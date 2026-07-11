@@ -61,6 +61,11 @@ require_instance_id() {
   [[ -n "$EC2_INSTANCE_ID" ]] || die "ASKLAKE_EC2_INSTANCE_ID is required"
 }
 
+validate_deploy_branch() {
+  git check-ref-format --branch "$DEPLOY_BRANCH" >/dev/null 2>&1 \
+    || die "ASKLAKE_DEPLOY_BRANCH is not a valid Git branch: $DEPLOY_BRANCH"
+}
+
 instance_field() {
   local query="$1"
   aws ec2 describe-instances \
@@ -232,10 +237,15 @@ stop_stack() {
 
 deploy_stack() {
   ensure_started
-  ssh_run "cd '$DEPLOY_PATH' && git fetch origin '$DEPLOY_BRANCH' && git checkout '$DEPLOY_BRANCH' && git pull --ff-only origin '$DEPLOY_BRANCH'"
+  sync_deploy_branch
   remote_compose 'up -d --build'
   health_check
   remote_compose 'ps'
+}
+
+sync_deploy_branch() {
+  local remote_ref="refs/heads/$DEPLOY_BRANCH:refs/remotes/origin/$DEPLOY_BRANCH"
+  ssh_run "cd '$DEPLOY_PATH' && test -z \"\$(git status --porcelain)\" || { echo 'error: remote working tree is dirty'; exit 1; }; git fetch --prune origin '$remote_ref' && if git show-ref --verify --quiet 'refs/heads/$DEPLOY_BRANCH'; then git checkout '$DEPLOY_BRANCH'; else git checkout --track -b '$DEPLOY_BRANCH' 'origin/$DEPLOY_BRANCH'; fi && git merge --ff-only 'origin/$DEPLOY_BRANCH'"
 }
 
 restart_stack() {
@@ -278,8 +288,10 @@ main() {
 
   need_command aws
   need_command curl
+  need_command git
   need_command ssh
   require_instance_id
+  validate_deploy_branch
 
   case "$command" in
     status) show_status ;;

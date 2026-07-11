@@ -159,14 +159,6 @@ export type SchemaColumnDraft = {
   expandedTotal?: number;
   included?: boolean;
   nullable: boolean;
-  reviewAnalysisAllowedValues?: string[];
-  reviewAnalysisFallbackAllowed?: boolean;
-  reviewAnalysisInstruction?: string;
-  reviewAnalysisMethod?: string;
-  reviewAnalysisModelArtifact?: string;
-  reviewAnalysisModelId?: string;
-  reviewAnalysisModelSelectionPolicy?: string;
-  reviewAnalysisRequireModel?: boolean;
   role?: string;
   sourceName: string;
   targetName: string;
@@ -410,44 +402,6 @@ export type JobRunSummary = {
   status: JobRunStatus;
   syncError?: string;
   taskStates?: Record<string, unknown>;
-  textStructuring?: TextStructuringColumnExecution[];
-  textStructuringExecution?: TextStructuringExecutionSummary;
-};
-
-export type TextStructuringColumnExecution = {
-  allowedValues?: string[];
-  distinctOutputValues?: number;
-  distributionWarning?: string;
-  executionMode?: string;
-  fallbackAllowed?: boolean;
-  fallbackUsed?: boolean;
-  invalidRows?: number;
-  method?: string;
-  metrics?: {
-    accuracy?: number;
-    macroF1?: number;
-    validationRows?: number;
-    [key: string]: unknown;
-  };
-  modelArtifact?: string;
-  modelRequired?: boolean;
-  modelSelectionPolicy?: string;
-  outputDistribution?: Array<{ count: number; value: string }>;
-  runtimeStatus?: string;
-  selectedModelArtifact?: string;
-  target?: string;
-  targetColumn?: string;
-  validationStatus?: string;
-  validationRows?: number;
-};
-
-export type TextStructuringExecutionSummary = {
-  columns: TextStructuringColumnExecution[];
-  fallbackColumns: string[];
-  modelColumns: string[];
-  missingModelColumns: string[];
-  oneOfValueColumns: number;
-  totalColumns: number;
 };
 
 export type JobDagStep = {

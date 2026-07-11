@@ -12,6 +12,7 @@ backend/.env.local
 frontend/.env
 frontend/.env.local
 backend/tmp/
+backend/data/
 output/
 __pycache__/
 *.pyc
@@ -20,3 +21,5 @@ deploy/.env
 deploy/ec2.env
 airflow/logs/
 airflow/config/airflow.cfg
+backend/uvicorn.*.log
+frontend/vite.*.log

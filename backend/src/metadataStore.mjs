@@ -3,7 +3,10 @@ import { normalizeColumnName } from "./profile.mjs";
 
 const { Pool } = pg;
 
-export const databaseUrl = process.env.DATABASE_URL || "postgres://asklake:asklake_dev@127.0.0.1:54328/asklake";
+const configuredDatabaseUrl = process.env.DATABASE_URL || "postgres://asklake:asklake_dev@127.0.0.1:54328/asklake";
+
+// SQLAlchemy uses URLs such as postgresql+psycopg:// while node-postgres expects postgresql://.
+export const databaseUrl = configuredDatabaseUrl.replace(/^postgresql\+[^:]+:\/\//i, "postgresql://");
 
 const pool = new Pool({
   connectionString: databaseUrl,
@@ -15,7 +18,6 @@ let useMemoryStore = false;
 const memoryStore = {
   datasets: new Map(),
   jobs: new Map(),
-  modelArtifacts: new Map(),
   sqlRuns: new Map(),
 };
 
@@ -44,22 +46,12 @@ export function ensureMetadataSchema() {
         created_at timestamptz NOT NULL DEFAULT now()
       );
 
-      CREATE TABLE IF NOT EXISTS model_artifacts (
-        id text PRIMARY KEY,
-        payload jsonb NOT NULL,
-        created_at timestamptz NOT NULL DEFAULT now(),
-        updated_at timestamptz NOT NULL DEFAULT now()
-      );
-
       ALTER TABLE etl_jobs
         ADD COLUMN IF NOT EXISTS payload jsonb;
       ALTER TABLE catalog_datasets
         ADD COLUMN IF NOT EXISTS payload jsonb;
       ALTER TABLE sql_runs
         ADD COLUMN IF NOT EXISTS payload jsonb;
-      ALTER TABLE model_artifacts
-        ADD COLUMN IF NOT EXISTS payload jsonb;
-
       CREATE INDEX IF NOT EXISTS etl_jobs_status_idx
         ON etl_jobs ((payload->>'status'));
       CREATE INDEX IF NOT EXISTS etl_jobs_owner_idx
@@ -72,10 +64,6 @@ export function ensureMetadataSchema() {
         ON catalog_datasets ((payload->>'owner'));
       CREATE INDEX IF NOT EXISTS sql_runs_dataset_id_idx
         ON sql_runs (dataset_id);
-      CREATE INDEX IF NOT EXISTS model_artifacts_target_dataset_idx
-        ON model_artifacts ((payload->>'targetDatasetId'));
-      CREATE INDEX IF NOT EXISTS model_artifacts_job_idx
-        ON model_artifacts ((payload->>'jobId'));
     `).catch((error) => {
       if (process.env.ASKLAKE_METADATA_MEMORY_FALLBACK === "false") throw error;
       useMemoryStore = true;
@@ -91,7 +79,6 @@ export async function resetMetadata() {
     memoryStore.sqlRuns.clear();
     memoryStore.datasets.clear();
     memoryStore.jobs.clear();
-    memoryStore.modelArtifacts.clear();
     return;
   }
   await pool.query(`
@@ -102,7 +89,6 @@ export async function resetMetadata() {
       END IF;
     END $$;
     DELETE FROM sql_runs;
-    DELETE FROM model_artifacts;
     DELETE FROM catalog_datasets;
     DELETE FROM etl_jobs;
   `);
@@ -128,15 +114,6 @@ export async function listDatasets() {
   await ensureMetadataSchema();
   if (useMemoryStore) return sortByUpdatedAt([...memoryStore.datasets.values()]);
   const result = await pool.query("SELECT payload FROM catalog_datasets ORDER BY updated_at DESC, created_at DESC");
-  return result.rows
-    .map((row) => row.payload)
-    .filter(isPlainObject);
-}
-
-export async function listModelArtifacts() {
-  await ensureMetadataSchema();
-  if (useMemoryStore) return sortByUpdatedAt([...memoryStore.modelArtifacts.values()]);
-  const result = await pool.query("SELECT payload FROM model_artifacts ORDER BY updated_at DESC, created_at DESC");
   return result.rows
     .map((row) => row.payload)
     .filter(isPlainObject);
@@ -216,24 +193,6 @@ export async function saveDataset(dataset) {
     [dataset.id, JSON.stringify(dataset)],
   );
   return dataset;
-}
-
-export async function saveModelArtifact(artifact) {
-  await ensureMetadataSchema();
-  if (useMemoryStore) {
-    memoryStore.modelArtifacts.set(artifact.id, stampPayload(artifact));
-    return memoryStore.modelArtifacts.get(artifact.id);
-  }
-  await pool.query(
-    `
-      INSERT INTO model_artifacts (id, payload)
-      VALUES ($1, $2::jsonb)
-      ON CONFLICT (id)
-      DO UPDATE SET payload = EXCLUDED.payload, updated_at = now()
-    `,
-    [artifact.id, JSON.stringify(artifact)],
-  );
-  return artifact;
 }
 
 export async function savePipelineCreation(job, dataset) {

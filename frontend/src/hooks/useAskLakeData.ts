@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiError } from "../types";
-import { catalogDatasets, etlJobs } from "../data/mockData";
 import { apiConfig } from "../services/apiClient";
 import { deleteDatasetMaterializationRun } from "../services/catalogApi";
 import { applyDraftPipelinePatch } from "../services/draftPipelineContract";
@@ -15,6 +14,7 @@ import {
   runJobCommand as runLiveJobCommand,
 } from "../services/pipelineApi";
 import { normalizeDatasetStatus, normalizeJobStatus } from "../utils/statusMeta";
+import { permissionDeniedMessage } from "../utils/permissions";
 import type {
   AuditResult,
   AuditTargetType,
@@ -123,9 +123,9 @@ function normalizeInitialDraftPipeline(draft: DraftPipeline): DraftPipeline {
 }
 
 const initialDraftPipeline: DraftPipeline = normalizeInitialDraftPipeline({
-  id: "pair_a_customer_review_gold",
+  id: "",
   permission: {
-    owner: "data-team-01",
+    owner: "",
     roles: [],
     summary: "Data Engineer Group · 조직 기본 권한",
   },
@@ -301,11 +301,11 @@ function saveStoredCatalogDataset(dataset: CatalogDataset) {
 }
 
 function getInitialDatasets() {
-  return apiConfig.useMock ? mergeCatalogDatasets(catalogDatasets, loadStoredCatalogDatasets()) : [];
+  return [];
 }
 
 function getInitialJobs() {
-  return apiConfig.useMock ? etlJobs.map(normalizeJobRow) : [];
+  return [];
 }
 
 function buildSqlDatasetJobDraft(
@@ -637,6 +637,14 @@ function commandSuccessMessage(command: ServerJobCommand, job: JobRowData): stri
   return "작업 취소 요청을 접수했습니다.";
 }
 
+function commandFailureMessage(error: unknown, command: ServerJobCommand): string {
+  if (error instanceof ApiError && error.status === 403) {
+    return permissionDeniedMessage("작업", command === "run" || command === "retry" ? "실행" : "관리");
+  }
+  const detail = error instanceof Error ? error.message.trim() : "";
+  return detail ? `작업 명령 실패: ${detail}` : "작업 명령 처리에 실패했습니다.";
+}
+
 function buildClientRunId(jobId: string): string {
   return `client:${jobId}:${Date.now()}`;
 }
@@ -889,7 +897,7 @@ export function useAskLakeData({
       applyDataset(nextDataset);
       writeAuditLog("catalog.dataset.materialization_run_deleted", `/api/catalog/datasets/${datasetId}/materialization-runs/${runId}`, runId, "success", { targetType: "dataset" });
       showToast("데이터셋 append 결과를 삭제했습니다.");
-    } catch {
+    } catch (error) {
       setDatasets(previousState.datasets);
       setSelectedDataset(previousState.selectedDataset);
       writeAuditLog("catalog.dataset.materialization_run_delete_failed", `/api/catalog/datasets/${datasetId}/materialization-runs/${runId}`, runId, "failed", { targetType: "dataset" });
@@ -1019,13 +1027,12 @@ export function useAskLakeData({
       }
       showToast(commandSuccessMessage(command, job));
       return normalizedUpdatedJob;
-    } catch {
+    } catch (error) {
       if (tempRunId) {
         rollbackOptimisticRun();
       }
       writeAuditLog("etl.job.command_failed", `/api/etl/jobs/${job.id}`, job.id, "failed");
-      showToast("작업 명령 처리에 실패했습니다.", "info");
-      return undefined;
+      showToast(commandFailureMessage(error, command), "info");
     } finally {
       commandPendingRef.current.delete(job.id);
       setCommandPendingByJobId((state) => {

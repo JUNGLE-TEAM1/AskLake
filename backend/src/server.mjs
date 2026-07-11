@@ -1,14 +1,12 @@
 import http from "node:http";
 import {
   commandJob,
-  createTextStructuringTrainingRun,
   createPipeline,
   executeQuery,
   getPipelineJob,
   getPipelineRun,
   listDatasets,
   listJobs,
-  listModelArtifacts,
   previewDatasetRows,
   readPipelineRunLogs,
 } from "./createPipeline.mjs";
@@ -16,7 +14,6 @@ import { listSourceAssets, testSourceConnector } from "./connectors.mjs";
 import { listS3Buckets, listS3Prefixes } from "./s3.service.mjs";
 import { ensureMetadataSchema, resetMetadata } from "./metadataStore.mjs";
 import { listTargetDatabases } from "./targetDatabase.service.mjs";
-import { getCellphonesReviewAnalysisStatus, runCellphonesReviewAnalysis, suggestReviewAnalysisSchema } from "./reviewRowAnalysis.mjs";
 import { handleAuthRoute } from "./authService.mjs";
 
 const port = Number(process.env.PORT || 8080);
@@ -84,22 +81,6 @@ const server = http.createServer(async (request, response) => {
       return;
     }
 
-    if (request.method === "GET" && url.pathname === "/api/catalog/models") {
-      sendJson(response, 200, await listModelArtifacts());
-      return;
-    }
-
-    if (request.method === "GET" && url.pathname === "/api/text-structuring/models") {
-      sendJson(response, 200, await listModelArtifacts());
-      return;
-    }
-
-    if (request.method === "POST" && url.pathname === "/api/text-structuring/training-runs") {
-      const body = await readJson(request);
-      sendJson(response, 201, await createTextStructuringTrainingRun(body));
-      return;
-    }
-
     if (request.method === "GET" && /^\/api\/catalog\/datasets\/[^/]+\/rows$/.test(url.pathname)) {
       const datasetId = decodeURIComponent(url.pathname.split("/")[4]);
       sendJson(response, 200, await previewDatasetRows(datasetId, {
@@ -125,23 +106,6 @@ const server = http.createServer(async (request, response) => {
 
     if (request.method === "GET" && url.pathname === "/api/target/databases") {
       sendJson(response, 200, listTargetDatabases());
-      return;
-    }
-
-    if (request.method === "GET" && url.pathname === "/api/review-analysis/cellphones") {
-      sendJson(response, 200, await getCellphonesReviewAnalysisStatus());
-      return;
-    }
-
-    if (request.method === "POST" && url.pathname === "/api/review-analysis/cellphones/run") {
-      const body = await readJson(request);
-      sendJson(response, 200, await runCellphonesReviewAnalysis(body));
-      return;
-    }
-
-    if (request.method === "POST" && url.pathname === "/api/review-analysis/schema-suggestion") {
-      const body = await readJson(request);
-      sendJson(response, 200, await suggestReviewAnalysisSchema(body));
       return;
     }
 

@@ -153,12 +153,16 @@ const checks = [
     forbiddenPatterns: [/const moveAllToLeft =/, /aria-label="Remove all target columns"/],
   },
   {
-    name: "Schema projection preserves source columns and sample row order",
+    name: "Schema projection preserves raw columns and supports user-added target fields",
     file: "src/pages/etl/SchemaTransformWorkbench.tsx",
     patterns: [
-      /const nextColumns = currentColumns\.map\(\(column\) => \{/,
-      /if \(!selected\) return \{ \.\.\.column, included: false, targetOrder: undefined \};/,
-      /const nextRows = sampleRows\.map\(\(row\) => \[\.\.\.row\]\);/,
+      /\.filter\(\(column\) => column\.role !== "schema-added"\)/,
+      /currentColumns\.forEach\(\(column, columnIndex\) => \{/,
+      /if \(!selected && column\.role === "schema-added"\) return;/,
+      /const nextRows = sampleRows\.map\(\(row\) => retainedIndexes\.map\(\(index\) => row\[index\] \?\? ""\)\);/,
+      /role: "schema-added"/,
+      /operation: dataStep\.operation/,
+      /const outputName = column\.targetName \?\? column\.sourceName;/,
     ],
   },
   {
@@ -439,7 +443,7 @@ const checks = [
     name: "Frontend defaults to live API mode",
     file: "src/services/apiClient.ts",
     patterns: [
-      /VITE_USE_MOCK_API \?\? "false"/,
+      /const useMockApi = false;/,
     ],
   },
   {
@@ -502,6 +506,99 @@ const checks = [
     ],
     forbiddenPatterns: [
       /현재 대시보드 링크를 복사했습니다/,
+    ],
+  },
+  {
+    name: "ETL source keeps folder collection and delimited parsing separate from schema editing",
+    file: "src/pages/etl/EtlPages.tsx",
+    patterns: [
+      /<section className="delimited-parser-editor" aria-label="구분 텍스트 파싱">/,
+      /<RefreshCw \/> 파싱 적용/,
+      /sourceConfigValue\(editableFields, "Collection Scope"\)/,
+      /\["Row Delimiter", "auto"\]/,
+      /value=\{parserRowDelimiter\}/,
+      /<option value=\{"\\\\n"\}>LF \(\\n\)<\/option>/,
+      /<option value=\{"\\\\r\\\\n"\}>CRLF \(\\r\\n\)<\/option>/,
+      /<option value=\{"\\\\r"\}>CR \(\\r\)<\/option>/,
+      /\["Collection Scope", "folder"\]/,
+      /\["Recursive", "true"\]/,
+      /sampleSourceAsset\(samplePath \|\| folderPath/,
+      /"Extract Regex": "정규식 추출"/,
+      /\/\\\.\(csv\|tsv\|txt\|log\)\$\/i\.test\(path\)/,
+      /"Delimited Fields",\s*JSON\.stringify\(columns\.map/,
+    ],
+    forbiddenPatterns: [
+      /Text Structuring/,
+      /one_of_values/,
+      /Auto model/,
+      /현재 필드 사용/,
+      /removeDelimitedField/,
+    ],
+  },
+  {
+    name: "Folder policy and delimited parser keep stable responsive controls",
+    file: "src/styles/etl.css",
+    patterns: [
+      /\.collection-policy-grid\s*\{[^}]*grid-template-columns:\s*minmax\(260px, 1\.6fr\) minmax\(150px, \.8fr\) minmax\(132px, \.6fr\);/s,
+      /\.delimited-dialect-grid\s*\{[^}]*grid-template-columns:\s*repeat\(3, minmax\(140px, 1fr\)\);/s,
+      /@media \(max-width: 720px\)[\s\S]*\.collection-policy-grid,[\s\S]*\.delimited-dialect-grid\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/,
+    ],
+  },
+  {
+    name: "Schema transform editor owns field addition and regex extraction",
+    file: "src/components/etl/SchemaTransformEditor.jsx",
+    patterns: [
+      /const addTargetColumn = \(\) => \{/,
+      /isAdded: true/,
+      /<Plus className="h-4 w-4" \/>/,
+      /onClick=\{addTargetColumn\}/,
+    ],
+  },
+  {
+    name: "Field transform modal persists regex extraction metadata",
+    file: "src/components/etl/TransformFunctionModal.jsx",
+    patterns: [
+      /setOperation\('Extract Regex'\)/,
+      /operation: 'Extract Regex'/,
+      /params: regexPattern/,
+      /\^\/products\/\(\[\^\/\]\+\)/,
+    ],
+  },
+  {
+    name: "Source tree separates folder navigation from folder collection selection",
+    file: "src/pages/etl/SourceAssetTree.tsx",
+    patterns: [
+      /if \(node\.isFolder\) \{\s*toggleFolder\(node\);\s*return;/s,
+      /aria-label=\{`폴더 \$\{node\.name\} 선택`\}/,
+      /void onSelect\(node\.path\)/,
+    ],
+  },
+  {
+    name: "Permission governance derives sensitive fields from the active schema",
+    file: "src/pages/etl/EtlPages.tsx",
+    patterns: [
+      /const sensitiveColumns = draft\.schema\.columns/,
+      /"민감 데이터", sensitiveDataLabel, sensitiveColumns\.length > 0 \? "검토 필요" : "안전"/,
+    ],
+    forbiddenPatterns: [/"review_text 포함"/],
+  },
+  {
+    name: "Target configuration uses only the active schema without sales fixtures",
+    file: "src/pages/etl/EtlPages.tsx",
+    patterns: [
+      /const sourceColumns = columns;/,
+      /const activeSchemaRules = schemaRules;/,
+      /partitionColumns: target\?\.partitionColumns \?\? draft\.target\.partitionColumns \?\? \[\]/,
+    ],
+    forbiddenPatterns: [/SAMPLE_TARGET_SCHEMA_COLUMNS/, /gross_sales/, /SAMPLE_TARGET_ROWS/],
+  },
+  {
+    name: "Target schema controls have stable accessible names",
+    file: "src/components/etl/SchemaTransformEditor.jsx",
+    patterns: [
+      /aria-label=\{`\$\{col\.originalName \|\| col\.name\} 출력 컬럼명`\}/,
+      /aria-label=\{`\$\{col\.originalName \|\| col\.name\} 출력 타입`\}/,
+      /aria-label=\{`\$\{col\.originalName \|\| col\.name\} 변환 설정`\}/,
     ],
   },
 ];

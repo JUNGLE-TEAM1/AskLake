@@ -208,14 +208,6 @@ function materializationRunStatusLabel(status: DatasetMaterializationRun["status
   return "대기";
 }
 
-function formatCatalogModelExecution(executionMode?: string, fallbackUsed?: boolean) {
-  if (fallbackUsed || executionMode === "fallback_rule") return "규칙 Fallback";
-  if (executionMode === "selected_model") return "선택 모델";
-  if (executionMode === "auto_model") return "자동 모델";
-  if (executionMode === "missing_model") return "모델 없음";
-  return executionMode || "처리 정보 없음";
-}
-
 function parseCatalogSearchQuery(query: string, knownTags: string[]): CatalogSearchQuery {
   let remainingQuery = normalizeCatalogText(query);
   const tags: string[] = [];
@@ -957,15 +949,6 @@ function CatalogMaterializationRuns({
             const isSelectable = run.status === "success" && canQueryDatasetForCurrentUser(dataset);
             const isSelected = run.runId === selectedRunId;
             const statusTone = run.status === "success" ? "success" : run.status === "failed" ? "danger" : run.status === "running" ? "default" : "muted";
-            const textStructuringChecks = run.textStructuringExecution?.columns ?? run.textStructuring ?? [];
-            const modelProvenance = textStructuringChecks.map((check) => {
-              const targetColumn = check.targetColumn || check.target || check.output || "컬럼";
-              const modelArtifact = check.selectedModelArtifact || check.modelArtifact;
-              const execution = modelArtifact
-                ? `${formatCatalogModelExecution(check.executionMode, check.fallbackUsed)} · ${modelArtifact}`
-                : formatCatalogModelExecution(check.executionMode || check.runtimeStatus, check.fallbackUsed);
-              return `${targetColumn}: ${execution}`;
-            }).join(", ");
             const quarantineRows = Number(run.quarantine?.rows ?? 0);
 
             return (
@@ -1025,11 +1008,6 @@ function CatalogMaterializationRuns({
                 <span>{formatRunCreatedAt(run.createdAt)}</span>
                 <span>{run.rowCount.toLocaleString()}행 · {formatRunStorageSize(run.storageSizeBytes)}</span>
                 <span className="truncate sm:col-span-2" title={run.sourceLabel}>{run.sourceLabel}</span>
-                {modelProvenance ? (
-                  <span className="truncate font-semibold text-blue-700 sm:col-span-2" title={modelProvenance}>
-                    모델 기반 변환 · {modelProvenance}
-                  </span>
-                ) : null}
                 {quarantineRows > 0 ? (
                   <span className="truncate font-semibold text-amber-700 sm:col-span-2" title={run.quarantine?.path || undefined}>
                     검증 격리 · {quarantineRows.toLocaleString()}행

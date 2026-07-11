@@ -6,7 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { fieldValue, formatBytes, inferSchemaColumns, parseSourceSample, schemaFingerprint, sourceId, upsertFields } from "./profile.mjs";
 
-const textFileExtensions = [".csv", ".json", ".jsonl", ".txt", ".tsv"];
+const textFileExtensions = [".csv", ".json", ".jsonl", ".log", ".txt", ".tsv"];
 const backendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const scriptsDir = path.join(backendDir, "scripts");
 const ivyDir = path.join(backendDir, "tmp", "spark-ivy");
@@ -85,6 +85,9 @@ export async function testObjectStorageSource(fields, sourceType = "File / S3") 
   const secretAccessKey = requiredSourceField(fields, "Secret Key", "MinIO/S3 secret key is required.");
   const forcePathStyle = parseBoolean(fieldValue(fields, "Use Path Style"), true);
   const selectedObject = selectedObjectKey(fields);
+  const collectionScope = String(fieldValue(fields, "Collection Scope") || "file").trim().toLowerCase();
+  const collectionPattern = fieldValue(fields, "File Pattern") || "*";
+  const collectionRecursive = parseBoolean(fieldValue(fields, "Recursive"), false);
 
   if (!accessKeyId || !secretAccessKey) {
     throw apiError("SOURCE_CREDENTIALS_REQUIRED", "MinIO/S3 액세스 키와 시크릿 키가 필요합니다.", 400);
@@ -112,7 +115,14 @@ export async function testObjectStorageSource(fields, sourceType = "File / S3") 
     if (!prefix && objects.length === 0) {
       objects = listDirectObjectsViaMinioContainer({ accessKeyId, bucket, endpoint, limit: sourceAssetListLimit(), prefix, secretAccessKey }) ?? objects;
     }
-    const sampleObject = selectedObject ? objects.find((item) => item.Key === selectedObject) : immediateSampleObject(objects, prefix);
+    let sampleObject = selectedObject
+      ? objects.find((item) => item.Key === selectedObject)
+      : collectionScope === "folder"
+        ? immediateCollectionSampleObject(objects, prefix, collectionPattern)
+        : immediateSampleObject(objects, prefix);
+    if (!sampleObject && !selectedObject && collectionScope === "folder" && collectionRecursive) {
+      sampleObject = await findRecursiveCollectionSampleObject(client, bucket, prefix, collectionPattern);
+    }
     return buildObjectStorageAnalysis({
       bucket,
       client,
@@ -734,7 +744,7 @@ async function buildObjectStorageAnalysis({ bucket, client, endpoint, fields, fo
       Range: requestedBytes > 0 ? `bytes=0-${Math.max(0, requestedBytes - 1)}` : undefined,
     }));
     const text = await readBodyTextWithinLimit(objectResult.Body, requestedBytes);
-    parsedSample = parseSourceSample(sampleObject.Key, text ?? "", { maxRows: samplePolicy.rowLimit });
+    parsedSample = parseSourceSample(sampleObject.Key, text ?? "", sourceSampleParsingOptions(fields, samplePolicy.rowLimit));
     logs.push(`제한 샘플 조회: ${sampleObject.Key}`);
     logs.push(`샘플 범위 적용: ${samplePolicy.label} (${formatBytes(requestedBytes)} 요청, 최대 ${samplePolicy.rowLimit.toLocaleString()}행 프로파일)`);
     logs.push(`프로파일 스냅샷 추론: ${parsedSample.columns.length}개 필드, 샘플 행 ${parsedSample.rows.length}개`);
@@ -766,6 +776,7 @@ async function buildObjectStorageAnalysis({ bucket, client, endpoint, fields, fo
     ["__Source Unit Count", String(objects.length)],
     ["__Sample Object", sampleKey],
     ["__Selected Object", selectedObject],
+    ...delimitedProfileSourceFields(parsedSample),
   ]);
   const sourceLabel = `${bucket}${prefix ? `/${prefix}` : ""}`;
 
@@ -795,7 +806,7 @@ async function buildObjectStorageAnalysis({ bucket, client, endpoint, fields, fo
       ? parsedSample.rows
       : objects.slice(0, 8).map((item) => [item.Key ?? "-", item.__folder ? "folder" : formatBytes(item.Size ?? 0), item.LastModified?.toISOString() ?? "-"]),
     status: "success",
-    testItems: [["Endpoint", endpoint], ["Bucket", bucket], ["Immediate children", String(objects.length)]],
+    testItems: [["Endpoint", endpoint], ["Bucket", bucket], ["Immediate children", String(objects.length)], ...delimitedProfileTestItems(parsedSample)],
   };
 }
 
@@ -824,7 +835,7 @@ function readObjectStorageViaMinioContainer({ accessKeyId, bucket, endpoint, fie
       key: sampleObject.Key,
       secretAccessKey,
     });
-    parsedSample = parseSourceSample(sampleObject.Key, text ?? "", { maxRows: samplePolicy.rowLimit });
+    parsedSample = parseSourceSample(sampleObject.Key, text ?? "", sourceSampleParsingOptions(fields, samplePolicy.rowLimit));
     logs.push(`제한 샘플 조회: ${sampleObject.Key}`);
     logs.push(`샘플 범위 적용: ${samplePolicy.label} (${formatBytes(requestedBytes)} 요청, 최대 ${samplePolicy.rowLimit.toLocaleString()}행 프로파일)`);
     logs.push(`프로파일 스키마 추론: ${parsedSample.columns.length}개 필드, 샘플 행 ${parsedSample.rows.length}개`);
@@ -856,6 +867,7 @@ function readObjectStorageViaMinioContainer({ accessKeyId, bucket, endpoint, fie
     ["__Sample Object", sampleKey],
     ["__Selected Object", selectedObject],
     ["__MinIO Runtime", "docker-container"],
+    ...delimitedProfileSourceFields(parsedSample),
   ]);
   const sourceLabel = `${bucket}${prefix ? `/${prefix}` : ""}`;
 
@@ -885,8 +897,55 @@ function readObjectStorageViaMinioContainer({ accessKeyId, bucket, endpoint, fie
       ? parsedSample.rows
       : objects.slice(0, 8).map((item) => [item.Key ?? "-", item.__folder ? "folder" : formatBytes(item.Size ?? 0), item.LastModified?.toISOString() ?? "-"]),
     status: "success",
-    testItems: [["Endpoint", endpoint], ["Bucket", bucket], ["Immediate children", String(objects.length)]],
+    testItems: [["Endpoint", endpoint], ["Bucket", bucket], ["Immediate children", String(objects.length)], ...delimitedProfileTestItems(parsedSample)],
   };
+}
+
+function sourceSampleParsingOptions(fields, maxRows) {
+  return {
+    delimiter: fieldValue(fields, "Delimiter"),
+    escapeChar: fieldValue(fields, "Escape Character"),
+    fields: fieldValue(fields, "Delimited Fields"),
+    hasHeader: fieldValue(fields, "Header"),
+    maxRows,
+    parserMode: fieldValue(fields, "Parser Mode"),
+    quoteChar: fieldValue(fields, "Quote Character"),
+    rowDelimiter: fieldValue(fields, "Row Delimiter"),
+  };
+}
+
+function delimitedProfileSourceFields(sample) {
+  if (!sample?.profile?.detected) return [];
+  return [
+    ["__Delimited Profile", JSON.stringify(sample.profile)],
+    ["__Detected Delimiter", displayDelimiter(sample.profile.detected.delimiter)],
+    ["__Detected Header", String(Boolean(sample.profile.detected.has_header))],
+    ["__Detected Row Delimiter", displayRowDelimiter(sample.profile.detected.line_separator)],
+    ["__Parser Width Conflicts", String(sample.profile.width_conflicts ?? 0)],
+  ];
+}
+
+function delimitedProfileTestItems(sample) {
+  if (!sample?.profile?.detected) return [];
+  return [
+    ["Row delimiter", displayRowDelimiter(sample.profile.detected.line_separator)],
+    ["Delimiter", displayDelimiter(sample.profile.detected.delimiter)],
+    ["Parsed fields", String(sample.columns?.length ?? 0)],
+    ["Width conflicts", String(sample.profile.width_conflicts ?? 0)],
+  ];
+}
+
+function displayDelimiter(value) {
+  if (value === "\t") return "\\t";
+  if (value === " ") return "space";
+  return String(value ?? "");
+}
+
+function displayRowDelimiter(value) {
+  if (value === "\r\n") return "\\r\\n";
+  if (value === "\n") return "\\n";
+  if (value === "\r") return "\\r";
+  return String(value ?? "");
 }
 
 function s3Client({ accessKeyId, endpoint, forcePathStyle, region, secretAccessKey }) {
@@ -969,7 +1028,7 @@ function parentPrefix(value) {
 }
 
 function looksLikeObjectKey(value) {
-  return /\.(csv|json|jsonl|parquet|tsv|txt)$/i.test(String(value ?? "").trim());
+  return /\.(csv|json|jsonl|log|parquet|tsv|txt)$/i.test(String(value ?? "").trim());
 }
 
 function sourceListLimit() {
@@ -1068,6 +1127,51 @@ function immediateSampleObject(objects, prefix) {
       : key;
     return relative.length > 0 && !relative.includes("/");
   });
+}
+
+function immediateCollectionSampleObject(objects, prefix, pattern) {
+  const sample = immediateSampleObject(objects.filter((item) => collectionPatternMatches(item.Key, pattern)), prefix);
+  return sample;
+}
+
+async function findRecursiveCollectionSampleObject(client, bucket, prefix, pattern) {
+  const normalizedPrefix = normalizePrefix(prefix);
+  const normalizedPrefixWithSlash = normalizedPrefix ? `${normalizedPrefix}/` : "";
+  const limit = sourceAssetListLimit();
+  let continuationToken;
+  let scanned = 0;
+  do {
+    const remaining = Math.max(1, limit - scanned);
+    const result = await client.send(new ListObjectsV2Command({
+      Bucket: bucket,
+      ContinuationToken: continuationToken,
+      MaxKeys: Math.min(200, remaining),
+      Prefix: normalizedPrefixWithSlash || normalizedPrefix,
+    }));
+    const contents = result.Contents ?? [];
+    scanned += contents.length;
+    const sample = contents.find((item) => (
+      item.Key
+      && item.Key !== normalizedPrefixWithSlash
+      && hasTextExtension(item.Key)
+      && collectionPatternMatches(item.Key, pattern)
+    ));
+    if (sample) return { ...sample, __folder: false };
+    continuationToken = result.IsTruncated && scanned < limit ? result.NextContinuationToken : undefined;
+  } while (continuationToken);
+  return undefined;
+}
+
+function collectionPatternMatches(key, pattern) {
+  const normalizedPattern = String(pattern || "*").trim() || "*";
+  const fileName = String(key || "").split("/").pop() || "";
+  let source = "^";
+  for (const character of normalizedPattern) {
+    if (character === "*") source += ".*";
+    else if (character === "?") source += ".";
+    else source += character.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
+  }
+  return new RegExp(`${source}$`, "i").test(fileName);
 }
 
 function browsableObjectStorageItems(objects, prefix) {

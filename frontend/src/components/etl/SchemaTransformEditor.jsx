@@ -5,6 +5,7 @@ import {
   ChevronUp,
   ChevronDown,
   Braces,
+  Plus,
   Trash2,
 } from "lucide-react";
 import TransformFunctionModal from "./TransformFunctionModal";
@@ -335,6 +336,34 @@ export default function SchemaTransformEditor({
     if (onTestStatusChange) onTestStatusChange(false);
   };
 
+  const addTargetColumn = () => {
+    const names = new Set(targetSchema.map((column) => String(column.name || "").trim()));
+    let index = targetSchema.length + 1;
+    while (names.has(`new_column_${index}`)) index += 1;
+    const name = `new_column_${index}`;
+    onSchemaChange([
+      ...targetSchema,
+      {
+        defaultValue: "",
+        isAdded: true,
+        name,
+        notNull: false,
+        onError: "Warn",
+        originalName: name,
+        originalType: "string",
+        sourceId,
+        sourceName: "Manual",
+        transform: null,
+        transformChain: [],
+        transformDisplay: null,
+        transformOperation: null,
+        transformParams: "",
+        type: "string",
+      },
+    ]);
+    if (onTestStatusChange) onTestStatusChange(false);
+  };
+
   // Open transform function editor
   const openFunctionEditor = (column, index) => {
     setEditingColumn({ ...column, index });
@@ -346,94 +375,6 @@ export default function SchemaTransformEditor({
     if (editingColumn) {
       const next = [...targetSchema];
       const existing = next[editingColumn.index];
-      if (transformMeta.mode === "csvMultiOutput" && Array.isArray(transformMeta.columns)) {
-        const sourceField = transformMeta.sourceField || existing.originalName || existing.sourceName || existing.name || newName;
-        const outputColumns = transformMeta.columns
-          .map((column, columnIndex) => {
-            const method = column.method || "copy";
-            const isOneOfValues = method === "one_of_values";
-            const fallbackAllowed = isOneOfValues && Boolean(column.fallbackAllowed || column.allowFallback);
-            const modelArtifact = isOneOfValues ? column.modelArtifact || column.selectedModelArtifact || "" : "";
-            const modelId = isOneOfValues ? column.modelId || column.selectedModelId || "" : "";
-            return {
-              allowedValues: Array.isArray(column.allowedValues) ? column.allowedValues : [],
-              fallbackAllowed,
-              instruction: column.instruction || "",
-              method,
-              modelArtifact,
-              modelId,
-              modelSelectionPolicy: isOneOfValues ? (column.modelSelectionPolicy || (modelArtifact || modelId ? "explicit" : "auto")) : "none",
-              nullable: column.nullable !== false,
-              requireModel: isOneOfValues && !fallbackAllowed,
-              targetName: String(column.targetName || `column_${columnIndex + 1}`).trim().replace(/[^a-zA-Z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || `column_${columnIndex + 1}`,
-              type: column.type || "String",
-            };
-          })
-          .filter((column, columnIndex, columns) => column.targetName && columns.findIndex((item) => item.targetName === column.targetName) === columnIndex);
-        if (outputColumns.length > 0) {
-          const params = JSON.stringify({ columns: outputColumns, sourceField, version: 1 });
-          const expansionId = existing.expansionId
-            || transformMeta.expansionId
-            || `text-row-${sourceField}-${Date.now().toString(36)}`;
-          const generated = outputColumns.map((column, columnIndex) => ({
-            defaultValue: existing.defaultValue || "",
-            expansionId,
-            expandedFrom: sourceField,
-            expandedIndex: columnIndex + 1,
-            expandedTotal: outputColumns.length,
-            included: true,
-            name: column.targetName,
-            nullable: column.nullable,
-            notNull: existing.notNull || false,
-            originalName: sourceField,
-            originalType: existing.originalType || existing.type,
-            role: `text-row-analysis:${column.instruction || column.targetName}`,
-            sourceId: existing.sourceId,
-            sourceName: `__text_analysis.${column.targetName}`,
-            targetName: column.targetName,
-            reviewAnalysisMethod: column.method,
-            reviewAnalysisAllowedValues: column.allowedValues || [],
-            reviewAnalysisFallbackAllowed: Boolean(column.fallbackAllowed),
-            reviewAnalysisModelArtifact: column.modelArtifact || "",
-            reviewAnalysisModelId: column.modelId || "",
-            reviewAnalysisModelSelectionPolicy: column.modelSelectionPolicy || "none",
-            reviewAnalysisRequireModel: Boolean(column.requireModel),
-            reviewAnalysisInstruction: column.instruction || "",
-            transform: `TEXT_ANALYZE(${sourceField}).${column.targetName}`,
-            transformChain: [{
-              display: `Text row -> ${column.targetName}`,
-              expression: `TEXT_ANALYZE(${sourceField}).${column.targetName}`,
-              onError: transformMeta.onError || "Warn",
-              operation: transformMeta.operation || "Text Row Analysis",
-              params,
-              type: column.type,
-            }],
-            transformDisplay: `Text row -> ${column.targetName}`,
-            transformOperation: transformMeta.operation || "Text Row Analysis",
-            transformParams: params,
-            type: column.type,
-          }));
-          const groupIndexes = existing.expansionId
-            ? next.map((item, itemIndex) => (item.expansionId === existing.expansionId ? itemIndex : -1)).filter((itemIndex) => itemIndex >= 0)
-            : existing.expandedFrom
-              ? next
-                .map((item, itemIndex) => (
-                  item.expandedFrom === existing.expandedFrom && String(item.sourceName || "").startsWith("__text_analysis.")
-                    ? itemIndex
-                    : -1
-                ))
-                .filter((itemIndex) => itemIndex >= 0)
-              : [editingColumn.index];
-          const replaceStartIndex = Math.min(...groupIndexes, editingColumn.index);
-          const filtered = next.filter((_, itemIndex) => !groupIndexes.includes(itemIndex));
-          filtered.splice(Math.min(replaceStartIndex, filtered.length), 0, ...generated);
-          onSchemaChange(filtered);
-          if (onTestStatusChange) onTestStatusChange(false);
-          setShowFunctionModal(false);
-          setEditingColumn(null);
-          return;
-        }
-      }
       const fallbackOperation = transformMeta.operation || "SQL Expression";
       const fallbackParams = transformMeta.params ?? (fallbackOperation === "SQL Expression" ? transformExpr : "");
       const fallbackStep = {
@@ -729,15 +670,25 @@ export default function SchemaTransformEditor({
                 <span className="w-1 h-3 bg-indigo-600 rounded-full"></span>
                 After (Target)
               </h3>
-              <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-slate-600">
-                <Checkbox
-                  aria-label="전체 타겟 컬럼 선택"
-                  checked={targetSchema.length > 0 && selectedAfter.size === targetSchema.length ? true : selectedAfter.size > 0 ? "indeterminate" : false}
-                  disabled={targetSchema.length === 0}
-                  onCheckedChange={(checked) => toggleAllTargetColumns(checked === true)}
-                />
-                전체 선택
-              </label>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={addTargetColumn}
+                  className="inline-flex min-h-8 items-center gap-1.5 rounded-md border border-indigo-200 bg-white px-2.5 text-xs font-bold text-indigo-700 transition-colors hover:border-indigo-400 hover:bg-indigo-50"
+                >
+                  <Plus className="h-4 w-4" />
+                  컬럼 추가
+                </button>
+                <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-slate-600">
+                  <Checkbox
+                    aria-label="전체 타겟 컬럼 선택"
+                    checked={targetSchema.length > 0 && selectedAfter.size === targetSchema.length ? true : selectedAfter.size > 0 ? "indeterminate" : false}
+                    disabled={targetSchema.length === 0}
+                    onCheckedChange={(checked) => toggleAllTargetColumns(checked === true)}
+                  />
+                  전체 선택
+                </label>
+              </div>
             </div>
             <div className="flex-1 overflow-y-auto p-2">
               {targetSchema.length === 0 ? (
@@ -771,6 +722,7 @@ export default function SchemaTransformEditor({
                         )}
                         <input
                           type="text"
+                          aria-label={`${col.originalName || col.name} 출력 컬럼명`}
                           value={col.name}
                           onChange={(e) =>
                             updateColumnProperty(index, "name", e.target.value)
@@ -778,6 +730,7 @@ export default function SchemaTransformEditor({
                           className="flex-1 px-1.5 py-1 text-sm font-semibold text-slate-900 bg-white border border-slate-200 rounded-md focus:outline-none focus:border-indigo-500 transition-colors"
                         />
                         <select
+                          aria-label={`${col.originalName || col.name} 출력 타입`}
                           value={col.type}
                           onChange={(e) =>
                             updateColumnProperty(index, "type", e.target.value)
@@ -794,6 +747,7 @@ export default function SchemaTransformEditor({
                         </select>
                         {/* Transform Function Button */}
                         <button
+                          aria-label={`${col.originalName || col.name} 변환 설정`}
                           onClick={() => openFunctionEditor(col, index)}
                           className={`p-1.5 rounded transition-colors ${
                             col.transform || col.transformOperation || dataTransformChain(col.transformChain).length
@@ -827,6 +781,7 @@ export default function SchemaTransformEditor({
                         <label className="flex items-center gap-1.5 cursor-pointer">
                           <input
                             type="checkbox"
+                            aria-label={`${col.originalName || col.name} NOT NULL`}
                             checked={col.notNull || false}
                             onChange={(e) =>
                               updateColumnProperty(
@@ -845,6 +800,7 @@ export default function SchemaTransformEditor({
                           <span className="text-gray-500">Default:</span>
                           <input
                             type="text"
+                            aria-label={`${col.originalName || col.name} 기본값`}
                             value={col.defaultValue || ""}
                             onChange={(e) =>
                               updateColumnProperty(

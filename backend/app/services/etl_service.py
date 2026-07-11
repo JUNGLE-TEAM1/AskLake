@@ -816,8 +816,16 @@ def run_spark_job(job: ETLJobModel, command: str, run_id: str) -> dict[str, Any]
             "runId": run_id,
         },
         error_marker="ASKLAKE_SPARK_RUN_ERROR",
-        timeout_seconds=900,
+        timeout_seconds=spark_execution_timeout_seconds(),
     )
+
+
+def spark_execution_timeout_seconds() -> int:
+    configured = os.environ.get("ASKLAKE_SPARK_RUN_TIMEOUT_SECONDS") or "7200"
+    try:
+        return max(60, int(configured))
+    except (TypeError, ValueError):
+        return 7200
 
 
 def execute_airflow_spark_run(
@@ -1046,11 +1054,26 @@ def validate_catalog_output_identity(job: ETLJobModel, run_id: str, output_path:
         return
     expected = canonical_storage_path(f"{configured_root.rstrip('/')}/{run_id}")
     actual = canonical_storage_path(output_path)
+    if local_spark_output_matches_run(run_id, actual):
+        return
     if actual != expected:
         raise catalog_reconciliation_error(
             "Spark output path does not match the persisted Job destination.",
             {"expected": expected, "outputPath": actual, "runId": run_id},
         )
+
+
+def local_spark_output_matches_run(run_id: str, output_path: str) -> bool:
+    if str(os.environ.get("ASKLAKE_SPARK_OUTPUT_MODE") or "").strip().lower() != "local":
+        return False
+    configured_root = os.environ.get("ASKLAKE_SPARK_LOCAL_OUTPUT_DIR")
+    local_root = Path(configured_root).expanduser().resolve() if configured_root else Path(__file__).resolve().parents[2] / "tmp" / "spark-output"
+    actual = Path(output_path).expanduser().resolve()
+    try:
+        actual.relative_to(local_root.resolve())
+    except ValueError:
+        return False
+    return actual.name == run_id
 
 
 def canonical_storage_path(value: str) -> str:
@@ -1498,12 +1521,16 @@ def sync_airflow_runs_for_job(db: Session, job: ETLJobModel) -> None:
     dataset_id = job.dataset_id or f"ds_{normalize_column_name(job.target)}"
     dataset = etl_repository.get_dataset_by_id(db, dataset_id)
     repaired_success = repair_incomplete_airflow_successes(runs, dataset)
-    active_runs = [
+    runs_to_sync = [
         run
         for run in runs
-        if run.status in ACTIVE_RUN_STATUSES and run.airflow_dag_run_id
+        if run.airflow_dag_run_id
+        and (
+            run.status in ACTIVE_RUN_STATUSES
+            or terminal_airflow_run_needs_reconciliation(run)
+        )
     ]
-    if not active_runs:
+    if not runs_to_sync:
         if repaired_success and runs:
             apply_job_state_from_latest_run(job, runs[0])
             job.stats = stats_from_runs(job, [etl_repository.run_to_schema(run) for run in runs])
@@ -1515,20 +1542,29 @@ def sync_airflow_runs_for_job(db: Session, job: ETLJobModel) -> None:
     except ApiError as exc:
         sync_error = exc.message
         synced_at = iso_now()
-        for run in active_runs:
+        for run in runs_to_sync:
             run.sync_error = sync_error
             run.last_synced_at = synced_at
         job.last_state = f"Airflow 상태 동기화 실패 · {sync_error}"
         etl_repository.save_job(db, job)
         return
 
-    for run in active_runs:
+    for run in runs_to_sync:
         sync_airflow_run(db, job, run, airflow_client, dataset)
 
     latest_run = runs[0]
     apply_job_state_from_latest_run(job, latest_run)
     job.stats = stats_from_runs(job, [etl_repository.run_to_schema(run) for run in runs])
     etl_repository.save_job(db, job)
+
+
+def terminal_airflow_run_needs_reconciliation(run: ETLRunModel) -> bool:
+    catalog_result = (run.task_states or {}).get("catalogResult")
+    return (
+        run.status == "failed"
+        and isinstance(catalog_result, dict)
+        and catalog_result.get("status") == "success"
+    )
 
 
 def sync_airflow_run(

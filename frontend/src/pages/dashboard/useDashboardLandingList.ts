@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { getMockDashboardListResponse, listDashboards } from "../../services/dashboardApi";
+import { listDashboards } from "../../services/dashboardApi";
 import type { DashboardListQuery, DashboardListResponse, SavedDashboardCard } from "../../types";
 import { dashboardPageSize } from "./dashboardListUtils";
 import type { DashboardListControl, DashboardSortOption } from "./dashboardListUtils";
@@ -18,11 +18,13 @@ export function useDashboardLandingList(dashboards: SavedDashboardCard[], onActi
   const [dashboardLoading, setDashboardLoading] = useState(false);
   const [dashboardError, setDashboardError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
-  const [dashboardResponse, setDashboardResponse] = useState<DashboardListResponse>(() => getMockDashboardListResponse({
+  const [dashboardResponse, setDashboardResponse] = useState<DashboardListResponse>({
+    filterOptions: { owners: [], tags: [] },
+    items: [],
     page: 1,
     pageSize: dashboardPageSize,
-    sort: "updated-desc",
-  }, dashboards));
+    total: 0,
+  });
 
   const dashboardQuery = useMemo<DashboardListQuery>(() => ({
     owner: ownerFilter === "all" ? undefined : ownerFilter,
@@ -49,7 +51,7 @@ export function useDashboardLandingList(dashboards: SavedDashboardCard[], onActi
 
     setDashboardLoading(true);
     setDashboardError(null);
-    void listDashboards(dashboardQuery, dashboards)
+    void listDashboards(dashboardQuery)
       .then((response) => {
         if (ignore) return;
         setDashboardResponse(response);
