@@ -1,3 +1,5 @@
+import type { ResourcePermissions } from "./permissions";
+
 export type DashboardRuntimeMode = "published" | "draft";
 export type DashboardView = "list" | "builder" | "detail" | "runtime";
 export type DashboardStatus = "draft" | "published";
@@ -139,6 +141,7 @@ export type SavedDashboardCard = {
   meta: string;
   name: string;
   owner: string;
+  permissions?: ResourcePermissions;
   createdAt?: string;
   createdAtValue?: string;
   sourceRunId?: string;
@@ -188,6 +191,7 @@ export type DashboardEntry = {
 export type DashboardMeta = {
   hasPublishedRevision: boolean;
   id: string;
+  permissions?: ResourcePermissions;
   status: DashboardStatus;
   title: string;
   updatedAt: string;

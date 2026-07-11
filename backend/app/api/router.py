@@ -1,5 +1,7 @@
 from fastapi import APIRouter
 
+from app.api.admin import router as admin_router
+from app.api.auth import router as auth_router
 from app.api.catalog import router as catalog_router
 from app.api.dashboard_assistant import router as dashboard_assistant_router
 from app.api.dashboard_card import router as dashboard_card_router
@@ -10,10 +12,14 @@ from app.api.harness import router as harness_router
 from app.api.health import router as health_router
 from app.api.sql import router as sql_router
 from app.api.sql_test import router as sql_test_router
+from app.api.users import router as users_router
 
 api_router = APIRouter()
 api_router.include_router(health_router, tags=["health"])
 api_router.include_router(harness_router)
+api_router.include_router(auth_router)
+api_router.include_router(users_router)
+api_router.include_router(admin_router)
 api_router.include_router(etl_router)
 api_router.include_router(catalog_router)
 api_router.include_router(sql_router)

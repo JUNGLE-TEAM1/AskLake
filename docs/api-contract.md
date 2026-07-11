@@ -81,8 +81,9 @@ Authorization: Bearer {accessToken}
 X-Request-Id: req_20260703_000001
 ```
 
-현재 데모 프론트에는 로그인/토큰 저장이 아직 없으므로, 인증이 붙기 전까지는 백엔드에서 임시 actor를 `demo-user`로 처리해도 됩니다.
-인증을 붙일 때는 `frontend/src/services/apiClient.ts`에서 `Authorization` 헤더 주입 지점을 추가하면 됩니다.
+로컬 Phase 0 인증은 httpOnly `asklake_session` cookie를 사용합니다. frontend는 `/api/auth/session` 확인 이후 보호 route와 backend hydrate를 시작합니다. 운영 IdP/SSO 연동은 후속 범위입니다.
+
+Session/identity/admin 계약은 `/api/auth/signup`, `/api/auth/login`, `/api/auth/session`, `/api/auth/logout`, `/api/users/me`, `/api/admin/users`, `/api/admin/groups`, `/api/admin/permissions`, `/api/admin/governance-controls`, `/api/admin/audit-logs`를 사용합니다. `/api/admin/*`는 admin actor가 아니면 `403 FORBIDDEN`을 반환합니다.
 
 ### Success Envelope
 

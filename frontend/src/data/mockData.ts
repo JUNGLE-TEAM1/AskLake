@@ -1257,4 +1257,18 @@ export const summaryByFlow: Record<FlowId, Array<[string, string]>> = {
     ["대상", "사용자 / 그룹 / API"],
     ["로그", "Audit Log"],
   ],
+  profile: [
+    ["해당 영역", "내 프로필"],
+    ["표시 기능", "계정 / 그룹 / 권한"],
+    ["상태", "연결됨"],
+    ["입력", "현재 Actor"],
+    ["API", "/api/users/me"],
+  ],
+  login: [
+    ["해당 영역", "계정"],
+    ["표시 기능", "로그인 / 회원가입"],
+    ["상태", "연결됨"],
+    ["입력", "이메일 / 비밀번호"],
+    ["API", "/api/auth"],
+  ],
 };

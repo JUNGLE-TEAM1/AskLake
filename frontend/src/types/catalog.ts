@@ -1,3 +1,5 @@
+import type { ResourcePermissions } from "./permissions";
+
 export type LineageLayer = "SOURCE" | "RAW" | "BRONZE" | "SILVER" | "GOLD" | "CONSUMER";
 
 export type LineageGraphColumn = {
@@ -39,6 +41,7 @@ export type CatalogDataset = {
   name: string;
   nextRefresh: string;
   owner: string;
+  permissions?: ResourcePermissions;
   quality: string;
   rag: boolean;
   rows: string;
