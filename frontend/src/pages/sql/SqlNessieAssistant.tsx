@@ -2,7 +2,7 @@ import type { RefObject } from "react";
 import { Send } from "lucide-react";
 
 import nessieIcon from "@/assets/asklake-nessi-icon.png";
-import { Avatar, AvatarBadge, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Bubble, BubbleContent, BubbleGroup } from "@/components/ui/bubble";
 import { Button } from "@/components/ui/button";
 import {
@@ -41,10 +41,9 @@ export const INITIAL_NESSIE_MESSAGES: NessieMessage[] = [{
 
 function NessieAvatar({ compact = false }: { compact?: boolean }) {
   return (
-    <Avatar size={compact ? "sm" : "lg"}>
-      <AvatarImage alt="Nessie" src={nessieIcon} />
-      <AvatarFallback>NS</AvatarFallback>
-      {!compact && <AvatarBadge />}
+    <Avatar className="rounded-lg bg-muted p-1" size={compact ? "default" : "lg"}>
+      <AvatarImage alt="Nessie" className="object-contain" src={nessieIcon} />
+      <AvatarFallback className="rounded-md">NS</AvatarFallback>
     </Avatar>
   );
 }
@@ -75,15 +74,19 @@ export function SqlNessieAssistant({
     >
       <CardHeader className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-1 p-3">
         <NessieAvatar />
-        <CardTitle className="text-base">Nessie</CardTitle>
-        <CardDescription className="col-start-2 text-sm leading-5">
-          SQL 작성과 결과 시각화를 도와드려요.
+        <CardTitle>Nessie</CardTitle>
+        <CardDescription className="col-start-2">
+          SQL과 차트를 함께 완성해요.
         </CardDescription>
       </CardHeader>
       <Separator />
       <CardContent className="min-h-0 p-0">
-        <ScrollArea className="h-full min-h-0" type="always">
-          <BubbleGroup aria-live="polite" className="p-3 pr-5">
+        <ScrollArea
+          className="h-full min-h-0"
+          type="always"
+          viewportProps={{ className: "[&>div]:!block [&>div]:h-full" }}
+        >
+          <BubbleGroup aria-live="polite" className="h-full justify-end p-4 pr-5">
             {messages.map((message) => (
               <div
                 className={cn(
@@ -97,7 +100,7 @@ export function SqlNessieAssistant({
                   align={message.role === "user" ? "end" : "start"}
                   className="sql-ai-suggestion"
                   role={message.tone === "error" ? "alert" : undefined}
-                  variant={message.role === "user" ? "default" : message.tone === "error" ? "destructive" : "tinted"}
+                  variant={message.role === "user" ? "default" : message.tone === "error" ? "destructive" : "secondary"}
                 >
                   <BubbleContent className="grid gap-2">
                     <span>{message.content}</span>

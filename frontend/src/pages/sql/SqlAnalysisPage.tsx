@@ -910,10 +910,6 @@ export function SqlAnalysisPage({
                 <Button type="button" onClick={resetQuery} size="sm" variant="outline">
                   <RotateCcw data-icon="inline-start" /> SQL 초기화
                 </Button>
-                <Button type="button" onClick={openSqlAssistant} size="sm" variant="outline">
-                  <img alt="" aria-hidden="true" className="size-5 rounded-sm object-contain" data-icon="inline-start" src={nessieIcon} />
-                  SQL 작성 AI
-                </Button>
                 <Button type="button" onClick={executePreview} disabled={!canRunPreview || queryPending} size="sm" variant="primary">
                   <PlayCircle data-icon="inline-start" /> {queryPending ? "실행 중" : "실행"}
                 </Button>
