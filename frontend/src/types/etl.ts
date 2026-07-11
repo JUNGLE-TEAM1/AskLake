@@ -6,10 +6,18 @@ export type JobCommand = "edit" | "run" | "retry" | "pause" | "cancelRun" | "sto
 export type KafkaExecutionMode = "snapshot" | "continuous";
 export type ContinuousRuntimeStatus = "starting" | "running" | "pausing" | "paused" | "stopping" | "stopped" | "failed";
 
+export type KafkaSchemaEvolutionPolicy = {
+  additiveNullable: "allow" | "quarantine" | "pause";
+  missingRequired: "quarantine" | "pause";
+  incompatibleType: "quarantine" | "pause";
+  unknownField: "preserve" | "ignore" | "quarantine" | "pause";
+};
+
 export type KafkaContinuousConfigDraft = {
   initialOffsetPolicy: "earliest" | "latest";
   triggerIntervalSeconds: number;
   maxOffsetsPerTrigger: number;
+  schemaEvolutionPolicy?: KafkaSchemaEvolutionPolicy;
 };
 
 export type KafkaContinuousRuntime = {
@@ -19,10 +27,59 @@ export type KafkaContinuousRuntime = {
   lastFlushAt?: string | null;
   lastBatchId?: string | null;
   lag?: number | null;
+  maxPartitionLag?: number | null;
+  laggingPartitionCount: number;
+  lagAvailable: boolean;
+  partitionProgress: Record<string, { processedOffset: number; latestOffset: number; lag: number }>;
+  lastBatchDurationMs?: number | null;
+  lastBatchInputRows: number;
+  throughputRowsPerSecond?: number | null;
+  schemaVersion: number;
+  schemaFingerprint?: string | null;
+  schemaStatus: string;
+  schemaChanges: Array<Record<string, unknown>>;
   consumedCount: number;
   storedCount: number;
   quarantinedCount: number;
+  replayedCount: number;
   failedCount: number;
+  lastError?: string | null;
+};
+
+export type ContinuousWorkerLogsResponse = {
+  jobId: string;
+  containerState: string;
+  lines: string[];
+  truncated: boolean;
+};
+
+export type ContinuousQuarantineRecord = {
+  topic: string;
+  partition: number;
+  offset: number;
+  rawPayload: string;
+  reason: string;
+  schemaFingerprint?: string | null;
+  quarantinedAt?: string | null;
+  replayStatus: string;
+};
+
+export type ContinuousQuarantineResponse = {
+  jobId: string;
+  records: ContinuousQuarantineRecord[];
+  total: number;
+};
+
+export type ContinuousMaintenanceRun = {
+  runId: string;
+  jobId: string;
+  kind: "quarantine_replay" | "compaction";
+  status: "queued" | "running" | "success" | "failed";
+  requestedBy: string;
+  config: Record<string, unknown>;
+  result?: Record<string, unknown> | null;
+  startedAt?: string | null;
+  endedAt?: string | null;
   lastError?: string | null;
 };
 export type TargetLayer = "RAW" | "BRONZE" | "SILVER" | "GOLD";

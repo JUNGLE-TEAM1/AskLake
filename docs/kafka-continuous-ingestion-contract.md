@@ -129,3 +129,40 @@ type JobCommand =
 4. Pause, resume, stop, and worker restart preserve checkpoint progress without target duplicates or skipped committed ranges.
 5. The Job detail/list shows runtime status, heartbeat, lag, last flush, and processed counters.
 6. Existing Snapshot execution, schedule tick, direct target retry, Catalog materialization, and RAW/BRONZE/SILVER target selection remain valid.
+
+## 9. Runtime Observability Contract
+
+- Every worker report includes `partitionProgress`, keyed by Kafka partition, with `processedOffset`, `latestOffset`, and non-negative `lag`.
+- Runtime summary exposes `lag`, `maxPartitionLag`, `laggingPartitionCount`, `lastBatchDurationMs`, `lastBatchInputRows`, `throughputRowsPerSecond`, and cumulative `replayedCount`.
+- Kafka latest-offset lookup failure does not stop a healthy stream. The report marks lag availability and preserves the previous processed offset.
+- Worker logs are read through `GET /api/etl/jobs/{jobId}/continuous/logs`. The response is bounded, strips ANSI control sequences, masks common credential/token forms, and requires Job `view` permission.
+
+## 10. Schema Evolution Contract
+
+- Continuous configuration stores `schemaEvolutionPolicy` with `additiveNullable`, `missingRequired`, `incompatibleType`, and `unknownField` actions.
+- The default policy allows additive nullable fields for observation, quarantines missing required fields and incompatible values, and keeps unknown-field rows in the fixed target projection while writing their raw payload and unknown-key list to `_schema-evidence`.
+- `missingRequired`, `incompatibleType`, and `unknownField` can select `pause` where supported. A pause-policy violation fails before target publication so the same checkpoint range can be retried after an operator changes the policy. `unknownField=ignore` accepts the fixed projection without sidecar evidence, while `quarantine` excludes the row from the target.
+- Each batch reports a deterministic `schemaFingerprint`, `schemaVersion`, `schemaStatus`, and detected changes. Destructive changes are never auto-applied.
+- V1 keeps the physical target schema immutable while a worker is active. Applying an approved target schema requires an explicit Job copy/restart workflow.
+
+## 11. Quarantine Replay Contract
+
+- Quarantine records retain `topic`, `partition`, `offset`, raw payload, failure reason, observed schema fingerprint, and quarantine timestamp.
+- `topic + partition + offset` is the replay idempotency key. A replay anti-joins offsets already present in target data and previous successful replay output.
+- Replay is a finite Spark batch operation over Lake quarantine Parquet, not a Kafka offset rewind.
+- Replay runs expose queued/running/success/failed state and input/stored/skipped/failed counts.
+- `quarantinedCount` remains the historical quarantine count, while `replayedCount` records recovered rows also included in `storedCount`. Counter reconciliation is `storedCount + quarantinedCount - replayedCount = consumedCount`.
+- V1 requires the Continuous worker to be paused or stopped before quarantine inspection, replay, or compaction. This prevents executor starvation on the single-worker local stack and keeps maintenance outside the streaming hot path; one maintenance run is allowed per Job at a time.
+
+## 12. Compaction Contract
+
+- Compaction reads only completed batch outputs and never mutates checkpoints or an active batch directory.
+- Output is staged under a run-specific path. Existing target data remains authoritative when compaction fails.
+- V1 records compaction output and statistics without deleting source batches. Source deletion requires a later retention policy and an atomic reader-manifest switch.
+- Target file size defaults to 256 MiB and is constrained to 128-512 MiB. Partition count is calculated from actual source Parquet bytes, and the result records input/output bytes, file counts, and average file sizes.
+
+## 13. Load And Fault Verification
+
+- The replay harness supports generated events or streaming `.jsonl`/`.jsonl.gz` input, count/rate/batch-size, malformed ratio, schema-change injection, optional worker termination, and optional staged compaction.
+- Fault scenarios cover worker termination, backend restart, Kafka unavailability, and MinIO unavailability.
+- Verification reconciles produced, consumed, stored, quarantined, replayed, duplicate, missing, and Catalog materialization counts, plus peak lag, throughput, recovery time, file count, and average file size.

@@ -1,6 +1,5 @@
-import { execFileSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CreateBucketCommand, HeadBucketCommand, S3Client } from "@aws-sdk/client-s3";
@@ -37,6 +36,7 @@ async function manage(request) {
   if (action === "start") return startWorker(request, containerName);
   if (action === "pause" || action === "stop") return stopWorker(jobId, action, containerName);
   if (action === "status") return workerStatus(jobId, containerName);
+  if (action === "logs") return workerLogs(jobId, containerName, positiveInt(request.tail, 200));
   throw new Error(`Unsupported continuous worker action: ${action}`);
 }
 
@@ -71,7 +71,10 @@ async function startWorker(request, containerName) {
     "-e", `ASKLAKE_CONTINUOUS_TRIGGER_SECONDS=${positiveInt(request.triggerIntervalSeconds, 30)}`,
     "-e", `ASKLAKE_CONTINUOUS_MAX_OFFSETS=${positiveInt(request.maxOffsetsPerTrigger, 10000)}`,
     "-e", `ASKLAKE_CONTINUOUS_INITIAL_COUNTS=${JSON.stringify(request.initialCounts || {})}`,
+    "-e", `ASKLAKE_CONTINUOUS_INITIAL_METRICS=${JSON.stringify(request.initialMetrics || {})}`,
+    "-e", `ASKLAKE_CONTINUOUS_INITIAL_SCHEMA_STATE=${JSON.stringify(request.initialSchemaState || {})}`,
     "-e", `ASKLAKE_CONTINUOUS_SCHEMA_COLUMNS=${JSON.stringify(request.schemaColumns || [])}`,
+    "-e", `ASKLAKE_CONTINUOUS_SCHEMA_POLICY=${JSON.stringify(request.schemaEvolutionPolicy || {})}`,
     "-e", `ASKLAKE_CONTINUOUS_REPORT_FILE=${reportContainerDir}/${reportFileName(jobId)}`,
     "-e", `ASKLAKE_CONTINUOUS_COMMAND_FILE=${reportContainerDir}/${commandFileName(jobId)}`,
     "-e", `MINIO_ENDPOINT=${process.env.MINIO_ENDPOINT_IN_DOCKER || "http://minio:9000"}`,
@@ -118,13 +121,46 @@ function stopWorker(jobId, action, containerName) {
 
 function workerStatus(jobId, containerName) {
   const existing = inspectContainer(containerName);
+  const command = readCommand(jobId);
   return {
     containerName,
     containerState: existing?.State?.Running ? "running" : existing ? "exited" : "missing",
     exitCode: existing?.State?.ExitCode ?? null,
     jobId,
     report: readReport(jobId),
+    requestedAction: command?.action || null,
   };
+}
+
+function workerLogs(jobId, containerName, tail) {
+  const existing = inspectContainer(containerName);
+  if (!existing) {
+    const report = readReport(jobId);
+    return {
+      containerName,
+      containerState: "missing",
+      lines: report?.lastError ? [redactLogLine(String(report.lastError))] : [],
+      truncated: false,
+    };
+  }
+  const limit = Math.min(Math.max(tail, 1), 1000);
+  const result = spawnSync("docker", ["logs", "--tail", String(limit), containerName], { encoding: "utf8", maxBuffer: 1024 * 1024 });
+  const combined = `${result.stdout || ""}\n${result.stderr || ""}`.trim();
+  const lines = combined.split(/\r?\n/).filter(Boolean).slice(-limit).map(redactLogLine);
+  return {
+    containerName,
+    containerState: existing.State?.Running ? "running" : "exited",
+    lines,
+    truncated: combined.length >= 1024 * 1024,
+  };
+}
+
+function redactLogLine(value) {
+  return String(value)
+    .replace(/\u001b\[[0-9;]*m/g, "")
+    .replace(/((?:["']?(?:access[_-]?key|secret(?:[_-]?access)?[_-]?key|api[_-]?key|token|password)["']?)\s*[=:]\s*["']?)[^\s,"']+/gi, "$1[REDACTED]")
+    .replace(/(authorization\s*[=:]\s*["']?bearer\s+)[^\s,"']+/gi, "$1[REDACTED]")
+    .slice(0, 4000);
 }
 
 function ensureSparkServer() {
@@ -160,6 +196,9 @@ function commandFile(jobId) { return path.join(reportDir, commandFileName(jobId)
 function clearCommand(jobId) { if (existsSync(commandFile(jobId))) writeFileSync(commandFile(jobId), "", "utf8"); }
 function readReport(jobId) {
   try { return existsSync(reportFile(jobId)) ? JSON.parse(readFileSync(reportFile(jobId), "utf8")) : null; } catch { return null; }
+}
+function readCommand(jobId) {
+  try { return existsSync(commandFile(jobId)) ? JSON.parse(readFileSync(commandFile(jobId), "utf8")) : null; } catch { return null; }
 }
 function workerName(jobId) { return `asklake-kafka-stream-${safeSegment(jobId)}`; }
 function safeSegment(value) { return String(value).toLowerCase().replace(/[^a-z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "") || "job"; }

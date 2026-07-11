@@ -547,11 +547,25 @@ Kafka Job command가 실패하면 `JobRunSummary.status`는 `failed`이며 `task
 
 ### Kafka Continuous Runtime
 
-Issue #500 defines `executionMode: "snapshot" | "continuous"` on Kafka Job creation. Existing and migrated Kafka Jobs default to `snapshot`. `continuous` is immutable after creation and adds `continuousConfig` (`initialOffsetPolicy`, `triggerIntervalSeconds`, `maxOffsetsPerTrigger`, `checkpointPath`) plus `continuousRuntime` (`status`, heartbeat, lag, last flush, counters, last error) to `JobRowData`.
+Issue #500 defines `executionMode: "snapshot" | "continuous"` on Kafka Job creation. Existing and migrated Kafka Jobs default to `snapshot`. `continuous` is immutable after creation and adds `continuousConfig` (`initialOffsetPolicy`, `triggerIntervalSeconds`, `maxOffsetsPerTrigger`, `schemaEvolutionPolicy`, `checkpointPath`) plus `continuousRuntime` (`status`, heartbeat, lag, last flush, counters, last error) to `JobRowData`.
 
 `startContinuous`, `pauseContinuous`, `resumeContinuous`, and `stopContinuous` are command extensions of `POST /api/etl/jobs/{jobId}/commands`. They launch or signal a Spark Structured Streaming worker, reject conflicting active Snapshot or Continuous consumer identity with `409`, and use a durable Spark checkpoint as source-progress authority. Each batch uses a stable batch-ID Parquet subpath to avoid duplicate output after a checkpoint retry. Job hydrate verifies Docker worker liveness and heartbeat freshness; an exited/missing/stale worker becomes `failed` only while the runtime is active. An intentional exit after `pauseContinuous` or `stopContinuous` completes as `paused` or `stopped`. See [Kafka Continuous Ingestion Contract](kafka-continuous-ingestion-contract.md).
 
 Frontend `DraftPipeline.source` carries optional `executionMode` and `continuousConfig`; `executionMode: "continuous"` serializes them into Job creation. `JobRowData` includes optional `continuousRuntime` for lifecycle controls and runtime display.
+
+Continuous runtime operations:
+
+```text
+GET  /api/etl/jobs/{jobId}/continuous/logs?tail=200
+GET  /api/etl/jobs/{jobId}/continuous/quarantine?limit=100
+GET  /api/etl/jobs/{jobId}/continuous/maintenance-runs
+POST /api/etl/jobs/{jobId}/continuous/quarantine/replays
+POST /api/etl/jobs/{jobId}/continuous/compactions
+```
+
+`continuousRuntime` additionally exposes `maxPartitionLag`, `laggingPartitionCount`, `lagAvailable`, `partitionProgress`, `lastBatchDurationMs`, `lastBatchInputRows`, `throughputRowsPerSecond`, `replayedCount`, `schemaVersion`, `schemaFingerprint`, `schemaStatus`, and `schemaChanges`. `replayedCount` prevents recovered quarantine rows from being double-counted: `storedCount + quarantinedCount - replayedCount = consumedCount`. Worker logs are limited to 1,000 lines, ANSI-stripped, and redact common key/token/password assignments.
+
+Quarantine replay accepts optional `offsets` values in `partition:offset` form. It reads Lake quarantine Parquet, anti-joins target Kafka offsets, and appends a Catalog materialization run for newly recovered rows, so it does not rewind the Kafka consumer group. Compaction accepts `targetFileSizeMb` from 128 to 512, calculates partitions from actual Parquet bytes, and writes a run-specific staged result without deleting active source batches. Quarantine inspection/replay and compaction require a paused or stopped worker and return `409` while streaming or while another maintenance run is active. Both operations persist a `ContinuousMaintenanceRun` with config, result counters, status, timestamps, and error.
 
 ### LineageGraph
 

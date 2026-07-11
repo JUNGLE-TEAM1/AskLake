@@ -135,6 +135,7 @@ export function hydrateDraftPipelineFromJob(job: JobRowData, fallback: DraftPipe
         initialOffsetPolicy: job.continuousConfig.initialOffsetPolicy,
         triggerIntervalSeconds: job.continuousConfig.triggerIntervalSeconds,
         maxOffsetsPerTrigger: job.continuousConfig.maxOffsetsPerTrigger,
+        schemaEvolutionPolicy: job.continuousConfig.schemaEvolutionPolicy,
       } : fallback.source.continuousConfig,
     },
     target: {

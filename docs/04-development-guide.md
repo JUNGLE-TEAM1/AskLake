@@ -228,6 +228,28 @@ ASKLAKE_CONTINUOUS_COMPOSE_FILE=../deploy/docker-compose.prod.yml \
 npm run verify:kafka-continuous-e2e
 ```
 
+설정 가능한 장시간 harness는 기본 1,000건 synthetic smoke로 시작한다. `ASKLAKE_CONTINUOUS_SOAK_INPUT`에 `.jsonl` 또는 `.jsonl.gz`를 주면 파일을 메모리에 모두 올리지 않고 line 단위로 Kafka에 replay한다. `ASKLAKE_CONTINUOUS_SOAK_COUNT`, `ASKLAKE_CONTINUOUS_SOAK_RATE`, `ASKLAKE_CONTINUOUS_SOAK_BATCH_SIZE`, `ASKLAKE_CONTINUOUS_SOAK_MALFORMED_PERCENT`, `ASKLAKE_CONTINUOUS_SOAK_SCHEMA_CHANGE_AT`, `ASKLAKE_CONTINUOUS_SOAK_COMPACT`로 범위와 maintenance 검증을 조절한다. `ASKLAKE_CONTINUOUS_SOAK_FAULT=worker|backend|kafka|minio`는 한 번의 장애를 주입하며 `FAULT_AFTER`, `FAULT_DURATION_MS`로 시점과 지속 시간을 정한다. 기존 `ASKLAKE_CONTINUOUS_SOAK_KILL_WORKER=true`도 `worker` alias로 유지한다. 6.47GB 전체 replay와 compaction은 CI가 아니라 수동 soak로 실행한다.
+
+```bash
+cd backend
+ASKLAKE_RUN_KAFKA_CONTINUOUS_SOAK=true \
+ASKLAKE_CONTINUOUS_SOAK_COUNT=1000 \
+ASKLAKE_CONTINUOUS_SOAK_RATE=500 \
+ASKLAKE_CONTINUOUS_SOAK_KILL_WORKER=true \
+npm run verify:kafka-continuous-soak
+```
+
+```bash
+cd backend
+ASKLAKE_RUN_KAFKA_CONTINUOUS_SOAK=true \
+ASKLAKE_CONTINUOUS_SOAK_INPUT="$HOME/Downloads/Electronics.jsonl.gz" \
+ASKLAKE_CONTINUOUS_SOAK_RATE=1000 \
+ASKLAKE_CONTINUOUS_SOAK_BATCH_SIZE=500 \
+npm run verify:kafka-continuous-soak
+```
+
+Job 상세의 Continuous Runtime은 partition lag, 처리량, schema drift, bounded/redacted worker log를 표시한다. Quarantine inspection/replay와 compaction은 worker를 일시정지하거나 중지한 상태에서 실행한다. Replay는 Lake의 격리 Parquet를 읽어 `partition:offset` anti-join 후 정상 target과 Catalog materialization에 기록한다. Compaction은 `_compactions/run_id=*`에 staged output을 만들며 V1에서는 원본 batch를 삭제하거나 active Catalog path를 교체하지 않는다.
+
 수동 UI 확인에서는 Kafka Source 연결 화면에서 `Continuous`를 선택해 target format이 Parquet로 유지되는지 확인한다. 생성 후 수집/처리 목록과 상세에서 `스트림 시작`, `일시정지`, `체크포인트 재개`, `스트림 중지`가 Snapshot의 run/retry와 섞이지 않는지, runtime counter/heartbeat/checkpoint가 polling으로 갱신되는지 확인한다.
 
 ```bash

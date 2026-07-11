@@ -13,12 +13,17 @@ from sqlalchemy.orm import Session
 from app.core.auth_context import ActorContext, require_permission
 from app.core.errors import ApiError
 from app.core.permission_metadata import permission_grants_from_roles, resource_permissions
-from app.models import CatalogDatasetModel, ETLJobModel, ETLRunModel, KafkaContinuousRuntimeModel, KafkaSnapshotModel
+from app.models import CatalogDatasetModel, ETLJobModel, ETLRunModel, KafkaContinuousMaintenanceRunModel, KafkaContinuousRuntimeModel, KafkaSnapshotModel
 from app.repositories.audit_repository import safe_record_audit_event
 from app.repositories import etl_repository
 from app.schemas.common import ErrorCode
 from app.schemas.etl import (
     CatalogDataset,
+    ContinuousCompactionRequest,
+    ContinuousMaintenanceRun,
+    ContinuousQuarantineResponse,
+    ContinuousReplayRequest,
+    ContinuousWorkerLogsResponse,
     CreatePipelineRequest,
     CreatePipelineResponse,
     JobCommandResponse,
@@ -1319,12 +1324,12 @@ def dataset_payload_from_spark_result(
         {
             "createdAt": last_updated,
             "jobId": job.id,
-            "rowCount": parse_count_value(result.get("outputRows")),
+            "rowCount": parse_count_value(result.get("materializationRows", result.get("outputRows"))),
             "runId": str(result.get("runId") or ""),
             "sourceKind": result.get("sourceKind") or ("sql" if job.source_type == "SQL Result" else "etl"),
             "sourceLabel": job.name or job.source or job.source_label or job.id,
             "status": "success" if result.get("status") == "success" else "failed",
-            "storageLocation": output_path,
+            "storageLocation": str(result.get("materializationOutputPath") or output_path),
             "storageSizeBytes": storage_size_bytes,
         },
     )
@@ -1723,7 +1728,12 @@ def marker_payload(output: str, marker: str) -> dict[str, Any] | None:
     return None
 
 
-def run_kafka_continuous_worker(job: ETLJobModel, runtime: KafkaContinuousRuntimeModel, action: str) -> dict[str, Any]:
+def run_kafka_continuous_worker(
+    job: ETLJobModel,
+    runtime: KafkaContinuousRuntimeModel,
+    action: str,
+    options: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     config = job.continuous_config or {}
     target = parse_kafka_target_path(job.storage_path or job.target_path, job.target, job.target_layer)
     output_path = f"s3a://{target['bucket']}/{target['prefix'].strip('/')}"
@@ -1742,16 +1752,204 @@ def run_kafka_continuous_worker(job: ETLJobModel, runtime: KafkaContinuousRuntim
                 "quarantinedCount": runtime.quarantined_count,
                 "failedCount": runtime.failed_count,
             },
+            "initialMetrics": {
+                "lag": runtime.lag,
+                **(runtime.metrics or {}),
+            },
+            "initialSchemaState": runtime.schema_state or {},
             "jobId": job.id,
             "maxOffsetsPerTrigger": config.get("maxOffsetsPerTrigger", 10000),
             "outputPath": output_path,
             "schemaColumns": job.schema_columns or [],
+            "schemaEvolutionPolicy": config.get("schemaEvolutionPolicy") or {},
             "topic": runtime.topic,
             "triggerIntervalSeconds": config.get("triggerIntervalSeconds", 30),
+            **(options or {}),
         },
         error_marker="ASKLAKE_KAFKA_CONTINUOUS_ERROR",
         timeout_seconds=90 if action == "start" else 20,
     )
+
+
+def get_kafka_continuous_worker_logs(
+    db: Session,
+    job_id: str,
+    actor: ActorContext,
+    tail: int,
+) -> ContinuousWorkerLogsResponse:
+    job = require_continuous_job_access(db, job_id, actor, "view", "GET", "continuous/logs")
+    runtime = etl_repository.get_kafka_continuous_runtime(db, job.id)
+    if runtime is None:
+        raise ApiError(ErrorCode.NOT_FOUND, f"Continuous runtime not found: {job_id}", status.HTTP_404_NOT_FOUND)
+    result = run_kafka_continuous_worker(job, runtime, "logs", {"tail": min(max(tail, 1), 1000)})
+    return ContinuousWorkerLogsResponse(
+        job_id=job.id,
+        container_state=str(result.get("containerState") or "unknown"),
+        lines=[str(line) for line in (result.get("lines") or [])],
+        truncated=bool(result.get("truncated")),
+    )
+
+
+def get_kafka_continuous_quarantine(
+    db: Session,
+    job_id: str,
+    actor: ActorContext,
+    limit: int,
+) -> ContinuousQuarantineResponse:
+    job = require_continuous_job_access(db, job_id, actor, "view", "GET", "continuous/quarantine")
+    require_continuous_maintenance_idle(db, job)
+    result = run_kafka_continuous_maintenance(job, "inspect_quarantine", stable_id("inspect", iso_now()), {"limit": limit})
+    return ContinuousQuarantineResponse(job_id=job.id, records=result.get("records") or [], total=int(result.get("total") or 0))
+
+
+def list_kafka_continuous_maintenance_runs(
+    db: Session,
+    job_id: str,
+    actor: ActorContext,
+) -> list[ContinuousMaintenanceRun]:
+    require_continuous_job_access(db, job_id, actor, "view", "GET", "continuous/maintenance-runs")
+    return etl_repository.list_kafka_continuous_maintenance_runs(db, job_id)
+
+
+def replay_kafka_continuous_quarantine(
+    db: Session,
+    job_id: str,
+    request: ContinuousReplayRequest,
+    actor: ActorContext,
+) -> ContinuousMaintenanceRun:
+    return execute_kafka_continuous_maintenance(db, job_id, "quarantine_replay", request.model_dump(mode="json", by_alias=True), actor)
+
+
+def compact_kafka_continuous_target(
+    db: Session,
+    job_id: str,
+    request: ContinuousCompactionRequest,
+    actor: ActorContext,
+) -> ContinuousMaintenanceRun:
+    return execute_kafka_continuous_maintenance(db, job_id, "compaction", request.model_dump(mode="json", by_alias=True), actor)
+
+
+def execute_kafka_continuous_maintenance(
+    db: Session,
+    job_id: str,
+    kind: str,
+    config: dict[str, Any],
+    actor: ActorContext,
+) -> ContinuousMaintenanceRun:
+    job = require_continuous_job_access(db, job_id, actor, "run", "POST", f"continuous/{kind}")
+    require_continuous_maintenance_idle(db, job)
+    active_runs = etl_repository.list_kafka_continuous_maintenance_run_models(db, job.id, active_only=True)
+    if active_runs:
+        raise ApiError(
+            ErrorCode.CONFLICT,
+            f"Continuous maintenance is already active: {active_runs[0].run_id}",
+            status.HTTP_409_CONFLICT,
+            {"activeRunId": active_runs[0].run_id, "kind": active_runs[0].kind},
+        )
+    run_id = stable_id("continuous-maint", f"{job.id}:{kind}:{iso_now()}")
+    run = KafkaContinuousMaintenanceRunModel(
+        run_id=run_id,
+        job_id=job.id,
+        kind=kind,
+        status="running",
+        requested_by=actor.name,
+        config=config,
+        started_at=iso_now(),
+    )
+    etl_repository.save_kafka_continuous_maintenance_run(db, run)
+    try:
+        result = run_kafka_continuous_maintenance(job, kind, run_id, config)
+    except Exception as exc:
+        run.status = "failed"
+        run.ended_at = iso_now()
+        run.last_error = exc.message if isinstance(exc, ApiError) else compact_storage_text(str(exc), limit=1000)
+        etl_repository.save_kafka_continuous_maintenance_run(db, run)
+        if isinstance(exc, ApiError):
+            raise
+        raise ApiError(
+            "KAFKA_CONTINUOUS_MAINTENANCE_FAILED",
+            run.last_error,
+            status.HTTP_502_BAD_GATEWAY,
+        ) from exc
+    result.pop("stdout", None)
+    result.pop("stderr", None)
+    run.status = "success"
+    run.result = result
+    run.ended_at = optional_string(result.get("endedAt")) or iso_now()
+    if kind == "quarantine_replay":
+        runtime = etl_repository.get_kafka_continuous_runtime(db, job.id)
+        if runtime is not None:
+            replayed_count = nonnegative_int(result.get("storedCount"), 0)
+            runtime.stored_count = int(runtime.stored_count or 0) + replayed_count
+            runtime.metrics = {
+                **(runtime.metrics or {}),
+                "replayedCount": nonnegative_int((runtime.metrics or {}).get("replayedCount"), 0) + replayed_count,
+            }
+            if replayed_count:
+                materialize_continuous_replay(db, job, runtime, result)
+            etl_repository.save_kafka_continuous_command(db, job, runtime)
+    return etl_repository.save_kafka_continuous_maintenance_run(db, run)
+
+
+def run_kafka_continuous_maintenance(
+    job: ETLJobModel,
+    kind: str,
+    run_id: str,
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    target = parse_kafka_target_path(job.storage_path or job.target_path, job.target, job.target_layer)
+    output_path = f"s3a://{target['bucket']}/{target['prefix'].strip('/')}"
+    return run_node_bridge(
+        "manage-kafka-continuous-maintenance.mjs",
+        "ASKLAKE_KAFKA_MAINTENANCE_RESULT",
+        {
+            "kind": kind,
+            "runId": run_id,
+            "outputPath": output_path,
+            "schemaColumns": job.schema_columns or [],
+            **config,
+        },
+        error_marker="ASKLAKE_KAFKA_MAINTENANCE_ERROR",
+        timeout_seconds=600,
+    )
+
+
+def require_continuous_job_access(
+    db: Session,
+    job_id: str,
+    actor: ActorContext,
+    action: str,
+    http_method: str,
+    suffix: str,
+) -> ETLJobModel:
+    job = etl_repository.get_job(db, job_id)
+    if job is None:
+        raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
+    if job.execution_mode != "continuous" or not is_kafka_job(job):
+        raise ApiError(ErrorCode.INVALID_JOB_STATE, "Continuous operation requires a continuous Kafka Job.", status.HTTP_422_UNPROCESSABLE_ENTITY)
+    require_governed_access(
+        db,
+        actor,
+        action=action,
+        api_path=f"/api/etl/jobs/{job_id}/{suffix}",
+        http_method=http_method,
+        metadata={"owner": job.owner},
+        resource_id=job.id,
+        resource_name=job.name,
+        resource_type="etl_job",
+    )
+    return job
+
+
+def require_continuous_maintenance_idle(db: Session, job: ETLJobModel) -> None:
+    runtime = etl_repository.get_kafka_continuous_runtime(db, job.id)
+    if runtime is not None and runtime.status in {"starting", "running", "pausing", "stopping"}:
+        raise ApiError(
+            ErrorCode.CONFLICT,
+            "Pause or stop the Continuous worker before Lake maintenance.",
+            status.HTTP_409_CONFLICT,
+            {"runtimeStatus": runtime.status},
+        )
 
 
 def refresh_kafka_continuous_runtime(db: Session, job: ETLJobModel) -> None:
@@ -1763,11 +1961,13 @@ def refresh_kafka_continuous_runtime(db: Session, job: ETLJobModel) -> None:
     report_path = continuous_runtime_report_path(job.id)
     worker_status = continuous_worker_status(job, runtime)
     container_state = str(worker_status.get("containerState") or "unknown")
-    if runtime.status in {"pausing", "stopping"} and container_state in {"exited", "missing"}:
+    requested_action = optional_string(worker_status.get("requestedAction"))
+    requested_terminal_status = "paused" if requested_action == "pause" else "stopped" if requested_action == "stop" else None
+    if (runtime.status in {"pausing", "stopping"} or requested_terminal_status) and container_state in {"exited", "missing"}:
         # Pause and stop intentionally terminate the worker after persisting its
         # checkpoint. The previous running report can outlive that container,
         # so the requested control transition is authoritative here.
-        runtime.status = "paused" if runtime.status == "pausing" else "stopped"
+        runtime.status = requested_terminal_status or ("paused" if runtime.status == "pausing" else "stopped")
         runtime.last_error = None
         if runtime.status == "paused":
             job.status = "paused"
@@ -1794,11 +1994,41 @@ def refresh_kafka_continuous_runtime(db: Session, job: ETLJobModel) -> None:
     runtime.heartbeat_at = optional_string(payload.get("heartbeatAt")) or runtime.heartbeat_at
     runtime.last_flush_at = optional_string(payload.get("lastFlushAt")) or runtime.last_flush_at
     runtime.last_batch_id = optional_string(payload.get("lastBatchId")) or runtime.last_batch_id
-    runtime.lag = optional_int(payload.get("lag"))
-    runtime.consumed_count = nonnegative_int(payload.get("consumedCount"), runtime.consumed_count)
-    runtime.stored_count = nonnegative_int(payload.get("storedCount"), runtime.stored_count)
-    runtime.quarantined_count = nonnegative_int(payload.get("quarantinedCount"), runtime.quarantined_count)
-    runtime.failed_count = nonnegative_int(payload.get("failedCount"), runtime.failed_count)
+    previous_metrics = runtime.metrics or {}
+    metrics_available = bool(payload.get("lagAvailable"))
+    if metrics_available:
+        runtime.lag = optional_int(payload.get("lag"))
+        runtime.metrics = {
+            "lagAvailable": True,
+            "maxPartitionLag": optional_int(payload.get("maxPartitionLag")),
+            "laggingPartitionCount": nonnegative_int(payload.get("laggingPartitionCount"), 0),
+            "partitionProgress": payload.get("partitionProgress") if isinstance(payload.get("partitionProgress"), dict) else {},
+            "lastBatchDurationMs": optional_int(payload.get("lastBatchDurationMs")),
+            "lastBatchInputRows": nonnegative_int(payload.get("lastBatchInputRows"), 0),
+            "throughputRowsPerSecond": payload.get("throughputRowsPerSecond"),
+            "replayedCount": max(
+                nonnegative_int(payload.get("replayedCount"), 0),
+                nonnegative_int(previous_metrics.get("replayedCount"), 0),
+            ),
+        }
+    else:
+        # A checkpointed worker can restart without receiving a new Spark
+        # progress event. Keep the last valid Kafka observation in that idle
+        # window instead of replacing it with an artificial zero/empty state.
+        runtime.metrics = previous_metrics
+        if runtime.lag is None and previous_metrics.get("lagAvailable"):
+            runtime.lag = optional_int(previous_metrics.get("lag"))
+    previous_schema_state = runtime.schema_state or {}
+    runtime.schema_state = {
+        "schemaVersion": nonnegative_int(payload.get("schemaVersion"), nonnegative_int(previous_schema_state.get("schemaVersion"), 1)),
+        "schemaFingerprint": optional_string(payload.get("schemaFingerprint")) or optional_string(previous_schema_state.get("schemaFingerprint")),
+        "schemaStatus": optional_string(payload.get("schemaStatus")) or optional_string(previous_schema_state.get("schemaStatus")) or "stable",
+        "schemaChanges": payload.get("schemaChanges") if isinstance(payload.get("schemaChanges"), list) else previous_schema_state.get("schemaChanges", []),
+    }
+    runtime.consumed_count = max(int(runtime.consumed_count or 0), nonnegative_int(payload.get("consumedCount"), 0))
+    runtime.stored_count = max(int(runtime.stored_count or 0), nonnegative_int(payload.get("storedCount"), 0))
+    runtime.quarantined_count = max(int(runtime.quarantined_count or 0), nonnegative_int(payload.get("quarantinedCount"), 0))
+    runtime.failed_count = max(int(runtime.failed_count or 0), nonnegative_int(payload.get("failedCount"), 0))
     runtime.last_error = optional_string(payload.get("lastError"))
     heartbeat_stale = continuous_heartbeat_is_stale(runtime.heartbeat_at, job)
     if runtime_status in {"starting", "running", "pausing", "stopping"} and container_state in {"exited", "missing"}:
@@ -1882,9 +2112,11 @@ def materialize_continuous_batch(
     result = {
         "endedAt": runtime.last_flush_at or runtime.heartbeat_at or iso_now(),
         "outputPath": output_path,
-        "outputRows": int(report.get("lastBatchStoredCount") or 0),
+        "outputRows": runtime.stored_count,
+        "materializationRows": int(report.get("lastBatchStoredCount") or 0),
+        "materializationOutputPath": f"{output_path}/batch_id={batch_id}",
         "runId": run_id,
-        "sourceKind": "kafka_continuous",
+        "sourceKind": "kafka",
         "status": "success",
     }
     try:
@@ -1903,6 +2135,34 @@ def materialize_continuous_batch(
             "sourceUnits": "Kafka topic",
             "successRate": "100%" if runtime.failed_count == 0 else "확인 필요",
         }
+
+
+def materialize_continuous_replay(
+    db: Session,
+    job: ETLJobModel,
+    runtime: KafkaContinuousRuntimeModel,
+    replay_result: dict[str, Any],
+) -> None:
+    replayed_count = nonnegative_int(replay_result.get("storedCount"), 0)
+    if replayed_count == 0:
+        return
+    existing = etl_repository.get_dataset_by_id(db, job.dataset_id or f"ds_{normalize_column_name(job.target)}")
+    target = parse_kafka_target_path(job.storage_path or job.target_path, job.target, job.target_layer)
+    target_root = f"s3a://{target['bucket']}/{target['prefix'].strip('/')}/_batches"
+    result = {
+        "endedAt": optional_string(replay_result.get("endedAt")) or iso_now(),
+        "outputPath": target_root,
+        "outputRows": runtime.stored_count,
+        "materializationRows": replayed_count,
+        "materializationOutputPath": replay_result.get("outputPath") or target_root,
+        "runId": replay_result.get("runId"),
+        "sourceKind": "kafka",
+        "status": "success",
+    }
+    try:
+        etl_repository.save_dataset(db, dataset_from_spark_result(job, result, existing))
+    except Exception as exc:  # Replay data is already durable; Catalog can retry independently.
+        runtime.last_error = f"Replay Catalog materialization pending retry: {compact_storage_text(str(exc), limit=500)}"
 
 
 def continuous_runtime_report_path(job_id: str) -> Path:
@@ -2401,6 +2661,12 @@ def continuous_config_from_request(request: CreatePipelineRequest, job_id: str) 
         "initialOffsetPolicy": config.initial_offset_policy if config else "earliest",
         "triggerIntervalSeconds": config.trigger_interval_seconds if config else 30,
         "maxOffsetsPerTrigger": config.max_offsets_per_trigger if config else 10000,
+        "schemaEvolutionPolicy": config.schema_evolution_policy.model_dump(mode="json", by_alias=True) if config else {
+            "additiveNullable": "allow",
+            "missingRequired": "quarantine",
+            "incompatibleType": "quarantine",
+            "unknownField": "preserve",
+        },
         "checkpointPath": f"{base_path}/_checkpoints/{job_id}",
     }
 

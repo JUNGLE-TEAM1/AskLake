@@ -85,6 +85,8 @@ Canonical status values:
 
 Issue #500은 같은 command endpoint에 `startContinuous`, `pauseContinuous`, `resumeContinuous`, `stopContinuous`를 추가한다. 이 명령은 `executionMode: "continuous"` Kafka Job에만 적용하며, Docker가 시작한 long-running Spark Structured Streaming worker를 제어한다. 응답의 `processingResult.controlPlaneOnly`는 `false`, `worker`는 `spark_structured_streaming`이다. `GET /api/etl/jobs/{jobId}`는 worker container liveness와 heartbeat를 검사해 runtime을 hydrate하며, 요청 없이 종료되거나 heartbeat가 만료된 active worker는 `failed`로 반영한다. `pausing`/`stopping`에서의 의도된 worker 종료는 각각 `paused`/`stopped`로 완료한다. Continuous Job은 장기 실행 Spark query와 checkpoint로 상태를 복원하므로 `run`/`retry` Snapshot command와 섞어 사용할 수 없다. 상세 request/response와 충돌 정책은 [Kafka Continuous Ingestion Contract](kafka-continuous-ingestion-contract.md)를 따른다.
 
+Continuous 운영 API는 `GET /api/etl/jobs/{jobId}/continuous/logs`, `GET /api/etl/jobs/{jobId}/continuous/quarantine`, `GET /api/etl/jobs/{jobId}/continuous/maintenance-runs`, `POST /api/etl/jobs/{jobId}/continuous/quarantine/replays`, `POST /api/etl/jobs/{jobId}/continuous/compactions`를 제공한다. 로그는 bounded/redacted response이고 replay/compaction은 checkpoint를 변경하지 않는 유한 maintenance run이다.
+
 `GET /api/etl/jobs/{jobId}`는 Job 상세와 실행 polling뿐 아니라 향후 수정 화면 hydrate의 source of truth다. 응답은 source config, schema columns/fingerprint/sample/summary, transform/quality, schedule/retry/watermark, permission summary/roles, target database/metadata를 함께 유지한다. Issue #460의 update endpoint 구현 전에는 이 응답을 수정 저장에 사용하지 않는다.
 
 `PATCH /api/etl/jobs/{jobId}`는 `manage` 권한이 필요하다. request는 source field를 허용하지 않으며, 실행 중인 Job은 `409`, 성공 Run이 있는 Job의 target dataset/database/layer/format/storage identity 변경은 `422`로 차단한다. update는 Job metadata만 바꾸고 Kafka consumer group offset 및 durable snapshot은 변경하지 않는다.

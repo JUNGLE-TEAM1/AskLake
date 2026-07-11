@@ -79,6 +79,8 @@ Issue #500은 Snapshot direct-target 경로를 제거하지 않고, Kafka Job �
 
 Continuous target은 V1에서 batch ID별 idempotent Parquet output과 별도 compaction을 사용한다. 첫 성공 batch는 Catalog dataset/materialization run을 만들고 이후 batch를 append한다. 현재 streaming-safe schema projection과 malformed JSON quarantine만 지원하므로 enabled transform/quality rule은 Continuous Job 생성에서 거절한다. Kafka Source 화면은 `Snapshot`과 `Continuous`를 분리해 선택하며 Continuous 선택 시 Parquet target을 사용한다. Job 목록/상세는 stream start, pause, resume, stop과 runtime counter/heartbeat/checkpoint를 표시한다. Snapshot과 Continuous는 같은 broker/topic/consumer group을 공유한 상태로 동시 실행할 수 없으며, worker container 상태와 heartbeat 만료를 함께 확인해 고아 `running` 상태를 `failed`로 전이한다. 단, 사용자가 요청한 `pausing`/`stopping` 중 worker 종료는 정상적으로 각각 `paused`/`stopped`로 확정한다. 상세 계약은 [Kafka Continuous Ingestion Contract](kafka-continuous-ingestion-contract.md)를 따른다.
 
+운영 보강 경로는 streaming hot path와 유한 maintenance task를 분리한다. Backend control-plane은 worker liveness, partition lag, bounded log 조회, schema drift metadata를 동기화한다. Quarantine replay와 compaction은 run ID를 가진 유한 Spark batch로 실행하며, 향후 Airflow 예약은 이 maintenance task만 감싼다. Continuous worker 자체를 장기 Airflow DAG task로 실행하지 않는다.
+
 ### ETL Job 수정 계약
 
 Issue #460에서 Job 상세/목록의 수정은 `GET /api/etl/jobs/{jobId}` 결과를 `edit draft`로 hydrate해 Source 단계에 표시하고, `PATCH /api/etl/jobs/{jobId}`로 같은 Job ID에 저장한다. 수정 mode의 Kafka source identity는 읽기 전용이며, 수정 저장은 새 Job 생성을 호출하지 않는다.

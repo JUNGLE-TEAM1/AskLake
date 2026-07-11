@@ -1,6 +1,7 @@
 """Long-running Kafka to Parquet Structured Streaming worker for AskLake."""
 
 import json
+import hashlib
 import os
 import signal
 from datetime import datetime, timezone
@@ -8,8 +9,16 @@ from pathlib import Path
 from typing import Any
 
 from pyspark.sql import DataFrame, SparkSession
-from pyspark.sql.functions import col, current_timestamp, from_json, sum as spark_sum
-from pyspark.sql.types import BooleanType, DoubleType, LongType, StringType, StructField, StructType, TimestampType
+from pyspark.sql.functions import array, array_except, col, current_timestamp, explode, from_json, lit, map_keys, max as spark_max, size, sum as spark_sum, when
+from pyspark.sql.types import BooleanType, DoubleType, LongType, MapType, StringType, StructField, StructType, TimestampType
+
+
+def json_object_env(name: str) -> dict[str, Any]:
+    try:
+        value = json.loads(os.environ.get(name, "{}"))
+    except json.JSONDecodeError:
+        return {}
+    return value if isinstance(value, dict) else {}
 
 
 JOB_ID = os.environ["ASKLAKE_CONTINUOUS_JOB_ID"]
@@ -18,6 +27,15 @@ COMMAND_FILE = Path(os.environ["ASKLAKE_CONTINUOUS_COMMAND_FILE"])
 STOP_REQUESTED = False
 QUERY = None
 INITIAL_COUNTS = json.loads(os.environ.get("ASKLAKE_CONTINUOUS_INITIAL_COUNTS", "{}"))
+INITIAL_METRICS = json_object_env("ASKLAKE_CONTINUOUS_INITIAL_METRICS")
+INITIAL_SCHEMA_STATE = json_object_env("ASKLAKE_CONTINUOUS_INITIAL_SCHEMA_STATE")
+SCHEMA_POLICY = {
+    "additiveNullable": "allow",
+    "missingRequired": "quarantine",
+    "incompatibleType": "quarantine",
+    "unknownField": "preserve",
+    **json_object_env("ASKLAKE_CONTINUOUS_SCHEMA_POLICY"),
+}
 COUNTERS = {
     "consumedCount": int(INITIAL_COUNTS.get("consumedCount") or 0),
     "storedCount": int(INITIAL_COUNTS.get("storedCount") or 0),
@@ -29,6 +47,26 @@ LAST_FLUSH_AT: str | None = None
 LAST_BATCH_STORED_COUNT = 0
 LAST_BATCH_QUARANTINED_COUNT = 0
 LAST_BATCH_WRITTEN = False
+PROCESSED_OFFSETS: dict[str, int] = {}
+METRICS: dict[str, Any] = {
+    "lag": None,
+    "lagAvailable": False,
+    "maxPartitionLag": None,
+    "laggingPartitionCount": 0,
+    "partitionProgress": {},
+    "lastBatchDurationMs": None,
+    "lastBatchInputRows": 0,
+    "throughputRowsPerSecond": None,
+    "replayedCount": 0,
+    **INITIAL_METRICS,
+}
+SCHEMA_STATE: dict[str, Any] = {
+    "schemaVersion": 1,
+    "schemaFingerprint": None,
+    "schemaStatus": "stable",
+    "schemaChanges": [],
+    **INITIAL_SCHEMA_STATE,
+}
 
 
 def now() -> str:
@@ -49,7 +87,8 @@ def report(status: str, *, batch_id: int | None = None, error: str | None = None
         "lastBatchStoredCount": LAST_BATCH_STORED_COUNT,
         "lastBatchQuarantinedCount": LAST_BATCH_QUARANTINED_COUNT,
         "lastBatchWritten": LAST_BATCH_WRITTEN,
-        "lag": None,
+        **METRICS,
+        **SCHEMA_STATE,
         **COUNTERS,
         "lastError": error,
     }
@@ -86,21 +125,72 @@ def spark_type(value: str):
     return StringType()
 
 
-def source_schema() -> tuple[StructType, list[tuple[str, str]]]:
+def source_schema() -> tuple[StructType, list[tuple[str, str]], list[str]]:
     columns = json.loads(os.environ.get("ASKLAKE_CONTINUOUS_SCHEMA_COLUMNS", "[]"))
     selected = [column for column in columns if column.get("included", True)]
     fields = []
     aliases = []
+    required = []
     for column_def in selected:
         source = str(column_def.get("sourceName") or column_def.get("targetName") or "").strip()
         target = str(column_def.get("targetName") or source).strip()
         if source and target:
             fields.append(StructField(source, spark_type(str(column_def.get("type") or "string")), True))
             aliases.append((source, target))
+            if not bool(column_def.get("nullable", False)):
+                required.append(source)
     if not fields:
         fields.append(StructField("value", StringType(), True))
         aliases.append(("value", "value"))
-    return StructType(fields), aliases
+    fingerprint_payload = [{"name": field.name, "type": field.dataType.simpleString(), "required": field.name in required} for field in fields]
+    previous_fingerprint = SCHEMA_STATE.get("schemaFingerprint")
+    fingerprint = hashlib.sha256(json.dumps(fingerprint_payload, sort_keys=True).encode("utf-8")).hexdigest()
+    if previous_fingerprint and previous_fingerprint != fingerprint:
+        SCHEMA_STATE["schemaVersion"] = int(SCHEMA_STATE.get("schemaVersion") or 1) + 1
+        SCHEMA_STATE["schemaStatus"] = "expected_schema_changed"
+        SCHEMA_STATE["schemaChanges"] = [{"kind": "configured_schema_changed", "from": previous_fingerprint, "to": fingerprint}]
+    SCHEMA_STATE["schemaFingerprint"] = fingerprint
+    return StructType(fields), aliases, required
+
+
+def decode_offsets(value: Any) -> dict[str, Any]:
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+    return value if isinstance(value, dict) else {}
+
+
+def refresh_query_metrics(query: Any) -> None:
+    progress = query.lastProgress or {}
+    sources = progress.get("sources") or []
+    source = sources[0] if sources else {}
+    latest_by_topic = decode_offsets(source.get("latestOffset"))
+    latest = latest_by_topic.get(os.environ["ASKLAKE_CONTINUOUS_TOPIC"], {})
+    partition_progress = {}
+    for partition, processed in PROCESSED_OFFSETS.items():
+        reported_latest = int(latest.get(str(partition), processed)) if isinstance(latest, dict) else processed
+        latest_offset = max(reported_latest, processed)
+        lag = max(latest_offset - processed, 0)
+        partition_progress[str(partition)] = {"processedOffset": processed, "latestOffset": latest_offset, "lag": lag}
+    lags = [item["lag"] for item in partition_progress.values()]
+    duration_ms = int((progress.get("durationMs") or {}).get("triggerExecution") or progress.get("batchDuration") or 0)
+    input_rows = int(progress.get("numInputRows") or 0)
+    if partition_progress:
+        METRICS.update({
+            "lag": sum(lags),
+            "lagAvailable": True,
+            "maxPartitionLag": max(lags),
+            "laggingPartitionCount": sum(1 for lag in lags if lag > 0),
+            "partitionProgress": partition_progress,
+        })
+    if progress and input_rows > 0:
+        METRICS.update({
+            "lastBatchDurationMs": duration_ms or METRICS.get("lastBatchDurationMs"),
+            "lastBatchInputRows": input_rows,
+            "throughputRowsPerSecond": round(input_rows / (duration_ms / 1000), 2) if duration_ms else METRICS.get("throughputRowsPerSecond"),
+        })
 
 
 def configure_s3a(spark: SparkSession) -> None:
@@ -171,7 +261,7 @@ def main() -> None:
     global QUERY, LAST_BATCH_STORED_COUNT, LAST_BATCH_QUARANTINED_COUNT, LAST_BATCH_WRITTEN
     signal.signal(signal.SIGTERM, on_signal)
     signal.signal(signal.SIGINT, on_signal)
-    schema, aliases = source_schema()
+    schema, aliases, required_fields = source_schema()
     output_path = os.environ["ASKLAKE_CONTINUOUS_OUTPUT_PATH"]
     checkpoint_path = os.environ["ASKLAKE_CONTINUOUS_CHECKPOINT_PATH"]
     quarantine_path = f"{output_path.rstrip('/')}/_quarantine"
@@ -192,28 +282,71 @@ def main() -> None:
         col("topic"), col("partition"), col("offset"), col("timestamp").alias("kafka_timestamp"),
         col("value").cast("string").alias("raw_payload"),
         from_json(col("value").cast("string"), schema).alias("payload"),
+        from_json(col("value").cast("string"), MapType(StringType(), StringType())).alias("raw_map"),
     )
 
     def write_batch(batch: DataFrame, batch_id: int) -> None:
         global LAST_BATCH_STORED_COUNT, LAST_BATCH_QUARANTINED_COUNT, LAST_BATCH_WRITTEN
         if STOP_REQUESTED:
             return
+        batch.persist()
         total = batch.count()
         if total == 0:
             # Keep the last non-empty batch publication visible to the control
             # plane. Spark can invoke foreachBatch for empty microbatches while
             # the stream is idle, and those must not erase Catalog retry state.
             report("running")
+            batch.unpersist()
             return
+        for row in batch.groupBy("partition").agg(spark_max("offset").alias("max_offset")).collect():
+            PROCESSED_OFFSETS[str(row["partition"])] = int(row["max_offset"]) + 1
         published = read_batch_manifest(spark, output_path, batch_id)
         if published is not None:
             LAST_BATCH_STORED_COUNT = published["storedCount"]
             LAST_BATCH_QUARANTINED_COUNT = published["quarantinedCount"]
             LAST_BATCH_WRITTEN = True
             report("running", batch_id=batch_id)
+            batch.unpersist()
             return
-        valid = batch.where(col("payload").isNotNull())
-        invalid = batch.where(col("payload").isNull())
+        required_missing = lit(False)
+        incompatible_type = lit(False)
+        for field_name, _target in aliases:
+            source_value = col("raw_map").getItem(field_name)
+            parsed_value_missing = col(f"payload.`{field_name}`").isNull()
+            if field_name in required_fields:
+                required_missing = required_missing | source_value.isNull()
+            incompatible_type = incompatible_type | (source_value.isNotNull() & parsed_value_missing)
+        malformed = col("raw_map").isNull() | col("payload").isNull()
+        expected_keys = array(*[lit(source) for source, _target in aliases])
+        unknown_keys = array_except(map_keys(col("raw_map")), expected_keys)
+        unknown_condition = col("raw_map").isNotNull() & (size(unknown_keys) > 0)
+        unknown_rows = (batch.where(col("raw_map").isNotNull())
+            .select(explode(unknown_keys).alias("field"))
+            .distinct().limit(100).collect())
+        unknown_fields = sorted({str(row["field"]) for row in unknown_rows})
+        if unknown_fields:
+            SCHEMA_STATE["schemaStatus"] = "drift_detected"
+            SCHEMA_STATE["schemaChanges"] = [{"kind": "additive_unknown", "field": field} for field in unknown_fields]
+        pause_condition = lit(False)
+        if SCHEMA_POLICY.get("missingRequired") == "pause":
+            pause_condition = pause_condition | required_missing
+        if SCHEMA_POLICY.get("incompatibleType") == "pause":
+            pause_condition = pause_condition | incompatible_type
+        if SCHEMA_POLICY.get("unknownField") == "pause" or SCHEMA_POLICY.get("additiveNullable") == "pause":
+            pause_condition = pause_condition | unknown_condition
+        if batch.where(~malformed & pause_condition).limit(1).count():
+            SCHEMA_STATE["schemaStatus"] = "policy_paused"
+            report("failed", error="Schema evolution policy paused the worker before target publication.")
+            raise RuntimeError("Schema evolution policy paused the worker before target publication.")
+        invalid_condition = malformed
+        if SCHEMA_POLICY.get("missingRequired") == "quarantine":
+            invalid_condition = invalid_condition | required_missing
+        if SCHEMA_POLICY.get("incompatibleType") == "quarantine":
+            invalid_condition = invalid_condition | incompatible_type
+        if SCHEMA_POLICY.get("unknownField") == "quarantine" or SCHEMA_POLICY.get("additiveNullable") == "quarantine":
+            invalid_condition = invalid_condition | unknown_condition
+        valid = batch.where(~invalid_condition)
+        invalid = batch.where(invalid_condition)
         valid_count = valid.count()
         invalid_count = total - valid_count
         valid_written = False
@@ -229,8 +362,29 @@ def main() -> None:
         if invalid_count:
             invalid_written = write_batch_once(
                 spark,
-                invalid.select("topic", "partition", "offset", "kafka_timestamp", "raw_payload", current_timestamp().alias("quarantined_at")),
+                invalid.select(
+                    "topic", "partition", "offset", "kafka_timestamp", "raw_payload",
+                    when(malformed, lit("malformed_json"))
+                    .when(required_missing, lit("missing_required"))
+                    .when(incompatible_type, lit("incompatible_type"))
+                    .when(unknown_condition, lit("unknown_field"))
+                    .otherwise(lit("schema_policy_rejected")).alias("reason"),
+                    lit(SCHEMA_STATE["schemaFingerprint"]).alias("schema_fingerprint"),
+                    current_timestamp().alias("quarantined_at"),
+                ),
                 quarantine_path,
+                batch_id,
+            )
+        if unknown_fields and SCHEMA_POLICY.get("unknownField") == "preserve":
+            write_batch_once(
+                spark,
+                batch.where(unknown_condition).select(
+                    "topic", "partition", "offset", "kafka_timestamp", "raw_payload",
+                    unknown_keys.alias("unknown_fields"),
+                    lit(SCHEMA_STATE["schemaFingerprint"]).alias("schema_fingerprint"),
+                    current_timestamp().alias("observed_at"),
+                ),
+                f"{output_path.rstrip('/')}/_schema-evidence",
                 batch_id,
             )
         # The manifest is published only after both valid and quarantine paths
@@ -248,6 +402,7 @@ def main() -> None:
         COUNTERS["storedCount"] += valid_count
         COUNTERS["quarantinedCount"] += invalid_count
         report("running", batch_id=batch_id)
+        batch.unpersist()
 
     report("starting")
     QUERY = (parsed.writeStream.foreachBatch(write_batch)
@@ -260,6 +415,7 @@ def main() -> None:
     while QUERY.isActive:
         QUERY.awaitTermination(5)
         if QUERY.isActive:
+            refresh_query_metrics(QUERY)
             report("running")
     report("paused" if requested_action() == "pause" else "stopped")
 

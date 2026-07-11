@@ -126,8 +126,25 @@ class KafkaContinuousRuntimeModel(TimestampMixin, Base):
     last_flush_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
     last_batch_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     lag: Mapped[int | None] = mapped_column(nullable=True)
+    metrics: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    schema_state: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     consumed_count: Mapped[int] = mapped_column(nullable=False, default=0)
     stored_count: Mapped[int] = mapped_column(nullable=False, default=0)
     quarantined_count: Mapped[int] = mapped_column(nullable=False, default=0)
     failed_count: Mapped[int] = mapped_column(nullable=False, default=0)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class KafkaContinuousMaintenanceRunModel(TimestampMixin, Base):
+    __tablename__ = "kafka_continuous_maintenance_runs"
+
+    run_id: Mapped[str] = mapped_column(String(120), primary_key=True)
+    job_id: Mapped[str] = mapped_column(String(120), ForeignKey("etl_jobs.id"), nullable=False, index=True)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued", index=True)
+    requested_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    config: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    started_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    ended_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)

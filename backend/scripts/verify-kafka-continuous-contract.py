@@ -11,7 +11,7 @@ from app.core.auth_context import ActorContext
 from app.core.errors import ApiError
 from app.models.etl import ETLJobModel
 from app.repositories import etl_repository
-from app.schemas.etl import CreatePipelineRequest, SchemaColumnDraft
+from app.schemas.etl import ContinuousReplayRequest, CreatePipelineRequest, SchemaColumnDraft
 from app.services import etl_service
 
 
@@ -72,12 +72,26 @@ def continuous_job() -> ETLJobModel:
 
 
 def main() -> None:
+    assert ContinuousReplayRequest(offsets=["01:002", "1:2"]).offsets == ["1:2"]
+    try:
+        ContinuousReplayRequest(offsets=["bad-offset"])
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("Replay offsets must use partition:offset format.")
+
     request = continuous_request()
     config = etl_service.continuous_config_from_request(request, "JOB-CONTINUOUS-CONTRACT")
     assert config == {
         "initialOffsetPolicy": "earliest",
         "triggerIntervalSeconds": 30,
         "maxOffsetsPerTrigger": 10000,
+        "schemaEvolutionPolicy": {
+            "additiveNullable": "allow",
+            "missingRequired": "quarantine",
+            "incompatibleType": "quarantine",
+            "unknownField": "preserve",
+        },
         "checkpointPath": "s3a://asklake-output/reviews_continuous/bronze/_checkpoints/JOB-CONTINUOUS-CONTRACT",
     }
 
@@ -86,6 +100,30 @@ def main() -> None:
     assert runtime.topic == "reviews.continuous"
     assert runtime.consumer_group_id == "asklake-continuous-contract"
     assert runtime.status == "stopped"
+    runtime.lag = 4
+    runtime.stored_count = 5
+    runtime.metrics = {
+        "lagAvailable": True,
+        "maxPartitionLag": 4,
+        "laggingPartitionCount": 1,
+        "partitionProgress": {"0": {"processedOffset": 6, "latestOffset": 10, "lag": 4}},
+        "lastBatchDurationMs": 2000,
+        "lastBatchInputRows": 20,
+        "throughputRowsPerSecond": 10.0,
+        "replayedCount": 1,
+    }
+    runtime.schema_state = {
+        "schemaVersion": 1,
+        "schemaFingerprint": "schema-v1",
+        "schemaStatus": "drift_detected",
+        "schemaChanges": [{"kind": "additive_unknown", "field": "language"}],
+    }
+    runtime_schema = etl_repository.continuous_runtime_to_schema(runtime)
+    assert runtime_schema is not None
+    assert runtime_schema.max_partition_lag == 4
+    assert runtime_schema.partition_progress["0"]["lag"] == 4
+    assert runtime_schema.replayed_count == 1
+    assert runtime_schema.schema_status == "drift_detected"
 
     original_get = etl_repository.get_kafka_continuous_runtime
     original_find = etl_repository.find_conflicting_kafka_continuous_runtime
@@ -155,7 +193,8 @@ def main() -> None:
             "lastBatchStoredCount": 2,
             "lastBatchWritten": True,
         })
-        assert captured_dataset["dataset"].payload["materializationRuns"][0]["sourceKind"] == "kafka_continuous"
+        assert captured_dataset["dataset"].payload["materializationRuns"][0]["sourceKind"] == "kafka"
+        assert captured_dataset["dataset"].payload["materializationRuns"][0]["rowCount"] == 2
         assert captured_dataset["dataset"].payload["storageLocation"].endswith("/_batches")
 
         with tempfile.TemporaryDirectory() as report_dir:
@@ -196,6 +235,10 @@ def main() -> None:
             etl_service.refresh_kafka_continuous_runtime(None, job)
             assert runtime.status == "failed"
             assert "heartbeat expired" in runtime.last_error
+            assert runtime.lag == 4
+            assert runtime.metrics["partitionProgress"]["0"]["lag"] == 4
+            assert runtime.stored_count == 5
+            assert runtime.metrics["replayedCount"] == 1
             if previous_report_dir is None:
                 os.environ.pop("ASKLAKE_SPARK_REPORT_DIR", None)
             else:

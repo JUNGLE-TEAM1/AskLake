@@ -15,7 +15,7 @@ FastAPI 전환의 공통 구조와 의사결정은 `docs/backend-fastapi-transit
 | Target DB 선택 | `GET /api/target/databases`로 허용 DB 목록을 조회하고 `target.databaseName` string에 반영. 테이블명 입력은 노출하지 않고 datasetName을 create payload 호환값으로 사용 | 운영 catalog DB 목록/권한 API |
 | Source/Schema | mock mode에서는 `SourceConnectorAnalysis` fallback으로 schema/sampleRows 반영, live mode에서는 `POST /api/etl/sources/test`로 실제 connector 확인. MongoDB connector는 Node MongoDB driver로 컬렉션과 제한 문서 샘플을 조회하며, 사용자가 선택한 File / S3 Parquet 객체는 Spark reader로 물리 스키마를 읽음 | Kafka message payload sampling, 다중 Parquet 파일의 통합 스키마 추론 |
 | Rule | 현재 schema/sampleRows 기반 preview, create payload에 transform/quality detail 포함 | 별도 backend rule preview API |
-| Job command | Kafka Snapshot Job은 `POST /api/etl/jobs/{jobId}/commands`의 run/retry로 fixed range ingest를 실행하고, non-Kafka Job은 Airflow DAG Run을 접수. Continuous Kafka Job은 Docker로 long-running Spark Structured Streaming submit container를 시작하거나 signal을 보내며, `redpanda:9092`, S3A checkpoint, batch ID idempotent Parquet output, Catalog materialization, report-volume liveness/heartbeat hydration을 사용 | streaming-safe transform/quality rules, production E2E smoke |
+| Job command | Kafka Snapshot Job은 `POST /api/etl/jobs/{jobId}/commands`의 run/retry로 fixed range ingest를 실행하고, non-Kafka Job은 Airflow DAG Run을 접수. Continuous Kafka Job은 Docker로 long-running Spark Structured Streaming submit container를 시작하거나 signal을 보내며, S3A checkpoint, partition lag/throughput/schema drift report, bounded worker log, quarantine replay, non-destructive compaction run을 제공 | production soak, async Airflow maintenance scheduling, compaction retention switch |
 | Run/DAG | `GET /api/etl/jobs/{jobId}`가 active Airflow DAG Run과 Task Instance를 polling/sync해 runHistory, dagSteps, `dagStepsByRunId`를 갱신 | local Airflow compose/runtime wiring, run detail table과 Spark log object storage 분리 |
 | Catalog | `GET /api/catalog/datasets` hydrate, `GET /api/catalog/datasets/{datasetId}/lineage`, create/run 결과를 Postgres JSONB payload로 반영 | 상세/lineage/search API 고도화 |
 | SQL 분석 | `POST /api/query/runs`, `POST /api/query/ai-suggestions`, `POST /api/catalog/derived-datasets` 호출 지점 유지. SQL run 결과는 `sql_runs.payload`에 snapshot 저장 | read-only SQL engine 고도화 |
@@ -388,9 +388,9 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 
 ## 14. 남은 작업
 
-- Kafka message payload schema sampling
+- Kafka schema evolution approval/restart workflow
 - 다중 Parquet 파일의 통합 스키마 추론
-- Run detail table, DAG step table, Spark log object storage 분리
+- Worker log 장기 object storage 및 metric alerting
 - 삭제/수정 API persistence
 - SQL engine read-only guard 고도화
 - Dashboard 권한/공유/export API

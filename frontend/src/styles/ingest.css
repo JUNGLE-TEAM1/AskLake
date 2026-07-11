@@ -1656,6 +1656,83 @@
   padding: 7px 10px;
 }
 
+.job-runtime-log-header {
+  align-items: center;
+  border-top: 1px solid #e2e8f0;
+  display: flex;
+  justify-content: space-between;
+  margin-top: 16px;
+  padding-top: 14px;
+}
+
+.job-runtime-log {
+  background: #f8fafc;
+  border: 1px solid #dbe3ee;
+  border-radius: 6px;
+  color: #263548;
+  font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  margin: 10px 0 0;
+  max-height: 220px;
+  min-height: 72px;
+  overflow: auto;
+  padding: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.job-inline-error {
+  color: #b42318;
+  font-size: 13px;
+  margin: 10px 0 0;
+}
+
+.job-runtime-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.job-maintenance-summary {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 12px;
+}
+
+.job-maintenance-summary span {
+  background: #f8fafc;
+  border: 1px solid #dbe3ee;
+  border-radius: 6px;
+  color: #475569;
+  font-size: 12px;
+  padding: 9px 10px;
+}
+
+.job-quarantine-list {
+  border-top: 1px solid #e2e8f0;
+  margin-top: 12px;
+}
+
+.job-quarantine-list > div {
+  align-items: center;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 76px 160px 90px minmax(0, 1fr);
+  min-width: 0;
+  padding: 9px 0;
+}
+
+.job-quarantine-list > div + div {
+  border-top: 1px solid #eef2f6;
+}
+
+.job-quarantine-list span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .detail-kv-grid.summary-kv {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
@@ -2460,4 +2537,10 @@
 .status-pill.canceled {
   background: #f1f5f9;
   color: #475569;
+}
+
+@media (max-width: 720px) {
+  .job-quarantine-list > div {
+    grid-template-columns: minmax(64px, 0.7fr) minmax(0, 1.3fr);
+  }
 }

@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import type React from "react";
 import {
   flexRender,
@@ -44,6 +44,8 @@ import {
 } from "lucide-react";
 import { Field, PageTitle } from "../../components/common";
 import { getCellphonesReviewAnalysis, runCellphonesReviewAnalysis, type ReviewAnalysisSummary } from "../../services/reviewAnalysisApi";
+import { compactContinuousTarget, getContinuousMaintenanceRuns, getContinuousQuarantine, getContinuousWorkerLogs, replayContinuousQuarantine } from "../../services/pipelineApi";
+import type { ContinuousMaintenanceRun, ContinuousQuarantineRecord } from "../../types";
 import type { AuditResult, JobCommand, JobDagStep, JobDagStepStatus, JobExecutionEvidence, JobRowData, JobRunStatus, JobRunSummary, JobStats, JobStatus } from "../../types";
 import { canRunJobCommand, permissionDeniedMessage } from "../../utils/permissions";
 import { jobStatusMeta } from "../../utils/statusMeta";
@@ -1430,6 +1432,55 @@ export function JobDetailPage({
 
 function ContinuousRuntimeCard({ job }: { job: JobRowData }) {
   const runtime = job.continuousRuntime;
+  const maintenanceBlocked = runtime ? ["starting", "running", "pausing", "stopping"].includes(runtime.status) : false;
+  const [logs, setLogs] = useState<string[]>([]);
+  const [logError, setLogError] = useState("");
+  const [loadingLogs, setLoadingLogs] = useState(false);
+  const [quarantine, setQuarantine] = useState<ContinuousQuarantineRecord[]>([]);
+  const [maintenanceRuns, setMaintenanceRuns] = useState<ContinuousMaintenanceRun[]>([]);
+  const [maintenanceBusy, setMaintenanceBusy] = useState(false);
+  const [maintenanceMessage, setMaintenanceMessage] = useState("");
+  const loadLogs = useCallback(async () => {
+    setLoadingLogs(true);
+    setLogError("");
+    try {
+      setLogs((await getContinuousWorkerLogs(job.id, 100)).lines);
+    } catch (error) {
+      setLogError(error instanceof Error ? error.message : "Worker 로그를 불러오지 못했습니다.");
+    } finally {
+      setLoadingLogs(false);
+    }
+  }, [job.id]);
+  useEffect(() => { void loadLogs(); }, [loadLogs]);
+  const refreshMaintenance = useCallback(async () => {
+    try {
+      const runs = await getContinuousMaintenanceRuns(job.id);
+      setMaintenanceRuns(runs);
+      if (maintenanceBlocked) {
+        setQuarantine([]);
+      } else {
+        setQuarantine((await getContinuousQuarantine(job.id, 25)).records);
+      }
+    } catch (error) {
+      setMaintenanceMessage(error instanceof Error ? error.message : "Maintenance 정보를 불러오지 못했습니다.");
+    }
+  }, [job.id, maintenanceBlocked]);
+  useEffect(() => { void refreshMaintenance(); }, [refreshMaintenance]);
+  const runMaintenance = async (kind: "replay" | "compact") => {
+    setMaintenanceBusy(true);
+    setMaintenanceMessage("");
+    try {
+      const run = kind === "replay"
+        ? await replayContinuousQuarantine(job.id)
+        : await compactContinuousTarget(job.id, 256);
+      setMaintenanceMessage(`${kind === "replay" ? "격리 재처리" : "Compaction"} ${run.status}`);
+      await refreshMaintenance();
+    } catch (error) {
+      setMaintenanceMessage(error instanceof Error ? error.message : "Maintenance 실행에 실패했습니다.");
+    } finally {
+      setMaintenanceBusy(false);
+    }
+  };
   return (
     <article className="job-detail-card metadata-card">
       <h3>Continuous Runtime</h3>
@@ -1437,11 +1488,35 @@ function ContinuousRuntimeCard({ job }: { job: JobRowData }) {
         <Field label="상태" value={continuousRuntimeLabel(job)} />
         <Field label="마지막 batch" value={runtime?.lastBatchId ?? "-"} />
         <Field label="소비 / 적재" value={`${runtime?.consumedCount?.toLocaleString() ?? "0"} / ${runtime?.storedCount?.toLocaleString() ?? "0"}`} />
-        <Field label="격리 / 실패" value={`${runtime?.quarantinedCount?.toLocaleString() ?? "0"} / ${runtime?.failedCount?.toLocaleString() ?? "0"}`} />
+        <Field label="격리 / 재처리" value={`${runtime?.quarantinedCount?.toLocaleString() ?? "0"} / ${runtime?.replayedCount?.toLocaleString() ?? "0"}`} />
+        <Field label="실패" value={runtime?.failedCount?.toLocaleString() ?? "0"} />
+        <Field label="Kafka Lag" value={runtime?.lagAvailable ? `${runtime.lag?.toLocaleString() ?? 0}건 · 최대 ${runtime.maxPartitionLag?.toLocaleString() ?? 0}` : "측정 대기"} />
+        <Field label="처리량" value={runtime?.throughputRowsPerSecond != null ? `${runtime.throughputRowsPerSecond.toLocaleString()} rows/s` : "-"} />
+        <Field label="최근 Batch" value={runtime?.lastBatchDurationMs != null ? `${runtime.lastBatchInputRows.toLocaleString()}건 · ${runtime.lastBatchDurationMs.toLocaleString()}ms` : "-"} />
+        <Field label="Schema" value={`v${runtime?.schemaVersion ?? 1} · ${runtime?.schemaStatus ?? "stable"}`} />
         <Field label="Heartbeat" value={runtime?.heartbeatAt ? formatCompactDateTime(runtime.heartbeatAt) : "-"} />
         <Field label="Checkpoint" value={runtime?.checkpointPath ?? "-"} />
         {runtime?.lastError && <Field label="최근 오류" value={runtime.lastError} />}
       </div>
+      <div className="job-runtime-log-header">
+        <strong>Worker Log</strong>
+        <button className="job-action-button" disabled={loadingLogs} onClick={() => void loadLogs()} type="button"><RefreshCw size={15} />새로고침</button>
+      </div>
+      {logError ? <p className="job-inline-error">{logError}</p> : <pre className="job-runtime-log">{logs.length ? logs.join("\n") : loadingLogs ? "로그 불러오는 중..." : "표시할 로그가 없습니다."}</pre>}
+      <div className="job-runtime-log-header">
+        <strong>Quarantine · Maintenance</strong>
+        <div className="job-runtime-actions">
+          <button className="job-action-button" disabled={maintenanceBlocked || maintenanceBusy || !quarantine.some((item) => item.replayStatus !== "replayed")} onClick={() => void runMaintenance("replay")} title={maintenanceBlocked ? "스트림을 일시정지하거나 중지한 뒤 실행할 수 있습니다." : undefined} type="button"><Repeat2 size={15} />전체 재처리</button>
+          <button className="job-action-button" disabled={maintenanceBlocked || maintenanceBusy || (runtime?.storedCount ?? 0) === 0} onClick={() => void runMaintenance("compact")} title={maintenanceBlocked ? "스트림을 일시정지하거나 중지한 뒤 실행할 수 있습니다." : undefined} type="button"><HardDrive size={15} />Compaction</button>
+        </div>
+      </div>
+      {maintenanceMessage && <p className="panel-note">{maintenanceMessage}</p>}
+      <div className="job-maintenance-summary">
+        <span>격리 샘플 {quarantine.length.toLocaleString()}건</span>
+        <span>실행 이력 {maintenanceRuns.length.toLocaleString()}건</span>
+        <span>최근 {maintenanceRuns[0] ? `${maintenanceRuns[0].kind} · ${maintenanceRuns[0].status}` : "-"}</span>
+      </div>
+      {quarantine.length > 0 && <div className="job-quarantine-list">{quarantine.slice(0, 5).map((item) => <div key={`${item.partition}:${item.offset}`}><code>{item.partition}:{item.offset}</code><span>{item.reason}</span><span>{item.replayStatus}</span><span>{item.rawPayload}</span></div>)}</div>}
     </article>
   );
 }

@@ -20,11 +20,13 @@ try {
   const created = await post("/api/etl/jobs", jobPayload());
   jobId = created.job.id;
   await post(`/api/etl/jobs/${encodeURIComponent(jobId)}/commands`, { command: "startContinuous" });
+  await expectStatus(`/api/etl/jobs/${encodeURIComponent(jobId)}/continuous/quarantine?limit=1`, 409);
   await waitFor(async () => (await datasets()).some((dataset) => dataset.id === `ds_${target}`), "Catalog materialization");
   await waitFor(async () => (await getJob()).continuousRuntime?.storedCount >= 2, "retained backlog consumption");
 
   produce(2, 2);
-  await waitFor(async () => (await getJob()).continuousRuntime?.storedCount >= 4, "new Kafka event consumption");
+  produceRecoverableUnknown();
+  await waitFor(async () => (await getJob()).continuousRuntime?.consumedCount >= 6, "new Kafka event consumption");
   await post(`/api/etl/jobs/${encodeURIComponent(jobId)}/commands`, { command: "pauseContinuous" });
   await waitFor(async () => (await getJob()).continuousRuntime?.status === "paused", "pause");
 
@@ -36,9 +38,25 @@ try {
   await waitFor(async () => (await getJob()).continuousRuntime?.status === "running", "checkpoint restart");
 
   const afterRestart = await getJob();
-  assert(afterRestart.continuousRuntime.consumedCount === 5, "Restart must preserve consumed count.");
+  assert(afterRestart.continuousRuntime.consumedCount === 6, "Restart must preserve consumed count.");
   assert(afterRestart.continuousRuntime.storedCount === 4, "Restart must not duplicate completed batch rows or reset counters.");
-  assert(afterRestart.continuousRuntime.quarantinedCount === 1, "Malformed payload count must survive restart.");
+  assert(afterRestart.continuousRuntime.quarantinedCount === 2, "Malformed and schema-policy quarantine counts must survive restart.");
+  assert(afterRestart.continuousRuntime.lagAvailable === true, "Restart must preserve the last valid partition lag observation.");
+  assert(Object.keys(afterRestart.continuousRuntime.partitionProgress || {}).length > 0, "Restart must preserve partition progress while idle.");
+  await post(`/api/etl/jobs/${encodeURIComponent(jobId)}/commands`, { command: "stopContinuous" });
+  await waitFor(async () => (await getJob()).continuousRuntime?.status === "stopped", "stop before replay");
+  const replay = await post(`/api/etl/jobs/${encodeURIComponent(jobId)}/continuous/quarantine/replays`, {});
+  assert(replay.result.storedCount === 1 && replay.result.failedCount === 1, "Replay must recover only the schema-policy quarantine row.");
+  const afterReplay = await getJob();
+  assert(afterReplay.continuousRuntime.storedCount === 5, "Replay must increment durable target rows.");
+  assert(afterReplay.continuousRuntime.replayedCount === 1, "Replay must be counted separately from historical quarantine.");
+  assert(afterReplay.continuousRuntime.storedCount + afterReplay.continuousRuntime.quarantinedCount - afterReplay.continuousRuntime.replayedCount === 6, "Replay counters must reconcile to consumed rows.");
+  const replayAgain = await post(`/api/etl/jobs/${encodeURIComponent(jobId)}/continuous/quarantine/replays`, {});
+  assert(replayAgain.result.storedCount === 0 && replayAgain.result.skippedCount === 1, "Replay must be idempotent by partition and offset.");
+  const quarantine = await get(`/api/etl/jobs/${encodeURIComponent(jobId)}/continuous/quarantine?limit=10`);
+  assert(quarantine.records.some((record) => record.replayStatus === "replayed"), "Quarantine inspection must expose replay status.");
+  const dataset = (await datasets()).find((item) => item.id === `ds_${target}`);
+  assert(dataset?.materializationRuns?.some((run) => run.runId === replay.runId), "Replay must append a Catalog materialization run.");
   console.log("verify-kafka-continuous-e2e: ok");
 } finally {
   if (jobId) await post(`/api/etl/jobs/${encodeURIComponent(jobId)}/commands`, { command: "stopContinuous" }).catch(() => undefined);
@@ -63,7 +81,12 @@ function jobPayload() {
     storagePath: `s3a://asklake-output/${target}/bronze`,
     owner: "data-team-01",
     executionMode: "continuous",
-    continuousConfig: { initialOffsetPolicy: "earliest", triggerIntervalSeconds: 2, maxOffsetsPerTrigger: 100 },
+    continuousConfig: {
+      initialOffsetPolicy: "earliest",
+      triggerIntervalSeconds: 2,
+      maxOffsetsPerTrigger: 100,
+      schemaEvolutionPolicy: { additiveNullable: "allow", missingRequired: "quarantine", incompatibleType: "quarantine", unknownField: "quarantine" },
+    },
   };
 }
 
@@ -78,6 +101,15 @@ function produce(count, offsetStart) {
 
 function produceMalformed() {
   rpk(["topic", "produce", topic], "{not-json}\n");
+}
+
+function produceRecoverableUnknown() {
+  rpk(["topic", "produce", topic], `${JSON.stringify({
+    event_id: `continuous-${suffix}-unknown`,
+    review: "recoverable schema policy row",
+    created_at: "2026-07-11T00:00:00Z",
+    language: "ko",
+  })}\n`);
 }
 
 function killWorker() {
@@ -101,6 +133,10 @@ async function datasets() {
 }
 async function get(path) { return request(path); }
 async function post(path, body) { return request(path, { method: "POST", body: JSON.stringify(body) }); }
+async function expectStatus(path, expectedStatus) {
+  const response = await fetch(`${baseUrl}${path}`, { headers: { "X-AskLake-Role": "admin" } });
+  if (response.status !== expectedStatus) throw new Error(`GET ${path} expected ${expectedStatus}, received ${response.status}: ${await response.text()}`);
+}
 async function request(path, options = {}) {
   const response = await fetch(`${baseUrl}${path}`, {
     ...options,

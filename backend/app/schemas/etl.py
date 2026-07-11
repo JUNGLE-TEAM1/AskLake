@@ -1,6 +1,6 @@
 from typing import Any, Literal
 
-from pydantic import ConfigDict, Field
+from pydantic import ConfigDict, Field, field_validator
 
 from app.schemas.common import CamelModel, to_camel
 from app.schemas.permissions import PermissionGrant, ResourcePermissions
@@ -87,10 +87,18 @@ class WatermarkPolicyDraft(CamelModel):
     mode: str = "last_success_to_scheduled_at"
 
 
+class KafkaSchemaEvolutionPolicy(CamelModel):
+    additive_nullable: Literal["allow", "quarantine", "pause"] = "allow"
+    missing_required: Literal["quarantine", "pause"] = "quarantine"
+    incompatible_type: Literal["quarantine", "pause"] = "quarantine"
+    unknown_field: Literal["preserve", "ignore", "quarantine", "pause"] = "preserve"
+
+
 class KafkaContinuousConfigDraft(CamelModel):
     initial_offset_policy: Literal["earliest", "latest"] = "earliest"
     trigger_interval_seconds: int = Field(default=30, ge=1, le=3600)
     max_offsets_per_trigger: int = Field(default=10000, ge=1, le=1_000_000)
+    schema_evolution_policy: KafkaSchemaEvolutionPolicy = Field(default_factory=KafkaSchemaEvolutionPolicy)
 
 
 class KafkaContinuousRuntime(CamelModel):
@@ -100,10 +108,80 @@ class KafkaContinuousRuntime(CamelModel):
     last_flush_at: str | None = None
     last_batch_id: str | None = None
     lag: int | None = None
+    max_partition_lag: int | None = None
+    lagging_partition_count: int = 0
+    lag_available: bool = False
+    partition_progress: dict[str, dict[str, int]] = Field(default_factory=dict)
+    last_batch_duration_ms: int | None = None
+    last_batch_input_rows: int = 0
+    throughput_rows_per_second: float | None = None
+    schema_version: int = 1
+    schema_fingerprint: str | None = None
+    schema_status: str = "stable"
+    schema_changes: list[dict[str, Any]] = Field(default_factory=list)
     consumed_count: int = 0
     stored_count: int = 0
     quarantined_count: int = 0
+    replayed_count: int = 0
     failed_count: int = 0
+    last_error: str | None = None
+
+
+class ContinuousWorkerLogsResponse(CamelModel):
+    job_id: str
+    container_state: str
+    lines: list[str] = Field(default_factory=list)
+    truncated: bool = False
+
+
+class ContinuousQuarantineRecord(CamelModel):
+    topic: str
+    partition: int
+    offset: int
+    raw_payload: str
+    reason: str
+    schema_fingerprint: str | None = None
+    quarantined_at: str | None = None
+    replay_status: str = "pending"
+
+
+class ContinuousQuarantineResponse(CamelModel):
+    job_id: str
+    records: list[ContinuousQuarantineRecord] = Field(default_factory=list)
+    total: int = 0
+
+
+class ContinuousReplayRequest(CamelModel):
+    offsets: list[str] = Field(default_factory=list)
+
+    @field_validator("offsets")
+    @classmethod
+    def validate_offsets(cls, values: list[str]) -> list[str]:
+        if len(values) > 1000:
+            raise ValueError("offsets supports at most 1000 partition:offset values")
+        normalized = []
+        for value in values:
+            parts = str(value).split(":", 1)
+            if len(parts) != 2 or not all(part.isdigit() for part in parts):
+                raise ValueError("each offset must use non-negative partition:offset format")
+            normalized.append(f"{int(parts[0])}:{int(parts[1])}")
+        return list(dict.fromkeys(normalized))
+
+
+class ContinuousCompactionRequest(CamelModel):
+    target_file_size_mb: int = Field(default=256, ge=128, le=512)
+
+
+class ContinuousMaintenanceRun(CamelModel):
+    run_id: str
+    job_id: str
+    kind: Literal["quarantine_replay", "compaction"]
+    status: Literal["queued", "running", "success", "failed"]
+    requested_by: str
+    config: dict[str, Any] = Field(default_factory=dict)
+    result: dict[str, Any] | None = None
+    started_at: str | None = None
+    ended_at: str | None = None
     last_error: str | None = None
 
 
