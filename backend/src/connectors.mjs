@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { GetObjectCommand, ListObjectsV2Command, S3Client } from "@aws-sdk/client-s3";
+import { NodeHttpHandler } from "@smithy/node-http-handler";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,6 +14,9 @@ const ivyDir = path.join(backendDir, "tmp", "spark-ivy");
 const objectStorageSourceTypes = new Set(["File / S3", "File / S3 CSV", "File / S3 JSON", "File / S3 JSONL", "File / S3 TSV", "File / S3 TXT"]);
 const dataLakeSourceTypes = new Set(["Data Lake", "Data Lake Parquet"]);
 const kafkaSourceTypes = new Set(["Stream / Kafka", "Kafka JSON"]);
+const sourceAssetCache = new Map();
+const sourceAssetFailureCache = new Map();
+const minioDockerFailureCache = new Map();
 
 export async function testSourceConnector(sourceType, fields) {
   if (objectStorageSourceTypes.has(sourceType)) return testObjectStorageSource(fields, sourceType);
@@ -38,17 +42,38 @@ export async function listSourceAssets(sourceType, fields, requestedPrefix) {
   const accessKeyId = requiredSourceField(fields, "Access Key", "MinIO/S3 access key is required.");
   const secretAccessKey = requiredSourceField(fields, "Secret Key", "MinIO/S3 secret key is required.");
   const forcePathStyle = parseBoolean(fieldValue(fields, "Use Path Style"), true);
-  let items = listDirectObjectsViaMinioContainer({ accessKeyId, bucket, endpoint, limit, prefix, secretAccessKey });
-  if (!items) {
-    const client = s3Client({ accessKeyId, endpoint, forcePathStyle, region, secretAccessKey });
+  const cacheKey = sourceAssetCacheKey({ accessKeyId, bucket, endpoint, forcePathStyle, prefix, region, sourceType });
+  const cached = getCachedSourceAssets(cacheKey);
+  if (cached) return cached;
+  const cachedFailure = getCachedSourceAssetFailure(cacheKey);
+  if (cachedFailure) throw cachedFailure;
+
+  let items;
+  const client = s3Client({ accessKeyId, endpoint, forcePathStyle, region, secretAccessKey });
+  try {
     items = await listDirectObjects(client, bucket, prefix, limit);
+  } catch (error) {
+    items = listDirectObjectsViaMinioContainer({ accessKeyId, bucket, endpoint, limit, prefix, secretAccessKey });
+    if (!items) {
+      setCachedSourceAssetFailure(cacheKey, error);
+      throw error;
+    }
   }
-  return {
+  if (!items) {
+    const error = apiError("SOURCE_ASSET_LIST_FAILED", "MinIO/S3 object listing failed.", 502);
+    setCachedSourceAssetFailure(cacheKey, error);
+    throw error;
+  }
+
+  const response = {
     assets: toSourceAssets(items, limit),
     count: items.length,
     limit,
     prefix,
   };
+  setCachedSourceAssets(cacheKey, response);
+  sourceAssetFailureCache.delete(cacheKey);
+  return response;
 }
 
 export async function testObjectStorageSource(fields, sourceType = "File / S3") {
@@ -65,18 +90,27 @@ export async function testObjectStorageSource(fields, sourceType = "File / S3") 
     throw apiError("SOURCE_CREDENTIALS_REQUIRED", "MinIO/S3 액세스 키와 시크릿 키가 필요합니다.", 400);
   }
 
+  // A selected Parquet object needs the Spark reader; treating it as a text
+  // object silently falls back to object metadata instead of its real schema.
+  if (isParquetObjectKey(selectedObject)) {
+    const parquetPath = `s3://${bucket}/${selectedObject}`;
+    const parquetFields = upsertFields(fields, [
+      ["Path", parquetPath],
+      ["Path / Prefix", selectedObject],
+      ["__Selected Object", selectedObject],
+      ["__Sample Object", selectedObject],
+    ]);
+    return testDataLakeSourceStable(parquetFields, sourceType);
+  }
+
   const samplePolicy = samplePolicyForFields(fields, "object");
   const client = s3Client({ accessKeyId, endpoint, forcePathStyle, region, secretAccessKey });
-  if (shouldPreferMinioContainer(endpoint)) {
-    const fallback = readObjectStorageViaMinioContainer({ accessKeyId, bucket, endpoint, fields, prefix, samplePolicy, secretAccessKey, selectedObject, sourceType });
-    if (fallback) return fallback;
-  }
   try {
     let objects = selectedObject
       ? await listSelectedObject(client, bucket, selectedObject)
-      : await listDirectObjects(client, bucket, prefix);
+      : await listDirectObjects(client, bucket, prefix, sourceAssetListLimit());
     if (!prefix && objects.length === 0) {
-      objects = listDirectObjectsViaMinioContainer({ accessKeyId, bucket, endpoint, prefix, secretAccessKey }) ?? objects;
+      objects = listDirectObjectsViaMinioContainer({ accessKeyId, bucket, endpoint, limit: sourceAssetListLimit(), prefix, secretAccessKey }) ?? objects;
     }
     const sampleObject = selectedObject ? objects.find((item) => item.Key === selectedObject) : immediateSampleObject(objects, prefix);
     return buildObjectStorageAnalysis({
@@ -98,11 +132,6 @@ export async function testObjectStorageSource(fields, sourceType = "File / S3") 
     if (fallback) return fallback;
     throw error;
   }
-}
-
-function shouldPreferMinioContainer(endpoint) {
-  if (String(process.env.ASKLAKE_MINIO_DOCKER_FALLBACK ?? "true").toLowerCase() === "false") return false;
-  return /^https?:\/\/(?:127\.0\.0\.1|localhost):(?:9000|19000)(?:\/|$)/i.test(String(endpoint ?? ""));
 }
 
 export async function testDataLakeSource(fields, sourceType = "Data Lake") {
@@ -293,6 +322,14 @@ export async function testDataLakeSourceStable(fields, sourceType = "Data Lake")
     }
   }
 
+  if (isParquetObjectKey(selectedObject) && inspectError) {
+    throw apiError(
+      "PARQUET_SCHEMA_INFERENCE_FAILED",
+      `선택한 Parquet 파일의 스키마를 읽지 못했습니다: ${inspectError}`,
+      502,
+    );
+  }
+
   const schemaColumns = inspected?.schemaColumns ?? [];
   const sampleRows = inspected?.sampleRows ?? [];
   const id = sourceId("source", `${lakePath}:${objects.length}`);
@@ -370,7 +407,11 @@ export async function testRestSource(fields) {
   const accept = fieldValue(fields, "Accept") || "application/json";
   if (!endpoint) throw apiError("REST_ENDPOINT_REQUIRED", "REST API 엔드포인트 URL이 필요합니다.", 400);
 
-  const response = await fetch(endpoint, { headers: { Accept: accept }, method });
+  const response = await fetch(endpoint, {
+    headers: { Accept: accept },
+    method,
+    signal: AbortSignal.timeout(sourceConnectTimeoutMs("ASKLAKE_REST_TIMEOUT_MS", 5000)),
+  });
   if (!response.ok) {
     throw apiError("REST_SOURCE_FAILED", `REST API 응답 실패: ${response.status} ${response.statusText}`, 502);
   }
@@ -429,7 +470,16 @@ export async function testPostgresSource(fields) {
   const tableSelector = fieldValue(fields, "DATASET OR TABLE SELECTOR");
   const samplePolicy = samplePolicyForFields(fields, "rows");
 
-  const client = new Client({ database, host, password, port, user });
+  const client = new Client({
+    connectionTimeoutMillis: sourceConnectTimeoutMs("ASKLAKE_POSTGRES_CONNECT_TIMEOUT_MS", 3000),
+    database,
+    host,
+    password,
+    port,
+    query_timeout: sourceConnectTimeoutMs("ASKLAKE_POSTGRES_QUERY_TIMEOUT_MS", 5000),
+    statement_timeout: sourceConnectTimeoutMs("ASKLAKE_POSTGRES_QUERY_TIMEOUT_MS", 5000),
+    user,
+  });
   await client.connect();
   try {
     const tableResult = await client.query(
@@ -583,7 +633,13 @@ export async function testKafkaSource(fields, sourceType = "Stream / Kafka") {
   const configuredGroupId = fieldValue(fields, "CONSUMER GROUP ID") || "asklake-schema-preview";
   const sampleGroupId = `asklake-schema-preview-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const samplePolicy = samplePolicyForFields(fields, "rows");
-  const kafka = new Kafka({ brokers: [broker], clientId: "asklake-source-test", retry: { retries: 1 } });
+  const kafka = new Kafka({
+    brokers: [broker],
+    clientId: "asklake-source-test",
+    connectionTimeout: sourceConnectTimeoutMs("ASKLAKE_KAFKA_CONNECT_TIMEOUT_MS", 3000),
+    requestTimeout: sourceConnectTimeoutMs("ASKLAKE_KAFKA_REQUEST_TIMEOUT_MS", 5000),
+    retry: { retries: 0 },
+  });
   const admin = kafka.admin();
   await admin.connect();
   try {
@@ -838,7 +894,12 @@ function s3Client({ accessKeyId, endpoint, forcePathStyle, region, secretAccessK
     credentials: { accessKeyId, secretAccessKey },
     endpoint,
     forcePathStyle,
+    maxAttempts: 1,
     region,
+    requestHandler: new NodeHttpHandler({
+      connectionTimeout: sourceConnectTimeoutMs("ASKLAKE_S3_CONNECT_TIMEOUT_MS", 800),
+      requestTimeout: sourceConnectTimeoutMs("ASKLAKE_S3_REQUEST_TIMEOUT_MS", 2500),
+    }),
   });
 }
 
@@ -880,7 +941,7 @@ async function listSelectedObject(client, bucket, key) {
 }
 
 function sourceAssetPrefix(sourceType, fields, requestedPrefix) {
-  if (typeof requestedPrefix === "string") return normalizeAssetPrefix(requestedPrefix);
+  if (typeof requestedPrefix === "string" && requestedPrefix.trim()) return normalizeAssetPrefix(requestedPrefix);
   const parsedLakePath = dataLakeSourceTypes.has(sourceType) ? parseS3Path(fieldValue(fields, "Path")) : null;
   const selectedObject = selectedObjectKey(fields);
   return safeAssetConfigPrefix(fieldValue(fields, "Path / Prefix") || parsedLakePath?.prefix || fieldValue(fields, "Path"), selectedObject);
@@ -917,6 +978,69 @@ function sourceListLimit() {
 
 function sourceAssetListLimit() {
   return Math.min(configuredListLimit("ASKLAKE_SOURCE_ASSET_LIST_LIMIT", 200), 1000);
+}
+
+function sourceConnectTimeoutMs(envName, defaultMs) {
+  const configured = Number(process.env[envName] ?? defaultMs);
+  if (!Number.isFinite(configured) || configured <= 0) return defaultMs;
+  return Math.trunc(configured);
+}
+
+function sourceAssetCacheKey({ accessKeyId, bucket, endpoint, forcePathStyle, prefix, region, sourceType }) {
+  return JSON.stringify({
+    accessKeyId,
+    bucket,
+    endpoint,
+    forcePathStyle: Boolean(forcePathStyle),
+    prefix: normalizePrefix(prefix),
+    region,
+    sourceType,
+  });
+}
+
+function getCachedSourceAssets(key) {
+  const cached = sourceAssetCache.get(key);
+  if (!cached) return null;
+  if (Date.now() > cached.expiresAt) {
+    sourceAssetCache.delete(key);
+    return null;
+  }
+  return { ...cached.value, assets: [...cached.value.assets] };
+}
+
+function setCachedSourceAssets(key, value) {
+  sourceAssetCache.set(key, {
+    expiresAt: Date.now() + sourceConnectTimeoutMs("ASKLAKE_SOURCE_ASSET_CACHE_TTL_MS", 30000),
+    value: { ...value, assets: [...value.assets] },
+  });
+  if (sourceAssetCache.size > 200) {
+    const oldestKey = sourceAssetCache.keys().next().value;
+    if (oldestKey) sourceAssetCache.delete(oldestKey);
+  }
+}
+
+function getCachedSourceAssetFailure(key) {
+  const cached = sourceAssetFailureCache.get(key);
+  if (!cached) return null;
+  if (Date.now() > cached.expiresAt) {
+    sourceAssetFailureCache.delete(key);
+    return null;
+  }
+  return apiError(cached.code, cached.message, cached.status);
+}
+
+function setCachedSourceAssetFailure(key, error) {
+  const status = Number(error?.status || 502);
+  sourceAssetFailureCache.set(key, {
+    code: typeof error?.code === "string" ? error.code : "SOURCE_ASSET_LIST_FAILED",
+    expiresAt: Date.now() + sourceConnectTimeoutMs("ASKLAKE_SOURCE_ASSET_FAILURE_CACHE_TTL_MS", 10000),
+    message: error?.message || "Source asset listing failed.",
+    status,
+  });
+  if (sourceAssetFailureCache.size > 200) {
+    const oldestKey = sourceAssetFailureCache.keys().next().value;
+    if (oldestKey) sourceAssetFailureCache.delete(oldestKey);
+  }
 }
 
 function configuredListLimit(envName, defaultLimit) {
@@ -1087,10 +1211,13 @@ function readObjectSampleViaMinioContainer({ accessKeyId, bucket, bytes, key, se
   }) ?? "";
 }
 
-function runMinioClientCommand({ accessKeyId, command, endpoint = "http://127.0.0.1:19000", secretAccessKey }) {
+function runMinioClientCommand({ accessKeyId, command, endpoint = "http://127.0.0.1:9000", secretAccessKey }) {
   if (process.env.ASKLAKE_MINIO_DOCKER_FALLBACK === "false") return null;
   const container = process.env.ASKLAKE_MINIO_CONTAINER || "m3-minio";
   const minioEndpoint = process.env.ASKLAKE_MINIO_CONTAINER_ENDPOINT || endpointForMinioContainer(endpoint);
+  const failureKey = `${container}:${minioEndpoint}`;
+  const failureUntil = minioDockerFailureCache.get(failureKey) ?? 0;
+  if (failureUntil > Date.now()) return null;
   const accessKey = accessKeyId || process.env.MINIO_ACCESS_KEY || process.env.MINIO_ROOT_USER || "m3admin";
   const secretKey = secretAccessKey || process.env.MINIO_SECRET_KEY || process.env.MINIO_ROOT_PASSWORD || "wishuponastar";
   const script = [
@@ -1101,16 +1228,21 @@ function runMinioClientCommand({ accessKeyId, command, endpoint = "http://127.0.
     encoding: "utf8",
     env: { ...process.env, MC_QUIET: "1", MC_DISABLE_PAGER: "1" },
     maxBuffer: 32 * 1024 * 1024,
+    timeout: sourceConnectTimeoutMs("ASKLAKE_MINIO_DOCKER_TIMEOUT_MS", 5000),
   });
-  if (result.status !== 0) return null;
+  if (result.status !== 0) {
+    minioDockerFailureCache.set(
+      failureKey,
+      Date.now() + sourceConnectTimeoutMs("ASKLAKE_MINIO_DOCKER_FAILURE_CACHE_MS", 30000),
+    );
+    return null;
+  }
+  minioDockerFailureCache.delete(failureKey);
   return result.stdout ?? "";
 }
 
 function endpointForMinioContainer(endpoint) {
   const value = String(endpoint || "");
-  if (/^https?:\/\/(127\.0\.0\.1|localhost):19000\b/i.test(value)) {
-    return value.replace(/:19000\b/i, ":9000");
-  }
   return value;
 }
 
@@ -1155,7 +1287,7 @@ function inspectParquetLakeWithSpark({ accessKeyId, endpoint, path: sourcePath, 
   const result = spawnSync("docker", dockerArgs, {
     encoding: "utf8",
     maxBuffer: 128 * 1024 * 1024,
-    timeout: Number(process.env.ASKLAKE_SOURCE_INSPECT_TIMEOUT_MS || 30000),
+    timeout: Number(process.env.ASKLAKE_SOURCE_INSPECT_TIMEOUT_MS || 90000),
   });
   const output = `${result.stdout || ""}\n${result.stderr || ""}`;
   const marker = output.split(/\r?\n/).findLast((line) => line.startsWith("ASKLAKE_SOURCE_INSPECT="));
@@ -1190,9 +1322,6 @@ function inspectParquetLakeWithSpark({ accessKeyId, endpoint, path: sourcePath, 
 
 function endpointForDockerNetwork(endpoint) {
   const value = String(endpoint || "");
-  if (value.includes("127.0.0.1:19000") || value.includes("localhost:19000")) {
-    return "http://asklake-source-minio:9000";
-  }
   if (value.includes("127.0.0.1:9000") || value.includes("localhost:9000")) {
     return process.env.ASKLAKE_MINIO_CONTAINER_ENDPOINT || "http://m3-minio:9000";
   }
@@ -1237,10 +1366,16 @@ async function inspectParquetObjectWithJs({ bucket, client, key, rowLimit }) {
 
 async function sampleKafkaMessages({ broker, groupId, rowLimit, topic }) {
   const { Kafka } = await import("kafkajs");
-  const kafka = new Kafka({ brokers: [broker], clientId: "asklake-source-sampler", retry: { retries: 1 } });
+  const kafka = new Kafka({
+    brokers: [broker],
+    clientId: "asklake-source-sampler",
+    connectionTimeout: sourceConnectTimeoutMs("ASKLAKE_KAFKA_CONNECT_TIMEOUT_MS", 3000),
+    requestTimeout: sourceConnectTimeoutMs("ASKLAKE_KAFKA_REQUEST_TIMEOUT_MS", 5000),
+    retry: { retries: 0 },
+  });
   const consumer = kafka.consumer({ groupId });
   const messages = [];
-  const timeoutMs = Number(process.env.ASKLAKE_KAFKA_SAMPLE_TIMEOUT_MS || 8000);
+  const timeoutMs = sourceConnectTimeoutMs("ASKLAKE_KAFKA_SAMPLE_TIMEOUT_MS", 3000);
   await consumer.connect();
   try {
     await consumer.subscribe({ fromBeginning: true, topic });
@@ -1349,6 +1484,10 @@ function hasTextExtension(key) {
   return textFileExtensions.some((extension) => lower.endsWith(extension));
 }
 
+function isParquetObjectKey(key) {
+  return String(key ?? "").trim().toLowerCase().endsWith(".parquet");
+}
+
 function samplePolicyForFields(fields, kind) {
   const rawScope = fieldValue(fields, "__Schema Sample Scope").toLowerCase();
   const scope = ["slice1gb", "full"].includes(rawScope) ? rawScope : "current";
@@ -1448,7 +1587,11 @@ function quoteIdent(value) {
 async function runMongoDriverSample({ collectionSelector, database, rowLimit, uri }) {
   const { MongoClient } = await import("mongodb");
   const limit = Number.isFinite(rowLimit) && rowLimit > 0 ? Math.floor(rowLimit) : 10;
-  const client = new MongoClient(uri, { serverSelectionTimeoutMS: 8000 });
+  const client = new MongoClient(uri, {
+    connectTimeoutMS: sourceConnectTimeoutMs("ASKLAKE_MONGO_CONNECT_TIMEOUT_MS", 3000),
+    serverSelectionTimeoutMS: sourceConnectTimeoutMs("ASKLAKE_MONGO_SERVER_SELECTION_TIMEOUT_MS", 3000),
+    socketTimeoutMS: sourceConnectTimeoutMs("ASKLAKE_MONGO_SOCKET_TIMEOUT_MS", 5000),
+  });
 
   try {
     await client.connect();

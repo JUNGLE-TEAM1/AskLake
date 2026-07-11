@@ -27,6 +27,7 @@ type RuntimeNotice = {
 };
 
 export function DashboardRuntimeShell({
+  canManage = true,
   children,
   datasetSidebar,
   datasetSidebarOpen = false,
@@ -130,6 +131,7 @@ export function DashboardRuntimeShell({
   return (
     <div className="asklake-dashboard-runtime">
       <DashboardTopBar
+        canManage={canManage}
         hasPublishedRevision={hasPublishedRevision}
         isPublishing={isPublishing}
         isRenaming={isRenamingTitle}

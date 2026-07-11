@@ -1,4 +1,4 @@
-from sqlalchemy import JSON, Boolean, Float, ForeignKey, String, Text
+from sqlalchemy import JSON, Boolean, Float, ForeignKey, Index, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -10,6 +10,8 @@ class ETLJobModel(TimestampMixin, Base):
     id: Mapped[str] = mapped_column(String(120), primary_key=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     owner: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_by_profile: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     status: Mapped[str] = mapped_column(String(64), nullable=False, default="scheduled")
     tag: Mapped[str] = mapped_column(String(64), nullable=False, default="[생성]")
     source: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -26,11 +28,19 @@ class ETLJobModel(TimestampMixin, Base):
     schema_columns: Mapped[list[dict]] = mapped_column(JSON, nullable=False, default=list)
     schema_fingerprint: Mapped[str | None] = mapped_column(Text, nullable=True)
     schema_sample_rows: Mapped[list[list[str]]] = mapped_column(JSON, nullable=False, default=list)
+    schema_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    rule_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    permission_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     permission_roles: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True)
     storage_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
     partition: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    partition_columns: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    index_columns: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     compression: Mapped[str | None] = mapped_column(String(64), nullable=True)
     storage_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    target_description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    target_database: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    target_tags: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     target_format: Mapped[str] = mapped_column(String(120), nullable=False)
     target_layer: Mapped[str] = mapped_column(String(32), nullable=False)
     target_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
@@ -42,7 +52,7 @@ class ETLJobModel(TimestampMixin, Base):
     quality_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     quality_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
     last_run: Mapped[str] = mapped_column(String(64), nullable=False)
-    last_state: Mapped[str] = mapped_column(String(255), nullable=False)
+    last_state: Mapped[str] = mapped_column(Text, nullable=False)
     next_run: Mapped[str] = mapped_column(String(255), nullable=False)
     progress: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     stats: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
@@ -63,5 +73,27 @@ class ETLRunModel(TimestampMixin, Base):
     input_rows: Mapped[str] = mapped_column(String(120), nullable=False)
     output_rows: Mapped[str] = mapped_column(String(120), nullable=False)
     output_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
-    failed_stage: Mapped[str] = mapped_column(String(255), nullable=False)
-    error_summary: Mapped[str] = mapped_column(String(512), nullable=False)
+    failed_stage: Mapped[str] = mapped_column(Text, nullable=False)
+    error_summary: Mapped[str] = mapped_column(Text, nullable=False)
+    airflow_dag_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    airflow_dag_run_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    airflow_run_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    airflow_state: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    task_states: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    last_synced_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    sync_error: Mapped[str | None] = mapped_column(String(512), nullable=True)
+
+
+class KafkaSnapshotModel(TimestampMixin, Base):
+    __tablename__ = "kafka_snapshots"
+    __table_args__ = (
+        Index("ix_kafka_snapshots_active", "topic", "consumer_group_id", "status"),
+    )
+
+    snapshot_id: Mapped[str] = mapped_column(String(120), primary_key=True)
+    job_id: Mapped[str | None] = mapped_column(String(120), ForeignKey("etl_jobs.id"), nullable=True, index=True)
+    topic: Mapped[str] = mapped_column(String(255), nullable=False)
+    consumer_group_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="running")
+    snapshot: Mapped[dict] = mapped_column(JSON, nullable=False)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)

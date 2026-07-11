@@ -1,20 +1,30 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
+import secrets
 import subprocess
 from typing import Any
+from urllib.parse import urlparse
 
 from fastapi import status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.auth_context import ActorContext, require_permission
+from app.core.config import settings
 from app.core.errors import ApiError
-from app.models import CatalogDatasetModel, ETLJobModel, ETLRunModel
+from app.core.permission_metadata import permission_grants_from_roles, resource_permissions
+from app.models import CatalogDatasetModel, ETLJobModel, ETLRunModel, KafkaSnapshotModel
+from app.repositories.audit_repository import safe_record_audit_event
 from app.repositories import etl_repository
 from app.schemas.common import ErrorCode
 from app.schemas.etl import (
+    AirflowCatalogReconciliationResponse,
     CatalogDataset,
+    AirflowRunExecutionResponse,
     CreatePipelineRequest,
     CreatePipelineResponse,
     JobCommandResponse,
@@ -36,19 +46,26 @@ from app.schemas.etl import (
     SourceAssetsResponse,
     SourceConnectorAnalysis,
     SourceConnectorRequest,
+    UpdatePipelineRequest,
 )
+
+from app.services.airflow_client import AirflowDagRun, AirflowTaskInstance, build_airflow_client
+from app.services.governance_enforcement import require_governed_access
+from app.services.resource_permission_service import job_with_persisted_permission_grants, permission_grants_for_resource, permissions_for_actor_with_governance
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 SCRIPTS_DIR = BACKEND_DIR / "scripts"
 JOB_STATUSES = ("scheduled", "failed", "running", "paused", "canceled", "stopped")
 
 
-def create_pipeline(db: Session, request: CreatePipelineRequest) -> CreatePipelineResponse:
+def create_pipeline(db: Session, request: CreatePipelineRequest, actor_name: str = "demo-user") -> CreatePipelineResponse:
     validate_create_request(request)
+    created_by = identity_name(request.created_by or actor_name or request.owner)
+    created_by_profile = request.created_by_profile or identity_profile(created_by)
     dataset_id = f"ds_{normalize_column_name(request.target_dataset)}"
     existing_job = etl_repository.get_job_by_dataset_id(db, dataset_id) or etl_repository.get_job_by_target(db, request.target_dataset)
     if existing_job is not None:
-        update_existing_append_job(existing_job, request, dataset_id)
+        update_existing_append_job(existing_job, request, dataset_id, created_by, created_by_profile)
         saved_job = etl_repository.save_job(db, existing_job)
         return CreatePipelineResponse(
             catalog_target={
@@ -72,6 +89,8 @@ def create_pipeline(db: Session, request: CreatePipelineRequest) -> CreatePipeli
         id=job_id,
         name=request.job_name,
         owner=request.owner,
+        created_by=created_by,
+        created_by_profile=created_by_profile,
         status="scheduled",
         tag="[생성]",
         source=f"{request.source_type} / {request.source_label}",
@@ -88,13 +107,22 @@ def create_pipeline(db: Session, request: CreatePipelineRequest) -> CreatePipeli
         schema_columns=[column.model_dump(mode="json", by_alias=True) for column in request.schema_columns],
         schema_fingerprint=request.schema_fingerprint,
         schema_sample_rows=request.schema_sample_rows,
+        schema_summary=request.schema_summary,
+        rule_summary=request.rule_summary,
+        permission_summary=request.permission_summary,
         permission_roles=request.permission_roles,
         storage_type=request.storage_type,
         partition=request.partition,
+        partition_columns=normalize_string_list(request.partition_columns),
+        index_columns=normalize_string_list(request.index_columns),
         compression=request.compression,
         storage_path=request.storage_path,
+        target_description=normalize_optional_text(request.target_description),
+        target_database=normalize_optional_text(request.target_database),
+        target_tags=normalize_target_tags(request.target_tags),
         target_format=request.target_format,
         target_layer=request.target_layer,
+        target_path=request.storage_path,
         rag=request.rag,
         transform_output_columns=tuple_rows_to_lists(request.transform_output_columns),
         transform_steps=[step.model_dump(mode="json", by_alias=True) for step in request.transform_steps],
@@ -170,11 +198,135 @@ def latest_run_outcome(job: JobRowData) -> JobRunOutcome | None:
     return status_value if status_value in {"success", "failed", "canceled"} else None
 
 
-def get_job(db: Session, job_id: str) -> JobRowData:
+def normalize_list_job(job: JobRowData) -> JobRowData:
+    if job.status not in {"failed", "canceled", "paused"}:
+        return job
+    return job.model_copy(update={"status": "scheduled"})
+
+
+def latest_run_outcome(job: JobRowData) -> JobRunOutcome | None:
+    latest_run = (job.run_history or [None])[0]
+    if latest_run is None:
+        return None
+    status_value = latest_run.status if hasattr(latest_run, "status") else latest_run.get("status")
+    return status_value if status_value in {"success", "failed", "canceled"} else None
+
+
+def run_due_scheduled_jobs(
+    db: Session,
+    request: ScheduledJobRunRequest,
+    actor: ActorContext | None = None,
+) -> ScheduledJobRunResponse:
+    jobs = etl_repository.list_job_models(db)
+    if request.job_id:
+        jobs = [job for job in jobs if job.id == request.job_id]
+    items: list[ScheduledJobRunItem] = []
+    actor_context = actor or ActorContext(name="scheduler", role="admin")
+
+    for job in jobs:
+        should_run, reason = should_run_scheduled_job(job, request)
+        if not should_run:
+            items.append(ScheduledJobRunItem(
+                job_id=job.id,
+                job_name=job.name,
+                reason=reason,
+                schedule=job.schedule,
+                triggered=False,
+            ))
+            continue
+
+        response = command_job(db, job.id, "run", actor_context)
+        if reason == "due":
+            advance_scheduled_job_after_tick(db, job.id)
+        items.append(ScheduledJobRunItem(
+            job_id=job.id,
+            job_name=job.name,
+            reason=reason,
+            response=response,
+            schedule=job.schedule,
+            triggered=True,
+        ))
+
+    return ScheduledJobRunResponse(
+        checked_count=len(items),
+        items=items,
+        triggered_count=sum(1 for item in items if item.triggered),
+    )
+
+
+def get_job(db: Session, job_id: str, actor: ActorContext | None = None) -> JobRowData:
+    actor_context = actor or ActorContext()
+    job_model = etl_repository.get_job(db, job_id)
+    if job_model is None:
+        raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
+    sync_airflow_runs_for_job(db, job_model)
     job = etl_repository.get_job_schema(db, job_id)
     if job is None:
         raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
-    return job
+    job_with_permissions = with_job_permissions(db, job, actor_context)
+    if not job_with_permissions.permissions.can_view:
+        safe_record_audit_event(
+            db,
+            actor=actor_context,
+            action="etl_job.view.forbidden",
+            result="forbidden",
+            target_id=job_id,
+            target_type="etl_job",
+            details={"reason": "missing_view_permission"},
+        )
+        raise ApiError(ErrorCode.FORBIDDEN, "Job access denied", status.HTTP_403_FORBIDDEN)
+    return job_with_permissions
+
+
+def update_pipeline(
+    db: Session,
+    job_id: str,
+    request: UpdatePipelineRequest,
+    actor: ActorContext | None = None,
+) -> JobRowData:
+    job = etl_repository.get_job(db, job_id)
+    if job is None:
+        raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
+
+    actor_context = actor or ActorContext()
+    require_governed_access(
+        db,
+        actor_context,
+        action="manage",
+        api_path=f"/api/etl/jobs/{job_id}",
+        http_method="PATCH",
+        metadata={"owner": job.owner},
+        resource_id=job.id,
+        resource_name=job.name,
+        resource_type="etl_job",
+    )
+    require_permission(
+        actor_context,
+        "manage",
+        owner=job.owner,
+        grants=permission_grants_for_resource(
+            db,
+            "etl_job",
+            job.id,
+            permission_grants_from_roles(job.owner, job.permission_roles, default_actions=["view", "run"]),
+        ),
+        resource_label="job",
+    )
+    if job.status == "running":
+        raise ApiError(ErrorCode.CONFLICT, f"Job is running and cannot be updated: {job_id}", status.HTTP_409_CONFLICT)
+
+    validate_update_request(request)
+    target_changed = target_identity_changed(job, request)
+    if target_changed and has_successful_run(db, job.id):
+        raise ApiError(
+            ErrorCode.VALIDATION_ERROR,
+            "Target dataset, database, layer, format, storage type, and path are immutable after a successful run. Clone the job to change its destination.",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
+
+    apply_update_request(job, request, target_changed)
+    saved_job = etl_repository.save_job(db, job)
+    return with_job_permissions(db, saved_job, actor_context)
 
 
 def list_datasets(db: Session) -> list[CatalogDataset]:
@@ -220,13 +372,54 @@ def execute_query(db: Session, request: QueryRunRequest) -> QueryRunResponse:
     )
 
 
-def command_job(db: Session, job_id: str, command: str) -> JobCommandResponse:
+def command_job(db: Session, job_id: str, command: str, actor: ActorContext | None = None) -> JobCommandResponse:
     job = etl_repository.get_job(db, job_id)
     if job is None:
         raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
 
     if command not in {"run", "retry", "pause", "cancelRun", "stopSchedule", "resumeSchedule"}:
         raise ApiError(ErrorCode.VALIDATION_ERROR, f"Unsupported job command: {command}", status.HTTP_400_BAD_REQUEST)
+    actor_context = actor or ActorContext()
+    required_action = "run" if command in {"run", "retry"} else "manage"
+    require_governed_access(
+        db,
+        actor_context,
+        action=required_action,
+        api_path=f"/api/etl/jobs/{job_id}/commands",
+        http_method="POST",
+        metadata={"command": command, "owner": job.owner},
+        resource_id=job.id,
+        resource_name=job.name,
+        resource_type="etl_job",
+    )
+    try:
+        require_permission(
+            actor_context,
+            required_action,
+            owner=job.owner,
+            grants=permission_grants_for_resource(
+                db,
+                "etl_job",
+                job.id,
+                permission_grants_from_roles(job.owner, job.permission_roles, default_actions=["view", "run"]),
+            ),
+            resource_label="job",
+        )
+    except ApiError as exc:
+        safe_record_audit_event(
+            db,
+            action="etl_job.command.forbidden",
+            actor=actor_context,
+            api_path=f"/api/etl/jobs/{job_id}/commands",
+            http_method="POST",
+            metadata={"command": command, "requiredAction": required_action, "owner": job.owner},
+            result="forbidden",
+            status_code=exc.status_code,
+            target_id=job.id,
+            target_name=job.name,
+            target_type="etl_job",
+        )
+        raise
     if command == "run" and job.status == "running":
         raise ApiError(ErrorCode.CONFLICT, f"Job is already running: {job_id}", status.HTTP_409_CONFLICT)
     if command == "pause" and job.status != "running":
@@ -268,12 +461,27 @@ def command_job(db: Session, job_id: str, command: str) -> JobCommandResponse:
     run_model = None
     dataset_model = None
     if command in {"run", "retry"}:
-        apply_job_command(job, command)
-        spark_result = run_spark_job(job, command, stable_id("run", f"{job.id}:{command}:{iso_now()}"))
-        run_model = run_from_spark_result(job, spark_result)
-        run_schema = etl_repository.run_to_schema(run_model)
-        finalize_job_from_spark_result(job, command, spark_result)
-        job.dag_steps = dag_steps_from_spark_result(job, command, run_schema.model_dump(by_alias=True), spark_result)
+        if is_kafka_job(job):
+            run_id = stable_id("run", f"{job.id}:{command}:kafka:{iso_now()}")
+            kafka_request = kafka_ingest_request_from_job(job, run_id)
+            db.commit()
+            try:
+                result = run_kafka_ingest_request(db, kafka_request, command, job.id)
+            except ApiError as exc:
+                bridge_error = exc.details.get("bridge") if isinstance(exc.details, dict) else None
+                result = kafka_failure_result(kafka_request, run_id, exc, bridge_error if isinstance(bridge_error, dict) else {})
+            job = etl_repository.get_job(db, job_id)
+            if job is None:
+                raise ApiError(ErrorCode.NOT_FOUND, f"Job not found after Kafka ingest: {job_id}", status.HTTP_404_NOT_FOUND)
+            run_model = run_from_kafka_result(job, result)
+            run_schema = etl_repository.run_to_schema(run_model)
+            finalize_job_from_kafka_result(job, command, result)
+            job.dag_steps = dag_steps_from_kafka_result(job, command, run_schema.model_dump(by_alias=True), result)
+        else:
+            run_model = submit_airflow_job_run(job, command)
+            run_schema = etl_repository.run_to_schema(run_model)
+            apply_airflow_submit_job_state(job, command, run_model)
+            job.dag_steps = dag_steps_from_airflow_submit(job, command, run_schema.model_dump(by_alias=True))
         job.dag_steps_by_run_id = {**(job.dag_steps_by_run_id or {}), run_schema.run_id: job.dag_steps}
         job.stats = stats_from_runs(job, [run_schema, *etl_repository.list_runs_for_job(db, job.id)])
         if spark_result.get("status") == "success":
@@ -295,15 +503,35 @@ def command_job(db: Session, job_id: str, command: str) -> JobCommandResponse:
 
     saved_job, persisted_run, dataset_schema = etl_repository.save_command_result(db, job, run_model, dataset_model)
     run_schema = persisted_run or run_schema
+    if dataset_schema is None and job.dataset_id:
+        dataset_schema = etl_repository.get_dataset_schema_by_id(db, job.dataset_id)
 
     return JobCommandResponse(
         action=action_by_command[command],
         api_path=f"/api/etl/jobs/{job_id}/commands",
         dataset=dataset_schema,
-        job=saved_job,
+        job=with_job_permissions(db, saved_job, actor or ActorContext()),
         run=run_schema,
         dag_steps=[JobDagStep(**step) for step in job.dag_steps] if job.dag_steps else None,
     )
+
+
+def with_job_permissions(db: Session, job: JobRowData, actor: ActorContext) -> JobRowData:
+    job_with_grants = job_with_persisted_permission_grants(db, job)
+    grant_payloads = [
+        grant.model_dump(by_alias=True) if hasattr(grant, "model_dump") else grant
+        for grant in job_with_grants.permission_grants
+    ]
+    return job_with_grants.model_copy(update={
+        "permissions": permissions_for_actor_with_governance(
+            db,
+            actor,
+            owner=job_with_grants.owner,
+            grants=grant_payloads,
+            resource_id=job_with_grants.id,
+            resource_type="etl_job",
+        ),
+    })
 
 
 def test_source_connector(request: SourceConnectorRequest) -> SourceConnectorAnalysis:
@@ -429,6 +657,551 @@ def run_spark_job(job: ETLJobModel, command: str, run_id: str) -> dict[str, Any]
     )
 
 
+def execute_airflow_spark_run(
+    db: Session,
+    *,
+    job_id: str,
+    run_id: str,
+    command: str,
+) -> dict[str, Any]:
+    job = etl_repository.get_job(db, job_id)
+    if job is None:
+        raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
+    run = etl_repository.get_run_model(db, run_id)
+    if run is None or run.job_id != job.id or run.airflow_dag_run_id != run_id:
+        raise ApiError(
+            "AIRFLOW_RUN_MISMATCH",
+            "Airflow Spark execution does not match a persisted AskLake Run.",
+            status.HTTP_409_CONFLICT,
+            {"jobId": job_id, "runId": run_id},
+        )
+
+    existing_result = (run.task_states or {}).get("sparkResult")
+    if isinstance(existing_result, dict) and existing_result.get("status") == "success":
+        return existing_result
+
+    result = run_spark_job(job, command, run_id)
+    manifest = spark_result_manifest(result, run_id)
+    run.input_rows = format_rows(manifest.get("inputRows"))
+    run.output_rows = format_rows(manifest.get("outputRows"))
+    run.output_path = manifest.get("outputPath") or run.output_path
+    run.duration = format_duration_ms(manifest.get("durationMs"))
+    run.ended_at = str(manifest.get("endedAt") or run.ended_at)
+    run.failed_stage = "-" if manifest.get("status") == "success" else spark_failed_stage(manifest)
+    run.error_summary = "-" if manifest.get("status") == "success" else spark_error_summary(manifest)
+    run.task_states = {**(run.task_states or {}), "sparkResult": manifest}
+    if manifest.get("status") == "success" and manifest.get("outputPath"):
+        job.target_path = str(manifest["outputPath"])
+    db.commit()
+    return manifest
+
+
+def reconcile_airflow_catalog(
+    db: Session,
+    *,
+    job_id: str,
+    run_id: str,
+) -> AirflowCatalogReconciliationResponse:
+    job, run = airflow_catalog_identity(db, job_id, run_id)
+    dataset_id = str(job.dataset_id or "").strip()
+    if not dataset_id:
+        error = catalog_reconciliation_error(
+            "Persisted Job does not have a target dataset id.",
+            {"jobId": job_id, "runId": run_id},
+        )
+        persist_catalog_reconciliation_failure(db, run_id, dataset_id, error.message)
+        raise error
+
+    task_states = dict(run.task_states or {})
+    catalog_result = task_states.get("catalogResult")
+    if (
+        isinstance(catalog_result, dict)
+        and catalog_result.get("status") == "success"
+        and str(catalog_result.get("runId") or "") == run_id
+        and str(catalog_result.get("datasetId") or "") == dataset_id
+    ):
+        dataset = etl_repository.get_dataset_schema_by_id(db, dataset_id)
+        if dataset is not None:
+            return AirflowCatalogReconciliationResponse(
+                dataset=dataset,
+                reconciled_at=str(catalog_result.get("reconciledAt") or iso_now()),
+                run_id=run_id,
+            )
+
+    spark_result = task_states.get("sparkResult")
+    if not isinstance(spark_result, dict) or spark_result.get("status") != "success":
+        raise ApiError(
+            "SPARK_RESULT_NOT_READY",
+            "A persisted successful Spark result is required before Catalog reconciliation.",
+            status.HTTP_409_CONFLICT,
+            {"jobId": job_id, "runId": run_id},
+        )
+    if str(spark_result.get("runId") or run_id) != run_id:
+        raise ApiError(
+            "AIRFLOW_RUN_MISMATCH",
+            "Persisted Spark result does not match the requested Airflow Run.",
+            status.HTTP_409_CONFLICT,
+            {"jobId": job_id, "runId": run_id, "sparkRunId": spark_result.get("runId")},
+        )
+
+    output_path = str(spark_result.get("outputPath") or "").strip()
+    try:
+        validate_catalog_output_identity(job, run_id, output_path)
+        physical = inspect_spark_output(output_path)
+        enriched_result = {
+            **spark_result,
+            "parquetObjectCount": physical["parquetObjectCount"],
+            "storageSizeBytes": physical["storageSizeBytes"],
+        }
+        return commit_airflow_catalog_reconciliation(
+            db,
+            job_id=job_id,
+            run_id=run_id,
+            result=enriched_result,
+            retry_on_create_conflict=True,
+        )
+    except ApiError as exc:
+        if str(exc.code) == "CATALOG_RECONCILIATION_FAILED":
+            persist_catalog_reconciliation_failure(db, run_id, dataset_id, exc.message)
+        raise
+    except Exception as exc:
+        message = compact_storage_text(exc, limit=1800)
+        persist_catalog_reconciliation_failure(db, run_id, dataset_id, message)
+        raise catalog_reconciliation_error(
+            "Catalog reconciliation failed.",
+            {"jobId": job_id, "runId": run_id, "reason": message},
+        ) from exc
+
+
+def airflow_catalog_identity(db: Session, job_id: str, run_id: str) -> tuple[ETLJobModel, ETLRunModel]:
+    job = etl_repository.get_job(db, job_id)
+    if job is None:
+        raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
+    run = etl_repository.get_run_model(db, run_id)
+    if run is None or run.job_id != job.id or run.airflow_dag_run_id != run_id:
+        raise ApiError(
+            "AIRFLOW_RUN_MISMATCH",
+            "Catalog reconciliation does not match a persisted AskLake Run.",
+            status.HTTP_409_CONFLICT,
+            {"jobId": job_id, "runId": run_id},
+        )
+    return job, run
+
+
+def commit_airflow_catalog_reconciliation(
+    db: Session,
+    *,
+    job_id: str,
+    run_id: str,
+    result: dict[str, Any],
+    retry_on_create_conflict: bool,
+) -> AirflowCatalogReconciliationResponse:
+    job, run = airflow_catalog_identity(db, job_id, run_id)
+    dataset_id = str(job.dataset_id or "").strip()
+    existing_dataset = etl_repository.get_dataset_by_id_for_update(db, dataset_id)
+    name_match = etl_repository.get_dataset_by_name(db, job.target)
+    if name_match is not None and name_match.id != dataset_id:
+        raise catalog_reconciliation_error(
+            "Target dataset name is already owned by another dataset id.",
+            {"datasetId": dataset_id, "existingDatasetId": name_match.id, "runId": run_id},
+        )
+
+    reconciled_at = iso_now()
+    dataset_model = dataset_from_spark_result(job, result, existing_dataset)
+    catalog_result = {
+        "datasetId": dataset_id,
+        "parquetObjectCount": parse_count_value(result.get("parquetObjectCount")),
+        "reconciledAt": reconciled_at,
+        "runId": run_id,
+        "status": "success",
+        "storageLocation": result.get("outputPath"),
+        "storageSizeBytes": parse_count_value(result.get("storageSizeBytes")),
+    }
+    run.task_states = {
+        **(run.task_states or {}),
+        "sparkResult": result,
+        "catalogResult": catalog_result,
+    }
+
+    try:
+        _, _, dataset = etl_repository.save_command_result(db, job, run, dataset_model)
+    except IntegrityError:
+        db.rollback()
+        if retry_on_create_conflict:
+            return commit_airflow_catalog_reconciliation(
+                db,
+                job_id=job_id,
+                run_id=run_id,
+                result=result,
+                retry_on_create_conflict=False,
+            )
+        raise
+
+    if dataset is None:
+        raise RuntimeError("Catalog reconciliation committed without a dataset response.")
+    return AirflowCatalogReconciliationResponse(
+        dataset=dataset,
+        reconciled_at=reconciled_at,
+        run_id=run_id,
+    )
+
+
+def persist_catalog_reconciliation_failure(db: Session, run_id: str, dataset_id: str, message: str) -> None:
+    try:
+        db.rollback()
+        run = etl_repository.get_run_model(db, run_id)
+        if run is None:
+            return
+        failed_at = iso_now()
+        compact_message = compact_storage_text(message, limit=1800)
+        run.task_states = {
+            **(run.task_states or {}),
+            "catalogResult": {
+                "datasetId": dataset_id,
+                "error": compact_message,
+                "failedAt": failed_at,
+                "runId": run_id,
+                "status": "failed",
+            },
+        }
+        run.failed_stage = "Catalog reconciliation"
+        run.error_summary = compact_message
+        db.add(run)
+        db.commit()
+    except Exception:
+        db.rollback()
+
+
+def validate_catalog_output_identity(job: ETLJobModel, run_id: str, output_path: str) -> None:
+    if not output_path or output_path == "-":
+        raise catalog_reconciliation_error(
+            "Successful Spark result does not include an output path.",
+            {"jobId": job.id, "runId": run_id},
+        )
+    configured_root = str(job.storage_path or "").strip()
+    if not configured_root:
+        return
+    expected = canonical_storage_path(f"{configured_root.rstrip('/')}/{run_id}")
+    actual = canonical_storage_path(output_path)
+    if actual != expected:
+        raise catalog_reconciliation_error(
+            "Spark output path does not match the persisted Job destination.",
+            {"expected": expected, "outputPath": actual, "runId": run_id},
+        )
+
+
+def canonical_storage_path(value: str) -> str:
+    text_value = str(value or "").strip()
+    if re.match(r"^s3a?://", text_value, re.IGNORECASE):
+        return re.sub(r"^s3://", "s3a://", text_value, flags=re.IGNORECASE).rstrip("/")
+    return str(Path(text_value).expanduser().resolve()).rstrip("/")
+
+
+def inspect_spark_output(output_path: str, *, s3_client: Any | None = None) -> dict[str, int]:
+    if re.match(r"^s3a?://", output_path, re.IGNORECASE):
+        return inspect_s3_spark_output(output_path, s3_client=s3_client)
+    path = Path(output_path)
+    if not path.exists():
+        raise catalog_reconciliation_error(
+            "Spark output path does not exist.",
+            {"outputPath": output_path},
+        )
+    files = [path] if path.is_file() else [item for item in path.rglob("*") if item.is_file()]
+    parquet_files = [item for item in files if item.name.lower().endswith(".parquet")]
+    storage_size_bytes = sum(item.stat().st_size for item in files)
+    if not parquet_files or storage_size_bytes <= 0:
+        raise catalog_reconciliation_error(
+            "Spark output does not contain a non-empty Parquet result.",
+            {"outputPath": output_path},
+        )
+    return {
+        "parquetObjectCount": len(parquet_files),
+        "storageSizeBytes": storage_size_bytes,
+    }
+
+
+def inspect_s3_spark_output(output_path: str, *, s3_client: Any | None = None) -> dict[str, int]:
+    parsed = urlparse(re.sub(r"^s3a://", "s3://", output_path, flags=re.IGNORECASE))
+    bucket = parsed.netloc
+    key = parsed.path.lstrip("/").rstrip("/")
+    if not bucket or not key:
+        raise catalog_reconciliation_error(
+            "Spark S3 output path is invalid.",
+            {"outputPath": output_path},
+        )
+    client = s3_client or build_catalog_s3_client()
+    prefix = f"{key}/"
+    continuation_token = None
+    parquet_count = 0
+    storage_size_bytes = 0
+    try:
+        while True:
+            request = {"Bucket": bucket, "Prefix": prefix}
+            if continuation_token:
+                request["ContinuationToken"] = continuation_token
+            response = client.list_objects_v2(**request)
+            for item in response.get("Contents") or []:
+                object_key = str(item.get("Key") or "")
+                storage_size_bytes += max(int(item.get("Size") or 0), 0)
+                if object_key.lower().endswith(".parquet"):
+                    parquet_count += 1
+            if not response.get("IsTruncated"):
+                break
+            continuation_token = response.get("NextContinuationToken")
+            if not continuation_token:
+                break
+    except ApiError:
+        raise
+    except Exception as exc:
+        raise catalog_reconciliation_error(
+            "Spark S3 output could not be inspected.",
+            {"bucket": bucket, "prefix": prefix, "reason": compact_storage_text(exc, limit=1000)},
+        ) from exc
+    if parquet_count <= 0 or storage_size_bytes <= 0:
+        raise catalog_reconciliation_error(
+            "Spark S3 output does not contain a non-empty Parquet result.",
+            {"bucket": bucket, "prefix": prefix},
+        )
+    return {
+        "parquetObjectCount": parquet_count,
+        "storageSizeBytes": storage_size_bytes,
+    }
+
+
+def build_catalog_s3_client() -> Any:
+    try:
+        import boto3
+        from botocore.config import Config
+    except ImportError as exc:
+        raise catalog_reconciliation_error(
+            "Python S3 client dependency is not installed.",
+        ) from exc
+
+    endpoint = os.environ.get("S3_ENDPOINT") or os.environ.get("MINIO_ENDPOINT")
+    access_key = os.environ.get("AWS_ACCESS_KEY_ID") or os.environ.get("MINIO_ACCESS_KEY")
+    secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY") or os.environ.get("MINIO_SECRET_KEY")
+    region = os.environ.get("AWS_REGION") or os.environ.get("MINIO_REGION") or "us-east-1"
+    force_path_style = str(os.environ.get("S3_FORCE_PATH_STYLE") or "true").lower() != "false"
+    kwargs: dict[str, Any] = {
+        "config": Config(s3={"addressing_style": "path" if force_path_style else "auto"}),
+        "region_name": region,
+    }
+    if endpoint:
+        kwargs["endpoint_url"] = endpoint
+    if access_key:
+        kwargs["aws_access_key_id"] = access_key
+    if secret_key:
+        kwargs["aws_secret_access_key"] = secret_key
+    return boto3.client("s3", **kwargs)
+
+
+def catalog_reconciliation_error(message: str, details: dict[str, Any] | None = None) -> ApiError:
+    return ApiError(
+        "CATALOG_RECONCILIATION_FAILED",
+        message,
+        status.HTTP_500_INTERNAL_SERVER_ERROR,
+        details,
+    )
+
+
+def spark_result_manifest(result: dict[str, Any], run_id: str) -> dict[str, Any]:
+    manifest = {
+        key: result.get(key)
+        for key in (
+            "durationMs",
+            "endedAt",
+            "error",
+            "failedStage",
+            "format",
+            "inputRows",
+            "outputPath",
+            "outputRows",
+            "quality",
+            "schema",
+            "sourcePath",
+            "sparkExitCode",
+            "startedAt",
+            "status",
+        )
+        if result.get(key) is not None
+    }
+    manifest["runId"] = str(result.get("runId") or run_id)
+    if manifest.get("error"):
+        manifest["error"] = compact_storage_text(manifest["error"], limit=1800)
+    return manifest
+
+
+def execute_airflow_run(
+    db: Session,
+    job_id: str,
+    run_id: str,
+    command: str,
+    airflow_token: str | None,
+) -> AirflowRunExecutionResponse:
+    require_airflow_internal_token(airflow_token)
+    job = etl_repository.get_job(db, job_id)
+    run = etl_repository.get_run(db, run_id)
+    if job is None:
+        raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
+    if run is None or run.job_id != job_id:
+        raise ApiError(ErrorCode.NOT_FOUND, f"Run not found for job: {run_id}", status.HTTP_404_NOT_FOUND)
+    if not run.airflow_dag_run_id:
+        raise ApiError(
+            ErrorCode.INVALID_JOB_STATE,
+            f"Run is not owned by Airflow: {run_id}",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
+
+    dataset_id = job.dataset_id or f"ds_{normalize_column_name(job.target)}"
+    job.dataset_id = dataset_id
+    existing_dataset = etl_repository.get_dataset_by_id(db, dataset_id)
+    if airflow_run_has_materialization(run, existing_dataset):
+        return airflow_execution_response_from_persisted(job, run, existing_dataset)
+
+    try:
+        result = run_spark_job(job, command, run_id)
+    except ApiError as exc:
+        now = iso_now()
+        result = {
+            "endedAt": now,
+            "error": exc.message,
+            "failedStage": "Spark ETL bridge",
+            "inputRows": 0,
+            "outputPath": "-",
+            "outputRows": 0,
+            "runId": run_id,
+            "startedAt": now,
+            "status": "failed",
+        }
+
+    spark_run = run_from_spark_result(job, result)
+    apply_spark_result_to_airflow_run(run, spark_run)
+    dataset_model = None
+    if result.get("status") == "success":
+        dataset_model = dataset_from_spark_result(job, result, existing_dataset)
+        job.target_path = result.get("outputPath") or job.target_path
+        job.last_state = "Spark 적재 및 카탈로그 등록 완료 · Airflow 종료 확인 중"
+        job.progress = {"label": "Airflow 종료 확인 중", "value": 95}
+        job.status = "running"
+    else:
+        finalize_job_from_spark_result(job, command, result)
+
+    run_schema = etl_repository.run_to_schema(run)
+    other_runs = [item for item in etl_repository.list_runs_for_job(db, job.id) if item.run_id != run.run_id]
+    job.stats = stats_from_runs(job, [run_schema, *other_runs])
+    etl_repository.save_command_result(db, job, run, dataset_model)
+    return airflow_execution_response(job, result, dataset_model.id if dataset_model else None)
+
+
+def require_airflow_internal_token(provided_token: str | None) -> None:
+    expected_token = str(settings.airflow_internal_token or "")
+    if not expected_token:
+        raise ApiError(
+            "AIRFLOW_INTERNAL_TOKEN_MISSING",
+            "AIRFLOW_INTERNAL_TOKEN is not configured on the AskLake backend.",
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+    if not provided_token or not secrets.compare_digest(expected_token, provided_token):
+        raise ApiError(
+            ErrorCode.FORBIDDEN,
+            "Airflow worker authentication failed.",
+            status.HTTP_403_FORBIDDEN,
+        )
+
+
+def apply_spark_result_to_airflow_run(run: ETLRunModel, spark_run: ETLRunModel) -> None:
+    run.duration = spark_run.duration
+    run.ended_at = spark_run.ended_at
+    run.error_summary = spark_run.error_summary
+    run.failed_stage = spark_run.failed_stage
+    run.input_rows = spark_run.input_rows
+    run.output_path = spark_run.output_path
+    run.output_rows = spark_run.output_rows
+    # Airflow remains the orchestration source of truth until the DAG reaches a terminal state.
+    run.status = "running" if spark_run.status == "success" else "failed"
+
+
+def airflow_execution_response(
+    job: ETLJobModel,
+    result: dict[str, Any],
+    dataset_id: str | None,
+) -> AirflowRunExecutionResponse:
+    return AirflowRunExecutionResponse(
+        status="success" if result.get("status") == "success" else "failed",
+        job_id=job.id,
+        run_id=str(result.get("runId") or ""),
+        dataset_id=dataset_id,
+        input_rows=parse_count_value(result.get("inputRows")),
+        output_rows=parse_count_value(result.get("outputRows")),
+        output_path=str(result.get("outputPath") or "-"),
+        duration_ms=parse_optional_integer(result.get("durationMs")),
+        schema=result.get("schema") if isinstance(result.get("schema"), list) else [],
+        quality=result.get("quality") if isinstance(result.get("quality"), dict) else None,
+        failed_stage=str(result.get("failedStage") or "") or None,
+        error=spark_error_summary(result) if result.get("status") != "success" else None,
+    )
+
+
+def airflow_execution_response_from_persisted(
+    job: ETLJobModel,
+    run: ETLRunModel,
+    dataset: CatalogDatasetModel,
+) -> AirflowRunExecutionResponse:
+    payload = dataset.payload or {}
+    schema_payload = payload.get("schema") if isinstance(payload.get("schema"), list) else []
+    schema = [
+        {"name": str(item[0]), "type": str(item[1])}
+        for item in schema_payload
+        if isinstance(item, list) and len(item) >= 2
+    ]
+    return AirflowRunExecutionResponse(
+        status="success",
+        job_id=job.id,
+        run_id=run.run_id,
+        dataset_id=dataset.id,
+        input_rows=parse_count_value(run.input_rows),
+        output_rows=parse_count_value(run.output_rows),
+        output_path=str(run.output_path or payload.get("storageLocation") or "-"),
+        schema=schema,
+    )
+
+
+def submit_airflow_job_run(job: ETLJobModel, command: str) -> ETLRunModel:
+    submitted_at = iso_now()
+    run_id = stable_id("run", f"{job.id}:{command}:airflow:{submitted_at}")
+    airflow_client = build_airflow_client()
+    dag_run = airflow_client.trigger_dag_run(
+        dag_run_id=run_id,
+        conf=airflow_dag_run_conf(job, command, run_id, submitted_at),
+        note=f"AskLake {command} command for {job.id}",
+    )
+    if not dag_run.dag_run_id:
+        raise ApiError(
+            "AIRFLOW_BAD_RESPONSE",
+            "Airflow DAG Run response did not include dag_run_id.",
+            status.HTTP_502_BAD_GATEWAY,
+            {"dagId": airflow_client.config.dag_id, "runId": run_id},
+        )
+    return run_from_airflow_submit(
+        job,
+        command,
+        run_id,
+        submitted_at,
+        dag_run,
+        airflow_client.dag_run_url(dag_run.dag_run_id),
+    )
+
+
+def airflow_dag_run_conf(job: ETLJobModel, command: str, run_id: str, submitted_at: str) -> dict[str, Any]:
+    return {
+        "command": command,
+        "executionMode": "spark",
+        "jobId": job.id,
+        "runId": run_id,
+        "submittedAt": submitted_at,
+    }
+
+
 def job_payload_for_spark(job: ETLJobModel) -> dict[str, Any]:
     return {
         "id": job.id,
@@ -449,12 +1222,50 @@ def job_payload_for_spark(job: ETLJobModel) -> dict[str, Any]:
         "sourceType": job.source_type,
         "stats": job.stats or {},
         "target": job.target,
+        "targetDescription": job.target_description,
         "targetFormat": job.target_format,
         "targetLayer": job.target_layer,
         "targetPath": job.target_path,
+        "targetTags": job.target_tags or [],
+        "storagePath": job.storage_path,
+        "storageType": job.storage_type,
+        "partition": job.partition,
+        "partitionColumns": job.partition_columns or [],
+        "indexColumns": job.index_columns or [],
+        "compression": job.compression,
         "transformOutputColumns": job.transform_output_columns or [],
         "transformSteps": job.transform_steps or [],
     }
+
+
+def run_from_airflow_submit(
+    job: ETLJobModel,
+    command: str,
+    run_id: str,
+    submitted_at: str,
+    dag_run: AirflowDagRun,
+    airflow_run_url: str | None,
+) -> ETLRunModel:
+    return ETLRunModel(
+        run_id=run_id,
+        job_id=job.id,
+        status=dag_run.asklake_status,
+        started_at=submitted_at,
+        ended_at="-",
+        duration="-",
+        input_rows="-",
+        output_rows="-",
+        output_path=job.target_path,
+        failed_stage="-",
+        error_summary="-",
+        airflow_dag_id=dag_run.dag_id,
+        airflow_dag_run_id=dag_run.dag_run_id,
+        airflow_run_url=airflow_run_url,
+        airflow_state=dag_run.state,
+        task_states=None,
+        last_synced_at=submitted_at,
+        sync_error=None,
+    )
 
 
 def run_from_spark_result(job: ETLJobModel, result: dict[str, Any]) -> ETLRunModel:
@@ -469,9 +1280,343 @@ def run_from_spark_result(job: ETLJobModel, result: dict[str, Any]) -> ETLRunMod
         input_rows=format_rows(result.get("inputRows")),
         output_rows=format_rows(result.get("outputRows")),
         output_path=result.get("outputPath") or "-",
-        failed_stage="-" if success else str(result.get("failedStage") or "Spark ETL"),
-        error_summary="-" if success else str(result.get("error") or "Spark job failed."),
+        failed_stage="-" if success else spark_failed_stage(result),
+        error_summary="-" if success else spark_error_summary(result),
     )
+
+
+def run_from_kafka_result(job: ETLJobModel, result: dict[str, Any]) -> ETLRunModel:
+    success = result.get("status") == "success"
+    started_at = str(result.get("startedAt") or iso_now())
+    ended_at = str(result.get("endedAt") or iso_now())
+    return ETLRunModel(
+        run_id=str(result.get("runId") or stable_id("run", f"{job.id}:kafka:{iso_now()}")),
+        job_id=job.id,
+        status="success" if success else "failed",
+        started_at=started_at,
+        ended_at=ended_at,
+        duration=format_iso_duration(started_at, ended_at),
+        input_rows=format_rows(result.get("consumedCount")),
+        output_rows=format_rows(result.get("storedCount")),
+        output_path=result.get("storageLocation") or "-",
+        failed_stage="-" if success else str(result.get("failedStage") or "Kafka ingest"),
+        error_summary="-" if success else str(result.get("error") or "Kafka ingest failed."),
+        task_states={
+            "kafkaSnapshot": result.get("snapshot"),
+            "transform": result.get("transform"),
+            "quality": result.get("quality"),
+        } if result.get("snapshot") else None,
+    )
+
+
+def apply_airflow_submit_job_state(job: ETLJobModel, command: str, run: ETLRunModel) -> None:
+    action_label = "재실행" if command == "retry" else "실행"
+    state_label = run.airflow_state or run.status
+    job.last_run = run.started_at
+    job.last_state = f"Airflow {action_label} 접수 · {state_label}"
+    job.next_run = "-"
+    if run.status == "failed":
+        job.progress = None
+        job.status = "failed"
+        return
+    if run.status == "success":
+        job.progress = None
+        job.status = "scheduled"
+        return
+    job.progress = {
+        "label": f"Airflow DAG Run {state_label}",
+        "value": 10 if run.status == "queued" else 20,
+    }
+    job.status = "running"
+
+
+def sync_airflow_runs_for_job(db: Session, job: ETLJobModel) -> None:
+    runs = etl_repository.list_run_models_for_job(db, job.id)
+    dataset_id = job.dataset_id or f"ds_{normalize_column_name(job.target)}"
+    dataset = etl_repository.get_dataset_by_id(db, dataset_id)
+    repaired_success = repair_incomplete_airflow_successes(runs, dataset)
+    active_runs = [
+        run
+        for run in runs
+        if run.status in ACTIVE_RUN_STATUSES and run.airflow_dag_run_id
+    ]
+    if not active_runs:
+        if repaired_success and runs:
+            apply_job_state_from_latest_run(job, runs[0])
+            job.stats = stats_from_runs(job, [etl_repository.run_to_schema(run) for run in runs])
+            etl_repository.save_job(db, job)
+        return
+
+    try:
+        airflow_client = build_airflow_client()
+    except ApiError as exc:
+        sync_error = exc.message
+        synced_at = iso_now()
+        for run in active_runs:
+            run.sync_error = sync_error
+            run.last_synced_at = synced_at
+        job.last_state = f"Airflow 상태 동기화 실패 · {sync_error}"
+        etl_repository.save_job(db, job)
+        return
+
+    for run in active_runs:
+        sync_airflow_run(db, job, run, airflow_client, dataset)
+
+    latest_run = runs[0]
+    apply_job_state_from_latest_run(job, latest_run)
+    job.stats = stats_from_runs(job, [etl_repository.run_to_schema(run) for run in runs])
+    etl_repository.save_job(db, job)
+
+
+def sync_airflow_run(
+    db: Session,
+    job: ETLJobModel,
+    run: ETLRunModel,
+    airflow_client: Any,
+    dataset: CatalogDatasetModel | None = None,
+) -> None:
+    synced_at = iso_now()
+    try:
+        dag_run = airflow_client.get_dag_run(run.airflow_dag_run_id)
+        task_instances = airflow_client.list_task_instances(run.airflow_dag_run_id)
+    except ApiError as exc:
+        run.sync_error = exc.message
+        run.last_synced_at = synced_at
+        return
+
+    # Spark/Catalog execution endpoints can commit task evidence while this
+    # polling request is waiting on Airflow. Refresh and lock the Run before
+    # replacing the task snapshot so a stale poll cannot erase that evidence.
+    etl_repository.refresh_run_for_update(db, run)
+    run.status = dag_run.asklake_status
+    run.airflow_dag_id = dag_run.dag_id or run.airflow_dag_id
+    run.airflow_dag_run_id = dag_run.dag_run_id or run.airflow_dag_run_id
+    run.airflow_run_url = airflow_client.dag_run_url(run.airflow_dag_run_id) or run.airflow_run_url
+    run.airflow_state = dag_run.state
+    spark_result = (run.task_states or {}).get("sparkResult")
+    catalog_result = (run.task_states or {}).get("catalogResult")
+    run.task_states = task_state_snapshot(task_instances)
+    if isinstance(spark_result, dict):
+        run.task_states["sparkResult"] = spark_result
+    if isinstance(catalog_result, dict):
+        run.task_states["catalogResult"] = catalog_result
+    run.last_synced_at = synced_at
+    run.sync_error = None
+
+    if run.status in TERMINAL_RUN_STATUSES and run.ended_at == "-":
+        run.ended_at = synced_at
+        run.duration = format_iso_duration(run.started_at, synced_at)
+
+    catalog_failed = isinstance(catalog_result, dict) and catalog_result.get("status") == "failed"
+    catalog_committed = isinstance(catalog_result, dict) and catalog_result.get("status") == "success"
+
+    if run.status == "failed":
+        failed_task = first_problem_task(task_instances)
+        spark_failed = isinstance(spark_result, dict) and bool(spark_result.get("failedStage") or spark_result.get("error"))
+        if catalog_failed:
+            run.failed_stage = "Catalog reconciliation"
+            run.error_summary = str(catalog_result.get("error") or "Catalog reconciliation failed.")
+        elif spark_failed:
+            run.failed_stage = str(spark_result.get("failedStage") or "Spark ETL")
+            run.error_summary = str(spark_result.get("error") or "Spark execution failed.")
+        else:
+            run.failed_stage = task_title(failed_task.task_id) if failed_task else "Airflow DAG Run"
+            run.error_summary = f"Airflow task failed: {failed_task.task_id}" if failed_task else "Airflow DAG Run failed."
+    elif run.status == "success":
+        if catalog_failed:
+            mark_airflow_catalog_reconciliation_failure(run, catalog_result)
+        elif catalog_committed or airflow_run_has_materialization(run, dataset):
+            run.failed_stage = "-"
+            run.error_summary = "-"
+        else:
+            mark_airflow_success_without_catalog_reconciliation(run)
+
+    run_schema = etl_repository.run_to_schema(run)
+    dag_steps = dag_steps_from_airflow_sync(job, run_schema.model_dump(by_alias=True), task_instances)
+    job.dag_steps_by_run_id = {
+        **(job.dag_steps_by_run_id or {}),
+        run.run_id: dag_steps,
+    }
+    job.dag_steps = dag_steps
+
+
+def repair_incomplete_airflow_successes(
+    runs: list[ETLRunModel],
+    dataset: CatalogDatasetModel | None,
+) -> bool:
+    repaired = False
+    for run in runs:
+        if run.status != "success" or not run.airflow_dag_run_id:
+            continue
+        catalog_result = (run.task_states or {}).get("catalogResult")
+        if isinstance(catalog_result, dict) and catalog_result.get("status") == "failed":
+            mark_airflow_catalog_reconciliation_failure(run, catalog_result)
+            repaired = True
+        elif (
+            not (isinstance(catalog_result, dict) and catalog_result.get("status") == "success")
+            and not airflow_run_has_materialization(run, dataset)
+        ):
+            mark_airflow_success_without_catalog_reconciliation(run)
+            repaired = True
+    return repaired
+
+
+def airflow_run_has_materialization(
+    run: ETLRunModel,
+    dataset: CatalogDatasetModel | None,
+) -> bool:
+    if dataset is None or not isinstance(dataset.payload, dict):
+        return False
+    materialization_runs = dataset.payload.get("materializationRuns")
+    if not isinstance(materialization_runs, list):
+        return False
+    return any(
+        isinstance(item, dict)
+        and str(item.get("runId") or "") == run.run_id
+        and item.get("status") == "success"
+        for item in materialization_runs
+    )
+
+
+def mark_airflow_catalog_reconciliation_failure(run: ETLRunModel, catalog_result: dict[str, Any]) -> None:
+    run.status = "failed"
+    run.failed_stage = "Catalog reconciliation"
+    run.error_summary = str(catalog_result.get("error") or "Catalog reconciliation failed.")
+
+
+def mark_airflow_success_without_catalog_reconciliation(run: ETLRunModel) -> None:
+    run.status = "failed"
+    run.failed_stage = "Catalog reconciliation"
+    run.error_summary = "Airflow completed without a successful Catalog reconciliation."
+
+
+def apply_job_state_from_latest_run(job: ETLJobModel, latest_run: ETLRunModel) -> None:
+    job.last_run = latest_run.ended_at if latest_run.status in TERMINAL_RUN_STATUSES else latest_run.started_at
+    job.next_run = "-" if job.schedule in {"수동 실행", "manual"} else job.schedule
+
+    if latest_run.status == "success":
+        job.status = "scheduled"
+        job.progress = None
+        job.last_state = "최근 실행 성공 · 다음 실행 대기"
+        return
+    if latest_run.status == "failed":
+        job.status = "failed"
+        job.progress = None
+        job.last_state = f"최근 실행 실패 · {latest_run.failed_stage}"
+        return
+    if latest_run.status == "canceled":
+        job.status = "canceled"
+        job.progress = None
+        job.last_state = "최근 실행 취소"
+        return
+
+    state_label = latest_run.airflow_state or latest_run.status
+    job.status = "running"
+    job.progress = {
+        "label": f"Airflow DAG Run {state_label}",
+        "value": 10 if latest_run.status == "queued" else 55,
+    }
+    job.last_state = f"Airflow 실행 중 · {state_label}"
+    job.next_run = "-"
+
+
+AIRFLOW_TASK_TITLES = {
+    "receive_asklake_run": "1. Airflow DAG Run 접수",
+    "validate_spark_request": "2. Spark 실행 요청 검증",
+    "spark_process_write": "3. Spark 처리/품질/Parquet 적재",
+    "publish_run_result": "4. Spark 실행 결과 확정",
+}
+
+
+def task_state_snapshot(task_instances: list[AirflowTaskInstance]) -> dict[str, dict[str, Any]]:
+    return {
+        task.task_id: {
+            "airflowState": task.state,
+            "dagId": task.dag_id,
+            "dagRunId": task.dag_run_id,
+            "status": task.asklake_status,
+            "taskId": task.task_id,
+        }
+        for task in task_instances
+        if task.task_id
+    }
+
+
+def first_problem_task(task_instances: list[AirflowTaskInstance]) -> AirflowTaskInstance | None:
+    for task in task_instances:
+        if task.asklake_status in {"failed", "blocked"}:
+            return task
+    return None
+
+
+def task_title(task_id: str) -> str:
+    if task_id in AIRFLOW_TASK_TITLES:
+        return AIRFLOW_TASK_TITLES[task_id]
+    return str(task_id or "Airflow task").replace("_", " ").strip().title()
+
+
+def dag_steps_from_airflow_submit(job: ETLJobModel, command: str, run: dict[str, Any]) -> list[dict[str, Any]]:
+    action_label = "재실행" if command == "retry" else "실행"
+    state_label = str(run.get("airflowState") or run.get("status") or "queued")
+    return [
+        dag_step("airflow-submit", "Airflow DAG Run 접수", state_label, "running", [
+            ["Job", job.name],
+            ["Run ID", run.get("runId", "-")],
+            ["DAG Run ID", run.get("airflowDagRunId", "-")],
+        ], [f"AskLake {action_label} 명령이 Airflow에 접수되었습니다."]),
+        *[
+            dag_step(task_id, title, "대기", "pending", [
+                ["Airflow task", task_id],
+            ], ["Airflow Task Instance 상태 polling 대기 중입니다."])
+            for task_id, title in AIRFLOW_TASK_TITLES.items()
+        ],
+    ]
+
+
+def dag_steps_from_airflow_sync(
+    job: ETLJobModel,
+    run: dict[str, Any],
+    task_instances: list[AirflowTaskInstance],
+) -> list[dict[str, Any]]:
+    task_by_id = {task.task_id: task for task in task_instances if task.task_id}
+    run_status = str(run.get("status") or "running")
+    run_state = str(run.get("airflowState") or run_status)
+    submit_status = "success" if run_status in TERMINAL_RUN_STATUSES else "running"
+    if run_status == "failed":
+        submit_status = "failed"
+
+    steps = [
+        dag_step("airflow-submit", "Airflow DAG Run 상태", run_state, submit_status, [
+            ["Job", job.name],
+            ["Run ID", run.get("runId", "-")],
+            ["DAG Run ID", run.get("airflowDagRunId", "-")],
+            ["Airflow state", run_state],
+        ], [f"Airflow DAG Run 상태: {run_state}"]),
+    ]
+
+    for task_id, title in AIRFLOW_TASK_TITLES.items():
+        task = task_by_id.get(task_id)
+        status_value = task.asklake_status if task else "pending"
+        airflow_state = task.state if task and task.state else "not_started"
+        logs = [f"Airflow Task Instance state: {airflow_state}"]
+        if task and task.raw.get("try_number") is not None:
+            logs.append(f"try_number={task.raw.get('try_number')}")
+        steps.append(dag_step(task_id, title, airflow_state, status_value, [
+            ["Airflow task", task_id],
+            ["Airflow state", airflow_state],
+        ], logs))
+
+    extra_tasks = [
+        task for task in task_instances
+        if task.task_id and task.task_id not in AIRFLOW_TASK_TITLES
+    ]
+    for task in extra_tasks:
+        steps.append(dag_step(task.task_id, task_title(task.task_id), task.state or "-", task.asklake_status, [
+            ["Airflow task", task.task_id],
+            ["Airflow state", task.state or "-"],
+        ], [f"Airflow Task Instance state: {task.state or '-'}"]))
+
+    return steps
 
 
 def finalize_job_from_spark_result(job: ETLJobModel, command: str, result: dict[str, Any]) -> None:
@@ -480,7 +1625,41 @@ def finalize_job_from_spark_result(job: ETLJobModel, command: str, result: dict[
     job.last_state = (
         f"{'재실행' if command == 'retry' else '실행'} 완료 · Spark Parquet 적재"
         if success
-        else f"Spark 실행 실패 · {result.get('error') or '원인 확인 필요'}"
+        else f"Spark 실행 실패 · {spark_error_summary(result, limit=180)}"
+    )
+    job.next_run = schedule_next_run_label(job.schedule, job.next_run)
+    job.progress = None
+    job.status = "scheduled"
+    job.target_path = result.get("outputPath") or job.target_path
+
+
+def spark_failed_stage(result: dict[str, Any]) -> str:
+    return compact_storage_text(result.get("failedStage") or "Spark ETL", limit=500)
+
+
+def spark_error_summary(result: dict[str, Any], *, limit: int = 1800) -> str:
+    return compact_storage_text(result.get("error") or result.get("stderr") or result.get("stdout") or "Spark job failed.", limit=limit)
+
+
+def compact_storage_text(value: Any, *, limit: int) -> str:
+    text_value = str(value or "").replace("\r", "\n")
+    lines = [line.strip() for line in text_value.splitlines() if line.strip()]
+    compact = " | ".join(lines) if lines else "-"
+    if len(compact) <= limit:
+        return compact
+    return f"{compact[: max(0, limit - 32)]} ... [truncated {len(compact)} chars]"
+
+
+def finalize_job_from_kafka_result(job: ETLJobModel, command: str, result: dict[str, Any]) -> None:
+    success = result.get("status") == "success"
+    stored_count = int(result.get("storedCount") or 0)
+    failed_count = int(result.get("failedCount") or 0)
+    snapshot_id = str((result.get("snapshot") or {}).get("snapshotId") or "-")
+    job.last_run = str(result.get("endedAt") or iso_now())
+    job.last_state = (
+        f"{'재실행' if command == 'retry' else '실행'} 완료 · Kafka snapshot {snapshot_id} · {stored_count:,}건 target 저장"
+        if success
+        else f"Kafka 실행 실패 · {result.get('error') or '원인 확인 필요'}"
     )
     job.next_run = schedule_next_run_label(job.schedule, job.next_run)
     job.progress = None
@@ -495,16 +1674,19 @@ def dataset_from_spark_result(job: ETLJobModel, result: dict[str, Any], existing
         [str(field.get("name") or "-"), str(field.get("type") or "string")]
         for field in schema
     ] if isinstance(schema, list) and schema else schema_from_job(job)
-    dataset_id = f"ds_{normalize_column_name(job.target)}"
+    dataset_id = str(job.dataset_id or f"ds_{normalize_column_name(job.target)}")
     previous_payload = existing_dataset.payload if existing_dataset and existing_dataset.payload else None
     dataset_payload = dataset_payload_from_spark_result(job, result, dataset_id, schema_json, now, previous_payload)
     storage_size_bytes = int(dataset_payload.get("storageSizeBytes") or 0)
     display_size = format_storage_size(storage_size_bytes) if storage_size_bytes > 0 else "Pending"
+    target_description = target_dataset_description(job)
+    target_tags = target_dataset_tags(job)
+    sample_rows = spark_output_sample_rows(result, schema_json)
     return CatalogDatasetModel(
         id=dataset_id,
         payload=dataset_payload,
         name=job.target,
-        description=f"{job.source_type} 소스 {job.source_label} 실행 결과 데이터셋",
+        description=target_description,
         owner=job.owner,
         layer=job.target_layer,
         status="available",
@@ -516,9 +1698,9 @@ def dataset_from_spark_result(job: ETLJobModel, result: dict[str, Any], existing
         last_updated=now,
         next_refresh=job.schedule,
         rag=job.rag,
-        tags=["#생성", f"#{str(job.target_layer).lower()}"],
+        tags=target_tags,
         schema_json=schema_json,
-        sample_rows=job.schema_sample_rows or [],
+        sample_rows=sample_rows,
         upstream=[job.source_label, job.name],
         downstream=["SQL 분석", "RAG 인덱싱"] if job.rag else ["SQL 분석"],
     )
@@ -533,9 +1715,13 @@ def dataset_payload_from_spark_result(
     previous_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     output_path = str(result.get("outputPath") or "-")
-    storage_size_bytes = dataset_storage_size_bytes(output_path)
+    storage_size_bytes = parse_count_value(result.get("storageSizeBytes")) or dataset_storage_size_bytes(output_path)
     display_size = format_storage_size(storage_size_bytes) if storage_size_bytes > 0 else "Pending"
     lineage_graph = etl_dataset_lineage_graph(job, dataset_id, schema_json)
+    sample_rows = spark_output_sample_rows(result, schema_json)
+    partition_columns = normalize_string_list(job.partition_columns)
+    index_columns = normalize_string_list(job.index_columns)
+    partition = "/".join(partition_columns) if partition_columns else normalize_optional_text(job.partition)
     materialization_runs = append_materialization_run(
         previous_payload.get("materializationRuns") if previous_payload else [],
         {
@@ -552,7 +1738,7 @@ def dataset_payload_from_spark_result(
     )
     aggregate = aggregate_materialization_runs(materialization_runs)
     return {
-        "description": f"{job.source_type} 소스 {job.source_label} 실행 결과 데이터셋",
+        "description": target_dataset_description(job),
         "downstream": ["SQL 분석", "RAG 인덱싱"] if job.rag else ["SQL 분석"],
         "freshness": "latest",
         "id": dataset_id,
@@ -563,29 +1749,44 @@ def dataset_payload_from_spark_result(
         "name": job.target,
         "nextRefresh": job.schedule,
         "owner": job.owner,
+        "createdBy": job.created_by or job.owner,
+        "createdByProfile": job.created_by_profile or identity_profile(job.created_by or job.owner),
+        "permissionGrants": permission_grants_from_roles(job.owner, job.permission_roles, default_actions=["view", "query"]),
+        "permissions": resource_permissions(can_query=True),
         "quality": quality_summary_from_spark_result(job, result),
         "rag": job.rag,
         "rows": format_rows(aggregate["rowCount"]),
-        "sampleRows": job.schema_sample_rows or [],
+        "sampleRows": sample_rows,
         "schema": schema_json,
         "size": format_storage_size(aggregate["storageSizeBytes"]) if aggregate["storageSizeBytes"] > 0 else display_size,
         "source": job.name,
         "sourceRunId": aggregate["latestRunId"] or result.get("runId"),
         "status": "available",
-        "storageFormat": "parquet",
+        "storageFormat": SPARK_OUTPUT_FORMAT,
         "storageLocation": output_path,
         "storageSizeBytes": aggregate["storageSizeBytes"],
-        "tags": ["#생성", f"#{str(job.target_layer).lower()}"],
+        "partition": partition,
+        "partitionColumns": partition_columns,
+        "indexColumns": index_columns,
+        "tags": target_dataset_tags(job),
         "upstream": [job.source_label, job.name],
     }
 
 
-def update_existing_append_job(job: ETLJobModel, request: CreatePipelineRequest, dataset_id: str) -> None:
+def update_existing_append_job(
+    job: ETLJobModel,
+    request: CreatePipelineRequest,
+    dataset_id: str,
+    created_by: str,
+    created_by_profile: dict[str, Any],
+) -> None:
     dataset_schema = dataset_schema_from_request(request)
     sample_rows = dataset_sample_rows_from_request(request, dataset_schema)
     metrics = source_metrics_from_request(request, dataset_schema, sample_rows)
     job.name = request.job_name or job.name
     job.owner = request.owner
+    job.created_by = job.created_by or created_by
+    job.created_by_profile = job.created_by_profile or created_by_profile
     job.tag = "[append]"
     job.source = f"{request.source_type} / {request.source_label}"
     job.target = request.target_dataset
@@ -601,13 +1802,22 @@ def update_existing_append_job(job: ETLJobModel, request: CreatePipelineRequest,
     job.schema_columns = [column.model_dump(mode="json", by_alias=True) for column in request.schema_columns]
     job.schema_fingerprint = request.schema_fingerprint
     job.schema_sample_rows = request.schema_sample_rows
+    job.schema_summary = request.schema_summary
+    job.rule_summary = request.rule_summary
+    job.permission_summary = request.permission_summary
     job.permission_roles = request.permission_roles
     job.storage_type = request.storage_type
     job.partition = request.partition
+    job.partition_columns = normalize_string_list(request.partition_columns)
+    job.index_columns = normalize_string_list(request.index_columns)
     job.compression = request.compression
     job.storage_path = request.storage_path
+    job.target_description = normalize_optional_text(request.target_description)
+    job.target_database = normalize_optional_text(request.target_database)
+    job.target_tags = normalize_target_tags(request.target_tags)
     job.target_format = request.target_format
     job.target_layer = request.target_layer
+    job.target_path = request.storage_path
     job.rag = request.rag
     job.transform_output_columns = tuple_rows_to_lists(request.transform_output_columns)
     job.transform_steps = [step.model_dump(mode="json", by_alias=True) for step in request.transform_steps]
@@ -632,6 +1842,20 @@ def append_materialization_run(previous_runs: Any, next_run: dict[str, Any]) -> 
     return [next_run, *[run for run in runs if str(run.get("runId") or "") != run_id]]
 
 
+def identity_name(value: str | None) -> str:
+    return (value or "").strip() or "demo-user"
+
+
+def identity_profile(name: str) -> dict[str, str]:
+    display_name = identity_name(name)
+    words = [word for word in display_name.replace("_", " ").replace("-", " ").split(" ") if word]
+    initials = "".join(word[0].upper() for word in words[:2]) or display_name[:2].upper()
+    return {
+        "avatarInitials": initials[:2],
+        "displayName": display_name,
+    }
+
+
 def aggregate_materialization_runs(runs: list[dict[str, Any]]) -> dict[str, Any]:
     active_runs = [run for run in runs if run.get("status") == "success"]
     latest_run = active_runs[0] if active_runs else None
@@ -654,40 +1878,184 @@ def parse_count_value(value: Any) -> int:
     return int(digits) if digits else 0
 
 
+def parse_optional_integer(value: Any) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return None
+
+
 def etl_dataset_lineage_graph(job: ETLJobModel, dataset_id: str, schema_json: list[list[str]]) -> dict[str, Any]:
     source_node_id = normalize_lineage_id(f"{dataset_id}-{job.source_label or job.source_type or 'source'}")
+    source_schema = source_lineage_schema(job, schema_json)
     source_node = lineage_node(
         source_node_id,
         job.source_label or job.source_type or "Source",
         "SOURCE",
-        schema_json,
-        "SOURCE",
+        source_schema,
+        lineage_source_engine(job),
     )
-    job_node = lineage_node(normalize_lineage_id(job.id), job.name, "BRONZE", schema_json, "SPARK")
-    target_node = lineage_node(dataset_id, job.target, job.target_layer or "RAW", schema_json, "ICEBERG")
+    job_node = lineage_node(normalize_lineage_id(job.id), job.name, "PROCESS", schema_json, "SPARK")
+    target_node = lineage_node(
+        dataset_id,
+        job.target,
+        job.target_layer or "RAW",
+        schema_json,
+        lineage_target_engine(job),
+    )
     return {
         "datasetId": dataset_id,
         "datasets": [source_node, job_node, target_node],
         "edges": [
-            *lineage_edges_between(source_node, job_node),
+            *lineage_edges_from_job_inputs(job, source_node, job_node),
             *lineage_edges_between(job_node, target_node),
         ],
     }
 
 
+def source_lineage_schema(job: ETLJobModel, target_schema: list[list[str]]) -> list[list[str]]:
+    type_by_name: dict[str, str] = {
+        str(name): str(type_ or "string")
+        for name, type_ in target_schema
+        if name
+    }
+    for column in job.schema_columns or []:
+        if not isinstance(column, dict):
+            continue
+        type_value = str(column.get("type") or "string")
+        for name in (column.get("sourceName"), column.get("targetName")):
+            if name:
+                type_by_name.setdefault(str(name), type_value)
+
+    transform_outputs = {
+        str(step.get("output") or "").strip()
+        for step in job.transform_steps or []
+        if isinstance(step, dict) and step.get("enabled", True) is not False
+    }
+    source_names: list[str] = []
+    for step in job.transform_steps or []:
+        if not isinstance(step, dict) or step.get("enabled", True) is False:
+            continue
+        append_unique(source_names, str(step.get("input") or "").strip())
+
+    for column in job.schema_columns or []:
+        if not isinstance(column, dict) or not schema_column_included(column):
+            continue
+        source_name = str(column.get("sourceName") or "").strip()
+        target_name = str(column.get("targetName") or source_name).strip()
+        if not source_name or source_name.startswith("__text_analysis.") or target_name in transform_outputs:
+            continue
+        append_unique(source_names, source_name)
+
+    if not source_names:
+        source_names = [str(name) for name, _ in target_schema if name and not str(name).startswith("_asklake_")]
+    return [[name, type_by_name.get(name, "string")] for name in source_names]
+
+
+def lineage_target_engine(_job: ETLJobModel) -> str:
+    return SPARK_OUTPUT_FORMAT.upper()
+
+
+def lineage_source_engine(job: ETLJobModel) -> str:
+    source_label = str(getattr(job, "source_label", "") or "").lower().split("?", 1)[0]
+    for suffix, engine in (
+        (".parquet", "PARQUET"),
+        (".jsonl", "JSONL"),
+        (".ndjson", "JSONL"),
+        (".json", "JSON"),
+        (".csv", "CSV"),
+        (".avro", "AVRO"),
+        (".xlsx", "XLSX"),
+    ):
+        if source_label.endswith(suffix):
+            return engine
+
+    source_type = str(getattr(job, "source_type", "") or "").strip()
+    return source_type.upper() or "SOURCE"
+
+
+def lineage_edges_from_job_inputs(
+    job: ETLJobModel,
+    source_node: dict[str, Any],
+    job_node: dict[str, Any],
+) -> list[dict[str, str]]:
+    source_columns = lineage_columns_by_name(source_node)
+    job_columns = lineage_columns_by_name(job_node)
+    pairs: list[tuple[str, str]] = []
+
+    for step in job.transform_steps or []:
+        if not isinstance(step, dict) or step.get("enabled", True) is False:
+            continue
+        append_unique_pair(
+            pairs,
+            str(step.get("input") or "").strip(),
+            str(step.get("output") or "").strip(),
+        )
+
+    for column in job.schema_columns or []:
+        if not isinstance(column, dict) or not schema_column_included(column):
+            continue
+        source_name = str(column.get("sourceName") or "").strip()
+        target_name = str(column.get("targetName") or source_name).strip()
+        if source_name.startswith("__text_analysis."):
+            continue
+        append_unique_pair(pairs, source_name, target_name)
+
+    for name in source_columns:
+        if name in job_columns:
+            append_unique_pair(pairs, name, name)
+
+    return [
+        lineage_edge(source_node, source_columns[source_name], job_node, job_columns[target_name])
+        for source_name, target_name in pairs
+        if source_name in source_columns and target_name in job_columns
+    ]
+
+
 def lineage_edges_between(source_node: dict[str, Any], target_node: dict[str, Any]) -> list[dict[str, str]]:
-    source_columns = source_node.get("columns") if isinstance(source_node.get("columns"), list) else []
-    target_columns = target_node.get("columns") if isinstance(target_node.get("columns"), list) else []
-    edges = []
-    for index, target_column in enumerate(target_columns):
-        source_column = source_columns[index] if index < len(source_columns) else target_column
-        edges.append({
-            "fromColumnId": str(source_column.get("id") or target_column.get("id")),
-            "fromDatasetId": str(source_node.get("id")),
-            "toColumnId": str(target_column.get("id")),
-            "toDatasetId": str(target_node.get("id")),
-        })
-    return edges
+    source_columns = lineage_columns_by_name(source_node)
+    target_columns = lineage_columns_by_name(target_node)
+    return [
+        lineage_edge(source_node, source_columns[name], target_node, target_column)
+        for name, target_column in target_columns.items()
+        if name in source_columns
+    ]
+
+
+def lineage_columns_by_name(node: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    columns = node.get("columns") if isinstance(node.get("columns"), list) else []
+    return {
+        str(column.get("name")): column
+        for column in columns
+        if isinstance(column, dict) and column.get("name")
+    }
+
+
+def lineage_edge(
+    source_node: dict[str, Any],
+    source_column: dict[str, Any],
+    target_node: dict[str, Any],
+    target_column: dict[str, Any],
+) -> dict[str, str]:
+    return {
+        "fromColumnId": str(source_column.get("id")),
+        "fromDatasetId": str(source_node.get("id")),
+        "toColumnId": str(target_column.get("id")),
+        "toDatasetId": str(target_node.get("id")),
+    }
+
+
+def append_unique(values: list[str], value: str) -> None:
+    if value and value not in values:
+        values.append(value)
+
+
+def append_unique_pair(values: list[tuple[str, str]], source: str, target: str) -> None:
+    pair = (source, target)
+    if source and target and pair not in values:
+        values.append(pair)
 
 
 def dataset_storage_size_bytes(output_path: str) -> int:
@@ -760,9 +2128,67 @@ def dag_steps_from_spark_result(job: ETLJobModel, command: str, run: dict[str, A
     ]
 
 
-def dag_step(id_: str, title: str, meta: str, status_value: str, details: list[list[str]] | None = None, logs: list[str] | None = None) -> dict[str, Any]:
+def dag_steps_from_kafka_result(job: ETLJobModel, command: str, run: dict[str, Any], result: dict[str, Any]) -> list[dict[str, Any]]:
+    failed = result.get("status") != "success"
+    failed_stage = str(result.get("failedStage") or "").lower()
+    consume_failed = failed and failed_stage in {"kafka ingest", "consume", "source"}
+    transform_failed = failed and failed_stage == "transform"
+    quality_failed = failed and failed_stage == "quality"
+    topic = str(result.get("topic") or field_value(job.source_config or [], "TOPIC / QUEUE NAME") or "-")
+    broker = str(result.get("broker") or field_value(job.source_config or [], "Broker / Endpoint") or "-")
+    storage_location = str(result.get("storageLocation") or run.get("outputPath") or "-")
+    dataset_id = str(result.get("datasetId") or job.dataset_id or f"ds_{normalize_column_name(job.target)}")
+    consumer_group_id = str(result.get("consumerGroupId") or field_value(job.source_config or [], "CONSUMER GROUP ID") or "-")
+    snapshot = result.get("snapshot") or {}
+    transform = result.get("transform") or {}
+    quality = result.get("quality") or {}
+    snapshot_ranges = ", ".join(
+        f"p{item.get('partition')}:{item.get('startOffset')}~{item.get('endOffset')}"
+        for item in snapshot.get("partitions", [])
+    ) or "-"
+    return [
+        dag_step("source", "1. Kafka 소스 연결", topic, "failed" if consume_failed else "success", [
+            ["Broker", broker],
+            ["Topic", topic],
+        ], [f"Kafka topic {topic} batch consume 요청을 실행했습니다."]),
+        dag_step("consume", "2. 메시지 batch consume", format_rows(result.get("consumedCount")), "failed" if consume_failed else "success", [
+            ["Consumer group", consumer_group_id],
+            ["Snapshot", str(snapshot.get("snapshotId") or "-")],
+            ["Offset ranges", snapshot_ranges],
+            ["Consumed", format_rows(result.get("consumedCount"))],
+            ["Failed", format_rows(result.get("failedCount"))],
+        ], [f"Kafka consume 실패: {run.get('errorSummary')}" if consume_failed else "Kafka 메시지를 batch 단위로 읽었습니다."]),
+        dag_step("transform", "3. 변환 규칙 적용", f"{transform.get('appliedStepCount', 0)}개 규칙", "failed" if transform_failed else "blocked" if failed else "success", [
+            ["Configured", str(transform.get("configuredStepCount", 0))],
+            ["Applied", str(transform.get("appliedStepCount", 0))],
+            ["Transform errors", str(transform.get("errorCount", 0))],
+        ], [f"변환 규칙 적용 실패: {run.get('errorSummary')}" if transform_failed else "이전 단계 실패로 변환이 수행되지 않았습니다." if failed else "Kafka snapshot 레코드에 변환 규칙을 적용했습니다."]),
+        dag_step("quality", "4. 품질 검증", str(quality.get("summary") or "규칙 없음"), "failed" if quality_failed else "blocked" if failed else "success", [
+            ["Configured", str(quality.get("configuredRuleCount", 0))],
+            ["Invalid", str(quality.get("invalidRowCount", 0))],
+            ["Quarantined", str(quality.get("quarantinedCount", 0))],
+            ["Dropped", str(quality.get("droppedCount", 0))],
+        ], [f"품질 검증 실패: {run.get('errorSummary')}" if quality_failed else "이전 단계 실패로 품질 검증이 수행되지 않았습니다." if failed else str(quality.get("summary") or "품질 규칙 없음")]),
+        dag_step("target", "5. Direct target 저장", storage_location, "blocked" if failed else "success", [
+            ["Storage", str(result.get("storageMode") or "s3")],
+            ["Format", str(result.get("storageFormat") or "jsonl")],
+            ["Layer", str(result.get("targetLayer") or job.target_layer)],
+            ["Stored", format_rows(result.get("storedCount"))],
+        ], ["이전 단계 실패로 target 저장이 수행되지 않았습니다." if failed else f"Kafka snapshot 결과를 target에 저장했습니다: {storage_location}"]),
+        dag_step("catalog", "6. 카탈로그 갱신", dataset_id, "blocked" if failed else "success", [
+            ["Dataset", dataset_id],
+            ["Run ID", run.get("runId", "-")],
+        ], ["이전 단계 실패로 카탈로그 갱신이 중단되었습니다." if failed else "Catalog materialization run이 Kafka sourceKind로 갱신되었습니다."]),
+    ]
+
+
+def dag_step(id_: str, title: str, meta: str, status_value: str, details: list[list[Any]] | None = None, logs: list[str] | None = None) -> dict[str, Any]:
+    normalized_details = [
+        [str(label or "-"), str(value if value is not None else "-")]
+        for label, value in (details or [])
+    ]
     return {
-        "details": details or [],
+        "details": normalized_details,
         "id": id_,
         "logs": [str(line) for line in (logs or []) if line],
         "meta": str(meta or "-"),
@@ -823,7 +2249,7 @@ def run_node_bridge(script_name: str, success_marker: str, payload: dict[str, An
             error_payload.get("code") or "BACKEND_BRIDGE_FAILED",
             error_payload.get("message") or (stderr.strip() or f"{script_name} failed."),
             int(error_payload.get("status") or status.HTTP_502_BAD_GATEWAY),
-            {"stderr": stderr[-4000:], "stdout": stdout[-4000:]},
+            {"bridge": error_payload, "stderr": stderr[-4000:], "stdout": stdout[-4000:]},
         )
     payload_result = marker_payload(stdout, success_marker)
     if payload_result is None:
@@ -871,6 +2297,90 @@ def validate_create_request(request: CreatePipelineRequest) -> None:
             f"Missing required fields: {', '.join(missing)}",
             status.HTTP_400_BAD_REQUEST,
         )
+
+
+def validate_update_request(request: UpdatePipelineRequest) -> None:
+    missing = []
+    if not request.job_name:
+        missing.append("jobName")
+    if not request.target_dataset:
+        missing.append("targetDataset")
+    if not request.target_layer:
+        missing.append("targetLayer")
+    if not request.owner:
+        missing.append("owner")
+    if not request.schema_columns:
+        missing.append("schemaColumns")
+    elif not any(column.included and column.target_name.strip() for column in request.schema_columns):
+        missing.append("schemaColumns[included]")
+    if missing:
+        raise ApiError(
+            ErrorCode.VALIDATION_ERROR,
+            f"Missing required fields: {', '.join(missing)}",
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+
+def target_identity_changed(job: ETLJobModel, request: UpdatePipelineRequest) -> bool:
+    return any((
+        str(job.target or "") != request.target_dataset,
+        str(job.target_layer or "") != request.target_layer,
+        str(job.target_format or "") != request.target_format,
+        str(job.target_database or "asklake") != str(request.target_database or "asklake"),
+        str(job.storage_type or "") != str(request.storage_type or ""),
+        str(job.storage_path or "") != str(request.storage_path or ""),
+    ))
+
+
+def has_successful_run(db: Session, job_id: str) -> bool:
+    return any(run.status == "success" for run in etl_repository.list_runs_for_job(db, job_id))
+
+
+def apply_update_request(job: ETLJobModel, request: UpdatePipelineRequest, target_changed: bool) -> None:
+    job.name = request.job_name
+    job.owner = request.owner
+    job.target = request.target_dataset
+    job.schedule = request.schedule_label
+    job.schedule_policy = schedule_policy_from_request(request)
+    job.schedule_summary = request.schedule_summary
+    job.retry_policy = request.retry_policy.model_dump(mode="json", by_alias=True) if request.retry_policy else None
+    job.retry_policy_summary = request.retry_policy_summary
+    job.run_limit_summary = request.run_limit_summary
+    job.schema_columns = [column.model_dump(mode="json", by_alias=True) for column in request.schema_columns]
+    job.schema_fingerprint = request.schema_fingerprint
+    job.schema_sample_rows = request.schema_sample_rows
+    job.schema_summary = request.schema_summary
+    job.rule_summary = request.rule_summary
+    job.permission_summary = request.permission_summary
+    job.permission_roles = request.permission_roles
+    job.storage_type = request.storage_type
+    job.partition = request.partition
+    job.partition_columns = normalize_string_list(request.partition_columns)
+    job.index_columns = normalize_string_list(request.index_columns)
+    job.compression = request.compression
+    job.storage_path = request.storage_path
+    job.target_path = request.storage_path
+    job.target_database = normalize_optional_text(request.target_database)
+    job.target_description = normalize_optional_text(request.target_description)
+    job.target_tags = normalize_target_tags(request.target_tags)
+    job.target_format = request.target_format
+    job.target_layer = request.target_layer
+    job.rag = request.rag
+    job.transform_output_columns = tuple_rows_to_lists(request.transform_output_columns)
+    job.transform_steps = [step.model_dump(mode="json", by_alias=True) for step in request.transform_steps]
+    job.quality_invalid_rows = request.quality_invalid_rows
+    job.quality_rules = [rule.model_dump(mode="json", by_alias=True) for rule in request.quality_rules]
+    job.quality_score = request.quality_score
+    job.quality_status = request.quality_status
+    job.last_state = "설정 수정됨"
+    job.next_run = schedule_next_run_label(request.schedule_label, request.next_run_utc or job.next_run)
+    job.stats = {
+        **(job.stats or {}),
+        "currentStage": "설정 수정됨",
+        "schemaColumns": f"{len(dataset_schema_from_request(request)):,}개",
+    }
+    if target_changed:
+        job.dataset_id = f"ds_{normalize_column_name(request.target_dataset)}"
 
 
 def schedule_next_run_label(schedule_label: str | None, fallback: str | None = None) -> str:
@@ -921,6 +2431,88 @@ def schedule_policy_from_request(request: CreatePipelineRequest) -> dict[str, An
 
 def has_scheduled_execution(job: ETLJobModel) -> bool:
     return job.status != "stopped" and has_scheduled_label(job.schedule)
+
+
+def should_run_scheduled_job(job: ETLJobModel, request: ScheduledJobRunRequest) -> tuple[bool, str]:
+    if request.kafka_only and not is_kafka_job(job):
+        return False, "not_kafka_job"
+    if job.status == "stopped":
+        return False, "stopped"
+    if job.status == "running":
+        return False, "already_running"
+    if request.force:
+        return True, "forced"
+    if not has_scheduled_execution(job):
+        return False, "not_scheduled"
+
+    next_run_utc = ""
+    if isinstance(job.schedule_policy, dict):
+        next_run_utc = str(job.schedule_policy.get("nextRunUtc") or "")
+    if not next_run_utc:
+        return False, "next_run_not_set"
+
+    try:
+        next_run_at = datetime.fromisoformat(next_run_utc.replace("Z", "+00:00"))
+    except ValueError:
+        return False, "invalid_next_run"
+
+    if next_run_at <= datetime.now(UTC):
+        return True, "due"
+    return False, "not_due"
+
+
+def advance_scheduled_job_after_tick(db: Session, job_id: str) -> None:
+    job = etl_repository.get_job(db, job_id)
+    if job is None or not isinstance(job.schedule_policy, dict):
+        return
+
+    next_run_utc = next_scheduled_run_utc(job)
+    if not next_run_utc:
+        return
+
+    job.schedule_policy = {
+        **job.schedule_policy,
+        "nextRunUtc": next_run_utc,
+    }
+    job.next_run = next_run_utc
+    etl_repository.save_job(db, job)
+
+
+def next_scheduled_run_utc(job: ETLJobModel) -> str:
+    schedule = str(job.schedule or "")
+    current = ""
+    if isinstance(job.schedule_policy, dict):
+        current = str(job.schedule_policy.get("nextRunUtc") or "")
+    try:
+        base = datetime.fromisoformat(current.replace("Z", "+00:00")) if current else datetime.now(UTC)
+    except ValueError:
+        base = datetime.now(UTC)
+
+    now = datetime.now(UTC)
+    if schedule.startswith("매시간"):
+        minute_match = re.search(r"매시간\s+(\d{1,2})분", schedule)
+        minute = max(0, min(59, int(minute_match.group(1)) if minute_match else base.minute))
+        candidate = base.replace(minute=minute, second=0, microsecond=0)
+        while candidate <= now:
+            candidate += timedelta(hours=1)
+        return candidate.isoformat().replace("+00:00", "Z")
+
+    if schedule.startswith("매일"):
+        time_match = re.search(r"매일\s+(\d{1,2}):(\d{2})", schedule)
+        hour = max(0, min(23, int(time_match.group(1)) if time_match else base.hour))
+        minute = max(0, min(59, int(time_match.group(2)) if time_match else base.minute))
+        candidate = base.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        while candidate <= now:
+            candidate += timedelta(days=1)
+        return candidate.isoformat().replace("+00:00", "Z")
+
+    if schedule.startswith("매주"):
+        candidate = base.replace(second=0, microsecond=0)
+        while candidate <= now:
+            candidate += timedelta(days=7)
+        return candidate.isoformat().replace("+00:00", "Z")
+
+    return ""
 
 
 def apply_job_command(job: ETLJobModel, command: str) -> None:
@@ -1096,7 +2688,7 @@ def stats_from_runs(job: ETLJobModel, runs: list[Any]) -> dict[str, Any]:
     }
 
 
-def dataset_schema_from_request(request: CreatePipelineRequest) -> list[tuple[str, str]]:
+def dataset_schema_from_request(request: CreatePipelineRequest | UpdatePipelineRequest) -> list[tuple[str, str]]:
     if request.transform_output_columns:
         return [(name, type_ or "string") for name, type_ in request.transform_output_columns if name]
     return [
@@ -1221,6 +2813,41 @@ def tuple_rows_to_lists(rows: list[tuple[str, str]]) -> list[list[str]]:
     return [[str(key), str(value)] for key, value in rows]
 
 
+def normalize_string_list(values: list[str] | None) -> list[str]:
+    seen: set[str] = set()
+    normalized: list[str] = []
+    for value in values or []:
+        item = str(value).strip()
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        normalized.append(item)
+    return normalized
+
+
+def normalize_target_tags(values: list[str] | None) -> list[str]:
+    normalized = []
+    for value in normalize_string_list(values):
+        normalized.append(value if value.startswith("#") else f"#{value}")
+    return normalized
+
+
+def normalize_optional_text(value: str | None) -> str | None:
+    text = str(value).strip() if value is not None else ""
+    return text or None
+
+
+def target_dataset_description(job: ETLJobModel) -> str:
+    return (
+        normalize_optional_text(job.target_description)
+        or f"{job.source_type} 소스 {job.source_label} 실행 결과 데이터셋"
+    )
+
+
+def target_dataset_tags(job: ETLJobModel) -> list[str]:
+    return normalize_target_tags(job.target_tags) or ["#생성", f"#{str(job.target_layer).lower()}"]
+
+
 def parse_positive_integer(value: str) -> int:
     try:
         parsed = int(float(value))
@@ -1259,6 +2886,15 @@ def format_duration_ms(value: Any) -> str:
         return f"{seconds}\ucd08"
     minutes, rest = divmod(seconds, 60)
     return f"{minutes}\ubd84 {rest}\ucd08"
+
+
+def format_iso_duration(started_at: str, ended_at: str) -> str:
+    try:
+        start = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+        end = datetime.fromisoformat(ended_at.replace("Z", "+00:00"))
+    except ValueError:
+        return "-"
+    return format_duration_ms(max(0, int((end - start).total_seconds() * 1000)))
 
 
 def iso_now() -> str:

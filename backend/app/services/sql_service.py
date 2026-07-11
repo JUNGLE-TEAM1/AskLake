@@ -10,12 +10,16 @@ from uuid import uuid4
 import duckdb
 from fastapi import status
 
+from app.core.auth_context import ActorContext, require_permission
 from app.core.errors import ApiError
+from app.repositories.audit_repository import safe_record_audit_event
 from app.repositories.catalog_repository import CatalogRepository
 from app.repositories.sql_repository import SqlRepository
 from app.schemas.catalog import CatalogDatasetResponse
 from app.schemas.common import ErrorCode
 from app.schemas.sql import QueryRunRequest, QueryRunResponse
+from app.services.governance_enforcement import require_governed_access
+from app.services.resource_permission_service import dataset_with_persisted_permission_grants
 
 DEFAULT_PREVIEW_LIMIT = 100
 MUTATION_KEYWORDS = (
@@ -69,7 +73,8 @@ class SqlService:
         self.repository = repository
         self.catalog_repository = catalog_repository
 
-    def create_query_run(self, request: QueryRunRequest) -> QueryRunResponse:
+    def create_query_run(self, request: QueryRunRequest, actor: ActorContext | None = None) -> QueryRunResponse:
+        actor_context = actor or ActorContext()
         query = request.query
         statement = validate_read_only_query(query)
 
@@ -85,6 +90,41 @@ class SqlService:
             for reference_dataset_id in reference_dataset_ids
         ]
         context_datasets = [base_dataset, *reference_datasets]
+        for dataset in context_datasets:
+            require_governed_access(
+                self.repository.db,
+                actor_context,
+                action="query",
+                api_path="/api/query/runs",
+                http_method="POST",
+                metadata={"owner": dataset.owner, "query": query[:500]},
+                resource_id=dataset.id,
+                resource_name=dataset.name,
+                resource_type="dataset",
+            )
+            try:
+                require_permission(
+                    actor_context,
+                    "query",
+                    owner=dataset.owner,
+                    grants=dataset.permission_grants,
+                    resource_label="dataset",
+                )
+            except ApiError as exc:
+                safe_record_audit_event(
+                    self.repository.db,
+                    action="dataset.query.forbidden",
+                    actor=actor_context,
+                    api_path="/api/query/runs",
+                    http_method="POST",
+                    metadata={"owner": dataset.owner, "query": query[:500]},
+                    result="forbidden",
+                    status_code=exc.status_code,
+                    target_id=dataset.id,
+                    target_name=dataset.name,
+                    target_type="dataset",
+                )
+                raise
         referenced_datasets = resolve_referenced_datasets(
             mask_sql_comments_and_literals(statement),
             context_datasets,
@@ -118,6 +158,17 @@ class SqlService:
         )
         return response
 
+    def get_query_run(self, run_id: str) -> QueryRunResponse:
+        payload = self.repository.get_run_payload(run_id)
+        if payload is None:
+            raise ApiError(
+                ErrorCode.NOT_FOUND,
+                "SQL run not found",
+                status.HTTP_404_NOT_FOUND,
+                {"runId": run_id},
+            )
+        return QueryRunResponse.model_validate(payload)
+
     def get_catalog_dataset(
         self,
         dataset_id: str,
@@ -132,7 +183,10 @@ class SqlService:
                 status.HTTP_404_NOT_FOUND,
                 {"datasetId": dataset_id},
             )
-        return CatalogDatasetResponse.model_validate(payload)
+        return dataset_with_persisted_permission_grants(
+            self.catalog_repository.db,
+            CatalogDatasetResponse.model_validate(payload),
+        )
 
 
 def validate_read_only_query(query: str) -> str:

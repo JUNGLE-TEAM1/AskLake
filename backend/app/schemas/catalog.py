@@ -1,17 +1,18 @@
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import Field
 
 from app.schemas.common import CamelModel, CursorPageMeta
+from app.schemas.permissions import PermissionGrant, ResourcePermissions
 
 CatalogLayer = Literal["RAW", "BRONZE", "SILVER", "GOLD"]
 DatasetFreshness = Literal["latest", "stale", "approval"]
 DatasetStatus = Literal["available", "approval_required"]
 DerivedDatasetLayer = Literal["SILVER", "GOLD"]
-LineageLayer = Literal["SOURCE", "RAW", "BRONZE", "SILVER", "GOLD", "CONSUMER"]
+LineageLayer = Literal["SOURCE", "PROCESS", "RAW", "BRONZE", "SILVER", "GOLD", "CONSUMER"]
 QueryRefreshPolicy = Literal["manual"]
 MaterializationRunStatus = Literal["queued", "running", "success", "failed", "canceled"]
-MaterializationSourceKind = Literal["etl", "sql"]
+MaterializationSourceKind = Literal["etl", "sql", "kafka"]
 
 
 class LineageGraphColumn(CamelModel):
@@ -54,6 +55,10 @@ class DatasetMaterializationRun(CamelModel):
 
 
 class CatalogDatasetResponse(CamelModel):
+    created_by: str | None = None
+    created_by_profile: dict[str, Any] | None = None
+    permission_grants: list[PermissionGrant] = Field(default_factory=list)
+    permissions: ResourcePermissions = Field(default_factory=ResourcePermissions)
     description: str
     downstream: list[str] = Field(default_factory=list)
     freshness: DatasetFreshness
@@ -77,6 +82,9 @@ class CatalogDatasetResponse(CamelModel):
     storage_format: str | None = None
     storage_location: str | None = None
     storage_size_bytes: int | None = None
+    partition: str | None = None
+    partition_columns: list[str] | None = None
+    index_columns: list[str] | None = None
     tags: list[str]
     upstream: list[str] = Field(default_factory=list)
 

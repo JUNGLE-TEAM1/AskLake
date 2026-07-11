@@ -11,6 +11,7 @@ import { listS3Buckets, listS3Prefixes, type S3PrefixesResponse, type S3PrefixFo
 import { buildS3Path, normalizePrefix, parseS3Path, S3_SCHEME } from "../../utils/s3Path";
 
 type S3PathFieldProps = {
+  disabled?: boolean;
   onChange: (path: string) => void;
   useShadcnStyles?: boolean;
   value: string;

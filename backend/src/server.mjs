@@ -1,14 +1,30 @@
 import http from "node:http";
-import { commandJob, createPipeline, executeQuery, getPipelineJob, listDatasets, listJobs } from "./createPipeline.mjs";
+import {
+  commandJob,
+  createTextStructuringTrainingRun,
+  createPipeline,
+  executeQuery,
+  getPipelineJob,
+  getPipelineRun,
+  listDatasets,
+  listJobs,
+  listModelArtifacts,
+  previewDatasetRows,
+  readPipelineRunLogs,
+} from "./createPipeline.mjs";
 import { listSourceAssets, testSourceConnector } from "./connectors.mjs";
 import { listS3Buckets, listS3Prefixes } from "./s3.service.mjs";
 import { ensureMetadataSchema, resetMetadata } from "./metadataStore.mjs";
 import { listTargetDatabases } from "./targetDatabase.service.mjs";
+import { getCellphonesReviewAnalysisStatus, runCellphonesReviewAnalysis, suggestReviewAnalysisSchema } from "./reviewRowAnalysis.mjs";
+import { handleAuthRoute } from "./authService.mjs";
 
 const port = Number(process.env.PORT || 8080);
 
 const server = http.createServer(async (request, response) => {
-  response.setHeader("Access-Control-Allow-Origin", process.env.CORS_ORIGIN || "*");
+  const requestOrigin = request.headers.origin;
+  response.setHeader("Access-Control-Allow-Origin", process.env.CORS_ORIGIN || requestOrigin || "*");
+  response.setHeader("Access-Control-Allow-Credentials", "true");
   response.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   response.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
 
@@ -22,6 +38,10 @@ const server = http.createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
     if (request.method === "GET" && url.pathname === "/api/health") {
       sendJson(response, 200, { ok: true, service: "asklake-backend", time: new Date().toISOString() });
+      return;
+    }
+
+    if (await handleAuthRoute(request, response, url, readJson, sendJson)) {
       return;
     }
 
@@ -41,8 +61,51 @@ const server = http.createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === "GET" && /^\/api\/etl\/jobs\/[^/]+\/runs\/[^/]+$/.test(url.pathname)) {
+      const segments = url.pathname.split("/");
+      const jobId = decodeURIComponent(segments[4]);
+      const runId = decodeURIComponent(segments[6]);
+      sendJson(response, 200, await getPipelineRun(jobId, runId));
+      return;
+    }
+
+    if (request.method === "GET" && /^\/api\/etl\/jobs\/[^/]+\/runs\/[^/]+\/logs$/.test(url.pathname)) {
+      const segments = url.pathname.split("/");
+      const jobId = decodeURIComponent(segments[4]);
+      const runId = decodeURIComponent(segments[6]);
+      const stream = url.searchParams.get("stream") || "stdout";
+      const tailBytes = Number(url.searchParams.get("tail") || 65536);
+      sendJson(response, 200, await readPipelineRunLogs(jobId, runId, { stream, tailBytes }));
+      return;
+    }
+
     if (request.method === "GET" && url.pathname === "/api/catalog/datasets") {
       sendJson(response, 200, await listDatasets());
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/catalog/models") {
+      sendJson(response, 200, await listModelArtifacts());
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/text-structuring/models") {
+      sendJson(response, 200, await listModelArtifacts());
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/text-structuring/training-runs") {
+      const body = await readJson(request);
+      sendJson(response, 201, await createTextStructuringTrainingRun(body));
+      return;
+    }
+
+    if (request.method === "GET" && /^\/api\/catalog\/datasets\/[^/]+\/rows$/.test(url.pathname)) {
+      const datasetId = decodeURIComponent(url.pathname.split("/")[4]);
+      sendJson(response, 200, await previewDatasetRows(datasetId, {
+        limit: url.searchParams.get("limit"),
+        offset: url.searchParams.get("offset"),
+      }));
       return;
     }
 
@@ -62,6 +125,23 @@ const server = http.createServer(async (request, response) => {
 
     if (request.method === "GET" && url.pathname === "/api/target/databases") {
       sendJson(response, 200, listTargetDatabases());
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/review-analysis/cellphones") {
+      sendJson(response, 200, await getCellphonesReviewAnalysisStatus());
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/review-analysis/cellphones/run") {
+      const body = await readJson(request);
+      sendJson(response, 200, await runCellphonesReviewAnalysis(body));
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/review-analysis/schema-suggestion") {
+      const body = await readJson(request);
+      sendJson(response, 200, await suggestReviewAnalysisSchema(body));
       return;
     }
 

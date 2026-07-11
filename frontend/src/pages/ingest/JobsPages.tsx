@@ -1166,13 +1166,28 @@ function hasLatestSuccessfulRun(job: JobRowData) {
   return /^(성공|success)$/i.test(normalizeWhitespace(job.lastState));
 }
 
-function normalizeShortText(value?: string) {
-  if (!value) return "";
-  return value.trim();
+function getLatestRunOutcome(job: JobRowData): JobRunStatus | null {
+  const latestRun = job.runHistory?.[0];
+  if (latestRun && ["success", "failed", "canceled"].includes(latestRun.status)) return latestRun.status;
+  if (/실행 실패/.test(job.lastState)) return "failed";
+  if (/취소됨/.test(job.lastState)) return "canceled";
+  return null;
 }
 
-function normalizeWhitespace(value: string) {
-  return value.replace(/\s+/g, " ").trim();
+function hasLatestSuccessfulRun(job: JobRowData) {
+  const latestRun = job.runHistory?.[0];
+  if (latestRun) return latestRun.status === "success";
+
+  return /^(성공|success)$/i.test(normalizeWhitespace(job.lastState));
+}
+
+function normalizeShortText(value?: unknown) {
+  if (!value) return "";
+  return String(value).trim();
+}
+
+function normalizeWhitespace(value: unknown) {
+  return String(value ?? "").replace(/\s+/g, " ").trim();
 }
 
 function isVerboseLogText(value: string) {
@@ -1183,18 +1198,24 @@ function isVerboseLogText(value: string) {
 
 function formatCompactDateTime(value: string) {
   const normalized = normalizeWhitespace(value);
-  if (!normalized || normalized === "-") return value;
+  if (normalized.length > 120) return true;
+  return /warning:|exception|traceback|spark|ivy|\/opt\/spark|hadoop-aws|jar:file|download|successfully/i.test(normalized);
+}
+
+function formatCompactDateTime(value: unknown): string {
+  const normalized = normalizeWhitespace(value);
+  if (!normalized || normalized === "-") return normalized || "-";
 
   const dateCandidate = normalized.includes("T")
     ? normalized
     : /^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}/.test(normalized)
       ? normalized.replace(" ", "T")
       : "";
-  if (!dateCandidate) return value;
+  if (!dateCandidate) return normalized;
 
   const safeCandidate = dateCandidate.replace(/\.(\d{3})\d+(?=Z|[+-]\d{2}:?\d{2}|$)/, ".$1");
   const date = new Date(safeCandidate);
-  if (Number.isNaN(date.getTime())) return value;
+  if (Number.isNaN(date.getTime())) return normalized;
 
   const year = String(date.getFullYear());
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -1223,7 +1244,7 @@ function compactLogSummary(value: string) {
   return truncateText(matched ?? normalized, 72);
 }
 
-function truncateText(value: string, maxLength: number) {
+function truncateText(value: unknown, maxLength: number) {
   const normalized = normalizeWhitespace(value);
   if (normalized.length <= maxLength) return normalized;
   return `${normalized.slice(0, Math.max(0, maxLength - 3)).trim()}...`;

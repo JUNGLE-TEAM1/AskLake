@@ -6,12 +6,15 @@ from typing import Any
 
 from fastapi import status
 
+from app.core.auth_context import ActorContext, require_permission
 from app.core.config import settings
 from app.core.errors import ApiError
 from app.repositories.catalog_repository import CatalogRepository
 from app.schemas.catalog import CatalogDatasetResponse
 from app.schemas.common import ErrorCode
 from app.schemas.sql import QueryAiSuggestionRequest, QueryAiSuggestionResponse
+from app.services.governance_enforcement import require_governed_access
+from app.services.resource_permission_service import dataset_with_persisted_permission_grants
 from app.services.sql_service import (
     build_dataset_context_map,
     extract_cte_names,
@@ -32,7 +35,9 @@ class QueryAiService:
     def create_suggestion(
         self,
         request: QueryAiSuggestionRequest,
+        actor: ActorContext | None = None,
     ) -> QueryAiSuggestionResponse:
+        actor_context = actor or ActorContext()
         if request.mode != "draft_sql":
             raise ApiError(
                 ErrorCode.VALIDATION_ERROR,
@@ -66,6 +71,25 @@ class QueryAiService:
             self.get_catalog_dataset(dataset_id)
             for dataset_id in context_dataset_ids
         ]
+        for dataset in datasets:
+            require_governed_access(
+                self.repository.db,
+                actor_context,
+                action="query",
+                api_path="/api/query/ai/suggestions",
+                http_method="POST",
+                metadata={"owner": dataset.owner},
+                resource_id=dataset.id,
+                resource_name=dataset.name,
+                resource_type="dataset",
+            )
+            require_permission(
+                actor_context,
+                "query",
+                owner=dataset.owner,
+                grants=dataset.permission_grants,
+                resource_label="dataset",
+            )
         base_dataset = self.pick_base_dataset(datasets, request.base_dataset_id)
         client = OpenAiResponsesClient(
             api_key=settings.openai_api_key,
@@ -104,7 +128,10 @@ class QueryAiService:
                 status.HTTP_404_NOT_FOUND,
                 {"datasetId": dataset_id},
             )
-        return CatalogDatasetResponse.model_validate(payload)
+        return dataset_with_persisted_permission_grants(
+            self.catalog_repository.db,
+            CatalogDatasetResponse.model_validate(payload),
+        )
 
     def pick_base_dataset(
         self,

@@ -1,8 +1,9 @@
 from typing import Any, Literal
 
-from pydantic import Field
+from pydantic import ConfigDict, Field
 
-from app.schemas.common import CamelModel
+from app.schemas.common import CamelModel, to_camel
+from app.schemas.permissions import PermissionGrant, ResourcePermissions
 
 TargetLayer = Literal["RAW", "BRONZE", "SILVER", "GOLD"]
 JobStatus = Literal["scheduled", "failed", "running", "paused", "canceled", "stopped"]
@@ -24,6 +25,7 @@ class JobStats(CamelModel):
     average_duration: str
     current_stage: str
     input_rows: str
+    last_synced_at: str | None = None
     last_success: str
     output_rows: str
     output_path: str | None = None
@@ -61,6 +63,7 @@ class QualityRuleDraft(CamelModel):
     failure_action: str
     id: str
     kind: str
+    params: str = ""
     severity: str
     target_column: str
     validation_type: str
@@ -85,6 +88,10 @@ class WatermarkPolicyDraft(CamelModel):
 
 
 class JobRunSummary(CamelModel):
+    airflow_dag_id: str | None = None
+    airflow_dag_run_id: str | None = None
+    airflow_run_url: str | None = None
+    airflow_state: str | None = None
     duration: str
     ended_at: str
     error_summary: str
@@ -95,6 +102,8 @@ class JobRunSummary(CamelModel):
     run_id: str
     started_at: str
     status: JobRunStatus
+    sync_error: str | None = None
+    task_states: dict[str, Any] | None = None
 
 
 class JobDagStep(CamelModel):
@@ -113,6 +122,10 @@ class JobRowData(CamelModel):
     name: str
     id: str
     owner: str
+    created_by: str | None = None
+    created_by_profile: dict[str, Any] | None = None
+    permission_grants: list[PermissionGrant] = Field(default_factory=list)
+    permissions: ResourcePermissions = Field(default_factory=ResourcePermissions)
     tag: str
     source: str
     target: str
@@ -123,14 +136,25 @@ class JobRowData(CamelModel):
     source_config: SourceFieldRows | None = None
     source_label: str | None = None
     source_type: str | None = None
+    schema_columns: list[SchemaColumnDraft] | list[dict[str, Any]] | None = None
+    schema_fingerprint: str | None = None
+    schema_sample_rows: list[list[str]] | None = None
+    schema_summary: str | None = None
+    rule_summary: str | None = None
     retry_policy: RetryPolicyDraft | dict[str, Any] | None = None
     retry_policy_summary: str | None = None
     run_limit_summary: str | None = None
     permission_roles: list[dict[str, Any]] | None = None
+    permission_summary: str | None = None
     storage_type: str | None = None
     partition: str | None = None
+    partition_columns: list[str] | None = None
+    index_columns: list[str] | None = None
     compression: str | None = None
     storage_path: str | None = None
+    target_description: str | None = None
+    target_database: str | None = None
+    target_tags: list[str] | None = None
     target_format: str | None = None
     target_layer: TargetLayer | None = None
     target_path: str | None = None
@@ -167,6 +191,10 @@ class CatalogDataset(CamelModel):
     name: str
     description: str
     owner: str
+    created_by: str | None = None
+    created_by_profile: dict[str, Any] | None = None
+    permission_grants: list[PermissionGrant] = Field(default_factory=list)
+    permissions: ResourcePermissions = Field(default_factory=ResourcePermissions)
     layer: TargetLayer
     status: Literal["available", "approval_required"]
     freshness: Literal["latest", "stale", "approval"]
@@ -186,6 +214,9 @@ class CatalogDataset(CamelModel):
     storage_format: str | None = None
     storage_location: str | None = None
     storage_size_bytes: int | None = None
+    partition: str | None = None
+    partition_columns: list[str] | None = None
+    index_columns: list[str] | None = None
     lineage_graph: dict[str, Any] | None = None
     materialization_runs: list[dict[str, Any]] = Field(default_factory=list)
 
@@ -239,8 +270,13 @@ class CreatePipelineRequest(CamelModel):
     watermark_policy: WatermarkPolicyDraft | dict[str, Any] | None = None
     permission_summary: str = ""
     permission_roles: list[dict[str, Any]] | None = None
+    permission_grants: list[PermissionGrant] | None = None
+    created_by: str | None = None
+    created_by_profile: dict[str, Any] | None = None
     storage_type: str | None = None
     partition: str | None = None
+    partition_columns: list[str] | None = None
+    index_columns: list[str] | None = None
     compression: str | None = None
     storage_path: str | None = None
     target_dataset: str
@@ -292,6 +328,22 @@ class JobCommandRequest(CamelModel):
     command: JobCommand
 
 
+class AirflowSparkExecutionRequest(CamelModel):
+    command: Literal["run", "retry"] = "run"
+    job_id: str
+
+
+class AirflowCatalogReconciliationRequest(CamelModel):
+    job_id: str
+
+
+class AirflowCatalogReconciliationResponse(CamelModel):
+    dataset: CatalogDataset
+    reconciled_at: str
+    run_id: str
+    status: Literal["success"] = "success"
+
+
 class JobCommandResponse(CamelModel):
     action: str
     api_path: str
@@ -300,6 +352,110 @@ class JobCommandResponse(CamelModel):
     run: JobRunSummary | None = None
     dag_steps: list[JobDagStep] | None = None
     processing_result: dict[str, Any] | None = None
+
+
+class AirflowRunExecutionRequest(CamelModel):
+    command: Literal["run", "retry"] = "run"
+
+
+class AirflowRunExecutionResponse(CamelModel):
+    status: Literal["success", "failed"]
+    job_id: str
+    run_id: str
+    dataset_id: str | None = None
+    input_rows: int = 0
+    output_rows: int = 0
+    output_path: str = "-"
+    duration_ms: int | None = None
+    schema_: list[dict[str, Any]] = Field(default_factory=list, alias="schema")
+    quality: dict[str, Any] | None = None
+    failed_stage: str | None = None
+    error: str | None = None
+
+
+class ScheduledJobRunRequest(CamelModel):
+    force: bool = False
+    job_id: str | None = None
+    kafka_only: bool = True
+
+
+class ScheduledJobRunItem(CamelModel):
+    job_id: str
+    job_name: str
+    reason: str
+    response: JobCommandResponse | None = None
+    schedule: str
+    triggered: bool
+
+
+class ScheduledJobRunResponse(CamelModel):
+    checked_count: int
+    items: list[ScheduledJobRunItem]
+    triggered_count: int
+
+
+class KafkaReviewIngestRequest(CamelModel):
+    allow_empty: bool = False
+    broker: str = "127.0.0.1:19092"
+    topic: str = "reviews.raw"
+    consumer_group_id: str | None = None
+    dataset_id: str | None = None
+    dataset_name: str = "reviews_raw"
+    target_bucket: str = "asklake-output"
+    target_description: str | None = None
+    target_format: str = "jsonl"
+    target_layer: Literal["RAW", "BRONZE", "SILVER"] = "BRONZE"
+    target_prefix: str = ""
+    transform_steps: list[TransformStepDraft] = Field(default_factory=list)
+    quality_rules: list[QualityRuleDraft] = Field(default_factory=list)
+    landing_bucket: str = "m3-raw"
+    landing_endpoint: str = "http://127.0.0.1:9000"
+    landing_prefix: str = "kafka-landing"
+    local_landing_dir: str | None = None
+    max_messages: int = Field(default=100, ge=1, le=1_000_000)
+    offset_policy: Literal["earliest", "latest"] = "earliest"
+    register_catalog: bool = True
+    run_id: str | None = None
+    storage_mode: Literal["local", "s3"] = "s3"
+    test_fail_after_target_write: bool = False
+    timeout_ms: int = Field(default=10000, ge=1000, le=300000)
+
+
+class KafkaPartitionSnapshot(CamelModel):
+    end_offset: str
+    high_watermark: str
+    partition: int
+    start_offset: str
+
+
+class KafkaSnapshot(CamelModel):
+    captured_at: str
+    consumer_group_id: str
+    offset_policy: Literal["earliest", "latest"]
+    partitions: list[KafkaPartitionSnapshot]
+    snapshot_id: str
+    topic: str
+
+
+class KafkaReviewIngestResponse(CamelModel):
+    broker: str
+    catalog_dataset: dict[str, Any] | None = None
+    consumed_count: int
+    dataset_id: str | None = None
+    dataset_name: str | None = None
+    failed_count: int
+    metadata_location: str
+    run_id: str
+    snapshot: KafkaSnapshot
+    status: Literal["success"]
+    storage_format: str
+    storage_location: str
+    storage_mode: Literal["local", "s3"]
+    stored_count: int
+    target_layer: Literal["RAW", "BRONZE", "SILVER"]
+    topic: str
+    transform: dict[str, Any] | None = None
+    quality: dict[str, Any] | None = None
 
 
 class QueryRunRequest(CamelModel):

@@ -1,7 +1,8 @@
 from sqlalchemy import inspect, select, text
 from sqlalchemy.orm import Session
 
-from app.models import CatalogDatasetModel, ETLJobModel, ETLRunModel
+from app.core.permission_metadata import permission_grants_from_roles, resource_permissions
+from app.models import CatalogDatasetModel, ETLJobModel, ETLRunModel, KafkaSnapshotModel
 from app.models.base import Base
 from app.repositories.catalog_repository import ensure_catalog_schema
 from app.schemas.etl import CatalogDataset, JobRowData, JobRunSummary
@@ -23,16 +24,21 @@ def ensure_schema(db: Session) -> None:
             connection.execute(text("ALTER TABLE etl_jobs ALTER COLUMN payload DROP NOT NULL"))
         column_defs = {
             "compression": "VARCHAR(64)",
+            "created_by": "VARCHAR(255)",
+            "created_by_profile": "JSON",
             "dag_steps": "JSON",
             "dag_steps_by_run_id": "JSON",
             "dataset_id": "VARCHAR(120)",
             "last_run": "VARCHAR(64)",
-            "last_state": "VARCHAR(255)",
+            "last_state": "TEXT",
             "name": "VARCHAR(255)",
             "next_run": "VARCHAR(255)",
             "owner": "VARCHAR(255)",
             "partition": "VARCHAR(255)",
+            "partition_columns": "JSON",
+            "index_columns": "JSON",
             "permission_roles": "JSON",
+            "permission_summary": "TEXT",
             "progress": "JSON",
             "quality_invalid_rows": "JSON",
             "quality_rules": "JSON",
@@ -48,6 +54,8 @@ def ensure_schema(db: Session) -> None:
             "schema_columns": "JSON",
             "schema_fingerprint": "TEXT",
             "schema_sample_rows": "JSON",
+            "schema_summary": "TEXT",
+            "rule_summary": "TEXT",
             "source": "VARCHAR(255)",
             "source_config": "JSON",
             "source_label": "VARCHAR(255)",
@@ -58,17 +66,88 @@ def ensure_schema(db: Session) -> None:
             "storage_type": "VARCHAR(64)",
             "tag": "VARCHAR(64)",
             "target": "VARCHAR(255)",
+            "target_description": "TEXT",
+            "target_database": "VARCHAR(255)",
             "target_format": "VARCHAR(120)",
             "target_layer": "VARCHAR(32)",
             "target_path": "VARCHAR(512)",
+            "target_tags": "JSON",
             "transform_output_columns": "JSON",
             "transform_steps": "JSON",
         }
         for column_name, column_type in column_defs.items():
             if column_name not in existing_columns:
                 connection.execute(text(f"ALTER TABLE etl_jobs ADD COLUMN {column_name} {column_type}"))
+
+        job_defaults = {
+            "dag_steps": "[]",
+            "last_run": "-",
+            "last_state": "대기",
+            "name": "Untitled ETL Job",
+            "next_run": "-",
+            "owner": "AskLake",
+            "quality_invalid_rows": "[]",
+            "quality_rules": "[]",
+            "rag": False,
+            "schedule": "수동",
+            "schema_columns": "[]",
+            "schema_sample_rows": "[]",
+            "source": "unknown",
+            "source_config": "[]",
+            "source_label": "Unknown source",
+            "source_type": "unknown",
+            "stats": "{}",
+            "status": "scheduled",
+            "tag": "[생성]",
+            "target": "unknown",
+            "target_format": "parquet",
+            "target_layer": "RAW",
+            "transform_output_columns": "[]",
+            "transform_steps": "[]",
+        }
+        for column_name, default_value in job_defaults.items():
+            if isinstance(default_value, bool):
+                sql_value = "true" if default_value else "false"
+            elif column_name in {
+                "dag_steps",
+                "quality_invalid_rows",
+                "quality_rules",
+                "schema_columns",
+                "schema_sample_rows",
+                "source_config",
+                "stats",
+                "transform_output_columns",
+                "transform_steps",
+            } and connection.dialect.name != "sqlite":
+                sql_value = f"'{default_value}'::json"
+            else:
+                sql_value = f"'{default_value}'"
+            connection.execute(text(f"UPDATE etl_jobs SET {column_name} = {sql_value} WHERE {column_name} IS NULL"))
         if "schema_fingerprint" in existing_columns:
             connection.execute(text("ALTER TABLE etl_jobs ALTER COLUMN schema_fingerprint TYPE TEXT"))
+        if "last_state" in existing_columns:
+            connection.execute(text("ALTER TABLE etl_jobs ALTER COLUMN last_state TYPE TEXT"))
+
+        existing_run_columns = {column["name"] for column in inspector.get_columns("etl_runs")}
+        if "failed_stage" in existing_run_columns:
+            connection.execute(text("ALTER TABLE etl_runs ALTER COLUMN failed_stage TYPE TEXT"))
+        if "error_summary" in existing_run_columns:
+            connection.execute(text("ALTER TABLE etl_runs ALTER COLUMN error_summary TYPE TEXT"))
+
+
+        existing_run_columns = {column["name"] for column in inspector.get_columns("etl_runs")}
+        run_column_defs = {
+            "airflow_dag_id": "VARCHAR(255)",
+            "airflow_dag_run_id": "VARCHAR(255)",
+            "airflow_run_url": "VARCHAR(1024)",
+            "airflow_state": "VARCHAR(64)",
+            "last_synced_at": "VARCHAR(64)",
+            "sync_error": "VARCHAR(512)",
+            "task_states": "JSON",
+        }
+        for column_name, column_type in run_column_defs.items():
+            if column_name not in existing_run_columns:
+                connection.execute(text(f"ALTER TABLE etl_runs ADD COLUMN {column_name} {column_type}"))
 
     ensure_catalog_schema(db)
     _schema_ready_bind_ids.add(bind_key)
@@ -78,6 +157,11 @@ def list_jobs(db: Session) -> list[JobRowData]:
     ensure_schema(db)
     jobs = db.scalars(select(ETLJobModel).order_by(ETLJobModel.created_at.desc())).all()
     return [job_to_schema(db, job) for job in jobs]
+
+
+def list_job_models(db: Session) -> list[ETLJobModel]:
+    ensure_schema(db)
+    return db.scalars(select(ETLJobModel).order_by(ETLJobModel.created_at.desc())).all()
 
 
 def get_job(db: Session, job_id: str) -> ETLJobModel | None:
@@ -105,6 +189,15 @@ def get_job_by_target(db: Session, target: str) -> ETLJobModel | None:
 def get_dataset_by_id(db: Session, dataset_id: str) -> CatalogDatasetModel | None:
     ensure_schema(db)
     return db.get(CatalogDatasetModel, dataset_id)
+
+
+def get_dataset_by_id_for_update(db: Session, dataset_id: str) -> CatalogDatasetModel | None:
+    ensure_schema(db)
+    return db.scalar(
+        select(CatalogDatasetModel)
+        .where(CatalogDatasetModel.id == dataset_id)
+        .with_for_update()
+    )
 
 
 def get_dataset_by_name(db: Session, name: str) -> CatalogDatasetModel | None:
@@ -198,6 +291,48 @@ def create_run(db: Session, run: ETLRunModel) -> JobRunSummary:
     return run_to_schema(run)
 
 
+def get_run(db: Session, run_id: str) -> ETLRunModel | None:
+    ensure_schema(db)
+    return db.get(ETLRunModel, run_id)
+
+
+def get_active_kafka_snapshot(
+    db: Session,
+    topic: str,
+    consumer_group_id: str,
+    job_id: str | None,
+) -> KafkaSnapshotModel | None:
+    ensure_schema(db)
+    statement = (
+        select(KafkaSnapshotModel)
+        .where(
+            KafkaSnapshotModel.topic == topic,
+            KafkaSnapshotModel.consumer_group_id == consumer_group_id,
+            KafkaSnapshotModel.status.in_(["running", "failed"]),
+        )
+        .order_by(KafkaSnapshotModel.created_at.desc())
+    )
+    if job_id is None:
+        statement = statement.where(KafkaSnapshotModel.job_id.is_(None))
+    else:
+        statement = statement.where(KafkaSnapshotModel.job_id == job_id)
+    return db.scalars(statement).first()
+
+
+def save_kafka_snapshot(db: Session, snapshot: KafkaSnapshotModel) -> KafkaSnapshotModel:
+    ensure_schema(db)
+    db.add(snapshot)
+    db.commit()
+    db.refresh(snapshot)
+    return snapshot
+
+
+def update_kafka_snapshot(db: Session, snapshot: KafkaSnapshotModel, status: str, error: str | None = None) -> None:
+    snapshot.status = status
+    snapshot.last_error = error
+    db.commit()
+
+
 def list_runs_for_job(db: Session, job_id: str) -> list[JobRunSummary]:
     ensure_schema(db)
     runs = db.scalars(
@@ -208,12 +343,36 @@ def list_runs_for_job(db: Session, job_id: str) -> list[JobRunSummary]:
     return [run_to_schema(run) for run in runs]
 
 
+
+def list_run_models_for_job(db: Session, job_id: str) -> list[ETLRunModel]:
+    ensure_schema(db)
+    return db.scalars(
+        select(ETLRunModel)
+        .where(ETLRunModel.job_id == job_id)
+        .order_by(ETLRunModel.created_at.desc())
+    ).all()
+
+
+def get_run_model(db: Session, run_id: str) -> ETLRunModel | None:
+    ensure_schema(db)
+    return db.get(ETLRunModel, run_id)
+
+
+def refresh_run_for_update(db: Session, run: ETLRunModel) -> None:
+    ensure_schema(db)
+    db.refresh(run, with_for_update=True)
+
+
 def job_to_schema(db: Session, job: ETLJobModel) -> JobRowData:
     return JobRowData(
         created_at=job.created_at.isoformat() if job.created_at else None,
         id=job.id,
         name=job.name or job.target or job.id,
         owner=job.owner or "demo-user",
+        created_by=job.created_by or job.owner or "demo-user",
+        created_by_profile=job.created_by_profile,
+        permission_grants=permission_grants_from_roles(job.owner, job.permission_roles, default_actions=["view", "run"]),
+        permissions=resource_permissions(can_run=True),
         status=job.status or "scheduled",
         tag=job.tag or "[생성]",
         source=job.source or job.source_label or "-",
@@ -225,14 +384,25 @@ def job_to_schema(db: Session, job: ETLJobModel) -> JobRowData:
         source_config=job.source_config,
         source_label=job.source_label,
         source_type=job.source_type,
+        schema_columns=job.schema_columns,
+        schema_fingerprint=job.schema_fingerprint,
+        schema_sample_rows=job.schema_sample_rows,
+        schema_summary=job.schema_summary,
+        rule_summary=job.rule_summary,
         retry_policy=job.retry_policy,
         retry_policy_summary=job.retry_policy_summary,
         run_limit_summary=job.run_limit_summary,
         permission_roles=job.permission_roles,
+        permission_summary=job.permission_summary,
         storage_type=job.storage_type,
         partition=job.partition,
+        partition_columns=job.partition_columns,
+        index_columns=job.index_columns,
         compression=job.compression,
         storage_path=job.storage_path,
+        target_description=job.target_description,
+        target_database=job.target_database,
+        target_tags=job.target_tags,
         target_format=job.target_format,
         target_layer=job.target_layer,
         target_path=job.target_path,
@@ -261,6 +431,10 @@ def dataset_to_schema(dataset: CatalogDatasetModel) -> CatalogDataset:
             name=str(payload.get("name") or dataset.id),
             description=str(payload.get("description") or ""),
             owner=str(payload.get("owner") or ""),
+            created_by=payload.get("createdBy"),
+            created_by_profile=payload.get("createdByProfile"),
+            permission_grants=payload.get("permissionGrants") or permission_grants_from_roles(str(payload.get("owner") or ""), default_actions=["view", "query"]),
+            permissions=payload.get("permissions") or resource_permissions(can_query=True),
             layer=payload.get("layer") or "RAW",
             status=payload.get("status") or "available",
             freshness=payload.get("freshness") or "latest",
@@ -289,6 +463,10 @@ def dataset_to_schema(dataset: CatalogDatasetModel) -> CatalogDataset:
         name=dataset.name or dataset.id,
         description=dataset.description or "",
         owner=dataset.owner or "",
+        created_by=dataset.payload.get("createdBy") if dataset.payload else dataset.owner,
+        created_by_profile=dataset.payload.get("createdByProfile") if dataset.payload else None,
+        permission_grants=permission_grants_from_roles(dataset.owner, default_actions=["view", "query"]),
+        permissions=resource_permissions(can_query=True),
         layer=dataset.layer or "RAW",
         status=dataset.status or "available",
         freshness=dataset.freshness or "latest",
@@ -321,4 +499,11 @@ def run_to_schema(run: ETLRunModel) -> JobRunSummary:
         output_path=run.output_path,
         failed_stage=run.failed_stage,
         error_summary=run.error_summary,
+        airflow_dag_id=run.airflow_dag_id,
+        airflow_dag_run_id=run.airflow_dag_run_id,
+        airflow_run_url=run.airflow_run_url,
+        airflow_state=run.airflow_state,
+        task_states=run.task_states,
+        last_synced_at=run.last_synced_at,
+        sync_error=run.sync_error,
     )

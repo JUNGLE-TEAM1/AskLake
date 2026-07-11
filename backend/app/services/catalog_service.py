@@ -3,8 +3,11 @@ from datetime import datetime, timezone
 
 from fastapi import status
 
+from app.core.auth_context import ActorContext, require_any_permission, require_permission
 from app.core.errors import ApiError
+from app.core.permission_metadata import permission_grants_from_roles, resource_permissions
 from app.repositories.catalog_repository import CatalogRepository, dataset_model_to_payload
+from app.repositories.audit_repository import safe_record_audit_event
 from app.repositories.sql_repository import SqlRepository
 from app.schemas.catalog import (
     CatalogDatasetListResponse,
@@ -23,6 +26,12 @@ from app.services.lake_storage_service import (
     LocalLakeStorageService,
     MaterializedDatasetResult,
 )
+from app.services.governance_enforcement import require_governed_access
+from app.services.resource_permission_service import (
+    dataset_with_persisted_permission_grants,
+    datasets_with_persisted_permission_grants,
+    permissions_for_actor_with_governance,
+)
 
 
 class CatalogService:
@@ -36,24 +45,68 @@ class CatalogService:
         self.repository = repository
         self.sql_repository = sql_repository
 
-    def list_datasets(self) -> CatalogDatasetListResponse:
+    def list_datasets(self, actor: ActorContext | None = None) -> CatalogDatasetListResponse:
+        actor_context = actor or ActorContext()
+        datasets = datasets_with_persisted_permission_grants(
+            self.repository.db,
+            [
+                CatalogDatasetResponse.model_validate(dataset_model_to_payload(model))
+                for model in self.repository.list_dataset_models()
+            ],
+        )
         datasets = [
-            CatalogDatasetResponse.model_validate(dataset_model_to_payload(model))
-            for model in self.repository.list_dataset_models()
+            with_dataset_permissions(dataset, actor_context, self.repository.db)
+            for dataset in datasets
         ]
+        datasets = [dataset for dataset in datasets if dataset.permissions.can_view]
         return CatalogDatasetListResponse(
             datasets=datasets,
             page=CursorPageMeta(cursor=None, has_next=False),
         )
 
-    def get_dataset(self, dataset_id: str) -> CatalogDatasetResponse:
+    def get_dataset(self, dataset_id: str, actor: ActorContext | None = None) -> CatalogDatasetResponse:
         payload = self.repository.get_dataset_payload(dataset_id)
         if payload is None:
             raise ApiError(ErrorCode.NOT_FOUND, "Dataset not found", status.HTTP_404_NOT_FOUND)
-        return CatalogDatasetResponse.model_validate(payload)
+        dataset = dataset_with_persisted_permission_grants(
+            self.repository.db,
+            CatalogDatasetResponse.model_validate(payload),
+        )
+        actor_context = actor or ActorContext()
+        require_governed_access(
+            self.repository.db,
+            actor_context,
+            action="view",
+            api_path=f"/api/catalog/datasets/{dataset_id}",
+            http_method="GET",
+            metadata={"owner": dataset.owner},
+            resource_id=dataset.id,
+            resource_name=dataset.name,
+            resource_type="dataset",
+        )
+        try:
+            require_permission(
+                actor_context,
+                "view",
+                owner=dataset.owner,
+                grants=dataset.permission_grants,
+                resource_label="dataset",
+            )
+        except ApiError as exc:
+            record_forbidden_dataset_event(
+                self.repository.db,
+                actor_context,
+                action="dataset.view.forbidden",
+                dataset=dataset,
+                api_path=f"/api/catalog/datasets/{dataset_id}",
+                http_method="GET",
+                status_code=exc.status_code,
+            )
+            raise
+        return with_dataset_permissions(dataset, actor_context, self.repository.db)
 
-    def get_dataset_lineage(self, dataset_id: str) -> LineageGraphResponse:
-        dataset = self.get_dataset(dataset_id)
+    def get_dataset_lineage(self, dataset_id: str, actor: ActorContext | None = None) -> LineageGraphResponse:
+        dataset = self.get_dataset(dataset_id, actor)
         lineage_payload = self.repository.get_lineage_payload(dataset_id)
         if lineage_payload is not None:
             return LineageGraphResponse.model_validate(lineage_payload)
@@ -63,10 +116,47 @@ class CatalogService:
         self,
         dataset_id: str,
         run_id: str,
+        actor: ActorContext | None = None,
     ) -> DeleteMaterializationRunResponse:
         payload = self.repository.get_dataset_payload(dataset_id)
         if payload is None:
             raise ApiError(ErrorCode.NOT_FOUND, "Dataset not found", status.HTTP_404_NOT_FOUND)
+        dataset = dataset_with_persisted_permission_grants(
+            self.repository.db,
+            CatalogDatasetResponse.model_validate(payload),
+        )
+        actor_context = actor or ActorContext()
+        require_governed_access(
+            self.repository.db,
+            actor_context,
+            action="delete",
+            api_path=f"/api/catalog/datasets/{dataset_id}/materialization-runs/{run_id}",
+            http_method="DELETE",
+            metadata={"owner": dataset.owner, "runId": run_id},
+            resource_id=dataset.id,
+            resource_name=dataset.name,
+            resource_type="dataset",
+        )
+        try:
+            require_any_permission(
+                actor_context,
+                ("manage", "delete"),
+                owner=dataset.owner,
+                grants=dataset.permission_grants,
+                resource_label="dataset",
+            )
+        except ApiError as exc:
+            record_forbidden_dataset_event(
+                self.repository.db,
+                actor_context,
+                action="dataset.materialization_run.delete.forbidden",
+                dataset=dataset,
+                api_path=f"/api/catalog/datasets/{dataset_id}/materialization-runs/{run_id}",
+                http_method="DELETE",
+                metadata={"runId": run_id},
+                status_code=exc.status_code,
+            )
+            raise
 
         runs = payload.get("materializationRuns")
         materialization_runs = [run for run in runs if isinstance(run, dict)] if isinstance(runs, list) else []
@@ -90,23 +180,86 @@ class CatalogService:
             })
         )
         return DeleteMaterializationRunResponse(
-            dataset=CatalogDatasetResponse.model_validate(saved_payload),
+            dataset=with_dataset_permissions(CatalogDatasetResponse.model_validate(saved_payload), actor_context, self.repository.db),
             deleted_run_id=run_id,
         )
 
     def create_derived_dataset(
         self,
         request: CreateDerivedDatasetRequest,
+        actor: ActorContext | None = None,
     ) -> CatalogDatasetResponse:
-        request_source_dataset = self.get_dataset(request.source_dataset_id)
+        actor_context = actor or ActorContext()
+        request_source_dataset = self.get_dataset(request.source_dataset_id, actor_context)
         sql_result = self.get_sql_result(request.source_run_id)
         validate_derived_dataset_request(request, sql_result)
-        result_source_dataset = self.get_dataset(sql_result.dataset_id)
+        result_source_dataset = self.get_dataset(sql_result.dataset_id, actor_context)
+        require_governed_access(
+            self.repository.db,
+            actor_context,
+            action="query",
+            api_path="/api/catalog/derived-datasets",
+            http_method="POST",
+            metadata={"owner": result_source_dataset.owner},
+            resource_id=result_source_dataset.id,
+            resource_name=result_source_dataset.name,
+            resource_type="dataset",
+        )
+        try:
+            require_permission(
+                actor_context,
+                "query",
+                owner=result_source_dataset.owner,
+                grants=result_source_dataset.permission_grants,
+                resource_label="dataset",
+            )
+        except ApiError as exc:
+            record_forbidden_dataset_event(
+                self.repository.db,
+                actor_context,
+                action="dataset.derived.create.forbidden",
+                dataset=result_source_dataset,
+                api_path="/api/catalog/derived-datasets",
+                http_method="POST",
+                status_code=exc.status_code,
+            )
+            raise
 
         reference_datasets = [
-            self.get_dataset(reference_dataset_id)
+            self.get_dataset(reference_dataset_id, actor_context)
             for reference_dataset_id in unique_values(request.reference_dataset_ids)
         ]
+        for dataset in reference_datasets:
+            require_governed_access(
+                self.repository.db,
+                actor_context,
+                action="query",
+                api_path="/api/catalog/derived-datasets",
+                http_method="POST",
+                metadata={"owner": dataset.owner},
+                resource_id=dataset.id,
+                resource_name=dataset.name,
+                resource_type="dataset",
+            )
+            try:
+                require_permission(
+                    actor_context,
+                    "query",
+                    owner=dataset.owner,
+                    grants=dataset.permission_grants,
+                    resource_label="dataset",
+                )
+            except ApiError as exc:
+                record_forbidden_dataset_event(
+                    self.repository.db,
+                    actor_context,
+                    action="dataset.derived.create.forbidden",
+                    dataset=dataset,
+                    api_path="/api/catalog/derived-datasets",
+                    http_method="POST",
+                    status_code=exc.status_code,
+                )
+                raise
         schema_source_datasets = unique_datasets_by_id([
             result_source_dataset,
             *reference_datasets,
@@ -130,6 +283,7 @@ class CatalogService:
             result_source_dataset,
             sql_result,
             schema_source_datasets,
+            actor_context.name,
             previous_payload,
         )
         derived_dataset = CatalogDatasetResponse.model_validate(dataset_payload)
@@ -143,7 +297,7 @@ class CatalogService:
         )
 
         saved_payload = self.repository.save_dataset_payload(dataset_payload)
-        return CatalogDatasetResponse.model_validate(saved_payload)
+        return with_dataset_permissions(CatalogDatasetResponse.model_validate(saved_payload), actor_context, self.repository.db)
 
     def get_sql_result(self, run_id: str) -> QueryRunResponse:
         payload = self.sql_repository.get_run_payload(run_id)
@@ -224,6 +378,7 @@ def build_derived_dataset_payload(
     result_source_dataset: CatalogDatasetResponse,
     sql_result: QueryRunResponse,
     schema_source_datasets: list[CatalogDatasetResponse],
+    actor_name: str,
     previous_payload: dict[str, object] | None = None,
 ) -> dict[str, object]:
     dataset_description = (
@@ -262,6 +417,10 @@ def build_derived_dataset_payload(
         "name": dataset_name,
         "nextRefresh": "수동 갱신",
         "owner": result_source_dataset.owner,
+        "createdBy": created_by_from_payload(previous_payload, actor_name),
+        "createdByProfile": created_by_profile_from_payload(previous_payload, actor_name),
+        "permissionGrants": permission_grants_from_roles(result_source_dataset.owner, default_actions=["view", "query"]),
+        "permissions": resource_permissions(actor=actor_name, can_query=True),
         "quality": "SQL materialized",
         "rag": request.dataset.rag,
         "rows": f"{aggregate['rowCount']:,} rows",
@@ -284,6 +443,28 @@ def build_derived_dataset_payload(
             request.source_run_id,
         ],
     }
+
+
+def with_dataset_permissions(dataset: CatalogDatasetResponse, actor: ActorContext, db: object | None = None) -> CatalogDatasetResponse:
+    grant_payloads = [
+        grant.model_dump(by_alias=True) if hasattr(grant, "model_dump") else grant
+        for grant in dataset.permission_grants
+    ]
+    permissions = (
+        permissions_for_actor_with_governance(
+            db,
+            actor,
+            owner=dataset.owner,
+            grants=grant_payloads,
+            resource_id=dataset.id,
+            resource_type="dataset",
+        )
+        if db is not None
+        else None
+    )
+    return dataset.model_copy(update={
+        "permissions": permissions,
+    })
 
 
 def build_derived_dataset_name(
@@ -322,6 +503,24 @@ def normalize_derived_dataset_tags(tags: list[str]) -> list[str]:
         if tag
     ]
     return unique_values(normalized_tags or ["#sql-derived"])
+
+
+def created_by_from_payload(previous_payload: dict[str, object] | None, actor_name: str) -> str:
+    previous_created_by = previous_payload.get("createdBy") if previous_payload else None
+    return str(previous_created_by or actor_name or "demo-user").strip() or "demo-user"
+
+
+def created_by_profile_from_payload(previous_payload: dict[str, object] | None, actor_name: str) -> dict[str, str]:
+    previous_profile = previous_payload.get("createdByProfile") if previous_payload else None
+    if isinstance(previous_profile, dict):
+        return {str(key): str(value) for key, value in previous_profile.items()}
+    display_name = created_by_from_payload(previous_payload, actor_name)
+    words = [word for word in display_name.replace("_", " ").replace("-", " ").split(" ") if word]
+    initials = "".join(word[0].upper() for word in words[:2]) or display_name[:2].upper()
+    return {
+        "avatarInitials": initials[:2],
+        "displayName": display_name,
+    }
 
 
 def infer_column_type(
@@ -641,3 +840,29 @@ def get_lineage_table_name(value: str) -> str:
 def normalize_lineage_id(value: str) -> str:
     normalized_value = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
     return normalized_value or "lineage"
+
+
+def record_forbidden_dataset_event(
+    db: object,
+    actor: ActorContext,
+    *,
+    action: str,
+    dataset: CatalogDatasetResponse,
+    api_path: str,
+    http_method: str,
+    metadata: dict[str, object] | None = None,
+    status_code: int | None = None,
+) -> None:
+    safe_record_audit_event(
+        db,
+        action=action,
+        actor=actor,
+        api_path=api_path,
+        http_method=http_method,
+        metadata={"owner": dataset.owner, **(metadata or {})},
+        result="forbidden",
+        status_code=status_code or status.HTTP_403_FORBIDDEN,
+        target_id=dataset.id,
+        target_name=dataset.name,
+        target_type="dataset",
+    )

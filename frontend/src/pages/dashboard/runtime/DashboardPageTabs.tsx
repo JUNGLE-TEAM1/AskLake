@@ -10,6 +10,7 @@ type DashboardPageTab = {
 };
 
 export function DashboardPageTabs({
+  canManage = true,
   isAddingPage = false,
   mode,
   onAddPage,
@@ -20,6 +21,7 @@ export function DashboardPageTabs({
   renamingPageId,
   selectedPageId,
 }: {
+  canManage?: boolean;
   isAddingPage?: boolean;
   mode: "published" | "draft";
   onAddPage?: () => void;

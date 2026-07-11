@@ -30,6 +30,20 @@ type DatasetSidebarProps = {
   onSelectColumn?: (dataset: DashboardDatasetOption, column: DashboardDatasetColumn) => void;
   onSelectDataset: (datasetId: string) => void;
   selectedDatasetId: string | null;
+  sourceMode?: "dataset" | "sqlResult";
+};
+
+type DatasetTreeNode = {
+  children?: DatasetTreeNode[];
+  columnName?: string;
+  datasetId?: string;
+  hoverCard?: ReactNode;
+  icon: ReactNode;
+  id: string;
+  kind: "column" | "dataset" | "group";
+  meta?: string;
+  selected?: boolean;
+  title: string;
 };
 
 type DatasetTreeNode = {
@@ -227,7 +241,9 @@ export function DatasetSidebar({
   onSelectColumn,
   onSelectDataset,
   selectedDatasetId,
+  sourceMode = "dataset",
 }: DatasetSidebarProps) {
+  const isSqlResultMode = sourceMode === "sqlResult";
   const totalColumnCount = useMemo(
     () => datasets.reduce((total, dataset) => total + dataset.columns.length, 0),
     [datasets],

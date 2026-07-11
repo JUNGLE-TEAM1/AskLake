@@ -5,7 +5,7 @@ AskLake is a trusted data lake workflow project. This branch includes the Pair A
 ## Structure
 
 ```text
-backend/    # Local Node backend, source connectors, Spark validation scripts
+backend/    # FastAPI backend plus source/Spark launcher and validation helpers
 frontend/   # React/Vite frontend
 docs/       # Product, architecture, API, validation, and team guardrails
 ```
@@ -43,6 +43,9 @@ cd backend
 $env:ASKLAKE_WITH_KAFKA = "true"
 $env:ASKLAKE_RECREATE_KAFKA = "true"
 npm run sources:fixtures
+npm run kafka:reviews-fixture:generate -- --count 100
+npm run kafka:reviews-fixture
+npm run kafka:reviews-replay -- --dry-run --limit 100
 $env:ASKLAKE_VERIFY_KAFKA = "true"
 npm run verify:sources
 npm run minio:prepare-samples

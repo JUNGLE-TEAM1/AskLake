@@ -11,6 +11,13 @@ import {
 } from "@/components/ui/data-table-stacked-cell";
 import { formatDashboardDateLabel, localizeDashboardName, localizeDashboardOwner, localizeDashboardTags } from "../dashboardListUtils";
 import type { SavedDashboardCard } from "../../../types";
+import { permissionDeniedMessage } from "../../../utils/permissions";
+
+function getOwnerInitials(owner: string) {
+  const words = owner.trim().split(/[\s_-]+/).filter(Boolean);
+  if (words.length >= 2) return words.slice(0, 2).map((word) => word[0]).join("").toUpperCase();
+  return (words[0] ?? "?").slice(0, 2).toUpperCase();
+}
 
 function getOwnerInitials(owner: string) {
   const words = owner.trim().split(/[\s_-]+/).filter(Boolean);

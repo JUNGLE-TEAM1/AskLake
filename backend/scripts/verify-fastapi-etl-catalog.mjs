@@ -1,23 +1,48 @@
+import { ListObjectsV2Command, S3Client } from "@aws-sdk/client-s3";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync, rmSync } from "node:fs";
+import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import pg from "pg";
 
 const backendDir = fileURLToPath(new URL("..", import.meta.url));
 const pythonBin = process.env.ASKLAKE_FASTAPI_PYTHON || "python3";
 const port = Number(process.env.ASKLAKE_FASTAPI_ETL_SMOKE_PORT || 18085);
 const baseUrl = process.env.ASKLAKE_FASTAPI_ETL_SMOKE_BASE_URL || `http://127.0.0.1:${port}`;
 const shouldStartServer = process.env.ASKLAKE_FASTAPI_ETL_SMOKE_START_SERVER !== "false";
+const airflowPort = Number(process.env.ASKLAKE_FASTAPI_ETL_AIRFLOW_MOCK_PORT || 18086);
+const airflowBaseUrl = process.env.AIRFLOW_API_BASE_URL || `http://127.0.0.1:${airflowPort}`;
+const airflowDagId = process.env.AIRFLOW_DAG_ID || "asklake_etl_job";
+const airflowInternalToken = process.env.AIRFLOW_INTERNAL_TOKEN || "asklake-etl-smoke-token";
+const shouldStartAirflowMock = !process.env.AIRFLOW_API_BASE_URL && process.env.ASKLAKE_FASTAPI_ETL_AIRFLOW_MOCK !== "false";
+const airflowSyncPollIntervalMs = positiveNumber(process.env.ASKLAKE_FASTAPI_ETL_AIRFLOW_POLL_INTERVAL_MS, 1000);
+const airflowSyncTimeoutMs = positiveNumber(process.env.ASKLAKE_FASTAPI_ETL_AIRFLOW_TIMEOUT_MS, 600000);
+const configuredSparkOutputMode = process.env.ASKLAKE_SPARK_OUTPUT_MODE || "local";
+const expectSparkFailure = process.env.ASKLAKE_FASTAPI_ETL_EXPECT_SPARK_FAILURE === "true";
 const env = {
   ...process.env,
-  ASKLAKE_SPARK_HADOOP_AWS_PACKAGE: process.env.ASKLAKE_SPARK_HADOOP_AWS_PACKAGE || "none",
-  ASKLAKE_SPARK_OUTPUT_MODE: process.env.ASKLAKE_SPARK_OUTPUT_MODE || "local",
+  AIRFLOW_API_BASE_URL: airflowBaseUrl,
+  AIRFLOW_DAG_ID: airflowDagId,
+  AIRFLOW_EXECUTION_API_TOKEN: process.env.AIRFLOW_EXECUTION_API_TOKEN || "asklake-local-airflow-execution",
+  AIRFLOW_INTERNAL_TOKEN: airflowInternalToken,
+  AIRFLOW_REQUEST_TIMEOUT_SECONDS: process.env.AIRFLOW_REQUEST_TIMEOUT_SECONDS || "5",
+  AIRFLOW_UI_BASE_URL: process.env.AIRFLOW_UI_BASE_URL || airflowBaseUrl,
+  ASKLAKE_SPARK_HADOOP_AWS_PACKAGE: process.env.ASKLAKE_SPARK_HADOOP_AWS_PACKAGE
+    || (configuredSparkOutputMode.toLowerCase() === "s3a" ? "org.apache.hadoop:hadoop-aws:3.4.1" : "none"),
+  ASKLAKE_SPARK_OUTPUT_MODE: configuredSparkOutputMode,
   ASKLAKE_SPARK_RUN_ROW_LIMIT: process.env.ASKLAKE_SPARK_RUN_ROW_LIMIT || "2",
   LOCAL_LAKE_STORAGE_DIR: process.env.LOCAL_LAKE_STORAGE_DIR || path.join(backendDir, "tmp", "smoke-lake"),
   PYTHONPATH: [backendDir, process.env.PYTHONPATH].filter(Boolean).join(path.delimiter),
 };
 
 let serverProcess = null;
+let airflowServer = null;
+let smokeJobId = "";
+let smokeDatasetId = "";
+let smokeRunId = "";
+let smokeOutputPath = "";
+const mockAirflowRuns = new Map();
 
 try {
   await runSmoke();
@@ -25,17 +50,25 @@ try {
   console.error(error instanceof Error ? error.message : String(error));
   process.exitCode = 1;
 } finally {
+  await cleanupSmokeResources();
   if (serverProcess) serverProcess.kill("SIGTERM");
+  if (airflowServer) await closeServer(airflowServer);
 }
 
 async function runSmoke() {
   ensureFastApiPythonDependencies();
+  if (shouldStartAirflowMock) airflowServer = await startMockAirflowServer();
   if (shouldStartServer) serverProcess = startFastApiServer();
 
   await waitForHealth();
+  await assertInternalExecutionAuth();
 
   const suffix = Date.now().toString(36);
   const targetDataset = `fastapi_etl_catalog_smoke_${suffix}`;
+  const sparkOutputMode = String(env.ASKLAKE_SPARK_OUTPUT_MODE || "local").toLowerCase();
+  const targetStoragePath = sparkOutputMode === "s3a"
+    ? `s3a://${process.env.ASKLAKE_FASTAPI_ETL_OUTPUT_BUCKET || "asklake-output"}/phase2/${targetDataset}`
+    : "";
   const create = await post("/api/etl/jobs", {
     id: `fastapi-etl-catalog-${suffix}`,
     jobName: `FastAPI ETL Catalog Smoke ${suffix}`,
@@ -50,7 +83,16 @@ async function runSmoke() {
     transformOutputColumns: [["customer_id", "string"], ["amount", "double"]],
     transformSteps: [],
     qualityInvalidRows: [],
-    qualityRules: [],
+    qualityRules: expectSparkFailure ? [{
+      enabled: true,
+      failureAction: "Fail Run",
+      id: "phase2-negative-amount",
+      kind: "range",
+      params: "",
+      severity: "Error",
+      targetColumn: "amount",
+      validationType: "Range Check",
+    }] : [],
     qualityScore: 100,
     qualityStatus: "pass",
     scheduleLabel: "manual",
@@ -58,7 +100,7 @@ async function runSmoke() {
       { included: true, nullable: false, sourceName: "customer_id", targetName: "customer_id", type: "String" },
       { included: true, nullable: false, sourceName: "amount", targetName: "amount", type: "Float" },
     ],
-    schemaSampleRows: [["C-001", "42.5"], ["C-002", "17.25"]],
+    schemaSampleRows: [["C-001", expectSparkFailure ? "-42.5" : "42.5"], ["C-002", "17.25"]],
     schemaSummary: "FastAPI ETL catalog payload smoke schema",
     sourceConfig: [["Endpoint", "sample://inline"], ["__Sample Row Limit", "2"]],
     sourceLabel: "inline sample rows",
@@ -75,80 +117,337 @@ async function runSmoke() {
   assert(create.job?.id, "ETL job create response should include job.id.");
   assert(create.job?.partition === "customer_id/amount", "ETL job should preserve multi-column partition metadata.");
   assert(create.catalogTarget?.id, "ETL job create response should include catalogTarget.id.");
+  smokeJobId = create.job.id;
+  smokeDatasetId = create.catalogTarget.id;
 
   const command = await post(`/api/etl/jobs/${encodeURIComponent(create.job.id)}/commands`, { command: "run" });
-  const datasetId = command.dataset?.id;
-  assert(command.run?.status === "success", `Spark run should succeed: ${command.run?.errorSummary}`);
-  assert(datasetId === create.catalogTarget.id, "Run response dataset should match the create catalog target.");
-  assert(command.dataset?.storageFormat === undefined, "ETL command schema should keep the existing public dataset shape.");
-  assert(command.dataset?.size && !String(command.dataset.size).includes("/"), "ETL command dataset size should be display text, not a path.");
-
-  const catalogDataset = await get(`/api/catalog/datasets/${encodeURIComponent(datasetId)}`);
-  assert(catalogDataset.sourceRunId === command.run.runId, "Catalog dataset should keep sourceRunId from the ETL run.");
-  assert(catalogDataset.storageFormat === "parquet", "Catalog dataset should expose parquet storage format.");
-  assert(catalogDataset.storageLocation === command.run.outputPath, "Catalog storageLocation should match run outputPath.");
-  assert(catalogDataset.storageSizeBytes > 0, "Catalog storageSizeBytes should be greater than zero.");
-  assert(catalogDataset.size && !catalogDataset.size.includes("/"), "Catalog size should be display text, not a path.");
-  assert(catalogDataset.lineageGraph?.datasets?.length >= 3, "Catalog payload should include stored source/job/target lineage.");
-  if (shouldStartServer) {
-    assert(existsSync(catalogDataset.storageLocation), `ETL storage path should exist: ${catalogDataset.storageLocation}`);
+  assert(command.action === "etl.run.requested", "ETL run command should return the run requested action.");
+  assert(command.run?.status === "queued", `Airflow submit should create a queued run: ${command.run?.errorSummary}`);
+  assert(command.run?.airflowDagId === airflowDagId, "Run summary should include the configured Airflow DAG id.");
+  assert(command.run?.airflowDagRunId, "Run summary should include the Airflow DAG Run id.");
+  assert(command.run?.airflowState === "queued", "Initial Airflow state should be queued.");
+  assert(command.run?.airflowRunUrl?.includes(command.run.airflowDagRunId), "Run summary should include an Airflow UI URL.");
+  smokeRunId = command.run.runId;
+  assert(!command.dataset, "Airflow submit is asynchronous and should not create a catalog dataset in the command response.");
+  assert(command.dagSteps?.some((step) => step.id === "airflow-submit"), "Command response should include an Airflow submit DAG step.");
+  if (shouldStartAirflowMock) {
+    await assertCatalogNotReady(create.job.id, command.run.airflowDagRunId);
   }
 
-  const sqlPreview = await post("/api/query/runs", {
-    baseDatasetId: datasetId,
-    datasetId,
-    limit: 10,
-    mode: "preview",
-    query: `SELECT customer_id, amount FROM ${targetDataset} WHERE amount > 20 ORDER BY customer_id`,
-    referenceDatasetIds: [],
-    validationKey: `${datasetId}:duckdb-parquet`,
-  });
-  assert(JSON.stringify(sqlPreview.columns) === JSON.stringify(["customer_id", "amount"]), "DuckDB SQL preview should project ETL parquet columns.");
-  assert(sqlPreview.rowCount === 1, "DuckDB SQL preview should execute filters against ETL parquet storage.");
-  assert(JSON.stringify(sqlPreview.rows[0]) === JSON.stringify(["C-001", "42.5"]), "DuckDB SQL preview should read the ETL storageLocation parquet data.");
+  if (shouldStartAirflowMock) {
+    const execution = await postExecution(
+      `/api/internal/airflow/spark-runs/${encodeURIComponent(command.run.runId)}/execute`,
+      { command: "run", jobId: create.job.id },
+    );
+    if (expectSparkFailure) {
+      assert(execution.status === "failed", "Expected quality failure should persist a failed Spark manifest.");
+      const mockRun = mockAirflowRuns.get(command.run.airflowDagRunId);
+      if (mockRun) mockRun.state = "failed";
+    } else {
+      assert(execution.status === "success", `Airflow worker should execute the real Spark path: ${execution.error}`);
+      assert(Number(execution.outputRows) === 2, `Spark execution should persist the two inline rows: ${execution.outputRows}`);
+      smokeOutputPath = execution.outputPath;
+      const catalogResult = await postExecution(
+        `/api/internal/airflow/spark-runs/${encodeURIComponent(command.run.runId)}/catalog`,
+        { jobId: create.job.id },
+      );
+      assert(catalogResult.dataset?.id === create.catalogTarget.id, "Catalog reconciliation should persist the target dataset.");
+    }
+  }
 
-  const lineage = await get(`/api/catalog/datasets/${encodeURIComponent(datasetId)}/lineage`);
-  const engines = lineage.datasets.map((dataset) => dataset.engine);
-  assert(lineage.datasetId === datasetId, "Lineage response should be scoped to the ETL dataset.");
-  assert(engines.includes("SOURCE"), "ETL lineage should include SOURCE node.");
-  assert(engines.includes("SPARK"), "ETL lineage should include SPARK node.");
-  assert(engines.includes("ICEBERG"), "ETL lineage should include ICEBERG node.");
-  assert(lineage.edges.length >= 4, "ETL lineage should include column edges across source/job/target.");
+  const syncedJob = await waitForTerminalJob(create.job.id);
+  const latestRun = syncedJob.runHistory?.[0];
+  if (expectSparkFailure) {
+    assert(latestRun?.status === "failed", `Spark quality failure should fail the AskLake Run: ${latestRun?.status}`);
+    assert(latestRun?.airflowState === "failed", "Spark quality failure should fail the Airflow DAG Run.");
+    assert(latestRun?.taskStates?.spark_process_write?.airflowState === "failed", "Spark task should expose failed state.");
+    assert(latestRun?.taskStates?.sparkResult?.status === "failed", "Failed Spark manifest should be preserved.");
+    assert(latestRun?.taskStates?.sparkResult?.failedStage === "Quality", "Spark manifest should identify the Quality stage.");
+    assert(syncedJob.status === "failed", "Job should expose failed status after Spark quality failure.");
+    if (!shouldStartAirflowMock) {
+      const catalogList = await get("/api/catalog/datasets");
+      assert(
+        !catalogList.datasets?.some((dataset) => dataset.id === create.catalogTarget.id),
+        "Spark failure must not publish the target Catalog dataset.",
+      );
+    }
+    console.log("verify-fastapi-etl-catalog: expected Spark failure ok");
+    return;
+  }
+  assert(latestRun?.status === "success", `Airflow sync should update the run to success: ${latestRun?.syncError}`);
+  assert(latestRun?.airflowState === "success", "Synced run should keep the Airflow success state.");
+  assert(latestRun?.taskStates?.publish_run_result?.airflowState === "success", "Synced run should include task instance states.");
+  if (!shouldStartAirflowMock) {
+    assert(latestRun?.taskStates?.sparkResult?.status === "success", "Synced run should preserve the Spark result manifest.");
+    assert(Number(latestRun?.taskStates?.sparkResult?.outputRows) === 2, "Spark should write the two input rows.");
+    await assertPhysicalParquet(latestRun?.outputPath);
+    assert(latestRun?.taskStates?.catalogResult?.status === "success", "Catalog publication should persist a successful catalogResult.");
+    assert(latestRun?.taskStates?.catalogResult?.runId === latestRun.runId, "Catalog result should preserve the AskLake Run id.");
 
-  const dashboard = await post("/api/dashboards", {
-    datasetId,
-    owner: "admin",
-    source: "catalog",
-    title: `ETL Catalog Smoke Dashboard ${suffix}`,
-  });
-  const dashboardId = dashboard.dashboard?.id;
-  assert(dashboardId, "Dashboard create response should include dashboard.id.");
+    const catalogDataset = await get(`/api/catalog/datasets/${encodeURIComponent(create.catalogTarget.id)}`);
+    assert(catalogDataset.sourceRunId === latestRun.runId, "Catalog dataset should point to the successful Run id.");
+    assert(catalogDataset.storageLocation === latestRun.outputPath, "Catalog storageLocation should match the Spark outputPath.");
+    assert(catalogDataset.storageFormat === "parquet", "Catalog storage format should be Parquet.");
+    assert(Number(catalogDataset.storageSizeBytes) > 0, "Catalog dataset should persist positive physical bytes.");
+    assert(
+      catalogDataset.materializationRuns?.filter((run) => run.runId === latestRun.runId).length === 1,
+      "Catalog dataset should contain one materialization for the successful Run.",
+    );
+    assert(catalogDataset.lineageGraph?.datasets?.length === 3, "Catalog lineage should contain source, Spark Job, and target nodes.");
+  }
+  smokeOutputPath = latestRun?.outputPath || smokeOutputPath;
+  assert(syncedJob.status === "scheduled", "Job should return to scheduled after a successful Airflow sync.");
+  assert(syncedJob.dagSteps?.some((step) => step.id === "publish_run_result" && step.status === "success"), "Synced job should expose Airflow task DAG steps.");
 
-  const draft = await post(`/api/dashboards/${encodeURIComponent(dashboardId)}/draft/ensure`, {});
-  const pageId = draft.pages?.[0]?.id;
-  assert(pageId, "Draft runtime should include a default page.");
+  const catalog = await get("/api/catalog/datasets");
+  const materialized = catalog.datasets?.find((dataset) => dataset.id === create.catalogTarget.id);
+  assert(materialized, "Successful Airflow/Spark execution should be visible in Catalog hydrate.");
+  assert(materialized.sourceRunId === command.run.runId, "Catalog dataset should point to the successful Airflow run.");
+  assert(materialized.materializationRuns?.length === 1, "Idempotent Airflow execution should create one materialization run.");
+  const sourceLineageNode = materialized.lineageGraph?.datasets?.find((dataset) => dataset.layer === "SOURCE");
+  const processLineageNode = materialized.lineageGraph?.datasets?.find((dataset) => dataset.layer === "PROCESS");
+  const targetLineageNode = materialized.lineageGraph?.datasets?.find((dataset) => dataset.id === create.catalogTarget.id);
+  assert(
+    JSON.stringify(sourceLineageNode?.columns?.map((column) => column.name)) === JSON.stringify(["customer_id", "amount"]),
+    "ETL lineage source node should contain source columns without Spark-generated metadata.",
+  );
+  assert(sourceLineageNode?.engine === "REST API", "ETL lineage source engine should match the source connector or file format.");
+  assert(
+    !materialized.lineageGraph?.edges?.some((edge) => edge.fromDatasetId === sourceLineageNode?.id && edge.toColumnId.includes("asklake")),
+    "Spark-generated metadata columns should not have source lineage edges.",
+  );
+  assert(processLineageNode?.engine === "SPARK", "ETL lineage should represent the Spark job as a PROCESS node.");
+  assert(targetLineageNode?.engine === "PARQUET", "ETL lineage target engine should match the persisted Spark output format.");
 
-  const widget = await post(`/api/dashboards/${encodeURIComponent(dashboardId)}/draft/pages/${encodeURIComponent(pageId)}/widgets`, {
-    config: {
-      columns: ["customer_id", "amount"],
-    },
-    datasetId,
-    title: "ETL catalog table",
-    type: "table",
-  });
-  assert(widget.id, "Draft widget create response should include widget id.");
-
-  const draftAfterWidget = await post(`/api/dashboards/${encodeURIComponent(dashboardId)}/draft/ensure`, {});
-  const createdWidget = Object.values(draftAfterWidget.widgetsByPageId ?? {})
-    .flat()
-    .find((item) => item.id === widget.id);
-  assert(createdWidget, "Draft runtime should include the created dataset widget.");
-  assert(createdWidget.datasetId === datasetId, "Widget should keep the ETL catalog datasetId.");
-  assert(createdWidget.data?.length === 2, "Widget data should snapshot ETL catalog sample rows.");
-  assert(createdWidget.data[0]?.customer_id === "C-001", "Widget data should use catalog schema names.");
-  assert(createdWidget.data[0]?.amount === 42.5, "Widget data should coerce numeric catalog values.");
+  await del(`/api/catalog/datasets/${encodeURIComponent(materialized.id)}/materialization-runs/${encodeURIComponent(command.run.runId)}`);
+  const jobAfterMaterializationDelete = await get(`/api/etl/jobs/${encodeURIComponent(create.job.id)}`);
+  assert(
+    jobAfterMaterializationDelete.runHistory?.find((run) => run.runId === command.run.runId)?.status === "success",
+    "Deleting an append result should not rewrite the historical Spark run as failed.",
+  );
 
   console.log("verify-fastapi-etl-catalog: ok");
+}
+
+async function assertInternalExecutionAuth() {
+  for (const endpoint of ["execute", "catalog"]) {
+    const response = await fetch(`${baseUrl}/api/internal/airflow/spark-runs/not-a-run/${endpoint}`, {
+      body: JSON.stringify(endpoint === "execute" ? { command: "run", jobId: "not-a-job" } : { jobId: "not-a-job" }),
+      headers: {
+        Authorization: "Bearer invalid-phase2-token",
+        "Content-Type": "application/json",
+      },
+      method: "POST",
+    });
+    const payload = await readPayload(response);
+    assert(response.status === 401, `Internal ${endpoint} endpoint should reject an invalid token: ${response.status}`);
+    assert(payload?.error?.code === "AIRFLOW_EXECUTION_UNAUTHORIZED", `Internal ${endpoint} auth should return the expected error code.`);
+  }
+
+  const legacyResponse = await fetch(`${baseUrl}/api/etl/internal/airflow/jobs/not-a-job/runs/not-a-run/execute`, {
+    body: JSON.stringify({ command: "run" }),
+    headers: {
+      "Content-Type": "application/json",
+      "X-AskLake-Airflow-Token": "invalid-phase2-token",
+    },
+    method: "POST",
+  });
+  assert(legacyResponse.status === 403, "Legacy internal Airflow endpoint should reject an invalid token.");
+}
+
+async function assertCatalogNotReady(jobId, runId) {
+  const response = await fetch(`${baseUrl}/api/internal/airflow/spark-runs/${encodeURIComponent(runId)}/catalog`, {
+    body: JSON.stringify({ jobId }),
+    headers: {
+      Authorization: `Bearer ${env.AIRFLOW_EXECUTION_API_TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    method: "POST",
+  });
+  const payload = await readPayload(response);
+  assert(response.status === 409, `Catalog endpoint should wait for persisted Spark success: ${response.status}`);
+  assert(payload?.error?.code === "SPARK_RESULT_NOT_READY", "Catalog endpoint should expose SPARK_RESULT_NOT_READY.");
+}
+
+async function assertPhysicalParquet(outputPath) {
+  assert(outputPath, "Spark success should persist an output path.");
+  const match = String(outputPath).match(/^s3a?:\/\/([^/]+)\/(.+)$/i);
+  if (match) {
+    const client = new S3Client({
+      credentials: {
+        accessKeyId: process.env.MINIO_ACCESS_KEY || "m3admin",
+        secretAccessKey: process.env.MINIO_SECRET_KEY || "wishuponastar",
+      },
+      endpoint: process.env.MINIO_ENDPOINT || "http://127.0.0.1:9000",
+      forcePathStyle: true,
+      region: process.env.MINIO_REGION || "us-east-1",
+    });
+    const listed = await client.send(new ListObjectsV2Command({ Bucket: match[1], Prefix: match[2] }));
+    assert(
+      listed.Contents?.some((entry) => entry.Key?.endsWith(".parquet")),
+      `MinIO output prefix has no Parquet object: ${outputPath}`,
+    );
+    return;
+  }
+  assert(existsSync(outputPath), `Spark output path does not exist: ${outputPath}`);
+  assert(hasParquetFile(outputPath), `Spark output path has no Parquet file: ${outputPath}`);
+}
+
+function hasParquetFile(dir) {
+  return readdirSync(dir, { withFileTypes: true }).some((entry) => (
+    entry.isDirectory()
+      ? hasParquetFile(path.join(dir, entry.name))
+      : entry.name.endsWith(".parquet")
+  ));
+}
+
+async function cleanupSmokeResources() {
+  if (smokeJobId) {
+    const client = new pg.Client({
+      connectionString: env.DATABASE_URL || "postgresql://asklake:asklake_dev@127.0.0.1:54328/asklake",
+    });
+    try {
+      await client.connect();
+      await client.query("BEGIN");
+      if (smokeDatasetId) await client.query("DELETE FROM catalog_datasets WHERE id = $1", [smokeDatasetId]);
+      await client.query("DELETE FROM etl_runs WHERE job_id = $1", [smokeJobId]);
+      await client.query("DELETE FROM etl_jobs WHERE id = $1", [smokeJobId]);
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => {});
+      console.error(`Smoke cleanup failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      await client.end().catch(() => {});
+    }
+  }
+
+  if (smokeOutputPath && !smokeOutputPath.startsWith("s3")) {
+    rmSync(smokeOutputPath, { force: true, recursive: true });
+  }
+  if (smokeRunId) {
+    const reportDir = process.env.ASKLAKE_SPARK_REPORT_DIR || path.join(backendDir, "tmp", "spark-runs");
+    for (const suffix of [".json", ".manifest.json", "-source.jsonl"]) {
+      rmSync(path.join(reportDir, `${smokeRunId}${suffix}`), { force: true });
+    }
+  }
+}
+function startMockAirflowServer() {
+  const server = http.createServer(async (request, response) => {
+    try {
+      await handleMockAirflowRequest(request, response);
+    } catch (error) {
+      writeJson(response, 500, {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  return new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(airflowPort, "127.0.0.1", () => {
+      server.off("error", reject);
+      resolve(server);
+    });
+  });
+}
+
+async function handleMockAirflowRequest(request, response) {
+  const url = new URL(request.url || "/", airflowBaseUrl);
+  const parts = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
+
+  if (request.method === "POST" && url.pathname === "/auth/token") {
+    writeJson(response, 200, { access_token: "mock-airflow-token" });
+    return;
+  }
+
+  if (parts[0] !== "api" || parts[1] !== "v2" || parts[2] !== "dags" || parts[3] !== airflowDagId || parts[4] !== "dagRuns") {
+    writeJson(response, 404, { detail: `Unhandled mock Airflow route: ${request.method} ${url.pathname}` });
+    return;
+  }
+
+  if (request.method === "POST" && parts.length === 5) {
+    const payload = await readRequestJson(request);
+    const dagRunId = String(payload.dag_run_id || `mock_run_${Date.now()}`);
+    const run = {
+      conf: payload.conf || {},
+      dag_id: airflowDagId,
+      dag_run_id: dagRunId,
+      state: "queued",
+    };
+    mockAirflowRuns.set(dagRunId, run);
+    writeJson(response, 200, run);
+    return;
+  }
+
+  const dagRunId = parts[5];
+  const run = mockAirflowRuns.get(dagRunId);
+  if (!run) {
+    writeJson(response, 404, { detail: `DAG Run not found: ${dagRunId}` });
+    return;
+  }
+
+  if (request.method === "GET" && parts.length === 6) {
+    writeJson(response, 200, { ...run, state: run.state === "queued" ? "success" : run.state });
+    return;
+  }
+
+  if (request.method === "GET" && parts.length === 7 && parts[6] === "taskInstances") {
+    const sparkFailed = run.state === "failed";
+    writeJson(response, 200, {
+      task_instances: [
+        mockTask("receive_asklake_run", dagRunId),
+        mockTask("validate_spark_request", dagRunId),
+        mockTask("spark_process_write", dagRunId, sparkFailed ? "failed" : "success"),
+        mockTask("publish_run_result", dagRunId, sparkFailed ? "upstream_failed" : "success"),
+      ],
+    });
+    return;
+  }
+
+  writeJson(response, 404, { detail: `Unhandled mock Airflow route: ${request.method} ${url.pathname}` });
+}
+
+function mockTask(taskId, dagRunId, state = "success") {
+  return {
+    dag_id: airflowDagId,
+    dag_run_id: dagRunId,
+    state,
+    task_id: taskId,
+  };
+}
+
+function readRequestJson(request) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    request.on("data", (chunk) => chunks.push(chunk));
+    request.on("end", () => {
+      const text = Buffer.concat(chunks).toString("utf-8");
+      if (!text) {
+        resolve({});
+        return;
+      }
+      try {
+        resolve(JSON.parse(text));
+      } catch (error) {
+        reject(error);
+      }
+    });
+    request.on("error", reject);
+  });
+}
+
+function writeJson(response, statusCode, payload) {
+  response.writeHead(statusCode, { "Content-Type": "application/json" });
+  response.end(JSON.stringify(payload));
+}
+
+function closeServer(server) {
+  return new Promise((resolve, reject) => {
+    server.close((error) => {
+      if (error) reject(error);
+      else resolve();
+    });
+  });
 }
 
 function ensureFastApiPythonDependencies() {
@@ -191,11 +490,27 @@ async function waitForHealth() {
     try {
       const health = await get("/api/health");
       if (health.ok && health.database?.ok) return;
-    } catch {
-      await sleep(250);
-    }
+    } catch {}
+    await sleep(250);
   }
   throw new Error(`FastAPI health check did not pass at ${baseUrl}/api/health.`);
+}
+
+async function waitForTerminalJob(jobId) {
+  const deadline = Date.now() + airflowSyncTimeoutMs;
+  let latestJob = null;
+  let latestRun = null;
+  while (Date.now() < deadline) {
+    latestJob = await get(`/api/etl/jobs/${encodeURIComponent(jobId)}`);
+    latestRun = latestJob.runHistory?.[0];
+    if (["success", "failed", "canceled"].includes(latestRun?.status)) return latestJob;
+    await sleep(airflowSyncPollIntervalMs);
+  }
+  throw new Error(
+    `AskLake did not sync the Airflow run within ${airflowSyncTimeoutMs}ms: ` +
+    `${latestRun?.airflowDagRunId || "unknown run"} (${latestRun?.airflowState || latestRun?.status || "unknown"})` +
+    `${latestRun?.syncError ? `, syncError=${latestRun.syncError}` : ""}`,
+  );
 }
 
 async function get(route) {
@@ -209,6 +524,23 @@ async function post(route, body) {
     headers: { "Content-Type": "application/json" },
     method: "POST",
   });
+  return readResponse(response);
+}
+
+async function postExecution(route, body) {
+  const response = await fetch(`${baseUrl}${route}`, {
+    body: JSON.stringify(body),
+    headers: {
+      Authorization: `Bearer ${env.AIRFLOW_EXECUTION_API_TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    method: "POST",
+  });
+  return readResponse(response);
+}
+
+async function del(route) {
+  const response = await fetch(`${baseUrl}${route}`, { method: "DELETE" });
   return readResponse(response);
 }
 
@@ -232,4 +564,9 @@ function assert(condition, message) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function positiveNumber(value, fallback) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }

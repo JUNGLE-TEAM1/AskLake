@@ -13,7 +13,7 @@ const env = {
   ...process.env,
   ASKLAKE_KAFKA_SAMPLE_TIMEOUT_MS: process.env.ASKLAKE_KAFKA_SAMPLE_TIMEOUT_MS || "10000",
   MINIO_ACCESS_KEY: process.env.MINIO_ACCESS_KEY || "m3admin",
-  MINIO_ENDPOINT: process.env.MINIO_ENDPOINT || "http://127.0.0.1:19000",
+  MINIO_ENDPOINT: process.env.MINIO_ENDPOINT || "http://127.0.0.1:9000",
   MINIO_SECRET_KEY: process.env.MINIO_SECRET_KEY || "wishuponastar",
   PYTHONPATH: [backendDir, process.env.PYTHONPATH].filter(Boolean).join(path.delimiter),
 };
@@ -70,7 +70,7 @@ async function verifyAllSources() {
     ["Access Key", env.MINIO_ACCESS_KEY],
     ["Secret Key", env.MINIO_SECRET_KEY],
     ["Use Path Style", "true"],
-  ]);
+  ], (result) => result.assets?.length > 0 && result.draftPatch?.source?.sourceType === "Data Lake Parquet");
   if (process.env.ASKLAKE_VERIFY_KAFKA === "true") {
     await verify("Kafka JSON", [
       ["Broker / Endpoint", process.env.ASKLAKE_KAFKA_BROKER || "127.0.0.1:19092"],
@@ -94,10 +94,10 @@ function objectStorageConfig(prefix) {
   ];
 }
 
-async function verify(sourceType, sourceConfig) {
+async function verify(sourceType, sourceConfig, assertResult = (result) => result.draftPatch?.schema?.columns?.length > 0) {
   const result = await post("/api/etl/sources/test", { sourceConfig, sourceType });
   if (result.status !== "success") throw new Error(`${sourceType} did not return success.`);
-  if (!result.draftPatch?.schema?.columns?.length) throw new Error(`${sourceType} returned no schema columns.`);
+  if (!assertResult(result)) throw new Error(`${sourceType} returned no expected metadata.`);
   console.log(`${sourceType}: ok`);
 }
 
