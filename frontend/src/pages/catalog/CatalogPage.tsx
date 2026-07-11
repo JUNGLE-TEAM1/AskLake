@@ -8,7 +8,9 @@ import type { Edge, Node as FlowNode } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import {
   AlertCircle,
+  ChevronDown,
   ExternalLink,
+  Filter,
   LayoutGrid,
   PanelRight,
   Pin,
@@ -30,17 +32,22 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyIcon, EmptyTitle } from "@/c
 import {
   FilterToolbar,
   FilterToolbarActions,
-  FilterToolbarCheckbox,
-  FilterToolbarCheckboxGroup,
   FilterToolbarInput,
   FilterToolbarSearch,
 } from "@/components/ui/filter-toolbar";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { PageHeader } from "@/components/ui/page-header";
 import { PaginationBar } from "@/components/ui/pagination-bar";
 import { Panel, PanelHeader } from "@/components/ui/panel";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { Field, FieldLegend, FieldSet } from "@/components/ui/field";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -336,6 +343,13 @@ export function CatalogPage({
     onAction("catalog.filter_changed", `/api/catalog/datasets?filter=${filterName}&enabled=${checked}`, filterName);
   };
 
+  const clearFilters = () => {
+    setFilterState({ approvalRequired: false, available: false, rag: false });
+    onAction("catalog.filter_changed", "/api/catalog/datasets?filter=all&enabled=false", "all");
+  };
+
+  const activeFilterCount = Object.values(filterState).filter(Boolean).length;
+
   const updateSortMode = (nextSortMode: CatalogSortMode) => {
     setSortMode(nextSortMode);
     onAction("catalog.sort_changed", `/api/catalog/search/sort?sort=${nextSortMode}`, nextSortMode);
@@ -516,30 +530,52 @@ export function CatalogPage({
                 title="검색 결과"
               />
               <FilterToolbar
-                className="grid-cols-[minmax(0,1fr)_max-content] gap-3 py-3 max-xl:grid-cols-1"
+                className="grid-cols-1 gap-3 py-3"
                 layout="actions"
               >
-                <FieldSet className="gap-0">
-                  <FieldLegend className="sr-only">검색 결과 필터</FieldLegend>
-                  <FilterToolbarCheckboxGroup>
-                    <Field className="gap-0">
-                      <FilterToolbarCheckbox checked={filterState.available} onCheckedChange={(checked) => updateFilter("available", checked)}>
-                        사용 가능
-                      </FilterToolbarCheckbox>
-                    </Field>
-                    <Field className="gap-0">
-                      <FilterToolbarCheckbox checked={filterState.approvalRequired} onCheckedChange={(checked) => updateFilter("approvalRequired", checked)}>
-                        승인 필요
-                      </FilterToolbarCheckbox>
-                    </Field>
-                    <Field className="gap-0">
-                      <FilterToolbarCheckbox checked={filterState.rag} onCheckedChange={(checked) => updateFilter("rag", checked)}>
-                        RAG 여부
-                      </FilterToolbarCheckbox>
-                    </Field>
-                  </FilterToolbarCheckboxGroup>
-                </FieldSet>
                 <FilterToolbarActions>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button aria-label="상태 필터" className="min-h-[42px] gap-2 px-3.5 text-sm font-semibold text-slate-600" size="sm" type="button" variant="outline">
+                        <Filter className="size-4" aria-hidden="true" />
+                        <span>{activeFilterCount ? `상태 ${activeFilterCount}개` : "상태 필터"}</span>
+                        <ChevronDown className="size-4" aria-hidden="true" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start" className="min-w-44">
+                      <DropdownMenuLabel>상태 필터</DropdownMenuLabel>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuCheckboxItem
+                        checked={activeFilterCount === 0}
+                        onCheckedChange={clearFilters}
+                        onSelect={(event) => event.preventDefault()}
+                      >
+                        전체
+                      </DropdownMenuCheckboxItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuCheckboxItem
+                        checked={filterState.available}
+                        onCheckedChange={(checked) => updateFilter("available", Boolean(checked))}
+                        onSelect={(event) => event.preventDefault()}
+                      >
+                        사용 가능
+                      </DropdownMenuCheckboxItem>
+                      <DropdownMenuCheckboxItem
+                        checked={filterState.approvalRequired}
+                        onCheckedChange={(checked) => updateFilter("approvalRequired", Boolean(checked))}
+                        onSelect={(event) => event.preventDefault()}
+                      >
+                        승인 필요
+                      </DropdownMenuCheckboxItem>
+                      <DropdownMenuCheckboxItem
+                        checked={filterState.rag}
+                        onCheckedChange={(checked) => updateFilter("rag", Boolean(checked))}
+                        onSelect={(event) => event.preventDefault()}
+                      >
+                        RAG 여부
+                      </DropdownMenuCheckboxItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                   <Select value={sortMode} onValueChange={(value) => updateSortMode(value as CatalogSortMode)}>
                     <SelectTrigger aria-label="정렬 기준" className="w-44" onPointerDown={() => onAction("catalog.sort_opened", "/api/catalog/search/sort", "catalog-sort")} size="sm">
                       <SelectValue placeholder="정렬 기준" />

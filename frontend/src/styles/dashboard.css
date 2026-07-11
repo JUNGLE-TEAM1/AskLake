@@ -5,7 +5,6 @@
   font-family: var(--jobs-font-family);
 }
 
-.dashboard-list-menu,
 .dashboard-delete-dialog,
 .asklake-dashboard-share-sheet {
   font-family: var(--jobs-font-family);
@@ -563,62 +562,6 @@
   background: #fff;
   color: #64748b;
   padding: 0;
-}
-
-.dashboard-list-menu {
-  z-index: 20;
-  display: grid;
-  width: 240px;
-  max-height: 320px;
-  overflow-y: auto;
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
-  background: #fff;
-  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.14);
-  padding: 8px;
-}
-
-.dashboard-list-menu.sort {
-  width: 260px;
-}
-
-.dashboard-menu-option {
-  display: flex;
-  width: 100%;
-  min-height: 38px;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: #334155;
-  font-size: 13px;
-  font-weight: 800;
-  padding: 0 10px;
-  text-align: left;
-}
-
-.dashboard-menu-option span {
-  min-width: 0;
-}
-
-.dashboard-menu-option svg {
-  flex: 0 0 auto;
-}
-
-.dashboard-menu-option.checkbox {
-  justify-content: flex-start;
-  padding-left: 32px;
-}
-
-.dashboard-menu-option:hover,
-.dashboard-menu-option:focus-visible,
-.dashboard-menu-option[data-highlighted],
-.dashboard-menu-option[data-state="checked"],
-.dashboard-menu-option.active {
-  background: #eff6ff;
-  color: #2563eb;
 }
 
 .dashboard-table-list {
