@@ -172,10 +172,12 @@ function parseReviewAnalysisStep(step, sourceField, outputName, outputType) {
     const method = normalizeReviewAnalysisMethod(rawMethod, "copy");
     return {
       allowedValues: Array.isArray(firstColumn?.allowedValues) ? firstColumn.allowedValues : defaultAllowedValues(rawMethod || method),
+      fallbackAllowed: Boolean(firstColumn?.fallbackAllowed || firstColumn?.allowFallback || firstColumn?.fallbackPolicy === "rule" || firstColumn?.requireModel === false || firstColumn?.requirePortableModel === false),
       instruction: String(firstColumn?.instruction || parsed.instruction || defaultInstruction(rawMethod || method, outputName)),
       method,
       modelArtifact: String(firstColumn?.modelArtifact || firstColumn?.selectedModelArtifact || ""),
       modelId: String(firstColumn?.modelId || firstColumn?.selectedModelId || ""),
+      modelSelectionPolicy: String(firstColumn?.modelSelectionPolicy || firstColumn?.modelPolicy || ""),
       requireModel: Boolean(firstColumn?.requireModel || firstColumn?.requirePortableModel),
       sourceField: String(parsed.sourceField || sourceField),
       targetName: String(firstColumn?.targetName || parsed.targetName || outputName),
@@ -197,20 +199,25 @@ function newReviewRuleId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function createReviewRule({ allowedValues, instruction, method, modelArtifact, modelId, requireModel, targetName, type } = {}) {
+function createReviewRule({ allowedValues, fallbackAllowed, instruction, method, modelArtifact, modelId, modelSelectionPolicy, requireModel, targetName, type } = {}) {
   const normalizedMethod = normalizeReviewAnalysisMethod(method, "copy");
   const normalizedAllowedValues = Array.isArray(allowedValues) && allowedValues.length > 0
     ? allowedValues
     : defaultAllowedValues(method || normalizedMethod);
+  const normalizedFallbackAllowed = normalizedMethod === "one_of_values"
+    ? Boolean(fallbackAllowed)
+    : false;
   return {
     allowedValues: normalizedAllowedValues,
     allowedValuesInput: serializeAllowedValues(normalizedAllowedValues),
+    fallbackAllowed: normalizedFallbackAllowed,
     id: newReviewRuleId(),
     instruction: String(instruction || defaultInstruction(method || normalizedMethod, targetName)).trim(),
     method: normalizedMethod,
     modelArtifact: String(modelArtifact || ""),
     modelId: String(modelId || ""),
-    requireModel: Boolean(requireModel),
+    modelSelectionPolicy: normalizedMethod === "one_of_values" ? (modelSelectionPolicy || (modelArtifact || modelId ? "explicit" : "auto")) : "none",
+    requireModel: normalizedMethod === "one_of_values" ? !normalizedFallbackAllowed && requireModel !== false : Boolean(requireModel),
     targetName: normalizeCsvColumnName(targetName || "output_value") || "output_value",
     type: type || "string",
   };
@@ -224,11 +231,13 @@ function parseReviewAnalysisRules(step, sourceField, outputName, outputType) {
       const rules = columns
         .map((column, index) => createReviewRule({
           allowedValues: Array.isArray(column?.allowedValues) ? column.allowedValues : [],
+          fallbackAllowed: column?.fallbackAllowed || column?.allowFallback || column?.fallbackPolicy === "rule" || column?.requireModel === false || column?.requirePortableModel === false,
           instruction: column?.instruction || column?.description || "",
           method: column?.method || column?.analysisMethod || parsed.method,
           modelArtifact: column?.modelArtifact || column?.selectedModelArtifact || "",
           modelId: column?.modelId || column?.selectedModelId || "",
-          requireModel: column?.requireModel || column?.requirePortableModel,
+          modelSelectionPolicy: column?.modelSelectionPolicy || column?.modelPolicy || "",
+          requireModel: column?.requireModel ?? column?.requirePortableModel,
           targetName: column?.targetName || column?.value || parsed.outputColumn || outputName || `output_${index + 1}`,
           type: column?.type || parsed.type || outputType || "string",
         }))
@@ -254,6 +263,67 @@ function buildTextRowExpression(sourceField, targetName) {
   return `TEXT_ANALYZE(${sourceField}).${targetName}`;
 }
 
+function normalizedText(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function normalizedName(value) {
+  return normalizeCsvColumnName(value).toLowerCase();
+}
+
+function normalizedAllowedValueSet(values) {
+  return new Set((Array.isArray(values) ? values : []).map(normalizedText).filter(Boolean));
+}
+
+function sameAllowedValues(leftValues, rightValues) {
+  const left = normalizedAllowedValueSet(leftValues);
+  const right = normalizedAllowedValueSet(rightValues);
+  if (left.size === 0 || right.size === 0 || left.size !== right.size) return false;
+  for (const value of left) {
+    if (!right.has(value)) return false;
+  }
+  return true;
+}
+
+function modelArtifactMatchesRule(artifact, rule) {
+  if (!artifact || !rule) return false;
+  if (artifact.status !== "available" || !artifact.modelArtifact) return false;
+  if (normalizedText(artifact.method) !== "one_of_values") return false;
+  const ruleTarget = normalizedName(rule.targetName);
+  const artifactTarget = normalizedName(artifact.targetColumn || artifact.outputColumn || "");
+  if (!ruleTarget || !artifactTarget || ruleTarget !== artifactTarget) return false;
+  return sameAllowedValues(rule.allowedValues, artifact.allowedValues);
+}
+
+function compatibleModelArtifactsForRule(rule, artifacts) {
+  return artifacts.filter((artifact) => modelArtifactMatchesRule(artifact, rule));
+}
+
+function ruleWithCurrentAllowedValues(rule) {
+  return {
+    ...rule,
+    allowedValues: parseAllowedValues(rule.allowedValuesInput ?? serializeAllowedValues(rule.allowedValues)),
+  };
+}
+
+function compactMetric(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number.toFixed(2) : "-";
+}
+
+function artifactOptionLabel(artifact) {
+  const metrics = artifact.metrics || {};
+  const rows = artifact.validationRows ?? metrics.validationRows;
+  const rowLabel = Number.isFinite(Number(rows)) ? `${Number(rows).toLocaleString()} val` : "val -";
+  return `${artifact.modelArtifact || artifact.id} - acc ${compactMetric(metrics.accuracy ?? artifact.accuracy)} - F1 ${compactMetric(metrics.macroF1 ?? artifact.macroF1)} - ${rowLabel}`;
+}
+
+function ruleModelStillCompatible(rule, artifacts) {
+  if (!rule.modelArtifact && !rule.modelId) return true;
+  return compatibleModelArtifactsForRule(rule, artifacts)
+    .some((artifact) => artifact.modelArtifact === rule.modelArtifact || artifact.id === rule.modelId);
+}
+
 export default function TransformFunctionModal({ column, onApply, onClose }) {
   const editorRef = useRef(null);
   const sourceField = column.originalName || column.name;
@@ -272,10 +342,23 @@ export default function TransformFunctionModal({ column, onApply, onClose }) {
   const [reviewRules, setReviewRules] = useState(() => parseReviewAnalysisRules(initialDataStep, sourceField, column.name, column.type));
   const [modelArtifacts, setModelArtifacts] = useState([]);
   const [modelArtifactsError, setModelArtifactsError] = useState("");
-  const availableModelArtifacts = useMemo(
-    () => modelArtifacts.filter((artifact) => artifact?.status === "available" && artifact?.modelArtifact),
-    [modelArtifacts],
-  );
+  const availableModelArtifacts = useMemo(() => {
+    const byArtifact = new Map();
+    for (const artifact of modelArtifacts) {
+      if (artifact?.status !== "available" || !artifact?.modelArtifact) continue;
+      const key = [
+        normalizedName(artifact.targetColumn || artifact.outputColumn || ""),
+        normalizedText(artifact.method),
+        [...normalizedAllowedValueSet(artifact.allowedValues)].sort().join("|"),
+        String(artifact.modelArtifact),
+      ].join("::");
+      const current = byArtifact.get(key);
+      if (!current || String(artifact.updatedAt || "").localeCompare(String(current.updatedAt || "")) > 0) {
+        byArtifact.set(key, artifact);
+      }
+    }
+    return [...byArtifact.values()];
+  }, [modelArtifacts]);
 
   useEffect(() => {
     if (!isClassifierEditorOpen) return undefined;
@@ -393,6 +476,16 @@ export default function TransformFunctionModal({ column, onApply, onClose }) {
     setReviewRules((prev) => prev.map((rule) => (rule.id === id ? { ...rule, ...patch } : rule)));
   };
 
+  const updateReviewRuleTargetName = (id, value) => {
+    setReviewRules((prev) => prev.map((rule) => {
+      if (rule.id !== id) return rule;
+      const next = { ...rule, targetName: value };
+      return ruleModelStillCompatible(next, availableModelArtifacts)
+        ? next
+        : { ...next, modelArtifact: "", modelId: "", modelSelectionPolicy: "auto" };
+    }));
+  };
+
   const updateReviewRuleMethod = (id, method) => {
     const normalizedMethod = normalizeReviewAnalysisMethod(method);
     setReviewRules((prev) => prev.map((rule) => (rule.id === id
@@ -408,14 +501,23 @@ export default function TransformFunctionModal({ column, onApply, onClose }) {
           method: normalizedMethod,
           modelArtifact: normalizedMethod === "one_of_values" ? rule.modelArtifact : "",
           modelId: normalizedMethod === "one_of_values" ? rule.modelId : "",
-          requireModel: normalizedMethod === "one_of_values" ? rule.requireModel : false,
+          modelSelectionPolicy: normalizedMethod === "one_of_values" ? rule.modelSelectionPolicy || "auto" : "none",
+          fallbackAllowed: normalizedMethod === "one_of_values" ? Boolean(rule.fallbackAllowed) : false,
+          requireModel: normalizedMethod === "one_of_values" && !rule.fallbackAllowed,
         };
       })()
       : rule)));
   };
 
   const updateReviewRuleAllowedValues = (id, value) => {
-    updateReviewRule(id, { allowedValues: parseAllowedValues(value), allowedValuesInput: value });
+    const allowedValues = parseAllowedValues(value);
+    setReviewRules((prev) => prev.map((rule) => {
+      if (rule.id !== id) return rule;
+      const next = { ...rule, allowedValues, allowedValuesInput: value };
+      return ruleModelStillCompatible(next, availableModelArtifacts)
+        ? next
+        : { ...next, modelArtifact: "", modelId: "", modelSelectionPolicy: "auto" };
+    }));
   };
 
   const updateReviewRuleInstruction = (id, value) => {
@@ -423,12 +525,32 @@ export default function TransformFunctionModal({ column, onApply, onClose }) {
   };
 
   const updateReviewRuleModel = (id, value) => {
-    const selected = availableModelArtifacts.find((artifact) => artifact.id === value || artifact.modelArtifact === value);
-    updateReviewRule(id, {
-      modelArtifact: selected?.modelArtifact || "",
-      modelId: selected?.id || "",
-      requireModel: Boolean(selected),
-    });
+    setReviewRules((prev) => prev.map((rule) => {
+      if (rule.id !== id) return rule;
+      const currentRule = ruleWithCurrentAllowedValues(rule);
+      const selected = compatibleModelArtifactsForRule(currentRule, availableModelArtifacts)
+        .find((artifact) => artifact.modelArtifact === value || artifact.id === value);
+      return {
+        ...rule,
+        modelArtifact: selected?.modelArtifact || "",
+        modelId: selected?.id || "",
+        modelSelectionPolicy: selected ? "explicit" : "auto",
+        requireModel: normalizeReviewAnalysisMethod(rule.method) === "one_of_values" && !rule.fallbackAllowed,
+      };
+    }));
+  };
+
+  const updateReviewRuleFallbackAllowed = (id, checked) => {
+    setReviewRules((prev) => prev.map((rule) => {
+      if (rule.id !== id) return rule;
+      const method = normalizeReviewAnalysisMethod(rule.method);
+      const fallbackAllowed = method === "one_of_values" && Boolean(checked);
+      return {
+        ...rule,
+        fallbackAllowed,
+        requireModel: method === "one_of_values" && !fallbackAllowed,
+      };
+    }));
   };
 
   const addReviewRule = () => {
@@ -508,14 +630,23 @@ export default function TransformFunctionModal({ column, onApply, onClose }) {
         .map((rule, index) => {
           const targetName = normalizeCsvColumnName(rule.targetName || `output_${index + 1}`) || `output_${index + 1}`;
           const method = normalizeReviewAnalysisMethod(rule.method, "copy");
+          const allowedValues = parseAllowedValues(rule.allowedValuesInput ?? serializeAllowedValues(rule.allowedValues));
+          const candidateRule = { ...rule, allowedValues, targetName };
+          const compatibleModel = method === "one_of_values"
+            ? compatibleModelArtifactsForRule(candidateRule, availableModelArtifacts)
+              .find((artifact) => artifact.modelArtifact === rule.modelArtifact || artifact.id === rule.modelId)
+            : null;
+          const fallbackAllowed = method === "one_of_values" && Boolean(rule.fallbackAllowed);
           return {
-            allowedValues: parseAllowedValues(rule.allowedValuesInput ?? serializeAllowedValues(rule.allowedValues)),
+            allowedValues,
+            fallbackAllowed,
             instruction: String(rule.instruction || "").trim(),
             method,
-            modelArtifact: method === "one_of_values" ? String(rule.modelArtifact || "") : "",
-            modelId: method === "one_of_values" ? String(rule.modelId || "") : "",
+            modelArtifact: compatibleModel ? String(compatibleModel.modelArtifact || "") : "",
+            modelId: compatibleModel ? String(compatibleModel.id || "") : "",
+            modelSelectionPolicy: method === "one_of_values" ? (compatibleModel ? "explicit" : "auto") : "none",
             nullable: true,
-            requireModel: method === "one_of_values" && Boolean(rule.modelArtifact || rule.modelId || rule.requireModel),
+            requireModel: method === "one_of_values" && !fallbackAllowed,
             targetName,
             type: rule.type || "string",
           };
@@ -635,7 +766,7 @@ export default function TransformFunctionModal({ column, onApply, onClose }) {
               </div>
 
               <div className="overflow-auto rounded-xl border border-slate-300 bg-white">
-                <div className="min-w-[1040px]">
+                <div className="min-w-[1060px]">
                   <div className="grid grid-cols-[56px_minmax(180px,1fr)_140px_190px_240px_minmax(360px,1.5fr)_72px] bg-slate-950 font-mono text-xs font-bold text-slate-100">
                     <div className="border-r border-slate-700 px-3 py-3 text-center">#</div>
                     <div className="border-r border-slate-700 px-3 py-3">A - output_column</div>
@@ -651,6 +782,13 @@ export default function TransformFunctionModal({ column, onApply, onClose }) {
                     const methodOption = METHOD_OPTION_BY_VALUE[normalizeReviewAnalysisMethod(rule.method)] || METHOD_OPTION_BY_VALUE.one_of_values;
                     const canUseAllowedValues = methodOption.kind === "classify";
                     const canUseInstruction = methodOption.kind === "instruction";
+                    const currentRule = ruleWithCurrentAllowedValues(rule);
+                    const compatibleArtifacts = canUseAllowedValues ? compatibleModelArtifactsForRule(currentRule, availableModelArtifacts) : [];
+                    const modelStatus = canUseAllowedValues
+                      ? compatibleArtifacts.length > 0
+                        ? `${compatibleArtifacts.length} compatible model(s); fallback ${rule.fallbackAllowed ? "allowed" : "off"}`
+                        : `training required; fallback ${rule.fallbackAllowed ? "allowed" : "off"}`
+                      : "not required";
                     return (
                       <div
                         key={rule.id}
@@ -663,7 +801,7 @@ export default function TransformFunctionModal({ column, onApply, onClose }) {
                           <input
                             className="h-full min-h-12 w-full border-0 px-3 font-mono text-sm outline-none focus:bg-indigo-50 focus:ring-2 focus:ring-inset focus:ring-indigo-500"
                             value={rule.targetName}
-                            onChange={(event) => updateReviewRule(rule.id, { targetName: event.target.value })}
+                            onChange={(event) => updateReviewRuleTargetName(rule.id, event.target.value)}
                           />
                         </div>
                         <div className="border-l border-slate-200 p-0">
@@ -679,21 +817,6 @@ export default function TransformFunctionModal({ column, onApply, onClose }) {
                         </div>
                         <div className="border-l border-slate-200 p-0">
                           <select
-                            className="h-full min-h-12 w-full border-0 bg-white px-3 font-mono text-sm outline-none focus:bg-indigo-50 focus:ring-2 focus:ring-inset focus:ring-indigo-500 disabled:bg-slate-50 disabled:text-slate-400"
-                            disabled={!canUseAllowedValues || availableModelArtifacts.length === 0}
-                            value={rule.modelId || rule.modelArtifact || ""}
-                            onChange={(event) => updateReviewRuleModel(rule.id, event.target.value)}
-                          >
-                            <option value="">Auto model</option>
-                            {availableModelArtifacts.map((artifact) => (
-                              <option key={artifact.id || artifact.modelArtifact} value={artifact.modelArtifact || artifact.id}>
-                                {(artifact.targetColumn || artifact.outputColumn || "model") + " · " + (artifact.modelArtifact || artifact.id)}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                        <div className="border-l border-slate-200 p-0">
-                          <select
                             className="h-full min-h-12 w-full border-0 bg-white px-3 font-mono text-sm outline-none focus:bg-indigo-50 focus:ring-2 focus:ring-inset focus:ring-indigo-500"
                             value={normalizeReviewAnalysisMethod(rule.method)}
                             onChange={(event) => updateReviewRuleMethod(rule.id, event.target.value)}
@@ -702,6 +825,32 @@ export default function TransformFunctionModal({ column, onApply, onClose }) {
                               <option key={option.value} value={option.value}>{option.label}</option>
                             ))}
                           </select>
+                        </div>
+                        <div className="border-l border-slate-200 px-2 py-1">
+                          <select
+                            className="min-h-8 w-full border-0 bg-white px-1 font-mono text-sm outline-none focus:bg-indigo-50 focus:ring-2 focus:ring-inset focus:ring-indigo-500 disabled:bg-slate-50 disabled:text-slate-400"
+                            disabled={!canUseAllowedValues}
+                            value={rule.modelArtifact || rule.modelId || ""}
+                            onChange={(event) => updateReviewRuleModel(rule.id, event.target.value)}
+                          >
+                            <option value="">Auto model</option>
+                            {compatibleArtifacts.map((artifact) => (
+                              <option key={artifact.id || artifact.modelArtifact} value={artifact.modelArtifact || artifact.id}>
+                                {artifactOptionLabel(artifact)}
+                              </option>
+                            ))}
+                          </select>
+                          <span className="block truncate px-1 pt-1 text-[11px] font-semibold text-slate-500" title={modelStatus}>{modelStatus}</span>
+                          <label className="mt-1 flex items-center gap-1 px-1 text-[11px] font-semibold text-slate-600">
+                            <input
+                              checked={Boolean(rule.fallbackAllowed)}
+                              className="h-3 w-3 accent-indigo-600 disabled:opacity-50"
+                              disabled={!canUseAllowedValues}
+                              onChange={(event) => updateReviewRuleFallbackAllowed(rule.id, event.target.checked)}
+                              type="checkbox"
+                            />
+                            Allow rule fallback
+                          </label>
                         </div>
                         <div className="border-l border-slate-200 p-0">
                           <textarea
@@ -742,8 +891,8 @@ export default function TransformFunctionModal({ column, onApply, onClose }) {
                 {modelArtifactsError
                   ? `Model list failed: ${modelArtifactsError}`
                   : availableModelArtifacts.length > 0
-                    ? `${availableModelArtifacts.length} saved model(s) available`
-                    : "No saved model yet. One of values will use automatic matching or fallback."}
+                    ? `${availableModelArtifacts.length} saved model(s); dropdowns show only target/method/value matches`
+                    : "No saved model yet. One of values requires a trained or reusable model."}
               </div>
 
             </div>          ) : (

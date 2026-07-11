@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError } from "../types";
 import { catalogDatasets, etlJobs } from "../data/mockData";
 import { apiConfig } from "../services/apiClient";
@@ -854,6 +854,56 @@ export function useAskLakeData({
     }));
   };
 
+  const applyInitialSnapshot = useCallback((snapshot: InitialDataSnapshot) => {
+    const normalizedJobs = snapshot.jobs;
+    const normalizedDatasets = snapshot.datasets;
+    const hydratedRunState = snapshot.hydratedRunState;
+    setJobs(normalizedJobs);
+    setDatasets(normalizedDatasets);
+    setSelectedJob(normalizedJobs[0] ?? emptySelectedJob);
+    setSelectedDataset(normalizedDatasets[0] ?? emptySelectedDataset);
+    setRunsByJobId(hydratedRunState.runsByJobId);
+    setSelectedRunIdByJobId(hydratedRunState.selectedRunIdByJobId);
+    setDagStepsByRunId(hydratedRunState.dagStepsByRunId);
+
+    if (snapshot.fatalErrors.length > 0) {
+      setDataError(snapshot.fatalErrors.join(" / "));
+    } else {
+      setDataError(null);
+      if (snapshot.recoverableErrors.length > 0) {
+        showToastRef.current("Some DB API lists failed to load; showing available data.", "info");
+      }
+    }
+
+    setDataLoading(false);
+  }, []);
+
+  const refreshData = useCallback(async () => {
+    if (!enabled) return;
+    setDataLoading(true);
+    setDataError(null);
+    if (apiConfig.useMock) {
+      const mockJobs = getInitialJobs();
+      const hydratedRunState = buildRunStateFromJobs(mockJobs);
+      setJobs(mockJobs);
+      setDatasets(getInitialDatasets());
+      setRunsByJobId(hydratedRunState.runsByJobId);
+      setSelectedRunIdByJobId(hydratedRunState.selectedRunIdByJobId);
+      setDagStepsByRunId(hydratedRunState.dagStepsByRunId);
+      setDataLoading(false);
+      return;
+    }
+
+    initialDataSnapshot = null;
+    initialDataSnapshotReadAt = 0;
+    try {
+      applyInitialSnapshot(await readInitialDataSnapshot());
+    } catch (error) {
+      setDataError(error instanceof Error ? error.message : "Failed to refresh AskLake data.");
+      setDataLoading(false);
+    }
+  }, [applyInitialSnapshot, enabled]);
+
   useEffect(() => {
     if (!enabled) {
       setDataLoading(false);
@@ -1327,6 +1377,7 @@ export function useAskLakeData({
     openJobRuns,
     filterJobs,
     prepareSqlDatasetJobDraft,
+    refreshData,
     deleteMaterializationRun,
     runsByJobId,
     selectedDataset,

@@ -350,19 +350,35 @@ export default function SchemaTransformEditor({
       if (transformMeta.mode === "csvMultiOutput" && Array.isArray(transformMeta.columns)) {
         const sourceField = transformMeta.sourceField || existing.originalName || existing.sourceName || existing.name || newName;
         const outputColumns = transformMeta.columns
-          .map((column, columnIndex) => ({
-            allowedValues: Array.isArray(column.allowedValues) ? column.allowedValues : [],
-            instruction: column.instruction || "",
-            method: column.method || "copy",
-            nullable: column.nullable !== false,
-            targetName: String(column.targetName || `column_${columnIndex + 1}`).trim().replace(/[^a-zA-Z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || `column_${columnIndex + 1}`,
-            type: column.type || "String",
-          }))
+          .map((column, columnIndex) => {
+            const method = column.method || "copy";
+            const isOneOfValues = method === "one_of_values";
+            const fallbackAllowed = isOneOfValues && Boolean(column.fallbackAllowed || column.allowFallback);
+            const modelArtifact = isOneOfValues ? column.modelArtifact || column.selectedModelArtifact || "" : "";
+            const modelId = isOneOfValues ? column.modelId || column.selectedModelId || "" : "";
+            return {
+              allowedValues: Array.isArray(column.allowedValues) ? column.allowedValues : [],
+              fallbackAllowed,
+              instruction: column.instruction || "",
+              method,
+              modelArtifact,
+              modelId,
+              modelSelectionPolicy: isOneOfValues ? (column.modelSelectionPolicy || (modelArtifact || modelId ? "explicit" : "auto")) : "none",
+              nullable: column.nullable !== false,
+              requireModel: isOneOfValues && !fallbackAllowed,
+              targetName: String(column.targetName || `column_${columnIndex + 1}`).trim().replace(/[^a-zA-Z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || `column_${columnIndex + 1}`,
+              type: column.type || "String",
+            };
+          })
           .filter((column, columnIndex, columns) => column.targetName && columns.findIndex((item) => item.targetName === column.targetName) === columnIndex);
         if (outputColumns.length > 0) {
           const params = JSON.stringify({ columns: outputColumns, sourceField, version: 1 });
+          const expansionId = existing.expansionId
+            || transformMeta.expansionId
+            || `text-row-${sourceField}-${Date.now().toString(36)}`;
           const generated = outputColumns.map((column, columnIndex) => ({
             defaultValue: existing.defaultValue || "",
+            expansionId,
             expandedFrom: sourceField,
             expandedIndex: columnIndex + 1,
             expandedTotal: outputColumns.length,
@@ -377,6 +393,12 @@ export default function SchemaTransformEditor({
             sourceName: `__text_analysis.${column.targetName}`,
             targetName: column.targetName,
             reviewAnalysisMethod: column.method,
+            reviewAnalysisAllowedValues: column.allowedValues || [],
+            reviewAnalysisFallbackAllowed: Boolean(column.fallbackAllowed),
+            reviewAnalysisModelArtifact: column.modelArtifact || "",
+            reviewAnalysisModelId: column.modelId || "",
+            reviewAnalysisModelSelectionPolicy: column.modelSelectionPolicy || "none",
+            reviewAnalysisRequireModel: Boolean(column.requireModel),
             reviewAnalysisInstruction: column.instruction || "",
             transform: `TEXT_ANALYZE(${sourceField}).${column.targetName}`,
             transformChain: [{
@@ -392,15 +414,21 @@ export default function SchemaTransformEditor({
             transformParams: params,
             type: column.type,
           }));
-          const replacingExpandedGroup = existing.expandedFrom
-            ? next.findIndex((item) => item.expandedFrom === existing.expandedFrom)
-            : -1;
-          const replaceStartIndex = replacingExpandedGroup >= 0 ? replacingExpandedGroup : editingColumn.index;
-          const replaceCount = replacingExpandedGroup >= 0
-            ? Math.max(1, next.filter((item) => item.expandedFrom === existing.expandedFrom).length)
-            : 1;
-          next.splice(replaceStartIndex, replaceCount, ...generated);
-          onSchemaChange(next);
+          const groupIndexes = existing.expansionId
+            ? next.map((item, itemIndex) => (item.expansionId === existing.expansionId ? itemIndex : -1)).filter((itemIndex) => itemIndex >= 0)
+            : existing.expandedFrom
+              ? next
+                .map((item, itemIndex) => (
+                  item.expandedFrom === existing.expandedFrom && String(item.sourceName || "").startsWith("__text_analysis.")
+                    ? itemIndex
+                    : -1
+                ))
+                .filter((itemIndex) => itemIndex >= 0)
+              : [editingColumn.index];
+          const replaceStartIndex = Math.min(...groupIndexes, editingColumn.index);
+          const filtered = next.filter((_, itemIndex) => !groupIndexes.includes(itemIndex));
+          filtered.splice(Math.min(replaceStartIndex, filtered.length), 0, ...generated);
+          onSchemaChange(filtered);
           if (onTestStatusChange) onTestStatusChange(false);
           setShowFunctionModal(false);
           setEditingColumn(null);

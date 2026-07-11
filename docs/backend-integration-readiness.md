@@ -138,6 +138,8 @@ Spark runner 입력:
 
 Spark runner 결과:
 
+- Text structuring `one_of_values` execution must record whether each column used `selected_model`, `auto_model`, `fallback_rule`, or `missing_model`. Model artifacts stay in the model registry (`/api/catalog/models`), while transformed rows stay as Catalog datasets/materialization runs.
+
 - transformed Parquet output
 - 선택된 컬럼이 있을 때 다중 partition directory를 포함한 Parquet output
 - output schema

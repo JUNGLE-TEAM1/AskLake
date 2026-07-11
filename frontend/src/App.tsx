@@ -281,6 +281,7 @@ export function App() {
     jobs,
     openDatasetInSql,
     prepareSqlDatasetJobDraft,
+    refreshData,
     runsByJobId,
     selectedDataset,
     selectedJob,
@@ -465,6 +466,11 @@ export function App() {
   const saveDraft = (flow: FlowId) => {
     writeAuditLog("etl.job.draft_saved", "/api/etl/jobs", `draft:${flow}`);
     showToast("설정이 임시 저장되었습니다.");
+  };
+
+  const refreshShellData = () => {
+    writeAuditLog("app.data_refreshed", "/api/catalog/datasets", "datasets");
+    void refreshData();
   };
 
   const navigateSidebar = (item: NavItem) => {
@@ -656,7 +662,7 @@ export function App() {
         onNavigate={navigateSidebar}
       />
       <main className={activeFlow === "schema" ? "main-shell schema-shell" : "main-shell"}>
-        <Topbar auditLogs={auditLogs} auditOpen={auditOpen} currentUser={currentUser} onAccount={openProfilePage} onAuditToggle={() => setAuditOpen((open) => !open)} onLogin={openLoginPage} onLogout={handleLogout} onRefresh={() => writeAuditLog("etl.job.status_refreshed", "/api/etl/jobs", "jobs")} />
+        <Topbar auditLogs={auditLogs} auditOpen={auditOpen} currentUser={currentUser} onAccount={openProfilePage} onAuditToggle={() => setAuditOpen((open) => !open)} onLogin={openLoginPage} onLogout={handleLogout} onRefresh={refreshShellData} />
         {toast && <div className={`app-toast ${toast.tone}`}>{toast.message}</div>}
         {(apiPending || (dataLoading && (hasShellRows || isIngestShellFlow))) && <div className="app-api-pending">{pendingMessage}</div>}
         {wizardFlows.includes(activeFlow) && <Stepper activeIndex={current?.stepIndex ?? 0} onStepSelect={navigateWizardStep} />}
