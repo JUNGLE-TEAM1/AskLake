@@ -14,8 +14,7 @@
   font-family: var(--jobs-font-family);
 }
 
-.sql-materialize-dialog,
-.sql-dashboard-builder-dialog {
+.sql-materialize-dialog {
   font-family: var(--jobs-font-family);
 }
 
@@ -73,8 +72,37 @@
   overflow: hidden;
 }
 
-.sql-result-panel:has(.sql-result-scroll) {
+.sql-result-panel.has-result {
   grid-template-rows: max-content max-content minmax(0, 1fr);
+}
+
+.sql-result-toolbar {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.sql-result-toolbar > :first-child {
+  flex: 0 0 auto;
+}
+
+.sql-result-toolbar > :last-child {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.sql-result-view-empty {
+  height: 100%;
+  min-height: 0;
+}
+
+.sql-chart-configurator {
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .sql-dataset-scroll [data-slot="scroll-area-scrollbar"][data-orientation="vertical"] {
@@ -335,48 +363,6 @@
   width: min(100%, 860px);
 }
 
-.sql-dashboard-builder-dialog {
-  position: relative;
-  width: min(1680px, calc(100vw - 40px));
-  height: min(940px, calc(100vh - 40px));
-  max-width: none;
-  max-height: calc(100vh - 40px);
-  min-height: 620px;
-  overflow: hidden;
-  gap: 0;
-  padding: 0;
-}
-
-.sql-dashboard-builder-dialog .dashboard-runtime-page {
-  height: 100%;
-}
-
-.sql-dashboard-builder-dialog .asklake-dashboard-runtime {
-  border: 0;
-  border-radius: 0;
-}
-
-.sql-dashboard-builder-dialog .asklake-dashboard-topbar {
-  padding-right: 106px;
-}
-
-.sql-dashboard-builder-dialog .asklake-dashboard-actions {
-  flex-wrap: wrap;
-}
-
-.sql-dashboard-builder-close {
-  position: absolute;
-  z-index: 3;
-  top: 14px;
-  right: 14px;
-}
-
-@media (max-width: 760px) {
-  .sql-dashboard-builder-dialog .asklake-dashboard-topbar {
-    padding-right: 82px;
-  }
-}
-
 @media (max-width: 1240px) {
   .sql-page {
     grid-template-columns: minmax(320px, 0.95fr) minmax(0, 1.05fr);
@@ -408,12 +394,14 @@
 
   .sql-dataset-panel {
     position: relative;
-    height: auto;
-    min-height: 0;
-    max-height: none;
+    height: min(720px, 80dvh);
+    min-height: min(560px, 80dvh);
+    max-height: 80dvh;
   }
 
   .sql-workspace {
+    grid-column: 1;
+    grid-row: auto;
     height: auto;
     min-height: 0;
     max-height: none;
@@ -421,9 +409,28 @@
   }
 
   .sql-result-panel,
-  .sql-result-panel:has(.sql-result-scroll) {
-    grid-template-rows: none;
+  .sql-result-panel.has-result {
+    grid-template-rows: auto;
     overflow: visible;
+  }
+
+  .sql-result-toolbar {
+    align-items: flex-start;
+  }
+
+  .sql-result-toolbar > :first-child,
+  .sql-result-toolbar > :last-child {
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .sql-result-toolbar > :last-child {
+    margin-left: 0;
+  }
+
+  .sql-chart-configurator {
+    min-height: 0;
   }
 
   .sql-result-scroll {

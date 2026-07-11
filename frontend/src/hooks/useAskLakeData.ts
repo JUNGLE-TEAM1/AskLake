@@ -309,6 +309,23 @@ function getInitialJobs() {
   return apiConfig.useMock ? etlJobs.map(normalizeJobRow) : [];
 }
 
+const sqlJobPermissionAccess = ["조회", "쿼리 실행", "메타데이터", "관리"];
+
+function buildSqlJobPermissionRoles(
+  accessScope: NonNullable<CreateDerivedDatasetRequest["job"]>["accessScope"] | undefined,
+  owner: string,
+) {
+  if (accessScope === "private") {
+    return [{ access: [...sqlJobPermissionAccess], checked: true, name: owner }];
+  }
+
+  return [
+    { access: [...sqlJobPermissionAccess], checked: true, name: "Data Engineer Group" },
+    { access: [...sqlJobPermissionAccess], checked: accessScope !== "project", name: "Data Analyst Group" },
+    { access: [...sqlJobPermissionAccess], checked: accessScope === "project", name: "Project Members" },
+  ];
+}
+
 function buildSqlDatasetJobDraft(
   request: CreateDerivedDatasetRequest,
   sourceDataset: CatalogDataset,
@@ -316,6 +333,7 @@ function buildSqlDatasetJobDraft(
 ): DraftPipeline {
   const targetDataset = normalizeDraftDatasetName(request.dataset.name, `${sourceDataset.name}_analysis`);
   const targetLayer = request.dataset.layer;
+  const permissionOwner = request.job?.owner || sourceDataset.owner || initialDraftPipeline.permission.owner;
   const outputColumns: Array<[string, string]> = sqlResult.columns.map((column) => [column, inferSqlResultColumnType(sourceDataset, column)]);
   const schemaColumns: SchemaColumnDraft[] = outputColumns.map(([name, type], index) => ({
     confidence: 1,
@@ -343,8 +361,9 @@ function buildSqlDatasetJobDraft(
     id: `sql_${normalizeDraftId(targetDataset)}_${normalizeDraftId(sqlResult.runId).slice(-8)}`,
     permission: {
       ...initialDraftPipeline.permission,
-      owner: sourceDataset.owner || initialDraftPipeline.permission.owner,
-      summary: "Data Engineer Group · 조직 내부 · 승인 완료",
+      owner: permissionOwner,
+      roles: buildSqlJobPermissionRoles(request.job?.accessScope, permissionOwner),
+      summary: request.job?.permissionSummary || "Data Engineer Group · 조직 내부 · 승인 완료",
     },
     quality: {
       invalidRows: [],
@@ -356,11 +375,13 @@ function buildSqlDatasetJobDraft(
     schedule: {
       ...initialDraftPipeline.schedule,
       endDate: "",
-      label: "수동 실행",
-      mode: "manual",
-      nextRun: "수동 실행 대기",
+      label: request.job?.scheduleLabel || "스케줄링 건너뛰기",
+      mode: request.job?.scheduleMode || "manual",
+      nextRun: request.job?.scheduleMode === "repeat" ? "다음 예약 계산 중" : "수동 실행 대기",
+      overlapPolicy: request.job?.overlapPolicy ?? initialDraftPipeline.schedule.overlapPolicy,
       startDate: "",
-      summary: "SQL 결과 저장 Job · 수동 실행",
+      summary: request.job?.scheduleSummary || "SQL 결과 저장 Job · 수동 실행",
+      timezone: request.job?.timezone ?? initialDraftPipeline.schedule.timezone,
     },
     schema: {
       columns: schemaColumns,
@@ -386,14 +407,18 @@ function buildSqlDatasetJobDraft(
     },
     target: {
       ...initialDraftPipeline.target,
-      compression: "Snappy",
+      compression: request.job?.compression ?? "Snappy",
       datasetName: targetDataset,
+      description: request.dataset.description,
       format: "Parquet",
       layer: targetLayer,
-      partition: "sql_run_date",
-      rag: request.dataset.rag,
-      storagePath: `s3a://asklake-output/${targetDataset}/${targetLayer.toLowerCase()}/`,
+      partition: request.job?.partitionColumn || "",
+      partitionColumns: request.job?.partitionColumn ? [request.job.partitionColumn] : [],
+      rag: false,
+      storagePath: request.job?.storagePath || `s3a://asklake-output/${targetDataset}/${targetLayer.toLowerCase()}/`,
       storageType: "S3",
+      tableName: targetDataset,
+      tags: [],
     },
     transform: {
       outputColumns,
@@ -805,10 +830,16 @@ export function useAskLakeData({
     setDraftPipeline((draft) => applyDraftPipelinePatch(draft, patch));
   };
 
-  const createPipeline = async () => {
+  const createPipelineFromDraft = async (
+    pipelineDraft: DraftPipeline,
+    {
+      navigateToJobs = true,
+      resetDraft = true,
+    }: { navigateToJobs?: boolean; resetDraft?: boolean } = {},
+  ) => {
     if (createPendingRef.current) {
       showToast("이미 생성 요청이 처리 중입니다.", "info");
-      return;
+      return false;
     }
 
     const previousState = {
@@ -821,8 +852,8 @@ export function useAskLakeData({
     setApiPending(true);
     try {
       const result = apiConfig.useMock
-        ? await createMockPipelineDraft(draftPipeline, jobs.length)
-        : await createLivePipelineDraft(draftPipeline);
+        ? await createMockPipelineDraft(pipelineDraft, jobs.length)
+        : await createLivePipelineDraft(pipelineDraft);
       const normalizedJob = normalizeJobRow(result.job);
       const normalizedDataset = result.dataset ? normalizeDatasetRow(result.dataset) : null;
 
@@ -833,26 +864,32 @@ export function useAskLakeData({
         setDatasets((items) => [normalizedDataset, ...items.filter((item) => item.id !== normalizedDataset.id)]);
         setSelectedDataset(normalizedDataset);
       }
-      writeAuditLog("etl.job.created", "/api/etl/jobs", draftPipeline.id);
-      writeAuditLog("etl.run.queued", `/api/etl/jobs/${draftPipeline.id}/runs`, draftPipeline.id);
+      writeAuditLog("etl.job.created", "/api/etl/jobs", pipelineDraft.id);
+      writeAuditLog("etl.run.queued", `/api/etl/jobs/${pipelineDraft.id}/runs`, pipelineDraft.id);
       showToast(normalizedDataset ? "파이프라인 생성 요청이 접수되었습니다." : "파이프라인 생성 요청을 접수했습니다. 실행 성공 후 카탈로그에 등록됩니다.");
-      setDraftPipeline(initialDraftPipeline);
-      onFlowChange("jobs");
+      if (resetDraft) setDraftPipeline(initialDraftPipeline);
+      if (navigateToJobs) onFlowChange("jobs");
+      return true;
     } catch (error) {
       setJobs(previousState.jobs);
       setDatasets(previousState.datasets);
       setSelectedJob(previousState.selectedJob);
       setSelectedDataset(previousState.selectedDataset);
-      writeAuditLog("etl.job.create_failed", "/api/etl/jobs", draftPipeline.id, "failed");
+      writeAuditLog("etl.job.create_failed", "/api/etl/jobs", pipelineDraft.id, "failed");
       const message = error instanceof ApiError ? error.message : "파이프라인 생성 요청에 실패했습니다.";
       showToast(message, "info");
+      return false;
     } finally {
       createPendingRef.current = false;
       setApiPending(false);
     }
   };
 
-  const prepareSqlDatasetJobDraft = (request: CreateDerivedDatasetRequest) => {
+  const createPipeline = async () => {
+    await createPipelineFromDraft(draftPipeline);
+  };
+
+  const createSqlDatasetJob = async (request: CreateDerivedDatasetRequest) => {
     const sourceDataset = datasets.find((item) => item.id === request.sourceDatasetId);
     const currentSqlResult = sqlResultDraft?.runId === request.sourceRunId ? sqlResultDraft : null;
 
@@ -863,12 +900,8 @@ export function useAskLakeData({
     }
 
     const nextDraft = buildSqlDatasetJobDraft(request, sourceDataset, currentSqlResult);
-    setDraftPipeline(nextDraft);
-    setSelectedDataset(sourceDataset);
     writeAuditLog("analysis.derived_dataset.job_draft_prepared", "/api/etl/jobs", nextDraft.id);
-    showToast("SQL 결과 기반 처리 Job 초안을 만들었습니다.");
-    onFlowChange("review");
-    return true;
+    return createPipelineFromDraft(nextDraft, { resetDraft: false });
   };
 
   const deleteMaterializationRun = async (datasetId: string, runId: string) => {
@@ -1113,7 +1146,7 @@ export function useAskLakeData({
     openJobDetail,
     openJobRuns,
     filterJobs,
-    prepareSqlDatasetJobDraft,
+    createSqlDatasetJob,
     deleteMaterializationRun,
     runsByJobId,
     selectedDataset,

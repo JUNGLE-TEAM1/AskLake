@@ -1,4 +1,5 @@
 import type { CatalogDataset } from "./catalog";
+import type { ScheduleOverlapPolicy } from "./etl";
 
 export type DerivedDatasetLayer = Extract<CatalogDataset["layer"], "SILVER" | "GOLD">;
 
@@ -26,6 +27,19 @@ export type CreateDerivedDatasetRequest = {
     rag: boolean;
     refreshPolicy: "manual";
     tags: string[];
+  };
+  job?: {
+    accessScope: "organization" | "private" | "project";
+    compression: "Gzip" | "None" | "Snappy";
+    owner: string;
+    overlapPolicy: ScheduleOverlapPolicy;
+    partitionColumn?: string;
+    permissionSummary: string;
+    scheduleLabel: string;
+    scheduleMode: "manual" | "repeat";
+    scheduleSummary: string;
+    storagePath: string;
+    timezone?: string;
   };
   previewLimit?: number;
   query: string;
