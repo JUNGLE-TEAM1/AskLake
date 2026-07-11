@@ -1,4 +1,4 @@
-import type { CatalogDataset, ContinuousMaintenanceRun, ContinuousQuarantineResponse, ContinuousWorkerLogsResponse, DraftPipeline, JobCommand, JobDagStep, JobRowData, JobRunSummary, SqlResultDraft } from "../types";
+import type { CatalogDataset, ContinuousMaintenanceRun, ContinuousQuarantineResponse, ContinuousWorkerLogsResponse, DraftPipeline, JobCommand, JobDagStep, JobRowData, JobRunSummary, KafkaContinuousBatch, KafkaContinuousSession, SqlResultDraft } from "../types";
 import { toCreatePipelineRequest, toUpdatePipelineRequest } from "./draftPipelineContract";
 import { apiClient } from "./apiClient";
 
@@ -41,6 +41,18 @@ export async function runJobCommand(job: JobRowData, command: Exclude<JobCommand
 
 export async function getContinuousWorkerLogs(jobId: string, tail = 200): Promise<ContinuousWorkerLogsResponse> {
   return apiClient.get<ContinuousWorkerLogsResponse>(`/api/etl/jobs/${encodeURIComponent(jobId)}/continuous/logs?tail=${tail}`);
+}
+
+export async function getContinuousSessions(jobId: string): Promise<KafkaContinuousSession[]> {
+  return apiClient.get<KafkaContinuousSession[]>(`/api/etl/jobs/${encodeURIComponent(jobId)}/continuous/sessions`);
+}
+
+export async function getContinuousSession(jobId: string, sessionId: string): Promise<KafkaContinuousSession> {
+  return apiClient.get<KafkaContinuousSession>(`/api/etl/jobs/${encodeURIComponent(jobId)}/continuous/sessions/${encodeURIComponent(sessionId)}`);
+}
+
+export async function getContinuousSessionBatches(jobId: string, sessionId: string, limit = 100): Promise<KafkaContinuousBatch[]> {
+  return apiClient.get<KafkaContinuousBatch[]>(`/api/etl/jobs/${encodeURIComponent(jobId)}/continuous/sessions/${encodeURIComponent(sessionId)}/batches?limit=${limit}`);
 }
 
 export async function getContinuousQuarantine(jobId: string, limit = 100): Promise<ContinuousQuarantineResponse> {

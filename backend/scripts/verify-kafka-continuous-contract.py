@@ -127,6 +127,7 @@ def main() -> None:
     assert runtime_schema.schema_status == "drift_detected"
 
     original_get = etl_repository.get_kafka_continuous_runtime
+    original_lock = etl_repository.lock_kafka_continuous_runtime
     original_find = etl_repository.find_conflicting_kafka_continuous_runtime
     original_snapshot_find = etl_repository.find_conflicting_kafka_snapshot
     original_list_runs = etl_repository.list_runs_for_job
@@ -139,8 +140,13 @@ def main() -> None:
     original_maintenance_list = etl_repository.list_kafka_continuous_maintenance_run_models
     original_maintenance_save = etl_repository.save_kafka_continuous_maintenance_run
     original_maintenance_cleanup = etl_service.cleanup_kafka_continuous_maintenance
+    original_session_stage = etl_repository.stage_kafka_continuous_session
+    original_session_get = etl_repository.get_kafka_continuous_session
+    original_active_session_get = etl_repository.get_latest_active_kafka_continuous_session
+    original_batch_stage = etl_repository.stage_kafka_continuous_batch
     try:
         etl_repository.get_kafka_continuous_runtime = lambda _db, _job_id: runtime
+        etl_repository.lock_kafka_continuous_runtime = lambda _db, _job_id: runtime
         etl_repository.find_conflicting_kafka_continuous_runtime = lambda _db, **_kwargs: None
         etl_repository.find_conflicting_kafka_snapshot = lambda _db, **_kwargs: None
         etl_repository.list_runs_for_job = lambda _db, _job_id: []
@@ -188,6 +194,101 @@ def main() -> None:
         else:
             raise AssertionError("Starting a Snapshot against an active Continuous worker must conflict.")
         etl_repository.find_conflicting_kafka_continuous_runtime = lambda _db, **_kwargs: None
+        etl_repository.find_conflicting_kafka_snapshot = lambda _db, **_kwargs: None
+
+        stored_sessions = {}
+        stored_batches = {}
+        etl_repository.stage_kafka_continuous_session = lambda _db, session: stored_sessions.setdefault(session.session_id, session)
+        etl_repository.get_kafka_continuous_session = lambda _db, session_id: stored_sessions.get(session_id)
+        etl_repository.get_latest_active_kafka_continuous_session = lambda _db, _job_id: next(
+            (session for session in reversed(list(stored_sessions.values())) if session.status in {"starting", "running", "stopping"}),
+            None,
+        )
+        etl_repository.stage_kafka_continuous_batch = lambda _db, batch: stored_batches.setdefault(batch.id, batch)
+        etl_service.run_kafka_continuous_worker = lambda _job, _runtime, action: {
+            "action": action,
+            "containerState": "starting",
+            "workerAttemptId": f"attempt-{len(stored_sessions) + 1}",
+        }
+        fake_db = type("FakeSession", (), {"add": lambda _self, _model: None})()
+        runtime.status = "stopped"
+        runtime.consumed_count = 10
+        runtime.stored_count = 8
+        runtime.quarantined_count = 2
+        runtime.failed_count = 0
+        runtime.last_batch_id = "4"
+        session_start = etl_service.command_kafka_continuous_job(fake_db, job, "startContinuous", ActorContext())
+        assert session_start.processing_result["runtimeStatus"] == "starting"
+        assert len(stored_sessions) == 1
+        first_session = next(iter(stored_sessions.values()))
+        assert first_session.status == "starting"
+        assert first_session.baseline_counts["storedCount"] == 8
+        runtime.status = "running"
+        runtime.consumed_count = 15
+        runtime.stored_count = 13
+        runtime.quarantined_count = 2
+        runtime.last_batch_id = "5"
+        runtime.last_flush_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        runtime.metrics = {**(runtime.metrics or {}), "lastBatchDurationMs": 1200}
+        session_payload = {
+            "workerAttemptId": first_session.worker_attempt_id,
+            "lastBatchId": "5",
+            "publishedBatches": [{
+                "batchId": 5,
+                "consumedCount": 5,
+                "storedCount": 5,
+                "quarantinedCount": 0,
+                "publishedAt": runtime.last_flush_at,
+                "sourceRanges": [{"topic": runtime.topic, "partition": 0, "startOffset": 10, "endOffset": 15}],
+            }],
+        }
+        etl_service.sync_kafka_continuous_session(fake_db, runtime, session_payload)
+        etl_service.sync_kafka_continuous_session(fake_db, runtime, session_payload)
+        assert first_session.status == "running"
+        assert first_session.consumed_count == 5
+        assert first_session.stored_count == 5
+        assert len(stored_batches) == 1, "Repeated worker reports must not duplicate session batch history."
+        etl_service.mark_kafka_continuous_session_stopping(fake_db, runtime, "stopped")
+        runtime.status = "stopped"
+        etl_service.sync_kafka_continuous_session(fake_db, runtime)
+        assert first_session.status == "stopped"
+        assert first_session.ended_at
+        runtime.stored_count += 1
+        etl_service.sync_kafka_continuous_session(fake_db, runtime)
+        assert first_session.stored_count == 5, "Maintenance counters must not mutate a terminal stream session."
+        runtime.stored_count -= 1
+        runtime.status = "stopped"
+        etl_service.command_kafka_continuous_job(fake_db, job, "resumeContinuous", ActorContext())
+        assert len(stored_sessions) == 2
+        second_session = list(stored_sessions.values())[-1]
+        assert second_session.session_id != first_session.session_id
+        assert second_session.baseline_counts["storedCount"] == 13
+        runtime.status = "failed"
+        runtime.failed_count = 1
+        runtime.last_error = "worker crashed"
+        etl_service.sync_kafka_continuous_session(fake_db, runtime)
+        assert second_session.status == "failed"
+        assert second_session.failed_count == 1
+        assert second_session.end_reason == "worker_failed"
+        runtime.status = "stopped"
+        runtime.lag = 4
+        runtime.consumed_count = 0
+        runtime.stored_count = 5
+        runtime.quarantined_count = 0
+        runtime.failed_count = 0
+        runtime.last_batch_id = None
+        runtime.last_flush_at = None
+        runtime.last_error = None
+        runtime.metrics = {
+            "lagAvailable": True,
+            "maxPartitionLag": 4,
+            "laggingPartitionCount": 1,
+            "partitionProgress": {"0": {"processedOffset": 6, "latestOffset": 10, "lag": 4}},
+            "lastBatchDurationMs": 2000,
+            "lastBatchInputRows": 20,
+            "throughputRowsPerSecond": 10.0,
+            "replayedCount": 1,
+        }
 
         captured_dataset = {}
         dataset_save_count = {"value": 0}
@@ -309,6 +410,7 @@ def main() -> None:
         assert saved_maintenance == [stale_run]
     finally:
         etl_repository.get_kafka_continuous_runtime = original_get
+        etl_repository.lock_kafka_continuous_runtime = original_lock
         etl_repository.find_conflicting_kafka_continuous_runtime = original_find
         etl_repository.find_conflicting_kafka_snapshot = original_snapshot_find
         etl_repository.list_runs_for_job = original_list_runs
@@ -321,6 +423,10 @@ def main() -> None:
         etl_repository.list_kafka_continuous_maintenance_run_models = original_maintenance_list
         etl_repository.save_kafka_continuous_maintenance_run = original_maintenance_save
         etl_service.cleanup_kafka_continuous_maintenance = original_maintenance_cleanup
+        etl_repository.stage_kafka_continuous_session = original_session_stage
+        etl_repository.get_kafka_continuous_session = original_session_get
+        etl_repository.get_latest_active_kafka_continuous_session = original_active_session_get
+        etl_repository.stage_kafka_continuous_batch = original_batch_stage
 
     print("verify-kafka-continuous-contract: ok")
 

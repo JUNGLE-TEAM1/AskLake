@@ -136,6 +136,9 @@ type JobCommand =
 - Runtime summary exposes `lag`, `maxPartitionLag`, `laggingPartitionCount`, `lastBatchDurationMs`, `lastBatchInputRows`, `throughputRowsPerSecond`, and cumulative `replayedCount`.
 - Kafka latest-offset lookup failure does not stop a healthy stream. The report marks lag availability and preserves the previous processed offset.
 - Worker logs are read through `GET /api/etl/jobs/{jobId}/continuous/logs`. The response is bounded, strips ANSI control sequences, masks common credential/token forms, and requires Job `view` permission.
+- A stream start/resume creates one durable session row. Pause, stop, or failure closes that row; a later restart creates a new session while reusing the same checkpoint.
+- Session counters are deltas from the cumulative runtime baseline captured at session start. Worker `publishedBatches` become idempotent child records keyed by session and Spark batch ID, while the main execution history remains one row per session.
+- The execution-history UI polls session and selected batch APIs every three seconds only while a session is active. It prevents overlapping/stale responses, backs off on errors without clearing the last good state, defers polling for hidden tabs, and stops after terminal state or unmount. Manual refresh calls the same live APIs.
 
 ## 10. Schema Evolution Contract
 

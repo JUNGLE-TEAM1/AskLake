@@ -54,6 +54,46 @@ export type ContinuousWorkerLogsResponse = {
   truncated: boolean;
 };
 
+export type KafkaContinuousSessionStatus = "starting" | "running" | "stopping" | "stopped" | "failed";
+
+export type KafkaContinuousSession = {
+  sessionId: string;
+  jobId: string;
+  workerAttemptId?: string | null;
+  status: KafkaContinuousSessionStatus;
+  startedAt: string;
+  endedAt?: string | null;
+  endReason?: string | null;
+  consumedCount: number;
+  storedCount: number;
+  quarantinedCount: number;
+  failedCount: number;
+  lastBatchId?: string | null;
+  lastFlushAt?: string | null;
+  lag?: number | null;
+  checkpointPath: string;
+  lastError?: string | null;
+};
+
+export type KafkaContinuousBatch = {
+  batchId: number;
+  sessionId: string;
+  publishedAt?: string | null;
+  consumedCount: number;
+  storedCount: number;
+  quarantinedCount: number;
+  durationMs?: number | null;
+  sourceRanges: Array<{
+    topic?: string;
+    partition?: number;
+    startOffset?: number;
+    endOffset?: number;
+  }>;
+  dataPath?: string | null;
+  quarantinePath?: string | null;
+  manifestPath?: string | null;
+};
+
 export type ContinuousQuarantineRecord = {
   topic: string;
   partition: number;

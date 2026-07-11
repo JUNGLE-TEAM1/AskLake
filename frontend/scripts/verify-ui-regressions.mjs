@@ -505,6 +505,23 @@ const checks = [
     ],
   },
   {
+    name: "Continuous execution history uses durable sessions and guarded live polling",
+    file: "src/pages/ingest/JobsPages.tsx",
+    patterns: [
+      /props\.job\.executionMode === "continuous"/,
+      /getContinuousSessions\(job\.id\)/,
+      /getContinuousSessionBatches\(job\.id, nextSelectedId, 100\)/,
+      /inFlightRef\.current/,
+      /requestSequenceRef\.current/,
+      /document\.visibilityState === "hidden"/,
+      /schedule\(result\.ok \? 3000/,
+      /title="스트림 세션 이력"/,
+      /title="세션 Batch 상세"/,
+      /label="세션 누적 적재"/,
+      /label="현재 데이터셋"/,
+    ],
+  },
+  {
     name: "Continuous Kafka creation skips the scheduler and keeps stream controls explicit",
     file: "src/App.tsx",
     patterns: [

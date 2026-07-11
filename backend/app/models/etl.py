@@ -1,4 +1,4 @@
-from sqlalchemy import JSON, Boolean, Float, ForeignKey, Index, String, Text
+from sqlalchemy import JSON, Boolean, Float, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -133,6 +133,53 @@ class KafkaContinuousRuntimeModel(TimestampMixin, Base):
     quarantined_count: Mapped[int] = mapped_column(nullable=False, default=0)
     failed_count: Mapped[int] = mapped_column(nullable=False, default=0)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class KafkaContinuousSessionModel(TimestampMixin, Base):
+    __tablename__ = "kafka_continuous_sessions"
+    __table_args__ = (
+        Index("ix_kafka_continuous_sessions_job_started", "job_id", "started_at"),
+        Index("ix_kafka_continuous_sessions_worker_attempt", "worker_attempt_id"),
+    )
+
+    session_id: Mapped[str] = mapped_column(String(160), primary_key=True)
+    job_id: Mapped[str] = mapped_column(String(120), ForeignKey("etl_jobs.id"), nullable=False, index=True)
+    worker_attempt_id: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="starting", index=True)
+    started_at: Mapped[str] = mapped_column(String(64), nullable=False)
+    ended_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    end_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    checkpoint_path: Mapped[str] = mapped_column(String(1024), nullable=False)
+    baseline_counts: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    consumed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    stored_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    quarantined_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_batch_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    last_flush_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    lag: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class KafkaContinuousBatchModel(TimestampMixin, Base):
+    __tablename__ = "kafka_continuous_batches"
+    __table_args__ = (
+        Index("ix_kafka_continuous_batches_session_batch", "session_id", "batch_id", unique=True),
+    )
+
+    id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    job_id: Mapped[str] = mapped_column(String(120), ForeignKey("etl_jobs.id"), nullable=False, index=True)
+    session_id: Mapped[str] = mapped_column(String(160), ForeignKey("kafka_continuous_sessions.session_id"), nullable=False, index=True)
+    batch_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    published_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    consumed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    stored_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    quarantined_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    source_ranges: Mapped[list[dict]] = mapped_column(JSON, nullable=False, default=list)
+    data_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    quarantine_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    manifest_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
 
 
 class KafkaContinuousMaintenanceRunModel(TimestampMixin, Base):

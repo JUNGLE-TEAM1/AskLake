@@ -5,6 +5,7 @@ import json
 import os
 import re
 import signal
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -466,6 +467,7 @@ def main() -> None:
         global LAST_BATCH_STORED_COUNT, LAST_BATCH_QUARANTINED_COUNT, LAST_BATCH_WRITTEN, PUBLISHED_BATCHES
         if STOP_REQUESTED:
             return
+        batch_started_at = time.monotonic()
         batch.persist()
         total = batch.count()
         if total == 0:
@@ -609,6 +611,7 @@ def main() -> None:
             "consumedCount": total,
             "storedCount": valid_count,
             "quarantinedCount": invalid_count,
+            "durationMs": max(0, round((time.monotonic() - batch_started_at) * 1000)),
             "dataPath": data_path,
             "quarantinePath": quarantine_batch_path,
             "schemaEvidencePath": evidence_batch_path,

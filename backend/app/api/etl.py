@@ -26,6 +26,8 @@ from app.schemas.etl import (
     KafkaReviewIngestResponse,
     KafkaReplayProducerRequest,
     KafkaReplayProducerStatus,
+    KafkaContinuousBatch,
+    KafkaContinuousSession,
     ScheduledJobRunRequest,
     ScheduledJobRunResponse,
     SchemaDraft,
@@ -179,6 +181,36 @@ def get_continuous_worker_logs(
     actor: ActorContext = Depends(get_actor_context),
 ) -> ContinuousWorkerLogsResponse:
     return etl_service.get_kafka_continuous_worker_logs(db, job_id, actor, tail)
+
+
+@router.get("/jobs/{job_id}/continuous/sessions", response_model=list[KafkaContinuousSession])
+def list_continuous_sessions(
+    job_id: str,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(get_actor_context),
+) -> list[KafkaContinuousSession]:
+    return etl_service.list_kafka_continuous_sessions(db, job_id, actor)
+
+
+@router.get("/jobs/{job_id}/continuous/sessions/{session_id}", response_model=KafkaContinuousSession)
+def get_continuous_session(
+    job_id: str,
+    session_id: str,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(get_actor_context),
+) -> KafkaContinuousSession:
+    return etl_service.get_kafka_continuous_session(db, job_id, session_id, actor)
+
+
+@router.get("/jobs/{job_id}/continuous/sessions/{session_id}/batches", response_model=list[KafkaContinuousBatch])
+def list_continuous_session_batches(
+    job_id: str,
+    session_id: str,
+    limit: int = Query(default=100, ge=1, le=500),
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(get_actor_context),
+) -> list[KafkaContinuousBatch]:
+    return etl_service.list_kafka_continuous_session_batches(db, job_id, session_id, actor, limit)
 
 
 @router.get("/jobs/{job_id}/continuous/quarantine", response_model=ContinuousQuarantineResponse)

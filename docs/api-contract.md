@@ -588,10 +588,50 @@ Continuous runtime operations:
 
 ```text
 GET  /api/etl/jobs/{jobId}/continuous/logs?tail=200
+GET  /api/etl/jobs/{jobId}/continuous/sessions
+GET  /api/etl/jobs/{jobId}/continuous/sessions/{sessionId}
+GET  /api/etl/jobs/{jobId}/continuous/sessions/{sessionId}/batches?limit=100
 GET  /api/etl/jobs/{jobId}/continuous/quarantine?limit=100
 GET  /api/etl/jobs/{jobId}/continuous/maintenance-runs
 POST /api/etl/jobs/{jobId}/continuous/quarantine/replays
 POST /api/etl/jobs/{jobId}/continuous/compactions
+```
+
+`startContinuous`와 `resumeContinuous`는 각각 새 `KafkaContinuousSession`을 만들고 시작 시점의 누적 runtime counter를 baseline으로 저장한다. worker report를 읽을 때 session counter는 `현재 누적값 - baseline`으로 계산되므로 checkpoint를 이어받는 재시작에서도 이전 세션 수치가 섞이지 않는다. pause와 stop은 session을 `stopping`에서 `stopped`로, worker/container/heartbeat 실패는 `failed`로 끝내며 `endedAt`, `endReason`, `lastError`를 보존한다. `publishedBatches`는 `(sessionId, batchId)` unique key로 멱등 저장되고 시작 전 `lastBatchId` 이하의 복구 manifest는 새 session batch로 다시 기록하지 않는다.
+
+```ts
+type KafkaContinuousSession = {
+  sessionId: string;
+  jobId: string;
+  workerAttemptId: string | null;
+  status: "starting" | "running" | "stopping" | "stopped" | "failed";
+  startedAt: string;
+  endedAt: string | null;
+  endReason: string | null;
+  consumedCount: number;
+  storedCount: number;
+  quarantinedCount: number;
+  failedCount: number;
+  lastBatchId: string | null;
+  lastFlushAt: string | null;
+  lag: number | null;
+  checkpointPath: string;
+  lastError: string | null;
+};
+
+type KafkaContinuousBatch = {
+  batchId: number;
+  sessionId: string;
+  publishedAt: string | null;
+  consumedCount: number;
+  storedCount: number;
+  quarantinedCount: number;
+  durationMs: number | null;
+  sourceRanges: Array<{ topic: string; partition: number; startOffset: number; endOffset: number }>;
+  dataPath: string | null;
+  quarantinePath: string | null;
+  manifestPath: string | null;
+};
 ```
 
 `continuousRuntime` additionally exposes `maxPartitionLag`, `laggingPartitionCount`, `lagAvailable`, `partitionProgress`, `lastBatchDurationMs`, `lastBatchInputRows`, `throughputRowsPerSecond`, `replayedCount`, `schemaVersion`, `schemaFingerprint`, `schemaStatus`, and `schemaChanges`. `replayedCount` prevents recovered quarantine rows from being double-counted: `storedCount + quarantinedCount - replayedCount = consumedCount`. Worker logs are limited to 1,000 lines, ANSI-stripped, and redact common key/token/password assignments.

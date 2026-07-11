@@ -136,6 +136,39 @@ class ContinuousWorkerLogsResponse(CamelModel):
     truncated: bool = False
 
 
+class KafkaContinuousSession(CamelModel):
+    session_id: str
+    job_id: str
+    worker_attempt_id: str | None = None
+    status: Literal["starting", "running", "stopping", "stopped", "failed"]
+    started_at: str
+    ended_at: str | None = None
+    end_reason: str | None = None
+    consumed_count: int = 0
+    stored_count: int = 0
+    quarantined_count: int = 0
+    failed_count: int = 0
+    last_batch_id: str | None = None
+    last_flush_at: str | None = None
+    lag: int | None = None
+    checkpoint_path: str
+    last_error: str | None = None
+
+
+class KafkaContinuousBatch(CamelModel):
+    batch_id: int
+    session_id: str
+    published_at: str | None = None
+    consumed_count: int = 0
+    stored_count: int = 0
+    quarantined_count: int = 0
+    duration_ms: int | None = None
+    source_ranges: list[dict[str, Any]] = Field(default_factory=list)
+    data_path: str | None = None
+    quarantine_path: str | None = None
+    manifest_path: str | None = None
+
+
 class ContinuousQuarantineRecord(CamelModel):
     topic: str
     partition: int

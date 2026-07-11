@@ -2,10 +2,27 @@ from sqlalchemy import inspect, select, text
 from sqlalchemy.orm import Session
 
 from app.core.permission_metadata import permission_grants_from_roles, resource_permissions
-from app.models import CatalogDatasetModel, ETLJobModel, ETLRunModel, KafkaContinuousMaintenanceRunModel, KafkaContinuousRuntimeModel, KafkaSnapshotModel
+from app.models import (
+    CatalogDatasetModel,
+    ETLJobModel,
+    ETLRunModel,
+    KafkaContinuousBatchModel,
+    KafkaContinuousMaintenanceRunModel,
+    KafkaContinuousRuntimeModel,
+    KafkaContinuousSessionModel,
+    KafkaSnapshotModel,
+)
 from app.models.base import Base
 from app.repositories.catalog_repository import ensure_catalog_schema
-from app.schemas.etl import CatalogDataset, ContinuousMaintenanceRun, JobRowData, JobRunSummary, KafkaContinuousRuntime
+from app.schemas.etl import (
+    CatalogDataset,
+    ContinuousMaintenanceRun,
+    JobRowData,
+    JobRunSummary,
+    KafkaContinuousBatch,
+    KafkaContinuousRuntime,
+    KafkaContinuousSession,
+)
 
 _schema_ready_bind_ids: set[int] = set()
 
@@ -428,6 +445,72 @@ def save_kafka_continuous_command(db: Session, job: ETLJobModel, runtime: KafkaC
     return job_to_schema(db, job)
 
 
+def stage_kafka_continuous_session(db: Session, session: KafkaContinuousSessionModel) -> None:
+    ensure_schema(db)
+    db.add(session)
+
+
+def get_kafka_continuous_session(db: Session, session_id: str) -> KafkaContinuousSessionModel | None:
+    ensure_schema(db)
+    return db.get(KafkaContinuousSessionModel, session_id)
+
+
+def get_latest_active_kafka_continuous_session(db: Session, job_id: str) -> KafkaContinuousSessionModel | None:
+    ensure_schema(db)
+    return db.scalars(
+        select(KafkaContinuousSessionModel)
+        .where(
+            KafkaContinuousSessionModel.job_id == job_id,
+            KafkaContinuousSessionModel.status.in_(["starting", "running", "stopping"]),
+        )
+        .order_by(KafkaContinuousSessionModel.started_at.desc())
+    ).first()
+
+
+def list_kafka_continuous_sessions(db: Session, job_id: str) -> list[KafkaContinuousSession]:
+    ensure_schema(db)
+    sessions = db.scalars(
+        select(KafkaContinuousSessionModel)
+        .where(KafkaContinuousSessionModel.job_id == job_id)
+        .order_by(KafkaContinuousSessionModel.started_at.desc())
+    ).all()
+    return [continuous_session_to_schema(session) for session in sessions]
+
+
+def stage_kafka_continuous_batch(db: Session, batch: KafkaContinuousBatchModel) -> KafkaContinuousBatchModel:
+    ensure_schema(db)
+    existing = db.get(KafkaContinuousBatchModel, batch.id)
+    if existing is None:
+        db.add(batch)
+        return batch
+    existing.published_at = batch.published_at or existing.published_at
+    existing.consumed_count = batch.consumed_count
+    existing.stored_count = batch.stored_count
+    existing.quarantined_count = batch.quarantined_count
+    existing.duration_ms = batch.duration_ms if batch.duration_ms is not None else existing.duration_ms
+    existing.source_ranges = batch.source_ranges
+    existing.data_path = batch.data_path or existing.data_path
+    existing.quarantine_path = batch.quarantine_path or existing.quarantine_path
+    existing.manifest_path = batch.manifest_path or existing.manifest_path
+    db.add(existing)
+    return existing
+
+
+def list_kafka_continuous_batches(
+    db: Session,
+    session_id: str,
+    limit: int = 100,
+) -> list[KafkaContinuousBatch]:
+    ensure_schema(db)
+    batches = db.scalars(
+        select(KafkaContinuousBatchModel)
+        .where(KafkaContinuousBatchModel.session_id == session_id)
+        .order_by(KafkaContinuousBatchModel.batch_id.desc())
+        .limit(limit)
+    ).all()
+    return [continuous_batch_to_schema(batch) for batch in batches]
+
+
 def save_kafka_continuous_maintenance_run(
     db: Session,
     run: KafkaContinuousMaintenanceRunModel,
@@ -585,6 +668,43 @@ def continuous_runtime_to_schema(runtime: KafkaContinuousRuntimeModel | None) ->
         replayed_count=int(metrics.get("replayedCount") or 0),
         failed_count=int(runtime.failed_count or 0),
         last_error=runtime.last_error,
+    )
+
+
+def continuous_session_to_schema(session: KafkaContinuousSessionModel) -> KafkaContinuousSession:
+    return KafkaContinuousSession(
+        session_id=session.session_id,
+        job_id=session.job_id,
+        worker_attempt_id=session.worker_attempt_id,
+        status=session.status,
+        started_at=session.started_at,
+        ended_at=session.ended_at,
+        end_reason=session.end_reason,
+        consumed_count=int(session.consumed_count or 0),
+        stored_count=int(session.stored_count or 0),
+        quarantined_count=int(session.quarantined_count or 0),
+        failed_count=int(session.failed_count or 0),
+        last_batch_id=session.last_batch_id,
+        last_flush_at=session.last_flush_at,
+        lag=session.lag,
+        checkpoint_path=session.checkpoint_path,
+        last_error=session.last_error,
+    )
+
+
+def continuous_batch_to_schema(batch: KafkaContinuousBatchModel) -> KafkaContinuousBatch:
+    return KafkaContinuousBatch(
+        batch_id=batch.batch_id,
+        session_id=batch.session_id,
+        published_at=batch.published_at,
+        consumed_count=int(batch.consumed_count or 0),
+        stored_count=int(batch.stored_count or 0),
+        quarantined_count=int(batch.quarantined_count or 0),
+        duration_ms=batch.duration_ms,
+        source_ranges=batch.source_ranges or [],
+        data_path=batch.data_path,
+        quarantine_path=batch.quarantine_path,
+        manifest_path=batch.manifest_path,
     )
 
 
