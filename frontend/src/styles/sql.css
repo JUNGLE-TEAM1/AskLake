@@ -31,7 +31,8 @@
   grid-row: 2;
   grid-template-rows: minmax(0, 1fr);
   align-self: start;
-  height: auto;
+  height: 0;
+  min-height: 100%;
   max-height: none;
   min-width: 0;
   overflow: hidden;
@@ -52,6 +53,16 @@
 .sql-workspace {
   grid-column: 2;
   grid-row: 2;
+}
+
+.sql-dataset-scroll [data-slot="scroll-area-scrollbar"][data-orientation="vertical"] {
+  background: #e2e8f0;
+  opacity: 1;
+}
+
+.sql-dataset-scroll [data-slot="scroll-area-thumb"] {
+  background: #94a3b8;
+  opacity: 1;
 }
 
 .sql-tree-hover-card {
@@ -371,6 +382,7 @@
   .sql-dataset-panel {
     position: relative;
     height: auto;
+    min-height: 0;
     max-height: none;
   }
 
