@@ -1,5 +1,4 @@
 import { lazy, Suspense, type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
-import { motion } from "motion/react";
 import {
   BarChart3,
   Database,
@@ -10,9 +9,9 @@ import {
   PlayCircle,
   RotateCcw,
   Search,
+  Sparkles,
   Table2,
 } from "lucide-react";
-import nessieIcon from "@/assets/asklake-nessi-icon.png";
 import { ActionGroup } from "@/components/ui/action-group";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -21,12 +20,13 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
 import { DialogShell } from "@/components/ui/dialog-shell";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
-import { Field, FieldGroup, FieldLabel, FieldTitle } from "@/components/ui/field";
+import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel, FieldTitle } from "@/components/ui/field";
 import { FilterToolbarInput, FilterToolbarSearch } from "@/components/ui/filter-toolbar";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
@@ -35,7 +35,7 @@ import { PaginationBar } from "@/components/ui/pagination-bar";
 import { Panel, PanelHeader } from "@/components/ui/panel";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { cn } from "@/lib/utils";
@@ -47,11 +47,6 @@ import {
 import type { AuditResult, CatalogDataset, CreateDerivedDatasetRequest, DashboardEntry, DerivedDatasetLayer, SqlResultDraft } from "../../types";
 import { DashboardPage } from "../dashboard/DashboardPage";
 import { SqlDatasetTree } from "./SqlDatasetRow";
-import {
-  INITIAL_NESSIE_MESSAGES,
-  SqlNessieAssistant,
-  type NessieMessage,
-} from "./SqlNessieAssistant";
 import { SqlPreviewTable } from "./SqlPreviewTable";
 import {
   PREVIEW_ROW_LIMIT,
@@ -72,10 +67,6 @@ import {
 const LazySqlResultChart = lazy(() => import("./SqlResultChart").then((module) => ({
   default: module.SqlResultChart,
 })));
-
-function createNessieMessageId() {
-  return `nessie-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
 
 function isChartRequest(prompt: string) {
   return /(차트|시각화|그래프|막대)/i.test(prompt);
@@ -118,7 +109,6 @@ export function SqlAnalysisPage({
   );
   const defaultQuery = useMemo(() => baseDataset ? buildDefaultQuery(baseDataset) : "", [baseDataset]);
   const [contextCollapsed, setContextCollapsed] = useState(false);
-  const [contextPanelTab, setContextPanelTab] = useState<"tables" | "queryAi">("tables");
   const [datasetSearch, setDatasetSearch] = useState("");
   const [contextPage, setContextPage] = useState(1);
   const [contextPageSize, setContextPageSize] = useState(() => Math.max(1, datasets.length));
@@ -134,7 +124,7 @@ export function SqlAnalysisPage({
   const [queryAiSuggestion, setQueryAiSuggestion] = useState<QueryAiSuggestion | null>(null);
   const [queryAiPending, setQueryAiPending] = useState(false);
   const [queryAiError, setQueryAiError] = useState<string | null>(null);
-  const [nessieMessages, setNessieMessages] = useState<NessieMessage[]>(INITIAL_NESSIE_MESSAGES);
+  const [queryAiDialogOpen, setQueryAiDialogOpen] = useState(false);
   const [chartGenerated, setChartGenerated] = useState(false);
   const [resultView, setResultView] = useState<"chart" | "table">("table");
   const [resultDialogOpen, setResultDialogOpen] = useState(false);
@@ -268,7 +258,6 @@ export function SqlAnalysisPage({
       setQueryAiPrompt("");
       setQueryAiSuggestion(null);
       setQueryAiError(null);
-      setNessieMessages(INITIAL_NESSIE_MESSAGES);
       setChartGenerated(false);
       setResultView("table");
       setResultDialogOpen(false);
@@ -292,7 +281,6 @@ export function SqlAnalysisPage({
     setQueryAiPrompt("");
     setQueryAiSuggestion(null);
     setQueryAiError(null);
-    setNessieMessages(INITIAL_NESSIE_MESSAGES);
     setChartGenerated(false);
     setResultView("table");
     setResultDialogOpen(false);
@@ -314,7 +302,6 @@ export function SqlAnalysisPage({
     setDashboardDialogOpen(false);
     setQueryAiSuggestion(null);
     setQueryAiError(null);
-    setNessieMessages(INITIAL_NESSIE_MESSAGES);
     setChartGenerated(false);
     setResultView("table");
     setResultDialogOpen(false);
@@ -525,34 +512,18 @@ export function SqlAnalysisPage({
       return;
     }
 
-    setNessieMessages((messages) => [...messages, {
-      content: prompt,
-      id: createNessieMessageId(),
-      role: "user",
-    }]);
-    setQueryAiPrompt("");
     setQueryAiError(null);
 
     if (isChartRequest(prompt)) {
       if (!resultDraft) {
         const message = "먼저 SQL을 실행해 주세요. 실행 결과가 생기면 그 데이터를 바로 차트로 바꿔드릴게요.";
         setQueryAiError(message);
-        setNessieMessages((messages) => [...messages, {
-          content: message,
-          id: createNessieMessageId(),
-          role: "assistant",
-          tone: "error",
-        }]);
         return;
       }
 
       setChartGenerated(true);
       setResultView("chart");
-      setNessieMessages((messages) => [...messages, {
-        content: `방금 실행한 SQL 결과 ${resultDraft.rows.length}행을 기준으로 차트를 만들었습니다. 결과 영역에서 표와 차트를 전환할 수 있어요.`,
-        id: createNessieMessageId(),
-        role: "assistant",
-      }]);
+      setQueryAiDialogOpen(false);
       onAction("analysis.ai.chart_created", `/api/query/runs/${resultDraft.runId}/visualization`, resultDraft.datasetId);
       return;
     }
@@ -568,22 +539,10 @@ export function SqlAnalysisPage({
         selectedDatasets: selectedContextDatasets,
       });
       setQueryAiSuggestion(suggestion);
-      setNessieMessages((messages) => [...messages, {
-        content: "선택한 데이터셋 범위에서 실행 가능한 SQL 초안을 만들었습니다.",
-        id: createNessieMessageId(),
-        role: "assistant",
-        sql: suggestion.sql,
-      }]);
       onAction("analysis.ai.suggestion_created", "/api/query/ai-suggestions?mode=draft_sql", baseDataset.id);
     } catch {
       const message = "SQL 제안을 만들지 못했습니다. 잠시 후 다시 시도해 주세요.";
       setQueryAiError(message);
-      setNessieMessages((messages) => [...messages, {
-        content: message,
-        id: createNessieMessageId(),
-        role: "assistant",
-        tone: "error",
-      }]);
       onAction("analysis.ai.suggestion_failed", "/api/query/ai-suggestions?mode=draft_sql", baseDataset.id, "failed");
     } finally {
       setQueryAiPending(false);
@@ -595,6 +554,8 @@ export function SqlAnalysisPage({
     const nextQuery = suggestedSql;
     updateQuery(nextQuery);
     setCursorIndex(nextQuery.length);
+    setQueryAiDialogOpen(false);
+    setQueryAiPrompt("");
     onAction("analysis.ai.suggestion_applied", `/api/query/ai-suggestions?mode=${queryAiSuggestion?.mode ?? "draft_sql"}/apply`, baseDataset.id);
     requestAnimationFrame(() => {
       textareaRef.current?.focus();
@@ -610,8 +571,8 @@ export function SqlAnalysisPage({
   };
 
   const openSqlAssistant = () => {
-    setContextCollapsed(false);
-    setContextPanelTab("queryAi");
+    setQueryAiDialogOpen(true);
+    setQueryAiError(null);
     onAction("analysis.ai.opened", "/api/query/ai-suggestions", baseDataset?.id ?? "sql-empty");
     requestAnimationFrame(() => queryAiPromptRef.current?.focus());
   };
@@ -696,7 +657,6 @@ export function SqlAnalysisPage({
       setQueryAiPrompt("");
       setQueryAiSuggestion(null);
       setQueryAiError(null);
-      setNessieMessages(INITIAL_NESSIE_MESSAGES);
     }
     resetResultState();
     onAction(
@@ -780,135 +740,80 @@ export function SqlAnalysisPage({
       {!contextCollapsed && (
         <Panel asChild>
           <aside className="sql-dataset-panel" ref={contextPanelRef}>
-            <Tabs
-              className="grid h-full min-h-0 grid-rows-[max-content_minmax(0,1fr)] gap-4"
-              onValueChange={(value) => setContextPanelTab(value as "tables" | "queryAi")}
-              value={contextPanelTab}
-            >
-                <div className="grid gap-4">
-                  <PanelHeader
-                    actions={(
-                      <Button type="button" onClick={toggleContext} aria-label="분석 테이블 접기" title="분석 테이블 접기" size="icon" variant="ghost">
-                        <PanelLeftClose data-icon="inline-start" />
-                      </Button>
-                    )}
-                    className="min-h-0 p-0 pb-4"
-                    icon={<Table2 size={16} />}
-                    title="SQL 도구"
-                  />
-                  <TabsList className="grid w-full grid-cols-2" aria-label="SQL 도구 선택">
-                    <TabsTrigger
-                      className="relative isolate overflow-hidden data-[state=active]:bg-transparent data-[state=active]:shadow-none"
-                      value="tables"
-                    >
-                      {contextPanelTab === "tables" && (
-                        <motion.span
-                          aria-hidden="true"
-                          className="absolute inset-0 z-0 rounded-md bg-white shadow-sm"
-                          data-sql-tab-indicator=""
-                          layoutId="sql-tools-active-tab"
-                          transition={{ type: "spring", stiffness: 420, damping: 32 }}
+            <div className="grid h-full min-h-0 grid-rows-[max-content_max-content_minmax(0,1fr)] gap-4">
+              <PanelHeader
+                actions={(
+                  <Button type="button" onClick={toggleContext} aria-label="분석 테이블 접기" title="분석 테이블 접기" size="icon" variant="ghost">
+                    <PanelLeftClose data-icon="inline-start" />
+                  </Button>
+                )}
+                className="min-h-0 p-0"
+                icon={<Table2 size={16} />}
+                title="분석 테이블"
+              />
+              <FilterToolbarSearch icon={<Search size={15} />} size="compact">
+                <FilterToolbarInput
+                  aria-label="분석 테이블 검색"
+                  className="text-xs font-bold"
+                  value={datasetSearch}
+                  onChange={(event) => setDatasetSearch(event.target.value)}
+                  placeholder="데이터셋, 컬럼, 태그 검색"
+                  type="search"
+                />
+              </FilterToolbarSearch>
+              <section className="grid min-h-0 grid-rows-[max-content_minmax(0,1fr)_max-content] gap-2">
+                <FieldTitle>데이터셋</FieldTitle>
+                <div className="relative min-h-0 overflow-hidden">
+                  <Panel asChild>
+                    <ScrollArea className="sql-dataset-scroll min-h-0" style={{ inset: 0, position: "absolute" }} type="always">
+                      <div className="grid min-w-0 gap-0 pr-3" ref={contextListRef}>
+                        <SqlDatasetTree
+                          datasets={paginatedContextDatasets}
+                          expandedDatasetId={expandedDatasetId}
+                          onSelect={addSelectedDataset}
+                          onToggle={toggleDatasetPreview}
+                          selectedDatasetIds={selectedDatasetIdSet}
                         />
-                      )}
-                      <span className="relative z-10 inline-flex items-center gap-1.5"><Table2 /> 분석 테이블</span>
-                    </TabsTrigger>
-                    <TabsTrigger
-                      className="relative isolate overflow-hidden data-[state=active]:bg-transparent data-[state=active]:shadow-none"
-                      value="queryAi"
-                    >
-                      {contextPanelTab === "queryAi" && (
-                        <motion.span
-                          aria-hidden="true"
-                          className="absolute inset-0 z-0 rounded-md bg-white shadow-sm"
-                          data-sql-tab-indicator=""
-                          layoutId="sql-tools-active-tab"
-                          transition={{ type: "spring", stiffness: 420, damping: 32 }}
-                        />
-                      )}
-                      <span className="relative z-10 inline-flex items-center gap-1.5">
-                        <img alt="" aria-hidden="true" className="size-5 rounded-sm object-contain" src={nessieIcon} />
-                        Nessie
-                      </span>
-                    </TabsTrigger>
-                  </TabsList>
+                        {filteredDatasets.length === 0 && (
+                          <Empty size="sm" variant="bordered">
+                            <EmptyHeader>
+                              <EmptyTitle>{datasetSearch.trim() ? "검색 결과가 없습니다." : "선택 가능한 테이블이 없습니다."}</EmptyTitle>
+                              <EmptyDescription>{datasetSearch.trim() ? "다른 검색어를 입력해 주세요." : "SQL에 사용할 테이블이 없습니다."}</EmptyDescription>
+                            </EmptyHeader>
+                          </Empty>
+                        )}
+                      </div>
+                    </ScrollArea>
+                  </Panel>
                 </div>
-                <TabsContent className="mt-0 grid min-h-0 min-w-0 grid-rows-[max-content_minmax(0,1fr)] gap-3 overflow-hidden" value="tables">
-                  <FilterToolbarSearch icon={<Search size={15} />} size="compact">
-                    <FilterToolbarInput
-                      aria-label="분석 테이블 검색"
-                      className="text-xs font-bold"
-                      value={datasetSearch}
-                      onChange={(event) => setDatasetSearch(event.target.value)}
-                      placeholder="데이터셋, 컬럼, 태그 검색"
-                      type="search"
-                    />
-                  </FilterToolbarSearch>
-                  <section className="grid min-h-0 grid-rows-[max-content_minmax(0,1fr)_max-content] gap-2">
-                    <FieldTitle>데이터셋</FieldTitle>
-                    <div className="relative min-h-0 overflow-hidden">
-                      <Panel asChild>
-                        <ScrollArea className="sql-dataset-scroll min-h-0" style={{ inset: 0, position: "absolute" }} type="always">
-                          <div className="grid min-w-0 gap-0 pr-3" ref={contextListRef}>
-                            <SqlDatasetTree
-                              datasets={paginatedContextDatasets}
-                              expandedDatasetId={expandedDatasetId}
-                              onSelect={addSelectedDataset}
-                              onToggle={toggleDatasetPreview}
-                              selectedDatasetIds={selectedDatasetIdSet}
-                            />
-                            {filteredDatasets.length === 0 && (
-                              <Empty size="sm" variant="bordered">
-                                <EmptyHeader>
-                                  <EmptyTitle>{datasetSearch.trim() ? "검색 결과가 없습니다." : "선택 가능한 테이블이 없습니다."}</EmptyTitle>
-                                  <EmptyDescription>{datasetSearch.trim() ? "다른 검색어를 입력해 주세요." : "SQL에 사용할 테이블이 없습니다."}</EmptyDescription>
-                                </EmptyHeader>
-                              </Empty>
-                            )}
-                          </div>
-                        </ScrollArea>
-                      </Panel>
-                    </div>
-                    {filteredDatasets.length > contextPageSize && (
-                      <PaginationBar
-                        aria-label="테이블 검색 결과 페이지"
-                        buttonSize="sm"
-                        currentPage={currentContextPage}
-                        onNext={() => setContextPage((page) => Math.min(totalContextPages, page + 1))}
-                        onPrevious={() => setContextPage((page) => Math.max(1, page - 1))}
-                        rangeLabel={`${contextPageStartIndex + 1}-${contextPageStartIndex + paginatedContextDatasets.length} / ${filteredDatasets.length}`}
-                        ref={contextPaginationRef}
-                        totalPages={totalContextPages}
-                      />
-                    )}
-                  </section>
-                </TabsContent>
-                <TabsContent className="mt-0 min-h-0 min-w-0 overflow-hidden" value="queryAi">
-                  <SqlNessieAssistant
-                    error={queryAiError}
-                    messages={nessieMessages}
-                    onApplySuggestion={applyQueryAiSuggestion}
-                    onPromptChange={(nextPrompt) => {
-                      setQueryAiPrompt(nextPrompt);
-                      setQueryAiError(null);
-                    }}
-                    onSubmit={requestQueryAiSuggestion}
-                    pending={queryAiPending}
-                    prompt={queryAiPrompt}
-                    promptRef={queryAiPromptRef}
+                {filteredDatasets.length > contextPageSize && (
+                  <PaginationBar
+                    aria-label="테이블 검색 결과 페이지"
+                    buttonSize="sm"
+                    currentPage={currentContextPage}
+                    onNext={() => setContextPage((page) => Math.min(totalContextPages, page + 1))}
+                    onPrevious={() => setContextPage((page) => Math.max(1, page - 1))}
+                    rangeLabel={`${contextPageStartIndex + 1}-${contextPageStartIndex + paginatedContextDatasets.length} / ${filteredDatasets.length}`}
+                    ref={contextPaginationRef}
+                    totalPages={totalContextPages}
                   />
-                </TabsContent>
-            </Tabs>
+                )}
+              </section>
+            </div>
           </aside>
         </Panel>
       )}
 
-      <main className="sql-workspace grid min-w-0 auto-rows-max content-start gap-3">
-        <Panel className="grid gap-4 p-5">
+      <main className="sql-workspace grid min-w-0 content-start gap-3">
+        <Panel className="sql-query-panel grid gap-4 p-5">
           <PanelHeader
             actions={(
               <ActionGroup density="compact" wrap="nowrap">
                 <Button type="button" onClick={resetQuery} size="sm" variant="outline">
                   <RotateCcw data-icon="inline-start" /> SQL 초기화
+                </Button>
+                <Button type="button" onClick={openSqlAssistant} disabled={!baseDataset} size="sm" variant="outline">
+                  <Sparkles data-icon="inline-start" /> AI로 SQL 작성
                 </Button>
                 <Button type="button" onClick={executePreview} disabled={!canRunPreview || queryPending} size="sm" variant="primary">
                   <PlayCircle data-icon="inline-start" /> {queryPending ? "실행 중" : "실행"}
@@ -992,7 +897,7 @@ export function SqlAnalysisPage({
           </div>}
         </Panel>
 
-        <Panel className="grid gap-4 p-5">
+        <Panel className="sql-result-panel grid gap-4 p-5">
           <PanelHeader
             actions={resultDraft ? (
               <ActionGroup density="compact">
@@ -1012,8 +917,7 @@ export function SqlAnalysisPage({
                   </ToggleGroup>
                 ) : (
                   <Button type="button" onClick={openChartAssistant} size="sm" variant="outline">
-                    <img alt="" aria-hidden="true" className="size-5 rounded-sm object-contain" data-icon="inline-start" src={nessieIcon} />
-                    Nessie에게 차트 부탁하기
+                    <Sparkles data-icon="inline-start" /> AI로 차트 만들기
                   </Button>
                 )}
                 <Button type="button" onClick={() => setResultDialogOpen(true)} size="sm" variant="outline">
@@ -1051,6 +955,73 @@ export function SqlAnalysisPage({
           )}
         </Panel>
       </main>
+      <Dialog onOpenChange={setQueryAiDialogOpen} open={queryAiDialogOpen}>
+        <DialogContent className="w-[min(calc(100vw-2rem),44rem)] max-w-none">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles aria-hidden="true" /> AI로 SQL 작성
+            </DialogTitle>
+            <DialogDescription>
+              선택한 데이터셋과 현재 SQL을 기준으로 요청을 해석합니다. 생성된 초안은 자동 실행하지 않고 편집기에만 적용합니다.
+            </DialogDescription>
+          </DialogHeader>
+          <FieldGroup>
+            <Field data-invalid={Boolean(queryAiError)}>
+              <FieldLabel htmlFor="sql-query-ai-dialog-prompt">어떤 SQL이 필요한가요?</FieldLabel>
+              <Textarea
+                aria-invalid={Boolean(queryAiError)}
+                disabled={queryAiPending}
+                id="sql-query-ai-dialog-prompt"
+                onChange={(event) => {
+                  setQueryAiPrompt(event.target.value);
+                  setQueryAiError(null);
+                  setQueryAiSuggestion(null);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter" || (!event.metaKey && !event.ctrlKey)) return;
+                  event.preventDefault();
+                  void requestQueryAiSuggestion();
+                }}
+                placeholder="예: 최근 30일 동안 카테고리별 주문 금액 합계를 큰 순서대로 보여줘"
+                ref={queryAiPromptRef}
+                rows={4}
+                value={queryAiPrompt}
+              />
+              <FieldDescription>⌘/Ctrl + Enter로도 SQL 초안을 생성할 수 있습니다.</FieldDescription>
+              {queryAiError && <FieldError role="alert">{queryAiError}</FieldError>}
+            </Field>
+            {queryAiSuggestion?.sql && (
+              <Panel className="grid gap-3 p-4" variant="muted">
+                <div className="flex min-w-0 items-center justify-between gap-3">
+                  <strong className="truncate">{queryAiSuggestion.title}</strong>
+                  <Badge size="sm" variant="secondary">SQL 초안</Badge>
+                </div>
+                <p className="text-sm leading-6 text-muted-foreground">{queryAiSuggestion.body}</p>
+                <ScrollArea className="sql-ai-dialog-preview" scrollbars="both" type="always">
+                  <pre>{queryAiSuggestion.sql}</pre>
+                </ScrollArea>
+              </Panel>
+            )}
+          </FieldGroup>
+          <DialogFooter>
+            <Button type="button" onClick={() => setQueryAiDialogOpen(false)} variant="outline">취소</Button>
+            <Button
+              disabled={queryAiPending || queryAiPrompt.trim().length === 0 || !baseDataset}
+              onClick={requestQueryAiSuggestion}
+              type="button"
+              variant="secondary"
+            >
+              {queryAiPending ? <Spinner data-icon="inline-start" /> : <Sparkles data-icon="inline-start" />}
+              {queryAiPending ? "생성 중" : "SQL 초안 생성"}
+            </Button>
+            {queryAiSuggestion?.sql && (
+              <Button type="button" onClick={() => applyQueryAiSuggestion()} variant="primary">
+                편집기에 적용
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       {resultDraft && (
         <Dialog onOpenChange={setResultDialogOpen} open={resultDialogOpen}>
           <DialogContent className="grid h-[min(900px,calc(100vh-2rem))] w-[min(1440px,calc(100vw-2rem))] max-w-none grid-rows-[max-content_minmax(0,1fr)] overflow-hidden">

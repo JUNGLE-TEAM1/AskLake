@@ -110,6 +110,8 @@ uvicorn app.main:app --reload --port 8080
 ```
 
 로컬 환경 변수는 `backend/.env.example`을 기준으로 둔다. 실제 OpenAI 키는 git에 올리지 않는 `backend/.env.local`의 `OPENAI_API_KEY`에 둔다. Query AI live mode는 backend가 이 값을 읽어 `POST /api/query/ai-suggestions`에서만 사용하며, frontend env에는 OpenAI 키를 두지 않는다.
+
+SQL UI를 변경할 때는 desktop에서 좌측 분석 테이블과 우측 editor/result workspace의 하단이 SQL 실행 전후 모두 일치하는지 확인한다. Catalog 미리보기의 `SQL 분석에서 열기`가 선택 Dataset을 유지한 채 `/sql`로 이동하는지 확인하고, editor 헤더의 `AI로 SQL 작성` Dialog에서 자연어 요청 → 초안 생성 → 편집기 적용이 동작하되 자동 실행되지 않는지 확인한다.
 FastAPI 폴더 구조와 설계 결정은 `docs/backend-fastapi-transition-plan.md`를 기준으로 한다.
 
 ## 4) Prod-Like Docker Compose
