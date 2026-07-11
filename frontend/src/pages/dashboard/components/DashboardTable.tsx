@@ -9,9 +9,7 @@ import {
   DataTableCellSecondary,
   DataTableStackedCell,
 } from "@/components/ui/data-table-stacked-cell";
-import { StatusBadge } from "@/components/ui/status-badge";
 import { formatDashboardDateLabel, localizeDashboardName, localizeDashboardOwner, localizeDashboardTags } from "../dashboardListUtils";
-import { dashboardStatusMeta } from "../../../utils/statusMeta";
 import type { SavedDashboardCard } from "../../../types";
 
 function getOwnerInitials(owner: string) {
@@ -35,24 +33,6 @@ export function DashboardTable({
 }) {
   const columns = useMemo<ColumnDef<SavedDashboardCard>[]>(
     () => [
-      {
-        accessorKey: "status",
-        cell: ({ row }) => (
-          <StatusBadge
-            className="min-w-[132px] justify-center whitespace-nowrap rounded-md px-4 py-2.5 text-base font-semibold"
-            tone={row.original.status === "published" ? "success" : "warning"}
-          >
-            {dashboardStatusMeta[row.original.status].label}
-          </StatusBadge>
-        ),
-        enableSorting: false,
-        header: "상태",
-        meta: {
-          align: "center",
-          headerClassName: "text-lg",
-          widthClassName: "w-[156px]",
-        } satisfies DataTableColumnMeta,
-      },
       {
         accessorKey: "name",
         cell: ({ row }) => {
@@ -82,7 +62,8 @@ export function DashboardTable({
         },
         header: "대시보드",
         meta: {
-          headerClassName: "text-lg",
+          cellClassName: "pl-6",
+          headerClassName: "pl-6 text-lg",
           widthClassName: "w-[320px]",
         } satisfies DataTableColumnMeta,
       },
