@@ -757,27 +757,29 @@ export function SqlAnalysisPage({
                   </FilterToolbarSearch>
                   <section className="grid min-h-0 grid-rows-[max-content_minmax(0,1fr)_max-content] gap-2">
                     <FieldTitle>데이터셋</FieldTitle>
-                    <Panel asChild>
-                      <ScrollArea className="h-[300px] min-h-0" type="always">
-                        <div className="grid min-w-0 gap-0 pr-3" ref={contextListRef}>
-                          <SqlDatasetTree
-                            datasets={paginatedContextDatasets}
-                            expandedDatasetId={expandedDatasetId}
-                            onSelect={addSelectedDataset}
-                            onToggle={toggleDatasetPreview}
-                            selectedDatasetIds={selectedDatasetIdSet}
-                          />
-                          {filteredDatasets.length === 0 && (
-                            <Empty size="sm" variant="bordered">
-                              <EmptyHeader>
-                                <EmptyTitle>{datasetSearch.trim() ? "검색 결과가 없습니다." : "선택 가능한 테이블이 없습니다."}</EmptyTitle>
-                                <EmptyDescription>{datasetSearch.trim() ? "다른 검색어를 입력해 주세요." : "SQL에 사용할 테이블이 없습니다."}</EmptyDescription>
-                              </EmptyHeader>
-                            </Empty>
-                          )}
-                        </div>
-                      </ScrollArea>
-                    </Panel>
+                    <div className="relative min-h-0 overflow-hidden">
+                      <Panel asChild>
+                        <ScrollArea className="sql-dataset-scroll min-h-0" style={{ inset: 0, position: "absolute" }} type="always">
+                          <div className="grid min-w-0 gap-0 pr-3" ref={contextListRef}>
+                            <SqlDatasetTree
+                              datasets={paginatedContextDatasets}
+                              expandedDatasetId={expandedDatasetId}
+                              onSelect={addSelectedDataset}
+                              onToggle={toggleDatasetPreview}
+                              selectedDatasetIds={selectedDatasetIdSet}
+                            />
+                            {filteredDatasets.length === 0 && (
+                              <Empty size="sm" variant="bordered">
+                                <EmptyHeader>
+                                  <EmptyTitle>{datasetSearch.trim() ? "검색 결과가 없습니다." : "선택 가능한 테이블이 없습니다."}</EmptyTitle>
+                                  <EmptyDescription>{datasetSearch.trim() ? "다른 검색어를 입력해 주세요." : "SQL에 사용할 테이블이 없습니다."}</EmptyDescription>
+                                </EmptyHeader>
+                              </Empty>
+                            )}
+                          </div>
+                        </ScrollArea>
+                      </Panel>
+                    </div>
                     {filteredDatasets.length > contextPageSize && (
                       <PaginationBar
                         aria-label="테이블 검색 결과 페이지"
@@ -962,14 +964,16 @@ export function SqlAnalysisPage({
 
         <Panel className="grid gap-4 p-5">
           <PanelHeader
-            actions={(
+            actions={(queryPending || executed || executionMs !== null) ? (
               <ActionGroup density="compact">
-                <StatusBadge size="sm" tone={queryPending ? "default" : executed ? "success" : "muted"}>
-                  {queryPending ? "실행 중" : executed ? "완료" : "대기 중"}
-                </StatusBadge>
+                {(queryPending || executed) && (
+                  <StatusBadge size="sm" tone={queryPending ? "default" : "success"}>
+                    {queryPending ? "실행 중" : "완료"}
+                  </StatusBadge>
+                )}
                 {executionMs !== null && <Badge size="sm" variant="secondary">{formatDuration(executionMs)}</Badge>}
               </ActionGroup>
-            )}
+            ) : undefined}
             bordered={false}
             className="min-h-0 p-0"
             icon={<Table2 size={16} />}
