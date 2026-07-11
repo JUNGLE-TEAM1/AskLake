@@ -307,7 +307,6 @@ export function JobsLandingPage({
   const [searchQuery, setSearchQuery] = useState("");
   const [jobQuery, setJobQuery] = useState<JobListQuery>({});
   const [excludedJobIds, setExcludedJobIds] = useState<Set<string>>(() => new Set());
-  const [activeLatestRun, setActiveLatestRun] = useState<{ job: JobRowData; run: JobRunSummary } | null>(null);
   const metrics = getJobMetrics(jobListFacets);
   const failureFilterActive = jobQuery.lastRunOutcome === "failed";
   const failedRunCount = jobListFacets.latestRunOutcomeCounts.failed;
@@ -333,18 +332,6 @@ export function JobsLandingPage({
   const clearSearch = () => {
     setSearchQuery("");
     onAction("etl.jobs.search_reset", "/api/etl/jobs", "search");
-  };
-
-  const openLatestRun = (job: JobRowData) => {
-    const latestRun = job.runHistory?.[0];
-
-    if (!latestRun) {
-      onRuns(job);
-      return;
-    }
-
-    onAction("etl.job.latest_run_opened", `/api/etl/jobs/${job.id}/runs/${latestRun.runId}`, latestRun.runId);
-    setActiveLatestRun({ job, run: latestRun });
   };
 
   const toggleFailureFilter = () => {
@@ -416,7 +403,7 @@ export function JobsLandingPage({
           onCommand={handleJobCommand}
           onCreate={onCreate}
           onDetail={onDetail}
-          onLatestRun={openLatestRun}
+          onRuns={onRuns}
           toolbar={<JobsToolbar searchQuery={searchQuery} onSearchQueryChange={setSearchQuery} />}
           statusFilters={jobQuery.statuses}
           scheduleKind={jobQuery.scheduleKind}
@@ -429,14 +416,6 @@ export function JobsLandingPage({
           title="작업 목록"
         />
       </div>
-      {activeLatestRun && (
-        <RunDagModal
-          job={activeLatestRun.job}
-          onAction={onAction}
-          onClose={() => setActiveLatestRun(null)}
-          run={activeLatestRun.run}
-        />
-      )}
     </div>
   );
 }
@@ -547,7 +526,7 @@ type JobsTableSectionProps = {
   onCommand: (job: JobRowData, command: JobCommand) => Promise<void> | void;
   onCreate: () => void;
   onDetail: (job: JobRowData) => void;
-  onLatestRun: (job: JobRowData) => void;
+  onRuns: (job: JobRowData) => void;
   onScheduleKindChange?: (scheduleKind?: JobScheduleKind) => void;
   onStatusFilterChange?: (statuses?: JobStatus[]) => void;
   onOwnerChange?: (owner?: string) => void;
@@ -736,7 +715,7 @@ function JobsTableSection({
   onCommand,
   onCreate,
   onDetail,
-  onLatestRun,
+  onRuns,
   onScheduleKindChange,
   onStatusFilterChange,
   onOwnerChange,
@@ -754,11 +733,11 @@ function JobsTableSection({
       return;
     }
     if (action === "runs") {
-      onLatestRun(job);
+      onRuns(job);
       return;
     }
     onCommand(job, action);
-  }, [onCommand, onDetail, onLatestRun]);
+  }, [onCommand, onDetail, onRuns]);
   const columns = useMemo<ColumnDef<JobsTableRow>[]>(() => [
     {
       accessorFn: (row) => row.job.status,
@@ -799,7 +778,7 @@ function JobsTableSection({
     },
     {
       accessorFn: (row) => row.job.schedule,
-      cell: ({ row }) => <DataTableCellPrimary className="text-lg">{formatJobSchedule(row.original.job.schedule)}</DataTableCellPrimary>,
+      cell: ({ row }) => <DataTableCellPrimary className="text-lg">{row.original.job.schedule}</DataTableCellPrimary>,
       header: () => onScheduleKindChange ? (
         <ScheduleKindFilter
           value={scheduleKind}
@@ -867,7 +846,7 @@ function JobsTableSection({
                 </Tooltip>
               )}
             </div>
-            <Button className="absolute left-0 top-[calc(50%+18px)] h-auto px-0 py-0 text-base" size="sm" type="button" variant="link" onClick={() => onLatestRun(job)}>
+            <Button className="absolute left-0 top-[calc(50%+18px)] h-auto px-0 py-0 text-base" size="sm" type="button" variant="link" onClick={() => onRuns(job)}>
               실행 이력
             </Button>
           </DataTableStackedCell>
@@ -891,7 +870,7 @@ function JobsTableSection({
         widthClassName: "w-[220px]",
       } satisfies DataTableColumnMeta,
     },
-  ], [onLatestRun, onOwnerChange, onScheduleKindChange, onStatusFilterChange, owner, owners, scheduleKind, statusFilters]);
+  ], [onOwnerChange, onRuns, onScheduleKindChange, onStatusFilterChange, owner, owners, scheduleKind, statusFilters]);
 
   return (
     <TooltipProvider delayDuration={250}>
@@ -1238,35 +1217,35 @@ function hasLatestSuccessfulRun(job: JobRowData) {
   return /^(성공|success)$/i.test(normalizeWhitespace(job.lastState));
 }
 
-function normalizeShortText(value?: unknown) {
+function normalizeShortText(value?: string) {
   if (!value) return "";
-  return String(value).trim();
+  return value.trim();
 }
 
-function normalizeWhitespace(value: unknown) {
-  return String(value ?? "").replace(/\s+/g, " ").trim();
+function normalizeWhitespace(value: string) {
+  return value.replace(/\s+/g, " ").trim();
 }
 
-function isVerboseLogText(value: unknown) {
+function isVerboseLogText(value: string) {
   const normalized = normalizeWhitespace(value);
   if (normalized.length > 120) return true;
   return /warning:|exception|traceback|spark|ivy|\/opt\/spark|hadoop-aws|jar:file|download|successfully/i.test(normalized);
 }
 
-function formatCompactDateTime(value: unknown): string {
+function formatCompactDateTime(value: string) {
   const normalized = normalizeWhitespace(value);
-  if (!normalized || normalized === "-") return normalized || "-";
+  if (!normalized || normalized === "-") return value;
 
   const dateCandidate = normalized.includes("T")
     ? normalized
     : /^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}/.test(normalized)
       ? normalized.replace(" ", "T")
       : "";
-  if (!dateCandidate) return normalized;
+  if (!dateCandidate) return value;
 
   const safeCandidate = dateCandidate.replace(/\.(\d{3})\d+(?=Z|[+-]\d{2}:?\d{2}|$)/, ".$1");
   const date = new Date(safeCandidate);
-  if (Number.isNaN(date.getTime())) return normalized;
+  if (Number.isNaN(date.getTime())) return value;
 
   const year = String(date.getFullYear());
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -1277,7 +1256,7 @@ function formatCompactDateTime(value: unknown): string {
   return `${year}.${month}.${day} ${hours}:${minutes}`;
 }
 
-function compactLogSummary(value: unknown) {
+function compactLogSummary(value: string) {
   const normalized = normalizeWhitespace(value);
   if (!normalized || normalized === "실패") return "실패 원인 확인 필요";
 
@@ -1295,7 +1274,7 @@ function compactLogSummary(value: unknown) {
   return truncateText(matched ?? normalized, 72);
 }
 
-function truncateText(value: unknown, maxLength: number) {
+function truncateText(value: string, maxLength: number) {
   const normalized = normalizeWhitespace(value);
   if (normalized.length <= maxLength) return normalized;
   return `${normalized.slice(0, Math.max(0, maxLength - 3)).trim()}...`;
@@ -1427,25 +1406,80 @@ function formatOperationalDelay(value: number | null) {
 }
 
 const jobDetailFieldLabelMap: Record<string, string> = {
+  Accept: "응답 형식",
   Aggregation: "집계 주기",
+  Authentication: "인증",
+  "Authentication Type": "인증 방식",
+  "Broker / Endpoint": "브로커 / 엔드포인트",
   "Bootstrap Server": "부트스트랩 서버",
   Bucket: "버킷",
+  "Bucket / Stage Name": "버킷 / 스테이지 이름",
+  "CATALOG / NAMESPACE": "카탈로그 / 네임스페이스",
+  Collection: "컬렉션",
+  "Connection URI": "연결 URI",
   "Consumer Group": "컨슈머 그룹",
+  "CONSUMER GROUP ID": "컨슈머 그룹 ID",
+  "DATASET OR TABLE SELECTOR": "데이터셋 또는 테이블 선택자",
   Database: "데이터베이스",
+  "DATABASE / SCHEMA": "데이터베이스 / 스키마",
+  "Database Name": "데이터베이스 이름",
   Dataset: "데이터셋",
+  Delimiter: "구분자",
+  Encoding: "인코딩",
+  Endpoint: "엔드포인트",
+  "Endpoint / Host": "엔드포인트 / 호스트",
+  "Endpoint URL": "엔드포인트 URL",
+  "File Type": "파일 형식",
   Format: "파일 형식",
-  Header: "헤더 포함",
+  Header: "헤더 처리",
   Host: "호스트",
   "Incremental Key": "증분 기준 키",
+  "Lake Access": "레이크 접근",
+  "Lake Type": "레이크 유형",
+  "Message Format": "메시지 형식",
+  Method: "메서드",
   Offset: "시작 오프셋",
+  "Offset Policy": "오프셋 정책",
+  "Pagination Strategy": "페이지네이션 방식",
+  Path: "경로",
+  "Path / Prefix": "경로 / 프리픽스",
+  Port: "포트",
   Prefix: "경로 접두사",
+  Region: "리전",
+  "Root Path": "루트 경로",
+  "Storage Provider": "스토리지 제공자",
+  "Stream Type": "스트림 유형",
   Table: "테이블",
   Topic: "토픽",
+  "TOPIC / QUEUE NAME": "토픽 / 큐 이름",
+  Username: "사용자 이름",
+  "Use Path Style": "Path Style 사용",
   Window: "집계 범위",
+};
+
+const hiddenJobDetailFieldLabels = new Set([
+  "Access Key",
+  "Password / Auth Token",
+  "Secret Key",
+  "Token / Secret",
+]);
+
+const jobSourceTypeLabelMap: Record<string, string> = {
+  "Data Lake": "데이터 레이크",
+  "File / S3": "파일 / MinIO",
+  "Stream / Kafka": "스트림 / Kafka",
 };
 
 function getJobDetailFieldLabel(label: string) {
   return jobDetailFieldLabelMap[label] ?? label;
+}
+
+function isVisibleJobDetailField(label: string) {
+  return !label.startsWith("__") && !hiddenJobDetailFieldLabels.has(label);
+}
+
+function getJobSourceTypeLabel(value: string) {
+  return jobSourceTypeLabelMap[value] ?? value;
 }
 
 const ruleActionLabelMap: Record<string, string> = {
@@ -1749,8 +1783,9 @@ export function JobDetailPage({
   onCommand: (job: JobRowData, command: JobCommand) => void;
   onRuns: () => void;
 }) {
-  const sourceType = job.source.split(" / ")[0] ?? job.source;
-  const sourcePath = job.source.split(" / ")[1] ?? job.source;
+  const rawSourceType = job.sourceType ?? job.source.split(" / ")[0] ?? job.source;
+  const sourceType = getJobSourceTypeLabel(rawSourceType);
+  const sourcePath = job.sourceLabel ?? (job.source.split(" / ").slice(1).join(" / ") || job.source);
   const stats = job.stats ?? fallbackJobStats(job);
   const realtime = isRealtimeJob(job);
   const totalRunsLabel = stats.totalRuns === "-" || stats.totalRuns.endsWith("회") ? stats.totalRuns : `${stats.totalRuns}회`;
@@ -1872,7 +1907,7 @@ export function JobDetailPage({
               value={activeRun ? `${formatCompactDateTime(activeRun.startedAt)} 시작` : latestRun ? runStatusMeta[latestRun.status].label : "-"}
             />
             <OperationSummaryItem
-              detail={realtime ? job.scheduleSummary ?? job.schedule : job.schedule}
+              detail={realtime ? job.scheduleSummary ?? formatJobSchedule(job.schedule) : formatJobSchedule(job.schedule)}
               label={realtime ? "수집 방식" : "다음 실행"}
               tone="scheduled"
               value={realtime ? "실시간" : formatCompactDateTime(job.nextRun)}
@@ -1914,11 +1949,13 @@ export function JobDetailPage({
           </AccordionTrigger>
           <AccordionContent className="grid items-stretch gap-4 border-t border-slate-100 p-4 lg:grid-cols-2">
             <JobEndpointCard
-              badge={job.sourceType ?? sourceType}
+              badge={sourceType}
               icon={<Database aria-hidden="true" className="size-5" />}
               items={[
                 { label: "소스 경로", value: job.sourceLabel ?? sourcePath },
-                ...(job.sourceConfig ?? []).map(([label, value]) => ({ label: getJobDetailFieldLabel(label), value })),
+                ...(job.sourceConfig ?? [])
+                  .filter(([label]) => isVisibleJobDetailField(label))
+                  .map(([label, value]) => ({ label: getJobDetailFieldLabel(label), value })),
               ]}
               title="소스"
               tone="source"
@@ -2020,7 +2057,7 @@ export function JobDetailPage({
               </span>
               <span className="grid min-w-0 gap-1">
                 <span className="text-base font-[850] leading-tight text-slate-900">스케줄 / 권한</span>
-                <span className="text-sm font-semibold text-slate-500">{job.schedule} · 역할별 접근 권한</span>
+                <span className="text-sm font-semibold text-slate-500">{formatJobSchedule(job.schedule)} · 역할별 접근 권한</span>
               </span>
             </span>
           </AccordionTrigger>
@@ -2035,8 +2072,8 @@ export function JobDetailPage({
               <KeyValueList
                 className={detailKeyValueListClassName}
                 items={[
-                  { label: "실행 유형", value: isRealtimeJob(job) ? "실시간 수집" : "반복 스케줄" },
-                  { label: "주기", value: job.schedule },
+                  { label: "실행 유형", value: isRealtimeJob(job) ? "실시간 수집" : getJobScheduleKind(job) === "none" ? "수동 실행" : "반복 스케줄" },
+                  { label: "주기", value: formatJobSchedule(job.schedule) },
                   { label: "다음 실행", value: formatCompactDateTime(job.nextRun) },
                   { label: "재시도 정책", value: retrySummary },
                 ]}
@@ -2584,9 +2621,6 @@ function DagStepInspector({ currentRun, step }: { currentRun: JobRunSummary; ste
 
   const details = [["단계 상태", dagStepStatusMeta[step.status].label], ...(step.details ?? [])];
   const messages = (step.logs ?? []).filter(Boolean);
-  const textStructuringChecks = isTextStructuringDagStep(step)
-    ? currentRun.textStructuringExecution?.columns ?? currentRun.textStructuring ?? []
-    : [];
 
   return (
     <aside className="dag-step-inspector" aria-label={`${step.title} 상세`}>
@@ -2603,27 +2637,6 @@ function DagStepInspector({ currentRun, step }: { currentRun: JobRunSummary; ste
         {details.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value || "-"}</dd></div>)}
       </dl>
 
-      {textStructuringChecks.length > 0 ? (
-        <section className="grid gap-3 rounded-md border border-blue-100 bg-blue-50/50 p-4" aria-label="모델 실행 정보">
-          <div className="flex items-center justify-between gap-3">
-            <strong className="text-sm font-extrabold text-slate-900">모델 실행 정보</strong>
-            <StatusBadge shape="compact" size="sm" tone="default">{textStructuringChecks.length}개 컬럼</StatusBadge>
-          </div>
-          <div className="grid gap-2">
-            {textStructuringChecks.map((check, index) => (
-              <dl className="grid grid-cols-2 gap-x-3 gap-y-2 rounded-md border border-slate-200 bg-white p-3 text-sm sm:grid-cols-3" key={`${check.targetColumn || check.target || "column"}-${index}`}>
-                <div><dt className="font-bold text-slate-500">대상 컬럼</dt><dd className="mt-1 font-extrabold text-slate-900">{check.targetColumn || check.target || "-"}</dd></div>
-                <div><dt className="font-bold text-slate-500">사용 모델</dt><dd className="mt-1 break-all font-extrabold text-slate-900">{check.selectedModelArtifact || check.modelArtifact || "규칙 기반"}</dd></div>
-                <div><dt className="font-bold text-slate-500">실행 방식</dt><dd className="mt-1 font-extrabold text-slate-900">{formatTextStructuringExecution(check.executionMode, check.fallbackUsed)}</dd></div>
-                <div><dt className="font-bold text-slate-500">검증 행</dt><dd className="mt-1 font-extrabold text-slate-900">{Number(check.validationRows ?? check.metrics?.validationRows ?? 0).toLocaleString()}행</dd></div>
-                <div><dt className="font-bold text-slate-500">유효하지 않은 행</dt><dd className="mt-1 font-extrabold text-slate-900">{Number(check.invalidRows ?? 0).toLocaleString()}행</dd></div>
-                <div><dt className="font-bold text-slate-500">Fallback</dt><dd className="mt-1 font-extrabold text-slate-900">{check.fallbackUsed ? "사용" : "사용 안 함"}</dd></div>
-              </dl>
-            ))}
-          </div>
-        </section>
-      ) : null}
-
       <section className="dag-step-message">
         <div>
           <span>진단 메시지</span>
@@ -2637,27 +2650,6 @@ function DagStepInspector({ currentRun, step }: { currentRun: JobRunSummary; ste
       </section>
     </aside>
   );
-}
-
-function isTextStructuringDagStep(step: JobDagStep) {
-  const searchable = [
-    step.id,
-    step.title,
-    step.meta,
-    ...(step.details ?? []).flat(),
-    ...(step.logs ?? []),
-  ].join(" ");
-  return /text|model|transform|구조화|모델|변환/i.test(searchable);
-}
-
-function formatTextStructuringExecution(executionMode?: string, fallbackUsed?: boolean) {
-  if (fallbackUsed || executionMode === "fallback_rule") return "규칙 Fallback";
-  if (executionMode === "selected_model") return "선택 모델";
-  if (executionMode === "auto_model") return "자동 모델";
-  if (executionMode === "missing_model") return "모델 없음";
-  if (executionMode === "copy") return "값 복사";
-  if (executionMode === "instruction") return "지시문 처리";
-  return executionMode || "-";
 }
 
 function getSelectedDagStep(steps: JobDagStep[], selectedStepId: string | null) {

@@ -7,7 +7,6 @@ export type SourceAsset = [path: string, meta: string, status: string];
 
 type SourceAssetTreeProps = {
   assets: SourceAsset[];
-  disabled?: boolean;
   /** Folder paths the parent already fetched, including empty folders. */
   loadedFolderPaths?: readonly string[];
   loadingPath?: string;
@@ -38,7 +37,6 @@ const LABELS = {
 
 export function SourceAssetTree({
   assets,
-  disabled = false,
   loadedFolderPaths,
   loadingPath = "",
   selectedPath,
@@ -85,7 +83,6 @@ export function SourceAssetTree({
 
   const renderNode = (node: SourceAssetTreeNode, depth = 0): React.ReactNode => {
     const canSelectFile = !node.isFolder && typeof node.assetIndex === "number";
-    const isFileDisabled = canSelectFile && disabled;
     const isSelected = canSelectFile && node.path === selectedPath;
     const isExpanded = expandedItems.includes(node.id);
     const folderMeta = node.path === loadingPath
@@ -97,9 +94,8 @@ export function SourceAssetTree({
     return (
       <div className="source-asset-tree-item" key={node.id}>
         <TreeRow
-          aria-disabled={isFileDisabled || undefined}
           aria-expanded={node.isFolder ? isExpanded : undefined}
-          className={isSelected ? "source-asset-tree-label active" : isFileDisabled ? "source-asset-tree-label disabled" : "source-asset-tree-label"}
+          className={isSelected ? "source-asset-tree-label active" : "source-asset-tree-label"}
           expanded={node.isFolder ? isExpanded : undefined}
           leaf={!node.isFolder}
           level={depth}
@@ -111,7 +107,7 @@ export function SourceAssetTree({
               toggleFolder(node);
               return;
             }
-            if (canSelectFile && !isFileDisabled) {
+            if (canSelectFile) {
               void onSelect(node.path);
             }
           }}

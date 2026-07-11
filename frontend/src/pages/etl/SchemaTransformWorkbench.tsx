@@ -50,6 +50,7 @@ export function SchemaTransformWorkbench({
   const targetSchema = useMemo(
     () => columns
       .filter((column) => column.included !== false)
+      .sort((left, right) => (left.targetOrder ?? columns.indexOf(left)) - (right.targetOrder ?? columns.indexOf(right)))
       .map((column) => toSchemaTransformTargetColumn(column, transformSteps)),
     [columns, transformSteps],
   );
@@ -130,39 +131,27 @@ function projectSchemaTransformSchema(
   sampleRows: string[][],
   nextTargetSchema: SchemaTransformColumn[],
 ) {
-  const sourceIndexByName = new Map(currentColumns.map((column, index) => [column.sourceName, index]));
-  const usedSourceNames = new Set<string>();
-
-  const targetColumns = nextTargetSchema.map((target) => {
+  const targetBySourceName = new Map<string, { order: number; target: SchemaTransformColumn }>();
+  nextTargetSchema.forEach((target, order) => {
     const sourceName = normalizeSourceName(target.originalName || target.name);
-    const sourceIndex = sourceIndexByName.get(sourceName);
-    const existing = sourceIndex === undefined ? undefined : currentColumns[sourceIndex];
-    usedSourceNames.add(existing?.sourceName ?? sourceName);
+    if (!targetBySourceName.has(sourceName)) targetBySourceName.set(sourceName, { order, target });
+  });
 
+  const nextColumns = currentColumns.map((column) => {
+    const selected = targetBySourceName.get(normalizeSourceName(column.sourceName));
+    if (!selected) return { ...column, included: false, targetOrder: undefined };
+    const { order, target } = selected;
     return {
-      ...(existing ?? {
-        confidence: 85,
-        nullable: !target.notNull,
-        sourceName,
-      }),
+      ...column,
       included: true,
       nullable: !target.notNull,
-      role: target.transform ? `schema-transform:${target.transform}` : existing?.role,
-      sourceName: existing?.sourceName ?? sourceName,
+      role: target.transform ? `schema-transform:${target.transform}` : column.role,
       targetName: target.name,
+      targetOrder: order,
       type: fromSchemaTransformType(target.type),
     } satisfies SchemaColumnDraft;
   });
-
-  const excludedColumns = currentColumns
-    .filter((column) => !usedSourceNames.has(column.sourceName))
-    .map((column) => ({ ...column, included: false }));
-
-  const nextColumns = [...targetColumns, ...excludedColumns];
-  const nextRows = sampleRows.map((row) => nextColumns.map((column) => {
-    const sourceIndex = sourceIndexByName.get(column.sourceName);
-    return sourceIndex === undefined ? "" : row[sourceIndex] ?? "";
-  }));
+  const nextRows = sampleRows.map((row) => [...row]);
 
   return { nextColumns, nextRows };
 }

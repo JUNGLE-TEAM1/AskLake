@@ -254,6 +254,7 @@ export type SchemaColumnDraft = {
   role?: string;
   sourceName: string;
   targetName: string;
+  targetOrder?: number;
   transformChain?: TransformChainStepDraft[];
   type: string;
 };

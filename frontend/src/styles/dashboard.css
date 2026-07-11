@@ -5,61 +5,9 @@
   font-family: var(--jobs-font-family);
 }
 
-.dashboard-list-menu,
 .dashboard-delete-dialog,
 .asklake-dashboard-share-sheet {
   font-family: var(--jobs-font-family);
-}
-
-.dashboard-context-missing {
-  min-height: min(520px, calc(100vh - 220px));
-  align-content: center;
-}
-
-.dashboard-context-missing-panel {
-  display: flex;
-  align-items: flex-start;
-  gap: 14px;
-  max-width: 640px;
-  border: 1px solid #dbeafe;
-  border-radius: 8px;
-  background: #f8fbff;
-  padding: 22px;
-}
-
-.dashboard-context-missing-panel svg {
-  flex: 0 0 auto;
-  color: #2563eb;
-}
-
-.dashboard-context-missing-panel div {
-  display: grid;
-  gap: 6px;
-  min-width: 0;
-}
-
-.dashboard-context-missing-panel span {
-  color: #2563eb;
-  font-size: 12px;
-  font-weight: 900;
-}
-
-.dashboard-context-missing-panel h1 {
-  color: #0f172a;
-  font-size: 22px;
-  font-weight: 900;
-  line-height: 1.25;
-}
-
-.dashboard-context-missing-panel p {
-  color: #64748b;
-  font-size: 14px;
-  line-height: 1.5;
-}
-
-.dashboard-context-missing-panel button {
-  justify-self: flex-start;
-  margin-top: 4px;
 }
 
 .page-body > .dashboard-list-page,
@@ -441,8 +389,6 @@
 }
 
 .dashboard-table-viewport {
-  contain: paint;
-  max-width: 100%;
   border-radius: 8px;
 }
 
@@ -618,74 +564,18 @@
   padding: 0;
 }
 
-.dashboard-list-menu {
-  z-index: 20;
-  display: grid;
-  width: 240px;
-  max-height: 320px;
-  overflow-y: auto;
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
-  background: #fff;
-  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.14);
-  padding: 8px;
-}
-
-.dashboard-list-menu.sort {
-  width: 260px;
-}
-
-.dashboard-menu-option {
-  display: flex;
-  width: 100%;
-  min-height: 38px;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: #334155;
-  font-size: 13px;
-  font-weight: 800;
-  padding: 0 10px;
-  text-align: left;
-}
-
-.dashboard-menu-option span {
-  min-width: 0;
-}
-
-.dashboard-menu-option svg {
-  flex: 0 0 auto;
-}
-
-.dashboard-menu-option.checkbox {
-  justify-content: flex-start;
-  padding-left: 32px;
-}
-
-.dashboard-menu-option:hover,
-.dashboard-menu-option:focus-visible,
-.dashboard-menu-option[data-highlighted],
-.dashboard-menu-option[data-state="checked"],
-.dashboard-menu-option.active {
-  background: #eff6ff;
-  color: #2563eb;
-}
-
 .dashboard-table-list {
   display: grid;
   gap: 0;
+  min-width: 0;
   padding: 0;
   width: 100%;
 }
 
 .dashboard-table-list-body {
   display: grid;
-  min-width: 0;
   gap: 12px;
-  overflow: hidden;
+  min-width: 0;
   padding: 0;
 }
 

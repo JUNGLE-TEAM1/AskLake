@@ -8,6 +8,7 @@ import {
   Trash2,
 } from "lucide-react";
 import TransformFunctionModal from "./TransformFunctionModal";
+import { Checkbox } from "@/components/ui/checkbox";
 
 /**
  * SchemaTransformEditor - Dual List Box style schema transformation UI
@@ -132,7 +133,7 @@ export default function SchemaTransformEditor({
         const visibleDisplay = visibleChain.map(formatTransformChainStep).filter(Boolean).join(" -> ");
         return {
           ...col,
-          type: normalizedType, // ?Ä???ïÍ∑ú??
+          type: normalizedType,
           notNull: col.notNull || false,
           defaultValue: col.defaultValue || "",
           transform: visibleStep?.expression || (visibleStep?.operation === "SQL Expression" ? visibleStep.params : col.transform || null),
@@ -142,7 +143,7 @@ export default function SchemaTransformEditor({
           transformParams: visibleStep?.params || col.transformParams || "",
           onError: col.onError || "Warn",
           originalName: col.originalName || col.name,
-          originalType: normalizeType(col.originalType) || normalizedType, // ?êÎ≥∏ ?Ä??Î≥¥Ï°¥
+          originalType: normalizeType(col.originalType) || normalizedType,
           sourceId: col.sourceId || sourceId,
           sourceName: col.sourceName || sourceName,
         };
@@ -193,10 +194,13 @@ export default function SchemaTransformEditor({
     });
   };
 
+  const targetColumnKey = (column) => `${column.sourceId || sourceId || "source"}:${String(column.originalName || column.name).replace(/\./g, "_")}`;
+
   // Check if column from current source is already in target
   const isColumnInTarget = (colName) => {
+    const normalizedName = String(colName).replace(/\./g, "_");
     return targetSchema.some(
-      (ac) => ac.originalName === colName && ac.sourceId === sourceId,
+      (ac) => String(ac.originalName || ac.name).replace(/\./g, "_") === normalizedName && ac.sourceId === sourceId,
     );
   };
 
@@ -230,15 +234,14 @@ export default function SchemaTransformEditor({
     const enriched = newColumns.map((c) => {
       // Convert dot notation to underscore for MongoDB fields
       const convertedName = c.name.replace(/\./g, "_");
-      const convertedOriginalName = c.originalName.replace(/\./g, "_");
       const normalizedType = normalizeType(c.type);
 
       return {
         ...c,
         name: getUniqueColumnName(convertedName),
-        originalName: convertedOriginalName,
-        type: normalizedType, // ?Ä??Î™ÖÏãú???§Ï†ï
-        originalType: normalizedType, // ?êÎ≥∏ ?Ä???Ä??
+        originalName: c.originalName,
+        type: normalizedType,
+        originalType: normalizedType,
         notNull: false,
         defaultValue: "",
         transform: null,
@@ -271,15 +274,14 @@ export default function SchemaTransformEditor({
     const enriched = newColumns.map((c) => {
       // Convert dot notation to underscore for MongoDB fields
       const convertedName = c.name.replace(/\./g, "_");
-      const convertedOriginalName = c.originalName.replace(/\./g, "_");
       const normalizedType = normalizeType(c.type);
 
       return {
         ...c,
         name: getUniqueColumnName(convertedName),
-        originalName: convertedOriginalName,
-        type: normalizedType, // ?Ä??Î™ÖÏãú???§Ï†ï
-        originalType: normalizedType, // ?êÎ≥∏ ?Ä???Ä??
+        originalName: c.originalName,
+        type: normalizedType,
+        originalType: normalizedType,
         notNull: false,
         defaultValue: "",
         transform: null,
@@ -300,17 +302,14 @@ export default function SchemaTransformEditor({
 
   const moveSelectedToLeft = () => {
     // Remove selected columns from targetSchema
-    const newSchema = targetSchema.filter((c) => !selectedAfter.has(c.name));
+    const newSchema = targetSchema.filter((c) => !selectedAfter.has(targetColumnKey(c)));
     onSchemaChange(newSchema);
     setSelectedAfter(new Set());
     if (onTestStatusChange) onTestStatusChange(false);
   };
 
-  const moveAllToLeft = () => {
-    // Clear all target columns
-    onSchemaChange([]);
-    setSelectedAfter(new Set());
-    if (onTestStatusChange) onTestStatusChange(false);
+  const toggleAllTargetColumns = (checked) => {
+    setSelectedAfter(checked ? new Set(targetSchema.map(targetColumnKey)) : new Set());
   };
 
   // Reorder handlers
@@ -480,7 +479,7 @@ export default function SchemaTransformEditor({
     setEditingColumn(null);
   };
 
-  // Spark SQL ?Ä??Îß§Ìïë
+  // Spark SQL type mapping
   const TYPE_MAP = {
     string: "STRING",
     integer: "INT",
@@ -526,16 +525,16 @@ export default function SchemaTransformEditor({
 
       let expr = `\`${columnName}\``;
 
-      // 1. Type Cast ?ÅÏö© (?Ä?ÖÏù¥ Î≥ÄÍ≤ΩÎêú Í≤ΩÏö∞?êÎßå)
+      // Apply an explicit cast only when the type changed.
       const sparkType = TYPE_MAP[col.type];
       const originalType = col.originalType || "string";
       if (col.type !== originalType && sparkType) {
         expr = `CAST(${expr} AS ${sparkType})`;
       }
 
-      // 2. Default Value ?ÅÏö© (COALESCE)
+      // Apply default values with COALESCE.
       if (col.defaultValue && col.defaultValue.trim() !== "") {
-        // ?´Ïûê ?Ä?ÖÏù¥Î©??∞Ïò¥???ÜÏù¥, ?ÑÎãàÎ©??∞Ïò¥?úÎ°ú Í∞êÏã∏Í∏?
+        // Quote non-numeric default values.
         const isNumericType = ["integer", "long", "double", "float"].includes(
           col.type,
         );
@@ -550,7 +549,7 @@ export default function SchemaTransformEditor({
         }
       }
 
-      // 3. AS alias Ï∂îÍ? (Ïª¨ÎüºÎ™?Î≥ÄÍ≤? CAST, ?êÎäî COALESCE ?ÅÏö©??Í≤ΩÏö∞)
+      // Add an alias when the expression or output name changed.
       const typeChanged = col.type !== originalType;
       const needsAlias =
         col.name !== columnName ||
@@ -564,7 +563,7 @@ export default function SchemaTransformEditor({
       return expr;
     });
 
-    // NOT NULL ?ÑÌÑ∞ ?ÅÏö©
+    // Apply NOT NULL filters.
     const notNullCols = columnsToUse.filter((c) => c.notNull);
     let whereClause = "";
     if (notNullCols.length > 0) {
@@ -721,24 +720,24 @@ export default function SchemaTransformEditor({
             >
               <Trash2 className="w-5 h-5 text-gray-600" />
             </button>
-            <button
-              onClick={moveAllToLeft}
-              disabled={targetSchema.length === 0}
-              className="p-2 rounded-md bg-white border border-gray-300 hover:bg-red-50 hover:border-red-300 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              aria-label="Remove all target columns"
-              title="Remove all target columns"
-            >
-              <Trash2 className="w-6 h-6 text-gray-600" />
-            </button>
           </div>
 
           {/* After Schema (Right) */}
           <div className="flex-1 basis-0 flex flex-col bg-white rounded-xl border border-slate-200 shadow-sm transition-all overflow-hidden min-w-0">
-            <div className="px-4 py-3 border-b border-slate-200 bg-slate-50/50">
+            <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-slate-200 bg-slate-50/50">
               <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-2">
                 <span className="w-1 h-3 bg-indigo-600 rounded-full"></span>
                 After (Target)
               </h3>
+              <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-slate-600">
+                <Checkbox
+                  aria-label="Ï†ÑÏ≤¥ ÌÉÄÍ≤ü Ïª¨Îüº ÏÑ†ÌÉù"
+                  checked={targetSchema.length > 0 && selectedAfter.size === targetSchema.length ? true : selectedAfter.size > 0 ? "indeterminate" : false}
+                  disabled={targetSchema.length === 0}
+                  onCheckedChange={(checked) => toggleAllTargetColumns(checked === true)}
+                />
+                Ï†ÑÏ≤¥ ÏÑ†ÌÉù
+              </label>
             </div>
             <div className="flex-1 overflow-y-auto p-2">
               {targetSchema.length === 0 ? (
@@ -749,9 +748,9 @@ export default function SchemaTransformEditor({
                 <div className="space-y-2">
                   {targetSchema.map((col, index) => (
                     <div
-                      key={`${col.name}-${index}`}
+                      key={targetColumnKey(col)}
                       className={`p-2.5 rounded-xl border transition-all ${
-                        selectedAfter.has(col.name)
+                        selectedAfter.has(targetColumnKey(col))
                           ? "bg-slate-50 border-indigo-300 shadow-sm ring-1 ring-indigo-300"
                           : col.expandedFrom
                             ? "bg-indigo-50/60 border-indigo-200 hover:border-indigo-300"
@@ -760,18 +759,11 @@ export default function SchemaTransformEditor({
                     >
                       {/* Column Header */}
                       <div className="flex items-center gap-2 mb-2">
-                        <div
-                          onClick={() => toggleAfterSelection(col.name)}
-                          className={`w-4 h-4 rounded border transition-colors flex items-center justify-center cursor-pointer ${
-                            selectedAfter.has(col.name)
-                              ? "bg-indigo-600 border-indigo-600"
-                              : "bg-white border-slate-300 hover:border-indigo-400"
-                          }`}
-                        >
-                          {selectedAfter.has(col.name) && (
-                            <div className="w-1.5 h-1.5 bg-white rounded-full"></div>
-                          )}
-                        </div>
+                        <Checkbox
+                          aria-label={`${col.name} ÏÑ†ÌÉù`}
+                          checked={selectedAfter.has(targetColumnKey(col))}
+                          onCheckedChange={() => toggleAfterSelection(targetColumnKey(col))}
+                        />
                         {col.expandedFrom && (
                           <span className="shrink-0 rounded-full bg-indigo-100 px-2 py-1 text-[10px] font-bold text-indigo-700" title={`Expanded from ${col.expandedFrom}`}>
                             expanded {col.expandedIndex || index + 1}/{col.expandedTotal || 1}

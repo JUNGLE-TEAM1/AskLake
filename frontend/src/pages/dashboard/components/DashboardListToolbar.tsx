@@ -1,10 +1,9 @@
-import { ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, ChevronRight, Filter, Search, SlidersHorizontal } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, ChevronRight, Filter, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
-  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
@@ -12,7 +11,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { FilterToolbar, FilterToolbarActions, FilterToolbarDivider, FilterToolbarInput, FilterToolbarMenu, FilterToolbarSearch } from "@/components/ui/filter-toolbar";
-import { Panel, PanelHeader } from "@/components/ui/panel";
 import { dashboardSortOptions, getDashboardSortLabel } from "../dashboardListUtils";
 import type { DashboardListControl, DashboardSortOption } from "../dashboardListUtils";
 
@@ -51,12 +49,7 @@ export function DashboardListToolbar({
   };
 
   return (
-    <Panel className="dashboard-list-toolbar" overflow="visible">
-      <PanelHeader
-        icon={<SlidersHorizontal size={16} />}
-        title="검색 및 필터"
-      />
-      <FilterToolbar layout="actions">
+      <FilterToolbar className="dashboard-list-toolbar" layout="actions">
         <FilterToolbarSearch icon={<Search size={16} />}>
           <FilterToolbarInput
             aria-label="대시보드 검색"
@@ -76,20 +69,17 @@ export function DashboardListToolbar({
                   <ChevronDown size={18} />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="dashboard-list-menu">
-                <DropdownMenuLabel>소유자</DropdownMenuLabel>
-                <DropdownMenuItem className={ownerFilter === "all" ? "dashboard-menu-option active" : "dashboard-menu-option"} onSelect={() => onSelectOwner("all")}>
-                  모든 소유자
-                </DropdownMenuItem>
-                {owners.map((owner) => (
-                  <DropdownMenuItem
-                    className={ownerFilter === owner ? "dashboard-menu-option active" : "dashboard-menu-option"}
-                    key={owner}
-                    onSelect={() => onSelectOwner(owner)}
-                  >
-                    {owner}
-                  </DropdownMenuItem>
-                ))}
+              <DropdownMenuContent align="end" className="min-w-44">
+                <DropdownMenuLabel>소유자 필터</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuRadioGroup value={ownerFilter} onValueChange={onSelectOwner}>
+                  <DropdownMenuRadioItem value="all">전체</DropdownMenuRadioItem>
+                  {owners.map((owner) => (
+                    <DropdownMenuRadioItem key={owner} value={owner}>
+                      {owner}
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
               </DropdownMenuContent>
             </DropdownMenu>
           </FilterToolbarMenu>
@@ -101,16 +91,19 @@ export function DashboardListToolbar({
                   <ChevronRight size={18} />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="dashboard-list-menu">
-                <DropdownMenuLabel>태그</DropdownMenuLabel>
-                <DropdownMenuItem className="dashboard-menu-option" onSelect={onClearTags}>
-                  전체 태그
-                </DropdownMenuItem>
+              <DropdownMenuContent align="end" className="min-w-44">
+                <DropdownMenuLabel>태그 필터</DropdownMenuLabel>
                 <DropdownMenuSeparator />
+                <DropdownMenuCheckboxItem
+                  checked={selectedTags.length === 0}
+                  onCheckedChange={onClearTags}
+                  onSelect={(event) => event.preventDefault()}
+                >
+                  전체
+                </DropdownMenuCheckboxItem>
                 {tags.map((tag) => (
                   <DropdownMenuCheckboxItem
                     checked={selectedTags.includes(tag)}
-                    className="dashboard-menu-option checkbox"
                     key={tag}
                     onCheckedChange={() => onToggleTag(tag)}
                     onSelect={(event) => event.preventDefault()}
@@ -129,11 +122,12 @@ export function DashboardListToolbar({
                   <ArrowUpDown size={24} />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="dashboard-list-menu sort">
+              <DropdownMenuContent align="end" className="min-w-56">
                 <DropdownMenuLabel>정렬 기준</DropdownMenuLabel>
+                <DropdownMenuSeparator />
                 <DropdownMenuRadioGroup value={sortOption} onValueChange={(value) => onSelectSort(value as DashboardSortOption)}>
                   {dashboardSortOptions.map((option) => (
-                    <DropdownMenuRadioItem className="dashboard-menu-option" key={option.id} value={option.id} aria-label={option.ariaLabel}>
+                    <DropdownMenuRadioItem className="gap-2" key={option.id} value={option.id} aria-label={option.ariaLabel}>
                       <span>{option.label}</span>
                       {option.direction === "asc" ? <ArrowUp size={16} /> : <ArrowDown size={16} />}
                     </DropdownMenuRadioItem>
@@ -144,6 +138,5 @@ export function DashboardListToolbar({
           </FilterToolbarMenu>
         </FilterToolbarActions>
       </FilterToolbar>
-    </Panel>
   );
 }

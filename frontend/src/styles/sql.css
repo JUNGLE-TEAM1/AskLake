@@ -25,14 +25,15 @@
 .sql-dataset-panel {
   position: sticky;
   z-index: 20;
-  top: 0;
+  top: 12px;
   display: grid;
   grid-column: 1;
   grid-row: 2;
   grid-template-rows: minmax(0, 1fr);
   align-self: start;
-  height: auto;
-  max-height: none;
+  height: min(860px, calc(100vh - 24px));
+  min-height: min(620px, calc(100vh - 24px));
+  max-height: 860px;
   min-width: 0;
   overflow: hidden;
   padding: 20px;
@@ -41,17 +42,30 @@
 .sql-context-rail-button {
   position: absolute;
   z-index: 3;
-  top: 0;
+  top: 20px;
   left: 0;
 }
 
 .sql-page.context-collapsed .sql-workspace {
-  padding-left: 44px;
+  grid-column: 1;
+  min-width: 0;
+  padding-left: 56px;
+  position: relative;
 }
 
 .sql-workspace {
   grid-column: 2;
   grid-row: 2;
+}
+
+.sql-dataset-scroll [data-slot="scroll-area-scrollbar"][data-orientation="vertical"] {
+  background: #e2e8f0;
+  opacity: 1;
+}
+
+.sql-dataset-scroll [data-slot="scroll-area-thumb"] {
+  background: #94a3b8;
+  opacity: 1;
 }
 
 .sql-tree-hover-card {
@@ -181,7 +195,7 @@
   background: #111827;
   color: #94a3b8;
   font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 13px;
+  font-size: 15px;
   line-height: 24px;
   padding: 16px 12px;
   text-align: right;
@@ -198,7 +212,7 @@
   background: #0f172a;
   color: #e2e8f0;
   font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 13px;
+  font-size: 15px;
   line-height: 24px;
   padding: 16px;
 }
@@ -238,10 +252,9 @@
 }
 
 .sql-editor-footer {
-  display: grid;
-  min-height: 40px;
-  align-items: stretch;
-  gap: 12px;
+  display: flex;
+  min-height: 28px;
+  align-items: center;
   color: #64748b;
   font-size: 12px;
 }
@@ -255,26 +268,9 @@
   gap: 8px;
 }
 
-.sql-editor-footer-controls {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  align-items: center;
-  gap: 12px;
-}
-
-.sql-editor-footer-controls > button {
-  justify-self: end;
-}
-
-.sql-preview-limit-field {
-  grid-template-columns: max-content minmax(64px, 1fr);
-  align-items: center;
-  gap: 10px;
-}
-
 .sql-result-scroll {
-  height: min(560px, 58vh);
-  min-height: 320px;
+  height: min(460px, 48vh);
+  min-height: 300px;
   min-width: 0;
 }
 
@@ -353,7 +349,7 @@
   }
 
   .sql-page.context-collapsed .sql-workspace {
-    padding-left: 44px;
+    padding-left: 56px;
   }
 
 }
@@ -371,6 +367,7 @@
   .sql-dataset-panel {
     position: relative;
     height: auto;
+    min-height: 0;
     max-height: none;
   }
 
@@ -380,7 +377,6 @@
 
   .sql-context-rail-button {
     position: static;
-    margin-bottom: 10px;
   }
 
   .sql-preview-limit-field {

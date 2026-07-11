@@ -8,7 +8,9 @@ import type { Edge, Node as FlowNode } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import {
   AlertCircle,
+  ArrowUpDown,
   ExternalLink,
+  Filter,
   LayoutGrid,
   PanelRight,
   Pin,
@@ -41,18 +43,23 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyIcon, EmptyTitle } from "@/c
 import {
   FilterToolbar,
   FilterToolbarActions,
-  FilterToolbarCheckbox,
-  FilterToolbarCheckboxGroup,
   FilterToolbarInput,
   FilterToolbarSearch,
 } from "@/components/ui/filter-toolbar";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { PageHeader } from "@/components/ui/page-header";
 import { PaginationBar } from "@/components/ui/pagination-bar";
 import { Panel, PanelHeader } from "@/components/ui/panel";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { Field, FieldLegend, FieldSet } from "@/components/ui/field";
-import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Slider } from "@/components/ui/slider";
@@ -64,7 +71,7 @@ import { IconButton } from "@/components/ui/icon-button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { getCatalogDatasetRows } from "../../services/catalogApi";
 import { getDatasetLineageGraph } from "../../services/mockApi";
-import type { AuditResult, CatalogDataset, CatalogDatasetRowsResponse, CurrentUserResponse, DatasetMaterializationRun, LineageGraph, LineageGraphDataset, LineageLayer } from "../../types";
+import type { AuditResult, CatalogDataset, CatalogDatasetRowsResponse, DatasetMaterializationRun, LineageGraph, LineageGraphDataset, LineageLayer } from "../../types";
 import { canDeleteDatasetMaterializationRun, canQueryDatasetAs, permissionDeniedMessage } from "../../utils/permissions";
 import { datasetStatusMeta } from "../../utils/statusMeta";
 import { cn } from "@/lib/utils";
@@ -99,6 +106,7 @@ type CatalogFilterState = {
   available: boolean;
   rag: boolean;
 };
+type CatalogStatusFilter = "all" | keyof CatalogFilterState;
 
 type CatalogSearchQuery = {
   keywords: string[];
@@ -120,6 +128,12 @@ const catalogSortOptions: Array<{ label: string; mode: CatalogSortMode }> = [
   { label: "이름순", mode: "name" },
   { label: "최근 갱신순", mode: "updated" },
   { label: "품질 높은순", mode: "quality" },
+];
+const catalogStatusFilterOptions: Array<{ label: string; value: CatalogStatusFilter }> = [
+  { label: "전체", value: "all" },
+  { label: "사용 가능", value: "available" },
+  { label: "승인 필요", value: "approvalRequired" },
+  { label: "RAG 여부", value: "rag" },
 ];
 
 const catalogPageSize = 5;
@@ -290,7 +304,6 @@ function compareCatalogDatasetsBySort(
 }
 
 export function CatalogPage({
-  currentUser,
   datasets,
   error = null,
   loading = false,
@@ -299,7 +312,6 @@ export function CatalogPage({
   onOpenSql,
   selectedDataset,
 }: {
-  currentUser?: CurrentUserResponse | null;
   datasets: CatalogDataset[];
   error?: string | null;
   loading?: boolean;
@@ -321,7 +333,7 @@ export function CatalogPage({
   const [sortMode, setSortMode] = useState<CatalogSortMode>("default");
   const tags = useMemo(() => getCatalogTagsByFrequency(datasets), [datasets]);
   const searchQuery = useMemo(() => parseCatalogSearchQuery(debouncedSearchText, tags), [debouncedSearchText, tags]);
-  const canQueryCurrentDataset = (dataset: CatalogDataset | null | undefined) => canQueryDatasetAs(dataset, currentUser);
+  const canQueryCurrentDataset = (dataset: CatalogDataset | null | undefined) => canQueryDatasetAs(dataset, undefined);
   const filteredDatasets = useMemo(() => datasets
     .map((dataset, index) => ({ dataset, index }))
     .filter(({ dataset }) => {
@@ -392,9 +404,25 @@ export function CatalogPage({
     onAction("catalog.search.submitted", `/api/catalog/datasets?q=${encodeURIComponent(query)}`, query || "empty");
   };
 
-  const updateFilter = (filterName: keyof CatalogFilterState, checked: boolean) => {
-    setFilterState((filters) => ({ ...filters, [filterName]: checked }));
-    onAction("catalog.filter_changed", `/api/catalog/datasets?filter=${filterName}&enabled=${checked}`, filterName);
+  const activeStatusFilter: CatalogStatusFilter = filterState.available
+    ? "available"
+    : filterState.approvalRequired
+      ? "approvalRequired"
+      : filterState.rag
+        ? "rag"
+        : "all";
+
+  const updateStatusFilter = (nextStatus: CatalogStatusFilter) => {
+    setFilterState({
+      approvalRequired: nextStatus === "approvalRequired",
+      available: nextStatus === "available",
+      rag: nextStatus === "rag",
+    });
+    onAction(
+      "catalog.filter_changed",
+      `/api/catalog/datasets?filter=${nextStatus}&enabled=${nextStatus !== "all"}`,
+      nextStatus,
+    );
   };
 
   const updateSortMode = (nextSortMode: CatalogSortMode) => {
@@ -510,6 +538,7 @@ export function CatalogPage({
                 </div>
               </AccordionContent>
             </AccordionItem>
+
             <AccordionItem value="schema">
               <AccordionTrigger>
                 <span className="catalog-preview-accordion-label"><TerminalSquare /> 스키마 미리보기</span>
@@ -532,7 +561,7 @@ export function CatalogPage({
             </AccordionItem>
             <AccordionItem value="materialization-runs">
               <AccordionTrigger>
-                <span className="catalog-preview-accordion-label"><ExternalLink /> 생성 결과</span>
+                <span className="catalog-preview-accordion-label"><ExternalLink /> 데이터 버전</span>
               </AccordionTrigger>
               <AccordionContent>
                 <CatalogMaterializationRuns
@@ -555,8 +584,8 @@ export function CatalogPage({
             title={!canQueryCurrentDataset(previewDataset)
               ? permissionDeniedMessage("데이터셋", "SQL 실행")
               : selectedSqlRunTarget?.datasetId === previewDataset.id && selectedSqlRunTarget.datasetName === previewDataset.name
-                ? "선택한 생성 결과 기준으로 SQL 분석을 엽니다."
-                : "성공한 생성 결과를 먼저 선택해 주세요."}
+                ? "선택한 데이터 버전을 기준으로 SQL 분석을 엽니다."
+                : "성공한 데이터 버전을 먼저 선택해 주세요."}
             type="button"
             variant="outline"
             onClick={openSelectedSqlDataset}
@@ -578,13 +607,8 @@ export function CatalogPage({
     <div className="catalog-page">
       <PageHeader
         className="catalog-page-header"
-        description="데이터셋을 검색하고 메타데이터, 스키마, 계보를 확인합니다."
-        descriptionClassName="text-xl leading-8"
-        icon={<Search size={30} />}
-        iconClassName="mt-0 size-16 rounded-xl"
-        size="lg"
+        icon={<Search size={18} />}
         title="검색/카탈로그"
-        titleClassName="text-4xl"
       />
       {error ? (
         <Alert className="border-red-200 bg-red-50 text-red-800" variant="destructive">
@@ -595,29 +619,6 @@ export function CatalogPage({
       ) : null}
       <div className="catalog-content-grid">
         <div className="catalog-main">
-          <Panel className="catalog-search-panel">
-            <PanelHeader
-              icon={<Search size={16} />}
-              title="검색 조건"
-            />
-            <FilterToolbar layout="stacked">
-              <FilterToolbarSearch icon={<Search size={18} />}>
-                <FilterToolbarInput
-                  aria-label="카탈로그 검색"
-                  onChange={(event) => setSearchText(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      handleSearchSubmit();
-                    }
-                  }}
-                  placeholder="테이블명, 컬럼명 또는 업무 키워드로 검색하세요..."
-                  type="search"
-                  value={searchText}
-                />
-              </FilterToolbarSearch>
-            </FilterToolbar>
-          </Panel>
-
           {hasCatalogResults && (
             <Sheet open={mobilePreviewOpen} onOpenChange={setMobilePreviewOpen}>
               <SheetTrigger asChild>
@@ -642,43 +643,70 @@ export function CatalogPage({
                 icon={<LayoutGrid size={16} />}
                 title="검색 결과"
               />
-              <FilterToolbar
-                className="grid-cols-[minmax(0,1fr)_max-content] gap-3 py-3 max-xl:grid-cols-1"
-                layout="actions"
-              >
-                <FieldSet className="gap-0">
-                  <FieldLegend className="sr-only">검색 결과 필터</FieldLegend>
-                  <FilterToolbarCheckboxGroup>
-                    <Field className="gap-0">
-                      <FilterToolbarCheckbox checked={filterState.available} onCheckedChange={(checked) => updateFilter("available", checked)}>
-                        사용 가능
-                      </FilterToolbarCheckbox>
-                    </Field>
-                    <Field className="gap-0">
-                      <FilterToolbarCheckbox checked={filterState.approvalRequired} onCheckedChange={(checked) => updateFilter("approvalRequired", checked)}>
-                        승인 필요
-                      </FilterToolbarCheckbox>
-                    </Field>
-                    <Field className="gap-0">
-                      <FilterToolbarCheckbox checked={filterState.rag} onCheckedChange={(checked) => updateFilter("rag", checked)}>
-                        RAG 여부
-                      </FilterToolbarCheckbox>
-                    </Field>
-                  </FilterToolbarCheckboxGroup>
-                </FieldSet>
+              <FilterToolbar className="py-3" layout="actions">
+                <FilterToolbarSearch icon={<Search size={18} />}>
+                  <FilterToolbarInput
+                    aria-label="카탈로그 검색"
+                    onChange={(event) => setSearchText(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        handleSearchSubmit();
+                      }
+                    }}
+                    placeholder="테이블명, 컬럼명 또는 업무 키워드로 검색하세요..."
+                    type="search"
+                    value={searchText}
+                  />
+                </FilterToolbarSearch>
                 <FilterToolbarActions>
-                  <Select value={sortMode} onValueChange={(value) => updateSortMode(value as CatalogSortMode)}>
-                    <SelectTrigger aria-label="정렬 기준" className="w-44" onPointerDown={() => onAction("catalog.sort_opened", "/api/catalog/search/sort", "catalog-sort")} size="sm">
-                      <SelectValue placeholder="정렬 기준" />
-                    </SelectTrigger>
-                    <SelectContent align="end">
-                      <SelectGroup>
-                        {catalogSortOptions.map((option) => (
-                          <SelectItem key={option.mode} value={option.mode}>{option.label}</SelectItem>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        aria-label="상태 필터"
+                        className="h-9 justify-start gap-1.5 px-0 text-lg font-semibold text-slate-600 hover:bg-transparent hover:text-slate-950"
+                        size="sm"
+                        type="button"
+                        variant="ghost"
+                      >
+                        상태
+                        <Filter className="size-[18px]" aria-hidden="true" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start" className="min-w-44">
+                      <DropdownMenuLabel>상태 필터</DropdownMenuLabel>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuRadioGroup value={activeStatusFilter} onValueChange={(value) => updateStatusFilter(value as CatalogStatusFilter)}>
+                        {catalogStatusFilterOptions.map((option) => (
+                          <DropdownMenuRadioItem key={option.value} value={option.value}>
+                            {option.label}
+                          </DropdownMenuRadioItem>
                         ))}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
+                      </DropdownMenuRadioGroup>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                  <DropdownMenu onOpenChange={(open) => open && onAction("catalog.sort_opened", "/api/catalog/search/sort", "catalog-sort")}>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        aria-label="정렬 기준"
+                        className="h-9 justify-start gap-1.5 px-0 text-lg font-semibold text-slate-600 hover:bg-transparent hover:text-slate-950"
+                        size="sm"
+                        type="button"
+                        variant="ghost"
+                      >
+                        정렬
+                        <ArrowUpDown className="size-[18px]" aria-hidden="true" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="min-w-44">
+                      <DropdownMenuLabel>정렬 기준</DropdownMenuLabel>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuRadioGroup value={sortMode} onValueChange={(value) => updateSortMode(value as CatalogSortMode)}>
+                        {catalogSortOptions.map((option) => (
+                          <DropdownMenuRadioItem key={option.mode} value={option.mode}>{option.label}</DropdownMenuRadioItem>
+                        ))}
+                      </DropdownMenuRadioGroup>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </FilterToolbarActions>
               </FilterToolbar>
             </div>
@@ -811,14 +839,12 @@ function CatalogModal({
 }
 
 export function CatalogDetailPage({
-  currentUser,
   dataset,
   onAction,
   onBack,
   onLineage,
   onOpenSql,
 }: {
-  currentUser?: CurrentUserResponse | null;
   dataset: CatalogDataset;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
   onBack: () => void;
@@ -826,7 +852,6 @@ export function CatalogDetailPage({
   onOpenSql: () => void;
 }) {
   const [activeTab, setActiveTab] = useState<"overview" | "schema" | "sample" | "lineage">("overview");
-  const canQueryCurrentDataset = canQueryDatasetAs(dataset, currentUser);
 
   const openLineage = () => {
     setActiveTab("lineage");
@@ -849,23 +874,12 @@ export function CatalogDetailPage({
             <div className="job-detail-meta">
               <DatasetStatusBadge dataset={dataset} />
               <Badge shape="compact" size="sm" variant="outline">{dataset.owner}</Badge>
-              <Badge shape="compact" size="sm" variant="outline">생성: {dataset.createdByProfile?.displayName || dataset.createdBy || dataset.owner}</Badge>
               <Badge shape="compact" size="sm" variant="secondary">{dataset.layer} 레이어</Badge>
               {dataset.tags.map((tag) => <Badge key={tag} shape="compact" size="sm" variant="secondary">{tag}</Badge>)}
             </div>
           </div>
           <div className="job-detail-actions">
-            <Button
-              className="job-action-button primary"
-              disabled={!canQueryCurrentDataset}
-              size="sm"
-              title={canQueryCurrentDataset ? "SQL 분석에서 엽니다." : permissionDeniedMessage("데이터셋", "SQL 실행")}
-              type="button"
-              variant="primary"
-              onClick={onOpenSql}
-            >
-              <ExternalLink size={14} /> SQL 분석에서 열기
-            </Button>
+            <Button className="job-action-button primary" type="button" onClick={onOpenSql} size="sm" variant="primary"><ExternalLink size={14} /> SQL 분석에서 열기</Button>
             <Button className="job-action-button" type="button" onClick={openLineage} size="sm" variant="outline">리니지 보기</Button>
             <Button className="job-action-button" type="button" onClick={() => onAction("catalog.dataset.refreshed", `/api/catalog/datasets/${dataset.id}`, dataset.id)} size="sm" variant="outline">새로고침</Button>
           </div>
@@ -932,6 +946,9 @@ function CatalogMaterializationRuns({
 
   return (
     <div className="catalog-materialization-panel grid gap-3" onClick={(event) => event.stopPropagation()}>
+      <p className="m-0 text-xs font-semibold leading-5 text-slate-500">
+        SQL 분석에 사용할 데이터 저장 시점을 선택합니다.
+      </p>
       {visibleRuns.length > 0 ? (
         <div className="grid gap-2">
           {visibleRuns.map((run) => {
@@ -962,7 +979,7 @@ function CatalogMaterializationRuns({
               role="button"
               size="none"
               tabIndex={isSelectable ? 0 : -1}
-              title={isSelectable ? "SQL 분석 대상으로 선택" : !canQueryDatasetForCurrentUser(dataset) ? permissionDeniedMessage("데이터셋", "SQL 실행") : "성공한 생성 결과만 SQL 분석 대상으로 선택할 수 있습니다."}
+              title={isSelectable ? "SQL 분석 대상으로 선택" : !canQueryDatasetForCurrentUser(dataset) ? permissionDeniedMessage("데이터셋", "SQL 실행") : "성공한 데이터 버전만 SQL 분석 대상으로 선택할 수 있습니다."}
               onClick={(event) => onSelectRun(event, dataset, run)}
               onKeyDown={(event) => {
                 if (event.key === "Enter" || event.key === " ") {
@@ -977,12 +994,12 @@ function CatalogMaterializationRuns({
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
                     <Button
-                      aria-label={`${run.runId} 생성 결과 삭제`}
+                      aria-label={`${run.runId} 데이터 버전 삭제`}
                       className="ml-auto"
                       disabled={!canDeleteDatasetMaterializationRun(dataset)}
                       shape="compact"
                       size="sm"
-                      title={canDeleteDatasetMaterializationRun(dataset) ? "생성 결과를 삭제합니다." : permissionDeniedMessage("데이터셋", "생성 결과 삭제")}
+                      title={canDeleteDatasetMaterializationRun(dataset) ? "데이터 버전을 삭제합니다." : permissionDeniedMessage("데이터셋", "데이터 버전 삭제")}
                       type="button"
                       variant="ghost"
                       onClick={(event) => event.stopPropagation()}
@@ -992,8 +1009,8 @@ function CatalogMaterializationRuns({
                   </AlertDialogTrigger>
                   <AlertDialogContent onClick={(event) => event.stopPropagation()}>
                     <AlertDialogHeader>
-                      <AlertDialogTitle>생성 결과를 삭제하시겠습니까?</AlertDialogTitle>
-                      <AlertDialogDescription>{run.runId} 결과는 삭제 후 복구할 수 없습니다.</AlertDialogDescription>
+                      <AlertDialogTitle>데이터 버전을 삭제하시겠습니까?</AlertDialogTitle>
+                      <AlertDialogDescription>{run.runId} 버전은 삭제 후 복구할 수 없습니다.</AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
                       <AlertDialogCancel>취소</AlertDialogCancel>
@@ -1024,7 +1041,7 @@ function CatalogMaterializationRuns({
       ) : (
         <Empty size="sm" variant="bordered">
           <EmptyHeader>
-            <EmptyTitle>생성 결과가 없습니다.</EmptyTitle>
+            <EmptyTitle>데이터 버전이 없습니다.</EmptyTitle>
             <EmptyDescription>데이터셋 생성 또는 append가 완료되면 여기에서 SQL 분석 대상을 선택할 수 있습니다.</EmptyDescription>
           </EmptyHeader>
         </Empty>
@@ -1167,8 +1184,7 @@ function CatalogSample({ dataset }: { dataset: CatalogDataset }) {
     setRowsError(null);
     getCatalogDatasetRows(dataset.id, { limit: pageSize, offset })
       .then((result) => {
-        if (cancelled) return;
-        setRowsResult(result);
+        if (!cancelled) setRowsResult(result);
       })
       .catch((error) => {
         if (cancelled) return;
@@ -1285,6 +1301,7 @@ function CatalogSample({ dataset }: { dataset: CatalogDataset }) {
     </Panel>
   );
 }
+
 function CatalogLineage({ compact = false, dataset }: { compact?: boolean; dataset: CatalogDataset }) {
   const [lineageGraph, setLineageGraph] = useState<LineageGraph | null>(dataset.lineageGraph ?? null);
   const [selectedColumnKey, setSelectedColumnKey] = useState<string | null>(null);
@@ -1484,6 +1501,7 @@ function getLineageTableHeight(columnCount: number): number {
 function LineageTableNode({ data }: { data: LineageTableNodeData }) {
   const updateNodeInternals = useUpdateNodeInternals();
   const layerVariant = getLineageLayerBadgeVariant(data.dataset.layer);
+  const displayName = getLineageNodeDisplayName(data.dataset);
 
   useEffect(() => {
     updateNodeInternals(data.nodeId);
@@ -1504,7 +1522,7 @@ function LineageTableNode({ data }: { data: LineageTableNodeData }) {
           <Table2 className="size-5" />
         </div>
         <div className="min-w-0 flex-1">
-          <CardTitle className="break-words text-sm leading-5" title={data.dataset.name}>{data.dataset.name}</CardTitle>
+          <CardTitle className="break-words text-sm leading-5" title={displayName}>{displayName}</CardTitle>
           <CardDescription className="mt-1 flex flex-wrap items-center gap-1 text-xs leading-4">
             <Badge shape="compact" size="sm" variant={layerVariant}>{data.dataset.layer}</Badge>
             <span>{data.dataset.engine}</span>
@@ -1524,6 +1542,13 @@ function LineageTableNode({ data }: { data: LineageTableNodeData }) {
       </CardContent>
     </Card>
   );
+}
+
+function getLineageNodeDisplayName(dataset: LineageGraphDataset): string {
+  if (dataset.layer !== "SOURCE") return dataset.name;
+
+  const enginePrefix = new RegExp(`^${escapeRegExp(dataset.engine)}\\s+`, "i");
+  return dataset.name.replace(enginePrefix, "").trim() || dataset.name;
 }
 
 function LineageColumnRow({ column, data }: { column: LineageColumn; data: LineageTableNodeData }) {
@@ -1696,11 +1721,6 @@ function getMaxColumnCount(datasets: LineageGraphDataset[]): number {
   return Math.max(...datasets.map((dataset) => dataset.columns.length), 1);
 }
 
-function countUpstreamDatasets(graph: LineageGraph | null): number {
-  if (!graph) return 0;
-  return graph.datasets.filter((item) => item.id !== graph.datasetId && item.layer !== "PROCESS").length;
-}
-
 function getLineageHandleMode(hasIncoming: boolean, hasOutgoing: boolean): LineageTableNodeData["handleMode"] {
   if (hasIncoming && hasOutgoing) return "both";
   if (hasIncoming) return "target";
@@ -1709,7 +1729,6 @@ function getLineageHandleMode(hasIncoming: boolean, hasOutgoing: boolean): Linea
 
 function getLineageLayerLabel(layer: LineageLayer): string {
   if (layer === "SOURCE") return "SOURCE";
-  if (layer === "PROCESS") return "PROCESS";
   if (layer === "CONSUMER") return "CONSUMER";
   return `${layer} LAYER`;
 }

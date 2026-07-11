@@ -1,5 +1,3 @@
-import { AlertCircle } from "lucide-react";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { DialogShell } from "@/components/ui/dialog-shell";
 import type { SavedDashboardCard } from "../../../types";
@@ -47,3 +45,5 @@ export function DashboardDeleteConfirmDialog({
     </DialogShell>
   );
 }
+import { AlertCircle } from "lucide-react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";

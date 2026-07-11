@@ -111,36 +111,31 @@ export function DashboardLandingPage({
           </Button>
         )}
         className="dashboard-page-header"
-        description="데이터셋을 기반으로 지표를 구성하고 대시보드를 공유합니다."
-        descriptionClassName="text-xl leading-8"
-        icon={<BarChart3 size={30} />}
-        iconClassName="mt-0 size-16 rounded-xl"
-        size="lg"
+        icon={<BarChart3 size={18} />}
+        leadingAlign="center"
         title="대시보드"
-        titleClassName="text-4xl"
       />
 
       <div className="dashboard-panel-stack">
-        <DashboardListToolbar
-          onClearTags={onClearTags}
-          onSearchQueryChange={onSearchQueryChange}
-          onSelectOwner={onSelectOwner}
-          onSelectSort={onSelectSort}
-          onToggleControl={onToggleControl}
-          onToggleTag={onToggleTag}
-          openControl={openControl}
-          ownerFilter={ownerFilter}
-          owners={owners}
-          searchQuery={searchQuery}
-          selectedTags={selectedTags}
-          sortOption={sortOption}
-          tags={tags}
-        />
-
         <Panel className="dashboard-table-list">
           <PanelHeader
             icon={<Table2 size={16} />}
             title="대시보드 목록"
+          />
+          <DashboardListToolbar
+            onClearTags={onClearTags}
+            onSearchQueryChange={onSearchQueryChange}
+            onSelectOwner={onSelectOwner}
+            onSelectSort={onSelectSort}
+            onToggleControl={onToggleControl}
+            onToggleTag={onToggleTag}
+            openControl={openControl}
+            ownerFilter={ownerFilter}
+            owners={owners}
+            searchQuery={searchQuery}
+            selectedTags={selectedTags}
+            sortOption={sortOption}
+            tags={tags}
           />
           <div className="dashboard-table-list-body">
             {error && (

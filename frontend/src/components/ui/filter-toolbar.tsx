@@ -77,7 +77,7 @@ export interface FilterToolbarInputProps
 export const FilterToolbarInput = React.forwardRef<HTMLInputElement, FilterToolbarInputProps>(
   ({ className, ...props }, ref) => (
     <InputGroupInput
-      className={cn("h-auto min-w-0 flex-1 px-0 py-0 text-sm font-semibold text-slate-900 placeholder:text-slate-400", className)}
+      className={cn("h-auto min-w-0 flex-1 px-0 py-0 !text-[16px] font-semibold text-slate-900 placeholder:text-slate-400", className)}
       ref={ref}
       variant="ghost"
       {...props}
