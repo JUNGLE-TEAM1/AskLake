@@ -504,6 +504,51 @@ const checks = [
       /현재 대시보드 링크를 복사했습니다/,
     ],
   },
+  {
+    name: "Continuous execution history uses durable sessions and guarded live polling",
+    file: "src/pages/ingest/JobsPages.tsx",
+    patterns: [
+      /props\.job\.executionMode === "continuous"/,
+      /getContinuousSessions\(job\.id\)/,
+      /getContinuousSessionBatches\(job\.id, nextSelectedId, 100\)/,
+      /inFlightRef\.current/,
+      /requestSequenceRef\.current/,
+      /document\.visibilityState === "hidden"/,
+      /schedule\(result\.ok \? 3000/,
+      /title="스트림 세션 이력"/,
+      /title="세션 Batch 상세"/,
+      /label="세션 누적 적재"/,
+      /label="현재 데이터셋"/,
+    ],
+  },
+  {
+    name: "Continuous Kafka creation skips the scheduler and keeps stream controls explicit",
+    file: "src/App.tsx",
+    patterns: [
+      /\["source", "schema", "permission", "target", "review"\]/,
+      /steps\.filter\(\(step\) => step !== "스케줄"\)/,
+      /continuousKafkaDraft \? "permission" : lastScheduleFlow/,
+    ],
+  },
+  {
+    name: "Continuous Kafka source exposes compact advanced stream settings",
+    file: "src/pages/etl/EtlPages.tsx",
+    patterns: [
+      /고급 설정/,
+      /label="시작 위치"/,
+      /label="Trigger 간격"/,
+      /label="Micro-batch 최대 메시지"/,
+    ],
+  },
+  {
+    name: "Continuous Kafka creation stores lifecycle metadata instead of a batch schedule",
+    file: "src/services/draftPipelineContract.ts",
+    patterns: [
+      /const continuousKafka = draft\.source\.executionMode === "continuous"/,
+      /scheduleLabel: continuousKafka \? "스케줄링 건너뛰기" : draft\.schedule\.label/,
+      /scheduleSummary: continuousKafka \? "실시간 스트림은 작업 생성 후 시작\/중지로 제어"/,
+    ],
+  },
 ];
 
 const failures = [];

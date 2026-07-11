@@ -1,3 +1,7 @@
+import asyncio
+import logging
+from contextlib import asynccontextmanager, suppress
+
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -6,10 +10,33 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.api.router import api_router
 from app.core.config import settings
 from app.core.errors import ApiError, api_error_handler, http_error_handler, unhandled_error_handler, validation_error_handler
+from app.services.etl_service import sync_active_kafka_continuous_runtimes
+
+logger = logging.getLogger(__name__)
+
+
+async def continuous_runtime_sync_loop() -> None:
+    while True:
+        try:
+            await asyncio.to_thread(sync_active_kafka_continuous_runtimes)
+        except Exception:  # Keep the control plane alive for the next interval.
+            logger.exception("Continuous runtime synchronization failed")
+        await asyncio.sleep(settings.continuous_runtime_sync_interval_seconds)
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    task = asyncio.create_task(continuous_runtime_sync_loop())
+    try:
+        yield
+    finally:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title=settings.app_name)
+    app = FastAPI(title=settings.app_name, lifespan=lifespan)
 
     app.add_middleware(
         CORSMiddleware,

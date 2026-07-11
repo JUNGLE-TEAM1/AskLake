@@ -12,6 +12,7 @@ import {
 } from "../services/mockApi";
 import {
   createPipelineDraft as createLivePipelineDraft,
+  getJob as getLiveJob,
   runJobCommand as runLiveJobCommand,
 } from "../services/pipelineApi";
 import { normalizeDatasetStatus, normalizeJobStatus } from "../utils/statusMeta";
@@ -632,6 +633,10 @@ function commandSuccessMessage(command: ServerJobCommand, job: JobRowData): stri
   if (command === "run") return "작업 실행 요청을 접수했습니다.";
   if (command === "retry") return "작업 재실행 요청을 접수했습니다.";
   if (command === "pause") return "실행 일시정지 요청을 접수했습니다.";
+  if (command === "startContinuous") return "Continuous 스트림 시작 요청을 접수했습니다.";
+  if (command === "pauseContinuous") return "Continuous 스트림 일시정지 요청을 접수했습니다.";
+  if (command === "resumeContinuous") return "Continuous 스트림 재개 요청을 접수했습니다.";
+  if (command === "stopContinuous") return "Continuous 스트림 중지 요청을 접수했습니다.";
   if (command === "stopSchedule") return realtime ? "실시간 수집을 중지했습니다." : "다음 반복 예약을 중지했습니다.";
   if (command === "resumeSchedule") return realtime ? "실시간 수집을 다시 시작했습니다." : "반복 스케줄을 다시 시작했습니다.";
   return "작업 취소 요청을 접수했습니다.";
@@ -669,6 +674,11 @@ function buildOptimisticJob(job: JobRowData): JobRowData {
   });
 }
 
+function isContinuousRuntimeTransition(job: JobRowData) {
+  return job.executionMode === "continuous"
+    && ["starting", "pausing", "stopping"].includes(job.continuousRuntime?.status ?? "");
+}
+
 export function useAskLakeData({
   enabled = true,
   onFlowChange,
@@ -697,6 +707,7 @@ export function useAskLakeData({
   const [dataError, setDataError] = useState<string | null>(null);
   const createPendingRef = useRef(false);
   const commandPendingRef = useRef<Set<string>>(new Set());
+  const continuousPollingRef = useRef<Set<string>>(new Set());
   const jobsFilterRequestRef = useRef(0);
 
   const jobExecutionEvidence = useMemo(
@@ -902,6 +913,27 @@ export function useAskLakeData({
     setSelectedJob((job) => (job.id === jobId ? updater(job) : job));
   };
 
+  const pollContinuousRuntimeUntilStable = async (initialJob: JobRowData) => {
+    if (apiConfig.useMock || !isContinuousRuntimeTransition(initialJob) || continuousPollingRef.current.has(initialJob.id)) return;
+
+    continuousPollingRef.current.add(initialJob.id);
+    let currentJob = initialJob;
+    try {
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 1000));
+        const nextJob = normalizeJobRow(await getLiveJob(initialJob.id));
+        updateJobState(initialJob.id, () => nextJob);
+        setJobListFacets((facets) => moveJobFacetCounts(facets, currentJob, nextJob));
+        currentJob = nextJob;
+        if (!isContinuousRuntimeTransition(nextJob)) return;
+      }
+    } catch {
+      // The last accepted command state remains visible; the next list refresh can retry the read.
+    } finally {
+      continuousPollingRef.current.delete(initialJob.id);
+    }
+  };
+
   const selectRunForJob = (jobId: string, runId: string) => {
     setSelectedRunIdByJobId((state) => {
       const runExists = (runsByJobId[jobId] ?? []).some((run) => run.runId === runId);
@@ -987,6 +1019,7 @@ export function useAskLakeData({
         normalizedUpdatedJob = nextJob;
         updateJobState(job.id, () => nextJob);
         setJobListFacets((facets) => moveJobFacetCounts(facets, previousJob, nextJob));
+        void pollContinuousRuntimeUntilStable(nextJob);
       }
       if (run) {
         setRunsByJobId((state) => ({

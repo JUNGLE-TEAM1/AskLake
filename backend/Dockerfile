@@ -17,6 +17,7 @@ RUN npm ci --omit=dev
 
 COPY app ./app
 COPY scripts ./scripts
+COPY fixtures ./fixtures
 COPY src ./src
 
 EXPOSE 8080
