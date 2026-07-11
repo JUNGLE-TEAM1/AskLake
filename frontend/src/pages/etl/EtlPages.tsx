@@ -611,8 +611,8 @@ function normalizeCronExpression(value: string) {
 const DEFAULT_PERMISSION_TEMPLATE = "Data Engineer Group";
 const DEFAULT_VISIBILITY = "조직 내부";
 const DEFAULT_APPROVAL_STATUS = "승인 검토";
-const DEFAULT_OWNER = "data-team-01";
-const DEFAULT_TARGET_DATASET = "customer_review_gold";
+const DEFAULT_OWNER = "";
+const DEFAULT_TARGET_DATASET = "";
 const DEFAULT_TARGET_LAYER: TargetLayer = "GOLD";
 const DEFAULT_TARGET_FORMAT: TargetFileFormat = "parquet";
 const DEFAULT_TARGET_TAGS: string[] = [];
@@ -757,7 +757,9 @@ function normalizeTargetLayer(value: string | undefined): TargetLayer {
 }
 
 function buildTargetStoragePath(targetDataset: string, targetLayer: TargetLayer) {
-  return `s3a://asklake-output/${targetDataset}/${targetLayer.toLowerCase()}/`;
+  const datasetPath = targetDataset.trim().replace(/[\\/\s]+/g, "_");
+  if (!datasetPath) return "";
+  return `s3a://asklake-output/${datasetPath}/${targetLayer.toLowerCase()}/`;
 }
 
 const TARGET_CONFIG_STORAGE_KEY = "asklake.targetConfigDraft";
@@ -955,7 +957,8 @@ function validateTargetConfig(config: TargetSavedConfig, jsonParseFailed: boolea
   return errors;
 }
 function buildJobName(targetDataset: string) {
-  return `${getDisplayText(targetDataset, DEFAULT_TARGET_DATASET)}_pipeline`;
+  const datasetName = getDisplayText(targetDataset, DEFAULT_TARGET_DATASET);
+  return datasetName ? `${datasetName}_pipeline` : "";
 }
 
 function buildPermissionSummary(permissionTemplate: string, visibility: string, approvalStatus: string) {
@@ -998,7 +1001,7 @@ function getTargetDraftValues(draft: DraftPipeline) {
   const storagePath = getDisplayText(target?.storagePath ?? draft.target.storagePath, buildTargetStoragePath(targetDataset, targetLayer));
 
   return {
-    description: getDisplayText(target?.description ?? draft.target.description, "고객 리뷰 분석용 정제 데이터셋"),
+    description: getDisplayText(target?.description ?? draft.target.description, ""),
     jobName: getDisplayText(target?.jobName ?? compatDraft.jobName, buildJobName(targetDataset)),
     owner: getDisplayText(target?.owner ?? compatDraft.owner ?? draft.permission.owner, DEFAULT_OWNER),
     partitionColumns: target?.partitionColumns ?? draft.target.partitionColumns ?? ["date", "category"],
@@ -1093,13 +1096,13 @@ export function SourceConnectionPage({
       title: "PostgreSQL 연결",
       description: "백엔드 커넥터가 PostgreSQL 테이블 목록, 샘플 행, 스키마를 조회합니다.",
       fields: [
-        ["Endpoint / Host", "127.0.0.1"],
-        ["Port", "15432"],
-        ["Database Name", "asklake_sources"],
+        ["Endpoint / Host", ""],
+        ["Port", ""],
+        ["Database Name", ""],
         ["Schema", "public"],
-        ["Username", "asklake"],
-        ["Password / Auth Token", "asklake"],
-        ["DATASET OR TABLE SELECTOR", "nyc_taxi_sample"],
+        ["Username", ""],
+        ["Password / Auth Token", ""],
+        ["DATASET OR TABLE SELECTOR", ""],
       ],
       testItems: [["Endpoint", "Not tested"], ["Backend connector", "Required"], ["Tables", "Pending"]],
       logs: ["PostgreSQL 소스 식별은 백엔드 커넥터 러너에서 검증합니다.", "브라우저는 원시 데이터베이스 소켓을 열지 않습니다."],
@@ -1115,12 +1118,12 @@ export function SourceConnectionPage({
       title: "MongoDB 연결",
       description: "백엔드 커넥터가 MongoDB 컬렉션 목록, 문서 샘플, 중첩 필드를 조회합니다.",
       fields: [
-        ["Endpoint / Host", "127.0.0.1"],
-        ["Port", "27018"],
-        ["Database Name", "asklake_sources"],
+        ["Endpoint / Host", ""],
+        ["Port", ""],
+        ["Database Name", ""],
         ["Username", ""],
         ["Password / Auth Token", ""],
-        ["DATASET OR TABLE SELECTOR", "app_events"],
+        ["DATASET OR TABLE SELECTOR", ""],
       ],
       testItems: [["Endpoint", "Not tested"], ["Database", "Pending"], ["Collection", "Pending"]],
       logs: ["MongoDB 소스 식별이 아직 검증되지 않았습니다.", "연결 테스트를 실행하면 제한 문서 샘플을 가져옵니다."],
@@ -1163,11 +1166,11 @@ export function SourceConnectionPage({
       description: "백엔드 connector runner가 Delta/Iceberg/Hudi 메타데이터를 조회해야 합니다.",
       fields: [
         ["Lake Type", "Delta Lake (Databricks)"],
-        ["CATALOG / NAMESPACE", "local_catalog"],
-        ["DATABASE / SCHEMA", "default"],
-        ["Path", "s3://m3-raw/nyc_taxi/yellow_parquet/"],
-        ["Endpoint URL", "http://127.0.0.1:9000"],
-        ["Region", "us-east-1"],
+        ["CATALOG / NAMESPACE", ""],
+        ["DATABASE / SCHEMA", ""],
+        ["Path", ""],
+        ["Endpoint URL", ""],
+        ["Region", ""],
         ["Access Key", ""],
         ["Secret Key", ""],
         ["Use Path Style", "true"],
@@ -1188,13 +1191,13 @@ export function SourceConnectionPage({
       description: "원격 데이터를 수집할 REST 엔드포인트를 설정합니다.",
       fields: [
         ["Method", "GET"],
-        ["Endpoint URL", "http://localhost:8080/api/harness/rest-sample"],
+        ["Endpoint URL", ""],
         ["Authentication Type", "None"],
         ["Token / Secret", ""],
         ["Accept", "application/json"],
-        ["X-Request-ID", "etl-9928-ax"],
-        ["limit", "50"],
-        ["status", "active"],
+        ["X-Request-ID", ""],
+        ["limit", ""],
+        ["status", ""],
         ["Pagination Strategy", "Page Number"],
         ["Root Path", "$.data.items"],
       ],
@@ -1212,9 +1215,9 @@ export function SourceConnectionPage({
       description: "실시간 데이터 스트림 엔드포인트를 설정합니다.",
       fields: [
         ["Stream Type", "Apache Kafka"],
-        ["Broker / Endpoint", "127.0.0.1:19092"],
-        ["TOPIC / QUEUE NAME", "asklake-source-events"],
-        ["CONSUMER GROUP ID", "asklake-etl-consumer-01"],
+        ["Broker / Endpoint", ""],
+        ["TOPIC / QUEUE NAME", ""],
+        ["CONSUMER GROUP ID", ""],
         ["Offset Policy", "Earliest (Start from beginning)"],
         ["Message Format", "JSON (Auto-infer Schema)"],
         ["Authentication", "SASL / SCRAM"],
@@ -1508,6 +1511,16 @@ export function SourceConnectionPage({
     }
     if (connectionStatus !== "success") {
       onNotify(isSqlResultSource ? "SQL 분석에서 Preview를 실행한 뒤 처리 Job 생성으로 진입해 주세요." : "먼저 소스 연결 테스트를 성공시켜야 스키마 단계로 넘어갈 수 있습니다.");
+      return;
+    }
+    if (requiresAssetSelectionForPreview && sourceStage === "connect") {
+      setSourceStage("browse");
+      onNotify("변환할 파일을 선택해 제한 샘플과 스키마를 확인하세요.");
+      return;
+    }
+    if (requiresAssetSelectionForPreview && (!selectedAsset || !hasSchemaPatch)) {
+      setSourceStage("browse");
+      onNotify("실제 파일을 선택하고 샘플 스키마 로드를 완료해야 다음 단계로 이동할 수 있습니다.");
       return;
     }
     applySourceDraft(activeSourceType, verifiedSourceFields, connectionStatus, connectionMessage);
@@ -4638,8 +4651,14 @@ export function TargetPage({
   );
   const sampleTargetSchema = useMemo(() => inferTargetSchema([], [], undefined), []);
   const [targetDataset, setTargetDataset] = useState(initialTarget.targetDataset);
-  const [databaseName, setDatabaseName] = useState(draftTarget?.databaseName ?? "asklake");
+  const [databaseName, setDatabaseName] = useState(draftTarget?.databaseName ?? "");
   const [targetStoragePath, setTargetStoragePath] = useState(initialTarget.storagePath);
+  const [isTargetStoragePathCustomized, setIsTargetStoragePathCustomized] = useState(
+    () => Boolean(
+      initialTarget.storagePath
+      && initialTarget.storagePath !== buildTargetStoragePath(initialTarget.targetDataset, initialTarget.targetLayer)
+    ),
+  );
   const [targetDescription, setTargetDescription] = useState(initialTarget.description);
   const [targetFormat, setTargetFormat] = useState<TargetFileFormat>(normalizeTargetFileFormat(initialTarget.targetFormat));
   const [targetOwner, setTargetOwner] = useState(draftTarget?.owner ?? initialTarget.owner);
@@ -4651,6 +4670,12 @@ export function TargetPage({
   const [schemaRules, setSchemaRules] = useState<TargetSchemaRule[]>(inferredTarget.schemaRules);
   const lastTestRun = draftTarget?.lastTestRun ?? { status: "idle", logs: [] };
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (!isTargetStoragePathCustomized) {
+      setTargetStoragePath(buildTargetStoragePath(targetDataset, targetLayer));
+    }
+  }, [isTargetStoragePathCustomized, targetDataset, targetLayer]);
 
   const shouldUseSampleTargetSchema = useMemo(
     () => !schemaRules.some((rule) => rule.partitionable && !rule.raw),
@@ -4865,7 +4890,16 @@ export function TargetPage({
               </Select>
             </FormFieldGroup>
             <FormFieldGroup className="field wide target-storage-field" label="저장경로">
-              <S3PathField useShadcnStyles value={targetStoragePath} onChange={setTargetStoragePath} />
+              <S3PathField
+                useShadcnStyles
+                value={targetStoragePath}
+                onChange={(nextPath) => {
+                  setTargetStoragePath(nextPath);
+                  setIsTargetStoragePathCustomized(
+                    nextPath.trim() !== buildTargetStoragePath(targetDataset, targetLayer),
+                  );
+                }}
+              />
             </FormFieldGroup>
           </div>
         </section>

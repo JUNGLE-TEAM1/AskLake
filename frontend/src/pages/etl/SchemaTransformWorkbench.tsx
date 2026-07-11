@@ -70,8 +70,8 @@ export function SchemaTransformWorkbench({
     onTransformStepsChange?.(buildTransformSteps(nextTargetSchema));
   };
 
-  const handleSqlChange = (sql: string) => {
-    if (!sql.trim()) return;
+  const handleSqlChange = (sql: string, mode?: string) => {
+    if (mode !== "sql" || !sql.trim()) return;
     onTransformStepsChange?.([
       {
         enabled: true,

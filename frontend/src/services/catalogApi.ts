@@ -1,4 +1,4 @@
-import type { CatalogDataset, CatalogDatasetRowsResponse, CatalogModelArtifact } from "../types";
+import type { CatalogDataset, CatalogDatasetRowsResponse } from "../types";
 import { apiClient } from "./apiClient";
 
 type DeleteMaterializationRunResponse = {
@@ -11,7 +11,6 @@ export async function deleteDatasetMaterializationRun(datasetId: string, runId: 
     `/api/catalog/datasets/${encodeURIComponent(datasetId)}/materialization-runs/${encodeURIComponent(runId)}`,
   );
 }
-
 export async function getCatalogDatasetRows(datasetId: string, options: { limit?: number; offset?: number } = {}): Promise<CatalogDatasetRowsResponse> {
   const params = new URLSearchParams();
   if (options.limit !== undefined) params.set("limit", String(options.limit));
@@ -20,8 +19,4 @@ export async function getCatalogDatasetRows(datasetId: string, options: { limit?
   return apiClient.get<CatalogDatasetRowsResponse>(
     `/api/catalog/datasets/${encodeURIComponent(datasetId)}/rows${query ? `?${query}` : ""}`,
   );
-}
-
-export async function getCatalogModelArtifacts(): Promise<CatalogModelArtifact[]> {
-  return apiClient.get<CatalogModelArtifact[]>("/api/catalog/models");
 }

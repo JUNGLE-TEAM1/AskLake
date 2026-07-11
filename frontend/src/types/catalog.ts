@@ -8,7 +8,6 @@ export type LineageGraphColumn = {
   name: string;
   type: string;
 };
-
 export type LineageGraphDataset = {
   columns: LineageGraphColumn[];
   engine: string;
@@ -62,13 +61,6 @@ export type CatalogDataset = {
   storageLocation?: string;
   storageSizeBytes?: number;
   tags: string[];
-  textStructuring?: TextStructuringRuntimeCheck[];
-  textStructuringDefinition?: {
-    columns?: Array<Record<string, unknown>>;
-    sourceFields?: string[];
-    version?: number;
-  } | null;
-  textStructuringExecution?: TextStructuringExecutionSummary;
   upstream: string[];
 };
 
@@ -89,45 +81,6 @@ export type DatasetMaterializationRun = {
   status: "success" | "failed" | "canceled" | "running" | "queued";
   storageLocation?: string;
   storageSizeBytes: number;
-  textStructuring?: TextStructuringRuntimeCheck[];
-  textStructuringExecution?: TextStructuringExecutionSummary;
-};
-
-export type TextStructuringRuntimeCheck = {
-  allowedValues?: string[];
-  distinctOutputValues?: number;
-  distributionWarning?: string;
-  executionMode?: "selected_model" | "auto_model" | "fallback_rule" | "missing_model" | "copy" | "instruction" | string;
-  fallbackAllowed?: boolean;
-  fallbackUsed?: boolean;
-  invalidRows?: number;
-  method?: string;
-  metrics?: {
-    accuracy?: number;
-    macroF1?: number;
-    validationRows?: number;
-    [key: string]: unknown;
-  };
-  modelArtifact?: string;
-  modelRequired?: boolean;
-  modelSelectionPolicy?: string;
-  output?: string;
-  outputDistribution?: Array<{ count: number; value: string }>;
-  runtimeStatus?: string;
-  selectedModelArtifact?: string;
-  target?: string;
-  targetColumn?: string;
-  validationStatus?: string;
-  validationRows?: number;
-};
-
-export type TextStructuringExecutionSummary = {
-  columns: TextStructuringRuntimeCheck[];
-  fallbackColumns: string[];
-  missingModelColumns: string[];
-  modelColumns: string[];
-  oneOfValueColumns: number;
-  totalColumns: number;
 };
 
 export type CatalogDatasetRowsResponse = {
@@ -140,37 +93,4 @@ export type CatalogDatasetRowsResponse = {
   returnedRows: number;
   rowCount: number;
   rows: string[][];
-};
-
-export type CatalogModelArtifact = {
-  allowedValues?: string[];
-  artifactType: "model";
-  datasetName?: string;
-  distinctOutputValues?: number;
-  distributionWarning?: string;
-  executionMode?: string;
-  fallbackUsed?: boolean;
-  id: string;
-  jobId?: string;
-  method?: string;
-  metrics?: {
-    accuracy?: number;
-    macroF1?: number;
-    validationRows?: number;
-    [key: string]: unknown;
-  };
-  modelArtifact?: string;
-  modelKind?: string;
-  outputColumn?: string;
-  outputDistribution?: Array<{ count: number; value: string }>;
-  runId?: string;
-  runtimeStatus?: string;
-  status?: "available" | "fallback" | "missing" | string;
-  targetColumn?: string;
-  targetDatasetId?: string;
-  totalRows?: number;
-  updatedAt?: string;
-  validRows?: number;
-  validationStatus?: string;
-  validationRows?: number;
 };

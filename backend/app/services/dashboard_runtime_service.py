@@ -55,7 +55,7 @@ from app.schemas.dashboard import (
 )
 from app.services.governance_enforcement import require_governed_access
 from app.services.resource_permission_service import dashboard_with_persisted_permission_grants, permissions_for_actor_with_governance
-from app.services.demo_catalog import dataset_rows_to_widget_data, get_demo_dataset
+from app.services.demo_catalog import dataset_rows_to_widget_data
 
 
 class DashboardRuntimeService:
@@ -510,7 +510,7 @@ class DashboardRuntimeService:
         if explicit_data is not None:
             return explicit_data
         dataset_payload = self.catalog_repository.get_dataset_payload(dataset_id) if dataset_id else None
-        return dataset_rows_to_widget_data(dataset_payload or get_demo_dataset(dataset_id))
+        return dataset_rows_to_widget_data(dataset_payload)
 
     @staticmethod
     def _default_config(widget_type: DashboardRuntimeWidgetType) -> DashboardWidgetConfigBase:

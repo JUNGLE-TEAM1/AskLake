@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { fieldValue, formatBytes, normalizeColumnName, sourceId } from "./profile.mjs";
@@ -11,10 +11,8 @@ import {
   getJob,
   listDatasets as listStoredDatasets,
   listJobs as listStoredJobs,
-  listModelArtifacts as listStoredModelArtifacts,
   saveDataset,
   saveJob,
-  saveModelArtifact,
   saveSqlRun,
 } from "./metadataStore.mjs";
 
@@ -85,220 +83,7 @@ export async function getPipelineJob(jobId) {
 }
 
 export async function listDatasets() {
-  const datasets = await listStoredDatasets();
-  return datasets.filter((dataset) => !isCatalogModelArtifact(dataset));
-}
-
-export async function listModelArtifacts() {
-  const stored = await listStoredModelArtifacts();
-  const discovered = discoverReviewTextModelArtifacts();
-  const byId = new Map();
-  for (const artifact of discovered) {
-    byId.set(artifact.id, artifact);
-  }
-  for (const artifact of stored) {
-    byId.set(artifact.id, { ...(byId.get(artifact.id) ?? {}), ...artifact });
-  }
-  return dedupeModelArtifacts([...byId.values()])
-    .sort((left, right) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")));
-}
-
-function dedupeModelArtifacts(artifacts) {
-  const byModel = new Map();
-  for (const artifact of artifacts) {
-    const key = [
-      normalizeColumnName(artifact.targetColumn || artifact.targetName || ""),
-      artifact.modelArtifact || artifact.artifact || "",
-      artifact.modelPath || artifact.path || "",
-    ].join("::");
-    const current = byModel.get(key);
-    if (!current) {
-      byModel.set(key, artifact);
-      continue;
-    }
-    const artifactIsNewer = String(artifact.updatedAt || "").localeCompare(String(current.updatedAt || "")) > 0;
-    const preferred = artifactIsNewer ? artifact : current;
-    const fallback = artifactIsNewer ? current : artifact;
-    const trainingArtifact = [preferred, fallback].find((item) => item?.source === "training_run");
-    byModel.set(key, {
-      ...fallback,
-      ...preferred,
-      allowedValues: preferred.allowedValues?.length ? preferred.allowedValues : fallback.allowedValues,
-      createdAt: preferred.createdAt || fallback.createdAt,
-      id: trainingArtifact?.id || preferred.id || fallback.id,
-      metrics: Object.keys(preferred.metrics || {}).length ? preferred.metrics : fallback.metrics,
-      runId: trainingArtifact?.runId || preferred.runId || fallback.runId,
-      source: trainingArtifact ? "training_run" : preferred.source,
-      trainingRows: trainingArtifact?.trainingRows ?? preferred.trainingRows ?? fallback.trainingRows,
-      validationRows: preferred.validationRows ?? fallback.validationRows,
-    });
-  }
-  for (const [key, artifact] of byModel) {
-    if (!artifact.id && artifact.modelArtifact) {
-      byModel.set(key, {
-        ...artifact,
-        id: `model_${normalizeColumnName(artifact.targetColumn || artifact.targetName || artifact.modelArtifact)}`,
-      });
-    }
-  }
-  return [...byModel.values()];
-}
-
-export async function createTextStructuringTrainingRun(request) {
-  const columns = Array.isArray(request?.columns) ? request.columns : [];
-  const trainRows = Array.isArray(request?.trainRows) ? request.trainRows : [];
-  if (columns.length === 0) throw validationError("Text structuring training requires at least one output column.");
-  if (trainRows.length < 2) throw validationError("Text structuring training requires labeled trainRows.");
-  const runId = `text_model_${Date.now().toString(36)}`;
-  const outputDir = path.join(backendDir, "..", "output", "nlp-eval", "text-structuring", "runtime", runId);
-  const pythonBin = process.env.ASKLAKE_FASTAPI_PYTHON || process.env.PYTHON || "python";
-  const result = spawnSync(
-    pythonBin,
-    [path.join(scriptsDir, "train_text_structuring_models.py"), "--output-dir", outputDir],
-    {
-      cwd: backendDir,
-      encoding: "utf8",
-      input: JSON.stringify({
-        ...request,
-        outputDir,
-      }),
-      maxBuffer: 128 * 1024 * 1024,
-    },
-  );
-  if (result.status !== 0) {
-    const error = new Error(result.stderr || result.stdout || "Text structuring model training failed.");
-    error.status = 500;
-    error.code = "TEXT_STRUCTURING_TRAINING_FAILED";
-    throw error;
-  }
-  let manifest;
-  try {
-    manifest = JSON.parse(result.stdout || "{}");
-  } catch {
-    const error = new Error("Text structuring model training returned invalid JSON.");
-    error.status = 500;
-    error.code = "TEXT_STRUCTURING_TRAINING_INVALID_OUTPUT";
-    throw error;
-  }
-  const trainedModels = manifest.trainedModels && typeof manifest.trainedModels === "object" ? manifest.trainedModels : {};
-  const savedArtifacts = [];
-  for (const [targetColumn, model] of Object.entries(trainedModels)) {
-    if (!model || model.status !== "trained" || !model.artifact) continue;
-    const artifact = {
-      allowedValues: model.allowedValues ?? [],
-      artifactType: "model",
-      accuracy: model.metrics?.accuracy,
-      createdAt: manifest.createdAt,
-      id: `model_${normalizeColumnName(targetColumn)}_${runId}`,
-      macroF1: model.metrics?.macroF1,
-      method: "one_of_values",
-      metrics: model.metrics ?? {},
-      modelArtifact: model.artifact,
-      modelKind: model.modelKind || "portable_tfidf_linear_svc",
-      modelPath: path.join(manifest.latestRuntimeDir || "", model.artifact),
-      runId,
-      runtimeStatus: "portable_text_model_available",
-      source: "training_run",
-      status: "available",
-      supportedMethods: ["one_of_values"],
-      targetColumn,
-      trainingRows: model.trainRows,
-      updatedAt: new Date().toISOString(),
-      validationRows: model.validationRows,
-      validationStatus: "available_for_selection",
-    };
-    savedArtifacts.push(await saveModelArtifact(artifact));
-  }
-  return {
-    artifacts: savedArtifacts,
-    manifest,
-    run: {
-      id: runId,
-      outputDir,
-      status: savedArtifacts.length > 0 ? "success" : "no_models_trained",
-      trainedModelCount: savedArtifacts.length,
-    },
-  };
-}
-
-function isCatalogModelArtifact(dataset) {
-  const kind = String(dataset?.artifactType || dataset?.resourceType || dataset?.type || "").toLowerCase();
-  return kind === "model" || kind === "model_artifact";
-}
-
-function discoverReviewTextModelArtifacts() {
-  const root = path.resolve(
-    process.env.ASKLAKE_REVIEW_TEXT_MODEL_HOST_DIR
-      || path.join(backendDir, "..", "output", "nlp-eval", "template-model-validation", "runtime", "latest"),
-  );
-  if (!existsSync(root)) return [];
-  const files = findPortableReviewTextModels(root);
-  return files.map((filePath) => {
-    const filename = path.basename(filePath);
-    const targetColumn = normalizeColumnName(filename.replace(/\.portable_linear_svc\.json$/i, ""));
-    let allowedValues = [];
-    let metrics = {};
-    try {
-      const payload = JSON.parse(readFileSync(filePath, "utf8"));
-      const rawAllowedValues = Array.isArray(payload.allowedValues) && payload.allowedValues.length > 0
-        ? payload.allowedValues
-        : payload.classes;
-      allowedValues = Array.isArray(rawAllowedValues) ? rawAllowedValues.map((value) => String(value)) : [];
-      metrics = payload.metrics && typeof payload.metrics === "object" ? payload.metrics : {};
-    } catch {
-      allowedValues = [];
-      metrics = {};
-    }
-    let updatedAt = new Date().toISOString();
-    try {
-      updatedAt = statSync(filePath).mtime.toISOString();
-    } catch {
-      // Keep current timestamp fallback.
-    }
-    return {
-      accuracy: metrics.accuracy,
-      allowedValues,
-      artifactType: "model",
-      id: `model_${targetColumn}`,
-      macroF1: metrics.macroF1,
-      method: "one_of_values",
-      metrics,
-      modelArtifact: filename,
-      modelKind: "portable_linear_svc",
-      modelPath: filePath,
-      runtimeStatus: "portable_text_model_available",
-      source: "filesystem",
-      status: "available",
-      supportedMethods: ["one_of_values"],
-      targetColumn,
-      updatedAt,
-      validationRows: metrics.validationRows,
-      validationStatus: "available_for_selection",
-    };
-  });
-}
-
-function findPortableReviewTextModels(root) {
-  const found = [];
-  const stack = [root];
-  while (stack.length > 0) {
-    const current = stack.pop();
-    let entries = [];
-    try {
-      entries = readdirSync(current, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    for (const entry of entries) {
-      const fullPath = path.join(current, entry.name);
-      if (entry.isDirectory()) {
-        stack.push(fullPath);
-      } else if (/\.portable_linear_svc\.json$/i.test(entry.name)) {
-        found.push(fullPath);
-      }
-    }
-  }
-  return found;
+  return listStoredDatasets();
 }
 
 export async function createPipeline(request) {
@@ -1013,60 +798,7 @@ function runFromSparkResult(run, result) {
     outputRows: formatRows(result.outputRows),
     startedAt: result.startedAt ?? run.startedAt,
     status: success ? "success" : "failed",
-    textStructuring: textStructuringRuntimeChecksFromSparkResult(result),
-    textStructuringExecution: textStructuringExecutionFromSparkResult(result),
   };
-}
-
-function textStructuringRuntimeChecksFromSparkResult(result) {
-  const checks = result?.quality?.reviewRowAnalysisChecks;
-  if (!Array.isArray(checks)) return [];
-  return checks.map((check) => ({
-    allowedValues: Array.isArray(check.allowedValues) ? check.allowedValues : [],
-    distinctOutputValues: Number(check.distinctOutputValues || 0),
-    distributionWarning: check.distributionWarning || "",
-    executionMode: check.executionMode || executionModeFromRuntimeStatus(check.runtimeStatus),
-    fallbackAllowed: Boolean(check.fallbackAllowed),
-    fallbackUsed: Boolean(check.fallbackUsed || check.runtimeStatus === "rule_fallback_output" || check.runtimeStatus === "rule_fallback_planned"),
-    invalidRows: Number(check.invalidRows || 0),
-    method: check.method || "",
-    metrics: check.metrics && typeof check.metrics === "object" ? check.metrics : {},
-    modelArtifact: check.modelArtifact || "",
-    modelRequired: Boolean(check.modelRequired),
-    modelSelectionPolicy: check.modelSelectionPolicy || "",
-    outputDistribution: Array.isArray(check.outputDistribution) ? check.outputDistribution : [],
-    runtimeStatus: check.runtimeStatus || "",
-    selectedModelArtifact: check.selectedModelArtifact || "",
-    target: check.target || check.output || check.id || "",
-    targetColumn: check.target || check.output || check.id || "",
-    validationStatus: check.validationStatus || "",
-    validationRows: Number(check.validationRows || check.metrics?.validationRows || 0),
-  }));
-}
-
-function textStructuringExecutionFromSparkResult(result) {
-  const execution = result?.textStructuring?.execution || result?.quality?.textStructuringExecution;
-  if (execution && typeof execution === "object") return execution;
-  const columns = textStructuringRuntimeChecksFromSparkResult(result);
-  return {
-    columns,
-    fallbackColumns: columns.filter((item) => item.fallbackUsed).map((item) => item.targetColumn || item.target).filter(Boolean),
-    missingModelColumns: columns.filter((item) => item.runtimeStatus === "missing_model_artifact").map((item) => item.targetColumn || item.target).filter(Boolean),
-    modelColumns: columns
-      .filter((item) => item.executionMode === "selected_model" || item.executionMode === "auto_model")
-      .map((item) => item.targetColumn || item.target)
-      .filter(Boolean),
-    oneOfValueColumns: columns.filter((item) => item.method === "one_of_values").length,
-    totalColumns: columns.length,
-  };
-}
-
-function executionModeFromRuntimeStatus(status) {
-  const normalized = String(status || "").toLowerCase();
-  if (normalized.includes("missing_model")) return "missing_model";
-  if (normalized.includes("fallback")) return "fallback_rule";
-  if (normalized.includes("portable_text_model")) return "auto_model";
-  return "";
 }
 
 function finalizeJobFromSparkResult(job, command, result) {
@@ -1110,9 +842,6 @@ async function updateDatasetFromSparkResult(job, result) {
   nextDataset.source = job.name;
   nextDataset.sourceRunId = result.runId;
   nextDataset.status = "available";
-  nextDataset.textStructuring = textStructuringRuntimeChecksFromSparkResult(result);
-  nextDataset.textStructuringDefinition = result?.textStructuring?.definition ?? null;
-  nextDataset.textStructuringExecution = textStructuringExecutionFromSparkResult(result);
   if (result.outputPath) {
     nextDataset.storageFormat = "parquet";
     nextDataset.storageLocation = result.outputPath;
@@ -1121,7 +850,6 @@ async function updateDatasetFromSparkResult(job, result) {
   nextDataset.materializationRuns = upsertMaterializationRun(nextDataset.materializationRuns, materializationRunFromSparkResult(job, result));
   nextDataset.upstream = Array.from(new Set([...(nextDataset.upstream ?? []), result.sourcePath ?? job.source]));
   await saveDataset(nextDataset);
-  await saveReviewRowModelArtifacts(job, result, nextDataset);
   return nextDataset;
 }
 
@@ -1157,9 +885,6 @@ function datasetFromSuccessfulRun(job, result) {
     storageLocation: result.outputPath ?? null,
     storageSizeBytes: Number(result.storageSizeBytes || 0),
     materializationRuns: [materializationRunFromSparkResult(job, result)],
-    textStructuring: textStructuringRuntimeChecksFromSparkResult(result),
-    textStructuringDefinition: result?.textStructuring?.definition ?? null,
-    textStructuringExecution: textStructuringExecutionFromSparkResult(result),
     upstream: Array.from(new Set([job.sourceLabel, job.name, result.sourcePath ?? job.source].filter(Boolean))),
   };
 }
@@ -1177,8 +902,6 @@ function materializationRunFromSparkResult(job, result) {
     storageSizeBytes: Number(result.storageSizeBytes || 0),
     quality: result.quality ?? null,
     quarantine: result.quality?.quarantine ?? null,
-    textStructuring: textStructuringRuntimeChecksFromSparkResult(result),
-    textStructuringExecution: textStructuringExecutionFromSparkResult(result),
   };
 }
 
@@ -1187,53 +910,6 @@ function upsertMaterializationRun(runs, nextRun) {
     nextRun,
     ...(Array.isArray(runs) ? runs.filter((run) => run?.runId !== nextRun.runId) : []),
   ];
-}
-
-async function saveReviewRowModelArtifacts(job, result, dataset) {
-  const checks = result?.quality?.reviewRowAnalysisChecks;
-  if (!Array.isArray(checks) || checks.length === 0) return [];
-  const saved = [];
-  for (const check of checks) {
-    if (!check || typeof check !== "object") continue;
-    if (!check.modelArtifact) continue;
-    const target = normalizeColumnName(check.target || check.output || check.id || "output");
-    if (!target) continue;
-    const artifact = {
-      allowedValues: Array.isArray(check.allowedValues) ? check.allowedValues : [],
-      artifactType: "model",
-      createdAt: result.endedAt ?? new Date().toISOString(),
-      datasetName: dataset.name,
-      executionMode: check.executionMode || executionModeFromRuntimeStatus(check.runtimeStatus),
-      fallbackAllowed: Boolean(check.fallbackAllowed),
-      fallbackUsed: Boolean(check.fallbackUsed || check.runtimeStatus === "rule_fallback_output" || check.runtimeStatus === "rule_fallback_planned"),
-      id: `model_${normalizeColumnName(dataset.id)}_${target}`,
-      jobId: job.id,
-      method: check.method || "",
-      metrics: check.metrics && typeof check.metrics === "object" ? check.metrics : {},
-      distinctOutputValues: Number(check.distinctOutputValues || 0),
-      distributionWarning: check.distributionWarning || "",
-      modelArtifact: check.modelArtifact || "",
-      modelKind: "review_row_text_transform",
-      modelRequired: Boolean(check.modelRequired),
-      modelSelectionPolicy: check.modelSelectionPolicy || "",
-      outputColumn: check.output || target,
-      runId: result.runId,
-      runtimeStatus: check.runtimeStatus || "",
-      outputDistribution: Array.isArray(check.outputDistribution) ? check.outputDistribution : [],
-      selectedModelArtifact: check.selectedModelArtifact || "",
-      status: check.modelArtifact ? "available" : check.runtimeStatus === "missing_model_artifact" ? "missing" : "fallback",
-      supportedMethods: Array.isArray(check.supportedMethods) ? check.supportedMethods : [],
-      targetColumn: target,
-      targetDatasetId: dataset.id,
-      totalRows: Number(check.totalRows || result.outputRows || 0),
-      updatedAt: result.endedAt ?? new Date().toISOString(),
-      validRows: Number(check.validRows || 0),
-      validationStatus: check.validationStatus || "",
-      validationRows: Number(check.validationRows || check.metrics?.validationRows || 0),
-    };
-    saved.push(await saveModelArtifact(artifact));
-  }
-  return saved;
 }
 
 function schemaFromJob(job) {

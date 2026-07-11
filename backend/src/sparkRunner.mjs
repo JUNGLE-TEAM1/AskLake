@@ -14,11 +14,6 @@ const reportContainerDir = process.env.ASKLAKE_SPARK_REPORT_CONTAINER_DIR || "/w
 const localOutputDir = path.resolve(process.env.ASKLAKE_SPARK_LOCAL_OUTPUT_DIR || path.join(backendDir, "tmp", "spark-output"));
 const sampleHostDir = path.resolve(process.env.ASKLAKE_LOCAL_SAMPLE_DIR || path.join(os.tmpdir(), "asklake-1gb-samples"));
 const sampleContainerDir = process.env.ASKLAKE_SAMPLE_CONTAINER_DIR || "/opt/asklake-samples";
-const reviewTextModelHostDir = path.resolve(
-  process.env.ASKLAKE_REVIEW_TEXT_MODEL_HOST_DIR
-    || path.join(backendDir, "..", "output", "nlp-eval", "template-model-validation", "runtime", "latest"),
-);
-const reviewTextModelContainerDir = process.env.ASKLAKE_REVIEW_TEXT_MODEL_CONTAINER_DIR || "/work/review-text-models";
 const outputVolumeName = process.env.ASKLAKE_SPARK_OUTPUT_VOLUME || "asklake-spark-output";
 const outputContainerDir = process.env.ASKLAKE_SPARK_OUTPUT_CONTAINER_DIR || "/work/output";
 
@@ -28,7 +23,6 @@ export function runSparkPipeline(job, command, runId) {
   ensureWritableDir(reportDir);
   ensureWritableDir(localOutputDir);
   ensureWritableDir(sampleHostDir);
-  ensureWritableDir(reviewTextModelHostDir);
 
   const source = sparkSourceFromJob(job, runId);
   const output = sparkOutputPath(job, runId);
@@ -37,13 +31,6 @@ export function runSparkPipeline(job, command, runId) {
   const manifestPath = path.join(reportDir, `${runId}.manifest.json`);
   const dockerManifestPath = `${reportContainerDir}/${runId}.manifest.json`;
   const packageArgs = sparkPackageArgs(source, output);
-  const localLlmEndpoint = process.env.ASKLAKE_LOCAL_LLM_ENDPOINT_IN_DOCKER
-    || process.env.ASKLAKE_LOCAL_LLM_ENDPOINT
-    || "http://host.docker.internal:1234/v1/chat/completions";
-  const localLlmModel = process.env.ASKLAKE_LOCAL_LLM_MODEL || "local-review-analyzer";
-  const localLlmTimeoutSeconds = process.env.ASKLAKE_LOCAL_LLM_TIMEOUT_SECONDS
-    || String(Math.ceil(Number(process.env.ASKLAKE_LOCAL_LLM_TIMEOUT_MS || 120000) / 1000));
-  const reviewAnalysisRuntime = process.env.ASKLAKE_REVIEW_ANALYSIS_RUNTIME || "scalable";
   writeSparkJobManifest(manifestPath, job);
   const dockerArgs = [
     "run",
@@ -60,8 +47,6 @@ export function runSparkPipeline(job, command, runId) {
     `${reportDir}:${reportContainerDir}`,
     "-v",
     `${sampleHostDir}:${sampleContainerDir}:ro`,
-    "-v",
-    `${reviewTextModelHostDir}:${reviewTextModelContainerDir}:ro`,
     "-v",
     `${outputVolumeName}:${outputContainerDir}`,
     "-e",
@@ -85,23 +70,9 @@ export function runSparkPipeline(job, command, runId) {
     "-e",
     `ASKLAKE_SPARK_JOB_MANIFEST_FILE=${dockerManifestPath}`,
     "-e",
-    `ASKLAKE_SPARK_TEXT_STRUCTURING_DEFINITION_FILE=${dockerManifestPath}`,
-    "-e",
     `ASKLAKE_SPARK_REPORT_FILE=${dockerReportPath}`,
     "-e",
     `ASKLAKE_SPARK_APP_NAME=asklake-${command}-${job.id}`,
-    "-e",
-    `ASKLAKE_LOCAL_LLM_ENDPOINT=${localLlmEndpoint}`,
-    "-e",
-    `ASKLAKE_LOCAL_LLM_MODEL=${localLlmModel}`,
-    "-e",
-    `ASKLAKE_LOCAL_LLM_TIMEOUT_SECONDS=${localLlmTimeoutSeconds}`,
-    "-e",
-    `ASKLAKE_LOCAL_LLM_MAX_INPUT_CHARS=${process.env.ASKLAKE_LOCAL_LLM_MAX_INPUT_CHARS || "9000"}`,
-    "-e",
-    `ASKLAKE_REVIEW_ANALYSIS_RUNTIME=${reviewAnalysisRuntime}`,
-    "-e",
-    `ASKLAKE_REVIEW_TEXT_MODEL_ROOT=${reviewTextModelContainerDir}`,
     "-e",
     "HOME=/tmp",
     process.env.ASKLAKE_SPARK_IMAGE || "apache/spark:4.0.1",
@@ -121,18 +92,6 @@ export function runSparkPipeline(job, command, runId) {
     `spark.cores.max=${process.env.ASKLAKE_SPARK_CORES_MAX || "4"}`,
     "--conf",
     `spark.sql.shuffle.partitions=${process.env.ASKLAKE_SPARK_SQL_SHUFFLE_PARTITIONS || "32"}`,
-    "--conf",
-    `spark.executorEnv.ASKLAKE_LOCAL_LLM_ENDPOINT=${localLlmEndpoint}`,
-    "--conf",
-    `spark.executorEnv.ASKLAKE_LOCAL_LLM_MODEL=${localLlmModel}`,
-    "--conf",
-    `spark.executorEnv.ASKLAKE_LOCAL_LLM_TIMEOUT_SECONDS=${localLlmTimeoutSeconds}`,
-    "--conf",
-    `spark.executorEnv.ASKLAKE_LOCAL_LLM_MAX_INPUT_CHARS=${process.env.ASKLAKE_LOCAL_LLM_MAX_INPUT_CHARS || "9000"}`,
-    "--conf",
-    `spark.executorEnv.ASKLAKE_REVIEW_ANALYSIS_RUNTIME=${reviewAnalysisRuntime}`,
-    "--conf",
-    `spark.executorEnv.ASKLAKE_REVIEW_TEXT_MODEL_ROOT=${reviewTextModelContainerDir}`,
     ...packageArgs,
     "/work/scripts/spark_job_run.py",
   ];
@@ -170,52 +129,14 @@ export function runSparkPipeline(job, command, runId) {
 }
 
 function writeSparkJobManifest(manifestPath, job) {
-  const textStructuringColumns = textStructuringDefinitionColumns(job.transformSteps ?? []);
   const manifest = {
     createdAt: new Date().toISOString(),
     partitionColumns: job.partition || "",
     qualityRules: job.qualityRules ?? [],
     schemaColumns: job.schemaColumns ?? [],
-    textStructuring: {
-      columns: textStructuringColumns,
-      specVersion: textStructuringColumns.length > 0 ? 1 : undefined,
-    },
     transformSteps: job.transformSteps ?? [],
   };
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
-}
-
-function textStructuringDefinitionColumns(transformSteps) {
-  return (Array.isArray(transformSteps) ? transformSteps : [])
-    .map((step) => {
-      if (!step || step.kind !== "derive") return null;
-      const rawParams = typeof step.params === "string" ? step.params : "";
-      const parsed = rawParams ? safeJsonParse(rawParams) : {};
-      const columns = Array.isArray(parsed?.columns) ? parsed.columns : [];
-      const firstColumn = columns.find((column) => column?.targetName === step.output) || columns[0] || {};
-      if (!firstColumn || !parsed?.sourceField) return null;
-      return {
-        allowedValues: Array.isArray(firstColumn.allowedValues) ? firstColumn.allowedValues : [],
-        fallbackAllowed: Boolean(firstColumn.fallbackAllowed),
-        method: firstColumn.method || "",
-        modelArtifact: firstColumn.modelArtifact || "",
-        modelId: firstColumn.modelId || "",
-        modelSelectionPolicy: firstColumn.modelSelectionPolicy || "",
-        outputColumn: step.output || firstColumn.targetName || "",
-        requireModel: Boolean(firstColumn.requireModel),
-        sourceField: parsed.sourceField,
-        type: firstColumn.type || step.type || "string",
-      };
-    })
-    .filter(Boolean);
-}
-
-function safeJsonParse(value) {
-  try {
-    return JSON.parse(value);
-  } catch {
-    return {};
-  }
 }
 
 function sparkPackageArgs(source, output) {
