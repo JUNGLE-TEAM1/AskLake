@@ -541,7 +541,7 @@
 
 .catalog-materialization-row {
   display: grid;
-  grid-template-columns: 56px minmax(98px, 1.1fr) minmax(112px, 1fr) minmax(78px, 0.7fr) minmax(62px, 0.6fr) minmax(120px, 1fr) auto;
+  grid-template-columns: 56px minmax(98px, 1.1fr) minmax(112px, 1fr) minmax(78px, 0.7fr) minmax(62px, 0.6fr) minmax(120px, 1fr) minmax(150px, 1.2fr) auto;
   align-items: center;
   gap: 8px;
   min-width: 0;

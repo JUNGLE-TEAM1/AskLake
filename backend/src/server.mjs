@@ -1,5 +1,17 @@
 import http from "node:http";
-import { commandJob, createPipeline, executeQuery, getPipelineJob, listDatasets, listJobs, listModelArtifacts, previewDatasetRows } from "./createPipeline.mjs";
+import {
+  commandJob,
+  createTextStructuringTrainingRun,
+  createPipeline,
+  executeQuery,
+  getPipelineJob,
+  getPipelineRun,
+  listDatasets,
+  listJobs,
+  listModelArtifacts,
+  previewDatasetRows,
+  readPipelineRunLogs,
+} from "./createPipeline.mjs";
 import { listSourceAssets, testSourceConnector } from "./connectors.mjs";
 import { listS3Buckets, listS3Prefixes } from "./s3.service.mjs";
 import { ensureMetadataSchema, resetMetadata } from "./metadataStore.mjs";
@@ -44,6 +56,24 @@ const server = http.createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === "GET" && /^\/api\/etl\/jobs\/[^/]+\/runs\/[^/]+$/.test(url.pathname)) {
+      const segments = url.pathname.split("/");
+      const jobId = decodeURIComponent(segments[4]);
+      const runId = decodeURIComponent(segments[6]);
+      sendJson(response, 200, await getPipelineRun(jobId, runId));
+      return;
+    }
+
+    if (request.method === "GET" && /^\/api\/etl\/jobs\/[^/]+\/runs\/[^/]+\/logs$/.test(url.pathname)) {
+      const segments = url.pathname.split("/");
+      const jobId = decodeURIComponent(segments[4]);
+      const runId = decodeURIComponent(segments[6]);
+      const stream = url.searchParams.get("stream") || "stdout";
+      const tailBytes = Number(url.searchParams.get("tail") || 65536);
+      sendJson(response, 200, await readPipelineRunLogs(jobId, runId, { stream, tailBytes }));
+      return;
+    }
+
     if (request.method === "GET" && url.pathname === "/api/catalog/datasets") {
       sendJson(response, 200, await listDatasets());
       return;
@@ -51,6 +81,17 @@ const server = http.createServer(async (request, response) => {
 
     if (request.method === "GET" && url.pathname === "/api/catalog/models") {
       sendJson(response, 200, await listModelArtifacts());
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/text-structuring/models") {
+      sendJson(response, 200, await listModelArtifacts());
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/text-structuring/training-runs") {
+      const body = await readJson(request);
+      sendJson(response, 201, await createTextStructuringTrainingRun(body));
       return;
     }
 
