@@ -680,10 +680,12 @@ function isContinuousRuntimeTransition(job: JobRowData) {
 }
 
 export function useAskLakeData({
+  enabled = true,
   onFlowChange,
   showToast,
   writeAuditLog,
 }: {
+  enabled?: boolean;
   onFlowChange: (flow: FlowId) => void;
   showToast: (message: string, tone?: "success" | "info") => void;
   writeAuditLog: WriteAuditLog;
@@ -714,6 +716,10 @@ export function useAskLakeData({
   );
 
   useEffect(() => {
+    if (!enabled) {
+      setDataLoading(false);
+      return;
+    }
     if (apiConfig.useMock) {
       const initialJobs = getInitialJobs();
       const hydratedRunState = buildRunStateFromJobs(initialJobs);
@@ -770,7 +776,7 @@ export function useAskLakeData({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [enabled]);
 
   const filterJobs = async (query: JobListQuery) => {
     const requestId = jobsFilterRequestRef.current + 1;

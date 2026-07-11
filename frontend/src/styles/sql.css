@@ -1,5 +1,6 @@
 .sql-page {
   --sql-side-panel-width: clamp(320px, 22vw, 400px);
+  --sql-workspace-height: min(860px, calc(100dvh - 24px));
   position: relative;
   display: grid;
   width: 100%;
@@ -31,9 +32,9 @@
   grid-row: 2;
   grid-template-rows: minmax(0, 1fr);
   align-self: start;
-  height: min(860px, calc(100vh - 24px));
-  min-height: min(620px, calc(100vh - 24px));
-  max-height: 860px;
+  height: var(--sql-workspace-height);
+  min-height: min(620px, var(--sql-workspace-height));
+  max-height: var(--sql-workspace-height);
   min-width: 0;
   overflow: hidden;
   padding: 20px;
@@ -42,20 +43,38 @@
 .sql-context-rail-button {
   position: absolute;
   z-index: 3;
-  top: 20px;
+  top: 0;
   left: 0;
 }
 
 .sql-page.context-collapsed .sql-workspace {
+  position: relative;
   grid-column: 1;
   min-width: 0;
   padding-left: 56px;
-  position: relative;
 }
 
 .sql-workspace {
   grid-column: 2;
   grid-row: 2;
+  height: var(--sql-workspace-height);
+  min-height: min(620px, var(--sql-workspace-height));
+  max-height: var(--sql-workspace-height);
+  grid-template-rows: max-content minmax(0, 1fr);
+}
+
+.sql-query-panel {
+  align-self: start;
+}
+
+.sql-result-panel {
+  min-height: 0;
+  grid-template-rows: max-content minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.sql-result-panel:has(.sql-result-scroll) {
+  grid-template-rows: max-content max-content minmax(0, 1fr);
 }
 
 .sql-dataset-scroll [data-slot="scroll-area-scrollbar"][data-orientation="vertical"] {
@@ -269,9 +288,32 @@
 }
 
 .sql-result-scroll {
-  height: min(460px, 48vh);
-  min-height: 300px;
+  height: 100%;
+  min-height: 0;
   min-width: 0;
+}
+
+.sql-result-empty {
+  height: 100%;
+  min-height: 0;
+}
+
+.sql-ai-dialog-preview {
+  height: min(260px, 34vh);
+  min-height: 160px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #0f172a;
+}
+
+.sql-ai-dialog-preview pre {
+  min-width: max-content;
+  color: #e2e8f0;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 13px;
+  line-height: 22px;
+  margin: 0;
+  padding: 16px 20px;
 }
 
 .sql-result-scroll .schema-table {
@@ -349,7 +391,7 @@
   }
 
   .sql-page.context-collapsed .sql-workspace {
-    padding-left: 56px;
+    padding-left: 44px;
   }
 
 }
@@ -371,12 +413,31 @@
     max-height: none;
   }
 
+  .sql-workspace {
+    height: auto;
+    min-height: 0;
+    max-height: none;
+    grid-template-rows: none;
+  }
+
+  .sql-result-panel,
+  .sql-result-panel:has(.sql-result-scroll) {
+    grid-template-rows: none;
+    overflow: visible;
+  }
+
+  .sql-result-scroll {
+    height: min(460px, 48vh);
+    min-height: 300px;
+  }
+
   .sql-tree-hover-card {
     display: none;
   }
 
   .sql-context-rail-button {
     position: static;
+    margin-bottom: 10px;
   }
 
   .sql-preview-limit-field {

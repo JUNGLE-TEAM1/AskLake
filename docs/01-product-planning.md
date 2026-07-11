@@ -32,6 +32,10 @@ AskLake는 사용자가 데이터셋의 출처, 품질, 권한, 실행 결과, �
 
 현재 브랜치에서 보여줄 수 있어야 하는 범위:
 
+- `/` AskLake 랜딩과 session login 진입
+- session actor 기반 로그인 guard, 프로필, 관리자 접근 분기
+- Dataset context를 선택하는 AI 활용 대화 UI
+- 사용자·그룹·권한·감사 로그 관리 콘솔
 - Source 연결 테스트와 Schema 추론
 - 새 수집/처리 Job 생성
 - 작업 명령 UI: 실행, 재실행, 일시정지, 취소
@@ -39,11 +43,11 @@ AskLake는 사용자가 데이터셋의 출처, 품질, 권한, 실행 결과, �
 - 실행 성공 후 Catalog dataset 등록
 - Catalog 목록/상세/lineage fallback
 - Dataset 범위의 read-only SQL preview
-- SQL 분석 화면 안의 Query AI 생성 기능: 자연어 요청 기반 SQL 초안 제안
-- AI 활용 메뉴의 ChatGPT형 UI skeleton: Catalog Dataset 컨텍스트를 고르는 대화 화면만 제공하며, 실제 AI 호출과 RAG runtime은 후속 범위로 둔다.
+- SQL editor 헤더의 AI 도우미: shadcn Dialog에서 자연어 요청 기반 SQL 초안 제안과 실행 결과 차트 전환
+- AI 활용 메뉴의 ChatGPT형 대화 UI: Catalog Dataset 컨텍스트를 고르는 대화 화면을 제공하며, 실제 AI 호출과 RAG runtime은 후속 범위로 둔다.
 - 수집/처리 Transform 화면은 필드 매핑과 quick transform function 중심으로 유지하며, AI 기반 필드 transform 버튼은 현재 MVP 범위에서 노출하지 않는다.
 - SQL preview 결과 기반 처리 Job 초안 생성 및 Lake Dataset materialize 준비
-- Dashboard 목록/빌더/런타임은 FastAPI Pair3 전까지 local/mock fallback으로 유지
+- Dashboard 목록/빌더/런타임은 FastAPI API를 우선 사용하고, 이전 backend 호환을 위해 404 local/mock fallback을 유지
 - 감사 로그와 toast feedback
 
 ## 5) Backend 확장 범위
@@ -60,13 +64,14 @@ FastAPI live backend에서 현재 우선 구현하는 범위:
 | SQL run | read-only SQL preview 결과 반환 | Medium | `docs/api-contract.md` |
 | Query AI 생성 | 선택 테이블 context와 자연어 요청으로 read-only SQL 초안을 생성 | Medium | `docs/api-contract.md` |
 | SQL derived dataset | SQL preview 결과를 Catalog dataset 또는 처리 Job materialize 흐름으로 연결 | Medium | `docs/api-contract.md` |
+| Local session auth | 로그인, 회원가입, session 확인, 로그아웃과 현재 사용자 조회 | High | `docs/api-contract.md` |
+| Phase 0 admin | 사용자·그룹·permission grant·governance control·감사 로그 조회/관리 | Medium | `docs/api-contract.md` |
 
-FastAPI Pair3 이전에 아직 live target으로 보지 않는 범위:
+현재 구현을 production 완성 범위로 보지 않는 항목:
 
-- Dashboard persistence 전체
-- Dashboard draft/published runtime persistence 전체
-- Audit log server persistence
-- 실제 인증/인가 시스템
+- Dashboard 공유 링크·export와 장기 운영 권한
+- Dashboard fallback 제거와 cross-pair E2E 검증
+- 운영 IdP/SSO 연동
 - production-grade scheduler
 - 실제 RAG indexing/runtime
 
@@ -77,6 +82,13 @@ FastAPI Pair3 이전에 아직 live target으로 보지 않는 범위:
 Phase 0에서는 용어와 경계를 먼저 고정한다. `createdBy`, `owner`, profile/avatar 같은 값은 표시용 identity metadata로 분리하고, 실제 접근 제어는 `ActorContext`, resource별 `permissionGrants`, backend permission check로 다룬다. 현재 기준 권한 판정은 allow-only 모델이며, `admin`은 전체 허용되고, owner fallback과 user/group/role/public grant 중 하나가 맞으면 허용된다. 지원 action은 `view`, `query`, `run`, `manage`, `delete`, `share`이고 여러 grant는 합산한다. 관리자 권한 편집 기능은 독립 `permission_grants` table row를 생성/수정/삭제하며, payload에서 유래한 owner/permissionRoles grant는 읽기 전용 metadata grant로 유지한다.
 
 ## 6) 핵심 사용자 흐름
+
+### Flow 0. 랜딩과 session login
+
+1. 사용자는 `/`에서 AskLake 랜딩을 확인하고 `/login`으로 이동한다.
+2. frontend는 `/api/auth/session`으로 session actor를 확인한다.
+3. 인증되지 않은 workspace route는 `AuthPage`로 이동한다.
+4. 인증 성공 후 `/jobs`로 이동하고, admin actor만 관리 메뉴를 사용할 수 있다.
 
 ### Flow A. 수집/처리 생성
 
@@ -92,11 +104,13 @@ Phase 0에서는 용어와 경계를 먼저 고정한다. `createdBy`, `owner`, 
 1. 사용자는 Catalog dataset을 연다.
 2. 시스템은 schema, sample rows, lineage를 보여준다.
 3. 사용자는 SQL 화면으로 이동해 read-only preview를 실행한다.
-4. 사용자는 선택 테이블과 schema context를 기반으로 Query AI 생성 기능에서 SQL 초안을 받을 수 있다.
+4. 사용자는 선택 테이블과 schema context를 기반으로 SQL editor 헤더의 AI Dialog에서 SQL 초안을 받을 수 있다.
 5. AI 제안은 자동 실행되지 않고 editor에 반영한 뒤 기존 read-only/preflight 검증을 통과해야 실행할 수 있다.
-6. Preview 결과는 수집/처리 Job 초안으로 넘겨 Review에서 Lake Dataset materialize 요청을 만들 수 있다.
-7. Preview 결과는 Dashboard builder로 넘겨 SQL 결과 컬럼과 row sample을 직접 시각화할 수 있다.
-8. Dashboard builder 진입은 실제 dataset 또는 SQL preview 결과가 있을 때만 허용한다.
+6. 실행 결과는 고정 높이 결과 영역과 전체 보기 모달에서 표로 탐색할 수 있다.
+7. 실행 결과가 있으면 AI 차트 액션을 사용해 같은 결과 영역을 shadcn Chart 시각화로 전환할 수 있다.
+8. Preview 결과는 수집/처리 Job 초안으로 넘겨 Review에서 Lake Dataset materialize 요청을 만들 수 있다.
+9. Preview 결과는 Dashboard builder로 넘겨 SQL 결과 컬럼과 row sample을 직접 시각화할 수 있다.
+10. Dashboard builder 진입은 실제 dataset 또는 SQL preview 결과가 있을 때만 허용한다.
 
 ### Flow C. FastAPI live backend 연결
 
@@ -104,7 +118,7 @@ Phase 0에서는 용어와 경계를 먼저 고정한다. `createdBy`, `owner`, 
 2. API adapter는 `VITE_API_BASE_URL` 또는 기본 `http://localhost:8080` 기준으로 서버를 호출한다.
 3. 서버 응답이 성공하면 프론트 상태를 서버 응답 기준으로 갱신한다.
 4. 실패하면 사용자에게 알리고 rollback 또는 retry 경로를 제공한다.
-5. Dashboard API는 FastAPI Pair3 전까지 local/mock fallback을 사용한다.
+5. Dashboard API는 FastAPI 응답을 우선하고, 이전 backend 호환을 위해 404 local/mock fallback을 사용한다.
 
 ## 7) 성공 기준
 
@@ -113,7 +127,7 @@ Phase 0에서는 용어와 경계를 먼저 고정한다. `createdBy`, `owner`, 
 - conflict marker가 남아 있지 않다.
 - 문서에 깨진 문자가 남아 있지 않다.
 - Source/Schema/Create/Run/Catalog/SQL live 경로가 문서와 코드에서 같은 범위를 말한다.
-- Dashboard 영역은 아직 FastAPI live 구현이라고 과장하지 않는다.
+- Dashboard 영역은 FastAPI 연결 범위와 404 local/mock fallback, 아직 남은 운영 범위를 구분한다.
 
 ## 8) 4일 데모 마일스톤
 
@@ -141,6 +155,6 @@ Phase 0에서는 용어와 경계를 먼저 고정한다. `createdBy`, `owner`, 
 
 ## 10) 오픈 질문
 
-- Dashboard FastAPI 구현은 Pair3에서 Node demo API를 옮겨올지, 새 SQLAlchemy 모델로 다시 만들지 결정해야 한다.
+- Dashboard 404 fallback 제거 시점과 공유 링크·export 운영 범위를 결정해야 한다.
 - 인증/권한은 MVP에 포함할지, demo actor로 둘지 결정해야 한다. 단, Phase 0 기준으로는 표시용 identity metadata와 실제 permission grant를 분리한다.
 - Audit log는 product feature인지 operational evidence인지 먼저 정해야 한다.

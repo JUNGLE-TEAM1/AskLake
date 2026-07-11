@@ -16,6 +16,7 @@ export const flowTabs: Array<{ id: FlowId; label: string; stepIndex: number }> =
   { id: "target", label: "타겟 설정", stepIndex: 4 },
   { id: "permission", label: "권한 설정", stepIndex: 3 },
   { id: "review", label: "검토 및 생성", stepIndex: 5 },
+  { id: "profile", label: "내 프로필", stepIndex: 0 },
   { id: "login", label: "로그인", stepIndex: 0 },
 ];
 

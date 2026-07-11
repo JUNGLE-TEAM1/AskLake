@@ -326,9 +326,9 @@ export function AdminConsolePage({ onAction, onNotify }: AdminConsolePageProps) 
           <AdminMetric label="제한 항목" value={`${blockedPrincipalCount + lockedResourceCount}`} />
         </div>
 
-        <section className="asklake-review-card admin-console-panel">
-          <div className="asklake-review-card-header">
-            <span className="asklake-review-icon permission"><ShieldCheck size={17} /></span>
+        <section className="xflow-review-card admin-console-panel">
+          <div className="xflow-review-card-header">
+            <span className="xflow-review-icon permission"><ShieldCheck size={17} /></span>
             <div>
               <h2>관리 콘솔</h2>
               <p>사용자, 그룹, 리소스 권한, 감사 로그를 관리합니다.</p>

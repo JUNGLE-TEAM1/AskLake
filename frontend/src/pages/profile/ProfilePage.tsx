@@ -66,9 +66,9 @@ export function ProfilePage({ onAction }: ProfilePageProps) {
         />
 
         {loading && (
-          <section className="asklake-review-card">
-            <div className="asklake-review-card-header">
-              <span className="asklake-review-icon"><CircleUser size={17} /></span>
+          <section className="xflow-review-card">
+            <div className="xflow-review-card-header">
+              <span className="xflow-review-icon"><CircleUser size={17} /></span>
               <div>
                 <h2>프로필 로딩 중</h2>
                 <p>현재 세션의 계정 정보를 확인합니다.</p>
@@ -79,9 +79,9 @@ export function ProfilePage({ onAction }: ProfilePageProps) {
         )}
 
         {!loading && error && (
-          <section className="asklake-review-card">
-            <div className="asklake-review-card-header">
-              <span className="asklake-review-icon"><CircleUser size={17} /></span>
+          <section className="xflow-review-card">
+            <div className="xflow-review-card-header">
+              <span className="xflow-review-icon"><CircleUser size={17} /></span>
               <div>
                 <h2>프로필 오류</h2>
                 <p>계정 정보를 불러오지 못했습니다.</p>
@@ -92,8 +92,8 @@ export function ProfilePage({ onAction }: ProfilePageProps) {
         )}
 
         {!loading && currentUser && (
-          <div className="asklake-review-stack profile-review-stack">
-            <section className="asklake-review-card profile-hero-panel">
+          <div className="xflow-review-stack profile-xflow-stack">
+            <section className="xflow-review-card profile-hero-panel">
               <div className="profile-hero">
                 <div className="profile-avatar" aria-hidden="true">{avatarInitials}</div>
                 <div>
@@ -105,9 +105,9 @@ export function ProfilePage({ onAction }: ProfilePageProps) {
               </div>
             </section>
 
-            <section className="asklake-review-card">
-              <div className="asklake-review-card-header">
-                <span className="asklake-review-icon permission"><ShieldCheck size={17} /></span>
+            <section className="xflow-review-card">
+              <div className="xflow-review-card-header">
+                <span className="xflow-review-icon permission"><ShieldCheck size={17} /></span>
                 <div>
                   <h2>권한 요약</h2>
                   <p>{currentUser.permissionsSummary.canView}개 리소스 조회 가능</p>
@@ -123,9 +123,9 @@ export function ProfilePage({ onAction }: ProfilePageProps) {
               </div>
             </section>
 
-            <section className="asklake-review-card">
-              <div className="asklake-review-card-header">
-                <span className="asklake-review-icon schema"><Boxes size={17} /></span>
+            <section className="xflow-review-card">
+              <div className="xflow-review-card-header">
+                <span className="xflow-review-icon schema"><Boxes size={17} /></span>
                 <div>
                   <h2>소속 그룹</h2>
                   <p>{currentUser.groups.length}개 그룹이 현재 actor principal로 계산됩니다.</p>
@@ -148,9 +148,9 @@ export function ProfilePage({ onAction }: ProfilePageProps) {
         )}
       </div>
 
-      <aside className="asklake-review-card profile-summary-panel">
-        <div className="asklake-review-card-header">
-          <span className="asklake-review-icon"><CircleUser size={17} /></span>
+      <aside className="xflow-review-card profile-summary-panel">
+        <div className="xflow-review-card-header">
+          <span className="xflow-review-icon"><CircleUser size={17} /></span>
           <div>
             <h2>Actor Context</h2>
             <p>권한 계산에 사용하는 현재 계정 기준입니다.</p>
