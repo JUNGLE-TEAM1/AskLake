@@ -1,5 +1,5 @@
 import { useMemo, type ReactNode } from "react";
-import { AlertCircle, CalendarDays, Database, Hash, LetterText, Server, Table2 } from "lucide-react";
+import { AlertCircle, CalendarDays, Database, Hash, LetterText, Server, Table2, X } from "lucide-react";
 import {
   TreeExpander,
   TreeIcon,
@@ -12,6 +12,7 @@ import {
 } from "@/components/kibo-ui/tree";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
+import { IconButton } from "@/components/ui/icon-button";
 import { PanelHeader } from "@/components/ui/panel";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -25,6 +26,7 @@ type DatasetSidebarProps = {
   error?: Error | null;
   isOpen?: boolean;
   isLoading?: boolean;
+  onClose?: () => void;
   onSelectColumn?: (dataset: DashboardDatasetOption, column: DashboardDatasetColumn) => void;
   onSelectDataset: (datasetId: string) => void;
   selectedDatasetId: string | null;
@@ -221,6 +223,7 @@ export function DatasetSidebar({
   error = null,
   isOpen = true,
   isLoading = false,
+  onClose,
   onSelectColumn,
   onSelectDataset,
   selectedDatasetId,
@@ -346,11 +349,21 @@ export function DatasetSidebar({
   return (
     <aside
       aria-hidden={!isOpen}
-      aria-label="Dataset"
+      aria-label="데이터"
       className="asklake-dashboard-dataset-sidebar"
       id="asklake-dashboard-dataset-sidebar"
     >
-      <PanelHeader className="min-h-0 border-b border-slate-200 p-4" icon={<Database />} title="Dataset" />
+      <PanelHeader
+        actions={onClose ? (
+          <IconButton label="데이터 패널 닫기" size="xs" variant="ghost" onClick={onClose}>
+            <X />
+          </IconButton>
+        ) : undefined}
+        className="min-h-0 p-4"
+        description="위젯에 연결할 데이터셋과 필드를 선택하세요."
+        icon={<Database />}
+        title="데이터"
+      />
 
       {isLoading ? (
         <DatasetTreeSkeleton />
@@ -369,7 +382,7 @@ export function DatasetSidebar({
         </Empty>
       ) : (
         <TooltipProvider delayDuration={250}>
-          <ScrollArea className="h-[min(760px,calc(100vh-240px))] min-h-[260px]" type="always">
+          <ScrollArea className="min-h-0 flex-1" type="always">
             <TreeProvider
               className="pr-3"
               defaultExpandedIds={[systemItemId, schemaItemId, tablesItemId]}
