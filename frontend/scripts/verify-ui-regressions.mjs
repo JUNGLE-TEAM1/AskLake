@@ -37,6 +37,13 @@ const checks = [
     ],
   },
   {
+    name: "SQL collapsed control stays inside the workspace rail",
+    file: "src/pages/sql/SqlAnalysisPage.tsx",
+    patterns: [
+      /<main className="sql-workspace[\s\S]*contextCollapsed && \([\s\S]*className="sql-context-rail-button"/,
+    ],
+  },
+  {
     name: "SQL page header uses the shared page gutter",
     file: "src/styles/base.css",
     patterns: [
@@ -53,6 +60,26 @@ const checks = [
     forbiddenPatterns: [
       /\.flex-1\.overflow-y-auto\.p-2::before/,
       /box-shadow:\s*inset -18px 0 0 #dbeafe/,
+    ],
+  },
+  {
+    name: "Schema target selection uses shared checkboxes and one delete action",
+    file: "src/components/etl/SchemaTransformEditor.jsx",
+    patterns: [
+      /import \{ Checkbox \} from "@\/components\/ui\/checkbox";/,
+      /aria-label="전체 타겟 컬럼 선택"/,
+      /aria-label=\{`\$\{col\.name\} 선택`\}/,
+      /targetSchema\.filter\(\(c\) => !selectedAfter\.has\(targetColumnKey\(c\)\)\)/,
+    ],
+    forbiddenPatterns: [/const moveAllToLeft =/, /aria-label="Remove all target columns"/],
+  },
+  {
+    name: "Schema projection preserves source columns and sample row order",
+    file: "src/pages/etl/SchemaTransformWorkbench.tsx",
+    patterns: [
+      /const nextColumns = currentColumns\.map\(\(column\) => \{/,
+      /if \(!selected\) return \{ \.\.\.column, included: false, targetOrder: undefined \};/,
+      /const nextRows = sampleRows\.map\(\(row\) => \[\.\.\.row\]\);/,
     ],
   },
   {
