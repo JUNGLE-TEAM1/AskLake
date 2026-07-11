@@ -6,8 +6,8 @@ import os
 from datetime import datetime, timezone
 
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, concat_ws, from_json, lit
-from pyspark.sql.types import BooleanType, DoubleType, LongType, StringType, StructField, StructType, TimestampType
+from pyspark.sql.functions import array, array_except, col, concat_ws, from_json, lit, map_keys, size
+from pyspark.sql.types import BooleanType, DoubleType, LongType, MapType, StringType, StructField, StructType, TimestampType
 
 
 def spark_type(value: str):
@@ -54,6 +54,31 @@ def output_exists(spark: SparkSession, path: str) -> bool:
     return bool(target.getFileSystem(hadoop).exists(target))
 
 
+def output_committed(spark: SparkSession, path: str) -> bool:
+    return output_exists(spark, f"{path.rstrip('/')}/_SUCCESS")
+
+
+def completed_batch_paths(spark: SparkSession, root: str) -> list[str]:
+    if not output_exists(spark, root):
+        return []
+    jvm = spark.sparkContext._jvm
+    hadoop = spark.sparkContext._jsc.hadoopConfiguration()
+    root_path = jvm.org.apache.hadoop.fs.Path(root)
+    paths = []
+    for status in root_path.getFileSystem(hadoop).listStatus(root_path):
+        child = str(status.getPath())
+        if status.isDirectory() and status.getPath().getName().startswith("batch_id=") and output_committed(spark, child):
+            paths.append(child)
+    return sorted(paths)
+
+
+def read_completed_batches(spark: SparkSession, root: str):
+    paths = completed_batch_paths(spark, root)
+    if not paths:
+        return None
+    return spark.read.option("basePath", root).parquet(*paths)
+
+
 def parquet_file_stats(spark: SparkSession, path: str) -> dict[str, int]:
     if not output_exists(spark, path):
         return {"count": 0, "bytes": 0}
@@ -70,11 +95,18 @@ def parquet_file_stats(spark: SparkSession, path: str) -> dict[str, int]:
     return {"count": count, "bytes": total_bytes}
 
 
+def parquet_paths_stats(spark: SparkSession, paths: list[str]) -> dict[str, int]:
+    result = {"count": 0, "bytes": 0}
+    for path in paths:
+        current = parquet_file_stats(spark, path)
+        result["count"] += current["count"]
+        result["bytes"] += current["bytes"]
+    return result
+
+
 def read_quarantine(spark: SparkSession, output_path: str):
     path = f"{output_path.rstrip('/')}/_quarantine/_batches"
-    if not output_exists(spark, path):
-        return None
-    return spark.read.option("recursiveFileLookup", "true").parquet(path)
+    return read_completed_batches(spark, path)
 
 
 def inspect_quarantine(spark: SparkSession, output_path: str):
@@ -82,8 +114,9 @@ def inspect_quarantine(spark: SparkSession, output_path: str):
     if frame is None:
         return {"records": [], "total": 0}
     target_path = f"{output_path.rstrip('/')}/_batches"
-    if output_exists(spark, target_path):
-        target_offsets = (spark.read.option("recursiveFileLookup", "true").parquet(target_path)
+    target = read_completed_batches(spark, target_path)
+    if target is not None:
+        target_offsets = (target
             .select(col("kafka_partition").alias("partition"), col("kafka_offset").alias("offset"))
             .distinct().withColumn("replayed", lit(True)))
         frame = frame.join(target_offsets, ["partition", "offset"], "left")
@@ -117,20 +150,58 @@ def replay_quarantine(spark: SparkSession, output_path: str, run_id: str):
         frame = frame.where(concat_ws(":", col("partition").cast("string"), col("offset").cast("string")).isin(keys))
     input_count = frame.count()
     schema, aliases, required = source_schema()
-    parsed = frame.withColumn("payload", from_json(col("raw_payload"), schema))
-    valid_condition = col("payload").isNotNull()
-    for field in required:
-        valid_condition = valid_condition & col(f"payload.`{field}`").isNotNull()
-    valid = parsed.where(valid_condition)
+    policy = {
+        "additiveNullable": "allow",
+        "missingRequired": "quarantine",
+        "incompatibleType": "quarantine",
+        "unknownField": "preserve",
+        **json.loads(os.environ.get("ASKLAKE_MAINTENANCE_SCHEMA_POLICY", "{}")),
+    }
+    approve_unknown_fields = os.environ.get("ASKLAKE_MAINTENANCE_APPROVE_UNKNOWN_FIELDS", "false").lower() == "true"
+    if approve_unknown_fields:
+        policy["additiveNullable"] = "allow"
+        policy["unknownField"] = "ignore"
+    parsed = (frame
+        .withColumn("raw_map", from_json(col("raw_payload"), MapType(StringType(), StringType())))
+        .withColumn("payload", from_json(col("raw_payload"), schema)))
+    malformed = col("raw_map").isNull() | col("payload").isNull()
+    required_missing = lit(False)
+    incompatible_type = lit(False)
+    for field, _target in aliases:
+        source_value = col("raw_map").getItem(field)
+        parsed_value_missing = col(f"payload.`{field}`").isNull()
+        if field in required:
+            required_missing = required_missing | source_value.isNull()
+        incompatible_type = incompatible_type | (source_value.isNotNull() & parsed_value_missing)
+    expected_keys = array(*[lit(source) for source, _target in aliases])
+    unknown_condition = col("raw_map").isNotNull() & (size(array_except(map_keys(col("raw_map")), expected_keys)) > 0)
+    pause_condition = lit(False)
+    if policy.get("missingRequired") == "pause":
+        pause_condition = pause_condition | required_missing
+    if policy.get("incompatibleType") == "pause":
+        pause_condition = pause_condition | incompatible_type
+    if policy.get("unknownField") == "pause" or policy.get("additiveNullable") == "pause":
+        pause_condition = pause_condition | unknown_condition
+    if parsed.where(~malformed & pause_condition).limit(1).count():
+        raise RuntimeError("Current schema evolution policy paused quarantine replay.")
+    invalid_condition = malformed
+    if policy.get("missingRequired") in {"quarantine", "pause"}:
+        invalid_condition = invalid_condition | required_missing
+    if policy.get("incompatibleType") in {"quarantine", "pause"}:
+        invalid_condition = invalid_condition | incompatible_type
+    if policy.get("unknownField") in {"quarantine", "pause"} or policy.get("additiveNullable") in {"quarantine", "pause"}:
+        invalid_condition = invalid_condition | unknown_condition
+    valid = parsed.where(~invalid_condition)
     failed_count = input_count - valid.count()
     target_root = f"{output_path.rstrip('/')}/_batches"
-    if output_exists(spark, target_root):
-        existing = (spark.read.option("recursiveFileLookup", "true").parquet(target_root)
+    existing_target = read_completed_batches(spark, target_root)
+    if existing_target is not None:
+        existing = (existing_target
             .select(col("kafka_partition").alias("partition"), col("kafka_offset").alias("offset")).distinct())
         valid = valid.join(existing, ["partition", "offset"], "left_anti")
     stored_count = valid.count()
     skipped_count = input_count - failed_count - stored_count
-    replay_path = f"{target_root}/replay_run={run_id}"
+    replay_path = f"{target_root}/batch_id=replay_{run_id}"
     if stored_count:
         selected = [col(f"payload.`{source}`").alias(target) for source, target in aliases]
         valid.select(
@@ -146,16 +217,18 @@ def replay_quarantine(spark: SparkSession, output_path: str, run_id: str):
         "skippedCount": skipped_count,
         "failedCount": failed_count,
         "outputPath": replay_path if stored_count else None,
+        "appliedSchemaPolicy": policy,
+        "policyOverride": "approve_unknown_fields" if approve_unknown_fields else None,
     }
 
 
 def compact(spark: SparkSession, output_path: str, run_id: str):
     source_path = f"{output_path.rstrip('/')}/_batches"
-    if not output_exists(spark, source_path):
+    frame = read_completed_batches(spark, source_path)
+    if frame is None:
         return {"inputRows": 0, "inputFiles": 0, "outputFiles": 0, "outputPath": None}
-    frame = spark.read.option("recursiveFileLookup", "true").parquet(source_path)
     input_rows = frame.count()
-    input_stats = parquet_file_stats(spark, source_path)
+    input_stats = parquet_paths_stats(spark, completed_batch_paths(spark, source_path))
     target_mb = min(max(int(os.environ.get("ASKLAKE_MAINTENANCE_TARGET_MB", "256")), 128), 512)
     target_bytes = target_mb * 1024 * 1024
     partitions = max(1, math.ceil(input_stats["bytes"] / target_bytes))

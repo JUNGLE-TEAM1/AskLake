@@ -11,6 +11,7 @@ const suffix = Date.now().toString(36);
 const topic = `asklake.continuous.verify.${suffix}`;
 const group = `asklake-continuous-verify-${suffix}`;
 const target = `continuous_verify_${suffix}`;
+const publicationFault = process.env.ASKLAKE_CONTINUOUS_E2E_PUBLICATION_FAULT === "true";
 let jobId = "";
 
 try {
@@ -21,6 +22,10 @@ try {
   jobId = created.job.id;
   await post(`/api/etl/jobs/${encodeURIComponent(jobId)}/commands`, { command: "startContinuous" });
   await expectStatus(`/api/etl/jobs/${encodeURIComponent(jobId)}/continuous/quarantine?limit=1`, 409);
+  if (publicationFault) {
+    await waitFor(async () => (await getJob()).continuousRuntime?.status === "failed", "injected pre-manifest failure");
+    await post(`/api/etl/jobs/${encodeURIComponent(jobId)}/commands`, { command: "resumeContinuous" });
+  }
   await waitFor(async () => (await datasets()).some((dataset) => dataset.id === `ds_${target}`), "Catalog materialization");
   await waitFor(async () => (await getJob()).continuousRuntime?.storedCount >= 2, "retained backlog consumption");
 
@@ -45,18 +50,23 @@ try {
   assert(Object.keys(afterRestart.continuousRuntime.partitionProgress || {}).length > 0, "Restart must preserve partition progress while idle.");
   await post(`/api/etl/jobs/${encodeURIComponent(jobId)}/commands`, { command: "stopContinuous" });
   await waitFor(async () => (await getJob()).continuousRuntime?.status === "stopped", "stop before replay");
-  const replay = await post(`/api/etl/jobs/${encodeURIComponent(jobId)}/continuous/quarantine/replays`, {});
-  assert(replay.result.storedCount === 1 && replay.result.failedCount === 1, "Replay must recover only the schema-policy quarantine row.");
+  const policyReplay = await post(`/api/etl/jobs/${encodeURIComponent(jobId)}/continuous/quarantine/replays`, {});
+  assert(policyReplay.result.storedCount === 0 && policyReplay.result.failedCount === 2, "Default replay must reapply the current schema policy.");
+  const replay = await post(`/api/etl/jobs/${encodeURIComponent(jobId)}/continuous/quarantine/replays`, { approveUnknownFields: true });
+  assert(replay.result.storedCount === 1 && replay.result.failedCount === 1, "Managed unknown-field approval must recover only the schema-policy quarantine row.");
+  assert(replay.result.policyOverride === "approve_unknown_fields", "Replay override must be explicit in the maintenance result.");
   const afterReplay = await getJob();
   assert(afterReplay.continuousRuntime.storedCount === 5, "Replay must increment durable target rows.");
   assert(afterReplay.continuousRuntime.replayedCount === 1, "Replay must be counted separately from historical quarantine.");
   assert(afterReplay.continuousRuntime.storedCount + afterReplay.continuousRuntime.quarantinedCount - afterReplay.continuousRuntime.replayedCount === 6, "Replay counters must reconcile to consumed rows.");
-  const replayAgain = await post(`/api/etl/jobs/${encodeURIComponent(jobId)}/continuous/quarantine/replays`, {});
+  const replayAgain = await post(`/api/etl/jobs/${encodeURIComponent(jobId)}/continuous/quarantine/replays`, { approveUnknownFields: true });
   assert(replayAgain.result.storedCount === 0 && replayAgain.result.skippedCount === 1, "Replay must be idempotent by partition and offset.");
   const quarantine = await get(`/api/etl/jobs/${encodeURIComponent(jobId)}/continuous/quarantine?limit=10`);
   assert(quarantine.records.some((record) => record.replayStatus === "replayed"), "Quarantine inspection must expose replay status.");
   const dataset = (await datasets()).find((item) => item.id === `ds_${target}`);
   assert(dataset?.materializationRuns?.some((run) => run.runId === replay.runId), "Replay must append a Catalog materialization run.");
+  const compaction = await post(`/api/etl/jobs/${encodeURIComponent(jobId)}/continuous/compactions`, { targetFileSizeMb: 128 });
+  assert(compaction.result.inputRows === 5, "The standard non-recursive Spark reader must read stream and replay batch_id partitions together.");
   console.log("verify-kafka-continuous-e2e: ok");
 } finally {
   if (jobId) await post(`/api/etl/jobs/${encodeURIComponent(jobId)}/commands`, { command: "stopContinuous" }).catch(() => undefined);

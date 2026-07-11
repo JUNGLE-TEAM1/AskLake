@@ -1438,7 +1438,7 @@ export function JobDetailPage({
 
 function ContinuousRuntimeCard({ job }: { job: JobRowData }) {
   const runtime = job.continuousRuntime;
-  const maintenanceBlocked = runtime ? ["starting", "running", "pausing", "stopping"].includes(runtime.status) : false;
+  const maintenanceBlocked = runtime ? !["paused", "stopped"].includes(runtime.status) : true;
   const [logs, setLogs] = useState<string[]>([]);
   const [logError, setLogError] = useState("");
   const [loadingLogs, setLoadingLogs] = useState(false);
@@ -1479,7 +1479,14 @@ function ContinuousRuntimeCard({ job }: { job: JobRowData }) {
       const run = kind === "replay"
         ? await replayContinuousQuarantine(job.id)
         : await compactContinuousTarget(job.id, 256);
-      setMaintenanceMessage(`${kind === "replay" ? "격리 재처리" : "Compaction"} ${run.status}`);
+      if (kind === "replay") {
+        const stored = Number(run.result?.storedCount ?? 0);
+        const failed = Number(run.result?.failedCount ?? 0);
+        const skipped = Number(run.result?.skippedCount ?? 0);
+        setMaintenanceMessage(`격리 재처리 ${run.status} · 적재 ${stored.toLocaleString()} · 정책 거부 ${failed.toLocaleString()} · 이미 처리 ${skipped.toLocaleString()}`);
+      } else {
+        setMaintenanceMessage(`Compaction ${run.status}`);
+      }
       await refreshMaintenance();
     } catch (error) {
       setMaintenanceMessage(error instanceof Error ? error.message : "Maintenance 실행에 실패했습니다.");

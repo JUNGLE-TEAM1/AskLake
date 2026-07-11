@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CreateBucketCommand, HeadBucketCommand, S3Client } from "@aws-sdk/client-s3";
+import { randomUUID } from "node:crypto";
 
 const backendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const scriptsDir = path.resolve(process.env.ASKLAKE_SPARK_HOST_SCRIPTS_DIR || path.join(backendDir, "scripts"));
@@ -35,6 +36,7 @@ async function manage(request) {
 
   if (action === "start") return startWorker(request, containerName);
   if (action === "pause" || action === "stop") return stopWorker(jobId, action, containerName);
+  if (action === "terminate") return terminateWorker(jobId, containerName);
   if (action === "status") return workerStatus(jobId, containerName);
   if (action === "logs") return workerLogs(jobId, containerName, positiveInt(request.tail, 200));
   throw new Error(`Unsupported continuous worker action: ${action}`);
@@ -44,7 +46,7 @@ async function startWorker(request, containerName) {
   const jobId = required(request.jobId, "jobId");
   const existing = inspectContainer(containerName);
   if (existing?.State?.Running) {
-    return { containerName, containerState: "running", jobId, report: readReport(jobId), started: false };
+    return { containerId: existing.Id, containerName, containerState: "running", jobId, report: readReport(jobId), started: false, workerAttemptId: existing.Config?.Labels?.["asklake.worker-attempt-id"] || null };
   }
   if (existing) runDocker(["rm", "-f", containerName], true);
 
@@ -52,16 +54,19 @@ async function startWorker(request, containerName) {
   await ensureOutputBucket(required(request.outputPath, "outputPath"));
   clearCommand(jobId);
   if (existsSync(reportFile(jobId))) unlinkSync(reportFile(jobId));
+  const workerAttemptId = randomUUID();
   const packages = sparkPackages();
   const args = [
     "run", "-d", "--name", containerName, "--network", network,
     "--add-host", "host.docker.internal:host-gateway",
     "--label", "asklake.role=kafka-continuous-worker",
     "--label", `asklake.job-id=${jobId}`,
+    "--label", `asklake.worker-attempt-id=${workerAttemptId}`,
     "-v", `${scriptsDir}:/work/scripts:ro`,
     "-v", `${ivyDir}:/tmp/.ivy2`,
     "-v", `${reportDir}:${reportContainerDir}`,
     "-e", `ASKLAKE_CONTINUOUS_JOB_ID=${jobId}`,
+    "-e", `ASKLAKE_CONTINUOUS_WORKER_ATTEMPT_ID=${workerAttemptId}`,
     "-e", `ASKLAKE_CONTINUOUS_BROKER=${required(request.broker, "broker")}`,
     "-e", `ASKLAKE_CONTINUOUS_TOPIC=${required(request.topic, "topic")}`,
     "-e", `ASKLAKE_CONTINUOUS_CONSUMER_GROUP_ID=${required(request.consumerGroupId, "consumerGroupId")}`,
@@ -75,6 +80,7 @@ async function startWorker(request, containerName) {
     "-e", `ASKLAKE_CONTINUOUS_INITIAL_SCHEMA_STATE=${JSON.stringify(request.initialSchemaState || {})}`,
     "-e", `ASKLAKE_CONTINUOUS_SCHEMA_COLUMNS=${JSON.stringify(request.schemaColumns || [])}`,
     "-e", `ASKLAKE_CONTINUOUS_SCHEMA_POLICY=${JSON.stringify(request.schemaEvolutionPolicy || {})}`,
+    "-e", `ASKLAKE_CONTINUOUS_FAIL_AFTER_DATA_WRITE_ONCE=${process.env.ASKLAKE_CONTINUOUS_FAIL_AFTER_DATA_WRITE_ONCE || "false"}`,
     "-e", `ASKLAKE_CONTINUOUS_REPORT_FILE=${reportContainerDir}/${reportFileName(jobId)}`,
     "-e", `ASKLAKE_CONTINUOUS_COMMAND_FILE=${reportContainerDir}/${commandFileName(jobId)}`,
     "-e", `MINIO_ENDPOINT=${process.env.MINIO_ENDPOINT_IN_DOCKER || "http://minio:9000"}`,
@@ -90,7 +96,7 @@ async function startWorker(request, containerName) {
     "/work/scripts/kafka_continuous_stream.py",
   ];
   const containerId = runDocker(args).trim();
-  return { containerId, containerName, containerState: "starting", jobId, report: readReport(jobId), started: true };
+  return { containerId, containerName, containerState: "starting", jobId, report: readReport(jobId), started: true, workerAttemptId };
 }
 
 async function ensureOutputBucket(outputPath) {
@@ -124,11 +130,26 @@ function workerStatus(jobId, containerName) {
   const command = readCommand(jobId);
   return {
     containerName,
+    containerId: existing?.Id || null,
     containerState: existing?.State?.Running ? "running" : existing ? "exited" : "missing",
     exitCode: existing?.State?.ExitCode ?? null,
     jobId,
     report: readReport(jobId),
     requestedAction: command?.action || null,
+    workerAttemptId: existing?.Config?.Labels?.["asklake.worker-attempt-id"] || null,
+  };
+}
+
+function terminateWorker(jobId, containerName) {
+  const existing = inspectContainer(containerName);
+  if (existing?.State?.Running) runDocker(["kill", "--signal=SIGTERM", containerName], true);
+  return {
+    containerId: existing?.Id || null,
+    containerName,
+    containerState: existing?.State?.Running ? "terminateRequested" : "not_running",
+    jobId,
+    report: readReport(jobId),
+    workerAttemptId: existing?.Config?.Labels?.["asklake.worker-attempt-id"] || null,
   };
 }
 

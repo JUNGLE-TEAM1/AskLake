@@ -12,12 +12,26 @@ const masterUrl = process.env.ASKLAKE_SPARK_MASTER_URL || "spark://asklake-spark
 const request = JSON.parse(readFileSync(0, "utf8").trim() || "{}");
 
 try {
-  ensureSparkServer();
-  const result = runMaintenance(request);
+  const result = request.action === "cleanup" ? cleanupMaintenance(request) : runMaintenanceWithSpark(request);
   console.log(`ASKLAKE_KAFKA_MAINTENANCE_RESULT=${JSON.stringify(result)}`);
 } catch (error) {
   console.log(`ASKLAKE_KAFKA_MAINTENANCE_ERROR=${JSON.stringify({ code: "KAFKA_CONTINUOUS_MAINTENANCE_FAILED", message: error?.message || String(error), status: 502 })}`);
   process.exitCode = 1;
+}
+
+function runMaintenanceWithSpark(input) {
+  ensureSparkServer();
+  return runMaintenance(input);
+}
+
+function cleanupMaintenance(input) {
+  const runId = required(input.runId, "runId");
+  const containerName = maintenanceName(runId);
+  const execution = spawnSync("docker", ["rm", "-f", containerName], { encoding: "utf8" });
+  if (execution.status !== 0 && !String(execution.stderr || "").includes("No such container")) {
+    throw new Error(`Maintenance container cleanup failed.\n${execution.stdout}\n${execution.stderr}`);
+  }
+  return { cleaned: execution.status === 0, containerName, runId };
 }
 
 function runMaintenance(input) {
@@ -26,6 +40,9 @@ function runMaintenance(input) {
   ].filter((value) => value && value !== "none").join(",");
   const args = [
     "run", "--rm", "--network", network,
+    "--name", maintenanceName(input.runId),
+    "--label", "asklake.role=kafka-continuous-maintenance",
+    "--label", `asklake.maintenance-run-id=${required(input.runId, "runId")}`,
     "--add-host", "host.docker.internal:host-gateway",
     "-v", `${scriptsDir}:/work/scripts:ro`,
     "-v", `${ivyDir}:/tmp/.ivy2`,
@@ -33,6 +50,8 @@ function runMaintenance(input) {
     "-e", `ASKLAKE_MAINTENANCE_RUN_ID=${required(input.runId, "runId")}`,
     "-e", `ASKLAKE_MAINTENANCE_OUTPUT_PATH=${required(input.outputPath, "outputPath")}`,
     "-e", `ASKLAKE_MAINTENANCE_SCHEMA_COLUMNS=${JSON.stringify(input.schemaColumns || [])}`,
+    "-e", `ASKLAKE_MAINTENANCE_SCHEMA_POLICY=${JSON.stringify(input.schemaEvolutionPolicy || {})}`,
+    "-e", `ASKLAKE_MAINTENANCE_APPROVE_UNKNOWN_FIELDS=${Boolean(input.approveUnknownFields)}`,
     "-e", `ASKLAKE_MAINTENANCE_OFFSETS=${JSON.stringify(input.offsets || [])}`,
     "-e", `ASKLAKE_MAINTENANCE_TARGET_MB=${input.targetFileSizeMb || 256}`,
     "-e", `ASKLAKE_MAINTENANCE_LIMIT=${input.limit || 100}`,
@@ -62,4 +81,9 @@ function ensureSparkServer() {
 function required(value, name) {
   if (value === undefined || value === null || String(value).trim() === "") throw new Error(`${name} is required`);
   return String(value);
+}
+
+function maintenanceName(runId) {
+  const safe = String(runId).toLowerCase().replace(/[^a-z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "") || "run";
+  return `asklake-kafka-maint-${safe}`.slice(0, 120);
 }

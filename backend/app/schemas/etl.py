@@ -153,6 +153,7 @@ class ContinuousQuarantineResponse(CamelModel):
 
 class ContinuousReplayRequest(CamelModel):
     offsets: list[str] = Field(default_factory=list)
+    approve_unknown_fields: bool = False
 
     @field_validator("offsets")
     @classmethod

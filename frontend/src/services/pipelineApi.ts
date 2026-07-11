@@ -51,8 +51,8 @@ export async function getContinuousMaintenanceRuns(jobId: string): Promise<Conti
   return apiClient.get<ContinuousMaintenanceRun[]>(`/api/etl/jobs/${encodeURIComponent(jobId)}/continuous/maintenance-runs`);
 }
 
-export async function replayContinuousQuarantine(jobId: string, offsets: string[] = []): Promise<ContinuousMaintenanceRun> {
-  return apiClient.post<ContinuousMaintenanceRun>(`/api/etl/jobs/${encodeURIComponent(jobId)}/continuous/quarantine/replays`, { offsets });
+export async function replayContinuousQuarantine(jobId: string, offsets: string[] = [], approveUnknownFields = false): Promise<ContinuousMaintenanceRun> {
+  return apiClient.post<ContinuousMaintenanceRun>(`/api/etl/jobs/${encodeURIComponent(jobId)}/continuous/quarantine/replays`, { offsets, approveUnknownFields });
 }
 
 export async function compactContinuousTarget(jobId: string, targetFileSizeMb = 256): Promise<ContinuousMaintenanceRun> {

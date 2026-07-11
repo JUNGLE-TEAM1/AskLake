@@ -1,15 +1,16 @@
 """Long-running Kafka to Parquet Structured Streaming worker for AskLake."""
 
-import json
 import hashlib
+import json
 import os
+import re
 import signal
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from pyspark.sql import DataFrame, SparkSession
-from pyspark.sql.functions import array, array_except, col, current_timestamp, explode, from_json, lit, map_keys, max as spark_max, size, sum as spark_sum, when
+from pyspark.sql.functions import array, array_except, col, current_timestamp, explode, from_json, lit, map_keys, min as spark_min, max as spark_max, size, when
 from pyspark.sql.types import BooleanType, DoubleType, LongType, MapType, StringType, StructField, StructType, TimestampType
 
 
@@ -22,6 +23,7 @@ def json_object_env(name: str) -> dict[str, Any]:
 
 
 JOB_ID = os.environ["ASKLAKE_CONTINUOUS_JOB_ID"]
+WORKER_ATTEMPT_ID = os.environ.get("ASKLAKE_CONTINUOUS_WORKER_ATTEMPT_ID")
 REPORT_FILE = Path(os.environ["ASKLAKE_CONTINUOUS_REPORT_FILE"])
 COMMAND_FILE = Path(os.environ["ASKLAKE_CONTINUOUS_COMMAND_FILE"])
 STOP_REQUESTED = False
@@ -48,6 +50,7 @@ LAST_BATCH_STORED_COUNT = 0
 LAST_BATCH_QUARANTINED_COUNT = 0
 LAST_BATCH_WRITTEN = False
 PROCESSED_OFFSETS: dict[str, int] = {}
+PUBLISHED_BATCHES: list[dict[str, Any]] = []
 METRICS: dict[str, Any] = {
     "lag": None,
     "lagAvailable": False,
@@ -73,20 +76,37 @@ def now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def apply_catalog_ack() -> None:
+    global PUBLISHED_BATCHES
+    ack_path = REPORT_FILE.with_suffix(".catalog-ack.json")
+    try:
+        payload = json.loads(ack_path.read_text(encoding="utf-8"))
+        acknowledged_batch = int(payload.get("batchId"))
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return
+    PUBLISHED_BATCHES = [
+        item for item in PUBLISHED_BATCHES
+        if int(item.get("batchId") or 0) > acknowledged_batch
+    ]
+
+
 def report(status: str, *, batch_id: int | None = None, error: str | None = None) -> None:
     global LAST_BATCH_ID, LAST_FLUSH_AT
     if batch_id is not None:
         LAST_BATCH_ID = batch_id
         LAST_FLUSH_AT = now()
+    apply_catalog_ack()
     REPORT_FILE.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "status": status,
+        "workerAttemptId": WORKER_ATTEMPT_ID,
         "heartbeatAt": now(),
         "lastFlushAt": LAST_FLUSH_AT,
         "lastBatchId": str(LAST_BATCH_ID) if LAST_BATCH_ID is not None else None,
         "lastBatchStoredCount": LAST_BATCH_STORED_COUNT,
         "lastBatchQuarantinedCount": LAST_BATCH_QUARANTINED_COUNT,
         "lastBatchWritten": LAST_BATCH_WRITTEN,
+        "publishedBatches": PUBLISHED_BATCHES,
         **METRICS,
         **SCHEMA_STATE,
         **COUNTERS,
@@ -205,20 +225,83 @@ def configure_s3a(spark: SparkSession) -> None:
     hadoop.set("fs.s3a.connection.ssl.enabled", "false")
 
 
-def batch_output_exists(spark: SparkSession, output_path: str) -> bool:
+def path_exists(spark: SparkSession, output_path: str) -> bool:
     jvm = spark.sparkContext._jvm
     hadoop = spark.sparkContext._jsc.hadoopConfiguration()
     path = jvm.org.apache.hadoop.fs.Path(output_path)
     return bool(path.getFileSystem(hadoop).exists(path))
 
 
-def write_batch_once(spark: SparkSession, frame: DataFrame, root: str, batch_id: int) -> bool:
-    # Spark retries the same batch ID after a failed checkpoint commit. A stable
-    # batch directory turns that retry into an idempotent target publication.
+def output_committed(spark: SparkSession, output_path: str) -> bool:
+    return path_exists(spark, f"{output_path.rstrip('/')}/_SUCCESS")
+
+
+def delete_incomplete_output(spark: SparkSession, output_path: str) -> None:
+    if not path_exists(spark, output_path) or output_committed(spark, output_path):
+        return
+    jvm = spark.sparkContext._jvm
+    hadoop = spark.sparkContext._jsc.hadoopConfiguration()
+    path = jvm.org.apache.hadoop.fs.Path(output_path)
+    if not path.getFileSystem(hadoop).delete(path, True):
+        raise RuntimeError(f"Could not remove incomplete publication: {output_path}")
+
+
+def delete_output(spark: SparkSession, output_path: str) -> None:
+    if not path_exists(spark, output_path):
+        return
+    jvm = spark.sparkContext._jvm
+    hadoop = spark.sparkContext._jsc.hadoopConfiguration()
+    path = jvm.org.apache.hadoop.fs.Path(output_path)
+    if not path.getFileSystem(hadoop).delete(path, True):
+        raise RuntimeError(f"Could not remove stale publication: {output_path}")
+
+
+def canonical_publication_signature(signature: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "batchId": int(signature.get("batchId") or 0),
+        "inputCount": int(signature.get("inputCount") or 0),
+        "outputKind": str(signature.get("outputKind") or "target"),
+        "sourceRanges": normalized_source_ranges(signature.get("sourceRanges")),
+    }
+
+
+def publication_signature_path(batch_path: str) -> str:
+    return f"{batch_path.rstrip('/')}/_asklake_publication"
+
+
+def read_publication_signature(spark: SparkSession, batch_path: str) -> dict[str, Any] | None:
+    signature_path = publication_signature_path(batch_path)
+    if not output_committed(spark, signature_path):
+        return None
+    row = spark.read.json(signature_path).first()
+    return canonical_publication_signature(row.asDict(recursive=True)) if row is not None else None
+
+
+def write_publication_signature(spark: SparkSession, batch_path: str, signature: dict[str, Any]) -> None:
+    signature_path = publication_signature_path(batch_path)
+    frame = spark.read.json(spark.sparkContext.parallelize([json.dumps(canonical_publication_signature(signature))]))
+    frame.write.mode("errorifexists").json(signature_path)
+    if not output_committed(spark, signature_path):
+        raise RuntimeError(f"Publication signature did not produce a completion marker: {signature_path}")
+
+
+def write_batch_once(
+    spark: SparkSession,
+    frame: DataFrame,
+    root: str,
+    batch_id: int,
+    signature: dict[str, Any],
+) -> bool:
     batch_path = f"{root.rstrip('/')}/_batches/batch_id={batch_id}"
-    if batch_output_exists(spark, batch_path):
-        return False
+    if output_committed(spark, batch_path):
+        if read_publication_signature(spark, batch_path) == canonical_publication_signature(signature):
+            return False
+        delete_output(spark, batch_path)
+    delete_incomplete_output(spark, batch_path)
     frame.write.mode("errorifexists").parquet(batch_path)
+    if not output_committed(spark, batch_path):
+        raise RuntimeError(f"Batch publication did not produce a completion marker: {batch_path}")
+    write_publication_signature(spark, batch_path, signature)
     return True
 
 
@@ -226,39 +309,124 @@ def manifest_path(root: str, batch_id: int) -> str:
     return f"{root.rstrip('/')}/_batch-manifests/batch_id={batch_id}"
 
 
-def read_batch_manifest(spark: SparkSession, root: str, batch_id: int) -> dict[str, int] | None:
+def read_batch_manifest(spark: SparkSession, root: str, batch_id: int) -> dict[str, Any] | None:
     path = manifest_path(root, batch_id)
-    if not batch_output_exists(spark, path):
+    if not output_committed(spark, path):
         return None
+    return load_committed_manifest(spark, root, path, batch_id)
+
+
+def load_committed_manifest(
+    spark: SparkSession,
+    root: str,
+    path: str,
+    batch_id: int,
+) -> dict[str, Any]:
     row = spark.read.json(path).first()
     if row is None:
-        return None
+        raise RuntimeError(f"Committed batch manifest has no record: {path}")
+    manifest = row.asDict(recursive=True)
+    manifest.setdefault("batchId", batch_id)
+    manifest.setdefault("publicationId", f"stream:{JOB_ID}:batch:{batch_id}")
+    manifest.setdefault("publicationType", "stream")
+    manifest.setdefault("manifestPath", path)
+    if int(manifest.get("storedCount") or 0) > 0:
+        manifest.setdefault("dataPath", f"{root.rstrip('/')}/_batches/batch_id={batch_id}")
+    if int(manifest.get("quarantinedCount") or 0) > 0:
+        manifest.setdefault("quarantinePath", f"{root.rstrip('/')}/_quarantine/_batches/batch_id={batch_id}")
+    manifest.setdefault("sourceRanges", [])
+    for count_name, path_name in (("storedCount", "dataPath"), ("quarantinedCount", "quarantinePath")):
+        if int(manifest.get(count_name) or 0) > 0 and not output_committed(spark, str(manifest.get(path_name) or "")):
+            raise RuntimeError(f"Batch manifest references an incomplete {path_name}: {path}")
+    return manifest
+
+
+def write_batch_manifest(spark: SparkSession, root: str, batch_id: int, manifest: dict[str, Any]) -> None:
+    path = manifest_path(root, batch_id)
+    if output_committed(spark, path):
+        return
+    delete_incomplete_output(spark, path)
+    frame = spark.read.json(spark.sparkContext.parallelize([json.dumps(manifest)]))
+    frame.write.mode("errorifexists").json(path)
+    if not output_committed(spark, path):
+        raise RuntimeError(f"Batch manifest did not produce a completion marker: {path}")
+
+
+def committed_child_paths(spark: SparkSession, root: str) -> list[str]:
+    if not path_exists(spark, root):
+        return []
+    jvm = spark.sparkContext._jvm
+    hadoop = spark.sparkContext._jsc.hadoopConfiguration()
+    root_path = jvm.org.apache.hadoop.fs.Path(root)
+    file_system = root_path.getFileSystem(hadoop)
+    paths = []
+    for status in file_system.listStatus(root_path):
+        child = str(status.getPath())
+        if status.isDirectory() and output_committed(spark, child):
+            paths.append(child)
+    return sorted(paths)
+
+
+def recover_published_state(spark: SparkSession, root: str) -> dict[str, Any]:
+    manifest_root = f"{root.rstrip('/')}/_batch-manifests"
+    paths = committed_child_paths(spark, manifest_root)
+    if not paths:
+        return {"counts": {"consumedCount": 0, "storedCount": 0, "quarantinedCount": 0}, "batches": []}
+    batches = []
+    for path in paths:
+        match = re.search(r"/batch_id=(\d+)$", path.rstrip("/"))
+        if not match:
+            continue
+        batches.append(load_committed_manifest(spark, root, path, int(match.group(1))))
+    batches.sort(key=lambda item: int(item.get("batchId") or 0))
+    counts = {
+        key: sum(int(batch.get(key) or 0) for batch in batches)
+        for key in ("consumedCount", "storedCount", "quarantinedCount")
+    }
     return {
-        "consumedCount": int(row["consumedCount"] or 0),
-        "storedCount": int(row["storedCount"] or 0),
-        "quarantinedCount": int(row["quarantinedCount"] or 0),
+        "counts": counts,
+        "batches": batches,
     }
 
 
-def write_batch_manifest(spark: SparkSession, root: str, batch_id: int, counts: dict[str, int]) -> None:
-    spark.createDataFrame([counts]).write.mode("errorifexists").json(manifest_path(root, batch_id))
+def batch_source_ranges(batch: DataFrame) -> list[dict[str, Any]]:
+    rows = (batch.groupBy("topic", "partition")
+        .agg(spark_min("offset").alias("start_offset"), spark_max("offset").alias("last_offset"))
+        .collect())
+    return sorted([
+        {
+            "topic": str(row["topic"]),
+            "partition": int(row["partition"]),
+            "startOffset": int(row["start_offset"]),
+            "endOffset": int(row["last_offset"]) + 1,
+        }
+        for row in rows
+    ], key=lambda item: (item["topic"], item["partition"]))
 
 
-def recover_published_counts(spark: SparkSession, root: str) -> dict[str, int]:
-    manifest_root = f"{root.rstrip('/')}/_batch-manifests"
-    if not batch_output_exists(spark, manifest_root):
-        return {"consumedCount": 0, "storedCount": 0, "quarantinedCount": 0}
-    row = (spark.read.json(f"{manifest_root}/*")
-        .agg(
-            spark_sum("consumedCount").alias("consumedCount"),
-            spark_sum("storedCount").alias("storedCount"),
-            spark_sum("quarantinedCount").alias("quarantinedCount"),
-        ).first())
-    return {key: int(row[key] or 0) for key in ("consumedCount", "storedCount", "quarantinedCount")}
+def normalized_source_ranges(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return sorted([
+        {
+            "topic": str(item.get("topic") or ""),
+            "partition": int(item.get("partition") or 0),
+            "startOffset": int(item.get("startOffset") or 0),
+            "endOffset": int(item.get("endOffset") or 0),
+        }
+        for item in value if isinstance(item, dict)
+    ], key=lambda item: (item["topic"], item["partition"]))
+
+
+def validate_manifest_retry(manifest: dict[str, Any], source_ranges: list[dict[str, Any]], total: int) -> None:
+    persisted_ranges = normalized_source_ranges(manifest.get("sourceRanges"))
+    ranges_mismatch = bool(persisted_ranges) and persisted_ranges != source_ranges
+    if int(manifest.get("consumedCount") or 0) != total or ranges_mismatch:
+        raise RuntimeError("Existing batch manifest does not match the current Kafka offset range; checkpoint reuse is unsafe.")
 
 
 def main() -> None:
-    global QUERY, LAST_BATCH_STORED_COUNT, LAST_BATCH_QUARANTINED_COUNT, LAST_BATCH_WRITTEN
+    global QUERY, LAST_BATCH_ID, LAST_FLUSH_AT, LAST_BATCH_STORED_COUNT, LAST_BATCH_QUARANTINED_COUNT, LAST_BATCH_WRITTEN, PUBLISHED_BATCHES
     signal.signal(signal.SIGTERM, on_signal)
     signal.signal(signal.SIGINT, on_signal)
     schema, aliases, required_fields = source_schema()
@@ -269,8 +437,17 @@ def main() -> None:
 
     spark = SparkSession.builder.appName(f"asklake-kafka-continuous-{JOB_ID}").getOrCreate()
     configure_s3a(spark)
-    for key, value in recover_published_counts(spark, output_path).items():
+    recovered = recover_published_state(spark, output_path)
+    for key, value in recovered["counts"].items():
         COUNTERS[key] = max(COUNTERS[key], value)
+    PUBLISHED_BATCHES = recovered["batches"]
+    if PUBLISHED_BATCHES:
+        latest = PUBLISHED_BATCHES[-1]
+        LAST_BATCH_ID = int(latest.get("batchId") or 0)
+        LAST_FLUSH_AT = str(latest.get("publishedAt") or "") or None
+        LAST_BATCH_STORED_COUNT = int(latest.get("storedCount") or 0)
+        LAST_BATCH_QUARANTINED_COUNT = int(latest.get("quarantinedCount") or 0)
+        LAST_BATCH_WRITTEN = True
     source = (spark.readStream.format("kafka")
         .option("kafka.bootstrap.servers", os.environ["ASKLAKE_CONTINUOUS_BROKER"])
         .option("subscribe", os.environ["ASKLAKE_CONTINUOUS_TOPIC"])
@@ -286,7 +463,7 @@ def main() -> None:
     )
 
     def write_batch(batch: DataFrame, batch_id: int) -> None:
-        global LAST_BATCH_STORED_COUNT, LAST_BATCH_QUARANTINED_COUNT, LAST_BATCH_WRITTEN
+        global LAST_BATCH_STORED_COUNT, LAST_BATCH_QUARANTINED_COUNT, LAST_BATCH_WRITTEN, PUBLISHED_BATCHES
         if STOP_REQUESTED:
             return
         batch.persist()
@@ -298,13 +475,19 @@ def main() -> None:
             report("running")
             batch.unpersist()
             return
-        for row in batch.groupBy("partition").agg(spark_max("offset").alias("max_offset")).collect():
-            PROCESSED_OFFSETS[str(row["partition"])] = int(row["max_offset"]) + 1
+        source_ranges = batch_source_ranges(batch)
+        for item in source_ranges:
+            PROCESSED_OFFSETS[str(item["partition"])] = int(item["endOffset"])
         published = read_batch_manifest(spark, output_path, batch_id)
         if published is not None:
-            LAST_BATCH_STORED_COUNT = published["storedCount"]
-            LAST_BATCH_QUARANTINED_COUNT = published["quarantinedCount"]
+            validate_manifest_retry(published, source_ranges, total)
+            LAST_BATCH_STORED_COUNT = int(published.get("storedCount") or 0)
+            LAST_BATCH_QUARANTINED_COUNT = int(published.get("quarantinedCount") or 0)
             LAST_BATCH_WRITTEN = True
+            PUBLISHED_BATCHES = sorted(
+                [item for item in PUBLISHED_BATCHES if int(item.get("batchId") or -1) != batch_id] + [published],
+                key=lambda item: int(item.get("batchId") or 0),
+            )
             report("running", batch_id=batch_id)
             batch.unpersist()
             return
@@ -349,18 +532,25 @@ def main() -> None:
         invalid = batch.where(invalid_condition)
         valid_count = valid.count()
         invalid_count = total - valid_count
-        valid_written = False
-        invalid_written = False
+        data_path = f"{output_path.rstrip('/')}/_batches/batch_id={batch_id}" if valid_count else None
+        quarantine_batch_path = f"{quarantine_path.rstrip('/')}/_batches/batch_id={batch_id}" if invalid_count else None
+        evidence_batch_path = None
         if valid_count:
             selected = [col(f"payload.`{source}`").alias(target) for source, target in aliases]
-            valid_written = write_batch_once(
+            write_batch_once(
                 spark,
                 valid.select(*selected, col("kafka_timestamp"), col("partition").alias("kafka_partition"), col("offset").alias("kafka_offset"), current_timestamp().alias("ingested_at")),
                 output_path,
                 batch_id,
+                {
+                    "batchId": batch_id,
+                    "inputCount": valid_count,
+                    "outputKind": "target",
+                    "sourceRanges": batch_source_ranges(valid),
+                },
             )
         if invalid_count:
-            invalid_written = write_batch_once(
+            write_batch_once(
                 spark,
                 invalid.select(
                     "topic", "partition", "offset", "kafka_timestamp", "raw_payload",
@@ -374,27 +564,61 @@ def main() -> None:
                 ),
                 quarantine_path,
                 batch_id,
+                {
+                    "batchId": batch_id,
+                    "inputCount": invalid_count,
+                    "outputKind": "quarantine",
+                    "sourceRanges": batch_source_ranges(invalid),
+                },
             )
         if unknown_fields and SCHEMA_POLICY.get("unknownField") == "preserve":
+            evidence_root = f"{output_path.rstrip('/')}/_schema-evidence"
+            evidence_batch_path = f"{evidence_root}/_batches/batch_id={batch_id}"
+            evidence = batch.where(unknown_condition)
+            evidence_count = evidence.count()
             write_batch_once(
                 spark,
-                batch.where(unknown_condition).select(
+                evidence.select(
                     "topic", "partition", "offset", "kafka_timestamp", "raw_payload",
                     unknown_keys.alias("unknown_fields"),
                     lit(SCHEMA_STATE["schemaFingerprint"]).alias("schema_fingerprint"),
                     current_timestamp().alias("observed_at"),
                 ),
-                f"{output_path.rstrip('/')}/_schema-evidence",
+                evidence_root,
                 batch_id,
+                {
+                    "batchId": batch_id,
+                    "inputCount": evidence_count,
+                    "outputKind": "schema_evidence",
+                    "sourceRanges": batch_source_ranges(evidence),
+                },
             )
-        # The manifest is published only after both valid and quarantine paths
-        # are durable. It is the accounting authority across worker restarts.
-        published_counts = {
+        if os.environ.get("ASKLAKE_CONTINUOUS_FAIL_AFTER_DATA_WRITE_ONCE", "").lower() == "true":
+            fault_marker = REPORT_FILE.with_suffix(".publish-fault-applied")
+            if not fault_marker.exists():
+                fault_marker.write_text(now(), encoding="utf-8")
+                raise RuntimeError("Injected failure after data write and before manifest publication.")
+        published_at = now()
+        published_manifest = {
+            "batchId": batch_id,
+            "publicationId": f"stream:{JOB_ID}:batch:{batch_id}",
+            "publicationType": "stream",
+            "publishedAt": published_at,
+            "topic": os.environ["ASKLAKE_CONTINUOUS_TOPIC"],
+            "sourceRanges": source_ranges,
             "consumedCount": total,
             "storedCount": valid_count,
             "quarantinedCount": invalid_count,
+            "dataPath": data_path,
+            "quarantinePath": quarantine_batch_path,
+            "schemaEvidencePath": evidence_batch_path,
+            "manifestPath": manifest_path(output_path, batch_id),
         }
-        write_batch_manifest(spark, output_path, batch_id, published_counts)
+        write_batch_manifest(spark, output_path, batch_id, published_manifest)
+        PUBLISHED_BATCHES = sorted(
+            [item for item in PUBLISHED_BATCHES if int(item.get("batchId") or -1) != batch_id] + [published_manifest],
+            key=lambda item: int(item.get("batchId") or 0),
+        )
         LAST_BATCH_STORED_COUNT = valid_count
         LAST_BATCH_QUARANTINED_COUNT = invalid_count
         LAST_BATCH_WRITTEN = True

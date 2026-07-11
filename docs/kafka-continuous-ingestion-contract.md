@@ -4,7 +4,7 @@ Issue: #500
 
 ## 1. Status
 
-Phase 0 defines the product and interface boundary. Phase 1 persists `executionMode`, continuous configuration, and a durable runtime control record; it also adds the lifecycle command contract. Phase 2 adds the Redpanda broker prerequisite to prod-like Compose so the backend and Spark submit containers share one internal Kafka endpoint. Phase 3 connects lifecycle commands to an isolated Spark Structured Streaming submit container: it reads Kafka with a durable checkpoint, projects the approved source schema, appends valid JSON payloads as Parquet, and writes malformed payloads to a target-adjacent Parquet quarantine path. The bounded Snapshot bridge remains unchanged.
+The implemented V1 persists `executionMode`, continuous configuration, durable runtime state, and lifecycle commands; prod-like Compose provides the shared Redpanda endpoint. An isolated Spark Structured Streaming container reads Kafka with a durable checkpoint, applies the configured schema policy, publishes completed Parquet micro-batches plus offset manifests, and writes rejected payloads to target-adjacent quarantine. The control plane provides lag/log/schema observability, Catalog recovery, policy-aware replay, and non-destructive compaction. The bounded Snapshot bridge remains unchanged.
 
 ## 2. Objective
 
@@ -77,7 +77,7 @@ type KafkaContinuousRuntime = {
 
 - A continuous query runs as a long-lived Spark Structured Streaming application. It processes Kafka as micro-batches; it does not write a Lake object per source event.
 - Each successful micro-batch appends the selected target dataset and advances the checkpoint. Phase 3 supports schema projection and malformed-JSON quarantine; enabled visual transform and quality rules are rejected for Continuous Job creation until they are made streaming-safe in a later phase.
-- Target write or checkpoint failure leaves the previous successful checkpoint authoritative. Restart resumes from that point; each Spark batch ID uses a stable target subpath so a retried batch does not create another Parquet output or counter increment. A successful batch is materialized into the Catalog with its own batch run ID.
+- Target write or checkpoint failure leaves the previous successful checkpoint authoritative. A batch path is complete only when `_SUCCESS` and its hidden publication signature exist. Before the final manifest, a retry reuses data/quarantine only when the signature's count and partial topic/partition ranges match; otherwise it rewrites that uncommitted path. After all outputs complete, the worker publishes an immutable manifest with full-batch counts and `[startOffset, endOffset)` ranges. Backend reconciles every reported manifest into an idempotent Catalog run before evaluating worker liveness, then acknowledges the highest contiguous Catalog batch so the report can discard old entries without losing recovery evidence.
 - Malformed payloads and `Quarantine` quality results preserve raw payload plus Kafka context in a target-adjacent quarantine output. A quarantined micro-batch must not silently drop source progress.
 - Continuous writes use append-oriented Parquet output in V1. Compaction is a separate maintenance operation; JSONL snapshot direct targets remain supported for Snapshot Jobs.
 
@@ -104,7 +104,7 @@ type JobCommand =
 - `stopContinuous`: persists a stop request while leaving checkpoint state available for a later explicit resume or Job copy policy.
 - `run` and `retry` remain Snapshot-only commands. A continuous Job never creates a one-time snapshot run through those commands.
 - `GET /api/etl/jobs/{jobId}` includes `executionMode`, `continuousConfig`, and `continuousRuntime` after implementation.
-- Command responses identify `controlPlaneOnly: false` and `worker: "spark_structured_streaming"`. Worker heartbeats and counters are written to the Spark report volume, then hydrated by Job reads together with Docker container liveness. An exited, missing, or stale active worker transitions to `failed`.
+- Command responses identify `controlPlaneOnly: false` and `worker: "spark_structured_streaming"`. Worker heartbeats and counters are written to the Spark report volume, then hydrated by Job reads together with Docker container liveness. An exited, missing, or stale active worker transitions to `failed`. Failure accounting is keyed by Docker container attempt and reason, so polling the same terminal attempt does not repeatedly increment `failedCount`. Heartbeat cleanup uses an internal terminate signal and cannot be mistaken for an operator stop.
 
 ## 6. Mutual Exclusion and Backfill
 
@@ -149,10 +149,10 @@ type JobCommand =
 
 - Quarantine records retain `topic`, `partition`, `offset`, raw payload, failure reason, observed schema fingerprint, and quarantine timestamp.
 - `topic + partition + offset` is the replay idempotency key. A replay anti-joins offsets already present in target data and previous successful replay output.
-- Replay is a finite Spark batch operation over Lake quarantine Parquet, not a Kafka offset rewind.
+- Replay is a finite Spark batch operation over completed Lake quarantine Parquet, not a Kafka offset rewind. It reapplies the current schema evolution policy by default. `approveUnknownFields: true` is a narrow `manage`-permission exception that accepts unknown fields into the fixed projection, records an audit event, and exposes `policyOverride` in the result.
 - Replay runs expose queued/running/success/failed state and input/stored/skipped/failed counts.
 - `quarantinedCount` remains the historical quarantine count, while `replayedCount` records recovered rows also included in `storedCount`. Counter reconciliation is `storedCount + quarantinedCount - replayedCount = consumedCount`.
-- V1 requires the Continuous worker to be paused or stopped before quarantine inspection, replay, or compaction. This prevents executor starvation on the single-worker local stack and keeps maintenance outside the streaming hot path; one maintenance run is allowed per Job at a time.
+- V1 requires the Continuous worker to be paused or stopped before quarantine inspection, replay, or compaction. Runtime row locking serializes inspection and persisted maintenance. Replay uses `batch_id=replay_<runId>`, the same partition key as stream batches, and readers select only child paths with `_SUCCESS`. A persisted maintenance run has a 900-second default lease; expiry marks it failed and removes its named Docker container.
 
 ## 12. Compaction Contract
 

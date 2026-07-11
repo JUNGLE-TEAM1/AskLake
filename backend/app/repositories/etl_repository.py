@@ -239,7 +239,11 @@ def create_job_and_dataset(db: Session, job: ETLJobModel, dataset: CatalogDatase
 def save_dataset(db: Session, dataset: CatalogDatasetModel) -> CatalogDataset:
     ensure_schema(db)
     dataset = db.merge(dataset)
-    db.commit()
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     db.refresh(dataset)
     return dataset_to_schema(dataset)
 
@@ -374,6 +378,15 @@ def update_kafka_snapshot(db: Session, snapshot: KafkaSnapshotModel, status: str
 def get_kafka_continuous_runtime(db: Session, job_id: str) -> KafkaContinuousRuntimeModel | None:
     ensure_schema(db)
     return db.get(KafkaContinuousRuntimeModel, job_id)
+
+
+def lock_kafka_continuous_runtime(db: Session, job_id: str) -> KafkaContinuousRuntimeModel | None:
+    ensure_schema(db)
+    return db.scalars(
+        select(KafkaContinuousRuntimeModel)
+        .where(KafkaContinuousRuntimeModel.job_id == job_id)
+        .with_for_update()
+    ).first()
 
 
 def find_conflicting_kafka_continuous_runtime(
