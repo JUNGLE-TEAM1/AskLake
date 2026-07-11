@@ -305,13 +305,27 @@ export async function createPipelineDraft(draftPipeline: DraftPipeline, jobCount
     name: `${draftPipeline.target.datasetName}_pipeline`,
     id: `JOB-${String(jobCount + 1).padStart(3, "0")}`,
     owner: draftPipeline.permission.owner,
+    permissionRoles: draftPipeline.permission.roles,
+    permissionSummary: draftPipeline.permission.summary,
     tag: "[리뷰]",
     source: `${draftPipeline.source.sourceType} / ${draftPipeline.source.sourceLabel}`,
     target: draftPipeline.target.datasetName,
     schedule: draftPipeline.schedule.label,
+    schedulePolicy: {
+      endDate: draftPipeline.schedule.endDate,
+      nextRunUtc: draftPipeline.schedule.nextRunUtc,
+      overlapPolicy: draftPipeline.schedule.overlapPolicy,
+      startDate: draftPipeline.schedule.startDate,
+      timezone: draftPipeline.schedule.timezone,
+      watermarkPolicy: draftPipeline.schedule.watermarkPolicy,
+    },
+    scheduleSummary: draftPipeline.schedule.summary,
     lastRun: "생성됨",
     lastState: "대기 중",
     nextRun: draftPipeline.schedule.mode === "manual" ? "-" : "다음 예약 대기",
+    compression: draftPipeline.target.compression,
+    partition: draftPipeline.target.partitionColumns?.join("/") || draftPipeline.target.partition,
+    partitionColumns: draftPipeline.target.partitionColumns,
     qualityInvalidRows: draftPipeline.quality.invalidRows,
     qualityRules: draftPipeline.quality.rules,
     qualityScore: draftPipeline.quality.score,
@@ -319,8 +333,13 @@ export async function createPipelineDraft(draftPipeline: DraftPipeline, jobCount
     sourceConfig: draftPipeline.source.sourceConfig,
     sourceLabel: draftPipeline.source.sourceLabel,
     sourceType: draftPipeline.source.sourceType,
+    storagePath: draftPipeline.target.storagePath,
+    storageType: draftPipeline.target.storageType,
+    targetDescription: draftPipeline.target.description,
     targetFormat: draftPipeline.target.format,
     targetLayer: draftPipeline.target.layer,
+    targetTags: draftPipeline.target.tags,
+    rag: draftPipeline.target.rag,
     transformOutputColumns: draftPipeline.transform.outputColumns,
     transformSteps: draftPipeline.transform.steps,
   };
@@ -346,9 +365,9 @@ export async function createPipelineDraft(draftPipeline: DraftPipeline, jobCount
   );
 
   const dataset: CatalogDataset = {
-    description: isSqlResultSource
+    description: draftPipeline.target.description?.trim() || (isSqlResultSource
       ? `${draftPipeline.target.datasetName} SQL Result 처리 Job으로 생성한 데이터셋`
-      : "생성 플로우에서 만든 고객 리뷰 분석용 데이터셋",
+      : "생성 플로우에서 만든 고객 리뷰 분석용 데이터셋"),
     downstream: ["SQL 분석", "대시보드", draftPipeline.target.rag ? "AI 활용" : "카탈로그"],
     freshness: "latest",
     id: `ds_${draftPipeline.target.datasetName}`,
@@ -357,6 +376,8 @@ export async function createPipelineDraft(draftPipeline: DraftPipeline, jobCount
     name: draftPipeline.target.datasetName,
     nextRefresh: draftPipeline.schedule.label,
     owner: draftPipeline.permission.owner,
+    partition: draftPipeline.target.partitionColumns?.join("/") || draftPipeline.target.partition,
+    partitionColumns: draftPipeline.target.partitionColumns,
     quality: isSqlResultSource ? "SQL Preview verified" : "95% (Draft verified)",
     rag: draftPipeline.target.rag,
     rows: isSqlResultSource ? `${(Number(previewRowCount) || sampleRows.length).toLocaleString()} preview rows` : "0 rows",
@@ -367,6 +388,8 @@ export async function createPipelineDraft(draftPipeline: DraftPipeline, jobCount
     size: isSqlResultSource ? "Preview result" : "Pending",
     source: job.name,
     status: "available",
+    storageFormat: draftPipeline.target.format,
+    storageLocation: draftPipeline.target.storagePath,
     tags: normalizedTags,
     upstream: [
       draftPipeline.source.sourceLabel,

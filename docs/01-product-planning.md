@@ -43,10 +43,11 @@ AskLake는 사용자가 데이터셋의 출처, 품질, 권한, 실행 결과, �
 - 실행 성공 후 Catalog dataset 등록
 - Catalog 목록/상세/lineage fallback
 - Dataset 범위의 read-only SQL preview
-- SQL editor 헤더의 AI 도우미: shadcn Dialog에서 자연어 요청 기반 SQL 초안 제안과 실행 결과 차트 전환
+- SQL 좌측 도구의 Nessie 대화: 선택 데이터셋 context에서 자연어 요청 기반 SQL 초안을 제안하며 자동 실행하지 않는다.
+- SQL 결과 차트 빌더: SQL 결과 또는 선택 데이터셋을 소스로 차트 유형, 축, 집계를 직접 설정하고 같은 결과 영역에서 표/차트를 전환한다.
 - AI 활용 메뉴의 ChatGPT형 대화 UI: Catalog Dataset 컨텍스트를 고르는 대화 화면을 제공하며, 실제 AI 호출과 RAG runtime은 후속 범위로 둔다.
 - 수집/처리 Transform 화면은 필드 매핑과 quick transform function 중심으로 유지하며, AI 기반 필드 transform 버튼은 현재 MVP 범위에서 노출하지 않는다.
-- SQL preview 결과 기반 처리 Job 초안 생성 및 Lake Dataset materialize 준비
+- SQL preview 결과 기반 처리 Job 생성: SQL 화면의 다단계 모달에서 기본 정보, 스케줄, 거버넌스, 저장 설정을 완료한 뒤 기존 Job 생성 API를 호출한다.
 - Dashboard 목록/빌더/런타임은 FastAPI API를 우선 사용하고, 이전 backend 호환을 위해 404 local/mock fallback을 유지
 - 감사 로그와 toast feedback
 
@@ -104,11 +105,11 @@ Phase 0에서는 용어와 경계를 먼저 고정한다. `createdBy`, `owner`, 
 1. 사용자는 Catalog dataset을 연다.
 2. 시스템은 schema, sample rows, lineage를 보여준다.
 3. 사용자는 SQL 화면으로 이동해 read-only preview를 실행한다.
-4. 사용자는 선택 테이블과 schema context를 기반으로 SQL editor 헤더의 AI Dialog에서 SQL 초안을 받을 수 있다.
+4. 사용자는 선택 테이블과 schema context를 기반으로 좌측 Nessie 대화에서 SQL 초안을 받을 수 있다.
 5. AI 제안은 자동 실행되지 않고 editor에 반영한 뒤 기존 read-only/preflight 검증을 통과해야 실행할 수 있다.
 6. 실행 결과는 고정 높이 결과 영역과 전체 보기 모달에서 표로 탐색할 수 있다.
-7. 실행 결과가 있으면 AI 차트 액션을 사용해 같은 결과 영역을 shadcn Chart 시각화로 전환할 수 있다.
-8. Preview 결과는 수집/처리 Job 초안으로 넘겨 Review에서 Lake Dataset materialize 요청을 만들 수 있다.
+7. 실행 결과가 있으면 SQL 결과 또는 선택 데이터셋을 소스로 차트 유형, 축, 집계를 직접 설정하고 같은 결과 영역에서 표와 차트를 전환할 수 있다.
+8. Preview 결과는 SQL 화면의 처리 Job 모달에서 기본 정보, 스케줄, 거버넌스, 저장 설정을 순서대로 완료한 뒤 Lake Dataset materialize Job으로 생성할 수 있다.
 9. Preview 결과는 Dashboard builder로 넘겨 SQL 결과 컬럼과 row sample을 직접 시각화할 수 있다.
 10. Dashboard builder 진입은 실제 dataset 또는 SQL preview 결과가 있을 때만 허용한다.
 

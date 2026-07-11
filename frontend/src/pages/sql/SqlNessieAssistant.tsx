@@ -34,7 +34,7 @@ export type NessieMessage = {
 };
 
 export const INITIAL_NESSIE_MESSAGES: NessieMessage[] = [{
-  content: "SQL 작성과 방금 실행한 결과의 차트 생성을 도와드릴게요.",
+  content: "선택한 데이터셋을 기준으로 실행 가능한 SQL 초안을 함께 만들어요.",
   id: "nessie-welcome",
   role: "assistant",
 }];
@@ -76,7 +76,7 @@ export function SqlNessieAssistant({
         <NessieAvatar />
         <CardTitle>Nessie</CardTitle>
         <CardDescription className="col-start-2">
-          SQL과 차트를 함께 완성해요.
+          데이터셋 문맥을 유지하며 SQL을 작성해요.
         </CardDescription>
       </CardHeader>
       <Separator />

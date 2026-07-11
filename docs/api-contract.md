@@ -1473,7 +1473,7 @@ Validation:
 프론트 함수:
 
 - `createDerivedDatasetFromSql({ request, sourceDataset, sqlResult })`
-- 현재 SQL 화면의 `처리 Job 생성` UI는 `prepareSqlDatasetJobDraft(request)`로 같은 metadata를 ETL `DraftPipeline`에 주입한 뒤 Review 화면에서 `POST /api/etl/jobs`를 호출한다.
+- 현재 SQL 화면의 `처리 Job 생성` UI는 `SqlJobWizardDialog`에서 기본 정보, 스케줄, 거버넌스, 저장 설정을 순차 입력한다. 최종 제출 시 `createSqlDatasetJob(request)`가 SQL Result metadata와 설정을 명시적인 ETL `DraftPipeline`으로 변환해 `POST /api/etl/jobs`를 호출하며 `/etl/review`로 이동하지 않는다.
 
 Request:
 
@@ -1486,6 +1486,19 @@ type CreateDerivedDatasetRequest = {
     rag: boolean;
     refreshPolicy: "manual";
     tags: string[];
+  };
+  job?: {
+    accessScope: "organization" | "private" | "project";
+    compression: "Gzip" | "None" | "Snappy";
+    owner: string;
+    overlapPolicy: "skip_if_running" | "queue_after_current" | "allow_parallel";
+    partitionColumn?: string;
+    permissionSummary: string;
+    scheduleLabel: string;
+    scheduleMode: "manual" | "repeat";
+    scheduleSummary: string;
+    storagePath: string;
+    timezone?: string;
   };
   previewLimit?: number;
   query: string;
@@ -1504,9 +1517,22 @@ Request 예시:
     "description": "일별 매출 SQL Preview 결과로 생성한 분석 데이터셋",
     "layer": "GOLD",
     "name": "sales_daily_summary_analysis",
-    "rag": true,
+    "rag": false,
     "refreshPolicy": "manual",
-    "tags": ["#sql-derived", "#sales", "#dw"]
+    "tags": []
+  },
+  "job": {
+    "accessScope": "organization",
+    "compression": "Snappy",
+    "owner": "data-team-01",
+    "overlapPolicy": "skip_if_running",
+    "partitionColumn": "order_date",
+    "permissionSummary": "Data Engineer Group · 조직 내부 · 승인 검토",
+    "scheduleLabel": "매일 09:00",
+    "scheduleMode": "repeat",
+    "scheduleSummary": "반복 실행 · 매일 09:00 · Asia/Seoul · 실행 중이면 다음 예약 건너뜀",
+    "storagePath": "s3a://asklake-output/sales_daily_summary_analysis/gold/",
+    "timezone": "Asia/Seoul"
   },
   "previewLimit": 100,
   "query": "SELECT ...",
@@ -1525,10 +1551,10 @@ type CreateDerivedDatasetResponse = CatalogDataset;
 
 프론트 기대 동작:
 
-- SQL 화면의 기본 materialize UX는 생성 대상 이름/설명/태그/레이어/RAG 여부와 `sourceRunId`, `query`, `referenceDatasetIds`를 보존한 ETL Review draft를 만든다.
-- Review에서 `파이프라인 생성`을 누르면 기존 `POST /api/etl/jobs` 경로로 처리 Job이 생성되고, 실행 성공 후 Catalog dataset 등록 흐름을 따른다.
+- SQL 화면의 기본 materialize UX는 생성 대상 이름/설명과 `sourceRunId`, `query`, `referenceDatasetIds`를 보존하고, 같은 모달에서 스케줄·거버넌스·압축·파티션·저장 경로를 설정한다. SQL 간편 생성에서는 레이어 선택, 태그, RAG 설정을 노출하지 않고 내부 기본값 `GOLD`, `[]`, `false`를 사용한다.
+- 마지막 `처리 Job 생성`을 누르면 기존 `POST /api/etl/jobs` 경로로 처리 Job이 생성되고, 실행 성공 후 Catalog dataset 등록 흐름을 따른다.
 - 생성된 dataset을 Catalog 목록 맨 앞에 추가합니다. SQL 작성 화면이 리셋되지 않도록 현재 선택 dataset은 유지할 수 있습니다.
-- 저장 화면에서 입력한 `name`, `description`, `tags`, `layer`, `rag` 값을 생성된 `CatalogDataset` metadata에 반영합니다.
+- 저장 화면에서 입력한 `name`, `description`, 스케줄, owner, permission summary, 압축, 파티션, 저장 경로를 생성 Job metadata에 반영합니다.
 - mock mode에서는 생성된 derived dataset을 pipeline 생성 dataset과 같은 `window.localStorage["asklake.catalogDatasets"]`에 저장하고, 앱 로드시 mock catalog dataset 앞에 병합합니다. 기존 `asklake.derivedDatasets`는 읽기 호환만 유지합니다.
 - live API mode에서는 localStorage fallback을 사용하지 않고 `POST /api/catalog/derived-datasets` 응답과 이후 `GET /api/catalog/datasets` hydrate를 신뢰합니다.
 - `sampleRows`, `schema`, `upstream`에는 SQL Preview 결과와 `sourceRunId` 연결 정보가 포함되어야 합니다.
