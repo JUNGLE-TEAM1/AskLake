@@ -1,4 +1,4 @@
-import { lazy, Suspense, type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, type KeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { motion } from "motion/react";
 import {
   BarChart3,
@@ -12,7 +12,6 @@ import {
   Search,
   Table2,
 } from "lucide-react";
-import nessieIcon from "@/assets/asklake-nessi-icon.png";
 import { ActionGroup } from "@/components/ui/action-group";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -47,6 +46,7 @@ import {
 import type { AuditResult, CatalogDataset, CreateDerivedDatasetRequest, DashboardEntry, DerivedDatasetLayer, SqlResultDraft } from "../../types";
 import { DashboardPage } from "../dashboard/DashboardPage";
 import { SqlDatasetTree } from "./SqlDatasetRow";
+import { NessieMark } from "./NessieMark";
 import {
   INITIAL_NESSIE_MESSAGES,
   SqlNessieAssistant,
@@ -155,6 +155,21 @@ export function SqlAnalysisPage({
   const queryAiPromptRef = useRef<HTMLTextAreaElement | null>(null);
   const lineNumberRef = useRef<HTMLPreElement | null>(null);
   const skipNextBaseDatasetResetRef = useRef(false);
+
+  useLayoutEffect(() => {
+    const panel = contextPanelRef.current;
+    if (!panel || contextCollapsed) return;
+
+    const syncPanelHeight = () => {
+      const availableHeight = Math.max(0, window.innerHeight - panel.getBoundingClientRect().top - 12);
+      panel.style.setProperty("--sql-panel-available-height", `${availableHeight}px`);
+    };
+
+    syncPanelHeight();
+    window.addEventListener("resize", syncPanelHeight);
+    return () => window.removeEventListener("resize", syncPanelHeight);
+  }, [contextCollapsed]);
+
   const referenceDatasetIdSet = useMemo(() => new Set(referenceDatasetIds), [referenceDatasetIds]);
   const queryValidationKey = useMemo(
     () => JSON.stringify({
@@ -826,7 +841,7 @@ export function SqlAnalysisPage({
                         />
                       )}
                       <span className="relative z-10 inline-flex items-center gap-1.5">
-                        <img alt="" aria-hidden="true" className="size-5 rounded-sm object-contain" src={nessieIcon} />
+                        <NessieMark className="size-5 rounded-sm" />
                         Nessie
                       </span>
                     </TabsTrigger>
@@ -1012,7 +1027,7 @@ export function SqlAnalysisPage({
                   </ToggleGroup>
                 ) : (
                   <Button type="button" onClick={openChartAssistant} size="sm" variant="outline">
-                    <img alt="" aria-hidden="true" className="size-5 rounded-sm object-contain" data-icon="inline-start" src={nessieIcon} />
+                    <NessieMark className="size-5 rounded-sm" />
                     Nessie에게 차트 부탁하기
                   </Button>
                 )}

@@ -1,8 +1,7 @@
 import type { RefObject } from "react";
 import { Send } from "lucide-react";
 
-import nessieIcon from "@/assets/asklake-nessi-icon.png";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Bubble, BubbleContent, BubbleGroup } from "@/components/ui/bubble";
 import { Button } from "@/components/ui/button";
 import {
@@ -22,6 +21,7 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
+import { NessieMark } from "./NessieMark";
 
 const NESSIE_PROMPT_PLACEHOLDER = "만들고 싶은 분석을 자연어로 입력해 주세요.";
 
@@ -42,7 +42,7 @@ export const INITIAL_NESSIE_MESSAGES: NessieMessage[] = [{
 function NessieAvatar({ compact = false }: { compact?: boolean }) {
   return (
     <Avatar className="rounded-lg bg-muted p-1" size={compact ? "default" : "lg"}>
-      <AvatarImage alt="Nessie" className="object-contain" src={nessieIcon} />
+      <NessieMark className="size-full" />
       <AvatarFallback className="rounded-md">NS</AvatarFallback>
     </Avatar>
   );
