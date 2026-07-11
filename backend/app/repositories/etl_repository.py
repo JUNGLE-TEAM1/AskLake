@@ -191,6 +191,15 @@ def get_dataset_by_id(db: Session, dataset_id: str) -> CatalogDatasetModel | Non
     return db.get(CatalogDatasetModel, dataset_id)
 
 
+def get_dataset_by_id_for_update(db: Session, dataset_id: str) -> CatalogDatasetModel | None:
+    ensure_schema(db)
+    return db.scalar(
+        select(CatalogDatasetModel)
+        .where(CatalogDatasetModel.id == dataset_id)
+        .with_for_update()
+    )
+
+
 def get_dataset_by_name(db: Session, name: str) -> CatalogDatasetModel | None:
     ensure_schema(db)
     return db.scalar(select(CatalogDatasetModel).where(CatalogDatasetModel.name == name))
@@ -282,6 +291,11 @@ def create_run(db: Session, run: ETLRunModel) -> JobRunSummary:
     return run_to_schema(run)
 
 
+def get_run(db: Session, run_id: str) -> ETLRunModel | None:
+    ensure_schema(db)
+    return db.get(ETLRunModel, run_id)
+
+
 def get_active_kafka_snapshot(
     db: Session,
     topic: str,
@@ -337,6 +351,16 @@ def list_run_models_for_job(db: Session, job_id: str) -> list[ETLRunModel]:
         .where(ETLRunModel.job_id == job_id)
         .order_by(ETLRunModel.created_at.desc())
     ).all()
+
+
+def get_run_model(db: Session, run_id: str) -> ETLRunModel | None:
+    ensure_schema(db)
+    return db.get(ETLRunModel, run_id)
+
+
+def refresh_run_for_update(db: Session, run: ETLRunModel) -> None:
+    ensure_schema(db)
+    db.refresh(run, with_for_update=True)
 
 
 def job_to_schema(db: Session, job: ETLJobModel) -> JobRowData:

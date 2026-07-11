@@ -326,6 +326,22 @@ class JobCommandRequest(CamelModel):
     command: JobCommand
 
 
+class AirflowSparkExecutionRequest(CamelModel):
+    command: Literal["run", "retry"] = "run"
+    job_id: str
+
+
+class AirflowCatalogReconciliationRequest(CamelModel):
+    job_id: str
+
+
+class AirflowCatalogReconciliationResponse(CamelModel):
+    dataset: CatalogDataset
+    reconciled_at: str
+    run_id: str
+    status: Literal["success"] = "success"
+
+
 class JobCommandResponse(CamelModel):
     action: str
     api_path: str
@@ -334,6 +350,25 @@ class JobCommandResponse(CamelModel):
     run: JobRunSummary | None = None
     dag_steps: list[JobDagStep] | None = None
     processing_result: dict[str, Any] | None = None
+
+
+class AirflowRunExecutionRequest(CamelModel):
+    command: Literal["run", "retry"] = "run"
+
+
+class AirflowRunExecutionResponse(CamelModel):
+    status: Literal["success", "failed"]
+    job_id: str
+    run_id: str
+    dataset_id: str | None = None
+    input_rows: int = 0
+    output_rows: int = 0
+    output_path: str = "-"
+    duration_ms: int | None = None
+    schema_: list[dict[str, Any]] = Field(default_factory=list, alias="schema")
+    quality: dict[str, Any] | None = None
+    failed_stage: str | None = None
+    error: str | None = None
 
 
 class ScheduledJobRunRequest(CamelModel):

@@ -64,6 +64,10 @@ const dagStepStatusMeta: Record<JobDagStepStatus, { className: string; label: st
   blocked: { className: "paused", label: "중단" },
 };
 
+function dagStepStatusDisplay(status: JobDagStepStatus | string | undefined) {
+  return dagStepStatusMeta[(status as JobDagStepStatus) || "pending"] ?? dagStepStatusMeta.blocked;
+}
+
 type JobMetricTone = "total" | "running" | "scheduled" | "failed" | "attention";
 
 type JobMetric = {
@@ -375,8 +379,10 @@ function severityLabel(value: string) {
 }
 
 function reviewSummary(row: { issue_category: string; issue_label: string; summary: string }) {
-  return row.summary
-    .replace(`${row.issue_label} 이슈`, `${reviewIssueLabel(row.issue_category, row.issue_label)} 이슈`)
+  const summary = String(row.summary ?? "");
+  const issueLabel = String(row.issue_label ?? "");
+  return summary
+    .replace(`${issueLabel} 이슈`, `${reviewIssueLabel(row.issue_category, issueLabel)} 이슈`)
     .replace("Positive / value", "긍정 / 가치")
     .replace("Charging / power", "충전 / 전원")
     .replace("Screen / display", "화면 / 디스플레이")
@@ -611,7 +617,7 @@ function JobsTableSection({
         return (
           <div className="jobs-table-title-cell">
             <strong>{job.name}</strong>
-            <span>{job.id} · {job.tag.replace("[", "").replace("]", "")}</span>
+            <span>{job.id} · {String(job.tag ?? "").replace("[", "").replace("]", "")}</span>
           </div>
         );
       },
@@ -967,12 +973,12 @@ type JobExecutionDisplay = {
 };
 
 function getJobExecutionDisplay(job: JobRowData): JobExecutionDisplay {
-  const problemRun = getLatestProblemRun(job);
-  const problemStage = normalizeShortText(problemRun?.failedStage);
-  const errorSummary = normalizeShortText(problemRun?.errorSummary);
-  const rawCandidates = [job.lastState, problemRun?.errorSummary ?? ""].map((value) => value.trim()).filter(Boolean);
-  const raw = rawCandidates.sort((first, second) => second.length - first.length)[0] ?? job.lastState;
   const isProblem = job.status === "failed" || job.status === "canceled";
+  const problemRun = getLatestProblemRun(job);
+  const problemStage = isProblem ? normalizeShortText(problemRun?.failedStage) : "";
+  const errorSummary = isProblem ? normalizeShortText(problemRun?.errorSummary) : "";
+  const rawCandidates = [job.lastState, isProblem ? problemRun?.errorSummary ?? "" : ""].map((value) => value.trim()).filter(Boolean);
+  const raw = rawCandidates.sort((first, second) => second.length - first.length)[0] ?? job.lastState;
   const stage = problemStage && problemStage !== "-" ? problemStage : isProblem ? "실패 단계 미확인" : job.progress?.label ?? jobStatusMeta[job.status].summaryLabel;
   const fallbackSummary = isProblem ? compactLogSummary(raw) : normalizeWhitespace(job.lastState);
   const summarySource = errorSummary && errorSummary !== "-" && !isVerboseLogText(errorSummary) ? errorSummary : fallbackSummary;
@@ -993,29 +999,29 @@ function getLatestProblemRun(job: JobRowData) {
   return job.runHistory?.find((run) => run.status === "failed" || run.status === "canceled");
 }
 
-function normalizeShortText(value?: string) {
+function normalizeShortText(value?: unknown) {
   if (!value) return "";
-  return value.trim();
+  return String(value).trim();
 }
 
-function normalizeWhitespace(value: string) {
-  return value.replace(/\s+/g, " ").trim();
+function normalizeWhitespace(value: unknown) {
+  return String(value ?? "").replace(/\s+/g, " ").trim();
 }
 
-function formatCompactDateTime(value: string) {
+function formatCompactDateTime(value: unknown): string {
   const normalized = normalizeWhitespace(value);
-  if (!normalized || normalized === "-") return value;
+  if (!normalized || normalized === "-") return normalized || "-";
 
   const dateCandidate = normalized.includes("T")
     ? normalized
     : /^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}/.test(normalized)
       ? normalized.replace(" ", "T")
       : "";
-  if (!dateCandidate) return value;
+  if (!dateCandidate) return normalized;
 
   const safeCandidate = dateCandidate.replace(/\.(\d{3})\d+(?=Z|[+-]\d{2}:?\d{2}|$)/, ".$1");
   const date = new Date(safeCandidate);
-  if (Number.isNaN(date.getTime())) return value;
+  if (Number.isNaN(date.getTime())) return normalized;
 
   const year = String(date.getFullYear());
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -1026,13 +1032,13 @@ function formatCompactDateTime(value: string) {
   return `${year}.${month}.${day} ${hours}:${minutes}`;
 }
 
-function isVerboseLogText(value: string) {
+function isVerboseLogText(value: unknown) {
   const normalized = normalizeWhitespace(value);
   if (normalized.length > 120) return true;
   return /warning:|exception|traceback|spark|ivy|\/opt\/spark|hadoop-aws|jar:file|download|successfully/i.test(normalized);
 }
 
-function compactLogSummary(value: string) {
+function compactLogSummary(value: unknown) {
   const normalized = normalizeWhitespace(value);
   if (!normalized || normalized === "실패") return "실패 원인 확인 필요";
 
@@ -1050,7 +1056,7 @@ function compactLogSummary(value: string) {
   return truncateText(matched ?? normalized, 72);
 }
 
-function truncateText(value: string, maxLength: number) {
+function truncateText(value: unknown, maxLength: number) {
   const normalized = normalizeWhitespace(value);
   if (normalized.length <= maxLength) return normalized;
   return `${normalized.slice(0, Math.max(0, maxLength - 3)).trim()}...`;
@@ -1184,7 +1190,7 @@ function JobDetailHeader({
             <StatusPill status={job.status} />
             <span className="owner-chip">Owner: {job.owner}</span>
             <span className="owner-chip">Created: {jobCreatorLabel(job)}</span>
-            <span className="tag-chip">{job.tag.replace("[", "").replace("]", "")}</span>
+            <span className="tag-chip">{String(job.tag ?? "").replace("[", "").replace("]", "")}</span>
           </div>
         </div>
         <div className="job-detail-actions">
@@ -1558,6 +1564,8 @@ function RunDagModal({
   const [dagSearchOpen, setDagSearchOpen] = useState(false);
   const dagSteps = evidence?.dagSteps.length ? evidence.dagSteps : job.dagSteps ?? [];
   const currentRun = run;
+  const textStructuringChecks = currentRun.textStructuringExecution?.columns ?? currentRun.textStructuring ?? [];
+  const textStructuringSummary = currentRun.textStructuringExecution;
   const completedSteps = dagSteps.filter((step) => step.status === "success").length;
   const activeOrFailedStep = dagSteps.find((step) => step.status === "running" || step.status === "failed" || step.status === "blocked");
   const toggleSearch = () => {
@@ -1627,6 +1635,49 @@ function RunDagModal({
               <DagSummaryCard label={currentRun.status === "failed" ? "실패 단계" : "현재 단계"} value={currentRun.failedStage !== "-" ? currentRun.failedStage : activeOrFailedStep?.title ?? "-"} />
             </div>
 
+            {textStructuringChecks.length > 0 && (
+              <article className="dag-flow-card">
+                <div className="dag-flow-topbar">
+                  <h2>Text structuring runtime</h2>
+                  {textStructuringSummary && (
+                    <span>
+                      models {textStructuringSummary.modelColumns.length} - fallback {textStructuringSummary.fallbackColumns.length} - missing {textStructuringSummary.missingModelColumns.length}
+                    </span>
+                  )}
+                </div>
+                <div className="detail-table-scroll">
+                  <table className="detail-table">
+                    <thead>
+                      <tr>
+                        <th>Column</th>
+                        <th>Method</th>
+                        <th>Execution</th>
+                        <th>Artifact</th>
+                        <th>Policy</th>
+                        <th>Invalid</th>
+                        <th>Distribution</th>
+                        <th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {textStructuringChecks.map((check, index) => (
+                        <tr key={`${check.targetColumn || check.target || "column"}-${index}`}>
+                          <td>{check.targetColumn || check.target || "-"}</td>
+                          <td>{check.method || "-"}</td>
+                          <td>{check.executionMode || (check.fallbackUsed ? "fallback_rule" : "-")}</td>
+                          <td>{check.modelArtifact || check.selectedModelArtifact || "-"}</td>
+                          <td>{check.modelSelectionPolicy || "-"}{check.fallbackAllowed ? " / fallback allowed" : ""}</td>
+                          <td>{Number(check.invalidRows ?? 0).toLocaleString()}</td>
+                          <td>{check.distributionWarning || (check.distinctOutputValues ? `${check.distinctOutputValues} values` : "-")}</td>
+                          <td>{check.runtimeStatus || check.validationStatus || "-"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </article>
+            )}
+
             <article className="dag-flow-card">
               <div className="dag-flow-topbar">
                 <h2>작업 진행 순서 / 실행 단계</h2>
@@ -1669,7 +1720,7 @@ function DagSummaryCard({ helper, label, value }: { helper?: string; label: stri
 }
 
 function DagStatePill({ status }: { status: JobDagStepStatus }) {
-  const statusMeta = dagStepStatusMeta[status];
+  const statusMeta = dagStepStatusDisplay(status);
   return <span className={`dag-state-pill ${statusMeta.className}`}>{statusMeta.label}</span>;
 }
 
@@ -1682,7 +1733,7 @@ function DagStepNode({
   step: JobDagStep;
   wide?: boolean;
 }) {
-  const tone = dagStepStatusMeta[step.status].className;
+  const tone = dagStepStatusDisplay(step.status).className;
 
   return (
     <button className={wide ? `dag-step-node ${tone} wide` : `dag-step-node ${tone}`} type="button" onClick={onSelect}>

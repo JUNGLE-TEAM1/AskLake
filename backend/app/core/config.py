@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     airflow_password: str | None = None
     airflow_request_timeout_seconds: float = 10.0
     airflow_ui_base_url: str | None = None
+    airflow_execution_api_token: str | None = None
+    airflow_internal_token: str | None = None
     trino_enabled: bool = False
     trino_base_url: str = "http://localhost:8088"
     trino_catalog: str = "iceberg"

@@ -178,7 +178,12 @@ function applyTransformStep(row: TransformQualitySampleRow, step: TransformQuali
     if (operation.includes("custom csv classifier") || operation.includes("csv classifier")) {
       return { failed: false, value: classifyCustomCsvValue(row, step, inputValue) };
     }
-    if (operation.includes("review row analysis") || operation.includes("review_analyze")) {
+    if (
+      operation.includes("review row analysis")
+      || operation.includes("text row analysis")
+      || operation.includes("review_analyze")
+      || operation.includes("text_analyze")
+    ) {
       return { failed: false, value: reviewRowAnalysisPreviewValue(row, step) };
     }
     if (operation.includes("json")) {
