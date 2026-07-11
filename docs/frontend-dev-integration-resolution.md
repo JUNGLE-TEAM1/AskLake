@@ -208,3 +208,36 @@
 - Python AST 및 Node `--check`: Spark runner, model training/finalize script, server 모두 통과했다.
 - `cd backend && npm run verify:spark-run`: 검증용 ecommerce CSV fixture로 통과했다. 3행 입력, 7개 DAG 단계 성공, Catalog dataset 생성, Job `scheduled` 복귀, `event_type/category_id` 다중 partition Parquet 3개를 확인했다.
 - 저장소의 `minio:seed-verify`는 taxi schema를 쓰지만 `verify:spark-run`은 ecommerce schema를 기대한다. 검증 시 로컬 MinIO 객체만 ecommerce fixture로 교체했으며, 두 스크립트의 fixture 계약 정리는 별도 후속 작업으로 남긴다.
+
+## 2026-07-11 Airflow Spark Catalog 후속 통합
+
+- 통합 전 HEAD: `4e4f12912066e47406f491584ae00657763c96de`
+- 대상 `origin/dev`: `496c69dfb6de980c37a3122686f5e40e4fe3d638`
+- 로컬 안전 브랜치: `backup/pre-airflow-catalog-merge-20260711-4e4f129`
+- 실제 merge commit: `ab16ae3`
+
+### 추가 통합 결정
+
+1. Airflow `spark_process_write`와 `publish_run_result`, token-authenticated FastAPI execution endpoint, physical Parquet 검증, 멱등 Catalog reconciliation과 frontend terminal-success refresh를 모두 보존했다.
+2. 기존 Job 목록의 server filter request ordering과 새 Catalog refresh Run dedup/active tracking ref를 함께 유지했다.
+3. FastAPI ETL/Catalog verifier는 새 target storage 계약과 기존 `customer_id/amount` 다중 partition 검증을 동시에 사용한다.
+4. frontend-only mock은 계속 `VITE_USE_MOCK_API=true` 명시적 opt-in이며, live 모드의 Job 생성 시 Catalog row는 만들지 않고 Airflow 최종 publish가 검증된 Dataset을 확정한다.
+
+### 추가 작은 커밋
+
+| SHA | 목적 |
+| --- | --- |
+| `c1fd0f6` | Airflow Catalog publish와 Spark 다중 partition 검증 통합 |
+| `e45351e` | 성공 Run Catalog refresh와 Job filter race 보호 통합 |
+| `cd7a6a3` | Airflow Spark publish 흐름과 live/mock 문서 통합 |
+| `ab16ae3` | 최신 Airflow Catalog reconciliation 비충돌 변경 병합 |
+
+### 추가 검증
+
+- `cd frontend && npm run build`: 통과. 기존 Vite 대형 chunk 경고만 남는다.
+- `cd frontend && npm run verify:ui-regressions`: 21개 검사 통과.
+- `cd backend && npm run verify:airflow-catalog-wiring`: 통과.
+- Airflow/FastAPI 관련 Python 파일 AST 및 Node script `--check`: 통과.
+- `cd backend && npm run verify`: PostgreSQL metadata 연결을 포함해 통과.
+- `cd backend && npm run verify:spark-run`: 통과. 3행 입력, 7개 DAG 단계, Catalog 생성, Job `scheduled`, 두 단계 partition Parquet를 재확인했다.
+- `cd backend && npm run verify:airflow-spark`: 현재 기본 `python3`에 `duckdb`가 없어 서버 시작 전에 중단됐다. 준비된 backend `.venv` 또는 `ASKLAKE_FASTAPI_PYTHON`을 지정해 후속 실행해야 한다.
