@@ -953,11 +953,13 @@ function getJobListActions(job: JobRowData): JobListAction[] {
 
   if (isContinuousKafkaJob(job)) {
     const runtimeStatus = job.continuousRuntime?.status ?? "stopped";
-    if (["starting", "running", "pausing", "stopping"].includes(runtimeStatus)) {
-      return [...actions, { className: "job-action-button primary soft", kind: "runs", label: "런타임" }, { className: "job-action-button", kind: "pauseContinuous", label: "일시정지" }, { className: "job-action-button danger", kind: "stopContinuous", label: "중지" }];
+    if (runtimeStatus === "stopping") {
+      return [...actions, { className: "job-action-button primary soft", kind: "runs", label: "중지 중" }];
     }
-    if (runtimeStatus === "paused") return [...actions, { className: "job-action-button primary soft", kind: "resumeContinuous", label: "재개" }, { className: "job-action-button danger", kind: "stopContinuous", label: "중지" }];
-    return [...actions, { className: "job-action-button primary soft", kind: runtimeStatus === "failed" ? "resumeContinuous" : "startContinuous", label: runtimeStatus === "failed" ? "체크포인트 재개" : "스트림 시작" }, { className: "job-action-button", kind: "edit", label: "수정" }];
+    if (["starting", "running", "pausing"].includes(runtimeStatus)) {
+      return [...actions, { className: "job-action-button primary soft", kind: "runs", label: "런타임" }, { className: "job-action-button danger", kind: "stopContinuous", label: "중지" }];
+    }
+    return [...actions, { className: "job-action-button primary soft", kind: "startContinuous", label: "스트림 시작" }, { className: "job-action-button", kind: "edit", label: "수정" }];
   }
 
   if (job.status === "running") {
@@ -1069,14 +1071,13 @@ type JobDetailAction = {
 function getJobDetailActions(job: JobRowData): JobDetailAction[] {
   if (isContinuousKafkaJob(job)) {
     const runtimeStatus = job.continuousRuntime?.status ?? "stopped";
-    if (["starting", "running", "pausing", "stopping"].includes(runtimeStatus)) {
-      return [
-        { className: "job-action-button", kind: "pauseContinuous", label: "일시정지" },
-        { className: "job-action-button danger", kind: "stopContinuous", label: "스트림 중지" },
-      ];
+    if (runtimeStatus === "stopping") {
+      return [];
     }
-    if (runtimeStatus === "paused") return [{ className: "job-action-button primary", kind: "resumeContinuous", label: "체크포인트 재개" }, { className: "job-action-button danger", kind: "stopContinuous", label: "스트림 중지" }];
-    return [{ className: "job-action-button primary", kind: runtimeStatus === "failed" ? "resumeContinuous" : "startContinuous", label: runtimeStatus === "failed" ? "체크포인트 재개" : "스트림 시작" }, { className: "job-action-button", kind: "edit", label: "수정" }];
+    if (["starting", "running", "pausing"].includes(runtimeStatus)) {
+      return [{ className: "job-action-button danger", kind: "stopContinuous", label: "스트림 중지" }];
+    }
+    return [{ className: "job-action-button primary", kind: "startContinuous", label: "스트림 시작" }, { className: "job-action-button", kind: "edit", label: "수정" }];
   }
   if (job.status === "running") {
     if (isRealtimeJob(job)) {
@@ -2188,8 +2189,8 @@ function ContinuousRuntimeCard({ job }: { job: JobRowData }) {
       <div className="job-runtime-log-header">
         <strong>Quarantine · Maintenance</strong>
         <div className="job-runtime-actions">
-          <button className="job-action-button" disabled={maintenanceBlocked || maintenanceBusy || !quarantine.some((item) => item.replayStatus !== "replayed")} onClick={() => void runMaintenance("replay")} title={maintenanceBlocked ? "스트림을 일시정지하거나 중지한 뒤 실행할 수 있습니다." : undefined} type="button"><Repeat2 size={15} />전체 재처리</button>
-          <button className="job-action-button" disabled={maintenanceBlocked || maintenanceBusy || (runtime?.storedCount ?? 0) === 0} onClick={() => void runMaintenance("compact")} title={maintenanceBlocked ? "스트림을 일시정지하거나 중지한 뒤 실행할 수 있습니다." : undefined} type="button"><HardDrive size={15} />Compaction</button>
+          <button className="job-action-button" disabled={maintenanceBlocked || maintenanceBusy || !quarantine.some((item) => item.replayStatus !== "replayed")} onClick={() => void runMaintenance("replay")} title={maintenanceBlocked ? "스트림을 중지한 뒤 실행할 수 있습니다." : undefined} type="button"><Repeat2 size={15} />전체 재처리</button>
+          <button className="job-action-button" disabled={maintenanceBlocked || maintenanceBusy || (runtime?.storedCount ?? 0) === 0} onClick={() => void runMaintenance("compact")} title={maintenanceBlocked ? "스트림을 중지한 뒤 실행할 수 있습니다." : undefined} type="button"><HardDrive size={15} />Compaction</button>
         </div>
       </div>
       {maintenanceMessage && <p className="panel-note">{maintenanceMessage}</p>}
