@@ -624,6 +624,7 @@
 .dashboard-table-list {
   display: grid;
   gap: 0;
+  min-width: 0;
   padding: 0;
   width: 100%;
 }
@@ -631,6 +632,7 @@
 .dashboard-table-list-body {
   display: grid;
   gap: 12px;
+  min-width: 0;
   padding: 0;
 }
 

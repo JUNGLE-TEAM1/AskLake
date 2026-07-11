@@ -58,7 +58,7 @@ export function PageHeader({
       <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className={cn("flex min-w-0 gap-3", leadingAlign === "center" ? "items-center" : "items-start")}>
           {icon && (
-            <span className={cn(leadingAlign === "center" ? "mt-0" : "mt-1", "inline-flex size-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-blue-700 shadow-sm", iconClassName)}>
+            <span className={cn(leadingAlign === "center" ? "mt-0" : "mt-1", "inline-flex size-14 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-blue-700 shadow-sm [&_svg]:size-7 sm:size-16 sm:[&_svg]:size-[30px]", iconClassName)}>
               {icon}
             </span>
           )}
@@ -69,11 +69,11 @@ export function PageHeader({
               </div>
             )}
             <div className="grid min-w-0 gap-1">
-              <h1 className={cn("text-2xl font-semibold leading-tight tracking-normal text-slate-950", titleClassName)}>
+              <h1 className={cn("text-3xl font-semibold leading-tight tracking-normal text-slate-950 sm:text-4xl", titleClassName)}>
                 {title}
               </h1>
               {description && (
-                <p className={cn("max-w-3xl text-sm leading-6 text-slate-500", descriptionClassName)}>
+                <p className={cn("max-w-4xl text-base leading-7 text-slate-500 sm:text-xl sm:leading-8", descriptionClassName)}>
                   {description}
                 </p>
               )}

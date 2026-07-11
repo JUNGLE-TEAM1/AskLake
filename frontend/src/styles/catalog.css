@@ -358,7 +358,7 @@
 
 .catalog-mini-metric span {
   color: #64748b;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 800;
 }
 
@@ -367,7 +367,7 @@
   min-width: 0;
   max-width: 100%;
   color: #0f172a;
-  font-size: 14px;
+  font-size: 16px;
   line-height: 1.35;
   overflow-wrap: anywhere;
   word-break: break-word;
@@ -383,7 +383,7 @@
 
 .catalog-section-header span {
   color: #64748b;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 800;
 }
 
@@ -410,7 +410,7 @@
 .catalog-schema-preview td {
   border-bottom: 1px solid #eef2f7;
   color: #334155;
-  font-size: 13px;
+  font-size: 15px;
   padding: 10px 0;
   text-align: left;
 }
@@ -429,7 +429,7 @@
   border: 0;
   background: transparent;
   color: #2563eb;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 800;
   padding: 0;
 }

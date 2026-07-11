@@ -234,12 +234,10 @@ const checks = [
       /DataTableStackedCell/,
       /DataTableCellPrimary/,
       /DataTableCellSecondary/,
-      /header: "상태"/,
       /header: "대시보드"/,
       /header: "마지막 수정"/,
       /header: "생성 일시"/,
       /header: "소유자"/,
-      /<StatusBadge[\s\S]*min-w-\[132px\]/,
       /<Avatar size="lg">/,
       /min-h-\[72px\] w-full justify-start rounded-none/,
       /onRowClick=\{\(row\) => onOpenDetail\(row\.original\)\}/,
@@ -248,6 +246,8 @@ const checks = [
     forbiddenPatterns: [
       /dashboard-row-tag/,
       /dashboard-row-link/,
+      /header: "상태"/,
+      /<StatusBadge/,
     ],
   },
   {
