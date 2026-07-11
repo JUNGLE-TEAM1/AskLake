@@ -31,9 +31,9 @@
   grid-row: 2;
   grid-template-rows: minmax(0, 1fr);
   align-self: start;
-  height: min(860px, calc(100vh - 24px));
-  min-height: min(620px, calc(100vh - 24px));
-  max-height: 860px;
+  height: var(--sql-panel-available-height, min(860px, calc(100dvh - 24px)));
+  min-height: min(620px, var(--sql-panel-available-height, calc(100dvh - 24px)));
+  max-height: var(--sql-panel-available-height, calc(100dvh - 24px));
   min-width: 0;
   overflow: hidden;
   padding: 20px;
