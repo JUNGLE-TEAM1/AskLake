@@ -18,6 +18,54 @@ const checks = [
     ],
   },
   {
+    name: "Job detail localizes source metadata and manual schedules",
+    file: "src/pages/ingest/JobsPages.tsx",
+    patterns: [
+      /"Bucket \/ Stage Name": "버킷 \/ 스테이지 이름"/,
+      /"Path \/ Prefix": "경로 \/ 프리픽스"/,
+      /return !label\.startsWith\("__"\) && !hiddenJobDetailFieldLabels\.has\(label\);/,
+      /detail=\{realtime \? job\.scheduleSummary \?\? formatJobSchedule\(job\.schedule\) : formatJobSchedule\(job\.schedule\)\}/,
+      /\{ label: "주기", value: formatJobSchedule\(job\.schedule\) \}/,
+    ],
+  },
+  {
+    name: "SQL collapsed workspace stays in the visible grid column",
+    file: "src/styles/sql.css",
+    patterns: [
+      /\.sql-page\.context-collapsed \.sql-workspace\s*\{[^}]*grid-column:\s*1;/s,
+      /\.sql-page\.context-collapsed \.sql-workspace\s*\{[^}]*min-width:\s*0;/s,
+    ],
+  },
+  {
+    name: "SQL page header uses the shared page gutter",
+    file: "src/styles/base.css",
+    patterns: [
+      /\.page-body\.sql-body\s*\{[^}]*padding:\s*24px var\(--layout-page-padding\) 40px;/s,
+    ],
+  },
+  {
+    name: "Schema transform scrollbars do not render a fixed blue fake thumb",
+    file: "src/styles/schema-transform-adapter.css",
+    patterns: [
+      /scrollbar-color:\s*#cbd5e1 transparent;/,
+      /::-webkit-scrollbar-thumb\s*\{[^}]*background:\s*#cbd5e1;/s,
+    ],
+    forbiddenPatterns: [
+      /\.flex-1\.overflow-y-auto\.p-2::before/,
+      /box-shadow:\s*inset -18px 0 0 #dbeafe/,
+    ],
+  },
+  {
+    name: "Catalog explains materialization runs as selectable data versions",
+    file: "src/pages/catalog/CatalogPage.tsx",
+    patterns: [
+      /<ExternalLink \/> 데이터 버전/,
+      /SQL 분석에 사용할 데이터 저장 시점을 선택합니다\./,
+      /선택한 데이터 버전을 기준으로 SQL 분석을 엽니다\./,
+    ],
+    forbiddenPatterns: [/생성 결과/],
+  },
+  {
     name: "Catalog wide action button keeps icon and label aligned",
     file: "src/styles/catalog.css",
     patterns: [
