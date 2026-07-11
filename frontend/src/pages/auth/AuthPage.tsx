@@ -48,9 +48,9 @@ export function AuthPage({ onAction, onAuthenticated }: AuthPageProps) {
           icon={mode === "login" ? <LogIn size={28} /> : <UserPlus size={28} />}
         />
 
-        <section className="xflow-review-card auth-panel">
-          <div className="xflow-review-card-header">
-            <span className="xflow-review-icon permission">{mode === "login" ? <LogIn size={17} /> : <UserPlus size={17} />}</span>
+        <section className="asklake-review-card auth-panel">
+          <div className="asklake-review-card-header">
+            <span className="asklake-review-icon permission">{mode === "login" ? <LogIn size={17} /> : <UserPlus size={17} />}</span>
             <div>
               <h2>{mode === "login" ? "세션 시작" : "새 계정 만들기"}</h2>
               <p>로그인 후 세션 actor 기준으로 프로필과 관리 권한을 계산합니다.</p>
@@ -93,9 +93,9 @@ export function AuthPage({ onAction, onAuthenticated }: AuthPageProps) {
         </section>
       </div>
 
-      <aside className="xflow-review-card profile-summary-panel auth-summary-panel">
-        <div className="xflow-review-card-header">
-          <span className="xflow-review-icon"><LogIn size={17} /></span>
+      <aside className="asklake-review-card profile-summary-panel auth-summary-panel">
+        <div className="asklake-review-card-header">
+          <span className="asklake-review-icon"><LogIn size={17} /></span>
           <div>
             <h2>테스트 계정</h2>
             <p>로컬 세션 검증용 계정입니다.</p>

@@ -415,7 +415,13 @@ export function getPreflightSummary(result: SqlPreflightResult | null) {
   return { detail: errorMessage, label: "점검 필요", tone: "error" as const };
 }
 
-export function runSqlPreflight(query: string, baseDataset: CatalogDataset, referenceDatasets: CatalogDataset[], key: string): SqlPreflightResult {
+export function runSqlPreflight(
+  query: string,
+  baseDataset: CatalogDataset,
+  referenceDatasets: CatalogDataset[],
+  key: string,
+  previewRowLimit = PREVIEW_ROW_LIMIT,
+): SqlPreflightResult {
   const normalizedQuery = stripSqlComments(query).trim();
   const messages: SqlPreflightMessage[] = [];
   const contextDatasets = [baseDataset, ...referenceDatasets];
@@ -516,7 +522,7 @@ export function runSqlPreflight(query: string, baseDataset: CatalogDataset, refe
   }
 
   messages.push({ tone: "success", text: `읽기 전용 SQL 확인 완료. 선택 테이블 ${referenceDatasets.length + 1}개 기준으로 JOIN 포함 실행할 수 있습니다.` });
-  messages.push({ tone: "info", text: `실행 결과는 원본 SQL을 바꾸지 않고 최대 ${PREVIEW_ROW_LIMIT}행으로 제한해 표시합니다.` });
+  messages.push({ tone: "info", text: `실행 결과는 원본 SQL을 바꾸지 않고 최대 ${previewRowLimit}행으로 제한해 표시합니다.` });
   const tableAliases = extractTableAliases(statement);
   if (tableAliases.length > 0) {
     messages.push({ tone: "warning", text: `테이블 별칭 ${tableAliases.map((alias) => `"${alias}"`).join(", ")}이 감지되었습니다. 의도한 별칭이면 실행할 수 있고, LIMIT 오타라면 수정해 주세요.` });

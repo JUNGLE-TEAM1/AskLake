@@ -1,6 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { X } from "lucide-react";
 import { getCatalogModelArtifacts } from "../../services/catalogApi";
+import { ActionGroup } from "../ui/action-group";
+import { Button } from "../ui/button";
+import { DialogShell } from "../ui/dialog-shell";
 
 const SQL_EXPRESSION = "SQL Expression";
 const LEGACY_CSV_CLASSIFIER = "Custom CSV Classifier";
@@ -691,15 +694,22 @@ export default function TransformFunctionModal({ column, onApply, onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[1002]">
-      <div className={`bg-white rounded-2xl shadow-xl border border-slate-200 max-h-[90vh] overflow-hidden ${isClassifierEditorOpen ? "w-[calc(100vw-24px)] max-w-[1280px]" : "w-[640px]"}`}>
-        <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/50">
-          <h3 className="text-xs font-bold text-slate-800 uppercase tracking-widest flex items-center gap-2">
-            <span className="w-1 h-3 bg-indigo-500 rounded-full"></span>
-            Field Transform
-          </h3>
-        </div>
-
+    <DialogShell
+      bodyClassName="!p-0"
+      contentClassName="rounded-2xl"
+      description={<>Refining: <span className="font-bold text-indigo-600">{sourceField}</span></>}
+      footer={(
+        <ActionGroup density="compact">
+          <Button type="button" size="sm" variant="outline" onClick={onClose}>Cancel</Button>
+          <Button type="button" size="sm" onClick={applyTransform}>
+            {isClassifierEditorOpen ? "Apply Text Schema" : "Apply Transform"}
+          </Button>
+        </ActionGroup>
+      )}
+      onClose={onClose}
+      size={isClassifierEditorOpen ? "wide" : "md"}
+      title="Field Transform"
+    >
         <div className={`p-6 space-y-4 overflow-y-auto ${isClassifierEditorOpen ? "max-h-[72vh]" : "max-h-[56vh]"}`}>
           {!isClassifierEditorOpen && (
           <div className="grid grid-cols-2 gap-3">
@@ -976,23 +986,6 @@ export default function TransformFunctionModal({ column, onApply, onClose }) {
           )}
         </div>
 
-        <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2 bg-slate-50/50">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 text-xs font-bold text-slate-500 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-all"
-            type="button"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={applyTransform}
-            className="px-5 py-2 bg-indigo-600 text-white text-xs font-bold rounded-lg hover:bg-indigo-700 transition-all shadow-md shadow-indigo-200"
-            type="button"
-          >
-            {isClassifierEditorOpen ? "Apply Text Schema" : "Apply Transform"}
-          </button>
-        </div>
-      </div>
-    </div>
+    </DialogShell>
   );
 }

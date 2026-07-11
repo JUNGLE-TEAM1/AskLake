@@ -30,7 +30,15 @@ child.stderr.on("data", (chunk) => process.stderr.write(`[backend] ${chunk}`));
 try {
   await waitForHealth();
   await waitForRestFixture();
-  await assertGet("/api/etl/jobs", []);
+  await assertGet("/api/etl/jobs", {
+    facets: {
+      latestRunOutcomeCounts: { success: 0, failed: 0, canceled: 0 },
+      owners: [],
+      statusCounts: { scheduled: 0, failed: 0, running: 0, paused: 0, canceled: 0, stopped: 0 },
+      total: 0,
+    },
+    jobs: [],
+  });
   await assertGet("/api/catalog/datasets", []);
 
   const minio = await post("/api/etl/sources/test", {
@@ -150,8 +158,11 @@ try {
   await assertPostFails("/api/etl/jobs", createRequest, 409, "Duplicate pending target dataset should be rejected.");
 
   const jobs = await get("/api/etl/jobs");
+  const ownerJobs = await get("/api/etl/jobs?owner=data-team-01&status=scheduled");
   const datasets = await get("/api/catalog/datasets");
-  assert(jobs.length === 1, "Backend hydrate jobs should contain the created job only.");
+  assert(jobs.jobs.length === 1, "Backend hydrate jobs should contain the created job only.");
+  assert(jobs.facets.total === 1, "Backend hydrate facets should count all jobs.");
+  assert(ownerJobs.jobs.length === 1, "Backend job filters should accept owner and status query parameters.");
   assert(
     !datasets.some((dataset) => dataset.id === created.catalogTarget.id || dataset.name === createRequest.targetDataset),
     "Catalog should not expose the pending target dataset until a job run succeeds.",

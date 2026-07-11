@@ -1,3 +1,5 @@
+import { PaginationBar } from "@/components/ui/pagination-bar";
+
 export function DashboardPagination({
   currentPage,
   onNext,
@@ -10,10 +12,13 @@ export function DashboardPagination({
   totalPages: number;
 }) {
   return (
-    <div className="dashboard-pagination">
-      <button type="button" disabled={currentPage === 1} onClick={onPrevious}>이전</button>
-      <span>{currentPage}</span>
-      <button type="button" disabled={currentPage === totalPages} onClick={onNext}>다음</button>
-    </div>
+    <PaginationBar
+      className="dashboard-pagination"
+      currentPage={currentPage}
+      onNext={onNext}
+      onPrevious={onPrevious}
+      pageLabel={currentPage}
+      totalPages={totalPages}
+    />
   );
 }
