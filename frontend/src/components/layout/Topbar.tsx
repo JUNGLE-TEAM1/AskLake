@@ -1,34 +1,36 @@
-import { Activity, RefreshCw } from "lucide-react";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { IconButton } from "@/components/ui/icon-button";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { Activity, LogIn, LogOut, RefreshCw } from "lucide-react";
 import type { AuditEntry } from "../../types";
+import type { CurrentUserResponse } from "../../types";
 
 export function Topbar({
   auditLogs,
   auditOpen,
+  currentUser,
+  onAccount,
   onAuditToggle,
+  onLogin,
+  onLogout,
   onRefresh,
 }: {
   auditLogs: AuditEntry[];
   auditOpen: boolean;
+  currentUser: CurrentUserResponse | null;
+  onAccount: () => void;
   onAuditToggle: () => void;
+  onLogin: () => void;
+  onLogout: () => void;
   onRefresh: () => void;
 }) {
+  const displayName = currentUser?.profile.displayName || currentUser?.displayName || "";
+  const initials = currentUser?.profile.avatarInitials || displayName.slice(0, 2).toUpperCase();
   return (
     <header className="topbar">
-      <TooltipProvider delayDuration={300}>
       <div className="topbar-actions">
         <div className="audit-menu">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <IconButton className={auditOpen ? "icon-button active" : "icon-button"} label="최근 API 호출" type="button" onClick={onAuditToggle}>
-                <Activity />
-                {auditLogs.length > 0 && <span className="audit-dot" />}
-              </IconButton>
-            </TooltipTrigger>
-            <TooltipContent>최근 API 호출</TooltipContent>
-          </Tooltip>
+          <button className={auditOpen ? "icon-button active" : "icon-button"} type="button" aria-label="최근 API 호출" onClick={onAuditToggle}>
+            <Activity size={18} />
+            {auditLogs.length > 0 && <span className="audit-dot" />}
+          </button>
           {auditOpen && (
             <section className="audit-popover">
               <div className="audit-popover-header">
@@ -50,15 +52,24 @@ export function Topbar({
             </section>
           )}
         </div>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <IconButton className="icon-button" label="새로고침" type="button" onClick={onRefresh}><RefreshCw /></IconButton>
-          </TooltipTrigger>
-          <TooltipContent>새로고침</TooltipContent>
-        </Tooltip>
-        <Avatar><AvatarFallback>AL</AvatarFallback></Avatar>
+        <button className="icon-button" type="button" aria-label="Refresh" onClick={onRefresh}>
+          <RefreshCw size={18} />
+        </button>
+        {currentUser ? (
+          <>
+            <button className="icon-button" type="button" aria-label="로그아웃" onClick={onLogout}>
+              <LogOut size={18} />
+            </button>
+            <button className="avatar-button" type="button" aria-label="내 프로필" onClick={onAccount}>
+              <span className="avatar">{initials}</span>
+            </button>
+          </>
+        ) : (
+          <button className="icon-button" type="button" aria-label="로그인" onClick={onLogin}>
+            <LogIn size={18} />
+          </button>
+        )}
       </div>
-      </TooltipProvider>
     </header>
   );
 }

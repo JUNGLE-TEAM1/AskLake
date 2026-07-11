@@ -1,4 +1,4 @@
-export type AuditResult = "success" | "failed";
+export type AuditResult = "success" | "failed" | "forbidden";
 export type AuditTargetType = "etl_job" | "dataset" | "dashboard" | "ai_module" | "admin_module" | "ui";
 
 export type AuditEntry = {

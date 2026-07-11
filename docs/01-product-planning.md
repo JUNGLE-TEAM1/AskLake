@@ -32,6 +32,10 @@ AskLake는 사용자가 데이터셋의 출처, 품질, 권한, 실행 결과, �
 
 현재 브랜치에서 보여줄 수 있어야 하는 범위:
 
+- `/` AskLake 랜딩과 session login 진입
+- session actor 기반 로그인 guard, 프로필, 관리자 접근 분기
+- Dataset context를 선택하는 AI 활용 대화 UI
+- 사용자·그룹·권한·감사 로그 관리 콘솔
 - Source 연결 테스트와 Schema 추론
 - 새 수집/처리 Job 생성
 - 작업 명령 UI: 실행, 재실행, 일시정지, 취소
@@ -58,17 +62,25 @@ FastAPI live backend에서 현재 우선 구현하는 범위:
 | SQL run | read-only SQL preview 결과 반환 | Medium | `docs/api-contract.md` |
 | Query AI 생성 | 선택 테이블 context와 자연어 요청으로 read-only SQL 초안을 생성 | Medium | `docs/api-contract.md` |
 | SQL derived dataset | SQL preview 결과를 Catalog dataset 또는 처리 Job materialize 흐름으로 연결 | Medium | `docs/api-contract.md` |
+| Local session auth | 로그인, 회원가입, session 확인, 로그아웃과 현재 사용자 조회 | High | `docs/api-contract.md` |
+| Phase 0 admin | 사용자·그룹·permission grant·governance control·감사 로그 조회/관리 | Medium | `docs/api-contract.md` |
 
 FastAPI Pair3 이전에 아직 live target으로 보지 않는 범위:
 
 - Dashboard persistence 전체
 - Dashboard draft/published runtime persistence 전체
-- Audit log server persistence
-- 실제 인증/인가 시스템
+- 운영 IdP/SSO 연동
 - production-grade scheduler
 - 실제 RAG indexing/runtime
 
 ## 6) 핵심 사용자 흐름
+
+### Flow 0. 랜딩과 session login
+
+1. 사용자는 `/`에서 AskLake 랜딩을 확인하고 `/login`으로 이동한다.
+2. frontend는 `/api/auth/session`으로 session actor를 확인한다.
+3. 인증되지 않은 workspace route는 `AuthPage`로 이동한다.
+4. 인증 성공 후 `/jobs`로 이동하고, admin actor만 관리 메뉴를 사용할 수 있다.
 
 ### Flow A. 수집/처리 생성
 

@@ -1,3 +1,5 @@
+import type { ResourcePermissions } from "./permissions";
+
 export type JobStatus = "scheduled" | "failed" | "running" | "paused" | "canceled" | "stopped";
 export type JobScheduleKind = "daily" | "weekly" | "monthly" | "realtime" | "none" | "other";
 export type JobCommand = "edit" | "run" | "retry" | "pause" | "cancelRun" | "stopSchedule" | "resumeSchedule" | "delete";
@@ -39,6 +41,7 @@ export type JobRowData = {
   name: string;
   id: string;
   owner: string;
+  permissions?: ResourcePermissions;
   ownerAvatarUrl?: string;
   tag: string;
   source: string;

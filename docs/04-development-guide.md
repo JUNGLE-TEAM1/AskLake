@@ -273,6 +273,11 @@ ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:fastapi-etl-catalog
 
 ## 11) Manual Smoke Checklist
 
+- `/` 랜딩이 표시되고 시작 CTA가 `/login`으로 이동한다.
+- session이 없으면 `/jobs`, `/ai`, `/admin` 직접 접근이 `AuthPage`로 이동한다.
+- admin 계정 로그인 후 `/jobs`가 표시되고 `/ai`는 `AiChatPage`, `/admin`은 `AdminConsolePage`를 렌더링한다.
+- viewer 계정에는 관리 메뉴가 보이지 않고 `/admin` 직접 접근은 프로필로 이동한다.
+- 로그아웃 후 보호 route에 다시 접근하면 로그인 화면이 표시된다.
 - 수집/처리 목록이 열린다.
 - 새 수집/처리 생성 flow가 Review까지 이동한다.
 - 생성 요청 후 job과 dataset이 반영된다.
