@@ -1652,6 +1652,18 @@ export function SourceConnectionPage({
     void runSourceConnectionTest(editableFields);
   };
 
+  const goPrev = () => {
+    if (sourceStage === "browse") {
+      setSourceStage("connect");
+      return;
+    }
+    if (sourceStage === "connect" && !sourceLocked) {
+      setSourceStage("choose");
+      return;
+    }
+    onPrev();
+  };
+
   const goNext = () => {
     if (!hasSelectedSource) {
       onNotify("먼저 소스를 선택하세요.");
@@ -1677,7 +1689,7 @@ export function SourceConnectionPage({
 
   return (
     <CreationFlowLayout
-      actions={<CreationTopActions nextDisabled={sourceStage === "choose" && !hasSelectedSource} useShadcnStyles onPrev={onPrev} onNext={goNext} />}
+      actions={<CreationTopActions nextDisabled={sourceStage === "choose" && !hasSelectedSource} useShadcnStyles onPrev={goPrev} onNext={goNext} />}
     >
         <PageHeader
           className="etl-flow-page-header etl-source-page-header"
