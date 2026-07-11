@@ -603,10 +603,12 @@
 }
 
 .asklake-dashboard-canvas-scroll-viewport > div {
+  display: flex !important;
   min-height: 100%;
 }
 
 .asklake-dashboard-canvas-wrap {
+  width: 100%;
   min-width: 0;
   min-height: 100%;
   overflow: visible;
@@ -620,7 +622,7 @@
   min-height: 100%;
   flex-direction: column;
   background: #ffffff;
-  padding-bottom: 78px;
+  padding-bottom: 0;
 }
 
 .asklake-dashboard-edit-stage > .asklake-dashboard-empty-canvas {
@@ -1874,7 +1876,7 @@
   }
 
   .asklake-dashboard-edit-stage {
-    padding-bottom: 72px;
+    padding-bottom: 0;
   }
 
   .asklake-dashboard-edit-toolbar {
