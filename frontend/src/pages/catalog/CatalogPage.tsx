@@ -532,7 +532,7 @@ export function CatalogPage({
             </AccordionItem>
             <AccordionItem value="materialization-runs">
               <AccordionTrigger>
-                <span className="catalog-preview-accordion-label"><ExternalLink /> 생성 결과</span>
+                <span className="catalog-preview-accordion-label"><ExternalLink /> 데이터 버전</span>
               </AccordionTrigger>
               <AccordionContent>
                 <CatalogMaterializationRuns
@@ -555,8 +555,8 @@ export function CatalogPage({
             title={!canQueryCurrentDataset(previewDataset)
               ? permissionDeniedMessage("데이터셋", "SQL 실행")
               : selectedSqlRunTarget?.datasetId === previewDataset.id && selectedSqlRunTarget.datasetName === previewDataset.name
-                ? "선택한 생성 결과 기준으로 SQL 분석을 엽니다."
-                : "성공한 생성 결과를 먼저 선택해 주세요."}
+                ? "선택한 데이터 버전을 기준으로 SQL 분석을 엽니다."
+                : "성공한 데이터 버전을 먼저 선택해 주세요."}
             type="button"
             variant="outline"
             onClick={openSelectedSqlDataset}
@@ -932,6 +932,9 @@ function CatalogMaterializationRuns({
 
   return (
     <div className="catalog-materialization-panel grid gap-3" onClick={(event) => event.stopPropagation()}>
+      <p className="m-0 text-xs font-semibold leading-5 text-slate-500">
+        SQL 분석에 사용할 데이터 저장 시점을 선택합니다.
+      </p>
       {visibleRuns.length > 0 ? (
         <div className="grid gap-2">
           {visibleRuns.map((run) => {
@@ -962,7 +965,7 @@ function CatalogMaterializationRuns({
               role="button"
               size="none"
               tabIndex={isSelectable ? 0 : -1}
-              title={isSelectable ? "SQL 분석 대상으로 선택" : !canQueryDatasetForCurrentUser(dataset) ? permissionDeniedMessage("데이터셋", "SQL 실행") : "성공한 생성 결과만 SQL 분석 대상으로 선택할 수 있습니다."}
+              title={isSelectable ? "SQL 분석 대상으로 선택" : !canQueryDatasetForCurrentUser(dataset) ? permissionDeniedMessage("데이터셋", "SQL 실행") : "성공한 데이터 버전만 SQL 분석 대상으로 선택할 수 있습니다."}
               onClick={(event) => onSelectRun(event, dataset, run)}
               onKeyDown={(event) => {
                 if (event.key === "Enter" || event.key === " ") {
@@ -977,12 +980,12 @@ function CatalogMaterializationRuns({
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
                     <Button
-                      aria-label={`${run.runId} 생성 결과 삭제`}
+                      aria-label={`${run.runId} 데이터 버전 삭제`}
                       className="ml-auto"
                       disabled={!canDeleteDatasetMaterializationRun(dataset)}
                       shape="compact"
                       size="sm"
-                      title={canDeleteDatasetMaterializationRun(dataset) ? "생성 결과를 삭제합니다." : permissionDeniedMessage("데이터셋", "생성 결과 삭제")}
+                      title={canDeleteDatasetMaterializationRun(dataset) ? "데이터 버전을 삭제합니다." : permissionDeniedMessage("데이터셋", "데이터 버전 삭제")}
                       type="button"
                       variant="ghost"
                       onClick={(event) => event.stopPropagation()}
@@ -992,8 +995,8 @@ function CatalogMaterializationRuns({
                   </AlertDialogTrigger>
                   <AlertDialogContent onClick={(event) => event.stopPropagation()}>
                     <AlertDialogHeader>
-                      <AlertDialogTitle>생성 결과를 삭제하시겠습니까?</AlertDialogTitle>
-                      <AlertDialogDescription>{run.runId} 결과는 삭제 후 복구할 수 없습니다.</AlertDialogDescription>
+                      <AlertDialogTitle>데이터 버전을 삭제하시겠습니까?</AlertDialogTitle>
+                      <AlertDialogDescription>{run.runId} 버전은 삭제 후 복구할 수 없습니다.</AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
                       <AlertDialogCancel>취소</AlertDialogCancel>
@@ -1024,7 +1027,7 @@ function CatalogMaterializationRuns({
       ) : (
         <Empty size="sm" variant="bordered">
           <EmptyHeader>
-            <EmptyTitle>생성 결과가 없습니다.</EmptyTitle>
+            <EmptyTitle>데이터 버전이 없습니다.</EmptyTitle>
             <EmptyDescription>데이터셋 생성 또는 append가 완료되면 여기에서 SQL 분석 대상을 선택할 수 있습니다.</EmptyDescription>
           </EmptyHeader>
         </Empty>
