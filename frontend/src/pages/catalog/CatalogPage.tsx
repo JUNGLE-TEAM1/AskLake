@@ -8,7 +8,7 @@ import type { Edge, Node as FlowNode } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import {
   AlertCircle,
-  ChevronDown,
+  ArrowUpDown,
   ExternalLink,
   Filter,
   LayoutGrid,
@@ -37,9 +37,10 @@ import {
 } from "@/components/ui/filter-toolbar";
 import {
   DropdownMenu,
-  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -48,7 +49,6 @@ import { PaginationBar } from "@/components/ui/pagination-bar";
 import { Panel, PanelHeader } from "@/components/ui/panel";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Slider } from "@/components/ui/slider";
@@ -93,6 +93,7 @@ type CatalogFilterState = {
   available: boolean;
   rag: boolean;
 };
+type CatalogStatusFilter = "all" | keyof CatalogFilterState;
 
 type CatalogSearchQuery = {
   keywords: string[];
@@ -114,6 +115,12 @@ const catalogSortOptions: Array<{ label: string; mode: CatalogSortMode }> = [
   { label: "이름순", mode: "name" },
   { label: "최근 갱신순", mode: "updated" },
   { label: "품질 높은순", mode: "quality" },
+];
+const catalogStatusFilterOptions: Array<{ label: string; value: CatalogStatusFilter }> = [
+  { label: "전체", value: "all" },
+  { label: "사용 가능", value: "available" },
+  { label: "승인 필요", value: "approvalRequired" },
+  { label: "RAG 여부", value: "rag" },
 ];
 
 const catalogPageSize = 5;
@@ -338,17 +345,26 @@ export function CatalogPage({
     onAction("catalog.search.submitted", `/api/catalog/datasets?q=${encodeURIComponent(query)}`, query || "empty");
   };
 
-  const updateFilter = (filterName: keyof CatalogFilterState, checked: boolean) => {
-    setFilterState((filters) => ({ ...filters, [filterName]: checked }));
-    onAction("catalog.filter_changed", `/api/catalog/datasets?filter=${filterName}&enabled=${checked}`, filterName);
-  };
+  const activeStatusFilter: CatalogStatusFilter = filterState.available
+    ? "available"
+    : filterState.approvalRequired
+      ? "approvalRequired"
+      : filterState.rag
+        ? "rag"
+        : "all";
 
-  const clearFilters = () => {
-    setFilterState({ approvalRequired: false, available: false, rag: false });
-    onAction("catalog.filter_changed", "/api/catalog/datasets?filter=all&enabled=false", "all");
+  const updateStatusFilter = (nextStatus: CatalogStatusFilter) => {
+    setFilterState({
+      approvalRequired: nextStatus === "approvalRequired",
+      available: nextStatus === "available",
+      rag: nextStatus === "rag",
+    });
+    onAction(
+      "catalog.filter_changed",
+      `/api/catalog/datasets?filter=${nextStatus}&enabled=${nextStatus !== "all"}`,
+      nextStatus,
+    );
   };
-
-  const activeFilterCount = Object.values(filterState).filter(Boolean).length;
 
   const updateSortMode = (nextSortMode: CatalogSortMode) => {
     setSortMode(nextSortMode);
@@ -524,58 +540,52 @@ export function CatalogPage({
                 <FilterToolbarActions>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <Button aria-label="상태 필터" className="min-h-[42px] gap-2 px-3.5 text-sm font-semibold text-slate-600" size="sm" type="button" variant="outline">
-                        <Filter className="size-4" aria-hidden="true" />
-                        <span>{activeFilterCount ? `상태 ${activeFilterCount}개` : "상태 필터"}</span>
-                        <ChevronDown className="size-4" aria-hidden="true" />
+                      <Button
+                        aria-label="상태 필터"
+                        className="h-9 justify-start gap-1.5 px-0 text-lg font-semibold text-slate-600 hover:bg-transparent hover:text-slate-950"
+                        size="sm"
+                        type="button"
+                        variant="ghost"
+                      >
+                        상태
+                        <Filter className="size-[18px]" aria-hidden="true" />
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="start" className="min-w-44">
                       <DropdownMenuLabel>상태 필터</DropdownMenuLabel>
                       <DropdownMenuSeparator />
-                      <DropdownMenuCheckboxItem
-                        checked={activeFilterCount === 0}
-                        onCheckedChange={clearFilters}
-                        onSelect={(event) => event.preventDefault()}
-                      >
-                        전체
-                      </DropdownMenuCheckboxItem>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuCheckboxItem
-                        checked={filterState.available}
-                        onCheckedChange={(checked) => updateFilter("available", Boolean(checked))}
-                        onSelect={(event) => event.preventDefault()}
-                      >
-                        사용 가능
-                      </DropdownMenuCheckboxItem>
-                      <DropdownMenuCheckboxItem
-                        checked={filterState.approvalRequired}
-                        onCheckedChange={(checked) => updateFilter("approvalRequired", Boolean(checked))}
-                        onSelect={(event) => event.preventDefault()}
-                      >
-                        승인 필요
-                      </DropdownMenuCheckboxItem>
-                      <DropdownMenuCheckboxItem
-                        checked={filterState.rag}
-                        onCheckedChange={(checked) => updateFilter("rag", Boolean(checked))}
-                        onSelect={(event) => event.preventDefault()}
-                      >
-                        RAG 여부
-                      </DropdownMenuCheckboxItem>
+                      <DropdownMenuRadioGroup value={activeStatusFilter} onValueChange={(value) => updateStatusFilter(value as CatalogStatusFilter)}>
+                        {catalogStatusFilterOptions.map((option) => (
+                          <DropdownMenuRadioItem key={option.value} value={option.value}>
+                            {option.label}
+                          </DropdownMenuRadioItem>
+                        ))}
+                      </DropdownMenuRadioGroup>
                     </DropdownMenuContent>
                   </DropdownMenu>
-                  <Select value={sortMode} onValueChange={(value) => updateSortMode(value as CatalogSortMode)}>
-                    <SelectTrigger aria-label="정렬 기준" className="w-44" onPointerDown={() => onAction("catalog.sort_opened", "/api/catalog/search/sort", "catalog-sort")} size="sm">
-                      <SelectValue placeholder="정렬 기준" />
-                    </SelectTrigger>
-                    <SelectContent align="end">
-                      <SelectGroup>
+                  <DropdownMenu onOpenChange={(open) => open && onAction("catalog.sort_opened", "/api/catalog/search/sort", "catalog-sort")}>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        aria-label="정렬 기준"
+                        className="h-9 justify-start gap-1.5 px-0 text-lg font-semibold text-slate-600 hover:bg-transparent hover:text-slate-950"
+                        size="sm"
+                        type="button"
+                        variant="ghost"
+                      >
+                        정렬
+                        <ArrowUpDown className="size-[18px]" aria-hidden="true" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="min-w-44">
+                      <DropdownMenuLabel>정렬 기준</DropdownMenuLabel>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuRadioGroup value={sortMode} onValueChange={(value) => updateSortMode(value as CatalogSortMode)}>
                         {catalogSortOptions.map((option) => (
-                          <SelectItem key={option.mode} value={option.mode}>{option.label}</SelectItem>
+                          <DropdownMenuRadioItem key={option.mode} value={option.mode}>{option.label}</DropdownMenuRadioItem>
                         ))}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
+                      </DropdownMenuRadioGroup>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </FilterToolbarActions>
               </FilterToolbar>
             </div>
