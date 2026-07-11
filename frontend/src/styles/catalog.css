@@ -12,6 +12,14 @@
   font-family: var(--jobs-font-family);
 }
 
+.catalog-page-header > div > div:first-child {
+  align-items: center;
+}
+
+.catalog-page-header > div > div:first-child > span {
+  margin-top: 0;
+}
+
 .catalog-content-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) clamp(320px, 24vw, 420px);
@@ -25,11 +33,6 @@
   align-content: start;
   gap: 20px;
   min-width: 0;
-}
-
-.catalog-search-panel {
-  display: grid;
-  gap: 0;
 }
 
 .catalog-results-header h2,
@@ -350,7 +353,7 @@
 
 .catalog-mini-metric span {
   color: #64748b;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 800;
 }
 
@@ -359,7 +362,7 @@
   min-width: 0;
   max-width: 100%;
   color: #0f172a;
-  font-size: 14px;
+  font-size: 16px;
   line-height: 1.35;
   overflow-wrap: anywhere;
   word-break: break-word;
@@ -375,7 +378,7 @@
 
 .catalog-section-header span {
   color: #64748b;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 800;
 }
 
@@ -402,7 +405,7 @@
 .catalog-schema-preview td {
   border-bottom: 1px solid #eef2f7;
   color: #334155;
-  font-size: 13px;
+  font-size: 15px;
   padding: 10px 0;
   text-align: left;
 }
@@ -421,7 +424,7 @@
   border: 0;
   background: transparent;
   color: #2563eb;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 800;
   padding: 0;
 }
@@ -432,11 +435,6 @@
   align-items: center;
   justify-content: center;
   gap: 6px;
-}
-
-.catalog-wide-button svg {
-  flex: 0 0 auto;
-  margin-right: 0;
 }
 
 .catalog-modal {

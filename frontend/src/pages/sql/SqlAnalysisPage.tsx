@@ -1,23 +1,29 @@
-import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "motion/react";
 import {
   BarChart3,
   Database,
   Download,
+  Maximize2,
   PanelLeftClose,
   PanelLeftOpen,
   PlayCircle,
   RotateCcw,
   Search,
-  Sparkles,
   Table2,
 } from "lucide-react";
+import nessieIcon from "@/assets/asklake-nessi-icon.png";
 import { ActionGroup } from "@/components/ui/action-group";
 import { Badge } from "@/components/ui/badge";
-import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { DialogShell } from "@/components/ui/dialog-shell";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 import { Field, FieldGroup, FieldLabel, FieldTitle } from "@/components/ui/field";
@@ -28,21 +34,24 @@ import { PageHeader } from "@/components/ui/page-header";
 import { PaginationBar } from "@/components/ui/pagination-bar";
 import { Panel, PanelHeader } from "@/components/ui/panel";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Slider } from "@/components/ui/slider";
-import { StatusBadge } from "@/components/ui/status-badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { cn } from "@/lib/utils";
 import { executeQueryPreview } from "../../services/mockApi";
 import {
   generateQueryAiSuggestion,
   type QueryAiSuggestion,
 } from "../../services/queryAiService";
-import { ApiError } from "../../types";
-import type { AuditResult, CatalogDataset, CreateDerivedDatasetRequest, CurrentUserResponse, DashboardEntry, DerivedDatasetLayer, SqlResultDraft } from "../../types";
-import { canQueryDatasetAs, permissionDeniedMessage } from "../../utils/permissions";
+import type { AuditResult, CatalogDataset, CreateDerivedDatasetRequest, DashboardEntry, DerivedDatasetLayer, SqlResultDraft } from "../../types";
 import { DashboardPage } from "../dashboard/DashboardPage";
 import { SqlDatasetTree } from "./SqlDatasetRow";
+import {
+  INITIAL_NESSIE_MESSAGES,
+  SqlNessieAssistant,
+  type NessieMessage,
+} from "./SqlNessieAssistant";
 import { SqlPreviewTable } from "./SqlPreviewTable";
 import {
   PREVIEW_ROW_LIMIT,
@@ -52,8 +61,6 @@ import {
   buildDefaultDerivedDatasetTags,
   buildDefaultQuery,
   escapeCsvCell,
-  formatDuration,
-  formatResultTimestamp,
   getAutocompleteContext,
   getPreflightSummary,
   parseDerivedDatasetTags,
@@ -62,9 +69,25 @@ import {
   type SqlPreflightResult,
 } from "./sqlLogic";
 
-const QUERY_AI_PROMPT_PLACEHOLDER = "만들고 싶은 분석을 자연어로 입력해 주세요.";
-const PREVIEW_ROW_LIMIT_MIN = 10;
-const PREVIEW_ROW_LIMIT_STEP = 10;
+const LazySqlResultChart = lazy(() => import("./SqlResultChart").then((module) => ({
+  default: module.SqlResultChart,
+})));
+
+function createNessieMessageId() {
+  return `nessie-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function isChartRequest(prompt: string) {
+  return /(차트|시각화|그래프|막대)/i.test(prompt);
+}
+
+function SqlResultChartView({ resultDraft }: { resultDraft: SqlResultDraft }) {
+  return (
+    <Suspense fallback={<Skeleton className="m-4 h-[400px] min-w-[720px]" />}>
+      <LazySqlResultChart resultDraft={resultDraft} />
+    </Suspense>
+  );
+}
 
 function isSqlCandidateDataset(dataset: CatalogDataset) {
   const normalizedName = dataset.name.toLowerCase();
@@ -75,7 +98,6 @@ function isSqlCandidateDataset(dataset: CatalogDataset) {
 
 export function SqlAnalysisPage({
   cachedResult,
-  currentUser,
   dataset,
   datasets,
   onAction,
@@ -83,7 +105,6 @@ export function SqlAnalysisPage({
   onResultChange,
 }: {
   cachedResult?: SqlResultDraft | null;
-  currentUser?: CurrentUserResponse | null;
   dataset: CatalogDataset | null;
   datasets: CatalogDataset[];
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
@@ -96,7 +117,6 @@ export function SqlAnalysisPage({
     [baseDatasetId, dataset, datasets],
   );
   const defaultQuery = useMemo(() => baseDataset ? buildDefaultQuery(baseDataset) : "", [baseDataset]);
-  const [executed, setExecuted] = useState(false);
   const [contextCollapsed, setContextCollapsed] = useState(false);
   const [contextPanelTab, setContextPanelTab] = useState<"tables" | "queryAi">("tables");
   const [datasetSearch, setDatasetSearch] = useState("");
@@ -104,7 +124,6 @@ export function SqlAnalysisPage({
   const [contextPageSize, setContextPageSize] = useState(() => Math.max(1, datasets.length));
   const [expandedDatasetId, setExpandedDatasetId] = useState<string | null>(null);
   const [referenceDatasetIds, setReferenceDatasetIds] = useState<string[]>([]);
-  const [executionMs, setExecutionMs] = useState<number | null>(null);
   const [queryPending, setQueryPending] = useState(false);
   const [query, setQuery] = useState(defaultQuery);
   const [previewRowLimit, setPreviewRowLimit] = useState(PREVIEW_ROW_LIMIT);
@@ -115,6 +134,10 @@ export function SqlAnalysisPage({
   const [queryAiSuggestion, setQueryAiSuggestion] = useState<QueryAiSuggestion | null>(null);
   const [queryAiPending, setQueryAiPending] = useState(false);
   const [queryAiError, setQueryAiError] = useState<string | null>(null);
+  const [nessieMessages, setNessieMessages] = useState<NessieMessage[]>(INITIAL_NESSIE_MESSAGES);
+  const [chartGenerated, setChartGenerated] = useState(false);
+  const [resultView, setResultView] = useState<"chart" | "table">("table");
+  const [resultDialogOpen, setResultDialogOpen] = useState(false);
   const [derivedDatasetName, setDerivedDatasetName] = useState(dataset ? buildDefaultDerivedDatasetName(dataset) : "");
   const [derivedDatasetDescription, setDerivedDatasetDescription] = useState(dataset ? buildDefaultDerivedDatasetDescription(dataset) : "");
   const [derivedDatasetTags, setDerivedDatasetTags] = useState(dataset ? buildDefaultDerivedDatasetTags(dataset) : "");
@@ -162,31 +185,14 @@ export function SqlAnalysisPage({
     () => datasets.filter(isSqlCandidateDataset),
     [datasets],
   );
-  const dashboardBaseDataset = useMemo(() => {
-    if (baseDataset) return baseDataset;
-    if (!resultDraft) return null;
-    const candidateIds = [resultDraft.baseDatasetId, resultDraft.datasetId].filter((id): id is string => Boolean(id));
-    return candidateIds
-      .map((id) => datasets.find((item) => item.id === id) ?? (dataset?.id === id ? dataset : null))
-      .find((item): item is CatalogDataset => Boolean(item)) ?? null;
-  }, [baseDataset, dataset, datasets, resultDraft]);
   const dashboardDialogEntry = useMemo<DashboardEntry>(() => ({
-    baseDatasetId: dashboardBaseDataset?.id,
-    dashboardId: resultDraft && dashboardBaseDataset ? `dash_${dashboardBaseDataset.id}_${resultDraft.runId}` : "dash_sql_empty_draft",
+    dashboardId: resultDraft && baseDataset ? `dash_${baseDataset.id}_${resultDraft.runId}` : "dash_sql_empty_draft",
     runtimeMode: "draft",
-    sqlResultDatasetId: resultDraft?.datasetId,
-    sqlRunId: resultDraft?.runId,
     source: "sql",
     view: "runtime",
     version: dashboardDialogVersion,
-  }), [dashboardBaseDataset, dashboardDialogVersion, resultDraft]);
-  const selectedReferenceDatasets = useMemo(
-    () => datasets.filter((item) => referenceDatasetIdSet.has(item.id)),
-    [datasets, referenceDatasetIdSet],
-  );
-  const hasQueryPermission = Boolean(baseDataset && canQueryDatasetAs(baseDataset, currentUser) && selectedReferenceDatasets.every((item) => canQueryDatasetAs(item, currentUser)));
-  const queryPermissionMessage = hasQueryPermission ? "" : permissionDeniedMessage("선택 데이터셋", "SQL 실행");
-  const canRunPreview = Boolean(baseDataset && hasQueryPermission && preflightResult?.canExecute === true && preflightResult.key === queryValidationKey);
+  }), [baseDataset, dashboardDialogVersion, resultDraft]);
+  const canRunPreview = Boolean(baseDataset && preflightResult?.canExecute === true && preflightResult.key === queryValidationKey);
   const lineNumbers = useMemo(() => {
     if (!baseDataset) return "";
     const lineCount = Math.max(query.split("\n").length, 7);
@@ -249,11 +255,9 @@ export function SqlAnalysisPage({
     }
 
     if (!baseDataset) {
-      setExecuted(false);
       setQuery("");
       setCursorIndex(0);
       setResultDraft(null);
-      setExecutionMs(null);
       setPreflightResult(null);
       setDerivedDatasetName("");
       setDerivedDatasetDescription("");
@@ -264,6 +268,10 @@ export function SqlAnalysisPage({
       setQueryAiPrompt("");
       setQueryAiSuggestion(null);
       setQueryAiError(null);
+      setNessieMessages(INITIAL_NESSIE_MESSAGES);
+      setChartGenerated(false);
+      setResultView("table");
+      setResultDialogOpen(false);
       setReferenceDatasetIds([]);
       onResultChange(null);
       return;
@@ -271,11 +279,9 @@ export function SqlAnalysisPage({
 
     if (canRestoreCachedResult) return;
 
-    setExecuted(false);
     setQuery(defaultQuery);
     setCursorIndex(defaultQuery.length);
     setResultDraft(null);
-    setExecutionMs(null);
     setPreflightResult(null);
     setDerivedDatasetName(buildDefaultDerivedDatasetName(baseDataset));
     setDerivedDatasetDescription(buildDefaultDerivedDatasetDescription(baseDataset));
@@ -286,6 +292,10 @@ export function SqlAnalysisPage({
     setQueryAiPrompt("");
     setQueryAiSuggestion(null);
     setQueryAiError(null);
+    setNessieMessages(INITIAL_NESSIE_MESSAGES);
+    setChartGenerated(false);
+    setResultView("table");
+    setResultDialogOpen(false);
     setReferenceDatasetIds((ids) => ids.filter((id) => id !== baseDataset.id));
     onResultChange(null);
   }, [baseDataset, canRestoreCachedResult, defaultQuery]);
@@ -295,17 +305,19 @@ export function SqlAnalysisPage({
 
     const cachedReferences = (cachedResult.referenceDatasetIds ?? []).filter((id) => id !== baseDataset.id);
 
-    setExecuted(true);
     setQuery(cachedResult.query);
     setPreviewRowLimit(cachedResult.previewLimit ?? PREVIEW_ROW_LIMIT);
     setCursorIndex(cachedResult.query.length);
     setReferenceDatasetIds(cachedReferences);
     setResultDraft(cachedResult);
-    setExecutionMs(null);
     setMaterializeDialogOpen(false);
     setDashboardDialogOpen(false);
     setQueryAiSuggestion(null);
     setQueryAiError(null);
+    setNessieMessages(INITIAL_NESSIE_MESSAGES);
+    setChartGenerated(false);
+    setResultView("table");
+    setResultDialogOpen(false);
   }, [baseDataset, cachedResult, canRestoreCachedResult]);
 
   const queryContextPath = (mode: "preflight" | "preview" = "preview") => {
@@ -382,16 +394,9 @@ export function SqlAnalysisPage({
       setPreflightResult(null);
       return;
     }
-    if (!hasQueryPermission) {
-      setPreflightResult({
-        key: queryValidationKey,
-        canExecute: false,
-        messages: [{ tone: "error", text: queryPermissionMessage }],
-      });
-      return;
-    }
-    setPreflightResult(runSqlPreflight(query, baseDataset, selectedReferenceDatasets, queryValidationKey));
-  }, [baseDataset, hasQueryPermission, query, queryPermissionMessage, queryValidationKey, selectedReferenceDatasets]);
+    const referenceDatasets = datasets.filter((item) => referenceDatasetIdSet.has(item.id));
+    setPreflightResult(runSqlPreflight(query, baseDataset, referenceDatasets, queryValidationKey, previewRowLimit));
+  }, [baseDataset, datasets, previewRowLimit, query, queryValidationKey, referenceDatasetIdSet]);
 
   const buildPreviewDraft = (): Promise<SqlResultDraft> => {
     if (!baseDataset) return Promise.reject(new Error("No dataset selected"));
@@ -403,10 +408,11 @@ export function SqlAnalysisPage({
   };
 
   const resetResultState = () => {
-    setExecuted(false);
     setResultDraft(null);
-    setExecutionMs(null);
     setPreflightResult(null);
+    setChartGenerated(false);
+    setResultView("table");
+    setResultDialogOpen(false);
     setMaterializeDialogOpen(false);
     setDashboardDialogOpen(false);
     onResultChange(null);
@@ -476,13 +482,12 @@ export function SqlAnalysisPage({
       onAction("analysis.query.preview_blocked", queryContextPath("preview"), baseDataset?.id ?? "sql-empty", "failed");
       return;
     }
-    const startedAt = performance.now();
     setQueryPending(true);
     try {
       const resultDraft = await buildPreviewDraft();
-      setExecuted(true);
-      setExecutionMs(Math.round(performance.now() - startedAt));
       setResultDraft(resultDraft);
+      setChartGenerated(false);
+      setResultView("table");
       onResultChange(resultDraft);
       onAction("analysis.query.preview_executed", queryContextPath("preview"), baseDataset.id);
     } catch (error) {
@@ -499,9 +504,12 @@ export function SqlAnalysisPage({
   };
 
   const preflightSummary = getPreflightSummary(preflightResult);
+  const visiblePreflightSummary = preflightSummary?.tone === "success" ? null : preflightSummary;
 
   const requestQueryAiSuggestion = async () => {
     if (queryAiPending) return;
+
+    const prompt = queryAiPrompt.trim();
 
     if (!baseDataset) {
       setQueryAiSuggestion(null);
@@ -510,46 +518,84 @@ export function SqlAnalysisPage({
       return;
     }
 
-    if (!hasQueryPermission) {
-      setQueryAiSuggestion(null);
-      setQueryAiError(queryPermissionMessage);
-      return;
-    }
-
-    if (queryAiPrompt.trim().length === 0) {
+    if (prompt.length === 0) {
       setQueryAiSuggestion(null);
       setQueryAiError("만들고 싶은 분석을 자연어로 입력해 주세요.");
       queryAiPromptRef.current?.focus();
       return;
     }
 
-    setQueryAiPending(true);
+    setNessieMessages((messages) => [...messages, {
+      content: prompt,
+      id: createNessieMessageId(),
+      role: "user",
+    }]);
+    setQueryAiPrompt("");
     setQueryAiError(null);
+
+    if (isChartRequest(prompt)) {
+      if (!resultDraft) {
+        const message = "먼저 SQL을 실행해 주세요. 실행 결과가 생기면 그 데이터를 바로 차트로 바꿔드릴게요.";
+        setQueryAiError(message);
+        setNessieMessages((messages) => [...messages, {
+          content: message,
+          id: createNessieMessageId(),
+          role: "assistant",
+          tone: "error",
+        }]);
+        return;
+      }
+
+      setChartGenerated(true);
+      setResultView("chart");
+      setNessieMessages((messages) => [...messages, {
+        content: `방금 실행한 SQL 결과 ${resultDraft.rows.length}행을 기준으로 차트를 만들었습니다. 결과 영역에서 표와 차트를 전환할 수 있어요.`,
+        id: createNessieMessageId(),
+        role: "assistant",
+      }]);
+      onAction("analysis.ai.chart_created", `/api/query/runs/${resultDraft.runId}/visualization`, resultDraft.datasetId);
+      return;
+    }
+
+    setQueryAiPending(true);
     try {
       const suggestion = await generateQueryAiSuggestion({
         baseDataset,
         mode: "draft_sql",
         preflightMessages: preflightResult?.messages ?? [],
-        prompt: queryAiPrompt,
+        prompt,
         query,
         selectedDatasets: selectedContextDatasets,
       });
       setQueryAiSuggestion(suggestion);
+      setNessieMessages((messages) => [...messages, {
+        content: "선택한 데이터셋 범위에서 실행 가능한 SQL 초안을 만들었습니다.",
+        id: createNessieMessageId(),
+        role: "assistant",
+        sql: suggestion.sql,
+      }]);
       onAction("analysis.ai.suggestion_created", "/api/query/ai-suggestions?mode=draft_sql", baseDataset.id);
-    } catch (error) {
-      setQueryAiError(error instanceof ApiError && error.status === 403 ? queryPermissionMessage : "AI 제안을 만들지 못했습니다. 잠시 후 다시 시도해 주세요.");
+    } catch {
+      const message = "SQL 제안을 만들지 못했습니다. 잠시 후 다시 시도해 주세요.";
+      setQueryAiError(message);
+      setNessieMessages((messages) => [...messages, {
+        content: message,
+        id: createNessieMessageId(),
+        role: "assistant",
+        tone: "error",
+      }]);
       onAction("analysis.ai.suggestion_failed", "/api/query/ai-suggestions?mode=draft_sql", baseDataset.id, "failed");
     } finally {
       setQueryAiPending(false);
     }
   };
 
-  const applyQueryAiSuggestion = () => {
-    if (!baseDataset || !queryAiSuggestion?.sql) return;
-    const nextQuery = queryAiSuggestion.sql;
+  const applyQueryAiSuggestion = (suggestedSql = queryAiSuggestion?.sql) => {
+    if (!baseDataset || !suggestedSql) return;
+    const nextQuery = suggestedSql;
     updateQuery(nextQuery);
     setCursorIndex(nextQuery.length);
-    onAction("analysis.ai.suggestion_applied", `/api/query/ai-suggestions?mode=${queryAiSuggestion.mode}/apply`, baseDataset.id);
+    onAction("analysis.ai.suggestion_applied", `/api/query/ai-suggestions?mode=${queryAiSuggestion?.mode ?? "draft_sql"}/apply`, baseDataset.id);
     requestAnimationFrame(() => {
       textareaRef.current?.focus();
       textareaRef.current?.setSelectionRange(nextQuery.length, nextQuery.length);
@@ -561,6 +607,19 @@ export function SqlAnalysisPage({
     updateQuery(defaultQuery);
     setCursorIndex(defaultQuery.length);
     onAction("analysis.query.reset", "/api/query/reset", baseDataset?.id ?? "sql-empty");
+  };
+
+  const openSqlAssistant = () => {
+    setContextCollapsed(false);
+    setContextPanelTab("queryAi");
+    onAction("analysis.ai.opened", "/api/query/ai-suggestions", baseDataset?.id ?? "sql-empty");
+    requestAnimationFrame(() => queryAiPromptRef.current?.focus());
+  };
+
+  const openChartAssistant = () => {
+    setQueryAiPrompt("방금 만든 SQL로 관련 차트를 만들어줘");
+    setQueryAiError(null);
+    openSqlAssistant();
   };
 
   const toggleContext = () => {
@@ -637,6 +696,7 @@ export function SqlAnalysisPage({
       setQueryAiPrompt("");
       setQueryAiSuggestion(null);
       setQueryAiError(null);
+      setNessieMessages(INITIAL_NESSIE_MESSAGES);
     }
     resetResultState();
     onAction(
@@ -655,18 +715,6 @@ export function SqlAnalysisPage({
     );
   };
 
-  const applyPreflightAutoFix = () => {
-    if (!preflightResult?.autoFixQuery) return;
-    const nextQuery = preflightResult.autoFixQuery;
-    updateQuery(nextQuery);
-    setCursorIndex(nextQuery.length);
-    onAction("analysis.query.identifier_autofixed", queryContextPath("preflight"), baseDataset?.id ?? "sql-empty");
-    requestAnimationFrame(() => {
-      textareaRef.current?.focus();
-      textareaRef.current?.setSelectionRange(nextQuery.length, nextQuery.length);
-      syncLineNumberScroll();
-    });
-  };
   const downloadCsv = () => {
     if (!resultDraft) return;
     const csv = [
@@ -711,37 +759,18 @@ export function SqlAnalysisPage({
   };
 
   const openDashboardBuilder = () => {
-    if (!dashboardBaseDataset || !resultDraft) return;
+    if (!baseDataset || !resultDraft) return;
     setDashboardDialogVersion((version) => version + 1);
     setDashboardDialogOpen(true);
-    onAction("dashboard.builder.modal_opened_from_sql", `/api/dashboards/${dashboardBaseDataset.id}/draft/ensure`, resultDraft.runId);
-  };
-
-  const handleDashboardBuilderMouseDown = (event: React.MouseEvent<HTMLButtonElement>) => {
-    event.preventDefault();
-    openDashboardBuilder();
-  };
-
-  const updatePreviewRowLimit = (values: number[]) => {
-    setPreviewRowLimit(values[0] ?? PREVIEW_ROW_LIMIT);
-  };
-
-  const commitPreviewRowLimit = (values: number[]) => {
-    setPreviewRowLimit(values[0] ?? PREVIEW_ROW_LIMIT);
-    resetResultState();
+    onAction("dashboard.builder.modal_opened_from_sql", `/api/dashboards/${baseDataset.id}/draft/ensure`, resultDraft.runId);
   };
 
   return (
     <div className={cn("sql-page", contextCollapsed && "context-collapsed")}>
       <PageHeader
         className="sql-page-header"
-        description="데이터셋을 탐색하고 SQL 쿼리를 실행해 결과를 분석합니다."
-        descriptionClassName="text-xl leading-8"
-        icon={<Table2 size={30} />}
-        iconClassName="mt-0 size-16 rounded-xl"
-        size="lg"
+        icon={<Table2 size={18} />}
         title="SQL 분석"
-        titleClassName="text-4xl"
       />
       {contextCollapsed && (
         <Button className="sql-context-rail-button" type="button" onClick={toggleContext} aria-label="분석 테이블 열기" title="분석 테이블 열기" size="icon" variant="outline">
@@ -796,7 +825,10 @@ export function SqlAnalysisPage({
                           transition={{ type: "spring", stiffness: 420, damping: 32 }}
                         />
                       )}
-                      <span className="relative z-10 inline-flex items-center gap-1.5"><Sparkles /> Query AI</span>
+                      <span className="relative z-10 inline-flex items-center gap-1.5">
+                        <img alt="" aria-hidden="true" className="size-5 rounded-sm object-contain" src={nessieIcon} />
+                        Nessie
+                      </span>
                     </TabsTrigger>
                   </TabsList>
                 </div>
@@ -813,27 +845,29 @@ export function SqlAnalysisPage({
                   </FilterToolbarSearch>
                   <section className="grid min-h-0 grid-rows-[max-content_minmax(0,1fr)_max-content] gap-2">
                     <FieldTitle>데이터셋</FieldTitle>
-                    <Panel asChild>
-                      <ScrollArea className="h-[300px] min-h-0" type="always">
-                        <div className="grid min-w-0 gap-0 pr-3" ref={contextListRef}>
-                          <SqlDatasetTree
-                            datasets={paginatedContextDatasets}
-                            expandedDatasetId={expandedDatasetId}
-                            onSelect={addSelectedDataset}
-                            onToggle={toggleDatasetPreview}
-                            selectedDatasetIds={selectedDatasetIdSet}
-                          />
-                          {filteredDatasets.length === 0 && (
-                            <Empty size="sm" variant="bordered">
-                              <EmptyHeader>
-                                <EmptyTitle>{datasetSearch.trim() ? "검색 결과가 없습니다." : "선택 가능한 테이블이 없습니다."}</EmptyTitle>
-                                <EmptyDescription>{datasetSearch.trim() ? "다른 검색어를 입력해 주세요." : "SQL에 사용할 테이블이 없습니다."}</EmptyDescription>
-                              </EmptyHeader>
-                            </Empty>
-                          )}
-                        </div>
-                      </ScrollArea>
-                    </Panel>
+                    <div className="relative min-h-0 overflow-hidden">
+                      <Panel asChild>
+                        <ScrollArea className="sql-dataset-scroll min-h-0" style={{ inset: 0, position: "absolute" }} type="always">
+                          <div className="grid min-w-0 gap-0 pr-3" ref={contextListRef}>
+                            <SqlDatasetTree
+                              datasets={paginatedContextDatasets}
+                              expandedDatasetId={expandedDatasetId}
+                              onSelect={addSelectedDataset}
+                              onToggle={toggleDatasetPreview}
+                              selectedDatasetIds={selectedDatasetIdSet}
+                            />
+                            {filteredDatasets.length === 0 && (
+                              <Empty size="sm" variant="bordered">
+                                <EmptyHeader>
+                                  <EmptyTitle>{datasetSearch.trim() ? "검색 결과가 없습니다." : "선택 가능한 테이블이 없습니다."}</EmptyTitle>
+                                  <EmptyDescription>{datasetSearch.trim() ? "다른 검색어를 입력해 주세요." : "SQL에 사용할 테이블이 없습니다."}</EmptyDescription>
+                                </EmptyHeader>
+                              </Empty>
+                            )}
+                          </div>
+                        </ScrollArea>
+                      </Panel>
+                    </div>
                     {filteredDatasets.length > contextPageSize && (
                       <PaginationBar
                         aria-label="테이블 검색 결과 페이지"
@@ -849,67 +883,19 @@ export function SqlAnalysisPage({
                   </section>
                 </TabsContent>
                 <TabsContent className="mt-0 min-h-0 min-w-0 overflow-hidden" value="queryAi">
-                  <ScrollArea className="h-full" type="always">
-                    <Panel className="mr-3 grid gap-3 p-3.5" variant="muted">
-                      <div className="grid min-w-0 gap-2.5">
-                        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-stretch gap-2.5 max-[860px]:grid-cols-1">
-                          <Field>
-                            <FieldLabel htmlFor="sql-query-ai-prompt">요청</FieldLabel>
-                            <Textarea
-                              className="min-h-[66px]"
-                              id="sql-query-ai-prompt"
-                              ref={queryAiPromptRef}
-                              onChange={(event) => {
-                                setQueryAiPrompt(event.target.value);
-                                setQueryAiError(null);
-                              }}
-                              onKeyDown={(event) => {
-                                if (event.key !== "Enter" || event.shiftKey) return;
-                                event.preventDefault();
-                                void requestQueryAiSuggestion();
-                              }}
-                              placeholder={QUERY_AI_PROMPT_PLACEHOLDER}
-                              rows={3}
-                              value={queryAiPrompt}
-                            />
-                          </Field>
-                          <ActionGroup align="end" className="self-end" density="compact">
-                            <Button
-                              disabled={queryAiPending || !hasQueryPermission}
-                              onClick={requestQueryAiSuggestion}
-                              size="sm"
-                              title={hasQueryPermission ? "Query AI 초안을 생성합니다." : queryPermissionMessage}
-                              type="button"
-                              variant="outline"
-                            >
-                              <Sparkles data-icon="inline-start" /> {queryAiPending ? "생성 중" : "제안"}
-                            </Button>
-                          </ActionGroup>
-                        </div>
-                        <Bubble
-                          aria-live="polite"
-                          className="sql-ai-suggestion w-full max-w-full"
-                          role={queryAiError ? "alert" : "status"}
-                          variant={queryAiSuggestion ? "outline" : queryAiError ? "destructive" : "muted"}
-                        >
-                          <BubbleContent className="grid w-full gap-2">
-                            {queryAiSuggestion ? (
-                              <>
-                                {queryAiSuggestion.sql && <pre>{queryAiSuggestion.sql}</pre>}
-                                {queryAiSuggestion.sql && (
-                                  <Button onClick={applyQueryAiSuggestion} type="button" size="sm" variant="primary">
-                                    SQL에 적용
-                                  </Button>
-                                )}
-                              </>
-                            ) : (
-                              <span>{queryAiError ?? (!hasQueryPermission ? queryPermissionMessage : baseDataset ? "자동 실행 없이 초안만 만듭니다." : "분석 테이블을 추가하면 AI 제안을 만들 수 있습니다.")}</span>
-                            )}
-                          </BubbleContent>
-                        </Bubble>
-                      </div>
-                    </Panel>
-                  </ScrollArea>
+                  <SqlNessieAssistant
+                    error={queryAiError}
+                    messages={nessieMessages}
+                    onApplySuggestion={applyQueryAiSuggestion}
+                    onPromptChange={(nextPrompt) => {
+                      setQueryAiPrompt(nextPrompt);
+                      setQueryAiError(null);
+                    }}
+                    onSubmit={requestQueryAiSuggestion}
+                    pending={queryAiPending}
+                    prompt={queryAiPrompt}
+                    promptRef={queryAiPromptRef}
+                  />
                 </TabsContent>
             </Tabs>
           </aside>
@@ -920,16 +906,14 @@ export function SqlAnalysisPage({
         <Panel className="grid gap-4 p-5">
           <PanelHeader
             actions={(
-              <Button
-                disabled={!canRunPreview || queryPending}
-                onClick={executePreview}
-                size="sm"
-                title={hasQueryPermission ? "SQL Preview를 실행합니다." : queryPermissionMessage}
-                type="button"
-                variant="primary"
-              >
-                <PlayCircle data-icon="inline-start" /> {queryPending ? "실행 중" : "실행"}
-              </Button>
+              <ActionGroup density="compact" wrap="nowrap">
+                <Button type="button" onClick={resetQuery} size="sm" variant="outline">
+                  <RotateCcw data-icon="inline-start" /> SQL 초기화
+                </Button>
+                <Button type="button" onClick={executePreview} disabled={!canRunPreview || queryPending} size="sm" variant="primary">
+                  <PlayCircle data-icon="inline-start" /> {queryPending ? "실행 중" : "실행"}
+                </Button>
+              </ActionGroup>
             )}
             bordered={false}
             className="min-h-0 p-0"
@@ -988,63 +972,55 @@ export function SqlAnalysisPage({
               </div>
             </div>
           </div>
-          <div className="sql-editor-footer">
+          {visiblePreflightSummary && <div className="sql-editor-footer">
             <div className="sql-editor-status-line">
-              {preflightSummary && (
-                <StatusBadge
-                  size="sm"
-                  tone={preflightSummary.tone === "success" ? "success" : preflightSummary.tone === "warning" ? "warning" : "danger"}
-                >
-                  {preflightSummary.label}
-                </StatusBadge>
-              )}
-              {preflightSummary?.detail && (
+              <Badge
+                size="sm"
+                variant={visiblePreflightSummary.tone === "error" ? "destructive" : "warning"}
+              >
+                {visiblePreflightSummary.label}
+              </Badge>
+              {visiblePreflightSummary.detail && (
                 <Badge
                   size="sm"
-                  variant={preflightSummary.tone === "error" ? "destructive" : preflightSummary.tone === "warning" ? "warning" : "outline"}
+                  variant={visiblePreflightSummary.tone === "error" ? "destructive" : "warning"}
                 >
-                  {preflightSummary.detail}
+                  {visiblePreflightSummary.detail}
                 </Badge>
               )}
             </div>
-            <div className="sql-editor-footer-controls">
-              <Field className="sql-preview-limit-field">
-                <FieldLabel htmlFor="sql-preview-row-limit">Preview {previewRowLimit}행</FieldLabel>
-                <Slider
-                  aria-label={`SQL Preview 최대 ${previewRowLimit}행`}
-                  aria-valuetext={`${previewRowLimit}행`}
-                  disabled={!baseDataset || queryPending}
-                  id="sql-preview-row-limit"
-                  max={PREVIEW_ROW_LIMIT}
-                  min={PREVIEW_ROW_LIMIT_MIN}
-                  onValueChange={updatePreviewRowLimit}
-                  onValueCommit={commitPreviewRowLimit}
-                  step={PREVIEW_ROW_LIMIT_STEP}
-                  value={[previewRowLimit]}
-                />
-              </Field>
-              <Button type="button" onClick={resetQuery} size="sm" variant="outline">
-                <RotateCcw data-icon="inline-start" /> SQL 초기화
-              </Button>
-              {preflightResult?.autoFixQuery && (
-                <Button type="button" onClick={applyPreflightAutoFix} size="sm" variant="outline">
-                  식별자 자동 보정
-                </Button>
-              )}
-            </div>
-          </div>
+          </div>}
         </Panel>
 
         <Panel className="grid gap-4 p-5">
           <PanelHeader
-            actions={(
+            actions={resultDraft ? (
               <ActionGroup density="compact">
-                <StatusBadge size="sm" tone={queryPending ? "default" : executed ? "success" : "muted"}>
-                  {queryPending ? "실행 중" : executed ? "완료" : "대기 중"}
-                </StatusBadge>
-                {executionMs !== null && <Badge size="sm" variant="secondary">{formatDuration(executionMs)}</Badge>}
+                {chartGenerated ? (
+                  <ToggleGroup
+                    aria-label="SQL 결과 표시 방식"
+                    onValueChange={(value) => value && setResultView(value as "chart" | "table")}
+                    type="single"
+                    value={resultView}
+                  >
+                    <ToggleGroupItem aria-label="표 보기" size="sm" value="table">
+                      <Table2 /> 표
+                    </ToggleGroupItem>
+                    <ToggleGroupItem aria-label="차트 보기" size="sm" value="chart">
+                      <BarChart3 /> 차트
+                    </ToggleGroupItem>
+                  </ToggleGroup>
+                ) : (
+                  <Button type="button" onClick={openChartAssistant} size="sm" variant="outline">
+                    <img alt="" aria-hidden="true" className="size-5 rounded-sm object-contain" data-icon="inline-start" src={nessieIcon} />
+                    Nessie에게 차트 부탁하기
+                  </Button>
+                )}
+                <Button type="button" onClick={() => setResultDialogOpen(true)} size="sm" variant="outline">
+                  <Maximize2 data-icon="inline-start" /> 전체 보기
+                </Button>
               </ActionGroup>
-            )}
+            ) : undefined}
             bordered={false}
             className="min-h-0 p-0"
             icon={<Table2 size={16} />}
@@ -1052,31 +1028,17 @@ export function SqlAnalysisPage({
           />
           {resultDraft ? (
             <>
-              <Panel className="grid min-h-9 items-start gap-3 p-3" variant="muted">
-                <Badge className="w-fit max-w-full" size="sm" variant="secondary">
-                  실행 ID {resultDraft.runId}
-                  {resultDraft.previewLimit ? ` · 최대 ${resultDraft.previewLimit}행 표시` : ""}
-                  {` · ${resultDraft.rows.length}/${resultDraft.rowCount}행 표시 · ${resultDraft.columns.length}컬럼`}
-                  {` · ${formatResultTimestamp(resultDraft.executedAt)}`}
-                </Badge>
+              <Panel className="grid min-h-9 items-start p-3" variant="muted">
                 <ActionGroup align="start" className="w-full" density="compact">
                   <Button type="button" onClick={downloadCsv} size="sm" variant="outline"><Download data-icon="inline-start" /> CSV 다운로드</Button>
                   <Button type="button" onClick={() => setMaterializeDialogOpen(true)} size="sm" variant="outline"><Database data-icon="inline-start" /> 처리 Job 생성</Button>
-                  <Button
-                    disabled={!dashboardBaseDataset}
-                    onClick={openDashboardBuilder}
-                    onMouseDown={handleDashboardBuilderMouseDown}
-                    size="sm"
-                    title={dashboardBaseDataset ? "현재 SQL 실행 결과로 대시보드 초안을 엽니다." : "SQL 실행 결과의 기준 데이터셋을 찾을 수 없습니다."}
-                    type="button"
-                    variant="outline"
-                  >
-                    <BarChart3 data-icon="inline-start" /> 대시보드 만들기
-                  </Button>
+                  <Button type="button" onClick={openDashboardBuilder} size="sm" variant="outline"><BarChart3 data-icon="inline-start" /> 대시보드 만들기</Button>
                 </ActionGroup>
               </Panel>
               <ScrollArea className="sql-result-scroll" scrollbars="both" type="always">
-                <SqlPreviewTable resultDraft={resultDraft} />
+                {chartGenerated && resultView === "chart"
+                  ? <SqlResultChartView resultDraft={resultDraft} />
+                  : <SqlPreviewTable resultDraft={resultDraft} />}
               </ScrollArea>
             </>
           ) : (
@@ -1089,6 +1051,27 @@ export function SqlAnalysisPage({
           )}
         </Panel>
       </main>
+      {resultDraft && (
+        <Dialog onOpenChange={setResultDialogOpen} open={resultDialogOpen}>
+          <DialogContent className="grid h-[min(900px,calc(100vh-2rem))] w-[min(1440px,calc(100vw-2rem))] max-w-none grid-rows-[max-content_minmax(0,1fr)] overflow-hidden">
+            <DialogHeader>
+              <DialogTitle>SQL 결과 전체 보기</DialogTitle>
+              <DialogDescription>
+                {resultDraft.rows.length}/{resultDraft.rowCount}행 · {resultDraft.columns.length}컬럼 · {chartGenerated && resultView === "chart" ? "차트" : "표"} 보기
+              </DialogDescription>
+            </DialogHeader>
+            <ScrollArea className="min-h-0" scrollbars="both" type="always">
+              {chartGenerated && resultView === "chart"
+                ? <SqlResultChartView resultDraft={resultDraft} />
+                : (
+                  <div className="min-w-0 px-4 pb-4 pt-6">
+                    <SqlPreviewTable resultDraft={resultDraft} />
+                  </div>
+                )}
+            </ScrollArea>
+          </DialogContent>
+        </Dialog>
+      )}
       {resultDraft && materializeDialogOpen && (
         <DialogShell
           contentClassName="sql-materialize-dialog"
@@ -1161,9 +1144,8 @@ export function SqlAnalysisPage({
             </Field>
             <Button
               className="col-span-3 self-end max-[860px]:col-span-1"
-              disabled={!hasQueryPermission || derivedDatasetName.trim().length === 0 || derivedDatasetTagList.length === 0}
+              disabled={derivedDatasetName.trim().length === 0 || derivedDatasetTagList.length === 0}
               onClick={prepareDerivedDatasetJob}
-              title={hasQueryPermission ? "처리 Job 생성 검토로 이동합니다." : queryPermissionMessage}
               type="button"
               size="sm"
               variant="primary"
@@ -1173,7 +1155,7 @@ export function SqlAnalysisPage({
           </FieldGroup>
         </DialogShell>
       )}
-      {resultDraft && dashboardBaseDataset && (
+      {resultDraft && baseDataset && (
         <Dialog onOpenChange={setDashboardDialogOpen} open={dashboardDialogOpen}>
           <DialogContent
             aria-describedby={undefined}
@@ -1185,12 +1167,11 @@ export function SqlAnalysisPage({
               닫기
             </Button>
             <DashboardPage
-              dataset={dashboardBaseDataset}
+              dataset={baseDataset}
               datasets={selectedContextDatasets}
               entry={dashboardDialogEntry}
               sqlResult={resultDraft}
               onAction={onAction}
-              onMissingSqlResult={() => setDashboardDialogOpen(false)}
             />
           </DialogContent>
         </Dialog>

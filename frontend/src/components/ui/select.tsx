@@ -18,7 +18,7 @@ export const selectTriggerVariants = cva(
     },
     variants: {
       size: {
-        default: "h-10 px-3 py-2 text-sm",
+        default: "h-10 px-3 py-2 text-base",
         lg: "h-11 px-4 py-2 text-base",
         sm: "h-9 px-3 py-1.5 text-sm",
       },
@@ -115,7 +115,7 @@ export const SelectLabel = React.forwardRef<
   React.ComponentPropsWithoutRef<typeof SelectPrimitive.Label>
 >(({ className, ...props }, ref) => (
   <SelectPrimitive.Label
-    className={cn("px-2 py-1.5 text-xs font-semibold text-slate-500", className)}
+    className={cn("px-2 py-1.5 text-sm font-semibold text-slate-500", className)}
     ref={ref}
     {...props}
   />
@@ -128,7 +128,7 @@ export const SelectItem = React.forwardRef<
 >(({ children, className, ...props }, ref) => (
   <SelectPrimitive.Item
     className={cn(
-      "relative flex w-full cursor-default select-none items-center rounded-md py-1.5 pl-8 pr-2 text-sm outline-none transition-colors focus:bg-slate-100 focus:text-slate-950 data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+      "relative flex w-full cursor-default select-none items-center rounded-md py-1.5 pl-8 pr-2 text-base outline-none transition-colors focus:bg-slate-100 focus:text-slate-950 data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
       className,
     )}
     ref={ref}

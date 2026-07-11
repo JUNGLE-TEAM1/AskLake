@@ -1,31 +1,20 @@
-import { Activity, LogIn, LogOut, RefreshCw } from "lucide-react";
+import { Activity, RefreshCw } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { IconButton } from "@/components/ui/icon-button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import type { AuditEntry } from "../../types";
-import type { CurrentUserResponse } from "../../types";
 
 export function Topbar({
   auditLogs,
   auditOpen,
-  currentUser,
-  onAccount,
   onAuditToggle,
-  onLogin,
-  onLogout,
   onRefresh,
 }: {
   auditLogs: AuditEntry[];
   auditOpen: boolean;
-  currentUser: CurrentUserResponse | null;
-  onAccount: () => void;
   onAuditToggle: () => void;
-  onLogin: () => void;
-  onLogout: () => void;
   onRefresh: () => void;
 }) {
-  const displayName = currentUser?.profile.displayName || currentUser?.displayName || "";
-  const initials = currentUser?.profile.avatarInitials || displayName.slice(0, 2).toUpperCase();
   return (
     <header className="topbar">
       <TooltipProvider delayDuration={300}>
@@ -67,31 +56,7 @@ export function Topbar({
           </TooltipTrigger>
           <TooltipContent>새로고침</TooltipContent>
         </Tooltip>
-        {currentUser ? (
-          <>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <IconButton className="icon-button" label="로그아웃" type="button" onClick={onLogout}><LogOut /></IconButton>
-              </TooltipTrigger>
-              <TooltipContent>로그아웃</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <IconButton className="p-0" label="내 프로필" type="button" onClick={onAccount}>
-                  <Avatar><AvatarFallback>{initials || "AL"}</AvatarFallback></Avatar>
-                </IconButton>
-              </TooltipTrigger>
-              <TooltipContent>내 프로필</TooltipContent>
-            </Tooltip>
-          </>
-        ) : (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <IconButton className="icon-button" label="로그인" type="button" onClick={onLogin}><LogIn /></IconButton>
-            </TooltipTrigger>
-            <TooltipContent>로그인</TooltipContent>
-          </Tooltip>
-        )}
+        <Avatar><AvatarFallback>AL</AvatarFallback></Avatar>
       </div>
       </TooltipProvider>
     </header>

@@ -42,7 +42,6 @@ type VisualizationPromptInsertion = {
 };
 
 type DashboardRuntimeState = {
-  canManage: boolean;
   canRedoLayout: boolean;
   canUndoLayout: boolean;
   deletingWidgetId: string | null;
@@ -56,7 +55,6 @@ type DashboardRuntimeState = {
   isPublishing: boolean;
   isRenamingTitle: boolean;
   isRefreshing: boolean;
-  managePermissionMessage: string;
   mode: DashboardRuntimeMode;
   notice: RuntimeNotice | null;
   pages: DashboardRuntimePage[];
@@ -82,7 +80,6 @@ type DashboardRuntimeDatasetState = {
   isLoading: boolean;
   selectedDataset: DashboardDatasetOption | null;
   selectedDatasetId: string | null;
-  sourceMode?: "dataset" | "sqlResult";
 };
 
 type DashboardRuntimeViewActions = {
@@ -264,7 +261,6 @@ export function DashboardRuntimeView({
   const {
     canRedoLayout,
     canUndoLayout,
-    canManage,
     deletingWidgetId,
     draftError,
     draftLoading,
@@ -276,7 +272,6 @@ export function DashboardRuntimeView({
     isPublishing,
     isRenamingTitle,
     isRefreshing,
-    managePermissionMessage,
     mode,
     notice,
     pages,
@@ -301,7 +296,6 @@ export function DashboardRuntimeView({
     isLoading: dashboardDatasetsLoading,
     selectedDataset,
     selectedDatasetId,
-    sourceMode = "dataset",
   } = datasets;
   const {
     addPage: onAddPage,
@@ -334,15 +328,8 @@ export function DashboardRuntimeView({
     updateWidget: onUpdateWidget,
   } = actions;
   const isDraftMode = mode === "draft";
-  const canEditDraft = isDraftMode && canManage;
   const openDraftAction = (
-    <Button
-      className="asklake-dashboard-empty-action"
-      disabled={!canManage}
-      onClick={onOpenDraft}
-      title={canManage ? "위젯 편집" : managePermissionMessage}
-      type="button"
-    >
+    <Button type="button" onClick={onOpenDraft}>
       위젯 편집
     </Button>
   );
@@ -386,12 +373,7 @@ export function DashboardRuntimeView({
     return nextConfig as UpdateDraftWidgetFormInput["config"];
   };
   const applyWidgetPatch = (widget: DashboardRuntimeWidget, patch: DashboardAssistantWidgetPatch) => {
-    const requestedDatasetId = patch.datasetId ?? widget.datasetId ?? selectedDatasetId ?? null;
-    const nextDataset = dashboardDatasets.find((dataset) => dataset.id === requestedDatasetId)
-      ?? (selectedDatasetId ? dashboardDatasets.find((dataset) => dataset.id === selectedDatasetId) : null)
-      ?? dashboardDatasets[0]
-      ?? null;
-    const nextDatasetId = nextDataset?.id ?? null;
+    const nextDatasetId = patch.datasetId ?? widget.datasetId ?? selectedDatasetId ?? null;
     const nextData = cloneDatasetRows(dashboardDatasets, nextDatasetId);
 
     return onUpdateWidget(widget.id, {
@@ -527,7 +509,7 @@ export function DashboardRuntimeView({
     ) : (
       <DashboardCanvas
         deletingWidgetId={deletingWidgetId}
-        editable={canEditDraft}
+        editable
         selectedWidgetId={selectedWidgetId}
         scrollTargetWidgetId={widgetScrollTargetId}
         widgets={selectedDraftWidgets}
@@ -577,31 +559,30 @@ export function DashboardRuntimeView({
     </div>
   );
 
-  const canShowEditToolbar = canEditDraft && Boolean(draftRuntime?.revision) && !draftLoading && !draftError;
+  const canShowEditToolbar = isDraftMode && Boolean(draftRuntime?.revision) && !draftLoading && !draftError;
 
   return (
     <div className="dashboard-page dashboard-runtime-page">
       <DashboardRuntimeShell
-        canManage={canManage}
-        datasetSidebar={canEditDraft ? (
+        datasetSidebar={isDraftMode ? (
           <DatasetSidebar
             datasets={dashboardDatasets}
             error={dashboardDatasetsError}
             isOpen={isDatasetSidebarOpen}
             isLoading={dashboardDatasetsLoading}
+            onClose={onToggleDatasetSidebar}
             selectedDatasetId={selectedDatasetId}
-            sourceMode={sourceMode}
             onSelectColumn={handleSelectDatasetColumn}
             onSelectDataset={handleSelectDataset}
           />
         ) : undefined}
-        datasetSidebarOpen={canEditDraft && isDatasetSidebarOpen}
+        datasetSidebarOpen={isDraftMode && isDatasetSidebarOpen}
         hasPublishedRevision={hasPublishedRevision}
         isAddingPage={isAddingPage}
         isPublishing={isPublishing}
         isRenamingTitle={isRenamingTitle}
         isRefreshing={isRefreshing}
-        inspector={isAssistantInspectorOpen && canEditDraft ? (
+        inspector={isAssistantInspectorOpen ? (
           <aside className="asklake-dashboard-inspector assistant">
             <DashboardAssistantPanel
               dashboardId={assistantContext.dashboardId}
@@ -614,7 +595,7 @@ export function DashboardRuntimeView({
               onUpdateWidget={onUpdateWidget}
             />
           </aside>
-        ) : canEditDraft && !selectedWidgetHidesInspector ? (
+        ) : isDraftMode && !selectedWidgetHidesInspector ? (
           <aside className="asklake-dashboard-inspector">
             <WidgetConfigPanel
               datasets={dashboardDatasets}
@@ -645,11 +626,11 @@ export function DashboardRuntimeView({
         onOpenPublished={onOpenPublished}
         onPublishDraft={onPublishDraft}
         onRefresh={onRefresh}
-        onRenamePage={canEditDraft ? onRenamePage : undefined}
-        onRenameTitle={canEditDraft ? onRenameTitle : undefined}
+        onRenamePage={isDraftMode ? onRenamePage : undefined}
+        onRenameTitle={isDraftMode ? onRenameTitle : undefined}
         onSelectPage={onSelectPage}
         onShare={onShare}
-        onToggleDatasetSidebar={canEditDraft ? onToggleDatasetSidebar : undefined}
+        onToggleDatasetSidebar={isDraftMode ? onToggleDatasetSidebar : undefined}
       >
         {canShowEditToolbar ? (
           <div className="asklake-dashboard-edit-stage">

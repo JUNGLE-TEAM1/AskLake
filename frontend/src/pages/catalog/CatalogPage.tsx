@@ -8,7 +8,9 @@ import type { Edge, Node as FlowNode } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import {
   AlertCircle,
+  ArrowUpDown,
   ExternalLink,
+  Filter,
   LayoutGrid,
   PanelRight,
   Pin,
@@ -21,17 +23,6 @@ import {
 } from "lucide-react";
 import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
@@ -41,18 +32,23 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyIcon, EmptyTitle } from "@/c
 import {
   FilterToolbar,
   FilterToolbarActions,
-  FilterToolbarCheckbox,
-  FilterToolbarCheckboxGroup,
   FilterToolbarInput,
   FilterToolbarSearch,
 } from "@/components/ui/filter-toolbar";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { PageHeader } from "@/components/ui/page-header";
 import { PaginationBar } from "@/components/ui/pagination-bar";
 import { Panel, PanelHeader } from "@/components/ui/panel";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { Field, FieldLegend, FieldSet } from "@/components/ui/field";
-import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Slider } from "@/components/ui/slider";
@@ -62,10 +58,8 @@ import { TagList } from "@/components/ui/tag-list";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { IconButton } from "@/components/ui/icon-button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { getCatalogDatasetRows } from "../../services/catalogApi";
 import { getDatasetLineageGraph } from "../../services/mockApi";
-import type { AuditResult, CatalogDataset, CatalogDatasetRowsResponse, CurrentUserResponse, DatasetMaterializationRun, LineageGraph, LineageGraphDataset, LineageLayer } from "../../types";
-import { canDeleteDatasetMaterializationRun, canQueryDatasetAs, permissionDeniedMessage } from "../../utils/permissions";
+import type { AuditResult, CatalogDataset, LineageGraph, LineageGraphDataset, LineageLayer } from "../../types";
 import { datasetStatusMeta } from "../../utils/statusMeta";
 import { cn } from "@/lib/utils";
 
@@ -99,6 +93,7 @@ type CatalogFilterState = {
   available: boolean;
   rag: boolean;
 };
+type CatalogStatusFilter = "all" | keyof CatalogFilterState;
 
 type CatalogSearchQuery = {
   keywords: string[];
@@ -121,9 +116,14 @@ const catalogSortOptions: Array<{ label: string; mode: CatalogSortMode }> = [
   { label: "최근 갱신순", mode: "updated" },
   { label: "품질 높은순", mode: "quality" },
 ];
+const catalogStatusFilterOptions: Array<{ label: string; value: CatalogStatusFilter }> = [
+  { label: "전체", value: "all" },
+  { label: "사용 가능", value: "available" },
+  { label: "승인 필요", value: "approvalRequired" },
+  { label: "RAG 여부", value: "rag" },
+];
 
 const catalogPageSize = 5;
-const materializationRunPageSize = 5;
 const catalogSearchDebounceMs = 300;
 const lineageNodeWidth = 220;
 const lineageNodeHeaderHeight = 76;
@@ -162,44 +162,6 @@ function getCatalogTagsByFrequency(datasets: CatalogDataset[]) {
   return Array.from(tagCounts.values())
     .sort((left, right) => right.count - left.count || left.firstIndex - right.firstIndex)
     .map(({ tag }) => tag);
-}
-
-function formatRunCreatedAt(value: string) {
-  const parsed = Date.parse(value);
-  if (Number.isNaN(parsed)) return value || "-";
-  return new Intl.DateTimeFormat("ko-KR", {
-    dateStyle: "short",
-    timeStyle: "short",
-  }).format(new Date(parsed));
-}
-
-function formatRunStorageSize(sizeBytes: number) {
-  if (!Number.isFinite(sizeBytes) || sizeBytes <= 0) return "0B";
-  if (sizeBytes < 1024) return `${sizeBytes}B`;
-
-  const units = ["KB", "MB", "GB", "TB"];
-  let size = sizeBytes;
-  for (const unit of units) {
-    size /= 1024;
-    if (size < 1024) return `${size.toFixed(1)}${unit}`;
-  }
-  return `${size.toFixed(1)}PB`;
-}
-
-function materializationRunStatusLabel(status: DatasetMaterializationRun["status"]) {
-  if (status === "success") return "성공";
-  if (status === "failed") return "실패";
-  if (status === "canceled") return "취소";
-  if (status === "running") return "실행 중";
-  return "대기";
-}
-
-function formatCatalogModelExecution(executionMode?: string, fallbackUsed?: boolean) {
-  if (fallbackUsed || executionMode === "fallback_rule") return "규칙 Fallback";
-  if (executionMode === "selected_model") return "선택 모델";
-  if (executionMode === "auto_model") return "자동 모델";
-  if (executionMode === "missing_model") return "모델 없음";
-  return executionMode || "처리 정보 없음";
 }
 
 function parseCatalogSearchQuery(query: string, knownTags: string[]): CatalogSearchQuery {
@@ -290,22 +252,16 @@ function compareCatalogDatasetsBySort(
 }
 
 export function CatalogPage({
-  currentUser,
   datasets,
   error = null,
   loading = false,
   onAction,
-  onMaterializationRunDelete,
-  onOpenSql,
   selectedDataset,
 }: {
-  currentUser?: CurrentUserResponse | null;
   datasets: CatalogDataset[];
   error?: string | null;
   loading?: boolean;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
-  onMaterializationRunDelete: (datasetId: string, runId: string) => void;
-  onOpenSql: (dataset: CatalogDataset) => void;
   selectedDataset: CatalogDataset;
 }) {
   const [previewDataset, setPreviewDataset] = useState<CatalogDataset>(selectedDataset);
@@ -313,15 +269,12 @@ export function CatalogPage({
   const [filterState, setFilterState] = useState<CatalogFilterState>({ approvalRequired: false, available: false, rag: false });
   const [currentPage, setCurrentPage] = useState(1);
   const [mobilePreviewOpen, setMobilePreviewOpen] = useState(false);
-  const [materializationRunPageByDatasetId, setMaterializationRunPageByDatasetId] = useState<Record<string, number>>({});
   const [pinnedDatasetIds, setPinnedDatasetIds] = useState<string[]>([]);
-  const [selectedSqlRunTarget, setSelectedSqlRunTarget] = useState<{ datasetId: string; datasetName: string; runId: string } | null>(null);
   const [searchText, setSearchText] = useState("");
   const [debouncedSearchText, setDebouncedSearchText] = useState("");
   const [sortMode, setSortMode] = useState<CatalogSortMode>("default");
   const tags = useMemo(() => getCatalogTagsByFrequency(datasets), [datasets]);
   const searchQuery = useMemo(() => parseCatalogSearchQuery(debouncedSearchText, tags), [debouncedSearchText, tags]);
-  const canQueryCurrentDataset = (dataset: CatalogDataset | null | undefined) => canQueryDatasetAs(dataset, currentUser);
   const filteredDatasets = useMemo(() => datasets
     .map((dataset, index) => ({ dataset, index }))
     .filter(({ dataset }) => {
@@ -392,9 +345,25 @@ export function CatalogPage({
     onAction("catalog.search.submitted", `/api/catalog/datasets?q=${encodeURIComponent(query)}`, query || "empty");
   };
 
-  const updateFilter = (filterName: keyof CatalogFilterState, checked: boolean) => {
-    setFilterState((filters) => ({ ...filters, [filterName]: checked }));
-    onAction("catalog.filter_changed", `/api/catalog/datasets?filter=${filterName}&enabled=${checked}`, filterName);
+  const activeStatusFilter: CatalogStatusFilter = filterState.available
+    ? "available"
+    : filterState.approvalRequired
+      ? "approvalRequired"
+      : filterState.rag
+        ? "rag"
+        : "all";
+
+  const updateStatusFilter = (nextStatus: CatalogStatusFilter) => {
+    setFilterState({
+      approvalRequired: nextStatus === "approvalRequired",
+      available: nextStatus === "available",
+      rag: nextStatus === "rag",
+    });
+    onAction(
+      "catalog.filter_changed",
+      `/api/catalog/datasets?filter=${nextStatus}&enabled=${nextStatus !== "all"}`,
+      nextStatus,
+    );
   };
 
   const updateSortMode = (nextSortMode: CatalogSortMode) => {
@@ -427,36 +396,6 @@ export function CatalogPage({
       previewDataset.id,
     );
     setActiveModal(variant);
-  };
-
-  const updateMaterializationRunPage = (dataset: CatalogDataset, nextPage: number) => {
-    const totalPages = Math.max(1, Math.ceil((dataset.materializationRuns?.length ?? 0) / materializationRunPageSize));
-    const normalizedPage = Math.min(Math.max(nextPage, 1), totalPages);
-    setMaterializationRunPageByDatasetId((state) => ({
-      ...state,
-      [dataset.id]: normalizedPage,
-    }));
-    onAction("catalog.dataset.materialization_runs_page_changed", `/api/catalog/datasets/${dataset.id}/materialization-runs?page=${normalizedPage}`, dataset.id);
-  };
-
-  const selectSqlMaterializationRun = (event: React.MouseEvent | React.KeyboardEvent, dataset: CatalogDataset, run: DatasetMaterializationRun) => {
-    event.stopPropagation();
-    if (run.status !== "success" || !canQueryCurrentDataset(dataset)) return;
-    setPreviewDataset(dataset);
-    setSelectedSqlRunTarget({ datasetId: dataset.id, datasetName: dataset.name, runId: run.runId });
-    onAction("catalog.dataset.materialization_run_selected_for_sql", `/api/catalog/datasets/${dataset.id}/materialization-runs/${run.runId}`, dataset.id);
-  };
-
-  const deleteMaterializationRun = (event: React.MouseEvent, dataset: CatalogDataset, runId: string) => {
-    event.stopPropagation();
-    setSelectedSqlRunTarget((target) => target?.datasetId === dataset.id && target.datasetName === dataset.name && target.runId === runId ? null : target);
-    onMaterializationRunDelete(dataset.id, runId);
-  };
-
-  const openSelectedSqlDataset = () => {
-    if (!canQueryCurrentDataset(previewDataset) || !selectedSqlRunTarget || selectedSqlRunTarget.datasetId !== previewDataset.id || selectedSqlRunTarget.datasetName !== previewDataset.name) return;
-    onAction("catalog.open_in_sql.materialization_run_confirmed", `/api/catalog/datasets/${previewDataset.id}/materialization-runs/${selectedSqlRunTarget.runId}/query`, previewDataset.id, "success");
-    onOpenSql(previewDataset);
   };
 
   const renderPreviewContent = (fromMobileSheet = false) => (
@@ -510,6 +449,7 @@ export function CatalogPage({
                 </div>
               </AccordionContent>
             </AccordionItem>
+
             <AccordionItem value="schema">
               <AccordionTrigger>
                 <span className="catalog-preview-accordion-label"><TerminalSquare /> 스키마 미리보기</span>
@@ -530,39 +470,7 @@ export function CatalogPage({
                 </Button>
               </AccordionContent>
             </AccordionItem>
-            <AccordionItem value="materialization-runs">
-              <AccordionTrigger>
-                <span className="catalog-preview-accordion-label"><ExternalLink /> 생성 결과</span>
-              </AccordionTrigger>
-              <AccordionContent>
-                <CatalogMaterializationRuns
-                  canQueryDatasetForCurrentUser={canQueryCurrentDataset}
-                  dataset={previewDataset}
-                  onDelete={deleteMaterializationRun}
-                  onPageChange={updateMaterializationRunPage}
-                  onSelectRun={selectSqlMaterializationRun}
-                  page={materializationRunPageByDatasetId[previewDataset.id] ?? 1}
-                  selectedRunId={selectedSqlRunTarget?.datasetId === previewDataset.id ? selectedSqlRunTarget.runId : null}
-                />
-              </AccordionContent>
-            </AccordionItem>
           </Accordion>
-          <Button
-            className="catalog-wide-button"
-            disabled={!canQueryCurrentDataset(previewDataset) || selectedSqlRunTarget?.datasetId !== previewDataset.id || selectedSqlRunTarget.datasetName !== previewDataset.name}
-            shape="compact"
-            size="sm"
-            title={!canQueryCurrentDataset(previewDataset)
-              ? permissionDeniedMessage("데이터셋", "SQL 실행")
-              : selectedSqlRunTarget?.datasetId === previewDataset.id && selectedSqlRunTarget.datasetName === previewDataset.name
-                ? "선택한 생성 결과 기준으로 SQL 분석을 엽니다."
-                : "성공한 생성 결과를 먼저 선택해 주세요."}
-            type="button"
-            variant="outline"
-            onClick={openSelectedSqlDataset}
-          >
-            <ExternalLink data-icon="inline-start" /> SQL 분석에서 열기
-          </Button>
           <TagList align="center" className="catalog-preview-tags" density="compact">
             {previewDataset.tags.map((tag) => (
               <Badge key={tag} shape="compact" size="sm" variant="secondary">{tag}</Badge>
@@ -578,13 +486,8 @@ export function CatalogPage({
     <div className="catalog-page">
       <PageHeader
         className="catalog-page-header"
-        description="데이터셋을 검색하고 메타데이터, 스키마, 계보를 확인합니다."
-        descriptionClassName="text-xl leading-8"
-        icon={<Search size={30} />}
-        iconClassName="mt-0 size-16 rounded-xl"
-        size="lg"
+        icon={<Search size={18} />}
         title="검색/카탈로그"
-        titleClassName="text-4xl"
       />
       {error ? (
         <Alert className="border-red-200 bg-red-50 text-red-800" variant="destructive">
@@ -595,29 +498,6 @@ export function CatalogPage({
       ) : null}
       <div className="catalog-content-grid">
         <div className="catalog-main">
-          <Panel className="catalog-search-panel">
-            <PanelHeader
-              icon={<Search size={16} />}
-              title="검색 조건"
-            />
-            <FilterToolbar layout="stacked">
-              <FilterToolbarSearch icon={<Search size={18} />}>
-                <FilterToolbarInput
-                  aria-label="카탈로그 검색"
-                  onChange={(event) => setSearchText(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      handleSearchSubmit();
-                    }
-                  }}
-                  placeholder="테이블명, 컬럼명 또는 업무 키워드로 검색하세요..."
-                  type="search"
-                  value={searchText}
-                />
-              </FilterToolbarSearch>
-            </FilterToolbar>
-          </Panel>
-
           {hasCatalogResults && (
             <Sheet open={mobilePreviewOpen} onOpenChange={setMobilePreviewOpen}>
               <SheetTrigger asChild>
@@ -642,43 +522,70 @@ export function CatalogPage({
                 icon={<LayoutGrid size={16} />}
                 title="검색 결과"
               />
-              <FilterToolbar
-                className="grid-cols-[minmax(0,1fr)_max-content] gap-3 py-3 max-xl:grid-cols-1"
-                layout="actions"
-              >
-                <FieldSet className="gap-0">
-                  <FieldLegend className="sr-only">검색 결과 필터</FieldLegend>
-                  <FilterToolbarCheckboxGroup>
-                    <Field className="gap-0">
-                      <FilterToolbarCheckbox checked={filterState.available} onCheckedChange={(checked) => updateFilter("available", checked)}>
-                        사용 가능
-                      </FilterToolbarCheckbox>
-                    </Field>
-                    <Field className="gap-0">
-                      <FilterToolbarCheckbox checked={filterState.approvalRequired} onCheckedChange={(checked) => updateFilter("approvalRequired", checked)}>
-                        승인 필요
-                      </FilterToolbarCheckbox>
-                    </Field>
-                    <Field className="gap-0">
-                      <FilterToolbarCheckbox checked={filterState.rag} onCheckedChange={(checked) => updateFilter("rag", checked)}>
-                        RAG 여부
-                      </FilterToolbarCheckbox>
-                    </Field>
-                  </FilterToolbarCheckboxGroup>
-                </FieldSet>
+              <FilterToolbar className="py-3" layout="actions">
+                <FilterToolbarSearch icon={<Search size={18} />}>
+                  <FilterToolbarInput
+                    aria-label="카탈로그 검색"
+                    onChange={(event) => setSearchText(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        handleSearchSubmit();
+                      }
+                    }}
+                    placeholder="테이블명, 컬럼명 또는 업무 키워드로 검색하세요..."
+                    type="search"
+                    value={searchText}
+                  />
+                </FilterToolbarSearch>
                 <FilterToolbarActions>
-                  <Select value={sortMode} onValueChange={(value) => updateSortMode(value as CatalogSortMode)}>
-                    <SelectTrigger aria-label="정렬 기준" className="w-44" onPointerDown={() => onAction("catalog.sort_opened", "/api/catalog/search/sort", "catalog-sort")} size="sm">
-                      <SelectValue placeholder="정렬 기준" />
-                    </SelectTrigger>
-                    <SelectContent align="end">
-                      <SelectGroup>
-                        {catalogSortOptions.map((option) => (
-                          <SelectItem key={option.mode} value={option.mode}>{option.label}</SelectItem>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        aria-label="상태 필터"
+                        className="h-9 justify-start gap-1.5 px-0 text-lg font-semibold text-slate-600 hover:bg-transparent hover:text-slate-950"
+                        size="sm"
+                        type="button"
+                        variant="ghost"
+                      >
+                        상태
+                        <Filter className="size-[18px]" aria-hidden="true" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start" className="min-w-44">
+                      <DropdownMenuLabel>상태 필터</DropdownMenuLabel>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuRadioGroup value={activeStatusFilter} onValueChange={(value) => updateStatusFilter(value as CatalogStatusFilter)}>
+                        {catalogStatusFilterOptions.map((option) => (
+                          <DropdownMenuRadioItem key={option.value} value={option.value}>
+                            {option.label}
+                          </DropdownMenuRadioItem>
                         ))}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
+                      </DropdownMenuRadioGroup>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                  <DropdownMenu onOpenChange={(open) => open && onAction("catalog.sort_opened", "/api/catalog/search/sort", "catalog-sort")}>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        aria-label="정렬 기준"
+                        className="h-9 justify-start gap-1.5 px-0 text-lg font-semibold text-slate-600 hover:bg-transparent hover:text-slate-950"
+                        size="sm"
+                        type="button"
+                        variant="ghost"
+                      >
+                        정렬
+                        <ArrowUpDown className="size-[18px]" aria-hidden="true" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="min-w-44">
+                      <DropdownMenuLabel>정렬 기준</DropdownMenuLabel>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuRadioGroup value={sortMode} onValueChange={(value) => updateSortMode(value as CatalogSortMode)}>
+                        {catalogSortOptions.map((option) => (
+                          <DropdownMenuRadioItem key={option.mode} value={option.mode}>{option.label}</DropdownMenuRadioItem>
+                        ))}
+                      </DropdownMenuRadioGroup>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </FilterToolbarActions>
               </FilterToolbar>
             </div>
@@ -811,14 +718,12 @@ function CatalogModal({
 }
 
 export function CatalogDetailPage({
-  currentUser,
   dataset,
   onAction,
   onBack,
   onLineage,
   onOpenSql,
 }: {
-  currentUser?: CurrentUserResponse | null;
   dataset: CatalogDataset;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
   onBack: () => void;
@@ -826,7 +731,6 @@ export function CatalogDetailPage({
   onOpenSql: () => void;
 }) {
   const [activeTab, setActiveTab] = useState<"overview" | "schema" | "sample" | "lineage">("overview");
-  const canQueryCurrentDataset = canQueryDatasetAs(dataset, currentUser);
 
   const openLineage = () => {
     setActiveTab("lineage");
@@ -849,23 +753,12 @@ export function CatalogDetailPage({
             <div className="job-detail-meta">
               <DatasetStatusBadge dataset={dataset} />
               <Badge shape="compact" size="sm" variant="outline">{dataset.owner}</Badge>
-              <Badge shape="compact" size="sm" variant="outline">생성: {dataset.createdByProfile?.displayName || dataset.createdBy || dataset.owner}</Badge>
               <Badge shape="compact" size="sm" variant="secondary">{dataset.layer} 레이어</Badge>
               {dataset.tags.map((tag) => <Badge key={tag} shape="compact" size="sm" variant="secondary">{tag}</Badge>)}
             </div>
           </div>
           <div className="job-detail-actions">
-            <Button
-              className="job-action-button primary"
-              disabled={!canQueryCurrentDataset}
-              size="sm"
-              title={canQueryCurrentDataset ? "SQL 분석에서 엽니다." : permissionDeniedMessage("데이터셋", "SQL 실행")}
-              type="button"
-              variant="primary"
-              onClick={onOpenSql}
-            >
-              <ExternalLink size={14} /> SQL 분석에서 열기
-            </Button>
+            <Button className="job-action-button primary" type="button" onClick={onOpenSql} size="sm" variant="primary"><ExternalLink size={14} /> SQL 분석에서 열기</Button>
             <Button className="job-action-button" type="button" onClick={openLineage} size="sm" variant="outline">리니지 보기</Button>
             <Button className="job-action-button" type="button" onClick={() => onAction("catalog.dataset.refreshed", `/api/catalog/datasets/${dataset.id}`, dataset.id)} size="sm" variant="outline">새로고침</Button>
           </div>
@@ -904,141 +797,6 @@ function CatalogMiniMetric({ label, value }: { label: string; value: string }) {
       <span>{label}</span>
       <strong>{value}</strong>
     </Card>
-  );
-}
-
-function CatalogMaterializationRuns({
-  canQueryDatasetForCurrentUser,
-  dataset,
-  onDelete,
-  onPageChange,
-  onSelectRun,
-  page,
-  selectedRunId,
-}: {
-  canQueryDatasetForCurrentUser: (dataset: CatalogDataset | null | undefined) => boolean;
-  dataset: CatalogDataset;
-  onDelete: (event: React.MouseEvent, dataset: CatalogDataset, runId: string) => void;
-  onPageChange: (dataset: CatalogDataset, nextPage: number) => void;
-  onSelectRun: (event: React.MouseEvent | React.KeyboardEvent, dataset: CatalogDataset, run: DatasetMaterializationRun) => void;
-  page: number;
-  selectedRunId: string | null;
-}) {
-  const runs = dataset.materializationRuns ?? [];
-  const totalPages = Math.max(1, Math.ceil(runs.length / materializationRunPageSize));
-  const currentPage = Math.min(Math.max(page, 1), totalPages);
-  const pageStartIndex = (currentPage - 1) * materializationRunPageSize;
-  const visibleRuns = runs.slice(pageStartIndex, pageStartIndex + materializationRunPageSize);
-
-  return (
-    <div className="catalog-materialization-panel grid gap-3" onClick={(event) => event.stopPropagation()}>
-      {visibleRuns.length > 0 ? (
-        <div className="grid gap-2">
-          {visibleRuns.map((run) => {
-            const isSelectable = run.status === "success" && canQueryDatasetForCurrentUser(dataset);
-            const isSelected = run.runId === selectedRunId;
-            const statusTone = run.status === "success" ? "success" : run.status === "failed" ? "danger" : run.status === "running" ? "default" : "muted";
-            const textStructuringChecks = run.textStructuringExecution?.columns ?? run.textStructuring ?? [];
-            const modelProvenance = textStructuringChecks.map((check) => {
-              const targetColumn = check.targetColumn || check.target || check.output || "컬럼";
-              const modelArtifact = check.selectedModelArtifact || check.modelArtifact;
-              const execution = modelArtifact
-                ? `${formatCatalogModelExecution(check.executionMode, check.fallbackUsed)} · ${modelArtifact}`
-                : formatCatalogModelExecution(check.executionMode || check.runtimeStatus, check.fallbackUsed);
-              return `${targetColumn}: ${execution}`;
-            }).join(", ");
-            const quarantineRows = Number(run.quarantine?.rows ?? 0);
-
-            return (
-            <Card
-              aria-disabled={!isSelectable}
-              aria-pressed={isSelected}
-              className={cn(
-                "grid gap-2 p-3 transition-colors",
-                isSelectable ? "cursor-pointer hover:border-blue-300 hover:bg-blue-50/40" : "opacity-70",
-                isSelected && "border-blue-500 bg-blue-50 ring-1 ring-blue-200",
-              )}
-              key={run.runId}
-              role="button"
-              size="none"
-              tabIndex={isSelectable ? 0 : -1}
-              title={isSelectable ? "SQL 분석 대상으로 선택" : !canQueryDatasetForCurrentUser(dataset) ? permissionDeniedMessage("데이터셋", "SQL 실행") : "성공한 생성 결과만 SQL 분석 대상으로 선택할 수 있습니다."}
-              onClick={(event) => onSelectRun(event, dataset, run)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") {
-                  event.preventDefault();
-                  onSelectRun(event, dataset, run);
-                }
-              }}
-            >
-              <div className="flex min-w-0 items-center gap-2">
-                <StatusBadge shape="compact" size="sm" tone={statusTone}>{materializationRunStatusLabel(run.status)}</StatusBadge>
-                <strong className="min-w-0 truncate" title={run.runId}>{run.runId}</strong>
-                <AlertDialog>
-                  <AlertDialogTrigger asChild>
-                    <Button
-                      aria-label={`${run.runId} 생성 결과 삭제`}
-                      className="ml-auto"
-                      disabled={!canDeleteDatasetMaterializationRun(dataset)}
-                      shape="compact"
-                      size="sm"
-                      title={canDeleteDatasetMaterializationRun(dataset) ? "생성 결과를 삭제합니다." : permissionDeniedMessage("데이터셋", "생성 결과 삭제")}
-                      type="button"
-                      variant="ghost"
-                      onClick={(event) => event.stopPropagation()}
-                    >
-                      삭제
-                    </Button>
-                  </AlertDialogTrigger>
-                  <AlertDialogContent onClick={(event) => event.stopPropagation()}>
-                    <AlertDialogHeader>
-                      <AlertDialogTitle>생성 결과를 삭제하시겠습니까?</AlertDialogTitle>
-                      <AlertDialogDescription>{run.runId} 결과는 삭제 후 복구할 수 없습니다.</AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel>취소</AlertDialogCancel>
-                      <AlertDialogAction onClick={(event) => onDelete(event, dataset, run.runId)}>삭제</AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
-              </div>
-              <div className="grid gap-1 text-xs text-slate-600 sm:grid-cols-2">
-                <span>{formatRunCreatedAt(run.createdAt)}</span>
-                <span>{run.rowCount.toLocaleString()}행 · {formatRunStorageSize(run.storageSizeBytes)}</span>
-                <span className="truncate sm:col-span-2" title={run.sourceLabel}>{run.sourceLabel}</span>
-                {modelProvenance ? (
-                  <span className="truncate font-semibold text-blue-700 sm:col-span-2" title={modelProvenance}>
-                    모델 기반 변환 · {modelProvenance}
-                  </span>
-                ) : null}
-                {quarantineRows > 0 ? (
-                  <span className="truncate font-semibold text-amber-700 sm:col-span-2" title={run.quarantine?.path || undefined}>
-                    검증 격리 · {quarantineRows.toLocaleString()}행
-                  </span>
-                ) : null}
-              </div>
-            </Card>
-            );
-          })}
-        </div>
-      ) : (
-        <Empty size="sm" variant="bordered">
-          <EmptyHeader>
-            <EmptyTitle>생성 결과가 없습니다.</EmptyTitle>
-            <EmptyDescription>데이터셋 생성 또는 append가 완료되면 여기에서 SQL 분석 대상을 선택할 수 있습니다.</EmptyDescription>
-          </EmptyHeader>
-        </Empty>
-      )}
-      {runs.length > materializationRunPageSize && (
-        <PaginationBar
-          currentPage={currentPage}
-          onNext={() => onPageChange(dataset, currentPage + 1)}
-          onPrevious={() => onPageChange(dataset, currentPage - 1)}
-          rangeLabel={`${pageStartIndex + 1}-${Math.min(pageStartIndex + visibleRuns.length, runs.length)} / ${runs.length}`}
-          totalPages={totalPages}
-        />
-      )}
-    </div>
   );
 }
 
@@ -1149,45 +907,9 @@ function CatalogSchemaTable({ dataset, maxRows, variant = "full" }: { dataset: C
 }
 
 function CatalogSample({ dataset }: { dataset: CatalogDataset }) {
-  const pageSize = 100;
-  const [offset, setOffset] = useState(0);
-  const [rowsResult, setRowsResult] = useState<CatalogDatasetRowsResponse | null>(null);
-  const [rowsError, setRowsError] = useState<string | null>(null);
-  const [isLoadingRows, setIsLoadingRows] = useState(false);
+  const columns = dataset.schema.map(([name]) => name);
   const scrollViewportRef = useRef<HTMLDivElement | null>(null);
   const [horizontalScrollPercent, setHorizontalScrollPercent] = useState(0);
-  const fallbackColumns = dataset.schema.slice(0, 8).map(([name]) => name);
-  const columns = rowsResult?.columns.length ? rowsResult.columns : fallbackColumns;
-  const rows = rowsResult?.rows ?? dataset.sampleRows.slice(0, pageSize);
-  const totalRows = rowsResult?.rowCount ?? rows.length;
-
-  useEffect(() => {
-    let cancelled = false;
-    setIsLoadingRows(true);
-    setRowsError(null);
-    getCatalogDatasetRows(dataset.id, { limit: pageSize, offset })
-      .then((result) => {
-        if (cancelled) return;
-        setRowsResult(result);
-      })
-      .catch((error) => {
-        if (cancelled) return;
-        setRowsError(error instanceof Error ? error.message : "데이터셋 행을 불러오지 못했습니다.");
-        setRowsResult(null);
-      })
-      .finally(() => {
-        if (!cancelled) setIsLoadingRows(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [dataset.id, offset]);
-
-  useEffect(() => {
-    setOffset(0);
-    setHorizontalScrollPercent(0);
-  }, [dataset.id]);
 
   useEffect(() => {
     const viewport = scrollViewportRef.current;
@@ -1204,7 +926,7 @@ function CatalogSample({ dataset }: { dataset: CatalogDataset }) {
     updateScrollState();
 
     return () => resizeObserver.disconnect();
-  }, [dataset.id, rowsResult]);
+  }, [dataset.id]);
 
   const updateHorizontalScroll = ([nextPercent]: number[]) => {
     const viewport = scrollViewportRef.current;
@@ -1215,28 +937,13 @@ function CatalogSample({ dataset }: { dataset: CatalogDataset }) {
     setHorizontalScrollPercent(nextPercent);
   };
 
-  const nextOffset = offset + pageSize;
-  const previousOffset = Math.max(0, offset - pageSize);
-  const hasNext = rowsResult?.hasNext ?? false;
-  const startLabel = totalRows === 0 ? 0 : offset + 1;
-  const endLabel = Math.min(offset + rows.length, totalRows);
-  const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
-  const currentPage = Math.floor(offset / pageSize) + 1;
-
   return (
     <Panel asChild className="catalog-table-card">
       <section>
         <div className="catalog-section-header">
           <h2>샘플 데이터</h2>
-          <span>{isLoadingRows ? "불러오는 중..." : `${startLabel}-${endLabel} / ${totalRows.toLocaleString()}행`}</span>
+          <span>읽기 전용 미리보기</span>
         </div>
-        {rowsError ? (
-          <Alert className="m-4" variant="destructive">
-            <AlertCircle />
-            <AlertTitle>실제 데이터를 불러오지 못했습니다.</AlertTitle>
-            <AlertDescription>{rowsError} 저장된 미리보기 데이터를 표시합니다.</AlertDescription>
-          </Alert>
-        ) : null}
         <Slider
           aria-label="샘플 데이터 가로 이동"
           className="catalog-sample-slider"
@@ -1263,28 +970,19 @@ function CatalogSample({ dataset }: { dataset: CatalogDataset }) {
               <TableRow>{columns.map((column, index) => <TableHead key={`${column}-${index}`}>{column}</TableHead>)}</TableRow>
             </TableHeader>
             <TableBody>
-              {rows.map((row, rowIndex) => (
-                <TableRow key={`dataset-row-${offset + rowIndex}`}>
-                  {columns.map((_, cellIndex) => <TableCell key={`${offset + rowIndex}-${cellIndex}`}>{row[cellIndex] ?? ""}</TableCell>)}
+              {dataset.sampleRows.map((row, rowIndex) => (
+                <TableRow key={`sample-${rowIndex}`}>
+                  {row.map((cell, cellIndex) => <TableCell key={`${rowIndex}-${cellIndex}`}>{cell}</TableCell>)}
                 </TableRow>
               ))}
             </TableBody>
           </Table>
         </ScrollArea>
-        <PaginationBar
-          className="catalog-pagination"
-          currentPage={currentPage}
-          nextDisabled={!hasNext || isLoadingRows}
-          onNext={() => setOffset(nextOffset)}
-          onPrevious={() => setOffset(previousOffset)}
-          previousDisabled={offset === 0 || isLoadingRows}
-          rangeLabel={`${startLabel}-${endLabel} / ${totalRows.toLocaleString()}`}
-          totalPages={totalPages}
-        />
       </section>
     </Panel>
   );
 }
+
 function CatalogLineage({ compact = false, dataset }: { compact?: boolean; dataset: CatalogDataset }) {
   const [lineageGraph, setLineageGraph] = useState<LineageGraph | null>(dataset.lineageGraph ?? null);
   const [selectedColumnKey, setSelectedColumnKey] = useState<string | null>(null);
@@ -1484,6 +1182,7 @@ function getLineageTableHeight(columnCount: number): number {
 function LineageTableNode({ data }: { data: LineageTableNodeData }) {
   const updateNodeInternals = useUpdateNodeInternals();
   const layerVariant = getLineageLayerBadgeVariant(data.dataset.layer);
+  const displayName = getLineageNodeDisplayName(data.dataset);
 
   useEffect(() => {
     updateNodeInternals(data.nodeId);
@@ -1504,7 +1203,7 @@ function LineageTableNode({ data }: { data: LineageTableNodeData }) {
           <Table2 className="size-5" />
         </div>
         <div className="min-w-0 flex-1">
-          <CardTitle className="break-words text-sm leading-5" title={data.dataset.name}>{data.dataset.name}</CardTitle>
+          <CardTitle className="break-words text-sm leading-5" title={displayName}>{displayName}</CardTitle>
           <CardDescription className="mt-1 flex flex-wrap items-center gap-1 text-xs leading-4">
             <Badge shape="compact" size="sm" variant={layerVariant}>{data.dataset.layer}</Badge>
             <span>{data.dataset.engine}</span>
@@ -1524,6 +1223,13 @@ function LineageTableNode({ data }: { data: LineageTableNodeData }) {
       </CardContent>
     </Card>
   );
+}
+
+function getLineageNodeDisplayName(dataset: LineageGraphDataset): string {
+  if (dataset.layer !== "SOURCE") return dataset.name;
+
+  const enginePrefix = new RegExp(`^${escapeRegExp(dataset.engine)}\\s+`, "i");
+  return dataset.name.replace(enginePrefix, "").trim() || dataset.name;
 }
 
 function LineageColumnRow({ column, data }: { column: LineageColumn; data: LineageTableNodeData }) {
@@ -1696,11 +1402,6 @@ function getMaxColumnCount(datasets: LineageGraphDataset[]): number {
   return Math.max(...datasets.map((dataset) => dataset.columns.length), 1);
 }
 
-function countUpstreamDatasets(graph: LineageGraph | null): number {
-  if (!graph) return 0;
-  return graph.datasets.filter((item) => item.id !== graph.datasetId && item.layer !== "PROCESS").length;
-}
-
 function getLineageHandleMode(hasIncoming: boolean, hasOutgoing: boolean): LineageTableNodeData["handleMode"] {
   if (hasIncoming && hasOutgoing) return "both";
   if (hasIncoming) return "target";
@@ -1709,7 +1410,6 @@ function getLineageHandleMode(hasIncoming: boolean, hasOutgoing: boolean): Linea
 
 function getLineageLayerLabel(layer: LineageLayer): string {
   if (layer === "SOURCE") return "SOURCE";
-  if (layer === "PROCESS") return "PROCESS";
   if (layer === "CONSUMER") return "CONSUMER";
   return `${layer} LAYER`;
 }

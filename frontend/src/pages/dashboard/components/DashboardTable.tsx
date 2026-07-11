@@ -9,11 +9,8 @@ import {
   DataTableCellSecondary,
   DataTableStackedCell,
 } from "@/components/ui/data-table-stacked-cell";
-import { StatusBadge } from "@/components/ui/status-badge";
 import { formatDashboardDateLabel, localizeDashboardName, localizeDashboardOwner, localizeDashboardTags } from "../dashboardListUtils";
-import { dashboardStatusMeta } from "../../../utils/statusMeta";
 import type { SavedDashboardCard } from "../../../types";
-import { permissionDeniedMessage } from "../../../utils/permissions";
 
 function getOwnerInitials(owner: string) {
   const words = owner.trim().split(/[\s_-]+/).filter(Boolean);
@@ -36,24 +33,6 @@ export function DashboardTable({
 }) {
   const columns = useMemo<ColumnDef<SavedDashboardCard>[]>(
     () => [
-      {
-        accessorKey: "status",
-        cell: ({ row }) => (
-          <StatusBadge
-            className="min-w-[132px] justify-center whitespace-nowrap rounded-md px-4 py-2.5 text-base font-semibold"
-            tone={row.original.status === "published" ? "success" : "warning"}
-          >
-            {dashboardStatusMeta[row.original.status].label}
-          </StatusBadge>
-        ),
-        enableSorting: false,
-        header: "상태",
-        meta: {
-          align: "center",
-          headerClassName: "text-lg",
-          widthClassName: "w-[156px]",
-        } satisfies DataTableColumnMeta,
-      },
       {
         accessorKey: "name",
         cell: ({ row }) => {
@@ -83,7 +62,8 @@ export function DashboardTable({
         },
         header: "대시보드",
         meta: {
-          headerClassName: "text-lg",
+          cellClassName: "pl-6",
+          headerClassName: "pl-6 text-lg",
           widthClassName: "w-[320px]",
         } satisfies DataTableColumnMeta,
       },
@@ -129,8 +109,8 @@ export function DashboardTable({
               </Avatar>
               <div className="grid min-w-0 gap-1">
                 <span className="truncate text-lg font-semibold text-slate-800" title={owner}>{owner}</span>
-                <span className="truncate text-base font-medium text-slate-500" title={dashboard.createdByProfile?.displayName || dashboard.createdBy || dashboard.owner}>
-                  생성 {dashboard.createdByProfile?.displayName || dashboard.createdBy || dashboard.owner}
+                <span className="truncate text-base font-medium text-slate-500" title={dashboard.updated}>
+                  최근 수정 {dashboard.updated}
                 </span>
               </div>
             </div>
@@ -162,26 +142,23 @@ export function DashboardTable({
       onRowClick={(row) => onOpenDetail(row.original)}
       tableClassName="dashboard-list-data-table"
       viewportClassName="dashboard-table-viewport"
-      renderRowActions={(row) => {
-        const canDeleteDashboard = row.original.permissions?.canDelete !== false;
-        return (
-          <Button
-            aria-label={`${localizeDashboardName(row.original)} 삭제`}
-            className="text-slate-500 hover:text-red-600"
-            disabled={deletingDashboardId === row.original.id || !canDeleteDashboard}
-            title={canDeleteDashboard ? "대시보드 삭제" : permissionDeniedMessage("대시보드", "삭제")}
-            type="button"
-            variant="ghost"
-            size="icon"
-            onClick={(event) => {
-              event.stopPropagation();
-              onRequestDelete(row.original);
-            }}
-          >
-            <Trash2 />
-          </Button>
-        );
-      }}
+      renderRowActions={(row) => (
+        <Button
+          aria-label={`${localizeDashboardName(row.original)} 삭제`}
+          className="text-slate-500 hover:text-red-600"
+          disabled={deletingDashboardId === row.original.id}
+          title="대시보드 삭제"
+          type="button"
+          variant="ghost"
+          size="icon"
+          onClick={(event) => {
+            event.stopPropagation();
+            onRequestDelete(row.original);
+          }}
+        >
+          <Trash2 />
+        </Button>
+      )}
       rowActionsClassName="dashboard-table-action-cell"
       rowActionsHeader={<span className="sr-only">삭제</span>}
     />

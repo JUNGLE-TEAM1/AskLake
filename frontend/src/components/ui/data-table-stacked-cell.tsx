@@ -19,7 +19,7 @@ export const DataTableCellPrimary = React.forwardRef<
   React.HTMLAttributes<HTMLElement>
 >(({ className, ...props }, ref) => (
   <strong
-    className={cn("min-w-0 truncate text-sm font-semibold text-slate-950", className)}
+    className={cn("min-w-0 truncate text-base font-semibold text-slate-950", className)}
     ref={ref}
     {...props}
   />
@@ -31,7 +31,7 @@ export const DataTableCellSecondary = React.forwardRef<
   React.HTMLAttributes<HTMLSpanElement>
 >(({ className, ...props }, ref) => (
   <span
-    className={cn("min-w-0 truncate text-xs font-medium text-slate-500", className)}
+    className={cn("min-w-0 truncate text-sm font-medium text-slate-500", className)}
     ref={ref}
     {...props}
   />

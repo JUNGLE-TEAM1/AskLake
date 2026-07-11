@@ -1,5 +1,5 @@
 import { useMemo, type ReactNode } from "react";
-import { AlertCircle, CalendarDays, Database, Hash, LetterText, Server, Table2 } from "lucide-react";
+import { AlertCircle, CalendarDays, Database, Hash, LetterText, Server, Table2, X } from "lucide-react";
 import {
   TreeExpander,
   TreeIcon,
@@ -12,6 +12,7 @@ import {
 } from "@/components/kibo-ui/tree";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
+import { IconButton } from "@/components/ui/icon-button";
 import { PanelHeader } from "@/components/ui/panel";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -25,10 +26,10 @@ type DatasetSidebarProps = {
   error?: Error | null;
   isOpen?: boolean;
   isLoading?: boolean;
+  onClose?: () => void;
   onSelectColumn?: (dataset: DashboardDatasetOption, column: DashboardDatasetColumn) => void;
   onSelectDataset: (datasetId: string) => void;
   selectedDatasetId: string | null;
-  sourceMode?: "dataset" | "sqlResult";
 };
 
 type DatasetTreeNode = {
@@ -222,12 +223,11 @@ export function DatasetSidebar({
   error = null,
   isOpen = true,
   isLoading = false,
+  onClose,
   onSelectColumn,
   onSelectDataset,
   selectedDatasetId,
-  sourceMode = "dataset",
 }: DatasetSidebarProps) {
-  const isSqlResultMode = sourceMode === "sqlResult";
   const totalColumnCount = useMemo(
     () => datasets.reduce((total, dataset) => total + dataset.columns.length, 0),
     [datasets],
@@ -256,7 +256,7 @@ export function DatasetSidebar({
                           { label: "type", value: columnTypeLabel(column.type) },
                           { label: "table", value: dataset.name },
                         ]}
-                        subtitle={`${isSqlResultMode ? "sql.results" : "system.datasets"}.${dataset.name}`}
+                        subtitle={`system.datasets.${dataset.name}`}
                         title={column.name}
                       />
                     ),
@@ -269,15 +269,15 @@ export function DatasetSidebar({
                   datasetId: dataset.id,
                   hoverCard: (
                     <DatasetHoverCard
-                      description={dataset.description ?? (isSqlResultMode ? "SQL 분석에서 실행한 결과 스냅샷입니다." : "대시보드 위젯에 사용할 수 있는 데이터셋입니다.")}
+                      description={dataset.description ?? "Dataset available for dashboard widgets."}
                       icon={<Table2 />}
                       rows={[
-                        { label: isSqlResultMode ? "출처" : "소유자", value: isSqlResultMode ? "SQL 분석" : "System user" },
-                        { label: isSqlResultMode ? "실행 시각" : "최근 수정", value: dataset.updatedAt ?? "정보 없음" },
-                        { label: "컬럼", value: `${dataset.columns.length}` },
-                        { label: "지표", value: `${numericColumnCount}` },
+                        { label: "owner", value: "System user" },
+                        { label: "updated", value: dataset.updatedAt ?? "unknown" },
+                        { label: "columns", value: `${dataset.columns.length}` },
+                        { label: "metrics", value: `${numericColumnCount}` },
                       ]}
-                      subtitle={isSqlResultMode ? "sql.results" : "system.datasets"}
+                      subtitle="system.datasets"
                       title={dataset.name}
                     />
                   ),
@@ -291,72 +291,78 @@ export function DatasetSidebar({
               }),
               hoverCard: (
                 <DatasetHoverCard
-                  description={isSqlResultMode ? "위젯 원본으로 사용할 SQL 실행 결과입니다." : "위젯 원본으로 선택할 수 있는 테이블입니다."}
+                  description="Tables available as widget sources."
                   icon={<Table2 />}
                   rows={[
-                    { label: isSqlResultMode ? "결과" : "테이블", value: `${datasets.length}` },
-                    { label: "컬럼", value: `${totalColumnCount}` },
-                    { label: "지표", value: `${totalMetricCount}` },
+                    { label: "tables", value: `${datasets.length}` },
+                    { label: "columns", value: `${totalColumnCount}` },
+                    { label: "metrics", value: `${totalMetricCount}` },
                   ]}
-                  subtitle={isSqlResultMode ? "sql.results" : "system.datasets"}
-                  title={isSqlResultMode ? `실행 결과 (${datasets.length})` : `tables (${datasets.length})`}
+                  subtitle="system.datasets"
+                  title={`tables (${datasets.length})`}
                 />
               ),
               icon: <Table2 />,
               id: tablesItemId,
               kind: "group",
-              title: isSqlResultMode ? `실행 결과 (${datasets.length})` : `tables (${datasets.length})`,
+              title: `tables (${datasets.length})`,
             },
           ],
           hoverCard: (
             <DatasetHoverCard
-            description={isSqlResultMode ? "SQL 실행 결과 컬럼 묶음입니다." : "대시보드 위젯 생성에 사용할 데이터셋 묶음입니다."}
+              description="Dataset group available for dashboard widget creation."
               icon={<Database />}
               rows={[
                 { label: "owner", value: "System user" },
-              { label: isSqlResultMode ? "실행 결과" : "테이블", value: `${datasets.length}` },
-              { label: "컬럼", value: `${totalColumnCount}` },
-            ]}
-            subtitle={isSqlResultMode ? "sql" : "system"}
-            title={isSqlResultMode ? "results" : "datasets"}
+                { label: "tables", value: `${datasets.length}` },
+                { label: "columns", value: `${totalColumnCount}` },
+              ]}
+              subtitle="system"
+              title="datasets"
             />
           ),
           icon: <Database />,
           id: schemaItemId,
           kind: "group",
-          title: isSqlResultMode ? "results" : "datasets",
+          title: "datasets",
         },
       ],
       hoverCard: (
         <DatasetHoverCard
-        description={isSqlResultMode ? "SQL 분석에서 방금 실행한 결과 스냅샷입니다." : "대시보드 위젯에 사용할 데이터셋 카탈로그입니다."}
+          description="Dataset catalog available for dashboard widgets."
           icon={<Server />}
           rows={[
             { label: "owner", value: "System user" },
-          { label: isSqlResultMode ? "결과" : "업데이트됨", value: isSqlResultMode ? `${datasets.length}개` : "1시간 전" },
-          { label: isSqlResultMode ? "컬럼" : "테이블", value: isSqlResultMode ? `${totalColumnCount}개` : `${datasets.length}개` },
-        ]}
-        title={isSqlResultMode ? "sql" : "system"}
+            { label: "updated", value: "1 hour ago" },
+            { label: "tables", value: `${datasets.length}` },
+          ]}
+          title="system"
         />
       ),
       icon: <Server />,
       id: systemItemId,
       kind: "group",
-      title: isSqlResultMode ? "sql" : "system",
+      title: "system",
     },
-  ], [datasets, isSqlResultMode, selectedDatasetId, totalColumnCount, totalMetricCount]);
+  ], [datasets, selectedDatasetId, totalColumnCount, totalMetricCount]);
 
   return (
     <aside
       aria-hidden={!isOpen}
-      aria-label={isSqlResultMode ? "SQL 실행 결과" : "데이터셋"}
+      aria-label="데이터"
       className="asklake-dashboard-dataset-sidebar"
       id="asklake-dashboard-dataset-sidebar"
     >
       <PanelHeader
-        className="min-h-0 border-b border-slate-200 p-4"
+        actions={onClose ? (
+          <IconButton label="데이터 패널 닫기" size="xs" variant="ghost" onClick={onClose}>
+            <X />
+          </IconButton>
+        ) : undefined}
+        className="min-h-0 p-4"
+        description="위젯에 연결할 데이터셋과 필드를 선택하세요."
         icon={<Database />}
-        title={isSqlResultMode ? "SQL 실행 결과" : "데이터셋"}
+        title="데이터"
       />
 
       {isLoading ? (
@@ -364,19 +370,19 @@ export function DatasetSidebar({
       ) : error ? (
         <Alert className="m-3 w-auto" variant="destructive">
           <AlertCircle />
-          <AlertTitle>{isSqlResultMode ? "SQL 실행 결과를 불러오지 못했습니다." : "데이터셋을 불러오지 못했습니다."}</AlertTitle>
-          <AlertDescription>{isSqlResultMode ? "SQL 분석에서 다시 실행해 주세요." : error.message}</AlertDescription>
+          <AlertTitle>Dataset을 불러오지 못했습니다.</AlertTitle>
+          <AlertDescription>{error.message}</AlertDescription>
         </Alert>
       ) : datasets.length === 0 ? (
         <Empty className="m-3" size="sm" variant="bordered">
           <EmptyHeader>
-            <EmptyTitle>{isSqlResultMode ? "표시할 SQL 실행 결과가 없습니다." : "사용 가능한 데이터셋이 없습니다."}</EmptyTitle>
-            <EmptyDescription>{isSqlResultMode ? "SQL 분석에서 Preview를 실행한 뒤 다시 시도해 주세요." : "Catalog에서 데이터셋을 준비한 뒤 다시 시도해 주세요."}</EmptyDescription>
+            <EmptyTitle>사용 가능한 Dataset이 없습니다.</EmptyTitle>
+            <EmptyDescription>Catalog에서 Dataset을 준비한 뒤 다시 시도해 주세요.</EmptyDescription>
           </EmptyHeader>
         </Empty>
       ) : (
         <TooltipProvider delayDuration={250}>
-          <ScrollArea className="h-[min(760px,calc(100vh-240px))] min-h-[260px]" type="always">
+          <ScrollArea className="min-h-0 flex-1" type="always">
             <TreeProvider
               className="pr-3"
               defaultExpandedIds={[systemItemId, schemaItemId, tablesItemId]}
@@ -384,7 +390,7 @@ export function DatasetSidebar({
               selectable={false}
               showLines
             >
-              <TreeView aria-label={isSqlResultMode ? "Dashboard SQL result tree" : "Dashboard dataset tree"} className="p-2">
+              <TreeView aria-label="Dashboard dataset tree" className="p-2">
                 <DashboardDatasetTreeItems
                   datasets={datasets}
                   items={treeData}

@@ -54,11 +54,11 @@ export function EmptyState({
         </span>
       )}
       <div className="grid max-w-md gap-1">
-        <h2 className="text-base font-semibold leading-6 tracking-normal text-slate-950">
+        <h2 className="text-lg font-semibold leading-7 tracking-normal text-slate-950">
           {title}
         </h2>
         {description && (
-          <p className="text-sm leading-6 text-slate-500">
+          <p className="text-[15px] leading-6 text-slate-500">
             {description}
           </p>
         )}
