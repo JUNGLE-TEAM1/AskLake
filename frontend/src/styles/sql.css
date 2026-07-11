@@ -46,6 +46,8 @@
 }
 
 .sql-page.context-collapsed .sql-workspace {
+  grid-column: 1;
+  min-width: 0;
   padding-left: 44px;
 }
 
