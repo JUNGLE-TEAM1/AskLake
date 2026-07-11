@@ -118,9 +118,9 @@ export async function countJobs() {
 export async function listJobs() {
   await ensureMetadataSchema();
   if (useMemoryStore) return sortByUpdatedAt([...memoryStore.jobs.values()]);
-  const result = await pool.query("SELECT payload FROM etl_jobs ORDER BY updated_at DESC, created_at DESC");
+  const result = await pool.query("SELECT payload, created_at, updated_at FROM etl_jobs ORDER BY updated_at DESC, created_at DESC");
   return result.rows
-    .map((row) => row.payload)
+    .map(hydratePayloadTimestamps)
     .filter(isPlainObject);
 }
 
@@ -145,8 +145,8 @@ export async function listModelArtifacts() {
 export async function getJob(jobId) {
   await ensureMetadataSchema();
   if (useMemoryStore) return memoryStore.jobs.get(jobId) ?? null;
-  const result = await pool.query("SELECT payload FROM etl_jobs WHERE id = $1", [jobId]);
-  return result.rows[0]?.payload ?? null;
+  const result = await pool.query("SELECT payload, created_at, updated_at FROM etl_jobs WHERE id = $1", [jobId]);
+  return result.rows[0] ? hydratePayloadTimestamps(result.rows[0]) : null;
 }
 
 export async function getDataset(datasetId) {
@@ -183,8 +183,9 @@ export async function findDatasetForJob(job) {
 
 export async function saveJob(job) {
   await ensureMetadataSchema();
+  const stampedJob = stampPayload(job);
   if (useMemoryStore) {
-    memoryStore.jobs.set(job.id, stampPayload(job));
+    memoryStore.jobs.set(job.id, stampedJob);
     return memoryStore.jobs.get(job.id);
   }
   await pool.query(
@@ -194,9 +195,9 @@ export async function saveJob(job) {
       ON CONFLICT (id)
       DO UPDATE SET payload = EXCLUDED.payload, updated_at = now()
     `,
-    [job.id, JSON.stringify(job)],
+    [job.id, JSON.stringify(stampedJob)],
   );
-  return job;
+  return stampedJob;
 }
 
 export async function saveDataset(dataset) {
@@ -302,6 +303,20 @@ function stampPayload(payload) {
     createdAt: payload.createdAt || payload.created_at || now,
     updatedAt: now,
   };
+}
+
+function hydratePayloadTimestamps(row) {
+  if (!isPlainObject(row?.payload)) return null;
+  return {
+    ...row.payload,
+    createdAt: row.payload.createdAt || row.payload.created_at || toTimestampString(row.created_at),
+    updatedAt: row.payload.updatedAt || row.payload.updated_at || toTimestampString(row.updated_at),
+  };
+}
+
+function toTimestampString(value) {
+  if (!value) return undefined;
+  return value instanceof Date ? value.toISOString() : String(value);
 }
 
 function sortByUpdatedAt(values) {
