@@ -1,0 +1,100 @@
+.auth-only-shell {
+  display: flex;
+  min-height: 100vh;
+  flex-direction: column;
+  background: #f8fafc;
+}
+
+.auth-only-main {
+  flex: 1;
+  width: 100%;
+  padding: 48px var(--layout-page-padding) 40px;
+}
+
+.auth-only-main > *,
+.auth-page,
+.profile-page,
+.admin-console-page {
+  width: 100%;
+  max-width: var(--layout-main-width);
+  margin-right: auto;
+  margin-left: auto;
+}
+
+.auth-page,
+.profile-page {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 20px;
+}
+
+.auth-panel,
+.profile-summary-panel,
+.admin-console-page section {
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #fff;
+  padding: 20px;
+}
+
+.auth-form,
+.admin-console-page form {
+  display: grid;
+  gap: 14px;
+}
+
+.auth-tabs,
+.admin-console-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 16px 0;
+}
+
+.auth-tabs button,
+.admin-console-tabs button {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #dbe4f0;
+  border-radius: 8px;
+  background: #fff;
+  padding: 0 12px;
+}
+
+.auth-tabs button.active,
+.admin-console-tabs button.active {
+  border-color: #2563eb;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.avatar-button {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+}
+
+.avatar-button .avatar {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 50%;
+  background: #1d4ed8;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+@media (max-width: 860px) {
+  .auth-page,
+  .profile-page {
+    grid-template-columns: 1fr;
+  }
+}

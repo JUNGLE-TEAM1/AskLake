@@ -282,6 +282,8 @@ uvicorn app.main:app --reload --port 8080
 ```
 
 로컬 환경 변수는 `backend/.env.example`을 기준으로 둔다. 실제 OpenAI 키는 git에 올리지 않는 `backend/.env.local`의 `OPENAI_API_KEY`에 둔다. Query AI live mode는 backend가 이 값을 읽어 `POST /api/query/ai-suggestions`에서만 사용하며, frontend env에는 OpenAI 키를 두지 않는다.
+
+SQL UI를 변경할 때는 desktop에서 좌측 분석 테이블과 우측 editor/result workspace의 하단이 SQL 실행 전후 모두 일치하는지 확인한다. Catalog 미리보기의 `SQL 분석에서 열기`가 선택 Dataset을 유지한 채 `/sql`로 이동하는지 확인하고, editor 헤더의 `AI로 SQL 작성` Dialog에서 자연어 요청 → 초안 생성 → 편집기 적용이 동작하되 자동 실행되지 않는지 확인한다.
 FastAPI 폴더 구조와 설계 결정은 `docs/backend-fastapi-transition-plan.md`를 기준으로 한다.
 
 ## 4) Prod-Like Docker Compose
@@ -466,6 +468,11 @@ ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:etl-lineage
 
 ## 11) Manual Smoke Checklist
 
+- `/` 랜딩이 표시되고 시작 CTA가 `/login`으로 이동한다.
+- session이 없으면 `/jobs`, `/ai`, `/admin` 직접 접근이 `AuthPage`로 이동한다.
+- admin 계정 로그인 후 `/jobs`가 표시되고 `/ai`는 `AiChatPage`, `/admin`은 `AdminConsolePage`를 렌더링한다.
+- viewer 계정에는 관리 메뉴가 보이지 않고 `/admin` 직접 접근은 프로필로 이동한다.
+- 로그아웃 후 보호 route에 다시 접근하면 로그인 화면이 표시된다.
 - 수집/처리 목록이 열린다.
 - 새 수집/처리 생성 flow가 Review까지 이동한다.
 - 생성 요청 후 job과 dataset이 반영된다.

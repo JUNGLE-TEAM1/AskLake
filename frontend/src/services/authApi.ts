@@ -1,11 +1,29 @@
 import { ApiError } from "../types";
 import type { AuthSessionResponse, AuthUserResponse, CurrentUserResponse, LoginRequest, LogoutResponse, SignupRequest } from "../types";
-import { apiClient } from "./apiClient";
+import { apiClient, apiConfig } from "./apiClient";
 
 const tempUsersKey = "asklake.tempAuth.users";
 const tempSessionKey = "asklake.tempAuth.session";
+const mockSessionKey = "asklake.mockAuthUser";
+const mockAutoAuth = String(import.meta.env.VITE_MOCK_AUTHENTICATED ?? "false").toLowerCase() === "true";
+
+const mockAdminUser: CurrentUserResponse = {
+  displayName: "AskLake Admin",
+  email: "admin.user@asklake.local",
+  groups: [],
+  id: "user-admin",
+  permissionsSummary: { canDelete: 12, canManage: 12, canQuery: 12, canRun: 12, canShare: 12, canView: 12 },
+  profile: { avatarInitials: "AL", displayName: "AskLake Admin", email: "admin.user@asklake.local", role: "admin", title: "Platform Administrator" },
+  role: "admin",
+};
+
+let mockSessionUser: CurrentUserResponse | null = null;
 
 export async function fetchAuthSession(): Promise<AuthSessionResponse> {
+  if (apiConfig.useMock) {
+    const user = readMockSession() ?? (mockAutoAuth ? mockAdminUser : null);
+    return { authenticated: Boolean(user), user };
+  }
   try {
     const session = await apiClient.get<AuthSessionResponse>("/api/auth/session");
     return session.authenticated ? session : localSession();
@@ -16,6 +34,11 @@ export async function fetchAuthSession(): Promise<AuthSessionResponse> {
 }
 
 export async function login(payload: LoginRequest): Promise<AuthUserResponse> {
+  if (apiConfig.useMock) {
+    const user = { ...mockAdminUser, email: payload.email, profile: { ...mockAdminUser.profile, email: payload.email } };
+    writeMockSession(user);
+    return { user };
+  }
   try {
     return await apiClient.post<AuthUserResponse>("/api/auth/login", payload);
   } catch (error) {
@@ -25,6 +48,16 @@ export async function login(payload: LoginRequest): Promise<AuthUserResponse> {
 }
 
 export async function signup(payload: SignupRequest): Promise<AuthUserResponse> {
+  if (apiConfig.useMock) {
+    const user = {
+      ...mockAdminUser,
+      displayName: payload.displayName,
+      email: payload.email,
+      profile: { ...mockAdminUser.profile, displayName: payload.displayName, email: payload.email },
+    };
+    writeMockSession(user);
+    return { user };
+  }
   try {
     return await apiClient.post<AuthUserResponse>("/api/auth/signup", payload);
   } catch (error) {
@@ -34,6 +67,10 @@ export async function signup(payload: SignupRequest): Promise<AuthUserResponse> 
 }
 
 export async function logout(): Promise<LogoutResponse> {
+  if (apiConfig.useMock) {
+    writeMockSession(null);
+    return { ok: true };
+  }
   clearTempSession();
   try {
     return await apiClient.post<LogoutResponse>("/api/auth/logout", {});
@@ -41,6 +78,25 @@ export async function logout(): Promise<LogoutResponse> {
     if (!shouldUseTempAuth(error)) throw error;
     return { ok: true };
   }
+}
+
+function readMockSession() {
+  if (mockSessionUser || typeof window === "undefined") return mockSessionUser;
+  const stored = window.sessionStorage.getItem(mockSessionKey);
+  if (!stored) return null;
+  try {
+    mockSessionUser = JSON.parse(stored) as CurrentUserResponse;
+  } catch {
+    window.sessionStorage.removeItem(mockSessionKey);
+  }
+  return mockSessionUser;
+}
+
+function writeMockSession(user: CurrentUserResponse | null) {
+  mockSessionUser = user;
+  if (typeof window === "undefined") return;
+  if (user) window.sessionStorage.setItem(mockSessionKey, JSON.stringify(user));
+  else window.sessionStorage.removeItem(mockSessionKey);
 }
 
 type TempUserRecord = {

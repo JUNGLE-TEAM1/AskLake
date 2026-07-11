@@ -482,8 +482,10 @@ export function CatalogPage({
   };
 
   const openSelectedSqlDataset = () => {
-    if (!canQueryCurrentDataset(previewDataset) || !selectedSqlRunTarget || selectedSqlRunTarget.datasetId !== previewDataset.id || selectedSqlRunTarget.datasetName !== previewDataset.name) return;
-    onAction("catalog.open_in_sql.materialization_run_confirmed", `/api/catalog/datasets/${previewDataset.id}/materialization-runs/${selectedSqlRunTarget.runId}/query`, previewDataset.id, "success");
+    if (!canQueryCurrentDataset(previewDataset)) return;
+    if (selectedSqlRunTarget?.datasetId === previewDataset.id && selectedSqlRunTarget.datasetName === previewDataset.name) {
+      onAction("catalog.open_in_sql.materialization_run_confirmed", `/api/catalog/datasets/${previewDataset.id}/materialization-runs/${selectedSqlRunTarget.runId}/query`, previewDataset.id, "success");
+    }
     onOpenSql(previewDataset);
   };
 
@@ -578,14 +580,14 @@ export function CatalogPage({
           </Accordion>
           <Button
             className="catalog-wide-button"
-            disabled={!canQueryCurrentDataset(previewDataset) || selectedSqlRunTarget?.datasetId !== previewDataset.id || selectedSqlRunTarget.datasetName !== previewDataset.name}
+            disabled={!canQueryCurrentDataset(previewDataset)}
             shape="compact"
             size="sm"
             title={!canQueryCurrentDataset(previewDataset)
               ? permissionDeniedMessage("데이터셋", "SQL 실행")
               : selectedSqlRunTarget?.datasetId === previewDataset.id && selectedSqlRunTarget.datasetName === previewDataset.name
                 ? "선택한 데이터 버전을 기준으로 SQL 분석을 엽니다."
-                : "성공한 데이터 버전을 먼저 선택해 주세요."}
+                : "현재 데이터셋을 기준으로 SQL 분석을 엽니다."}
             type="button"
             variant="outline"
             onClick={openSelectedSqlDataset}
