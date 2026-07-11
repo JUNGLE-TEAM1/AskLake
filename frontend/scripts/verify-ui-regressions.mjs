@@ -539,7 +539,7 @@ const checks = [
     name: "Folder policy and delimited parser keep stable responsive controls",
     file: "src/styles/etl.css",
     patterns: [
-      /\.collection-policy-grid\s*\{[^}]*grid-template-columns:\s*minmax\(260px, 1\.6fr\) minmax\(150px, \.8fr\) minmax\(132px, \.6fr\);/s,
+      /\.collection-policy-grid\s*\{[^}]*grid-template-columns:\s*minmax\(260px, 1\.6fr\) minmax\(150px, \.8fr\) repeat\(2, minmax\(132px, \.6fr\)\);/s,
       /\.delimited-dialect-grid\s*\{[^}]*grid-template-columns:\s*repeat\(3, minmax\(140px, 1fr\)\);/s,
       /@media \(max-width: 720px\)[\s\S]*\.collection-policy-grid,[\s\S]*\.delimited-dialect-grid\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/,
     ],
