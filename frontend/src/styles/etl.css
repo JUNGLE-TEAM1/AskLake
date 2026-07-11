@@ -308,6 +308,51 @@
   color: #ffffff;
 }
 
+.kafka-continuous-settings {
+  margin-top: 10px;
+  border-top: 1px solid #e2e8f0;
+  padding-top: 10px;
+}
+
+.kafka-continuous-settings-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  color: #475569;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 4px 0;
+}
+
+.kafka-continuous-settings-toggle:hover {
+  color: #1d4ed8;
+}
+
+.kafka-continuous-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.kafka-continuous-settings-grid .field {
+  gap: 6px;
+}
+
+.kafka-continuous-settings-grid .field > span {
+  color: #475569;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.kafka-continuous-settings-grid .field small {
+  color: #64748b;
+  font-size: 11px;
+}
+
 .source-stage-screen {
   display: grid;
   gap: 12px;
@@ -8995,6 +9040,10 @@ input.schema-checkbox:checked {
 
 @media (max-width: 640px) {
   .kafka-execution-mode-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .kafka-continuous-settings-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 }

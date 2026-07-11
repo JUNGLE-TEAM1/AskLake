@@ -25,6 +25,7 @@ export const watermarkWindowModeLabels: Record<WatermarkWindowMode, string> = {
 
 export function toCreatePipelineRequest(draft: DraftPipeline): CreatePipelineRequest {
   const targetDataset = draft.target.datasetName.trim();
+  const continuousKafka = draft.source.executionMode === "continuous" && ["Stream / Kafka", "Kafka JSON"].includes(draft.source.sourceType);
   const partitionColumns = normalizeStringList(draft.target.partitionColumns);
   const targetTags = normalizeStringList(draft.target.tags);
   const retryPolicy = normalizeRetryPolicy(draft.schedule.retryPolicy);
@@ -44,14 +45,14 @@ export function toCreatePipelineRequest(draft: DraftPipeline): CreatePipelineReq
     qualityRules: draft.quality.rules,
     qualityScore: draft.quality.score,
     qualityStatus: draft.quality.status,
-    endDate: draft.schedule.endDate,
-    nextRunUtc: draft.schedule.nextRunUtc,
-    overlapPolicy: draft.schedule.overlapPolicy,
-    scheduleLabel: draft.schedule.label,
-    scheduleSummary: draft.schedule.summary || draft.schedule.label,
-    startDate: draft.schedule.startDate,
-    timezone: draft.schedule.timezone,
-    watermarkPolicy,
+    endDate: continuousKafka ? undefined : draft.schedule.endDate,
+    nextRunUtc: continuousKafka ? undefined : draft.schedule.nextRunUtc,
+    overlapPolicy: continuousKafka ? undefined : draft.schedule.overlapPolicy,
+    scheduleLabel: continuousKafka ? "스케줄링 건너뛰기" : draft.schedule.label,
+    scheduleSummary: continuousKafka ? "실시간 스트림은 작업 생성 후 시작/중지로 제어" : draft.schedule.summary || draft.schedule.label,
+    startDate: continuousKafka ? undefined : draft.schedule.startDate,
+    timezone: continuousKafka ? undefined : draft.schedule.timezone,
+    watermarkPolicy: continuousKafka ? undefined : watermarkPolicy,
     schemaColumns: draft.schema.columns,
     schemaFingerprint: draft.schema.schemaFingerprint,
     schemaSampleRows: draft.schema.sampleRows,

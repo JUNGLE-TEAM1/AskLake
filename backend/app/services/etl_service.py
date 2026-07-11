@@ -734,10 +734,14 @@ def review_pipeline(request: ReviewPipelineRequest) -> ReviewSnapshot:
     ]
     schema_ready = bool(included_columns)
     processing_ready = bool(request.rule_summary.strip())
+    continuous_rules_supported = request.execution_mode != "continuous" or (
+        not any(step.enabled for step in request.transform_steps)
+        and not any(rule.enabled for rule in request.quality_rules)
+    )
     schedule_ready = bool(request.schedule_label.strip())
     retry_ready = bool(request.retry_policy_summary.strip())
     permission_ready = bool(request.permission_summary.strip() and request.target_dataset.strip() and request.owner.strip())
-    can_create = source_ready and schema_ready and bool(request.source_type.strip()) and bool(request.source_label.strip()) and bool(request.target_dataset.strip()) and bool(request.owner.strip())
+    can_create = source_ready and schema_ready and continuous_rules_supported and bool(request.source_type.strip()) and bool(request.source_label.strip()) and bool(request.target_dataset.strip()) and bool(request.owner.strip())
 
     source_type = "PostgreSQL" if request.source_type == "Database" else request.source_type
     source_display = " · ".join(value for value in [source_type, request.source_label] if value.strip())
@@ -747,6 +751,7 @@ def review_pipeline(request: ReviewPipelineRequest) -> ReviewSnapshot:
             review_entry("작업 ID", request.id),
             review_entry("작업명", request.job_name),
             review_entry("소스", source_display),
+            review_entry("실행 방식", "실시간 스트림" if request.execution_mode == "continuous" else "Snapshot batch"),
             review_entry("대상 데이터셋", request.target_dataset),
             review_entry("설명", request.target_description),
         ],
@@ -776,7 +781,8 @@ def review_pipeline(request: ReviewPipelineRequest) -> ReviewSnapshot:
             review_validation("소스 연결", source_ready, "완료", "확인 필요"),
             review_validation("스키마", schema_ready, "확정됨", "추론 필요"),
             review_validation("처리 테스트", processing_ready, "통과", "확인 필요"),
-            review_validation("스케줄", schedule_ready, "유효함", "확인 필요"),
+            *([review_validation("Continuous 규칙", continuous_rules_supported, "지원 범위 확인", "Continuous에서는 transform/quality rule을 제거하세요")] if request.execution_mode == "continuous" else []),
+            review_validation("스트림 제어" if request.execution_mode == "continuous" else "스케줄", schedule_ready, "시작/중지로 제어" if request.execution_mode == "continuous" else "유효함", "확인 필요"),
             review_validation("실패 재시도", retry_ready, "유효함", "확인 필요"),
             review_validation("권한/타겟", permission_ready, "유효함", "확인 필요"),
         ],

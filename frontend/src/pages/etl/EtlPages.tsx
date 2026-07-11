@@ -1086,7 +1086,22 @@ export function SourceConnectionPage({
   const [sourceStage, setSourceStage] = useState<"choose" | "connect" | "browse">(() => getInitialSourceStage(draft));
   const [loadingAssetPath, setLoadingAssetPath] = useState("");
   const [selectedAssetPath, setSelectedAssetPath] = useState("");
+  const [continuousAdvancedOpen, setContinuousAdvancedOpen] = useState(false);
   const sourceLocked = connectionStatus === "testing";
+  const continuousConfig = draft.source.continuousConfig ?? {
+    initialOffsetPolicy: "earliest" as const,
+    triggerIntervalSeconds: 30,
+    maxOffsetsPerTrigger: 10000,
+  };
+  const updateContinuousConfig = (patch: Partial<typeof continuousConfig>) => {
+    onDraftChange({
+      source: {
+        executionMode: "continuous",
+        continuousConfig: { ...continuousConfig, ...patch },
+      },
+      target: { format: "parquet" },
+    });
+  };
   const connectorMeta: Record<string, { icon: React.ReactNode; label: string; status: string }> = {
     "File / S3": { icon: <SourceBrandIcon kind="s3" />, label: "MinIO", status: "실제 연결" },
     PostgreSQL: { icon: <SourceBrandIcon kind="postgres" />, label: "Postgres", status: "실제 연결" },
@@ -1647,10 +1662,7 @@ export function SourceConnectionPage({
                         <span className="kafka-execution-mode-tag">Batch</span>
                         {kafkaExecutionMode === "snapshot" && <span className="kafka-execution-mode-check"><Check size={14} /></span>}
                       </button>
-                      <button aria-pressed={kafkaExecutionMode === "continuous"} className={`kafka-execution-mode-card ${kafkaExecutionMode === "continuous" ? "selected" : ""}`} disabled={sourceLocked} type="button" onClick={() => onDraftChange({
-                        source: { executionMode: "continuous", continuousConfig: draft.source.continuousConfig ?? { initialOffsetPolicy: "earliest", triggerIntervalSeconds: 30, maxOffsetsPerTrigger: 10000 } },
-                        target: { format: "parquet" },
-                      })}>
+                      <button aria-pressed={kafkaExecutionMode === "continuous"} className={`kafka-execution-mode-card ${kafkaExecutionMode === "continuous" ? "selected" : ""}`} disabled={sourceLocked} type="button" onClick={() => updateContinuousConfig({})}>
                         <span className="kafka-execution-mode-icon"><Repeat2 size={19} /></span>
                         <span className="kafka-execution-mode-copy">
                           <strong>Continuous</strong>
@@ -1660,6 +1672,36 @@ export function SourceConnectionPage({
                         {kafkaExecutionMode === "continuous" && <span className="kafka-execution-mode-check"><Check size={14} /></span>}
                       </button>
                     </div>
+                    {kafkaExecutionMode === "continuous" && (
+                      <div className="kafka-continuous-settings">
+                        <button aria-expanded={continuousAdvancedOpen} className="kafka-continuous-settings-toggle" type="button" onClick={() => setContinuousAdvancedOpen((open) => !open)}>
+                          <span>고급 설정</span>
+                          {continuousAdvancedOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                        </button>
+                        {continuousAdvancedOpen && (
+                          <div className="kafka-continuous-settings-grid">
+                            <FormFieldGroup className="field" hint="새 checkpoint를 만들 때만 적용" label="시작 위치">
+                              <NativeSelect disabled={sourceLocked} value={continuousConfig.initialOffsetPolicy} onChange={(event) => updateContinuousConfig({ initialOffsetPolicy: event.target.value as "earliest" | "latest" })}>
+                                <option value="earliest">처음부터 읽기</option>
+                                <option value="latest">새 이벤트부터 읽기</option>
+                              </NativeSelect>
+                            </FormFieldGroup>
+                            <FormFieldGroup className="field" hint="1~3600초" label="Trigger 간격">
+                              <Input disabled={sourceLocked} max={3600} min={1} type="number" value={continuousConfig.triggerIntervalSeconds} onChange={(event) => {
+                                const value = Number(event.target.value);
+                                if (Number.isInteger(value) && value >= 1 && value <= 3600) updateContinuousConfig({ triggerIntervalSeconds: value });
+                              }} />
+                            </FormFieldGroup>
+                            <FormFieldGroup className="field" hint="1~1,000,000건" label="Micro-batch 최대 메시지">
+                              <Input disabled={sourceLocked} max={1_000_000} min={1} type="number" value={continuousConfig.maxOffsetsPerTrigger} onChange={(event) => {
+                                const value = Number(event.target.value);
+                                if (Number.isInteger(value) && value >= 1 && value <= 1_000_000) updateContinuousConfig({ maxOffsetsPerTrigger: value });
+                              }} />
+                            </FormFieldGroup>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </section>
                 )}
                 {current.info && <InfoBox title={isSqlResultSource ? "SQL Preview 입력" : "보안 연결"} body={current.info} />}

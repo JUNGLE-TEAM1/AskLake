@@ -1,12 +1,13 @@
 import { Check } from "lucide-react";
-import { steps } from "../../data/appShellData";
+import { steps as defaultSteps } from "../../data/appShellData";
 
 type StepperProps = {
   activeIndex: number;
   onStepSelect?: (stepIndex: number) => void;
+  steps?: string[];
 };
 
-export function Stepper({ activeIndex, onStepSelect }: StepperProps) {
+export function Stepper({ activeIndex, onStepSelect, steps = defaultSteps }: StepperProps) {
   return (
     <div className="stepper">
       <div className="stepper-inner">
