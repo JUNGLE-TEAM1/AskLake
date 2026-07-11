@@ -16,7 +16,7 @@ const sampleHostDir = path.resolve(process.env.ASKLAKE_LOCAL_SAMPLE_DIR || path.
 const sampleContainerDir = process.env.ASKLAKE_SAMPLE_CONTAINER_DIR || "/opt/asklake-samples";
 const reviewTextModelHostDir = path.resolve(
   process.env.ASKLAKE_REVIEW_TEXT_MODEL_HOST_DIR
-    || path.join(backendDir, "..", "output", "nlp-eval", "template-model-validation", "runtime", "latest"),
+    || path.join(backendDir, "tmp", "review-text-models"),
 );
 const reviewTextModelContainerDir = process.env.ASKLAKE_REVIEW_TEXT_MODEL_CONTAINER_DIR || "/work/review-text-models";
 const outputVolumeName = process.env.ASKLAKE_SPARK_OUTPUT_VOLUME || "asklake-spark-output";
@@ -39,7 +39,7 @@ export function runSparkPipeline(job, command, runId) {
   const packageArgs = sparkPackageArgs(source, output);
   const localLlmEndpoint = process.env.ASKLAKE_LOCAL_LLM_ENDPOINT_IN_DOCKER
     || process.env.ASKLAKE_LOCAL_LLM_ENDPOINT
-    || "http://host.docker.internal:1234/v1/chat/completions";
+    || "";
   const localLlmModel = process.env.ASKLAKE_LOCAL_LLM_MODEL || "local-review-analyzer";
   const localLlmTimeoutSeconds = process.env.ASKLAKE_LOCAL_LLM_TIMEOUT_SECONDS
     || String(Math.ceil(Number(process.env.ASKLAKE_LOCAL_LLM_TIMEOUT_MS || 120000) / 1000));
@@ -50,8 +50,7 @@ export function runSparkPipeline(job, command, runId) {
     "--rm",
     "--network",
     process.env.ASKLAKE_DOCKER_NETWORK || "asklake_default",
-    "--add-host",
-    "host.docker.internal:host-gateway",
+    ...(localLlmEndpoint.includes("host.docker.internal") ? ["--add-host", "host.docker.internal:host-gateway"] : []),
     "-v",
     `${sparkHostScriptsDir}:/work/scripts:ro`,
     "-v",
@@ -79,7 +78,7 @@ export function runSparkPipeline(job, command, runId) {
     "-e",
     `ASKLAKE_SPARK_OUTPUT_PATH=${output.sparkPath}`,
     "-e",
-    `ASKLAKE_SPARK_RUN_ROW_LIMIT=${sparkRowLimitFromJob(job)}`,
+    `ASKLAKE_SPARK_RUN_ROW_LIMIT=${sparkRowLimitFromEnvironment()}`,
     "-e",
     `ASKLAKE_SPARK_RUN_ID=${runId}`,
     "-e",
@@ -407,14 +406,11 @@ function sparkOutputPath(job, runId) {
   };
 }
 
-function sparkRowLimitFromJob(job) {
-  const sourceConfig = Array.isArray(job.sourceConfig) ? job.sourceConfig : [];
-  const configuredLimit = fieldValue(sourceConfig, "__Execution Row Limit") || fieldValue(sourceConfig, "Execution Row Limit");
-  if (configuredLimit && Number(configuredLimit) > 0) return configuredLimit;
-  const scope = fieldValue(sourceConfig, "__Schema Sample Scope");
-  if (scope === "slice1gb") return process.env.ASKLAKE_SPARK_RUN_ROW_LIMIT || "10000";
-  if (scope === "full") return process.env.ASKLAKE_SPARK_RUN_ROW_LIMIT || "0";
-  return process.env.ASKLAKE_SPARK_RUN_ROW_LIMIT || "0";
+function sparkRowLimitFromEnvironment() {
+  const configuredLimit = String(process.env.ASKLAKE_SPARK_RUN_ROW_LIMIT || "0").trim();
+  if (!/^[1-9]\d*$/.test(configuredLimit)) return "0";
+  const parsedLimit = Number(configuredLimit);
+  return Number.isSafeInteger(parsedLimit) ? String(parsedLimit) : "0";
 }
 
 function inferFormat(sourceConfig, prefix, fallback) {

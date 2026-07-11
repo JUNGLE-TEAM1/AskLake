@@ -491,6 +491,30 @@ def list_source_assets(request: SourceAssetsRequest) -> SourceAssetsResponse:
     return SourceAssetsResponse.model_validate(result)
 
 
+def list_text_structuring_models() -> list[dict[str, Any]]:
+    result = run_node_bridge(
+        "list-text-structuring-models.mjs",
+        "ASKLAKE_TEXT_STRUCTURING_MODELS",
+        {},
+        error_marker="ASKLAKE_TEXT_STRUCTURING_MODELS_ERROR",
+        timeout_seconds=30,
+    )
+    models = result.get("models") if isinstance(result, dict) else []
+    return [model for model in models if isinstance(model, dict)]
+
+
+def create_text_structuring_training_run(request: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(request, dict):
+        raise ApiError(ErrorCode.VALIDATION_ERROR, "Text structuring training request must be an object.", status.HTTP_400_BAD_REQUEST)
+    return run_node_bridge(
+        "train-text-structuring-models.mjs",
+        "ASKLAKE_TEXT_STRUCTURING_TRAINING_RESULT",
+        request,
+        error_marker="ASKLAKE_TEXT_STRUCTURING_TRAINING_ERROR",
+        timeout_seconds=900,
+    )
+
+
 def infer_schema(request: SourceConnectorRequest) -> SchemaDraft:
     analysis = test_source_connector(request)
     if analysis.draft_patch.schema_ is None:

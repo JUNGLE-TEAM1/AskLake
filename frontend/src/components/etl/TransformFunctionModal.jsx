@@ -60,6 +60,40 @@ const LEGACY_METHOD_DEFAULT_INSTRUCTIONS = {
   summary: "Summarize the row in one short factual sentence.",
 };
 
+const AMAZON_CELL_PHONES_TEMPLATE = [
+  { method: "copy", targetName: "raw", type: "string" },
+  {
+    allowedValues: ["positive", "negative"],
+    method: "one_of_values",
+    targetName: "sentiment",
+    type: "string",
+  },
+  {
+    allowedValues: ["shipping_delivery", "durability_quality", "charging_power", "no_issue"],
+    method: "one_of_values",
+    targetName: "issue_category",
+    type: "string",
+  },
+  {
+    allowedValues: ["critical", "high", "medium", "low"],
+    method: "one_of_values",
+    targetName: "severity",
+    type: "string",
+  },
+  {
+    instruction: "Summarize the phone or accessory review in one factual sentence without adding new claims.",
+    method: "instruction",
+    targetName: "summary",
+    type: "string",
+  },
+  {
+    instruction: "Extract the shortest source span that supports the sentiment, issue category, or severity decision.",
+    method: "instruction",
+    targetName: "evidence",
+    type: "string",
+  },
+];
+
 function formatChainStep(step) {
   if (!step) return "";
   if (step.display) return step.display;
@@ -561,6 +595,14 @@ export default function TransformFunctionModal({ column, onApply, onClose }) {
     ]);
   };
 
+  const applyAmazonCellPhonesTemplate = () => {
+    setReviewRules(AMAZON_CELL_PHONES_TEMPLATE.map((rule) => createReviewRule({
+      ...rule,
+      fallbackAllowed: false,
+      requireModel: rule.method === "one_of_values",
+    })));
+  };
+
   const removeReviewRule = (id) => {
     setReviewRules((prev) => (prev.length > 1 ? prev.filter((rule) => rule.id !== id) : prev));
   };
@@ -738,6 +780,14 @@ export default function TransformFunctionModal({ column, onApply, onClose }) {
                   <span className="block truncate font-mono text-xs font-semibold text-indigo-600">source field: {sourceField}</span>
                 </div>
                 <div className="flex gap-2">
+                  <button
+                    className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-700 hover:bg-emerald-100"
+                    onClick={applyAmazonCellPhonesTemplate}
+                    title="Amazon Cell Phones & Accessories JSONL output schema"
+                    type="button"
+                  >
+                    데모 값 채우기
+                  </button>
                   <button
                     className="rounded-lg border border-indigo-200 bg-white px-3 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-50"
                     onClick={addReviewRule}

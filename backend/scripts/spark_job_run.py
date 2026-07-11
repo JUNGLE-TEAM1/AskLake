@@ -59,7 +59,7 @@ def main():
         source_format = required_env("ASKLAKE_SPARK_SOURCE_FORMAT").lower()
         output_path = required_env("ASKLAKE_SPARK_OUTPUT_PATH")
         run_id = required_env("ASKLAKE_SPARK_RUN_ID")
-        row_limit = int(os.environ.get("ASKLAKE_SPARK_RUN_ROW_LIMIT", "0") or "0")
+        row_limit = optional_row_limit(os.environ.get("ASKLAKE_SPARK_RUN_ROW_LIMIT"))
         manifest = load_spark_job_manifest()
         schema_columns = manifest.get("schemaColumns") or load_json_env("ASKLAKE_SPARK_SCHEMA_COLUMNS", [])
         transform_steps = manifest.get("transformSteps") or load_json_env("ASKLAKE_SPARK_TRANSFORM_STEPS", [])
@@ -837,7 +837,9 @@ def local_llm_review_row_target(raw_row_json, target, schema_json, source_field)
 
 
 def call_local_review_llm(row, columns, source_field="text"):
-    endpoint = os.environ.get("ASKLAKE_LOCAL_LLM_ENDPOINT") or "http://host.docker.internal:1234/v1/chat/completions"
+    endpoint = os.environ.get("ASKLAKE_LOCAL_LLM_ENDPOINT") or ""
+    if not endpoint:
+        raise RuntimeError("ASKLAKE_LOCAL_LLM_ENDPOINT is required when instruction analysis uses the local_llm runtime.")
     model = os.environ.get("ASKLAKE_LOCAL_LLM_MODEL") or "local-review-analyzer"
     timeout_seconds = int(os.environ.get("ASKLAKE_LOCAL_LLM_TIMEOUT_SECONDS", "120") or "120")
     max_chars = int(os.environ.get("ASKLAKE_LOCAL_LLM_MAX_INPUT_CHARS", "9000") or "9000")
@@ -2207,6 +2209,14 @@ def truncate_text(value, length):
     if len(text) <= length:
         return text
     return text[: max(length - 1, 0)] + "..."
+
+
+def optional_row_limit(value):
+    try:
+        parsed = int(str(value or "").strip())
+    except (TypeError, ValueError):
+        return 0
+    return parsed if parsed > 0 else 0
 
 
 def required_env(name):

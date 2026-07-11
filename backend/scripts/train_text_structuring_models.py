@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import re
 import sys
 from collections import Counter
@@ -20,8 +21,9 @@ from sklearn.svm import LinearSVC
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_RUNTIME_ROOT = REPO_ROOT / "output" / "nlp-eval" / "text-structuring" / "runtime"
-DEFAULT_LATEST_ROOT = REPO_ROOT / "output" / "nlp-eval" / "template-model-validation" / "runtime" / "latest"
+DEFAULT_MODEL_ROOT = Path(os.environ.get("ASKLAKE_REVIEW_TEXT_MODEL_HOST_DIR") or REPO_ROOT / "tmp" / "review-text-models").resolve()
+DEFAULT_RUNTIME_ROOT = DEFAULT_MODEL_ROOT / "runs"
+DEFAULT_LATEST_ROOT = DEFAULT_MODEL_ROOT / "latest"
 
 DENSE_PATTERNS = [
     ("negative_word", r"\b(bad|terrible|awful|broken|defective|disappointed|waste|poor|horrible)\b"),

@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
@@ -16,6 +16,7 @@ from app.schemas.catalog import (
     LineageGraphResponse,
 )
 from app.services.catalog_service import CatalogService
+from app.services import etl_service
 from app.services.lake_storage_service import LocalLakeStorageService
 
 router = APIRouter(prefix="/catalog", tags=["catalog"])
@@ -35,6 +36,15 @@ def list_datasets(
     actor: Annotated[ActorContext, Depends(get_actor_context)],
 ) -> CatalogDatasetListResponse:
     return service.list_datasets(actor)
+
+
+@router.get("/models")
+def list_model_artifacts(
+    actor: Annotated[ActorContext, Depends(get_actor_context)],
+) -> list[dict[str, Any]]:
+    # Resolve the actor before returning registry metadata so this endpoint follows the normal session path.
+    _ = actor
+    return etl_service.list_text_structuring_models()
 
 
 @router.get("/datasets/{dataset_id}", response_model=CatalogDatasetResponse)

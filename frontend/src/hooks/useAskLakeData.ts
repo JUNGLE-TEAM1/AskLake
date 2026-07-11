@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError } from "../types";
-import { catalogDatasets, etlJobs } from "../data/mockData";
 import { apiConfig } from "../services/apiClient";
 import { deleteDatasetMaterializationRun } from "../services/catalogApi";
 import { applyDraftPipelinePatch, hydrateDraftPipelineFromJob } from "../services/draftPipelineContract";
@@ -287,11 +286,11 @@ function saveStoredCatalogDataset(dataset: CatalogDataset) {
 }
 
 function getInitialDatasets() {
-  return apiConfig.useMock ? mergeCatalogDatasets(catalogDatasets, loadStoredCatalogDatasets()) : [];
+  return [];
 }
 
 function getInitialJobs() {
-  return apiConfig.useMock ? etlJobs.map(normalizeJobRow) : [];
+  return [];
 }
 
 function buildSqlDatasetJobDraft(
@@ -679,6 +678,14 @@ function commandSuccessMessage(command: ServerJobCommand): string {
   if (command === "pause") return "작업 일시정지 요청을 접수했습니다.";
   if (command === "stopSchedule") return "다음 반복 예약을 중지했습니다.";
   return "작업 취소 요청을 접수했습니다.";
+}
+
+function commandFailureMessage(error: unknown, command: ServerJobCommand): string {
+  if (error instanceof ApiError && error.status === 403) {
+    return permissionDeniedMessage("작업", command === "run" || command === "retry" ? "실행" : "관리");
+  }
+  const detail = error instanceof Error ? error.message.trim() : "";
+  return detail ? `작업 명령 실패: ${detail}` : "작업 명령 처리에 실패했습니다.";
 }
 
 function buildClientRunId(jobId: string): string {
@@ -1210,7 +1217,7 @@ export function useAskLakeData({
         rollbackOptimisticRun();
       }
       writeAuditLog("etl.job.command_failed", `/api/etl/jobs/${job.id}`, job.id, "failed");
-      showToast(error instanceof ApiError && error.status === 403 ? permissionDeniedMessage("작업", command === "run" || command === "retry" ? "실행" : "관리") : "작업 명령 처리에 실패했습니다.", "info");
+      showToast(commandFailureMessage(error, command), "info");
     } finally {
       commandPendingRef.current.delete(job.id);
       setCommandPendingByJobId((state) => {

@@ -3,7 +3,10 @@ import { normalizeColumnName } from "./profile.mjs";
 
 const { Pool } = pg;
 
-export const databaseUrl = process.env.DATABASE_URL || "postgres://asklake:asklake_dev@127.0.0.1:54328/asklake";
+const configuredDatabaseUrl = process.env.DATABASE_URL || "postgres://asklake:asklake_dev@127.0.0.1:54328/asklake";
+
+// SQLAlchemy uses URLs such as postgresql+psycopg:// while node-postgres expects postgresql://.
+export const databaseUrl = configuredDatabaseUrl.replace(/^postgresql\+[^:]+:\/\//i, "postgresql://");
 
 const pool = new Pool({
   connectionString: databaseUrl,

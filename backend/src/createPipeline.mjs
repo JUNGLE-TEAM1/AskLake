@@ -98,16 +98,18 @@ export async function createTextStructuringTrainingRun(request) {
   if (columns.length === 0) throw validationError("Text structuring training requires at least one output column.");
   if (trainRows.length < 2) throw validationError("Text structuring training requires labeled trainRows.");
   const runId = `text_model_${Date.now().toString(36)}`;
-  const outputDir = path.join(backendDir, "..", "output", "nlp-eval", "text-structuring", "runtime", runId);
+  const outputDir = path.join(reviewTextModelRunsDir(), runId);
+  const latestDir = reviewTextModelLatestDir();
   const pythonBin = process.env.ASKLAKE_FASTAPI_PYTHON || process.env.PYTHON || "python";
   const result = spawnSync(
     pythonBin,
-    [path.join(scriptsDir, "train_text_structuring_models.py"), "--output-dir", outputDir],
+    [path.join(scriptsDir, "train_text_structuring_models.py"), "--output-dir", outputDir, "--latest-dir", latestDir],
     {
       cwd: backendDir,
       encoding: "utf8",
       input: JSON.stringify({
         ...request,
+        latestDir,
         outputDir,
       }),
       maxBuffer: 128 * 1024 * 1024,
@@ -175,10 +177,7 @@ function isCatalogModelArtifact(dataset) {
 }
 
 function discoverReviewTextModelArtifacts() {
-  const root = path.resolve(
-    process.env.ASKLAKE_REVIEW_TEXT_MODEL_HOST_DIR
-      || path.join(backendDir, "..", "output", "nlp-eval", "template-model-validation", "runtime", "latest"),
-  );
+  const root = reviewTextModelLatestDir();
   if (!existsSync(root)) return [];
   const files = findPortableReviewTextModels(root);
   return files.map((filePath) => {
@@ -224,6 +223,20 @@ function discoverReviewTextModelArtifacts() {
       validationStatus: "available_for_selection",
     };
   });
+}
+
+function reviewTextModelRoot() {
+  return path.resolve(process.env.ASKLAKE_REVIEW_TEXT_MODEL_HOST_DIR || path.join(backendDir, "tmp", "review-text-models"));
+}
+
+function reviewTextModelLatestDir() {
+  const root = reviewTextModelRoot();
+  return path.basename(root).toLowerCase() === "latest" ? root : path.join(root, "latest");
+}
+
+function reviewTextModelRunsDir() {
+  const root = reviewTextModelRoot();
+  return path.basename(root).toLowerCase() === "latest" ? path.join(path.dirname(root), "runs") : path.join(root, "runs");
 }
 
 function findPortableReviewTextModels(root) {
