@@ -3,8 +3,8 @@ import { useMemo } from "react";
 import type {
   CatalogDataset,
   DashboardRuntimeWidget,
+  DashboardRuntimeWidgetConfig,
   DashboardRuntimeWidgetType,
-  DashboardWidgetAggregation,
   SqlResultDraft,
 } from "../../types";
 import {
@@ -12,13 +12,13 @@ import {
   sqlResultToDashboardOption,
 } from "../dashboard/runtime/dashboardDatasetAdapters";
 import type { DashboardDatasetOption } from "../dashboard/runtime/dashboardRuntimeTypes";
-import { defaultWidgetColorConfig } from "../dashboard/runtime/widgetDefinitions";
+import {
+  dashboardWidgetDefinitions,
+  defaultWidgetColorConfig,
+} from "../dashboard/runtime/widgetDefinitions";
 import { WidgetRenderer } from "../dashboard/runtime/WidgetRenderer";
 
-export type SqlChartType = Extract<
-  DashboardRuntimeWidgetType,
-  "area_chart" | "bar_chart" | "donut_chart" | "line_chart"
->;
+export type SqlChartType = DashboardRuntimeWidgetType;
 
 export type SqlChartSource = {
   dataset: DashboardDatasetOption;
@@ -28,27 +28,11 @@ export type SqlChartSource = {
 };
 
 export type SqlChartConfig = {
-  aggregation: DashboardWidgetAggregation;
-  categoryKey: string;
+  config: DashboardRuntimeWidgetConfig;
   sourceId: string;
+  title: string;
   type: SqlChartType;
-  valueKey: string;
 };
-
-export const sqlChartTypes: SqlChartType[] = [
-  "bar_chart",
-  "line_chart",
-  "area_chart",
-  "donut_chart",
-];
-
-export const sqlChartAggregations: DashboardWidgetAggregation[] = [
-  "sum",
-  "avg",
-  "count",
-  "min",
-  "max",
-];
 
 export function createSqlResultChartSource(resultDraft: SqlResultDraft): SqlChartSource {
   return {
@@ -84,18 +68,22 @@ export function buildSqlChartSources(
 
 export function createDefaultSqlChartConfig(
   source: SqlChartSource,
-  type: SqlChartType = "bar_chart",
 ): SqlChartConfig {
   const categoryColumn = source.dataset.columns.find((column) => column.type !== "number")
     ?? source.dataset.columns[0];
   const valueColumn = source.dataset.columns.find((column) => column.type === "number");
 
   return {
-    aggregation: valueColumn ? "sum" : "count",
-    categoryKey: categoryColumn?.name ?? "",
+    config: {
+      aggregation: valueColumn ? "sum" : "count",
+      color: defaultWidgetColorConfig,
+      orientation: "vertical",
+      xKey: categoryColumn?.name ?? "",
+      yKey: valueColumn?.name ?? "",
+    },
     sourceId: source.id,
-    type,
-    valueKey: valueColumn?.name ?? "",
+    title: source.label,
+    type: "bar_chart",
   };
 }
 
@@ -104,12 +92,8 @@ export function getSqlChartConfigError(
   source: SqlChartSource | undefined,
 ) {
   if (!source) return "차트에 사용할 데이터 소스를 선택해 주세요.";
-  const columnNames = new Set(source.dataset.columns.map((column) => column.name));
-  if (!config.categoryKey || !columnNames.has(config.categoryKey)) return "분류 또는 X축 컬럼을 선택해 주세요.";
-  if (config.aggregation !== "count") {
-    const valueColumn = source.dataset.columns.find((column) => column.name === config.valueKey);
-    if (!valueColumn || valueColumn.type !== "number") return "숫자 값 컬럼을 선택해 주세요.";
-  }
+  if (config.sourceId !== source.id) return "차트 데이터 소스를 다시 선택해 주세요.";
+  if (source.dataset.columns.length === 0) return "차트에 사용할 컬럼이 없습니다.";
   return null;
 }
 
@@ -124,61 +108,13 @@ export function buildSqlChartWidget(
     layout: { h: 8, minH: 4, minW: 4, w: 12, x: 0, y: 0 },
     pageId: "sql-chart-preview",
     queryId: null,
-    title: source.label,
+    title: config.title || source.label,
   };
-  const chartBase = {
-    aggregation: config.aggregation,
-    color: defaultWidgetColorConfig,
-  };
-
-  if (config.type === "line_chart") {
-    return {
-      ...common,
-      config: {
-        ...chartBase,
-        curve: "smooth",
-        xKey: config.categoryKey,
-        yKey: config.valueKey,
-      },
-      type: "line_chart",
-    };
-  }
-
-  if (config.type === "area_chart") {
-    return {
-      ...common,
-      config: {
-        ...chartBase,
-        stacked: false,
-        xKey: config.categoryKey,
-        yKey: config.valueKey,
-      },
-      type: "area_chart",
-    };
-  }
-
-  if (config.type === "donut_chart") {
-    return {
-      ...common,
-      config: {
-        ...chartBase,
-        labelKey: config.categoryKey,
-        valueKey: config.valueKey,
-      },
-      type: "donut_chart",
-    };
-  }
-
   return {
     ...common,
-    config: {
-      ...chartBase,
-      orientation: "vertical",
-      xKey: config.categoryKey,
-      yKey: config.valueKey,
-    },
-    type: "bar_chart",
-  };
+    config: config.config,
+    type: config.type,
+  } as DashboardRuntimeWidget;
 }
 
 export function SqlResultChart({
@@ -205,14 +141,12 @@ export function SqlResultChart({
 
   if (!resolvedSource || !resolvedConfig || !widget) return null;
 
-  const valueLabel = resolvedConfig.aggregation === "count" ? "행 개수" : resolvedConfig.valueKey;
+  const widgetDefinition = dashboardWidgetDefinitions[resolvedConfig.type];
   return (
     <section className="grid min-h-[360px] min-w-[720px] grid-rows-[max-content_minmax(0,1fr)] gap-3 p-4" aria-label="SQL 결과 차트">
       <div className="grid gap-1">
-        <strong className="text-base">{resolvedSource.label}</strong>
-        <span className="text-sm text-muted-foreground">
-          {resolvedConfig.categoryKey} 기준 · {valueLabel} · {resolvedConfig.aggregation}
-        </span>
+        <strong className="text-base">{resolvedConfig.title || resolvedSource.label}</strong>
+        <span className="text-sm text-muted-foreground">{widgetDefinition.label}</span>
       </div>
       <div className="h-[360px] min-h-0 overflow-hidden rounded-lg border bg-background">
         <WidgetRenderer widget={widget} />

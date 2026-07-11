@@ -236,8 +236,7 @@ function fallbackColorLabels(count: number) {
   return Array.from({ length: count }, (_, index) => `색상 ${index + 1}`);
 }
 
-function configDraftFromWidget(widget: DashboardRuntimeWidget): WidgetConfigDraft {
-  const config = widget.config;
+function configDraftFromConfig(config: DashboardRuntimeWidgetConfig): WidgetConfigDraft {
   return {
     aggregation: configString(config, "aggregation") as DashboardWidgetAggregation | undefined,
     columns: configStringArray(config, "columns"),
@@ -489,9 +488,11 @@ function cloneDatasetRows(dataset: DashboardDatasetOption | null | undefined) {
 }
 
 export function WidgetConfigPanel({
+  createButtonLabel = "위젯 생성",
   datasets = [],
   editingWidget = null,
   focusedColorSlot = null,
+  initialCreateInput = null,
   isCreating = false,
   isUpdating = false,
   onCreateWidget,
@@ -501,9 +502,11 @@ export function WidgetConfigPanel({
   selectedDataset,
   selectedDatasetId,
 }: {
+  createButtonLabel?: string;
   datasets?: DashboardDatasetOption[];
   editingWidget?: DashboardRuntimeWidget | null;
   focusedColorSlot?: DashboardWidgetColorSlotFocus | null;
+  initialCreateInput?: CreateDraftWidgetFormInput | null;
   isCreating?: boolean;
   isUpdating?: boolean;
   onCreateWidget: (input: CreateDraftWidgetFormInput) => Promise<void> | void;
@@ -528,6 +531,9 @@ export function WidgetConfigPanel({
   const previousSelectedDatasetIdRef = useRef<string | null>(null);
   const isEditMode = Boolean(editingWidget);
   const isVisualizationRequestEdit = isVisualizationRequestWidget(editingWidget);
+  const initialCreateInputKey = initialCreateInput
+    ? `${initialCreateInput.datasetId}|${initialCreateInput.type}|${initialCreateInput.title}|${JSON.stringify(initialCreateInput.config)}`
+    : "";
 
   const columnGroups = useMemo(() => {
     const allColumns = selectedDataset?.columns ?? [];
@@ -572,7 +578,22 @@ export function WidgetConfigPanel({
         ...defaultConfigs,
         [editingWidget.type]: isVisualizationRequestWidget(editingWidget)
           ? defaultConfigs[editingWidget.type] ?? {}
-          : configDraftFromWidget(editingWidget),
+          : configDraftFromConfig(editingWidget.config),
+      });
+      return;
+    }
+
+    const initialInput = initialCreateInput?.datasetId === nextSelectedDatasetId
+      ? initialCreateInput
+      : null;
+    if (initialInput && selectedDataset) {
+      setType(initialInput.type);
+      setTitle(initialInput.title);
+      setDescription(configString(initialInput.config, "description") ?? "");
+      setColor(configColor(initialInput.config));
+      setConfigsByType({
+        ...createDefaultConfigs(selectedDataset),
+        [initialInput.type]: configDraftFromConfig(initialInput.config),
       });
       return;
     }
@@ -582,7 +603,7 @@ export function WidgetConfigPanel({
     setTitle("");
     setType("bar_chart");
     setConfigsByType(selectedDataset ? createDefaultConfigs(selectedDataset) : {});
-  }, [editingWidget, selectedDataset]);
+  }, [editingWidget, initialCreateInputKey, selectedDataset]);
 
   const currentConfig = configsByType[type] ?? {};
   const radialRangeStart = Math.min(currentConfig.min ?? 0, currentConfig.max ?? 100);
@@ -1140,7 +1161,7 @@ export function WidgetConfigPanel({
 
         <div className="asklake-widget-config-actions">
           <Button className="asklake-widget-create-button" disabled={!canSubmit || isCreating || isUpdating} type="submit">
-            {isEditMode ? (isUpdating ? "저장 중" : "변경사항 저장") : (isCreating ? "생성 중" : "위젯 생성")}
+            {isEditMode ? (isUpdating ? "저장 중" : "변경사항 저장") : (isCreating ? "생성 중" : createButtonLabel)}
           </Button>
         </div>
         </FieldGroup>

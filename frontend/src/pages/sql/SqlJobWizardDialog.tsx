@@ -10,11 +10,10 @@ import {
 } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { DialogShell } from "@/components/ui/dialog-shell";
-import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
 import { Spinner } from "@/components/ui/spinner";
@@ -364,8 +363,6 @@ export function SqlJobWizardDialog({
     <DialogShell
       bodyClassName="min-h-0"
       contentClassName="grid-rows-[auto_minmax(0,1fr)_auto]"
-      description="SQL 결과를 기준으로 스케줄, 권한, 저장 위치를 확인한 뒤 Job을 생성합니다."
-      eyebrow="처리 작업"
       footer={footer}
       onClose={onClose}
       open={open}
@@ -430,13 +427,6 @@ export function SqlJobWizardDialog({
               <Textarea id="sql-job-wizard-description" rows={4} value={configuration.dataset.description} onChange={(event) => updateDataset({ description: event.target.value })} />
               {showErrors && !configuration.dataset.description.trim() ? <FieldError>데이터셋 설명은 필수입니다.</FieldError> : null}
             </Field>
-            <Card className="col-span-12 grid gap-2 max-[760px]:col-span-1" size="sm" variant="muted">
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge variant="outline">SQL Result</Badge>
-                <strong>{baseDataset.name}</strong>
-              </div>
-              <p className="text-sm text-slate-500">{resultDraft.rowCount.toLocaleString()}행 · {resultDraft.columns.length}개 컬럼을 처리 Job 입력으로 사용합니다.</p>
-            </Card>
           </FieldGroup>
         ) : null}
 
@@ -496,7 +486,6 @@ export function SqlJobWizardDialog({
                 </Field>
               </div>
             ) : null}
-            <Card size="sm" variant="muted"><strong className="text-sm">실행 미리보기</strong><p className="mt-1 text-sm text-slate-500">{formatSqlJobWizardScheduleSummary(configuration.schedule)}</p></Card>
           </FieldGroup>
         ) : null}
 
@@ -530,7 +519,6 @@ export function SqlJobWizardDialog({
             <Field className="col-span-2 max-[760px]:col-span-1">
               <FieldLabel htmlFor="sql-job-wizard-permission-summary">권한 정책 요약</FieldLabel>
               <Textarea id="sql-job-wizard-permission-summary" rows={3} value={configuration.governance.permissionSummary} onChange={(event) => setConfiguration((current) => ({ ...current, governance: { ...current.governance, permissionSummary: event.target.value } }))} />
-              <FieldDescription>조직 정책과 승인 상태를 Job 검토 정보에 함께 저장합니다.</FieldDescription>
               {showErrors && !configuration.governance.permissionSummary.trim() ? <FieldError>권한 정책 요약은 필수입니다.</FieldError> : null}
             </Field>
           </FieldGroup>
@@ -567,10 +555,7 @@ export function SqlJobWizardDialog({
             </div>
 
             <section className="grid gap-3" aria-labelledby="sql-job-wizard-preview-title">
-              <div className="flex items-end justify-between gap-3">
-                <div><h3 className="font-semibold" id="sql-job-wizard-preview-title">SQL 결과 미리보기</h3><p className="text-sm text-slate-500">전체 {resultDraft.rowCount.toLocaleString()}행 중 최대 5행을 확인합니다.</p></div>
-                <Badge variant="secondary">{resultDraft.columns.length}개 컬럼</Badge>
-              </div>
+              <h3 className="font-semibold" id="sql-job-wizard-preview-title">SQL 결과 미리보기</h3>
               <div className="overflow-x-auto rounded-lg border border-slate-200">
                 <Table className="min-w-[720px]">
                   <TableHeader><TableRow>{resultDraft.columns.map((column) => <TableHead key={column}>{column}</TableHead>)}</TableRow></TableHeader>

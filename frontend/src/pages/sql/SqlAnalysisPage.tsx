@@ -47,7 +47,6 @@ import {
   SqlJobWizardDialog,
   type SqlJobWizardCreateRequest,
 } from "./SqlJobWizardDialog";
-import { NessieMark } from "./NessieMark";
 import { SqlPreviewTable } from "./SqlPreviewTable";
 import {
   buildSqlChartSources,
@@ -530,6 +529,7 @@ export function SqlAnalysisPage({
     setCursorIndex(nextQuery.length);
     setQueryAiDialogOpen(false);
     setQueryAiPrompt("");
+    setQueryAiSuggestion(null);
     onAction("analysis.ai.suggestion_applied", "/api/query/ai-suggestions?mode=draft_sql/apply", baseDataset.id);
     requestAnimationFrame(() => {
       textareaRef.current?.focus();
@@ -544,11 +544,12 @@ export function SqlAnalysisPage({
     onAction("analysis.query.reset", "/api/query/reset", baseDataset?.id ?? "sql-empty");
   };
 
-  const openSqlAssistant = () => {
-    setQueryAiDialogOpen(true);
+  const handleSqlAssistantOpenChange = (nextOpen: boolean) => {
+    setQueryAiDialogOpen(nextOpen);
+    if (!nextOpen) return;
+
     setQueryAiError(null);
     onAction("analysis.ai.opened", "/api/query/ai-suggestions", baseDataset?.id ?? "sql-empty");
-    requestAnimationFrame(() => queryAiPromptRef.current?.focus());
   };
 
   const toggleContext = () => {
@@ -709,6 +710,7 @@ export function SqlAnalysisPage({
       <PageHeader
         className="sql-page-header"
         icon={<Table2 size={18} />}
+        leadingAlign="center"
         title="SQL 분석"
       />
       {!contextCollapsed && (
@@ -807,11 +809,25 @@ export function SqlAnalysisPage({
           <PanelHeader
             actions={(
               <ActionGroup density="compact" wrap="wrap">
+                <SqlAiWriterDialog
+                  disabled={!baseDataset}
+                  error={queryAiError}
+                  onApply={applyQueryAiSuggestion}
+                  onGenerate={requestQueryAiSuggestion}
+                  onOpenChange={handleSqlAssistantOpenChange}
+                  onPromptChange={(nextPrompt) => {
+                    setQueryAiPrompt(nextPrompt);
+                    setQueryAiSuggestion(null);
+                    setQueryAiError(null);
+                  }}
+                  open={queryAiDialogOpen}
+                  pending={queryAiPending}
+                  prompt={queryAiPrompt}
+                  promptRef={queryAiPromptRef}
+                  suggestion={queryAiSuggestion}
+                />
                 <Button type="button" onClick={resetQuery} size="sm" variant="outline">
                   <RotateCcw data-icon="inline-start" /> SQL 초기화
-                </Button>
-                <Button type="button" onClick={openSqlAssistant} disabled={!baseDataset} size="sm" variant="outline">
-                  <NessieMark className="size-5" /> Nessie로 SQL 작성
                 </Button>
                 <Button type="button" onClick={executePreview} disabled={!canRunPreview || queryPending} size="sm" variant="primary">
                   <PlayCircle data-icon="inline-start" /> {queryPending ? "실행 중" : "실행"}
@@ -896,12 +912,6 @@ export function SqlAnalysisPage({
         </Panel>
 
         <Panel className={cn("sql-result-panel grid gap-4 p-5", resultDraft && "has-result")}>
-          <PanelHeader
-            bordered={false}
-            className="min-h-0 p-0"
-            icon={<Table2 size={16} />}
-            title={resultDraft ? `${resultDraft.rowCount}행 조회됨` : "결과 대기 중"}
-          />
           {resultDraft ? (
             <>
               <div className="sql-result-toolbar">
@@ -935,12 +945,20 @@ export function SqlAnalysisPage({
               </ScrollArea>
             </>
           ) : (
-            <Empty className="sql-result-empty" size="sm" variant="bordered">
-              <EmptyHeader>
-                <EmptyTitle>아직 결과가 없습니다.</EmptyTitle>
-                <EmptyDescription>{baseDataset ? "SQL을 실행하면 Preview 결과가 여기에 표시됩니다." : "먼저 분석 테이블에서 데이터셋을 선택해 주세요."}</EmptyDescription>
-              </EmptyHeader>
-            </Empty>
+            <>
+              <PanelHeader
+                bordered={false}
+                className="min-h-0 p-0"
+                icon={<Table2 size={16} />}
+                title="결과 대기 중"
+              />
+              <Empty className="sql-result-empty" size="sm" variant="bordered">
+                <EmptyHeader>
+                  <EmptyTitle>아직 결과가 없습니다.</EmptyTitle>
+                  <EmptyDescription>{baseDataset ? "SQL을 실행하면 Preview 결과가 여기에 표시됩니다." : "먼저 분석 테이블에서 데이터셋을 선택해 주세요."}</EmptyDescription>
+                </EmptyHeader>
+              </Empty>
+            </>
           )}
         </Panel>
       </main>
@@ -967,23 +985,6 @@ export function SqlAnalysisPage({
           </DialogContent>
         </Dialog>
       )}
-      <SqlAiWriterDialog
-        disabled={!baseDataset}
-        error={queryAiError}
-        onApply={applyQueryAiSuggestion}
-        onGenerate={requestQueryAiSuggestion}
-        onOpenChange={setQueryAiDialogOpen}
-        onPromptChange={(nextPrompt) => {
-          setQueryAiPrompt(nextPrompt);
-          setQueryAiSuggestion(null);
-          setQueryAiError(null);
-        }}
-        open={queryAiDialogOpen}
-        pending={queryAiPending}
-        prompt={queryAiPrompt}
-        promptRef={queryAiPromptRef}
-        suggestion={queryAiSuggestion}
-      />
       {resultDraft && baseDataset && materializeDialogOpen && (
         <SqlJobWizardDialog
           baseDataset={baseDataset}

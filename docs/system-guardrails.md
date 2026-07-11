@@ -67,7 +67,7 @@
 
 | Failure | How to fix |
 | --- | --- |
-| `npm run verify:ui-regressions` failed | SQL 분석의 Nessie SQL 모달·인라인 차트 설정·차트/데이터 전환·Job wizard, Catalog wide button, Dashboard 목록, ApexCharts 위젯의 최근 회귀 방지 스타일/렌더 계약을 확인하고 관련 파일을 수정한다. |
+| `npm run verify:ui-regressions` failed | SQL 분석의 Nessie Popover/Bubble/Collapsible·Dashboard WidgetConfigPanel 재사용·차트/데이터 전환·Job wizard, Catalog wide button, Dashboard 목록, ApexCharts 위젯의 최근 회귀 방지 스타일/렌더 계약을 확인하고 관련 파일을 수정한다. |
 | `npm run build` failed | TypeScript error와 Vite build output을 확인하고 관련 파일을 수정한다. |
 | Live API mode failed | `VITE_API_BASE_URL`, backend server 상태, `docs/api-contract.md` response shape를 확인한다. |
 | Prod compose config failed | `deploy/.env.example`의 필수 env key, `deploy/docker-compose.prod.yml`, Dockerfile path를 확인한다. |
