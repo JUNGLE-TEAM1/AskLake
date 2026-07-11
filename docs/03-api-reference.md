@@ -348,7 +348,7 @@ Schedule UI는 `수동/자동/1회 실행` 대신 `스케줄링 건너뛰기`와
 
 SQL 분석 UI는 Preview 행 수를 10~100 범위에서 10행 단위로 선택하고, 선택값을 기존 `executeQueryPreview(..., { limit })` 옵션으로 전달한다. API request/response shape는 바뀌지 않으며 응답 `previewLimit`은 실제 실행된 제한값을 유지한다.
 
-SQL 차트 빌더는 별도 AI/API 호출 없이 현재 `SqlResultDraft` 또는 선택한 `CatalogDataset.sampleRows`를 `DashboardDatasetOption`으로 변환한다. 막대·선·영역·도넛 유형과 X/분류, Y/값, `sum|avg|count|min|max` 집계를 설정하고 기존 Dashboard runtime `WidgetRenderer`로 미리보기와 결과 차트를 렌더링한다. 차트 설정은 SQL 화면 메모리에만 유지하며 Dashboard 저장은 기존 `대시보드 만들기` 흐름을 사용한다.
+SQL 차트 생성은 별도 AI/API 호출 없이 현재 `SqlResultDraft` 또는 선택한 `CatalogDataset.sampleRows`를 `DashboardDatasetOption`으로 변환한다. 왼쪽 `차트 생성하기`에서 막대·선·영역·도넛 유형과 X/분류, Y/값, `sum|avg|count|min|max` 집계를 설정하고, 명시적으로 생성한 뒤 기존 Dashboard runtime `WidgetRenderer`로 오른쪽 `차트 보기`에 렌더링한다. `데이터 미리보기`는 원본 SQL 표를 유지한다. 차트 설정은 SQL 화면 메모리에만 유지하며 SQL 결과 toolbar에서는 Dashboard 저장 또는 `대시보드 만들기` action을 노출하지 않는다.
 
 ## 8) Pair Handoff Contracts
 

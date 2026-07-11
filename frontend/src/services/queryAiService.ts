@@ -239,6 +239,7 @@ function pickDimensionColumn(dataset: CatalogDataset, intent: string) {
   const targetedPatterns = [
     [/고객|customer|사용자|user/, /customer_id|user_id|customer|user/],
     [/상품|product|sku|카테고리|category/, /product_id|sku|category|product/],
+    [/채널|channel/, /channel/],
     [/날짜|일별|월별|date|day|month|시간|time/, /date|day|month|time|created_at|event_time/],
     [/상태|status/, /status/],
     [/지역|region/, /region/],
@@ -262,6 +263,7 @@ function pickDimensionColumn(dataset: CatalogDataset, intent: string) {
 function pickMetricColumn(dataset: CatalogDataset, intent: string) {
   const targetedPatterns = [
     [/금액|매출|revenue|amount|sales|구매/, /amount|revenue|sales|price|total/],
+    [/주문|order/, /^(orders?|order_count)$/],
     [/수량|재고|quantity|stock/, /quantity|stock|count/],
     [/점수|score|위험|risk/, /score|risk/],
     [/가치|value/, /value/],

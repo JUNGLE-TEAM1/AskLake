@@ -35,10 +35,11 @@ import { cn } from "@/lib/utils";
 import { executeQueryPreview } from "../../services/mockApi";
 import {
   generateQueryAiSuggestion,
+  type QueryAiSuggestion,
 } from "../../services/queryAiService";
-import type { AuditResult, CatalogDataset, CreateDerivedDatasetRequest, DashboardEntry, SqlResultDraft } from "../../types";
-import { DashboardPage } from "../dashboard/DashboardPage";
-import { SqlChartBuilderDialog } from "./SqlChartBuilderDialog";
+import type { AuditResult, CatalogDataset, CreateDerivedDatasetRequest, SqlResultDraft } from "../../types";
+import { SqlAiWriterDialog } from "./SqlAiWriterDialog";
+import { SqlChartConfigurator } from "./SqlChartConfigurator";
 import { SqlDatasetTree } from "./SqlDatasetRow";
 import {
   formatSqlJobWizardScheduleLabel,
@@ -47,11 +48,6 @@ import {
   type SqlJobWizardCreateRequest,
 } from "./SqlJobWizardDialog";
 import { NessieMark } from "./NessieMark";
-import {
-  INITIAL_NESSIE_MESSAGES,
-  SqlNessieAssistant,
-  type NessieMessage,
-} from "./SqlNessieAssistant";
 import { SqlPreviewTable } from "./SqlPreviewTable";
 import {
   buildSqlChartSources,
@@ -72,15 +68,22 @@ import {
   type SqlPreflightResult,
 } from "./sqlLogic";
 
-function createNessieMessageId() {
-  return `nessie-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
 function isSqlCandidateDataset(dataset: CatalogDataset) {
   const normalizedName = dataset.name.toLowerCase();
   const normalizedTags = dataset.tags.map((tag) => tag.toLowerCase());
 
   return !normalizedName.includes("legacy") && !normalizedTags.includes("#legacy");
+}
+
+function SqlChartEmptyState() {
+  return (
+    <Empty className="sql-result-view-empty" size="sm" variant="bordered">
+      <EmptyHeader>
+        <EmptyTitle>아직 생성된 차트가 없습니다.</EmptyTitle>
+        <EmptyDescription>왼쪽 차트 생성하기에서 위젯을 설정하고 차트를 생성해 주세요.</EmptyDescription>
+      </EmptyHeader>
+    </Empty>
+  );
 }
 
 export function SqlAnalysisPage({
@@ -107,7 +110,7 @@ export function SqlAnalysisPage({
   );
   const defaultQuery = useMemo(() => baseDataset ? buildDefaultQuery(baseDataset) : "", [baseDataset]);
   const [contextCollapsed, setContextCollapsed] = useState(false);
-  const [contextPanelTab, setContextPanelTab] = useState<"nessie" | "tables">("tables");
+  const [contextPanelTab, setContextPanelTab] = useState<"chart" | "tables">("tables");
   const [datasetSearch, setDatasetSearch] = useState("");
   const [contextPage, setContextPage] = useState(1);
   const [contextPageSize, setContextPageSize] = useState(() => Math.max(1, datasets.length));
@@ -120,16 +123,14 @@ export function SqlAnalysisPage({
   const [resultDraft, setResultDraft] = useState<SqlResultDraft | null>(null);
   const [preflightResult, setPreflightResult] = useState<SqlPreflightResult | null>(null);
   const [queryAiPrompt, setQueryAiPrompt] = useState("");
+  const [queryAiSuggestion, setQueryAiSuggestion] = useState<QueryAiSuggestion | null>(null);
   const [queryAiPending, setQueryAiPending] = useState(false);
   const [queryAiError, setQueryAiError] = useState<string | null>(null);
-  const [nessieMessages, setNessieMessages] = useState<NessieMessage[]>(INITIAL_NESSIE_MESSAGES);
-  const [chartBuilderOpen, setChartBuilderOpen] = useState(false);
+  const [queryAiDialogOpen, setQueryAiDialogOpen] = useState(false);
   const [chartConfig, setChartConfig] = useState<SqlChartConfig | null>(null);
   const [resultView, setResultView] = useState<"chart" | "table">("table");
   const [resultDialogOpen, setResultDialogOpen] = useState(false);
   const [materializeDialogOpen, setMaterializeDialogOpen] = useState(false);
-  const [dashboardDialogOpen, setDashboardDialogOpen] = useState(false);
-  const [dashboardDialogVersion, setDashboardDialogVersion] = useState(0);
   const [autocompleteIndex, setAutocompleteIndex] = useState(0);
   const [dismissedAutocompleteKey, setDismissedAutocompleteKey] = useState<string | null>(null);
   const contextPanelRef = useRef<HTMLElement | null>(null);
@@ -176,13 +177,6 @@ export function SqlAnalysisPage({
     () => datasets.filter(isSqlCandidateDataset),
     [datasets],
   );
-  const dashboardDialogEntry = useMemo<DashboardEntry>(() => ({
-    dashboardId: resultDraft && baseDataset ? `dash_${baseDataset.id}_${resultDraft.runId}` : "dash_sql_empty_draft",
-    runtimeMode: "draft",
-    source: "sql",
-    view: "runtime",
-    version: dashboardDialogVersion,
-  }), [baseDataset, dashboardDialogVersion, resultDraft]);
   const canRunPreview = Boolean(baseDataset && preflightResult?.canExecute === true && preflightResult.key === queryValidationKey);
   const lineNumbers = useMemo(() => {
     if (!baseDataset) return "";
@@ -251,11 +245,10 @@ export function SqlAnalysisPage({
       setResultDraft(null);
       setPreflightResult(null);
       setMaterializeDialogOpen(false);
-      setDashboardDialogOpen(false);
       setQueryAiPrompt("");
+      setQueryAiSuggestion(null);
       setQueryAiError(null);
-      setNessieMessages(INITIAL_NESSIE_MESSAGES);
-      setChartBuilderOpen(false);
+      setQueryAiDialogOpen(false);
       setChartConfig(null);
       setResultView("table");
       setResultDialogOpen(false);
@@ -271,11 +264,10 @@ export function SqlAnalysisPage({
     setResultDraft(null);
     setPreflightResult(null);
     setMaterializeDialogOpen(false);
-    setDashboardDialogOpen(false);
     setQueryAiPrompt("");
+    setQueryAiSuggestion(null);
     setQueryAiError(null);
-    setNessieMessages(INITIAL_NESSIE_MESSAGES);
-    setChartBuilderOpen(false);
+    setQueryAiDialogOpen(false);
     setChartConfig(null);
     setResultView("table");
     setResultDialogOpen(false);
@@ -294,10 +286,9 @@ export function SqlAnalysisPage({
     setReferenceDatasetIds(cachedReferences);
     setResultDraft(cachedResult);
     setMaterializeDialogOpen(false);
-    setDashboardDialogOpen(false);
+    setQueryAiSuggestion(null);
     setQueryAiError(null);
-    setNessieMessages(INITIAL_NESSIE_MESSAGES);
-    setChartBuilderOpen(false);
+    setQueryAiDialogOpen(false);
     setChartConfig(null);
     setResultView("table");
     setResultDialogOpen(false);
@@ -393,18 +384,17 @@ export function SqlAnalysisPage({
   const resetResultState = () => {
     setResultDraft(null);
     setPreflightResult(null);
-    setChartBuilderOpen(false);
     setChartConfig(null);
     setResultView("table");
     setResultDialogOpen(false);
     setMaterializeDialogOpen(false);
-    setDashboardDialogOpen(false);
     onResultChange(null);
   };
 
   const updateQuery = (nextQuery: string) => {
     setQuery(nextQuery);
     setPreflightResult(null);
+    setQueryAiSuggestion(null);
     setQueryAiError(null);
     resetResultState();
   };
@@ -469,7 +459,6 @@ export function SqlAnalysisPage({
     try {
       const resultDraft = await buildPreviewDraft();
       setResultDraft(resultDraft);
-      setChartBuilderOpen(false);
       setChartConfig(null);
       setResultView("table");
       onResultChange(resultDraft);
@@ -496,23 +485,20 @@ export function SqlAnalysisPage({
     const prompt = queryAiPrompt.trim();
 
     if (!baseDataset) {
+      setQueryAiSuggestion(null);
       setQueryAiError("왼쪽에서 분석 테이블을 먼저 추가해 주세요.");
       queryAiPromptRef.current?.focus();
       return;
     }
 
     if (prompt.length === 0) {
+      setQueryAiSuggestion(null);
       setQueryAiError("만들고 싶은 분석을 자연어로 입력해 주세요.");
       queryAiPromptRef.current?.focus();
       return;
     }
 
-    setNessieMessages((messages) => [...messages, {
-      content: prompt,
-      id: createNessieMessageId(),
-      role: "user",
-    }]);
-    setQueryAiPrompt("");
+    setQueryAiSuggestion(null);
     setQueryAiError(null);
 
     setQueryAiPending(true);
@@ -525,33 +511,24 @@ export function SqlAnalysisPage({
         query,
         selectedDatasets: selectedContextDatasets,
       });
-      setNessieMessages((messages) => [...messages, {
-        content: "선택한 데이터셋 범위에서 실행 가능한 SQL 초안을 만들었습니다.",
-        id: createNessieMessageId(),
-        role: "assistant",
-        sql: suggestion.sql,
-      }]);
+      setQueryAiSuggestion(suggestion);
       onAction("analysis.ai.suggestion_created", "/api/query/ai-suggestions?mode=draft_sql", baseDataset.id);
     } catch {
       const message = "SQL 제안을 만들지 못했습니다. 잠시 후 다시 시도해 주세요.";
+      setQueryAiSuggestion(null);
       setQueryAiError(message);
-      setNessieMessages((messages) => [...messages, {
-        content: message,
-        id: createNessieMessageId(),
-        role: "assistant",
-        tone: "error",
-      }]);
       onAction("analysis.ai.suggestion_failed", "/api/query/ai-suggestions?mode=draft_sql", baseDataset.id, "failed");
     } finally {
       setQueryAiPending(false);
     }
   };
 
-  const applyQueryAiSuggestion = (suggestedSql: string) => {
+  const applyQueryAiSuggestion = (suggestedSql = queryAiSuggestion?.sql ?? "") => {
     if (!baseDataset || !suggestedSql) return;
     const nextQuery = suggestedSql;
     updateQuery(nextQuery);
     setCursorIndex(nextQuery.length);
+    setQueryAiDialogOpen(false);
     setQueryAiPrompt("");
     onAction("analysis.ai.suggestion_applied", "/api/query/ai-suggestions?mode=draft_sql/apply", baseDataset.id);
     requestAnimationFrame(() => {
@@ -568,8 +545,7 @@ export function SqlAnalysisPage({
   };
 
   const openSqlAssistant = () => {
-    setContextCollapsed(false);
-    setContextPanelTab("nessie");
+    setQueryAiDialogOpen(true);
     setQueryAiError(null);
     onAction("analysis.ai.opened", "/api/query/ai-suggestions", baseDataset?.id ?? "sql-empty");
     requestAnimationFrame(() => queryAiPromptRef.current?.focus());
@@ -647,8 +623,8 @@ export function SqlAnalysisPage({
       setCursorIndex(0);
       setPreflightResult(null);
       setQueryAiPrompt("");
+      setQueryAiSuggestion(null);
       setQueryAiError(null);
-      setNessieMessages(INITIAL_NESSIE_MESSAGES);
     }
     resetResultState();
     onAction(
@@ -721,24 +697,11 @@ export function SqlAnalysisPage({
     return created;
   };
 
-  const openChartBuilder = () => {
-    if (!resultDraft) return;
-    setChartBuilderOpen(true);
-    onAction("analysis.chart.builder_opened", `/api/query/runs/${resultDraft.runId}/visualization`, resultDraft.datasetId);
-  };
-
   const applyChartConfig = (nextConfig: SqlChartConfig) => {
     if (!resultDraft) return;
     setChartConfig(nextConfig);
     setResultView("chart");
     onAction("analysis.chart.configured", `/api/query/runs/${resultDraft.runId}/visualization`, resultDraft.datasetId);
-  };
-
-  const openDashboardBuilder = () => {
-    if (!baseDataset || !resultDraft) return;
-    setDashboardDialogVersion((version) => version + 1);
-    setDashboardDialogOpen(true);
-    onAction("dashboard.builder.modal_opened_from_sql", `/api/dashboards/${baseDataset.id}/draft/ensure`, resultDraft.runId);
   };
 
   return (
@@ -753,7 +716,7 @@ export function SqlAnalysisPage({
           <aside className="sql-dataset-panel" ref={contextPanelRef}>
             <Tabs
               className="grid h-full min-h-0 grid-rows-[max-content_minmax(0,1fr)] gap-4"
-              onValueChange={(value) => setContextPanelTab(value as "nessie" | "tables")}
+              onValueChange={(value) => setContextPanelTab(value as "chart" | "tables")}
               value={contextPanelTab}
             >
               <div className="grid gap-4">
@@ -769,7 +732,7 @@ export function SqlAnalysisPage({
                 />
                 <TabsList className="grid w-full grid-cols-2" aria-label="SQL 도구 선택">
                   <TabsTrigger value="tables"><Table2 /> 분석 테이블</TabsTrigger>
-                  <TabsTrigger value="nessie"><NessieMark className="size-5" /> Nessie</TabsTrigger>
+                  <TabsTrigger value="chart"><BarChart3 /> 차트 생성하기</TabsTrigger>
                 </TabsList>
               </div>
               <TabsContent className="mt-0 grid min-h-0 min-w-0 grid-rows-[max-content_minmax(0,1fr)] gap-3 overflow-hidden" value="tables">
@@ -822,19 +785,11 @@ export function SqlAnalysisPage({
                   )}
                 </section>
               </TabsContent>
-              <TabsContent className="mt-0 min-h-0 min-w-0 overflow-hidden" value="nessie">
-                <SqlNessieAssistant
-                  error={queryAiError}
-                  messages={nessieMessages}
-                  onApplySuggestion={applyQueryAiSuggestion}
-                  onPromptChange={(nextPrompt) => {
-                    setQueryAiPrompt(nextPrompt);
-                    setQueryAiError(null);
-                  }}
-                  onSubmit={requestQueryAiSuggestion}
-                  pending={queryAiPending}
-                  prompt={queryAiPrompt}
-                  promptRef={queryAiPromptRef}
+              <TabsContent className="sql-chart-configurator mt-0 min-w-0" value="chart">
+                <SqlChartConfigurator
+                  initialConfig={chartConfig}
+                  onApply={applyChartConfig}
+                  sources={chartSources}
                 />
               </TabsContent>
             </Tabs>
@@ -851,7 +806,7 @@ export function SqlAnalysisPage({
         <Panel className="sql-query-panel grid gap-4 p-5">
           <PanelHeader
             actions={(
-              <ActionGroup density="compact" wrap="nowrap">
+              <ActionGroup density="compact" wrap="wrap">
                 <Button type="button" onClick={resetQuery} size="sm" variant="outline">
                   <RotateCcw data-icon="inline-start" /> SQL 초기화
                 </Button>
@@ -940,33 +895,8 @@ export function SqlAnalysisPage({
           </div>}
         </Panel>
 
-        <Panel className="sql-result-panel grid gap-4 p-5">
+        <Panel className={cn("sql-result-panel grid gap-4 p-5", resultDraft && "has-result")}>
           <PanelHeader
-            actions={resultDraft ? (
-              <ActionGroup density="compact">
-                {chartConfig ? (
-                  <ToggleGroup
-                    aria-label="SQL 결과 표시 방식"
-                    onValueChange={(value) => value && setResultView(value as "chart" | "table")}
-                    type="single"
-                    value={resultView}
-                  >
-                    <ToggleGroupItem aria-label="표 보기" size="sm" value="table">
-                      <Table2 /> 표
-                    </ToggleGroupItem>
-                    <ToggleGroupItem aria-label="차트 보기" size="sm" value="chart">
-                      <BarChart3 /> 차트
-                    </ToggleGroupItem>
-                  </ToggleGroup>
-                ) : null}
-                <Button type="button" onClick={openChartBuilder} size="sm" variant="outline">
-                  <BarChart3 data-icon="inline-start" /> {chartConfig ? "차트 설정" : "차트 만들기"}
-                </Button>
-                <Button type="button" onClick={() => setResultDialogOpen(true)} size="sm" variant="outline">
-                  <Maximize2 data-icon="inline-start" /> 전체 보기
-                </Button>
-              </ActionGroup>
-            ) : undefined}
             bordered={false}
             className="min-h-0 p-0"
             icon={<Table2 size={16} />}
@@ -974,16 +904,33 @@ export function SqlAnalysisPage({
           />
           {resultDraft ? (
             <>
-              <Panel className="grid min-h-9 items-start p-3" variant="muted">
-                <ActionGroup align="start" className="w-full" density="compact">
+              <div className="sql-result-toolbar">
+                <ToggleGroup
+                  aria-label="SQL 결과 보기"
+                  onValueChange={(value) => value && setResultView(value as "chart" | "table")}
+                  type="single"
+                  value={resultView}
+                >
+                  <ToggleGroupItem aria-label="차트 보기" size="sm" value="chart">
+                    <BarChart3 /> 차트 보기
+                  </ToggleGroupItem>
+                  <ToggleGroupItem aria-label="데이터 미리보기" size="sm" value="table">
+                    <Table2 /> 데이터 미리보기
+                  </ToggleGroupItem>
+                </ToggleGroup>
+                <ActionGroup density="compact" wrap="wrap">
                   <Button type="button" onClick={downloadCsv} size="sm" variant="outline"><Download data-icon="inline-start" /> CSV 다운로드</Button>
                   <Button type="button" onClick={() => setMaterializeDialogOpen(true)} size="sm" variant="outline"><Database data-icon="inline-start" /> 처리 Job 생성</Button>
-                  <Button type="button" onClick={openDashboardBuilder} size="sm" variant="outline"><BarChart3 data-icon="inline-start" /> 대시보드 만들기</Button>
+                  <Button type="button" onClick={() => setResultDialogOpen(true)} size="sm" variant="outline">
+                    <Maximize2 data-icon="inline-start" /> 전체 보기
+                  </Button>
                 </ActionGroup>
-              </Panel>
+              </div>
               <ScrollArea className="sql-result-scroll" scrollbars="both" type="always">
-                {chartConfig && activeChartSource && resultView === "chart"
-                  ? <SqlResultChart chartConfig={chartConfig} source={activeChartSource} />
+                {resultView === "chart"
+                  ? chartConfig && activeChartSource
+                    ? <SqlResultChart chartConfig={chartConfig} source={activeChartSource} />
+                    : <SqlChartEmptyState />
                   : <SqlPreviewTable resultDraft={resultDraft} />}
               </ScrollArea>
             </>
@@ -1003,12 +950,14 @@ export function SqlAnalysisPage({
             <DialogHeader>
               <DialogTitle>SQL 결과 전체 보기</DialogTitle>
               <DialogDescription>
-                {resultDraft.rows.length}/{resultDraft.rowCount}행 · {resultDraft.columns.length}컬럼 · {chartConfig && activeChartSource && resultView === "chart" ? "차트" : "표"} 보기
+                {resultDraft.rows.length}/{resultDraft.rowCount}행 · {resultDraft.columns.length}컬럼 · {resultView === "chart" ? "차트" : "표"} 보기
               </DialogDescription>
             </DialogHeader>
             <ScrollArea className="min-h-0" scrollbars="both" type="always">
-              {chartConfig && activeChartSource && resultView === "chart"
-                ? <SqlResultChart chartConfig={chartConfig} source={activeChartSource} />
+              {resultView === "chart"
+                ? chartConfig && activeChartSource
+                  ? <SqlResultChart chartConfig={chartConfig} source={activeChartSource} />
+                  : <SqlChartEmptyState />
                 : (
                   <div className="min-w-0 px-4 pb-4 pt-6">
                     <SqlPreviewTable resultDraft={resultDraft} />
@@ -1018,15 +967,23 @@ export function SqlAnalysisPage({
           </DialogContent>
         </Dialog>
       )}
-      {resultDraft && (
-        <SqlChartBuilderDialog
-          initialConfig={chartConfig}
-          onApply={applyChartConfig}
-          onOpenChange={setChartBuilderOpen}
-          open={chartBuilderOpen}
-          sources={chartSources}
-        />
-      )}
+      <SqlAiWriterDialog
+        disabled={!baseDataset}
+        error={queryAiError}
+        onApply={applyQueryAiSuggestion}
+        onGenerate={requestQueryAiSuggestion}
+        onOpenChange={setQueryAiDialogOpen}
+        onPromptChange={(nextPrompt) => {
+          setQueryAiPrompt(nextPrompt);
+          setQueryAiSuggestion(null);
+          setQueryAiError(null);
+        }}
+        open={queryAiDialogOpen}
+        pending={queryAiPending}
+        prompt={queryAiPrompt}
+        promptRef={queryAiPromptRef}
+        suggestion={queryAiSuggestion}
+      />
       {resultDraft && baseDataset && materializeDialogOpen && (
         <SqlJobWizardDialog
           baseDataset={baseDataset}
@@ -1040,27 +997,6 @@ export function SqlAnalysisPage({
           pending={createPending}
           resultDraft={resultDraft}
         />
-      )}
-      {resultDraft && baseDataset && (
-        <Dialog onOpenChange={setDashboardDialogOpen} open={dashboardDialogOpen}>
-          <DialogContent
-            aria-describedby={undefined}
-            className="sql-dashboard-builder-dialog"
-            showCloseButton={false}
-          >
-            <DialogTitle className="sr-only">SQL 결과 대시보드 만들기</DialogTitle>
-            <Button className="sql-dashboard-builder-close" type="button" onClick={() => setDashboardDialogOpen(false)} size="sm" variant="outline">
-              닫기
-            </Button>
-            <DashboardPage
-              dataset={baseDataset}
-              datasets={selectedContextDatasets}
-              entry={dashboardDialogEntry}
-              sqlResult={resultDraft}
-              onAction={onAction}
-            />
-          </DialogContent>
-        </Dialog>
       )}
     </div>
   );
