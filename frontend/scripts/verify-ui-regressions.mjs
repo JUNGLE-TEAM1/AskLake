@@ -134,6 +134,19 @@ const checks = [
     ],
   },
   {
+    name: "Terminal Job success refreshes Catalog once per Run",
+    file: "src/hooks/useAskLakeData.ts",
+    patterns: [
+      /const wasObservedActive = activeRunIds\.delete\(latestRun\.runId\);\s*return wasObservedActive && latestRun\.status === "success" \? latestRun\.runId : null;/s,
+      /const terminalSuccessRunId = trackCatalogRefreshCandidate\(normalizedJob, catalogActiveRunIdsRef\.current\);/,
+      /terminalSuccessRunId && !catalogRefreshRunIdsRef\.current\.has\(terminalSuccessRunId\)/,
+      /catalogRefreshRunIdsRef\.current\.add\(terminalSuccessRunId\);/,
+      /const refreshedDatasets = await getDatasets\(\);/,
+      /applyHydratedDatasets\(refreshedDatasets\);/,
+      /catalog\.datasets\.refresh_after_run_failed/,
+    ],
+  },
+  {
     name: "AI chat context uses only queryable available datasets",
     file: "src/pages/ai/AiChatPage.tsx",
     patterns: [
