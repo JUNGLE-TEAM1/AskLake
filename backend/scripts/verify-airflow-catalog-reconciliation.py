@@ -288,7 +288,7 @@ def assert_api_error(call, code: str, status_code: int) -> None:
 def assert_fake_s3_inspection() -> None:
     client = FakeS3Client()
     evidence = inspect_spark_output("s3a://asklake-output/customer/gold/run_123", s3_client=client)
-    assert evidence == {"parquetObjectCount": 2, "storageSizeBytes": 30}
+    assert evidence == {"dataObjectCount": 2, "storageSizeBytes": 30}
     assert client.requests == [
         {"Bucket": "asklake-output", "Prefix": "customer/gold/run_123/"},
         {"Bucket": "asklake-output", "Prefix": "customer/gold/run_123/", "ContinuationToken": "next"},

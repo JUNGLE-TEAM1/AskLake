@@ -134,8 +134,9 @@ function writeSparkJobManifest(manifestPath, job) {
     partitionColumns: job.partition || "",
     qualityRules: job.qualityRules ?? [],
     schemaColumns: job.schemaColumns ?? [],
-    sourceCollection: sourceCollectionFromConfig(job.sourceConfig ?? []),
+    sourceCollection: sourceCollectionFromConfig(job.sourceConfig ?? [], job.sourceIncrementalSince),
     sourceParsing: sourceParsingFromConfig(job.sourceConfig ?? []),
+    targetFormat: normalizeTargetFormat(job.targetFormat),
     transformSteps: job.transformSteps ?? [],
   };
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
@@ -317,10 +318,13 @@ function sparkOutputPath(job, runId) {
   const layer = normalizeColumnName(job.targetLayer || "gold") || "gold";
   const dataset = normalizeColumnName(job.target || job.name || "asklake_dataset");
   const prefix = normalizePrefix(process.env.ASKLAKE_SPARK_OUTPUT_PREFIX || "asklake-output");
-  if ((process.env.ASKLAKE_SPARK_OUTPUT_MODE || "local").toLowerCase() === "s3a") {
+  const outputMode = (process.env.ASKLAKE_SPARK_OUTPUT_MODE || "auto").toLowerCase();
+  const configuredTarget = String(job.storagePath || "").trim();
+  const useObjectStorage = outputMode === "s3a"
+    || (outputMode === "auto" && /^s3a?:\/\//i.test(configuredTarget));
+  if (useObjectStorage) {
     // storagePath is the configured destination root. targetPath is the latest
     // observed Run output and must not become the next Run's parent directory.
-    const configuredTarget = String(job.storagePath || "").trim();
     const targetBase = /^s3a?:\/\//i.test(configuredTarget)
       ? toS3APath(configuredTarget).replace(/\/+$/, "")
       : `s3a://${process.env.ASKLAKE_SPARK_OUTPUT_BUCKET || "asklake-output"}/${prefix}${layer}/${dataset}`;
@@ -389,15 +393,24 @@ export function sourceParsingFromConfig(sourceConfig) {
   };
 }
 
-export function sourceCollectionFromConfig(sourceConfig) {
+export function sourceCollectionFromConfig(sourceConfig, incrementalSince = undefined) {
   const scope = String(fieldValue(sourceConfig, "Collection Scope") || "file").trim().toLowerCase() === "folder"
     ? "folder"
     : "file";
+  const collectionMode = String(fieldValue(sourceConfig, "Collection Mode") || "incremental").trim().toLowerCase();
+  const mode = scope === "folder" && collectionMode !== "full" ? "incremental" : "full";
   return {
     filePattern: scope === "folder" ? fieldValue(sourceConfig, "File Pattern") || null : null,
+    incrementalSince: mode === "incremental" && incrementalSince ? String(incrementalSince) : null,
+    mode,
     recursive: scope === "folder" && parseConfigBoolean(fieldValue(sourceConfig, "Recursive")),
     scope,
   };
+}
+
+function normalizeTargetFormat(value) {
+  const format = String(value || "parquet").trim().toLowerCase();
+  return format === "parquet" ? "parquet" : format;
 }
 
 function parseDelimitedFields(value) {

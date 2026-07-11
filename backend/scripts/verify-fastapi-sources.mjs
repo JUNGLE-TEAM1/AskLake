@@ -38,39 +38,46 @@ try {
 }
 
 async function verifyAllSources() {
-  await verify("File / S3 CSV", objectStorageConfig("asklake-fixtures/csv/"));
-  await verify("File / S3 JSON", objectStorageConfig("asklake-fixtures/json/"));
-  await verify("File / S3 JSONL", objectStorageConfig("asklake-fixtures/jsonl/"));
-  await verify("File / S3 TSV", objectStorageConfig("asklake-fixtures/tsv/"));
-  await verify("File / S3 TXT", objectStorageConfig("asklake-fixtures/txt/"));
+  await verify(
+    "File / S3 JSONL",
+    objectStorageConfig(process.env.ASKLAKE_VERIFY_MINIO_PREFIX || "amazon_reviews/cell_phones_and_accessories/reviews/Cell_Phones_and_Accessories.jsonl"),
+  );
   await verify("REST API", [
     ["Method", "GET"],
     ["Endpoint URL", `${restFixtureUrl}/events`],
     ["Accept", "application/json"],
   ]);
-  await verify("PostgreSQL", [
-    ["Endpoint / Host", "127.0.0.1"],
-    ["Port", process.env.ASKLAKE_SOURCE_PGPORT || "15432"],
-    ["Database Name", "asklake_sources"],
-    ["Schema", "public"],
-    ["Username", "asklake"],
-    ["Password / Auth Token", process.env.ASKLAKE_SOURCE_PGPASSWORD || "asklake"],
-    ["DATASET OR TABLE SELECTOR", "nyc_taxi_sample"],
-  ]);
-  await verify("MongoDB", [
-    ["Endpoint / Host", "127.0.0.1"],
-    ["Port", process.env.ASKLAKE_MONGO_PORT || "27018"],
-    ["Database Name", "asklake_sources"],
-    ["DATASET OR TABLE SELECTOR", "app_events"],
-  ]);
-  await verify("Data Lake Parquet", [
-    ["Path", "s3://m3-raw/asklake-fixtures/parquet/"],
-    ["Endpoint URL", env.MINIO_ENDPOINT],
-    ["Region", "us-east-1"],
-    ["Access Key", env.MINIO_ACCESS_KEY],
-    ["Secret Key", env.MINIO_SECRET_KEY],
-    ["Use Path Style", "true"],
-  ], (result) => result.assets?.length > 0 && result.draftPatch?.source?.sourceType === "Data Lake Parquet");
+  if (process.env.ASKLAKE_VERIFY_SOURCE_FIXTURES === "true") {
+    await verify("File / S3 CSV", objectStorageConfig("asklake-fixtures/csv/"));
+    await verify("File / S3 JSON", objectStorageConfig("asklake-fixtures/json/"));
+    await verify("File / S3 TSV", objectStorageConfig("asklake-fixtures/tsv/"));
+    await verify("File / S3 TXT", objectStorageConfig("asklake-fixtures/txt/"));
+    await verify("PostgreSQL", [
+      ["Endpoint / Host", "127.0.0.1"],
+      ["Port", process.env.ASKLAKE_SOURCE_PGPORT || "15432"],
+      ["Database Name", "asklake_sources"],
+      ["Schema", "public"],
+      ["Username", "asklake"],
+      ["Password / Auth Token", process.env.ASKLAKE_SOURCE_PGPASSWORD || "asklake"],
+      ["DATASET OR TABLE SELECTOR", "nyc_taxi_sample"],
+    ]);
+    await verify("MongoDB", [
+      ["Endpoint / Host", "127.0.0.1"],
+      ["Port", process.env.ASKLAKE_MONGO_PORT || "27018"],
+      ["Database Name", "asklake_sources"],
+      ["DATASET OR TABLE SELECTOR", "app_events"],
+    ]);
+    await verify("Data Lake Parquet", [
+      ["Path", "s3://m3-raw/asklake-fixtures/parquet/"],
+      ["Endpoint URL", env.MINIO_ENDPOINT],
+      ["Region", "us-east-1"],
+      ["Access Key", env.MINIO_ACCESS_KEY],
+      ["Secret Key", env.MINIO_SECRET_KEY],
+      ["Use Path Style", "true"],
+    ], (result) => result.assets?.length > 0 && result.draftPatch?.source?.sourceType === "Data Lake Parquet");
+  } else {
+    console.log("Provisioned CSV/JSON/TSV/TXT/Parquet/PostgreSQL/Mongo fixtures skipped. Set ASKLAKE_VERIFY_SOURCE_FIXTURES=true after npm run sources:fixtures.");
+  }
   if (process.env.ASKLAKE_VERIFY_KAFKA === "true") {
     await verify("Kafka JSON", [
       ["Broker / Endpoint", process.env.ASKLAKE_KAFKA_BROKER || "127.0.0.1:19092"],

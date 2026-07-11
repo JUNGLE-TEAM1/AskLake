@@ -84,8 +84,9 @@ export async function testObjectStorageSource(fields, sourceType = "File / S3") 
   const accessKeyId = requiredSourceField(fields, "Access Key", "MinIO/S3 access key is required.");
   const secretAccessKey = requiredSourceField(fields, "Secret Key", "MinIO/S3 secret key is required.");
   const forcePathStyle = parseBoolean(fieldValue(fields, "Use Path Style"), true);
-  const selectedObject = selectedObjectKey(fields);
   const collectionScope = String(fieldValue(fields, "Collection Scope") || "file").trim().toLowerCase();
+  const selectedObject = selectedObjectKey(fields)
+    || (collectionScope !== "folder" && looksLikeObjectKey(prefix) ? prefix : "");
   const collectionPattern = fieldValue(fields, "File Pattern") || "*";
   const collectionRecursive = parseBoolean(fieldValue(fields, "Recursive"), false);
 

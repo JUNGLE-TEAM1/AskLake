@@ -48,7 +48,7 @@ try {
       ["Endpoint URL", env.MINIO_ENDPOINT],
       ["Region", "us-east-1"],
       ["Bucket / Stage Name", "m3-raw"],
-      ["Path / Prefix", process.env.ASKLAKE_VERIFY_MINIO_PREFIX || "asklake-fixtures/csv/"],
+      ["Path / Prefix", process.env.ASKLAKE_VERIFY_MINIO_PREFIX || "amazon_reviews/cell_phones_and_accessories/reviews/Cell_Phones_and_Accessories.jsonl"],
       ["Access Key", env.MINIO_ACCESS_KEY],
       ["Secret Key", env.MINIO_SECRET_KEY],
       ["Use Path Style", "true"],

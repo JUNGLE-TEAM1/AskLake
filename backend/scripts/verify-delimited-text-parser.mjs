@@ -116,6 +116,19 @@ const folderCollection = sourceCollectionFromConfig([
   ["File Pattern", "*.log"],
   ["Recursive", "true"],
 ]);
-assert.deepEqual(folderCollection, { filePattern: "*.log", recursive: true, scope: "folder" });
+assert.deepEqual(folderCollection, {
+  filePattern: "*.log",
+  incrementalSince: null,
+  mode: "incremental",
+  recursive: true,
+  scope: "folder",
+});
+assert.deepEqual(
+  sourceCollectionFromConfig([
+    ["Collection Scope", "folder"],
+    ["Collection Mode", "incremental"],
+  ], "2026-07-11T10:20:30Z"),
+  { filePattern: null, incrementalSince: "2026-07-11T10:20:30Z", mode: "incremental", recursive: false, scope: "folder" },
+);
 
 console.log("verify-delimited-text-parser: ok");

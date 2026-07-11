@@ -36,6 +36,15 @@ class JobStats(CamelModel):
     total_runs: str
 
 
+class TargetDatabaseOption(CamelModel):
+    description: str
+    name: str
+
+
+class TargetDatabasesResponse(CamelModel):
+    databases: list[TargetDatabaseOption]
+
+
 class SchemaColumnDraft(CamelModel):
     confidence: int | None = None
     included: bool = True

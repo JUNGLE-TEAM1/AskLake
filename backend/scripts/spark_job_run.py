@@ -21,6 +21,7 @@ def main():
     run_id = os.environ.get("ASKLAKE_SPARK_RUN_ID", "unknown")
     source_collection = {}
     source_parsing = {}
+    output_format = "parquet"
     spark = None
     try:
         source_path = required_env("ASKLAKE_SPARK_SOURCE_PATH")
@@ -29,6 +30,9 @@ def main():
         run_id = required_env("ASKLAKE_SPARK_RUN_ID")
         row_limit = int(os.environ.get("ASKLAKE_SPARK_RUN_ROW_LIMIT", "0") or "0")
         manifest = load_spark_job_manifest()
+        output_format = str(manifest.get("targetFormat") or os.environ.get("ASKLAKE_SPARK_OUTPUT_FORMAT") or "parquet").lower()
+        if output_format not in {"parquet", "csv", "json"}:
+            raise ValueError(f"Unsupported Spark output format: {output_format}.")
         partition_columns = parse_partition_columns(
             manifest.get("partitionColumns") or os.environ.get("ASKLAKE_SPARK_PARTITION_COLUMNS")
         )
@@ -53,8 +57,8 @@ def main():
         writer = output_df.write.mode("overwrite")
         if resolved_partition_columns:
             writer = writer.partitionBy(*resolved_partition_columns)
-        writer.parquet(output_path)
-        written_df = spark.read.parquet(output_path)
+        write_output(writer, output_path, output_format)
+        written_df = read_output(spark, output_path, output_format)
         output_rows = written_df.count()
         quality = evaluate_quality_rules(written_df, quality_rules, total_rows=output_rows)
         sample_rows = collect_sample_rows(written_df, 10)
@@ -65,7 +69,7 @@ def main():
                 "endedAt": ended_at,
                 "error": quality["summary"],
                 "failedStage": "Quality",
-                "format": source_format,
+                "format": output_format,
                 "inputRows": input_rows,
                 "outputPath": output_path,
                 "outputRows": output_rows,
@@ -93,7 +97,7 @@ def main():
         result = {
             "durationMs": int(time.time() * 1000) - started_ms,
             "endedAt": ended_at,
-            "format": source_format,
+            "format": output_format,
             "inputRows": input_rows,
             "outputPath": output_path,
             "outputRows": output_rows,
@@ -123,7 +127,7 @@ def main():
             "durationMs": int(time.time() * 1000) - started_ms,
             "endedAt": ended_at,
             "error": str(exc),
-            "format": source_format,
+            "format": output_format,
             "inputRows": 0,
             "outputPath": output_path,
             "outputRows": 0,
@@ -206,6 +210,24 @@ def read_source(spark, source_format, source_path, schema_columns, source_parsin
     raise ValueError(f"Unsupported Spark source format: {source_format}")
 
 
+def write_output(writer, output_path, output_format):
+    if output_format == "csv":
+        writer.option("header", "true").csv(output_path)
+        return
+    if output_format == "json":
+        writer.json(output_path)
+        return
+    writer.parquet(output_path)
+
+
+def read_output(spark, output_path, output_format):
+    if output_format == "csv":
+        return spark.read.option("header", "true").csv(output_path)
+    if output_format == "json":
+        return spark.read.json(output_path)
+    return spark.read.parquet(output_path)
+
+
 def apply_source_collection(reader, source_collection):
     if str(source_collection.get("scope") or "file").lower() != "folder":
         return reader
@@ -214,7 +236,23 @@ def apply_source_collection(reader, source_collection):
         reader = reader.option("pathGlobFilter", file_pattern)
     if bool(source_collection.get("recursive")):
         reader = reader.option("recursiveFileLookup", "true")
+    incremental_since = str(source_collection.get("incrementalSince") or "").strip()
+    if str(source_collection.get("mode") or "full").lower() == "incremental" and incremental_since:
+        reader = reader.option("modifiedAfter", spark_modified_after(incremental_since))
     return reader
+
+
+def spark_modified_after(value):
+    normalized = str(value or "").strip()
+    if not normalized:
+        return ""
+    try:
+        parsed = datetime.fromisoformat(normalized.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(f"Invalid incremental source watermark: {value}") from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
 
 
 def delimited_struct_type(fields):
@@ -463,9 +501,11 @@ def apply_transform_steps(spark, frame, steps):
                 F.lit(params),
             ).otherwise(source)
         elif "null guard" in operation or "not null" in operation:
-            current = current.filter(source.isNotNull() & (F.length(F.trim(source.cast("string"))) > 0))
-            if output_column != normalize_column_name(input_column):
-                current = current.withColumn(output_column, source)
+            # Guard the already-derived output when a preceding transform writes
+            # to a different column. Re-copying the input would erase that value.
+            guard_column = resolve_column_name(current, output_column) or resolve_column_name(current, input_column)
+            guard_source = safe_col(current, guard_column or input_column)
+            current = current.filter(guard_source.isNotNull() & (F.length(F.trim(guard_source.cast("string"))) > 0))
             index += 1
             continue
         elif "sql expression" in operation and params.strip().lower().startswith("select"):

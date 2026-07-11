@@ -277,6 +277,7 @@ const sourceFieldLabels: Record<string, string> = {
   "CONSUMER GROUP ID": "컨슈머 그룹 ID",
   "CATALOG / NAMESPACE": "카탈로그 / 네임스페이스",
   Collection: "컬렉션",
+  "Collection Mode": "수집 실행 방식",
   "Collection Scope": "수집 범위",
   "Connection URI": "연결 URI",
   "DATASET OR TABLE SELECTOR": "데이터셋 또는 테이블 선택자",
@@ -1152,6 +1153,7 @@ export function SourceConnectionPage({
         ["Secret Key", ""],
         ["Use Path Style", "true"],
         ["File Type", "auto"],
+        ["Collection Mode", "incremental"],
         ["Collection Scope", "file"],
         ["File Pattern", ""],
         ["Recursive", "false"],
@@ -1298,6 +1300,7 @@ export function SourceConnectionPage({
   const collectionPrefix = sourceConfigValue(editableFields, "Path / Prefix");
   const collectionPattern = sourceConfigValue(editableFields, "File Pattern");
   const collectionRecursive = parseSourceBoolean(sourceConfigValue(editableFields, "Recursive"));
+  const collectionIncremental = sourceConfigValue(editableFields, "Collection Mode").trim().toLowerCase() !== "full";
   const showCollectionPolicy = activeSourceType === "File / S3" && Boolean(selectedAsset);
   const showDelimitedParser = activeSourceType === "File / S3"
     && Boolean(selectedAsset)
@@ -1486,6 +1489,7 @@ export function SourceConnectionPage({
           : [fieldLabel, fieldValue] as [string, string]
       )), [
         ["Collection Scope", "folder"],
+        ["Collection Mode", "incremental"],
         ["File Pattern", samplePath ? sourceFilePattern(samplePath) : "*"],
         ["Recursive", "true"],
         ["__Selected Object", samplePath],
@@ -1501,6 +1505,7 @@ export function SourceConnectionPage({
         : [fieldLabel, fieldValue] as [string, string]
     )), [
       ["Collection Scope", "file"],
+      ["Collection Mode", "full"],
       ["File Pattern", ""],
       ["Recursive", "false"],
       ["__Selected Object", assetPath],
@@ -1751,7 +1756,7 @@ export function SourceConnectionPage({
                       <div>
                         <HardDrive size={18} />
                         <strong>파일 수집 정책</strong>
-                        <span>{collectionScope === "folder" ? `${collectionPattern || "*"} · ${collectionRecursive ? "하위 폴더 포함" : "현재 폴더"}` : "선택 파일 1개"}</span>
+                        <span>{collectionScope === "folder" ? `${collectionPattern || "*"} · ${collectionRecursive ? "하위 폴더 포함" : "현재 폴더"} · ${collectionIncremental ? "변경 파일만" : "전체 재처리"}` : "선택 파일 1개"}</span>
                       </div>
                     </div>
                     <div className="collection-policy-grid">
@@ -1779,6 +1784,18 @@ export function SourceConnectionPage({
                         />
                         <span>하위 폴더 포함</span>
                       </label>
+                      <label className="collection-recursive-toggle">
+                        <Checkbox
+                          aria-label="변경 파일만 수집"
+                          checked={collectionIncremental}
+                          disabled={collectionScope === "file"}
+                          onCheckedChange={(checked) => updateCollectionConfig([["Collection Mode", checked === true ? "incremental" : "full"]])}
+                        />
+                        <span>변경 파일만 수집</span>
+                      </label>
+                      {collectionScope === "folder" && collectionIncremental ? (
+                        <p className="collection-policy-note">첫 실행은 기준점을 만들기 위해 전체를 읽고, 이후 실행은 마지막 성공 Run 이후 새로 추가되거나 수정된 파일만 읽습니다.</p>
+                      ) : null}
                     </div>
                   </section>
                 )}
@@ -2038,6 +2055,7 @@ function isVisibleSourceField(sourceType: string, label: string) {
       "Storage Provider",
       "Region",
       "Use Path Style",
+      "Collection Mode",
       "Collection Scope",
       "File Pattern",
       "Recursive",
@@ -5540,16 +5558,22 @@ export function ReviewPage({
 }) {
   const [reviewSnapshot, setReviewSnapshot] = useState<ReviewSnapshot | null>(null);
   const [reviewLoading, setReviewLoading] = useState(true);
+  const [reviewError, setReviewError] = useState("");
+  const [reviewAttempt, setReviewAttempt] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
     setReviewLoading(true);
+    setReviewError("");
     void getReviewSnapshot(draft)
       .then((snapshot) => {
         if (!cancelled) setReviewSnapshot(snapshot);
       })
-      .catch(() => {
-        if (!cancelled) setReviewSnapshot(null);
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setReviewSnapshot(null);
+          setReviewError(error instanceof Error ? error.message : "검토 API 응답을 확인하지 못했습니다.");
+        }
       })
       .finally(() => {
         if (!cancelled) setReviewLoading(false);
@@ -5557,7 +5581,7 @@ export function ReviewPage({
     return () => {
       cancelled = true;
     };
-  }, [draft]);
+  }, [draft, reviewAttempt]);
 
   const basicInformationRows = reviewSnapshot?.basicInformation ?? [];
   const destinationRows = reviewSnapshot?.destination ?? [];
@@ -5578,6 +5602,14 @@ export function ReviewPage({
           icon={<FileText size={18} />}
           title="검토 및 생성"
         />
+        {reviewError ? (
+          <section className="etl-review-card" role="alert">
+            <InfoBox title="검토 정보를 불러오지 못했습니다" body={reviewError} />
+            <Button type="button" variant="outline" onClick={() => setReviewAttempt((attempt) => attempt + 1)}>
+              <RefreshCw aria-hidden="true" data-icon="inline-start" /> 다시 확인
+            </Button>
+          </section>
+        ) : null}
         <div className="etl-review-stack">
           <section className="etl-review-card">
             <div className="etl-review-card-header">

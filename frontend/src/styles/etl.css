@@ -786,7 +786,7 @@
 
 .collection-policy-grid {
   display: grid;
-  grid-template-columns: minmax(260px, 1.6fr) minmax(150px, .8fr) minmax(132px, .6fr);
+  grid-template-columns: minmax(260px, 1.6fr) minmax(150px, .8fr) repeat(2, minmax(132px, .6fr));
   align-items: end;
   gap: 8px;
   min-width: 0;
@@ -800,6 +800,14 @@
   color: #475569;
   font-size: 11px;
   font-weight: 800;
+}
+
+.collection-policy-note {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: #64748b;
+  font-size: 11px;
+  line-height: 1.5;
 }
 
 .delimited-dialect-grid {

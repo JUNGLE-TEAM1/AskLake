@@ -51,6 +51,8 @@ from app.schemas.etl import (
     SourceAssetsResponse,
     SourceConnectorAnalysis,
     SourceConnectorRequest,
+    TargetDatabaseOption,
+    TargetDatabasesResponse,
     UpdatePipelineRequest,
 )
 
@@ -612,7 +614,7 @@ def review_pipeline(request: ReviewPipelineRequest) -> ReviewSnapshot:
             ReviewSchemaRow(
                 column_name=name,
                 nullable=("예" if column.nullable else "아니요") if (column := next((item for item in included_columns if item.target_name == name or item.source_name == name), None)) else "생성",
-                transform=(f"원본.{column.source_name}" if column and column.source_name == name else f"{column.source_name} -> {name}" if column else "변환 출력"),
+                transform=review_transform_label(name, column, request.transform_steps),
                 type=type_ or "string",
             )
             for name, type_ in output_columns
@@ -626,6 +628,26 @@ def review_pipeline(request: ReviewPipelineRequest) -> ReviewSnapshot:
             review_validation("권한/타겟", permission_ready, "유효함", "확인 필요"),
         ],
     )
+
+
+def review_transform_label(name: str, column: Any, steps: list[Any]) -> str:
+    normalized_name = normalize_column_name(name)
+    matching_steps = [
+        step for step in steps
+        if getattr(step, "enabled", True) is not False
+        and normalize_column_name(str(getattr(step, "output", "") or "")) == normalized_name
+        and "null guard" not in str(getattr(step, "operation", "") or "").lower()
+    ]
+    if matching_steps:
+        step = matching_steps[-1]
+        operation = str(getattr(step, "operation", "변환") or "변환")
+        params = str(getattr(step, "params", "") or "").strip()
+        return f"{operation}: {params}" if params else operation
+    if column and column.source_name == name:
+        return f"원본.{column.source_name}"
+    if column:
+        return f"{column.source_name} -> {name}"
+    return "변환 출력"
 
 
 def review_entry(label: str, value: str | None) -> ReviewEntry:
@@ -806,13 +828,13 @@ def is_kafka_job(job: ETLJobModel) -> bool:
     return bool(field_value(fields, "Broker / Endpoint") and (field_value(fields, "TOPIC / QUEUE NAME") or field_value(fields, "Topic")))
 
 
-def run_spark_job(job: ETLJobModel, command: str, run_id: str) -> dict[str, Any]:
+def run_spark_job(db: Session, job: ETLJobModel, command: str, run_id: str) -> dict[str, Any]:
     return run_node_bridge(
         "run-spark-job-once.mjs",
         "ASKLAKE_SPARK_RUN_RESULT",
         {
             "command": command,
-            "job": job_payload_for_spark(job),
+            "job": job_payload_for_spark(job, source_incremental_since(db, job.id, run_id)),
             "runId": run_id,
         },
         error_marker="ASKLAKE_SPARK_RUN_ERROR",
@@ -851,7 +873,7 @@ def execute_airflow_spark_run(
     if isinstance(existing_result, dict) and existing_result.get("status") == "success":
         return existing_result
 
-    result = run_spark_job(job, command, run_id)
+    result = run_spark_job(db, job, command, run_id)
     manifest = spark_result_manifest(result, run_id)
     run.input_rows = format_rows(manifest.get("inputRows"))
     run.output_rows = format_rows(manifest.get("outputRows"))
@@ -918,10 +940,10 @@ def reconcile_airflow_catalog(
     output_path = str(spark_result.get("outputPath") or "").strip()
     try:
         validate_catalog_output_identity(job, run_id, output_path)
-        physical = inspect_spark_output(output_path)
+        physical = inspect_spark_output(output_path, storage_format=spark_output_format(job, spark_result))
         enriched_result = {
             **spark_result,
-            "parquetObjectCount": physical["parquetObjectCount"],
+            "dataObjectCount": physical["dataObjectCount"],
             "storageSizeBytes": physical["storageSizeBytes"],
         }
         return commit_airflow_catalog_reconciliation(
@@ -981,7 +1003,7 @@ def commit_airflow_catalog_reconciliation(
     dataset_model = dataset_from_spark_result(job, result, existing_dataset)
     catalog_result = {
         "datasetId": dataset_id,
-        "parquetObjectCount": parse_count_value(result.get("parquetObjectCount")),
+        "dataObjectCount": parse_count_value(result.get("dataObjectCount")),
         "reconciledAt": reconciled_at,
         "runId": run_id,
         "status": "success",
@@ -1083,9 +1105,9 @@ def canonical_storage_path(value: str) -> str:
     return str(Path(text_value).expanduser().resolve()).rstrip("/")
 
 
-def inspect_spark_output(output_path: str, *, s3_client: Any | None = None) -> dict[str, int]:
+def inspect_spark_output(output_path: str, storage_format: str = SPARK_OUTPUT_FORMAT, *, s3_client: Any | None = None) -> dict[str, int]:
     if re.match(r"^s3a?://", output_path, re.IGNORECASE):
-        return inspect_s3_spark_output(output_path, s3_client=s3_client)
+        return inspect_s3_spark_output(output_path, storage_format=storage_format, s3_client=s3_client)
     path = Path(output_path)
     if not path.exists():
         raise catalog_reconciliation_error(
@@ -1093,20 +1115,20 @@ def inspect_spark_output(output_path: str, *, s3_client: Any | None = None) -> d
             {"outputPath": output_path},
         )
     files = [path] if path.is_file() else [item for item in path.rglob("*") if item.is_file()]
-    parquet_files = [item for item in files if item.name.lower().endswith(".parquet")]
+    data_files = [item for item in files if spark_output_file_matches(item.name, storage_format)]
     storage_size_bytes = sum(item.stat().st_size for item in files)
-    if not parquet_files or storage_size_bytes <= 0:
+    if not data_files or storage_size_bytes <= 0:
         raise catalog_reconciliation_error(
-            "Spark output does not contain a non-empty Parquet result.",
-            {"outputPath": output_path},
+            "Spark output does not contain a non-empty result in the configured format.",
+            {"outputPath": output_path, "storageFormat": storage_format},
         )
     return {
-        "parquetObjectCount": len(parquet_files),
+        "dataObjectCount": len(data_files),
         "storageSizeBytes": storage_size_bytes,
     }
 
 
-def inspect_s3_spark_output(output_path: str, *, s3_client: Any | None = None) -> dict[str, int]:
+def inspect_s3_spark_output(output_path: str, storage_format: str = SPARK_OUTPUT_FORMAT, *, s3_client: Any | None = None) -> dict[str, int]:
     parsed = urlparse(re.sub(r"^s3a://", "s3://", output_path, flags=re.IGNORECASE))
     bucket = parsed.netloc
     key = parsed.path.lstrip("/").rstrip("/")
@@ -1118,7 +1140,7 @@ def inspect_s3_spark_output(output_path: str, *, s3_client: Any | None = None) -
     client = s3_client or build_catalog_s3_client()
     prefix = f"{key}/"
     continuation_token = None
-    parquet_count = 0
+    data_object_count = 0
     storage_size_bytes = 0
     try:
         while True:
@@ -1129,8 +1151,8 @@ def inspect_s3_spark_output(output_path: str, *, s3_client: Any | None = None) -
             for item in response.get("Contents") or []:
                 object_key = str(item.get("Key") or "")
                 storage_size_bytes += max(int(item.get("Size") or 0), 0)
-                if object_key.lower().endswith(".parquet"):
-                    parquet_count += 1
+                if spark_output_file_matches(object_key, storage_format):
+                    data_object_count += 1
             if not response.get("IsTruncated"):
                 break
             continuation_token = response.get("NextContinuationToken")
@@ -1143,15 +1165,26 @@ def inspect_s3_spark_output(output_path: str, *, s3_client: Any | None = None) -
             "Spark S3 output could not be inspected.",
             {"bucket": bucket, "prefix": prefix, "reason": compact_storage_text(exc, limit=1000)},
         ) from exc
-    if parquet_count <= 0 or storage_size_bytes <= 0:
+    if data_object_count <= 0 or storage_size_bytes <= 0:
         raise catalog_reconciliation_error(
-            "Spark S3 output does not contain a non-empty Parquet result.",
-            {"bucket": bucket, "prefix": prefix},
+            "Spark S3 output does not contain a non-empty result in the configured format.",
+            {"bucket": bucket, "prefix": prefix, "storageFormat": storage_format},
         )
     return {
-        "parquetObjectCount": parquet_count,
+        "dataObjectCount": data_object_count,
         "storageSizeBytes": storage_size_bytes,
     }
+
+
+def spark_output_file_matches(name: str, storage_format: str) -> bool:
+    normalized_format = str(storage_format or SPARK_OUTPUT_FORMAT).lower()
+    suffixes = {"parquet": (".parquet",), "csv": (".csv",), "json": (".json",)}
+    return str(name or "").lower().endswith(suffixes.get(normalized_format, suffixes[SPARK_OUTPUT_FORMAT]))
+
+
+def spark_output_format(job: ETLJobModel, result: dict[str, Any]) -> str:
+    value = str(result.get("format") or job.target_format or SPARK_OUTPUT_FORMAT).strip().lower()
+    return value if value in {"parquet", "csv", "json"} else SPARK_OUTPUT_FORMAT
 
 
 def build_catalog_s3_client() -> Any:
@@ -1245,7 +1278,7 @@ def execute_airflow_run(
         return airflow_execution_response_from_persisted(job, run, existing_dataset)
 
     try:
-        result = run_spark_job(job, command, run_id)
+        result = run_spark_job(db, job, command, run_id)
     except ApiError as exc:
         now = iso_now()
         result = {
@@ -1388,7 +1421,7 @@ def airflow_dag_run_conf(job: ETLJobModel, command: str, run_id: str, submitted_
     }
 
 
-def job_payload_for_spark(job: ETLJobModel) -> dict[str, Any]:
+def job_payload_for_spark(job: ETLJobModel, incremental_since: str | None = None) -> dict[str, Any]:
     return {
         "id": job.id,
         "name": job.name,
@@ -1404,6 +1437,7 @@ def job_payload_for_spark(job: ETLJobModel) -> dict[str, Any]:
         "schemaSampleRows": job.schema_sample_rows or [],
         "source": job.source,
         "sourceConfig": job.source_config or [],
+        "sourceIncrementalSince": incremental_since,
         "sourceLabel": job.source_label,
         "sourceType": job.source_type,
         "stats": job.stats or {},
@@ -1422,6 +1456,31 @@ def job_payload_for_spark(job: ETLJobModel) -> dict[str, Any]:
         "transformOutputColumns": job.transform_output_columns or [],
         "transformSteps": job.transform_steps or [],
     }
+
+
+def source_incremental_since(db: Session, job_id: str, current_run_id: str) -> str | None:
+    successful_runs = [
+        run for run in etl_repository.list_run_models_for_job(db, job_id)
+        if run.run_id != current_run_id and run.status == "success" and str(run.ended_at or "").strip() not in {"", "-"}
+    ]
+    if not successful_runs:
+        return None
+    return max(str(run.ended_at) for run in successful_runs)
+
+
+def list_target_databases() -> TargetDatabasesResponse:
+    configured = str(os.environ.get("ASKLAKE_TARGET_DATABASES") or "").strip()
+    default_databases = [
+        ("asklake", "기본 AskLake 카탈로그 DB"),
+        ("asklake_gold", "정제 데이터셋 저장 DB"),
+        ("analytics", "분석용 데이터 마트 DB"),
+        ("marketing", "마케팅/고객 데이터 DB"),
+    ]
+    names = [name.strip() for name in configured.split(",") if name.strip()] if configured else [name for name, _ in default_databases]
+    descriptions = dict(default_databases)
+    return TargetDatabasesResponse(
+        databases=[TargetDatabaseOption(name=name, description=descriptions.get(name, "배포 환경에서 구성한 대상 DB")) for name in dict.fromkeys(names)]
+    )
 
 
 def run_from_airflow_submit(
@@ -1986,7 +2045,7 @@ def dataset_payload_from_spark_result(
         "source": job.name,
         "sourceRunId": aggregate["latestRunId"] or result.get("runId"),
         "status": "available",
-        "storageFormat": SPARK_OUTPUT_FORMAT,
+        "storageFormat": spark_output_format(job, result),
         "storageLocation": output_path,
         "storageSizeBytes": aggregate["storageSizeBytes"],
         "partition": partition,

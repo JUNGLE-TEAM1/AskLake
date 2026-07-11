@@ -810,6 +810,7 @@ export function useAskLakeData({
 
     const previousState = {
       datasets,
+      jobListFacets,
       jobs,
       selectedDataset,
       selectedJob,
@@ -822,8 +823,10 @@ export function useAskLakeData({
         : await createLivePipelineDraft(draftPipeline);
       const normalizedJob = normalizeJobRow(result.job);
       const normalizedDataset = result.dataset ? normalizeDatasetRow(result.dataset) : null;
+      const nextJobs = [normalizedJob, ...jobs.filter((item) => item.name !== normalizedJob.name)];
 
-      setJobs((items) => [normalizedJob, ...items.filter((item) => item.name !== normalizedJob.name)]);
+      setJobs(nextJobs);
+      setJobListFacets(getJobListFacets(nextJobs));
       setSelectedJob(normalizedJob);
       if (normalizedDataset) {
         saveStoredCatalogDataset(normalizedDataset);
@@ -837,6 +840,7 @@ export function useAskLakeData({
       onFlowChange("jobs");
     } catch (error) {
       setJobs(previousState.jobs);
+      setJobListFacets(previousState.jobListFacets);
       setDatasets(previousState.datasets);
       setSelectedJob(previousState.selectedJob);
       setSelectedDataset(previousState.selectedDataset);
