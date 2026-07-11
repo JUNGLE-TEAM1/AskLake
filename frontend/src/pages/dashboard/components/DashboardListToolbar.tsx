@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, ChevronRight, Filter, Search, SlidersHorizontal } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, ChevronRight, Filter, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -12,7 +12,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { FilterToolbar, FilterToolbarActions, FilterToolbarDivider, FilterToolbarInput, FilterToolbarMenu, FilterToolbarSearch } from "@/components/ui/filter-toolbar";
-import { Panel, PanelHeader } from "@/components/ui/panel";
 import { dashboardSortOptions, getDashboardSortLabel } from "../dashboardListUtils";
 import type { DashboardListControl, DashboardSortOption } from "../dashboardListUtils";
 
@@ -51,12 +50,7 @@ export function DashboardListToolbar({
   };
 
   return (
-    <Panel className="dashboard-list-toolbar" overflow="visible">
-      <PanelHeader
-        icon={<SlidersHorizontal size={16} />}
-        title="검색 및 필터"
-      />
-      <FilterToolbar layout="actions">
+      <FilterToolbar className="dashboard-list-toolbar" layout="actions">
         <FilterToolbarSearch icon={<Search size={16} />}>
           <FilterToolbarInput
             aria-label="대시보드 검색"
@@ -144,6 +138,5 @@ export function DashboardListToolbar({
           </FilterToolbarMenu>
         </FilterToolbarActions>
       </FilterToolbar>
-    </Panel>
   );
 }
