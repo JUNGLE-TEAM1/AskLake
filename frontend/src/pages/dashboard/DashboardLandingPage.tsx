@@ -117,26 +117,25 @@ export function DashboardLandingPage({
       />
 
       <div className="dashboard-panel-stack">
-        <DashboardListToolbar
-          onClearTags={onClearTags}
-          onSearchQueryChange={onSearchQueryChange}
-          onSelectOwner={onSelectOwner}
-          onSelectSort={onSelectSort}
-          onToggleControl={onToggleControl}
-          onToggleTag={onToggleTag}
-          openControl={openControl}
-          ownerFilter={ownerFilter}
-          owners={owners}
-          searchQuery={searchQuery}
-          selectedTags={selectedTags}
-          sortOption={sortOption}
-          tags={tags}
-        />
-
         <Panel className="dashboard-table-list">
           <PanelHeader
             icon={<Table2 size={16} />}
             title="대시보드 목록"
+          />
+          <DashboardListToolbar
+            onClearTags={onClearTags}
+            onSearchQueryChange={onSearchQueryChange}
+            onSelectOwner={onSelectOwner}
+            onSelectSort={onSelectSort}
+            onToggleControl={onToggleControl}
+            onToggleTag={onToggleTag}
+            openControl={openControl}
+            ownerFilter={ownerFilter}
+            owners={owners}
+            searchQuery={searchQuery}
+            selectedTags={selectedTags}
+            sortOption={sortOption}
+            tags={tags}
           />
           <div className="dashboard-table-list-body">
             {error && (
