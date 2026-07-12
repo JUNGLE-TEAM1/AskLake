@@ -44,6 +44,29 @@ KAFKA_SNAPSHOT_TRANSFORMS = {
     "parse_timestamp",
     "rename",
 }
+VALID_RULE_KINDS = {"transform", "quality"}
+VALID_ERROR_POLICIES = {"fail_batch", "quarantine", "warn"}
+VALID_FAILURE_DISPOSITIONS = {"keep", "drop_row", "set_null"}
+VALID_SEVERITIES = {"warning", "error"}
+PARAMETER_KEYS: dict[tuple[str, str], set[str] | None] = {
+    ("transform", "cast"): {"format", "targetType"},
+    ("transform", "copy"): set(),
+    ("transform", "custom_csv_classifier"): None,
+    ("transform", "default_value"): {"value"},
+    ("transform", "json_extract"): {"path"},
+    ("transform", "lowercase_trim"): set(),
+    ("transform", "mask"): {"policy"},
+    ("transform", "null_guard"): set(),
+    ("transform", "parse_timestamp"): {"format"},
+    ("transform", "rename"): set(),
+    ("transform", "sql_expression"): {"expression"},
+    ("transform", "sql_result_materialize"): None,
+    ("transform", "text_row_analysis"): None,
+    ("quality", "accepted_values"): {"values"},
+    ("quality", "not_null"): set(),
+    ("quality", "range"): {"inclusive", "max", "min"},
+    ("quality", "regex"): {"pattern"},
+}
 
 
 @dataclass(frozen=True)
@@ -55,6 +78,7 @@ class CompiledRuleSet:
 
 def compile_rule_set(
     *,
+    contract_version: str | None = None,
     rules: Iterable[CanonicalRuleDraft | dict[str, Any]] | None,
     transform_steps: Iterable[TransformStepDraft | dict[str, Any]] | None,
     quality_rules: Iterable[QualityRuleDraft | dict[str, Any]] | None,
@@ -65,11 +89,12 @@ def compile_rule_set(
 ) -> CompiledRuleSet:
     schema = [_payload(column) for column in (schema_columns or [])]
     declared_outputs = _normalize_output_columns(transform_output_columns)
+    canonical_supplied = rules is not None
     canonical_rules = [
         rule if isinstance(rule, CanonicalRuleDraft) else CanonicalRuleDraft.model_validate(rule)
         for rule in (rules or [])
     ]
-    if not canonical_rules:
+    if not canonical_supplied:
         canonical_rules = adapt_legacy_rules(
             transform_steps=transform_steps,
             quality_rules=quality_rules,
@@ -93,19 +118,29 @@ def compile_rule_set(
     declared_types = {name: canonical_schema_type(type_) for name, type_ in declared_outputs}
 
     issues: list[RuleCompilationIssue] = []
+    if canonical_supplied and contract_version != RULE_CONTRACT_VERSION:
+        code = "RULE_CONTRACT_VERSION_REQUIRED" if contract_version is None else "RULE_CONTRACT_VERSION_UNSUPPORTED"
+        issues.append(_issue(
+            code,
+            "ruleContractVersion",
+            "Canonical rules require ruleContractVersion 1.0."
+            if contract_version is None
+            else f"Unsupported rule contract version: {contract_version}",
+        ))
     normalized_rules: list[CanonicalRuleDraft] = []
     seen_ids: set[str] = set()
     kafka_snapshot = execution_mode == "snapshot" and "kafka" in str(source_type or "").lower()
 
     for index, rule in enumerate(canonical_rules):
         rule_id = str(rule.id or f"rule-{index + 1}").strip()
-        operation = normalize_operation(rule.operation, rule.kind)
+        kind = str(rule.kind or "").strip()
+        operation = normalize_operation(rule.operation, kind)
         inputs = _normalize_names(rule.input_columns)
         outputs = _normalize_names(rule.output_columns)
         parameters = dict(rule.parameters or {})
-        on_error = rule.on_error
-        disposition = rule.failure_disposition
-        severity = rule.severity or ("warning" if rule.kind == "quality" else None)
+        on_error = str(rule.on_error or "").strip()
+        disposition = str(rule.failure_disposition or "").strip()
+        severity = str(rule.severity or ("warning" if kind == "quality" else "")).strip() or None
 
         if not rule_id:
             rule_id = f"rule-{index + 1}"
@@ -114,9 +149,48 @@ def compile_rule_set(
             issues.append(_issue("RULE_ID_DUPLICATE", "id", f"Duplicate rule id: {rule_id}", rule_id))
         seen_ids.add(rule_id)
 
-        known_operations = TRANSFORM_OPERATIONS if rule.kind == "transform" else QUALITY_OPERATIONS
+        if rule.contract_version != RULE_CONTRACT_VERSION:
+            issues.append(_issue(
+                "RULE_CONTRACT_VERSION_UNSUPPORTED",
+                "contractVersion",
+                f"Unsupported rule contract version: {rule.contract_version}",
+                rule_id,
+            ))
+        if kind not in VALID_RULE_KINDS:
+            issues.append(_issue("RULE_KIND_UNSUPPORTED", "kind", f"Unsupported rule kind: {kind}", rule_id))
+        if on_error not in VALID_ERROR_POLICIES:
+            issues.append(_issue("RULE_ERROR_POLICY_UNSUPPORTED", "onError", f"Unsupported onError policy: {on_error}", rule_id))
+        if disposition not in VALID_FAILURE_DISPOSITIONS:
+            issues.append(_issue(
+                "RULE_FAILURE_DISPOSITION_UNSUPPORTED",
+                "failureDisposition",
+                f"Unsupported failureDisposition: {disposition}",
+                rule_id,
+            ))
+        if on_error in {"fail_batch", "quarantine"} and disposition in {"drop_row", "set_null"}:
+            issues.append(_issue(
+                "RULE_FAILURE_POLICY_CONFLICT",
+                "failureDisposition",
+                f"{on_error} requires failureDisposition 'keep'.",
+                rule_id,
+            ))
+        if severity is not None and severity not in VALID_SEVERITIES:
+            issues.append(_issue("RULE_SEVERITY_UNSUPPORTED", "severity", f"Unsupported severity: {severity}", rule_id))
+
+        known_operations = TRANSFORM_OPERATIONS if kind == "transform" else QUALITY_OPERATIONS if kind == "quality" else set()
         if operation not in known_operations:
-            issues.append(_issue("RULE_OPERATION_UNSUPPORTED", "operation", f"Unsupported {rule.kind} operation: {rule.operation}", rule_id))
+            issues.append(_issue("RULE_OPERATION_UNSUPPORTED", "operation", f"Unsupported {kind or 'unknown'} operation: {rule.operation}", rule_id))
+
+        allowed_parameter_keys = PARAMETER_KEYS.get((kind, operation))
+        if allowed_parameter_keys is not None:
+            unsupported_keys = sorted(set(parameters) - allowed_parameter_keys)
+            if unsupported_keys:
+                issues.append(_issue(
+                    "RULE_PARAMETER_UNSUPPORTED",
+                    "parameters",
+                    f"Unsupported parameters for {operation}: {', '.join(unsupported_keys)}",
+                    rule_id,
+                ))
 
         if rule.enabled:
             if execution_mode == "continuous":
@@ -140,14 +214,14 @@ def compile_rule_set(
                 if input_name not in available_types:
                     issues.append(_issue("RULE_INPUT_NOT_FOUND", "inputColumns", f"Rule input column does not exist: {input_name}", rule_id))
 
-            if rule.kind == "transform":
+            if kind == "transform":
                 if len(outputs) != 1:
                     issues.append(_issue("RULE_OUTPUT_ARITY", "outputColumns", "Transform rules require exactly one output column.", rule_id))
                 if operation == "json_extract" and not str(parameters.get("path") or "").startswith("$"):
                     issues.append(_issue("RULE_PARAMETER_INVALID", "parameters.path", "JSON extract path must start with '$'.", rule_id))
                 if operation == "sql_expression" and not str(parameters.get("expression") or "").strip():
                     issues.append(_issue("RULE_PARAMETER_REQUIRED", "parameters.expression", "SQL expression is required.", rule_id))
-            elif outputs:
+            elif kind == "quality" and outputs:
                 issues.append(_issue("RULE_OUTPUT_NOT_ALLOWED", "outputColumns", "Quality rules do not create output columns.", rule_id))
 
         input_type = available_types.get(inputs[0], "String") if inputs else "String"
@@ -158,18 +232,18 @@ def compile_rule_set(
             failure_disposition=disposition,
             id=rule_id,
             input_columns=inputs,
-            kind=rule.kind,
+            kind=kind,
             label=rule.label,
             on_error=on_error,
             operation=operation,
             output_columns=outputs,
-            output_type=output_type if rule.kind == "transform" else None,
+            output_type=output_type if kind == "transform" else None,
             parameters=parameters,
             severity=severity,
         )
         normalized_rules.append(normalized_rule)
 
-        if rule.enabled and rule.kind == "transform" and len(outputs) == 1:
+        if rule.enabled and kind == "transform" and len(outputs) == 1:
             available_types[outputs[0]] = output_type or "String"
             output_types[outputs[0]] = output_type or "String"
 
@@ -211,7 +285,8 @@ def adapt_legacy_rules(
         input_name = str(step.get("input") or "").strip()
         output_name = str(step.get("output") or input_name).strip()
         on_error, disposition = legacy_failure_policy(step.get("onError") or step.get("on_error"))
-        parameters = legacy_parameters(operation, step.get("params"), "transform")
+        canonical_parameters = step.get("canonicalParameters", step.get("canonical_parameters"))
+        parameters = dict(canonical_parameters) if isinstance(canonical_parameters, dict) else legacy_parameters(operation, step.get("params"), "transform")
         adapted.append(CanonicalRuleDraft(
             enabled=step.get("enabled", True) is not False,
             failure_disposition=disposition,
@@ -231,6 +306,7 @@ def adapt_legacy_rules(
         operation = normalize_operation(rule.get("validationType") or rule.get("validation_type") or rule.get("kind"), "quality")
         target = str(rule.get("targetColumn") or rule.get("target_column") or "").strip()
         on_error, disposition = legacy_failure_policy(rule.get("failureAction") or rule.get("failure_action"))
+        canonical_parameters = rule.get("canonicalParameters", rule.get("canonical_parameters"))
         adapted.append(CanonicalRuleDraft(
             enabled=rule.get("enabled", True) is not False,
             failure_disposition=disposition,
@@ -241,7 +317,7 @@ def adapt_legacy_rules(
             on_error=on_error,
             operation=operation,
             output_columns=[],
-            parameters=legacy_parameters(operation, rule.get("params"), "quality"),
+            parameters=dict(canonical_parameters) if isinstance(canonical_parameters, dict) else legacy_parameters(operation, rule.get("params"), "quality"),
             severity="error" if str(rule.get("severity") or "").lower() == "error" else "warning",
         ))
     return adapted
@@ -252,6 +328,7 @@ def canonical_transform_to_legacy(rule: CanonicalRuleDraft) -> TransformStepDraf
     output_name = rule.output_columns[0] if rule.output_columns else input_name
     operation, kind = legacy_transform_operation(rule.operation, rule.output_type)
     return TransformStepDraft(
+        canonical_parameters=dict(rule.parameters or {}),
         enabled=rule.enabled,
         id=rule.id,
         input=input_name,
@@ -268,6 +345,7 @@ def canonical_quality_to_legacy(rule: CanonicalRuleDraft) -> QualityRuleDraft:
     target = rule.input_columns[0] if rule.input_columns else ""
     validation_type, kind = legacy_quality_operation(rule.operation)
     return QualityRuleDraft(
+        canonical_parameters=dict(rule.parameters or {}),
         enabled=rule.enabled,
         failure_action=canonical_failure_policy(rule),
         id=rule.id,
@@ -465,7 +543,8 @@ def legacy_parameter_string(rule: CanonicalRuleDraft) -> str:
     if rule.operation == "mask":
         return str(parameters.get("policy") or "keep first 3 digits")
     if rule.operation == "default_value":
-        return str(parameters.get("value") or "")
+        value = parameters.get("value")
+        return "" if value is None else str(value)
     if rule.operation == "sql_expression":
         return str(parameters.get("expression") or "")
     if rule.operation == "lowercase_trim":
@@ -506,5 +585,5 @@ def _json_object(value: str) -> dict[str, Any] | None:
     return parsed if isinstance(parsed, dict) else None
 
 
-def _issue(code: str, field: str, message: str, rule_id: str) -> RuleCompilationIssue:
+def _issue(code: str, field: str, message: str, rule_id: str | None = None) -> RuleCompilationIssue:
     return RuleCompilationIssue(code=code, field=field, message=message, rule_id=rule_id)

@@ -759,6 +759,9 @@ function normalizeTransformSteps(steps) {
       operation: String(step.operation || ""),
       output: String(step.output || step.input || `column_${index + 1}`),
       params: String(step.params || ""),
+      ...(step.canonicalParameters && typeof step.canonicalParameters === "object" && !Array.isArray(step.canonicalParameters)
+        ? { canonicalParameters: { ...step.canonicalParameters } }
+        : {}),
     }))
     .filter((step) => step.input && step.output);
 }
@@ -776,6 +779,9 @@ function normalizeQualityRules(rules) {
       severity: String(rule.severity || "Warning"),
       targetColumn: String(rule.targetColumn || ""),
       validationType: String(rule.validationType || "Not Null"),
+      ...(rule.canonicalParameters && typeof rule.canonicalParameters === "object" && !Array.isArray(rule.canonicalParameters)
+        ? { canonicalParameters: { ...rule.canonicalParameters } }
+        : {}),
     }))
     .filter((rule) => rule.targetColumn);
 }

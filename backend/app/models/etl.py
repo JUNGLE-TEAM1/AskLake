@@ -32,6 +32,8 @@ class ETLJobModel(TimestampMixin, Base):
     schema_sample_rows: Mapped[list[list[str]]] = mapped_column(JSON, nullable=False, default=list)
     schema_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     rule_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    rule_contract_version: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    rules: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True)
     permission_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     permission_roles: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True)
     storage_type: Mapped[str | None] = mapped_column(String(64), nullable=True)

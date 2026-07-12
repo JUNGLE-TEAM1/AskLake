@@ -1,9 +1,12 @@
+import { readFileSync } from "node:fs";
 import { compileRuleContract } from "../src/ruleCompiler.mjs";
 
 const schemaColumns = [
   { included: true, sourceName: "review", targetName: "review", type: "string" },
   { included: true, sourceName: "rating", targetName: "rating", type: "float" },
 ];
+
+verifySharedConformance();
 
 const passThrough = compile({});
 assert(passThrough.result.status === "pass", "No-rule contract should pass.");
@@ -95,10 +98,57 @@ const kafkaSql = compile({
 });
 assertIssue(kafkaSql, "RULE_EXECUTION_MODE_UNSUPPORTED");
 
+for (const value of [0, false, "", null]) {
+  const first = compile({
+    rules: [canonicalRule({
+      id: `default-${String(value)}`,
+      inputColumns: ["rating"],
+      operation: "default_value",
+      outputColumns: ["rating"],
+      outputType: "Double",
+      parameters: { value },
+    })],
+  });
+  const roundTrip = compileRuleContract({
+    executionMode: "snapshot",
+    qualityRules: first.qualityRules,
+    schemaColumns,
+    sourceType: "File / S3",
+    transformOutputColumns: first.result.outputSchema,
+    transformSteps: first.transformSteps,
+  });
+  assert(JSON.stringify(roundTrip.result.rules[0].parameters) === JSON.stringify({ value }), `Default value ${String(value)} should round-trip.`);
+}
+
+assertIssue(compile({
+  rules: [canonicalRule({ failureDisposition: "drop_row", id: "policy-conflict", onError: "quarantine" })],
+}), "RULE_FAILURE_POLICY_CONFLICT");
+assertIssue(compile({
+  ruleContractVersion: "2.0",
+  rules: [canonicalRule({ id: "future-version" })],
+}), "RULE_CONTRACT_VERSION_UNSUPPORTED");
+assertIssue(compileRuleContract({
+  executionMode: "snapshot",
+  qualityRules: [],
+  rules: [canonicalRule({ id: "missing-version" })],
+  schemaColumns,
+  sourceType: "File / S3",
+  transformSteps: [],
+}), "RULE_CONTRACT_VERSION_REQUIRED");
+assertIssue(compile({
+  rules: [canonicalRule({ id: "unsupported-parameter", parameters: { extra: true } })],
+}), "RULE_PARAMETER_UNSUPPORTED");
+
+const explicitEmpty = compile({
+  rules: [],
+  transformSteps: legacy.transformSteps,
+});
+assert(explicitEmpty.result.rules.length === 0, "Explicit canonical empty rules must not revive legacy rules.");
+
 console.log("verify-rule-compiler-contract-node: ok");
 
 function compile(overrides) {
-  return compileRuleContract({
+  const request = {
     executionMode: "snapshot",
     qualityRules: [],
     schemaColumns,
@@ -106,7 +156,11 @@ function compile(overrides) {
     transformOutputColumns: [],
     transformSteps: [],
     ...overrides,
-  });
+  };
+  if (Object.hasOwn(overrides, "rules") && !Object.hasOwn(overrides, "ruleContractVersion")) {
+    request.ruleContractVersion = "1.0";
+  }
+  return compileRuleContract(request);
 }
 
 function canonicalRule(overrides = {}) {
@@ -136,4 +190,23 @@ function assertSchema(actual, expected) {
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
+}
+
+function verifySharedConformance() {
+  const fixture = JSON.parse(readFileSync(new URL("../fixtures/rules/rule-compiler-conformance.json", import.meta.url), "utf8"));
+  for (const testCase of fixture.cases) {
+    const compilation = compileRuleContract({
+      executionMode: "snapshot",
+      qualityRules: [],
+      schemaColumns: fixture.schemaColumns,
+      sourceType: "File / S3",
+      transformOutputColumns: [],
+      transformSteps: [],
+      ...testCase.request,
+    });
+    const actualCodes = [...new Set(compilation.result.issues.map((item) => item.code))].sort();
+    assert(compilation.result.status === testCase.expectedStatus, `${testCase.name}: status mismatch.`);
+    assert(JSON.stringify(actualCodes) === JSON.stringify([...testCase.expectedIssueCodes].sort()), `${testCase.name}: issue mismatch ${JSON.stringify(actualCodes)}.`);
+    if (testCase.expectedOutputSchema) assertSchema(compilation.result.outputSchema, testCase.expectedOutputSchema);
+  }
 }

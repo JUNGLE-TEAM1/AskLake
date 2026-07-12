@@ -310,6 +310,7 @@ export type SchemaDraft = {
 };
 
 export type TransformStepDraft = {
+  canonicalParameters?: Record<string, unknown>;
   enabled: boolean;
   id: string;
   input: string;
@@ -328,6 +329,7 @@ export type TransformDraft = {
 };
 
 export type QualityRuleDraft = {
+  canonicalParameters?: Record<string, unknown>;
   enabled: boolean;
   failureAction: "Warn" | "Quarantine" | "Fail Run" | "Drop Row" | "Set Null";
   id: string;

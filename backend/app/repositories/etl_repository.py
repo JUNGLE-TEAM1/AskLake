@@ -76,6 +76,8 @@ def ensure_schema(db: Session) -> None:
             "schema_sample_rows": "JSON",
             "schema_summary": "TEXT",
             "rule_summary": "TEXT",
+            "rule_contract_version": "VARCHAR(16)",
+            "rules": "JSON",
             "source": "VARCHAR(255)",
             "source_config": "JSON",
             "source_label": "VARCHAR(255)",
@@ -578,8 +580,10 @@ def refresh_run_for_update(db: Session, run: ETLRunModel) -> None:
 
 def job_to_schema(db: Session, job: ETLJobModel) -> JobRowData:
     runtime = get_kafka_continuous_runtime(db, job.id) if db is not None and job.execution_mode == "continuous" else None
+    persisted_rules = job.rules if job.rule_contract_version is not None and job.rules is not None else None
     compiled_rules = compile_rule_set(
-        rules=[],
+        contract_version=job.rule_contract_version,
+        rules=persisted_rules,
         transform_steps=job.transform_steps,
         quality_rules=job.quality_rules,
         schema_columns=job.schema_columns,
@@ -615,7 +619,7 @@ def job_to_schema(db: Session, job: ETLJobModel) -> JobRowData:
         schema_sample_rows=job.schema_sample_rows,
         schema_summary=job.schema_summary,
         rule_summary=job.rule_summary,
-        rule_contract_version="1.0",
+        rule_contract_version=compiled_rules.result.contract_version,
         rules=compiled_rules.result.rules,
         rule_compilation=compiled_rules.result,
         retry_policy=job.retry_policy,

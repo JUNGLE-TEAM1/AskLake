@@ -948,6 +948,7 @@ type CreatePipelineRequest = {
   ruleContractVersion: "1.0";
   rules: CanonicalRuleDraft[];
   transformSteps: Array<{
+    canonicalParameters?: Record<string, unknown>;
     enabled: boolean;
     id: string;
     input: string;
@@ -960,6 +961,7 @@ type CreatePipelineRequest = {
   }>;
   transformOutputColumns: Array<[string, string]>;
   qualityRules: Array<{
+    canonicalParameters?: Record<string, unknown>;
     enabled: boolean;
     failureAction: "Warn" | "Quarantine" | "Fail Run" | "Drop Row" | "Set Null";
     id: string;
@@ -1013,12 +1015,16 @@ type CreatePipelineRequest = {
 
 Rule contract rules:
 
-- 새 client는 `rules[]`를 source of truth로 보냅니다. `transformSteps`, `qualityRules`와 `transformOutputColumns`는 현재 runner와 기존 Job을 위한 파생 호환 필드입니다.
-- 기존 client가 `rules[]`를 생략하거나 빈 배열로 보내면서 legacy 규칙을 포함하면 backend adapter가 canonical Rule로 변환합니다.
+- 새 client는 `ruleContractVersion: "1.0"`과 `rules[]`를 source of truth로 함께 보냅니다. `transformSteps`, `qualityRules`와 `transformOutputColumns`는 현재 runner와 기존 Job을 위한 파생 호환 필드입니다.
+- `ruleContractVersion: "1.0"`, `rules: []`는 명시적 pass-through입니다. 같은 payload나 저장 행에 legacy 규칙이 남아 있어도 다시 활성화하지 않습니다.
+- version과 canonical Rule이 없는 기존 client/저장 행만 backend adapter가 legacy 규칙을 canonical Rule로 변환합니다. 호환 필드의 `canonicalParameters`는 legacy 표시 문자열로 표현할 수 없는 `0`, `false`, 빈 문자열, `null`과 operation parameter를 보존합니다.
+- 새 create, 기존 target append, `PATCH`는 canonical version과 Rule JSON을 nullable DB 컬럼에 저장합니다. 기존 행은 backfill하지 않고 조회 시에만 legacy adapter를 사용합니다.
 - `rules`, `transformSteps`, `qualityRules`가 모두 비어 있으면 pass-through로 유효합니다.
-- 생성/수정 전 compiler가 operation 지원 여부, input/output column, parameter, 실행 mode와 결정된 output schema를 검증합니다.
+- 생성/수정 전 compiler가 contract version, kind, operation, input/output column, parameter key, severity, 오류 정책, 실행 mode와 결정된 output schema를 검증합니다.
+- `fail_batch`/`quarantine`은 `failureDisposition: "keep"`만 허용합니다. `warn`은 `keep`, `drop_row`, `set_null`을 사용할 수 있습니다.
 - 실패 응답은 `400 RULE_COMPILATION_FAILED`이며 `error.details`에 `contractVersion`, `issues`, `outputSchema`를 포함합니다.
-- backend 응답은 legacy 저장 Job도 `ruleContractVersion`, `rules`, `ruleCompilation`을 재구성해 반환합니다.
+- 대표 issue code는 `RULE_CONTRACT_VERSION_REQUIRED`, `RULE_CONTRACT_VERSION_UNSUPPORTED`, `RULE_KIND_UNSUPPORTED`, `RULE_ERROR_POLICY_UNSUPPORTED`, `RULE_FAILURE_DISPOSITION_UNSUPPORTED`, `RULE_FAILURE_POLICY_CONFLICT`, `RULE_SEVERITY_UNSUPPORTED`, `RULE_PARAMETER_UNSUPPORTED`입니다.
+- backend 응답은 persisted canonical Rule을 우선 반환하고, canonical 컬럼이 없는 legacy 저장 Job만 `ruleContractVersion`, `rules`, `ruleCompilation`을 재구성해 반환합니다.
 
 Request 예시:
 

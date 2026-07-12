@@ -1,0 +1,205 @@
+{
+  "schemaColumns": [
+    { "included": true, "sourceName": "review", "targetName": "review", "type": "String" },
+    { "included": true, "sourceName": "rating", "targetName": "rating", "type": "Double" }
+  ],
+  "cases": [
+    {
+      "name": "canonical pass-through",
+      "request": { "ruleContractVersion": "1.0", "rules": [] },
+      "expectedStatus": "pass",
+      "expectedIssueCodes": [],
+      "expectedOutputSchema": [["review", "String"], ["rating", "Double"]]
+    },
+    {
+      "name": "canonical copy",
+      "request": {
+        "ruleContractVersion": "1.0",
+        "rules": [{
+          "contractVersion": "1.0",
+          "enabled": true,
+          "failureDisposition": "keep",
+          "id": "copy-review",
+          "inputColumns": ["review"],
+          "kind": "transform",
+          "onError": "warn",
+          "operation": "copy",
+          "outputColumns": ["review_copy"],
+          "parameters": {}
+        }]
+      },
+      "expectedStatus": "pass",
+      "expectedIssueCodes": [],
+      "expectedOutputSchema": [["review", "String"], ["rating", "Double"], ["review_copy", "String"]]
+    },
+    {
+      "name": "canonical contract version required",
+      "request": {
+        "rules": [{
+          "contractVersion": "1.0",
+          "enabled": true,
+          "failureDisposition": "keep",
+          "id": "missing-top-level-version",
+          "inputColumns": ["review"],
+          "kind": "transform",
+          "onError": "warn",
+          "operation": "copy",
+          "outputColumns": ["review_copy"],
+          "parameters": {}
+        }]
+      },
+      "expectedStatus": "fail",
+      "expectedIssueCodes": ["RULE_CONTRACT_VERSION_REQUIRED"]
+    },
+    {
+      "name": "policy conflict",
+      "request": {
+        "ruleContractVersion": "1.0",
+        "rules": [{
+          "contractVersion": "1.0",
+          "enabled": true,
+          "failureDisposition": "drop_row",
+          "id": "policy-conflict",
+          "inputColumns": ["review"],
+          "kind": "quality",
+          "onError": "quarantine",
+          "operation": "not_null",
+          "outputColumns": [],
+          "parameters": {},
+          "severity": "error"
+        }]
+      },
+      "expectedStatus": "fail",
+      "expectedIssueCodes": ["RULE_FAILURE_POLICY_CONFLICT"]
+    },
+    {
+      "name": "future contract version",
+      "request": {
+        "ruleContractVersion": "2.0",
+        "rules": [{
+          "contractVersion": "2.0",
+          "enabled": true,
+          "failureDisposition": "keep",
+          "id": "future-version",
+          "inputColumns": ["review"],
+          "kind": "transform",
+          "onError": "warn",
+          "operation": "copy",
+          "outputColumns": ["review_copy"],
+          "parameters": {}
+        }]
+      },
+      "expectedStatus": "fail",
+      "expectedIssueCodes": ["RULE_CONTRACT_VERSION_UNSUPPORTED"]
+    },
+    {
+      "name": "invalid rule shape",
+      "request": {
+        "ruleContractVersion": "1.0",
+        "rules": [{
+          "contractVersion": "1.0",
+          "enabled": true,
+          "failureDisposition": "discard",
+          "id": "invalid-shape",
+          "inputColumns": ["review"],
+          "kind": "future",
+          "onError": "ignore",
+          "operation": "copy",
+          "outputColumns": ["review_copy"],
+          "parameters": {}
+        }]
+      },
+      "expectedStatus": "fail",
+      "expectedIssueCodes": [
+        "RULE_ERROR_POLICY_UNSUPPORTED",
+        "RULE_FAILURE_DISPOSITION_UNSUPPORTED",
+        "RULE_KIND_UNSUPPORTED",
+        "RULE_OPERATION_UNSUPPORTED"
+      ]
+    },
+    {
+      "name": "unsupported parameter",
+      "request": {
+        "ruleContractVersion": "1.0",
+        "rules": [{
+          "contractVersion": "1.0",
+          "enabled": true,
+          "failureDisposition": "keep",
+          "id": "unsupported-parameter",
+          "inputColumns": ["review"],
+          "kind": "transform",
+          "onError": "warn",
+          "operation": "copy",
+          "outputColumns": ["review_copy"],
+          "parameters": { "extra": true }
+        }]
+      },
+      "expectedStatus": "fail",
+      "expectedIssueCodes": ["RULE_PARAMETER_UNSUPPORTED"]
+    },
+    {
+      "name": "unsupported severity",
+      "request": {
+        "ruleContractVersion": "1.0",
+        "rules": [{
+          "contractVersion": "1.0",
+          "enabled": true,
+          "failureDisposition": "keep",
+          "id": "unsupported-severity",
+          "inputColumns": ["review"],
+          "kind": "quality",
+          "onError": "warn",
+          "operation": "not_null",
+          "outputColumns": [],
+          "parameters": {},
+          "severity": "critical"
+        }]
+      },
+      "expectedStatus": "fail",
+      "expectedIssueCodes": ["RULE_SEVERITY_UNSUPPORTED"]
+    },
+    {
+      "name": "continuous rule remains blocked",
+      "request": {
+        "executionMode": "continuous",
+        "ruleContractVersion": "1.0",
+        "sourceType": "Stream / Kafka",
+        "rules": [{
+          "contractVersion": "1.0",
+          "enabled": true,
+          "failureDisposition": "keep",
+          "id": "continuous-copy",
+          "inputColumns": ["review"],
+          "kind": "transform",
+          "onError": "warn",
+          "operation": "copy",
+          "outputColumns": ["review_copy"],
+          "parameters": {}
+        }]
+      },
+      "expectedStatus": "fail",
+      "expectedIssueCodes": ["RULE_EXECUTION_MODE_UNSUPPORTED"]
+    },
+    {
+      "name": "explicit empty does not revive legacy",
+      "request": {
+        "ruleContractVersion": "1.0",
+        "rules": [],
+        "transformSteps": [{
+          "enabled": true,
+          "id": "legacy-copy",
+          "input": "review",
+          "kind": "derive",
+          "label": "legacy copy",
+          "onError": "Warn",
+          "operation": "Copy",
+          "output": "legacy_copy",
+          "params": ""
+        }]
+      },
+      "expectedStatus": "pass",
+      "expectedIssueCodes": [],
+      "expectedOutputSchema": [["review", "String"], ["rating", "Double"]]
+    }
+  ]
+}

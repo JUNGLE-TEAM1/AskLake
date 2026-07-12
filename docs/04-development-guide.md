@@ -43,9 +43,12 @@ cd backend
 npm run verify:schema-type-contract
 npm run verify:rule-compiler
 PYTHONPATH=. .venv/bin/python scripts/verify-kafka-continuous-contract.py
+
+cd ../frontend
+npm run verify:rule-compiler
 ```
 
-`npm run verify:rule-compiler`는 FastAPI와 local Node backend의 canonical Rule compiler를 함께 검사한다. create/update/review 변경 시 no-rule pass-through, legacy `transformSteps`/`qualityRules` hydrate, output schema와 구조화된 validation issue가 유지돼야 한다.
+backend의 `npm run verify:rule-compiler`는 FastAPI와 local Node compiler의 공통 fixture, canonical Rule DB 영속성, legacy fallback을 함께 검사한다. frontend의 같은 명령은 동일 fixture와 `canonicalParameters`를 통한 `0`, `false`, 빈 문자열, `null` 왕복을 확인한다. create/update/review 변경 시 explicit empty pass-through, output schema, 구조화된 validation issue가 유지돼야 한다.
 
 ## 3) Backend Live Mode
 
@@ -213,7 +216,7 @@ npm run build
 
 ```bash
 cd backend
-python3 scripts/verify-etl-job-hydrate-contract.py
+PYTHONPATH=. .venv/bin/python scripts/verify-etl-job-hydrate-contract.py
 ```
 
 브라우저에서는 생성된 Kafka Job의 `수정`을 열어 broker, topic, consumer group 값이 저장된 값으로 표시되고 편집할 수 없는지 확인한다. 목록에서 다른 Job의 `수정`을 직접 선택한 경우에도 해당 Job이 상세 기준으로 선택되고, 성공 Run 유무에 맞춰 target identity 잠금이 적용돼야 한다. Review 단계의 `변경사항 저장`은 기존 Job을 update하며 새 Job을 만들지 않아야 한다.
@@ -224,7 +227,7 @@ python3 scripts/verify-etl-job-hydrate-contract.py
 
 ```bash
 cd backend
-.venv/bin/python scripts/verify-etl-job-update-contract.py
+PYTHONPATH=. .venv/bin/python scripts/verify-etl-job-update-contract.py
 ```
 
 이 검증은 source field 요청 거부, source config 보존, 성공 Run 이후 target identity 변경 차단, 실행 중 update 차단을 함께 확인한다.

@@ -151,6 +151,8 @@ def create_pipeline(db: Session, request: CreatePipelineRequest, actor_name: str
         schema_sample_rows=request.schema_sample_rows,
         schema_summary=request.schema_summary,
         rule_summary=request.rule_summary,
+        rule_contract_version=request.rule_contract_version,
+        rules=[rule.model_dump(mode="json", by_alias=True) for rule in request.rules],
         permission_summary=request.permission_summary,
         permission_roles=request.permission_roles,
         storage_type=request.storage_type,
@@ -2200,6 +2202,8 @@ def update_existing_append_job(
     job.schema_sample_rows = request.schema_sample_rows
     job.schema_summary = request.schema_summary
     job.rule_summary = request.rule_summary
+    job.rule_contract_version = request.rule_contract_version
+    job.rules = [rule.model_dump(mode="json", by_alias=True) for rule in request.rules]
     job.permission_summary = request.permission_summary
     job.permission_roles = request.permission_roles
     job.storage_type = request.storage_type
@@ -3545,8 +3549,10 @@ def compile_pipeline_rules(
     execution_mode: str | None = None,
     source_type: str | None = None,
 ) -> CompiledRuleSet:
+    canonical_requested = request.rule_contract_version is not None or bool(request.rules)
     return compile_rule_set(
-        rules=request.rules,
+        contract_version=request.rule_contract_version,
+        rules=request.rules if canonical_requested else None,
         transform_steps=request.transform_steps,
         quality_rules=request.quality_rules,
         schema_columns=request.schema_columns,
@@ -3662,6 +3668,8 @@ def apply_update_request(job: ETLJobModel, request: UpdatePipelineRequest, targe
     job.schema_sample_rows = request.schema_sample_rows
     job.schema_summary = request.schema_summary
     job.rule_summary = request.rule_summary
+    job.rule_contract_version = request.rule_contract_version
+    job.rules = [rule.model_dump(mode="json", by_alias=True) for rule in request.rules]
     job.permission_summary = request.permission_summary
     job.permission_roles = request.permission_roles
     job.storage_type = request.storage_type

@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+
 from app.core.errors import ApiError
 from app.schemas.etl import CanonicalRuleDraft, QualityRuleDraft, ReviewPipelineRequest, SchemaColumnDraft, TransformStepDraft
 from app.services import etl_service
@@ -14,8 +17,34 @@ def issue_codes(compiled):
     return {issue.code for issue in compiled.result.issues}
 
 
+def verify_shared_conformance() -> None:
+    fixture_path = Path(__file__).resolve().parents[1] / "fixtures" / "rules" / "rule-compiler-conformance.json"
+    fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+    schema_columns = [SchemaColumnDraft.model_validate(column) for column in fixture["schemaColumns"]]
+    for case in fixture["cases"]:
+        request = case["request"]
+        canonical_supplied = "rules" in request
+        compiled = compile_rule_set(
+            contract_version=request.get("ruleContractVersion"),
+            rules=[CanonicalRuleDraft.model_validate(rule) for rule in request.get("rules", [])] if canonical_supplied else None,
+            transform_steps=request.get("transformSteps", []),
+            quality_rules=request.get("qualityRules", []),
+            schema_columns=schema_columns,
+            transform_output_columns=request.get("transformOutputColumns", []),
+            execution_mode=request.get("executionMode", "snapshot"),
+            source_type=request.get("sourceType", "File / S3"),
+        )
+        actual_codes = sorted(issue_codes(compiled))
+        assert compiled.result.status == case["expectedStatus"], case["name"]
+        assert actual_codes == sorted(case["expectedIssueCodes"]), (case["name"], actual_codes)
+        if "expectedOutputSchema" in case:
+            assert [list(column) for column in compiled.result.output_schema] == case["expectedOutputSchema"], case["name"]
+
+
 def main() -> None:
+    verify_shared_conformance()
     pass_through = compile_rule_set(
+        contract_version="1.0",
         rules=[],
         transform_steps=[],
         quality_rules=[],
@@ -25,7 +54,7 @@ def main() -> None:
     assert pass_through.result.output_schema == [("review", "String"), ("raw_amount", "Double")]
 
     legacy = compile_rule_set(
-        rules=[],
+        rules=None,
         transform_steps=[TransformStepDraft(
             id="normalize-review",
             input="review",
@@ -58,6 +87,7 @@ def main() -> None:
     assert legacy.result.output_schema[-1] == ("normalized_review", "String")
 
     canonical = compile_rule_set(
+        contract_version="1.0",
         rules=[CanonicalRuleDraft(
             id="cast-amount",
             input_columns=["raw.amount"],
@@ -80,6 +110,7 @@ def main() -> None:
     assert canonical.result.output_schema[-1] == ("amount", "Double")
 
     missing_input = compile_rule_set(
+        contract_version="1.0",
         rules=[CanonicalRuleDraft(
             id="missing-input",
             input_columns=["absent"],
@@ -94,6 +125,7 @@ def main() -> None:
     assert "RULE_INPUT_NOT_FOUND" in issue_codes(missing_input)
 
     unsupported = compile_rule_set(
+        contract_version="1.0",
         rules=[CanonicalRuleDraft(
             id="aggregate",
             input_columns=["raw.amount"],
@@ -108,6 +140,7 @@ def main() -> None:
     assert "RULE_OPERATION_UNSUPPORTED" in issue_codes(unsupported)
 
     unique_rule = compile_rule_set(
+        contract_version="1.0",
         rules=[CanonicalRuleDraft(
             id="unique-review",
             input_columns=["review"],
@@ -121,6 +154,7 @@ def main() -> None:
     assert "RULE_OPERATION_UNSUPPORTED" in issue_codes(unique_rule)
 
     continuous = compile_rule_set(
+        contract_version="1.0",
         rules=legacy.result.rules[:1],
         transform_steps=[],
         quality_rules=[],
@@ -131,6 +165,7 @@ def main() -> None:
     assert "RULE_EXECUTION_MODE_UNSUPPORTED" in issue_codes(continuous)
 
     kafka_sql = compile_rule_set(
+        contract_version="1.0",
         rules=[CanonicalRuleDraft(
             id="sql-expression",
             input_columns=["review"],
@@ -146,6 +181,119 @@ def main() -> None:
         source_type="Stream / Kafka",
     )
     assert "RULE_EXECUTION_MODE_UNSUPPORTED" in issue_codes(kafka_sql)
+
+    for value in (0, False, "", None):
+        first = compile_rule_set(
+            contract_version="1.0",
+            rules=[CanonicalRuleDraft(
+                id=f"default-{value!r}",
+                input_columns=["raw.amount"],
+                kind="transform",
+                operation="default_value",
+                output_columns=["raw_amount"],
+                output_type="Double",
+                parameters={"value": value},
+            )],
+            transform_steps=[],
+            quality_rules=[],
+            schema_columns=SCHEMA,
+        )
+        round_trip = compile_rule_set(
+            rules=None,
+            transform_steps=first.transform_steps,
+            quality_rules=first.quality_rules,
+            schema_columns=SCHEMA,
+            transform_output_columns=first.result.output_schema,
+        )
+        assert round_trip.result.rules[0].parameters == {"value": value}
+
+    policy_conflict = compile_rule_set(
+        contract_version="1.0",
+        rules=[CanonicalRuleDraft(
+            id="policy-conflict",
+            input_columns=["review"],
+            kind="quality",
+            on_error="quarantine",
+            failure_disposition="drop_row",
+            operation="not_null",
+        )],
+        transform_steps=[],
+        quality_rules=[],
+        schema_columns=SCHEMA,
+    )
+    assert "RULE_FAILURE_POLICY_CONFLICT" in issue_codes(policy_conflict)
+
+    future_version = compile_rule_set(
+        contract_version="2.0",
+        rules=[CanonicalRuleDraft(
+            contract_version="2.0",
+            id="future-version",
+            input_columns=["review"],
+            kind="transform",
+            operation="copy",
+            output_columns=["review_copy"],
+        )],
+        transform_steps=[],
+        quality_rules=[],
+        schema_columns=SCHEMA,
+    )
+    assert "RULE_CONTRACT_VERSION_UNSUPPORTED" in issue_codes(future_version)
+
+    missing_version = compile_rule_set(
+        rules=[CanonicalRuleDraft(
+            id="missing-version",
+            input_columns=["review"],
+            kind="transform",
+            operation="copy",
+            output_columns=["review_copy"],
+        )],
+        transform_steps=[],
+        quality_rules=[],
+        schema_columns=SCHEMA,
+    )
+    assert "RULE_CONTRACT_VERSION_REQUIRED" in issue_codes(missing_version)
+
+    invalid_shape = compile_rule_set(
+        contract_version="1.0",
+        rules=[CanonicalRuleDraft(
+            id="invalid-shape",
+            input_columns=["review"],
+            kind="future",
+            on_error="ignore",
+            failure_disposition="discard",
+            operation="copy",
+            output_columns=["review_copy"],
+        )],
+        transform_steps=[],
+        quality_rules=[],
+        schema_columns=SCHEMA,
+    )
+    assert {"RULE_KIND_UNSUPPORTED", "RULE_ERROR_POLICY_UNSUPPORTED", "RULE_FAILURE_DISPOSITION_UNSUPPORTED"} <= issue_codes(invalid_shape)
+
+    unsupported_parameter = compile_rule_set(
+        contract_version="1.0",
+        rules=[CanonicalRuleDraft(
+            id="unsupported-parameter",
+            input_columns=["review"],
+            kind="transform",
+            operation="copy",
+            output_columns=["review_copy"],
+            parameters={"extra": True},
+        )],
+        transform_steps=[],
+        quality_rules=[],
+        schema_columns=SCHEMA,
+    )
+    assert "RULE_PARAMETER_UNSUPPORTED" in issue_codes(unsupported_parameter)
+
+    explicit_empty = compile_rule_set(
+        contract_version="1.0",
+        rules=[],
+        transform_steps=legacy.transform_steps,
+        quality_rules=legacy.quality_rules,
+        schema_columns=SCHEMA,
+    )
+    assert explicit_empty.result.rules == []
 
     review_request = ReviewPipelineRequest(
         id="rule-review",
@@ -167,7 +315,7 @@ def main() -> None:
     assert review.rule_compilation.status == "pass"
     assert any(row.label == "처리 규칙" and row.value == "pass-through" for row in review.validation)
 
-    invalid_review = review_request.model_copy(update={"rules": unsupported.result.rules})
+    invalid_review = review_request.model_copy(update={"rule_contract_version": "1.0", "rules": unsupported.result.rules})
     invalid_result = etl_service.review_pipeline(invalid_review)
     assert invalid_result.can_create is False
     assert invalid_result.rule_compilation.status == "fail"

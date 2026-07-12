@@ -18,6 +18,29 @@ const qualityOperations = new Set(["accepted_values", "not_null", "range", "rege
 const kafkaSnapshotTransforms = new Set([
   "cast", "copy", "default_value", "json_extract", "lowercase_trim", "mask", "null_guard", "parse_timestamp", "rename",
 ]);
+const validRuleKinds = new Set(["transform", "quality"]);
+const validErrorPolicies = new Set(["fail_batch", "quarantine", "warn"]);
+const validFailureDispositions = new Set(["keep", "drop_row", "set_null"]);
+const validSeverities = new Set(["warning", "error"]);
+const parameterKeys = new Map<string, ReadonlySet<string> | null>([
+  ["transform:cast", new Set(["format", "targetType"])],
+  ["transform:copy", new Set()],
+  ["transform:custom_csv_classifier", null],
+  ["transform:default_value", new Set(["value"])],
+  ["transform:json_extract", new Set(["path"])],
+  ["transform:lowercase_trim", new Set()],
+  ["transform:mask", new Set(["policy"])],
+  ["transform:null_guard", new Set()],
+  ["transform:parse_timestamp", new Set(["format"])],
+  ["transform:rename", new Set()],
+  ["transform:sql_expression", new Set(["expression"])],
+  ["transform:sql_result_materialize", null],
+  ["transform:text_row_analysis", null],
+  ["quality:accepted_values", new Set(["values"])],
+  ["quality:not_null", new Set()],
+  ["quality:range", new Set(["inclusive", "max", "min"])],
+  ["quality:regex", new Set(["pattern"])],
+]);
 
 export function canonicalRulesFromLegacy(
   transformSteps: TransformStepDraft[],
@@ -28,7 +51,9 @@ export function canonicalRulesFromLegacy(
   const typeByName = schemaTypeMap(schemaColumns, transformOutputColumns);
   const transforms = transformSteps.map((step, index) => {
     const operation = normalizeOperation(step.operation || step.kind, "transform");
-    const parameters = legacyParameters(operation, step.params, "transform");
+    const parameters = step.canonicalParameters
+      ? { ...step.canonicalParameters }
+      : legacyParameters(operation, step.params, "transform");
     const [onError, failureDisposition] = canonicalFailurePolicy(step.onError);
     return {
       contractVersion: RULE_CONTRACT_VERSION,
@@ -58,7 +83,9 @@ export function canonicalRulesFromLegacy(
       onError,
       operation,
       outputColumns: [],
-      parameters: legacyParameters(operation, rule.params, "quality"),
+      parameters: rule.canonicalParameters
+        ? { ...rule.canonicalParameters }
+        : legacyParameters(operation, rule.params, "quality"),
       severity: rule.severity === "Error" ? "error" : "warning",
     } satisfies CanonicalRuleDraft;
   });
@@ -71,6 +98,7 @@ export function legacyRulesFromCanonical(rules: CanonicalRuleDraft[]) {
     const output = rule.outputColumns[0] ?? input;
     const [operation, kind] = legacyTransformOperation(rule.operation, rule.outputType);
     return {
+      canonicalParameters: { ...rule.parameters },
       enabled: rule.enabled,
       id: rule.id,
       input,
@@ -85,6 +113,7 @@ export function legacyRulesFromCanonical(rules: CanonicalRuleDraft[]) {
   const qualityRules = rules.filter((rule) => rule.kind === "quality").map((rule) => {
     const [validationType, kind] = legacyQualityOperation(rule.operation);
     return {
+      canonicalParameters: { ...rule.parameters },
       enabled: rule.enabled,
       failureAction: legacyFailurePolicy(rule) as QualityRuleDraft["failureAction"],
       id: rule.id,
@@ -99,6 +128,7 @@ export function legacyRulesFromCanonical(rules: CanonicalRuleDraft[]) {
 }
 
 export function compileRuleContract({
+  contractVersion,
   executionMode = "snapshot",
   qualityRules,
   rules,
@@ -107,6 +137,7 @@ export function compileRuleContract({
   transformOutputColumns = [],
   transformSteps,
 }: {
+  contractVersion?: string;
   executionMode?: KafkaExecutionMode;
   qualityRules: QualityRuleDraft[];
   rules?: CanonicalRuleDraft[];
@@ -115,7 +146,7 @@ export function compileRuleContract({
   transformOutputColumns?: Array<[string, string]>;
   transformSteps: TransformStepDraft[];
 }): RuleCompilationResult {
-  const canonical = rules?.length
+  const canonical = rules !== undefined
     ? rules
     : canonicalRulesFromLegacy(transformSteps, qualityRules, schemaColumns, transformOutputColumns);
   const available = schemaTypeMap(schemaColumns);
@@ -127,18 +158,54 @@ export function compileRuleContract({
   });
   const declaredTypes = new Map(transformOutputColumns.map(([name, type]) => [name, canonicalSchemaType(type)]));
   const issues: RuleCompilationIssue[] = [];
+  if (rules !== undefined && contractVersion === undefined) {
+    issues.push(issue(
+      "RULE_CONTRACT_VERSION_REQUIRED",
+      "ruleContractVersion",
+      "Canonical rules require ruleContractVersion 1.0.",
+    ));
+  } else if (contractVersion !== undefined && contractVersion !== RULE_CONTRACT_VERSION) {
+    issues.push(issue(
+      "RULE_CONTRACT_VERSION_UNSUPPORTED",
+      "ruleContractVersion",
+      `Unsupported rule contract version: ${contractVersion}`,
+    ));
+  }
   const seenIds = new Set<string>();
   const kafkaSnapshot = executionMode === "snapshot" && sourceType.toLowerCase().includes("kafka");
   const normalizedRules = canonical.map((rule, index) => {
+    const kind = String(rule.kind ?? "");
     const id = rule.id.trim() || `rule-${index + 1}`;
-    const operation = normalizeOperation(rule.operation, rule.kind);
+    const operation = normalizeOperation(rule.operation, kind as CanonicalRuleDraft["kind"]);
     const inputColumns = uniqueNames(rule.inputColumns);
     const outputColumns = uniqueNames(rule.outputColumns);
     const parameters = { ...rule.parameters };
+    const onError = String(rule.onError ?? "");
+    const failureDisposition = String(rule.failureDisposition ?? "");
+    const severity = String(rule.severity ?? (kind === "quality" ? "warning" : ""));
     if (seenIds.has(id)) issues.push(issue("RULE_ID_DUPLICATE", "id", `Duplicate rule id: ${id}`, id));
     seenIds.add(id);
-    const supported = rule.kind === "transform" ? transformOperations : qualityOperations;
-    if (!supported.has(operation)) issues.push(issue("RULE_OPERATION_UNSUPPORTED", "operation", `Unsupported ${rule.kind} operation: ${rule.operation}`, id));
+    if (String(rule.contractVersion ?? "") !== RULE_CONTRACT_VERSION) {
+      issues.push(issue("RULE_CONTRACT_VERSION_UNSUPPORTED", "contractVersion", `Unsupported rule contract version: ${String(rule.contractVersion ?? "")}`, id));
+    }
+    if (!validRuleKinds.has(kind)) issues.push(issue("RULE_KIND_UNSUPPORTED", "kind", `Unsupported rule kind: ${kind}`, id));
+    if (!validErrorPolicies.has(onError)) issues.push(issue("RULE_ERROR_POLICY_UNSUPPORTED", "onError", `Unsupported onError policy: ${onError}`, id));
+    if (!validFailureDispositions.has(failureDisposition)) {
+      issues.push(issue("RULE_FAILURE_DISPOSITION_UNSUPPORTED", "failureDisposition", `Unsupported failureDisposition: ${failureDisposition}`, id));
+    }
+    if (["fail_batch", "quarantine"].includes(onError) && ["drop_row", "set_null"].includes(failureDisposition)) {
+      issues.push(issue("RULE_FAILURE_POLICY_CONFLICT", "failureDisposition", `${onError} requires failureDisposition 'keep'.`, id));
+    }
+    if (severity && !validSeverities.has(severity)) issues.push(issue("RULE_SEVERITY_UNSUPPORTED", "severity", `Unsupported severity: ${severity}`, id));
+    const supported = kind === "transform" ? transformOperations : kind === "quality" ? qualityOperations : new Set<string>();
+    if (!supported.has(operation)) issues.push(issue("RULE_OPERATION_UNSUPPORTED", "operation", `Unsupported ${kind || "unknown"} operation: ${rule.operation}`, id));
+    const allowedParameterKeys = parameterKeys.get(`${kind}:${operation}`);
+    if (allowedParameterKeys !== undefined && allowedParameterKeys !== null) {
+      const unsupportedKeys = Object.keys(parameters).filter((key) => !allowedParameterKeys.has(key)).sort();
+      if (unsupportedKeys.length > 0) {
+        issues.push(issue("RULE_PARAMETER_UNSUPPORTED", "parameters", `Unsupported parameters for ${operation}: ${unsupportedKeys.join(", ")}`, id));
+      }
+    }
     if (rule.enabled) {
       if (executionMode === "continuous") {
         issues.push(issue("RULE_EXECUTION_MODE_UNSUPPORTED", "operation", `Continuous does not support enabled rule '${id}' until the streaming compiler phase.`, id));
@@ -149,10 +216,10 @@ export function compileRuleContract({
       inputColumns.forEach((name) => {
         if (!available.has(name)) issues.push(issue("RULE_INPUT_NOT_FOUND", "inputColumns", `Rule input column does not exist: ${name}`, id));
       });
-      if (rule.kind === "transform" && outputColumns.length !== 1) {
+      if (kind === "transform" && outputColumns.length !== 1) {
         issues.push(issue("RULE_OUTPUT_ARITY", "outputColumns", "Transform rules require exactly one output column.", id));
       }
-      if (rule.kind === "quality" && outputColumns.length > 0) {
+      if (kind === "quality" && outputColumns.length > 0) {
         issues.push(issue("RULE_OUTPUT_NOT_ALLOWED", "outputColumns", "Quality rules do not create output columns.", id));
       }
       if (operation === "json_extract" && !String(parameters.path ?? "").startsWith("$")) {
@@ -163,22 +230,26 @@ export function compileRuleContract({
       }
     }
     const inputType = available.get(inputColumns[0] ?? "") ?? "String";
-    const outputType = rule.kind === "transform"
+    const outputType = kind === "transform"
       ? inferOutputType(operation, rule.outputType ?? declaredTypes.get(outputColumns[0] ?? ""), parameters, inputType)
       : undefined;
-    if (rule.enabled && rule.kind === "transform" && outputColumns.length === 1) {
+    if (rule.enabled && kind === "transform" && outputColumns.length === 1) {
       available.set(outputColumns[0], outputType ?? "String");
       outputTypes.set(outputColumns[0], outputType ?? "String");
     }
     return {
       ...rule,
       contractVersion: RULE_CONTRACT_VERSION,
+      failureDisposition: failureDisposition as CanonicalRuleDraft["failureDisposition"],
       id,
       inputColumns,
+      kind: kind as CanonicalRuleDraft["kind"],
+      onError: onError as CanonicalRuleDraft["onError"],
       operation,
       outputColumns,
       outputType,
       parameters,
+      ...(severity ? { severity: severity as CanonicalRuleDraft["severity"] } : {}),
     } satisfies CanonicalRuleDraft;
   });
   return {
@@ -342,6 +413,6 @@ function uniqueNames(values: string[]) {
   return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
 }
 
-function issue(code: string, field: string, message: string, ruleId: string): RuleCompilationIssue {
+function issue(code: string, field: string, message: string, ruleId?: string): RuleCompilationIssue {
   return { code, field, message, ruleId };
 }

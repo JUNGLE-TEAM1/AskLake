@@ -92,11 +92,13 @@ npm run build
 ### Phase 2. 공통 Rule 모델과 compiler (완료)
 
 - Frontend create/update adapter와 FastAPI/Node backend가 `ruleContractVersion: "1.0"`, `rules[]`를 canonical 계약으로 교환한다.
-- 기존 `transformSteps`, `qualityRules`는 migration 없이 읽고 실행하기 위한 호환 adapter 출력으로 유지한다.
+- 새 create/append/update는 canonical version과 Rule JSON을 nullable DB 컬럼에 저장하고, canonical 컬럼이 없는 기존 행만 legacy adapter로 읽는다.
+- 기존 `transformSteps`, `qualityRules`는 실행 호환 adapter 출력으로 유지하며 `canonicalParameters`로 falsy/null 값을 손실 없이 보존한다.
 - 규칙이 없으면 source schema를 그대로 반환하는 pass-through compilation으로 처리한다.
 - operation, input/output arity, column 존재 여부, parameter와 실행 mode 지원 여부를 create/update/review 전에 검증한다.
 - `Drop Row`와 `Set Null`은 core `onError`와 별도인 `failureDisposition`으로 보존한다.
-- 저장된 legacy Job은 조회 시 canonical Rule과 compilation 결과를 결정적으로 재구성한다.
+- 저장된 legacy Job은 조회 시 canonical Rule과 compilation 결과를 결정적으로 재구성하고, `1.0 + []`는 legacy 필드와 무관한 pass-through로 유지한다.
+- `fail_batch`/`quarantine`과 row mutation disposition의 충돌, 버전·kind·severity·parameter 오류를 세 compiler가 같은 구조화 issue로 거절한다.
 - Continuous의 활성 규칙 차단은 Streaming compiler가 들어오는 Phase 5까지 유지한다.
 
 Phase 2 검증:
@@ -107,6 +109,7 @@ npm run verify:rule-compiler
 PYTHONPATH=. .venv/bin/python scripts/verify-kafka-continuous-contract.py
 
 cd ../frontend
+npm run verify:rule-compiler
 npm run verify:ui-regressions
 npm run build
 ```

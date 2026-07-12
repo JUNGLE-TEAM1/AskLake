@@ -546,7 +546,7 @@ type CreateJobResponse = {
 };
 ```
 
-Create/update/review request의 Rule source of truth는 `ruleContractVersion: "1.0"`과 `rules[]`다. Backend는 저장 전에 canonical Rule을 검증하고 `ruleCompilation.status`, 정확한 `issues[]`, 결정된 `outputSchema`를 반환한다. 규칙이 없으면 source schema 그대로 pass-through로 통과한다. 기존 `transformSteps`, `transformOutputColumns`, `qualityRules`는 기존 Job hydrate와 Spark/Kafka runner를 위한 호환 표현으로 계속 수용하고 응답에도 파생해 포함한다. `Drop Row`/`Set Null`은 `onError`가 아니라 canonical `failureDisposition`에 보존된다. Continuous 활성 Rule은 streaming compiler가 연결되기 전까지 `RULE_EXECUTION_MODE_UNSUPPORTED`로 생성/수정을 거절한다.
+Create/update/review request의 Rule source of truth는 `ruleContractVersion: "1.0"`과 `rules[]`다. Backend는 저장 전에 canonical Rule을 검증하고 `ruleCompilation.status`, 정확한 `issues[]`, 결정된 `outputSchema`를 반환하며 create/append/update에서 version과 Rule JSON을 그대로 영속화한다. `1.0 + []`는 source schema 그대로의 명시적 pass-through이고 legacy 필드를 되살리지 않는다. canonical 컬럼이 없는 기존 Job만 `transformSteps`, `transformOutputColumns`, `qualityRules`에서 Rule을 재구성하며, 이 호환 표현의 `canonicalParameters`는 `0`, `false`, 빈 문자열, `null`을 손실 없이 보존한다. `fail_batch`와 `quarantine`은 `failureDisposition: "keep"`만 허용하고, `warn`은 `keep`, `drop_row`, `set_null`을 사용할 수 있다. 버전 누락/불일치, 잘못된 kind·오류 정책·severity, 지원하지 않는 parameter는 각각 구조화된 `RULE_*` issue로 거절한다. Continuous 활성 Rule은 streaming compiler가 연결되기 전까지 `RULE_EXECUTION_MODE_UNSUPPORTED`로 생성/수정을 거절한다.
 
 필수 확인:
 

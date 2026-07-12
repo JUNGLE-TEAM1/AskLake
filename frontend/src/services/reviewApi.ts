@@ -50,6 +50,7 @@ function buildMockReviewSnapshot(draft: DraftPipeline): ReviewSnapshot {
   const request = toCreatePipelineRequest(draft);
   const includedColumns = draft.schema.columns.filter((column) => column.included !== false && Boolean(column.targetName.trim()));
   const ruleCompilation = compileRuleContract({
+    contractVersion: request.ruleContractVersion,
     executionMode: request.executionMode,
     qualityRules: request.qualityRules,
     rules: request.rules,

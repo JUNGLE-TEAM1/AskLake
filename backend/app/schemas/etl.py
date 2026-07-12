@@ -53,6 +53,7 @@ class SchemaColumnDraft(CamelModel):
 
 
 class TransformStepDraft(CamelModel):
+    canonical_parameters: dict[str, Any] | None = None
     enabled: bool = True
     id: str
     input: str
@@ -65,6 +66,7 @@ class TransformStepDraft(CamelModel):
 
 
 class QualityRuleDraft(CamelModel):
+    canonical_parameters: dict[str, Any] | None = None
     enabled: bool = True
     failure_action: str
     id: str
@@ -76,19 +78,19 @@ class QualityRuleDraft(CamelModel):
 
 
 class CanonicalRuleDraft(CamelModel):
-    contract_version: RuleContractVersion = "1.0"
+    contract_version: str = "1.0"
     enabled: bool = True
-    failure_disposition: CanonicalRuleFailureDisposition = "keep"
+    failure_disposition: str = "keep"
     id: str
     input_columns: list[str] = Field(default_factory=list)
-    kind: CanonicalRuleKind
+    kind: str
     label: str | None = None
-    on_error: CanonicalRuleErrorPolicy = "warn"
+    on_error: str = "warn"
     operation: str
     output_columns: list[str] = Field(default_factory=list)
     output_type: str | None = None
     parameters: dict[str, Any] = Field(default_factory=dict)
-    severity: Literal["warning", "error"] | None = None
+    severity: str | None = None
 
 
 class RuleCompilationIssue(CamelModel):
@@ -428,7 +430,7 @@ class CreatePipelineRequest(CamelModel):
     continuous_config: KafkaContinuousConfigDraft | None = None
     schema_summary: str = ""
     rule_summary: str = ""
-    rule_contract_version: RuleContractVersion = "1.0"
+    rule_contract_version: str | None = None
     rules: list[CanonicalRuleDraft] = Field(default_factory=list)
     transform_output_columns: SourceFieldRows = Field(default_factory=list)
     transform_steps: list[TransformStepDraft] = Field(default_factory=list)
@@ -514,7 +516,7 @@ class UpdatePipelineRequest(CamelModel):
     schema_sample_rows: list[list[str]] = Field(default_factory=list)
     schema_summary: str = ""
     rule_summary: str = ""
-    rule_contract_version: RuleContractVersion = "1.0"
+    rule_contract_version: str | None = None
     rules: list[CanonicalRuleDraft] = Field(default_factory=list)
     transform_output_columns: SourceFieldRows = Field(default_factory=list)
     transform_steps: list[TransformStepDraft] = Field(default_factory=list)

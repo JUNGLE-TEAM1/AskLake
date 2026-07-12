@@ -37,6 +37,7 @@ export function toCreatePipelineRequest(draft: DraftPipeline): CreatePipelineReq
   const retryPolicy = normalizeRetryPolicy(draft.schedule.retryPolicy);
   const watermarkPolicy = normalizeWatermarkPolicy(draft.schedule.watermarkPolicy);
   const ruleCompilation = compileRuleContract({
+    contractVersion: RULE_CONTRACT_VERSION,
     executionMode: draft.source.executionMode,
     qualityRules: draft.quality.rules,
     schemaColumns: draft.schema.columns,
