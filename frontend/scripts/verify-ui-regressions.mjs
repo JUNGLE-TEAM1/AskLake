@@ -22,6 +22,25 @@ const read = (path) => {
 
 const checks = [
   {
+    name: "ETL schedule keeps controls while omitting redundant helper copy",
+    file: "src/pages/etl/EtlPages.tsx",
+    patterns: [
+      /<h2>실행 방식 설정<\/h2>/,
+      /<RunTypeCard active=\{selectedOption === "skip"\}/,
+      /<RunTypeCard active=\{selectedOption === "repeat"\}/,
+      /<h2>직접 실행 정책<\/h2>/,
+      /<RetryPolicy value=\{retryPolicy\} onChange=\{onRetryPolicyChange\} \/>/,
+    ],
+    forbiddenPatterns: [
+      /description="파이프라인의 실행 시간, 반복 여부, 실행 정책을 설정합니다\."/,
+      /<p>저장만 할지, 정해진 주기로 자동 실행할지 선택합니다\.<\/p>/,
+      /<p>자동 예약 없이 저장하고 필요할 때 Job 목록에서 직접 실행합니다\.<\/p>/,
+      /<span className="schedule-config-state">\{selectedOption === "repeat" \? "자동 실행" : "직접 실행"\}<\/span>/,
+      /<span className="schedule-config-state muted">스케줄 없음<\/span>/,
+      /<InfoBox title="다음 실행 없음"/,
+    ],
+  },
+  {
     name: "Landing hero renders a scalable vector brand instead of enlarged raster logos",
     file: "src/pages/landing/AskLakeLandingPage.tsx",
     patterns: [
