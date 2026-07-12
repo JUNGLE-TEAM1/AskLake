@@ -1,0 +1,142 @@
+.dashboard-workspace-header,
+.dashboard-table-list,
+.dashboard-builder-side section,
+.dashboard-publish-card,
+.dashboard-meta-footer {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.dashboard-workspace-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 18px 20px;
+}
+
+.dashboard-workspace-header > div:first-child {
+  display: grid;
+  flex: 1 1 280px;
+  gap: 8px;
+  min-width: 240px;
+}
+
+.dashboard-workspace-header h1 {
+  color: #0f172a;
+  font-size: 22px;
+  line-height: 1.25;
+}
+
+.dashboard-publish-state {
+  justify-self: start;
+  border-radius: 999px;
+  background: #fff7ed;
+  color: #c2410c;
+  font-size: 11px;
+  font-weight: 900;
+  padding: 5px 9px;
+}
+
+.dashboard-publish-state.published {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.dashboard-workspace-actions {
+  flex: 1 1 620px;
+  align-items: center;
+  row-gap: 10px;
+}
+
+.dashboard-workspace-actions .primary-button,
+.dashboard-workspace-actions .secondary-button {
+  min-height: 40px;
+  white-space: nowrap;
+}
+
+.dashboard-workspace-actions .primary-button {
+  padding-right: 14px;
+  padding-left: 14px;
+}
+
+.dashboard-pagination button {
+  min-height: 40px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #fff;
+  color: #334155;
+  font-size: 14px;
+  font-weight: 800;
+  padding: 0 14px;
+  white-space: nowrap;
+}
+
+.dashboard-list-toolbar .dashboard-filter-button {
+  display: inline-flex;
+  min-height: 42px;
+  align-items: center;
+  gap: 14px;
+  border-radius: 8px;
+  color: #475569;
+  font-size: 14px;
+  padding: 0 16px;
+}
+
+.dashboard-list-toolbar .dashboard-filter-button span {
+  display: inline-block;
+  min-width: max-content;
+}
+
+.dashboard-list-toolbar .dashboard-sort-button {
+  display: inline-grid;
+  width: 42px;
+  min-height: 42px;
+  place-items: center;
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  color: #64748b;
+  padding: 0;
+}
+
+.dashboard-table-list {
+  display: grid;
+  gap: 0;
+  min-width: 0;
+  padding: 0;
+  width: 100%;
+}
+
+.dashboard-table-list-body {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 0;
+}
+
+.dashboard-table-action-cell {
+  width: 64px;
+  text-align: right;
+}
+
+.dashboard-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.dashboard-pagination span {
+  border-radius: 8px;
+  background: #eff6ff;
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 900;
+  padding: 8px 11px;
+}
+
+.dashboard-pagination button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}

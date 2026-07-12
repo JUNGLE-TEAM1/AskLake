@@ -17,13 +17,13 @@
 - `DatasetSidebar`: Kibo/shadcn-compatible Tree, shadcn `ScrollArea`, `Alert`, `Empty`, `Skeleton`, `Tooltip`과 `TreeHoverCard`를 조합한다.
 - `WidgetConfigPanel`: `SettingsPanel`, `FieldGroup`, `Field`, `Select`, `Input`, `Textarea`, `ToggleGroup`, `Tooltip`, `Checkbox`, `Button`을 조합한다.
 - `DashboardAssistantPanel`: shadcn `Bubble`, `BubbleGroup`, `BubbleContent`, `Textarea`, `Button`으로 dashboard AI interaction을 제공한다.
-- `ActionGroup`: undo/redo, assistant, cursor, widget 생성 toolbar의 layout을 담당한다.
+- `DashboardEditToolbar`: shadcn `ToggleGroup`, `ButtonGroup`, `Button`, `Tooltip`로 assistant/cursor mode와 widget 생성, undo/redo action을 분리한다.
 - `WidgetFrame`, `WidgetRenderer`: widget selection, delete, preview, chart/table/metric 렌더링을 담당한다.
 - shadcn `Sheet`: share panel에 사용한다.
 
 ## Weakly Componentized Areas
 
-- edit toolbar 안의 assistant/cursor/widget type action 일부가 raw `<button>`이며 공통 Button variant와 focus-visible 규칙을 사용하지 않는다.
+- [RESOLVED #580] edit toolbar를 `DashboardEditToolbar.tsx`로 추출하고 mode는 `ToggleGroup`, 생성/기록 action은 `ButtonGroup`/`Button`으로 유지한다.
 - dataset sidebar toggle은 raw button이며 subnav/tab CSS에 직접 결합되어 있다.
 - page tab wrapper, rename/delete controls, selected state가 custom CSS로 구현되어 있다.
 - widget inspector의 color slot, palette, custom color popover는 `react-colorful`과 전용 absolute layer/CSS로 구성된다.
@@ -55,11 +55,11 @@
 
 ## Related CSS
 
-- 현재 사용 중: `frontend/src/styles/dashboard-runtime.css`의 `.asklake-dashboard-workspace`, `.has-dataset-sidebar`, `.dataset-sidebar-open`, `.has-inspector`.
-- 현재 사용 중: `.asklake-dashboard-dataset-sidebar`, `.asklake-dataset-tree-*`, `.asklake-dashboard-inspector`, `.asklake-dashboard-edit-stage`, `.asklake-dashboard-edit-toolbar`.
-- 현재 사용 중: `.asklake-dashboard-rgl*`, `.asklake-widget-frame*`, `.asklake-widget-config-*`, `.asklake-widget-type-*`, `.asklake-widget-color-*`.
-- 현재 사용 중: `.asklake-assistant-*`, `.asklake-dashboard-tab-*`, `.asklake-dashboard-title-edit-*`, `.asklake-dashboard-share-sheet*`.
-- 주의: runtime CSS가 약 46KB이며 view/edit/widget/assistant 상태를 공유한다. component 단위 stylesheet ownership을 먼저 정한 뒤 cleanup한다.
+- 현재 사용 중: `dashboard-runtime-dataset.css`의 `.asklake-dashboard-workspace`, `.has-dataset-sidebar`, `.dataset-sidebar-open`, `.has-inspector`, dataset sidebar/hover selector.
+- 현재 사용 중: `dashboard-runtime-canvas.css`의 `.asklake-dashboard-edit-stage`, `.asklake-dashboard-edit-toolbar`, `.asklake-dashboard-rgl*`.
+- 현재 사용 중: `dashboard-runtime-widgets.css`의 `.asklake-widget-frame*`, `dashboard-runtime-config.css`의 `.asklake-widget-config-*`, `.asklake-widget-type-*`, `.asklake-widget-color-*`.
+- 현재 사용 중: `dashboard-runtime-assistant.css`의 `.asklake-assistant-*`, `dashboard-runtime-shell.css`의 tab/title/share selector.
+- 주의: `dashboard-runtime.css` manifest의 import 순서가 view/edit/widget/assistant cascade를 보존한다. selector 이동 시 ownership과 순서를 함께 갱신한다.
 
 ## QA Notes
 

@@ -1,33 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { LayoutItem } from "react-grid-layout";
-import {
-  Database,
-  Maximize2,
-  Plus,
-  Share2,
-  ShieldCheck,
-  SlidersHorizontal,
-  Table2,
-} from "lucide-react";
-import { PreviewPanel } from "@/components/ui/preview-panel";
-import { SegmentedTabs } from "@/components/ui/segmented-tabs";
-import { SelectableCard } from "@/components/ui/selectable-card";
-import { DatasetStatusBadge } from "../catalog/CatalogPage";
 import { DashboardRuntimeView } from "./runtime/DashboardRuntimeView";
 import { sqlResultToDashboardOption } from "./runtime/dashboardDatasetAdapters";
+import { useDashboardLayoutHistory } from "./runtime/useDashboardLayoutHistory";
 import { useDashboardDatasets } from "./runtime/useDashboardDatasets";
+import { useDashboardRuntimeResources } from "./runtime/useDashboardRuntimeResources";
 import { useDraftWidgetCreator } from "./runtime/useDraftWidgetCreator";
 import { useDraftWidgetLayouts } from "./runtime/useDraftWidgetLayouts";
-import {
-  DashboardChartCard,
-  DashboardChartModal,
-  DashboardDeleteModal,
-  DashboardFooterMeta,
-  DashboardWidgetPreview,
-  DashboardWorkspaceHeader,
-} from "./DashboardParts";
 import { DashboardLandingPage } from "./DashboardLandingPage";
 import type { ExpandedChart } from "./DashboardParts";
+import { DashboardLegacyBuilderView } from "./legacy/DashboardLegacyBuilderView";
+import { DashboardLegacyDetailView } from "./legacy/DashboardLegacyDetailView";
+import { createDashboardLegacyModel } from "./legacy/dashboardLegacyModel";
 import { defaultDashboardCards } from "./dashboardListData";
 import {
   formatDashboardTimestamp,
@@ -39,8 +22,6 @@ import {
   createDraftPage,
   deleteDraftPage,
   deleteDraftWidget,
-  ensureDraftDashboard,
-  getPublishedDashboard,
   publishDashboard as publishRuntimeDashboard,
   updateDraftPageTitle,
   updateDraftWidget,
@@ -49,27 +30,12 @@ import { createDashboard, deleteDashboard, updateDashboardTitle } from "../../se
 import { saveDashboardCard } from "../../services/mockApi";
 import { ApiError } from "../../types";
 import type { AuditResult, CatalogDataset, DashboardEntry, DashboardRuntimeMode, DashboardRuntimeResponse, DashboardRuntimeWidget, DashboardRuntimeWidgetType, DashboardView, DashboardWidgetLayout, DashboardWidgetType, SavedDashboardCard, SqlResultDraft } from "../../types";
-import { dashboardStatusMeta } from "../../utils/statusMeta";
 import type { DashboardDatasetOption, UpdateDraftWidgetFormInput } from "./runtime/dashboardRuntimeTypes";
-
-const defaultRuntimePages = [
-  { id: "page-1", title: "Untitled page" },
-  { id: "page-2", title: "제목 없는 페이지" },
-];
-
-type RuntimePage = {
-  id: string;
-  title: string;
-};
 
 type RuntimeNotice = {
   message: string;
   tone: "success" | "info" | "error";
 };
-
-type RuntimeLayoutSnapshot = Array<Pick<LayoutItem, "h" | "i" | "minH" | "minW" | "w" | "x" | "y">>;
-
-const maxLayoutHistoryEntries = 5;
 
 const previewDraftWidgetChanged = (
   current: DashboardRuntimeWidget | null,
@@ -109,48 +75,6 @@ const defaultDraftWidgetLayout: Record<DashboardRuntimeWidgetType, DashboardWidg
   treemap_chart: { h: 5, minH: 3, minW: 4, w: 6, x: 0, y: 0 },
 };
 
-function normalizeLayoutSnapshot(layout: readonly LayoutItem[]): RuntimeLayoutSnapshot {
-  return layout
-    .map((item) => ({
-      h: item.h,
-      i: item.i,
-      minH: item.minH,
-      minW: item.minW,
-      w: item.w,
-      x: item.x,
-      y: item.y,
-    }))
-    .sort((first, second) => first.i.localeCompare(second.i));
-}
-
-function widgetLayoutSnapshot(widgets: DashboardRuntimeWidget[]): RuntimeLayoutSnapshot {
-  return normalizeLayoutSnapshot(widgets.map((widget) => ({
-    h: widget.layout.h,
-    i: widget.id,
-    minH: widget.layout.minH,
-    minW: widget.layout.minW,
-    w: widget.layout.w,
-    x: widget.layout.x,
-    y: widget.layout.y,
-  })));
-}
-
-function layoutSnapshotsEqual(first: RuntimeLayoutSnapshot, second: RuntimeLayoutSnapshot) {
-  if (first.length !== second.length) return false;
-  return first.every((item, index) => {
-    const next = second[index];
-    return item.i === next.i
-      && item.x === next.x
-      && item.y === next.y
-      && item.w === next.w
-      && item.h === next.h;
-  });
-}
-
-function pushLayoutHistory(stack: RuntimeLayoutSnapshot[], snapshot: RuntimeLayoutSnapshot) {
-  return [...stack, snapshot].slice(-maxLayoutHistoryEntries);
-}
-
 export function DashboardPage({
   dataset,
   datasets: catalogDatasets = [],
@@ -183,12 +107,6 @@ export function DashboardPage({
     dashboardId: entry.dashboardId ?? "dash_sales_demo",
     mode: entry.runtimeMode ?? "published",
   }));
-  const [publishedRuntime, setPublishedRuntime] = useState<DashboardRuntimeResponse | null>(null);
-  const [runtimeLoading, setRuntimeLoading] = useState(false);
-  const [runtimeError, setRuntimeError] = useState<string | null>(null);
-  const [draftRuntime, setDraftRuntime] = useState<DashboardRuntimeResponse | null>(null);
-  const [draftLoading, setDraftLoading] = useState(false);
-  const [draftError, setDraftError] = useState<string | null>(null);
   const [dashboardListRefreshKey, setDashboardListRefreshKey] = useState(0);
   const [isAddingRuntimePage, setIsAddingRuntimePage] = useState(false);
   const [isPublishingRuntime, setIsPublishingRuntime] = useState(false);
@@ -201,12 +119,9 @@ export function DashboardPage({
   const [runtimeShareLink, setRuntimeShareLink] = useState<string | null>(null);
   const [isDatasetSidebarOpen, setIsDatasetSidebarOpen] = useState(true);
   const [previewDraftWidget, setPreviewDraftWidget] = useState<DashboardRuntimeWidget | null>(null);
-  const [layoutRedoStack, setLayoutRedoStack] = useState<RuntimeLayoutSnapshot[]>([]);
-  const [layoutUndoStack, setLayoutUndoStack] = useState<RuntimeLayoutSnapshot[]>([]);
   const [selectedDatasetId, setSelectedDatasetId] = useState<string | null>(null);
   const [selectedWidgetId, setSelectedWidgetId] = useState<string | null>(null);
   const [widgetScrollTargetId, setWidgetScrollTargetId] = useState<string | null>(null);
-  const [selectedRuntimePageId, setSelectedRuntimePageId] = useState<string | null>(defaultRuntimePages[0].id);
   const [selectedDashboard, setSelectedDashboard] = useState<SavedDashboardCard | null>(null);
   const [savedDashboards, setSavedDashboards] = useState<SavedDashboardCard[]>(() => {
     const stored = window.localStorage.getItem("asklake.dashboardCards");
@@ -224,54 +139,17 @@ export function DashboardPage({
     () => activeSqlResult ? sqlResultToDashboardOption(activeSqlResult) : null,
     [activeSqlResult],
   );
-  const dashboardTitle = activeSqlResult ? `${activeSqlResult.datasetName} SQL Result Dashboard` : "Sales Analytics Demo 2026-06-26 22:04:05";
-  const dashboardId = `dash_${dataset.id}_${activeSqlResult?.runId ?? "draft"}`;
-  const sourceRunId = activeSqlResult?.runId;
-  const dashboardColumns = activeSqlResult?.columns.length ? activeSqlResult.columns : dataset.schema.slice(0, 5).map(([column]) => column);
-  const dashboardRowsPreview = activeSqlResult?.rows.length ? activeSqlResult.rows : dataset.sampleRows;
-  const metricCards = [
-    ["총 주문", "128,420", "+12.4%", "SQL 결과 기준"],
-    ["매출", "₩8.2억", "+8.1%", "집계 mart 반영"],
-    ["전환율", "4.8%", "-0.3%", "모바일 유입 감소"],
-    ["품질 점수", dataset.quality, "안정", dataset.lastUpdated],
-  ];
-  const barSeries = [62, 84, 71, 96, 78, 88, 104];
-  const channelRows = [
-    ["Mobile", "62,140", "₩3.9억", "48.4%"],
-    ["Web", "41,880", "₩2.7억", "32.6%"],
-    ["Partner", "24,400", "₩1.6억", "19.0%"],
-  ];
-  const categorySales = [
-    ["전자제품", 124500],
-    ["의류", 93375],
-    ["식료품", 62250],
-    ["가구", 31125],
-    ["취미용품", 68500],
-  ];
-  const widgetTypes: Array<{ id: DashboardWidgetType; label: string; desc: string }> = [
-    { id: "kpi", label: "KPI", desc: "핵심 수치 카드" },
-    { id: "bar", label: "막대 차트", desc: "카테고리 비교" },
-    { id: "line", label: "라인 차트", desc: "시간 추이" },
-    { id: "donut", label: "도넛 차트", desc: "비중 분포" },
-    { id: "table", label: "결과 테이블", desc: "행 데이터" },
-  ];
-  const primaryColumn = dashboardColumns[0] ?? "id";
-  const secondaryColumn = dashboardColumns[1] ?? primaryColumn;
-  const metricColumn = dashboardColumns[2] ?? secondaryColumn;
-  const widgetConfig: Record<DashboardWidgetType, { title: string; fields: Array<[string, string]> }> = {
-    kpi: { title: `${metricColumn} KPI`, fields: [["Metric", metricColumn], ["Aggregation", "COUNT"], ["Format", "Number"]] },
-    bar: { title: `${secondaryColumn}별 ${metricColumn}`, fields: [["X축", secondaryColumn], ["Y축", metricColumn], ["집계", "SUM"]] },
-    line: { title: `${primaryColumn} 추이`, fields: [["X축", primaryColumn], ["Y축", metricColumn], ["Granularity", "Auto"]] },
-    donut: { title: `${secondaryColumn} 비중`, fields: [["Dimension", secondaryColumn], ["Metric", metricColumn], ["Aggregation", "SUM"]] },
-    table: { title: "SQL 결과 테이블", fields: [["Columns", dashboardColumns.slice(0, 4).join(", ")], ["Rows", String(activeSqlResult?.rowCount ?? dataset.sampleRows.length)], ["Sort", `${primaryColumn} ASC`]] },
-  };
-  const snapshotWidgets: DashboardWidgetType[] = builderWidgets.length ? builderWidgets : activeSqlResult ? ["table", "bar"] : ["bar", "line", "donut", "table"];
-  const sqlResultSnapshot = activeSqlResult ? {
-    columns: activeSqlResult.columns,
-    query: activeSqlResult.query,
-    rowCount: activeSqlResult.rowCount,
-    runId: activeSqlResult.runId,
-  } : undefined;
+  const legacyModel = useMemo(
+    () => createDashboardLegacyModel({ activeSqlResult, builderWidgets, dataset }),
+    [activeSqlResult, builderWidgets, dataset],
+  );
+  const {
+    dashboardId,
+    dashboardTitle,
+    snapshotWidgets,
+    sourceRunId,
+    sqlResultSnapshot,
+  } = legacyModel;
   const sidebarDashboards = dashboardList.visibleDashboards.length ? dashboardList.visibleDashboards : savedDashboards;
   const activeDashboardId = selectedDashboard?.id ?? dashboardId;
   const activeDashboardTitle = selectedDashboard?.name ?? dashboardTitle;
@@ -295,14 +173,50 @@ export function DashboardPage({
       : dashboardDatasets,
     [dashboardDatasets, sqlDashboardDataset],
   );
+
+  useEffect(() => {
+    setView(entry.view);
+    if (entry.view === "runtime" && entry.dashboardId) {
+      setRuntimeSelection({
+        dashboardId: entry.dashboardId,
+        mode: entry.runtimeMode ?? "published",
+      });
+    }
+    if (entry.view !== "detail") setSelectedDashboard(null);
+    if (entry.source === "sql" && sqlResult?.datasetId === dataset.id) {
+      setBuilderWidgets(["table", "bar"]);
+    }
+    if (entry.view === "builder") {
+      onAction(entry.source === "sql" ? "dashboard.builder.opened_from_sql" : "dashboard.builder.opened_from_catalog", "/api/dashboards/builder", dataset.id);
+    }
+  }, [dataset.id, entry.dashboardId, entry.runtimeMode, entry.source, entry.version, entry.view, sqlResult?.datasetId]);
+
+  const runtimeResources = useDashboardRuntimeResources({
+    active: view === "runtime",
+    dashboardId: runtimeSelection.dashboardId,
+    mode: runtimeSelection.mode,
+  });
+  const {
+    draftError,
+    draftLoading,
+    draftRuntime,
+    loadDraftRuntime,
+    loadPublishedRuntime,
+    pages: runtimePages,
+    publishedRuntime,
+    runtimeError,
+    runtimeLoading,
+    selectedPageId: selectedRuntimePageId,
+    setDraftError,
+    setDraftRuntime,
+    setPublishedRuntime,
+    setSelectedPageId: setSelectedRuntimePageId,
+  } = runtimeResources;
   const runtimeDashboards = [...dashboardList.visibleDashboards, ...savedDashboards];
   const runtimeDashboard = runtimeDashboards.find((dashboard) => dashboard.id === runtimeSelection.dashboardId);
   const runtimeTitle = runtimeSelection.mode === "published"
     ? publishedRuntime?.dashboard.title ?? runtimeDashboard?.name ?? runtimeSelection.dashboardId
     : draftRuntime?.dashboard.title ?? runtimeDashboard?.name ?? runtimeSelection.dashboardId;
-  const runtimePages = runtimeSelection.mode === "published"
-    ? (publishedRuntime?.pages ?? [])
-    : (draftRuntime?.pages ?? []);
   const runtimeHasPublishedRevision = runtimeSelection.mode === "published"
     ? publishedRuntime?.dashboard.hasPublishedRevision ?? runtimeDashboard?.hasPublishedRevision ?? runtimeDashboard?.status === "published"
     : draftRuntime?.dashboard.hasPublishedRevision ?? runtimeDashboard?.hasPublishedRevision ?? runtimeDashboard?.status === "published";
@@ -353,53 +267,6 @@ export function DashboardPage({
     setSelectedDatasetId(null);
   }, [availableDashboardDatasets, selectedDatasetId]);
 
-  const selectRuntimePageFromResponse = (runtime: DashboardRuntimeResponse) => {
-    const requestedPageId = new URLSearchParams(window.location.search).get("page");
-    const requestedPageExists = requestedPageId && runtime.pages.some((page) => page.id === requestedPageId);
-    const fallbackPageId = requestedPageExists ? requestedPageId : runtime.pages[0]?.id ?? null;
-
-    setSelectedRuntimePageId((currentPageId) => {
-      if (currentPageId && runtime.pages.some((page) => page.id === currentPageId)) {
-        return currentPageId;
-      }
-      return fallbackPageId;
-    });
-  };
-
-  const loadPublishedRuntime = async (nextDashboardId: string) => {
-    setRuntimeLoading(true);
-    setRuntimeError(null);
-    try {
-      const runtime = await getPublishedDashboard(nextDashboardId);
-      setPublishedRuntime(runtime);
-      selectRuntimePageFromResponse(runtime);
-      return runtime;
-    } catch (error) {
-      setPublishedRuntime(null);
-      setRuntimeError(error instanceof Error ? error.message : "Failed to load the published dashboard.");
-      return null;
-    } finally {
-      setRuntimeLoading(false);
-    }
-  };
-
-  const loadDraftRuntime = async (nextDashboardId: string, options: { silent?: boolean } = {}) => {
-    if (!options.silent) setDraftLoading(true);
-    setDraftError(null);
-    try {
-      const runtime = await ensureDraftDashboard(nextDashboardId);
-      setDraftRuntime(runtime);
-      selectRuntimePageFromResponse(runtime);
-      return runtime;
-    } catch (error) {
-      if (!options.silent) setDraftRuntime(null);
-      setDraftError(error instanceof Error ? error.message : "Failed to load the draft dashboard.");
-      return null;
-    } finally {
-      if (!options.silent) setDraftLoading(false);
-    }
-  };
-
   const {
     createDatasetDraftWidget,
     createToolbarDraftWidget,
@@ -429,93 +296,21 @@ export function DashboardPage({
     setRuntimeNotice,
   });
 
-  const commitRuntimeLayout = (layout: LayoutItem[]) => {
-    const previousLayout = widgetLayoutSnapshot(selectedDraftWidgets);
-    const nextLayout = normalizeLayoutSnapshot(layout);
-    if (layoutSnapshotsEqual(previousLayout, nextLayout)) return;
-
-    setLayoutUndoStack((stack) => pushLayoutHistory(stack, previousLayout));
-    setLayoutRedoStack([]);
-    updateDraftWidgetLayouts(nextLayout);
-  };
-
-  const undoRuntimeLayout = () => {
-    const previousLayout = layoutUndoStack.at(-1);
-    if (!previousLayout) return;
-
-    const currentLayout = widgetLayoutSnapshot(selectedDraftWidgets);
-    setLayoutUndoStack((stack) => stack.slice(0, -1));
-    setLayoutRedoStack((stack) => pushLayoutHistory(stack, currentLayout));
-    updateDraftWidgetLayouts(previousLayout);
-    setRuntimeNotice({ message: "레이아웃 변경을 실행 취소했습니다.", tone: "info" });
-    onAction("dashboard.layout.undo", `/api/dashboards/${runtimeSelection.dashboardId}/draft/layouts`, selectedRuntimePageId ?? runtimeSelection.dashboardId);
-  };
-
-  const redoRuntimeLayout = () => {
-    const nextLayout = layoutRedoStack.at(-1);
-    if (!nextLayout) return;
-
-    const currentLayout = widgetLayoutSnapshot(selectedDraftWidgets);
-    setLayoutRedoStack((stack) => stack.slice(0, -1));
-    setLayoutUndoStack((stack) => pushLayoutHistory(stack, currentLayout));
-    updateDraftWidgetLayouts(nextLayout);
-    setRuntimeNotice({ message: "레이아웃 변경을 다시 실행했습니다.", tone: "info" });
-    onAction("dashboard.layout.redo", `/api/dashboards/${runtimeSelection.dashboardId}/draft/layouts`, selectedRuntimePageId ?? runtimeSelection.dashboardId);
-  };
-
-  useEffect(() => {
-    setView(entry.view);
-    if (entry.view === "runtime" && entry.dashboardId) {
-      setRuntimeSelection({
-        dashboardId: entry.dashboardId,
-        mode: entry.runtimeMode ?? "published",
-      });
-    }
-    if (entry.view !== "detail") setSelectedDashboard(null);
-    if (entry.source === "sql" && sqlResult?.datasetId === dataset.id) {
-      setBuilderWidgets(["table", "bar"]);
-    }
-    if (entry.view === "builder") {
-      onAction(entry.source === "sql" ? "dashboard.builder.opened_from_sql" : "dashboard.builder.opened_from_catalog", "/api/dashboards/builder", dataset.id);
-    }
-  }, [dataset.id, entry.dashboardId, entry.runtimeMode, entry.source, entry.version, entry.view, sqlResult?.datasetId]);
-
-  useEffect(() => {
-    if (view !== "runtime" || runtimeSelection.mode !== "published") {
-      setRuntimeError(null);
-      setRuntimeLoading(false);
-      return;
-    }
-
-    void loadPublishedRuntime(runtimeSelection.dashboardId);
-  }, [runtimeSelection.dashboardId, runtimeSelection.mode, view]);
-
-  useEffect(() => {
-    if (view !== "runtime" || runtimeSelection.mode !== "draft") {
-      setDraftError(null);
-      setDraftLoading(false);
-      return;
-    }
-
-    void loadDraftRuntime(runtimeSelection.dashboardId);
-  }, [runtimeSelection.dashboardId, runtimeSelection.mode, view]);
-
-  useEffect(() => {
-    if (view !== "runtime") return;
-    if (!runtimePages.some((page) => page.id === selectedRuntimePageId)) {
-      setSelectedRuntimePageId(runtimePages[0]?.id ?? null);
-    }
-  }, [runtimePages, selectedRuntimePageId, view]);
+  const layoutHistory = useDashboardLayoutHistory({
+    dashboardId: runtimeSelection.dashboardId,
+    mode: runtimeSelection.mode,
+    onAction,
+    onNotice: setRuntimeNotice,
+    selectedPageId: selectedRuntimePageId,
+    selectedWidgetIdsKey: selectedDraftWidgetIds,
+    selectedWidgets: selectedDraftWidgets,
+    updateLayouts: updateDraftWidgetLayouts,
+  });
 
   useEffect(() => {
     setSelectedWidgetId(null);
     setPreviewDraftWidget(null);
   }, [selectedRuntimePageId]);
-
-  useEffect(() => {
-    setLayoutRedoStack([]);
-    setLayoutUndoStack([]);
-  }, [runtimeSelection.dashboardId, runtimeSelection.mode, selectedDraftWidgetIds, selectedRuntimePageId]);
 
   useEffect(() => {
     window.localStorage.setItem("asklake.dashboardCards", JSON.stringify(savedDashboards));
@@ -565,12 +360,6 @@ export function DashboardPage({
     setPeriod(nextPeriod);
     setSegment(nextSegment);
     onAction("dashboard.filter.changed", "/api/dashboards/filters", dataset.id);
-  };
-
-  const openBuilder = () => {
-    setSelectedDashboard(null);
-    setView("builder");
-    onAction("dashboard.create_clicked", "/api/dashboards", dataset.id);
   };
 
   const createDashboardFromLanding = async () => {
@@ -1038,48 +827,6 @@ export function DashboardPage({
     onAction("dashboard.chart.expanded", `/api/dashboards/charts/${kind}`, dataset.id);
   };
 
-  const renderChart = (kind: ExpandedChart["kind"], expanded = false) => {
-    if (kind === "category") {
-      return (
-        <div className={expanded ? "dashboard-category-chart expanded" : "dashboard-category-chart"}>
-          <div className="dashboard-axis-labels">
-            {["124500", "93375", "62250", "31125", "0"].map((label) => <span key={label}>{label}</span>)}
-          </div>
-          <div className="dashboard-category-bars">
-            {categorySales.map(([label, value]) => (
-              <span key={label} style={{ height: `${Math.max(28, Number(value) / (expanded ? 720 : 1200))}px` }}>
-                <i>{label}</i>
-              </span>
-            ))}
-          </div>
-        </div>
-      );
-    }
-
-    if (kind === "channels") {
-      return (
-        <div className={expanded ? "dashboard-donut-area expanded" : "dashboard-donut-area"}>
-          <div className="dashboard-donut" />
-          <div className="dashboard-channel-list">
-            {channelRows.map(([name, orders, revenue, share]) => (
-              <p key={name}><span>{name}</span><strong>{orders}</strong><em>{revenue}</em><small>{share}</small></p>
-            ))}
-          </div>
-        </div>
-      );
-    }
-
-    return (
-      <div className={expanded ? "dashboard-bar-chart expanded" : "dashboard-bar-chart"} aria-label="일별 주문 막대 차트">
-        {barSeries.map((value, index) => (
-          <span key={value + index} style={{ height: `${Math.max(26, expanded ? value * 1.5 : value)}px` }}>
-            <i>{["월", "화", "수", "목", "금", "토", "일"][index]}</i>
-          </span>
-        ))}
-      </div>
-    );
-  };
-
   if (view === "list") {
     return (
       <DashboardLandingPage
@@ -1130,12 +877,12 @@ export function DashboardPage({
       createToolbarWidget: createToolbarDraftWidget,
       deletePage: deleteRuntimePage,
       deleteWidget: deleteRuntimeWidget,
-      layoutCommit: commitRuntimeLayout,
+      layoutCommit: layoutHistory.commit,
       layoutRejected: () => setRuntimeNotice({ message: "위젯이 겹쳐 원래 위치로 되돌렸습니다.", tone: "error" }),
       openDraft: () => openRuntimeDashboard(runtimeSelection.dashboardId, "draft"),
       openPublished: () => openRuntimeDashboard(runtimeSelection.dashboardId, "published"),
       publishDraft: publishDraftRuntime,
-      redoLayout: redoRuntimeLayout,
+      redoLayout: layoutHistory.redo,
       refresh: refreshRuntimeDashboard,
       renamePage: renameRuntimePage,
       renameTitle: renameRuntimeDashboardTitle,
@@ -1148,7 +895,7 @@ export function DashboardPage({
       share: shareRuntimeDashboard,
       toggleDatasetSidebar: () => setIsDatasetSidebarOpen((open) => !open),
       previewWidget: previewRuntimeWidget,
-      undoLayout: undoRuntimeLayout,
+      undoLayout: layoutHistory.undo,
       updateWidget: updateRuntimeWidget,
     };
     const runtimeDatasetState = {
@@ -1164,8 +911,8 @@ export function DashboardPage({
       draftError,
       draftLoading,
       draftRuntime,
-      canRedoLayout: layoutRedoStack.length > 0,
-      canUndoLayout: layoutUndoStack.length > 0,
+      canRedoLayout: layoutHistory.canRedo,
+      canUndoLayout: layoutHistory.canUndo,
       hasPublishedRevision: runtimeHasPublishedRevision,
       isAddingPage: isAddingRuntimePage,
       isDatasetSidebarOpen,
@@ -1202,287 +949,77 @@ export function DashboardPage({
 
   if (view === "builder") {
     return (
-      <div className="dashboard-page dashboard-builder-page">
-        <DashboardWorkspaceHeader
-          isPublished={isPublished}
-          onBackToList={backToList}
-          onExport={exportDashboard}
-          onFullscreen={openDashboardFullscreen}
-          onPublish={publishDashboard}
-          onSave={saveDashboard}
-          onShare={shareDashboard}
-          onViewPublished={openPublishedView}
-          primaryTitle={isPublished ? "Published" : "Draft"}
-          title={isPublished ? dashboardTitle : activeSqlResult ? `${activeSqlResult.datasetName} SQL Result Draft` : "SQL Result Dashboard Draft"}
-        />
-        <div className="dashboard-builder-layout">
-          <aside className="dashboard-builder-side">
-            <section>
-              <h2>{activeSqlResult ? "SQL Result" : "Data"}</h2>
-              <div className="dashboard-source-card">
-                <Database size={18} />
-                <strong>{activeSqlResult ? activeSqlResult.datasetName : dataset.name}</strong>
-                <span>{activeSqlResult ? `${activeSqlResult.rowCount} result rows · ${activeSqlResult.columns.length} columns` : `${dataset.layer} · ${dataset.rows} rows`}</span>
-              </div>
-            </section>
-            {activeSqlResult && (
-              <section>
-                <h2>Query source</h2>
-                <div className="dashboard-field-map">
-                  <p><span>Run ID</span><strong>{activeSqlResult.runId}</strong></p>
-                  <p><span>Executed</span><strong>{new Date(activeSqlResult.executedAt).toLocaleTimeString()}</strong></p>
-                  <p><span>Columns</span><strong>{activeSqlResult.columns.slice(0, 3).join(", ")}</strong></p>
-                </div>
-              </section>
-            )}
-            <section>
-              <h2>Untitled page</h2>
-              <p>제목 없는 페이지</p>
-            </section>
-            <section>
-              <h2>Widget type</h2>
-              <div className="dashboard-widget-type-list">
-                {widgetTypes.map((widget) => (
-                  <SelectableCard
-                    className="dashboard-widget-type-card"
-                    description={widget.desc}
-                    key={widget.id}
-                    selected={selectedWidgetType === widget.id}
-                    title={widget.label}
-                    onClick={() => {
-                      setSelectedWidgetType(widget.id);
-                      onAction("dashboard.widget.type_selected", "/api/dashboards/widgets/types", widget.id);
-                    }}
-                  />
-                ))}
-              </div>
-            </section>
-            <section>
-              <h2>Field mapping</h2>
-              <div className="dashboard-field-map">
-                {widgetConfig[selectedWidgetType].fields.map(([label, value]) => (
-                  <p key={label}><span>{label}</span><strong>{value}</strong></p>
-                ))}
-              </div>
-            </section>
-          </aside>
-          <main className={builderWidgets.length ? "dashboard-builder-canvas has-widgets" : "dashboard-builder-canvas"}>
-            <PreviewPanel
-              actions={<button type="button" onClick={addWidgetToCanvas}><Plus size={16} /></button>}
-              className="dashboard-widget-preview-panel"
-              description={activeSqlResult ? `${activeSqlResult.datasetName} · SQL result` : `${dataset.name} · ${dataset.layer} source`}
-              eyebrow="WIDGET PREVIEW"
-              headerClassName="dashboard-card-header"
-              title={widgetConfig[selectedWidgetType].title}
-            >
-              <DashboardWidgetPreview columns={dashboardColumns} rows={dashboardRowsPreview} type={selectedWidgetType} />
-              <button className="primary-button" type="button" onClick={addWidgetToCanvas}><Plus size={16} /> 캔버스에 추가</button>
-            </PreviewPanel>
-            <section className="dashboard-canvas-draft">
-              <div className="dashboard-card-header">
-                <div>
-                  <span>DRAFT CANVAS</span>
-                  <h2>추가된 위젯</h2>
-                </div>
-                <button className="secondary-button" type="button" disabled={!builderWidgets.length} onClick={() => {
-                  setView("detail");
-                  onAction("dashboard.preview_opened", "/api/dashboards/preview", dataset.id);
-                }}>대시보드 미리보기</button>
-              </div>
-              {builderWidgets.length === 0 ? (
-                <div className="dashboard-empty-dropzone">
-                  <strong>아직 추가된 위젯이 없습니다.</strong>
-                  <span>왼쪽에서 유형과 필드를 확인한 뒤 캔버스에 추가하세요.</span>
-                </div>
-              ) : (
-                <div className="dashboard-draft-widget-grid">
-                  {builderWidgets.map((type, index) => (
-                    <article className="dashboard-draft-widget" key={`${type}-${index}`}>
-                      <div>
-                        <strong>{widgetConfig[type].title}</strong>
-                        <span>{widgetTypes.find((widget) => widget.id === type)?.label} · {activeSqlResult ? activeSqlResult.datasetName : dataset.name}</span>
-                      </div>
-                      <DashboardWidgetPreview columns={dashboardColumns} compact rows={dashboardRowsPreview} type={type} />
-                      <div className="dashboard-draft-actions">
-                        <button type="button" onClick={() => {
-                          setSelectedWidgetType(type);
-                          onAction("dashboard.widget.settings_opened", "/api/dashboards/widgets/settings", type);
-                        }}>설정</button>
-                        <button type="button" onClick={() => removeBuilderWidget(index)}>삭제</button>
-                      </div>
-                    </article>
-                  ))}
-                </div>
-              )}
-            </section>
-          </main>
-        </div>
-        <DashboardFooterMeta />
-        {expandedChart && (
-          <DashboardChartModal chart={expandedChart} onClose={() => setExpandedChart(null)}>
-            {renderChart(expandedChart.kind, true)}
-          </DashboardChartModal>
-        )}
-      </div>
+      <DashboardLegacyBuilderView
+        activeSqlResult={activeSqlResult}
+        builderWidgets={builderWidgets}
+        dataset={dataset}
+        expandedChart={expandedChart}
+        isPublished={isPublished}
+        model={legacyModel}
+        onAddWidget={addWidgetToCanvas}
+        onBackToList={backToList}
+        onCloseExpandedChart={() => setExpandedChart(null)}
+        onExport={exportDashboard}
+        onFullscreen={openDashboardFullscreen}
+        onOpenPreview={() => {
+          setView("detail");
+          onAction("dashboard.preview_opened", "/api/dashboards/preview", dataset.id);
+        }}
+        onOpenWidgetSettings={(type) => {
+          setSelectedWidgetType(type);
+          onAction("dashboard.widget.settings_opened", "/api/dashboards/widgets/settings", type);
+        }}
+        onPublish={publishDashboard}
+        onRemoveWidget={removeBuilderWidget}
+        onSave={saveDashboard}
+        onSelectWidgetType={(type) => {
+          setSelectedWidgetType(type);
+          onAction("dashboard.widget.type_selected", "/api/dashboards/widgets/types", type);
+        }}
+        onShare={shareDashboard}
+        onViewPublished={openPublishedView}
+        selectedWidgetType={selectedWidgetType}
+      />
     );
   }
 
   return (
-    <div className="dashboard-page dashboard-detail-page">
-      <DashboardWorkspaceHeader
-        isPublished={isPublished}
-        onBackToList={backToList}
-        onDraftEdit={() => {
-          setView("builder");
-          onAction("dashboard.draft_edit_opened", "/api/dashboards/draft", dataset.id);
-        }}
-        onExport={exportDashboard}
-        onFullscreen={openDashboardFullscreen}
-        onPublish={publishDashboard}
-        onSave={saveDashboard}
-        onShare={shareDashboard}
-        onViewPublished={openPublishedView}
-        primaryTitle={selectedDashboard ? dashboardStatusMeta[selectedDashboard.status].label : isPublished ? "Published" : "Draft"}
-        title={activeDashboardTitle}
-      />
-
-      <section className="dashboard-publish-card">
-        <div>
-          <strong>팀원이나 외부 협업자와 대시보드를 공유하고 권한을 관리하세요.</strong>
-          <span>링크가 있는 조직 내 모든 사용자가 이 대시보드를 볼 수 있습니다.</span>
-        </div>
-        <button className="secondary-button" type="button" onClick={shareDashboard}><Share2 size={16} /> Share</button>
-      </section>
-
-      <header className="dashboard-header compact">
-        <div>
-          <span>Dashboards</span>
-          <h1>대시보드 개요</h1>
-          <p>{activeSqlResult ? `${activeSqlResult.datasetName} SQL 결과 위젯을 배치한 게시용 대시보드입니다.` : `${dataset.name} 데이터셋과 SQL 결과 위젯을 함께 배치한 게시용 대시보드입니다.`}</p>
-        </div>
-      </header>
-
-      <section className="dashboard-filter-bar">
-        <div className="dashboard-filter-title">
-          <SlidersHorizontal size={16} />
-          <strong>필터</strong>
-        </div>
-        <SegmentedTabs
-          ariaLabel="대시보드 기간 필터"
-          className="dashboard-segmented"
-          items={["오늘", "최근 7일", "최근 30일"].map((item) => ({ label: item, value: item }))}
-          value={period}
-          onValueChange={(item) => changeFilter(item)}
-        />
-        <label>
-          <span>채널</span>
-          <select value={segment} onChange={(event) => changeFilter(period, event.target.value)}>
-            <option>전체 채널</option>
-            <option>Mobile</option>
-            <option>Web</option>
-            <option>Partner</option>
-          </select>
-        </label>
-        <button className="secondary-button" type="button" onClick={() => {
-          setBuilderWidgets([]);
-          setIsPublished(false);
-          setView("builder");
-          onAction("dashboard.created", "/api/dashboards", dataset.id);
-        }}><Plus size={16} /> 새 대시보드</button>
-      </section>
-
-      <section className="dashboard-metric-grid">
-        {metricCards.map(([label, value, delta, note]) => (
-          <article className="dashboard-metric-card" key={label}>
-            <span>{label}</span>
-            <strong>{value}</strong>
-            <div>
-              <em className={delta.startsWith("-") ? "down" : ""}>{delta}</em>
-              <small>{note}</small>
-            </div>
-          </article>
-        ))}
-      </section>
-
-      <div className="dashboard-layout">
-        <main className="dashboard-canvas">
-          <section className="dashboard-chart-card dashboard-category-card">
-            <div className="dashboard-card-header">
-              <div>
-                <span>CHART</span>
-                <h2>카테고리별 매출 (KRW)</h2>
-                <p>전자제품 · 의류 · 식료품 · 가구 · 취미용품</p>
-              </div>
-              <div className="dashboard-widget-toolbar">
-                <button type="button" onClick={() => openExpandedChart("category", "카테고리별 매출 (KRW)", "전자제품 · 의류 · 식료품 · 가구 · 취미용품")}><Maximize2 size={16} /></button>
-                <button type="button" onClick={() => requestDelete("category-sales")}>삭제</button>
-              </div>
-            </div>
-            {renderChart("category")}
-          </section>
-
-          <DashboardChartCard title="일별 주문/매출 추이" subtitle={`${period} · ${segment}`} onOpen={() => openExpandedChart("orders", "일별 주문/매출 추이", `${period} · ${segment}`)}>
-            {renderChart("orders")}
-          </DashboardChartCard>
-
-          <DashboardChartCard title="채널별 성과" subtitle="주문수 · 매출 · 비중" onOpen={() => openExpandedChart("channels", "채널별 성과", "주문수 · 매출 · 비중")}>
-            {renderChart("channels")}
-          </DashboardChartCard>
-
-          <section className="dashboard-table-card">
-            <div className="dashboard-card-header">
-              <div>
-                <span>RESULT TABLE</span>
-                <h2>{dataset.name} 샘플 결과</h2>
-              </div>
-              <Table2 size={18} />
-            </div>
-            <div className="dashboard-table-scroll">
-              <table className="schema-table">
-                <thead><tr>{dashboardColumns.slice(0, 5).map((column, index) => <th key={`${column}-${index}`}>{column}</th>)}</tr></thead>
-                <tbody>{dashboardRowsPreview.map((row, rowIndex) => <tr key={`dashboard-row-${rowIndex}`}>{row.slice(0, 5).map((cell, cellIndex) => <td key={`${rowIndex}-${cellIndex}`}>{cell}</td>)}</tr>)}</tbody>
-              </table>
-            </div>
-          </section>
-        </main>
-
-        <aside className="dashboard-side-panel">
-          <section>
-            <h2>데이터 연결</h2>
-            <div className="dashboard-source-card">
-              <Database size={18} />
-              <strong>{dataset.name}</strong>
-              <span>{dataset.layer} · {dataset.rows} rows</span>
-              <DatasetStatusBadge dataset={dataset} />
-            </div>
-          </section>
-          <section>
-            <h2>대시보드 목록</h2>
-            {sidebarDashboards.slice(0, 3).map((dashboard) => (
-              <button key={dashboard.id} type="button" onClick={() => openDetail(dashboard)}>
-                <strong>{dashboard.name}</strong>
-                <span>{dashboardStatusMeta[dashboard.status].label}</span>
-                <small>{dashboard.meta}</small>
-              </button>
-            ))}
-          </section>
-          <section>
-            <h2>공유 상태</h2>
-            <div className="dashboard-share-box">
-              <ShieldCheck size={18} />
-              <strong>팀 내부 공개</strong>
-              <span>analytics, platform 그룹에 읽기 권한이 부여되어 있습니다.</span>
-            </div>
-          </section>
-        </aside>
-      </div>
-      <DashboardFooterMeta />
-      {expandedChart && (
-        <DashboardChartModal chart={expandedChart} onClose={() => setExpandedChart(null)}>
-          {renderChart(expandedChart.kind, true)}
-        </DashboardChartModal>
-      )}
-      {deleteTarget && <DashboardDeleteModal onCancel={() => setDeleteTarget(null)} onDelete={confirmDelete} />}
-    </div>
+    <DashboardLegacyDetailView
+      activeDashboardTitle={activeDashboardTitle}
+      activeSqlResult={activeSqlResult}
+      dataset={dataset}
+      deleteRequested={Boolean(deleteTarget)}
+      expandedChart={expandedChart}
+      isPublished={isPublished}
+      model={legacyModel}
+      onBackToList={backToList}
+      onCancelDelete={() => setDeleteTarget(null)}
+      onChangeFilter={changeFilter}
+      onCloseExpandedChart={() => setExpandedChart(null)}
+      onConfirmDelete={confirmDelete}
+      onCreateDashboard={() => {
+        setBuilderWidgets([]);
+        setIsPublished(false);
+        setView("builder");
+        onAction("dashboard.created", "/api/dashboards", dataset.id);
+      }}
+      onDraftEdit={() => {
+        setView("builder");
+        onAction("dashboard.draft_edit_opened", "/api/dashboards/draft", dataset.id);
+      }}
+      onExport={exportDashboard}
+      onFullscreen={openDashboardFullscreen}
+      onOpenDashboard={openDetail}
+      onOpenExpandedChart={openExpandedChart}
+      onPublish={publishDashboard}
+      onRequestDelete={requestDelete}
+      onSave={saveDashboard}
+      onShare={shareDashboard}
+      onViewPublished={openPublishedView}
+      period={period}
+      segment={segment}
+      selectedDashboard={selectedDashboard}
+      sidebarDashboards={sidebarDashboards}
+    />
   );
 }
