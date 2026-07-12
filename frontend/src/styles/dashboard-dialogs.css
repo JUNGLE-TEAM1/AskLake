@@ -1,0 +1,60 @@
+.danger-button {
+  background: #dc2626;
+}
+
+.dashboard-chart-modal-panel {
+  display: grid;
+  max-height: calc(100vh - 56px);
+  overflow: hidden;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 28px 90px rgba(15, 23, 42, 0.28);
+}
+
+.dashboard-chart-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.dashboard-chart-modal-header div {
+  display: grid;
+  gap: 6px;
+}
+
+.dashboard-chart-modal-header span {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.dashboard-chart-modal-header h2 {
+  color: #0f172a;
+  font-size: 22px;
+  line-height: 1.25;
+}
+
+.dashboard-chart-modal-header p {
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.dashboard-chart-modal-header button {
+  min-height: 36px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #fff;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 850;
+  padding: 0 14px;
+}
+
+.dashboard-chart-modal-body {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 18px;
+}

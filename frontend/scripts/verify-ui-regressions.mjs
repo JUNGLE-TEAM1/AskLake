@@ -1,9 +1,24 @@
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 
 const root = resolve(import.meta.dirname, "..");
 
-const read = (path) => readFileSync(resolve(root, path), "utf8");
+const readCssWithLocalImports = (filePath, visited = new Set()) => {
+  if (visited.has(filePath)) return "";
+  visited.add(filePath);
+
+  return readFileSync(filePath, "utf8").replace(
+    /@import\s+["'](\.\/[^"']+)["'];/g,
+    (_, importPath) => readCssWithLocalImports(resolve(dirname(filePath), importPath), visited),
+  );
+};
+
+const read = (path) => {
+  const filePath = resolve(root, path);
+  return path.endsWith(".css")
+    ? readCssWithLocalImports(filePath)
+    : readFileSync(filePath, "utf8");
+};
 
 const checks = [
   {
@@ -457,7 +472,7 @@ const checks = [
   },
   {
     name: "Dashboard edit toolbar separates active tools from action buttons",
-    file: "src/pages/dashboard/runtime/DashboardRuntimeView.tsx",
+    file: "src/pages/dashboard/runtime/DashboardEditToolbar.tsx",
     patterns: [
       /import \{ ButtonGroup \} from "@\/components\/ui\/button-group";/,
       /import \{ ToggleGroup, ToggleGroupItem \} from "@\/components\/ui\/toggle-group";/,
