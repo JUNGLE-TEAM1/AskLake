@@ -160,6 +160,59 @@ class GeneratorTests(unittest.TestCase):
             self.assertGreaterEqual(first_stats["order_completed_session_conversion_pct"], 1.0)
             self.assertLessEqual(first_stats["order_completed_session_conversion_pct"], 3.0)
 
+    def test_size_limit_stops_at_a_complete_session_boundary(self) -> None:
+        profiles = generate.generate_users(120, 9102, self.start, self.end)
+        products = sample_products()
+        with tempfile.TemporaryDirectory() as directory:
+            full = Path(directory) / "full.jsonl"
+            capped = Path(directory) / "capped.jsonl"
+            repeated = Path(directory) / "repeated.jsonl"
+            generate.generate_events(profiles, products, full, 9102, self.start, self.end)
+
+            session_chunks: list[bytes] = []
+            current_session = None
+            current_lines: list[bytes] = []
+            for line in full.read_bytes().splitlines(keepends=True):
+                session_id = json.loads(line)["session_id"]
+                if current_session is not None and session_id != current_session:
+                    session_chunks.append(b"".join(current_lines))
+                    current_lines = []
+                current_session = session_id
+                current_lines.append(line)
+            if current_lines:
+                session_chunks.append(b"".join(current_lines))
+
+            self.assertGreater(len(session_chunks), 11)
+            accepted_prefix = b"".join(session_chunks[:10])
+            next_session = session_chunks[10]
+            byte_limit = len(accepted_prefix) + max(1, len(next_session) // 2)
+
+            stats = generate.generate_events(
+                profiles,
+                products,
+                capped,
+                9102,
+                self.start,
+                self.end,
+                max_bytes=byte_limit,
+            )
+            repeated_stats = generate.generate_events(
+                profiles,
+                products,
+                repeated,
+                9102,
+                self.start,
+                self.end,
+                max_bytes=byte_limit,
+            )
+
+            self.assertEqual(capped.read_bytes(), accepted_prefix)
+            self.assertEqual(capped.read_bytes(), repeated.read_bytes())
+            self.assertEqual(stats, repeated_stats)
+            self.assertLessEqual(capped.stat().st_size, byte_limit)
+            self.assertTrue(stats["size_limit_reached"])
+            self.assertEqual(stats["bytes_written"], capped.stat().st_size)
+
     def test_analyzer_rejects_malformed_and_unsupported_events(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "events.jsonl"

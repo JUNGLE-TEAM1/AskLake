@@ -225,6 +225,7 @@ FastAPI Pair2 smoke:
 - `npm run verify:airflow-catalog-wiring`은 Airflow runtime 없이 실제 mode의 Catalog endpoint 경로, bearer token, `jobId` body, 최소 XCom 결과, smoke 우회, Run identity mismatch, Catalog HTTP 실패 전파를 확인한다.
 - `npm run verify:airflow-spark`는 ETL Job 생성, Airflow 비동기 접수, authenticated FastAPI internal execution, 실제 PySpark 2행 처리, MinIO Parquet object, terminal Run/task/Spark manifest 동기화를 확인한다. `ASKLAKE_FASTAPI_ETL_EXPECT_SPARK_FAILURE=true`를 주면 Quality `Fail Run`의 Spark/Airflow/AskLake 실패 전파를 검사한다.
 - `npm run verify:fastapi-etl-catalog`는 같은 script의 기존 호환 이름이다. Airflow URL이 없으면 내장 mock 계약을 확인하고, 실제 Airflow URL을 사용하면 Spark 성공 뒤 `catalogResult`, Catalog dataset, materialization, physical size, lineage까지 검사한다.
+- `ASKLAKE_FASTAPI_ETL_PROFILE=synthetic-commerce`는 MinIO의 256MiB 이하 단일 JSONL 객체를 실제 선택 payload로 schema inference하고, row limit 없이 Spark→Parquet→Catalog→SQL까지 검증한다. 큰 schema preview를 FastAPI Node bridge로 전달할 때 marker stdout이 flush되기 전에 강제 종료하지 않아야 한다.
 - `npm run verify:etl-lineage`는 text source 하나가 `text`, `sentiment`, `severity`로 파생되는 경우 source node가 `text`만 갖고 one-to-many transform edge를 만들며 `_asklake_*` metadata에 가짜 source edge를 만들지 않는지 확인한다. 또한 Parquet source를 `SOURCE · PARQUET`, Spark Job을 `PROCESS · SPARK`, 현재 Spark physical output을 요청 포맷과 무관하게 실제 `PARQUET` engine으로 표시하는지 검증한다.
 - `python3 scripts/verify-etl-job-hydrate-contract.py`는 저장된 Kafka source/schema/rule/permission/target metadata가 `JobRowData` hydrate 응답에서 손실되지 않는지 확인한다.
 - `python3 scripts/verify-etl-job-update-contract.py`는 update request가 source field를 거부하고 source config를 보존한 채 editable metadata만 반영하는지, 성공 Run 뒤 target identity 변경이 `422`로 막히는지, 실행 중 update가 `409`로 막히는지 확인한다.
@@ -260,6 +261,14 @@ Live Airflow verification through 2026-07-11:
 - Airflow `publish_run_result` -> Catalog endpoint: pass, real Spark/MinIO output published with matching Run id/path, positive bytes, one materialization, and 3-node lineage
 - concurrent polling evidence preservation: pass, stale session could not erase committed `sparkResult`
 - frontend terminal-success Catalog refresh: pass, active Run id에서 success로 전환된 뒤 `GET /api/catalog/datasets` 1회 호출, 이전 success 조기 재조회 없음, page/session reload 없음, UI/server 2 runs · 4 rows · 2.9 KB 일치
+
+Synthetic commerce 256MiB single-object verification through 2026-07-12:
+
+- input object: pass, 268,434,527 bytes (255.999 MiB), SHA-256 `e78c8485655cd76ac322a23696f50b4c34ea76a5f3add22a8cd362406e20cb49`
+- source schema inference: pass, selected JSONL object including flattened `properties.*` fields
+- Spark full run: pass, input/output 762,390 rows with no execution row limit
+- Parquet/Catalog: pass, 17,808,509 physical bytes and Catalog dataset publication
+- SQL preview: pass, 186,918 impression sessions, 10,648 purchase-click sessions, 3,960 completed-order sessions, 2.119% session order conversion
 
 ## 7. 완료 기준
 

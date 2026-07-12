@@ -180,6 +180,26 @@ Connector-backed jobs such as REST, PostgreSQL, and MongoDB write bounded sample
 
 Text structuring runs must also verify `quality.reviewRowAnalysisChecks`, `textStructuring.execution`, `runHistory[].textStructuringExecution`, and Catalog `materializationRuns[].textStructuringExecution`. `one_of_values` columns without a compatible model fail preflight unless the column explicitly sets `fallbackAllowed: true`.
 
+### 256MiB synthetic commerce single-object profile
+
+`backend/tmp/synthetic-commerce-256mib/manifest.json`과 동일한 이벤트 파일을 `m3-raw/synthetic-commerce/issue-623/commerce_events-256mib.jsonl`에 업로드한 뒤 다음 명령을 실행한다.
+
+```bash
+cd backend
+ASKLAKE_FASTAPI_PYTHON=.venv/bin/python \
+ASKLAKE_FASTAPI_ETL_PROFILE=synthetic-commerce \
+ASKLAKE_FASTAPI_ETL_AIRFLOW_MOCK=true \
+ASKLAKE_SPARK_OUTPUT_MODE=local \
+ASKLAKE_SPARK_RUN_ROW_LIMIT=0 \
+MINIO_ENDPOINT=http://127.0.0.1:9000 \
+MINIO_ENDPOINT_IN_DOCKER=http://host.docker.internal:9000 \
+npm run verify:fastapi-etl-catalog
+```
+
+이 profile은 UI가 단일 객체를 클릭할 때 사용하는 `__Selected Object`와 `__Sample Object`를 포함해 schema inference를 호출한다. 이어서 manifest 행 수와 Spark input/output 행 수를 비교하고, Parquet 물리 파일과 Catalog dataset을 확인한 뒤 DuckDB SQL preview의 세션 주문 전환율을 generator 분석값과 비교한다. `ASKLAKE_SPARK_RUN_ROW_LIMIT=0`을 유지해야 256MiB object 전체 검증이 되며, S3A source이므로 출력이 local이어도 Hadoop AWS package가 필요하다.
+
+MinIO와 Spark가 다른 Compose network에 있으면 `m3-minio` DNS 이름이 Spark에서 해석되지 않는다. 이 경우 Docker Desktop에서는 `MINIO_ENDPOINT_IN_DOCKER=http://host.docker.internal:9000`을 사용하거나 두 서비스를 같은 Docker network에 연결한다.
+
 ## 8. Kafka Continuous Large-Data Soak
 
 Continuous soak는 `ASKLAKE_RUN_KAFKA_CONTINUOUS_SOAK=true`일 때만 실행한다. `ASKLAKE_CONTINUOUS_SOAK_INPUT`을 생략하면 synthetic event를 만들고, 지정하면 `.jsonl` 또는 `.jsonl.gz`를 line streaming으로 읽는다. 전체 Electronics 파일은 CI가 아니라 수동 환경에서 실행하며, `ASKLAKE_CONTINUOUS_SOAK_COUNT`를 생략하면 파일 끝까지 replay한다.

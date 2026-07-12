@@ -124,6 +124,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=20260711)
     parser.add_argument("--start-date", default="2026-06-01")
     parser.add_argument("--days", type=int, default=30)
+    parser.add_argument(
+        "--max-events-file-mib",
+        type=float,
+        help=(
+            "stop before the next complete session would make commerce_events.jsonl "
+            "exceed this MiB limit"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -480,9 +488,13 @@ def choose_product(
 
 
 def write_event(handle: Any, event: dict[str, Any]) -> int:
-    encoded = json.dumps(event, ensure_ascii=False, separators=(",", ":"))
-    handle.write(encoded + "\n")
-    return len(encoded.encode("utf-8")) + 1
+    line = encode_event(event)
+    handle.write(line)
+    return len(line.encode("utf-8"))
+
+
+def encode_event(event: dict[str, Any]) -> str:
+    return json.dumps(event, ensure_ascii=False, separators=(",", ":")) + "\n"
 
 
 def generate_events(
@@ -492,7 +504,11 @@ def generate_events(
     seed: int,
     start: datetime,
     end: datetime,
+    max_bytes: int | None = None,
 ) -> dict[str, Any]:
+    if max_bytes is not None and max_bytes <= 0:
+        raise ValueError("max_bytes must be positive")
+
     rng = random.Random(seed + 202)
     by_category: dict[str, list[Product]] = defaultdict(list)
     for product in products:
@@ -511,6 +527,7 @@ def generate_events(
     checkout_count = 0
     order_count = 0
     bytes_written = 0
+    size_limit_reached = False
     session_means = {"casual": 3.0, "regular": 8.0, "power": 20.0}
     # Effects are deliberately visible but moderate. Applying huge multipliers
     # would make SQL results look scripted instead of sampled from a population.
@@ -529,8 +546,10 @@ def generate_events(
 
             sessions_for_user = poisson(rng, session_means[profile.activity_tier])
             for _ in range(sessions_for_user):
-                session_count += 1
-                session_id = f"SES-{session_count:08d}"
+                next_session_count = session_count + 1
+                session_id = f"SES-{next_session_count:08d}"
+                session_events: list[dict[str, Any]] = []
+                session_product_exposure: set[str] = set()
                 device = actual_device(rng, user["primary_device"])
                 referrer = actual_referrer(rng, user["acquisition_channel"])
                 span_seconds = max(1, int((end - eligible_start).total_seconds()))
@@ -558,24 +577,20 @@ def generate_events(
                     current_time += timedelta(seconds=rng.randint(4, 40))
                     if current_time >= end:
                         break
-                    product_exposure.add(product.product_id)
+                    session_product_exposure.add(product.product_id)
 
                     def emit(
                         event_type: str,
                         page_url: str,
                         properties: dict[str, Any] | None = None,
                     ) -> None:
-                        nonlocal event_count, bytes_written
-                        event_count += 1
-                        event_counts[event_type] += 1
+                        event_number = event_count + len(session_events) + 1
                         event_source = EVENT_SOURCE_BY_TYPE[event_type]
-                        event_source_counts[event_source] += 1
-                        event_sessions[event_type].add(session_id)
                         event_properties = {"position": position}
                         if properties:
                             event_properties.update(properties)
                         event = {
-                            "event_id": f"EVT-{event_count:09d}",
+                            "event_id": f"EVT-{event_number:09d}",
                             "schema_version": EVENT_SCHEMA_VERSION,
                             "event_source": event_source,
                             "user_id": user["user_id"],
@@ -588,7 +603,7 @@ def generate_events(
                             "referrer": referrer,
                             "properties": event_properties,
                         }
-                        bytes_written += write_event(handle, event)
+                        session_events.append(event)
 
                     search_url = f"/search?category={quote_plus(category)}"
                     emit("product_impression", search_url)
@@ -664,6 +679,26 @@ def generate_events(
                         {**funnel_properties, "order_id": order_id},
                     )
 
+                session_lines = [encode_event(event) for event in session_events]
+                session_bytes = sum(len(line.encode("utf-8")) for line in session_lines)
+                if max_bytes is not None and bytes_written + session_bytes > max_bytes:
+                    size_limit_reached = True
+                    break
+
+                session_count = next_session_count
+                event_count += len(session_events)
+                bytes_written += session_bytes
+                product_exposure.update(session_product_exposure)
+                handle.write("".join(session_lines))
+                for event in session_events:
+                    event_type = event["event_type"]
+                    event_counts[event_type] += 1
+                    event_source_counts[event["event_source"]] += 1
+                    event_sessions[event_type].add(session_id)
+
+            if size_limit_reached:
+                break
+
     impression_sessions = len(event_sessions["product_impression"])
     completed_sessions = len(event_sessions["order_completed"])
     return {
@@ -681,6 +716,8 @@ def generate_events(
         "products_exposed": len(product_exposure),
         "product_coverage_pct": round(len(product_exposure) / len(products) * 100, 2),
         "bytes_written": bytes_written,
+        "size_limit_bytes": max_bytes,
+        "size_limit_reached": size_limit_reached,
     }
 
 
@@ -706,6 +743,8 @@ def main() -> None:
         raise SystemExit(f"product source does not exist: {product_source_path}")
     if args.products <= 0 or args.users <= 0 or args.days <= 0:
         raise SystemExit("products, users, and days must be positive")
+    if args.max_events_file_mib is not None and args.max_events_file_mib <= 0:
+        raise SystemExit("max-events-file-mib must be positive")
 
     output_dir = args.output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -739,7 +778,20 @@ def main() -> None:
     events_path = output_dir / "commerce_events.jsonl"
     write_csv(products_path, PRODUCT_COLUMNS, (item.as_csv_row() for item in products))
     write_csv(users_path, USER_COLUMNS, (item.public for item in profiles))
-    event_stats = generate_events(profiles, products, events_path, args.seed, start, end)
+    max_events_file_bytes = (
+        int(args.max_events_file_mib * 1024 * 1024)
+        if args.max_events_file_mib is not None
+        else None
+    )
+    event_stats = generate_events(
+        profiles,
+        products,
+        events_path,
+        args.seed,
+        start,
+        end,
+        max_bytes=max_events_file_bytes,
+    )
 
     files = {}
     for path in (products_path, users_path, events_path):
@@ -750,7 +802,7 @@ def main() -> None:
         }
 
     manifest = {
-        "generator_version": 2,
+        "generator_version": 3,
         "event_schema_version": EVENT_SCHEMA_VERSION,
         "seed": args.seed,
         "source_file": original_source_file,
@@ -761,7 +813,16 @@ def main() -> None:
         "counts": {
             "products": len(products),
             "users": len(profiles),
-            **{key: value for key, value in event_stats.items() if key != "bytes_written"},
+            **{
+                key: value
+                for key, value in event_stats.items()
+                if key not in {"bytes_written", "size_limit_bytes", "size_limit_reached"}
+            },
+        },
+        "generation_limits": {
+            "events_file_max_bytes": event_stats["size_limit_bytes"],
+            "events_file_max_mib": args.max_events_file_mib,
+            "stopped_before_next_session": event_stats["size_limit_reached"],
         },
         "product_selection": selection_stats,
         "public_user_columns": list(USER_COLUMNS),

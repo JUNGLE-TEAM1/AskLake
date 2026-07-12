@@ -570,6 +570,37 @@ python3 backend/scripts/synthetic-commerce/analyze.py \
 python3 backend/scripts/synthetic-commerce/test_generate.py
 ```
 
+256MiB 이하 단일 이벤트 파일을 만들 때는 충분한 사용자 후보를 주고 선택형 한도를 지정한다. generator는 다음 세션 전체를 쓰면 한도를 넘는 시점에 그 세션을 제외하므로 퍼널 중간을 자르지 않는다.
+
+```bash
+python3 backend/scripts/synthetic-commerce/generate.py \
+  --products-csv backend/fixtures/synthetic-commerce/products.csv \
+  --output-dir backend/tmp/synthetic-commerce-256mib \
+  --products 10000 \
+  --users 40000 \
+  --seed 20260711 \
+  --start-date 2026-06-01 \
+  --days 30 \
+  --max-events-file-mib 256
+
+python3 backend/scripts/synthetic-commerce/analyze.py \
+  --data-dir backend/tmp/synthetic-commerce-256mib
+```
+
+생성 파일을 `m3-raw/synthetic-commerce/issue-623/commerce_events-256mib.jsonl` 단일 객체로 업로드한 뒤 아래 profile로 Source schema → 전체 Spark → Parquet → Catalog → SQL을 한 번에 확인한다. `ASKLAKE_SPARK_RUN_ROW_LIMIT=0`은 sample이 아니라 전체 파일 처리라는 뜻이다. MinIO가 Spark와 다른 Compose network에 있으면 Docker Desktop의 host gateway를 사용한다.
+
+```bash
+cd backend
+ASKLAKE_FASTAPI_PYTHON=.venv/bin/python \
+ASKLAKE_FASTAPI_ETL_PROFILE=synthetic-commerce \
+ASKLAKE_FASTAPI_ETL_AIRFLOW_MOCK=true \
+ASKLAKE_SPARK_OUTPUT_MODE=local \
+ASKLAKE_SPARK_RUN_ROW_LIMIT=0 \
+MINIO_ENDPOINT=http://127.0.0.1:9000 \
+MINIO_ENDPOINT_IN_DOCKER=http://host.docker.internal:9000 \
+npm run verify:fastapi-etl-catalog
+```
+
 상품 표본까지 다시 선택할 때는 `--products-csv` 대신 `--source /path/to/meta_Electronics.jsonl`을 사용한다. canonical 이벤트 파일은 `commerce_events.jsonl`이며 기존 `click_events.jsonl`을 이름만 바꿔 사용하지 않는다.
 
 분석기는 생성 결과를 SQLite에 적재해 `analysis-result.json`과 `insights.md`를 만든다. 세션 주문 완료 전환율 1~3%, 단계별 감소, event ID와 checkout/order 무결성, acquisition channel·membership tier·device·category별 전환 차이, 완료 주문 금액 분석이 모두 통과해야 검증 완료로 본다. 생성 규칙, 컬럼 계약, 인사이트 품질 기준과 산출물 커밋 정책은 `backend/scripts/synthetic-commerce/README.md`를 따른다.

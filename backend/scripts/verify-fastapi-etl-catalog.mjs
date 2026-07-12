@@ -1,6 +1,6 @@
 import { ListObjectsV2Command, S3Client } from "@aws-sdk/client-s3";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,6 +20,7 @@ const airflowSyncPollIntervalMs = positiveNumber(process.env.ASKLAKE_FASTAPI_ETL
 const airflowSyncTimeoutMs = positiveNumber(process.env.ASKLAKE_FASTAPI_ETL_AIRFLOW_TIMEOUT_MS, 600000);
 const configuredSparkOutputMode = process.env.ASKLAKE_SPARK_OUTPUT_MODE || "local";
 const expectSparkFailure = process.env.ASKLAKE_FASTAPI_ETL_EXPECT_SPARK_FAILURE === "true";
+const smokeProfile = process.env.ASKLAKE_FASTAPI_ETL_PROFILE || "default";
 const env = {
   ...process.env,
   AIRFLOW_API_BASE_URL: airflowBaseUrl,
@@ -29,9 +30,14 @@ const env = {
   AIRFLOW_REQUEST_TIMEOUT_SECONDS: process.env.AIRFLOW_REQUEST_TIMEOUT_SECONDS || "5",
   AIRFLOW_UI_BASE_URL: process.env.AIRFLOW_UI_BASE_URL || airflowBaseUrl,
   ASKLAKE_SPARK_HADOOP_AWS_PACKAGE: process.env.ASKLAKE_SPARK_HADOOP_AWS_PACKAGE
-    || (configuredSparkOutputMode.toLowerCase() === "s3a" ? "org.apache.hadoop:hadoop-aws:3.4.1" : "none"),
+    || (
+      configuredSparkOutputMode.toLowerCase() === "s3a" || smokeProfile === "synthetic-commerce"
+        ? "org.apache.hadoop:hadoop-aws:3.4.1"
+        : "none"
+    ),
   ASKLAKE_SPARK_OUTPUT_MODE: configuredSparkOutputMode,
-  ASKLAKE_SPARK_RUN_ROW_LIMIT: process.env.ASKLAKE_SPARK_RUN_ROW_LIMIT || "2",
+  ASKLAKE_SPARK_RUN_ROW_LIMIT: process.env.ASKLAKE_SPARK_RUN_ROW_LIMIT
+    || (smokeProfile === "synthetic-commerce" ? "0" : "2"),
   LOCAL_LAKE_STORAGE_DIR: process.env.LOCAL_LAKE_STORAGE_DIR || path.join(backendDir, "tmp", "smoke-lake"),
   PYTHONPATH: [backendDir, process.env.PYTHONPATH].filter(Boolean).join(path.delimiter),
 };
@@ -42,6 +48,7 @@ let smokeJobId = "";
 let smokeDatasetId = "";
 let smokeRunId = "";
 let smokeOutputPath = "";
+let smokeSqlRunId = "";
 const mockAirflowRuns = new Map();
 
 try {
@@ -62,6 +69,11 @@ async function runSmoke() {
 
   await waitForHealth();
   await assertInternalExecutionAuth();
+
+  if (smokeProfile === "synthetic-commerce") {
+    await runSyntheticCommerceSmoke();
+    return;
+  }
 
   const suffix = Date.now().toString(36);
   const targetDataset = `fastapi_etl_catalog_smoke_${suffix}`;
@@ -229,6 +241,180 @@ async function runSmoke() {
   console.log("verify-fastapi-etl-catalog: ok");
 }
 
+async function runSyntheticCommerceSmoke() {
+  assert(shouldStartAirflowMock, "Synthetic commerce smoke requires the built-in Airflow mock.");
+  const manifestPath = process.env.ASKLAKE_SYNTHETIC_COMMERCE_MANIFEST
+    || path.join(backendDir, "tmp", "synthetic-commerce-256mib", "manifest.json");
+  assert(existsSync(manifestPath), `Synthetic commerce manifest does not exist: ${manifestPath}`);
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  const expectedRows = Number(manifest.counts?.event_count || 0);
+  const expectedSessionCounts = manifest.counts?.event_type_session_counts || {};
+  assert(expectedRows > 0, "Synthetic commerce manifest should include a positive event_count.");
+  assert(
+    Number(manifest.files?.["commerce_events.jsonl"]?.bytes) <= 256 * 1024 * 1024,
+    "Synthetic commerce event file should not exceed 256 MiB.",
+  );
+
+  const sourceBucket = process.env.ASKLAKE_SYNTHETIC_COMMERCE_BUCKET || "m3-raw";
+  const sourceKey = process.env.ASKLAKE_SYNTHETIC_COMMERCE_KEY
+    || "synthetic-commerce/issue-623/commerce_events-256mib.jsonl";
+  const sourceConfig = [
+    ["Storage Provider", "MinIO"],
+    ["Endpoint URL", process.env.MINIO_ENDPOINT || "http://127.0.0.1:9000"],
+    ["Region", process.env.MINIO_REGION || "us-east-1"],
+    ["Bucket / Stage Name", sourceBucket],
+    ["Path / Prefix", sourceKey],
+    ["File Type", "JSONL"],
+    ["__Selected Object", sourceKey],
+    ["__Sample Object", sourceKey],
+    ["Access Key", process.env.MINIO_ACCESS_KEY || "m3admin"],
+    ["Secret Key", process.env.MINIO_SECRET_KEY || "wishuponastar"],
+    ["Use Path Style", "true"],
+    ["__Schema Sample Scope", "full"],
+    ["__Source Unit Count", "1"],
+  ];
+  const sourceTest = await post("/api/etl/sources/test", {
+    sourceConfig,
+    sourceType: "File / S3",
+  });
+  assert(sourceTest.status === "success", "Synthetic commerce MinIO source test should succeed.");
+  const inferredColumns = sourceTest.draftPatch?.schema?.columns || [];
+  const requiredNames = [
+    "event_id",
+    "schema_version",
+    "event_source",
+    "user_id",
+    "session_id",
+    "event_time",
+    "event_type",
+    "product_id",
+    "device_type",
+    "referrer",
+  ];
+  const inferredByName = new Map(
+    inferredColumns.map((column) => [column.sourceName || column.targetName, column]),
+  );
+  const schemaColumns = requiredNames.map((name) => {
+    const column = inferredByName.get(name);
+    assert(column, `Source schema inference should include ${name}.`);
+    return { ...column, included: true, nullable: false, sourceName: name, targetName: name };
+  });
+  const sourceColumnIndexes = schemaColumns.map((column) => (
+    inferredColumns.findIndex((candidate) => (
+      (candidate.sourceName || candidate.targetName) === column.sourceName
+    ))
+  ));
+  const schemaSampleRows = (sourceTest.draftPatch?.schema?.sampleRows || []).map((row) => (
+    sourceColumnIndexes.map((index) => row[index])
+  ));
+
+  const suffix = Date.now().toString(36);
+  const targetDataset = `synthetic_commerce_256mib_${suffix}`;
+  const create = await post("/api/etl/jobs", {
+    id: `synthetic-commerce-256mib-${suffix}`,
+    jobName: `Synthetic Commerce 256MiB ${suffix}`,
+    owner: "admin",
+    permissionRoles: [{ access: ["조회", "쿼리 실행"], checked: true, name: "Data Engineer Group" }],
+    permissionSummary: "admin",
+    rag: false,
+    retryPolicy: { backoffMultiplier: 2, backoffStrategy: "exponential", failureAction: "retry_then_fail", initialRetryDelayMinutes: 1, maxRetries: 0, maxRetryDelayMinutes: 30, retryIntervalMinutes: 1, timeoutMinutes: 60 },
+    retryPolicySummary: "재시도 없음 · 재시도 후 실패 처리",
+    runLimitSummary: "60분 초과 시 Run 실패 처리",
+    ruleSummary: "256MiB single-object full Spark validation",
+    transformOutputColumns: schemaColumns.map((column) => [column.targetName, column.type]),
+    transformSteps: [],
+    qualityInvalidRows: [],
+    qualityRules: [],
+    qualityScore: 100,
+    qualityStatus: "pass",
+    scheduleLabel: "manual",
+    schemaColumns,
+    schemaSampleRows,
+    schemaSummary: sourceTest.draftPatch?.schema?.summary || "Synthetic commerce JSONL schema",
+    sourceConfig,
+    sourceLabel: `${sourceBucket}/${sourceKey}`,
+    sourceType: "File / S3",
+    targetDataset,
+    compression: "Snappy",
+    partition: "event_type",
+    partitionColumns: ["event_type"],
+    storagePath: "",
+    storageType: "Local",
+    targetFormat: "Parquet",
+    targetLayer: "GOLD",
+  });
+  assert(create.job?.id, "Synthetic commerce ETL create response should include job.id.");
+  smokeJobId = create.job.id;
+  smokeDatasetId = create.catalogTarget.id;
+
+  const command = await post(`/api/etl/jobs/${encodeURIComponent(create.job.id)}/commands`, {
+    command: "run",
+  });
+  smokeRunId = command.run?.runId || "";
+  assert(command.run?.status === "queued", "Synthetic commerce run should be queued.");
+  const execution = await postExecution(
+    `/api/internal/airflow/spark-runs/${encodeURIComponent(smokeRunId)}/execute`,
+    { command: "run", jobId: create.job.id },
+  );
+  assert(execution.status === "success", `Synthetic commerce Spark execution failed: ${execution.error}`);
+  assert(Number(execution.inputRows) === expectedRows, `Spark input rows should equal manifest: ${execution.inputRows} != ${expectedRows}`);
+  assert(Number(execution.outputRows) === expectedRows, `Spark output rows should equal manifest: ${execution.outputRows} != ${expectedRows}`);
+  smokeOutputPath = execution.outputPath;
+  const catalogResult = await postExecution(
+    `/api/internal/airflow/spark-runs/${encodeURIComponent(smokeRunId)}/catalog`,
+    { jobId: create.job.id },
+  );
+  assert(catalogResult.dataset?.id === create.catalogTarget.id, "Catalog should publish the Spark result.");
+
+  const syncedJob = await waitForTerminalJob(create.job.id);
+  const latestRun = syncedJob.runHistory?.find((run) => run.runId === smokeRunId);
+  assert(latestRun?.status === "success", `Synthetic commerce run should finish successfully: ${latestRun?.status}`);
+  assert(
+    Number(latestRun?.taskStates?.sparkResult?.inputRows) === expectedRows,
+    "Persisted Spark result inputRows should equal the manifest.",
+  );
+  await assertPhysicalParquet(latestRun?.outputPath);
+  const catalogDataset = await get(`/api/catalog/datasets/${encodeURIComponent(create.catalogTarget.id)}`);
+  assert(catalogDataset.storageFormat === "parquet", "Catalog should expose Parquet storage format.");
+  assert(Number(catalogDataset.storageSizeBytes) > 0, "Catalog should expose positive Parquet bytes.");
+
+  const quotedTable = `"${targetDataset.replaceAll('"', '""')}"`;
+  const query = `SELECT COUNT(DISTINCT session_id) FILTER (WHERE event_type = 'product_impression') AS impression_sessions, COUNT(DISTINCT session_id) FILTER (WHERE event_type = 'purchase_click') AS purchase_click_sessions, COUNT(DISTINCT session_id) FILTER (WHERE event_type = 'order_completed') AS order_completed_sessions, ROUND(100.0 * COUNT(DISTINCT session_id) FILTER (WHERE event_type = 'order_completed') / COUNT(DISTINCT session_id) FILTER (WHERE event_type = 'product_impression'), 3) AS session_order_conversion_pct FROM ${quotedTable}`;
+  const preview = await post("/api/query/runs", {
+    baseDatasetId: catalogDataset.id,
+    datasetId: catalogDataset.id,
+    limit: 10,
+    mode: "preview",
+    query,
+    referenceDatasetIds: [],
+    validationKey: `${catalogDataset.id}:${query}`,
+  });
+  smokeSqlRunId = preview.runId;
+  assert(preview.rowCount === 1, "Synthetic commerce SQL preview should return one insight row.");
+  const [impressionSessions, purchaseClickSessions, orderCompletedSessions, conversionPct] = (
+    preview.rows[0].map(Number)
+  );
+  assert(impressionSessions === Number(expectedSessionCounts.product_impression), "SQL impression sessions should equal the manifest.");
+  assert(purchaseClickSessions === Number(expectedSessionCounts.purchase_click), "SQL purchase-click sessions should equal the manifest.");
+  assert(orderCompletedSessions === Number(expectedSessionCounts.order_completed), "SQL order sessions should equal the manifest.");
+  assert(Math.abs(conversionPct - Number(manifest.counts.order_completed_session_conversion_pct)) < 0.001, "SQL conversion should equal the generator analysis.");
+
+  console.log(JSON.stringify({
+    catalogDatasetId: catalogDataset.id,
+    inputRows: Number(execution.inputRows),
+    outputRows: Number(execution.outputRows),
+    parquetBytes: Number(catalogDataset.storageSizeBytes),
+    sourceColumns: inferredColumns.map((column) => column.sourceName || column.targetName),
+    sqlInsight: {
+      impressionSessions,
+      purchaseClickSessions,
+      orderCompletedSessions,
+      sessionOrderConversionPct: conversionPct,
+    },
+  }, null, 2));
+  console.log("verify-fastapi-etl-catalog: synthetic-commerce ok");
+}
+
 async function assertInternalExecutionAuth() {
   for (const endpoint of ["execute", "catalog"]) {
     const response = await fetch(`${baseUrl}/api/internal/airflow/spark-runs/not-a-run/${endpoint}`, {
@@ -309,6 +495,7 @@ async function cleanupSmokeResources() {
     try {
       await client.connect();
       await client.query("BEGIN");
+      if (smokeSqlRunId) await client.query("DELETE FROM sql_runs WHERE id = $1", [smokeSqlRunId]);
       if (smokeDatasetId) await client.query("DELETE FROM catalog_datasets WHERE id = $1", [smokeDatasetId]);
       await client.query("DELETE FROM etl_runs WHERE job_id = $1", [smokeJobId]);
       await client.query("DELETE FROM etl_jobs WHERE id = $1", [smokeJobId]);

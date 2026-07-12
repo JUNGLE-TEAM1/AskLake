@@ -114,6 +114,24 @@ python3 backend/scripts/synthetic-commerce/generate.py \
   --days 30
 ```
 
+### 최대 256MiB 단일 이벤트 파일
+
+`--max-events-file-mib`를 지정하면 `commerce_events.jsonl`이 해당 크기를 넘기 전에 생성을 멈춥니다. 한 행이나 퍼널 중간에서 자르지 않고 다음 세션 전체를 먼저 계산한 뒤, 그 세션을 쓰면 한도를 넘는 경우 세션 전체를 제외합니다. 단위는 decimal MB가 아니라 MiB(`1024 * 1024`)입니다.
+
+```bash
+python3 backend/scripts/synthetic-commerce/generate.py \
+  --products-csv backend/fixtures/synthetic-commerce/products.csv \
+  --output-dir backend/tmp/synthetic-commerce-256mib \
+  --products 10000 \
+  --users 40000 \
+  --seed 20260711 \
+  --start-date 2026-06-01 \
+  --days 30 \
+  --max-events-file-mib 256
+```
+
+`manifest.json`의 `generation_limits`에는 byte/MiB 한도와 다음 세션 전에 종료했는지가 기록됩니다. `files.commerce_events.jsonl`의 실제 byte와 SHA-256, `counts.event_count`, 이벤트별 건수를 analyzer 결과와 함께 확인합니다. 256MiB 산출물은 Git에 추가하지 않고 ignored `backend/tmp/`와 로컬 MinIO/S3에만 둡니다.
+
 Amazon 원천에서 상품까지 다시 선택하려면 `--products-csv` 대신 다음 옵션을 사용합니다.
 
 ```bash
@@ -179,6 +197,7 @@ python3 backend/scripts/synthetic-commerce/test_generate.py
 - 주문 properties의 동일성 및 null 조건
 - 기본 seed의 1~3% 주문 완료 전환율
 - malformed JSON과 지원하지 않는 schema version 거절
+- 설정한 byte 한도를 넘지 않고 완전한 세션 경계에서 종료되는지
 
 ## 기존 click_events.jsonl 마이그레이션
 
