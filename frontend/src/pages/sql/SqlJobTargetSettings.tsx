@@ -4,11 +4,10 @@ import { BookOpen, HardDrive, Plus, SlidersHorizontal, X } from "lucide-react";
 import { DatabaseField } from "@/components/target/DatabaseField";
 import { S3PathField } from "@/components/s3/S3PathField";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Field,
-  FieldDescription,
   FieldError,
   FieldGroup,
   FieldLabel,
@@ -114,10 +113,7 @@ export function SqlJobTargetSettings({
           <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-blue-50 text-blue-600">
             <HardDrive className="size-4" aria-hidden="true" />
           </span>
-          <div className="grid gap-1">
-            <CardTitle className="text-base">저장 위치 설정</CardTitle>
-            <CardDescription className="text-sm">데이터셋이 등록될 DB와 파일 저장 방식을 지정합니다.</CardDescription>
-          </div>
+          <CardTitle className="text-base">저장 위치 설정</CardTitle>
         </CardHeader>
         <CardContent className="grid grid-cols-12 gap-4 px-4 pb-4 pt-4 max-[760px]:grid-cols-1">
           <Field className="col-span-5 max-[760px]:col-span-1" data-disabled={disabled || undefined}>
@@ -170,10 +166,7 @@ export function SqlJobTargetSettings({
           <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-blue-50 text-blue-600">
             <SlidersHorizontal className="size-4" aria-hidden="true" />
           </span>
-          <div className="grid gap-1">
-            <CardTitle className="text-base">파티션 및 태그</CardTitle>
-            <CardDescription className="text-sm">검색과 적재에 사용할 분류 정보와 파티션 컬럼을 지정합니다.</CardDescription>
-          </div>
+          <CardTitle className="text-base">파티션 및 태그</CardTitle>
         </CardHeader>
         <CardContent className="grid grid-cols-2 gap-5 px-4 pb-4 pt-4 max-[760px]:grid-cols-1">
           <FieldGroup>
@@ -182,7 +175,6 @@ export function SqlJobTargetSettings({
                 <BookOpen className="mr-1 inline size-4 text-blue-600" aria-hidden="true" />
                 태그
               </FieldLabel>
-              <FieldDescription>태그는 생성될 데이터셋과 Job 메타데이터에 함께 저장됩니다.</FieldDescription>
               {target.tags.length > 0 ? (
                 <div className="flex min-h-10 flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-white p-2" aria-label="타겟 태그" role="group">
                   {target.tags.map((tag) => (
@@ -219,7 +211,6 @@ export function SqlJobTargetSettings({
 
           <FieldSet disabled={disabled}>
             <FieldLegend className="text-sm">파티션</FieldLegend>
-            <FieldDescription>SQL 결과 컬럼을 여러 개 선택할 수 있습니다.</FieldDescription>
             <div className="grid grid-cols-2 gap-2 max-[980px]:grid-cols-1" role="group" aria-label="파티션 컬럼 다중 선택">
               {partitionOptions.map((option) => {
                 const checked = target.partitionColumns.includes(option.name);
