@@ -696,7 +696,7 @@ def recalculate_dataset_payload_from_runs(payload: dict[str, object]) -> dict[st
 
 
 def aggregate_materialization_runs(runs: list[dict[str, object]]) -> dict[str, object]:
-    active_runs = [run for run in runs if run.get("status") == "success"]
+    active_runs = active_materialization_runs(runs)
     latest_run = active_runs[0] if active_runs else None
     return {
         "latestRunId": latest_run.get("runId") if latest_run else None,

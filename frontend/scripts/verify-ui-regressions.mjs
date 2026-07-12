@@ -1194,6 +1194,14 @@ const checks = [
     ],
   },
   {
+    name: "Catalog materialization totals stop at the newest snapshot",
+    file: "src/hooks/useAskLakeData.ts",
+    patterns: [
+      /activeDatasetMaterializationRuns\(materializationRuns\)/,
+      /if \(run\.materializationMode !== "delta"\) break;/,
+    ],
+  },
+  {
     name: "Global top-bar refresh awaits the authoritative workspace rehydrate",
     file: "src/App.tsx",
     patterns: [

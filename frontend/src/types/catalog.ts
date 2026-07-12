@@ -76,6 +76,7 @@ export type DatasetMaterializationRun = {
   createdAt: string;
   jobId: string;
   publicationManifest?: string;
+  materializationMode?: "snapshot" | "delta";
   quality?: Record<string, unknown> | null;
   quarantine?: {
     format?: string;

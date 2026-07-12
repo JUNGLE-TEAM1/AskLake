@@ -47,6 +47,7 @@ class DatasetMaterializationRun(CamelModel):
     job_id: str
     publication_manifest: str | None = None
     quality: dict[str, Any] | None = None
+    materialization_mode: Literal["snapshot", "delta"] = "snapshot"
     row_count: int = 0
     rule_contract_version: str | None = None
     rule_fingerprint: str | None = None

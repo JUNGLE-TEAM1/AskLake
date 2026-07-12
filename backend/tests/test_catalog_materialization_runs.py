@@ -16,6 +16,7 @@ from app.core.config import settings
 from app.core.errors import ApiError
 from app.models.catalog import CatalogDatasetModel
 from app.repositories.catalog_repository import CatalogRepository
+from app.schemas.catalog import CatalogDatasetResponse
 from app.services.catalog_service import (
     CatalogService,
     recalculate_dataset_payload_from_runs,
@@ -75,6 +76,28 @@ def catalog_payload(
 
 
 class CatalogMaterializationDeleteGuardTests(unittest.TestCase):
+    def test_rebaseline_aggregate_uses_latest_snapshot_and_newer_deltas_only(self) -> None:
+        runs = [
+            materialization_run("delta-new", created_at="2026-07-12T03:00:00Z", mode="delta", row_count=2),
+            materialization_run("snapshot", created_at="2026-07-12T02:00:00Z", mode="snapshot", row_count=10),
+            materialization_run("snapshot-old", created_at="2026-07-12T01:00:00Z", mode="snapshot", row_count=20),
+        ]
+
+        payload = recalculate_dataset_payload_from_runs(catalog_payload("dataset-rebaseline", runs))
+
+        self.assertEqual(payload["rows"], "12 rows")
+        self.assertEqual(payload["size"], "120B")
+        self.assertEqual(payload["sourceRunId"], "delta-new")
+
+    def test_catalog_response_preserves_materialization_mode(self) -> None:
+        payload = catalog_payload("dataset-mode", [
+            materialization_run("delta-new", created_at="2026-07-12T03:00:00Z", mode="delta", row_count=2),
+        ])
+
+        response = CatalogDatasetResponse.model_validate(payload).model_dump(by_alias=True)
+
+        self.assertEqual(response["materializationRuns"][0]["materializationMode"], "delta")
+
     def test_active_snapshot_cannot_be_deleted_before_newer_deltas(self) -> None:
         runs = [
             materialization_run("delta-new", created_at="2026-07-12T03:00:00Z", mode="delta", row_count=2),

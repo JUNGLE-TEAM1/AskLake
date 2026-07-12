@@ -625,7 +625,7 @@ function formatStorageSize(sizeBytes: number) {
 
 function recalculateDatasetFromMaterializationRuns(dataset: CatalogDataset): CatalogDataset {
   const materializationRuns = dataset.materializationRuns ?? [];
-  const activeRuns = materializationRuns.filter((run) => run.status === "success");
+  const activeRuns = activeDatasetMaterializationRuns(materializationRuns);
   const latestRun = activeRuns[0];
   const rowCount = activeRuns.reduce((total, run) => total + Math.max(run.rowCount || 0, 0), 0);
   const storageSizeBytes = activeRuns.reduce((total, run) => total + Math.max(run.storageSizeBytes || 0, 0), 0);
@@ -638,6 +638,16 @@ function recalculateDatasetFromMaterializationRuns(dataset: CatalogDataset): Cat
     sourceRunId: latestRun?.runId,
     storageSizeBytes,
   });
+}
+
+function activeDatasetMaterializationRuns(runs: NonNullable<CatalogDataset["materializationRuns"]>) {
+  const activeRuns = [];
+  for (const run of runs) {
+    if (run.status !== "success") continue;
+    activeRuns.push(run);
+    if (run.materializationMode !== "delta") break;
+  }
+  return activeRuns;
 }
 
 function upsertRunByRunId(runs: JobRunSummary[], run: JobRunSummary): JobRunSummary[] {
