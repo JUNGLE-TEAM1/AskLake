@@ -330,6 +330,7 @@ export async function createPipelineDraft(draftPipeline: DraftPipeline, jobCount
     qualityRules: draftPipeline.quality.rules,
     qualityScore: draftPipeline.quality.score,
     qualityStatus: draftPipeline.quality.status,
+    recordParsing: draftPipeline.recordParsing.enabled ? draftPipeline.recordParsing : undefined,
     sourceConfig: draftPipeline.source.sourceConfig,
     sourceLabel: draftPipeline.source.sourceLabel,
     sourceType: draftPipeline.source.sourceType,

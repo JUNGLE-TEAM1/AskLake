@@ -61,6 +61,7 @@ export function toCreatePipelineRequest(draft: DraftPipeline): CreatePipelineReq
     sourceLabel: draft.source.sourceLabel,
     sourceType: draft.source.sourceType,
     executionMode: draft.source.executionMode ?? "snapshot",
+    recordParsing: draft.recordParsing.enabled ? draft.recordParsing : undefined,
     continuousConfig: draft.source.executionMode === "continuous"
       ? draft.source.continuousConfig ?? { initialOffsetPolicy: "earliest", triggerIntervalSeconds: 30, maxOffsetsPerTrigger: 10000 }
       : undefined,
@@ -105,6 +106,7 @@ export function hydrateDraftPipelineFromJob(job: JobRowData, fallback: DraftPipe
       status: job.qualityStatus ?? fallback.quality.status,
       summary: transformSummary,
     },
+    recordParsing: job.recordParsing ?? fallback.recordParsing,
     schedule: {
       ...fallback.schedule,
       endDate: schedulePolicy?.endDate ?? fallback.schedule.endDate,
@@ -172,6 +174,7 @@ export function toUpdatePipelineRequest(draft: DraftPipeline): UpdatePipelineReq
     createdByProfile: _createdByProfile,
     id: _id,
     permissionGrants: _permissionGrants,
+    recordParsing: _recordParsing,
     sourceConfig: _sourceConfig,
     sourceLabel: _sourceLabel,
     sourceType: _sourceType,
@@ -205,6 +208,7 @@ export function applyDraftPipelinePatch(draft: DraftPipeline, patch: DraftPipeli
     ...draft,
     permission: { ...draft.permission, ...patch.permission },
     quality: { ...draft.quality, ...patch.quality },
+    recordParsing: { ...draft.recordParsing, ...patch.recordParsing },
     schedule: { ...draft.schedule, ...patch.schedule },
     schema: { ...draft.schema, ...patch.schema },
     source: { ...draft.source, ...patch.source },
@@ -218,6 +222,7 @@ export function applyDraftPipelinePatch(draft: DraftPipeline, patch: DraftPipeli
   if (patch.sourceType !== undefined) next.source.sourceType = patch.sourceType;
   if (patch.executionMode !== undefined) next.source.executionMode = patch.executionMode;
   if (patch.continuousConfig !== undefined) next.source.continuousConfig = patch.continuousConfig;
+  if (patch.recordParsing !== undefined) next.recordParsing = { ...next.recordParsing, ...patch.recordParsing };
   if (patch.schemaColumns !== undefined) next.schema.columns = patch.schemaColumns;
   if (patch.schemaFingerprint !== undefined) next.schema.schemaFingerprint = patch.schemaFingerprint;
   if (patch.schemaSampleRows !== undefined) next.schema.sampleRows = patch.schemaSampleRows;

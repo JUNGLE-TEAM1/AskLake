@@ -71,8 +71,8 @@ import { DatabaseField } from "../../components/target/DatabaseField";
 import { runTransformQualitySamplePreview } from "../../data/transformQualityPreview";
 import { toCreatePipelineRequest } from "../../services/draftPipelineContract";
 import { getReviewSnapshot, type ReviewSnapshot } from "../../services/reviewApi";
-import { listSourceAssets, testSourceConnector, type SourceConnectorAnalysis } from "../../services/sourceConnectorService";
-import type { AuditResult, DraftPipeline, DraftPipelinePatch, FlowId, ScheduleFlowId, SchemaColumnDraft, SourceDraft, TargetLayer } from "../../types";
+import { listSourceAssets, previewRecordParsing, testSourceConnector, type SourceConnectorAnalysis } from "../../services/sourceConnectorService";
+import type { AuditResult, DraftPipeline, DraftPipelinePatch, FlowId, RecordParsingDraft, RecordParsingPreviewResponse, ScheduleFlowId, SchemaColumnDraft, SourceDraft, TargetLayer } from "../../types";
 import type { QualityRuleDraft, RetryPolicyDraft, ScheduleDraft, ScheduleOverlapPolicy, TransformStepDraft, WatermarkPolicyDraft, WatermarkWindowMode } from "../../types/etl";
 import type { QualityRuleOption, TransformQualityInvalidRow, TransformQualityPreviewSample, TransformQualitySampleRow, TransformQualityStepPreview, TransformQualityValidationResult } from "../../data/transformQualityPreview";
 import { SourceAssetTree } from "./SourceAssetTree";
@@ -1334,7 +1334,7 @@ export function SourceConnectionPage({
     ["연결 상태", isSqlResultSource ? (hasSqlResultPreview && connectionStatus === "success" ? "SQL Preview 검증됨" : "SQL Preview 필요") : connectionStatus === "success" ? publicConnectionMessage : connectionStatus === "testing" ? "테스트 중" : connectionStatus === "failed" ? "실패" : "테스트 필요"],
     ["감지 파일", isSqlResultSource ? `${sourceConfigValue(editableFields, "Preview Row Count") || "0"} rows` : `${displayAssets.length}개`],
     ["인증 방식", isSqlResultSource ? "SQL Preview 검증" : activeSourceType === "File / S3" ? "MinIO 액세스 키" : "백엔드 커넥터"],
-    ["다음 단계", isSqlResultSource ? "Review 확인" : "스키마 추론"],
+    ["다음 단계", isSqlResultSource ? "Review 확인" : (sourceRuntime?.draftPatch.source?.requiresRecordParsing ? "레코드 구조화" : "스키마 추론")],
   ];
 
   const applySourceDraft = (
@@ -1386,6 +1386,7 @@ export function SourceConnectionPage({
     setConnectionStatus(nextStatus);
     setConnectionMessage(nextMessage);
     applySourceDraft(value, nextFields, nextStatus, nextMessage);
+    onDraftChange({ recordParsing: { columns: [], delimiterKind: "whitespace", delimiterPattern: "\\s+", enabled: false, expectedFieldCount: 0, header: false } });
     onAction("etl.source.connector_selected", "/api/etl/sources/connectors", value);
   };
 
@@ -1399,6 +1400,7 @@ export function SourceConnectionPage({
     setConnectionStatus(nextStatus);
     setConnectionMessage(nextMessage);
     applySourceDraft(activeSourceType, nextFields, nextStatus, nextMessage);
+    onDraftChange({ recordParsing: { columns: [], delimiterKind: "whitespace", delimiterPattern: "\\s+", enabled: false, expectedFieldCount: 0, header: false } });
   };
 
   const loadSourceAssetChildren = async (folderPath: string) => {
@@ -1452,6 +1454,7 @@ export function SourceConnectionPage({
     setConnectionMessage(nextMessage);
     setConnectionStatus("testing");
     applySourceDraft(activeSourceType, nextFields, "testing", nextMessage);
+    onDraftChange({ recordParsing: { columns: [], delimiterKind: "whitespace", delimiterPattern: "\\s+", enabled: false, expectedFieldCount: 0, header: false } });
     onAction("etl.source.asset_selected", "/api/etl/sources/assets", assetPath);
     try {
       const result = mergeConnectorAnalysisSourceConfig(
@@ -1801,6 +1804,211 @@ export function SourceConnectionPage({
   );
 }
 
+export function RecordParsingPage({
+  draft,
+  onAction,
+  onDraftChange,
+  onNext,
+  onNotify,
+  onPrev,
+}: {
+  draft: DraftPipeline;
+  onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
+  onDraftChange: (patch: DraftPipelinePatch) => void;
+  onNext: () => void;
+  onNotify: (message: string) => void;
+  onPrev: () => void;
+}) {
+  const rawLines = draft.source.rawPreviewLines ?? [];
+  const [preview, setPreview] = useState<RecordParsingPreviewResponse | null>(null);
+  const [parsing, setParsing] = useState<RecordParsingDraft>(draft.recordParsing);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const loadPreview = async (nextParsing: RecordParsingDraft) => {
+    setLoading(true);
+    setError("");
+    try {
+      const result = await previewRecordParsing(rawLines, nextParsing);
+      setPreview(result);
+      setParsing(result.recordParsing);
+      onAction("etl.record_parsing.previewed", "/api/etl/record-parsing/preview", draft.source.sourceLabel || "txt");
+    } catch (previewError) {
+      const message = previewError instanceof Error ? previewError.message : "레코드 구조화 미리보기에 실패했습니다.";
+      setError(message);
+      onAction("etl.record_parsing.preview_failed", "/api/etl/record-parsing/preview", draft.source.sourceLabel || "txt", "failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (rawLines.length === 0) {
+      setError("원본 TXT 샘플이 없습니다. 소스 단계에서 파일을 다시 선택해 주세요.");
+      return;
+    }
+    void loadPreview(draft.recordParsing.enabled ? draft.recordParsing : {
+      columns: [],
+      delimiterKind: "whitespace",
+      delimiterPattern: "\\s+",
+      enabled: true,
+      expectedFieldCount: 0,
+      header: false,
+    });
+  }, [draft.source.sourceLabel]);
+
+  const updateHeader = (header: boolean) => {
+    const next = { ...parsing, columns: [], expectedFieldCount: 0, header };
+    setParsing(next);
+    void loadPreview(next);
+  };
+
+  const updateColumn = (position: number, patch: Partial<RecordParsingDraft["columns"][number]>) => {
+    const columns = parsing.columns.map((column) => column.position === position ? { ...column, ...patch } : column);
+    const nextParsing = { ...parsing, columns };
+    setParsing(nextParsing);
+    setPreview((current) => current ? {
+      ...current,
+      columns: current.columns.map((column, index) => index === position ? {
+        ...column,
+        sourceName: patch.name ?? column.sourceName,
+        targetName: patch.name ?? column.targetName,
+        type: patch.inferredType ?? column.type,
+      } : column),
+      recordParsing: nextParsing,
+    } : current);
+  };
+
+  const normalizedNames = parsing.columns.map((column) => normalizeTargetColumnName(column.name));
+  const columnNamesValid = normalizedNames.every(Boolean) && new Set(normalizedNames).size === normalizedNames.length;
+  const canApply = Boolean(preview?.canApply && columnNamesValid && parsing.columns.length === parsing.expectedFieldCount);
+
+  const applyAndContinue = () => {
+    if (!preview || !canApply) {
+      onNotify("필드 개수와 컬럼명을 확인한 뒤 다시 시도해 주세요.");
+      return;
+    }
+    const columns = parsing.columns.map((column) => {
+      const name = normalizeTargetColumnName(column.name) || `field_${column.position + 1}`;
+      return {
+        confidence: 90,
+        included: true,
+        nullable: false,
+        sourceName: name,
+        targetName: name,
+        type: column.inferredType,
+      } satisfies SchemaColumnDraft;
+    });
+    const normalizedParsing: RecordParsingDraft = {
+      ...parsing,
+      columns: parsing.columns.map((column) => ({ ...column, name: normalizeTargetColumnName(column.name) })),
+      enabled: true,
+    };
+    onDraftChange({
+      recordParsing: normalizedParsing,
+      schema: {
+        columns,
+        sampleRows: preview.sampleRows,
+        schemaFingerprint: buildSchemaFingerprint(columns),
+        summary: `TXT 연속 공백 구조화 · ${preview.totalRows}행 검증 · ${columns.length}개 필드`,
+      },
+      transform: {
+        outputColumns: columns.map((column) => [column.targetName, column.type]),
+        summary: "레코드 구조화 적용 · 추가 변환 없음",
+      },
+    });
+    onAction("etl.record_parsing.applied", "/api/etl/record-parsing/preview", draft.source.sourceLabel || "txt");
+    onNext();
+  };
+
+  return (
+    <CreationFlowLayout
+      actions={<CreationTopActions nextDisabled={!canApply || loading} useShadcnStyles onPrev={onPrev} onNext={applyAndContinue} />}
+    >
+      <section className="record-parsing-source-strip panel" aria-label="선택한 원시 소스">
+        <span><em>소스</em><strong>{draft.source.sourceLabel || "-"}</strong></span>
+        <span><em>감지 포맷</em><strong>{draft.source.detectedFormat || "TXT"}</strong></span>
+        <span><em>샘플</em><strong>{rawLines.length}행</strong></span>
+        <span><em>필드 상태</em><strong>이름 없음</strong></span>
+      </section>
+
+      <div className="record-parsing-workspace">
+        <section className="panel record-parsing-panel">
+          <div className="record-parsing-panel-header">
+            <h2>원본 샘플</h2>
+            <span className="source-select-pill active">UTF-8 · 줄바꿈</span>
+          </div>
+          <textarea className="input record-parsing-raw" readOnly aria-label="원본 TXT 샘플" value={rawLines.join("\n")} />
+        </section>
+
+        <section className="panel record-parsing-panel">
+          <div className="record-parsing-panel-header">
+            <h2>분리 규칙과 컬럼 초안</h2>
+            <span className={preview?.invalidRows.length ? "source-select-pill warning" : "source-select-pill active"}>
+              {loading ? "검증 중" : preview ? `${preview.validRows}/${preview.totalRows}행 정상` : "검증 대기"}
+            </span>
+          </div>
+          <div className="record-parsing-controls">
+            <FormFieldGroup className="field" label="필드 구분자">
+              <NativeSelect disabled value="whitespace"><option value="whitespace">연속 공백 (\\s+)</option></NativeSelect>
+            </FormFieldGroup>
+            <FormFieldGroup className="field" label="헤더 처리">
+              <NativeSelect value={parsing.header ? "first" : "none"} onChange={(event) => updateHeader(event.target.value === "first")}>
+                <option value="none">헤더 없음</option>
+                <option value="first">첫 줄을 헤더로 사용</option>
+              </NativeSelect>
+            </FormFieldGroup>
+          </div>
+          {error && <p className="record-parsing-error">{error}</p>}
+          <ScrollArea type="always" scrollbars="horizontal" className="record-parsing-table-scroll">
+            <table className="schema-table record-parsing-table">
+              <thead><tr><th>순서</th><th>샘플 값</th><th>출력 컬럼명</th><th>추론 타입</th></tr></thead>
+              <tbody>
+                {parsing.columns.map((column) => (
+                  <tr key={column.position}>
+                    <td>{column.position + 1}</td>
+                    <td><code>{preview?.sampleRows[0]?.[column.position] || "-"}</code></td>
+                    <td><Input aria-label={`${column.position + 1}번째 출력 컬럼명`} value={column.name} onChange={(event) => updateColumn(column.position, { name: event.target.value })} /></td>
+                    <td>
+                      <NativeSelect value={column.inferredType} onChange={(event) => updateColumn(column.position, { inferredType: event.target.value as RecordParsingDraft["columns"][number]["inferredType"] })}>
+                        {schemaTypeOptions.filter((type) => type !== "JSON").map((type) => <option key={type} value={type}>{type}</option>)}
+                      </NativeSelect>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </ScrollArea>
+          {!columnNamesValid && <p className="record-parsing-error">컬럼명은 비어 있거나 중복될 수 없습니다.</p>}
+        </section>
+      </div>
+
+      {preview?.invalidRows.length ? (
+        <section className="panel record-parsing-panel">
+          <div className="record-parsing-panel-header"><h2>필드 개수 불일치</h2></div>
+          <table className="schema-table record-parsing-invalid-table">
+            <thead><tr><th>원본 행</th><th>예상</th><th>실제</th><th>원문</th></tr></thead>
+            <tbody>{preview.invalidRows.map((row) => <tr key={row.lineNumber}><td>{row.lineNumber}</td><td>{row.expectedFieldCount}</td><td>{row.actualFieldCount}</td><td><code>{row.rawPreview}</code></td></tr>)}</tbody>
+          </table>
+        </section>
+      ) : preview && (
+        <section className="panel record-parsing-panel">
+          <div className="record-parsing-panel-header">
+            <h2>구조화 결과 미리보기</h2>
+            <span className="source-select-pill active">{preview.totalRows}행 · {parsing.expectedFieldCount}컬럼</span>
+          </div>
+          <ScrollArea type="always" scrollbars="horizontal" className="record-parsing-table-scroll">
+            <table className="schema-table record-parsing-preview-table">
+              <thead><tr>{parsing.columns.map((column) => <th key={column.position}>{column.name}</th>)}</tr></thead>
+              <tbody>{preview.sampleRows.slice(0, 5).map((row, rowIndex) => <tr key={rowIndex}>{row.map((cell, cellIndex) => <td key={cellIndex}>{cell}</td>)}</tr>)}</tbody>
+            </table>
+          </ScrollArea>
+        </section>
+      )}
+    </CreationFlowLayout>
+  );
+}
+
 function sourceFormatFromConfig(fields: Array<[string, string]>, _sourceType?: string) {
   const fieldMap = new Map(fields.map(([label, value]) => [label, value]));
   const declaredFormat = (fieldMap.get("File Type") || "").trim().toLowerCase();
@@ -1817,6 +2025,7 @@ function sourceFormatFromConfig(fields: Array<[string, string]>, _sourceType?: s
   if (rawFormat.includes("csv")) return "CSV";
   if (rawFormat.includes("tsv")) return "TSV";
   if (rawFormat.includes("txt")) return "TXT";
+  if (rawFormat.includes("log")) return "TXT";
   if (rawFormat.includes("parquet")) return "PARQUET";
   return "AUTO";
 }
@@ -2004,6 +2213,7 @@ function detectSchemaSourceFormat(draft: DraftPipeline) {
   if (probe.includes("jsonl")) return "JSONL";
   if (probe.includes("json")) return "JSON";
   if (probe.includes("parquet")) return "PARQUET";
+  if (probe.includes(".txt") || probe.includes(".log") || probe.includes(" txt") || probe.includes(" log")) return "TXT";
   if (probe.includes("tsv")) return "TSV";
   if (probe.includes("csv")) return "CSV";
   if (draft.source.sourceType === "PostgreSQL") return "TABLE";

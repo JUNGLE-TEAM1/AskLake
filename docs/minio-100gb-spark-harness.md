@@ -11,6 +11,9 @@ This document records the Pair A person-1 backend validation path for Source, Sc
 - `backend/src/profile.mjs`: CSV/TSV/JSON/JSONL/TXT parser and schema profiler
 - `backend/src/createPipeline.mjs`: create `{ job, catalogTarget }`, run success `dataset` mapper
 - `backend/scripts/prepare-minio-samples.mjs`: local 1GB-style sample preparation
+- `backend/scripts/seed-minio-click-log.mjs`: whitespace-delimited raw click log 100-row fixture
+- `backend/scripts/verify-record-parsing-contract.py`: record parsing preview and row-width validation contract verifier
+- `backend/scripts/verify-record-parsing-e2e.mjs`: real MinIO TXT -> FastAPI -> Airflow -> Spark -> Parquet -> Catalog verifier
 - `backend/scripts/start-spark-server.mjs`: Spark standalone master/worker startup
 - `backend/scripts/spark_validate.py`: Spark validation and transform type checks
 - `backend/scripts/verify-spark-job-run.mjs`: create -> run -> Spark -> DAG -> Catalog verifier
@@ -81,6 +84,25 @@ $env:TARGET_DATABASES = "asklake,asklake_gold,analytics,marketing"
 cd backend
 npm run sources:fixtures
 ```
+
+1.5단계 원시 레코드 구조화 개발에는 헤더가 없는 100줄 click event TXT fixture를 사용한다.
+
+```powershell
+cd backend
+npm run minio:seed-click-log
+```
+
+기본 object는 `s3://m3-raw/asklake-fixtures/txt/click-events-whitespace-100.log`다. 한 줄은 하나의 이벤트이고 값은 공백 하나로 구분한다. 필드 순서는 `event_time`, `event_id`, `customer_id`, `session_id`, `event_type`, `page_path`, `element_id`, `device`, `region`, `latency_ms`이며 파일 본문에는 헤더를 넣지 않는다. 스크립트는 업로드 후 object를 다시 읽어 100줄과 행별 10개 필드를 검증한다. 같은 명령을 다시 실행하면 동일 key를 같은 결정적 fixture로 덮어쓴다.
+
+Preview 계약과 전체 runtime을 함께 검증할 때는 FastAPI, Airflow, MinIO, Spark가 같은 local Compose network를 사용하도록 한 뒤 아래 명령을 실행한다.
+
+```powershell
+cd backend
+npm run verify:record-parsing
+npm run verify:record-parsing:e2e
+```
+
+E2E는 Source API에서 원본을 `line_number`/`value` 100줄로 읽은 뒤 1.5단계에서 10필드로 구조화하고, 같은 저장 계약으로 Spark가 전체 오브젝트 100행을 Parquet로 기록하는지 확인한다. Catalog에는 10개 사용자 컬럼과 `_asklake_run_id`, `_asklake_ingested_at` 메타 컬럼만 있어야 한다. 실행 중인 Compose project가 `asklake-dev`라면 backend의 `ASKLAKE_DOCKER_NETWORK`는 `asklake-dev_default`여야 한다.
 
 With Kafka:
 

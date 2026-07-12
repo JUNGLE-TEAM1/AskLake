@@ -53,6 +53,9 @@ type CommandPendingByJobId = Partial<Record<string, ServerJobCommand>>;
 const catalogDatasetStorageKey = "asklake.catalogDatasets";
 const legacyDerivedDatasetStorageKey = "asklake.derivedDatasets";
 const maxStoredCatalogDatasets = 30;
+const snapshotPollIntervalMs = 1000;
+const snapshotPollMaxAttempts = 900;
+const snapshotPollMaxConsecutiveErrors = 5;
 
 function normalizeInitialDraftPipeline(draft: DraftPipeline): DraftPipeline {
   return {
@@ -69,6 +72,14 @@ function normalizeInitialDraftPipeline(draft: DraftPipeline): DraftPipeline {
       score: undefined,
       status: "idle",
       summary: "데이터 품질 규칙을 설정하세요.",
+    },
+    recordParsing: {
+      columns: [],
+      delimiterKind: "whitespace",
+      delimiterPattern: "\\s+",
+      enabled: false,
+      expectedFieldCount: 0,
+      header: false,
     },
     schedule: {
       ...draft.schedule,
@@ -136,6 +147,14 @@ const initialDraftPipeline: DraftPipeline = normalizeInitialDraftPipeline({
     score: 94.2,
     status: "pass",
     summary: "품질 규칙 5개 · 유효하지 않은 행 격리",
+  },
+  recordParsing: {
+    columns: [],
+    delimiterKind: "whitespace",
+    delimiterPattern: "\\s+",
+    enabled: false,
+    expectedFieldCount: 0,
+    header: false,
   },
   schedule: {
     endDate: "",
@@ -708,6 +727,10 @@ function isContinuousRuntimeTransition(job: JobRowData) {
     && ["starting", "pausing", "stopping"].includes(job.continuousRuntime?.status ?? "");
 }
 
+function isTerminalRunStatus(status: JobRunSummary["status"]) {
+  return status === "success" || status === "failed" || status === "canceled";
+}
+
 export function useAskLakeData({
   enabled = true,
   onFlowChange,
@@ -737,6 +760,7 @@ export function useAskLakeData({
   const createPendingRef = useRef(false);
   const commandPendingRef = useRef<Set<string>>(new Set());
   const continuousPollingRef = useRef<Set<string>>(new Set());
+  const snapshotPollingRef = useRef<Set<string>>(new Set());
   const jobsFilterRequestRef = useRef(0);
 
   const jobExecutionEvidence = useMemo(
@@ -971,6 +995,78 @@ export function useAskLakeData({
     }
   };
 
+  const pollSnapshotJobUntilTerminal = async (initialJob: JobRowData, runId: string) => {
+    if (apiConfig.useMock || initialJob.executionMode === "continuous" || snapshotPollingRef.current.has(runId)) return;
+
+    snapshotPollingRef.current.add(runId);
+    let currentJob = initialJob;
+    let consecutiveErrors = 0;
+    try {
+      for (let attempt = 0; attempt < snapshotPollMaxAttempts; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, snapshotPollIntervalMs));
+
+        let nextJob: JobRowData;
+        try {
+          nextJob = normalizeJobRow(await getLiveJob(initialJob.id));
+          consecutiveErrors = 0;
+        } catch (error) {
+          consecutiveErrors += 1;
+          if (consecutiveErrors >= snapshotPollMaxConsecutiveErrors) throw error;
+          continue;
+        }
+
+        updateJobState(initialJob.id, () => nextJob);
+        setJobListFacets((facets) => moveJobFacetCounts(facets, currentJob, nextJob));
+        currentJob = nextJob;
+
+        const hydratedRunState = buildRunStateFromJobs([nextJob]);
+        const nextRuns = hydratedRunState.runsByJobId[nextJob.id];
+        if (nextRuns) {
+          setRunsByJobId((state) => ({
+            ...state,
+            [nextJob.id]: nextRuns,
+          }));
+        }
+        setDagStepsByRunId((state) => ({
+          ...state,
+          ...hydratedRunState.dagStepsByRunId,
+        }));
+
+        const nextRun = nextJob.runHistory?.find((candidate) => candidate.runId === runId);
+        if (!nextRun || !isTerminalRunStatus(nextRun.status)) continue;
+
+        if (nextRun.status === "success") {
+          try {
+            const nextDatasets = (await getDatasets()).map(normalizeDatasetRow);
+            setDatasets(nextDatasets);
+            setSelectedDataset((selected) => nextDatasets.find((dataset) => dataset.id === selected.id) ?? selected);
+          } catch {
+            showToast("작업은 완료됐지만 Catalog 목록을 자동 갱신하지 못했습니다.", "info");
+          }
+        }
+        return;
+      }
+
+      showToast("작업이 제한 시간 안에 끝나지 않아 자동 상태 갱신을 중단했습니다.", "info");
+    } catch {
+      showToast("작업 상태 자동 갱신에 실패했습니다. 잠시 후 다시 확인해 주세요.", "info");
+    } finally {
+      snapshotPollingRef.current.delete(runId);
+    }
+  };
+
+  useEffect(() => {
+    if (!enabled || apiConfig.useMock) return;
+
+    jobs.forEach((job) => {
+      if (job.executionMode === "continuous") return;
+      const activeRun = (runsByJobId[job.id] ?? job.runHistory ?? []).find(
+        (run) => !run.runId.startsWith("client:") && (run.status === "queued" || run.status === "running"),
+      );
+      if (activeRun) void pollSnapshotJobUntilTerminal(job, activeRun.runId);
+    });
+  }, [enabled, jobs, runsByJobId]);
+
   const selectRunForJob = (jobId: string, runId: string) => {
     setSelectedRunIdByJobId((state) => {
       const runExists = (runsByJobId[jobId] ?? []).some((run) => run.runId === runId);
@@ -1086,6 +1182,9 @@ export function useAskLakeData({
         saveStoredCatalogDataset(normalizedDataset);
         setDatasets((items) => [normalizedDataset, ...items.filter((item) => item.id !== normalizedDataset.id)]);
         setSelectedDataset(normalizedDataset);
+      }
+      if (run && normalizedUpdatedJob && isOptimisticRunCommand(command)) {
+        void pollSnapshotJobUntilTerminal(normalizedUpdatedJob, run.runId);
       }
       showToast(commandSuccessMessage(command, job));
       return normalizedUpdatedJob;
