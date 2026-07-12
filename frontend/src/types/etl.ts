@@ -426,6 +426,7 @@ export type WatermarkPolicyDraft = {
 };
 
 export type PermissionDraft = {
+  grants?: PermissionGrant[];
   owner: string;
   roles?: Array<{
     access: string[];
@@ -433,6 +434,8 @@ export type PermissionDraft = {
     name: string;
   }>;
   summary: string;
+  template?: string;
+  visibility?: "조직 내부" | "프로젝트 멤버" | "외부 공유";
 };
 
 export type TargetDraft = {
@@ -541,7 +544,7 @@ export type CreatePipelineRequest = {
 
 export type UpdatePipelineRequest = Omit<
   CreatePipelineRequest,
-  "id" | "sourceConfig" | "sourceLabel" | "sourceType" | "recordParsing" | "createdBy" | "createdByProfile" | "permissionGrants"
+  "id" | "sourceConfig" | "sourceLabel" | "sourceType" | "recordParsing" | "createdBy" | "createdByProfile"
 >;
 
 export type DraftPipelineSlicePatch = {

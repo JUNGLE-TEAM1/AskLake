@@ -34,6 +34,7 @@ export function toCreatePipelineRequest(draft: DraftPipeline): CreatePipelineReq
     id: draft.id,
     jobName: `${targetDataset}_pipeline`,
     owner: draft.permission.owner,
+    permissionGrants: draft.permission.grants,
     permissionSummary: draft.permission.summary,
     permissionRoles: draft.permission.roles,
     rag: draft.target.rag,
@@ -94,6 +95,7 @@ export function hydrateDraftPipelineFromJob(job: JobRowData, fallback: DraftPipe
     id: job.id,
     permission: {
       ...fallback.permission,
+      grants: job.permissionGrants ?? fallback.permission.grants,
       owner: job.owner || fallback.permission.owner,
       roles: job.permissionRoles ?? fallback.permission.roles,
       summary: job.permissionSummary || fallback.permission.summary,
@@ -173,7 +175,6 @@ export function toUpdatePipelineRequest(draft: DraftPipeline): UpdatePipelineReq
     createdBy: _createdBy,
     createdByProfile: _createdByProfile,
     id: _id,
-    permissionGrants: _permissionGrants,
     recordParsing: _recordParsing,
     sourceConfig: _sourceConfig,
     sourceLabel: _sourceLabel,
@@ -247,6 +248,7 @@ export function applyDraftPipelinePatch(draft: DraftPipeline, patch: DraftPipeli
   if (patch.watermarkPolicy !== undefined) next.schedule.watermarkPolicy = patch.watermarkPolicy;
   if (patch.permissionSummary !== undefined) next.permission.summary = patch.permissionSummary;
   if (patch.permissionRoles !== undefined) next.permission.roles = patch.permissionRoles;
+  if (patch.permissionGrants !== undefined) next.permission.grants = patch.permissionGrants;
   if (patch.owner !== undefined) next.permission.owner = patch.owner;
   if (patch.compression !== undefined) next.target.compression = patch.compression;
   if (patch.partition !== undefined) next.target.partition = patch.partition;

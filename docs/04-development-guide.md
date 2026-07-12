@@ -622,3 +622,16 @@ python3 backend/scripts/synthetic-commerce/test_generate.py
 `AGENTS.local.md` may be used for local-only Codex workflow preferences, such as routing natural-language issue, PR, and review requests to installed personal skills.
 
 This file is ignored by git and must not contain shared team policy, secrets, tokens, private keys, or real credentials.
+### ETL Permission create-flow 검증
+
+```powershell
+cd backend
+python scripts/verify-permission-create-flow-contract.py
+npm run verify:permission-job-dashboard
+
+cd ..\frontend
+npm run verify:ui-regressions
+npm run build
+```
+
+Windows에서 FastAPI 의존성이 저장소 가상환경에만 설치돼 있으면 `python` 대신 `.\.venv\Scripts\python.exe`를 사용한다. `verify:permission-job-dashboard`는 PostgreSQL metadata DB가 응답 가능한 환경을 요구한다.

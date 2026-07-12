@@ -3,7 +3,7 @@ from typing import Any, Literal
 from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.common import CamelModel, to_camel
-from app.schemas.permissions import PermissionGrant, ResourcePermissions
+from app.schemas.permissions import PermissionAction, PermissionGrant, ResourcePermissions
 
 TargetLayer = Literal["RAW", "BRONZE", "SILVER", "GOLD"]
 JobStatus = Literal["scheduled", "failed", "running", "paused", "canceled", "stopped"]
@@ -361,6 +361,26 @@ class JobListResponse(CamelModel):
     jobs: list[JobRowData]
 
 
+class PermissionOptionGroup(CamelModel):
+    id: str
+    name: str
+    description: str | None = None
+    actions: list[PermissionAction] = Field(default_factory=list)
+
+
+class PermissionOptionUser(CamelModel):
+    id: str
+    name: str
+    email: str
+    initials: str
+    role: str
+
+
+class PermissionOptionsResponse(CamelModel):
+    groups: list[PermissionOptionGroup] = Field(default_factory=list)
+    users: list[PermissionOptionUser] = Field(default_factory=list)
+
+
 class CatalogDataset(CamelModel):
     id: str
     name: str
@@ -531,6 +551,7 @@ class UpdatePipelineRequest(CamelModel):
     watermark_policy: WatermarkPolicyDraft | dict[str, Any] | None = None
     permission_summary: str = ""
     permission_roles: list[dict[str, Any]] | None = None
+    permission_grants: list[PermissionGrant] | None = None
     storage_type: str | None = None
     partition: str | None = None
     partition_columns: list[str] | None = None
