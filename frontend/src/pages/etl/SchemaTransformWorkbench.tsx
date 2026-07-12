@@ -8,6 +8,7 @@ import "../../styles/schema-transform-source.css";
 import "../../styles/schema-transform-adapter.css";
 import type {
   KafkaExecutionMode,
+  QualityRuleDraft,
   SchemaColumnDraft,
   TransformChainStepDraft,
   TransformStepDraft,
@@ -38,8 +39,10 @@ type SchemaTransformWorkbenchProps = {
   selectedIndex: number;
   sourceFormat: string;
   sourceType: string;
+  qualityRules?: QualityRuleDraft[];
   transformSteps?: TransformStepDraft[];
   onColumnsChange: (columns: SchemaColumnDraft[], sampleRows?: string[][]) => void;
+  onQualityRulesChange?: (rules: QualityRuleDraft[]) => void;
   onSelectedIndexChange: (index: number) => void;
   onTransformStepsChange?: (steps: TransformStepDraft[], outputColumns: Array<[string, string]>) => void;
 };
@@ -55,8 +58,10 @@ export function SchemaTransformWorkbench({
   selectedIndex,
   sourceFormat,
   sourceType,
+  qualityRules = [],
   transformSteps = [],
   onColumnsChange,
+  onQualityRulesChange,
   onSelectedIndexChange,
   onTransformStepsChange,
 }: SchemaTransformWorkbenchProps) {
@@ -93,7 +98,7 @@ export function SchemaTransformWorkbench({
     sourceType: sourceFormat?.toLowerCase?.() ?? "source",
   }], [sourceFormat, sourceSchema]);
 
-  const previewSignature = JSON.stringify({ columns, executionMode, sampleRows, transformSteps });
+  const previewSignature = JSON.stringify({ columns, executionMode, qualityRules, sampleRows, transformSteps });
   useEffect(() => {
     setPreview(null);
     setPreviewError("");
@@ -142,7 +147,7 @@ export function SchemaTransformWorkbench({
     const outputColumns = outputColumnsFromTargetSchema(targetSchema);
     const compilation = compileRuleContract({
       executionMode,
-      qualityRules: [],
+      qualityRules,
       schemaColumns: columns,
       sourceType,
       transformOutputColumns: outputColumns,
@@ -178,15 +183,18 @@ export function SchemaTransformWorkbench({
         <SchemaTransformEditor
           allSources={allSources}
           allowSqlTransform={!continuous && !isKafka}
-          initialCustomSql=""
+          initialCustomSql={transformSteps.find((step) => step.operation === "SQL Expression")?.params ?? ""}
           initialTargetSchema={targetSchema}
+          qualityRules={qualityRules}
           onSchemaChange={handleSchemaChange}
+          onQualityRulesChange={onQualityRulesChange}
           onSqlChange={handleSqlChange}
           onTestStatusChange={() => undefined}
-          portableTransforms
+          portableTransforms={continuous || isKafka}
           sourceDatasetId={SCHEMA_TRANSFORM_DATASET_ID}
           sourceId={SCHEMA_TRANSFORM_SOURCE_ID}
           sourceName={sourceFormat || "Source"}
+          sourceSampleRows={sampleRows}
           sourceSchema={sourceSchema}
           sourceTabs={null}
           targetSchema={targetSchema}
