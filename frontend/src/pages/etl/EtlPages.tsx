@@ -152,6 +152,7 @@ export function SchedulePage({
         <PageHeader
           className="etl-flow-page-header"
           icon={<Calendar size={18} />}
+          leadingAlign="center"
           title={title}
         />
         <Card className="overflow-hidden" size="none">
