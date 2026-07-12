@@ -1,7 +1,7 @@
 import { Bot, Check, ChevronDown, CircleUser, Database, Plus, Send, Sparkles, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { AuditResult, CatalogDataset } from "../../types";
-import { generateQueryAiSuggestion } from "../../services/queryAiService";
+import { generateQueryAiSuggestion, getQueryAiErrorMessage, QUERY_AI_REQUEST_TIMEOUT_MS } from "../../services/queryAiService";
 
 const suggestedQuestions = [
   "이번 주 리뷰 불만을 요약하는 SQL을 만들어줘",
@@ -25,6 +25,12 @@ type Conversation = {
   draftPrompt: string;
   selectedDatasetIds: string[];
   pending: boolean;
+};
+
+type ActiveQueryAiRequest = {
+  controller: AbortController;
+  conversationId: string;
+  requestId: number;
 };
 
 function createConversation(): Conversation {
@@ -57,6 +63,9 @@ export function AiChatPage({
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const contextPickerRef = useRef<HTMLDivElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const mountedRef = useRef(false);
+  const queryAiRequestRef = useRef<ActiveQueryAiRequest | null>(null);
+  const queryAiRequestIdRef = useRef(0);
   const availableDatasets = useMemo(
     () => datasets.filter((dataset) => dataset.status === "available" && dataset.permissions?.canQuery !== false),
     [datasets],
@@ -64,6 +73,15 @@ export function AiChatPage({
   const activeConversation = conversations.find((conversation) => conversation.id === activeConversationId) ?? conversations[0];
   const selectedDatasets = availableDatasets.filter((dataset) => activeConversation.selectedDatasetIds.includes(dataset.id));
   const isPending = activeConversation.pending;
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      queryAiRequestRef.current?.controller.abort();
+      queryAiRequestRef.current = null;
+    };
+  }, []);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -143,13 +161,18 @@ export function AiChatPage({
 
     const conversationId = activeConversation.id;
     const contextNames = selectedDatasets.map((dataset) => dataset.name);
+    const controller = new AbortController();
+    const requestId = queryAiRequestIdRef.current + 1;
+    queryAiRequestIdRef.current = requestId;
+    const previousRequest = queryAiRequestRef.current;
+    queryAiRequestRef.current = { controller, conversationId, requestId };
+    previousRequest?.controller.abort();
     const appendAssistantMessage = (message: Omit<ChatMessage, "id" | "kind">) => {
       setConversations((current) => current.map((conversation) => (
         conversation.id === conversationId
           ? {
             ...conversation,
             messages: [...conversation.messages, { ...message, id: `assistant-${Date.now()}`, kind: "assistant" }],
-            pending: false,
           }
           : conversation
       )));
@@ -180,7 +203,11 @@ export function AiChatPage({
         prompt: question,
         query: "",
         selectedDatasets,
+      }, {
+        signal: controller.signal,
+        timeoutMs: QUERY_AI_REQUEST_TIMEOUT_MS,
       });
+      if (!mountedRef.current || queryAiRequestRef.current?.requestId !== requestId) return;
       appendAssistantMessage({
         content: suggestion.body,
         contextNames,
@@ -189,11 +216,22 @@ export function AiChatPage({
       });
       onAction("ai.chat.suggestion_created", "/api/query/ai-suggestions", selectedDatasets[0].id);
     } catch (error) {
+      if (!mountedRef.current || queryAiRequestRef.current?.requestId !== requestId) return;
       appendAssistantMessage({
-        content: error instanceof Error ? error.message : "AI SQL 초안을 만들지 못했습니다. 잠시 후 다시 시도해 주세요.",
+        content: getQueryAiErrorMessage(error),
         contextNames,
       });
       onAction("ai.chat.suggestion_failed", "/api/query/ai-suggestions", selectedDatasets[0].id, "failed");
+    } finally {
+      const activeRequest = queryAiRequestRef.current;
+      const isCurrentRequest = activeRequest?.requestId === requestId;
+      const hasReplacementForConversation = !isCurrentRequest && activeRequest?.conversationId === conversationId;
+      if (isCurrentRequest) queryAiRequestRef.current = null;
+      if (mountedRef.current && !hasReplacementForConversation) {
+        setConversations((current) => current.map((conversation) => (
+          conversation.id === conversationId ? { ...conversation, pending: false } : conversation
+        )));
+      }
     }
   };
 

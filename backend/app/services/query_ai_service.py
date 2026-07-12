@@ -76,7 +76,7 @@ class QueryAiService:
                 self.catalog_repository.db,
                 actor_context,
                 action="query",
-                api_path="/api/query/ai/suggestions",
+                api_path="/api/query/ai-suggestions",
                 http_method="POST",
                 metadata={"owner": dataset.owner},
                 resource_id=dataset.id,

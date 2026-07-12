@@ -46,7 +46,7 @@ class QueryAiContractTests(unittest.TestCase):
         self.assertEqual(raised.exception.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
         self.assertIn("OPENAI_API_KEY", raised.exception.message)
 
-    def test_service_uses_catalog_repository_database_for_governance(self) -> None:
+    def test_service_uses_catalog_database_and_route_for_governance_audit(self) -> None:
         repository = type("Repository", (), {"db": object()})()
         service = QueryAiService(repository)
         dataset = catalog_dataset()
@@ -70,6 +70,7 @@ class QueryAiContractTests(unittest.TestCase):
 
         self.assertEqual(response.sql, "SELECT review_id FROM review_gold LIMIT 10")
         self.assertIs(governed.call_args.args[0], repository.db)
+        self.assertEqual(governed.call_args.kwargs["api_path"], "/api/query/ai-suggestions")
 
     def test_generated_sql_cannot_reference_an_unselected_dataset(self) -> None:
         with self.assertRaises(ApiError) as raised:
