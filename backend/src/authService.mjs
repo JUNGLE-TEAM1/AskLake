@@ -6,6 +6,12 @@ const { Pool } = pg;
 
 const SESSION_COOKIE_NAME = "asklake_session";
 const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
+const LEGACY_PBKDF2_ITERATIONS = 120_000;
+const PBKDF2_ITERATIONS = 600_000;
+const PASSWORD_HASH_SCHEME = "pbkdf2_sha256";
+const appEnvironment = String(process.env.APP_ENV || "local").trim().toLowerCase();
+const allowsPublicSignup = ["local", "development", "dev", "test", "testing"].includes(appEnvironment)
+  || String(process.env.AUTH_PUBLIC_SIGNUP_ENABLED || "false").trim().toLowerCase() === "true";
 
 const DEMO_USERS = [
   {
@@ -158,6 +164,9 @@ async function ensureDemoUsers() {
 
 async function signup(body) {
   await ensureAuthSchema();
+  if (!allowsPublicSignup) {
+    throw apiError("FORBIDDEN", "Public account signup is disabled. Contact an AskLake administrator.", 403);
+  }
   const email = normalizeEmail(requiredString(body.email, "Email is required."));
   const password = requiredString(body.password, "Password is required.");
   const displayName = requiredString(body.displayName || body.display_name || email.split("@")[0], "Display name is required.").trim();
@@ -213,6 +222,15 @@ async function login(body) {
   }
   if (user.status !== "active") {
     throw apiError("AUTH_INACTIVE_USER", "비활성화된 계정입니다.", 403);
+  }
+  if (passwordNeedsRehash(user.password_hash)) {
+    user.password_hash = hashPassword(password, user.password_salt);
+    if (!useMemoryAuth) {
+      await pool.query(
+        "UPDATE auth_users SET password_hash = $1, updated_at = now() WHERE id = $2",
+        [user.password_hash, user.id],
+      );
+    }
   }
   if (useMemoryAuth) {
     user.last_active_at = new Date();
@@ -367,12 +385,32 @@ function parseCookies(cookieHeader) {
   }, {});
 }
 
-function hashPassword(password, salt) {
-  return crypto.pbkdf2Sync(password, salt, 120_000, 32, "sha256").toString("hex");
+export function hashPassword(password, salt) {
+  const digest = crypto.pbkdf2Sync(password, salt, PBKDF2_ITERATIONS, 32, "sha256").toString("hex");
+  return `${PASSWORD_HASH_SCHEME}$${PBKDF2_ITERATIONS}$${digest}`;
 }
 
-function verifyPassword(password, salt, expectedHash) {
-  return crypto.timingSafeEqual(Buffer.from(hashPassword(password, salt), "hex"), Buffer.from(expectedHash, "hex"));
+export function verifyPassword(password, salt, expectedHash) {
+  const { digest, iterations } = passwordHashParts(expectedHash);
+  const actual = crypto.pbkdf2Sync(password, salt, iterations, 32, "sha256");
+  const expected = Buffer.from(digest, "hex");
+  return expected.length === actual.length && crypto.timingSafeEqual(actual, expected);
+}
+
+function passwordHashParts(value) {
+  const parts = String(value || "").split("$", 3);
+  if (parts.length === 3 && parts[0] === PASSWORD_HASH_SCHEME) {
+    const iterations = Number(parts[1]);
+    if (Number.isSafeInteger(iterations) && iterations > 0 && iterations <= PBKDF2_ITERATIONS * 2 && parts[2]) {
+      return { digest: parts[2], iterations };
+    }
+  }
+  return { digest: String(value || ""), iterations: LEGACY_PBKDF2_ITERATIONS };
+}
+
+function passwordNeedsRehash(value) {
+  const { iterations } = passwordHashParts(value);
+  return !String(value || "").startsWith(`${PASSWORD_HASH_SCHEME}$`) || iterations < PBKDF2_ITERATIONS;
 }
 
 function normalizeEmail(email) {

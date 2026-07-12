@@ -53,18 +53,19 @@ def login(
     try:
         session = service.login(email=payload.email, password=payload.password)
     except ApiError as exc:
-        safe_record_audit_event(
-            db,
-            action="auth.login.failed",
-            actor=ActorContext(name=payload.email, role="anonymous", email=payload.email),
-            api_path="/api/auth/login",
-            http_method="POST",
-            metadata={"email": payload.email},
-            result="forbidden" if exc.status_code == status.HTTP_403_FORBIDDEN else "failed",
-            status_code=exc.status_code,
-            target_id=payload.email,
-            target_type="auth",
-        )
+        if exc.status_code != status.HTTP_429_TOO_MANY_REQUESTS:
+            safe_record_audit_event(
+                db,
+                action="auth.login.failed",
+                actor=ActorContext(name=payload.email, role="anonymous", email=payload.email),
+                api_path="/api/auth/login",
+                http_method="POST",
+                metadata={"email": payload.email},
+                result="forbidden" if exc.status_code == status.HTTP_403_FORBIDDEN else "failed",
+                status_code=exc.status_code,
+                target_id=payload.email,
+                target_type="auth",
+            )
         raise
     issue_session_cookie(response, str(session["token"]))
     actor = actor_context_from_session(session)

@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from fastapi import Response
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -26,13 +26,11 @@ class OperationalAuthHardeningTests(unittest.TestCase):
         )
         self.db = Session(self.engine)
         auth_service._login_failures_by_email.clear()
-        auth_service._global_login_failures.clear()
 
     def tearDown(self) -> None:
         self.db.close()
         self.engine.dispose()
         auth_service._login_failures_by_email.clear()
-        auth_service._global_login_failures.clear()
 
     def test_production_signup_is_disabled_by_default(self) -> None:
         production = SimpleNamespace(
@@ -132,6 +130,55 @@ class OperationalAuthHardeningTests(unittest.TestCase):
 
         self.assertEqual(limited.exception.status_code, 429)
 
+    def test_correct_password_recovers_after_rate_limit(self) -> None:
+        local = SimpleNamespace(allows_header_auth_fallback=True)
+        with patch.object(auth_service, "settings", local):
+            service = AuthService(self.db)
+            admin = self.db.get(AuthUserModel, "admin-user")
+            assert admin is not None
+            for _attempt in range(auth_service.LOGIN_FAILURE_LIMIT + 1):
+                with self.assertRaises(ApiError):
+                    service.login(email=admin.email, password="wrong-password")
+
+            session = service.login(email=admin.email, password="asklake-admin")
+
+        self.assertIn("token", session)
+        self.assertNotIn(admin.email, auth_service._login_failures_by_email)
+
+    def test_missing_user_still_executes_dummy_password_verification(self) -> None:
+        local = SimpleNamespace(allows_header_auth_fallback=True)
+        with (
+            patch.object(auth_service, "settings", local),
+            patch.object(auth_service, "verify_password", wraps=auth_service.verify_password) as verify,
+        ):
+            service = AuthService(self.db)
+            with self.assertRaises(ApiError):
+                service.login(email="missing@example.com", password="wrong-password")
+
+        verify.assert_called_once_with(
+            "wrong-password",
+            auth_service.DUMMY_PASSWORD_SALT,
+            auth_service.DUMMY_PASSWORD_HASH,
+        )
+
+    def test_signup_rolls_back_user_when_session_creation_fails(self) -> None:
+        local = SimpleNamespace(allows_header_auth_fallback=True, allows_public_signup=True)
+        with patch.object(auth_service, "settings", local):
+            service = AuthService(self.db)
+            with (
+                patch.object(service, "create_session", side_effect=RuntimeError("session failed")),
+                self.assertRaises(RuntimeError),
+            ):
+                service.signup(
+                    email="transaction@example.com",
+                    password="transaction-password",
+                    display_name="Transaction User",
+                )
+
+        self.assertIsNone(
+            self.db.scalar(select(AuthUserModel).where(AuthUserModel.email == "transaction@example.com"))
+        )
+
 
 class ProductionConfigurationHardeningTests(unittest.TestCase):
     def test_production_rejects_wildcard_or_insecure_cors_origins(self) -> None:
@@ -154,6 +201,29 @@ class ProductionConfigurationHardeningTests(unittest.TestCase):
                 backend_cors_origins=[],
             )
 
+    def test_production_requires_valid_admin_email_and_long_password(self) -> None:
+        for email, password in (
+            ("invalid-email", "strong-bootstrap-password"),
+            ("owner@example.com", "too-short"),
+        ):
+            with self.subTest(email=email):
+                with self.assertRaises(ValueError):
+                    Settings(
+                        app_env="production",
+                        bootstrap_admin_email=email,
+                        bootstrap_admin_password=password,
+                        backend_cors_origins=[],
+                    )
+
+    def test_cors_origin_trailing_slash_is_normalized(self) -> None:
+        configured = Settings(
+            app_env="production",
+            bootstrap_admin_email="owner@example.com",
+            bootstrap_admin_password="strong-bootstrap-password",
+            backend_cors_origins=["https://app.example.com/"],
+        )
+        self.assertEqual(configured.backend_cors_origins, ["https://app.example.com"])
+
     def test_health_returns_503_when_database_probe_fails(self) -> None:
         response = Response()
         with patch("app.api.health.SessionLocal", side_effect=SQLAlchemyError("db down")):
@@ -175,6 +245,8 @@ class ProductionConfigurationHardeningTests(unittest.TestCase):
         ):
             with self.subTest(header=header):
                 self.assertIn(header, caddyfile)
+        self.assertIn("https://fonts.googleapis.com", caddyfile)
+        self.assertIn("https://www.youtube.com", caddyfile)
 
 
 if __name__ == "__main__":

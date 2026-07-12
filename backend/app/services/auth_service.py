@@ -23,12 +23,11 @@ PBKDF2_ITERATIONS = 600_000
 MAX_PBKDF2_ITERATIONS = 1_200_000
 PASSWORD_HASH_SCHEME = "pbkdf2_sha256"
 LOGIN_FAILURE_LIMIT = 5
-GLOBAL_LOGIN_FAILURE_LIMIT = 100
 LOGIN_FAILURE_WINDOW = timedelta(minutes=15)
+DUMMY_PASSWORD_SALT = "asklake-dummy-auth-salt-v1"
 
 _login_failure_lock = Lock()
 _login_failures_by_email: dict[str, list[datetime]] = {}
-_global_login_failures: list[datetime] = []
 
 DEMO_AUTH_USERS = [
     {
@@ -95,21 +94,36 @@ class AuthService:
             title="AskLake User",
         )
         user.password_hash = hash_password(password, user.password_salt)
-        self.db.add(user)
-        self.db.commit()
-        self.db.refresh(user)
-        return self.create_session(user)
+        try:
+            self.db.add(user)
+            self.db.flush()
+            session = self.create_session(user, commit=False)
+            self.db.commit()
+            self.db.refresh(user)
+            return session
+        except Exception:
+            self.db.rollback()
+            raise
 
     def login(self, *, email: str, password: str) -> dict[str, Any]:
         normalized_email = normalize_email(email)
-        enforce_login_rate_limit(normalized_email)
         user = self.db.scalar(select(AuthUserModel).where(AuthUserModel.email == normalized_email))
-        if user is None or not verify_password(password, user.password_salt, user.password_hash):
-            record_login_failure(normalized_email)
+        password_valid = verify_password(
+            password,
+            user.password_salt if user is not None else DUMMY_PASSWORD_SALT,
+            user.password_hash if user is not None else DUMMY_PASSWORD_HASH,
+        )
+        if user is None or not password_valid:
+            rate_limited = record_login_failure(normalized_email)
             raise ApiError(
-                ErrorCode.UNAUTHORIZED,
-                "이메일 또는 비밀번호를 확인해주세요.",
-                status.HTTP_401_UNAUTHORIZED,
+                ErrorCode.RATE_LIMITED if rate_limited else ErrorCode.UNAUTHORIZED,
+                "Too many failed login attempts. Try again later."
+                if rate_limited
+                else "이메일 또는 비밀번호를 확인해주세요.",
+                status.HTTP_429_TOO_MANY_REQUESTS if rate_limited else status.HTTP_401_UNAUTHORIZED,
+                {"retryAfterSeconds": int(LOGIN_FAILURE_WINDOW.total_seconds())}
+                if rate_limited
+                else None,
             )
         if user.status != "active":
             raise ApiError(
@@ -129,11 +143,15 @@ class AuthService:
         if password_needs_rehash(user.password_hash):
             user.password_hash = hash_password(password, user.password_salt)
         user.last_active_at = now_utc()
-        session = self.create_session(user)
-        self.db.commit()
-        return session
+        try:
+            session = self.create_session(user, commit=False)
+            self.db.commit()
+            return session
+        except Exception:
+            self.db.rollback()
+            raise
 
-    def create_session(self, user: AuthUserModel) -> dict[str, Any]:
+    def create_session(self, user: AuthUserModel, *, commit: bool = True) -> dict[str, Any]:
         token = secrets.token_urlsafe(48)
         expires_at = now_utc() + timedelta(days=SESSION_TTL_DAYS)
         session = AuthSessionModel(
@@ -143,7 +161,8 @@ class AuthService:
             user_snapshot=user_to_actor(user),
         )
         self.db.add(session)
-        self.db.commit()
+        if commit:
+            self.db.commit()
         return {
             "token": token,
             "expires_at": expires_at,
@@ -340,26 +359,13 @@ def password_needs_rehash(value: str) -> bool:
     return not value.startswith(f"{PASSWORD_HASH_SCHEME}$") or iterations < PBKDF2_ITERATIONS
 
 
-def enforce_login_rate_limit(email: str) -> None:
+def record_login_failure(email: str) -> bool:
     now = now_utc()
     with _login_failure_lock:
         prune_login_failures(now)
-        account_failures = _login_failures_by_email.get(email, [])
-        if len(account_failures) >= LOGIN_FAILURE_LIMIT or len(_global_login_failures) >= GLOBAL_LOGIN_FAILURE_LIMIT:
-            raise ApiError(
-                ErrorCode.RATE_LIMITED,
-                "Too many failed login attempts. Try again later.",
-                status.HTTP_429_TOO_MANY_REQUESTS,
-                {"retryAfterSeconds": int(LOGIN_FAILURE_WINDOW.total_seconds())},
-            )
-
-
-def record_login_failure(email: str) -> None:
-    now = now_utc()
-    with _login_failure_lock:
-        prune_login_failures(now)
-        _login_failures_by_email.setdefault(email, []).append(now)
-        _global_login_failures.append(now)
+        failures = _login_failures_by_email.setdefault(email, [])
+        failures.append(now)
+        return len(failures) > LOGIN_FAILURE_LIMIT
 
 
 def clear_login_failures(email: str) -> None:
@@ -375,7 +381,9 @@ def prune_login_failures(now: datetime) -> None:
             _login_failures_by_email[email] = active
         else:
             _login_failures_by_email.pop(email, None)
-    _global_login_failures[:] = [failure for failure in _global_login_failures if failure >= cutoff]
+
+
+DUMMY_PASSWORD_HASH = hash_password("not-a-real-password", DUMMY_PASSWORD_SALT)
 
 
 def now_utc() -> datetime:

@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     app_env: str = "local"
     api_prefix: str = "/api"
     database_url: str = "postgresql+psycopg://asklake:asklake_dev@localhost:54328/asklake"
+    database_connect_timeout_seconds: int = Field(default=5, ge=1, le=30)
     local_lake_storage_dir: str | None = None
     openai_api_key: str | None = None
     openai_assistant_enabled: bool = True
@@ -57,12 +58,12 @@ class Settings(BaseSettings):
                 try:
                     parsed = json.loads(text)
                     if isinstance(parsed, list):
-                        return [str(origin).strip() for origin in parsed if str(origin).strip()]
+                        return [str(origin).strip().rstrip("/") for origin in parsed if str(origin).strip()]
                 except json.JSONDecodeError:
                     pass
-            return [origin.strip() for origin in text.split(",") if origin.strip()]
+            return [origin.strip().rstrip("/") for origin in text.split(",") if origin.strip()]
         if isinstance(value, list):
-            return value
+            return [str(origin).strip().rstrip("/") for origin in value if str(origin).strip()]
         return []
 
     @model_validator(mode="after")
@@ -75,6 +76,13 @@ class Settings(BaseSettings):
             raise ValueError(
                 "BOOTSTRAP_ADMIN_EMAIL and BOOTSTRAP_ADMIN_PASSWORD are required outside local/dev/test"
             )
+        if not self.allows_header_auth_fallback:
+            normalized_email = str(self.bootstrap_admin_email or "").strip().casefold()
+            local_part, separator, domain = normalized_email.partition("@")
+            if not separator or not local_part or "." not in domain or domain.startswith(".") or domain.endswith("."):
+                raise ValueError("BOOTSTRAP_ADMIN_EMAIL must be a valid administrator email address")
+            if len(str(self.bootstrap_admin_password or "")) < 16:
+                raise ValueError("BOOTSTRAP_ADMIN_PASSWORD must contain at least 16 characters")
         placeholder_values = {
             "replace-with-admin-email@example.invalid",
             "replace-with-a-unique-bootstrap-password",
@@ -84,7 +92,7 @@ class Settings(BaseSettings):
             "asklake-demo",
         }
         if not self.allows_header_auth_fallback and (
-            self.bootstrap_admin_email in placeholder_values
+            str(self.bootstrap_admin_email or "").casefold() in placeholder_values
             or self.bootstrap_admin_password in placeholder_values
         ):
             raise ValueError("Replace the production bootstrap administrator placeholders before startup")

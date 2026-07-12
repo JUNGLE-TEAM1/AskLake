@@ -89,6 +89,23 @@ const checks = [
     ],
   },
   {
+    name: "Authentication failures stay server-side instead of creating browser-local users",
+    file: "src/services/authApi.ts",
+    patterns: [
+      /return apiClient\.get<AuthSessionResponse>\("\/api\/auth\/session"\);/,
+      /return apiClient\.post<AuthUserResponse>\("\/api\/auth\/login", payload\);/,
+      /return apiClient\.post<AuthUserResponse>\("\/api\/auth\/signup", payload\);/,
+    ],
+    forbiddenPatterns: [
+      /asklake\.tempAuth/,
+      /asklake\.mockAuthUser/,
+      /shouldUseTempAuth/,
+      /localStorage/,
+      /sessionStorage/,
+      /apiConfig\.useMock/,
+    ],
+  },
+  {
     name: "Landing hero renders a scalable vector brand instead of enlarged raster logos",
     file: "src/pages/landing/AskLakeLandingPage.tsx",
     patterns: [
