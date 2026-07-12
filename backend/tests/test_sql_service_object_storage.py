@@ -17,7 +17,8 @@ class FakeS3Client:
         self.reported_sizes = reported_sizes or {}
         self.downloaded_keys: list[str] = []
 
-    def list_objects_v2(self, **_: object) -> dict[str, object]:
+    def list_objects_v2(self, **kwargs: object) -> dict[str, object]:
+        prefix = str(kwargs.get("Prefix") or "")
         return {
             "Contents": [
                 {
@@ -25,6 +26,7 @@ class FakeS3Client:
                     "Size": self.reported_sizes.get(key, source.stat().st_size),
                 }
                 for key, source in self.objects.items()
+                if key.startswith(prefix)
             ],
             "IsTruncated": False,
         }
@@ -46,14 +48,23 @@ class SqlServiceObjectStorageTest(TestCase):
             )
         finally:
             connection.close()
+        self.csv_path = self.fixture_dir / "source.csv"
+        self.csv_path.write_text("id,label\n1,alpha\n2,beta\n", encoding="utf-8")
+        self.json_path = self.fixture_dir / "source.json"
+        self.json_path.write_text(
+            '{"id":1,"label":"alpha"}\n{"id":2,"label":"beta"}\n',
+            encoding="utf-8",
+        )
+        self.jsonl_path = self.fixture_dir / "source.jsonl"
+        self.jsonl_path.write_text(self.json_path.read_text(encoding="utf-8"), encoding="utf-8")
 
-    def remote_dataset(self) -> SimpleNamespace:
+    def remote_dataset(self, storage_format: str = "parquet") -> SimpleNamespace:
         return SimpleNamespace(
             id="ds_remote_table",
             name="remote_table",
             sample_rows=[],
             schema_=[],
-            storage_format="parquet",
+            storage_format=storage_format,
             storage_location="s3a://asklake-output/remote_table/silver/run_1",
         )
 
@@ -81,6 +92,29 @@ class SqlServiceObjectStorageTest(TestCase):
         self.assertEqual(result["columns"], ["row_count"])
         self.assertEqual(result["rows"], [["2"]])
         self.assertEqual(client.downloaded_keys, [object_key])
+
+    def test_remote_csv_json_and_jsonl_are_downloaded_and_queried(self) -> None:
+        fixtures = (
+            ("csv", self.csv_path),
+            ("json", self.json_path),
+            ("jsonl", self.jsonl_path),
+        )
+        for storage_format, source_path in fixtures:
+            with self.subTest(storage_format=storage_format):
+                object_key = f"remote_table/silver/run_1/part-00000.{storage_format}"
+                client = FakeS3Client({object_key: source_path})
+                with (
+                    patch.object(sql_service, "build_sql_preview_s3_client", return_value=client),
+                    patch.dict(os.environ, {"MINIO_BUCKET": "asklake-output"}, clear=False),
+                ):
+                    result = sql_service.execute_duckdb_preview(
+                        'SELECT COUNT(*) AS row_count FROM "remote_table"',
+                        context_datasets=[self.remote_dataset(storage_format)],
+                        preview_limit=100,
+                    )
+
+                self.assertEqual(result["rows"], [["2"]])
+                self.assertEqual(client.downloaded_keys, [object_key])
 
     def test_local_parquet_preview_still_works(self) -> None:
         dataset = SimpleNamespace(

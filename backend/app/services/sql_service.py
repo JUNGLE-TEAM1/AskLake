@@ -186,7 +186,11 @@ class SqlService:
         )
         return response
 
-    def get_query_run(self, run_id: str) -> QueryRunResponse:
+    def get_query_run(
+        self,
+        run_id: str,
+        actor: ActorContext,
+    ) -> QueryRunResponse:
         payload = self.repository.get_run_payload(run_id)
         if payload is None:
             raise ApiError(
@@ -195,7 +199,33 @@ class SqlService:
                 status.HTTP_404_NOT_FOUND,
                 {"runId": run_id},
             )
-        return QueryRunResponse.model_validate(payload)
+        response = QueryRunResponse.model_validate(payload)
+        dataset_ids = unique_dataset_ids([
+            response.dataset_id,
+            response.base_dataset_id or "",
+            *response.reference_dataset_ids,
+        ])
+        for dataset_id in dataset_ids:
+            dataset = self.get_catalog_dataset(dataset_id)
+            require_governed_access(
+                self.catalog_repository.db,
+                actor,
+                action="query",
+                api_path=f"/api/query/runs/{run_id}",
+                http_method="GET",
+                metadata={"owner": dataset.owner},
+                resource_id=dataset.id,
+                resource_name=dataset.name,
+                resource_type="dataset",
+            )
+            require_permission(
+                actor,
+                "query",
+                owner=dataset.owner,
+                grants=dataset.permission_grants,
+                resource_label="dataset",
+            )
+        return response
 
     def get_catalog_dataset(
         self,
@@ -412,57 +442,80 @@ def register_duckdb_storage_location(
     remote_cache_root: Path | None = None,
     remote_budget: RemotePreviewBudget | None = None,
 ) -> bool:
-    storage_location = dataset.storage_location
-    if not storage_location:
+    storage_location = str(dataset.storage_location or "").strip()
+    if not storage_location or storage_location in {"-", "Pending"}:
         return False
 
-    storage_format = str(dataset.storage_format or "").lower()
-    if is_remote_storage_location(storage_location):
-        if storage_format != "parquet":
-            return False
-        if remote_cache_root is None or remote_budget is None:
-            raise sql_storage_error(
-                "Remote SQL Preview cache is not configured",
-                {"datasetId": dataset.id},
-            )
-        parquet_path = download_remote_parquet_dataset(
-            storage_location,
-            dataset_id=dataset.id,
-            cache_root=remote_cache_root,
-            budget=remote_budget,
+    storage_format = str(dataset.storage_format or "").strip().lower()
+    if storage_format not in {"csv", "json", "jsonl", "parquet"}:
+        raise sql_storage_error(
+            "Dataset storage format is not supported for SQL Preview",
+            {
+                "datasetId": dataset.id,
+                "storageFormat": storage_format or None,
+                "storageLocation": storage_location,
+            },
         )
-        connection.execute(
-            f"CREATE TEMP VIEW {quote_duckdb_identifier(table_name)} AS "
-            f"SELECT * FROM read_parquet({quote_duckdb_string_literal(parquet_path)}, "
-            "union_by_name = true, hive_partitioning = true)"
-        )
-        return True
-
-    storage_path = Path(storage_location)
-    if not storage_path.exists():
-        return False
 
     try:
-        if storage_format == "jsonl" and storage_path.is_file():
-            records = read_jsonl_records(storage_path)
-            if not records:
-                return False
-            register_duckdb_records(connection, table_name, records)
-            return True
-
-        if storage_format == "parquet":
-            parquet_path = parquet_scan_path(storage_path)
-            if not parquet_path:
-                return False
-            connection.execute(
-                f"CREATE TEMP VIEW {quote_duckdb_identifier(table_name)} AS "
-                f"SELECT * FROM read_parquet({quote_duckdb_string_literal(parquet_path)})"
+        if is_remote_storage_location(storage_location):
+            if remote_cache_root is None or remote_budget is None:
+                raise sql_storage_error(
+                    "Remote SQL Preview cache is not configured",
+                    {"datasetId": dataset.id},
+                )
+            scan_path = download_remote_storage_dataset(
+                storage_location,
+                dataset_id=dataset.id,
+                storage_format=storage_format,
+                cache_root=remote_cache_root,
+                budget=remote_budget,
             )
-            return True
-    except (OSError, duckdb.Error, json.JSONDecodeError):
-        return False
+        else:
+            storage_path = Path(storage_location)
+            if not storage_path.exists():
+                raise FileNotFoundError(f"Storage location does not exist: {storage_location}")
+            scan_path = (
+                parquet_scan_path(storage_path)
+                if storage_format == "parquet"
+                else delimited_scan_path(storage_path, storage_format)
+            )
+            if not scan_path:
+                raise FileNotFoundError(
+                    f"{storage_format.upper()} storage does not contain readable files: {storage_location}"
+                )
 
-    return False
+        register_duckdb_scan_view(connection, table_name, scan_path, storage_format)
+        return True
+    except ApiError:
+        raise
+    except (OSError, ValueError, duckdb.Error, json.JSONDecodeError) as error:
+        raise sql_storage_error(
+            "Dataset physical storage could not be read for SQL Preview",
+            {
+                "datasetId": dataset.id,
+                "storageFormat": storage_format,
+                "storageLocation": storage_location,
+                "reason": str(error)[:500],
+            },
+        ) from error
+
+
+def register_duckdb_scan_view(
+    connection: duckdb.DuckDBPyConnection,
+    table_name: str,
+    scan_path: str,
+    storage_format: str,
+) -> None:
+    table = quote_duckdb_identifier(table_name)
+    path = quote_duckdb_string_literal(scan_path)
+    if storage_format == "parquet":
+        source = f"read_parquet({path}, union_by_name = true, hive_partitioning = true)"
+    elif storage_format == "csv":
+        source = f"read_csv_auto({path}, header = true, union_by_name = true, hive_partitioning = true)"
+    else:
+        source = f"read_json_auto({path}, union_by_name = true, hive_partitioning = true)"
+    connection.execute(f"CREATE TEMP VIEW {table} AS SELECT * FROM {source}")
 
 
 def is_remote_storage_location(storage_location: str) -> bool:
@@ -487,6 +540,29 @@ def download_remote_parquet_dataset(
     cache_root: Path,
     budget: RemotePreviewBudget,
 ) -> str:
+    return download_remote_storage_dataset(
+        storage_location,
+        dataset_id=dataset_id,
+        storage_format="parquet",
+        cache_root=cache_root,
+        budget=budget,
+    )
+
+
+def download_remote_storage_dataset(
+    storage_location: str,
+    *,
+    dataset_id: str,
+    storage_format: str,
+    cache_root: Path,
+    budget: RemotePreviewBudget,
+) -> str:
+    format_label = {
+        "csv": "CSV",
+        "json": "JSON",
+        "jsonl": "JSONL",
+        "parquet": "Parquet",
+    }.get(storage_format, storage_format.upper())
     parsed = urlparse(storage_location)
     bucket = parsed.netloc.strip()
     prefix = parsed.path.lstrip("/").rstrip("/")
@@ -499,30 +575,35 @@ def download_remote_parquet_dataset(
 
     try:
         client = build_sql_preview_s3_client()
-        parquet_objects = list_remote_parquet_objects(client, bucket, prefix)
-        if not parquet_objects:
+        storage_objects = list_remote_storage_objects(client, bucket, prefix, storage_format)
+        if not storage_objects:
             raise sql_storage_error(
-                "Remote dataset does not contain Parquet objects",
-                {"datasetId": dataset_id, "bucket": bucket, "prefix": prefix},
+                f"Remote dataset does not contain {format_label} objects",
+                {
+                    "datasetId": dataset_id,
+                    "bucket": bucket,
+                    "prefix": prefix,
+                    "storageFormat": storage_format,
+                },
             )
 
         budget.reserve(
-            sum(size_bytes for _, size_bytes in parquet_objects),
+            sum(size_bytes for _, size_bytes in storage_objects),
             bucket=bucket,
             prefix=prefix,
         )
         dataset_cache_dir = cache_root / safe_cache_directory_name(dataset_id)
         dataset_cache_dir.mkdir(parents=True, exist_ok=True)
-        for object_key, _ in parquet_objects:
+        for object_key, _ in storage_objects:
             destination = remote_object_cache_path(dataset_cache_dir, object_key, prefix)
             destination.parent.mkdir(parents=True, exist_ok=True)
             client.download_file(bucket, object_key, str(destination))
-        return str(dataset_cache_dir / "**" / "*.parquet")
+        return str(dataset_cache_dir / "**" / f"*.{storage_format}")
     except ApiError:
         raise
     except Exception as exc:
         raise sql_storage_error(
-            "Remote Parquet dataset could not be loaded for SQL Preview",
+            f"Remote {format_label} dataset could not be loaded for SQL Preview",
             {
                 "datasetId": dataset_id,
                 "bucket": bucket,
@@ -533,7 +614,17 @@ def download_remote_parquet_dataset(
 
 
 def list_remote_parquet_objects(client: Any, bucket: str, prefix: str) -> list[tuple[str, int]]:
+    return list_remote_storage_objects(client, bucket, prefix, "parquet")
+
+
+def list_remote_storage_objects(
+    client: Any,
+    bucket: str,
+    prefix: str,
+    storage_format: str,
+) -> list[tuple[str, int]]:
     objects: list[tuple[str, int]] = []
+    suffix = f".{storage_format.lower()}"
     continuation_token: str | None = None
     while True:
         request: dict[str, Any] = {"Bucket": bucket, "Prefix": prefix}
@@ -543,7 +634,7 @@ def list_remote_parquet_objects(client: Any, bucket: str, prefix: str) -> list[t
         for item in response.get("Contents") or []:
             object_key = str(item.get("Key") or "")
             size_bytes = max(int(item.get("Size") or 0), 0)
-            if object_key.lower().endswith(".parquet") and size_bytes > 0:
+            if object_key.lower().endswith(suffix) and size_bytes > 0:
                 objects.append((object_key, size_bytes))
         if not response.get("IsTruncated"):
             break
@@ -798,6 +889,15 @@ def parquet_scan_path(storage_path: Path) -> str:
         parquet_files = list(storage_path.rglob("*.parquet"))
         if parquet_files:
             return str(storage_path / "**" / "*.parquet")
+    return ""
+
+
+def delimited_scan_path(storage_path: Path, storage_format: str) -> str:
+    suffix = f".{storage_format.lower()}"
+    if storage_path.is_file() and storage_path.suffix.lower() == suffix:
+        return str(storage_path)
+    if storage_path.is_dir() and any(storage_path.rglob(f"*{suffix}")):
+        return str(storage_path / "**" / f"*{suffix}")
     return ""
 
 
