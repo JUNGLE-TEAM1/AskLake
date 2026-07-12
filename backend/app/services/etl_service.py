@@ -6,10 +6,12 @@ from pathlib import Path
 import re
 import secrets
 import subprocess
+from types import SimpleNamespace
 from typing import Any
 from urllib.parse import urlparse
 
 from fastapi import status
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -27,8 +29,11 @@ from app.models import (
     KafkaContinuousSessionModel,
     KafkaSnapshotModel,
 )
+from app.models.base import Base
+from app.models.identity import AuthUserModel
 from app.repositories.audit_repository import safe_record_audit_event
 from app.repositories import etl_repository
+from app.repositories.permission_repository import replace_permission_ui_grants
 from app.schemas.common import ErrorCode
 from app.schemas.etl import (
     AirflowCatalogReconciliationResponse,
@@ -48,6 +53,9 @@ from app.schemas.etl import (
     JobRowData,
     JobRunOutcome,
     JobScheduleKind,
+    PermissionOptionGroup,
+    PermissionOptionsResponse,
+    PermissionOptionUser,
     KafkaContinuousBatch,
     KafkaContinuousSession,
     ReviewEntry,
@@ -78,6 +86,7 @@ from app.schemas.etl import (
 
 from app.services.airflow_client import AirflowDagRun, AirflowTaskInstance, build_airflow_client
 from app.services.governance_enforcement import require_governed_access
+from app.services.identity_service import DEMO_GROUPS, DEMO_USERS
 from app.services.resource_permission_service import job_with_persisted_permission_grants, permission_grants_for_resource, permissions_for_actor_with_governance
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
@@ -86,10 +95,58 @@ JOB_STATUSES = ("scheduled", "failed", "running", "paused", "canceled", "stopped
 ACTIVE_RUN_STATUSES = {"queued", "running"}
 TERMINAL_RUN_STATUSES = {"success", "failed", "canceled"}
 SPARK_OUTPUT_FORMAT = "parquet"
+PERMISSION_GROUP_ACTIONS = {
+    "analytics": ["view", "query"],
+    "data-platform": ["view", "run", "manage"],
+    "ops": ["view", "run"],
+}
 
 
-def create_pipeline(db: Session, request: CreatePipelineRequest, actor_name: str = "demo-user") -> CreatePipelineResponse:
+def get_permission_options(db: Session, actor: ActorContext) -> PermissionOptionsResponse:
+    if actor.role != "admin":
+        raise ApiError(ErrorCode.FORBIDDEN, "Admin role is required", status.HTTP_403_FORBIDDEN)
+    Base.metadata.create_all(bind=db.get_bind(), tables=[AuthUserModel.__table__])
+    stored_users = list(db.scalars(select(AuthUserModel).order_by(AuthUserModel.display_name.asc())).all())
+    users = stored_users or [
+        SimpleNamespace(
+            id=value["id"],
+            display_name=value["display_name"],
+            email=value["email"],
+            role=value["role"],
+        )
+        for value in DEMO_USERS.values()
+    ]
+    return PermissionOptionsResponse(
+        groups=[
+            PermissionOptionGroup(
+                id=group.id,
+                name=group.name,
+                description=group.description,
+                actions=PERMISSION_GROUP_ACTIONS.get(group.id, ["view", "run"]),
+            )
+            for group in DEMO_GROUPS.values()
+        ],
+        users=[
+            PermissionOptionUser(
+                id=user.id,
+                name=user.display_name,
+                email=user.email,
+                initials="".join(part[0] for part in user.display_name.split()[:2]).upper() or user.display_name[:2].upper(),
+                role=user.role,
+            )
+            for user in users
+        ],
+    )
+
+
+def create_pipeline(
+    db: Session,
+    request: CreatePipelineRequest,
+    actor: ActorContext | str = "demo-user",
+) -> CreatePipelineResponse:
     validate_create_request(request)
+    actor_context = actor if isinstance(actor, ActorContext) else ActorContext(name=actor)
+    actor_name = actor_context.name
     created_by = identity_name(request.created_by or actor_name or request.owner)
     created_by_profile = request.created_by_profile or identity_profile(created_by)
     dataset_id = f"ds_{normalize_column_name(request.target_dataset)}"
@@ -109,6 +166,7 @@ def create_pipeline(db: Session, request: CreatePipelineRequest, actor_name: str
             )
         update_existing_append_job(existing_job, request, dataset_id, created_by, created_by_profile)
         saved_job = etl_repository.save_job(db, existing_job)
+        saved_job = persist_requested_permission_grants(db, saved_job, request.permission_grants, created_by, actor_context)
         return CreatePipelineResponse(
             catalog_target={
                 "id": dataset_id,
@@ -188,6 +246,7 @@ def create_pipeline(db: Session, request: CreatePipelineRequest, actor_name: str
     if request.execution_mode == "continuous":
         etl_repository.save_kafka_continuous_runtime(db, continuous_runtime_from_job(job))
         saved_job = etl_repository.get_job_schema(db, job_id) or saved_job
+    saved_job = persist_requested_permission_grants(db, saved_job, request.permission_grants, created_by, actor_context)
     return CreatePipelineResponse(
         catalog_target={
             "id": dataset_id,
@@ -384,7 +443,34 @@ def update_pipeline(
 
     apply_update_request(job, request, target_changed)
     saved_job = etl_repository.save_job(db, job)
+    saved_job = persist_requested_permission_grants(
+        db,
+        saved_job,
+        request.permission_grants,
+        actor_context.name,
+        actor_context,
+    )
     return with_job_permissions(db, saved_job, actor_context)
+
+
+def persist_requested_permission_grants(
+    db: Session,
+    job: JobRowData,
+    grants: list[Any] | None,
+    created_by: str,
+    actor: ActorContext,
+) -> JobRowData:
+    if grants is None:
+        return job
+    replace_permission_ui_grants(
+        db,
+        resource_type="etl_job",
+        resource_id=job.id,
+        grants=grants,
+        created_by=created_by,
+    )
+    refreshed_job = etl_repository.get_job_schema(db, job.id) or job
+    return with_job_permissions(db, refreshed_job, actor)
 
 
 def list_datasets(db: Session) -> list[CatalogDataset]:
@@ -3683,6 +3769,7 @@ def nonnegative_int(value: Any, fallback: int) -> int:
 
 
 def validate_create_request(request: CreatePipelineRequest) -> None:
+    validate_requested_permission_grants(request.permission_grants)
     missing = []
     if not request.job_name:
         missing.append("jobName")
@@ -3726,6 +3813,7 @@ def validate_create_request(request: CreatePipelineRequest) -> None:
 
 
 def validate_update_request(request: UpdatePipelineRequest) -> None:
+    validate_requested_permission_grants(request.permission_grants)
     missing = []
     if not request.job_name:
         missing.append("jobName")
@@ -3745,6 +3833,25 @@ def validate_update_request(request: UpdatePipelineRequest) -> None:
             f"Missing required fields: {', '.join(missing)}",
             status.HTTP_400_BAD_REQUEST,
         )
+
+
+def validate_requested_permission_grants(grants: list[Any] | None) -> None:
+    for grant in grants or []:
+        principal_type = str(getattr(grant, "principal_type", "") or "").strip()
+        principal_id = str(getattr(grant, "principal_id", "") or "").strip()
+        actions = list(getattr(grant, "actions", []) or [])
+        if principal_type != "public" and not principal_id:
+            raise ApiError(
+                ErrorCode.VALIDATION_ERROR,
+                "permissionGrants principalId is required",
+                status.HTTP_400_BAD_REQUEST,
+            )
+        if not actions:
+            raise ApiError(
+                ErrorCode.VALIDATION_ERROR,
+                "permissionGrants actions must include at least one action",
+                status.HTTP_400_BAD_REQUEST,
+            )
 
 
 def target_identity_changed(job: ETLJobModel, request: UpdatePipelineRequest) -> bool:

@@ -16,6 +16,7 @@ from app.schemas.etl import (
     JobCommandRequest,
     JobCommandResponse,
     JobListResponse,
+    PermissionOptionsResponse,
     JobRowData,
     JobRunOutcome,
     JobScheduleKind,
@@ -127,9 +128,17 @@ def execute_airflow_run(
 def create_job(
     request: CreatePipelineRequest,
     db: Session = Depends(get_db),
-    actor_name: str = Header(default="demo-user", alias="X-AskLake-User"),
+    actor: ActorContext = Depends(get_actor_context),
 ) -> CreatePipelineResponse:
-    return etl_service.create_pipeline(db, request, actor_name)
+    return etl_service.create_pipeline(db, request, actor)
+
+
+@router.get("/permission-options", response_model=PermissionOptionsResponse)
+def get_permission_options(
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(get_actor_context),
+) -> PermissionOptionsResponse:
+    return etl_service.get_permission_options(db, actor)
 
 
 @router.get("/jobs", response_model=JobListResponse)
