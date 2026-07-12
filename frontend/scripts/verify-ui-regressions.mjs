@@ -595,6 +595,20 @@ const checks = [
     ],
   },
   {
+    name: "Schema Transform emits Spark-compatible identifier quoting",
+    file: "src/components/etl/SchemaTransformEditor.jsx",
+    patterns: [
+      /const columnName = col\.name;/,
+      /return `\$\{col\.transform\} AS \\\`\$\{col\.name\}\\\``;/,
+      /return `\$\{expr\} AS \\\`\$\{col\.name\}\\\``;/,
+      /return `\\\`\$\{columnName\}\\\` IS NOT NULL`;/,
+    ],
+    forbiddenPatterns: [
+      /AS "\$\{col\.name\}"/,
+      /return `"\$\{columnName\}" IS NOT NULL`;/,
+    ],
+  },
+  {
     name: "Frontend defaults to the live dashboard Assistant API",
     file: "src/services/dashboardAssistantService.ts",
     patterns: [
