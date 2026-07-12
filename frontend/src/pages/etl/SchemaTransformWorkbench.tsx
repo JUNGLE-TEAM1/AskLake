@@ -2,12 +2,13 @@ import { useMemo } from "react";
 import SchemaTransformEditor from "../../components/etl/SchemaTransformEditor.jsx";
 import "../../styles/schema-transform-source.css";
 import "../../styles/schema-transform-adapter.css";
-import type { SchemaColumnDraft, TransformStepDraft } from "../../types";
+import type { QualityRuleDraft, SchemaColumnDraft, TransformStepDraft } from "../../types";
 
 type SchemaTransformColumn = {
   defaultValue?: string;
   name: string;
   notNull?: boolean;
+  onError?: string;
   originalName?: string;
   originalType?: string;
   sourceId?: string | null;
@@ -22,8 +23,10 @@ type SchemaTransformWorkbenchProps = {
   sampleRows: string[][];
   selectedIndex: number;
   sourceFormat: string;
+  qualityRules?: QualityRuleDraft[];
   transformSteps?: TransformStepDraft[];
   onColumnsChange: (columns: SchemaColumnDraft[], sampleRows?: string[][]) => void;
+  onQualityRulesChange?: (rules: QualityRuleDraft[]) => void;
   onSelectedIndexChange: (index: number) => void;
   onTransformStepsChange?: (steps: TransformStepDraft[]) => void;
 };
@@ -36,8 +39,10 @@ export function SchemaTransformWorkbench({
   sampleRows,
   selectedIndex,
   sourceFormat,
+  qualityRules = [],
   transformSteps = [],
   onColumnsChange,
+  onQualityRulesChange,
   onSelectedIndexChange,
   onTransformStepsChange,
 }: SchemaTransformWorkbenchProps) {
@@ -70,8 +75,12 @@ export function SchemaTransformWorkbench({
     onTransformStepsChange?.(buildTransformSteps(nextTargetSchema));
   };
 
-  const handleSqlChange = (sql: string) => {
+  const handleSqlChange = (sql: string, mode: "columns" | "sql" = "sql") => {
     if (!sql.trim()) return;
+    // Visual mode is persisted from the target column model in handleSchemaChange.
+    // Replacing it with a whole-query step here creates a targetSchema -> SQL ->
+    // transformSteps feedback loop and drops per-field rule metadata.
+    if (mode === "columns") return;
     onTransformStepsChange?.([
       {
         enabled: true,
@@ -92,14 +101,17 @@ export function SchemaTransformWorkbench({
       <div className="asklake-schema-transform-scroll-frame">
         <SchemaTransformEditor
           allSources={allSources}
-          initialCustomSql=""
+          initialCustomSql={transformSteps.find((step) => step.operation === "SQL Expression" && step.output === "schema_transform_sql_output")?.params ?? ""}
           initialTargetSchema={targetSchema}
+          qualityRules={qualityRules}
           onSchemaChange={handleSchemaChange}
+          onQualityRulesChange={onQualityRulesChange}
           onSqlChange={handleSqlChange}
           onTestStatusChange={() => undefined}
           sourceDatasetId={SCHEMA_TRANSFORM_DATASET_ID}
           sourceId={SCHEMA_TRANSFORM_SOURCE_ID}
           sourceName={sourceFormat || "Source"}
+          sourceSampleRows={sampleRows}
           sourceSchema={sourceSchema}
           sourceTabs={null}
           targetSchema={targetSchema}
@@ -116,6 +128,7 @@ function toSchemaTransformTargetColumn(column: SchemaColumnDraft, transformSteps
     defaultValue: step?.operation === "Default Value" ? step.params : "",
     name: outputName,
     notNull: column.nullable === false || step?.operation === "Null Guard",
+    onError: step?.onError || "Warn",
     originalName: column.sourceName,
     originalType: toSchemaTransformType(column.type),
     sourceId: SCHEMA_TRANSFORM_SOURCE_ID,
@@ -167,7 +180,7 @@ function buildTransformSteps(targetSchema: SchemaTransformColumn[]): TransformSt
         input,
         kind: "derive",
         label: `SQL Expression: ${output}`,
-        onError: "Warn",
+        onError: column.onError || "Warn",
         operation: "SQL Expression",
         output,
         params: column.transform,
@@ -180,7 +193,7 @@ function buildTransformSteps(targetSchema: SchemaTransformColumn[]): TransformSt
         input,
         kind: "derive",
         label: `Default Value: ${output}`,
-        onError: "Warn",
+        onError: column.onError || "Warn",
         operation: "Default Value",
         output,
         params: column.defaultValue,
@@ -193,7 +206,7 @@ function buildTransformSteps(targetSchema: SchemaTransformColumn[]): TransformSt
         input,
         kind: "derive",
         label: `Null Guard: ${output}`,
-        onError: "Warn",
+        onError: column.onError || "Warn",
         operation: "Null Guard",
         output,
         params: "required",

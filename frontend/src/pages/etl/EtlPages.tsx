@@ -18,7 +18,6 @@ import {
   CircleUser,
   Clock3,
   Database,
-  Download,
   ExternalLink,
   FileText,
   HardDrive,
@@ -43,6 +42,7 @@ import {
 import { Field, InfoBox, RetryPolicy, StatusTile } from "../../components/common";
 import { CreationFlowLayout, CreationTopActions, CreationValidationPanel } from "../../components/creation/CreationFlow";
 import { ActionGroup } from "@/components/ui/action-group";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { CheckableOption } from "@/components/ui/checkable-option";
@@ -78,6 +78,8 @@ import type { QualityRuleOption, TransformQualityInvalidRow, TransformQualityPre
 import { SourceAssetTree } from "./SourceAssetTree";
 import { SourceJsonSampleTree } from "./SourceJsonSampleTree";
 import { SchemaTransformWorkbench } from "./SchemaTransformWorkbench";
+import { SchemaRuleSummary } from "./SchemaRuleSummary";
+import { SchemaResultPreview } from "./SchemaResultPreview";
 
 type RepeatFrequency = "hourly" | "daily" | "weekly" | "custom";
 type RepeatScheduleDraft = {
@@ -2262,6 +2264,7 @@ export function SchemaInferencePage({
   const [flattenBaseSchema, setFlattenBaseSchema] = useState<SchemaBaseSnapshot | null>(null);
   const [schemaSampleScope, setSchemaSampleScope] = useState<SchemaSampleScope>("current");
   const [isRecheckingSchema, setIsRecheckingSchema] = useState(false);
+  const [showResultPreview, setShowResultPreview] = useState(false);
   const hasInferredSchema = draft.schema.columns.length > 0;
   const schemaColumns: SchemaColumnDraft[] = draft.schema.columns;
   const includedSchemaColumns = schemaColumns.filter(isSchemaColumnIncluded);
@@ -2439,28 +2442,6 @@ export function SchemaInferencePage({
     onSave();
   };
 
-  const exportSchema = () => {
-    if (!hasInferredSchema) {
-      onNotify("내보낼 스키마가 없습니다. 소스 연결 테스트를 먼저 실행하세요.");
-      return;
-    }
-    const payload = JSON.stringify({
-      columns: schemaColumns,
-      sampleRows: schemaSampleRows.slice(0, 5),
-      schemaFingerprint,
-      summary: approvedSummary,
-    }, null, 2);
-    const blob = new Blob([payload], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `${draft.source.sourceLabel || "asklake-schema"}.schema.json`.replace(/[\\/:*?"<>|]+/g, "_");
-    link.click();
-    URL.revokeObjectURL(url);
-    onAction("etl.schema.exported", "/api/etl/schema-inference/export", draft.source.sourceLabel || "schema");
-    onNotify("현재 스키마 JSON을 내보냈습니다.");
-  };
-
   const confirmCurrentSchema = () => {
     if (!approveSchema()) return;
     onNext();
@@ -2537,35 +2518,73 @@ export function SchemaInferencePage({
         </div>
       </section>
 
-      <SchemaTransformWorkbench
-        columns={schemaColumns}
-        sampleRows={schemaSampleRows}
-        selectedIndex={selectedIndex}
-        sourceFormat={sourceFormat}
-        transformSteps={draft.transform.steps}
-        onSelectedIndexChange={setSelectedSchemaIndex}
-        onColumnsChange={(nextColumns, nextSampleRows = schemaSampleRows) => {
-          patchSchemaColumns(nextColumns, nextSampleRows);
-          const boundedIndex = nextColumns.length > 0 ? Math.min(selectedIndex, nextColumns.length - 1) : 0;
-          setSelectedSchemaIndex(boundedIndex);
-        }}
-        onTransformStepsChange={(steps) => {
-          onDraftChange({
-            transform: {
-              steps,
-              summary: steps.length > 0 ? `스키마 단계 변환 ${steps.length}개 설정` : "스키마 단계 변환 없음",
-            },
-          });
-        }}
-      />
-
-      <CommandBar className="schema-bottom-bar" density="compact">
+      <CommandBar className="schema-bottom-bar schema-top-actions" density="compact">
         <Button className="secondary-button" type="button" variant="outline" onClick={onPrev}>이전: 데이터 탐색</Button>
-        <Button className="secondary-button" type="button" variant="outline" disabled={!hasInferredSchema} onClick={exportSchema}><Download size={15} /> 스키마 JSON 내보내기</Button>
         <span>2/3 단계 · {hasInferredSchema ? approvedSummary : inferredSummary}</span>
+        <Button
+          aria-expanded={showResultPreview}
+          className="secondary-button schema-result-preview-button"
+          type="button"
+          variant="outline"
+          disabled={!hasInferredSchema}
+          onClick={() => setShowResultPreview((current) => !current)}
+        >
+          <Table2 size={15} /> {showResultPreview ? "미리보기 닫기" : "결과 미리보기"}
+        </Button>
         <Button className="primary-button" type="button" disabled={!hasInferredSchema} onClick={confirmCurrentSchema}>스키마 확정 후 다음</Button>
         <Button className="ghost-button" type="button" variant="ghost" onClick={saveSchemaDraft}>설정 저장</Button>
       </CommandBar>
+
+      <div className="schema-workbench-content">
+        <SchemaTransformWorkbench
+          columns={schemaColumns}
+          sampleRows={schemaSampleRows}
+          selectedIndex={selectedIndex}
+          sourceFormat={sourceFormat}
+          qualityRules={draft.quality.rules}
+          transformSteps={draft.transform.steps}
+          onSelectedIndexChange={setSelectedSchemaIndex}
+          onColumnsChange={(nextColumns, nextSampleRows = schemaSampleRows) => {
+            patchSchemaColumns(nextColumns, nextSampleRows);
+            const boundedIndex = nextColumns.length > 0 ? Math.min(selectedIndex, nextColumns.length - 1) : 0;
+            setSelectedSchemaIndex(boundedIndex);
+          }}
+          onTransformStepsChange={(steps) => {
+            onDraftChange({
+              transform: {
+                steps,
+                summary: steps.length > 0 ? `스키마 단계 변환 ${steps.length}개 설정` : "스키마 단계 변환 없음",
+              },
+            });
+          }}
+          onQualityRulesChange={(rules) => {
+            onDraftChange({
+              quality: {
+                invalidRows: [],
+                rules,
+                score: undefined,
+                status: "idle",
+                summary: rules.length > 0 ? `스키마 단계 품질 규칙 ${rules.length}개 설정` : "데이터 품질 규칙 없음",
+              },
+            });
+          }}
+        />
+
+        {showResultPreview ? (
+          <SchemaResultPreview
+            columns={schemaColumns}
+            qualityRules={draft.quality.rules}
+            sampleRows={schemaSampleRows}
+          />
+        ) : null}
+
+        <SchemaRuleSummary
+          columns={schemaColumns}
+          qualityRules={draft.quality.rules}
+          transformSteps={draft.transform.steps}
+        />
+      </div>
+
     </div>
   );
 }
@@ -5083,7 +5102,6 @@ export function PermissionPage({
     applyPermissionDraft();
     onNext();
   };
-  const selectedRoleCount = PERMISSION_ROLES.filter((role) => Boolean(roleChecks[role.name])).length;
   const governanceChecks = [
     ["공유 범위", visibility, visibility === "외부 공유" ? "검토 필요" : "안전"],
     ["민감 데이터", "review_text 포함", "검토 필요"],
@@ -5097,18 +5115,15 @@ export function PermissionPage({
     >
       <PageHeader
         className="etl-flow-page-header"
-        description="생성할 데이터셋에 접근할 수 있는 역할과 사용자를 선택하세요."
         icon={<ShieldCheck size={18} />}
+        leadingAlign="center"
         title="권한 설정"
       />
       <div className="etl-review-stack permission-config-stack">
         <section className="etl-review-card permission-config-card">
           <div className="etl-review-card-header">
             <span className="etl-review-icon permission"><ShieldCheck size={17} /></span>
-            <div>
-              <h2>Governance Check</h2>
-              <p>공개 범위, 민감 데이터, 승인 상태를 생성 전에 확인합니다.</p>
-            </div>
+            <h2>Governance Check</h2>
           </div>
           <ValidationList
             className="etl-review-validation permission-config-validation"
@@ -5118,46 +5133,49 @@ export function PermissionPage({
               value: `${value} · ${status}`,
             }))}
           />
-          <InfoBox title="권한 검토 필요" body="외부 공유 또는 민감 데이터 접근 권한은 데이터 오너 승인 후 적용됩니다." />
         </section>
 
         <section className="etl-review-card permission-config-card">
           <div className="etl-review-card-header">
             <span className="etl-review-icon"><SlidersHorizontal size={17} /></span>
-            <div>
-              <h2>Access Policy</h2>
-              <p>조직 정책에 맞는 권한 템플릿과 공개 범위를 설정합니다.</p>
-            </div>
+            <h2>Access Policy</h2>
           </div>
-          <InfoBox title="추천 권한 템플릿" body="유사 데이터셋의 접근 권한과 조직 정책을 기반으로 추천되었습니다." />
           <div className="target-config-form-grid permission-config-form-grid">
-            <NativeSelectField
-              className="input control-input"
-              fieldClassName="field"
-              label="권한 템플릿"
-              value={permissionTemplate}
-              onChange={(event) => {
-                const nextPermissionTemplate = getKnownOption(event.target.value, PERMISSION_TEMPLATES, DEFAULT_PERMISSION_TEMPLATE);
-                setPermissionTemplate(nextPermissionTemplate);
-                setRoleChecks((checks) => ({ ...checks, [nextPermissionTemplate]: true }));
-                applyPermissionDraft({ permissionTemplate: nextPermissionTemplate });
-              }}
-            >
-              {PERMISSION_TEMPLATES.map((template) => <option key={template}>{template}</option>)}
-            </NativeSelectField>
-            <NativeSelectField
-              className="input control-input"
-              fieldClassName="field"
-              label="공개 범위"
-              value={visibility}
-              onChange={(event) => {
-                const nextVisibility = getKnownOption(event.target.value, VISIBILITY_OPTIONS, DEFAULT_VISIBILITY);
-                setVisibility(nextVisibility);
-                applyPermissionDraft({ visibility: nextVisibility });
-              }}
-            >
-              {VISIBILITY_OPTIONS.map((option) => <option key={option}>{option}</option>)}
-            </NativeSelectField>
+            <FormFieldGroup className="field" label="권한 템플릿">
+              <Select
+                value={permissionTemplate}
+                onValueChange={(value) => {
+                  const nextPermissionTemplate = getKnownOption(value, PERMISSION_TEMPLATES, DEFAULT_PERMISSION_TEMPLATE);
+                  setPermissionTemplate(nextPermissionTemplate);
+                  setRoleChecks((checks) => ({ ...checks, [nextPermissionTemplate]: true }));
+                  applyPermissionDraft({ permissionTemplate: nextPermissionTemplate });
+                }}
+              >
+                <SelectTrigger aria-label="권한 템플릿" className="w-full" size="sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {PERMISSION_TEMPLATES.map((template) => <SelectItem key={template} value={template}>{template}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </FormFieldGroup>
+            <FormFieldGroup className="field" label="공개 범위">
+              <Select
+                value={visibility}
+                onValueChange={(value) => {
+                  const nextVisibility = getKnownOption(value, VISIBILITY_OPTIONS, DEFAULT_VISIBILITY);
+                  setVisibility(nextVisibility);
+                  applyPermissionDraft({ visibility: nextVisibility });
+                }}
+              >
+                <SelectTrigger aria-label="공개 범위" className="w-full" size="sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {VISIBILITY_OPTIONS.map((option) => <SelectItem key={option} value={option}>{option}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </FormFieldGroup>
             <FormFieldGroup className="field" label="데이터 오너">
               <Input className="input control-input" value={dataOwner} onChange={(event) => {
                 const nextOwner = event.target.value;
@@ -5165,29 +5183,30 @@ export function PermissionPage({
                 applyPermissionDraft({ owner: nextOwner });
               }} />
             </FormFieldGroup>
-            <NativeSelectField
-              className="input control-input"
-              fieldClassName="field"
-              label="승인 상태"
-              value={approvalStatus}
-              onChange={(event) => {
-                const nextApprovalStatus = getKnownOption(event.target.value, APPROVAL_STATUS_OPTIONS, DEFAULT_APPROVAL_STATUS);
-                setApprovalStatus(nextApprovalStatus);
-                applyPermissionDraft({ approvalStatus: nextApprovalStatus });
-              }}
-            >
-              {APPROVAL_STATUS_OPTIONS.map((option) => <option key={option}>{option}</option>)}
-            </NativeSelectField>
+            <FormFieldGroup className="field" label="승인 상태">
+              <Select
+                value={approvalStatus}
+                onValueChange={(value) => {
+                  const nextApprovalStatus = getKnownOption(value, APPROVAL_STATUS_OPTIONS, DEFAULT_APPROVAL_STATUS);
+                  setApprovalStatus(nextApprovalStatus);
+                  applyPermissionDraft({ approvalStatus: nextApprovalStatus });
+                }}
+              >
+                <SelectTrigger aria-label="승인 상태" className="w-full" size="sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {APPROVAL_STATUS_OPTIONS.map((option) => <SelectItem key={option} value={option}>{option}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </FormFieldGroup>
           </div>
         </section>
 
         <section className="etl-review-card permission-config-card">
           <div className="etl-review-card-header">
             <span className="etl-review-icon schema"><CircleUser size={17} /></span>
-            <div>
-              <h2>Role Grants</h2>
-              <p>{selectedRoleCount}개 역할 선택 · 템플릿 기준 접근 권한을 조정합니다.</p>
-            </div>
+            <h2>Role Grants</h2>
           </div>
           <div className="permission-config-role-list">
             {PERMISSION_ROLES.map((role) => {
@@ -5203,13 +5222,19 @@ export function PermissionPage({
                   <span className="permission-config-role-body">
                     <span className="permission-config-role-title">
                       <strong>{role.name}</strong>
-                      {recommended ? <em>Template</em> : null}
                     </span>
                     <small>{role.note}</small>
                   </span>
                   <div className="permission-chip-row permission-config-access-row">
                     {PERMISSION_ACCESS_ITEMS.map((item) => (
-                      <em className={selected && role.access.includes(item) ? "allowed" : ""} key={item}>{item}</em>
+                      <Badge
+                        key={item}
+                        shape="compact"
+                        size="sm"
+                        variant={selected && role.access.includes(item) ? "default" : "outline"}
+                      >
+                        {item}
+                      </Badge>
                     ))}
                   </div>
                 </CheckableOption>
