@@ -1,10 +1,14 @@
 import re
 from collections.abc import Iterable
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 import json
-from pathlib import Path
+import os
+from pathlib import Path, PurePosixPath
+from tempfile import TemporaryDirectory
 from typing import Any
+from urllib.parse import urlparse
 from uuid import uuid4
 
 import duckdb
@@ -22,6 +26,8 @@ from app.services.governance_enforcement import require_governed_access
 from app.services.resource_permission_service import dataset_with_persisted_permission_grants
 
 DEFAULT_PREVIEW_LIMIT = 100
+DEFAULT_REMOTE_PREVIEW_MAX_BYTES = 512 * 1024 * 1024
+REMOTE_STORAGE_SCHEMES = {"s3", "s3a"}
 MUTATION_KEYWORDS = (
     "insert",
     "update",
@@ -62,6 +68,28 @@ SQL_CTE_NAME_RE = re.compile(
     rf"(?:\bwith|,)\s+({SQL_IDENTIFIER_PATTERN})\s+as\s*\(",
     re.IGNORECASE,
 )
+
+
+@dataclass
+class RemotePreviewBudget:
+    limit_bytes: int
+    used_bytes: int = 0
+
+    def reserve(self, size_bytes: int, *, bucket: str, prefix: str) -> None:
+        next_used_bytes = self.used_bytes + max(size_bytes, 0)
+        if next_used_bytes > self.limit_bytes:
+            raise ApiError(
+                ErrorCode.VALIDATION_ERROR,
+                "Remote dataset is too large for SQL Preview",
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                {
+                    "bucket": bucket,
+                    "prefix": prefix,
+                    "requestedBytes": next_used_bytes,
+                    "maxBytes": self.limit_bytes,
+                },
+            )
+        self.used_bytes = next_used_bytes
 
 
 class SqlService:
@@ -316,24 +344,31 @@ def execute_duckdb_preview(
 ) -> dict[str, Any]:
     connection = duckdb.connect(database=":memory:")
     try:
-        for dataset in unique_datasets_by_id(context_datasets):
-            register_duckdb_dataset(connection, dataset)
+        with TemporaryDirectory(prefix="asklake-sql-preview-") as remote_cache_dir:
+            remote_budget = RemotePreviewBudget(remote_preview_max_bytes())
+            for dataset in unique_datasets_by_id(context_datasets):
+                register_duckdb_dataset(
+                    connection,
+                    dataset,
+                    remote_cache_root=Path(remote_cache_dir),
+                    remote_budget=remote_budget,
+                )
 
-        cursor = connection.execute(
-            f"SELECT * FROM ({statement}) AS asklake_query_result LIMIT ?",
-            [preview_limit],
-        )
-        raw_rows = cursor.fetchall()
-        columns = [str(description[0]) for description in (cursor.description or [])]
-        rows = [
-            [format_sql_cell(cell) for cell in row]
-            for row in raw_rows
-        ]
-        return {
-            "columns": columns,
-            "row_count": len(rows),
-            "rows": rows,
-        }
+            cursor = connection.execute(
+                f"SELECT * FROM ({statement}) AS asklake_query_result LIMIT ?",
+                [preview_limit],
+            )
+            raw_rows = cursor.fetchall()
+            columns = [str(description[0]) for description in (cursor.description or [])]
+            rows = [
+                [format_sql_cell(cell) for cell in row]
+                for row in raw_rows
+            ]
+            return {
+                "columns": columns,
+                "row_count": len(rows),
+                "rows": rows,
+            }
     except duckdb.Error as error:
         raise ApiError(
             ErrorCode.SQL_SYNTAX_ERROR,
@@ -348,9 +383,18 @@ def execute_duckdb_preview(
 def register_duckdb_dataset(
     connection: duckdb.DuckDBPyConnection,
     dataset: CatalogDatasetResponse,
+    *,
+    remote_cache_root: Path | None = None,
+    remote_budget: RemotePreviewBudget | None = None,
 ) -> None:
     table_name = dataset.name
-    registered = register_duckdb_storage_location(connection, dataset, table_name)
+    registered = register_duckdb_storage_location(
+        connection,
+        dataset,
+        table_name,
+        remote_cache_root=remote_cache_root,
+        remote_budget=remote_budget,
+    )
     if not registered:
         register_duckdb_sample_rows(connection, dataset, table_name)
 
@@ -364,16 +408,40 @@ def register_duckdb_storage_location(
     connection: duckdb.DuckDBPyConnection,
     dataset: CatalogDatasetResponse,
     table_name: str,
+    *,
+    remote_cache_root: Path | None = None,
+    remote_budget: RemotePreviewBudget | None = None,
 ) -> bool:
     storage_location = dataset.storage_location
     if not storage_location:
         return False
 
+    storage_format = str(dataset.storage_format or "").lower()
+    if is_remote_storage_location(storage_location):
+        if storage_format != "parquet":
+            return False
+        if remote_cache_root is None or remote_budget is None:
+            raise sql_storage_error(
+                "Remote SQL Preview cache is not configured",
+                {"datasetId": dataset.id},
+            )
+        parquet_path = download_remote_parquet_dataset(
+            storage_location,
+            dataset_id=dataset.id,
+            cache_root=remote_cache_root,
+            budget=remote_budget,
+        )
+        connection.execute(
+            f"CREATE TEMP VIEW {quote_duckdb_identifier(table_name)} AS "
+            f"SELECT * FROM read_parquet({quote_duckdb_string_literal(parquet_path)}, "
+            "union_by_name = true, hive_partitioning = true)"
+        )
+        return True
+
     storage_path = Path(storage_location)
     if not storage_path.exists():
         return False
 
-    storage_format = str(dataset.storage_format or "").lower()
     try:
         if storage_format == "jsonl" and storage_path.is_file():
             records = read_jsonl_records(storage_path)
@@ -395,6 +463,167 @@ def register_duckdb_storage_location(
         return False
 
     return False
+
+
+def is_remote_storage_location(storage_location: str) -> bool:
+    return urlparse(storage_location).scheme.lower() in REMOTE_STORAGE_SCHEMES
+
+
+def remote_preview_max_bytes() -> int:
+    raw_value = os.environ.get("ASKLAKE_SQL_PREVIEW_MAX_REMOTE_BYTES", "")
+    if not raw_value.strip():
+        return DEFAULT_REMOTE_PREVIEW_MAX_BYTES
+    try:
+        value = int(raw_value)
+    except ValueError:
+        return DEFAULT_REMOTE_PREVIEW_MAX_BYTES
+    return value if value > 0 else DEFAULT_REMOTE_PREVIEW_MAX_BYTES
+
+
+def download_remote_parquet_dataset(
+    storage_location: str,
+    *,
+    dataset_id: str,
+    cache_root: Path,
+    budget: RemotePreviewBudget,
+) -> str:
+    parsed = urlparse(storage_location)
+    bucket = parsed.netloc.strip()
+    prefix = parsed.path.lstrip("/").rstrip("/")
+    if not bucket or not prefix:
+        raise sql_storage_error(
+            "Remote dataset storage location is invalid",
+            {"datasetId": dataset_id, "storageLocation": storage_location},
+        )
+    require_allowed_preview_bucket(bucket)
+
+    try:
+        client = build_sql_preview_s3_client()
+        parquet_objects = list_remote_parquet_objects(client, bucket, prefix)
+        if not parquet_objects:
+            raise sql_storage_error(
+                "Remote dataset does not contain Parquet objects",
+                {"datasetId": dataset_id, "bucket": bucket, "prefix": prefix},
+            )
+
+        budget.reserve(
+            sum(size_bytes for _, size_bytes in parquet_objects),
+            bucket=bucket,
+            prefix=prefix,
+        )
+        dataset_cache_dir = cache_root / safe_cache_directory_name(dataset_id)
+        dataset_cache_dir.mkdir(parents=True, exist_ok=True)
+        for object_key, _ in parquet_objects:
+            destination = remote_object_cache_path(dataset_cache_dir, object_key, prefix)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            client.download_file(bucket, object_key, str(destination))
+        return str(dataset_cache_dir / "**" / "*.parquet")
+    except ApiError:
+        raise
+    except Exception as exc:
+        raise sql_storage_error(
+            "Remote Parquet dataset could not be loaded for SQL Preview",
+            {
+                "datasetId": dataset_id,
+                "bucket": bucket,
+                "prefix": prefix,
+                "reason": str(exc)[:500],
+            },
+        ) from exc
+
+
+def list_remote_parquet_objects(client: Any, bucket: str, prefix: str) -> list[tuple[str, int]]:
+    objects: list[tuple[str, int]] = []
+    continuation_token: str | None = None
+    while True:
+        request: dict[str, Any] = {"Bucket": bucket, "Prefix": prefix}
+        if continuation_token:
+            request["ContinuationToken"] = continuation_token
+        response = client.list_objects_v2(**request)
+        for item in response.get("Contents") or []:
+            object_key = str(item.get("Key") or "")
+            size_bytes = max(int(item.get("Size") or 0), 0)
+            if object_key.lower().endswith(".parquet") and size_bytes > 0:
+                objects.append((object_key, size_bytes))
+        if not response.get("IsTruncated"):
+            break
+        continuation_token = response.get("NextContinuationToken")
+        if not continuation_token:
+            break
+    return sorted(objects)
+
+
+def build_sql_preview_s3_client() -> Any:
+    try:
+        import boto3
+        from botocore.config import Config
+    except ImportError as exc:
+        raise sql_storage_error("Python S3 client dependency is not installed") from exc
+
+    endpoint = os.environ.get("S3_ENDPOINT") or os.environ.get("MINIO_ENDPOINT")
+    access_key = os.environ.get("AWS_ACCESS_KEY_ID") or os.environ.get("MINIO_ACCESS_KEY")
+    secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY") or os.environ.get("MINIO_SECRET_KEY")
+    region = os.environ.get("AWS_REGION") or os.environ.get("MINIO_REGION") or "us-east-1"
+    force_path_style = str(os.environ.get("S3_FORCE_PATH_STYLE") or "true").lower() != "false"
+    kwargs: dict[str, Any] = {
+        "config": Config(
+            connect_timeout=5,
+            read_timeout=30,
+            retries={"max_attempts": 2, "mode": "standard"},
+            s3={"addressing_style": "path" if force_path_style else "auto"},
+        ),
+        "region_name": region,
+    }
+    if endpoint:
+        kwargs["endpoint_url"] = endpoint
+    if access_key:
+        kwargs["aws_access_key_id"] = access_key
+    if secret_key:
+        kwargs["aws_secret_access_key"] = secret_key
+    return boto3.client("s3", **kwargs)
+
+
+def require_allowed_preview_bucket(bucket: str) -> None:
+    configured_buckets = (
+        os.environ.get("S3_ALLOWED_BUCKETS")
+        or os.environ.get("ASKLAKE_S3_ALLOWED_BUCKETS")
+        or os.environ.get("MINIO_BUCKET")
+        or ""
+    )
+    allowed_buckets = {value.strip() for value in configured_buckets.split(",") if value.strip()}
+    if allowed_buckets and bucket not in allowed_buckets:
+        raise ApiError(
+            ErrorCode.FORBIDDEN,
+            "Remote dataset bucket is not allowed for SQL Preview",
+            status.HTTP_403_FORBIDDEN,
+            {"bucket": bucket},
+        )
+
+
+def safe_cache_directory_name(dataset_id: str) -> str:
+    normalized = re.sub(r"[^a-zA-Z0-9_.-]+", "_", dataset_id).strip("._")
+    return normalized or "dataset"
+
+
+def remote_object_cache_path(cache_dir: Path, object_key: str, prefix: str) -> Path:
+    relative_key = object_key[len(prefix):].lstrip("/") if object_key.startswith(prefix) else ""
+    safe_parts = [
+        part
+        for part in PurePosixPath(relative_key).parts
+        if part not in {"", ".", ".."}
+    ]
+    if not safe_parts:
+        safe_parts = [Path(object_key).name or "part.parquet"]
+    return cache_dir.joinpath(*safe_parts)
+
+
+def sql_storage_error(message: str, details: dict[str, Any] | None = None) -> ApiError:
+    return ApiError(
+        "SQL_STORAGE_ERROR",
+        message,
+        status.HTTP_502_BAD_GATEWAY,
+        details,
+    )
 
 
 def register_duckdb_sample_rows(

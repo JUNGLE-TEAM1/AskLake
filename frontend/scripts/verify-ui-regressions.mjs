@@ -64,6 +64,7 @@ const checks = [
       /const datasets = useMemo\(\(\) => sources\.map\(toConfigDataset\), \[sources\]\);/,
       /<WidgetConfigPanel/,
       /datasets=\{datasets\}/,
+      /fieldSelectMode="dropdown"/,
       /onSelectDataset=\{setSelectedSourceId\}/,
       /createButtonLabel=\{initialCreateInput \? "변경 적용" : "차트 생성하기"\}/,
       /onApply\(\{/,
@@ -91,6 +92,20 @@ const checks = [
     forbiddenPatterns: [
       /<Dialog/,
       /DialogContent/,
+      /Enter 또는 Ctrl\/⌘ \+ Enter로 생성 · Shift \+ Enter로 줄바꿈/,
+    ],
+  },
+  {
+    name: "SQL result chart keeps its heading compact and fits inside the result panel",
+    file: "src/pages/sql/SqlResultChart.tsx",
+    patterns: [
+      /min-h-\[320px\]/,
+      /sql-result-chart-header flex min-w-0 items-center gap-2/,
+      /shrink-0 text-sm text-muted-foreground/,
+      /h-\[280px\]/,
+    ],
+    forbiddenPatterns: [
+      /h-\[360px\]/,
     ],
   },
   {
@@ -134,6 +149,32 @@ const checks = [
       /조직 정책과 승인 상태를 Job 검토 정보에 함께 저장합니다\./,
       /전체 \{resultDraft\.rowCount\.toLocaleString\(\)\}행 중 최대 5행을 확인합니다\./,
       /\{resultDraft\.columns\.length\}개 컬럼/,
+    ],
+  },
+  {
+    name: "SQL Job wizard uses shared shadcn dropdown fields across selectable steps",
+    file: "src/pages/sql/SqlJobWizardDialog.tsx",
+    patterns: [
+      /function WizardSelectField<T extends string>/,
+      /function WizardTimeField/,
+      /const timeHourOptions = Array\.from\(\{ length: 24 \}/,
+      /const timeMinuteOptions = Array\.from\(\{ length: 60 \}/,
+      /<DropdownMenuTrigger asChild>/,
+      /<DropdownMenuRadioGroup/,
+      /<PopoverContent align="start" className="grid w-72 gap-3 p-3">/,
+      /<ScrollArea className="h-52 rounded-lg border border-slate-200">/,
+      /label="실행 시간"/,
+      /label="실행 요일"/,
+      /label="시간대"/,
+      /label="실행 겹침 정책"/,
+      /label="접근 범위"/,
+      /label="압축 방식"/,
+      /label="파티션 컬럼"/,
+    ],
+    forbiddenPatterns: [
+      /NativeSelect/,
+      /<select/,
+      /type="time"/,
     ],
   },
   {
@@ -421,9 +462,20 @@ const checks = [
       /function WidgetSelectField\([\s\S]*?<DashboardFieldCombobox/,
       /Children\.toArray\(children\)\.flatMap/,
       /child\.type !== "option"/,
+      /WidgetSelectModeContext = createContext<"combobox" \| "dropdown">\("combobox"\)/,
+      /selectMode === "dropdown"/,
+      /<DropdownMenuTrigger asChild>/,
+      /<DropdownMenuRadioGroup/,
+      /const selectValue = value \|\| widgetEmptySelectValue;/,
+      /<DropdownMenuLabel>\{String\(props\.label\)\} 필터<\/DropdownMenuLabel>/,
+      /className=\{cn\("min-w-0 w-full", props\.fieldClassName\)\}/,
+      /asklake-widget-select h-9 w-full min-w-0 max-w-full justify-start overflow-hidden px-3/,
+      /<strong className="min-w-0 max-w-full break-words">/,
+      /<WidgetSelectModeContext\.Provider value=\{fieldSelectMode\}>/,
     ],
     forbiddenPatterns: [
       /<select/,
+      /<Filter className="size-4 shrink-0 text-slate-500"/,
     ],
   },
   {
@@ -563,6 +615,20 @@ const checks = [
       /align=\{message\.role === "user" \? "end" : "start"\}/,
       /variant=\{message\.role === "user" \? "default" : "secondary"\}/,
       /<BubbleContent className="whitespace-pre-wrap">\{message\.text\}<\/BubbleContent>/,
+    ],
+  },
+  {
+    name: "Schema Transform emits Spark-compatible identifier quoting",
+    file: "src/components/etl/SchemaTransformEditor.jsx",
+    patterns: [
+      /const columnName = col\.name;/,
+      /return `\$\{col\.transform\} AS \\\`\$\{col\.name\}\\\``;/,
+      /return `\$\{expr\} AS \\\`\$\{col\.name\}\\\``;/,
+      /return `\\\`\$\{columnName\}\\\` IS NOT NULL`;/,
+    ],
+    forbiddenPatterns: [
+      /AS "\$\{col\.name\}"/,
+      /return `"\$\{columnName\}" IS NOT NULL`;/,
     ],
   },
   {

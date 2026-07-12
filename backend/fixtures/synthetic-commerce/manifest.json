@@ -1,0 +1,90 @@
+{
+  "generator_version": 1,
+  "seed": 20260711,
+  "source_file": "meta_Electronics.jsonl",
+  "window": {
+    "start": "2026-06-01T00:00:00+09:00",
+    "end_exclusive": "2026-07-01T00:00:00+09:00"
+  },
+  "counts": {
+    "products": 10000,
+    "users": 3000,
+    "event_count": 76640,
+    "session_count": 19126,
+    "event_type_counts": {
+      "product_impression": 53393,
+      "product_click": 18731,
+      "add_to_cart": 3332,
+      "purchase_click": 1184
+    },
+    "products_exposed": 9869,
+    "product_coverage_pct": 98.69
+  },
+  "product_selection": {
+    "source_rows_scanned": 1610012,
+    "invalid_json_rows": 0,
+    "selected_by_category": {
+      "Camera & Photo": 1250,
+      "Car & Vehicle Electronics": 1250,
+      "Computers & Accessories": 1250,
+      "Headphones, Earbuds & Accessories": 1250,
+      "Home Audio": 1250,
+      "Portable Audio & Video": 1250,
+      "Television & Video": 1250,
+      "Wearable Technology": 1250
+    },
+    "eligible_by_category": {
+      "Computers & Accessories": 155142,
+      "Camera & Photo": 67607,
+      "Television & Video": 35772,
+      "Headphones, Earbuds & Accessories": 25357,
+      "Home Audio": 20624,
+      "Car & Vehicle Electronics": 21763,
+      "Portable Audio & Video": 14593,
+      "Wearable Technology": 5177
+    },
+    "selection_rule": "balanced deterministic hash sample; valid price; rating_count >= 5"
+  },
+  "public_user_columns": [
+    "user_id",
+    "age",
+    "gender",
+    "region",
+    "signup_at",
+    "acquisition_channel",
+    "membership_tier",
+    "primary_device"
+  ],
+  "hidden_generation_traits": [
+    "activity_tier",
+    "price_sensitivity",
+    "purchase_propensity",
+    "category_affinity"
+  ],
+  "planted_patterns": [
+    "age 18-34 favors headphones, wearables, and computers",
+    "age 45+ favors television/video and home audio",
+    "referral users have higher cart and purchase-click propensity than paid-search users",
+    "premium/vip users have higher funnel progression than basic users",
+    "mobile sessions concentrate in local evening hours",
+    "gender and region have no direct behavior multiplier and act as null controls"
+  ],
+  "files": {
+    "products.csv": {
+      "bytes": 2063421,
+      "mib": 1.968,
+      "sha256": "956a7a3fdac8fa0edf033164e9524b9024fd791e1c6cad037205d79702fd863e"
+    },
+    "users.csv": {
+      "bytes": 225203,
+      "mib": 0.215,
+      "sha256": "c7948c0070a69c3c9d98d85528d81329bd5fe40cd8394e6ee5d97cddb89e809a"
+    },
+    "click_events.jsonl": {
+      "bytes": 22798021,
+      "mib": 21.742,
+      "sha256": "01dc08639dc2ec8a55c6e6c4a90d979daa997a3f130ca6f0f8e164041d2b0cc3"
+    }
+  },
+  "total_mib": 23.924
+}
