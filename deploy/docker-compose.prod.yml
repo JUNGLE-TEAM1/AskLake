@@ -281,6 +281,10 @@ services:
     user: "185:185"
     environment:
       HOME: /tmp
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-http://minio:9000}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY is required}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
+      MINIO_REGION: ${MINIO_REGION:-us-east-1}
       PYSPARK_DRIVER_PYTHON: /usr/bin/python3
       PYSPARK_PYTHON: /usr/bin/python3
       SPARK_WORKER_OPTS: >-

@@ -1262,11 +1262,26 @@ function inspectParquetLakeWithSpark({ accessKeyId, endpoint, path: sourcePath, 
   const executionMode = sparkExecutionMode();
   mkdirSync(ivyDir, { recursive: true });
   const sparkMinioEndpoint = process.env.MINIO_ENDPOINT_IN_DOCKER || endpointForDockerNetwork(endpoint);
+  const inheritedAccessKey = process.env.MINIO_ACCESS_KEY || "m3admin";
+  const inheritedSecretKey = process.env.MINIO_SECRET_KEY || "wishuponastar";
+  if (
+    executionMode === "rest"
+    && ((accessKeyId && accessKeyId !== inheritedAccessKey)
+      || (secretAccessKey && secretAccessKey !== inheritedSecretKey))
+  ) {
+    throw apiError(
+      "DATALAKE_SPARK_CREDENTIAL_CONFIGURATION_INVALID",
+      "Spark REST source inspection only supports MinIO application credentials inherited by the worker.",
+      422,
+    );
+  }
   const inspectEnvironment = {
     MINIO_ENDPOINT: sparkMinioEndpoint,
-    MINIO_ACCESS_KEY: accessKeyId || process.env.MINIO_ACCESS_KEY || "m3admin",
-    MINIO_SECRET_KEY: secretAccessKey || process.env.MINIO_SECRET_KEY || "wishuponastar",
     MINIO_REGION: process.env.MINIO_REGION || "us-east-1",
+    ...(executionMode === "docker" ? {
+      MINIO_ACCESS_KEY: accessKeyId || inheritedAccessKey,
+      MINIO_SECRET_KEY: secretAccessKey || inheritedSecretKey,
+    } : {}),
     ASKLAKE_SOURCE_PATH: toS3APath(sourcePath),
     ASKLAKE_SOURCE_FORMAT: "parquet",
     ASKLAKE_SOURCE_ROW_LIMIT: Math.max(1, Math.min(Number(rowLimit) || 10, 50000)),
@@ -1277,6 +1292,7 @@ function inspectParquetLakeWithSpark({ accessKeyId, endpoint, path: sourcePath, 
     mkdirSync(sparkReportDir, { recursive: true });
     const reportName = `source-inspect-${randomUUID()}.json`;
     const reportPath = path.join(sparkReportDir, reportName);
+    const statePath = path.join(sparkReportDir, reportName.replace(/\.json$/, ".spark-rest-state.json"));
     const reportRuntimePath = path.posix.join(
       String(sparkReportRuntimeDir).replace(/\\/g, "/"),
       reportName,
@@ -1290,6 +1306,8 @@ function inspectParquetLakeWithSpark({ accessKeyId, endpoint, path: sourcePath, 
         },
       }),
       sourceInspectTimeoutMs(),
+      process.env,
+      { stateFile: statePath },
     );
     const output = `${result.stdout || ""}\n${result.stderr || ""}\n${result.error?.message || ""}`;
     try {

@@ -22,8 +22,9 @@ const reviewTextModelHostDir = path.resolve(
 const reviewTextModelContainerDir = process.env.ASKLAKE_REVIEW_TEXT_MODEL_CONTAINER_DIR || "/work/review-text-models";
 const outputVolumeName = process.env.ASKLAKE_SPARK_OUTPUT_VOLUME || "asklake-spark-output";
 const outputContainerDir = process.env.ASKLAKE_SPARK_OUTPUT_CONTAINER_DIR || "/work/output";
+export const SPARK_REST_BRIDGE_GRACE_MS = 30_000;
 
-export function runSparkPipeline(job, command, runId) {
+export function runSparkPipeline(job, command, runId, options = {}) {
   const executionMode = sparkExecutionMode();
   if (executionMode === "docker") ensureSparkServer();
   const allowWorldWritable = executionMode === "docker";
@@ -56,12 +57,19 @@ function runSparkPipelineWithSource(job, command, runId, source) {
   const localLlmTimeoutSeconds = process.env.ASKLAKE_LOCAL_LLM_TIMEOUT_SECONDS
     || String(Math.ceil(Number(process.env.ASKLAKE_LOCAL_LLM_TIMEOUT_MS || 120000) / 1000));
   const reviewAnalysisRuntime = process.env.ASKLAKE_REVIEW_ANALYSIS_RUNTIME || "scalable";
+  const sourceAccessKey = fieldValue(job.sourceConfig ?? [], "Access Key") || minioAccessKey();
+  const sourceSecretKey = fieldValue(job.sourceConfig ?? [], "Secret Key") || minioSecretKey();
+  if (executionMode === "rest") {
+    assertInheritedMinioCredentials(sourceAccessKey, sourceSecretKey);
+  }
   writeSparkJobManifest(manifestPath, job);
   const sparkEnvironment = {
     MINIO_ENDPOINT: process.env.MINIO_ENDPOINT_IN_DOCKER || "http://m3-minio:9000",
-    MINIO_ACCESS_KEY: fieldValue(job.sourceConfig ?? [], "Access Key") || minioAccessKey(),
-    MINIO_SECRET_KEY: fieldValue(job.sourceConfig ?? [], "Secret Key") || minioSecretKey(),
     MINIO_REGION: process.env.MINIO_REGION || "us-east-1",
+    ...(executionMode === "docker" ? {
+      MINIO_ACCESS_KEY: sourceAccessKey,
+      MINIO_SECRET_KEY: sourceSecretKey,
+    } : {}),
     ASKLAKE_SPARK_SOURCE_PATH: source.path,
     ASKLAKE_SPARK_SOURCE_FORMAT: source.format,
     ASKLAKE_SPARK_OUTPUT_PATH: output.sparkPath,
@@ -190,7 +198,11 @@ function runSparkPipelineWithSource(job, command, runId, source) {
         scriptPath: sparkRestRuntimeConfig().jobScript,
         sparkProperties: sparkExecutorProperties,
       }),
-      sparkRunTimeoutMs(),
+      positiveInteger(options.sparkRestTimeoutMs, sparkRunTimeoutMs()),
+      process.env,
+      {
+        stateFile: sparkRestStateFileForRun(runId, options.sparkRestStateFile),
+      },
     )
     : runSparkSubmitContainer(dockerArgs);
   let report = readSparkReport(reportPath, result.stdout);
@@ -309,21 +321,39 @@ export function createSparkRestSubmission({
   };
 }
 
-export function runSparkRestSubmission(submission, timeoutMs, environment = process.env) {
+export function runSparkRestSubmission(submission, timeoutMs, environment = process.env, options = {}) {
   const runtime = sparkRestRuntimeConfig(environment);
   const effectiveTimeoutMs = positiveInteger(timeoutMs, 90_000);
-  return spawnSync(process.execPath, [sparkRestClientScript], {
+  const stateFile = requiredSparkRestStateFile(options.stateFile);
+  const result = spawnSync(process.execPath, [sparkRestClientScript], {
     cwd: backendDir,
     encoding: "utf8",
     input: JSON.stringify({
       pollIntervalMs: positiveInteger(environment.ASKLAKE_SPARK_REST_POLL_INTERVAL_MS, 1_000),
       restUrl: runtime.restUrl,
+      stateFile,
       submission,
       timeoutMs: effectiveTimeoutMs,
     }),
     maxBuffer: 4 * 1024 * 1024,
-    timeout: effectiveTimeoutMs + 15_000,
+    timeout: sparkRestBridgeTimeoutMs(effectiveTimeoutMs),
   });
+  if (!result.error && !result.signal) return result;
+
+  const recovery = spawnSync(process.execPath, [sparkRestClientScript], {
+    cwd: backendDir,
+    encoding: "utf8",
+    input: JSON.stringify({ operation: "kill-state", restUrl: runtime.restUrl, stateFile }),
+    maxBuffer: 1024 * 1024,
+    timeout: 10_000,
+  });
+  const recoveryDetail = recovery.status === 0
+    ? String(recovery.stdout || "").trim()
+    : `Spark REST timeout recovery failed: ${recovery.stderr || recovery.error?.message || "unknown error"}`;
+  return {
+    ...result,
+    stderr: [result.stderr, recoveryDetail].filter(Boolean).join("\n"),
+  };
 }
 
 function writeSparkJobManifest(manifestPath, job) {
@@ -800,9 +830,56 @@ function ensureWritableDir(dir, allowWorldWritable = true) {
   if (allowWorldWritable) chmodSync(dir, 0o777);
 }
 
-function sparkRunTimeoutMs() {
-  const bridgeTimeoutMs = positiveInteger(process.env.ASKLAKE_SPARK_RUN_TIMEOUT_SECONDS, 7200) * 1000;
-  return Math.max(1_000, bridgeTimeoutMs - 20_000);
+export function sparkRunTimeoutMs(environment = process.env) {
+  const timeoutSeconds = boundedInteger(
+    environment.ASKLAKE_SPARK_RUN_TIMEOUT_SECONDS,
+    7200,
+    1,
+    24 * 60 * 60,
+  );
+  return timeoutSeconds * 1000;
+}
+
+export function sparkRestBridgeTimeoutMs(pollTimeoutMs) {
+  return boundedInteger(pollTimeoutMs, 90_000, 1_000, 24 * 60 * 60 * 1000)
+    + SPARK_REST_BRIDGE_GRACE_MS;
+}
+
+function sparkRestStateFileForRun(runId, configured) {
+  const candidate = configured
+    || path.join(reportDir, `${safeArtifactSegment(runId)}.spark-rest-state.json`);
+  const resolved = requiredSparkRestStateFile(candidate);
+  const relative = path.relative(reportDir, resolved);
+  if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw sparkConfigurationError("Spark REST state file must be below ASKLAKE_SPARK_REPORT_DIR.");
+  }
+  return resolved;
+}
+
+function requiredSparkRestStateFile(value) {
+  const raw = String(value || "");
+  if (!raw || raw.includes("\0") || !path.isAbsolute(raw)) {
+    throw sparkConfigurationError("Spark REST state file must be an absolute path.");
+  }
+  return path.resolve(raw);
+}
+
+function safeArtifactSegment(value) {
+  return String(value || "run")
+    .toLowerCase()
+    .replace(/[^a-z0-9_.-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    || "run";
+}
+
+function assertInheritedMinioCredentials(accessKey, secretKey) {
+  const configuredAccessKey = minioAccessKey();
+  const configuredSecretKey = minioSecretKey();
+  if (accessKey !== configuredAccessKey || secretKey !== configuredSecretKey) {
+    throw sparkConfigurationError(
+      "Spark REST execution only supports the MinIO application credentials inherited by the worker.",
+    );
+  }
 }
 
 function configuredSparkRestUrl(value) {
@@ -849,6 +926,11 @@ function stringValues(value) {
 function positiveInteger(value, fallback) {
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function boundedInteger(value, fallback, minimum, maximum) {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= minimum && parsed <= maximum ? parsed : fallback;
 }
 
 function minioAccessKey() {

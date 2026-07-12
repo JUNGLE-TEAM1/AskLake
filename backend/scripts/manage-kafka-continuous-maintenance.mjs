@@ -79,7 +79,7 @@ async function runMaintenanceRest(input) {
     if (existsSync(resultFile(runId))) unlinkSync(resultFile(runId));
     const submission = createSparkRestSubmission({
       appName: `asklake-${safeSegment(required(input.kind, "kind"))}-${safeSegment(runId)}`,
-      environmentVariables: maintenanceEnvironment(input, runtime.reportRuntimeDir),
+      environmentVariables: maintenanceEnvironment(input, runtime.reportRuntimeDir, false),
       packages: sparkPackageList(),
       scriptPath: runtime.scriptPath,
     }, process.env);
@@ -90,6 +90,7 @@ async function runMaintenanceRest(input) {
       driverState: "SUBMITTED",
       events: [],
       kind: required(input.kind, "kind"),
+      restUrl: runtime.restUrl,
       runId,
       runner: "rest",
       submissionId: created.submissionId,
@@ -213,7 +214,7 @@ function maintenanceRestRuntime() {
   return { ...runtime, reportRuntimeDir, scriptPath };
 }
 
-function maintenanceEnvironment(input, runtimeReportDir) {
+function maintenanceEnvironment(input, runtimeReportDir, includeCredentials = true) {
   const runId = required(input.runId, "runId");
   return {
     ASKLAKE_MAINTENANCE_KIND: required(input.kind, "kind"),
@@ -227,9 +228,11 @@ function maintenanceEnvironment(input, runtimeReportDir) {
     ASKLAKE_MAINTENANCE_LIMIT: input.limit || 100,
     ASKLAKE_MAINTENANCE_RESULT_FILE: path.posix.join(runtimeReportDir, resultFileName(runId)),
     MINIO_ENDPOINT: process.env.MINIO_ENDPOINT_IN_DOCKER || process.env.MINIO_ENDPOINT || "http://minio:9000",
-    MINIO_ACCESS_KEY: process.env.MINIO_ACCESS_KEY || "",
-    MINIO_SECRET_KEY: process.env.MINIO_SECRET_KEY || "",
     MINIO_REGION: process.env.MINIO_REGION || "us-east-1",
+    ...(includeCredentials ? {
+      MINIO_ACCESS_KEY: process.env.MINIO_ACCESS_KEY || "",
+      MINIO_SECRET_KEY: process.env.MINIO_SECRET_KEY || "",
+    } : {}),
     HOME: "/tmp",
   };
 }

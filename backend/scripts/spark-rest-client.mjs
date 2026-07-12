@@ -1,4 +1,11 @@
-import { readFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import {
+  existsSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -11,6 +18,17 @@ export class TerminalSparkError extends Error {
 }
 
 export const terminalSparkFailureStates = new Set(["ERROR", "FAILED", "KILLED"]);
+
+const forbiddenCredentialNames = new Set([
+  "AWS_ACCESS_KEY_ID",
+  "AWS_SECRET_ACCESS_KEY",
+  "MINIO_ACCESS_KEY",
+  "MINIO_ROOT_PASSWORD",
+  "MINIO_ROOT_USER",
+  "MINIO_SECRET_KEY",
+  "SPARK_MINIO_ACCESS_KEY",
+  "SPARK_MINIO_SECRET_KEY",
+]);
 
 export async function createSparkRestDriver(restUrlValue, submissionValue, timeoutMs = 15_000) {
   const restUrl = validateRestUrl(restUrlValue);
@@ -59,6 +77,7 @@ export async function killSparkRestDriver(restUrlValue, submissionIdValue, timeo
 }
 
 export async function waitForSparkRestDriver({
+  killOnTimeout = true,
   onStatus,
   pollIntervalMs: pollIntervalValue,
   restUrl: restUrlValue,
@@ -97,17 +116,170 @@ export async function waitForSparkRestDriver({
         lastStatus,
       );
     }
-    // Spark may briefly report UNKNOWN while the master is reconciling a
-    // newly submitted or relaunched driver. Keep polling until timeout.
+    // UNKNOWN is transient while the standalone master reconciles a driver.
   }
 
-  try {
-    await killSparkRestDriver(restUrl, submissionId);
-  } catch {
-    // The timeout remains the actionable error; kill is best-effort cleanup.
+  if (killOnTimeout) {
+    try {
+      await killSparkRestDriver(restUrl, submissionId);
+    } catch {
+      // The timeout remains the actionable error; callers may retry cleanup.
+    }
   }
   const detail = lastStatusError ? ` Last status error: ${lastStatusError}` : "";
   throw new Error(`Spark driver ${submissionId} timed out in state ${lastState}.${detail}`);
+}
+
+export async function runSparkRestRequest({
+  pollIntervalMs,
+  restUrl: restUrlValue,
+  stateFile: stateFileValue,
+  submission: submissionValue,
+  timeoutMs,
+}) {
+  const restUrl = validateRestUrl(restUrlValue);
+  const submission = validateSubmission(submissionValue);
+  const stateFile = validateStateFile(stateFileValue);
+  let state = readSparkRestState(stateFile, false);
+
+  if (state && state.restUrl !== restUrl) {
+    throw new Error("Spark REST state URL does not match the configured control plane.");
+  }
+
+  if (!state) {
+    const created = await createSparkRestDriver(restUrl, submission, Math.min(timeoutMs, 15_000));
+    const now = new Date().toISOString();
+    state = {
+      createdAt: now,
+      driverState: "SUBMITTED",
+      restUrl,
+      runner: "rest",
+      submissionId: created.submissionId,
+      updatedAt: now,
+      version: 1,
+    };
+    try {
+      writeSparkRestState(stateFile, state);
+    } catch (error) {
+      try {
+        await killSparkRestDriver(restUrl, created.submissionId);
+      } catch {
+        // Preserve the state persistence error; cleanup is best effort here.
+      }
+      throw error;
+    }
+  }
+
+  try {
+    const completed = await waitForSparkRestDriver({
+      killOnTimeout: false,
+      onStatus: (status) => {
+        state = {
+          ...state,
+          driverState: status.driverState,
+          lastStatusError: null,
+          updatedAt: new Date().toISOString(),
+        };
+        writeSparkRestState(stateFile, state);
+      },
+      pollIntervalMs,
+      restUrl,
+      submissionId: state.submissionId,
+      timeoutMs,
+    });
+    state = {
+      ...state,
+      driverState: completed.state,
+      lastStatusError: null,
+      updatedAt: new Date().toISOString(),
+    };
+    writeSparkRestState(stateFile, state);
+    return completed;
+  } catch (error) {
+    let cleanupError = "";
+    if (!(error instanceof TerminalSparkError)) {
+      try {
+        await killSparkRestDriver(restUrl, state.submissionId);
+        state = { ...state, killRequestedAt: new Date().toISOString() };
+      } catch (cleanupFailure) {
+        cleanupError = safeSparkRestMessage(cleanupFailure?.message || cleanupFailure);
+      }
+    }
+    state = {
+      ...state,
+      lastError: safeSparkRestMessage(error?.message || error),
+      lastStatusError: cleanupError || state.lastStatusError || null,
+      updatedAt: new Date().toISOString(),
+    };
+    try {
+      writeSparkRestState(stateFile, state);
+    } catch {
+      // The original polling or persistence error remains actionable.
+    }
+    throw error;
+  }
+}
+
+export async function killSparkRestSubmissionFromState(stateFileValue, expectedRestUrlValue) {
+  const stateFile = validateStateFile(stateFileValue);
+  let state = readSparkRestState(stateFile, true);
+  const restUrl = validateRestUrl(state.restUrl);
+  const expectedRestUrl = validateRestUrl(expectedRestUrlValue);
+  if (restUrl !== expectedRestUrl) {
+    throw new Error("Spark REST recovery state does not match the configured control plane.");
+  }
+  let status = null;
+  try {
+    status = await getSparkRestDriverStatus(restUrl, state.submissionId, 2_000);
+  } catch (error) {
+    state = {
+      ...state,
+      lastStatusError: safeSparkRestMessage(error?.message || error),
+      updatedAt: new Date().toISOString(),
+    };
+  }
+  if (status && isTerminalSparkDriverState(status.driverState)) {
+    state = {
+      ...state,
+      driverState: status.driverState,
+      lastStatusError: null,
+      updatedAt: new Date().toISOString(),
+    };
+    writeSparkRestState(stateFile, state);
+    return { driverState: status.driverState, killed: false, submissionId: state.submissionId };
+  }
+
+  await killSparkRestDriver(restUrl, state.submissionId);
+  state = {
+    ...state,
+    killRequestedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  writeSparkRestState(stateFile, state);
+  return { driverState: state.driverState, killed: true, submissionId: state.submissionId };
+}
+
+export function readSparkRestState(stateFileValue, required = true) {
+  const stateFile = validateStateFile(stateFileValue);
+  if (!existsSync(stateFile)) {
+    if (required) throw new Error(`Spark REST state file does not exist: ${stateFile}`);
+    return null;
+  }
+  let state;
+  try {
+    state = JSON.parse(readFileSync(stateFile, "utf8"));
+  } catch (error) {
+    throw new Error(`Spark REST state file is unreadable: ${safeSparkRestMessage(error?.message || error)}`);
+  }
+  if (
+    !state
+    || state.runner !== "rest"
+    || !String(state.restUrl || "").trim()
+    || !String(state.submissionId || "").trim()
+  ) {
+    throw new Error("Spark REST state file is invalid.");
+  }
+  return state;
 }
 
 export function normalizeSparkDriverState(value) {
@@ -148,6 +320,15 @@ export function validateSubmission(value) {
   if (!path.posix.isAbsolute(script) || script === "/" || script.includes("\0")) {
     throw new Error("Spark REST application script must be an absolute runtime path.");
   }
+  const credentialFields = [
+    ...Object.keys(value.environmentVariables || {}),
+    ...Object.keys(value.sparkProperties || {}),
+  ].filter(isCredentialField);
+  if (credentialFields.length > 0) {
+    throw new Error(
+      `Spark REST submission must inherit application credentials from the worker environment; forbidden fields: ${credentialFields.join(", ")}`,
+    );
+  }
   return value;
 }
 
@@ -173,6 +354,36 @@ async function requestJson(url, options, timeout) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+function writeSparkRestState(stateFileValue, state) {
+  const stateFile = validateStateFile(stateFileValue);
+  const temporary = `${stateFile}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    writeFileSync(temporary, `${JSON.stringify(state)}\n`, "utf8");
+    renameSync(temporary, stateFile);
+  } finally {
+    if (existsSync(temporary)) unlinkSync(temporary);
+  }
+}
+
+function validateStateFile(value) {
+  const raw = String(value || "");
+  if (!raw || raw.includes("\0") || !path.isAbsolute(raw)) {
+    throw new Error("Spark REST state file must be an absolute path.");
+  }
+  const resolved = path.resolve(raw);
+  if (path.dirname(resolved) === resolved) {
+    throw new Error("Spark REST state file must identify a file.");
+  }
+  return resolved;
+}
+
+function isCredentialField(value) {
+  const name = String(value || "");
+  const leaf = name.split(".").at(-1)?.toUpperCase() || "";
+  return forbiddenCredentialNames.has(leaf)
+    || /(?:^|\.)fs\.s3a\.(?:access|secret)\.key$/i.test(name);
 }
 
 function requiredSubmissionId(value) {
@@ -202,16 +413,12 @@ function isMainModule() {
 async function main() {
   try {
     const request = JSON.parse(readFileSync(0, "utf8") || "{}");
-    const restUrl = validateRestUrl(request.restUrl);
-    const submission = validateSubmission(request.submission);
-    const timeoutMs = boundedInteger(request.timeoutMs, 90_000, 1_000, 24 * 60 * 60 * 1000);
-    const created = await createSparkRestDriver(restUrl, submission, Math.min(timeoutMs, 15_000));
-    const result = await waitForSparkRestDriver({
-      pollIntervalMs: request.pollIntervalMs,
-      restUrl,
-      submissionId: created.submissionId,
-      timeoutMs,
-    });
+    if (request.operation === "kill-state") {
+      const recovered = await killSparkRestSubmissionFromState(request.stateFile, request.restUrl);
+      console.log(`ASKLAKE_SPARK_REST_RECOVERY=${JSON.stringify(recovered)}`);
+      return;
+    }
+    const result = await runSparkRestRequest(request);
     console.log(`ASKLAKE_SPARK_REST_RESULT=${JSON.stringify({
       state: result.state,
       submissionId: result.submissionId,

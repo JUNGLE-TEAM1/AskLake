@@ -98,7 +98,7 @@ async function startWorkerRest(request, containerName) {
   const runtime = continuousRestRuntime();
   const submission = createSparkRestSubmission({
     appName: `asklake-kafka-continuous-${safeSegment(jobId)}`,
-    environmentVariables: continuousEnvironment(request, workerAttemptId, runtime.reportRuntimeDir),
+    environmentVariables: continuousEnvironment(request, workerAttemptId, runtime.reportRuntimeDir, false),
     packages: sparkPackageList(true),
     scriptPath: runtime.scriptPath,
     sparkProperties: {
@@ -112,6 +112,7 @@ async function startWorkerRest(request, containerName) {
     driverState: "SUBMITTED",
     events: [],
     jobId,
+    restUrl: runtime.restUrl,
     runner: "rest",
     submissionId: created.submissionId,
     updatedAt: now,
@@ -290,7 +291,7 @@ function continuousRestRuntime() {
   return { ...runtime, reportRuntimeDir, scriptPath };
 }
 
-function continuousEnvironment(request, workerAttemptId, runtimeReportDir) {
+function continuousEnvironment(request, workerAttemptId, runtimeReportDir, includeCredentials = true) {
   const jobId = required(request.jobId, "jobId");
   return {
     ASKLAKE_CONTINUOUS_JOB_ID: jobId,
@@ -312,9 +313,11 @@ function continuousEnvironment(request, workerAttemptId, runtimeReportDir) {
     ASKLAKE_CONTINUOUS_REPORT_FILE: path.posix.join(runtimeReportDir, reportFileName(jobId)),
     ASKLAKE_CONTINUOUS_COMMAND_FILE: path.posix.join(runtimeReportDir, commandFileName(jobId)),
     MINIO_ENDPOINT: process.env.MINIO_ENDPOINT_IN_DOCKER || process.env.MINIO_ENDPOINT || "http://minio:9000",
-    MINIO_ACCESS_KEY: process.env.MINIO_ACCESS_KEY || "",
-    MINIO_SECRET_KEY: process.env.MINIO_SECRET_KEY || "",
     MINIO_REGION: process.env.MINIO_REGION || "us-east-1",
+    ...(includeCredentials ? {
+      MINIO_ACCESS_KEY: process.env.MINIO_ACCESS_KEY || "",
+      MINIO_SECRET_KEY: process.env.MINIO_SECRET_KEY || "",
+    } : {}),
     HOME: "/tmp",
   };
 }

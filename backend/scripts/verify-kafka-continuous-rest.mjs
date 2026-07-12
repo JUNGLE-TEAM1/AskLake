@@ -23,6 +23,8 @@ const reportDir = path.join(temporaryDir, "reports");
 const ivyDir = path.join(temporaryDir, "ivy");
 const fakeBinDir = path.join(temporaryDir, "bin");
 const dockerCallMarker = path.join(temporaryDir, "docker-called.txt");
+const minioAccessSentinel = "REST_BODY_ACCESS_SENTINEL";
+const minioSecretSentinel = "REST_BODY_SECRET_SENTINEL";
 mkdirSync(reportDir, { recursive: true });
 mkdirSync(ivyDir, { recursive: true });
 mkdirSync(fakeBinDir, { recursive: true });
@@ -116,6 +118,8 @@ try {
     ASKLAKE_SPARK_RUNNER: "rest",
     ASKLAKE_SPARK_SCRIPT_DIR: "/opt/asklake/scripts",
     ASKLAKE_SPARK_SOURCE_INSPECT_SCRIPT: "/opt/asklake/scripts/spark_source_inspect_rest.py",
+    MINIO_ACCESS_KEY: minioAccessSentinel,
+    MINIO_SECRET_KEY: minioSecretSentinel,
     PATH: `${fakeBinDir}${path.delimiter}${process.env.PATH || ""}`,
   };
 
@@ -289,8 +293,15 @@ try {
   assert.equal(existsSync(dockerCallMarker), false, "Production continuous and maintenance paths must make zero Docker calls.");
   assert.equal(createRequests.filter((item) => String(item.appArgs?.[0]).endsWith("/kafka_continuous_stream.py")).length, 3);
   assert.equal(createRequests.filter((item) => String(item.appArgs?.[0]).endsWith("/kafka_continuous_maintenance.py")).length, 1);
+  for (const request of createRequests) {
+    const serialized = JSON.stringify(request);
+    assert.equal(serialized.includes(minioAccessSentinel), false, "REST bodies must not serialize MinIO access keys.");
+    assert.equal(serialized.includes(minioSecretSentinel), false, "REST bodies must not serialize MinIO secret keys.");
+    assert.equal(request.environmentVariables?.MINIO_ACCESS_KEY, undefined);
+    assert.equal(request.environmentVariables?.MINIO_SECRET_KEY, undefined);
+  }
 
-  console.log("Kafka continuous REST verified: lifecycle, restart state, maintenance artifact/cleanup, and zero production Docker calls.");
+  console.log("Kafka continuous REST verified: lifecycle, restart state, maintenance cleanup, credential-free bodies, and zero Docker calls.");
 } finally {
   await new Promise((resolve) => server.close(resolve));
   rmSync(temporaryDir, { force: true, recursive: true });

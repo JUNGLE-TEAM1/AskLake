@@ -190,6 +190,8 @@ try:
     backend = services["backend"]["environment"]
     minio = services["minio"]["environment"]
     minio_init = services["minio-init"]["environment"]
+    spark_worker_service = services.get("spark-worker")
+    spark_worker = spark_worker_service.get("environment", {}) if spark_worker_service else None
     expected = {
         "root_user": os.environ["ASKLAKE_PREFLIGHT_MINIO_ROOT_USER"],
         "root_password": os.environ["ASKLAKE_PREFLIGHT_MINIO_ROOT_PASSWORD"],
@@ -205,6 +207,8 @@ try:
         minio_init.get("MINIO_ROOT_PASSWORD") == expected["root_password"],
         minio_init.get("MINIO_ACCESS_KEY") == expected["access_key"],
         minio_init.get("MINIO_SECRET_KEY") == expected["secret_key"],
+        spark_worker is None or spark_worker.get("MINIO_ACCESS_KEY") == expected["access_key"],
+        spark_worker is None or spark_worker.get("MINIO_SECRET_KEY") == expected["secret_key"],
     ))
 except (AttributeError, KeyError, TypeError, ValueError, json.JSONDecodeError):
     valid = False
@@ -219,7 +223,7 @@ unset ASKLAKE_PREFLIGHT_MINIO_SECRET_KEY
 
 if (( compose_wiring_status != 0 )); then
   printf '%s\n' \
-    'error: Compose must wire MINIO_ROOT_* to minio/minio-init and the distinct MINIO_ACCESS_KEY/MINIO_SECRET_KEY application pair to backend/minio-init' >&2
+    'error: Compose must wire MINIO_ROOT_* to minio/minio-init and the distinct MINIO_ACCESS_KEY/MINIO_SECRET_KEY application pair to backend/minio-init/spark-worker' >&2
   exit 1
 fi
 

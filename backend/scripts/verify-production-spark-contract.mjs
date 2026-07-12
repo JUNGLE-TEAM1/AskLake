@@ -8,8 +8,11 @@ import { createSparkSourceInspectRestSubmission } from "../src/connectors.mjs";
 import {
   createSparkRestSubmission,
   sparkExecutionMode,
+  sparkRestBridgeTimeoutMs,
   sparkRestRuntimeConfig,
+  sparkRunTimeoutMs,
 } from "../src/sparkRunner.mjs";
+import { validateSubmission } from "./spark-rest-client.mjs";
 
 const backendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const repositoryDir = path.dirname(backendDir);
@@ -72,6 +75,10 @@ assert.equal(backendEnvironment.MINIO_ACCESS_KEY, minioInit.environment?.MINIO_A
 assert.equal(backendEnvironment.MINIO_SECRET_KEY, minioInit.environment?.MINIO_SECRET_KEY);
 assert.notEqual(backendEnvironment.MINIO_ACCESS_KEY, minio.environment?.MINIO_ROOT_USER);
 assert.notEqual(backendEnvironment.MINIO_SECRET_KEY, minio.environment?.MINIO_ROOT_PASSWORD);
+assert.equal(worker.environment?.MINIO_ACCESS_KEY, backendEnvironment.MINIO_ACCESS_KEY);
+assert.equal(worker.environment?.MINIO_SECRET_KEY, backendEnvironment.MINIO_SECRET_KEY);
+assert.notEqual(worker.environment?.MINIO_ACCESS_KEY, minio.environment?.MINIO_ROOT_USER);
+assert.notEqual(worker.environment?.MINIO_SECRET_KEY, minio.environment?.MINIO_ROOT_PASSWORD);
 
 const sharedPaths = [
   "/var/lib/asklake/spark-ivy",
@@ -130,6 +137,18 @@ assert.equal(
   undefined,
   "Generic submissions must not invent ETL business environment values.",
 );
+assert.doesNotMatch(JSON.stringify(pipelineSubmission), new RegExp(escapeRegExp(backendEnvironment.MINIO_ACCESS_KEY)));
+assert.doesNotMatch(JSON.stringify(pipelineSubmission), new RegExp(escapeRegExp(backendEnvironment.MINIO_SECRET_KEY)));
+assert.throws(
+  () => validateSubmission({
+    ...pipelineSubmission,
+    environmentVariables: {
+      ...pipelineSubmission.environmentVariables,
+      MINIO_SECRET_KEY: backendEnvironment.MINIO_SECRET_KEY,
+    },
+  }),
+  /inherit application credentials from the worker environment/,
+);
 
 const inspectSubmission = createSparkSourceInspectRestSubmission({
   environmentVariables: {
@@ -142,11 +161,35 @@ assert.equal(
   inspectSubmission.environmentVariables.ASKLAKE_SOURCE_INSPECT_REPORT_FILE,
   backendEnvironment.ASKLAKE_SPARK_REPORT_CONTAINER_DIR + "/source-inspect.json",
 );
+assert.doesNotMatch(JSON.stringify(inspectSubmission), new RegExp(escapeRegExp(backendEnvironment.MINIO_ACCESS_KEY)));
+assert.doesNotMatch(JSON.stringify(inspectSubmission), new RegExp(escapeRegExp(backendEnvironment.MINIO_SECRET_KEY)));
+assert.equal(sparkRunTimeoutMs({ ASKLAKE_SPARK_RUN_TIMEOUT_SECONDS: "1" }), 1_000);
+assert.equal(sparkRunTimeoutMs({ ASKLAKE_SPARK_RUN_TIMEOUT_SECONDS: "0" }), 7_200_000);
+assert.equal(sparkRestBridgeTimeoutMs(1_000), 31_000);
 
 const dockerfile = readFileSync(path.join(backendDir, "Dockerfile"), "utf8");
 assert.doesNotMatch(dockerfile, /\bdocker-cli\b/, "Production backend image must not install Docker CLI.");
 assert.match(dockerfile, /^FROM apache\/spark:4\.0\.1 AS spark-runtime$/m);
 assert.match(dockerfile, /^FROM python:3\.13-slim AS backend-runtime$/m);
+
+const pythonBin = process.env.ASKLAKE_FASTAPI_PYTHON || (process.platform === "win32" ? "python" : "python3");
+const bridgeTimeoutResult = spawnSync(pythonBin, [
+  path.join(backendDir, "scripts", "verify-spark-bridge-timeout-contract.py"),
+], {
+  cwd: backendDir,
+  encoding: "utf8",
+  env: {
+    ...process.env,
+    PYTHONPATH: [backendDir, process.env.PYTHONPATH].filter(Boolean).join(path.delimiter),
+  },
+  maxBuffer: 4 * 1024 * 1024,
+  timeout: 30_000,
+});
+assert.equal(
+  bridgeTimeoutResult.status,
+  0,
+  `Spark bridge timeout contract failed: ${bridgeTimeoutResult.stderr || bridgeTimeoutResult.stdout}`,
+);
 
 const continuousRestResult = spawnSync(process.execPath, [
   path.join(backendDir, "scripts", "verify-kafka-continuous-rest.mjs"),
@@ -163,6 +206,7 @@ assert.equal(
 );
 
 console.log(continuousRestResult.stdout.trim());
+console.log(bridgeTimeoutResult.stdout.trim());
 console.log("Production Spark contract verified: REST runner, configured paths, UID 185 binds, and no backend Docker dependency.");
 
 function requiredService(config, name) {
@@ -173,4 +217,8 @@ function requiredService(config, name) {
 
 function hasVolumeTarget(service, target) {
   return (service.volumes || []).some((volume) => volume.target === target);
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
