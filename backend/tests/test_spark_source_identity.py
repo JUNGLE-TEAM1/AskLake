@@ -1,14 +1,36 @@
+import importlib
 import os
 from pathlib import Path
 import sys
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
 SCRIPTS_DIR = Path(__file__).parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 try:
-    import spark_job_run
+    try:
+        spark_job_run = importlib.import_module("spark_job_run")
+    except ModuleNotFoundError as exc:
+        if exc.name != "pyspark":
+            raise
+        pyspark_module = ModuleType("pyspark")
+        sql_module = ModuleType("pyspark.sql")
+        functions_module = ModuleType("pyspark.sql.functions")
+        types_module = ModuleType("pyspark.sql.types")
+        functions_module.lit = Mock(name="lit")
+        functions_module.current_timestamp = Mock(name="current_timestamp")
+        sql_module.SparkSession = object
+        sql_module.functions = functions_module
+        sql_module.types = types_module
+        pyspark_module.sql = sql_module
+        with patch.dict(sys.modules, {
+            "pyspark": pyspark_module,
+            "pyspark.sql": sql_module,
+            "pyspark.sql.functions": functions_module,
+            "pyspark.sql.types": types_module,
+        }):
+            spark_job_run = importlib.import_module("spark_job_run")
 finally:
     sys.path.remove(str(SCRIPTS_DIR))
 
