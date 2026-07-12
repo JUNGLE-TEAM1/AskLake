@@ -42,28 +42,34 @@ import {
 import { Field, InfoBox, RetryPolicy, StatusTile } from "../../components/common";
 import { CreationFlowLayout, CreationTopActions, CreationValidationPanel } from "../../components/creation/CreationFlow";
 import { ActionGroup } from "@/components/ui/action-group";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
-import { CheckableOption } from "@/components/ui/checkable-option";
 import { CommandBar } from "@/components/ui/command-bar";
+import { Empty, EmptyDescription, EmptyHeader, EmptyIcon, EmptyTitle } from "@/components/ui/empty";
+import { Field as ShadcnField, FieldGroup, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
 import { FormFieldGroup, NativeSelectField } from "@/components/ui/form-field-group";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { KeyValueList } from "@/components/ui/key-value-list";
 import { NativeSelect } from "@/components/ui/native-select";
 import { SegmentedTabs } from "@/components/ui/segmented-tabs";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
 import { SelectableCard } from "@/components/ui/selectable-card";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
 import { TagList } from "@/components/ui/tag-list";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ValidationList } from "@/components/ui/validation-list";
 import { cn } from "@/lib/utils";
 import { S3PathField } from "../../components/s3/S3PathField";
@@ -72,8 +78,8 @@ import { runTransformQualitySamplePreview } from "../../data/transformQualityPre
 import { getDatasets } from "../../services/mockApi";
 import { toCreatePipelineRequest } from "../../services/draftPipelineContract";
 import { getReviewSnapshot, type ReviewSnapshot } from "../../services/reviewApi";
-import { listSourceAssets, testSourceConnector, type SourceConnectorAnalysis } from "../../services/sourceConnectorService";
-import type { AuditResult, CatalogDataset, DraftPipeline, DraftPipelinePatch, FlowId, ScheduleFlowId, SchemaColumnDraft, SourceDraft, TargetLayer } from "../../types";
+import { listSourceAssets, previewRecordParsing, testSourceConnector, type SourceConnectorAnalysis } from "../../services/sourceConnectorService";
+import type { AuditResult, CatalogDataset, DraftPipeline, DraftPipelinePatch, FlowId, RecordParsingDraft, RecordParsingPreviewResponse, ScheduleFlowId, SchemaColumnDraft, SourceDraft, TargetLayer } from "../../types";
 import type { QualityRuleDraft, RetryPolicyDraft, ScheduleDraft, ScheduleOverlapPolicy, TransformStepDraft, WatermarkPolicyDraft, WatermarkWindowMode } from "../../types/etl";
 import type { QualityRuleOption, TransformQualityInvalidRow, TransformQualityPreviewSample, TransformQualitySampleRow, TransformQualityStepPreview, TransformQualityValidationResult } from "../../data/transformQualityPreview";
 import { SourceAssetTree } from "./SourceAssetTree";
@@ -155,7 +161,6 @@ export function SchedulePage({
     >
         <EtlStepHeader
           className="etl-step-standalone-header"
-          description="파이프라인의 실행 시간, 반복 여부, 실행 정책을 설정합니다."
           icon={<Calendar />}
           title={title}
         />
@@ -165,9 +170,7 @@ export function SchedulePage({
               <span className="etl-review-icon"><PlayCircle size={17} /></span>
               <div>
                 <h2>실행 방식 설정</h2>
-                <p>저장만 할지, 정해진 주기로 자동 실행할지 선택합니다.</p>
               </div>
-              <span className="schedule-config-state">{selectedOption === "repeat" ? "자동 실행" : "직접 실행"}</span>
             </div>
             <div className="schedule-config-mode-grid">
               <RunTypeCard active={selectedOption === "skip"} icon={<PlayCircle size={20} />} title="스케줄링 건너뛰기" desc="시간을 정하지 않고 저장만 합니다. 필요할 때 목록에서 즉시 실행합니다." onClick={() => selectOption("skip")} />
@@ -642,6 +645,13 @@ const PERMISSION_ROLES = [
   { name: "ML Team", access: PERMISSION_ACCESS_ITEMS, checked: false, note: "RAG 인덱스 검증 후 확장 예정" },
 ];
 
+const PERMISSION_USERS = [
+  { email: "haneul@asklake.io", id: "haneul", initials: "KH", name: "김하늘", role: "Data Analyst Group" },
+  { email: "jimin@asklake.io", id: "jimin", initials: "PJ", name: "박지민", role: "Data Engineer Group" },
+] as const;
+
+type PermissionGrantTab = "roles" | "users";
+
 type PermissionDraftSlice = {
   approvalStatus?: string;
   owner?: string;
@@ -1020,6 +1030,15 @@ function getPermissionDraftValues(draft: DraftPipeline) {
   };
 }
 
+function getPermissionRoleChecks(draft: DraftPipeline) {
+  const savedRoles = draft.permission.roles ?? [];
+
+  return Object.fromEntries(PERMISSION_ROLES.map((role) => {
+    const savedRole = savedRoles.find((candidate) => candidate.name === role.name);
+    return [role.name, savedRole?.checked ?? role.checked];
+  }));
+}
+
 function getTargetDraftValues(draft: DraftPipeline) {
   const compatDraft = draft as DraftPipelineWithSlices;
   const target = compatDraft.target;
@@ -1396,7 +1415,7 @@ export function SourceConnectionPage({
     ["연결 상태", isSqlResultSource ? (hasSqlResultPreview && connectionStatus === "success" ? "SQL Preview 검증됨" : "SQL Preview 필요") : connectionStatus === "success" ? publicConnectionMessage : connectionStatus === "testing" ? "테스트 중" : connectionStatus === "failed" ? "실패" : "테스트 필요"],
     ["감지 파일", isSqlResultSource ? `${sourceConfigValue(editableFields, "Preview Row Count") || "0"} rows` : `${displayAssets.length}개`],
     ["인증 방식", isSqlResultSource ? "SQL Preview 검증" : isInternalDataLake ? "AskLake 로그인 권한" : activeSourceType === "File / S3" ? "MinIO 액세스 키" : "백엔드 커넥터"],
-    ["다음 단계", isSqlResultSource ? "Review 확인" : "스키마 추론"],
+    ["다음 단계", isSqlResultSource ? "Review 확인" : (sourceRuntime?.draftPatch.source?.requiresRecordParsing ? "레코드 구조화" : "스키마 추론")],
   ];
 
   const applySourceDraft = (
@@ -1456,6 +1475,7 @@ export function SourceConnectionPage({
     setConnectionStatus(nextStatus);
     setConnectionMessage(nextMessage);
     applySourceDraft(value, nextFields, nextStatus, nextMessage);
+    onDraftChange({ recordParsing: { columns: [], delimiterKind: "whitespace", delimiterPattern: "\\s+", enabled: false, expectedFieldCount: 0, header: false } });
     onAction("etl.source.connector_selected", "/api/etl/sources/connectors", value);
   };
 
@@ -1518,6 +1538,7 @@ export function SourceConnectionPage({
     setConnectionStatus(nextStatus);
     setConnectionMessage(nextMessage);
     applySourceDraft(activeSourceType, nextFields, nextStatus, nextMessage);
+    onDraftChange({ recordParsing: { columns: [], delimiterKind: "whitespace", delimiterPattern: "\\s+", enabled: false, expectedFieldCount: 0, header: false } });
   };
 
   const loadSourceAssetChildren = async (folderPath: string) => {
@@ -1580,6 +1601,7 @@ export function SourceConnectionPage({
     setConnectionMessage(nextMessage);
     setConnectionStatus("testing");
     applySourceDraft(activeSourceType, nextFields, "testing", nextMessage);
+    onDraftChange({ recordParsing: { columns: [], delimiterKind: "whitespace", delimiterPattern: "\\s+", enabled: false, expectedFieldCount: 0, header: false } });
     onAction("etl.source.asset_selected", "/api/etl/sources/assets", assetPath);
     try {
       const result = mergeConnectorAnalysisSourceConfig(
@@ -2048,6 +2070,211 @@ function DataLakeDatasetList({
   );
 }
 
+export function RecordParsingPage({
+  draft,
+  onAction,
+  onDraftChange,
+  onNext,
+  onNotify,
+  onPrev,
+}: {
+  draft: DraftPipeline;
+  onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
+  onDraftChange: (patch: DraftPipelinePatch) => void;
+  onNext: () => void;
+  onNotify: (message: string) => void;
+  onPrev: () => void;
+}) {
+  const rawLines = draft.source.rawPreviewLines ?? [];
+  const [preview, setPreview] = useState<RecordParsingPreviewResponse | null>(null);
+  const [parsing, setParsing] = useState<RecordParsingDraft>(draft.recordParsing);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const loadPreview = async (nextParsing: RecordParsingDraft) => {
+    setLoading(true);
+    setError("");
+    try {
+      const result = await previewRecordParsing(rawLines, nextParsing);
+      setPreview(result);
+      setParsing(result.recordParsing);
+      onAction("etl.record_parsing.previewed", "/api/etl/record-parsing/preview", draft.source.sourceLabel || "txt");
+    } catch (previewError) {
+      const message = previewError instanceof Error ? previewError.message : "레코드 구조화 미리보기에 실패했습니다.";
+      setError(message);
+      onAction("etl.record_parsing.preview_failed", "/api/etl/record-parsing/preview", draft.source.sourceLabel || "txt", "failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (rawLines.length === 0) {
+      setError("원본 TXT 샘플이 없습니다. 소스 단계에서 파일을 다시 선택해 주세요.");
+      return;
+    }
+    void loadPreview(draft.recordParsing.enabled ? draft.recordParsing : {
+      columns: [],
+      delimiterKind: "whitespace",
+      delimiterPattern: "\\s+",
+      enabled: true,
+      expectedFieldCount: 0,
+      header: false,
+    });
+  }, [draft.source.sourceLabel]);
+
+  const updateHeader = (header: boolean) => {
+    const next = { ...parsing, columns: [], expectedFieldCount: 0, header };
+    setParsing(next);
+    void loadPreview(next);
+  };
+
+  const updateColumn = (position: number, patch: Partial<RecordParsingDraft["columns"][number]>) => {
+    const columns = parsing.columns.map((column) => column.position === position ? { ...column, ...patch } : column);
+    const nextParsing = { ...parsing, columns };
+    setParsing(nextParsing);
+    setPreview((current) => current ? {
+      ...current,
+      columns: current.columns.map((column, index) => index === position ? {
+        ...column,
+        sourceName: patch.name ?? column.sourceName,
+        targetName: patch.name ?? column.targetName,
+        type: patch.inferredType ?? column.type,
+      } : column),
+      recordParsing: nextParsing,
+    } : current);
+  };
+
+  const normalizedNames = parsing.columns.map((column) => normalizeTargetColumnName(column.name));
+  const columnNamesValid = normalizedNames.every(Boolean) && new Set(normalizedNames).size === normalizedNames.length;
+  const canApply = Boolean(preview?.canApply && columnNamesValid && parsing.columns.length === parsing.expectedFieldCount);
+
+  const applyAndContinue = () => {
+    if (!preview || !canApply) {
+      onNotify("필드 개수와 컬럼명을 확인한 뒤 다시 시도해 주세요.");
+      return;
+    }
+    const columns = parsing.columns.map((column) => {
+      const name = normalizeTargetColumnName(column.name) || `field_${column.position + 1}`;
+      return {
+        confidence: 90,
+        included: true,
+        nullable: false,
+        sourceName: name,
+        targetName: name,
+        type: column.inferredType,
+      } satisfies SchemaColumnDraft;
+    });
+    const normalizedParsing: RecordParsingDraft = {
+      ...parsing,
+      columns: parsing.columns.map((column) => ({ ...column, name: normalizeTargetColumnName(column.name) })),
+      enabled: true,
+    };
+    onDraftChange({
+      recordParsing: normalizedParsing,
+      schema: {
+        columns,
+        sampleRows: preview.sampleRows,
+        schemaFingerprint: buildSchemaFingerprint(columns),
+        summary: `TXT 연속 공백 구조화 · ${preview.totalRows}행 검증 · ${columns.length}개 필드`,
+      },
+      transform: {
+        outputColumns: columns.map((column) => [column.targetName, column.type]),
+        summary: "레코드 구조화 적용 · 추가 변환 없음",
+      },
+    });
+    onAction("etl.record_parsing.applied", "/api/etl/record-parsing/preview", draft.source.sourceLabel || "txt");
+    onNext();
+  };
+
+  return (
+    <CreationFlowLayout
+      actions={<CreationTopActions nextDisabled={!canApply || loading} useShadcnStyles onPrev={onPrev} onNext={applyAndContinue} />}
+    >
+      <section className="record-parsing-source-strip panel" aria-label="선택한 원시 소스">
+        <span><em>소스</em><strong>{draft.source.sourceLabel || "-"}</strong></span>
+        <span><em>감지 포맷</em><strong>{draft.source.detectedFormat || "TXT"}</strong></span>
+        <span><em>샘플</em><strong>{rawLines.length}행</strong></span>
+        <span><em>필드 상태</em><strong>이름 없음</strong></span>
+      </section>
+
+      <div className="record-parsing-workspace">
+        <section className="panel record-parsing-panel">
+          <div className="record-parsing-panel-header">
+            <h2>원본 샘플</h2>
+            <span className="source-select-pill active">UTF-8 · 줄바꿈</span>
+          </div>
+          <textarea className="input record-parsing-raw" readOnly aria-label="원본 TXT 샘플" value={rawLines.join("\n")} />
+        </section>
+
+        <section className="panel record-parsing-panel">
+          <div className="record-parsing-panel-header">
+            <h2>분리 규칙과 컬럼 초안</h2>
+            <span className={preview?.invalidRows.length ? "source-select-pill warning" : "source-select-pill active"}>
+              {loading ? "검증 중" : preview ? `${preview.validRows}/${preview.totalRows}행 정상` : "검증 대기"}
+            </span>
+          </div>
+          <div className="record-parsing-controls">
+            <FormFieldGroup className="field" label="필드 구분자">
+              <NativeSelect disabled value="whitespace"><option value="whitespace">연속 공백 (\\s+)</option></NativeSelect>
+            </FormFieldGroup>
+            <FormFieldGroup className="field" label="헤더 처리">
+              <NativeSelect value={parsing.header ? "first" : "none"} onChange={(event) => updateHeader(event.target.value === "first")}>
+                <option value="none">헤더 없음</option>
+                <option value="first">첫 줄을 헤더로 사용</option>
+              </NativeSelect>
+            </FormFieldGroup>
+          </div>
+          {error && <p className="record-parsing-error">{error}</p>}
+          <ScrollArea type="always" scrollbars="horizontal" className="record-parsing-table-scroll">
+            <table className="schema-table record-parsing-table">
+              <thead><tr><th>순서</th><th>샘플 값</th><th>출력 컬럼명</th><th>추론 타입</th></tr></thead>
+              <tbody>
+                {parsing.columns.map((column) => (
+                  <tr key={column.position}>
+                    <td>{column.position + 1}</td>
+                    <td><code>{preview?.sampleRows[0]?.[column.position] || "-"}</code></td>
+                    <td><Input aria-label={`${column.position + 1}번째 출력 컬럼명`} value={column.name} onChange={(event) => updateColumn(column.position, { name: event.target.value })} /></td>
+                    <td>
+                      <NativeSelect value={column.inferredType} onChange={(event) => updateColumn(column.position, { inferredType: event.target.value as RecordParsingDraft["columns"][number]["inferredType"] })}>
+                        {schemaTypeOptions.filter((type) => type !== "JSON").map((type) => <option key={type} value={type}>{type}</option>)}
+                      </NativeSelect>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </ScrollArea>
+          {!columnNamesValid && <p className="record-parsing-error">컬럼명은 비어 있거나 중복될 수 없습니다.</p>}
+        </section>
+      </div>
+
+      {preview?.invalidRows.length ? (
+        <section className="panel record-parsing-panel">
+          <div className="record-parsing-panel-header"><h2>필드 개수 불일치</h2></div>
+          <table className="schema-table record-parsing-invalid-table">
+            <thead><tr><th>원본 행</th><th>예상</th><th>실제</th><th>원문</th></tr></thead>
+            <tbody>{preview.invalidRows.map((row) => <tr key={row.lineNumber}><td>{row.lineNumber}</td><td>{row.expectedFieldCount}</td><td>{row.actualFieldCount}</td><td><code>{row.rawPreview}</code></td></tr>)}</tbody>
+          </table>
+        </section>
+      ) : preview && (
+        <section className="panel record-parsing-panel">
+          <div className="record-parsing-panel-header">
+            <h2>구조화 결과 미리보기</h2>
+            <span className="source-select-pill active">{preview.totalRows}행 · {parsing.expectedFieldCount}컬럼</span>
+          </div>
+          <ScrollArea type="always" scrollbars="horizontal" className="record-parsing-table-scroll">
+            <table className="schema-table record-parsing-preview-table">
+              <thead><tr>{parsing.columns.map((column) => <th key={column.position}>{column.name}</th>)}</tr></thead>
+              <tbody>{preview.sampleRows.slice(0, 5).map((row, rowIndex) => <tr key={rowIndex}>{row.map((cell, cellIndex) => <td key={cellIndex}>{cell}</td>)}</tr>)}</tbody>
+            </table>
+          </ScrollArea>
+        </section>
+      )}
+    </CreationFlowLayout>
+  );
+}
+
 function sourceFormatFromConfig(fields: Array<[string, string]>, _sourceType?: string) {
   const fieldMap = new Map(fields.map(([label, value]) => [label, value]));
   const declaredFormat = (fieldMap.get("File Type") || "").trim().toLowerCase();
@@ -2064,6 +2291,7 @@ function sourceFormatFromConfig(fields: Array<[string, string]>, _sourceType?: s
   if (rawFormat.includes("csv")) return "CSV";
   if (rawFormat.includes("tsv")) return "TSV";
   if (rawFormat.includes("txt")) return "TXT";
+  if (rawFormat.includes("log")) return "TXT";
   if (rawFormat.includes("parquet")) return "PARQUET";
   return "AUTO";
 }
@@ -2353,6 +2581,7 @@ function detectSchemaSourceFormat(draft: DraftPipeline) {
   if (probe.includes("jsonl")) return "JSONL";
   if (probe.includes("json")) return "JSON";
   if (probe.includes("parquet")) return "PARQUET";
+  if (probe.includes(".txt") || probe.includes(".log") || probe.includes(" txt") || probe.includes(" log")) return "TXT";
   if (probe.includes("tsv")) return "TSV";
   if (probe.includes("csv")) return "CSV";
   if (draft.source.sourceType === "PostgreSQL") return "TABLE";
@@ -5070,9 +5299,7 @@ function NoScheduleSettings({ onRetryPolicyChange, retryPolicy }: { onRetryPolic
         <span className="etl-review-icon"><PlayCircle size={17} /></span>
         <div>
           <h2>직접 실행 정책</h2>
-          <p>자동 예약 없이 저장하고 필요할 때 Job 목록에서 직접 실행합니다.</p>
         </div>
-        <span className="schedule-config-state muted">스케줄 없음</span>
       </div>
       <div className="etl-review-validation schedule-config-validation">
         <div className="ready">
@@ -5097,7 +5324,6 @@ function NoScheduleSettings({ onRetryPolicyChange, retryPolicy }: { onRetryPolic
           <h3>재시도 정책</h3>
         </div>
         <RetryPolicy value={retryPolicy} onChange={onRetryPolicyChange} />
-        <InfoBox title="다음 실행 없음" body="스케줄을 저장하지 않으므로 다음 예약 일시는 생성되지 않습니다. 필요할 때 Job 목록에서 즉시 실행합니다." />
       </div>
     </section>
   );
@@ -5422,24 +5648,29 @@ export function PermissionPage({
   const [visibility, setVisibility] = useState(initialPermission.visibility);
   const [dataOwner, setDataOwner] = useState(initialPermission.owner);
   const [approvalStatus, setApprovalStatus] = useState(initialPermission.approvalStatus);
+  const [grantTab, setGrantTab] = useState<PermissionGrantTab>("roles");
+  const [grantSearch, setGrantSearch] = useState("");
   const [roleChecks, setRoleChecks] = useState<Record<string, boolean>>(() => ({
-    ...Object.fromEntries(PERMISSION_ROLES.map((role) => [role.name, role.checked])),
+    ...getPermissionRoleChecks(draft),
     [initialPermission.permissionTemplate]: true,
   }));
+  const [userChecks, setUserChecks] = useState<Record<string, boolean>>(() => (
+    Object.fromEntries(PERMISSION_USERS.map((user) => [user.id, true]))
+  ));
 
   const applyPermissionDraft = (patch: Partial<{
     approvalStatus: string;
     owner: string;
     permissionTemplate: string;
     visibility: string;
-  }> = {}) => {
+  }> = {}, nextRoleChecks = roleChecks) => {
     const nextPermissionTemplate = getKnownOption(patch.permissionTemplate ?? permissionTemplate, PERMISSION_TEMPLATES, DEFAULT_PERMISSION_TEMPLATE);
     const nextVisibility = getKnownOption(patch.visibility ?? visibility, VISIBILITY_OPTIONS, DEFAULT_VISIBILITY);
     const nextApprovalStatus = getKnownOption(patch.approvalStatus ?? approvalStatus, APPROVAL_STATUS_OPTIONS, DEFAULT_APPROVAL_STATUS);
     const nextOwner = getDisplayText(patch.owner ?? dataOwner, DEFAULT_OWNER);
     const permissionRoles = PERMISSION_ROLES.map((role) => ({
       access: [...role.access],
-      checked: Boolean(roleChecks[role.name] ?? role.checked),
+      checked: Boolean(nextRoleChecks[role.name] ?? role.checked),
       name: role.name,
     }));
 
@@ -5456,10 +5687,25 @@ export function PermissionPage({
     applyPermissionDraft();
     onNext();
   };
+  const updateRoleCheck = (roleName: string, checked: boolean) => {
+    const nextRoleChecks = { ...roleChecks, [roleName]: checked };
+    setRoleChecks(nextRoleChecks);
+    applyPermissionDraft({}, nextRoleChecks);
+  };
+  const normalizedGrantSearch = grantSearch.trim().toLocaleLowerCase();
+  const filteredRoles = PERMISSION_ROLES.filter((role) => (
+    `${role.name} ${role.note}`.toLocaleLowerCase().includes(normalizedGrantSearch)
+  ));
+  const filteredUsers = PERMISSION_USERS.filter((user) => (
+    `${user.name} ${user.email} ${user.role}`.toLocaleLowerCase().includes(normalizedGrantSearch)
+  ));
+  const selectedRoleCount = Object.values(roleChecks).filter(Boolean).length;
+  const selectedUserCount = Object.values(userChecks).filter(Boolean).length;
   const governanceChecks = [
-    ["공유 범위", visibility, visibility === "외부 공유" ? "검토 필요" : "안전"],
-    ["민감 데이터", "review_text 포함", "검토 필요"],
-    ["승인자", dataOwner, approvalStatus === "승인 완료" ? "준비됨" : "대기"],
+    { icon: <Database size={18} />, label: "공유 범위", status: visibility === "외부 공유" ? "검토 필요" : "안전", value: visibility },
+    { icon: <FileText size={18} />, label: "민감 데이터", status: "검토 필요", value: "review_text 포함" },
+    { icon: <CircleUser size={18} />, label: "승인자", status: approvalStatus === "승인 완료" ? "준비됨" : "대기", value: dataOwner },
+    { icon: <ShieldCheck size={18} />, label: "승인 상태", status: approvalStatus === "승인 완료" ? "준비됨" : "검토 필요", value: approvalStatus },
   ];
 
   return (
@@ -5472,47 +5718,67 @@ export function PermissionPage({
         icon={<ShieldCheck />}
         title="권한 설정"
       />
-      <div className="etl-review-stack permission-config-stack">
-        <section className="etl-review-card permission-config-card">
-          <div className="etl-review-card-header">
+      <div className="grid min-w-0 gap-4 pb-6" data-testid="permission-workflow">
+        <Card className="min-w-0 overflow-hidden" size="none">
+          <CardHeader className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3 border-b border-slate-200 px-5 py-4">
             <span className="etl-review-icon permission"><ShieldCheck size={17} /></span>
-            <h2>Governance Check</h2>
-          </div>
-          <ValidationList
-            className="etl-review-validation permission-config-validation"
-            items={governanceChecks.map(([label, value, status]) => ({
-              label,
-              status: status === "안전" || status === "준비됨" ? "ready" : "warning",
-              value: `${value} · ${status}`,
-            }))}
-          />
-        </section>
+            <CardTitle>Governance Check</CardTitle>
+          </CardHeader>
+          <CardContent className="grid min-w-0 gap-3 p-5 sm:grid-cols-2 xl:grid-cols-4">
+            {governanceChecks.map((item) => (
+              <Card className="min-w-0" key={item.label} size="sm" variant="muted">
+                <div className="flex min-w-0 items-start justify-between gap-3">
+                  <div className="flex min-w-0 items-start gap-2">
+                    {item.icon}
+                    <div className="grid min-w-0 gap-1">
+                      <span className="text-sm font-semibold text-slate-500">{item.label}</span>
+                      <strong className="truncate text-sm text-slate-950" title={item.value}>{item.value}</strong>
+                    </div>
+                  </div>
+                  <Badge
+                    shape="compact"
+                    size="sm"
+                    variant={item.status === "안전" || item.status === "준비됨" ? "success" : item.status === "대기" ? "muted" : "warning"}
+                  >
+                    {item.status}
+                  </Badge>
+                </div>
+              </Card>
+            ))}
+          </CardContent>
+        </Card>
 
-        <section className="etl-review-card permission-config-card">
-          <div className="etl-review-card-header">
+        <Card className="min-w-0 overflow-hidden" size="none">
+          <CardHeader className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3 border-b border-slate-200 px-5 py-4">
             <span className="etl-review-icon"><SlidersHorizontal size={17} /></span>
-            <h2>Access Policy</h2>
-          </div>
-          <div className="target-config-form-grid permission-config-form-grid">
-            <FormFieldGroup className="field" label="권한 템플릿">
+            <CardTitle>Access Policy</CardTitle>
+          </CardHeader>
+          <CardContent className="p-5">
+            <FieldGroup className="grid min-w-0 gap-4 md:grid-cols-2">
+              <ShadcnField>
+                <FieldLabel htmlFor="permission-template">권한 템플릿</FieldLabel>
               <Select
                 value={permissionTemplate}
                 onValueChange={(value) => {
                   const nextPermissionTemplate = getKnownOption(value, PERMISSION_TEMPLATES, DEFAULT_PERMISSION_TEMPLATE);
+                  const nextRoleChecks = { ...roleChecks, [nextPermissionTemplate]: true };
                   setPermissionTemplate(nextPermissionTemplate);
-                  setRoleChecks((checks) => ({ ...checks, [nextPermissionTemplate]: true }));
-                  applyPermissionDraft({ permissionTemplate: nextPermissionTemplate });
+                  setRoleChecks(nextRoleChecks);
+                  applyPermissionDraft({ permissionTemplate: nextPermissionTemplate }, nextRoleChecks);
                 }}
               >
-                <SelectTrigger aria-label="권한 템플릿" className="w-full" size="sm">
+                <SelectTrigger aria-label="권한 템플릿" id="permission-template" size="sm">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {PERMISSION_TEMPLATES.map((template) => <SelectItem key={template} value={template}>{template}</SelectItem>)}
+                  <SelectGroup>
+                    {PERMISSION_TEMPLATES.map((template) => <SelectItem key={template} value={template}>{template}</SelectItem>)}
+                  </SelectGroup>
                 </SelectContent>
               </Select>
-            </FormFieldGroup>
-            <FormFieldGroup className="field" label="공개 범위">
+              </ShadcnField>
+              <ShadcnField>
+                <FieldLabel htmlFor="permission-visibility">공개 범위</FieldLabel>
               <Select
                 value={visibility}
                 onValueChange={(value) => {
@@ -5521,22 +5787,26 @@ export function PermissionPage({
                   applyPermissionDraft({ visibility: nextVisibility });
                 }}
               >
-                <SelectTrigger aria-label="공개 범위" className="w-full" size="sm">
+                <SelectTrigger aria-label="공개 범위" id="permission-visibility" size="sm">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {VISIBILITY_OPTIONS.map((option) => <SelectItem key={option} value={option}>{option}</SelectItem>)}
+                  <SelectGroup>
+                    {VISIBILITY_OPTIONS.map((option) => <SelectItem key={option} value={option}>{option}</SelectItem>)}
+                  </SelectGroup>
                 </SelectContent>
               </Select>
-            </FormFieldGroup>
-            <FormFieldGroup className="field" label="데이터 오너">
-              <Input className="input control-input" value={dataOwner} onChange={(event) => {
+              </ShadcnField>
+              <ShadcnField>
+                <FieldLabel htmlFor="permission-owner">데이터 오너</FieldLabel>
+              <Input id="permission-owner" value={dataOwner} onChange={(event) => {
                 const nextOwner = event.target.value;
                 setDataOwner(nextOwner);
                 applyPermissionDraft({ owner: nextOwner });
               }} />
-            </FormFieldGroup>
-            <FormFieldGroup className="field" label="승인 상태">
+              </ShadcnField>
+              <ShadcnField>
+                <FieldLabel htmlFor="permission-approval">승인 상태</FieldLabel>
               <Select
                 value={approvalStatus}
                 onValueChange={(value) => {
@@ -5545,58 +5815,151 @@ export function PermissionPage({
                   applyPermissionDraft({ approvalStatus: nextApprovalStatus });
                 }}
               >
-                <SelectTrigger aria-label="승인 상태" className="w-full" size="sm">
+                <SelectTrigger aria-label="승인 상태" id="permission-approval" size="sm">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {APPROVAL_STATUS_OPTIONS.map((option) => <SelectItem key={option} value={option}>{option}</SelectItem>)}
+                  <SelectGroup>
+                    {APPROVAL_STATUS_OPTIONS.map((option) => <SelectItem key={option} value={option}>{option}</SelectItem>)}
+                  </SelectGroup>
                 </SelectContent>
               </Select>
-            </FormFieldGroup>
-          </div>
-        </section>
+              </ShadcnField>
+            </FieldGroup>
+          </CardContent>
+        </Card>
 
-        <section className="etl-review-card permission-config-card">
-          <div className="etl-review-card-header">
+        <Card className="min-w-0 overflow-hidden" size="none">
+          <CardHeader className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 border-b border-slate-200 px-5 py-4">
             <span className="etl-review-icon schema"><CircleUser size={17} /></span>
-            <h2>Role Grants</h2>
-          </div>
-          <div className="permission-config-role-list">
-            {PERMISSION_ROLES.map((role) => {
-              const selected = Boolean(roleChecks[role.name]);
-              const recommended = role.name === permissionTemplate;
-              return (
-                <CheckableOption
-                  checked={selected}
-                  className={recommended ? "permission-config-role recommended" : "permission-config-role"}
-                  key={role.name}
-                  onCheckedChange={(checked) => setRoleChecks((checks) => ({ ...checks, [role.name]: checked }))}
-                >
-                  <span className="permission-config-role-body">
-                    <span className="permission-config-role-title">
-                      <strong>{role.name}</strong>
-                    </span>
-                    <small>{role.note}</small>
-                  </span>
-                  <div className="permission-chip-row permission-config-access-row">
-                    {PERMISSION_ACCESS_ITEMS.map((item) => (
-                      <Badge
-                        key={item}
-                        shape="compact"
-                        size="sm"
-                        variant={selected && role.access.includes(item) ? "default" : "outline"}
-                      >
-                        {item}
-                      </Badge>
-                    ))}
+            <CardTitle>Role Grants</CardTitle>
+            <Badge shape="compact" size="sm" variant="secondary">
+              {grantTab === "roles" ? `${selectedRoleCount}개 선택` : `${selectedUserCount}명 선택`}
+            </Badge>
+          </CardHeader>
+          <CardContent className="grid min-w-0 gap-4 p-5">
+            <Tabs
+              className="grid min-w-0 gap-4"
+              value={grantTab}
+              onValueChange={(value) => {
+                setGrantTab(value as PermissionGrantTab);
+                setGrantSearch("");
+              }}
+            >
+              <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <TabsList aria-label="권한 대상 유형">
+                  <TabsTrigger value="roles">역할</TabsTrigger>
+                  <TabsTrigger value="users">사용자</TabsTrigger>
+                </TabsList>
+                <InputGroup className="sm:max-w-80">
+                  <InputGroupAddon><Search aria-hidden="true" /></InputGroupAddon>
+                  <InputGroupInput
+                    aria-label={grantTab === "roles" ? "역할 검색" : "사용자 검색"}
+                    placeholder={grantTab === "roles" ? "역할 검색" : "사용자 검색"}
+                    value={grantSearch}
+                    onChange={(event) => setGrantSearch(event.target.value)}
+                  />
+                </InputGroup>
+              </div>
+              <Separator />
+
+              <TabsContent className="mt-0" value="roles">
+                {filteredRoles.length > 0 ? (
+                  <FieldSet className="gap-3">
+                    <FieldLegend className="sr-only">역할 선택</FieldLegend>
+                    {filteredRoles.map((role) => {
+                      const selected = Boolean(roleChecks[role.name]);
+                      const recommended = role.name === permissionTemplate;
+                      const checkboxId = `permission-role-${role.name.replaceAll(" ", "-").toLocaleLowerCase()}`;
+                      return (
+                        <Card aria-selected={selected} key={role.name} size="sm" variant={selected ? "muted" : "default"}>
+                          <div className="grid min-w-0 gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+                            <div className="flex min-w-0 items-start gap-3">
+                              <Checkbox
+                                checked={selected}
+                                id={checkboxId}
+                                onCheckedChange={(checked) => updateRoleCheck(role.name, checked === true)}
+                              />
+                              <label className="grid min-w-0 cursor-pointer gap-1" htmlFor={checkboxId}>
+                                <span className="flex min-w-0 flex-wrap items-center gap-2">
+                                  <strong className="truncate text-sm">{role.name}</strong>
+                                  {recommended ? <Badge shape="compact" size="sm" variant="default">추천</Badge> : null}
+                                </span>
+                                <span className="text-sm text-slate-500">{role.note}</span>
+                              </label>
+                            </div>
+                            <div className="flex flex-wrap gap-2 md:justify-end" aria-label={`${role.name} 권한`}>
+                              {PERMISSION_ACCESS_ITEMS.map((item) => (
+                                <Badge
+                                  key={item}
+                                  shape="compact"
+                                  size="sm"
+                                  variant={selected && role.access.includes(item) ? "default" : "outline"}
+                                >
+                                  {item}
+                                </Badge>
+                              ))}
+                            </div>
+                          </div>
+                        </Card>
+                      );
+                    })}
+                  </FieldSet>
+                ) : (
+                  <PermissionGrantEmpty query={grantSearch} />
+                )}
+              </TabsContent>
+
+              <TabsContent className="mt-0" value="users">
+                {filteredUsers.length > 0 ? (
+                  <div className="grid gap-3">
+                    {filteredUsers.map((user) => {
+                      const selected = Boolean(userChecks[user.id]);
+                      return (
+                        <Card aria-selected={selected} key={user.id} size="sm" variant={selected ? "muted" : "default"}>
+                          <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div className="flex min-w-0 items-center gap-3">
+                              <Avatar><AvatarFallback>{user.initials}</AvatarFallback></Avatar>
+                              <div className="grid min-w-0 gap-1">
+                                <strong className="truncate text-sm">{user.name}</strong>
+                                <span className="truncate text-sm text-slate-500">{user.email} · {user.role}</span>
+                              </div>
+                            </div>
+                            <Button
+                              aria-pressed={selected}
+                              size="sm"
+                              type="button"
+                              variant={selected ? "outline" : "subtle"}
+                              onClick={() => setUserChecks((checks) => ({ ...checks, [user.id]: !selected }))}
+                            >
+                              {selected ? "제거" : "추가"}
+                            </Button>
+                          </div>
+                        </Card>
+                      );
+                    })}
                   </div>
-                </CheckableOption>
-              );
-            })}
-          </div>
-        </section>
+                ) : (
+                  <PermissionGrantEmpty query={grantSearch} />
+                )}
+              </TabsContent>
+            </Tabs>
+          </CardContent>
+        </Card>
       </div>
     </CreationFlowLayout>
+  );
+}
+
+function PermissionGrantEmpty({ query }: { query: string }) {
+  return (
+    <Empty className="py-10" size="sm" variant="plain">
+      <EmptyIcon><Search aria-hidden="true" /></EmptyIcon>
+      <EmptyHeader>
+        <EmptyTitle>검색 결과가 없습니다.</EmptyTitle>
+        <EmptyDescription>{query ? `“${query}”와 일치하는 권한 대상을 찾지 못했습니다.` : "표시할 권한 대상이 없습니다."}</EmptyDescription>
+      </EmptyHeader>
+    </Empty>
   );
 }
 
