@@ -70,6 +70,7 @@ import {
   DataTableStackedCell,
 } from "@/components/ui/data-table-stacked-cell";
 import { DetailTableSection } from "@/components/ui/detail-table-section";
+import { Dialog, DialogContent, DialogDescription, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { DialogShell } from "@/components/ui/dialog-shell";
 import {
   DropdownMenu,
@@ -1836,41 +1837,90 @@ const outputSchemaColumns: ColumnDef<OutputSchemaRow>[] = [
   },
 ];
 
+function TransformRuleSettingsAction({ rule }: { rule: TransformRuleRow }) {
+  return (
+    <Dialog>
+      <DialogTrigger className="inline-flex h-auto items-center justify-center whitespace-nowrap p-0 text-base font-semibold text-blue-600 underline-offset-4 transition-colors hover:text-blue-700 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2">
+        설정 보기
+      </DialogTrigger>
+      <DialogContent
+        closeLabel="닫기"
+        className="max-h-[calc(100vh-2rem)] w-[min(calc(100vw-2rem),48rem)] gap-0 overflow-hidden p-0"
+      >
+        <header className="grid min-w-0 gap-1.5 border-b border-slate-200 px-6 py-5 pr-16">
+          <span className="text-xs font-black uppercase tracking-normal text-blue-600">변환 규칙 {rule.index}</span>
+          <DialogTitle className="text-xl font-extrabold leading-tight">{rule.label}</DialogTitle>
+          <DialogDescription>{rule.operation}</DialogDescription>
+        </header>
+        <div className="grid min-h-0 gap-5 overflow-y-auto px-6 py-5">
+          <KeyValueList
+            className={detailKeyValueListClassName}
+            items={[
+              { label: "입력", value: rule.input },
+              { label: "출력", value: rule.output },
+              { label: "오류 처리", value: rule.onError },
+              { label: "상태", value: rule.enabled ? "활성" : "비활성" },
+            ]}
+          />
+          <section className="grid min-w-0 gap-3">
+            <h3 className="text-base font-extrabold text-slate-950">설정</h3>
+            <pre className="max-h-[320px] min-w-0 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-slate-950 p-5 font-mono text-sm leading-6 text-slate-100">
+              {rule.params || "설정 없음"}
+            </pre>
+          </section>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 const transformRuleColumns: ColumnDef<TransformRuleRow>[] = [
   {
     accessorKey: "index",
     header: "순서",
-    meta: { align: "center", widthClassName: "w-[80px]" } satisfies DataTableColumnMeta,
+    meta: { align: "center", widthClassName: "w-[64px]" } satisfies DataTableColumnMeta,
   },
   {
     accessorKey: "label",
     header: "변환 규칙",
     cell: ({ row }) => (
-      <DataTableStackedCell className="gap-1">
+      <DataTableStackedCell className="min-w-[170px] gap-1">
         <DataTableCellPrimary className="text-base font-bold">{row.original.label}</DataTableCellPrimary>
         <DataTableCellSecondary className="text-[13px] font-semibold">{row.original.operation}</DataTableCellSecondary>
       </DataTableStackedCell>
     ),
+    meta: { widthClassName: "w-[190px]" } satisfies DataTableColumnMeta,
   },
   {
     id: "mapping",
     header: "입력 → 출력",
-    cell: ({ row }) => <DataTableCellPrimary className="text-base font-semibold">{row.original.input} → {row.original.output}</DataTableCellPrimary>,
-  },
-  {
-    accessorKey: "params",
-    header: "설정",
-    cell: ({ row }) => <DataTableCellPrimary className="text-base font-medium text-slate-700">{row.original.params || "-"}</DataTableCellPrimary>,
+    cell: ({ row }) => {
+      const mapping = `${row.original.input} → ${row.original.output}`;
+      return (
+        <DataTableCellPrimary className="block max-w-[260px] truncate text-base font-semibold" title={mapping}>
+          {mapping}
+        </DataTableCellPrimary>
+      );
+    },
+    meta: { widthClassName: "w-[280px]" } satisfies DataTableColumnMeta,
   },
   {
     accessorKey: "onError",
     header: "오류 처리",
-    cell: ({ row }) => <DataTableCellPrimary className="text-base font-medium text-slate-700">{row.original.onError}</DataTableCellPrimary>,
+    cell: ({ row }) => <DataTableCellPrimary className="whitespace-nowrap text-base font-medium text-slate-700">{row.original.onError}</DataTableCellPrimary>,
+    meta: { widthClassName: "w-[140px]" } satisfies DataTableColumnMeta,
   },
   {
     accessorKey: "enabled",
     header: "상태",
     cell: ({ row }) => <Badge shape="compact" size="lg" variant={row.original.enabled ? "success" : "muted"}>{row.original.enabled ? "활성" : "비활성"}</Badge>,
+    meta: { widthClassName: "w-[96px]" } satisfies DataTableColumnMeta,
+  },
+  {
+    id: "settings",
+    header: "상세",
+    cell: ({ row }) => <TransformRuleSettingsAction rule={row.original} />,
+    meta: { align: "center", widthClassName: "w-[112px]" } satisfies DataTableColumnMeta,
   },
 ];
 
@@ -2091,6 +2141,14 @@ export function JobDetailPage({
   const retrySummary = job.retryPolicySummary ?? (job.retryPolicy
     ? `${job.retryPolicy.maxRetries}회 · ${job.retryPolicy.backoffStrategy === "exponential" ? "지수" : "고정"} 백오프`
     : "설정 없음");
+  const sourceDetailItems = compactSourceConfigItems(job, rawSourceType, sourcePath);
+  const targetDetailItems: JobEndpointItem[] = [
+    { label: "데이터셋", value: job.target },
+    { label: "저장소", value: job.storageType ?? "설정 없음" },
+    { label: "저장 경로", value: job.storagePath ?? physicalOutputPath },
+    { label: "압축", value: job.compression ?? "사용 안 함" },
+    ...(job.partition?.trim() ? [{ label: "파티션", value: job.partition }] : []),
+  ];
 
   return (
     <div className="job-detail-page">
@@ -2196,12 +2254,7 @@ export function JobDetailPage({
             <JobEndpointCard
               badge={sourceType}
               icon={<Database aria-hidden="true" className="size-5" />}
-              items={[
-                { label: "소스 경로", value: job.sourceLabel ?? sourcePath },
-                ...(job.sourceConfig ?? [])
-                  .filter(([label]) => isVisibleJobDetailField(label))
-                  .map(([label, value]) => ({ label: getJobDetailFieldLabel(label), value })),
-              ]}
+              items={sourceDetailItems}
               title="소스"
               tone="source"
             />
@@ -2209,13 +2262,7 @@ export function JobDetailPage({
             <JobEndpointCard
               badge={job.targetFormat ?? "데이터셋"}
               icon={<Table2 aria-hidden="true" className="size-5" />}
-              items={[
-                { label: "데이터셋", value: job.target },
-                { label: "저장소", value: job.storageType ?? "설정 없음" },
-                { label: "저장 경로", value: job.storagePath ?? physicalOutputPath },
-                { label: "압축", value: job.compression ?? "사용 안 함" },
-                { label: "파티션", value: job.partition ?? "사용 안 함" },
-              ]}
+              items={targetDetailItems}
               title="타겟"
               tone="target"
             />
@@ -2267,8 +2314,8 @@ export function JobDetailPage({
                 data={transformRuleRows}
                 emptyState={{ title: "저장된 변환 규칙이 없습니다." }}
                 enableSorting={false}
-                pagination={false}
-                tableClassName="min-w-[980px]"
+                pagination={transformRuleRows.length > 5 ? { label: "변환 규칙", pageSize: 5, showPageSize: false, showSummary: true } : false}
+                tableClassName="min-w-[860px] table-fixed"
                 viewportClassName="rounded-none border-0"
               />
             </DetailTableSection>

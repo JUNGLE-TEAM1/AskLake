@@ -182,6 +182,12 @@ Job의 현재 상태와 최근 Run 결과는 별도 개념으로 표시합니다
 
 인증 정보는 credential 값이 아니라 연결 이름 또는 secret reference만 표시해야 합니다.
 
+Source 카드는 공통 2열 레이아웃 안에서 `sourceConfig` 전체를 그대로 노출하지 않고 connector별 핵심 필드를 최대 6개까지 표시합니다. 파일/오브젝트 스토리지 소스는 소스 경로, 실제 파일 형식, 읽기 범위, 읽기 방식을 기본으로 보여주며 구분자와 헤더 처리는 CSV 소스일 때만 추가합니다. Endpoint URL, Region, Path Style, 중복되는 Bucket/Prefix와 인증값은 기본 상세에서 숨기고 연결 수정 또는 진단 화면에서 다룹니다. Database 소스는 host/database/table/read mode/incremental key, Kafka 소스는 broker/topic/consumer group/message format/offset/ingestion mode처럼 운영자가 소스를 식별하는 최소 필드만 표시합니다.
+
+Target 카드는 dataset, 저장소, 물리 저장 경로, compression을 기본으로 표시하고 format은 카드 badge로 제공합니다. Partition은 실제 설정값이 있을 때만 표시하며 빈 행을 만들지 않습니다. Write mode 계약이 추가되면 저장소보다 우선순위가 높은 실행 설정으로 함께 노출합니다.
+
+변환 규칙 표는 긴 SQL 식이나 JSON 설정을 셀에 직접 펼치지 않습니다. 표에는 순서, 규칙명과 operation code, 입력 → 출력, 오류 처리, 상태, `설정 보기` action만 두고 전체 설정은 공통 `DialogShell`에서 monospace 형식으로 표시합니다. 입력·출력은 고정 너비 안에서 말줄임 처리하고 원문은 title로 확인하며, 규칙이 5개를 넘으면 표 내부 pagination을 사용합니다.
+
 #### 3) 실행 이력 route로 보내야 할 정보
 
 - Run별 DAG 단계
