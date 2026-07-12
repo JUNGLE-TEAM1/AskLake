@@ -110,6 +110,7 @@ function containerNeedsCreate(name) {
   const sampleMounted = metadata?.Mounts?.some((mount) => normalizePath(mount.Source) === expectedSource && mount.Destination === sampleContainerDir);
   const reportMounted = metadata?.Mounts?.some((mount) => normalizePath(mount.Source) === expectedReportSource && mount.Destination === reportContainerDir);
   const outputMounted = metadata?.Mounts?.some((mount) => mount.Name === outputVolumeName && mount.Destination === outputContainerDir);
+  const networkConnected = Boolean(metadata?.NetworkSettings?.Networks?.[network]);
   const hostGatewayMapped = (metadata?.HostConfig?.ExtraHosts ?? []).some((entry) => (
     String(entry || "").startsWith("host.docker.internal:")
   ));
@@ -120,7 +121,7 @@ function containerNeedsCreate(name) {
     && args.includes("--memory")
     && args.includes(workerMemory)
   );
-  if (sampleMounted && reportMounted && outputMounted && hostGatewayMapped && workerResourceMatches) return false;
+  if (sampleMounted && reportMounted && outputMounted && networkConnected && hostGatewayMapped && workerResourceMatches) return false;
   run("docker", ["rm", "-f", name], { allowFailure: true });
   return true;
 }

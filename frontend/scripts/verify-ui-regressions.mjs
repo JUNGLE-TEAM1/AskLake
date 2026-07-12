@@ -902,8 +902,8 @@ const checks = [
     name: "Continuous Kafka creation skips the scheduler and keeps stream controls explicit",
     file: "src/App.tsx",
     patterns: [
-      /\["source", "schema", "permission", "target", "review"\]/,
-      /steps\.filter\(\(step\) => step !== "스케줄"\)/,
+      /\["source", \.\.\.\(requiresRecordParsing \? \["recordParsing" as const\] : \[\]\), "schema", "permission", "target", "review"\]/,
+      /labels\.filter\(\(step\) => step !== "스케줄"\)/,
       /continuousKafkaDraft \? "permission" : lastScheduleFlow/,
     ],
   },
