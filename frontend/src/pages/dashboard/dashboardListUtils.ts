@@ -29,6 +29,39 @@ export function splitDashboardTags(tags: string) {
   return tags.split("|").flatMap((tag) => tag.split("·")).map((tag) => tag.trim()).filter(Boolean);
 }
 
+const dashboardNameLabels: Record<string, string> = Object.fromEntries(
+  defaultDashboardCards.map((dashboard) => [dashboard.id, dashboard.name]),
+);
+
+const dashboardTagLabels: Record<string, string> = {
+  Cohort: "고객군", Cost: "비용", Customer: "고객", Data: "데이터", Demo: "데모",
+  Executive: "경영", Finance: "재무", Funnel: "전환", Growth: "성장", Health: "상태",
+  Inventory: "재고", Logistics: "물류", Marketing: "마케팅", Mobile: "모바일", Monthly: "월간",
+  Ops: "운영", Procurement: "구매", Quality: "품질", Quarterly: "분기 실적", Regional: "지역",
+  Retention: "유지율", Revenue: "매출", Risk: "위험", ROI: "수익률", Sales: "영업",
+  SLA: "서비스 수준", Spend: "광고비", Support: "고객 지원",
+};
+
+const dashboardOwnerLabels: Record<string, string> = {
+  "Admin User": "관리자",
+  "Jane Doe": "마케팅팀",
+  "Michael Chen": "운영팀",
+  "Robert Wilson": "경영기획팀",
+  "Sarah Kim": "분석팀",
+};
+
+export function localizeDashboardName(dashboard: SavedDashboardCard) {
+  return dashboardNameLabels[dashboard.id] ?? dashboard.name;
+}
+
+export function localizeDashboardTags(tags: string) {
+  return splitDashboardTags(tags).map((tag) => dashboardTagLabels[tag] ?? tag);
+}
+
+export function localizeDashboardOwner(owner: string) {
+  return dashboardOwnerLabels[owner] ?? owner;
+}
+
 export function formatDashboardTimestamp(date: Date) {
   const pad = (value: number) => String(value).padStart(2, "0");
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;

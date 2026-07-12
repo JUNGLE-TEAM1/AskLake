@@ -1,52 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import type { CatalogDataset } from "../../../types";
 import { getDatasets } from "../../../services/mockApi";
-import type { DashboardDatasetColumn, DashboardDatasetOption } from "./dashboardRuntimeTypes";
-
-function dashboardColumnType(type: string): DashboardDatasetColumn["type"] {
-  const normalized = type.trim().toLowerCase();
-  if (["date", "time", "timestamp"].some((hint) => normalized.includes(hint))) return "date";
-  if (["bigint", "decimal", "double", "float", "int", "long", "number", "numeric", "real"].some((hint) => normalized.includes(hint))) return "number";
-  return "string";
-}
-
-function sampleRowsToRecords(dataset: CatalogDataset) {
-  return dataset.sampleRows.map((row) => Object.fromEntries(
-    dataset.schema.map(([name], index) => [name, row[index] ?? null]),
-  ));
-}
-
-function catalogDatasetToDashboardOption(dataset: CatalogDataset): DashboardDatasetOption {
-  return {
-    columns: dataset.schema.map(([name, type]) => ({
-      name,
-      type: dashboardColumnType(type),
-    })),
-    description: dataset.description,
-    id: dataset.id,
-    layer: dataset.layer,
-    name: dataset.name,
-    rows: sampleRowsToRecords(dataset),
-    status: dataset.status,
-    updatedAt: dataset.lastUpdated,
-  };
-}
-
-function isUsableDashboardDataset(dataset: CatalogDataset) {
-  return dataset.status === "available" && dataset.schema.length > 0;
-}
-
-function mergeDashboardDatasets(
-  primary: DashboardDatasetOption[],
-  fallback: DashboardDatasetOption[],
-) {
-  const seen = new Set<string>();
-  return [...primary, ...fallback].filter((dataset) => {
-    if (seen.has(dataset.id)) return false;
-    seen.add(dataset.id);
-    return true;
-  });
-}
+import type { DashboardDatasetOption } from "./dashboardRuntimeTypes";
+import {
+  catalogDatasetToDashboardOption,
+  isUsableDashboardDataset,
+  mergeDashboardDatasets,
+} from "./dashboardDatasetAdapters";
 
 export function useDashboardDatasets(fallbackCatalogDatasets: CatalogDataset[] = []) {
   const fallbackDatasets = useMemo(

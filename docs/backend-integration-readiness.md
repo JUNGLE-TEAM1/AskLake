@@ -1,6 +1,6 @@
 # AskLake Backend Integration Readiness
 
-이 문서는 AskLake 프론트엔드와 백엔드 연결 상태, 남은 API 범위, 검증 기준을 정리한다. Pair A Source/Schema/Create/Run 흐름은 mock mode에서는 frontend fallback으로, live API mode에서는 backend를 기준으로 검증한다.
+이 문서는 AskLake 프론트엔드와 백엔드 연결 상태, 남은 API 범위, 검증 기준을 정리한다. Pair A Source/Schema/Create/Run 흐름은 기본 live API mode에서 backend를 기준으로 검증하고, frontend-only QA에서만 `VITE_USE_MOCK_API=true` fallback을 사용한다.
 FastAPI 전환의 공통 구조와 의사결정은 `docs/backend-fastapi-transition-plan.md`를 기준으로 한다.
 
 상세 request/response shape는 `docs/api-contract.md`를 기준으로 한다.
@@ -9,31 +9,32 @@ FastAPI 전환의 공통 구조와 의사결정은 `docs/backend-fastapi-transit
 
 | 영역 | 현재 상태 | 남은 범위 |
 | --- | --- | --- |
-| 수집/처리 목록 | Job 수정은 상세 response를 edit draft로 복원하고 source를 읽기 전용으로 표시. `PATCH /api/etl/jobs/{jobId}`가 동일 Job ID에 허용된 metadata를 저장 | 삭제, 복제 후 새 Job 생성 UX |
+| 수집/처리 목록 | `GET /api/etl/jobs` hydrate. `status` 반복 query, `scheduleKind=daily|weekly|monthly|realtime|none|other`, `owner`, `lastRunOutcome`으로 server-side 목록을 좁히고 status/최근 실행 결과 count와 owner facet을 함께 반환. Job 수정은 상세 response를 edit draft로 복원하고 source를 읽기 전용으로 표시하며, `PATCH /api/etl/jobs/{jobId}`가 같은 Job ID에 허용된 metadata를 저장 | 삭제 API, 서버 pagination/search, 복제 후 새 Job 생성 UX |
 | 새 수집/처리 생성 | Source -> Schema -> Rule -> Schedule -> Permission -> Target -> Review -> Create가 `POST /api/etl/jobs`로 연결되고 `etl_jobs`에 저장. 응답의 `catalogTarget`은 pending identity이며 아직 Catalog row를 만들지 않음 | 중간 단계별 서버 저장 API는 후속 범위 |
 | Target 저장경로 선택 | `GET /api/s3/buckets`, `GET /api/s3/prefixes`로 S3 bucket/prefix를 서버에서 lazy 조회하고 `target.storagePath` string에 반영. EC2 prod compose는 MinIO를 S3-compatible endpoint로 제공하고 서버 `deploy/.env`의 `S3_ALLOWED_BUCKETS` allowlist를 사용 | 운영 IAM/credential rotation, external S3 전환 |
 | Target DB 선택 | `GET /api/target/databases`로 허용 DB 목록을 조회하고 `target.databaseName` string에 반영. 테이블명 입력은 노출하지 않고 datasetName을 create payload 호환값으로 사용 | 운영 catalog DB 목록/권한 API |
 | Source/Schema | mock mode에서는 `SourceConnectorAnalysis` fallback으로 schema/sampleRows 반영, live mode에서는 `POST /api/etl/sources/test`로 실제 connector 확인. MongoDB connector는 Node MongoDB driver로 컬렉션과 제한 문서 샘플을 조회하며, 사용자가 선택한 File / S3 Parquet 객체는 Spark reader로 물리 스키마를 읽음 | Kafka message payload sampling, 다중 Parquet 파일의 통합 스키마 추론 |
 | Rule | 현재 schema/sampleRows 기반 preview, create payload에 transform/quality detail 포함 | 별도 backend rule preview API |
-| Job command | `POST /api/etl/jobs/{jobId}/commands`가 run/retry를 Airflow DAG Run으로 접수하고 non-terminal job/run을 즉시 응답 | pause/cancel의 실제 Airflow/Spark interrupt |
-| Run/DAG | local Airflow DAG가 token-authenticated FastAPI internal API를 통해 실제 PySpark를 실행하고 MinIO/S3 Parquet를 생성. `publish_run_result`가 Catalog endpoint를 호출하고 `GET /api/etl/jobs/{jobId}`가 DAG/task/Spark/Catalog evidence를 동기화 | run detail table과 Spark log object storage 분리 |
+| Job command | Kafka Snapshot Job은 `POST /api/etl/jobs/{jobId}/commands`의 run/retry로 fixed range ingest를 실행하고, non-Kafka Job은 Airflow DAG Run을 접수. Continuous Kafka Job은 Docker로 long-running Spark Structured Streaming submit container를 시작하거나 signal을 보내며, S3A checkpoint, `_SUCCESS` + offset manifest 게시, Catalog 복구, partition lag/throughput/schema drift report, bounded worker log, policy-aware quarantine replay, lease 기반 maintenance, non-destructive compaction을 제공 | pause/cancel의 실제 Airflow/Spark interrupt, production soak, async Airflow maintenance scheduling, compaction retention switch |
+| Run/DAG | local Airflow DAG가 token-authenticated FastAPI internal API를 통해 실제 PySpark를 실행하고 MinIO/S3 Parquet를 생성. `publish_run_result`가 Catalog endpoint를 호출하고 `GET /api/etl/jobs/{jobId}`가 DAG/task/Spark/Catalog evidence를 동기화. Continuous는 start-to-terminal session과 하위 micro-batch 이력을 별도 table/API로 영속화하고 active 실행 이력 화면을 자동 갱신 | Spark log object storage 분리, session history 장기 retention/pagination |
 | Catalog | `GET /api/catalog/datasets` hydrate, `GET /api/catalog/datasets/{datasetId}/lineage`, SQL derived/Kafka 결과를 Postgres JSONB payload로 반영. 일반 Airflow/Spark batch의 멱등 reconciliation endpoint, transaction, final-task 연결, frontend terminal-success 1회 refresh, live E2E 구현 | 상세/lineage/search API 고도화 |
 | SQL 분석 | Trino Query Run과 Iceberg CTAS materialization API가 연결되어 있으며, `TRINO_ENABLED=true` UI는 idempotent run submit/status polling/fixed-size cursor page 결과/취소를 사용하고 기본 SQL 초안에 preview `LIMIT`을 넣지 않는다. 유효 SQL은 editor 아래에서 자동 평가하고, token 없는 estimate snapshot은 Query Run에 남는다. 실행 모니터는 실제 Trino progress 또는 split 비율만 percent로 표시하며 알 수 없으면 indeterminate, result object 저장은 별도 수집 단계로 표시한다. Query Run과 materialization continuation은 durable collector가 처리하며 stale worker generation fencing, atomic actor concurrency slot, full-batch retention cleanup을 적용한다. SQL materialization은 현재 query/governance를 재검사하고 Catalog pending 저장 후 Trino `DESCRIBE`를 통과해야 physical mapping을 자동 공개한다. Production bootstrap/least-privilege ACL/result-storage readiness 자동화가 포함됐다. | Spark/Kafka writer의 native Iceberg 전환, target host TLS certificate/secret provisioning, org quota/actual plan-cost integration |
 | Dashboard | FastAPI dashboard card/list와 draft/published runtime API 연결. 프론트는 404 local fallback 유지. Dashboard 목록/runtime/title/draft/delete 권한 enforcement 연결 | 공유 링크/API, export API, cross-pair E2E QA |
 | Permission/Governance | Create flow의 `owner`, `permissionSummary`, `permissionRoles`는 metadata로 저장/표시. Job/Dataset/Dashboard 응답은 optional `createdBy`/`createdByProfile`, `permissionGrants`, `permissions` metadata를 받을 수 있음. Backend는 `asklake_session` 쿠키 또는 `X-AskLake-User`/`X-AskLake-Role`, `X-AskLake-Groups`를 `ActorContext`로 읽고 공통 `can()` 판정을 제공함. 독립 `permission_grants` table을 만들고 기존 payload grant와 병합해 Admin permission 조회에 반영함. Admin 권한은 resource 접근 그룹이 아니라 `role=admin`으로 부여하고, demo admin groups는 빈 배열로 동기화함. Admin permission grant 생성/수정/삭제 API와 관리 콘솔 권한 편집 UI가 연결됨. `principal_controls`와 `resource_locks`로 user/group 차단 및 Dataset/Job/Dashboard 잠금 API를 제공함. 관리 콘솔 UI는 user 차단을 사용자 탭, group 차단을 그룹 탭, resource lock을 권한 탭에 배치하고 차단/잠금 사유는 관리자 내부 표시와 감사 로그용으로만 사용함. Profile/Admin API와 로컬 login/signup/session/logout API가 연결됨. Dashboard 삭제/runtime 편집, Catalog dataset 조회/lineage/materialization-run 삭제, SQL Query Run 제출/결과 조회/취소, Query AI 생성, Job command는 공통 판정기를 사용함. Frontend는 `permissions`로 관련 버튼을 비활성화하고 403을 권한 메시지로 표시함 | dataset 생성/삭제 전체로 permission check 확대 |
+| Auth / Admin | httpOnly `asklake_session` cookie 기반 local login/signup/session/logout, 현재 사용자 profile, admin 사용자·그룹·permission grant·governance control API 연결. Frontend는 session actor 확인 이후 보호 route와 hydrate를 시작하고, admin actor에게만 관리 콘솔을 노출 | 운영 IdP/SSO, production session hardening, Alembic migration |
 | Audit | `audit_events` table 기반 admin 조회/필터 UI + auth login/logout/login 실패 + permission grant 변경 + principal/resource control 변경 + Dataset/Job/Dashboard 403 접근 시도 기록 + frontend local 최근 호출 로그 | audit export/retention 정책 |
 
 FastAPI 1차 scaffold의 범위는 서버 실행, CORS, PostgreSQL 연결, 공통 error envelope, `/api/health` 확인이었다.
-현재 브랜치는 ETL/Catalog/SQL live endpoint와 Dashboard card/runtime FastAPI endpoint를 함께 포함한다.
+현재 브랜치는 ETL/Catalog/SQL live endpoint, Dashboard card/runtime, local session auth와 Phase 0 admin endpoint를 함께 포함한다.
 FastAPI 공통 schema 기준은 `backend/app/schemas/common.py`에 두며, 각 Pair는 도메인별 schema 파일에서 `CamelModel`, `ErrorResponse`, pagination 관련 schema를 재사용한다.
 Demo hydrate endpoint는 live ETL/Catalog API를 가리지 않도록 `/api/demo/etl/jobs`, `/api/demo/catalog/datasets`에 둔다.
-Amazon review Kafka replay/ingest 병렬 개발은 `backend/fixtures/kafka/amazon-review-fixture.jsonl` 100건 mock fixture와 `npm run kafka:reviews-fixture`로 `reviews.raw` topic에 표준 JSON fixture를 넣어 시작한다. fixture를 다시 만들 때는 `npm run kafka:reviews-fixture:generate -- --count 100`을 사용한다. 실제 Amazon review JSONL/JSONL.gz 파일은 `npm run kafka:reviews-replay -- --input <path> --limit 100 --rate 100`으로 같은 메시지 계약에 맞춰 replay한다. 이 스크립트는 Kafka 입력 계약 검증과 replay를 담당하며, Lake 적재 로직은 별도 ingest 작업 범위다.
+Amazon review Kafka replay/ingest 병렬 개발은 `backend/fixtures/kafka/amazon-review-fixture.jsonl` 100건 mock fixture와 `npm run kafka:reviews-fixture`로 `reviews.raw` topic에 표준 JSON fixture를 넣어 시작한다. fixture를 다시 만들 때는 `npm run kafka:reviews-fixture:generate -- --count 100`을 사용한다. 실제 Amazon review JSONL/JSONL.gz 파일은 `npm run kafka:reviews-replay -- --input <path> --limit 100 --rate 100`으로 같은 메시지 계약에 맞춰 replay한다. `npm run kafka:reviews-loop -- --rate 2 --max-messages 500`는 cycle별 고유 event ID와 증가 offset을 갖는 Continuous 검증용 입력을 만든다. topic 재생성은 `--recreate-topic`을 명시한 경우에만 수행한다. 배포 환경은 `GET|POST|DELETE /api/etl/kafka/replay-producer`로 한 개의 producer subprocess를 관리하며, 대용량 파일은 `ASKLAKE_REPLAY_INPUT_DIR` mount 아래 상대 `inputPath`로만 지정한다. 이 스크립트는 Kafka 입력 계약 검증과 replay를 담당하며, Lake 적재 로직은 별도 ingest 작업 범위다.
 
 ## 2. Pair A Live Contract
 
 Pair A 생성 요청은 nested `draftPipeline`을 submit 직전에 flat `CreatePipelineRequest`로 변환한다.
 
-Frontend demo baseline에서는 `VITE_USE_MOCK_API`가 미설정이면 mock mode로 동작한다. 이때 `frontend/src/services/sourceConnectorService.ts`는 backend 호출 없이 source type별 mock `SourceConnectorAnalysis`를 반환해야 한다. `VITE_USE_MOCK_API=false`일 때만 live backend connector를 호출한다.
+Frontend baseline은 `VITE_USE_MOCK_API`가 미설정이면 live mode로 동작한다. frontend-only mock QA가 필요할 때는 `VITE_USE_MOCK_API=true`를 명시하며, 이때 `frontend/src/services/sourceConnectorService.ts`는 backend 호출 없이 source type별 mock `SourceConnectorAnalysis`를 반환한다.
 
 필수 create payload:
 
@@ -43,7 +44,7 @@ Frontend demo baseline에서는 `VITE_USE_MOCK_API`가 미설정이면 mock mode
 - Quality: `qualityRules`, `qualityScore`, `qualityStatus`, `qualityInvalidRows`
 - Schedule/Permission/Target: `scheduleLabel`, `scheduleSummary`, `startDate`, optional `endDate`, `nextRunUtc`, `overlapPolicy`, `timezone`, `watermarkPolicy`, `retryPolicy`, `retryPolicySummary`, `runLimitSummary`, `owner`, `permissionSummary`, `targetDataset`, optional `targetDatabase`, `targetDescription`, `targetTags`, `targetLayer`, `targetFormat`, `storageType`, `storagePath`, `partition`, `partitionColumns`, `indexColumns`, `compression`
 
-Schedule UI 문구는 `수동/자동/1회 실행` 대신 `스케줄링 건너뛰기`, `반복 실행`을 사용한다. `스케줄링 건너뛰기`는 저장만 하고 나중에 목록에서 직접 실행하는 상태이며, 즉시 실행은 스케줄 생성 옵션이 아니라 기존 Job command API의 `run` action으로 분리한다. 반복 실행 화면은 반복 주기, 실행 시각, IANA `timezone`, 실패 재시도만 노출한다. `startDate`, 빈 값이면 종료일 없음으로 처리하는 `endDate`, 기본 `skip_if_running` 겹침 처리, watermark 수집 기준, 2배 지수 백오프 재시도 정책은 생성 payload와 Job hydrate 응답에 보존하되 UI에서는 기본값으로 처리한다. 현재 Run 취소는 `cancelRun`, 다음 반복 예약 제거는 `stopSchedule`로 분리한다.
+Schedule UI 문구는 `수동/자동/1회 실행` 대신 `스케줄링 건너뛰기`, `반복 실행`을 사용한다. `스케줄링 건너뛰기`는 저장만 하고 나중에 목록에서 직접 실행하는 상태이며, 즉시 실행은 스케줄 생성 옵션이 아니라 기존 Job command API의 `run` action으로 분리한다. 반복 실행 화면은 반복 주기, 실행 시각, IANA `timezone`, 실패 재시도만 노출한다. `startDate`, 빈 값이면 종료일 없음으로 처리하는 `endDate`, 기본 `skip_if_running` 겹침 처리, watermark 수집 기준, 2배 지수 백오프 재시도 정책은 생성 payload와 Job hydrate 응답에 보존하되 UI에서는 기본값으로 처리한다. 현재 배치 Run 취소는 `cancelRun`으로 분리한다. 반복 예약 일시중지는 스케줄 설정을 보존하는 `stopSchedule`, 복원은 `resumeSchedule`을 사용한다. 실행 중인 실시간 Job의 `stopSchedule`은 UI에서 `수집 중지`로 표시하고 현재 Run을 `canceled`로 종료한다. 실시간 Job의 `수집 시작`은 `run` 또는 실패 후 `retry`로 실제 새 Run을 시작한다.
 
 Target metadata는 Review에서 보이는 값과 create payload, Spark run 성공 후 Catalog dataset metadata가 같은 값을 사용해야 한다. `partition`은 기존 호환 문자열로 유지하고, 실제 선택 컬럼 목록은 `partitionColumns`에 보존한다.
 
@@ -134,12 +135,14 @@ Spark runner 입력:
 - connector sample JSONL은 `ASKLAKE_SPARK_REPORT_DIR`에 쓰고 Spark submit/master/worker 모두 `ASKLAKE_SPARK_REPORT_CONTAINER_DIR` 기본값 `/work/reports`로 같은 host directory를 mount해야 한다. worktree가 바뀌면 Spark container는 mount source가 달라지므로 자동 재생성되어야 한다.
 - `ASKLAKE_SPARK_TRANSFORM_STEPS`: create payload의 transform steps
 - `ASKLAKE_SPARK_QUALITY_RULES`: create payload의 quality rules
+- `ASKLAKE_SPARK_PARTITION_COLUMNS`: Target에서 선택한 다중 파티션 컬럼을 `/` 구분 문자열로 전달하며 Spark writer가 순서대로 `partitionBy`에 적용
 
 Spark runner 결과:
 
 - Text structuring `one_of_values` execution must record whether each column used `selected_model`, `auto_model`, `fallback_rule`, or `missing_model`. Model artifacts stay in the model registry (`/api/catalog/models`), while transformed rows stay as Catalog datasets/materialization runs.
 
 - transformed Parquet output
+- 선택된 컬럼이 있을 때 다중 partition directory를 포함한 Parquet output
 - output schema
 - input/output row count
 - quality summary
@@ -385,7 +388,7 @@ Catalog dataset append 보완 기준:
 | 카탈로그 | 상세/lineage 고도화, 저장소 보관 기준 확정, 태그/필터 서버 검색 |
 | SQL | 쿼리 저장, CSV 다운로드 |
 | 대시보드 | 권한 기반 공유, 내보내기 API, 장기 운영용 권한/감사 로그 |
-| 공통 | 감사 로그 서버 저장, 사용자 인증/권한 |
+| 공통 | 운영 IdP/SSO 연동, session hardening, 외부 감사 저장소 연동 |
 
 Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity metadata 작업이고 실제 권한 판정은 `ActorContext`와 resource별 grant 작업이다. 현재 로컬 auth/session은 계정 actor를 결정하기 위한 demo-grade 구현이며, 외부 IdP/SSO, refresh token, 비밀번호 재설정, 이메일 인증, 권한 정책 고도화 UI, auth/permission table Alembic migration은 후속 범위다. `owner` 문자열만으로 권한을 판단하면 이름 변경, 그룹 소유, 대리 생성, 외부 공유 같은 edge case가 생기므로 backend는 payload grant와 `permission_grants` table row를 병합해 판정하고, admin API와 관리 콘솔로 table grant를 편집한다.
 
@@ -444,11 +447,18 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 - 실패 응답은 토스트와 감사 로그에 남습니다.
 - 콘솔에 React key/layout 관련 error가 없어야 합니다.
 
+## Review Snapshot 연결
+
+- `/etl/review`는 `POST /api/etl/review` 응답을 source of truth로 사용한다.
+- live mode는 source 연결 성공 상태를 backend connector로 재검증하고, source/schema/target/permission/schedule 값을 하나의 snapshot으로 반환한다.
+- mock mode는 같은 `ReviewSnapshot` 계약을 fixture로 반환해 화면과 API 타입이 갈라지지 않게 한다.
+- Review 생성 버튼은 snapshot의 `canCreate`가 true일 때만 활성화한다.
+
 ## 14. 남은 작업
 
-- Kafka message payload schema sampling
+- Kafka schema evolution approval/restart workflow
 - 다중 Parquet 파일의 통합 스키마 추론
-- Run detail table, DAG step table, Spark log object storage 분리
+- Worker log 장기 object storage 및 metric alerting
 - 삭제/수정 API persistence
 - SQL engine read-only guard 고도화
 - Dashboard 권한/공유/export API

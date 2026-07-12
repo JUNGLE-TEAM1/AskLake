@@ -1,13 +1,18 @@
-import { useEffect, useMemo, useState, type SyntheticEvent } from "react";
-import { Check, Clipboard, Folder, FolderOpen, FolderSearch, RefreshCw, Search, X } from "lucide-react";
-import { SimpleTreeView } from "@mui/x-tree-view/SimpleTreeView";
-import { TreeItem } from "@mui/x-tree-view/TreeItem";
+import { useEffect, useMemo, useState } from "react";
+import { Check, Clipboard, Folder, FolderOpen, FolderSearch, RefreshCw, Search } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Field, FieldLabel } from "@/components/ui/field";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
+import { NativeSelect } from "@/components/ui/native-select";
+import { PickerDialog } from "@/components/ui/picker-dialog";
+import { TreePanel } from "@/components/ui/tree-panel";
+import { TreeGroup, TreeRow, TreeView } from "@/components/ui/tree-view";
 import { listS3Buckets, listS3Prefixes, type S3PrefixesResponse, type S3PrefixFolder } from "../../services/s3PathApi";
 import { buildS3Path, normalizePrefix, parseS3Path, S3_SCHEME } from "../../utils/s3Path";
 
 type S3PathFieldProps = {
-  disabled?: boolean;
   onChange: (path: string) => void;
+  useShadcnStyles?: boolean;
   value: string;
 };
 
@@ -27,11 +32,6 @@ function prefixToItemId(prefix: string) {
   return prefix ? `prefix:${prefix}` : ROOT_PREFIX_ID;
 }
 
-function itemIdToPrefix(itemId: string) {
-  if (itemId === ROOT_PREFIX_ID) return "";
-  return itemId.startsWith("prefix:") ? itemId.slice("prefix:".length) : "";
-}
-
 function hasVisibleMatch(folder: S3PrefixFolder, query: string) {
   if (!query) return true;
   const normalizedQuery = query.trim().toLowerCase();
@@ -48,7 +48,7 @@ function S3PathText({ value }: { value: string }) {
   return <span className="s3-path-text" title={parsed.path}>{parsed.path}</span>;
 }
 
-export function S3PathField({ disabled = false, onChange, value }: S3PathFieldProps) {
+export function S3PathField({ onChange, useShadcnStyles = false, value }: S3PathFieldProps) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const parsed = useMemo(() => parseS3Path(value), [value]);
@@ -65,17 +65,18 @@ export function S3PathField({ disabled = false, onChange, value }: S3PathFieldPr
       <div className="s3-path-display" title={parsed.path || value}>
         <S3PathText value={value} />
       </div>
-      <button className="secondary-button s3-path-action" disabled={disabled} type="button" onClick={() => setPickerOpen(true)}>
-        <FolderSearch size={14} />
+      <Button className={useShadcnStyles ? undefined : "secondary-button s3-path-action"} type="button" variant="outline" onClick={() => setPickerOpen(true)}>
+        <FolderSearch data-icon="inline-start" />
         찾아보기
-      </button>
-      <button className="secondary-button s3-path-action" disabled={!value.trim()} type="button" onClick={copyPath}>
-        {copied ? <Check size={14} /> : <Clipboard size={14} />}
+      </Button>
+      <Button className={useShadcnStyles ? undefined : "secondary-button s3-path-action"} disabled={!value.trim()} type="button" variant="outline" onClick={copyPath}>
+        {copied ? <Check data-icon="inline-start" /> : <Clipboard data-icon="inline-start" />}
         {copied ? "복사됨" : "복사"}
-      </button>
-      {pickerOpen && !disabled ? (
+      </Button>
+      {pickerOpen ? (
         <S3PathPicker
           value={value}
+          useShadcnStyles={useShadcnStyles}
           onCancel={() => setPickerOpen(false)}
           onSelect={(path) => {
             onChange(path);
@@ -90,10 +91,12 @@ export function S3PathField({ disabled = false, onChange, value }: S3PathFieldPr
 function S3PathPicker({
   onCancel,
   onSelect,
+  useShadcnStyles,
   value,
 }: {
   onCancel: () => void;
   onSelect: (path: string) => void;
+  useShadcnStyles: boolean;
   value: string;
 }) {
   const parsed = useMemo(() => parseS3Path(value), [value]);
@@ -176,147 +179,163 @@ function S3PathPicker({
     void loadPrefix("");
   }, [bucket]);
 
-  const renderChildren = (prefix: string) => {
+  const togglePrefix = (prefix: string) => {
+    const itemId = prefixToItemId(prefix);
+    setSelectedPrefix(prefix);
+    setExpandedItems((current) => {
+      const isExpanded = current.includes(itemId);
+      if (!isExpanded) void loadPrefix(prefix);
+      return isExpanded ? current.filter((entry) => entry !== itemId) : [...current, itemId];
+    });
+  };
+
+  const renderChildren = (prefix: string, depth = 1) => {
     const key = listingKey(bucket, prefix);
     const state = listingCache[key];
     const folders = (state?.data?.folders ?? []).filter((folder) => hasVisibleMatch(folder, query));
     const nextContinuationToken = state?.data?.nextContinuationToken ?? null;
 
     if (state?.loading && !state.data) {
-      return <TreeItem itemId={`loading:${prefix || "root"}`} label={<span className="s3-tree-state">불러오는 중...</span>} />;
+      return (
+        <TreeGroup className="s3-tree-group" level={depth}>
+          <TreeRow className="s3-tree-row state" leaf level={depth}>
+            <span className="s3-tree-state">불러오는 중...</span>
+          </TreeRow>
+        </TreeGroup>
+      );
     }
 
     if (state?.error) {
       return (
-        <TreeItem
-          itemId={`error:${prefix || "root"}`}
-          label={(
-            <button className="s3-tree-retry" type="button" onClick={() => loadPrefix(prefix)}>
+        <TreeGroup className="s3-tree-group" level={depth}>
+          <TreeRow className="s3-tree-row s3-tree-retry" leaf level={depth} onClick={() => loadPrefix(prefix)}>
+            <span>
               <RefreshCw size={13} />
               다시 시도
-            </button>
-          )}
-        />
+            </span>
+          </TreeRow>
+        </TreeGroup>
       );
     }
 
     if (!state?.data || folders.length === 0) {
-      return <TreeItem itemId={`empty:${prefix || "root"}`} label={<span className="s3-tree-state">하위 폴더가 없습니다.</span>} />;
+      return (
+        <TreeGroup className="s3-tree-group" level={depth}>
+          <TreeRow className="s3-tree-row state" leaf level={depth}>
+            <span className="s3-tree-state">하위 폴더가 없습니다.</span>
+          </TreeRow>
+        </TreeGroup>
+      );
     }
 
     return (
-      <>
+      <TreeGroup className="s3-tree-group" level={depth}>
         {folders.map((folder) => {
           const itemId = prefixToItemId(folder.prefix);
           const expanded = expandedItems.includes(itemId);
           return (
-            <TreeItem
-              itemId={itemId}
-              key={folder.prefix}
-              label={(
+            <div className="s3-tree-item" key={folder.prefix}>
+              <TreeRow
+                className="s3-tree-row"
+                expanded={expanded}
+                level={depth}
+                selected={selectedPrefix === folder.prefix}
+                onClick={() => togglePrefix(folder.prefix)}
+              >
                 <span className={selectedPrefix === folder.prefix ? "s3-tree-label selected" : "s3-tree-label"}>
                   {expanded ? <FolderOpen size={15} /> : <Folder size={15} />}
                   <strong>{folder.name}</strong>
                 </span>
-              )}
-            >
-              {expanded ? renderChildren(folder.prefix) : null}
-            </TreeItem>
+              </TreeRow>
+              {expanded ? renderChildren(folder.prefix, depth + 1) : null}
+            </div>
           );
         })}
         {nextContinuationToken ? (
-          <TreeItem
-            itemId={`more:${prefix || "root"}`}
-            label={(
-              <button className="s3-tree-more" type="button" onClick={() => loadPrefix(prefix, nextContinuationToken)}>
-                더 불러오기
-              </button>
-            )}
-          />
+          <TreeRow className="s3-tree-row s3-tree-more" leaf level={depth} onClick={() => loadPrefix(prefix, nextContinuationToken)}>
+            <span>
+              더 불러오기
+            </span>
+          </TreeRow>
         ) : null}
-      </>
+      </TreeGroup>
     );
   };
 
   return (
-    <div className="s3-picker-backdrop" role="presentation" onMouseDown={onCancel}>
-      <section aria-label="S3 경로 선택" aria-modal="true" className="s3-picker-dialog" role="dialog" onMouseDown={(event) => event.stopPropagation()}>
-        <header className="s3-picker-header">
-          <div>
-            <h2>S3 경로 선택</h2>
-            <p>버킷과 주소를 선택하면 저장경로에 반영됩니다.</p>
-          </div>
-          <button className="s3-picker-close" type="button" onClick={onCancel} aria-label="S3 경로 선택 닫기">
-            <X size={16} />
-          </button>
-        </header>
-
+    <PickerDialog
+      contentClassName="s3-picker-dialog"
+      description="버킷과 주소를 선택하면 저장경로에 반영됩니다."
+      footer={(
+        <>
+          <div className="s3-picker-preview" title={selectedPath}>{selectedPath || "선택된 경로가 없습니다."}</div>
+          <Button className={useShadcnStyles ? undefined : "secondary-button"} type="button" variant="outline" onClick={onCancel}>취소</Button>
+          <Button className={useShadcnStyles ? undefined : "primary-button"} disabled={!bucket} type="button" onClick={() => onSelect(selectedPath)}>선택</Button>
+        </>
+      )}
+      footerClassName="s3-picker-footer"
+      headerClassName="s3-picker-header"
+      onClose={onCancel}
+      title="S3 경로 선택"
+      toolbar={(
         <div className="s3-picker-toolbar">
-          <label className="field">
-            <span>Bucket</span>
-            <select className="input control-input" disabled={bucketsLoading || buckets.length === 0} value={bucket} onChange={(event) => {
-              setBucket(event.target.value);
-              setSelectedPrefix("");
-            }}>
-              {buckets.map((item) => <option key={item}>{item}</option>)}
-            </select>
-          </label>
-          <label className="field">
-            <span>주소 필터</span>
-            <div className="s3-picker-search">
-              <Search size={14} />
-              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="주소 검색" />
-            </div>
-          </label>
-        </div>
-
-        {bucketError ? (
-          <div className="s3-picker-error">
-            <span>{bucketError}</span>
-            <button type="button" onClick={loadBuckets}>다시 시도</button>
-          </div>
-        ) : null}
-
-        <div className="s3-picker-body">
-          <div className="s3-tree-panel">
-            <SimpleTreeView
-              className="s3-tree"
-              expandedItems={expandedItems}
-              selectedItems={prefixToItemId(selectedPrefix)}
-              onExpandedItemsChange={(_event: SyntheticEvent | null, itemIds: string[]) => {
-                setExpandedItems(itemIds);
-                itemIds.forEach((itemId) => {
-                  if (itemId.startsWith("prefix:") || itemId === ROOT_PREFIX_ID) {
-                    void loadPrefix(itemIdToPrefix(itemId));
-                  }
-                });
-              }}
-              onSelectedItemsChange={(_event: SyntheticEvent | null, itemId: string | null) => {
-                if (!itemId || itemId.startsWith("loading:") || itemId.startsWith("error:") || itemId.startsWith("empty:") || itemId.startsWith("more:")) return;
-                setSelectedPrefix(itemIdToPrefix(itemId));
+          <Field className="field">
+            <FieldLabel>Bucket</FieldLabel>
+            <NativeSelect
+              className="input control-input"
+              disabled={bucketsLoading || buckets.length === 0}
+              size="sm"
+              value={bucket}
+              onChange={(event) => {
+                setBucket(event.target.value);
+                setSelectedPrefix("");
               }}
             >
-              <TreeItem
-                itemId={ROOT_PREFIX_ID}
-                label={(
-                  <span className={selectedPrefix === "" ? "s3-tree-label selected" : "s3-tree-label"}>
-                    <FolderOpen size={15} />
-                    <strong>/</strong>
-                  </span>
-                )}
-              >
-                {renderChildren("")}
-              </TreeItem>
-            </SimpleTreeView>
-          </div>
+              {buckets.map((item) => <option key={item}>{item}</option>)}
+            </NativeSelect>
+          </Field>
+          <Field className="field">
+            <FieldLabel>주소 필터</FieldLabel>
+            <InputGroup className="s3-picker-search">
+              <InputGroupAddon>
+                <Search size={14} />
+              </InputGroupAddon>
+              <InputGroupInput value={query} onChange={(event) => setQuery(event.target.value)} placeholder="주소 검색" />
+            </InputGroup>
+          </Field>
         </div>
-
-        <footer className="s3-picker-footer">
-          <div className="s3-picker-preview" title={selectedPath}>{selectedPath || "선택된 경로가 없습니다."}</div>
-          <button className="secondary-button" type="button" onClick={onCancel}>취소</button>
-          <button className="primary-button" disabled={!bucket} type="button" onClick={() => onSelect(selectedPath)}>선택</button>
-        </footer>
-      </section>
-    </div>
+      )}
+      error={bucketError ? (
+        <div className="s3-picker-error">
+          <span>{bucketError}</span>
+          <Button size="sm" type="button" variant="link" onClick={loadBuckets}>다시 시도</Button>
+        </div>
+      ) : null}
+    >
+      <div className="s3-picker-body">
+        <TreePanel className="s3-tree-panel">
+          <TreeView
+            className="s3-tree"
+            label="S3 prefix tree"
+          >
+            <div className="s3-tree-item">
+              <TreeRow
+                className="s3-tree-row"
+                expanded={expandedItems.includes(ROOT_PREFIX_ID)}
+                level={0}
+                selected={selectedPrefix === ""}
+                onClick={() => togglePrefix("")}
+              >
+                <span className={selectedPrefix === "" ? "s3-tree-label selected" : "s3-tree-label"}>
+                  <FolderOpen size={15} />
+                  <strong>/</strong>
+                </span>
+              </TreeRow>
+              {expandedItems.includes(ROOT_PREFIX_ID) ? renderChildren("") : null}
+            </div>
+          </TreeView>
+        </TreePanel>
+      </div>
+    </PickerDialog>
   );
 }

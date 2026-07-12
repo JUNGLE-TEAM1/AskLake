@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     airflow_password: str | None = None
     airflow_request_timeout_seconds: float = 10.0
     airflow_ui_base_url: str | None = None
+    continuous_runtime_sync_interval_seconds: float = Field(default=5.0, ge=1.0, le=60.0)
     airflow_execution_api_token: str | None = None
     airflow_internal_token: str | None = None
     trino_enabled: bool = False

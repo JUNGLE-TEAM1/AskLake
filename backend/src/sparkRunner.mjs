@@ -173,6 +173,7 @@ function writeSparkJobManifest(manifestPath, job) {
   const textStructuringColumns = textStructuringDefinitionColumns(job.transformSteps ?? []);
   const manifest = {
     createdAt: new Date().toISOString(),
+    partitionColumns: job.partition || "",
     qualityRules: job.qualityRules ?? [],
     schemaColumns: job.schemaColumns ?? [],
     textStructuring: {

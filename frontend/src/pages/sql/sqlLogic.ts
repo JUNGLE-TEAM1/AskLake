@@ -419,8 +419,10 @@ export function runSqlPreflight(
   baseDataset: CatalogDataset,
   referenceDatasets: CatalogDataset[],
   key: string,
-  trinoRuntime = false,
+  options: { previewRowLimit?: number; trinoRuntime?: boolean } = {},
 ): SqlPreflightResult {
+  const previewRowLimit = options.previewRowLimit ?? PREVIEW_ROW_LIMIT;
+  const trinoRuntime = options.trinoRuntime ?? false;
   const normalizedQuery = stripSqlComments(query).trim();
   const messages: SqlPreflightMessage[] = [];
   const contextDatasets = [baseDataset, ...referenceDatasets];
@@ -525,7 +527,7 @@ export function runSqlPreflight(
     tone: "info",
     text: trinoRuntime
       ? "전체 SQL을 실행하고 결과는 페이지 단위로 표시합니다."
-      : `호환 실행 결과는 원본 SQL을 바꾸지 않고 최대 ${PREVIEW_ROW_LIMIT}행으로 제한해 표시합니다.`,
+      : `호환 실행 결과는 원본 SQL을 바꾸지 않고 최대 ${previewRowLimit}행으로 제한해 표시합니다.`,
   });
   const tableAliases = extractTableAliases(statement);
   if (tableAliases.length > 0) {

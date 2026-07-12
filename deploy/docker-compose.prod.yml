@@ -89,6 +89,8 @@ services:
         condition: service_completed_successfully
       trino-storage-bootstrap:
         condition: service_completed_successfully
+      redpanda:
+        condition: service_healthy
     environment:
       APP_ENV: ${APP_ENV:-production}
       API_PREFIX: ${API_PREFIX:-/api}
@@ -148,6 +150,11 @@ services:
       ASKLAKE_MONGO_USER: ${MONGO_INITDB_ROOT_USERNAME:?MONGO_INITDB_ROOT_USERNAME is required}
       ASKLAKE_MONGO_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD:?MONGO_INITDB_ROOT_PASSWORD is required}
       ASKLAKE_DOCKER_NETWORK: ${COMPOSE_PROJECT_NAME:-asklake}_default
+      ASKLAKE_KAFKA_BROKER: ${ASKLAKE_KAFKA_BROKER:-redpanda:9092}
+      ASKLAKE_REPLAY_INPUT_DIR: ${ASKLAKE_REPLAY_INPUT_DIR:-/var/lib/asklake/replay-input}
+      CONTINUOUS_RUNTIME_SYNC_INTERVAL_SECONDS: ${CONTINUOUS_RUNTIME_SYNC_INTERVAL_SECONDS:-5}
+      ASKLAKE_CONTINUOUS_MAINTENANCE_LEASE_SECONDS: ${ASKLAKE_CONTINUOUS_MAINTENANCE_LEASE_SECONDS:-900}
+      ASKLAKE_CONTINUOUS_FAIL_AFTER_DATA_WRITE_ONCE: ${ASKLAKE_CONTINUOUS_FAIL_AFTER_DATA_WRITE_ONCE:-false}
       ASKLAKE_SPARK_HOST_SCRIPTS_DIR: ${ASKLAKE_SPARK_HOST_SCRIPTS_DIR:-/opt/asklake/backend/scripts}
       ASKLAKE_SPARK_IVY_DIR: ${ASKLAKE_HOST_DATA_DIR:-/tmp/asklake}/spark-ivy
       ASKLAKE_SPARK_IMAGE: ${ASKLAKE_SPARK_IMAGE:-apache/spark:4.0.1}
@@ -155,6 +162,7 @@ services:
       ASKLAKE_SPARK_MASTER_CONTAINER: ${ASKLAKE_SPARK_MASTER_CONTAINER:-asklake-spark-master}
       ASKLAKE_SPARK_MASTER_URL: ${ASKLAKE_SPARK_MASTER_URL:-spark://asklake-spark-master:7077}
       ASKLAKE_SPARK_HADOOP_AWS_PACKAGE: ${ASKLAKE_SPARK_HADOOP_AWS_PACKAGE:-org.apache.hadoop:hadoop-aws:3.4.1}
+      ASKLAKE_SPARK_KAFKA_PACKAGE: ${ASKLAKE_SPARK_KAFKA_PACKAGE:-org.apache.spark:spark-sql-kafka-0-10_2.13:4.0.1}
       ASKLAKE_SPARK_OUTPUT_MODE: ${ASKLAKE_SPARK_OUTPUT_MODE:-local}
       ASKLAKE_SPARK_OUTPUT_PREFIX: ${ASKLAKE_SPARK_OUTPUT_PREFIX:-asklake-output}
       ASKLAKE_SPARK_OUTPUT_VOLUME: ${ASKLAKE_SPARK_OUTPUT_VOLUME:-asklake-spark-output}
@@ -184,6 +192,7 @@ services:
       - ${ASKLAKE_HOST_DATA_DIR:-/tmp/asklake}/spark-output:${ASKLAKE_HOST_DATA_DIR:-/tmp/asklake}/spark-output
       - ${ASKLAKE_HOST_DATA_DIR:-/tmp/asklake}/spark-runs:${ASKLAKE_HOST_DATA_DIR:-/tmp/asklake}/spark-runs
       - ${ASKLAKE_HOST_DATA_DIR:-/tmp/asklake}/samples:${ASKLAKE_HOST_DATA_DIR:-/tmp/asklake}/samples
+      - ${ASKLAKE_REPLAY_HOST_INPUT_DIR:-/tmp/asklake/replay-input}:${ASKLAKE_REPLAY_INPUT_DIR:-/var/lib/asklake/replay-input}:ro
       - spark_output:/var/lib/asklake/spark-output-volume
       - ${TRINO_TLS_CA_FILE:?TRINO_TLS_CA_FILE is required}:/run/secrets/trino-ca.pem:ro
     networks:
@@ -431,6 +440,36 @@ services:
     networks:
       - trino_internal
 
+  redpanda:
+    image: redpandadata/redpanda:v24.3.1
+    restart: unless-stopped
+    command:
+      - redpanda
+      - start
+      - --overprovisioned
+      - --smp
+      - "1"
+      - --memory
+      - 1G
+      - --reserve-memory
+      - 0M
+      - --node-id
+      - "0"
+      - --check=false
+      - --kafka-addr
+      - internal://0.0.0.0:9092
+      - --advertise-kafka-addr
+      - internal://redpanda:9092
+    expose:
+      - "9092"
+    volumes:
+      - redpanda_data:/var/lib/redpanda/data
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health --api-urls localhost:9644 >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
 volumes:
   caddy_data:
   caddy_config:
@@ -438,6 +477,7 @@ volumes:
   airflow_postgres_data:
   mongo_data:
   minio_data:
+  redpanda_data:
   lake_data:
   spark_output:
     name: ${ASKLAKE_SPARK_OUTPUT_VOLUME:-asklake-spark-output}

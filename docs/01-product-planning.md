@@ -32,6 +32,10 @@ AskLake는 사용자가 데이터셋의 출처, 품질, 권한, 실행 결과, �
 
 현재 브랜치에서 보여줄 수 있어야 하는 범위:
 
+- `/` AskLake 랜딩과 session login 진입
+- session actor 기반 로그인 guard, 프로필, 관리자 접근 분기
+- Dataset context를 선택하는 AI 활용 대화 UI
+- 사용자·그룹·권한·감사 로그 관리 콘솔
 - Source 연결 테스트와 Schema 추론
 - 새 수집/처리 Job 생성
 - 작업 명령 UI: 실행, 재실행, 일시정지, 취소
@@ -39,11 +43,13 @@ AskLake는 사용자가 데이터셋의 출처, 품질, 권한, 실행 결과, �
 - 실행 성공 후 Catalog dataset 등록
 - Catalog 목록/상세/lineage fallback
 - Dataset 범위의 read-only SQL 실행. 기본 SQL 초안에는 preview용 `LIMIT`을 넣지 않으며, 목표 runtime은 Trino 기반 실제 전체 실행이다. Query Run의 validation/lifecycle은 `docs/trino-query-run-contract.md`, 대용량 전체 결과의 private page storage/retention은 `docs/trino-query-result-storage-contract.md`를 따른다.
-- SQL 분석 화면 안의 Query AI 생성 기능: 자연어 요청 기반 SQL 초안 제안
-- AI 활용 메뉴의 ChatGPT형 UI skeleton: Catalog Dataset 컨텍스트를 고르는 대화 화면만 제공하며, 실제 AI 호출과 RAG runtime은 후속 범위로 둔다.
+- SQL 편집기 상단의 Nessie SQL 작성 Popover: 선택 데이터셋 context와 사용자 프롬프트로 SQL 초안을 제안한다. 입력 후에는 폼을 접고 생성 상태와 편집기 적용 action을 Bubble로 표시하며, SQL은 사용자가 적용한 뒤 별도로 실행한다.
+- SQL 좌측 도구의 차트 생성하기: bounded compatibility 결과 또는 선택 데이터셋을 소스로 Dashboard와 같은 위젯 설정에서 유형, 필드, 집계, 색상을 설정한다. Trino 전체 실행 결과는 현재 페이지 단위 표와 전체 보기로 탐색한다.
+- AI 활용 메뉴의 ChatGPT형 대화 UI: Catalog Dataset 컨텍스트를 고르는 대화 화면을 제공하며, 실제 AI 호출과 RAG runtime은 후속 범위로 둔다.
 - 수집/처리 Transform 화면은 필드 매핑과 quick transform function 중심으로 유지하며, AI 기반 필드 transform 버튼은 현재 MVP 범위에서 노출하지 않는다.
-- SQL 실행 결과 기반 처리 Job 초안 생성 및 Lake Dataset materialize 준비
-- Dashboard 목록/빌더/런타임은 FastAPI Pair3 전까지 local/mock fallback으로 유지
+- bounded compatibility 결과 기반 처리 Job 생성: SQL 화면의 다단계 모달에서 기본 정보, 스케줄, 거버넌스, 저장 설정을 완료한 뒤 기존 Job 생성 API를 호출한다.
+- 완료된 Trino Query Run은 Iceberg CTAS materialization으로 1회성 Dataset을 생성하고 physical table 확인 후 Catalog와 SQL 분석 대상에 자동 등록한다.
+- Dashboard 목록/빌더/런타임은 FastAPI API를 우선 사용하고, 이전 backend 호환을 위해 404 local/mock fallback을 유지
 - 감사 로그와 toast feedback
 
 ## 5) Backend 확장 범위
@@ -60,13 +66,14 @@ FastAPI live backend에서 현재 우선 구현하는 범위:
 | SQL run | read-only SQL의 Trino 실제 실행, 상태 추적, private result page storage 기반 결과 페이지 조회 | Medium | `docs/trino-query-run-contract.md`, `docs/trino-query-result-storage-contract.md` |
 | Query AI 생성 | 선택 테이블 context와 자연어 요청으로 read-only SQL 초안을 생성 | Medium | `docs/api-contract.md` |
 | SQL derived dataset | 완료된 SQL run 결과를 Catalog dataset 또는 처리 Job materialize 흐름으로 연결 | Medium | `docs/api-contract.md` |
+| Local session auth | 로그인, 회원가입, session 확인, 로그아웃과 현재 사용자 조회 | High | `docs/api-contract.md` |
+| Phase 0 admin | 사용자·그룹·permission grant·governance control·감사 로그 조회/관리 | Medium | `docs/api-contract.md` |
 
-FastAPI Pair3 이전에 아직 live target으로 보지 않는 범위:
+현재 구현을 production 완성 범위로 보지 않는 항목:
 
-- Dashboard persistence 전체
-- Dashboard draft/published runtime persistence 전체
-- Audit log server persistence
-- 실제 인증/인가 시스템
+- Dashboard 공유 링크·export와 장기 운영 권한
+- Dashboard fallback 제거와 cross-pair E2E 검증
+- 운영 IdP/SSO 연동
 - production-grade scheduler
 - 실제 RAG indexing/runtime
 
@@ -77,6 +84,13 @@ FastAPI Pair3 이전에 아직 live target으로 보지 않는 범위:
 Phase 0에서는 용어와 경계를 먼저 고정한다. `createdBy`, `owner`, profile/avatar 같은 값은 표시용 identity metadata로 분리하고, 실제 접근 제어는 `ActorContext`, resource별 `permissionGrants`, backend permission check로 다룬다. 현재 기준 권한 판정은 allow-only 모델이며, `admin`은 전체 허용되고, owner fallback과 user/group/role/public grant 중 하나가 맞으면 허용된다. 지원 action은 `view`, `query`, `run`, `manage`, `delete`, `share`이고 여러 grant는 합산한다. 관리자 권한 편집 기능은 독립 `permission_grants` table row를 생성/수정/삭제하며, payload에서 유래한 owner/permissionRoles grant는 읽기 전용 metadata grant로 유지한다.
 
 ## 6) 핵심 사용자 흐름
+
+### Flow 0. 랜딩과 session login
+
+1. 사용자는 `/`에서 AskLake 랜딩을 확인하고 `/login`으로 이동한다.
+2. frontend는 `/api/auth/session`으로 session actor를 확인한다.
+3. 인증되지 않은 workspace route는 `AuthPage`로 이동한다.
+4. 인증 성공 후 `/jobs`로 이동하고, admin actor만 관리 메뉴를 사용할 수 있다.
 
 ### Flow A. 수집/처리 생성
 
@@ -92,21 +106,21 @@ Phase 0에서는 용어와 경계를 먼저 고정한다. `createdBy`, `owner`, 
 1. 사용자는 Catalog dataset을 연다.
 2. 시스템은 schema, sample rows, lineage를 보여준다.
 3. 사용자는 SQL 화면으로 이동해 read-only SQL을 Trino에 실제 실행한다.
-4. 사용자는 선택 테이블과 schema context를 기반으로 Query AI 생성 기능에서 SQL 초안을 받을 수 있다.
+4. 사용자는 편집기 상단 `Nessie로 SQL 작성` Popover를 열고 선택 테이블과 schema context를 기반으로 SQL 초안을 받을 수 있다. 제출 후 입력 폼은 접히고 생성 상태와 적용 action이 Bubble로 표시된다.
 5. AI 제안은 자동 실행되지 않고 editor에 반영한 뒤 기존 read-only/preflight 검증을 통과해야 실행할 수 있다.
-6. 완료된 SQL run은 수집/처리 Job 초안으로 넘겨 Review에서 Lake Dataset materialize 요청을 만들 수 있다.
-7. Trino materialize 요청은 Iceberg CTAS를 실행하고 실제 table 확인까지 성공한 뒤 Dataset을 SQL 분석 대상으로 자동 등록한다. 사용자가 physical catalog/schema/table을 따로 입력하지 않는다.
-8. 등록 중이거나 검증에 실패한 Dataset은 Catalog에는 상태를 남기되 SQL 실행 대상으로 노출하지 않는다.
-9. 완료된 run 결과는 retention 안에서 임시 Dashboard draft source로 쓸 수 있고, publish 또는 반복 사용은 materialized Dataset을 source로 사용한다.
-10. Dashboard builder 진입은 실제 Dataset 또는 완료된 SQL run이 있을 때만 허용한다.
+6. Trino 실행 전 예상 처리량과 예상 시간을 확인하고, 실행 중에는 진행률·경과 시간·처리량을 확인하거나 취소할 수 있다.
+7. 완료된 결과는 retention-backed 원격 페이지와 전체 보기 모달에서 탐색하고, 최근 실행 이력에서 다시 열 수 있다.
+8. Trino materialize 요청은 Iceberg CTAS를 실행하고 실제 table 확인까지 성공한 뒤 Dataset을 SQL 분석 대상으로 자동 등록한다. 사용자가 physical catalog/schema/table을 따로 입력하지 않는다.
+9. 등록 중이거나 검증에 실패한 Dataset은 Catalog에는 상태를 남기되 SQL 실행 대상으로 노출하지 않는다.
+10. bounded compatibility 결과는 차트로 전환하거나 처리 Job 위저드에서 기본 정보, 스케줄, 거버넌스, 저장 설정을 완료해 기존 Job 생성 API로 연결할 수 있다.
 
 ### Flow C. FastAPI live backend 연결
 
-1. 프론트는 `VITE_USE_MOCK_API=false`일 때 live backend API를 호출한다.
+1. 프론트는 기본적으로 live backend API를 호출하며, frontend-only QA는 `VITE_USE_MOCK_API=true`로 mock mode를 명시한다.
 2. API adapter는 `VITE_API_BASE_URL` 또는 기본 `http://localhost:8080` 기준으로 서버를 호출한다.
 3. 서버 응답이 성공하면 프론트 상태를 서버 응답 기준으로 갱신한다.
 4. 실패하면 사용자에게 알리고 rollback 또는 retry 경로를 제공한다.
-5. Dashboard API는 FastAPI Pair3 전까지 local/mock fallback을 사용한다.
+5. Dashboard API는 FastAPI 응답을 우선하고, 이전 backend 호환을 위해 404 local/mock fallback을 사용한다.
 
 ## 7) 성공 기준
 
@@ -115,7 +129,7 @@ Phase 0에서는 용어와 경계를 먼저 고정한다. `createdBy`, `owner`, 
 - conflict marker가 남아 있지 않다.
 - 문서에 깨진 문자가 남아 있지 않다.
 - Source/Schema/Create/Run/Catalog/SQL live 경로가 문서와 코드에서 같은 범위를 말한다.
-- Dashboard 영역은 아직 FastAPI live 구현이라고 과장하지 않는다.
+- Dashboard 영역은 FastAPI 연결 범위와 404 local/mock fallback, 아직 남은 운영 범위를 구분한다.
 
 ## 8) 4일 데모 마일스톤
 
@@ -133,7 +147,7 @@ Phase 0에서는 용어와 경계를 먼저 고정한다. `createdBy`, `owner`, 
 
 - 모든 source type의 production 연결
 - 대용량 처리 성능 검증
-- Kafka 실시간 스트리밍 완성
+- Kafka Continuous Ingestion V1 운영 확장: 지속 실행 Spark worker, checkpoint 재개, Catalog 등록, partition lag, bounded log, quarantine replay, staged compaction은 Issue #500에서 구현했다. autoscaling, alerting/SLA, 장기 로그 object storage, compaction 결과의 atomic reader 전환/retention, 다중 worker 운영은 후속 범위
 - Spark, Trino, Kafka, Airflow 전체 운영 완성
 - 완전한 인증/인가 시스템
 - Dashboard 권한 공유 실제 저장
@@ -143,6 +157,6 @@ Phase 0에서는 용어와 경계를 먼저 고정한다. `createdBy`, `owner`, 
 
 ## 10) 오픈 질문
 
-- Dashboard FastAPI 구현은 Pair3에서 Node demo API를 옮겨올지, 새 SQLAlchemy 모델로 다시 만들지 결정해야 한다.
+- Dashboard 404 fallback 제거 시점과 공유 링크·export 운영 범위를 결정해야 한다.
 - 인증/권한은 MVP에 포함할지, demo actor로 둘지 결정해야 한다. 단, Phase 0 기준으로는 표시용 identity metadata와 실제 permission grant를 분리한다.
 - Audit log는 product feature인지 operational evidence인지 먼저 정해야 한다.

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { LayoutItem } from "react-grid-layout";
 import {
   Database,
@@ -9,8 +9,12 @@ import {
   SlidersHorizontal,
   Table2,
 } from "lucide-react";
+import { PreviewPanel } from "@/components/ui/preview-panel";
+import { SegmentedTabs } from "@/components/ui/segmented-tabs";
+import { SelectableCard } from "@/components/ui/selectable-card";
 import { DatasetStatusBadge } from "../catalog/CatalogPage";
 import { DashboardRuntimeView } from "./runtime/DashboardRuntimeView";
+import { sqlResultToDashboardOption } from "./runtime/dashboardDatasetAdapters";
 import { useDashboardDatasets } from "./runtime/useDashboardDatasets";
 import { useDraftWidgetCreator } from "./runtime/useDraftWidgetCreator";
 import { useDraftWidgetLayouts } from "./runtime/useDraftWidgetLayouts";
@@ -32,7 +36,6 @@ import {
 } from "./dashboardListUtils";
 import { useDashboardLandingList } from "./useDashboardLandingList";
 import {
-  createDraftWidget,
   createDraftPage,
   deleteDraftPage,
   deleteDraftWidget,
@@ -45,8 +48,7 @@ import {
 import { createDashboard, deleteDashboard, updateDashboardTitle } from "../../services/dashboardApi";
 import { saveDashboardCard } from "../../services/mockApi";
 import { ApiError } from "../../types";
-import type { AuditResult, CatalogDataset, DashboardEntry, DashboardRuntimeMode, DashboardRuntimeResponse, DashboardRuntimeWidget, DashboardRuntimeWidgetConfig, DashboardRuntimeWidgetType, DashboardView, DashboardWidgetLayout, DashboardWidgetType, SavedDashboardCard, SqlResultDraft } from "../../types";
-import { canManageDashboard, permissionDeniedMessage } from "../../utils/permissions";
+import type { AuditResult, CatalogDataset, DashboardEntry, DashboardRuntimeMode, DashboardRuntimeResponse, DashboardRuntimeWidget, DashboardRuntimeWidgetType, DashboardView, DashboardWidgetLayout, DashboardWidgetType, SavedDashboardCard, SqlResultDraft } from "../../types";
 import { dashboardStatusMeta } from "../../utils/statusMeta";
 import type { DashboardDatasetOption, UpdateDraftWidgetFormInput } from "./runtime/dashboardRuntimeTypes";
 
@@ -149,111 +151,19 @@ function pushLayoutHistory(stack: RuntimeLayoutSnapshot[], snapshot: RuntimeLayo
   return [...stack, snapshot].slice(-maxLayoutHistoryEntries);
 }
 
-function buildSqlDashboardDataset(sqlResult: SqlResultDraft): DashboardDatasetOption {
-  const columns = sqlResult.columns.map((name, columnIndex) => {
-    const normalizedColumn = name.toLowerCase();
-    const values = sqlResult.rows
-      .map((row) => row[columnIndex])
-      .filter((value): value is string => Boolean(value));
-    const inferredType = (() => {
-      if (/(^|_)(date|time|at|day|month|year)($|_)/.test(normalizedColumn)) return "date" as const;
-      if (/(amount|count|score|total|value|price|qty|quantity|rate|risk|cost|sales|revenue|rows?)/.test(normalizedColumn)) return "number" as const;
-      if (values.length > 0 && values.every((value) => Number.isFinite(Number(value)))) return "number" as const;
-      if (values.length > 0 && values.every((value) => Number.isFinite(Date.parse(value)))) return "date" as const;
-      return "string" as const;
-    })();
-    return { name, type: inferredType };
-  });
-  const rows = sqlResult.rows.map((row) => Object.fromEntries(columns.map((column, index) => {
-    const value = row[index] ?? "";
-    return [column.name, column.type === "number" ? Number(value) || 0 : value];
-  })));
-
-  return {
-    columns,
-    description: `SQL 실행 ${sqlResult.runId} 결과`,
-    id: `sql-result-${sqlResult.runId}`,
-    layer: "GOLD",
-    name: `SQL 실행 결과 · ${sqlResult.datasetName}`,
-    rows,
-    status: "available",
-    updatedAt: new Date(sqlResult.executedAt).toLocaleString("ko-KR"),
-  };
-}
-
-function dashboardEntryMatchesSqlResult(entry: DashboardEntry, dataset: CatalogDataset, sqlResult: SqlResultDraft | null) {
-  if (entry.source !== "sql" || !sqlResult) return false;
-  const matchesRun = !entry.sqlRunId || entry.sqlRunId === sqlResult.runId;
-  const matchesBaseDataset = !entry.baseDatasetId
-    || entry.baseDatasetId === sqlResult.baseDatasetId
-    || entry.baseDatasetId === sqlResult.datasetId
-    || entry.baseDatasetId === dataset.id;
-  const matchesResultDataset = !entry.sqlResultDatasetId || entry.sqlResultDatasetId === sqlResult.datasetId;
-
-  return matchesRun && matchesBaseDataset && matchesResultDataset;
-}
-
-function buildSqlResultStarterWidgets(sqlDataset: DashboardDatasetOption) {
-  const displayColumns = sqlDataset.columns.slice(0, 8).map((column) => column.name);
-  const rows = sqlDataset.rows ?? [];
-  const numericColumn = sqlDataset.columns.find((column) => column.type === "number");
-  const timeColumn = sqlDataset.columns.find((column) => column.type === "date");
-  const dimensionColumn = sqlDataset.columns.find((column) => column.type !== "number" && column.name !== numericColumn?.name)
-    ?? sqlDataset.columns.find((column) => column.name !== numericColumn?.name);
-  const tableWidget = {
-    config: {
-      columns: displayColumns,
-      description: "SQL Preview에서 넘어온 실행 결과입니다.",
-      limit: Math.min(50, Math.max(10, rows.length || 10)),
-      sortKey: displayColumns[0],
-    } satisfies DashboardRuntimeWidgetConfig,
-    data: rows,
-    layout: { h: 5, minH: 3, minW: 4, w: 12, x: 0, y: 0 },
-    title: "SQL 결과 테이블",
-    type: "table" as const,
-  };
-
-  if (!numericColumn || !dimensionColumn) return [tableWidget];
-
-  const chartType = timeColumn ? "line_chart" as const : "bar_chart" as const;
-  const chartConfig = {
-    aggregation: "sum",
-    color: { colors: ["#2563eb"] },
-    description: "SQL 실행 결과에서 자동으로 구성한 기본 시각화입니다.",
-    xKey: timeColumn?.name ?? dimensionColumn.name,
-    yKey: numericColumn.name,
-    ...(chartType === "line_chart" ? { curve: "smooth" as const, dateUnit: "day" as const } : { orientation: "vertical" as const }),
-  } satisfies DashboardRuntimeWidgetConfig;
-
-  return [
-    tableWidget,
-    {
-      config: chartConfig,
-      data: rows,
-      layout: { h: 6, minH: 3, minW: 4, w: 8, x: 0, y: 5 },
-      title: `${timeColumn?.name ?? dimensionColumn.name}별 ${numericColumn.name}`,
-      type: chartType,
-    },
-  ];
-}
-
 export function DashboardPage({
   dataset,
   datasets: catalogDatasets = [],
   entry,
-  isHydratingSqlResult = false,
   sqlResult,
   onAction,
-  onMissingSqlResult,
   onRuntimeNavigate,
 }: {
   dataset: CatalogDataset;
   datasets?: CatalogDataset[];
   entry: DashboardEntry;
-  isHydratingSqlResult?: boolean;
   sqlResult: SqlResultDraft | null;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
-  onMissingSqlResult?: () => void;
   onRuntimeNavigate?: (dashboardId: string, mode: DashboardRuntimeMode) => void;
 }) {
   const [view, setView] = useState<DashboardView>(entry.view);
@@ -298,7 +208,6 @@ export function DashboardPage({
   const [widgetScrollTargetId, setWidgetScrollTargetId] = useState<string | null>(null);
   const [selectedRuntimePageId, setSelectedRuntimePageId] = useState<string | null>(defaultRuntimePages[0].id);
   const [selectedDashboard, setSelectedDashboard] = useState<SavedDashboardCard | null>(null);
-  const sqlStarterSeedKeys = useRef(new Set<string>());
   const [savedDashboards, setSavedDashboards] = useState<SavedDashboardCard[]>(() => {
     const stored = window.localStorage.getItem("asklake.dashboardCards");
     if (!stored) return defaultDashboardCards;
@@ -310,10 +219,9 @@ export function DashboardPage({
     }
   });
   const dashboardList = useDashboardLandingList(savedDashboards, onAction, entry.version + dashboardListRefreshKey);
-  const expectsSqlResult = entry.source === "sql";
-  const activeSqlResult = dashboardEntryMatchesSqlResult(entry, dataset, sqlResult) ? sqlResult : null;
+  const activeSqlResult = entry.source === "sql" && (sqlResult?.datasetId === dataset.id || sqlResult?.baseDatasetId === dataset.id) ? sqlResult : null;
   const sqlDashboardDataset = useMemo(
-    () => activeSqlResult ? buildSqlDashboardDataset(activeSqlResult) : null,
+    () => activeSqlResult ? sqlResultToDashboardOption(activeSqlResult) : null,
     [activeSqlResult],
   );
   const dashboardTitle = activeSqlResult ? `${activeSqlResult.datasetName} SQL Result Dashboard` : "Sales Analytics Demo 2026-06-26 22:04:05";
@@ -382,7 +290,9 @@ export function DashboardPage({
     isLoading: dashboardDatasetsLoading,
   } = useDashboardDatasets(dashboardDatasetFallbacks);
   const availableDashboardDatasets = useMemo(
-    () => sqlDashboardDataset ? [sqlDashboardDataset] : dashboardDatasets,
+    () => sqlDashboardDataset
+      ? [sqlDashboardDataset, ...dashboardDatasets.filter((item) => item.id !== sqlDashboardDataset.id)]
+      : dashboardDatasets,
     [dashboardDatasets, sqlDashboardDataset],
   );
   const runtimeDashboards = [...dashboardList.visibleDashboards, ...savedDashboards];
@@ -396,11 +306,6 @@ export function DashboardPage({
   const runtimeHasPublishedRevision = runtimeSelection.mode === "published"
     ? publishedRuntime?.dashboard.hasPublishedRevision ?? runtimeDashboard?.hasPublishedRevision ?? runtimeDashboard?.status === "published"
     : draftRuntime?.dashboard.hasPublishedRevision ?? runtimeDashboard?.hasPublishedRevision ?? runtimeDashboard?.status === "published";
-  const runtimePermissionDashboard = runtimeSelection.mode === "published"
-    ? (publishedRuntime?.dashboard.id === runtimeSelection.dashboardId ? publishedRuntime.dashboard : runtimeDashboard ?? null)
-    : (draftRuntime?.dashboard.id === runtimeSelection.dashboardId ? draftRuntime.dashboard : runtimeDashboard ?? null);
-  const runtimeCanManage = canManageDashboard(runtimePermissionDashboard);
-  const runtimeManageMessage = permissionDeniedMessage("대시보드", "편집");
   const selectedDraftWidgets = useMemo(
     () => runtimeSelection.mode === "draft" && selectedRuntimePageId
       ? draftRuntime?.widgetsByPageId[selectedRuntimePageId] ?? []
@@ -448,11 +353,6 @@ export function DashboardPage({
     setSelectedDatasetId(null);
   }, [availableDashboardDatasets, selectedDatasetId]);
 
-  useEffect(() => {
-    if (!sqlDashboardDataset) return;
-    setSelectedDatasetId(sqlDashboardDataset.id);
-  }, [sqlDashboardDataset]);
-
   const selectRuntimePageFromResponse = (runtime: DashboardRuntimeResponse) => {
     const requestedPageId = new URLSearchParams(window.location.search).get("page");
     const requestedPageExists = requestedPageId && runtime.pages.some((page) => page.id === requestedPageId);
@@ -493,7 +393,7 @@ export function DashboardPage({
       return runtime;
     } catch (error) {
       if (!options.silent) setDraftRuntime(null);
-      setDraftError(error instanceof ApiError && error.status === 403 ? runtimeManageMessage : error instanceof Error ? error.message : "Failed to load the draft dashboard.");
+      setDraftError(error instanceof Error ? error.message : "Failed to load the draft dashboard.");
       return null;
     } finally {
       if (!options.silent) setDraftLoading(false);
@@ -530,10 +430,6 @@ export function DashboardPage({
   });
 
   const commitRuntimeLayout = (layout: LayoutItem[]) => {
-    if (!runtimeCanManage) {
-      setRuntimeNotice({ message: runtimeManageMessage, tone: "error" });
-      return;
-    }
     const previousLayout = widgetLayoutSnapshot(selectedDraftWidgets);
     const nextLayout = normalizeLayoutSnapshot(layout);
     if (layoutSnapshotsEqual(previousLayout, nextLayout)) return;
@@ -620,69 +516,6 @@ export function DashboardPage({
     setLayoutRedoStack([]);
     setLayoutUndoStack([]);
   }, [runtimeSelection.dashboardId, runtimeSelection.mode, selectedDraftWidgetIds, selectedRuntimePageId]);
-
-  useEffect(() => {
-    if (!activeSqlResult || !sqlDashboardDataset) return;
-    if (view !== "runtime" || runtimeSelection.mode !== "draft") return;
-    if (!draftRuntime?.revision || !selectedRuntimePageId) return;
-    if (selectedDraftWidgets.length > 0) return;
-
-    const seedKey = `${runtimeSelection.dashboardId}:${activeSqlResult.runId}:${selectedRuntimePageId}`;
-    if (sqlStarterSeedKeys.current.has(seedKey)) return;
-    sqlStarterSeedKeys.current.add(seedKey);
-
-    let cancelled = false;
-    const seedSqlStarterWidgets = async () => {
-      const starterWidgets = buildSqlResultStarterWidgets(sqlDashboardDataset);
-      if (!starterWidgets.length) return;
-
-      setRuntimeNotice({ message: "SQL 실행 결과로 기본 위젯을 구성하는 중입니다.", tone: "info" });
-      try {
-        let firstWidgetId: string | null = null;
-        for (const widget of starterWidgets) {
-          const result = await createDraftWidget(runtimeSelection.dashboardId, selectedRuntimePageId, {
-            config: widget.config,
-            data: widget.data,
-            datasetId: sqlDashboardDataset.id,
-            layout: widget.layout,
-            title: widget.title,
-            type: widget.type,
-          });
-          firstWidgetId ??= result.id;
-        }
-        if (cancelled) return;
-        await loadDraftRuntime(runtimeSelection.dashboardId, { silent: true });
-        if (firstWidgetId) {
-          setSelectedWidgetId(firstWidgetId);
-          setWidgetScrollTargetId(firstWidgetId);
-        }
-        setRuntimeNotice({ message: "SQL 실행 결과 기반 기본 위젯을 추가했습니다.", tone: "success" });
-        onAction("dashboard.sql_result_starter_widgets_added", `/api/dashboards/${runtimeSelection.dashboardId}/draft/pages/${selectedRuntimePageId}/widgets`, activeSqlResult.runId);
-      } catch (error) {
-        sqlStarterSeedKeys.current.delete(seedKey);
-        const message = error instanceof Error ? error.message : "SQL 실행 결과 기반 기본 위젯을 추가하지 못했습니다.";
-        setDraftError(message);
-        setRuntimeNotice({ message: "SQL 실행 결과 기반 기본 위젯을 추가하지 못했습니다.", tone: "error" });
-        onAction("dashboard.sql_result_starter_widgets_failed", `/api/dashboards/${runtimeSelection.dashboardId}/draft/pages/${selectedRuntimePageId}/widgets`, activeSqlResult.runId, "failed");
-      }
-    };
-
-    void seedSqlStarterWidgets();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    activeSqlResult,
-    draftRuntime?.revision,
-    onAction,
-    runtimeSelection.dashboardId,
-    runtimeSelection.mode,
-    selectedRuntimePageId,
-    selectedDraftWidgets.length,
-    sqlDashboardDataset,
-    view,
-  ]);
 
   useEffect(() => {
     window.localStorage.setItem("asklake.dashboardCards", JSON.stringify(savedDashboards));
@@ -782,11 +615,6 @@ export function DashboardPage({
   };
 
   const openRuntimeDashboard = (nextDashboardId: string, mode: DashboardRuntimeMode) => {
-    const targetDashboard = runtimeDashboards.find((dashboard) => dashboard.id === nextDashboardId);
-    if (mode === "draft" && targetDashboard && !canManageDashboard(targetDashboard)) {
-      setRuntimeNotice({ message: runtimeManageMessage, tone: "error" });
-      return;
-    }
     setRuntimeSelection({ dashboardId: nextDashboardId, mode });
     setView("runtime");
     onAction(
@@ -861,10 +689,6 @@ export function DashboardPage({
 
   const addRuntimePage = async () => {
     if (runtimeSelection.mode !== "draft" || isAddingRuntimePage) return;
-    if (!runtimeCanManage) {
-      setRuntimeNotice({ message: runtimeManageMessage, tone: "error" });
-      return;
-    }
     const nextPageNumber = (draftRuntime?.pages.length ?? 0) + 1;
     const title = nextPageNumber > 1 ? `제목 없는 페이지 ${nextPageNumber}` : "제목 없는 페이지";
     setIsAddingRuntimePage(true);
@@ -887,10 +711,6 @@ export function DashboardPage({
 
   const deleteRuntimePage = async (pageId: string) => {
     if (runtimeSelection.mode !== "draft") return;
-    if (!runtimeCanManage) {
-      setRuntimeNotice({ message: runtimeManageMessage, tone: "error" });
-      return;
-    }
     try {
       await deleteDraftPage(runtimeSelection.dashboardId, pageId);
       if (selectedRuntimePageId === pageId) {
@@ -906,10 +726,6 @@ export function DashboardPage({
 
   const deleteRuntimeWidget = async (widgetId: string) => {
     if (runtimeSelection.mode !== "draft" || deletingRuntimeWidgetId) return;
-    if (!runtimeCanManage) {
-      setRuntimeNotice({ message: runtimeManageMessage, tone: "error" });
-      return;
-    }
     const targetWidget = selectedDraftWidgets.find((widget) => widget.id === widgetId);
     const targetTitle = targetWidget?.title || "제목 없는 위젯";
     const confirmed = window.confirm(`'${targetTitle}' 위젯을 삭제할까요? 삭제 후에는 되돌릴 수 없습니다.`);
@@ -975,10 +791,6 @@ export function DashboardPage({
 
   const updateRuntimeWidget = async (widgetId: string, input: UpdateDraftWidgetFormInput) => {
     if (runtimeSelection.mode !== "draft" || updatingRuntimeWidgetId) return;
-    if (!runtimeCanManage) {
-      setRuntimeNotice({ message: runtimeManageMessage, tone: "error" });
-      return;
-    }
 
     setUpdatingRuntimeWidgetId(widgetId);
     setDraftError(null);
@@ -1002,10 +814,6 @@ export function DashboardPage({
 
   const renameRuntimeDashboardTitle = async (title: string) => {
     if (runtimeSelection.mode !== "draft" || isRenamingRuntimeTitle) return;
-    if (!runtimeCanManage) {
-      setRuntimeNotice({ message: runtimeManageMessage, tone: "error" });
-      return;
-    }
     const nextTitle = title.trim();
     if (!nextTitle) {
       setRuntimeNotice({ message: "대시보드 제목을 입력해 주세요.", tone: "error" });
@@ -1053,10 +861,6 @@ export function DashboardPage({
 
   const renameRuntimePage = async (pageId: string, title: string) => {
     if (runtimeSelection.mode !== "draft" || renamingRuntimePageId) return;
-    if (!runtimeCanManage) {
-      setRuntimeNotice({ message: runtimeManageMessage, tone: "error" });
-      return;
-    }
     const nextTitle = title.trim();
     if (!nextTitle) {
       setRuntimeNotice({ message: "페이지 이름을 입력해 주세요.", tone: "error" });
@@ -1099,17 +903,14 @@ export function DashboardPage({
   };
 
   const shareRuntimeDashboard = () => {
-    const path = runtimeHasPublishedRevision ? `/dashboards/${runtimeSelection.dashboardId}` : `/dashboards/${runtimeSelection.dashboardId}/edit`;
+    const path = `/dashboards/${runtimeSelection.dashboardId}`;
     const shareUrl = `${window.location.origin}${path}`;
     setRuntimeShareLink(shareUrl);
-    void navigator.clipboard?.writeText(shareUrl)
-      .then(() => setRuntimeNotice({ message: "공유 링크를 복사했습니다.", tone: "success" }))
-      .catch(() => setRuntimeNotice({ message: "링크가 준비되었습니다. 패널에서 복사할 수 있습니다.", tone: "info" }));
+    setRuntimeNotice({ message: "공유 링크가 준비되었습니다.", tone: "info" });
     onAction("dashboard.runtime.shared", path, runtimeSelection.dashboardId);
   };
 
   const cleanupEmptyVisualizationRequestWidgets = async () => {
-    if (!runtimeCanManage) return 0;
     const widgetIds = emptyVisualizationRequestWidgetIds(draftRuntime);
     if (!widgetIds.length) return 0;
 
@@ -1136,10 +937,6 @@ export function DashboardPage({
 
   const publishDraftRuntime = async () => {
     if (runtimeSelection.mode !== "draft" || isPublishingRuntime) return;
-    if (!runtimeCanManage) {
-      setRuntimeNotice({ message: runtimeManageMessage, tone: "error" });
-      return;
-    }
     setIsPublishingRuntime(true);
     setDraftError(null);
     try {
@@ -1283,30 +1080,6 @@ export function DashboardPage({
     );
   };
 
-  if (expectsSqlResult && !activeSqlResult) {
-    return (
-      <div className="dashboard-page dashboard-context-missing">
-        <section className="dashboard-context-missing-panel">
-          <Database size={24} />
-          <div>
-            <span>SQL 실행 결과</span>
-            <h1>{isHydratingSqlResult ? "SQL 실행 결과를 불러오는 중입니다" : "SQL 실행 결과를 찾을 수 없습니다"}</h1>
-            <p>
-              {isHydratingSqlResult
-                ? "저장된 SQL Preview run snapshot을 확인하고 있습니다."
-                : "이 대시보드는 SQL Preview 결과 스냅샷이 있어야 열 수 있습니다. SQL 분석에서 Preview를 다시 실행한 뒤 대시보드 만들기를 열어 주세요."}
-            </p>
-            {!isHydratingSqlResult && onMissingSqlResult && (
-              <button className="primary-button" type="button" onClick={onMissingSqlResult}>
-                SQL 분석으로 돌아가기
-              </button>
-            )}
-          </div>
-        </section>
-      </div>
-    );
-  }
-
   if (view === "list") {
     return (
       <DashboardLandingPage
@@ -1380,12 +1153,11 @@ export function DashboardPage({
     };
     const runtimeDatasetState = {
       datasets: availableDashboardDatasets,
-      error: activeSqlResult ? null : dashboardDatasetsError,
+      error: dashboardDatasetsError,
       isCreatingWidget: isCreatingDatasetWidget,
-      isLoading: activeSqlResult ? false : dashboardDatasetsLoading,
+      isLoading: dashboardDatasetsLoading,
       selectedDataset: editorDataset,
       selectedDatasetId: editorDatasetId,
-      sourceMode: activeSqlResult ? "sqlResult" as const : "dataset" as const,
     };
     const runtimeViewState = {
       deletingWidgetId: deletingRuntimeWidgetId,
@@ -1398,8 +1170,6 @@ export function DashboardPage({
       isAddingPage: isAddingRuntimePage,
       isDatasetSidebarOpen,
       isCreatingToolbarWidget,
-      canManage: runtimeCanManage,
-      managePermissionMessage: runtimeManageMessage,
       isPublishing: isPublishingRuntime,
       isRenamingTitle: isRenamingRuntimeTitle,
       isRefreshing: isRefreshingRuntime,
@@ -1448,10 +1218,10 @@ export function DashboardPage({
         <div className="dashboard-builder-layout">
           <aside className="dashboard-builder-side">
             <section>
-              <h2>{activeSqlResult ? "SQL 실행 결과" : "Data"}</h2>
+              <h2>{activeSqlResult ? "SQL Result" : "Data"}</h2>
               <div className="dashboard-source-card">
                 <Database size={18} />
-                <strong>{activeSqlResult ? `SQL 실행 결과 · ${activeSqlResult.datasetName}` : dataset.name}</strong>
+                <strong>{activeSqlResult ? activeSqlResult.datasetName : dataset.name}</strong>
                 <span>{activeSqlResult ? `${activeSqlResult.rowCount} result rows · ${activeSqlResult.columns.length} columns` : `${dataset.layer} · ${dataset.rows} rows`}</span>
               </div>
             </section>
@@ -1473,13 +1243,17 @@ export function DashboardPage({
               <h2>Widget type</h2>
               <div className="dashboard-widget-type-list">
                 {widgetTypes.map((widget) => (
-                  <button className={selectedWidgetType === widget.id ? "active" : ""} key={widget.id} type="button" onClick={() => {
-                    setSelectedWidgetType(widget.id);
-                    onAction("dashboard.widget.type_selected", "/api/dashboards/widgets/types", widget.id);
-                  }}>
-                    <strong>{widget.label}</strong>
-                    <span>{widget.desc}</span>
-                  </button>
+                  <SelectableCard
+                    className="dashboard-widget-type-card"
+                    description={widget.desc}
+                    key={widget.id}
+                    selected={selectedWidgetType === widget.id}
+                    title={widget.label}
+                    onClick={() => {
+                      setSelectedWidgetType(widget.id);
+                      onAction("dashboard.widget.type_selected", "/api/dashboards/widgets/types", widget.id);
+                    }}
+                  />
                 ))}
               </div>
             </section>
@@ -1493,18 +1267,17 @@ export function DashboardPage({
             </section>
           </aside>
           <main className={builderWidgets.length ? "dashboard-builder-canvas has-widgets" : "dashboard-builder-canvas"}>
-            <section className="dashboard-widget-preview-panel">
-              <div className="dashboard-card-header">
-                <div>
-                  <span>WIDGET PREVIEW</span>
-                  <h2>{widgetConfig[selectedWidgetType].title}</h2>
-                  <p>{activeSqlResult ? `${activeSqlResult.datasetName} · SQL result` : `${dataset.name} · ${dataset.layer} source`}</p>
-                </div>
-                <button type="button" onClick={addWidgetToCanvas}><Plus size={16} /></button>
-              </div>
+            <PreviewPanel
+              actions={<button type="button" onClick={addWidgetToCanvas}><Plus size={16} /></button>}
+              className="dashboard-widget-preview-panel"
+              description={activeSqlResult ? `${activeSqlResult.datasetName} · SQL result` : `${dataset.name} · ${dataset.layer} source`}
+              eyebrow="WIDGET PREVIEW"
+              headerClassName="dashboard-card-header"
+              title={widgetConfig[selectedWidgetType].title}
+            >
               <DashboardWidgetPreview columns={dashboardColumns} rows={dashboardRowsPreview} type={selectedWidgetType} />
               <button className="primary-button" type="button" onClick={addWidgetToCanvas}><Plus size={16} /> 캔버스에 추가</button>
-            </section>
+            </PreviewPanel>
             <section className="dashboard-canvas-draft">
               <div className="dashboard-card-header">
                 <div>
@@ -1594,11 +1367,13 @@ export function DashboardPage({
           <SlidersHorizontal size={16} />
           <strong>필터</strong>
         </div>
-        <div className="dashboard-segmented">
-          {["오늘", "최근 7일", "최근 30일"].map((item) => (
-            <button className={period === item ? "active" : ""} key={item} type="button" onClick={() => changeFilter(item)}>{item}</button>
-          ))}
-        </div>
+        <SegmentedTabs
+          ariaLabel="대시보드 기간 필터"
+          className="dashboard-segmented"
+          items={["오늘", "최근 7일", "최근 30일"].map((item) => ({ label: item, value: item }))}
+          value={period}
+          onValueChange={(item) => changeFilter(item)}
+        />
         <label>
           <span>채널</span>
           <select value={segment} onChange={(event) => changeFilter(period, event.target.value)}>

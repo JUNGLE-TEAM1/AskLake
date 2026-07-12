@@ -1,6 +1,6 @@
-import { LogIn, UserPlus } from "lucide-react";
 import { useState } from "react";
-import { InfoBox, PageTitle } from "../../components/common";
+import { Link } from "react-router";
+
 import { login, signup } from "../../services/authApi";
 import { ApiError } from "../../types";
 import type { CurrentUserResponse } from "../../types";
@@ -20,10 +20,16 @@ export function AuthPage({ onAction, onAuthenticated }: AuthPageProps) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const changeMode = (nextMode: AuthMode) => {
+    setMode(nextMode);
+    setError(null);
+  };
+
   const submit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setPending(true);
     setError(null);
+
     try {
       const response = mode === "login"
         ? await login({ email, password })
@@ -40,78 +46,54 @@ export function AuthPage({ onAction, onAuthenticated }: AuthPageProps) {
   };
 
   return (
-    <div className="content-grid module-page-grid auth-page">
-      <div className="content-main">
-        <PageTitle
-          title={mode === "login" ? "로그인" : "회원가입"}
-          description="로컬 데모 계정으로 로그인하고 세션 기준 권한을 확인합니다."
-          icon={mode === "login" ? <LogIn size={28} /> : <UserPlus size={28} />}
-        />
+    <main className="login-page">
+      <Link className="login-brand" to="/" aria-label="AskLake 랜딩으로 돌아가기">
+        <img alt="" aria-hidden="true" src="/asklake-wave-icon.png" />
+        <strong>AskLake</strong>
+      </Link>
+      <p className="login-tagline">The Complete Data Pipeline Platform</p>
 
-        <section className="xflow-review-card auth-panel">
-          <div className="xflow-review-card-header">
-            <span className="xflow-review-icon permission">{mode === "login" ? <LogIn size={17} /> : <UserPlus size={17} />}</span>
-            <div>
-              <h2>{mode === "login" ? "세션 시작" : "새 계정 만들기"}</h2>
-              <p>로그인 후 세션 actor 기준으로 프로필과 관리 권한을 계산합니다.</p>
-            </div>
-          </div>
+      <form className="login-card" onSubmit={submit}>
+        <h1>{mode === "login" ? "Sign In" : "Create Account"}</h1>
+        <p className="login-card-description">
+          {mode === "login"
+            ? "AskLake 계정으로 로그인해 데이터 작업 공간을 시작하세요."
+            : "이름과 계정 정보를 입력해 새 AskLake 계정을 만드세요."}
+        </p>
 
-          <div className="admin-console-tabs auth-tabs" role="tablist" aria-label="계정">
-            <button className={mode === "login" ? "active" : ""} type="button" onClick={() => setMode("login")}>
-              <LogIn size={16} />
-              <span>로그인</span>
-            </button>
-            <button className={mode === "signup" ? "active" : ""} type="button" onClick={() => setMode("signup")}>
-              <UserPlus size={16} />
-              <span>회원가입</span>
-            </button>
-          </div>
-
-          <form className="auth-form" onSubmit={submit}>
-            {mode === "signup" && (
-              <label className="field">
-                <span>이름</span>
-                <input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="예: Kim Analyst" required />
-              </label>
-            )}
-            <label className="field">
-              <span>이메일</span>
-              <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required />
-            </label>
-            <label className="field">
-              <span>비밀번호</span>
-              <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} required minLength={mode === "signup" ? 8 : 1} />
-            </label>
-            {error && <InfoBox title="인증 실패" body={error} />}
-            <div className="form-actions inline">
-              <button className="primary-button" type="submit" disabled={pending}>
-                {pending ? "처리 중..." : mode === "login" ? "로그인" : "계정 만들기"}
-              </button>
-            </div>
-          </form>
-        </section>
-      </div>
-
-      <aside className="xflow-review-card profile-summary-panel auth-summary-panel">
-        <div className="xflow-review-card-header">
-          <span className="xflow-review-icon"><LogIn size={17} /></span>
-          <div>
-            <h2>테스트 계정</h2>
-            <p>로컬 세션 검증용 계정입니다.</p>
-          </div>
+        <div className="login-mode-switch" role="tablist" aria-label="계정 모드">
+          <button aria-selected={mode === "login"} className={mode === "login" ? "active" : ""} role="tab" type="button" onClick={() => changeMode("login")}>로그인</button>
+          <button aria-selected={mode === "signup"} className={mode === "signup" ? "active" : ""} role="tab" type="button" onClick={() => changeMode("signup")}>회원가입</button>
         </div>
-        <dl>
-          <div>
-            <dt>Admin</dt>
-            <dd>admin.user@asklake.local / asklake-admin</dd>
-          </div>
-          <div>
-            <dt>Viewer</dt>
-            <dd>demo.user@asklake.local / asklake-demo</dd>
-          </div>
-        </dl>
-      </aside>
-    </div>
+
+        {mode === "signup" && (
+          <label>
+            <span>Display Name</span>
+            <input autoComplete="name" name="displayName" onChange={(event) => setDisplayName(event.target.value)} placeholder="Kim Analyst" required value={displayName} />
+          </label>
+        )}
+        <label>
+          <span>Email</span>
+          <input autoComplete="email" inputMode="email" name="email" onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" required type="email" value={email} />
+        </label>
+        <label>
+          <span>Password</span>
+          <input autoComplete={mode === "login" ? "current-password" : "new-password"} minLength={mode === "signup" ? 8 : 1} name="password" onChange={(event) => setPassword(event.target.value)} placeholder="••••••••" required type="password" value={password} />
+        </label>
+
+        {error && <p className="login-error" role="alert">{error}</p>}
+        <button className="login-submit" disabled={pending} type="submit">
+          {pending ? "Processing..." : mode === "login" ? "Sign In" : "Create Account"}
+        </button>
+
+        <div className="login-account-help">
+          {mode === "login" ? (
+            <small>Admin · admin.user@asklake.local / asklake-admin</small>
+          ) : (
+            <small>비밀번호는 8자 이상 입력하세요. 가입이 완료되면 바로 로그인됩니다.</small>
+          )}
+        </div>
+      </form>
+    </main>
   );
 }

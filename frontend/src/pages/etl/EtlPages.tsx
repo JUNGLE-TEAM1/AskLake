@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useRef, useState } from "react";
+﻿import { useEffect, useMemo, useState } from "react";
 import type React from "react";
 import {
   flexRender,
@@ -10,6 +10,7 @@ import {
   BarChart3,
   BookOpen,
   Bot,
+  Cable,
   Calendar,
   Check,
   ChevronDown,
@@ -30,7 +31,6 @@ import {
   Plus,
   RefreshCw,
   Repeat2,
-  Save,
   Star,
   Search,
   Settings,
@@ -39,22 +39,45 @@ import {
   Table2,
   TerminalSquare,
   Trash2,
-  X,
 } from "lucide-react";
-import { Field, InfoBox, PageTitle, RetryPolicy, StatusTile } from "../../components/common";
+import { Field, InfoBox, RetryPolicy, StatusTile } from "../../components/common";
 import { CreationFlowLayout, CreationTopActions, CreationValidationPanel } from "../../components/creation/CreationFlow";
+import { ActionGroup } from "@/components/ui/action-group";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { CheckableOption } from "@/components/ui/checkable-option";
+import { CommandBar } from "@/components/ui/command-bar";
+import { FormFieldGroup, NativeSelectField } from "@/components/ui/form-field-group";
+import { Input } from "@/components/ui/input";
+import { KeyValueList } from "@/components/ui/key-value-list";
+import { NativeSelect } from "@/components/ui/native-select";
+import { PageHeader } from "@/components/ui/page-header";
+import { SegmentedTabs } from "@/components/ui/segmented-tabs";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { SelectableCard } from "@/components/ui/selectable-card";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { TagList } from "@/components/ui/tag-list";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ValidationList } from "@/components/ui/validation-list";
+import { cn } from "@/lib/utils";
 import { S3PathField } from "../../components/s3/S3PathField";
 import { DatabaseField } from "../../components/target/DatabaseField";
 import { runTransformQualitySamplePreview } from "../../data/transformQualityPreview";
 import { toCreatePipelineRequest } from "../../services/draftPipelineContract";
-import { runCellphonesReviewAnalysis, suggestReviewAnalysisSchema, type ReviewAnalysisSummary } from "../../services/reviewAnalysisApi";
-import { listSourceAssets, testSourceConnector, type SourceAssetsResponse, type SourceConnectorAnalysis } from "../../services/sourceConnectorService";
+import { getReviewSnapshot, type ReviewSnapshot } from "../../services/reviewApi";
+import { listSourceAssets, testSourceConnector, type SourceConnectorAnalysis } from "../../services/sourceConnectorService";
 import type { AuditResult, DraftPipeline, DraftPipelinePatch, FlowId, ScheduleFlowId, SchemaColumnDraft, SourceDraft, TargetLayer } from "../../types";
 import type { QualityRuleDraft, RetryPolicyDraft, ScheduleDraft, ScheduleOverlapPolicy, TransformStepDraft, WatermarkPolicyDraft, WatermarkWindowMode } from "../../types/etl";
 import type { QualityRuleOption, TransformQualityInvalidRow, TransformQualityPreviewSample, TransformQualitySampleRow, TransformQualityStepPreview, TransformQualityValidationResult } from "../../data/transformQualityPreview";
 import { SourceAssetTree } from "./SourceAssetTree";
 import { SourceJsonSampleTree } from "./SourceJsonSampleTree";
-import { XFlowSchemaTransformEditor } from "./XFlowSchemaTransformEditor";
+import { SchemaTransformWorkbench } from "./SchemaTransformWorkbench";
 
 type RepeatFrequency = "hourly" | "daily" | "weekly" | "custom";
 type RepeatScheduleDraft = {
@@ -120,18 +143,23 @@ export function SchedulePage({
     <CreationFlowLayout
       actions={<CreationTopActions onPrev={onPrev} onNext={goNext} />}
     >
-        <PageTitle title={title} description="파이프라인의 실행 시간, 반복 여부, 실행 정책을 설정합니다." />
-        <div className="xflow-review-stack schedule-xflow-stack">
-          <section className="xflow-review-card schedule-xflow-card">
-            <div className="xflow-review-card-header">
-              <span className="xflow-review-icon"><PlayCircle size={17} /></span>
+        <PageHeader
+          className="etl-flow-page-header"
+          description="파이프라인의 실행 시간, 반복 여부, 실행 정책을 설정합니다."
+          icon={<Calendar size={18} />}
+          title={title}
+        />
+        <div className="etl-review-stack schedule-config-stack">
+          <section className="etl-review-card schedule-config-card">
+            <div className="etl-review-card-header">
+              <span className="etl-review-icon"><PlayCircle size={17} /></span>
               <div>
                 <h2>실행 방식 설정</h2>
                 <p>저장만 할지, 정해진 주기로 자동 실행할지 선택합니다.</p>
               </div>
-              <span className="schedule-xflow-state">{selectedOption === "repeat" ? "자동 실행" : "직접 실행"}</span>
+              <span className="schedule-config-state">{selectedOption === "repeat" ? "자동 실행" : "직접 실행"}</span>
             </div>
-            <div className="schedule-xflow-mode-grid">
+            <div className="schedule-config-mode-grid">
               <RunTypeCard active={selectedOption === "skip"} icon={<PlayCircle size={20} />} title="스케줄링 건너뛰기" desc="시간을 정하지 않고 저장만 합니다. 필요할 때 목록에서 즉시 실행합니다." onClick={() => selectOption("skip")} />
               <RunTypeCard active={selectedOption === "repeat"} icon={<Repeat2 size={20} />} title="반복 실행" desc="정해진 주기마다 자동으로 실행합니다." onClick={() => selectOption("repeat")} />
             </div>
@@ -169,53 +197,25 @@ export function SchedulePage({
 
 function RunTypeCard({ active, icon, title, desc, onClick }: { active: boolean; icon: React.ReactNode; title: string; desc: string; onClick: () => void }) {
   return (
-    <button className={active ? "schedule-xflow-mode-card active" : "schedule-xflow-mode-card"} type="button" onClick={onClick}>
-      {active && <span className="run-selected-dot" />}
-      <span className="schedule-xflow-mode-icon">{icon}</span>
-      <span>
-        <strong>{title}</strong>
-        <small>{desc}</small>
-      </span>
-    </button>
+    <SelectableCard
+      className="schedule-config-mode-card"
+      contentClassName="schedule-config-mode-copy"
+      description={<small>{desc}</small>}
+      icon={<span className="schedule-config-mode-icon">{icon}</span>}
+      selected={active}
+      selectedIndicator={<span className="run-selected-dot" />}
+      title={title}
+      onClick={onClick}
+    />
   );
 }
 
 function mergeFieldRows(baseFields: Array<[string, string]>, savedFields: Array<[string, string]>): Array<[string, string]> {
   const savedByLabel = new Map(savedFields);
-  const mergedFields = baseFields.map(([label, value]) => {
-    const savedValue = savedByLabel.get(label);
-    if (shouldBackfillSourceField(label, value, savedValue)) return [label, value] as [string, string];
-    return [label, savedValue ?? value] as [string, string];
-  });
+  const mergedFields = baseFields.map(([label, value]) => [label, savedByLabel.get(label) ?? value] as [string, string]);
   const baseLabels = new Set(baseFields.map(([label]) => label));
   const extraSavedFields = savedFields.filter(([label]) => !baseLabels.has(label));
   return [...mergedFields, ...extraSavedFields];
-}
-
-function mergeSourceFieldsWithDefaults(baseFields: Array<[string, string]>, savedFields: Array<[string, string]> | undefined): Array<[string, string]> {
-  return savedFields ? mergeFieldRows(baseFields, savedFields) : baseFields;
-}
-
-function shouldBackfillSourceField(label: string, defaultValue: string, savedValue: string | undefined) {
-  if (savedValue === undefined || savedValue.trim() !== "" || defaultValue.trim() === "") return false;
-  return [
-    "Access Key",
-    "Broker / Endpoint",
-    "Bucket / Stage Name",
-    "CONSUMER GROUP ID",
-    "Database Name",
-    "Endpoint / Host",
-    "Endpoint URL",
-    "File Type",
-    "Path",
-    "Password / Auth Token",
-    "Port",
-    "Region",
-    "Secret Key",
-    "TOPIC / QUEUE NAME",
-    "Use Path Style",
-    "Username",
-  ].includes(label);
 }
 
 function mergeConnectorSourceConfig(currentFields: Array<[string, string]>, responseFields: Array<[string, string]>): Array<[string, string]> {
@@ -372,14 +372,6 @@ const sourceValueLabels: Record<string, string> = {
   Verified: "검증됨",
 };
 
-const sourceActionLabels: Record<string, string> = {
-  "Download CSV": "CSV 다운로드",
-  "Fetch Metadata": "메타데이터 조회",
-  "Full Screen": "전체 화면",
-  "Refresh Preview": "미리보기 새로고침",
-  "Show Advanced Configuration": "고급 설정 보기",
-};
-
 function sourceTypeLabel(value: string) {
   return sourceTypeLabels[value] ?? value;
 }
@@ -396,10 +388,6 @@ function sourceValueLabel(value: string) {
   if (/^leader \d+$/i.test(value)) return value.replace(/^leader/i, "리더");
   if (/^\d+ bytes$/i.test(value)) return value.replace("bytes", "바이트");
   return sourceValueLabels[value] ?? value;
-}
-
-function sourceActionLabel(value: string) {
-  return sourceActionLabels[value] ?? value;
 }
 
 function isInternalSourceField(label: string) {
@@ -634,7 +622,7 @@ const PERMISSION_TEMPLATES = ["Data Engineer Group", "Data Analyst Group", "ML T
 const VISIBILITY_OPTIONS = ["조직 내부", "프로젝트 멤버", "외부 공유"] as const;
 const APPROVAL_STATUS_OPTIONS = ["승인 검토", "승인 완료", "오너 승인 필요"] as const;
 const TARGET_LAYER_OPTIONS: TargetLayer[] = ["RAW", "BRONZE", "SILVER", "GOLD"];
-const TARGET_FORMAT_OPTIONS: TargetFileFormat[] = ["parquet", "csv", "json", "jsonl"];
+const TARGET_FORMAT_OPTIONS: TargetFileFormat[] = ["parquet", "csv", "json"];
 
 const PERMISSION_ACCESS_ITEMS = ["조회", "쿼리 실행", "메타데이터", "관리"] as const;
 
@@ -682,7 +670,7 @@ type TargetDraftSlice = {
   testStatus?: "idle" | "success" | "failed";
 };
 
-type TargetFileFormat = "parquet" | "csv" | "json" | "jsonl";
+type TargetFileFormat = "parquet" | "csv" | "json";
 type TargetTestStatus = "idle" | "pending" | "success" | "failed";
 type TargetColumnType = "string" | "number" | "boolean" | "datetime" | "json";
 
@@ -773,36 +761,28 @@ function buildTargetStoragePath(targetDataset: string, targetLayer: TargetLayer)
 }
 
 function normalizeKafkaDatasetName(topic: string) {
-  return (topic || "reviews.raw").trim().replace(/[^0-9A-Za-z_]+/g, "_").replace(/^_+|_+$/g, "").toLowerCase() || "reviews_raw";
+  const normalized = topic.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  return normalized || "kafka_events";
+}
+
+function isDefaultTargetDataset(value: string | undefined) {
+  return !value?.trim() || value.trim() === DEFAULT_TARGET_DATASET;
 }
 
 function isDefaultTargetStoragePath(value: string | undefined) {
-  return !value || value.includes("asklake-output/");
+  return !value?.trim() || value.trim() === buildTargetStoragePath(DEFAULT_TARGET_DATASET, DEFAULT_TARGET_LAYER);
 }
 
 function isLegacyKafkaLandingPath(value: string | undefined) {
   return Boolean(value?.includes("kafka-landing/"));
 }
 
-function isDefaultTargetDataset(value: string | undefined) {
-  return !value || [DEFAULT_TARGET_DATASET, "pair_a_customer_review_gold"].includes(value);
-}
-
-function isDefaultTargetTable(value: string | undefined) {
-  return !value || [DEFAULT_TARGET_DATASET, "pair_a_customer_review_gold"].includes(value);
-}
-
 function isDefaultTargetDescription(value: string | undefined) {
-  return !value || value.includes("고객 리뷰 분석용");
-}
-
-function kafkaTargetTags(tags: string[] | undefined, layer: TargetLayer) {
-  const visibleTags = filterVisibleTargetTags(tags);
-  return visibleTags.length > 0 ? visibleTags : ["#kafka", `#${layer.toLowerCase()}`];
+  return !value?.trim() || value.trim() === "고객 리뷰 분석용 정제 데이터셋";
 }
 
 const TARGET_CONFIG_STORAGE_KEY = "asklake.targetConfigDraft";
-const TARGET_FILE_FORMAT_VALUES: TargetFileFormat[] = ["parquet", "csv", "json", "jsonl"];
+const TARGET_FILE_FORMAT_VALUES: TargetFileFormat[] = ["parquet", "csv", "json"];
 const SAMPLE_TARGET_SCHEMA_COLUMNS: SchemaColumnDraft[] = [
   { included: true, nullable: false, sourceName: "order_date", targetName: "order_date", type: "date" },
   { included: true, nullable: false, sourceName: "order_count", targetName: "order_count", type: "integer" },
@@ -1034,6 +1014,7 @@ function getTargetDraftValues(draft: DraftPipeline) {
   const compatDraft = draft as DraftPipelineWithSlices;
   const target = compatDraft.target;
   const isKafkaSource = draft.source.sourceType === "Stream / Kafka" || draft.source.sourceType === "Kafka JSON";
+  const isContinuousKafka = isKafkaSource && draft.source.executionMode === "continuous";
   const kafkaTopic = sourceConfigValue(draft.source.sourceConfig, "TOPIC / QUEUE NAME") || sourceConfigValue(draft.source.sourceConfig, "Topic") || "reviews.raw";
   const kafkaDatasetName = normalizeKafkaDatasetName(kafkaTopic);
   const rawTargetDataset = target?.targetDataset ?? target?.datasetName ?? compatDraft.targetDataset;
@@ -1041,9 +1022,11 @@ function getTargetDraftValues(draft: DraftPipeline) {
     ? kafkaDatasetName
     : getDisplayText(rawTargetDataset, isKafkaSource ? kafkaDatasetName : DEFAULT_TARGET_DATASET);
   const rawTargetFormat = target?.targetFormat ?? target?.format ?? compatDraft.targetFormat;
-  const targetFormat = isKafkaSource && (!rawTargetFormat || rawTargetFormat === DEFAULT_TARGET_FORMAT)
-    ? "jsonl"
-    : getKnownOption(rawTargetFormat, TARGET_FORMAT_OPTIONS, isKafkaSource ? "jsonl" : DEFAULT_TARGET_FORMAT);
+  const targetFormat = isContinuousKafka
+    ? "parquet"
+    : isKafkaSource && (!rawTargetFormat || rawTargetFormat === DEFAULT_TARGET_FORMAT)
+      ? "jsonl"
+      : getKnownOption(rawTargetFormat, TARGET_FORMAT_OPTIONS, isKafkaSource ? "jsonl" : DEFAULT_TARGET_FORMAT);
   const rawTargetLayer = target?.targetLayer ?? target?.layer ?? compatDraft.targetLayer ?? draft.target.layer;
   const targetLayer = isKafkaSource && (!rawTargetLayer || rawTargetLayer === DEFAULT_TARGET_LAYER)
     ? "BRONZE"
@@ -1056,17 +1039,15 @@ function getTargetDraftValues(draft: DraftPipeline) {
 
   return {
     description: isKafkaSource && isDefaultTargetDescription(target?.description ?? draft.target.description)
-      ? "Kafka snapshot direct target 데이터셋"
+      ? isContinuousKafka ? "Kafka continuous micro-batch target 데이터셋" : "Kafka snapshot direct target 데이터셋"
       : getDisplayText(target?.description ?? draft.target.description, "고객 리뷰 분석용 정제 데이터셋"),
     jobName: getDisplayText(target?.jobName ?? compatDraft.jobName, buildJobName(targetDataset)),
     owner: getDisplayText(target?.owner ?? compatDraft.owner ?? draft.permission.owner, DEFAULT_OWNER),
-    partitionColumns: isKafkaSource ? ["created_at"] : target?.partitionColumns ?? draft.target.partitionColumns ?? ["date", "category"],
+    partitionColumns: target?.partitionColumns ?? draft.target.partitionColumns ?? ["date", "category"],
     rag: typeof target?.rag === "boolean" ? target.rag : compatDraft.rag ?? draft.target.rag,
     storagePath,
-    tableName: isKafkaSource && isDefaultTargetTable(target?.tableName ?? draft.target.tableName)
-      ? targetDataset
-      : getDisplayText(target?.tableName ?? draft.target.tableName, targetDataset),
-    tags: isKafkaSource ? kafkaTargetTags(target?.tags ?? draft.target.tags, targetLayer) : filterVisibleTargetTags(target?.tags ?? draft.target.tags ?? DEFAULT_TARGET_TAGS),
+    tableName: getDisplayText(target?.tableName ?? draft.target.tableName, targetDataset),
+    tags: filterVisibleTargetTags(target?.tags ?? draft.target.tags ?? DEFAULT_TARGET_TAGS),
     targetDataset,
     targetFormat,
     targetLayer,
@@ -1087,7 +1068,6 @@ export function SourceConnectionPage({
   onNotify,
   onPrev,
   onNext,
-  sourceLocked = false,
 }: {
   draft: DraftPipeline;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
@@ -1096,27 +1076,40 @@ export function SourceConnectionPage({
   onPrev: () => void;
   onNext: () => void;
   onSave: () => void;
-  sourceLocked?: boolean;
 }) {
   const [sourceType, setSourceType] = useState(draft.source.sourceType || "");
+  const kafkaExecutionMode = draft.source.executionMode ?? "snapshot";
   const [sourceFields, setSourceFields] = useState<Record<string, Array<[string, string]>>>({});
   const [connectionStatus, setConnectionStatus] = useState<SourceDraft["connectionStatus"]>(draft.source.connectionStatus);
   const [connectionMessage, setConnectionMessage] = useState(draft.source.connectionMessage ?? "검토 전에 연결 테스트가 필요합니다.");
   const [sourceRuntime, setSourceRuntime] = useState<SourceConnectorAnalysis | null>(null);
-  const [sourceStage, setSourceStage] = useState<"choose" | "connect" | "browse">(() => sourceLocked ? "connect" : getInitialSourceStage(draft));
+  const [sourceStage, setSourceStage] = useState<"choose" | "connect" | "browse">(() => getInitialSourceStage(draft));
   const [loadingAssetPath, setLoadingAssetPath] = useState("");
-  const [samplingAssetPath, setSamplingAssetPath] = useState("");
   const [selectedAssetPath, setSelectedAssetPath] = useState("");
-  const sourceAssetCacheRef = useRef<Map<string, SourceAssetsResponse>>(new Map());
-  const sourceSampleInFlightRef = useRef(false);
-  const connectorMeta: Record<string, { desc: string; icon: React.ReactNode; label: string; status: string }> = {
-    "File / S3": { desc: "MinIO 버킷을 연결한 뒤 실제 오브젝트를 선택합니다.", icon: <SourceBrandIcon kind="s3" />, label: "MinIO", status: "실제 연결" },
-    PostgreSQL: { desc: "테이블 목록, 샘플 행, 스키마 추론", icon: <SourceBrandIcon kind="postgres" />, label: "Postgres", status: "실제 연결" },
-    MongoDB: { desc: "컬렉션 목록, 문서 샘플, 중첩 필드 추론", icon: <SourceBrandIcon kind="mongo" />, label: "MongoDB", status: "실제 연결" },
-    "REST API": { desc: "HTTP 응답 샘플을 백엔드에서 수집", icon: <SourceBrandIcon kind="rest" />, label: "REST API", status: "실제 연결" },
-    "Data Lake": { desc: "MinIO 경로의 Parquet 오브젝트 목록", icon: <SourceBrandIcon kind="lake" />, label: "레이크", status: "목록 조회" },
-    "SQL Result": { desc: "SQL Preview 결과를 처리 Job 입력으로 사용", icon: <TerminalSquare size={20} />, label: "SQL Result", status: "검증 완료" },
-    "Stream / Kafka": { desc: "Apache Kafka 스트림 데이터를 연결합니다.", icon: <SourceBrandIcon kind="kafka" />, label: "Kafka", status: "메타데이터" },
+  const [continuousAdvancedOpen, setContinuousAdvancedOpen] = useState(false);
+  const sourceLocked = connectionStatus === "testing";
+  const continuousConfig = draft.source.continuousConfig ?? {
+    initialOffsetPolicy: "earliest" as const,
+    triggerIntervalSeconds: 30,
+    maxOffsetsPerTrigger: 10000,
+  };
+  const updateContinuousConfig = (patch: Partial<typeof continuousConfig>) => {
+    onDraftChange({
+      source: {
+        executionMode: "continuous",
+        continuousConfig: { ...continuousConfig, ...patch },
+      },
+      target: { format: "parquet" },
+    });
+  };
+  const connectorMeta: Record<string, { icon: React.ReactNode; label: string; status: string }> = {
+    "File / S3": { icon: <SourceBrandIcon kind="s3" />, label: "MinIO", status: "실제 연결" },
+    PostgreSQL: { icon: <SourceBrandIcon kind="postgres" />, label: "Postgres", status: "실제 연결" },
+    MongoDB: { icon: <SourceBrandIcon kind="mongo" />, label: "MongoDB", status: "실제 연결" },
+    "REST API": { icon: <SourceBrandIcon kind="rest" />, label: "REST API", status: "실제 연결" },
+    "Data Lake": { icon: <SourceBrandIcon kind="lake" />, label: "레이크", status: "목록 조회" },
+    "SQL Result": { icon: <TerminalSquare size={20} />, label: "SQL Result", status: "검증 완료" },
+    "Stream / Kafka": { icon: <SourceBrandIcon kind="kafka" />, label: "Kafka", status: "메타데이터" },
   };
   const sourceConfigs: Record<string, {
     title: string;
@@ -1130,7 +1123,6 @@ export function SourceConnectionPage({
     previewNote: string;
     previewColumns: string[];
     previewRows: string[][];
-    actions?: string[];
     info?: string;
   }> = {
     "SQL Result": {
@@ -1204,12 +1196,12 @@ export function SourceConnectionPage({
       description: "MinIO 오브젝트 스토리지에서 버킷과 제한 샘플을 실제 조회합니다.",
       fields: [
         ["Storage Provider", "MinIO"],
-        ["Endpoint URL", "http://127.0.0.1:9000"],
-        ["Region", "us-east-1"],
-        ["Bucket / Stage Name", "m3-raw"],
+        ["Endpoint URL", ""],
+        ["Region", ""],
+        ["Bucket / Stage Name", ""],
         ["Path / Prefix", ""],
-        ["Access Key", "m3admin"],
-        ["Secret Key", "wishuponastar"],
+        ["Access Key", ""],
+        ["Secret Key", ""],
         ["Use Path Style", "true"],
         ["File Type", "auto"],
         ["Delimiter", ","],
@@ -1224,7 +1216,6 @@ export function SourceConnectionPage({
       previewNote: "미리보기 데이터 없음 · MinIO 연결 테스트를 실행하세요.",
       previewColumns: ["Object Key", "Size", "Last Modified"],
       previewRows: [],
-      actions: ["Refresh Preview"],
     },
     "Data Lake": {
       title: "데이터 레이크 소스",
@@ -1233,11 +1224,11 @@ export function SourceConnectionPage({
         ["Lake Type", "Delta Lake (Databricks)"],
         ["CATALOG / NAMESPACE", "local_catalog"],
         ["DATABASE / SCHEMA", "default"],
-        ["Path", "s3://m3-raw/"],
+        ["Path", "s3://m3-raw/nyc_taxi/yellow_parquet/"],
         ["Endpoint URL", "http://127.0.0.1:9000"],
         ["Region", "us-east-1"],
-        ["Access Key", "m3admin"],
-        ["Secret Key", "wishuponastar"],
+        ["Access Key", ""],
+        ["Secret Key", ""],
         ["Use Path Style", "true"],
         ["Read Mode", "Latest Version (Snapshot Isolation)"],
         ["DATASET OR TABLE SELECTOR", ""],
@@ -1250,7 +1241,6 @@ export function SourceConnectionPage({
       previewNote: "미리보기 데이터 없음 · 백엔드 연결 테스트를 실행하세요.",
       previewColumns: ["Event Timestamp", "User ID", "Transaction ID", "Region", "Action Type", "Latency"],
       previewRows: [],
-      actions: ["Fetch Metadata", "Download CSV", "Full Screen"],
     },
     "REST API": {
       title: "REST API 소스",
@@ -1275,7 +1265,6 @@ export function SourceConnectionPage({
       previewNote: "미리보기 데이터 없음 · 연결 테스트를 실행하세요.",
       previewColumns: ["User ID", "Email", "Date", "Status", "Amount"],
       previewRows: [],
-      actions: ["Refresh Preview"],
     },
     "Stream / Kafka": {
       title: "스트림 소스 설정",
@@ -1283,13 +1272,11 @@ export function SourceConnectionPage({
       fields: [
         ["Stream Type", "Apache Kafka"],
         ["Broker / Endpoint", "127.0.0.1:19092"],
-        ["TOPIC / QUEUE NAME", "reviews.raw"],
-        ["CONSUMER GROUP ID", "asklake-reviews-raw-job"],
-        ["Batch Max Messages (per partition)", "100"],
-        ["Timeout Ms", "10000"],
+        ["TOPIC / QUEUE NAME", "asklake-source-events"],
+        ["CONSUMER GROUP ID", "asklake-etl-consumer-01"],
         ["Offset Policy", "Earliest (Start from beginning)"],
         ["Message Format", "JSON (Auto-infer Schema)"],
-        ["Authentication", "None"],
+        ["Authentication", "SASL / SCRAM"],
       ],
       testItems: [["Broker Reachable", "Not tested"], ["Topic Access", "Pending"], ["Backend connector", "Required"]],
       logs: ["Kafka 소스 윈도우 식별은 백엔드 커넥터 러너에서 검증합니다.", "브라우저는 Kafka 프로토콜 핸드셰이크를 수행할 수 없습니다."],
@@ -1299,21 +1286,17 @@ export function SourceConnectionPage({
       previewNote: "미리보기 데이터 없음 · 백엔드 연결 테스트를 실행하세요.",
       previewColumns: ["Payload (Raw JSON)", "Part.", "Offset", "Timestamp"],
       previewRows: [],
-      actions: ["Show Advanced Configuration"],
     },
   };
   const selectedSourceType = sourceType === "Database" ? "PostgreSQL" : sourceType;
   const activeSourceType = sourceConfigs[selectedSourceType] ? selectedSourceType : "";
   const hasSelectedSource = activeSourceType.length > 0;
   const current = hasSelectedSource ? sourceConfigs[activeSourceType] : sourceConfigs["File / S3"];
-  const cachedEditableFields = activeSourceType ? sourceFields[activeSourceType] : undefined;
-  const editableFields = cachedEditableFields
-    ? mergeSourceFieldsWithDefaults(current.fields, cachedEditableFields)
-    : (
+  const editableFields = sourceFields[activeSourceType] ?? (
     draft.source.sourceType === activeSourceType && draft.source.sourceConfig.length > 0
       ? mergeFieldRows(current.fields, draft.source.sourceConfig)
       : current.fields
-    );
+  );
   const isSqlResultSource = activeSourceType === "SQL Result";
   const hasSqlResultPreview = isSqlResultSource && hasSqlResultPreviewConfig(editableFields);
   const sourceLabel = hasSelectedSource
@@ -1336,7 +1319,6 @@ export function SourceConnectionPage({
   );
   const displayPreviewColumns = selectedAssetHasSample ? sourceRuntime?.previewColumns ?? [] : [];
   const displayPreviewRows = selectedAssetHasSample ? sourceRuntime?.previewRows ?? [] : [];
-  const isSamplingAsset = samplingAssetPath.length > 0;
   const hasSamplePreview = displayPreviewColumns.length > 0 && displayPreviewRows.length > 0;
   const hasSchemaPatch = Boolean(sourceRuntime?.draftPatch.schema?.columns?.length && sourceRuntime?.draftPatch.schema?.sampleRows?.length);
   const displayPreviewNote = sourceRuntime?.previewNote ?? current.previewNote;
@@ -1354,22 +1336,6 @@ export function SourceConnectionPage({
     ["인증 방식", isSqlResultSource ? "SQL Preview 검증" : activeSourceType === "File / S3" ? "MinIO 액세스 키" : "백엔드 커넥터"],
     ["다음 단계", isSqlResultSource ? "Review 확인" : "스키마 추론"],
   ];
-  const assetCacheKey = (prefix: string, fieldsForAssets = editableFields) => JSON.stringify({
-    fields: fieldsForAssets,
-    prefix,
-    sourceType: activeSourceType,
-  });
-  const getSourceAssets = async (prefix: string, fieldsForAssets = editableFields) => {
-    const key = assetCacheKey(prefix, fieldsForAssets);
-    const cached = sourceAssetCacheRef.current.get(key);
-    if (cached) return cached;
-    const result = await listSourceAssets(activeSourceType, fieldsForAssets, prefix);
-    sourceAssetCacheRef.current.set(key, result);
-    return result;
-  };
-  const clearSourceAssetCache = () => {
-    sourceAssetCacheRef.current.clear();
-  };
 
   const applySourceDraft = (
     nextType = activeSourceType,
@@ -1390,6 +1356,7 @@ export function SourceConnectionPage({
       return;
     }
     const label = sourceLabelFromFields(nextType, nextFields);
+    const executionMode = nextType === "Stream / Kafka" ? draft.source.executionMode ?? "snapshot" : "snapshot";
     onDraftChange({
       source: {
         connectionMessage: nextMessage,
@@ -1397,15 +1364,14 @@ export function SourceConnectionPage({
         sourceConfig: nextFields,
         sourceLabel: label,
         sourceType: nextType,
+        executionMode,
+        continuousConfig: executionMode === "continuous" ? draft.source.continuousConfig : undefined,
       },
     });
   };
 
   const selectSource = (value: string) => {
-    if (sourceLocked) return;
-    const nextFields = value === activeSourceType
-      ? editableFields
-      : mergeSourceFieldsWithDefaults(sourceConfigs[value].fields, sourceFields[value]);
+    const nextFields = value === activeSourceType ? editableFields : sourceFields[value] ?? sourceConfigs[value].fields;
     const nextIsSqlResult = value === "SQL Result";
     const nextHasSqlResultPreview = nextIsSqlResult && hasSqlResultPreviewConfig(nextFields);
     const nextStatus: SourceDraft["connectionStatus"] = nextIsSqlResult ? (nextHasSqlResultPreview ? "success" : "idle") : "idle";
@@ -1415,10 +1381,8 @@ export function SourceConnectionPage({
         : "SQL Result는 SQL 분석 Preview에서 처리 Job 생성으로 진입할 때 사용합니다."
       : `${sourceTypeLabel(value)} 설정을 선택했습니다. 검토 전에 연결 테스트를 실행하세요.`;
     setSourceType(value);
-    clearSourceAssetCache();
     setSourceRuntime(null);
     setSelectedAssetPath("");
-    setSourceStage("connect");
     setConnectionStatus(nextStatus);
     setConnectionMessage(nextMessage);
     applySourceDraft(value, nextFields, nextStatus, nextMessage);
@@ -1426,11 +1390,9 @@ export function SourceConnectionPage({
   };
 
   const updateSourceField = (label: string, value: string) => {
-    if (sourceLocked) return;
     const nextFields = editableFields.map(([fieldLabel, fieldValue]) => [fieldLabel, fieldLabel === label ? value : fieldValue] as [string, string]);
     const nextMessage = isSqlResultSource ? connectionMessage : "소스 설정이 변경되었습니다. 연결 테스트를 다시 실행하세요.";
     const nextStatus = isSqlResultSource ? connectionStatus : "idle";
-    clearSourceAssetCache();
     setSourceFields((fields) => ({ ...fields, [activeSourceType]: nextFields }));
     setSourceRuntime(null);
     setSelectedAssetPath("");
@@ -1439,39 +1401,12 @@ export function SourceConnectionPage({
     applySourceDraft(activeSourceType, nextFields, nextStatus, nextMessage);
   };
 
-  const fillMinioDemoFields = () => {
-    if (sourceLocked) return;
-    const demoFields: Array<[string, string]> = [
-      ["Storage Provider", "MinIO"],
-      ["Endpoint URL", "http://127.0.0.1:9000"],
-      ["Region", "us-east-1"],
-      ["Bucket / Stage Name", "m3-raw"],
-      ["Path / Prefix", ""],
-      ["Access Key", "m3admin"],
-      ["Secret Key", "wishuponastar"],
-      ["Use Path Style", "true"],
-      ["File Type", "auto"],
-      ["Delimiter", ","],
-      ["Encoding", "UTF-8"],
-      ["Header", "Treat first row as header"],
-    ];
-    const nextFields = mergeFieldRows(editableFields, demoFields);
-    const nextMessage = "로컬 MinIO 데모 연결값을 채웠습니다. 연결 테스트를 실행하세요.";
-    setSourceFields((fields) => ({ ...fields, [activeSourceType]: nextFields }));
-    setSourceRuntime(null);
-    setSelectedAssetPath("");
-    setConnectionStatus("idle");
-    setConnectionMessage(nextMessage);
-    applySourceDraft(activeSourceType, nextFields, "idle", nextMessage);
-    onAction("etl.source.demo_minio_filled", "/api/etl/sources/demo-minio", activeSourceType);
-  };
-
   const loadSourceAssetChildren = async (folderPath: string) => {
     if (!hasSelectedSource || !(activeSourceType === "File / S3" || activeSourceType === "Data Lake")) return;
     const folderPrefix = normalizeFolderPrefix(folderPath);
     setLoadingAssetPath(folderPrefix);
     try {
-      const result = await getSourceAssets(folderPrefix);
+      const result = await listSourceAssets(activeSourceType, editableFields, folderPrefix);
       setSourceRuntime((runtime) => runtime
         ? { ...runtime, assets: mergeSourceAssets(runtime.assets ?? [], result.assets ?? []) }
         : {
@@ -1495,10 +1430,6 @@ export function SourceConnectionPage({
   };
 
   const selectSourceAsset = async (assetPath: string) => {
-    if (sourceSampleInFlightRef.current) {
-      onNotify("선택한 파일의 샘플을 불러오는 중입니다.");
-      return;
-    }
     const asset = displayAssets.find(([path]) => path === assetPath);
     if (!asset) return;
     const [, assetMeta] = asset;
@@ -1517,14 +1448,11 @@ export function SourceConnectionPage({
     ]);
     const nextMessage = `${assetMeta === "folder" ? "폴더" : "파일"} ${assetPath} 선택됨`;
     setSelectedAssetPath(assetPath);
-    setSamplingAssetPath(assetPath);
-    setSourceRuntime(null);
     setSourceFields((fields) => ({ ...fields, [activeSourceType]: nextFields }));
     setConnectionMessage(nextMessage);
     setConnectionStatus("testing");
     applySourceDraft(activeSourceType, nextFields, "testing", nextMessage);
     onAction("etl.source.asset_selected", "/api/etl/sources/assets", assetPath);
-    sourceSampleInFlightRef.current = true;
     try {
       const result = mergeConnectorAnalysisSourceConfig(
         publicConnectorAnalysis(await testSourceConnector(activeSourceType, nextFields)),
@@ -1547,14 +1475,10 @@ export function SourceConnectionPage({
       applySourceDraft(activeSourceType, nextFields, "failed", message);
       onAction("etl.source.asset_sample_failed", "/api/etl/sources/test", assetPath, "failed");
       onNotify(message);
-    } finally {
-      sourceSampleInFlightRef.current = false;
-      setSamplingAssetPath("");
     }
   };
 
-  const runSourceConnectionTest = async (fieldsForTest = editableFields) => {
-    if (sourceLocked) return;
+  const testConnection = async () => {
     if (!hasSelectedSource) {
       onNotify("먼저 소스를 선택하세요.");
       return;
@@ -1566,7 +1490,7 @@ export function SourceConnectionPage({
       const nextStatus: SourceDraft["connectionStatus"] = hasSqlResultPreview ? "success" : "idle";
       setConnectionStatus(nextStatus);
       setConnectionMessage(message);
-      applySourceDraft(activeSourceType, fieldsForTest, nextStatus, message);
+      applySourceDraft(activeSourceType, editableFields, nextStatus, message);
       onNotify(message);
       return;
     }
@@ -1576,15 +1500,15 @@ export function SourceConnectionPage({
     setConnectionMessage(testingMessage);
     setSourceRuntime(null);
     setSelectedAssetPath("");
-    applySourceDraft(activeSourceType, fieldsForTest, "testing", testingMessage);
+    applySourceDraft(activeSourceType, editableFields, "testing", testingMessage);
     try {
       if (activeSourceType !== "File / S3" && activeSourceType !== "Data Lake") {
         const result = mergeConnectorAnalysisSourceConfig(
-          publicConnectorAnalysis(await testSourceConnector(activeSourceType, fieldsForTest)),
-          fieldsForTest,
+          publicConnectorAnalysis(await testSourceConnector(activeSourceType, editableFields)),
+          editableFields,
         );
         if (result.draftPatch.source?.sourceConfig) {
-          setSourceFields((fields) => ({ ...fields, [activeSourceType]: result.draftPatch.source?.sourceConfig ?? fieldsForTest }));
+          setSourceFields((fields) => ({ ...fields, [activeSourceType]: result.draftPatch.source?.sourceConfig ?? editableFields }));
         }
         setSourceRuntime(result);
         setSelectedAssetPath("");
@@ -1595,7 +1519,7 @@ export function SourceConnectionPage({
         onNotify(result.message);
         return;
       }
-      const result = await getSourceAssets("", fieldsForTest);
+      const result = await listSourceAssets(activeSourceType, editableFields, "");
       const successMessage = `${sourceTypeLabel(activeSourceType)} 연결 성공: 하위 항목 ${result.assets.length}개`;
       const connectorResult: SourceConnectorAnalysis = {
         actionPath: "/api/etl/sources/assets",
@@ -1604,8 +1528,8 @@ export function SourceConnectionPage({
           source: {
             connectionMessage: successMessage,
             connectionStatus: "success",
-            sourceConfig: fieldsForTest,
-            sourceLabel: sourceLabelFromFields(activeSourceType, fieldsForTest),
+            sourceConfig: editableFields,
+            sourceLabel: sourceLabelFromFields(activeSourceType, editableFields),
             sourceType: activeSourceType,
           },
         },
@@ -1629,14 +1553,10 @@ export function SourceConnectionPage({
       setSourceRuntime(null);
       setConnectionStatus("failed");
       setConnectionMessage(message);
-      applySourceDraft(activeSourceType, fieldsForTest, "failed", message);
+      applySourceDraft(activeSourceType, editableFields, "failed", message);
       onAction("etl.source.connection_failed", "/api/etl/sources/test", activeSourceType, "failed");
       onNotify(message);
     }
-  };
-
-  const testConnection = () => {
-    void runSourceConnectionTest(editableFields);
   };
 
   const goNext = () => {
@@ -1644,107 +1564,71 @@ export function SourceConnectionPage({
       onNotify("먼저 소스를 선택하세요.");
       return;
     }
-    if (connectionStatus !== "success") {
-      onNotify(isSqlResultSource ? "SQL 분석에서 Preview를 실행한 뒤 처리 Job 생성으로 진입해 주세요." : "먼저 소스 연결 테스트를 성공시켜야 스키마 단계로 넘어갈 수 있습니다.");
+    if (sourceStage === "choose") {
+      setSourceStage("connect");
       return;
     }
-    if (!sourceLocked && requiresAssetSelectionForPreview && !selectedAssetHasSample) {
-      onNotify("목록에서 실제 파일을 선택해 스키마 샘플을 확인한 뒤 다음 단계로 이동하세요.");
+    if (connectionStatus !== "success") {
+      onNotify(isSqlResultSource ? "SQL 분석에서 Preview를 실행한 뒤 처리 Job 생성으로 진입해 주세요." : "먼저 소스 연결 테스트를 성공시켜야 스키마 단계로 넘어갈 수 있습니다.");
       return;
     }
     applySourceDraft(activeSourceType, verifiedSourceFields, connectionStatus, connectionMessage);
     onNext();
   };
 
-  const fetchMetadata = () => {
-    onAction("etl.source.metadata_fetched", "/api/etl/sources/metadata", activeSourceType);
-  };
-
-  const sourceChoiceGroups: Array<{ connectors: string[]; description: string; id: string; title: string }> = [
-    {
-      id: "database",
-      title: "데이터베이스",
-      description: "관계형/문서형 DB에서 테이블·컬렉션을 조회하고 샘플로 스키마를 추론합니다.",
-      connectors: ["PostgreSQL", "MongoDB"],
-    },
-    {
-      id: "object-storage",
-      title: "파일 / 오브젝트 스토리지",
-      description: "MinIO 버킷, 파일, Parquet 레이크 오브젝트를 선택합니다.",
-      connectors: ["File / S3", "Data Lake"],
-    },
-    {
-      id: "stream",
-      title: "스트림",
-      description: "이벤트 스트림 메타데이터와 토픽 기반 입력을 설정합니다.",
-      connectors: ["Stream / Kafka"],
-    },
-    {
-      id: "api",
-      title: "API",
-      description: "HTTP 응답 샘플을 수집해서 처리 입력으로 사용합니다.",
-      connectors: ["REST API"],
-    },
-  ];
+  const sourceChoiceConnectors = ["PostgreSQL", "MongoDB", "File / S3", "REST API", "Stream / Kafka", "Data Lake"];
 
   return (
     <CreationFlowLayout
-      actions={<CreationTopActions onPrev={onPrev} onNext={goNext} />}
+      actions={<CreationTopActions nextDisabled={sourceStage === "choose" && !hasSelectedSource} useShadcnStyles onPrev={onPrev} onNext={goNext} />}
     >
-        <PageTitle title="소스 연결" description={sourceLocked ? "저장된 Job의 소스 설정입니다. 소스를 바꾸려면 복제 후 새 Job을 생성하세요." : isSqlResultSource ? "SQL Preview 결과를 처리 Job 입력으로 확인합니다." : "소스를 선택하고 실제 연결 테스트로 샘플을 가져옵니다."} />
+        <PageHeader
+          className="etl-flow-page-header etl-source-page-header"
+          icon={<Cable size={18} />}
+          title="소스 연결"
+        />
         <section className="panel hegun-console-panel source-connect-panel" aria-label="소스 선택 및 연결">
-          <div className="source-stage-tabs" role="tablist" aria-label="소스 연결 단계">
-            <button className={sourceStage === "choose" ? "active" : ""} disabled={sourceLocked} title={sourceLocked ? "수정 모드에서는 소스가 고정됩니다." : undefined} type="button" onClick={() => setSourceStage("choose")}>1. 소스 선택</button>
-            <button className={sourceStage === "connect" ? "active" : ""} type="button" disabled={!hasSelectedSource} onClick={() => setSourceStage("connect")}>2. 연결 설정</button>
-            <button className={sourceStage === "browse" ? "active" : ""} type="button" disabled={connectionStatus !== "success" || !hasDetectedAssets} onClick={() => setSourceStage("browse")}>3. 데이터 탐색</button>
-          </div>
+          <Tabs
+            value={sourceStage}
+            onValueChange={(value) => setSourceStage(value as "choose" | "connect" | "browse")}
+          >
+            <TabsList aria-label="소스 연결 단계" className="source-stage-tabs">
+              <TabsTrigger value="choose">1. 소스 선택</TabsTrigger>
+              <TabsTrigger disabled={!hasSelectedSource || sourceStage === "choose"} value="connect">2. 연결 설정</TabsTrigger>
+              <TabsTrigger disabled={connectionStatus !== "success" || !hasDetectedAssets} value="browse">3. 데이터 탐색</TabsTrigger>
+            </TabsList>
 
           {sourceStage === "choose" && (
             <div className="source-stage-screen source-choice-screen">
-              <div className="xflow-source-select-heading">
-                <h2>Select a data source</h2>
-                <p>Choose the type of data source you want to connect</p>
+              <div className="source-select-heading">
+                <h2>데이터 소스 선택</h2>
               </div>
-              <div className="source-choice-groups">
-                {sourceChoiceGroups.map((group) => (
-                  <section className="source-choice-group" key={group.id} aria-labelledby={`source-choice-${group.id}`}>
-                    <div className="source-choice-group-head">
-                      <div>
-                        <h3 id={`source-choice-${group.id}`}>{group.title}</h3>
-                        <p>{group.description}</p>
-                      </div>
-                      <span>{group.connectors.length} connectors</span>
-                    </div>
-                    <div className="source-choice-list">
-                      {group.connectors.map((connector) => {
-                        const meta = connectorMeta[connector];
-                        const config = sourceConfigs[connector];
-                        const selected = sourceType === connector;
-                        return (
-                          <button aria-label={`${group.title} ${meta.label} ${meta.desc}`} className={selected ? "source-choice-row active" : "source-choice-row"} disabled={sourceLocked} key={connector} type="button" onClick={() => selectSource(connector)}>
-                            <span className="source-choice-icon">{meta.icon}</span>
-                            <span className="source-choice-main">
-                              <strong>{meta.label}</strong>
-                              <span>{meta.desc}</span>
-                            </span>
-                            <span className="source-choice-meta">
-                              <em>{meta.status}</em>
-                              <span>{config?.assetsTitle ?? "데이터 탐색"}</span>
-                            </span>
-                            <span className="source-choice-next">연결 설정</span>
-                            {selected && <span className="source-choice-check"><Check size={18} /></span>}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </section>
-                ))}
+              <div className="source-choice-grid">
+                {sourceChoiceConnectors.map((connector) => {
+                  const meta = connectorMeta[connector];
+                  return (
+                    <Button
+                      aria-label={`${meta.label} 소스 선택`}
+                      aria-pressed={sourceType === connector}
+                      className="source-choice-button relative grid h-auto min-h-28 w-full grid-cols-[56px_minmax(0,1fr)] items-center justify-items-start gap-4 whitespace-normal px-8 py-6 text-left"
+                      key={connector}
+                      type="button"
+                      variant={sourceType === connector ? "subtle" : "outline"}
+                      onClick={() => selectSource(connector)}
+                    >
+                      {sourceType === connector && <span className="absolute right-4 top-4 inline-flex size-7 items-center justify-center rounded-full bg-blue-600 text-white"><Check /></span>}
+                      <span className="inline-flex size-14 items-center justify-center">{meta.icon}</span>
+                      <span className="text-base font-semibold text-slate-950">{meta.label}</span>
+                    </Button>
+                  );
+                })}
               </div>
             </div>
           )}
 
           {sourceStage === "connect" && hasSelectedSource && (
-            <div className="source-stage-screen">
+            <ScrollArea className="h-[calc(100vh-270px)] min-h-0">
+              <div className="source-stage-screen">
               <section className="source-step-section active">
                 <div className="source-step-header">
                   <em>1</em>
@@ -1752,32 +1636,85 @@ export function SourceConnectionPage({
                     <strong>{current.title}</strong>
                   </div>
                   <div className="hegun-status-actions">
-                  {!sourceLocked && activeSourceType === "File / S3" && <button className="secondary-button" type="button" onClick={fillMinioDemoFields}>데모용 MinIO 값 채우기</button>}
-                  {!sourceLocked && current.actions?.includes("Show Advanced Configuration") && <button className="secondary-button" type="button" onClick={() => onAction("etl.source.advanced_opened", "/api/etl/sources/advanced", activeSourceType)}>{sourceActionLabel("Show Advanced Configuration")}</button>}
-                  {!sourceLocked && current.actions?.includes("Fetch Metadata") && <button className="secondary-button" type="button" onClick={fetchMetadata}>{sourceActionLabel("Fetch Metadata")}</button>}
-                    {sourceLocked ? <span className="panel-note">저장된 소스 고정</span> : isSqlResultSource ? <span className="panel-note">연결 테스트 생략</span> : <button className="primary-button" type="button" disabled={connectionStatus === "testing"} onClick={testConnection}>연결 테스트</button>}
+                    {isSqlResultSource ? <span className="panel-note">연결 테스트 생략</span> : <Button type="button" disabled={connectionStatus === "testing"} onClick={testConnection}>연결 테스트</Button>}
                   </div>
                 </div>
                 <div className="hegun-field-grid source-flow-fields">
                   {visibleEditableFields.map(([label, value]) => (
-                    <label className={value.length > 38 ? "field wide" : "field"} key={`${activeSourceType}-${label}`}>
-                      <span>{sourceFieldLabel(label)}</span>
-                      <input className="input control-input" readOnly={isSqlResultSource || sourceLocked} value={value} onChange={(event) => updateSourceField(label, event.target.value)} />
-                    </label>
+                    <FormFieldGroup className={value.length > 38 ? "field wide" : "field"} key={`${activeSourceType}-${label}`} label={sourceFieldLabel(label)}>
+                      <Input readOnly={isSqlResultSource} value={value} onChange={(event) => updateSourceField(label, event.target.value)} />
+                    </FormFieldGroup>
                   ))}
                 </div>
+                {activeSourceType === "Stream / Kafka" && (
+                  <section className="source-step-section" aria-label="Kafka 실행 방식">
+                    <div className="source-step-header">
+                      <em>2</em>
+                      <div><strong>Kafka 실행 방식</strong></div>
+                    </div>
+                    <div className="kafka-execution-mode-grid" role="group" aria-label="Kafka 실행 방식 선택">
+                      <button aria-pressed={kafkaExecutionMode === "snapshot"} className={`kafka-execution-mode-card ${kafkaExecutionMode === "snapshot" ? "selected" : ""}`} disabled={sourceLocked} type="button" onClick={() => onDraftChange({ source: { executionMode: "snapshot" } })}>
+                        <span className="kafka-execution-mode-icon"><Clock3 size={19} /></span>
+                        <span className="kafka-execution-mode-copy">
+                          <strong>Snapshot</strong>
+                          <span>수동 또는 스케줄 실행</span>
+                        </span>
+                        <span className="kafka-execution-mode-tag">Batch</span>
+                        {kafkaExecutionMode === "snapshot" && <span className="kafka-execution-mode-check"><Check size={14} /></span>}
+                      </button>
+                      <button aria-pressed={kafkaExecutionMode === "continuous"} className={`kafka-execution-mode-card ${kafkaExecutionMode === "continuous" ? "selected" : ""}`} disabled={sourceLocked} type="button" onClick={() => updateContinuousConfig({})}>
+                        <span className="kafka-execution-mode-icon"><Repeat2 size={19} /></span>
+                        <span className="kafka-execution-mode-copy">
+                          <strong>Continuous</strong>
+                          <span>실시간 데이터 적재</span>
+                        </span>
+                        <span className="kafka-execution-mode-tag">Streaming</span>
+                        {kafkaExecutionMode === "continuous" && <span className="kafka-execution-mode-check"><Check size={14} /></span>}
+                      </button>
+                    </div>
+                    {kafkaExecutionMode === "continuous" && (
+                      <div className="kafka-continuous-settings">
+                        <button aria-expanded={continuousAdvancedOpen} className="kafka-continuous-settings-toggle" type="button" onClick={() => setContinuousAdvancedOpen((open) => !open)}>
+                          <span>고급 설정</span>
+                          {continuousAdvancedOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                        </button>
+                        {continuousAdvancedOpen && (
+                          <div className="kafka-continuous-settings-grid">
+                            <FormFieldGroup className="field" hint="새 checkpoint를 만들 때만 적용" label="시작 위치">
+                              <NativeSelect disabled={sourceLocked} value={continuousConfig.initialOffsetPolicy} onChange={(event) => updateContinuousConfig({ initialOffsetPolicy: event.target.value as "earliest" | "latest" })}>
+                                <option value="earliest">처음부터 읽기</option>
+                                <option value="latest">새 이벤트부터 읽기</option>
+                              </NativeSelect>
+                            </FormFieldGroup>
+                            <FormFieldGroup className="field" hint="1~3600초" label="Trigger 간격">
+                              <Input disabled={sourceLocked} max={3600} min={1} type="number" value={continuousConfig.triggerIntervalSeconds} onChange={(event) => {
+                                const value = Number(event.target.value);
+                                if (Number.isInteger(value) && value >= 1 && value <= 3600) updateContinuousConfig({ triggerIntervalSeconds: value });
+                              }} />
+                            </FormFieldGroup>
+                            <FormFieldGroup className="field" hint="1~1,000,000건" label="Micro-batch 최대 메시지">
+                              <Input disabled={sourceLocked} max={1_000_000} min={1} type="number" value={continuousConfig.maxOffsetsPerTrigger} onChange={(event) => {
+                                const value = Number(event.target.value);
+                                if (Number.isInteger(value) && value >= 1 && value <= 1_000_000) updateContinuousConfig({ maxOffsetsPerTrigger: value });
+                              }} />
+                            </FormFieldGroup>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </section>
+                )}
                 {current.info && <InfoBox title={isSqlResultSource ? "SQL Preview 입력" : "보안 연결"} body={current.info} />}
               </section>
 
               <section className={`hegun-source-status-bar ${connectionStatus}`} aria-label="연결 테스트 상태">
                 <div className="hegun-status-head">
-                  <div className="hegun-status-copy">
+                  <div className="hegun-status-copy single-line">
                     {sourceStatusIcon(connectionStatus)}
                     <h2>{connectionStatusCopy[connectionStatus].title}</h2>
-                    <span className="panel-note">{publicConnectionMessage}</span>
                   </div>
                   <div className="hegun-status-actions">
-                    {connectionStatus === "success" && hasDetectedAssets && <button className="secondary-button" type="button" onClick={() => setSourceStage("browse")}>데이터 탐색 열기</button>}
+                    {connectionStatus === "success" && hasDetectedAssets && <Button type="button" variant="outline" onClick={() => setSourceStage("browse")}>데이터 탐색 열기</Button>}
                     {isSqlResultSource && <span className="panel-note">연결 테스트 생략</span>}
                   </div>
                 </div>
@@ -1791,20 +1728,21 @@ export function SourceConnectionPage({
                   ))}
                 </div>
               </section>
-            </div>
+              </div>
+            </ScrollArea>
           )}
 
           {sourceStage === "browse" && hasSelectedSource && (
-            <div className="source-stage-screen source-xflow-layout">
+            <ScrollArea className="h-[calc(100vh-270px)] min-h-0">
+              <div className="source-stage-screen source-browser-layout">
               <section className="source-from-panel">
-                <div className="source-xflow-heading">
+                <div className="source-browser-heading">
                   <LayoutGrid size={18} />
                   <div><h2>{current.assetsTitle}</h2></div>
                 </div>
                 {hasDetectedAssets ? (
                   <SourceAssetTree
                     assets={displayAssets}
-                    disabled={isSamplingAsset}
                     loadingPath={loadingAssetPath}
                     selectedPath={selectedAssetPath}
                     onOpenFolder={loadSourceAssetChildren}
@@ -1825,7 +1763,7 @@ export function SourceConnectionPage({
                   </div>
                   <div className="source-preview-format-strip">
                     <strong>{displayPreviewFormat}</strong>
-                    <span>{isSamplingAsset ? "불러오는 중" : `${displayPreviewRows.length}행 · ${displayPreviewColumns.length}필드`}</span>
+                    <span>{displayPreviewRows.length}행 · {displayPreviewColumns.length}필드</span>
                   </div>
                   {displayPreviewRows.length > 0 ? (
                     usesJsonSampleTree ? (
@@ -1835,26 +1773,29 @@ export function SourceConnectionPage({
                         rows={displayPreviewRows}
                       />
                     ) : (
-                      <div className="hegun-table-scroll source-preview-scroll">
+                      <ScrollArea
+                        type="always"
+                        scrollbars="horizontal"
+                        horizontalScrollBarClassName="h-3 border-t-0 bg-slate-100 p-1 [&>div]:rounded-sm [&>div]:bg-slate-400 hover:[&>div]:bg-slate-500"
+                        className="source-preview-scroll w-full min-w-0"
+                      >
                         <table className="schema-table" style={{ minWidth: previewTableMinWidth }}>
                           <thead><tr>{displayPreviewColumns.map((column, index) => <th key={`${column}-${index}`}>{sourceColumnLabel(column)}</th>)}</tr></thead>
                           <tbody>
                             {displayPreviewRows.map((row, rowIndex) => <tr key={`${activeSourceType}-preview-${rowIndex}`}>{row.map((cell, cellIndex) => <td key={`${rowIndex}-${cellIndex}`}>{cell}</td>)}</tr>)}
                           </tbody>
                         </table>
-                      </div>
+                      </ScrollArea>
                     )
                   ) : (
-                    <p className="source-empty-note">
-                      {isSamplingAsset
-                        ? `${samplingAssetPath}의 스키마와 제한 샘플을 불러오는 중입니다.`
-                        : "파일을 선택하면 해당 파일 기준 샘플과 스키마가 표시됩니다."}
-                    </p>
+                    <p className="source-empty-note">파일을 선택한 뒤 연결 테스트를 다시 실행하면 해당 파일 기준 샘플이 표시됩니다.</p>
                   )}
                 </section>
               </section>
-            </div>
+              </div>
+            </ScrollArea>
           )}
+          </Tabs>
         </section>
     </CreationFlowLayout>
   );
@@ -1916,7 +1857,7 @@ function sourceStatusIcon(status: SourceDraft["connectionStatus"]) {
 function isVisibleSourceField(sourceType: string, label: string) {
   if (isInternalSourceField(label)) return false;
   if (sourceType === "File / S3") {
-    return !["Storage Provider", "Region", "Use Path Style", "Header", "Path", "Path / Prefix"].includes(label);
+    return !["Storage Provider", "Region", "Use Path Style", "Header", "Path / Prefix"].includes(label);
   }
   return true;
 }
@@ -1924,7 +1865,7 @@ function isVisibleSourceField(sourceType: string, label: string) {
 function SourceBrandIcon({ kind }: { kind: "s3" | "postgres" | "mongo" | "rest" | "lake" | "kafka" }) {
   if (kind === "s3") {
     return (
-      <svg className="source-brand-icon source-brand-s3" viewBox="0 0 64 64" aria-hidden="true">
+      <svg className="source-brand-icon source-brand-s3 size-14" viewBox="0 0 64 64" aria-hidden="true">
         <path fill="#ff9900" d="M14 17.5 32 8l18 9.5v29L32 56l-18-9.5v-29Z" />
         <path fill="#f58518" d="m32 8 18 9.5-18 9.4-18-9.4L32 8Z" opacity=".72" />
         <path fill="#d95b00" d="M32 26.9 50 17.5v29L32 56V26.9Z" opacity=".36" />
@@ -1935,7 +1876,7 @@ function SourceBrandIcon({ kind }: { kind: "s3" | "postgres" | "mongo" | "rest" 
   }
   if (kind === "postgres") {
     return (
-      <svg className="source-brand-icon source-brand-postgres" viewBox="0 0 64 64" aria-hidden="true">
+      <svg className="source-brand-icon source-brand-postgres size-14" viewBox="0 0 64 64" aria-hidden="true">
         <circle cx="32" cy="32" r="29" fill="#336791" />
         <path fill="#fff" d="M18.8 29.2c.2-8.7 5.7-14.5 14.2-14.2 8.9.3 14 6.7 12.5 15.4l-1.9 10.8c-.6 3.6-4.4 5.6-7.5 3.9l-4.2-2.3-5 6.6c-2.2 2.9-6.8 1.3-6.7-2.4l.2-8.7-1.5-.7c-3.2-1.5-4.8-4.6-4.2-8.1l4.1-.3Z" opacity=".96" />
         <path fill="#336791" d="M25.1 30.4c-.6-5.8 2.2-9.1 7.2-9.1 5.7 0 8.3 4.3 7.1 10.7l-1.1 5.9-6.3-3.3-4.8 6.4.4-8.2-2.5-2.4Z" />
@@ -1946,7 +1887,7 @@ function SourceBrandIcon({ kind }: { kind: "s3" | "postgres" | "mongo" | "rest" 
   }
   if (kind === "mongo") {
     return (
-      <svg className="source-brand-icon source-brand-mongo" viewBox="0 0 64 64" aria-hidden="true">
+      <svg className="source-brand-icon source-brand-mongo size-14" viewBox="0 0 64 64" aria-hidden="true">
         <path fill="#47a248" d="M33.2 4.8c10.1 7.9 14.5 16.6 13.1 26.3-1.2 8.5-6.1 15.6-14.3 28.1-8.3-12.5-13.1-19.6-14.3-28.1-1.4-9.7 3-18.4 13.1-26.3l1.2-.9 1.2.9Z" />
         <path fill="#2f7d32" d="M32 3.9v55.3c8.2-12.5 13.1-19.6 14.3-28.1C47.7 21.4 43.3 12.7 33.2 4.8L32 3.9Z" opacity=".4" />
         <path fill="none" stroke="#e7f7ea" strokeLinecap="round" strokeWidth="3.2" d="M32 12.5v36.8" />
@@ -1956,7 +1897,7 @@ function SourceBrandIcon({ kind }: { kind: "s3" | "postgres" | "mongo" | "rest" 
   }
   if (kind === "rest") {
     return (
-      <svg className="source-brand-icon source-brand-rest" viewBox="0 0 64 64" aria-hidden="true">
+      <svg className="source-brand-icon source-brand-rest size-14" viewBox="0 0 64 64" aria-hidden="true">
         <rect x="9" y="11" width="46" height="42" rx="10" fill="#eff6ff" stroke="#2563eb" strokeWidth="3" />
         <path fill="none" stroke="#2563eb" strokeLinecap="round" strokeLinejoin="round" strokeWidth="4" d="M24 27.5 17.5 34 24 40.5M40 27.5 46.5 34 40 40.5M35.8 24.5l-7.6 19" />
         <path fill="#2563eb" d="M18 18.5h28a2 2 0 0 1 2 2v1.2H16v-1.2a2 2 0 0 1 2-2Z" opacity=".18" />
@@ -1967,7 +1908,7 @@ function SourceBrandIcon({ kind }: { kind: "s3" | "postgres" | "mongo" | "rest" 
   }
   if (kind === "lake") {
     return (
-      <svg className="source-brand-icon source-brand-lake" viewBox="0 0 64 64" aria-hidden="true">
+      <svg className="source-brand-icon source-brand-lake size-14" viewBox="0 0 64 64" aria-hidden="true">
         <path fill="#e0f2fe" d="M8 23c0-6.6 10.7-12 24-12s24 5.4 24 12v18c0 6.6-10.7 12-24 12S8 47.6 8 41V23Z" />
         <ellipse cx="32" cy="23" fill="#38bdf8" rx="24" ry="12" />
         <path fill="#0284c7" d="M8 23c0 6.6 10.7 12 24 12s24-5.4 24-12v18c0 6.6-10.7 12-24 12S8 47.6 8 41V23Z" opacity=".7" />
@@ -1977,7 +1918,7 @@ function SourceBrandIcon({ kind }: { kind: "s3" | "postgres" | "mongo" | "rest" 
     );
   }
   return (
-    <svg className="source-brand-icon source-brand-kafka" viewBox="0 0 64 64" aria-hidden="true">
+    <svg className="source-brand-icon source-brand-kafka size-14" viewBox="0 0 64 64" aria-hidden="true">
       <circle cx="19" cy="18" r="8" fill="#111827" />
       <circle cx="45" cy="18" r="8" fill="#111827" />
       <circle cx="32" cy="46" r="8" fill="#111827" />
@@ -2300,465 +2241,6 @@ function formatSourceFieldPath(value: string) {
   return parts.map((part, index) => (index === 0 ? part : `└ ${part}`)).join(" ");
 }
 
-type ReviewStructuringColumnDef = {
-  allowedValues?: string[];
-  fallbackAllowed?: boolean;
-  instruction?: string;
-  label: string;
-  method?: string;
-  modelArtifact?: string;
-  modelId?: string;
-  modelSelectionPolicy?: string;
-  nullable: boolean;
-  requireModel?: boolean;
-  targetName: string;
-  type: string;
-};
-
-type ReviewStructuringTemplate = {
-  columns: ReviewStructuringColumnDef[];
-  createdAt: string;
-  id: string;
-  name: string;
-  sourceObject: string;
-};
-
-const REVIEW_STRUCTURING_SOURCE_OBJECT = "s3://m3-raw/amazon_reviews/cell_phones_and_accessories/reviews/Cell_Phones_and_Accessories.jsonl";
-const REVIEW_SCHEMA_TEMPLATE_STORAGE_KEY = "asklake.reviewSchemaTemplates.v1";
-const REVIEW_STRUCTURING_COLUMNS: ReviewStructuringColumnDef[] = [
-  { label: "리뷰 식별자", method: "copy", nullable: false, targetName: "review_id", type: "String" },
-  { allowedValues: ["positive", "mixed", "negative"], label: "감정", method: "one_of_values", nullable: false, targetName: "sentiment", type: "String" },
-  { allowedValues: ["charging_power", "screen_display", "shipping_delivery", "listing_accuracy", "durability_quality", "no_issue", "other_issue"], label: "이슈 카테고리", method: "one_of_values", nullable: false, targetName: "issue_category", type: "String" },
-  { allowedValues: ["charging_or_power", "screen_or_display", "shipping_or_package", "listing_mismatch", "durability_or_quality", "positive_feedback", "other"], label: "이슈 세부 분류", method: "one_of_values", nullable: true, targetName: "issue_subcategory", type: "String" },
-  { allowedValues: ["critical", "high", "medium", "low"], label: "심각도", method: "one_of_values", nullable: false, targetName: "severity", type: "String" },
-  { instruction: "리뷰 내용을 한 문장으로 요약", label: "요약", method: "instruction", nullable: true, targetName: "summary", type: "String" },
-  { instruction: "판단 근거가 되는 원문 문장 추출", label: "근거 문장", method: "instruction", nullable: true, targetName: "evidence", type: "String" },
-];
-const REVIEW_STRUCTURING_STEP_PREFIX = "review-row-analysis-";
-const TEXT_ANALYSIS_SOURCE_NAMES = ["text", "review_text", "body", "content", "message", "description", "payload", "value"];
-
-function reviewStructuringOutputNames(columns = REVIEW_STRUCTURING_COLUMNS) {
-  return new Set(columns.map((column) => column.targetName));
-}
-
-function readReviewStructuringTemplates() {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = window.localStorage.getItem(REVIEW_SCHEMA_TEMPLATE_STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .filter((item): item is ReviewStructuringTemplate => (
-        item
-        && typeof item.id === "string"
-        && typeof item.name === "string"
-        && Array.isArray(item.columns)
-      ))
-      .slice(0, 20);
-  } catch {
-    return [];
-  }
-}
-
-function writeReviewStructuringTemplates(templates: ReviewStructuringTemplate[]) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(REVIEW_SCHEMA_TEMPLATE_STORAGE_KEY, JSON.stringify(templates.slice(0, 20)));
-}
-
-function buildReviewStructuringTemplate(name: string): ReviewStructuringTemplate {
-  return {
-    columns: REVIEW_STRUCTURING_COLUMNS,
-    createdAt: new Date().toISOString(),
-    id: `review-schema-${Date.now()}`,
-    name: name.trim() || "Amazon 리뷰 분석 추천 스키마",
-    sourceObject: REVIEW_STRUCTURING_SOURCE_OBJECT,
-  };
-}
-
-function reviewAnalysisInstructionForColumn(column: SchemaColumnDraft) {
-  if (column.reviewAnalysisInstruction) return column.reviewAnalysisInstruction;
-  const targetName = column.targetName || column.sourceName.replace(/^__(review|text)_analysis\./, "");
-  const chainStep = column.transformChain?.find((step) => step.operation === "Text Row Analysis" || step.operation === "Review Row Analysis");
-  if (!chainStep?.params) return "";
-  try {
-    const parsed = JSON.parse(chainStep.params);
-    const columns = Array.isArray(parsed.columns) ? parsed.columns : [];
-    const matched = columns.find((item: { targetName?: string }) => normalizeReviewFieldName(item.targetName || "") === normalizeReviewFieldName(targetName));
-    return String(matched?.instruction || "");
-  } catch {
-    return "";
-  }
-}
-
-function buildReviewStructuringTemplateFromSchema(columns: SchemaColumnDraft[], name: string): ReviewStructuringTemplate {
-  const configuredColumns = columns
-    .filter((column) => (
-      column.sourceName.startsWith("__review_analysis.")
-      || column.sourceName.startsWith("__text_analysis.")
-      || column.role?.startsWith("review-row-analysis:")
-      || column.role?.startsWith("text-row-analysis:")
-    ))
-    .map((column) => ({
-      allowedValues: (column as SchemaColumnDraft & { reviewAnalysisAllowedValues?: string[] }).reviewAnalysisAllowedValues
-        || reviewAnalysisAllowedValuesForTarget(column.targetName || column.sourceName.replace(/^__(review|text)_analysis\./, "")),
-      fallbackAllowed: Boolean((column as SchemaColumnDraft & { reviewAnalysisFallbackAllowed?: boolean }).reviewAnalysisFallbackAllowed),
-      instruction: reviewAnalysisInstructionForColumn(column),
-      label: (column.role ?? "").replace(/^(review|text)-row-analysis:/, "") || column.targetName || column.sourceName,
-      method: (column as SchemaColumnDraft & { reviewAnalysisMethod?: string }).reviewAnalysisMethod || reviewAnalysisMethodForTarget(column.targetName || column.sourceName),
-      modelArtifact: (column as SchemaColumnDraft & { reviewAnalysisModelArtifact?: string }).reviewAnalysisModelArtifact || "",
-      modelId: (column as SchemaColumnDraft & { reviewAnalysisModelId?: string }).reviewAnalysisModelId || "",
-      modelSelectionPolicy: (column as SchemaColumnDraft & { reviewAnalysisModelSelectionPolicy?: string }).reviewAnalysisModelSelectionPolicy || "auto",
-      nullable: column.nullable,
-      requireModel: Boolean((column as SchemaColumnDraft & { reviewAnalysisRequireModel?: boolean }).reviewAnalysisRequireModel),
-      targetName: column.targetName || column.sourceName.replace(/^__(review|text)_analysis\./, ""),
-      type: column.type || "String",
-    }))
-    .filter((column) => Boolean(column.targetName));
-  return {
-    columns: configuredColumns.length > 0 ? configuredColumns : REVIEW_STRUCTURING_COLUMNS,
-    createdAt: new Date().toISOString(),
-    id: `review-schema-${Date.now()}`,
-    name: name.trim() || "사용자 수정 리뷰 분석 스키마",
-    sourceObject: REVIEW_STRUCTURING_SOURCE_OBJECT,
-  };
-}
-
-function reviewAnalysisMethodForTarget(value: string) {
-  const target = String(value || "").replace(/^__(review|text)_analysis\./, "").toLowerCase();
-  if (target === "sentiment" || target === "issue_present" || target === "has_issue" || target === "action_needed" || target === "needs_action" || target === "issue_category" || target === "issue_subcategory" || target === "severity" || target === "severity_risk") return "one_of_values";
-  if (target === "summary" || target === "evidence" || target === "supporting_evidence" || target.includes("reason")) return "instruction";
-  if (target.startsWith("is_") || target.startsWith("has_") || target === "clicked") return "one_of_values";
-  return "copy";
-}
-
-function reviewAnalysisAllowedValuesForTarget(value: string) {
-  const method = reviewAnalysisMethodForTarget(value);
-  const target = String(value || "").replace(/^__(review|text)_analysis\./, "").toLowerCase();
-  if (target === "sentiment") return ["positive", "mixed", "negative"];
-  if (target === "issue_present" || target === "has_issue") return ["issue", "no_issue"];
-  if (target === "action_needed" || target === "needs_action") return ["action_needed", "low_or_none"];
-  if (target === "issue_category") return ["charging_power", "screen_display", "shipping_delivery", "listing_accuracy", "durability_quality", "no_issue", "other_issue"];
-  if (target === "issue_subcategory") return ["charging_or_power", "screen_or_display", "shipping_or_package", "listing_mismatch", "durability_or_quality", "positive_feedback", "other"];
-  if (target === "severity" || target === "severity_risk") return ["critical", "high", "medium", "low"];
-  if (target.endsWith("_yn") || target.startsWith("is_") || target.startsWith("has_")) return ["Y", "N"];
-  return [];
-}
-
-function reviewAnalysisParamsForColumns(reviewColumns: ReviewStructuringColumnDef[], sourceField = "text") {
-  return JSON.stringify({
-    columns: reviewColumns.map((column) => {
-      const method = column.method || reviewAnalysisMethodForTarget(column.targetName);
-      const isOneOfValues = method === "one_of_values";
-      return {
-        allowedValues: column.allowedValues ?? reviewAnalysisAllowedValuesForTarget(column.targetName),
-        fallbackAllowed: isOneOfValues && Boolean(column.fallbackAllowed),
-        instruction: column.instruction ?? "",
-        method,
-        modelArtifact: isOneOfValues ? column.modelArtifact || "" : "",
-        modelId: isOneOfValues ? column.modelId || "" : "",
-        modelSelectionPolicy: isOneOfValues ? column.modelSelectionPolicy || (column.modelArtifact || column.modelId ? "explicit" : "auto") : "none",
-        nullable: column.nullable,
-        requireModel: isOneOfValues ? !column.fallbackAllowed : Boolean(column.requireModel),
-        targetName: column.targetName,
-        type: column.type,
-      };
-    }),
-    asinField: "asin",
-    ratingField: "rating",
-    sourceField,
-    textField: sourceField,
-    titleField: "title",
-    version: 1,
-  });
-}
-
-function reviewTemplateDateLabel(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleString("ko-KR", { dateStyle: "short", timeStyle: "short" });
-}
-
-function normalizeReviewFieldName(value: string) {
-  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
-}
-
-function schemaColumnName(column: SchemaColumnDraft) {
-  return normalizeReviewFieldName(column.targetName || column.sourceName);
-}
-
-function findReviewFieldIndex(columns: SchemaColumnDraft[], names: string[]) {
-  const normalizedNames = new Set(names.map(normalizeReviewFieldName));
-  return columns.findIndex((column) => normalizedNames.has(schemaColumnName(column)) || normalizedNames.has(normalizeReviewFieldName(column.sourceName)));
-}
-
-function hasReviewTextFields(columns: SchemaColumnDraft[]) {
-  return findReviewFieldIndex(columns, TEXT_ANALYSIS_SOURCE_NAMES) >= 0;
-}
-
-function findTextAnalysisSourceField(columns: SchemaColumnDraft[]) {
-  const index = findReviewFieldIndex(columns, TEXT_ANALYSIS_SOURCE_NAMES);
-  if (index < 0) return "text";
-  return columns[index]?.targetName || columns[index]?.sourceName || "text";
-}
-
-function isReviewStructuringApplied(columns: SchemaColumnDraft[], reviewColumns = REVIEW_STRUCTURING_COLUMNS) {
-  return reviewColumns.every((column) => (
-    columns.some((item) => schemaColumnName(item) === column.targetName)
-  ));
-}
-
-function shouldShowReviewStructuringFlow(draft: DraftPipeline, columns: SchemaColumnDraft[], sourceFormat: string) {
-  const sourceText = [
-    draft.source.sourceLabel,
-    draft.source.sourceType,
-    sourceFormat,
-    ...draft.source.sourceConfig.flatMap(([label, value]) => [label, value]),
-    ...columns.flatMap((column) => [column.sourceName, column.targetName]),
-  ].join(" ").toLowerCase();
-  return hasReviewTextFields(columns)
-    || sourceFormat.toLowerCase() === "text"
-    || sourceText.includes("cell_phones_and_accessories")
-    || sourceText.includes("amazon_reviews")
-    || sourceText.includes("review");
-}
-
-function buildReviewStructuringColumns(columns: SchemaColumnDraft[], reviewColumns = REVIEW_STRUCTURING_COLUMNS) {
-  const outputNames = reviewStructuringOutputNames(reviewColumns);
-  const baseColumns = columns.filter((column) => (
-    !outputNames.has(schemaColumnName(column))
-    && !column.sourceName.startsWith("__review_analysis.")
-    && !column.sourceName.startsWith("__text_analysis.")
-  ));
-  const sourceField = findTextAnalysisSourceField(columns);
-  const params = reviewAnalysisParamsForColumns(reviewColumns, sourceField);
-  const generatedColumns = reviewColumns.map((column) => {
-    const method = column.method || reviewAnalysisMethodForTarget(column.targetName);
-    const isOneOfValues = method === "one_of_values";
-    return {
-      included: true,
-      nullable: column.nullable,
-      role: `text-row-analysis:${column.label}`,
-      sourceName: `__text_analysis.${column.targetName}`,
-      targetName: column.targetName,
-      reviewAnalysisFallbackAllowed: isOneOfValues && Boolean(column.fallbackAllowed),
-      reviewAnalysisInstruction: column.instruction ?? "",
-      reviewAnalysisMethod: method,
-      reviewAnalysisModelArtifact: isOneOfValues ? column.modelArtifact ?? "" : "",
-      reviewAnalysisModelId: isOneOfValues ? column.modelId ?? "" : "",
-      reviewAnalysisModelSelectionPolicy: isOneOfValues ? column.modelSelectionPolicy || (column.modelArtifact || column.modelId ? "explicit" : "auto") : "none",
-      reviewAnalysisRequireModel: isOneOfValues ? !column.fallbackAllowed : Boolean(column.requireModel),
-      transformChain: [{
-        display: `텍스트 row 구조화 -> ${column.label}`,
-        expression: `TEXT_ANALYZE(${sourceField}).${column.targetName}`,
-        onError: "Warn",
-        operation: "Text Row Analysis",
-        params,
-        type: column.type,
-      }],
-      type: column.type,
-    } satisfies SchemaColumnDraft;
-  });
-  return [...baseColumns, ...generatedColumns];
-}
-
-function buildReviewStructuringTransformSteps(existingSteps: TransformStepDraft[], reviewColumns = REVIEW_STRUCTURING_COLUMNS, sourceField = "text") {
-  const rest = existingSteps.filter((step) => !step.id.startsWith(REVIEW_STRUCTURING_STEP_PREFIX));
-  const params = reviewAnalysisParamsForColumns(reviewColumns, sourceField);
-  const generatedSteps = reviewColumns.map((column) => ({
-    enabled: true,
-    id: `${REVIEW_STRUCTURING_STEP_PREFIX}${column.targetName}`,
-    input: sourceField,
-    kind: "derive",
-    label: `텍스트 row 구조화: ${column.label}`,
-    onError: "Warn",
-    operation: "Text Row Analysis",
-    output: column.targetName,
-    params,
-  } satisfies TransformStepDraft));
-  return [...rest, ...generatedSteps];
-}
-
-function buildReviewStructuringSampleRows(columns: SchemaColumnDraft[], sampleRows: string[][], reviewColumns = REVIEW_STRUCTURING_COLUMNS) {
-  const fieldIndexes = {
-    asin: findReviewFieldIndex(columns, ["asin", "product_id"]),
-    rating: findReviewFieldIndex(columns, ["rating", "stars", "score"]),
-    text: findReviewFieldIndex(columns, TEXT_ANALYSIS_SOURCE_NAMES),
-    timestamp: findReviewFieldIndex(columns, ["timestamp", "event_time", "created_at"]),
-    title: findReviewFieldIndex(columns, ["title", "summary", "review_title"]),
-    userId: findReviewFieldIndex(columns, ["user_id", "reviewer_id", "customer_id"]),
-  };
-  return sampleRows.map((row, rowIndex) => {
-    const sample = classifyReviewSample(row, fieldIndexes, rowIndex);
-    return [
-      ...row,
-      ...reviewColumns.map((column) => sample[column.targetName] ?? ""),
-    ];
-  });
-}
-
-function classifyReviewSample(row: string[], indexes: { asin: number; rating: number; text: number; timestamp: number; title: number; userId: number }, rowIndex: number) {
-  const rating = Number(row[indexes.rating] ?? "");
-  const title = indexes.title >= 0 ? row[indexes.title] ?? "" : "";
-  const text = indexes.text >= 0 ? row[indexes.text] ?? "" : "";
-  const asin = indexes.asin >= 0 ? row[indexes.asin] ?? "" : "";
-  const userId = indexes.userId >= 0 ? row[indexes.userId] ?? "" : "";
-  const timestamp = indexes.timestamp >= 0 ? row[indexes.timestamp] ?? "" : "";
-  const combined = `${title} ${text}`.toLowerCase();
-  const category = reviewIssueCategoryForText(combined, rating);
-  const severity = reviewSeverityForText(combined, rating, category.id);
-  const sentiment = rating <= 2 || severity === "critical" || severity === "high"
-    ? "negative"
-    : rating === 3 || category.id !== "positive_value"
-      ? "mixed"
-      : "positive";
-  const evidence = compactSchemaPreviewValue(text || title || "(샘플 텍스트 없음)");
-  const reviewIdSeed = [asin, userId, timestamp].filter(Boolean).join("_") || `sample_${rowIndex + 1}`;
-  return {
-    evidence,
-    issue_category: category.id,
-    issue_subcategory: category.label,
-    review_id: reviewIdSeed.replace(/[^a-zA-Z0-9_-]+/g, "_"),
-    sentiment,
-    severity,
-    summary: `${category.label} 신호를 감지했습니다. ${evidence}`,
-  } as Record<string, string>;
-}
-
-function reviewIssueCategoryForText(text: string, rating: number) {
-  const rules = [
-    { id: "safety_battery", label: "배터리/안전", pattern: /(battery|explode|fire|hot|overheat|burn|smoke|danger)/i },
-    { id: "charging_power", label: "충전/전원", pattern: /(charge|charging|charger|power|cable|usb|plug)/i },
-    { id: "screen_display", label: "화면/디스플레이", pattern: /(screen|display|glass|crack|touch|protector)/i },
-    { id: "audio_bluetooth", label: "오디오/블루투스", pattern: /(sound|audio|speaker|earbud|bluetooth|pairing|mic)/i },
-    { id: "compatibility_fit", label: "호환/장착", pattern: /(fit|compatible|case|size|model|install|mount)/i },
-    { id: "delivery_packaging", label: "배송/포장", pattern: /(shipping|delivery|package|packaging|arrived|box)/i },
-    { id: "durability_quality", label: "내구성/품질", pattern: /(broke|broken|defect|quality|cheap|scratch|stopped|fail)/i },
-    { id: "listing_accuracy", label: "상품 정보 불일치", pattern: /(not as described|wrong|fake|different|missing|picture|listing)/i },
-  ];
-  const matched = rules.find((rule) => rule.pattern.test(text));
-  if (matched) return matched;
-  if (rating > 0 && rating <= 2) return { id: "general_negative", label: "일반 불만" };
-  return { id: "positive_value", label: "긍정/가치" };
-}
-
-function reviewSeverityForText(text: string, rating: number, category: string) {
-  if (/(explode|fire|burn|smoke|danger|injury)/i.test(text)) return "critical";
-  if (category === "safety_battery" || rating === 1) return "high";
-  if (rating === 2 || /(broken|defect|stopped|fail|wrong|missing)/i.test(text)) return "medium";
-  if (category !== "positive_value") return "low";
-  return "none";
-}
-
-function summarizeReviewAnalysisResult(result: ReviewAnalysisSummary | null) {
-  if (!result || result.status !== "success") return "아직 실제 원본 검증을 실행하지 않았습니다.";
-  const processedRows = result.processedRows?.toLocaleString() ?? "0";
-  const issueRows = result.metrics?.issueRows?.toLocaleString() ?? "0";
-  const highRows = result.metrics?.highSeverityRows?.toLocaleString() ?? "0";
-  return `${processedRows}행 처리 · 이슈 ${issueRows}행 · High+ ${highRows}행`;
-}
-
-function ReviewStructuringFlowCard({
-  applied,
-  error,
-  hasRequiredFields,
-  loading,
-  recommendedColumns,
-  result,
-  suggesting,
-  selectedTemplateId,
-  templateName,
-  templates,
-  onApply,
-  onGenerateSuggestion,
-  onLoadTemplate,
-  onRunValidation,
-  onSaveTemplate,
-  onClose,
-  onTemplateNameChange,
-}: {
-  applied: boolean;
-  error: string;
-  hasRequiredFields: boolean;
-  loading: boolean;
-  recommendedColumns: ReviewStructuringColumnDef[];
-  result: ReviewAnalysisSummary | null;
-  suggesting: boolean;
-  selectedTemplateId: string;
-  templateName: string;
-  templates: ReviewStructuringTemplate[];
-  onApply: () => void;
-  onGenerateSuggestion: () => void;
-  onLoadTemplate: (templateId: string) => void;
-  onRunValidation: () => void;
-  onSaveTemplate: () => void;
-  onClose: () => void;
-  onTemplateNameChange: (value: string) => void;
-}) {
-  return (
-    <section className="review-structuring-flow-card" aria-label="AI 추천 텍스트 구조화 스키마 초안">
-      <div className="review-structuring-flow-head">
-        <span className="review-structuring-flow-icon"><Bot size={17} /></span>
-        <div>
-          <strong>AI 스키마 추천</strong>
-          <p>텍스트 row를 어떤 출력 컬럼으로 나눌지 초안만 만듭니다. 적용 후 XFlow에서 직접 수정하고 템플릿으로 저장하세요.</p>
-        </div>
-        <span className={applied ? "review-structuring-status applied" : "review-structuring-status"}>
-          {applied ? "편집 가능 상태" : "초안 대기"}
-        </span>
-        <button className="review-schema-close-button" type="button" aria-label="AI 스키마 추천 닫기" onClick={onClose}>
-          <X size={16} />
-        </button>
-      </div>
-      <div className="review-structuring-pipeline">
-        <div><HardDrive size={15} /><span>입력</span><strong>텍스트 포함 source row</strong></div>
-        <div><Bot size={15} /><span>AI 역할</span><strong>초안 스키마 추천만</strong></div>
-        <div><Table2 size={15} /><span>실행 기준</span><strong>사용자가 수정/저장한 템플릿</strong></div>
-      </div>
-      <div className="review-structuring-columns">
-        {recommendedColumns.length > 0
-          ? recommendedColumns.map((column) => (
-            <span key={column.targetName}>{column.targetName}</span>
-          ))
-          : <p>{suggesting ? "로컬 LLM이 추천 스키마를 생성하는 중입니다." : "아직 생성된 AI 추천 스키마가 없습니다."}</p>}
-      </div>
-      <div className="review-template-controls">
-        <label>
-          <span>템플릿 이름</span>
-          <input value={templateName} onChange={(event) => onTemplateNameChange(event.target.value)} />
-        </label>
-        <label>
-          <span>저장된 템플릿</span>
-          <select value={selectedTemplateId} onChange={(event) => onLoadTemplate(event.target.value)}>
-            <option value="">템플릿 선택</option>
-            {templates.map((template) => (
-              <option key={template.id} value={template.id}>
-                {template.name}{template.createdAt ? ` · ${reviewTemplateDateLabel(template.createdAt)}` : ""}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button className="secondary-button" type="button" disabled={!hasRequiredFields || suggesting} onClick={onGenerateSuggestion}>
-          <Bot size={15} /> {suggesting ? "AI 추천 중..." : "AI 추천 새로 생성"}
-        </button>
-        <button className="secondary-button" type="button" onClick={onSaveTemplate}>
-          <Save size={15} /> 현재 스키마 템플릿 저장
-        </button>
-      </div>
-      {error && <div className="review-structuring-error">{error}</div>}
-      <div className="review-structuring-actions">
-        <span>{summarizeReviewAnalysisResult(result)}</span>
-        <button className="secondary-button" type="button" disabled={!hasRequiredFields || loading} onClick={onRunValidation}>
-          <PlayCircle size={15} /> {loading ? "검증 실행 중..." : "현재 템플릿 기준 실제 원본 검증"}
-        </button>
-        <button className="primary-button" type="button" disabled={!hasRequiredFields || recommendedColumns.length === 0 || suggesting} onClick={onApply}>
-          <Check size={15} /> {applied ? "AI 초안 다시 적용" : "AI 추천 초안 적용"}
-        </button>
-      </div>
-    </section>
-  );
-}
-
 export function SchemaInferencePage({
   draft,
   onDraftChange,
@@ -2783,15 +2265,6 @@ export function SchemaInferencePage({
   const [flattenBaseSchema, setFlattenBaseSchema] = useState<SchemaBaseSnapshot | null>(null);
   const [schemaSampleScope, setSchemaSampleScope] = useState<SchemaSampleScope>("current");
   const [isRecheckingSchema, setIsRecheckingSchema] = useState(false);
-  const [reviewStructuringResult, setReviewStructuringResult] = useState<ReviewAnalysisSummary | null>(null);
-  const [reviewStructuringError, setReviewStructuringError] = useState("");
-  const [isReviewStructuringRunning, setIsReviewStructuringRunning] = useState(false);
-  const [isReviewSchemaSuggesting, setIsReviewSchemaSuggesting] = useState(false);
-  const [isReviewSchemaPanelOpen, setIsReviewSchemaPanelOpen] = useState(false);
-  const [reviewSchemaSuggestionColumns, setReviewSchemaSuggestionColumns] = useState<ReviewStructuringColumnDef[]>([]);
-  const [reviewTemplates, setReviewTemplates] = useState<ReviewStructuringTemplate[]>(() => readReviewStructuringTemplates());
-  const [selectedReviewTemplateId, setSelectedReviewTemplateId] = useState("");
-  const [reviewTemplateName, setReviewTemplateName] = useState("Amazon 리뷰 분석 스키마");
   const hasInferredSchema = draft.schema.columns.length > 0;
   const schemaColumns: SchemaColumnDraft[] = draft.schema.columns;
   const includedSchemaColumns = schemaColumns.filter(isSchemaColumnIncluded);
@@ -2830,11 +2303,6 @@ export function SchemaInferencePage({
   const previewOutputItems = includedSchemaColumnItems.slice(0, 8);
   const hiddenPreviewColumnCount = Math.max(0, includedSchemaColumnItems.length - previewOutputItems.length);
   const previewOutputRows = schemaSampleRows.slice(0, 4);
-  const reviewStructuringVisible = hasInferredSchema && shouldShowReviewStructuringFlow(draft, schemaColumns, sourceFormat);
-  const reviewStructuringHasRequiredFields = hasReviewTextFields(schemaColumns);
-  const selectedReviewTemplate = reviewTemplates.find((template) => template.id === selectedReviewTemplateId);
-  const activeReviewColumns = selectedReviewTemplate?.columns?.length ? selectedReviewTemplate.columns : reviewSchemaSuggestionColumns;
-  const reviewStructuringApplied = activeReviewColumns.length > 0 && isReviewStructuringApplied(schemaColumns, activeReviewColumns);
   const visibleSchemaColumns = schemaColumns
     .map((column, index) => ({ column, index }))
     .filter(({ column }) => {
@@ -2852,9 +2320,6 @@ export function SchemaInferencePage({
         schemaFingerprint: buildSchemaFingerprint(columns),
         summary,
       },
-      transform: {
-        outputColumns: buildSchemaDraftOutputColumns(columns),
-      },
     });
     return true;
   };
@@ -2867,9 +2332,6 @@ export function SchemaInferencePage({
         sampleRows,
         schemaFingerprint: buildSchemaFingerprint(columns),
         summary: columns.length > 0 ? summarizeSchemaColumns(columns, reviewCount, sourceFormat) : "출력 컬럼 없음 · 스키마 매핑 필요",
-      },
-      transform: {
-        outputColumns: buildSchemaDraftOutputColumns(columns),
       },
     });
   };
@@ -2954,134 +2416,6 @@ export function SchemaInferencePage({
     onAction(action, path, draft.source.sourceLabel || "source");
     if (schemaSummary) {
       applySchemaDraft(schemaSummary);
-    }
-  };
-
-  const applyReviewStructuringPreset = () => {
-    if (!hasInferredSchema) {
-      onNotify("스키마 추론 후 리뷰 row 분석 프리셋을 적용할 수 있습니다.");
-      return;
-    }
-    if (!reviewStructuringHasRequiredFields) {
-      onNotify("텍스트 row 구조화에는 text/content/body/value 같은 텍스트 필드가 필요합니다.");
-      return;
-    }
-    if (activeReviewColumns.length === 0) {
-      onNotify("먼저 AI 추천 스키마 초안을 생성하세요.");
-      return;
-    }
-    const activeOutputNames = reviewStructuringOutputNames(activeReviewColumns);
-    const sourceField = findTextAnalysisSourceField(schemaColumns);
-    const baseColumns = schemaColumns.filter((column) => (
-      !activeOutputNames.has(schemaColumnName(column))
-      && !column.sourceName.startsWith("__review_analysis.")
-      && !column.sourceName.startsWith("__text_analysis.")
-    ));
-    const nextColumns = buildReviewStructuringColumns(schemaColumns, activeReviewColumns);
-    const nextSampleRows = buildReviewStructuringSampleRows(baseColumns, schemaSampleRows, activeReviewColumns);
-    const nextSteps = buildReviewStructuringTransformSteps(draft.transform.steps, activeReviewColumns, sourceField);
-    onDraftChange({
-      schema: {
-        columns: nextColumns,
-        sampleRows: nextSampleRows,
-        schemaFingerprint: buildSchemaFingerprint(nextColumns),
-        summary: `AI 추천 리뷰 분석 스키마 적용 · 출력 파생 컬럼 ${activeReviewColumns.length}개 추가`,
-      },
-      transform: {
-        outputColumns: buildSchemaDraftOutputColumns(nextColumns),
-        steps: nextSteps,
-        summary: `AI 추천 리뷰 분석 스키마 적용 · ${activeReviewColumns.map((column) => column.targetName).join(", ")}`,
-      },
-    });
-    setSelectedSchemaIndex(Math.max(0, nextColumns.findIndex((column) => activeOutputNames.has(schemaColumnName(column)))));
-    onAction("etl.schema.review_row_analysis_applied", "/api/etl/schema-inference/review-row-analysis", draft.source.sourceLabel || REVIEW_STRUCTURING_SOURCE_OBJECT, "success");
-    onNotify("AI 추천 스키마 초안을 출력 스키마와 변환 단계에 반영했습니다. 이제 컬럼명/타입/변환식을 직접 수정하세요.");
-  };
-
-  const saveReviewStructuringTemplate = () => {
-    const draftTemplate = buildReviewStructuringTemplateFromSchema(schemaColumns, reviewTemplateName);
-    const nextTemplate = isReviewStructuringApplied(schemaColumns, activeReviewColumns)
-      ? draftTemplate
-      : { ...draftTemplate, columns: activeReviewColumns };
-    if (nextTemplate.columns.length === 0) {
-      onNotify("저장할 리뷰 분석 스키마가 없습니다. AI 추천 초안을 먼저 생성하세요.");
-      return;
-    }
-    const nextTemplates = [nextTemplate, ...reviewTemplates.filter((template) => template.name !== nextTemplate.name)];
-    setReviewTemplates(nextTemplates);
-    setSelectedReviewTemplateId(nextTemplate.id);
-    writeReviewStructuringTemplates(nextTemplates);
-    onAction("etl.schema.review_template_saved", "/api/etl/schema-inference/review-row-analysis/templates", nextTemplate.name, "success");
-    onNotify(`현재 리뷰 분석 스키마를 템플릿으로 저장했습니다: ${nextTemplate.name}`);
-  };
-
-  const loadReviewStructuringTemplate = (templateId: string) => {
-    setSelectedReviewTemplateId(templateId);
-    const template = reviewTemplates.find((item) => item.id === templateId);
-    if (!template) return;
-    setReviewTemplateName(template.name);
-    onAction("etl.schema.review_template_selected", "/api/etl/schema-inference/review-row-analysis/templates", template.name, "success");
-    onNotify(`템플릿을 선택했습니다. 적용을 누르면 현재 출력 스키마에 반영됩니다: ${template.name}`);
-  };
-
-  const generateReviewSchemaSuggestion = async () => {
-    if (!reviewStructuringHasRequiredFields) {
-      onNotify("AI 추천에는 text/content/body/value 같은 텍스트 필드가 필요합니다.");
-      return;
-    }
-    setIsReviewSchemaSuggesting(true);
-    setReviewStructuringError("");
-    try {
-      const suggestion = await suggestReviewAnalysisSchema({
-        sampleRows: schemaSampleRows.slice(0, 3),
-        sourceColumns: schemaColumns.map((column) => ({
-          name: column.targetName || column.sourceName,
-          type: column.type,
-        })),
-      });
-      setSelectedReviewTemplateId("");
-      setReviewSchemaSuggestionColumns(suggestion.columns);
-      onAction("etl.schema.review_schema_suggested", "/api/review-analysis/schema-suggestion", suggestion.model, "success");
-      onNotify(`로컬 LLM이 리뷰 분석 스키마 초안 ${suggestion.columns.length}개 컬럼을 추천했습니다.`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "로컬 LLM 스키마 추천에 실패했습니다.";
-      setReviewStructuringError(message);
-      onAction("etl.schema.review_schema_suggestion_failed", "/api/review-analysis/schema-suggestion", "local-llm", "failed");
-      onNotify(message);
-    } finally {
-      setIsReviewSchemaSuggesting(false);
-    }
-  };
-
-  const openReviewSchemaPanel = () => {
-    setIsReviewSchemaPanelOpen(true);
-    onAction("etl.schema.review_schema_panel_opened", "/api/review-analysis/schema-suggestion", draft.source.sourceLabel || "source", "success");
-    if (reviewStructuringHasRequiredFields && activeReviewColumns.length === 0 && !isReviewSchemaSuggesting) {
-      void generateReviewSchemaSuggestion();
-    }
-  };
-
-  const runReviewStructuringValidation = async () => {
-    setIsReviewStructuringRunning(true);
-    setReviewStructuringError("");
-    try {
-      const configuredSchema = buildReviewStructuringTemplateFromSchema(schemaColumns, reviewTemplateName).columns;
-      const validationSchema = isReviewStructuringApplied(schemaColumns, activeReviewColumns) ? configuredSchema : activeReviewColumns;
-      if (validationSchema.length === 0) {
-        onNotify("검증할 AI 추천 스키마가 없습니다.");
-        return;
-      }
-      const result = await runCellphonesReviewAnalysis(50000, validationSchema);
-      setReviewStructuringResult(result);
-      onAction("etl.schema.review_row_analysis_validated", "/api/review-analysis/cellphones/run", result.runId ?? "Cell_Phones_and_Accessories", "success");
-      onNotify(`실제 원본 검증 완료: ${(result.processedRows ?? 0).toLocaleString()}행을 처리했습니다.`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "실제 원본 검증 실행에 실패했습니다.";
-      setReviewStructuringError(message);
-      onAction("etl.schema.review_row_analysis_validation_failed", "/api/review-analysis/cellphones/run", "Cell_Phones_and_Accessories", "failed");
-      onNotify(message);
-    } finally {
-      setIsReviewStructuringRunning(false);
     }
   };
 
@@ -3197,42 +2531,16 @@ export function SchemaInferencePage({
           <strong>{hasInferredSchema ? (lowConfidenceCount > 0 ? "검토 필요" : "추론 완료") : "소스 연결 필요"}</strong>
         </div>
         <div className="schema-status-actions">
-          <button className="secondary-button" type="button" disabled={!hasInferredSchema} onClick={resetSchemaMappings}>
+          <Button className="secondary-button" type="button" variant="outline" disabled={!hasInferredSchema} onClick={resetSchemaMappings}>
             <RefreshCw size={15} /> 매핑 초기화
-          </button>
-          <button className="primary-button" type="button" disabled={!hasInferredSchema} onClick={() => schemaAction("etl.schema.approved_all", "/api/etl/schema-inference/approve-all", approvedSummary)}>
+          </Button>
+          <Button className="primary-button" type="button" disabled={!hasInferredSchema} onClick={() => schemaAction("etl.schema.approved_all", "/api/etl/schema-inference/approve-all", approvedSummary)}>
             <Check size={15} /> 스키마 승인
-          </button>
+          </Button>
         </div>
       </section>
 
-      {reviewStructuringVisible && isReviewSchemaPanelOpen && (
-        <div className="review-schema-modal-backdrop" role="presentation" onMouseDown={() => setIsReviewSchemaPanelOpen(false)}>
-          <div className="review-schema-modal" role="dialog" aria-modal="true" aria-label="AI 스키마 추천" onMouseDown={(event) => event.stopPropagation()}>
-            <ReviewStructuringFlowCard
-              applied={reviewStructuringApplied}
-              error={reviewStructuringError}
-              hasRequiredFields={reviewStructuringHasRequiredFields}
-              loading={isReviewStructuringRunning}
-              recommendedColumns={activeReviewColumns}
-              result={reviewStructuringResult}
-              suggesting={isReviewSchemaSuggesting}
-              selectedTemplateId={selectedReviewTemplateId}
-              templateName={reviewTemplateName}
-              templates={reviewTemplates}
-              onApply={applyReviewStructuringPreset}
-              onClose={() => setIsReviewSchemaPanelOpen(false)}
-              onGenerateSuggestion={generateReviewSchemaSuggestion}
-              onLoadTemplate={loadReviewStructuringTemplate}
-              onRunValidation={runReviewStructuringValidation}
-              onSaveTemplate={saveReviewStructuringTemplate}
-              onTemplateNameChange={setReviewTemplateName}
-            />
-          </div>
-        </div>
-      )}
-
-      <XFlowSchemaTransformEditor
+      <SchemaTransformWorkbench
         columns={schemaColumns}
         sampleRows={schemaSampleRows}
         selectedIndex={selectedIndex}
@@ -3254,18 +2562,13 @@ export function SchemaInferencePage({
         }}
       />
 
-      <section className="schema-bottom-bar">
-        <button className="secondary-button" type="button" onClick={onPrev}>이전: 데이터 탐색</button>
-        {reviewStructuringVisible && (
-          <button className="secondary-button ai-schema-action-button" type="button" disabled={!reviewStructuringHasRequiredFields} onClick={openReviewSchemaPanel}>
-            <Bot size={15} /> AI 스키마 추천
-          </button>
-        )}
-        <button className="secondary-button" type="button" disabled={!hasInferredSchema} onClick={exportSchema}><Download size={15} /> 스키마 JSON 내보내기</button>
+      <CommandBar className="schema-bottom-bar" density="compact">
+        <Button className="secondary-button" type="button" variant="outline" onClick={onPrev}>이전: 데이터 탐색</Button>
+        <Button className="secondary-button" type="button" variant="outline" disabled={!hasInferredSchema} onClick={exportSchema}><Download size={15} /> 스키마 JSON 내보내기</Button>
         <span>2/3 단계 · {hasInferredSchema ? approvedSummary : inferredSummary}</span>
-        <button className="primary-button" type="button" disabled={!hasInferredSchema} onClick={confirmCurrentSchema}>스키마 확정 후 다음</button>
-        <button className="ghost-button" type="button" onClick={saveSchemaDraft}>설정 저장</button>
-      </section>
+        <Button className="primary-button" type="button" disabled={!hasInferredSchema} onClick={confirmCurrentSchema}>스키마 확정 후 다음</Button>
+        <Button className="ghost-button" type="button" variant="ghost" onClick={saveSchemaDraft}>설정 저장</Button>
+      </CommandBar>
     </div>
   );
 }
@@ -3465,23 +2768,6 @@ function writeTransformQualityPreviewCache(cache: TransformQualityPreviewCache) 
 
 function schemaColumnOutputName(column: SchemaColumnDraft) {
   return (column.targetName || column.sourceName || "column").trim();
-}
-
-function buildSchemaDraftOutputColumns(columns: SchemaColumnDraft[]) {
-  return columns
-    .filter(isSchemaColumnIncluded)
-    .map((column) => [schemaColumnOutputName(column), column.type] as [string, string]);
-}
-
-function reviewTransformLabel(outputName: string, sourceColumn: SchemaColumnDraft | undefined, steps: TransformStepDraft[]) {
-  const matchedSteps = steps.filter((step) => step.enabled !== false && step.output === outputName);
-  if (matchedSteps.length > 0) {
-    return matchedSteps
-      .map((step) => `${step.operation}${step.params ? `: ${step.params}` : ""}`)
-      .join(" -> ");
-  }
-  if (!sourceColumn) return "변환 출력";
-  return sourceColumn.sourceName === outputName ? `SOURCE.${sourceColumn.sourceName}` : `${sourceColumn.sourceName} -> ${outputName}`;
 }
 
 function getRuleSourceColumns(columns: SchemaColumnDraft[]) {
@@ -3692,7 +2978,6 @@ function toDraftQualityRules(rules: QualityRule[]): QualityRuleDraft[] {
     failureAction: rule.failureAction,
     id: rule.id,
     kind: toQualityRuleKind(rule.validationType),
-    params: rule.params,
     severity: rule.severity,
     targetColumn: rule.targetColumn,
     validationType: rule.validationType,
@@ -4178,22 +3463,23 @@ function RuleMetrics({ stats }: { stats: RuleStats }) {
 function RuleCategoryTabs({ activeCategory, onSelect }: { activeCategory: RuleCategory; onSelect: (category: RuleCategory) => void }) {
   return (
     <section className="hegun-rule-mode-switcher" aria-label="처리 규칙 모드">
-      <div className="hegun-rule-category-list" role="tablist" aria-label="처리 규칙 모드">
-        {RULE_CATEGORIES.map((category) => (
-          <button
-            aria-selected={category.id === activeCategory}
-            className={category.id === activeCategory ? "hegun-rule-category active" : "hegun-rule-category"}
-            key={category.id}
-            role="tab"
-            type="button"
-            onClick={() => onSelect(category.id)}
-          >
-            <span className="hegun-rule-category-icon">{category.icon}</span>
-            <strong>{category.label}</strong>
-            <em>{category.description}</em>
-          </button>
-        ))}
-      </div>
+      <SegmentedTabs
+        ariaLabel="처리 규칙 모드"
+        buttonClassName="hegun-rule-category"
+        className="hegun-rule-category-list"
+        items={RULE_CATEGORIES.map((category) => ({
+          icon: <span className="hegun-rule-category-icon">{category.icon}</span>,
+          label: (
+            <>
+              <strong>{category.label}</strong>
+              <em>{category.description}</em>
+            </>
+          ),
+          value: category.id,
+        }))}
+        value={activeCategory}
+        onValueChange={onSelect}
+      />
       <div className="hegun-rail-note">
         <BookOpen size={16} />
         <span>샘플로 먼저 확인하고 실행 시 전체 데이터에 적용합니다.</span>
@@ -4387,7 +3673,6 @@ function createQualityRuleFromDraft(draft: RuleStepDraft, id: string): QualityRu
   return {
     failureAction: getQualityFailureAction(draft.onError || fallback.onError),
     id,
-    params: draft.params,
     severity: getQualitySeverity(draft.params || "Warning"),
     targetColumn: draft.input.trim() || fallback.input,
     validationType: getQualityValidationType(draft.operation || fallback.operation),
@@ -4469,7 +3754,6 @@ function RuleStepBuilder({
   const [selectedValidationType, setSelectedValidationType] = useState<QualityRule["validationType"]>(selectedQualityPreset.validationType);
   const [selectedSeverity, setSelectedSeverity] = useState<QualityRule["severity"]>(selectedQualityPreset.severity);
   const [selectedFailureAction, setSelectedFailureAction] = useState<QualityRule["failureAction"]>(selectedQualityPreset.failureAction);
-  const [qualityParams, setQualityParams] = useState(selectedQualityPreset.params ?? "");
   const trimmedOutputColumn = outputColumn.trim();
   const outputColumnMode = trimmedOutputColumn && baseColumnSet.has(trimmedOutputColumn) ? "inPlace" : "derived";
   const getTransformParams = (operation: TransformOperation) => {
@@ -4501,7 +3785,7 @@ function RuleStepBuilder({
         onError: selectedFailureAction,
         operation: selectedValidationType,
         output: "validation_status",
-        params: qualityParams,
+        params: selectedSeverity,
       };
   const presetOptions = isTransform
     ? transformPresets.map((step) => ({ id: step.id, label: `${transformOperationLabel(step.operation)}: ${step.input} -> ${step.output}` }))
@@ -4523,7 +3807,6 @@ function RuleStepBuilder({
     setSelectedValidationType(preset.validationType);
     setSelectedSeverity(preset.severity);
     setSelectedFailureAction(preset.failureAction);
-    setQualityParams(preset.params ?? "");
   };
   const applyTransformDraft = (draft: RuleStepDraft) => {
     const operation = getAllowedTransformOperation(draft.operation);
@@ -4651,56 +3934,64 @@ function RuleStepBuilder({
         <>
           <div className="hegun-rule-builder">
             {!isEditing && (
-              <label className="hegun-rule-field wide">
-                <span>{isTransform ? "추천 변환 규칙 불러오기" : "추천 품질 규칙 불러오기"}</span>
-                <select className="input control-input" value={selectedPresetId} onChange={(event) => setSelectedPresetId(event.target.value)}>
-                  {presetOptions.map((option) => (
-                    <option key={option.id} value={option.id}>{option.label}</option>
-                  ))}
-                </select>
-              </label>
-            )}
-            <label className="hegun-rule-field">
-              <span>{isTransform ? "입력 컬럼" : "대상 컬럼"}</span>
-              <select
+              <NativeSelectField
                 className="input control-input"
-                value={isTransform ? selectedInputColumn : selectedTargetColumn}
-                onChange={(event) => {
-                  if (isTransform) {
-                    selectTransformInputColumn(event.target.value);
-                    return;
-                  }
-                  setSelectedTargetColumn(event.target.value);
-                }}
+                fieldClassName="hegun-rule-field wide"
+                label={isTransform ? "추천 변환 규칙 불러오기" : "추천 품질 규칙 불러오기"}
+                value={selectedPresetId}
+                onChange={(event) => setSelectedPresetId(event.target.value)}
               >
-                {workingColumns.map((column) => (
-                  <option key={column} value={column}>
-                    {baseColumnSet.has(column) ? column : `${column} (파생)`}
-                  </option>
+                {presetOptions.map((option) => (
+                  <option key={option.id} value={option.id}>{option.label}</option>
                 ))}
-              </select>
-            </label>
-            <label className="hegun-rule-field">
-              <span>{isTransform ? "처리 작업" : "검증 규칙"}</span>
+              </NativeSelectField>
+            )}
+            <NativeSelectField
+              className="input control-input"
+              fieldClassName="hegun-rule-field"
+              label={isTransform ? "입력 컬럼" : "대상 컬럼"}
+              value={isTransform ? selectedInputColumn : selectedTargetColumn}
+              onChange={(event) => {
+                if (isTransform) {
+                  selectTransformInputColumn(event.target.value);
+                  return;
+                }
+                setSelectedTargetColumn(event.target.value);
+              }}
+            >
+              {workingColumns.map((column) => (
+                <option key={column} value={column}>
+                  {baseColumnSet.has(column) ? column : `${column} (파생)`}
+                </option>
+              ))}
+            </NativeSelectField>
+            <FormFieldGroup className="hegun-rule-field" label={isTransform ? "처리 작업" : "검증 규칙"}>
               {isTransform ? (
-                <select className="input control-input" value={selectedOperation} onChange={(event) => selectTransformOperation(event.target.value as TransformOperation)}>
+                <NativeSelect
+                  className="input control-input"
+                  value={selectedOperation}
+                  onChange={(event) => selectTransformOperation(event.target.value as TransformOperation)}
+                >
                   {TRANSFORM_OPERATION_OPTIONS.map((operation) => (
                     <option key={operation} value={operation}>{transformOperationLabel(operation)}</option>
                   ))}
-                </select>
+                </NativeSelect>
               ) : (
-                <select className="input control-input" value={selectedValidationType} onChange={(event) => setSelectedValidationType(event.target.value as QualityRule["validationType"])}>
+                <NativeSelect
+                  className="input control-input"
+                  value={selectedValidationType}
+                  onChange={(event) => setSelectedValidationType(event.target.value as QualityRule["validationType"])}
+                >
                   {QUALITY_VALIDATION_OPTIONS.map((validationType) => (
                     <option key={validationType} value={validationType}>{qualityValidationLabel(validationType)}</option>
                   ))}
-                </select>
+                </NativeSelect>
               )}
-            </label>
-            <label className="hegun-rule-field">
-              <span>{isTransform ? "출력 컬럼" : "심각도"}</span>
+            </FormFieldGroup>
+            <FormFieldGroup className="hegun-rule-field" label={isTransform ? "출력 컬럼" : "심각도"}>
               {isTransform ? (
                 <div className="hegun-rule-control-stack">
-                  <input
+                  <Input
                     className="input control-input"
                     type="text"
                     value={outputColumn}
@@ -4718,15 +4009,18 @@ function RuleStepBuilder({
                   </em>
                 </div>
               ) : (
-                <select className="input control-input" value={selectedSeverity} onChange={(event) => setSelectedSeverity(event.target.value as QualityRule["severity"])}>
+                <NativeSelect
+                  className="input control-input"
+                  value={selectedSeverity}
+                  onChange={(event) => setSelectedSeverity(event.target.value as QualityRule["severity"])}
+                >
                   {QUALITY_SEVERITY_OPTIONS.map((severity) => (
                     <option key={severity} value={severity}>{qualitySeverityLabel(severity)}</option>
                   ))}
-                </select>
+                </NativeSelect>
               )}
-            </label>
-            <label className="hegun-rule-field">
-              <span>{isTransform ? "옵션" : "실패 처리"}</span>
+            </FormFieldGroup>
+            <FormFieldGroup className="hegun-rule-field" label={isTransform ? "옵션" : "실패 처리"}>
               {isTransform ? (
                 <TransformParameterControl
                   decimalFormat={decimalFormat}
@@ -4740,35 +4034,36 @@ function RuleStepBuilder({
                   onTimestampFormatChange={setTimestampFormat}
                 />
               ) : (
-                <select className="input control-input" value={selectedFailureAction} onChange={(event) => setSelectedFailureAction(event.target.value as QualityRule["failureAction"])}>
+                <NativeSelect
+                  className="input control-input"
+                  value={selectedFailureAction}
+                  onChange={(event) => setSelectedFailureAction(event.target.value as QualityRule["failureAction"])}
+                >
                   {QUALITY_FAILURE_ACTION_OPTIONS.map((failureAction) => (
                     <option key={failureAction} value={failureAction}>{failureActionLabel(failureAction)}</option>
                   ))}
-                </select>
+                </NativeSelect>
               )}
-            </label>
-            {!isTransform && (
-              <label className="hegun-rule-field">
-                <span>규칙 값 (JSON)</span>
-                <input className="input control-input" value={qualityParams} placeholder='{"pattern":"..."}' onChange={(event) => setQualityParams(event.target.value)} />
-              </label>
-            )}
+            </FormFieldGroup>
             {isTransform && (
-              <label className="hegun-rule-field">
-                <span>오류 처리</span>
-                <select className="input control-input" value={onError} onChange={(event) => setOnError(event.target.value as TransformFailurePolicy)}>
-                  {TRANSFORM_FAILURE_POLICY_OPTIONS.map((policy) => (
-                    <option key={policy} value={policy}>{failureActionLabel(policy)}</option>
-                  ))}
-                </select>
-              </label>
+              <NativeSelectField
+                className="input control-input"
+                fieldClassName="hegun-rule-field"
+                label="오류 처리"
+                value={onError}
+                onChange={(event) => setOnError(event.target.value as TransformFailurePolicy)}
+              >
+                {TRANSFORM_FAILURE_POLICY_OPTIONS.map((policy) => (
+                  <option key={policy} value={policy}>{failureActionLabel(policy)}</option>
+                ))}
+              </NativeSelectField>
             )}
           </div>
-          <div className="hegun-rule-form-actions">
-            {isEditing && <button className="ghost-button" type="button" onClick={cancelEdit}>수정 취소</button>}
-            <button className="secondary-button" type="button" onClick={previewDraft}>{isTransform ? "선택 단계 미리보기" : "선택 검사 미리보기"}</button>
-            <button className="primary-button" type="button" onClick={addDraftStep}>{submitLabel}</button>
-          </div>
+          <ActionGroup className="hegun-rule-form-actions" density="compact">
+            {isEditing && <Button className="ghost-button" type="button" variant="ghost" onClick={cancelEdit}>수정 취소</Button>}
+            <Button className="secondary-button" type="button" variant="outline" onClick={previewDraft}>{isTransform ? "선택 단계 미리보기" : "선택 검사 미리보기"}</Button>
+            <Button className="primary-button" type="button" onClick={addDraftStep}>{submitLabel}</Button>
+          </ActionGroup>
         </>
       )}
     </section>
@@ -4808,7 +4103,7 @@ function TransformParameterControl({
   if (operation === "Extract JSONPath") {
     return (
       <div className="hegun-rule-control-stack">
-        <input className="input control-input" type="text" value={jsonPath} onChange={(event) => onJsonPathChange(event.target.value)} />
+        <Input className="input control-input" type="text" value={jsonPath} onChange={(event) => onJsonPathChange(event.target.value)} />
         <em>JSON 컬럼에서 꺼낼 경로</em>
       </div>
     );
@@ -4817,7 +4112,7 @@ function TransformParameterControl({
   if (operation === "Cast Decimal") {
     return (
       <div className="hegun-rule-control-stack">
-        <input className="input control-input" type="text" value={decimalFormat} onChange={(event) => onDecimalFormatChange(event.target.value)} />
+        <Input className="input control-input" type="text" value={decimalFormat} onChange={(event) => onDecimalFormatChange(event.target.value)} />
         <em>숫자 변환 형식</em>
       </div>
     );
@@ -4826,10 +4121,10 @@ function TransformParameterControl({
   if (operation === "Parse Timestamp") {
     return (
       <div className="hegun-rule-control-stack">
-        <select className="input control-input" value={timestampFormat} onChange={(event) => onTimestampFormatChange(event.target.value)}>
+        <NativeSelect className="input control-input" value={timestampFormat} onChange={(event) => onTimestampFormatChange(event.target.value)}>
           <option value="UTC">UTC</option>
           <option value="string to UTC">string to UTC</option>
-        </select>
+        </NativeSelect>
         <em>목표 시간대 / 변환 형식</em>
       </div>
     );
@@ -4837,10 +4132,10 @@ function TransformParameterControl({
 
   return (
     <div className="hegun-rule-control-stack">
-      <select className="input control-input" value={maskPolicy} onChange={(event) => onMaskPolicyChange(event.target.value)}>
+      <NativeSelect className="input control-input" value={maskPolicy} onChange={(event) => onMaskPolicyChange(event.target.value)}>
         <option value="keep first 3 digits">앞 3자리 유지</option>
         <option value="keep last 4 digits">뒤 4자리 유지</option>
-      </select>
+      </NativeSelect>
       <em>마스킹 정책</em>
     </div>
   );
@@ -4864,20 +4159,20 @@ function RuleBottomBar({
   onTest: () => void;
 }) {
   return (
-    <div className="hegun-rule-bottom-bar">
-      <button className="secondary-button" type="button" onClick={onPrev}>스키마로 돌아가기</button>
-      <button className="ghost-button hegun-bottom-command" type="button" onClick={onTest}>
+    <CommandBar className="hegun-rule-bottom-bar" layout="sticky">
+      <Button className="secondary-button" type="button" variant="outline" onClick={onPrev}>스키마로 돌아가기</Button>
+      <Button className="ghost-button hegun-bottom-command" type="button" variant="ghost" onClick={onTest}>
         <Search size={16} />
         샘플 테스트 (1,000개 행)
-      </button>
-      <button className={invalidRowsVisible ? "ghost-button hegun-bottom-command active" : "ghost-button hegun-bottom-command"} type="button" onClick={onInvalidRows}>
+      </Button>
+      <Button className={invalidRowsVisible ? "ghost-button hegun-bottom-command active" : "ghost-button hegun-bottom-command"} type="button" variant="ghost" onClick={onInvalidRows}>
         <Info size={16} />
         유효하지 않은 행 보기 ({invalidRowCount})
-      </button>
+      </Button>
       <span className="hegun-target-engine">실행 엔진<br /><strong>Spark</strong></span>
-      <button className="secondary-button" type="button" onClick={onSave}>임시 저장</button>
-      <button className="primary-button" type="button" onClick={onNext}>실행 준비 완료</button>
-    </div>
+      <Button className="secondary-button" type="button" variant="outline" onClick={onSave}>임시 저장</Button>
+      <Button className="primary-button" type="button" onClick={onNext}>실행 준비 완료</Button>
+    </CommandBar>
   );
 }
 
@@ -4983,7 +4278,7 @@ function StepPreviewAnalysis({
       <div className="panel-header">
         <RefreshCw size={18} />
         <h2>단계 미리보기 및 분석</h2>
-        <button className="secondary-button hegun-header-button" type="button" onClick={() => onAction("etl.rules.sample_rows_refetched", "/api/etl/rules/sample-rows")}>새 샘플 행 가져오기</button>
+        <Button className="secondary-button hegun-header-button" type="button" variant="outline" onClick={() => onAction("etl.rules.sample_rows_refetched", "/api/etl/rules/sample-rows")}>새 샘플 행 가져오기</Button>
       </div>
       <div className="hegun-selected-step-banner">
         <span>선택 단계</span>
@@ -5120,7 +4415,7 @@ function QualityPreviewAnalysis({
       <div className="panel-header">
         <ShieldCheck size={18} />
         <h2>품질 검증 미리보기</h2>
-        <button className="secondary-button hegun-header-button" type="button" onClick={() => onAction("etl.rules.quality_sample_refetched", "/api/etl/rules/quality/sample-rows")}>새 샘플 행 가져오기</button>
+        <Button className="secondary-button hegun-header-button" type="button" variant="outline" onClick={() => onAction("etl.rules.quality_sample_refetched", "/api/etl/rules/quality/sample-rows")}>새 샘플 행 가져오기</Button>
       </div>
       <div className="hegun-preview-grid">
         <div className="hegun-preview-column">
@@ -5204,10 +4499,10 @@ function QualityFailedRowsPanel({
           </tbody>
         </table>
       </div>
-      <div className="hegun-rule-form-actions">
-        <button className="secondary-button" type="button" onClick={() => onAction("etl.rules.quality_failed_rows_exported", "/api/etl/rules/quality/failed-rows/export")}>행 내보내기</button>
-        <button className="primary-button" type="button" onClick={() => onAction("etl.rules.quality_failed_rows_reviewed", "/api/etl/rules/quality/failed-rows/review")}>검토 완료</button>
-      </div>
+      <ActionGroup className="hegun-rule-form-actions" density="compact">
+        <Button className="secondary-button" type="button" variant="outline" onClick={() => onAction("etl.rules.quality_failed_rows_exported", "/api/etl/rules/quality/failed-rows/export")}>행 내보내기</Button>
+        <Button className="primary-button" type="button" onClick={() => onAction("etl.rules.quality_failed_rows_reviewed", "/api/etl/rules/quality/failed-rows/review")}>검토 완료</Button>
+      </ActionGroup>
     </section>
   );
 }
@@ -5252,10 +4547,10 @@ function InvalidRowsPanel({
           </tbody>
         </table>
       </div>
-      <div className="hegun-rule-form-actions">
-        <button className="secondary-button" type="button" onClick={() => onAction("etl.rules.invalid_rows_exported", "/api/etl/rules/invalid-rows/export")}>행 내보내기</button>
-        <button className="primary-button" type="button" onClick={() => onAction("etl.rules.invalid_rows_reviewed", "/api/etl/rules/invalid-rows/review")}>검토 완료</button>
-      </div>
+      <ActionGroup className="hegun-rule-form-actions" density="compact">
+        <Button className="secondary-button" type="button" variant="outline" onClick={() => onAction("etl.rules.invalid_rows_exported", "/api/etl/rules/invalid-rows/export")}>행 내보내기</Button>
+        <Button className="primary-button" type="button" onClick={() => onAction("etl.rules.invalid_rows_reviewed", "/api/etl/rules/invalid-rows/review")}>검토 완료</Button>
+      </ActionGroup>
     </section>
   );
 }
@@ -5308,44 +4603,49 @@ function RepeatSettings({
         : `매주 ${selectedDay}요일 ${time}에 실행됩니다. 다음 실행 예정은 저장 시점 기준으로 계산됩니다.`;
 
   return (
-    <section className="xflow-review-card schedule-xflow-card">
-      <div className="xflow-review-card-header">
-        <span className="xflow-review-icon schema"><Repeat2 size={17} /></span>
+    <section className="etl-review-card schedule-config-card">
+      <div className="etl-review-card-header">
+        <span className="etl-review-icon schema"><Repeat2 size={17} /></span>
         <div>
           <h2>반복 실행 상세 설정</h2>
           <p>실행 주기, 시간대, 재시도 정책을 한 번에 확인하고 조정합니다.</p>
         </div>
-        <span className="schedule-xflow-state">{repeatFrequencyLabels[frequency]}</span>
+        <span className="schedule-config-state">{repeatFrequencyLabels[frequency]}</span>
       </div>
       <div className="schedule-config-section">
-        <div className="schedule-xflow-subheader">
+        <div className="schedule-config-subheader">
           <Clock3 size={16} />
           <h3>실행 일정</h3>
         </div>
-        <div className="schedule-xflow-form-grid">
-          <label className="field">
-            <span>반복 주기</span>
-            <select className="input control-input" value={frequency} onChange={(event) => onFrequencyChange(event.target.value as RepeatFrequency)}>
+        <div className="schedule-config-form-grid">
+          <NativeSelectField
+            fieldClassName="field"
+            label="반복 주기"
+            selectClassName="input control-input"
+            value={frequency}
+            onChange={(event) => onFrequencyChange(event.target.value as RepeatFrequency)}
+          >
               {visibleRepeatFrequencyOptions.map((option) => (
                 <option key={option.value} value={option.value}>{option.label}</option>
               ))}
-            </select>
-          </label>
+          </NativeSelectField>
           {frequency === "hourly" && (
-            <label className="field">
-              <span>실행 분</span>
-              <select className="input control-input" value={minute} onChange={(event) => onMinuteChange(event.target.value)}>
+            <NativeSelectField
+              fieldClassName="field"
+              label="실행 분"
+              selectClassName="input control-input"
+              value={minute}
+              onChange={(event) => onMinuteChange(event.target.value)}
+            >
                 {validRepeatMinutes.map((value) => (
                   <option key={value} value={value}>{value}분</option>
                 ))}
-              </select>
-            </label>
+            </NativeSelectField>
           )}
           {frequency === "daily" && (
-            <label className="field">
-              <span>실행 시간</span>
-              <input className="input control-input" max="23:59" min="00:00" step="60" type="time" value={normalizeTimeValue(time)} onBlur={onTimeCommit} onChange={(event) => onTimeChange(event.target.value)} onInput={(event) => onTimeChange(event.currentTarget.value)} />
-            </label>
+            <FormFieldGroup className="field" label="실행 시간">
+              <Input className="input control-input" max="23:59" min="00:00" step="60" type="time" value={normalizeTimeValue(time)} onBlur={onTimeCommit} onChange={(event) => onTimeChange(event.target.value)} onInput={(event) => onTimeChange(event.currentTarget.value)} />
+            </FormFieldGroup>
           )}
           {frequency === "weekly" && (
             <div className="field wide">
@@ -5360,33 +4660,34 @@ function RepeatSettings({
             </div>
           )}
           {frequency === "weekly" && (
-            <label className="field">
-              <span>실행 시간</span>
-              <input className="input control-input" max="23:59" min="00:00" step="60" type="time" value={normalizeTimeValue(time)} onBlur={onTimeCommit} onChange={(event) => onTimeChange(event.target.value)} onInput={(event) => onTimeChange(event.currentTarget.value)} />
-            </label>
+            <FormFieldGroup className="field" label="실행 시간">
+              <Input className="input control-input" max="23:59" min="00:00" step="60" type="time" value={normalizeTimeValue(time)} onBlur={onTimeCommit} onChange={(event) => onTimeChange(event.target.value)} onInput={(event) => onTimeChange(event.currentTarget.value)} />
+            </FormFieldGroup>
           )}
           {frequency === "custom" && (
-            <label className="field wide">
-              <span>Cron 표현식</span>
-              <input className="input control-input" inputMode="numeric" pattern="[0-9*,/\\-\\s]+" value={customCron} onBlur={onCronCommit} onChange={(event) => onCronChange(event.target.value)} onInput={(event) => onCronChange(event.currentTarget.value)} />
-            </label>
+            <FormFieldGroup className="field wide" label="Cron 표현식">
+              <Input className="input control-input" inputMode="numeric" pattern="[0-9*,/\\-\\s]+" value={customCron} onBlur={onCronCommit} onChange={(event) => onCronChange(event.target.value)} onInput={(event) => onCronChange(event.currentTarget.value)} />
+            </FormFieldGroup>
           )}
-          <label className="field">
-            <span>시간대</span>
-            <select className="input control-input" value={timezone} onChange={(event) => onTimezoneChange(event.target.value)}>
+          <NativeSelectField
+            fieldClassName="field"
+            label="시간대"
+            selectClassName="input control-input"
+            value={timezone}
+            onChange={(event) => onTimezoneChange(event.target.value)}
+          >
               {timezoneOptions.map((option) => (
                 <option key={option.value} value={option.value}>{option.label}</option>
               ))}
-            </select>
-          </label>
+          </NativeSelectField>
         </div>
-        <div className="schedule-xflow-preview">
+        <div className="schedule-config-preview">
           <InfoBox title="실행 미리보기" body={preview} />
           {frequency === "custom" && !cronIsValid && <InfoBox title="Cron 형식 확인" body="5개 필드 형식만 저장합니다. 예: 0 10 * * 1-5" />}
         </div>
       </div>
-      <div className="schedule-xflow-policy-section">
-        <div className="schedule-xflow-subheader">
+      <div className="schedule-config-policy-section">
+        <div className="schedule-config-subheader">
           <ShieldCheck size={16} />
           <h3>재시도 정책</h3>
         </div>
@@ -5398,16 +4699,16 @@ function RepeatSettings({
 
 function NoScheduleSettings({ onRetryPolicyChange, retryPolicy }: { onRetryPolicyChange: (policy: RetryPolicyDraft) => void; retryPolicy: RetryPolicyDraft }) {
   return (
-    <section className="xflow-review-card schedule-xflow-card">
-      <div className="xflow-review-card-header">
-        <span className="xflow-review-icon"><PlayCircle size={17} /></span>
+    <section className="etl-review-card schedule-config-card">
+      <div className="etl-review-card-header">
+        <span className="etl-review-icon"><PlayCircle size={17} /></span>
         <div>
           <h2>직접 실행 정책</h2>
           <p>자동 예약 없이 저장하고 필요할 때 Job 목록에서 직접 실행합니다.</p>
         </div>
-        <span className="schedule-xflow-state muted">스케줄 없음</span>
+        <span className="schedule-config-state muted">스케줄 없음</span>
       </div>
-      <div className="xflow-review-validation schedule-xflow-validation">
+      <div className="etl-review-validation schedule-config-validation">
         <div className="ready">
           <Check size={14} />
           <span>자동 스케줄</span>
@@ -5424,8 +4725,8 @@ function NoScheduleSettings({ onRetryPolicyChange, retryPolicy }: { onRetryPolic
           <strong>미생성</strong>
         </div>
       </div>
-      <div className="schedule-xflow-policy-section">
-        <div className="schedule-xflow-subheader">
+      <div className="schedule-config-policy-section">
+        <div className="schedule-config-subheader">
           <ShieldCheck size={16} />
           <h3>재시도 정책</h3>
         </div>
@@ -5441,14 +4742,12 @@ export function TargetPage({
   onDraftChange,
   onPrev,
   onNext,
-  targetIdentityLocked = false,
 }: {
   draft: DraftPipeline;
   onDraftChange: (patch: DraftPipelinePatch) => void;
   onPrev: () => void;
   onNext: () => void;
   onSave: () => void;
-  targetIdentityLocked?: boolean;
 }) {
   const initialTarget = getTargetDraftValues(draft);
   const draftTarget = (draft as DraftPipelineWithSlices).target;
@@ -5472,7 +4771,6 @@ export function TargetPage({
   const [schemaRules, setSchemaRules] = useState<TargetSchemaRule[]>(inferredTarget.schemaRules);
   const lastTestRun = draftTarget?.lastTestRun ?? { status: "idle", logs: [] };
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
-  const [formatOptionsOpen, setFormatOptionsOpen] = useState(false);
 
   const shouldUseSampleTargetSchema = useMemo(
     () => !schemaRules.some((rule) => rule.partitionable && !rule.raw),
@@ -5485,8 +4783,7 @@ export function TargetPage({
   const usedSchemaRules = useMemo(() => orderedSchemaRules.filter((rule) => rule.use), [orderedSchemaRules]);
   const partitionCandidates = useMemo(() => orderedSchemaRules.filter((rule) => rule.partitionable && !rule.raw), [orderedSchemaRules]);
   const filteredPartitionColumns = partitionColumns
-    .filter((column) => partitionCandidates.some((rule) => rule.name === column && rule.use))
-    .slice(0, 1);
+    .filter((column) => partitionCandidates.some((rule) => rule.name === column && rule.use));
   const previewRows = useMemo(() => activePreviewRows.slice(0, 5).map((row) => {
     const previewRow: Record<string, string> = {};
     usedSchemaRules.forEach((rule) => {
@@ -5580,15 +4877,10 @@ export function TargetPage({
     setCustomTag("");
   };
 
-  const togglePartitionColumn = (columnName: string) => {
-    setPartitionColumns([columnName]);
-  };
-
-  const updateTargetDataset = (value: string) => {
-    setTargetDataset(value);
-    if (!targetIdentityLocked && isDefaultTargetStoragePath(targetStoragePath)) {
-      setTargetStoragePath(buildTargetStoragePath(value, targetLayer));
-    }
+  const setPartitionColumnSelected = (columnName: string, selected: boolean) => {
+    setPartitionColumns((currentColumns) => selected
+      ? currentColumns.includes(columnName) ? currentColumns : [...currentColumns, columnName]
+      : currentColumns.filter((column) => column !== columnName));
   };
 
   const saveTargetConfig = () => {
@@ -5613,11 +4905,20 @@ export function TargetPage({
   };
 
   const renderPartitionOption = (rule: TargetSchemaRule) => {
-    const selected = filteredPartitionColumns[0] === rule.name;
+    const selected = filteredPartitionColumns.includes(rule.name);
     const disabled = !rule.use;
+    const checkboxId = `target-partition-${rule.name}`;
     return (
-      <label className={["target-partition-option", selected ? "active" : "", disabled ? "disabled" : ""].filter(Boolean).join(" ")} key={rule.name}>
-        <input checked={selected} disabled={disabled} name="target-partition-column" type="radio" onChange={() => togglePartitionColumn(rule.name)} />
+      <label
+        className={cn("target-partition-option", selected && "active", disabled && "disabled")}
+        key={rule.name}
+      >
+        <Checkbox
+          checked={selected}
+          disabled={disabled}
+          id={checkboxId}
+          onCheckedChange={(checked) => setPartitionColumnSelected(rule.name, checked === true)}
+        />
         <span className="target-partition-name">{rule.name}</span>
         <span className="target-partition-type">{formatPartitionColumnType(rule)}</span>
       </label>
@@ -5625,135 +4926,108 @@ export function TargetPage({
   };
 
   return (
-    <CreationFlowLayout actions={<CreationTopActions prevLabel="이전" nextLabel="다음" onPrev={onPrev} onNext={handleNext} />}>
-      <PageTitle title="타겟 설정" description={targetIdentityLocked ? "성공 Run이 있어 목적지 식별값은 고정됩니다. metadata와 파티션은 수정할 수 있습니다." : "최종 데이터셋의 저장 명세, 컬럼 규칙, 파티션을 설정합니다."} />
-      {targetIdentityLocked ? <InfoBox title="저장 목적지 고정" body="성공한 데이터가 있는 Job은 데이터셋, DB, 포맷, 저장 경로를 바꿀 수 없습니다. 다른 목적지가 필요하면 Job을 복제하세요." /> : null}
+    <CreationFlowLayout actions={<CreationTopActions prevLabel="이전" nextLabel="다음" useShadcnStyles onPrev={onPrev} onNext={handleNext} />}>
+      <PageHeader
+        className="etl-flow-page-header"
+        icon={<HardDrive size={18} />}
+        title="타겟 설정"
+      />
       {validationErrors.length > 0 ? (
         <div className="target-validation-summary" role="alert">
           {validationErrors.map((error) => <span key={error}>{error}</span>)}
         </div>
       ) : null}
-      <div className="xflow-review-stack target-xflow-stack">
-        <section className="xflow-review-card target-xflow-card">
-          <div className="xflow-review-card-header">
-            <span className="xflow-review-icon"><FileText size={17} /></span>
+      <div className="etl-review-stack target-config-stack">
+        <section className="etl-review-card target-config-card">
+          <div className="etl-review-card-header">
+            <span className="etl-review-icon"><FileText size={17} /></span>
             <div>
-              <h2>Basic Information</h2>
-              <p>타겟 데이터셋의 이름과 소유 정보를 설정합니다.</p>
+              <h2>기본 정보</h2>
             </div>
           </div>
-          <div className="target-xflow-form-grid basic">
-            <label className="field wide">
-              <span>데이터셋명</span>
-              <input className="input control-input" readOnly={targetIdentityLocked} value={targetDataset} onChange={(event) => updateTargetDataset(event.target.value)} />
-            </label>
-            <label className="field">
-              <span>오너</span>
-              <input className="input control-input" value={targetOwner} onChange={(event) => setTargetOwner(event.target.value)} />
-            </label>
-            <label className="field">
-              <span>담당자</span>
-              <input className="input control-input" value={targetManager} onChange={(event) => setTargetManager(event.target.value)} />
-            </label>
-            <label className="field wide">
-              <span>설명</span>
-              <input className="input control-input" value={targetDescription} onChange={(event) => setTargetDescription(event.target.value)} />
-            </label>
+          <div className="target-config-form-grid basic">
+            <FormFieldGroup className="field wide" label="데이터셋명">
+              <Input className="input control-input" value={targetDataset} onChange={(event) => setTargetDataset(event.target.value)} />
+            </FormFieldGroup>
+            <FormFieldGroup className="field" label="오너">
+              <Input className="input control-input" value={targetOwner} onChange={(event) => setTargetOwner(event.target.value)} />
+            </FormFieldGroup>
+            <FormFieldGroup className="field" label="담당자">
+              <Input className="input control-input" value={targetManager} onChange={(event) => setTargetManager(event.target.value)} />
+            </FormFieldGroup>
+            <FormFieldGroup className="field wide" label="설명">
+              <Input className="input control-input" value={targetDescription} onChange={(event) => setTargetDescription(event.target.value)} />
+            </FormFieldGroup>
           </div>
         </section>
 
-        <section className="xflow-review-card target-xflow-card">
-          <div className="xflow-review-card-header">
-            <span className="xflow-review-icon destination"><HardDrive size={17} /></span>
+        <section className="etl-review-card target-config-card">
+          <div className="etl-review-card-header">
+            <span className="etl-review-icon destination"><HardDrive size={17} /></span>
             <div>
-              <h2>Destination Settings</h2>
-              <p>Lake 저장 위치와 데이터셋 물리 저장 방식을 설정합니다.</p>
+              <h2>저장 위치 설정</h2>
             </div>
           </div>
-          <div className="target-xflow-form-grid destination">
-            <label className="field target-db-field">
-              <span>DB 선택</span>
-              <DatabaseField disabled={targetIdentityLocked} value={databaseName} onChange={setDatabaseName} />
-            </label>
-            <label className="field target-format-field">
-              <span>포맷</span>
-              <div className="target-format-toggle" role="group" aria-label="파일 포맷 선택">
-                <button
-                  aria-expanded={formatOptionsOpen}
-                  className="target-format-trigger"
-                  disabled={targetIdentityLocked}
-                  type="button"
-                  onClick={() => setFormatOptionsOpen((open) => !open)}
-                >
-                  <span>{targetFormat}</span>
-                  {formatOptionsOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-                </button>
-                {formatOptionsOpen && !targetIdentityLocked ? (
-                  <div className="target-format-menu">
-                    {TARGET_FORMAT_OPTIONS.map((format) => (
-                      <button
-                        aria-pressed={targetFormat === format}
-                        className={targetFormat === format ? "target-format-option active" : "target-format-option"}
-                        key={format}
-                        type="button"
-                        onClick={() => {
-                          setTargetFormat(format);
-                          setFormatOptionsOpen(false);
-                        }}
-                      >
-                        {format}
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
-            </label>
-            <label className="field wide target-storage-field">
-              <span>저장경로</span>
-              <S3PathField disabled={targetIdentityLocked} value={targetStoragePath} onChange={setTargetStoragePath} />
-            </label>
+          <div className="target-config-form-grid destination">
+            <FormFieldGroup className="field target-db-field" label="DB 선택">
+              <DatabaseField useShadcnStyles value={databaseName} onChange={setDatabaseName} />
+            </FormFieldGroup>
+            <FormFieldGroup className="field target-format-field" label="포맷">
+              <Select value={targetFormat} onValueChange={(format) => setTargetFormat(format as TargetFileFormat)}>
+                <SelectTrigger aria-label="파일 포맷 선택" className="target-format-select" size="sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {TARGET_FORMAT_OPTIONS.map((format) => (
+                    <SelectItem key={format} value={format}>{format.toUpperCase()}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </FormFieldGroup>
+            <FormFieldGroup className="field wide target-storage-field" label="저장경로">
+              <S3PathField useShadcnStyles value={targetStoragePath} onChange={setTargetStoragePath} />
+            </FormFieldGroup>
           </div>
         </section>
-        <section className="xflow-review-card target-xflow-card">
-          <div className="xflow-review-card-header">
-            <span className="xflow-review-icon permission"><SlidersHorizontal size={17} /></span>
+        <section className="etl-review-card target-config-card">
+          <div className="etl-review-card-header">
+            <span className="etl-review-icon permission"><SlidersHorizontal size={17} /></span>
             <div>
-              <h2>Partition & Tags</h2>
-              <p>검색, 저장, 운영 기준으로 사용할 태그와 파티션을 설정합니다.</p>
+              <h2>파티션 및 태그</h2>
             </div>
           </div>
-          <div className="target-xflow-split">
-            <div className="target-xflow-subsection">
-              <div className="target-xflow-subheader">
+          <div className="target-config-split">
+            <div className="target-config-subsection">
+              <div className="target-config-subheader">
                 <BookOpen size={16} />
-                <h3>Tags</h3>
+                <h3>태그</h3>
               </div>
               {targetTags.length > 0 ? (
-                <div className="target-chip-grid" role="group" aria-label="타겟 태그">
+                <TagList className="target-chip-grid" density="compact" role="group" aria-label="타겟 태그">
                   {targetTags.map((tag) => (
-                    <button className={targetTags.includes(tag) ? "target-chip active" : "target-chip"} key={tag} type="button" onClick={() => toggleTag(tag)}>
+                    <Button aria-pressed={targetTags.includes(tag)} key={tag} size="sm" type="button" variant="secondary" onClick={() => toggleTag(tag)}>
                       {tag}
-                    </button>
+                    </Button>
                   ))}
-                </div>
+                </TagList>
               ) : null}
               <div className="target-inline-controls">
-                <input className="input control-input" placeholder="직접 태그 추가" value={customTag} onChange={(event) => setCustomTag(event.target.value)} onKeyDown={(event) => {
+                <Input className="input control-input" placeholder="직접 태그 추가" value={customTag} onChange={(event) => setCustomTag(event.target.value)} onKeyDown={(event) => {
                   if (event.key === "Enter") {
                     event.preventDefault();
                     addCustomTag();
                   }
                 }} />
-                <button className="secondary-button" type="button" onClick={addCustomTag}><Plus size={14} />추가</button>
+                <Button type="button" variant="outline" onClick={addCustomTag}><Plus data-icon="inline-start" />추가</Button>
               </div>
             </div>
-            <div className="target-xflow-subsection">
-              <div className="target-xflow-subheader">
+            <div className="target-config-subsection">
+              <div className="target-config-subheader">
                 <SlidersHorizontal size={16} />
-                <h3>Partition</h3>
+                <h3>파티션</h3>
               </div>
               <div className="target-partition-settings">
-                <div className="target-partition-grid" role="radiogroup" aria-label="파티션 컬럼 선택">
+                <div className="target-partition-grid" role="group" aria-label="파티션 컬럼 다중 선택">
                   {partitionCandidates.map(renderPartitionOption)}
                 </div>
               </div>
@@ -5827,108 +5101,124 @@ export function PermissionPage({
       variant="permission"
       actions={<CreationTopActions onPrev={onPrev} onNext={goNext} />}
     >
-      <PageTitle title="권한 설정" description="생성할 데이터셋에 접근할 수 있는 역할과 사용자를 선택하세요." />
-      <div className="xflow-review-stack permission-xflow-stack">
-        <section className="xflow-review-card permission-xflow-card">
-          <div className="xflow-review-card-header">
-            <span className="xflow-review-icon permission"><ShieldCheck size={17} /></span>
+      <PageHeader
+        className="etl-flow-page-header"
+        description="생성할 데이터셋에 접근할 수 있는 역할과 사용자를 선택하세요."
+        icon={<ShieldCheck size={18} />}
+        title="권한 설정"
+      />
+      <div className="etl-review-stack permission-config-stack">
+        <section className="etl-review-card permission-config-card">
+          <div className="etl-review-card-header">
+            <span className="etl-review-icon permission"><ShieldCheck size={17} /></span>
             <div>
               <h2>Governance Check</h2>
               <p>공개 범위, 민감 데이터, 승인 상태를 생성 전에 확인합니다.</p>
             </div>
           </div>
-          <div className="xflow-review-validation permission-xflow-validation">
-            {governanceChecks.map(([label, value, status]) => (
-              <div className={status === "안전" || status === "준비됨" ? "ready" : "needs-review"} key={label}>
-                <Check size={15} />
-                <span>{label}</span>
-                <strong>{value} · {status}</strong>
-              </div>
-            ))}
-          </div>
+          <ValidationList
+            className="etl-review-validation permission-config-validation"
+            items={governanceChecks.map(([label, value, status]) => ({
+              label,
+              status: status === "안전" || status === "준비됨" ? "ready" : "warning",
+              value: `${value} · ${status}`,
+            }))}
+          />
           <InfoBox title="권한 검토 필요" body="외부 공유 또는 민감 데이터 접근 권한은 데이터 오너 승인 후 적용됩니다." />
         </section>
 
-        <section className="xflow-review-card permission-xflow-card">
-          <div className="xflow-review-card-header">
-            <span className="xflow-review-icon"><SlidersHorizontal size={17} /></span>
+        <section className="etl-review-card permission-config-card">
+          <div className="etl-review-card-header">
+            <span className="etl-review-icon"><SlidersHorizontal size={17} /></span>
             <div>
               <h2>Access Policy</h2>
               <p>조직 정책에 맞는 권한 템플릿과 공개 범위를 설정합니다.</p>
             </div>
           </div>
           <InfoBox title="추천 권한 템플릿" body="유사 데이터셋의 접근 권한과 조직 정책을 기반으로 추천되었습니다." />
-          <div className="target-xflow-form-grid permission-xflow-form-grid">
-            <label className="field">
-              <span>권한 템플릿</span>
-              <select className="input control-input" value={permissionTemplate} onChange={(event) => {
+          <div className="target-config-form-grid permission-config-form-grid">
+            <NativeSelectField
+              className="input control-input"
+              fieldClassName="field"
+              label="권한 템플릿"
+              value={permissionTemplate}
+              onChange={(event) => {
                 const nextPermissionTemplate = getKnownOption(event.target.value, PERMISSION_TEMPLATES, DEFAULT_PERMISSION_TEMPLATE);
                 setPermissionTemplate(nextPermissionTemplate);
                 setRoleChecks((checks) => ({ ...checks, [nextPermissionTemplate]: true }));
                 applyPermissionDraft({ permissionTemplate: nextPermissionTemplate });
-              }}>
-                {PERMISSION_TEMPLATES.map((template) => <option key={template}>{template}</option>)}
-              </select>
-            </label>
-            <label className="field">
-              <span>공개 범위</span>
-              <select className="input control-input" value={visibility} onChange={(event) => {
+              }}
+            >
+              {PERMISSION_TEMPLATES.map((template) => <option key={template}>{template}</option>)}
+            </NativeSelectField>
+            <NativeSelectField
+              className="input control-input"
+              fieldClassName="field"
+              label="공개 범위"
+              value={visibility}
+              onChange={(event) => {
                 const nextVisibility = getKnownOption(event.target.value, VISIBILITY_OPTIONS, DEFAULT_VISIBILITY);
                 setVisibility(nextVisibility);
                 applyPermissionDraft({ visibility: nextVisibility });
-              }}>
-                {VISIBILITY_OPTIONS.map((option) => <option key={option}>{option}</option>)}
-              </select>
-            </label>
-            <label className="field">
-              <span>데이터 오너</span>
-              <input className="input control-input" value={dataOwner} onChange={(event) => {
+              }}
+            >
+              {VISIBILITY_OPTIONS.map((option) => <option key={option}>{option}</option>)}
+            </NativeSelectField>
+            <FormFieldGroup className="field" label="데이터 오너">
+              <Input className="input control-input" value={dataOwner} onChange={(event) => {
                 const nextOwner = event.target.value;
                 setDataOwner(nextOwner);
                 applyPermissionDraft({ owner: nextOwner });
               }} />
-            </label>
-            <label className="field">
-              <span>승인 상태</span>
-              <select className="input control-input" value={approvalStatus} onChange={(event) => {
+            </FormFieldGroup>
+            <NativeSelectField
+              className="input control-input"
+              fieldClassName="field"
+              label="승인 상태"
+              value={approvalStatus}
+              onChange={(event) => {
                 const nextApprovalStatus = getKnownOption(event.target.value, APPROVAL_STATUS_OPTIONS, DEFAULT_APPROVAL_STATUS);
                 setApprovalStatus(nextApprovalStatus);
                 applyPermissionDraft({ approvalStatus: nextApprovalStatus });
-              }}>
-                {APPROVAL_STATUS_OPTIONS.map((option) => <option key={option}>{option}</option>)}
-              </select>
-            </label>
+              }}
+            >
+              {APPROVAL_STATUS_OPTIONS.map((option) => <option key={option}>{option}</option>)}
+            </NativeSelectField>
           </div>
         </section>
 
-        <section className="xflow-review-card permission-xflow-card">
-          <div className="xflow-review-card-header">
-            <span className="xflow-review-icon schema"><CircleUser size={17} /></span>
+        <section className="etl-review-card permission-config-card">
+          <div className="etl-review-card-header">
+            <span className="etl-review-icon schema"><CircleUser size={17} /></span>
             <div>
               <h2>Role Grants</h2>
               <p>{selectedRoleCount}개 역할 선택 · 템플릿 기준 접근 권한을 조정합니다.</p>
             </div>
           </div>
-          <div className="permission-xflow-role-list">
+          <div className="permission-config-role-list">
             {PERMISSION_ROLES.map((role) => {
               const selected = Boolean(roleChecks[role.name]);
               const recommended = role.name === permissionTemplate;
               return (
-                <label className={["permission-xflow-role", selected ? "active" : "", recommended ? "recommended" : ""].filter(Boolean).join(" ")} key={role.name}>
-                  <input type="checkbox" checked={selected} onChange={(event) => setRoleChecks((checks) => ({ ...checks, [role.name]: event.target.checked }))} />
-                  <span className="permission-xflow-role-body">
-                    <span className="permission-xflow-role-title">
+                <CheckableOption
+                  checked={selected}
+                  className={recommended ? "permission-config-role recommended" : "permission-config-role"}
+                  key={role.name}
+                  onCheckedChange={(checked) => setRoleChecks((checks) => ({ ...checks, [role.name]: checked }))}
+                >
+                  <span className="permission-config-role-body">
+                    <span className="permission-config-role-title">
                       <strong>{role.name}</strong>
                       {recommended ? <em>Template</em> : null}
                     </span>
                     <small>{role.note}</small>
                   </span>
-                  <div className="permission-chip-row permission-xflow-access-row">
+                  <div className="permission-chip-row permission-config-access-row">
                     {PERMISSION_ACCESS_ITEMS.map((item) => (
                       <em className={selected && role.access.includes(item) ? "allowed" : ""} key={item}>{item}</em>
                     ))}
                   </div>
-                </label>
+                </CheckableOption>
               );
             })}
           </div>
@@ -5941,165 +5231,138 @@ export function PermissionPage({
 export function ReviewPage({
   createPending,
   draft,
-  editing = false,
   onCreate,
   onEdit,
 }: {
   createPending?: boolean;
   draft: DraftPipeline;
-  editing?: boolean;
   onCreate: () => void;
   onEdit: (flow: FlowId) => void;
   onSave: () => void;
 }) {
-  const request = toCreatePipelineRequest(draft);
-  const includedReviewColumns = draft.schema.columns.filter(isSchemaColumnIncluded);
-  const schemaRows: ReviewSchemaRow[] = draft.transform.outputColumns.length > 0
-    ? draft.transform.outputColumns.map(([name, type]) => {
-        const sourceColumn = includedReviewColumns.find((column) => schemaColumnOutputName(column) === name || column.sourceName === name);
-        return {
-          columnName: name,
-          nullable: sourceColumn ? (sourceColumn.nullable ? "예" : "아니요") : "생성",
-          transform: reviewTransformLabel(name, sourceColumn, draft.transform.steps),
-          type,
-        };
+  const [reviewSnapshot, setReviewSnapshot] = useState<ReviewSnapshot | null>(null);
+  const [reviewLoading, setReviewLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setReviewLoading(true);
+    void getReviewSnapshot(draft)
+      .then((snapshot) => {
+        if (!cancelled) setReviewSnapshot(snapshot);
       })
-    : includedReviewColumns.map((column) => ({
-        columnName: column.targetName,
-        nullable: column.nullable ? "예" : "아니요",
-        transform: reviewTransformLabel(schemaColumnOutputName(column), column, draft.transform.steps),
-        type: column.type,
-      }));
-  const sourceSummary = summarizeSourceConfig(request.sourceConfig);
-  const permissionReview = getPermissionDraftValues(draft);
-  const targetReview = getTargetDraftValues(draft);
-  const targetDatabaseName = (draft as DraftPipelineWithSlices).target?.databaseName ?? "asklake";
-  const basicInformationRows = [
-    ["Job ID", request.id],
-    ["Job Name", targetReview.jobName],
-    ["Source", `${sourceTypeLabel(request.sourceType)} · ${sourceSummary || request.sourceLabel}`],
-    ["Target Dataset", targetReview.targetDataset],
-    ["Description", targetReview.description],
-  ];
-  const destinationRows = [
-    ["Output Path", targetReview.storagePath],
-    ["Database", targetDatabaseName],
-    ["Table Name", targetReview.tableName],
-    ["Format", targetReview.targetFormat],
-    ["Layer", targetReview.targetLayer],
-    ["Partition", targetReview.partitionColumns.length > 0 ? targetReview.partitionColumns.join(", ") : "없음"],
-  ];
-  const permissionRows = [
-    ["Permission Template", permissionReview.permissionTemplate],
-    ["Visibility", permissionReview.visibility],
-    ["Approval", permissionReview.approvalStatus],
-    ["Owner", permissionReview.owner],
-    ["Summary", permissionReview.permissionSummary],
-  ];
-  const validationRows = [
-    ["소스 연결", draft.source.connectionStatus === "success" ? "실제 연결 확인" : "연결 테스트 필요"],
-    ["스키마", includedReviewColumns.length > 0 ? "추론 결과 있음" : "추론 필요"],
-    ["처리 규칙", request.ruleSummary ? "설정값 저장" : "규칙 없음"],
-    ["스케줄", request.scheduleLabel ? "예약 메타데이터 저장" : "확인 필요"],
-    ["실패 재시도", request.retryPolicySummary ? "정책 메타데이터 저장" : "기본 정책"],
-    ["권한/타겟", request.permissionSummary && request.targetDataset ? "메타데이터 저장" : "확인 필요"],
-  ];
-  const readyValidationStatuses = new Set(["실제 연결 확인", "추론 결과 있음", "설정값 저장", "규칙 없음", "예약 메타데이터 저장", "정책 메타데이터 저장", "기본 정책", "메타데이터 저장"]);
-  const canCreate = draft.source.connectionStatus === "success"
-    && includedReviewColumns.length > 0
-    && Boolean(request.sourceType.trim())
-    && Boolean(request.sourceLabel.trim())
-    && Boolean(request.targetDataset.trim())
-    && Boolean(request.owner.trim());
-  const createDisabled = createPending || !canCreate;
-  const createLabel = createPending ? (editing ? "저장 중..." : "생성 중...") : canCreate ? (editing ? "변경사항 저장" : "파이프라인 생성") : "검증 필요";
+      .catch(() => {
+        if (!cancelled) setReviewSnapshot(null);
+      })
+      .finally(() => {
+        if (!cancelled) setReviewLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [draft]);
+
+  const basicInformationRows = reviewSnapshot?.basicInformation ?? [];
+  const destinationRows = reviewSnapshot?.destination ?? [];
+  const permissionRows = reviewSnapshot?.permission ?? [];
+  const schemaRows = reviewSnapshot?.schema ?? [];
+  const validationRows = reviewSnapshot?.validation ?? [];
+  const canCreate = reviewSnapshot?.canCreate === true;
+  const createDisabled = createPending || reviewLoading || !canCreate;
+  const createLabel = createPending ? "생성 중..." : reviewLoading ? "서버 확인 중..." : canCreate ? "파이프라인 생성" : "검증 필요";
 
   return (
     <CreationFlowLayout
       variant="review"
-      actions={<CreationTopActions nextDisabled={createDisabled} nextLabel={createLabel} onPrev={() => onEdit("target")} onNext={onCreate} />}
+      actions={<CreationTopActions nextDisabled={createDisabled} nextLabel={createLabel} useShadcnStyles onPrev={() => onEdit("target")} onNext={onCreate} />}
     >
-        <PageTitle title={editing ? "검토 및 저장" : "검토 및 생성"} description={editing ? "변경된 구성을 확인하고 기존 데이터 파이프라인에 저장하세요." : "설정된 모든 구성을 확인하고 데이터 파이프라인 생성을 완료하세요."} />
-        <div className="xflow-review-stack">
-          <section className="xflow-review-card">
-            <div className="xflow-review-card-header">
-              <span className="xflow-review-icon"><FileText size={17} /></span>
+        <PageHeader
+          className="etl-flow-page-header etl-review-page-header"
+          icon={<FileText size={18} />}
+          title="검토 및 생성"
+        />
+        <div className="etl-review-stack">
+          <section className="etl-review-card">
+            <div className="etl-review-card-header">
+              <span className="etl-review-icon"><FileText size={17} /></span>
               <div>
-                <h2>Basic Information</h2>
-                <p>생성될 파이프라인과 타겟 데이터셋의 기본 정보를 확인합니다.</p>
+                <h2>기본 정보</h2>
               </div>
-              <button className="xflow-review-edit" type="button" onClick={() => onEdit("target")}><Pencil size={14} /> 수정</button>
+              <ReviewEditButton label="기본 정보 수정" onClick={() => onEdit("target")} />
             </div>
-            <dl className="xflow-review-kv">
-              {basicInformationRows.map(([label, value]) => (
-                <div className={label === "Description" ? "wide" : undefined} key={label}>
-                  <dt>{label}</dt>
-                  <dd>{value}</dd>
-                </div>
-              ))}
-            </dl>
+            <KeyValueList
+              className="etl-review-kv"
+              items={basicInformationRows.map(({ label, value }) => ({
+                className: label === "설명" ? "wide" : undefined,
+                label,
+                value,
+              }))}
+            />
           </section>
 
-          <section className="xflow-review-card">
-            <div className="xflow-review-card-header">
-              <span className="xflow-review-icon schema"><Database size={17} /></span>
+          <section className="etl-review-card">
+            <div className="etl-review-card-header">
+              <span className="etl-review-icon schema"><Database size={17} /></span>
               <div>
-                <h2>Output Schema</h2>
+                <h2>출력 스키마</h2>
               </div>
-              <button className="xflow-review-edit" type="button" onClick={() => onEdit("schema")}><Pencil size={14} /> 수정</button>
+              <ReviewEditButton label="출력 스키마 수정" onClick={() => onEdit("schema")} />
             </div>
             <ReviewSchemaTable rows={schemaRows} />
           </section>
 
-          <section className="xflow-review-card">
-            <div className="xflow-review-card-header">
-              <span className="xflow-review-icon destination"><HardDrive size={17} /></span>
+          <section className="etl-review-card">
+            <div className="etl-review-card-header">
+              <span className="etl-review-icon destination"><HardDrive size={17} /></span>
               <div>
-                <h2>Destination Settings</h2>
-                <p>Lake 저장 위치와 데이터셋 물리 저장 방식을 확인합니다.</p>
+                <h2>저장 위치 설정</h2>
               </div>
-              <button className="xflow-review-edit" type="button" onClick={() => onEdit("target")}><Pencil size={14} /> 수정</button>
+              <ReviewEditButton label="저장 위치 수정" onClick={() => onEdit("target")} />
             </div>
-            <dl className="xflow-review-kv destination">
-              {destinationRows.map(([label, value]) => (
-                <div className={label === "Output Path" ? "wide" : undefined} key={label}>
-                  <dt>{label}</dt>
-                  <dd>{value}</dd>
-                </div>
-              ))}
-            </dl>
+            <KeyValueList
+              className="etl-review-kv destination"
+              items={destinationRows.map(({ label, value }) => ({
+                className: label === "저장 경로" ? "wide" : undefined,
+                label,
+                value,
+              }))}
+            />
           </section>
 
-          <section className="xflow-review-card">
-            <div className="xflow-review-card-header">
-              <span className="xflow-review-icon permission"><ShieldCheck size={17} /></span>
+          <section className="etl-review-card">
+            <div className="etl-review-card-header">
+              <span className="etl-review-icon permission"><ShieldCheck size={17} /></span>
               <div>
-                <h2>Permission & Validation</h2>
-                <p>접근 권한과 생성 전 체크 항목을 확인합니다.</p>
+                <h2>권한 및 검증</h2>
               </div>
-              <button className="xflow-review-edit" type="button" onClick={() => onEdit("permission")}><Pencil size={14} /> 수정</button>
+              <ReviewEditButton label="권한 및 검증 수정" onClick={() => onEdit("permission")} />
             </div>
-            <dl className="xflow-review-kv permission">
-              {permissionRows.map(([label, value]) => (
-                <div className={label === "Summary" ? "wide" : undefined} key={label}>
-                  <dt>{label}</dt>
-                  <dd>{value}</dd>
-                </div>
-              ))}
-            </dl>
-            <div className="xflow-review-validation">
-              {validationRows.map(([item, status]) => (
-                <div className={readyValidationStatuses.has(status) ? "ready" : "needs-review"} key={item}>
-                  <Check size={15} />
-                  <span>{item}</span>
-                  <strong>{status}</strong>
-                </div>
-              ))}
-            </div>
-            <InfoBox title="안내사항" body="파이프라인 생성 후 실행이 성공하면 데이터 카탈로그에 등록되고 SQL 쿼리를 수행할 수 있습니다." />
+            <KeyValueList
+              className="etl-review-kv permission"
+              items={permissionRows.map(({ label, value }) => ({
+                className: label === "요약" ? "wide" : undefined,
+                label,
+                value,
+              }))}
+            />
+            <ValidationList
+              className="etl-review-validation"
+              items={validationRows.map(({ label, status, value }) => ({
+                label,
+                status,
+                value,
+              }))}
+            />
           </section>
         </div>
     </CreationFlowLayout>
+  );
+}
+
+function ReviewEditButton({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <Button aria-label={label} className="etl-review-edit" size="sm" type="button" variant="outline" onClick={onClick}>
+      <Pencil aria-hidden="true" data-icon="inline-start" /> 수정
+    </Button>
   );
 }
 
@@ -6120,38 +5383,44 @@ function ReviewSchemaTable({ rows }: { rows: ReviewSchemaRow[] }) {
   });
 
   return (
-    <table className="schema-table review-schema-table">
-      <thead>
-        {table.getHeaderGroups().map((headerGroup) => (
-          <tr key={headerGroup.id}>
-            {headerGroup.headers.map((header) => (
-              <th key={header.id}>
-                {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
-              </th>
-            ))}
-          </tr>
-        ))}
-      </thead>
-      <tbody>
-        {table.getRowModel().rows.map((row) => (
-          <tr key={row.id}>
-            {row.getVisibleCells().map((cell) => (
-              <td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>
-            ))}
-          </tr>
-        ))}
-        {rows.length === 0 && (
-          <tr>
-            <td colSpan={columns.length}>소스 연결과 스키마 추론이 완료되면 출력 스키마가 표시됩니다.</td>
-          </tr>
-        )}
-      </tbody>
-    </table>
+    <div aria-label="출력 스키마 표" className="review-schema-table-viewport" role="region" tabIndex={0}>
+      <table className="schema-table review-schema-table">
+        <thead>
+          {table.getHeaderGroups().map((headerGroup) => (
+            <tr key={headerGroup.id}>
+              {headerGroup.headers.map((header) => (
+                <th key={header.id}>
+                  {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
+                </th>
+              ))}
+            </tr>
+          ))}
+        </thead>
+        <tbody>
+          {table.getRowModel().rows.map((row) => (
+            <tr key={row.id}>
+              {row.getVisibleCells().map((cell) => (
+                <td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>
+              ))}
+            </tr>
+          ))}
+          {rows.length === 0 && (
+            <tr>
+              <td colSpan={columns.length}>소스 연결과 스키마 추론이 완료되면 출력 스키마가 표시됩니다.</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
+function displayReviewValue(value: string | undefined) {
+  return value?.trim() || "미설정";
+}
+
 function summarizeSourceConfig(sourceConfig: Array<[string, string]>) {
-  const priorityLabels = ["Storage Provider", "Endpoint URL", "Bucket / Stage Name", "Path / Prefix", "Path", "DATASET OR TABLE SELECTOR", "TOPIC / QUEUE NAME", "CONSUMER GROUP ID", "Broker / Endpoint"];
+  const priorityLabels = ["Storage Provider", "Endpoint URL", "Bucket / Stage Name", "Path / Prefix", "Path", "DATASET OR TABLE SELECTOR", "Broker / Endpoint"];
   const valuesByLabel = new Map(sourceConfig);
   return priorityLabels
     .map((label) => {
@@ -6164,10 +5433,6 @@ function summarizeSourceConfig(sourceConfig: Array<[string, string]>) {
 
 function sourceLabelFromFields(sourceType: string, fields: Array<[string, string]>) {
   const valuesByLabel = new Map(fields);
-  if (sourceType === "Stream / Kafka" || sourceType === "Kafka JSON") {
-    return valuesByLabel.get("TOPIC / QUEUE NAME") || valuesByLabel.get("Topic") || sourceType;
-  }
-
   if (sourceType === "File / S3") {
     const bucket = valuesByLabel.get("Bucket / Stage Name");
     const prefix = valuesByLabel.get("Path / Prefix");

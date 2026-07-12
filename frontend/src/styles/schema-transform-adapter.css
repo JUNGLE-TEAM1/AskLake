@@ -1,0 +1,101 @@
+.asklake-schema-transform-adapter {
+  max-height: calc(100vh - 252px);
+  min-height: 540px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+}
+
+.asklake-schema-transform-scroll-frame {
+  min-width: 960px;
+}
+
+.asklake-schema-transform-adapter .flex.flex-col.bg-gray-50 {
+  min-height: 540px;
+}
+
+.asklake-schema-transform-adapter .flex.flex-1.p-4.gap-4 {
+  height: clamp(420px, 52vh, 540px) !important;
+  max-height: clamp(420px, 52vh, 540px) !important;
+  min-height: 0 !important;
+  overflow: hidden;
+}
+
+.asklake-schema-transform-adapter .flex-1.basis-0.flex.flex-col.bg-white {
+  min-height: 0;
+  max-height: 100%;
+}
+
+.asklake-schema-transform-adapter .flex-1.overflow-y-auto,
+.asklake-schema-transform-adapter textarea {
+  min-height: 0;
+  scrollbar-width: thin;
+}
+
+.asklake-schema-transform-adapter .flex-1.overflow-y-auto.p-2 {
+  flex: 1 1 0 !important;
+  height: auto !important;
+  max-height: 100% !important;
+  overflow-y: scroll !important;
+  position: relative;
+  padding-right: 8px !important;
+  scrollbar-color: #cbd5e1 transparent;
+  scrollbar-width: thin;
+}
+
+.asklake-schema-transform-adapter .flex-1.overflow-y-auto.p-4 {
+  overflow-y: scroll !important;
+  position: relative;
+  padding-right: 8px !important;
+  scrollbar-color: #cbd5e1 transparent;
+  scrollbar-width: thin;
+}
+
+.asklake-schema-transform-adapter .overflow-x-auto {
+  max-height: 280px;
+  overflow: auto;
+  scrollbar-width: thin;
+}
+
+.asklake-schema-transform-adapter ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.asklake-schema-transform-adapter ::-webkit-scrollbar-track {
+  background: transparent;
+  border-radius: 999px;
+}
+
+.asklake-schema-transform-adapter ::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+
+.asklake-schema-transform-adapter ::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+  background-clip: padding-box;
+}
+
+@media (max-width: 900px) {
+  .asklake-schema-transform-adapter {
+    max-height: calc(100vh - 212px);
+    min-height: 0;
+  }
+
+  .asklake-schema-transform-scroll-frame {
+    min-width: 840px;
+  }
+
+  .asklake-schema-transform-adapter .flex.flex-col.bg-gray-50 {
+    min-height: 520px;
+  }
+
+  .asklake-schema-transform-adapter .flex.flex-1.p-4.gap-4 {
+    height: 460px !important;
+    max-height: 460px !important;
+  }
+}

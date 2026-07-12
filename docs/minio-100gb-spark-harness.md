@@ -14,6 +14,8 @@ This document records the Pair A person-1 backend validation path for Source, Sc
 - `backend/scripts/start-spark-server.mjs`: Spark standalone master/worker startup
 - `backend/scripts/spark_validate.py`: Spark validation and transform type checks
 - `backend/scripts/verify-spark-job-run.mjs`: create -> run -> Spark -> DAG -> Catalog verifier
+- `backend/scripts/verify-kafka-continuous-soak.mjs`: generated or JSONL/GZIP Kafka replay -> continuous worker -> reconciliation/fault/compaction verifier
+- `backend/scripts/kafka_continuous_maintenance.py`: quarantine inspect/replay and staged Parquet compaction
 - `backend/scripts/setup-source-fixtures.mjs`: PostgreSQL, MongoDB, and Redpanda fixtures
 - `backend/scripts/verify-all-sources.mjs`: source connector verifier
 
@@ -172,13 +174,34 @@ cd backend
 npm run verify:spark-run
 ```
 
-This verifier starts from an empty ETL/Catalog metadata state, creates one live job from a MinIO sample, submits a run command, verifies that the command response immediately returns `running`, then polls `GET /api/etl/jobs/{jobId}` until Spark writes Parquet output and the job returns to its final state. The create payload includes submitted `transformSteps`, `transformOutputColumns`, and `qualityRules`; the expected DAG includes Source, Schema, Spark source read, Transform, Quality, Parquet write, and Catalog update steps.
+This verifier starts from an empty ETL/Catalog metadata state, creates one live job from a MinIO sample, submits a run command, verifies that the command response immediately returns `running`, then polls `GET /api/etl/jobs/{jobId}` until Spark writes Parquet output and the job returns to its final state. The create payload includes submitted `transformSteps`, `transformOutputColumns`, `qualityRules`, and the multi-column `partition` value; the verifier checks that Spark writes nested `event_type=.../category_id=...` partition directories. The expected DAG includes Source, Schema, Spark source read, Transform, Quality, Parquet write, and Catalog update steps.
 
 Connector-backed jobs such as REST, PostgreSQL, and MongoDB write bounded sample rows to `ASKLAKE_SPARK_REPORT_DIR` as JSONL before Spark reads them. `start-spark-server.mjs` mounts that same host directory into the submit, master, and worker containers at `ASKLAKE_SPARK_REPORT_CONTAINER_DIR` (`/work/reports` by default). If a Codex worktree or repo path changes, the Spark containers must be recreated with the new report mount before run command verification.
 
 Text structuring runs must also verify `quality.reviewRowAnalysisChecks`, `textStructuring.execution`, `runHistory[].textStructuringExecution`, and Catalog `materializationRuns[].textStructuringExecution`. `one_of_values` columns without a compatible model fail preflight unless the column explicitly sets `fallbackAllowed: true`.
 
-## 8. Frontend
+## 8. Kafka Continuous Large-Data Soak
+
+Continuous soak는 `ASKLAKE_RUN_KAFKA_CONTINUOUS_SOAK=true`일 때만 실행한다. `ASKLAKE_CONTINUOUS_SOAK_INPUT`을 생략하면 synthetic event를 만들고, 지정하면 `.jsonl` 또는 `.jsonl.gz`를 line streaming으로 읽는다. 전체 Electronics 파일은 CI가 아니라 수동 환경에서 실행하며, `ASKLAKE_CONTINUOUS_SOAK_COUNT`를 생략하면 파일 끝까지 replay한다.
+
+```bash
+cd backend
+ASKLAKE_RUN_KAFKA_CONTINUOUS_SOAK=true \
+ASKLAKE_CONTINUOUS_SOAK_INPUT="$HOME/Downloads/Electronics.jsonl.gz" \
+ASKLAKE_CONTINUOUS_SOAK_RATE=1000 \
+ASKLAKE_CONTINUOUS_SOAK_BATCH_SIZE=500 \
+ASKLAKE_CONTINUOUS_SOAK_FAULT=worker \
+ASKLAKE_CONTINUOUS_SOAK_COMPACT=true \
+npm run verify:kafka-continuous-soak
+```
+
+`ASKLAKE_CONTINUOUS_SOAK_FAULT`는 `worker`, `backend`, `kafka`, `minio` 중 하나를 선택한다. Kafka/MinIO fault는 해당 Compose service를 잠시 pause한 뒤 반드시 unpause하고, worker가 실패 상태로 전이되면 checkpoint resume을 수행한다. Compaction 검증을 켜면 harness가 먼저 worker를 정상 중지해 checkpoint를 보존하고 단일 local Spark executor를 maintenance에 넘긴다. 결과에는 input/output row, file, byte, average file size와 reconciliation/lag/throughput/recovery/Catalog 지표가 포함된다. Compaction output은 `_compactions/run_id=*`에만 stage되며 원본 batch를 삭제하지 않는다.
+
+`npm run verify:kafka-continuous-contract`는 같은 worker attempt의 실패 카운터 멱등성, 종료 worker의 manifest 기반 Catalog 복구, maintenance lease 정리를 검증한다. E2E는 기본 replay가 현재 schema policy를 다시 적용하는지, `approveUnknownFields` 관리자 예외만 unknown-field 행을 복구하는지, replay 이후 완료된 `batch_id` 경로를 표준 Spark `basePath` reader와 compaction이 함께 읽는지 확인한다. Stream batch manifest는 `_SUCCESS`가 있는 data/quarantine 경로와 topic/partition별 `[startOffset, endOffset)`을 포함해야 한다.
+
+게시 경계 fault 검증은 backend에 `ASKLAKE_CONTINUOUS_FAIL_AFTER_DATA_WRITE_ONCE=true`, E2E runner에 `ASKLAKE_CONTINUOUS_E2E_PUBLICATION_FAULT=true`를 설정한다. 첫 worker는 data `_SUCCESS` 뒤 manifest 전에 한 번 실패하고, harness가 resume한 뒤 같은 batch/offset을 중복 저장하지 않고 manifest와 Catalog를 복구해야 한다. 이 변수는 테스트 전용이며 운영에서는 반드시 `false`로 둔다.
+
+## 9. Frontend
 
 ```powershell
 cd frontend

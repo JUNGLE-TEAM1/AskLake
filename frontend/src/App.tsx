@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import type React from "react";
 import { BookOpen, CircleHelp, Database, History, LogOut, Settings, ShieldCheck, Workflow } from "lucide-react";
+import { useLocation, useNavigate } from "react-router";
 import asklakeLogo from "./assets/asklake-logo.png";
-import { flowTabs, wizardFlows } from "./data/appShellData";
+import { steps, wizardFlows } from "./data/appShellData";
 import { Sidebar } from "./components/layout/Sidebar";
 import { Topbar } from "./components/layout/Topbar";
 import { Stepper } from "./components/layout/Stepper";
@@ -11,46 +12,32 @@ import { CatalogDetailPage, CatalogPage } from "./pages/catalog/CatalogPage";
 import { SqlAnalysisPage } from "./pages/sql/SqlAnalysisPage";
 import { DashboardPage } from "./pages/dashboard/DashboardPage";
 import { AdminConsolePage } from "./pages/admin/AdminConsolePage";
-import { AuthPage } from "./pages/auth/AuthPage";
-import { ModulePlaceholderPage } from "./pages/ModulePlaceholderPage";
 import { AiChatPage } from "./pages/ai/AiChatPage";
+import { AuthPage } from "./pages/auth/AuthPage";
 import { ProfilePage } from "./pages/profile/ProfilePage";
-import { JobDetailPage, JobRunsPage, JobsLandingPage, JobsTableDemoPage } from "./pages/ingest/JobsPages";
+import { JobDetailPage, JobRunsPage, JobsLandingPage } from "./pages/ingest/JobsPages";
 import { PermissionPage, ReviewPage, RuleApplicationPage, SchedulePage, SchemaInferencePage, SourceConnectionPage, TargetPage } from "./pages/etl/EtlPages";
 import { useAuditLogs } from "./hooks/useAuditLogs";
 import { useAskLakeData } from "./hooks/useAskLakeData";
 import { fetchAuthSession, logout as logoutSession } from "./services/authApi";
-import { getQueryRun } from "./services/pipelineApi";
-import type { AuditEntry, AuditTargetType, CatalogDataset, CurrentUserResponse, DashboardEntry, FlowId, NavId, NavItem, ScheduleFlowId } from "./types";
+import { Avatar, AvatarFallback } from "./components/ui/avatar";
+import { Alert, AlertDescription, AlertTitle } from "./components/ui/alert";
+import { IconButton } from "./components/ui/icon-button";
+import { Skeleton } from "./components/ui/skeleton";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./components/ui/tooltip";
+import type { AuditEntry, CatalogDataset, CurrentUserResponse, DashboardEntry, DraftPipeline, FlowId, JobRowData, NavId, NavItem, ScheduleFlowId } from "./types";
 import type { DashboardRuntimeMode } from "./types";
 
-type PlaceholderFlow = Extract<FlowId, "ai" | "admin">;
-type PlaceholderAction = "requirements" | "status" | "primary";
 const scheduleFlows: ScheduleFlowId[] = ["repeat", "manual"];
 
 function isScheduleFlow(flow: FlowId): flow is ScheduleFlowId {
   return scheduleFlows.includes(flow as ScheduleFlowId);
 }
 
-const placeholderAuditConfig: Record<PlaceholderFlow, { targetType: AuditTargetType; actions: Record<PlaceholderAction, { action: string; apiPath: string }> }> = {
-  ai: {
-    targetType: "ai_module",
-    actions: {
-      requirements: { action: "rag.requirements.opened", apiPath: "/api/rag/requirements" },
-      status: { action: "rag.integration.status_recorded", apiPath: "/api/rag/integration-status" },
-      primary: { action: "rag.integration.pending", apiPath: "/api/rag/datasets" },
-    },
-  },
-  admin: {
-    targetType: "admin_module",
-    actions: {
-      requirements: { action: "admin.requirements.opened", apiPath: "/api/admin/requirements" },
-      status: { action: "admin.integration.status_recorded", apiPath: "/api/admin/integration-status" },
-      primary: { action: "admin.integration.pending", apiPath: "/api/audit-logs" },
-    },
-  },
-};
-
+function isContinuousKafkaDraft(draft: DraftPipeline) {
+  return draft.source.executionMode === "continuous"
+    && ["Stream / Kafka", "Kafka JSON"].includes(draft.source.sourceType);
+}
 const emptyDatasetId = "dataset_not_selected";
 const emptyJobId = "JOB-NONE";
 
@@ -58,20 +45,21 @@ type DashboardRouteState =
   | { dashboardId: string; runtimeMode: DashboardRuntimeMode; view: "runtime" }
   | { view: "list" };
 
-function parseSqlDashboardContext(dashboardId: string) {
-  const runIdMatch = dashboardId.match(/_((?:sql|sql_preview)_[A-Za-z0-9_-]+)$/);
-  if (!runIdMatch || runIdMatch.index === undefined) return null;
+type AppRouteState = {
+  dashboardRoute: DashboardRouteState | null;
+  datasetId?: string;
+  flow: FlowId;
+  jobId?: string;
+};
 
-  const sqlRunId = runIdMatch[1];
-  const baseDatasetId = dashboardId.startsWith("dash_")
-    ? dashboardId.slice("dash_".length, runIdMatch.index)
-    : undefined;
+type FlowPathContext = {
+  dashboardEntry?: DashboardEntry;
+  lastScheduleFlow?: ScheduleFlowId;
+  selectedDataset?: CatalogDataset;
+  selectedJob?: JobRowData;
+};
 
-  return {
-    baseDatasetId: baseDatasetId || undefined,
-    sqlRunId,
-  };
-}
+const defaultScheduleFlow: ScheduleFlowId = "repeat";
 
 function parseDashboardRoute(pathname: string): DashboardRouteState | null {
   const segments = pathname.split("/").filter(Boolean);
@@ -84,18 +72,6 @@ function parseDashboardRoute(pathname: string): DashboardRouteState | null {
 
 function dashboardEntryFromRoute(route: DashboardRouteState, version: number): DashboardEntry {
   if (route.view === "list") return { source: "sidebar", view: "list", version };
-  const sqlContext = parseSqlDashboardContext(route.dashboardId);
-  if (sqlContext) {
-    return {
-      baseDatasetId: sqlContext.baseDatasetId,
-      dashboardId: route.dashboardId,
-      runtimeMode: route.runtimeMode,
-      source: "sql",
-      sqlRunId: sqlContext.sqlRunId,
-      view: "runtime",
-      version,
-    };
-  }
   return {
     dashboardId: route.dashboardId,
     runtimeMode: route.runtimeMode,
@@ -110,6 +86,124 @@ function getDashboardPath(dashboardId: string, mode: DashboardRuntimeMode) {
   return mode === "draft" ? `/dashboards/${encodedId}/edit` : `/dashboards/${encodedId}`;
 }
 
+function decodePathSegment(segment?: string) {
+  if (!segment) return undefined;
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+}
+
+function encodePathSegment(segment: string) {
+  return encodeURIComponent(segment);
+}
+
+function parseAppRoute(pathname: string, currentScheduleFlow: ScheduleFlowId = defaultScheduleFlow): AppRouteState {
+  const dashboardRoute = parseDashboardRoute(pathname);
+  if (dashboardRoute) return { dashboardRoute, flow: "dashboard" };
+
+  const segments = pathname.split("/").filter(Boolean);
+  const [area, id, action] = segments;
+
+  if (!area) return { dashboardRoute: null, flow: "jobs" };
+  if (area === "jobs") {
+    const jobId = decodePathSegment(id);
+    if (jobId && action === "runs") return { dashboardRoute: null, flow: "jobRuns", jobId };
+    if (jobId) return { dashboardRoute: null, flow: "jobDetail", jobId };
+    return { dashboardRoute: null, flow: "jobs" };
+  }
+  if (area === "etl") {
+    if (id === "source") return { dashboardRoute: null, flow: "source" };
+    if (id === "schema") return { dashboardRoute: null, flow: "schema" };
+    if (id === "rules") return { dashboardRoute: null, flow: "rules" };
+    if (id === "schedule") return { dashboardRoute: null, flow: currentScheduleFlow };
+    if (id === "permission") return { dashboardRoute: null, flow: "permission" };
+    if (id === "target") return { dashboardRoute: null, flow: "target" };
+    if (id === "review") return { dashboardRoute: null, flow: "review" };
+    return { dashboardRoute: null, flow: "jobs" };
+  }
+  if (area === "catalog") {
+    const datasetId = decodePathSegment(id);
+    if (datasetId) return { dashboardRoute: null, datasetId, flow: "catalogDetail" };
+    return { dashboardRoute: null, flow: "catalog" };
+  }
+  if (area === "sql") return { dashboardRoute: null, flow: "sql" };
+  if (area === "ai") return { dashboardRoute: null, flow: "ai" };
+  if (area === "admin") return { dashboardRoute: null, flow: "admin" };
+  if (area === "profile") return { dashboardRoute: null, flow: "profile" };
+  if (area === "login") return { dashboardRoute: null, flow: "login" };
+
+  return { dashboardRoute: null, flow: "jobs" };
+}
+
+function getFlowPath(flow: FlowId, context: FlowPathContext = {}) {
+  if (flow === "jobs") return "/jobs";
+  if (flow === "jobDetail" && context.selectedJob && context.selectedJob.id !== emptyJobId) return `/jobs/${encodePathSegment(context.selectedJob.id)}`;
+  if (flow === "jobRuns" && context.selectedJob && context.selectedJob.id !== emptyJobId) return `/jobs/${encodePathSegment(context.selectedJob.id)}/runs`;
+  if (flow === "source") return "/etl/source";
+  if (flow === "schema") return "/etl/schema";
+  if (flow === "rules") return "/etl/rules";
+  if (isScheduleFlow(flow)) return "/etl/schedule";
+  if (flow === "permission") return "/etl/permission";
+  if (flow === "target") return "/etl/target";
+  if (flow === "review") return "/etl/review";
+  if (flow === "catalog") return "/catalog";
+  if (flow === "catalogDetail" && context.selectedDataset && context.selectedDataset.id !== emptyDatasetId) return `/catalog/${encodePathSegment(context.selectedDataset.id)}`;
+  if (flow === "sql") return "/sql";
+  if (flow === "dashboard") {
+    const entry = context.dashboardEntry;
+    if (entry?.view === "runtime" && entry.dashboardId && entry.runtimeMode) return getDashboardPath(entry.dashboardId, entry.runtimeMode);
+    return "/dashboards";
+  }
+  if (flow === "ai") return "/ai";
+  if (flow === "admin") return "/admin";
+  if (flow === "profile") return "/profile";
+  if (flow === "login") return "/login";
+  return "/jobs";
+}
+
+function buildMissingJobFromRoute(jobId: string): JobRowData {
+  return {
+    id: jobId,
+    lastRun: "-",
+    lastState: "목록에서 찾을 수 없음",
+    name: "선택한 Job을 찾을 수 없음",
+    nextRun: "-",
+    owner: "-",
+    schedule: "-",
+    source: "-",
+    status: "paused",
+    tag: "Missing",
+    target: "-",
+  };
+}
+
+function buildMissingDatasetFromRoute(datasetId: string): CatalogDataset {
+  return {
+    description: "목록에서 찾을 수 없는 데이터셋입니다.",
+    downstream: [],
+    freshness: "stale",
+    id: datasetId,
+    lastUpdated: "-",
+    layer: "RAW",
+    materializationRuns: [],
+    name: "선택한 데이터셋을 찾을 수 없음",
+    nextRefresh: "-",
+    owner: "-",
+    quality: "-",
+    rag: false,
+    rows: "-",
+    sampleRows: [],
+    schema: [],
+    size: "-",
+    source: "-",
+    status: "approval_required",
+    tags: [],
+    upstream: [],
+  };
+}
+
 function hasSelectedDataset(dataset: CatalogDataset, datasets: CatalogDataset[]) {
   return dataset.id !== emptyDatasetId && datasets.some((item) => item.id === dataset.id);
 }
@@ -119,51 +213,57 @@ function hasSelectedJob(jobId: string, jobs: Array<{ id: string }>) {
 }
 
 export function App() {
-  const initialDashboardRoute = parseDashboardRoute(window.location.pathname);
-  const initialJobsTableDemoRoute = window.location.pathname === "/jobs-table-demo";
-  const initialProfileRoute = window.location.pathname === "/profile";
-  const initialAdminRoute = window.location.pathname === "/admin";
-  const initialLoginRoute = window.location.pathname === "/login";
-  const [activeFlow, setActiveFlow] = useState<FlowId>(initialDashboardRoute ? "dashboard" : initialJobsTableDemoRoute ? "jobsTableDemo" : initialProfileRoute ? "profile" : initialAdminRoute ? "admin" : initialLoginRoute ? "login" : "jobs");
+  const location = useLocation();
+  const navigate = useNavigate();
+  const initialRoute = parseAppRoute(window.location.pathname, defaultScheduleFlow);
+  const [activeFlow, setActiveFlow] = useState<FlowId>(initialRoute.flow);
   const [currentUser, setCurrentUser] = useState<CurrentUserResponse | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
-  const [lastScheduleFlow, setLastScheduleFlow] = useState<ScheduleFlowId>("repeat");
+  const [lastScheduleFlow, setLastScheduleFlow] = useState<ScheduleFlowId>(() => isScheduleFlow(initialRoute.flow) ? initialRoute.flow : defaultScheduleFlow);
   const [dashboardEntry, setDashboardEntry] = useState<DashboardEntry>(() => (
-    initialDashboardRoute ? dashboardEntryFromRoute(initialDashboardRoute, 0) : { source: "sidebar", view: "list", version: 0 }
+    initialRoute.dashboardRoute ? dashboardEntryFromRoute(initialRoute.dashboardRoute, 0) : { source: "sidebar", view: "list", version: 0 }
   ));
-  const [hydratingSqlRunId, setHydratingSqlRunId] = useState<string | null>(null);
   const [sqlInitialDatasetId, setSqlInitialDatasetId] = useState<string | null>(null);
   const { auditLogs, auditOpen, auditSignal, setAuditOpen, showToast, toast, writeAuditLog } = useAuditLogs();
+  const changeFlowFromData = (flow: FlowId) => {
+    const nextFlow = flow === "rules" ? lastScheduleFlow : flow;
+    const nextScheduleFlow = isScheduleFlow(nextFlow) ? nextFlow : lastScheduleFlow;
+    if (isScheduleFlow(nextFlow)) {
+      setLastScheduleFlow(nextFlow);
+    }
+    setActiveFlow(nextFlow);
+
+    const nextPath = getFlowPath(nextFlow, { dashboardEntry, lastScheduleFlow: nextScheduleFlow });
+    if (location.pathname !== nextPath) {
+      navigate(nextPath);
+    }
+  };
   const {
     apiPending,
-    cancelJobEdit,
     createPipeline,
     dataError,
     dataLoading,
-    datasets,
     deleteMaterializationRun,
+    datasets,
     draftPipeline,
-    editingJobId,
+    filterJobs,
     handleJobCommand,
     jobExecutionEvidence,
+    jobListFacets,
+    jobsLoading,
     jobs,
-    openDatasetInSql,
-    openJobDetail,
-    openJobRuns,
-    prepareSqlDatasetJobDraft,
-    refreshData,
+    createSqlDatasetJob,
     runsByJobId,
     selectedDataset,
     selectedJob,
     selectedRunIdByJobId,
     selectRunForJob,
+    setSelectedDataset,
+    setSelectedJob,
     setSqlResultDraft,
     sqlResultDraft,
-    startJobEdit,
-    startNewPipeline,
     updateDraftPipeline,
-  } = useAskLakeData({ enabled: Boolean(currentUser), currentUser, onFlowChange: setActiveFlow, showToast, writeAuditLog });
-  const current = useMemo(() => flowTabs.find((tab) => tab.id === activeFlow), [activeFlow]);
+  } = useAskLakeData({ currentUser, enabled: Boolean(currentUser), onFlowChange: changeFlowFromData, showToast, writeAuditLog });
   const canAccessAdmin = currentUser?.role?.toLowerCase() === "admin";
   const activeNavId = useMemo<NavId | null>(() => {
     if (activeFlow === "catalog" || activeFlow === "catalogDetail") return "catalog";
@@ -171,17 +271,17 @@ export function App() {
     if (activeFlow === "dashboard") return "dashboard";
     if (activeFlow === "ai") return "ai";
     if (activeFlow === "admin") return canAccessAdmin ? "admin" : null;
-    if (activeFlow === "profile") return null;
-    if (activeFlow === "login") return null;
+    if (activeFlow === "profile" || activeFlow === "login") return null;
     return "ingest";
   }, [activeFlow, canAccessAdmin]);
   const hasShellRows = jobs.length > 0 || datasets.length > 0;
-  const isIngestShellFlow = activeFlow === "jobs" || activeFlow === "jobsTableDemo";
+  const isIngestShellFlow = activeFlow === "jobs";
   const shouldBlockForInitialData = dataLoading && !hasShellRows && !isIngestShellFlow;
   const shouldBlockForInitialError = !dataLoading && Boolean(dataError) && !hasShellRows && !isIngestShellFlow;
   const pendingMessage = dataLoading ? "DB 데이터 동기화 중..." : "API 요청 처리 중...";
   const selectedDatasetAvailable = hasSelectedDataset(selectedDataset, datasets);
   const selectedJobAvailable = hasSelectedJob(selectedJob.id, jobs);
+  const selectedJobCatalogDataset = datasets.find((dataset) => dataset.name === selectedJob.target);
   const requiresSelectedJob = activeFlow === "jobDetail" || activeFlow === "jobRuns";
   const requiresSelectedDataset = activeFlow === "catalogDetail" || (activeFlow === "dashboard" && dashboardEntry.view === "builder");
   const canRenderActiveFlow = (!requiresSelectedJob || selectedJobAvailable) && (!requiresSelectedDataset || selectedDatasetAvailable);
@@ -191,13 +291,23 @@ export function App() {
       : null,
     [datasets, selectedDataset, sqlInitialDatasetId],
   );
-  const shouldRenderAppContent = !shouldBlockForInitialData && !shouldBlockForInitialError && canRenderActiveFlow;
-  const isPublicAuthFlow = activeFlow === "login";
-  const shouldBlockForAuthCheck = !authChecked && !isPublicAuthFlow;
-  const shouldShowAuthGate = authChecked && !currentUser && !isPublicAuthFlow;
+  const continuousKafkaDraft = isContinuousKafkaDraft(draftPipeline);
+  const isIndependentFlow = activeFlow === "ai" || activeFlow === "admin" || activeFlow === "profile";
+  const shouldRenderAppContent = isIndependentFlow || (!shouldBlockForInitialData && !shouldBlockForInitialError && canRenderActiveFlow);
   const wizardStepFlows = useMemo<FlowId[]>(
-    () => ["source", "schema", lastScheduleFlow, "permission", "target", "review"],
-    [lastScheduleFlow],
+    () => continuousKafkaDraft
+      ? ["source", "schema", "permission", "target", "review"]
+      : ["source", "schema", lastScheduleFlow, "permission", "target", "review"],
+    [continuousKafkaDraft, lastScheduleFlow],
+  );
+  const wizardStepLabels = useMemo(
+    () => continuousKafkaDraft ? steps.filter((step) => step !== "스케줄") : steps,
+    [continuousKafkaDraft],
+  );
+  const wizardActiveIndex = Math.max(0, wizardStepFlows.indexOf(activeFlow));
+  const routeState = useMemo(
+    () => parseAppRoute(location.pathname, lastScheduleFlow),
+    [lastScheduleFlow, location.pathname],
   );
 
   useEffect(() => {
@@ -208,8 +318,7 @@ export function App() {
     let active = true;
     fetchAuthSession()
       .then((session) => {
-        if (!active) return;
-        setCurrentUser(session.user);
+        if (active) setCurrentUser(session.user);
       })
       .catch(() => {
         if (active) setCurrentUser(null);
@@ -224,91 +333,82 @@ export function App() {
 
   useEffect(() => {
     if (!authChecked || currentUser || activeFlow === "login") return;
-    if (window.location.pathname !== "/login") window.history.replaceState(null, "", "/login");
+    navigate("/login", { replace: true });
     setActiveFlow("login");
-  }, [activeFlow, authChecked, currentUser]);
+  }, [activeFlow, authChecked, currentUser, navigate]);
 
   useEffect(() => {
     if (!authChecked || !currentUser || activeFlow !== "login") return;
-    if (window.location.pathname !== "/profile") window.history.replaceState(null, "", "/profile");
-    setActiveFlow("profile");
-  }, [activeFlow, authChecked, currentUser]);
+    navigate("/jobs", { replace: true });
+    setActiveFlow("jobs");
+  }, [activeFlow, authChecked, currentUser, navigate]);
 
   useEffect(() => {
     if (!authChecked || !currentUser || activeFlow !== "admin" || canAccessAdmin) return;
-    if (window.location.pathname === "/admin") window.history.replaceState(null, "", "/profile");
+    navigate("/profile", { replace: true });
     showToast("관리 메뉴는 운영자 계정에서만 사용할 수 있습니다.", "info");
     setActiveFlow("profile");
-  }, [activeFlow, authChecked, canAccessAdmin, currentUser, showToast]);
+  }, [activeFlow, authChecked, canAccessAdmin, currentUser, navigate, showToast]);
 
   useEffect(() => {
-    if (activeFlow !== "dashboard" || dashboardEntry.source !== "sql" || !dashboardEntry.sqlRunId) return undefined;
-    if (sqlResultDraft?.runId === dashboardEntry.sqlRunId) return undefined;
-
-    const sqlRunId = dashboardEntry.sqlRunId;
-    let cancelled = false;
-    setHydratingSqlRunId(sqlRunId);
-    void getQueryRun(sqlRunId)
-      .then((result) => {
-        if (cancelled) return;
-        setSqlResultDraft(result);
-        setSqlInitialDatasetId(result.baseDatasetId ?? result.datasetId);
-        writeAuditLog("dashboard.sql_result_context_hydrated", `/api/query/runs/${sqlRunId}`, sqlRunId);
-      })
-      .catch(() => {
-        if (cancelled) return;
-        writeAuditLog("dashboard.sql_result_context_hydrate_failed", `/api/query/runs/${sqlRunId}`, sqlRunId, "failed");
-      })
-      .finally(() => {
-        if (!cancelled) setHydratingSqlRunId(null);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [activeFlow, dashboardEntry.source, dashboardEntry.sqlRunId, setSqlResultDraft, sqlResultDraft?.runId, writeAuditLog]);
+    if (routeState.dashboardRoute) {
+      setDashboardEntry((entry) => dashboardEntryFromRoute(routeState.dashboardRoute!, entry.version + 1));
+    }
+    if (isScheduleFlow(routeState.flow)) {
+      setLastScheduleFlow(routeState.flow);
+    }
+    setActiveFlow((flow) => flow === routeState.flow ? flow : routeState.flow);
+  }, [routeState]);
 
   useEffect(() => {
-    const handlePopState = () => {
-      const route = parseDashboardRoute(window.location.pathname);
-      if (route) {
-        setDashboardEntry((entry) => dashboardEntryFromRoute(route, entry.version + 1));
-        setActiveFlow("dashboard");
-        return;
-      }
-      if (window.location.pathname === "/profile") {
-        setActiveFlow("profile");
-        return;
-      }
-      if (window.location.pathname === "/admin") {
-        if (canAccessAdmin) {
-          setActiveFlow("admin");
-        } else {
-          window.history.replaceState(null, "", "/profile");
-          setActiveFlow("profile");
-        }
-        return;
-      }
-      if (window.location.pathname === "/login") {
-        setActiveFlow("login");
-        return;
-      }
-      setActiveFlow(window.location.pathname === "/jobs-table-demo" ? "jobsTableDemo" : "jobs");
-    };
+    if (!continuousKafkaDraft || !isScheduleFlow(activeFlow)) return;
+    const nextPath = getFlowPath("permission");
+    navigate(nextPath, { replace: true });
+    setActiveFlow("permission");
+  }, [activeFlow, continuousKafkaDraft, navigate]);
 
-    window.addEventListener("popstate", handlePopState);
-    return () => window.removeEventListener("popstate", handlePopState);
-  }, [canAccessAdmin]);
+  useEffect(() => {
+    if (!routeState.jobId) return;
+    const matchedJob = jobs.find((job) => job.id === routeState.jobId);
+    const nextJob = matchedJob ?? buildMissingJobFromRoute(routeState.jobId);
+    setSelectedJob((job) => (
+      job === nextJob || (job.id === nextJob.id && job.name === nextJob.name && job.lastState === nextJob.lastState)
+        ? job
+        : nextJob
+    ));
+  }, [jobs, routeState.jobId, setSelectedJob]);
 
-  const moveToFlow = (flow: FlowId) => {
+  useEffect(() => {
+    if (!routeState.datasetId) return;
+    const matchedDataset = datasets.find((dataset) => dataset.id === routeState.datasetId);
+    const nextDataset = matchedDataset ?? buildMissingDatasetFromRoute(routeState.datasetId);
+    setSelectedDataset((dataset) => (
+      dataset === nextDataset || (dataset.id === nextDataset.id && dataset.name === nextDataset.name && dataset.status === nextDataset.status)
+        ? dataset
+        : nextDataset
+    ));
+  }, [datasets, routeState.datasetId, setSelectedDataset]);
+
+  const moveToFlow = (flow: FlowId, context: FlowPathContext = {}) => {
     if (flow === "rules") {
-      setActiveFlow(lastScheduleFlow);
+      moveToFlow(continuousKafkaDraft ? "permission" : lastScheduleFlow, context);
       return;
     }
-    if (isScheduleFlow(flow)) {
-      setLastScheduleFlow(flow);
+    const resolvedFlow = continuousKafkaDraft && isScheduleFlow(flow) ? "permission" : flow;
+    const nextScheduleFlow = isScheduleFlow(resolvedFlow) ? resolvedFlow : lastScheduleFlow;
+    if (isScheduleFlow(resolvedFlow)) {
+      setLastScheduleFlow(resolvedFlow);
     }
-    setActiveFlow(flow);
+    const nextPath = getFlowPath(resolvedFlow, {
+      dashboardEntry: context.dashboardEntry ?? dashboardEntry,
+      lastScheduleFlow: nextScheduleFlow,
+      selectedDataset: context.selectedDataset ?? selectedDataset,
+      selectedJob: context.selectedJob ?? selectedJob,
+    });
+    if (location.pathname !== nextPath) {
+      navigate(nextPath);
+    }
+    setActiveFlow(resolvedFlow);
   };
 
   const navigateWizardStep = (stepIndex: number) => {
@@ -322,166 +422,105 @@ export function App() {
     showToast("설정이 임시 저장되었습니다.");
   };
 
-  const refreshShellData = () => {
-    writeAuditLog("app.data_refreshed", "/api/catalog/datasets", "datasets");
-    void refreshData();
-  };
-
   const navigateSidebar = (item: NavItem) => {
-    if (item.id === "admin" && !canAccessAdmin) {
-      showToast("관리 메뉴는 운영자 계정에서만 사용할 수 있습니다.", "info");
-      if (window.location.pathname !== "/profile") window.history.pushState(null, "", "/profile");
-      moveToFlow("profile");
-      return;
-    }
     writeAuditLog("ui.menu.clicked", `/app/${item.id}`, item.label);
     if (item.id === "sql") {
       setSqlInitialDatasetId(null);
       setSqlResultDraft(null);
     }
     if (item.id === "dashboard") {
-      if (window.location.pathname !== "/dashboards") window.history.pushState(null, "", "/dashboards");
-      setDashboardEntry((entry) => ({ source: "sidebar", view: "list", version: entry.version + 1 }));
-    } else if (item.id === "admin") {
-      if (window.location.pathname !== "/admin") window.history.pushState(null, "", "/admin");
-    } else if (window.location.pathname.startsWith("/dashboards") || window.location.pathname === "/jobs-table-demo" || window.location.pathname === "/profile" || window.location.pathname === "/admin" || window.location.pathname === "/login") {
-      window.history.pushState(null, "", "/");
+      const nextDashboardEntry: DashboardEntry = { source: "sidebar", view: "list", version: dashboardEntry.version + 1 };
+      setDashboardEntry(nextDashboardEntry);
+      moveToFlow(item.flow, { dashboardEntry: nextDashboardEntry });
+      return;
     }
     moveToFlow(item.flow);
   };
 
-  const openJobsTableDemo = () => {
-    writeAuditLog("etl.jobs.table_demo_opened", "/jobs-table-demo", "jobs-table-demo", "success", { targetType: "ui" });
-    if (window.location.pathname !== "/jobs-table-demo") window.history.pushState(null, "", "/jobs-table-demo");
-    moveToFlow("jobsTableDemo");
-  };
-
-  const closeJobsTableDemo = () => {
-    writeAuditLog("etl.jobs.table_demo_closed", "/api/etl/jobs", "jobs-table-demo", "success", { targetType: "ui" });
-    if (window.location.pathname === "/jobs-table-demo") window.history.pushState(null, "", "/");
-    moveToFlow("jobs");
-  };
-
   const navigateIngestLanding = () => {
     writeAuditLog("ui.brand.clicked", "/app/ingest", "AskLake");
-    if (window.location.pathname !== "/") window.history.pushState(null, "", "/");
     setDashboardEntry((entry) => ({ source: "sidebar", view: "list", version: entry.version + 1 }));
     moveToFlow("jobs");
   };
 
   const openProfilePage = () => {
     if (!currentUser) {
-      openLoginPage();
+      moveToFlow("login");
       return;
     }
     writeAuditLog("ui.account_opened", "/api/users/me", currentUser.email, "success", { targetType: "ui" });
-    if (window.location.pathname !== "/profile") window.history.pushState(null, "", "/profile");
     moveToFlow("profile");
-  };
-
-  const openLoginPage = () => {
-    writeAuditLog("ui.login_opened", "/api/auth/session", "login", "success", { targetType: "ui" });
-    if (window.location.pathname !== "/login") window.history.pushState(null, "", "/login");
-    moveToFlow("login");
   };
 
   const handleAuthenticated = (user: CurrentUserResponse) => {
     setCurrentUser(user);
-    showToast(`${user.displayName} 계정으로 로그인되었습니다.`, "success");
-    if (window.location.pathname !== "/profile") window.history.pushState(null, "", "/profile");
-    moveToFlow("profile");
+    showToast(`${user.profile.displayName || user.displayName} 계정으로 로그인했습니다.`, "success");
+    moveToFlow("jobs");
   };
 
   const handleLogout = () => {
-    logoutSession()
+    void logoutSession()
       .then(() => {
         setCurrentUser(null);
-        writeAuditLog("auth.logout.succeeded", "/api/auth/logout", "session", "success", { targetType: "ui" });
         showToast("로그아웃되었습니다.", "info");
-        if (window.location.pathname !== "/login") window.history.pushState(null, "", "/login");
         moveToFlow("login");
       })
-      .catch(() => {
-        writeAuditLog("auth.logout.failed", "/api/auth/logout", "session", "failed", { targetType: "ui" });
-        showToast("로그아웃 요청에 실패했습니다.", "info");
-      });
+      .catch(() => showToast("로그아웃 요청을 처리하지 못했습니다.", "info"));
   };
 
   const openDatasetInSqlWithSelection = (dataset: CatalogDataset) => {
     setSqlInitialDatasetId(dataset.id);
-    openDatasetInSql(dataset);
-  };
-
-  const reopenSqlAnalysisFromDashboard = () => {
-    const targetDatasetId = dashboardEntry.baseDatasetId ?? sqlResultDraft?.baseDatasetId ?? sqlResultDraft?.datasetId ?? null;
-    setSqlInitialDatasetId(targetDatasetId);
-    if (window.location.pathname.startsWith("/dashboards")) window.history.pushState(null, "", "/");
-    writeAuditLog("dashboard.sql_result_context_reopen_sql", "/api/query/runs", dashboardEntry.sqlRunId ?? "sql-result");
-    moveToFlow("sql");
+    setSelectedDataset(dataset);
+    setSqlResultDraft(null);
+    writeAuditLog("catalog.open_in_sql.clicked", `/api/catalog/datasets/${dataset.id}/query`, dataset.id, "success", { targetType: "dataset" });
+    moveToFlow("sql", { selectedDataset: dataset });
   };
 
   const navigateDashboardRuntime = (dashboardId: string, mode: DashboardRuntimeMode) => {
-    const path = getDashboardPath(dashboardId, mode);
-    if (window.location.pathname !== path) window.history.pushState(null, "", path);
-    setDashboardEntry((entry) => ({
+    const nextDashboardEntry: DashboardEntry = {
       dashboardId,
       runtimeMode: mode,
       source: "internal",
       view: "runtime",
-      version: entry.version + 1,
-    }));
-    moveToFlow("dashboard");
+      version: dashboardEntry.version + 1,
+    };
+    setDashboardEntry(nextDashboardEntry);
+    moveToFlow("dashboard", { dashboardEntry: nextDashboardEntry });
   };
 
-  const recordPlaceholderAction = (flow: PlaceholderFlow, actionType: PlaceholderAction) => {
-    const config = placeholderAuditConfig[flow];
-    const { action, apiPath } = config.actions[actionType];
-    writeAuditLog(action, apiPath, flow, "success", { targetType: config.targetType });
+  const openJobDetailWithRoute = (job: JobRowData) => {
+    setSelectedJob(job);
+    writeAuditLog("etl.job.detail_opened", `/api/etl/jobs/${job.id}`, job.id);
+    moveToFlow("jobDetail", { selectedJob: job });
   };
+
+  const openJobRunsWithRoute = (job: JobRowData) => {
+    setSelectedJob(job);
+    writeAuditLog("etl.job.runs_opened", `/api/etl/jobs/${job.id}/runs`, job.id);
+    moveToFlow("jobRuns", { selectedJob: job });
+  };
+
+  if (!authChecked && activeFlow !== "login") {
+    return <div className="workspace-route-loading" role="status">로그인 상태를 확인하는 중...</div>;
+  }
+
+  if (!currentUser || activeFlow === "login") {
+    return <AuthPage onAction={writeAuditLog} onAuthenticated={handleAuthenticated} />;
+  }
 
   if (activeFlow === "rules") {
-    if (shouldBlockForAuthCheck) {
-      return (
-        <div className="auth-only-shell" data-last-action={auditSignal}>
-          <main className="auth-only-main">
-            <div className="module-placeholder-page">
-              <span>SESSION</span>
-              <h1>세션을 확인하는 중입니다</h1>
-              <p>로그인 상태를 확인한 뒤 AskLake를 표시합니다.</p>
-            </div>
-          </main>
-        </div>
-      );
-    }
-
-    if (shouldShowAuthGate) {
-      return (
-        <div className="auth-only-shell" data-last-action={auditSignal}>
-          <main className="auth-only-main">
-            {toast && <div className={`app-toast ${toast.tone}`}>{toast.message}</div>}
-            <AuthPage onAction={writeAuditLog} onAuthenticated={handleAuthenticated} />
-          </main>
-          <Footer />
-        </div>
-      );
-    }
-
     return (
       <RuleBuilderShell
         auditOpen={auditOpen}
         auditLogs={auditLogs}
         auditCount={auditLogs.length}
-        canAccessAdmin={canAccessAdmin}
         onAccount={openProfilePage}
         onAuditToggle={() => setAuditOpen((open) => !open)}
         onDocs={() => {
           writeAuditLog("etl.builder.docs_opened", "/docs/etl-builder", "rule-application", "success", { targetType: "ui" });
           showToast("ETL Builder 도움말을 확인할 수 있도록 기록했습니다.", "info");
         }}
-        onLogout={() => {
-          writeAuditLog("ui.logout_requested", "/app/logout", "demo.user@asklake.local", "success", { targetType: "ui" });
-          showToast("데모 환경에서는 로그아웃 요청만 기록됩니다.", "info");
-        }}
+        onLogout={handleLogout}
         onBrandClick={navigateIngestLanding}
         onNavigate={(flow, label) => {
           writeAuditLog("ui.builder_menu.clicked", `/app/${flow}`, label);
@@ -491,34 +530,8 @@ export function App() {
       >
         {toast && <div className={`app-toast ${toast.tone}`}>{toast.message}</div>}
         {apiPending && <div className="app-api-pending">API 요청 처리 중...</div>}
-        <RuleApplicationPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("schema")} onNext={() => moveToFlow(lastScheduleFlow)} onSave={() => saveDraft("rules")} onAction={writeAuditLog} onNotify={showToast} />
+        <RuleApplicationPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("schema")} onNext={() => moveToFlow(continuousKafkaDraft ? "permission" : lastScheduleFlow)} onSave={() => saveDraft("rules")} onAction={writeAuditLog} onNotify={showToast} />
       </RuleBuilderShell>
-    );
-  }
-
-  if (shouldBlockForAuthCheck) {
-    return (
-      <div className="auth-only-shell" data-last-action={auditSignal}>
-        <main className="auth-only-main">
-          <div className="module-placeholder-page">
-            <span>SESSION</span>
-            <h1>세션을 확인하는 중입니다</h1>
-            <p>로그인 상태를 확인한 뒤 AskLake를 표시합니다.</p>
-          </div>
-        </main>
-      </div>
-    );
-  }
-
-  if (shouldShowAuthGate || (!currentUser && activeFlow === "login")) {
-    return (
-      <div className="auth-only-shell" data-last-action={auditSignal}>
-        <main className="auth-only-main">
-          {toast && <div className={`app-toast ${toast.tone}`}>{toast.message}</div>}
-          <AuthPage onAction={writeAuditLog} onAuthenticated={handleAuthenticated} />
-        </main>
-        <Footer />
-      </div>
     );
   }
 
@@ -532,24 +545,24 @@ export function App() {
         onNavigate={navigateSidebar}
       />
       <main className={activeFlow === "schema" ? "main-shell schema-shell" : "main-shell"}>
-        <Topbar auditLogs={auditLogs} auditOpen={auditOpen} currentUser={currentUser} onAccount={openProfilePage} onAuditToggle={() => setAuditOpen((open) => !open)} onLogin={openLoginPage} onLogout={handleLogout} onRefresh={refreshShellData} />
+        <Topbar auditLogs={auditLogs} auditOpen={auditOpen} currentUser={currentUser} onAccount={openProfilePage} onAuditToggle={() => setAuditOpen((open) => !open)} onLogin={() => moveToFlow("login")} onLogout={handleLogout} onRefresh={() => writeAuditLog("etl.job.status_refreshed", "/api/etl/jobs", "jobs")} />
         {toast && <div className={`app-toast ${toast.tone}`}>{toast.message}</div>}
         {(apiPending || (dataLoading && (hasShellRows || isIngestShellFlow))) && <div className="app-api-pending">{pendingMessage}</div>}
-        {wizardFlows.includes(activeFlow) && <Stepper activeIndex={current?.stepIndex ?? 0} onStepSelect={navigateWizardStep} />}
+        {wizardFlows.includes(activeFlow) && <Stepper activeIndex={wizardActiveIndex} steps={wizardStepLabels} onStepSelect={navigateWizardStep} />}
         <section className={activeFlow === "jobs" ? "page-body jobs-body" : activeFlow === "schema" ? "page-body schema-body" : activeFlow === "sql" ? "page-body sql-body" : "page-body"}>
-          {shouldBlockForInitialData && (
-            <div className="module-placeholder-page">
-              <span>POSTGRES</span>
-              <h1>DB 데이터를 불러오는 중입니다</h1>
-              <p>Docker Postgres에 seed된 AskLake 데이터를 API 서버에서 가져오고 있습니다.</p>
+          {!isIndependentFlow && shouldBlockForInitialData && (
+            <div aria-label="데이터를 불러오는 중" className="module-placeholder-page" role="status">
+              <Skeleton className="h-5 w-24" />
+              <Skeleton className="h-9 w-full max-w-md" />
+              <Skeleton className="h-5 w-full max-w-xl" />
             </div>
           )}
-          {shouldBlockForInitialError && (
-            <div className="module-placeholder-page">
-              <span>POSTGRES ERROR</span>
-              <h1>DB API 연결을 확인해주세요</h1>
-              <p>{dataError}</p>
-            </div>
+          {!isIndependentFlow && shouldBlockForInitialError && (
+            <Alert className="mx-auto max-w-3xl border-red-200 bg-red-50 text-red-800" variant="destructive">
+              <CircleHelp />
+              <AlertTitle>DB API 연결을 확인해 주세요.</AlertTitle>
+              <AlertDescription>{dataError}</AlertDescription>
+            </Alert>
           )}
           {!dataLoading && !dataError && !canRenderActiveFlow && (
             <div className="module-placeholder-page">
@@ -560,23 +573,21 @@ export function App() {
           )}
           {shouldRenderAppContent && (
             <>
-          {activeFlow === "jobs" && <JobsLandingPage jobs={jobs} onCommand={handleJobCommand} onCreate={startNewPipeline} onDetail={openJobDetail} onRuns={openJobRuns} onTableDemo={openJobsTableDemo} onAction={writeAuditLog} />}
-          {activeFlow === "jobsTableDemo" && <JobsTableDemoPage jobs={jobs} onBack={closeJobsTableDemo} onCommand={handleJobCommand} onCreate={startNewPipeline} onRuns={openJobRuns} onDetail={openJobDetail} onAction={writeAuditLog} />}
-          {activeFlow === "jobDetail" && <JobDetailPage job={selectedJob} onCommand={handleJobCommand} onBack={() => moveToFlow("jobs")} onEdit={() => void startJobEdit(selectedJob)} onRuns={() => openJobRuns(selectedJob)} onAction={writeAuditLog} />}
-          {activeFlow === "jobRuns" && <JobRunsPage evidence={jobExecutionEvidence[selectedJob.id]} job={selectedJob} onCommand={handleJobCommand} onBack={() => moveToFlow("jobDetail")} onAction={writeAuditLog} />}
-          {activeFlow === "source" && <SourceConnectionPage draft={draftPipeline} sourceLocked={Boolean(editingJobId)} onDraftChange={updateDraftPipeline} onPrev={editingJobId ? cancelJobEdit : () => moveToFlow("jobs")} onNext={() => moveToFlow("schema")} onSave={() => saveDraft("source")} onAction={writeAuditLog} onNotify={showToast} />}
-          {activeFlow === "schema" && <SchemaInferencePage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("source")} onNext={() => moveToFlow(lastScheduleFlow)} onSave={() => saveDraft("schema")} onAction={writeAuditLog} onNotify={showToast} />}
+          {activeFlow === "jobs" && <JobsLandingPage jobListFacets={jobListFacets} jobsLoading={jobsLoading} jobs={jobs} onCommand={handleJobCommand} onCreate={() => moveToFlow("source")} onDetail={openJobDetailWithRoute} onFilter={filterJobs} onAction={writeAuditLog} />}
+          {activeFlow === "jobDetail" && <JobDetailPage job={selectedJob} onCommand={handleJobCommand} onBack={() => moveToFlow("jobs")} onRuns={() => openJobRunsWithRoute(selectedJob)} />}
+          {activeFlow === "jobRuns" && <JobRunsPage catalogDatasetId={selectedJobCatalogDataset?.id} catalogRowCount={selectedJobCatalogDataset?.rows} evidence={jobExecutionEvidence[selectedJob.id]} job={selectedJob} onCommand={handleJobCommand} onBack={() => moveToFlow("jobDetail")} onAction={writeAuditLog} />}
+          {activeFlow === "source" && <SourceConnectionPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("jobs")} onNext={() => moveToFlow("schema")} onSave={() => saveDraft("source")} onAction={writeAuditLog} onNotify={showToast} />}
+          {activeFlow === "schema" && <SchemaInferencePage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("source")} onNext={() => moveToFlow(continuousKafkaDraft ? "permission" : lastScheduleFlow)} onSave={() => saveDraft("schema")} onAction={writeAuditLog} onNotify={showToast} />}
           {isScheduleFlow(activeFlow) && <SchedulePage draftSchedule={draftPipeline.schedule} mode={activeFlow} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("schema")} onModeChange={moveToFlow} onNext={() => moveToFlow("permission")} onSave={() => saveDraft(activeFlow)} />}
-          {activeFlow === "target" && <TargetPage draft={draftPipeline} targetIdentityLocked={Boolean(editingJobId && selectedJob.runHistory?.some((run) => run.status === "success"))} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("permission")} onNext={() => moveToFlow("review")} onSave={() => saveDraft("target")} />}
-          {activeFlow === "permission" && <PermissionPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow(lastScheduleFlow)} onNext={() => moveToFlow("target")} onSave={() => saveDraft("permission")} />}
-          {activeFlow === "review" && <ReviewPage createPending={apiPending} draft={draftPipeline} editing={Boolean(editingJobId)} onEdit={moveToFlow} onSave={() => saveDraft("review")} onCreate={createPipeline} />}
-          {activeFlow === "catalog" && <CatalogPage currentUser={currentUser} datasets={datasets} selectedDataset={selectedDataset} onAction={writeAuditLog} onMaterializationRunDelete={deleteMaterializationRun} onOpenSql={openDatasetInSqlWithSelection} />}
+          {activeFlow === "target" && <TargetPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("permission")} onNext={() => moveToFlow("review")} onSave={() => saveDraft("target")} />}
+          {activeFlow === "permission" && <PermissionPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow(continuousKafkaDraft ? "schema" : lastScheduleFlow)} onNext={() => moveToFlow("target")} onSave={() => saveDraft("permission")} />}
+          {activeFlow === "review" && <ReviewPage createPending={apiPending} draft={draftPipeline} onEdit={moveToFlow} onSave={() => saveDraft("review")} onCreate={createPipeline} />}
+          {activeFlow === "catalog" && <CatalogPage currentUser={currentUser} datasets={datasets} error={dataError} loading={dataLoading} selectedDataset={selectedDataset} onAction={writeAuditLog} onOpenSql={openDatasetInSqlWithSelection} />}
           {activeFlow === "catalogDetail" && <CatalogDetailPage currentUser={currentUser} dataset={selectedDataset} onAction={writeAuditLog} onBack={() => moveToFlow("catalog")} onLineage={() => writeAuditLog("catalog.lineage.opened", `/api/catalog/datasets/${selectedDataset.id}/lineage`, selectedDataset.id)} onOpenSql={() => openDatasetInSqlWithSelection(selectedDataset)} />}
-          {activeFlow === "sql" && <SqlAnalysisPage currentUser={currentUser} cachedResult={sqlResultDraft} dataset={sqlInitialDataset} datasets={datasets} onAction={writeAuditLog} onNotify={showToast} onPrepareDatasetJob={prepareSqlDatasetJobDraft} onResultChange={setSqlResultDraft} />}
-          {activeFlow === "dashboard" && <DashboardPage dataset={selectedDataset} datasets={datasets} entry={dashboardEntry} isHydratingSqlResult={hydratingSqlRunId === dashboardEntry.sqlRunId} sqlResult={sqlResultDraft} onAction={writeAuditLog} onMissingSqlResult={reopenSqlAnalysisFromDashboard} onRuntimeNavigate={navigateDashboardRuntime} />}
-          {activeFlow === "profile" && <ProfilePage onAction={writeAuditLog} />}
-          {activeFlow === "login" && <AuthPage onAction={writeAuditLog} onAuthenticated={handleAuthenticated} />}
+          {activeFlow === "sql" && <SqlAnalysisPage currentUser={currentUser} cachedResult={sqlResultDraft} createPending={apiPending} dataset={sqlInitialDataset} datasets={datasets} onAction={writeAuditLog} onCreateDatasetJob={createSqlDatasetJob} onNotify={showToast} onResultChange={setSqlResultDraft} />}
+          {activeFlow === "dashboard" && <DashboardPage dataset={selectedDataset} datasets={datasets} entry={dashboardEntry} sqlResult={sqlResultDraft} onAction={writeAuditLog} onRuntimeNavigate={navigateDashboardRuntime} />}
           {activeFlow === "ai" && <AiChatPage datasets={datasets} onAction={writeAuditLog} />}
+          {activeFlow === "profile" && <ProfilePage onAction={writeAuditLog} />}
           {activeFlow === "admin" && canAccessAdmin && <AdminConsolePage onAction={writeAuditLog} onNotify={showToast} />}
             </>
           )}
@@ -591,7 +602,6 @@ function RuleBuilderShell({
   auditCount,
   auditLogs,
   auditOpen,
-  canAccessAdmin,
   children,
   onAccount,
   onAuditToggle,
@@ -604,7 +614,6 @@ function RuleBuilderShell({
   auditCount: number;
   auditLogs: AuditEntry[];
   auditOpen: boolean;
-  canAccessAdmin: boolean;
   children: React.ReactNode;
   onAccount: () => void;
   onAuditToggle: () => void;
@@ -622,7 +631,7 @@ function RuleBuilderShell({
   const managementItems = [
     { icon: ShieldCheck, label: "거버넌스", flow: "permission" as FlowId },
     { icon: Settings, label: "설정", flow: "admin" as FlowId },
-  ].filter((item) => canAccessAdmin || item.flow !== "admin");
+  ];
   const stepItems = [
     ["1", "소스 연결"],
     ["2", "스키마 추론"],
@@ -644,12 +653,18 @@ function RuleBuilderShell({
             </span>
           ))}
         </nav>
+        <TooltipProvider delayDuration={300}>
         <div className="etl-builder-header-actions">
           <div className="audit-menu">
-            <button className={auditOpen ? "icon-button active" : "icon-button"} type="button" aria-label="최근 API 호출" onClick={onAuditToggle}>
-              <CircleHelp size={19} />
-              {auditCount > 0 && <span className="audit-dot" />}
-            </button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <IconButton className={auditOpen ? "icon-button active" : "icon-button"} label="최근 API 호출" size="sm" type="button" onClick={onAuditToggle}>
+                  <CircleHelp />
+                  {auditCount > 0 && <span className="audit-dot" />}
+                </IconButton>
+              </TooltipTrigger>
+              <TooltipContent>최근 API 호출</TooltipContent>
+            </Tooltip>
             {auditOpen && (
               <section className="audit-popover">
                 <div className="audit-popover-header">
@@ -671,14 +686,28 @@ function RuleBuilderShell({
               </section>
             )}
           </div>
-          <button className="icon-button" type="button" aria-label="문서" onClick={onDocs}>
-            <BookOpen size={19} />
-          </button>
-          <button className="icon-button" type="button" aria-label="새로고침" onClick={onRefresh}>
-            <History size={19} />
-          </button>
-          <button className="etl-builder-avatar" type="button" aria-label="계정" onClick={onAccount} />
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <IconButton className="icon-button" label="문서" size="sm" type="button" onClick={onDocs}><BookOpen /></IconButton>
+            </TooltipTrigger>
+            <TooltipContent>문서</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <IconButton className="icon-button" label="새로고침" size="sm" type="button" onClick={onRefresh}><History /></IconButton>
+            </TooltipTrigger>
+            <TooltipContent>새로고침</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <IconButton className="p-0" label="계정" size="sm" type="button" onClick={onAccount}>
+                <Avatar><AvatarFallback>AL</AvatarFallback></Avatar>
+              </IconButton>
+            </TooltipTrigger>
+            <TooltipContent>계정</TooltipContent>
+          </Tooltip>
         </div>
+        </TooltipProvider>
       </header>
       <aside className="etl-builder-sidebar">
         <div>

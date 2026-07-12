@@ -1,5 +1,16 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { createPortal } from "react-dom";
+import {
+  Children,
+  isValidElement,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type ComponentProps,
+  type FormEvent,
+  type ReactNode,
+} from "react";
 import {
   Boxes,
   ChartArea,
@@ -15,6 +26,19 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { HexColorInput, HexColorPicker } from "react-colorful";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { FormFieldGroup, NativeSelectField } from "@/components/ui/form-field-group";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { SettingsPanel } from "@/components/ui/settings-panel";
+import { Slider } from "@/components/ui/slider";
+import { Textarea } from "@/components/ui/textarea";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
+import { DashboardFieldCombobox, type DashboardComboboxOption } from "./DashboardFieldCombobox";
 import type {
   DashboardRuntimeWidget,
   DashboardRuntimeWidgetConfig,
@@ -57,12 +81,6 @@ type WidgetConfigDraft = {
   yKey?: string;
 };
 
-type WidgetTypeTooltip = {
-  left: number;
-  text: string;
-  top: number;
-};
-
 const aggregationOptions: Array<{ label: string; value: DashboardWidgetAggregation }> = [
   { label: "합계", value: "sum" },
   { label: "평균", value: "avg" },
@@ -96,6 +114,36 @@ const orientationOptions: Array<{ label: string; value: DashboardWidgetOrientati
   { label: "가로", value: "horizontal" },
 ];
 const multiColorFallbackCount = 6;
+
+function WidgetSelectField({
+  children,
+  onChange,
+  selectClassName,
+  value,
+  ...props
+}: Omit<ComponentProps<typeof NativeSelectField>, "children" | "onChange" | "value"> & {
+  children: ReactNode;
+  onChange?: (event: ChangeEvent<HTMLSelectElement>) => void;
+  value: string;
+}) {
+  const options = Children.toArray(children).flatMap((child): DashboardComboboxOption[] => {
+    if (!isValidElement<{ children?: ReactNode; value?: string }>(child) || child.type !== "option") return [];
+    const label = typeof child.props.children === "string" ? child.props.children : String(child.props.value ?? "");
+    return [{ label, value: child.props.value ?? label }];
+  });
+
+  return (
+    <DashboardFieldCombobox
+      className={cn("asklake-widget-select", selectClassName)}
+      disabled={props.disabled}
+      fieldClassName={props.fieldClassName}
+      label={String(props.label)}
+      options={options}
+      value={value}
+      onValueChange={(nextValue) => onChange?.({ target: { value: nextValue } } as ChangeEvent<HTMLSelectElement>)}
+    />
+  );
+}
 
 const widgetTypeIcons: Record<DashboardRuntimeWidgetType, LucideIcon> = {
   area_chart: ChartArea,
@@ -188,23 +236,7 @@ function fallbackColorLabels(count: number) {
   return Array.from({ length: count }, (_, index) => `색상 ${index + 1}`);
 }
 
-function createWidgetTypeTooltip(target: HTMLElement, text: string): WidgetTypeTooltip {
-  const rect = target.getBoundingClientRect();
-  const halfTooltipWidth = 150;
-  const safeLeft = Math.min(
-    Math.max(rect.left + rect.width / 2, halfTooltipWidth),
-    window.innerWidth - halfTooltipWidth,
-  );
-
-  return {
-    left: safeLeft,
-    text,
-    top: Math.max(rect.top - 10, 12),
-  };
-}
-
-function configDraftFromWidget(widget: DashboardRuntimeWidget): WidgetConfigDraft {
-  const config = widget.config;
+function configDraftFromConfig(config: DashboardRuntimeWidgetConfig): WidgetConfigDraft {
   return {
     aggregation: configString(config, "aggregation") as DashboardWidgetAggregation | undefined,
     columns: configStringArray(config, "columns"),
@@ -305,110 +337,7 @@ function createDefaultConfigs(dataset: DashboardDatasetOption): Record<Dashboard
   };
 }
 
-function includesColumn(columns: DashboardDatasetColumn[], columnName: string | undefined) {
-  return Boolean(columnName && columns.some((column) => column.name === columnName));
-}
-
-function firstAllowedColumn(columns: DashboardDatasetColumn[], current: string | undefined, allowEmpty = false) {
-  if (includesColumn(columns, current)) return current;
-  if (allowEmpty && !current) return "";
-  return columns[0]?.name ?? "";
-}
-
-function sanitizeConfigForDataset(
-  type: DashboardRuntimeWidgetType,
-  config: WidgetConfigDraft,
-  dataset: DashboardDatasetOption | null | undefined,
-): WidgetConfigDraft {
-  if (!dataset) return config;
-
-  const allColumns = dataset.columns;
-  const numericColumns = allColumns.filter((column) => column.type === "number");
-  const dimensionColumns = allColumns.filter((column) => column.type === "string" || column.type === "date");
-  const categoricalColumns = allColumns.filter((column) => column.type === "string");
-  const categoryColumns = categoricalColumns.length ? categoricalColumns : dimensionColumns;
-  const usesCount = config.aggregation === "count";
-
-  if (type === "metric") {
-    return {
-      ...config,
-      valueKey: usesCount ? firstAllowedColumn(numericColumns, config.valueKey, true) : firstAllowedColumn(numericColumns, config.valueKey),
-    };
-  }
-
-  if (type === "table") {
-    const columns = (config.columns ?? []).filter((column) => includesColumn(allColumns, column));
-    const nextColumns = columns.length ? columns : columnNames(allColumns.slice(0, 5));
-    return {
-      ...config,
-      columns: nextColumns,
-      sortKey: nextColumns.includes(config.sortKey ?? "") ? config.sortKey : nextColumns[0] ?? "",
-    };
-  }
-
-  if (type === "bar_chart") {
-    return {
-      ...config,
-      groupKey: firstAllowedColumn(dimensionColumns, config.groupKey, true),
-      xKey: firstAllowedColumn(allColumns, config.xKey),
-      yKey: usesCount ? firstAllowedColumn(numericColumns, config.yKey, true) : firstAllowedColumn(numericColumns, config.yKey),
-    };
-  }
-
-  if (type === "line_chart" || type === "area_chart") {
-    const timeColumns = allColumns.filter((column) => column.type === "date");
-    const lineXAxisColumns = timeColumns.length ? timeColumns : dimensionColumns.length ? dimensionColumns : allColumns;
-    return {
-      ...config,
-      seriesKey: firstAllowedColumn(dimensionColumns, config.seriesKey, true),
-      xKey: firstAllowedColumn(lineXAxisColumns, config.xKey),
-      yKey: usesCount ? firstAllowedColumn(numericColumns, config.yKey, true) : firstAllowedColumn(numericColumns, config.yKey),
-    };
-  }
-
-  if (type === "donut_chart" || type === "pie_chart" || type === "treemap_chart") {
-    return {
-      ...config,
-      labelKey: firstAllowedColumn(categoryColumns, config.labelKey),
-      valueKey: usesCount ? firstAllowedColumn(numericColumns, config.valueKey, true) : firstAllowedColumn(numericColumns, config.valueKey),
-    };
-  }
-
-  if (type === "radial_bar_chart") {
-    return {
-      ...config,
-      labelKey: firstAllowedColumn(dimensionColumns, config.labelKey, true),
-      valueKey: usesCount ? firstAllowedColumn(numericColumns, config.valueKey, true) : firstAllowedColumn(numericColumns, config.valueKey),
-    };
-  }
-
-  if (type === "heatmap_chart") {
-    return {
-      ...config,
-      valueKey: usesCount ? firstAllowedColumn(numericColumns, config.valueKey, true) : firstAllowedColumn(numericColumns, config.valueKey),
-      xKey: firstAllowedColumn(dimensionColumns, config.xKey),
-      yKey: firstAllowedColumn(dimensionColumns, config.yKey),
-    };
-  }
-
-  return config;
-}
-
-function validateConfig(type: DashboardRuntimeWidgetType, config: WidgetConfigDraft, dataset?: DashboardDatasetOption | null) {
-  if (dataset) {
-    const allColumns = dataset.columns;
-    const numericColumns = allColumns.filter((column) => column.type === "number");
-    const dimensionColumns = allColumns.filter((column) => column.type === "string" || column.type === "date");
-    const usesCount = config.aggregation === "count";
-
-    if (type !== "table" && !usesCount && ["metric", "bar_chart", "line_chart", "area_chart", "donut_chart", "pie_chart", "radial_bar_chart", "heatmap_chart", "treemap_chart"].includes(type) && numericColumns.length === 0) {
-      return "선택한 데이터소스에 숫자 컬럼이 없어 이 위젯 타입을 만들 수 없습니다.";
-    }
-    if ((type === "bar_chart" || type === "line_chart" || type === "area_chart" || type === "donut_chart" || type === "pie_chart" || type === "radial_bar_chart" || type === "heatmap_chart" || type === "treemap_chart") && dimensionColumns.length === 0) {
-      return "선택한 데이터소스에 분류/날짜 컬럼이 없어 이 위젯 타입을 만들 수 없습니다.";
-    }
-  }
-
+function validateConfig(type: DashboardRuntimeWidgetType, config: WidgetConfigDraft) {
   const usesCount = config.aggregation === "count";
   if (type === "metric" && !usesCount && !config.valueKey) return "값 컬럼을 선택해 주세요.";
   if (type === "table" && (!config.columns || config.columns.length === 0)) return "표시할 컬럼을 1개 이상 선택해 주세요.";
@@ -419,6 +348,7 @@ function validateConfig(type: DashboardRuntimeWidgetType, config: WidgetConfigDr
     return "분류와 값 컬럼을 선택해 주세요.";
   }
   if (type === "radial_bar_chart" && !usesCount && !config.valueKey) return "값 컬럼을 선택해 주세요.";
+  if (type === "radial_bar_chart" && (config.min ?? 0) >= (config.max ?? 100)) return "최솟값은 최댓값보다 작아야 합니다.";
   if (type === "heatmap_chart" && (!config.xKey || !config.yKey || (!usesCount && !config.valueKey))) {
     return "X축, Y축, 값 컬럼을 선택해 주세요.";
   }
@@ -558,9 +488,11 @@ function cloneDatasetRows(dataset: DashboardDatasetOption | null | undefined) {
 }
 
 export function WidgetConfigPanel({
+  createButtonLabel = "위젯 생성",
   datasets = [],
   editingWidget = null,
   focusedColorSlot = null,
+  initialCreateInput = null,
   isCreating = false,
   isUpdating = false,
   onCreateWidget,
@@ -570,9 +502,11 @@ export function WidgetConfigPanel({
   selectedDataset,
   selectedDatasetId,
 }: {
+  createButtonLabel?: string;
   datasets?: DashboardDatasetOption[];
   editingWidget?: DashboardRuntimeWidget | null;
   focusedColorSlot?: DashboardWidgetColorSlotFocus | null;
+  initialCreateInput?: CreateDraftWidgetFormInput | null;
   isCreating?: boolean;
   isUpdating?: boolean;
   onCreateWidget: (input: CreateDraftWidgetFormInput) => Promise<void> | void;
@@ -590,11 +524,16 @@ export function WidgetConfigPanel({
   const [formError, setFormError] = useState<string | null>(null);
   const [title, setTitle] = useState("");
   const [type, setType] = useState<DashboardRuntimeWidgetType>("bar_chart");
-  const [widgetTypeTooltip, setWidgetTypeTooltip] = useState<WidgetTypeTooltip | null>(null);
+  const datasetFieldId = useId();
+  const descriptionFieldId = useId();
+  const titleFieldId = useId();
   const previousEditingWidgetIdRef = useRef<string | null>(null);
   const previousSelectedDatasetIdRef = useRef<string | null>(null);
   const isEditMode = Boolean(editingWidget);
   const isVisualizationRequestEdit = isVisualizationRequestWidget(editingWidget);
+  const initialCreateInputKey = initialCreateInput
+    ? `${initialCreateInput.datasetId}|${initialCreateInput.type}|${initialCreateInput.title}|${JSON.stringify(initialCreateInput.config)}`
+    : "";
 
   const columnGroups = useMemo(() => {
     const allColumns = selectedDataset?.columns ?? [];
@@ -639,7 +578,22 @@ export function WidgetConfigPanel({
         ...defaultConfigs,
         [editingWidget.type]: isVisualizationRequestWidget(editingWidget)
           ? defaultConfigs[editingWidget.type] ?? {}
-          : configDraftFromWidget(editingWidget),
+          : configDraftFromConfig(editingWidget.config),
+      });
+      return;
+    }
+
+    const initialInput = initialCreateInput?.datasetId === nextSelectedDatasetId
+      ? initialCreateInput
+      : null;
+    if (initialInput && selectedDataset) {
+      setType(initialInput.type);
+      setTitle(initialInput.title);
+      setDescription(configString(initialInput.config, "description") ?? "");
+      setColor(configColor(initialInput.config));
+      setConfigsByType({
+        ...createDefaultConfigs(selectedDataset),
+        [initialInput.type]: configDraftFromConfig(initialInput.config),
       });
       return;
     }
@@ -649,12 +603,13 @@ export function WidgetConfigPanel({
     setTitle("");
     setType("bar_chart");
     setConfigsByType(selectedDataset ? createDefaultConfigs(selectedDataset) : {});
-  }, [editingWidget, selectedDataset]);
+  }, [editingWidget, initialCreateInputKey, selectedDataset]);
 
-  const currentConfig = useMemo(
-    () => sanitizeConfigForDataset(type, configsByType[type] ?? {}, selectedDataset),
-    [configsByType, selectedDataset, type],
-  );
+  const currentConfig = configsByType[type] ?? {};
+  const radialRangeStart = Math.min(currentConfig.min ?? 0, currentConfig.max ?? 100);
+  const radialRangeEnd = Math.max(currentConfig.min ?? 0, currentConfig.max ?? 100);
+  const radialRangeFloor = Math.min(0, radialRangeStart);
+  const radialRangeCeiling = Math.max(100, radialRangeEnd);
   const colorSlotLabels = useMemo(() => {
     if (type === "metric" || type === "table") return [];
 
@@ -701,7 +656,7 @@ export function WidgetConfigPanel({
   const requiresDatasetSelection = !isEditMode || isVisualizationRequestEdit;
   const shouldShowDatasetSelect = !isEditMode || isVisualizationRequestEdit;
   const validationMessage = selectedDataset || isEditMode
-    ? validateConfig(type, currentConfig, selectedDataset)
+    ? validateConfig(type, currentConfig)
     : "왼쪽에서 데이터셋을 먼저 선택해 주세요.";
   const canSubmit = Boolean(
     (isEditMode || (selectedDatasetId && selectedDataset))
@@ -777,15 +732,14 @@ export function WidgetConfigPanel({
       return;
     }
 
-    const sanitizedConfig = sanitizeConfigForDataset(type, currentConfig, selectedDataset);
-    const error = validateConfig(type, sanitizedConfig, selectedDataset);
+    const error = validateConfig(type, currentConfig);
     if (error) {
       setFormError(error);
       return;
     }
 
     setFormError(null);
-    const nextConfig = buildConfig(type, sanitizedConfig, {
+    const nextConfig = buildConfig(type, currentConfig, {
       color,
       description: description.trim() || undefined,
     });
@@ -823,98 +777,119 @@ export function WidgetConfigPanel({
 
   if (!selectedDataset && !editingWidget) {
     return (
-      <section className="asklake-widget-config-panel empty">
-        <strong>데이터셋을 선택해 주세요</strong>
-        <span>왼쪽에서 데이터셋을 선택하면 위젯 설정을 만들 수 있습니다.</span>
-      </section>
+      <SettingsPanel
+        className="asklake-widget-config-panel empty"
+        description="왼쪽에서 데이터셋을 선택하면 위젯 설정을 만들 수 있습니다."
+        headerClassName="asklake-widget-config-heading asklake-widget-config-empty-heading"
+        title="데이터셋을 선택해 주세요"
+      />
     );
   }
 
   return (
-    <section className="asklake-widget-config-panel">
-      <div className="asklake-widget-config-heading">
-        <div>
-          <span>{isEditMode ? "선택된 위젯" : "데이터셋"}</span>
-          <strong>{isEditMode ? editingWidget?.title || "제목 없는 위젯" : selectedDataset?.name}</strong>
-        </div>
-      </div>
-
-      <form className="asklake-widget-config-form" onSubmit={(event) => void handleSubmit(event)}>
-        {shouldShowDatasetSelect ? (
-          <label className="asklake-widget-dataset-field">
-            <span>데이터셋</span>
-            <select
-              disabled={!datasets.length || !onSelectDataset}
-              value={selectedDatasetId ?? ""}
-              onChange={(event) => {
-                if (event.target.value) onSelectDataset?.(event.target.value);
-              }}
-            >
-              <option value="">데이터셋 선택</option>
-              {datasets.map((dataset) => (
-                <option key={dataset.id} value={dataset.id}>
-                  {dataset.name}
-                </option>
-              ))}
-            </select>
-          </label>
-        ) : null}
-        <label>
-          <span>위젯 제목</span>
-          <input
-            placeholder="제목 없는 위젯"
-            value={title}
-            onChange={(event) => setTitle(event.target.value)}
-          />
-        </label>
-
-        <label>
-          <span>설명</span>
-          <textarea
-            placeholder="이 위젯에 대한 설명을 짧게 적어주세요."
-            rows={3}
-            value={description}
-            onChange={(event) => setDescription(event.target.value)}
-          />
-        </label>
-
-        <div className="asklake-widget-type-field">
-          <span>위젯 타입</span>
-          <div className="asklake-widget-type-grid">
-            {dashboardWidgetTypeOptions.map((option) => {
-              const definition = dashboardWidgetDefinitions[option.value];
-              const Icon = widgetTypeIcons[option.value];
-              const tooltip = `${definition.label}: ${definition.description}`;
-              const isSelected = type === option.value;
-              const showTooltip = (target: HTMLElement) => setWidgetTypeTooltip(createWidgetTypeTooltip(target, tooltip));
-              return (
-                <button
-                  key={option.value}
-                  aria-label={tooltip}
-                  className={`asklake-widget-type-button${isSelected ? " selected" : ""}`}
-                  type="button"
-                  onBlur={() => setWidgetTypeTooltip(null)}
-                  onFocus={(event) => showTooltip(event.currentTarget)}
-                  onClick={() => {
-                    setCustomColorIndex(0);
-                    setType(option.value);
-                  }}
-                  onMouseEnter={(event) => showTooltip(event.currentTarget)}
-                  onMouseLeave={() => setWidgetTypeTooltip(null)}
-                >
-                  <Icon aria-hidden="true" size={18} strokeWidth={2.3} />
-                </button>
-              );
-            })}
+    <SettingsPanel
+      bodyClassName="contents"
+      className="asklake-widget-config-panel"
+      header={(
+        <div className="asklake-widget-config-heading">
+          <div>
+            <span>{isEditMode ? "선택된 위젯" : "데이터셋"}</span>
+            <strong>{isEditMode ? editingWidget?.title || "제목 없는 위젯" : selectedDataset?.name}</strong>
           </div>
         </div>
+      )}
+    >
+      <form className="asklake-widget-config-form" onSubmit={(event) => void handleSubmit(event)}>
+        <FieldGroup className="contents">
+          {shouldShowDatasetSelect ? (
+            <Field className="asklake-widget-dataset-field">
+              <FieldLabel htmlFor={datasetFieldId}>데이터셋</FieldLabel>
+              <Select
+                disabled={!datasets.length || !onSelectDataset}
+                value={selectedDatasetId ?? ""}
+                onValueChange={(value) => onSelectDataset?.(value)}
+              >
+                <SelectTrigger id={datasetFieldId} size="sm">
+                  <SelectValue placeholder="데이터셋 선택" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    {datasets.map((dataset) => (
+                      <SelectItem key={dataset.id} value={dataset.id}>
+                        {dataset.name}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </Field>
+          ) : null}
+          <Field>
+            <FieldLabel htmlFor={titleFieldId}>위젯 제목</FieldLabel>
+            <Input
+              id={titleFieldId}
+              size="sm"
+              placeholder="제목 없는 위젯"
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+            />
+          </Field>
+
+          <Field>
+            <FieldLabel htmlFor={descriptionFieldId}>설명</FieldLabel>
+            <Textarea
+              id={descriptionFieldId}
+              placeholder="이 위젯에 대한 설명을 짧게 적어주세요."
+              rows={3}
+              value={description}
+              onChange={(event) => setDescription(event.target.value)}
+            />
+          </Field>
+
+          <Field>
+            <FieldLabel>위젯 타입</FieldLabel>
+            <TooltipProvider delayDuration={150}>
+              <ToggleGroup
+                aria-label="위젯 타입"
+                className="grid w-full grid-cols-5 gap-3 bg-transparent p-0"
+                type="single"
+                value={type}
+                onValueChange={(nextType) => {
+                  if (!nextType) return;
+                  setCustomColorIndex(0);
+                  setType(nextType as DashboardRuntimeWidgetType);
+                }}
+              >
+                {dashboardWidgetTypeOptions.map((option) => {
+                  const definition = dashboardWidgetDefinitions[option.value];
+                  const Icon = widgetTypeIcons[option.value];
+                  const label = `${definition.label}: ${definition.description}`;
+                  return (
+                    <Tooltip key={option.value}>
+                      <TooltipTrigger asChild>
+                        <ToggleGroupItem
+                          aria-label={label}
+                          className="h-11 w-full border border-slate-200 bg-white text-slate-500 data-[state=on]:border-blue-600 data-[state=on]:bg-blue-50 data-[state=on]:text-blue-700"
+                          size="icon"
+                          value={option.value}
+                        >
+                          <Icon aria-hidden="true" />
+                        </ToggleGroupItem>
+                      </TooltipTrigger>
+                      <TooltipContent side="top">{label}</TooltipContent>
+                    </Tooltip>
+                  );
+                })}
+              </ToggleGroup>
+            </TooltipProvider>
+          </Field>
 
         {colorSlotLabels.length > 0 && (
           <div className="asklake-widget-palette-field">
             <span>색상</span>
             <div className="asklake-widget-color-slots">
               {colorSlotLabels.map((label, index) => (
-                <button
+                <Button
                   key={`${label}-${index}`}
                   className={`asklake-widget-color-slot${customColorIndex === index ? " selected" : ""}`}
                   type="button"
@@ -922,7 +897,7 @@ export function WidgetConfigPanel({
                 >
                   <i style={{ backgroundColor: activeColors[index] }} />
                   <span>{label}</span>
-                </button>
+                </Button>
               ))}
             </div>
 
@@ -931,7 +906,7 @@ export function WidgetConfigPanel({
                 {dashboardWidgetColorChoices.map((choice) => {
                   const isSelected = activeCustomColor.toLowerCase() === choice.toLowerCase();
                   return (
-                    <button
+                    <Button
                       key={choice}
                       className={`asklake-widget-color-choice${isSelected ? " selected" : ""}`}
                       style={{ backgroundColor: choice }}
@@ -942,30 +917,29 @@ export function WidgetConfigPanel({
                       }}
                     >
                       {isSelected && <Check aria-hidden="true" size={15} strokeWidth={3.5} />}
-                    </button>
+                    </Button>
                   );
                 })}
-                <button
+                <Button
                   aria-label="직접 색상 만들기"
                   className={`asklake-widget-color-choice custom${customColorOpen ? " selected" : ""}`}
                   type="button"
                   onClick={() => setCustomColorOpen((open) => !open)}
                 >
                   {customColorOpen && <Check aria-hidden="true" size={15} strokeWidth={3.5} />}
-                </button>
+                </Button>
               </div>
 
               {customColorOpen && (
                 <div className="asklake-widget-custom-color-panel">
                   <HexColorPicker color={activeCustomColor} onChange={(nextColor) => updateColorSlot(customColorIndex, nextColor)} />
-                  <label className="asklake-widget-hex-input">
-                    <span>HEX</span>
+                  <FormFieldGroup className="asklake-widget-hex-input" label="HEX">
                     <HexColorInput
                       prefixed
                       color={activeCustomColor}
                       onChange={(nextColor) => updateColorSlot(customColorIndex, nextColor)}
                     />
-                  </label>
+                  </FormFieldGroup>
                 </div>
               )}
             </div>
@@ -980,30 +954,21 @@ export function WidgetConfigPanel({
 
         {type === "metric" && (
           <>
-            <label>
-              <span>값</span>
-              <select value={currentConfig.valueKey ?? ""} onChange={(event) => patchCurrentConfig({ valueKey: event.target.value })}>
+            <WidgetSelectField label="값" value={currentConfig.valueKey ?? ""} onChange={(event) => patchCurrentConfig({ valueKey: event.target.value })}>
                 {columnGroups.numericColumns.map((column) => (
                   <option key={column.name} value={column.name}>{column.name}</option>
                 ))}
-              </select>
-            </label>
-            <label>
-              <span>집계 방식</span>
-              <select value={currentConfig.aggregation ?? "sum"} onChange={(event) => patchCurrentConfig({ aggregation: event.target.value as DashboardWidgetAggregation })}>
+            </WidgetSelectField>
+            <WidgetSelectField label="집계 방식" value={currentConfig.aggregation ?? "sum"} onChange={(event) => patchCurrentConfig({ aggregation: event.target.value as DashboardWidgetAggregation })}>
                 {aggregationOptions.map((option) => (
                   <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
-              </select>
-            </label>
-            <label>
-              <span>표시 형식</span>
-              <select value={currentConfig.format ?? "number"} onChange={(event) => patchCurrentConfig({ format: event.target.value as DashboardWidgetFormat })}>
+            </WidgetSelectField>
+            <WidgetSelectField label="표시 형식" value={currentConfig.format ?? "number"} onChange={(event) => patchCurrentConfig({ format: event.target.value as DashboardWidgetFormat })}>
                 {formatOptions.map((option) => (
                   <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
-              </select>
-            </label>
+            </WidgetSelectField>
           </>
         )}
 
@@ -1013,127 +978,95 @@ export function WidgetConfigPanel({
               <legend>컬럼</legend>
               {columnGroups.allColumns.map((column) => (
                 <label key={column.name}>
-                  <input
+                  <Checkbox
                     checked={(currentConfig.columns ?? []).includes(column.name)}
-                    type="checkbox"
-                    onChange={() => toggleTableColumn(column.name)}
+                    onCheckedChange={() => toggleTableColumn(column.name)}
                   />
                   <span>{column.name}</span>
                 </label>
               ))}
             </fieldset>
-            <label>
-              <span>기본 정렬 컬럼</span>
-              <select value={currentConfig.sortKey ?? ""} onChange={(event) => patchCurrentConfig({ sortKey: event.target.value })}>
+            <WidgetSelectField label="기본 정렬 컬럼" value={currentConfig.sortKey ?? ""} onChange={(event) => patchCurrentConfig({ sortKey: event.target.value })}>
                 <option value="">선택 안 함</option>
                 {(currentConfig.columns ?? []).map((column) => (
                   <option key={column} value={column}>{column}</option>
                 ))}
-              </select>
-            </label>
-            <label>
-              <span>정렬 방향</span>
-              <select value={currentConfig.sortDirection ?? "asc"} onChange={(event) => patchCurrentConfig({ sortDirection: event.target.value as DashboardWidgetSortDirection })}>
+            </WidgetSelectField>
+            <WidgetSelectField label="정렬 방향" value={currentConfig.sortDirection ?? "asc"} onChange={(event) => patchCurrentConfig({ sortDirection: event.target.value as DashboardWidgetSortDirection })}>
                 <option value="asc">오름차순</option>
                 <option value="desc">내림차순</option>
-              </select>
-            </label>
-            <label>
-              <span>행 개수 제한</span>
-              <input
+            </WidgetSelectField>
+            <FormFieldGroup label="행 개수 제한">
+              <Input
+                size="sm"
                 min={1}
                 type="number"
                 value={currentConfig.limit ?? 100}
                 onChange={(event) => patchCurrentConfig({ limit: Number(event.target.value) || 100 })}
               />
-            </label>
+            </FormFieldGroup>
           </>
         )}
 
         {(type === "bar_chart" || type === "line_chart" || type === "area_chart") && (
           <>
-            <label>
-              <span>X축</span>
-              <select value={currentConfig.xKey ?? ""} onChange={(event) => patchCurrentConfig({ xKey: event.target.value })}>
+            <WidgetSelectField label="X축" value={currentConfig.xKey ?? ""} onChange={(event) => patchCurrentConfig({ xKey: event.target.value })}>
                 {columnGroups.allColumns.map((column) => (
                   <option key={column.name} value={column.name}>{column.name}</option>
                 ))}
-              </select>
-            </label>
-            <label>
-              <span>Y축</span>
-              <select value={currentConfig.yKey ?? ""} onChange={(event) => patchCurrentConfig({ yKey: event.target.value })}>
+            </WidgetSelectField>
+            <WidgetSelectField label="Y축" value={currentConfig.yKey ?? ""} onChange={(event) => patchCurrentConfig({ yKey: event.target.value })}>
                 {columnGroups.numericColumns.map((column) => (
                   <option key={column.name} value={column.name}>{column.name}</option>
                 ))}
-              </select>
-            </label>
-            <label>
-              <span>집계 방식</span>
-              <select value={currentConfig.aggregation ?? "sum"} onChange={(event) => patchCurrentConfig({ aggregation: event.target.value as DashboardWidgetAggregation })}>
+            </WidgetSelectField>
+            <WidgetSelectField label="집계 방식" value={currentConfig.aggregation ?? "sum"} onChange={(event) => patchCurrentConfig({ aggregation: event.target.value as DashboardWidgetAggregation })}>
                 {aggregationOptions.map((option) => (
                   <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
-              </select>
-            </label>
+            </WidgetSelectField>
             {type === "bar_chart" && (
               <>
-                <label>
-                  <span>그룹 컬럼</span>
-                  <select value={currentConfig.groupKey ?? ""} onChange={(event) => patchCurrentConfig({ groupKey: event.target.value })}>
+                <WidgetSelectField label="그룹 컬럼" value={currentConfig.groupKey ?? ""} onChange={(event) => patchCurrentConfig({ groupKey: event.target.value })}>
                     <option value="">선택 안 함</option>
                     {columnGroups.dimensionColumns.map((column) => (
                       <option key={column.name} value={column.name}>{column.name}</option>
                     ))}
-                  </select>
-                </label>
-                <label>
-                  <span>방향</span>
-                  <select value={currentConfig.orientation ?? "vertical"} onChange={(event) => patchCurrentConfig({ orientation: event.target.value as DashboardWidgetOrientation })}>
+                </WidgetSelectField>
+                <WidgetSelectField label="방향" value={currentConfig.orientation ?? "vertical"} onChange={(event) => patchCurrentConfig({ orientation: event.target.value as DashboardWidgetOrientation })}>
                     {orientationOptions.map((option) => (
                       <option key={option.value} value={option.value}>{option.label}</option>
                     ))}
-                  </select>
-                </label>
+                </WidgetSelectField>
               </>
             )}
             {(type === "line_chart" || type === "area_chart") && (
               <>
-                <label>
-                  <span>시리즈 컬럼</span>
-                  <select value={currentConfig.seriesKey ?? ""} onChange={(event) => patchCurrentConfig({ seriesKey: event.target.value })}>
+                <WidgetSelectField label="시리즈 컬럼" value={currentConfig.seriesKey ?? ""} onChange={(event) => patchCurrentConfig({ seriesKey: event.target.value })}>
                     <option value="">선택 안 함</option>
                     {columnGroups.dimensionColumns.map((column) => (
                       <option key={column.name} value={column.name}>{column.name}</option>
                     ))}
-                  </select>
-                </label>
-              <label>
-                <span>날짜 단위</span>
-                <select value={currentConfig.dateUnit ?? "month"} onChange={(event) => patchCurrentConfig({ dateUnit: event.target.value as DashboardWidgetDateUnit })}>
+                </WidgetSelectField>
+              <WidgetSelectField label="날짜 단위" value={currentConfig.dateUnit ?? "month"} onChange={(event) => patchCurrentConfig({ dateUnit: event.target.value as DashboardWidgetDateUnit })}>
                   {dateUnitOptions.map((option) => (
                     <option key={option.value} value={option.value}>{option.label}</option>
                   ))}
-                </select>
-              </label>
+              </WidgetSelectField>
               </>
             )}
             {type === "line_chart" && (
-              <label>
-                <span>선 모양</span>
-                <select value={currentConfig.curve ?? "smooth"} onChange={(event) => patchCurrentConfig({ curve: event.target.value as DashboardWidgetLineCurve })}>
+              <WidgetSelectField label="선 모양" value={currentConfig.curve ?? "smooth"} onChange={(event) => patchCurrentConfig({ curve: event.target.value as DashboardWidgetLineCurve })}>
                   {curveOptions.map((option) => (
                     <option key={option.value} value={option.value}>{option.label}</option>
                   ))}
-                </select>
-              </label>
+              </WidgetSelectField>
             )}
             {type === "area_chart" && (
               <label className="asklake-widget-checkbox-row">
-                <input
+                <Checkbox
                   checked={currentConfig.stacked ?? false}
-                  type="checkbox"
-                  onChange={(event) => patchCurrentConfig({ stacked: event.target.checked })}
+                  onCheckedChange={(checked) => patchCurrentConfig({ stacked: checked === true })}
                 />
                 <span>누적 영역으로 표시</span>
               </label>
@@ -1143,129 +1076,96 @@ export function WidgetConfigPanel({
 
         {(type === "donut_chart" || type === "pie_chart" || type === "treemap_chart") && (
           <>
-            <label>
-              <span>분류</span>
-              <select value={currentConfig.labelKey ?? ""} onChange={(event) => patchCurrentConfig({ labelKey: event.target.value })}>
+            <WidgetSelectField label="분류" value={currentConfig.labelKey ?? ""} onChange={(event) => patchCurrentConfig({ labelKey: event.target.value })}>
                 {(columnGroups.categoricalColumns.length ? columnGroups.categoricalColumns : columnGroups.dimensionColumns).map((column) => (
                   <option key={column.name} value={column.name}>{column.name}</option>
                 ))}
-              </select>
-            </label>
-            <label>
-              <span>값</span>
-              <select value={currentConfig.valueKey ?? ""} onChange={(event) => patchCurrentConfig({ valueKey: event.target.value })}>
+            </WidgetSelectField>
+            <WidgetSelectField label="값" value={currentConfig.valueKey ?? ""} onChange={(event) => patchCurrentConfig({ valueKey: event.target.value })}>
                 {columnGroups.numericColumns.map((column) => (
                   <option key={column.name} value={column.name}>{column.name}</option>
                 ))}
-              </select>
-            </label>
-            <label>
-              <span>집계 방식</span>
-              <select value={currentConfig.aggregation ?? "sum"} onChange={(event) => patchCurrentConfig({ aggregation: event.target.value as DashboardWidgetAggregation })}>
+            </WidgetSelectField>
+            <WidgetSelectField label="집계 방식" value={currentConfig.aggregation ?? "sum"} onChange={(event) => patchCurrentConfig({ aggregation: event.target.value as DashboardWidgetAggregation })}>
                 {donutAggregationOptions.map((option) => (
                   <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
-              </select>
-            </label>
+            </WidgetSelectField>
           </>
         )}
 
         {type === "radial_bar_chart" && (
           <>
-            <label>
-              <span>값</span>
-              <select value={currentConfig.valueKey ?? ""} onChange={(event) => patchCurrentConfig({ valueKey: event.target.value })}>
+            <WidgetSelectField label="값" value={currentConfig.valueKey ?? ""} onChange={(event) => patchCurrentConfig({ valueKey: event.target.value })}>
                 {columnGroups.numericColumns.map((column) => (
                   <option key={column.name} value={column.name}>{column.name}</option>
                 ))}
-              </select>
-            </label>
-            <label>
-              <span>분류</span>
-              <select value={currentConfig.labelKey ?? ""} onChange={(event) => patchCurrentConfig({ labelKey: event.target.value })}>
+            </WidgetSelectField>
+            <WidgetSelectField label="분류" value={currentConfig.labelKey ?? ""} onChange={(event) => patchCurrentConfig({ labelKey: event.target.value })}>
                 <option value="">선택 안 함</option>
                 {columnGroups.dimensionColumns.map((column) => (
                   <option key={column.name} value={column.name}>{column.name}</option>
                 ))}
-              </select>
-            </label>
-            <label>
-              <span>집계 방식</span>
-              <select value={currentConfig.aggregation ?? "avg"} onChange={(event) => patchCurrentConfig({ aggregation: event.target.value as DashboardWidgetAggregation })}>
+            </WidgetSelectField>
+            <WidgetSelectField label="집계 방식" value={currentConfig.aggregation ?? "avg"} onChange={(event) => patchCurrentConfig({ aggregation: event.target.value as DashboardWidgetAggregation })}>
                 {aggregationOptions.map((option) => (
                   <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
-              </select>
-            </label>
-            <label>
-              <span>최솟값</span>
-              <input type="number" value={currentConfig.min ?? 0} onChange={(event) => patchCurrentConfig({ min: Number(event.target.value) || 0 })} />
-            </label>
-            <label>
-              <span>최댓값</span>
-              <input type="number" value={currentConfig.max ?? 100} onChange={(event) => patchCurrentConfig({ max: Number(event.target.value) || 100 })} />
-            </label>
+            </WidgetSelectField>
+            <FormFieldGroup label="표시 범위">
+              <div className="grid gap-3">
+                <div className="flex items-center justify-between text-sm font-semibold text-slate-600">
+                  <span>최솟값 {radialRangeStart}</span>
+                  <span>최댓값 {radialRangeEnd}</span>
+                </div>
+                <Slider
+                  aria-label="radial chart 표시 범위"
+                  max={radialRangeCeiling}
+                  min={radialRangeFloor}
+                  minStepsBetweenThumbs={1}
+                  onValueChange={([min = 0, max = 100]) => patchCurrentConfig({ min, max })}
+                  step={1}
+                  value={[radialRangeStart, radialRangeEnd]}
+                />
+              </div>
+            </FormFieldGroup>
           </>
         )}
 
         {type === "heatmap_chart" && (
           <>
-            <label>
-              <span>X축</span>
-              <select value={currentConfig.xKey ?? ""} onChange={(event) => patchCurrentConfig({ xKey: event.target.value })}>
+            <WidgetSelectField label="X축" value={currentConfig.xKey ?? ""} onChange={(event) => patchCurrentConfig({ xKey: event.target.value })}>
                 {columnGroups.dimensionColumns.map((column) => (
                   <option key={column.name} value={column.name}>{column.name}</option>
                 ))}
-              </select>
-            </label>
-            <label>
-              <span>Y축</span>
-              <select value={currentConfig.yKey ?? ""} onChange={(event) => patchCurrentConfig({ yKey: event.target.value })}>
+            </WidgetSelectField>
+            <WidgetSelectField label="Y축" value={currentConfig.yKey ?? ""} onChange={(event) => patchCurrentConfig({ yKey: event.target.value })}>
                 {columnGroups.dimensionColumns.map((column) => (
                   <option key={column.name} value={column.name}>{column.name}</option>
                 ))}
-              </select>
-            </label>
-            <label>
-              <span>값</span>
-              <select value={currentConfig.valueKey ?? ""} onChange={(event) => patchCurrentConfig({ valueKey: event.target.value })}>
+            </WidgetSelectField>
+            <WidgetSelectField label="값" value={currentConfig.valueKey ?? ""} onChange={(event) => patchCurrentConfig({ valueKey: event.target.value })}>
                 {columnGroups.numericColumns.map((column) => (
                   <option key={column.name} value={column.name}>{column.name}</option>
                 ))}
-              </select>
-            </label>
-            <label>
-              <span>집계 방식</span>
-              <select value={currentConfig.aggregation ?? "sum"} onChange={(event) => patchCurrentConfig({ aggregation: event.target.value as DashboardWidgetAggregation })}>
+            </WidgetSelectField>
+            <WidgetSelectField label="집계 방식" value={currentConfig.aggregation ?? "sum"} onChange={(event) => patchCurrentConfig({ aggregation: event.target.value as DashboardWidgetAggregation })}>
                 {aggregationOptions.map((option) => (
                   <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
-              </select>
-            </label>
+            </WidgetSelectField>
           </>
         )}
 
-        {(formError || validationMessage) && <p className="asklake-widget-config-error">{formError ?? validationMessage}</p>}
+        {(formError || validationMessage) && <FieldError>{formError ?? validationMessage}</FieldError>}
 
         <div className="asklake-widget-config-actions">
-          <button className="asklake-widget-create-button" disabled={!canSubmit || isCreating || isUpdating} type="submit">
-            {isEditMode ? (isUpdating ? "저장 중" : "변경사항 저장") : (isCreating ? "생성 중" : "위젯 생성")}
-          </button>
+          <Button className="asklake-widget-create-button" disabled={!canSubmit || isCreating || isUpdating} type="submit">
+            {isEditMode ? (isUpdating ? "저장 중" : "변경사항 저장") : (isCreating ? "생성 중" : createButtonLabel)}
+          </Button>
         </div>
+        </FieldGroup>
       </form>
-      {widgetTypeTooltip && typeof document !== "undefined" && createPortal(
-        <div
-          className="asklake-widget-type-tooltip-layer"
-          role="tooltip"
-          style={{
-            left: widgetTypeTooltip.left,
-            top: widgetTypeTooltip.top,
-          }}
-        >
-          {widgetTypeTooltip.text}
-        </div>,
-        document.body,
-      )}
-    </section>
+    </SettingsPanel>
   );
 }

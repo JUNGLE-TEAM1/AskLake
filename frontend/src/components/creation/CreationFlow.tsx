@@ -1,5 +1,8 @@
 import type React from "react";
 import { FileText } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { CommandBar } from "@/components/ui/command-bar";
+import { KeyValueList } from "@/components/ui/key-value-list";
 import { summaryByFlow } from "../../data/appShellData";
 import type { FlowId } from "../../types";
 
@@ -35,18 +38,20 @@ export function CreationTopActions({
   onNext,
   onPrev,
   prevLabel = "이전",
+  useShadcnStyles = false,
 }: {
   nextDisabled?: boolean;
   nextLabel?: string;
   onNext: () => void;
   onPrev: () => void;
   prevLabel?: string;
+  useShadcnStyles?: boolean;
 }) {
   return (
-    <div className="creation-top-actions">
-      <button className="secondary-button" type="button" onClick={onPrev}>{prevLabel}</button>
-      <button className="primary-button" type="button" disabled={nextDisabled} onClick={onNext}>{nextLabel}</button>
-    </div>
+    <CommandBar className="creation-top-actions" density="compact">
+      <Button className={useShadcnStyles ? undefined : "secondary-button"} type="button" variant="outline" onClick={onPrev}>{prevLabel}</Button>
+      <Button className={useShadcnStyles ? undefined : "primary-button"} type="button" disabled={nextDisabled} onClick={onNext}>{nextLabel}</Button>
+    </CommandBar>
   );
 }
 
@@ -70,11 +75,11 @@ export function CreationPanelActions({
   withDivider?: boolean;
 }) {
   return (
-    <div className={withDivider ? "summary-actions permission-actions" : "summary-actions"}>
-      <button className="secondary-button" type="button" onClick={onPrev}>{prevLabel}</button>
-      <button className="secondary-button" type="button" onClick={onSave}>{saveLabel}</button>
-      <button className="primary-button" type="button" disabled={nextDisabled} onClick={onNext}>{nextLabel}</button>
-    </div>
+    <CommandBar className={withDivider ? "summary-actions permission-actions" : "summary-actions"} density="compact">
+      <Button className="secondary-button" type="button" variant="outline" onClick={onPrev}>{prevLabel}</Button>
+      <Button className="secondary-button" type="button" variant="outline" onClick={onSave}>{saveLabel}</Button>
+      <Button className="primary-button" type="button" disabled={nextDisabled} onClick={onNext}>{nextLabel}</Button>
+    </CommandBar>
   );
 }
 
@@ -112,14 +117,12 @@ export function CreationSummaryPanel({
         <FileText size={18} />
         <h2>{title}</h2>
       </div>
-      <dl>
-        {rows.map(([label, value]) => (
-          <div key={label}>
-            <dt>{label}</dt>
-            <dd>{selected && label === "실행 방식" ? selected : value}</dd>
-          </div>
-        ))}
-      </dl>
+      <KeyValueList
+        items={rows.map(([label, value]) => ({
+          label,
+          value: selected && label === "실행 방식" ? selected : value,
+        }))}
+      />
       <p className="summary-hint">{hint}</p>
       <CreationPanelActions
         nextDisabled={nextDisabled}

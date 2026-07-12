@@ -2,16 +2,166 @@ import type { IdentityProfile } from "./identity";
 import type { PermissionGrant, ResourcePermissions } from "./permissions";
 
 export type JobStatus = "scheduled" | "failed" | "running" | "paused" | "canceled" | "stopped";
-export type JobCommand = "edit" | "run" | "retry" | "pause" | "cancelRun" | "stopSchedule" | "delete";
+export type JobScheduleKind = "daily" | "weekly" | "monthly" | "realtime" | "none" | "other";
+export type JobCommand = "edit" | "run" | "retry" | "pause" | "cancelRun" | "stopSchedule" | "resumeSchedule" | "startContinuous" | "pauseContinuous" | "resumeContinuous" | "stopContinuous" | "delete";
+export type KafkaExecutionMode = "snapshot" | "continuous";
+export type ContinuousRuntimeStatus = "starting" | "running" | "pausing" | "paused" | "stopping" | "stopped" | "failed";
+
+export type KafkaSchemaEvolutionPolicy = {
+  additiveNullable: "allow" | "quarantine" | "pause";
+  missingRequired: "quarantine" | "pause";
+  incompatibleType: "quarantine" | "pause";
+  unknownField: "preserve" | "ignore" | "quarantine" | "pause";
+};
+
+export type KafkaContinuousConfigDraft = {
+  initialOffsetPolicy: "earliest" | "latest";
+  triggerIntervalSeconds: number;
+  maxOffsetsPerTrigger: number;
+  schemaEvolutionPolicy?: KafkaSchemaEvolutionPolicy;
+};
+
+export type KafkaContinuousRuntime = {
+  status: ContinuousRuntimeStatus;
+  checkpointPath: string;
+  heartbeatAt?: string | null;
+  lastFlushAt?: string | null;
+  lastBatchId?: string | null;
+  lag?: number | null;
+  maxPartitionLag?: number | null;
+  laggingPartitionCount: number;
+  lagAvailable: boolean;
+  partitionProgress: Record<string, { processedOffset: number; latestOffset: number; lag: number }>;
+  lastBatchDurationMs?: number | null;
+  lastBatchInputRows: number;
+  throughputRowsPerSecond?: number | null;
+  schemaVersion: number;
+  schemaFingerprint?: string | null;
+  schemaStatus: string;
+  schemaChanges: Array<Record<string, unknown>>;
+  consumedCount: number;
+  storedCount: number;
+  quarantinedCount: number;
+  replayedCount: number;
+  failedCount: number;
+  lastError?: string | null;
+};
+
+export type ContinuousWorkerLogsResponse = {
+  jobId: string;
+  containerState: string;
+  lines: string[];
+  truncated: boolean;
+};
+
+export type KafkaContinuousSessionStatus = "starting" | "running" | "stopping" | "stopped" | "failed";
+
+export type KafkaContinuousSession = {
+  sessionId: string;
+  jobId: string;
+  workerAttemptId?: string | null;
+  status: KafkaContinuousSessionStatus;
+  startedAt: string;
+  endedAt?: string | null;
+  endReason?: string | null;
+  consumedCount: number;
+  storedCount: number;
+  quarantinedCount: number;
+  failedCount: number;
+  lastBatchId?: string | null;
+  lastFlushAt?: string | null;
+  lag?: number | null;
+  checkpointPath: string;
+  lastError?: string | null;
+};
+
+export type KafkaContinuousBatch = {
+  batchId: number;
+  sessionId: string;
+  publishedAt?: string | null;
+  consumedCount: number;
+  storedCount: number;
+  quarantinedCount: number;
+  durationMs?: number | null;
+  sourceRanges: Array<{
+    topic?: string;
+    partition?: number;
+    startOffset?: number;
+    endOffset?: number;
+  }>;
+  dataPath?: string | null;
+  quarantinePath?: string | null;
+  manifestPath?: string | null;
+};
+
+export type ContinuousQuarantineRecord = {
+  topic: string;
+  partition: number;
+  offset: number;
+  rawPayload: string;
+  reason: string;
+  schemaFingerprint?: string | null;
+  quarantinedAt?: string | null;
+  replayStatus: string;
+};
+
+export type ContinuousQuarantineResponse = {
+  jobId: string;
+  records: ContinuousQuarantineRecord[];
+  total: number;
+};
+
+export type ContinuousMaintenanceRun = {
+  runId: string;
+  jobId: string;
+  kind: "quarantine_replay" | "compaction";
+  status: "queued" | "running" | "success" | "failed";
+  requestedBy: string;
+  config: Record<string, unknown>;
+  result?: Record<string, unknown> | null;
+  startedAt?: string | null;
+  endedAt?: string | null;
+  lastError?: string | null;
+};
 export type TargetLayer = "RAW" | "BRONZE" | "SILVER" | "GOLD";
 export type JobRunStatus = "queued" | "running" | "success" | "failed" | "canceled";
+export type JobRunOutcome = "success" | "failed" | "canceled";
 export type JobDagStepStatus = "pending" | "running" | "success" | "failed" | "blocked";
+export type RealtimeOperationalHealth = "healthy" | "degraded" | "unhealthy" | "unknown";
+
+export type BatchOperationalMetrics = {
+  metricType: "batch";
+  windowFrom: string;
+  windowTo: string;
+  totalRuns: number;
+  successfulRuns: number;
+  successRate: number | null;
+  averageDurationMs: number | null;
+};
+
+export type RealtimeOperationalMetrics = {
+  metricType: "realtime";
+  windowFrom: string;
+  windowTo: string;
+  healthStatus: RealtimeOperationalHealth;
+  availabilityRate: number | null;
+  consumerLag: number | null;
+  processingDelayMs: number | null;
+  lastHeartbeatAt: string | null;
+  lastCheckpointAt: string | null;
+  restartCount: number;
+  errorRate: number | null;
+};
+
+export type JobOperationalMetrics = BatchOperationalMetrics | RealtimeOperationalMetrics;
 
 export type JobRowData = {
+  createdAt?: string;
   status: JobStatus;
   name: string;
   id: string;
   owner: string;
+  ownerAvatarUrl?: string;
   createdBy?: string;
   createdByProfile?: IdentityProfile;
   permissionGrants?: PermissionGrant[];
@@ -19,12 +169,16 @@ export type JobRowData = {
   tag: string;
   source: string;
   target: string;
+  updatedAt?: string;
   schedule: string;
   schedulePolicy?: SchedulePolicyDraft;
   scheduleSummary?: string;
   sourceConfig?: Array<[string, string]>;
   sourceLabel?: string;
   sourceType?: string;
+  executionMode?: KafkaExecutionMode;
+  continuousConfig?: KafkaContinuousConfigDraft & { checkpointPath?: string };
+  continuousRuntime?: KafkaContinuousRuntime | null;
   schemaColumns?: SchemaColumnDraft[];
   schemaFingerprint?: string;
   schemaSampleRows?: string[][];
@@ -47,6 +201,7 @@ export type JobRowData = {
   targetFormat?: string;
   targetLayer?: TargetLayer;
   targetPath?: string;
+  schemaSampleValues?: Record<string, string>;
   rag?: boolean;
   transformOutputColumns?: Array<[string, string]>;
   transformSteps?: TransformStepDraft[];
@@ -57,6 +212,7 @@ export type JobRowData = {
   lastRun: string;
   lastState: string;
   nextRun: string;
+  operationalMetrics?: JobOperationalMetrics;
   progress?: {
     label: string;
     value: number;
@@ -65,6 +221,25 @@ export type JobRowData = {
   runHistory?: JobRunSummary[];
   dagSteps?: JobDagStep[];
   dagStepsByRunId?: Record<string, JobDagStep[]>;
+};
+
+export type JobListQuery = {
+  lastRunOutcome?: JobRunOutcome;
+  owner?: string;
+  scheduleKind?: JobScheduleKind;
+  statuses?: JobStatus[];
+};
+
+export type JobListFacets = {
+  latestRunOutcomeCounts: Record<JobRunOutcome, number>;
+  owners: string[];
+  statusCounts: Record<JobStatus, number>;
+  total: number;
+};
+
+export type JobListResult = {
+  facets: JobListFacets;
+  jobs: JobRowData[];
 };
 
 export type JobStats = {
@@ -88,6 +263,8 @@ export type SourceDraft = {
   sourceConfig: Array<[string, string]>;
   sourceLabel: string;
   sourceType: string;
+  executionMode?: KafkaExecutionMode;
+  continuousConfig?: KafkaContinuousConfigDraft;
 };
 
 export type TransformChainStepDraft = {
@@ -117,6 +294,7 @@ export type SchemaColumnDraft = {
   role?: string;
   sourceName: string;
   targetName: string;
+  targetOrder?: number;
   transformChain?: TransformChainStepDraft[];
   type: string;
 };
@@ -319,6 +497,8 @@ export type CreatePipelineRequest = {
   targetFormat: string;
   owner: string;
   rag: boolean;
+  executionMode?: KafkaExecutionMode;
+  continuousConfig?: KafkaContinuousConfigDraft;
 };
 
 export type UpdatePipelineRequest = Omit<
@@ -369,6 +549,12 @@ export type TextStructuringColumnExecution = {
   fallbackUsed?: boolean;
   invalidRows?: number;
   method?: string;
+  metrics?: {
+    accuracy?: number;
+    macroF1?: number;
+    validationRows?: number;
+    [key: string]: unknown;
+  };
   modelArtifact?: string;
   modelRequired?: boolean;
   modelSelectionPolicy?: string;
@@ -378,6 +564,7 @@ export type TextStructuringColumnExecution = {
   target?: string;
   targetColumn?: string;
   validationStatus?: string;
+  validationRows?: number;
 };
 
 export type TextStructuringExecutionSummary = {
@@ -390,7 +577,9 @@ export type TextStructuringExecutionSummary = {
 };
 
 export type JobDagStep = {
+  completedAt?: string;
   details?: Array<[string, string]>;
+  duration?: string;
   id: string;
   logs?: string[];
   meta: string;

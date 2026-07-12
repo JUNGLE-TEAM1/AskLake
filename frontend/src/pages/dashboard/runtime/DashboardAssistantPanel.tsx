@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { Loader2, Send } from "lucide-react";
-import type { DashboardRuntimeWidget, DashboardRuntimeWidgetConfig } from "../../../types";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Bubble, BubbleContent, BubbleGroup } from "@/components/ui/bubble";
+import type { DashboardRuntimeWidget } from "../../../types";
 import {
   type DashboardAssistantCreateWidgetAction,
   buildDashboardAssistantWidgetContext,
@@ -13,6 +13,7 @@ import {
 } from "../../../services/dashboardAssistantService";
 import askLakeNessiIconUrl from "../../../assets/asklake-nessi-icon.png";
 import type { CreateDraftWidgetFormInput, DashboardDatasetOption, UpdateDraftWidgetFormInput } from "./dashboardRuntimeTypes";
+import { VisualizationPromptInput, type VisualizationPromptInputHandle } from "./VisualizationPromptInput";
 
 type DashboardAssistantPanelProps = {
   dashboardId?: string;
@@ -63,14 +64,13 @@ export function DashboardAssistantPanel({
   const [messages, setMessages] = useState<AssistantMessage[]>([]);
   const [prompt, setPrompt] = useState("");
   const messagesEndRef = useRef<HTMLSpanElement | null>(null);
-  const promptInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const promptInputRef = useRef<VisualizationPromptInputHandle | null>(null);
   const isConfigured = isDashboardAssistantConfigured();
   const targetWidgets = useMemo(() => {
     return selectedWidget ? [selectedWidget] : widgets;
   }, [selectedWidget, widgets]);
 
-  const submitQuestion = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const submitQuestion = async () => {
     const nextPrompt = prompt.trim();
     if (!nextPrompt || isSubmitting) return;
 
@@ -163,17 +163,25 @@ export function DashboardAssistantPanel({
           <div className="asklake-assistant-hero">
             <AskLakeAssistantMark />
             <strong>AskLake</strong>
-            <span>AI로 질문하세요</span>
+            <Bubble variant="secondary">
+              <BubbleContent>대시보드에 대해 무엇이든 물어보세요.</BubbleContent>
+            </Bubble>
           </div>
         )}
 
         {hasMessages && (
-          <div className="asklake-assistant-messages" aria-live="polite">
+          <BubbleGroup aria-live="polite" className="asklake-assistant-messages">
             {messages.map((message) => (
-              <p className={message.role} key={message.id}>{message.text}</p>
+              <Bubble
+                align={message.role === "user" ? "end" : "start"}
+                key={message.id}
+                variant={message.role === "user" ? "default" : "secondary"}
+              >
+              <BubbleContent className="whitespace-pre-wrap">{message.text}</BubbleContent>
+              </Bubble>
             ))}
             <span ref={messagesEndRef} aria-hidden="true" />
-          </div>
+          </BubbleGroup>
         )}
       </div>
 
@@ -184,19 +192,18 @@ export function DashboardAssistantPanel({
         </div>
       )}
 
-      <form className="asklake-assistant-form" onSubmit={(event) => void submitQuestion(event)}>
-        <textarea
-          aria-label="AskLake 질문"
-          placeholder="AskLake에게 질문하세요."
-          ref={promptInputRef}
-          rows={3}
-          value={prompt}
-          onChange={(event) => setPrompt(event.target.value)}
-        />
-        <button aria-label="질문 보내기" disabled={!prompt.trim() || isSubmitting} type="submit">
-          {isSubmitting ? <Loader2 className="spin" size={16} /> : <Send size={16} />}
-        </button>
-      </form>
+      <VisualizationPromptInput
+        ariaLabel="AskLake 질문"
+        isSubmitting={isSubmitting}
+        placeholder="AskLake에게 질문하세요."
+        ref={promptInputRef}
+        rows={3}
+        submitAriaLabel="질문 보내기"
+        textareaClassName="min-h-[72px] px-3 py-2 text-sm font-medium"
+        value={prompt}
+        onSubmit={() => void submitQuestion()}
+        onValueChange={setPrompt}
+      />
 
       {error && <span className="asklake-assistant-error">{error}</span>}
     </section>
@@ -222,7 +229,7 @@ async function applyAssistantWidgetActions({
     if (action.type === "report") continue;
 
     if (action.type === "create_widget") {
-      const result = await applyCreateWidgetAction(action, datasets, onCreateWidget);
+      const result = await applyCreateWidgetAction(action, onCreateWidget);
       if (result) messages.push(result);
       continue;
     }
@@ -242,16 +249,12 @@ async function applyAssistantWidgetActions({
 
 async function applyCreateWidgetAction(
   action: DashboardAssistantCreateWidgetAction,
-  datasets: DashboardDatasetOption[],
   onCreateWidget?: (input: CreateDraftWidgetFormInput) => Promise<void> | void,
 ) {
   if (!onCreateWidget) return "위젯 생성 함수가 연결되지 않아 새 위젯을 추가하지 못했습니다.";
-  const dataset = resolveAssistantDataset(action.widget.datasetId, datasets);
-  if (!dataset) return "사용 가능한 데이터소스가 없어 AI 추천 위젯을 추가하지 못했습니다.";
   await onCreateWidget({
-    config: sanitizeAssistantWidgetConfig(action.widget.config, action.widget.type, dataset),
-    data: cloneDatasetRows(dataset),
-    datasetId: dataset.id,
+    config: action.widget.config,
+    datasetId: action.widget.datasetId,
     title: action.widget.title || "AI 추천 위젯",
     type: action.widget.type,
   });
@@ -271,83 +274,18 @@ async function applyUpdateWidgetAction(
     return "수정 대상 위젯을 찾지 못해 변경사항을 적용하지 못했습니다.";
   }
 
-  const dataset = resolveAssistantDataset(action.patch.datasetId ?? currentWidget?.datasetId ?? null, datasets);
-  if (!dataset) return "사용 가능한 데이터소스가 없어 AI 추천 변경사항을 적용하지 못했습니다.";
-  const nextType = action.patch.type ?? currentWidget?.type ?? "bar_chart";
-  const nextConfig = sanitizeAssistantWidgetConfig({
-    ...(currentWidget?.config ?? {}),
-    ...(action.patch.config ?? {}),
-  } as DashboardRuntimeWidgetConfig, nextType, dataset);
+  const nextDatasetId = action.patch.datasetId ?? currentWidget?.datasetId ?? null;
+  const nextRows = nextDatasetId ? datasets.find((dataset) => dataset.id === nextDatasetId)?.rows : undefined;
 
   await onUpdateWidget(action.widgetId, {
-    config: nextConfig,
-    data: cloneDatasetRows(dataset),
-    datasetId: dataset.id,
+    config: {
+      ...(currentWidget?.config ?? {}),
+      ...(action.patch.config ?? {}),
+    } as UpdateDraftWidgetFormInput["config"],
+    data: nextRows?.length ? nextRows.map((row) => ({ ...row })) : undefined,
+    datasetId: nextDatasetId,
     title: action.patch.title ?? currentWidget?.title ?? "제목 없는 위젯",
-    type: nextType,
+    type: action.patch.type ?? currentWidget?.type ?? "bar_chart",
   });
   return "AI가 제안한 위젯 변경사항을 적용했습니다.";
-}
-
-function resolveAssistantDataset(datasetId: string | null | undefined, datasets: DashboardDatasetOption[]) {
-  return datasets.find((dataset) => dataset.id === datasetId) ?? datasets[0] ?? null;
-}
-
-function cloneDatasetRows(dataset: DashboardDatasetOption) {
-  return dataset.rows?.map((row) => ({ ...row }));
-}
-
-function firstColumn(columns: DashboardDatasetOption["columns"], current: unknown, allowEmpty = false) {
-  if (typeof current === "string" && columns.some((column) => column.name === current)) return current;
-  if (allowEmpty && !current) return "";
-  return columns[0]?.name ?? "";
-}
-
-function sanitizeAssistantWidgetConfig(
-  config: DashboardRuntimeWidgetConfig,
-  type: DashboardRuntimeWidget["type"],
-  dataset: DashboardDatasetOption,
-): DashboardRuntimeWidgetConfig {
-  const record = { ...(config as Record<string, unknown>) };
-  const allColumns = dataset.columns;
-  const numericColumns = allColumns.filter((column) => column.type === "number");
-  const dimensionColumns = allColumns.filter((column) => column.type === "string" || column.type === "date");
-  const categoryColumns = allColumns.filter((column) => column.type === "string");
-  const usesCount = record.aggregation === "count";
-
-  if (Array.isArray(record.columns)) {
-    const columns = record.columns.filter((column): column is string => (
-      typeof column === "string" && allColumns.some((datasetColumn) => datasetColumn.name === column)
-    ));
-    record.columns = columns.length ? columns : allColumns.slice(0, 5).map((column) => column.name);
-  }
-  if (typeof record.sortKey === "string" && !allColumns.some((column) => column.name === record.sortKey)) {
-    record.sortKey = Array.isArray(record.columns) && typeof record.columns[0] === "string" ? record.columns[0] : undefined;
-  }
-
-  if (type === "metric") {
-    record.valueKey = usesCount ? firstColumn(numericColumns, record.valueKey, true) : firstColumn(numericColumns, record.valueKey);
-  } else if (type === "bar_chart") {
-    record.xKey = firstColumn(allColumns, record.xKey);
-    record.yKey = usesCount ? firstColumn(numericColumns, record.yKey, true) : firstColumn(numericColumns, record.yKey);
-    record.groupKey = firstColumn(dimensionColumns, record.groupKey, true);
-  } else if (type === "line_chart" || type === "area_chart") {
-    const timeColumns = allColumns.filter((column) => column.type === "date");
-    const xColumns = timeColumns.length ? timeColumns : dimensionColumns.length ? dimensionColumns : allColumns;
-    record.xKey = firstColumn(xColumns, record.xKey);
-    record.yKey = usesCount ? firstColumn(numericColumns, record.yKey, true) : firstColumn(numericColumns, record.yKey);
-    record.seriesKey = firstColumn(dimensionColumns, record.seriesKey, true);
-  } else if (type === "donut_chart" || type === "pie_chart" || type === "treemap_chart") {
-    record.labelKey = firstColumn(categoryColumns.length ? categoryColumns : dimensionColumns, record.labelKey);
-    record.valueKey = usesCount ? firstColumn(numericColumns, record.valueKey, true) : firstColumn(numericColumns, record.valueKey);
-  } else if (type === "radial_bar_chart") {
-    record.labelKey = firstColumn(dimensionColumns, record.labelKey, true);
-    record.valueKey = usesCount ? firstColumn(numericColumns, record.valueKey, true) : firstColumn(numericColumns, record.valueKey);
-  } else if (type === "heatmap_chart") {
-    record.xKey = firstColumn(dimensionColumns, record.xKey);
-    record.yKey = firstColumn(dimensionColumns, record.yKey);
-    record.valueKey = usesCount ? firstColumn(numericColumns, record.valueKey, true) : firstColumn(numericColumns, record.valueKey);
-  }
-
-  return record as DashboardRuntimeWidgetConfig;
 }
