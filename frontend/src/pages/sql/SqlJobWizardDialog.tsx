@@ -4,6 +4,7 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  Clock3,
   Database,
   HardDrive,
   ShieldCheck,
@@ -13,9 +14,19 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { DialogShell } from "@/components/ui/dialog-shell";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { NativeSelect } from "@/components/ui/native-select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Spinner } from "@/components/ui/spinner";
 import {
   Table,
@@ -131,6 +142,211 @@ const overlapPolicyLabels: Record<ScheduleOverlapPolicy, string> = {
   queue_after_current: "현재 Run 종료 후 실행",
   skip_if_running: "실행 중이면 다음 예약 건너뜀",
 };
+
+type WizardSelectOption<T extends string> = {
+  label: string;
+  value: T;
+};
+
+const weekdaySelectOptions: Array<WizardSelectOption<SqlJobWizardWeekday>> = weekdayOptions.map((day) => ({
+  label: `${day}요일`,
+  value: day,
+}));
+const timezoneSelectOptions: Array<WizardSelectOption<string>> = timezoneOptions.map((timezone) => ({
+  label: timezone,
+  value: timezone,
+}));
+const overlapPolicyOptions: Array<WizardSelectOption<ScheduleOverlapPolicy>> = [
+  { label: overlapPolicyLabels.allow_parallel, value: "allow_parallel" },
+  { label: overlapPolicyLabels.queue_after_current, value: "queue_after_current" },
+  { label: overlapPolicyLabels.skip_if_running, value: "skip_if_running" },
+];
+const accessScopeOptions: Array<WizardSelectOption<SqlJobWizardAccessScope>> = [
+  { label: accessScopeLabels.organization, value: "organization" },
+  { label: accessScopeLabels.project, value: "project" },
+  { label: accessScopeLabels.private, value: "private" },
+];
+const compressionOptions: Array<WizardSelectOption<SqlJobWizardCompression>> = [
+  { label: "Snappy", value: "Snappy" },
+  { label: "Gzip", value: "Gzip" },
+  { label: "압축 없음", value: "None" },
+];
+const timeHourOptions = Array.from({ length: 24 }, (_, hour) => String(hour).padStart(2, "0"));
+const timeMinuteOptions = Array.from({ length: 60 }, (_, minute) => String(minute).padStart(2, "0"));
+
+function WizardSelectField<T extends string>({
+  className,
+  disabled,
+  id,
+  label,
+  onValueChange,
+  options,
+  value,
+}: {
+  className?: string;
+  disabled?: boolean;
+  id: string;
+  label: string;
+  onValueChange: (value: T) => void;
+  options: ReadonlyArray<WizardSelectOption<T>>;
+  value: T;
+}) {
+  const selectedOption = options.find((option) => option.value === value);
+
+  return (
+    <Field className={className}>
+      <FieldLabel htmlFor={id}>{label}</FieldLabel>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            aria-label={label}
+            className="w-full min-w-0 max-w-full justify-start overflow-hidden text-left"
+            disabled={disabled}
+            id={id}
+            type="button"
+            variant="outline"
+          >
+            <span className="min-w-0 flex-1 truncate text-left">
+              {selectedOption?.label ?? "선택해 주세요"}
+            </span>
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent
+          align="start"
+          className="w-[var(--radix-dropdown-menu-trigger-width)] min-w-40"
+        >
+          <DropdownMenuLabel>{label}</DropdownMenuLabel>
+          <DropdownMenuSeparator />
+          <DropdownMenuRadioGroup
+            onValueChange={(nextValue) => onValueChange(nextValue as T)}
+            value={value}
+          >
+            {options.map((option) => (
+              <DropdownMenuRadioItem key={option.value} value={option.value}>
+                <span className="min-w-0 truncate">{option.label}</span>
+              </DropdownMenuRadioItem>
+            ))}
+          </DropdownMenuRadioGroup>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </Field>
+  );
+}
+
+function formatWizardTime(value: string) {
+  const [hourText = "00", minute = "00"] = value.split(":");
+  const hour = Number(hourText);
+  const period = hour < 12 ? "오전" : "오후";
+  const displayHour = String(hour % 12 || 12).padStart(2, "0");
+  return `${period} ${displayHour}:${minute}`;
+}
+
+function WizardTimeField({
+  disabled,
+  id,
+  label,
+  onValueChange,
+  value,
+}: {
+  disabled?: boolean;
+  id: string;
+  label: string;
+  onValueChange: (value: string) => void;
+  value: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const selectedHourRef = useRef<HTMLButtonElement>(null);
+  const selectedMinuteRef = useRef<HTMLButtonElement>(null);
+  const [hour = "00", minute = "00"] = value.split(":");
+
+  useEffect(() => {
+    if (!open) return;
+    const frame = window.requestAnimationFrame(() => {
+      selectedHourRef.current?.scrollIntoView({ block: "center" });
+      selectedMinuteRef.current?.scrollIntoView({ block: "center" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [hour, minute, open]);
+
+  return (
+    <Field>
+      <FieldLabel htmlFor={id}>{label}</FieldLabel>
+      <Popover onOpenChange={setOpen} open={open}>
+        <PopoverTrigger asChild>
+          <Button
+            className="w-full min-w-0 max-w-full justify-between overflow-hidden text-left"
+            disabled={disabled}
+            id={id}
+            type="button"
+            variant="outline"
+          >
+            <span className="min-w-0 flex-1 truncate text-left">{formatWizardTime(value)}</span>
+            <Clock3 aria-hidden="true" className="text-slate-500" />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent align="start" className="grid w-72 gap-3 p-3">
+          <div className="grid gap-1">
+            <strong className="text-sm">실행 시간</strong>
+            <small className="text-xs text-slate-500">시와 분을 각각 선택해 주세요.</small>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="grid gap-1.5">
+              <span className="text-xs font-semibold text-slate-500">시</span>
+              <ScrollArea className="h-52 rounded-lg border border-slate-200">
+                <div className="grid gap-1 p-1 pr-3">
+                  {timeHourOptions.map((option) => {
+                    const selected = option === hour;
+                    return (
+                      <Button
+                        aria-pressed={selected}
+                        className="w-full justify-center"
+                        key={option}
+                        onClick={() => onValueChange(`${option}:${minute}`)}
+                        ref={selected ? selectedHourRef : undefined}
+                        size="sm"
+                        type="button"
+                        variant={selected ? "subtle" : "ghost"}
+                      >
+                        {option}시
+                      </Button>
+                    );
+                  })}
+                </div>
+              </ScrollArea>
+            </div>
+            <div className="grid gap-1.5">
+              <span className="text-xs font-semibold text-slate-500">분</span>
+              <ScrollArea className="h-52 rounded-lg border border-slate-200">
+                <div className="grid gap-1 p-1 pr-3">
+                  {timeMinuteOptions.map((option) => {
+                    const selected = option === minute;
+                    return (
+                      <Button
+                        aria-pressed={selected}
+                        className="w-full justify-center"
+                        key={option}
+                        onClick={() => onValueChange(`${hour}:${option}`)}
+                        ref={selected ? selectedMinuteRef : undefined}
+                        size="sm"
+                        type="button"
+                        variant={selected ? "subtle" : "ghost"}
+                      >
+                        {option}분
+                      </Button>
+                    );
+                  })}
+                </div>
+              </ScrollArea>
+            </div>
+          </div>
+          <Button onClick={() => setOpen(false)} size="sm" type="button">
+            완료
+          </Button>
+        </PopoverContent>
+      </Popover>
+    </Field>
+  );
+}
 
 function normalizePathSegment(value: string) {
   return value.trim().replace(/\s+/g, "_") || "sql_result";
@@ -461,29 +677,51 @@ export function SqlJobWizardDialog({
             {configuration.schedule.mode !== "manual" ? (
               <div className="grid grid-cols-2 gap-4 max-[760px]:grid-cols-1">
                 {configuration.schedule.mode === "weekly" ? (
-                  <Field>
-                    <FieldLabel htmlFor="sql-job-wizard-weekday">실행 요일</FieldLabel>
-                    <NativeSelect id="sql-job-wizard-weekday" value={configuration.schedule.weekday} onChange={(event) => setConfiguration((current) => ({ ...current, schedule: { ...current.schedule, weekday: event.target.value as SqlJobWizardWeekday } }))}>
-                      {weekdayOptions.map((day) => <option key={day} value={day}>{day}요일</option>)}
-                    </NativeSelect>
-                  </Field>
+                  <WizardSelectField
+                    disabled={isBusy}
+                    id="sql-job-wizard-weekday"
+                    label="실행 요일"
+                    options={weekdaySelectOptions}
+                    value={configuration.schedule.weekday}
+                    onValueChange={(weekday) => setConfiguration((current) => ({
+                      ...current,
+                      schedule: { ...current.schedule, weekday },
+                    }))}
+                  />
                 ) : null}
-                <Field>
-                  <FieldLabel htmlFor="sql-job-wizard-time">실행 시간</FieldLabel>
-                  <Input id="sql-job-wizard-time" type="time" value={configuration.schedule.time} onChange={(event) => setConfiguration((current) => ({ ...current, schedule: { ...current.schedule, time: event.target.value } }))} />
-                </Field>
-                <Field>
-                  <FieldLabel htmlFor="sql-job-wizard-timezone">시간대</FieldLabel>
-                  <NativeSelect id="sql-job-wizard-timezone" value={configuration.schedule.timezone} onChange={(event) => setConfiguration((current) => ({ ...current, schedule: { ...current.schedule, timezone: event.target.value } }))}>
-                    {timezoneOptions.map((timezone) => <option key={timezone} value={timezone}>{timezone}</option>)}
-                  </NativeSelect>
-                </Field>
-                <Field className={configuration.schedule.mode === "daily" ? "col-span-2 max-[760px]:col-span-1" : undefined}>
-                  <FieldLabel htmlFor="sql-job-wizard-overlap">실행 겹침 정책</FieldLabel>
-                  <NativeSelect id="sql-job-wizard-overlap" value={configuration.schedule.overlapPolicy} onChange={(event) => setConfiguration((current) => ({ ...current, schedule: { ...current.schedule, overlapPolicy: event.target.value as ScheduleOverlapPolicy } }))}>
-                    {Object.entries(overlapPolicyLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                  </NativeSelect>
-                </Field>
+                <WizardTimeField
+                  disabled={isBusy}
+                  id="sql-job-wizard-time"
+                  label="실행 시간"
+                  value={configuration.schedule.time}
+                  onValueChange={(time) => setConfiguration((current) => ({
+                    ...current,
+                    schedule: { ...current.schedule, time },
+                  }))}
+                />
+                <WizardSelectField
+                  disabled={isBusy}
+                  id="sql-job-wizard-timezone"
+                  label="시간대"
+                  options={timezoneSelectOptions}
+                  value={configuration.schedule.timezone}
+                  onValueChange={(timezone) => setConfiguration((current) => ({
+                    ...current,
+                    schedule: { ...current.schedule, timezone },
+                  }))}
+                />
+                <WizardSelectField
+                  className={configuration.schedule.mode === "daily" ? "col-span-2 max-[760px]:col-span-1" : undefined}
+                  disabled={isBusy}
+                  id="sql-job-wizard-overlap"
+                  label="실행 겹침 정책"
+                  options={overlapPolicyOptions}
+                  value={configuration.schedule.overlapPolicy}
+                  onValueChange={(overlapPolicy) => setConfiguration((current) => ({
+                    ...current,
+                    schedule: { ...current.schedule, overlapPolicy },
+                  }))}
+                />
               </div>
             ) : null}
           </FieldGroup>
@@ -496,26 +734,21 @@ export function SqlJobWizardDialog({
               <Input id="sql-job-wizard-owner" value={configuration.governance.owner} onChange={(event) => setConfiguration((current) => ({ ...current, governance: { ...current.governance, owner: event.target.value } }))} />
               {showErrors && !configuration.governance.owner.trim() ? <FieldError>데이터 오너는 필수입니다.</FieldError> : null}
             </Field>
-            <Field>
-              <FieldLabel htmlFor="sql-job-wizard-access">접근 범위</FieldLabel>
-              <NativeSelect
-                id="sql-job-wizard-access"
-                value={configuration.governance.accessScope}
-                onChange={(event) => {
-                  const accessScope = event.target.value as SqlJobWizardAccessScope;
-                  setConfiguration((current) => ({
-                    ...current,
-                    governance: {
-                      ...current.governance,
-                      accessScope,
-                      permissionSummary: buildPermissionSummary(accessScope),
-                    },
-                  }));
-                }}
-              >
-                {Object.entries(accessScopeLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-              </NativeSelect>
-            </Field>
+            <WizardSelectField
+              disabled={isBusy}
+              id="sql-job-wizard-access"
+              label="접근 범위"
+              options={accessScopeOptions}
+              value={configuration.governance.accessScope}
+              onValueChange={(accessScope) => setConfiguration((current) => ({
+                ...current,
+                governance: {
+                  ...current.governance,
+                  accessScope,
+                  permissionSummary: buildPermissionSummary(accessScope),
+                },
+              }))}
+            />
             <Field className="col-span-2 max-[760px]:col-span-1">
               <FieldLabel htmlFor="sql-job-wizard-permission-summary">권한 정책 요약</FieldLabel>
               <Textarea id="sql-job-wizard-permission-summary" rows={3} value={configuration.governance.permissionSummary} onChange={(event) => setConfiguration((current) => ({ ...current, governance: { ...current.governance, permissionSummary: event.target.value } }))} />
@@ -527,19 +760,34 @@ export function SqlJobWizardDialog({
         {activeStep.id === "review" ? (
           <div className="grid gap-5">
             <FieldGroup className="grid-cols-3 max-[760px]:grid-cols-1">
-              <Field>
-                <FieldLabel htmlFor="sql-job-wizard-compression">압축 방식</FieldLabel>
-                <NativeSelect id="sql-job-wizard-compression" value={configuration.target.compression} onChange={(event) => setConfiguration((current) => ({ ...current, target: { ...current.target, compression: event.target.value as SqlJobWizardCompression } }))}>
-                  <option value="Snappy">Snappy</option><option value="Gzip">Gzip</option><option value="None">압축 없음</option>
-                </NativeSelect>
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="sql-job-wizard-partition">파티션 컬럼</FieldLabel>
-                <NativeSelect id="sql-job-wizard-partition" value={configuration.target.partitionColumn || "__none__"} onChange={(event) => setConfiguration((current) => ({ ...current, target: { ...current.target, partitionColumn: event.target.value === "__none__" ? "" : event.target.value } }))}>
-                  <option value="__none__">파티션 없음</option>
-                  {resultDraft.columns.map((column) => <option key={column} value={column}>{column}</option>)}
-                </NativeSelect>
-              </Field>
+              <WizardSelectField
+                disabled={isBusy}
+                id="sql-job-wizard-compression"
+                label="압축 방식"
+                options={compressionOptions}
+                value={configuration.target.compression}
+                onValueChange={(compression) => setConfiguration((current) => ({
+                  ...current,
+                  target: { ...current.target, compression },
+                }))}
+              />
+              <WizardSelectField
+                disabled={isBusy}
+                id="sql-job-wizard-partition"
+                label="파티션 컬럼"
+                options={[
+                  { label: "파티션 없음", value: "__none__" },
+                  ...resultDraft.columns.map((column) => ({ label: column, value: column })),
+                ]}
+                value={configuration.target.partitionColumn || "__none__"}
+                onValueChange={(partitionColumn) => setConfiguration((current) => ({
+                  ...current,
+                  target: {
+                    ...current.target,
+                    partitionColumn: partitionColumn === "__none__" ? "" : partitionColumn,
+                  },
+                }))}
+              />
               <Field>
                 <FieldLabel htmlFor="sql-job-wizard-storage">저장 경로</FieldLabel>
                 <Input id="sql-job-wizard-storage" value={configuration.target.storagePath} onChange={(event) => { setStoragePathTouched(true); setConfiguration((current) => ({ ...current, target: { ...current.target, storagePath: event.target.value } })); }} />
