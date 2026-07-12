@@ -42,13 +42,17 @@ import {
 import { Field, InfoBox, RetryPolicy, StatusTile } from "../../components/common";
 import { CreationFlowLayout, CreationTopActions, CreationValidationPanel } from "../../components/creation/CreationFlow";
 import { ActionGroup } from "@/components/ui/action-group";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
-import { CheckableOption } from "@/components/ui/checkable-option";
 import { CommandBar } from "@/components/ui/command-bar";
+import { Empty, EmptyDescription, EmptyHeader, EmptyIcon, EmptyTitle } from "@/components/ui/empty";
+import { Field as ShadcnField, FieldGroup, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
 import { FormFieldGroup, NativeSelectField } from "@/components/ui/form-field-group";
 import { Input } from "@/components/ui/input";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { KeyValueList } from "@/components/ui/key-value-list";
 import { NativeSelect } from "@/components/ui/native-select";
 import { PageHeader } from "@/components/ui/page-header";
@@ -56,14 +60,16 @@ import { SegmentedTabs } from "@/components/ui/segmented-tabs";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
 import { SelectableCard } from "@/components/ui/selectable-card";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
 import { TagList } from "@/components/ui/tag-list";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ValidationList } from "@/components/ui/validation-list";
 import { cn } from "@/lib/utils";
 import { S3PathField } from "../../components/s3/S3PathField";
@@ -631,6 +637,13 @@ const PERMISSION_ROLES = [
   { name: "ML Team", access: PERMISSION_ACCESS_ITEMS, checked: false, note: "RAG 인덱스 검증 후 확장 예정" },
 ];
 
+const PERMISSION_USERS = [
+  { email: "haneul@asklake.io", id: "haneul", initials: "KH", name: "김하늘", role: "Data Analyst Group" },
+  { email: "jimin@asklake.io", id: "jimin", initials: "PJ", name: "박지민", role: "Data Engineer Group" },
+] as const;
+
+type PermissionGrantTab = "roles" | "users";
+
 type PermissionDraftSlice = {
   approvalStatus?: string;
   owner?: string;
@@ -1007,6 +1020,15 @@ function getPermissionDraftValues(draft: DraftPipeline) {
     permissionTemplate,
     visibility,
   };
+}
+
+function getPermissionRoleChecks(draft: DraftPipeline) {
+  const savedRoles = draft.permission.roles ?? [];
+
+  return Object.fromEntries(PERMISSION_ROLES.map((role) => {
+    const savedRole = savedRoles.find((candidate) => candidate.name === role.name);
+    return [role.name, savedRole?.checked ?? role.checked];
+  }));
 }
 
 function getTargetDraftValues(draft: DraftPipeline) {
@@ -5068,24 +5090,29 @@ export function PermissionPage({
   const [visibility, setVisibility] = useState(initialPermission.visibility);
   const [dataOwner, setDataOwner] = useState(initialPermission.owner);
   const [approvalStatus, setApprovalStatus] = useState(initialPermission.approvalStatus);
+  const [grantTab, setGrantTab] = useState<PermissionGrantTab>("roles");
+  const [grantSearch, setGrantSearch] = useState("");
   const [roleChecks, setRoleChecks] = useState<Record<string, boolean>>(() => ({
-    ...Object.fromEntries(PERMISSION_ROLES.map((role) => [role.name, role.checked])),
+    ...getPermissionRoleChecks(draft),
     [initialPermission.permissionTemplate]: true,
   }));
+  const [userChecks, setUserChecks] = useState<Record<string, boolean>>(() => (
+    Object.fromEntries(PERMISSION_USERS.map((user) => [user.id, true]))
+  ));
 
   const applyPermissionDraft = (patch: Partial<{
     approvalStatus: string;
     owner: string;
     permissionTemplate: string;
     visibility: string;
-  }> = {}) => {
+  }> = {}, nextRoleChecks = roleChecks) => {
     const nextPermissionTemplate = getKnownOption(patch.permissionTemplate ?? permissionTemplate, PERMISSION_TEMPLATES, DEFAULT_PERMISSION_TEMPLATE);
     const nextVisibility = getKnownOption(patch.visibility ?? visibility, VISIBILITY_OPTIONS, DEFAULT_VISIBILITY);
     const nextApprovalStatus = getKnownOption(patch.approvalStatus ?? approvalStatus, APPROVAL_STATUS_OPTIONS, DEFAULT_APPROVAL_STATUS);
     const nextOwner = getDisplayText(patch.owner ?? dataOwner, DEFAULT_OWNER);
     const permissionRoles = PERMISSION_ROLES.map((role) => ({
       access: [...role.access],
-      checked: Boolean(roleChecks[role.name] ?? role.checked),
+      checked: Boolean(nextRoleChecks[role.name] ?? role.checked),
       name: role.name,
     }));
 
@@ -5102,10 +5129,25 @@ export function PermissionPage({
     applyPermissionDraft();
     onNext();
   };
+  const updateRoleCheck = (roleName: string, checked: boolean) => {
+    const nextRoleChecks = { ...roleChecks, [roleName]: checked };
+    setRoleChecks(nextRoleChecks);
+    applyPermissionDraft({}, nextRoleChecks);
+  };
+  const normalizedGrantSearch = grantSearch.trim().toLocaleLowerCase();
+  const filteredRoles = PERMISSION_ROLES.filter((role) => (
+    `${role.name} ${role.note}`.toLocaleLowerCase().includes(normalizedGrantSearch)
+  ));
+  const filteredUsers = PERMISSION_USERS.filter((user) => (
+    `${user.name} ${user.email} ${user.role}`.toLocaleLowerCase().includes(normalizedGrantSearch)
+  ));
+  const selectedRoleCount = Object.values(roleChecks).filter(Boolean).length;
+  const selectedUserCount = Object.values(userChecks).filter(Boolean).length;
   const governanceChecks = [
-    ["공유 범위", visibility, visibility === "외부 공유" ? "검토 필요" : "안전"],
-    ["민감 데이터", "review_text 포함", "검토 필요"],
-    ["승인자", dataOwner, approvalStatus === "승인 완료" ? "준비됨" : "대기"],
+    { icon: <Database size={18} />, label: "공유 범위", status: visibility === "외부 공유" ? "검토 필요" : "안전", value: visibility },
+    { icon: <FileText size={18} />, label: "민감 데이터", status: "검토 필요", value: "review_text 포함" },
+    { icon: <CircleUser size={18} />, label: "승인자", status: approvalStatus === "승인 완료" ? "준비됨" : "대기", value: dataOwner },
+    { icon: <ShieldCheck size={18} />, label: "승인 상태", status: approvalStatus === "승인 완료" ? "준비됨" : "검토 필요", value: approvalStatus },
   ];
 
   return (
@@ -5119,47 +5161,67 @@ export function PermissionPage({
         leadingAlign="center"
         title="권한 설정"
       />
-      <div className="etl-review-stack permission-config-stack">
-        <section className="etl-review-card permission-config-card">
-          <div className="etl-review-card-header">
+      <div className="grid min-w-0 gap-4 pb-6" data-testid="permission-workflow">
+        <Card className="min-w-0 overflow-hidden" size="none">
+          <CardHeader className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3 border-b border-slate-200 px-5 py-4">
             <span className="etl-review-icon permission"><ShieldCheck size={17} /></span>
-            <h2>Governance Check</h2>
-          </div>
-          <ValidationList
-            className="etl-review-validation permission-config-validation"
-            items={governanceChecks.map(([label, value, status]) => ({
-              label,
-              status: status === "안전" || status === "준비됨" ? "ready" : "warning",
-              value: `${value} · ${status}`,
-            }))}
-          />
-        </section>
+            <CardTitle>Governance Check</CardTitle>
+          </CardHeader>
+          <CardContent className="grid min-w-0 gap-3 p-5 sm:grid-cols-2 xl:grid-cols-4">
+            {governanceChecks.map((item) => (
+              <Card className="min-w-0" key={item.label} size="sm" variant="muted">
+                <div className="flex min-w-0 items-start justify-between gap-3">
+                  <div className="flex min-w-0 items-start gap-2">
+                    {item.icon}
+                    <div className="grid min-w-0 gap-1">
+                      <span className="text-sm font-semibold text-slate-500">{item.label}</span>
+                      <strong className="truncate text-sm text-slate-950" title={item.value}>{item.value}</strong>
+                    </div>
+                  </div>
+                  <Badge
+                    shape="compact"
+                    size="sm"
+                    variant={item.status === "안전" || item.status === "준비됨" ? "success" : item.status === "대기" ? "muted" : "warning"}
+                  >
+                    {item.status}
+                  </Badge>
+                </div>
+              </Card>
+            ))}
+          </CardContent>
+        </Card>
 
-        <section className="etl-review-card permission-config-card">
-          <div className="etl-review-card-header">
+        <Card className="min-w-0 overflow-hidden" size="none">
+          <CardHeader className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3 border-b border-slate-200 px-5 py-4">
             <span className="etl-review-icon"><SlidersHorizontal size={17} /></span>
-            <h2>Access Policy</h2>
-          </div>
-          <div className="target-config-form-grid permission-config-form-grid">
-            <FormFieldGroup className="field" label="권한 템플릿">
+            <CardTitle>Access Policy</CardTitle>
+          </CardHeader>
+          <CardContent className="p-5">
+            <FieldGroup className="grid min-w-0 gap-4 md:grid-cols-2">
+              <ShadcnField>
+                <FieldLabel htmlFor="permission-template">권한 템플릿</FieldLabel>
               <Select
                 value={permissionTemplate}
                 onValueChange={(value) => {
                   const nextPermissionTemplate = getKnownOption(value, PERMISSION_TEMPLATES, DEFAULT_PERMISSION_TEMPLATE);
+                  const nextRoleChecks = { ...roleChecks, [nextPermissionTemplate]: true };
                   setPermissionTemplate(nextPermissionTemplate);
-                  setRoleChecks((checks) => ({ ...checks, [nextPermissionTemplate]: true }));
-                  applyPermissionDraft({ permissionTemplate: nextPermissionTemplate });
+                  setRoleChecks(nextRoleChecks);
+                  applyPermissionDraft({ permissionTemplate: nextPermissionTemplate }, nextRoleChecks);
                 }}
               >
-                <SelectTrigger aria-label="권한 템플릿" className="w-full" size="sm">
+                <SelectTrigger aria-label="권한 템플릿" id="permission-template" size="sm">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {PERMISSION_TEMPLATES.map((template) => <SelectItem key={template} value={template}>{template}</SelectItem>)}
+                  <SelectGroup>
+                    {PERMISSION_TEMPLATES.map((template) => <SelectItem key={template} value={template}>{template}</SelectItem>)}
+                  </SelectGroup>
                 </SelectContent>
               </Select>
-            </FormFieldGroup>
-            <FormFieldGroup className="field" label="공개 범위">
+              </ShadcnField>
+              <ShadcnField>
+                <FieldLabel htmlFor="permission-visibility">공개 범위</FieldLabel>
               <Select
                 value={visibility}
                 onValueChange={(value) => {
@@ -5168,22 +5230,26 @@ export function PermissionPage({
                   applyPermissionDraft({ visibility: nextVisibility });
                 }}
               >
-                <SelectTrigger aria-label="공개 범위" className="w-full" size="sm">
+                <SelectTrigger aria-label="공개 범위" id="permission-visibility" size="sm">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {VISIBILITY_OPTIONS.map((option) => <SelectItem key={option} value={option}>{option}</SelectItem>)}
+                  <SelectGroup>
+                    {VISIBILITY_OPTIONS.map((option) => <SelectItem key={option} value={option}>{option}</SelectItem>)}
+                  </SelectGroup>
                 </SelectContent>
               </Select>
-            </FormFieldGroup>
-            <FormFieldGroup className="field" label="데이터 오너">
-              <Input className="input control-input" value={dataOwner} onChange={(event) => {
+              </ShadcnField>
+              <ShadcnField>
+                <FieldLabel htmlFor="permission-owner">데이터 오너</FieldLabel>
+              <Input id="permission-owner" value={dataOwner} onChange={(event) => {
                 const nextOwner = event.target.value;
                 setDataOwner(nextOwner);
                 applyPermissionDraft({ owner: nextOwner });
               }} />
-            </FormFieldGroup>
-            <FormFieldGroup className="field" label="승인 상태">
+              </ShadcnField>
+              <ShadcnField>
+                <FieldLabel htmlFor="permission-approval">승인 상태</FieldLabel>
               <Select
                 value={approvalStatus}
                 onValueChange={(value) => {
@@ -5192,58 +5258,151 @@ export function PermissionPage({
                   applyPermissionDraft({ approvalStatus: nextApprovalStatus });
                 }}
               >
-                <SelectTrigger aria-label="승인 상태" className="w-full" size="sm">
+                <SelectTrigger aria-label="승인 상태" id="permission-approval" size="sm">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {APPROVAL_STATUS_OPTIONS.map((option) => <SelectItem key={option} value={option}>{option}</SelectItem>)}
+                  <SelectGroup>
+                    {APPROVAL_STATUS_OPTIONS.map((option) => <SelectItem key={option} value={option}>{option}</SelectItem>)}
+                  </SelectGroup>
                 </SelectContent>
               </Select>
-            </FormFieldGroup>
-          </div>
-        </section>
+              </ShadcnField>
+            </FieldGroup>
+          </CardContent>
+        </Card>
 
-        <section className="etl-review-card permission-config-card">
-          <div className="etl-review-card-header">
+        <Card className="min-w-0 overflow-hidden" size="none">
+          <CardHeader className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 border-b border-slate-200 px-5 py-4">
             <span className="etl-review-icon schema"><CircleUser size={17} /></span>
-            <h2>Role Grants</h2>
-          </div>
-          <div className="permission-config-role-list">
-            {PERMISSION_ROLES.map((role) => {
-              const selected = Boolean(roleChecks[role.name]);
-              const recommended = role.name === permissionTemplate;
-              return (
-                <CheckableOption
-                  checked={selected}
-                  className={recommended ? "permission-config-role recommended" : "permission-config-role"}
-                  key={role.name}
-                  onCheckedChange={(checked) => setRoleChecks((checks) => ({ ...checks, [role.name]: checked }))}
-                >
-                  <span className="permission-config-role-body">
-                    <span className="permission-config-role-title">
-                      <strong>{role.name}</strong>
-                    </span>
-                    <small>{role.note}</small>
-                  </span>
-                  <div className="permission-chip-row permission-config-access-row">
-                    {PERMISSION_ACCESS_ITEMS.map((item) => (
-                      <Badge
-                        key={item}
-                        shape="compact"
-                        size="sm"
-                        variant={selected && role.access.includes(item) ? "default" : "outline"}
-                      >
-                        {item}
-                      </Badge>
-                    ))}
+            <CardTitle>Role Grants</CardTitle>
+            <Badge shape="compact" size="sm" variant="secondary">
+              {grantTab === "roles" ? `${selectedRoleCount}개 선택` : `${selectedUserCount}명 선택`}
+            </Badge>
+          </CardHeader>
+          <CardContent className="grid min-w-0 gap-4 p-5">
+            <Tabs
+              className="grid min-w-0 gap-4"
+              value={grantTab}
+              onValueChange={(value) => {
+                setGrantTab(value as PermissionGrantTab);
+                setGrantSearch("");
+              }}
+            >
+              <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <TabsList aria-label="권한 대상 유형">
+                  <TabsTrigger value="roles">역할</TabsTrigger>
+                  <TabsTrigger value="users">사용자</TabsTrigger>
+                </TabsList>
+                <InputGroup className="sm:max-w-80">
+                  <InputGroupAddon><Search aria-hidden="true" /></InputGroupAddon>
+                  <InputGroupInput
+                    aria-label={grantTab === "roles" ? "역할 검색" : "사용자 검색"}
+                    placeholder={grantTab === "roles" ? "역할 검색" : "사용자 검색"}
+                    value={grantSearch}
+                    onChange={(event) => setGrantSearch(event.target.value)}
+                  />
+                </InputGroup>
+              </div>
+              <Separator />
+
+              <TabsContent className="mt-0" value="roles">
+                {filteredRoles.length > 0 ? (
+                  <FieldSet className="gap-3">
+                    <FieldLegend className="sr-only">역할 선택</FieldLegend>
+                    {filteredRoles.map((role) => {
+                      const selected = Boolean(roleChecks[role.name]);
+                      const recommended = role.name === permissionTemplate;
+                      const checkboxId = `permission-role-${role.name.replaceAll(" ", "-").toLocaleLowerCase()}`;
+                      return (
+                        <Card aria-selected={selected} key={role.name} size="sm" variant={selected ? "muted" : "default"}>
+                          <div className="grid min-w-0 gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+                            <div className="flex min-w-0 items-start gap-3">
+                              <Checkbox
+                                checked={selected}
+                                id={checkboxId}
+                                onCheckedChange={(checked) => updateRoleCheck(role.name, checked === true)}
+                              />
+                              <label className="grid min-w-0 cursor-pointer gap-1" htmlFor={checkboxId}>
+                                <span className="flex min-w-0 flex-wrap items-center gap-2">
+                                  <strong className="truncate text-sm">{role.name}</strong>
+                                  {recommended ? <Badge shape="compact" size="sm" variant="default">추천</Badge> : null}
+                                </span>
+                                <span className="text-sm text-slate-500">{role.note}</span>
+                              </label>
+                            </div>
+                            <div className="flex flex-wrap gap-2 md:justify-end" aria-label={`${role.name} 권한`}>
+                              {PERMISSION_ACCESS_ITEMS.map((item) => (
+                                <Badge
+                                  key={item}
+                                  shape="compact"
+                                  size="sm"
+                                  variant={selected && role.access.includes(item) ? "default" : "outline"}
+                                >
+                                  {item}
+                                </Badge>
+                              ))}
+                            </div>
+                          </div>
+                        </Card>
+                      );
+                    })}
+                  </FieldSet>
+                ) : (
+                  <PermissionGrantEmpty query={grantSearch} />
+                )}
+              </TabsContent>
+
+              <TabsContent className="mt-0" value="users">
+                {filteredUsers.length > 0 ? (
+                  <div className="grid gap-3">
+                    {filteredUsers.map((user) => {
+                      const selected = Boolean(userChecks[user.id]);
+                      return (
+                        <Card aria-selected={selected} key={user.id} size="sm" variant={selected ? "muted" : "default"}>
+                          <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div className="flex min-w-0 items-center gap-3">
+                              <Avatar><AvatarFallback>{user.initials}</AvatarFallback></Avatar>
+                              <div className="grid min-w-0 gap-1">
+                                <strong className="truncate text-sm">{user.name}</strong>
+                                <span className="truncate text-sm text-slate-500">{user.email} · {user.role}</span>
+                              </div>
+                            </div>
+                            <Button
+                              aria-pressed={selected}
+                              size="sm"
+                              type="button"
+                              variant={selected ? "outline" : "subtle"}
+                              onClick={() => setUserChecks((checks) => ({ ...checks, [user.id]: !selected }))}
+                            >
+                              {selected ? "제거" : "추가"}
+                            </Button>
+                          </div>
+                        </Card>
+                      );
+                    })}
                   </div>
-                </CheckableOption>
-              );
-            })}
-          </div>
-        </section>
+                ) : (
+                  <PermissionGrantEmpty query={grantSearch} />
+                )}
+              </TabsContent>
+            </Tabs>
+          </CardContent>
+        </Card>
       </div>
     </CreationFlowLayout>
+  );
+}
+
+function PermissionGrantEmpty({ query }: { query: string }) {
+  return (
+    <Empty className="py-10" size="sm" variant="plain">
+      <EmptyIcon><Search aria-hidden="true" /></EmptyIcon>
+      <EmptyHeader>
+        <EmptyTitle>검색 결과가 없습니다.</EmptyTitle>
+        <EmptyDescription>{query ? `“${query}”와 일치하는 권한 대상을 찾지 못했습니다.` : "표시할 권한 대상이 없습니다."}</EmptyDescription>
+      </EmptyHeader>
+    </Empty>
   );
 }
 
