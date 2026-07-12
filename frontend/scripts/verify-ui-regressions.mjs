@@ -22,20 +22,23 @@ const read = (path) => {
 
 const checks = [
   {
-    name: "ETL permission keeps the configuration controls without redundant helper copy",
+    name: "ETL permission composes the governance, policy, and searchable grant workflow with shadcn controls",
     file: "src/pages/etl/EtlPages.tsx",
     patterns: [
       /title="권한 설정"/,
       /leadingAlign="center"/,
-      /<h2>Governance Check<\/h2>/,
-      /<h2>Access Policy<\/h2>/,
-      /<h2>Role Grants<\/h2>/,
-      /<SelectTrigger aria-label="권한 템플릿" className="w-full" size="sm">/,
-      /<SelectTrigger aria-label="공개 범위" className="w-full" size="sm">/,
-      /<SelectTrigger aria-label="승인 상태" className="w-full" size="sm">/,
-      /className=\{recommended \? "permission-config-role recommended" : "permission-config-role"\}/,
-      /import \{ Badge \} from "@\/components\/ui\/badge";/,
+      /data-testid="permission-workflow"/,
+      /<CardTitle>Governance Check<\/CardTitle>/,
+      /<CardTitle>Access Policy<\/CardTitle>/,
+      /<CardTitle>Role Grants<\/CardTitle>/,
+      /<SelectGroup>/,
+      /<TabsTrigger value="roles">역할<\/TabsTrigger>/,
+      /<TabsTrigger value="users">사용자<\/TabsTrigger>/,
+      /placeholder=\{grantTab === "roles" \? "역할 검색" : "사용자 검색"\}/,
+      /<Checkbox[\s\S]*onCheckedChange=\{\(checked\) => updateRoleCheck\(role\.name, checked === true\)\}/,
+      /<PermissionGrantEmpty query=\{grantSearch\} \/>/,
       /<Badge[\s\S]*shape="compact"[\s\S]*size="sm"[\s\S]*variant=\{selected && role\.access\.includes\(item\) \? "default" : "outline"\}/,
+      /function getPermissionRoleChecks\(draft: DraftPipeline\)/,
     ],
     forbiddenPatterns: [
       /생성할 데이터셋에 접근할 수 있는 역할과 사용자를 선택하세요\./,
@@ -49,6 +52,7 @@ const checks = [
       /<NativeSelectField[^>]*label="공개 범위"/,
       /<NativeSelectField[^>]*label="승인 상태"/,
       /<em className=\{selected && role\.access\.includes\(item\) \? "allowed" : ""\}/,
+      /<CheckableOption/,
     ],
   },
   {
