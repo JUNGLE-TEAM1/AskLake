@@ -20,8 +20,10 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
+import { cn } from "@/lib/utils";
 import type { QueryAiSuggestion } from "../../services/queryAiService";
 import { NessieMark } from "./NessieMark";
+import styles from "./SqlAiWriterDialog.module.css";
 
 export type SqlAiWriterDialogProps = {
   disabled?: boolean;
@@ -97,7 +99,7 @@ export function SqlAiWriterDialog({
       </PopoverTrigger>
       <PopoverContent
         align="end"
-        className="sql-ai-popover grid gap-4"
+        className={cn(styles.popover, "grid gap-4")}
         onOpenAutoFocus={(event) => {
           if (!promptOpen) return;
           event.preventDefault();
@@ -178,7 +180,7 @@ export function SqlAiWriterDialog({
             </Bubble>
             <Bubble className="w-full max-w-full" variant="outline">
               <BubbleContent className="w-full max-w-full p-0">
-                <ScrollArea className="sql-ai-popover-preview" scrollbars="both" type="always">
+                <ScrollArea className={styles.preview} scrollbars="both" type="always">
                   <pre>{suggestion.sql}</pre>
                 </ScrollArea>
               </BubbleContent>

@@ -3,8 +3,10 @@ import type { ColumnDef, SortingFn } from "@tanstack/react-table";
 import { Table2 } from "lucide-react";
 
 import { DataTable, type DataTableColumnMeta } from "@/components/ui/data-table";
+import { cn } from "@/lib/utils";
 import type { SqlResultDraft } from "../../types";
 import { SQL_RESULT_PAGE_SIZE } from "./sqlLogic";
+import styles from "./SqlPreviewTable.module.css";
 
 type SqlPreviewRow = {
   cells: string[];
@@ -82,7 +84,7 @@ export function SqlPreviewTable({ resultDraft }: { resultDraft: SqlResultDraft }
 
   return (
     <DataTable
-      className="sql-preview-table-wrap"
+      className={styles.wrap}
       columns={columns}
       data={data}
       data-column-count={resultDraft.columns.length}
@@ -93,7 +95,7 @@ export function SqlPreviewTable({ resultDraft }: { resultDraft: SqlResultDraft }
       }}
       pagination={{ label: "SQL preview", pageSize: SQL_RESULT_PAGE_SIZE }}
       resetPaginationKey={resultDraft.runId}
-      tableClassName="schema-table sql-preview-table"
+      tableClassName={cn("schema-table", styles.table)}
       viewportClassName="overflow-visible"
     />
   );

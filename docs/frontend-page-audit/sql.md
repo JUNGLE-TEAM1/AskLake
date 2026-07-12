@@ -23,9 +23,9 @@
 ## Weakly Componentized Areas
 
 - SQL editor는 `Textarea`, line-number `<pre>`, dark surface를 직접 조합한다. autocomplete는 editor focus/selection과 absolute position 계산이 묶인 custom popover다.
-- SQL editor와 autocomplete 위치에는 도메인 layout CSS가 남아 있다. dataset tree의 line/row/expand surface는 registry Tree가, dataset/schema/autocomplete/result의 실제 scroll 동작은 `ScrollArea`가 소유한다.
+- SQL editor와 autocomplete 위치에는 CSS Module 기반 도메인 layout이 남아 있다. dataset tree의 line/row/expand surface는 registry Tree가, dataset/schema/autocomplete/result의 실제 scroll 동작은 `ScrollArea`가 소유한다.
 - global App Shell sidebar가 좁은 viewport의 첫 화면을 점유해 SQL mobile workspace 가독성이 낮다.
-- `SqlAnalysisPage.tsx` 하나가 query state, AI, autocomplete, materialize dialog, embedded dashboard를 모두 관리한다.
+- `SqlAnalysisPage.tsx`는 route-level dataset/query/result 연결 상태를 유지한다. 검색·pagination, Query AI, panel rendering, Job wizard의 입력·단계·검증은 별도 hook/component/model로 분리됐으며, 추가 분리는 독립적인 상태 소유권이 생길 때만 진행한다.
 
 ## shadcn/ReUI Replacement Candidates
 
@@ -51,10 +51,10 @@
 ## Related CSS
 
 - `/sql` 본문과 처리 Job/Dashboard Dialog는 `--jobs-font-family`를 상속해 `/jobs`의 SUIT typography 기준을 사용한다. SQL editor와 line-number gutter의 monospace는 코드 가독성을 위해 유지한다.
-- 현재 사용 중: `frontend/src/styles/sql.css`의 `.sql-page`, `.sql-page-header`, `.sql-dataset-panel`, `.sql-schema-panel`.
+- route layout과 editor/result workspace는 `SqlAnalysisPage.module.css`, dataset row·Nessie·preview table의 세부 style은 각각 co-located CSS Module이 소유한다.
 - SQL preflight와 결과 실행 상태는 Jobs 기준 `StatusBadge`를 사용한다. SQL editor의 직접 작성 JOIN 문법은 유지하지만 선택 테이블의 자동 JOIN action은 제공하지 않는다.
-- 현재 사용 중: `.sql-tree-hover-*`, `.sql-editor-surface`, `.sql-autocomplete-popover`, `.sql-editor-footer*`, `.sql-result-scroll`, `.sql-preview-table*`, `.sql-dashboard-builder-dialog`.
-- #468 Tree/viewport 정리까지 `sql.css`를 2,547줄에서 401줄로 줄였다. shadcn이 소유하는 panel/header/form/list/separator/table/scroll/tree surface CSS는 제거했다.
+- global `frontend/src/styles/sql.css`는 제거했다. App Shell의 `.page-body.sql-body` gutter 외에는 SQL 전용 selector를 global stylesheet에 두지 않는다.
+- shadcn이 소유하는 panel/header/form/list/separator/table/scroll/tree surface는 CSS Module에서도 다시 정의하지 않는다.
 
 ## Pre-#468 QA Notes
 
@@ -155,3 +155,22 @@
 - SQL autocomplete의 surface/action/status/scroll은 shadcn으로 바꿨지만 editor focus/selection과 absolute position 계산은 유지했다.
 - dataset hover card의 fixed 위치, dark editor, ScrollArea의 높이/배치, embedded Dashboard 크기는 도메인 layout이라 유지했다. Tree 연결선/row/expand surface는 registry component가 소유한다.
 - global sidebar의 mobile 동작은 `layout.css`/`responsive.css` 소유이며 SQL route CSS에서 우회하지 않는다.
+
+## #582 Structure And Style Modularization
+
+2026-07-12 리팩토링은 SQL 동작과 API 계약을 바꾸지 않고 route composition, domain logic, Job wizard, style ownership을 분리했다.
+
+- `SqlAnalysisPage.tsx`의 panel markup을 `SqlDatasetContextPanel`, `SqlQueryEditorPanel`, `SqlResultsPanel`로 나누고 검색·pagination과 Query AI 상태를 전용 hook으로 이동했다.
+- `SqlJobWizardDialog.tsx`에서 단계 UI, field control, 초기값·검증·request formatting을 각각 `SqlJobWizardSteps.tsx`, `SqlJobWizardFields.tsx`, `sqlJobWizardModel.ts`로 분리했다.
+- 기존 `sqlLogic.ts`는 import 호환 façade만 남기고 AST, preflight, autocomplete, JOIN, identifier, CSV formatting, derived dataset helper를 독립 모듈로 분리했다.
+- 전역 `styles/sql.css`와 `responsive.css`의 SQL selector를 제거하고 route/component 전용 CSS Module로 이동했다. 공용 shadcn surface는 계속 primitive가 소유한다.
+- `verify:ui-regressions`는 삭제된 전역 CSS 파일이 아니라 새 component·hook·model·CSS Module 경계를 검사한다.
+- API path, query payload, derived dataset Job payload, audit event 이름은 변경하지 않았다.
+
+### #582 Verification
+
+- `npm run build`와 `npm run verify:ui-regressions` 58개 항목을 통과했다.
+- 1280×900에서 `/sql` 진입, `commerce_orders_daily` 선택, 기본 SQL 생성, Preview 실행과 결과 table 표시를 확인했다. framework overlay와 browser console warning/error는 없었다.
+- 처리 Job 모달을 열어 기본 정보에서 스케줄 단계로 이동하고 `매일 실행` 선택 시 시간·시간대 control이 렌더링되는 것을 확인했다.
+- 860×800과 390×844에서 SQL workspace가 단일 열로 전환되고 page horizontal overflow가 없음을 확인했다.
+- 좁은 viewport에서 global App Shell sidebar가 SQL 본문보다 먼저 표시되고 긴 dataset 이름과 pagination label이 협소한 문제는 기존 범위로 남는다. SQL CSS Module에서 우회하지 않는다.
