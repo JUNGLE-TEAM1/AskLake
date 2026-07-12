@@ -1,113 +1,39 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import {
-  Calendar,
-  Check,
-  ChevronLeft,
-  ChevronRight,
-  Clock3,
-  Database,
-  HardDrive,
-  ShieldCheck,
-} from "lucide-react";
+import { Calendar, Check, ChevronLeft, ChevronRight, Database, HardDrive, ShieldCheck } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import { DialogShell } from "@/components/ui/dialog-shell";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Spinner } from "@/components/ui/spinner";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { Textarea } from "@/components/ui/textarea";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { cn } from "@/lib/utils";
-import type {
-  CatalogDataset,
-  DerivedDatasetLayer,
-  ScheduleOverlapPolicy,
-  SqlResultDraft,
-} from "../../types";
+import {
+  SqlJobDatasetStep,
+  SqlJobGovernanceStep,
+  SqlJobReviewStep,
+  SqlJobScheduleStep,
+} from "./SqlJobWizardSteps";
+import {
+  buildDefaultStoragePath,
+  buildInitialSqlJobConfiguration,
+  createSqlJobRequest,
+  validateSqlJobStep,
+  type SqlJobWizardBaseDataset,
+  type SqlJobWizardConfiguration,
+  type SqlJobWizardCreateRequest,
+  type SqlJobWizardDatasetInfo,
+  type SqlJobWizardDefaultMetadata,
+  type SqlJobWizardStepId,
+} from "./sqlJobWizardModel";
+import type { SqlResultDraft } from "../../types";
 
-export type SqlJobWizardScheduleMode = "manual" | "daily" | "weekly";
-export type SqlJobWizardAccessScope = "organization" | "private" | "project";
-export type SqlJobWizardCompression = "Gzip" | "None" | "Snappy";
-export type SqlJobWizardWeekday = "금" | "목" | "수" | "월" | "일" | "토" | "화";
-
-export type SqlJobWizardDatasetInfo = {
-  description: string;
-  layer: DerivedDatasetLayer;
-  name: string;
-};
-
-export type SqlJobWizardSchedule = {
-  mode: SqlJobWizardScheduleMode;
-  overlapPolicy: ScheduleOverlapPolicy;
-  time: string;
-  timezone: string;
-  weekday: SqlJobWizardWeekday;
-};
-
-export type SqlJobWizardGovernance = {
-  accessScope: SqlJobWizardAccessScope;
-  owner: string;
-  permissionSummary: string;
-};
-
-export type SqlJobWizardTarget = {
-  compression: SqlJobWizardCompression;
-  partitionColumn: string;
-  storagePath: string;
-};
-
-export type SqlJobWizardConfiguration = {
-  dataset: SqlJobWizardDatasetInfo;
-  governance: SqlJobWizardGovernance;
-  schedule: SqlJobWizardSchedule;
-  target: SqlJobWizardTarget;
-};
-
-export type SqlJobWizardSourceContext = {
-  baseDatasetId: string;
-  baseDatasetName: string;
-  columns: string[];
-  previewLimit?: number;
-  query: string;
-  referenceDatasetIds: string[];
-  resultDatasetId: string;
-  resultDatasetName: string;
-  rowCount: number;
-  rows: string[][];
-  sourceRunId: string;
-  validationKey?: string;
-};
-
-export type SqlJobWizardCreateRequest = {
-  configuration: SqlJobWizardConfiguration;
-  context: SqlJobWizardSourceContext;
-};
-
-export type SqlJobWizardDefaultMetadata = Partial<SqlJobWizardDatasetInfo>;
+export {
+  formatSqlJobWizardScheduleLabel,
+  formatSqlJobWizardScheduleSummary,
+} from "./sqlJobWizardModel";
+export type { SqlJobWizardCreateRequest } from "./sqlJobWizardModel";
 
 export interface SqlJobWizardDialogProps {
-  baseDataset: Pick<CatalogDataset, "id" | "name" | "owner">;
+  baseDataset: SqlJobWizardBaseDataset;
   defaultMetadata?: SqlJobWizardDefaultMetadata;
   onClose: () => void;
   onCreate: (request: SqlJobWizardCreateRequest) => Promise<boolean | void>;
@@ -116,12 +42,10 @@ export interface SqlJobWizardDialogProps {
   resultDraft: SqlResultDraft;
 }
 
-type WizardStepId = "dataset" | "governance" | "review" | "schedule";
-
 const wizardSteps: Array<{
   description: string;
   icon: typeof Database;
-  id: WizardStepId;
+  id: SqlJobWizardStepId;
   label: string;
 }> = [
   { description: "생성할 데이터셋", icon: Database, id: "dataset", label: "기본 정보" },
@@ -129,336 +53,6 @@ const wizardSteps: Array<{
   { description: "소유자와 접근 범위", icon: ShieldCheck, id: "governance", label: "거버넌스" },
   { description: "저장 위치와 결과 확인", icon: HardDrive, id: "review", label: "저장 및 검토" },
 ];
-
-const weekdayOptions: SqlJobWizardWeekday[] = ["월", "화", "수", "목", "금", "토", "일"];
-const timezoneOptions = ["Asia/Seoul", "UTC", "America/New_York", "Europe/London"];
-const accessScopeLabels: Record<SqlJobWizardAccessScope, string> = {
-  organization: "조직 내부",
-  private: "소유자 전용",
-  project: "프로젝트 멤버",
-};
-const overlapPolicyLabels: Record<ScheduleOverlapPolicy, string> = {
-  allow_parallel: "겹쳐도 새 Run 시작",
-  queue_after_current: "현재 Run 종료 후 실행",
-  skip_if_running: "실행 중이면 다음 예약 건너뜀",
-};
-
-type WizardSelectOption<T extends string> = {
-  label: string;
-  value: T;
-};
-
-const weekdaySelectOptions: Array<WizardSelectOption<SqlJobWizardWeekday>> = weekdayOptions.map((day) => ({
-  label: `${day}요일`,
-  value: day,
-}));
-const timezoneSelectOptions: Array<WizardSelectOption<string>> = timezoneOptions.map((timezone) => ({
-  label: timezone,
-  value: timezone,
-}));
-const overlapPolicyOptions: Array<WizardSelectOption<ScheduleOverlapPolicy>> = [
-  { label: overlapPolicyLabels.allow_parallel, value: "allow_parallel" },
-  { label: overlapPolicyLabels.queue_after_current, value: "queue_after_current" },
-  { label: overlapPolicyLabels.skip_if_running, value: "skip_if_running" },
-];
-const accessScopeOptions: Array<WizardSelectOption<SqlJobWizardAccessScope>> = [
-  { label: accessScopeLabels.organization, value: "organization" },
-  { label: accessScopeLabels.project, value: "project" },
-  { label: accessScopeLabels.private, value: "private" },
-];
-const compressionOptions: Array<WizardSelectOption<SqlJobWizardCompression>> = [
-  { label: "Snappy", value: "Snappy" },
-  { label: "Gzip", value: "Gzip" },
-  { label: "압축 없음", value: "None" },
-];
-const timeHourOptions = Array.from({ length: 24 }, (_, hour) => String(hour).padStart(2, "0"));
-const timeMinuteOptions = Array.from({ length: 60 }, (_, minute) => String(minute).padStart(2, "0"));
-
-function WizardSelectField<T extends string>({
-  className,
-  disabled,
-  id,
-  label,
-  onValueChange,
-  options,
-  value,
-}: {
-  className?: string;
-  disabled?: boolean;
-  id: string;
-  label: string;
-  onValueChange: (value: T) => void;
-  options: ReadonlyArray<WizardSelectOption<T>>;
-  value: T;
-}) {
-  const selectedOption = options.find((option) => option.value === value);
-
-  return (
-    <Field className={className}>
-      <FieldLabel htmlFor={id}>{label}</FieldLabel>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            aria-label={label}
-            className="w-full min-w-0 max-w-full justify-start overflow-hidden text-left"
-            disabled={disabled}
-            id={id}
-            type="button"
-            variant="outline"
-          >
-            <span className="min-w-0 flex-1 truncate text-left">
-              {selectedOption?.label ?? "선택해 주세요"}
-            </span>
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent
-          align="start"
-          className="w-[var(--radix-dropdown-menu-trigger-width)] min-w-40"
-        >
-          <DropdownMenuLabel>{label}</DropdownMenuLabel>
-          <DropdownMenuSeparator />
-          <DropdownMenuRadioGroup
-            onValueChange={(nextValue) => onValueChange(nextValue as T)}
-            value={value}
-          >
-            {options.map((option) => (
-              <DropdownMenuRadioItem key={option.value} value={option.value}>
-                <span className="min-w-0 truncate">{option.label}</span>
-              </DropdownMenuRadioItem>
-            ))}
-          </DropdownMenuRadioGroup>
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </Field>
-  );
-}
-
-function formatWizardTime(value: string) {
-  const [hourText = "00", minute = "00"] = value.split(":");
-  const hour = Number(hourText);
-  const period = hour < 12 ? "오전" : "오후";
-  const displayHour = String(hour % 12 || 12).padStart(2, "0");
-  return `${period} ${displayHour}:${minute}`;
-}
-
-function WizardTimeField({
-  disabled,
-  id,
-  label,
-  onValueChange,
-  value,
-}: {
-  disabled?: boolean;
-  id: string;
-  label: string;
-  onValueChange: (value: string) => void;
-  value: string;
-}) {
-  const [open, setOpen] = useState(false);
-  const selectedHourRef = useRef<HTMLButtonElement>(null);
-  const selectedMinuteRef = useRef<HTMLButtonElement>(null);
-  const [hour = "00", minute = "00"] = value.split(":");
-
-  useEffect(() => {
-    if (!open) return;
-    const frame = window.requestAnimationFrame(() => {
-      selectedHourRef.current?.scrollIntoView({ block: "center" });
-      selectedMinuteRef.current?.scrollIntoView({ block: "center" });
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [hour, minute, open]);
-
-  return (
-    <Field>
-      <FieldLabel htmlFor={id}>{label}</FieldLabel>
-      <Popover onOpenChange={setOpen} open={open}>
-        <PopoverTrigger asChild>
-          <Button
-            className="w-full min-w-0 max-w-full justify-between overflow-hidden text-left"
-            disabled={disabled}
-            id={id}
-            type="button"
-            variant="outline"
-          >
-            <span className="min-w-0 flex-1 truncate text-left">{formatWizardTime(value)}</span>
-            <Clock3 aria-hidden="true" className="text-slate-500" />
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent align="start" className="grid w-72 gap-3 p-3">
-          <div className="grid gap-1">
-            <strong className="text-sm">실행 시간</strong>
-            <small className="text-xs text-slate-500">시와 분을 각각 선택해 주세요.</small>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="grid gap-1.5">
-              <span className="text-xs font-semibold text-slate-500">시</span>
-              <ScrollArea className="h-52 rounded-lg border border-slate-200">
-                <div className="grid gap-1 p-1 pr-3">
-                  {timeHourOptions.map((option) => {
-                    const selected = option === hour;
-                    return (
-                      <Button
-                        aria-pressed={selected}
-                        className="w-full justify-center"
-                        key={option}
-                        onClick={() => onValueChange(`${option}:${minute}`)}
-                        ref={selected ? selectedHourRef : undefined}
-                        size="sm"
-                        type="button"
-                        variant={selected ? "subtle" : "ghost"}
-                      >
-                        {option}시
-                      </Button>
-                    );
-                  })}
-                </div>
-              </ScrollArea>
-            </div>
-            <div className="grid gap-1.5">
-              <span className="text-xs font-semibold text-slate-500">분</span>
-              <ScrollArea className="h-52 rounded-lg border border-slate-200">
-                <div className="grid gap-1 p-1 pr-3">
-                  {timeMinuteOptions.map((option) => {
-                    const selected = option === minute;
-                    return (
-                      <Button
-                        aria-pressed={selected}
-                        className="w-full justify-center"
-                        key={option}
-                        onClick={() => onValueChange(`${hour}:${option}`)}
-                        ref={selected ? selectedMinuteRef : undefined}
-                        size="sm"
-                        type="button"
-                        variant={selected ? "subtle" : "ghost"}
-                      >
-                        {option}분
-                      </Button>
-                    );
-                  })}
-                </div>
-              </ScrollArea>
-            </div>
-          </div>
-          <Button onClick={() => setOpen(false)} size="sm" type="button">
-            완료
-          </Button>
-        </PopoverContent>
-      </Popover>
-    </Field>
-  );
-}
-
-function normalizePathSegment(value: string) {
-  return value.trim().replace(/\s+/g, "_") || "sql_result";
-}
-
-function buildDefaultStoragePath(dataset: SqlJobWizardDatasetInfo) {
-  return `s3a://asklake-output/${normalizePathSegment(dataset.name)}/${dataset.layer.toLowerCase()}/`;
-}
-
-function findDefaultPartitionColumn(columns: string[]) {
-  return columns.find((column) => /(date|time|month|year|created_at|updated_at)$/i.test(column)) ?? "";
-}
-
-function buildPermissionSummary(accessScope: SqlJobWizardAccessScope) {
-  return `Data Engineer Group · ${accessScopeLabels[accessScope]} · 승인 검토`;
-}
-
-function buildInitialConfiguration(
-  baseDataset: SqlJobWizardDialogProps["baseDataset"],
-  resultDraft: SqlResultDraft,
-  defaults?: SqlJobWizardDefaultMetadata,
-): SqlJobWizardConfiguration {
-  const dataset: SqlJobWizardDatasetInfo = {
-    description: defaults?.description ?? `${baseDataset.name} SQL 결과로 생성한 분석 데이터셋`,
-    layer: defaults?.layer ?? "GOLD",
-    name: defaults?.name ?? `${baseDataset.name}_analysis`,
-  };
-  const accessScope: SqlJobWizardAccessScope = "organization";
-
-  return {
-    dataset,
-    governance: {
-      accessScope,
-      owner: baseDataset.owner || "data-team-01",
-      permissionSummary: buildPermissionSummary(accessScope),
-    },
-    schedule: {
-      mode: "manual",
-      overlapPolicy: "skip_if_running",
-      time: "09:00",
-      timezone: "Asia/Seoul",
-      weekday: "월",
-    },
-    target: {
-      compression: "Snappy",
-      partitionColumn: findDefaultPartitionColumn(resultDraft.columns),
-      storagePath: buildDefaultStoragePath(dataset),
-    },
-  };
-}
-
-export function formatSqlJobWizardScheduleLabel(schedule: SqlJobWizardSchedule) {
-  if (schedule.mode === "manual") return "스케줄링 건너뛰기";
-  if (schedule.mode === "daily") return `매일 ${schedule.time}`;
-  return `매주 ${schedule.weekday}요일 ${schedule.time}`;
-}
-
-export function formatSqlJobWizardScheduleSummary(schedule: SqlJobWizardSchedule) {
-  if (schedule.mode === "manual") return "스케줄링 건너뛰기 · Job 목록에서 직접 실행";
-  return `반복 실행 · ${formatSqlJobWizardScheduleLabel(schedule)} · ${schedule.timezone} · ${overlapPolicyLabels[schedule.overlapPolicy]}`;
-}
-
-function isValidTime(value: string) {
-  return /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
-}
-
-function validateStep(step: WizardStepId, configuration: SqlJobWizardConfiguration) {
-  const errors: string[] = [];
-  if (step === "dataset") {
-    if (!configuration.dataset.name.trim()) errors.push("데이터셋 이름을 입력해 주세요.");
-    if (!configuration.dataset.description.trim()) errors.push("데이터셋 설명을 입력해 주세요.");
-  }
-  if (step === "schedule" && configuration.schedule.mode !== "manual") {
-    if (!isValidTime(configuration.schedule.time)) errors.push("실행 시간을 HH:mm 형식으로 입력해 주세요.");
-    if (!configuration.schedule.timezone.trim()) errors.push("시간대를 선택해 주세요.");
-  }
-  if (step === "governance") {
-    if (!configuration.governance.owner.trim()) errors.push("데이터 오너를 입력해 주세요.");
-    if (!configuration.governance.permissionSummary.trim()) errors.push("권한 정책 요약을 입력해 주세요.");
-  }
-  if (step === "review") {
-    if (!configuration.target.storagePath.trim()) errors.push("저장 경로를 입력해 주세요.");
-    if (configuration.target.storagePath && !/^s3a?:\/\//i.test(configuration.target.storagePath)) {
-      errors.push("저장 경로는 s3:// 또는 s3a:// 형식이어야 합니다.");
-    }
-  }
-  return errors;
-}
-
-function createRequest(
-  baseDataset: SqlJobWizardDialogProps["baseDataset"],
-  resultDraft: SqlResultDraft,
-  configuration: SqlJobWizardConfiguration,
-): SqlJobWizardCreateRequest {
-  return {
-    configuration,
-    context: {
-      baseDatasetId: baseDataset.id,
-      baseDatasetName: baseDataset.name,
-      columns: [...resultDraft.columns],
-      previewLimit: resultDraft.previewLimit,
-      query: resultDraft.query,
-      referenceDatasetIds: [...(resultDraft.referenceDatasetIds ?? [])],
-      resultDatasetId: resultDraft.datasetId,
-      resultDatasetName: resultDraft.datasetName,
-      rowCount: resultDraft.rowCount,
-      rows: resultDraft.rows.map((row) => [...row]),
-      sourceRunId: resultDraft.runId,
-      validationKey: resultDraft.validationKey,
-    },
-  };
-}
 
 export function SqlJobWizardDialog({
   baseDataset,
@@ -469,7 +63,7 @@ export function SqlJobWizardDialog({
   pending = false,
   resultDraft,
 }: SqlJobWizardDialogProps) {
-  const [configuration, setConfiguration] = useState(() => buildInitialConfiguration(baseDataset, resultDraft, defaultMetadata));
+  const [configuration, setConfiguration] = useState(() => buildInitialSqlJobConfiguration(baseDataset, resultDraft, defaultMetadata));
   const [stepIndex, setStepIndex] = useState(0);
   const [highestStepIndex, setHighestStepIndex] = useState(0);
   const [showErrors, setShowErrors] = useState(false);
@@ -479,10 +73,10 @@ export function SqlJobWizardDialog({
   const previousContextRef = useRef<string | null>(null);
   const contextKey = `${baseDataset.id}:${resultDraft.runId}`;
   const activeStep = wizardSteps[stepIndex];
-  const activeErrors = validateStep(activeStep.id, configuration);
+  const activeErrors = validateSqlJobStep(activeStep.id, configuration);
   const isBusy = pending || submitting;
   const allErrors = useMemo(
-    () => wizardSteps.flatMap((step) => validateStep(step.id, configuration)),
+    () => wizardSteps.flatMap((step) => validateSqlJobStep(step.id, configuration)),
     [configuration],
   );
 
@@ -493,7 +87,7 @@ export function SqlJobWizardDialog({
     }
     if (previousContextRef.current === contextKey) return;
     previousContextRef.current = contextKey;
-    setConfiguration(buildInitialConfiguration(baseDataset, resultDraft, defaultMetadata));
+    setConfiguration(buildInitialSqlJobConfiguration(baseDataset, resultDraft, defaultMetadata));
     setStepIndex(0);
     setHighestStepIndex(0);
     setShowErrors(false);
@@ -514,6 +108,24 @@ export function SqlJobWizardDialog({
         },
       };
     });
+  };
+  const updateSchedule = (patch: Partial<SqlJobWizardConfiguration["schedule"]>) => {
+    setConfiguration((current) => ({
+      ...current,
+      schedule: { ...current.schedule, ...patch },
+    }));
+  };
+  const updateGovernance = (patch: Partial<SqlJobWizardConfiguration["governance"]>) => {
+    setConfiguration((current) => ({
+      ...current,
+      governance: { ...current.governance, ...patch },
+    }));
+  };
+  const updateTarget = (patch: Partial<SqlJobWizardConfiguration["target"]>) => {
+    setConfiguration((current) => ({
+      ...current,
+      target: { ...current.target, ...patch },
+    }));
   };
 
   const goToStep = (nextIndex: number) => {
@@ -537,7 +149,7 @@ export function SqlJobWizardDialog({
 
   const createJob = async () => {
     if (allErrors.length > 0) {
-      const firstInvalidIndex = wizardSteps.findIndex((step) => validateStep(step.id, configuration).length > 0);
+      const firstInvalidIndex = wizardSteps.findIndex((step) => validateSqlJobStep(step.id, configuration).length > 0);
       setStepIndex(Math.max(firstInvalidIndex, 0));
       setHighestStepIndex((current) => Math.max(current, Math.max(firstInvalidIndex, 0)));
       setShowErrors(true);
@@ -547,7 +159,7 @@ export function SqlJobWizardDialog({
     setSubmitting(true);
     setSubmitError(null);
     try {
-      const created = await onCreate(createRequest(baseDataset, resultDraft, configuration));
+      const created = await onCreate(createSqlJobRequest(baseDataset, resultDraft, configuration));
       if (created !== false) onClose();
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : "처리 Job 생성 요청을 완료하지 못했습니다.");
@@ -632,191 +244,31 @@ export function SqlJobWizardDialog({
         ) : null}
 
         {activeStep.id === "dataset" ? (
-          <FieldGroup className="grid-cols-12 gap-4 max-[760px]:grid-cols-1">
-            <Field className="col-span-12 max-[760px]:col-span-1">
-              <FieldLabel htmlFor="sql-job-wizard-name">데이터셋 이름</FieldLabel>
-              <Input id="sql-job-wizard-name" value={configuration.dataset.name} onChange={(event) => updateDataset({ name: event.target.value })} />
-              {showErrors && !configuration.dataset.name.trim() ? <FieldError>데이터셋 이름은 필수입니다.</FieldError> : null}
-            </Field>
-            <Field className="col-span-12 max-[760px]:col-span-1">
-              <FieldLabel htmlFor="sql-job-wizard-description">설명</FieldLabel>
-              <Textarea id="sql-job-wizard-description" rows={4} value={configuration.dataset.description} onChange={(event) => updateDataset({ description: event.target.value })} />
-              {showErrors && !configuration.dataset.description.trim() ? <FieldError>데이터셋 설명은 필수입니다.</FieldError> : null}
-            </Field>
-          </FieldGroup>
+          <SqlJobDatasetStep dataset={configuration.dataset} onChange={updateDataset} showErrors={showErrors} />
         ) : null}
 
         {activeStep.id === "schedule" ? (
-          <FieldGroup>
-            <Field>
-              <FieldLabel>실행 방식</FieldLabel>
-              <ToggleGroup
-                className="grid-cols-3 max-[760px]:grid-cols-1"
-                type="single"
-                value={configuration.schedule.mode}
-                onValueChange={(mode) => {
-                  if (!mode) return;
-                  setConfiguration((current) => ({ ...current, schedule: { ...current.schedule, mode: mode as SqlJobWizardScheduleMode } }));
-                }}
-              >
-                {([
-                  ["manual", "스케줄링 건너뛰기", "필요할 때 Job 목록에서 직접 실행"],
-                  ["daily", "매일 실행", "매일 같은 시각에 반복 실행"],
-                  ["weekly", "매주 실행", "선택한 요일과 시각에 반복 실행"],
-                ] as const).map(([value, label, description]) => (
-                  <ToggleGroupItem
-                    className={cn("h-auto min-h-20 items-start justify-start gap-3 rounded-lg border p-4 text-left", configuration.schedule.mode === value ? "border-blue-500 bg-blue-50" : "border-slate-200")}
-                    key={value}
-                    value={value}
-                  >
-                    <span><strong className="block text-sm">{label}</strong><small className="mt-1 block text-xs leading-5 text-slate-500">{description}</small></span>
-                  </ToggleGroupItem>
-                ))}
-              </ToggleGroup>
-            </Field>
-            {configuration.schedule.mode !== "manual" ? (
-              <div className="grid grid-cols-2 gap-4 max-[760px]:grid-cols-1">
-                {configuration.schedule.mode === "weekly" ? (
-                  <WizardSelectField
-                    disabled={isBusy}
-                    id="sql-job-wizard-weekday"
-                    label="실행 요일"
-                    options={weekdaySelectOptions}
-                    value={configuration.schedule.weekday}
-                    onValueChange={(weekday) => setConfiguration((current) => ({
-                      ...current,
-                      schedule: { ...current.schedule, weekday },
-                    }))}
-                  />
-                ) : null}
-                <WizardTimeField
-                  disabled={isBusy}
-                  id="sql-job-wizard-time"
-                  label="실행 시간"
-                  value={configuration.schedule.time}
-                  onValueChange={(time) => setConfiguration((current) => ({
-                    ...current,
-                    schedule: { ...current.schedule, time },
-                  }))}
-                />
-                <WizardSelectField
-                  disabled={isBusy}
-                  id="sql-job-wizard-timezone"
-                  label="시간대"
-                  options={timezoneSelectOptions}
-                  value={configuration.schedule.timezone}
-                  onValueChange={(timezone) => setConfiguration((current) => ({
-                    ...current,
-                    schedule: { ...current.schedule, timezone },
-                  }))}
-                />
-                <WizardSelectField
-                  className={configuration.schedule.mode === "daily" ? "col-span-2 max-[760px]:col-span-1" : undefined}
-                  disabled={isBusy}
-                  id="sql-job-wizard-overlap"
-                  label="실행 겹침 정책"
-                  options={overlapPolicyOptions}
-                  value={configuration.schedule.overlapPolicy}
-                  onValueChange={(overlapPolicy) => setConfiguration((current) => ({
-                    ...current,
-                    schedule: { ...current.schedule, overlapPolicy },
-                  }))}
-                />
-              </div>
-            ) : null}
-          </FieldGroup>
+          <SqlJobScheduleStep disabled={isBusy} onChange={updateSchedule} schedule={configuration.schedule} />
         ) : null}
 
         {activeStep.id === "governance" ? (
-          <FieldGroup className="grid-cols-2 max-[760px]:grid-cols-1">
-            <Field>
-              <FieldLabel htmlFor="sql-job-wizard-owner">데이터 오너</FieldLabel>
-              <Input id="sql-job-wizard-owner" value={configuration.governance.owner} onChange={(event) => setConfiguration((current) => ({ ...current, governance: { ...current.governance, owner: event.target.value } }))} />
-              {showErrors && !configuration.governance.owner.trim() ? <FieldError>데이터 오너는 필수입니다.</FieldError> : null}
-            </Field>
-            <WizardSelectField
-              disabled={isBusy}
-              id="sql-job-wizard-access"
-              label="접근 범위"
-              options={accessScopeOptions}
-              value={configuration.governance.accessScope}
-              onValueChange={(accessScope) => setConfiguration((current) => ({
-                ...current,
-                governance: {
-                  ...current.governance,
-                  accessScope,
-                  permissionSummary: buildPermissionSummary(accessScope),
-                },
-              }))}
-            />
-            <Field className="col-span-2 max-[760px]:col-span-1">
-              <FieldLabel htmlFor="sql-job-wizard-permission-summary">권한 정책 요약</FieldLabel>
-              <Textarea id="sql-job-wizard-permission-summary" rows={3} value={configuration.governance.permissionSummary} onChange={(event) => setConfiguration((current) => ({ ...current, governance: { ...current.governance, permissionSummary: event.target.value } }))} />
-              {showErrors && !configuration.governance.permissionSummary.trim() ? <FieldError>권한 정책 요약은 필수입니다.</FieldError> : null}
-            </Field>
-          </FieldGroup>
+          <SqlJobGovernanceStep
+            disabled={isBusy}
+            governance={configuration.governance}
+            onChange={updateGovernance}
+            showErrors={showErrors}
+          />
         ) : null}
 
         {activeStep.id === "review" ? (
-          <div className="grid gap-5">
-            <FieldGroup className="grid-cols-3 max-[760px]:grid-cols-1">
-              <WizardSelectField
-                disabled={isBusy}
-                id="sql-job-wizard-compression"
-                label="압축 방식"
-                options={compressionOptions}
-                value={configuration.target.compression}
-                onValueChange={(compression) => setConfiguration((current) => ({
-                  ...current,
-                  target: { ...current.target, compression },
-                }))}
-              />
-              <WizardSelectField
-                disabled={isBusy}
-                id="sql-job-wizard-partition"
-                label="파티션 컬럼"
-                options={[
-                  { label: "파티션 없음", value: "__none__" },
-                  ...resultDraft.columns.map((column) => ({ label: column, value: column })),
-                ]}
-                value={configuration.target.partitionColumn || "__none__"}
-                onValueChange={(partitionColumn) => setConfiguration((current) => ({
-                  ...current,
-                  target: {
-                    ...current.target,
-                    partitionColumn: partitionColumn === "__none__" ? "" : partitionColumn,
-                  },
-                }))}
-              />
-              <Field>
-                <FieldLabel htmlFor="sql-job-wizard-storage">저장 경로</FieldLabel>
-                <Input id="sql-job-wizard-storage" value={configuration.target.storagePath} onChange={(event) => { setStoragePathTouched(true); setConfiguration((current) => ({ ...current, target: { ...current.target, storagePath: event.target.value } })); }} />
-                {showErrors && validateStep("review", configuration).length > 0 ? <FieldError>유효한 S3 저장 경로를 입력해 주세요.</FieldError> : null}
-              </Field>
-            </FieldGroup>
-
-            <div className="grid grid-cols-2 gap-3 max-[760px]:grid-cols-1">
-              <Card className="grid gap-2" size="sm" variant="muted"><span className="text-xs font-semibold text-slate-500">데이터셋</span><strong>{configuration.dataset.name}</strong><small className="text-slate-500">{configuration.target.compression} 압축</small></Card>
-              <Card className="grid gap-2" size="sm" variant="muted"><span className="text-xs font-semibold text-slate-500">실행 정책</span><strong>{formatSqlJobWizardScheduleLabel(configuration.schedule)}</strong><small className="text-slate-500">{configuration.schedule.mode === "manual" ? "직접 실행" : configuration.schedule.timezone}</small></Card>
-              <Card className="grid gap-2" size="sm" variant="muted"><span className="text-xs font-semibold text-slate-500">거버넌스</span><strong>{configuration.governance.owner}</strong><small className="text-slate-500">{accessScopeLabels[configuration.governance.accessScope]}</small></Card>
-              <Card className="grid gap-2" size="sm" variant="muted"><span className="text-xs font-semibold text-slate-500">저장 위치</span><strong className="truncate" title={configuration.target.storagePath}>{configuration.target.storagePath}</strong><small className="text-slate-500">{configuration.target.partitionColumn ? `${configuration.target.partitionColumn} 파티션` : "파티션 없음"}</small></Card>
-            </div>
-
-            <section className="grid gap-3" aria-labelledby="sql-job-wizard-preview-title">
-              <h3 className="font-semibold" id="sql-job-wizard-preview-title">SQL 결과 미리보기</h3>
-              <div className="overflow-x-auto rounded-lg border border-slate-200">
-                <Table className="min-w-[720px]">
-                  <TableHeader><TableRow>{resultDraft.columns.map((column) => <TableHead key={column}>{column}</TableHead>)}</TableRow></TableHeader>
-                  <TableBody>
-                    {resultDraft.rows.slice(0, 5).map((row, rowIndex) => (
-                      <TableRow key={rowIndex}>{resultDraft.columns.map((column, columnIndex) => <TableCell className="max-w-56 truncate" key={`${column}-${columnIndex}`} title={row[columnIndex] ?? ""}>{row[columnIndex] ?? ""}</TableCell>)}</TableRow>
-                    ))}
-                    {resultDraft.rows.length === 0 ? <TableRow><TableCell className="text-center text-slate-500" colSpan={Math.max(resultDraft.columns.length, 1)}>조회된 결과가 없습니다.</TableCell></TableRow> : null}
-                  </TableBody>
-                </Table>
-              </div>
-            </section>
-          </div>
+          <SqlJobReviewStep
+            configuration={configuration}
+            disabled={isBusy}
+            onStoragePathTouched={() => setStoragePathTouched(true)}
+            onTargetChange={updateTarget}
+            resultDraft={resultDraft}
+            showErrors={showErrors}
+          />
         ) : null}
       </div>
     </DialogShell>

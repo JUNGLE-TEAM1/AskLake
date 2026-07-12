@@ -12,7 +12,9 @@ import {
 } from "@/components/kibo-ui/tree";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { TreeHoverCard } from "@/components/ui/tree-hover-card";
+import { cn } from "@/lib/utils";
 import type { CatalogDataset } from "../../types";
+import styles from "./SqlDatasetRow.module.css";
 
 type SqlDatasetTreeProps = {
   datasets: CatalogDataset[];
@@ -224,11 +226,11 @@ function SqlDatasetHoverCard({ info }: { info: HoverInfo }) {
   return (
     <TreeHoverCard
       as="aside"
-      bodyClassName="sql-tree-hover-body"
-      className="sql-tree-hover-card"
+      bodyClassName={styles.hoverBody}
+      className={styles.hoverCard}
       description={info.kind === "table" ? info.dataset.description : getColumnDescription(info.columnType)}
       icon={info.kind === "table" ? <Table2 size={22} /> : renderColumnIcon(info.columnType)}
-      iconClassName={`sql-tree-hover-icon ${iconClassName}`}
+      iconClassName={cn(styles.hoverIcon, styles[iconClassName])}
       rowLayout="flat"
       rows={rows}
       style={{ left: info.position.left, top: info.position.top }}
