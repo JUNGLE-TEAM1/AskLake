@@ -1,15 +1,12 @@
 import {
   Children,
-  createContext,
   isValidElement,
   useEffect,
   useId,
-  useContext,
   useMemo,
   useRef,
   useState,
   type ChangeEvent,
-  type ComponentProps,
   type FormEvent,
   type ReactNode,
 } from "react";
@@ -30,19 +27,9 @@ import {
 import { HexColorInput, HexColorPicker } from "react-colorful";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
-import { FormFieldGroup, NativeSelectField } from "@/components/ui/form-field-group";
+import { FormFieldGroup, type NativeSelectFieldProps } from "@/components/ui/form-field-group";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SettingsPanel } from "@/components/ui/settings-panel";
 import { Slider } from "@/components/ui/slider";
 import { Textarea } from "@/components/ui/textarea";
@@ -125,81 +112,22 @@ const orientationOptions: Array<{ label: string; value: DashboardWidgetOrientati
   { label: "가로", value: "horizontal" },
 ];
 const multiColorFallbackCount = 6;
-const widgetEmptySelectValue = "__asklake_none__";
-const WidgetSelectModeContext = createContext<"combobox" | "dropdown">("combobox");
-
 function WidgetSelectField({
   children,
   onChange,
   selectClassName,
   value,
   ...props
-}: Omit<ComponentProps<typeof NativeSelectField>, "children" | "onChange" | "value"> & {
+}: Omit<NativeSelectFieldProps, "children" | "onChange" | "value"> & {
   children: ReactNode;
   onChange?: (event: ChangeEvent<HTMLSelectElement>) => void;
   value: string;
 }) {
-  const selectMode = useContext(WidgetSelectModeContext);
   const options = Children.toArray(children).flatMap((child): DashboardComboboxOption[] => {
     if (!isValidElement<{ children?: ReactNode; value?: string }>(child) || child.type !== "option") return [];
     const label = typeof child.props.children === "string" ? child.props.children : String(child.props.value ?? "");
     return [{ label, value: child.props.value ?? label }];
   });
-  const hasEmptyOption = options.some((option) => option.value === "");
-  const selectValue = value || widgetEmptySelectValue;
-
-  if (selectMode === "dropdown") {
-    const selectedOption = options.find((option) => option.value === value);
-    return (
-      <FormFieldGroup
-        className={cn("min-w-0 w-full", props.fieldClassName)}
-        label={props.label}
-      >
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              aria-label={String(props.label)}
-              className={cn(
-                "asklake-widget-select h-9 w-full min-w-0 max-w-full justify-start overflow-hidden px-3",
-                selectClassName,
-              )}
-              disabled={props.disabled}
-              size="sm"
-              type="button"
-              variant="outline"
-            >
-              <span className="min-w-0 flex-1 truncate text-left">
-                {selectedOption?.label ?? (hasEmptyOption ? options.find((option) => option.value === "")?.label : "선택하세요")}
-              </span>
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent
-            align="start"
-            className="w-[var(--radix-dropdown-menu-trigger-width)] min-w-40"
-          >
-            <DropdownMenuLabel>{String(props.label)} 필터</DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            <DropdownMenuRadioGroup
-              value={selectValue}
-              onValueChange={(nextValue) => onChange?.({
-                target: { value: nextValue === widgetEmptySelectValue ? "" : nextValue },
-              } as ChangeEvent<HTMLSelectElement>)}
-            >
-              {options.map((option) => (
-                <DropdownMenuRadioItem
-                  key={option.value || widgetEmptySelectValue}
-                  value={option.value || widgetEmptySelectValue}
-                >
-                  {option.label}
-                </DropdownMenuRadioItem>
-              ))}
-            </DropdownMenuRadioGroup>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </FormFieldGroup>
-    );
-  }
-
   return (
     <DashboardFieldCombobox
       className={cn("asklake-widget-select", selectClassName)}
@@ -559,7 +487,6 @@ export function WidgetConfigPanel({
   createButtonLabel = "위젯 생성",
   datasets = [],
   editingWidget = null,
-  fieldSelectMode = "combobox",
   focusedColorSlot = null,
   initialCreateInput = null,
   isCreating = false,
@@ -574,7 +501,6 @@ export function WidgetConfigPanel({
   createButtonLabel?: string;
   datasets?: DashboardDatasetOption[];
   editingWidget?: DashboardRuntimeWidget | null;
-  fieldSelectMode?: "combobox" | "dropdown";
   focusedColorSlot?: DashboardWidgetColorSlotFocus | null;
   initialCreateInput?: CreateDraftWidgetFormInput | null;
   isCreating?: boolean;
@@ -594,7 +520,6 @@ export function WidgetConfigPanel({
   const [formError, setFormError] = useState<string | null>(null);
   const [title, setTitle] = useState("");
   const [type, setType] = useState<DashboardRuntimeWidgetType>("bar_chart");
-  const datasetFieldId = useId();
   const descriptionFieldId = useId();
   const titleFieldId = useId();
   const previousEditingWidgetIdRef = useRef<string | null>(null);
@@ -871,45 +796,18 @@ export function WidgetConfigPanel({
         </div>
       )}
     >
-      <WidgetSelectModeContext.Provider value={fieldSelectMode}>
         <form className="asklake-widget-config-form" onSubmit={(event) => void handleSubmit(event)}>
           <FieldGroup className="contents">
-            {shouldShowDatasetSelect ? fieldSelectMode === "dropdown" ? (
-              <WidgetSelectField
+            {shouldShowDatasetSelect ? (
+              <DashboardFieldCombobox
                 disabled={!datasets.length || !onSelectDataset}
                 fieldClassName="asklake-widget-dataset-field"
                 label="데이터셋"
+                options={datasets.map((dataset) => ({ label: dataset.name, value: dataset.id }))}
+                placeholder="데이터셋 선택"
                 value={selectedDatasetId ?? ""}
-                onChange={(event) => onSelectDataset?.(event.target.value)}
-              >
-                {datasets.map((dataset) => (
-                  <option key={dataset.id} value={dataset.id}>
-                    {dataset.name}
-                  </option>
-                ))}
-              </WidgetSelectField>
-            ) : (
-              <Field className="asklake-widget-dataset-field">
-                <FieldLabel htmlFor={datasetFieldId}>데이터셋</FieldLabel>
-                <Select
-                  disabled={!datasets.length || !onSelectDataset}
-                  value={selectedDatasetId ?? ""}
-                  onValueChange={(value) => onSelectDataset?.(value)}
-                >
-                  <SelectTrigger id={datasetFieldId} size="sm">
-                    <SelectValue placeholder="데이터셋 선택" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectGroup>
-                      {datasets.map((dataset) => (
-                        <SelectItem key={dataset.id} value={dataset.id}>
-                          {dataset.name}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-              </Field>
+                onValueChange={(value) => onSelectDataset?.(value)}
+              />
             ) : null}
           <Field>
             <FieldLabel htmlFor={titleFieldId}>위젯 제목</FieldLabel>
@@ -1253,7 +1151,6 @@ export function WidgetConfigPanel({
         </div>
           </FieldGroup>
         </form>
-      </WidgetSelectModeContext.Provider>
     </SettingsPanel>
   );
 }
