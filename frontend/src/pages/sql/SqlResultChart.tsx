@@ -143,12 +143,12 @@ export function SqlResultChart({
 
   const widgetDefinition = dashboardWidgetDefinitions[resolvedConfig.type];
   return (
-    <section className="grid min-h-[360px] min-w-[720px] grid-rows-[max-content_minmax(0,1fr)] gap-3 p-4" aria-label="SQL 결과 차트">
-      <div className="grid gap-1">
+    <section className="grid min-h-[320px] min-w-[720px] grid-rows-[max-content_minmax(0,1fr)] gap-2 px-4 pb-3 pt-2" aria-label="SQL 결과 차트">
+      <div className="sql-result-chart-header flex min-w-0 items-center gap-2">
         <strong className="text-base">{resolvedConfig.title || resolvedSource.label}</strong>
-        <span className="text-sm text-muted-foreground">{widgetDefinition.label}</span>
+        <span className="shrink-0 text-sm text-muted-foreground">{widgetDefinition.label}</span>
       </div>
-      <div className="h-[360px] min-h-0 overflow-hidden rounded-lg border bg-background">
+      <div className="h-[280px] min-h-0 overflow-hidden rounded-lg border bg-background">
         <WidgetRenderer widget={widget} />
       </div>
     </section>

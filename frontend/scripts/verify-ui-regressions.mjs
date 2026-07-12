@@ -64,6 +64,7 @@ const checks = [
       /const datasets = useMemo\(\(\) => sources\.map\(toConfigDataset\), \[sources\]\);/,
       /<WidgetConfigPanel/,
       /datasets=\{datasets\}/,
+      /fieldSelectMode="dropdown"/,
       /onSelectDataset=\{setSelectedSourceId\}/,
       /createButtonLabel=\{initialCreateInput \? "변경 적용" : "차트 생성하기"\}/,
       /onApply\(\{/,
@@ -91,6 +92,20 @@ const checks = [
     forbiddenPatterns: [
       /<Dialog/,
       /DialogContent/,
+      /Enter 또는 Ctrl\/⌘ \+ Enter로 생성 · Shift \+ Enter로 줄바꿈/,
+    ],
+  },
+  {
+    name: "SQL result chart keeps its heading compact and fits inside the result panel",
+    file: "src/pages/sql/SqlResultChart.tsx",
+    patterns: [
+      /min-h-\[320px\]/,
+      /sql-result-chart-header flex min-w-0 items-center gap-2/,
+      /shrink-0 text-sm text-muted-foreground/,
+      /h-\[280px\]/,
+    ],
+    forbiddenPatterns: [
+      /h-\[360px\]/,
     ],
   },
   {
@@ -398,9 +413,20 @@ const checks = [
       /function WidgetSelectField\([\s\S]*?<DashboardFieldCombobox/,
       /Children\.toArray\(children\)\.flatMap/,
       /child\.type !== "option"/,
+      /WidgetSelectModeContext = createContext<"combobox" \| "dropdown">\("combobox"\)/,
+      /selectMode === "dropdown"/,
+      /<DropdownMenuTrigger asChild>/,
+      /<DropdownMenuRadioGroup/,
+      /const selectValue = value \|\| widgetEmptySelectValue;/,
+      /<DropdownMenuLabel>\{String\(props\.label\)\} 필터<\/DropdownMenuLabel>/,
+      /className=\{cn\("min-w-0 w-full", props\.fieldClassName\)\}/,
+      /asklake-widget-select h-9 w-full min-w-0 max-w-full justify-start overflow-hidden px-3/,
+      /<strong className="min-w-0 max-w-full break-words">/,
+      /<WidgetSelectModeContext\.Provider value=\{fieldSelectMode\}>/,
     ],
     forbiddenPatterns: [
       /<select/,
+      /<Filter className="size-4 shrink-0 text-slate-500"/,
     ],
   },
   {
