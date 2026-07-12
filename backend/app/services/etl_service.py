@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta
+from fnmatch import fnmatch
 import hashlib
 import json
 import os
@@ -12,14 +13,16 @@ import unicodedata
 from urllib.parse import urlparse
 
 from fastapi import status
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.auth_context import ActorContext, require_permission
 from app.core.config import settings
 from app.core.errors import ApiError
+from app.core.materialization import active_materialization_runs, has_bounded_source_window, materialization_source_window
 from app.core.permission_metadata import permission_grants_from_roles, resource_permissions
+from app.core.s3_policy import resolve_s3_source_location, s3_source_config_fields, validate_s3_source_config
 from app.models import (
     CatalogDatasetModel,
     ETLJobModel,
@@ -29,10 +32,12 @@ from app.models import (
     KafkaContinuousRuntimeModel,
     KafkaContinuousSessionModel,
     KafkaSnapshotModel,
+    PermissionGrantModel,
+    ResourceLockModel,
 )
 from app.models.base import Base
 from app.models.identity import AuthUserModel
-from app.repositories.audit_repository import safe_record_audit_event
+from app.repositories.audit_repository import add_audit_event, safe_record_audit_event
 from app.repositories import etl_repository
 from app.repositories.permission_repository import replace_permission_ui_grants
 from app.schemas.common import ErrorCode
@@ -513,6 +518,119 @@ def persist_requested_permission_grants(
     )
     refreshed_job = etl_repository.get_job_schema(db, job.id) or job
     return with_job_permissions(db, refreshed_job, actor)
+
+def delete_job(db: Session, job_id: str, actor: ActorContext | None = None) -> str:
+    job = etl_repository.get_job(db, job_id)
+    if job is None:
+        raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
+
+    job_name = job.name
+    job_owner = job.owner
+    actor_context = actor or ActorContext()
+    require_governed_access(
+        db,
+        actor_context,
+        action="delete",
+        api_path=f"/api/etl/jobs/{job_id}",
+        http_method="DELETE",
+        metadata={"owner": job_owner},
+        resource_id=job.id,
+        resource_name=job.name,
+        resource_type="etl_job",
+    )
+    require_permission(
+        actor_context,
+        "delete",
+        owner=job.owner,
+        grants=permission_grants_for_resource(
+            db,
+            "etl_job",
+            job.id,
+            permission_grants_from_roles(job.owner, job.permission_roles, default_actions=["view", "run"]),
+        ),
+        resource_label="job",
+    )
+
+    active_runs = [
+        run
+        for run in etl_repository.list_run_models_for_job(db, job.id)
+        if run.status in ACTIVE_RUN_STATUSES
+    ]
+    if active_runs:
+        raise ApiError(
+            ErrorCode.CONFLICT,
+            f"Job has an active run and cannot be deleted: {job_id}",
+            status.HTTP_409_CONFLICT,
+            {"runId": active_runs[0].run_id, "runStatus": active_runs[0].status},
+        )
+
+    runtime = etl_repository.get_kafka_continuous_runtime(db, job.id)
+    if runtime is not None and runtime.status in {"starting", "running", "pausing", "stopping"}:
+        raise ApiError(
+            ErrorCode.CONFLICT,
+            f"Continuous Job is active and cannot be deleted: {job_id}",
+            status.HTTP_409_CONFLICT,
+            {"runtimeStatus": runtime.status},
+        )
+    active_sessions = [
+        session
+        for session in etl_repository.list_kafka_continuous_sessions(db, job.id)
+        if session.status in {"starting", "running", "stopping"}
+    ]
+    if active_sessions:
+        raise ApiError(
+            ErrorCode.CONFLICT,
+            f"Continuous Job has an active session and cannot be deleted: {job_id}",
+            status.HTTP_409_CONFLICT,
+            {"sessionId": active_sessions[0].session_id, "sessionStatus": active_sessions[0].status},
+        )
+    reconcile_stale_continuous_maintenance_runs(db, job.id)
+    active_maintenance = etl_repository.list_kafka_continuous_maintenance_run_models(db, job.id, active_only=True)
+    if active_maintenance:
+        raise ApiError(
+            ErrorCode.CONFLICT,
+            f"Continuous maintenance is active and the Job cannot be deleted: {job_id}",
+            status.HTTP_409_CONFLICT,
+            {
+                "maintenanceRunId": active_maintenance[0].run_id,
+                "maintenanceStatus": active_maintenance[0].status,
+            },
+        )
+
+    db.execute(delete(KafkaContinuousBatchModel).where(KafkaContinuousBatchModel.job_id == job.id))
+    db.execute(delete(KafkaContinuousSessionModel).where(KafkaContinuousSessionModel.job_id == job.id))
+    db.execute(delete(KafkaContinuousMaintenanceRunModel).where(KafkaContinuousMaintenanceRunModel.job_id == job.id))
+    db.execute(delete(KafkaContinuousRuntimeModel).where(KafkaContinuousRuntimeModel.job_id == job.id))
+    db.execute(delete(ETLRunModel).where(ETLRunModel.job_id == job.id))
+    db.execute(delete(KafkaSnapshotModel).where(KafkaSnapshotModel.job_id == job.id))
+    db.execute(delete(PermissionGrantModel).where(
+        PermissionGrantModel.resource_type == "etl_job",
+        PermissionGrantModel.resource_id == job.id,
+    ))
+    db.execute(delete(ResourceLockModel).where(
+        ResourceLockModel.resource_type == "etl_job",
+        ResourceLockModel.resource_id == job.id,
+    ))
+    db.delete(job)
+    add_audit_event(
+        db,
+        actor=actor_context,
+        action="etl_job.deleted",
+        api_path=f"/api/etl/jobs/{job_id}",
+        http_method="DELETE",
+        metadata={"owner": job_owner},
+        result="success",
+        status_code=status.HTTP_200_OK,
+        target_id=job_id,
+        target_name=job_name,
+        target_type="etl_job",
+    )
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    return job_id
 
 
 def list_datasets(db: Session) -> list[CatalogDataset]:
@@ -1358,18 +1476,39 @@ def is_kafka_job(job: ETLJobModel) -> bool:
     return bool(field_value(fields, "Broker / Endpoint") and (field_value(fields, "TOPIC / QUEUE NAME") or field_value(fields, "Topic")))
 
 
-def run_spark_job(job: ETLJobModel, command: str, run_id: str) -> dict[str, Any]:
-    return run_node_bridge(
+def run_spark_job(db: Session, job: ETLJobModel, command: str, run_id: str) -> dict[str, Any]:
+    incremental_since, incremental_before = source_incremental_window(db, job, run_id)
+    source_window_rebaseline = source_uses_incremental_folder_window(job) and incremental_since is None
+    source_object_keys = incremental_source_object_keys(
+        db,
+        job,
+        incremental_since=incremental_since,
+        incremental_before=incremental_before,
+    )
+    result = run_node_bridge(
         "run-spark-job-once.mjs",
         "ASKLAKE_SPARK_RUN_RESULT",
         {
             "command": command,
-            "job": job_payload_for_spark(job),
+            "job": job_payload_for_spark(
+                job,
+                incremental_since,
+                incremental_before,
+                source_object_keys,
+                source_window_rebaseline=source_window_rebaseline,
+            ),
             "runId": run_id,
         },
         error_marker="ASKLAKE_SPARK_RUN_ERROR",
         timeout_seconds=900,
     )
+    if source_object_keys is not None:
+        source_collection = result.get("sourceCollection")
+        result["sourceCollection"] = {
+            **(source_collection if isinstance(source_collection, dict) else {}),
+            "objectKeys": source_object_keys,
+        }
+    return result
 
 
 def execute_airflow_spark_run(
@@ -1395,7 +1534,7 @@ def execute_airflow_spark_run(
     if isinstance(existing_result, dict) and existing_result.get("status") == "success":
         return existing_result
 
-    result = run_spark_job(job, command, run_id)
+    result = run_spark_job(db, job, command, run_id)
     manifest = spark_result_manifest(result, run_id)
     run.input_rows = format_rows(manifest.get("inputRows"))
     run.output_rows = format_rows(manifest.get("outputRows"))
@@ -1733,6 +1872,7 @@ def spark_result_manifest(result: dict[str, Any], run_id: str) -> dict[str, Any]
             "outputRows",
             "quality",
             "schema",
+            "sourceCollection",
             "sourcePath",
             "sparkExitCode",
             "startedAt",
@@ -1774,7 +1914,7 @@ def execute_airflow_run(
         return airflow_execution_response_from_persisted(job, run, existing_dataset)
 
     try:
-        result = run_spark_job(job, command, run_id)
+        result = run_spark_job(db, job, command, run_id)
     except ApiError as exc:
         now = iso_now()
         result = {
@@ -1917,7 +2057,14 @@ def airflow_dag_run_conf(job: ETLJobModel, command: str, run_id: str, submitted_
     }
 
 
-def job_payload_for_spark(job: ETLJobModel) -> dict[str, Any]:
+def job_payload_for_spark(
+    job: ETLJobModel,
+    incremental_since: str | None = None,
+    incremental_before: str | None = None,
+    source_object_keys: list[str] | None = None,
+    *,
+    source_window_rebaseline: bool = False,
+) -> dict[str, Any]:
     compiled_rules = compile_job_rules(job)
     require_compiled_rules(compiled_rules)
     return {
@@ -1945,6 +2092,11 @@ def job_payload_for_spark(job: ETLJobModel) -> dict[str, Any]:
         "schemaSampleRows": job.schema_sample_rows or [],
         "source": job.source,
         "sourceConfig": job.source_config or [],
+        "sourceIncrementalBefore": incremental_before,
+        "sourceIncrementalSince": incremental_since,
+        "sourceObjectKeys": source_object_keys,
+        "sourceWindowContractVersion": 1 if source_uses_incremental_folder_window(job) else None,
+        "sourceWindowRebaseline": source_window_rebaseline,
         "sourceLabel": job.source_label,
         "sourceType": job.source_type,
         "stats": job.stats or {},
@@ -1966,6 +2118,291 @@ def job_payload_for_spark(job: ETLJobModel) -> dict[str, Any]:
             for step in compiled_rules.transform_steps
         ],
     }
+
+
+def source_incremental_since(db: Session, job: ETLJobModel, current_run_id: str) -> str | None:
+    if not source_uses_incremental_folder_window(job):
+        return None
+    successful_runs = [
+        run
+        for run in etl_repository.list_run_models_for_job(db, job.id)
+        if run.run_id != current_run_id
+        and run.status == "success"
+        and str(run.started_at or "").strip() not in {"", "-"}
+    ]
+    if not successful_runs:
+        return None
+    latest_successful_run = max(successful_runs, key=lambda run: str(run.started_at))
+    dataset_id = str(getattr(job, "dataset_id", "") or "").strip()
+    dataset = etl_repository.get_dataset_by_id(db, dataset_id) if dataset_id else None
+    payload = dataset.payload if dataset is not None and isinstance(dataset.payload, dict) else {}
+    materialization_runs = payload.get("materializationRuns")
+    matching_run = next((
+        run
+        for run in materialization_runs
+        if isinstance(run, dict) and str(run.get("runId") or "") == str(latest_successful_run.run_id)
+    ), None) if isinstance(materialization_runs, list) else None
+    if matching_run is None or not has_bounded_source_window(matching_run):
+        return None
+    window = materialization_source_window(matching_run) or {}
+    object_keys = window.get("objectKeys") if "objectKeys" in window else window.get("object_keys")
+    if not isinstance(object_keys, list):
+        return None
+    return str(window.get("upperBound") or window.get("upper_bound") or "").strip() or None
+
+
+def source_incremental_window(
+    db: Session,
+    job: ETLJobModel,
+    current_run_id: str,
+) -> tuple[str | None, str | None]:
+    if not source_uses_incremental_folder_window(job):
+        return None, None
+    lower_bound = source_incremental_since(db, job, current_run_id)
+    current_run = etl_repository.get_run_model(db, current_run_id)
+    upper_bound = (
+        str(current_run.started_at)
+        if current_run and str(current_run.started_at or "").strip() not in {"", "-"}
+        else None
+    )
+    return lower_bound, upper_bound
+
+
+def source_uses_incremental_folder_window(job: ETLJobModel) -> bool:
+    source_type = str(getattr(job, "source_type", "") or "").strip().casefold()
+    if not (source_type.startswith("file / s3") or source_type.startswith("data lake")):
+        return False
+    fields = s3_source_config_fields(getattr(job, "source_config", None) or [])
+    return (
+        fields.get("collection scope", "").casefold() == "folder"
+        and fields.get("collection mode", "incremental").casefold() == "incremental"
+    )
+
+
+def incremental_source_object_keys(
+    db: Session,
+    job: ETLJobModel,
+    *,
+    incremental_since: str | None,
+    incremental_before: str | None,
+    s3_client: Any | None = None,
+) -> list[str] | None:
+    if not source_uses_incremental_folder_window(job):
+        return None
+    current_keys = list_incremental_s3_object_keys(
+        job,
+        incremental_since=incremental_since,
+        incremental_before=incremental_before,
+        s3_client=s3_client,
+    )
+    if incremental_since:
+        previous_keys = prior_incremental_source_object_keys(db, job)
+        duplicate_keys = sorted(set(current_keys).intersection(previous_keys))
+        if duplicate_keys:
+            raise ApiError(
+                "SOURCE_OBJECT_KEY_REPLACED",
+                "Incremental folder collection accepts new object keys only; replace the dataset with a full run after modifying an existing key.",
+                status.HTTP_409_CONFLICT,
+                {
+                    "duplicateObjectKeys": duplicate_keys[:20],
+                    "duplicateObjectCount": len(duplicate_keys),
+                    "jobId": job.id,
+                },
+            )
+    return current_keys
+
+
+def list_incremental_s3_object_keys(
+    job: ETLJobModel,
+    *,
+    incremental_since: str | None,
+    incremental_before: str | None,
+    s3_client: Any | None = None,
+) -> list[str]:
+    validate_s3_source_config(
+        job.source_type,
+        job.source_config or [],
+        allow_unconfigured=allows_unconfigured_s3_source(),
+    )
+    fields = s3_source_config_fields(job.source_config or [])
+    bucket, prefix = resolve_s3_source_location(job.source_type, fields)
+    if not bucket:
+        raise ApiError(
+            ErrorCode.VALIDATION_ERROR,
+            "Incremental folder collection requires an S3 bucket or s3:// path",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
+    upper_bound = parse_incremental_timestamp(incremental_before, "incrementalBefore")
+    if upper_bound is None:
+        raise ApiError(
+            ErrorCode.INVALID_JOB_STATE,
+            "Incremental folder collection requires a fixed upper-bound timestamp",
+            status.HTTP_409_CONFLICT,
+        )
+    lower_bound = parse_incremental_timestamp(incremental_since, "incrementalSince")
+    file_pattern = fields.get("file pattern", "").strip()
+    recursive = fields.get("recursive", "").casefold() in {"true", "1", "yes", "on"}
+    listing_prefix = prefix
+    if listing_prefix and not listing_prefix.endswith("/"):
+        listing_prefix = f"{listing_prefix}/"
+    object_limit = incremental_object_key_limit()
+    client = s3_client or build_source_s3_client(job)
+    continuation_token = None
+    keys: list[str] = []
+    while True:
+        request: dict[str, Any] = {"Bucket": bucket, "Prefix": listing_prefix}
+        if not recursive:
+            request["Delimiter"] = "/"
+        if continuation_token:
+            request["ContinuationToken"] = continuation_token
+        try:
+            response = client.list_objects_v2(**request)
+        except Exception as exc:
+            raise ApiError(
+                "SERVICE_UNAVAILABLE",
+                "Incremental source object inventory is unavailable",
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                {
+                    "bucket": bucket,
+                    "prefix": listing_prefix,
+                    "reason": compact_storage_text(exc, limit=1000),
+                },
+            ) from exc
+        for item in response.get("Contents") or []:
+            key = str(item.get("Key") or "")
+            modified_at = object_last_modified(item.get("LastModified"))
+            file_name = key.rsplit("/", 1)[-1]
+            if not key or not file_name or file_name.startswith((".", "_")) or modified_at is None:
+                continue
+            relative_key = key[len(listing_prefix):] if key.startswith(listing_prefix) else ""
+            if not relative_key or (not recursive and "/" in relative_key):
+                continue
+            if lower_bound is not None and modified_at < lower_bound:
+                continue
+            if modified_at >= upper_bound:
+                continue
+            if file_pattern and not fnmatch(file_name, file_pattern):
+                continue
+            keys.append(key)
+            if len(keys) > object_limit:
+                raise ApiError(
+                    ErrorCode.VALIDATION_ERROR,
+                    "Incremental source contains too many object keys for the configured checkpoint limit",
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    {"limit": object_limit},
+                )
+        if not response.get("IsTruncated"):
+            break
+        continuation_token = response.get("NextContinuationToken")
+        if not continuation_token:
+            raise ApiError(
+                "SERVICE_UNAVAILABLE",
+                "Incremental source inventory pagination did not provide a continuation token",
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                {"bucket": bucket, "prefix": listing_prefix},
+            )
+    return sorted(set(keys))
+
+
+def prior_incremental_source_object_keys(db: Session, job: ETLJobModel) -> set[str]:
+    dataset_id = str(getattr(job, "dataset_id", "") or "").strip()
+    dataset = etl_repository.get_dataset_by_id(db, dataset_id) if dataset_id else None
+    payload = dataset.payload if dataset is not None and isinstance(dataset.payload, dict) else {}
+    runs = payload.get("materializationRuns")
+    active_runs = active_materialization_runs(
+        run for run in runs if isinstance(run, dict)
+    ) if isinstance(runs, list) else []
+    return {
+        str(key)
+        for run in active_runs
+        for window in [materialization_source_window(run) or {}]
+        for key in (window.get("objectKeys") or window.get("object_keys") or [])
+        if str(key).strip()
+    }
+
+
+def parse_incremental_timestamp(value: str | None, field_name: str) -> datetime | None:
+    normalized = str(value or "").strip()
+    if not normalized:
+        return None
+    try:
+        parsed = datetime.fromisoformat(normalized.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ApiError(
+            ErrorCode.VALIDATION_ERROR,
+            f"Invalid {field_name} timestamp",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+        ) from exc
+    return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
+
+
+def object_last_modified(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+    try:
+        return parse_incremental_timestamp(str(value or ""), "LastModified")
+    except ApiError:
+        return None
+
+
+def incremental_object_key_limit() -> int:
+    try:
+        return max(1, int(os.environ.get("ASKLAKE_INCREMENTAL_OBJECT_KEY_LIMIT") or "20000"))
+    except ValueError:
+        return 20000
+
+
+def allows_unconfigured_s3_source() -> bool:
+    return str(getattr(settings, "app_env", "local") or "local").strip().casefold() in {
+        "dev",
+        "development",
+        "local",
+        "test",
+    }
+
+
+def build_source_s3_client(job: ETLJobModel) -> Any:
+    fields = s3_source_config_fields(job.source_config or [])
+    try:
+        import boto3
+        from botocore.config import Config
+    except ImportError as exc:
+        raise ApiError(
+            "SERVICE_UNAVAILABLE",
+            "Python S3 client dependency is not installed",
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+        ) from exc
+    endpoint = (
+        fields.get("endpoint url")
+        or fields.get("endpoint")
+        or os.environ.get("S3_ENDPOINT")
+        or os.environ.get("MINIO_ENDPOINT")
+    )
+    access_key = (
+        fields.get("access key")
+        or os.environ.get("AWS_ACCESS_KEY_ID")
+        or os.environ.get("MINIO_ACCESS_KEY")
+    )
+    secret_key = (
+        fields.get("secret key")
+        or os.environ.get("AWS_SECRET_ACCESS_KEY")
+        or os.environ.get("MINIO_SECRET_KEY")
+    )
+    region = fields.get("region") or os.environ.get("AWS_REGION") or os.environ.get("MINIO_REGION") or "us-east-1"
+    force_path_style = str(
+        fields.get("use path style") or os.environ.get("S3_FORCE_PATH_STYLE") or "true"
+    ).casefold() != "false"
+    kwargs: dict[str, Any] = {
+        "config": Config(s3={"addressing_style": "path" if force_path_style else "auto"}),
+        "region_name": region,
+    }
+    if endpoint:
+        kwargs["endpoint_url"] = endpoint
+    if access_key:
+        kwargs["aws_access_key_id"] = access_key
+    if secret_key:
+        kwargs["aws_secret_access_key"] = secret_key
+    return boto3.client("s3", **kwargs)
 
 
 def run_from_airflow_submit(
@@ -2482,6 +2919,7 @@ def dataset_payload_from_spark_result(
         {
             "createdAt": last_updated,
             "jobId": job.id,
+            "materializationMode": spark_materialization_mode(job, result),
             "rowCount": parse_count_value(result.get("materializationRows", result.get("outputRows"))),
             "runId": str(result.get("runId") or ""),
             "sourceKind": result.get("sourceKind") or ("sql" if job.source_type == "SQL Result" else "etl"),
@@ -2489,6 +2927,7 @@ def dataset_payload_from_spark_result(
             "status": "success" if result.get("status") == "success" else "failed",
             "storageLocation": str(result.get("materializationOutputPath") or output_path),
             "storageSizeBytes": storage_size_bytes,
+            **spark_source_window_metadata(result),
             **({"sourceRanges": result["sourceRanges"]} if isinstance(result.get("sourceRanges"), list) and result["sourceRanges"] else {}),
             **({"publicationManifest": str(result["publicationManifest"])} if result.get("publicationManifest") else {}),
             **({"ruleContractVersion": str(result["ruleContractVersion"])} if result.get("ruleContractVersion") else {}),
@@ -2610,6 +3049,50 @@ def append_materialization_run(previous_runs: Any, next_run: dict[str, Any]) -> 
     return [next_run, *[run for run in runs if str(run.get("runId") or "") != run_id]]
 
 
+def spark_materialization_mode(job: ETLJobModel, result: dict[str, Any]) -> str:
+    explicit_mode = str(result.get("materializationMode") or "").strip().casefold()
+    if explicit_mode in {"snapshot", "delta"}:
+        return explicit_mode
+    if str(result.get("sourceKind") or "").strip().casefold() == "kafka":
+        return "delta"
+    source_collection = result.get("sourceCollection")
+    if not isinstance(source_collection, dict):
+        return "snapshot"
+    is_incremental_folder = (
+        str(source_collection.get("scope") or "").strip().casefold() == "folder"
+        and str(source_collection.get("mode") or "incremental").strip().casefold() == "incremental"
+    )
+    if not is_incremental_folder:
+        return "snapshot"
+    rebaseline = bool(source_collection.get("rebaseline"))
+    lower_bound = str(source_collection.get("incrementalSince") or "").strip()
+    return "delta" if lower_bound and not rebaseline else "snapshot"
+
+
+def spark_source_window_metadata(result: dict[str, Any]) -> dict[str, Any]:
+    source_collection = result.get("sourceCollection")
+    if not isinstance(source_collection, dict):
+        return {}
+    version = source_collection.get("windowContractVersion")
+    upper_bound = str(source_collection.get("incrementalBefore") or "").strip()
+    if version != 1 or not upper_bound:
+        return {}
+    object_keys = source_collection.get("objectKeys")
+    return {
+        "sourceWindow": {
+            "contractVersion": 1,
+            "lowerBound": str(source_collection.get("incrementalSince") or "").strip() or None,
+            **(
+                {"objectKeys": sorted({str(key) for key in object_keys if str(key).strip()})}
+                if isinstance(object_keys, list)
+                else {}
+            ),
+            "rebaseline": bool(source_collection.get("rebaseline")),
+            "upperBound": upper_bound,
+        },
+    }
+
+
 def identity_name(value: str | None) -> str:
     return (value or "").strip() or "demo-user"
 
@@ -2625,7 +3108,7 @@ def identity_profile(name: str) -> dict[str, str]:
 
 
 def aggregate_materialization_runs(runs: list[dict[str, Any]]) -> dict[str, Any]:
-    active_runs = [run for run in runs if run.get("status") == "success"]
+    active_runs = active_materialization_runs(runs)
     latest_run = active_runs[0] if active_runs else None
     return {
         "latestRunId": latest_run.get("runId") if latest_run else None,

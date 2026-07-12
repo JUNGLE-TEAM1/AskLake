@@ -1316,6 +1316,89 @@
   font-weight: 850;
 }
 
+.collection-policy-editor {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  border-block: 1px solid #dbe3ef;
+  background: #fff;
+  padding: 14px 2px;
+}
+
+.collection-policy-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.collection-policy-header > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.collection-policy-header svg {
+  color: #2563eb;
+}
+
+.collection-policy-header strong {
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.collection-policy-header span {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.collection-policy-grid {
+  display: grid;
+  grid-template-columns: minmax(260px, 1.6fr) minmax(150px, .8fr) repeat(2, minmax(132px, .6fr));
+  align-items: end;
+  gap: 8px;
+  min-width: 0;
+}
+
+.collection-recursive-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 40px;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.collection-policy-note {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: #64748b;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+@media (max-width: 1100px) {
+  .collection-policy-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .collection-policy-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .collection-policy-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .source-preview-scroll {
   max-height: min(420px, calc(100vh - 520px));
 }
@@ -2218,6 +2301,40 @@
 
 .source-asset-tree-item {
   min-width: 0;
+}
+
+.source-asset-tree-row-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 30px;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+}
+
+.source-asset-tree-row-shell.file {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.source-asset-folder-select {
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: #94a3b8;
+  cursor: pointer;
+}
+
+.source-asset-folder-select:hover,
+.source-asset-folder-select:focus-visible,
+.source-asset-folder-select.active {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #2563eb;
+  outline: 0;
 }
 
 .source-asset-tree-group {

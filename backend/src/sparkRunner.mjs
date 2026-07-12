@@ -188,6 +188,14 @@ function writeSparkJobManifest(manifestPath, job) {
     rules: job.rules ?? [],
     recordParsing: job.recordParsing ?? null,
     schemaColumns: job.schemaColumns ?? [],
+    sourceCollection: sourceCollectionFromConfig(
+      job.sourceConfig ?? [],
+      job.sourceIncrementalSince,
+      job.sourceIncrementalBefore,
+      job.sourceWindowContractVersion,
+      job.sourceWindowRebaseline,
+      job.sourceObjectKeys,
+    ),
     textStructuring: {
       columns: textStructuringColumns,
       specVersion: textStructuringColumns.length > 0 ? 1 : undefined,
@@ -195,6 +203,40 @@ function writeSparkJobManifest(manifestPath, job) {
     transformSteps: job.transformSteps ?? [],
   };
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+}
+
+export function sourceCollectionFromConfig(
+  sourceConfig,
+  incrementalSince = undefined,
+  incrementalBefore = undefined,
+  windowContractVersion = undefined,
+  sourceWindowRebaseline = false,
+  sourceObjectKeys = undefined,
+) {
+  const scope = String(fieldValue(sourceConfig, "Collection Scope") || "file").trim().toLowerCase() === "folder"
+    ? "folder"
+    : "file";
+  const collectionMode = String(fieldValue(sourceConfig, "Collection Mode") || "incremental").trim().toLowerCase();
+  const mode = scope === "folder" && collectionMode !== "full" ? "incremental" : "full";
+  const boundedWindowVersion = mode === "incremental" && Number(windowContractVersion) === 1 ? 1 : null;
+  const objectKeys = mode === "incremental" && Array.isArray(sourceObjectKeys)
+    ? [...new Set(sourceObjectKeys.map((key) => String(key || "").trim()).filter(Boolean))].sort()
+    : null;
+  return {
+    filePattern: scope === "folder" ? fieldValue(sourceConfig, "File Pattern") || null : null,
+    incrementalBefore: mode === "incremental" && incrementalBefore ? String(incrementalBefore) : null,
+    incrementalSince: mode === "incremental" && incrementalSince ? String(incrementalSince) : null,
+    mode,
+    objectKeys,
+    rebaseline: boundedWindowVersion === 1 && sourceWindowRebaseline === true,
+    recursive: scope === "folder" && parseConfigBoolean(fieldValue(sourceConfig, "Recursive")),
+    scope,
+    windowContractVersion: boundedWindowVersion,
+  };
+}
+
+function parseConfigBoolean(value) {
+  return ["true", "1", "yes", "on"].includes(String(value || "").trim().toLowerCase());
 }
 
 function textStructuringDefinitionColumns(transformSteps) {

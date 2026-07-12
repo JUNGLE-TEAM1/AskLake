@@ -35,6 +35,10 @@ export async function updatePipelineDraft(jobId: string, draftPipeline: DraftPip
   return apiClient.patch<JobRowData>(`/api/etl/jobs/${encodeURIComponent(jobId)}`, toUpdatePipelineRequest(draftPipeline));
 }
 
+export async function deletePipelineJob(jobId: string): Promise<{ deletedJobId: string }> {
+  return apiClient.delete<{ deletedJobId: string }>(`/api/etl/jobs/${encodeURIComponent(jobId)}`);
+}
+
 export async function runJobCommand(job: JobRowData, command: Exclude<JobCommand, "edit" | "delete">): Promise<JobCommandResult> {
   return apiClient.post<JobCommandResult>(`/api/etl/jobs/${job.id}/commands`, { command });
 }

@@ -472,6 +472,45 @@ const checks = [
     ],
   },
   {
+    name: "ETL source can select a folder and persist its collection policy",
+    file: "src/pages/etl/EtlPages.tsx",
+    patterns: [
+      /sourceConfigValue\(editableFields, "Collection Scope"\)/,
+      /\["Collection Scope", "folder"\]/,
+      /\["Collection Mode", "incremental"\]/,
+      /\["Recursive", "true"\]/,
+      /sampleSourceAsset\(samplePath \|\| folderPath/,
+      /aria-label="새 파일 key만 수집"/,
+    ],
+  },
+  {
+    name: "Source tree separates folder navigation from folder collection selection",
+    file: "src/pages/etl/SourceAssetTree.tsx",
+    patterns: [
+      /if \(node\.isFolder\) \{\s*toggleFolder\(node\);\s*return;/s,
+      /aria-label=\{`폴더 \$\{node\.name\} 선택`\}/,
+      /void onSelect\(node\.path\)/,
+    ],
+  },
+  {
+    name: "Job detail tolerates partial stats so delete remains reachable",
+    file: "src/pages/ingest/JobsPages.tsx",
+    patterns: [
+      /const stats = \{ \.\.\.fallbackJobStats\(job\), \.\.\.\(job\.stats \?\? \{\}\) \};/,
+      /const totalRuns = String\(stats\.totalRuns \?\? "-"\);/,
+    ],
+  },
+  {
+    name: "Live Job deletion updates persisted rows and list facets together",
+    file: "src/hooks/useAskLakeData.ts",
+    patterns: [
+      /deletePipelineJob as deleteLivePipelineJob/,
+      /if \(!apiConfig\.useMock\) await deleteLivePipelineJob\(job\.id\);/,
+      /setJobListFacets\(\(facets\) => removeJobFacetCounts\(facets, job\)\);/,
+      /writeAuditLog\("etl\.job\.delete_failed"/,
+    ],
+  },
+  {
     name: "SQL collapsed workspace stays in the visible grid column",
     file: "src/pages/sql/SqlAnalysisPage.module.css",
     patterns: [

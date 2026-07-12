@@ -86,6 +86,9 @@ export async function testObjectStorageSource(fields, sourceType = "File / S3") 
   const secretAccessKey = requiredSourceField(fields, "Secret Key", "MinIO/S3 secret key is required.");
   const forcePathStyle = parseBoolean(fieldValue(fields, "Use Path Style"), true);
   const selectedObject = selectedObjectKey(fields);
+  const collectionScope = String(fieldValue(fields, "Collection Scope") || "file").trim().toLowerCase();
+  const collectionPattern = fieldValue(fields, "File Pattern") || "*";
+  const collectionRecursive = parseBoolean(fieldValue(fields, "Recursive"), false);
 
   if (!accessKeyId || !secretAccessKey) {
     throw apiError("SOURCE_CREDENTIALS_REQUIRED", "MinIO/S3 액세스 키와 시크릿 키가 필요합니다.", 400);
@@ -113,7 +116,14 @@ export async function testObjectStorageSource(fields, sourceType = "File / S3") 
     if (!prefix && objects.length === 0) {
       objects = listDirectObjectsViaMinioContainer({ accessKeyId, bucket, endpoint, limit: sourceAssetListLimit(), prefix, secretAccessKey }) ?? objects;
     }
-    const sampleObject = selectedObject ? objects.find((item) => item.Key === selectedObject) : immediateSampleObject(objects, prefix);
+    let sampleObject = selectedObject
+      ? objects.find((item) => item.Key === selectedObject)
+      : collectionScope === "folder"
+        ? immediateCollectionSampleObject(objects, prefix, collectionPattern)
+        : immediateSampleObject(objects, prefix);
+    if (!sampleObject && !selectedObject && collectionScope === "folder" && collectionRecursive) {
+      sampleObject = await findRecursiveCollectionSampleObject(client, bucket, prefix, collectionPattern);
+    }
     return buildObjectStorageAnalysis({
       bucket,
       client,
@@ -1069,6 +1079,50 @@ function immediateSampleObject(objects, prefix) {
       : key;
     return relative.length > 0 && !relative.includes("/");
   });
+}
+
+function immediateCollectionSampleObject(objects, prefix, pattern) {
+  return immediateSampleObject(objects.filter((item) => collectionPatternMatches(item.Key, pattern)), prefix);
+}
+
+async function findRecursiveCollectionSampleObject(client, bucket, prefix, pattern) {
+  const normalizedPrefix = normalizePrefix(prefix);
+  const normalizedPrefixWithSlash = normalizedPrefix ? `${normalizedPrefix}/` : "";
+  const limit = sourceAssetListLimit();
+  let continuationToken;
+  let scanned = 0;
+  do {
+    const remaining = Math.max(1, limit - scanned);
+    const result = await client.send(new ListObjectsV2Command({
+      Bucket: bucket,
+      ContinuationToken: continuationToken,
+      MaxKeys: Math.min(200, remaining),
+      Prefix: normalizedPrefixWithSlash || normalizedPrefix,
+    }));
+    const contents = result.Contents ?? [];
+    scanned += contents.length;
+    const sample = contents.find((item) => (
+      item.Key
+      && item.Key !== normalizedPrefixWithSlash
+      && hasTextExtension(item.Key)
+      && collectionPatternMatches(item.Key, pattern)
+    ));
+    if (sample) return { ...sample, __folder: false };
+    continuationToken = result.IsTruncated && scanned < limit ? result.NextContinuationToken : undefined;
+  } while (continuationToken);
+  return undefined;
+}
+
+function collectionPatternMatches(key, pattern) {
+  const normalizedPattern = String(pattern || "*").trim() || "*";
+  const fileName = String(key || "").split("/").pop() || "";
+  let source = "^";
+  for (const character of normalizedPattern) {
+    if (character === "*") source += ".*";
+    else if (character === "?") source += ".";
+    else source += character.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
+  }
+  return new RegExp(`${source}$`, "i").test(fileName);
 }
 
 function browsableObjectStorageItems(objects, prefix) {

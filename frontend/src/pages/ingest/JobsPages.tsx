@@ -2081,9 +2081,10 @@ export function JobDetailPage({
   const rawSourceType = job.sourceType ?? job.source.split(" / ")[0] ?? job.source;
   const sourceType = getJobSourceTypeLabel(rawSourceType);
   const sourcePath = job.sourceLabel ?? (job.source.split(" / ").slice(1).join(" / ") || job.source);
-  const stats = job.stats ?? fallbackJobStats(job);
+  const stats = { ...fallbackJobStats(job), ...(job.stats ?? {}) };
   const realtime = isRealtimeJob(job);
-  const totalRunsLabel = stats.totalRuns === "-" || stats.totalRuns.endsWith("회") ? stats.totalRuns : `${stats.totalRuns}회`;
+  const totalRuns = String(stats.totalRuns ?? "-");
+  const totalRunsLabel = totalRuns === "-" || totalRuns.endsWith("회") ? totalRuns : `${totalRuns}회`;
   const realtimeMetrics = job.operationalMetrics?.metricType === "realtime" ? job.operationalMetrics : undefined;
   const realtimeHealth = realtimeHealthMeta[realtimeMetrics?.healthStatus ?? "unknown"];
   const physicalOutputPath = job.targetPath ?? stats.outputPath ?? `lake/${job.target}`;
