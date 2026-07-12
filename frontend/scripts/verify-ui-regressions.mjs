@@ -649,6 +649,18 @@ const checks = [
     ],
   },
   {
+    name: "Bubble variants render with the AskLake white theme palette",
+    file: "src/components/ui/bubble.tsx",
+    patterns: [
+      /\*:data-\[slot=bubble-content\]:bg-blue-600 \*:data-\[slot=bubble-content\]:text-white/,
+      /\*:data-\[slot=bubble-content\]:border-slate-200 \*:data-\[slot=bubble-content\]:bg-white \*:data-\[slot=bubble-content\]:text-slate-900/,
+      /\*:data-\[slot=bubble-content\]:bg-slate-100 \*:data-\[slot=bubble-content\]:text-slate-700/,
+      /\*:data-\[slot=bubble-content\]:bg-blue-50 \*:data-\[slot=bubble-content\]:text-blue-950/,
+      /\*:data-\[slot=bubble-content\]:border-red-200 \*:data-\[slot=bubble-content\]:bg-red-50 \*:data-\[slot=bubble-content\]:text-red-700/,
+      /bg-slate-100[^\n]+text-slate-900[^\n]+ring-white/,
+    ],
+  },
+  {
     name: "Schema Transform emits Spark-compatible identifier quoting",
     file: "src/components/etl/SchemaTransformEditor.jsx",
     patterns: [
