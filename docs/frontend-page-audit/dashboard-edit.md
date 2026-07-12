@@ -16,7 +16,7 @@
 - `DashboardCanvas`: `react-grid-layout`을 사용해 widget drag/resize와 collision validation을 처리한다.
 - `DatasetSidebar`: Kibo/shadcn-compatible Tree, shadcn `ScrollArea`, `Alert`, `Empty`, `Skeleton`, `Tooltip`과 `TreeHoverCard`를 조합한다.
 - `WidgetConfigPanel`: `SettingsPanel`, `FieldGroup`, `Field`, `Select`, `Input`, `Textarea`, `ToggleGroup`, `Tooltip`, `Checkbox`, `Button`을 조합한다.
-- `DashboardAssistantPanel`: shadcn `Bubble`, `BubbleGroup`, `BubbleContent`, `Textarea`, `Button`으로 dashboard AI interaction을 제공한다. `Bubble` variant는 AskLake의 blue/slate 화이트 팔레트로 사용자 primary/end와 Assistant secondary/start 역할을 구분한다.
+- `DashboardAssistantPanel`: shadcn `Bubble`, `BubbleGroup`, `BubbleContent`, `Textarea`, `Button`으로 dashboard AI interaction을 제공한다. `Bubble` variant는 AskLake의 blue/slate 화이트 팔레트로 사용자 primary/end와 Assistant secondary/start 역할을 구분하며, 새 메시지는 역할 방향에서 짧은 spring entry motion으로 진입한다.
 - `DashboardEditToolbar`: shadcn `ToggleGroup`, `ButtonGroup`, `Button`, `Tooltip`로 assistant/cursor mode와 widget 생성, undo/redo action을 분리한다.
 - `WidgetFrame`, `WidgetRenderer`: widget selection, delete, preview, chart/table/metric 렌더링을 담당한다.
 - shadcn `Sheet`: share panel에 사용한다.
@@ -25,6 +25,7 @@
 
 - [RESOLVED #580] edit toolbar를 `DashboardEditToolbar.tsx`로 추출하고 mode는 `ToggleGroup`, 생성/기록 action은 `ButtonGroup`/`Button`으로 유지한다.
 - [RESOLVED #585] project에 정의되지 않은 shadcn semantic color token에 의존하던 `Bubble` variant를 AskLake의 기존 blue/slate 팔레트로 맞춰 실제 메시지 배경과 전경색이 렌더링되도록 정리한다.
+- [RESOLVED #585] Dashboard Assistant message entry는 `motion/react` spring으로만 움직이고 `useReducedMotion` 요청에서는 즉시 표시한다.
 - dataset sidebar toggle은 raw button이며 subnav/tab CSS에 직접 결합되어 있다.
 - page tab wrapper, rename/delete controls, selected state가 custom CSS로 구현되어 있다.
 - widget inspector의 color slot, palette, custom color popover는 `react-colorful`과 전용 absolute layer/CSS로 구성된다.

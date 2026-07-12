@@ -669,6 +669,9 @@ const checks = [
     patterns: [
       /import \{ Bubble, BubbleContent, BubbleGroup \} from "@\/components\/ui\/bubble";/,
       /<BubbleGroup aria-live="polite" className="asklake-assistant-messages">/,
+      /import \{ motion, useReducedMotion \} from "motion\/react";/,
+      /initial=\{shouldReduceMotion[\s\S]*?x: message\.role === "user" \? 28 : -28,[\s\S]*?y: 6,/,
+      /transition=\{shouldReduceMotion[\s\S]*?damping: 28, mass: 0\.8, stiffness: 260, type: "spring"/,
       /align=\{message\.role === "user" \? "end" : "start"\}/,
       /variant=\{message\.role === "user" \? "default" : "secondary"\}/,
       /<BubbleContent className="whitespace-pre-wrap">\{message\.text\}<\/BubbleContent>/,
