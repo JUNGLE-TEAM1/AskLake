@@ -43,6 +43,7 @@ import {
 import { Field, InfoBox, RetryPolicy, StatusTile } from "../../components/common";
 import { CreationFlowLayout, CreationTopActions, CreationValidationPanel } from "../../components/creation/CreationFlow";
 import { ActionGroup } from "@/components/ui/action-group";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { CheckableOption } from "@/components/ui/checkable-option";
@@ -5214,7 +5215,14 @@ export function PermissionPage({
                   </span>
                   <div className="permission-chip-row permission-config-access-row">
                     {PERMISSION_ACCESS_ITEMS.map((item) => (
-                      <em className={selected && role.access.includes(item) ? "allowed" : ""} key={item}>{item}</em>
+                      <Badge
+                        key={item}
+                        shape="compact"
+                        size="sm"
+                        variant={selected && role.access.includes(item) ? "default" : "outline"}
+                      >
+                        {item}
+                      </Badge>
                     ))}
                   </div>
                 </CheckableOption>

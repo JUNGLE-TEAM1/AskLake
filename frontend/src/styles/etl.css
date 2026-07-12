@@ -5933,23 +5933,6 @@
   gap: 7px;
 }
 
-.permission-chip-row em {
-  border: 1px solid #dee1e6;
-  border-radius: 999px;
-  background: #fff;
-  color: #9095a1;
-  font-size: 11px;
-  font-style: normal;
-  font-weight: 800;
-  padding: 4px 8px;
-}
-
-.permission-chip-row em.allowed {
-  border-color: #bfdbfe;
-  background: #eff6ff;
-  color: #1d4ed8;
-}
-
 .permission-matrix {
   display: grid;
   gap: 12px;
@@ -6363,17 +6346,6 @@
   font-weight: 850;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.permission-config-role-title em {
-  flex: 0 0 auto;
-  border-radius: 999px;
-  background: #eff6ff;
-  color: #2563eb;
-  font-size: 10px;
-  font-style: normal;
-  font-weight: 900;
-  padding: 4px 8px;
 }
 
 .permission-config-role-body small {

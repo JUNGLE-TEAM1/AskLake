@@ -34,6 +34,8 @@ const checks = [
       /<SelectTrigger aria-label="공개 범위" className="w-full" size="sm">/,
       /<SelectTrigger aria-label="승인 상태" className="w-full" size="sm">/,
       /className=\{recommended \? "permission-config-role recommended" : "permission-config-role"\}/,
+      /import \{ Badge \} from "@\/components\/ui\/badge";/,
+      /<Badge[\s\S]*shape="compact"[\s\S]*size="sm"[\s\S]*variant=\{selected && role\.access\.includes\(item\) \? "default" : "outline"\}/,
     ],
     forbiddenPatterns: [
       /생성할 데이터셋에 접근할 수 있는 역할과 사용자를 선택하세요\./,
@@ -46,6 +48,7 @@ const checks = [
       /<NativeSelectField[^>]*label="권한 템플릿"/,
       /<NativeSelectField[^>]*label="공개 범위"/,
       /<NativeSelectField[^>]*label="승인 상태"/,
+      /<em className=\{selected && role\.access\.includes\(item\) \? "allowed" : ""\}/,
     ],
   },
   {
