@@ -5,6 +5,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from app.main import create_app
+from app.core.errors import ApiError
 
 
 class FakeS3Client:
@@ -28,7 +29,7 @@ class S3ApiTests(unittest.TestCase):
     def test_lists_only_configured_buckets(self) -> None:
         with (
             patch.dict(os.environ, {"S3_ALLOWED_BUCKETS": "m3-raw"}),
-            patch("app.api.s3.build_catalog_s3_client", return_value=self.client),
+            patch("app.api.s3.build_catalog_s3_client", side_effect=AssertionError("ListBuckets must not be required")),
         ):
             response = self.test_client.get("/api/s3/buckets")
 
@@ -68,6 +69,50 @@ class S3ApiTests(unittest.TestCase):
             response = self.test_client.get("/api/s3/prefixes?bucket=m3-raw&prefix=amazon/../private/")
 
         self.assertEqual(response.status_code, 422)
+
+    def test_production_rejects_spoofed_headers_without_session(self) -> None:
+        with patch("app.core.auth_context.settings", type("Settings", (), {"allows_header_auth_fallback": False})()):
+            response = self.test_client.get(
+                "/api/s3/buckets",
+                headers={"X-AskLake-User": "Spoofed Admin", "X-AskLake-Role": "admin"},
+            )
+
+        self.assertEqual(response.status_code, 401)
+
+    def test_viewer_cannot_browse_s3(self) -> None:
+        response = self.test_client.get(
+            "/api/s3/buckets",
+            headers={"X-AskLake-User": "Read Only", "X-AskLake-Role": "viewer"},
+        )
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_source_connector_rejects_bucket_outside_allowlist_before_probe(self) -> None:
+        with (
+            patch.dict(os.environ, {"S3_ALLOWED_BUCKETS": "m3-raw"}),
+            patch("app.services.etl_service.run_node_bridge", side_effect=AssertionError("connector must not run")),
+        ):
+            response = self.test_client.post(
+                "/api/etl/sources/test",
+                json={
+                    "sourceType": "File / S3 JSONL",
+                    "sourceConfig": [["Bucket / Stage Name", "private-bucket"]],
+                },
+            )
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_production_requires_bucket_allowlist(self) -> None:
+        with (
+            patch.dict(os.environ, {"S3_ALLOWED_BUCKETS": ""}),
+            patch("app.api.s3.settings", type("Settings", (), {"allows_header_auth_fallback": False})()),
+        ):
+            with self.assertRaises(ApiError) as raised:
+                from app.api.s3 import require_bucket_allowlist
+
+                require_bucket_allowlist()
+
+        self.assertEqual(raised.exception.status_code, 503)
 
 
 if __name__ == "__main__":

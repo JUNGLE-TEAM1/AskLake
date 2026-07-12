@@ -43,11 +43,12 @@ AskLake는 사용자가 데이터셋의 출처, 품질, 권한, 실행 결과, �
 - 실행 성공 후 Catalog dataset 등록
 - Catalog 목록/상세/lineage fallback
 - Dataset 범위의 read-only SQL preview
-- SQL editor 헤더의 AI 도우미: shadcn Dialog에서 자연어 요청 기반 SQL 초안 제안과 실행 결과 차트 전환
+- SQL 편집기 상단의 Nessie SQL 작성 Popover: 선택 데이터셋 context와 사용자 프롬프트로 SQL 초안을 제안한다. 입력 후에는 폼을 접고 생성 상태와 편집기 적용 action을 Bubble로 표시하며, SQL은 사용자가 적용한 뒤 별도로 실행한다.
+- SQL 좌측 도구의 차트 생성하기: SQL 결과 또는 선택 데이터셋을 소스로 Dashboard와 같은 위젯 설정에서 유형, 필드, 집계, 색상을 설정한다. 오른쪽 결과 영역은 `차트 보기`와 `데이터 미리보기`를 항상 제공한다.
 - AI 활용 메뉴의 ChatGPT형 대화 UI: Catalog Dataset 컨텍스트를 고르는 대화 화면을 제공하며, 실제 AI 호출과 RAG runtime은 후속 범위로 둔다.
 - 수집/처리 Transform 화면은 필드 매핑과 quick transform function 중심으로 유지하며, AI 기반 필드 transform 버튼은 현재 MVP 범위에서 노출하지 않는다.
-- SQL preview 결과 기반 처리 Job 초안 생성 및 Lake Dataset materialize 준비
-- Dashboard 목록/빌더/런타임은 FastAPI API를 우선 사용하고, 이전 backend 호환을 위해 404 local/mock fallback을 유지
+- SQL preview 결과 기반 처리 Job 생성: SQL 화면의 다단계 모달에서 기본 정보, 스케줄, 거버넌스, 저장 설정을 완료한 뒤 기존 Job 생성 API를 호출한다.
+- Dashboard 목록/빌더/런타임은 FastAPI API를 source of truth로 사용하고 실패를 fixture 성공으로 대체하지 않음
 - 감사 로그와 toast feedback
 
 ## 5) Backend 확장 범위
@@ -104,21 +105,19 @@ Phase 0에서는 용어와 경계를 먼저 고정한다. `createdBy`, `owner`, 
 1. 사용자는 Catalog dataset을 연다.
 2. 시스템은 schema, sample rows, lineage를 보여준다.
 3. 사용자는 SQL 화면으로 이동해 read-only preview를 실행한다.
-4. 사용자는 선택 테이블과 schema context를 기반으로 SQL editor 헤더의 AI Dialog에서 SQL 초안을 받을 수 있다.
+4. 사용자는 편집기 상단 `Nessie로 SQL 작성` Popover를 열고 선택 테이블과 schema context를 기반으로 SQL 초안을 받을 수 있다. 제출 후 입력 폼은 접히고 생성 상태와 적용 action이 Bubble로 표시된다.
 5. AI 제안은 자동 실행되지 않고 editor에 반영한 뒤 기존 read-only/preflight 검증을 통과해야 실행할 수 있다.
 6. 실행 결과는 고정 높이 결과 영역과 전체 보기 모달에서 표로 탐색할 수 있다.
-7. 실행 결과가 있으면 AI 차트 액션을 사용해 같은 결과 영역을 shadcn Chart 시각화로 전환할 수 있다.
-8. Preview 결과는 수집/처리 Job 초안으로 넘겨 Review에서 Lake Dataset materialize 요청을 만들 수 있다.
-9. Preview 결과는 Dashboard builder로 넘겨 SQL 결과 컬럼과 row sample을 직접 시각화할 수 있다.
-10. Dashboard builder 진입은 실제 dataset 또는 SQL preview 결과가 있을 때만 허용한다.
+7. 실행 결과가 있으면 왼쪽 `차트 생성하기`에서 Dashboard와 같은 위젯 설정으로 소스, 유형, 필드, 집계, 색상을 설정하고 오른쪽 `차트 보기`/`데이터 미리보기`에서 결과를 전환할 수 있다. 차트가 없을 때 `차트 보기`는 생성 안내를 표시한다.
+8. Preview 결과는 SQL 화면의 처리 Job 모달에서 기본 정보, 스케줄, 거버넌스, 저장 설정을 순서대로 완료한 뒤 Lake Dataset materialize Job으로 생성할 수 있다.
 
 ### Flow C. FastAPI live backend 연결
 
-1. 프론트는 기본적으로 live backend API를 호출하며, frontend-only QA는 `VITE_USE_MOCK_API=true`로 mock mode를 명시한다.
-2. API adapter는 `VITE_API_BASE_URL` 또는 기본 `http://localhost:8080` 기준으로 서버를 호출한다.
+1. 프론트는 fixture fallback 없이 live backend API만 호출한다.
+2. 배포에서는 같은 origin의 `/api`를 호출하고, 로컬 Vite만 FastAPI proxy를 사용한다.
 3. 서버 응답이 성공하면 프론트 상태를 서버 응답 기준으로 갱신한다.
 4. 실패하면 사용자에게 알리고 rollback 또는 retry 경로를 제공한다.
-5. Dashboard API는 FastAPI 응답을 우선하고, 이전 backend 호환을 위해 404 local/mock fallback을 사용한다.
+5. Dashboard API 실패는 오류와 retry 상태로 표시한다.
 
 ## 7) 성공 기준
 
@@ -127,7 +126,7 @@ Phase 0에서는 용어와 경계를 먼저 고정한다. `createdBy`, `owner`, 
 - conflict marker가 남아 있지 않다.
 - 문서에 깨진 문자가 남아 있지 않다.
 - Source/Schema/Create/Run/Catalog/SQL live 경로가 문서와 코드에서 같은 범위를 말한다.
-- Dashboard 영역은 FastAPI 연결 범위와 404 local/mock fallback, 아직 남은 운영 범위를 구분한다.
+- Dashboard 영역은 FastAPI 연결 범위와 실제 오류 상태, 아직 남은 운영 범위를 구분한다.
 
 ## 8) 4일 데모 마일스톤
 
@@ -145,7 +144,7 @@ Phase 0에서는 용어와 경계를 먼저 고정한다. `createdBy`, `owner`, 
 
 - 모든 source type의 production 연결
 - 대용량 처리 성능 검증
-- Kafka 실시간 스트리밍 완성
+- Kafka Continuous Ingestion V1 운영 확장: 지속 실행 Spark worker, checkpoint 재개, Catalog 등록, partition lag, bounded log, quarantine replay, staged compaction은 Issue #500에서 구현했다. autoscaling, alerting/SLA, 장기 로그 object storage, compaction 결과의 atomic reader 전환/retention, 다중 worker 운영은 후속 범위
 - Spark, Trino, Kafka, Airflow 전체 운영 완성
 - 완전한 인증/인가 시스템
 - Dashboard 권한 공유 실제 저장

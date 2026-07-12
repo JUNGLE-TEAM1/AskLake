@@ -9,7 +9,10 @@ from sqlalchemy.orm import Session
 from app.core.auth_context import get_actor_context
 from app.core.config import Settings
 from app.core.errors import ApiError
+from app.api.demo_hydration import require_local_demo_mode
+from app.api.harness import require_local_harness_mode
 from app.main import create_app
+from app import main as main_module
 from app.models.identity import AuthSessionModel, AuthUserModel
 from app.services import auth_service
 from app.services.auth_service import AuthService, verify_password
@@ -36,6 +39,55 @@ class ActorContextProductionTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 401)
         self.assertEqual(response.json()["error"]["code"], "UNAUTHORIZED")
+
+    def test_production_rejects_dashboard_assistant_without_a_session(self) -> None:
+        with patch("app.core.auth_context.settings", SimpleNamespace(allows_header_auth_fallback=False)):
+            response = TestClient(create_app()).post(
+                "/api/dashboards/assistant",
+                headers={"X-AskLake-User": "Spoofed Admin", "X-AskLake-Role": "admin"},
+                json={"mode": "dashboard_question", "prompt": "Summarize this dashboard"},
+            )
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.json()["error"]["code"], "UNAUTHORIZED")
+
+    def test_production_rejects_sql_transform_test_without_a_session(self) -> None:
+        with patch("app.core.auth_context.settings", SimpleNamespace(allows_header_auth_fallback=False)):
+            response = TestClient(create_app()).post(
+                "/api/sql/test",
+                headers={"X-AskLake-User": "Spoofed Admin", "X-AskLake-Role": "admin"},
+                json={
+                    "sources": [{"sourceDatasetId": "dataset-1", "columns": ["id"]}],
+                    "sql": "SELECT * FROM input",
+                },
+            )
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.json()["error"]["code"], "UNAUTHORIZED")
+
+    def test_production_disables_demo_and_harness_routes(self) -> None:
+        production = SimpleNamespace(allows_header_auth_fallback=False)
+        for module_path, guard in (
+            ("app.api.demo_hydration.settings", require_local_demo_mode),
+            ("app.api.harness.settings", require_local_harness_mode),
+        ):
+            with patch(module_path, production):
+                with self.assertRaises(ApiError) as raised:
+                    guard()
+            self.assertEqual(raised.exception.status_code, 404)
+
+    def test_production_does_not_allow_arbitrary_localhost_cors_origins(self) -> None:
+        production = SimpleNamespace(
+            allows_header_auth_fallback=False,
+            api_prefix="/api",
+            app_name="AskLake test",
+            backend_cors_origins=[],
+        )
+        with patch.object(main_module, "settings", production):
+            app = main_module.create_app()
+
+        cors = next(middleware for middleware in app.user_middleware if middleware.cls.__name__ == "CORSMiddleware")
+        self.assertIsNone(cors.kwargs["allow_origin_regex"])
 
     def test_production_rejects_invalid_session_even_with_admin_headers(self) -> None:
         with (
@@ -140,6 +192,31 @@ class BootstrapAdminTests(unittest.TestCase):
         self.assertEqual(admin.display_name, "Production Admin")
         self.assertTrue(verify_password("initial-password", admin.password_salt, admin.password_hash))
         self.assertFalse(verify_password("changed-password", admin.password_salt, admin.password_hash))
+
+    def test_secure_environment_rejects_existing_non_admin_bootstrap_identity(self) -> None:
+        salt = "viewer-salt"
+        self.db.add(AuthUserModel(
+            id="existing-viewer",
+            email="admin@example.com",
+            display_name="Existing Viewer",
+            password_salt=salt,
+            password_hash=auth_service.hash_password("viewer-password", salt),
+            role="viewer",
+            groups=["analytics"],
+            status="active",
+            title="Data Viewer",
+        ))
+        self.db.commit()
+        production_settings = SimpleNamespace(
+            allows_header_auth_fallback=False,
+            bootstrap_admin_email="admin@example.com",
+            bootstrap_admin_password="bootstrap-password",
+            bootstrap_admin_display_name="Production Admin",
+        )
+
+        with patch.object(auth_service, "settings", production_settings):
+            with self.assertRaisesRegex(RuntimeError, "non-active administrator"):
+                AuthService(self.db)
 
 
 if __name__ == "__main__":

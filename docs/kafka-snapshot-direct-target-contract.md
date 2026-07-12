@@ -4,7 +4,7 @@ Issue: #455
 
 ## 1. Status
 
-Phase 0 defined the target contract. Phase 1 implemented partition offset snapshots and post-write offset commit. Phase 2 writes the fixed snapshot range directly to the selected target and removes the default intermediate RAW landing output. Phase 3 executes the configured supported transform and quality rules before that direct write. Phase 4 persists failed Kafka Job runs with their captured snapshot and verifies offset-safe retry behavior. Phase 5 verifies independent multi-partition snapshot ranges and offset commits. Phase 6 verifies target-write retry idempotency when Catalog publication fails after the target object exists. The hardening pass persists snapshot ranges before consume, quarantines malformed messages, and restricts business mutation to SILVER.
+Phase 0 defined the target contract. Phase 1 implemented partition offset snapshots and post-write offset commit. Phase 2 writes the fixed snapshot range directly to the selected target and removes the default intermediate RAW landing output. Phase 3 executes the configured supported transform and quality rules before that direct write. Phase 4 persists failed Kafka Job runs with their captured snapshot and verifies offset-safe retry behavior. Phase 5 verifies independent multi-partition snapshot ranges and offset commits. Phase 6 verifies target-write retry idempotency when Catalog publication fails after the target object exists. The hardening pass persists snapshot ranges before consume, quarantines malformed messages, and keeps target layer selection independent from transform and quality execution.
 
 ## 2. Objective
 
@@ -15,7 +15,7 @@ Kafka topic
   -> capture partition offset snapshot
   -> consume the fixed range
   -> normalize review event shape and apply configured rules
-  -> write selected Bronze/Silver/Gold target once
+  -> write selected RAW/Bronze/Silver target once
   -> register Catalog run
   -> commit Kafka offsets
 ```
@@ -83,8 +83,8 @@ Empty snapshots are valid successful runs. They create no target data file and r
 
 - Existing Kafka RAW landing runs remain readable historical data; they are not migrated or deleted by this feature.
 - The existing landing-only endpoint is replaced or deprecated only after direct target verification passes. Its public compatibility decision is tracked in #455.
-- Kafka Connect, Flink, Spark Structured Streaming, long-term raw archive mode, and Gold join/aggregation execution are excluded.
-- A continuous always-on consumer is also excluded. The contract applies to manual and scheduler-triggered micro-batch Job runs.
+- Kafka Connect, Flink, long-term raw archive mode, and Gold join/aggregation execution are excluded.
+- This contract applies only to Snapshot Job runs. Spark Structured Streaming and an always-on consumer are defined separately as planned work in [Kafka Continuous Ingestion Contract](kafka-continuous-ingestion-contract.md); they do not change this Snapshot contract until implemented.
 
 ## 7. Verification Contract
 

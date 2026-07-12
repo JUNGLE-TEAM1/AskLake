@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
 from app.core.auth_context import ActorContext, get_actor_context
@@ -10,6 +10,7 @@ from app.repositories.sql_repository import SqlRepository
 from app.schemas.catalog import (
     CatalogDatasetListResponse,
     CatalogDatasetResponse,
+    CatalogDatasetRowsResponse,
     CreateDerivedDatasetRequest,
     CreateDerivedDatasetResponse,
     DeleteMaterializationRunResponse,
@@ -44,6 +45,17 @@ def get_dataset(
     actor: Annotated[ActorContext, Depends(get_actor_context)],
 ) -> CatalogDatasetResponse:
     return service.get_dataset(dataset_id, actor)
+
+
+@router.get("/datasets/{dataset_id}/rows", response_model=CatalogDatasetRowsResponse)
+def get_dataset_rows(
+    dataset_id: str,
+    service: Annotated[CatalogService, Depends(get_catalog_service)],
+    actor: Annotated[ActorContext, Depends(get_actor_context)],
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> CatalogDatasetRowsResponse:
+    return service.get_dataset_rows(dataset_id, limit=limit, offset=offset, actor=actor)
 
 
 @router.get("/datasets/{dataset_id}/lineage", response_model=LineageGraphResponse)

@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from fastapi import status
 
 from app.core.auth_context import ActorContext, require_any_permission, require_permission
+from app.core.materialization import active_materialization_runs
 from app.core.errors import ApiError
 from app.core.permission_metadata import permission_grants_from_roles, resource_permissions
 from app.repositories.catalog_repository import CatalogRepository, dataset_model_to_payload
@@ -12,6 +13,7 @@ from app.repositories.sql_repository import SqlRepository
 from app.schemas.catalog import (
     CatalogDatasetListResponse,
     CatalogDatasetResponse,
+    CatalogDatasetRowsResponse,
     CreateDerivedDatasetRequest,
     DeleteMaterializationRunResponse,
     LineageGraphColumn,
@@ -32,6 +34,7 @@ from app.services.resource_permission_service import (
     datasets_with_persisted_permission_grants,
     permissions_for_actor_with_governance,
 )
+from app.services.sql_service import read_duckdb_dataset_page
 
 
 class CatalogService:
@@ -111,6 +114,64 @@ class CatalogService:
         if lineage_payload is not None:
             return LineageGraphResponse.model_validate(lineage_payload)
         return build_fallback_lineage_graph(dataset)
+
+    def get_dataset_rows(
+        self,
+        dataset_id: str,
+        *,
+        limit: int,
+        offset: int,
+        actor: ActorContext | None = None,
+    ) -> CatalogDatasetRowsResponse:
+        actor_context = actor or ActorContext()
+        dataset = self.get_dataset(dataset_id, actor_context)
+        api_path = f"/api/catalog/datasets/{dataset_id}/rows"
+        require_governed_access(
+            self.repository.db,
+            actor_context,
+            action="query",
+            api_path=api_path,
+            http_method="GET",
+            metadata={"owner": dataset.owner, "limit": limit, "offset": offset},
+            resource_id=dataset.id,
+            resource_name=dataset.name,
+            resource_type="dataset",
+        )
+        try:
+            require_permission(
+                actor_context,
+                "query",
+                owner=dataset.owner,
+                grants=dataset.permission_grants,
+                resource_label="dataset",
+            )
+        except ApiError as exc:
+            record_forbidden_dataset_event(
+                self.repository.db,
+                actor_context,
+                action="dataset.rows.forbidden",
+                dataset=dataset,
+                api_path=api_path,
+                http_method="GET",
+                metadata={"limit": limit, "offset": offset},
+                status_code=exc.status_code,
+            )
+            raise
+
+        result = read_duckdb_dataset_page(dataset, limit=limit, offset=offset)
+        rows = result["rows"]
+        row_count = result["row_count"]
+        return CatalogDatasetRowsResponse(
+            columns=result["columns"],
+            dataset_id=dataset.id,
+            dataset_name=dataset.name,
+            has_next=offset + len(rows) < row_count,
+            limit=limit,
+            offset=offset,
+            returned_rows=len(rows),
+            row_count=row_count,
+            rows=rows,
+        )
 
     def delete_materialization_run(
         self,
@@ -396,11 +457,13 @@ def build_derived_dataset_payload(
         {
             "createdAt": current_utc_timestamp(),
             "jobId": "sql-derived",
+            "materializationMode": "snapshot",
             "rowCount": materialized_result.row_count,
             "runId": request.source_run_id,
             "sourceKind": "sql",
             "sourceLabel": f"SQL Materialize · {sql_result.run_id}",
             "status": "success",
+            "storageFormat": materialized_result.storage_format,
             "storageLocation": materialized_result.storage_location,
             "storageSizeBytes": materialized_result.storage_size_bytes,
         },
@@ -670,11 +733,15 @@ def recalculate_dataset_payload_from_runs(payload: dict[str, object]) -> dict[st
     next_payload["size"] = format_storage_size(aggregate["storageSizeBytes"])
     next_payload["sourceRunId"] = aggregate["latestRunId"]
     next_payload["storageSizeBytes"] = aggregate["storageSizeBytes"]
+    active_runs = active_materialization_runs(materialization_runs)
+    latest_run = active_runs[0] if active_runs else None
+    next_payload["storageFormat"] = latest_run.get("storageFormat") if latest_run else None
+    next_payload["storageLocation"] = latest_run.get("storageLocation") if latest_run else None
     return next_payload
 
 
 def aggregate_materialization_runs(runs: list[dict[str, object]]) -> dict[str, object]:
-    active_runs = [run for run in runs if run.get("status") == "success"]
+    active_runs = active_materialization_runs(runs)
     latest_run = active_runs[0] if active_runs else None
     return {
         "latestRunId": latest_run.get("runId") if latest_run else None,

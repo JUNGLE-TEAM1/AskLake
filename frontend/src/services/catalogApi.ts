@@ -11,6 +11,10 @@ export async function deleteDatasetMaterializationRun(datasetId: string, runId: 
     `/api/catalog/datasets/${encodeURIComponent(datasetId)}/materialization-runs/${encodeURIComponent(runId)}`,
   );
 }
+export async function getCatalogDataset(datasetId: string): Promise<CatalogDataset> {
+  return apiClient.get<CatalogDataset>(`/api/catalog/datasets/${encodeURIComponent(datasetId)}`);
+}
+
 export async function getCatalogDatasetRows(datasetId: string, options: { limit?: number; offset?: number } = {}): Promise<CatalogDatasetRowsResponse> {
   const params = new URLSearchParams();
   if (options.limit !== undefined) params.set("limit", String(options.limit));

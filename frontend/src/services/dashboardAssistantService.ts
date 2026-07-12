@@ -100,6 +100,7 @@ function normalizeEndpoint(path: string) {
 async function postAbsoluteUrl(endpoint: string, body: DashboardAssistantRequest) {
   const response = await fetch(endpoint, {
     body: JSON.stringify(body),
+    credentials: "include",
     headers: {
       Accept: "application/json",
       "Content-Type": "application/json",

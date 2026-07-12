@@ -63,8 +63,7 @@ MSYS_NO_PATHCONV=1 docker run --rm \
 
 echo "Building frontend deploy image..."
 docker build \
-  --build-arg VITE_API_BASE_URL="${VITE_API_BASE_URL:-http://localhost:8080}" \
-  --build-arg VITE_USE_MOCK_API="${VITE_USE_MOCK_API:-false}" \
+  --build-arg VITE_API_BASE_URL="${VITE_API_BASE_URL:-}" \
   --build-arg VITE_DASHBOARD_ASSISTANT_API_PATH="${VITE_DASHBOARD_ASSISTANT_API_PATH:-/api/dashboards/assistant}" \
   -t "$FRONTEND_IMAGE" frontend
 

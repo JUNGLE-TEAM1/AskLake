@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import {
@@ -31,6 +31,7 @@ import {
   History,
   Info,
   ListChecks,
+  Pause,
   Pencil,
   Play,
   Plus,
@@ -50,6 +51,11 @@ import {
   X,
   Zap,
 } from "lucide-react";
+import { Field, PageTitle } from "../../components/common";
+import { getCatalogDataset } from "../../services/catalogApi";
+import { compactContinuousTarget, getContinuousMaintenanceRuns, getContinuousQuarantine, getContinuousSessionBatches, getContinuousSessions, getContinuousWorkerLogs, replayContinuousQuarantine } from "../../services/pipelineApi";
+import type { ContinuousMaintenanceRun, ContinuousQuarantineRecord, KafkaContinuousBatch, KafkaContinuousSession, KafkaContinuousSessionStatus } from "../../types";
+import { canRunJobCommand, permissionDeniedMessage } from "../../utils/permissions";
 import { ActionGroup } from "@/components/ui/action-group";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -64,6 +70,7 @@ import {
   DataTableStackedCell,
 } from "@/components/ui/data-table-stacked-cell";
 import { DetailTableSection } from "@/components/ui/detail-table-section";
+import { Dialog, DialogContent, DialogDescription, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { DialogShell } from "@/components/ui/dialog-shell";
 import {
   DropdownMenu,
@@ -192,6 +199,21 @@ function hasSameStatuses(first?: JobStatus[], second?: JobStatus[]) {
   return first.every((status) => second.includes(status));
 }
 
+function isContinuousKafkaJob(job: JobRowData) {
+  return job.executionMode === "continuous";
+}
+
+function continuousRuntimeLabel(job: JobRowData) {
+  const runtime = job.continuousRuntime;
+  if (!runtime) return "Continuous 설정 대기";
+  return `${runtime.status} · ${runtime.storedCount.toLocaleString()}건 적재`;
+}
+
+function jobActionDisabled(job: JobRowData, action: JobListActionKind | JobCommand) {
+  if (action === "detail" || action === "runs") return false;
+  return !canRunJobCommand(job, action);
+}
+
 function getJobsQueryPath(query: JobListQuery) {
   const searchParams = new URLSearchParams();
   query.statuses?.forEach((status) => searchParams.append("status", status));
@@ -253,6 +275,82 @@ function formatJobSchedule(schedule: string) {
     : schedule;
 }
 
+const weeklyScheduleDayIndex: Record<string, number> = {
+  일: 0,
+  월: 1,
+  화: 2,
+  수: 3,
+  목: 4,
+  금: 5,
+  토: 6,
+};
+
+function getNextScheduledRunDate(job: JobRowData, now = new Date()) {
+  if (job.status === "stopped" || getJobScheduleKind(job) === "none" || getJobScheduleKind(job) === "realtime") return null;
+
+  const persistedCandidates = [job.schedulePolicy?.nextRunUtc, job.nextRun];
+  for (const value of persistedCandidates) {
+    if (!value) continue;
+    const timestamp = Date.parse(value);
+    if (!Number.isNaN(timestamp) && timestamp > now.getTime()) return new Date(timestamp);
+  }
+
+  const schedule = job.schedule.trim();
+  const dailyMatch = schedule.match(/매일\s*(\d{1,2}):(\d{2})/);
+  if (dailyMatch) {
+    const candidate = new Date(now);
+    candidate.setHours(Number(dailyMatch[1]), Number(dailyMatch[2]), 0, 0);
+    if (candidate <= now) candidate.setDate(candidate.getDate() + 1);
+    return candidate;
+  }
+
+  const weeklyMatch = schedule.match(/매주\s*([월화수목금토일])요일\s*(\d{1,2}):(\d{2})/);
+  if (weeklyMatch) {
+    const candidate = new Date(now);
+    candidate.setHours(Number(weeklyMatch[2]), Number(weeklyMatch[3]), 0, 0);
+    let daysUntilRun = (weeklyScheduleDayIndex[weeklyMatch[1]] - now.getDay() + 7) % 7;
+    if (daysUntilRun === 0 && candidate <= now) daysUntilRun = 7;
+    candidate.setDate(candidate.getDate() + daysUntilRun);
+    return candidate;
+  }
+
+  const monthlyMatch = schedule.match(/매월\s*(\d{1,2})일\s*(\d{1,2}):(\d{2})/);
+  if (monthlyMatch) {
+    const targetDay = Number(monthlyMatch[1]);
+    const buildMonthlyCandidate = (year: number, month: number) => {
+      const lastDay = new Date(year, month + 1, 0).getDate();
+      return new Date(year, month, Math.min(targetDay, lastDay), Number(monthlyMatch[2]), Number(monthlyMatch[3]), 0, 0);
+    };
+    let candidate = buildMonthlyCandidate(now.getFullYear(), now.getMonth());
+    if (candidate <= now) candidate = buildMonthlyCandidate(now.getFullYear(), now.getMonth() + 1);
+    return candidate;
+  }
+
+  const intervalMinuteMatch = schedule.match(/(\d{1,2})분마다/);
+  if (intervalMinuteMatch) {
+    const interval = Math.max(1, Math.min(59, Number(intervalMinuteMatch[1])));
+    const candidate = new Date(now);
+    candidate.setSeconds(0, 0);
+    candidate.setMinutes((Math.floor(now.getMinutes() / interval) + 1) * interval);
+    return candidate;
+  }
+
+  const hourlyMinuteMatch = schedule.match(/매시간\s*(\d{1,2})분/);
+  if (hourlyMinuteMatch) {
+    const candidate = new Date(now);
+    candidate.setMinutes(Number(hourlyMinuteMatch[1]), 0, 0);
+    if (candidate <= now) candidate.setHours(candidate.getHours() + 1);
+    return candidate;
+  }
+
+  return null;
+}
+
+function formatNextScheduledRun(job: JobRowData) {
+  const nextRun = getNextScheduledRunDate(job);
+  return nextRun ? formatCompactDateTime(nextRun.toISOString()) : "-";
+}
+
 function matchesJobListQuery(job: JobRowData, query: JobListQuery) {
   const statuses = new Set(query.statuses ?? []);
   return (
@@ -272,7 +370,6 @@ export function JobsLandingPage({
   onCreate,
   onDetail,
   onFilter,
-  onRuns,
 }: {
   jobListFacets: JobListFacets;
   jobsLoading: boolean;
@@ -282,11 +379,11 @@ export function JobsLandingPage({
   onCreate: () => void;
   onDetail: (job: JobRowData) => void;
   onFilter: (query: JobListQuery) => Promise<void> | void;
-  onRuns: (job: JobRowData) => void;
 }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [jobQuery, setJobQuery] = useState<JobListQuery>({});
   const [excludedJobIds, setExcludedJobIds] = useState<Set<string>>(() => new Set());
+  const [latestRunModal, setLatestRunModal] = useState<{ job: JobRowData; run: JobRunSummary } | null>(null);
   const metrics = getJobMetrics(jobListFacets);
   const failureFilterActive = jobQuery.lastRunOutcome === "failed";
   const failedRunCount = jobListFacets.latestRunOutcomeCounts.failed;
@@ -312,6 +409,13 @@ export function JobsLandingPage({
   const clearSearch = () => {
     setSearchQuery("");
     onAction("etl.jobs.search_reset", "/api/etl/jobs", "search");
+  };
+
+  const openLatestRunTimeline = (job: JobRowData) => {
+    const latestRun = job.runHistory?.[0];
+    if (!latestRun) return;
+    onAction("etl.run.detail_opened", `/api/etl/jobs/${job.id}/runs/${latestRun.runId}`, latestRun.runId);
+    setLatestRunModal({ job, run: latestRun });
   };
 
   const toggleFailureFilter = () => {
@@ -383,7 +487,7 @@ export function JobsLandingPage({
           onCommand={handleJobCommand}
           onCreate={onCreate}
           onDetail={onDetail}
-          onRuns={onRuns}
+          onRuns={openLatestRunTimeline}
           toolbar={<JobsToolbar searchQuery={searchQuery} onSearchQueryChange={setSearchQuery} />}
           statusFilters={jobQuery.statuses}
           scheduleKind={jobQuery.scheduleKind}
@@ -396,6 +500,14 @@ export function JobsLandingPage({
           title="작업 목록"
         />
       </div>
+      {latestRunModal && (
+        <RunDagModal
+          job={latestRunModal.job}
+          onAction={onAction}
+          onClose={() => setLatestRunModal(null)}
+          run={latestRunModal.run}
+        />
+      )}
     </div>
   );
 }
@@ -712,8 +824,12 @@ function JobsTableSection({
       onDetail(job);
       return;
     }
+    if (action === "runs") {
+      onRuns(job);
+      return;
+    }
     onCommand(job, action);
-  }, [onCommand, onDetail]);
+  }, [onCommand, onDetail, onRuns]);
   const columns = useMemo<ColumnDef<JobsTableRow>[]>(() => [
     {
       accessorFn: (row) => row.job.status,
@@ -737,11 +853,25 @@ function JobsTableSection({
       accessorFn: (row) => row.job.target,
       cell: ({ row }) => {
         const { job } = row.original;
+        const { path: sourcePath, type: sourceType } = getJobListSourceDisplay(job);
 
         return (
           <DataTableStackedCell className="gap-1.5">
             <DataTableCellPrimary className="text-xl leading-7">{job.target}</DataTableCellPrimary>
-            <DataTableCellSecondary className="text-base" title={job.source}>{job.source}</DataTableCellSecondary>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div className="flex min-w-0 cursor-help items-center gap-1.5 text-sm text-slate-500">
+                  <Database aria-hidden="true" className="size-3.5 shrink-0 text-slate-400" />
+                  <span className="shrink-0 font-semibold">{sourceType}</span>
+                </div>
+              </TooltipTrigger>
+              <TooltipContent className="max-w-[480px]">
+                <div className="grid gap-1">
+                  <strong className="font-semibold">{sourceType}</strong>
+                  <span className="break-all text-slate-200">{sourcePath}</span>
+                </div>
+              </TooltipContent>
+            </Tooltip>
           </DataTableStackedCell>
         );
       },
@@ -754,7 +884,7 @@ function JobsTableSection({
     },
     {
       accessorFn: (row) => row.job.schedule,
-      cell: ({ row }) => <DataTableCellPrimary className="text-lg">{row.original.job.schedule}</DataTableCellPrimary>,
+      cell: ({ row }) => <DataTableCellPrimary className="text-lg">{formatJobSchedule(row.original.job.schedule)}</DataTableCellPrimary>,
       header: () => onScheduleKindChange ? (
         <ScheduleKindFilter
           value={scheduleKind}
@@ -769,10 +899,10 @@ function JobsTableSection({
       } satisfies DataTableColumnMeta,
     },
     {
-      accessorFn: (row) => row.job.nextRun,
+      accessorFn: (row) => getNextScheduledRunDate(row.job)?.getTime() ?? Number.POSITIVE_INFINITY,
       cell: ({ row }) => (
         <div className="flex min-h-[76px] items-center">
-          <DataTableCellPrimary className="text-lg leading-7">{formatCompactDateTime(row.original.job.nextRun)}</DataTableCellPrimary>
+          <DataTableCellPrimary className="text-lg leading-7">{formatNextScheduledRun(row.original.job)}</DataTableCellPrimary>
         </div>
       ),
       header: "다음 예정 실행",
@@ -786,6 +916,7 @@ function JobsTableSection({
       accessorFn: (row) => row.job.lastRun,
       cell: ({ row }) => {
         const { job } = row.original;
+        const latestRun = job.runHistory?.[0];
 
         return (
           <DataTableStackedCell className="relative min-h-[76px] gap-0">
@@ -822,8 +953,16 @@ function JobsTableSection({
                 </Tooltip>
               )}
             </div>
-            <Button className="absolute left-0 top-[calc(50%+18px)] h-auto px-0 py-0 text-base" size="sm" type="button" variant="link" onClick={() => onRuns(job)}>
-              실행 이력
+            <Button
+              className="absolute left-0 top-[calc(50%+18px)] h-auto px-0 py-0 text-base"
+              disabled={!latestRun}
+              size="sm"
+              title={latestRun ? "최근 실행 단계 보기" : "아직 실행 이력이 없습니다."}
+              type="button"
+              variant="link"
+              onClick={() => onRuns(job)}
+            >
+              실행 기록 보기
             </Button>
           </DataTableStackedCell>
         );
@@ -911,7 +1050,7 @@ function JobsTableSection({
   );
 }
 
-type JobListActionKind = Exclude<JobCommand, "delete"> | "detail";
+type JobListActionKind = Exclude<JobCommand, "delete"> | "detail" | "runs";
 
 type JobListAction = {
   className: string;
@@ -926,6 +1065,33 @@ function getJobListActions(job: JobRowData): JobListAction[] {
   const actions: JobListAction[] = [
     { className: "job-action-button", kind: "detail", label: "작업 정보" },
   ];
+
+  if (isContinuousKafkaJob(job)) {
+    const runtimeStatus = job.continuousRuntime?.status ?? "stopped";
+    if (runtimeStatus === "stopping") {
+      return [...actions, { className: "job-action-button primary soft", kind: "runs", label: "중지 중" }];
+    }
+    if (["starting", "running"].includes(runtimeStatus)) {
+      return [
+        ...actions,
+        { className: "job-action-button primary soft", kind: "runs", label: "런타임" },
+        { className: "job-action-button warning", kind: "pauseContinuous", label: "일시정지" },
+        { className: "job-action-button danger", kind: "stopContinuous", label: "중지" },
+      ];
+    }
+    if (runtimeStatus === "pausing") {
+      return [...actions, { className: "job-action-button primary soft", kind: "runs", label: "일시정지 중" }, { className: "job-action-button danger", kind: "stopContinuous", label: "중지" }];
+    }
+    if (runtimeStatus === "paused") {
+      return [
+        ...actions,
+        { className: "job-action-button primary soft", kind: "runs", label: "런타임" },
+        { className: "job-action-button realtime-resume", kind: "resumeContinuous", label: "스트림 재개" },
+        { className: "job-action-button danger", kind: "stopContinuous", label: "중지" },
+      ];
+    }
+    return [...actions, { className: "job-action-button primary soft", kind: "startContinuous", label: "스트림 시작" }, { className: "job-action-button", kind: "edit", label: "수정" }];
+  }
 
   if (job.status === "running") {
     if (isRealtimeJob(job)) {
@@ -1034,6 +1200,29 @@ type JobDetailAction = {
 };
 
 function getJobDetailActions(job: JobRowData): JobDetailAction[] {
+  if (isContinuousKafkaJob(job)) {
+    const runtimeStatus = job.continuousRuntime?.status ?? "stopped";
+    if (runtimeStatus === "stopping") {
+      return [];
+    }
+    if (["starting", "running"].includes(runtimeStatus)) {
+      return [
+        { className: "job-action-button warning", kind: "pauseContinuous", label: "스트림 일시정지" },
+        { className: "job-action-button danger", kind: "stopContinuous", label: "스트림 중지" },
+      ];
+    }
+    if (runtimeStatus === "pausing") {
+      return [{ className: "job-action-button danger", kind: "stopContinuous", label: "스트림 중지" }];
+    }
+    if (runtimeStatus === "paused") {
+      return [
+        { className: "job-action-button realtime-resume", kind: "resumeContinuous", label: "스트림 재개" },
+        { className: "job-action-button danger", kind: "stopContinuous", label: "스트림 중지" },
+        { className: "job-action-button", kind: "edit", label: "수정" },
+      ];
+    }
+    return [{ className: "job-action-button primary", kind: "startContinuous", label: "스트림 시작" }, { className: "job-action-button", kind: "edit", label: "수정" }];
+  }
   if (job.status === "running") {
     if (isRealtimeJob(job)) {
       return [{ className: "job-action-button danger realtime-stop", kind: "stopSchedule", label: "실행 중지" }];
@@ -1088,6 +1277,9 @@ function JobDetailActionIcon({ action, job }: { action: JobDetailAction; job: Jo
   if (action.kind === "edit") return <Pencil aria-hidden="true" />;
   if (action.kind === "delete") return <Trash2 aria-hidden="true" />;
   if (action.kind === "cancelRun") return <X aria-hidden="true" />;
+  if (action.kind === "pauseContinuous") return <Pause aria-hidden="true" />;
+  if (action.kind === "stopContinuous") return <Square aria-hidden="true" />;
+  if (action.kind === "startContinuous" || action.kind === "resumeContinuous") return <Play aria-hidden="true" />;
   if (action.kind === "stopSchedule") return isRealtimeJob(job) ? <Square aria-hidden="true" /> : <CalendarOff aria-hidden="true" />;
   if (action.kind === "resumeSchedule") return <Calendar aria-hidden="true" />;
   if (action.kind === "retry") return <RefreshCw aria-hidden="true" />;
@@ -1109,6 +1301,9 @@ type JobsTableRow = {
 function JobListActionIcon({ action }: { action: JobListAction }) {
   if (action.kind === "detail") return <Info aria-hidden="true" size={15} />;
   if (action.kind === "edit") return <Pencil aria-hidden="true" size={15} />;
+  if (action.kind === "pauseContinuous") return <Pause aria-hidden="true" size={15} />;
+  if (action.kind === "stopContinuous") return <Square aria-hidden="true" size={15} />;
+  if (action.kind === "startContinuous" || action.kind === "resumeContinuous") return <Play aria-hidden="true" size={15} />;
   if (action.className.includes("realtime-stop")) return <Square aria-hidden="true" size={15} />;
   if (action.className.includes("realtime-start")) return <Play aria-hidden="true" size={15} />;
   if (action.className.includes("realtime-resume")) return <Play aria-hidden="true" size={15} />;
@@ -1237,22 +1432,27 @@ function truncateText(value: string, maxLength: number) {
 }
 
 function StatusPill({ job }: { job: JobRowData }) {
-  const showScheduledBatchProgress = job.status === "running"
-    && hasAutomaticSchedule(job)
-    && !isRealtimeJob(job)
-    && job.progress !== undefined;
+  const showExecutionProgress = job.status === "running" && job.progress !== undefined;
 
   return (
-    <div className={`grid h-full min-w-[184px] content-center justify-items-center gap-3 px-3 py-3 ${showScheduledBatchProgress ? "min-h-[116px]" : "min-h-[100px]"}`}>
+    <div className={cn(
+      "grid h-full min-w-[184px] justify-items-center px-3",
+      showExecutionProgress
+        ? "min-h-[132px] grid-rows-[1fr_auto] gap-2 pb-3 pt-5"
+        : "min-h-[100px] content-center py-3",
+    )}>
       <StatusBadge
-        className="min-w-[160px] justify-center gap-2 whitespace-nowrap rounded-md px-4 py-2.5 text-base font-semibold"
+        className={cn(
+          "min-w-[160px] justify-center gap-2 whitespace-nowrap rounded-md px-4 py-2.5 text-base font-semibold",
+          showExecutionProgress && "self-end translate-y-0.5",
+        )}
         tone={getJobStatusTone(job.status)}
       >
         {job.status === "running" && <Spinner className="size-4" aria-label="실행 중" />}
         {jobStatusMeta[job.status].label}
       </StatusBadge>
-      {showScheduledBatchProgress && job.progress ? (
-        <div className="w-full text-left">
+      {showExecutionProgress && job.progress ? (
+        <div className="w-full self-end text-left">
           <Progress
             aria-label={`${job.progress.label} ${job.progress.value}%`}
             className="w-full"
@@ -1422,7 +1622,7 @@ const hiddenJobDetailFieldLabels = new Set([
 
 const jobSourceTypeLabelMap: Record<string, string> = {
   "Data Lake": "데이터 레이크",
-  "File / S3": "파일 / MinIO",
+  "File / S3": "파일 / 오브젝트 스토리지",
   "Stream / Kafka": "스트림 / Kafka",
 };
 
@@ -1436,6 +1636,131 @@ function isVisibleJobDetailField(label: string) {
 
 function getJobSourceTypeLabel(value: string) {
   return jobSourceTypeLabelMap[value] ?? value;
+}
+
+type JobEndpointItem = {
+  label: string;
+  value: string;
+};
+
+function sourceConfigValue(job: JobRowData, labels: string[]) {
+  const values = new Map(job.sourceConfig ?? []);
+  for (const label of labels) {
+    const value = values.get(label)?.trim();
+    if (value) return value;
+  }
+  return "";
+}
+
+function inferSourceFileFormat(job: JobRowData, sourcePath: string) {
+  const configuredFormat = sourceConfigValue(job, ["File Type", "Format"]);
+  if (configuredFormat && configuredFormat.toLowerCase() !== "auto") return configuredFormat;
+
+  const normalizedPath = sourcePath.split(/[?#]/)[0].toLowerCase();
+  if (normalizedPath.endsWith(".parquet")) return "Parquet";
+  if (normalizedPath.endsWith(".csv")) return "CSV";
+  if (normalizedPath.endsWith(".jsonl") || normalizedPath.endsWith(".ndjson")) return "JSONL";
+  if (normalizedPath.endsWith(".json")) return "JSON";
+  if (normalizedPath.endsWith(".avro")) return "Avro";
+  return configuredFormat;
+}
+
+function inferObjectSourceScope(sourcePath: string) {
+  if (/[*?{}]/.test(sourcePath)) return "경로 패턴";
+  const normalizedPath = sourcePath.split(/[?#]/)[0].replace(/\/+$/, "").toLowerCase();
+  if (/\.(avro|csv|json|jsonl|ndjson|orc|parquet)$/.test(normalizedPath)) return "단일 파일";
+  return "폴더 / 프리픽스";
+}
+
+function inferSourceReadMode(job: JobRowData, sourceType: string) {
+  const configuredMode = sourceConfigValue(job, ["Read Mode", "읽기 방식"]);
+  if (configuredMode) return configuredMode;
+  if (sourceType.includes("kafka") || sourceType.includes("stream")) return "연속 수집";
+  if (sourceConfigValue(job, ["Incremental Key", "Offset Policy", "Offset"])) return "증분 수집";
+  return "전체 스캔";
+}
+
+function compactSourceConfigItems(job: JobRowData, rawSourceType: string, sourcePath: string): JobEndpointItem[] {
+  const sourceType = rawSourceType.toLowerCase();
+  const item = (label: string, value: string): JobEndpointItem | null => value ? { label, value } : null;
+  const compact = (items: Array<JobEndpointItem | null>) => items.filter((value): value is JobEndpointItem => Boolean(value));
+
+  if (sourceType.includes("file") || sourceType.includes("s3") || sourceType.includes("minio")) {
+    const fileFormat = inferSourceFileFormat(job, sourcePath);
+    const isCsv = fileFormat.toLowerCase() === "csv";
+    return compact([
+      item("소스 경로", sourcePath),
+      item("파일 형식", fileFormat),
+      item("읽기 범위", inferObjectSourceScope(sourcePath)),
+      item("읽기 방식", inferSourceReadMode(job, sourceType)),
+      isCsv ? item("구분자", sourceConfigValue(job, ["Delimiter"])) : null,
+      isCsv ? item("헤더 처리", sourceConfigValue(job, ["Header"])) : null,
+    ]);
+  }
+
+  if (sourceType.includes("kafka") || sourceType.includes("stream")) {
+    return compact([
+      item("브로커 / 엔드포인트", sourceConfigValue(job, ["Broker / Endpoint", "Bootstrap Server"])),
+      item("토픽", sourceConfigValue(job, ["TOPIC / QUEUE NAME", "Topic"])),
+      item("컨슈머 그룹", sourceConfigValue(job, ["CONSUMER GROUP ID", "Consumer Group"])),
+      item("메시지 형식", sourceConfigValue(job, ["Message Format", "Format"])),
+      item("시작 오프셋", sourceConfigValue(job, ["Offset Policy", "Offset"])),
+      item("수집 방식", inferSourceReadMode(job, sourceType)),
+    ]);
+  }
+
+  if (sourceType.includes("postgres") || sourceType.includes("mysql") || sourceType.includes("database")) {
+    return compact([
+      item("호스트", sourceConfigValue(job, ["Host", "Endpoint / Host"])),
+      item("데이터베이스", sourceConfigValue(job, ["Database", "Database Name"])),
+      item("테이블", sourceConfigValue(job, ["Table", "DATASET OR TABLE SELECTOR"])),
+      item("읽기 방식", inferSourceReadMode(job, sourceType)),
+      item("증분 기준 키", sourceConfigValue(job, ["Incremental Key"])),
+    ]);
+  }
+
+  if (sourceType.includes("mongo")) {
+    return compact([
+      item("엔드포인트 / 호스트", sourceConfigValue(job, ["Endpoint / Host", "Host", "Endpoint"])),
+      item("데이터베이스", sourceConfigValue(job, ["Database Name", "Database"])),
+      item("컬렉션", sourceConfigValue(job, ["Collection"])),
+      item("읽기 방식", inferSourceReadMode(job, sourceType)),
+      item("증분 기준 키", sourceConfigValue(job, ["Incremental Key"])),
+    ]);
+  }
+
+  if (sourceType.includes("sql result")) {
+    return compact([
+      item("소스 데이터셋", sourceConfigValue(job, ["Source Dataset"])),
+      item("SQL 실행 ID", sourceConfigValue(job, ["SQL Run ID"])),
+    ]);
+  }
+
+  const fallbackItems = (job.sourceConfig ?? [])
+    .filter(([label, value]) => isVisibleJobDetailField(label) && value.trim())
+    .slice(0, 4)
+    .map(([label, value]) => ({ label: getJobDetailFieldLabel(label), value }));
+  return fallbackItems.length > 0 ? fallbackItems : [{ label: "소스 경로", value: sourcePath }];
+}
+
+function getJobListSourceDisplay(job: JobRowData) {
+  const sourceParts = job.source
+    .split(" / ")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const rawType = job.sourceType?.trim()
+    || (sourceParts[0] === "File" && sourceParts[1] === "S3" ? "File / S3" : sourceParts[0])
+    || "소스";
+  const inferredPath = rawType === "File / S3" && sourceParts[0] === "File" && sourceParts[1] === "S3"
+    ? sourceParts.slice(2).join(" / ")
+    : sourceParts.slice(1).join(" / ");
+
+  const path = job.sourceLabel?.trim() || inferredPath || job.source;
+
+  return {
+    path,
+    type: getJobSourceTypeLabel(rawType),
+  };
 }
 
 const ruleActionLabelMap: Record<string, string> = {
@@ -1547,41 +1872,90 @@ const outputSchemaColumns: ColumnDef<OutputSchemaRow>[] = [
   },
 ];
 
+function TransformRuleSettingsAction({ rule }: { rule: TransformRuleRow }) {
+  return (
+    <Dialog>
+      <DialogTrigger className="inline-flex h-auto items-center justify-center whitespace-nowrap p-0 text-base font-semibold text-blue-600 underline-offset-4 transition-colors hover:text-blue-700 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2">
+        설정 보기
+      </DialogTrigger>
+      <DialogContent
+        closeLabel="닫기"
+        className="max-h-[calc(100vh-2rem)] w-[min(calc(100vw-2rem),48rem)] gap-0 overflow-hidden p-0"
+      >
+        <header className="grid min-w-0 gap-1.5 border-b border-slate-200 px-6 py-5 pr-16">
+          <span className="text-xs font-black uppercase tracking-normal text-blue-600">변환 규칙 {rule.index}</span>
+          <DialogTitle className="text-xl font-extrabold leading-tight">{rule.label}</DialogTitle>
+          <DialogDescription>{rule.operation}</DialogDescription>
+        </header>
+        <div className="grid min-h-0 gap-5 overflow-y-auto px-6 py-5">
+          <KeyValueList
+            className={detailKeyValueListClassName}
+            items={[
+              { label: "입력", value: rule.input },
+              { label: "출력", value: rule.output },
+              { label: "오류 처리", value: rule.onError },
+              { label: "상태", value: rule.enabled ? "활성" : "비활성" },
+            ]}
+          />
+          <section className="grid min-w-0 gap-3">
+            <h3 className="text-base font-extrabold text-slate-950">설정</h3>
+            <pre className="max-h-[320px] min-w-0 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-slate-950 p-5 font-mono text-sm leading-6 text-slate-100">
+              {rule.params || "설정 없음"}
+            </pre>
+          </section>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 const transformRuleColumns: ColumnDef<TransformRuleRow>[] = [
   {
     accessorKey: "index",
     header: "순서",
-    meta: { align: "center", widthClassName: "w-[80px]" } satisfies DataTableColumnMeta,
+    meta: { align: "center", widthClassName: "w-[64px]" } satisfies DataTableColumnMeta,
   },
   {
     accessorKey: "label",
     header: "변환 규칙",
     cell: ({ row }) => (
-      <DataTableStackedCell className="gap-1">
+      <DataTableStackedCell className="min-w-[170px] gap-1">
         <DataTableCellPrimary className="text-base font-bold">{row.original.label}</DataTableCellPrimary>
         <DataTableCellSecondary className="text-[13px] font-semibold">{row.original.operation}</DataTableCellSecondary>
       </DataTableStackedCell>
     ),
+    meta: { widthClassName: "w-[190px]" } satisfies DataTableColumnMeta,
   },
   {
     id: "mapping",
     header: "입력 → 출력",
-    cell: ({ row }) => <DataTableCellPrimary className="text-base font-semibold">{row.original.input} → {row.original.output}</DataTableCellPrimary>,
-  },
-  {
-    accessorKey: "params",
-    header: "설정",
-    cell: ({ row }) => <DataTableCellPrimary className="text-base font-medium text-slate-700">{row.original.params || "-"}</DataTableCellPrimary>,
+    cell: ({ row }) => {
+      const mapping = `${row.original.input} → ${row.original.output}`;
+      return (
+        <DataTableCellPrimary className="block max-w-[260px] truncate text-base font-semibold" title={mapping}>
+          {mapping}
+        </DataTableCellPrimary>
+      );
+    },
+    meta: { widthClassName: "w-[280px]" } satisfies DataTableColumnMeta,
   },
   {
     accessorKey: "onError",
     header: "오류 처리",
-    cell: ({ row }) => <DataTableCellPrimary className="text-base font-medium text-slate-700">{row.original.onError}</DataTableCellPrimary>,
+    cell: ({ row }) => <DataTableCellPrimary className="whitespace-nowrap text-base font-medium text-slate-700">{row.original.onError}</DataTableCellPrimary>,
+    meta: { widthClassName: "w-[140px]" } satisfies DataTableColumnMeta,
   },
   {
     accessorKey: "enabled",
     header: "상태",
     cell: ({ row }) => <Badge shape="compact" size="lg" variant={row.original.enabled ? "success" : "muted"}>{row.original.enabled ? "활성" : "비활성"}</Badge>,
+    meta: { widthClassName: "w-[96px]" } satisfies DataTableColumnMeta,
+  },
+  {
+    id: "settings",
+    header: "상세",
+    cell: ({ row }) => <TransformRuleSettingsAction rule={row.original} />,
+    meta: { align: "center", widthClassName: "w-[112px]" } satisfies DataTableColumnMeta,
   },
 ];
 
@@ -1802,6 +2176,14 @@ export function JobDetailPage({
   const retrySummary = job.retryPolicySummary ?? (job.retryPolicy
     ? `${job.retryPolicy.maxRetries}회 · ${job.retryPolicy.backoffStrategy === "exponential" ? "지수" : "고정"} 백오프`
     : "설정 없음");
+  const sourceDetailItems = compactSourceConfigItems(job, rawSourceType, sourcePath);
+  const targetDetailItems: JobEndpointItem[] = [
+    { label: "데이터셋", value: job.target },
+    { label: "저장소", value: job.storageType ?? "설정 없음" },
+    { label: "저장 경로", value: job.storagePath ?? physicalOutputPath },
+    { label: "압축", value: job.compression ?? "사용 안 함" },
+    ...(job.partition?.trim() ? [{ label: "파티션", value: job.partition }] : []),
+  ];
 
   return (
     <div className="job-detail-page">
@@ -1866,7 +2248,7 @@ export function JobDetailPage({
               detail={realtime ? job.scheduleSummary ?? formatJobSchedule(job.schedule) : formatJobSchedule(job.schedule)}
               label={realtime ? "수집 방식" : "다음 실행"}
               tone="scheduled"
-              value={realtime ? "실시간" : formatCompactDateTime(job.nextRun)}
+              value={realtime ? "실시간" : formatNextScheduledRun(job)}
             />
             {realtime ? (
               <OperationSummaryItem
@@ -1888,6 +2270,8 @@ export function JobDetailPage({
         </div>
       </Panel>
 
+      {isContinuousKafkaJob(job) && <ContinuousRuntimeCard job={job} />}
+
       <Accordion className="grid gap-4" defaultValue={["source-target", "schema-transform"]} type="multiple">
         <AccordionItem className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm" value="source-target">
           <AccordionTrigger className="h-[72px] min-h-0 px-5 py-0 text-base">
@@ -1905,12 +2289,7 @@ export function JobDetailPage({
             <JobEndpointCard
               badge={sourceType}
               icon={<Database aria-hidden="true" className="size-5" />}
-              items={[
-                { label: "소스 경로", value: job.sourceLabel ?? sourcePath },
-                ...(job.sourceConfig ?? [])
-                  .filter(([label]) => isVisibleJobDetailField(label))
-                  .map(([label, value]) => ({ label: getJobDetailFieldLabel(label), value })),
-              ]}
+              items={sourceDetailItems}
               title="소스"
               tone="source"
             />
@@ -1918,13 +2297,7 @@ export function JobDetailPage({
             <JobEndpointCard
               badge={job.targetFormat ?? "데이터셋"}
               icon={<Table2 aria-hidden="true" className="size-5" />}
-              items={[
-                { label: "데이터셋", value: job.target },
-                { label: "저장소", value: job.storageType ?? "설정 없음" },
-                { label: "저장 경로", value: job.storagePath ?? physicalOutputPath },
-                { label: "압축", value: job.compression ?? "사용 안 함" },
-                { label: "파티션", value: job.partition ?? "사용 안 함" },
-              ]}
+              items={targetDetailItems}
               title="타겟"
               tone="target"
             />
@@ -1976,8 +2349,8 @@ export function JobDetailPage({
                 data={transformRuleRows}
                 emptyState={{ title: "저장된 변환 규칙이 없습니다." }}
                 enableSorting={false}
-                pagination={false}
-                tableClassName="min-w-[980px]"
+                pagination={transformRuleRows.length > 5 ? { label: "변환 규칙", pageSize: 5, showPageSize: false, showSummary: true } : false}
+                tableClassName="min-w-[860px] table-fixed"
                 viewportClassName="rounded-none border-0"
               />
             </DetailTableSection>
@@ -2028,7 +2401,7 @@ export function JobDetailPage({
                 items={[
                   { label: "실행 유형", value: isRealtimeJob(job) ? "실시간 수집" : getJobScheduleKind(job) === "none" ? "수동 실행" : "반복 스케줄" },
                   { label: "주기", value: formatJobSchedule(job.schedule) },
-                  { label: "다음 실행", value: formatCompactDateTime(job.nextRun) },
+                  { label: "다음 실행", value: formatNextScheduledRun(job) },
                   { label: "재시도 정책", value: retrySummary },
                 ]}
               />
@@ -2059,19 +2432,487 @@ export function JobDetailPage({
   );
 }
 
-export function JobRunsPage({
-  evidence,
-  job,
-  onAction,
-  onBack,
-  onCommand,
-}: {
+function ContinuousRuntimeCard({ job }: { job: JobRowData }) {
+  const runtime = job.continuousRuntime;
+  const maintenanceBlocked = runtime ? !["paused", "stopped"].includes(runtime.status) : true;
+  const [logs, setLogs] = useState<string[]>([]);
+  const [logError, setLogError] = useState("");
+  const [loadingLogs, setLoadingLogs] = useState(false);
+  const [quarantine, setQuarantine] = useState<ContinuousQuarantineRecord[]>([]);
+  const [maintenanceRuns, setMaintenanceRuns] = useState<ContinuousMaintenanceRun[]>([]);
+  const [maintenanceBusy, setMaintenanceBusy] = useState(false);
+  const [maintenanceMessage, setMaintenanceMessage] = useState("");
+  const loadLogs = useCallback(async () => {
+    setLoadingLogs(true);
+    setLogError("");
+    try {
+      setLogs((await getContinuousWorkerLogs(job.id, 100)).lines);
+    } catch (error) {
+      setLogError(error instanceof Error ? error.message : "Worker 로그를 불러오지 못했습니다.");
+    } finally {
+      setLoadingLogs(false);
+    }
+  }, [job.id]);
+  useEffect(() => { void loadLogs(); }, [loadLogs]);
+  const refreshMaintenance = useCallback(async () => {
+    try {
+      const runs = await getContinuousMaintenanceRuns(job.id);
+      setMaintenanceRuns(runs);
+      if (maintenanceBlocked) {
+        setQuarantine([]);
+      } else {
+        setQuarantine((await getContinuousQuarantine(job.id, 25)).records);
+      }
+    } catch (error) {
+      setMaintenanceMessage(error instanceof Error ? error.message : "Maintenance 정보를 불러오지 못했습니다.");
+    }
+  }, [job.id, maintenanceBlocked]);
+  useEffect(() => { void refreshMaintenance(); }, [refreshMaintenance]);
+  const runMaintenance = async (kind: "replay" | "compact") => {
+    setMaintenanceBusy(true);
+    setMaintenanceMessage("");
+    try {
+      const run = kind === "replay"
+        ? await replayContinuousQuarantine(job.id)
+        : await compactContinuousTarget(job.id, 256);
+      if (kind === "replay") {
+        const stored = Number(run.result?.storedCount ?? 0);
+        const failed = Number(run.result?.failedCount ?? 0);
+        const skipped = Number(run.result?.skippedCount ?? 0);
+        setMaintenanceMessage(`격리 재처리 ${run.status} · 적재 ${stored.toLocaleString()} · 정책 거부 ${failed.toLocaleString()} · 이미 처리 ${skipped.toLocaleString()}`);
+      } else {
+        setMaintenanceMessage(`Compaction ${run.status}`);
+      }
+      await refreshMaintenance();
+    } catch (error) {
+      setMaintenanceMessage(error instanceof Error ? error.message : "Maintenance 실행에 실패했습니다.");
+    } finally {
+      setMaintenanceBusy(false);
+    }
+  };
+  return (
+    <article className="job-detail-card metadata-card">
+      <h3>Continuous Runtime</h3>
+      <div className="detail-kv-grid">
+        <Field label="상태" value={continuousRuntimeLabel(job)} />
+        <Field label="마지막 batch" value={runtime?.lastBatchId ?? "-"} />
+        <Field label="소비 / 적재" value={`${runtime?.consumedCount?.toLocaleString() ?? "0"} / ${runtime?.storedCount?.toLocaleString() ?? "0"}`} />
+        <Field label="격리 / 재처리" value={`${runtime?.quarantinedCount?.toLocaleString() ?? "0"} / ${runtime?.replayedCount?.toLocaleString() ?? "0"}`} />
+        <Field label="실패" value={runtime?.failedCount?.toLocaleString() ?? "0"} />
+        <Field label="Kafka Lag" value={runtime?.lagAvailable ? `${runtime.lag?.toLocaleString() ?? 0}건 · 최대 ${runtime.maxPartitionLag?.toLocaleString() ?? 0}` : "측정 대기"} />
+        <Field label="처리량" value={runtime?.throughputRowsPerSecond != null ? `${runtime.throughputRowsPerSecond.toLocaleString()} rows/s` : "-"} />
+        <Field label="최근 Batch" value={runtime?.lastBatchDurationMs != null ? `${runtime.lastBatchInputRows.toLocaleString()}건 · ${runtime.lastBatchDurationMs.toLocaleString()}ms` : "-"} />
+        <Field label="Schema" value={`v${runtime?.schemaVersion ?? 1} · ${runtime?.schemaStatus ?? "stable"}`} />
+        <Field label="Heartbeat" value={runtime?.heartbeatAt ? formatCompactDateTime(runtime.heartbeatAt) : "-"} />
+        <Field label="Checkpoint" value={runtime?.checkpointPath ?? "-"} />
+        {runtime?.lastError && <Field label="최근 오류" value={runtime.lastError} />}
+      </div>
+      <div className="job-runtime-log-header">
+        <strong>Worker Log</strong>
+        <button className="job-action-button" disabled={loadingLogs} onClick={() => void loadLogs()} type="button"><RefreshCw size={15} />새로고침</button>
+      </div>
+      {logError ? <p className="job-inline-error">{logError}</p> : <pre className="job-runtime-log">{logs.length ? logs.join("\n") : loadingLogs ? "로그 불러오는 중..." : "표시할 로그가 없습니다."}</pre>}
+      <div className="job-runtime-log-header">
+        <strong>Quarantine · Maintenance</strong>
+        <div className="job-runtime-actions">
+          <button className="job-action-button" disabled={maintenanceBlocked || maintenanceBusy || !quarantine.some((item) => item.replayStatus !== "replayed")} onClick={() => void runMaintenance("replay")} title={maintenanceBlocked ? "스트림을 중지한 뒤 실행할 수 있습니다." : undefined} type="button"><Repeat2 size={15} />전체 재처리</button>
+          <button className="job-action-button" disabled={maintenanceBlocked || maintenanceBusy || (runtime?.storedCount ?? 0) === 0} onClick={() => void runMaintenance("compact")} title={maintenanceBlocked ? "스트림을 중지한 뒤 실행할 수 있습니다." : undefined} type="button"><HardDrive size={15} />Compaction</button>
+        </div>
+      </div>
+      {maintenanceMessage && <p className="panel-note">{maintenanceMessage}</p>}
+      <div className="job-maintenance-summary">
+        <span>격리 샘플 {quarantine.length.toLocaleString()}건</span>
+        <span>실행 이력 {maintenanceRuns.length.toLocaleString()}건</span>
+        <span>최근 {maintenanceRuns[0] ? `${maintenanceRuns[0].kind} · ${maintenanceRuns[0].status}` : "-"}</span>
+      </div>
+      {quarantine.length > 0 && <div className="job-quarantine-list">{quarantine.slice(0, 5).map((item) => <div key={`${item.partition}:${item.offset}`}><code>{item.partition}:{item.offset}</code><span>{item.reason}</span><span>{item.replayStatus}</span><span>{item.rawPayload}</span></div>)}</div>}
+    </article>
+  );
+}
+
+type JobRunsPageProps = {
+  catalogDatasetId?: string;
+  catalogRowCount?: string;
   evidence?: JobExecutionEvidence;
   job: JobRowData;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
   onBack: () => void;
   onCommand: (job: JobRowData, command: JobCommand) => void;
-}) {
+};
+
+const activeContinuousSessionStatuses = new Set<KafkaContinuousSessionStatus>(["starting", "running", "stopping"]);
+
+const continuousSessionStatusMeta: Record<KafkaContinuousSessionStatus, { label: string; tone: StatusBadgeTone }> = {
+  failed: { label: "실패", tone: "danger" },
+  running: { label: "실행 중", tone: "success" },
+  starting: { label: "시작 중", tone: "default" },
+  stopped: { label: "종료", tone: "muted" },
+  stopping: { label: "종료 중", tone: "default" },
+};
+
+export function JobRunsPage(props: JobRunsPageProps) {
+  if (props.job.executionMode === "continuous") {
+    return <ContinuousJobRunsPage {...props} />;
+  }
+  return <SnapshotJobRunsPage {...props} />;
+}
+
+function ContinuousJobRunsPage({
+  catalogDatasetId,
+  catalogRowCount,
+  job,
+  onAction,
+  onBack,
+  onCommand,
+}: JobRunsPageProps) {
+  const [sessions, setSessions] = useState<KafkaContinuousSession[]>([]);
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  const [selectedSession, setSelectedSession] = useState<KafkaContinuousSession | null>(null);
+  const [batches, setBatches] = useState<KafkaContinuousBatch[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [manualRefreshing, setManualRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<string | null>(null);
+  const [currentCatalogRowCount, setCurrentCatalogRowCount] = useState(catalogRowCount);
+  const [sessionPollingActive, setSessionPollingActive] = useState(false);
+  const inFlightRef = useRef(false);
+  const requestSequenceRef = useRef(0);
+  const activeSessionsRef = useRef(false);
+  const hasLoadedRef = useRef(false);
+
+  const loadSessions = useCallback(async () => {
+    if (inFlightRef.current) return { active: activeSessionsRef.current, ok: true };
+    inFlightRef.current = true;
+    const requestSequence = requestSequenceRef.current + 1;
+    requestSequenceRef.current = requestSequence;
+    if (!hasLoadedRef.current) setLoading(true);
+    try {
+      const [nextSessions, nextCatalogDataset] = await Promise.all([
+        getContinuousSessions(job.id),
+        catalogDatasetId ? getCatalogDataset(catalogDatasetId).catch(() => null) : Promise.resolve(null),
+      ]);
+      const nextSelectedId = nextSessions.some((session) => session.sessionId === selectedSessionId)
+        ? selectedSessionId
+        : nextSessions[0]?.sessionId ?? null;
+      const nextSelectedSession = nextSessions.find((session) => session.sessionId === nextSelectedId) ?? null;
+      const nextBatches = nextSelectedId
+        ? await getContinuousSessionBatches(job.id, nextSelectedId, 100)
+        : [];
+      if (requestSequence !== requestSequenceRef.current) return { active: false, ok: true };
+      setSessions(nextSessions);
+      setSelectedSessionId(nextSelectedId);
+      setSelectedSession(nextSelectedSession);
+      setBatches(nextBatches);
+      setCurrentCatalogRowCount(nextCatalogDataset?.rows ?? catalogRowCount);
+      setRefreshError(null);
+      setLastRefreshedAt(new Date().toISOString());
+      activeSessionsRef.current = nextSessions.some((session) => activeContinuousSessionStatuses.has(session.status));
+      setSessionPollingActive(activeSessionsRef.current);
+      return { active: activeSessionsRef.current, ok: true };
+    } catch {
+      if (requestSequence === requestSequenceRef.current) {
+        setRefreshError("실시간 실행 이력을 갱신하지 못했습니다. 마지막으로 확인한 값을 유지합니다.");
+      }
+      return { active: true, ok: false };
+    } finally {
+      if (requestSequence === requestSequenceRef.current) {
+        hasLoadedRef.current = true;
+        setLoading(false);
+      }
+      inFlightRef.current = false;
+    }
+  }, [catalogDatasetId, catalogRowCount, job.id, selectedSessionId]);
+
+  useEffect(() => {
+    requestSequenceRef.current += 1;
+    inFlightRef.current = false;
+    hasLoadedRef.current = false;
+    activeSessionsRef.current = false;
+    setSessions([]);
+    setSelectedSessionId(null);
+    setSelectedSession(null);
+    setBatches([]);
+    setSessionPollingActive(false);
+    setLoading(true);
+    setRefreshError(null);
+  }, [job.id]);
+
+  const runtimeActive = job.continuousRuntime
+    ? ["starting", "running", "pausing", "stopping"].includes(job.continuousRuntime.status)
+    : false;
+
+  useEffect(() => {
+    let cancelled = false;
+    let timer: number | undefined;
+    let failures = 0;
+
+    const schedule = (delay: number) => {
+      if (!cancelled) timer = window.setTimeout(() => void poll(), delay);
+    };
+    const poll = async () => {
+      if (cancelled) return;
+      if (document.visibilityState === "hidden") {
+        schedule(5000);
+        return;
+      }
+      const result = await loadSessions();
+      if (cancelled) return;
+      failures = result.ok ? 0 : Math.min(failures + 1, 3);
+      if (result.active || runtimeActive || sessionPollingActive || !result.ok) {
+        schedule(result.ok ? 3000 : 3000 * (2 ** failures));
+      }
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== "visible") return;
+      if (timer) window.clearTimeout(timer);
+      void poll();
+    };
+
+    void poll();
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      cancelled = true;
+      requestSequenceRef.current += 1;
+      if (timer) window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [loadSessions, runtimeActive, sessionPollingActive]);
+
+  const selectSession = (session: KafkaContinuousSession) => {
+    setSelectedSessionId(session.sessionId);
+    setSelectedSession(session);
+    setBatches([]);
+    onAction("etl.continuous.session_opened", `/api/etl/jobs/${job.id}/continuous/sessions/${session.sessionId}`, session.sessionId);
+  };
+
+  const refreshNow = async () => {
+    setManualRefreshing(true);
+    try {
+      const result = await loadSessions();
+      onAction("etl.continuous.sessions_refreshed", `/api/etl/jobs/${job.id}/continuous/sessions`, job.id, result.ok ? "success" : "failed");
+    } finally {
+      setManualRefreshing(false);
+    }
+  };
+
+  const latestSession = sessions[0] ?? null;
+  const metricSession = selectedSession ?? latestSession;
+  const sessionColumns: ColumnDef<KafkaContinuousSession>[] = [
+    {
+      accessorKey: "sessionId",
+      header: "세션 ID",
+      cell: ({ row }) => (
+        <Button className="h-auto max-w-[210px] justify-start truncate px-0 text-left font-semibold" size="content" type="button" variant="link" onClick={() => selectSession(row.original)}>
+          {row.original.sessionId}
+        </Button>
+      ),
+      meta: { widthClassName: "w-[220px]" } satisfies DataTableColumnMeta,
+    },
+    {
+      accessorKey: "status",
+      header: "상태",
+      cell: ({ row }) => <ContinuousSessionStatus status={row.original.status} />,
+      meta: { align: "center", widthClassName: "w-[100px]" } satisfies DataTableColumnMeta,
+    },
+    {
+      id: "period",
+      header: "실행 구간",
+      cell: ({ row }) => (
+        <DataTableStackedCell>
+          <DataTableCellPrimary>{formatCompactDateTime(row.original.startedAt)}</DataTableCellPrimary>
+          <DataTableCellSecondary>{row.original.endedAt ? `${formatCompactDateTime(row.original.endedAt)} · ${formatContinuousDuration(row.original.startedAt, row.original.endedAt)}` : "진행 중"}</DataTableCellSecondary>
+        </DataTableStackedCell>
+      ),
+      meta: { widthClassName: "w-[210px]" } satisfies DataTableColumnMeta,
+    },
+    {
+      id: "counts",
+      header: "세션 처리량",
+      cell: ({ row }) => (
+        <DataTableStackedCell>
+          <DataTableCellPrimary>소비 {row.original.consumedCount.toLocaleString()}건</DataTableCellPrimary>
+          <DataTableCellSecondary>적재 {row.original.storedCount.toLocaleString()} · 격리 {row.original.quarantinedCount.toLocaleString()}</DataTableCellSecondary>
+        </DataTableStackedCell>
+      ),
+      meta: { widthClassName: "w-[190px]" } satisfies DataTableColumnMeta,
+    },
+    {
+      accessorKey: "lag",
+      header: "Kafka Lag",
+      cell: ({ row }) => row.original.lag == null ? "-" : `${row.original.lag.toLocaleString()}건`,
+      meta: { align: "right", widthClassName: "w-[110px]" } satisfies DataTableColumnMeta,
+    },
+    {
+      accessorKey: "lastFlushAt",
+      header: "최근 적재",
+      cell: ({ row }) => row.original.lastFlushAt ? formatCompactDateTime(row.original.lastFlushAt) : "-",
+      meta: { widthClassName: "w-[160px]" } satisfies DataTableColumnMeta,
+    },
+  ];
+  const batchColumns: ColumnDef<KafkaContinuousBatch>[] = [
+    {
+      accessorKey: "batchId",
+      header: "Batch",
+      cell: ({ row }) => <strong className="tabular-nums">#{row.original.batchId}</strong>,
+      meta: { widthClassName: "w-[90px]" } satisfies DataTableColumnMeta,
+    },
+    {
+      accessorKey: "publishedAt",
+      header: "적재 시각",
+      cell: ({ row }) => row.original.publishedAt ? formatCompactDateTime(row.original.publishedAt) : "-",
+      meta: { widthClassName: "w-[170px]" } satisfies DataTableColumnMeta,
+    },
+    {
+      id: "counts",
+      header: "처리 건수",
+      cell: ({ row }) => `소비 ${row.original.consumedCount.toLocaleString()} · 적재 ${row.original.storedCount.toLocaleString()} · 격리 ${row.original.quarantinedCount.toLocaleString()}`,
+      meta: { widthClassName: "w-[270px]" } satisfies DataTableColumnMeta,
+    },
+    {
+      accessorKey: "durationMs",
+      header: "소요 시간",
+      cell: ({ row }) => row.original.durationMs == null ? "-" : `${row.original.durationMs.toLocaleString()}ms`,
+      meta: { align: "right", widthClassName: "w-[110px]" } satisfies DataTableColumnMeta,
+    },
+    {
+      id: "offsets",
+      header: "Kafka Offset 범위",
+      cell: ({ row }) => formatSourceRanges(row.original.sourceRanges),
+      meta: { widthClassName: "w-[260px]" } satisfies DataTableColumnMeta,
+    },
+    {
+      id: "paths",
+      header: "저장 경로",
+      cell: ({ row }) => (
+        <DataTableStackedCell>
+          <DataTableCellPrimary className="max-w-[260px] truncate" title={row.original.dataPath ?? row.original.quarantinePath ?? undefined}>
+            {row.original.dataPath ?? row.original.quarantinePath ?? "-"}
+          </DataTableCellPrimary>
+          <DataTableCellSecondary className="max-w-[260px] truncate" title={row.original.manifestPath ?? undefined}>
+            {row.original.manifestPath ? `manifest ${row.original.manifestPath}` : "manifest -"}
+          </DataTableCellSecondary>
+        </DataTableStackedCell>
+      ),
+      meta: { widthClassName: "w-[280px]" } satisfies DataTableColumnMeta,
+    },
+  ];
+
+  return (
+    <TooltipProvider delayDuration={250}>
+      <div className="job-detail-page job-runs-page">
+        <JobDetailHeader backLabel="작업 상세로 돌아가기" job={job} onBack={onBack} onCommand={onCommand} />
+        <section className="runs-body-content">
+          {refreshError && (
+            <Alert variant="destructive">
+              <AlertCircle aria-hidden="true" />
+              <AlertTitle>자동 갱신 지연</AlertTitle>
+              <AlertDescription>{refreshError}</AlertDescription>
+            </Alert>
+          )}
+          <Panel overflow="visible">
+            <PanelHeader icon={<Activity aria-hidden="true" size={18} />} title="실시간 실행 요약" />
+            <div className="grid gap-4 p-5 sm:grid-cols-2 xl:grid-cols-4">
+              <MetricCard detail={metricSession?.lastFlushAt ? formatCompactDateTime(metricSession.lastFlushAt) : "세션 기록 없음"} icon={<Activity aria-hidden="true" />} label="세션 상태" size="default" tone={metricSession?.status === "failed" ? "failed" : metricSession?.status === "running" ? "running" : "scheduled"} value={metricSession ? continuousSessionStatusMeta[metricSession.status].label : "-"} />
+              <MetricCard detail="선택 세션 기준" icon={<Database aria-hidden="true" />} label="세션 누적 적재" size="default" tone="running" value={`${(metricSession?.storedCount ?? 0).toLocaleString()}건`} />
+              <MetricCard detail="Catalog 현재 행 수" icon={<Table2 aria-hidden="true" />} label="현재 데이터셋" size="default" value={currentCatalogRowCount ?? "미등록"} />
+              <MetricCard detail={metricSession?.lastBatchId ? `최근 batch ${metricSession.lastBatchId}` : "batch 기록 없음"} icon={<Zap aria-hidden="true" />} label="Kafka Lag" size="default" tone={(metricSession?.lag ?? 0) > 0 ? "scheduled" : "total"} value={metricSession?.lag == null ? "-" : `${metricSession.lag.toLocaleString()}건`} />
+            </div>
+          </Panel>
+
+          <Panel>
+            <PanelHeader
+              actions={(
+                <Button disabled={loading || manualRefreshing} size="sm" type="button" variant="outline" onClick={() => void refreshNow()}>
+                  <RefreshCw aria-hidden="true" className={loading || manualRefreshing ? "animate-spin" : undefined} />
+                  새로고침
+                </Button>
+              )}
+              icon={<History aria-hidden="true" size={18} />}
+              meta={<Badge shape="compact" size="lg" variant="muted">{sessions.length}개 세션</Badge>}
+              title="스트림 세션 이력"
+            />
+            <DataTable
+              columns={sessionColumns}
+              data={sessions}
+              emptyState={{ title: loading ? "세션 이력을 불러오는 중입니다." : "아직 실시간 실행 세션이 없습니다." }}
+              getRowClassName={(row) => row.original.sessionId === selectedSessionId ? "bg-blue-50/70" : row.original.status === "failed" ? "bg-red-50/45" : undefined}
+              pagination={{ label: "스트림 세션", pageSize: 5, showSummary: false }}
+              resetPaginationKey={`${sessions.length}-${selectedSessionId ?? "none"}`}
+              tableClassName="min-w-[960px] table-fixed"
+              viewportClassName="rounded-none border-0 bg-transparent"
+            />
+            {lastRefreshedAt && <p className="px-5 pb-4 text-right text-xs text-slate-500">최근 갱신 {formatCompactDateTime(lastRefreshedAt)}</p>}
+          </Panel>
+
+          <Panel>
+            <PanelHeader
+              icon={<Workflow aria-hidden="true" size={18} />}
+              meta={<Badge shape="compact" size="lg" variant="muted">{batches.length}개 batch</Badge>}
+              title="세션 Batch 상세"
+            />
+            {selectedSession && (
+              <div className="grid gap-3 border-b border-slate-200 px-5 py-4 text-sm sm:grid-cols-2 xl:grid-cols-4">
+                <Field label="종료 사유" value={formatContinuousEndReason(selectedSession.endReason)} />
+                <Field label="실패 건수" value={`${selectedSession.failedCount.toLocaleString()}건`} />
+                <Field label="Checkpoint" value={selectedSession.checkpointPath} />
+                <Field label="최근 오류" value={selectedSession.lastError ?? "-"} />
+              </div>
+            )}
+            <DataTable
+              columns={batchColumns}
+              data={batches}
+              emptyState={{ title: selectedSession ? "이 세션에 기록된 micro-batch가 없습니다." : "확인할 세션을 선택해 주세요." }}
+              pagination={{ label: "micro-batch", pageSize: 10, showSummary: false }}
+              resetPaginationKey={`${selectedSessionId ?? "none"}-${batches.length}`}
+              tableClassName="min-w-[1180px] table-fixed"
+              viewportClassName="rounded-none border-0 bg-transparent"
+            />
+          </Panel>
+        </section>
+      </div>
+    </TooltipProvider>
+  );
+}
+
+function ContinuousSessionStatus({ status }: { status: KafkaContinuousSessionStatus }) {
+  const meta = continuousSessionStatusMeta[status];
+  return <StatusBadge className="min-w-[76px] justify-center" shape="compact" size="lg" tone={meta.tone}>{meta.label}</StatusBadge>;
+}
+
+function formatContinuousDuration(startedAt: string, endedAt?: string | null) {
+  const start = Date.parse(startedAt);
+  const end = Date.parse(endedAt ?? new Date().toISOString());
+  if (Number.isNaN(start) || Number.isNaN(end)) return "-";
+  const totalSeconds = Math.max(0, Math.round((end - start) / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return hours > 0 ? `${hours}시간 ${minutes}분` : minutes > 0 ? `${minutes}분 ${seconds}초` : `${seconds}초`;
+}
+
+function formatContinuousEndReason(reason?: string | null) {
+  const labels: Record<string, string> = {
+    paused: "일시정지",
+    start_failed: "시작 실패",
+    stopped: "사용자 중지",
+    worker_failed: "Worker 실패",
+    worker_stopped: "Worker 종료",
+  };
+  return reason ? labels[reason] ?? reason : "-";
+}
+
+function formatSourceRanges(ranges: KafkaContinuousBatch["sourceRanges"]) {
+  if (!ranges.length) return "-";
+  return ranges.map((range) => `${range.partition ?? 0}:${range.startOffset ?? 0}-${range.endOffset ?? 0}`).join(", ");
+}
+
+function SnapshotJobRunsPage({
+  evidence,
+  job,
+  onAction,
+  onBack,
+  onCommand,
+}: JobRunsPageProps) {
   const [activeRun, setActiveRun] = useState<JobRunSummary | null>(null);
   const [activeLogRun, setActiveLogRun] = useState<JobRunSummary | null>(null);
   const [runStatusFilter, setRunStatusFilter] = useState<"all" | JobRunStatus>("all");

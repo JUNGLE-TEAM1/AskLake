@@ -100,26 +100,32 @@ function S3PathPicker({
   value: string;
 }) {
   const parsed = useMemo(() => parseS3Path(value), [value]);
-  const [buckets, setBuckets] = useState<string[]>(parsed.bucket ? [parsed.bucket] : []);
+  const [buckets, setBuckets] = useState<string[]>([]);
   const [bucket, setBucket] = useState(parsed.bucket);
   const [bucketError, setBucketError] = useState("");
-  const [bucketsLoading, setBucketsLoading] = useState(false);
+  const [bucketsLoading, setBucketsLoading] = useState(true);
   const [expandedItems, setExpandedItems] = useState<string[]>([ROOT_PREFIX_ID]);
   const [query, setQuery] = useState("");
   const [selectedPrefix, setSelectedPrefix] = useState(parsed.prefix);
   const [listingCache, setListingCache] = useState<Record<string, ListingState>>({});
   const scheme = parsed.scheme || S3_SCHEME;
-  const selectedPath = buildS3Path({ bucket, prefix: selectedPrefix, scheme });
+  const bucketAllowed = !bucketsLoading && buckets.includes(bucket);
+  const selectedPath = bucketAllowed ? buildS3Path({ bucket, prefix: selectedPrefix, scheme }) : "";
 
   const loadBuckets = async () => {
     setBucketsLoading(true);
     setBucketError("");
     try {
       const result = await listS3Buckets();
-      const nextBuckets = result.buckets.length > 0 ? result.buckets : parsed.bucket ? [parsed.bucket] : [];
+      const nextBuckets = result.buckets;
+      const nextBucket = nextBuckets.includes(bucket) ? bucket : nextBuckets[0] || "";
       setBuckets(nextBuckets);
-      setBucket((currentBucket) => currentBucket || nextBuckets[0] || "");
+      setBucket(nextBucket);
+      if (nextBucket !== bucket) setSelectedPrefix("");
     } catch (error) {
+      setBuckets([]);
+      setBucket("");
+      setSelectedPrefix("");
       setBucketError(error instanceof Error ? error.message : "버킷 목록을 불러오지 못했습니다.");
     } finally {
       setBucketsLoading(false);
@@ -127,7 +133,7 @@ function S3PathPicker({
   };
 
   const loadPrefix = async (prefix: string, continuationToken?: string | null) => {
-    if (!bucket) return;
+    if (!bucket || !bucketAllowed) return;
     const normalizedPrefix = normalizePrefix(prefix);
     const key = listingKey(bucket, normalizedPrefix);
     const current = listingCache[key];
@@ -173,11 +179,11 @@ function S3PathPicker({
   }, []);
 
   useEffect(() => {
-    if (!bucket) return;
+    if (!bucketAllowed) return;
     setExpandedItems([ROOT_PREFIX_ID]);
     setSelectedPrefix((currentPrefix) => currentPrefix || "");
     void loadPrefix("");
-  }, [bucket]);
+  }, [bucket, bucketAllowed]);
 
   const togglePrefix = (prefix: string) => {
     const itemId = prefixToItemId(prefix);
@@ -270,7 +276,7 @@ function S3PathPicker({
         <>
           <div className="s3-picker-preview" title={selectedPath}>{selectedPath || "선택된 경로가 없습니다."}</div>
           <Button className={useShadcnStyles ? undefined : "secondary-button"} type="button" variant="outline" onClick={onCancel}>취소</Button>
-          <Button className={useShadcnStyles ? undefined : "primary-button"} disabled={!bucket} type="button" onClick={() => onSelect(selectedPath)}>선택</Button>
+          <Button className={useShadcnStyles ? undefined : "primary-button"} disabled={bucketsLoading || !bucketAllowed || Boolean(bucketError)} type="button" onClick={() => onSelect(selectedPath)}>선택</Button>
         </>
       )}
       footerClassName="s3-picker-footer"

@@ -13,7 +13,9 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { PreviewPanel } from "@/components/ui/preview-panel";
 import { SegmentedTabs } from "@/components/ui/segmented-tabs";
 import { SelectableCard } from "@/components/ui/selectable-card";
+import { Spinner } from "@/components/ui/spinner";
 import { DatasetStatusBadge } from "../catalog/CatalogPage";
+import { sqlResultToDashboardOption } from "./runtime/dashboardDatasetAdapters";
 import { useDashboardDatasets } from "./runtime/useDashboardDatasets";
 import { useDraftWidgetCreator } from "./runtime/useDraftWidgetCreator";
 import { useDraftWidgetLayouts } from "./runtime/useDraftWidgetLayouts";
@@ -53,6 +55,17 @@ import type { DashboardDatasetOption, UpdateDraftWidgetFormInput } from "./runti
 const DashboardRuntimeView = lazy(async () => ({
   default: (await import("./runtime/DashboardRuntimeView")).DashboardRuntimeView,
 }));
+
+function DashboardRuntimeModuleLoading() {
+  return (
+    <div aria-label="대시보드 편집기를 불러오는 중" className="grid min-h-[520px] place-items-center text-slate-600" role="status">
+      <span className="flex items-center gap-3 text-sm font-medium">
+        <Spinner className="size-5" />
+        대시보드 편집기를 불러오는 중...
+      </span>
+    </div>
+  );
+}
 
 const defaultRuntimePages = [
   { id: "page-1", title: "Untitled page" },
@@ -153,37 +166,6 @@ function pushLayoutHistory(stack: RuntimeLayoutSnapshot[], snapshot: RuntimeLayo
   return [...stack, snapshot].slice(-maxLayoutHistoryEntries);
 }
 
-function buildSqlDashboardDataset(sqlResult: SqlResultDraft): DashboardDatasetOption {
-  const columns = sqlResult.columns.map((name, columnIndex) => {
-    const normalizedColumn = name.toLowerCase();
-    const values = sqlResult.rows
-      .map((row) => row[columnIndex])
-      .filter((value): value is string => Boolean(value));
-    const inferredType = (() => {
-      if (/(^|_)(date|time|at|day|month|year)($|_)/.test(normalizedColumn)) return "date" as const;
-      if (/(amount|count|score|total|value|price|qty|quantity|rate|risk|cost|sales|revenue|rows?)/.test(normalizedColumn)) return "number" as const;
-      if (values.length > 0 && values.every((value) => Number.isFinite(Number(value)))) return "number" as const;
-      if (values.length > 0 && values.every((value) => Number.isFinite(Date.parse(value)))) return "date" as const;
-      return "string" as const;
-    })();
-    return { name, type: inferredType };
-  });
-  const rows = sqlResult.rows.map((row) => Object.fromEntries(columns.map((column, index) => {
-    const value = row[index] ?? "";
-    return [column.name, column.type === "number" ? Number(value) || 0 : value];
-  })));
-
-  return {
-    columns,
-    description: `SQL 실행 ${sqlResult.runId} 결과`,
-    id: `sql-result-${sqlResult.runId}`,
-    layer: "GOLD",
-    name: sqlResult.datasetName,
-    rows,
-    status: "available",
-  };
-}
-
 export function DashboardPage({
   dataset,
   datasets: catalogDatasets = [],
@@ -246,7 +228,7 @@ export function DashboardPage({
   const dashboardList = useDashboardLandingList(savedDashboards, onAction, entry.version + dashboardListRefreshKey);
   const activeSqlResult = entry.source === "sql" && (sqlResult?.datasetId === dataset.id || sqlResult?.baseDatasetId === dataset.id) ? sqlResult : null;
   const sqlDashboardDataset = useMemo(
-    () => activeSqlResult ? buildSqlDashboardDataset(activeSqlResult) : null,
+    () => activeSqlResult ? sqlResultToDashboardOption(activeSqlResult) : null,
     [activeSqlResult],
   );
   const dashboardTitle = activeSqlResult ? `${activeSqlResult.datasetName} SQL Result Dashboard` : "새 대시보드";
@@ -647,7 +629,7 @@ export function DashboardPage({
   };
 
   const openDashboardFromList = (dashboard: SavedDashboardCard) => {
-    openRuntimeDashboard(dashboard.id, "published");
+    openRuntimeDashboard(dashboard.id, dashboard.status === "published" ? "published" : "draft");
   };
 
   const upsertDashboard = async (status: SavedDashboardCard["status"]) => {
@@ -1239,7 +1221,7 @@ export function DashboardPage({
     };
 
     return (
-      <Suspense fallback={<div aria-label="대시보드 편집기를 불러오는 중" className="module-placeholder-page" role="status" />}>
+      <Suspense fallback={<DashboardRuntimeModuleLoading />}>
         <DashboardRuntimeView
           actions={runtimeViewActions}
           datasets={runtimeDatasetState}

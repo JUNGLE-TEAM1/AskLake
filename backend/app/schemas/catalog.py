@@ -13,6 +13,7 @@ LineageLayer = Literal["SOURCE", "PROCESS", "RAW", "BRONZE", "SILVER", "GOLD", "
 QueryRefreshPolicy = Literal["manual"]
 MaterializationRunStatus = Literal["queued", "running", "success", "failed", "canceled"]
 MaterializationSourceKind = Literal["etl", "sql", "kafka"]
+MaterializationMode = Literal["snapshot", "delta"]
 
 
 class LineageGraphColumn(CamelModel):
@@ -45,13 +46,16 @@ class LineageGraphResponse(CamelModel):
 class DatasetMaterializationRun(CamelModel):
     created_at: str
     job_id: str
+    materialization_mode: MaterializationMode = "snapshot"
     row_count: int = 0
     run_id: str
     source_kind: MaterializationSourceKind = "etl"
     source_label: str
     status: MaterializationRunStatus
+    storage_format: str | None = None
     storage_location: str | None = None
     storage_size_bytes: int = 0
+    source_window: dict[str, Any] | None = None
 
 
 class CatalogDatasetResponse(CamelModel):
@@ -92,6 +96,18 @@ class CatalogDatasetResponse(CamelModel):
 class CatalogDatasetListResponse(CamelModel):
     datasets: list[CatalogDatasetResponse]
     page: CursorPageMeta = Field(default_factory=CursorPageMeta)
+
+
+class CatalogDatasetRowsResponse(CamelModel):
+    columns: list[str]
+    dataset_id: str
+    dataset_name: str
+    has_next: bool
+    limit: int = Field(ge=1, le=500)
+    offset: int = Field(ge=0)
+    returned_rows: int = Field(ge=0)
+    row_count: int = Field(ge=0)
+    rows: list[list[str]]
 
 
 class DeleteMaterializationRunResponse(CamelModel):

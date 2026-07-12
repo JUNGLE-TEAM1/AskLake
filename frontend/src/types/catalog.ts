@@ -67,6 +67,7 @@ export type CatalogDataset = {
 export type DatasetMaterializationRun = {
   createdAt: string;
   jobId: string;
+  materializationMode?: "snapshot" | "delta";
   quality?: Record<string, unknown> | null;
   quarantine?: {
     format?: string;
@@ -79,8 +80,15 @@ export type DatasetMaterializationRun = {
   sourceKind: "etl" | "sql" | "kafka";
   sourceLabel: string;
   status: "success" | "failed" | "canceled" | "running" | "queued";
+  storageFormat?: string;
   storageLocation?: string;
   storageSizeBytes: number;
+  sourceWindow?: {
+    contractVersion?: number;
+    lowerBound?: string | null;
+    rebaseline?: boolean;
+    upperBound?: string | null;
+  } | null;
 };
 
 export type CatalogDatasetRowsResponse = {

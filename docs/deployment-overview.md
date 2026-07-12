@@ -97,7 +97,7 @@ File / S3, Data Lake source, Target S3 picker, Spark S3A demo는 서버 `deploy/
 | --- | --- | --- |
 | Priority P0 | `orders_clean` Catalog, SQL Preview, 처리 Job 생성, Catalog 재확인 | 발표 메인 흐름이므로 반드시 통과해야 한다. |
 | Priority P1 | `customers`, `user_activity`, MongoDB `customer_reviews`, `app_events`, dashboard preview | 보조 시연과 회귀 테스트에 넣는다. |
-| Priority P2 | 기존 mock catalog 후보 전체 | seed 후보 registry에 남기고 시간이 될 때 확장한다. |
+| Priority P2 | 추가 demo seed catalog 후보 | 실제 seed script 후보로만 관리하고 runtime fallback에는 사용하지 않는다. |
 | Priority P3 | auth, backup, monitoring, production scheduler | 데모 배포 안정화 뒤 별도 작업으로 분리한다. |
 
 ## 처음 한 번 할 일
@@ -227,7 +227,7 @@ docker build -t asklake-backend-deploy-check:local backend
 
 cd frontend
 npm run build
-VITE_USE_MOCK_API=false npm run build
+npm run build
 ```
 
 서버에서는 다음을 확인한다.
@@ -303,13 +303,13 @@ Spark runtime dependencies:
 - Spark jobs run in `ASKLAKE_SPARK_IMAGE`, default `apache/spark:4.0.1`.
 - The backend starts/uses `ASKLAKE_SPARK_MASTER_CONTAINER` and `ASKLAKE_SPARK_WORKER_CONTAINER` through Docker.
 - S3A jobs use `ASKLAKE_SPARK_HADOOP_AWS_PACKAGE`, default `org.apache.hadoop:hadoop-aws:3.4.1`.
-- Spark output/report/sample host directories are rooted at `ASKLAKE_HOST_DATA_DIR`, default `/tmp/asklake`.
+- Spark output/report/sample host directories are rooted at `ASKLAKE_HOST_DATA_DIR`, default `/var/lib/asklake`.
 
 Frontend deploy image dependencies:
 
 - Node 22 build image and Nginx runtime from `frontend/Dockerfile`.
 - Frontend packages from `frontend/package.json`.
-- Required build args are listed in `deploy/.env.example`: `VITE_API_BASE_URL`, `VITE_USE_MOCK_API`, and `VITE_DASHBOARD_ASSISTANT_API_PATH`.
+- Build args are listed in `deploy/.env.example`: optional same-origin `VITE_API_BASE_URL` and `VITE_DASHBOARD_ASSISTANT_API_PATH`.
 
 Local deploy dependency verification:
 

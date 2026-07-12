@@ -236,26 +236,30 @@ function fallbackColorLabels(count: number) {
   return Array.from({ length: count }, (_, index) => `색상 ${index + 1}`);
 }
 
-function configDraftFromWidget(widget: DashboardRuntimeWidget): WidgetConfigDraft {
-  const config = widget.config;
+function configDraftFromConfig(config: DashboardRuntimeWidgetConfig): WidgetConfigDraft {
+  const runtimeConfig = configRecord(config);
+  const sourceConfig = runtimeConfig.sourceConfig;
+  const editableConfig = typeof sourceConfig === "object" && sourceConfig !== null && !Array.isArray(sourceConfig)
+    ? sourceConfig as DashboardRuntimeWidgetConfig
+    : config;
   return {
-    aggregation: configString(config, "aggregation") as DashboardWidgetAggregation | undefined,
-    columns: configStringArray(config, "columns"),
-    curve: configString(config, "curve") as DashboardWidgetLineCurve | undefined,
-    dateUnit: configString(config, "dateUnit") as DashboardWidgetDateUnit | undefined,
-    format: configString(config, "format") as DashboardWidgetFormat | undefined,
-    labelKey: configString(config, "labelKey"),
-    limit: configNumber(config, "limit"),
-    max: configNumber(config, "max"),
-    min: configNumber(config, "min"),
-    orientation: configString(config, "orientation") as DashboardWidgetOrientation | undefined,
-    seriesKey: configString(config, "seriesKey"),
-    sortDirection: configString(config, "sortDirection") as DashboardWidgetSortDirection | undefined,
-    sortKey: configString(config, "sortKey"),
-    stacked: configBoolean(config, "stacked"),
-    valueKey: configString(config, "valueKey"),
-    xKey: configString(config, "xKey"),
-    yKey: configString(config, "yKey"),
+    aggregation: configString(editableConfig, "aggregation") as DashboardWidgetAggregation | undefined,
+    columns: configStringArray(editableConfig, "columns"),
+    curve: configString(editableConfig, "curve") as DashboardWidgetLineCurve | undefined,
+    dateUnit: configString(editableConfig, "dateUnit") as DashboardWidgetDateUnit | undefined,
+    format: configString(editableConfig, "format") as DashboardWidgetFormat | undefined,
+    labelKey: configString(editableConfig, "labelKey"),
+    limit: configNumber(editableConfig, "limit"),
+    max: configNumber(editableConfig, "max"),
+    min: configNumber(editableConfig, "min"),
+    orientation: configString(editableConfig, "orientation") as DashboardWidgetOrientation | undefined,
+    seriesKey: configString(editableConfig, "seriesKey"),
+    sortDirection: configString(editableConfig, "sortDirection") as DashboardWidgetSortDirection | undefined,
+    sortKey: configString(editableConfig, "sortKey"),
+    stacked: configBoolean(editableConfig, "stacked"),
+    valueKey: configString(editableConfig, "valueKey"),
+    xKey: configString(editableConfig, "xKey"),
+    yKey: configString(editableConfig, "yKey"),
   };
 }
 
@@ -456,11 +460,22 @@ function buildConfig(
 function preserveRuntimeOnlyConfig(
   widget: DashboardRuntimeWidget | null | undefined,
   config: DashboardRuntimeWidgetConfig,
-  options: { preserveVisualizationRequest?: boolean } = {},
+  options: { forPreview?: boolean; preserveVisualizationRequest?: boolean } = {},
 ): DashboardRuntimeWidgetConfig {
   if (!widget) return config;
 
   const source = configRecord(widget.config);
+  const dataMode = source.dataMode;
+  if (options.forPreview && (dataMode === "server_aggregated" || dataMode === "server_preview")) {
+    const nextConfig = configRecord(config);
+    return {
+      ...source,
+      ...(nextConfig.color ? { color: nextConfig.color } : {}),
+      ...(Object.hasOwn(nextConfig, "description") ? { description: nextConfig.description } : {}),
+      sourceConfig: nextConfig,
+    } as unknown as DashboardRuntimeWidgetConfig;
+  }
+
   const placeholderKind = source.placeholderKind;
   if (placeholderKind === "text") {
     return {
@@ -489,9 +504,11 @@ function cloneDatasetRows(dataset: DashboardDatasetOption | null | undefined) {
 }
 
 export function WidgetConfigPanel({
+  createButtonLabel = "위젯 생성",
   datasets = [],
   editingWidget = null,
   focusedColorSlot = null,
+  initialCreateInput = null,
   isCreating = false,
   isUpdating = false,
   onCreateWidget,
@@ -501,9 +518,11 @@ export function WidgetConfigPanel({
   selectedDataset,
   selectedDatasetId,
 }: {
+  createButtonLabel?: string;
   datasets?: DashboardDatasetOption[];
   editingWidget?: DashboardRuntimeWidget | null;
   focusedColorSlot?: DashboardWidgetColorSlotFocus | null;
+  initialCreateInput?: CreateDraftWidgetFormInput | null;
   isCreating?: boolean;
   isUpdating?: boolean;
   onCreateWidget: (input: CreateDraftWidgetFormInput) => Promise<void> | void;
@@ -528,6 +547,9 @@ export function WidgetConfigPanel({
   const previousSelectedDatasetIdRef = useRef<string | null>(null);
   const isEditMode = Boolean(editingWidget);
   const isVisualizationRequestEdit = isVisualizationRequestWidget(editingWidget);
+  const initialCreateInputKey = initialCreateInput
+    ? `${initialCreateInput.datasetId}|${initialCreateInput.type}|${initialCreateInput.title}|${JSON.stringify(initialCreateInput.config)}`
+    : "";
 
   const columnGroups = useMemo(() => {
     const allColumns = selectedDataset?.columns ?? [];
@@ -572,7 +594,22 @@ export function WidgetConfigPanel({
         ...defaultConfigs,
         [editingWidget.type]: isVisualizationRequestWidget(editingWidget)
           ? defaultConfigs[editingWidget.type] ?? {}
-          : configDraftFromWidget(editingWidget),
+          : configDraftFromConfig(editingWidget.config),
+      });
+      return;
+    }
+
+    const initialInput = initialCreateInput?.datasetId === nextSelectedDatasetId
+      ? initialCreateInput
+      : null;
+    if (initialInput && selectedDataset) {
+      setType(initialInput.type);
+      setTitle(initialInput.title);
+      setDescription(configString(initialInput.config, "description") ?? "");
+      setColor(configColor(initialInput.config));
+      setConfigsByType({
+        ...createDefaultConfigs(selectedDataset),
+        [initialInput.type]: configDraftFromConfig(initialInput.config),
       });
       return;
     }
@@ -582,7 +619,7 @@ export function WidgetConfigPanel({
     setTitle("");
     setType("bar_chart");
     setConfigsByType(selectedDataset ? createDefaultConfigs(selectedDataset) : {});
-  }, [editingWidget, selectedDataset]);
+  }, [editingWidget, initialCreateInputKey, selectedDataset]);
 
   const currentConfig = configsByType[type] ?? {};
   const radialRangeStart = Math.min(currentConfig.min ?? 0, currentConfig.max ?? 100);
@@ -678,7 +715,7 @@ export function WidgetConfigPanel({
           color,
           description: description.trim() || undefined,
         }),
-        { preserveVisualizationRequest: true },
+        { forPreview: true, preserveVisualizationRequest: true },
       ),
       title: title.trim() || "제목 없는 위젯",
       type,
@@ -1140,7 +1177,7 @@ export function WidgetConfigPanel({
 
         <div className="asklake-widget-config-actions">
           <Button className="asklake-widget-create-button" disabled={!canSubmit || isCreating || isUpdating} type="submit">
-            {isEditMode ? (isUpdating ? "저장 중" : "변경사항 저장") : (isCreating ? "생성 중" : "위젯 생성")}
+            {isEditMode ? (isUpdating ? "저장 중" : "변경사항 저장") : (isCreating ? "생성 중" : createButtonLabel)}
           </Button>
         </div>
         </FieldGroup>

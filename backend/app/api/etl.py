@@ -3,10 +3,17 @@ from sqlalchemy.orm import Session
 
 from app.core.auth_context import ActorContext, get_actor_context, require_permission
 from app.core.database import get_db
+from app.core.config import settings
+from app.core.s3_policy import validate_s3_source_config
 from app.schemas.etl import (
     CreatePipelineRequest,
     CreatePipelineResponse,
     DeleteJobResponse,
+    ContinuousCompactionRequest,
+    ContinuousMaintenanceRun,
+    ContinuousQuarantineResponse,
+    ContinuousReplayRequest,
+    ContinuousWorkerLogsResponse,
     AirflowRunExecutionRequest,
     AirflowRunExecutionResponse,
     JobCommandRequest,
@@ -20,6 +27,10 @@ from app.schemas.etl import (
     ReviewSnapshot,
     KafkaReviewIngestRequest,
     KafkaReviewIngestResponse,
+    KafkaReplayProducerRequest,
+    KafkaReplayProducerStatus,
+    KafkaContinuousBatch,
+    KafkaContinuousSession,
     ScheduledJobRunRequest,
     ScheduledJobRunResponse,
     SchemaDraft,
@@ -30,27 +41,64 @@ from app.schemas.etl import (
     UpdatePipelineRequest,
 )
 from app.services import etl_service
+from app.services.kafka_replay_producer_service import replay_producer_manager
 
 router = APIRouter(prefix="/etl", tags=["etl"])
 
 
 @router.post("/sources/test", response_model=SourceConnectorAnalysis)
-def test_source_connector(request: SourceConnectorRequest) -> SourceConnectorAnalysis:
+def test_source_connector(
+    request: SourceConnectorRequest,
+    actor: ActorContext = Depends(get_actor_context),
+) -> SourceConnectorAnalysis:
+    require_permission(actor, "manage", resource_label="source connector")
+    validate_s3_source_config(
+        request.source_type,
+        request.source_config,
+        allow_unconfigured=settings.allows_header_auth_fallback,
+    )
     return etl_service.test_source_connector(request)
 
 
 @router.post("/sources/assets", response_model=SourceAssetsResponse)
-def list_source_assets(request: SourceAssetsRequest) -> SourceAssetsResponse:
+def list_source_assets(
+    request: SourceAssetsRequest,
+    actor: ActorContext = Depends(get_actor_context),
+) -> SourceAssetsResponse:
+    require_permission(actor, "manage", resource_label="source connector")
+    validate_s3_source_config(
+        request.source_type,
+        request.source_config,
+        allow_unconfigured=settings.allows_header_auth_fallback,
+    )
     return etl_service.list_source_assets(request)
 
 
 @router.post("/schema-inference", response_model=SchemaDraft)
-def infer_schema(request: SourceConnectorRequest) -> SchemaDraft:
+def infer_schema(
+    request: SourceConnectorRequest,
+    actor: ActorContext = Depends(get_actor_context),
+) -> SchemaDraft:
+    require_permission(actor, "manage", resource_label="source connector")
+    validate_s3_source_config(
+        request.source_type,
+        request.source_config,
+        allow_unconfigured=settings.allows_header_auth_fallback,
+    )
     return etl_service.infer_schema(request)
 
 
 @router.post("/review", response_model=ReviewSnapshot)
-def review_pipeline(request: ReviewPipelineRequest) -> ReviewSnapshot:
+def review_pipeline(
+    request: ReviewPipelineRequest,
+    actor: ActorContext = Depends(get_actor_context),
+) -> ReviewSnapshot:
+    require_permission(actor, "manage", resource_label="source connector")
+    validate_s3_source_config(
+        request.source_type,
+        request.source_config,
+        allow_unconfigured=settings.allows_header_auth_fallback,
+    )
     return etl_service.review_pipeline(request)
 
 
@@ -58,8 +106,41 @@ def review_pipeline(request: ReviewPipelineRequest) -> ReviewSnapshot:
 def ingest_kafka_reviews(
     request: KafkaReviewIngestRequest,
     db: Session = Depends(get_db),
+    actor: ActorContext = Depends(get_actor_context),
 ) -> KafkaReviewIngestResponse:
+    require_kafka_replay_producer_access(actor)
     return etl_service.ingest_kafka_reviews(db, request)
+
+
+@router.get("/kafka/replay-producer", response_model=KafkaReplayProducerStatus)
+def get_kafka_replay_producer(
+    actor: ActorContext = Depends(get_actor_context),
+) -> KafkaReplayProducerStatus:
+    require_kafka_replay_producer_access(actor)
+    return replay_producer_manager.status()
+
+
+@router.post("/kafka/replay-producer", response_model=KafkaReplayProducerStatus, status_code=status.HTTP_202_ACCEPTED)
+def start_kafka_replay_producer(
+    request: KafkaReplayProducerRequest,
+    actor: ActorContext = Depends(get_actor_context),
+) -> KafkaReplayProducerStatus:
+    require_kafka_replay_producer_access(actor)
+    return replay_producer_manager.start(request)
+
+
+@router.delete("/kafka/replay-producer", response_model=KafkaReplayProducerStatus)
+def stop_kafka_replay_producer(
+    actor: ActorContext = Depends(get_actor_context),
+) -> KafkaReplayProducerStatus:
+    require_kafka_replay_producer_access(actor)
+    return replay_producer_manager.stop()
+
+
+def require_kafka_replay_producer_access(actor: ActorContext) -> None:
+    from app.core.auth_context import require_permission
+
+    require_permission(actor, "manage", resource_label="Kafka replay producer")
 
 
 @router.post(
@@ -85,7 +166,6 @@ def create_job(
     require_permission(actor, "manage", resource_label="job collection")
     owned_request = request.model_copy(update={
         "created_by": actor.name,
-        "owner": actor.name,
     })
     return etl_service.create_pipeline(db, owned_request, actor.name)
 
@@ -145,6 +225,85 @@ def command_job(
     actor: ActorContext = Depends(get_actor_context),
 ) -> JobCommandResponse:
     return etl_service.command_job(db, job_id, request.command, actor)
+
+
+@router.get("/jobs/{job_id}/continuous/logs", response_model=ContinuousWorkerLogsResponse)
+def get_continuous_worker_logs(
+    job_id: str,
+    tail: int = Query(default=200, ge=1, le=1000),
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(get_actor_context),
+) -> ContinuousWorkerLogsResponse:
+    return etl_service.get_kafka_continuous_worker_logs(db, job_id, actor, tail)
+
+
+@router.get("/jobs/{job_id}/continuous/sessions", response_model=list[KafkaContinuousSession])
+def list_continuous_sessions(
+    job_id: str,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(get_actor_context),
+) -> list[KafkaContinuousSession]:
+    return etl_service.list_kafka_continuous_sessions(db, job_id, actor)
+
+
+@router.get("/jobs/{job_id}/continuous/sessions/{session_id}", response_model=KafkaContinuousSession)
+def get_continuous_session(
+    job_id: str,
+    session_id: str,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(get_actor_context),
+) -> KafkaContinuousSession:
+    return etl_service.get_kafka_continuous_session(db, job_id, session_id, actor)
+
+
+@router.get("/jobs/{job_id}/continuous/sessions/{session_id}/batches", response_model=list[KafkaContinuousBatch])
+def list_continuous_session_batches(
+    job_id: str,
+    session_id: str,
+    limit: int = Query(default=100, ge=1, le=500),
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(get_actor_context),
+) -> list[KafkaContinuousBatch]:
+    return etl_service.list_kafka_continuous_session_batches(db, job_id, session_id, actor, limit)
+
+
+@router.get("/jobs/{job_id}/continuous/quarantine", response_model=ContinuousQuarantineResponse)
+def get_continuous_quarantine(
+    job_id: str,
+    limit: int = Query(default=100, ge=1, le=500),
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(get_actor_context),
+) -> ContinuousQuarantineResponse:
+    return etl_service.get_kafka_continuous_quarantine(db, job_id, actor, limit)
+
+
+@router.get("/jobs/{job_id}/continuous/maintenance-runs", response_model=list[ContinuousMaintenanceRun])
+def list_continuous_maintenance_runs(
+    job_id: str,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(get_actor_context),
+) -> list[ContinuousMaintenanceRun]:
+    return etl_service.list_kafka_continuous_maintenance_runs(db, job_id, actor)
+
+
+@router.post("/jobs/{job_id}/continuous/quarantine/replays", response_model=ContinuousMaintenanceRun)
+def replay_continuous_quarantine(
+    job_id: str,
+    request: ContinuousReplayRequest,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(get_actor_context),
+) -> ContinuousMaintenanceRun:
+    return etl_service.replay_kafka_continuous_quarantine(db, job_id, request, actor)
+
+
+@router.post("/jobs/{job_id}/continuous/compactions", response_model=ContinuousMaintenanceRun)
+def compact_continuous_target(
+    job_id: str,
+    request: ContinuousCompactionRequest,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(get_actor_context),
+) -> ContinuousMaintenanceRun:
+    return etl_service.compact_kafka_continuous_target(db, job_id, request, actor)
 
 
 @router.post("/schedules/run-due", response_model=ScheduledJobRunResponse)

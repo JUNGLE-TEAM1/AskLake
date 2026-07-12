@@ -185,6 +185,11 @@ class AuthService:
         normalized_email = normalize_email(email)
         existing = self.db.scalar(select(AuthUserModel).where(AuthUserModel.email == normalized_email))
         if existing is not None:
+            if existing.role != "admin" or existing.status != "active":
+                raise RuntimeError(
+                    "BOOTSTRAP_ADMIN_EMAIL is already assigned to a non-active administrator account. "
+                    "Choose another bootstrap email or promote the account explicitly before deployment."
+                )
             return
 
         salt = secrets.token_hex(16)

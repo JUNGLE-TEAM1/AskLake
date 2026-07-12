@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.core.auth_context import ActorContext
 from app.models.dashboard_runtime import DashboardWidget as DashboardWidgetModel
 from app.repositories.catalog_repository import CatalogRepository, dataset_model_to_payload
 from app.repositories.dashboard_runtime_repository import DashboardRuntimeRepository
@@ -13,6 +14,10 @@ from app.schemas.dashboard import (
 )
 from app.services.dashboard_assistant_options import widget_options_payload
 from app.services.dashboard_runtime_service import DashboardRuntimeService
+from app.services.resource_permission_service import (
+    datasets_with_persisted_permission_grants,
+    permissions_for_actor_with_governance,
+)
 
 
 @dataclass(frozen=True)
@@ -106,10 +111,11 @@ def build_assistant_context(
     request: DashboardAssistantRequest,
     runtime_repository: DashboardRuntimeRepository,
     catalog_repository: CatalogRepository,
+    actor: ActorContext,
     *,
     max_sample_rows: int,
 ) -> AssistantDashboardContext:
-    datasets = _available_dataset_contexts(catalog_repository, max_sample_rows)
+    datasets = _available_dataset_contexts(catalog_repository, actor, max_sample_rows)
     dashboard_id = request.dashboard_id
     if not dashboard_id:
         return _request_fallback_context(request, datasets)
@@ -186,13 +192,29 @@ def _filter_widgets_for_target(
 
 def _available_dataset_contexts(
     catalog_repository: CatalogRepository,
+    actor: ActorContext,
     max_sample_rows: int,
 ) -> list[AssistantDatasetContext]:
     contexts: list[AssistantDatasetContext] = []
+    parsed_datasets: list[CatalogDatasetResponse] = []
     for model in catalog_repository.list_dataset_models():
         try:
             dataset = CatalogDatasetResponse.model_validate(dataset_model_to_payload(model))
         except Exception:
+            continue
+        parsed_datasets.append(dataset)
+
+    datasets = datasets_with_persisted_permission_grants(catalog_repository.db, parsed_datasets)
+    for dataset in datasets:
+        permissions = permissions_for_actor_with_governance(
+            catalog_repository.db,
+            actor,
+            owner=dataset.owner,
+            grants=[grant.model_dump(by_alias=True) for grant in dataset.permission_grants],
+            resource_id=dataset.id,
+            resource_type="dataset",
+        )
+        if not permissions.can_query:
             continue
         if dataset.status != "available" or not dataset.schema_:
             continue

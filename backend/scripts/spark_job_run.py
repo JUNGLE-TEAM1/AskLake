@@ -4,7 +4,7 @@ import os
 import re
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
@@ -21,6 +21,7 @@ def main():
     run_id = os.environ.get("ASKLAKE_SPARK_RUN_ID", "unknown")
     source_collection = {}
     source_parsing = {}
+    sql_execution = None
     output_format = "parquet"
     spark = None
     try:
@@ -39,10 +40,21 @@ def main():
         schema_columns = manifest.get("schemaColumns") or load_json_env("ASKLAKE_SPARK_SCHEMA_COLUMNS", [])
         source_collection = manifest.get("sourceCollection") or {}
         source_parsing = manifest.get("sourceParsing") or {}
+        sql_execution = manifest.get("sqlExecution")
+        if source_format == "sql":
+            row_limit = 0
         transform_steps = manifest.get("transformSteps") or load_json_env("ASKLAKE_SPARK_TRANSFORM_STEPS", [])
         quality_rules = manifest.get("qualityRules") or load_json_env("ASKLAKE_SPARK_QUALITY_RULES", [])
         spark = make_spark()
-        source_df = read_source(spark, source_format, source_path, schema_columns, source_parsing, source_collection)
+        source_df = read_source(
+            spark,
+            source_format,
+            source_path,
+            schema_columns,
+            source_parsing,
+            source_collection,
+            sql_execution,
+        )
         input_rows = source_df.count() if row_limit <= 0 else source_df.limit(row_limit).count()
         working_df = source_df if row_limit <= 0 else source_df.limit(row_limit)
         normalized_df = normalize_columns(working_df)
@@ -87,6 +99,7 @@ def main():
                 "sourcePath": source_path,
                 "sourceCollection": source_collection,
                 "sourceParsing": source_parsing,
+                "sqlExecution": sql_execution_summary(sql_execution),
                 "startedAt": started_at,
                 "status": "failed",
             }
@@ -115,6 +128,7 @@ def main():
             "sourcePath": source_path,
             "sourceCollection": source_collection,
             "sourceParsing": source_parsing,
+            "sqlExecution": sql_execution_summary(sql_execution),
             "startedAt": started_at,
             "status": "success",
         }
@@ -135,6 +149,7 @@ def main():
             "sourcePath": source_path,
             "sourceCollection": source_collection,
             "sourceParsing": source_parsing,
+            "sqlExecution": sql_execution_summary(sql_execution),
             "startedAt": started_at,
             "status": "failed",
         }
@@ -159,6 +174,7 @@ def make_spark():
     spark = (
         SparkSession.builder.appName(os.environ.get("ASKLAKE_SPARK_APP_NAME", "asklake-pipeline-run"))
         .config("spark.sql.caseSensitive", "true")
+        .config("spark.sql.session.timeZone", "UTC")
         .config("spark.hadoop.fs.s3a.endpoint", endpoint)
         .config("spark.hadoop.fs.s3a.access.key", access_key)
         .config("spark.hadoop.fs.s3a.secret.key", secret_key)
@@ -172,7 +188,17 @@ def make_spark():
     return spark
 
 
-def read_source(spark, source_format, source_path, schema_columns, source_parsing=None, source_collection=None):
+def read_source(
+    spark,
+    source_format,
+    source_path,
+    schema_columns,
+    source_parsing=None,
+    source_collection=None,
+    sql_execution=None,
+):
+    if source_format == "sql":
+        return read_sql_source(spark, sql_execution)
     base_reader = apply_source_collection(spark.read, source_collection or {})
     if source_format == "csv":
         parsing = source_parsing or {}
@@ -210,6 +236,97 @@ def read_source(spark, source_format, source_path, schema_columns, source_parsin
     raise ValueError(f"Unsupported Spark source format: {source_format}")
 
 
+def read_sql_source(spark, sql_execution):
+    if not isinstance(sql_execution, dict):
+        raise ValueError("SQL source requires a sqlExecution manifest contract.")
+    if sql_execution.get("version") != 1 or sql_execution.get("validatedReadOnly") is not True:
+        raise ValueError("SQL source requires a validated read-only sqlExecution v1 contract.")
+
+    query = str(sql_execution.get("query") or "").strip()
+    datasets = sql_execution.get("datasets") or []
+    if not query or not isinstance(datasets, list) or not datasets:
+        raise ValueError("sqlExecution query and datasets are required.")
+
+    registered_dataset_ids = set()
+    for dataset in datasets:
+        if not isinstance(dataset, dict):
+            raise ValueError("Each sqlExecution dataset must be an object.")
+        dataset_id = str(dataset.get("datasetId") or "").strip()
+        dataset_name = str(dataset.get("name") or "").strip()
+        segments = dataset.get("storageSegments") or []
+        if not dataset_id or not dataset_name or not isinstance(segments, list) or not segments:
+            raise ValueError("Each sqlExecution dataset requires datasetId, name, and storageSegments.")
+        if dataset_id in registered_dataset_ids:
+            raise ValueError(f"Duplicate sqlExecution dataset: {dataset_id}")
+
+        frame = read_sql_dataset_segments(spark, dataset_id, segments)
+        for alias in dict.fromkeys([dataset_name, dataset_id]):
+            register_sql_dataset_view(frame, alias)
+        registered_dataset_ids.add(dataset_id)
+
+    required_dataset_ids = [
+        str(sql_execution.get("baseDatasetId") or "").strip(),
+        *[str(value or "").strip() for value in sql_execution.get("referenceDatasetIds") or []],
+    ]
+    missing_dataset_ids = [
+        dataset_id
+        for dataset_id in required_dataset_ids
+        if dataset_id and dataset_id not in registered_dataset_ids
+    ]
+    if missing_dataset_ids:
+        raise ValueError(f"sqlExecution is missing dataset inputs: {', '.join(missing_dataset_ids)}")
+    return spark.sql(query)
+
+
+def read_sql_dataset_segments(spark, dataset_id, segments):
+    frame = None
+    for segment in segments:
+        if not isinstance(segment, dict):
+            raise ValueError(f"Catalog dataset {dataset_id} contains an invalid storage segment.")
+        storage_format = str(segment.get("format") or "").strip().lower()
+        location = str(segment.get("location") or "").strip()
+        if storage_format not in {"csv", "json", "jsonl", "parquet"} or not location:
+            raise ValueError(f"Catalog dataset {dataset_id} contains an unreadable storage segment.")
+        segment_frame = read_sql_storage_segment(spark, storage_format, location)
+        frame = segment_frame if frame is None else frame.unionByName(segment_frame, allowMissingColumns=True)
+    if frame is None:
+        raise ValueError(f"Catalog dataset {dataset_id} has no readable physical storage segments.")
+    return frame
+
+
+def read_sql_storage_segment(spark, storage_format, location):
+    if storage_format == "parquet":
+        return spark.read.option("mergeSchema", "true").parquet(location)
+    if storage_format == "csv":
+        return spark.read.option("header", "true").option("inferSchema", "true").csv(location)
+    return spark.read.option("multiLine", "false").json(location)
+
+
+def register_sql_dataset_view(frame, alias):
+    normalized = str(alias or "").strip()
+    if not normalized:
+        raise ValueError("SQL Job dataset aliases cannot be empty.")
+    frame.createOrReplaceTempView(quote_identifier(normalized))
+
+
+def sql_execution_summary(sql_execution):
+    if not isinstance(sql_execution, dict):
+        return None
+    datasets = sql_execution.get("datasets") or []
+    return {
+        "baseDatasetId": sql_execution.get("baseDatasetId"),
+        "datasetCount": len(datasets),
+        "referenceDatasetIds": sql_execution.get("referenceDatasetIds") or [],
+        "sourceRunId": sql_execution.get("sourceRunId"),
+        "storageSegmentCount": sum(
+            len(dataset.get("storageSegments") or [])
+            for dataset in datasets
+            if isinstance(dataset, dict)
+        ),
+        "version": sql_execution.get("version"),
+    }
+
+
 def write_output(writer, output_path, output_format):
     if output_format == "csv":
         writer.option("header", "true").csv(output_path)
@@ -237,12 +354,16 @@ def apply_source_collection(reader, source_collection):
     if bool(source_collection.get("recursive")):
         reader = reader.option("recursiveFileLookup", "true")
     incremental_since = str(source_collection.get("incrementalSince") or "").strip()
-    if str(source_collection.get("mode") or "full").lower() == "incremental" and incremental_since:
-        reader = reader.option("modifiedAfter", spark_modified_after(incremental_since))
+    incremental_before = str(source_collection.get("incrementalBefore") or "").strip()
+    if str(source_collection.get("mode") or "full").lower() == "incremental":
+        if incremental_since:
+            reader = reader.option("modifiedAfter", spark_modified_timestamp(incremental_since, inclusive_lower=True))
+        if incremental_before:
+            reader = reader.option("modifiedBefore", spark_modified_timestamp(incremental_before))
     return reader
 
 
-def spark_modified_after(value):
+def spark_modified_timestamp(value, *, inclusive_lower=False):
     normalized = str(value or "").strip()
     if not normalized:
         return ""
@@ -252,7 +373,12 @@ def spark_modified_after(value):
         raise ValueError(f"Invalid incremental source watermark: {value}") from exc
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+    parsed = parsed.astimezone(timezone.utc)
+    # Spark compares file modification times at millisecond resolution using
+    # strict before/after predicates. This yields an exact [lower, upper) range.
+    if inclusive_lower:
+        parsed -= timedelta(microseconds=1)
+    return parsed.strftime("%Y-%m-%dT%H:%M:%S.%f")
 
 
 def delimited_struct_type(fields):
@@ -491,6 +617,11 @@ def apply_transform_steps(spark, frame, steps):
         output_column = normalize_column_name(step.get("output") or input_column)
         operation = str(step.get("operation") or step.get("kind") or "").lower()
         params = str(step.get("params") or "")
+        if "sql_result_materialize" in operation:
+            # Legacy SQL Job drafts used this marker after feeding preview rows.
+            # sqlExecution now materializes the saved query before transforms.
+            index += 1
+            continue
         if not input_column or not output_column:
             index += 1
             continue

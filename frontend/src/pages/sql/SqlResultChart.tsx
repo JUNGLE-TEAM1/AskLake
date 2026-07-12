@@ -1,82 +1,156 @@
 import { useMemo } from "react";
-import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 
+import type {
+  CatalogDataset,
+  DashboardRuntimeWidget,
+  DashboardRuntimeWidgetConfig,
+  DashboardRuntimeWidgetType,
+  SqlResultDraft,
+} from "../../types";
 import {
-  ChartContainer,
-  ChartTooltip,
-  ChartTooltipContent,
-  type ChartConfig,
-} from "@/components/ui/chart";
-import type { SqlResultDraft } from "../../types";
+  catalogDatasetToDashboardOption,
+  sqlResultToDashboardOption,
+} from "../dashboard/runtime/dashboardDatasetAdapters";
+import type { DashboardDatasetOption } from "../dashboard/runtime/dashboardRuntimeTypes";
+import {
+  dashboardWidgetDefinitions,
+  defaultWidgetColorConfig,
+} from "../dashboard/runtime/widgetDefinitions";
+import { WidgetRenderer } from "../dashboard/runtime/WidgetRenderer";
 
-const MAX_CHART_ROWS = 30;
+export type SqlChartType = DashboardRuntimeWidgetType;
 
-function toNumber(value: string) {
-  const normalized = value.replaceAll(",", "").trim();
-  if (normalized.length === 0) return null;
-  const numberValue = Number(normalized);
-  return Number.isFinite(numberValue) ? numberValue : null;
+export type SqlChartSource = {
+  dataset: DashboardDatasetOption;
+  id: string;
+  kind: "dataset" | "sql_result";
+  label: string;
+};
+
+export type SqlChartConfig = {
+  config: DashboardRuntimeWidgetConfig;
+  sourceId: string;
+  title: string;
+  type: SqlChartType;
+};
+
+export function createSqlResultChartSource(resultDraft: SqlResultDraft): SqlChartSource {
+  return {
+    dataset: sqlResultToDashboardOption(resultDraft),
+    id: `sql-result:${resultDraft.runId}`,
+    kind: "sql_result",
+    label: `${resultDraft.datasetName} · SQL 결과`,
+  };
 }
 
-function getNumericColumnIndex(resultDraft: SqlResultDraft) {
-  return resultDraft.columns.findIndex((_, columnIndex) => {
-    const values = resultDraft.rows
-      .map((row) => row[columnIndex] ?? "")
-      .filter((value) => value.trim().length > 0);
+export function createCatalogChartSource(dataset: CatalogDataset): SqlChartSource {
+  return {
+    dataset: catalogDatasetToDashboardOption(dataset),
+    id: `dataset:${dataset.id}`,
+    kind: "dataset",
+    label: dataset.name,
+  };
+}
 
-    return values.length > 0 && values.every((value) => toNumber(value) !== null);
+export function buildSqlChartSources(
+  resultDraft: SqlResultDraft,
+  selectedDatasets: CatalogDataset[] = [],
+) {
+  const seen = new Set<string>();
+  const datasetSources = selectedDatasets.flatMap((dataset) => {
+    if (dataset.status !== "available" || dataset.schema.length === 0 || seen.has(dataset.id)) return [];
+    seen.add(dataset.id);
+    return [createCatalogChartSource(dataset)];
   });
+
+  return [createSqlResultChartSource(resultDraft), ...datasetSources];
 }
 
-export function SqlResultChart({ resultDraft }: { resultDraft: SqlResultDraft }) {
-  const chartModel = useMemo(() => {
-    const numericColumnIndex = getNumericColumnIndex(resultDraft);
-    const valueColumnIndex = numericColumnIndex >= 0 ? numericColumnIndex : 0;
-    const labelColumnIndex = resultDraft.columns.findIndex((_, index) => index !== valueColumnIndex);
-    const resolvedLabelColumnIndex = labelColumnIndex >= 0 ? labelColumnIndex : valueColumnIndex;
-    const valueLabel = numericColumnIndex >= 0 ? resultDraft.columns[valueColumnIndex] : "행 수";
-    const labelLabel = resultDraft.columns[resolvedLabelColumnIndex] ?? "항목";
-    const data = resultDraft.rows.slice(0, MAX_CHART_ROWS).map((row, index) => ({
-      label: row[resolvedLabelColumnIndex]?.trim() || `${index + 1}행`,
-      value: numericColumnIndex >= 0 ? toNumber(row[valueColumnIndex] ?? "") ?? 0 : 1,
-    }));
-    const config = {
-      value: {
-        color: "var(--color-blue-600)",
-        label: valueLabel,
-      },
-    } satisfies ChartConfig;
+export function createDefaultSqlChartConfig(
+  source: SqlChartSource,
+): SqlChartConfig {
+  const categoryColumn = source.dataset.columns.find((column) => column.type !== "number")
+    ?? source.dataset.columns[0];
+  const valueColumn = source.dataset.columns.find((column) => column.type === "number");
 
-    return { config, data, labelLabel, valueLabel };
-  }, [resultDraft]);
+  return {
+    config: {
+      aggregation: valueColumn ? "sum" : "count",
+      color: defaultWidgetColorConfig,
+      orientation: "vertical",
+      xKey: categoryColumn?.name ?? "",
+      yKey: valueColumn?.name ?? "",
+    },
+    sourceId: source.id,
+    title: source.label,
+    type: "bar_chart",
+  };
+}
 
+export function getSqlChartConfigError(
+  config: SqlChartConfig,
+  source: SqlChartSource | undefined,
+) {
+  if (!source) return "차트에 사용할 데이터 소스를 선택해 주세요.";
+  if (config.sourceId !== source.id) return "차트 데이터 소스를 다시 선택해 주세요.";
+  if (source.dataset.columns.length === 0) return "차트에 사용할 컬럼이 없습니다.";
+  return null;
+}
+
+export function buildSqlChartWidget(
+  source: SqlChartSource,
+  config: SqlChartConfig,
+): DashboardRuntimeWidget {
+  const common = {
+    data: source.dataset.rows?.map((row) => ({ ...row })) ?? [],
+    datasetId: source.dataset.id,
+    id: `sql-chart-${source.id}`,
+    layout: { h: 8, minH: 4, minW: 4, w: 12, x: 0, y: 0 },
+    pageId: "sql-chart-preview",
+    queryId: null,
+    title: config.title || source.label,
+  };
+  return {
+    ...common,
+    config: config.config,
+    type: config.type,
+  } as DashboardRuntimeWidget;
+}
+
+export function SqlResultChart({
+  chartConfig,
+  resultDraft,
+  source,
+}: {
+  chartConfig?: SqlChartConfig;
+  resultDraft?: SqlResultDraft;
+  source?: SqlChartSource;
+}) {
+  const resolvedSource = useMemo(
+    () => source ?? (resultDraft ? createSqlResultChartSource(resultDraft) : undefined),
+    [resultDraft, source],
+  );
+  const resolvedConfig = useMemo(
+    () => chartConfig ?? (resolvedSource ? createDefaultSqlChartConfig(resolvedSource) : undefined),
+    [chartConfig, resolvedSource],
+  );
+  const widget = useMemo(
+    () => resolvedSource && resolvedConfig ? buildSqlChartWidget(resolvedSource, resolvedConfig) : null,
+    [resolvedConfig, resolvedSource],
+  );
+
+  if (!resolvedSource || !resolvedConfig || !widget) return null;
+
+  const widgetDefinition = dashboardWidgetDefinitions[resolvedConfig.type];
   return (
-    <section className="grid min-w-[720px] gap-3 p-4" aria-label="SQL 결과 차트">
+    <section className="grid min-h-[360px] min-w-[720px] grid-rows-[max-content_minmax(0,1fr)] gap-3 p-4" aria-label="SQL 결과 차트">
       <div className="grid gap-1">
-        <strong className="text-base">{chartModel.valueLabel} 분석</strong>
-        <span className="text-sm text-muted-foreground">
-          {chartModel.labelLabel} 기준 · 최대 {MAX_CHART_ROWS}개 행
-        </span>
+        <strong className="text-base">{resolvedConfig.title || resolvedSource.label}</strong>
+        <span className="text-sm text-muted-foreground">{widgetDefinition.label}</span>
       </div>
-      <ChartContainer
-        className="h-[360px] w-full aspect-auto"
-        config={chartModel.config}
-        initialDimension={{ width: 960, height: 360 }}
-      >
-        <BarChart accessibilityLayer data={chartModel.data} margin={{ left: 8, right: 8 }}>
-          <CartesianGrid vertical={false} />
-          <XAxis
-            axisLine={false}
-            dataKey="label"
-            minTickGap={24}
-            tickLine={false}
-            tickMargin={10}
-          />
-          <YAxis axisLine={false} tickLine={false} width={64} />
-          <ChartTooltip content={<ChartTooltipContent />} cursor={false} />
-          <Bar dataKey="value" fill="var(--color-value)" radius={6} />
-        </BarChart>
-      </ChartContainer>
+      <div className="h-[360px] min-h-0 overflow-hidden rounded-lg border bg-background">
+        <WidgetRenderer widget={widget} />
+      </div>
     </section>
   );
 }

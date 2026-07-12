@@ -31,7 +31,7 @@ export function runSparkPipeline(job, command, runId) {
   const manifestPath = path.join(reportDir, `${runId}.manifest.json`);
   const dockerManifestPath = `${reportContainerDir}/${runId}.manifest.json`;
   const packageArgs = sparkPackageArgs(source, output);
-  writeSparkJobManifest(manifestPath, job);
+  writeSparkJobManifest(manifestPath, job, source);
   const dockerArgs = [
     "run",
     "--rm",
@@ -128,23 +128,33 @@ export function runSparkPipeline(job, command, runId) {
   };
 }
 
-function writeSparkJobManifest(manifestPath, job) {
-  const manifest = {
+function writeSparkJobManifest(manifestPath, job, source) {
+  writeFileSync(manifestPath, `${JSON.stringify(sparkJobManifest(job, source), null, 2)}\n`, "utf8");
+}
+
+export function sparkJobManifest(job, source) {
+  return {
     createdAt: new Date().toISOString(),
     partitionColumns: job.partition || "",
     qualityRules: job.qualityRules ?? [],
     schemaColumns: job.schemaColumns ?? [],
-    sourceCollection: sourceCollectionFromConfig(job.sourceConfig ?? [], job.sourceIncrementalSince),
+    sourceCollection: sourceCollectionFromConfig(
+      job.sourceConfig ?? [],
+      job.sourceIncrementalSince,
+      job.sourceIncrementalBefore,
+      job.sourceWindowContractVersion,
+      job.sourceWindowRebaseline,
+    ),
     sourceParsing: sourceParsingFromConfig(job.sourceConfig ?? []),
+    sqlExecution: source?.sqlExecution ?? null,
     targetFormat: normalizeTargetFormat(job.targetFormat),
     transformSteps: job.transformSteps ?? [],
   };
-  writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 }
 
 function sparkPackageArgs(source, output) {
   if (process.env.ASKLAKE_SPARK_HADOOP_AWS_PACKAGE === "none") return [];
-  if (!usesS3A(source.path) && !usesS3A(output.sparkPath)) return [];
+  if (!sourceUsesS3(source) && !usesS3A(output.sparkPath)) return [];
   return [
     "--packages",
     process.env.ASKLAKE_SPARK_HADOOP_AWS_PACKAGE || "org.apache.hadoop:hadoop-aws:3.4.1",
@@ -153,6 +163,13 @@ function sparkPackageArgs(source, output) {
 
 function usesS3A(value) {
   return /^s3a?:\/\//i.test(String(value || ""));
+}
+
+function sourceUsesS3(source) {
+  if (usesS3A(source?.path)) return true;
+  return (source?.sqlExecution?.datasets ?? []).some((dataset) =>
+    (dataset.storageSegments ?? []).some((segment) => usesS3A(segment.location))
+  );
 }
 
 function runSparkSubmitContainer(dockerArgs) {
@@ -183,9 +200,17 @@ function ensureSparkServer() {
   }
 }
 
-function sparkSourceFromJob(job, runId) {
+export function sparkSourceFromJob(job, runId) {
   const sourceType = job.sourceType || "";
   const sourceConfig = Array.isArray(job.sourceConfig) ? job.sourceConfig : [];
+  if (String(sourceType).trim().toLowerCase() === "sql result") {
+    const sqlExecution = normalizeSqlExecutionContract(job.sqlExecution);
+    return {
+      format: "sql",
+      path: `catalog://${sqlExecution.baseDatasetId}`,
+      sqlExecution,
+    };
+  }
   if (sourceType === "File / S3") {
     const bucket = normalizeBucketName(fieldValue(sourceConfig, "Bucket / Stage Name") || process.env.MINIO_BUCKET || "m3-raw");
     const prefix = normalizeBucketRelativePath(
@@ -223,6 +248,122 @@ function sparkSourceFromJob(job, runId) {
   }
 
   throw sparkError(`Spark execution requires File / S3, Data Lake, or a connector sample with schema rows. Unsupported sourceType=${sourceType}`);
+}
+
+function normalizeSqlExecutionContract(value) {
+  if (!value || typeof value !== "object") {
+    throw sparkError("SQL Result execution requires a backend-resolved sqlExecution contract.");
+  }
+  if (Number(value.version) !== 1 || value.validatedReadOnly !== true) {
+    throw sparkError("SQL Result execution requires a validated read-only sqlExecution v1 contract.");
+  }
+
+  const sourceRunId = requiredSqlExecutionString(value.sourceRunId, "sourceRunId");
+  const baseDatasetId = requiredSqlExecutionString(value.baseDatasetId, "baseDatasetId");
+  const query = requiredSqlExecutionString(value.query, "query");
+  const referenceDatasetIds = Array.isArray(value.referenceDatasetIds)
+    ? value.referenceDatasetIds.map((item) => requiredSqlExecutionString(item, "referenceDatasetIds[]"))
+    : [];
+  const datasets = Array.isArray(value.datasets)
+    ? value.datasets.map((dataset, datasetIndex) => normalizeSqlDatasetInput(dataset, datasetIndex))
+    : [];
+  if (datasets.length === 0) {
+    throw sparkError("sqlExecution.datasets must include the selected Catalog dataset inputs.");
+  }
+
+  const datasetIds = new Set(datasets.map((dataset) => dataset.datasetId));
+  for (const datasetId of [baseDatasetId, ...referenceDatasetIds]) {
+    if (!datasetIds.has(datasetId)) {
+      throw sparkError(`sqlExecution is missing the physical input for Catalog dataset ${datasetId}.`);
+    }
+  }
+
+  return {
+    baseDatasetId,
+    datasets,
+    query,
+    referenceDatasetIds,
+    sourceRunId,
+    validatedReadOnly: true,
+    version: 1,
+  };
+}
+
+function normalizeSqlDatasetInput(value, datasetIndex) {
+  if (!value || typeof value !== "object") {
+    throw sparkError(`sqlExecution.datasets[${datasetIndex}] must be an object.`);
+  }
+  const datasetId = requiredSqlExecutionString(value.datasetId, `datasets[${datasetIndex}].datasetId`);
+  const name = requiredSqlExecutionString(value.name, `datasets[${datasetIndex}].name`);
+  const storageSegments = Array.isArray(value.storageSegments)
+    ? value.storageSegments.map((segment, segmentIndex) => normalizeSqlStorageSegment(segment, datasetIndex, segmentIndex))
+    : [];
+  if (storageSegments.length === 0) {
+    throw sparkError(`Catalog dataset ${datasetId} has no physical storage segments.`);
+  }
+  return { datasetId, name, storageSegments };
+}
+
+function normalizeSqlStorageSegment(value, datasetIndex, segmentIndex) {
+  if (!value || typeof value !== "object") {
+    throw sparkError(`sqlExecution.datasets[${datasetIndex}].storageSegments[${segmentIndex}] must be an object.`);
+  }
+  const format = requiredSqlExecutionString(
+    value.format,
+    `datasets[${datasetIndex}].storageSegments[${segmentIndex}].format`,
+  ).toLowerCase();
+  if (!new Set(["csv", "json", "jsonl", "parquet"]).has(format)) {
+    throw sparkError(`Unsupported SQL Job storage format: ${format}.`);
+  }
+  return {
+    format,
+    location: sparkSqlStorageLocation(requiredSqlExecutionString(
+      value.location,
+      `datasets[${datasetIndex}].storageSegments[${segmentIndex}].location`,
+    )),
+  };
+}
+
+function requiredSqlExecutionString(value, fieldName) {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) throw sparkError(`sqlExecution.${fieldName} is required.`);
+  return normalized;
+}
+
+function sparkSqlStorageLocation(value) {
+  if (usesS3A(value)) return toS3APath(value);
+
+  const normalizedFileValue = String(value).replace(/\\/g, "/");
+  const allowedContainerPrefixes = [outputContainerDir, sampleContainerDir]
+    .map((containerDir) => `file://${String(containerDir).replace(/\/+$/g, "")}/`);
+  if (allowedContainerPrefixes.some((prefix) => normalizedFileValue.startsWith(prefix))) {
+    return normalizedFileValue;
+  }
+
+  let hostPath = value;
+  if (/^file:\/\//i.test(value)) {
+    try {
+      hostPath = fileURLToPath(value);
+    } catch {
+      throw sparkError(`SQL Job storage location is not a valid file URI: ${value}`);
+    }
+  }
+
+  for (const [hostRoot, containerRoot] of [
+    [localOutputDir, outputContainerDir],
+    [sampleHostDir, sampleContainerDir],
+  ]) {
+    const resolved = path.resolve(hostPath);
+    const relative = path.relative(hostRoot, resolved);
+    if (!relative.startsWith("..") && !path.isAbsolute(relative)) {
+      const containerPath = [String(containerRoot).replace(/\/+$/g, ""), relative.replace(/\\/g, "/")]
+        .filter(Boolean)
+        .join("/");
+      return `file://${containerPath}`;
+    }
+  }
+
+  throw sparkError(`SQL Job local storage is outside the Spark-mounted data roots: ${value}`);
 }
 
 function isConnectorSampleSource(sourceType) {
@@ -341,7 +482,8 @@ function sparkOutputPath(job, runId) {
   };
 }
 
-function sparkRowLimitFromJob(job) {
+export function sparkRowLimitFromJob(job) {
+  if (String(job?.sourceType || "").trim().toLowerCase() === "sql result") return "0";
   const sourceConfig = Array.isArray(job.sourceConfig) ? job.sourceConfig : [];
   const configuredLimit = fieldValue(sourceConfig, "__Execution Row Limit") || fieldValue(sourceConfig, "Execution Row Limit");
   if (configuredLimit && Number(configuredLimit) > 0) return configuredLimit;
@@ -393,18 +535,28 @@ export function sourceParsingFromConfig(sourceConfig) {
   };
 }
 
-export function sourceCollectionFromConfig(sourceConfig, incrementalSince = undefined) {
+export function sourceCollectionFromConfig(
+  sourceConfig,
+  incrementalSince = undefined,
+  incrementalBefore = undefined,
+  windowContractVersion = undefined,
+  sourceWindowRebaseline = false,
+) {
   const scope = String(fieldValue(sourceConfig, "Collection Scope") || "file").trim().toLowerCase() === "folder"
     ? "folder"
     : "file";
   const collectionMode = String(fieldValue(sourceConfig, "Collection Mode") || "incremental").trim().toLowerCase();
   const mode = scope === "folder" && collectionMode !== "full" ? "incremental" : "full";
+  const boundedWindowVersion = mode === "incremental" && Number(windowContractVersion) === 1 ? 1 : null;
   return {
     filePattern: scope === "folder" ? fieldValue(sourceConfig, "File Pattern") || null : null,
+    incrementalBefore: mode === "incremental" && incrementalBefore ? String(incrementalBefore) : null,
     incrementalSince: mode === "incremental" && incrementalSince ? String(incrementalSince) : null,
     mode,
+    rebaseline: boundedWindowVersion === 1 && sourceWindowRebaseline === true,
     recursive: scope === "folder" && parseConfigBoolean(fieldValue(sourceConfig, "Recursive")),
     scope,
+    windowContractVersion: boundedWindowVersion,
   };
 }
 

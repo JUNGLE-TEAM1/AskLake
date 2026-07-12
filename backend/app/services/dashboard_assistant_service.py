@@ -4,20 +4,24 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from fastapi import status
+
+from app.core.auth_context import ActorContext
 from app.core.config import Settings
+from app.core.errors import ApiError
 from app.repositories.catalog_repository import CatalogRepository
 from app.repositories.dashboard_runtime_repository import DashboardRuntimeRepository
 from app.schemas.dashboard import (
     DashboardAssistantCreateWidgetAction,
     DashboardAssistantCreateWidgetInput,
     DashboardAssistantMode,
-    DashboardAssistantReportAction,
     DashboardAssistantRequest,
     DashboardAssistantResponse,
     DashboardAssistantUpdateWidgetAction,
     DashboardAssistantWidgetContext,
     DashboardAssistantWidgetPatch,
 )
+from app.schemas.common import ErrorCode
 from app.services.dashboard_assistant_context import (
     AssistantDashboardContext,
     AssistantDatasetContext,
@@ -43,21 +47,36 @@ class DashboardAssistantService:
         self.catalog_repository = catalog_repository
         self.settings = settings
 
-    def generate_response(self, request: DashboardAssistantRequest) -> DashboardAssistantResponse:
+    def generate_response(
+        self,
+        request: DashboardAssistantRequest,
+        actor: ActorContext,
+    ) -> DashboardAssistantResponse:
+        if not self.settings.openai_assistant_enabled:
+            raise ApiError(
+                ErrorCode.SERVICE_UNAVAILABLE,
+                "Dashboard assistant is disabled by server configuration.",
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                {"reason": "OPENAI_ASSISTANT_ENABLED is false"},
+            )
+        if not (self.settings.openai_api_key or "").strip():
+            raise ApiError(
+                ErrorCode.SERVICE_UNAVAILABLE,
+                "Dashboard assistant is unavailable because OPENAI_API_KEY is not configured.",
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                {"reason": "OPENAI_API_KEY is not configured"},
+            )
+
         context = build_assistant_context(
             request,
             self.runtime_repository,
             self.catalog_repository,
+            actor,
             max_sample_rows=self.settings.openai_assistant_max_sample_rows,
         )
 
         if _is_low_signal_prompt(request.prompt):
             return _build_low_signal_prompt_response()
-
-        if not self.settings.openai_assistant_enabled:
-            return self._mock_fallback_response(request, context, "mock fallback: OpenAI Assistant가 비활성화되어 있습니다.")
-        if not self.settings.openai_api_key:
-            return self._mock_fallback_response(request, context, "mock fallback: OPENAI_API_KEY가 설정되지 않았습니다.")
 
         try:
             raw_payload = self._request_openai(request, context)
@@ -68,11 +87,13 @@ class DashboardAssistantService:
             guarded_response = _normalize_visualization_success_message(request, guarded_response)
             return self._with_context_warnings(guarded_response, context)
         except (HTTPError, URLError, TimeoutError, ValueError, OSError) as exc:
-            return self._mock_fallback_response(
-                request,
-                context,
-                f"mock fallback: OpenAI 호출에 실패해 mock 응답을 사용했습니다. ({exc.__class__.__name__})",
-            )
+            reason = _openai_failure_reason(exc)
+            raise ApiError(
+                ErrorCode.INTERNAL_ERROR,
+                f"OpenAI dashboard assistant request failed: {reason}",
+                status.HTTP_502_BAD_GATEWAY,
+                {"reason": reason, "exceptionType": exc.__class__.__name__},
+            ) from exc
 
     def _request_openai(
         self,
@@ -115,8 +136,16 @@ class DashboardAssistantService:
         with urlopen(request, timeout=self.settings.openai_assistant_timeout_seconds) as response:
             response_payload = json.loads(response.read().decode("utf-8"))
 
-        if response_payload.get("error"):
-            raise ValueError("OpenAI response contained an error")
+        response_error = response_payload.get("error")
+        if response_error:
+            if isinstance(response_error, dict):
+                provider_reason = str(response_error.get("message") or "").strip()
+            else:
+                provider_reason = str(response_error).strip()
+            error_message = "OpenAI response contained an error"
+            if provider_reason:
+                error_message = f"{error_message}: {provider_reason}"
+            raise ValueError(error_message)
 
         output_text = _extract_output_text(response_payload)
         if not output_text:
@@ -126,20 +155,6 @@ class DashboardAssistantService:
             raise ValueError("OpenAI response JSON root was not an object")
         return parsed
 
-    def _mock_fallback_response(
-        self,
-        request: DashboardAssistantRequest,
-        context: AssistantDashboardContext,
-        warning: str,
-    ) -> DashboardAssistantResponse:
-        response = (
-            _build_visualization_mock_fallback(request, context)
-            if request.mode == DashboardAssistantMode.VISUALIZATION_REQUEST
-            else _build_dashboard_question_mock_fallback(request, context)
-        )
-        response.warnings = [*context.warnings, warning, *response.warnings]
-        return response
-
     @staticmethod
     def _with_context_warnings(
         response: DashboardAssistantResponse,
@@ -147,6 +162,18 @@ class DashboardAssistantService:
     ) -> DashboardAssistantResponse:
         response.warnings = [*context.warnings, *response.warnings]
         return response
+
+
+def _openai_failure_reason(exc: Exception) -> str:
+    if isinstance(exc, HTTPError):
+        reason = str(exc.reason).strip()
+        return f"HTTP {exc.code}{f' {reason}' if reason else ''}"
+    if isinstance(exc, URLError):
+        reason = str(exc.reason).strip()
+        return reason or "OpenAI endpoint could not be reached"
+
+    reason = str(exc).strip()
+    return reason or exc.__class__.__name__
 
 
 def _assistant_instructions() -> str:
@@ -700,62 +727,4 @@ def _find_target_widget(
         layout={"x": 0, "y": 0, "w": 4, "h": 3},
         config=context_widget.config,
         data_sample=context_widget.data_sample,
-    )
-
-
-def _build_visualization_mock_fallback(
-    request: DashboardAssistantRequest,
-    context: AssistantDashboardContext,
-) -> DashboardAssistantResponse:
-    target_widget = _find_target_widget(request, context)
-    warnings: list[str] = []
-    if not target_widget:
-        warnings.append("mock fallback: 위젯 컨텍스트가 없어 action을 만들지 못했습니다.")
-        return DashboardAssistantResponse(
-            message="mock fallback 응답입니다. 위젯 컨텍스트를 함께 보내면 수정 action을 반환할 수 있습니다.",
-            warnings=warnings,
-        )
-
-    config_patch = {
-        "description": "mock fallback 응답으로 생성한 시각화 설명입니다.",
-        "prompt": request.prompt,
-    }
-    widget_patch = DashboardAssistantWidgetPatch(
-        title=target_widget.title or "AI 추천 시각화",
-        config=config_patch,
-    )
-
-    return DashboardAssistantResponse(
-        message="mock fallback 응답입니다. OpenAI 응답 대신 기존 위젯 설정을 일부 보강했습니다.",
-        actions=[
-            DashboardAssistantUpdateWidgetAction(
-                widget_id=target_widget.id,
-                patch=widget_patch,
-            ),
-        ],
-        config_patch=config_patch,
-        widget_patch=widget_patch,
-        warnings=warnings,
-    )
-
-
-def _build_dashboard_question_mock_fallback(
-    request: DashboardAssistantRequest,
-    context: AssistantDashboardContext,
-) -> DashboardAssistantResponse:
-    target_widget = _find_target_widget(request, context)
-    widget_label = f"`{target_widget.title}`" if target_widget else "현재 대시보드"
-    markdown = (
-        "## mock fallback report\n\n"
-        f"- 대상: {widget_label}\n"
-        f"- 요청: {request.prompt}\n"
-        f"- 현재 page 위젯 수: {len(context.widgets)}개\n"
-        f"- 대시보드에서 사용할 수 있는 데이터셋 수: {len(context.datasets)}개\n\n"
-        "OpenAI 호출이 준비되지 않아 mock fallback 리포트를 반환했습니다."
-    )
-
-    return DashboardAssistantResponse(
-        message="mock fallback 응답입니다. 실제 분석 답변 대신 현재 컨텍스트 요약을 반환했습니다.",
-        actions=[DashboardAssistantReportAction(markdown=markdown)],
-        warnings=[],
     )

@@ -1,8 +1,9 @@
 import re
 from collections.abc import Iterable
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 import json
+import math
 import os
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,7 @@ import duckdb
 from fastapi import status
 
 from app.core.auth_context import ActorContext, require_permission
+from app.core.materialization import active_materialization_runs
 from app.core.errors import ApiError
 from app.repositories.audit_repository import safe_record_audit_event
 from app.repositories.catalog_repository import CatalogRepository
@@ -24,6 +26,9 @@ from app.services.governance_enforcement import require_governed_access
 from app.services.resource_permission_service import dataset_with_persisted_permission_grants
 
 DEFAULT_PREVIEW_LIMIT = 100
+DASHBOARD_CHART_ROW_LIMIT = 500
+DASHBOARD_TABLE_ROW_LIMIT = 500
+DASHBOARD_VALUE_ALIAS = "__asklake_widget_value"
 MUTATION_KEYWORDS = (
     "insert",
     "update",
@@ -373,13 +378,269 @@ def execute_duckdb_preview(
         connection.close()
 
 
+def read_duckdb_dataset_page(
+    dataset: CatalogDatasetResponse,
+    *,
+    limit: int,
+    offset: int,
+) -> dict[str, Any]:
+    connection = duckdb.connect(database=":memory:")
+    table = quote_duckdb_identifier(dataset.name)
+    try:
+        register_duckdb_dataset(connection, dataset)
+        declared_row_count = dataset_declared_row_count(dataset)
+        row_count = (
+            declared_row_count
+            if declared_row_count is not None
+            else int(connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
+        )
+        cursor = connection.execute(
+            f"SELECT * FROM {table} LIMIT ? OFFSET ?",
+            [limit, offset],
+        )
+        rows = [
+            [format_sql_cell(cell) for cell in row]
+            for row in cursor.fetchall()
+        ]
+        return {
+            "columns": [str(description[0]) for description in (cursor.description or [])],
+            "row_count": row_count,
+            "rows": rows,
+        }
+    except ApiError:
+        raise
+    except duckdb.Error as error:
+        raise dataset_storage_error(dataset, str(error)) from error
+    finally:
+        connection.close()
+
+
+class DashboardDatasetQuerySession:
+    """Registers one Catalog dataset once and runs bounded widget queries against it."""
+
+    def __init__(self, dataset: CatalogDatasetResponse) -> None:
+        self.dataset = dataset
+        self.connection = duckdb.connect(database=":memory:")
+        self.table = quote_duckdb_identifier(dataset.name)
+        try:
+            if not dataset_storage_locations(dataset):
+                raise dataset_storage_error(dataset, "Dashboard widgets require physical dataset storage")
+            register_duckdb_dataset(self.connection, dataset)
+            self.columns = {
+                str(row[0])
+                for row in self.connection.execute(f"DESCRIBE SELECT * FROM {self.table}").fetchall()
+            }
+        except ApiError:
+            self.connection.close()
+            raise
+        except duckdb.Error as error:
+            self.connection.close()
+            raise dataset_storage_error(dataset, str(error)) from error
+
+    def close(self) -> None:
+        self.connection.close()
+
+    def read_widget(self, widget_type: str, config: dict[str, Any]) -> dict[str, Any]:
+        source_config = dashboard_source_config(config)
+        if widget_type == "table":
+            sql = dashboard_table_query(self.table, self.columns, source_config)
+            data_mode = "server_preview"
+            runtime_config = dict(source_config)
+        else:
+            sql, runtime_config = dashboard_aggregation_query(
+                self.table,
+                self.columns,
+                widget_type,
+                source_config,
+            )
+            data_mode = "server_aggregated"
+
+        runtime_config["dataMode"] = data_mode
+        runtime_config["sourceConfig"] = source_config
+        try:
+            cursor = self.connection.execute(sql)
+            column_names = [str(description[0]) for description in (cursor.description or [])]
+            rows = [
+                {
+                    column_name: dashboard_json_cell(row[index])
+                    for index, column_name in enumerate(column_names)
+                }
+                for row in cursor.fetchall()
+            ]
+        except duckdb.Error as error:
+            raise dataset_storage_error(self.dataset, str(error)) from error
+        return {"config": runtime_config, "data": rows}
+
+
+def dashboard_source_config(config: dict[str, Any]) -> dict[str, Any]:
+    source = config.get("sourceConfig") or config.get("source_config")
+    if isinstance(source, dict):
+        return dict(source)
+    return {
+        key: value
+        for key, value in config.items()
+        if key not in {"dataMode", "data_mode", "sourceConfig", "source_config"}
+    }
+
+
+def dashboard_table_query(table: str, columns: set[str], config: dict[str, Any]) -> str:
+    requested_columns = config.get("columns")
+    selected = (
+        [value for value in requested_columns if isinstance(value, str) and value]
+        if isinstance(requested_columns, list)
+        else []
+    )
+    if not selected:
+        selected = sorted(columns)[:20]
+    if not selected:
+        raise ValueError("Dashboard table has no readable columns")
+    for column in selected:
+        require_dashboard_column(column, columns)
+
+    select_sql = ", ".join(quote_duckdb_identifier(column) for column in selected)
+    sort_key = config.get("sortKey") or config.get("sort_key")
+    order_sql = ""
+    if isinstance(sort_key, str) and sort_key:
+        require_dashboard_column(sort_key, columns)
+        direction = str(config.get("sortDirection") or config.get("sort_direction") or "asc").lower()
+        direction_sql = "DESC" if direction == "desc" else "ASC"
+        order_sql = f" ORDER BY {quote_duckdb_identifier(sort_key)} {direction_sql} NULLS LAST"
+    limit = dashboard_row_limit(config.get("limit"), default=100, maximum=DASHBOARD_TABLE_ROW_LIMIT)
+    return f"SELECT {select_sql} FROM {table}{order_sql} LIMIT {limit}"
+
+
+def dashboard_aggregation_query(
+    table: str,
+    columns: set[str],
+    widget_type: str,
+    config: dict[str, Any],
+) -> tuple[str, dict[str, Any]]:
+    aggregation = str(config.get("aggregation") or "sum").lower()
+    if aggregation not in {"sum", "avg", "count", "min", "max"}:
+        raise ValueError(f"Unsupported dashboard aggregation: {aggregation}")
+
+    dimension_specs, value_config_key = dashboard_widget_query_fields(widget_type, config)
+    select_parts: list[str] = []
+    dimension_aliases: list[str] = []
+    for _config_key, column, date_unit in dimension_specs:
+        if not column:
+            continue
+        require_dashboard_column(column, columns)
+        expression = quote_duckdb_identifier(column)
+        if date_unit in {"day", "month", "year"}:
+            expression = f"date_trunc('{date_unit}', TRY_CAST({expression} AS TIMESTAMP))"
+        select_parts.append(f"{expression} AS {quote_duckdb_identifier(column)}")
+        dimension_aliases.append(column)
+
+    configured_value_key = config.get(value_config_key) or config.get(camel_to_snake_key(value_config_key))
+    if aggregation != "count":
+        if not isinstance(configured_value_key, str) or not configured_value_key:
+            raise ValueError(f"Dashboard {widget_type} requires {value_config_key}")
+        require_dashboard_column(configured_value_key, columns)
+
+    value_alias = (
+        DASHBOARD_VALUE_ALIAS
+        if aggregation == "count" or configured_value_key in dimension_aliases
+        else str(configured_value_key)
+    )
+    aggregate_expression = dashboard_aggregate_expression(aggregation, configured_value_key)
+    select_parts.append(f"{aggregate_expression} AS {quote_duckdb_identifier(value_alias)}")
+
+    runtime_config = dict(config)
+    if aggregation == "count":
+        runtime_config["aggregation"] = "sum"
+    if value_alias != configured_value_key:
+        runtime_config[value_config_key] = value_alias
+
+    group_sql = " GROUP BY ALL" if dimension_aliases else ""
+    if widget_type in {"line_chart", "area_chart", "heatmap_chart"} and dimension_aliases:
+        order_sql = " ORDER BY " + ", ".join(
+            f"{quote_duckdb_identifier(alias)} ASC NULLS LAST" for alias in dimension_aliases
+        )
+    elif dimension_aliases:
+        order_sql = f" ORDER BY {quote_duckdb_identifier(value_alias)} DESC NULLS LAST"
+    else:
+        order_sql = ""
+    limit_sql = f" LIMIT {DASHBOARD_CHART_ROW_LIMIT}" if dimension_aliases else ""
+    return f"SELECT {', '.join(select_parts)} FROM {table}{group_sql}{order_sql}{limit_sql}", runtime_config
+
+
+def dashboard_widget_query_fields(
+    widget_type: str,
+    config: dict[str, Any],
+) -> tuple[list[tuple[str, str, str | None]], str]:
+    def text(key: str) -> str:
+        value = config.get(key) or config.get(camel_to_snake_key(key))
+        return str(value) if isinstance(value, str) else ""
+
+    def required(key: str) -> str:
+        value = text(key)
+        if not value:
+            raise ValueError(f"Dashboard {widget_type} requires {key}")
+        return value
+
+    if widget_type == "metric":
+        return [], "valueKey"
+    if widget_type == "bar_chart":
+        return [("xKey", required("xKey"), None), ("groupKey", text("groupKey"), None)], "yKey"
+    if widget_type in {"line_chart", "area_chart"}:
+        date_unit = text("dateUnit") or None
+        return [("xKey", required("xKey"), date_unit), ("seriesKey", text("seriesKey"), None)], "yKey"
+    if widget_type in {"donut_chart", "pie_chart", "treemap_chart"}:
+        return [("labelKey", required("labelKey"), None)], "valueKey"
+    if widget_type == "radial_bar_chart":
+        return [("labelKey", text("labelKey"), None)], "valueKey"
+    if widget_type == "heatmap_chart":
+        return [("xKey", required("xKey"), None), ("yKey", required("yKey"), None)], "valueKey"
+    raise ValueError(f"Unsupported dashboard widget type: {widget_type}")
+
+
+def dashboard_aggregate_expression(aggregation: str, value_key: Any) -> str:
+    if aggregation == "count":
+        return "COUNT(*)"
+    column = quote_duckdb_identifier(str(value_key))
+    function = {"sum": "SUM", "avg": "AVG", "min": "MIN", "max": "MAX"}[aggregation]
+    return f"{function}(TRY_CAST({column} AS DOUBLE))"
+
+
+def require_dashboard_column(column: str, columns: set[str]) -> None:
+    if column not in columns:
+        raise ValueError(f"Dashboard column does not exist: {column}")
+
+
+def dashboard_row_limit(value: Any, *, default: int, maximum: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(1, min(maximum, parsed))
+
+
+def camel_to_snake_key(value: str) -> str:
+    return re.sub(r"(?<!^)(?=[A-Z])", "_", value).lower()
+
+
+def dashboard_json_cell(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, bool)):
+        return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, Decimal):
+        converted = float(value)
+        return converted if math.isfinite(converted) else None
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value)
+
+
 def register_duckdb_dataset(
     connection: duckdb.DuckDBPyConnection,
     dataset: CatalogDatasetResponse,
 ) -> None:
     table_name = dataset.name
-    storage_location = str(dataset.storage_location or "").strip()
-    if storage_location and storage_location not in {"-", "Pending"}:
+    if dataset_storage_locations(dataset):
         register_duckdb_storage_location(connection, dataset, table_name)
     else:
         register_duckdb_sample_rows(connection, dataset, table_name)
@@ -395,49 +656,37 @@ def register_duckdb_storage_location(
     dataset: CatalogDatasetResponse,
     table_name: str,
 ) -> bool:
-    storage_location = str(dataset.storage_location or "").strip()
-    if not storage_location or storage_location in {"-", "Pending"}:
+    storage_segments = dataset_storage_segments(dataset)
+    if not storage_segments:
         return False
 
-    storage_format = str(dataset.storage_format or "").lower()
-    if storage_format not in {"csv", "json", "jsonl", "parquet"}:
-        raise dataset_storage_error(dataset, f"Unsupported storage format: {storage_format or '-'}")
-
     try:
-        if is_s3_storage_location(storage_location):
+        if any(is_s3_storage_location(location) for location, _format in storage_segments):
             configure_duckdb_s3(connection)
-            register_duckdb_scan_view(
-                connection,
-                table_name,
-                s3_scan_path(storage_location, storage_format),
-                storage_format,
+        scan_segments: list[tuple[str, str]] = []
+        for storage_location, storage_format in storage_segments:
+            if storage_format not in {"csv", "json", "jsonl", "parquet"}:
+                raise ValueError(f"Unsupported storage format: {storage_format or '-'}")
+            if is_s3_storage_location(storage_location):
+                scan_segments.append((s3_scan_path(storage_location, storage_format), storage_format))
+                continue
+
+            storage_path = Path(storage_location)
+            if not storage_path.exists():
+                raise FileNotFoundError(f"Storage location does not exist: {storage_location}")
+            scan_path = (
+                parquet_scan_path(storage_path)
+                if storage_format == "parquet"
+                else delimited_scan_path(storage_path, storage_format)
             )
-            return True
-
-        storage_path = Path(storage_location)
-        if not storage_path.exists():
-            raise FileNotFoundError(f"Storage location does not exist: {storage_location}")
-
-        if storage_format == "jsonl" and storage_path.is_file():
-            records = read_jsonl_records(storage_path)
-            if not records:
-                raise ValueError("JSONL storage does not contain readable records")
-            register_duckdb_records(connection, table_name, records)
-            return True
-
-        if storage_format == "parquet":
-            scan_path = parquet_scan_path(storage_path)
             if not scan_path:
-                raise FileNotFoundError("Parquet storage does not contain .parquet files")
-            register_duckdb_scan_view(connection, table_name, scan_path, storage_format)
-            return True
+                raise FileNotFoundError(
+                    f"{storage_format.upper()} storage does not contain readable files: {storage_location}"
+                )
+            scan_segments.append((scan_path, storage_format))
 
-        if storage_format in {"csv", "json", "jsonl"}:
-            scan_path = delimited_scan_path(storage_path, storage_format)
-            if not scan_path:
-                raise FileNotFoundError(f"{storage_format.upper()} storage does not contain readable files")
-            register_duckdb_scan_view(connection, table_name, scan_path, storage_format)
-            return True
+        register_duckdb_scan_segments_view(connection, table_name, scan_segments)
+        return True
     except ApiError:
         raise
     except (OSError, ValueError, duckdb.Error, json.JSONDecodeError) as error:
@@ -449,18 +698,101 @@ def register_duckdb_storage_location(
 def register_duckdb_scan_view(
     connection: duckdb.DuckDBPyConnection,
     table_name: str,
-    scan_path: str,
+    scan_path: str | list[str],
     storage_format: str,
 ) -> None:
+    scan_paths = [scan_path] if isinstance(scan_path, str) else scan_path
+    register_duckdb_scan_segments_view(
+        connection,
+        table_name,
+        [(path, storage_format) for path in scan_paths],
+    )
+
+
+def register_duckdb_scan_segments_view(
+    connection: duckdb.DuckDBPyConnection,
+    table_name: str,
+    scan_segments: list[tuple[str, str]],
+) -> None:
     table = quote_duckdb_identifier(table_name)
+    sources = [duckdb_scan_source(path, storage_format) for path, storage_format in scan_segments]
+    union_sql = " UNION ALL BY NAME ".join(f"SELECT * FROM {source}" for source in sources)
+    connection.execute(f"CREATE TEMP VIEW {table} AS {union_sql}")
+
+
+def duckdb_scan_source(scan_path: str, storage_format: str) -> str:
     path = quote_duckdb_string_literal(scan_path)
     if storage_format == "parquet":
-        source = f"read_parquet({path}, union_by_name = true, hive_partitioning = true)"
-    elif storage_format == "csv":
-        source = f"read_csv_auto({path}, header = true, union_by_name = true, hive_partitioning = true)"
-    else:
-        source = f"read_json_auto({path}, union_by_name = true, hive_partitioning = true)"
-    connection.execute(f"CREATE TEMP VIEW {table} AS SELECT * FROM {source}")
+        return f"read_parquet({path}, union_by_name = true, hive_partitioning = true)"
+    if storage_format == "csv":
+        return f"read_csv_auto({path}, header = true, union_by_name = true, hive_partitioning = true)"
+    return f"read_json_auto({path}, union_by_name = true, hive_partitioning = true)"
+
+
+def dataset_storage_locations(dataset: CatalogDatasetResponse) -> list[str]:
+    return [location for location, _format in dataset_storage_segments(dataset)]
+
+
+def dataset_declared_row_count(dataset: CatalogDatasetResponse) -> int | None:
+    counts: list[int] = []
+    for run in active_dataset_materialization_runs(dataset):
+        if not run.get("_rowCountDeclared"):
+            return None
+        value = run.get("rowCount")
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return None
+        if parsed < 0:
+            return None
+        counts.append(parsed)
+    return sum(counts) if counts else None
+
+
+def dataset_storage_segments(dataset: CatalogDatasetResponse) -> list[tuple[str, str]]:
+    segments: list[tuple[str, str]] = []
+    fallback_format = str(getattr(dataset, "storage_format", None) or "").strip().lower()
+    for run in reversed(active_dataset_materialization_runs(dataset)):
+        status_value = run.get("status")
+        location_value = run.get("storageLocation")
+        format_value = run.get("storageFormat")
+        location = str(location_value or "").strip()
+        storage_format = str(format_value or fallback_format).strip().lower()
+        segment = (location, storage_format)
+        if status_value == "success" and location and location not in {"-", "Pending"} and segment not in segments:
+            segments.append(segment)
+    if segments:
+        return segments
+    fallback = str(getattr(dataset, "storage_location", None) or "").strip()
+    return [(fallback, fallback_format)] if fallback and fallback not in {"-", "Pending"} else []
+
+
+def active_dataset_materialization_runs(dataset: CatalogDatasetResponse) -> list[dict[str, Any]]:
+    payloads: list[dict[str, Any]] = []
+    for run in getattr(dataset, "materialization_runs", None) or []:
+        if isinstance(run, dict):
+            payload = dict(run)
+            payload["_rowCountDeclared"] = "rowCount" in run or "row_count" in run
+            if "rowCount" not in payload and "row_count" in payload:
+                payload["rowCount"] = payload.get("row_count")
+            if "storageLocation" not in payload:
+                payload["storageLocation"] = payload.get("storage_location")
+            if "storageFormat" not in payload:
+                payload["storageFormat"] = payload.get("storage_format")
+            if "materializationMode" not in payload:
+                payload["materializationMode"] = payload.get("materialization_mode")
+        else:
+            fields_set = getattr(run, "model_fields_set", set())
+            payload = run.model_dump(mode="json", by_alias=True) if hasattr(run, "model_dump") else {
+                "status": getattr(run, "status", None),
+                "rowCount": getattr(run, "row_count", None),
+                "storageLocation": getattr(run, "storage_location", None),
+                "storageFormat": getattr(run, "storage_format", None),
+                "materializationMode": getattr(run, "materialization_mode", None),
+            }
+            payload["_rowCountDeclared"] = "row_count" in fields_set
+        payloads.append(payload)
+    return active_materialization_runs(payloads)
 
 
 def is_s3_storage_location(value: str) -> bool:

@@ -1,6 +1,6 @@
 import { Bot, Check, ChevronDown, CircleUser, Database, Plus, Send, Sparkles, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { CatalogDataset } from "../../types";
+import type { AuditResult, CatalogDataset } from "../../types";
 import { generateQueryAiSuggestion } from "../../services/queryAiService";
 
 const suggestedQuestions = [
@@ -48,7 +48,7 @@ export function AiChatPage({
   onAction,
 }: {
   datasets: CatalogDataset[];
-  onAction: (action: string, apiPath: string, targetId: string) => void;
+  onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
 }) {
   const initialConversationRef = useRef<Conversation>(createConversation());
   const [conversations, setConversations] = useState<Conversation[]>(() => [initialConversationRef.current]);
@@ -193,7 +193,7 @@ export function AiChatPage({
         content: error instanceof Error ? error.message : "AI SQL 초안을 만들지 못했습니다. 잠시 후 다시 시도해 주세요.",
         contextNames,
       });
-      onAction("ai.chat.suggestion_failed", "/api/query/ai-suggestions", selectedDatasets[0].id);
+      onAction("ai.chat.suggestion_failed", "/api/query/ai-suggestions", selectedDatasets[0].id, "failed");
     }
   };
 

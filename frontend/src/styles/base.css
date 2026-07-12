@@ -512,6 +512,22 @@ p {
   border-color: #bfdbfe;
 }
 
+.app-toast.error {
+  background: #fff1f2;
+  border-color: #fecdd3;
+  color: #9f1239;
+}
+
+.workspace-route-error {
+  align-items: center;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  justify-content: center;
+  min-height: 100dvh;
+  padding: 24px;
+}
+
 .app-api-pending {
   position: fixed;
   top: 126px;

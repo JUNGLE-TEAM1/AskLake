@@ -14,8 +14,7 @@
   font-family: var(--jobs-font-family);
 }
 
-.sql-materialize-dialog,
-.sql-dashboard-builder-dialog {
+.sql-materialize-dialog {
   font-family: var(--jobs-font-family);
 }
 
@@ -73,8 +72,37 @@
   overflow: hidden;
 }
 
-.sql-result-panel:has(.sql-result-scroll) {
-  grid-template-rows: max-content max-content minmax(0, 1fr);
+.sql-result-panel.has-result {
+  grid-template-rows: max-content minmax(0, 1fr);
+}
+
+.sql-result-toolbar {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.sql-result-toolbar > :first-child {
+  flex: 0 0 auto;
+}
+
+.sql-result-toolbar > :last-child {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.sql-result-view-empty {
+  height: 100%;
+  min-height: 0;
+}
+
+.sql-chart-configurator {
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .sql-dataset-scroll [data-slot="scroll-area-scrollbar"][data-orientation="vertical"] {
@@ -298,15 +326,26 @@
   min-height: 0;
 }
 
-.sql-ai-dialog-preview {
-  height: min(260px, 34vh);
-  min-height: 160px;
+.sql-ai-popover {
+  width: min(440px, calc(100vw - 32px));
+  max-height: min(620px, calc(100dvh - 32px));
+  overflow-y: auto;
+  transform-origin: var(--radix-popover-content-transform-origin);
+}
+
+.sql-ai-popover[data-state="open"] {
+  animation: sql-ai-popover-in 160ms ease-out;
+}
+
+.sql-ai-popover-preview {
+  height: min(220px, 28vh);
+  min-height: 140px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: #0f172a;
 }
 
-.sql-ai-dialog-preview pre {
+.sql-ai-popover-preview pre {
   min-width: max-content;
   color: #e2e8f0;
   font-family: "SFMono-Regular", Consolas, monospace;
@@ -314,6 +353,24 @@
   line-height: 22px;
   margin: 0;
   padding: 16px 20px;
+}
+
+@keyframes sql-ai-popover-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sql-ai-popover[data-state="open"] {
+    animation: none;
+  }
 }
 
 .sql-result-scroll .schema-table {
@@ -333,48 +390,6 @@
 .sql-preview-table-wrap[data-column-count="2"] .sql-preview-table,
 .sql-preview-table-wrap[data-column-count="3"] .sql-preview-table {
   width: min(100%, 860px);
-}
-
-.sql-dashboard-builder-dialog {
-  position: relative;
-  width: min(1680px, calc(100vw - 40px));
-  height: min(940px, calc(100vh - 40px));
-  max-width: none;
-  max-height: calc(100vh - 40px);
-  min-height: 620px;
-  overflow: hidden;
-  gap: 0;
-  padding: 0;
-}
-
-.sql-dashboard-builder-dialog .dashboard-runtime-page {
-  height: 100%;
-}
-
-.sql-dashboard-builder-dialog .asklake-dashboard-runtime {
-  border: 0;
-  border-radius: 0;
-}
-
-.sql-dashboard-builder-dialog .asklake-dashboard-topbar {
-  padding-right: 106px;
-}
-
-.sql-dashboard-builder-dialog .asklake-dashboard-actions {
-  flex-wrap: wrap;
-}
-
-.sql-dashboard-builder-close {
-  position: absolute;
-  z-index: 3;
-  top: 14px;
-  right: 14px;
-}
-
-@media (max-width: 760px) {
-  .sql-dashboard-builder-dialog .asklake-dashboard-topbar {
-    padding-right: 82px;
-  }
 }
 
 @media (max-width: 1240px) {
@@ -408,12 +423,14 @@
 
   .sql-dataset-panel {
     position: relative;
-    height: auto;
-    min-height: 0;
-    max-height: none;
+    height: min(720px, 80dvh);
+    min-height: min(560px, 80dvh);
+    max-height: 80dvh;
   }
 
   .sql-workspace {
+    grid-column: 1;
+    grid-row: auto;
     height: auto;
     min-height: 0;
     max-height: none;
@@ -421,9 +438,28 @@
   }
 
   .sql-result-panel,
-  .sql-result-panel:has(.sql-result-scroll) {
-    grid-template-rows: none;
+  .sql-result-panel.has-result {
+    grid-template-rows: auto;
     overflow: visible;
+  }
+
+  .sql-result-toolbar {
+    align-items: flex-start;
+  }
+
+  .sql-result-toolbar > :first-child,
+  .sql-result-toolbar > :last-child {
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .sql-result-toolbar > :last-child {
+    margin-left: 0;
+  }
+
+  .sql-chart-configurator {
+    min-height: 0;
   }
 
   .sql-result-scroll {

@@ -311,7 +311,7 @@ Fixture coverage 원칙:
 | Priority P1 | MongoDB source | `customer_reviews` | document source schema inference 후보 |
 | Priority P1 | MongoDB source | `app_events` | nested document schema 후보 |
 | Priority P1 | Dashboard | `orders_clean` 또는 derived dataset 기반 widget | 배포 후 dashboard runtime smoke 후보 |
-| Priority P2 | Existing mock catalog | frontend mock dataset 후보 전체 | seed 후보 보관, UI fallback 비교 |
+| Priority P2 | Demo seed catalog | 추가 dataset 후보 | 실제 seed script 후보로만 보관, runtime fallback 금지 |
 | Priority P3 | External storage | MinIO/S3 | 이번 기본 배포에서는 optional |
 | Priority P3 | Ops | auth, backup, monitoring, production scheduler | 데모 안정화 뒤 별도 작업 |
 
@@ -707,7 +707,7 @@ Definition of Done:
 ```bash
 cd frontend
 npm run build
-VITE_USE_MOCK_API=false npm run build
+npm run build
 ```
 
 서버 검증:
@@ -777,9 +777,8 @@ Definition of Done:
 APP_DOMAIN=도메인
 HTTP_PORT=80
 HTTPS_PORT=443
-VITE_USE_MOCK_API=false
-VITE_API_BASE_URL=https://도메인
-BACKEND_CORS_ORIGINS=https://도메인
+VITE_API_BASE_URL=
+BACKEND_CORS_ORIGINS=
 POSTGRES_DB=asklake_metadata
 POSTGRES_USER=asklake
 POSTGRES_PASSWORD=strong-password
