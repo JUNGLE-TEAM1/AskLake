@@ -1,4 +1,3 @@
-import { defaultDashboardCards } from "./dashboardListData";
 import type { DashboardSortOption, SavedDashboardCard } from "../../types";
 import { normalizeDashboardStatus } from "../../utils/statusMeta";
 
@@ -29,10 +28,6 @@ export function splitDashboardTags(tags: string) {
   return tags.split("|").flatMap((tag) => tag.split("·")).map((tag) => tag.trim()).filter(Boolean);
 }
 
-const dashboardNameLabels: Record<string, string> = Object.fromEntries(
-  defaultDashboardCards.map((dashboard) => [dashboard.id, dashboard.name]),
-);
-
 const dashboardTagLabels: Record<string, string> = {
   Cohort: "고객군", Cost: "비용", Customer: "고객", Data: "데이터", Demo: "데모",
   Executive: "경영", Finance: "재무", Funnel: "전환", Growth: "성장", Health: "상태",
@@ -51,7 +46,7 @@ const dashboardOwnerLabels: Record<string, string> = {
 };
 
 export function localizeDashboardName(dashboard: SavedDashboardCard) {
-  return dashboardNameLabels[dashboard.id] ?? dashboard.name;
+  return dashboard.name;
 }
 
 export function localizeDashboardTags(tags: string) {
@@ -74,25 +69,21 @@ export function formatDashboardDateLabel(value?: string) {
   return `${parsedDate.getFullYear()}년 ${parsedDate.getMonth() + 1}월 ${parsedDate.getDate()}일 ${parsedDate.getHours()}시 ${minute}분`;
 }
 
-export function normalizeSavedDashboardCard(card: SavedDashboardCard, index = 0): SavedDashboardCard {
-  const fallbackCard = defaultDashboardCards.find((dashboard) => dashboard.id === card.id) ?? defaultDashboardCards[index] ?? defaultDashboardCards[0];
-  const createdAt = card.createdAt ?? fallbackCard?.createdAt ?? fallbackDashboardDate;
-  const createdAtValue = card.createdAtValue ?? fallbackCard?.createdAtValue ?? fallbackDashboardDateValue;
+export function normalizeSavedDashboardCard(card: SavedDashboardCard): SavedDashboardCard {
+  const createdAt = card.createdAt ?? fallbackDashboardDate;
+  const createdAtValue = card.createdAtValue ?? fallbackDashboardDateValue;
 
   return {
     ...card,
     createdAt,
     createdAtValue,
     status: normalizeDashboardStatus(card.status),
-    updatedAtValue: card.updatedAtValue ?? fallbackCard?.updatedAtValue ?? createdAtValue,
+    updatedAtValue: card.updatedAtValue ?? createdAtValue,
   };
 }
 
 export function hydrateSavedDashboardCards(cards: SavedDashboardCard[]) {
-  const normalizedCards = cards.map(normalizeSavedDashboardCard);
-  const storedIds = new Set(normalizedCards.map((card) => card.id));
-  const missingDefaultCards = defaultDashboardCards.filter((card) => !storedIds.has(card.id));
-  return [...normalizedCards, ...missingDefaultCards];
+  return cards.map(normalizeSavedDashboardCard);
 }
 
 export function getDashboardSortLabel(sortOption: DashboardSortOption) {

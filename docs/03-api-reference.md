@@ -532,7 +532,7 @@ type DashboardRuntimeResponse = {
 
 `GET /api/dashboards/{dashboardId}/published`는 published revision이 없으면 `revision: null`, `pages: []`, `widgetsByPageId: {}`를 반환한다. `POST /api/dashboards/{dashboardId}/draft/ensure`는 idempotent이며 draft가 없으면 published snapshot 또는 새 revision과 기본 page를 만든다.
 
-Widget 생성 API는 `datasetId`가 있고 명시적 `data`가 없을 때 catalog dataset의 rows 또는 sample rows를 column name 기반 object row로 변환해 widget `data` snapshot에 저장한다. Runtime widget renderer는 `widget.data`와 type별 `config`를 기준으로 `metric`, `table`, ApexCharts 차트 8종 표시값을 계산한다.
+Catalog `datasetId`를 연결한 Widget은 browser가 보낸 `data`와 Catalog `sampleRows`를 저장 데이터로 사용하지 않는다. Runtime 조회 시 backend가 성공한 물리 materialization의 CSV/JSON/JSONL/Parquet segment를 DuckDB에 등록하고, chart/metric은 최대 500개 그룹으로 집계하며 table은 최대 500행 preview만 반환한다. 응답 `config.sourceConfig`는 편집 원본을, `dataMode`는 `server_aggregated` 또는 `server_preview`를 나타낸다. 물리 데이터를 읽을 수 없으면 해당 widget만 `DASHBOARD_DATA_UNAVAILABLE` error config와 빈 data를 반환한다.
 
 `DELETE /api/dashboards/{dashboardId}`는 dashboard card/list row와 runtime revision/page/widget snapshot을 함께 삭제한다.
 
@@ -680,6 +680,7 @@ type DataProcessingResult = {
 ### Dashboard Assistant UI Hook
 
 대시보드 draft editor의 AskLake 보조 패널과 시각화 요청 위젯은 `POST /api/dashboards/assistant` FastAPI endpoint에 연결할 수 있다.
+endpoint는 인증 actor를 요구하며 `dashboardId`가 있으면 Assistant 실행 전에 dashboard `view` 권한을 검사한다. 익명 운영 요청은 `401`, dashboard별 접근 권한이 없으면 `403`이다.
 이 endpoint는 `OPENAI_API_KEY`가 설정되어 있고 `OPENAI_ASSISTANT_ENABLED=true`이면 OpenAI Responses API를 호출한다.
 서버는 요청의 `dashboardId`/`pageId`를 기준으로 DB에서 draft 우선, 없으면 published runtime을 읽고,
 대시보드에서 사용할 수 있는 available catalog dataset, 현재 page widget, 지원 가능한 widget type/config option만 OpenAI 컨텍스트에 넣는다.
