@@ -152,6 +152,25 @@ const checks = [
     ],
   },
   {
+    name: "SQL Job wizard uses shared shadcn dropdown fields across selectable steps",
+    file: "src/pages/sql/SqlJobWizardDialog.tsx",
+    patterns: [
+      /function WizardSelectField<T extends string>/,
+      /<DropdownMenuTrigger asChild>/,
+      /<DropdownMenuRadioGroup/,
+      /label="실행 요일"/,
+      /label="시간대"/,
+      /label="실행 겹침 정책"/,
+      /label="접근 범위"/,
+      /label="압축 방식"/,
+      /label="파티션 컬럼"/,
+    ],
+    forbiddenPatterns: [
+      /NativeSelect/,
+      /<select/,
+    ],
+  },
+  {
     name: "Mock SQL Job creation preserves wizard schedule, governance, and storage settings",
     file: "src/services/mockApi.ts",
     patterns: [
