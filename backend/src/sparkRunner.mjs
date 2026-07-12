@@ -175,6 +175,7 @@ function writeSparkJobManifest(manifestPath, job) {
     createdAt: new Date().toISOString(),
     partitionColumns: job.partition || "",
     qualityRules: job.qualityRules ?? [],
+    recordParsing: job.recordParsing ?? null,
     schemaColumns: job.schemaColumns ?? [],
     textStructuring: {
       columns: textStructuringColumns,
@@ -431,7 +432,7 @@ function inferFormat(sourceConfig, prefix, fallback) {
   if (probe.includes(".jsonl") || probe.includes("jsonl") || probe.includes("ndjson")) return "jsonl";
   if (probe.includes(".json") || probe.includes("json")) return "json";
   if (probe.includes(".parquet") || probe.includes("parquet")) return "parquet";
-  if (probe.includes(".txt") || probe.includes(".text") || probe.includes("txt")) return "txt";
+  if (probe.includes(".txt") || probe.includes(".log") || probe.includes(".text") || probe.includes("txt") || probe.includes("log")) return "txt";
   if (probe.includes(".tsv") || probe.includes("tsv")) return "csv";
   if (probe.includes(".csv") || probe.includes("csv")) return "csv";
   return fallback;
