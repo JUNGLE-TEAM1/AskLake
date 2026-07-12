@@ -14,6 +14,7 @@ from sqlalchemy.orm import sessionmaker
 from app.core.auth_context import ActorContext
 from app.core.config import settings
 from app.core.errors import ApiError
+from app.core.materialization import materialization_mode
 from app.models.catalog import CatalogDatasetModel
 from app.repositories.catalog_repository import CatalogRepository
 from app.schemas.catalog import CatalogDatasetResponse
@@ -76,6 +77,44 @@ def catalog_payload(
 
 
 class CatalogMaterializationDeleteGuardTests(unittest.TestCase):
+    def test_materialization_mode_uses_explicit_mode_then_kafka_fallback(self) -> None:
+        cases = [
+            (
+                "explicit snapshot overrides Kafka",
+                {"materializationMode": " snapshot ", "sourceKind": "kafka"},
+                "snapshot",
+            ),
+            (
+                "explicit delta overrides non-Kafka",
+                {"materializationMode": "DELTA", "sourceKind": "etl"},
+                "delta",
+            ),
+            (
+                "snake-case explicit delta",
+                {"materialization_mode": "delta", "source_kind": "sql"},
+                "delta",
+            ),
+            ("legacy camel-case Kafka", {"sourceKind": "kafka"}, "delta"),
+            ("legacy snake-case Kafka", {"source_kind": "KAFKA"}, "delta"),
+            (
+                "blank mode uses Kafka fallback",
+                {"materializationMode": " ", "sourceKind": "kafka"},
+                "delta",
+            ),
+            ("missing mode for ETL", {"sourceKind": "etl"}, "snapshot"),
+            ("missing mode for SQL", {"source_kind": "sql"}, "snapshot"),
+            ("missing mode and source kind", {}, "snapshot"),
+            (
+                "invalid explicit mode does not use Kafka fallback",
+                {"materializationMode": "append", "sourceKind": "kafka"},
+                "snapshot",
+            ),
+        ]
+
+        for label, run, expected in cases:
+            with self.subTest(label=label):
+                self.assertEqual(materialization_mode(run), expected)
+
     def test_rebaseline_aggregate_uses_latest_snapshot_and_newer_deltas_only(self) -> None:
         runs = [
             materialization_run("delta-new", created_at="2026-07-12T03:00:00Z", mode="delta", row_count=2),
@@ -97,6 +136,98 @@ class CatalogMaterializationDeleteGuardTests(unittest.TestCase):
         response = CatalogDatasetResponse.model_validate(payload).model_dump(by_alias=True)
 
         self.assertEqual(response["materializationRuns"][0]["materializationMode"], "delta")
+
+    def test_legacy_kafka_without_mode_and_previous_snapshot_are_aggregated(self) -> None:
+        for source_kind_field in ("sourceKind", "source_kind"):
+            with self.subTest(source_kind_field=source_kind_field):
+                kafka_delta = materialization_run(
+                    "kafka-delta",
+                    created_at="2026-07-12T03:00:00Z",
+                    mode="delta",
+                    row_count=2,
+                )
+                kafka_delta.pop("materializationMode")
+                kafka_delta.pop("sourceKind")
+                kafka_delta[source_kind_field] = "kafka"
+                runs = [
+                    kafka_delta,
+                    materialization_run(
+                        "snapshot",
+                        created_at="2026-07-12T02:00:00Z",
+                        mode="snapshot",
+                        row_count=10,
+                    ),
+                ]
+
+                payload = recalculate_dataset_payload_from_runs(
+                    catalog_payload(f"dataset-{source_kind_field}", runs)
+                )
+
+                self.assertEqual(payload["rows"], "12 rows")
+                self.assertEqual(payload["size"], "120B")
+                self.assertEqual(payload["storageSizeBytes"], 120)
+                self.assertEqual(payload["sourceRunId"], "kafka-delta")
+
+    def test_legacy_kafka_without_mode_blocks_base_snapshot_delete(self) -> None:
+        for source_kind_field in ("sourceKind", "source_kind"):
+            with self.subTest(source_kind_field=source_kind_field):
+                kafka_delta = materialization_run(
+                    "kafka-delta",
+                    created_at="2026-07-12T03:00:00Z",
+                    mode="delta",
+                    row_count=2,
+                )
+                kafka_delta.pop("materializationMode")
+                kafka_delta.pop("sourceKind")
+                kafka_delta[source_kind_field] = "kafka"
+                runs = [
+                    kafka_delta,
+                    materialization_run(
+                        "snapshot",
+                        created_at="2026-07-12T02:00:00Z",
+                        mode="snapshot",
+                        row_count=10,
+                    ),
+                ]
+
+                with self.assertRaises(ApiError) as raised:
+                    validate_materialization_run_delete(runs, "snapshot")
+
+                self.assertEqual(raised.exception.status_code, 409)
+                self.assertEqual(
+                    raised.exception.details["dependentDeltaRunIds"],
+                    ["kafka-delta"],
+                )
+
+    def test_explicit_kafka_snapshot_overrides_source_kind_fallback(self) -> None:
+        for source_kind_field in ("sourceKind", "source_kind"):
+            with self.subTest(source_kind_field=source_kind_field):
+                kafka_snapshot = materialization_run(
+                    "kafka-snapshot",
+                    created_at="2026-07-12T03:00:00Z",
+                    mode="snapshot",
+                    row_count=3,
+                )
+                kafka_snapshot.pop("sourceKind")
+                kafka_snapshot[source_kind_field] = "kafka"
+                runs = [
+                    kafka_snapshot,
+                    materialization_run(
+                        "snapshot-old",
+                        created_at="2026-07-12T02:00:00Z",
+                        mode="snapshot",
+                        row_count=10,
+                    ),
+                ]
+
+                payload = recalculate_dataset_payload_from_runs(
+                    catalog_payload(f"dataset-explicit-{source_kind_field}", runs)
+                )
+
+                self.assertEqual(payload["rows"], "3 rows")
+                self.assertEqual(payload["size"], "30B")
+                self.assertEqual(payload["storageSizeBytes"], 30)
+                self.assertEqual(payload["sourceRunId"], "kafka-snapshot")
 
     def test_active_snapshot_cannot_be_deleted_before_newer_deltas(self) -> None:
         runs = [
@@ -196,9 +327,17 @@ class CatalogMaterializationLockingTests(unittest.TestCase):
         self.assertEqual(response.deleted_run_id, "snapshot-old")
         self.assertEqual(response.dataset.rows, "12 rows")
 
-    def test_locked_delta_still_blocks_active_snapshot_delete(self) -> None:
+    def test_locked_legacy_kafka_delta_still_blocks_active_snapshot_delete(self) -> None:
+        kafka_delta = materialization_run(
+            "kafka-concurrent",
+            created_at="2026-07-12T03:00:00Z",
+            mode="delta",
+            row_count=2,
+        )
+        kafka_delta.pop("materializationMode")
+        kafka_delta["sourceKind"] = "kafka"
         locked_runs = [
-            materialization_run("delta-concurrent", created_at="2026-07-12T03:00:00Z", mode="delta", row_count=2),
+            kafka_delta,
             materialization_run("snapshot-current", created_at="2026-07-12T02:00:00Z", mode="snapshot", row_count=10),
         ]
 
@@ -233,7 +372,7 @@ class CatalogMaterializationLockingTests(unittest.TestCase):
         self.assertEqual(raised.exception.status_code, 409)
         self.assertEqual(
             raised.exception.details["dependentDeltaRunIds"],
-            ["delta-concurrent"],
+            ["kafka-concurrent"],
         )
         self.assertFalse(repository.saved)
 
