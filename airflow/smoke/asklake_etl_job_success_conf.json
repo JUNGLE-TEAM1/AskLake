@@ -1,0 +1,60 @@
+{
+  "command": "run",
+  "jobId": "JOB-SMOKE-0001",
+  "runId": "run_smoke_success_0001",
+  "submittedAt": "2026-07-09T00:00:00Z",
+  "job": {
+    "id": "JOB-SMOKE-0001",
+    "name": "AskLake smoke ETL job",
+    "owner": "AskLake",
+    "source": "smoke_source",
+    "sourceType": "fixture",
+    "sourceConfig": [],
+    "target": "smoke_dataset",
+    "targetFormat": "parquet",
+    "targetLayer": "RAW",
+    "targetPath": "airflow-smoke://JOB-SMOKE-0001/run_smoke_success_0001/dataset.parquet",
+    "schemaColumns": [
+      {
+        "name": "id",
+        "type": "string"
+      },
+      {
+        "name": "amount",
+        "type": "number"
+      }
+    ],
+    "schemaSampleRows": [
+      {
+        "id": "row-1",
+        "amount": 100
+      },
+      {
+        "id": "row-2",
+        "amount": 200
+      }
+    ],
+    "transformSteps": [
+      {
+        "id": "normalize_amount",
+        "type": "derive"
+      }
+    ],
+    "qualityRules": [
+      {
+        "id": "amount_not_null",
+        "type": "not_null",
+        "column": "amount"
+      }
+    ],
+    "qualityInvalidRows": []
+  },
+  "smokeValidateSeconds": 0,
+  "smokePrepareSeconds": 0,
+  "smokeSubmitSeconds": 0,
+  "smokeCollectSeconds": 0,
+  "smokeQualitySeconds": 0,
+  "smokePublishSeconds": 0,
+  "smokeCatalogSeconds": 0,
+  "smokeLineageSeconds": 0
+}

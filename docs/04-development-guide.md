@@ -80,7 +80,7 @@ AIRFLOW_PASSWORD=airflow
 
 ### Airflow DAG 배포 개발 기준
 
-현재 `airflow/dags/asklake_etl_job.py`는 local smoke DAG다. 로컬에서는 `docker-compose.yml`의 volume mount로 `./airflow/dags`를 Airflow 컨테이너의 `/opt/airflow/dags`에 연결한다. 이 방식은 개발과 smoke 검증 전용이다.
+현재 `airflow/dags/asklake_etl_job.py`는 production ETL skeleton DAG다. task id는 정식 실행 흐름에 맞춰 고정되어 있지만, 각 task 내부는 아직 실제 Spark/MinIO/catalog/lineage를 호출하지 않는 smoke-safe metadata 작업이다. 로컬에서는 `docker-compose.yml`의 volume mount로 `./airflow/dags`를 Airflow 컨테이너의 `/opt/airflow/dags`에 연결한다. 이 방식은 개발과 smoke 검증 전용이다.
 
 운영 배포 전에는 `docs/airflow-orchestration-sot.md`의 DAG 배포 전략을 따른다. 기본 원칙은 아래와 같다.
 
@@ -88,7 +88,15 @@ AIRFLOW_PASSWORD=airflow
 - staging/prod에서는 DAG 파일을 수동 복사하지 않는다.
 - DAG 변경 PR은 DAG import/parse 확인과 smoke DAG Run 확인을 남긴다.
 - 초기 운영 형태는 `asklake_etl_job` 단일 static DAG를 유지하고, Job별 설정은 `dag_run.conf`로 전달한다.
-- 실제 ETL 확장 시에도 task id는 안정적으로 유지한다. AskLake DAG modal이 Task Instance 상태를 task id로 매핑하기 때문이다.
+- 실제 ETL 확장 시에도 아래 task id는 안정적으로 유지한다. AskLake DAG modal이 Task Instance 상태를 task id로 매핑하기 때문이다.
+  - `validate_run_conf`
+  - `prepare_source_input`
+  - `submit_spark_job`
+  - `collect_spark_result`
+  - `run_quality_checks`
+  - `publish_output_dataset`
+  - `update_catalog`
+  - `record_lineage`
 
 로컬 DAG 변경 후 최소 확인:
 
@@ -106,6 +114,45 @@ AIRFLOW_DAG_ID=asklake_etl_job
 AIRFLOW_UI_BASE_URL=http://127.0.0.1:8081
 AIRFLOW_USERNAME=airflow
 AIRFLOW_PASSWORD=airflow
+```
+
+Airflow API에 직접 smoke DAG Run을 만들 때는 `airflow/smoke/asklake_etl_job_success_conf.json` 또는 `airflow/smoke/asklake_etl_job_failure_conf.json`의 `conf`를 사용한다. `dag_run_id`는 Airflow metadata DB에서 unique해야 하므로 재실행 시 값을 바꾼다.
+
+```bash
+curl -u airflow:airflow \
+  -H "Content-Type: application/json" \
+  -X POST http://127.0.0.1:8081/api/v2/dags/asklake_etl_job/dagRuns \
+  -d '{
+    "dag_run_id": "run_smoke_success_0001",
+    "conf": {
+      "command": "run",
+      "jobId": "JOB-SMOKE-0001",
+      "runId": "run_smoke_success_0001",
+      "submittedAt": "2026-07-09T00:00:00Z",
+      "job": {
+        "id": "JOB-SMOKE-0001",
+        "name": "AskLake smoke ETL job",
+        "source": "smoke_source",
+        "sourceType": "fixture",
+        "target": "smoke_dataset",
+        "targetFormat": "parquet",
+        "targetPath": "airflow-smoke://JOB-SMOKE-0001/run_smoke_success_0001/dataset.parquet",
+        "schemaSampleRows": [{"id": "row-1"}],
+        "schemaColumns": [{"name": "id", "type": "string"}],
+        "transformSteps": [],
+        "qualityRules": [],
+        "qualityInvalidRows": []
+      },
+      "smokeValidateSeconds": 0,
+      "smokePrepareSeconds": 0,
+      "smokeSubmitSeconds": 0,
+      "smokeCollectSeconds": 0,
+      "smokeQualitySeconds": 0,
+      "smokePublishSeconds": 0,
+      "smokeCatalogSeconds": 0,
+      "smokeLineageSeconds": 0
+    }
+  }'
 ```
 
 staging/prod DAG 배포 후보는 아래를 통과해야 한다.

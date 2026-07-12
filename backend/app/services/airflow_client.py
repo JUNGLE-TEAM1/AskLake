@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
@@ -148,7 +149,7 @@ class AirflowClient:
     ) -> AirflowDagRun:
         payload = {
             "dag_run_id": dag_run_id,
-            "logical_date": logical_date,
+            "logical_date": logical_date or airflow_logical_date_now(),
             "conf": conf,
         }
         if note:
@@ -312,6 +313,10 @@ def airflow_step_status(state: str | None) -> str:
 
 def airflow_run_is_terminal(state: str | None) -> bool:
     return airflow_run_status(state) in TERMINAL_ASKLAKE_RUN_STATUSES
+
+
+def airflow_logical_date_now() -> str:
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 def normalize_airflow_state(state: str | None) -> str:
