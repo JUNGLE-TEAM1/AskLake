@@ -213,20 +213,15 @@ html:has(.landing-page) {
 
 .landing-hero h1.landing-hero-wordmark {
   display: block;
-  width: min(1040px, 92vw);
-  max-width: none;
-  overflow: hidden;
-  aspect-ratio: 3.27 / 1;
-  font-size: 0;
-  line-height: 0;
-}
-
-.landing-hero-wordmark img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  object-position: right center;
+  max-width: 92vw;
+  color: #071b49;
+  font-family: var(--jobs-font-family);
+  font-size: clamp(72px, 20vw, 248px);
+  font-weight: 850;
+  letter-spacing: -0.075em;
+  line-height: 0.92;
+  text-rendering: geometricPrecision;
+  -webkit-font-smoothing: antialiased;
 }
 
 .landing-hero > p {
@@ -360,7 +355,7 @@ html:has(.landing-page) {
 .landing-section-label::before {
   width: 24px;
   height: 24px;
-  background: url("/asklake-wave-icon.png") center / contain no-repeat;
+  background: url("/asklake-wave-hero.svg") center / contain no-repeat;
   content: "";
 }
 
@@ -1269,7 +1264,7 @@ html:has(.landing-page) {
   }
 
   .landing-hero h1.landing-hero-wordmark {
-    width: min(94vw, 560px);
+    max-width: 94vw;
   }
 
   .landing-hero > p {

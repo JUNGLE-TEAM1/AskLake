@@ -22,6 +22,32 @@ const read = (path) => {
 
 const checks = [
   {
+    name: "Landing hero renders a scalable vector brand instead of enlarged raster logos",
+    file: "src/pages/landing/AskLakeLandingPage.tsx",
+    patterns: [
+      /<h1 className="landing-hero-wordmark" id="landing-hero-title">\s*AskLake\s*<\/h1>/,
+      /src="\/asklake-wave-hero\.svg"/,
+    ],
+    forbiddenPatterns: [
+      /asklake-logo\.png/,
+      /asklake-wave-icon\.png/,
+    ],
+  },
+  {
+    name: "Landing vector wordmark stays crisp and responsive",
+    file: "src/styles/landing.css",
+    patterns: [
+      /font-size: clamp\(72px, 20vw, 248px\);/,
+      /text-rendering: geometricPrecision;/,
+      /-webkit-font-smoothing: antialiased;/,
+      /background: url\("\/asklake-wave-hero\.svg"\) center \/ contain no-repeat;/,
+    ],
+    forbiddenPatterns: [
+      /\.landing-hero-wordmark img/,
+      /asklake-wave-icon\.png/,
+    ],
+  },
+  {
     name: "SQL analysis uses Dashboard widget settings, a Nessie popover, and an in-dialog Job wizard",
     file: "src/pages/sql/SqlAnalysisPage.tsx",
     patterns: [
