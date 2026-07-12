@@ -4,9 +4,12 @@ import { createServer } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { waitForSparkRestDriver } from "./spark-rest-client.mjs";
+
 const scriptsDir = path.dirname(fileURLToPath(import.meta.url));
 const clientScript = path.join(scriptsDir, "spark-rest-client.mjs");
 const submissions = new Map();
+const killedSubmissions = [];
 let createCount = 0;
 
 const server = createServer(async (request, response) => {
@@ -17,7 +20,11 @@ const server = createServer(async (request, response) => {
       assert.equal(body.mainClass, "org.apache.spark.deploy.SparkSubmit");
       assert.deepEqual(body.appArgs, ["/opt/asklake/scripts/spark_job_run.py"]);
       createCount += 1;
-      const submissionId = createCount === 1 ? "driver-success" : "driver-failed";
+      const submissionId = createCount === 1
+        ? "driver-success"
+        : createCount === 2
+          ? "driver-failed"
+          : "driver-timeout";
       submissions.set(submissionId, 0);
       return json(response, 200, { success: true, submissionId });
     }
@@ -27,9 +34,17 @@ const server = createServer(async (request, response) => {
       const pollCount = (submissions.get(submissionId) || 0) + 1;
       submissions.set(submissionId, pollCount);
       const driverState = submissionId === "driver-success"
-        ? pollCount === 1 ? "RUNNING" : "FINISHED"
-        : "FAILED";
+        ? pollCount === 1 ? "UNKNOWN" : pollCount === 2 ? "RUNNING" : "FINISHED"
+        : submissionId === "driver-failed"
+          ? "FAILED"
+          : "UNKNOWN";
       return json(response, 200, { driverState, success: true, submissionId });
+    }
+    const killMatch = request.url?.match(/^\/v1\/submissions\/kill\/([^/]+)$/);
+    if (request.method === "POST" && killMatch) {
+      const submissionId = decodeURIComponent(killMatch[1]);
+      killedSubmissions.push(submissionId);
+      return json(response, 200, { success: true, submissionId });
     }
     return json(response, 404, { message: "not found", success: false });
   } catch (error) {
@@ -62,14 +77,31 @@ try {
   const success = await runClient(request);
   assert.equal(success.code, 0, success.stderr);
   assert.match(success.stdout, /"state":"FINISHED"/);
-  assert.equal(submissions.get("driver-success"), 2);
+  assert.equal(submissions.get("driver-success"), 3, "UNKNOWN must be polled rather than treated as terminal.");
+
+  await assert.rejects(
+    waitForSparkRestDriver({
+      onStatus: () => { throw new Error("state artifact write failed"); },
+      pollIntervalMs: 250,
+      restUrl: request.restUrl,
+      submissionId: "driver-success",
+      timeoutMs: 1_000,
+    }),
+    /state artifact write failed/,
+    "Local status persistence failures must not be swallowed as retriable HTTP errors.",
+  );
 
   const failure = await runClient(request);
   assert.notEqual(failure.code, 0, "Terminal Spark driver failure must fail the REST client.");
   assert.match(failure.stderr, /driver-failed ended in state FAILED/);
   assert.equal(submissions.get("driver-failed"), 1);
 
-  console.log("Spark REST client verified: create, running, finished, and terminal failure states.");
+  const timeout = await runClient({ ...request, timeoutMs: 1_000 });
+  assert.notEqual(timeout.code, 0, "A submission that remains UNKNOWN must eventually time out.");
+  assert.match(timeout.stderr, /driver-timeout timed out in state UNKNOWN/);
+  assert.deepEqual(killedSubmissions, ["driver-timeout"], "Timed out submissions must use Spark REST kill.");
+
+  console.log("Spark REST client verified: create/status/kill, UNKNOWN polling, success, and terminal failure.");
 } finally {
   await new Promise((resolve) => server.close(resolve));
 }

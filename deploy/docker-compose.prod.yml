@@ -145,6 +145,8 @@ services:
       ASKLAKE_SPARK_SCRIPT_DIR: /opt/asklake/scripts
       ASKLAKE_SPARK_JOB_SCRIPT: /opt/asklake/scripts/spark_job_run.py
       ASKLAKE_SPARK_SOURCE_INSPECT_SCRIPT: /opt/asklake/scripts/spark_source_inspect_rest.py
+      ASKLAKE_SPARK_CONTINUOUS_SCRIPT: /opt/asklake/scripts/kafka_continuous_stream.py
+      ASKLAKE_SPARK_CONTINUOUS_MAINTENANCE_SCRIPT: /opt/asklake/scripts/kafka_continuous_maintenance.py
       ASKLAKE_SPARK_IVY_DIR: /var/lib/asklake/spark-ivy
       ASKLAKE_SPARK_IVY_RUNTIME_DIR: /var/lib/asklake/spark-ivy
       ASKLAKE_SPARK_LOCAL_OUTPUT_DIR: /var/lib/asklake/spark-output
@@ -166,6 +168,7 @@ services:
       ASKLAKE_SPARK_RUN_ROW_LIMIT: ${ASKLAKE_SPARK_RUN_ROW_LIMIT:-0}
       ASKLAKE_SPARK_RUN_TIMEOUT_SECONDS: ${ASKLAKE_SPARK_RUN_TIMEOUT_SECONDS:-7200}
       ASKLAKE_SPARK_REST_POLL_INTERVAL_MS: ${ASKLAKE_SPARK_REST_POLL_INTERVAL_MS:-1000}
+      ASKLAKE_CONTINUOUS_MAINTENANCE_TIMEOUT_MS: ${ASKLAKE_CONTINUOUS_MAINTENANCE_TIMEOUT_MS:-540000}
       ASKLAKE_SOURCE_INSPECT_TIMEOUT_MS: ${ASKLAKE_SOURCE_INSPECT_TIMEOUT_MS:-90000}
       ASKLAKE_LOCAL_SAMPLE_DIR: /var/lib/asklake/samples
       ASKLAKE_SAMPLE_CONTAINER_DIR: /var/lib/asklake/samples

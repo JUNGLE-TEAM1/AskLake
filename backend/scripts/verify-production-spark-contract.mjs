@@ -58,6 +58,14 @@ assert.equal(
   backendEnvironment.ASKLAKE_SPARK_SOURCE_INSPECT_SCRIPT,
   "/opt/asklake/scripts/spark_source_inspect_rest.py",
 );
+assert.equal(
+  backendEnvironment.ASKLAKE_SPARK_CONTINUOUS_SCRIPT,
+  "/opt/asklake/scripts/kafka_continuous_stream.py",
+);
+assert.equal(
+  backendEnvironment.ASKLAKE_SPARK_CONTINUOUS_MAINTENANCE_SCRIPT,
+  "/opt/asklake/scripts/kafka_continuous_maintenance.py",
+);
 assert.equal(minio.environment?.MINIO_ROOT_USER, minioInit.environment?.MINIO_ROOT_USER);
 assert.equal(minio.environment?.MINIO_ROOT_PASSWORD, minioInit.environment?.MINIO_ROOT_PASSWORD);
 assert.equal(backendEnvironment.MINIO_ACCESS_KEY, minioInit.environment?.MINIO_ACCESS_KEY);
@@ -140,7 +148,22 @@ assert.doesNotMatch(dockerfile, /\bdocker-cli\b/, "Production backend image must
 assert.match(dockerfile, /^FROM apache\/spark:4\.0\.1 AS spark-runtime$/m);
 assert.match(dockerfile, /^FROM python:3\.13-slim AS backend-runtime$/m);
 
-console.log("Production Spark contract verified: REST runner, configured paths, UID 185 binds, no backend Docker socket.");
+const continuousRestResult = spawnSync(process.execPath, [
+  path.join(backendDir, "scripts", "verify-kafka-continuous-rest.mjs"),
+], {
+  cwd: backendDir,
+  encoding: "utf8",
+  maxBuffer: 16 * 1024 * 1024,
+  timeout: 60_000,
+});
+assert.equal(
+  continuousRestResult.status,
+  0,
+  `Production Kafka continuous REST contract failed: ${continuousRestResult.stderr || continuousRestResult.stdout}`,
+);
+
+console.log(continuousRestResult.stdout.trim());
+console.log("Production Spark contract verified: REST runner, configured paths, UID 185 binds, and no backend Docker dependency.");
 
 function requiredService(config, name) {
   const service = config.services?.[name];
