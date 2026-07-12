@@ -5146,8 +5146,6 @@ export function PermissionPage({
   const governanceChecks = [
     { icon: <Database size={18} />, label: "공유 범위", status: visibility === "외부 공유" ? "검토 필요" : "안전", value: visibility },
     { icon: <FileText size={18} />, label: "민감 데이터", status: "검토 필요", value: "review_text 포함" },
-    { icon: <CircleUser size={18} />, label: "승인자", status: approvalStatus === "승인 완료" ? "준비됨" : "대기", value: dataOwner },
-    { icon: <ShieldCheck size={18} />, label: "승인 상태", status: approvalStatus === "승인 완료" ? "준비됨" : "검토 필요", value: approvalStatus },
   ];
 
   return (
@@ -5167,7 +5165,7 @@ export function PermissionPage({
             <span className="etl-review-icon permission"><ShieldCheck size={17} /></span>
             <CardTitle>Governance Check</CardTitle>
           </CardHeader>
-          <CardContent className="grid min-w-0 gap-3 p-5 sm:grid-cols-2 xl:grid-cols-4">
+          <CardContent className="grid min-w-0 gap-3 p-5 sm:grid-cols-2">
             {governanceChecks.map((item) => (
               <Card className="min-w-0" key={item.label} size="sm" variant="muted">
                 <div className="flex min-w-0 items-start justify-between gap-3">

@@ -72,6 +72,8 @@ const checks = [
       /<NativeSelectField[^>]*label="승인 상태"/,
       /<em className=\{selected && role\.access\.includes\(item\) \? "allowed" : ""\}/,
       /<CheckableOption/,
+      /label: "승인자"/,
+      /label: "승인 상태"/,
     ],
   },
   {
