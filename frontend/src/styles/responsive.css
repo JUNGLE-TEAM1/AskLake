@@ -80,35 +80,8 @@
   .catalog-page,
   .catalog-content-grid,
   .catalog-detail-grid,
-  .sql-page,
-  .sql-page.context-collapsed,
   .dashboard-layout,
   .dashboard-builder-layout {
-    grid-template-columns: 1fr;
-  }
-
-  .sql-dataset-panel {
-    position: static;
-    grid-column: 1;
-    grid-row: auto;
-    height: min(680px, calc(100vh - 24px));
-    min-height: min(560px, calc(100vh - 24px));
-    max-height: none;
-    order: 1;
-  }
-
-  .sql-workspace {
-    grid-column: 1;
-    grid-row: auto;
-    order: 2;
-  }
-
-  .sql-page.context-collapsed .sql-workspace {
-    order: 2;
-  }
-
-  .sql-dashboard-preview-hero,
-  .sql-dashboard-preview-grid {
     grid-template-columns: 1fr;
   }
 
@@ -221,13 +194,6 @@
     min-width: 0;
   }
 
-  .sql-dataset-panel {
-    position: static;
-    height: auto;
-    max-height: none;
-    overflow: visible;
-  }
-
   .option-grid,
   .form-grid,
   .form-grid.compact,
@@ -295,7 +261,6 @@
   .dag-flow-topbar,
   .dag-output-strip,
   .panel-header,
-  .sql-page-header,
   .dashboard-header,
   .dashboard-card-header,
   .dashboard-workspace-header,
@@ -330,11 +295,6 @@
   .dag-output-strip em,
   .dag-output-strip button {
     width: 100%;
-  }
-
-  .sql-editor-actions,
-  .sql-result-status {
-    justify-content: flex-start;
   }
 
   .dashboard-header-actions {

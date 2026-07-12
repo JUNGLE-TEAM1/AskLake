@@ -6,7 +6,6 @@
 @import "./styles/ingest.css";
 @import "./styles/ingest-dag.css";
 @import "./styles/catalog.css";
-@import "./styles/sql.css";
 @import "./styles/dashboard.css";
 @import "./styles/dashboard-runtime.css";
 @import "./styles/etl.css";
