@@ -3,6 +3,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, 
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { fieldValue, formatBytes, normalizeColumnName, sourceId } from "./profile.mjs";
+import { compileRuleContract, RULE_CONTRACT_VERSION } from "./ruleCompiler.mjs";
 import { runSparkPipeline } from "./sparkRunner.mjs";
 import {
   countJobs,
@@ -58,9 +59,10 @@ export function buildJobListResult(storedJobs, query = {}) {
 }
 
 function normalizeListJob(job) {
-  return ["failed", "canceled", "paused"].includes(job.status)
-    ? { ...job, status: "scheduled" }
-    : job;
+  const normalized = withRuleContract(job);
+  return ["failed", "canceled", "paused"].includes(normalized.status)
+    ? { ...normalized, status: "scheduled" }
+    : normalized;
 }
 
 function latestRunOutcome(job) {
@@ -81,7 +83,7 @@ function jobScheduleKind(scheduleLabel) {
 export async function getPipelineJob(jobId) {
   const job = await getJob(jobId);
   if (!job) throw notFoundError(`작업을 찾지 못했습니다: ${jobId}`);
-  return job;
+  return withRuleContract(job);
 }
 
 export async function listDatasets() {
@@ -303,6 +305,16 @@ function findPortableReviewTextModels(root) {
 
 export async function createPipeline(request) {
   validateCreatePipelineRequest(request);
+  const ruleCompilation = compileRuleContract(request);
+  requireRuleCompilation(ruleCompilation);
+  request = {
+    ...request,
+    qualityRules: ruleCompilation.qualityRules,
+    ruleContractVersion: RULE_CONTRACT_VERSION,
+    rules: ruleCompilation.result.rules,
+    transformOutputColumns: ruleCompilation.result.outputSchema,
+    transformSteps: ruleCompilation.transformSteps,
+  };
   const jobCount = await countJobs();
   const transformSteps = normalizeTransformSteps(request.transformSteps);
   const transformOutputColumns = normalizeTransformOutputColumns(request.transformOutputColumns);
@@ -342,6 +354,8 @@ export async function createPipeline(request) {
     sourceConfig: request.sourceConfig,
     sourceLabel: request.sourceLabel,
     sourceType: request.sourceType,
+    executionMode: request.executionMode ?? "snapshot",
+    continuousConfig: request.continuousConfig,
     retryPolicy: request.retryPolicy,
     retryPolicySummary: request.retryPolicySummary,
     runLimitSummary: request.runLimitSummary,
@@ -359,6 +373,9 @@ export async function createPipeline(request) {
     targetLayer: request.targetLayer,
     transformOutputColumns,
     transformSteps,
+    ruleContractVersion: RULE_CONTRACT_VERSION,
+    rules: ruleCompilation.result.rules,
+    ruleCompilation: ruleCompilation.result,
     qualityInvalidRows,
     qualityRules,
     qualityScore: request.qualityScore,
@@ -755,11 +772,37 @@ function normalizeQualityRules(rules) {
       failureAction: String(rule.failureAction || "Warn"),
       id: String(rule.id || `qr-${index + 1}`),
       kind: String(rule.kind || "notNull"),
+      params: String(rule.params || ""),
       severity: String(rule.severity || "Warning"),
       targetColumn: String(rule.targetColumn || ""),
       validationType: String(rule.validationType || "Not Null"),
     }))
     .filter((rule) => rule.targetColumn);
+}
+
+function requireRuleCompilation(compilation) {
+  if (compilation.result.status === "pass") return;
+  const error = validationError(compilation.result.issues[0]?.message || "Rule compilation failed.");
+  error.code = "RULE_COMPILATION_FAILED";
+  error.details = {
+    contractVersion: compilation.result.contractVersion,
+    issues: compilation.result.issues,
+    outputSchema: compilation.result.outputSchema,
+  };
+  throw error;
+}
+
+function withRuleContract(job) {
+  const compilation = compileRuleContract(job);
+  return {
+    ...job,
+    qualityRules: compilation.qualityRules,
+    ruleContractVersion: RULE_CONTRACT_VERSION,
+    rules: compilation.result.rules,
+    ruleCompilation: compilation.result,
+    transformOutputColumns: compilation.result.outputSchema,
+    transformSteps: compilation.transformSteps,
+  };
 }
 
 function normalizeTransformOutputColumns(columns) {

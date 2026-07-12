@@ -41,8 +41,11 @@ Source schema의 JSON native type, legacy `Float` 호환, CSV fallback을 확인
 ```bash
 cd backend
 npm run verify:schema-type-contract
+npm run verify:rule-compiler
 PYTHONPATH=. .venv/bin/python scripts/verify-kafka-continuous-contract.py
 ```
+
+`npm run verify:rule-compiler`는 FastAPI와 local Node backend의 canonical Rule compiler를 함께 검사한다. create/update/review 변경 시 no-rule pass-through, legacy `transformSteps`/`qualityRules` hydrate, output schema와 구조화된 validation issue가 유지돼야 한다.
 
 ## 3) Backend Live Mode
 

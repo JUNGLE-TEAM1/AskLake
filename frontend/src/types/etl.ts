@@ -184,6 +184,9 @@ export type JobRowData = {
   schemaSampleRows?: string[][];
   schemaSummary?: string;
   ruleSummary?: string;
+  ruleContractVersion?: "1.0";
+  rules?: CanonicalRuleDraft[];
+  ruleCompilation?: RuleCompilationResult;
   retryPolicy?: RetryPolicyDraft;
   retryPolicySummary?: string;
   runLimitSummary?: string;
@@ -335,6 +338,57 @@ export type QualityRuleDraft = {
   validationType: "Not Null" | "Range Check" | "Regex Match" | "Accepted Values";
 };
 
+export type CanonicalRuleOperation =
+  | "accepted_values"
+  | "cast"
+  | "copy"
+  | "custom_csv_classifier"
+  | "default_value"
+  | "json_extract"
+  | "lowercase_trim"
+  | "mask"
+  | "not_null"
+  | "null_guard"
+  | "parse_timestamp"
+  | "range"
+  | "regex"
+  | "rename"
+  | "sql_expression"
+  | "sql_result_materialize"
+  | "text_row_analysis"
+  | "unique";
+
+export type CanonicalRuleDraft = {
+  contractVersion: "1.0";
+  enabled: boolean;
+  failureDisposition: "keep" | "drop_row" | "set_null";
+  id: string;
+  inputColumns: string[];
+  kind: "transform" | "quality";
+  label?: string;
+  onError: "fail_batch" | "quarantine" | "warn";
+  operation: CanonicalRuleOperation | string;
+  outputColumns: string[];
+  outputType?: string;
+  parameters: Record<string, unknown>;
+  severity?: "warning" | "error";
+};
+
+export type RuleCompilationIssue = {
+  code: string;
+  field?: string;
+  message: string;
+  ruleId?: string;
+};
+
+export type RuleCompilationResult = {
+  contractVersion: "1.0";
+  issues: RuleCompilationIssue[];
+  outputSchema: Array<[string, string]>;
+  rules: CanonicalRuleDraft[];
+  status: "pass" | "fail";
+};
+
 export type QualityDraft = {
   invalidRows: string[][];
   rules: QualityRuleDraft[];
@@ -461,6 +515,8 @@ export type CreatePipelineRequest = {
   sourceLabel: string;
   schemaSummary: string;
   ruleSummary: string;
+  ruleContractVersion: "1.0";
+  rules: CanonicalRuleDraft[];
   transformOutputColumns: Array<[string, string]>;
   transformSteps: TransformStepDraft[];
   qualityInvalidRows: string[][];

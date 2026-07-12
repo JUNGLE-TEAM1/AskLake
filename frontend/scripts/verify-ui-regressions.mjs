@@ -686,6 +686,35 @@ const checks = [
       /scheduleSummary: continuousKafka \? "실시간 스트림은 작업 생성 후 시작\/중지로 제어"/,
     ],
   },
+  {
+    name: "ETL create and edit use the canonical Rule contract with legacy hydration",
+    file: "src/services/draftPipelineContract.ts",
+    patterns: [
+      /const ruleCompilation = compileRuleContract\(\{/,
+      /ruleContractVersion: RULE_CONTRACT_VERSION/,
+      /rules: ruleCompilation\.rules/,
+      /transformOutputColumns: ruleCompilation\.outputSchema/,
+      /const canonicalRules = job\.rules\?\.length/,
+      /canonicalRulesFromLegacy\(/,
+      /legacyRulesFromCanonical\(canonicalRules\)/,
+      /if \(patch\.rules !== undefined\)/,
+    ],
+  },
+  {
+    name: "ETL review accepts no-rule pass-through and reports compiler issues",
+    file: "src/services/reviewApi.ts",
+    patterns: [
+      /const ruleCompilation = compileRuleContract\(\{/,
+      /const processingReady = ruleCompilation\.status === "pass"/,
+      /ruleCompilation,/,
+      /"규칙 없음 · 원본 스키마 그대로 통과"/,
+      /ruleCompilation\.issues\[0\]\?\.message/,
+    ],
+    forbiddenPatterns: [
+      /Boolean\(request\.ruleSummary\.trim\(\)\)/,
+      /Continuous에서는 transform\/quality rule을 제거하세요/,
+    ],
+  },
 ];
 
 const failures = [];

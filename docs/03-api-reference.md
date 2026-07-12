@@ -546,7 +546,7 @@ type CreateJobResponse = {
 };
 ```
 
-Day1 Pair A create request는 Review Summary용 `ruleSummary`만 보내지 않는다. `transformSteps`, `transformOutputColumns`, `qualityRules`, `qualityScore`, `qualityStatus`, `qualityInvalidRows`를 함께 보내고, backend는 이 payload를 job에 저장한 뒤 run command에서 Spark transform/quality 실행에 사용한다.
+Create/update/review request의 Rule source of truth는 `ruleContractVersion: "1.0"`과 `rules[]`다. Backend는 저장 전에 canonical Rule을 검증하고 `ruleCompilation.status`, 정확한 `issues[]`, 결정된 `outputSchema`를 반환한다. 규칙이 없으면 source schema 그대로 pass-through로 통과한다. 기존 `transformSteps`, `transformOutputColumns`, `qualityRules`는 기존 Job hydrate와 Spark/Kafka runner를 위한 호환 표현으로 계속 수용하고 응답에도 파생해 포함한다. `Drop Row`/`Set Null`은 `onError`가 아니라 canonical `failureDisposition`에 보존된다. Continuous 활성 Rule은 streaming compiler가 연결되기 전까지 `RULE_EXECUTION_MODE_UNSUPPORTED`로 생성/수정을 거절한다.
 
 필수 확인:
 

@@ -12,6 +12,10 @@ JobRunStatus = Literal["queued", "running", "success", "failed", "canceled"]
 JobRunOutcome = Literal["success", "failed", "canceled"]
 JobDagStepStatus = Literal["pending", "running", "success", "failed", "blocked"]
 KafkaExecutionMode = Literal["snapshot", "continuous"]
+RuleContractVersion = Literal["1.0"]
+CanonicalRuleKind = Literal["transform", "quality"]
+CanonicalRuleErrorPolicy = Literal["fail_batch", "quarantine", "warn"]
+CanonicalRuleFailureDisposition = Literal["keep", "drop_row", "set_null"]
 ContinuousRuntimeStatus = Literal["starting", "running", "pausing", "paused", "stopping", "stopped", "failed"]
 JobCommand = Literal["run", "retry", "pause", "cancelRun", "stopSchedule", "resumeSchedule", "startContinuous", "pauseContinuous", "resumeContinuous", "stopContinuous"]
 
@@ -69,6 +73,37 @@ class QualityRuleDraft(CamelModel):
     severity: str
     target_column: str
     validation_type: str
+
+
+class CanonicalRuleDraft(CamelModel):
+    contract_version: RuleContractVersion = "1.0"
+    enabled: bool = True
+    failure_disposition: CanonicalRuleFailureDisposition = "keep"
+    id: str
+    input_columns: list[str] = Field(default_factory=list)
+    kind: CanonicalRuleKind
+    label: str | None = None
+    on_error: CanonicalRuleErrorPolicy = "warn"
+    operation: str
+    output_columns: list[str] = Field(default_factory=list)
+    output_type: str | None = None
+    parameters: dict[str, Any] = Field(default_factory=dict)
+    severity: Literal["warning", "error"] | None = None
+
+
+class RuleCompilationIssue(CamelModel):
+    code: str
+    field: str | None = None
+    message: str
+    rule_id: str | None = None
+
+
+class RuleCompilationResult(CamelModel):
+    contract_version: RuleContractVersion = "1.0"
+    issues: list[RuleCompilationIssue] = Field(default_factory=list)
+    output_schema: SourceFieldRows = Field(default_factory=list)
+    rules: list[CanonicalRuleDraft] = Field(default_factory=list)
+    status: Literal["pass", "fail"] = "pass"
 
 
 class RetryPolicyDraft(CamelModel):
@@ -278,6 +313,9 @@ class JobRowData(CamelModel):
     schema_sample_rows: list[list[str]] | None = None
     schema_summary: str | None = None
     rule_summary: str | None = None
+    rule_contract_version: RuleContractVersion = "1.0"
+    rules: list[CanonicalRuleDraft] = Field(default_factory=list)
+    rule_compilation: RuleCompilationResult | None = None
     retry_policy: RetryPolicyDraft | dict[str, Any] | None = None
     retry_policy_summary: str | None = None
     run_limit_summary: str | None = None
@@ -390,6 +428,8 @@ class CreatePipelineRequest(CamelModel):
     continuous_config: KafkaContinuousConfigDraft | None = None
     schema_summary: str = ""
     rule_summary: str = ""
+    rule_contract_version: RuleContractVersion = "1.0"
+    rules: list[CanonicalRuleDraft] = Field(default_factory=list)
     transform_output_columns: SourceFieldRows = Field(default_factory=list)
     transform_steps: list[TransformStepDraft] = Field(default_factory=list)
     quality_invalid_rows: list[list[str]] = Field(default_factory=list)
@@ -460,6 +500,7 @@ class ReviewSnapshot(CamelModel):
     can_create: bool
     destination: list[ReviewEntry]
     permission: list[ReviewEntry]
+    rule_compilation: RuleCompilationResult
     schema_: list[ReviewSchemaRow] = Field(alias="schema")
     validation: list[ReviewValidationRow]
 
@@ -473,6 +514,8 @@ class UpdatePipelineRequest(CamelModel):
     schema_sample_rows: list[list[str]] = Field(default_factory=list)
     schema_summary: str = ""
     rule_summary: str = ""
+    rule_contract_version: RuleContractVersion = "1.0"
+    rules: list[CanonicalRuleDraft] = Field(default_factory=list)
     transform_output_columns: SourceFieldRows = Field(default_factory=list)
     transform_steps: list[TransformStepDraft] = Field(default_factory=list)
     quality_invalid_rows: list[list[str]] = Field(default_factory=list)

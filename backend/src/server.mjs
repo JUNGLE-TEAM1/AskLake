@@ -207,6 +207,7 @@ const server = http.createServer(async (request, response) => {
     sendJson(response, status, {
       error: {
         code,
+        ...(error.details && typeof error.details === "object" ? { details: error.details } : {}),
         message: error.message || "Internal server error",
       },
     });

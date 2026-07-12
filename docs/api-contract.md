@@ -404,6 +404,9 @@ type JobRowData = {
   schemaSampleRows?: string[][];
   schemaSummary?: string;
   ruleSummary?: string;
+  ruleContractVersion?: "1.0";
+  rules?: CanonicalRuleDraft[];
+  ruleCompilation?: RuleCompilationResult;
   permissionSummary?: string;
   permissionRoles?: PermissionDraft["roles"];
   targetDatabase?: string;
@@ -834,6 +837,7 @@ type ReviewSnapshot = {
   schema: Array<{ columnName: string; type: string; nullable: string; transform: string }>;
   destination: Array<{ label: string; value: string }>;
   permission: Array<{ label: string; value: string }>;
+  ruleCompilation: RuleCompilationResult;
   validation: Array<{ label: string; status: "ready" | "warning"; value: string }>;
   canCreate: boolean;
 };
@@ -842,6 +846,7 @@ type ReviewSnapshot = {
 - `targetDatabase`, `targetDescription`은 Review 표시용으로 create/review request에 함께 보냅니다.
 - live mode는 source connector 결과를 재확인하고, mock mode는 동일한 response shape를 fixture로 반환합니다.
 - Review UI는 local draft를 직접 조합하지 않고 이 response를 표시합니다.
+- `ruleCompilation.status`가 `pass`일 때만 `canCreate`가 true가 될 수 있습니다. `rules`가 비어 있으면 output schema는 포함된 source schema와 같은 pass-through 결과이며 `ruleSummary`가 비어 있어도 실패하지 않습니다.
 
 ### 7.3 작업 목록 조회
 
@@ -903,6 +908,35 @@ type WatermarkPolicyDraft = {
   mode: "last_success_to_scheduled_at" | "last_success_to_run_started_at" | "full_refresh";
 };
 
+type CanonicalRuleDraft = {
+  contractVersion: "1.0";
+  id: string;
+  kind: "transform" | "quality";
+  operation: string;
+  inputColumns: string[];
+  outputColumns: string[];
+  parameters: Record<string, unknown>;
+  outputType?: string;
+  enabled: boolean;
+  onError: "fail_batch" | "quarantine" | "warn";
+  failureDisposition: "keep" | "drop_row" | "set_null";
+  severity?: "warning" | "error";
+  label?: string;
+};
+
+type RuleCompilationResult = {
+  contractVersion: "1.0";
+  status: "pass" | "fail";
+  rules: CanonicalRuleDraft[];
+  outputSchema: Array<[string, string]>;
+  issues: Array<{
+    code: string;
+    message: string;
+    ruleId?: string;
+    field?: string;
+  }>;
+};
+
 type CreatePipelineRequest = {
   id: string;
   jobName: string;
@@ -911,6 +945,8 @@ type CreatePipelineRequest = {
   sourceLabel: string;
   schemaSummary: string;
   ruleSummary: string;
+  ruleContractVersion: "1.0";
+  rules: CanonicalRuleDraft[];
   transformSteps: Array<{
     enabled: boolean;
     id: string;
@@ -928,6 +964,7 @@ type CreatePipelineRequest = {
     failureAction: "Warn" | "Quarantine" | "Fail Run" | "Drop Row" | "Set Null";
     id: string;
     kind: "notNull" | "range" | "acceptedValues" | "regex" | "unique";
+    params?: string;
     severity: "Warning" | "Error";
     targetColumn: string;
     validationType: "Not Null" | "Range Check" | "Regex Match" | "Accepted Values";
@@ -974,6 +1011,15 @@ type CreatePipelineRequest = {
 
 `permissionSummary`, `permissionRoles`, `permissionGrants`, `owner`, `createdBy`, `createdByProfile`은 현재 생성 결과를 설명하고 표시하기 위한 governance/identity metadata입니다. 이 값만으로 dataset 조회, SQL 실행, job command 권한을 허용하거나 거부하지 않습니다. Backend는 `asklake_session` 쿠키 actor를 우선 사용하고, 세션이 없을 때만 `X-AskLake-User` header 또는 demo actor를 `createdBy` fallback으로 사용할 수 있습니다.
 
+Rule contract rules:
+
+- 새 client는 `rules[]`를 source of truth로 보냅니다. `transformSteps`, `qualityRules`와 `transformOutputColumns`는 현재 runner와 기존 Job을 위한 파생 호환 필드입니다.
+- 기존 client가 `rules[]`를 생략하거나 빈 배열로 보내면서 legacy 규칙을 포함하면 backend adapter가 canonical Rule로 변환합니다.
+- `rules`, `transformSteps`, `qualityRules`가 모두 비어 있으면 pass-through로 유효합니다.
+- 생성/수정 전 compiler가 operation 지원 여부, input/output column, parameter, 실행 mode와 결정된 output schema를 검증합니다.
+- 실패 응답은 `400 RULE_COMPILATION_FAILED`이며 `error.details`에 `contractVersion`, `issues`, `outputSchema`를 포함합니다.
+- backend 응답은 legacy 저장 Job도 `ruleContractVersion`, `rules`, `ruleCompilation`을 재구성해 반환합니다.
+
 Request 예시:
 
 ```json
@@ -989,6 +1035,22 @@ Request 예시:
   ],
   "schemaSummary": "5 columns inferred, review_id bigint primary key candidate",
   "ruleSummary": "3 quality rules enabled",
+  "ruleContractVersion": "1.0",
+  "rules": [
+    {
+      "contractVersion": "1.0",
+      "id": "review-required",
+      "kind": "quality",
+      "operation": "not_null",
+      "inputColumns": ["review"],
+      "outputColumns": [],
+      "parameters": {},
+      "enabled": true,
+      "onError": "fail_batch",
+      "failureDisposition": "keep",
+      "severity": "error"
+    }
+  ],
   "scheduleLabel": "매일 09:00",
   "scheduleSummary": "반복 실행 · 매일 09:00 · Asia/Seoul · 저장 후 다음 예약부터 시작",
   "retryPolicy": {
@@ -1143,6 +1205,7 @@ Rules:
 - `running` Job은 `409 CONFLICT`로 수정할 수 없다.
 - 성공 Run이 하나라도 있으면 `targetDataset`, `targetDatabase`, `targetLayer`, `targetFormat`, `storageType`, `storagePath` 변경을 `422`로 차단한다.
 - source config와 Kafka consumer group offset, `kafka_snapshots` row는 update 대상이 아니다.
+- 수정 request의 canonical Rule도 create와 같은 compiler를 통과해야 하며, 실패 시 기존 Job payload를 변경하지 않는다.
 - 성공 시 같은 Job ID를 반환하며 새 Job이나 Catalog Dataset을 만들지 않는다.
 - 실패하면 서버 Job은 변경하지 않고 frontend edit draft는 유지한다.
 

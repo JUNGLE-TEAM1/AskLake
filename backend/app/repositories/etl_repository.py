@@ -23,6 +23,7 @@ from app.schemas.etl import (
     KafkaContinuousRuntime,
     KafkaContinuousSession,
 )
+from app.services.rule_compiler import compile_rule_set
 
 _schema_ready_bind_ids: set[int] = set()
 
@@ -577,6 +578,15 @@ def refresh_run_for_update(db: Session, run: ETLRunModel) -> None:
 
 def job_to_schema(db: Session, job: ETLJobModel) -> JobRowData:
     runtime = get_kafka_continuous_runtime(db, job.id) if db is not None and job.execution_mode == "continuous" else None
+    compiled_rules = compile_rule_set(
+        rules=[],
+        transform_steps=job.transform_steps,
+        quality_rules=job.quality_rules,
+        schema_columns=job.schema_columns,
+        transform_output_columns=job.transform_output_columns,
+        execution_mode=job.execution_mode or "snapshot",
+        source_type=job.source_type or "",
+    )
     return JobRowData(
         created_at=job.created_at.isoformat() if job.created_at else None,
         id=job.id,
@@ -605,6 +615,9 @@ def job_to_schema(db: Session, job: ETLJobModel) -> JobRowData:
         schema_sample_rows=job.schema_sample_rows,
         schema_summary=job.schema_summary,
         rule_summary=job.rule_summary,
+        rule_contract_version="1.0",
+        rules=compiled_rules.result.rules,
+        rule_compilation=compiled_rules.result,
         retry_policy=job.retry_policy,
         retry_policy_summary=job.retry_policy_summary,
         run_limit_summary=job.run_limit_summary,

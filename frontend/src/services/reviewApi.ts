@@ -1,6 +1,7 @@
-import type { DraftPipeline } from "../types";
+import type { DraftPipeline, RuleCompilationResult } from "../types";
 import { apiClient, apiConfig } from "./apiClient";
 import { toCreatePipelineRequest } from "./draftPipelineContract";
+import { compileRuleContract } from "./ruleContract";
 
 export type ReviewEntry = {
   label: string;
@@ -25,6 +26,7 @@ export type ReviewSnapshot = {
   canCreate: boolean;
   destination: ReviewEntry[];
   permission: ReviewEntry[];
+  ruleCompilation: RuleCompilationResult;
   schema: ReviewSchemaRow[];
   validation: ReviewValidationRow[];
 };
@@ -47,13 +49,19 @@ export async function getReviewSnapshot(draft: DraftPipeline): Promise<ReviewSna
 function buildMockReviewSnapshot(draft: DraftPipeline): ReviewSnapshot {
   const request = toCreatePipelineRequest(draft);
   const includedColumns = draft.schema.columns.filter((column) => column.included !== false && Boolean(column.targetName.trim()));
-  const outputColumns = request.transformOutputColumns.length > 0
-    ? request.transformOutputColumns
-    : includedColumns.map((column) => [column.targetName, column.type] as [string, string]);
+  const ruleCompilation = compileRuleContract({
+    executionMode: request.executionMode,
+    qualityRules: request.qualityRules,
+    rules: request.rules,
+    schemaColumns: request.schemaColumns,
+    sourceType: request.sourceType,
+    transformOutputColumns: request.transformOutputColumns,
+    transformSteps: request.transformSteps,
+  });
+  const outputColumns = ruleCompilation.outputSchema;
   const sourceReady = draft.source.connectionStatus === "success";
   const schemaReady = includedColumns.length > 0;
-  const processingReady = Boolean(request.ruleSummary.trim());
-  const continuousRulesSupported = request.executionMode !== "continuous" || (!request.transformSteps.some((step) => step.enabled) && !request.qualityRules.some((rule) => rule.enabled));
+  const processingReady = ruleCompilation.status === "pass";
   const scheduleReady = Boolean(request.scheduleLabel.trim());
   const retryReady = Boolean(request.retryPolicySummary.trim());
   const permissionReady = Boolean(request.permissionSummary.trim() && request.targetDataset.trim() && request.owner.trim());
@@ -67,7 +75,7 @@ function buildMockReviewSnapshot(draft: DraftPipeline): ReviewSnapshot {
       ["대상 데이터셋", request.targetDataset],
       ["설명", request.targetDescription],
     ]),
-    canCreate: sourceReady && schemaReady && continuousRulesSupported && Boolean(request.sourceType.trim()) && Boolean(request.sourceLabel.trim()) && Boolean(request.targetDataset.trim()) && Boolean(request.owner.trim()),
+    canCreate: sourceReady && schemaReady && processingReady && Boolean(request.sourceType.trim()) && Boolean(request.sourceLabel.trim()) && Boolean(request.targetDataset.trim()) && Boolean(request.owner.trim()),
     destination: toReviewEntries([
       ["저장 경로", request.storagePath ?? ""],
       ["데이터베이스", request.targetDatabase ?? "asklake"],
@@ -80,6 +88,7 @@ function buildMockReviewSnapshot(draft: DraftPipeline): ReviewSnapshot {
       ["담당자", request.owner],
       ["요약", request.permissionSummary],
     ]),
+    ruleCompilation,
     schema: outputColumns.map(([name, type]) => {
       const sourceColumn = includedColumns.find((column) => column.targetName === name || column.sourceName === name);
       return {
@@ -92,8 +101,14 @@ function buildMockReviewSnapshot(draft: DraftPipeline): ReviewSnapshot {
     validation: [
       validationRow("소스 연결", sourceReady, "완료", "확인 필요"),
       validationRow("스키마", schemaReady, "확정됨", "추론 필요"),
-      validationRow("처리 테스트", processingReady, "통과", "확인 필요"),
-      ...(request.executionMode === "continuous" ? [validationRow("Continuous 규칙", continuousRulesSupported, "지원 범위 확인", "Continuous에서는 transform/quality rule을 제거하세요")] : []),
+      validationRow(
+        "처리 규칙",
+        processingReady,
+        ruleCompilation.rules.some((rule) => rule.enabled)
+          ? `${ruleCompilation.rules.filter((rule) => rule.enabled).length}개 규칙 컴파일 완료`
+          : "규칙 없음 · 원본 스키마 그대로 통과",
+        ruleCompilation.issues[0]?.message ?? "규칙을 확인하세요",
+      ),
       validationRow(request.executionMode === "continuous" ? "스트림 제어" : "스케줄", scheduleReady, request.executionMode === "continuous" ? "시작/중지로 제어" : "유효함", "확인 필요"),
       validationRow("실패 재시도", retryReady, "유효함", "확인 필요"),
       validationRow("권한/타겟", permissionReady, "유효함", "확인 필요"),

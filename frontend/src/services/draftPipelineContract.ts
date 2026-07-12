@@ -1,4 +1,10 @@
 import type { CreatePipelineRequest, DraftPipeline, DraftPipelinePatch, JobRowData, RetryBackoffStrategy, RetryFailureAction, RetryPolicyDraft, ScheduleDraft, ScheduleOverlapPolicy, UpdatePipelineRequest, WatermarkPolicyDraft, WatermarkWindowMode } from "../types";
+import {
+  canonicalRulesFromLegacy,
+  compileRuleContract,
+  legacyRulesFromCanonical,
+  RULE_CONTRACT_VERSION,
+} from "./ruleContract";
 
 export const retryFailureActionLabels: Record<RetryFailureAction, string> = {
   notify_only: "알림만 남기기",
@@ -30,6 +36,15 @@ export function toCreatePipelineRequest(draft: DraftPipeline): CreatePipelineReq
   const targetTags = normalizeStringList(draft.target.tags);
   const retryPolicy = normalizeRetryPolicy(draft.schedule.retryPolicy);
   const watermarkPolicy = normalizeWatermarkPolicy(draft.schedule.watermarkPolicy);
+  const ruleCompilation = compileRuleContract({
+    executionMode: draft.source.executionMode,
+    qualityRules: draft.quality.rules,
+    schemaColumns: draft.schema.columns,
+    sourceType: draft.source.sourceType,
+    transformOutputColumns: effectiveTransformOutputColumns(draft),
+    transformSteps: draft.transform.steps,
+  });
+  const legacyRules = legacyRulesFromCanonical(ruleCompilation.rules);
   return {
     id: draft.id,
     jobName: `${targetDataset}_pipeline`,
@@ -41,8 +56,10 @@ export function toCreatePipelineRequest(draft: DraftPipeline): CreatePipelineReq
     retryPolicySummary: formatRetryPolicySummary(retryPolicy),
     runLimitSummary: formatRunLimitSummary(retryPolicy),
     ruleSummary: combineSummaries(draft.transform.summary, draft.quality.summary),
+    ruleContractVersion: RULE_CONTRACT_VERSION,
+    rules: ruleCompilation.rules,
     qualityInvalidRows: draft.quality.invalidRows,
-    qualityRules: draft.quality.rules,
+    qualityRules: legacyRules.qualityRules,
     qualityScore: draft.quality.score,
     qualityStatus: draft.quality.status,
     endDate: continuousKafka ? undefined : draft.schedule.endDate,
@@ -76,8 +93,8 @@ export function toCreatePipelineRequest(draft: DraftPipeline): CreatePipelineReq
     targetTags,
     targetFormat: draft.target.format,
     targetLayer: draft.target.layer,
-    transformOutputColumns: effectiveTransformOutputColumns(draft),
-    transformSteps: draft.transform.steps,
+    transformOutputColumns: ruleCompilation.outputSchema,
+    transformSteps: legacyRules.transformSteps,
   };
 }
 
@@ -88,6 +105,15 @@ export function hydrateDraftPipelineFromJob(job: JobRowData, fallback: DraftPipe
   const sourceType = job.sourceType || fallback.source.sourceType;
   const sourceLabel = job.sourceLabel || fallback.source.sourceLabel;
   const transformSummary = job.ruleSummary || fallback.transform.summary;
+  const canonicalRules = job.rules?.length
+    ? job.rules
+    : canonicalRulesFromLegacy(
+      job.transformSteps ?? [],
+      job.qualityRules ?? [],
+      job.schemaColumns ?? [],
+      job.transformOutputColumns ?? [],
+    );
+  const legacyRules = legacyRulesFromCanonical(canonicalRules);
 
   return {
     id: job.id,
@@ -100,7 +126,7 @@ export function hydrateDraftPipelineFromJob(job: JobRowData, fallback: DraftPipe
     quality: {
       ...fallback.quality,
       invalidRows: job.qualityInvalidRows ?? [],
-      rules: job.qualityRules ?? [],
+      rules: legacyRules.qualityRules,
       score: job.qualityScore,
       status: job.qualityStatus ?? fallback.quality.status,
       summary: transformSummary,
@@ -159,8 +185,8 @@ export function hydrateDraftPipelineFromJob(job: JobRowData, fallback: DraftPipe
       testStatus: "success",
     },
     transform: {
-      outputColumns: job.transformOutputColumns ?? [],
-      steps: job.transformSteps ?? [],
+      outputColumns: job.ruleCompilation?.outputSchema ?? job.transformOutputColumns ?? [],
+      steps: legacyRules.transformSteps,
       summary: transformSummary,
     },
   };
@@ -223,6 +249,11 @@ export function applyDraftPipelinePatch(draft: DraftPipeline, patch: DraftPipeli
   if (patch.schemaSampleRows !== undefined) next.schema.sampleRows = patch.schemaSampleRows;
   if (patch.schemaSummary !== undefined) next.schema.summary = patch.schemaSummary;
   if (patch.ruleSummary !== undefined) next.transform.summary = patch.ruleSummary;
+  if (patch.rules !== undefined) {
+    const legacyRules = legacyRulesFromCanonical(patch.rules);
+    next.transform.steps = legacyRules.transformSteps;
+    next.quality.rules = legacyRules.qualityRules;
+  }
   if (patch.transformOutputColumns !== undefined) next.transform.outputColumns = patch.transformOutputColumns;
   if (patch.transformSteps !== undefined) next.transform.steps = patch.transformSteps;
   if (patch.qualityInvalidRows !== undefined) next.quality.invalidRows = patch.qualityInvalidRows;

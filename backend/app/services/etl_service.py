@@ -72,6 +72,7 @@ from app.schemas.etl import (
 
 from app.services.airflow_client import AirflowDagRun, AirflowTaskInstance, build_airflow_client
 from app.services.governance_enforcement import require_governed_access
+from app.services.rule_compiler import CompiledRuleSet, compile_rule_set
 from app.services.resource_permission_service import job_with_persisted_permission_grants, permission_grants_for_resource, permissions_for_actor_with_governance
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
@@ -83,6 +84,9 @@ SPARK_OUTPUT_FORMAT = "parquet"
 
 
 def create_pipeline(db: Session, request: CreatePipelineRequest, actor_name: str = "demo-user") -> CreatePipelineResponse:
+    compiled_rules = compile_pipeline_rules(request)
+    require_compiled_rules(compiled_rules)
+    apply_compiled_rules(request, compiled_rules)
     validate_create_request(request)
     created_by = identity_name(request.created_by or actor_name or request.owner)
     created_by_profile = request.created_by_profile or identity_profile(created_by)
@@ -366,6 +370,13 @@ def update_pipeline(
     if job.status == "running":
         raise ApiError(ErrorCode.CONFLICT, f"Job is running and cannot be updated: {job_id}", status.HTTP_409_CONFLICT)
 
+    compiled_rules = compile_pipeline_rules(
+        request,
+        execution_mode=job.execution_mode or "snapshot",
+        source_type=job.source_type or "",
+    )
+    require_compiled_rules(compiled_rules)
+    apply_compiled_rules(request, compiled_rules)
     validate_update_request(request)
     target_changed = target_identity_changed(job, request)
     if target_changed and has_successful_run(db, job.id):
@@ -747,19 +758,17 @@ def review_pipeline(request: ReviewPipelineRequest) -> ReviewSnapshot:
             source_ready = False
 
     included_columns = [column for column in request.schema_columns if column.included and column.target_name.strip()]
-    output_columns = request.transform_output_columns or [
-        (column.target_name, column.type) for column in included_columns
-    ]
+    compiled_rules = compile_pipeline_rules(request)
+    output_columns = compiled_rules.result.output_schema
     schema_ready = bool(included_columns)
-    processing_ready = bool(request.rule_summary.strip())
-    continuous_rules_supported = request.execution_mode != "continuous" or (
-        not any(step.enabled for step in request.transform_steps)
-        and not any(rule.enabled for rule in request.quality_rules)
-    )
+    rules_ready = compiled_rules.result.status == "pass"
+    enabled_rule_count = sum(1 for rule in compiled_rules.result.rules if rule.enabled)
+    rule_ready_value = "pass-through" if enabled_rule_count == 0 else f"{enabled_rule_count}개 규칙 compile 완료"
+    rule_warning_value = compiled_rules.result.issues[0].message if compiled_rules.result.issues else "규칙 확인 필요"
     schedule_ready = bool(request.schedule_label.strip())
     retry_ready = bool(request.retry_policy_summary.strip())
     permission_ready = bool(request.permission_summary.strip() and request.target_dataset.strip() and request.owner.strip())
-    can_create = source_ready and schema_ready and continuous_rules_supported and bool(request.source_type.strip()) and bool(request.source_label.strip()) and bool(request.target_dataset.strip()) and bool(request.owner.strip())
+    can_create = source_ready and schema_ready and rules_ready and bool(request.source_type.strip()) and bool(request.source_label.strip()) and bool(request.target_dataset.strip()) and bool(request.owner.strip())
 
     source_type = "PostgreSQL" if request.source_type == "Database" else request.source_type
     source_display = " · ".join(value for value in [source_type, request.source_label] if value.strip())
@@ -786,6 +795,7 @@ def review_pipeline(request: ReviewPipelineRequest) -> ReviewSnapshot:
             review_entry("담당자", request.owner),
             review_entry("요약", request.permission_summary),
         ],
+        rule_compilation=compiled_rules.result,
         schema=[
             ReviewSchemaRow(
                 column_name=name,
@@ -798,8 +808,7 @@ def review_pipeline(request: ReviewPipelineRequest) -> ReviewSnapshot:
         validation=[
             review_validation("소스 연결", source_ready, "완료", "확인 필요"),
             review_validation("스키마", schema_ready, "확정됨", "추론 필요"),
-            review_validation("처리 테스트", processing_ready, "통과", "확인 필요"),
-            *([review_validation("Continuous 규칙", continuous_rules_supported, "지원 범위 확인", "Continuous에서는 transform/quality rule을 제거하세요")] if request.execution_mode == "continuous" else []),
+            review_validation("처리 규칙", rules_ready, rule_ready_value, rule_warning_value),
             review_validation("스트림 제어" if request.execution_mode == "continuous" else "스케줄", schedule_ready, "시작/중지로 제어" if request.execution_mode == "continuous" else "유효함", "확인 필요"),
             review_validation("실패 재시도", retry_ready, "유효함", "확인 필요"),
             review_validation("권한/타겟", permission_ready, "유효함", "확인 필요"),
@@ -3530,6 +3539,46 @@ def nonnegative_int(value: Any, fallback: int) -> int:
     return parsed if parsed is not None and parsed >= 0 else fallback
 
 
+def compile_pipeline_rules(
+    request: CreatePipelineRequest | UpdatePipelineRequest,
+    *,
+    execution_mode: str | None = None,
+    source_type: str | None = None,
+) -> CompiledRuleSet:
+    return compile_rule_set(
+        rules=request.rules,
+        transform_steps=request.transform_steps,
+        quality_rules=request.quality_rules,
+        schema_columns=request.schema_columns,
+        transform_output_columns=request.transform_output_columns,
+        execution_mode=execution_mode or getattr(request, "execution_mode", "snapshot"),
+        source_type=source_type or getattr(request, "source_type", ""),
+    )
+
+
+def require_compiled_rules(compiled: CompiledRuleSet) -> None:
+    if compiled.result.status == "pass":
+        return
+    raise ApiError(
+        "RULE_COMPILATION_FAILED",
+        compiled.result.issues[0].message if compiled.result.issues else "Rule compilation failed.",
+        status.HTTP_400_BAD_REQUEST,
+        {
+            "contractVersion": compiled.result.contract_version,
+            "issues": [issue.model_dump(mode="json", by_alias=True) for issue in compiled.result.issues],
+            "outputSchema": compiled.result.output_schema,
+        },
+    )
+
+
+def apply_compiled_rules(request: CreatePipelineRequest | UpdatePipelineRequest, compiled: CompiledRuleSet) -> None:
+    request.rule_contract_version = "1.0"
+    request.rules = compiled.result.rules
+    request.transform_steps = compiled.transform_steps
+    request.quality_rules = compiled.quality_rules
+    request.transform_output_columns = compiled.result.output_schema
+
+
 def validate_create_request(request: CreatePipelineRequest) -> None:
     missing = []
     if not request.job_name:
@@ -3549,8 +3598,6 @@ def validate_create_request(request: CreatePipelineRequest) -> None:
             missing.append("continuousKafkaSource")
         if request.target_format.lower() != "parquet":
             missing.append("continuousTargetFormat=parquet")
-        if any(step.enabled for step in request.transform_steps) or any(rule.enabled for rule in request.quality_rules):
-            missing.append("continuousTransformAndQualityRules=unsupported")
     if not request.schema_columns:
         missing.append("schemaColumns")
     elif not any(column.included and column.target_name.strip() for column in request.schema_columns):
