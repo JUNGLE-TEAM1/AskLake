@@ -556,7 +556,7 @@ SQL 및 ETL 분석용 소규모 커머스 데이터는 `backend/scripts/syntheti
 
 ```bash
 python3 backend/scripts/synthetic-commerce/generate.py \
-  --source /path/to/meta_Electronics.jsonl \
+  --products-csv backend/fixtures/synthetic-commerce/products.csv \
   --output-dir backend/tmp/synthetic-commerce-output \
   --products 10000 \
   --users 3000 \
@@ -570,7 +570,9 @@ python3 backend/scripts/synthetic-commerce/analyze.py \
 python3 backend/scripts/synthetic-commerce/test_generate.py
 ```
 
-생성 규칙, 컬럼 계약, 인사이트 품질 기준과 산출물 커밋 정책은 `backend/scripts/synthetic-commerce/README.md`를 따른다.
+상품 표본까지 다시 선택할 때는 `--products-csv` 대신 `--source /path/to/meta_Electronics.jsonl`을 사용한다. canonical 이벤트 파일은 `commerce_events.jsonl`이며 기존 `click_events.jsonl`을 이름만 바꿔 사용하지 않는다.
+
+분석기는 생성 결과를 SQLite에 적재해 `analysis-result.json`과 `insights.md`를 만든다. 세션 주문 완료 전환율 1~3%, 단계별 감소, event ID와 checkout/order 무결성, acquisition channel·membership tier·device·category별 전환 차이, 완료 주문 금액 분석이 모두 통과해야 검증 완료로 본다. 생성 규칙, 컬럼 계약, 인사이트 품질 기준과 산출물 커밋 정책은 `backend/scripts/synthetic-commerce/README.md`를 따른다.
 
 ## 11) Manual Smoke Checklist
 

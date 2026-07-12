@@ -1,109 +1,168 @@
--- Run with:
--- sqlite3 -header -column output/analysis.sqlite < insights.sql
+-- Synthetic commerce insight queries.
+-- These queries use CASE expressions supported by both SQLite and PostgreSQL.
+-- `purchase_click` is a proxy. Real purchase conversion uses `order_completed`.
 
--- 1. Age cohort x category preference
-WITH clicks AS (
+-- 1. Session funnel and completed-order conversion
+WITH session_funnel AS (
   SELECT
-    CASE
-      WHEN u.age BETWEEN 18 AND 34 THEN '18-34'
-      WHEN u.age BETWEEN 35 AND 44 THEN '35-44'
-      ELSE '45+'
-    END AS age_group,
-    p.category
-  FROM click_events e
-  JOIN users u ON u.user_id = e.user_id
-  JOIN products p ON p.product_id = e.product_id
-  WHERE e.event_type = 'product_click'
-), totals AS (
-  SELECT age_group, COUNT(*) AS total_clicks
-  FROM clicks
-  GROUP BY age_group
+    session_id,
+    MAX(CASE WHEN event_type = 'product_impression' THEN 1 ELSE 0 END) AS impression,
+    MAX(CASE WHEN event_type = 'product_click' THEN 1 ELSE 0 END) AS click,
+    MAX(CASE WHEN event_type = 'add_to_cart' THEN 1 ELSE 0 END) AS cart,
+    MAX(CASE WHEN event_type = 'purchase_click' THEN 1 ELSE 0 END) AS purchase_click,
+    MAX(CASE WHEN event_type = 'checkout_started' THEN 1 ELSE 0 END) AS checkout_started,
+    MAX(CASE WHEN event_type = 'payment_success' THEN 1 ELSE 0 END) AS payment_success,
+    MAX(CASE WHEN event_type = 'order_completed' THEN 1 ELSE 0 END) AS order_completed
+  FROM commerce_events
+  GROUP BY session_id
 )
 SELECT
-  c.age_group,
-  c.category,
-  COUNT(*) AS clicks,
-  ROUND(100.0 * COUNT(*) / t.total_clicks, 2) AS click_share_pct
-FROM clicks c
-JOIN totals t ON t.age_group = c.age_group
-GROUP BY c.age_group, c.category
-ORDER BY c.age_group, click_share_pct DESC;
+  SUM(impression) AS impression_sessions,
+  SUM(click) AS click_sessions,
+  SUM(cart) AS cart_sessions,
+  SUM(purchase_click) AS purchase_click_sessions,
+  SUM(checkout_started) AS checkout_started_sessions,
+  SUM(payment_success) AS payment_success_sessions,
+  SUM(order_completed) AS order_completed_sessions,
+  ROUND(100.0 * SUM(order_completed) / NULLIF(SUM(impression), 0), 3)
+    AS session_order_conversion_pct,
+  ROUND(100.0 * SUM(checkout_started) / NULLIF(SUM(purchase_click), 0), 2)
+    AS checkout_entry_pct,
+  ROUND(100.0 * SUM(payment_success) / NULLIF(SUM(checkout_started), 0), 2)
+    AS payment_success_pct,
+  ROUND(100.0 * SUM(order_completed) / NULLIF(SUM(payment_success), 0), 2)
+    AS order_confirmation_pct
+FROM session_funnel;
 
--- 2. Acquisition-channel funnel
+-- 2. Acquisition channel: proxy click versus actual completed order
+WITH session_funnel AS (
+  SELECT
+    session_id,
+    user_id,
+    MAX(CASE WHEN event_type = 'product_impression' THEN 1 ELSE 0 END) AS impression,
+    MAX(CASE WHEN event_type = 'purchase_click' THEN 1 ELSE 0 END) AS purchase_click,
+    MAX(CASE WHEN event_type = 'order_completed' THEN 1 ELSE 0 END) AS order_completed
+  FROM commerce_events
+  GROUP BY session_id, user_id
+)
 SELECT
   u.acquisition_channel,
-  SUM(e.event_type = 'product_impression') AS impressions,
-  SUM(e.event_type = 'product_click') AS clicks,
-  SUM(e.event_type = 'add_to_cart') AS carts,
-  SUM(e.event_type = 'purchase_click') AS purchase_clicks,
-  ROUND(100.0 * SUM(e.event_type = 'product_click') /
-        NULLIF(SUM(e.event_type = 'product_impression'), 0), 2) AS ctr_pct,
-  ROUND(100.0 * SUM(e.event_type = 'purchase_click') /
-        NULLIF(SUM(e.event_type = 'product_click'), 0), 2) AS click_to_purchase_pct
-FROM click_events e
-JOIN users u ON u.user_id = e.user_id
+  SUM(s.impression) AS active_sessions,
+  SUM(s.purchase_click) AS purchase_click_sessions,
+  SUM(s.order_completed) AS order_completed_sessions,
+  ROUND(100.0 * SUM(s.purchase_click) / NULLIF(SUM(s.impression), 0), 2)
+    AS purchase_click_proxy_pct,
+  ROUND(100.0 * SUM(s.order_completed) / NULLIF(SUM(s.impression), 0), 2)
+    AS order_conversion_pct
+FROM session_funnel s
+JOIN users u ON u.user_id = s.user_id
 GROUP BY u.acquisition_channel
-ORDER BY click_to_purchase_pct DESC;
+ORDER BY order_conversion_pct DESC;
 
--- 3. Membership-tier funnel
-SELECT
-  u.membership_tier,
-  SUM(e.event_type = 'product_click') AS clicks,
-  SUM(e.event_type = 'add_to_cart') AS carts,
-  SUM(e.event_type = 'purchase_click') AS purchase_clicks,
-  ROUND(100.0 * SUM(e.event_type = 'add_to_cart') /
-        NULLIF(SUM(e.event_type = 'product_click'), 0), 2) AS click_to_cart_pct,
-  ROUND(100.0 * SUM(e.event_type = 'purchase_click') /
-        NULLIF(SUM(e.event_type = 'product_click'), 0), 2) AS click_to_purchase_pct
-FROM click_events e
-JOIN users u ON u.user_id = e.user_id
-GROUP BY u.membership_tier
-ORDER BY click_to_purchase_pct DESC;
-
--- 4. Local-hour pattern by actual event device
-SELECT
-  device_type,
-  COUNT(*) AS events,
-  SUM(CASE WHEN CAST(SUBSTR(event_time, 12, 2) AS INTEGER) BETWEEN 18 AND 23 THEN 1 ELSE 0 END)
-    AS evening_events,
-  ROUND(100.0 * SUM(CASE WHEN CAST(SUBSTR(event_time, 12, 2) AS INTEGER)
-                              BETWEEN 18 AND 23 THEN 1 ELSE 0 END) / COUNT(*), 2)
-    AS evening_share_pct
-FROM click_events
-GROUP BY device_type
-ORDER BY evening_share_pct DESC;
-
--- 5. Null control: no direct gender multiplier was planted
-SELECT
-  u.gender,
-  SUM(e.event_type = 'product_click') AS clicks,
-  SUM(e.event_type = 'purchase_click') AS purchase_clicks,
-  ROUND(100.0 * SUM(e.event_type = 'purchase_click') /
-        NULLIF(SUM(e.event_type = 'product_click'), 0), 2) AS click_to_purchase_pct
-FROM click_events e
-JOIN users u ON u.user_id = e.user_id
-GROUP BY u.gender
-ORDER BY u.gender;
-
--- 6. Product-rating-count long tail
-WITH event_clicks AS (
-  SELECT product_id, COUNT(*) AS clicks
-  FROM click_events
-  WHERE event_type = 'product_click'
-  GROUP BY product_id
-), product_clicks AS (
-  SELECT p.product_id, p.rating_count, COALESCE(e.clicks, 0) AS clicks
-  FROM products p
-  LEFT JOIN event_clicks e ON e.product_id = p.product_id
-), ranked AS (
-  SELECT *, NTILE(10) OVER (ORDER BY rating_count DESC) AS rating_count_decile
-  FROM product_clicks
+-- 3. Membership tier conversion
+WITH session_funnel AS (
+  SELECT
+    session_id,
+    user_id,
+    MAX(CASE WHEN event_type = 'product_impression' THEN 1 ELSE 0 END) AS impression,
+    MAX(CASE WHEN event_type = 'purchase_click' THEN 1 ELSE 0 END) AS purchase_click,
+    MAX(CASE WHEN event_type = 'order_completed' THEN 1 ELSE 0 END) AS order_completed
+  FROM commerce_events
+  GROUP BY session_id, user_id
 )
 SELECT
-  rating_count_decile,
-  COUNT(*) AS products,
-  SUM(clicks) AS clicks,
-  ROUND(AVG(clicks), 2) AS avg_clicks_per_product
-FROM ranked
-GROUP BY rating_count_decile
-ORDER BY rating_count_decile;
+  u.membership_tier,
+  SUM(s.impression) AS active_sessions,
+  SUM(s.purchase_click) AS purchase_click_sessions,
+  SUM(s.order_completed) AS order_completed_sessions,
+  ROUND(100.0 * SUM(s.purchase_click) / NULLIF(SUM(s.impression), 0), 2)
+    AS purchase_click_proxy_pct,
+  ROUND(100.0 * SUM(s.order_completed) / NULLIF(SUM(s.impression), 0), 2)
+    AS order_conversion_pct
+FROM session_funnel s
+JOIN users u ON u.user_id = s.user_id
+GROUP BY u.membership_tier
+ORDER BY order_conversion_pct DESC;
+
+-- 4. Device conversion and checkout drop-off
+WITH session_funnel AS (
+  SELECT
+    session_id,
+    MIN(device_type) AS device_type,
+    MAX(CASE WHEN event_type = 'product_impression' THEN 1 ELSE 0 END) AS impression,
+    MAX(CASE WHEN event_type = 'checkout_started' THEN 1 ELSE 0 END) AS checkout_started,
+    MAX(CASE WHEN event_type = 'payment_success' THEN 1 ELSE 0 END) AS payment_success,
+    MAX(CASE WHEN event_type = 'order_completed' THEN 1 ELSE 0 END) AS order_completed
+  FROM commerce_events
+  GROUP BY session_id
+)
+SELECT
+  device_type,
+  SUM(impression) AS active_sessions,
+  SUM(checkout_started) AS checkout_started_sessions,
+  SUM(payment_success) AS payment_success_sessions,
+  SUM(order_completed) AS order_completed_sessions,
+  ROUND(100.0 * SUM(order_completed) / NULLIF(SUM(impression), 0), 2)
+    AS order_conversion_pct,
+  ROUND(100.0 * (SUM(checkout_started) - SUM(order_completed)) /
+        NULLIF(SUM(checkout_started), 0), 2) AS checkout_dropoff_pct
+FROM session_funnel
+GROUP BY device_type
+ORDER BY order_conversion_pct DESC;
+
+-- 5. Completed-order value. Do not use purchase_click for revenue.
+SELECT
+  COUNT(*) AS completed_orders,
+  ROUND(SUM(order_value), 2) AS gross_order_value,
+  ROUND(AVG(order_value), 2) AS average_order_value,
+  ROUND(MIN(order_value), 2) AS minimum_order_value,
+  ROUND(MAX(order_value), 2) AS maximum_order_value
+FROM commerce_events
+WHERE event_type = 'order_completed';
+
+-- 6. Category conversion and completed-order value
+WITH category_sessions AS (
+  SELECT
+    p.category,
+    e.session_id,
+    MAX(CASE WHEN e.event_type = 'product_impression' THEN 1 ELSE 0 END) AS impression,
+    MAX(CASE WHEN e.event_type = 'order_completed' THEN 1 ELSE 0 END) AS order_completed,
+    SUM(CASE WHEN e.event_type = 'order_completed' THEN e.order_value ELSE 0 END) AS order_value
+  FROM commerce_events e
+  JOIN products p ON p.product_id = e.product_id
+  GROUP BY p.category, e.session_id
+)
+SELECT
+  category,
+  SUM(impression) AS impression_sessions,
+  SUM(order_completed) AS order_completed_sessions,
+  ROUND(100.0 * SUM(order_completed) / NULLIF(SUM(impression), 0), 2)
+    AS order_conversion_pct,
+  ROUND(SUM(order_value), 2) AS gross_order_value
+FROM category_sessions
+GROUP BY category
+ORDER BY order_conversion_pct DESC, gross_order_value DESC;
+
+-- 7. event_id uniqueness: duplicate_event_ids must be zero
+SELECT
+  COUNT(*) AS total_events,
+  COUNT(DISTINCT event_id) AS unique_event_ids,
+  COUNT(*) - COUNT(DISTINCT event_id) AS duplicate_event_ids
+FROM commerce_events;
+
+-- 8. Invalid server-source mapping: every count must be zero
+SELECT
+  event_type,
+  event_source,
+  COUNT(*) AS invalid_events
+FROM commerce_events
+WHERE event_source <> CASE event_type
+  WHEN 'product_impression' THEN 'web_client'
+  WHEN 'product_click' THEN 'web_client'
+  WHEN 'add_to_cart' THEN 'web_client'
+  WHEN 'purchase_click' THEN 'web_client'
+  WHEN 'checkout_started' THEN 'checkout_service'
+  WHEN 'payment_success' THEN 'payment_service'
+  WHEN 'order_completed' THEN 'order_service'
+  ELSE '__unsupported__' END
+GROUP BY event_type, event_source;

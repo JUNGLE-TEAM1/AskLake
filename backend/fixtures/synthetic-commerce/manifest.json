@@ -1,7 +1,11 @@
 {
-  "generator_version": 1,
+  "generator_version": 2,
+  "event_schema_version": "1.0",
   "seed": 20260711,
   "source_file": "meta_Electronics.jsonl",
+  "original_source_file": "meta_Electronics.jsonl",
+  "product_source_mode": "canonical_products_csv",
+  "reused_products_file": "products.csv",
   "window": {
     "start": "2026-06-01T00:00:00+09:00",
     "end_exclusive": "2026-07-01T00:00:00+09:00"
@@ -9,16 +13,35 @@
   "counts": {
     "products": 10000,
     "users": 3000,
-    "event_count": 76640,
-    "session_count": 19126,
+    "event_count": 79409,
+    "session_count": 19347,
     "event_type_counts": {
-      "product_impression": 53393,
-      "product_click": 18731,
-      "add_to_cart": 3332,
-      "purchase_click": 1184
+      "product_impression": 54194,
+      "product_click": 18877,
+      "add_to_cart": 3374,
+      "purchase_click": 1170,
+      "checkout_started": 820,
+      "payment_success": 557,
+      "order_completed": 417
     },
-    "products_exposed": 9869,
-    "product_coverage_pct": 98.69
+    "event_type_session_counts": {
+      "product_impression": 19347,
+      "product_click": 12632,
+      "add_to_cart": 3131,
+      "purchase_click": 1132,
+      "checkout_started": 797,
+      "payment_success": 548,
+      "order_completed": 415
+    },
+    "event_source_counts": {
+      "web_client": 77615,
+      "checkout_service": 820,
+      "payment_service": 557,
+      "order_service": 417
+    },
+    "order_completed_session_conversion_pct": 2.145,
+    "products_exposed": 9873,
+    "product_coverage_pct": 98.73
   },
   "product_selection": {
     "source_rows_scanned": 1610012,
@@ -43,7 +66,9 @@
       "Portable Audio & Video": 14593,
       "Wearable Technology": 5177
     },
-    "selection_rule": "balanced deterministic hash sample; valid price; rating_count >= 5"
+    "selection_rule": "balanced deterministic hash sample; valid price; rating_count >= 5",
+    "reuse_source_file": "products.csv",
+    "reuse_row_count": 10000
   },
   "public_user_columns": [
     "user_id",
@@ -61,10 +86,33 @@
     "purchase_propensity",
     "category_affinity"
   ],
+  "event_contract": {
+    "canonical_file": "commerce_events.jsonl",
+    "event_sources": {
+      "product_impression": "web_client",
+      "product_click": "web_client",
+      "add_to_cart": "web_client",
+      "purchase_click": "web_client",
+      "checkout_started": "checkout_service",
+      "payment_success": "payment_service",
+      "order_completed": "order_service"
+    },
+    "funnel_probabilities": {
+      "purchase_click_to_checkout_started": 0.7,
+      "checkout_started_to_payment_success": 0.7,
+      "payment_success_to_order_completed": 0.75
+    },
+    "order_properties": {
+      "currency": "USD",
+      "item_count": 1,
+      "order_value": "selected product price",
+      "order_id": "required only for order_completed; null before completion"
+    }
+  },
   "planted_patterns": [
     "age 18-34 favors headphones, wearables, and computers",
     "age 45+ favors television/video and home audio",
-    "referral users have higher cart and purchase-click propensity than paid-search users",
+    "referral users have higher cart and purchase-funnel propensity than paid-search users",
     "premium/vip users have higher funnel progression than basic users",
     "mobile sessions concentrate in local evening hours",
     "gender and region have no direct behavior multiplier and act as null controls"
@@ -80,11 +128,11 @@
       "mib": 0.215,
       "sha256": "c7948c0070a69c3c9d98d85528d81329bd5fe40cd8394e6ee5d97cddb89e809a"
     },
-    "click_events.jsonl": {
-      "bytes": 22798021,
-      "mib": 21.742,
-      "sha256": "01dc08639dc2ec8a55c6e6c4a90d979daa997a3f130ca6f0f8e164041d2b0cc3"
+    "commerce_events.jsonl": {
+      "bytes": 27957154,
+      "mib": 26.662,
+      "sha256": "3d3f3144094a3e334b19eb1d86a380c1cc9830333659130471e8f7dbb5b204ae"
     }
   },
-  "total_mib": 23.924
+  "total_mib": 28.845
 }
