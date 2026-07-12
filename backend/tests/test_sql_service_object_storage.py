@@ -68,6 +68,36 @@ class SqlServiceObjectStorageTest(TestCase):
             storage_location="s3a://asklake-output/remote_table/silver/run_1",
         )
 
+    def remote_materialized_dataset(self) -> SimpleNamespace:
+        snapshot_location = "s3a://asklake-output/remote_table/silver/snapshot"
+        delta_location = "s3a://asklake-output/remote_table/silver/delta"
+        return SimpleNamespace(
+            id="ds_remote_table",
+            materialization_runs=[
+                {
+                    "materializationMode": "delta",
+                    "runId": "delta",
+                    "sourceKind": "etl",
+                    "status": "success",
+                    "storageFormat": "parquet",
+                    "storageLocation": delta_location,
+                },
+                {
+                    "materializationMode": "snapshot",
+                    "runId": "snapshot",
+                    "sourceKind": "etl",
+                    "status": "success",
+                    "storageFormat": "parquet",
+                    "storageLocation": snapshot_location,
+                },
+            ],
+            name="remote_table",
+            sample_rows=[],
+            schema_=[],
+            storage_format="parquet",
+            storage_location=delta_location,
+        )
+
     def test_remote_parquet_is_downloaded_and_queried(self) -> None:
         object_key = "remote_table/silver/run_1/part-00000.parquet"
         client = FakeS3Client({object_key: self.parquet_path})
@@ -115,6 +145,34 @@ class SqlServiceObjectStorageTest(TestCase):
 
                 self.assertEqual(result["rows"], [["2"]])
                 self.assertEqual(client.downloaded_keys, [object_key])
+
+    def test_remote_snapshot_and_delta_use_distinct_cache_segments(self) -> None:
+        snapshot_key = "remote_table/silver/snapshot/part-00000.parquet"
+        delta_key = "remote_table/silver/delta/part-00000.parquet"
+        client = FakeS3Client({
+            snapshot_key: self.parquet_path,
+            delta_key: self.parquet_path,
+        })
+
+        with (
+            patch.object(sql_service, "build_sql_preview_s3_client", return_value=client),
+            patch.dict(
+                os.environ,
+                {
+                    "ASKLAKE_SQL_PREVIEW_MAX_REMOTE_BYTES": "1048576",
+                    "MINIO_BUCKET": "asklake-output",
+                },
+                clear=False,
+            ),
+        ):
+            result = sql_service.execute_duckdb_preview(
+                'SELECT COUNT(*) AS row_count FROM "remote_table"',
+                context_datasets=[self.remote_materialized_dataset()],
+                preview_limit=100,
+            )
+
+        self.assertEqual(result["rows"], [["4"]])
+        self.assertEqual(client.downloaded_keys, [snapshot_key, delta_key])
 
     def test_local_parquet_preview_still_works(self) -> None:
         dataset = SimpleNamespace(
@@ -195,4 +253,40 @@ class SqlServiceObjectStorageTest(TestCase):
             )
 
         self.assertEqual(raised.exception.code, sql_service.ErrorCode.VALIDATION_ERROR)
+        self.assertEqual(client.downloaded_keys, [])
+
+    def test_remote_active_segments_share_one_cumulative_download_budget(self) -> None:
+        snapshot_key = "remote_table/silver/snapshot/part-00000.parquet"
+        delta_key = "remote_table/silver/delta/part-00000.parquet"
+        client = FakeS3Client(
+            {
+                snapshot_key: self.parquet_path,
+                delta_key: self.parquet_path,
+            },
+            reported_sizes={
+                snapshot_key: 80,
+                delta_key: 80,
+            },
+        )
+
+        with (
+            patch.object(sql_service, "build_sql_preview_s3_client", return_value=client),
+            patch.dict(
+                os.environ,
+                {
+                    "ASKLAKE_SQL_PREVIEW_MAX_REMOTE_BYTES": "128",
+                    "MINIO_BUCKET": "asklake-output",
+                },
+                clear=False,
+            ),
+            self.assertRaises(ApiError) as raised,
+        ):
+            sql_service.execute_duckdb_preview(
+                'SELECT * FROM "remote_table"',
+                context_datasets=[self.remote_materialized_dataset()],
+                preview_limit=100,
+            )
+
+        self.assertEqual(raised.exception.code, sql_service.ErrorCode.VALIDATION_ERROR)
+        self.assertEqual(raised.exception.details["requestedBytes"], 160)
         self.assertEqual(client.downloaded_keys, [])
