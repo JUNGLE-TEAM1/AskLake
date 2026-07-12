@@ -356,6 +356,8 @@ Schedule UI는 `수동/자동/1회 실행` 대신 `스케줄링 건너뛰기`와
 
 SQL 분석 UI는 Preview 행 수를 10~100 범위에서 10행 단위로 선택하고, 선택값을 기존 `executeQueryPreview(..., { limit })` 옵션으로 전달한다. API request/response shape는 바뀌지 않으며 응답 `previewLimit`은 실제 실행된 제한값을 유지한다.
 
+Catalog의 `storageLocation`이 `s3://` 또는 `s3a://` Parquet이면 `POST /api/query/runs`는 backend S3/MinIO credential로 object를 query-scoped 임시 cache에 읽어 DuckDB에 등록한다. 원격 파일 합계는 `ASKLAKE_SQL_PREVIEW_MAX_REMOTE_BYTES` 기본 512 MiB로 제한하며, 연결·인증·object 오류를 빈 Preview로 숨기지 않고 `SQL_STORAGE_ERROR`로 반환한다.
+
 SQL 위젯 생성은 별도 AI/API 호출 없이 현재 `SqlResultDraft` 또는 선택한 `CatalogDataset.sampleRows`를 `DashboardDatasetOption`으로 변환한다. 왼쪽 `차트 생성하기`는 Dashboard runtime의 `WidgetConfigPanel`을 재사용해 동일한 위젯 유형, 필드, 집계, 색상 설정을 제공하고, 명시적으로 생성한 뒤 기존 `WidgetRenderer`로 오른쪽 `차트 보기`에 렌더링한다. `데이터 미리보기`는 원본 SQL 표를 유지한다. 위젯 설정은 SQL 화면 메모리에만 유지하며 SQL 결과 toolbar에서는 Dashboard 저장 또는 `대시보드 만들기` action을 노출하지 않는다.
 
 ## 8) Pair Handoff Contracts

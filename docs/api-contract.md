@@ -1415,7 +1415,9 @@ Validation:
 - frontend preflight는 PostgreSQL parser로 `SELECT` 단일 문장, CTE, `FROM`/`JOIN` table context를 검사합니다. backend는 같은 기준을 서버에서 다시 검증해야 합니다.
 - 선택 테이블 UI 변경은 SQL text를 자동 재작성하지 않습니다. SQL이 `baseDatasetId`/`referenceDatasetIds`에 포함되지 않은 table을 참조하면 preview 전 검증에서 실패해야 합니다.
 - live backend는 DuckDB in-memory connection을 query runtime으로 사용합니다. 선택된 Catalog dataset과 `referenceDatasetIds` dataset을 DuckDB table/view로 등록한 뒤 projection, filter, order, limit, selected-context JOIN을 실행합니다.
-- Catalog payload에 로컬 `storageLocation`과 `storageFormat`(`jsonl`, `parquet`)이 있으면 DuckDB가 해당 물리 파일을 우선 읽고, 파일이 없거나 읽을 수 없으면 `schema`/`sampleRows` 기반 임시 table로 fallback합니다.
+- Catalog payload에 로컬 `storageLocation`과 `storageFormat`(`jsonl`, `parquet`)이 있으면 DuckDB가 해당 물리 파일을 우선 읽고, 로컬 파일이 없거나 읽을 수 없으면 `schema`/`sampleRows` 기반 임시 table로 fallback합니다.
+- `storageLocation`이 `s3://` 또는 `s3a://`인 Parquet dataset은 backend가 `S3_ENDPOINT`/`MINIO_ENDPOINT`, server-side credential, path-style 설정으로 object 목록을 검사한 뒤 query-scoped 임시 디렉터리에 내려받고 DuckDB `read_parquet` view로 등록합니다. 임시 파일은 Preview 응답 또는 실패 직후 삭제하며 원격 object는 읽기만 합니다.
+- 한 Preview의 원격 Parquet 합계가 `ASKLAKE_SQL_PREVIEW_MAX_REMOTE_BYTES`(기본 512 MiB)를 넘으면 다운로드 전에 `422 VALIDATION_ERROR`로 차단합니다. 원격 인증·연결 실패 또는 Parquet object 부재는 `502 SQL_STORAGE_ERROR`로 반환하며 빈 `sampleRows` table로 조용히 fallback하지 않습니다.
 - 한국어, 공백, 특수문자가 포함된 dataset/column 표시명은 금지하지 않습니다. frontend가 기본 쿼리, 자동완성, 컬럼 삽입, JOIN 초안을 만들 때 SQL text에는 double-quoted identifier(`"월별 매출 데이터"`, `"주문 ID"`)를 사용해야 합니다. 사용자가 따옴표 없이 한글/공백 table reference를 직접 입력한 경우 frontend preflight는 실행 전에 감지하고 quoted identifier 자동 보정을 제안합니다.
 - DuckDB preview와 향후 Trino full run 모두 같은 quoted identifier 정책을 따른다. 실행 context 검증은 quoted 표시명만이 아니라 `baseDatasetId`와 `referenceDatasetIds`로 선택된 dataset 범위를 기준으로 재검증합니다.
 - 읽기 전용 SQL만 허용합니다.
