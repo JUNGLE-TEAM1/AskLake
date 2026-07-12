@@ -484,6 +484,20 @@ const checks = [
     ],
   },
   {
+    name: "Collection policy changes invalidate stale sample and schema state",
+    file: "src/pages/etl/EtlPages.tsx",
+    patterns: [
+      /const updateCollectionConfig = \(patches:/,
+      /\[\.\.\.patches, \["__Sample Object", ""\]\]/,
+      /draftPatch: \{\}/,
+      /setConnectionStatus\("idle"\)/,
+      /setSourceStage\("connect"\)/,
+      /requiresRecordParsing: false/,
+      /schemaFingerprint: undefined/,
+      /summary: "수집 범위 변경 · 스키마 재추론 필요"/,
+    ],
+  },
+  {
     name: "Source tree separates folder navigation from folder collection selection",
     file: "src/pages/etl/SourceAssetTree.tsx",
     patterns: [
