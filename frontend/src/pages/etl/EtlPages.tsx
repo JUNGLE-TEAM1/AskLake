@@ -42,6 +42,7 @@ import {
 import { Field, InfoBox, RetryPolicy, StatusTile } from "../../components/common";
 import { CreationFlowLayout, CreationTopActions, CreationValidationPanel } from "../../components/creation/CreationFlow";
 import { ActionGroup } from "@/components/ui/action-group";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -68,6 +69,7 @@ import {
 import { SelectableCard } from "@/components/ui/selectable-card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
+import { Skeleton } from "@/components/ui/skeleton";
 import { TagList } from "@/components/ui/tag-list";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ValidationList } from "@/components/ui/validation-list";
@@ -77,8 +79,9 @@ import { DatabaseField } from "../../components/target/DatabaseField";
 import { runTransformQualitySamplePreview } from "../../data/transformQualityPreview";
 import { toCreatePipelineRequest } from "../../services/draftPipelineContract";
 import { getReviewSnapshot, type ReviewSnapshot } from "../../services/reviewApi";
+import { fetchPermissionOptions } from "../../services/permissionApi";
 import { listSourceAssets, previewRecordParsing, testSourceConnector, type SourceConnectorAnalysis } from "../../services/sourceConnectorService";
-import type { AuditResult, DraftPipeline, DraftPipelinePatch, FlowId, RecordParsingDraft, RecordParsingPreviewResponse, ScheduleFlowId, SchemaColumnDraft, SourceDraft, TargetLayer } from "../../types";
+import type { AuditResult, DraftPipeline, DraftPipelinePatch, FlowId, PermissionAction, PermissionOptionsResponse, RecordParsingDraft, RecordParsingPreviewResponse, ScheduleFlowId, SchemaColumnDraft, SourceDraft, TargetLayer } from "../../types";
 import type { QualityRuleDraft, RetryPolicyDraft, ScheduleDraft, ScheduleOverlapPolicy, TransformStepDraft, WatermarkPolicyDraft, WatermarkWindowMode } from "../../types/etl";
 import type { QualityRuleOption, TransformQualityInvalidRow, TransformQualityPreviewSample, TransformQualitySampleRow, TransformQualityStepPreview, TransformQualityValidationResult } from "../../data/transformQualityPreview";
 import { SourceAssetTree } from "./SourceAssetTree";
@@ -615,7 +618,6 @@ function normalizeCronExpression(value: string) {
 
 const DEFAULT_PERMISSION_TEMPLATE = "Data Engineer Group";
 const DEFAULT_VISIBILITY = "조직 내부";
-const DEFAULT_APPROVAL_STATUS = "승인 검토";
 const DEFAULT_OWNER = "data-team-01";
 const DEFAULT_TARGET_DATASET = "customer_review_gold";
 const DEFAULT_TARGET_LAYER: TargetLayer = "GOLD";
@@ -623,29 +625,23 @@ const DEFAULT_TARGET_FORMAT: TargetFileFormat = "parquet";
 const DEFAULT_TARGET_TAGS: string[] = [];
 const LEGACY_TARGET_TAG_OPTIONS = ["마케팅용", "고객데이터", "고객 데이터", "분석용", "서비스용", "서비스 제공용", "원본", "원본 데이터", "가공됨", "가공 데이터", "운영 데이터", "개인정보 포함"];
 
-const PERMISSION_TEMPLATES = ["Data Engineer Group", "Data Analyst Group", "ML Team"] as const;
 const VISIBILITY_OPTIONS = ["조직 내부", "프로젝트 멤버", "외부 공유"] as const;
-const APPROVAL_STATUS_OPTIONS = ["승인 검토", "승인 완료", "오너 승인 필요"] as const;
 const TARGET_LAYER_OPTIONS: TargetLayer[] = ["RAW", "BRONZE", "SILVER", "GOLD"];
 const TARGET_FORMAT_OPTIONS: TargetFileFormat[] = ["parquet", "csv", "json"];
 
-const PERMISSION_ACCESS_ITEMS = ["조회", "쿼리 실행", "메타데이터", "관리"] as const;
-
-const PERMISSION_ROLES = [
-  { name: "Data Engineer Group", access: PERMISSION_ACCESS_ITEMS, checked: true, note: "파이프라인 운영 및 장애 대응 권한" },
-  { name: "Data Analyst Group", access: PERMISSION_ACCESS_ITEMS, checked: true, note: "분석 업무용 표준 접근 권한" },
-  { name: "ML Team", access: PERMISSION_ACCESS_ITEMS, checked: false, note: "RAG 인덱스 검증 후 확장 예정" },
-];
-
-const PERMISSION_USERS = [
-  { email: "haneul@asklake.io", id: "haneul", initials: "KH", name: "김하늘", role: "Data Analyst Group" },
-  { email: "jimin@asklake.io", id: "jimin", initials: "PJ", name: "박지민", role: "Data Engineer Group" },
-] as const;
+const PERMISSION_ACTION_LABELS: Record<PermissionAction, string> = {
+  delete: "삭제",
+  manage: "관리",
+  query: "쿼리 실행",
+  run: "실행",
+  share: "공유",
+  view: "조회",
+};
 
 type PermissionGrantTab = "roles" | "users";
 
 type PermissionDraftSlice = {
-  approvalStatus?: string;
+  grants?: DraftPipeline["permission"]["grants"];
   owner?: string;
   permissionSummary?: string;
   permissionTemplate?: string;
@@ -991,16 +987,15 @@ function buildJobName(targetDataset: string) {
   return `${getDisplayText(targetDataset, DEFAULT_TARGET_DATASET)}_pipeline`;
 }
 
-function buildPermissionSummary(permissionTemplate: string, visibility: string, approvalStatus: string) {
-  return `${permissionTemplate} · ${visibility} · ${approvalStatus}`;
+function buildPermissionSummary(permissionTemplate: string, visibility: string) {
+  return `${permissionTemplate} · ${visibility}`;
 }
 
 function parsePermissionSummary(summary: string | undefined) {
-  const [template, visibility, approvalStatus] = (summary ?? "").split(/[·/]/).map((part) => part.trim()).filter(Boolean);
+  const [template, visibility] = (summary ?? "").split(/[·/]/).map((part) => part.trim()).filter(Boolean);
 
   return {
-    approvalStatus: getKnownOption(approvalStatus, APPROVAL_STATUS_OPTIONS, DEFAULT_APPROVAL_STATUS),
-    permissionTemplate: getKnownOption(template, PERMISSION_TEMPLATES, DEFAULT_PERMISSION_TEMPLATE),
+    permissionTemplate: template || DEFAULT_PERMISSION_TEMPLATE,
     visibility: getKnownOption(visibility, VISIBILITY_OPTIONS, DEFAULT_VISIBILITY),
   };
 }
@@ -1009,26 +1004,15 @@ function getPermissionDraftValues(draft: DraftPipeline) {
   const compatDraft = draft as DraftPipelineWithSlices;
   const permission = compatDraft.permission;
   const parsed = parsePermissionSummary(permission?.permissionSummary ?? permission?.summary ?? compatDraft.permissionSummary);
-  const permissionTemplate = getKnownOption(permission?.permissionTemplate ?? permission?.template ?? parsed.permissionTemplate, PERMISSION_TEMPLATES, DEFAULT_PERMISSION_TEMPLATE);
+  const permissionTemplate = getDisplayText(permission?.permissionTemplate ?? permission?.template ?? parsed.permissionTemplate, DEFAULT_PERMISSION_TEMPLATE);
   const visibility = getKnownOption(permission?.visibility ?? parsed.visibility, VISIBILITY_OPTIONS, DEFAULT_VISIBILITY);
-  const approvalStatus = getKnownOption(permission?.approvalStatus ?? parsed.approvalStatus, APPROVAL_STATUS_OPTIONS, DEFAULT_APPROVAL_STATUS);
 
   return {
-    approvalStatus,
     owner: getDisplayText(permission?.owner ?? compatDraft.owner, DEFAULT_OWNER),
-    permissionSummary: buildPermissionSummary(permissionTemplate, visibility, approvalStatus),
+    permissionSummary: buildPermissionSummary(permissionTemplate, visibility),
     permissionTemplate,
     visibility,
   };
-}
-
-function getPermissionRoleChecks(draft: DraftPipeline) {
-  const savedRoles = draft.permission.roles ?? [];
-
-  return Object.fromEntries(PERMISSION_ROLES.map((role) => {
-    const savedRole = savedRoles.find((candidate) => candidate.name === role.name);
-    return [role.name, savedRole?.checked ?? role.checked];
-  }));
 }
 
 function getTargetDraftValues(draft: DraftPipeline) {
@@ -5299,63 +5283,149 @@ export function PermissionPage({
   const [permissionTemplate, setPermissionTemplate] = useState(initialPermission.permissionTemplate);
   const [visibility, setVisibility] = useState(initialPermission.visibility);
   const [dataOwner, setDataOwner] = useState(initialPermission.owner);
-  const [approvalStatus, setApprovalStatus] = useState(initialPermission.approvalStatus);
   const [grantTab, setGrantTab] = useState<PermissionGrantTab>("roles");
   const [grantSearch, setGrantSearch] = useState("");
-  const [roleChecks, setRoleChecks] = useState<Record<string, boolean>>(() => ({
-    ...getPermissionRoleChecks(draft),
-    [initialPermission.permissionTemplate]: true,
-  }));
-  const [userChecks, setUserChecks] = useState<Record<string, boolean>>(() => (
-    Object.fromEntries(PERMISSION_USERS.map((user) => [user.id, true]))
-  ));
+  const [permissionOptions, setPermissionOptions] = useState<PermissionOptionsResponse | null>(null);
+  const [permissionOptionsError, setPermissionOptionsError] = useState("");
+  const [permissionOptionsLoading, setPermissionOptionsLoading] = useState(true);
+  const [permissionOptionsRequest, setPermissionOptionsRequest] = useState(0);
+  const [roleChecks, setRoleChecks] = useState<Record<string, boolean>>({});
+  const [userChecks, setUserChecks] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    let active = true;
+    setPermissionOptionsLoading(true);
+    setPermissionOptionsError("");
+
+    void fetchPermissionOptions()
+      .then((options) => {
+        if (!active) return;
+        const savedGroupGrants = new Set(
+          (draft.permission.grants ?? [])
+            .filter((grant) => grant.principalType === "group")
+            .map((grant) => grant.principalId),
+        );
+        const savedUserGrants = new Set(
+          (draft.permission.grants ?? [])
+            .filter((grant) => grant.principalType === "user")
+            .map((grant) => grant.principalId),
+        );
+        const savedRoles = new Map((draft.permission.roles ?? []).map((role) => [role.name, role.checked]));
+        const hasSavedGrants = draft.permission.grants !== undefined;
+        const nextRoleChecks = Object.fromEntries(options.groups.map((group, index) => [
+          group.id,
+          hasSavedGrants ? savedGroupGrants.has(group.id) : savedRoles.get(group.name) ?? index === 0,
+        ]));
+        const nextUserChecks = Object.fromEntries(options.users.map((user) => [user.id, savedUserGrants.has(user.id)]));
+        const selectedTemplate = options.groups.find((group) => group.name === initialPermission.permissionTemplate)
+          ?? options.groups.find((group) => nextRoleChecks[group.id])
+          ?? options.groups[0];
+        setPermissionOptions(options);
+        setPermissionTemplate(selectedTemplate?.name ?? initialPermission.permissionTemplate);
+        setRoleChecks(nextRoleChecks);
+        setUserChecks(nextUserChecks);
+      })
+      .catch((error) => {
+        if (!active) return;
+        setPermissionOptionsError(error instanceof Error ? error.message : "권한 대상 목록을 불러오지 못했습니다.");
+      })
+      .finally(() => {
+        if (active) setPermissionOptionsLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [permissionOptionsRequest]);
 
   const applyPermissionDraft = (patch: Partial<{
-    approvalStatus: string;
     owner: string;
     permissionTemplate: string;
     visibility: string;
-  }> = {}, nextRoleChecks = roleChecks) => {
-    const nextPermissionTemplate = getKnownOption(patch.permissionTemplate ?? permissionTemplate, PERMISSION_TEMPLATES, DEFAULT_PERMISSION_TEMPLATE);
+  }> = {}, nextRoleChecks = roleChecks, nextUserChecks = userChecks) => {
+    if (!permissionOptions) return;
+    const requestedTemplate = patch.permissionTemplate ?? permissionTemplate;
+    const nextPermissionTemplate = permissionOptions.groups.some((group) => group.name === requestedTemplate)
+      ? requestedTemplate
+      : permissionOptions.groups[0]?.name ?? DEFAULT_PERMISSION_TEMPLATE;
     const nextVisibility = getKnownOption(patch.visibility ?? visibility, VISIBILITY_OPTIONS, DEFAULT_VISIBILITY);
-    const nextApprovalStatus = getKnownOption(patch.approvalStatus ?? approvalStatus, APPROVAL_STATUS_OPTIONS, DEFAULT_APPROVAL_STATUS);
     const nextOwner = getDisplayText(patch.owner ?? dataOwner, DEFAULT_OWNER);
-    const permissionRoles = PERMISSION_ROLES.map((role) => ({
-      access: [...role.access],
-      checked: Boolean(nextRoleChecks[role.name] ?? role.checked),
-      name: role.name,
+    const permissionRoles = permissionOptions.groups.map((group) => ({
+      access: group.actions.map((action) => PERMISSION_ACTION_LABELS[action]),
+      checked: Boolean(nextRoleChecks[group.id]),
+      name: group.name,
     }));
+    const permissionGrants = [
+      ...permissionOptions.groups
+        .filter((group) => nextRoleChecks[group.id])
+        .map((group) => ({
+          actions: group.actions,
+          principalId: group.id,
+          principalType: "group" as const,
+          source: "permission_ui",
+        })),
+      ...permissionOptions.users
+        .filter((user) => nextUserChecks[user.id])
+        .map((user) => ({
+          actions: ["view", "run"] as PermissionAction[],
+          principalId: user.id,
+          principalType: "user" as const,
+          source: "permission_ui",
+        })),
+      ...(nextVisibility === "외부 공유" ? [{
+        actions: ["view"] as PermissionAction[],
+        principalId: "public",
+        principalType: "public" as const,
+        source: "permission_ui",
+      }] : []),
+    ];
+    const permissionSummary = buildPermissionSummary(nextPermissionTemplate, nextVisibility);
 
     onDraftChange({
       owner: nextOwner,
+      permissionGrants,
       permissionRoles,
       permission: {
+        grants: permissionGrants,
+        owner: nextOwner,
         roles: permissionRoles,
+        summary: permissionSummary,
+        template: nextPermissionTemplate,
+        visibility: nextVisibility,
       },
-      permissionSummary: buildPermissionSummary(nextPermissionTemplate, nextVisibility, nextApprovalStatus),
+      permissionSummary,
     });
   };
   const goNext = () => {
+    if (!permissionOptions) return;
     applyPermissionDraft();
     onNext();
   };
-  const updateRoleCheck = (roleName: string, checked: boolean) => {
-    const nextRoleChecks = { ...roleChecks, [roleName]: checked };
+  const updateRoleCheck = (roleId: string, checked: boolean) => {
+    const nextRoleChecks = { ...roleChecks, [roleId]: checked };
     setRoleChecks(nextRoleChecks);
     applyPermissionDraft({}, nextRoleChecks);
   };
+  const updateUserCheck = (userId: string, checked: boolean) => {
+    const nextUserChecks = { ...userChecks, [userId]: checked };
+    setUserChecks(nextUserChecks);
+    applyPermissionDraft({}, roleChecks, nextUserChecks);
+  };
   const normalizedGrantSearch = grantSearch.trim().toLocaleLowerCase();
-  const filteredRoles = PERMISSION_ROLES.filter((role) => (
-    `${role.name} ${role.note}`.toLocaleLowerCase().includes(normalizedGrantSearch)
+  const filteredRoles = (permissionOptions?.groups ?? []).filter((role) => (
+    `${role.name} ${role.description ?? ""}`.toLocaleLowerCase().includes(normalizedGrantSearch)
   ));
-  const filteredUsers = PERMISSION_USERS.filter((user) => (
+  const filteredUsers = (permissionOptions?.users ?? []).filter((user) => (
     `${user.name} ${user.email} ${user.role}`.toLocaleLowerCase().includes(normalizedGrantSearch)
   ));
   const selectedRoleCount = Object.values(roleChecks).filter(Boolean).length;
   const selectedUserCount = Object.values(userChecks).filter(Boolean).length;
+  const sensitiveColumnCount = draft.schema.columns.filter((column) => (
+    /(email|phone|address|review_text|customer|user_name|이메일|전화|주소|주민)/i.test(`${column.sourceName} ${column.targetName}`)
+  )).length;
   const governanceChecks = [
     { icon: <Database size={18} />, label: "공유 범위", status: visibility === "외부 공유" ? "검토 필요" : "안전", value: visibility },
-    { icon: <FileText size={18} />, label: "민감 데이터", status: "검토 필요", value: "review_text 포함" },
+    { icon: <FileText size={18} />, label: "민감 데이터", status: sensitiveColumnCount > 0 ? "검토 필요" : "안전", value: sensitiveColumnCount > 0 ? `${sensitiveColumnCount}개 필드 감지` : "감지 없음" },
   ];
 
   return (
@@ -5389,7 +5459,7 @@ export function PermissionPage({
                   <Badge
                     shape="compact"
                     size="sm"
-                    variant={item.status === "안전" || item.status === "준비됨" ? "success" : item.status === "대기" ? "muted" : "warning"}
+                    variant={item.status === "안전" ? "success" : "warning"}
                   >
                     {item.status}
                   </Badge>
@@ -5408,25 +5478,27 @@ export function PermissionPage({
             <FieldGroup className="grid min-w-0 gap-4 md:grid-cols-2">
               <ShadcnField>
                 <FieldLabel htmlFor="permission-template">권한 템플릿</FieldLabel>
-              <Select
-                value={permissionTemplate}
-                onValueChange={(value) => {
-                  const nextPermissionTemplate = getKnownOption(value, PERMISSION_TEMPLATES, DEFAULT_PERMISSION_TEMPLATE);
-                  const nextRoleChecks = { ...roleChecks, [nextPermissionTemplate]: true };
-                  setPermissionTemplate(nextPermissionTemplate);
-                  setRoleChecks(nextRoleChecks);
-                  applyPermissionDraft({ permissionTemplate: nextPermissionTemplate }, nextRoleChecks);
-                }}
-              >
-                <SelectTrigger aria-label="권한 템플릿" id="permission-template" size="sm">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectGroup>
-                    {PERMISSION_TEMPLATES.map((template) => <SelectItem key={template} value={template}>{template}</SelectItem>)}
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
+                <Select
+                  disabled={!permissionOptions}
+                  value={permissionTemplate}
+                  onValueChange={(value) => {
+                    const group = permissionOptions?.groups.find((candidate) => candidate.name === value);
+                    if (!group) return;
+                    const nextRoleChecks = { ...roleChecks, [group.id]: true };
+                    setPermissionTemplate(group.name);
+                    setRoleChecks(nextRoleChecks);
+                    applyPermissionDraft({ permissionTemplate: group.name }, nextRoleChecks);
+                  }}
+                >
+                  <SelectTrigger aria-label="권한 템플릿" id="permission-template" size="sm">
+                    <SelectValue placeholder={permissionOptionsLoading ? "불러오는 중" : "템플릿 선택"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      {(permissionOptions?.groups ?? []).map((group) => <SelectItem key={group.id} value={group.name}>{group.name}</SelectItem>)}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
               </ShadcnField>
               <ShadcnField>
                 <FieldLabel htmlFor="permission-visibility">공개 범위</FieldLabel>
@@ -5456,26 +5528,6 @@ export function PermissionPage({
                 applyPermissionDraft({ owner: nextOwner });
               }} />
               </ShadcnField>
-              <ShadcnField>
-                <FieldLabel htmlFor="permission-approval">승인 상태</FieldLabel>
-              <Select
-                value={approvalStatus}
-                onValueChange={(value) => {
-                  const nextApprovalStatus = getKnownOption(value, APPROVAL_STATUS_OPTIONS, DEFAULT_APPROVAL_STATUS);
-                  setApprovalStatus(nextApprovalStatus);
-                  applyPermissionDraft({ approvalStatus: nextApprovalStatus });
-                }}
-              >
-                <SelectTrigger aria-label="승인 상태" id="permission-approval" size="sm">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectGroup>
-                    {APPROVAL_STATUS_OPTIONS.map((option) => <SelectItem key={option} value={option}>{option}</SelectItem>)}
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-              </ShadcnField>
             </FieldGroup>
           </CardContent>
         </Card>
@@ -5489,6 +5541,25 @@ export function PermissionPage({
             </Badge>
           </CardHeader>
           <CardContent className="grid min-w-0 gap-4 p-5">
+            {permissionOptionsLoading ? (
+              <div className="grid gap-3" data-testid="permission-options-loading">
+                <Skeleton className="h-9 w-full" />
+                <Skeleton className="h-20 w-full" />
+                <Skeleton className="h-20 w-full" />
+              </div>
+            ) : permissionOptionsError ? (
+              <Alert variant="destructive">
+                <Info />
+                <AlertTitle>권한 대상 API를 불러오지 못했습니다.</AlertTitle>
+                <AlertDescription className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <span>{permissionOptionsError}</span>
+                  <Button size="sm" type="button" variant="outline" onClick={() => setPermissionOptionsRequest((value) => value + 1)}>
+                    <RefreshCw data-icon="inline-start" />
+                    다시 시도
+                  </Button>
+                </AlertDescription>
+              </Alert>
+            ) : (
             <Tabs
               className="grid min-w-0 gap-4"
               value={grantTab}
@@ -5519,35 +5590,35 @@ export function PermissionPage({
                   <FieldSet className="gap-3">
                     <FieldLegend className="sr-only">역할 선택</FieldLegend>
                     {filteredRoles.map((role) => {
-                      const selected = Boolean(roleChecks[role.name]);
+                      const selected = Boolean(roleChecks[role.id]);
                       const recommended = role.name === permissionTemplate;
-                      const checkboxId = `permission-role-${role.name.replaceAll(" ", "-").toLocaleLowerCase()}`;
+                      const checkboxId = `permission-role-${role.id}`;
                       return (
-                        <Card aria-selected={selected} key={role.name} size="sm" variant={selected ? "muted" : "default"}>
+                        <Card aria-selected={selected} key={role.id} size="sm" variant={selected ? "muted" : "default"}>
                           <div className="grid min-w-0 gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
                             <div className="flex min-w-0 items-start gap-3">
                               <Checkbox
                                 checked={selected}
                                 id={checkboxId}
-                                onCheckedChange={(checked) => updateRoleCheck(role.name, checked === true)}
+                                onCheckedChange={(checked) => updateRoleCheck(role.id, checked === true)}
                               />
                               <label className="grid min-w-0 cursor-pointer gap-1" htmlFor={checkboxId}>
                                 <span className="flex min-w-0 flex-wrap items-center gap-2">
                                   <strong className="truncate text-sm">{role.name}</strong>
                                   {recommended ? <Badge shape="compact" size="sm" variant="default">추천</Badge> : null}
                                 </span>
-                                <span className="text-sm text-slate-500">{role.note}</span>
+                                <span className="text-sm text-slate-500">{role.description}</span>
                               </label>
                             </div>
                             <div className="flex flex-wrap gap-2 md:justify-end" aria-label={`${role.name} 권한`}>
-                              {PERMISSION_ACCESS_ITEMS.map((item) => (
+                              {role.actions.map((action) => (
                                 <Badge
-                                  key={item}
+                                  key={action}
                                   shape="compact"
                                   size="sm"
-                                  variant={selected && role.access.includes(item) ? "default" : "outline"}
+                                  variant={selected ? "default" : "outline"}
                                 >
-                                  {item}
+                                  {PERMISSION_ACTION_LABELS[action]}
                                 </Badge>
                               ))}
                             </div>
@@ -5581,7 +5652,7 @@ export function PermissionPage({
                               size="sm"
                               type="button"
                               variant={selected ? "outline" : "subtle"}
-                              onClick={() => setUserChecks((checks) => ({ ...checks, [user.id]: !selected }))}
+                              onClick={() => updateUserCheck(user.id, !selected)}
                             >
                               {selected ? "제거" : "추가"}
                             </Button>
@@ -5595,6 +5666,7 @@ export function PermissionPage({
                 )}
               </TabsContent>
             </Tabs>
+            )}
           </CardContent>
         </Card>
       </div>

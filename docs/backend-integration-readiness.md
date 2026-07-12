@@ -467,3 +467,13 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 - SQL engine read-only guard 고도화
 - Dashboard 권한/공유/export API
 - Audit log server persistence
+## ETL Permission create-flow readiness
+
+- [x] `GET /api/etl/permission-options` 그룹·사용자 경량 조회
+- [x] admin actor guard와 `403 FORBIDDEN`
+- [x] create/update `permissionGrants` validation
+- [x] `permission_ui` grant 저장 및 교체
+- [x] admin source grant 보존
+- [x] 생성·수정 응답과 접근 판정에 persisted grant 병합
+- [x] `backend/scripts/verify-permission-create-flow-contract.py` 생성·교체 계약 검증
+- [ ] Docker/PostgreSQL 기반 `verify:permission-job-dashboard` 전체 스모크는 metadata DB가 응답 가능한 환경에서 실행

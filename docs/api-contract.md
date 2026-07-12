@@ -3111,3 +3111,26 @@ type AuditEntry = {
 - dataset row count/size 표기: 문자열로 내려줄지 숫자와 단위를 분리할지.
 - audit log 저장 실패 시 사용자에게 노출할지 여부.
 - dashboard widget 저장 모델을 `dashboards`, `dashboard_widgets`로 분리할지 여부.
+## ETL Permission create-flow contract
+
+ETL Permission 화면은 더 이상 하드코딩 사용자 목록을 source of truth로 사용하지 않는다.
+
+1. 화면 진입 시 `GET /api/etl/permission-options`로 그룹과 사용자 후보를 조회한다.
+2. 선택한 그룹은 응답의 `actions`를 유지한 `group` grant로 변환한다.
+3. 선택한 사용자는 기본 `view`, `run` action을 가진 `user` grant로 변환한다.
+4. 공개 범위를 `외부 공유`로 명시한 경우에만 `public` principal의 `view` grant를 추가한다.
+5. 생성 또는 수정 request의 `permissionGrants`를 `permission_grants` table에 `source=permission_ui`로 저장한다.
+6. 동일 resource 수정은 `permission_ui` source만 교체하고 `admin`, `admin_seed` 등 다른 source는 보존한다.
+
+```ts
+type PermissionGrant = {
+  actions: Array<"view" | "query" | "run" | "manage" | "delete" | "share">;
+  principalId: string;
+  principalType: "user" | "group" | "role" | "public";
+  source?: string;
+};
+```
+
+빈 `principalId` 또는 action이 없는 grant는 `400 VALIDATION_ERROR`다. `public` principal은 `principalId`를 `public`으로 정규화한다. backend는 client가 보낸 `id`와 `source`를 신뢰하지 않고 새 ID와 `permission_ui` source를 부여한다.
+
+권한 옵션 조회는 admin actor만 허용한다. live frontend는 API 오류 시 grant 화면 안에 재시도 경로를 표시하고 다음 단계 이동을 막는다. `VITE_USE_MOCK_API=true`에서는 동일 response shape의 fixture를 사용하되 최종 Job request shape는 live와 동일하다.
