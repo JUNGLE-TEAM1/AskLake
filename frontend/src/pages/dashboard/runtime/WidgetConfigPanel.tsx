@@ -1,8 +1,10 @@
 import {
   Children,
+  createContext,
   isValidElement,
   useEffect,
   useId,
+  useContext,
   useMemo,
   useRef,
   useState,
@@ -114,6 +116,8 @@ const orientationOptions: Array<{ label: string; value: DashboardWidgetOrientati
   { label: "가로", value: "horizontal" },
 ];
 const multiColorFallbackCount = 6;
+const widgetEmptySelectValue = "__asklake_none__";
+const WidgetSelectModeContext = createContext<"combobox" | "select">("combobox");
 
 function WidgetSelectField({
   children,
@@ -126,11 +130,56 @@ function WidgetSelectField({
   onChange?: (event: ChangeEvent<HTMLSelectElement>) => void;
   value: string;
 }) {
+  const selectMode = useContext(WidgetSelectModeContext);
   const options = Children.toArray(children).flatMap((child): DashboardComboboxOption[] => {
     if (!isValidElement<{ children?: ReactNode; value?: string }>(child) || child.type !== "option") return [];
     const label = typeof child.props.children === "string" ? child.props.children : String(child.props.value ?? "");
     return [{ label, value: child.props.value ?? label }];
   });
+  const hasEmptyOption = options.some((option) => option.value === "");
+  const selectValue = value || widgetEmptySelectValue;
+
+  if (selectMode === "select") {
+    return (
+      <FormFieldGroup className={props.fieldClassName} label={props.label}>
+        <Select
+          disabled={props.disabled}
+          value={selectValue}
+          onValueChange={(nextValue) => {
+            if (!hasEmptyOption && (!nextValue || nextValue === widgetEmptySelectValue)) return;
+            onChange?.({
+              target: { value: nextValue === widgetEmptySelectValue ? "" : nextValue },
+            } as ChangeEvent<HTMLSelectElement>);
+          }}
+        >
+          <SelectTrigger
+            aria-label={String(props.label)}
+            className={cn("asklake-widget-select", selectClassName)}
+            size="sm"
+          >
+            <SelectValue placeholder="선택하세요" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectGroup>
+              {!hasEmptyOption && (
+                <SelectItem disabled value={widgetEmptySelectValue}>
+                  선택하세요
+                </SelectItem>
+              )}
+              {options.map((option) => (
+                <SelectItem
+                  key={option.value || widgetEmptySelectValue}
+                  value={option.value || widgetEmptySelectValue}
+                >
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+      </FormFieldGroup>
+    );
+  }
 
   return (
     <DashboardFieldCombobox
@@ -491,6 +540,7 @@ export function WidgetConfigPanel({
   createButtonLabel = "위젯 생성",
   datasets = [],
   editingWidget = null,
+  fieldSelectMode = "combobox",
   focusedColorSlot = null,
   initialCreateInput = null,
   isCreating = false,
@@ -505,6 +555,7 @@ export function WidgetConfigPanel({
   createButtonLabel?: string;
   datasets?: DashboardDatasetOption[];
   editingWidget?: DashboardRuntimeWidget | null;
+  fieldSelectMode?: "combobox" | "select";
   focusedColorSlot?: DashboardWidgetColorSlotFocus | null;
   initialCreateInput?: CreateDraftWidgetFormInput | null;
   isCreating?: boolean;
@@ -799,8 +850,9 @@ export function WidgetConfigPanel({
         </div>
       )}
     >
-      <form className="asklake-widget-config-form" onSubmit={(event) => void handleSubmit(event)}>
-        <FieldGroup className="contents">
+      <WidgetSelectModeContext.Provider value={fieldSelectMode}>
+        <form className="asklake-widget-config-form" onSubmit={(event) => void handleSubmit(event)}>
+          <FieldGroup className="contents">
           {shouldShowDatasetSelect ? (
             <Field className="asklake-widget-dataset-field">
               <FieldLabel htmlFor={datasetFieldId}>데이터셋</FieldLabel>
@@ -1164,8 +1216,9 @@ export function WidgetConfigPanel({
             {isEditMode ? (isUpdating ? "저장 중" : "변경사항 저장") : (isCreating ? "생성 중" : createButtonLabel)}
           </Button>
         </div>
-        </FieldGroup>
-      </form>
+          </FieldGroup>
+        </form>
+      </WidgetSelectModeContext.Provider>
     </SettingsPanel>
   );
 }
