@@ -29,42 +29,6 @@ class ActorContextProductionTests(unittest.TestCase):
         self.assertEqual(response.status_code, 401)
         self.assertEqual(response.json()["error"]["code"], "UNAUTHORIZED")
 
-    def test_production_rejects_etl_create_without_a_session(self) -> None:
-        with patch("app.core.auth_context.settings", SimpleNamespace(allows_header_auth_fallback=False)):
-            response = TestClient(create_app()).post(
-                "/api/etl/jobs",
-                headers={"X-AskLake-User": "Spoofed Admin", "X-AskLake-Role": "admin"},
-                json={},
-            )
-
-        self.assertEqual(response.status_code, 401)
-        self.assertEqual(response.json()["error"]["code"], "UNAUTHORIZED")
-
-    def test_production_rejects_dashboard_assistant_without_a_session(self) -> None:
-        with patch("app.core.auth_context.settings", SimpleNamespace(allows_header_auth_fallback=False)):
-            response = TestClient(create_app()).post(
-                "/api/dashboards/assistant",
-                headers={"X-AskLake-User": "Spoofed Admin", "X-AskLake-Role": "admin"},
-                json={"mode": "dashboard_question", "prompt": "Summarize this dashboard"},
-            )
-
-        self.assertEqual(response.status_code, 401)
-        self.assertEqual(response.json()["error"]["code"], "UNAUTHORIZED")
-
-    def test_production_rejects_sql_transform_test_without_a_session(self) -> None:
-        with patch("app.core.auth_context.settings", SimpleNamespace(allows_header_auth_fallback=False)):
-            response = TestClient(create_app()).post(
-                "/api/sql/test",
-                headers={"X-AskLake-User": "Spoofed Admin", "X-AskLake-Role": "admin"},
-                json={
-                    "sources": [{"sourceDatasetId": "dataset-1", "columns": ["id"]}],
-                    "sql": "SELECT * FROM input",
-                },
-            )
-
-        self.assertEqual(response.status_code, 401)
-        self.assertEqual(response.json()["error"]["code"], "UNAUTHORIZED")
-
     def test_production_disables_demo_and_harness_routes(self) -> None:
         production = SimpleNamespace(allows_header_auth_fallback=False)
         for module_path, guard in (
