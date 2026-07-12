@@ -22,6 +22,18 @@ const read = (path) => {
 
 const checks = [
   {
+    name: "Snapshot ETL runs poll detail state through terminal and refresh Catalog",
+    file: "src/hooks/useAskLakeData.ts",
+    patterns: [
+      /const snapshotPollIntervalMs = 1000;/,
+      /const pollSnapshotJobUntilTerminal = async/,
+      /nextJob = normalizeJobRow\(await getLiveJob\(initialJob\.id\)\);/,
+      /if \(!nextRun \|\| !isTerminalRunStatus\(nextRun\.status\)\) continue;/,
+      /const nextDatasets = \(await getDatasets\(\)\)\.map\(normalizeDatasetRow\);/,
+      /void pollSnapshotJobUntilTerminal\(normalizedUpdatedJob, run\.runId\);/,
+    ],
+  },
+  {
     name: "Landing hero renders a scalable vector brand instead of enlarged raster logos",
     file: "src/pages/landing/AskLakeLandingPage.tsx",
     patterns: [
