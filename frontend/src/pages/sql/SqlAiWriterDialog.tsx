@@ -135,11 +135,11 @@ export function SqlAiWriterDialog({
                   rows={4}
                   value={prompt}
                 />
-                <FieldDescription>
-                  {disabled
-                    ? "먼저 분석 테이블에서 데이터셋을 선택해 주세요."
-                    : "Enter 또는 Ctrl/⌘ + Enter로 생성 · Shift + Enter로 줄바꿈"}
-                </FieldDescription>
+                {disabled && (
+                  <FieldDescription>
+                    먼저 분석 테이블에서 데이터셋을 선택해 주세요.
+                  </FieldDescription>
+                )}
                 {error && <FieldError role="alert">{error}</FieldError>}
               </Field>
               <Button

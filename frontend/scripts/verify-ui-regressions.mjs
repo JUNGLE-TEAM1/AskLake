@@ -91,6 +91,20 @@ const checks = [
     forbiddenPatterns: [
       /<Dialog/,
       /DialogContent/,
+      /Enter 또는 Ctrl\/⌘ \+ Enter로 생성 · Shift \+ Enter로 줄바꿈/,
+    ],
+  },
+  {
+    name: "SQL result chart keeps its heading compact and fits inside the result panel",
+    file: "src/pages/sql/SqlResultChart.tsx",
+    patterns: [
+      /min-h-\[320px\]/,
+      /sql-result-chart-header flex min-w-0 items-center gap-2/,
+      /shrink-0 text-sm text-muted-foreground/,
+      /h-\[280px\]/,
+    ],
+    forbiddenPatterns: [
+      /h-\[360px\]/,
     ],
   },
   {
