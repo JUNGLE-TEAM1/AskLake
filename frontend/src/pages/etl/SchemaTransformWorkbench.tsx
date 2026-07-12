@@ -133,12 +133,12 @@ function projectSchemaTransformSchema(
 ) {
   const targetBySourceName = new Map<string, { order: number; target: SchemaTransformColumn }>();
   nextTargetSchema.forEach((target, order) => {
-    const sourceName = normalizeSourceName(target.originalName || target.name);
+    const sourceName = target.originalName || target.name;
     if (!targetBySourceName.has(sourceName)) targetBySourceName.set(sourceName, { order, target });
   });
 
   const nextColumns = currentColumns.map((column) => {
-    const selected = targetBySourceName.get(normalizeSourceName(column.sourceName));
+    const selected = targetBySourceName.get(column.sourceName);
     if (!selected) return { ...column, included: false, targetOrder: undefined };
     const { order, target } = selected;
     return {
@@ -159,7 +159,7 @@ function projectSchemaTransformSchema(
 function buildTransformSteps(targetSchema: SchemaTransformColumn[]): TransformStepDraft[] {
   return targetSchema.flatMap((column) => {
     const output = column.name;
-    const input = normalizeSourceName(column.originalName || column.name);
+    const input = column.originalName || column.name;
     if (column.transform) {
       return [{
         enabled: true,
@@ -203,16 +203,11 @@ function buildTransformSteps(targetSchema: SchemaTransformColumn[]): TransformSt
   });
 }
 
-function normalizeSourceName(value: string) {
-  return value.replace(/\./g, "_");
-}
-
 function toSchemaTransformType(type: string) {
   const normalized = type.toLowerCase();
   if (normalized === "integer" || normalized === "int") return "integer";
-  if (normalized === "long" || normalized === "bigint") return "long";
-  if (normalized === "float") return "float";
-  if (normalized === "double" || normalized === "number") return "double";
+  if (normalized === "long" || normalized === "bigint" || normalized === "int64") return "long";
+  if (["float", "float32", "float64", "double", "decimal", "number"].includes(normalized)) return "double";
   if (normalized === "boolean" || normalized === "bool") return "boolean";
   if (normalized === "timestamp" || normalized === "datetime") return "timestamp";
   if (normalized === "date") return "date";
@@ -223,8 +218,7 @@ function fromSchemaTransformType(type: string) {
   const normalized = type.toLowerCase();
   if (normalized === "integer") return "Integer";
   if (normalized === "long") return "Long";
-  if (normalized === "float") return "Float";
-  if (normalized === "double") return "Double";
+  if (["float", "double", "decimal", "number"].includes(normalized)) return "Double";
   if (normalized === "boolean") return "Boolean";
   if (normalized === "timestamp") return "Timestamp";
   if (normalized === "date") return "Date";

@@ -11,8 +11,10 @@ from pathlib import Path
 from typing import Any
 
 from pyspark.sql import DataFrame, SparkSession
-from pyspark.sql.functions import array, array_except, col, current_timestamp, explode, from_json, lit, map_keys, min as spark_min, max as spark_max, size, when
+from pyspark.sql.functions import array, array_except, array_union, col, concat, current_timestamp, explode, from_json, get_json_object, lit, map_keys, min as spark_min, max as spark_max, size, transform, when
 from pyspark.sql.types import BooleanType, DoubleType, LongType, MapType, StringType, StructField, StructType, TimestampType
+
+from kafka_schema_paths import build_nested_schema_tree, expected_object_keys, json_path, split_source_path
 
 
 def json_object_env(name: str) -> dict[str, Any]:
@@ -146,24 +148,73 @@ def spark_type(value: str):
     return StringType()
 
 
+def struct_type_from_tree(tree: dict[str, Any]) -> StructType:
+    return StructType([
+        StructField(name, struct_type_from_tree(value) if isinstance(value, dict) else value, True)
+        for name, value in tree.items()
+    ])
+
+
+def nested_payload_column(source_path: str):
+    value = col("payload")
+    for segment in split_source_path(source_path):
+        value = value.getField(segment)
+    return value
+
+
+def raw_source_value(source_path: str):
+    return get_json_object(col("raw_payload"), json_path(source_path))
+
+
+def unknown_field_expressions(expected_keys_by_parent: dict[str, list[str]]):
+    unknown_condition = lit(False)
+    unknown_keys = None
+    empty_array = array().cast("array<string>")
+    for parent_path, expected_keys in expected_keys_by_parent.items():
+        raw_object = from_json(
+            col("raw_payload") if not parent_path else get_json_object(col("raw_payload"), json_path(parent_path)),
+            MapType(StringType(), StringType()),
+        )
+        object_unknown_keys = array_except(map_keys(raw_object), array(*[lit(key) for key in expected_keys]))
+        object_unknown_keys = when(raw_object.isNotNull(), object_unknown_keys).otherwise(empty_array)
+        unknown_condition = unknown_condition | (size(object_unknown_keys) > 0)
+        if parent_path:
+            object_unknown_keys = transform(
+                object_unknown_keys,
+                lambda field: concat(lit(f"{parent_path}."), field),
+            )
+        unknown_keys = object_unknown_keys if unknown_keys is None else array_union(unknown_keys, object_unknown_keys)
+    return unknown_condition, unknown_keys if unknown_keys is not None else empty_array
+
+
 def source_schema() -> tuple[StructType, list[tuple[str, str]], list[str]]:
     columns = json.loads(os.environ.get("ASKLAKE_CONTINUOUS_SCHEMA_COLUMNS", "[]"))
     selected = [column for column in columns if column.get("included", True)]
-    fields = []
+    bindings = []
     aliases = []
     required = []
     for column_def in selected:
         source = str(column_def.get("sourceName") or column_def.get("targetName") or "").strip()
         target = str(column_def.get("targetName") or source).strip()
         if source and target:
-            fields.append(StructField(source, spark_type(str(column_def.get("type") or "string")), True))
+            field_type = spark_type(str(column_def.get("type") or "string"))
+            bindings.append((source, field_type))
             aliases.append((source, target))
             if not bool(column_def.get("nullable", False)):
                 required.append(source)
-    if not fields:
-        fields.append(StructField("value", StringType(), True))
+    if not bindings:
+        bindings.append(("value", StringType()))
         aliases.append(("value", "value"))
-    fingerprint_payload = [{"name": field.name, "type": field.dataType.simpleString(), "required": field.name in required} for field in fields]
+    schema_tree = build_nested_schema_tree(bindings)
+    fingerprint_payload = [
+        {
+            "required": source in required,
+            "source": source,
+            "target": target,
+            "type": field_type.simpleString(),
+        }
+        for (source, field_type), (_source, target) in zip(bindings, aliases)
+    ]
     previous_fingerprint = SCHEMA_STATE.get("schemaFingerprint")
     fingerprint = hashlib.sha256(json.dumps(fingerprint_payload, sort_keys=True).encode("utf-8")).hexdigest()
     if previous_fingerprint and previous_fingerprint != fingerprint:
@@ -171,7 +222,7 @@ def source_schema() -> tuple[StructType, list[tuple[str, str]], list[str]]:
         SCHEMA_STATE["schemaStatus"] = "expected_schema_changed"
         SCHEMA_STATE["schemaChanges"] = [{"kind": "configured_schema_changed", "from": previous_fingerprint, "to": fingerprint}]
     SCHEMA_STATE["schemaFingerprint"] = fingerprint
-    return StructType(fields), aliases, required
+    return struct_type_from_tree(schema_tree), aliases, required
 
 
 def decode_offsets(value: Any) -> dict[str, Any]:
@@ -431,6 +482,7 @@ def main() -> None:
     signal.signal(signal.SIGTERM, on_signal)
     signal.signal(signal.SIGINT, on_signal)
     schema, aliases, required_fields = source_schema()
+    expected_keys_by_parent = expected_object_keys(source for source, _target in aliases)
     output_path = os.environ["ASKLAKE_CONTINUOUS_OUTPUT_PATH"]
     checkpoint_path = os.environ["ASKLAKE_CONTINUOUS_CHECKPOINT_PATH"]
     quarantine_path = f"{output_path.rstrip('/')}/_quarantine"
@@ -496,15 +548,13 @@ def main() -> None:
         required_missing = lit(False)
         incompatible_type = lit(False)
         for field_name, _target in aliases:
-            source_value = col("raw_map").getItem(field_name)
-            parsed_value_missing = col(f"payload.`{field_name}`").isNull()
+            source_value = raw_source_value(field_name)
+            parsed_value_missing = nested_payload_column(field_name).isNull()
             if field_name in required_fields:
                 required_missing = required_missing | source_value.isNull()
             incompatible_type = incompatible_type | (source_value.isNotNull() & parsed_value_missing)
         malformed = col("raw_map").isNull() | col("payload").isNull()
-        expected_keys = array(*[lit(source) for source, _target in aliases])
-        unknown_keys = array_except(map_keys(col("raw_map")), expected_keys)
-        unknown_condition = col("raw_map").isNotNull() & (size(unknown_keys) > 0)
+        unknown_condition, unknown_keys = unknown_field_expressions(expected_keys_by_parent)
         unknown_rows = (batch.where(col("raw_map").isNotNull())
             .select(explode(unknown_keys).alias("field"))
             .distinct().limit(100).collect())
@@ -538,7 +588,7 @@ def main() -> None:
         quarantine_batch_path = f"{quarantine_path.rstrip('/')}/_batches/batch_id={batch_id}" if invalid_count else None
         evidence_batch_path = None
         if valid_count:
-            selected = [col(f"payload.`{source}`").alias(target) for source, target in aliases]
+            selected = [nested_payload_column(source).alias(target) for source, target in aliases]
             write_batch_once(
                 spark,
                 valid.select(*selected, col("kafka_timestamp"), col("partition").alias("kafka_partition"), col("offset").alias("kafka_offset"), current_timestamp().alias("ingested_at")),

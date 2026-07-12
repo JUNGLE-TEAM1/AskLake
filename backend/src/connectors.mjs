@@ -4,7 +4,7 @@ import { NodeHttpHandler } from "@smithy/node-http-handler";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { fieldValue, formatBytes, inferSchemaColumns, parseSourceSample, schemaFingerprint, sourceId, upsertFields } from "./profile.mjs";
+import { canonicalSchemaType, fieldValue, formatBytes, inferSchemaColumns, parseSourceSample, schemaFingerprint, sourceId, upsertFields } from "./profile.mjs";
 
 const textFileExtensions = [".csv", ".json", ".jsonl", ".txt", ".tsv"];
 const backendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -1439,13 +1439,7 @@ function normalizeSparkColumnName(value) {
 
 function sparkLogicalType(value) {
   const normalized = String(value ?? "").toLowerCase();
-  if (normalized.includes("bool")) return "Boolean";
-  if (/(int|long|bigint|smallint|tinyint)/.test(normalized)) return "Integer";
-  if (/(float|double|decimal|numeric)/.test(normalized)) return "Float";
-  if (normalized.includes("timestamp")) return "Timestamp";
-  if (normalized.includes("date")) return "Date";
-  if (normalized.includes("array") || normalized.includes("struct") || normalized.includes("map")) return "JSON";
-  return "String";
+  return canonicalSchemaType(normalized);
 }
 
 function parquetJsLogicalType(name, field) {
@@ -1455,9 +1449,7 @@ function parquetJsLogicalType(name, field) {
   if (primitive.includes("boolean")) return "Boolean";
   if (logical.includes("timestamp") || normalizedName.includes("time") || normalizedName.endsWith("_at")) return "Timestamp";
   if (logical.includes("date")) return "Date";
-  if (primitive.includes("int") || logical.includes("int")) return "Integer";
-  if (primitive.includes("float") || primitive.includes("double") || primitive.includes("decimal")) return "Float";
-  return "String";
+  return canonicalSchemaType(`${primitive} ${logical}`);
 }
 
 function tail(value) {

@@ -229,7 +229,7 @@ function inferPreviewColumnType(values: string[]) {
   if (nonEmptyValues.length === 0) return "String";
   if (nonEmptyValues.every((value) => /^(true|false)$/i.test(value))) return "Boolean";
   if (nonEmptyValues.every((value) => /^-?\d+$/.test(value))) return "Integer";
-  if (nonEmptyValues.every((value) => /^-?\d+(\.\d+)?$/.test(value))) return "Float";
+  if (nonEmptyValues.every((value) => /^-?\d+(\.\d+)?$/.test(value))) return "Double";
   if (nonEmptyValues.every((value) => !Number.isNaN(Date.parse(value)) && /[-T:]/.test(value))) return "Timestamp";
   if (nonEmptyValues.some((value) => /^[\[{]/.test(value))) return "JSON";
   return "String";

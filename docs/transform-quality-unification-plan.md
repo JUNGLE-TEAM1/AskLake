@@ -70,11 +70,24 @@ contract version
 - canonical Rule, 타입, 오류 정책, 단계 결과 계약을 문서화한다.
 - Phase별 검증 명령과 수동 검증 시나리오를 확정한다.
 
-### Phase 1. 스키마 타입 정상화
+### Phase 1. 스키마 타입 정상화 (완료)
 
-- JSON native type을 보존하도록 source profile을 보완한다.
-- `Float`/`Double` UI와 payload 불일치를 제거한다.
-- 중첩 source path와 target alias를 안전하게 처리한다.
+- JSON/JSONL preview 문자열과 별도로 native 값을 보존해 string, integer, real, boolean, object/array를 canonical 타입으로 추론한다.
+- 기존 `Float`는 읽기 호환하고 backend profile, 신규 draft, Transform UI는 `Double`을 사용한다.
+- dotted source path는 Transform input과 Continuous projection에 그대로 유지하고, 물리 target alias만 underscore 이름으로 생성한다.
+- Continuous는 nested Spark schema와 root/nested unknown-field 검사를 사용하며 scalar/object path 충돌을 거절한다.
+
+Phase 1 검증:
+
+```bash
+cd backend
+npm run verify:schema-type-contract
+PYTHONPATH=. .venv/bin/python scripts/verify-kafka-continuous-contract.py
+
+cd ../frontend
+npm run verify:ui-regressions
+npm run build
+```
 
 ### Phase 2. 공통 Rule 모델과 compiler
 

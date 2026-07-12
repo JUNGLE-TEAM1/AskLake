@@ -19,6 +19,7 @@
     "verify:permission-job-dashboard": "node scripts/verify-permission-job-dashboard.mjs",
     "verify:fastapi-pair2": "node scripts/verify-fastapi-pair2.mjs",
     "verify:fastapi-sources": "node scripts/verify-fastapi-sources.mjs",
+    "verify:schema-type-contract": "node scripts/verify-schema-type-contract.mjs",
     "verify:target-metadata": "node scripts/verify-target-metadata-contract.mjs",
     "verify:dashboard-assistant-guard": "node scripts/verify-dashboard-assistant-guard.mjs",
     "verify:sources": "node scripts/verify-all-sources.mjs",

@@ -4,6 +4,7 @@ import { createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync }
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import readline from "node:readline";
+import { canonicalSchemaType } from "./profile.mjs";
 
 const backendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const outputRoot = path.resolve(process.env.ASKLAKE_REVIEW_ANALYSIS_DIR || path.join(backendDir, "tmp", "review-row-analysis"));
@@ -129,7 +130,7 @@ export async function suggestReviewAnalysisSchema(request = {}) {
     "Use method one_of_values only when the output must be selected from allowedValues.",
     "Use method instruction for summary, evidence, reason, or other free-form extraction/generation.",
     "Use allowedValues only for method one_of_values.",
-    "Allowed types: String, Float, Integer, Boolean, Timestamp.",
+    "Allowed types: String, Integer, Long, Double, Boolean, Timestamp.",
     "Use English label values to avoid escaping problems.",
     "Do not put quotes inside string values.",
     "Include columns for copied identifiers when present, sentiment when useful, issue/category when useful, severity/risk when useful, short summary, and evidence/reason.",
@@ -507,12 +508,7 @@ function normalizeSuggestedColumns(columns) {
 }
 
 function normalizeSchemaType(value) {
-  const normalized = String(value ?? "String").toLowerCase();
-  if (normalized.includes("float") || normalized.includes("double") || normalized.includes("decimal")) return "Float";
-  if (normalized.includes("int") || normalized.includes("long")) return "Integer";
-  if (normalized.includes("bool")) return "Boolean";
-  if (normalized.includes("time") || normalized.includes("date")) return "Timestamp";
-  return "String";
+  return canonicalSchemaType(value);
 }
 
 function normalizeOutputSchema(columns) {
@@ -520,7 +516,7 @@ function normalizeOutputSchema(columns) {
     { instruction: "원본 row에서 리뷰 고유 ID를 생성", method: "copy", targetName: "review_id", type: "String" },
     { instruction: "상품 ASIN", method: "copy", targetName: "asin", type: "String" },
     { instruction: "상위 상품 ASIN", method: "copy", targetName: "parent_asin", type: "String" },
-    { instruction: "원본 평점", method: "copy", targetName: "rating", type: "Float" },
+    { instruction: "원본 평점", method: "copy", targetName: "rating", type: "Double" },
     { allowedValues: ["positive", "mixed", "negative"], instruction: "후보값 중 하나로 감정을 선택", method: "one_of_values", targetName: "sentiment", type: "String" },
     { allowedValues: ["charging_power", "screen_display", "shipping_delivery", "listing_accuracy", "durability_quality", "no_issue", "other_issue"], instruction: "후보값 중 하나로 이슈 대분류를 선택", method: "one_of_values", targetName: "issue_category", type: "String" },
     { allowedValues: ["charging_or_power", "screen_or_display", "shipping_or_package", "listing_mismatch", "durability_or_quality", "positive_feedback", "other"], instruction: "후보값 중 하나로 이슈 세부 분류를 선택", method: "one_of_values", targetName: "issue_subcategory", type: "String" },

@@ -275,6 +275,29 @@ const checks = [
     ],
   },
   {
+    name: "Schema transform keeps source paths distinct and canonicalizes floating types",
+    file: "src/pages/etl/SchemaTransformWorkbench.tsx",
+    patterns: [
+      /const sourceName = target\.originalName \|\| target\.name;/,
+      /const selected = targetBySourceName\.get\(column\.sourceName\);/,
+      /const input = column\.originalName \|\| column\.name;/,
+      /\["float", "float32", "float64", "double", "decimal", "number"\]\.includes\(normalized\)\) return "double";/,
+      /\["float", "double", "decimal", "number"\]\.includes\(normalized\)\) return "Double";/,
+    ],
+    forbiddenPatterns: [/function normalizeSourceName/, /return "Float"/],
+  },
+  {
+    name: "Schema editor allocates physical aliases without collapsing source identity",
+    file: "src/components/etl/SchemaTransformEditor.jsx",
+    patterns: [
+      /float: "double"/,
+      /float32: "double"/,
+      /const targetColumnKey = \(column\) => `\$\{column\.sourceId \|\| sourceId \|\| "source"\}:\$\{String\(column\.originalName \|\| column\.name\)\}`;/,
+      /const physicalName = column\.name\.replace\(\/\\\.\/g, "_"\);/,
+      /name: getUniqueColumnName\(physicalName, usedNames\)/,
+    ],
+  },
+  {
     name: "Catalog requires explicit dataset selection before SQL analysis",
     file: "src/pages/catalog/CatalogPage.tsx",
     patterns: [

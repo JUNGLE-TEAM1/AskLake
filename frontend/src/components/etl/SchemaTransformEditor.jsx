@@ -34,8 +34,11 @@ const normalizeType = (type) => {
     int32: "integer",
     int64: "long",
     bigint: "long",
-    float32: "float",
+    float: "double",
+    float32: "double",
     float64: "double",
+    decimal: "double",
+    number: "double",
     bool: "boolean",
     str: "string",
     datetime: "timestamp",
@@ -194,30 +197,55 @@ export default function SchemaTransformEditor({
     });
   };
 
-  const targetColumnKey = (column) => `${column.sourceId || sourceId || "source"}:${String(column.originalName || column.name).replace(/\./g, "_")}`;
+  const targetColumnKey = (column) => `${column.sourceId || sourceId || "source"}:${String(column.originalName || column.name)}`;
 
   // Check if column from current source is already in target
   const isColumnInTarget = (colName) => {
-    const normalizedName = String(colName).replace(/\./g, "_");
     return targetSchema.some(
-      (ac) => String(ac.originalName || ac.name).replace(/\./g, "_") === normalizedName && ac.sourceId === sourceId,
+      (ac) => String(ac.originalName || ac.name) === String(colName) && ac.sourceId === sourceId,
     );
   };
 
-  // Generate unique name with prefix if needed
-  const getUniqueColumnName = (colName) => {
-    if (allSources.length <= 1) {
-      return colName;
-    }
-    // Check if this exact name already exists in target (from different source)
-    const nameExists = targetSchema.some(
+  const getUniqueColumnName = (colName, usedNames) => {
+    const nameExistsFromDifferentSource = targetSchema.some(
       (ac) => ac.name === colName && ac.sourceId !== sourceId,
     );
-    if (nameExists) {
-      // Add source name as prefix
-      return `${sourceName}_${colName}`;
+    const baseName = allSources.length > 1 && nameExistsFromDifferentSource
+      ? `${sourceName}_${colName}`
+      : colName;
+    let candidate = baseName;
+    let suffix = 2;
+    while (usedNames.has(candidate)) {
+      candidate = `${baseName}_${suffix}`;
+      suffix += 1;
     }
-    return colName;
+    usedNames.add(candidate);
+    return candidate;
+  };
+
+  const enrichTargetColumns = (columns) => {
+    const usedNames = new Set(targetSchema.map((column) => column.name));
+    return columns.map((column) => {
+      const physicalName = column.name.replace(/\./g, "_");
+      const normalizedType = normalizeType(column.type);
+      return {
+        ...column,
+        name: getUniqueColumnName(physicalName, usedNames),
+        originalName: column.originalName,
+        type: normalizedType,
+        originalType: normalizedType,
+        notNull: false,
+        defaultValue: "",
+        transform: null,
+        transformDisplay: null,
+        transformChain: [],
+        transformOperation: null,
+        transformParams: "",
+        onError: "Warn",
+        sourceId,
+        sourceName,
+      };
+    });
   };
 
   // Move handlers
@@ -231,29 +259,7 @@ export default function SchemaTransformEditor({
       return;
     }
 
-    const enriched = newColumns.map((c) => {
-      // Convert dot notation to underscore for MongoDB fields
-      const convertedName = c.name.replace(/\./g, "_");
-      const normalizedType = normalizeType(c.type);
-
-      return {
-        ...c,
-        name: getUniqueColumnName(convertedName),
-        originalName: c.originalName,
-        type: normalizedType,
-        originalType: normalizedType,
-        notNull: false,
-        defaultValue: "",
-        transform: null,
-        transformDisplay: null,
-        transformChain: [],
-        transformOperation: null,
-        transformParams: "",
-        onError: "Warn",
-        sourceId: sourceId,
-        sourceName: sourceName,
-      };
-    });
+    const enriched = enrichTargetColumns(newColumns);
 
     onSchemaChange([...targetSchema, ...enriched]);
     setSelectedBefore(new Set());
@@ -271,29 +277,7 @@ export default function SchemaTransformEditor({
       return;
     }
 
-    const enriched = newColumns.map((c) => {
-      // Convert dot notation to underscore for MongoDB fields
-      const convertedName = c.name.replace(/\./g, "_");
-      const normalizedType = normalizeType(c.type);
-
-      return {
-        ...c,
-        name: getUniqueColumnName(convertedName),
-        originalName: c.originalName,
-        type: normalizedType,
-        originalType: normalizedType,
-        notNull: false,
-        defaultValue: "",
-        transform: null,
-        transformDisplay: null,
-        transformChain: [],
-        transformOperation: null,
-        transformParams: "",
-        onError: "Warn",
-        sourceId: sourceId,
-        sourceName: sourceName,
-      };
-    });
+    const enriched = enrichTargetColumns(newColumns);
 
     onSchemaChange([...targetSchema, ...enriched]);
     setSelectedBefore(new Set());

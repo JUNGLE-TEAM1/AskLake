@@ -13,6 +13,7 @@ from app.models.etl import ETLJobModel, KafkaContinuousMaintenanceRunModel
 from app.repositories import etl_repository
 from app.schemas.etl import ContinuousReplayRequest, CreatePipelineRequest, SchemaColumnDraft
 from app.services import etl_service
+from scripts.kafka_schema_paths import build_nested_schema_tree, expected_object_keys, json_path, split_source_path
 
 
 def continuous_request() -> CreatePipelineRequest:
@@ -72,6 +73,28 @@ def continuous_job() -> ETLJobModel:
 
 
 def main() -> None:
+    assert split_source_path("raw.reviewerID") == ("raw", "reviewerID")
+    assert build_nested_schema_tree([
+        ("event_id", "string"),
+        ("raw.reviewerID", "string"),
+        ("raw.overall", "long"),
+    ]) == {
+        "event_id": "string",
+        "raw": {"reviewerID": "string", "overall": "long"},
+    }
+    assert expected_object_keys(["event_id", "raw.reviewerID", "raw.overall"]) == {
+        "": ["event_id", "raw"],
+        "raw": ["reviewerID", "overall"],
+    }
+    assert json_path("raw.reviewerID") == "$.raw.reviewerID"
+    assert json_path("raw.review-value") == "$.raw['review-value']"
+    try:
+        build_nested_schema_tree([("raw", "string"), ("raw.reviewerID", "string")])
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("Scalar/object source path collisions must be rejected.")
+
     assert ContinuousReplayRequest(offsets=["01:002", "1:2"]).offsets == ["1:2"]
     assert ContinuousReplayRequest(approve_unknown_fields=True).model_dump(mode="json", by_alias=True)["approveUnknownFields"] is True
     try:

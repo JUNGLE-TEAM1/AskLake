@@ -1947,7 +1947,7 @@ function sourceCheckState(value: string) {
   return "idle";
 }
 
-const schemaTypeOptions = ["String", "Integer", "Float", "Boolean", "Timestamp", "JSON"];
+const schemaTypeOptions = ["String", "Integer", "Long", "Double", "Boolean", "Timestamp", "Date", "JSON"];
 const schemaRoleOptions = [
   { label: "일반", value: "" },
   { label: "식별자", value: "Identifier" },

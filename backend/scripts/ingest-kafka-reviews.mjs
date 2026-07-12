@@ -838,8 +838,8 @@ function targetSchema(records) {
 
 function inferRecordType(value) {
   if (typeof value === "boolean") return "Boolean";
-  if (typeof value === "number") return Number.isInteger(value) ? "Integer" : "Float";
-  if (value && typeof value === "object") return "Object";
+  if (typeof value === "number") return Number.isInteger(value) ? "Long" : "Double";
+  if (value && typeof value === "object") return "JSON";
   return "String";
 }
 
@@ -848,10 +848,10 @@ function standardReviewSchema() {
     { nullable: false, sourceName: "schema_version", targetName: "schema_version", type: "String" },
     { nullable: false, role: "Identifier", sourceName: "event_id", targetName: "event_id", type: "String" },
     { nullable: false, sourceName: "source", targetName: "source", type: "String" },
-    { nullable: false, sourceName: "offset", targetName: "offset", type: "Integer" },
+    { nullable: false, sourceName: "offset", targetName: "offset", type: "Long" },
     { nullable: false, sourceName: "review", targetName: "review", type: "String" },
     { nullable: false, role: "Event Time", sourceName: "created_at", targetName: "created_at", type: "Timestamp" },
-    { nullable: false, sourceName: "raw", targetName: "raw", type: "Object" },
+    { nullable: false, sourceName: "raw", targetName: "raw", type: "JSON" },
   ];
 }
 
