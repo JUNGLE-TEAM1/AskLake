@@ -2,10 +2,12 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from fastapi import Response
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
+from app.api import auth as auth_api
 from app.core.auth_context import get_actor_context
 from app.core.config import Settings
 from app.core.errors import ApiError
@@ -15,7 +17,7 @@ from app.main import create_app
 from app import main as main_module
 from app.models.identity import AuthSessionModel, AuthUserModel
 from app.services import auth_service
-from app.services.auth_service import AuthService, verify_password
+from app.services.auth_service import initialize_auth, verify_password
 
 
 class ActorContextProductionTests(unittest.TestCase):
@@ -99,6 +101,103 @@ class ActorContextProductionTests(unittest.TestCase):
         self.assertTrue(actor.is_admin)
 
 
+class SessionCookieHardeningTests(unittest.TestCase):
+    def _cookie_headers(self, configured_settings: Settings) -> tuple[str, str]:
+        issued = Response()
+        deleted = Response()
+        with patch.object(auth_api, "settings", configured_settings):
+            auth_api.issue_session_cookie(issued, "session-token")
+            auth_api.delete_session_cookie(deleted)
+        return issued.headers["set-cookie"], deleted.headers["set-cookie"]
+
+    def _assert_aligned_cookie_options(self, headers: tuple[str, str], *, secure: bool) -> None:
+        for header in headers:
+            with self.subTest(header=header):
+                self.assertIn("asklake_session=", header)
+                self.assertIn("; HttpOnly", header)
+                self.assertIn("; Path=/", header)
+                self.assertIn("; SameSite=lax", header)
+                if secure:
+                    self.assertIn("; Secure", header)
+                else:
+                    self.assertNotIn("; Secure", header)
+
+    def test_fail_closed_issue_and_delete_cookie_headers_are_secure_and_aligned(self) -> None:
+        for app_env in ("production", "staging"):
+            with self.subTest(app_env=app_env):
+                configured = Settings(
+                    app_env=app_env,
+                    bootstrap_admin_email="owner@example.com",
+                    bootstrap_admin_password="strong-bootstrap-password",
+                    backend_cors_origins=[],
+                    _env_file=None,
+                )
+                issued, deleted = self._cookie_headers(configured)
+
+                self._assert_aligned_cookie_options((issued, deleted), secure=True)
+                self.assertIn("Max-Age=604800", issued)
+                self.assertIn("Max-Age=0", deleted)
+
+    def test_local_and_test_cookie_headers_are_not_secure_and_remain_aligned(self) -> None:
+        for app_env in ("local", "test"):
+            with self.subTest(app_env=app_env):
+                configured = Settings(
+                    app_env=app_env,
+                    bootstrap_admin_email=None,
+                    bootstrap_admin_password=None,
+                    backend_cors_origins=[],
+                    _env_file=None,
+                )
+                self._assert_aligned_cookie_options(
+                    self._cookie_headers(configured),
+                    secure=False,
+                )
+
+
+class AuthStartupTests(unittest.TestCase):
+    def test_lifespan_initializes_auth_before_serving_requests(self) -> None:
+        state = {"initialized": False}
+        startup_db = object()
+
+        def mark_initialized(db: object) -> None:
+            state["initialized"] = db is startup_db
+
+        app = create_app()
+
+        @app.get("/startup-state")
+        def startup_state() -> dict[str, bool]:
+            return state
+
+        with (
+            patch.object(main_module, "SessionLocal") as session_factory,
+            patch.object(main_module, "initialize_auth", side_effect=mark_initialized) as initializer,
+            patch.object(main_module, "sync_active_kafka_continuous_runtimes"),
+        ):
+            session_factory.return_value.__enter__.return_value = startup_db
+            with TestClient(app) as client:
+                response = client.get("/startup-state")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"initialized": True})
+        session_factory.assert_called_once_with()
+        initializer.assert_called_once_with(startup_db)
+        session_factory.return_value.__exit__.assert_called_once()
+
+    def test_lifespan_propagates_auth_initialization_conflicts(self) -> None:
+        with (
+            patch.object(main_module, "SessionLocal") as session_factory,
+            patch.object(
+                main_module,
+                "initialize_auth",
+                side_effect=RuntimeError("bootstrap identity conflict"),
+            ),
+        ):
+            session_factory.return_value.__enter__.return_value = object()
+            with self.assertRaisesRegex(RuntimeError, "bootstrap identity conflict"):
+                with TestClient(create_app()):
+                    pass
+
+
 class BootstrapAdminTests(unittest.TestCase):
     def test_secure_environment_requires_bootstrap_admin(self) -> None:
         with self.assertRaises(ValueError):
@@ -139,7 +238,7 @@ class BootstrapAdminTests(unittest.TestCase):
         )
 
         with patch.object(auth_service, "settings", initial_settings):
-            AuthService(self.db)
+            initialize_auth(self.db)
 
         admin = self.db.scalar(select(AuthUserModel).where(AuthUserModel.email == "admin@example.com"))
         self.assertIsNotNone(admin)
@@ -150,7 +249,7 @@ class BootstrapAdminTests(unittest.TestCase):
         self.assertIsNone(self.db.get(AuthUserModel, "demo-user"))
 
         with patch.object(auth_service, "settings", changed_password_settings):
-            AuthService(self.db)
+            initialize_auth(self.db)
 
         self.db.refresh(admin)
         self.assertEqual(admin.display_name, "Production Admin")
@@ -180,7 +279,7 @@ class BootstrapAdminTests(unittest.TestCase):
 
         with patch.object(auth_service, "settings", production_settings):
             with self.assertRaisesRegex(RuntimeError, "non-active administrator"):
-                AuthService(self.db)
+                initialize_auth(self.db)
 
 
 if __name__ == "__main__":

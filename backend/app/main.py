@@ -9,7 +9,9 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.router import api_router
 from app.core.config import settings
+from app.core.database import SessionLocal
 from app.core.errors import ApiError, api_error_handler, http_error_handler, unhandled_error_handler, validation_error_handler
+from app.services.auth_service import initialize_auth
 from app.services.etl_service import sync_active_kafka_continuous_runtimes
 
 logger = logging.getLogger(__name__)
@@ -24,8 +26,14 @@ async def continuous_runtime_sync_loop() -> None:
         await asyncio.sleep(settings.continuous_runtime_sync_interval_seconds)
 
 
+def initialize_auth_on_startup() -> None:
+    with SessionLocal() as db:
+        initialize_auth(db)
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    initialize_auth_on_startup()
     task = asyncio.create_task(continuous_runtime_sync_loop())
     try:
         yield

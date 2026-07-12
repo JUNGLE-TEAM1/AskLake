@@ -9,13 +9,13 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.api.auth import login_client_address
+from app.api.auth import get_auth_service, login_client_address
 from app.api.health import health_check
 from app.core.config import Settings
 from app.core.errors import ApiError
 from app.models.identity import AuthSessionModel, AuthUserModel
 from app.services import auth_service
-from app.services.auth_service import AuthService
+from app.services.auth_service import AuthService, initialize_auth
 
 
 class OperationalAuthHardeningTests(unittest.TestCase):
@@ -55,6 +55,7 @@ class OperationalAuthHardeningTests(unittest.TestCase):
     def test_legacy_demo_accounts_are_disabled_and_sessions_revoked(self) -> None:
         local = SimpleNamespace(allows_header_auth_fallback=True)
         with patch.object(auth_service, "settings", local):
+            initialize_auth(self.db)
             local_service = AuthService(self.db)
             admin = self.db.get(AuthUserModel, "admin-user")
             assert admin is not None
@@ -67,7 +68,7 @@ class OperationalAuthHardeningTests(unittest.TestCase):
             bootstrap_admin_display_name="Production Owner",
         )
         with patch.object(auth_service, "settings", production):
-            AuthService(self.db)
+            initialize_auth(self.db)
 
         self.assertEqual(self.db.get(AuthUserModel, "admin-user").status, "disabled")
         self.assertEqual(self.db.get(AuthUserModel, "demo-user").status, "disabled")
@@ -77,8 +78,31 @@ class OperationalAuthHardeningTests(unittest.TestCase):
             patch.object(auth_service, "settings", production),
             patch.object(self.db, "commit", wraps=self.db.commit) as commit,
         ):
-            AuthService(self.db)
+            initialize_auth(self.db)
         commit.assert_not_called()
+
+    def test_request_time_service_construction_skips_initialization_work(self) -> None:
+        for allows_header_auth_fallback in (True, False):
+            with self.subTest(allows_header_auth_fallback=allows_header_auth_fallback):
+                configured = SimpleNamespace(allows_header_auth_fallback=allows_header_auth_fallback)
+                with (
+                    patch.object(auth_service, "settings", configured),
+                    patch.object(AuthService, "_ensure_tables") as ensure_tables,
+                    patch.object(AuthService, "_ensure_demo_users") as ensure_demo_users,
+                    patch.object(AuthService, "_disable_legacy_demo_users") as disable_demo_users,
+                    patch.object(AuthService, "_ensure_bootstrap_admin") as ensure_bootstrap_admin,
+                    patch.object(auth_service, "hash_password") as hash_password,
+                ):
+                    first = get_auth_service(self.db)
+                    second = get_auth_service(self.db)
+
+                self.assertIsInstance(first, AuthService)
+                self.assertIsInstance(second, AuthService)
+                ensure_tables.assert_not_called()
+                ensure_demo_users.assert_not_called()
+                disable_demo_users.assert_not_called()
+                ensure_bootstrap_admin.assert_not_called()
+                hash_password.assert_not_called()
 
     def test_legacy_password_hash_is_upgraded_after_successful_login(self) -> None:
         password = "legacy-password"
@@ -134,6 +158,7 @@ class OperationalAuthHardeningTests(unittest.TestCase):
     def test_rate_limit_blocks_the_same_client_but_not_a_different_client(self) -> None:
         local = SimpleNamespace(allows_header_auth_fallback=True)
         with patch.object(auth_service, "settings", local):
+            initialize_auth(self.db)
             service = AuthService(self.db)
             admin = self.db.get(AuthUserModel, "admin-user")
             assert admin is not None

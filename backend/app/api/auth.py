@@ -1,9 +1,10 @@
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Cookie, Depends, Request, Response, status
 from sqlalchemy.orm import Session
 
 from app.core.auth_context import ActorContext, get_actor_context
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.errors import ApiError
 from app.repositories.audit_repository import safe_record_audit_event
@@ -18,20 +19,36 @@ from app.services.identity_service import IdentityService
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
+SESSION_COOKIE_PATH = "/"
+SESSION_COOKIE_SAMESITE = "lax"
+
 
 def get_auth_service(db: Annotated[Session, Depends(get_db)]) -> AuthService:
     return AuthService(db)
+
+
+def session_cookie_options() -> dict[str, Any]:
+    return {
+        "httponly": True,
+        "path": SESSION_COOKIE_PATH,
+        "samesite": SESSION_COOKIE_SAMESITE,
+        "secure": not settings.allows_header_auth_fallback,
+    }
 
 
 def issue_session_cookie(response: Response, token: str) -> None:
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
         value=token,
-        httponly=True,
         max_age=SESSION_TTL_DAYS * 24 * 60 * 60,
-        path="/",
-        samesite="lax",
-        secure=False,
+        **session_cookie_options(),
+    )
+
+
+def delete_session_cookie(response: Response) -> None:
+    response.delete_cookie(
+        key=SESSION_COOKIE_NAME,
+        **session_cookie_options(),
     )
 
 
@@ -162,7 +179,7 @@ def logout(
         target_name=actor.name,
         target_type="auth",
     )
-    response.delete_cookie(key=SESSION_COOKIE_NAME, path="/", samesite="lax")
+    delete_session_cookie(response)
     return LogoutResponse()
 
 

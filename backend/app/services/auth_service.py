@@ -54,12 +54,6 @@ DEMO_AUTH_USERS = [
 class AuthService:
     def __init__(self, db: Session) -> None:
         self.db = db
-        self._ensure_tables()
-        if settings.allows_header_auth_fallback:
-            self._ensure_demo_users()
-        else:
-            self._disable_legacy_demo_users()
-            self._ensure_bootstrap_admin()
 
     def signup(self, *, email: str, password: str, display_name: str) -> dict[str, Any]:
         if not settings.allows_public_signup:
@@ -276,6 +270,20 @@ class AuthService:
             )
         )
         self.db.commit()
+
+
+def initialize_auth(db: Session) -> None:
+    service = AuthService(db)
+    try:
+        service._ensure_tables()
+        if settings.allows_header_auth_fallback:
+            service._ensure_demo_users()
+        else:
+            service._disable_legacy_demo_users()
+            service._ensure_bootstrap_admin()
+    except Exception:
+        db.rollback()
+        raise
 
 
 def load_session_actor(db: Session, token: str | None) -> dict[str, Any] | None:
