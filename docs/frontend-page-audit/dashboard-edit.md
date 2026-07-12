@@ -127,6 +127,7 @@
 - radial bar chart의 동적 min/max 범위 `Slider`에 `min < max` validation과 thumb 간격 제한을 적용한다.
 - 편집 toolbar는 활성 도구를 shadcn `ToggleGroup` 단일 선택으로, 위젯 추가·기록 동작을 `ButtonGroup`으로 분리하고 `Tooltip`을 제공한다.
 - 위젯 설정의 데이터셋·컬럼·집계·정렬·형식 선택은 공통 searchable Combobox로 제공해 긴 컬럼명을 검색·키보드 선택할 수 있게 한다.
+- #594에서는 공통 combobox의 선택 표시를 체크에서 원형 점으로 바꾸고, 데이터셋 선택까지 같은 검색 가능한 UI로 통일했다. trigger는 inspector ScrollArea 폭 안에서 줄어들어 가로로 튀어나오지 않는다.
 - 초기 빈 편집 화면에서도 canvas wrap과 edit stage의 흰색 배경이 viewport 하단까지 이어지고, 빈 canvas가 최소 높이를 유지하도록 한다.
 - 중앙 canvas의 native scrollbar를 shadcn `ScrollArea`의 vertical/horizontal track과 thumb로 교체한다.
 - 위젯 설정의 데이터셋·제목·설명을 `FieldGroup`과 `Select`/`Input`/`Textarea`로 통일하고, 차트 타입 아이콘은 `ToggleGroup type="single"` 및 `Tooltip`로 교체한다.
