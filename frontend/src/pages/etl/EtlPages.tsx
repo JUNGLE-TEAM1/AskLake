@@ -5089,7 +5089,6 @@ export function PermissionPage({
     applyPermissionDraft();
     onNext();
   };
-  const selectedRoleCount = PERMISSION_ROLES.filter((role) => Boolean(roleChecks[role.name])).length;
   const governanceChecks = [
     ["공유 범위", visibility, visibility === "외부 공유" ? "검토 필요" : "안전"],
     ["민감 데이터", "review_text 포함", "검토 필요"],
@@ -5194,10 +5193,7 @@ export function PermissionPage({
         <section className="etl-review-card permission-config-card">
           <div className="etl-review-card-header">
             <span className="etl-review-icon schema"><CircleUser size={17} /></span>
-            <div>
-              <h2>Role Grants</h2>
-              <p>{selectedRoleCount}개 역할 선택 · 템플릿 기준 접근 권한을 조정합니다.</p>
-            </div>
+            <h2>Role Grants</h2>
           </div>
           <div className="permission-config-role-list">
             {PERMISSION_ROLES.map((role) => {

@@ -42,6 +42,7 @@ const checks = [
       /recommended \? <em>Template<\/em> : null/,
       /공개 범위, 민감 데이터, 승인 상태를 생성 전에 확인합니다\./,
       /조직 정책에 맞는 권한 템플릿과 공개 범위를 설정합니다\./,
+      /개 역할 선택 · 템플릿 기준 접근 권한을 조정합니다\./,
       /<NativeSelectField[^>]*label="권한 템플릿"/,
       /<NativeSelectField[^>]*label="공개 범위"/,
       /<NativeSelectField[^>]*label="승인 상태"/,
