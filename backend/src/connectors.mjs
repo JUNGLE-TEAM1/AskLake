@@ -76,6 +76,13 @@ export async function listSourceAssets(sourceType, fields, requestedPrefix) {
   return response;
 }
 
+export async function getSourceRows(sourceType, fields, options = {}) {
+  if (sourceType === "Database" || sourceType === "PostgreSQL") {
+    return getPostgresSourceRows(fields, options);
+  }
+  throw apiError("UNSUPPORTED_SOURCE_ROWS", `${sourceType} source row paging is not supported.`, 400);
+}
+
 export async function testObjectStorageSource(fields, sourceType = "File / S3") {
   const endpoint = requiredSourceField(fields, "Endpoint URL", "MinIO/S3 endpoint URL is required.");
   const region = fieldValue(fields, "Region") || "us-east-1";
@@ -468,7 +475,7 @@ export async function testPostgresSource(fields) {
   const user = requiredSourceField(fields, "Username", "PostgreSQL username is required.");
   const password = requiredSourceField(fields, "Password / Auth Token", "PostgreSQL password is required.");
   const tableSelector = fieldValue(fields, "DATASET OR TABLE SELECTOR");
-  const samplePolicy = samplePolicyForFields(fields, "rows");
+  const previewLimit = postgresPreviewRowLimit();
 
   const client = new Client({
     connectionTimeoutMillis: sourceConnectTimeoutMs("ASKLAKE_POSTGRES_CONNECT_TIMEOUT_MS", 3000),
@@ -492,11 +499,32 @@ export async function testPostgresSource(fields) {
       throw apiError("POSTGRES_TABLE_NOT_FOUND", `${schema}.${table} 테이블을 찾지 못했습니다.`, 404);
     }
 
-    const sample = await client.query(`select * from ${quoteIdent(schema)}.${quoteIdent(table)} limit ${samplePolicy.rowLimit}`);
+    const primaryKeyColumns = await postgresPrimaryKeyColumns(client, schema, table);
+    const orderClause = postgresPreviewOrderClause(primaryKeyColumns);
+    const sample = await client.query(
+      `select * from ${quoteIdent(schema)}.${quoteIdent(table)} ${orderClause} limit $1`,
+      [previewLimit],
+    );
+    const countResult = await client.query(`select count(*)::bigint as row_count from ${quoteIdent(schema)}.${quoteIdent(table)}`);
+    const rowCount = Number(countResult.rows[0]?.row_count || 0);
+    const columnMetadata = await client.query(
+      "select column_name, data_type, udt_name, is_nullable from information_schema.columns where table_schema = $1 and table_name = $2 order by ordinal_position",
+      [schema, table],
+    );
+    const metadataByColumn = new Map(columnMetadata.rows.map((column) => [column.column_name, column]));
     const columns = sample.fields.map((field) => field.name);
     const rows = sample.rows.map((row) => columns.map((column) => stringifyCell(row[column])));
     const parsedSample = { columns, format: "postgres", rows };
-    const schemaColumns = inferSchemaColumns(parsedSample);
+    const schemaColumns = inferSchemaColumns(parsedSample).map((column) => {
+      const metadata = metadataByColumn.get(column.sourceName);
+      if (!metadata) return column;
+      return {
+        ...column,
+        nullable: metadata.is_nullable === "YES",
+        type: postgresLogicalType(metadata.data_type, metadata.udt_name),
+      };
+    });
+    const jdbcPartitionFields = await postgresJdbcPartitionFields(client, schema, table, columnMetadata.rows);
     const id = sourceId("source", `postgres://${host}:${port}/${database}/${schema}/${table}`);
     const runId = sourceId("run", `${id}:${Date.now()}`);
     const sourceConfig = upsertFields(redactSecretConfigValues(fields), [
@@ -505,9 +533,12 @@ export async function testPostgresSource(fields) {
       ["Database Name", database],
       ["Schema", schema],
       ["Username", user],
-      ["__Schema Sample Scope", samplePolicy.scope],
-      ["__Schema Sample Scope Label", samplePolicy.label],
-      ["__Sample Row Limit", String(samplePolicy.rowLimit)],
+      ["__Schema Sample Scope", "current"],
+      ["__Schema Sample Scope Label", `첫 ${previewLimit}행`],
+      ["__Sample Row Limit", String(previewLimit)],
+      ["__Preview Row Count", String(rowCount)],
+      ["__Preview Order Columns", primaryKeyColumns.join(",")],
+      ...jdbcPartitionFields,
       ["__Source ID", id],
       ["__Run ID", runId],
       ["__Source Unit Count", String(tableResult.rows.length)],
@@ -535,19 +566,138 @@ export async function testPostgresSource(fields) {
       logs: [
         `PostgreSQL 연결 성공: ${host}:${port}/${database}`,
         `선택 테이블: ${schema}.${table}`,
-        `프로파일 스냅샷 추론: ${schemaColumns.length}개 필드, 샘플 행 ${rows.length}개`,
-        `샘플 범위 적용: ${samplePolicy.label} (최대 ${samplePolicy.rowLimit.toLocaleString()}행)`,
+        `프로파일 스냅샷 추론: ${schemaColumns.length}개 필드, 미리보기 ${rows.length}행`,
+        `원천 행 수 확인: ${rowCount.toLocaleString()}행`,
       ],
       message: `PostgreSQL 연결 성공: ${schema}.${table}`,
       previewColumns: columns,
       previewNote: `${schema}.${table}에서 가져온 첫 ${rows.length}행`,
       previewRows: rows,
+      previewHasNext: rows.length < rowCount,
+      previewLimit,
+      previewOffset: 0,
+      previewRowCount: rowCount,
       status: "success",
       testItems: [["Endpoint", `${host}:${port}`], ["Database", database], ["Table", `${schema}.${table}`]],
     };
   } finally {
     await client.end().catch(() => undefined);
   }
+}
+
+async function getPostgresSourceRows(fields, options = {}) {
+  const { Client } = await import("pg");
+  const host = requiredSourceField(fields, "Endpoint / Host", "PostgreSQL host is required.");
+  const port = Number(requiredSourceField(fields, "Port", "PostgreSQL port is required."));
+  const database = requiredSourceField(fields, "Database Name", "PostgreSQL database name is required.");
+  const schema = fieldValue(fields, "Schema") || "public";
+  const user = requiredSourceField(fields, "Username", "PostgreSQL username is required.");
+  const password = requiredSourceField(fields, "Password / Auth Token", "PostgreSQL password is required.");
+  const table = requiredSourceField(fields, "DATASET OR TABLE SELECTOR", "PostgreSQL table is required.");
+  const limit = Math.min(Math.max(Math.trunc(Number(options.limit) || 100), 1), 200);
+  const offset = Math.max(Math.trunc(Number(options.offset) || 0), 0);
+  const knownRowCount = options.knownRowCount === null || options.knownRowCount === undefined
+    ? null
+    : Math.max(Math.trunc(Number(options.knownRowCount) || 0), 0);
+  const client = new Client({
+    connectionTimeoutMillis: sourceConnectTimeoutMs("ASKLAKE_POSTGRES_CONNECT_TIMEOUT_MS", 3000),
+    database,
+    host,
+    password,
+    port,
+    query_timeout: sourceConnectTimeoutMs("ASKLAKE_POSTGRES_PAGE_QUERY_TIMEOUT_MS", 30000),
+    statement_timeout: sourceConnectTimeoutMs("ASKLAKE_POSTGRES_PAGE_QUERY_TIMEOUT_MS", 30000),
+    user,
+  });
+
+  await client.connect();
+  try {
+    const tableResult = await client.query(
+      "select exists(select 1 from information_schema.tables where table_schema = $1 and table_name = $2 and table_type = 'BASE TABLE') as exists",
+      [schema, table],
+    );
+    if (!tableResult.rows[0]?.exists) {
+      throw apiError("POSTGRES_TABLE_NOT_FOUND", `${schema}.${table} 테이블을 찾지 못했습니다.`, 404);
+    }
+    const primaryKeyColumns = await postgresPrimaryKeyColumns(client, schema, table);
+    const orderClause = postgresPreviewOrderClause(primaryKeyColumns);
+    const [pageResult, countResult] = await Promise.all([
+      client.query(
+        `select * from ${quoteIdent(schema)}.${quoteIdent(table)} ${orderClause} limit $1 offset $2`,
+        [limit, offset],
+      ),
+      knownRowCount === null
+        ? client.query(`select count(*)::bigint as row_count from ${quoteIdent(schema)}.${quoteIdent(table)}`)
+        : Promise.resolve({ rows: [{ row_count: knownRowCount }] }),
+    ]);
+    const columns = pageResult.fields.map((field) => field.name);
+    const rows = pageResult.rows.map((row) => columns.map((column) => stringifyCell(row[column])));
+    const rowCount = Number(countResult.rows[0]?.row_count || 0);
+    return {
+      columns,
+      hasNext: rows.length === limit && offset + rows.length < rowCount,
+      limit,
+      offset,
+      orderColumns: primaryKeyColumns,
+      returnedRows: rows.length,
+      rowCount,
+      rows,
+      sourceLabel: `${schema}.${table}`,
+    };
+  } finally {
+    await client.end().catch(() => undefined);
+  }
+}
+
+async function postgresPrimaryKeyColumns(client, schema, table) {
+  const result = await client.query(
+    `select attribute.attname as column_name
+       from pg_index index_info
+       join pg_class table_info on table_info.oid = index_info.indrelid
+       join pg_namespace namespace_info on namespace_info.oid = table_info.relnamespace
+       join lateral unnest(index_info.indkey) with ordinality as key_info(attnum, position) on true
+       join pg_attribute attribute on attribute.attrelid = table_info.oid and attribute.attnum = key_info.attnum
+      where namespace_info.nspname = $1 and table_info.relname = $2 and index_info.indisprimary
+      order by key_info.position`,
+    [schema, table],
+  );
+  return result.rows.map((row) => String(row.column_name));
+}
+
+function postgresPreviewOrderClause(primaryKeyColumns) {
+  return primaryKeyColumns.length > 0
+    ? `order by ${primaryKeyColumns.map(quoteIdent).join(", ")}`
+    : "order by ctid";
+}
+
+async function postgresJdbcPartitionFields(client, schema, table, columnMetadata) {
+  const partitionColumn = columnMetadata.find((column) => {
+    const type = `${column.data_type ?? ""} ${column.udt_name ?? ""}`.toLowerCase();
+    return /(smallint|integer|bigint|numeric|decimal|real|double precision|date|timestamp)/.test(type);
+  });
+  if (!partitionColumn) return [];
+  const columnName = String(partitionColumn.column_name);
+  const bounds = await client.query(
+    `select min(${quoteIdent(columnName)})::text as lower_bound, max(${quoteIdent(columnName)})::text as upper_bound from ${quoteIdent(schema)}.${quoteIdent(table)}`,
+  );
+  const lowerBound = bounds.rows[0]?.lower_bound;
+  const upperBound = bounds.rows[0]?.upper_bound;
+  if (lowerBound === null || lowerBound === undefined || upperBound === null || upperBound === undefined || lowerBound === upperBound) {
+    return [];
+  }
+  const configuredPartitions = Math.trunc(Number(process.env.ASKLAKE_POSTGRES_JDBC_PARTITIONS || 4));
+  const numPartitions = Math.min(Math.max(Number.isFinite(configuredPartitions) ? configuredPartitions : 4, 1), 32);
+  return [
+    ["__JDBC Partition Column", columnName],
+    ["__JDBC Lower Bound", String(lowerBound)],
+    ["__JDBC Upper Bound", String(upperBound)],
+    ["__JDBC Num Partitions", String(numPartitions)],
+  ];
+}
+
+function postgresPreviewRowLimit() {
+  const configured = Math.trunc(Number(process.env.ASKLAKE_POSTGRES_INLINE_PREVIEW_ROWS || 10));
+  return Math.min(Math.max(Number.isFinite(configured) ? configured : 10, 1), 50);
 }
 
 export async function testMongoSource(fields) {
@@ -722,6 +872,7 @@ async function buildObjectStorageAnalysis({ bucket, client, endpoint, fields, fo
   ];
 
   let parsedSample = { columns: [], format: "unknown", rows: [] };
+  let profileSample = parsedSample;
   let sampleKey = "";
   let requestedBytes = 0;
   if (sampleObject?.Key && hasTextExtension(sampleObject.Key)) {
@@ -734,10 +885,13 @@ async function buildObjectStorageAnalysis({ bucket, client, endpoint, fields, fo
       Range: requestedBytes > 0 ? `bytes=0-${Math.max(0, requestedBytes - 1)}` : undefined,
     }));
     const text = await readBodyTextWithinLimit(objectResult.Body, requestedBytes);
-    parsedSample = parseSourceSample(sampleObject.Key, text ?? "", { maxRows: samplePolicy.rowLimit });
+    profileSample = parseSourceSample(sampleObject.Key, text ?? "", {
+      maxRows: objectSchemaProfileRowLimit(samplePolicy.rowLimit),
+    });
+    parsedSample = { ...profileSample, rows: profileSample.rows.slice(0, samplePolicy.rowLimit) };
     logs.push(`제한 샘플 조회: ${sampleObject.Key}`);
     logs.push(`샘플 범위 적용: ${samplePolicy.label} (${formatBytes(requestedBytes)} 요청, 최대 ${samplePolicy.rowLimit.toLocaleString()}행 프로파일)`);
-    logs.push(`프로파일 스냅샷 추론: ${parsedSample.columns.length}개 필드, 샘플 행 ${parsedSample.rows.length}개`);
+    logs.push(`프로파일 스냅샷 추론: ${profileSample.columns.length}개 필드, 프로파일 ${profileSample.rows.length}행, 미리보기 ${parsedSample.rows.length}행`);
   } else if (sampleObject?.Key) {
     sampleKey = sampleObject.Key;
     logs.push(`샘플 오브젝트가 텍스트 오브젝트가 아닙니다: ${sampleObject.Key}`);
@@ -747,7 +901,7 @@ async function buildObjectStorageAnalysis({ bucket, client, endpoint, fields, fo
 
   const id = sourceId("source", `${endpoint}:${bucket}:${prefix}`);
   const runId = sourceId("run", `${id}:${Date.now()}`);
-  const schemaColumns = inferSchemaColumns(parsedSample);
+  const schemaColumns = inferSchemaColumns(profileSample);
   const summary = schemaColumns.length
     ? `MinIO/S3 ${parsedSample.format} 샘플에서 ${schemaColumns.length}개 필드 추론 · 프로파일 확인`
     : `MinIO/S3 연결 성공 · 스키마 추론 대기 (오브젝트 ${objects.length}개)`;
@@ -807,6 +961,7 @@ function readObjectStorageViaMinioContainer({ accessKeyId, bucket, endpoint, fie
 
   const sampleObject = selectedObject ? objects.find((item) => item.Key === selectedObject) : immediateSampleObject(objects, prefix);
   let parsedSample = { columns: [], format: "unknown", rows: [] };
+  let profileSample = parsedSample;
   let sampleKey = "";
   let requestedBytes = 0;
   const logs = [
@@ -824,10 +979,13 @@ function readObjectStorageViaMinioContainer({ accessKeyId, bucket, endpoint, fie
       key: sampleObject.Key,
       secretAccessKey,
     });
-    parsedSample = parseSourceSample(sampleObject.Key, text ?? "", { maxRows: samplePolicy.rowLimit });
+    profileSample = parseSourceSample(sampleObject.Key, text ?? "", {
+      maxRows: objectSchemaProfileRowLimit(samplePolicy.rowLimit),
+    });
+    parsedSample = { ...profileSample, rows: profileSample.rows.slice(0, samplePolicy.rowLimit) };
     logs.push(`제한 샘플 조회: ${sampleObject.Key}`);
     logs.push(`샘플 범위 적용: ${samplePolicy.label} (${formatBytes(requestedBytes)} 요청, 최대 ${samplePolicy.rowLimit.toLocaleString()}행 프로파일)`);
-    logs.push(`프로파일 스키마 추론: ${parsedSample.columns.length}개 필드, 샘플 행 ${parsedSample.rows.length}개`);
+    logs.push(`프로파일 스키마 추론: ${profileSample.columns.length}개 필드, 프로파일 ${profileSample.rows.length}행, 미리보기 ${parsedSample.rows.length}행`);
   } else if (sampleObject?.Key) {
     sampleKey = sampleObject.Key;
     logs.push(`샘플 오브젝트가 텍스트 파일이 아닙니다: ${sampleObject.Key}`);
@@ -837,7 +995,7 @@ function readObjectStorageViaMinioContainer({ accessKeyId, bucket, endpoint, fie
 
   const id = sourceId("source", `${endpoint}:${bucket}:${prefix}`);
   const runId = sourceId("run", `${id}:${Date.now()}`);
-  const schemaColumns = inferSchemaColumns(parsedSample);
+  const schemaColumns = inferSchemaColumns(profileSample);
   const summary = schemaColumns.length
     ? `MinIO/S3 ${parsedSample.format} 샘플에서 ${schemaColumns.length}개 필드 추론 · 프로파일 확인`
     : `MinIO/S3 연결 성공 · 스키마 추론 대기(오브젝트 ${objects.length}개)`;
@@ -1448,6 +1606,17 @@ function sparkLogicalType(value) {
   return "String";
 }
 
+export function postgresLogicalType(dataType, udtName = "") {
+  const normalized = `${dataType ?? ""} ${udtName ?? ""}`.toLowerCase();
+  if (normalized.includes("bool")) return "Boolean";
+  if (/(smallint|integer|bigint|int2|int4|int8)/.test(normalized)) return "Integer";
+  if (/(numeric|decimal|real|double precision|float4|float8|money)/.test(normalized)) return "Float";
+  if (normalized.includes("timestamp") || normalized.startsWith("time ")) return "Timestamp";
+  if (normalized.includes("date")) return "Date";
+  if (/(json|jsonb|array)/.test(normalized) || String(udtName ?? "").startsWith("_")) return "JSON";
+  return "String";
+}
+
 function parquetJsLogicalType(name, field) {
   const normalizedName = String(name || "").toLowerCase();
   const primitive = String(field?.primitiveType || field?.type || field?.originalType || "").toLowerCase();
@@ -1521,6 +1690,12 @@ function sampleRowLimit(scope, kind) {
   if (scope === "slice1gb") return 10000;
   if (scope === "full") return 50000;
   return 10;
+}
+
+function objectSchemaProfileRowLimit(previewRowLimit) {
+  const configured = Number(process.env.ASKLAKE_SOURCE_SCHEMA_PROFILE_ROWS || 1000);
+  const profileRows = Number.isFinite(configured) ? Math.trunc(configured) : 1000;
+  return Math.min(Math.max(profileRows, previewRowLimit, 1), 50000);
 }
 
 function sampleObjectRangeBytes(policy, objectSize) {
@@ -1610,8 +1785,9 @@ async function runMongoDriverSample({ collectionSelector, database, rowLimit, ur
   }
 }
 
-function stringifyCell(value) {
+export function stringifyCell(value) {
   if (value === null || value === undefined) return "";
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? "" : value.toISOString();
   if (typeof value === "object") return JSON.stringify(value);
   return String(value);
 }

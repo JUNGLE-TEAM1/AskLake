@@ -10,10 +10,26 @@ export type SourceConnectorAnalysis = {
   logs: string[];
   message: string;
   previewColumns: string[];
+  previewHasNext?: boolean;
+  previewLimit?: number;
   previewNote: string;
+  previewOffset?: number;
+  previewRowCount?: number;
   previewRows: string[][];
   status: SourceDraft["connectionStatus"];
   testItems: Array<[string, string]>;
+};
+
+export type SourceRowsResponse = {
+  columns: string[];
+  hasNext: boolean;
+  limit: number;
+  offset: number;
+  orderColumns: string[];
+  returnedRows: number;
+  rowCount: number;
+  rows: string[][];
+  sourceLabel: string;
 };
 
 type BackendSourceConnectorResponse = SourceConnectorAnalysis;
@@ -39,6 +55,38 @@ export async function testSourceConnector(sourceType: string, fields: SourceFiel
 
 export async function listSourceAssets(sourceType: string, fields: SourceFieldRows, prefix = ""): Promise<SourceAssetsResponse> {
   return postSourceAssets(normalizeSourceType(sourceType), fields, prefix);
+}
+
+export async function getSourceRows(
+  sourceType: string,
+  fields: SourceFieldRows,
+  options: { knownRowCount?: number; limit?: number; offset?: number } = {},
+): Promise<SourceRowsResponse> {
+  const normalizedSourceType = normalizeSourceType(sourceType);
+  const limit = Math.min(Math.max(Math.trunc(options.limit ?? 100), 1), 200);
+  const offset = Math.max(Math.trunc(options.offset ?? 0), 0);
+  if (apiConfig.useMock) {
+    const analysis = resolveMockConnectorAnalysis(normalizedSourceType, fields);
+    const rows = analysis.previewRows.slice(offset, offset + limit);
+    return {
+      columns: analysis.previewColumns,
+      hasNext: offset + rows.length < analysis.previewRows.length,
+      limit,
+      offset,
+      orderColumns: [],
+      returnedRows: rows.length,
+      rowCount: analysis.previewRows.length,
+      rows,
+      sourceLabel: fieldValue(fields, "DATASET OR TABLE SELECTOR") || normalizedSourceType,
+    };
+  }
+  return postWithDevFallback<SourceRowsResponse>("/api/etl/sources/rows", {
+    limit,
+    knownRowCount: options.knownRowCount,
+    offset,
+    sourceConfig: fields,
+    sourceType: normalizedSourceType,
+  });
 }
 
 async function postSourceConnector(sourceType: string, fields: SourceFieldRows): Promise<BackendSourceConnectorResponse> {

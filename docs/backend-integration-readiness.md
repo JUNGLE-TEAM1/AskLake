@@ -13,7 +13,7 @@ FastAPI 전환의 공통 구조와 의사결정은 `docs/backend-fastapi-transit
 | 새 수집/처리 생성 | Source -> Schema -> Rule -> Schedule -> Permission -> Target -> Review -> Create가 `POST /api/etl/jobs`로 연결되고 `etl_jobs`에 저장. 응답의 `catalogTarget`은 pending identity이며 아직 Catalog row를 만들지 않음 | 중간 단계별 서버 저장 API는 후속 범위 |
 | Target 저장경로 선택 | `GET /api/s3/buckets`, `GET /api/s3/prefixes`로 S3 bucket/prefix를 서버에서 lazy 조회하고 `target.storagePath` string에 반영. EC2 prod compose는 MinIO를 S3-compatible endpoint로 제공하고 서버 `deploy/.env`의 `S3_ALLOWED_BUCKETS` allowlist를 사용 | 운영 IAM/credential rotation, external S3 전환 |
 | Target DB 선택 | `GET /api/target/databases`로 허용 DB 목록을 조회하고 `target.databaseName` string에 반영. 테이블명 입력은 노출하지 않고 datasetName을 create payload 호환값으로 사용 | 운영 catalog DB 목록/권한 API |
-| Source/Schema | mock mode에서는 `SourceConnectorAnalysis` fallback으로 schema/sampleRows 반영, live mode에서는 `POST /api/etl/sources/test`로 실제 connector 확인. MongoDB connector는 Node MongoDB driver로 컬렉션과 제한 문서 샘플을 조회하며, 사용자가 선택한 File / S3 Parquet 객체는 Spark reader로 물리 스키마를 읽음 | Kafka message payload sampling, 다중 Parquet 파일의 통합 스키마 추론 |
+| Source/Schema | mock mode에서는 `SourceConnectorAnalysis` fallback으로 schema/sampleRows 반영, live mode에서는 `POST /api/etl/sources/test`로 실제 connector 확인. PostgreSQL은 인라인 10행과 전체 row count를 반환하고 `POST /api/etl/sources/rows`로 전체 상한 없는 100행 단위 Dialog paging을 제공. MongoDB connector는 Node MongoDB driver로 컬렉션과 제한 문서 샘플을 조회하며, 사용자가 선택한 File / S3 Parquet 객체는 Spark reader로 물리 스키마를 읽음 | Kafka message payload sampling, 다중 Parquet 파일의 통합 스키마 추론 |
 | Rule | 현재 schema/sampleRows 기반 preview, create payload에 transform/quality detail 포함 | 별도 backend rule preview API |
 | Job command | Kafka Snapshot Job은 `POST /api/etl/jobs/{jobId}/commands`의 run/retry로 fixed range ingest를 실행하고, non-Kafka Job은 Airflow DAG Run을 접수. Continuous Kafka Job은 Docker로 long-running Spark Structured Streaming submit container를 시작하거나 signal을 보내며, S3A checkpoint, `_SUCCESS` + offset manifest 게시, Catalog 복구, partition lag/throughput/schema drift report, bounded worker log, policy-aware quarantine replay, lease 기반 maintenance, non-destructive compaction을 제공 | pause/cancel의 실제 Airflow/Spark interrupt, production soak, async Airflow maintenance scheduling, compaction retention switch |
 | Run/DAG | local Airflow DAG가 token-authenticated FastAPI internal API를 통해 실제 PySpark를 실행하고 MinIO/S3 Parquet를 생성. `publish_run_result`가 Catalog endpoint를 호출하고 `GET /api/etl/jobs/{jobId}`가 DAG/task/Spark/Catalog evidence를 동기화. Continuous는 start-to-terminal session과 하위 micro-batch 이력을 별도 table/API로 영속화하고 active 실행 이력 화면을 자동 갱신 | Spark log object storage 분리, session history 장기 retention/pagination |
@@ -108,9 +108,11 @@ Backend connector 응답은 secret field를 redacted value로 내려준다. 프�
 
 ## 5. Airflow-Orchestrated Run Path
 
-`POST /api/etl/jobs/{jobId}/commands`는 run/retry 요청을 Airflow DAG Run으로 제출하고, `queued` 또는 `running` 상태의 run을 즉시 저장/응답한다. 프론트는 명령 응답을 먼저 Run History와 DAG modal에 반영하고, active run이 있는 동안 `GET /api/etl/jobs/{jobId}`를 polling해 Airflow DAG Run 및 Task Instance 상태를 동기화한다. Terminal 상태(`success`, `failed`, `canceled`)가 되면 polling 대상에서 제외된다.
+`POST /api/etl/jobs/{jobId}/commands`는 run/retry 요청을 Airflow DAG Run으로 제출하고, `queued` 또는 `running` 상태의 run을 즉시 저장/응답한다. 프론트는 명령 응답을 먼저 Run History와 DAG modal에 반영하고, active run이 있는 동안 `GET /api/etl/jobs/{jobId}`를 polling해 Airflow DAG Run 및 Task Instance 상태를 동기화한다. 앱 재진입 시에도 active Snapshot Run polling을 복원한다. 일시적인 backend 연결 실패는 Run을 terminal로 추측하지 않고 마지막 상태와 별도인 `unavailable/retrying` UI 상태로 표시하며, visibility/online 복귀와 최대 30초 backoff로 계속 재시도한다. Terminal 상태(`success`, `failed`, `canceled`)가 되면 polling 대상에서 제외된다.
 
-현재 local `docker-compose.yml`에는 Postgres/MinIO와 함께 Airflow API server, scheduler, DAG processor, Airflow metadata Postgres가 포함되어 있다. `airflow/dags/asklake_etl_job.py`는 독립 smoke mode와 실제 Spark execution mode를 함께 지원한다. Airflow 설정이 없으면 backend는 `AIRFLOW_CONFIG_MISSING` 503 error envelope로 실패한다.
+현재 local `docker-compose.yml`에는 health-managed FastAPI backend, Postgres/MinIO와 함께 Airflow API server, scheduler, DAG processor, Airflow metadata Postgres가 포함되어 있다. Airflow internal task는 `http://backend:8080` service DNS를 사용하고 backend health 이후 시작한다. `airflow/dags/asklake_etl_job.py`는 독립 smoke mode와 실제 Spark execution mode를 함께 지원한다. Airflow 설정이 없으면 backend는 `AIRFLOW_CONFIG_MISSING` 503 error envelope로 실패한다.
+
+로컬 Spark resource profile은 아직 Compose capacity preflight를 강제하지 않는다. 코드 기본 driver 4g/executor 8g보다 Docker Desktop 메모리가 작으면 `spark_process_write`가 exit code 137로 강제 종료될 수 있다. 이때 결과 manifest가 없어서 입력/출력 행 수가 0으로 보일 수 있으나 source가 0행이라는 의미는 아니다. 재현 근거와 경량 profile 복구 기준은 [Local Spark Exit 137 메모리 장애 분석](spark-exit-137-memory-incident-analysis.md)에 기록한다.
 
 필수 Airflow 환경변수:
 
@@ -131,7 +133,8 @@ Spark runner 입력:
 - Target S3 picker: `S3_ALLOWED_BUCKETS` allowlist 안의 bucket만 선택 가능하며 prefix 조회는 backend AWS SDK v3 `ListObjectsV2`에서 처리한다. 프론트에는 AWS credential을 넣지 않는다.
 - EC2 prod compose: MinIO endpoint는 `http://minio:9000`이고, backend/Spark는 `MINIO_ENDPOINT`, `MINIO_ENDPOINT_IN_DOCKER`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `MINIO_BUCKET`을 서버 `deploy/.env`에서 읽는다.
 - Target DB picker: `TARGET_DATABASES` 또는 `ASKLAKE_TARGET_DATABASES` allowlist를 서버에서 읽어 허용 DB만 내려준다.
-- REST/PostgreSQL/MongoDB 등 connector source: bounded schema sample rows를 JSONL로 기록한 뒤 Spark source로 사용
+- PostgreSQL connector source: preview sample과 실행 입력을 분리하고 Spark JDBC가 원천 테이블 전체를 직접 읽음. 연결 테스트에서 적합한 numeric/date/timestamp partition column과 bounds를 찾으면 기본 4개 partition으로 병렬 read
+- REST/MongoDB 등 나머지 connector source: bounded schema sample rows를 JSONL로 기록한 뒤 Spark source로 사용
 - connector sample JSONL은 `ASKLAKE_SPARK_REPORT_DIR`에 쓰고 Spark submit/master/worker 모두 `ASKLAKE_SPARK_REPORT_CONTAINER_DIR` 기본값 `/work/reports`로 같은 host directory를 mount해야 한다. worktree가 바뀌면 Spark container는 mount source가 달라지므로 자동 재생성되어야 한다.
 - `ASKLAKE_SPARK_TRANSFORM_STEPS`: create payload의 transform steps
 - `ASKLAKE_SPARK_QUALITY_RULES`: create payload의 quality rules
@@ -176,6 +179,7 @@ Failure/recovery boundary:
 
 - Spark failure는 `spark_process_write`에서 DAG를 실패시키며 Catalog endpoint를 호출하지 않는다.
 - Catalog 실패는 성공 Parquet와 `sparkResult`를 남긴 채 `publish_run_result`를 실패시킨다. 실패 `catalogResult`에는 `runId`, `datasetId`, compact error, failed timestamp를 남긴다.
+- backend에 도달하기 전 network failure는 즉시 `catalogResult`를 쓸 수 없다. backend 복구 뒤 polling sync가 failed `publish_run_result`와 redacted Airflow task log tail을 읽어 Run을 `Catalog reconciliation` 실패로 확정하고 compact 원인을 저장한다.
 - `publish_run_result`는 30초 간격으로 최대 2회 재시도하며, 같은 Airflow DAG Run의 persisted manifest로 Catalog만 최대 3회 시도하고 Spark를 다시 실행하지 않는다.
 - commit 뒤 response가 유실돼도 retry는 기존 성공 `catalogResult`를 읽어 같은 success를 반환한다.
 - Catalog commit 전에는 Airflow DAG Run과 AskLake Run을 최종 `success`로 간주하지 않는다.
@@ -245,6 +249,7 @@ Browser smoke:
 - Airflow API가 연결된 상태에서 생성된 Job을 실행한다.
 - Run History에 새 run이 즉시 보이고, 선택 Run 실행 흐름이 Airflow DAG Run/Task Instance 상태를 반영하는지 확인한다.
 - Airflow terminal 상태 도달 후 polling이 멈추는지 확인한다.
+- polling 중 backend를 중단했을 때 stale `running`과 `상태 확인 불가`가 구분되고, backend 복구 후 같은 Run의 실제 terminal 상태가 반영되는지 확인한다.
 
 Live Airflow verification through 2026-07-11:
 

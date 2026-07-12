@@ -94,7 +94,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { StatusBadge, type StatusBadgeTone } from "@/components/ui/status-badge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import type { AuditResult, JobCommand, JobDagStep, JobDagStepStatus, JobExecutionEvidence, JobListFacets, JobListQuery, JobRowData, JobRunStatus, JobRunSummary, JobScheduleKind, JobStats, JobStatus, RealtimeOperationalHealth } from "../../types";
+import type { AuditResult, JobCommand, JobDagStep, JobDagStepStatus, JobExecutionEvidence, JobListFacets, JobListQuery, JobRowData, JobRunStatus, JobRunSummary, JobRunSyncState, JobScheduleKind, JobStats, JobStatus, RealtimeOperationalHealth } from "../../types";
 import { jobStatusMeta } from "../../utils/statusMeta";
 
 const runStatusMeta: Record<JobRunStatus, { className: string; label: string }> = {
@@ -2503,6 +2503,8 @@ type JobRunsPageProps = {
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
   onBack: () => void;
   onCommand: (job: JobRowData, command: JobCommand) => void;
+  onRefreshJob: (jobId: string) => Promise<boolean>;
+  syncState?: JobRunSyncState;
 };
 
 const activeContinuousSessionStatuses = new Set<KafkaContinuousSessionStatus>(["starting", "running", "stopping"]);
@@ -2877,10 +2879,13 @@ function SnapshotJobRunsPage({
   onAction,
   onBack,
   onCommand,
+  onRefreshJob,
+  syncState,
 }: JobRunsPageProps) {
   const [activeRun, setActiveRun] = useState<JobRunSummary | null>(null);
   const [activeLogRun, setActiveLogRun] = useState<JobRunSummary | null>(null);
   const [runStatusFilter, setRunStatusFilter] = useState<"all" | JobRunStatus>("all");
+  const [manualRefreshing, setManualRefreshing] = useState(false);
   const runs = evidence?.runs.length ? evidence.runs : job.runHistory ?? [];
   const runStatusCounts = useMemo(() => {
     const counts: Record<JobRunStatus, number> = { canceled: 0, failed: 0, queued: 0, running: 0, success: 0 };
@@ -2904,6 +2909,14 @@ function SnapshotJobRunsPage({
   const changeRunStatusFilter = (nextValue: "all" | JobRunStatus) => {
     setRunStatusFilter(nextValue);
     onAction("etl.runs.status_filtered", `/api/etl/jobs/${job.id}/runs?status=${nextValue}`, job.id);
+  };
+  const refreshRuns = async () => {
+    setManualRefreshing(true);
+    try {
+      await onRefreshJob(job.id);
+    } finally {
+      setManualRefreshing(false);
+    }
   };
   const runColumns: ColumnDef<JobRunSummary>[] = [
     {
@@ -2980,6 +2993,18 @@ function SnapshotJobRunsPage({
       <div className="job-detail-page job-runs-page">
         <JobDetailHeader backLabel="작업 상세로 돌아가기" job={job} onBack={onBack} onCommand={onCommand} />
 
+        {syncState?.error && (
+          <Alert className="border-amber-200 bg-amber-50 text-amber-950" role="status">
+            <AlertCircle />
+            <AlertTitle>현재 실행 상태를 확인할 수 없습니다.</AlertTitle>
+            <AlertDescription>
+              마지막 서버 상태를 유지하고 자동 재시도 중입니다.
+              {syncState.lastSuccessAt ? ` 마지막 정상 확인: ${formatCompactDateTime(syncState.lastSuccessAt)}.` : ""}
+              {syncState.error ? ` ${syncState.error}` : ""}
+            </AlertDescription>
+          </Alert>
+        )}
+
         <section className="runs-body-content">
           <Panel overflow="visible">
             <PanelHeader icon={<BarChart3 aria-hidden="true" size={18} />} title="실행 통계 요약" />
@@ -3001,9 +3026,9 @@ function SnapshotJobRunsPage({
           <Panel>
             <PanelHeader
               actions={(
-                <Button size="sm" type="button" variant="outline" onClick={() => onAction("etl.runs.refreshed", `/api/etl/jobs/${job.id}/runs`, job.id)}>
-                  <RefreshCw aria-hidden="true" />
-                  새로고침
+                <Button disabled={manualRefreshing} size="sm" type="button" variant="outline" onClick={() => void refreshRuns()}>
+                  <RefreshCw aria-hidden="true" className={manualRefreshing ? "animate-spin" : undefined} />
+                  {manualRefreshing ? "확인 중" : "새로고침"}
                 </Button>
               )}
               icon={<Workflow aria-hidden="true" size={18} />}

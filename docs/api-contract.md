@@ -806,6 +806,44 @@ Rules:
 - 서버는 `TARGET_DATABASES` 또는 `ASKLAKE_TARGET_DATABASES`에 지정된 이름만 반환할 수 있습니다.
 - 환경변수가 없으면 local demo 기본값으로 `asklake`, `asklake_gold`, `analytics`, `marketing`을 반환합니다.
 
+### 7.1.2 PostgreSQL Source row paging
+
+연결 테스트 `POST /api/etl/sources/test`는 PostgreSQL source에서 스키마와 인라인 미리보기 첫 10행을 반환한다. 응답의 `previewRowCount`, `previewLimit`, `previewOffset`, `previewHasNext`는 전체 테이블 크기와 미리보기 window를 설명한다. `previewRows`는 Job 실행 입력이 아니다.
+
+`POST /api/etl/sources/rows`
+
+```ts
+type SourceRowsRequest = {
+  sourceConfig: Array<[string, string]>;
+  sourceType: "PostgreSQL" | "Database";
+  knownRowCount?: number; // 연결 테스트에서 받은 값, page마다 COUNT 반복 방지
+  limit?: number; // 기본 100, 1~200
+  offset?: number; // 기본 0
+};
+
+type SourceRowsResponse = {
+  columns: string[];
+  hasNext: boolean;
+  limit: number;
+  offset: number;
+  orderColumns: string[];
+  returnedRows: number;
+  rowCount: number;
+  rows: string[][];
+  sourceLabel: string;
+};
+```
+
+Rules:
+
+- endpoint는 요청한 page만 메모리와 응답에 올리며 전체 테이블을 브라우저로 전송하지 않는다.
+- frontend는 연결 테스트의 `previewRowCount`를 `knownRowCount`로 다시 보내 page마다 큰 테이블의 `COUNT(*)`를 반복하지 않는다. 값이 없을 때만 endpoint가 row count를 조회한다.
+- `limit`의 최대 200행은 단일 요청 크기 제한이다. 전체 탐색 행 수에는 50,000행 등의 상한을 두지 않는다.
+- page ordering은 테이블 기본키를 우선한다. 기본키가 없으면 현재 static preview 범위에서 PostgreSQL `ctid`를 사용하며, 원천 테이블이 변경되는 동안에는 page 경계가 달라질 수 있다.
+- UI는 Source 본문에 첫 10행과 전체 행 수만 표시하고, `전체 보기` Dialog 안에서 기본 100행 단위로 이전/다음 page를 요청한다.
+- credential은 기존 Source connector request와 같은 방식으로 backend에만 전달하며 응답이나 audit target에 포함하지 않는다.
+- PostgreSQL Job은 이 endpoint 또는 `previewRows`를 재사용하지 않고 Spark JDBC로 저장된 source identity의 전체 테이블을 읽는다.
+
 ### 7.2 Review snapshot
 
 `POST /api/etl/review`
@@ -1217,11 +1255,13 @@ Failure contract:
 - physical output 검증 또는 Catalog transaction이 실패하면 `500 CATALOG_RECONCILIATION_FAILED`
 - 실패 시 Catalog partial update는 rollback한다. Parquet와 성공 `sparkResult`는 삭제하지 않는다.
 - rollback 후 같은 Run에 `taskStates.catalogResult={ status: "failed", ... }`와 compact error를 별도 저장해 원인을 관찰할 수 있게 한다.
-- `publish_run_result`는 endpoint 실패를 Airflow task 실패로 전파한다. 따라서 Airflow DAG Run과 AskLake Run은 성공으로 표시되지 않으며 failed stage는 `Catalog reconciliation`이다.
+- `publish_run_result`는 endpoint 실패를 Airflow task 실패로 전파한다. 따라서 Airflow DAG Run과 AskLake Run은 성공으로 표시되지 않으며 failed stage는 `Catalog reconciliation`이다. backend에 도달하기 전 network failure는 `catalogResult`를 즉시 저장할 수 없으므로, backend 복구 후 Airflow task state와 redacted task log tail에서 compact 원인을 복구한다.
 - `publish_run_result`는 30초 간격으로 최대 2회 재시도하며, 같은 DAG Run의 성공 `sparkResult`를 재사용해 Catalog만 최대 3회 시도하고 Spark output을 다시 만들지 않는다.
 - Catalog commit 뒤 HTTP response만 유실된 경우 retry는 저장된 성공 `catalogResult`와 동일 `runId` materialization을 읽어 같은 success response를 반환한다.
 
-최종 상태 규칙은 `spark_process_write success + Catalog transaction success = publish_run_result success = Airflow DAG Run success = AskLake Run success`다. Phase 3 FastAPI Catalog endpoint와 transaction, 실제 Spark mode의 `publish_run_result` 호출 연결은 구현됐고 실제 Airflow/Spark/MinIO/Catalog 성공 및 Spark 실패 경로를 검증했다. polling sync는 Airflow 상태 조회 뒤 Run row를 다시 읽고 lock한 다음 task snapshot을 저장해, 동시에 commit된 `sparkResult`/`catalogResult`를 잃지 않는다. 명시적인 failed `catalogResult`는 Airflow success보다 우선해 AskLake Run을 실패로 유지하며, 성공 `catalogResult` 또는 같은 Run의 성공 materialization이 없으면 Spark 행 수·경로만으로 성공 처리하지 않는다. 독립 DAG import/status 검증용 `executionMode=smoke`만 물리 Catalog 호출을 건너뛴다. frontend는 동일 Run id를 queued/running으로 관찰한 뒤 success가 됐을 때만 `GET /api/catalog/datasets`를 한 번 호출한다. 낙관적 실행 직후 서버가 돌려준 이전 성공 Run은 refresh trigger가 아니다. 재조회 실패는 성공 Run을 rollback하지 않고 기존 Catalog 화면을 유지하며 수동 새로고침 안내를 표시한다.
+최종 상태 규칙은 `spark_process_write success + Catalog transaction success = publish_run_result success = Airflow DAG Run success = AskLake Run success`다. Phase 3 FastAPI Catalog endpoint와 transaction, 실제 Spark mode의 `publish_run_result` 호출 연결은 구현됐고 실제 Airflow/Spark/MinIO/Catalog 성공 및 Spark 실패 경로를 검증했다. polling sync는 Airflow 상태 조회 뒤 Run row를 다시 읽고 lock한 다음 task snapshot을 저장해, 동시에 commit된 `sparkResult`/`catalogResult`를 잃지 않는다. 명시적인 failed `catalogResult`는 Airflow success보다 우선해 AskLake Run을 실패로 유지하며, 성공 `catalogResult` 또는 같은 Run의 성공 materialization이 없으면 Spark 행 수·경로만으로 성공 처리하지 않는다. 독립 DAG import/status 검증용 `executionMode=smoke`만 물리 Catalog 호출을 건너뛴다. frontend는 동일 Run id를 queued/running으로 관찰한 뒤 `GET /api/etl/jobs/{jobId}`를 terminal까지 polling한다. backend 연결 오류는 마지막 Run status와 별도인 `unavailable/retrying` UI 상태이며, 연속 오류 뒤에도 bounded backoff로 재시도한다. success가 됐을 때만 `GET /api/catalog/datasets`를 한 번 호출한다. 낙관적 실행 직후 서버가 돌려준 이전 성공 Run은 refresh trigger가 아니다. 재조회 실패는 성공 Run을 rollback하지 않고 기존 Catalog 화면을 유지하며 수동 새로고침 안내를 표시한다.
+
+File/S3의 제한 샘플 응답은 UI 미리보기 기본 10행과 스키마 프로파일 기본 1,000행을 분리한다. backend는 같은 bounded object range에서 최대 `ASKLAKE_SOURCE_SCHEMA_PROFILE_ROWS`행을 읽어 JSON/JSONL의 희소 필드를 합집합으로 추론하고, frontend에는 미리보기 제한만큼만 반환한다. 프로파일 행 수는 최대 50,000행으로 제한한다.
 
 프론트 함수:
 

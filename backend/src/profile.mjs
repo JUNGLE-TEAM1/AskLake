@@ -24,7 +24,7 @@ export function inferSchemaColumns(sample) {
       role: inferRole(column),
       sourceName: column,
       targetName: normalizeColumnName(column),
-      type: inferType(values),
+      type: inferType(column, values),
     };
   });
 }
@@ -189,12 +189,14 @@ function normalizeMaxRows(value) {
   return Math.min(Math.max(Math.trunc(parsed), 1), 50000);
 }
 
-function inferType(values) {
+function inferType(column, values) {
   const nonEmpty = values.map((value) => value.trim()).filter(Boolean);
+  const normalizedColumn = normalizeColumnName(column);
   if (nonEmpty.length === 0) return "String";
+  if (normalizedColumn === "schema_version" || normalizedColumn.endsWith("_version")) return "String";
   if (nonEmpty.every((value) => /^-?\d+$/.test(value))) return "Integer";
   if (nonEmpty.every((value) => /^-?\d+(\.\d+)?$/.test(value))) return "Float";
-  if (nonEmpty.every((value) => !Number.isNaN(Date.parse(value)) && /[-:TZ/]/.test(value))) return "Timestamp";
+  if (nonEmpty.every((value) => /^\d{4}[-/]\d{1,2}[-/]\d{1,2}(?:[T\s].*)?$/.test(value) && !Number.isNaN(Date.parse(value)))) return "Timestamp";
   if (nonEmpty.every((value) => ["true", "false"].includes(value.toLowerCase()))) return "Boolean";
   if (nonEmpty.every((value) => (value.startsWith("{") && value.endsWith("}")) || (value.startsWith("[") && value.endsWith("]")))) return "JSON";
   return "String";

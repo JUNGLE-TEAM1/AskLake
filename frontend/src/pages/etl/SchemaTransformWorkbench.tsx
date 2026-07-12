@@ -211,7 +211,7 @@ function toSchemaTransformType(type: string) {
   const normalized = type.toLowerCase();
   if (normalized === "integer" || normalized === "int") return "integer";
   if (normalized === "long" || normalized === "bigint") return "long";
-  if (normalized === "float") return "float";
+  if (normalized === "float") return "double";
   if (normalized === "double" || normalized === "number") return "double";
   if (normalized === "boolean" || normalized === "bool") return "boolean";
   if (normalized === "timestamp" || normalized === "datetime") return "timestamp";

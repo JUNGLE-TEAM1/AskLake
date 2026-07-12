@@ -151,6 +151,23 @@ def main() -> None:
         else:
             raise AssertionError("Catalog HTTP failure must fail publish_run_result.")
 
+    network_error = urllib.error.URLError(OSError(101, "Network is unreachable"))
+    with patch.dict(
+        os.environ,
+        {
+            "ASKLAKE_EXECUTION_API_BASE_URL": "http://asklake-backend:8080",
+            "ASKLAKE_EXECUTION_API_TOKEN": "phase3-token",
+        },
+        clear=False,
+    ), patch.object(module.urllib.request, "urlopen", side_effect=network_error):
+        try:
+            module.publish_catalog_result(conf, spark_result)
+        except RuntimeError as exc:
+            assert "Catalog reconciliation API request failed" in str(exc)
+            assert "Network is unreachable" in str(exc)
+        else:
+            raise AssertionError("Catalog network failure must fail publish_run_result.")
+
     print("verify-airflow-dag-catalog-wiring: ok")
 
 

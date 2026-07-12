@@ -35,6 +35,8 @@ from app.schemas.etl import (
     SourceAssetsResponse,
     SourceConnectorAnalysis,
     SourceConnectorRequest,
+    SourceRowsRequest,
+    SourceRowsResponse,
     UpdatePipelineRequest,
 )
 from app.services import etl_service
@@ -46,6 +48,11 @@ router = APIRouter(prefix="/etl", tags=["etl"])
 @router.post("/sources/test", response_model=SourceConnectorAnalysis)
 def test_source_connector(request: SourceConnectorRequest) -> SourceConnectorAnalysis:
     return etl_service.test_source_connector(request)
+
+
+@router.post("/sources/rows", response_model=SourceRowsResponse)
+def get_source_rows(request: SourceRowsRequest) -> SourceRowsResponse:
+    return etl_service.get_source_rows(request)
 
 
 @router.post("/sources/assets", response_model=SourceAssetsResponse)

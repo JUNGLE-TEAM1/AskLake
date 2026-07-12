@@ -142,6 +142,23 @@ def main() -> None:
             assert missing_catalog_run.failed_stage == "Catalog reconciliation"
             assert missing_catalog_run.error_summary == "Airflow completed without a successful Catalog reconciliation."
 
+            unreachable_catalog_run_id = f"run_catalog_{suffix}_unreachable_catalog"
+            unreachable_catalog_output = write_parquet_fixture(
+                output_root,
+                unreachable_catalog_run_id,
+                b"PAR1-unreachable-catalog",
+            )
+            add_run(db, job_id, unreachable_catalog_run_id, unreachable_catalog_output)
+            unreachable_catalog_run = etl_repository.get_run_model(db, unreachable_catalog_run_id)
+            assert unreachable_catalog_run is not None
+            sync_airflow_run(db, job, unreachable_catalog_run, UnreachableCatalogAirflowClient())
+            assert unreachable_catalog_run.status == "failed"
+            assert unreachable_catalog_run.failed_stage == "Catalog reconciliation"
+            assert "Network is unreachable" in unreachable_catalog_run.error_summary
+            assert "super-secret-token" not in unreachable_catalog_run.error_summary
+            assert (unreachable_catalog_run.task_states or {}).get("sparkResult", {}).get("status") == "success"
+            assert (unreachable_catalog_run.task_states or {}).get("catalogResult") is None
+
             stale_sync_run_id = f"run_catalog_{suffix}_stale_sync"
             add_run(db, job_id, stale_sync_run_id, None, spark_status=None)
             stale_sync_run = etl_repository.get_run_model(db, stale_sync_run_id)
@@ -354,6 +371,26 @@ class SuccessfulAirflowClient:
 
     def dag_run_url(self, run_id: str) -> str:
         return f"http://airflow.local/dags/asklake_etl_job/runs/{run_id}"
+
+
+class UnreachableCatalogAirflowClient(FailedCatalogAirflowClient):
+    def list_task_instances(self, run_id: str) -> list[AirflowTaskInstance]:
+        return [AirflowTaskInstance.from_payload({
+            "dag_id": "asklake_etl_job",
+            "dag_run_id": run_id,
+            "state": "failed",
+            "task_id": "publish_run_result",
+            "try_number": 3,
+        })]
+
+    def get_task_log(self, run_id: str, task_id: str, *, try_number: int = 1) -> str:
+        assert task_id == "publish_run_result"
+        assert try_number == 3
+        return (
+            "RuntimeError: AskLake Catalog reconciliation API request failed: "
+            "<urlopen error [Errno 101] Network is unreachable>\n"
+            "Authorization: Bearer super-secret-token"
+        )
 
 
 class FailedSparkAirflowClient:

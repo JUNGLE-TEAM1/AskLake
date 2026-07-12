@@ -393,6 +393,7 @@ const checks = [
       /const nextColumns = currentColumns\.map\(\(column\) => \{/,
       /if \(!selected\) return \{ \.\.\.column, included: false, targetOrder: undefined \};/,
       /const nextRows = sampleRows\.map\(\(row\) => \[\.\.\.row\]\);/,
+      /if \(normalized === "float"\) return "double";/,
     ],
   },
   {
@@ -777,6 +778,39 @@ const checks = [
     ],
     forbiddenPatterns: [
       /현재 대시보드 링크를 복사했습니다/,
+    ],
+  },
+  {
+    name: "Snapshot execution history polls terminal state and exposes stale connectivity",
+    file: "src/hooks/useAskLakeData.ts",
+    patterns: [
+      /const activeSnapshotRunKey = useMemo/,
+      /getLiveJob\(jobId\)/,
+      /snapshotPollMaxBackoffMs/,
+      /document\.visibilityState === "hidden"/,
+      /window\.addEventListener\("online"/,
+      /refreshCatalogAfterTerminalSuccess\(runId\)/,
+      /status: "unavailable"/,
+    ],
+  },
+  {
+    name: "Snapshot execution refresh calls the live job reader and renders an unavailable notice",
+    file: "src/pages/ingest/JobsPages.tsx",
+    patterns: [
+      /await onRefreshJob\(job\.id\)/,
+      /현재 실행 상태를 확인할 수 없습니다/,
+      /마지막 서버 상태를 유지하고 자동 재시도 중입니다/,
+      /onClick=\{\(\) => void refreshRuns\(\)\}/,
+    ],
+  },
+  {
+    name: "Auth bootstrap distinguishes backend connectivity from unauthenticated sessions",
+    file: "src/App.tsx",
+    patterns: [
+      /authConnectionError/,
+      /AskLake 서버 상태를 확인할 수 없습니다/,
+      /로그아웃된 것은 아닙니다/,
+      /void checkAuthSession\(\)/,
     ],
   },
   {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type React from "react";
 import { BookOpen, CircleHelp, Database, History, LogOut, Settings, ShieldCheck, Workflow } from "lucide-react";
 import { useLocation, useNavigate } from "react-router";
@@ -22,6 +22,7 @@ import { useAskLakeData } from "./hooks/useAskLakeData";
 import { fetchAuthSession, logout as logoutSession } from "./services/authApi";
 import { Avatar, AvatarFallback } from "./components/ui/avatar";
 import { Alert, AlertDescription, AlertTitle } from "./components/ui/alert";
+import { Button } from "./components/ui/button";
 import { IconButton } from "./components/ui/icon-button";
 import { Skeleton } from "./components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./components/ui/tooltip";
@@ -219,6 +220,7 @@ export function App() {
   const [activeFlow, setActiveFlow] = useState<FlowId>(initialRoute.flow);
   const [currentUser, setCurrentUser] = useState<CurrentUserResponse | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
+  const [authConnectionError, setAuthConnectionError] = useState<string | null>(null);
   const [lastScheduleFlow, setLastScheduleFlow] = useState<ScheduleFlowId>(() => isScheduleFlow(initialRoute.flow) ? initialRoute.flow : defaultScheduleFlow);
   const [dashboardEntry, setDashboardEntry] = useState<DashboardEntry>(() => (
     initialRoute.dashboardRoute ? dashboardEntryFromRoute(initialRoute.dashboardRoute, 0) : { source: "sidebar", view: "list", version: 0 }
@@ -254,10 +256,12 @@ export function App() {
     jobs,
     createSqlDatasetJob,
     runsByJobId,
+    refreshJob,
     selectedDataset,
     selectedJob,
     selectedRunIdByJobId,
     selectRunForJob,
+    snapshotSyncByJobId,
     setSelectedDataset,
     setSelectedJob,
     setSqlResultDraft,
@@ -314,28 +318,28 @@ export function App() {
     window.scrollTo({ top: 0, left: 0 });
   }, [activeFlow, selectedJob?.id]);
 
-  useEffect(() => {
-    let active = true;
-    fetchAuthSession()
-      .then((session) => {
-        if (active) setCurrentUser(session.user);
-      })
-      .catch(() => {
-        if (active) setCurrentUser(null);
-      })
-      .finally(() => {
-        if (active) setAuthChecked(true);
-      });
-    return () => {
-      active = false;
-    };
+  const checkAuthSession = useCallback(async () => {
+    setAuthChecked(false);
+    setAuthConnectionError(null);
+    try {
+      const session = await fetchAuthSession();
+      setCurrentUser(session.user);
+    } catch (error) {
+      setAuthConnectionError(error instanceof Error ? error.message : "AskLake backend에 연결하지 못했습니다.");
+    } finally {
+      setAuthChecked(true);
+    }
   }, []);
 
   useEffect(() => {
-    if (!authChecked || currentUser || activeFlow === "login") return;
+    void checkAuthSession();
+  }, [checkAuthSession]);
+
+  useEffect(() => {
+    if (!authChecked || authConnectionError || currentUser || activeFlow === "login") return;
     navigate("/login", { replace: true });
     setActiveFlow("login");
-  }, [activeFlow, authChecked, currentUser, navigate]);
+  }, [activeFlow, authChecked, authConnectionError, currentUser, navigate]);
 
   useEffect(() => {
     if (!authChecked || !currentUser || activeFlow !== "login") return;
@@ -377,6 +381,11 @@ export function App() {
         : nextJob
     ));
   }, [jobs, routeState.jobId, setSelectedJob]);
+
+  useEffect(() => {
+    if (!currentUser || !selectedJobAvailable || (activeFlow !== "jobDetail" && activeFlow !== "jobRuns")) return;
+    void refreshJob(selectedJob.id);
+  }, [activeFlow, currentUser, refreshJob, selectedJob.id, selectedJobAvailable]);
 
   useEffect(() => {
     if (!routeState.datasetId) return;
@@ -504,6 +513,23 @@ export function App() {
     return <div className="workspace-route-loading" role="status">로그인 상태를 확인하는 중...</div>;
   }
 
+  if (authConnectionError && !currentUser) {
+    return (
+      <div className="workspace-route-loading" role="alert">
+        <Alert className="max-w-xl border-amber-200 bg-amber-50 text-amber-950">
+          <CircleHelp />
+          <AlertTitle>AskLake 서버 상태를 확인할 수 없습니다.</AlertTitle>
+          <AlertDescription className="grid gap-3">
+            <span>로그아웃된 것은 아닙니다. backend 연결을 복구한 뒤 다시 시도해 주세요.</span>
+            <Button className="w-fit" size="sm" type="button" variant="outline" onClick={() => void checkAuthSession()}>
+              연결 다시 확인
+            </Button>
+          </AlertDescription>
+        </Alert>
+      </div>
+    );
+  }
+
   if (!currentUser || activeFlow === "login") {
     return <AuthPage onAction={writeAuditLog} onAuthenticated={handleAuthenticated} />;
   }
@@ -575,7 +601,7 @@ export function App() {
             <>
           {activeFlow === "jobs" && <JobsLandingPage jobListFacets={jobListFacets} jobsLoading={jobsLoading} jobs={jobs} onCommand={handleJobCommand} onCreate={() => moveToFlow("source")} onDetail={openJobDetailWithRoute} onFilter={filterJobs} onAction={writeAuditLog} />}
           {activeFlow === "jobDetail" && <JobDetailPage job={selectedJob} onCommand={handleJobCommand} onBack={() => moveToFlow("jobs")} onRuns={() => openJobRunsWithRoute(selectedJob)} />}
-          {activeFlow === "jobRuns" && <JobRunsPage catalogDatasetId={selectedJobCatalogDataset?.id} catalogRowCount={selectedJobCatalogDataset?.rows} evidence={jobExecutionEvidence[selectedJob.id]} job={selectedJob} onCommand={handleJobCommand} onBack={() => moveToFlow("jobDetail")} onAction={writeAuditLog} />}
+          {activeFlow === "jobRuns" && <JobRunsPage catalogDatasetId={selectedJobCatalogDataset?.id} catalogRowCount={selectedJobCatalogDataset?.rows} evidence={jobExecutionEvidence[selectedJob.id]} job={selectedJob} onCommand={handleJobCommand} onBack={() => moveToFlow("jobDetail")} onAction={writeAuditLog} onRefreshJob={refreshJob} syncState={snapshotSyncByJobId[selectedJob.id]} />}
           {activeFlow === "source" && <SourceConnectionPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("jobs")} onNext={() => moveToFlow("schema")} onSave={() => saveDraft("source")} onAction={writeAuditLog} onNotify={showToast} />}
           {activeFlow === "schema" && <SchemaInferencePage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("source")} onNext={() => moveToFlow(continuousKafkaDraft ? "permission" : lastScheduleFlow)} onSave={() => saveDraft("schema")} onAction={writeAuditLog} onNotify={showToast} />}
           {isScheduleFlow(activeFlow) && <SchedulePage draftSchedule={draftPipeline.schedule} mode={activeFlow} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("schema")} onModeChange={moveToFlow} onNext={() => moveToFlow("permission")} onSave={() => saveDraft(activeFlow)} />}

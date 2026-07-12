@@ -36,6 +36,8 @@ npm run dev
 For frontend-only mock mode, set `VITE_USE_MOCK_API` to `"true"`. In live mode, initial ETL jobs and catalog datasets may start empty. Creating a pipeline adds the Job. In Phase 3, Airflow's final task publishes a verified Spark result to Catalog, and the frontend refreshes Catalog after observing that Run's terminal success.
 The local backend stores ETL jobs, catalog datasets, and SQL run snapshots in the Postgres JSONB metadata tables from `docker-compose.yml`. Override `DATABASE_URL` only when using a different metadata database.
 
+For the Airflow/Spark runtime, start the Compose-managed backend and Airflow services from the repository root so long-running Runs are not tied to a reload-based local process. See [docs/04-development-guide.md](docs/04-development-guide.md) for the commands and health checks.
+
 ## Validation
 
 ```powershell

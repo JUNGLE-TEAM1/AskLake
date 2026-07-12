@@ -72,6 +72,7 @@ export function runSparkPipeline(job, command, runId) {
     `MINIO_SECRET_KEY=${fieldValue(job.sourceConfig ?? [], "Secret Key") || minioSecretKey()}`,
     "-e",
     `MINIO_REGION=${process.env.MINIO_REGION || "us-east-1"}`,
+    ...sparkSourceDockerEnv(source),
     "-e",
     `ASKLAKE_SPARK_SOURCE_PATH=${source.path}`,
     "-e",
@@ -219,12 +220,14 @@ function safeJsonParse(value) {
 }
 
 function sparkPackageArgs(source, output) {
-  if (process.env.ASKLAKE_SPARK_HADOOP_AWS_PACKAGE === "none") return [];
-  if (!usesS3A(source.path) && !usesS3A(output.sparkPath)) return [];
-  return [
-    "--packages",
-    process.env.ASKLAKE_SPARK_HADOOP_AWS_PACKAGE || "org.apache.hadoop:hadoop-aws:3.4.1",
-  ];
+  const packages = [];
+  if ((usesS3A(source.path) || usesS3A(output.sparkPath)) && process.env.ASKLAKE_SPARK_HADOOP_AWS_PACKAGE !== "none") {
+    packages.push(process.env.ASKLAKE_SPARK_HADOOP_AWS_PACKAGE || "org.apache.hadoop:hadoop-aws:3.4.1");
+  }
+  if (source.format === "jdbc" && process.env.ASKLAKE_SPARK_POSTGRES_JDBC_PACKAGE !== "none") {
+    packages.push(process.env.ASKLAKE_SPARK_POSTGRES_JDBC_PACKAGE || "org.postgresql:postgresql:42.7.4");
+  }
+  return packages.length > 0 ? ["--packages", packages.join(",")] : [];
 }
 
 function usesS3A(value) {
@@ -285,6 +288,25 @@ function sparkSourceFromJob(job, runId) {
       path: toS3APath(fieldValue(sourceConfig, "Path") || "s3://m3-raw/nyc_taxi/yellow_parquet/"),
     };
   }
+  if (["database", "postgresql"].includes(String(sourceType).trim().toLowerCase())) {
+    const host = requiredSparkSourceField(sourceConfig, "Endpoint / Host", "PostgreSQL host");
+    const port = requiredSparkSourceField(sourceConfig, "Port", "PostgreSQL port");
+    const database = requiredSparkSourceField(sourceConfig, "Database Name", "PostgreSQL database");
+    const schema = fieldValue(sourceConfig, "Schema") || "public";
+    const table = requiredSparkSourceField(sourceConfig, "DATASET OR TABLE SELECTOR", "PostgreSQL table");
+    return {
+      format: "jdbc",
+      jdbcDbtable: `${quoteJdbcIdentifier(schema)}.${quoteJdbcIdentifier(table)}`,
+      jdbcFetchSize: process.env.ASKLAKE_SPARK_JDBC_FETCH_SIZE || "10000",
+      jdbcLowerBound: fieldValue(sourceConfig, "__JDBC Lower Bound"),
+      jdbcNumPartitions: fieldValue(sourceConfig, "__JDBC Num Partitions"),
+      jdbcPartitionColumn: fieldValue(sourceConfig, "__JDBC Partition Column"),
+      jdbcPassword: requiredSparkSourceField(sourceConfig, "Password / Auth Token", "PostgreSQL password"),
+      jdbcUpperBound: fieldValue(sourceConfig, "__JDBC Upper Bound"),
+      jdbcUser: requiredSparkSourceField(sourceConfig, "Username", "PostgreSQL username"),
+      path: `jdbc:postgresql://${dockerReachableHost(host)}:${port}/${database}`,
+    };
+  }
 
   const samplePath = hasInlineSampleEndpoint(job)
     ? writeSampleRowsSource(job, runId) || writeConnectorSampleRowsSource(job, runId)
@@ -299,6 +321,37 @@ function sparkSourceFromJob(job, runId) {
   }
 
   throw sparkError(`Spark execution requires File / S3, Data Lake, or a connector sample with schema rows. Unsupported sourceType=${sourceType}`);
+}
+
+function sparkSourceDockerEnv(source) {
+  if (source.format !== "jdbc") return [];
+  const values = [
+    ["ASKLAKE_SPARK_JDBC_DBTABLE", source.jdbcDbtable],
+    ["ASKLAKE_SPARK_JDBC_USER", source.jdbcUser],
+    ["ASKLAKE_SPARK_JDBC_PASSWORD", source.jdbcPassword],
+    ["ASKLAKE_SPARK_JDBC_FETCH_SIZE", source.jdbcFetchSize],
+    ["ASKLAKE_SPARK_JDBC_PARTITION_COLUMN", source.jdbcPartitionColumn],
+    ["ASKLAKE_SPARK_JDBC_LOWER_BOUND", source.jdbcLowerBound],
+    ["ASKLAKE_SPARK_JDBC_UPPER_BOUND", source.jdbcUpperBound],
+    ["ASKLAKE_SPARK_JDBC_NUM_PARTITIONS", source.jdbcNumPartitions],
+  ];
+  return values.flatMap(([key, value]) => ["-e", `${key}=${value || ""}`]);
+}
+
+function requiredSparkSourceField(sourceConfig, label, description) {
+  const value = fieldValue(sourceConfig, label);
+  if (!value) throw sparkError(`${description} is required for Spark JDBC execution.`);
+  return value;
+}
+
+function dockerReachableHost(host) {
+  return ["127.0.0.1", "localhost", "::1"].includes(String(host).trim().toLowerCase())
+    ? "host.docker.internal"
+    : host;
+}
+
+function quoteJdbcIdentifier(value) {
+  return `"${String(value).replace(/"/g, '""')}"`;
 }
 
 function isConnectorSampleSource(sourceType) {

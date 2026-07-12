@@ -95,7 +95,9 @@ Catalog reconciliation의 상태 소유권은 다음과 같다.
 - `catalog_datasets.payload`: dataset metadata, `materializationRuns`, lineage의 source of truth
 - Airflow Task Instance/DAG Run: orchestration 성공·실패의 source of truth
 
-같은 `runId` 재호출은 기존 materialization을 교체하고, 다른 Run은 같은 dataset row에 append한다. target dataset row는 append read-modify-write 동안 lock해 동시 갱신 손실을 막는다. Catalog 저장이 실패하면 Parquet와 `sparkResult`는 복구 증거로 남고 `publish_run_result`가 실패한다. `publish_run_result`는 30초 간격으로 최대 2회 재시도하며, upstream Spark task를 다시 실행하지 않고 같은 DAG Run의 저장된 manifest로 Catalog 단계만 재호출한다. polling sync는 Airflow 상태를 읽은 뒤 persisted Run을 다시 읽고 lock한 상태에서 task snapshot을 교체해, 동시에 저장된 `sparkResult`/`catalogResult`를 오래된 snapshot으로 지우지 않는다. `catalogResult=failed`는 Airflow가 success를 반환해도 AskLake Run 실패가 우선하며, 성공 `catalogResult` 또는 같은 Run의 성공 materialization이 없으면 Spark 경로·행 수만으로 성공 처리하지 않는다. frontend는 같은 Run id를 queued/running으로 관찰한 뒤 terminal success로 전환됐을 때만 Catalog 목록을 한 번 다시 hydrate한다. 이 재조회만 실패하면 서버의 Run/Catalog 성공을 되돌리지 않고 현재 화면 데이터를 유지하며 수동 새로고침 안내를 표시한다.
+같은 `runId` 재호출은 기존 materialization을 교체하고, 다른 Run은 같은 dataset row에 append한다. target dataset row는 append read-modify-write 동안 lock해 동시 갱신 손실을 막는다. Catalog 저장이 실패하면 Parquet와 `sparkResult`는 복구 증거로 남고 `publish_run_result`가 실패한다. `publish_run_result`는 30초 간격으로 최대 2회 재시도하며, upstream Spark task를 다시 실행하지 않고 같은 DAG Run의 저장된 manifest로 Catalog 단계만 재호출한다. polling sync는 Airflow 상태를 읽은 뒤 persisted Run을 다시 읽고 lock한 상태에서 task snapshot을 교체해, 동시에 저장된 `sparkResult`/`catalogResult`를 오래된 snapshot으로 지우지 않는다. `catalogResult=failed`는 Airflow가 success를 반환해도 AskLake Run 실패가 우선하며, 성공 `catalogResult` 또는 같은 Run의 성공 materialization이 없으면 Spark 경로·행 수만으로 성공 처리하지 않는다. frontend는 같은 Run id를 queued/running으로 관찰한 뒤 `GET /api/etl/jobs/{jobId}`를 terminal까지 polling한다. 일시적인 backend 연결 실패는 마지막 Run 상태를 성공/실패로 추측하지 않고 별도 `상태 확인 불가`로 표시하며, visibility/online 복귀와 bounded backoff로 재시도한다. terminal success로 전환됐을 때만 Catalog 목록을 한 번 다시 hydrate한다. 이 재조회만 실패하면 서버의 Run/Catalog 성공을 되돌리지 않고 현재 화면 데이터를 유지하며 수동 새로고침 안내를 표시한다.
+
+로컬 전체 Airflow/Spark runtime은 root `docker-compose.yml`의 health-managed FastAPI backend를 사용한다. Airflow task는 compose service DNS `http://backend:8080`으로 internal execution API를 호출하며 Airflow service는 backend health 이후 시작한다. 별도 터미널의 `uvicorn --reload`는 일반 API 개발용으로 유지하지만 장시간 Airflow Run의 backend lifecycle source로 사용하지 않는다.
 
 ### Kafka Snapshot Direct Target 전환 계획
 
@@ -166,7 +168,7 @@ route param은 기존 `selectedJob`, `selectedDataset`, `dashboardEntry` 상태�
 수집/처리 목록은 TanStack Table 기반 표형 목록을 기본 화면으로 사용한다. 실행 이력에서는 같은 job의 run 목록, 실패 로그, 실행 단계 보기 모달을 함께 다룬다.
 수집/처리의 작업 진행 순서 시각화는 독립 메뉴가 아니라 실행 이력의 `실행 단계 보기` 모달에서 표시한다.
 live mode에서는 마지막으로 성공한 ETL job/catalog hydrate 결과를 브라우저 localStorage에 보관해, job 실행 중 새로고침해도 수집/처리 shell과 직전 job 목록을 먼저 렌더링한다.
-live mode에서 run/retry 명령 응답의 `running` 상태를 즉시 반영하고, `GET /api/etl/jobs/{jobId}` polling으로 Spark 완료 후 최종 상태를 반영한다.
+live mode에서 run/retry 명령 응답의 `running` 상태를 즉시 반영하고, 앱 재진입 시 active Snapshot Run polling을 복원하며, `GET /api/etl/jobs/{jobId}` polling으로 Spark 완료 후 최종 상태를 반영한다. 실행 이력의 수동 새로고침도 같은 상세 endpoint와 상태 reconcile 함수를 사용한다.
 
 ## 6) Job Run State Contract
 
@@ -279,6 +281,7 @@ FastAPI 현재 구현 범위:
 - `GET /api/admin/permissions`
 - `GET /api/admin/audit-logs`
 - `POST /api/etl/sources/test`
+- `POST /api/etl/sources/rows`: PostgreSQL Source 전체 보기 Dialog의 서버 페이지 조회. 한 요청은 최대 200행이며 전체 탐색 상한은 두지 않는다.
 - `POST /api/etl/review`: Review 화면의 표시값과 생성 가능 상태를 서버 기준으로 정규화
 - `POST /api/etl/schema-inference`
 - `POST /api/etl/jobs`

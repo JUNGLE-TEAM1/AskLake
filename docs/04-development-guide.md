@@ -60,16 +60,20 @@ Backend `DATABASE_URL`은 미설정 시 `postgres://asklake:asklake_dev@127.0.0.
 
 ### Local Airflow + Spark batch runtime
 
-Airflow run polling과 실제 Spark batch를 확인하려면 AskLake backend와 별도로 local Airflow API server를 띄운다. Airflow는 `http://127.0.0.1:8081`에서 열리며 기본 계정은 local 전용 `airflow` / `airflow`다. `AIRFLOW_EXECUTION_API_TOKEN`은 Airflow task와 FastAPI에 같은 값을 설정하고 저장소나 로그에 운영 token을 남기지 않는다.
+Airflow run polling과 실제 Spark batch를 확인할 때는 root Compose의 health-managed FastAPI backend와 local Airflow API server를 함께 사용한다. Airflow는 `http://127.0.0.1:8081`, backend는 `http://127.0.0.1:8080`에서 열리며 기본 Airflow 계정은 local 전용 `airflow` / `airflow`다. `AIRFLOW_EXECUTION_API_TOKEN`은 Airflow task와 FastAPI에 같은 값을 설정하고 저장소나 로그에 운영 token을 남기지 않는다.
+
+Docker Desktop 메모리보다 Spark driver/executor 요청이 크면 `spark_process_write`가 exit code 137로 종료될 수 있다. 현재 코드 기본값은 driver 4g, executor 8g이므로 Docker 메모리가 작은 로컬 환경에서는 명시적인 경량 profile을 사용하거나 Docker 메모리를 늘린다. 현상, 증거, 복구 기준은 [Local Spark Exit 137 메모리 장애 분석](./spark-exit-137-memory-incident-analysis.md)을 참고한다.
 
 ```bash
 export AIRFLOW_EXECUTION_API_TOKEN=asklake-local-airflow-execution
+docker compose up -d postgres minio
 docker compose up airflow-init
-docker compose up -d airflow-apiserver airflow-scheduler airflow-dag-processor
+docker compose up -d --build backend airflow-apiserver airflow-scheduler airflow-dag-processor
+curl -fsS http://127.0.0.1:8080/api/health
 curl -fsS http://127.0.0.1:8081/api/v2/monitor/health
 ```
 
-FastAPI backend는 아래 환경변수를 준 뒤 재시작한다.
+Root Compose backend에는 대응하는 service DNS 설정이 local 기본값으로 주입된다. backend 코드를 변경한 뒤에는 `docker compose up -d --build backend`로 image와 service를 함께 갱신한다. backend가 host Docker socket으로 Spark driver를 시작하므로 Spark script와 review model 경로는 host가 볼 수 있는 repo 절대 경로를 사용하고, Ivy/report/sample/output은 backend와 host에 같은 경로로 mount된 `ASKLAKE_HOST_DATA_DIR` 아래에 둔다. 기본값은 현재 repo의 `${PWD}/backend/scripts`, `${PWD}/output/nlp-eval/template-model-validation/runtime/latest`, `/tmp/asklake`이며 root에서 `docker compose`를 실행한다. 다른 위치에서 Compose를 실행할 때는 `ASKLAKE_SPARK_HOST_SCRIPTS_DIR`와 `ASKLAKE_REVIEW_TEXT_MODEL_HOST_DIR`를 실제 host 절대 경로로 지정한다. 아래 값은 짧은 host `uvicorn` 디버깅의 호환 예시이며, 장시간 Airflow Run의 execution backend에는 Compose service를 사용한다.
 
 ```bash
 AIRFLOW_API_BASE_URL=http://127.0.0.1:8081
@@ -87,7 +91,7 @@ MINIO_SECRET_KEY=wishuponastar
 MINIO_BUCKET=asklake-output
 ```
 
-Local Compose의 Airflow task에는 backend URL과 `AIRFLOW_EXECUTION_API_TOKEN` 기반 bearer token이 주입된다. `AIRFLOW_INTERNAL_TOKEN`은 기존 단일 호출 endpoint 호환용으로 함께 유지한다. 그 다음 `수집/처리` 화면에서 Job 실행 버튼을 누르면 `spark_process_write`가 실제 Spark runner를 호출하고, `publish_run_result`가 물리 Parquet를 검증해 Catalog를 확정한다. Run History와 DAG modal은 `GET /api/etl/jobs/{jobId}` polling으로 DAG Run/Task Instance 상태를 반영한다.
+Local Compose의 Airflow task에는 `http://backend:8080` service URL과 `AIRFLOW_EXECUTION_API_TOKEN` 기반 bearer token이 주입된다. `AIRFLOW_INTERNAL_TOKEN`은 기존 단일 호출 endpoint 호환용으로 함께 유지한다. Airflow service는 backend health 이후 시작한다. 그 다음 `수집/처리` 화면에서 Job 실행 버튼을 누르면 `spark_process_write`가 실제 Spark runner를 호출하고, `publish_run_result`가 물리 Parquet를 검증해 Catalog를 확정한다. Run History와 DAG modal은 `GET /api/etl/jobs/{jobId}` polling으로 DAG Run/Task Instance 상태를 반영한다. polling 연결이 끊기면 마지막 Run 상태와 별도로 `상태 확인 불가`를 표시하고 backend 복구 후 자동으로 terminal 상태를 동기화한다.
 
 실행 중인 local Airflow 자체의 DAG 발견/import error/성공 Run/강제 실패 Run을 한 번에 확인할 때는 아래 smoke를 실행한다.
 
@@ -101,6 +105,11 @@ npm run verify:airflow-smoke
 ```
 
 AskLake backend의 `run` 접수, 실제 PySpark 처리, MinIO Parquet, terminal polling/task state 동기화를 확인하려면 `asklake-output` bucket을 준비하고 같은 Airflow/Spark 환경변수와 Python interpreter로 아래 검증을 실행한다.
+
+```bash
+cd backend
+MINIO_ENDPOINT=http://127.0.0.1:9000 MINIO_BUCKET=asklake-output npm run minio:seed-verify
+```
 
 ```bash
 cd backend
@@ -556,7 +565,7 @@ SQL 및 ETL 분석용 소규모 커머스 데이터는 `backend/scripts/syntheti
 
 ```bash
 python3 backend/scripts/synthetic-commerce/generate.py \
-  --source /path/to/meta_Electronics.jsonl \
+  --products-csv backend/fixtures/synthetic-commerce/products.csv \
   --output-dir backend/tmp/synthetic-commerce-output \
   --products 10000 \
   --users 3000 \
@@ -568,9 +577,19 @@ python3 backend/scripts/synthetic-commerce/analyze.py \
   --data-dir backend/tmp/synthetic-commerce-output
 
 python3 backend/scripts/synthetic-commerce/test_generate.py
+npm run verify:source-profile
+npm run sources:commerce-postgres
+npm run verify:postgres-source
+npm run verify:postgres-spark-full
 ```
 
-생성 규칙, 컬럼 계약, 인사이트 품질 기준과 산출물 커밋 정책은 `backend/scripts/synthetic-commerce/README.md`를 따른다.
+상품 표본까지 다시 선택할 때는 `--products-csv` 대신 `--source /path/to/meta_Electronics.jsonl`을 사용한다. canonical 이벤트 파일은 `commerce_events.jsonl`이며 기존 `click_events.jsonl`을 이름만 바꿔 사용하지 않는다.
+
+분석기는 생성 결과를 SQLite에 적재해 `analysis-result.json`과 `insights.md`를 만든다. 세션 주문 완료 전환율 1~3%, 단계별 감소, event ID와 checkout/order 무결성, acquisition channel·membership tier·device·category별 전환 차이, 완료 주문 금액 분석이 모두 통과해야 검증 완료로 본다. 생성 규칙, 컬럼 계약, 인사이트 품질 기준과 산출물 커밋 정책은 `backend/scripts/synthetic-commerce/README.md`를 따른다.
+
+`sources:commerce-postgres`는 로컬 source PostgreSQL의 `synthetic_commerce` 스키마에 `products`, `users`, `commerce_events`를 재적재하고 `session_funnel`, `order_facts` view를 만든다. 적재 후 manifest 행 수, 완료 주문 417건, 세션 주문 전환율 2.145%, 3-table join 결과가 일치해야 한다. AskLake Compose backend에서는 `asklake-postgres-source:5432/asklake_sources`로 연결한다.
+
+`verify:postgres-source`는 Source 본문의 10행 미리보기와 전체 보기 서버 paging을 검증하며 50,000행 이후와 마지막 page가 반드시 조회되어야 한다. `verify:postgres-spark-full`은 같은 fixture를 Spark JDBC로 실행해 `inputRows=outputRows=79,409`를 확인하므로 Docker PostgreSQL·Spark가 실행 중이어야 한다.
 
 ## 11) Manual Smoke Checklist
 

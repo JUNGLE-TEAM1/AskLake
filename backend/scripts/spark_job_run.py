@@ -245,6 +245,28 @@ def make_spark():
 
 
 def read_source(spark, source_format, source_path, schema_columns):
+    if source_format == "jdbc":
+        reader = (
+            spark.read.format("jdbc")
+            .option("url", source_path)
+            .option("dbtable", required_env("ASKLAKE_SPARK_JDBC_DBTABLE"))
+            .option("user", required_env("ASKLAKE_SPARK_JDBC_USER"))
+            .option("password", required_env("ASKLAKE_SPARK_JDBC_PASSWORD"))
+            .option("driver", "org.postgresql.Driver")
+            .option("fetchsize", os.environ.get("ASKLAKE_SPARK_JDBC_FETCH_SIZE", "10000"))
+        )
+        partition_column = os.environ.get("ASKLAKE_SPARK_JDBC_PARTITION_COLUMN", "").strip()
+        lower_bound = os.environ.get("ASKLAKE_SPARK_JDBC_LOWER_BOUND", "").strip()
+        upper_bound = os.environ.get("ASKLAKE_SPARK_JDBC_UPPER_BOUND", "").strip()
+        num_partitions = os.environ.get("ASKLAKE_SPARK_JDBC_NUM_PARTITIONS", "").strip()
+        if partition_column and lower_bound and upper_bound and num_partitions:
+            reader = (
+                reader.option("partitionColumn", partition_column)
+                .option("lowerBound", lower_bound)
+                .option("upperBound", upper_bound)
+                .option("numPartitions", num_partitions)
+            )
+        return reader.load()
     if source_format == "csv":
         infer_schema = "false" if schema_columns else "true"
         return spark.read.option("header", "true").option("inferSchema", infer_schema).csv(source_path)
@@ -480,14 +502,27 @@ def cast_for_schema(frame, column_name, logical_type):
     if any(token in normalized for token in ["float", "double", "decimal", "number", "numeric"]):
         return try_cast_type(column_name, "double")
     if "timestamp" in normalized or "datetime" in normalized:
-        return F.to_timestamp(source.cast("string"))
+        return parse_timestamp_expression(source)
     if normalized == "date" or "date" in normalized:
-        return F.to_date(source.cast("string"))
+        return parse_date_expression(source)
     return source.cast(spark_sql_type(logical_type))
 
 
 def try_cast_type(column_name, target_type):
     return F.expr(f"try_cast({quote_identifier(column_name)} as {target_type})")
+
+
+def parse_timestamp_expression(source):
+    return F.to_timestamp(normalize_legacy_json_scalar(source))
+
+
+def parse_date_expression(source):
+    return F.to_date(normalize_legacy_json_scalar(source))
+
+
+def normalize_legacy_json_scalar(source):
+    text = source.cast("string")
+    return F.when(text.rlike(r'^".*"$'), F.regexp_replace(text, r'^"(.*)"$', "$1")).otherwise(text)
 
 
 def spark_sql_type(logical_type):
@@ -555,7 +590,7 @@ def apply_transform_steps(spark, frame, steps):
         elif "decimal" in operation or "cast" in operation:
             expression = try_cast_double(current, input_column)
         elif "timestamp" in operation or "date" in operation:
-            expression = F.to_timestamp(source.cast("string"))
+            expression = parse_timestamp_expression(source)
         elif "mask" in operation:
             expression = F.regexp_replace(source.cast("string"), r"(\d{3})-\d{4}-(\d{4})", "$1-****-$2")
         else:

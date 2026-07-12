@@ -82,6 +82,7 @@ Canonical status values:
 | `GET/PATCH` | `/api/admin/governance-controls` | Admin | principal block과 resource lock 관리 | `docs/api-contract.md` |
 | `GET` | `/api/admin/audit-logs` | Admin | 감사 로그 필터 조회 | `docs/api-contract.md` |
 | `POST` | `/api/etl/sources/test` | TBD | Source 연결 테스트와 schema draft patch 반환 | `docs/api-contract.md` |
+| `POST` | `/api/etl/sources/rows` | TBD | PostgreSQL 원천 테이블의 서버 페이지 조회. 전체 행 상한 없이 요청 페이지의 최대 200행만 반환 | `docs/api-contract.md` |
 | `POST` | `/api/etl/schema-inference` | TBD | Source 테스트 결과 기반 schema 반환 | `docs/api-contract.md` |
 | `POST` | `/api/etl/jobs` | TBD | 새 수집/처리 job 생성 | `docs/api-contract.md` |
 | `PATCH` | `/api/etl/jobs/{jobId}` | `manage` | 생성된 Job의 허용 설정 업데이트. source identity는 요청에 포함할 수 없음 | `docs/etl-job-edit-contract.md` |
@@ -99,13 +100,23 @@ Canonical status values:
 | `POST` | `/api/query/ai-suggestions` | TBD | 선택 테이블 context 기반 Query AI SQL 초안 생성 | `docs/api-contract.md` |
 | `POST` | `/api/catalog/derived-datasets` | TBD | SQL 결과 기반 Lake Dataset 생성 | `docs/api-contract.md` |
 
-`POST /api/etl/jobs/{jobId}/commands`의 일반 배치 `run`/`retry`는 Airflow 접수 직후 `queued` 또는 `running` 상태를 응답한다. Airflow의 `spark_process_write` task가 bearer token으로 FastAPI internal execution API를 호출해 실제 PySpark 처리를 수행하고, 최종 Run/DAG/Spark manifest는 `GET /api/etl/jobs/{jobId}` polling으로 반영한다.
+`POST /api/etl/jobs/{jobId}/commands`의 일반 배치 `run`/`retry`는 Airflow 접수 직후 `queued` 또는 `running` 상태를 응답한다. Airflow의 `spark_process_write` task가 bearer token으로 FastAPI internal execution API를 호출해 실제 PySpark 처리를 수행하고, 최종 Run/DAG/Spark manifest는 `GET /api/etl/jobs/{jobId}` polling으로 반영한다. frontend는 active Snapshot Run을 앱 초기 hydrate에서도 복원해 terminal까지 polling하며, 연결 실패를 마지막 `running` 상태와 분리된 `unavailable/retrying` UI 상태로 표시한다. 연속 오류는 bounded exponential backoff를 사용하지만 polling을 영구 중단하지 않는다.
+
+File/S3 텍스트 소스는 화면 미리보기 행 수와 스키마 프로파일 행 수를 분리한다. 기본 미리보기는 10행을 유지하되 같은 bounded object range에서 최대 1,000행을 프로파일링해 뒤쪽에 드물게 등장하는 JSON/JSONL 필드도 스키마에 포함한다. `ASKLAKE_SOURCE_SCHEMA_PROFILE_ROWS`로 최대 50,000행 범위에서 조정할 수 있다.
+
+프로파일에서 추론한 `Float`은 처리 화면이 지원하는 수치 타입 `double`로 표시해 금액 컬럼이 문자열로 강등되지 않게 한다.
+
+PostgreSQL 소스는 샘플 값보다 `information_schema.columns`의 `data_type`, `udt_name`, `is_nullable`을 우선한다. 첫 샘플 행이 null이어도 numeric, timestamp, JSON 컬럼의 타입과 nullability를 실제 테이블 계약대로 유지한다. PostgreSQL driver가 반환한 `Date` 샘플은 JSON 문자열 리터럴이 아니라 ISO 8601 문자열로 직렬화하며, Spark는 이전 Job에 저장된 따옴표 포함 timestamp/date 샘플도 temporal cast 전에 정규화한다.
+
+PostgreSQL 연결 테스트 응답은 인라인 화면용 첫 10행과 전체 `previewRowCount`만 반환한다. Source 화면의 `전체 보기` Dialog는 `POST /api/etl/sources/rows`를 100행 단위로 호출하고, 기본키 순서 또는 기본키가 없는 테이블의 `ctid` 순서로 50,000행 이후와 마지막 페이지까지 탐색한다. 이 10/100 값은 화면/전송 단위이며 전체 데이터 상한이 아니다.
+
+PostgreSQL Job 실행은 `previewRows` 또는 connector sample JSONL을 입력으로 사용하지 않는다. Spark는 PostgreSQL JDBC driver로 저장된 source table 전체를 읽고, 적합한 numeric/date/timestamp 컬럼의 bounds가 연결 테스트에 기록되면 기본 4개 JDBC partition으로 병렬 읽는다. `ASKLAKE_SPARK_RUN_ROW_LIMIT`를 별도로 양수 설정하지 않은 일반 Job은 `LIMIT` 없이 전 행을 처리한다.
 
 내부 실행 API는 `AIRFLOW_EXECUTION_API_TOKEN`이 없으면 `503 AIRFLOW_EXECUTION_NOT_CONFIGURED`, token이 다르면 `401 AIRFLOW_EXECUTION_UNAUTHORIZED`, 저장된 Job/Run/Airflow DAG Run identity가 일치하지 않으면 `409 AIRFLOW_RUN_MISMATCH`를 반환한다. 성공/실패 Spark manifest는 `JobRunSummary.taskStates.sparkResult`에 보존되며, Phase 2에서는 Catalog Dataset을 생성하거나 materialization history를 갱신하지 않는다.
 
 Phase 3의 `publish_run_result` task는 `POST /api/internal/airflow/spark-runs/{runId}/catalog`에 `{ "jobId": "..." }`를 보낸다. backend는 저장된 `sparkResult.status=success`, 실제 Parquet object, Job의 `datasetId`를 검증한 뒤 같은 Run의 materialization과 lineage를 `catalog_datasets.payload`에 저장한다. 성공 response는 `status`, `runId`, `reconciledAt`, `dataset`을 반환하고 `JobRunSummary.taskStates.catalogResult`에도 같은 식별자와 결과를 보존한다.
 
-Catalog endpoint는 `runId` 기준으로 멱등하다. `publish_run_result`는 30초 간격으로 최대 2회 재시도하므로 최초 시도를 포함해 최대 3회 같은 `runId`의 Catalog reconciliation을 호출한다. 이 task retry는 upstream의 성공 Spark XCom과 저장된 `sparkResult`를 재사용해 Spark를 다시 실행하지 않으며, `materializationRuns`에는 같은 `runId`가 하나만 남아야 한다. 저장된 Spark 성공 결과가 없으면 `409 SPARK_RESULT_NOT_READY`, identity가 다르면 `409 AIRFLOW_RUN_MISMATCH`, 실제 output 확인 또는 Catalog transaction이 실패하면 `500 CATALOG_RECONCILIATION_FAILED`를 반환한다. 실패 응답은 재시도 소진 후 `publish_run_result` task와 DAG Run을 실패시키고, AskLake Run의 실패 단계는 `Catalog reconciliation`로 표시한다.
+Catalog endpoint는 `runId` 기준으로 멱등하다. `publish_run_result`는 30초 간격으로 최대 2회 재시도하므로 최초 시도를 포함해 최대 3회 같은 `runId`의 Catalog reconciliation을 호출한다. 이 task retry는 upstream의 성공 Spark XCom과 저장된 `sparkResult`를 재사용해 Spark를 다시 실행하지 않으며, `materializationRuns`에는 같은 `runId`가 하나만 남아야 한다. 저장된 Spark 성공 결과가 없으면 `409 SPARK_RESULT_NOT_READY`, identity가 다르면 `409 AIRFLOW_RUN_MISMATCH`, 실제 output 확인 또는 Catalog transaction이 실패하면 `500 CATALOG_RECONCILIATION_FAILED`를 반환한다. 실패 응답은 재시도 소진 후 `publish_run_result` task와 DAG Run을 실패시키고, AskLake Run의 실패 단계는 `Catalog reconciliation`로 표시한다. backend에 도달하기 전의 network failure는 `catalogResult`를 기록할 수 없으므로 backend 복구 후 Airflow task state와 redacted task log tail을 읽어 같은 실패 단계와 compact 원인을 보존한다.
 
 Airflow DAG Run은 Catalog endpoint가 성공한 뒤에만 `success`가 된다. frontend polling이 해당 terminal success 전환을 관찰하면 `GET /api/catalog/datasets`를 다시 호출해 새 dataset 또는 append history를 전체 새로고침 없이 반영한다.
 

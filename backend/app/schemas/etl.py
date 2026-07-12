@@ -732,6 +732,24 @@ class SourceConnectorRequest(CamelModel):
     source_type: str
 
 
+class SourceRowsRequest(SourceConnectorRequest):
+    known_row_count: int | None = Field(default=None, ge=0)
+    limit: int = Field(default=100, ge=1, le=200)
+    offset: int = Field(default=0, ge=0)
+
+
+class SourceRowsResponse(CamelModel):
+    columns: list[str]
+    has_next: bool
+    limit: int
+    offset: int
+    order_columns: list[str] = Field(default_factory=list)
+    returned_rows: int
+    row_count: int
+    rows: list[list[str]]
+    source_label: str
+
+
 class SourceAssetsRequest(CamelModel):
     prefix: str = ""
     source_config: SourceFieldRows = Field(default_factory=list)
@@ -754,5 +772,9 @@ class SourceConnectorAnalysis(CamelModel):
     preview_columns: list[str]
     preview_note: str
     preview_rows: list[list[str]]
+    preview_has_next: bool = False
+    preview_limit: int = 10
+    preview_offset: int = 0
+    preview_row_count: int | None = None
     status: Literal["idle", "testing", "success", "failed"]
     test_items: list[tuple[str, str]]

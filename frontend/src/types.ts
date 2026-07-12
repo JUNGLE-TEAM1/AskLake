@@ -28,6 +28,7 @@ export type {
   JobRunStatus,
   JobRunOutcome,
   JobRunSummary,
+  JobRunSyncState,
   JobStats,
   JobStatus,
   KafkaContinuousBatch,

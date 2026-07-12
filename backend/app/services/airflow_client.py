@@ -187,6 +187,40 @@ class AirflowClient:
             if isinstance(item, dict)
         ]
 
+    def get_task_log(
+        self,
+        dag_run_id: str,
+        task_id: str,
+        *,
+        try_number: int = 1,
+    ) -> str:
+        response = self._request_json(
+            "GET",
+            (
+                f"/dags/{path_segment(self.config.dag_id)}/dagRuns/{path_segment(dag_run_id)}"
+                f"/taskInstances/{path_segment(task_id)}/logs/{max(0, try_number)}"
+            ),
+            query={"full_content": "true"},
+        )
+        content = response.get("content")
+        if not isinstance(content, list):
+            raise api_error(
+                "AIRFLOW_BAD_RESPONSE",
+                "Airflow task log response did not include content.",
+                HTTP_502_BAD_GATEWAY,
+                {"dagId": self.config.dag_id, "dagRunId": dag_run_id, "taskId": task_id},
+            )
+        lines = []
+        for item in content:
+            if isinstance(item, dict):
+                timestamp = string_or_none(item.get("timestamp"))
+                event = string_or_none(item.get("event"))
+                if event:
+                    lines.append(f"{timestamp} {event}" if timestamp else event)
+            elif item is not None:
+                lines.append(str(item))
+        return "\n".join(lines)
+
     def dag_run_url(self, dag_run_id: str) -> str | None:
         if not self.config.ui_base_url:
             return None

@@ -16,6 +16,8 @@ output/
 __pycache__/
 *.pyc
 .playwright-cli/
+.DS_Store
+exports/*.parquet
 deploy/.env
 deploy/ec2.env
 airflow/logs/

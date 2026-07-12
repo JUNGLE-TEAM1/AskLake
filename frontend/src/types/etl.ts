@@ -540,6 +540,13 @@ export type JobRunSummary = {
   textStructuringExecution?: TextStructuringExecutionSummary;
 };
 
+export type JobRunSyncState = {
+  activeRunId?: string;
+  error?: string;
+  lastSuccessAt?: string;
+  status: "idle" | "healthy" | "retrying" | "unavailable";
+};
+
 export type TextStructuringColumnExecution = {
   allowedValues?: string[];
   distinctOutputValues?: number;

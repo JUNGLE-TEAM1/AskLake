@@ -28,6 +28,8 @@
 | --- | --- | --- | --- | --- | --- |
 | Frontend UI checks before merge | GitHub Actions workflow running `cd frontend && npm run verify:ui-regressions && npm run build` | `enabled` | block merge when required check is enabled and the workflow fails | maintainer | PR에서 SQL/Catalog/Dashboard UI regression contract와 Vite build를 함께 확인 |
 | Prod compose config check | CI workflow candidate running `docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml config` | `planned` | block deploy workflow when compose config is invalid | maintainer | Phase 3에서 prod-like compose 파일 추가 |
+| Local Airflow/backend lifecycle check | `docker compose config --quiet` plus backend/Airflow health smoke | `partial` | catch invalid service dependency or an unreachable internal execution API before a long Spark Run | maintainer | local Airflow uses the health-managed root Compose backend and `http://backend:8080` service DNS |
+| Local Spark resource capacity check | launcher preflight candidate comparing requested driver/executor memory with Docker capacity | `planned` | fail before submit when the local Spark request cannot fit the Docker runtime | maintainer | exit 137 incident and recovery evidence: `docs/spark-exit-137-memory-incident-analysis.md` |
 | Backend deploy image build | CI/deploy workflow candidate running `docker build -t asklake-backend-deploy-check:local backend` | `planned` | catch Python/package incompatibility before EC2 compose rebuild | maintainer | FastAPI backend uses `python:3.13-slim` and `backend/requirements.txt` |
 | Secret scanning / push protection | GitHub repository setting | `unknown` | block or warn on secret push | repo admin | repository admin 확인 필요 |
 | Protected integration branches | GitHub repository ruleset on `main`, `dev`, and `pair` | `enabled` | block direct push or force push; require changes through PR | repo admin | ruleset: `Push 금지` |
@@ -71,6 +73,11 @@
 | `npm run build` failed | TypeScript error와 Vite build output을 확인하고 관련 파일을 수정한다. |
 | Live API mode failed | `VITE_API_BASE_URL`, backend server 상태, `docs/api-contract.md` response shape를 확인한다. |
 | Prod compose config failed | `deploy/.env.example`의 필수 env key, `deploy/docker-compose.prod.yml`, Dockerfile path를 확인한다. |
+| Local Airflow backend health failed | `docker compose up -d --build backend airflow-apiserver airflow-scheduler airflow-dag-processor` 후 backend와 Airflow health endpoint를 확인한다. |
+| Local Spark `mounts denied` | root에서 Compose를 실행하고 `ASKLAKE_SPARK_HOST_SCRIPTS_DIR`와 `ASKLAKE_REVIEW_TEXT_MODEL_HOST_DIR`가 host 절대 경로인지, Ivy/report/sample/output이 동일 경로로 공유된 `ASKLAKE_HOST_DATA_DIR` 아래인지 확인한다. |
+| Local Spark MinIO `UnknownHostException` | Spark가 붙는 Compose network에서 `m3-minio`가 해석되는지 확인하고 root Compose backend의 `MINIO_ENDPOINT_IN_DOCKER=http://m3-minio:9000`을 유지한다. |
+| Local Spark MinIO `NoSuchBucket` | `cd backend && MINIO_ENDPOINT=http://127.0.0.1:9000 MINIO_BUCKET=asklake-output npm run minio:seed-verify`로 local target bucket을 준비한 뒤 재실행한다. |
+| Local Spark exit code `137` | Docker 메모리 한도와 `ASKLAKE_SPARK_DRIVER_MEMORY`/`ASKLAKE_SPARK_EXECUTOR_MEMORY` 합계를 확인한다. 작은 로컬 환경은 경량 profile을 사용하고, `inputRows=0`은 manifest 미수집일 수 있으므로 source row count와 혼동하지 않는다. |
 | API contract mismatch | `docs/03-api-reference.md`, `docs/api-contract.md`, frontend types/API adapter를 함께 맞춘다. |
 | PR branch policy failed | base/head 조합을 확인한다. `main <- dev`, `dev <- pair1|pair2|pair3`만 허용된다. |
 | EC2 deploy script failed | `source deploy/ec2.env`, AWS auth, SSH key, instance state, server `deploy/.env`, Compose logs를 순서대로 확인한다. |

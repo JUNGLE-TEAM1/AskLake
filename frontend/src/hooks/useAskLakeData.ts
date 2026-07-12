@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError } from "../types";
 import { catalogDatasets, etlJobs } from "../data/mockData";
 import { apiConfig } from "../services/apiClient";
@@ -31,6 +31,7 @@ import type {
   JobListQuery,
   JobRowData,
   JobRunOutcome,
+  JobRunSyncState,
   JobRunSummary,
   RunsByJobId,
   SelectedRunIdByJobId,
@@ -49,10 +50,14 @@ type JobRunStateMaps = {
 
 type ServerJobCommand = Exclude<JobCommand, "edit" | "delete">;
 type CommandPendingByJobId = Partial<Record<string, ServerJobCommand>>;
+type SnapshotSyncByJobId = Record<string, JobRunSyncState>;
 
 const catalogDatasetStorageKey = "asklake.catalogDatasets";
 const legacyDerivedDatasetStorageKey = "asklake.derivedDatasets";
 const maxStoredCatalogDatasets = 30;
+const snapshotPollIntervalMs = 3000;
+const snapshotPollMaxBackoffMs = 30000;
+const activeSnapshotRunStatuses = new Set(["queued", "running"]);
 
 function normalizeInitialDraftPipeline(draft: DraftPipeline): DraftPipeline {
   return {
@@ -725,6 +730,7 @@ export function useAskLakeData({
   const [selectedRunIdByJobId, setSelectedRunIdByJobId] = useState<SelectedRunIdByJobId>({});
   const [dagStepsByRunId, setDagStepsByRunId] = useState<DagStepsByRunId>({});
   const [commandPendingByJobId, setCommandPendingByJobId] = useState<CommandPendingByJobId>({});
+  const [snapshotSyncByJobId, setSnapshotSyncByJobId] = useState<SnapshotSyncByJobId>({});
   const [sqlResultDraft, setSqlResultDraft] = useState<SqlResultDraft | null>(null);
   const [apiPending, setApiPending] = useState(false);
   const [dataLoading, setDataLoading] = useState(false);
@@ -734,6 +740,17 @@ export function useAskLakeData({
   const commandPendingRef = useRef<Set<string>>(new Set());
   const continuousPollingRef = useRef<Set<string>>(new Set());
   const jobsFilterRequestRef = useRef(0);
+  const jobsRef = useRef(jobs);
+  const runsByJobIdRef = useRef(runsByJobId);
+  const catalogRefreshedRunIdsRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    jobsRef.current = jobs;
+  }, [jobs]);
+
+  useEffect(() => {
+    runsByJobIdRef.current = runsByJobId;
+  }, [runsByJobId]);
 
   const jobExecutionEvidence = useMemo(
     () => buildJobExecutionEvidence(runsByJobId, selectedRunIdByJobId, dagStepsByRunId),
@@ -942,9 +959,185 @@ export function useAskLakeData({
   };
 
   const updateJobState = (jobId: string, updater: (job: JobRowData) => JobRowData) => {
-    setJobs((items) => items.map((job) => (job.id === jobId ? updater(job) : job)));
+    setJobs((items) => {
+      const nextItems = items.map((job) => (job.id === jobId ? updater(job) : job));
+      jobsRef.current = nextItems;
+      return nextItems;
+    });
     setSelectedJob((job) => (job.id === jobId ? updater(job) : job));
   };
+
+  const applyLiveJob = useCallback((liveJob: JobRowData) => {
+    const nextJob = normalizeJobRow(liveJob);
+    const previousJob = jobsRef.current.find((job) => job.id === nextJob.id);
+    const nextJobs = previousJob
+      ? jobsRef.current.map((job) => (job.id === nextJob.id ? nextJob : job))
+      : [nextJob, ...jobsRef.current];
+    const hydratedRunState = buildRunStateFromJobs([nextJob]);
+    const nextRuns = hydratedRunState.runsByJobId[nextJob.id] ?? [];
+
+    jobsRef.current = nextJobs;
+    setJobs(nextJobs);
+    setJobListFacets(getJobListFacets(nextJobs));
+    setSelectedJob((job) => (job.id === nextJob.id ? nextJob : job));
+    setRunsByJobId((state) => ({
+      ...state,
+      [nextJob.id]: nextRuns,
+    }));
+    setSelectedRunIdByJobId((state) => {
+      const selectedRunId = state[nextJob.id];
+      if (selectedRunId && nextRuns.some((run) => run.runId === selectedRunId)) return state;
+      if (!nextRuns[0]) return withoutRecordKey(state, nextJob.id);
+      return { ...state, [nextJob.id]: nextRuns[0].runId };
+    });
+    setDagStepsByRunId((state) => ({
+      ...state,
+      ...hydratedRunState.dagStepsByRunId,
+    }));
+    return nextJob;
+  }, []);
+
+  const updateSnapshotSync = useCallback((jobId: string, patch: Partial<JobRunSyncState>) => {
+    setSnapshotSyncByJobId((state) => {
+      const current = state[jobId] ?? { status: "idle" as const };
+      return {
+        ...state,
+        [jobId]: {
+          ...current,
+          ...patch,
+          status: patch.status ?? current.status,
+        },
+      };
+    });
+  }, []);
+
+  const refreshCatalogAfterTerminalSuccess = useCallback(async (runId: string) => {
+    if (catalogRefreshedRunIdsRef.current.has(runId)) return;
+    catalogRefreshedRunIdsRef.current.add(runId);
+    try {
+      const nextDatasets = (await getDatasets()).map(normalizeDatasetRow);
+      setDatasets(nextDatasets);
+      setSelectedDataset((dataset) => nextDatasets.find((item) => item.id === dataset.id) ?? dataset);
+    } catch {
+      catalogRefreshedRunIdsRef.current.delete(runId);
+      showToast("Run은 성공했지만 카탈로그 목록을 갱신하지 못했습니다. 잠시 후 새로고침해 주세요.", "info");
+    }
+  }, [showToast]);
+
+  const readLiveJob = useCallback(async (jobId: string, activeRunId?: string) => {
+    const nextJob = applyLiveJob(await getLiveJob(jobId));
+    updateSnapshotSync(jobId, {
+      activeRunId,
+      error: undefined,
+      lastSuccessAt: new Date().toISOString(),
+      status: "healthy",
+    });
+    return nextJob;
+  }, [applyLiveJob, updateSnapshotSync]);
+
+  const refreshJob = useCallback(async (jobId: string) => {
+    const activeRun = (runsByJobIdRef.current[jobId] ?? jobsRef.current.find((job) => job.id === jobId)?.runHistory ?? [])
+      .find((run) => activeSnapshotRunStatuses.has(run.status));
+    updateSnapshotSync(jobId, {
+      activeRunId: activeRun?.runId,
+      error: undefined,
+      status: "retrying",
+    });
+    try {
+      await readLiveJob(jobId, activeRun?.runId);
+      writeAuditLog("etl.runs.refreshed", `/api/etl/jobs/${jobId}`, jobId, "success");
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "실행 상태를 확인하지 못했습니다.";
+      updateSnapshotSync(jobId, {
+        activeRunId: activeRun?.runId,
+        error: message,
+        status: "unavailable",
+      });
+      writeAuditLog("etl.runs.refresh_failed", `/api/etl/jobs/${jobId}`, jobId, "failed");
+      showToast("실행 상태를 확인하지 못했습니다. 자동 재시도를 계속합니다.", "info");
+      return false;
+    }
+  }, [readLiveJob, showToast, updateSnapshotSync, writeAuditLog]);
+
+  const activeSnapshotRunKey = useMemo(() => jobs
+    .filter((job) => job.executionMode !== "continuous")
+    .flatMap((job) => {
+      const runs = runsByJobId[job.id] ?? job.runHistory ?? [];
+      const activeRun = runs.find((run) => activeSnapshotRunStatuses.has(run.status));
+      return activeRun ? [`${job.id}\t${activeRun.runId}`] : [];
+    })
+    .sort()
+    .join("\n"), [jobs, runsByJobId]);
+
+  useEffect(() => {
+    if (!enabled || apiConfig.useMock || !activeSnapshotRunKey) return;
+
+    const entries = activeSnapshotRunKey.split("\n").map((entry) => {
+      const [jobId, runId] = entry.split("\t");
+      return { jobId, runId };
+    });
+    const timers = new Map<string, number>();
+    const failures = new Map<string, number>();
+    let cancelled = false;
+
+    const schedule = (jobId: string, runId: string, delay: number) => {
+      const previousTimer = timers.get(jobId);
+      if (previousTimer) window.clearTimeout(previousTimer);
+      if (cancelled) return;
+      timers.set(jobId, window.setTimeout(() => void poll(jobId, runId), delay));
+    };
+    const poll = async (jobId: string, runId: string) => {
+      if (cancelled) return;
+      if (document.visibilityState === "hidden") {
+        schedule(jobId, runId, 5000);
+        return;
+      }
+
+      const failureCount = failures.get(jobId) ?? 0;
+      if (failureCount > 0) {
+        updateSnapshotSync(jobId, { activeRunId: runId, status: "retrying" });
+      }
+      try {
+        const nextJob = await readLiveJob(jobId, runId);
+        failures.set(jobId, 0);
+        const observedRun = nextJob.runHistory?.find((run) => run.runId === runId);
+        if (observedRun?.status === "success") {
+          await refreshCatalogAfterTerminalSuccess(runId);
+          return;
+        }
+        if (observedRun && !activeSnapshotRunStatuses.has(observedRun.status)) return;
+        schedule(jobId, runId, snapshotPollIntervalMs);
+      } catch (error) {
+        const nextFailureCount = Math.min(failureCount + 1, 4);
+        failures.set(jobId, nextFailureCount);
+        updateSnapshotSync(jobId, {
+          activeRunId: runId,
+          error: error instanceof Error ? error.message : "실행 상태 API에 연결하지 못했습니다.",
+          status: "unavailable",
+        });
+        schedule(
+          jobId,
+          runId,
+          Math.min(snapshotPollIntervalMs * (2 ** nextFailureCount), snapshotPollMaxBackoffMs),
+        );
+      }
+    };
+    const retryVisibleRuns = () => {
+      if (document.visibilityState === "hidden") return;
+      entries.forEach(({ jobId, runId }) => schedule(jobId, runId, 0));
+    };
+
+    entries.forEach(({ jobId, runId }) => schedule(jobId, runId, 1000));
+    document.addEventListener("visibilitychange", retryVisibleRuns);
+    window.addEventListener("online", retryVisibleRuns);
+    return () => {
+      cancelled = true;
+      timers.forEach((timer) => window.clearTimeout(timer));
+      document.removeEventListener("visibilitychange", retryVisibleRuns);
+      window.removeEventListener("online", retryVisibleRuns);
+    };
+  }, [activeSnapshotRunKey, enabled, readLiveJob, refreshCatalogAfterTerminalSuccess, updateSnapshotSync]);
 
   const pollContinuousRuntimeUntilStable = async (initialJob: JobRowData) => {
     if (apiConfig.useMock || !isContinuousRuntimeTransition(initialJob) || continuousPollingRef.current.has(initialJob.id)) return;
@@ -1146,6 +1339,7 @@ export function useAskLakeData({
     openJobDetail,
     openJobRuns,
     filterJobs,
+    refreshJob,
     createSqlDatasetJob,
     deleteMaterializationRun,
     runsByJobId,
@@ -1153,6 +1347,7 @@ export function useAskLakeData({
     selectedJob,
     selectedRunIdByJobId,
     selectRunForJob,
+    snapshotSyncByJobId,
     setSelectedDataset,
     setSelectedJob,
     setSqlResultDraft,

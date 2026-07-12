@@ -29,7 +29,9 @@ export async function fetchAuthSession(): Promise<AuthSessionResponse> {
     return session.authenticated ? session : localSession();
   } catch (error) {
     if (!shouldUseTempAuth(error)) throw error;
-    return localSession();
+    const session = localSession();
+    if (session.authenticated) return session;
+    throw error;
   }
 }
 

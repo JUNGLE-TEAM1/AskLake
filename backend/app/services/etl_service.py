@@ -67,6 +67,8 @@ from app.schemas.etl import (
     SourceAssetsResponse,
     SourceConnectorAnalysis,
     SourceConnectorRequest,
+    SourceRowsRequest,
+    SourceRowsResponse,
     UpdatePipelineRequest,
 )
 
@@ -712,6 +714,23 @@ def test_source_connector(request: SourceConnectorRequest) -> SourceConnectorAna
         timeout_seconds=120,
     )
     return SourceConnectorAnalysis.model_validate(result)
+
+
+def get_source_rows(request: SourceRowsRequest) -> SourceRowsResponse:
+    result = run_node_bridge(
+        "get-source-rows.mjs",
+        "ASKLAKE_SOURCE_ROWS_RESULT",
+        {
+            "knownRowCount": request.known_row_count,
+            "limit": request.limit,
+            "offset": request.offset,
+            "sourceConfig": request.source_config,
+            "sourceType": request.source_type,
+        },
+        error_marker="ASKLAKE_SOURCE_ROWS_ERROR",
+        timeout_seconds=120,
+    )
+    return SourceRowsResponse.model_validate(result)
 
 
 def list_source_assets(request: SourceAssetsRequest) -> SourceAssetsResponse:
@@ -1777,6 +1796,9 @@ def sync_airflow_run(
         elif spark_failed:
             run.failed_stage = str(spark_result.get("failedStage") or "Spark ETL")
             run.error_summary = str(spark_result.get("error") or "Spark execution failed.")
+        elif failed_task and failed_task.task_id == "publish_run_result":
+            run.failed_stage = "Catalog reconciliation"
+            run.error_summary = airflow_task_failure_summary(airflow_client, run, failed_task)
         else:
             run.failed_stage = task_title(failed_task.task_id) if failed_task else "Airflow DAG Run"
             run.error_summary = f"Airflow task failed: {failed_task.task_id}" if failed_task else "Airflow DAG Run failed."
@@ -1882,7 +1904,7 @@ AIRFLOW_TASK_TITLES = {
     "receive_asklake_run": "1. Airflow DAG Run 접수",
     "validate_spark_request": "2. Spark 실행 요청 검증",
     "spark_process_write": "3. Spark 처리/품질/Parquet 적재",
-    "publish_run_result": "4. Spark 실행 결과 확정",
+    "publish_run_result": "4. Catalog reconciliation",
 }
 
 
@@ -1911,6 +1933,48 @@ def task_title(task_id: str) -> str:
     if task_id in AIRFLOW_TASK_TITLES:
         return AIRFLOW_TASK_TITLES[task_id]
     return str(task_id or "Airflow task").replace("_", " ").strip().title()
+
+
+def airflow_task_failure_summary(
+    airflow_client: Any,
+    run: ETLRunModel,
+    task: AirflowTaskInstance,
+) -> str:
+    fallback = f"Airflow task failed: {task.task_id}"
+    get_task_log = getattr(airflow_client, "get_task_log", None)
+    if not callable(get_task_log) or not run.airflow_dag_run_id:
+        return fallback
+
+    try:
+        raw_try_number = task.raw.get("try_number")
+        try_number = max(1, int(raw_try_number or 1))
+        raw_log = get_task_log(run.airflow_dag_run_id, task.task_id, try_number=try_number)
+    except Exception:
+        return fallback
+
+    lines = [redact_airflow_log_line(line) for line in str(raw_log or "").splitlines() if line.strip()]
+    keywords = (
+        "catalog reconciliation",
+        "network is unreachable",
+        "connection refused",
+        "urlerror",
+        "runtimeerror",
+        "error",
+    )
+    relevant = [line for line in lines if any(keyword in line.lower() for keyword in keywords)]
+    selected = (relevant or lines)[-6:]
+    if not selected:
+        return fallback
+    return compact_storage_text(" | ".join(selected), limit=1800)
+
+
+def redact_airflow_log_line(value: str) -> str:
+    redacted = re.sub(r"(?i)bearer\s+[^\s,;]+", "Bearer [REDACTED]", value)
+    return re.sub(
+        r"(?i)((?:access[_-]?key|authorization|password|secret|token)\s*[:=]\s*)[^\s,;]+",
+        r"\1[REDACTED]",
+        redacted,
+    )
 
 
 def dag_steps_from_airflow_submit(job: ETLJobModel, command: str, run: dict[str, Any]) -> list[dict[str, Any]]:

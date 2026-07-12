@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { createReadStream, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CreateBucketCommand, HeadBucketCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
@@ -11,6 +11,7 @@ const mongoName = process.env.ASKLAKE_MONGO_CONTAINER || "asklake-mongodb-source
 const mongoPort = process.env.ASKLAKE_MONGO_PORT || "27018";
 const dockerNetwork = process.env.ASKLAKE_DOCKER_NETWORK || "asklake_default";
 const backendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const syntheticCommerceDir = path.join(backendDir, "fixtures", "synthetic-commerce");
 
 ensureDockerNetwork();
 if (process.env.ASKLAKE_WITH_SOURCE_MINIO === "true") {
@@ -19,6 +20,9 @@ if (process.env.ASKLAKE_WITH_SOURCE_MINIO === "true") {
 }
 ensurePostgres();
 loadPostgresSample();
+if (process.env.ASKLAKE_WITH_SYNTHETIC_COMMERCE === "true") {
+  loadSyntheticCommercePostgres();
+}
 ensureMongo();
 loadMongoSample();
 
@@ -55,11 +59,24 @@ function ensurePostgres() {
   }
 
   for (let attempt = 0; attempt < 40; attempt += 1) {
-    const ready = run("docker", ["exec", postgresName, "pg_isready", "-U", "asklake", "-d", "asklake_sources"], { allowFailure: true, quiet: true });
-    if (ready.status === 0) return;
+    const ready = run("docker", ["exec", postgresName, "pg_isready", "-U", "asklake", "-d", "postgres"], { allowFailure: true, quiet: true });
+    if (ready.status === 0) {
+      ensurePostgresDatabase();
+      return;
+    }
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250);
   }
   throw new Error("Postgres fixture did not become ready.");
+}
+
+function ensurePostgresDatabase() {
+  const exists = run(
+    "docker",
+    ["exec", postgresName, "psql", "-U", "asklake", "-d", "postgres", "-tAc", "select 1 from pg_database where datname = 'asklake_sources'"],
+    { allowFailure: true, quiet: true },
+  );
+  if (exists.status === 0 && String(exists.stdout).trim() === "1") return;
+  run("docker", ["exec", postgresName, "createdb", "-U", "asklake", "asklake_sources"], { quiet: true });
 }
 
 function loadPostgresSample() {
@@ -79,6 +96,15 @@ insert into public.nyc_taxi_sample(id, event_time, product_id, price, active, pa
 on conflict (id) do update set price = excluded.price;
 `;
   run("docker", ["exec", "-i", postgresName, "psql", "-U", "asklake", "-d", "asklake_sources"], { input: sql, quiet: true });
+}
+
+function loadSyntheticCommercePostgres() {
+  const configuredPython = process.env.ASKLAKE_FASTAPI_PYTHON;
+  const venvPython = process.platform === "win32"
+    ? path.join(backendDir, ".venv", "Scripts", "python.exe")
+    : path.join(backendDir, ".venv", "bin", "python");
+  const pythonBin = configuredPython || (existsSync(venvPython) ? venvPython : (process.platform === "win32" ? "python" : "python3"));
+  run(pythonBin, [path.join(backendDir, "scripts", "seed-synthetic-commerce-postgres.py")]);
 }
 
 function ensureMongo() {
@@ -290,6 +316,10 @@ async function seedMinioSourceSamples() {
     await client.send(new PutObjectCommand({ Body: body, Bucket: bucket, ContentType: contentType, Key: key }));
   }
 
+  if (process.env.ASKLAKE_WITH_SYNTHETIC_COMMERCE === "true") {
+    await seedSyntheticCommerceSamples(client, bucket);
+  }
+
   const parquetFixture = findFirstParquetFixture();
   if (parquetFixture) {
     await client.send(new PutObjectCommand({
@@ -300,6 +330,31 @@ async function seedMinioSourceSamples() {
     }));
   }
   console.log("MinIO source fixtures ready");
+}
+
+async function seedSyntheticCommerceSamples(client, bucket) {
+  const fixtures = [
+    ["products.csv", "text/csv"],
+    ["users.csv", "text/csv"],
+    ["commerce_events.jsonl", "application/x-ndjson"],
+    ["manifest.json", "application/json"],
+  ];
+
+  for (const [fileName, contentType] of fixtures) {
+    const filePath = path.join(syntheticCommerceDir, fileName);
+    if (!existsSync(filePath)) {
+      throw new Error(`Synthetic commerce fixture is missing: ${filePath}`);
+    }
+    await client.send(new PutObjectCommand({
+      Body: createReadStream(filePath),
+      Bucket: bucket,
+      ContentLength: statSync(filePath).size,
+      ContentType: contentType,
+      Key: `synthetic-commerce/${fileName}`,
+    }));
+  }
+
+  console.log(`Synthetic commerce source ready: s3://${bucket}/synthetic-commerce/`);
 }
 
 async function ensureBucket(client, bucket) {

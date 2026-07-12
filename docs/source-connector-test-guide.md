@@ -93,6 +93,17 @@ npm run dev -- --host 127.0.0.1 --port 5173
 | TXT | `asklake-fixtures/txt/events.txt` |
 | Parquet | `asklake-fixtures/parquet/events.parquet` |
 
+합성 커머스 fixture를 함께 올리려면 다음과 같이 실행한다.
+
+```bash
+cd backend
+ASKLAKE_WITH_SOURCE_MINIO=true \
+ASKLAKE_WITH_SYNTHETIC_COMMERCE=true \
+npm run sources:fixtures
+```
+
+Compose backend에서 연결할 때 Endpoint URL은 `http://asklake-source-minio:9000`, bucket은 `m3-raw`, prefix는 `synthetic-commerce/`를 사용한다. 해당 prefix에는 `commerce_events.jsonl`, `products.csv`, `users.csv`, `manifest.json`이 준비된다.
+
 ### MongoDB
 
 | Field | Value |
@@ -149,7 +160,29 @@ $env:ASKLAKE_MONGO_DATABASE = "asklake_sources"
 | Password / Auth Token | `asklake` |
 | DATASET OR TABLE SELECTOR | `nyc_taxi_sample` |
 
-연결 테스트 후 테이블 목록, 샘플 행, 스키마를 확인한다.
+연결 테스트 후 테이블 목록, 인라인 첫 10행, 전체 행 수, 스키마를 확인한다. `전체 보기`를 열면 100행 단위로 서버에서 다음 page를 조회하며 메인 화면에는 page control을 노출하지 않는다.
+
+합성 커머스 정형 source는 `ASKLAKE_WITH_SYNTHETIC_COMMERCE=true npm run sources:fixtures` 또는 `npm run sources:commerce-postgres`로 적재한다. Compose backend에서 연결할 때는 다음 값을 사용한다.
+
+| Field | Value |
+| --- | --- |
+| Endpoint / Host | `asklake-postgres-source` |
+| Port | `5432` |
+| Database Name | `asklake_sources` |
+| Schema | `synthetic_commerce` |
+| Username | `asklake` |
+| Password / Auth Token | `asklake` |
+| DATASET OR TABLE SELECTOR | `products`, `users`, `commerce_events` 중 하나 |
+
+세 테이블의 기대 행 수는 각각 10,000, 3,000, 79,409다. `commerce_events.order_value`는 Float, `event_time`은 Timestamp, nullable 주문 필드는 실제 PostgreSQL metadata 기준으로 추론되어야 한다.
+
+```bash
+cd backend
+npm run verify:postgres-source
+npm run verify:postgres-spark-full
+```
+
+첫 명령은 인라인 10행, 50,001~50,100행, 마지막 79,401~79,409행과 `hasNext=false`를 검증한다. 두 번째 명령은 같은 검증 뒤 Spark JDBC가 `commerce_events` 79,409행 전체를 읽고 같은 수의 Parquet row를 쓰는지 확인한다. 로컬 fixture가 실행 중이어야 한다.
 
 ### Kafka
 

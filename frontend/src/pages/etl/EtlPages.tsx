@@ -47,11 +47,19 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { CheckableOption } from "@/components/ui/checkable-option";
 import { CommandBar } from "@/components/ui/command-bar";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { FormFieldGroup, NativeSelectField } from "@/components/ui/form-field-group";
 import { Input } from "@/components/ui/input";
 import { KeyValueList } from "@/components/ui/key-value-list";
 import { NativeSelect } from "@/components/ui/native-select";
 import { PageHeader } from "@/components/ui/page-header";
+import { PaginationBar } from "@/components/ui/pagination-bar";
 import { SegmentedTabs } from "@/components/ui/segmented-tabs";
 import {
   Select,
@@ -71,7 +79,7 @@ import { DatabaseField } from "../../components/target/DatabaseField";
 import { runTransformQualitySamplePreview } from "../../data/transformQualityPreview";
 import { toCreatePipelineRequest } from "../../services/draftPipelineContract";
 import { getReviewSnapshot, type ReviewSnapshot } from "../../services/reviewApi";
-import { listSourceAssets, testSourceConnector, type SourceConnectorAnalysis } from "../../services/sourceConnectorService";
+import { getSourceRows, listSourceAssets, testSourceConnector, type SourceConnectorAnalysis, type SourceRowsResponse } from "../../services/sourceConnectorService";
 import type { AuditResult, DraftPipeline, DraftPipelinePatch, FlowId, ScheduleFlowId, SchemaColumnDraft, SourceDraft, TargetLayer } from "../../types";
 import type { QualityRuleDraft, RetryPolicyDraft, ScheduleDraft, ScheduleOverlapPolicy, TransformStepDraft, WatermarkPolicyDraft, WatermarkWindowMode } from "../../types/etl";
 import type { QualityRuleOption, TransformQualityInvalidRow, TransformQualityPreviewSample, TransformQualitySampleRow, TransformQualityStepPreview, TransformQualityValidationResult } from "../../data/transformQualityPreview";
@@ -1061,6 +1069,9 @@ function getInitialSourceStage(draft: DraftPipeline): "choose" | "connect" | "br
   return "connect";
 }
 
+const POSTGRES_INLINE_PREVIEW_ROWS = 10;
+const POSTGRES_PREVIEW_PAGE_SIZE = 100;
+
 export function SourceConnectionPage({
   draft,
   onAction,
@@ -1087,6 +1098,10 @@ export function SourceConnectionPage({
   const [loadingAssetPath, setLoadingAssetPath] = useState("");
   const [selectedAssetPath, setSelectedAssetPath] = useState("");
   const [continuousAdvancedOpen, setContinuousAdvancedOpen] = useState(false);
+  const [previewDialogOpen, setPreviewDialogOpen] = useState(false);
+  const [previewPage, setPreviewPage] = useState<SourceRowsResponse | null>(null);
+  const [previewPageError, setPreviewPageError] = useState("");
+  const [previewPageLoading, setPreviewPageLoading] = useState(false);
   const sourceLocked = connectionStatus === "testing";
   const continuousConfig = draft.source.continuousConfig ?? {
     initialOffsetPolicy: "earliest" as const,
@@ -1320,6 +1335,10 @@ export function SourceConnectionPage({
   const displayPreviewColumns = selectedAssetHasSample ? sourceRuntime?.previewColumns ?? [] : [];
   const displayPreviewRows = selectedAssetHasSample ? sourceRuntime?.previewRows ?? [] : [];
   const hasSamplePreview = displayPreviewColumns.length > 0 && displayPreviewRows.length > 0;
+  const inlinePreviewRows = activeSourceType === "PostgreSQL"
+    ? displayPreviewRows.slice(0, POSTGRES_INLINE_PREVIEW_ROWS)
+    : displayPreviewRows;
+  const previewRowCount = sourceRuntime?.previewRowCount ?? displayPreviewRows.length;
   const hasSchemaPatch = Boolean(sourceRuntime?.draftPatch.schema?.columns?.length && sourceRuntime?.draftPatch.schema?.sampleRows?.length);
   const displayPreviewNote = sourceRuntime?.previewNote ?? current.previewNote;
   const previewTableMinWidth = Math.max(880, displayPreviewColumns.length * 148);
@@ -1383,6 +1402,8 @@ export function SourceConnectionPage({
     setSourceType(value);
     setSourceRuntime(null);
     setSelectedAssetPath("");
+    setPreviewDialogOpen(false);
+    setPreviewPage(null);
     setConnectionStatus(nextStatus);
     setConnectionMessage(nextMessage);
     applySourceDraft(value, nextFields, nextStatus, nextMessage);
@@ -1396,6 +1417,8 @@ export function SourceConnectionPage({
     setSourceFields((fields) => ({ ...fields, [activeSourceType]: nextFields }));
     setSourceRuntime(null);
     setSelectedAssetPath("");
+    setPreviewDialogOpen(false);
+    setPreviewPage(null);
     setConnectionStatus(nextStatus);
     setConnectionMessage(nextMessage);
     applySourceDraft(activeSourceType, nextFields, nextStatus, nextMessage);
@@ -1575,6 +1598,42 @@ export function SourceConnectionPage({
     applySourceDraft(activeSourceType, verifiedSourceFields, connectionStatus, connectionMessage);
     onNext();
   };
+
+  const loadSourcePreviewPage = async (offset: number) => {
+    if (activeSourceType !== "PostgreSQL") return;
+    setPreviewPageLoading(true);
+    setPreviewPageError("");
+    try {
+      const result = await getSourceRows(activeSourceType, verifiedSourceFields, {
+        knownRowCount: previewRowCount,
+        limit: POSTGRES_PREVIEW_PAGE_SIZE,
+        offset,
+      });
+      setPreviewPage(result);
+      onAction("etl.source.preview_page_loaded", "/api/etl/sources/rows", `${result.sourceLabel}:${offset}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "원천 데이터 페이지를 불러오지 못했습니다.";
+      setPreviewPageError(message);
+      onAction("etl.source.preview_page_failed", "/api/etl/sources/rows", `${activeSourceType}:${offset}`, "failed");
+    } finally {
+      setPreviewPageLoading(false);
+    }
+  };
+
+  const handlePreviewDialogOpenChange = (open: boolean) => {
+    setPreviewDialogOpen(open);
+    if (open) {
+      setPreviewPage(null);
+      void loadSourcePreviewPage(0);
+    }
+  };
+
+  const previewPageOffset = previewPage?.offset ?? 0;
+  const previewDialogRowCount = previewPage?.rowCount ?? previewRowCount;
+  const previewPageStart = previewDialogRowCount === 0 ? 0 : previewPageOffset + 1;
+  const previewPageEnd = Math.min(previewPageOffset + (previewPage?.rows.length ?? 0), previewDialogRowCount);
+  const previewTotalPages = Math.max(1, Math.ceil(previewDialogRowCount / POSTGRES_PREVIEW_PAGE_SIZE));
+  const previewCurrentPage = Math.floor(previewPageOffset / POSTGRES_PREVIEW_PAGE_SIZE) + 1;
 
   const sourceChoiceConnectors = ["PostgreSQL", "MongoDB", "File / S3", "REST API", "Stream / Kafka", "Data Lake"];
 
@@ -1757,20 +1816,27 @@ export function SourceConnectionPage({
                   <div className="source-step-header">
                     <em>2</em>
                     <div>
-                      <strong>제한 샘플 미리보기</strong>
+                      <strong>{activeSourceType === "PostgreSQL" ? "원천 데이터 미리보기" : "제한 샘플 미리보기"}</strong>
                     </div>
-                    <span className="source-select-pill active">{selectedAsset ? selectedAsset[0] : "선택 대기"}</span>
+                    <div className="flex items-center gap-2">
+                      <span className="source-select-pill active">{selectedAsset ? selectedAsset[0] : activeSourceType === "PostgreSQL" ? sourceConfigValue(verifiedSourceFields, "DATASET OR TABLE SELECTOR") : "선택 대기"}</span>
+                      {activeSourceType === "PostgreSQL" && hasSamplePreview ? (
+                        <Button size="sm" type="button" variant="outline" onClick={() => handlePreviewDialogOpenChange(true)}>
+                          <Maximize2 data-icon="inline-start" /> 전체 보기
+                        </Button>
+                      ) : null}
+                    </div>
                   </div>
                   <div className="source-preview-format-strip">
                     <strong>{displayPreviewFormat}</strong>
-                    <span>{displayPreviewRows.length}행 · {displayPreviewColumns.length}필드</span>
+                    <span>{activeSourceType === "PostgreSQL" ? `1-${inlinePreviewRows.length} / ${previewRowCount.toLocaleString()}행` : `${displayPreviewRows.length}행`} · {displayPreviewColumns.length}필드</span>
                   </div>
-                  {displayPreviewRows.length > 0 ? (
+                  {inlinePreviewRows.length > 0 ? (
                     usesJsonSampleTree ? (
                       <SourceJsonSampleTree
                         columns={displayPreviewColumns}
                         format={displayPreviewFormat}
-                        rows={displayPreviewRows}
+                        rows={inlinePreviewRows}
                       />
                     ) : (
                       <ScrollArea
@@ -1782,7 +1848,7 @@ export function SourceConnectionPage({
                         <table className="schema-table" style={{ minWidth: previewTableMinWidth }}>
                           <thead><tr>{displayPreviewColumns.map((column, index) => <th key={`${column}-${index}`}>{sourceColumnLabel(column)}</th>)}</tr></thead>
                           <tbody>
-                            {displayPreviewRows.map((row, rowIndex) => <tr key={`${activeSourceType}-preview-${rowIndex}`}>{row.map((cell, cellIndex) => <td key={`${rowIndex}-${cellIndex}`}>{cell}</td>)}</tr>)}
+                            {inlinePreviewRows.map((row, rowIndex) => <tr key={`${activeSourceType}-preview-${rowIndex}`}>{row.map((cell, cellIndex) => <td key={`${rowIndex}-${cellIndex}`}>{cell}</td>)}</tr>)}
                           </tbody>
                         </table>
                       </ScrollArea>
@@ -1795,6 +1861,53 @@ export function SourceConnectionPage({
               </div>
             </ScrollArea>
           )}
+          <Dialog onOpenChange={handlePreviewDialogOpenChange} open={previewDialogOpen}>
+            <DialogContent className="grid h-[min(900px,calc(100vh-2rem))] w-[min(1440px,calc(100vw-2rem))] max-w-none grid-rows-[max-content_minmax(0,1fr)] overflow-hidden">
+              <DialogHeader>
+                <DialogTitle>원천 데이터 전체 보기</DialogTitle>
+                <DialogDescription>
+                  {previewPage?.sourceLabel ?? sourceConfigValue(verifiedSourceFields, "DATASET OR TABLE SELECTOR")} · 총 {previewDialogRowCount.toLocaleString()}행 · 페이지당 {POSTGRES_PREVIEW_PAGE_SIZE}행
+                </DialogDescription>
+              </DialogHeader>
+              <div className="grid min-h-0 grid-rows-[minmax(0,1fr)_max-content] gap-3 px-4 pb-4 pt-2">
+                <ScrollArea className="min-h-0 rounded-lg border border-slate-200" scrollbars="both" type="always">
+                  {previewPageError ? (
+                    <div className="grid min-h-48 place-items-center p-6 text-center text-sm font-semibold text-red-600">
+                      <div>
+                        <p>{previewPageError}</p>
+                        <Button className="mt-3" size="sm" type="button" variant="outline" onClick={() => void loadSourcePreviewPage(previewPageOffset)}>다시 시도</Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <table className="schema-table" style={{ minWidth: Math.max(880, (previewPage?.columns.length ?? displayPreviewColumns.length) * 148) }}>
+                      <thead>
+                        <tr>{(previewPage?.columns ?? displayPreviewColumns).map((column, index) => <th key={`${column}-${index}`}>{sourceColumnLabel(column)}</th>)}</tr>
+                      </thead>
+                      <tbody>
+                        {previewPageLoading && !previewPage ? (
+                          <tr><td colSpan={Math.max(displayPreviewColumns.length, 1)}>페이지를 불러오는 중입니다.</td></tr>
+                        ) : (previewPage?.rows ?? []).map((row, rowIndex) => (
+                          <tr key={`postgres-preview-${previewPageOffset + rowIndex}`}>
+                            {row.map((cell, cellIndex) => <td key={`${previewPageOffset + rowIndex}-${cellIndex}`}>{cell}</td>)}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </ScrollArea>
+                <PaginationBar
+                  aria-label="원천 데이터 페이지"
+                  currentPage={previewCurrentPage}
+                  nextDisabled={!previewPage?.hasNext || previewPageLoading}
+                  onNext={() => void loadSourcePreviewPage(previewPageOffset + POSTGRES_PREVIEW_PAGE_SIZE)}
+                  onPrevious={() => void loadSourcePreviewPage(Math.max(0, previewPageOffset - POSTGRES_PREVIEW_PAGE_SIZE))}
+                  previousDisabled={previewPageOffset === 0 || previewPageLoading}
+                  rangeLabel={`${previewPageStart}-${previewPageEnd} / ${previewDialogRowCount.toLocaleString()}행`}
+                  totalPages={previewTotalPages}
+                />
+              </div>
+            </DialogContent>
+          </Dialog>
           </Tabs>
         </section>
     </CreationFlowLayout>

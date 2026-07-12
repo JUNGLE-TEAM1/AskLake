@@ -26,6 +26,21 @@ from urllib.parse import quote_plus
 
 KST = timezone(timedelta(hours=9))
 
+EVENT_SCHEMA_VERSION = "1.0"
+CHECKOUT_START_PROBABILITY = 0.70
+PAYMENT_SUCCESS_PROBABILITY = 0.70
+ORDER_COMPLETION_PROBABILITY = 0.75
+
+EVENT_SOURCE_BY_TYPE = {
+    "product_impression": "web_client",
+    "product_click": "web_client",
+    "add_to_cart": "web_client",
+    "purchase_click": "web_client",
+    "checkout_started": "checkout_service",
+    "payment_success": "payment_service",
+    "order_completed": "order_service",
+}
+
 TARGET_CATEGORIES = (
     "Computers & Accessories",
     "Camera & Photo",
@@ -96,7 +111,13 @@ class UserProfile:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--source", required=True, type=Path)
+    product_source = parser.add_mutually_exclusive_group(required=True)
+    product_source.add_argument("--source", type=Path)
+    product_source.add_argument(
+        "--products-csv",
+        type=Path,
+        help="reuse an existing generated products.csv instead of rescanning Amazon metadata",
+    )
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--products", type=int, default=10_000)
     parser.add_argument("--users", type=int, default=3_000)
@@ -247,6 +268,76 @@ def select_products(source: Path, count: int, seed: int) -> tuple[list[Product],
         "selection_rule": "balanced deterministic hash sample; valid price; rating_count >= 5",
     }
     return products, stats
+
+
+def load_products_csv(path: Path, expected_count: int) -> tuple[list[Product], dict[str, Any]]:
+    """Load the committed canonical catalog and rebuild hidden price percentiles."""
+    raw_products: list[Product] = []
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        for line_number, row in enumerate(csv.DictReader(handle), start=2):
+            try:
+                product = Product(
+                    product_id=row["product_id"],
+                    category=row["category"],
+                    leaf_category=row["leaf_category"],
+                    title=row["title"],
+                    store=row["store"],
+                    price=float(row["price"]),
+                    average_rating=float(row["average_rating"]),
+                    rating_count=int(row["rating_count"]),
+                )
+            except (KeyError, TypeError, ValueError) as error:
+                raise ValueError(f"invalid products CSV row {line_number}: {error}") from error
+            if product.category not in TARGET_CATEGORIES:
+                raise ValueError(
+                    f"invalid products CSV row {line_number}: unsupported category {product.category}"
+                )
+            raw_products.append(product)
+
+    if len(raw_products) != expected_count:
+        raise ValueError(
+            f"products CSV count mismatch: expected {expected_count}, found {len(raw_products)}"
+        )
+    if len({item.product_id for item in raw_products}) != len(raw_products):
+        raise ValueError("products CSV contains duplicate product_id values")
+
+    by_category: dict[str, list[Product]] = defaultdict(list)
+    for product in raw_products:
+        by_category[product.category].append(product)
+
+    products: list[Product] = []
+    for category in TARGET_CATEGORIES:
+        selected = by_category[category]
+        prices = sorted(item.price for item in selected)
+        price_rank = {price: index for index, price in enumerate(prices)}
+        denominator = max(1, len(prices) - 1)
+        for item in selected:
+            products.append(
+                Product(
+                    **{**item.__dict__, "price_percentile": price_rank[item.price] / denominator}
+                )
+            )
+
+    products.sort(key=lambda item: (item.category, item.product_id))
+    reuse_stats = {
+        "source_rows_scanned": len(raw_products),
+        "invalid_json_rows": 0,
+        "selected_by_category": dict(Counter(item.category for item in products)),
+        "eligible_by_category": dict(Counter(item.category for item in products)),
+        "selection_rule": "reused canonical products.csv; recomputed category price percentiles",
+    }
+    manifest_path = path.with_name("manifest.json")
+    if manifest_path.is_file():
+        try:
+            previous_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            previous_selection = previous_manifest.get("product_selection")
+            if isinstance(previous_selection, dict):
+                reuse_stats = dict(previous_selection)
+        except (json.JSONDecodeError, OSError):
+            pass
+    reuse_stats["reuse_source_file"] = path.name
+    reuse_stats["reuse_row_count"] = len(raw_products)
+    return products, reuse_stats
 
 
 def age_band(age: int) -> str:
@@ -412,9 +503,13 @@ def generate_events(
     }
 
     event_counts: Counter[str] = Counter()
+    event_source_counts: Counter[str] = Counter()
+    event_sessions: dict[str, set[str]] = defaultdict(set)
     product_exposure: set[str] = set()
     session_count = 0
     event_count = 0
+    checkout_count = 0
+    order_count = 0
     bytes_written = 0
     session_means = {"casual": 3.0, "regular": 8.0, "power": 20.0}
     # Effects are deliberately visible but moderate. Applying huge multipliers
@@ -460,15 +555,29 @@ def generate_events(
                 for position in range(1, impressions + 1):
                     category = weighted_choice(rng, categories, category_weights)
                     product = choose_product(rng, by_category[category], popularity[category])
-                    product_exposure.add(product.product_id)
                     current_time += timedelta(seconds=rng.randint(4, 40))
+                    if current_time >= end:
+                        break
+                    product_exposure.add(product.product_id)
 
-                    def emit(event_type: str, page_url: str) -> None:
+                    def emit(
+                        event_type: str,
+                        page_url: str,
+                        properties: dict[str, Any] | None = None,
+                    ) -> None:
                         nonlocal event_count, bytes_written
                         event_count += 1
                         event_counts[event_type] += 1
+                        event_source = EVENT_SOURCE_BY_TYPE[event_type]
+                        event_source_counts[event_source] += 1
+                        event_sessions[event_type].add(session_id)
+                        event_properties = {"position": position}
+                        if properties:
+                            event_properties.update(properties)
                         event = {
                             "event_id": f"EVT-{event_count:09d}",
+                            "schema_version": EVENT_SCHEMA_VERSION,
+                            "event_source": event_source,
                             "user_id": user["user_id"],
                             "session_id": session_id,
                             "event_time": current_time.isoformat(timespec="seconds"),
@@ -477,7 +586,7 @@ def generate_events(
                             "page_url": page_url,
                             "device_type": device,
                             "referrer": referrer,
-                            "properties": {"position": position},
+                            "properties": event_properties,
                         }
                         bytes_written += write_event(handle, event)
 
@@ -492,6 +601,8 @@ def generate_events(
                         continue
 
                     current_time += timedelta(seconds=rng.randint(1, 18))
+                    if current_time >= end:
+                        continue
                     emit("product_click", f"/dp/{product.product_id}")
 
                     price_factor = 1.22 - profile.price_sensitivity * product.price_percentile * 0.72
@@ -502,6 +613,8 @@ def generate_events(
                         continue
 
                     current_time += timedelta(seconds=rng.randint(8, 90))
+                    if current_time >= end:
+                        continue
                     emit("add_to_cart", f"/dp/{product.product_id}")
 
                     purchase_probability = 0.34 * membership_purchase_multiplier[user["membership_tier"]]
@@ -511,12 +624,60 @@ def generate_events(
                         continue
 
                     current_time += timedelta(seconds=rng.randint(15, 150))
-                    emit("purchase_click", "/checkout")
+                    if current_time >= end:
+                        continue
+                    checkout_count += 1
+                    checkout_id = f"CHK-{checkout_count:09d}"
+                    funnel_properties = {
+                        "checkout_id": checkout_id,
+                        "order_id": None,
+                        "currency": "USD",
+                        "order_value": round(product.price, 2),
+                        "item_count": 1,
+                    }
+                    emit("purchase_click", "/checkout", funnel_properties)
 
+                    if rng.random() >= CHECKOUT_START_PROBABILITY:
+                        continue
+                    current_time += timedelta(seconds=rng.randint(5, 90))
+                    if current_time >= end:
+                        continue
+                    emit("checkout_started", f"/checkout/{checkout_id}", funnel_properties)
+
+                    if rng.random() >= PAYMENT_SUCCESS_PROBABILITY:
+                        continue
+                    current_time += timedelta(seconds=rng.randint(10, 180))
+                    if current_time >= end:
+                        continue
+                    emit("payment_success", f"/payments/{checkout_id}", funnel_properties)
+
+                    if rng.random() >= ORDER_COMPLETION_PROBABILITY:
+                        continue
+                    current_time += timedelta(seconds=rng.randint(1, 30))
+                    if current_time >= end:
+                        continue
+                    order_count += 1
+                    order_id = f"ORD-{order_count:09d}"
+                    emit(
+                        "order_completed",
+                        f"/orders/{order_id}",
+                        {**funnel_properties, "order_id": order_id},
+                    )
+
+    impression_sessions = len(event_sessions["product_impression"])
+    completed_sessions = len(event_sessions["order_completed"])
     return {
         "event_count": event_count,
         "session_count": session_count,
         "event_type_counts": dict(event_counts),
+        "event_type_session_counts": {
+            event_type: len(event_sessions[event_type]) for event_type in EVENT_SOURCE_BY_TYPE
+        },
+        "event_source_counts": dict(event_source_counts),
+        "order_completed_session_conversion_pct": round(
+            100.0 * completed_sessions / impression_sessions if impression_sessions else 0.0,
+            3,
+        ),
         "products_exposed": len(product_exposure),
         "product_coverage_pct": round(len(product_exposure) / len(products) * 100, 2),
         "bytes_written": bytes_written,
@@ -525,7 +686,7 @@ def generate_events(
 
 def write_csv(path: Path, columns: Iterable[str], rows: Iterable[dict[str, Any]]) -> None:
     with path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(columns))
+        writer = csv.DictWriter(handle, fieldnames=list(columns), lineterminator="\n")
         writer.writeheader()
         writer.writerows(rows)
 
@@ -540,8 +701,9 @@ def sha256_file(path: Path) -> str:
 
 def main() -> None:
     args = parse_args()
-    if not args.source.is_file():
-        raise SystemExit(f"source does not exist: {args.source}")
+    product_source_path = args.source or args.products_csv
+    if not product_source_path.is_file():
+        raise SystemExit(f"product source does not exist: {product_source_path}")
     if args.products <= 0 or args.users <= 0 or args.days <= 0:
         raise SystemExit("products, users, and days must be positive")
 
@@ -550,12 +712,31 @@ def main() -> None:
     start = datetime.fromisoformat(args.start_date).replace(tzinfo=KST)
     end = start + timedelta(days=args.days)
 
-    products, selection_stats = select_products(args.source, args.products, args.seed)
+    original_source_file = product_source_path.name
+    product_source_mode = "amazon_metadata_jsonl"
+    reused_products_file = None
+    if args.source:
+        products, selection_stats = select_products(args.source, args.products, args.seed)
+    else:
+        product_source_mode = "canonical_products_csv"
+        reused_products_file = args.products_csv.name
+        previous_manifest_path = args.products_csv.with_name("manifest.json")
+        if previous_manifest_path.is_file():
+            try:
+                previous_manifest = json.loads(previous_manifest_path.read_text(encoding="utf-8"))
+                original_source_file = str(
+                    previous_manifest.get("original_source_file")
+                    or previous_manifest.get("source_file")
+                    or original_source_file
+                )
+            except (json.JSONDecodeError, OSError):
+                pass
+        products, selection_stats = load_products_csv(args.products_csv, args.products)
     profiles = generate_users(args.users, args.seed, start, end)
 
     products_path = output_dir / "products.csv"
     users_path = output_dir / "users.csv"
-    events_path = output_dir / "click_events.jsonl"
+    events_path = output_dir / "commerce_events.jsonl"
     write_csv(products_path, PRODUCT_COLUMNS, (item.as_csv_row() for item in products))
     write_csv(users_path, USER_COLUMNS, (item.public for item in profiles))
     event_stats = generate_events(profiles, products, events_path, args.seed, start, end)
@@ -569,9 +750,13 @@ def main() -> None:
         }
 
     manifest = {
-        "generator_version": 1,
+        "generator_version": 2,
+        "event_schema_version": EVENT_SCHEMA_VERSION,
         "seed": args.seed,
-        "source_file": args.source.name,
+        "source_file": original_source_file,
+        "original_source_file": original_source_file,
+        "product_source_mode": product_source_mode,
+        "reused_products_file": reused_products_file,
         "window": {"start": start.isoformat(), "end_exclusive": end.isoformat()},
         "counts": {
             "products": len(products),
@@ -586,10 +771,25 @@ def main() -> None:
             "purchase_propensity",
             "category_affinity",
         ],
+        "event_contract": {
+            "canonical_file": events_path.name,
+            "event_sources": EVENT_SOURCE_BY_TYPE,
+            "funnel_probabilities": {
+                "purchase_click_to_checkout_started": CHECKOUT_START_PROBABILITY,
+                "checkout_started_to_payment_success": PAYMENT_SUCCESS_PROBABILITY,
+                "payment_success_to_order_completed": ORDER_COMPLETION_PROBABILITY,
+            },
+            "order_properties": {
+                "currency": "USD",
+                "item_count": 1,
+                "order_value": "selected product price",
+                "order_id": "required only for order_completed; null before completion",
+            },
+        },
         "planted_patterns": [
             "age 18-34 favors headphones, wearables, and computers",
             "age 45+ favors television/video and home audio",
-            "referral users have higher cart and purchase-click propensity than paid-search users",
+            "referral users have higher cart and purchase-funnel propensity than paid-search users",
             "premium/vip users have higher funnel progression than basic users",
             "mobile sessions concentrate in local evening hours",
             "gender and region have no direct behavior multiplier and act as null controls",
