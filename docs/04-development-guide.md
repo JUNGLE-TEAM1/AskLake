@@ -549,6 +549,28 @@ ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:etl-lineage
 - dashboard persistence regression tests
 - dashboard publish/share/refresh runtime smoke tests
 
+### Synthetic commerce dataset 검증
+
+SQL 및 ETL 분석용 소규모 커머스 데이터는 `backend/scripts/synthetic-commerce/`의 결정적 generator로 만든다. Amazon Electronics metadata JSONL은 저장소에 포함하지 않으며 실행자가 로컬 경로로 전달한다. 생성 결과는 ignored `backend/tmp/` 아래에 둔다.
+
+```bash
+python3 backend/scripts/synthetic-commerce/generate.py \
+  --source /path/to/meta_Electronics.jsonl \
+  --output-dir backend/tmp/synthetic-commerce-output \
+  --products 10000 \
+  --users 3000 \
+  --seed 20260711 \
+  --start-date 2026-06-01 \
+  --days 30
+
+python3 backend/scripts/synthetic-commerce/analyze.py \
+  --data-dir backend/tmp/synthetic-commerce-output
+
+python3 backend/scripts/synthetic-commerce/test_generate.py
+```
+
+생성 규칙, 컬럼 계약, 인사이트 품질 기준과 산출물 커밋 정책은 `backend/scripts/synthetic-commerce/README.md`를 따른다.
+
 ## 11) Manual Smoke Checklist
 
 - `/` 랜딩이 표시되고 시작 CTA가 `/login`으로 이동한다.
