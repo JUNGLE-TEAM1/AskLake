@@ -34,4 +34,4 @@ def request_dashboard_assistant(
         catalog_repository,
         settings,
     )
-    return service.generate_response(request)
+    return service.generate_response(request, actor)

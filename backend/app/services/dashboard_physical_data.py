@@ -2,9 +2,11 @@ import math
 import os
 import re
 from collections.abc import Mapping
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
+from threading import Timer
 from typing import Any
 from urllib.parse import urlparse
 
@@ -17,30 +19,114 @@ from app.core.errors import ApiError
 DASHBOARD_CHART_ROW_LIMIT = 500
 DASHBOARD_TABLE_ROW_LIMIT = 500
 DASHBOARD_VALUE_ALIAS = "__asklake_widget_value"
+DEFAULT_DASHBOARD_DUCKDB_MEMORY_BYTES = 256 * 1024 * 1024
+DEFAULT_DASHBOARD_DUCKDB_TEMP_BYTES = 256 * 1024 * 1024
+DEFAULT_DASHBOARD_DUCKDB_THREADS = 2
+DEFAULT_DASHBOARD_QUERY_TIMEOUT_SECONDS = 15.0
+DEFAULT_DASHBOARD_REMOTE_MAX_BYTES = 512 * 1024 * 1024
+DEFAULT_DASHBOARD_REMOTE_MAX_OBJECTS = 256
 SUPPORTED_STORAGE_FORMATS = {"csv", "json", "jsonl", "parquet"}
 _DASHBOARD_TABLE_NAME = "asklake_dashboard_dataset"
+
+
+@dataclass
+class DashboardRemoteScanBudget:
+    max_bytes: int
+    max_objects: int
+    used_bytes: int = 0
+    used_objects: int = 0
+    _seen_objects: set[tuple[str, str]] = field(default_factory=set, repr=False)
+
+    @classmethod
+    def from_environment(cls) -> "DashboardRemoteScanBudget":
+        return cls(
+            max_bytes=positive_int_env(
+                "ASKLAKE_DASHBOARD_MAX_REMOTE_BYTES",
+                DEFAULT_DASHBOARD_REMOTE_MAX_BYTES,
+                maximum=4 * 1024 * 1024 * 1024,
+            ),
+            max_objects=positive_int_env(
+                "ASKLAKE_DASHBOARD_MAX_REMOTE_OBJECTS",
+                DEFAULT_DASHBOARD_REMOTE_MAX_OBJECTS,
+                maximum=10_000,
+            ),
+        )
+
+    @property
+    def remaining_objects(self) -> int:
+        return max(self.max_objects - self.used_objects, 0)
+
+    def reserve_object(
+        self,
+        *,
+        bucket: str,
+        object_key: str,
+        size_bytes: int,
+        include_bytes: bool,
+    ) -> None:
+        identity = (bucket, object_key)
+        if identity in self._seen_objects:
+            return
+
+        next_object_count = self.used_objects + 1
+        next_byte_count = self.used_bytes + (max(size_bytes, 0) if include_bytes else 0)
+        if next_object_count > self.max_objects:
+            raise ValueError(
+                f"Dashboard remote scan exceeds the {self.max_objects} object budget"
+            )
+        if next_byte_count > self.max_bytes:
+            raise ValueError(
+                f"Dashboard remote scan exceeds the {self.max_bytes} byte budget"
+            )
+
+        self._seen_objects.add(identity)
+        self.used_objects = next_object_count
+        self.used_bytes = next_byte_count
 
 
 class DashboardDatasetQuerySession:
     """Run bounded widget queries against one physical Catalog dataset."""
 
-    def __init__(self, dataset: Any) -> None:
+    def __init__(
+        self,
+        dataset: Any,
+        *,
+        remote_budget: DashboardRemoteScanBudget | None = None,
+        query_timeout_seconds: float | None = None,
+    ) -> None:
         self.dataset = dataset
+        self.query_timeout_seconds = (
+            query_timeout_seconds
+            if query_timeout_seconds is not None
+            else dashboard_query_timeout_seconds()
+        )
         self.connection = duckdb.connect(database=":memory:")
         self.table = quote_duckdb_identifier(_DASHBOARD_TABLE_NAME)
         try:
+            configure_dashboard_duckdb_resources(self.connection)
             storage_segments = dataset_storage_segments(dataset)
             if not storage_segments:
                 raise dashboard_storage_error(dataset, "Dashboard widgets require physical dataset storage")
-            register_dashboard_dataset(self.connection, self.table, storage_segments)
+            resolved_remote_budget = remote_budget or DashboardRemoteScanBudget.from_environment()
+            preflight_dashboard_s3_segments(dataset, storage_segments, resolved_remote_budget)
+            register_dashboard_dataset(
+                self.connection,
+                self.table,
+                storage_segments,
+                query_timeout_seconds=self.query_timeout_seconds,
+            )
             self.columns = {
                 str(row[0])
-                for row in self.connection.execute(f"DESCRIBE SELECT * FROM {self.table}").fetchall()
+                for row in execute_dashboard_query(
+                    self.connection,
+                    f"DESCRIBE SELECT * FROM {self.table}",
+                    timeout_seconds=self.query_timeout_seconds,
+                ).fetchall()
             }
         except ApiError:
             self.connection.close()
             raise
-        except (OSError, ValueError, duckdb.Error) as error:
+        except (OSError, RuntimeError, ValueError, duckdb.Error) as error:
             self.connection.close()
             raise dashboard_storage_error(dataset, str(error)) from error
 
@@ -65,7 +151,11 @@ class DashboardDatasetQuerySession:
         runtime_config["dataMode"] = data_mode
         runtime_config["sourceConfig"] = source_config
         try:
-            cursor = self.connection.execute(query)
+            cursor = execute_dashboard_query(
+                self.connection,
+                query,
+                timeout_seconds=self.query_timeout_seconds,
+            )
             column_names = [str(description[0]) for description in (cursor.description or [])]
             rows = [
                 {
@@ -242,6 +332,8 @@ def register_dashboard_dataset(
     connection: duckdb.DuckDBPyConnection,
     table: str,
     storage_segments: list[tuple[str, str]],
+    *,
+    query_timeout_seconds: float,
 ) -> None:
     if any(is_s3_storage_location(location) for location, _storage_format in storage_segments):
         configure_duckdb_s3(connection)
@@ -260,7 +352,11 @@ def register_dashboard_dataset(
     if not sources:
         raise ValueError("Dashboard dataset has no readable physical segments")
     union_sql = " UNION ALL BY NAME ".join(f"SELECT * FROM {source}" for source in sources)
-    connection.execute(f"CREATE TEMP VIEW {table} AS {union_sql}")
+    execute_dashboard_query(
+        connection,
+        f"CREATE TEMP VIEW {table} AS {union_sql}",
+        timeout_seconds=query_timeout_seconds,
+    )
 
 
 def dataset_storage_segments(dataset: Any) -> list[tuple[str, str]]:
@@ -272,8 +368,7 @@ def dataset_storage_segments(dataset: Any) -> list[tuple[str, str]]:
             if normalized_text(dataset_value(run, "status")) != "success":
                 continue
             active_runs.append(run)
-            mode = normalized_text(dataset_value(run, "materialization_mode", "materializationMode")) or "snapshot"
-            if mode == "snapshot":
+            if canonical_materialization_mode(run) == "snapshot":
                 break
 
     segments: list[tuple[str, str]] = []
@@ -322,6 +417,21 @@ def normalized_text(value: Any) -> str:
     return str(value or "").strip().lower()
 
 
+def canonical_materialization_mode(run: Any) -> str:
+    explicit_mode = normalized_text(
+        dataset_value(run, "materializationMode")
+        or dataset_value(run, "materialization_mode")
+    )
+    if explicit_mode:
+        return explicit_mode if explicit_mode in {"snapshot", "delta"} else "snapshot"
+
+    source_kind = normalized_text(
+        dataset_value(run, "sourceKind")
+        or dataset_value(run, "source_kind")
+    )
+    return "delta" if source_kind == "kafka" else "snapshot"
+
+
 def clean_text(value: Any) -> str:
     if hasattr(value, "value"):
         value = value.value
@@ -361,12 +471,226 @@ def s3_scan_path(storage_location: str, storage_format: str) -> str:
     return normalized if normalized.lower().endswith(suffix) else f"{normalized}/**/*{suffix}"
 
 
+def preflight_dashboard_s3_segments(
+    dataset: Any,
+    storage_segments: list[tuple[str, str]],
+    budget: DashboardRemoteScanBudget,
+) -> None:
+    remote_segments = [
+        parse_dashboard_s3_segment(storage_location, storage_format)
+        for storage_location, storage_format in storage_segments
+        if is_s3_storage_location(storage_location)
+    ]
+    if not remote_segments:
+        return
+
+    try:
+        for bucket, _prefix, _exact_key, _storage_format in remote_segments:
+            require_allowed_dashboard_bucket(bucket)
+        client = build_dashboard_s3_client()
+        for bucket, prefix, exact_key, storage_format in remote_segments:
+            matched_objects = list_dashboard_s3_segment_objects(
+                client,
+                bucket=bucket,
+                prefix=prefix,
+                exact_key=exact_key,
+                storage_format=storage_format,
+                budget=budget,
+            )
+            if matched_objects == 0:
+                raise ValueError(
+                    f"Remote dashboard segment has no .{storage_format} objects"
+                )
+    except ApiError:
+        raise
+    except Exception as error:
+        raise dashboard_storage_error(dataset, str(error)) from error
+
+
+def parse_dashboard_s3_segment(
+    storage_location: str,
+    storage_format: str,
+) -> tuple[str, str, str | None, str]:
+    normalized_location = re.sub(
+        r"^s3a://",
+        "s3://",
+        storage_location.strip(),
+        flags=re.IGNORECASE,
+    )
+    parsed = urlparse(normalized_location)
+    bucket = parsed.netloc.strip().casefold()
+    key = parsed.path.lstrip("/").rstrip("/")
+    if not bucket or not key:
+        raise ValueError("Remote dashboard storage location is invalid")
+    suffix = f".{storage_format.casefold()}"
+    exact_key = key if key.casefold().endswith(suffix) else None
+    prefix = exact_key or f"{key}/"
+    return bucket, prefix, exact_key, storage_format.casefold()
+
+
+def list_dashboard_s3_segment_objects(
+    client: Any,
+    *,
+    bucket: str,
+    prefix: str,
+    exact_key: str | None,
+    storage_format: str,
+    budget: DashboardRemoteScanBudget,
+) -> int:
+    continuation_token: str | None = None
+    matched_objects = 0
+    suffix = f".{storage_format}"
+    while True:
+        request: dict[str, Any] = {
+            "Bucket": bucket,
+            "Prefix": prefix,
+            "MaxKeys": min(1000, max(1, budget.remaining_objects + 1)),
+        }
+        if continuation_token:
+            request["ContinuationToken"] = continuation_token
+        response = client.list_objects_v2(**request)
+        for item in response.get("Contents") or []:
+            object_key = str(item.get("Key") or "")
+            if not object_key:
+                continue
+            is_scan_object = (
+                object_key == exact_key
+                if exact_key is not None
+                else object_key.startswith(prefix) and object_key.casefold().endswith(suffix)
+            )
+            budget.reserve_object(
+                bucket=bucket,
+                object_key=object_key,
+                size_bytes=max(int(item.get("Size") or 0), 0),
+                include_bytes=is_scan_object,
+            )
+            if is_scan_object:
+                matched_objects += 1
+        if not response.get("IsTruncated"):
+            return matched_objects
+        continuation_token = str(response.get("NextContinuationToken") or "").strip()
+        if not continuation_token:
+            raise ValueError("Remote dashboard object listing did not provide a continuation token")
+
+
+def require_allowed_dashboard_bucket(bucket: str) -> None:
+    configured_buckets = (
+        os.environ.get("S3_ALLOWED_BUCKETS")
+        or os.environ.get("ASKLAKE_S3_ALLOWED_BUCKETS")
+        or os.environ.get("AWS_S3_ALLOWED_BUCKETS")
+        or os.environ.get("MINIO_BUCKET")
+        or "asklake-output"
+    )
+    allowed_buckets = {
+        value.strip().casefold()
+        for value in configured_buckets.split(",")
+        if value.strip()
+    }
+    if bucket.casefold() not in allowed_buckets:
+        raise ValueError("Remote dashboard bucket is not allowlisted")
+
+
+def build_dashboard_s3_client() -> Any:
+    try:
+        import boto3
+        from botocore.config import Config
+    except ImportError as error:
+        raise RuntimeError("Python S3 client dependency is not installed") from error
+
+    endpoint = os.environ.get("S3_ENDPOINT") or os.environ.get("MINIO_ENDPOINT")
+    access_key = os.environ.get("AWS_ACCESS_KEY_ID") or os.environ.get("MINIO_ACCESS_KEY")
+    secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY") or os.environ.get("MINIO_SECRET_KEY")
+    session_token = os.environ.get("AWS_SESSION_TOKEN")
+    region = os.environ.get("AWS_REGION") or os.environ.get("MINIO_REGION") or "us-east-1"
+    force_path_style = str(os.environ.get("S3_FORCE_PATH_STYLE") or "true").casefold() != "false"
+    kwargs: dict[str, Any] = {
+        "config": Config(
+            connect_timeout=5,
+            read_timeout=15,
+            retries={"max_attempts": 2, "mode": "standard"},
+            s3={"addressing_style": "path" if force_path_style else "auto"},
+        ),
+        "region_name": region,
+    }
+    if endpoint:
+        kwargs["endpoint_url"] = endpoint
+    if access_key:
+        kwargs["aws_access_key_id"] = access_key
+    if secret_key:
+        kwargs["aws_secret_access_key"] = secret_key
+    if session_token:
+        kwargs["aws_session_token"] = session_token
+    return boto3.client("s3", **kwargs)
+
+
+def configure_dashboard_duckdb_resources(connection: duckdb.DuckDBPyConnection) -> None:
+    memory_bytes = positive_int_env(
+        "ASKLAKE_DASHBOARD_DUCKDB_MEMORY_BYTES",
+        DEFAULT_DASHBOARD_DUCKDB_MEMORY_BYTES,
+        maximum=2 * 1024 * 1024 * 1024,
+    )
+    temp_bytes = positive_int_env(
+        "ASKLAKE_DASHBOARD_DUCKDB_TEMP_BYTES",
+        DEFAULT_DASHBOARD_DUCKDB_TEMP_BYTES,
+        maximum=2 * 1024 * 1024 * 1024,
+    )
+    threads = positive_int_env(
+        "ASKLAKE_DASHBOARD_DUCKDB_THREADS",
+        DEFAULT_DASHBOARD_DUCKDB_THREADS,
+        maximum=8,
+    )
+    connection.execute(f"SET memory_limit = '{memory_bytes}B'")
+    connection.execute(f"SET max_temp_directory_size = '{temp_bytes}B'")
+    connection.execute(f"SET threads = {threads}")
+    connection.execute("SET preserve_insertion_order = false")
+    connection.execute("SET autoinstall_known_extensions = false")
+    connection.execute("SET autoload_known_extensions = false")
+
+
+def execute_dashboard_query(
+    connection: duckdb.DuckDBPyConnection,
+    query: str,
+    *,
+    timeout_seconds: float,
+) -> Any:
+    timer = Timer(max(timeout_seconds, 0.001), connection.interrupt)
+    timer.daemon = True
+    timer.start()
+    try:
+        return connection.execute(query)
+    finally:
+        timer.cancel()
+
+
+def dashboard_query_timeout_seconds() -> float:
+    raw_value = str(os.environ.get("ASKLAKE_DASHBOARD_QUERY_TIMEOUT_SECONDS") or "").strip()
+    try:
+        value = float(raw_value) if raw_value else DEFAULT_DASHBOARD_QUERY_TIMEOUT_SECONDS
+    except ValueError:
+        return DEFAULT_DASHBOARD_QUERY_TIMEOUT_SECONDS
+    if not math.isfinite(value) or value <= 0:
+        return DEFAULT_DASHBOARD_QUERY_TIMEOUT_SECONDS
+    return min(value, 60.0)
+
+
+def positive_int_env(name: str, default: int, *, maximum: int) -> int:
+    raw_value = str(os.environ.get(name) or "").strip()
+    try:
+        value = int(raw_value) if raw_value else default
+    except ValueError:
+        return default
+    if value <= 0:
+        return default
+    return min(value, maximum)
+
+
 def configure_duckdb_s3(connection: duckdb.DuckDBPyConnection) -> None:
     try:
         connection.execute("LOAD httpfs")
-    except duckdb.Error:
-        connection.execute("INSTALL httpfs")
-        connection.execute("LOAD httpfs")
+    except duckdb.Error as error:
+        raise RuntimeError(
+            "DuckDB httpfs is not installed in the backend image"
+        ) from error
 
     endpoint = str(os.environ.get("S3_ENDPOINT") or os.environ.get("MINIO_ENDPOINT") or "").strip()
     access_key = str(os.environ.get("AWS_ACCESS_KEY_ID") or os.environ.get("MINIO_ACCESS_KEY") or "").strip()

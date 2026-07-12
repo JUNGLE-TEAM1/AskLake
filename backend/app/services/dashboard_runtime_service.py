@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import status
+from pydantic import ValidationError
 
 from app.core.auth_context import ActorContext, require_permission
 from app.core.errors import ApiError
@@ -15,6 +16,7 @@ from app.repositories.dashboard_card_repository import get_dashboard_card
 from app.repositories.dashboard_runtime_repository import DashboardRuntimeMetaRecord, DashboardRuntimeRepository
 from app.repositories.catalog_repository import CatalogRepository
 from app.schemas.common import ErrorCode
+from app.schemas.catalog import CatalogDatasetResponse
 from app.schemas.dashboard import (
     AreaChartWidgetConfig,
     BarChartWidgetConfig,
@@ -55,11 +57,21 @@ from app.schemas.dashboard import (
     UpdateDraftWidgetRequest,
 )
 from app.services.governance_enforcement import require_governed_access
-from app.services.resource_permission_service import dashboard_with_persisted_permission_grants, permissions_for_actor_with_governance
-from app.services.dashboard_physical_data import DashboardDatasetQuerySession
+from app.services.dashboard_dataset_access import require_dashboard_dataset_query_access
+from app.services.resource_permission_service import (
+    dashboard_with_persisted_permission_grants,
+    dataset_with_persisted_permission_grants,
+    permissions_for_actor_with_governance,
+)
+from app.services.dashboard_physical_data import (
+    DashboardDatasetQuerySession,
+    DashboardRemoteScanBudget,
+)
 
 
 MAX_EXPLICIT_WIDGET_ROWS = 500
+DASHBOARD_DATA_FORBIDDEN = "DASHBOARD_DATA_FORBIDDEN"
+DASHBOARD_DATA_UNAVAILABLE = "DASHBOARD_DATA_UNAVAILABLE"
 
 
 class DashboardRuntimeService:
@@ -250,9 +262,16 @@ class DashboardRuntimeService:
         widgets_by_page_id = self.repository.list_widgets_by_page_ids([page.id for page in pages])
 
         sessions: dict[str, DashboardDatasetQuerySession] = {}
-        session_errors: set[str] = set()
+        session_errors: dict[str, tuple[str, str]] = {}
         catalog_payloads: dict[str, dict[str, Any] | None] = {}
         result_cache: dict[str, dict[str, Any]] = {}
+        remote_budget = DashboardRemoteScanBudget.from_environment()
+        runtime_api_path = (
+            f"/api/dashboards/{dashboard_meta.id}/published"
+            if mode == DashboardRuntimeMode.PUBLISHED
+            else f"/api/dashboards/{dashboard_meta.id}/draft/ensure"
+        )
+        runtime_http_method = "GET" if mode == DashboardRuntimeMode.PUBLISHED else "POST"
         try:
             return DashboardRuntimeResponse(
                 dashboard=self._dashboard_meta_to_schema(dashboard_meta, has_published_revision, actor, dashboard_card),
@@ -261,7 +280,17 @@ class DashboardRuntimeService:
                 pages=[self._page_to_schema(page) for page in pages],
                 widgets_by_page_id={
                     page_id: [
-                        self._widget_to_schema(widget, sessions, session_errors, catalog_payloads, result_cache)
+                        self._widget_to_schema(
+                            widget,
+                            sessions,
+                            session_errors,
+                            catalog_payloads,
+                            result_cache,
+                            actor=actor,
+                            remote_budget=remote_budget,
+                            api_path=runtime_api_path,
+                            http_method=runtime_http_method,
+                        )
                         for widget in widgets
                     ]
                     for page_id, widgets in widgets_by_page_id.items()
@@ -451,18 +480,31 @@ class DashboardRuntimeService:
         self,
         widget: DashboardWidgetModel,
         sessions: dict[str, DashboardDatasetQuerySession],
-        session_errors: set[str],
+        session_errors: dict[str, tuple[str, str]],
         catalog_payloads: dict[str, dict[str, Any] | None],
         result_cache: dict[str, dict[str, Any]],
+        *,
+        actor: ActorContext,
+        remote_budget: DashboardRemoteScanBudget,
+        api_path: str,
+        http_method: str,
     ) -> DashboardRuntimeWidget:
         widget_type = DashboardRuntimeWidgetType(widget.type)
         config = self._normalize_widget_config(widget_type, widget.config)
-        data = widget.data
+        data = list(widget.data or [])[:MAX_EXPLICIT_WIDGET_ROWS]
         if widget.dataset_id:
             if widget.dataset_id not in catalog_payloads:
                 catalog_payloads[widget.dataset_id] = self.catalog_repository.get_dataset_payload(widget.dataset_id)
             payload = catalog_payloads[widget.dataset_id]
-            if payload is not None:
+            if payload is None:
+                if not widget.query_id:
+                    config = {
+                        **config,
+                        "error": DASHBOARD_DATA_UNAVAILABLE,
+                        "errorMessage": "The Catalog dataset linked to this widget is no longer available.",
+                    }
+                    data = []
+            else:
                 cache_key = "|".join((
                     widget.dataset_id,
                     widget_type.value,
@@ -473,10 +515,46 @@ class DashboardRuntimeService:
                     session = sessions.get(widget.dataset_id)
                     if session is None:
                         try:
-                            session = DashboardDatasetQuerySession(payload)
+                            dataset = dataset_with_persisted_permission_grants(
+                                self.catalog_repository.db,
+                                CatalogDatasetResponse.model_validate(payload),
+                            )
+                            require_dashboard_dataset_query_access(
+                                self.catalog_repository.db,
+                                actor,
+                                dataset,
+                                api_path=api_path,
+                                http_method=http_method,
+                            )
+                        except ApiError as exc:
+                            if exc.status_code in {status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN}:
+                                session_errors[widget.dataset_id] = (
+                                    DASHBOARD_DATA_FORBIDDEN,
+                                    "You do not have permission to query this widget's dataset.",
+                                )
+                            else:
+                                session_errors[widget.dataset_id] = (
+                                    DASHBOARD_DATA_UNAVAILABLE,
+                                    "Dashboard widget data could not be read from physical storage.",
+                                )
+                        except ValidationError:
+                            session_errors[widget.dataset_id] = (
+                                DASHBOARD_DATA_UNAVAILABLE,
+                                "Dashboard widget data could not be read from physical storage.",
+                            )
+                        if widget.dataset_id not in session_errors:
+                            try:
+                                session = DashboardDatasetQuerySession(
+                                    payload,
+                                    remote_budget=remote_budget,
+                                )
+                            except (ApiError, ValueError):
+                                session_errors[widget.dataset_id] = (
+                                    DASHBOARD_DATA_UNAVAILABLE,
+                                    "Dashboard widget data could not be read from physical storage.",
+                                )
+                        if session is not None:
                             sessions[widget.dataset_id] = session
-                        except (ApiError, ValueError):
-                            session_errors.add(widget.dataset_id)
                     if session is not None:
                         try:
                             result = session.read_widget(widget_type.value, config)
@@ -487,10 +565,17 @@ class DashboardRuntimeService:
                     config = result["config"]
                     data = result["data"]
                 else:
+                    error_code, error_message = session_errors.get(
+                        widget.dataset_id,
+                        (
+                            DASHBOARD_DATA_UNAVAILABLE,
+                            "Dashboard widget data could not be read from physical storage.",
+                        ),
+                    )
                     config = {
                         **config,
-                        "error": "DASHBOARD_DATA_UNAVAILABLE",
-                        "errorMessage": "Dashboard widget data could not be read from physical storage.",
+                        "error": error_code,
+                        "errorMessage": error_message,
                     }
                     data = []
         return DashboardRuntimeWidget(

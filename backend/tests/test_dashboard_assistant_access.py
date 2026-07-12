@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -9,7 +10,12 @@ from app.core.database import get_db
 from app.core.errors import ApiError
 from app.main import create_app
 from app.schemas.common import ErrorCode
-from app.schemas.dashboard import DashboardAssistantResponse, DashboardCard
+from app.schemas.dashboard import (
+    DashboardAssistantRequest,
+    DashboardAssistantResponse,
+    DashboardCard,
+)
+from app.services.dashboard_assistant_service import DashboardAssistantService
 from app.services.dashboard_runtime_service import DashboardRuntimeService
 
 
@@ -28,6 +34,47 @@ def dashboard_card(dashboard_id: str, principal_id: str) -> DashboardCard:
             "principalType": "user",
         }],
     })
+
+
+def assistant_dataset_payload(
+    dataset_id: str,
+    *,
+    principal_id: str,
+    sample_value: str,
+) -> dict[str, object]:
+    return {
+        "description": "assistant dataset",
+        "freshness": "latest",
+        "id": dataset_id,
+        "lastUpdated": "2026-07-12T00:00:00Z",
+        "layer": "GOLD",
+        "name": dataset_id,
+        "nextRefresh": "-",
+        "owner": "dataset-owner",
+        "permissionGrants": [{
+            "actions": ["query", "view"],
+            "principalId": principal_id,
+            "principalType": "user",
+        }],
+        "quality": "passed",
+        "rag": False,
+        "rows": "1 row",
+        "sampleRows": [[sample_value, "1"]],
+        "schema": [["category", "string"], ["amount", "number"]],
+        "size": "1 KiB",
+        "source": "test",
+        "status": "available",
+        "tags": ["assistant"],
+    }
+
+
+class FakeAssistantCatalogRepository:
+    def __init__(self, payloads: list[dict[str, object]]) -> None:
+        self.db = SimpleNamespace()
+        self.models = [SimpleNamespace(payload=payload) for payload in payloads]
+
+    def list_dataset_models(self):
+        return self.models
 
 
 class DashboardAssistantAccessTests(unittest.TestCase):
@@ -92,6 +139,7 @@ class DashboardAssistantAccessTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         require_access.assert_called_once_with("dashboard-a", actor)
         generate.assert_called_once()
+        self.assertIs(generate.call_args.args[1], actor)
 
     def test_dashboard_view_permission_is_evaluated_per_dashboard(self) -> None:
         cards = {
@@ -121,6 +169,83 @@ class DashboardAssistantAccessTests(unittest.TestCase):
                 service.require_assistant_access("dashboard-b", actor)
 
         self.assertEqual(denied.exception.status_code, 403)
+
+    def test_provider_context_excludes_unauthorized_and_locked_dataset_samples(self) -> None:
+        actor = ActorContext(name="dashboard-viewer", role="viewer")
+        catalog_repository = FakeAssistantCatalogRepository([
+            assistant_dataset_payload(
+                "dataset-allowed",
+                principal_id="dashboard-viewer",
+                sample_value="allowed-visible",
+            ),
+            assistant_dataset_payload(
+                "dataset-denied",
+                principal_id="another-viewer",
+                sample_value="denied-secret",
+            ),
+            assistant_dataset_payload(
+                "dataset-locked",
+                principal_id="dashboard-viewer",
+                sample_value="locked-secret",
+            ),
+        ])
+        service = DashboardAssistantService(
+            SimpleNamespace(),
+            catalog_repository,
+            SimpleNamespace(
+                openai_api_key="test-key",
+                openai_assistant_enabled=True,
+                openai_assistant_max_sample_rows=5,
+            ),
+        )
+        request = DashboardAssistantRequest.model_validate({
+            "mode": "dashboard_question",
+            "prompt": "Summarize the available revenue data",
+            "widgets": [{
+                "config": {"columns": ["category"]},
+                "dataSample": [{"secret": "denied-widget-secret"}],
+                "datasetId": "dataset-denied",
+                "id": "denied-widget",
+                "layout": {"x": 0, "y": 0, "w": 4, "h": 3},
+                "title": "Denied widget",
+                "type": "table",
+            }],
+        })
+        captured_context: dict[str, object] = {}
+
+        def fake_openai(_request, context):
+            captured_context.update(context.to_prompt_payload())
+            return {"actions": [], "message": "ok", "warnings": []}
+
+        def enforce_governance(*_args, **kwargs):
+            if kwargs.get("resource_id") == "dataset-locked":
+                raise ApiError(ErrorCode.FORBIDDEN, "locked", 403)
+
+        with (
+            patch(
+                "app.services.dashboard_assistant_context.datasets_with_persisted_permission_grants",
+                side_effect=lambda _db, datasets: datasets,
+            ),
+            patch(
+                "app.services.dashboard_dataset_access.require_governed_access",
+                side_effect=enforce_governance,
+            ),
+            patch("app.services.dashboard_dataset_access.safe_record_audit_event"),
+            patch.object(service, "_request_openai", side_effect=fake_openai),
+        ):
+            response = service.generate_response(request, actor)
+
+        serialized_context = json.dumps(captured_context, ensure_ascii=False)
+        self.assertEqual(response.message, "ok")
+        self.assertEqual(
+            [dataset["id"] for dataset in captured_context["availableDatasets"]],
+            ["dataset-allowed"],
+        )
+        self.assertEqual(captured_context["widgets"], [])
+        self.assertIn("allowed-visible", serialized_context)
+        self.assertNotIn("denied-secret", serialized_context)
+        self.assertNotIn("locked-secret", serialized_context)
+        self.assertNotIn("denied-widget-secret", serialized_context)
 
 
 if __name__ == "__main__":
