@@ -13,6 +13,11 @@ from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
 
+from spark_source_identity import (
+    source_change_detection_mode,
+    verify_incremental_source_inventory,
+)
+
 
 REVIEW_ROW_ANALYSIS_SUPPORTED_METHODS = {
     "copy",
@@ -70,8 +75,21 @@ def main():
         record_parsing = manifest.get("recordParsing") or {}
         transform_steps = manifest.get("transformSteps") or load_json_env("ASKLAKE_SPARK_TRANSFORM_STEPS", [])
         quality_rules = manifest.get("qualityRules") or load_json_env("ASKLAKE_SPARK_QUALITY_RULES", [])
-        spark = make_spark()
-        source_df = read_source(spark, source_format, source_path, schema_columns, source_collection, record_parsing)
+        spark = make_spark(source_collection)
+        verify_spark_source_inventory(
+            spark,
+            source_path,
+            source_collection,
+            phase="before_read",
+        )
+        source_df = read_source(
+            spark,
+            source_format,
+            source_path,
+            schema_columns,
+            record_parsing,
+            source_collection,
+        )
         input_rows = source_df.count() if row_limit <= 0 else source_df.limit(row_limit).count()
         working_df = source_df if row_limit <= 0 else source_df.limit(row_limit)
         normalized_df = normalize_columns(working_df)
@@ -142,6 +160,12 @@ def main():
         if text_structuring.get("definition", {}).get("columns"):
             quality["textStructuringExecution"] = text_structuring.get("execution", {})
         sample_rows = collect_sample_rows(written_df, 10)
+        verify_spark_source_inventory(
+            spark,
+            source_path,
+            source_collection,
+            phase="after_read",
+        )
         if quality["status"] == "fail":
             ended_at = now_iso()
             result = {
@@ -207,6 +231,13 @@ def main():
             "durationMs": int(time.time() * 1000) - started_ms,
             "endedAt": ended_at,
             "error": str(exc),
+            "failedStage": (
+                "Record Parsing"
+                if "RECORD_FIELD_COUNT_MISMATCH" in str(exc) or "RECORD_PARSING_" in str(exc)
+                else "Source Inventory"
+                if "SOURCE_OBJECT_" in str(exc)
+                else "Spark ETL"
+            ),
             "format": source_format,
             "inputRows": 0,
             "outputPath": output_path,
@@ -226,7 +257,7 @@ def main():
             spark.stop()
 
 
-def make_spark():
+def make_spark(source_collection=None):
     endpoint = os.environ.get("MINIO_ENDPOINT", "http://m3-minio:9000")
     access_key = os.environ.get("MINIO_ACCESS_KEY") or os.environ.get("MINIO_ROOT_USER", "")
     secret_key = os.environ.get("MINIO_SECRET_KEY") or os.environ.get("MINIO_ROOT_PASSWORD", "")
@@ -235,7 +266,8 @@ def make_spark():
     if ssl_enabled is None:
         ssl_enabled = "true" if endpoint.lower().startswith("https://") else "false"
 
-    spark = (
+    change_detection_source = source_change_detection_mode(source_collection)
+    builder = (
         SparkSession.builder.appName(os.environ.get("ASKLAKE_SPARK_APP_NAME", "asklake-pipeline-run"))
         .config("spark.sql.caseSensitive", "true")
         .config("spark.hadoop.fs.s3a.endpoint", endpoint)
@@ -245,13 +277,59 @@ def make_spark():
         .config("spark.hadoop.fs.s3a.path.style.access", "true")
         .config("spark.hadoop.fs.s3a.connection.ssl.enabled", ssl_enabled)
         .config("spark.hadoop.fs.s3a.aws.credentials.provider", "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider")
-        .getOrCreate()
+        .config("spark.hadoop.fs.s3a.change.detection.source", change_detection_source)
+        .config("spark.hadoop.fs.s3a.change.detection.mode", "server")
+        .config("spark.hadoop.fs.s3a.change.detection.version.required", "true")
     )
+    if change_detection_source == "versionid":
+        builder = builder.config("spark.hadoop.fs.s3a.versioned.store", "true")
+    spark = builder.getOrCreate()
     spark.sparkContext.setLogLevel("INFO")
     return spark
 
 
-def read_source(spark, source_format, source_path, schema_columns, source_collection=None, record_parsing=None):
+def s3a_source_object_identity(spark, source_path):
+    path = spark._jvm.org.apache.hadoop.fs.Path(source_path)
+    status = path.getFileSystem(spark._jsc.hadoopConfiguration()).getFileStatus(path)
+    try:
+        e_tag = status.getEtag()
+    except Exception:
+        e_tag = status.getETag()
+    try:
+        version_id = status.getVersionId()
+    except Exception:
+        version_id = None
+    last_modified = datetime.fromtimestamp(
+        int(status.getModificationTime()) / 1000,
+        tz=timezone.utc,
+    ).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    return {
+        "eTag": str(e_tag or ""),
+        "versionId": str(version_id or "") or None,
+        "lastModified": last_modified,
+        "size": int(status.getLen()),
+    }
+
+
+def verify_spark_source_inventory(spark, source_path, source_collection, *, phase):
+    try:
+        return verify_incremental_source_inventory(
+            source_path,
+            source_collection,
+            lambda path: s3a_source_object_identity(spark, path),
+        )
+    except ValueError as exc:
+        raise ValueError(f"{exc} phase={phase}") from exc
+
+
+def read_source(
+    spark,
+    source_format,
+    source_path,
+    schema_columns,
+    record_parsing=None,
+    source_collection=None,
+):
     source_collection = source_collection or {}
     exact_paths = incremental_source_paths(source_path, source_collection)
     if exact_paths == []:

@@ -195,6 +195,7 @@ function writeSparkJobManifest(manifestPath, job) {
       job.sourceWindowContractVersion,
       job.sourceWindowRebaseline,
       job.sourceObjectKeys,
+      job.sourceObjectInventory,
     ),
     textStructuring: {
       columns: textStructuringColumns,
@@ -212,14 +213,23 @@ export function sourceCollectionFromConfig(
   windowContractVersion = undefined,
   sourceWindowRebaseline = false,
   sourceObjectKeys = undefined,
+  sourceObjectInventory = undefined,
 ) {
   const scope = String(fieldValue(sourceConfig, "Collection Scope") || "file").trim().toLowerCase() === "folder"
     ? "folder"
     : "file";
   const collectionMode = String(fieldValue(sourceConfig, "Collection Mode") || "incremental").trim().toLowerCase();
   const mode = scope === "folder" && collectionMode !== "full" ? "incremental" : "full";
-  const boundedWindowVersion = mode === "incremental" && Number(windowContractVersion) === 1 ? 1 : null;
-  const objectKeys = mode === "incremental" && Array.isArray(sourceObjectKeys)
+  const requestedWindowVersion = Number(windowContractVersion);
+  const boundedWindowVersion = mode === "incremental" && [1, 2].includes(requestedWindowVersion)
+    ? requestedWindowVersion
+    : null;
+  const objectInventory = boundedWindowVersion === 2
+    ? normalizeSourceObjectInventory(sourceObjectInventory)
+    : null;
+  const objectKeys = boundedWindowVersion === 2 && Array.isArray(objectInventory)
+    ? objectInventory.map((item) => item.key)
+    : mode === "incremental" && Array.isArray(sourceObjectKeys)
     ? [...new Set(sourceObjectKeys.map((key) => String(key || "").trim()).filter(Boolean))].sort()
     : null;
   return {
@@ -227,12 +237,61 @@ export function sourceCollectionFromConfig(
     incrementalBefore: mode === "incremental" && incrementalBefore ? String(incrementalBefore) : null,
     incrementalSince: mode === "incremental" && incrementalSince ? String(incrementalSince) : null,
     mode,
+    ...(boundedWindowVersion === 2 ? { objectInventory } : {}),
     objectKeys,
-    rebaseline: boundedWindowVersion === 1 && sourceWindowRebaseline === true,
+    rebaseline: boundedWindowVersion !== null && sourceWindowRebaseline === true,
     recursive: scope === "folder" && parseConfigBoolean(fieldValue(sourceConfig, "Recursive")),
     scope,
     windowContractVersion: boundedWindowVersion,
   };
+}
+
+function normalizeSourceObjectInventory(value) {
+  if (!Array.isArray(value)) return null;
+  const inventoryByKey = new Map();
+  let invalid = false;
+  value.forEach((item) => {
+    if (!item || typeof item !== "object") {
+      invalid = true;
+      return;
+    }
+    const key = String(item.key ?? item.Key ?? "").trim();
+    const eTag = normalizeEtag(item.eTag ?? item.ETag ?? item.etag);
+    const lastModified = String(item.lastModified ?? item.LastModified ?? "").trim();
+    const rawSize = item.size ?? item.Size;
+    const size = Number(rawSize);
+    const hasValidRawSize = typeof rawSize !== "boolean"
+      && rawSize !== null
+      && rawSize !== undefined
+      && String(rawSize).trim() !== "";
+    if (!key || !eTag || !lastModified || !hasValidRawSize || !Number.isSafeInteger(size) || size < 0) {
+      invalid = true;
+      return;
+    }
+    const rawVersionId = String(item.versionId ?? item.VersionId ?? "").trim();
+    const normalized = {
+      key,
+      eTag,
+      versionId: rawVersionId && rawVersionId.toLowerCase() !== "null" ? rawVersionId : null,
+      lastModified,
+      size,
+    };
+    if (inventoryByKey.has(key) && JSON.stringify(inventoryByKey.get(key)) !== JSON.stringify(normalized)) {
+      invalid = true;
+      return;
+    }
+    inventoryByKey.set(key, normalized);
+  });
+  return invalid ? null : [...inventoryByKey.values()].sort((left, right) => left.key.localeCompare(right.key));
+}
+
+function normalizeEtag(value) {
+  let normalized = String(value ?? "").trim();
+  if (normalized.startsWith("W/")) normalized = normalized.slice(2).trim();
+  if (normalized.length >= 2 && normalized.startsWith('"') && normalized.endsWith('"')) {
+    normalized = normalized.slice(1, -1);
+  }
+  return normalized;
 }
 
 function parseConfigBoolean(value) {

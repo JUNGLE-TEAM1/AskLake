@@ -6,10 +6,47 @@ from unittest.mock import Mock, patch
 from app.core.errors import ApiError
 from app.services.etl_service import (
     incremental_source_object_keys,
+    list_incremental_s3_object_inventory,
     list_incremental_s3_object_keys,
     source_incremental_since,
     source_incremental_window,
 )
+
+
+def s3_object(key: str, modified_at: datetime, *, size: int = 10, e_tag: str | None = None) -> dict[str, object]:
+    return {
+        "ETag": f'"{e_tag or f"etag-{key}"}"',
+        "Key": key,
+        "LastModified": modified_at,
+        "Size": size,
+    }
+
+
+def s3_inventory_client(
+    contents: list[dict[str, object]],
+    *,
+    head_overrides: dict[str, dict[str, object]] | None = None,
+    version_ids: dict[str, str] | None = None,
+) -> Mock:
+    client = Mock()
+    client.list_objects_v2.return_value = {"Contents": contents, "IsTruncated": False}
+    by_key = {str(item["Key"]): item for item in contents}
+
+    def head_object(*, Bucket: str, Key: str) -> dict[str, object]:
+        del Bucket
+        item = by_key[Key]
+        response: dict[str, object] = {
+            "ContentLength": item["Size"],
+            "ETag": item["ETag"],
+            "LastModified": item["LastModified"],
+        }
+        if version_ids and Key in version_ids:
+            response["VersionId"] = version_ids[Key]
+        response.update((head_overrides or {}).get(Key, {}))
+        return response
+
+    client.head_object.side_effect = head_object
+    return client
 
 
 def incremental_job() -> SimpleNamespace:
@@ -117,16 +154,13 @@ class IncrementalFolderWatermarkTests(unittest.TestCase):
             ["Path / Prefix", "reviews/"],
             ["File Pattern", "*.jsonl"],
         ])
-        client = SimpleNamespace(list_objects_v2=lambda **_request: {
-            "Contents": [
-                {"Key": "reviews/before.jsonl", "LastModified": datetime(2026, 7, 11, 9, 59, 59, tzinfo=UTC)},
-                {"Key": "reviews/lower.jsonl", "LastModified": datetime(2026, 7, 11, 10, 0, tzinfo=UTC)},
-                {"Key": "reviews/inside.jsonl", "LastModified": datetime(2026, 7, 11, 10, 30, tzinfo=UTC)},
-                {"Key": "reviews/upper.jsonl", "LastModified": datetime(2026, 7, 11, 11, 0, tzinfo=UTC)},
-                {"Key": "reviews/ignored.csv", "LastModified": datetime(2026, 7, 11, 10, 30, tzinfo=UTC)},
-            ],
-            "IsTruncated": False,
-        })
+        client = s3_inventory_client([
+            s3_object("reviews/before.jsonl", datetime(2026, 7, 11, 9, 59, 59, tzinfo=UTC)),
+            s3_object("reviews/lower.jsonl", datetime(2026, 7, 11, 10, 0, tzinfo=UTC)),
+            s3_object("reviews/inside.jsonl", datetime(2026, 7, 11, 10, 30, tzinfo=UTC)),
+            s3_object("reviews/upper.jsonl", datetime(2026, 7, 11, 11, 0, tzinfo=UTC)),
+            s3_object("reviews/ignored.csv", datetime(2026, 7, 11, 10, 30, tzinfo=UTC)),
+        ])
 
         keys = list_incremental_s3_object_keys(
             job,
@@ -171,14 +205,10 @@ class IncrementalFolderWatermarkTests(unittest.TestCase):
             ["Path / Prefix", "reviews"],
             ["Recursive", "false"],
         ])
-        client = Mock()
-        client.list_objects_v2.return_value = {
-            "Contents": [
-                {"Key": "reviews/direct.jsonl", "LastModified": datetime(2026, 7, 11, 10, 30, tzinfo=UTC)},
-                {"Key": "reviews/nested/descendant.jsonl", "LastModified": datetime(2026, 7, 11, 10, 30, tzinfo=UTC)},
-            ],
-            "IsTruncated": False,
-        }
+        client = s3_inventory_client([
+            s3_object("reviews/direct.jsonl", datetime(2026, 7, 11, 10, 30, tzinfo=UTC)),
+            s3_object("reviews/nested/descendant.jsonl", datetime(2026, 7, 11, 10, 30, tzinfo=UTC)),
+        ])
 
         keys = list_incremental_s3_object_keys(
             job,
@@ -197,14 +227,10 @@ class IncrementalFolderWatermarkTests(unittest.TestCase):
             ["Path / Prefix", "reviews/"],
             ["Recursive", "true"],
         ])
-        client = Mock()
-        client.list_objects_v2.return_value = {
-            "Contents": [
-                {"Key": "reviews/direct.jsonl", "LastModified": datetime(2026, 7, 11, 10, 30, tzinfo=UTC)},
-                {"Key": "reviews/nested/descendant.jsonl", "LastModified": datetime(2026, 7, 11, 10, 30, tzinfo=UTC)},
-            ],
-            "IsTruncated": False,
-        }
+        client = s3_inventory_client([
+            s3_object("reviews/direct.jsonl", datetime(2026, 7, 11, 10, 30, tzinfo=UTC)),
+            s3_object("reviews/nested/descendant.jsonl", datetime(2026, 7, 11, 10, 30, tzinfo=UTC)),
+        ])
 
         keys = list_incremental_s3_object_keys(
             job,
@@ -235,7 +261,13 @@ class IncrementalFolderWatermarkTests(unittest.TestCase):
     def test_modified_existing_object_key_is_blocked_before_spark(self) -> None:
         job = incremental_job()
         with (
-            patch("app.services.etl_service.list_incremental_s3_object_keys", return_value=["reviews/existing.jsonl"]),
+            patch("app.services.etl_service.list_incremental_s3_object_inventory", return_value=[{
+                "key": "reviews/existing.jsonl",
+                "eTag": "etag-existing",
+                "versionId": None,
+                "lastModified": "2026-07-11T10:30:00.000Z",
+                "size": 10,
+            }]),
             patch("app.services.etl_service.prior_incremental_source_object_keys", return_value={"reviews/existing.jsonl"}),
         ):
             with self.assertRaises(ApiError) as raised:
@@ -248,6 +280,58 @@ class IncrementalFolderWatermarkTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.status_code, 409)
         self.assertEqual(raised.exception.code, "SOURCE_OBJECT_KEY_REPLACED")
+
+    def test_inventory_persists_head_identity_and_version_id(self) -> None:
+        job = incremental_job()
+        job.source_config.extend([
+            ["Bucket / Stage Name", "m3-raw"],
+            ["Path / Prefix", "reviews/"],
+        ])
+        modified_at = datetime(2026, 7, 11, 10, 30, tzinfo=UTC)
+        client = s3_inventory_client(
+            [s3_object("reviews/versioned.jsonl", modified_at, size=27, e_tag="etag-v1")],
+            version_ids={"reviews/versioned.jsonl": "version-123"},
+        )
+
+        inventory = list_incremental_s3_object_inventory(
+            job,
+            incremental_since=None,
+            incremental_before="2026-07-11T11:00:00Z",
+            s3_client=client,
+        )
+
+        self.assertEqual(inventory, [{
+            "key": "reviews/versioned.jsonl",
+            "eTag": "etag-v1",
+            "versionId": "version-123",
+            "lastModified": "2026-07-11T10:30:00.000Z",
+            "size": 27,
+        }])
+        client.head_object.assert_called_once_with(Bucket="m3-raw", Key="reviews/versioned.jsonl")
+
+    def test_replacement_between_list_and_head_fails_closed(self) -> None:
+        job = incremental_job()
+        job.source_config.extend([
+            ["Bucket / Stage Name", "m3-raw"],
+            ["Path / Prefix", "reviews/"],
+        ])
+        modified_at = datetime(2026, 7, 11, 10, 30, tzinfo=UTC)
+        client = s3_inventory_client(
+            [s3_object("reviews/replaced.jsonl", modified_at, e_tag="etag-before")],
+            head_overrides={"reviews/replaced.jsonl": {"ETag": '"etag-after"'}},
+        )
+
+        with self.assertRaises(ApiError) as raised:
+            list_incremental_s3_object_inventory(
+                job,
+                incremental_since=None,
+                incremental_before="2026-07-11T11:00:00Z",
+                s3_client=client,
+            )
+
+        self.assertEqual(raised.exception.code, "SOURCE_OBJECT_IDENTITY_CHANGED")
+        self.assertEqual(raised.exception.status_code, 409)
+        self.assertEqual(raised.exception.details["mismatchFields"], ["eTag"])
 
 
 if __name__ == "__main__":

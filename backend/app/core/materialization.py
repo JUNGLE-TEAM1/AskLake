@@ -1,6 +1,10 @@
 from typing import Any, Iterable
 
 
+SOURCE_WINDOW_CONTRACT_VERSION = 2
+SUPPORTED_SOURCE_WINDOW_CONTRACT_VERSIONS = frozenset({1, SOURCE_WINDOW_CONTRACT_VERSION})
+
+
 def materialization_mode(run: dict[str, Any]) -> str:
     mode = str(run.get("materializationMode") or run.get("materialization_mode") or "").strip().casefold()
     return mode if mode in {"snapshot", "delta"} else "snapshot"
@@ -22,13 +26,31 @@ def materialization_source_window(run: dict[str, Any]) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
 
 
+def source_window_contract_version(run: dict[str, Any]) -> int | None:
+    window = materialization_source_window(run)
+    if not window:
+        return None
+    version = window.get("contractVersion") or window.get("contract_version")
+    try:
+        parsed = int(version)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed in SUPPORTED_SOURCE_WINDOW_CONTRACT_VERSIONS else None
+
+
+def materialization_source_object_inventory(run: dict[str, Any]) -> list[dict[str, Any]] | None:
+    window = materialization_source_window(run)
+    if not window:
+        return None
+    value = window.get("objectInventory") if "objectInventory" in window else window.get("object_inventory")
+    if not isinstance(value, list) or not all(isinstance(item, dict) for item in value):
+        return None
+    return list(value)
+
+
 def has_bounded_source_window(run: dict[str, Any]) -> bool:
     window = materialization_source_window(run)
     if not window:
         return False
-    version = window.get("contractVersion") or window.get("contract_version")
     upper = window.get("upperBound") or window.get("upper_bound")
-    try:
-        return int(version) == 1 and bool(str(upper or "").strip())
-    except (TypeError, ValueError):
-        return False
+    return source_window_contract_version(run) is not None and bool(str(upper or "").strip())
