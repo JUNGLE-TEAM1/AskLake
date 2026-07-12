@@ -274,6 +274,82 @@ function formatJobSchedule(schedule: string) {
     : schedule;
 }
 
+const weeklyScheduleDayIndex: Record<string, number> = {
+  일: 0,
+  월: 1,
+  화: 2,
+  수: 3,
+  목: 4,
+  금: 5,
+  토: 6,
+};
+
+function getNextScheduledRunDate(job: JobRowData, now = new Date()) {
+  if (job.status === "stopped" || getJobScheduleKind(job) === "none" || getJobScheduleKind(job) === "realtime") return null;
+
+  const persistedCandidates = [job.schedulePolicy?.nextRunUtc, job.nextRun];
+  for (const value of persistedCandidates) {
+    if (!value) continue;
+    const timestamp = Date.parse(value);
+    if (!Number.isNaN(timestamp) && timestamp > now.getTime()) return new Date(timestamp);
+  }
+
+  const schedule = job.schedule.trim();
+  const dailyMatch = schedule.match(/매일\s*(\d{1,2}):(\d{2})/);
+  if (dailyMatch) {
+    const candidate = new Date(now);
+    candidate.setHours(Number(dailyMatch[1]), Number(dailyMatch[2]), 0, 0);
+    if (candidate <= now) candidate.setDate(candidate.getDate() + 1);
+    return candidate;
+  }
+
+  const weeklyMatch = schedule.match(/매주\s*([월화수목금토일])요일\s*(\d{1,2}):(\d{2})/);
+  if (weeklyMatch) {
+    const candidate = new Date(now);
+    candidate.setHours(Number(weeklyMatch[2]), Number(weeklyMatch[3]), 0, 0);
+    let daysUntilRun = (weeklyScheduleDayIndex[weeklyMatch[1]] - now.getDay() + 7) % 7;
+    if (daysUntilRun === 0 && candidate <= now) daysUntilRun = 7;
+    candidate.setDate(candidate.getDate() + daysUntilRun);
+    return candidate;
+  }
+
+  const monthlyMatch = schedule.match(/매월\s*(\d{1,2})일\s*(\d{1,2}):(\d{2})/);
+  if (monthlyMatch) {
+    const targetDay = Number(monthlyMatch[1]);
+    const buildMonthlyCandidate = (year: number, month: number) => {
+      const lastDay = new Date(year, month + 1, 0).getDate();
+      return new Date(year, month, Math.min(targetDay, lastDay), Number(monthlyMatch[2]), Number(monthlyMatch[3]), 0, 0);
+    };
+    let candidate = buildMonthlyCandidate(now.getFullYear(), now.getMonth());
+    if (candidate <= now) candidate = buildMonthlyCandidate(now.getFullYear(), now.getMonth() + 1);
+    return candidate;
+  }
+
+  const intervalMinuteMatch = schedule.match(/(\d{1,2})분마다/);
+  if (intervalMinuteMatch) {
+    const interval = Math.max(1, Math.min(59, Number(intervalMinuteMatch[1])));
+    const candidate = new Date(now);
+    candidate.setSeconds(0, 0);
+    candidate.setMinutes((Math.floor(now.getMinutes() / interval) + 1) * interval);
+    return candidate;
+  }
+
+  const hourlyMinuteMatch = schedule.match(/매시간\s*(\d{1,2})분/);
+  if (hourlyMinuteMatch) {
+    const candidate = new Date(now);
+    candidate.setMinutes(Number(hourlyMinuteMatch[1]), 0, 0);
+    if (candidate <= now) candidate.setHours(candidate.getHours() + 1);
+    return candidate;
+  }
+
+  return null;
+}
+
+function formatNextScheduledRun(job: JobRowData) {
+  const nextRun = getNextScheduledRunDate(job);
+  return nextRun ? formatCompactDateTime(nextRun.toISOString()) : "-";
+}
+
 function matchesJobListQuery(job: JobRowData, query: JobListQuery) {
   const statuses = new Set(query.statuses ?? []);
   return (
@@ -776,11 +852,25 @@ function JobsTableSection({
       accessorFn: (row) => row.job.target,
       cell: ({ row }) => {
         const { job } = row.original;
+        const { path: sourcePath, type: sourceType } = getJobListSourceDisplay(job);
 
         return (
           <DataTableStackedCell className="gap-1.5">
             <DataTableCellPrimary className="text-xl leading-7">{job.target}</DataTableCellPrimary>
-            <DataTableCellSecondary className="text-base" title={job.source}>{job.source}</DataTableCellSecondary>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div className="flex min-w-0 cursor-help items-center gap-1.5 text-sm text-slate-500">
+                  <Database aria-hidden="true" className="size-3.5 shrink-0 text-slate-400" />
+                  <span className="shrink-0 font-semibold">{sourceType}</span>
+                </div>
+              </TooltipTrigger>
+              <TooltipContent className="max-w-[480px]">
+                <div className="grid gap-1">
+                  <strong className="font-semibold">{sourceType}</strong>
+                  <span className="break-all text-slate-200">{sourcePath}</span>
+                </div>
+              </TooltipContent>
+            </Tooltip>
           </DataTableStackedCell>
         );
       },
@@ -808,10 +898,10 @@ function JobsTableSection({
       } satisfies DataTableColumnMeta,
     },
     {
-      accessorFn: (row) => row.job.nextRun,
+      accessorFn: (row) => getNextScheduledRunDate(row.job)?.getTime() ?? Number.POSITIVE_INFINITY,
       cell: ({ row }) => (
         <div className="flex min-h-[76px] items-center">
-          <DataTableCellPrimary className="text-lg leading-7">{formatCompactDateTime(row.original.job.nextRun)}</DataTableCellPrimary>
+          <DataTableCellPrimary className="text-lg leading-7">{formatNextScheduledRun(row.original.job)}</DataTableCellPrimary>
         </div>
       ),
       header: "다음 예정 실행",
@@ -871,7 +961,7 @@ function JobsTableSection({
               variant="link"
               onClick={() => onRuns(job)}
             >
-              실행 이력
+              실행 기록 보기
             </Button>
           </DataTableStackedCell>
         );
@@ -1309,16 +1399,24 @@ function StatusPill({ job }: { job: JobRowData }) {
   const showExecutionProgress = job.status === "running" && job.progress !== undefined;
 
   return (
-    <div className={`grid h-full min-w-[184px] content-center justify-items-center gap-3 px-3 py-3 ${showExecutionProgress ? "min-h-[116px]" : "min-h-[100px]"}`}>
+    <div className={cn(
+      "grid h-full min-w-[184px] justify-items-center px-3",
+      showExecutionProgress
+        ? "min-h-[132px] grid-rows-[1fr_auto] gap-2 pb-3 pt-5"
+        : "min-h-[100px] content-center py-3",
+    )}>
       <StatusBadge
-        className="min-w-[160px] justify-center gap-2 whitespace-nowrap rounded-md px-4 py-2.5 text-base font-semibold"
+        className={cn(
+          "min-w-[160px] justify-center gap-2 whitespace-nowrap rounded-md px-4 py-2.5 text-base font-semibold",
+          showExecutionProgress && "self-end translate-y-0.5",
+        )}
         tone={getJobStatusTone(job.status)}
       >
         {job.status === "running" && <Spinner className="size-4" aria-label="실행 중" />}
         {jobStatusMeta[job.status].label}
       </StatusBadge>
       {showExecutionProgress && job.progress ? (
-        <div className="w-full text-left">
+        <div className="w-full self-end text-left">
           <Progress
             aria-label={`${job.progress.label} ${job.progress.value}%`}
             className="w-full"
@@ -1488,7 +1586,7 @@ const hiddenJobDetailFieldLabels = new Set([
 
 const jobSourceTypeLabelMap: Record<string, string> = {
   "Data Lake": "데이터 레이크",
-  "File / S3": "파일 / MinIO",
+  "File / S3": "파일 / 오브젝트 스토리지",
   "Stream / Kafka": "스트림 / Kafka",
 };
 
@@ -1502,6 +1600,131 @@ function isVisibleJobDetailField(label: string) {
 
 function getJobSourceTypeLabel(value: string) {
   return jobSourceTypeLabelMap[value] ?? value;
+}
+
+type JobEndpointItem = {
+  label: string;
+  value: string;
+};
+
+function sourceConfigValue(job: JobRowData, labels: string[]) {
+  const values = new Map(job.sourceConfig ?? []);
+  for (const label of labels) {
+    const value = values.get(label)?.trim();
+    if (value) return value;
+  }
+  return "";
+}
+
+function inferSourceFileFormat(job: JobRowData, sourcePath: string) {
+  const configuredFormat = sourceConfigValue(job, ["File Type", "Format"]);
+  if (configuredFormat && configuredFormat.toLowerCase() !== "auto") return configuredFormat;
+
+  const normalizedPath = sourcePath.split(/[?#]/)[0].toLowerCase();
+  if (normalizedPath.endsWith(".parquet")) return "Parquet";
+  if (normalizedPath.endsWith(".csv")) return "CSV";
+  if (normalizedPath.endsWith(".jsonl") || normalizedPath.endsWith(".ndjson")) return "JSONL";
+  if (normalizedPath.endsWith(".json")) return "JSON";
+  if (normalizedPath.endsWith(".avro")) return "Avro";
+  return configuredFormat;
+}
+
+function inferObjectSourceScope(sourcePath: string) {
+  if (/[*?{}]/.test(sourcePath)) return "경로 패턴";
+  const normalizedPath = sourcePath.split(/[?#]/)[0].replace(/\/+$/, "").toLowerCase();
+  if (/\.(avro|csv|json|jsonl|ndjson|orc|parquet)$/.test(normalizedPath)) return "단일 파일";
+  return "폴더 / 프리픽스";
+}
+
+function inferSourceReadMode(job: JobRowData, sourceType: string) {
+  const configuredMode = sourceConfigValue(job, ["Read Mode", "읽기 방식"]);
+  if (configuredMode) return configuredMode;
+  if (sourceType.includes("kafka") || sourceType.includes("stream")) return "연속 수집";
+  if (sourceConfigValue(job, ["Incremental Key", "Offset Policy", "Offset"])) return "증분 수집";
+  return "전체 스캔";
+}
+
+function compactSourceConfigItems(job: JobRowData, rawSourceType: string, sourcePath: string): JobEndpointItem[] {
+  const sourceType = rawSourceType.toLowerCase();
+  const item = (label: string, value: string): JobEndpointItem | null => value ? { label, value } : null;
+  const compact = (items: Array<JobEndpointItem | null>) => items.filter((value): value is JobEndpointItem => Boolean(value));
+
+  if (sourceType.includes("file") || sourceType.includes("s3") || sourceType.includes("minio")) {
+    const fileFormat = inferSourceFileFormat(job, sourcePath);
+    const isCsv = fileFormat.toLowerCase() === "csv";
+    return compact([
+      item("소스 경로", sourcePath),
+      item("파일 형식", fileFormat),
+      item("읽기 범위", inferObjectSourceScope(sourcePath)),
+      item("읽기 방식", inferSourceReadMode(job, sourceType)),
+      isCsv ? item("구분자", sourceConfigValue(job, ["Delimiter"])) : null,
+      isCsv ? item("헤더 처리", sourceConfigValue(job, ["Header"])) : null,
+    ]);
+  }
+
+  if (sourceType.includes("kafka") || sourceType.includes("stream")) {
+    return compact([
+      item("브로커 / 엔드포인트", sourceConfigValue(job, ["Broker / Endpoint", "Bootstrap Server"])),
+      item("토픽", sourceConfigValue(job, ["TOPIC / QUEUE NAME", "Topic"])),
+      item("컨슈머 그룹", sourceConfigValue(job, ["CONSUMER GROUP ID", "Consumer Group"])),
+      item("메시지 형식", sourceConfigValue(job, ["Message Format", "Format"])),
+      item("시작 오프셋", sourceConfigValue(job, ["Offset Policy", "Offset"])),
+      item("수집 방식", inferSourceReadMode(job, sourceType)),
+    ]);
+  }
+
+  if (sourceType.includes("postgres") || sourceType.includes("mysql") || sourceType.includes("database")) {
+    return compact([
+      item("호스트", sourceConfigValue(job, ["Host", "Endpoint / Host"])),
+      item("데이터베이스", sourceConfigValue(job, ["Database", "Database Name"])),
+      item("테이블", sourceConfigValue(job, ["Table", "DATASET OR TABLE SELECTOR"])),
+      item("읽기 방식", inferSourceReadMode(job, sourceType)),
+      item("증분 기준 키", sourceConfigValue(job, ["Incremental Key"])),
+    ]);
+  }
+
+  if (sourceType.includes("mongo")) {
+    return compact([
+      item("엔드포인트 / 호스트", sourceConfigValue(job, ["Endpoint / Host", "Host", "Endpoint"])),
+      item("데이터베이스", sourceConfigValue(job, ["Database Name", "Database"])),
+      item("컬렉션", sourceConfigValue(job, ["Collection"])),
+      item("읽기 방식", inferSourceReadMode(job, sourceType)),
+      item("증분 기준 키", sourceConfigValue(job, ["Incremental Key"])),
+    ]);
+  }
+
+  if (sourceType.includes("sql result")) {
+    return compact([
+      item("소스 데이터셋", sourceConfigValue(job, ["Source Dataset"])),
+      item("SQL 실행 ID", sourceConfigValue(job, ["SQL Run ID"])),
+    ]);
+  }
+
+  const fallbackItems = (job.sourceConfig ?? [])
+    .filter(([label, value]) => isVisibleJobDetailField(label) && value.trim())
+    .slice(0, 4)
+    .map(([label, value]) => ({ label: getJobDetailFieldLabel(label), value }));
+  return fallbackItems.length > 0 ? fallbackItems : [{ label: "소스 경로", value: sourcePath }];
+}
+
+function getJobListSourceDisplay(job: JobRowData) {
+  const sourceParts = job.source
+    .split(" / ")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const rawType = job.sourceType?.trim()
+    || (sourceParts[0] === "File" && sourceParts[1] === "S3" ? "File / S3" : sourceParts[0])
+    || "소스";
+  const inferredPath = rawType === "File / S3" && sourceParts[0] === "File" && sourceParts[1] === "S3"
+    ? sourceParts.slice(2).join(" / ")
+    : sourceParts.slice(1).join(" / ");
+
+  const path = job.sourceLabel?.trim() || inferredPath || job.source;
+
+  return {
+    path,
+    type: getJobSourceTypeLabel(rawType),
+  };
 }
 
 const ruleActionLabelMap: Record<string, string> = {
@@ -1932,7 +2155,7 @@ export function JobDetailPage({
               detail={realtime ? job.scheduleSummary ?? formatJobSchedule(job.schedule) : formatJobSchedule(job.schedule)}
               label={realtime ? "수집 방식" : "다음 실행"}
               tone="scheduled"
-              value={realtime ? "실시간" : formatCompactDateTime(job.nextRun)}
+              value={realtime ? "실시간" : formatNextScheduledRun(job)}
             />
             {realtime ? (
               <OperationSummaryItem
@@ -2096,7 +2319,7 @@ export function JobDetailPage({
                 items={[
                   { label: "실행 유형", value: isRealtimeJob(job) ? "실시간 수집" : getJobScheduleKind(job) === "none" ? "수동 실행" : "반복 스케줄" },
                   { label: "주기", value: formatJobSchedule(job.schedule) },
-                  { label: "다음 실행", value: formatCompactDateTime(job.nextRun) },
+                  { label: "다음 실행", value: formatNextScheduledRun(job) },
                   { label: "재시도 정책", value: retrySummary },
                 ]}
               />
