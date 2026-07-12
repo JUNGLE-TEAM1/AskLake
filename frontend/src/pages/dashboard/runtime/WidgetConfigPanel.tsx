@@ -22,6 +22,7 @@ import {
   Check,
   CircleDot,
   CircleGauge,
+  Filter,
   Grid3X3,
   Hash,
   Table2,
@@ -30,6 +31,15 @@ import {
 import { HexColorInput, HexColorPicker } from "react-colorful";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { FormFieldGroup, NativeSelectField } from "@/components/ui/form-field-group";
 import { Input } from "@/components/ui/input";
@@ -117,7 +127,7 @@ const orientationOptions: Array<{ label: string; value: DashboardWidgetOrientati
 ];
 const multiColorFallbackCount = 6;
 const widgetEmptySelectValue = "__asklake_none__";
-const WidgetSelectModeContext = createContext<"combobox" | "select">("combobox");
+const WidgetSelectModeContext = createContext<"combobox" | "dropdown">("combobox");
 
 function WidgetSelectField({
   children,
@@ -139,44 +149,49 @@ function WidgetSelectField({
   const hasEmptyOption = options.some((option) => option.value === "");
   const selectValue = value || widgetEmptySelectValue;
 
-  if (selectMode === "select") {
+  if (selectMode === "dropdown") {
+    const selectedOption = options.find((option) => option.value === value);
     return (
       <FormFieldGroup className={props.fieldClassName} label={props.label}>
-        <Select
-          disabled={props.disabled}
-          value={selectValue}
-          onValueChange={(nextValue) => {
-            if (!hasEmptyOption && (!nextValue || nextValue === widgetEmptySelectValue)) return;
-            onChange?.({
-              target: { value: nextValue === widgetEmptySelectValue ? "" : nextValue },
-            } as ChangeEvent<HTMLSelectElement>);
-          }}
-        >
-          <SelectTrigger
-            aria-label={String(props.label)}
-            className={cn("asklake-widget-select", selectClassName)}
-            size="sm"
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              aria-label={String(props.label)}
+              className={cn("asklake-widget-select h-9 w-full justify-between px-3", selectClassName)}
+              disabled={props.disabled}
+              size="sm"
+              type="button"
+              variant="outline"
+            >
+              <span className="min-w-0 flex-1 truncate text-left">
+                {selectedOption?.label ?? (hasEmptyOption ? options.find((option) => option.value === "")?.label : "선택하세요")}
+              </span>
+              <Filter className="size-4 shrink-0 text-slate-500" aria-hidden="true" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            align="start"
+            className="w-[var(--radix-dropdown-menu-trigger-width)] min-w-40"
           >
-            <SelectValue placeholder="선택하세요" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectGroup>
-              {!hasEmptyOption && (
-                <SelectItem disabled value={widgetEmptySelectValue}>
-                  선택하세요
-                </SelectItem>
-              )}
+            <DropdownMenuLabel>{String(props.label)} 필터</DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <DropdownMenuRadioGroup
+              value={selectValue}
+              onValueChange={(nextValue) => onChange?.({
+                target: { value: nextValue === widgetEmptySelectValue ? "" : nextValue },
+              } as ChangeEvent<HTMLSelectElement>)}
+            >
               {options.map((option) => (
-                <SelectItem
+                <DropdownMenuRadioItem
                   key={option.value || widgetEmptySelectValue}
                   value={option.value || widgetEmptySelectValue}
                 >
                   {option.label}
-                </SelectItem>
+                </DropdownMenuRadioItem>
               ))}
-            </SelectGroup>
-          </SelectContent>
-        </Select>
+            </DropdownMenuRadioGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </FormFieldGroup>
     );
   }
@@ -555,7 +570,7 @@ export function WidgetConfigPanel({
   createButtonLabel?: string;
   datasets?: DashboardDatasetOption[];
   editingWidget?: DashboardRuntimeWidget | null;
-  fieldSelectMode?: "combobox" | "select";
+  fieldSelectMode?: "combobox" | "dropdown";
   focusedColorSlot?: DashboardWidgetColorSlotFocus | null;
   initialCreateInput?: CreateDraftWidgetFormInput | null;
   isCreating?: boolean;
@@ -853,29 +868,43 @@ export function WidgetConfigPanel({
       <WidgetSelectModeContext.Provider value={fieldSelectMode}>
         <form className="asklake-widget-config-form" onSubmit={(event) => void handleSubmit(event)}>
           <FieldGroup className="contents">
-          {shouldShowDatasetSelect ? (
-            <Field className="asklake-widget-dataset-field">
-              <FieldLabel htmlFor={datasetFieldId}>데이터셋</FieldLabel>
-              <Select
+            {shouldShowDatasetSelect ? fieldSelectMode === "dropdown" ? (
+              <WidgetSelectField
                 disabled={!datasets.length || !onSelectDataset}
+                fieldClassName="asklake-widget-dataset-field"
+                label="데이터셋"
                 value={selectedDatasetId ?? ""}
-                onValueChange={(value) => onSelectDataset?.(value)}
+                onChange={(event) => onSelectDataset?.(event.target.value)}
               >
-                <SelectTrigger id={datasetFieldId} size="sm">
-                  <SelectValue placeholder="데이터셋 선택" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectGroup>
-                    {datasets.map((dataset) => (
-                      <SelectItem key={dataset.id} value={dataset.id}>
-                        {dataset.name}
-                      </SelectItem>
-                    ))}
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-            </Field>
-          ) : null}
+                {datasets.map((dataset) => (
+                  <option key={dataset.id} value={dataset.id}>
+                    {dataset.name}
+                  </option>
+                ))}
+              </WidgetSelectField>
+            ) : (
+              <Field className="asklake-widget-dataset-field">
+                <FieldLabel htmlFor={datasetFieldId}>데이터셋</FieldLabel>
+                <Select
+                  disabled={!datasets.length || !onSelectDataset}
+                  value={selectedDatasetId ?? ""}
+                  onValueChange={(value) => onSelectDataset?.(value)}
+                >
+                  <SelectTrigger id={datasetFieldId} size="sm">
+                    <SelectValue placeholder="데이터셋 선택" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      {datasets.map((dataset) => (
+                        <SelectItem key={dataset.id} value={dataset.id}>
+                          {dataset.name}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </Field>
+            ) : null}
           <Field>
             <FieldLabel htmlFor={titleFieldId}>위젯 제목</FieldLabel>
             <Input

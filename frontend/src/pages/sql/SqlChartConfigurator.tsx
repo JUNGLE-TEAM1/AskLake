@@ -72,7 +72,7 @@ export function SqlChartConfigurator({
         <WidgetConfigPanel
           createButtonLabel={initialCreateInput ? "변경 적용" : "차트 생성하기"}
           datasets={datasets}
-          fieldSelectMode="select"
+          fieldSelectMode="dropdown"
           initialCreateInput={initialCreateInput}
           onCreateWidget={applyWidget}
           onSelectDataset={setSelectedSourceId}
