@@ -6,6 +6,7 @@ from app.core.materialization import (
     active_materialization_runs,
     has_bounded_source_window,
     materialization_source_object_inventory,
+    materialization_mode,
     source_window_contract_version,
 )
 from app.services.etl_service import spark_materialization_mode, spark_result_manifest, spark_source_window_metadata
@@ -21,6 +22,22 @@ class MaterializationContractTests(unittest.TestCase):
         ]
 
         self.assertEqual([run["runId"] for run in active_materialization_runs(runs)], ["delta-2", "snapshot-2"])
+
+    def test_legacy_kafka_run_remains_delta_until_explicit_snapshot(self) -> None:
+        legacy_runs = [
+            {"runId": "kafka-new", "status": "success", "sourceKind": "kafka"},
+            {"runId": "etl-base", "status": "success"},
+        ]
+
+        self.assertEqual(materialization_mode(legacy_runs[0]), "delta")
+        self.assertEqual(
+            [run["runId"] for run in active_materialization_runs(legacy_runs)],
+            ["kafka-new", "etl-base"],
+        )
+        self.assertEqual(materialization_mode({
+            "materializationMode": "snapshot",
+            "sourceKind": "kafka",
+        }), "snapshot")
 
     def test_bounded_window_requires_version_and_upper_bound(self) -> None:
         self.assertTrue(has_bounded_source_window({

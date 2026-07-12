@@ -1,9 +1,13 @@
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+import os
 from typing import Any, Callable
 from urllib.parse import urlparse
 
 
 SOURCE_WINDOW_IDENTITY_CONTRACT_VERSION = 2
+DEFAULT_IDENTITY_WORKERS = 16
+MAX_IDENTITY_WORKERS = 64
 
 
 def source_change_detection_mode(source_collection: dict[str, Any] | None) -> str:
@@ -63,8 +67,8 @@ def verify_incremental_source_inventory(
         raise ValueError("SOURCE_OBJECT_INVENTORY_INVALID objectKeys and objectInventory do not match")
 
     paths_by_key = incremental_source_paths_by_key(source_path, object_keys)
-    verified_paths: list[str] = []
-    for key in sorted(inventory_by_key):
+
+    def verify_one(key: str) -> str:
         expected = inventory_by_key[key]
         path = paths_by_key[key]
         try:
@@ -84,8 +88,16 @@ def verify_incremental_source_inventory(
             raise ValueError(
                 f"SOURCE_OBJECT_IDENTITY_MISMATCH key={key} fields={','.join(mismatches)}"
             )
-        verified_paths.append(path)
-    return verified_paths
+        return path
+
+    keys = sorted(inventory_by_key)
+    if not keys:
+        return []
+    with ThreadPoolExecutor(
+        max_workers=identity_worker_count(len(keys)),
+        thread_name_prefix="asklake-spark-identity",
+    ) as executor:
+        return list(executor.map(verify_one, keys))
 
 
 def normalize_object_identity(value: Any, *, expected_key: str | None = None) -> dict[str, Any]:
@@ -168,3 +180,11 @@ def normalize_last_modified(value: Any) -> int | None:
 def compact_error(error: Exception, *, limit: int = 300) -> str:
     text = " ".join(str(error).split()) or error.__class__.__name__
     return text[:limit]
+
+
+def identity_worker_count(item_count: int) -> int:
+    try:
+        configured = int(os.environ.get("ASKLAKE_SOURCE_IDENTITY_WORKERS") or DEFAULT_IDENTITY_WORKERS)
+    except ValueError:
+        configured = DEFAULT_IDENTITY_WORKERS
+    return max(1, min(item_count, configured, MAX_IDENTITY_WORKERS))

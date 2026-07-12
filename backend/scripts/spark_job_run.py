@@ -60,6 +60,7 @@ def main():
     run_id = os.environ.get("ASKLAKE_SPARK_RUN_ID", "unknown")
     source_collection = {}
     spark = None
+    output_write_started = False
     try:
         source_path = required_env("ASKLAKE_SPARK_SOURCE_PATH")
         source_format = required_env("ASKLAKE_SPARK_SOURCE_FORMAT").lower()
@@ -145,6 +146,7 @@ def main():
         writer = output_df.write.mode("overwrite")
         if resolved_partition_columns:
             writer = writer.partitionBy(*resolved_partition_columns)
+        output_write_started = True
         writer.parquet(output_path)
         written_df = spark.read.parquet(output_path)
         output_rows = written_df.count()
@@ -227,6 +229,12 @@ def main():
         return 0
     except Exception as exc:
         ended_at = now_iso()
+        error_message = str(exc)
+        cleanup_errors = (
+            cleanup_failed_output_paths(spark, output_path)
+            if spark is not None and output_write_started
+            else []
+        )
         result = {
             "durationMs": int(time.time() * 1000) - started_ms,
             "endedAt": ended_at,
@@ -248,6 +256,11 @@ def main():
             "startedAt": started_at,
             "status": "failed",
         }
+        if output_write_started:
+            result["outputCleanup"] = {
+                "errors": cleanup_errors,
+                "status": "failed" if cleanup_errors else "success",
+            }
         write_report(report_file, result)
         print(f"ASKLAKE_SPARK_JOB_RESULT={json.dumps(result, ensure_ascii=False, sort_keys=True)}")
         print(f"Spark job failed: {exc}", file=sys.stderr)
@@ -255,6 +268,20 @@ def main():
     finally:
         if spark is not None:
             spark.stop()
+
+
+def cleanup_failed_output_paths(spark, output_path):
+    errors = []
+    paths = [str(output_path).rstrip("/"), f"{str(output_path).rstrip('/')}_quarantine"]
+    for path in paths:
+        try:
+            hadoop_path = spark._jvm.org.apache.hadoop.fs.Path(path)
+            file_system = hadoop_path.getFileSystem(spark._jsc.hadoopConfiguration())
+            file_system.delete(hadoop_path, True)
+        except Exception as exc:
+            reason = " ".join(str(exc).split()) or exc.__class__.__name__
+            errors.append({"path": path, "reason": reason[:500]})
+    return errors
 
 
 def make_spark(source_collection=None):

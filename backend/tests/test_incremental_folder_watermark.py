@@ -1,5 +1,7 @@
 import unittest
 from datetime import UTC, datetime
+from threading import Lock
+import time
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -332,6 +334,48 @@ class IncrementalFolderWatermarkTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, "SOURCE_OBJECT_IDENTITY_CHANGED")
         self.assertEqual(raised.exception.status_code, 409)
         self.assertEqual(raised.exception.details["mismatchFields"], ["eTag"])
+
+    def test_head_identity_checks_use_bounded_concurrency_and_keep_key_order(self) -> None:
+        job = incremental_job()
+        job.source_config.extend([
+            ["Bucket / Stage Name", "m3-raw"],
+            ["Path / Prefix", "reviews/"],
+        ])
+        modified_at = datetime(2026, 7, 11, 10, 30, tzinfo=UTC)
+        contents = [
+            s3_object(f"reviews/{index}.jsonl", modified_at, e_tag=f"etag-{index}")
+            for index in range(6)
+        ]
+        client = s3_inventory_client(contents)
+        original_head = client.head_object.side_effect
+        lock = Lock()
+        active = 0
+        max_active = 0
+
+        def tracked_head(**kwargs):
+            nonlocal active, max_active
+            with lock:
+                active += 1
+                max_active = max(max_active, active)
+            try:
+                time.sleep(0.03)
+                return original_head(**kwargs)
+            finally:
+                with lock:
+                    active -= 1
+
+        client.head_object.side_effect = tracked_head
+        with patch.dict("os.environ", {"ASKLAKE_SOURCE_IDENTITY_WORKERS": "3"}, clear=False):
+            inventory = list_incremental_s3_object_inventory(
+                job,
+                incremental_since=None,
+                incremental_before="2026-07-11T11:00:00Z",
+                s3_client=client,
+            )
+
+        self.assertEqual([item["key"] for item in inventory], sorted(item["Key"] for item in contents))
+        self.assertGreater(max_active, 1)
+        self.assertLessEqual(max_active, 3)
 
 
 if __name__ == "__main__":

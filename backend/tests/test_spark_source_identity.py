@@ -2,6 +2,8 @@ import importlib
 import os
 from pathlib import Path
 import sys
+from threading import Lock
+import time
 from types import ModuleType, SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
@@ -249,6 +251,7 @@ class SparkSourceIdentityTests(unittest.TestCase):
             patch.object(spark_job_run, "text_structuring_manifest", return_value={"definition": {"columns": []}}),
             patch.object(spark_job_run, "collect_sample_rows", return_value=[]),
             patch.object(spark_job_run, "write_report", write_report),
+            patch.object(spark_job_run, "cleanup_failed_output_paths", return_value=[]) as cleanup,
             patch.object(spark_job_run.F, "lit", return_value="run-1"),
             patch.object(spark_job_run.F, "current_timestamp", return_value="now"),
             patch("builtins.print"),
@@ -261,7 +264,46 @@ class SparkSourceIdentityTests(unittest.TestCase):
         self.assertEqual(report["status"], "failed")
         self.assertEqual(report["failedStage"], "Source Inventory")
         self.assertIn("phase=after_read", report["error"])
+        self.assertEqual(report["outputCleanup"], {"errors": [], "status": "success"})
+        cleanup.assert_called_once_with(spark, "s3a://m3-output/run-1")
         spark.stop.assert_called_once_with()
+
+    def test_identity_status_checks_use_bounded_concurrency_and_keep_path_order(self) -> None:
+        items = [
+            identity(f"incoming/{index}.jsonl", e_tag=f"etag-{index}")
+            for index in range(6)
+        ]
+        collection = source_collection(*items)
+        by_path = {
+            f"s3a://m3-raw/{item['key']}": item
+            for item in items
+        }
+        lock = Lock()
+        active = 0
+        max_active = 0
+
+        def tracked_loader(path: str) -> dict[str, object]:
+            nonlocal active, max_active
+            with lock:
+                active += 1
+                max_active = max(max_active, active)
+            try:
+                time.sleep(0.03)
+                return dict(by_path[path])
+            finally:
+                with lock:
+                    active -= 1
+
+        with patch.dict(os.environ, {"ASKLAKE_SOURCE_IDENTITY_WORKERS": "3"}, clear=False):
+            paths = verify_incremental_source_inventory(
+                "s3a://m3-raw/incoming/",
+                collection,
+                tracked_loader,
+            )
+
+        self.assertEqual(paths, sorted(by_path))
+        self.assertGreater(max_active, 1)
+        self.assertLessEqual(max_active, 3)
 
     def test_spark_job_invokes_identity_guard_before_and_after_all_actions(self) -> None:
         source = (Path(__file__).parents[1] / "scripts" / "spark_job_run.py").read_text(encoding="utf-8")

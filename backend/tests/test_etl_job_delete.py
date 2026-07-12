@@ -29,7 +29,14 @@ from app.models import (
 )
 from app.models.base import Base
 from app.services.airflow_client import AirflowDagRun
-from app.services.etl_service import command_job, delete_job
+from app.services.etl_service import (
+    airflow_submission_error_is_definitive,
+    command_job,
+    delete_job,
+    execute_airflow_spark_run,
+    record_airflow_sync_error,
+    sync_airflow_run,
+)
 
 
 def delete_fixture_job(job_id: str = "JOB-DELETE-TEST") -> ETLJobModel:
@@ -217,6 +224,93 @@ class BlockingAirflowClient:
     def dag_run_url(self, dag_run_id: str) -> str:
         return f"http://airflow.test/{dag_run_id}"
 
+    def get_dag_run(self, dag_run_id: str) -> AirflowDagRun:
+        return AirflowDagRun(
+            dag_id=self.config.dag_id,
+            dag_run_id=dag_run_id,
+            state="queued",
+            asklake_status="queued",
+            conf={},
+            raw={},
+        )
+
+    def list_task_instances(self, dag_run_id: str) -> list:
+        del dag_run_id
+        return []
+
+
+class TimeoutAfterAcceptAirflowClient(BlockingAirflowClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.accepted_run: AirflowDagRun | None = None
+        self.lookup_count = 0
+
+    def trigger_dag_run(self, *, dag_run_id: str, conf: dict[str, object], note: str) -> AirflowDagRun:
+        del note
+        self.trigger_count += 1
+        self.accepted_run = AirflowDagRun(
+            dag_id=self.config.dag_id,
+            dag_run_id=dag_run_id,
+            state="queued",
+            asklake_status="queued",
+            conf=conf,
+            raw={},
+        )
+        raise TimeoutError("response was lost after Airflow accepted the run")
+
+    def get_dag_run(self, dag_run_id: str) -> AirflowDagRun:
+        self.lookup_count += 1
+        if self.accepted_run is None or self.accepted_run.dag_run_id != dag_run_id:
+            raise AssertionError("reserved Airflow run was not found")
+        return self.accepted_run
+
+
+class RejectedAirflowClient(BlockingAirflowClient):
+    def trigger_dag_run(self, *, dag_run_id: str, conf: dict[str, object], note: str) -> AirflowDagRun:
+        del dag_run_id, conf, note
+        self.trigger_count += 1
+        raise ApiError(
+            "AIRFLOW_API_ERROR",
+            "Airflow rejected the request",
+            502,
+            {"airflowStatus": 401},
+        )
+
+    def get_dag_run(self, dag_run_id: str) -> AirflowDagRun:
+        del dag_run_id
+        raise ApiError(
+            "AIRFLOW_API_ERROR",
+            "Airflow run does not exist",
+            502,
+            {"airflowStatus": 404},
+        )
+
+
+class LostResponseAirflowClient(BlockingAirflowClient):
+    def trigger_dag_run(self, *, dag_run_id: str, conf: dict[str, object], note: str) -> AirflowDagRun:
+        del dag_run_id, conf, note
+        self.trigger_count += 1
+        if self.entered is not None:
+            self.entered.set()
+        if self.release is not None and not self.release.wait(timeout=10):
+            raise TimeoutError("test did not release the lost Airflow response")
+        raise TimeoutError("Airflow accepted the run but the response was lost")
+
+    def get_dag_run(self, dag_run_id: str) -> AirflowDagRun:
+        del dag_run_id
+        raise ApiError("AIRFLOW_API_UNAVAILABLE", "Airflow lookup is temporarily unavailable", 502)
+
+
+class MissingTaskInstancesAirflowClient(BlockingAirflowClient):
+    def list_task_instances(self, dag_run_id: str) -> list:
+        del dag_run_id
+        raise ApiError(
+            "AIRFLOW_API_ERROR",
+            "Task instances were not found",
+            502,
+            {"airflowStatus": 404},
+        )
+
 
 class EtlJobDeleteRunConcurrencyTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -260,7 +354,28 @@ class EtlJobDeleteRunConcurrencyTests(unittest.TestCase):
             db.add(kafka_fixture_job(job_id))
             db.commit()
 
-    def test_delete_waits_for_airflow_start_then_observes_persisted_run(self) -> None:
+    def insert_airflow_run(self, job_id: str, run_id: str) -> None:
+        with self.session_factory() as db:
+            db.add(ETLRunModel(
+                run_id=run_id,
+                job_id=job_id,
+                status="queued",
+                started_at="2026-07-12T11:00:00Z",
+                ended_at="-",
+                duration="-",
+                input_rows="-",
+                output_rows="-",
+                output_path="s3a://asklake-output/test",
+                failed_stage="-",
+                error_summary="-",
+                airflow_dag_id="asklake_test_dag",
+                airflow_dag_run_id=run_id,
+                airflow_state="queued",
+                task_states={},
+            ))
+            db.commit()
+
+    def test_delete_observes_airflow_reservation_while_external_trigger_runs(self) -> None:
         job_id = "JOB-SQLITE-RUN-WINS"
         self.insert_job(job_id)
         trigger_entered = threading.Event()
@@ -293,20 +408,18 @@ class EtlJobDeleteRunConcurrencyTests(unittest.TestCase):
 
             delete_thread = threading.Thread(target=delete, name="delete-waiter")
             delete_thread.start()
-            time.sleep(0.2)
-            self.assertTrue(delete_thread.is_alive(), "delete should wait on the SQLite writer lock")
+            delete_thread.join(timeout=5)
+            self.assertFalse(delete_thread.is_alive(), "delete should reject the committed Airflow reservation")
+            delete_result = delete_results.get_nowait()
+            self.assertIsInstance(delete_result, ApiError)
+            self.assertEqual(delete_result.status_code, 409)
 
             release_trigger.set()
             run_thread.join(timeout=10)
-            delete_thread.join(timeout=10)
 
         self.assertFalse(run_thread.is_alive())
-        self.assertFalse(delete_thread.is_alive())
         run_result = run_results.get_nowait()
-        delete_result = delete_results.get_nowait()
         self.assertFalse(isinstance(run_result, BaseException), run_result)
-        self.assertIsInstance(delete_result, ApiError)
-        self.assertEqual(delete_result.status_code, 409)
         self.assertEqual(airflow.trigger_count, 1)
         with self.session_factory() as db:
             self.assertIsNotNone(db.get(ETLJobModel, job_id))
@@ -374,6 +487,282 @@ class EtlJobDeleteRunConcurrencyTests(unittest.TestCase):
         self.assertEqual(airflow.trigger_count, 0)
         with self.session_factory() as db:
             self.assertIsNone(db.get(ETLJobModel, job_id))
+
+    def test_airflow_timeout_after_accept_reconciles_the_reserved_run(self) -> None:
+        job_id = "JOB-SQLITE-AIRFLOW-TIMEOUT"
+        self.insert_job(job_id)
+        airflow = TimeoutAfterAcceptAirflowClient()
+
+        with (
+            patch("app.repositories.etl_repository.ensure_schema", return_value=None),
+            patch("app.services.etl_service.build_airflow_client", return_value=airflow),
+        ):
+            with self.session_factory() as db:
+                response = command_job(db, job_id, "run", ActorContext(name="Test Admin", role="admin"))
+            with self.session_factory() as db:
+                with self.assertRaises(ApiError) as duplicate:
+                    command_job(db, job_id, "retry", ActorContext(name="Test Admin", role="admin"))
+
+        self.assertEqual(response.run.status, "queued")
+        self.assertEqual(duplicate.exception.status_code, 409)
+        self.assertEqual(airflow.trigger_count, 1)
+        self.assertEqual(airflow.lookup_count, 1)
+        with self.session_factory() as db:
+            runs = list(db.scalars(select(ETLRunModel).where(ETLRunModel.job_id == job_id)))
+            self.assertEqual(len(runs), 1)
+            self.assertEqual(runs[0].run_id, response.run.run_id)
+            self.assertEqual(runs[0].airflow_dag_run_id, response.run.run_id)
+
+    def test_definitive_airflow_rejection_fails_the_reserved_run(self) -> None:
+        job_id = "JOB-SQLITE-AIRFLOW-REJECTED"
+        self.insert_job(job_id)
+        airflow = RejectedAirflowClient()
+
+        with (
+            patch("app.repositories.etl_repository.ensure_schema", return_value=None),
+            patch("app.services.etl_service.build_airflow_client", return_value=airflow),
+        ):
+            with self.session_factory() as db:
+                response = command_job(db, job_id, "run", ActorContext(name="Test Admin", role="admin"))
+
+        self.assertEqual(response.run.status, "failed")
+        self.assertEqual(response.run.failed_stage, "Airflow submission")
+        with self.session_factory() as db:
+            self.assertEqual(db.get(ETLJobModel, job_id).status, "failed")
+
+    def test_repeated_authoritative_airflow_404_terminates_reservation(self) -> None:
+        job_id = "JOB-SQLITE-AIRFLOW-MISSING"
+        run_id = "RUN-SQLITE-AIRFLOW-MISSING"
+        self.insert_job(job_id)
+        self.insert_airflow_run(job_id, run_id)
+        missing = ApiError(
+            "AIRFLOW_API_ERROR",
+            "Airflow DAG Run was not found",
+            502,
+            {"airflowStatus": 404},
+        )
+
+        with self.session_factory() as db:
+            run = db.get(ETLRunModel, run_id)
+            record_airflow_sync_error(run, missing, "2026-07-12T11:01:00Z")
+            record_airflow_sync_error(run, missing, "2026-07-12T11:02:00Z")
+            self.assertEqual(run.status, "queued")
+            record_airflow_sync_error(run, missing, "2026-07-12T11:03:00Z")
+            self.assertEqual(run.status, "failed")
+            self.assertEqual(run.failed_stage, "Airflow submission")
+            self.assertEqual(run.task_states["airflowReservation"]["missingCount"], 3)
+
+    def test_airflow_submit_finalization_preserves_worker_completion(self) -> None:
+        job_id = "JOB-SQLITE-AIRFLOW-WORKER-WINS"
+        self.insert_job(job_id)
+        trigger_entered = threading.Event()
+        release_trigger = threading.Event()
+        airflow = BlockingAirflowClient(trigger_entered, release_trigger)
+        command_result: Queue = Queue()
+
+        def start_run() -> None:
+            try:
+                with self.session_factory() as db:
+                    command_result.put(command_job(db, job_id, "run", ActorContext(name="Test Admin", role="admin")))
+            except BaseException as exc:
+                command_result.put(exc)
+
+        with (
+            patch("app.repositories.etl_repository.ensure_schema", return_value=None),
+            patch("app.services.etl_service.build_airflow_client", return_value=airflow),
+        ):
+            command_thread = threading.Thread(target=start_run, name="airflow-command-finalizer")
+            command_thread.start()
+            self.assertTrue(trigger_entered.wait(timeout=5))
+            with self.session_factory() as db:
+                run = db.scalar(select(ETLRunModel).where(ETLRunModel.job_id == job_id))
+                self.assertIsNotNone(run)
+                run.status = "success"
+                run.airflow_state = "success"
+                run.output_path = "s3a://asklake-output/test/worker-complete"
+                run.output_rows = "7 rows"
+                run.task_states = {
+                    "sparkResult": {"status": "success", "outputRows": 7},
+                    "catalogResult": {"status": "success", "datasetId": "dataset-1"},
+                }
+                db.commit()
+            release_trigger.set()
+            command_thread.join(timeout=10)
+
+        self.assertFalse(command_thread.is_alive())
+        response = command_result.get_nowait()
+        self.assertFalse(isinstance(response, BaseException), response)
+        self.assertEqual(response.run.status, "success")
+        with self.session_factory() as db:
+            run = db.get(ETLRunModel, response.run.run_id)
+            self.assertEqual(run.status, "success")
+            self.assertEqual(run.output_rows, "7 rows")
+            self.assertEqual(run.output_path, "s3a://asklake-output/test/worker-complete")
+            self.assertEqual(run.task_states["sparkResult"]["status"], "success")
+            self.assertEqual(run.task_states["catalogResult"]["status"], "success")
+
+    def test_lost_airflow_submit_response_preserves_worker_completion(self) -> None:
+        job_id = "JOB-SQLITE-AIRFLOW-LOST-RESPONSE"
+        self.insert_job(job_id)
+        trigger_entered = threading.Event()
+        release_trigger = threading.Event()
+        airflow = LostResponseAirflowClient(trigger_entered, release_trigger)
+        command_result: Queue = Queue()
+
+        def start_run() -> None:
+            try:
+                with self.session_factory() as db:
+                    command_result.put(command_job(db, job_id, "run", ActorContext(name="Test Admin", role="admin")))
+            except BaseException as exc:
+                command_result.put(exc)
+
+        with (
+            patch("app.repositories.etl_repository.ensure_schema", return_value=None),
+            patch("app.services.etl_service.build_airflow_client", return_value=airflow),
+        ):
+            command_thread = threading.Thread(target=start_run, name="airflow-lost-response")
+            command_thread.start()
+            self.assertTrue(trigger_entered.wait(timeout=5))
+            with self.session_factory() as db:
+                run = db.scalar(select(ETLRunModel).where(ETLRunModel.job_id == job_id))
+                run.status = "success"
+                run.airflow_state = "success"
+                run.output_rows = "9 rows"
+                run.task_states = {"sparkResult": {"status": "success"}}
+                db.commit()
+            release_trigger.set()
+            command_thread.join(timeout=10)
+
+        response = command_result.get_nowait()
+        self.assertFalse(isinstance(response, BaseException), response)
+        self.assertEqual(response.run.status, "success")
+        with self.session_factory() as db:
+            run = db.get(ETLRunModel, response.run.run_id)
+            self.assertEqual(run.status, "success")
+            self.assertEqual(run.output_rows, "9 rows")
+            self.assertEqual(run.task_states["sparkResult"]["status"], "success")
+
+    def test_airflow_sync_preserves_active_spark_execution_lease(self) -> None:
+        job_id = "JOB-SQLITE-AIRFLOW-SYNC-LEASE"
+        run_id = "RUN-SQLITE-AIRFLOW-SYNC-LEASE"
+        self.insert_job(job_id)
+        self.insert_airflow_run(job_id, run_id)
+        with self.session_factory() as db:
+            run = db.get(ETLRunModel, run_id)
+            run.task_states = {
+                "sparkExecution": {
+                    "attemptId": "attempt-1",
+                    "startedAt": "2026-07-12T11:00:00Z",
+                    "status": "running",
+                },
+            }
+            db.commit()
+
+        with (
+            patch("app.repositories.etl_repository.ensure_schema", return_value=None),
+            self.session_factory() as db,
+        ):
+            sync_airflow_run(
+                db,
+                db.get(ETLJobModel, job_id),
+                db.get(ETLRunModel, run_id),
+                BlockingAirflowClient(),
+            )
+
+        with self.session_factory() as db:
+            run = db.get(ETLRunModel, run_id)
+            self.assertEqual(run.task_states["sparkExecution"]["attemptId"], "attempt-1")
+            self.assertEqual(run.task_states["sparkExecution"]["status"], "running")
+
+    def test_task_instance_404_does_not_mark_dag_run_missing(self) -> None:
+        job_id = "JOB-SQLITE-AIRFLOW-TASKS-MISSING"
+        run_id = "RUN-SQLITE-AIRFLOW-TASKS-MISSING"
+        self.insert_job(job_id)
+        self.insert_airflow_run(job_id, run_id)
+        client = MissingTaskInstancesAirflowClient()
+
+        with patch("app.repositories.etl_repository.ensure_schema", return_value=None):
+            for _ in range(3):
+                with self.session_factory() as db:
+                    sync_airflow_run(
+                        db,
+                        db.get(ETLJobModel, job_id),
+                        db.get(ETLRunModel, run_id),
+                        client,
+                    )
+
+        with self.session_factory() as db:
+            run = db.get(ETLRunModel, run_id)
+            self.assertEqual(run.status, "queued")
+            self.assertNotIn("missingCount", (run.task_states or {}).get("airflowReservation", {}))
+
+    def test_bad_airflow_response_is_not_a_definitive_rejection(self) -> None:
+        self.assertFalse(airflow_submission_error_is_definitive(ApiError(
+            "AIRFLOW_BAD_RESPONSE",
+            "Airflow returned malformed JSON",
+            502,
+        )))
+
+    def test_duplicate_airflow_spark_request_is_blocked_by_run_lease(self) -> None:
+        job_id = "JOB-SQLITE-SPARK-LEASE"
+        run_id = "RUN-SQLITE-SPARK-LEASE"
+        self.insert_job(job_id)
+        self.insert_airflow_run(job_id, run_id)
+        spark_entered = threading.Event()
+        release_spark = threading.Event()
+        spark_calls = Mock()
+        first_result: Queue = Queue()
+
+        def blocking_spark(_db, _job, command, requested_run_id):
+            spark_calls(command, requested_run_id)
+            spark_entered.set()
+            if not release_spark.wait(timeout=10):
+                raise TimeoutError("test did not release Spark")
+            return {
+                "endedAt": "2026-07-12T11:00:02Z",
+                "inputRows": 2,
+                "outputPath": f"s3a://asklake-output/test/{requested_run_id}",
+                "outputRows": 2,
+                "runId": requested_run_id,
+                "startedAt": "2026-07-12T11:00:00Z",
+                "status": "success",
+            }
+
+        def first_request() -> None:
+            try:
+                with self.session_factory() as db:
+                    first_result.put(execute_airflow_spark_run(
+                        db,
+                        job_id=job_id,
+                        run_id=run_id,
+                        command="run",
+                    ))
+            except BaseException as exc:
+                first_result.put(exc)
+
+        with (
+            patch("app.repositories.etl_repository.ensure_schema", return_value=None),
+            patch("app.services.etl_service.run_spark_job", side_effect=blocking_spark),
+        ):
+            first_thread = threading.Thread(target=first_request, name="spark-lease-owner")
+            first_thread.start()
+            self.assertTrue(spark_entered.wait(timeout=5))
+            with self.session_factory() as db:
+                with self.assertRaises(ApiError) as duplicate:
+                    execute_airflow_spark_run(db, job_id=job_id, run_id=run_id, command="run")
+            self.assertEqual(duplicate.exception.status_code, 409)
+            release_spark.set()
+            first_thread.join(timeout=10)
+
+        self.assertFalse(first_thread.is_alive())
+        completed = first_result.get_nowait()
+        self.assertFalse(isinstance(completed, BaseException), completed)
+        self.assertEqual(completed["status"], "success")
+        spark_calls.assert_called_once_with("run", run_id)
+        with self.session_factory() as db:
+            run = db.get(ETLRunModel, run_id)
+            self.assertEqual(run.task_states["sparkExecution"]["status"], "success")
+            self.assertEqual(run.task_states["sparkResult"]["status"], "success")
 
     def test_delete_observes_kafka_reservation_while_external_ingest_runs(self) -> None:
         job_id = "JOB-SQLITE-KAFKA-RUN-WINS"
