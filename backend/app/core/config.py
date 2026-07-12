@@ -1,7 +1,8 @@
 import json
 from functools import lru_cache
+from urllib.parse import urlparse
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -28,6 +29,10 @@ class Settings(BaseSettings):
     continuous_runtime_sync_interval_seconds: float = Field(default=5.0, ge=1.0, le=60.0)
     airflow_execution_api_token: str | None = None
     airflow_internal_token: str | None = None
+    bootstrap_admin_email: str | None = None
+    bootstrap_admin_password: str | None = None
+    bootstrap_admin_display_name: str = "AskLake Administrator"
+    auth_public_signup_enabled: bool = False
     backend_cors_origins: list[str] = Field(default_factory=lambda: [
         "http://localhost:5173",
         "http://127.0.0.1:5173",
@@ -59,6 +64,56 @@ class Settings(BaseSettings):
         if isinstance(value, list):
             return value
         return []
+
+    @model_validator(mode="after")
+    def validate_bootstrap_admin(self) -> "Settings":
+        if bool(self.bootstrap_admin_email) != bool(self.bootstrap_admin_password):
+            raise ValueError(
+                "BOOTSTRAP_ADMIN_EMAIL and BOOTSTRAP_ADMIN_PASSWORD must be configured together"
+            )
+        if not self.allows_header_auth_fallback and not self.bootstrap_admin_email:
+            raise ValueError(
+                "BOOTSTRAP_ADMIN_EMAIL and BOOTSTRAP_ADMIN_PASSWORD are required outside local/dev/test"
+            )
+        placeholder_values = {
+            "replace-with-admin-email@example.invalid",
+            "replace-with-a-unique-bootstrap-password",
+            "admin.user@asklake.local",
+            "demo.user@asklake.local",
+            "asklake-admin",
+            "asklake-demo",
+        }
+        if not self.allows_header_auth_fallback and (
+            self.bootstrap_admin_email in placeholder_values
+            or self.bootstrap_admin_password in placeholder_values
+        ):
+            raise ValueError("Replace the production bootstrap administrator placeholders before startup")
+        if not self.allows_header_auth_fallback:
+            for origin in self.backend_cors_origins:
+                parsed = urlparse(origin)
+                if (
+                    origin == "*"
+                    or parsed.scheme != "https"
+                    or not parsed.netloc
+                    or parsed.username is not None
+                    or parsed.password is not None
+                    or parsed.path not in {"", "/"}
+                    or parsed.params
+                    or parsed.query
+                    or parsed.fragment
+                ):
+                    raise ValueError(
+                        "BACKEND_CORS_ORIGINS must contain only explicit https origins outside local development"
+                    )
+        return self
+
+    @property
+    def allows_header_auth_fallback(self) -> bool:
+        return self.app_env.strip().casefold() in {"local", "development", "dev", "test", "testing"}
+
+    @property
+    def allows_public_signup(self) -> bool:
+        return self.allows_header_auth_fallback or self.auth_public_signup_enabled
 
 
 @lru_cache

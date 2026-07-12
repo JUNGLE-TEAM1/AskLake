@@ -1,4 +1,4 @@
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Response, status
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -9,7 +9,7 @@ router = APIRouter()
 
 
 @router.get("/health", response_model=HealthResponse)
-def health_check() -> HealthResponse:
+def health_check(response: Response) -> HealthResponse:
     database_ok = True
     database_message = "ok"
 
@@ -20,8 +20,9 @@ def health_check() -> HealthResponse:
         database_ok = False
         database_message = error.__class__.__name__
 
+    response.status_code = status.HTTP_200_OK if database_ok else status.HTTP_503_SERVICE_UNAVAILABLE
     return HealthResponse(
         ok=database_ok,
-        statusCode=status.HTTP_200_OK,
+        statusCode=response.status_code,
         database={"ok": database_ok, "message": database_message},
     )

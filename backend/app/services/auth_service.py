@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 import hashlib
 import secrets
+from threading import Lock
 from types import SimpleNamespace
 from typing import Any
 
@@ -8,6 +9,7 @@ from fastapi import status
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.errors import ApiError
 from app.models.base import Base
 from app.models.identity import AuthSessionModel, AuthUserModel
@@ -16,6 +18,17 @@ from app.schemas.common import ErrorCode
 
 SESSION_COOKIE_NAME = "asklake_session"
 SESSION_TTL_DAYS = 7
+LEGACY_PBKDF2_ITERATIONS = 120_000
+PBKDF2_ITERATIONS = 600_000
+MAX_PBKDF2_ITERATIONS = 1_200_000
+PASSWORD_HASH_SCHEME = "pbkdf2_sha256"
+LOGIN_FAILURE_LIMIT = 5
+GLOBAL_LOGIN_FAILURE_LIMIT = 100
+LOGIN_FAILURE_WINDOW = timedelta(minutes=15)
+
+_login_failure_lock = Lock()
+_login_failures_by_email: dict[str, list[datetime]] = {}
+_global_login_failures: list[datetime] = []
 
 DEMO_AUTH_USERS = [
     {
@@ -43,9 +56,19 @@ class AuthService:
     def __init__(self, db: Session) -> None:
         self.db = db
         self._ensure_tables()
-        self._ensure_demo_users()
+        if settings.allows_header_auth_fallback:
+            self._ensure_demo_users()
+        else:
+            self._disable_legacy_demo_users()
+            self._ensure_bootstrap_admin()
 
     def signup(self, *, email: str, password: str, display_name: str) -> dict[str, Any]:
+        if not settings.allows_public_signup:
+            raise ApiError(
+                ErrorCode.FORBIDDEN,
+                "Public account signup is disabled. Contact an AskLake administrator.",
+                status.HTTP_403_FORBIDDEN,
+            )
         normalized_email = normalize_email(email)
         if "@" not in normalized_email or "." not in normalized_email.rsplit("@", 1)[-1]:
             raise ApiError(
@@ -78,8 +101,11 @@ class AuthService:
         return self.create_session(user)
 
     def login(self, *, email: str, password: str) -> dict[str, Any]:
-        user = self.db.scalar(select(AuthUserModel).where(AuthUserModel.email == normalize_email(email)))
+        normalized_email = normalize_email(email)
+        enforce_login_rate_limit(normalized_email)
+        user = self.db.scalar(select(AuthUserModel).where(AuthUserModel.email == normalized_email))
         if user is None or not verify_password(password, user.password_salt, user.password_hash):
+            record_login_failure(normalized_email)
             raise ApiError(
                 ErrorCode.UNAUTHORIZED,
                 "이메일 또는 비밀번호를 확인해주세요.",
@@ -99,6 +125,9 @@ class AuthService:
                 status.HTTP_403_FORBIDDEN,
                 {"principalType": blocked_principal.principal_type, "principalId": blocked_principal.principal_id},
             )
+        clear_login_failures(normalized_email)
+        if password_needs_rehash(user.password_hash):
+            user.password_hash = hash_password(password, user.password_salt)
         user.last_active_at = now_utc()
         session = self.create_session(user)
         self.db.commit()
@@ -172,6 +201,58 @@ class AuthService:
         if changed:
             self.db.commit()
 
+    def _disable_legacy_demo_users(self) -> None:
+        demo_ids = [str(item["id"]) for item in DEMO_AUTH_USERS]
+        demo_emails = [str(item["email"]) for item in DEMO_AUTH_USERS]
+        users = list(self.db.scalars(
+            select(AuthUserModel).where(
+                AuthUserModel.id.in_(demo_ids) | AuthUserModel.email.in_(demo_emails)
+            )
+        ))
+        if not users:
+            return
+        user_ids = [user.id for user in users]
+        changed = False
+        for user in users:
+            if user.status != "disabled":
+                user.status = "disabled"
+                changed = True
+        deleted = self.db.execute(delete(AuthSessionModel).where(AuthSessionModel.user_id.in_(user_ids)))
+        if changed or int(getattr(deleted, "rowcount", 0) or 0) > 0:
+            self.db.commit()
+
+    def _ensure_bootstrap_admin(self) -> None:
+        email = settings.bootstrap_admin_email
+        password = settings.bootstrap_admin_password
+        if not email or not password:
+            return
+
+        normalized_email = normalize_email(email)
+        existing = self.db.scalar(select(AuthUserModel).where(AuthUserModel.email == normalized_email))
+        if existing is not None:
+            if existing.role != "admin" or existing.status != "active":
+                raise RuntimeError(
+                    "BOOTSTRAP_ADMIN_EMAIL is already assigned to a non-active administrator account. "
+                    "Choose another bootstrap email or promote the account explicitly before deployment."
+                )
+            return
+
+        salt = secrets.token_hex(16)
+        self.db.add(
+            AuthUserModel(
+                id=unique_user_id("bootstrap-admin"),
+                email=normalized_email,
+                display_name=settings.bootstrap_admin_display_name.strip() or "AskLake Administrator",
+                password_salt=salt,
+                password_hash=hash_password(password, salt),
+                role="admin",
+                groups=[],
+                status="active",
+                title="Platform Admin",
+            )
+        )
+        self.db.commit()
+
 
 def load_session_actor(db: Session, token: str | None) -> dict[str, Any] | None:
     return AuthService(db).actor_for_session(token)
@@ -225,12 +306,76 @@ def unique_user_id(display_name: str) -> str:
 
 
 def hash_password(password: str, salt: str) -> str:
-    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 120_000)
-    return digest.hex()
+    digest = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        salt.encode("utf-8"),
+        PBKDF2_ITERATIONS,
+    )
+    return f"{PASSWORD_HASH_SCHEME}${PBKDF2_ITERATIONS}${digest.hex()}"
 
 
 def verify_password(password: str, salt: str, expected_hash: str) -> bool:
-    return secrets.compare_digest(hash_password(password, salt), expected_hash)
+    iterations, expected_digest = password_hash_parts(expected_hash)
+    digest = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        salt.encode("utf-8"),
+        iterations,
+    ).hex()
+    return secrets.compare_digest(digest, expected_digest)
+
+
+def password_hash_parts(value: str) -> tuple[int, str]:
+    parts = value.split("$", 2)
+    if len(parts) == 3 and parts[0] == PASSWORD_HASH_SCHEME and parts[1].isdigit():
+        iterations = int(parts[1])
+        if 0 < iterations <= MAX_PBKDF2_ITERATIONS and parts[2]:
+            return iterations, parts[2]
+    return LEGACY_PBKDF2_ITERATIONS, value
+
+
+def password_needs_rehash(value: str) -> bool:
+    iterations, _digest = password_hash_parts(value)
+    return not value.startswith(f"{PASSWORD_HASH_SCHEME}$") or iterations < PBKDF2_ITERATIONS
+
+
+def enforce_login_rate_limit(email: str) -> None:
+    now = now_utc()
+    with _login_failure_lock:
+        prune_login_failures(now)
+        account_failures = _login_failures_by_email.get(email, [])
+        if len(account_failures) >= LOGIN_FAILURE_LIMIT or len(_global_login_failures) >= GLOBAL_LOGIN_FAILURE_LIMIT:
+            raise ApiError(
+                ErrorCode.RATE_LIMITED,
+                "Too many failed login attempts. Try again later.",
+                status.HTTP_429_TOO_MANY_REQUESTS,
+                {"retryAfterSeconds": int(LOGIN_FAILURE_WINDOW.total_seconds())},
+            )
+
+
+def record_login_failure(email: str) -> None:
+    now = now_utc()
+    with _login_failure_lock:
+        prune_login_failures(now)
+        _login_failures_by_email.setdefault(email, []).append(now)
+        _global_login_failures.append(now)
+
+
+def clear_login_failures(email: str) -> None:
+    with _login_failure_lock:
+        _login_failures_by_email.pop(email, None)
+
+
+def prune_login_failures(now: datetime) -> None:
+    cutoff = now - LOGIN_FAILURE_WINDOW
+    for email, failures in list(_login_failures_by_email.items()):
+        active = [failure for failure in failures if failure >= cutoff]
+        if active:
+            _login_failures_by_email[email] = active
+        else:
+            _login_failures_by_email.pop(email, None)
+    _global_login_failures[:] = [failure for failure in _global_login_failures if failure >= cutoff]
 
 
 def now_utc() -> datetime:
