@@ -147,7 +147,6 @@ export function SchedulePage({
     >
         <PageHeader
           className="etl-flow-page-header"
-          description="파이프라인의 실행 시간, 반복 여부, 실행 정책을 설정합니다."
           icon={<Calendar size={18} />}
           title={title}
         />
@@ -157,9 +156,7 @@ export function SchedulePage({
               <span className="etl-review-icon"><PlayCircle size={17} /></span>
               <div>
                 <h2>실행 방식 설정</h2>
-                <p>저장만 할지, 정해진 주기로 자동 실행할지 선택합니다.</p>
               </div>
-              <span className="schedule-config-state">{selectedOption === "repeat" ? "자동 실행" : "직접 실행"}</span>
             </div>
             <div className="schedule-config-mode-grid">
               <RunTypeCard active={selectedOption === "skip"} icon={<PlayCircle size={20} />} title="스케줄링 건너뛰기" desc="시간을 정하지 않고 저장만 합니다. 필요할 때 목록에서 즉시 실행합니다." onClick={() => selectOption("skip")} />
@@ -4723,9 +4720,7 @@ function NoScheduleSettings({ onRetryPolicyChange, retryPolicy }: { onRetryPolic
         <span className="etl-review-icon"><PlayCircle size={17} /></span>
         <div>
           <h2>직접 실행 정책</h2>
-          <p>자동 예약 없이 저장하고 필요할 때 Job 목록에서 직접 실행합니다.</p>
         </div>
-        <span className="schedule-config-state muted">스케줄 없음</span>
       </div>
       <div className="etl-review-validation schedule-config-validation">
         <div className="ready">
@@ -4750,7 +4745,6 @@ function NoScheduleSettings({ onRetryPolicyChange, retryPolicy }: { onRetryPolic
           <h3>재시도 정책</h3>
         </div>
         <RetryPolicy value={retryPolicy} onChange={onRetryPolicyChange} />
-        <InfoBox title="다음 실행 없음" body="스케줄을 저장하지 않으므로 다음 예약 일시는 생성되지 않습니다. 필요할 때 Job 목록에서 즉시 실행합니다." />
       </div>
     </section>
   );
