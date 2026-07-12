@@ -2,6 +2,7 @@ import json
 import os
 import sys
 import tempfile
+from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -11,7 +12,8 @@ from app.core.auth_context import ActorContext
 from app.core.errors import ApiError
 from app.models.etl import ETLJobModel, KafkaContinuousMaintenanceRunModel
 from app.repositories import etl_repository
-from app.schemas.etl import ContinuousReplayRequest, CreatePipelineRequest, SchemaColumnDraft
+from app.schemas.catalog import DatasetMaterializationRun
+from app.schemas.etl import CanonicalRuleDraft, ContinuousReplayRequest, CreatePipelineRequest, SchemaColumnDraft, UpdatePipelineRequest
 from app.services import etl_service
 from scripts.kafka_schema_paths import build_nested_schema_tree, expected_object_keys, json_path, split_source_path
 
@@ -28,6 +30,15 @@ def continuous_request() -> CreatePipelineRequest:
             ("Consumer Group ID", "asklake-continuous-contract"),
         ],
         schema_columns=[SchemaColumnDraft(source_name="event_id", target_name="event_id", type="String")],
+        rule_contract_version="1.0",
+        rules=[CanonicalRuleDraft(
+            id="event-id-required",
+            input_columns=["event_id"],
+            kind="quality",
+            on_error="quarantine",
+            operation="not_null",
+            severity="error",
+        )],
         schedule_label="수동",
         target_dataset="reviews_continuous",
         target_layer="BRONZE",
@@ -40,6 +51,9 @@ def continuous_request() -> CreatePipelineRequest:
 
 def continuous_job() -> ETLJobModel:
     request = continuous_request()
+    compiled = etl_service.compile_pipeline_rules(request)
+    etl_service.require_compiled_rules(compiled)
+    etl_service.apply_compiled_rules(request, compiled)
     return ETLJobModel(
         id="JOB-CONTINUOUS-CONTRACT",
         name=request.job_name,
@@ -54,7 +68,7 @@ def continuous_job() -> ETLJobModel:
         source_type=request.source_type,
         execution_mode="continuous",
         continuous_config=etl_service.continuous_config_from_request(request, "JOB-CONTINUOUS-CONTRACT"),
-        schema_columns=[],
+        schema_columns=[column.model_dump(mode="json", by_alias=True) for column in request.schema_columns],
         schema_sample_rows=[],
         target_format=request.target_format,
         target_layer=request.target_layer,
@@ -64,6 +78,8 @@ def continuous_job() -> ETLJobModel:
         transform_steps=[],
         quality_invalid_rows=[],
         quality_rules=[],
+        rule_contract_version=request.rule_contract_version,
+        rules=[rule.model_dump(mode="json", by_alias=True) for rule in request.rules],
         last_run="생성 후 미실행",
         last_state="준비됨",
         next_run="-",
@@ -135,6 +151,11 @@ def main() -> None:
         "lastBatchInputRows": 20,
         "throughputRowsPerSecond": 10.0,
         "replayedCount": 1,
+        "ruleContractVersion": "1.0",
+        "ruleFingerprint": "rule-v1",
+        "runtimeFingerprint": "runtime-v1",
+        "ruleMetrics": {"qualityQuarantinedCount": 2, "failedBatchCount": 0},
+        "lastRuleResult": {"status": "success"},
     }
     runtime.schema_state = {
         "schemaVersion": 1,
@@ -148,6 +169,37 @@ def main() -> None:
     assert runtime_schema.partition_progress["0"]["lag"] == 4
     assert runtime_schema.replayed_count == 1
     assert runtime_schema.schema_status == "drift_detected"
+    assert runtime_schema.rule_fingerprint == "rule-v1"
+    assert runtime_schema.rule_metrics["qualityQuarantinedCount"] == 2
+
+    captured_worker_payload = {}
+    original_node_bridge = etl_service.run_node_bridge
+    try:
+        etl_service.run_node_bridge = lambda _script, _marker, payload, **_kwargs: captured_worker_payload.update(payload) or {"containerState": "starting"}
+        etl_service.run_kafka_continuous_worker(job, runtime, "start")
+    finally:
+        etl_service.run_node_bridge = original_node_bridge
+    assert captured_worker_payload["ruleContractVersion"] == "1.0"
+    assert captured_worker_payload["rules"][0]["operation"] == "not_null"
+    assert captured_worker_payload["ruleOutputSchema"] == [("event_id", "String")]
+    assert len(captured_worker_payload["ruleFingerprint"]) == 64
+
+    update_request = UpdatePipelineRequest(
+        job_name=job.name,
+        owner=job.owner,
+        rule_contract_version=job.rule_contract_version,
+        rules=job.rules,
+        schedule_label=job.schedule,
+        schema_columns=job.schema_columns,
+        storage_path=job.storage_path,
+        target_dataset=job.target,
+        target_format=job.target_format,
+        target_layer=job.target_layer,
+    )
+    assert etl_service.continuous_processing_contract_changed(job, update_request) is False
+    pass_through_update = update_request.model_copy(update={"rules": [], "rule_contract_version": "1.0"})
+    assert etl_service.continuous_processing_contract_changed(job, pass_through_update) is True
+    assert etl_service.continuous_checkpoint_initialized(runtime) is True
 
     original_get = etl_repository.get_kafka_continuous_runtime
     original_lock = etl_repository.lock_kafka_continuous_runtime
@@ -163,6 +215,7 @@ def main() -> None:
     original_maintenance_list = etl_repository.list_kafka_continuous_maintenance_run_models
     original_maintenance_save = etl_repository.save_kafka_continuous_maintenance_run
     original_maintenance_cleanup = etl_service.cleanup_kafka_continuous_maintenance
+    original_session_sync = etl_service.sync_kafka_continuous_session
     original_session_stage = etl_repository.stage_kafka_continuous_session
     original_session_get = etl_repository.get_kafka_continuous_session
     original_active_session_get = etl_repository.get_latest_active_kafka_continuous_session
@@ -233,7 +286,10 @@ def main() -> None:
             "containerState": "starting",
             "workerAttemptId": f"attempt-{len(stored_sessions) + 1}",
         }
-        fake_db = type("FakeSession", (), {"add": lambda _self, _model: None})()
+        fake_db = type("FakeSession", (), {
+            "add": lambda _self, _model: None,
+            "no_autoflush": property(lambda _self: nullcontext()),
+        })()
         runtime.status = "stopped"
         runtime.consumed_count = 10
         runtime.stored_count = 8
@@ -322,13 +378,30 @@ def main() -> None:
             dataset_save_count["value"] += 1
             return dataset
         etl_repository.save_dataset = capture_dataset
-        etl_service.materialize_continuous_batch(None, job, runtime, {
+        runtime_relock_count = {"value": 0}
+        runtime.metrics = {**(runtime.metrics or {}), "concurrentMarker": "stale"}
+        def count_runtime_relock(_db, _job_id):
+            runtime_relock_count["value"] += 1
+            runtime.metrics = {
+                **(runtime.metrics or {}),
+                "catalogBatchCursor": 9,
+                "concurrentMarker": "latest",
+            }
+            return runtime
+        etl_repository.lock_kafka_continuous_runtime = count_runtime_relock
+        etl_service.materialize_continuous_batch(fake_db, job, runtime, {
             "publishedBatches": [{
                 "batchId": 0,
                 "storedCount": 2,
                 "sourceRanges": [{"topic": "reviews.continuous", "partition": 0, "startOffset": 0, "endOffset": 2}],
             }],
         })
+        assert runtime_relock_count["value"] == 1, "Catalog commit boundaries must reacquire the runtime lock."
+        assert runtime.metrics["concurrentMarker"] == "latest", "Reacquired runtime metrics must win over a stale local copy."
+        assert runtime.metrics["catalogBatchCursor"] == 9, "Catalog cursor must not regress after a concurrent reconciliation."
+        runtime.metrics.pop("concurrentMarker", None)
+        runtime.metrics.pop("catalogBatchCursor", None)
+        etl_repository.lock_kafka_continuous_runtime = lambda _db, _job_id: runtime
         dataset_id = f"ds_{etl_service.normalize_column_name(job.target)}"
         assert captured_dataset[dataset_id].payload["materializationRuns"][0]["sourceKind"] == "kafka"
         assert captured_dataset[dataset_id].payload["materializationRuns"][0]["rowCount"] == 2
@@ -388,6 +461,11 @@ def main() -> None:
                 "storedCount": 6,
                 "quarantinedCount": 1,
                 "failedCount": 1,
+                "ruleContractVersion": "1.0",
+                "ruleFingerprint": "rule-v2",
+                "runtimeFingerprint": "runtime-v2",
+                "ruleMetrics": {"qualityQuarantinedCount": 1, "qualityWarnCount": 2},
+                "lastRuleResult": {"status": "success", "quality": {"invalidRowCount": 3}},
                 "publishedBatches": [{
                     "batchId": 8,
                     "consumedCount": 2,
@@ -395,6 +473,12 @@ def main() -> None:
                     "quarantinedCount": 1,
                     "dataPath": "s3a://asklake-output/reviews_continuous/bronze/_batches/batch_id=8",
                     "manifestPath": "s3a://asklake-output/reviews_continuous/bronze/_batch-manifests/batch_id=8",
+                    "ruleContractVersion": "1.0",
+                    "ruleFingerprint": "rule-v2",
+                    "runtimeFingerprint": "runtime-v2",
+                    "schemaFingerprint": "schema-v1",
+                    "quality": {"invalidRowCount": 1},
+                    "transform": {"warnCount": 0},
                     "publishedAt": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
                     "sourceRanges": [{"topic": "reviews.continuous", "partition": 0, "startOffset": 6, "endOffset": 8}],
                 }],
@@ -402,10 +486,25 @@ def main() -> None:
             runtime.status = "running"
             etl_service.continuous_worker_status = lambda _job, _runtime: {"containerState": "exited", "containerId": "attempt-crashed", "exitCode": 137}
             before_recovery_saves = dataset_save_count["value"]
+            session_sync_count = {"value": 0}
+            def count_session_sync(*args, **kwargs):
+                session_sync_count["value"] += 1
+                return original_session_sync(*args, **kwargs)
+            etl_service.sync_kafka_continuous_session = count_session_sync
             etl_service.refresh_kafka_continuous_runtime(None, job)
+            assert session_sync_count["value"] == 1, "A runtime report must stage session batches exactly once per refresh."
+            etl_service.sync_kafka_continuous_session = original_session_sync
             recovered_run = captured_dataset[dataset_id].payload["materializationRuns"][0]
             assert recovered_run["runId"] == f"continuous:{job.id}:batch:8"
             assert recovered_run["sourceRanges"][0]["endOffset"] == 8
+            assert recovered_run["ruleFingerprint"] == "rule-v2"
+            assert recovered_run["quality"]["invalidRowCount"] == 1
+            serialized_run = DatasetMaterializationRun.model_validate(recovered_run).model_dump(mode="json", by_alias=True)
+            assert serialized_run["ruleFingerprint"] == "rule-v2"
+            assert serialized_run["runtimeFingerprint"] == "runtime-v2"
+            assert serialized_run["sourceRanges"][0]["endOffset"] == 8
+            assert runtime.metrics["ruleFingerprint"] == "rule-v2"
+            assert runtime.metrics["ruleMetrics"]["qualityWarnCount"] == 2
             assert dataset_save_count["value"] == before_recovery_saves + 1
             etl_service.refresh_kafka_continuous_runtime(None, job)
             assert dataset_save_count["value"] == before_recovery_saves + 1, "Catalog recovery must be idempotent."
@@ -446,6 +545,7 @@ def main() -> None:
         etl_repository.list_kafka_continuous_maintenance_run_models = original_maintenance_list
         etl_repository.save_kafka_continuous_maintenance_run = original_maintenance_save
         etl_service.cleanup_kafka_continuous_maintenance = original_maintenance_cleanup
+        etl_service.sync_kafka_continuous_session = original_session_sync
         etl_repository.stage_kafka_continuous_session = original_session_stage
         etl_repository.get_kafka_continuous_session = original_session_get
         etl_repository.get_latest_active_kafka_continuous_session = original_active_session_get

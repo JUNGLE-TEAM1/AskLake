@@ -32,6 +32,10 @@ try {
   produce(2, 2);
   produceRecoverableUnknown();
   await waitFor(async () => (await getJob()).continuousRuntime?.consumedCount >= 6, "new Kafka event consumption");
+  const ruleRuntime = (await getJob()).continuousRuntime;
+  assert(ruleRuntime.ruleFingerprint?.length === 64, "Continuous runtime must expose the canonical Rule fingerprint.");
+  assert(ruleRuntime.ruleMetrics.transformQuarantinedCount === 1, "Transform quarantine counters must be durable.");
+  assert(ruleRuntime.ruleMetrics.qualityWarnCount === 1, "Quality warn counters must be durable.");
   await post(`/api/etl/jobs/${encodeURIComponent(jobId)}/commands`, { command: "pauseContinuous" });
   await waitFor(async () => (await getJob()).continuousRuntime?.status === "paused", "pause");
 
@@ -44,29 +48,33 @@ try {
 
   const afterRestart = await getJob();
   assert(afterRestart.continuousRuntime.consumedCount === 6, "Restart must preserve consumed count.");
-  assert(afterRestart.continuousRuntime.storedCount === 4, "Restart must not duplicate completed batch rows or reset counters.");
-  assert(afterRestart.continuousRuntime.quarantinedCount === 2, "Malformed and schema-policy quarantine counts must survive restart.");
+  assert(afterRestart.continuousRuntime.storedCount === 3, "Restart must not duplicate completed batch rows or reset counters.");
+  assert(afterRestart.continuousRuntime.quarantinedCount === 3, "Schema and Rule quarantine counts must survive restart.");
+  assert(afterRestart.continuousRuntime.ruleMetrics.transformQuarantinedCount === 1, "Restart must not duplicate Rule counters.");
   assert(afterRestart.continuousRuntime.lagAvailable === true, "Restart must preserve the last valid partition lag observation.");
   assert(Object.keys(afterRestart.continuousRuntime.partitionProgress || {}).length > 0, "Restart must preserve partition progress while idle.");
   await post(`/api/etl/jobs/${encodeURIComponent(jobId)}/commands`, { command: "stopContinuous" });
   await waitFor(async () => (await getJob()).continuousRuntime?.status === "stopped", "stop before replay");
   const policyReplay = await post(`/api/etl/jobs/${encodeURIComponent(jobId)}/continuous/quarantine/replays`, {});
-  assert(policyReplay.result.storedCount === 0 && policyReplay.result.failedCount === 2, "Default replay must reapply the current schema policy.");
+  assert(policyReplay.result.storedCount === 0 && policyReplay.result.failedCount === 3, "Default replay must reapply schema policy and canonical Rules.");
+  assert(policyReplay.result.ruleRejectedCount === 1, "Rule quarantine replay must not bypass the failing Rule.");
   const replay = await post(`/api/etl/jobs/${encodeURIComponent(jobId)}/continuous/quarantine/replays`, { approveUnknownFields: true });
-  assert(replay.result.storedCount === 1 && replay.result.failedCount === 1, "Managed unknown-field approval must recover only the schema-policy quarantine row.");
+  assert(replay.result.storedCount === 1 && replay.result.failedCount === 2, "Managed unknown-field approval must recover only the schema-policy quarantine row.");
   assert(replay.result.policyOverride === "approve_unknown_fields", "Replay override must be explicit in the maintenance result.");
   const afterReplay = await getJob();
-  assert(afterReplay.continuousRuntime.storedCount === 5, "Replay must increment durable target rows.");
+  assert(afterReplay.continuousRuntime.storedCount === 4, "Replay must increment durable target rows.");
   assert(afterReplay.continuousRuntime.replayedCount === 1, "Replay must be counted separately from historical quarantine.");
   assert(afterReplay.continuousRuntime.storedCount + afterReplay.continuousRuntime.quarantinedCount - afterReplay.continuousRuntime.replayedCount === 6, "Replay counters must reconcile to consumed rows.");
   const replayAgain = await post(`/api/etl/jobs/${encodeURIComponent(jobId)}/continuous/quarantine/replays`, { approveUnknownFields: true });
   assert(replayAgain.result.storedCount === 0 && replayAgain.result.skippedCount === 1, "Replay must be idempotent by partition and offset.");
   const quarantine = await get(`/api/etl/jobs/${encodeURIComponent(jobId)}/continuous/quarantine?limit=10`);
   assert(quarantine.records.some((record) => record.replayStatus === "replayed"), "Quarantine inspection must expose replay status.");
+  assert(quarantine.records.some((record) => record.ruleId === "cast-rating" && record.stage === "transform"), "Quarantine inspection must identify the failing canonical Rule.");
   const dataset = (await datasets()).find((item) => item.id === `ds_${target}`);
   assert(dataset?.materializationRuns?.some((run) => run.runId === replay.runId), "Replay must append a Catalog materialization run.");
+  assert(dataset?.materializationRuns?.some((run) => run.ruleFingerprint?.length === 64), "Catalog materialization must retain Rule execution identity.");
   const compaction = await post(`/api/etl/jobs/${encodeURIComponent(jobId)}/continuous/compactions`, { targetFileSizeMb: 128 });
-  assert(compaction.result.inputRows === 5, "The standard non-recursive Spark reader must read stream and replay batch_id partitions together.");
+  assert(compaction.result.inputRows === 4, "The standard non-recursive Spark reader must read stream and replay batch_id partitions together.");
   console.log("verify-kafka-continuous-e2e: ok");
 } finally {
   if (jobId) await post(`/api/etl/jobs/${encodeURIComponent(jobId)}/commands`, { command: "stopContinuous" }).catch(() => undefined);
@@ -83,6 +91,25 @@ function jobPayload() {
       { included: true, nullable: false, sourceName: "event_id", targetName: "event_id", type: "String" },
       { included: true, nullable: false, sourceName: "review", targetName: "review", type: "String" },
       { included: true, nullable: false, sourceName: "created_at", targetName: "created_at", type: "Timestamp" },
+      { included: true, nullable: true, sourceName: "rating", sourceType: "String", targetName: "rating", type: "Double" },
+    ],
+    ruleContractVersion: "1.0",
+    rules: [
+      {
+        contractVersion: "1.0", enabled: true, failureDisposition: "keep", id: "cast-rating",
+        inputColumns: ["rating"], kind: "transform", onError: "quarantine", operation: "cast",
+        outputColumns: ["rating"], outputType: "Double", parameters: { targetType: "Double" },
+      },
+      {
+        contractVersion: "1.0", enabled: true, failureDisposition: "keep", id: "normalize-review",
+        inputColumns: ["review"], kind: "transform", onError: "warn", operation: "lowercase_trim",
+        outputColumns: ["review_normalized"], outputType: "String", parameters: {},
+      },
+      {
+        contractVersion: "1.0", enabled: true, failureDisposition: "keep", id: "review-prefix",
+        inputColumns: ["review_normalized"], kind: "quality", onError: "warn", operation: "regex",
+        outputColumns: [], parameters: { pattern: "^continuous review" }, severity: "warning",
+      },
     ],
     scheduleLabel: "스케줄링 건너뛰기",
     targetDataset: target,
@@ -105,6 +132,8 @@ function produce(count, offsetStart) {
     event_id: `continuous-${suffix}-${offsetStart + index}`,
     review: `continuous review ${offsetStart + index}`,
     created_at: "2026-07-11T00:00:00Z",
+    rating: offsetStart + index === 2 ? "invalid" : String(5 - (index % 2)),
+    ...(offsetStart + index === 3 ? { review: "unexpected review" } : {}),
   })).join("\n") + "\n";
   rpk(["topic", "produce", topic], lines);
 }
@@ -119,6 +148,7 @@ function produceRecoverableUnknown() {
     review: "recoverable schema policy row",
     created_at: "2026-07-11T00:00:00Z",
     language: "ko",
+    rating: "4",
   })}\n`);
 }
 

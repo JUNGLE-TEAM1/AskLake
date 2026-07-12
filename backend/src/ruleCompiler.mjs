@@ -8,6 +8,8 @@ const qualityOperations = new Set(["accepted_values", "not_null", "range", "rege
 const kafkaSnapshotTransforms = new Set([
   "cast", "copy", "default_value", "json_extract", "lowercase_trim", "mask", "null_guard", "parse_timestamp", "rename",
 ]);
+const continuousTransforms = kafkaSnapshotTransforms;
+const continuousQuality = qualityOperations;
 const validRuleKinds = new Set(["transform", "quality"]);
 const validErrorPolicies = new Set(["fail_batch", "quarantine", "warn"]);
 const validFailureDispositions = new Set(["keep", "drop_row", "set_null"]);
@@ -100,11 +102,14 @@ export function compileRuleContract(request = {}) {
     }
 
     if (enabled) {
-      if (executionMode === "continuous") {
+      if (executionMode === "continuous" && (
+        (kind === "transform" && !continuousTransforms.has(operation))
+        || (kind === "quality" && !continuousQuality.has(operation))
+      )) {
         issues.push(issue(
           "RULE_EXECUTION_MODE_UNSUPPORTED",
           "operation",
-          `Continuous does not support enabled rule '${id}' until the streaming compiler phase.`,
+          `Continuous does not support stateful or engine-specific ${kind} operation: ${operation}`,
           id,
         ));
       } else if (kafkaSnapshot && kind === "transform" && !kafkaSnapshotTransforms.has(operation)) {

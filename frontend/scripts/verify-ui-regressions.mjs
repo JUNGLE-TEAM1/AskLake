@@ -903,6 +903,23 @@ const checks = [
       /Continuous에서는 transform\/quality rule을 제거하세요/,
     ],
   },
+  {
+    name: "Continuous schema editing exposes only streaming-safe canonical transforms and Preview",
+    file: "src/pages/etl/SchemaTransformWorkbench.tsx",
+    patterns: [
+      /ensureRequiredFieldTransformSteps\(targetSchema, transformSteps\)/,
+      /const nextSteps = buildTransformSteps\(nextTargetSchema\)/,
+      /allowSqlTransform=\{!continuous && !isKafka\}/,
+      /portableTransforms/,
+      /transformsDisabled=\{false\}/,
+      /streaming-safe canonical Rule/,
+      /disabled=\{previewPending \|\| sampleRows\.length === 0\}/,
+    ],
+    forbiddenPatterns: [
+      /실시간 규칙은 다음 compiler 페이즈 전까지 pass-through/,
+      /실시간 규칙 Preview는 streaming compiler/,
+    ],
+  },
 ];
 
 const failures = [];

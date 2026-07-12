@@ -64,6 +64,7 @@ from app.schemas.etl import (
     ScheduledJobRunItem,
     ScheduledJobRunRequest,
     ScheduledJobRunResponse,
+    SchemaColumnDraft,
     SchemaDraft,
     SourceAssetsRequest,
     SourceAssetsResponse,
@@ -371,9 +372,6 @@ def update_pipeline(
         ),
         resource_label="job",
     )
-    if job.status == "running":
-        raise ApiError(ErrorCode.CONFLICT, f"Job is running and cannot be updated: {job_id}", status.HTTP_409_CONFLICT)
-
     compiled_rules = compile_pipeline_rules(
         request,
         execution_mode=job.execution_mode or "snapshot",
@@ -382,6 +380,22 @@ def update_pipeline(
     require_compiled_rules(compiled_rules)
     apply_compiled_rules(request, compiled_rules)
     validate_update_request(request)
+    runtime = etl_repository.get_kafka_continuous_runtime(db, job.id) if job.execution_mode == "continuous" else None
+    continuous_contract_changed = continuous_processing_contract_changed(job, request)
+    if runtime is not None and continuous_contract_changed and runtime.status in {"starting", "running", "pausing", "stopping"}:
+        raise ApiError(
+            "CONTINUOUS_IMMUTABLE_CONFIG_ACTIVE",
+            "Stop the Continuous worker before changing schema, Rules, or target configuration.",
+            status.HTTP_409_CONFLICT,
+        )
+    if job.status == "running":
+        raise ApiError(ErrorCode.CONFLICT, f"Job is running and cannot be updated: {job_id}", status.HTTP_409_CONFLICT)
+    if runtime is not None and continuous_contract_changed and continuous_checkpoint_initialized(runtime):
+        raise ApiError(
+            "CONTINUOUS_CHECKPOINT_CONTRACT_IMMUTABLE",
+            "This Continuous checkpoint already has a schema and Rule contract. Copy the Job to use a new checkpoint.",
+            status.HTTP_409_CONFLICT,
+        )
     target_changed = target_identity_changed(job, request)
     if target_changed and has_successful_run(db, job.id):
         raise ApiError(
@@ -2190,6 +2204,12 @@ def dataset_payload_from_spark_result(
             "storageSizeBytes": storage_size_bytes,
             **({"sourceRanges": result["sourceRanges"]} if isinstance(result.get("sourceRanges"), list) and result["sourceRanges"] else {}),
             **({"publicationManifest": str(result["publicationManifest"])} if result.get("publicationManifest") else {}),
+            **({"ruleContractVersion": str(result["ruleContractVersion"])} if result.get("ruleContractVersion") else {}),
+            **({"ruleFingerprint": str(result["ruleFingerprint"])} if result.get("ruleFingerprint") else {}),
+            **({"runtimeFingerprint": str(result["runtimeFingerprint"])} if result.get("runtimeFingerprint") else {}),
+            **({"schemaFingerprint": str(result["schemaFingerprint"])} if result.get("schemaFingerprint") else {}),
+            **({"transform": result["transform"]} if isinstance(result.get("transform"), dict) else {}),
+            **({"quality": result["quality"]} if isinstance(result.get("quality"), dict) else {}),
         },
     )
     aggregate = aggregate_materialization_runs(materialization_runs)
@@ -2740,6 +2760,13 @@ def run_kafka_continuous_worker(
     options: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     config = job.continuous_config or {}
+    compiled_rules = compile_job_rules(job)
+    require_compiled_rules(compiled_rules)
+    canonical_rules = [
+        rule.model_dump(mode="json", by_alias=True)
+        for rule in compiled_rules.result.rules
+    ]
+    rule_fingerprint = canonical_rule_fingerprint(compiled_rules.result.contract_version, canonical_rules)
     target = parse_kafka_target_path(job.storage_path or job.target_path, job.target, job.target_layer)
     output_path = f"s3a://{target['bucket']}/{target['prefix'].strip('/')}"
     return run_node_bridge(
@@ -2765,6 +2792,10 @@ def run_kafka_continuous_worker(
             "jobId": job.id,
             "maxOffsetsPerTrigger": config.get("maxOffsetsPerTrigger", 10000),
             "outputPath": output_path,
+            "ruleContractVersion": compiled_rules.result.contract_version,
+            "ruleFingerprint": rule_fingerprint,
+            "ruleOutputSchema": compiled_rules.result.output_schema,
+            "rules": canonical_rules,
             "schemaColumns": job.schema_columns or [],
             "schemaEvolutionPolicy": config.get("schemaEvolutionPolicy") or {},
             "topic": runtime.topic,
@@ -2988,6 +3019,12 @@ def run_kafka_continuous_maintenance(
     run_id: str,
     config: dict[str, Any],
 ) -> dict[str, Any]:
+    compiled_rules = compile_job_rules(job)
+    require_compiled_rules(compiled_rules)
+    canonical_rules = [
+        rule.model_dump(mode="json", by_alias=True)
+        for rule in compiled_rules.result.rules
+    ]
     target = parse_kafka_target_path(job.storage_path or job.target_path, job.target, job.target_layer)
     output_path = f"s3a://{target['bucket']}/{target['prefix'].strip('/')}"
     return run_node_bridge(
@@ -2998,6 +3035,10 @@ def run_kafka_continuous_maintenance(
             "kind": kind,
             "runId": run_id,
             "outputPath": output_path,
+            "ruleContractVersion": compiled_rules.result.contract_version,
+            "ruleFingerprint": canonical_rule_fingerprint(compiled_rules.result.contract_version, canonical_rules),
+            "ruleOutputSchema": compiled_rules.result.output_schema,
+            "rules": canonical_rules,
             "schemaColumns": job.schema_columns or [],
             "schemaEvolutionPolicy": (job.continuous_config or {}).get("schemaEvolutionPolicy") or {},
             **config,
@@ -3300,6 +3341,16 @@ def refresh_kafka_continuous_runtime(db: Session, job: ETLJobModel) -> None:
             return
         payload = {}
         worker_attempt_id = None
+    rule_metrics = payload.get("ruleMetrics") if isinstance(payload.get("ruleMetrics"), dict) else None
+    last_rule_result = payload.get("lastRuleResult") if isinstance(payload.get("lastRuleResult"), dict) else None
+    previous_metrics = {
+        **previous_metrics,
+        **({"ruleContractVersion": optional_string(payload.get("ruleContractVersion"))} if payload.get("ruleContractVersion") else {}),
+        **({"ruleFingerprint": optional_string(payload.get("ruleFingerprint"))} if payload.get("ruleFingerprint") else {}),
+        **({"runtimeFingerprint": optional_string(payload.get("runtimeFingerprint"))} if payload.get("runtimeFingerprint") else {}),
+        **({"ruleMetrics": rule_metrics} if rule_metrics is not None else {}),
+        **({"lastRuleResult": last_rule_result} if last_rule_result is not None else {}),
+    }
     runtime_status = forced_terminal_status or str(payload.get("status") or runtime.status)
     if runtime_status not in {"starting", "running", "pausing", "paused", "stopping", "stopped", "failed"}:
         return
@@ -3350,9 +3401,8 @@ def refresh_kafka_continuous_runtime(db: Session, job: ETLJobModel) -> None:
     if forced_terminal_status:
         runtime.last_error = None
     # A publication manifest is durable independently from the worker process.
-    # Reconcile it before liveness handling so a crash cannot strand Lake data
-    # outside Catalog merely because the worker is no longer running.
-    sync_kafka_continuous_session(db, runtime, payload)
+    # Reconcile Catalog before liveness handling so a crash cannot strand Lake
+    # data outside Catalog merely because the worker is no longer running.
     catalog_ack_cursor = materialize_continuous_batch(db, job, runtime, payload)
     heartbeat_stale = continuous_heartbeat_is_stale(runtime.heartbeat_at, job)
     if runtime_status in {"starting", "running", "pausing", "stopping"} and container_state in {"exited", "missing"}:
@@ -3386,6 +3436,9 @@ def refresh_kafka_continuous_runtime(db: Session, job: ETLJobModel) -> None:
         job.status = "failed"
         job.last_state = "Continuous worker 실패"
         job.progress = None
+    # Sync each report once after the terminal state is known. Calling this
+    # before and after Catalog reconciliation can stage the same zero-row
+    # publication twice when no intermediate Catalog commit occurs.
     sync_kafka_continuous_session(db, runtime, payload)
     etl_repository.save_kafka_continuous_command(db, job, runtime)
     if catalog_ack_cursor is not None and db is not None:
@@ -3477,13 +3530,28 @@ def materialize_continuous_batch(
     normalized.sort(key=lambda item: nonnegative_int(item.get("batchId"), 0))
     metrics = dict(runtime.metrics or {})
     cursor = optional_int(metrics.get("catalogBatchCursor"))
+    job_id = job.id
     for publication in normalized:
         publication_batch_id = nonnegative_int(publication.get("batchId"), 0)
         if cursor is not None and publication_batch_id <= cursor:
             continue
-        if not materialize_continuous_publication(db, job, runtime, publication):
+        materialized = materialize_continuous_publication(db, job, runtime, publication)
+        if db is not None:
+            # Catalog persistence commits independently. Reacquire the runtime
+            # row before any pending Job/runtime state can autoflush so every
+            # concurrent reconciler keeps the same runtime -> Job lock order.
+            with db.no_autoflush:
+                locked_runtime = etl_repository.lock_kafka_continuous_runtime(db, job_id)
+            if locked_runtime is not None:
+                runtime = locked_runtime
+                persisted_metrics = dict(runtime.metrics or {})
+                persisted_cursor = optional_int(persisted_metrics.get("catalogBatchCursor"))
+                if persisted_cursor is not None and (cursor is None or persisted_cursor > cursor):
+                    cursor = persisted_cursor
+                metrics = {**metrics, **persisted_metrics}
+        if not materialized:
             break
-        cursor = publication_batch_id
+        cursor = publication_batch_id if cursor is None else max(cursor, publication_batch_id)
         metrics["catalogBatchCursor"] = cursor
         runtime.metrics = metrics
     return cursor
@@ -3525,6 +3593,12 @@ def materialize_continuous_publication(
         "materializationRows": nonnegative_int(publication.get("storedCount"), 0),
         "materializationOutputPath": optional_string(publication.get("dataPath")) or f"{output_path}/batch_id={batch_id}",
         "publicationManifest": optional_string(publication.get("manifestPath")),
+        "ruleContractVersion": optional_string(publication.get("ruleContractVersion")),
+        "ruleFingerprint": optional_string(publication.get("ruleFingerprint")),
+        "runtimeFingerprint": optional_string(publication.get("runtimeFingerprint")),
+        "schemaFingerprint": optional_string(publication.get("schemaFingerprint")),
+        "transform": publication.get("transform") if isinstance(publication.get("transform"), dict) else {},
+        "quality": publication.get("quality") if isinstance(publication.get("quality"), dict) else {},
         "runId": run_id,
         "sourceRanges": publication.get("sourceRanges") if isinstance(publication.get("sourceRanges"), list) else [],
         "sourceKind": "kafka",
@@ -3564,15 +3638,23 @@ def materialize_continuous_replay(
     existing = etl_repository.get_dataset_by_id(db, job.dataset_id or f"ds_{normalize_column_name(job.target)}")
     target = parse_kafka_target_path(job.storage_path or job.target_path, job.target, job.target_layer)
     target_root = f"s3a://{target['bucket']}/{target['prefix'].strip('/')}/_batches"
+    metrics = runtime.metrics or {}
+    schema_state = runtime.schema_state or {}
     result = {
         "endedAt": optional_string(replay_result.get("endedAt")) or iso_now(),
         "outputPath": target_root,
         "outputRows": runtime.stored_count,
         "materializationRows": replayed_count,
         "materializationOutputPath": replay_result.get("outputPath") or target_root,
+        "quality": replay_result.get("quality") if isinstance(replay_result.get("quality"), dict) else {},
+        "ruleContractVersion": optional_string(replay_result.get("ruleContractVersion")) or optional_string(metrics.get("ruleContractVersion")),
+        "ruleFingerprint": optional_string(replay_result.get("ruleFingerprint")) or optional_string(metrics.get("ruleFingerprint")),
         "runId": replay_result.get("runId"),
+        "runtimeFingerprint": optional_string(metrics.get("runtimeFingerprint")),
+        "schemaFingerprint": optional_string(schema_state.get("schemaFingerprint")),
         "sourceKind": "kafka",
         "status": "success",
+        "transform": replay_result.get("transform") if isinstance(replay_result.get("transform"), dict) else {},
     }
     try:
         etl_repository.save_dataset(db, dataset_from_spark_result(job, result, existing))
@@ -3634,6 +3716,16 @@ def compile_job_rules(job: ETLJobModel) -> CompiledRuleSet:
         execution_mode=job.execution_mode or "snapshot",
         source_type=job.source_type or "",
     )
+
+
+def canonical_rule_fingerprint(contract_version: str, rules: list[dict[str, Any]]) -> str:
+    payload = json.dumps(
+        {"contractVersion": contract_version, "rules": rules},
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def require_compiled_rules(compiled: CompiledRuleSet) -> None:
@@ -3720,6 +3812,60 @@ def target_identity_changed(job: ETLJobModel, request: UpdatePipelineRequest) ->
         str(job.target_database or "asklake") != str(request.target_database or "asklake"),
         str(job.storage_type or "") != str(request.storage_type or ""),
         str(job.storage_path or "") != str(request.storage_path or ""),
+    ))
+
+
+def continuous_processing_contract_changed(job: ETLJobModel, request: UpdatePipelineRequest) -> bool:
+    if job.execution_mode != "continuous":
+        return False
+    compiled_job = compile_job_rules(job)
+    require_compiled_rules(compiled_job)
+    current = {
+        "compression": job.compression,
+        "indexColumns": normalize_string_list(job.index_columns),
+        "partition": job.partition,
+        "partitionColumns": normalize_string_list(job.partition_columns),
+        "ruleContractVersion": compiled_job.result.contract_version,
+        "rules": [rule.model_dump(mode="json", by_alias=True) for rule in compiled_job.result.rules],
+        "schemaColumns": [
+            SchemaColumnDraft.model_validate(column).model_dump(mode="json", by_alias=True)
+            for column in (job.schema_columns or [])
+        ],
+        "storagePath": job.storage_path,
+        "storageType": job.storage_type,
+        "targetDatabase": normalize_optional_text(job.target_database) or "asklake",
+        "targetDataset": job.target,
+        "targetFormat": job.target_format,
+        "targetLayer": job.target_layer,
+    }
+    requested = {
+        "compression": request.compression,
+        "indexColumns": normalize_string_list(request.index_columns),
+        "partition": request.partition,
+        "partitionColumns": normalize_string_list(request.partition_columns),
+        "ruleContractVersion": request.rule_contract_version,
+        "rules": [rule.model_dump(mode="json", by_alias=True) for rule in request.rules],
+        "schemaColumns": [column.model_dump(mode="json", by_alias=True) for column in request.schema_columns],
+        "storagePath": request.storage_path,
+        "storageType": request.storage_type,
+        "targetDatabase": normalize_optional_text(request.target_database) or "asklake",
+        "targetDataset": request.target_dataset,
+        "targetFormat": request.target_format,
+        "targetLayer": request.target_layer,
+    }
+    return json.dumps(current, ensure_ascii=False, separators=(",", ":"), sort_keys=True) != json.dumps(
+        requested,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+def continuous_checkpoint_initialized(runtime: KafkaContinuousRuntimeModel) -> bool:
+    return any((
+        runtime.last_batch_id is not None,
+        int(runtime.consumed_count or 0) > 0,
+        bool((runtime.metrics or {}).get("runtimeFingerprint")),
     ))
 
 

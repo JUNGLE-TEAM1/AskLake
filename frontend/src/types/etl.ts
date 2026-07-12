@@ -39,6 +39,11 @@ export type KafkaContinuousRuntime = {
   schemaFingerprint?: string | null;
   schemaStatus: string;
   schemaChanges: Array<Record<string, unknown>>;
+  ruleContractVersion: string;
+  ruleFingerprint?: string | null;
+  runtimeFingerprint?: string | null;
+  ruleMetrics: Record<string, number>;
+  lastRuleResult: Record<string, unknown>;
   consumedCount: number;
   storedCount: number;
   quarantinedCount: number;
@@ -101,6 +106,10 @@ export type ContinuousQuarantineRecord = {
   rawPayload: string;
   reason: string;
   schemaFingerprint?: string | null;
+  ruleFingerprint?: string | null;
+  ruleId?: string | null;
+  stage?: string | null;
+  targetColumn?: string | null;
   quarantinedAt?: string | null;
   replayStatus: string;
 };

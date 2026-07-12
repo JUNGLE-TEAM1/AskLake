@@ -81,8 +81,8 @@ export function SchemaTransformWorkbench({
   );
 
   const effectiveTransformSteps = useMemo(
-    () => continuous ? transformSteps : ensureRequiredFieldTransformSteps(targetSchema, transformSteps),
-    [continuous, targetSchema, transformSteps],
+    () => ensureRequiredFieldTransformSteps(targetSchema, transformSteps),
+    [targetSchema, transformSteps],
   );
 
   const allSources = useMemo(() => [{
@@ -100,13 +100,13 @@ export function SchemaTransformWorkbench({
   }, [previewSignature]);
 
   useEffect(() => {
-    if (continuous || effectiveTransformSteps === transformSteps) return;
+    if (effectiveTransformSteps === transformSteps) return;
     onTransformStepsChange?.(effectiveTransformSteps, outputColumnsFromTargetSchema(targetSchema));
-  }, [continuous, effectiveTransformSteps, onTransformStepsChange, targetSchema, transformSteps]);
+  }, [effectiveTransformSteps, onTransformStepsChange, targetSchema, transformSteps]);
 
   const handleSchemaChange = (nextTargetSchema: SchemaTransformColumn[]) => {
     const { nextColumns, nextRows } = projectSchemaTransformSchema(columns, sampleRows, nextTargetSchema);
-    const nextSteps = continuous ? [] : buildTransformSteps(nextTargetSchema);
+    const nextSteps = buildTransformSteps(nextTargetSchema);
     onColumnsChange(nextColumns, nextRows);
     onSelectedIndexChange(Math.min(selectedIndex, Math.max(nextColumns.length - 1, 0)));
     onTransformStepsChange?.(nextSteps, outputColumnsFromTargetSchema(nextTargetSchema));
@@ -134,10 +134,6 @@ export function SchemaTransformWorkbench({
   };
 
   const runPreview = async () => {
-    if (continuous) {
-      setPreviewError("실시간 규칙 Preview는 streaming compiler가 연결되는 다음 페이즈에서 활성화됩니다.");
-      return;
-    }
     if (sampleRows.length === 0) {
       setPreviewError("Preview에 사용할 소스 샘플이 없습니다. 연결 테스트를 먼저 실행하세요.");
       return;
@@ -187,14 +183,14 @@ export function SchemaTransformWorkbench({
           onSchemaChange={handleSchemaChange}
           onSqlChange={handleSqlChange}
           onTestStatusChange={() => undefined}
-          portableTransforms={!continuous}
+          portableTransforms
           sourceDatasetId={SCHEMA_TRANSFORM_DATASET_ID}
           sourceId={SCHEMA_TRANSFORM_SOURCE_ID}
           sourceName={sourceFormat || "Source"}
           sourceSchema={sourceSchema}
           sourceTabs={null}
           targetSchema={targetSchema}
-          transformsDisabled={continuous}
+          transformsDisabled={false}
         />
       </div>
 
@@ -203,10 +199,10 @@ export function SchemaTransformWorkbench({
           <div>
             <h3>실행 엔진 Preview</h3>
             <p>{continuous
-              ? "실시간 규칙은 다음 compiler 페이즈 전까지 pass-through로 유지됩니다."
+              ? "현재 샘플에 실시간 micro-batch와 같은 streaming-safe canonical Rule을 적용합니다."
               : "현재 샘플과 canonical Rule을 Snapshot 실행 런타임에 그대로 적용합니다."}</p>
           </div>
-          <Button disabled={previewPending || continuous || sampleRows.length === 0} type="button" onClick={runPreview}>
+          <Button disabled={previewPending || sampleRows.length === 0} type="button" onClick={runPreview}>
             {previewPending ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <Play data-icon="inline-start" />}
             Preview 실행
           </Button>

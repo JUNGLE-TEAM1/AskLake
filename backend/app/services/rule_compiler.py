@@ -44,6 +44,8 @@ KAFKA_SNAPSHOT_TRANSFORMS = {
     "parse_timestamp",
     "rename",
 }
+CONTINUOUS_TRANSFORMS = KAFKA_SNAPSHOT_TRANSFORMS
+CONTINUOUS_QUALITY = QUALITY_OPERATIONS
 VALID_RULE_KINDS = {"transform", "quality"}
 VALID_ERROR_POLICIES = {"fail_batch", "quarantine", "warn"}
 VALID_FAILURE_DISPOSITIONS = {"keep", "drop_row", "set_null"}
@@ -194,11 +196,14 @@ def compile_rule_set(
                 ))
 
         if rule.enabled:
-            if execution_mode == "continuous":
+            if execution_mode == "continuous" and (
+                (kind == "transform" and operation not in CONTINUOUS_TRANSFORMS)
+                or (kind == "quality" and operation not in CONTINUOUS_QUALITY)
+            ):
                 issues.append(_issue(
                     "RULE_EXECUTION_MODE_UNSUPPORTED",
                     "operation",
-                    f"Continuous does not support enabled rule '{rule_id}' until the streaming compiler phase.",
+                    f"Continuous does not support stateful or engine-specific {kind} operation: {operation}",
                     rule_id,
                 ))
             elif kafka_snapshot and rule.kind == "transform" and operation not in KAFKA_SNAPSHOT_TRANSFORMS:

@@ -4,7 +4,7 @@
 
 Issue #567은 일반 Snapshot, Kafka Snapshot, Kafka Continuous에서 분산된 스키마 추론과 Transform/Quality 실행 의미를 하나의 계약으로 정리한다.
 
-이 작업은 하나의 기능 브랜치와 Draft PR에서 진행하되, Phase별 독립 커밋과 검증 게이트를 유지한다. 구현이 끝나기 전까지 현재 Continuous V1의 규칙 차단 동작을 임의로 해제하지 않는다.
+이 작업은 하나의 기능 브랜치와 Draft PR에서 진행하되, Phase별 독립 커밋과 검증 게이트를 유지한다. Continuous 규칙은 Snapshot conformance와 전용 Spark 검증을 통과한 operation만 단계적으로 활성화한다.
 
 ## 2. 현재 기준
 
@@ -14,7 +14,7 @@ Issue #567은 일반 Snapshot, Kafka Snapshot, Kafka Continuous에서 분산된 
 | --- | --- | --- | --- |
 | 일반 Snapshot | Run 단위 source read | `backend/scripts/spark_job_run.py` | 지원 |
 | Kafka Snapshot | 고정 partition offset 범위 | `backend/scripts/ingest-kafka-reviews.mjs` | 지원 |
-| Kafka Continuous | Spark checkpoint와 micro-batch | `backend/scripts/kafka_continuous_stream.py` | schema projection과 quarantine만 지원 |
+| Kafka Continuous | Spark checkpoint와 micro-batch | `backend/scripts/kafka_continuous_stream.py` | streaming-safe canonical Rule 지원 |
 
 같은 이름의 규칙이라도 실행 언어와 구현이 달라 null, cast, 오류 분기, 출력 타입이 어긋날 수 있다. Frontend Preview 역시 별도 변환 모델을 사용하므로 실제 Spark 결과와의 동등성을 별도로 증명해야 한다.
 
@@ -99,7 +99,7 @@ npm run build
 - `Drop Row`와 `Set Null`은 core `onError`와 별도인 `failureDisposition`으로 보존한다.
 - 저장된 legacy Job은 조회 시 canonical Rule과 compilation 결과를 결정적으로 재구성하고, `1.0 + []`는 legacy 필드와 무관한 pass-through로 유지한다.
 - `fail_batch`/`quarantine`과 row mutation disposition의 충돌, 버전·kind·severity·parameter 오류를 세 compiler가 같은 구조화 issue로 거절한다.
-- Continuous의 활성 규칙 차단은 Streaming compiler가 들어오는 Phase 5까지 유지한다.
+- Phase 2에서는 Continuous 활성 규칙 차단을 유지했고, Phase 5에서 Snapshot conformance를 통과한 stateless operation만 해제했다.
 
 Phase 2 검증:
 
@@ -158,12 +158,29 @@ npm run verify:ui-regressions
 npm run build
 ```
 
-### Phase 5. Kafka Continuous 실행
+### Phase 5. Kafka Continuous 실행 (완료)
 
-- canonical Rule을 `foreachBatch` target publication 전에 적용한다.
-- rule/schema fingerprint를 worker report와 checkpoint metadata에 기록한다.
-- Fail/Quarantine/Warn 카운터와 재시작 동작을 검증한다.
-- 활성 worker의 불변 설정 변경은 명시적인 중지/복사 정책으로 제한한다.
+- `cast`, `copy`, `default_value`, `json_extract`, `lowercase_trim`, `mask`, `null_guard`, `parse_timestamp`, `rename`과 네 가지 Quality operation을 `foreachBatch` target publication 전에 공통 Spark runtime으로 적용한다. 임의 SQL과 stateful/engine-specific operation은 계속 거절한다.
+- Kafka JSON은 `sourceType`으로 파싱하고 canonical Rule 뒤 compiler output schema만 target에 게시한다. `Fail Batch`는 checkpoint 전진을 막고, `Quarantine`은 Kafka 위치와 Rule identity를 보존하며, Warn/drop/set-null 카운터는 manifest와 runtime에 누적한다.
+- canonical Rule, configured schema, target/source identity를 합친 fingerprint를 checkpoint의 `_asklake_contract` metadata에 고정한다. worker report, publication signature, batch manifest와 Catalog materialization에도 rule/schema/runtime fingerprint를 남긴다.
+- 초기화된 checkpoint의 스키마·Rule·물리 target 변경은 Job 복사와 새 checkpoint를 요구한다. 실행 중 변경은 `409 CONTINUOUS_IMMUTABLE_CONFIG_ACTIVE`, 초기화 후 변경은 `409 CONTINUOUS_CHECKPOINT_CONTRACT_IMMUTABLE`로 거절한다.
+- 격리 replay도 현재 schema policy와 canonical Rule을 다시 적용하므로 Rule 격리 행이 maintenance 경로를 통해 우회 적재되지 않는다.
+- Schema Transform UI는 Continuous에서도 streaming-safe Visual Transform과 bounded Preview를 제공하고 임의 SQL은 노출하지 않는다.
+
+Phase 5 검증:
+
+```bash
+cd backend
+npm run verify
+npm run verify:rule-compiler
+npm run verify:snapshot-rule-conformance
+npm run verify:kafka-continuous-contract
+npm run verify:kafka-continuous-rules
+
+cd ../frontend
+npm run verify:ui-regressions
+npm run build
+```
 
 ### Phase 6. Streaming DAG와 실행 근거
 
@@ -196,6 +213,7 @@ cd backend
 npm run verify
 npm run verify:kafka-review-scheduled-ingest
 npm run verify:kafka-continuous-contract
+npm run verify:kafka-continuous-rules
 npm run verify:kafka-continuous-e2e
 
 cd ../frontend
@@ -213,9 +231,9 @@ npm run build
 - 다중 worker autoscaling과 SLA alerting
 - 기존 적재 데이터의 일괄 migration 또는 삭제
 
-## 9. 결정이 필요한 항목
+## 9. 결정 사항과 잔여 항목
 
-- Continuous 초기 지원 operation의 최종 목록
-- rule/schema fingerprint가 바뀔 때 Job copy와 checkpoint 정책
+- Continuous 초기 지원 operation은 Phase 3 공통 Spark runtime의 stateless Transform 9개와 Quality 4개로 확정했다.
+- 초기화된 checkpoint의 rule/schema/runtime fingerprint 변경은 in-place 재사용하지 않고 Job copy와 새 checkpoint를 요구한다.
 - Target layer 기본값 변경 정책. 현재는 기존 source별 기본값을 유지하고 모든 Job에서 선택을 노출한다.
 - 기존 Run DAG와 Streaming DAG의 공통 UI 범위

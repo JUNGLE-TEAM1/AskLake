@@ -210,7 +210,25 @@ def main() -> None:
         execution_mode="continuous",
         source_type="Stream / Kafka",
     )
-    assert "RULE_EXECUTION_MODE_UNSUPPORTED" in issue_codes(continuous)
+    assert continuous.result.status == "pass"
+
+    continuous_sql = compile_rule_set(
+        contract_version="1.0",
+        rules=[CanonicalRuleDraft(
+            id="continuous-sql-expression",
+            input_columns=["review"],
+            kind="transform",
+            operation="sql_expression",
+            output_columns=["derived"],
+            parameters={"expression": "upper(review)"},
+        )],
+        transform_steps=[],
+        quality_rules=[],
+        schema_columns=SCHEMA,
+        execution_mode="continuous",
+        source_type="Stream / Kafka",
+    )
+    assert "RULE_EXECUTION_MODE_UNSUPPORTED" in issue_codes(continuous_sql)
 
     kafka_sql = compile_rule_set(
         contract_version="1.0",

@@ -159,7 +159,7 @@
       "expectedIssueCodes": ["RULE_SEVERITY_UNSUPPORTED"]
     },
     {
-      "name": "continuous rule remains blocked",
+      "name": "continuous stateless rules compile",
       "request": {
         "executionMode": "continuous",
         "ruleContractVersion": "1.0",
@@ -175,6 +175,29 @@
           "operation": "copy",
           "outputColumns": ["review_copy"],
           "parameters": {}
+        }]
+      },
+      "expectedStatus": "pass",
+      "expectedIssueCodes": [],
+      "expectedOutputSchema": [["review", "String"], ["rating", "Double"], ["review_copy", "String"]]
+    },
+    {
+      "name": "continuous engine-specific rule remains blocked",
+      "request": {
+        "executionMode": "continuous",
+        "ruleContractVersion": "1.0",
+        "sourceType": "Stream / Kafka",
+        "rules": [{
+          "contractVersion": "1.0",
+          "enabled": true,
+          "failureDisposition": "keep",
+          "id": "continuous-sql",
+          "inputColumns": ["review"],
+          "kind": "transform",
+          "onError": "warn",
+          "operation": "sql_expression",
+          "outputColumns": ["review_sql"],
+          "parameters": { "expression": "upper(review)" }
         }]
       },
       "expectedStatus": "fail",

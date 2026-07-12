@@ -15,6 +15,7 @@ from pyspark.sql.functions import array, array_except, array_union, col, concat,
 from pyspark.sql.types import BooleanType, DoubleType, LongType, MapType, StringType, StructField, StructType, TimestampType
 
 from kafka_schema_paths import build_nested_schema_tree, expected_object_keys, json_path, split_source_path
+from snapshot_rule_runtime import SnapshotRuleExecutionError, apply_snapshot_rules, supports_snapshot_rules
 
 
 def json_object_env(name: str) -> dict[str, Any]:
@@ -23,6 +24,19 @@ def json_object_env(name: str) -> dict[str, Any]:
     except json.JSONDecodeError:
         return {}
     return value if isinstance(value, dict) else {}
+
+
+def json_array_env(name: str) -> list[Any]:
+    try:
+        value = json.loads(os.environ.get(name, "[]"))
+    except json.JSONDecodeError:
+        return []
+    return value if isinstance(value, list) else []
+
+
+def canonical_hash(value: Any) -> str:
+    payload = json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 JOB_ID = os.environ["ASKLAKE_CONTINUOUS_JOB_ID"]
@@ -34,6 +48,11 @@ QUERY = None
 INITIAL_COUNTS = json.loads(os.environ.get("ASKLAKE_CONTINUOUS_INITIAL_COUNTS", "{}"))
 INITIAL_METRICS = json_object_env("ASKLAKE_CONTINUOUS_INITIAL_METRICS")
 INITIAL_SCHEMA_STATE = json_object_env("ASKLAKE_CONTINUOUS_INITIAL_SCHEMA_STATE")
+RULE_CONTRACT_VERSION = os.environ.get("ASKLAKE_CONTINUOUS_RULE_CONTRACT_VERSION", "1.0")
+RULES = [rule for rule in json_array_env("ASKLAKE_CONTINUOUS_RULES") if isinstance(rule, dict)]
+RULE_OUTPUT_SCHEMA = [item for item in json_array_env("ASKLAKE_CONTINUOUS_RULE_OUTPUT_SCHEMA") if isinstance(item, (list, tuple)) and len(item) >= 2]
+RULE_FINGERPRINT = canonical_hash({"contractVersion": RULE_CONTRACT_VERSION, "rules": RULES})
+EXPECTED_RULE_FINGERPRINT = os.environ.get("ASKLAKE_CONTINUOUS_RULE_FINGERPRINT", "")
 SCHEMA_POLICY = {
     "additiveNullable": "allow",
     "missingRequired": "quarantine",
@@ -73,6 +92,46 @@ SCHEMA_STATE: dict[str, Any] = {
     "schemaChanges": [],
     **INITIAL_SCHEMA_STATE,
 }
+RULE_METRICS: dict[str, int] = {
+    "failedBatchCount": 0,
+    "qualityDroppedCount": 0,
+    "qualityInvalidCount": 0,
+    "qualityQuarantinedCount": 0,
+    "qualitySetNullCount": 0,
+    "qualityWarnCount": 0,
+    "transformDroppedCount": 0,
+    "transformErrorCount": 0,
+    "transformQuarantinedCount": 0,
+    "transformSetNullCount": 0,
+    "transformWarnCount": 0,
+    **(
+        {
+            key: int(value or 0)
+            for key, value in INITIAL_METRICS.get("ruleMetrics", {}).items()
+            if key in {
+                "failedBatchCount",
+                "qualityDroppedCount",
+                "qualityInvalidCount",
+                "qualityQuarantinedCount",
+                "qualitySetNullCount",
+                "qualityWarnCount",
+                "transformDroppedCount",
+                "transformErrorCount",
+                "transformQuarantinedCount",
+                "transformSetNullCount",
+                "transformWarnCount",
+            }
+        }
+        if isinstance(INITIAL_METRICS.get("ruleMetrics"), dict)
+        else {}
+    ),
+}
+LAST_RULE_RESULT: dict[str, Any] = (
+    dict(INITIAL_METRICS.get("lastRuleResult") or {})
+    if isinstance(INITIAL_METRICS.get("lastRuleResult"), dict)
+    else {}
+)
+RUNTIME_FINGERPRINT: str | None = None
 
 
 def now() -> str:
@@ -113,6 +172,11 @@ def report(status: str, *, batch_id: int | None = None, error: str | None = None
         **METRICS,
         **SCHEMA_STATE,
         **COUNTERS,
+        "ruleContractVersion": RULE_CONTRACT_VERSION,
+        "ruleFingerprint": RULE_FINGERPRINT,
+        "runtimeFingerprint": RUNTIME_FINGERPRINT,
+        "ruleMetrics": RULE_METRICS,
+        "lastRuleResult": LAST_RULE_RESULT,
         "lastError": error,
     }
     temp_file = REPORT_FILE.with_suffix(".tmp")
@@ -193,30 +257,38 @@ def source_schema() -> tuple[StructType, list[tuple[str, str]], list[str]]:
     bindings = []
     aliases = []
     required = []
+    column_contracts = []
     for column_def in selected:
         source = str(column_def.get("sourceName") or column_def.get("targetName") or "").strip()
         target = str(column_def.get("targetName") or source).strip()
         if source and target:
-            field_type = spark_type(str(column_def.get("type") or "string"))
+            source_type = str(column_def.get("sourceType") or column_def.get("type") or "string")
+            target_type = str(column_def.get("type") or source_type)
+            field_type = spark_type(source_type)
             bindings.append((source, field_type))
             aliases.append((source, target))
             if not bool(column_def.get("nullable", False)):
                 required.append(source)
+            column_contracts.append({
+                "required": source in required,
+                "source": source,
+                "sourceType": field_type.simpleString(),
+                "target": target,
+                "targetType": spark_type(target_type).simpleString(),
+            })
     if not bindings:
         bindings.append(("value", StringType()))
         aliases.append(("value", "value"))
+        column_contracts.append({
+            "required": False,
+            "source": "value",
+            "sourceType": "string",
+            "target": "value",
+            "targetType": "string",
+        })
     schema_tree = build_nested_schema_tree(bindings)
-    fingerprint_payload = [
-        {
-            "required": source in required,
-            "source": source,
-            "target": target,
-            "type": field_type.simpleString(),
-        }
-        for (source, field_type), (_source, target) in zip(bindings, aliases)
-    ]
     previous_fingerprint = SCHEMA_STATE.get("schemaFingerprint")
-    fingerprint = hashlib.sha256(json.dumps(fingerprint_payload, sort_keys=True).encode("utf-8")).hexdigest()
+    fingerprint = canonical_hash(column_contracts)
     if previous_fingerprint and previous_fingerprint != fingerprint:
         SCHEMA_STATE["schemaVersion"] = int(SCHEMA_STATE.get("schemaVersion") or 1) + 1
         SCHEMA_STATE["schemaStatus"] = "expected_schema_changed"
@@ -308,11 +380,192 @@ def delete_output(spark: SparkSession, output_path: str) -> None:
         raise RuntimeError(f"Could not remove stale publication: {output_path}")
 
 
+def checkpoint_contract_path(checkpoint_path: str) -> str:
+    return f"{checkpoint_path.rstrip('/')}/_asklake_contract"
+
+
+def continuous_runtime_contract(output_path: str) -> dict[str, Any]:
+    output_schema = [
+        {"name": str(item[0]), "type": str(item[1])}
+        for item in RULE_OUTPUT_SCHEMA
+    ]
+    contract = {
+        "consumerGroupId": os.environ["ASKLAKE_CONTINUOUS_CONSUMER_GROUP_ID"],
+        "jobId": JOB_ID,
+        "outputPath": output_path.rstrip("/"),
+        "outputSchema": output_schema,
+        "ruleContractVersion": RULE_CONTRACT_VERSION,
+        "ruleFingerprint": RULE_FINGERPRINT,
+        "schemaFingerprint": SCHEMA_STATE.get("schemaFingerprint"),
+        "topic": os.environ["ASKLAKE_CONTINUOUS_TOPIC"],
+    }
+    return {**contract, "runtimeFingerprint": canonical_hash(contract)}
+
+
+def ensure_checkpoint_contract(spark: SparkSession, checkpoint_path: str, output_path: str) -> None:
+    global RUNTIME_FINGERPRINT
+    if EXPECTED_RULE_FINGERPRINT and EXPECTED_RULE_FINGERPRINT != RULE_FINGERPRINT:
+        raise RuntimeError("Continuous rule fingerprint differs between the control plane and worker payload.")
+    if not supports_snapshot_rules(RULES):
+        raise RuntimeError("Continuous worker received a stateful or unsupported canonical Rule.")
+    contract = continuous_runtime_contract(output_path)
+    RUNTIME_FINGERPRINT = str(contract["runtimeFingerprint"])
+    path = checkpoint_contract_path(checkpoint_path)
+    if output_committed(spark, path):
+        row = spark.read.json(path).first()
+        persisted = row.asDict(recursive=True) if row is not None else {}
+        if str(persisted.get("runtimeFingerprint") or "") != RUNTIME_FINGERPRINT:
+            raise RuntimeError(
+                "Continuous checkpoint contract fingerprint mismatch; stop and copy the Job to use a new checkpoint."
+            )
+        return
+    delete_incomplete_output(spark, path)
+    frame = spark.read.json(spark.sparkContext.parallelize([json.dumps(contract)]))
+    frame.write.mode("errorifexists").json(path)
+    if not output_committed(spark, path):
+        raise RuntimeError(f"Checkpoint contract did not produce a completion marker: {path}")
+
+
+def quoted_column(name: str):
+    return col(f"`{str(name).replace('`', '``')}`")
+
+
+def normalized_column_name(value: str) -> str:
+    return re.sub(r"[^0-9A-Za-z_]+", "_", str(value or "").strip().lower()).strip("_")
+
+
+def resolve_frame_column(frame: DataFrame, name: str) -> str:
+    if name in frame.columns:
+        return name
+    normalized = normalized_column_name(name)
+    return normalized if normalized in frame.columns else ""
+
+
+def select_continuous_target(frame: DataFrame) -> DataFrame:
+    output_columns = []
+    for item in RULE_OUTPUT_SCHEMA:
+        name = str(item[0]).strip()
+        resolved = resolve_frame_column(frame, name)
+        if not resolved:
+            raise RuntimeError(f"Continuous Rule output is missing compiled target column: {name}")
+        output_columns.append(quoted_column(resolved).alias(name))
+    if not output_columns:
+        output_columns = [
+            quoted_column(name)
+            for name in frame.columns
+            if name not in {"topic", "kafka_partition", "kafka_offset", "kafka_timestamp", "raw_payload", "ingested_at"}
+        ]
+    return frame.select(
+        *output_columns,
+        col("kafka_timestamp").cast("timestamp").alias("kafka_timestamp"),
+        col("kafka_partition").cast("int").alias("kafka_partition"),
+        col("kafka_offset").cast("long").alias("kafka_offset"),
+        col("ingested_at").cast("timestamp").alias("ingested_at"),
+    )
+
+
+def schema_quarantine_rows(
+    invalid: DataFrame,
+    malformed: Any,
+    required_missing: Any,
+    incompatible_type: Any,
+    unknown_condition: Any,
+) -> DataFrame:
+    return invalid.select(
+        col("topic").cast("string").alias("topic"),
+        col("partition").cast("int").alias("partition"),
+        col("offset").cast("long").alias("offset"),
+        col("kafka_timestamp").cast("timestamp").alias("kafka_timestamp"),
+        col("raw_payload").cast("string").alias("raw_payload"),
+        lit("").alias("event_id"),
+        col("raw_payload").alias("record"),
+        when(malformed, lit("malformed_json"))
+        .when(required_missing, lit("missing_required"))
+        .when(incompatible_type, lit("incompatible_type"))
+        .when(unknown_condition, lit("unknown_field"))
+        .otherwise(lit("schema_policy_rejected")).alias("reason"),
+        lit("").alias("ruleId"),
+        lit("schema").alias("stage"),
+        lit("").alias("targetColumn"),
+        lit(SCHEMA_STATE["schemaFingerprint"]).alias("schema_fingerprint"),
+        lit(RULE_FINGERPRINT).alias("rule_fingerprint"),
+        current_timestamp().alias("quarantined_at"),
+    )
+
+
+def rule_quarantine_rows(frame: DataFrame) -> DataFrame:
+    return frame.select(
+        col("topic").cast("string").alias("topic"),
+        col("partition").cast("int").alias("partition"),
+        col("offset").cast("long").alias("offset"),
+        col("kafka_timestamp").cast("timestamp").alias("kafka_timestamp"),
+        col("raw_payload").cast("string").alias("raw_payload"),
+        col("event_id").cast("string").alias("event_id"),
+        col("record").cast("string").alias("record"),
+        col("reason").cast("string").alias("reason"),
+        col("ruleId").cast("string").alias("ruleId"),
+        col("stage").cast("string").alias("stage"),
+        col("targetColumn").cast("string").alias("targetColumn"),
+        lit(SCHEMA_STATE["schemaFingerprint"]).alias("schema_fingerprint"),
+        lit(RULE_FINGERPRINT).alias("rule_fingerprint"),
+        current_timestamp().alias("quarantined_at"),
+    )
+
+
+def update_rule_metrics(transform_result: dict[str, Any], quality_result: dict[str, Any], *, failed: bool = False) -> None:
+    global LAST_RULE_RESULT
+    mappings = {
+        "qualityDroppedCount": (quality_result, "droppedCount"),
+        "qualityInvalidCount": (quality_result, "invalidRowCount"),
+        "qualityQuarantinedCount": (quality_result, "quarantinedCount"),
+        "qualitySetNullCount": (quality_result, "setNullCount"),
+        "qualityWarnCount": (quality_result, "warnCount"),
+        "transformDroppedCount": (transform_result, "droppedCount"),
+        "transformErrorCount": (transform_result, "errorCount"),
+        "transformQuarantinedCount": (transform_result, "quarantinedCount"),
+        "transformSetNullCount": (transform_result, "setNullCount"),
+        "transformWarnCount": (transform_result, "warnCount"),
+    }
+    for metric_name, (source, source_name) in mappings.items():
+        RULE_METRICS[metric_name] += int(source.get(source_name) or 0)
+    if failed:
+        RULE_METRICS["failedBatchCount"] += 1
+    LAST_RULE_RESULT = {
+        "quality": quality_result,
+        "status": "failed" if failed else "success",
+        "transform": transform_result,
+    }
+
+
+def recovered_rule_metrics(batches: list[dict[str, Any]]) -> dict[str, int]:
+    totals = {key: 0 for key in RULE_METRICS if key != "failedBatchCount"}
+    mappings = {
+        "qualityDroppedCount": ("quality", "droppedCount"),
+        "qualityInvalidCount": ("quality", "invalidRowCount"),
+        "qualityQuarantinedCount": ("quality", "quarantinedCount"),
+        "qualitySetNullCount": ("quality", "setNullCount"),
+        "qualityWarnCount": ("quality", "warnCount"),
+        "transformDroppedCount": ("transform", "droppedCount"),
+        "transformErrorCount": ("transform", "errorCount"),
+        "transformQuarantinedCount": ("transform", "quarantinedCount"),
+        "transformSetNullCount": ("transform", "setNullCount"),
+        "transformWarnCount": ("transform", "warnCount"),
+    }
+    for batch in batches:
+        for metric_name, (section, field) in mappings.items():
+            payload = batch.get(section) if isinstance(batch.get(section), dict) else {}
+            totals[metric_name] += int(payload.get(field) or 0)
+    return totals
+
+
 def canonical_publication_signature(signature: dict[str, Any]) -> dict[str, Any]:
     return {
         "batchId": int(signature.get("batchId") or 0),
         "inputCount": int(signature.get("inputCount") or 0),
         "outputKind": str(signature.get("outputKind") or "target"),
+        "ruleFingerprint": str(signature.get("ruleFingerprint") or RULE_FINGERPRINT),
+        "runtimeFingerprint": str(signature.get("runtimeFingerprint") or RUNTIME_FINGERPRINT or ""),
+        "schemaFingerprint": str(signature.get("schemaFingerprint") or SCHEMA_STATE.get("schemaFingerprint") or ""),
         "sourceRanges": normalized_source_ranges(signature.get("sourceRanges")),
     }
 
@@ -473,7 +726,12 @@ def normalized_source_ranges(value: Any) -> list[dict[str, Any]]:
 def validate_manifest_retry(manifest: dict[str, Any], source_ranges: list[dict[str, Any]], total: int) -> None:
     persisted_ranges = normalized_source_ranges(manifest.get("sourceRanges"))
     ranges_mismatch = bool(persisted_ranges) and persisted_ranges != source_ranges
-    if int(manifest.get("consumedCount") or 0) != total or ranges_mismatch:
+    fingerprint_mismatch = any((
+        bool(manifest.get("ruleFingerprint")) and manifest.get("ruleFingerprint") != RULE_FINGERPRINT,
+        bool(manifest.get("runtimeFingerprint")) and manifest.get("runtimeFingerprint") != RUNTIME_FINGERPRINT,
+        bool(manifest.get("schemaFingerprint")) and manifest.get("schemaFingerprint") != SCHEMA_STATE.get("schemaFingerprint"),
+    ))
+    if int(manifest.get("consumedCount") or 0) != total or ranges_mismatch or fingerprint_mismatch:
         raise RuntimeError("Existing batch manifest does not match the current Kafka offset range; checkpoint reuse is unsafe.")
 
 
@@ -490,10 +748,13 @@ def main() -> None:
 
     spark = SparkSession.builder.appName(f"asklake-kafka-continuous-{JOB_ID}").getOrCreate()
     configure_s3a(spark)
+    ensure_checkpoint_contract(spark, checkpoint_path, output_path)
     recovered = recover_published_state(spark, output_path)
     for key, value in recovered["counts"].items():
         COUNTERS[key] = max(COUNTERS[key], value)
     PUBLISHED_BATCHES = recovered["batches"]
+    for key, value in recovered_rule_metrics(PUBLISHED_BATCHES).items():
+        RULE_METRICS[key] = max(RULE_METRICS[key], value)
     if PUBLISHED_BATCHES:
         latest = PUBLISHED_BATCHES[-1]
         LAST_BATCH_ID = int(latest.get("batchId") or 0)
@@ -501,6 +762,11 @@ def main() -> None:
         LAST_BATCH_STORED_COUNT = int(latest.get("storedCount") or 0)
         LAST_BATCH_QUARANTINED_COUNT = int(latest.get("quarantinedCount") or 0)
         LAST_BATCH_WRITTEN = True
+        LAST_RULE_RESULT.update({
+            "quality": latest.get("quality") if isinstance(latest.get("quality"), dict) else {},
+            "status": "success",
+            "transform": latest.get("transform") if isinstance(latest.get("transform"), dict) else {},
+        })
     source = (spark.readStream.format("kafka")
         .option("kafka.bootstrap.servers", os.environ["ASKLAKE_CONTINUOUS_BROKER"])
         .option("subscribe", os.environ["ASKLAKE_CONTINUOUS_TOPIC"])
@@ -539,9 +805,17 @@ def main() -> None:
             LAST_BATCH_QUARANTINED_COUNT = int(published.get("quarantinedCount") or 0)
             LAST_BATCH_WRITTEN = True
             PUBLISHED_BATCHES = sorted(
-                [item for item in PUBLISHED_BATCHES if int(item.get("batchId") or -1) != batch_id] + [published],
+                [
+                    item for item in PUBLISHED_BATCHES
+                    if (int(item["batchId"]) if item.get("batchId") is not None else -1) != batch_id
+                ] + [published],
                 key=lambda item: int(item.get("batchId") or 0),
             )
+            LAST_RULE_RESULT.update({
+                "quality": published.get("quality") if isinstance(published.get("quality"), dict) else {},
+                "status": "success",
+                "transform": published.get("transform") if isinstance(published.get("transform"), dict) else {},
+            })
             report("running", batch_id=batch_id)
             batch.unpersist()
             return
@@ -582,45 +856,70 @@ def main() -> None:
             invalid_condition = invalid_condition | unknown_condition
         valid = batch.where(~invalid_condition)
         invalid = batch.where(invalid_condition)
-        valid_count = valid.count()
-        invalid_count = total - valid_count
-        data_path = f"{output_path.rstrip('/')}/_batches/batch_id={batch_id}" if valid_count else None
-        quarantine_batch_path = f"{quarantine_path.rstrip('/')}/_batches/batch_id={batch_id}" if invalid_count else None
+        schema_valid_count = valid.count()
+        schema_invalid_count = total - schema_valid_count
+        selected = [nested_payload_column(source).alias(target) for source, target in aliases]
+        projected = valid.select(
+            *selected,
+            col("topic"),
+            col("partition").alias("kafka_partition"),
+            col("offset").alias("kafka_offset"),
+            col("kafka_timestamp"),
+            col("raw_payload"),
+            current_timestamp().alias("ingested_at"),
+        )
+        try:
+            rule_execution = apply_snapshot_rules(projected, RULES)
+        except SnapshotRuleExecutionError as exc:
+            update_rule_metrics(exc.transform or {}, exc.quality or {}, failed=True)
+            report("failed", error=str(exc)[:2000])
+            batch.unpersist()
+            raise
+        transformed = rule_execution["frame"].persist()
+        target_frame = select_continuous_target(transformed).persist()
+        stored_count = target_frame.count()
+        rule_quarantine = rule_execution["quarantine"]
+        rule_quarantine_count = rule_quarantine.count() if rule_quarantine is not None else 0
+        quarantined_count = schema_invalid_count + rule_quarantine_count
+        data_path = f"{output_path.rstrip('/')}/_batches/batch_id={batch_id}" if stored_count else None
+        quarantine_batch_path = f"{quarantine_path.rstrip('/')}/_batches/batch_id={batch_id}" if quarantined_count else None
         evidence_batch_path = None
-        if valid_count:
-            selected = [nested_payload_column(source).alias(target) for source, target in aliases]
+        if stored_count:
             write_batch_once(
                 spark,
-                valid.select(*selected, col("kafka_timestamp"), col("partition").alias("kafka_partition"), col("offset").alias("kafka_offset"), current_timestamp().alias("ingested_at")),
+                target_frame,
                 output_path,
                 batch_id,
                 {
                     "batchId": batch_id,
-                    "inputCount": valid_count,
+                    "inputCount": stored_count,
                     "outputKind": "target",
-                    "sourceRanges": batch_source_ranges(valid),
+                    "sourceRanges": source_ranges,
                 },
             )
-        if invalid_count:
+        if quarantined_count:
+            quarantine_frame = None
+            if schema_invalid_count:
+                quarantine_frame = schema_quarantine_rows(
+                    invalid,
+                    malformed,
+                    required_missing,
+                    incompatible_type,
+                    unknown_condition,
+                )
+            if rule_quarantine is not None:
+                rule_evidence = rule_quarantine_rows(rule_quarantine)
+                quarantine_frame = rule_evidence if quarantine_frame is None else quarantine_frame.unionByName(rule_evidence)
             write_batch_once(
                 spark,
-                invalid.select(
-                    "topic", "partition", "offset", "kafka_timestamp", "raw_payload",
-                    when(malformed, lit("malformed_json"))
-                    .when(required_missing, lit("missing_required"))
-                    .when(incompatible_type, lit("incompatible_type"))
-                    .when(unknown_condition, lit("unknown_field"))
-                    .otherwise(lit("schema_policy_rejected")).alias("reason"),
-                    lit(SCHEMA_STATE["schemaFingerprint"]).alias("schema_fingerprint"),
-                    current_timestamp().alias("quarantined_at"),
-                ),
+                quarantine_frame,
                 quarantine_path,
                 batch_id,
                 {
                     "batchId": batch_id,
-                    "inputCount": invalid_count,
+                    "inputCount": quarantined_count,
                     "outputKind": "quarantine",
-                    "sourceRanges": batch_source_ranges(invalid),
+                    "sourceRanges": source_ranges,
                 },
             )
         if unknown_fields and SCHEMA_POLICY.get("unknownField") == "preserve":
@@ -659,8 +958,19 @@ def main() -> None:
             "topic": os.environ["ASKLAKE_CONTINUOUS_TOPIC"],
             "sourceRanges": source_ranges,
             "consumedCount": total,
-            "storedCount": valid_count,
-            "quarantinedCount": invalid_count,
+            "storedCount": stored_count,
+            "quarantinedCount": quarantined_count,
+            "schemaAcceptedCount": schema_valid_count,
+            "schemaQuarantinedCount": schema_invalid_count,
+            "ruleQuarantinedCount": rule_quarantine_count,
+            "droppedCount": int(rule_execution["transform"].get("droppedCount") or 0) + int(rule_execution["quality"].get("droppedCount") or 0),
+            "warnCount": int(rule_execution["transform"].get("warnCount") or 0) + int(rule_execution["quality"].get("warnCount") or 0),
+            "ruleContractVersion": RULE_CONTRACT_VERSION,
+            "ruleFingerprint": RULE_FINGERPRINT,
+            "runtimeFingerprint": RUNTIME_FINGERPRINT,
+            "schemaFingerprint": SCHEMA_STATE["schemaFingerprint"],
+            "transform": rule_execution["transform"],
+            "quality": rule_execution["quality"],
             "durationMs": max(0, round((time.monotonic() - batch_started_at) * 1000)),
             "dataPath": data_path,
             "quarantinePath": quarantine_batch_path,
@@ -669,16 +979,22 @@ def main() -> None:
         }
         write_batch_manifest(spark, output_path, batch_id, published_manifest)
         PUBLISHED_BATCHES = sorted(
-            [item for item in PUBLISHED_BATCHES if int(item.get("batchId") or -1) != batch_id] + [published_manifest],
+            [
+                item for item in PUBLISHED_BATCHES
+                if (int(item["batchId"]) if item.get("batchId") is not None else -1) != batch_id
+            ] + [published_manifest],
             key=lambda item: int(item.get("batchId") or 0),
         )
-        LAST_BATCH_STORED_COUNT = valid_count
-        LAST_BATCH_QUARANTINED_COUNT = invalid_count
+        LAST_BATCH_STORED_COUNT = stored_count
+        LAST_BATCH_QUARANTINED_COUNT = quarantined_count
         LAST_BATCH_WRITTEN = True
         COUNTERS["consumedCount"] += total
-        COUNTERS["storedCount"] += valid_count
-        COUNTERS["quarantinedCount"] += invalid_count
+        COUNTERS["storedCount"] += stored_count
+        COUNTERS["quarantinedCount"] += quarantined_count
+        update_rule_metrics(rule_execution["transform"], rule_execution["quality"])
         report("running", batch_id=batch_id)
+        target_frame.unpersist()
+        transformed.unpersist()
         batch.unpersist()
 
     report("starting")

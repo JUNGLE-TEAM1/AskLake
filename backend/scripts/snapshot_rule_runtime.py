@@ -315,6 +315,11 @@ def _quarantine_rows(frame, stage, rule, reason):
     event_id = _resolve_column_name(frame, "event_id")
     return frame.select(
         F.col(ROW_ID),
+        _optional_column(frame, ["topic"], "string").alias("topic"),
+        _optional_column(frame, ["partition", "kafka_partition"], "int").alias("partition"),
+        _optional_column(frame, ["offset", "kafka_offset"], "long").alias("offset"),
+        _optional_column(frame, ["kafka_timestamp"], "timestamp").alias("kafka_timestamp"),
+        _optional_column(frame, ["raw_payload"], "string").alias("raw_payload"),
         (F.col(_quote(event_id)).cast("string") if event_id else F.lit("")).alias("event_id"),
         F.to_json(F.struct(*record_columns)).alias("record"),
         F.lit(reason).alias("reason"),
@@ -322,6 +327,14 @@ def _quarantine_rows(frame, stage, rule, reason):
         F.lit(stage).alias("stage"),
         F.lit(str(_first(rule.get("inputColumns")) or _first(rule.get("outputColumns")) or "")).alias("targetColumn"),
     )
+
+
+def _optional_column(frame, candidates, data_type):
+    for candidate in candidates:
+        resolved = _resolve_column_name(frame, candidate)
+        if resolved:
+            return F.col(_quote(resolved)).cast(data_type)
+    return F.lit(None).cast(data_type)
 
 
 def _append_quarantine(current, next_frame):

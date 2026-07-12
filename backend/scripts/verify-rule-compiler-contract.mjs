@@ -101,7 +101,19 @@ const continuous = compile({
   sourceType: "Stream / Kafka",
   rules: [canonicalRule({ id: "continuous-rule", outputColumns: ["review_copy"] })],
 });
-assertIssue(continuous, "RULE_EXECUTION_MODE_UNSUPPORTED");
+assert(continuous.result.status === "pass", "Continuous stateless rules should compile.");
+
+const continuousSql = compile({
+  executionMode: "continuous",
+  sourceType: "Stream / Kafka",
+  rules: [canonicalRule({
+    id: "continuous-sql",
+    operation: "sql_expression",
+    outputColumns: ["review_sql"],
+    parameters: { expression: "upper(review)" },
+  })],
+});
+assertIssue(continuousSql, "RULE_EXECUTION_MODE_UNSUPPORTED");
 
 const kafkaSql = compile({
   sourceType: "Stream / Kafka",

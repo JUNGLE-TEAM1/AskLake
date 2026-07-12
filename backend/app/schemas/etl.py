@@ -176,6 +176,11 @@ class KafkaContinuousRuntime(CamelModel):
     schema_fingerprint: str | None = None
     schema_status: str = "stable"
     schema_changes: list[dict[str, Any]] = Field(default_factory=list)
+    rule_contract_version: str = "1.0"
+    rule_fingerprint: str | None = None
+    runtime_fingerprint: str | None = None
+    rule_metrics: dict[str, int] = Field(default_factory=dict)
+    last_rule_result: dict[str, Any] = Field(default_factory=dict)
     consumed_count: int = 0
     stored_count: int = 0
     quarantined_count: int = 0
@@ -231,6 +236,10 @@ class ContinuousQuarantineRecord(CamelModel):
     raw_payload: str
     reason: str
     schema_fingerprint: str | None = None
+    rule_fingerprint: str | None = None
+    rule_id: str | None = None
+    stage: str | None = None
+    target_column: str | None = None
     quarantined_at: str | None = None
     replay_status: str = "pending"
 

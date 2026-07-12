@@ -2399,6 +2399,7 @@ export function JobDetailPage({
 
 function ContinuousRuntimeCard({ job }: { job: JobRowData }) {
   const runtime = job.continuousRuntime;
+  const ruleMetrics = runtime?.ruleMetrics ?? {};
   const maintenanceBlocked = runtime ? !["paused", "stopped"].includes(runtime.status) : true;
   const [logs, setLogs] = useState<string[]>([]);
   const [logError, setLogError] = useState("");
@@ -2468,6 +2469,8 @@ function ContinuousRuntimeCard({ job }: { job: JobRowData }) {
         <Field label="처리량" value={runtime?.throughputRowsPerSecond != null ? `${runtime.throughputRowsPerSecond.toLocaleString()} rows/s` : "-"} />
         <Field label="최근 Batch" value={runtime?.lastBatchDurationMs != null ? `${runtime.lastBatchInputRows.toLocaleString()}건 · ${runtime.lastBatchDurationMs.toLocaleString()}ms` : "-"} />
         <Field label="Schema" value={`v${runtime?.schemaVersion ?? 1} · ${runtime?.schemaStatus ?? "stable"}`} />
+        <Field label="Rule 계약" value={`v${runtime?.ruleContractVersion ?? "1.0"} · ${runtime?.ruleFingerprint?.slice(0, 10) ?? "대기"}`} />
+        <Field label="Rule 처리" value={`경고 ${(Number(ruleMetrics.transformWarnCount ?? 0) + Number(ruleMetrics.qualityWarnCount ?? 0)).toLocaleString()} · 격리 ${(Number(ruleMetrics.transformQuarantinedCount ?? 0) + Number(ruleMetrics.qualityQuarantinedCount ?? 0)).toLocaleString()} · 실패 batch ${Number(ruleMetrics.failedBatchCount ?? 0).toLocaleString()}`} />
         <Field label="Heartbeat" value={runtime?.heartbeatAt ? formatCompactDateTime(runtime.heartbeatAt) : "-"} />
         <Field label="Checkpoint" value={runtime?.checkpointPath ?? "-"} />
         {runtime?.lastError && <Field label="최근 오류" value={runtime.lastError} />}
@@ -2490,7 +2493,7 @@ function ContinuousRuntimeCard({ job }: { job: JobRowData }) {
         <span>실행 이력 {maintenanceRuns.length.toLocaleString()}건</span>
         <span>최근 {maintenanceRuns[0] ? `${maintenanceRuns[0].kind} · ${maintenanceRuns[0].status}` : "-"}</span>
       </div>
-      {quarantine.length > 0 && <div className="job-quarantine-list">{quarantine.slice(0, 5).map((item) => <div key={`${item.partition}:${item.offset}`}><code>{item.partition}:{item.offset}</code><span>{item.reason}</span><span>{item.replayStatus}</span><span>{item.rawPayload}</span></div>)}</div>}
+      {quarantine.length > 0 && <div className="job-quarantine-list">{quarantine.slice(0, 5).map((item) => <div key={`${item.partition}:${item.offset}`}><code>{item.partition}:{item.offset}</code><span>{item.stage === "schema" ? "스키마" : item.ruleId ? `${item.stage ?? "rule"} · ${item.ruleId}` : "규칙"} · {item.reason}</span><span>{item.replayStatus}</span><span>{item.rawPayload}</span></div>)}</div>}
     </article>
   );
 }
