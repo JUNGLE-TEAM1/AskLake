@@ -12,6 +12,17 @@ Amazon Electronics 상품 메타데이터에서 분석 가능한 소규모 커�
 
 기본 규모는 상품 10,000개, 사용자 3,000명, 30일치 이벤트입니다. 실제 이벤트 수는 seed와 사용자 활동 분포에 따라 결정됩니다.
 
+검증에 사용한 고정 seed 결과는 `backend/fixtures/synthetic-commerce/`에 함께 제공됩니다.
+
+```text
+products.csv          10,000 rows
+users.csv              3,000 rows
+click_events.jsonl    76,640 rows
+manifest.json          row counts, rules, SHA-256
+```
+
+따라서 대용량 Amazon 원천 파일이 없어도 이 fixture를 PostgreSQL 또는 다른 분석 저장소에 바로 적재할 수 있습니다. 다른 규모나 seed가 필요할 때만 generator를 다시 실행합니다.
+
 ## 원천 파일
 
 `generate.py`는 한 줄에 JSON 객체 하나가 있는 Amazon Electronics metadata JSONL을 입력으로 받습니다.
@@ -103,16 +114,12 @@ python3 backend/scripts/synthetic-commerce/test_generate.py
 
 테스트는 사용자 생성의 결정성, 숨은 특성 비노출, 이벤트 참조 무결성, 세션 내 시간 순서와 퍼널 선행조건을 검증합니다.
 
-## 커밋 정책
+## 산출물 정책
 
-다음 파일은 생성 산출물이므로 커밋하지 않습니다.
+`backend/fixtures/synthetic-commerce/`의 고정 fixture 네 파일은 팀의 즉시 재현과 E2E 적재를 위해 저장소에서 관리합니다. 다른 seed 또는 임시 실험으로 생성한 파일은 커밋하지 않습니다.
 
 ```text
 backend/tmp/synthetic-commerce-output/
-products.csv
-users.csv
-click_events.jsonl
-manifest.json
 analysis.sqlite
 analysis-result.json
 insights.md

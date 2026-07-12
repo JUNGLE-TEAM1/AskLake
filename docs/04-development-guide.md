@@ -551,7 +551,7 @@ ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:etl-lineage
 
 ### Synthetic commerce dataset 검증
 
-SQL 및 ETL 분석용 소규모 커머스 데이터는 `backend/scripts/synthetic-commerce/`의 결정적 generator로 만든다. Amazon Electronics metadata JSONL은 저장소에 포함하지 않으며 실행자가 로컬 경로로 전달한다. 생성 결과는 ignored `backend/tmp/` 아래에 둔다.
+SQL 및 ETL 분석용 소규모 커머스 데이터는 `backend/scripts/synthetic-commerce/`의 결정적 generator로 만든다. Amazon Electronics metadata JSONL은 저장소에 포함하지 않으며 실행자가 로컬 경로로 전달한다. 검증된 고정 seed 결과는 `backend/fixtures/synthetic-commerce/`에 제공하고, 다른 seed의 임시 생성 결과는 ignored `backend/tmp/` 아래에 둔다.
 
 ```bash
 python3 backend/scripts/synthetic-commerce/generate.py \
