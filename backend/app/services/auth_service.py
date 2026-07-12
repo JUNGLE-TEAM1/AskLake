@@ -8,6 +8,7 @@ from fastapi import status
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.errors import ApiError
 from app.models.base import Base
 from app.models.identity import AuthSessionModel, AuthUserModel
@@ -43,7 +44,10 @@ class AuthService:
     def __init__(self, db: Session) -> None:
         self.db = db
         self._ensure_tables()
-        self._ensure_demo_users()
+        if settings.allows_header_auth_fallback:
+            self._ensure_demo_users()
+        else:
+            self._ensure_bootstrap_admin()
 
     def signup(self, *, email: str, password: str, display_name: str) -> dict[str, Any]:
         normalized_email = normalize_email(email)
@@ -171,6 +175,33 @@ class AuthService:
             changed = True
         if changed:
             self.db.commit()
+
+    def _ensure_bootstrap_admin(self) -> None:
+        email = settings.bootstrap_admin_email
+        password = settings.bootstrap_admin_password
+        if not email or not password:
+            return
+
+        normalized_email = normalize_email(email)
+        existing = self.db.scalar(select(AuthUserModel).where(AuthUserModel.email == normalized_email))
+        if existing is not None:
+            return
+
+        salt = secrets.token_hex(16)
+        self.db.add(
+            AuthUserModel(
+                id=unique_user_id("bootstrap-admin"),
+                email=normalized_email,
+                display_name=settings.bootstrap_admin_display_name.strip() or "AskLake Administrator",
+                password_salt=salt,
+                password_hash=hash_password(password, salt),
+                role="admin",
+                groups=[],
+                status="active",
+                title="Platform Admin",
+            )
+        )
+        self.db.commit()
 
 
 def load_session_actor(db: Session, token: str | None) -> dict[str, Any] | None:

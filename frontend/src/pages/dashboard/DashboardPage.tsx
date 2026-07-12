@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import type { LayoutItem } from "react-grid-layout";
 import {
   Database,
@@ -9,11 +9,11 @@ import {
   SlidersHorizontal,
   Table2,
 } from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { PreviewPanel } from "@/components/ui/preview-panel";
 import { SegmentedTabs } from "@/components/ui/segmented-tabs";
 import { SelectableCard } from "@/components/ui/selectable-card";
 import { DatasetStatusBadge } from "../catalog/CatalogPage";
-import { DashboardRuntimeView } from "./runtime/DashboardRuntimeView";
 import { useDashboardDatasets } from "./runtime/useDashboardDatasets";
 import { useDraftWidgetCreator } from "./runtime/useDraftWidgetCreator";
 import { useDraftWidgetLayouts } from "./runtime/useDraftWidgetLayouts";
@@ -27,7 +27,6 @@ import {
 } from "./DashboardParts";
 import { DashboardLandingPage } from "./DashboardLandingPage";
 import type { ExpandedChart } from "./DashboardParts";
-import { defaultDashboardCards } from "./dashboardListData";
 import {
   formatDashboardTimestamp,
   hydrateSavedDashboardCards,
@@ -50,6 +49,10 @@ import { ApiError } from "../../types";
 import type { AuditResult, CatalogDataset, DashboardEntry, DashboardRuntimeMode, DashboardRuntimeResponse, DashboardRuntimeWidget, DashboardRuntimeWidgetType, DashboardView, DashboardWidgetLayout, DashboardWidgetType, SavedDashboardCard, SqlResultDraft } from "../../types";
 import { dashboardStatusMeta } from "../../utils/statusMeta";
 import type { DashboardDatasetOption, UpdateDraftWidgetFormInput } from "./runtime/dashboardRuntimeTypes";
+
+const DashboardRuntimeView = lazy(async () => ({
+  default: (await import("./runtime/DashboardRuntimeView")).DashboardRuntimeView,
+}));
 
 const defaultRuntimePages = [
   { id: "page-1", title: "Untitled page" },
@@ -199,6 +202,7 @@ export function DashboardPage({
   const [view, setView] = useState<DashboardView>(entry.view);
   const [builderWidgets, setBuilderWidgets] = useState<DashboardWidgetType[]>([]);
   const [isPublished, setIsPublished] = useState(false);
+  const [dashboardMutation, setDashboardMutation] = useState<"publish" | "save" | null>(null);
   const [selectedWidgetType, setSelectedWidgetType] = useState<DashboardWidgetType>("bar");
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [dashboardCreateError, setDashboardCreateError] = useState<string | null>(null);
@@ -210,7 +214,7 @@ export function DashboardPage({
   const [period, setPeriod] = useState("최근 7일");
   const [segment, setSegment] = useState("전체 채널");
   const [runtimeSelection, setRuntimeSelection] = useState<{ dashboardId: string; mode: DashboardRuntimeMode }>(() => ({
-    dashboardId: entry.dashboardId ?? "dash_sales_demo",
+    dashboardId: entry.dashboardId ?? "",
     mode: entry.runtimeMode ?? "published",
   }));
   const [publishedRuntime, setPublishedRuntime] = useState<DashboardRuntimeResponse | null>(null);
@@ -238,23 +242,14 @@ export function DashboardPage({
   const [widgetScrollTargetId, setWidgetScrollTargetId] = useState<string | null>(null);
   const [selectedRuntimePageId, setSelectedRuntimePageId] = useState<string | null>(defaultRuntimePages[0].id);
   const [selectedDashboard, setSelectedDashboard] = useState<SavedDashboardCard | null>(null);
-  const [savedDashboards, setSavedDashboards] = useState<SavedDashboardCard[]>(() => {
-    const stored = window.localStorage.getItem("asklake.dashboardCards");
-    if (!stored) return defaultDashboardCards;
-    try {
-      const cards = JSON.parse(stored) as SavedDashboardCard[];
-      return hydrateSavedDashboardCards(cards);
-    } catch {
-      return defaultDashboardCards;
-    }
-  });
+  const [savedDashboards, setSavedDashboards] = useState<SavedDashboardCard[]>([]);
   const dashboardList = useDashboardLandingList(savedDashboards, onAction, entry.version + dashboardListRefreshKey);
   const activeSqlResult = entry.source === "sql" && (sqlResult?.datasetId === dataset.id || sqlResult?.baseDatasetId === dataset.id) ? sqlResult : null;
   const sqlDashboardDataset = useMemo(
     () => activeSqlResult ? buildSqlDashboardDataset(activeSqlResult) : null,
     [activeSqlResult],
   );
-  const dashboardTitle = activeSqlResult ? `${activeSqlResult.datasetName} SQL Result Dashboard` : "Sales Analytics Demo 2026-06-26 22:04:05";
+  const dashboardTitle = activeSqlResult ? `${activeSqlResult.datasetName} SQL Result Dashboard` : "새 대시보드";
   const dashboardId = `dash_${dataset.id}_${activeSqlResult?.runId ?? "draft"}`;
   const sourceRunId = activeSqlResult?.runId;
   const dashboardColumns = activeSqlResult?.columns.length ? activeSqlResult.columns : dataset.schema.slice(0, 5).map(([column]) => column);
@@ -548,10 +543,6 @@ export function DashboardPage({
   }, [runtimeSelection.dashboardId, runtimeSelection.mode, selectedDraftWidgetIds, selectedRuntimePageId]);
 
   useEffect(() => {
-    window.localStorage.setItem("asklake.dashboardCards", JSON.stringify(savedDashboards));
-  }, [savedDashboards]);
-
-  useEffect(() => {
     if (!runtimeNotice) return undefined;
     const timeoutId = window.setTimeout(() => setRuntimeNotice(null), 3200);
     return () => window.clearTimeout(timeoutId);
@@ -678,16 +669,10 @@ export function DashboardPage({
       updatedAtValue: now.toISOString(),
       widgets: snapshotWidgets,
     };
-    const optimisticCard = normalizeSavedDashboardCard(nextCard);
-    setSavedDashboards((cards) => [optimisticCard, ...cards.filter((card) => card.id !== optimisticCard.id)]);
-
-    try {
-      const savedCard = normalizeSavedDashboardCard(await saveDashboardCard(optimisticCard));
-      setSavedDashboards((cards) => [savedCard, ...cards.filter((card) => card.id !== savedCard.id)]);
-      return savedCard;
-    } catch {
-      return optimisticCard;
-    }
+    const savedCard = normalizeSavedDashboardCard(await saveDashboardCard(normalizeSavedDashboardCard(nextCard)));
+    setSavedDashboards((cards) => [savedCard, ...cards.filter((card) => card.id !== savedCard.id)]);
+    setDashboardListRefreshKey((key) => key + 1);
+    return savedCard;
   };
 
   const addWidgetToCanvas = () => {
@@ -700,15 +685,47 @@ export function DashboardPage({
     onAction("dashboard.widget.removed_from_canvas", "/api/dashboards/widgets", dataset.id);
   };
 
+  const persistDashboard = async (action: "publish" | "save") => {
+    if (dashboardMutation) return;
+
+    const status = action === "publish" || isPublished ? "published" : "draft";
+    setDashboardMutation(action);
+    setRuntimeNotice({
+      message: action === "publish" ? "대시보드를 게시하는 중입니다." : "대시보드를 저장하는 중입니다.",
+      tone: "info",
+    });
+    try {
+      await upsertDashboard(status);
+      if (action === "publish") setIsPublished(true);
+      setRuntimeNotice({
+        message: action === "publish" ? "대시보드를 게시했습니다." : "대시보드를 저장했습니다.",
+        tone: "success",
+      });
+      onAction(
+        action === "publish" ? "dashboard.published" : "dashboard.saved",
+        action === "publish" ? `/api/dashboards/${dashboardId}/publish` : `/api/dashboards/${dashboardId}`,
+        dashboardId,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "대시보드를 저장하지 못했습니다.";
+      setRuntimeNotice({ message, tone: "error" });
+      onAction(
+        action === "publish" ? "dashboard.publish_failed" : "dashboard.save_failed",
+        action === "publish" ? `/api/dashboards/${dashboardId}/publish` : `/api/dashboards/${dashboardId}`,
+        dashboardId,
+        "failed",
+      );
+    } finally {
+      setDashboardMutation(null);
+    }
+  };
+
   const publishDashboard = () => {
-    setIsPublished(true);
-    void upsertDashboard("published");
-    onAction("dashboard.published", `/api/dashboards/${dashboardId}/publish`, dashboardId);
+    void persistDashboard("publish");
   };
 
   const saveDashboard = () => {
-    void upsertDashboard(isPublished ? "published" : "draft");
-    onAction("dashboard.saved", `/api/dashboards/${dashboardId}`, dashboardId);
+    void persistDashboard("save");
   };
 
   const shareDashboard = () => {
@@ -1222,11 +1239,13 @@ export function DashboardPage({
     };
 
     return (
-      <DashboardRuntimeView
-        actions={runtimeViewActions}
-        datasets={runtimeDatasetState}
-        runtime={runtimeViewState}
-      />
+      <Suspense fallback={<div aria-label="대시보드 편집기를 불러오는 중" className="module-placeholder-page" role="status" />}>
+        <DashboardRuntimeView
+          actions={runtimeViewActions}
+          datasets={runtimeDatasetState}
+          runtime={runtimeViewState}
+        />
+      </Suspense>
     );
   }
 
@@ -1235,6 +1254,7 @@ export function DashboardPage({
       <div className="dashboard-page dashboard-builder-page">
         <DashboardWorkspaceHeader
           isPublished={isPublished}
+          pendingAction={dashboardMutation}
           onBackToList={backToList}
           onExport={exportDashboard}
           onFullscreen={openDashboardFullscreen}
@@ -1245,6 +1265,14 @@ export function DashboardPage({
           primaryTitle={isPublished ? "Published" : "Draft"}
           title={isPublished ? dashboardTitle : activeSqlResult ? `${activeSqlResult.datasetName} SQL Result Draft` : "SQL Result Dashboard Draft"}
         />
+        {runtimeNotice && (
+          <Alert
+            className={runtimeNotice.tone === "success" ? "border-emerald-200 bg-emerald-50 text-emerald-900" : undefined}
+            variant={runtimeNotice.tone === "error" ? "destructive" : "default"}
+          >
+            <AlertDescription>{runtimeNotice.message}</AlertDescription>
+          </Alert>
+        )}
         <div className="dashboard-builder-layout">
           <aside className="dashboard-builder-side">
             <section>
@@ -1361,6 +1389,7 @@ export function DashboardPage({
     <div className="dashboard-page dashboard-detail-page">
       <DashboardWorkspaceHeader
         isPublished={isPublished}
+        pendingAction={dashboardMutation}
         onBackToList={backToList}
         onDraftEdit={() => {
           setView("builder");
@@ -1375,6 +1404,14 @@ export function DashboardPage({
         primaryTitle={selectedDashboard ? dashboardStatusMeta[selectedDashboard.status].label : isPublished ? "Published" : "Draft"}
         title={activeDashboardTitle}
       />
+      {runtimeNotice && (
+        <Alert
+          className={runtimeNotice.tone === "success" ? "border-emerald-200 bg-emerald-50 text-emerald-900" : undefined}
+          variant={runtimeNotice.tone === "error" ? "destructive" : "default"}
+        >
+          <AlertDescription>{runtimeNotice.message}</AlertDescription>
+        </Alert>
+      )}
 
       <section className="dashboard-publish-card">
         <div>

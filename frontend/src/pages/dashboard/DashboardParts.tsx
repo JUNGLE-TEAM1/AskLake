@@ -13,6 +13,7 @@ export type ExpandedChart = {
 
 export function DashboardWorkspaceHeader({
   isPublished,
+  pendingAction,
   onBackToList,
   onDraftEdit,
   onExport,
@@ -25,6 +26,7 @@ export function DashboardWorkspaceHeader({
   title,
 }: {
   isPublished: boolean;
+  pendingAction?: "publish" | "save" | null;
   onBackToList: () => void;
   onDraftEdit?: () => void;
   onExport: () => void;
@@ -45,8 +47,12 @@ export function DashboardWorkspaceHeader({
       <ActionGroup className="dashboard-header-actions dashboard-workspace-actions" density="compact">
         <button className="secondary-button" type="button" onClick={onBackToList}>목록으로</button>
         {onDraftEdit && <button className="secondary-button" type="button" onClick={onDraftEdit}>초안 수정</button>}
-        <button className="secondary-button" type="button" onClick={onSave}><Save size={16} /> 저장</button>
-        <button className="secondary-button" type="button" onClick={onPublish}>Publish</button>
+        <button className="secondary-button" disabled={pendingAction !== null && pendingAction !== undefined} type="button" onClick={onSave}>
+          <Save size={16} /> {pendingAction === "save" ? "저장 중..." : "저장"}
+        </button>
+        <button className="secondary-button" disabled={pendingAction !== null && pendingAction !== undefined} type="button" onClick={onPublish}>
+          {pendingAction === "publish" ? "게시 중..." : "Publish"}
+        </button>
         <button className="secondary-button" type="button" onClick={onShare}><Share2 size={16} /> Share</button>
         <button className="secondary-button" type="button" onClick={onExport}><Download size={16} /> 내보내기</button>
         <button className="secondary-button" type="button" onClick={onFullscreen}>전체화면</button>

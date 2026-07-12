@@ -1,8 +1,7 @@
-import { memo, useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent } from "react";
+import { lazy, memo, Suspense, useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent } from "react";
 import type { ApexOptions } from "apexcharts";
 import type { ColumnDef } from "@tanstack/react-table";
 import { AlertCircle, CheckCircle2 } from "lucide-react";
-import Chart from "react-apexcharts";
 import { Button } from "@/components/ui/button";
 import { DataTable, type DataTableColumnMeta } from "@/components/ui/data-table";
 import { ResultPanel } from "@/components/ui/preview-panel";
@@ -27,6 +26,8 @@ import {
 } from "../../../services/dashboardAssistantService";
 import type { DashboardAssistantRuntimeContext } from "./dashboardRuntimeTypes";
 import { VisualizationPromptInput, type VisualizationPromptInputHandle } from "./VisualizationPromptInput";
+
+const ApexChart = lazy(() => import("react-apexcharts"));
 
 type SimpleRow = Record<string, unknown>;
 type ChartPoint = {
@@ -669,7 +670,9 @@ function RuntimeApexChart({
 
   return (
     <div className="asklake-apex-widget" ref={chartContainerRef} onClickCapture={handleClickCapture}>
-      <Chart height="100%" options={chartOptions} series={series} type={type} width="100%" />
+      <Suspense fallback={<div aria-label="차트를 불러오는 중" className="asklake-widget-empty" role="status" />}>
+        <ApexChart height="100%" options={chartOptions} series={series} type={type} width="100%" />
+      </Suspense>
     </div>
   );
 }

@@ -1160,6 +1160,7 @@ function CatalogSample({ dataset }: { dataset: CatalogDataset }) {
 
   useEffect(() => {
     let cancelled = false;
+    setRowsResult(null);
     setIsLoadingRows(true);
     setRowsError(null);
     getCatalogDatasetRows(dataset.id, { limit: pageSize, offset })

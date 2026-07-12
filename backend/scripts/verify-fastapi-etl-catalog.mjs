@@ -20,6 +20,8 @@ const airflowSyncPollIntervalMs = positiveNumber(process.env.ASKLAKE_FASTAPI_ETL
 const airflowSyncTimeoutMs = positiveNumber(process.env.ASKLAKE_FASTAPI_ETL_AIRFLOW_TIMEOUT_MS, 600000);
 const configuredSparkOutputMode = process.env.ASKLAKE_SPARK_OUTPUT_MODE || "local";
 const expectSparkFailure = process.env.ASKLAKE_FASTAPI_ETL_EXPECT_SPARK_FAILURE === "true";
+const targetFormat = String(process.env.ASKLAKE_FASTAPI_ETL_TARGET_FORMAT || "parquet").trim().toLowerCase();
+assert(["parquet", "csv", "json"].includes(targetFormat), `Unsupported smoke target format: ${targetFormat}`);
 const env = {
   ...process.env,
   AIRFLOW_API_BASE_URL: airflowBaseUrl,
@@ -110,7 +112,7 @@ async function runSmoke() {
     partition: "customer_id/amount",
     storagePath: targetStoragePath,
     storageType: sparkOutputMode === "s3a" ? "S3" : "Local",
-    targetFormat: "Parquet",
+    targetFormat,
     targetLayer: "GOLD",
   });
 
@@ -180,14 +182,14 @@ async function runSmoke() {
   if (!shouldStartAirflowMock) {
     assert(latestRun?.taskStates?.sparkResult?.status === "success", "Synced run should preserve the Spark result manifest.");
     assert(Number(latestRun?.taskStates?.sparkResult?.outputRows) === 2, "Spark should write the two input rows.");
-    await assertPhysicalParquet(latestRun?.outputPath);
+    await assertPhysicalOutput(latestRun?.outputPath, targetFormat);
     assert(latestRun?.taskStates?.catalogResult?.status === "success", "Catalog publication should persist a successful catalogResult.");
     assert(latestRun?.taskStates?.catalogResult?.runId === latestRun.runId, "Catalog result should preserve the AskLake Run id.");
 
     const catalogDataset = await get(`/api/catalog/datasets/${encodeURIComponent(create.catalogTarget.id)}`);
     assert(catalogDataset.sourceRunId === latestRun.runId, "Catalog dataset should point to the successful Run id.");
     assert(catalogDataset.storageLocation === latestRun.outputPath, "Catalog storageLocation should match the Spark outputPath.");
-    assert(catalogDataset.storageFormat === "parquet", "Catalog storage format should be Parquet.");
+    assert(catalogDataset.storageFormat === targetFormat, `Catalog storage format should be ${targetFormat}.`);
     assert(Number(catalogDataset.storageSizeBytes) > 0, "Catalog dataset should persist positive physical bytes.");
     assert(
       catalogDataset.materializationRuns?.filter((run) => run.runId === latestRun.runId).length === 1,
@@ -217,7 +219,7 @@ async function runSmoke() {
     "Spark-generated metadata columns should not have source lineage edges.",
   );
   assert(processLineageNode?.engine === "SPARK", "ETL lineage should represent the Spark job as a PROCESS node.");
-  assert(targetLineageNode?.engine === "PARQUET", "ETL lineage target engine should match the persisted Spark output format.");
+  assert(targetLineageNode?.engine === targetFormat.toUpperCase(), "ETL lineage target engine should match the persisted Spark output format.");
 
   await del(`/api/catalog/datasets/${encodeURIComponent(materialized.id)}/materialization-runs/${encodeURIComponent(command.run.runId)}`);
   const jobAfterMaterializationDelete = await get(`/api/etl/jobs/${encodeURIComponent(create.job.id)}`);
@@ -269,8 +271,9 @@ async function assertCatalogNotReady(jobId, runId) {
   assert(payload?.error?.code === "SPARK_RESULT_NOT_READY", "Catalog endpoint should expose SPARK_RESULT_NOT_READY.");
 }
 
-async function assertPhysicalParquet(outputPath) {
+async function assertPhysicalOutput(outputPath, storageFormat) {
   assert(outputPath, "Spark success should persist an output path.");
+  const suffix = `.${storageFormat}`;
   const match = String(outputPath).match(/^s3a?:\/\/([^/]+)\/(.+)$/i);
   if (match) {
     const client = new S3Client({
@@ -284,20 +287,20 @@ async function assertPhysicalParquet(outputPath) {
     });
     const listed = await client.send(new ListObjectsV2Command({ Bucket: match[1], Prefix: match[2] }));
     assert(
-      listed.Contents?.some((entry) => entry.Key?.endsWith(".parquet")),
-      `MinIO output prefix has no Parquet object: ${outputPath}`,
+      listed.Contents?.some((entry) => entry.Key?.endsWith(suffix)),
+      `MinIO output prefix has no ${storageFormat} object: ${outputPath}`,
     );
     return;
   }
   assert(existsSync(outputPath), `Spark output path does not exist: ${outputPath}`);
-  assert(hasParquetFile(outputPath), `Spark output path has no Parquet file: ${outputPath}`);
+  assert(hasOutputFile(outputPath, suffix), `Spark output path has no ${storageFormat} file: ${outputPath}`);
 }
 
-function hasParquetFile(dir) {
+function hasOutputFile(dir, suffix) {
   return readdirSync(dir, { withFileTypes: true }).some((entry) => (
     entry.isDirectory()
-      ? hasParquetFile(path.join(dir, entry.name))
-      : entry.name.endsWith(".parquet")
+      ? hasOutputFile(path.join(dir, entry.name), suffix)
+      : entry.name.endsWith(suffix)
   ));
 }
 

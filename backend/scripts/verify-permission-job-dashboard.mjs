@@ -21,6 +21,7 @@ const env = {
 
 let serverProcess = null;
 let createdDashboardId = null;
+let createdJobId = null;
 const createdGrantIds = new Set();
 
 try {
@@ -48,6 +49,7 @@ async function runSmoke() {
   const suffix = Date.now().toString(36);
   const jobPayload = buildSmokeJobPayload(suffix);
   const job = await createSmokeJob(jobPayload);
+  createdJobId = job.id;
   await verifyJobPermissions(job.id, jobPayload);
 
   const dashboard = await post("/api/dashboards", {
@@ -79,7 +81,7 @@ async function verifyJobPermissions(jobId, jobPayload) {
   }, jobResource);
   assert(manageGrant?.id, "Job manage grant should be persisted.");
 
-  const jobs = await get("/api/etl/jobs", viewerHeaders);
+  const jobs = (await get("/api/etl/jobs", viewerHeaders)).jobs;
   const viewerJob = jobs.find((item) => item.id === jobId);
   assert(viewerJob?.permissions?.canManage === true, "Job list response should merge persisted manage grant into permissions.");
 
@@ -92,7 +94,7 @@ async function verifyJobPermissions(jobId, jobPayload) {
     resourceId: jobId,
     resourceType: "etl_job",
   });
-  const lockedJobs = await get("/api/etl/jobs", viewerHeaders);
+  const lockedJobs = (await get("/api/etl/jobs", viewerHeaders)).jobs;
   const lockedJob = lockedJobs.find((item) => item.id === jobId);
   assert(lockedJob?.permissions?.canRun === false, "Locked job should report canRun=false.");
   assert(lockedJob?.permissions?.canManage === false, "Locked job should report canManage=false.");
@@ -108,7 +110,7 @@ async function verifyJobPermissions(jobId, jobPayload) {
     resourceId: jobId,
     resourceType: "etl_job",
   });
-  const unlockedJobs = await get("/api/etl/jobs", viewerHeaders);
+  const unlockedJobs = (await get("/api/etl/jobs", viewerHeaders)).jobs;
   const unlockedJob = unlockedJobs.find((item) => item.id === jobId);
   assert(unlockedJob?.permissions?.canManage === true, "Unlocked job should restore manage permission.");
 
@@ -118,7 +120,7 @@ async function verifyJobPermissions(jobId, jobPayload) {
     reason: "Permission job smoke user block",
     status: "blocked",
   });
-  const blockedJobs = await get("/api/etl/jobs", viewerHeaders);
+  const blockedJobs = (await get("/api/etl/jobs", viewerHeaders)).jobs;
   assert(!blockedJobs.some((item) => item.id === jobId), "Blocked actor should not see granted job in list.");
   await patch("/api/admin/governance/principals", {
     principalId: viewerHeaders["X-AskLake-User"],
@@ -301,6 +303,21 @@ async function cleanupCreatedState() {
   if (createdDashboardId) {
     try {
       await del(`/api/dashboards/${encodeURIComponent(createdDashboardId)}`);
+    } catch {
+      // Best-effort cleanup only; failed smoke output above remains the source of truth.
+    }
+  }
+  if (createdJobId) {
+    try {
+      const deletedJobId = createdJobId;
+      const deleted = await del(`/api/etl/jobs/${encodeURIComponent(deletedJobId)}`);
+      assert(deleted.deletedJobId === deletedJobId, "Job delete response should identify the deleted job.");
+      const deletionAudits = await get(`/api/admin/audit-logs?resourceType=etl_job&result=success&q=${encodeURIComponent(deletedJobId)}&limit=20`);
+      assert(
+        deletionAudits.logs.some((log) => log.targetId === deletedJobId && log.action === "etl_job.deleted"),
+        "Successful job deletion should be recorded in admin audit logs.",
+      );
+      createdJobId = null;
     } catch {
       // Best-effort cleanup only; failed smoke output above remains the source of truth.
     }

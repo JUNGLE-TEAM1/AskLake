@@ -10,6 +10,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from fastapi import status
+from sqlalchemy import delete
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -17,7 +18,14 @@ from app.core.auth_context import ActorContext, require_permission
 from app.core.config import settings
 from app.core.errors import ApiError
 from app.core.permission_metadata import permission_grants_from_roles, resource_permissions
-from app.models import CatalogDatasetModel, ETLJobModel, ETLRunModel, KafkaSnapshotModel
+from app.models import (
+    CatalogDatasetModel,
+    ETLJobModel,
+    ETLRunModel,
+    KafkaSnapshotModel,
+    PermissionGrantModel,
+    ResourceLockModel,
+)
 from app.repositories.audit_repository import safe_record_audit_event
 from app.repositories import etl_repository
 from app.schemas.common import ErrorCode
@@ -329,6 +337,68 @@ def update_pipeline(
     apply_update_request(job, request, target_changed)
     saved_job = etl_repository.save_job(db, job)
     return with_job_permissions(db, saved_job, actor_context)
+
+
+def delete_job(db: Session, job_id: str, actor: ActorContext | None = None) -> str:
+    job = etl_repository.get_job(db, job_id)
+    if job is None:
+        raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
+    if job.status == "running":
+        raise ApiError(ErrorCode.CONFLICT, f"Job is running and cannot be deleted: {job_id}", status.HTTP_409_CONFLICT)
+
+    job_name = job.name
+    job_owner = job.owner
+    actor_context = actor or ActorContext()
+    require_governed_access(
+        db,
+        actor_context,
+        action="delete",
+        api_path=f"/api/etl/jobs/{job_id}",
+        http_method="DELETE",
+        metadata={"owner": job_owner},
+        resource_id=job.id,
+        resource_name=job.name,
+        resource_type="etl_job",
+    )
+    require_permission(
+        actor_context,
+        "delete",
+        owner=job.owner,
+        grants=permission_grants_for_resource(
+            db,
+            "etl_job",
+            job.id,
+            permission_grants_from_roles(job.owner, job.permission_roles, default_actions=["view", "run"]),
+        ),
+        resource_label="job",
+    )
+
+    db.execute(delete(ETLRunModel).where(ETLRunModel.job_id == job.id))
+    db.execute(delete(KafkaSnapshotModel).where(KafkaSnapshotModel.job_id == job.id))
+    db.execute(delete(PermissionGrantModel).where(
+        PermissionGrantModel.resource_type == "etl_job",
+        PermissionGrantModel.resource_id == job.id,
+    ))
+    db.execute(delete(ResourceLockModel).where(
+        ResourceLockModel.resource_type == "etl_job",
+        ResourceLockModel.resource_id == job.id,
+    ))
+    db.delete(job)
+    db.commit()
+    safe_record_audit_event(
+        db,
+        actor=actor_context,
+        action="etl_job.deleted",
+        api_path=f"/api/etl/jobs/{job_id}",
+        http_method="DELETE",
+        metadata={"owner": job.owner},
+        result="success",
+        status_code=status.HTTP_200_OK,
+        target_id=job_id,
+        target_name=job_name,
+        target_type="etl_job",
+    )
+    return job_id
 
 
 def list_datasets(db: Session) -> list[CatalogDataset]:
@@ -834,7 +904,7 @@ def run_spark_job(db: Session, job: ETLJobModel, command: str, run_id: str) -> d
         "ASKLAKE_SPARK_RUN_RESULT",
         {
             "command": command,
-            "job": job_payload_for_spark(job, source_incremental_since(db, job.id, run_id)),
+            "job": job_payload_for_spark(job, source_incremental_since(db, job, run_id)),
             "runId": run_id,
         },
         error_marker="ASKLAKE_SPARK_RUN_ERROR",
@@ -1458,14 +1528,31 @@ def job_payload_for_spark(job: ETLJobModel, incremental_since: str | None = None
     }
 
 
-def source_incremental_since(db: Session, job_id: str, current_run_id: str) -> str | None:
+def source_incremental_since(db: Session, job: ETLJobModel, current_run_id: str) -> str | None:
     successful_runs = [
-        run for run in etl_repository.list_run_models_for_job(db, job_id)
-        if run.run_id != current_run_id and run.status == "success" and str(run.ended_at or "").strip() not in {"", "-"}
+        run for run in etl_repository.list_run_models_for_job(db, job.id)
+        if run.run_id != current_run_id and run.status == "success" and str(run.started_at or "").strip() not in {"", "-"}
     ]
     if not successful_runs:
         return None
-    return max(str(run.ended_at) for run in successful_runs)
+    # Use the previous run's start as the lower bound. A file created while that
+    # run was scanning can otherwise fall before its end timestamp and be lost.
+    lower_bound = max(str(run.started_at) for run in successful_runs)
+    return apply_incremental_lookback(lower_bound, job.schedule_policy)
+
+
+def apply_incremental_lookback(value: str, schedule_policy: dict[str, Any] | None) -> str:
+    policy = (schedule_policy or {}).get("watermarkPolicy") or {}
+    if policy.get("enabled") is False:
+        return value
+    try:
+        lookback_minutes = max(0, min(int(policy.get("lookbackMinutes", 5)), 1440))
+        timestamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return value
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=UTC)
+    return (timestamp.astimezone(UTC) - timedelta(minutes=lookback_minutes)).isoformat().replace("+00:00", "Z")
 
 
 def list_target_databases() -> TargetDatabasesResponse:
@@ -1781,7 +1868,7 @@ def apply_job_state_from_latest_run(job: ETLJobModel, latest_run: ETLRunModel) -
 AIRFLOW_TASK_TITLES = {
     "receive_asklake_run": "1. Airflow DAG Run 접수",
     "validate_spark_request": "2. Spark 실행 요청 검증",
-    "spark_process_write": "3. Spark 처리/품질/Parquet 적재",
+    "spark_process_write": "3. Spark 처리/품질/출력 적재",
     "publish_run_result": "4. Spark 실행 결과 확정",
 }
 
@@ -1879,9 +1966,10 @@ def dag_steps_from_airflow_sync(
 
 def finalize_job_from_spark_result(job: ETLJobModel, command: str, result: dict[str, Any]) -> None:
     success = result.get("status") == "success"
+    output_format = spark_output_format(job, result).upper()
     job.last_run = str(result.get("endedAt") or iso_now())
     job.last_state = (
-        f"{'재실행' if command == 'retry' else '실행'} 완료 · Spark Parquet 적재"
+        f"{'재실행' if command == 'retry' else '실행'} 완료 · Spark {output_format} 적재"
         if success
         else f"Spark 실행 실패 · {spark_error_summary(result, limit=180)}"
     )
@@ -2000,7 +2088,8 @@ def dataset_payload_from_spark_result(
     output_path = str(result.get("outputPath") or "-")
     storage_size_bytes = parse_count_value(result.get("storageSizeBytes")) or dataset_storage_size_bytes(output_path)
     display_size = format_storage_size(storage_size_bytes) if storage_size_bytes > 0 else "Pending"
-    lineage_graph = etl_dataset_lineage_graph(job, dataset_id, schema_json)
+    storage_format = spark_output_format(job, result)
+    lineage_graph = etl_dataset_lineage_graph(job, dataset_id, schema_json, target_format=storage_format)
     sample_rows = spark_output_sample_rows(result, schema_json)
     partition_columns = normalize_string_list(job.partition_columns)
     index_columns = normalize_string_list(job.index_columns)
@@ -2015,6 +2104,7 @@ def dataset_payload_from_spark_result(
             "sourceKind": "sql" if job.source_type == "SQL Result" else "etl",
             "sourceLabel": job.name or job.source or job.source_label or job.id,
             "status": "success" if result.get("status") == "success" else "failed",
+            "storageFormat": storage_format,
             "storageLocation": output_path,
             "storageSizeBytes": storage_size_bytes,
         },
@@ -2045,7 +2135,7 @@ def dataset_payload_from_spark_result(
         "source": job.name,
         "sourceRunId": aggregate["latestRunId"] or result.get("runId"),
         "status": "available",
-        "storageFormat": spark_output_format(job, result),
+        "storageFormat": storage_format,
         "storageLocation": output_path,
         "storageSizeBytes": aggregate["storageSizeBytes"],
         "partition": partition,
@@ -2170,7 +2260,13 @@ def parse_optional_integer(value: Any) -> int | None:
         return None
 
 
-def etl_dataset_lineage_graph(job: ETLJobModel, dataset_id: str, schema_json: list[list[str]]) -> dict[str, Any]:
+def etl_dataset_lineage_graph(
+    job: ETLJobModel,
+    dataset_id: str,
+    schema_json: list[list[str]],
+    *,
+    target_format: str | None = None,
+) -> dict[str, Any]:
     source_node_id = normalize_lineage_id(f"{dataset_id}-{job.source_label or job.source_type or 'source'}")
     source_schema = source_lineage_schema(job, schema_json)
     source_node = lineage_node(
@@ -2186,7 +2282,7 @@ def etl_dataset_lineage_graph(job: ETLJobModel, dataset_id: str, schema_json: li
         job.target,
         job.target_layer or "RAW",
         schema_json,
-        lineage_target_engine(job),
+        lineage_target_engine(job, target_format),
     )
     return {
         "datasetId": dataset_id,
@@ -2237,8 +2333,8 @@ def source_lineage_schema(job: ETLJobModel, target_schema: list[list[str]]) -> l
     return [[name, type_by_name.get(name, "string")] for name in source_names]
 
 
-def lineage_target_engine(_job: ETLJobModel) -> str:
-    return SPARK_OUTPUT_FORMAT.upper()
+def lineage_target_engine(job: ETLJobModel, target_format: str | None = None) -> str:
+    return spark_output_format(job, {"format": target_format}).upper()
 
 
 def lineage_source_engine(job: ETLJobModel) -> str:
@@ -2376,6 +2472,7 @@ def dag_steps_from_spark_result(job: ETLJobModel, command: str, run: dict[str, A
     quality_meta = f"{len(job.quality_rules or [])}개 검사"
     source_path = str(result.get("sourcePath") or job.source)
     output_path = str(result.get("outputPath") or run.get("outputPath") or "-")
+    output_format = spark_output_format(job, result).upper()
     spark_logs = compact_spark_logs(result)
     quality_result = result.get("quality") if isinstance(result.get("quality"), dict) else {}
     quality_summary = str(quality_result.get("summary") or "-")
@@ -2400,10 +2497,10 @@ def dag_steps_from_spark_result(job: ETLJobModel, command: str, run: dict[str, A
             ["품질 검사", quality_meta],
             ["품질 결과", quality_summary],
         ], [f"품질 검증 실패: {run.get('errorSummary')}" if quality_failed else "이전 단계 실패로 품질 검증이 실행되지 않았습니다." if read_failed or transform_failed else quality_summary if quality_summary != "-" else "품질 검증 완료."]),
-        dag_step("write", "6. Parquet 적재", output_path, "blocked" if failed else "success", [
+        dag_step("write", f"6. {output_format} 적재", output_path, "blocked" if failed else "success", [
             ["출력 경로", output_path],
             ["출력 행", run.get("outputRows", "0")],
-        ], ["이전 단계 실패로 Parquet 적재가 수행되지 않았습니다." if failed else f"Parquet 출력 완료: {output_path}"]),
+        ], [f"이전 단계 실패로 {output_format} 적재가 수행되지 않았습니다." if failed else f"{output_format} 출력 완료: {output_path}"]),
         dag_step("catalog", "7. 카탈로그 데이터셋 갱신", job.target, "blocked" if failed else "success", [
             ["데이터셋", job.target],
             ["레이어", job.target_layer],
@@ -2935,6 +3032,7 @@ def initial_dag_steps(request: CreatePipelineRequest, metrics: dict[str, Any]) -
 
 
 def dag_steps_from_command(job: ETLJobModel, command: str, run: dict[str, Any]) -> list[dict[str, str]]:
+    output_format = spark_output_format(job, {}).upper()
     if command in {"cancelRun", "stopSchedule"}:
         return [
             {"id": "source", "meta": job.source, "status": "blocked", "title": "1. 소스 연결"},
@@ -2950,7 +3048,7 @@ def dag_steps_from_command(job: ETLJobModel, command: str, run: dict[str, Any]) 
         {"id": "read", "meta": run.get("inputRows", "0"), "status": "running", "title": "3. Spark 소스 읽기"},
         {"id": "transform", "meta": f"{len(job.transform_steps)}개 규칙", "status": "pending", "title": "4. 처리 규칙 적용"},
         {"id": "quality", "meta": f"{len(job.quality_rules)}개 검사", "status": "pending", "title": "5. 품질 검증"},
-        {"id": "write", "meta": run.get("outputPath", "-"), "status": "pending", "title": "6. Parquet 적재"},
+        {"id": "write", "meta": run.get("outputPath", "-"), "status": "pending", "title": f"6. {output_format} 적재"},
         {"id": "catalog", "meta": job.target, "status": "pending", "title": "7. 카탈로그 데이터셋 갱신"},
     ]
 

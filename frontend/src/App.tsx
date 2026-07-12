@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import type React from "react";
 import { BookOpen, CircleHelp, Database, History, LogOut, Settings, ShieldCheck, Workflow } from "lucide-react";
 import { useLocation, useNavigate } from "react-router";
@@ -8,15 +8,6 @@ import { Sidebar } from "./components/layout/Sidebar";
 import { Topbar } from "./components/layout/Topbar";
 import { Stepper } from "./components/layout/Stepper";
 import { Footer } from "./components/layout/Footer";
-import { CatalogDetailPage, CatalogPage } from "./pages/catalog/CatalogPage";
-import { SqlAnalysisPage } from "./pages/sql/SqlAnalysisPage";
-import { DashboardPage } from "./pages/dashboard/DashboardPage";
-import { AdminConsolePage } from "./pages/admin/AdminConsolePage";
-import { AiChatPage } from "./pages/ai/AiChatPage";
-import { AuthPage } from "./pages/auth/AuthPage";
-import { ProfilePage } from "./pages/profile/ProfilePage";
-import { JobDetailPage, JobRunsPage, JobsLandingPage } from "./pages/ingest/JobsPages";
-import { PermissionPage, ReviewPage, RuleApplicationPage, SchedulePage, SchemaInferencePage, SourceConnectionPage, TargetPage } from "./pages/etl/EtlPages";
 import { useAuditLogs } from "./hooks/useAuditLogs";
 import { useAskLakeData } from "./hooks/useAskLakeData";
 import { fetchAuthSession, logout as logoutSession } from "./services/authApi";
@@ -27,6 +18,25 @@ import { Skeleton } from "./components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./components/ui/tooltip";
 import type { AuditEntry, CatalogDataset, CurrentUserResponse, DashboardEntry, FlowId, JobRowData, NavId, NavItem, ScheduleFlowId } from "./types";
 import type { DashboardRuntimeMode } from "./types";
+
+const CatalogPage = lazy(async () => ({ default: (await import("./pages/catalog/CatalogPage")).CatalogPage }));
+const CatalogDetailPage = lazy(async () => ({ default: (await import("./pages/catalog/CatalogPage")).CatalogDetailPage }));
+const SqlAnalysisPage = lazy(async () => ({ default: (await import("./pages/sql/SqlAnalysisPage")).SqlAnalysisPage }));
+const DashboardPage = lazy(async () => ({ default: (await import("./pages/dashboard/DashboardPage")).DashboardPage }));
+const AdminConsolePage = lazy(async () => ({ default: (await import("./pages/admin/AdminConsolePage")).AdminConsolePage }));
+const AiChatPage = lazy(async () => ({ default: (await import("./pages/ai/AiChatPage")).AiChatPage }));
+const AuthPage = lazy(async () => ({ default: (await import("./pages/auth/AuthPage")).AuthPage }));
+const ProfilePage = lazy(async () => ({ default: (await import("./pages/profile/ProfilePage")).ProfilePage }));
+const JobsLandingPage = lazy(async () => ({ default: (await import("./pages/ingest/JobsPages")).JobsLandingPage }));
+const JobDetailPage = lazy(async () => ({ default: (await import("./pages/ingest/JobsPages")).JobDetailPage }));
+const JobRunsPage = lazy(async () => ({ default: (await import("./pages/ingest/JobsPages")).JobRunsPage }));
+const SourceConnectionPage = lazy(async () => ({ default: (await import("./pages/etl/EtlPages")).SourceConnectionPage }));
+const SchemaInferencePage = lazy(async () => ({ default: (await import("./pages/etl/EtlPages")).SchemaInferencePage }));
+const SchedulePage = lazy(async () => ({ default: (await import("./pages/etl/EtlPages")).SchedulePage }));
+const PermissionPage = lazy(async () => ({ default: (await import("./pages/etl/EtlPages")).PermissionPage }));
+const TargetPage = lazy(async () => ({ default: (await import("./pages/etl/EtlPages")).TargetPage }));
+const ReviewPage = lazy(async () => ({ default: (await import("./pages/etl/EtlPages")).ReviewPage }));
+const RuleApplicationPage = lazy(async () => ({ default: (await import("./pages/etl/EtlPages")).RuleApplicationPage }));
 
 const scheduleFlows: ScheduleFlowId[] = ["repeat", "manual"];
 
@@ -56,6 +66,16 @@ type FlowPathContext = {
 };
 
 const defaultScheduleFlow: ScheduleFlowId = "repeat";
+
+function PageModuleLoading() {
+  return (
+    <div aria-label="화면을 불러오는 중" className="module-placeholder-page" role="status">
+      <Skeleton className="h-5 w-24" />
+      <Skeleton className="h-9 w-full max-w-md" />
+      <Skeleton className="h-5 w-full max-w-xl" />
+    </div>
+  );
+}
 
 function parseDashboardRoute(pathname: string): DashboardRouteState | null {
   const segments = pathname.split("/").filter(Boolean);
@@ -485,7 +505,7 @@ export function App() {
   }
 
   if (!currentUser || activeFlow === "login") {
-    return <AuthPage onAction={writeAuditLog} onAuthenticated={handleAuthenticated} />;
+    return <Suspense fallback={<PageModuleLoading />}><AuthPage onAction={writeAuditLog} onAuthenticated={handleAuthenticated} /></Suspense>;
   }
 
   if (activeFlow === "rules") {
@@ -510,7 +530,9 @@ export function App() {
       >
         {toast && <div className={`app-toast ${toast.tone}`}>{toast.message}</div>}
         {apiPending && <div className="app-api-pending">API 요청 처리 중...</div>}
-        <RuleApplicationPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("schema")} onNext={() => moveToFlow(lastScheduleFlow)} onSave={() => saveDraft("rules")} onAction={writeAuditLog} onNotify={showToast} />
+        <Suspense fallback={<PageModuleLoading />}>
+          <RuleApplicationPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("schema")} onNext={() => moveToFlow(lastScheduleFlow)} onSave={() => saveDraft("rules")} onAction={writeAuditLog} onNotify={showToast} />
+        </Suspense>
       </RuleBuilderShell>
     );
   }
@@ -552,7 +574,7 @@ export function App() {
             </div>
           )}
           {shouldRenderAppContent && (
-            <>
+            <Suspense fallback={<PageModuleLoading />}>
           {activeFlow === "jobs" && <JobsLandingPage jobListFacets={jobListFacets} jobsLoading={jobsLoading} jobs={jobs} onCommand={handleJobCommand} onCreate={() => moveToFlow("source")} onDetail={openJobDetailWithRoute} onFilter={filterJobs} onRuns={openJobRunsWithRoute} onAction={writeAuditLog} />}
           {activeFlow === "jobDetail" && <JobDetailPage job={selectedJob} onCommand={handleJobCommand} onBack={() => moveToFlow("jobs")} onRuns={() => openJobRunsWithRoute(selectedJob)} />}
           {activeFlow === "jobRuns" && <JobRunsPage evidence={jobExecutionEvidence[selectedJob.id]} job={selectedJob} onCommand={handleJobCommand} onBack={() => moveToFlow("jobDetail")} onAction={writeAuditLog} />}
@@ -569,7 +591,7 @@ export function App() {
           {activeFlow === "ai" && <AiChatPage datasets={datasets} onAction={writeAuditLog} />}
           {activeFlow === "profile" && <ProfilePage onAction={writeAuditLog} />}
           {activeFlow === "admin" && canAccessAdmin && <AdminConsolePage onAction={writeAuditLog} onNotify={showToast} />}
-            </>
+            </Suspense>
           )}
         </section>
         <Footer />

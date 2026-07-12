@@ -16,7 +16,7 @@ FastAPI 전환의 공통 구조와 의사결정은 `docs/backend-fastapi-transit
 | Source/Schema | mock mode에서는 `SourceConnectorAnalysis` fallback으로 schema/sampleRows 반영, live mode에서는 `POST /api/etl/sources/test`로 실제 connector 확인. MongoDB connector는 Node MongoDB driver로 컬렉션과 제한 문서 샘플을 조회하며, 사용자가 선택한 File / S3 Parquet 객체는 Spark reader로 물리 스키마를 읽음 | Kafka message payload sampling, 다중 Parquet 파일의 통합 스키마 추론 |
 | Rule | 현재 schema/sampleRows 기반 preview, create payload에 transform/quality detail 포함 | 별도 backend rule preview API |
 | Job command | `POST /api/etl/jobs/{jobId}/commands`가 run/retry를 Airflow DAG Run으로 접수하고 non-terminal job/run을 즉시 응답 | pause/cancel의 실제 Airflow/Spark interrupt |
-| Run/DAG | local Airflow DAG가 token-authenticated FastAPI internal API를 통해 실제 PySpark를 실행하고 MinIO/S3 Parquet를 생성. `publish_run_result`가 Catalog endpoint를 호출하고 `GET /api/etl/jobs/{jobId}`가 DAG/task/Spark/Catalog evidence를 동기화 | run detail table과 Spark log object storage 분리 |
+| Run/DAG | local Airflow DAG가 token-authenticated FastAPI internal API를 통해 실제 PySpark를 실행하고 선택된 포맷의 MinIO/S3 output을 생성. `publish_run_result`가 Catalog endpoint를 호출하고 `GET /api/etl/jobs/{jobId}`가 DAG/task/Spark/Catalog evidence를 동기화 | run detail table과 Spark log object storage 분리 |
 | Catalog | `GET /api/catalog/datasets` hydrate, `GET /api/catalog/datasets/{datasetId}/lineage`, SQL derived/Kafka 결과를 Postgres JSONB payload로 반영. 일반 Airflow/Spark batch의 멱등 reconciliation endpoint, transaction, final-task 연결, frontend terminal-success 1회 refresh, live E2E 구현 | 상세/lineage/search API 고도화 |
 | SQL 분석 | `POST /api/query/runs`, `POST /api/query/ai-suggestions`, `POST /api/catalog/derived-datasets` 호출 지점 유지. SQL run 결과는 `sql_runs.payload`에 snapshot 저장 | read-only SQL engine 고도화 |
 | Dashboard | FastAPI dashboard card/list와 draft/published runtime API 연결. 프론트는 404 local fallback 유지. Dashboard 목록/runtime/title/draft/delete 권한 enforcement 연결 | 공유 링크/API, export API, cross-pair E2E QA |
@@ -123,12 +123,12 @@ Backend connector 응답은 secret field를 redacted value로 내려준다. 프�
 - `AIRFLOW_INTERNAL_BASE_URL`, `AIRFLOW_INTERNAL_TOKEN`, `AIRFLOW_INTERNAL_TIMEOUT_SECONDS`: 기존 단일 호출 internal endpoint 호환 설정. 신규 DAG는 execution bearer endpoint를 우선 사용한다.
 
 일반 배치 `run`/`retry`는 `executionMode=spark`로 DAG를 시작한다. `spark_process_write`가 FastAPI internal endpoint를 호출하면 FastAPI가 persisted Job/Run/Airflow identity를 확인하고 PySpark runner를 실행한다. Airflow에는 Docker socket과 MinIO credential을 직접 제공하지 않는다. `executionMode=smoke`는 backend 없이 DAG 성공/강제 실패만 검증할 때 사용한다.
-`publish_run_result`는 성공 Spark manifest와 실제 Parquet를 검증한 뒤 Catalog dataset/materialization을 transaction으로 저장한다. Airflow terminal state만 성공이고 같은 `runId`의 Catalog evidence 또는 기존 persisted Spark result가 없으면 backend가 Run을 실패로 보정한다.
+`publish_run_result`는 성공 Spark manifest와 manifest 포맷의 실제 output을 검증한 뒤 Catalog dataset/materialization을 transaction으로 저장한다. Airflow terminal state만 성공이고 같은 `runId`의 Catalog evidence 또는 기존 persisted Spark result가 없으면 backend가 Run을 실패로 보정한다.
 
 Spark runner 입력:
 
 - File / S3, Data Lake: object path를 Spark source로 직접 사용
-- Target S3 picker: `S3_ALLOWED_BUCKETS` allowlist 안의 bucket만 선택 가능하며 prefix 조회는 backend AWS SDK v3 `ListObjectsV2`에서 처리한다. 프론트에는 AWS credential을 넣지 않는다.
+- Target S3 picker: `S3_ALLOWED_BUCKETS` allowlist 안의 bucket만 선택 가능하며 prefix 조회는 FastAPI `boto3`의 `ListObjectsV2`에서 처리한다. 프론트에는 AWS credential을 넣지 않는다.
 - EC2 prod compose: MinIO endpoint는 `http://minio:9000`이고, backend/Spark는 `MINIO_ENDPOINT`, `MINIO_ENDPOINT_IN_DOCKER`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `MINIO_BUCKET`을 서버 `deploy/.env`에서 읽는다.
 - Target DB picker: `TARGET_DATABASES` 또는 `ASKLAKE_TARGET_DATABASES` allowlist를 서버에서 읽어 허용 DB만 내려준다.
 - REST/PostgreSQL/MongoDB 등 connector source: bounded schema sample rows를 JSONL로 기록한 뒤 Spark source로 사용
@@ -158,7 +158,7 @@ Airflow sync 결과:
 
 Status: contract, FastAPI backend implementation, real-mode Airflow DAG call, frontend terminal-success Catalog refresh, and live end-to-end verification are complete on the current branch.
 
-Phase 3에서는 `publish_run_result`가 `POST /api/internal/airflow/spark-runs/{runId}/catalog`를 호출한다. FastAPI는 bearer token과 저장된 Job/Run/Airflow identity를 다시 검증하고 `taskStates.sparkResult`에서만 실행 결과를 읽는다. 성공 Spark manifest와 실제 Parquet가 모두 확인된 경우에만 Catalog dataset을 create/upsert한다.
+Phase 3에서는 `publish_run_result`가 `POST /api/internal/airflow/spark-runs/{runId}/catalog`를 호출한다. FastAPI는 bearer token과 저장된 Job/Run/Airflow identity를 다시 검증하고 `taskStates.sparkResult`에서만 실행 결과를 읽는다. 성공 Spark manifest와 manifest 포맷의 실제 output이 모두 확인된 경우에만 Catalog dataset을 create/upsert한다.
 
 Transaction boundary:
 
@@ -221,9 +221,9 @@ FastAPI Pair2 smoke:
 - `npm run verify:permission-job-dashboard`는 권한 없는 viewer의 Job command, Dashboard 목록/runtime/title/draft/delete 차단과 user grant 변경 후 즉시 허용되는 흐름을 검증한다. 기본 포트는 `18088`이며 `ASKLAKE_PERMISSION_JOB_DASHBOARD_PORT`로 바꿀 수 있다.
 - `npm run verify:airflow-smoke`는 실행 중인 Airflow API에서 `asklake_etl_job` 발견, import error 0건, smoke 성공 Run의 4개 task 성공, `forceFail` Run의 `spark_process_write` 실패를 확인한다. 기본 API는 `http://127.0.0.1:8081`이며 `AIRFLOW_*`와 `ASKLAKE_AIRFLOW_SMOKE_*` 환경변수로 바꿀 수 있다.
 - `npm run verify:airflow-catalog-wiring`은 Airflow runtime 없이 실제 mode의 Catalog endpoint 경로, bearer token, `jobId` body, 최소 XCom 결과, smoke 우회, Run identity mismatch, Catalog HTTP 실패 전파를 확인한다.
-- `npm run verify:airflow-spark`는 ETL Job 생성, Airflow 비동기 접수, authenticated FastAPI internal execution, 실제 PySpark 2행 처리, MinIO Parquet object, terminal Run/task/Spark manifest 동기화를 확인한다. `ASKLAKE_FASTAPI_ETL_EXPECT_SPARK_FAILURE=true`를 주면 Quality `Fail Run`의 Spark/Airflow/AskLake 실패 전파를 검사한다.
+- `npm run verify:airflow-spark`는 ETL Job 생성, Airflow 비동기 접수, authenticated FastAPI internal execution, 실제 PySpark 2행 처리, 설정 포맷의 MinIO output object, terminal Run/task/Spark manifest 동기화를 확인한다. `ASKLAKE_FASTAPI_ETL_EXPECT_SPARK_FAILURE=true`를 주면 Quality `Fail Run`의 Spark/Airflow/AskLake 실패 전파를 검사한다.
 - `npm run verify:fastapi-etl-catalog`는 같은 script의 기존 호환 이름이다. Airflow URL이 없으면 내장 mock 계약을 확인하고, 실제 Airflow URL을 사용하면 Spark 성공 뒤 `catalogResult`, Catalog dataset, materialization, physical size, lineage까지 검사한다.
-- `npm run verify:etl-lineage`는 text source 하나가 `text`, `sentiment`, `severity`로 파생되는 경우 source node가 `text`만 갖고 one-to-many transform edge를 만들며 `_asklake_*` metadata에 가짜 source edge를 만들지 않는지 확인한다. 또한 Parquet source를 `SOURCE · PARQUET`, Spark Job을 `PROCESS · SPARK`, 현재 Spark physical output을 요청 포맷과 무관하게 실제 `PARQUET` engine으로 표시하는지 검증한다.
+- `npm run verify:etl-lineage`는 source와 target 사이의 transform edge 및 `_asklake_*` metadata 경계를 확인한다. 또한 source format, `PROCESS · SPARK`, 실제 Spark physical output format이 lineage engine에 일치하는지 검증한다.
 - `python3 scripts/verify-etl-job-hydrate-contract.py`는 저장된 Kafka source/schema/rule/permission/target metadata가 `JobRowData` hydrate 응답에서 손실되지 않는지 확인한다.
 - `python3 scripts/verify-etl-job-update-contract.py`는 update request가 source field를 거부하고 source config를 보존한 채 editable metadata만 반영하는지, 성공 Run 뒤 target identity 변경이 `422`로 막히는지, 실행 중 update가 `409`로 막히는지 확인한다.
 

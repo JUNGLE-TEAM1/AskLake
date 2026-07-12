@@ -73,7 +73,7 @@ class QueryAiService:
         ]
         for dataset in datasets:
             require_governed_access(
-                self.repository.db,
+                self.catalog_repository.db,
                 actor_context,
                 action="query",
                 api_path="/api/query/ai/suggestions",

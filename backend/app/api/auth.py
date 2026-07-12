@@ -4,6 +4,7 @@ from fastapi import APIRouter, Cookie, Depends, Response, status
 from sqlalchemy.orm import Session
 
 from app.core.auth_context import ActorContext, get_actor_context
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.errors import ApiError
 from app.repositories.audit_repository import safe_record_audit_event
@@ -26,7 +27,7 @@ def issue_session_cookie(response: Response, token: str) -> None:
         max_age=SESSION_TTL_DAYS * 24 * 60 * 60,
         path="/",
         samesite="lax",
-        secure=False,
+        secure=not settings.allows_header_auth_fallback,
     )
 
 

@@ -803,12 +803,13 @@ function runFromSparkResult(run, result) {
 
 function finalizeJobFromSparkResult(job, command, result) {
   const success = result.status === "success";
+  const outputFormat = sparkOutputFormat(job, result).toUpperCase();
   const qualityStatus = success ? normalizeQualityStatus(result.quality?.status ?? job.qualityStatus) : "fail";
   return {
     ...job,
     lastRun: result.endedAt ?? new Date().toISOString(),
     lastState: success
-      ? `${command === "retry" ? "재실행" : "실행"} 완료 · Spark Parquet 적재`
+      ? `${command === "retry" ? "재실행" : "실행"} 완료 · Spark ${outputFormat} 적재`
       : `Spark 실행 실패 · ${result.error ?? "원인 확인 필요"}`,
     nextRun: scheduleNextRunLabel(job.schedule, job.nextRun),
     progress: undefined,
@@ -843,7 +844,7 @@ async function updateDatasetFromSparkResult(job, result) {
   nextDataset.sourceRunId = result.runId;
   nextDataset.status = "available";
   if (result.outputPath) {
-    nextDataset.storageFormat = "parquet";
+    nextDataset.storageFormat = sparkOutputFormat(job, result);
     nextDataset.storageLocation = result.outputPath;
   }
   nextDataset.storageSizeBytes = Number(result.storageSizeBytes || nextDataset.storageSizeBytes || 0);
@@ -881,7 +882,7 @@ function datasetFromSuccessfulRun(job, result) {
     sourceRunId: result.runId,
     status: "available",
     tags: ["#실행완료", `#${String(layer).toLowerCase()}`],
-    storageFormat: "parquet",
+    storageFormat: sparkOutputFormat(job, result),
     storageLocation: result.outputPath ?? null,
     storageSizeBytes: Number(result.storageSizeBytes || 0),
     materializationRuns: [materializationRunFromSparkResult(job, result)],
@@ -898,6 +899,7 @@ function materializationRunFromSparkResult(job, result) {
     sourceKind: "etl",
     sourceLabel: job.sourceLabel || job.source || job.name,
     status: result.status === "success" ? "success" : "failed",
+    storageFormat: sparkOutputFormat(job, result),
     storageLocation: result.outputPath ?? null,
     storageSizeBytes: Number(result.storageSizeBytes || 0),
     quality: result.quality ?? null,
@@ -947,6 +949,7 @@ function dagStepsFromCommand(job, command, run, sparkResult) {
   const qualityMeta = `${(job.qualityRules ?? []).length}개 검사`;
   const sourcePath = sparkResult?.sourcePath ?? job.source;
   const outputPath = run.outputPath ?? sparkResult?.outputPath ?? "-";
+  const outputFormat = sparkOutputFormat(job, sparkResult).toUpperCase();
   const sparkLogs = compactSparkLogs(sparkResult);
   const qualitySummary = sparkResult?.quality?.summary ?? "-";
   if (!canceled) {
@@ -975,10 +978,10 @@ function dagStepsFromCommand(job, command, run, sparkResult) {
         ["품질 검사", qualityMeta],
         ["품질 결과", qualitySummary],
       ], qualityFailed ? [`품질 검증 실패: ${run.errorSummary}`] : readFailed || transformFailed ? ["이전 단계 실패로 품질 검증이 실행되지 않았습니다."] : [qualitySummary !== "-" ? qualitySummary : "품질 검증 완료."]),
-      dagStep("write", "6. Parquet 적재", outputPath, failed ? "blocked" : "success", [
+      dagStep("write", `6. ${outputFormat} 적재`, outputPath, failed ? "blocked" : "success", [
         ["출력 경로", outputPath],
         ["출력 행", run.outputRows],
-      ], failed ? ["이전 단계 실패로 Parquet 적재가 수행되지 않았습니다."] : [`Parquet 출력 완료: ${outputPath}`]),
+      ], failed ? [`이전 단계 실패로 ${outputFormat} 적재가 수행되지 않았습니다.`] : [`${outputFormat} 출력 완료: ${outputPath}`]),
       dagStep("catalog", "7. 카탈로그 데이터셋 갱신", job.target, failed ? "blocked" : "success", [
         ["데이터셋", job.target],
         ["레이어", job.targetLayer ?? "-"],
@@ -993,6 +996,11 @@ function dagStepsFromCommand(job, command, run, sparkResult) {
     dagStep("quality", "5. 품질 검증", qualityMeta, "pending", [["품질 검사", qualityMeta]], ["취소 상태입니다."]),
     dagStep("target", "6. Lake 적재", job.target, "pending", [["타겟", job.target]], ["취소 상태입니다."]),
   ];
+}
+
+function sparkOutputFormat(job, result = {}) {
+  const value = String(result?.format || job?.targetFormat || "parquet").trim().toLowerCase();
+  return ["parquet", "csv", "json"].includes(value) ? value : "parquet";
 }
 
 function dagStep(id, title, meta, status, details = [], logs = [], note) {

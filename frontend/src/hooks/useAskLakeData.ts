@@ -11,6 +11,7 @@ import {
 } from "../services/mockApi";
 import {
   createPipelineDraft as createLivePipelineDraft,
+  deletePipelineJob,
   runJobCommand as runLiveJobCommand,
 } from "../services/pipelineApi";
 import { normalizeDatasetStatus, normalizeJobStatus } from "../utils/statusMeta";
@@ -637,7 +638,7 @@ function commandSuccessMessage(command: ServerJobCommand, job: JobRowData): stri
   return "작업 취소 요청을 접수했습니다.";
 }
 
-function commandFailureMessage(error: unknown, command: ServerJobCommand): string {
+function commandFailureMessage(error: unknown, command: Exclude<JobCommand, "edit">): string {
   if (error instanceof ApiError && error.status === 403) {
     return permissionDeniedMessage("작업", command === "run" || command === "retry" ? "실행" : "관리");
   }
@@ -732,40 +733,43 @@ export function useAskLakeData({
     let cancelled = false;
 
     async function hydrateData() {
+      setDataLoading(true);
       setDataError(null);
-      const [jobsResult, datasetsResult] = await Promise.all([
-        readInitialResource(getJobs, "jobs", { facets: getJobListFacets([]), jobs: [] }),
-        readInitialResource(getDatasets, "catalog", []),
-      ]);
-      if (cancelled) return;
+      try {
+        const [jobsResult, datasetsResult] = await Promise.all([
+          readInitialResource(getJobs, "jobs", { facets: getJobListFacets([]), jobs: [] }),
+          readInitialResource(getDatasets, "catalog", []),
+        ]);
+        if (cancelled) return;
 
-      const normalizedJobs = jobsResult.data.jobs.map(normalizeJobRow);
-      const normalizedDatasets = datasetsResult.data.map(normalizeDatasetRow);
-      const hydratedRunState = buildRunStateFromJobs(normalizedJobs);
-      setJobs(normalizedJobs);
-      setJobListFacets(jobsResult.data.facets);
-      setDatasets(normalizedDatasets);
-      setSelectedJob(normalizedJobs[0] ?? emptySelectedJob);
-      setSelectedDataset(normalizedDatasets[0] ?? emptySelectedDataset);
-      setRunsByJobId(hydratedRunState.runsByJobId);
-      setSelectedRunIdByJobId(hydratedRunState.selectedRunIdByJobId);
-      setDagStepsByRunId(hydratedRunState.dagStepsByRunId);
+        const normalizedJobs = jobsResult.data.jobs.map(normalizeJobRow);
+        const normalizedDatasets = datasetsResult.data.map(normalizeDatasetRow);
+        const hydratedRunState = buildRunStateFromJobs(normalizedJobs);
+        setJobs(normalizedJobs);
+        setJobListFacets(jobsResult.data.facets);
+        setDatasets(normalizedDatasets);
+        setSelectedJob(normalizedJobs[0] ?? emptySelectedJob);
+        setSelectedDataset(normalizedDatasets[0] ?? emptySelectedDataset);
+        setRunsByJobId(hydratedRunState.runsByJobId);
+        setSelectedRunIdByJobId(hydratedRunState.selectedRunIdByJobId);
+        setDagStepsByRunId(hydratedRunState.dagStepsByRunId);
 
-      const fatalErrors = [jobsResult, datasetsResult]
-        .filter((result) => result.fatal && result.error)
-        .map((result) => result.error);
-      const recoverableErrors = [jobsResult, datasetsResult]
-        .filter((result) => !result.fatal && result.error)
-        .map((result) => result.error);
+        const fatalErrors = [jobsResult, datasetsResult]
+          .filter((result) => result.fatal && result.error)
+          .map((result) => result.error);
+        const recoverableErrors = [jobsResult, datasetsResult]
+          .filter((result) => !result.fatal && result.error)
+          .map((result) => result.error);
 
-      if (fatalErrors.length > 0) {
-        setDataError(fatalErrors.join(" / "));
-      } else if (recoverableErrors.length > 0) {
-        setDataError(null);
-        showToast("DB API 초기 목록을 불러오지 못해 빈 상태로 표시합니다.", "info");
+        if (fatalErrors.length > 0) {
+          setDataError(fatalErrors.join(" / "));
+        } else if (recoverableErrors.length > 0) {
+          setDataError(null);
+          showToast("DB API 초기 목록을 불러오지 못해 빈 상태로 표시합니다.", "info");
+        }
+      } finally {
+        if (!cancelled) setDataLoading(false);
       }
-
-      setDataLoading(false);
     }
 
     void hydrateData();
@@ -934,20 +938,35 @@ export function useAskLakeData({
     }
 
     if (command === "delete") {
-      writeAuditLog("etl.job.delete_requested", `/api/etl/jobs/${job.id}`, job.id);
-      const remaining = jobs.filter((item) => item.id !== job.id);
-      const deletedRunIds = new Set((runsByJobId[job.id] ?? []).map((run) => run.runId));
-      setJobs(remaining);
-      setSelectedJob(remaining[0] ?? emptySelectedJob);
-      setRunsByJobId((state) => withoutRecordKey(state, job.id));
-      setSelectedRunIdByJobId((state) => withoutRecordKey(state, job.id));
-      setDagStepsByRunId((state) => Object.fromEntries(Object.entries(state).filter(([runId]) => !deletedRunIds.has(runId))));
-      commandPendingRef.current.delete(job.id);
-      setCommandPendingByJobId((state) => {
-        const { [job.id]: _pendingCommand, ...rest } = state;
-        return rest;
-      });
-      onFlowChange("jobs");
+      if (commandPendingRef.current.has(job.id)) {
+        showToast("이미 해당 작업 명령을 처리 중입니다.", "info");
+        return undefined;
+      }
+      commandPendingRef.current.add(job.id);
+      setApiPending(true);
+      try {
+        if (!apiConfig.useMock) await deletePipelineJob(job.id);
+        writeAuditLog("etl.job.deleted", `/api/etl/jobs/${job.id}`, job.id);
+        const remaining = jobs.filter((item) => item.id !== job.id);
+        const deletedRunIds = new Set((runsByJobId[job.id] ?? []).map((run) => run.runId));
+        setJobs(remaining);
+        setSelectedJob(remaining[0] ?? emptySelectedJob);
+        setRunsByJobId((state) => withoutRecordKey(state, job.id));
+        setSelectedRunIdByJobId((state) => withoutRecordKey(state, job.id));
+        setDagStepsByRunId((state) => Object.fromEntries(Object.entries(state).filter(([runId]) => !deletedRunIds.has(runId))));
+        commandPendingRef.current.delete(job.id);
+        setCommandPendingByJobId((state) => {
+          const { [job.id]: _pendingCommand, ...rest } = state;
+          return rest;
+        });
+        onFlowChange("jobs");
+      } catch (error) {
+        commandPendingRef.current.delete(job.id);
+        writeAuditLog("etl.job.delete_failed", `/api/etl/jobs/${job.id}`, job.id, "failed");
+        showToast(commandFailureMessage(error, command), "info");
+      } finally {
+        setApiPending(false);
+      }
       return undefined;
     }
 

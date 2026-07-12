@@ -195,6 +195,10 @@ class JobListResponse(CamelModel):
     jobs: list[JobRowData]
 
 
+class DeleteJobResponse(CamelModel):
+    deleted_job_id: str
+
+
 class CatalogDataset(CamelModel):
     id: str
     name: str

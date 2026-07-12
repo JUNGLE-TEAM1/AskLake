@@ -5,6 +5,7 @@ from fastapi import Cookie, Depends, Header
 from fastapi import status
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.errors import ApiError
 from app.schemas.common import ErrorCode
@@ -50,6 +51,12 @@ def get_actor_context(
                 email=str(session_actor.get("email") or "") or None,
                 title=str(session_actor.get("title") or "") or None,
             )
+    if not settings.allows_header_auth_fallback:
+        raise ApiError(
+            ErrorCode.UNAUTHORIZED,
+            "A valid AskLake session is required.",
+            status.HTTP_401_UNAUTHORIZED,
+        )
     return ActorContext(
         name=(actor_name or "").strip() or "demo-user",
         role=(actor_role or "").strip() or "viewer",

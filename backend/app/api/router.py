@@ -13,6 +13,7 @@ from app.api.harness import router as harness_router
 from app.api.health import router as health_router
 from app.api.sql import router as sql_router
 from app.api.sql_test import router as sql_test_router
+from app.api.s3 import router as s3_router
 from app.api.target import router as target_router
 from app.api.users import router as users_router
 
@@ -28,6 +29,7 @@ api_router.include_router(target_router)
 api_router.include_router(catalog_router)
 api_router.include_router(sql_router)
 api_router.include_router(sql_test_router)
+api_router.include_router(s3_router)
 api_router.include_router(dashboard_card_router)
 api_router.include_router(dashboard_runtime_router)
 api_router.include_router(dashboard_assistant_router)

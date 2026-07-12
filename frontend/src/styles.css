@@ -1,5 +1,6 @@
 @import url("https://fonts.googleapis.com/css2?family=Gothic+A1:wght@400;600;700;800&display=swap");
 @import url("https://cdn.jsdelivr.net/gh/sun-typeface/SUIT@2/fonts/variable/woff2/SUIT-Variable.css");
+@import "tailwindcss";
 
 @import "./styles/base.css";
 @import "./styles/layout.css";

@@ -457,18 +457,88 @@ const checks = [
     ],
   },
   {
-    name: "Dashboard list fixtures and status labels stay localized",
-    file: "src/pages/dashboard/dashboardListData.ts",
+    name: "Dashboard list uses only persisted API records without demo fallback",
+    file: "src/pages/dashboard/DashboardPage.tsx",
     patterns: [
-      /name: "매출 분석 데모/,
-      /tags: "영업 · 매출 · 데모"/,
-      /name: "마케팅 캠페인 수익률 추적"/,
-      /name: "데이터 품질 운영 현황"/,
-      /owner: "관리자"/,
+      /const \[savedDashboards, setSavedDashboards\] = useState<SavedDashboardCard\[\]>\(\[\]\);/,
+      /dashboardId: entry\.dashboardId \?\? ""/,
+      /const dashboardTitle = activeSqlResult \? `\$\{activeSqlResult\.datasetName\} SQL Result Dashboard` : "새 대시보드";/,
     ],
     forbiddenPatterns: [
-      /name: "Sales Analytics Demo/,
-      /tags: "Marketing · ROI"/,
+      /defaultDashboardCards/,
+      /dash_sales_demo/,
+      /Sales Analytics Demo/,
+      /asklake\.dashboardCards/,
+    ],
+  },
+  {
+    name: "Authentication fails closed outside explicit mock mode",
+    file: "src/services/authApi.ts",
+    patterns: [
+      /return apiClient\.get<AuthSessionResponse>\("\/api\/auth\/session"\);/,
+      /return apiClient\.post<AuthUserResponse>\("\/api\/auth\/login", payload\);/,
+      /return apiClient\.post<AuthUserResponse>\("\/api\/auth\/signup", payload\);/,
+    ],
+    forbiddenPatterns: [/tempAuth/, /localStorage/, /shouldUseTempAuth/],
+  },
+  {
+    name: "AI workspace submits through the supported SQL suggestion contract",
+    file: "src/pages/ai/AiChatPage.tsx",
+    patterns: [
+      /import \{ generateQueryAiSuggestion \} from "\.\.\/\.\.\/services\/queryAiService";/,
+      /const suggestion = await generateQueryAiSuggestion\(\{/,
+      /ai\.chat\.suggestion_created/,
+      /kind: "assistant"/,
+    ],
+    forbiddenPatterns: [/runtimeUnavailable/, /ai\.chat\.prompt_drafted/],
+  },
+  {
+    name: "Live AI suggestions preserve the backend-validated SQL response",
+    file: "src/services/queryAiService.ts",
+    patterns: [/return suggestion;/],
+    forbiddenPatterns: [/ensureSelectedJoinSuggestion/, /frontend JOIN 초안 fallback/],
+  },
+  {
+    name: "ETL transform editor does not expose an unregistered AI endpoint",
+    file: "src/components/etl/TransformFunctionModal.jsx",
+    forbiddenPatterns: [/InlineAIInput/, /Sparkles/, /showAI/],
+  },
+  {
+    name: "Dashboard normalization does not append fixture cards",
+    file: "src/pages/dashboard/dashboardListUtils.ts",
+    patterns: [
+      /return cards\.map\(normalizeSavedDashboardCard\);/,
+      /return dashboard\.name;/,
+    ],
+    forbiddenPatterns: [
+      /defaultDashboardCards/,
+      /missingDefaultCards/,
+    ],
+  },
+  {
+    name: "Tailwind utilities load globally without depending on a lazy route",
+    file: "src/styles.css",
+    patterns: [
+      /^@import url\([^\n]+\);\s*@import url\([^\n]+\);\s*@import "tailwindcss";/,
+    ],
+  },
+  {
+    name: "Lazy schema styles do not own the global Tailwind import",
+    file: "src/styles/schema-transform-source.css",
+    forbiddenPatterns: [/@import "tailwindcss";/],
+  },
+  {
+    name: "Dashboard save and publish failures are surfaced instead of accepted optimistically",
+    file: "src/pages/dashboard/DashboardPage.tsx",
+    patterns: [
+      /const persistDashboard = async \(action: "publish" \| "save"\) =>/,
+      /await upsertDashboard\(status\);/,
+      /"dashboard\.save_failed"/,
+      /setRuntimeNotice\(\{ message, tone: "error" \}\);/,
+    ],
+    forbiddenPatterns: [
+      /catch \{\s*return optimisticCard;/,
+      /setIsPublished\(true\);\s*void upsertDashboard/,
     ],
   },
   {
@@ -607,7 +677,7 @@ const failures = [];
 
 for (const check of checks) {
   const contents = read(check.file);
-  check.patterns.forEach((pattern, index) => {
+  (check.patterns ?? []).forEach((pattern, index) => {
     if (!pattern.test(contents)) {
       failures.push(`${check.name}: missing pattern #${index + 1} in ${check.file}`);
     }

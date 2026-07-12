@@ -44,37 +44,11 @@ export async function generateQueryAiSuggestion(request: QueryAiRequest): Promis
         schema: dataset.schema,
       })),
     });
-    return ensureSelectedJoinSuggestion(request, suggestion);
+    return suggestion;
   }
 
   await new Promise((resolve) => window.setTimeout(resolve, 180));
   return draftSql(request);
-}
-
-function ensureSelectedJoinSuggestion(request: QueryAiRequest, suggestion: QueryAiSuggestion) {
-  const referenceDatasets = request.selectedDatasets.filter((dataset) => dataset.id !== request.baseDataset.id);
-
-  if (referenceDatasets.length === 0 || suggestionIncludesSelectedJoin(suggestion.sql, referenceDatasets)) {
-    return suggestion;
-  }
-
-  const fallback = buildJoinSuggestion(request.baseDataset, referenceDatasets);
-  if (!fallback) return suggestion;
-
-  return {
-    ...fallback,
-    notices: [
-      ...fallback.notices,
-      "live AI 응답이 선택 reference JOIN을 포함하지 않아 frontend JOIN 초안 fallback을 적용했습니다.",
-    ],
-  };
-}
-
-function suggestionIncludesSelectedJoin(sql: string | undefined, referenceDatasets: CatalogDataset[]) {
-  if (!sql || !/\bjoin\b/i.test(sql)) return false;
-
-  const normalizedSql = sql.toLowerCase();
-  return referenceDatasets.some((dataset) => normalizedSql.includes(dataset.name.toLowerCase()));
 }
 
 function draftSql({ baseDataset, prompt, selectedDatasets }: QueryAiRequest): QueryAiSuggestion {

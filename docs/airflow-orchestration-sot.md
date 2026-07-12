@@ -40,7 +40,7 @@ numbering so that a request to proceed has one unambiguous acceptance boundary.
 - Phase 5 — deployment and operations: define DAG deployment, versioning,
   credentials, logs, monitoring, and rollback for a non-local Airflow server.
 
-Phase 2 now validates real Spark processing and physical Parquet output. It does
+Phase 2 now validates real Spark processing and physical output in the manifest format. It does
 not claim that Catalog metadata was materialized; that claim becomes valid only
 after Phase 3 passes its own acceptance checks.
 
@@ -70,7 +70,7 @@ Execution boundary:
 
 Sources of truth:
 
-- MinIO/S3 or the configured local lake path owns physical Parquet objects.
+- MinIO/S3 or the configured local lake path owns physical output objects.
 - `etl_runs.task_states.sparkResult` owns persisted Spark execution evidence.
 - `catalog_datasets.payload` owns Catalog metadata, materialization history,
   and lineage.
@@ -90,7 +90,7 @@ Invariants:
   materializations.
 - Catalog `storageLocation` equals the successful Spark `outputPath` exactly.
   S3A size comes from the object prefix and local size comes from the filesystem;
-  at least one Parquet object must exist before publication.
+  at least one object matching the manifest format must exist before publication.
 - Catalog schema and quality come from the persisted Spark manifest. Bounded
   output sample rows may be stored; pre-transform source samples must not be
   presented as transformed output when they differ.
@@ -99,7 +99,7 @@ Failure and recovery:
 
 - Spark failure stops at `spark_process_write`; `publish_run_result` does not
   run and Catalog remains unchanged.
-- Catalog failure leaves the physical Parquet and successful `sparkResult` as
+- Catalog failure leaves the physical output and successful `sparkResult` as
   recovery evidence, records a failed `catalogResult`, and fails
   `publish_run_result`. The AskLake Run reports `Catalog reconciliation` as the
   failed stage instead of reporting success.

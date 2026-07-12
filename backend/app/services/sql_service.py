@@ -3,8 +3,10 @@ from collections.abc import Iterable
 from datetime import datetime, timezone
 from decimal import Decimal
 import json
+import os
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 from uuid import uuid4
 
 import duckdb
@@ -158,7 +160,7 @@ class SqlService:
         )
         return response
 
-    def get_query_run(self, run_id: str) -> QueryRunResponse:
+    def get_query_run(self, run_id: str, actor: ActorContext) -> QueryRunResponse:
         payload = self.repository.get_run_payload(run_id)
         if payload is None:
             raise ApiError(
@@ -167,7 +169,33 @@ class SqlService:
                 status.HTTP_404_NOT_FOUND,
                 {"runId": run_id},
             )
-        return QueryRunResponse.model_validate(payload)
+        response = QueryRunResponse.model_validate(payload)
+        dataset_ids = unique_dataset_ids([
+            response.dataset_id,
+            response.base_dataset_id or "",
+            *response.reference_dataset_ids,
+        ])
+        for dataset_id in dataset_ids:
+            dataset = self.get_catalog_dataset(dataset_id)
+            require_governed_access(
+                self.repository.db,
+                actor,
+                action="query",
+                api_path=f"/api/query/runs/{run_id}",
+                http_method="GET",
+                metadata={"owner": dataset.owner},
+                resource_id=dataset.id,
+                resource_name=dataset.name,
+                resource_type="dataset",
+            )
+            require_permission(
+                actor,
+                "query",
+                owner=dataset.owner,
+                grants=dataset.permission_grants,
+                resource_label="dataset",
+            )
+        return response
 
     def get_catalog_dataset(
         self,
@@ -350,8 +378,10 @@ def register_duckdb_dataset(
     dataset: CatalogDatasetResponse,
 ) -> None:
     table_name = dataset.name
-    registered = register_duckdb_storage_location(connection, dataset, table_name)
-    if not registered:
+    storage_location = str(dataset.storage_location or "").strip()
+    if storage_location and storage_location not in {"-", "Pending"}:
+        register_duckdb_storage_location(connection, dataset, table_name)
+    else:
         register_duckdb_sample_rows(connection, dataset, table_name)
 
     if dataset.id != dataset.name:
@@ -365,36 +395,133 @@ def register_duckdb_storage_location(
     dataset: CatalogDatasetResponse,
     table_name: str,
 ) -> bool:
-    storage_location = dataset.storage_location
-    if not storage_location:
-        return False
-
-    storage_path = Path(storage_location)
-    if not storage_path.exists():
+    storage_location = str(dataset.storage_location or "").strip()
+    if not storage_location or storage_location in {"-", "Pending"}:
         return False
 
     storage_format = str(dataset.storage_format or "").lower()
+    if storage_format not in {"csv", "json", "jsonl", "parquet"}:
+        raise dataset_storage_error(dataset, f"Unsupported storage format: {storage_format or '-'}")
+
     try:
+        if is_s3_storage_location(storage_location):
+            configure_duckdb_s3(connection)
+            register_duckdb_scan_view(
+                connection,
+                table_name,
+                s3_scan_path(storage_location, storage_format),
+                storage_format,
+            )
+            return True
+
+        storage_path = Path(storage_location)
+        if not storage_path.exists():
+            raise FileNotFoundError(f"Storage location does not exist: {storage_location}")
+
         if storage_format == "jsonl" and storage_path.is_file():
             records = read_jsonl_records(storage_path)
             if not records:
-                return False
+                raise ValueError("JSONL storage does not contain readable records")
             register_duckdb_records(connection, table_name, records)
             return True
 
         if storage_format == "parquet":
-            parquet_path = parquet_scan_path(storage_path)
-            if not parquet_path:
-                return False
-            connection.execute(
-                f"CREATE TEMP VIEW {quote_duckdb_identifier(table_name)} AS "
-                f"SELECT * FROM read_parquet({quote_duckdb_string_literal(parquet_path)})"
-            )
+            scan_path = parquet_scan_path(storage_path)
+            if not scan_path:
+                raise FileNotFoundError("Parquet storage does not contain .parquet files")
+            register_duckdb_scan_view(connection, table_name, scan_path, storage_format)
             return True
-    except (OSError, duckdb.Error, json.JSONDecodeError):
-        return False
+
+        if storage_format in {"csv", "json", "jsonl"}:
+            scan_path = delimited_scan_path(storage_path, storage_format)
+            if not scan_path:
+                raise FileNotFoundError(f"{storage_format.upper()} storage does not contain readable files")
+            register_duckdb_scan_view(connection, table_name, scan_path, storage_format)
+            return True
+    except ApiError:
+        raise
+    except (OSError, ValueError, duckdb.Error, json.JSONDecodeError) as error:
+        raise dataset_storage_error(dataset, str(error)) from error
 
     return False
+
+
+def register_duckdb_scan_view(
+    connection: duckdb.DuckDBPyConnection,
+    table_name: str,
+    scan_path: str,
+    storage_format: str,
+) -> None:
+    table = quote_duckdb_identifier(table_name)
+    path = quote_duckdb_string_literal(scan_path)
+    if storage_format == "parquet":
+        source = f"read_parquet({path}, union_by_name = true, hive_partitioning = true)"
+    elif storage_format == "csv":
+        source = f"read_csv_auto({path}, header = true, union_by_name = true, hive_partitioning = true)"
+    else:
+        source = f"read_json_auto({path}, union_by_name = true, hive_partitioning = true)"
+    connection.execute(f"CREATE TEMP VIEW {table} AS SELECT * FROM {source}")
+
+
+def is_s3_storage_location(value: str) -> bool:
+    return bool(re.match(r"^s3a?://", value, re.IGNORECASE))
+
+
+def s3_scan_path(storage_location: str, storage_format: str) -> str:
+    normalized = re.sub(r"^s3a://", "s3://", storage_location.strip(), flags=re.IGNORECASE).rstrip("/")
+    suffix = f".{storage_format.lower()}"
+    if normalized.lower().endswith(suffix):
+        return normalized
+    return f"{normalized}/**/*{suffix}"
+
+
+def configure_duckdb_s3(connection: duckdb.DuckDBPyConnection) -> None:
+    try:
+        connection.execute("LOAD httpfs")
+    except duckdb.Error:
+        connection.execute("INSTALL httpfs")
+        connection.execute("LOAD httpfs")
+
+    endpoint = str(os.environ.get("S3_ENDPOINT") or os.environ.get("MINIO_ENDPOINT") or "").strip()
+    access_key = str(os.environ.get("AWS_ACCESS_KEY_ID") or os.environ.get("MINIO_ACCESS_KEY") or "").strip()
+    secret_key = str(os.environ.get("AWS_SECRET_ACCESS_KEY") or os.environ.get("MINIO_SECRET_KEY") or "").strip()
+    session_token = str(os.environ.get("AWS_SESSION_TOKEN") or "").strip()
+    region = str(os.environ.get("AWS_REGION") or os.environ.get("MINIO_REGION") or "us-east-1").strip()
+
+    set_duckdb_option(connection, "s3_region", region)
+    if access_key:
+        set_duckdb_option(connection, "s3_access_key_id", access_key)
+    if secret_key:
+        set_duckdb_option(connection, "s3_secret_access_key", secret_key)
+    if session_token:
+        set_duckdb_option(connection, "s3_session_token", session_token)
+
+    if endpoint:
+        parsed = urlparse(endpoint if "://" in endpoint else f"https://{endpoint}")
+        endpoint_host = parsed.netloc or parsed.path
+        set_duckdb_option(connection, "s3_endpoint", endpoint_host.rstrip("/"))
+        connection.execute(f"SET s3_use_ssl = {'true' if parsed.scheme.lower() == 'https' else 'false'}")
+
+    force_path_style = str(os.environ.get("S3_FORCE_PATH_STYLE") or "true").strip().lower() != "false"
+    set_duckdb_option(connection, "s3_url_style", "path" if force_path_style else "vhost")
+
+
+def set_duckdb_option(connection: duckdb.DuckDBPyConnection, name: str, value: str) -> None:
+    connection.execute(f"SET {name} = {quote_duckdb_string_literal(value)}")
+
+
+def dataset_storage_error(dataset: CatalogDatasetResponse, reason: str) -> ApiError:
+    return ApiError(
+        ErrorCode.SERVICE_UNAVAILABLE,
+        "Dataset physical storage could not be read",
+        status.HTTP_503_SERVICE_UNAVAILABLE,
+        {
+            "datasetId": str(getattr(dataset, "id", "") or ""),
+            "reason": reason[:500],
+            "storageFormat": str(getattr(dataset, "storage_format", "") or ""),
+            "storageLocation": str(getattr(dataset, "storage_location", "") or ""),
+        },
+    )
 
 
 def register_duckdb_sample_rows(
@@ -569,6 +696,15 @@ def parquet_scan_path(storage_path: Path) -> str:
         parquet_files = list(storage_path.rglob("*.parquet"))
         if parquet_files:
             return str(storage_path / "**" / "*.parquet")
+    return ""
+
+
+def delimited_scan_path(storage_path: Path, storage_format: str) -> str:
+    suffix = f".{storage_format.lower()}"
+    if storage_path.is_file() and storage_path.suffix.lower() == suffix:
+        return str(storage_path)
+    if storage_path.is_dir() and any(storage_path.rglob(f"*{suffix}")):
+        return str(storage_path / "**" / f"*{suffix}")
     return ""
 
 

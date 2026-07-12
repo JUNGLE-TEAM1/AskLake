@@ -83,6 +83,26 @@ def _iso_timestamp(value: datetime | None) -> str:
     return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def _relative_timestamp(value: datetime | None) -> str:
+    if value is None:
+        return "방금 전"
+    current = datetime.now(timezone.utc)
+    timestamp = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    seconds = max(0, int((current - timestamp.astimezone(timezone.utc)).total_seconds()))
+    if seconds < 60:
+        return "방금 전"
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes}분 전"
+    hours = minutes // 60
+    if hours < 24:
+        return f"{hours}시간 전"
+    days = hours // 24
+    if days < 30:
+        return f"{days}일 전"
+    return _format_timestamp(timestamp)
+
+
 def _payload_value(payload: dict[str, Any], *keys: str) -> Any:
     for key in keys:
         if key in payload and payload[key] is not None:
@@ -117,7 +137,7 @@ def _row_to_dashboard_card(row: Any) -> DashboardCard:
         "sourceRunId": getattr(row, "source_run_id", None) or _payload_value(payload, "sourceRunId", "sqlRunId"),
         "status": getattr(row, "status", None) or _payload_value(payload, "status") or "draft",
         "tags": _payload_value(payload, "tags") or "초안 · Dashboard",
-        "updated": _payload_value(payload, "updated") or "방금 전",
+        "updated": _relative_timestamp(updated_at),
         "updatedAtValue": _payload_value(payload, "updatedAtValue") or _iso_timestamp(updated_at),
         "widgets": _payload_value(payload, "widgets") or [],
     }

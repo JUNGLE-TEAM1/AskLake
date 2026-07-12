@@ -3,7 +3,6 @@ import type React from "react";
 import { Calendar, Clock3, PlayCircle, Repeat2 } from "lucide-react";
 import { Field, InfoBox, PageTitle, RetryPolicy } from "../../../components/common";
 import { CreationFlowLayout, CreationSummaryPanel } from "../../../components/creation/CreationFlow";
-import { Checkbox } from "../../../components/ui/checkbox";
 import { Input } from "../../../components/ui/input";
 import { NativeSelect } from "../../../components/ui/native-select";
 import { SelectableCard } from "../../../components/ui/selectable-card";
@@ -332,13 +331,6 @@ function RepeatSettings({
       </div>
       <InfoBox title="실행 미리보기" body={preview} />
       {frequency === "custom" && !cronIsValid && <InfoBox title="Cron 형식 확인" body="5개 필드 형식만 저장합니다. 예: 0 10 * * 1-5" />}
-      <label className="policy-check-row">
-        <Checkbox defaultChecked />
-        <span>
-          <strong>과거 데이터 소급 (Backfill)</strong>
-          <small>파이프라인 생성 시점 이전의 누락된 구간 데이터를 자동으로 처리합니다.</small>
-        </span>
-      </label>
       <RetryPolicy value={retryPolicy} onChange={onRetryPolicyChange} />
     </section>
   );
@@ -352,16 +344,6 @@ function ManualSettings({ onRetryPolicyChange, retryPolicy }: { onRetryPolicyCha
         <h2>수동 실행 상세 설정</h2>
       </div>
       <InfoBox title="자동 스케줄 없음" body="이 파이프라인은 저장 후 사용자가 직접 실행할 때만 동작합니다. 테스트 실행이나 필요할 때만 데이터를 적재하는 작업에 적합합니다." />
-      <div className="policy-section">
-        <h3>실행 정책</h3>
-        <label className="policy-check-row compact">
-          <Checkbox defaultChecked />
-          <span>
-            <strong>실패 시 재시도 활성화</strong>
-            <small>수동 실행 중 오류가 발생하면 지정한 정책에 따라 자동 재시도합니다.</small>
-          </span>
-        </label>
-      </div>
       <RetryPolicy value={retryPolicy} onChange={onRetryPolicyChange} />
       <InfoBox title="자동 실행 예정 없음" body="저장 후 필요할 때 직접 실행할 수 있으며, 다음 실행 일시는 생성되지 않습니다." />
     </section>
@@ -395,16 +377,6 @@ function OnceSettings({
         <Field label="시간대" value="Asia/Seoul (GMT+09:00)" icon={<Clock3 size={16} />} />
       </div>
       <InfoBox title="실행 미리보기" body={`${formatDateTimeLocalLabel(dateTime)}에 한 번 실행됩니다. 실행 완료 후 반복되지 않습니다.`} />
-      <div className="policy-section">
-        <h3>실행 정책</h3>
-        <label className="policy-check-row compact">
-          <Checkbox defaultChecked />
-          <span>
-            <strong>실패 시 재시도</strong>
-            <small>예약 실행 실패 시 재시도 정책을 적용합니다.</small>
-          </span>
-        </label>
-      </div>
       <RetryPolicy value={retryPolicy} onChange={onRetryPolicyChange} />
     </section>
   );
