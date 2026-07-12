@@ -18,7 +18,6 @@ import {
   CircleUser,
   Clock3,
   Database,
-  Download,
   ExternalLink,
   FileText,
   HardDrive,
@@ -79,6 +78,8 @@ import type { QualityRuleOption, TransformQualityInvalidRow, TransformQualityPre
 import { SourceAssetTree } from "./SourceAssetTree";
 import { SourceJsonSampleTree } from "./SourceJsonSampleTree";
 import { SchemaTransformWorkbench } from "./SchemaTransformWorkbench";
+import { SchemaRuleSummary } from "./SchemaRuleSummary";
+import { SchemaResultPreview } from "./SchemaResultPreview";
 
 type RepeatFrequency = "hourly" | "daily" | "weekly" | "custom";
 type RepeatScheduleDraft = {
@@ -2266,6 +2267,7 @@ export function SchemaInferencePage({
   const [flattenBaseSchema, setFlattenBaseSchema] = useState<SchemaBaseSnapshot | null>(null);
   const [schemaSampleScope, setSchemaSampleScope] = useState<SchemaSampleScope>("current");
   const [isRecheckingSchema, setIsRecheckingSchema] = useState(false);
+  const [showResultPreview, setShowResultPreview] = useState(false);
   const hasInferredSchema = draft.schema.columns.length > 0;
   const schemaColumns: SchemaColumnDraft[] = draft.schema.columns;
   const includedSchemaColumns = schemaColumns.filter(isSchemaColumnIncluded);
@@ -2443,28 +2445,6 @@ export function SchemaInferencePage({
     onSave();
   };
 
-  const exportSchema = () => {
-    if (!hasInferredSchema) {
-      onNotify("내보낼 스키마가 없습니다. 소스 연결 테스트를 먼저 실행하세요.");
-      return;
-    }
-    const payload = JSON.stringify({
-      columns: schemaColumns,
-      sampleRows: schemaSampleRows.slice(0, 5),
-      schemaFingerprint,
-      summary: approvedSummary,
-    }, null, 2);
-    const blob = new Blob([payload], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `${draft.source.sourceLabel || "asklake-schema"}.schema.json`.replace(/[\\/:*?"<>|]+/g, "_");
-    link.click();
-    URL.revokeObjectURL(url);
-    onAction("etl.schema.exported", "/api/etl/schema-inference/export", draft.source.sourceLabel || "schema");
-    onNotify("현재 스키마 JSON을 내보냈습니다.");
-  };
-
   const confirmCurrentSchema = () => {
     if (!approveSchema()) return;
     onNext();
@@ -2541,35 +2521,73 @@ export function SchemaInferencePage({
         </div>
       </section>
 
-      <SchemaTransformWorkbench
-        columns={schemaColumns}
-        sampleRows={schemaSampleRows}
-        selectedIndex={selectedIndex}
-        sourceFormat={sourceFormat}
-        transformSteps={draft.transform.steps}
-        onSelectedIndexChange={setSelectedSchemaIndex}
-        onColumnsChange={(nextColumns, nextSampleRows = schemaSampleRows) => {
-          patchSchemaColumns(nextColumns, nextSampleRows);
-          const boundedIndex = nextColumns.length > 0 ? Math.min(selectedIndex, nextColumns.length - 1) : 0;
-          setSelectedSchemaIndex(boundedIndex);
-        }}
-        onTransformStepsChange={(steps) => {
-          onDraftChange({
-            transform: {
-              steps,
-              summary: steps.length > 0 ? `스키마 단계 변환 ${steps.length}개 설정` : "스키마 단계 변환 없음",
-            },
-          });
-        }}
-      />
-
-      <CommandBar className="schema-bottom-bar" density="compact">
+      <CommandBar className="schema-bottom-bar schema-top-actions" density="compact">
         <Button className="secondary-button" type="button" variant="outline" onClick={onPrev}>이전: 데이터 탐색</Button>
-        <Button className="secondary-button" type="button" variant="outline" disabled={!hasInferredSchema} onClick={exportSchema}><Download size={15} /> 스키마 JSON 내보내기</Button>
         <span>2/3 단계 · {hasInferredSchema ? approvedSummary : inferredSummary}</span>
+        <Button
+          aria-expanded={showResultPreview}
+          className="secondary-button schema-result-preview-button"
+          type="button"
+          variant="outline"
+          disabled={!hasInferredSchema}
+          onClick={() => setShowResultPreview((current) => !current)}
+        >
+          <Table2 size={15} /> {showResultPreview ? "미리보기 닫기" : "결과 미리보기"}
+        </Button>
         <Button className="primary-button" type="button" disabled={!hasInferredSchema} onClick={confirmCurrentSchema}>스키마 확정 후 다음</Button>
         <Button className="ghost-button" type="button" variant="ghost" onClick={saveSchemaDraft}>설정 저장</Button>
       </CommandBar>
+
+      <div className="schema-workbench-content">
+        <SchemaTransformWorkbench
+          columns={schemaColumns}
+          sampleRows={schemaSampleRows}
+          selectedIndex={selectedIndex}
+          sourceFormat={sourceFormat}
+          qualityRules={draft.quality.rules}
+          transformSteps={draft.transform.steps}
+          onSelectedIndexChange={setSelectedSchemaIndex}
+          onColumnsChange={(nextColumns, nextSampleRows = schemaSampleRows) => {
+            patchSchemaColumns(nextColumns, nextSampleRows);
+            const boundedIndex = nextColumns.length > 0 ? Math.min(selectedIndex, nextColumns.length - 1) : 0;
+            setSelectedSchemaIndex(boundedIndex);
+          }}
+          onTransformStepsChange={(steps) => {
+            onDraftChange({
+              transform: {
+                steps,
+                summary: steps.length > 0 ? `스키마 단계 변환 ${steps.length}개 설정` : "스키마 단계 변환 없음",
+              },
+            });
+          }}
+          onQualityRulesChange={(rules) => {
+            onDraftChange({
+              quality: {
+                invalidRows: [],
+                rules,
+                score: undefined,
+                status: "idle",
+                summary: rules.length > 0 ? `스키마 단계 품질 규칙 ${rules.length}개 설정` : "데이터 품질 규칙 없음",
+              },
+            });
+          }}
+        />
+
+        {showResultPreview ? (
+          <SchemaResultPreview
+            columns={schemaColumns}
+            qualityRules={draft.quality.rules}
+            sampleRows={schemaSampleRows}
+          />
+        ) : null}
+
+        <SchemaRuleSummary
+          columns={schemaColumns}
+          qualityRules={draft.quality.rules}
+          transformSteps={draft.transform.steps}
+        />
+      </div>
+
     </div>
   );
 }
