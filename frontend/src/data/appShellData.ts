@@ -8,6 +8,7 @@ export const flowTabs: Array<{ id: FlowId; label: string; stepIndex: number }> =
   { id: "jobDetail", label: "작업 상세", stepIndex: 0 },
   { id: "jobRuns", label: "실행 이력", stepIndex: 0 },
   { id: "source", label: "소스 연결", stepIndex: 0 },
+  { id: "recordParsing", label: "레코드 구조화", stepIndex: 1 },
   { id: "schema", label: "스키마 확인", stepIndex: 1 },
   { id: "rules", label: "변환 규칙", stepIndex: 1 },
   { id: "repeat", label: "반복 실행", stepIndex: 2 },
@@ -29,9 +30,9 @@ export const navItems = [
   { id: "admin", label: "관리", icon: Settings, flow: "admin" },
 ] satisfies NavItem[];
 
-export const ingestFlows: FlowId[] = ["jobs", "jobDetail", "jobRuns", "source", "schema", "repeat", "manual", "target", "permission", "review"];
+export const ingestFlows: FlowId[] = ["jobs", "jobDetail", "jobRuns", "source", "recordParsing", "schema", "repeat", "manual", "target", "permission", "review"];
 export const jobManagerFlows: FlowId[] = ["jobs", "jobDetail", "jobRuns"];
-export const wizardFlows: FlowId[] = ["source", "schema", "repeat", "manual", "permission", "target", "review"];
+export const wizardFlows: FlowId[] = ["source", "recordParsing", "schema", "repeat", "manual", "permission", "target", "review"];
 
 export const summaryByFlow: Record<FlowId, Array<[string, string]>> = {
   jobs: [
@@ -67,6 +68,13 @@ export const summaryByFlow: Record<FlowId, Array<[string, string]>> = {
     ["연결 상태", "테스트 필요"],
     ["감지 파일", "0개"],
     ["인증 방식", "MinIO/S3 액세스 키"],
+    ["다음 단계", "스키마 확인"],
+  ],
+  recordParsing: [
+    ["입력 포맷", "TXT"],
+    ["구분자", "연속 공백"],
+    ["샘플 검증", "대기"],
+    ["출력 필드", "0개"],
     ["다음 단계", "스키마 확인"],
   ],
   schema: [
