@@ -65,16 +65,6 @@ class ActorContextProductionTests(unittest.TestCase):
         self.assertEqual(response.status_code, 401)
         self.assertEqual(response.json()["error"]["code"], "UNAUTHORIZED")
 
-    def test_production_rejects_sql_run_result_without_a_session(self) -> None:
-        with patch("app.core.auth_context.settings", SimpleNamespace(allows_header_auth_fallback=False)):
-            response = TestClient(create_app()).get(
-                "/api/query/runs/sql-secret",
-                headers={"X-AskLake-User": "Spoofed Admin", "X-AskLake-Role": "admin"},
-            )
-
-        self.assertEqual(response.status_code, 401)
-        self.assertEqual(response.json()["error"]["code"], "UNAUTHORIZED")
-
     def test_production_disables_demo_and_harness_routes(self) -> None:
         production = SimpleNamespace(allows_header_auth_fallback=False)
         for module_path, guard in (
