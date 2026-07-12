@@ -40,15 +40,19 @@ import {
   TerminalSquare,
   Trash2,
 } from "lucide-react";
-import { Field, InfoBox, RetryPolicy, StatusTile } from "../../components/common";
+import { Field, InfoBox, StatusTile } from "../../components/common";
 import { CreationFlowLayout, CreationTopActions, CreationValidationPanel } from "../../components/creation/CreationFlow";
 import { ActionGroup } from "@/components/ui/action-group";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { CheckableOption } from "@/components/ui/checkable-option";
 import { CommandBar } from "@/components/ui/command-bar";
+import { Field as FormField, FieldGroup, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
 import { FormFieldGroup, NativeSelectField } from "@/components/ui/form-field-group";
 import { Input } from "@/components/ui/input";
+import { InputGroup, InputGroupAddon, InputGroupInput, InputGroupText } from "@/components/ui/input-group";
 import { KeyValueList } from "@/components/ui/key-value-list";
 import { NativeSelect } from "@/components/ui/native-select";
 import { PageHeader } from "@/components/ui/page-header";
@@ -60,16 +64,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { SelectableCard } from "@/components/ui/selectable-card";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
+import { Switch } from "@/components/ui/switch";
 import { TagList } from "@/components/ui/tag-list";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { ValidationList } from "@/components/ui/validation-list";
 import { cn } from "@/lib/utils";
 import { S3PathField } from "../../components/s3/S3PathField";
 import { DatabaseField } from "../../components/target/DatabaseField";
 import { runTransformQualitySamplePreview } from "../../data/transformQualityPreview";
-import { toCreatePipelineRequest } from "../../services/draftPipelineContract";
+import { normalizeRetryPolicy, retryFailureActionLabels, scheduleOverlapPolicyLabels, toCreatePipelineRequest } from "../../services/draftPipelineContract";
 import { getReviewSnapshot, type ReviewSnapshot } from "../../services/reviewApi";
 import { listSourceAssets, testSourceConnector, type SourceConnectorAnalysis } from "../../services/sourceConnectorService";
 import type { AuditResult, DraftPipeline, DraftPipelinePatch, FlowId, ScheduleFlowId, SchemaColumnDraft, SourceDraft, TargetLayer } from "../../types";
@@ -116,7 +122,7 @@ export function SchedulePage({
   const title = "스케줄링 설정";
   const repeatDraft = { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime };
   const selectedOption = getScheduleOptionFromLabel(draftScheduleLabel, mode);
-  const scheduleTimezone = draftSchedule.timezone || SCHEDULE_TIMEZONE;
+  const scheduleTimezone = normalizeScheduleTimezone(draftSchedule.timezone);
   const scheduleStartDate = normalizeDateValue(draftSchedule.startDate, SCHEDULE_START_DATE);
   const scheduleEndDate = normalizeOptionalDateValue(draftSchedule.endDate);
   const updateRetryPolicy = (retryPolicy: RetryPolicyDraft) => {
@@ -145,26 +151,31 @@ export function SchedulePage({
     >
         <PageHeader
           className="etl-flow-page-header"
-          description="파이프라인의 실행 시간, 반복 여부, 실행 정책을 설정합니다."
           icon={<Calendar size={18} />}
           title={title}
         />
-        <div className="etl-review-stack schedule-config-stack">
-          <section className="etl-review-card schedule-config-card">
-            <div className="etl-review-card-header">
-              <span className="etl-review-icon"><PlayCircle size={17} /></span>
-              <div>
-                <h2>실행 방식 설정</h2>
-                <p>저장만 할지, 정해진 주기로 자동 실행할지 선택합니다.</p>
-              </div>
-              <span className="schedule-config-state">{selectedOption === "repeat" ? "자동 실행" : "직접 실행"}</span>
-            </div>
-            <div className="schedule-config-mode-grid">
-              <RunTypeCard active={selectedOption === "skip"} icon={<PlayCircle size={20} />} title="스케줄링 건너뛰기" desc="시간을 정하지 않고 저장만 합니다. 필요할 때 목록에서 즉시 실행합니다." onClick={() => selectOption("skip")} />
-              <RunTypeCard active={selectedOption === "repeat"} icon={<Repeat2 size={20} />} title="반복 실행" desc="정해진 주기마다 자동으로 실행합니다." onClick={() => selectOption("repeat")} />
-            </div>
-          </section>
-          {selectedOption === "repeat" && <RepeatSettings customCron={customCron} frequency={repeatFrequency} minute={repeatMinute} retryPolicy={draftRetryPolicy} selectedDay={repeatDay} time={repeatTime} timezone={scheduleTimezone} onCronChange={(cron) => {
+        <Card className="overflow-hidden" size="none">
+          <CardHeader className="flex flex-col gap-4 border-b border-slate-200 p-5 sm:flex-row sm:items-center sm:justify-between">
+            <CardTitle>실행 방식</CardTitle>
+            <ToggleGroup
+              aria-label="실행 방식"
+              className="grid w-full grid-cols-2 sm:w-auto"
+              type="single"
+              value={selectedOption}
+              onValueChange={(value) => value && selectOption(value as ScheduleOptionId)}
+            >
+              <ToggleGroupItem className="min-w-28" value="skip">
+                <PlayCircle />
+                직접 실행
+              </ToggleGroupItem>
+              <ToggleGroupItem className="min-w-28" value="repeat">
+                <Repeat2 />
+                반복 실행
+              </ToggleGroupItem>
+            </ToggleGroup>
+          </CardHeader>
+          <CardContent className="grid gap-6 p-5">
+          {selectedOption === "repeat" && <RepeatSettings customCron={customCron} frequency={repeatFrequency} minute={repeatMinute} overlapPolicy={draftSchedule.overlapPolicy ?? DEFAULT_OVERLAP_POLICY} selectedDay={repeatDay} time={repeatTime} timezone={scheduleTimezone} onCronChange={(cron) => {
             const sanitizedCron = sanitizeCronInput(cron);
             setCustomCron(sanitizedCron);
             onDraftChange(buildSchedulePatch("repeat", { cron: sanitizedCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime }, scheduleTimezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }));
@@ -188,25 +199,12 @@ export function SchedulePage({
           }} onTimeChange={(time) => {
             setRepeatTime(time);
             onDraftChange(buildSchedulePatch("repeat", { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time }, scheduleTimezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }));
-          }} onRetryPolicyChange={updateRetryPolicy} onTimezoneChange={(timezone) => onDraftChange(buildSchedulePatch("repeat", repeatDraft, timezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }))} />}
-          {selectedOption === "skip" && <NoScheduleSettings retryPolicy={draftRetryPolicy} onRetryPolicyChange={updateRetryPolicy} />}
-        </div>
+          }} onOverlapPolicyChange={(overlapPolicy) => onDraftChange({ overlapPolicy, schedule: { overlapPolicy } })} onTimezoneChange={(timezone) => onDraftChange(buildSchedulePatch("repeat", repeatDraft, timezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }))} />}
+            {selectedOption === "repeat" && <Separator />}
+            <ScheduleRetrySettings retryPolicy={draftRetryPolicy} onRetryPolicyChange={updateRetryPolicy} />
+          </CardContent>
+        </Card>
     </CreationFlowLayout>
-  );
-}
-
-function RunTypeCard({ active, icon, title, desc, onClick }: { active: boolean; icon: React.ReactNode; title: string; desc: string; onClick: () => void }) {
-  return (
-    <SelectableCard
-      className="schedule-config-mode-card"
-      contentClassName="schedule-config-mode-copy"
-      description={<small>{desc}</small>}
-      icon={<span className="schedule-config-mode-icon">{icon}</span>}
-      selected={active}
-      selectedIndicator={<span className="run-selected-dot" />}
-      title={title}
-      onClick={onClick}
-    />
   );
 }
 
@@ -473,6 +471,12 @@ const timezoneOptions = [
   { label: "America/New_York (DST 적용)", value: "America/New_York" },
   { label: "Europe/London (DST 적용)", value: "Europe/London" },
 ];
+
+function normalizeScheduleTimezone(timezone?: string) {
+  if (!timezone) return SCHEDULE_TIMEZONE;
+  if (timezone.includes("Seoul") || timezone.includes("Tokyo") || timezone.includes("GMT+09:00")) return SCHEDULE_TIMEZONE;
+  return timezoneOptions.some((option) => option.value === timezone) ? timezone : SCHEDULE_TIMEZONE;
+}
 const validRepeatMinutes = ["00", "15", "30", "45"];
 const validRepeatDays = ["월", "화", "수", "목", "금", "토", "일"];
 const repeatFrequencyLabels: Record<RepeatFrequency, string> = {
@@ -4564,11 +4568,11 @@ function RepeatSettings({
   onDayChange,
   onFrequencyChange,
   onMinuteChange,
-  onRetryPolicyChange,
+  onOverlapPolicyChange,
   onTimezoneChange,
   onTimeCommit,
   onTimeChange,
-  retryPolicy,
+  overlapPolicy,
   selectedDay,
   time,
   timezone,
@@ -4581,159 +4585,201 @@ function RepeatSettings({
   onDayChange: (day: string) => void;
   onFrequencyChange: (frequency: RepeatFrequency) => void;
   onMinuteChange: (minute: string) => void;
-  onRetryPolicyChange: (policy: RetryPolicyDraft) => void;
+  onOverlapPolicyChange: (policy: ScheduleOverlapPolicy) => void;
   onTimezoneChange: (timezone: string) => void;
   onTimeCommit: () => void;
   onTimeChange: (time: string) => void;
-  retryPolicy: RetryPolicyDraft;
+  overlapPolicy: ScheduleOverlapPolicy;
   selectedDay: string;
   time: string;
   timezone: string;
 }) {
   const cronIsValid = isValidCronExpression(customCron);
+  const normalizedTimezone = normalizeScheduleTimezone(timezone);
   const visibleRepeatFrequencyOptions = frequency === "custom"
     ? repeatFrequencyOptions
     : repeatFrequencyOptions.filter((option) => option.value !== "custom");
-  const preview = frequency === "hourly"
-    ? `매시간 ${minute}분에 실행됩니다. 다음 실행 예정은 저장 시점 기준으로 계산됩니다.`
-    : frequency === "daily"
-      ? `매일 ${time}에 실행됩니다. 다음 실행 예정은 저장 시점 기준으로 계산됩니다.`
-      : frequency === "custom"
-        ? `Cron ${customCron || DEFAULT_CUSTOM_CRON} 기준으로 반복 실행됩니다.`
-        : `매주 ${selectedDay}요일 ${time}에 실행됩니다. 다음 실행 예정은 저장 시점 기준으로 계산됩니다.`;
 
   return (
-    <section className="etl-review-card schedule-config-card">
-      <div className="etl-review-card-header">
-        <span className="etl-review-icon schema"><Repeat2 size={17} /></span>
-        <div>
-          <h2>반복 실행 상세 설정</h2>
-          <p>실행 주기, 시간대, 재시도 정책을 한 번에 확인하고 조정합니다.</p>
-        </div>
-        <span className="schedule-config-state">{repeatFrequencyLabels[frequency]}</span>
-      </div>
-      <div className="schedule-config-section">
-        <div className="schedule-config-subheader">
-          <Clock3 size={16} />
-          <h3>실행 일정</h3>
-        </div>
-        <div className="schedule-config-form-grid">
-          <NativeSelectField
-            fieldClassName="field"
-            label="반복 주기"
-            selectClassName="input control-input"
-            value={frequency}
-            onChange={(event) => onFrequencyChange(event.target.value as RepeatFrequency)}
-          >
+    <FieldSet>
+      <FieldLegend>반복 일정</FieldLegend>
+      <FieldGroup className="grid gap-4 md:grid-cols-2">
+        <FormField>
+          <FieldLabel htmlFor="schedule-frequency">반복 주기</FieldLabel>
+          <Select value={frequency} onValueChange={(value) => onFrequencyChange(value as RepeatFrequency)}>
+            <SelectTrigger id="schedule-frequency">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
               {visibleRepeatFrequencyOptions.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
+                <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
               ))}
-          </NativeSelectField>
+            </SelectContent>
+          </Select>
+        </FormField>
           {frequency === "hourly" && (
-            <NativeSelectField
-              fieldClassName="field"
-              label="실행 분"
-              selectClassName="input control-input"
-              value={minute}
-              onChange={(event) => onMinuteChange(event.target.value)}
-            >
+            <FormField>
+              <FieldLabel htmlFor="schedule-minute">실행 분</FieldLabel>
+              <Select value={minute} onValueChange={onMinuteChange}>
+                <SelectTrigger id="schedule-minute">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
                 {validRepeatMinutes.map((value) => (
-                  <option key={value} value={value}>{value}분</option>
+                    <SelectItem key={value} value={value}>{value}분</SelectItem>
                 ))}
-            </NativeSelectField>
+                </SelectContent>
+              </Select>
+            </FormField>
           )}
           {frequency === "daily" && (
-            <FormFieldGroup className="field" label="실행 시간">
-              <Input className="input control-input" max="23:59" min="00:00" step="60" type="time" value={normalizeTimeValue(time)} onBlur={onTimeCommit} onChange={(event) => onTimeChange(event.target.value)} onInput={(event) => onTimeChange(event.currentTarget.value)} />
-            </FormFieldGroup>
+            <ScheduleTimeField time={time} onTimeChange={onTimeChange} onTimeCommit={onTimeCommit} />
           )}
           {frequency === "weekly" && (
-            <div className="field wide">
-              <span>실행 요일</span>
-              <div className="weekday-group">
+            <FormField className="md:col-span-2">
+              <FieldLabel>실행 요일</FieldLabel>
+              <ToggleGroup aria-label="실행 요일" className="grid grid-cols-7" type="single" value={selectedDay} onValueChange={(value) => value && onDayChange(value)}>
                 {validRepeatDays.map((day) => (
-                  <button className={day === selectedDay ? "weekday active" : "weekday"} key={day} type="button" onClick={() => onDayChange(day)}>
+                  <ToggleGroupItem className="min-w-0 px-2" key={day} value={day}>
                     {day}
-                  </button>
+                  </ToggleGroupItem>
                 ))}
-              </div>
-            </div>
+              </ToggleGroup>
+            </FormField>
           )}
           {frequency === "weekly" && (
-            <FormFieldGroup className="field" label="실행 시간">
-              <Input className="input control-input" max="23:59" min="00:00" step="60" type="time" value={normalizeTimeValue(time)} onBlur={onTimeCommit} onChange={(event) => onTimeChange(event.target.value)} onInput={(event) => onTimeChange(event.currentTarget.value)} />
-            </FormFieldGroup>
+            <ScheduleTimeField time={time} onTimeChange={onTimeChange} onTimeCommit={onTimeCommit} />
           )}
           {frequency === "custom" && (
-            <FormFieldGroup className="field wide" label="Cron 표현식">
-              <Input className="input control-input" inputMode="numeric" pattern="[0-9*,/\\-\\s]+" value={customCron} onBlur={onCronCommit} onChange={(event) => onCronChange(event.target.value)} onInput={(event) => onCronChange(event.currentTarget.value)} />
-            </FormFieldGroup>
+            <FormField>
+              <FieldLabel htmlFor="schedule-cron">Cron 표현식</FieldLabel>
+              <Input id="schedule-cron" inputMode="numeric" pattern="[0-9*,/\\-\\s]+" value={customCron} onBlur={onCronCommit} onChange={(event) => onCronChange(event.target.value)} onInput={(event) => onCronChange(event.currentTarget.value)} />
+            </FormField>
           )}
-          <NativeSelectField
-            fieldClassName="field"
-            label="시간대"
-            selectClassName="input control-input"
-            value={timezone}
-            onChange={(event) => onTimezoneChange(event.target.value)}
-          >
+        <FormField>
+          <FieldLabel htmlFor="schedule-timezone">시간대</FieldLabel>
+          <Select value={normalizedTimezone} onValueChange={onTimezoneChange}>
+            <SelectTrigger id="schedule-timezone">
+              <span>{timezoneOptions.find((option) => option.value === normalizedTimezone)?.label}</span>
+            </SelectTrigger>
+            <SelectContent>
               {timezoneOptions.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
+                <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
               ))}
-          </NativeSelectField>
-        </div>
-        <div className="schedule-config-preview">
-          <InfoBox title="실행 미리보기" body={preview} />
-          {frequency === "custom" && !cronIsValid && <InfoBox title="Cron 형식 확인" body="5개 필드 형식만 저장합니다. 예: 0 10 * * 1-5" />}
-        </div>
-      </div>
-      <div className="schedule-config-policy-section">
-        <div className="schedule-config-subheader">
-          <ShieldCheck size={16} />
-          <h3>재시도 정책</h3>
-        </div>
-        <RetryPolicy value={retryPolicy} onChange={onRetryPolicyChange} />
-      </div>
-    </section>
+            </SelectContent>
+          </Select>
+        </FormField>
+        <FormField>
+          <FieldLabel htmlFor="schedule-overlap-policy">중복 실행 정책</FieldLabel>
+          <Select value={overlapPolicy} onValueChange={(value) => onOverlapPolicyChange(value as ScheduleOverlapPolicy)}>
+            <SelectTrigger id="schedule-overlap-policy">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {Object.entries(scheduleOverlapPolicyLabels).map(([value, label]) => (
+                <SelectItem key={value} value={value}>{label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </FormField>
+      </FieldGroup>
+      {frequency === "custom" && !cronIsValid && (
+        <Alert variant="destructive">
+          <Info />
+          <AlertTitle>Cron 형식을 확인해 주세요.</AlertTitle>
+          <AlertDescription>5개 필드 형식만 저장합니다. 예: 0 10 * * 1-5</AlertDescription>
+        </Alert>
+      )}
+    </FieldSet>
   );
 }
 
-function NoScheduleSettings({ onRetryPolicyChange, retryPolicy }: { onRetryPolicyChange: (policy: RetryPolicyDraft) => void; retryPolicy: RetryPolicyDraft }) {
+function ScheduleTimeField({ onTimeChange, onTimeCommit, time }: { onTimeChange: (time: string) => void; onTimeCommit: () => void; time: string }) {
   return (
-    <section className="etl-review-card schedule-config-card">
-      <div className="etl-review-card-header">
-        <span className="etl-review-icon"><PlayCircle size={17} /></span>
-        <div>
-          <h2>직접 실행 정책</h2>
-          <p>자동 예약 없이 저장하고 필요할 때 Job 목록에서 직접 실행합니다.</p>
+    <FormField>
+      <FieldLabel htmlFor="schedule-time">실행 시간</FieldLabel>
+      <Input id="schedule-time" max="23:59" min="00:00" step="60" type="time" value={normalizeTimeValue(time)} onBlur={onTimeCommit} onChange={(event) => onTimeChange(event.target.value)} onInput={(event) => onTimeChange(event.currentTarget.value)} />
+    </FormField>
+  );
+}
+
+function ScheduleRetrySettings({ onRetryPolicyChange, retryPolicy: value }: { onRetryPolicyChange: (policy: RetryPolicyDraft) => void; retryPolicy: RetryPolicyDraft }) {
+  const retryPolicy = normalizeRetryPolicy(value);
+  const retryEnabled = retryPolicy.maxRetries > 0;
+  const normalizeNumber = (nextValue: string, fallback: number, min: number, max: number) => {
+    const parsed = Number.parseInt(nextValue, 10);
+    return Number.isNaN(parsed) ? fallback : Math.min(Math.max(parsed, min), max);
+  };
+  const updateNumber = (key: "maxRetries" | "maxRetryDelayMinutes", nextValue: string, fallback: number, min: number, max: number) => {
+    onRetryPolicyChange({ ...retryPolicy, [key]: normalizeNumber(nextValue, fallback, min, max) });
+  };
+  const updateInitialDelay = (nextValue: string) => {
+    const nextDelay = normalizeNumber(nextValue, 1, 1, 1440);
+    onRetryPolicyChange({
+      ...retryPolicy,
+      initialRetryDelayMinutes: nextDelay,
+      maxRetryDelayMinutes: Math.max(retryPolicy.maxRetryDelayMinutes, nextDelay),
+      retryIntervalMinutes: nextDelay,
+    });
+  };
+  const blockInvalidNumberKey = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (["e", "E", "+", "-", "."].includes(event.key)) event.preventDefault();
+  };
+
+  return (
+    <FieldSet>
+      <div className="flex items-center justify-between gap-4">
+        <FieldLegend className="mb-0">재시도 정책</FieldLegend>
+        <div className="flex items-center gap-3">
+          <FieldLabel htmlFor="schedule-retry-enabled">재시도 사용</FieldLabel>
+          <Switch
+            checked={retryEnabled}
+            id="schedule-retry-enabled"
+            onCheckedChange={(checked) => onRetryPolicyChange({ ...retryPolicy, maxRetries: checked ? Math.max(retryPolicy.maxRetries, 3) : 0 })}
+          />
         </div>
-        <span className="schedule-config-state muted">스케줄 없음</span>
       </div>
-      <div className="etl-review-validation schedule-config-validation">
-        <div className="ready">
-          <Check size={14} />
-          <span>자동 스케줄</span>
-          <strong>없음</strong>
-        </div>
-        <div className="ready">
-          <Check size={14} />
-          <span>실행 방식</span>
-          <strong>수동</strong>
-        </div>
-        <div className="needs-review">
-          <Clock3 size={14} />
-          <span>다음 실행</span>
-          <strong>미생성</strong>
-        </div>
-      </div>
-      <div className="schedule-config-policy-section">
-        <div className="schedule-config-subheader">
-          <ShieldCheck size={16} />
-          <h3>재시도 정책</h3>
-        </div>
-        <RetryPolicy value={retryPolicy} onChange={onRetryPolicyChange} />
-        <InfoBox title="다음 실행 없음" body="스케줄을 저장하지 않으므로 다음 예약 일시는 생성되지 않습니다. 필요할 때 Job 목록에서 즉시 실행합니다." />
-      </div>
-    </section>
+      <FieldGroup className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {retryEnabled && (
+          <>
+            <FormField>
+              <FieldLabel htmlFor="schedule-max-retries">최대 재시도</FieldLabel>
+              <InputGroup>
+                <InputGroupInput id="schedule-max-retries" inputMode="numeric" max="10" min="1" type="number" value={retryPolicy.maxRetries} onChange={(event) => updateNumber("maxRetries", event.target.value, 3, 1, 10)} onKeyDown={blockInvalidNumberKey} />
+                <InputGroupAddon><InputGroupText>회</InputGroupText></InputGroupAddon>
+              </InputGroup>
+            </FormField>
+            <FormField>
+              <FieldLabel htmlFor="schedule-initial-delay">시작 지연</FieldLabel>
+              <InputGroup>
+                <InputGroupInput id="schedule-initial-delay" inputMode="numeric" max="1440" min="1" type="number" value={retryPolicy.initialRetryDelayMinutes} onChange={(event) => updateInitialDelay(event.target.value)} onKeyDown={blockInvalidNumberKey} />
+                <InputGroupAddon><InputGroupText>분</InputGroupText></InputGroupAddon>
+              </InputGroup>
+            </FormField>
+            <FormField>
+              <FieldLabel htmlFor="schedule-max-delay">최대 간격</FieldLabel>
+              <InputGroup>
+                <InputGroupInput id="schedule-max-delay" inputMode="numeric" max="1440" min={retryPolicy.initialRetryDelayMinutes} type="number" value={retryPolicy.maxRetryDelayMinutes} onChange={(event) => updateNumber("maxRetryDelayMinutes", event.target.value, 30, retryPolicy.initialRetryDelayMinutes, 1440)} onKeyDown={blockInvalidNumberKey} />
+                <InputGroupAddon><InputGroupText>분</InputGroupText></InputGroupAddon>
+              </InputGroup>
+            </FormField>
+          </>
+        )}
+        <FormField className={retryEnabled ? "" : "md:col-span-2 xl:col-span-2"}>
+          <FieldLabel htmlFor="schedule-failure-action">최종 실패 처리</FieldLabel>
+          <Select value={retryPolicy.failureAction} onValueChange={(failureAction) => onRetryPolicyChange({ ...retryPolicy, failureAction: failureAction as RetryPolicyDraft["failureAction"] })}>
+            <SelectTrigger id="schedule-failure-action">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {Object.entries(retryFailureActionLabels).map(([optionValue, label]) => (
+                <SelectItem key={optionValue} value={optionValue}>{label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </FormField>
+      </FieldGroup>
+    </FieldSet>
   );
 }
 

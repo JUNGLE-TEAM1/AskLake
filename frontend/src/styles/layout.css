@@ -1462,21 +1462,6 @@ select.control-input {
   line-height: 1.55;
 }
 
-.schedule-config-section {
-  display: grid;
-  gap: 16px;
-}
-
-.schedule-config-section h3 {
-  color: #171a1f;
-  font-size: 15px;
-  margin: 0;
-}
-
-.schedule-config-section + .retry-policy {
-  margin-top: 28px;
-}
-
 .retry-policy {
   display: grid;
   gap: 28px;

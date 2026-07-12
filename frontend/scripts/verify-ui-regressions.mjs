@@ -817,6 +817,30 @@ const checks = [
     ],
   },
   {
+    name: "ETL schedule uses one conditional shadcn settings surface",
+    file: "src/pages/etl/EtlPages.tsx",
+    patterns: [
+      /<Card className="overflow-hidden" size="none">/,
+      /<ToggleGroup[\s\S]*aria-label="실행 방식"[\s\S]*value=\{selectedOption\}/,
+      /<ToggleGroupItem className="min-w-28" value="skip">[\s\S]*직접 실행/,
+      /selectedOption === "repeat" && <RepeatSettings/,
+      /<FieldSet>/,
+      /<Switch[\s\S]*id="schedule-retry-enabled"/,
+      /<Separator \/>/,
+      /onOverlapPolicyChange=/,
+      /normalizeScheduleTimezone\(draftSchedule\.timezone\)/,
+    ],
+    forbiddenPatterns: [
+      /파이프라인의 실행 시간, 반복 여부, 실행 정책을 설정합니다\./,
+      /저장만 할지, 정해진 주기로 자동 실행할지 선택합니다\./,
+      /자동 예약 없이 저장하고 필요할 때 Job 목록에서 직접 실행합니다\./,
+      /<h2>직접 실행 정책<\/h2>/,
+      />스케줄 없음</,
+      /다음 실행 없음/,
+      /schedule-config-/,
+    ],
+  },
+  {
     name: "Continuous execution history uses durable sessions and guarded live polling",
     file: "src/pages/ingest/JobsPages.tsx",
     patterns: [
