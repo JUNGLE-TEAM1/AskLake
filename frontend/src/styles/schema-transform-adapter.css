@@ -126,6 +126,20 @@ th.schema-result-column {
   color: #c2410c;
 }
 
+.schema-sql-validation {
+  flex: 0 0 auto;
+  min-height: 42px;
+  line-height: 1.4;
+  white-space: normal;
+}
+
+.schema-sql-preview-empty {
+  display: grid;
+  min-height: 150px;
+  place-items: center;
+  padding: 24px;
+}
+
 .schema-result-preview-empty {
   display: grid;
   min-height: 150px;
@@ -184,7 +198,16 @@ th.schema-result-column {
 .schema-bottom-bar.schema-top-actions .secondary-button,
 .schema-bottom-bar.schema-top-actions .primary-button {
   height: 40px;
+  min-width: 96px;
+  padding: 0 18px;
+  font-size: 16px;
+  font-weight: 600;
   box-shadow: none;
+}
+
+.schema-bottom-bar.schema-top-actions .schema-result-preview-button {
+  width: auto;
+  min-width: 132px;
 }
 
 @media (max-width: 720px) {

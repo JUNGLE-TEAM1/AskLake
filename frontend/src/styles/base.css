@@ -346,7 +346,7 @@ p {
 }
 
 .schema-shell .topbar {
-  min-height: 54px;
+  min-height: 64px;
 }
 
 .search-box {
@@ -537,37 +537,39 @@ p {
 .stepper-inner {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
   height: 97px;
   justify-content: center;
-  max-width: var(--layout-main-width);
+  width: 100%;
+  max-width: 1600px;
   margin: 0 auto;
   overflow-x: auto;
   overscroll-behavior-x: contain;
-  padding: 0 var(--layout-page-padding);
+  padding: 0 clamp(28px, 4vw, 72px);
 }
 
 .schema-shell .stepper-inner {
-  height: 54px;
+  height: 97px;
 }
 
 .stepper-item {
   display: grid;
-  flex: 0 0 auto;
-  grid-template-columns: minmax(0, auto) 72px;
+  flex: 1 1 0;
+  grid-template-columns: minmax(0, auto) minmax(76px, 1fr);
   align-items: center;
-  gap: 10px;
+  gap: 16px;
 }
 
 .stepper-item:last-child {
+  flex: 0 0 auto;
   grid-template-columns: minmax(0, auto);
 }
 
 .step-trigger {
   display: grid;
-  grid-template-columns: 32px auto;
+  grid-template-columns: 40px auto;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   padding: 2px;
   border: 0;
   border-radius: 999px;
@@ -600,14 +602,14 @@ p {
 
 .step-dot {
   display: grid;
-  width: 32px;
-  height: 32px;
+  width: 40px;
+  height: 40px;
   place-items: center;
   border: 1px solid #dee1e6;
   border-radius: 50%;
   background: #fff;
   color: #9095a1;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 800;
 }
 
@@ -619,8 +621,8 @@ p {
 
 .step-label {
   color: #565d6d;
-  font-size: 13px;
-  font-weight: 650;
+  font-size: 15px;
+  font-weight: 700;
   white-space: nowrap;
 }
 
@@ -647,7 +649,9 @@ p {
 }
 
 .page-body.schema-body {
-  height: calc(100vh - 108px);
+  height: auto;
+  flex: 1;
+  min-height: 0;
   overflow: hidden;
   padding: 10px 16px 12px;
 }

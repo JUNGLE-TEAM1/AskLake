@@ -45,7 +45,7 @@ const checks = [
     file: "src/pages/etl/EtlPages.tsx",
     patterns: [
       /title="권한 설정"/,
-      /leadingAlign="center"/,
+      /<EtlStepHeader[\s\S]*className="etl-step-standalone-header"[\s\S]*icon=\{<ShieldCheck \/>\}[\s\S]*title="권한 설정"/,
       /data-testid="permission-workflow"/,
       /<CardTitle>Governance Check<\/CardTitle>/,
       /<CardTitle>Access Policy<\/CardTitle>/,
@@ -475,7 +475,7 @@ const checks = [
     file: "src/components/etl/SchemaTransformEditor.jsx",
     patterns: [
       /import \{ Checkbox \} from "@\/components\/ui\/checkbox";/,
-      /aria-label="전체 타겟 컬럼 선택"/,
+      /aria-label="전체 타겟 필드 선택"/,
       /aria-label=\{`\$\{col\.name\} 선택`\}/,
       /targetSchema\.filter\(\(c\) => !selectedAfter\.has\(targetColumnKey\(c\)\)\)/,
     ],
