@@ -332,6 +332,8 @@ npm run verify:kafka-continuous-rules
 ```
 
 Phase 2부터 prod-like Compose는 내부 broker `redpanda:9092`를 제공한다. 이 broker는 Snapshot fixture와 이후 Continuous Spark worker가 같은 Docker network에서 사용할 endpoint이며, 외부 Kafka endpoint를 쓰려면 배포 env에서 `ASKLAKE_KAFKA_BROKER`를 바꾼다.
+ETL 생성 화면의 Kafka 기본 broker도 production build에서는 `redpanda:9092`, Vite 개발 모드에서는 `127.0.0.1:19092`를 사용한다. 별도 frontend 배포 토폴로지에서는 `VITE_KAFKA_DEFAULT_BROKER`로 화면 기본값을 지정하며, backend의 요청 기본값은 `ASKLAKE_KAFKA_BROKER`를 따른다.
+Kafka 소스 연결 테스트는 새 샘플 consumer group이 첫 메시지를 받을 때까지 `ASKLAKE_KAFKA_SAMPLE_TIMEOUT_MS`(기본 8초)를 기다린다. 메시지가 시작된 뒤에는 `ASKLAKE_KAFKA_SAMPLE_IDLE_MS`(기본 0.5초) 동안 추가 메시지가 없으면 즉시 샘플을 반환하므로, 작은 토픽도 group 초기화와 경합하지 않고 불필요하게 전체 timeout을 채우지 않는다.
 
 Continuous worker는 Spark 4.0.1/Scala 2.13 Kafka connector를 사용한다. `ASKLAKE_SPARK_KAFKA_PACKAGE=org.apache.spark:spark-sql-kafka-0-10_2.13:4.0.1`과 `ASKLAKE_SPARK_HADOOP_AWS_PACKAGE`을 함께 설정하고, backend Docker socket 및 `ASKLAKE_SPARK_REPORT_DIR` 공유 mount를 유지해야 한다.
 

@@ -2,6 +2,7 @@ import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { loadKafkaJs } from "../src/kafka-codecs.mjs";
 
 const backendDir = fileURLToPath(new URL("..", import.meta.url));
 process.env.KAFKAJS_NO_PARTITIONER_WARNING = process.env.KAFKAJS_NO_PARTITIONER_WARNING || "1";
@@ -12,6 +13,7 @@ const shouldStartServer = process.env.ASKLAKE_KAFKA_SCHEDULE_VERIFY_START_SERVER
 const suffix = Date.now().toString(36);
 const topic = process.env.ASKLAKE_KAFKA_SCHEDULE_VERIFY_TOPIC || `reviews.raw.verify.${suffix}`;
 const minimalTopic = `reviews.raw.minimal.${suffix}`;
+const snappyTopic = `reviews.raw.snappy.${suffix}`;
 const groupId = `asklake-verify-${suffix}`;
 const targetDataset = `reviews_raw_verify_${suffix}`;
 const fixtureMessageCount = 100;
@@ -38,6 +40,7 @@ try {
   await waitForHealth();
   await verifyScheduledKafkaIngest();
   await verifyMinimalReviewContractIngest();
+  await verifySnappyReviewIngest();
   await verifyTransformAndQualityIngest();
   await verifyFailRunLeavesOffsetsForRetry();
   await verifyMultiPartitionSnapshots();
@@ -166,6 +169,52 @@ async function verifyMinimalReviewContractIngest() {
   assert(malformedResult.consumedCount === 1 && malformedResult.failedCount === 1, `Malformed Kafka message should be quarantined, not silently dropped: ${JSON.stringify(malformedResult)}`);
   assert(malformedResult.quality?.quarantineLocation?.endsWith("quarantine.jsonl"), "Malformed Kafka message should produce a quarantine object.");
   assert((await readS3Object(malformedResult.quality.quarantineLocation)).includes("{invalid json"), "Malformed quarantine must retain raw payload.");
+}
+
+async function verifySnappyReviewIngest() {
+  const { CompressionTypes, Kafka } = await loadKafkaJs();
+  const kafka = new Kafka({ brokers: [env.ASKLAKE_KAFKA_BROKER], clientId: "asklake-snappy-ingest-verify" });
+  const admin = kafka.admin();
+  const producer = kafka.producer();
+  await admin.connect();
+  await producer.connect();
+  try {
+    await admin.createTopics({ topics: [{ numPartitions: 1, replicationFactor: 1, topic: snappyTopic }] });
+    await producer.send({
+      compression: CompressionTypes.Snappy,
+      messages: [{ value: JSON.stringify({
+        created_at: "2026-07-12T00:00:00Z",
+        event_id: `snappy-review-${suffix}`,
+        offset: 0,
+        review: "snappy snapshot review",
+      }) }],
+      topic: snappyTopic,
+    });
+  } finally {
+    await producer.disconnect();
+    await admin.disconnect();
+  }
+
+  const result = await post("/api/etl/kafka/reviews/ingest", {
+    allowEmpty: false,
+    broker: env.ASKLAKE_KAFKA_BROKER,
+    consumerGroupId: `asklake-snappy-${suffix}`,
+    datasetId: `ds_reviews_snappy_${suffix}`,
+    datasetName: `reviews_snappy_${suffix}`,
+    landingEndpoint: env.MINIO_ENDPOINT,
+    maxMessages: 10,
+    offsetPolicy: "earliest",
+    registerCatalog: true,
+    storageMode: "s3",
+    targetBucket: "asklake-output",
+    targetFormat: "jsonl",
+    targetLayer: "BRONZE",
+    targetPrefix: `verify/${snappyTopic}/bronze`,
+    topic: snappyTopic,
+  });
+  assert(result.status === "success", "Snappy Kafka ingest should succeed.");
+  assert(result.consumedCount === 1, `Snappy Kafka ingest should consume one event: ${result.consumedCount}`);
+  assert(result.storedCount === 1, `Snappy Kafka ingest should store one event: ${result.storedCount}`);
 }
 
 async function verifyTransformAndQualityIngest() {

@@ -1000,7 +1000,7 @@ def kafka_ingest_request_from_job(job: ETLJobModel, run_id: str) -> dict[str, An
     offset_policy = kafka_offset_policy(field_value(fields, "Offset Policy") or field_value(fields, "offsetPolicy"))
     return {
         "allowEmpty": True,
-        "broker": field_value(fields, "Broker / Endpoint") or field_value(fields, "Broker") or "127.0.0.1:19092",
+        "broker": field_value(fields, "Broker / Endpoint") or field_value(fields, "Broker") or os.environ.get("ASKLAKE_KAFKA_BROKER") or "127.0.0.1:19092",
         "consumerGroupId": consumer_group_id,
         "datasetId": job.dataset_id or f"ds_{normalize_column_name(job.target)}",
         "datasetName": job.target or "reviews_raw",
@@ -4441,7 +4441,7 @@ def continuous_config_from_request(request: CreatePipelineRequest, job_id: str) 
 
 def continuous_runtime_from_job(job: ETLJobModel) -> KafkaContinuousRuntimeModel:
     fields = job.source_config or []
-    broker = kafka_field_value(fields, "Broker / Endpoint", "BROKER / ENDPOINT") or "127.0.0.1:19092"
+    broker = kafka_field_value(fields, "Broker / Endpoint", "BROKER / ENDPOINT") or os.environ.get("ASKLAKE_KAFKA_BROKER") or "127.0.0.1:19092"
     topic = kafka_field_value(fields, "TOPIC / QUEUE NAME", "Topic") or "reviews.raw"
     consumer_group_id = kafka_field_value(fields, "Consumer Group ID", "CONSUMER GROUP ID") or f"asklake-stream-{job.id.lower()}"
     config = job.continuous_config or {}

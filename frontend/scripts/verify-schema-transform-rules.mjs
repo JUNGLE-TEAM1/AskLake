@@ -9,6 +9,7 @@ const bundle = await build({
   },
   entryPoints: [fileURLToPath(new URL("../src/pages/etl/SchemaTransformWorkbench.tsx", import.meta.url))],
   format: "esm",
+  loader: { ".png": "dataurl" },
   platform: "node",
   plugins: [{
     name: "ignore-css",

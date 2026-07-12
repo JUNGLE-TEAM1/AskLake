@@ -434,6 +434,7 @@ export default function SchemaTransformEditor({
         next[editingColumn.index] = {
           ...existing,
           name: nextName,
+          notNull: typeof transformMeta.required === "boolean" ? transformMeta.required : existing.notNull,
           type: newType || existing.type,
           transform: null,
           transformChain: [],

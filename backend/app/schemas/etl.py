@@ -1,3 +1,4 @@
+import os
 from typing import Any, Literal
 
 from pydantic import ConfigDict, Field, field_validator, model_validator
@@ -658,7 +659,7 @@ class ScheduledJobRunResponse(CamelModel):
 
 class KafkaReviewIngestRequest(CamelModel):
     allow_empty: bool = False
-    broker: str = "127.0.0.1:19092"
+    broker: str = Field(default_factory=lambda: os.environ.get("ASKLAKE_KAFKA_BROKER") or "127.0.0.1:19092")
     topic: str = "reviews.raw"
     consumer_group_id: str | None = None
     dataset_id: str | None = None

@@ -91,6 +91,9 @@ type RepeatScheduleDraft = {
 };
 type ScheduleOptionId = "skip" | "repeat";
 
+const DEFAULT_KAFKA_BROKER = import.meta.env.VITE_KAFKA_DEFAULT_BROKER
+  || (import.meta.env.DEV ? "127.0.0.1:19092" : "redpanda:9092");
+
 export function SchedulePage({
   draftSchedule,
   mode,
@@ -1270,7 +1273,7 @@ export function SourceConnectionPage({
       description: "실시간 데이터 스트림 엔드포인트를 설정합니다.",
       fields: [
         ["Stream Type", "Apache Kafka"],
-        ["Broker / Endpoint", "127.0.0.1:19092"],
+        ["Broker / Endpoint", DEFAULT_KAFKA_BROKER],
         ["TOPIC / QUEUE NAME", "asklake-source-events"],
         ["CONSUMER GROUP ID", "asklake-etl-consumer-01"],
         ["Offset Policy", "Earliest (Start from beginning)"],

@@ -12,6 +12,7 @@ const topic = `asklake.continuous.verify.${suffix}`;
 const group = `asklake-continuous-verify-${suffix}`;
 const target = `continuous_verify_${suffix}`;
 const publicationFault = process.env.ASKLAKE_CONTINUOUS_E2E_PUBLICATION_FAULT === "true";
+const backendRestart = process.env.ASKLAKE_CONTINUOUS_E2E_BACKEND_RESTART === "true";
 let jobId = "";
 
 try {
@@ -61,6 +62,21 @@ try {
   assert(afterRestart.continuousRuntime.ruleMetrics.transformQuarantinedCount === 1, "Restart must not duplicate Rule counters.");
   assert(afterRestart.continuousRuntime.lagAvailable === true, "Restart must preserve the last valid partition lag observation.");
   assert(Object.keys(afterRestart.continuousRuntime.partitionProgress || {}).length > 0, "Restart must preserve partition progress while idle.");
+  if (backendRestart) {
+    restartBackend();
+    await waitFor(async () => {
+      try {
+        return (await getJob()).continuousRuntime?.status === "running";
+      } catch {
+        return false;
+      }
+    }, "backend restart reconciliation");
+    const afterBackendRestart = await getJob();
+    assert(afterBackendRestart.continuousRuntime.consumedCount === 6, "Backend restart must preserve consumed count.");
+    assert(afterBackendRestart.continuousRuntime.storedCount === 3, "Backend restart must not duplicate published rows.");
+    assert(afterBackendRestart.continuousRuntime.quarantinedCount === 3, "Backend restart must preserve quarantine evidence.");
+    assert(afterBackendRestart.continuousRuntime.ruleMetrics.transformQuarantinedCount === 1, "Backend restart must preserve Rule counters.");
+  }
   await post(`/api/etl/jobs/${encodeURIComponent(jobId)}/commands`, { command: "stopContinuous" });
   await waitFor(async () => (await getJob()).continuousRuntime?.status === "stopped", "stop before replay");
   const policyReplay = await post(`/api/etl/jobs/${encodeURIComponent(jobId)}/continuous/quarantine/replays`, {});
@@ -163,6 +179,10 @@ function produceRecoverableUnknown() {
 function killWorker() {
   const name = `asklake-kafka-stream-${jobId.toLowerCase()}`;
   run("docker", ["kill", name]);
+}
+
+function restartBackend() {
+  run("docker", ["compose", "--env-file", envFile, "-f", composeFile, "restart", "backend"]);
 }
 
 function rpk(args, input = "") {

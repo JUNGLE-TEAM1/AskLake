@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CreateBucketCommand, HeadBucketCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { closeMetadataStore, getDataset, saveDataset } from "../src/metadataStore.mjs";
+import { loadKafkaJs } from "../src/kafka-codecs.mjs";
 import { formatBytes, inferSchemaColumns, normalizeColumnName, parseSourceSample, schemaFingerprint } from "../src/profile.mjs";
 import { canonicalRulesFromLegacy } from "../src/ruleCompiler.mjs";
 import { applySnapshotRules, supportsSnapshotRules } from "../src/snapshotRuleRuntime.mjs";
@@ -90,7 +91,7 @@ async function ingestReviews() {
   if (!supportsSnapshotRules(canonicalRules)) {
     throw pipelineError("transform", "Kafka Snapshot received an unsupported canonical Rule operation.");
   }
-  const { Kafka } = await import("kafkajs");
+  const { Kafka } = await loadKafkaJs();
   const kafka = new Kafka({
     brokers: [broker],
     clientId: "asklake-review-ingest",

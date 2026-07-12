@@ -954,6 +954,8 @@ const checks = [
       /label="시작 위치"/,
       /label="Trigger 간격"/,
       /label="Micro-batch 최대 메시지"/,
+      /const DEFAULT_KAFKA_BROKER = import\.meta\.env\.VITE_KAFKA_DEFAULT_BROKER/,
+      /import\.meta\.env\.DEV \? "127\.0\.0\.1:19092" : "redpanda:9092"/,
     ],
   },
   {
@@ -1001,7 +1003,7 @@ const checks = [
       /ensureRequiredFieldTransformSteps\(targetSchema, transformSteps\)/,
       /const nextSteps = buildTransformSteps\(nextTargetSchema\)/,
       /allowSqlTransform=\{!continuous && !isKafka\}/,
-      /portableTransforms/,
+      /portableTransforms=\{continuous \|\| isKafka\}/,
       /transformsDisabled=\{false\}/,
       /streaming-safe canonical Rule/,
       /disabled=\{previewPending \|\| sampleRows\.length === 0\}/,
@@ -1009,6 +1011,22 @@ const checks = [
     forbiddenPatterns: [
       /실시간 규칙은 다음 compiler 페이즈 전까지 pass-through/,
       /실시간 규칙 Preview는 streaming compiler/,
+    ],
+  },
+  {
+    name: "Kafka field rules keep portable transforms, schema edits, quality, and failure policy together",
+    file: "src/components/etl/TransformFunctionModal.jsx",
+    patterns: [
+      /const qualityRulePayload = \(targetColumn\)/,
+      /const applyPortableFieldRules = \(\) =>/,
+      /portable \? applyPortableFieldRules : applyFieldRules/,
+      /<TabsTrigger value="quality">품질 검사<\/TabsTrigger>/,
+      /<TabsTrigger value="failure">실패 처리<\/TabsTrigger>/,
+      /Kafka Snapshot과 실시간 실행에서 동일하게 지원되는 변환만 표시합니다/,
+    ],
+    forbiddenPatterns: [
+      /if \(portable\) \{/,
+      /<SelectItem value="float">/,
     ],
   },
 ];

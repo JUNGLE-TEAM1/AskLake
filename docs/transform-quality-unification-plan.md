@@ -201,12 +201,42 @@ npm run verify:ui-regressions
 npm run build
 ```
 
-### Phase 7. 통합 검증
+### Phase 7. 통합 검증 (완료)
 
 - 일반 Snapshot, Kafka Snapshot, Kafka Continuous의 pass-through와 지원 Rule을 검증한다.
 - malformed JSON, incompatible cast, required null, unknown field, target write 실패를 검증한다.
 - worker/backend 재시작, checkpoint 재개, Catalog reconciliation과 중복 방지를 확인한다.
 - 최신 `dev` 통합 후 production-like Compose 수동 테스트를 수행한다.
+
+Phase 7 결과:
+
+- 최신 `origin/dev`의 Schema Workbench/field rule UI와 기존 canonical Rule 계약을 통합했다. 일반 Snapshot은 SQL 변환을 유지하고 Kafka Snapshot/Continuous는 portable Transform만 표시하되 schema rename/cast, Quality, 실패 정책을 같은 field rule modal에서 설정한다.
+- Snapshot Spark conformance, Kafka fixed-range ingest, malformed quarantine, Fail Batch offset 미커밋, 다중 partition, post-write retry 멱등성, Snappy-compressed source/snapshot을 자동 검증했다.
+- Continuous production-like E2E는 정상 실행과 post-data-write/pre-manifest fault 주입을 각각 통과했다. worker 강제 종료와 backend 재시작 뒤 같은 checkpoint에서 `consumed=6`, `stored=3`, `quarantined=3` 및 Rule counter를 중복 없이 복원했고 Catalog cursor, replay 멱등성, compaction을 확인했다.
+- production build의 Kafka 기본 broker를 `redpanda:9092`로 정합화하고 backend fallback은 `ASKLAKE_KAFKA_BROKER`를 사용한다. Source sampler는 첫 메시지 이후 bounded idle window를 사용하며 decode/run 오류를 metadata-only 성공으로 숨기지 않는다.
+
+Phase 7 검증:
+
+```bash
+cd backend
+npm run verify
+npm run verify:rule-compiler
+npm run verify:snapshot-rule-conformance
+npm run verify:snapshot-spark-pipeline
+npm run verify:rule-preview
+npm run verify:target-metadata
+ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:kafka-review-scheduled-ingest
+ASKLAKE_VERIFY_KAFKA=true npm run verify:fastapi-sources
+npm run verify:kafka-continuous-contract
+npm run verify:kafka-continuous-rules
+ASKLAKE_RUN_KAFKA_CONTINUOUS_E2E=true npm run verify:kafka-continuous-e2e
+
+cd ../frontend
+npm run verify:rule-compiler
+npm run verify:schema-transform-rules
+npm run verify:ui-regressions
+npm run build
+```
 
 ## 7. 검증 게이트
 
