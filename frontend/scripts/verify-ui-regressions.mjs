@@ -423,6 +423,7 @@ const checks = [
     ],
     forbiddenPatterns: [
       /<select/,
+      /<Filter className="size-4 shrink-0 text-slate-500"/,
     ],
   },
   {

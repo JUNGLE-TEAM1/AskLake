@@ -22,7 +22,6 @@ import {
   Check,
   CircleDot,
   CircleGauge,
-  Filter,
   Grid3X3,
   Hash,
   Table2,
@@ -157,7 +156,7 @@ function WidgetSelectField({
           <DropdownMenuTrigger asChild>
             <Button
               aria-label={String(props.label)}
-              className={cn("asklake-widget-select h-9 w-full justify-between px-3", selectClassName)}
+              className={cn("asklake-widget-select h-9 w-full justify-start px-3", selectClassName)}
               disabled={props.disabled}
               size="sm"
               type="button"
@@ -166,7 +165,6 @@ function WidgetSelectField({
               <span className="min-w-0 flex-1 truncate text-left">
                 {selectedOption?.label ?? (hasEmptyOption ? options.find((option) => option.value === "")?.label : "선택하세요")}
               </span>
-              <Filter className="size-4 shrink-0 text-slate-500" aria-hidden="true" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent
