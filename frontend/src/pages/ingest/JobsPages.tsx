@@ -2881,7 +2881,11 @@ function SnapshotJobRunsPage({
   const [activeRun, setActiveRun] = useState<JobRunSummary | null>(null);
   const [activeLogRun, setActiveLogRun] = useState<JobRunSummary | null>(null);
   const [runStatusFilter, setRunStatusFilter] = useState<"all" | JobRunStatus>("all");
-  const runs = evidence?.runs.length ? evidence.runs : job.runHistory ?? [];
+  const jobRuns = job.runHistory ?? [];
+  const evidenceRuns = evidence?.runs ?? [];
+  const runs = jobRuns.length
+    ? [...jobRuns, ...evidenceRuns.filter((run) => !jobRuns.some((jobRun) => jobRun.runId === run.runId))]
+    : evidenceRuns;
   const runStatusCounts = useMemo(() => {
     const counts: Record<JobRunStatus, number> = { canceled: 0, failed: 0, queued: 0, running: 0, success: 0 };
     runs.forEach((run) => { counts[run.status] += 1; });
@@ -2890,6 +2894,12 @@ function SnapshotJobRunsPage({
   const availableRunStatuses = runStatusFilterOrder.filter((status) => runStatusCounts[status] > 0);
   const filteredRuns = runStatusFilter === "all" ? runs : runs.filter((run) => run.status === runStatusFilter);
   const latestRun = runs[0];
+  const activeRunDetail = activeRun
+    ? runs.find((run) => run.runId === activeRun.runId) ?? activeRun
+    : null;
+  const activeLogRunDetail = activeLogRun
+    ? runs.find((run) => run.runId === activeLogRun.runId) ?? activeLogRun
+    : null;
   const totalRunsValue = job.stats?.totalRuns
     ? job.stats.totalRuns.endsWith("회") ? job.stats.totalRuns : `${job.stats.totalRuns}회`
     : `${runs.length}회`;
@@ -3040,8 +3050,8 @@ function SnapshotJobRunsPage({
             />
           </Panel>
         </section>
-        {activeRun && <RunDagModal evidence={evidence} job={job} onAction={onAction} onClose={() => setActiveRun(null)} run={activeRun} />}
-        {activeLogRun && <RunLogModal job={job} onClose={() => setActiveLogRun(null)} run={activeLogRun} />}
+        {activeRunDetail && <RunDagModal evidence={evidence} job={job} onAction={onAction} onClose={() => setActiveRun(null)} run={activeRunDetail} />}
+        {activeLogRunDetail && <RunLogModal job={job} onClose={() => setActiveLogRun(null)} run={activeLogRunDetail} />}
       </div>
     </TooltipProvider>
   );
@@ -3112,9 +3122,12 @@ function RunDagModal({
   run: JobRunSummary;
 }) {
   const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
-  const dagSteps = job.dagStepsByRunId?.[run.runId]
-    ?? (evidence?.dagSteps.length ? evidence.dagSteps : job.dagSteps ?? []);
-  const currentRun = run;
+  const evidenceRun = evidence?.runs.find((candidate) => candidate.runId === run.runId);
+  const currentRun = job.runHistory?.find((candidate) => candidate.runId === run.runId) ?? evidenceRun ?? run;
+  const evidenceMatchesRun = evidence?.runs[0]?.runId === currentRun.runId;
+  const dagSteps = evidenceMatchesRun && evidence?.dagSteps.length
+    ? evidence.dagSteps
+    : job.dagStepsByRunId?.[currentRun.runId] ?? job.dagSteps ?? [];
   const completedSteps = dagSteps.filter((step) => step.status === "success").length;
   const activeOrFailedStep = dagSteps.find((step) => step.status === "running" || step.status === "failed" || step.status === "blocked");
   const selectedStep = getSelectedDagStep(dagSteps, selectedStepId);

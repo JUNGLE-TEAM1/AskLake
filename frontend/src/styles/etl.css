@@ -8935,3 +8935,110 @@ input.schema-checkbox:checked {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+.record-parsing-source-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 28px;
+  padding: 16px 20px;
+}
+
+.record-parsing-source-strip span {
+  display: grid;
+  gap: 3px;
+}
+
+.record-parsing-source-strip em {
+  color: var(--muted-foreground);
+  font-size: 12px;
+  font-style: normal;
+}
+
+.record-parsing-source-strip strong {
+  color: var(--foreground);
+  font-size: 14px;
+}
+
+.record-parsing-workspace {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.record-parsing-panel {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+  padding: 20px;
+}
+
+.record-parsing-panel-header {
+  align-items: flex-start;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+}
+
+.record-parsing-panel-header h2 {
+  margin: 0;
+}
+
+.record-parsing-panel-header h2 {
+  font-size: 16px;
+}
+
+.record-parsing-raw {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  min-height: 310px;
+  resize: vertical;
+  white-space: pre;
+}
+
+.record-parsing-controls {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.record-parsing-table-scroll {
+  max-width: 100%;
+}
+
+.record-parsing-table,
+.record-parsing-preview-table,
+.record-parsing-invalid-table {
+  min-width: 720px;
+}
+
+.record-parsing-table code,
+.record-parsing-invalid-table code {
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.record-parsing-error {
+  color: var(--destructive);
+  font-size: 13px;
+  margin: 0;
+}
+
+.source-select-pill.warning {
+  background: color-mix(in srgb, var(--destructive) 10%, var(--background));
+  border-color: color-mix(in srgb, var(--destructive) 35%, var(--border));
+  color: var(--destructive);
+}
+
+@media (max-width: 960px) {
+  .record-parsing-workspace {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .record-parsing-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .record-parsing-panel-header {
+    flex-direction: column;
+  }
+}
