@@ -4,6 +4,7 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  Clock3,
   Database,
   HardDrive,
   ShieldCheck,
@@ -24,6 +25,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Spinner } from "@/components/ui/spinner";
 import {
   Table,
@@ -168,6 +171,8 @@ const compressionOptions: Array<WizardSelectOption<SqlJobWizardCompression>> = [
   { label: "Gzip", value: "Gzip" },
   { label: "압축 없음", value: "None" },
 ];
+const timeHourOptions = Array.from({ length: 24 }, (_, hour) => String(hour).padStart(2, "0"));
+const timeMinuteOptions = Array.from({ length: 60 }, (_, minute) => String(minute).padStart(2, "0"));
 
 function WizardSelectField<T extends string>({
   className,
@@ -224,6 +229,121 @@ function WizardSelectField<T extends string>({
           </DropdownMenuRadioGroup>
         </DropdownMenuContent>
       </DropdownMenu>
+    </Field>
+  );
+}
+
+function formatWizardTime(value: string) {
+  const [hourText = "00", minute = "00"] = value.split(":");
+  const hour = Number(hourText);
+  const period = hour < 12 ? "오전" : "오후";
+  const displayHour = String(hour % 12 || 12).padStart(2, "0");
+  return `${period} ${displayHour}:${minute}`;
+}
+
+function WizardTimeField({
+  disabled,
+  id,
+  label,
+  onValueChange,
+  value,
+}: {
+  disabled?: boolean;
+  id: string;
+  label: string;
+  onValueChange: (value: string) => void;
+  value: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const selectedHourRef = useRef<HTMLButtonElement>(null);
+  const selectedMinuteRef = useRef<HTMLButtonElement>(null);
+  const [hour = "00", minute = "00"] = value.split(":");
+
+  useEffect(() => {
+    if (!open) return;
+    const frame = window.requestAnimationFrame(() => {
+      selectedHourRef.current?.scrollIntoView({ block: "center" });
+      selectedMinuteRef.current?.scrollIntoView({ block: "center" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [hour, minute, open]);
+
+  return (
+    <Field>
+      <FieldLabel htmlFor={id}>{label}</FieldLabel>
+      <Popover onOpenChange={setOpen} open={open}>
+        <PopoverTrigger asChild>
+          <Button
+            className="w-full min-w-0 max-w-full justify-between overflow-hidden text-left"
+            disabled={disabled}
+            id={id}
+            type="button"
+            variant="outline"
+          >
+            <span className="min-w-0 flex-1 truncate text-left">{formatWizardTime(value)}</span>
+            <Clock3 aria-hidden="true" className="text-slate-500" />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent align="start" className="grid w-72 gap-3 p-3">
+          <div className="grid gap-1">
+            <strong className="text-sm">실행 시간</strong>
+            <small className="text-xs text-slate-500">시와 분을 각각 선택해 주세요.</small>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="grid gap-1.5">
+              <span className="text-xs font-semibold text-slate-500">시</span>
+              <ScrollArea className="h-52 rounded-lg border border-slate-200">
+                <div className="grid gap-1 p-1 pr-3">
+                  {timeHourOptions.map((option) => {
+                    const selected = option === hour;
+                    return (
+                      <Button
+                        aria-pressed={selected}
+                        className="w-full justify-center"
+                        key={option}
+                        onClick={() => onValueChange(`${option}:${minute}`)}
+                        ref={selected ? selectedHourRef : undefined}
+                        size="sm"
+                        type="button"
+                        variant={selected ? "subtle" : "ghost"}
+                      >
+                        {option}시
+                      </Button>
+                    );
+                  })}
+                </div>
+              </ScrollArea>
+            </div>
+            <div className="grid gap-1.5">
+              <span className="text-xs font-semibold text-slate-500">분</span>
+              <ScrollArea className="h-52 rounded-lg border border-slate-200">
+                <div className="grid gap-1 p-1 pr-3">
+                  {timeMinuteOptions.map((option) => {
+                    const selected = option === minute;
+                    return (
+                      <Button
+                        aria-pressed={selected}
+                        className="w-full justify-center"
+                        key={option}
+                        onClick={() => onValueChange(`${hour}:${option}`)}
+                        ref={selected ? selectedMinuteRef : undefined}
+                        size="sm"
+                        type="button"
+                        variant={selected ? "subtle" : "ghost"}
+                      >
+                        {option}분
+                      </Button>
+                    );
+                  })}
+                </div>
+              </ScrollArea>
+            </div>
+          </div>
+          <Button onClick={() => setOpen(false)} size="sm" type="button">
+            완료
+          </Button>
+        </PopoverContent>
+      </Popover>
     </Field>
   );
 }
@@ -569,10 +689,16 @@ export function SqlJobWizardDialog({
                     }))}
                   />
                 ) : null}
-                <Field>
-                  <FieldLabel htmlFor="sql-job-wizard-time">실행 시간</FieldLabel>
-                  <Input id="sql-job-wizard-time" type="time" value={configuration.schedule.time} onChange={(event) => setConfiguration((current) => ({ ...current, schedule: { ...current.schedule, time: event.target.value } }))} />
-                </Field>
+                <WizardTimeField
+                  disabled={isBusy}
+                  id="sql-job-wizard-time"
+                  label="실행 시간"
+                  value={configuration.schedule.time}
+                  onValueChange={(time) => setConfiguration((current) => ({
+                    ...current,
+                    schedule: { ...current.schedule, time },
+                  }))}
+                />
                 <WizardSelectField
                   disabled={isBusy}
                   id="sql-job-wizard-timezone"

@@ -156,8 +156,14 @@ const checks = [
     file: "src/pages/sql/SqlJobWizardDialog.tsx",
     patterns: [
       /function WizardSelectField<T extends string>/,
+      /function WizardTimeField/,
+      /const timeHourOptions = Array\.from\(\{ length: 24 \}/,
+      /const timeMinuteOptions = Array\.from\(\{ length: 60 \}/,
       /<DropdownMenuTrigger asChild>/,
       /<DropdownMenuRadioGroup/,
+      /<PopoverContent align="start" className="grid w-72 gap-3 p-3">/,
+      /<ScrollArea className="h-52 rounded-lg border border-slate-200">/,
+      /label="실행 시간"/,
       /label="실행 요일"/,
       /label="시간대"/,
       /label="실행 겹침 정책"/,
@@ -168,6 +174,7 @@ const checks = [
     forbiddenPatterns: [
       /NativeSelect/,
       /<select/,
+      /type="time"/,
     ],
   },
   {
