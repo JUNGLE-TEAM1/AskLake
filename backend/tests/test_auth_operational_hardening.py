@@ -9,6 +9,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from app.api.auth import login_client_address
 from app.api.health import health_check
 from app.core.config import Settings
 from app.core.errors import ApiError
@@ -25,12 +26,12 @@ class OperationalAuthHardeningTests(unittest.TestCase):
             tables=[AuthUserModel.__table__, AuthSessionModel.__table__],
         )
         self.db = Session(self.engine)
-        auth_service._login_failures_by_email.clear()
+        auth_service._login_failures_by_key.clear()
 
     def tearDown(self) -> None:
         self.db.close()
         self.engine.dispose()
-        auth_service._login_failures_by_email.clear()
+        auth_service._login_failures_by_key.clear()
 
     def test_production_signup_is_disabled_by_default(self) -> None:
         production = SimpleNamespace(
@@ -130,20 +131,45 @@ class OperationalAuthHardeningTests(unittest.TestCase):
 
         self.assertEqual(limited.exception.status_code, 429)
 
-    def test_correct_password_recovers_after_rate_limit(self) -> None:
+    def test_rate_limit_blocks_the_same_client_but_not_a_different_client(self) -> None:
         local = SimpleNamespace(allows_header_auth_fallback=True)
         with patch.object(auth_service, "settings", local):
             service = AuthService(self.db)
             admin = self.db.get(AuthUserModel, "admin-user")
             assert admin is not None
+            first_client = auth_service.login_failure_key(admin.email, "203.0.113.10")
+            second_client = auth_service.login_failure_key(admin.email, "203.0.113.11")
             for _attempt in range(auth_service.LOGIN_FAILURE_LIMIT + 1):
                 with self.assertRaises(ApiError):
-                    service.login(email=admin.email, password="wrong-password")
+                    service.login(
+                        email=admin.email,
+                        password="wrong-password",
+                        rate_limit_key=first_client,
+                    )
 
-            session = service.login(email=admin.email, password="asklake-admin")
+            with self.assertRaises(ApiError) as limited:
+                service.login(
+                    email=admin.email,
+                    password="asklake-admin",
+                    rate_limit_key=first_client,
+                )
+            session = service.login(
+                email=admin.email,
+                password="asklake-admin",
+                rate_limit_key=second_client,
+            )
 
+        self.assertEqual(limited.exception.status_code, 429)
         self.assertIn("token", session)
-        self.assertNotIn(admin.email, auth_service._login_failures_by_email)
+        self.assertIn(first_client, auth_service._login_failures_by_key)
+        self.assertNotIn(second_client, auth_service._login_failures_by_key)
+
+    def test_login_rate_limit_uses_the_original_forwarded_client(self) -> None:
+        request = SimpleNamespace(
+            headers={"x-forwarded-for": "203.0.113.20, 10.0.0.4"},
+            client=SimpleNamespace(host="10.0.0.4"),
+        )
+        self.assertEqual(login_client_address(request), "203.0.113.20")
 
     def test_missing_user_still_executes_dummy_password_verification(self) -> None:
         local = SimpleNamespace(allows_header_auth_fallback=True)

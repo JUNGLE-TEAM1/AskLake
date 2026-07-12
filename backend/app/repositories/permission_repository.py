@@ -13,6 +13,7 @@ from app.schemas.common import ErrorCode
 from app.schemas.permissions import PermissionGrant
 
 PermissionResourceKey = tuple[str, str]
+DELETED_SEED_SOURCE = "admin_seed_deleted"
 ALLOWED_ACTIONS = {"view", "query", "run", "manage", "delete", "share"}
 ALLOWED_PRINCIPAL_TYPES = {"user", "group", "role", "public"}
 ALLOWED_RESOURCE_TYPES = {"dataset", "etl_job", "dashboard"}
@@ -37,6 +38,7 @@ def list_permission_grants_by_resource(
             select(PermissionGrantModel)
             .where(PermissionGrantModel.resource_type == resource_type)
             .where(PermissionGrantModel.resource_id == resource_id)
+            .where(PermissionGrantModel.source != DELETED_SEED_SOURCE)
             .order_by(PermissionGrantModel.created_at.asc(), PermissionGrantModel.id.asc())
         )
         grouped[(resource_type, resource_id)].extend(row_to_permission_grant(row) for row in rows)
@@ -88,7 +90,9 @@ def ensure_demo_permission_grants(
             row.principal_id,
         )
         for row in db.scalars(
-            select(PermissionGrantModel).where(PermissionGrantModel.source == "admin_seed")
+            select(PermissionGrantModel).where(
+                PermissionGrantModel.source.in_(["admin_seed", DELETED_SEED_SOURCE])
+            )
         )
     }
     rows = [
@@ -98,7 +102,6 @@ def ensure_demo_permission_grants(
     ]
     if not rows:
         return 0
-
     db.add_all(rows)
     db.commit()
     return len(rows)
@@ -212,7 +215,10 @@ def update_permission_grant(
 def delete_permission_grant(db: Session, grant_id: str) -> PermissionGrantModel:
     ensure_permission_grant_table(db)
     row = get_permission_grant_or_404(db, grant_id)
-    db.delete(row)
+    if row.source == "admin_seed":
+        row.source = DELETED_SEED_SOURCE
+    else:
+        db.delete(row)
     db.commit()
     return row
 

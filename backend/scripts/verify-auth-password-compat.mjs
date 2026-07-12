@@ -1,6 +1,11 @@
 import crypto from "node:crypto";
 
-import { hashPassword, verifyPassword } from "../src/authService.mjs";
+import {
+  authRuntimePolicy,
+  bootstrapAdminConfig,
+  hashPassword,
+  verifyPassword,
+} from "../src/authService.mjs";
 
 const password = "compatibility-password";
 const salt = "compatibility-salt";
@@ -12,7 +17,26 @@ const checks = [
   ["versioned hash verifies", verifyPassword(password, salt, currentHash)],
   ["wrong password fails", !verifyPassword("wrong-password", salt, currentHash)],
   ["malformed hash fails without throwing", !verifyPassword(password, salt, "pbkdf2_sha256$999999999$00")],
+  ["production disables demo users", !authRuntimePolicy({ APP_ENV: "production" }).allowsDemoUsers],
+  ["production disables memory fallback", !authRuntimePolicy({ APP_ENV: "production" }).allowsMemoryFallback],
+  ["local development keeps explicit demo auth", authRuntimePolicy({ APP_ENV: "local" }).allowsDemoUsers],
+  ["production cookies are secure", authRuntimePolicy({ APP_ENV: "production" }).secureCookies],
+  ["valid bootstrap admin is accepted", bootstrapAdminConfig({
+    BOOTSTRAP_ADMIN_EMAIL: "owner@example.com",
+    BOOTSTRAP_ADMIN_PASSWORD: "a-strong-bootstrap-password",
+  }).email === "owner@example.com"],
 ];
+
+let demoBootstrapRejected = false;
+try {
+  bootstrapAdminConfig({
+    BOOTSTRAP_ADMIN_EMAIL: "admin.user@asklake.local",
+    BOOTSTRAP_ADMIN_PASSWORD: "asklake-admin",
+  });
+} catch {
+  demoBootstrapRejected = true;
+}
+checks.push(["demo bootstrap credentials are rejected", demoBootstrapRejected]);
 
 const failures = checks.filter(([, passed]) => !passed).map(([name]) => name);
 if (failures.length) {

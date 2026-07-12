@@ -216,7 +216,11 @@ class SqlService:
         response = QueryRunResponse.model_validate(payload)
         dataset_ids = unique_dataset_ids([
             response.dataset_id,
+<<<<<<< HEAD
             response.base_dataset_id or "",
+=======
+            response.base_dataset_id,
+>>>>>>> e69ff917 (fix: 운영 인증 우회와 권한 삭제 회귀 차단)
             *response.reference_dataset_ids,
         ])
         for dataset_id in dataset_ids:

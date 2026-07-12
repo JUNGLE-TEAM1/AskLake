@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 from types import SimpleNamespace
 import unittest
 from unittest.mock import call, patch
@@ -44,6 +45,30 @@ def catalog_dataset(dataset_id: str, *, owner: str = "data-owner") -> CatalogDat
         "name": dataset_id.replace("-", "_"),
         "nextRefresh": "manual",
         "owner": owner,
+=======
+import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
+
+from fastapi import status
+
+from app.core.auth_context import ActorContext
+from app.core.errors import ApiError
+from app.schemas.catalog import CatalogDatasetResponse
+from app.services.sql_service import SqlService
+
+
+def restricted_dataset() -> CatalogDatasetResponse:
+    return CatalogDatasetResponse.model_validate({
+        "description": "Restricted review output",
+        "freshness": "latest",
+        "id": "restricted-reviews",
+        "layer": "GOLD",
+        "lastUpdated": "2026-07-12T00:00:00Z",
+        "name": "restricted_reviews",
+        "nextRefresh": "manual",
+        "owner": "data-owner",
+>>>>>>> e69ff917 (fix: 운영 인증 우회와 권한 삭제 회귀 차단)
         "quality": "validated",
         "rag": False,
         "rows": "1",
@@ -56,6 +81,7 @@ def catalog_dataset(dataset_id: str, *, owner: str = "data-owner") -> CatalogDat
     })
 
 
+<<<<<<< HEAD
 def reject_anonymous() -> ActorContext:
     raise ApiError(
         ErrorCode.UNAUTHORIZED,
@@ -107,17 +133,36 @@ class SqlRunAuthorizationTests(unittest.TestCase):
         payload = query_run_payload()
         payload["baseDatasetId"] = None
         payload["referenceDatasetIds"] = []
+=======
+class SqlRunAuthorizationTests(unittest.TestCase):
+    def test_saved_result_requires_current_dataset_query_permission(self) -> None:
+        payload = {
+            "columns": ["review"],
+            "datasetId": "restricted-reviews",
+            "datasetName": "restricted_reviews",
+            "executedAt": "2026-07-12T00:00:00Z",
+            "query": "SELECT review FROM restricted_reviews",
+            "rowCount": 1,
+            "rows": [["private"]],
+            "runId": "sql-secret",
+        }
+>>>>>>> e69ff917 (fix: 운영 인증 우회와 권한 삭제 회귀 차단)
         repository = SimpleNamespace(db=object(), get_run_payload=lambda _run_id: payload)
         catalog_repository = SimpleNamespace(db=object())
         service = SqlService(repository, catalog_repository)
 
         with (
+<<<<<<< HEAD
             patch.object(
                 service,
                 "get_catalog_dataset",
                 return_value=catalog_dataset("result-dataset"),
             ),
             patch("app.services.sql_service.require_governed_access") as governed_access,
+=======
+            patch.object(service, "get_catalog_dataset", return_value=restricted_dataset()),
+            patch("app.services.sql_service.require_governed_access"),
+>>>>>>> e69ff917 (fix: 운영 인증 우회와 권한 삭제 회귀 차단)
             self.assertRaises(ApiError) as raised,
         ):
             service.get_query_run(
@@ -126,6 +171,7 @@ class SqlRunAuthorizationTests(unittest.TestCase):
             )
 
         self.assertEqual(raised.exception.status_code, status.HTTP_403_FORBIDDEN)
+<<<<<<< HEAD
         governed_access.assert_called_once()
 
     def test_unauthorized_actor_gets_403_from_saved_result_endpoint(self) -> None:
@@ -225,6 +271,8 @@ class SqlRunAuthorizationTests(unittest.TestCase):
 
         self.assertIs(raised.exception, denied)
         require_query.assert_not_called()
+=======
+>>>>>>> e69ff917 (fix: 운영 인증 우회와 권한 삭제 회귀 차단)
 
 
 if __name__ == "__main__":

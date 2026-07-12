@@ -7,7 +7,12 @@ from sqlalchemy.orm import Session
 
 from app.core.auth_context import ActorContext
 from app.models.identity import AuthSessionModel, AuthUserModel, PermissionGrantModel
-from app.repositories.permission_repository import create_permission_grant, ensure_demo_permission_grants
+from app.repositories.permission_repository import (
+    create_permission_grant,
+    delete_permission_grant,
+    ensure_demo_permission_grants,
+    list_permission_grants_by_resource,
+)
 from app.schemas.identity import PermissionSummary
 from app.services import identity_service
 from app.services.identity_service import IdentityService
@@ -59,7 +64,36 @@ class DemoPermissionSeedTests(unittest.TestCase):
         }
         self.assertEqual(ensure_demo_permission_grants(self.db, **args), 3)
         self.assertEqual(ensure_demo_permission_grants(self.db, **args), 0)
-        self.assertEqual(len(list(self.db.scalars(select(PermissionGrantModel)))), 3)
+        seeds = list(self.db.scalars(
+            select(PermissionGrantModel).where(PermissionGrantModel.source == "admin_seed")
+        ))
+        self.assertEqual(len(seeds), 3)
+
+    def test_deleted_demo_grant_is_not_recreated(self) -> None:
+        args = {
+            "dataset_ids": ["dataset-demo"],
+            "job_ids": ["job-demo"],
+            "dashboard_ids": ["dashboard-demo"],
+        }
+        self.assertEqual(ensure_demo_permission_grants(self.db, **args), 3)
+        dataset_grant = self.db.scalar(
+            select(PermissionGrantModel)
+            .where(PermissionGrantModel.source == "admin_seed")
+            .where(PermissionGrantModel.resource_type == "dataset")
+        )
+        assert dataset_grant is not None
+        delete_permission_grant(self.db, dataset_grant.id)
+
+        self.assertEqual(ensure_demo_permission_grants(self.db, **args), 0)
+        remaining_seed_types = set(self.db.scalars(
+            select(PermissionGrantModel.resource_type)
+            .where(PermissionGrantModel.source == "admin_seed")
+        ))
+        self.assertEqual(remaining_seed_types, {"etl_job", "dashboard"})
+        self.assertEqual(
+            list_permission_grants_by_resource(self.db, [("dataset", "dataset-demo")]),
+            {("dataset", "dataset-demo"): []},
+        )
 
 
 class IdentityDatabaseSourceTests(unittest.TestCase):
