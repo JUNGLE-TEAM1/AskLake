@@ -881,6 +881,11 @@ const checks = [
       /title="세션 Batch 상세"/,
       /label="세션 누적 적재"/,
       /label="현재 데이터셋"/,
+      /function ContinuousDagModal\(/,
+      /title="Streaming DAG"/,
+      /etl\.continuous\.session_dag_opened/,
+      /etl\.continuous\.batch_dag_opened/,
+      /rowActionsHeader="DAG"/,
     ],
   },
   {

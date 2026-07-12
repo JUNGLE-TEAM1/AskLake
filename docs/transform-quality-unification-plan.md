@@ -182,12 +182,24 @@ npm run verify:ui-regressions
 npm run build
 ```
 
-### Phase 6. Streaming DAG와 실행 근거
+### Phase 6. Streaming DAG와 실행 근거 (완료)
 
-- 세션과 micro-batch에 단계별 status, input/output rows, duration, error를 저장한다.
-- Source, Schema, Transform, Quality, Target, Manifest/Checkpoint, Catalog 단계를 Streaming DAG로 표시한다.
-- Transform/Quality 규칙이 없을 때 해당 단계는 `pass-through`로 표시한다.
+- 세션과 micro-batch에 단계별 status, input/output rows, duration, error를 JSON 증적으로 저장한다. `Fail Batch`처럼 manifest 전에 종료된 시도도 failed batch 이력으로 남기고 재시도 성공 시 같은 session/batch key를 갱신한다.
+- Source, Schema, Transform, Quality, Target, Manifest/Checkpoint, Catalog 7단계를 실행 이력의 Streaming DAG로 표시한다. 세션은 누적 처리량과 최신 batch 근거를, micro-batch는 해당 offset 범위와 물리 경로를 보여준다.
+- Transform/Quality 규칙이 없을 때 해당 단계는 성공한 `pass-through`로 표시한다. Catalog 단계는 물리 manifest만으로 성공 처리하지 않고 control plane의 `catalogBatchCursor`가 해당 batch를 확인한 뒤에만 성공으로 전환한다.
 - Continuous worker 자체는 장기 Airflow task로 만들지 않는다.
+
+Phase 6 검증:
+
+```bash
+cd backend
+PYTHONPATH=. .venv/bin/python scripts/verify-kafka-continuous-contract.py
+npm run verify:kafka-continuous-rules
+
+cd ../frontend
+npm run verify:ui-regressions
+npm run build
+```
 
 ### Phase 7. 통합 검증
 

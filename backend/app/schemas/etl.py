@@ -213,11 +213,13 @@ class KafkaContinuousSession(CamelModel):
     lag: int | None = None
     checkpoint_path: str
     last_error: str | None = None
+    dag_steps: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class KafkaContinuousBatch(CamelModel):
     batch_id: int
     session_id: str
+    status: Literal["running", "success", "failed"] = "success"
     published_at: str | None = None
     consumed_count: int = 0
     stored_count: int = 0
@@ -227,6 +229,8 @@ class KafkaContinuousBatch(CamelModel):
     data_path: str | None = None
     quarantine_path: str | None = None
     manifest_path: str | None = None
+    last_error: str | None = None
+    dag_steps: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ContinuousQuarantineRecord(CamelModel):
@@ -305,7 +309,9 @@ class JobRunSummary(CamelModel):
 
 
 class JobDagStep(CamelModel):
+    completed_at: str | None = None
     details: SourceFieldRows | None = None
+    duration: str | None = None
     id: str
     logs: list[str] | None = None
     meta: str

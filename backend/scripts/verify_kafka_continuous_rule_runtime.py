@@ -109,8 +109,28 @@ def main():
             report = json.loads((Path(root) / "report.json").read_text(encoding="utf-8"))
             assert report["ruleMetrics"]["qualityWarnCount"] == 0
             assert report["lastRuleResult"] == {}
+            assert report["lastBatchEvidence"] == {}
             worker.METRICS.pop("ruleMetrics", None)
             worker.METRICS.pop("lastRuleResult", None)
+
+            configured_rules = worker.RULES
+            worker.RULES = []
+            pass_through_steps = worker.build_batch_dag_steps(
+                status="success",
+                consumed_count=3,
+                schema_accepted_count=3,
+                schema_quarantined_count=0,
+                stored_count=3,
+                quarantined_count=0,
+                source_ranges=[{"topic": "reviews.verify", "partition": 0, "startOffset": 0, "endOffset": 3}],
+            )
+            worker.RULES = configured_rules
+            assert [step["id"] for step in pass_through_steps] == [
+                "source", "schema", "transform", "quality", "target", "manifest-checkpoint", "catalog",
+            ]
+            assert pass_through_steps[2]["meta"] == "pass-through"
+            assert pass_through_steps[3]["meta"] == "pass-through"
+            assert pass_through_steps[-1]["status"] == "pending"
 
             worker.source_schema()
             schema = T.StructType([
@@ -132,6 +152,8 @@ def main():
             ], schema)
 
             result = apply_snapshot_rules(frame, RULES)
+            assert result["timings"]["transformDurationMs"] >= 0
+            assert result["timings"]["qualityDurationMs"] >= 0
             target = worker.select_continuous_target(result["frame"])
             assert isinstance(target.schema["kafka_partition"].dataType, T.IntegerType)
             assert isinstance(target.schema["kafka_offset"].dataType, T.LongType)
@@ -222,6 +244,7 @@ def main():
             except SnapshotRuleExecutionError as error:
                 assert error.failed_stage == "quality"
                 assert error.rule_id == "event-required"
+                assert error.timings["qualityDurationMs"] >= 0
             else:
                 raise AssertionError("fail_batch must fail the bounded micro-batch.")
         finally:

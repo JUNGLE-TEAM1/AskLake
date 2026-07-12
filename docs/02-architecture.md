@@ -194,7 +194,7 @@ Ownership rules:
 
 - `job.id`는 `runsByJobId`의 key다.
 - `run.runId`는 `selectedRunIdByJobId[job.id]`에 저장되는 값이다.
-- `run.runId`는 `dagStepsByRunId`의 key다.
+- `run.runId`는 Snapshot `dagStepsByRunId`의 key다. Continuous는 Airflow Run을 만들지 않고 durable session과 `(sessionId, batchId)` micro-batch row가 각자의 `dagSteps`를 소유한다.
 - History는 `selectedRunIdByJobId[job.id]`만 바꿔 선택 Run을 변경한다.
 - Run History 안의 실행 흐름 카드는 `dagStepsByRunId[selectedRunIdByJobId[job.id]]`만 렌더링한다.
 - 초기 hydrate는 `job.runHistory`를 `runsByJobId`로 옮기고, 가능한 경우 최신 run id에 `job.dagSteps`를 연결한다.

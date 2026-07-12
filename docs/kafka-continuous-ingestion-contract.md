@@ -145,6 +145,7 @@ type JobCommand =
 - Worker logs are read through `GET /api/etl/jobs/{jobId}/continuous/logs`. The response is bounded, strips ANSI control sequences, masks common credential/token forms, and requires Job `view` permission.
 - A stream start/resume creates one durable session row. Pause, stop, or failure closes that row; a later restart creates a new session while reusing the same checkpoint.
 - Session counters are deltas from the cumulative runtime baseline captured at session start. Worker `publishedBatches` become idempotent child records keyed by session and Spark batch ID, while the main execution history remains one row per session.
+- Session and micro-batch rows persist a seven-stage Streaming DAG: Source, Schema, Transform, Quality, Target, Manifest/Checkpoint, and Catalog. A successful manifest keeps Catalog pending until the control plane cursor acknowledges that batch. A pre-manifest Rule failure persists `lastBatchEvidence` with the failed stage and blocks downstream stages without advancing the checkpoint. Empty Transform/Quality rule sets are recorded as successful pass-through stages.
 - The execution-history UI polls session and selected batch APIs every three seconds only while a session is active. It prevents overlapping/stale responses, backs off on errors without clearing the last good state, defers polling for hidden tabs, and stops after terminal state or unmount. Manual refresh calls the same live APIs.
 
 ## 10. Schema Evolution Contract

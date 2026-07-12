@@ -78,11 +78,13 @@ export type KafkaContinuousSession = {
   lag?: number | null;
   checkpointPath: string;
   lastError?: string | null;
+  dagSteps: JobDagStep[];
 };
 
 export type KafkaContinuousBatch = {
   batchId: number;
   sessionId: string;
+  status: "running" | "success" | "failed";
   publishedAt?: string | null;
   consumedCount: number;
   storedCount: number;
@@ -97,6 +99,8 @@ export type KafkaContinuousBatch = {
   dataPath?: string | null;
   quarantinePath?: string | null;
   manifestPath?: string | null;
+  lastError?: string | null;
+  dagSteps: JobDagStep[];
 };
 
 export type ContinuousQuarantineRecord = {

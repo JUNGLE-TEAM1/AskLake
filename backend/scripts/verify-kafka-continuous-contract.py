@@ -308,7 +308,7 @@ def main() -> None:
         runtime.quarantined_count = 2
         runtime.last_batch_id = "5"
         runtime.last_flush_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
-        runtime.metrics = {**(runtime.metrics or {}), "lastBatchDurationMs": 1200}
+        runtime.metrics = {**(runtime.metrics or {}), "catalogBatchCursor": 5, "lastBatchDurationMs": 1200}
         session_payload = {
             "workerAttemptId": first_session.worker_attempt_id,
             "lastBatchId": "5",
@@ -327,6 +327,34 @@ def main() -> None:
         assert first_session.consumed_count == 5
         assert first_session.stored_count == 5
         assert len(stored_batches) == 1, "Repeated worker reports must not duplicate session batch history."
+        stored_batch = next(iter(stored_batches.values()))
+        assert stored_batch.status == "success"
+        assert len(stored_batch.dag_steps) == 7
+        assert next(step for step in stored_batch.dag_steps if step["id"] == "catalog")["status"] == "success"
+        assert len(first_session.dag_steps) == 7
+        assert next(step for step in first_session.dag_steps if step["id"] == "source")["status"] == "running"
+        failed_steps = etl_service.continuous_batch_dag_steps({
+            "batchId": 6,
+            "consumedCount": 5,
+            "failedStage": "quality",
+            "lastError": "quality rule failed",
+        }, status="failed", catalog_applied=False)
+        assert next(step for step in failed_steps if step["id"] == "transform")["status"] == "success"
+        assert next(step for step in failed_steps if step["id"] == "quality")["status"] == "failed"
+        assert next(step for step in failed_steps if step["id"] == "target")["status"] == "blocked"
+        etl_service.sync_kafka_continuous_batches(fake_db, runtime, first_session, {
+            "lastBatchEvidence": {
+                "batchId": 6,
+                "status": "failed",
+                "consumedCount": 5,
+                "lastError": "quality rule failed",
+                "dagSteps": failed_steps,
+            },
+        })
+        failed_batch = stored_batches[f"{first_session.session_id}:6"]
+        assert failed_batch.status == "failed"
+        assert failed_batch.last_error == "quality rule failed"
+        assert next(step for step in failed_batch.dag_steps if step["id"] == "quality")["status"] == "failed"
         etl_service.mark_kafka_continuous_session_stopping(fake_db, runtime, "stopped")
         runtime.status = "stopped"
         etl_service.sync_kafka_continuous_session(fake_db, runtime)
@@ -342,6 +370,18 @@ def main() -> None:
         second_session = list(stored_sessions.values())[-1]
         assert second_session.session_id != first_session.session_id
         assert second_session.baseline_counts["storedCount"] == 13
+        runtime.metrics = {
+            **(runtime.metrics or {}),
+            "lastBatchEvidence": {
+                "batchId": 5,
+                "status": "success",
+                "consumedCount": 5,
+                "storedCount": 5,
+            },
+        }
+        runtime.status = "running"
+        etl_service.sync_kafka_continuous_session(fake_db, runtime)
+        assert next(step for step in second_session.dag_steps if step["id"] == "schema")["status"] == "pending", "A new idle session must not inherit the previous session's last batch DAG."
         runtime.status = "failed"
         runtime.failed_count = 1
         runtime.last_error = "worker crashed"

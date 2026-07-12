@@ -132,10 +132,215 @@ LAST_RULE_RESULT: dict[str, Any] = (
     else {}
 )
 RUNTIME_FINGERPRINT: str | None = None
+LAST_BATCH_EVIDENCE: dict[str, Any] = (
+    dict(INITIAL_METRICS.get("lastBatchEvidence") or {})
+    if isinstance(INITIAL_METRICS.get("lastBatchEvidence"), dict)
+    else {}
+)
+CURRENT_BATCH_CONTEXT: dict[str, Any] = {}
 
 
 def now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def duration_label(value: Any) -> str:
+    try:
+        duration_ms = max(0, int(value or 0))
+    except (TypeError, ValueError):
+        duration_ms = 0
+    return f"{duration_ms:,}ms"
+
+
+def source_ranges_label(ranges: Any) -> str:
+    if not isinstance(ranges, list) or not ranges:
+        return "-"
+    return ", ".join(
+        f"{int(item.get('partition') or 0)}:{int(item.get('startOffset') or 0)}-{int(item.get('endOffset') or 0)}"
+        for item in ranges if isinstance(item, dict)
+    ) or "-"
+
+
+def configured_rule_count(kind: str) -> int:
+    return sum(
+        1 for rule in RULES
+        if rule.get("kind") == kind and rule.get("enabled") is not False
+    )
+
+
+def dag_step(
+    step_id: str,
+    title: str,
+    status: str,
+    meta: str,
+    *,
+    completed_at: str | None = None,
+    details: list[list[str]] | None = None,
+    duration_ms: Any = None,
+    logs: list[str] | None = None,
+    note: str | None = None,
+) -> dict[str, Any]:
+    step = {
+        "id": step_id,
+        "title": title,
+        "status": status,
+        "meta": meta,
+        "details": details or [],
+    }
+    if completed_at and status in {"success", "failed"}:
+        step["completedAt"] = completed_at
+    if duration_ms is not None and status in {"success", "failed"}:
+        step["duration"] = duration_label(duration_ms)
+    if logs:
+        step["logs"] = [str(message)[:2000] for message in logs if message]
+    if note:
+        step["note"] = note
+    return step
+
+
+def build_batch_dag_steps(
+    *,
+    status: str,
+    consumed_count: int,
+    schema_accepted_count: int,
+    schema_quarantined_count: int,
+    stored_count: int,
+    quarantined_count: int,
+    source_ranges: list[dict[str, Any]],
+    transform: dict[str, Any] | None = None,
+    quality: dict[str, Any] | None = None,
+    durations: dict[str, Any] | None = None,
+    completed_at: str | None = None,
+    data_path: str | None = None,
+    manifest_path_value: str | None = None,
+    checkpoint_path: str | None = None,
+    failed_stage: str | None = None,
+    error: str | None = None,
+    catalog_status: str = "pending",
+) -> list[dict[str, Any]]:
+    transform = transform or {}
+    quality = quality or {}
+    durations = durations or {}
+    transform_count = int(transform.get("configuredStepCount") or configured_rule_count("transform"))
+    quality_count = int(quality.get("configuredRuleCount") or configured_rule_count("quality"))
+    order = ["source", "schema", "transform", "quality", "target", "manifest-checkpoint", "catalog"]
+    failed_index = order.index(failed_stage) if failed_stage in order else -1
+
+    def stage_status(stage: str) -> str:
+        index = order.index(stage)
+        if status == "failed" and failed_index >= 0:
+            if index < failed_index:
+                return "success"
+            if index == failed_index:
+                return "failed"
+            return "blocked"
+        if stage == "catalog":
+            return catalog_status
+        return "success" if status == "success" else "pending"
+
+    def stage_error(stage: str) -> list[str] | None:
+        return [error] if error and stage_status(stage) == "failed" else None
+
+    transform_note = "설정된 변환 규칙이 없어 입력을 그대로 전달했습니다." if transform_count == 0 else None
+    quality_note = "설정된 품질 규칙이 없어 입력을 그대로 전달했습니다." if quality_count == 0 else None
+    completed = completed_at or now()
+    steps = [
+        dag_step(
+            "source", "1. Source", stage_status("source"), f"Kafka {consumed_count:,}건 소비",
+            completed_at=completed, duration_ms=durations.get("sourceDurationMs"), logs=stage_error("source"),
+            details=[["입력 행", f"{consumed_count:,}"], ["Offset 범위", source_ranges_label(source_ranges)]],
+        ),
+        dag_step(
+            "schema", "2. Schema", stage_status("schema"), f"통과 {schema_accepted_count:,} · 격리 {schema_quarantined_count:,}",
+            completed_at=completed, duration_ms=durations.get("schemaDurationMs"), logs=stage_error("schema"),
+            details=[["입력 행", f"{consumed_count:,}"], ["스키마 통과", f"{schema_accepted_count:,}"], ["스키마 격리", f"{schema_quarantined_count:,}"], ["Schema fingerprint", str(SCHEMA_STATE.get("schemaFingerprint") or "-")]],
+        ),
+        dag_step(
+            "transform", "3. Transform", stage_status("transform"), "pass-through" if transform_count == 0 else f"규칙 {transform_count:,}개 적용",
+            completed_at=completed, duration_ms=durations.get("transformDurationMs"), logs=stage_error("transform"), note=transform_note,
+            details=[["설정 규칙", f"{transform_count:,}"], ["오류 행", f"{int(transform.get('errorCount') or 0):,}"], ["격리 행", f"{int(transform.get('quarantinedCount') or 0):,}"], ["제거 행", f"{int(transform.get('droppedCount') or 0):,}"]],
+        ),
+        dag_step(
+            "quality", "4. Quality", stage_status("quality"), "pass-through" if quality_count == 0 else str(quality.get("summary") or f"규칙 {quality_count:,}개 평가"),
+            completed_at=completed, duration_ms=durations.get("qualityDurationMs"), logs=stage_error("quality"), note=quality_note,
+            details=[["설정 규칙", f"{quality_count:,}"], ["평가 행", f"{int(quality.get('evaluatedRowCount') or 0):,}"], ["위반 행", f"{int(quality.get('invalidRowCount') or 0):,}"], ["통과율", f"{float(quality.get('passRate') or 0):.1f}%"]],
+        ),
+        dag_step(
+            "target", "5. Target", stage_status("target"), f"Parquet {stored_count:,}건 적재",
+            completed_at=completed, duration_ms=durations.get("targetDurationMs"), logs=stage_error("target"),
+            details=[["출력 행", f"{stored_count:,}"], ["전체 격리", f"{quarantined_count:,}"], ["저장 경로", data_path or "-"]],
+        ),
+        dag_step(
+            "manifest-checkpoint", "6. Manifest / Checkpoint", stage_status("manifest-checkpoint"), "publication과 offset 근거 저장",
+            completed_at=completed, duration_ms=durations.get("manifestDurationMs"), logs=stage_error("manifest-checkpoint"),
+            details=[["Manifest", manifest_path_value or "-"], ["Checkpoint", checkpoint_path or "-"]],
+        ),
+        dag_step(
+            "catalog", "7. Catalog", stage_status("catalog"), "Catalog 반영 완료" if catalog_status == "success" else "Catalog 반영 대기",
+            completed_at=completed if catalog_status == "success" else None,
+            details=[["상태", "반영 완료" if catalog_status == "success" else "반영 대기"]],
+        ),
+    ]
+    return steps
+
+
+def build_batch_evidence(**values: Any) -> dict[str, Any]:
+    batch_id = int(values.get("batch_id") or 0)
+    status = str(values.get("status") or "success")
+    evidence = {
+        "batchId": batch_id,
+        "status": status,
+        "publishedAt": values.get("completed_at"),
+        "consumedCount": int(values.get("consumed_count") or 0),
+        "storedCount": int(values.get("stored_count") or 0),
+        "quarantinedCount": int(values.get("quarantined_count") or 0),
+        "durationMs": int(values.get("duration_ms") or 0),
+        "sourceRanges": values.get("source_ranges") or [],
+        "dataPath": values.get("data_path"),
+        "quarantinePath": values.get("quarantine_path"),
+        "manifestPath": values.get("manifest_path_value"),
+        "lastError": values.get("error"),
+    }
+    evidence["dagSteps"] = build_batch_dag_steps(
+        status=status,
+        consumed_count=evidence["consumedCount"],
+        schema_accepted_count=int(values.get("schema_accepted_count") or 0),
+        schema_quarantined_count=int(values.get("schema_quarantined_count") or 0),
+        stored_count=evidence["storedCount"],
+        quarantined_count=evidence["quarantinedCount"],
+        source_ranges=evidence["sourceRanges"],
+        transform=values.get("transform"),
+        quality=values.get("quality"),
+        durations=values.get("durations"),
+        completed_at=values.get("completed_at"),
+        data_path=values.get("data_path"),
+        manifest_path_value=values.get("manifest_path_value"),
+        checkpoint_path=values.get("checkpoint_path"),
+        failed_stage=values.get("failed_stage"),
+        error=values.get("error"),
+        catalog_status=str(values.get("catalog_status") or "pending"),
+    )
+    return evidence
+
+
+def fail_current_batch(error: Exception) -> None:
+    global LAST_BATCH_EVIDENCE
+    if not CURRENT_BATCH_CONTEXT:
+        return
+    if (
+        LAST_BATCH_EVIDENCE.get("status") == "failed"
+        and int(LAST_BATCH_EVIDENCE.get("batchId") or -1) == int(CURRENT_BATCH_CONTEXT.get("batch_id") or -2)
+    ):
+        return
+    context = {**CURRENT_BATCH_CONTEXT}
+    context.update({
+        "status": "failed",
+        "completed_at": now(),
+        "duration_ms": max(0, round((time.monotonic() - float(context.get("batch_started_at") or time.monotonic())) * 1000)),
+        "error": str(error)[:2000],
+        "failed_stage": str(context.get("current_stage") or "target"),
+    })
+    LAST_BATCH_EVIDENCE = build_batch_evidence(**context)
 
 
 def apply_catalog_ack() -> None:
@@ -177,6 +382,7 @@ def report(status: str, *, batch_id: int | None = None, error: str | None = None
         "runtimeFingerprint": RUNTIME_FINGERPRINT,
         "ruleMetrics": RULE_METRICS,
         "lastRuleResult": LAST_RULE_RESULT,
+        "lastBatchEvidence": LAST_BATCH_EVIDENCE,
         "lastError": error,
     }
     temp_file = REPORT_FILE.with_suffix(".tmp")
@@ -736,7 +942,7 @@ def validate_manifest_retry(manifest: dict[str, Any], source_ranges: list[dict[s
 
 
 def main() -> None:
-    global QUERY, LAST_BATCH_ID, LAST_FLUSH_AT, LAST_BATCH_STORED_COUNT, LAST_BATCH_QUARANTINED_COUNT, LAST_BATCH_WRITTEN, PUBLISHED_BATCHES
+    global QUERY, LAST_BATCH_ID, LAST_FLUSH_AT, LAST_BATCH_STORED_COUNT, LAST_BATCH_QUARANTINED_COUNT, LAST_BATCH_WRITTEN, PUBLISHED_BATCHES, LAST_BATCH_EVIDENCE, CURRENT_BATCH_CONTEXT
     signal.signal(signal.SIGTERM, on_signal)
     signal.signal(signal.SIGINT, on_signal)
     schema, aliases, required_fields = source_schema()
@@ -767,6 +973,24 @@ def main() -> None:
             "status": "success",
             "transform": latest.get("transform") if isinstance(latest.get("transform"), dict) else {},
         })
+        latest_steps = latest.get("dagSteps") if isinstance(latest.get("dagSteps"), list) else None
+        if not latest_steps:
+            latest_steps = build_batch_dag_steps(
+                status="success",
+                consumed_count=int(latest.get("consumedCount") or 0),
+                schema_accepted_count=int(latest.get("schemaAcceptedCount") or latest.get("consumedCount") or 0),
+                schema_quarantined_count=int(latest.get("schemaQuarantinedCount") or 0),
+                stored_count=int(latest.get("storedCount") or 0),
+                quarantined_count=int(latest.get("quarantinedCount") or 0),
+                source_ranges=latest.get("sourceRanges") if isinstance(latest.get("sourceRanges"), list) else [],
+                transform=latest.get("transform") if isinstance(latest.get("transform"), dict) else {},
+                quality=latest.get("quality") if isinstance(latest.get("quality"), dict) else {},
+                completed_at=str(latest.get("publishedAt") or "") or None,
+                data_path=str(latest.get("dataPath") or "") or None,
+                manifest_path_value=str(latest.get("manifestPath") or "") or None,
+                checkpoint_path=checkpoint_path,
+            )
+        LAST_BATCH_EVIDENCE = {**latest, "status": "success", "lastError": None, "dagSteps": latest_steps}
     source = (spark.readStream.format("kafka")
         .option("kafka.bootstrap.servers", os.environ["ASKLAKE_CONTINUOUS_BROKER"])
         .option("subscribe", os.environ["ASKLAKE_CONTINUOUS_TOPIC"])
@@ -782,7 +1006,7 @@ def main() -> None:
     )
 
     def write_batch(batch: DataFrame, batch_id: int) -> None:
-        global LAST_BATCH_STORED_COUNT, LAST_BATCH_QUARANTINED_COUNT, LAST_BATCH_WRITTEN, PUBLISHED_BATCHES
+        global LAST_BATCH_STORED_COUNT, LAST_BATCH_QUARANTINED_COUNT, LAST_BATCH_WRITTEN, PUBLISHED_BATCHES, LAST_BATCH_EVIDENCE, CURRENT_BATCH_CONTEXT
         if STOP_REQUESTED:
             return
         batch_started_at = time.monotonic()
@@ -796,6 +1020,22 @@ def main() -> None:
             batch.unpersist()
             return
         source_ranges = batch_source_ranges(batch)
+        stage_durations = {
+            "sourceDurationMs": max(0, round((time.monotonic() - batch_started_at) * 1000)),
+        }
+        CURRENT_BATCH_CONTEXT = {
+            "batch_id": batch_id,
+            "batch_started_at": batch_started_at,
+            "checkpoint_path": checkpoint_path,
+            "consumed_count": total,
+            "current_stage": "schema",
+            "durations": stage_durations,
+            "quarantined_count": 0,
+            "schema_accepted_count": 0,
+            "schema_quarantined_count": 0,
+            "source_ranges": source_ranges,
+            "stored_count": 0,
+        }
         for item in source_ranges:
             PROCESSED_OFFSETS[str(item["partition"])] = int(item["endOffset"])
         published = read_batch_manifest(spark, output_path, batch_id)
@@ -816,6 +1056,24 @@ def main() -> None:
                 "status": "success",
                 "transform": published.get("transform") if isinstance(published.get("transform"), dict) else {},
             })
+            dag_steps = published.get("dagSteps") if isinstance(published.get("dagSteps"), list) else build_batch_dag_steps(
+                status="success",
+                consumed_count=int(published.get("consumedCount") or total),
+                schema_accepted_count=int(published.get("schemaAcceptedCount") or published.get("consumedCount") or total),
+                schema_quarantined_count=int(published.get("schemaQuarantinedCount") or 0),
+                stored_count=int(published.get("storedCount") or 0),
+                quarantined_count=int(published.get("quarantinedCount") or 0),
+                source_ranges=source_ranges,
+                transform=published.get("transform") if isinstance(published.get("transform"), dict) else {},
+                quality=published.get("quality") if isinstance(published.get("quality"), dict) else {},
+                durations=stage_durations,
+                completed_at=str(published.get("publishedAt") or "") or None,
+                data_path=str(published.get("dataPath") or "") or None,
+                manifest_path_value=str(published.get("manifestPath") or "") or None,
+                checkpoint_path=checkpoint_path,
+            )
+            LAST_BATCH_EVIDENCE = {**published, "status": "success", "lastError": None, "dagSteps": dag_steps}
+            CURRENT_BATCH_CONTEXT = {}
             report("running", batch_id=batch_id)
             batch.unpersist()
             return
@@ -843,8 +1101,24 @@ def main() -> None:
             pause_condition = pause_condition | incompatible_type
         if SCHEMA_POLICY.get("unknownField") == "pause" or SCHEMA_POLICY.get("additiveNullable") == "pause":
             pause_condition = pause_condition | unknown_condition
-        if batch.where(~malformed & pause_condition).limit(1).count():
+        schema_started_at = time.monotonic()
+        policy_pause_count = batch.where(~malformed & pause_condition).limit(1).count()
+        if policy_pause_count:
             SCHEMA_STATE["schemaStatus"] = "policy_paused"
+            stage_durations["schemaDurationMs"] = max(0, round((time.monotonic() - schema_started_at) * 1000))
+            CURRENT_BATCH_CONTEXT.update({
+                "current_stage": "schema",
+                "schema_accepted_count": max(0, total - policy_pause_count),
+                "schema_quarantined_count": policy_pause_count,
+            })
+            LAST_BATCH_EVIDENCE = build_batch_evidence(
+                **CURRENT_BATCH_CONTEXT,
+                status="failed",
+                completed_at=now(),
+                duration_ms=max(0, round((time.monotonic() - batch_started_at) * 1000)),
+                failed_stage="schema",
+                error="Schema evolution policy paused the worker before target publication.",
+            )
             report("failed", error="Schema evolution policy paused the worker before target publication.")
             raise RuntimeError("Schema evolution policy paused the worker before target publication.")
         invalid_condition = malformed
@@ -868,13 +1142,41 @@ def main() -> None:
             col("raw_payload"),
             current_timestamp().alias("ingested_at"),
         )
+        stage_durations["schemaDurationMs"] = max(0, round((time.monotonic() - schema_started_at) * 1000))
+        CURRENT_BATCH_CONTEXT.update({
+            "current_stage": "transform",
+            "schema_accepted_count": schema_valid_count,
+            "schema_quarantined_count": schema_invalid_count,
+            "quarantined_count": schema_invalid_count,
+        })
         try:
             rule_execution = apply_snapshot_rules(projected, RULES)
         except SnapshotRuleExecutionError as exc:
+            stage_durations.update(exc.timings or {})
             update_rule_metrics(exc.transform or {}, exc.quality or {}, failed=True)
+            CURRENT_BATCH_CONTEXT.update({
+                "current_stage": exc.failed_stage,
+                "transform": exc.transform or {},
+                "quality": exc.quality or {},
+            })
+            LAST_BATCH_EVIDENCE = build_batch_evidence(
+                **CURRENT_BATCH_CONTEXT,
+                status="failed",
+                completed_at=now(),
+                duration_ms=max(0, round((time.monotonic() - batch_started_at) * 1000)),
+                failed_stage=exc.failed_stage,
+                error=str(exc)[:2000],
+            )
             report("failed", error=str(exc)[:2000])
             batch.unpersist()
             raise
+        stage_durations.update(rule_execution.get("timings") or {})
+        target_started_at = time.monotonic()
+        CURRENT_BATCH_CONTEXT.update({
+            "current_stage": "target",
+            "quality": rule_execution["quality"],
+            "transform": rule_execution["transform"],
+        })
         transformed = rule_execution["frame"].persist()
         target_frame = select_continuous_target(transformed).persist()
         stored_count = target_frame.count()
@@ -944,12 +1246,38 @@ def main() -> None:
                     "sourceRanges": batch_source_ranges(evidence),
                 },
             )
+        stage_durations["targetDurationMs"] = max(0, round((time.monotonic() - target_started_at) * 1000))
+        CURRENT_BATCH_CONTEXT.update({
+            "current_stage": "manifest-checkpoint",
+            "data_path": data_path,
+            "quarantine_path": quarantine_batch_path,
+            "quarantined_count": quarantined_count,
+            "stored_count": stored_count,
+        })
         if os.environ.get("ASKLAKE_CONTINUOUS_FAIL_AFTER_DATA_WRITE_ONCE", "").lower() == "true":
             fault_marker = REPORT_FILE.with_suffix(".publish-fault-applied")
             if not fault_marker.exists():
                 fault_marker.write_text(now(), encoding="utf-8")
                 raise RuntimeError("Injected failure after data write and before manifest publication.")
         published_at = now()
+        stage_durations["manifestDurationMs"] = 0
+        batch_duration_ms = max(0, round((time.monotonic() - batch_started_at) * 1000))
+        batch_dag_steps = build_batch_dag_steps(
+            status="success",
+            consumed_count=total,
+            schema_accepted_count=schema_valid_count,
+            schema_quarantined_count=schema_invalid_count,
+            stored_count=stored_count,
+            quarantined_count=quarantined_count,
+            source_ranges=source_ranges,
+            transform=rule_execution["transform"],
+            quality=rule_execution["quality"],
+            durations=stage_durations,
+            completed_at=published_at,
+            data_path=data_path,
+            manifest_path_value=manifest_path(output_path, batch_id),
+            checkpoint_path=checkpoint_path,
+        )
         published_manifest = {
             "batchId": batch_id,
             "publicationId": f"stream:{JOB_ID}:batch:{batch_id}",
@@ -971,11 +1299,12 @@ def main() -> None:
             "schemaFingerprint": SCHEMA_STATE["schemaFingerprint"],
             "transform": rule_execution["transform"],
             "quality": rule_execution["quality"],
-            "durationMs": max(0, round((time.monotonic() - batch_started_at) * 1000)),
+            "durationMs": batch_duration_ms,
             "dataPath": data_path,
             "quarantinePath": quarantine_batch_path,
             "schemaEvidencePath": evidence_batch_path,
             "manifestPath": manifest_path(output_path, batch_id),
+            "dagSteps": batch_dag_steps,
         }
         write_batch_manifest(spark, output_path, batch_id, published_manifest)
         PUBLISHED_BATCHES = sorted(
@@ -988,6 +1317,8 @@ def main() -> None:
         LAST_BATCH_STORED_COUNT = stored_count
         LAST_BATCH_QUARANTINED_COUNT = quarantined_count
         LAST_BATCH_WRITTEN = True
+        LAST_BATCH_EVIDENCE = {**published_manifest, "status": "success", "lastError": None}
+        CURRENT_BATCH_CONTEXT = {}
         COUNTERS["consumedCount"] += total
         COUNTERS["storedCount"] += stored_count
         COUNTERS["quarantinedCount"] += quarantined_count
@@ -1017,6 +1348,7 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as exc:  # noqa: BLE001 - report worker failures to the control plane.
+        fail_current_batch(exc)
         COUNTERS["failedCount"] += 1
         report("failed", error=str(exc)[:2000])
         raise

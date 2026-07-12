@@ -1,4 +1,5 @@
 import re
+import time
 
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
@@ -20,11 +21,12 @@ ROW_ID = "__asklake_rule_row_id"
 
 
 class SnapshotRuleExecutionError(RuntimeError):
-    def __init__(self, stage, rule, reason, *, transform=None, quality=None):
+    def __init__(self, stage, rule, reason, *, transform=None, quality=None, timings=None):
         super().__init__(f"{stage} rule {rule.get('id') or 'unknown'} failed: {reason}")
         self.failed_stage = stage
         self.quality = quality
         self.rule_id = str(rule.get("id") or "")
+        self.timings = timings or {}
         self.transform = transform
 
 
@@ -67,6 +69,7 @@ def apply_snapshot_rules(frame, rules):
         "summary": "Quality rules passed" if quality_rules else "No quality rules",
         "warnCount": 0,
     }
+    transform_started_at = time.monotonic()
     current = frame.withColumn(ROW_ID, F.monotonically_increasing_id())
     quarantine = None
 
@@ -88,6 +91,7 @@ def apply_snapshot_rules(frame, rules):
                 reason,
                 transform=transform,
                 quality=quality,
+                timings={"transformDurationMs": _elapsed_ms(transform_started_at), "qualityDurationMs": 0},
             )
         if invalid_count and action == "quarantine":
             quarantine = _append_quarantine(
@@ -111,6 +115,8 @@ def apply_snapshot_rules(frame, rules):
             continue
         current = current.withColumn(output_name, expression)
 
+    transform_duration_ms = _elapsed_ms(transform_started_at)
+    quality_started_at = time.monotonic()
     quality_input_count = current.count()
     quality["evaluatedRowCount"] = quality_input_count
     flag_names = []
@@ -156,6 +162,7 @@ def apply_snapshot_rules(frame, rules):
             blocking_reason,
             transform=transform,
             quality=quality,
+            timings={"transformDurationMs": transform_duration_ms, "qualityDurationMs": _elapsed_ms(quality_started_at)},
         )
 
     current = flagged
@@ -198,8 +205,16 @@ def apply_snapshot_rules(frame, rules):
         "frame": current.drop(ROW_ID),
         "quality": quality,
         "quarantine": quarantine.drop(ROW_ID) if quarantine is not None else None,
+        "timings": {
+            "transformDurationMs": transform_duration_ms,
+            "qualityDurationMs": _elapsed_ms(quality_started_at),
+        },
         "transform": transform,
     }
+
+
+def _elapsed_ms(started_at):
+    return max(0, round((time.monotonic() - started_at) * 1000))
 
 
 def _transform_expression(frame, rule):

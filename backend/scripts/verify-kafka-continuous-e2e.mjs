@@ -36,6 +36,14 @@ try {
   assert(ruleRuntime.ruleFingerprint?.length === 64, "Continuous runtime must expose the canonical Rule fingerprint.");
   assert(ruleRuntime.ruleMetrics.transformQuarantinedCount === 1, "Transform quarantine counters must be durable.");
   assert(ruleRuntime.ruleMetrics.qualityWarnCount === 1, "Quality warn counters must be durable.");
+  const sessions = await get(`/api/etl/jobs/${encodeURIComponent(jobId)}/continuous/sessions`);
+  const activeSession = sessions.find((session) => session.status === "running") || sessions[0];
+  assert(activeSession?.dagSteps?.length === 7, "Continuous session history must expose the seven-stage Streaming DAG.");
+  assert(activeSession.dagSteps[0].status === "running", "An active session DAG must keep Source in the running state.");
+  const batches = await get(`/api/etl/jobs/${encodeURIComponent(jobId)}/continuous/sessions/${encodeURIComponent(activeSession.sessionId)}/batches?limit=100`);
+  assert(batches.length > 0, "Continuous session history must persist published micro-batches.");
+  assert(batches.every((batch) => batch.status === "success" && batch.dagSteps?.length === 7), "Every published micro-batch must expose a successful seven-stage DAG.");
+  assert(batches.every((batch) => batch.dagSteps.find((step) => step.id === "catalog")?.status === "success"), "Catalog stages must be acknowledged after materialization.");
   await post(`/api/etl/jobs/${encodeURIComponent(jobId)}/commands`, { command: "pauseContinuous" });
   await waitFor(async () => (await getJob()).continuousRuntime?.status === "paused", "pause");
 

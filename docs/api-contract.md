@@ -621,6 +621,8 @@ POST /api/etl/jobs/{jobId}/continuous/compactions
 
 `startContinuous`와 `resumeContinuous`는 각각 새 `KafkaContinuousSession`을 만들고 시작 시점의 누적 runtime counter를 baseline으로 저장한다. worker report를 읽을 때 session counter는 `현재 누적값 - baseline`으로 계산되므로 checkpoint를 이어받는 재시작에서도 이전 세션 수치가 섞이지 않는다. pause와 stop은 session을 `stopping`에서 `stopped`로, worker/container/heartbeat 실패는 `failed`로 끝내며 `endedAt`, `endReason`, `lastError`를 보존한다. `publishedBatches`는 `(sessionId, batchId)` unique key로 멱등 저장되고 시작 전 `lastBatchId` 이하의 복구 manifest는 새 session batch로 다시 기록하지 않는다.
 
+Phase 6부터 session과 batch는 `dagSteps`로 Source, Schema, Transform, Quality, Target, Manifest/Checkpoint, Catalog 7단계 증적을 반환한다. 각 단계는 status, input/output 근거, duration, error를 포함할 수 있다. 성공 publication의 Catalog 단계는 `catalogBatchCursor >= batchId`일 때만 `success`이고 그 전에는 `pending`이다. `Fail Batch`는 checkpoint와 manifest를 전진시키지 않지만 worker의 `lastBatchEvidence`로 `status: "failed"`, `lastError`, 실패 단계와 이후 `blocked` 단계를 DB에 남긴다. 규칙이 없는 Transform/Quality는 `meta: "pass-through"`로 표시한다.
+
 ```ts
 type KafkaContinuousSession = {
   sessionId: string;
@@ -639,11 +641,13 @@ type KafkaContinuousSession = {
   lag: number | null;
   checkpointPath: string;
   lastError: string | null;
+  dagSteps: JobDagStep[];
 };
 
 type KafkaContinuousBatch = {
   batchId: number;
   sessionId: string;
+  status: "running" | "success" | "failed";
   publishedAt: string | null;
   consumedCount: number;
   storedCount: number;
@@ -653,6 +657,8 @@ type KafkaContinuousBatch = {
   dataPath: string | null;
   quarantinePath: string | null;
   manifestPath: string | null;
+  lastError: string | null;
+  dagSteps: JobDagStep[];
 };
 ```
 
