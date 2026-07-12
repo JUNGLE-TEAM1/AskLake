@@ -41,6 +41,22 @@ assert(legacy.result.rules[1].onError === "fail_batch", "Fail Run must map to fa
 assert(legacy.transformSteps[0].onError === "Drop Row", "Canonical conversion must preserve Drop Row.");
 assertSchema(legacy.result.outputSchema, [["review", "String"], ["rating", "Double"], ["review_clean", "String"]]);
 
+const legacyDefaults = compile({
+  qualityRules: [
+    { enabled: true, failureAction: "Fail Run", id: "default-email", kind: "regex", severity: "Error", targetColumn: "review", validationType: "Regex Match" },
+    { enabled: true, failureAction: "Warn", id: "default-range", kind: "range", severity: "Warning", targetColumn: "rating", validationType: "Range Check" },
+  ],
+});
+assert(legacyDefaults.result.rules[0].parameters.pattern === "^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$", "Legacy regex default must be preserved.");
+assert(legacyDefaults.result.rules[1].parameters.min === 0, "Legacy range default must be preserved.");
+
+const nestedJson = compile({
+  qualityRules: [{ enabled: true, failureAction: "Fail Run", id: "nested-email", kind: "regex", severity: "Error", targetColumn: "raw.email", validationType: "Regex Match" }],
+  schemaColumns: [{ included: true, nullable: true, sourceName: "raw", targetName: "raw", type: "JSON" }],
+  sourceType: "Stream / Kafka",
+});
+assert(nestedJson.result.status === "pass", `Nested JSON input should compile: ${JSON.stringify(nestedJson.result.issues)}`);
+
 const canonical = compile({
   rules: [{
     contractVersion: "1.0",

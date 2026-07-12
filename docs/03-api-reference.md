@@ -151,8 +151,10 @@ type KafkaReviewIngestRequest = {
   targetLayer?: "RAW" | "BRONZE" | "SILVER";
   targetFormat?: "jsonl"; // direct Kafka target currently supports JSONL only
   targetDescription?: string;
-  transformSteps?: TransformStepDraft[]; // Job 실행 시 Job에 저장된 규칙이 전달됨
-  qualityRules?: QualityRuleDraft[];
+  ruleContractVersion?: "1.0";
+  rules?: CanonicalRuleDraft[]; // Job 실행의 source of truth
+  transformSteps?: TransformStepDraft[]; // legacy/debug compatibility
+  qualityRules?: QualityRuleDraft[]; // legacy/debug compatibility
   runId?: string;
   storageMode?: "local" | "s3";
   localLandingDir?: string;
@@ -214,6 +216,8 @@ type KafkaReviewEvent = {
 ```
 
 필수 필드는 `event_id`, `review`, `offset`, `created_at`이다. direct target object는 `s3://{targetBucket}/{targetPrefix}/snapshots/{snapshotId}/data.jsonl` 형태이며, metadata는 같은 snapshot directory의 `metadata.json`에 저장한다.
+
+Job command는 저장된 `ruleContractVersion`과 `rules`를 실행 직전에 다시 compile해 이 endpoint의 bridge payload로 전달한다. direct debug 호출에서 canonical 필드가 없을 때만 legacy `transformSteps`/`qualityRules`를 adapter로 변환한다. legacy의 빈 Regex, Accepted Values, Range 파라미터는 각각 기존 이메일 패턴, 국가 집합, 최소 0 기본값을 유지한다. schema가 `raw: JSON`을 선언하면 `raw.email` 같은 dotted Rule input도 유효하며, JSON root가 아닌 임의의 미등록 path는 계속 거절한다.
 
 ### Kafka snapshot direct target
 

@@ -923,6 +923,8 @@ def kafka_failure_result(request: dict[str, Any], run_id: str, error: ApiError, 
 
 
 def kafka_ingest_request_from_job(job: ETLJobModel, run_id: str) -> dict[str, Any]:
+    compiled_rules = compile_job_rules(job)
+    require_compiled_rules(compiled_rules)
     fields = job.source_config or []
     topic = (
         field_value(fields, "TOPIC / QUEUE NAME")
@@ -967,6 +969,11 @@ def kafka_ingest_request_from_job(job: ETLJobModel, run_id: str) -> dict[str, An
         "maxMessages": max_messages,
         "offsetPolicy": offset_policy,
         "registerCatalog": True,
+        "ruleContractVersion": compiled_rules.result.contract_version,
+        "rules": [
+            rule.model_dump(mode="json", by_alias=True)
+            for rule in compiled_rules.result.rules
+        ],
         "runId": run_id,
         "storageMode": target["storageMode"],
         "targetBucket": target["bucket"],
@@ -976,8 +983,14 @@ def kafka_ingest_request_from_job(job: ETLJobModel, run_id: str) -> dict[str, An
         "targetPrefix": target["prefix"],
         "timeoutMs": timeout_ms,
         "topic": topic,
-        "transformSteps": job.transform_steps or [],
-        "qualityRules": job.quality_rules or [],
+        "transformSteps": [
+            step.model_dump(mode="json", by_alias=True)
+            for step in compiled_rules.transform_steps
+        ],
+        "qualityRules": [
+            rule.model_dump(mode="json", by_alias=True)
+            for rule in compiled_rules.quality_rules
+        ],
     }
 
 
@@ -1572,16 +1585,27 @@ def airflow_dag_run_conf(job: ETLJobModel, command: str, run_id: str, submitted_
 
 
 def job_payload_for_spark(job: ETLJobModel) -> dict[str, Any]:
+    compiled_rules = compile_job_rules(job)
+    require_compiled_rules(compiled_rules)
     return {
         "id": job.id,
         "name": job.name,
         "owner": job.owner,
         "partition": job.partition,
         "qualityInvalidRows": job.quality_invalid_rows or [],
-        "qualityRules": job.quality_rules or [],
+        "qualityRules": [
+            rule.model_dump(mode="json", by_alias=True)
+            for rule in compiled_rules.quality_rules
+        ],
         "qualityScore": job.quality_score,
         "qualityStatus": job.quality_status,
         "rag": job.rag,
+        "ruleContractVersion": compiled_rules.result.contract_version,
+        "ruleOutputSchema": compiled_rules.result.output_schema,
+        "rules": [
+            rule.model_dump(mode="json", by_alias=True)
+            for rule in compiled_rules.result.rules
+        ],
         "schedule": job.schedule,
         "schemaColumns": job.schema_columns or [],
         "schemaSampleRows": job.schema_sample_rows or [],
@@ -1602,8 +1626,11 @@ def job_payload_for_spark(job: ETLJobModel) -> dict[str, Any]:
         "partitionColumns": job.partition_columns or [],
         "indexColumns": job.index_columns or [],
         "compression": job.compression,
-        "transformOutputColumns": job.transform_output_columns or [],
-        "transformSteps": job.transform_steps or [],
+        "transformOutputColumns": compiled_rules.result.output_schema,
+        "transformSteps": [
+            step.model_dump(mode="json", by_alias=True)
+            for step in compiled_rules.transform_steps
+        ],
     }
 
 
@@ -3559,6 +3586,20 @@ def compile_pipeline_rules(
         transform_output_columns=request.transform_output_columns,
         execution_mode=execution_mode or getattr(request, "execution_mode", "snapshot"),
         source_type=source_type or getattr(request, "source_type", ""),
+    )
+
+
+def compile_job_rules(job: ETLJobModel) -> CompiledRuleSet:
+    canonical_rules = job.rules if job.rule_contract_version is not None else None
+    return compile_rule_set(
+        contract_version=job.rule_contract_version,
+        rules=canonical_rules,
+        transform_steps=job.transform_steps or [],
+        quality_rules=job.quality_rules or [],
+        schema_columns=job.schema_columns or [],
+        transform_output_columns=job.transform_output_columns or [],
+        execution_mode=job.execution_mode or "snapshot",
+        source_type=job.source_type or "",
     )
 
 

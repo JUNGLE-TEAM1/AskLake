@@ -114,11 +114,25 @@ npm run verify:ui-regressions
 npm run build
 ```
 
-### Phase 3. Snapshot 실행 정합화
+### Phase 3. Snapshot 실행 정합화 (완료)
 
-- 일반 Snapshot과 Kafka Snapshot이 같은 fixture에서 동일한 출력과 오류 분기를 만든다.
-- Kafka offset snapshot과 commit 순서는 변경하지 않는다.
-- 구현 공유가 어려운 경계는 공통 conformance suite로 동등성을 강제한다.
+- 일반 Snapshot과 Kafka Snapshot은 versioned `rules[]`를 실행 직전에 다시 compile하고 같은 canonical 의미로 실행한다.
+- 공통 지원 Transform은 `cast`, `copy`, `default_value`, `json_extract`, `lowercase_trim`, `mask`, `null_guard`, `parse_timestamp`, `rename`이다.
+- 공통 지원 Quality는 `accepted_values`, `not_null`, `range`, `regex`이며 `Fail Batch`, `Quarantine`, `Warn + keep/drop_row/set_null`을 동일하게 적용한다.
+- 일반 Snapshot은 canonical Transform/Quality와 row disposition을 Parquet write 전에 적용한다. `Fail Batch`는 target을 만들지 않고, quarantine은 sibling Parquet evidence로 저장한다.
+- Kafka Snapshot은 같은 canonical runtime을 JSON event에 적용하되 기존 `offset snapshot -> fixed-range consume -> target/Catalog -> offset commit` 경계를 유지한다. 실패 시 offset을 commit하지 않는다.
+- canonical 범위를 벗어난 일반 Spark 전용 `sql_expression`, text analysis/classifier는 기존 Spark 경로를 유지한다. Kafka Snapshot은 지원하지 않는 operation을 실행 전에 거절한다.
+- legacy Rule adapter는 빈 Regex/Accepted Values/Range 설정의 기존 기본값과 JSON root 아래 dotted path를 보존한다.
+
+Phase 3 검증:
+
+```bash
+cd backend
+npm run verify:rule-compiler
+npm run verify:snapshot-rule-conformance
+npm run verify:snapshot-spark-pipeline
+npm run verify:kafka-review-scheduled-ingest
+```
 
 ### Phase 4. UI와 Preview 정합화
 

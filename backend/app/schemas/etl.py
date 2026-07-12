@@ -635,6 +635,8 @@ class KafkaReviewIngestRequest(CamelModel):
     target_format: str = "jsonl"
     target_layer: Literal["RAW", "BRONZE", "SILVER"] = "BRONZE"
     target_prefix: str = ""
+    rule_contract_version: str | None = None
+    rules: list[CanonicalRuleDraft] = Field(default_factory=list)
     transform_steps: list[TransformStepDraft] = Field(default_factory=list)
     quality_rules: list[QualityRuleDraft] = Field(default_factory=list)
     landing_bucket: str = "m3-raw"

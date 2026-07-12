@@ -211,7 +211,7 @@ def compile_rule_set(
             if len(inputs) != 1:
                 issues.append(_issue("RULE_INPUT_ARITY", "inputColumns", "Current rule contract requires exactly one input column.", rule_id))
             for input_name in inputs:
-                if input_name not in available_types:
+                if available_input_type(available_types, input_name) is None:
                     issues.append(_issue("RULE_INPUT_NOT_FOUND", "inputColumns", f"Rule input column does not exist: {input_name}", rule_id))
 
             if kind == "transform":
@@ -224,7 +224,7 @@ def compile_rule_set(
             elif kind == "quality" and outputs:
                 issues.append(_issue("RULE_OUTPUT_NOT_ALLOWED", "outputColumns", "Quality rules do not create output columns.", rule_id))
 
-        input_type = available_types.get(inputs[0], "String") if inputs else "String"
+        input_type = (available_input_type(available_types, inputs[0]) or "String") if inputs else "String"
         output_type = infer_output_type(operation, rule.output_type, parameters, input_type, outputs, declared_types)
         normalized_rule = CanonicalRuleDraft(
             contract_version="1.0",
@@ -433,13 +433,19 @@ def legacy_parameters(operation: str, raw_value: Any, kind: str) -> dict[str, An
     if parsed is not None:
         return parsed
     if kind == "quality":
-        if operation == "regex" and raw:
-            return {"pattern": raw}
-        if operation == "accepted_values" and raw:
-            return {"values": [item.strip() for item in raw.split(",") if item.strip()]}
+        if operation == "regex":
+            return {"pattern": raw or r"^[^\s@]+@[^\s@]+\.[^\s@]+$"}
+        if operation == "accepted_values":
+            return {
+                "values": [item.strip() for item in raw.split(",") if item.strip()]
+                if raw
+                else ["KOR", "JPN", "USA", "KR", "US"]
+            }
         if operation == "range" and raw:
             bounds = [item.strip() for item in raw.split(",")]
             return {"min": bounds[0], **({"max": bounds[1]} if len(bounds) > 1 else {})}
+        if operation == "range":
+            return {"min": 0}
         return {}
     if operation == "json_extract":
         return {"path": raw or "$.value"}
@@ -498,6 +504,15 @@ def canonical_schema_type(value: Any) -> str:
     if any(token in normalized for token in ["float", "double", "decimal", "numeric", "number", "real"]):
         return "Double"
     return "String"
+
+
+def available_input_type(available_types: dict[str, str], name: str) -> str | None:
+    if name in available_types:
+        return available_types[name]
+    root, separator, _path = str(name or "").partition(".")
+    if separator and available_types.get(root) == "JSON":
+        return "String"
+    return None
 
 
 def legacy_transform_operation(operation: str, output_type: str | None) -> tuple[str, str]:

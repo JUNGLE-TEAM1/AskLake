@@ -119,7 +119,9 @@ export function compileRuleContract(request = {}) {
         issues.push(issue("RULE_INPUT_ARITY", "inputColumns", "Current rule contract requires exactly one input column.", id));
       }
       for (const name of inputColumns) {
-        if (!available.has(name)) issues.push(issue("RULE_INPUT_NOT_FOUND", "inputColumns", `Rule input column does not exist: ${name}`, id));
+        if (!availableInputType(available, name)) {
+          issues.push(issue("RULE_INPUT_NOT_FOUND", "inputColumns", `Rule input column does not exist: ${name}`, id));
+        }
       }
       if (kind === "transform" && outputColumns.length !== 1) {
         issues.push(issue("RULE_OUTPUT_ARITY", "outputColumns", "Transform rules require exactly one output column.", id));
@@ -135,7 +137,7 @@ export function compileRuleContract(request = {}) {
       }
     }
 
-    const inputType = available.get(inputColumns[0]) || "String";
+    const inputType = availableInputType(available, inputColumns[0]) || "String";
     const outputType = kind === "transform"
       ? inferOutputType(operation, rule.outputType || declaredTypes.get(outputColumns[0]), parameters, inputType)
       : undefined;
@@ -307,12 +309,15 @@ function legacyParameters(operation, rawValue, kind) {
   const parsed = parseObject(raw);
   if (parsed) return parsed;
   if (kind === "quality") {
-    if (operation === "regex" && raw) return { pattern: raw };
-    if (operation === "accepted_values" && raw) return { values: raw.split(",").map((item) => item.trim()).filter(Boolean) };
+    if (operation === "regex") return { pattern: raw || "^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$" };
+    if (operation === "accepted_values") {
+      return { values: raw ? raw.split(",").map((item) => item.trim()).filter(Boolean) : ["KOR", "JPN", "USA", "KR", "US"] };
+    }
     if (operation === "range" && raw) {
       const [min, max] = raw.split(",").map((item) => item.trim());
       return { min, ...(max ? { max } : {}) };
     }
+    if (operation === "range") return { min: 0 };
     return {};
   }
   if (operation === "json_extract") return { path: raw || "$.value" };
@@ -383,6 +388,13 @@ function schemaTypeMap(schemaColumns, outputColumns = []) {
   }
   for (const [name, type] of outputColumns) result.set(name, canonicalSchemaType(type));
   return result;
+}
+
+function availableInputType(available, name) {
+  if (!name) return undefined;
+  if (available.has(name)) return available.get(name);
+  const [root, ...path] = text(name).split(".");
+  return path.length > 0 && available.get(root) === "JSON" ? "String" : undefined;
 }
 
 function canonicalSchemaType(value) {

@@ -49,15 +49,48 @@ def main() -> None:
         assert stored is not None
         assert stored.rules == [expected_updated_rule]
         assert etl_repository.get_job_schema(db, job_id).rules[0].parameters == {"value": False}
+        spark_payload = etl_service.job_payload_for_spark(stored)
+        assert spark_payload["ruleContractVersion"] == "1.0"
+        assert spark_payload["rules"][0]["parameters"] == {"value": False}
+        assert [list(column) for column in spark_payload["ruleOutputSchema"]] == [["rating", "Double"]]
 
         legacy = legacy_job("JOB-RULE-LEGACY", "legacy_target", rule_contract_version=None, rules=None)
         legacy_response = etl_repository.create_job(db, legacy)
         assert legacy_response.rules[0].parameters == {"value": "legacy"}
+        legacy_spark_payload = etl_service.job_payload_for_spark(etl_repository.get_job(db, legacy.id))
+        assert legacy_spark_payload["ruleContractVersion"] == "1.0"
+        assert legacy_spark_payload["rules"][0]["parameters"] == {"value": "legacy"}
 
         explicit_empty = legacy_job("JOB-RULE-EMPTY", "empty_target", rule_contract_version="1.0", rules=[])
         explicit_empty_response = etl_repository.create_job(db, explicit_empty)
         assert explicit_empty_response.rules == []
         assert explicit_empty_response.rule_compilation.status == "pass"
+        empty_spark_payload = etl_service.job_payload_for_spark(etl_repository.get_job(db, explicit_empty.id))
+        assert empty_spark_payload["rules"] == []
+        assert empty_spark_payload["transformSteps"] == []
+
+        kafka = legacy_job(
+            "JOB-RULE-KAFKA",
+            "kafka_rule_target",
+            rule_contract_version="1.0",
+            rules=[canonical_default_rule(0)],
+        )
+        kafka.source = "Stream / Kafka / Rule fixture"
+        kafka.source_type = "Stream / Kafka"
+        kafka.source_config = [
+            ["Broker / Endpoint", "redpanda:9092"],
+            ["TOPIC / QUEUE NAME", "rules.snapshot"],
+            ["CONSUMER GROUP ID", "asklake-rules-snapshot"],
+        ]
+        kafka.target_format = "jsonl"
+        etl_repository.create_job(db, kafka)
+        kafka_payload = etl_service.kafka_ingest_request_from_job(
+            etl_repository.get_job(db, kafka.id),
+            "run-rule-kafka",
+        )
+        assert kafka_payload["ruleContractVersion"] == "1.0"
+        assert kafka_payload["rules"][0]["parameters"] == {"value": 0}
+        assert kafka_payload["transformSteps"][0]["canonicalParameters"] == {"value": 0}
 
     print("verify-rule-persistence-contract: ok")
 

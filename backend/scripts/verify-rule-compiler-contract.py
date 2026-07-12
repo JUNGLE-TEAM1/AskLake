@@ -86,6 +86,50 @@ def main() -> None:
     assert legacy.quality_rules[0].failure_action == "Quarantine"
     assert legacy.result.output_schema[-1] == ("normalized_review", "String")
 
+    legacy_defaults = compile_rule_set(
+        rules=None,
+        transform_steps=[],
+        quality_rules=[
+            QualityRuleDraft(
+                failure_action="Fail Run",
+                id="default-email",
+                kind="regex",
+                severity="Error",
+                target_column="review",
+                validation_type="Regex Match",
+            ),
+            QualityRuleDraft(
+                failure_action="Warn",
+                id="default-range",
+                kind="range",
+                severity="Warning",
+                target_column="raw_amount",
+                validation_type="Range Check",
+            ),
+        ],
+        schema_columns=SCHEMA,
+    )
+    assert legacy_defaults.result.rules[0].parameters == {"pattern": r"^[^\s@]+@[^\s@]+\.[^\s@]+$"}
+    assert legacy_defaults.result.rules[1].parameters == {"min": 0}
+
+    nested_json = compile_rule_set(
+        rules=None,
+        transform_steps=[],
+        quality_rules=[QualityRuleDraft(
+            failure_action="Fail Run",
+            id="nested-email",
+            kind="regex",
+            severity="Error",
+            target_column="raw.email",
+            validation_type="Regex Match",
+        )],
+        schema_columns=[SchemaColumnDraft(source_name="raw", target_name="raw", type="JSON", nullable=True)],
+        execution_mode="snapshot",
+        source_type="Stream / Kafka",
+    )
+    assert nested_json.result.status == "pass"
+    assert nested_json.result.rules[0].input_columns == ["raw.email"]
+
     canonical = compile_rule_set(
         contract_version="1.0",
         rules=[CanonicalRuleDraft(
