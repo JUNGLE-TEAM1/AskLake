@@ -191,3 +191,15 @@
 - mock browser에서 `/sql` 진입, `commerce_orders_daily` 선택, Preview 실행, 처리 Job wizard 마지막 단계 진입을 확인했다.
 - `commerce` 태그 추가와 `order_date`, `channel` 다중 파티션 선택 후 Job을 생성했고, Job 상세에서 `parquet`, `Snappy`, `order_date/channel`이 유지되는 것을 확인했다.
 - 브라우저 console warning/error가 없음을 확인했다.
+
+## #594 Searchable Chart Select Alignment
+
+- SQL 차트 설정은 Dashboard `WidgetConfigPanel`의 기본 searchable combobox를 그대로 사용한다.
+- 데이터셋, X축, Y축, 집계 방식, 그룹 컬럼, 방향 등 단일 선택 필드에 검색 입력과 아래 화살표를 제공한다.
+- 선택된 옵션은 체크 아이콘 대신 원형 점으로 표시한다.
+- 좁은 SQL 도구 패널에서는 combobox와 색상 영역이 ScrollArea viewport 안쪽 폭을 넘지 않도록 `w-full`, `min-w-0`, `max-w-full` 경계를 유지한다.
+
+### #594 Verification
+
+- `npm run verify:ui-regressions` 64개 항목과 `npm run build`를 통과했다.
+- mock browser에서 Preview 실행 후 SQL 차트 설정을 열어 X축 검색, `channel` 선택, 원형 선택 표시와 패널 horizontal overflow가 없음을 확인했다.
