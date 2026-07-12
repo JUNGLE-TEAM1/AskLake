@@ -5,6 +5,7 @@ from fastapi import status
 
 from app.core.auth_context import ActorContext, require_any_permission, require_permission
 from app.core.errors import ApiError
+from app.core.materialization import active_materialization_runs, materialization_mode
 from app.core.permission_metadata import permission_grants_from_roles, resource_permissions
 from app.repositories.catalog_repository import CatalogRepository, dataset_model_to_payload
 from app.repositories.audit_repository import safe_record_audit_event
@@ -118,7 +119,7 @@ class CatalogService:
         run_id: str,
         actor: ActorContext | None = None,
     ) -> DeleteMaterializationRunResponse:
-        payload = self.repository.get_dataset_payload(dataset_id)
+        payload = self.repository.get_dataset_payload_for_update(dataset_id)
         if payload is None:
             raise ApiError(ErrorCode.NOT_FOUND, "Dataset not found", status.HTTP_404_NOT_FOUND)
         dataset = dataset_with_persisted_permission_grants(
@@ -172,6 +173,7 @@ class CatalogService:
                 status.HTTP_404_NOT_FOUND,
                 {"datasetId": dataset_id, "runId": run_id},
             )
+        validate_materialization_run_delete(materialization_runs, run_id)
 
         saved_payload = self.repository.save_dataset_payload(
             recalculate_dataset_payload_from_runs({
@@ -657,6 +659,26 @@ def append_materialization_run(
     if not run_id:
         return runs
     return [next_run, *[run for run in runs if str(run.get("runId") or "") != run_id]]
+
+
+def validate_materialization_run_delete(runs: list[dict[str, object]], run_id: str) -> None:
+    active_runs = active_materialization_runs(runs)
+    target = next((run for run in active_runs if str(run.get("runId") or "") == run_id), None)
+    if target is None or materialization_mode(target) != "snapshot":
+        return
+    dependent_delta_ids = [
+        str(run.get("runId") or "")
+        for run in active_runs
+        if materialization_mode(run) == "delta" and str(run.get("runId") or "")
+    ]
+    if not dependent_delta_ids:
+        return
+    raise ApiError(
+        ErrorCode.CONFLICT,
+        "Delete newer delta materializations before deleting their active snapshot",
+        status.HTTP_409_CONFLICT,
+        {"dependentDeltaRunIds": dependent_delta_ids, "snapshotRunId": run_id},
+    )
 
 
 def recalculate_dataset_payload_from_runs(payload: dict[str, object]) -> dict[str, object]:

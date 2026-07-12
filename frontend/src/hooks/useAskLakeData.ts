@@ -853,6 +853,7 @@ export function useAskLakeData({
   const commandPendingRef = useRef<Set<string>>(new Set());
   const continuousPollingRef = useRef<Set<string>>(new Set());
   const snapshotPollingRef = useRef<Set<string>>(new Set());
+  const dataHydrationRequestRef = useRef(0);
   const jobsFilterRequestRef = useRef(0);
 
   const jobExecutionEvidence = useMemo(
@@ -860,9 +861,65 @@ export function useAskLakeData({
     [dagStepsByRunId, runsByJobId, selectedRunIdByJobId],
   );
 
+  const applyHydratedJobs = (result: Awaited<ReturnType<typeof getJobs>>) => {
+    const normalizedJobs = result.jobs.map(normalizeJobRow);
+    const hydratedRunState = buildRunStateFromJobs(normalizedJobs);
+    setJobs(normalizedJobs);
+    setJobListFacets(result.facets);
+    setSelectedJob((current) => normalizedJobs.find((job) => job.id === current.id) ?? normalizedJobs[0] ?? emptySelectedJob);
+    setRunsByJobId(hydratedRunState.runsByJobId);
+    setSelectedRunIdByJobId(hydratedRunState.selectedRunIdByJobId);
+    setDagStepsByRunId(hydratedRunState.dagStepsByRunId);
+  };
+
+  const applyHydratedDatasets = (result: Awaited<ReturnType<typeof getDatasets>>) => {
+    const normalizedDatasets = result.map(normalizeDatasetRow);
+    setDatasets(normalizedDatasets);
+    setSelectedDataset((current) => normalizedDatasets.find((dataset) => dataset.id === current.id) ?? normalizedDatasets[0] ?? emptySelectedDataset);
+  };
+
+  const refreshData = async () => {
+    if (!enabled) return false;
+
+    const requestId = dataHydrationRequestRef.current + 1;
+    const jobsRequestId = jobsFilterRequestRef.current + 1;
+    dataHydrationRequestRef.current = requestId;
+    jobsFilterRequestRef.current = jobsRequestId;
+    setDataLoading(true);
+    setJobsLoading(false);
+    setDataError(null);
+    try {
+      const [jobsResult, datasetsResult] = await Promise.all([
+        getJobs(),
+        getDatasets(),
+      ]);
+      if (requestId !== dataHydrationRequestRef.current) return false;
+
+      if (jobsRequestId === jobsFilterRequestRef.current) applyHydratedJobs(jobsResult);
+      applyHydratedDatasets(
+        apiConfig.useMock
+          ? mergeCatalogDatasets(datasetsResult, loadStoredCatalogDatasets())
+          : datasetsResult,
+      );
+      showToast("Job과 데이터셋 목록을 새로고침했습니다.");
+      return true;
+    } catch (error) {
+      if (requestId !== dataHydrationRequestRef.current) return false;
+      const detail = getInitialReadErrorMessage(error);
+      setDataError(`refresh: ${detail}`);
+      showToast(`새로고침 실패: ${detail}`, "info");
+      return false;
+    } finally {
+      if (requestId === dataHydrationRequestRef.current) setDataLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (!enabled) {
+      dataHydrationRequestRef.current += 1;
+      jobsFilterRequestRef.current += 1;
       setDataLoading(false);
+      setJobsLoading(false);
       return;
     }
     if (apiConfig.useMock) {
@@ -878,48 +935,46 @@ export function useAskLakeData({
     }
 
     let cancelled = false;
+    const requestId = dataHydrationRequestRef.current + 1;
+    const jobsRequestId = jobsFilterRequestRef.current + 1;
+    dataHydrationRequestRef.current = requestId;
+    jobsFilterRequestRef.current = jobsRequestId;
 
     async function hydrateData() {
       setDataError(null);
-      const [jobsResult, datasetsResult] = await Promise.all([
-        readInitialResource(getJobs, "jobs", { facets: getJobListFacets([]), jobs: [] }),
-        readInitialResource(getDatasets, "catalog", []),
-      ]);
-      if (cancelled) return;
+      try {
+        const [jobsResult, datasetsResult] = await Promise.all([
+          readInitialResource(getJobs, "jobs", { facets: getJobListFacets([]), jobs: [] }),
+          readInitialResource(getDatasets, "catalog", []),
+        ]);
+        if (cancelled || requestId !== dataHydrationRequestRef.current) return;
 
-      const normalizedJobs = jobsResult.data.jobs.map(normalizeJobRow);
-      const normalizedDatasets = datasetsResult.data.map(normalizeDatasetRow);
-      const hydratedRunState = buildRunStateFromJobs(normalizedJobs);
-      setJobs(normalizedJobs);
-      setJobListFacets(jobsResult.data.facets);
-      setDatasets(normalizedDatasets);
-      setSelectedJob(normalizedJobs[0] ?? emptySelectedJob);
-      setSelectedDataset(normalizedDatasets[0] ?? emptySelectedDataset);
-      setRunsByJobId(hydratedRunState.runsByJobId);
-      setSelectedRunIdByJobId(hydratedRunState.selectedRunIdByJobId);
-      setDagStepsByRunId(hydratedRunState.dagStepsByRunId);
+        if (jobsRequestId === jobsFilterRequestRef.current) applyHydratedJobs(jobsResult.data);
+        applyHydratedDatasets(datasetsResult.data);
 
-      const fatalErrors = [jobsResult, datasetsResult]
-        .filter((result) => result.fatal && result.error)
-        .map((result) => result.error);
-      const recoverableErrors = [jobsResult, datasetsResult]
-        .filter((result) => !result.fatal && result.error)
-        .map((result) => result.error);
+        const fatalErrors = [jobsResult, datasetsResult]
+          .filter((result) => result.fatal && result.error)
+          .map((result) => result.error);
+        const recoverableErrors = [jobsResult, datasetsResult]
+          .filter((result) => !result.fatal && result.error)
+          .map((result) => result.error);
 
-      if (fatalErrors.length > 0) {
-        setDataError(fatalErrors.join(" / "));
-      } else if (recoverableErrors.length > 0) {
-        setDataError(null);
-        showToast("DB API 초기 목록을 불러오지 못해 빈 상태로 표시합니다.", "info");
+        if (fatalErrors.length > 0) {
+          setDataError(fatalErrors.join(" / "));
+        } else if (recoverableErrors.length > 0) {
+          setDataError(null);
+          showToast("DB API 초기 목록을 불러오지 못해 빈 상태로 표시합니다.", "info");
+        }
+      } finally {
+        if (!cancelled && requestId === dataHydrationRequestRef.current) setDataLoading(false);
       }
-
-      setDataLoading(false);
     }
 
     void hydrateData();
 
     return () => {
       cancelled = true;
+      dataHydrationRequestRef.current += 1;
     };
   }, [enabled]);
 
@@ -1351,6 +1406,7 @@ export function useAskLakeData({
     openJobDetail,
     openJobRuns,
     filterJobs,
+    refreshData,
     createSqlDatasetJob,
     deleteMaterializationRun,
     runsByJobId,
