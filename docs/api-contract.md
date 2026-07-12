@@ -8,6 +8,7 @@
 | 단계 | 우선순위 | API | 목적 |
 | --- | --- | --- | --- |
 | 1 | P0 | `POST /api/etl/jobs` | 새 수집/처리 생성 완료 |
+| 1b | P0 | `POST /api/etl/record-parsing/preview` | 이름 없는 TXT 레코드의 구조화 Preview와 필드 개수 검증 |
 | 1a | P0 | `PATCH /api/etl/jobs/{jobId}` | 생성 Job의 허용 설정 update (Issue #460) |
 | 2 | P0 | `POST /api/etl/jobs/{jobId}/commands` | 즉시 실행, 재실행, 일시정지, 현재 Run 취소, 스케줄 중지 |
 | 3 | P0 | `POST /api/query/runs` | 읽기 전용 SQL 실행 |
@@ -689,6 +690,66 @@ type SqlResultDraft = {
 ```
 
 ## 7. P0 API
+
+### 7.0 Record Parsing Preview
+
+조건부 1.5단계는 이름 있는 필드가 없는 MinIO/S3 TXT 입력에만 적용한다. Source 단계에서 선택한 `.txt`/`.log`의 제한 샘플이 `line_number`, `value` 형태이면 frontend는 `requiresRecordParsing=true`로 판단하고 `/etl/record-parsing`으로 이동한다. PostgreSQL, MongoDB JSON, Kafka JSON, JSON/JSONL, Parquet, 이름 있는 CSV는 이 단계를 건너뛴다.
+
+`POST /api/etl/record-parsing/preview`
+
+```ts
+type RecordParsingColumnDraft = {
+  position: number;
+  name: string;
+  inferredType: "String" | "Integer" | "Float" | "Boolean" | "Timestamp";
+};
+
+type RecordParsingDraft = {
+  enabled: boolean;
+  delimiterKind: "whitespace";
+  delimiterPattern: "\\s+";
+  header: boolean;
+  expectedFieldCount: number;
+  columns: RecordParsingColumnDraft[];
+};
+
+type RecordParsingPreviewRequest = {
+  rawLines: string[];
+  recordParsing: RecordParsingDraft;
+};
+```
+
+Response `200 OK`:
+
+```ts
+type RecordParsingInvalidRow = {
+  lineNumber: number;
+  expectedFieldCount: number;
+  actualFieldCount: number;
+  rawPreview: string;
+};
+
+type RecordParsingPreviewResponse = {
+  canApply: boolean;
+  columns: SchemaColumnDraft[];
+  sampleRows: string[][];
+  recordParsing: RecordParsingDraft;
+  totalRows: number;
+  validRows: number;
+  invalidRows: RecordParsingInvalidRow[];
+};
+```
+
+규칙:
+
+- 빈 줄과 앞뒤 공백은 무시하고, 연속 공백과 tab은 하나의 구분자로 처리한다.
+- `header=true`이면 첫 번째 비어 있지 않은 행을 컬럼명으로 사용하고 데이터 행에서 제외한다.
+- `expectedFieldCount=0`이면 데이터 행에서 가장 많이 나타난 필드 개수를 사용한다. 최빈값이 동률이면 `canApply=false`다.
+- 컬럼명은 비어 있거나 중복될 수 없고 컬럼 수는 `expectedFieldCount`와 같아야 한다.
+- Preview의 invalid row는 line number, expected/actual count, 200자 이하 raw preview만 반환한다.
+- 부족한 값을 null로 채우거나 초과 값을 자르거나 오류 행을 조용히 버리지 않는다.
+- `CreatePipelineRequest.recordParsing`은 확정된 규칙을 저장한다. Spark batch runtime은 전체 TXT 입력에 같은 규칙을 다시 적용하고 불일치가 하나라도 있으면 `RECORD_FIELD_COUNT_MISMATCH`로 target write 전에 Run을 실패시킨다.
+- 이번 범위는 MinIO/S3 TXT batch만 지원한다. Kafka Snapshot/Continuous 원시 TXT와 임의 정규식은 지원하지 않는다.
 
 ### 7.1 Target S3 Path Picker
 

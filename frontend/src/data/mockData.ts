@@ -1194,6 +1194,13 @@ export const summaryByFlow: Record<FlowId, Array<[string, string]>> = {
     ["인증 방식", "IAM Role"],
     ["다음 단계", "스키마 추론"],
   ],
+  recordParsing: [
+    ["입력 포맷", "TXT"],
+    ["구분자", "연속 공백"],
+    ["샘플 검증", "대기"],
+    ["출력 필드", "0개"],
+    ["다음 단계", "스키마 확인"],
+  ],
   schema: [
     ["샘플 Row", "10,000"],
     ["추론 필드", "24개"],

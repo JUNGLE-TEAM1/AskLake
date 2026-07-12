@@ -1,5 +1,5 @@
 import { apiClient, apiConfig } from "./apiClient";
-import type { DraftPipelinePatch, SchemaColumnDraft, SourceDraft } from "../types";
+import type { DraftPipelinePatch, RecordParsingDraft, RecordParsingPreviewResponse, SchemaColumnDraft, SourceDraft } from "../types";
 
 type SourceFieldRows = Array<[string, string]>;
 
@@ -30,11 +30,16 @@ export async function testSourceConnector(sourceType: string, fields: SourceFiel
   if (normalizedSourceType === "SQL Result") {
     return buildSqlResultConnectorAnalysis(fields);
   }
-  return normalizeConnectorAnalysis(
+  return withRecordParsingSourceMetadata(normalizeConnectorAnalysis(
     await postSourceConnector(normalizedSourceType, fields),
     normalizedSourceType,
     fields,
-  );
+  ), fields);
+}
+
+export async function previewRecordParsing(rawLines: string[], recordParsing: RecordParsingDraft): Promise<RecordParsingPreviewResponse> {
+  if (apiConfig.useMock) return buildMockRecordParsingPreview(rawLines, recordParsing);
+  return apiClient.post<RecordParsingPreviewResponse>("/api/etl/record-parsing/preview", { rawLines, recordParsing });
 }
 
 export async function listSourceAssets(sourceType: string, fields: SourceFieldRows, prefix = ""): Promise<SourceAssetsResponse> {
@@ -208,7 +213,66 @@ function hasSelectedObject(fields: SourceFieldRows) {
 }
 
 function looksLikeDataFile(value: string) {
-  return /\.(csv|tsv|txt|json|jsonl|parquet)$/i.test(value.trim());
+  return /\.(csv|tsv|txt|log|json|jsonl|parquet)$/i.test(value.trim());
+}
+
+function withRecordParsingSourceMetadata(analysis: SourceConnectorAnalysis, fields: SourceFieldRows): SourceConnectorAnalysis {
+  const sampleObject = fieldValue(analysis.draftPatch.source?.sourceConfig ?? fields, "__Sample Object")
+    || fieldValue(analysis.draftPatch.source?.sourceConfig ?? fields, "__Selected Object")
+    || fieldValue(fields, "Path / Prefix");
+  const detectedFormat = /\.(txt|log)$/i.test(sampleObject) ? "TXT" : undefined;
+  const rawValueIndex = analysis.previewColumns.findIndex((column) => /^(value|raw_value)$/i.test(column));
+  const requiresRecordParsing = detectedFormat === "TXT" && rawValueIndex >= 0;
+  if (!analysis.draftPatch.source) return analysis;
+  return {
+    ...analysis,
+    draftPatch: {
+      ...analysis.draftPatch,
+      source: {
+        ...analysis.draftPatch.source,
+        detectedFormat,
+        rawPreviewLines: requiresRecordParsing
+          ? analysis.previewRows.map((row) => row[rawValueIndex] ?? "").filter((line) => line.trim())
+          : [],
+        requiresRecordParsing,
+      },
+    },
+  };
+}
+
+function buildMockRecordParsingPreview(rawLines: string[], recordParsing: RecordParsingDraft): RecordParsingPreviewResponse {
+  const indexed = rawLines.map((line, index) => ({ line, lineNumber: index + 1 })).filter(({ line }) => line.trim());
+  const rows = indexed.map(({ line, lineNumber }) => ({ line, lineNumber, values: line.trim().split(/\s+/) }));
+  const dataRows = recordParsing.header ? rows.slice(1) : rows;
+  const counts = new Map<number, number>();
+  dataRows.forEach(({ values }) => counts.set(values.length, (counts.get(values.length) ?? 0) + 1));
+  const maxCount = Math.max(0, ...counts.values());
+  const dominant = Array.from(counts.entries()).filter(([, count]) => count === maxCount).map(([count]) => count);
+  const expectedFieldCount = recordParsing.expectedFieldCount || recordParsing.columns.length || (dominant.length === 1 ? dominant[0] : 0);
+  const valid = dataRows.filter(({ values }) => values.length === expectedFieldCount);
+  const columns = Array.from({ length: expectedFieldCount }, (_, position) => {
+    const current = recordParsing.columns[position];
+    const values = valid.map((row) => row.values[position] ?? "");
+    const inferredType = current?.inferredType ?? inferPreviewColumnType(values);
+    const name = current?.name || `field_${position + 1}`;
+    return { confidence: 90, nullable: false, sourceName: name, targetName: name, type: inferredType };
+  });
+  const normalizedColumns = columns.map((column, position) => ({ position, name: column.targetName, inferredType: column.type as RecordParsingDraft["columns"][number]["inferredType"] }));
+  const invalidRows = dataRows.filter(({ values }) => values.length !== expectedFieldCount).slice(0, 20).map(({ line, lineNumber, values }) => ({
+    actualFieldCount: values.length,
+    expectedFieldCount,
+    lineNumber,
+    rawPreview: line.slice(0, 200),
+  }));
+  return {
+    canApply: expectedFieldCount > 0 && dataRows.length > 0 && invalidRows.length === 0,
+    columns,
+    invalidRows,
+    recordParsing: { ...recordParsing, columns: normalizedColumns, enabled: true, expectedFieldCount },
+    sampleRows: valid.map(({ values }) => values),
+    totalRows: dataRows.length,
+    validRows: valid.length,
+  };
 }
 
 function inferSchemaColumnsFromPreview(columns: string[], rows: string[][]): SchemaColumnDraft[] {
