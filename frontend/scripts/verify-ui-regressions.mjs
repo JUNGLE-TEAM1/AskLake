@@ -1,40 +1,69 @@
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 
 const root = resolve(import.meta.dirname, "..");
 
-const read = (path) => readFileSync(resolve(root, path), "utf8");
+const readCssWithLocalImports = (filePath, visited = new Set()) => {
+  if (visited.has(filePath)) return "";
+  visited.add(filePath);
+
+  return readFileSync(filePath, "utf8").replace(
+    /@import\s+["'](\.\/[^"']+)["'];/g,
+    (_, importPath) => readCssWithLocalImports(resolve(dirname(filePath), importPath), visited),
+  );
+};
+
+const read = (path) => {
+  const filePath = resolve(root, path);
+  return path.endsWith(".css")
+    ? readCssWithLocalImports(filePath)
+    : readFileSync(filePath, "utf8");
+};
 
 const checks = [
   {
-    name: "SQL analysis uses Dashboard widget settings, a Nessie popover, and an in-dialog Job wizard",
+    name: "Landing hero renders a scalable vector brand instead of enlarged raster logos",
+    file: "src/pages/landing/AskLakeLandingPage.tsx",
+    patterns: [
+      /<h1 className="landing-hero-wordmark" id="landing-hero-title">\s*AskLake\s*<\/h1>/,
+      /src="\/asklake-wave-hero\.svg"/,
+    ],
+    forbiddenPatterns: [
+      /asklake-logo\.png/,
+      /asklake-wave-icon\.png/,
+    ],
+  },
+  {
+    name: "Landing vector wordmark stays crisp and responsive",
+    file: "src/styles/landing.css",
+    patterns: [
+      /font-size: clamp\(72px, 20vw, 248px\);/,
+      /text-rendering: geometricPrecision;/,
+      /-webkit-font-smoothing: antialiased;/,
+      /background: url\("\/asklake-wave-hero\.svg"\) center \/ contain no-repeat;/,
+    ],
+    forbiddenPatterns: [
+      /\.landing-hero-wordmark img/,
+      /asklake-wave-icon\.png/,
+    ],
+  },
+  {
+    name: "SQL analysis page orchestrates focused SQL modules",
     file: "src/pages/sql/SqlAnalysisPage.tsx",
     patterns: [
-      /className="sql-workspace grid min-w-0 content-start gap-3"/,
-      /className="sql-query-panel grid gap-4 p-5"/,
-      /className=\{cn\("sql-result-panel grid gap-4 p-5", resultDraft && "has-result"\)\}/,
-      /className="focus-visible:ring-0 focus-visible:ring-offset-0"[\s\S]*id="sql-query-editor"/,
+      /import \{ SqlDatasetContextPanel \} from "\.\/SqlDatasetContextPanel";/,
+      /import \{ SqlQueryEditorPanel \} from "\.\/SqlQueryEditorPanel";/,
+      /import \{ SqlResultsPanel, type SqlResultView \} from "\.\/SqlResultsPanel";/,
+      /const contextPanel = useSqlContextPanel\(\{/,
+      /const queryAi = useSqlQueryAi\(\{/,
       /limit: previewRowLimit,/,
-      /<TabsTrigger value="tables"><Table2 \/> 분석 테이블<\/TabsTrigger>/,
-      /<TabsTrigger value="chart"><BarChart3 \/> 차트 생성하기<\/TabsTrigger>/,
-      /<SqlChartConfigurator/,
       /leadingAlign="center"/,
-      /const handleSqlAssistantOpenChange = \(nextOpen: boolean\) =>/,
-      /<SqlAiWriterDialog/,
-      /<SqlAiWriterDialog[\s\S]*<Button type="button" onClick=\{resetQuery\}/,
-      /className="sql-result-toolbar"/,
-      /aria-label="차트 보기"[\s\S]*차트 보기/,
-      /aria-label="데이터 미리보기"[\s\S]*데이터 미리보기/,
-      /<SqlChartEmptyState \/>/,
+      /<SqlDatasetContextPanel/,
+      /<SqlQueryEditorPanel/,
+      /<SqlResultsPanel/,
       /<SqlJobWizardDialog/,
       /onCreate=\{createDerivedDatasetJob\}/,
       /onCreateDatasetJob: \(request: CreateDerivedDatasetRequest\) => Promise<boolean>;/,
-      /<PanelHeader[\s\S]*title="선택 데이터셋 기준 SQL"/,
-      /<ActionGroup density="compact" wrap="wrap">/,
-      /import \{ ScrollArea \} from "@\/components\/ui\/scroll-area";/,
-      /<ScrollArea className="sql-result-scroll" scrollbars="both" type="always">/,
-      /<DialogTitle>SQL 결과 전체 보기<\/DialogTitle>/,
-      /<SqlResultChart chartConfig=\{chartConfig\} source=\{activeChartSource\} \/>/,
       /const visiblePreflightSummary = preflightSummary\?\.tone === "success" \? null : preflightSummary;/,
     ],
     forbiddenPatterns: [
@@ -54,6 +83,43 @@ const checks = [
       /title=\{resultDraft \? `\$\{resultDraft\.rowCount\}행 조회됨`/,
       />완료</,
       /실행 ID \{resultDraft\.runId\}/,
+    ],
+  },
+  {
+    name: "SQL context panel keeps dataset and Dashboard chart tools together",
+    file: "src/pages/sql/SqlDatasetContextPanel.tsx",
+    patterns: [
+      /<TabsTrigger value="tables"><Table2 \/> 분석 테이블<\/TabsTrigger>/,
+      /<TabsTrigger value="chart"><BarChart3 \/> 차트 생성하기<\/TabsTrigger>/,
+      /<SqlDatasetTree/,
+      /<SqlChartConfigurator/,
+      /className=\{styles\.datasetPanel\}/,
+    ],
+  },
+  {
+    name: "SQL editor module keeps Nessie, reset, execution, and autocomplete controls",
+    file: "src/pages/sql/SqlQueryEditorPanel.tsx",
+    patterns: [
+      /<SqlAiWriterDialog disabled=\{disabled\} \{\.\.\.ai\} \/>/,
+      /<Button type="button" onClick=\{onReset\}/,
+      /<Button type="button" onClick=\{onExecute\}/,
+      /className="focus-visible:ring-0 focus-visible:ring-offset-0"[\s\S]*id="sql-query-editor"/,
+      /autocompleteCandidates\.map/,
+      /title="선택 데이터셋 기준 SQL"/,
+    ],
+  },
+  {
+    name: "SQL result module reuses one result renderer in panel and dialog",
+    file: "src/pages/sql/SqlResultsPanel.tsx",
+    patterns: [
+      /function SqlResultContent/,
+      /aria-label="차트 보기"[\s\S]*차트 보기/,
+      /aria-label="데이터 미리보기"[\s\S]*데이터 미리보기/,
+      /<SqlChartEmptyState \/>/,
+      /<DialogTitle>SQL 결과 전체 보기<\/DialogTitle>/,
+      /<SqlResultChart chartConfig=\{chartConfig\} source=\{activeChartSource\} \/>/,
+      /className=\{styles\.resultToolbar\}/,
+      /className=\{styles\.resultScroll\}/,
     ],
   },
   {
@@ -135,10 +201,10 @@ const checks = [
   },
   {
     name: "SQL Job governance keeps access scope and permission summary aligned",
-    file: "src/pages/sql/SqlJobWizardDialog.tsx",
+    file: "src/pages/sql/sqlJobWizardModel.ts",
     patterns: [
-      /function buildPermissionSummary\(accessScope: SqlJobWizardAccessScope\)/,
-      /accessScope,\s*permissionSummary: buildPermissionSummary\(accessScope\)/s,
+      /export function buildPermissionSummary\(accessScope: SqlJobWizardAccessScope\)/,
+      /accessScope,\s*owner:[\s\S]*permissionSummary: buildPermissionSummary\(accessScope\)/s,
     ],
     forbiddenPatterns: [
       /eyebrow="처리 작업"/,
@@ -152,17 +218,28 @@ const checks = [
     ],
   },
   {
-    name: "SQL Job wizard uses shared shadcn dropdown fields across selectable steps",
-    file: "src/pages/sql/SqlJobWizardDialog.tsx",
+    name: "SQL Job wizard fields use shared shadcn dropdown and time controls",
+    file: "src/pages/sql/SqlJobWizardFields.tsx",
     patterns: [
-      /function WizardSelectField<T extends string>/,
-      /function WizardTimeField/,
+      /export function WizardSelectField<T extends string>/,
+      /export function WizardTimeField/,
       /const timeHourOptions = Array\.from\(\{ length: 24 \}/,
       /const timeMinuteOptions = Array\.from\(\{ length: 60 \}/,
       /<DropdownMenuTrigger asChild>/,
       /<DropdownMenuRadioGroup/,
       /<PopoverContent align="start" className="grid w-72 gap-3 p-3">/,
       /<ScrollArea className="h-52 rounded-lg border border-slate-200">/,
+    ],
+    forbiddenPatterns: [
+      /NativeSelect/,
+      /<select/,
+      /type="time"/,
+    ],
+  },
+  {
+    name: "SQL Job wizard steps compose the shared selectable fields",
+    file: "src/pages/sql/SqlJobWizardSteps.tsx",
+    patterns: [
       /label="실행 시간"/,
       /label="실행 요일"/,
       /label="시간대"/,
@@ -170,11 +247,6 @@ const checks = [
       /label="접근 범위"/,
       /label="압축 방식"/,
       /label="파티션 컬럼"/,
-    ],
-    forbiddenPatterns: [
-      /NativeSelect/,
-      /<select/,
-      /type="time"/,
     ],
   },
   {
@@ -192,18 +264,26 @@ const checks = [
   },
   {
     name: "SQL workspace height matches the dataset panel in all result states",
-    file: "src/styles/sql.css",
+    file: "src/pages/sql/SqlAnalysisPage.module.css",
     patterns: [
       /--sql-workspace-height:\s*min\(860px, calc\(100dvh - 24px\)\);/,
-      /\.sql-dataset-panel[\s\S]*height:\s*var\(--sql-workspace-height\);/,
-      /\.sql-workspace[\s\S]*height:\s*var\(--sql-workspace-height\);/,
-      /\.sql-result-panel\.has-result[\s\S]*grid-template-rows:\s*max-content minmax\(0, 1fr\);/,
-      /\.sql-result-toolbar[\s\S]*display:\s*flex;/,
-      /\.sql-result-toolbar[\s\S]*flex-wrap:\s*wrap;/,
-      /\.sql-ai-popover[\s\S]*width:\s*min\(440px, calc\(100vw - 32px\)\);/,
-      /@media \(max-width: 860px\)[\s\S]*\.sql-dataset-panel[\s\S]*height:\s*min\(720px, 80dvh\);/,
-      /@media \(max-width: 860px\)[\s\S]*\.sql-workspace[\s\S]*grid-column:\s*1;/,
-      /\.sql-result-scroll[\s\S]*height:\s*100%;/,
+      /\.datasetPanel[\s\S]*height:\s*var\(--sql-workspace-height\);/,
+      /\.workspace[\s\S]*height:\s*var\(--sql-workspace-height\);/,
+      /\.resultPanel[\s\S]*grid-template-rows:\s*max-content minmax\(0, 1fr\);/,
+      /\.resultToolbar[\s\S]*display:\s*flex;/,
+      /\.resultToolbar[\s\S]*flex-wrap:\s*wrap;/,
+      /@media \(max-width: 860px\)[\s\S]*\.datasetPanel[\s\S]*height:\s*min\(720px, 80dvh\);/,
+      /@media \(max-width: 860px\)[\s\S]*\.workspace[\s\S]*grid-column:\s*1;/,
+      /\.resultScroll,[\s\S]*height:\s*100%;/,
+    ],
+  },
+  {
+    name: "Nessie popover styles stay scoped to the SQL AI module",
+    file: "src/pages/sql/SqlAiWriterDialog.module.css",
+    patterns: [
+      /\.popover[\s\S]*width:\s*min\(440px, calc\(100vw - 32px\)\);/,
+      /\.preview[\s\S]*height:\s*min\(220px, 28vh\);/,
+      /@media \(prefers-reduced-motion: reduce\)/,
     ],
   },
   {
@@ -263,17 +343,17 @@ const checks = [
   },
   {
     name: "SQL collapsed workspace stays in the visible grid column",
-    file: "src/styles/sql.css",
+    file: "src/pages/sql/SqlAnalysisPage.module.css",
     patterns: [
-      /\.sql-page\.context-collapsed \.sql-workspace\s*\{[^}]*grid-column:\s*1;/s,
-      /\.sql-page\.context-collapsed \.sql-workspace\s*\{[^}]*min-width:\s*0;/s,
+      /\.collapsed \.workspace\s*\{[^}]*grid-column:\s*1;/s,
+      /\.collapsed \.workspace\s*\{[^}]*min-width:\s*0;/s,
     ],
   },
   {
     name: "SQL collapsed control stays inside the workspace rail",
     file: "src/pages/sql/SqlAnalysisPage.tsx",
     patterns: [
-      /<main className="sql-workspace[\s\S]*contextCollapsed && \([\s\S]*className="sql-context-rail-button"/,
+      /<main className=\{cn\(styles\.workspace[\s\S]*contextPanel\.collapsed && \([\s\S]*className=\{styles\.contextRailButton\}/,
     ],
   },
   {
@@ -507,7 +587,7 @@ const checks = [
   },
   {
     name: "Dashboard edit toolbar separates active tools from action buttons",
-    file: "src/pages/dashboard/runtime/DashboardRuntimeView.tsx",
+    file: "src/pages/dashboard/runtime/DashboardEditToolbar.tsx",
     patterns: [
       /import \{ ButtonGroup \} from "@\/components\/ui\/button-group";/,
       /import \{ ToggleGroup, ToggleGroupItem \} from "@\/components\/ui\/toggle-group";/,
@@ -639,9 +719,24 @@ const checks = [
     patterns: [
       /import \{ Bubble, BubbleContent, BubbleGroup \} from "@\/components\/ui\/bubble";/,
       /<BubbleGroup aria-live="polite" className="asklake-assistant-messages">/,
+      /import \{ motion, useReducedMotion \} from "motion\/react";/,
+      /initial=\{shouldReduceMotion[\s\S]*?x: message\.role === "user" \? 28 : -28,[\s\S]*?y: 6,/,
+      /transition=\{shouldReduceMotion[\s\S]*?damping: 28, mass: 0\.8, stiffness: 260, type: "spring"/,
       /align=\{message\.role === "user" \? "end" : "start"\}/,
       /variant=\{message\.role === "user" \? "default" : "secondary"\}/,
       /<BubbleContent className="whitespace-pre-wrap">\{message\.text\}<\/BubbleContent>/,
+    ],
+  },
+  {
+    name: "Bubble variants render with the AskLake white theme palette",
+    file: "src/components/ui/bubble.tsx",
+    patterns: [
+      /\*:data-\[slot=bubble-content\]:bg-blue-600 \*:data-\[slot=bubble-content\]:text-white/,
+      /\*:data-\[slot=bubble-content\]:border-slate-200 \*:data-\[slot=bubble-content\]:bg-white \*:data-\[slot=bubble-content\]:text-slate-900/,
+      /\*:data-\[slot=bubble-content\]:bg-slate-100 \*:data-\[slot=bubble-content\]:text-slate-700/,
+      /\*:data-\[slot=bubble-content\]:bg-blue-50 \*:data-\[slot=bubble-content\]:text-blue-950/,
+      /\*:data-\[slot=bubble-content\]:border-red-200 \*:data-\[slot=bubble-content\]:bg-red-50 \*:data-\[slot=bubble-content\]:text-red-700/,
+      /bg-slate-100[^\n]+text-slate-900[^\n]+ring-white/,
     ],
   },
   {

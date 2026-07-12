@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Bot, Braces, Database, FileText, Search, ShieldCheck, Workflow } from "lucide-react";
 import { Link } from "react-router";
-import askLakeLogo from "../../assets/asklake-logo.png";
 import nessiMascot from "../../assets/landing/nessi-mascot.png";
 import teamSheet from "../../assets/landing/team-members.png";
 
@@ -17,7 +16,7 @@ const teamMembers = [
 function Brand({ compact = false }: { compact?: boolean }) {
   return (
     <span className={compact ? "landing-brand compact" : "landing-brand"}>
-      <img alt="" aria-hidden="true" src="/asklake-wave-icon.png" />
+      <img alt="" aria-hidden="true" src="/asklake-wave-hero.svg" />
       <span>AskLake</span>
     </span>
   );
@@ -70,7 +69,7 @@ function LakehouseVisual() {
       </div>
       <div className="landing-flow-lines"><i /><i /><i /></div>
       <div className="landing-lake-basin">
-        <img alt="" src="/asklake-wave-icon.png" />
+        <img alt="" src="/asklake-wave-hero.svg" />
         <span>Trusted Lake</span>
       </div>
     </div>
@@ -208,7 +207,7 @@ export function AskLakeLandingPage() {
         <section className="landing-hero" aria-labelledby="landing-hero-title">
           <HeroMark />
           <h1 className="landing-hero-wordmark" id="landing-hero-title">
-            <img alt="AskLake" src={askLakeLogo} />
+            AskLake
           </h1>
           <p>From collection to catalog, analysis to action.<br />One trusted lake for every data journey.</p>
           <div className="landing-hero-actions">
@@ -284,7 +283,7 @@ export function AskLakeLandingPage() {
         </section>
 
         <section className="landing-final-cta">
-          <img alt="" aria-hidden="true" src="/asklake-wave-icon.png" />
+          <img alt="" aria-hidden="true" src="/asklake-wave-hero.svg" />
           <h2>Ready to build your trusted data lake?</h2>
           <Link className="landing-button landing-button-dark" to="/login">Start AskLake Now</Link>
         </section>

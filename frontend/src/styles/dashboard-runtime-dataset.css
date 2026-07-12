@@ -1,0 +1,154 @@
+.asklake-dashboard-workspace {
+  display: grid;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--dash-bg);
+  transition: grid-template-columns 180ms ease;
+}
+
+.asklake-dashboard-workspace.has-inspector {
+  grid-template-columns: minmax(0, 1fr) 320px;
+}
+
+.asklake-dashboard-workspace.has-dataset-sidebar {
+  grid-template-columns: 0 minmax(0, 1fr);
+}
+
+.asklake-dashboard-workspace.has-dataset-sidebar.dataset-sidebar-open {
+  grid-template-columns: 280px minmax(0, 1fr);
+}
+
+.asklake-dashboard-workspace.has-dataset-sidebar.has-inspector {
+  grid-template-columns: 0 minmax(0, 1fr) 320px;
+}
+
+.asklake-dashboard-workspace.has-dataset-sidebar.has-inspector.dataset-sidebar-open {
+  grid-template-columns: 280px minmax(0, 1fr) 320px;
+}
+
+.asklake-dashboard-dataset-sidebar {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  border-right: 1px solid var(--dash-border);
+  background: #ffffff;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-12px);
+  transition:
+    opacity 160ms ease,
+    transform 180ms ease;
+}
+
+.asklake-dashboard-workspace.dataset-sidebar-open .asklake-dashboard-dataset-sidebar {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(0);
+}
+
+.asklake-dataset-hover-tooltip {
+  max-width: 380px;
+  overflow: visible;
+  border: 1px solid #d8e1ee;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #0f172a;
+  box-shadow: 0 18px 44px rgba(15, 23, 42, 0.16);
+  padding: 0;
+}
+
+.asklake-dataset-hover-card {
+  display: grid;
+  min-width: 320px;
+  max-width: 380px;
+  gap: 12px;
+  padding: 14px 16px 15px;
+}
+
+.asklake-dataset-hover-card-head {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+
+.asklake-dataset-hover-card-icon {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  border: 1px solid #dbe4ef;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #475569;
+}
+
+.asklake-dataset-hover-card-head div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.asklake-dataset-hover-card-head strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 900;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.asklake-dataset-hover-card-head span:not(.asklake-dataset-hover-card-icon) {
+  min-width: 0;
+  overflow: hidden;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.asklake-dataset-hover-card dl {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.asklake-dataset-hover-card dl div {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: 12px;
+}
+
+.asklake-dataset-hover-card dt {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 850;
+  line-height: 1.35;
+}
+
+.asklake-dataset-hover-card dd {
+  min-width: 0;
+  overflow: hidden;
+  color: #0f172a;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.35;
+  margin: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.asklake-dataset-hover-card p {
+  color: #475569;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.45;
+  margin: 0;
+}

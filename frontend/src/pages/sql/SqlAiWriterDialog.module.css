@@ -1,0 +1,46 @@
+.popover {
+  width: min(440px, calc(100vw - 32px));
+  max-height: min(620px, calc(100dvh - 32px));
+  overflow-y: auto;
+  transform-origin: var(--radix-popover-content-transform-origin);
+}
+
+.popover[data-state="open"] {
+  animation: popover-in 160ms ease-out;
+}
+
+.preview {
+  height: min(220px, 28vh);
+  min-height: 140px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #0f172a;
+}
+
+.preview pre {
+  min-width: max-content;
+  color: #e2e8f0;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 13px;
+  line-height: 22px;
+  margin: 0;
+  padding: 16px 20px;
+}
+
+@keyframes popover-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .popover[data-state="open"] {
+    animation: none;
+  }
+}

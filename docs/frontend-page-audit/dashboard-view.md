@@ -25,7 +25,7 @@
 - page tab shell은 `role="tablist"`와 Button을 조합하지만 shadcn `Tabs`의 roving focus와 keyboard contract를 사용하지 않는다.
 - runtime notice는 `role="status"` raw div와 tone class로 구현되어 있다.
 - 게시 revision/widget 없음, loading, error가 모두 `EmptyDashboardCanvas`와 여러 wrapper div 조합으로 반복된다.
-- empty state action은 raw `<button class="asklake-dashboard-empty-action">`이다.
+- [RESOLVED #580] empty state action은 shadcn `Button`을 사용하며 사용처가 없어진 `.asklake-dashboard-empty-action` CSS를 제거했다.
 - published widget grid와 `WidgetFrame` surface는 `asklake-dashboard-*` 전용 CSS에 강하게 결합되어 있다.
 - chart/table/metric별 empty/error 표시는 서로 다른 raw div와 text를 사용한다.
 - 상단 share Sheet는 shadcn을 사용하지만 link copy action이 없어 read-only code block만 제공한다.
@@ -37,7 +37,7 @@
 - `Empty`: revision 없음, page 없음, widget 없음 상태를 공통 empty composition의 variant로 통합한다.
 - `Skeleton`: published widget loading 시 최종 grid 크기를 유지한다.
 - `Tooltip`: icon-only refresh와 widget action의 설명을 보완한다.
-- `Button`: empty state의 raw action을 공통 variant로 교체한다.
+- `Button`: empty state action에 적용되어 있으며 published/draft CTA variant를 유지한다.
 - `ScrollArea`: page tab overflow와 긴 dashboard canvas 주변 scroll ownership을 명확히 한다.
 - `Sheet`: share panel은 이미 적절하게 적용되어 있으며 copy action만 `Button`/clipboard feedback으로 보완한다.
 
@@ -51,11 +51,11 @@
 
 ## Related CSS
 
-- 현재 사용 중: `frontend/src/styles/dashboard-runtime.css`의 `.asklake-dashboard-runtime`, `.asklake-dashboard-topbar`, `.asklake-dashboard-title`, `.asklake-dashboard-actions`.
+- 현재 사용 중: `frontend/src/styles/dashboard-runtime-shell.css`의 `.asklake-dashboard-runtime`, `.asklake-dashboard-topbar`, `.asklake-dashboard-title`, `.asklake-dashboard-actions`.
 - 현재 사용 중: `.asklake-dashboard-subnav`, `.asklake-dashboard-tabs`, `.asklake-dashboard-page-tab`, `.asklake-dashboard-canvas-wrap`.
-- 현재 사용 중: `.asklake-dashboard-empty-canvas`, `.asklake-dashboard-empty-action`, `.asklake-dashboard-widget-grid`, `.asklake-widget-frame`, `.asklake-widget-empty`.
+- 현재 사용 중: `dashboard-runtime-canvas.css`의 `.asklake-dashboard-empty-canvas`, `.asklake-dashboard-widget-grid`와 `dashboard-runtime-widgets.css`의 `.asklake-widget-frame`, `.asklake-widget-empty`.
 - 현재 사용 중: `.asklake-dashboard-runtime-notice`, `.asklake-dashboard-share-sheet*`, chart/table widget selector.
-- 주의: view와 edit가 같은 runtime CSS를 공유하므로 mode selector를 확인하지 않고 삭제하면 안 된다.
+- 주의: view와 edit는 `dashboard-runtime.css` manifest 아래의 runtime CSS 모듈을 공유하므로 mode selector와 import 순서를 확인하지 않고 삭제하면 안 된다.
 
 ## QA Notes
 

@@ -1,0 +1,342 @@
+.asklake-widget-config-panel {
+  display: grid;
+  justify-items: stretch;
+  gap: 12px;
+  min-width: 0;
+  width: 100%;
+  text-align: left;
+}
+
+.asklake-widget-config-panel.empty {
+  justify-items: center;
+  color: var(--dash-text-muted);
+  text-align: center;
+}
+
+.asklake-widget-config-heading {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.asklake-widget-config-heading div {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.asklake-widget-config-heading span {
+  color: var(--dash-text-muted);
+  font-size: 16px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.asklake-widget-config-heading strong {
+  color: var(--dash-text);
+  font-size: 20px;
+  line-height: 1.3;
+}
+
+.asklake-widget-dataset-field label {
+  font-size: 15px;
+}
+
+.asklake-widget-dataset-field button {
+  font-size: 17px;
+}
+
+.asklake-widget-config-heading em {
+  flex: 0 0 auto;
+  color: var(--dash-text-muted);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.asklake-widget-config-empty-heading {
+  justify-content: center;
+  width: 100%;
+  text-align: center;
+}
+
+.asklake-widget-config-empty-heading div {
+  justify-items: center;
+  gap: 8px;
+}
+
+.asklake-widget-config-empty-heading strong {
+  font-size: 16px;
+  line-height: 1.35;
+}
+
+.asklake-widget-config-empty-heading span {
+  max-width: 300px;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.5;
+  text-transform: none;
+}
+
+.asklake-widget-config-form {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.asklake-widget-config-form label {
+  display: grid;
+  gap: 5px;
+  color: var(--dash-text-muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.asklake-widget-config-form label > span {
+  color: var(--dash-text-muted);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.asklake-widget-config-form input,
+.asklake-widget-config-form select,
+.asklake-widget-config-form textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--dash-border-strong);
+  border-radius: 6px;
+  background: #ffffff;
+  color: var(--dash-text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 8px 9px;
+}
+
+.asklake-widget-config-form textarea {
+  resize: vertical;
+}
+
+.asklake-widget-palette-field {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.asklake-widget-palette-field > span {
+  color: var(--dash-text-muted);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.asklake-widget-palette-field small {
+  color: var(--dash-text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.asklake-widget-color-slots {
+  display: grid;
+  gap: 7px;
+}
+
+.asklake-widget-color-slot {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  min-height: 36px;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid #d7dfec;
+  border-radius: 6px;
+  background: #ffffff;
+  color: var(--dash-text);
+  font-size: 12px;
+  font-weight: 850;
+  padding: 6px 8px;
+  text-align: left;
+}
+
+.asklake-widget-color-slot.selected {
+  border-color: #2563eb;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.asklake-widget-color-slot i {
+  width: 22px;
+  height: 22px;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 999px;
+}
+
+.asklake-widget-color-slot span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.asklake-widget-color-choice-panel {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  border: 1px solid #dbe5f4;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 10px;
+}
+
+.asklake-widget-color-choice-list {
+  display: grid;
+  grid-template-columns: repeat(6, 28px);
+  justify-content: space-between;
+  gap: 10px 8px;
+}
+
+.asklake-widget-color-choice {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  color: #0f172a;
+  padding: 0;
+}
+
+.asklake-widget-color-choice.selected {
+  border-color: #0f172a;
+  box-shadow: 0 0 0 2px #ffffff;
+}
+
+.asklake-widget-color-choice svg {
+  color: #0f172a;
+  filter: drop-shadow(0 1px 1px rgba(255, 255, 255, 0.7));
+}
+
+.asklake-widget-color-choice.custom {
+  background-color: #ffffff;
+  background-image:
+    linear-gradient(45deg, #cbd5e1 25%, transparent 25%),
+    linear-gradient(-45deg, #cbd5e1 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #cbd5e1 75%),
+    linear-gradient(-45deg, transparent 75%, #cbd5e1 75%);
+  background-position: 0 0, 0 6px, 6px -6px, -6px 0;
+  background-size: 12px 12px;
+}
+
+.asklake-widget-color-choice.custom::after {
+  width: 14px;
+  height: 14px;
+  border: 2px solid #0f172a;
+  border-radius: 999px;
+  background: conic-gradient(#ef4444, #f59e0b, #22c55e, #06b6d4, #3b82f6, #a855f7, #ef4444);
+  content: "";
+}
+
+.asklake-widget-color-choice.custom.selected::after {
+  display: none;
+}
+
+.asklake-widget-custom-color-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.asklake-widget-custom-color-panel .react-colorful {
+  width: 100%;
+  height: 154px;
+}
+
+.asklake-widget-custom-color-panel .react-colorful__saturation {
+  border-radius: 6px 6px 0 0;
+}
+
+.asklake-widget-custom-color-panel .react-colorful__hue {
+  height: 16px;
+  border-radius: 0 0 6px 6px;
+}
+
+.asklake-widget-hex-input {
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: center;
+}
+
+.asklake-widget-column-picker {
+  display: grid;
+  gap: 8px;
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.asklake-widget-column-picker legend {
+  color: var(--dash-text-muted);
+  font-size: 12px;
+  font-weight: 800;
+  margin-bottom: 2px;
+}
+
+.asklake-widget-column-picker label {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  min-height: 30px;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #d7dfec;
+  border-radius: 6px;
+  background: #ffffff;
+  color: var(--dash-text);
+  font-size: 12px;
+  padding: 6px 8px;
+}
+
+.asklake-widget-column-picker input {
+  width: 14px;
+  min-height: 14px;
+}
+
+.asklake-widget-column-picker span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.asklake-widget-config-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.asklake-widget-config-actions > :only-child {
+  grid-column: 1 / -1;
+}
+
+.asklake-widget-create-button {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 850;
+  padding: 0 10px;
+}
+
+.asklake-widget-create-button {
+  border: 1px solid #2563eb;
+  background: #2563eb;
+  color: #ffffff;
+}
+
+.asklake-widget-create-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.56;
+}
