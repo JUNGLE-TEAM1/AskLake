@@ -226,12 +226,24 @@ const checks = [
     ],
   },
   {
-    name: "Mock Nessie SQL generation follows common chart dimensions and metrics",
+    name: "AI workspace submits through the governed SQL suggestion contract",
+    file: "src/pages/ai/AiChatPage.tsx",
+    patterns: [
+      /import \{ generateQueryAiSuggestion \} from "\.\.\/\.\.\/services\/queryAiService";/,
+      /const suggestion = await generateQueryAiSuggestion\(/,
+      /onAction\("ai\.chat\.suggestion_created", "\/api\/query\/ai-suggestions"/,
+      /onAction\("ai\.chat\.suggestion_failed", "\/api\/query\/ai-suggestions"/,
+      /message\.sql \? <pre className="ai-chat-sql">/,
+    ],
+    forbiddenPatterns: [/runtimeUnavailable/, /prompt_drafted/],
+  },
+  {
+    name: "AI suggestions preserve only the backend-validated response",
     file: "src/services/queryAiService.ts",
     patterns: [
-      /\[\/채널\|channel\/, \/channel\/\]/,
-      /\[\/주문\|order\/, \/\^\(orders\?\|order_count\)\$\/\]/,
+      /return apiClient\.post<QueryAiSuggestion>\("\/api\/query\/ai-suggestions"/,
     ],
+    forbiddenPatterns: [/useMock/, /draftSql\(/, /ensureSelectedJoinSuggestion/, /frontend JOIN 초안 fallback/],
   },
   {
     name: "SQL Job creation submits an explicit draft without opening ETL Review",
