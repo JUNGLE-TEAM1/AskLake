@@ -153,8 +153,8 @@ export function compileRuleContract({
   const outputTypes = new Map<string, string>();
   schemaColumns.filter((column) => column.included !== false).forEach((column) => {
     const target = column.targetName || column.sourceName;
-    const type = canonicalSchemaType(column.type);
-    if (target) outputTypes.set(target, type);
+    const targetType = canonicalSchemaType(column.type);
+    if (target) outputTypes.set(target, targetType);
   });
   const declaredTypes = new Map(transformOutputColumns.map(([name, type]) => [name, canonicalSchemaType(type)]));
   const issues: RuleCompilationIssue[] = [];
@@ -379,9 +379,10 @@ function legacyParameterString(rule: CanonicalRuleDraft) {
 function schemaTypeMap(schemaColumns: SchemaColumnDraft[], outputColumns: Array<[string, string]> = []) {
   const result = new Map<string, string>();
   schemaColumns.filter((column) => column.included !== false).forEach((column) => {
-    const type = canonicalSchemaType(column.type);
-    if (column.sourceName) result.set(column.sourceName, type);
-    if (column.targetName) result.set(column.targetName, type);
+    const sourceType = canonicalSchemaType(column.sourceType ?? column.type);
+    const targetType = canonicalSchemaType(column.type);
+    if (column.targetName) result.set(column.targetName, targetType);
+    if (column.sourceName) result.set(column.sourceName, sourceType);
   });
   outputColumns.forEach(([name, type]) => result.set(name, canonicalSchemaType(type)));
   return result;

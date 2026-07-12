@@ -2542,9 +2542,11 @@ export function SchemaInferencePage({
 
       <SchemaTransformWorkbench
         columns={schemaColumns}
+        executionMode={draft.source.executionMode}
         sampleRows={schemaSampleRows}
         selectedIndex={selectedIndex}
         sourceFormat={sourceFormat}
+        sourceType={draft.source.sourceType}
         transformSteps={draft.transform.steps}
         onSelectedIndexChange={setSelectedSchemaIndex}
         onColumnsChange={(nextColumns, nextSampleRows = schemaSampleRows) => {
@@ -2552,9 +2554,10 @@ export function SchemaInferencePage({
           const boundedIndex = nextColumns.length > 0 ? Math.min(selectedIndex, nextColumns.length - 1) : 0;
           setSelectedSchemaIndex(boundedIndex);
         }}
-        onTransformStepsChange={(steps) => {
+        onTransformStepsChange={(steps, outputColumns) => {
           onDraftChange({
             transform: {
+              outputColumns,
               steps,
               summary: steps.length > 0 ? `스키마 단계 변환 ${steps.length}개 설정` : "스키마 단계 변환 없음",
             },
@@ -4751,7 +4754,6 @@ export function TargetPage({
 }) {
   const initialTarget = getTargetDraftValues(draft);
   const draftTarget = (draft as DraftPipelineWithSlices).target;
-  const targetLayer = initialTarget.targetLayer;
   const inferredTarget = useMemo(
     () => inferTargetSchema(draft.schema.columns, draft.schema.sampleRows, draftTarget?.schemaRules),
     [draft.schema.columns, draft.schema.sampleRows, draftTarget?.schemaRules],
@@ -4759,7 +4761,11 @@ export function TargetPage({
   const sampleTargetSchema = useMemo(() => inferTargetSchema([], [], undefined), []);
   const [targetDataset, setTargetDataset] = useState(initialTarget.targetDataset);
   const [databaseName, setDatabaseName] = useState(draftTarget?.databaseName ?? "asklake");
+  const [targetLayer, setTargetLayer] = useState<TargetLayer>(initialTarget.targetLayer);
   const [targetStoragePath, setTargetStoragePath] = useState(initialTarget.storagePath);
+  const [storagePathCustomized, setStoragePathCustomized] = useState(
+    initialTarget.storagePath !== buildTargetStoragePath(initialTarget.targetDataset, initialTarget.targetLayer),
+  );
   const [targetDescription, setTargetDescription] = useState(initialTarget.description);
   const [targetFormat, setTargetFormat] = useState<TargetFileFormat>(normalizeTargetFileFormat(initialTarget.targetFormat));
   const [targetOwner, setTargetOwner] = useState(draftTarget?.owner ?? initialTarget.owner);
@@ -4883,6 +4889,20 @@ export function TargetPage({
       : currentColumns.filter((column) => column !== columnName));
   };
 
+  const changeTargetDataset = (nextDataset: string) => {
+    setTargetDataset(nextDataset);
+    if (!storagePathCustomized) {
+      setTargetStoragePath(buildTargetStoragePath(nextDataset.trim() || "target_dataset", targetLayer));
+    }
+  };
+
+  const changeTargetLayer = (nextLayer: TargetLayer) => {
+    setTargetLayer(nextLayer);
+    if (!storagePathCustomized) {
+      setTargetStoragePath(buildTargetStoragePath(targetDataset.trim() || "target_dataset", nextLayer));
+    }
+  };
+
   const saveTargetConfig = () => {
     const config = buildConfig();
     const errors = validateTargetConfig(config, activeJsonParseFailed);
@@ -4947,7 +4967,7 @@ export function TargetPage({
           </div>
           <div className="target-config-form-grid basic">
             <FormFieldGroup className="field wide" label="데이터셋명">
-              <Input className="input control-input" value={targetDataset} onChange={(event) => setTargetDataset(event.target.value)} />
+              <Input className="input control-input" value={targetDataset} onChange={(event) => changeTargetDataset(event.target.value)} />
             </FormFieldGroup>
             <FormFieldGroup className="field" label="오너">
               <Input className="input control-input" value={targetOwner} onChange={(event) => setTargetOwner(event.target.value)} />
@@ -4972,6 +4992,16 @@ export function TargetPage({
             <FormFieldGroup className="field target-db-field" label="DB 선택">
               <DatabaseField useShadcnStyles value={databaseName} onChange={setDatabaseName} />
             </FormFieldGroup>
+            <FormFieldGroup className="field" label="데이터 레이어">
+              <Select value={targetLayer} onValueChange={(layer) => changeTargetLayer(layer as TargetLayer)}>
+                <SelectTrigger aria-label="데이터 레이어 선택" size="sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {TARGET_LAYER_OPTIONS.map((layer) => <SelectItem key={layer} value={layer}>{layer}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </FormFieldGroup>
             <FormFieldGroup className="field target-format-field" label="포맷">
               <Select value={targetFormat} onValueChange={(format) => setTargetFormat(format as TargetFileFormat)}>
                 <SelectTrigger aria-label="파일 포맷 선택" className="target-format-select" size="sm">
@@ -4985,7 +5015,10 @@ export function TargetPage({
               </Select>
             </FormFieldGroup>
             <FormFieldGroup className="field wide target-storage-field" label="저장경로">
-              <S3PathField useShadcnStyles value={targetStoragePath} onChange={setTargetStoragePath} />
+              <S3PathField useShadcnStyles value={targetStoragePath} onChange={(path) => {
+                setTargetStoragePath(path);
+                setStoragePathCustomized(true);
+              }} />
             </FormFieldGroup>
           </div>
         </section>

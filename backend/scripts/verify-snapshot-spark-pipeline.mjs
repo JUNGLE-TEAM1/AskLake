@@ -73,7 +73,7 @@ function successManifest() {
     partitionColumns: "",
     qualityRules: [],
     ruleContractVersion: "1.0",
-    ruleOutputSchema: [...baseOutputSchema(), ["rating_value", "Double"]],
+    ruleOutputSchema: [...baseOutputSchema(), ["rating_value", "Double"], ["reviewer_alias", "String"]],
     rules: [
       canonicalRule({
         failureDisposition: "set_null",
@@ -84,6 +84,14 @@ function successManifest() {
         outputColumns: ["rating_value"],
         outputType: "Double",
         parameters: { targetType: "Double" },
+      }),
+      canonicalRule({
+        id: "rename-mixed-case-dotted-input",
+        inputColumns: ["raw.reviewerID"],
+        kind: "transform",
+        operation: "rename",
+        outputColumns: ["reviewer_alias"],
+        outputType: "String",
       }),
       canonicalRule({
         id: "email-pattern",
@@ -104,7 +112,10 @@ function successManifest() {
       }),
     ],
     schemaColumns: baseSchema(),
-    transformSteps: [{ enabled: true, input: "rating", output: "rating_value" }],
+    transformSteps: [
+      { enabled: true, input: "rating", output: "rating_value" },
+      { enabled: true, input: "raw.reviewerID", output: "reviewer_alias" },
+    ],
   };
 }
 
@@ -148,6 +159,7 @@ function baseSchema() {
     { included: true, nullable: true, sourceName: "rating", targetName: "rating", type: "String" },
     { included: true, nullable: true, sourceName: "status", targetName: "status", type: "String" },
     { included: true, nullable: true, sourceName: "email", targetName: "email", type: "String" },
+    { included: true, nullable: true, sourceName: "raw.reviewerID", targetName: "raw_reviewerid", type: "String" },
   ];
 }
 

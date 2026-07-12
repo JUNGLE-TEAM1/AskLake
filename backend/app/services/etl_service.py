@@ -55,6 +55,8 @@ from app.schemas.etl import (
     ReviewSchemaRow,
     ReviewSnapshot,
     ReviewValidationRow,
+    RulePreviewRequest,
+    RulePreviewResponse,
     KafkaReviewIngestRequest,
     KafkaReviewIngestResponse,
     QueryRunRequest,
@@ -747,6 +749,37 @@ def infer_schema(request: SourceConnectorRequest) -> SchemaDraft:
     if analysis.draft_patch.schema_ is None:
         return SchemaDraft(columns=[], sample_rows=[], summary="스키마 없음")
     return analysis.draft_patch.schema_
+
+
+def preview_rules(request: RulePreviewRequest) -> RulePreviewResponse:
+    compiled = compile_rule_set(
+        contract_version=request.rule_contract_version,
+        rules=request.rules,
+        transform_steps=[],
+        quality_rules=[],
+        schema_columns=request.schema_columns,
+        transform_output_columns=[],
+        execution_mode=request.execution_mode,
+        source_type=request.source_type,
+    )
+    require_compiled_rules(compiled)
+    result = run_node_bridge(
+        "preview-snapshot-rules.mjs",
+        "ASKLAKE_RULE_PREVIEW_RESULT",
+        {
+            "records": request.records,
+            "rules": [rule.model_dump(mode="json", by_alias=True) for rule in compiled.result.rules],
+        },
+        error_marker="ASKLAKE_RULE_PREVIEW_ERROR",
+        timeout_seconds=20,
+    )
+    return RulePreviewResponse(
+        compilation=compiled.result,
+        quality=result.get("quality") or {},
+        quarantined=result.get("quarantined") or [],
+        records=result.get("records") or [],
+        transform=result.get("transform") or {},
+    )
 
 
 def review_pipeline(request: ReviewPipelineRequest) -> ReviewSnapshot:

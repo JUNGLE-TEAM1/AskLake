@@ -382,9 +382,10 @@ function legacyParameterString(rule) {
 function schemaTypeMap(schemaColumns, outputColumns = []) {
   const result = new Map();
   for (const column of schemaColumns.filter((item) => item?.included !== false)) {
-    const type = canonicalSchemaType(column?.type);
-    if (text(column?.sourceName)) result.set(text(column.sourceName), type);
-    if (text(column?.targetName)) result.set(text(column.targetName), type);
+    const sourceType = canonicalSchemaType(column?.sourceType ?? column?.type);
+    const targetType = canonicalSchemaType(column?.type);
+    if (text(column?.targetName)) result.set(text(column.targetName), targetType);
+    if (text(column?.sourceName)) result.set(text(column.sourceName), sourceType);
   }
   for (const [name, type] of outputColumns) result.set(name, canonicalSchemaType(type));
   return result;

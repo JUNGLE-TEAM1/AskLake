@@ -23,6 +23,7 @@
     "verify:rule-compiler": "PYTHONPATH=. .venv/bin/python scripts/verify-rule-compiler-contract.py && node scripts/verify-rule-compiler-contract.mjs && PYTHONPATH=. .venv/bin/python scripts/verify-rule-persistence-contract.py",
     "verify:rule-persistence": "PYTHONPATH=. .venv/bin/python scripts/verify-rule-persistence-contract.py",
     "verify:snapshot-rule-conformance": "node scripts/verify-snapshot-rule-conformance.mjs",
+    "verify:rule-preview": "node scripts/verify-rule-preview-contract.mjs",
     "verify:snapshot-spark-pipeline": "node scripts/verify-snapshot-spark-pipeline.mjs",
     "verify:target-metadata": "node scripts/verify-target-metadata-contract.mjs",
     "verify:dashboard-assistant-guard": "node scripts/verify-dashboard-assistant-guard.mjs",

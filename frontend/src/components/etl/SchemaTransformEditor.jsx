@@ -90,6 +90,9 @@ export default function SchemaTransformEditor({
   initialCustomSql = "",
   sourceTabs = null,
   allSources = [], // All source nodes info: [{ id, datasetId, name, schema }]
+  allowSqlTransform = true,
+  portableTransforms = true,
+  transformsDisabled = false,
 }) {
   // State - beforeColumns is local, targetSchema is managed by parent
   const [beforeColumns, setBeforeColumns] = useState([]);
@@ -128,30 +131,6 @@ export default function SchemaTransformEditor({
       initialTargetSchema &&
       initialTargetSchema.length > 0
     ) {
-      const initialAfter = initialTargetSchema.map((col) => {
-        const normalizedType = normalizeType(col.type);
-        const normalizedChain = normalizeTransformChain(col.transformChain, normalizedType);
-        const visibleChain = dataTransformChain(normalizedChain);
-        const visibleStep = primaryTransformStep(visibleChain);
-        const visibleDisplay = visibleChain.map(formatTransformChainStep).filter(Boolean).join(" -> ");
-        return {
-          ...col,
-          type: normalizedType,
-          notNull: col.notNull || false,
-          defaultValue: col.defaultValue || "",
-          transform: visibleStep?.expression || (visibleStep?.operation === "SQL Expression" ? visibleStep.params : col.transform || null),
-          transformDisplay: visibleDisplay || (visibleStep ? col.transformDisplay : null) || (col.transform ? `${col.transform}` : null),
-          transformChain: visibleChain,
-          transformOperation: visibleStep?.operation || col.transformOperation || null,
-          transformParams: visibleStep?.params || col.transformParams || "",
-          onError: col.onError || "Warn",
-          originalName: col.originalName || col.name,
-          originalType: normalizeType(col.originalType) || normalizedType,
-          sourceId: col.sourceId || sourceId,
-          sourceName: col.sourceName || sourceName,
-        };
-      });
-      onSchemaChange(initialAfter);
       setIsInitialized(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -163,6 +142,10 @@ export default function SchemaTransformEditor({
       onSqlChange(customSql, "sql");
     }
   }, [customSql, activeTab]);
+
+  useEffect(() => {
+    if (!allowSqlTransform && activeTab === "sql") setActiveTab("columns");
+  }, [activeTab, allowSqlTransform]);
 
   // Initialize customSql from prop only once (edit mode)
   useEffect(() => {
@@ -235,6 +218,7 @@ export default function SchemaTransformEditor({
         type: normalizedType,
         originalType: normalizedType,
         notNull: false,
+        nullGuardExplicit: false,
         defaultValue: "",
         transform: null,
         transformDisplay: null,
@@ -314,7 +298,11 @@ export default function SchemaTransformEditor({
   // Column property handlers
   const updateColumnProperty = (index, property, value) => {
     const next = [...targetSchema];
-    next[index] = { ...next[index], [property]: value };
+    next[index] = {
+      ...next[index],
+      [property]: value,
+      ...(property === "notNull" ? { nullGuardExplicit: true } : {}),
+    };
     onSchemaChange(next);
     if (onTestStatusChange) onTestStatusChange(false);
   };
@@ -330,6 +318,21 @@ export default function SchemaTransformEditor({
     if (editingColumn) {
       const next = [...targetSchema];
       const existing = next[editingColumn.index];
+      if (transformMeta.mode === "clear") {
+        next[editingColumn.index] = {
+          ...existing,
+          transform: null,
+          transformChain: [],
+          transformDisplay: null,
+          transformOperation: null,
+          transformParams: "",
+        };
+        onSchemaChange(next);
+        if (onTestStatusChange) onTestStatusChange(false);
+        setShowFunctionModal(false);
+        setEditingColumn(null);
+        return;
+      }
       if (transformMeta.mode === "csvMultiOutput" && Array.isArray(transformMeta.columns)) {
         const sourceField = transformMeta.sourceField || existing.originalName || existing.sourceName || existing.name || newName;
         const outputColumns = transformMeta.columns
@@ -369,6 +372,7 @@ export default function SchemaTransformEditor({
             name: column.targetName,
             nullable: column.nullable,
             notNull: existing.notNull || false,
+            nullGuardExplicit: existing.nullGuardExplicit || false,
             originalName: sourceField,
             originalType: existing.originalType || existing.type,
             role: `text-row-analysis:${column.instruction || column.targetName}`,
@@ -449,6 +453,7 @@ export default function SchemaTransformEditor({
         type: newType || transformMeta.type || existing.type,
         defaultValue: defaultStep ? defaultStep.params : existing.defaultValue,
         notNull: hasNullGuard ? true : existing.notNull,
+        nullGuardExplicit: hasNullGuard ? true : existing.nullGuardExplicit,
         onError: dataStep?.onError || transformMeta.onError || existing.onError || "Warn",
         transform: dataStep?.expression || (dataStep?.operation === "SQL Expression" ? dataStep.params : null),
         transformChain: chain,
@@ -473,6 +478,7 @@ export default function SchemaTransformEditor({
     boolean: "BOOLEAN",
     timestamp: "TIMESTAMP",
     date: "DATE",
+    json: "STRING",
   };
 
   // Generate SQL from targetSchema (optionally filter by sourceId for testing)
@@ -576,16 +582,18 @@ export default function SchemaTransformEditor({
         >
           Visual Transform
         </button>
-        <button
-          onClick={() => setActiveTab("sql")}
-          className={`flex-1 px-6 py-3 text-sm font-semibold transition-all border-b-2 ${
-            activeTab === "sql"
-              ? "text-indigo-700 border-indigo-600 bg-indigo-50/30"
-              : "text-slate-600 border-transparent hover:text-slate-900 hover:bg-slate-50"
-          }`}
-        >
-          SQL Transform
-        </button>
+        {allowSqlTransform && (
+          <button
+            onClick={() => setActiveTab("sql")}
+            className={`flex-1 px-6 py-3 text-sm font-semibold transition-all border-b-2 ${
+              activeTab === "sql"
+                ? "text-indigo-700 border-indigo-600 bg-indigo-50/30"
+                : "text-slate-600 border-transparent hover:text-slate-900 hover:bg-slate-50"
+            }`}
+          >
+            SQL Transform
+          </button>
+        )}
       </div>
 
       {/* Column Selection Tab */}
@@ -744,6 +752,7 @@ export default function SchemaTransformEditor({
                         )}
                         <input
                           type="text"
+                          aria-label={`${col.originalName || col.name} 타겟 컬럼명`}
                           value={col.name}
                           onChange={(e) =>
                             updateColumnProperty(index, "name", e.target.value)
@@ -751,6 +760,7 @@ export default function SchemaTransformEditor({
                           className="flex-1 px-1.5 py-1 text-sm font-semibold text-slate-900 bg-white border border-slate-200 rounded-md focus:outline-none focus:border-indigo-500 transition-colors"
                         />
                         <select
+                          aria-label={`${col.originalName || col.name} 타겟 타입`}
                           value={col.type}
                           onChange={(e) =>
                             updateColumnProperty(index, "type", e.target.value)
@@ -764,16 +774,19 @@ export default function SchemaTransformEditor({
                           <option value="boolean">boolean</option>
                           <option value="timestamp">timestamp</option>
                           <option value="date">date</option>
+                          <option value="json">json</option>
                         </select>
                         {/* Transform Function Button */}
                         <button
+                          aria-label={`${col.name} 변환 설정`}
                           onClick={() => openFunctionEditor(col, index)}
+                          disabled={transformsDisabled}
                           className={`p-1.5 rounded transition-colors ${
                             col.transform || col.transformOperation || dataTransformChain(col.transformChain).length
                               ? "bg-purple-100 text-purple-600 hover:bg-purple-200"
                               : "bg-gray-100 text-gray-500 hover:bg-gray-200"
-                          }`}
-                          title="Add transform function"
+                          } disabled:cursor-not-allowed disabled:opacity-40`}
+                          title={`${col.name} 변환 설정`}
                         >
                           <Braces className="w-4 h-4" />
                         </button>
@@ -819,6 +832,7 @@ export default function SchemaTransformEditor({
                           <input
                             type="text"
                             value={col.defaultValue || ""}
+                            disabled={transformsDisabled}
                             onChange={(e) =>
                               updateColumnProperty(
                                 index,
@@ -943,6 +957,7 @@ export default function SchemaTransformEditor({
             setShowFunctionModal(false);
             setEditingColumn(null);
           }}
+          portable={portableTransforms}
         />
       )}
     </div>

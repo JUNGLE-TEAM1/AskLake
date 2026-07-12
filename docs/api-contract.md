@@ -817,6 +817,34 @@ Rules:
 - 서버는 `TARGET_DATABASES` 또는 `ASKLAKE_TARGET_DATABASES`에 지정된 이름만 반환할 수 있습니다.
 - 환경변수가 없으면 local demo 기본값으로 `asklake`, `asklake_gold`, `analytics`, `marketing`을 반환합니다.
 
+### 7.1.2 Snapshot Rule Preview
+
+`POST /api/etl/rules/preview`
+
+```ts
+type RulePreviewRequest = {
+  executionMode: "snapshot" | "continuous";
+  records: Array<Record<string, unknown>>; // 최대 100개
+  ruleContractVersion: "1.0";
+  rules: CanonicalRuleDraft[];
+  schemaColumns: Array<SchemaColumnDraft & { sourceType?: string }>;
+  sourceType: string;
+};
+
+type RulePreviewResponse = {
+  compilation: RuleCompilationResult;
+  records: Array<Record<string, unknown>>;
+  quarantined: Array<Record<string, unknown>>;
+  transform: Record<string, unknown>;
+  quality: Record<string, unknown>;
+};
+```
+
+- backend는 request를 canonical compiler로 먼저 검증하고 실제 Snapshot Rule runtime에 적용합니다.
+- `schemaColumns[].sourceType`은 원본 필드 타입, 같은 컬럼의 `type`은 target 타입입니다. 값이 없던 기존 payload는 `type`을 원본 타입으로도 사용합니다. 요청 최상위 `sourceType`은 Kafka 등 connector 종류를 뜻합니다.
+- 허용 operation은 Snapshot 공통 목록이며 임의 SQL과 Continuous 활성 Rule은 거절합니다.
+- 이 endpoint는 bounded UI Preview 전용이며 Job, offset, checkpoint, target object, Catalog를 변경하지 않습니다.
+
 ### 7.2 Review snapshot
 
 `POST /api/etl/review`
@@ -1183,7 +1211,7 @@ Validation:
 - `targetLayer`는 `RAW`, `BRONZE`, `SILVER`, `GOLD` 중 하나여야 합니다.
 - `storageType`, `partition`, `compression`, `storagePath`는 Target 화면의 draft 값이며, 없으면 frontend는 기존 기본값을 채웁니다.
 - Target metadata는 flat create contract를 유지하기 위해 `targetDescription`, `targetTags`, `partitionColumns`, `indexColumns`로 전달합니다. 기존 `partition`은 하위 호환용 표시/저장 문자열이며 `partitionColumns.join("/")` 값과 같아야 합니다.
-- 현재 Target 화면에서는 layer 선택 버튼을 노출하지 않고 기존 draft/default `targetLayer` 값을 사용합니다.
+- Target 화면은 모든 Source에서 `targetLayer`를 RAW/BRONZE/SILVER/GOLD 중 명시적으로 선택하게 하며 기존 draft/default layer를 초기값으로 사용합니다. 자동 생성 storage path는 선택 layer를 반영합니다.
 - `rag`는 호환 필드로 유지하지만, 현재 Target 화면에서는 설정을 노출하지 않고 frontend는 기본값 `false`를 전송합니다.
 - 현재 Target 화면은 저장소 선택 화면이 아니라 최종 dataset 저장 명세 화면입니다. `data` JSON 단일 컬럼 sample은 frontend에서 dot-path 컬럼으로 펼쳐 `schemaRules`와 preview를 구성하고, 원본 보존용 `raw_data`는 optional 미사용 컬럼으로 둡니다.
 - 현재 Target 화면의 파티션은 실제 사용 컬럼 중 partition 가능한 컬럼을 checkbox로 여러 개 선택하며, 선택 순서를 유지해 `/`로 연결한 뒤 create request의 `partition`에 반영합니다. 예: `event_date/region`.

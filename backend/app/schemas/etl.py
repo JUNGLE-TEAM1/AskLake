@@ -48,6 +48,7 @@ class SchemaColumnDraft(CamelModel):
     nullable: bool = False
     role: str | None = None
     source_name: str
+    source_type: str | None = None
     target_name: str
     type: str
 
@@ -106,6 +107,23 @@ class RuleCompilationResult(CamelModel):
     output_schema: SourceFieldRows = Field(default_factory=list)
     rules: list[CanonicalRuleDraft] = Field(default_factory=list)
     status: Literal["pass", "fail"] = "pass"
+
+
+class RulePreviewRequest(CamelModel):
+    execution_mode: KafkaExecutionMode = "snapshot"
+    records: list[dict[str, Any]] = Field(default_factory=list, max_length=100)
+    rule_contract_version: str = "1.0"
+    rules: list[CanonicalRuleDraft] = Field(default_factory=list)
+    schema_columns: list[SchemaColumnDraft] = Field(default_factory=list)
+    source_type: str = ""
+
+
+class RulePreviewResponse(CamelModel):
+    compilation: RuleCompilationResult
+    quality: dict[str, Any] = Field(default_factory=dict)
+    quarantined: list[dict[str, Any]] = Field(default_factory=list)
+    records: list[dict[str, Any]] = Field(default_factory=list)
+    transform: dict[str, Any] = Field(default_factory=dict)
 
 
 class RetryPolicyDraft(CamelModel):

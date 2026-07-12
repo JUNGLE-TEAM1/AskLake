@@ -24,12 +24,16 @@ def verify_shared_conformance() -> None:
     for case in fixture["cases"]:
         request = case["request"]
         canonical_supplied = "rules" in request
+        case_schema_columns = [
+            SchemaColumnDraft.model_validate(column)
+            for column in request.get("schemaColumns", fixture["schemaColumns"])
+        ]
         compiled = compile_rule_set(
             contract_version=request.get("ruleContractVersion"),
             rules=[CanonicalRuleDraft.model_validate(rule) for rule in request.get("rules", [])] if canonical_supplied else None,
             transform_steps=request.get("transformSteps", []),
             quality_rules=request.get("qualityRules", []),
-            schema_columns=schema_columns,
+            schema_columns=case_schema_columns,
             transform_output_columns=request.get("transformOutputColumns", []),
             execution_mode=request.get("executionMode", "snapshot"),
             source_type=request.get("sourceType", "File / S3"),

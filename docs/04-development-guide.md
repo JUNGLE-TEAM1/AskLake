@@ -42,17 +42,21 @@ Source schema의 JSON native type, legacy `Float` 호환, CSV fallback을 확인
 cd backend
 npm run verify:schema-type-contract
 npm run verify:rule-compiler
+npm run verify:rule-preview
 npm run verify:snapshot-rule-conformance
 npm run verify:snapshot-spark-pipeline
 PYTHONPATH=. .venv/bin/python scripts/verify-kafka-continuous-contract.py
 
 cd ../frontend
 npm run verify:rule-compiler
+npm run verify:schema-transform-rules
 ```
 
 backend의 `npm run verify:rule-compiler`는 FastAPI와 local Node compiler의 공통 fixture, canonical Rule DB 영속성, legacy fallback을 함께 검사한다. frontend의 같은 명령은 동일 fixture와 `canonicalParameters`를 통한 `0`, `false`, 빈 문자열, `null` 왕복을 확인한다. create/update/review 변경 시 explicit empty pass-through, output schema, 구조화된 validation issue가 유지돼야 한다.
 
-`npm run verify:snapshot-rule-conformance`는 같은 JSON fixture를 Node Kafka runtime과 실제 Spark 4 DataFrame runtime에 적용한다. `npm run verify:snapshot-spark-pipeline`은 `spark_job_run.py`를 직접 실행해 drop/quarantine/set-null 결과가 Parquet에 반영되고 `Fail Batch` target이 생성되지 않는지 확인한다.
+`npm run verify:schema-transform-rules`는 Visual Transform의 rename/cast/default/null guard 순서, canonical parameter, portable operation, 초기 pass-through를 실제 adapter 함수로 검증한다.
+
+`npm run verify:rule-preview`는 UI가 호출하는 bounded Preview bridge가 Snapshot conformance fixture와 같은 결과를 내고 임의 SQL을 거절하는지 확인한다. `npm run verify:snapshot-rule-conformance`는 같은 JSON fixture를 Node Kafka runtime과 실제 Spark 4 DataFrame runtime에 적용하므로 두 명령을 함께 실행하면 Preview와 Spark 의미의 동등성을 검증한다. `npm run verify:snapshot-spark-pipeline`은 `spark_job_run.py`를 직접 실행해 drop/quarantine/set-null 결과가 Parquet에 반영되고 `Fail Batch` target이 생성되지 않는지 확인한다.
 
 ## 3) Backend Live Mode
 

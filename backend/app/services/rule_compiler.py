@@ -109,12 +109,13 @@ def compile_rule_set(
             continue
         source = str(column.get("sourceName") or column.get("source_name") or "").strip()
         target = str(column.get("targetName") or column.get("target_name") or source).strip()
-        logical_type = canonical_schema_type(column.get("type"))
+        source_logical_type = canonical_schema_type(column.get("sourceType") or column.get("source_type") or column.get("type"))
+        target_type = canonical_schema_type(column.get("type"))
         if target:
-            output_types[target] = logical_type
-            available_types[target] = logical_type
+            output_types[target] = target_type
+            available_types[target] = target_type
         if source:
-            available_types[source] = logical_type
+            available_types[source] = source_logical_type
     declared_types = {name: canonical_schema_type(type_) for name, type_ in declared_outputs}
 
     issues: list[RuleCompilationIssue] = []

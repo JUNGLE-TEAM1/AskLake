@@ -362,7 +362,7 @@ def _json_text(frame, resolved, source):
 
 
 def _normalize_name(value):
-    text = re.sub(r"[^0-9A-Za-z_]+", "_", str(value or "").strip()).strip("_")
+    text = re.sub(r"[^0-9A-Za-z_]+", "_", str(value or "").strip().lower()).strip("_")
     return text
 
 

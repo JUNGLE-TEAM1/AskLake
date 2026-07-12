@@ -22,6 +22,8 @@ from app.schemas.etl import (
     JobStatus,
     ReviewPipelineRequest,
     ReviewSnapshot,
+    RulePreviewRequest,
+    RulePreviewResponse,
     KafkaReviewIngestRequest,
     KafkaReviewIngestResponse,
     KafkaReplayProducerRequest,
@@ -56,6 +58,11 @@ def list_source_assets(request: SourceAssetsRequest) -> SourceAssetsResponse:
 @router.post("/schema-inference", response_model=SchemaDraft)
 def infer_schema(request: SourceConnectorRequest) -> SchemaDraft:
     return etl_service.infer_schema(request)
+
+
+@router.post("/rules/preview", response_model=RulePreviewResponse)
+def preview_rules(request: RulePreviewRequest) -> RulePreviewResponse:
+    return etl_service.preview_rules(request)
 
 
 @router.post("/review", response_model=ReviewSnapshot)

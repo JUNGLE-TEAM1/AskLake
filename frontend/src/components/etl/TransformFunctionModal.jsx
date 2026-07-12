@@ -5,16 +5,45 @@ import { ActionGroup } from '../ui/action-group';
 import { Button } from '../ui/button';
 import { DialogShell } from '../ui/dialog-shell';
 
+const PORTABLE_OPERATIONS = [
+    { label: '추가 변환 없음', operation: '', value: 'none' },
+    { label: '소문자 + 공백 정리', operation: 'Lowercase + Trim', value: 'lowercase_trim' },
+    { label: 'JSON 경로 추출', operation: 'Extract JSONPath', parameterLabel: 'JSONPath', value: 'json_extract' },
+    { label: '마스킹', operation: 'Mask', parameterLabel: '마스킹 정책', value: 'mask' },
+    { label: 'Timestamp 파싱', operation: 'Parse Timestamp', parameterLabel: '입력 형식', value: 'parse_timestamp' },
+    { label: '값 복사', operation: 'Copy', value: 'copy' },
+];
+
+function portableOperationValue(operation = '') {
+    const normalized = String(operation).toLowerCase().replace(/[^a-z0-9]+/g, '_');
+    if (normalized.includes('lower') || normalized.includes('trim')) return 'lowercase_trim';
+    if (normalized.includes('json')) return 'json_extract';
+    if (normalized.includes('mask')) return 'mask';
+    if (normalized.includes('timestamp')) return 'parse_timestamp';
+    if (normalized.includes('copy')) return 'copy';
+    return 'none';
+}
+
+function portableDefaultParams(operation) {
+    if (operation === 'json_extract') return '$.value';
+    if (operation === 'mask') return 'phone';
+    if (operation === 'parse_timestamp') return 'ISO-8601';
+    return '';
+}
+
 /**
  * TransformFunctionModal - Modal for editing column transform functions
  */
-export default function TransformFunctionModal({ column, onApply, onClose }) {
+export default function TransformFunctionModal({ column, onApply, onClose, portable = false }) {
     const editorRef = useRef(null);
     const [newName, setNewName] = useState(column.name);
     const [newType, setNewType] = useState(column.type);
     const [transformExpr, setTransformExpr] = useState(column.transform || column.originalName || column.name);
     const [selectedFunction, setSelectedFunction] = useState('');
     const [showAI, setShowAI] = useState(false);
+    const [portableOperation, setPortableOperation] = useState(() => portableOperationValue(column.transformOperation));
+    const [portableParams, setPortableParams] = useState(column.transformParams || portableDefaultParams(portableOperationValue(column.transformOperation)));
+    const [portableOnError, setPortableOnError] = useState(column.onError || 'Warn');
 
     const functions = [
         { name: 'UPPER', desc: 'Convert to uppercase', template: `UPPER(CAST(${column.originalName} AS STRING))` },
@@ -71,6 +100,100 @@ export default function TransformFunctionModal({ column, onApply, onClose }) {
             setSelectedFunction(func.name);
         }
     };
+
+    if (portable) {
+        const selected = PORTABLE_OPERATIONS.find((operation) => operation.value === portableOperation) || PORTABLE_OPERATIONS[0];
+        const applyPortableTransform = () => {
+            if (!selected.operation) {
+                onApply('', newName, newType, { mode: 'clear' });
+                return;
+            }
+            const step = {
+                display: selected.label,
+                expression: '',
+                onError: portableOnError,
+                operation: selected.operation,
+                params: portableParams,
+                type: newType,
+            };
+            onApply('', newName, newType, {
+                chain: [step],
+                display: selected.label,
+                onError: portableOnError,
+                operation: selected.operation,
+                params: portableParams,
+                type: newType,
+            });
+        };
+
+        return (
+            <DialogShell
+                bodyClassName="!p-0"
+                closeLabel="닫기"
+                contentClassName="rounded-2xl"
+                description={`대상 컬럼: ${column.name}`}
+                footer={(
+                    <ActionGroup density="compact">
+                        <Button type="button" onClick={onClose} size="sm" variant="outline">취소</Button>
+                        <Button type="button" onClick={applyPortableTransform} size="sm">적용</Button>
+                    </ActionGroup>
+                )}
+                footerClassName="bg-slate-50/50"
+                headerClassName="bg-slate-50/50"
+                onClose={onClose}
+                size="sm"
+                title="필드 변환"
+            >
+                <div className="space-y-5 p-6">
+                    <label className="block space-y-2 text-sm font-medium text-slate-700">
+                        <span>변환 방식</span>
+                        <select
+                            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
+                            value={portableOperation}
+                            onChange={(event) => {
+                                const value = event.target.value;
+                                setPortableOperation(value);
+                                setPortableParams(portableDefaultParams(value));
+                                if (value === 'parse_timestamp') setNewType('timestamp');
+                            }}
+                        >
+                            {PORTABLE_OPERATIONS.map((operation) => (
+                                <option key={operation.value} value={operation.value}>{operation.label}</option>
+                            ))}
+                        </select>
+                    </label>
+
+                    {selected.parameterLabel ? (
+                        <label className="block space-y-2 text-sm font-medium text-slate-700">
+                            <span>{selected.parameterLabel}</span>
+                            <input
+                                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono text-sm"
+                                value={portableParams}
+                                onChange={(event) => setPortableParams(event.target.value)}
+                            />
+                        </label>
+                    ) : null}
+
+                    {selected.operation ? (
+                        <label className="block space-y-2 text-sm font-medium text-slate-700">
+                            <span>실패 처리</span>
+                            <select
+                                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
+                                value={portableOnError}
+                                onChange={(event) => setPortableOnError(event.target.value)}
+                            >
+                                <option>Warn</option>
+                                <option>Quarantine</option>
+                                <option>Fail Run</option>
+                                <option>Drop Row</option>
+                                <option>Set Null</option>
+                            </select>
+                        </label>
+                    ) : null}
+                </div>
+            </DialogShell>
+        );
+    }
 
     return (
         <DialogShell

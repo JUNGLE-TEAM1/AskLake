@@ -296,6 +296,7 @@ export type SchemaColumnDraft = {
   reviewAnalysisRequireModel?: boolean;
   role?: string;
   sourceName: string;
+  sourceType?: string;
   targetName: string;
   targetOrder?: number;
   transformChain?: TransformChainStepDraft[];

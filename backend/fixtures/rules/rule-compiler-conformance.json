@@ -181,6 +181,35 @@
       "expectedIssueCodes": ["RULE_EXECUTION_MODE_UNSUPPORTED"]
     },
     {
+      "name": "source type remains distinct from target type",
+      "request": {
+        "ruleContractVersion": "1.0",
+        "schemaColumns": [{
+          "included": true,
+          "nullable": true,
+          "sourceName": "rating",
+          "sourceType": "String",
+          "targetName": "rating",
+          "type": "Double"
+        }],
+        "rules": [{
+          "contractVersion": "1.0",
+          "enabled": true,
+          "failureDisposition": "keep",
+          "id": "copy-source-rating",
+          "inputColumns": ["rating"],
+          "kind": "transform",
+          "onError": "warn",
+          "operation": "copy",
+          "outputColumns": ["rating_copy"],
+          "parameters": {}
+        }]
+      },
+      "expectedStatus": "pass",
+      "expectedIssueCodes": [],
+      "expectedOutputSchema": [["rating", "Double"], ["rating_copy", "String"]]
+    },
+    {
       "name": "explicit empty does not revive legacy",
       "request": {
         "ruleContractVersion": "1.0",

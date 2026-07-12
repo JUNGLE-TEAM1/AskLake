@@ -110,6 +110,7 @@ PYTHONPATH=. .venv/bin/python scripts/verify-kafka-continuous-contract.py
 
 cd ../frontend
 npm run verify:rule-compiler
+npm run verify:schema-transform-rules
 npm run verify:ui-regressions
 npm run build
 ```
@@ -134,12 +135,28 @@ npm run verify:snapshot-spark-pipeline
 npm run verify:kafka-review-scheduled-ingest
 ```
 
-### Phase 4. UI와 Preview 정합화
+### Phase 4. UI와 Preview 정합화 (완료)
 
-- Transform 편집기의 타입과 operation 선택지를 backend 지원 목록과 맞춘다.
-- rename, cast, default, null guard를 명시적인 Rule로 직렬화한다.
-- Preview 결과를 실제 Spark fixture 결과와 비교한다.
-- 모든 Job에서 Target layer 선택을 같은 방식으로 제공한다.
+- Transform 편집기는 `String`, `Integer`, `Long`, `Double`, `Boolean`, `Timestamp`, `Date`, `JSON` 타입과 Snapshot portable operation을 사용한다. Kafka/Continuous에서 임의 SQL 탭은 노출하지 않는다.
+- 원본 `sourceType`과 target `type`을 분리해 보존하고 rename, cast, default, null guard를 순서가 있는 명시적 Rule로 모두 직렬화한다. Visual 편집 결과가 자동 생성 SQL 한 건으로 덮이지 않는다.
+- `POST /api/etl/rules/preview`는 최대 100개 샘플을 compiler로 검증한 뒤 실제 Node Snapshot runtime에 적용한다. 같은 conformance fixture를 실제 Spark 4 runtime과 비교해 Preview 의미를 고정한다.
+- 모든 Source의 Target 화면에서 RAW, BRONZE, SILVER, GOLD를 같은 Select로 고르며 layer 변경 시 자동 생성 storage path도 함께 갱신한다. Layer와 Rule 유무는 독립적이다.
+
+Phase 4 검증:
+
+```bash
+cd backend
+npm run verify:rule-compiler
+npm run verify:rule-preview
+npm run verify:snapshot-rule-conformance
+npm run verify:target-metadata
+
+cd ../frontend
+npm run verify:rule-compiler
+npm run verify:schema-transform-rules
+npm run verify:ui-regressions
+npm run build
+```
 
 ### Phase 5. Kafka Continuous 실행
 
@@ -200,5 +217,5 @@ npm run build
 
 - Continuous 초기 지원 operation의 최종 목록
 - rule/schema fingerprint가 바뀔 때 Job copy와 checkpoint 정책
-- Target layer 기본값과 사용자 선택 노출 방식
+- Target layer 기본값 변경 정책. 현재는 기존 source별 기본값을 유지하고 모든 Job에서 선택을 노출한다.
 - 기존 Run DAG와 Streaming DAG의 공통 UI 범위
