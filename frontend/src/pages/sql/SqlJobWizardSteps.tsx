@@ -1,3 +1,5 @@
+import { useMemo } from "react";
+
 import { Card } from "@/components/ui/card";
 import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
@@ -13,17 +15,19 @@ import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { cn } from "@/lib/utils";
 import type { SqlResultDraft } from "../../types";
+import { SqlJobTargetSettings } from "./SqlJobTargetSettings";
 import { WizardSelectField, WizardTimeField } from "./SqlJobWizardFields";
 import {
   accessScopeLabels,
   accessScopeOptions,
   buildPermissionSummary,
-  compressionOptions,
+  buildSqlJobPartitionOptions,
   formatSqlJobWizardScheduleLabel,
   overlapPolicyOptions,
   timezoneSelectOptions,
   weekdaySelectOptions,
   type SqlJobWizardConfiguration,
+  type SqlJobWizardBaseDataset,
   type SqlJobWizardDatasetInfo,
   type SqlJobWizardGovernance,
   type SqlJobWizardSchedule,
@@ -148,6 +152,7 @@ export function SqlJobGovernanceStep({
 }
 
 export function SqlJobReviewStep({
+  baseDataset,
   configuration,
   disabled,
   onStoragePathTouched,
@@ -155,6 +160,7 @@ export function SqlJobReviewStep({
   resultDraft,
   showErrors,
 }: {
+  baseDataset: SqlJobWizardBaseDataset;
   configuration: SqlJobWizardConfiguration;
   disabled: boolean;
   onStoragePathTouched: () => void;
@@ -162,43 +168,27 @@ export function SqlJobReviewStep({
   resultDraft: SqlResultDraft;
   showErrors: boolean;
 }) {
-  const partitionOptions = [
-    { label: "파티션 없음", value: "__none__" },
-    ...resultDraft.columns.map((column) => ({ label: column, value: column })),
-  ];
-  const storagePathInvalid = Boolean(configuration.target.storagePath && !/^s3a?:\/\//i.test(configuration.target.storagePath));
+  const partitionOptions = useMemo(
+    () => buildSqlJobPartitionOptions(baseDataset, resultDraft),
+    [baseDataset, resultDraft],
+  );
 
   return (
     <div className="grid gap-5">
-      <FieldGroup className="grid-cols-3 max-[760px]:grid-cols-1">
-        <WizardSelectField disabled={disabled} id="sql-job-wizard-compression" label="압축 방식" options={compressionOptions} value={configuration.target.compression} onValueChange={(compression) => onTargetChange({ compression })} />
-        <WizardSelectField
-          disabled={disabled}
-          id="sql-job-wizard-partition"
-          label="파티션 컬럼"
-          options={partitionOptions}
-          value={configuration.target.partitionColumn || "__none__"}
-          onValueChange={(partitionColumn) => onTargetChange({ partitionColumn: partitionColumn === "__none__" ? "" : partitionColumn })}
-        />
-        <Field>
-          <FieldLabel htmlFor="sql-job-wizard-storage">저장 경로</FieldLabel>
-          <Input
-            id="sql-job-wizard-storage"
-            value={configuration.target.storagePath}
-            onChange={(event) => {
-              onStoragePathTouched();
-              onTargetChange({ storagePath: event.target.value });
-            }}
-          />
-          {showErrors && (!configuration.target.storagePath.trim() || storagePathInvalid) ? <FieldError>유효한 S3 저장 경로를 입력해 주세요.</FieldError> : null}
-        </Field>
-      </FieldGroup>
+      <SqlJobTargetSettings
+        disabled={disabled}
+        onChange={onTargetChange}
+        onStoragePathTouched={onStoragePathTouched}
+        partitionOptions={partitionOptions}
+        showErrors={showErrors}
+        target={configuration.target}
+      />
 
       <div className="grid grid-cols-2 gap-3 max-[760px]:grid-cols-1">
-        <Card className="grid gap-2" size="sm" variant="muted"><span className="text-xs font-semibold text-slate-500">데이터셋</span><strong>{configuration.dataset.name}</strong><small className="text-slate-500">{configuration.target.compression} 압축</small></Card>
+        <Card className="grid gap-2" size="sm" variant="muted"><span className="text-xs font-semibold text-slate-500">데이터셋</span><strong>{configuration.dataset.name}</strong><small className="text-slate-500">{configuration.target.fileFormat.toUpperCase()} · {configuration.target.compression} 압축</small></Card>
         <Card className="grid gap-2" size="sm" variant="muted"><span className="text-xs font-semibold text-slate-500">실행 정책</span><strong>{formatSqlJobWizardScheduleLabel(configuration.schedule)}</strong><small className="text-slate-500">{configuration.schedule.mode === "manual" ? "직접 실행" : configuration.schedule.timezone}</small></Card>
         <Card className="grid gap-2" size="sm" variant="muted"><span className="text-xs font-semibold text-slate-500">거버넌스</span><strong>{configuration.governance.owner}</strong><small className="text-slate-500">{accessScopeLabels[configuration.governance.accessScope]}</small></Card>
-        <Card className="grid gap-2" size="sm" variant="muted"><span className="text-xs font-semibold text-slate-500">저장 위치</span><strong className="truncate" title={configuration.target.storagePath}>{configuration.target.storagePath}</strong><small className="text-slate-500">{configuration.target.partitionColumn ? `${configuration.target.partitionColumn} 파티션` : "파티션 없음"}</small></Card>
+        <Card className="grid gap-2" size="sm" variant="muted"><span className="text-xs font-semibold text-slate-500">저장 위치</span><strong className="truncate" title={configuration.target.storagePath}>{configuration.target.storagePath}</strong><small className="text-slate-500">{configuration.target.databaseName} · {configuration.target.partitionColumns.length > 0 ? `${configuration.target.partitionColumns.join(", ")} 파티션` : "파티션 없음"}</small></Card>
       </div>
 
       <section className="grid gap-3" aria-labelledby="sql-job-wizard-preview-title">

@@ -262,6 +262,7 @@ export function SqlJobWizardDialog({
 
         {activeStep.id === "review" ? (
           <SqlJobReviewStep
+            baseDataset={baseDataset}
             configuration={configuration}
             disabled={isBusy}
             onStoragePathTouched={() => setStoragePathTouched(true)}

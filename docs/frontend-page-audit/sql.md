@@ -174,3 +174,20 @@
 - 처리 Job 모달을 열어 기본 정보에서 스케줄 단계로 이동하고 `매일 실행` 선택 시 시간·시간대 control이 렌더링되는 것을 확인했다.
 - 860×800과 390×844에서 SQL workspace가 단일 열로 전환되고 page horizontal overflow가 없음을 확인했다.
 - 좁은 viewport에서 global App Shell sidebar가 SQL 본문보다 먼저 표시되고 긴 dataset 이름과 pagination label이 협소한 문제는 기존 범위로 남는다. SQL CSS Module에서 우회하지 않는다.
+
+## #591 SQL Job Target Settings Alignment
+
+2026-07-12 작업은 SQL 결과 처리 Job의 마지막 단계를 실제 ETL Target 설정과 같은 정보 구조로 맞췄다.
+
+- 기존 압축·단일 파티션·경로 입력을 `SqlJobTargetSettings.tsx`로 분리하고 DB 선택, 파일 포맷, 압축, S3 경로 찾아보기/복사, 태그 추가·삭제, 다중 파티션 선택을 구성했다.
+- `DatabaseField`와 `S3PathField`를 재사용해 ETL Target과 SQL Job wizard의 picker 동작을 동일하게 유지했다.
+- SQL 결과 컬럼 타입은 원본 dataset schema를 우선 사용하고, alias/집계 컬럼은 preview 값에서 `integer`, `decimal`, `boolean`, `date`, `timestamp`, `string`을 추론해 파티션 후보에 표시한다.
+- `CreateDerivedDatasetRequest.job`과 `DraftPipeline.target`에 database, format, tags, `partitionColumns`를 연결했다. 기존 `partitionColumn`은 첫 번째 선택값으로 유지해 하위 호환한다.
+- 신규 CSS selector는 추가하지 않았고 기존 shadcn Card, Field, Select, Checkbox, Button 및 공용 Target component를 조합했다.
+
+### #591 Verification
+
+- `npm run verify:ui-regressions` 64개 항목과 `npm run build`를 통과했다.
+- mock browser에서 `/sql` 진입, `commerce_orders_daily` 선택, Preview 실행, 처리 Job wizard 마지막 단계 진입을 확인했다.
+- `commerce` 태그 추가와 `order_date`, `channel` 다중 파티션 선택 후 Job을 생성했고, Job 상세에서 `parquet`, `Snappy`, `order_date/channel`이 유지되는 것을 확인했다.
+- 브라우저 console warning/error가 없음을 확인했다.

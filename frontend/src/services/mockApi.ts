@@ -336,6 +336,7 @@ export async function createPipelineDraft(draftPipeline: DraftPipeline, jobCount
     storagePath: draftPipeline.target.storagePath,
     storageType: draftPipeline.target.storageType,
     targetDescription: draftPipeline.target.description,
+    targetDatabase: draftPipeline.target.databaseName,
     targetFormat: draftPipeline.target.format,
     targetLayer: draftPipeline.target.layer,
     targetTags: draftPipeline.target.tags,

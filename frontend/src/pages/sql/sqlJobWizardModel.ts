@@ -9,6 +9,7 @@ import type { WizardSelectOption } from "./SqlJobWizardFields";
 export type SqlJobWizardScheduleMode = "manual" | "daily" | "weekly";
 export type SqlJobWizardAccessScope = "organization" | "private" | "project";
 export type SqlJobWizardCompression = "Gzip" | "None" | "Snappy";
+export type SqlJobWizardFileFormat = "csv" | "json" | "parquet";
 export type SqlJobWizardWeekday = "금" | "목" | "수" | "월" | "일" | "토" | "화";
 export type SqlJobWizardStepId = "dataset" | "governance" | "review" | "schedule";
 
@@ -34,8 +35,11 @@ export type SqlJobWizardGovernance = {
 
 export type SqlJobWizardTarget = {
   compression: SqlJobWizardCompression;
-  partitionColumn: string;
+  databaseName: string;
+  fileFormat: SqlJobWizardFileFormat;
+  partitionColumns: string[];
   storagePath: string;
+  tags: string[];
 };
 
 export type SqlJobWizardConfiguration = {
@@ -66,7 +70,12 @@ export type SqlJobWizardCreateRequest = {
 };
 
 export type SqlJobWizardDefaultMetadata = Partial<SqlJobWizardDatasetInfo>;
-export type SqlJobWizardBaseDataset = Pick<CatalogDataset, "id" | "name" | "owner">;
+export type SqlJobWizardBaseDataset = Pick<CatalogDataset, "id" | "name" | "owner" | "schema">;
+
+export type SqlJobWizardPartitionOption = {
+  name: string;
+  type: string;
+};
 
 export const accessScopeLabels: Record<SqlJobWizardAccessScope, string> = {
   organization: "조직 내부",
@@ -111,6 +120,12 @@ export const compressionOptions: Array<WizardSelectOption<SqlJobWizardCompressio
   { label: "압축 없음", value: "None" },
 ];
 
+export const fileFormatOptions: Array<WizardSelectOption<SqlJobWizardFileFormat>> = [
+  { label: "PARQUET", value: "parquet" },
+  { label: "CSV", value: "csv" },
+  { label: "JSON", value: "json" },
+];
+
 function normalizePathSegment(value: string) {
   return value.trim().replace(/\s+/g, "_") || "sql_result";
 }
@@ -121,6 +136,29 @@ export function buildDefaultStoragePath(dataset: SqlJobWizardDatasetInfo) {
 
 function findDefaultPartitionColumn(columns: string[]) {
   return columns.find((column) => /(date|time|month|year|created_at|updated_at)$/i.test(column)) ?? "";
+}
+
+function inferPreviewColumnType(values: string[]) {
+  const populatedValues = values.map((value) => value.trim()).filter(Boolean);
+  if (populatedValues.length === 0) return "string";
+  if (populatedValues.every((value) => /^-?\d+$/.test(value))) return "integer";
+  if (populatedValues.every((value) => /^-?(?:\d+\.?\d*|\d*\.\d+)$/.test(value))) return "decimal";
+  if (populatedValues.every((value) => /^(?:true|false)$/i.test(value))) return "boolean";
+  if (populatedValues.every((value) => /^\d{4}-\d{2}-\d{2}$/.test(value))) return "date";
+  if (populatedValues.every((value) => /^\d{4}-\d{2}-\d{2}[T\s]/.test(value))) return "timestamp";
+  return "string";
+}
+
+export function buildSqlJobPartitionOptions(
+  baseDataset: SqlJobWizardBaseDataset,
+  resultDraft: SqlResultDraft,
+): SqlJobWizardPartitionOption[] {
+  const schemaTypes = new Map(baseDataset.schema.map(([name, type]) => [name.toLowerCase(), type]));
+  return resultDraft.columns.map((name, columnIndex) => ({
+    name,
+    type: schemaTypes.get(name.toLowerCase())
+      ?? inferPreviewColumnType(resultDraft.rows.map((row) => row[columnIndex] ?? "")),
+  }));
 }
 
 export function buildPermissionSummary(accessScope: SqlJobWizardAccessScope) {
@@ -155,8 +193,11 @@ export function buildInitialSqlJobConfiguration(
     },
     target: {
       compression: "Snappy",
-      partitionColumn: findDefaultPartitionColumn(resultDraft.columns),
+      databaseName: "asklake",
+      fileFormat: "parquet",
+      partitionColumns: [findDefaultPartitionColumn(resultDraft.columns)].filter(Boolean),
       storagePath: buildDefaultStoragePath(dataset),
+      tags: [],
     },
   };
 }

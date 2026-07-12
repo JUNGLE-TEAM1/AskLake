@@ -333,6 +333,9 @@ function buildSqlDatasetJobDraft(
 ): DraftPipeline {
   const targetDataset = normalizeDraftDatasetName(request.dataset.name, `${sourceDataset.name}_analysis`);
   const targetLayer = request.dataset.layer;
+  const targetFormat = request.job?.fileFormat ?? "parquet";
+  const partitionColumns = request.job?.partitionColumns
+    ?? (request.job?.partitionColumn ? [request.job.partitionColumn] : []);
   const permissionOwner = request.job?.owner || sourceDataset.owner || initialDraftPipeline.permission.owner;
   const outputColumns: Array<[string, string]> = sqlResult.columns.map((column) => [column, inferSqlResultColumnType(sourceDataset, column)]);
   const schemaColumns: SchemaColumnDraft[] = outputColumns.map(([name, type], index) => ({
@@ -408,17 +411,18 @@ function buildSqlDatasetJobDraft(
     target: {
       ...initialDraftPipeline.target,
       compression: request.job?.compression ?? "Snappy",
+      databaseName: request.job?.databaseName?.trim() || "asklake",
       datasetName: targetDataset,
       description: request.dataset.description,
-      format: "Parquet",
+      format: targetFormat,
       layer: targetLayer,
-      partition: request.job?.partitionColumn || "",
-      partitionColumns: request.job?.partitionColumn ? [request.job.partitionColumn] : [],
+      partition: partitionColumns.join("/"),
+      partitionColumns,
       rag: false,
       storagePath: request.job?.storagePath || `s3a://asklake-output/${targetDataset}/${targetLayer.toLowerCase()}/`,
       storageType: "S3",
       tableName: targetDataset,
-      tags: [],
+      tags: request.job?.tags ?? request.dataset.tags,
     },
     transform: {
       outputColumns,
