@@ -3,7 +3,7 @@ import { ApiError } from "../types";
 import { catalogDatasets, etlJobs } from "../data/mockData";
 import { apiConfig } from "../services/apiClient";
 import { deleteDatasetMaterializationRun } from "../services/catalogApi";
-import { applyDraftPipelinePatch } from "../services/draftPipelineContract";
+import { applyDraftPipelinePatch, hydrateDraftPipelineFromJob } from "../services/draftPipelineContract";
 import {
   createPipelineDraft as createMockPipelineDraft,
   getDatasets,
@@ -134,7 +134,7 @@ function normalizeInitialDraftPipeline(draft: DraftPipeline): DraftPipeline {
   };
 }
 
-const initialDraftPipeline: DraftPipeline = normalizeInitialDraftPipeline({
+const baseInitialDraftPipeline: DraftPipeline = normalizeInitialDraftPipeline({
   id: "pair_a_customer_review_gold",
   permission: {
     owner: "data-team-01",
@@ -208,6 +208,80 @@ const initialDraftPipeline: DraftPipeline = normalizeInitialDraftPipeline({
     summary: "변환 규칙과 품질 검사를 설정하세요.",
   },
 });
+
+const initialDraftPipeline: DraftPipeline = apiConfig.useMock
+  ? {
+      ...baseInitialDraftPipeline,
+      quality: {
+        invalidRows: [],
+        rules: [
+          {
+            enabled: true,
+            failureAction: "Fail Run",
+            id: "mock-quality-order-id-not-null",
+            kind: "notNull",
+            severity: "Error",
+            targetColumn: "order_id",
+            validationType: "Not Null",
+          },
+          {
+            enabled: true,
+            failureAction: "Warn",
+            id: "mock-quality-amount-range",
+            kind: "range",
+            params: "0,1000000",
+            severity: "Warning",
+            targetColumn: "amount",
+            validationType: "Range Check",
+          },
+        ],
+        score: undefined,
+        status: "idle",
+        summary: "확인용 품질 규칙 2개",
+      },
+      schema: {
+        columns: [
+          { confidence: 99, included: true, nullable: false, sourceName: "order_id", targetName: "order_id", targetOrder: 0, type: "string" },
+          { confidence: 98, included: true, nullable: false, sourceName: "order_date", targetName: "order_date", targetOrder: 1, type: "timestamp" },
+          { confidence: 96, included: true, nullable: true, sourceName: "amount", targetName: "amount", targetOrder: 2, type: "double" },
+          { confidence: 97, included: true, nullable: true, sourceName: "status", targetName: "status", targetOrder: 3, type: "string" },
+        ],
+        sampleRows: [
+          ["ORD-1001", "2026-07-12T09:00:00Z", "42000", "paid"],
+          ["ORD-1002", "2026-07-12T09:05:00Z", "18500", "pending"],
+          ["", "2026-07-12T09:10:00Z", "-1200", "canceled"],
+          ["ORD-1004", "2026-07-12T09:15:00Z", "71000", "paid"],
+          ["ORD-1005", "2026-07-12T09:20:00Z", "24500", "refunded"],
+        ],
+        schemaFingerprint: "order_id:string:required|order_date:timestamp:required|amount:double:nullable|status:string:nullable",
+        summary: "확인용 주문 샘플 4개 컬럼",
+      },
+      source: {
+        connectionMessage: "확인용 mock 소스가 준비되었습니다.",
+        connectionStatus: "success",
+        sourceConfig: [["File Type", "CSV"], ["Path / Prefix", "mock/orders-preview.csv"]],
+        sourceLabel: "orders-preview.csv",
+        sourceType: "File / S3",
+      },
+      transform: {
+        outputColumns: [["order_id", "String"], ["order_date", "Timestamp"], ["amount", "Double"], ["status", "String"]],
+        steps: [
+          {
+            enabled: true,
+            id: "mock-transform-amount",
+            input: "amount",
+            kind: "cast",
+            label: "금액 숫자 변환",
+            onError: "Warn",
+            operation: "SQL Expression",
+            output: "amount",
+            params: "CAST(amount AS DOUBLE)",
+          },
+        ],
+        summary: "확인용 변환 규칙 1개",
+      },
+    }
+  : baseInitialDraftPipeline;
 
 const emptySelectedDataset: CatalogDataset = {
   description: "생성된 데이터셋이 없습니다. 수집/처리에서 파이프라인을 먼저 생성하고 실행하세요.",
@@ -1081,7 +1155,17 @@ export function useAskLakeData({
   const handleJobCommand = async (job: JobRowData, command: JobCommand): Promise<JobRowData | undefined> => {
     if (command === "edit") {
       writeAuditLog("etl.job.edit_opened", `/api/etl/jobs/${job.id}`, job.id);
-      setSelectedJob(job);
+      let editableJob = job;
+      if (!apiConfig.useMock) {
+        try {
+          editableJob = normalizeJobRow(await getLiveJob(job.id));
+          updateJobState(job.id, () => editableJob);
+        } catch {
+          // The list payload is still a valid fallback when the detail refresh fails.
+        }
+      }
+      setSelectedJob(editableJob);
+      setDraftPipeline(hydrateDraftPipelineFromJob(editableJob, initialDraftPipeline));
       onFlowChange("source");
       return undefined;
     }

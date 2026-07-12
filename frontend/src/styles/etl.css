@@ -5933,23 +5933,6 @@
   gap: 7px;
 }
 
-.permission-chip-row em {
-  border: 1px solid #dee1e6;
-  border-radius: 999px;
-  background: #fff;
-  color: #9095a1;
-  font-size: 11px;
-  font-style: normal;
-  font-weight: 800;
-  padding: 4px 8px;
-}
-
-.permission-chip-row em.allowed {
-  border-color: #bfdbfe;
-  background: #eff6ff;
-  color: #1d4ed8;
-}
-
 .permission-matrix {
   display: grid;
   gap: 12px;
@@ -6290,101 +6273,6 @@
   overflow: visible;
   text-overflow: clip;
   white-space: normal;
-}
-
-.permission-config-card .field {
-  margin: 0;
-}
-
-.permission-config-card .info-box {
-  margin-top: 16px;
-}
-
-.permission-config-validation {
-  padding-top: 18px;
-}
-
-.permission-config-form-grid {
-  padding-top: 0;
-}
-
-.permission-config-role-list {
-  display: grid;
-  gap: 10px;
-  padding: 18px 20px 20px;
-}
-
-.permission-config-role {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 10px 14px;
-  min-width: 0;
-  border: 1px solid #dee1e6;
-  border-radius: 8px;
-  background: #fff;
-  cursor: pointer;
-  padding: 14px 16px;
-}
-
-.permission-config-role.active {
-  border-color: #bfdbfe;
-  background: #f8fbff;
-}
-
-.permission-config-role.recommended {
-  box-shadow: inset 3px 0 0 #2563eb;
-}
-
-.permission-config-role input {
-  width: 18px;
-  height: 18px;
-  margin: 2px 0 0;
-  accent-color: #2563eb;
-}
-
-.permission-config-role-body {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-}
-
-.permission-config-role-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.permission-config-role-title strong {
-  min-width: 0;
-  overflow: hidden;
-  color: #111827;
-  font-size: 13px;
-  font-weight: 850;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.permission-config-role-title em {
-  flex: 0 0 auto;
-  border-radius: 999px;
-  background: #eff6ff;
-  color: #2563eb;
-  font-size: 10px;
-  font-style: normal;
-  font-weight: 900;
-  padding: 4px 8px;
-}
-
-.permission-config-role-body small {
-  color: #64748b;
-  font-size: 12px;
-  font-weight: 650;
-  line-height: 1.4;
-}
-
-.permission-config-access-row {
-  grid-column: 2;
 }
 
 .schedule-config-stack {
