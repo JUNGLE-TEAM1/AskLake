@@ -419,6 +419,9 @@ const checks = [
       /<DropdownMenuRadioGroup/,
       /const selectValue = value \|\| widgetEmptySelectValue;/,
       /<DropdownMenuLabel>\{String\(props\.label\)\} 필터<\/DropdownMenuLabel>/,
+      /className=\{cn\("min-w-0 w-full", props\.fieldClassName\)\}/,
+      /asklake-widget-select h-9 w-full min-w-0 max-w-full justify-start overflow-hidden px-3/,
+      /<strong className="min-w-0 max-w-full break-words">/,
       /<WidgetSelectModeContext\.Provider value=\{fieldSelectMode\}>/,
     ],
     forbiddenPatterns: [

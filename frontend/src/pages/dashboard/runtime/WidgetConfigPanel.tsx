@@ -151,12 +151,18 @@ function WidgetSelectField({
   if (selectMode === "dropdown") {
     const selectedOption = options.find((option) => option.value === value);
     return (
-      <FormFieldGroup className={props.fieldClassName} label={props.label}>
+      <FormFieldGroup
+        className={cn("min-w-0 w-full", props.fieldClassName)}
+        label={props.label}
+      >
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
               aria-label={String(props.label)}
-              className={cn("asklake-widget-select h-9 w-full justify-start px-3", selectClassName)}
+              className={cn(
+                "asklake-widget-select h-9 w-full min-w-0 max-w-full justify-start overflow-hidden px-3",
+                selectClassName,
+              )}
               disabled={props.disabled}
               size="sm"
               type="button"
@@ -858,7 +864,9 @@ export function WidgetConfigPanel({
         <div className="asklake-widget-config-heading">
           <div>
             <span>{isEditMode ? "선택된 위젯" : "데이터셋"}</span>
-            <strong>{isEditMode ? editingWidget?.title || "제목 없는 위젯" : selectedDataset?.name}</strong>
+            <strong className="min-w-0 max-w-full break-words">
+              {isEditMode ? editingWidget?.title || "제목 없는 위젯" : selectedDataset?.name}
+            </strong>
           </div>
         </div>
       )}
