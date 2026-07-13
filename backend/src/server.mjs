@@ -20,6 +20,7 @@ import { getCellphonesReviewAnalysisStatus, runCellphonesReviewAnalysis, suggest
 import { handleAuthRoute } from "./authService.mjs";
 import { compileRuleContract } from "./ruleCompiler.mjs";
 import { applySnapshotRules, supportsSnapshotRules } from "./snapshotRuleRuntime.mjs";
+import { kafkaDefaultBroker } from "./kafkaRuntime.mjs";
 
 const port = Number(process.env.PORT || 8080);
 
@@ -45,7 +46,7 @@ const server = http.createServer(async (request, response) => {
 
     if (request.method === "GET" && url.pathname === "/api/etl/sources/defaults") {
       sendJson(response, 200, {
-        kafkaBroker: process.env.ASKLAKE_KAFKA_BROKER || "127.0.0.1:19092",
+        kafkaBroker: kafkaDefaultBroker(),
       });
       return;
     }

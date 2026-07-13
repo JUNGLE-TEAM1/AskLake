@@ -438,9 +438,55 @@ npm run verify:kafka-continuous-contract
 npm run verify:kafka-continuous-rules
 ```
 
-Phase 2부터 prod-like Compose는 내부 broker `redpanda:9092`를 제공한다. 이 broker는 Snapshot fixture와 이후 Continuous Spark worker가 같은 Docker network에서 사용할 endpoint이며, 외부 Kafka endpoint를 쓰려면 배포 env에서 `ASKLAKE_KAFKA_BROKER`를 바꾼다.
-ETL 생성 화면은 `GET /api/etl/sources/defaults`에서 backend의 `ASKLAKE_KAFKA_BROKER` 값을 읽는다. 로컬 backend 기본값은 `127.0.0.1:19092`, prod-like Compose 기본값은 `redpanda:9092`이며 frontend build 변수로 같은 값을 중복 관리하지 않는다.
+Phase 2부터 prod-like Compose는 내부 broker `redpanda:9092`를 제공한다. 이 broker는 Snapshot fixture와 현재 Continuous Spark worker가 같은 Docker network에서 사용하는 기본/rollback endpoint다. Node Kafka 경로를 MSK Serverless로 전환하려면 단순히 broker 문자열만 바꾸지 않고 아래 Runtime block을 함께 설정한다.
+ETL 생성 화면은 `GET /api/etl/sources/defaults`에서 backend Kafka Runtime의 canonical broker 값을 읽는다. 로컬 backend 기본값은 `127.0.0.1:19092`, prod-like Compose 기본값은 `redpanda:9092`, MSK opt in은 comma-separated IAM bootstrap broker 목록이며 frontend build 변수로 같은 값을 중복 관리하지 않는다.
 Kafka 소스 연결 테스트는 새 샘플 consumer group이 첫 메시지를 받을 때까지 `ASKLAKE_KAFKA_SAMPLE_TIMEOUT_MS`(기본 8초)를 기다린다. 첫 메시지 이후 `ASKLAKE_KAFKA_SAMPLE_MIN_MESSAGES`(기본 3건)에 도달하면 `ASKLAKE_KAFKA_SAMPLE_IDLE_MS`(기본 0.5초) idle window로 종료한다. 최소 건수에 도달하지 못한 희소 topic은 `ASKLAKE_KAFKA_SAMPLE_SETTLE_MS`(기본 1.5초)까지만 추가 메시지를 기다린 뒤 현재 샘플을 반환한다.
+
+### Amazon MSK Serverless 연결 검증
+
+Phase 4의 MSK 연결은 Node Source test/schema sample, Kafka Snapshot ingest, replay producer와 bounded probe까지다. EMR Serverless Spark Structured Streaming의 IAM connector는 Phase 5이므로, 이 설정만으로 Continuous Job Runtime이 EMR로 전환되지는 않는다. 실제 cluster/VPC/subnet/security group은 AWS 배포 인프라에서 먼저 준비하고 probe 실행 주체가 bootstrap broker에 network reachability를 가져야 한다.
+
+staging의 최소 설정은 다음과 같다. MSK Serverless는 IAM 인증이 필수이므로 auth/TLS 값은 다른 mode로 바꿀 수 없다. AWS 인증은 EC2 instance profile, task role, 또는 실행 환경의 default credential chain을 사용하고 repo/env 파일에 장기 access key/secret/session token을 추가하지 않는다.
+
+```bash
+export ASKLAKE_KAFKA_RUNTIME=msk
+export ASKLAKE_KAFKA_ENVIRONMENT=staging
+export ASKLAKE_MSK_ENABLED=true
+export ASKLAKE_MSK_BOOTSTRAP_BROKERS='boot-aaa.example.amazonaws.com:9098,boot-bbb.example.amazonaws.com:9098'
+export ASKLAKE_MSK_REGION=ap-northeast-2
+export ASKLAKE_MSK_AUTH_MODE=iam
+export ASKLAKE_MSK_TLS_ENABLED=true
+```
+
+probe 실행 role의 최소 Kafka data-plane 권한은 cluster의 `kafka-cluster:Connect`, probe topic의 `DescribeTopic`, `DescribeTopicDynamicConfiguration`, `WriteData`, `ReadData`, probe group namespace의 `DescribeGroup`, `AlterGroup`이다. `--create-topic`을 사용할 때만 probe topic ARN에 `CreateTopic`을 추가한다. `AlterTopic`, `AlterTopicDynamicConfiguration`, `DeleteTopic`, `DeleteGroup`은 이 probe에 필요하지 않다.
+
+기본 topic namespace는 `asklake.staging.*`, 정책은 최소 3 partitions와 `retention.ms=604800000`이다. 실제 운영값을 바꿀 때는 아래 env를 명시한다. partition 수는 메시지 건수만으로 자동 조정하지 않으며 consumer 병렬성, key ordering, 평균 record 크기, broker 처리량을 부하 시험한 변경 기록으로 관리한다. 이미 만든 topic의 partition을 줄일 수 없고 이 도구는 partition 증가도 자동 실행하지 않는다.
+
+```bash
+export ASKLAKE_KAFKA_TOPIC_PREFIX=asklake.staging
+export ASKLAKE_KAFKA_TOPIC_POLICY_ENFORCED=true
+export ASKLAKE_KAFKA_TOPIC_MIN_PARTITIONS=6
+export ASKLAKE_KAFKA_TOPIC_RETENTION_MS=604800000
+```
+
+repo 기본 검증은 AWS에 연결하지 않는 fake client 계약이다.
+
+```bash
+cd backend
+npm run verify:msk-connection-contract
+```
+
+실제 staging에서는 먼저 전용 probe topic을 관리자가 만들거나, 해당 role에 topic create 권한을 준 일회성 검증에서만 `--create-topic`을 사용한다. 생성 옵션도 기존 topic의 config를 수정하거나 삭제·재생성하지 않는다. 성공 결과는 correlation ID, partition/offset, end-to-end latency와 검증된 topic policy만 출력하고 bootstrap broker·credential은 출력하지 않는다.
+
+```bash
+cd backend
+npm run kafka:msk-probe -- --topic asklake.staging.probe
+
+# topic이 아직 없고 명시적으로 생성해도 되는 staging role에서만 사용
+npm run kafka:msk-probe -- --topic asklake.staging.probe --create-topic
+```
+
+실패 code는 설정 오류 `KAFKA_RUNTIME_CONFIGURATION_INVALID`, IAM 인증/인가 `KAFKA_AUTHENTICATION_FAILED`, network/timeout `KAFKA_CONNECTION_TIMEOUT`, topic 없음 `KAFKA_TOPIC_NOT_FOUND`, namespace 위반 `KAFKA_TOPIC_NAMESPACE_INVALID`, partition/retention 불일치 `KAFKA_TOPIC_POLICY_MISMATCH`, bounded 수신 실패 `KAFKA_ROUNDTRIP_TIMEOUT`으로 구분한다. 인증 오류를 해결할 때 원문 stack이나 credential을 로그에 추가하지 말고 VPC route/security group, IAM cluster/topic/group 권한, region과 IAM bootstrap broker를 순서대로 확인한다.
 
 Continuous worker는 Spark 4.0.1/Scala 2.13 Kafka connector를 사용한다. 현재 Continuous worker/maintenance manager는 Docker container lifecycle API에 의존하므로 socketless production backend에서는 지원되지 않는다. 이번 REST 전환 범위는 일반 batch와 Parquet source inspect이며, Continuous production 전환은 별도 작업으로 관리한다.
 
@@ -519,6 +565,7 @@ Object storage provider 회귀는 별도 계약 검증으로 확인한다.
 ```bash
 cd backend
 npm run verify:object-storage-mode
+npm run verify:msk-connection-contract
 npm run verify:storage-layout-contract
 npm run verify:target-metadata
 npm run verify:kafka-continuous-contract

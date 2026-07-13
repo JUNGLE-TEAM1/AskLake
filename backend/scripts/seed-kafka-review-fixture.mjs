@@ -3,6 +3,16 @@ import { createInterface } from "node:readline";
 import path from "node:path";
 import { createGunzip } from "node:zlib";
 import { fileURLToPath } from "node:url";
+import {
+  KAFKA_RUNTIME_IDS,
+  assertKafkaTopicPolicy,
+  assertKafkaTopicRecreationAllowed,
+  createKafkaClient,
+  describeKafkaEndpoint,
+  resolveKafkaRuntimeConfig,
+  serializeKafkaError,
+  validateKafkaTopic,
+} from "../src/kafkaRuntime.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const defaultFixturePath = path.resolve(scriptDir, "../fixtures/kafka/amazon-review-fixture.jsonl");
@@ -34,6 +44,9 @@ const burstMinMessages = positiveInteger(options.burstMinMessages ?? process.env
 const burstMaxMessages = positiveInteger(options.burstMaxMessages ?? process.env.ASKLAKE_REVIEW_BURST_MAX_MESSAGES, "burst-max-messages");
 const burstIntervalSeconds = positiveInteger(options.burstIntervalSeconds ?? process.env.ASKLAKE_REVIEW_BURST_INTERVAL_SECONDS, "burst-interval-seconds");
 const burstMode = burstMinMessages !== null || burstMaxMessages !== null || burstIntervalSeconds !== null;
+const runtimeConfig = resolveKafkaRuntimeConfig({ broker });
+validateKafkaTopic(topic, runtimeConfig);
+assertKafkaTopicRecreationAllowed(runtimeConfig, recreateTopic);
 let stopRequested = false;
 
 if (maxCycles && !loop) {
@@ -61,7 +74,7 @@ if (dryRun) {
   const stats = await inspectInput();
   console.log(`Review Kafka replay input valid: ${stats.validRecords} messages from ${inputPath}`);
   console.log(`Target topic: ${topic}`);
-  console.log(`Broker: ${broker}`);
+  console.log(`Broker: ${describeKafkaEndpoint(runtimeConfig)}`);
   console.log(`Limit: ${limit || "all"}`);
   console.log(`Rate: ${rate || "unlimited"} messages/sec`);
   console.log(`Loop: ${loop ? "enabled" : "disabled"}`);
@@ -72,21 +85,23 @@ if (dryRun) {
   process.exit(0);
 }
 
-const { Kafka, Partitioners } = await import("kafkajs");
-const kafka = new Kafka({
-  brokers: [broker],
+const { client: kafka, kafkaJs } = await createKafkaClient({
+  config: runtimeConfig,
   clientId: "asklake-review-replay-producer",
-  retry: { retries: 2 },
+  retries: 2,
 });
 const admin = kafka.admin();
-const producer = kafka.producer({ createPartitioner: Partitioners.LegacyPartitioner });
+const producer = kafka.producer({ createPartitioner: kafkaJs.Partitioners.LegacyPartitioner });
 
 try {
   await admin.connect();
-  await ensureTopic(admin, topic);
+  await ensureTopic(admin, topic, runtimeConfig, kafkaJs);
   await producer.connect();
   const stats = await produceRecords(producer);
-  console.log(`Review Kafka replay finished: ${stats.sentRecords} messages across ${stats.completedCycles} cycle(s) to ${topic} at ${broker}${stats.stopped ? " (stopped by signal)" : ""}`);
+  console.log(`Review Kafka replay finished: ${stats.sentRecords} messages across ${stats.completedCycles} cycle(s) to ${topic} at ${describeKafkaEndpoint(runtimeConfig)}${stats.stopped ? " (stopped by signal)" : ""}`);
+} catch (error) {
+  console.error(`ASKLAKE_KAFKA_REPLAY_ERROR=${JSON.stringify(serializeKafkaError(error, { runtime: runtimeConfig.runtime, stage: "replay-producer" }))}`);
+  process.exitCode = 1;
 } finally {
   await producer.disconnect().catch(() => {});
   await admin.disconnect().catch(() => {});
@@ -247,7 +262,27 @@ function validateRecord(record, lineNumber) {
   return record;
 }
 
-async function ensureTopic(adminClient, targetTopic) {
+async function ensureTopic(adminClient, targetTopic, config, kafkaJs) {
+  if (config.runtime === KAFKA_RUNTIME_IDS.MSK) {
+    const [metadata, described] = await Promise.all([
+      adminClient.fetchTopicMetadata({ topics: [targetTopic] }),
+      adminClient.describeConfigs({
+        includeSynonyms: false,
+        resources: [{
+          configNames: ["retention.ms"],
+          name: targetTopic,
+          type: kafkaJs.ConfigResourceTypes?.TOPIC ?? 2,
+        }],
+      }),
+    ]);
+    assertKafkaTopicPolicy({
+      config,
+      configEntries: described?.resources?.[0]?.configEntries || [],
+      metadata,
+      topic: targetTopic,
+    });
+    return;
+  }
   if (recreateTopic) {
     const topics = await adminClient.listTopics();
     if (topics.includes(targetTopic)) {

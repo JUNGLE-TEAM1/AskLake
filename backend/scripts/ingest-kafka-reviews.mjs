@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CreateBucketCommand, HeadBucketCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { closeMetadataStore, getDataset, saveDataset } from "../src/metadataStore.mjs";
-import { loadKafkaJs } from "../src/kafka-codecs.mjs";
+import { KAFKA_RUNTIME_IDS, createKafkaClient, describeKafkaEndpoint, normalizeKafkaError, resolveKafkaRuntimeConfig, validateKafkaTopic } from "../src/kafkaRuntime.mjs";
 import { defaultOutputBucket, isMinioProvider, resolveObjectStorageConfig, s3ClientOptions } from "../src/objectStorageConfig.mjs";
 import { formatBytes, inferSchemaColumns, normalizeColumnName, parseSourceSample, schemaFingerprint } from "../src/profile.mjs";
 import {
@@ -66,18 +66,27 @@ let metadataPath = "";
 let activeSnapshot = null;
 const startedAt = new Date().toISOString();
 const requiredFields = ["event_id", "offset", "review", "created_at"];
+let activeKafkaConfig = null;
 
 try {
   const result = await ingestReviews();
   console.log(`ASKLAKE_KAFKA_REVIEW_INGEST_RESULT=${JSON.stringify(result)}`);
 } catch (error) {
+  const safeKafkaError = activeKafkaConfig?.runtime === KAFKA_RUNTIME_IDS.MSK && !error?.failedStage
+    ? normalizeKafkaError(error, { runtime: activeKafkaConfig.runtime, stage: "snapshot-ingest" })
+    : null;
   console.log(`ASKLAKE_KAFKA_REVIEW_INGEST_ERROR=${JSON.stringify({
     code: "KAFKA_REVIEW_INGEST_FAILED",
-    broker,
+    causeCode: safeKafkaError?.code,
+    broker: activeKafkaConfig
+      ? describeKafkaEndpoint(activeKafkaConfig)
+      : String(process.env.ASKLAKE_KAFKA_RUNTIME || "").toLowerCase().includes("msk")
+        ? "Amazon MSK"
+        : broker,
     consumerGroupId,
     endedAt: new Date().toISOString(),
     failedStage: error?.failedStage || "Kafka ingest",
-    message: error?.message || String(error),
+    message: safeKafkaError?.message || error?.message || String(error),
     quality: error?.quality,
     runId,
     snapshot: activeSnapshot,
@@ -101,12 +110,14 @@ async function ingestReviews() {
   if (!supportsSnapshotRules(canonicalRules)) {
     throw pipelineError("transform", "Kafka Snapshot received an unsupported canonical Rule operation.");
   }
-  const { Kafka } = await loadKafkaJs();
-  const kafka = new Kafka({
-    brokers: [broker],
+  const config = resolveKafkaRuntimeConfig({ broker });
+  validateKafkaTopic(topic, config);
+  const { client: kafka } = await createKafkaClient({
+    config,
     clientId: "asklake-review-ingest",
-    retry: { retries: 2 },
+    retries: 2,
   });
+  activeKafkaConfig = config;
   const snapshot = suppliedSnapshot || await captureKafkaSnapshot(kafka);
   activeSnapshot = snapshot;
   if (snapshotOnly) return { snapshot, status: "snapshot" };

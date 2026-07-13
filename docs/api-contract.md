@@ -569,11 +569,11 @@ type CatalogDataset = {
 
 ### Source Connector Defaults
 
-`GET /api/etl/sources/defaults`는 새 Source draft에 사용할 비밀이 아닌 runtime 기본값을 반환합니다.
+`GET /api/etl/sources/defaults`는 새 Source draft에 사용할 비밀이 아닌 runtime 기본값을 반환합니다. 기본 `redpanda` Runtime은 `ASKLAKE_KAFKA_BROKER`, opt-in `msk` Runtime은 canonical `ASKLAKE_MSK_BOOTSTRAP_BROKERS` 목록을 반환하며 IAM credential 자체는 반환하지 않습니다. MSK feature flag/region/IAM/TLS 설정이 불완전하면 `KAFKA_RUNTIME_CONFIGURATION_INVALID`로 실패합니다.
 
 ```ts
 type SourceConnectorDefaults = {
-  kafkaBroker: string; // ASKLAKE_KAFKA_BROKER, fallback 127.0.0.1:19092
+  kafkaBroker: string; // Redpanda ASKLAKE_KAFKA_BROKER 또는 comma-separated MSK bootstrap brokers
 };
 ```
 

@@ -87,6 +87,8 @@ TRINO_CLEANUP_POLL_SECONDS=3600
 - `ASKLAKE_SPARK_RUNTIME`은 HTTP API shape가 아니라 backend 실행 provider 계약이다. 지원값은 `docker`, `spark-rest`, `emr-serverless`이며 production Compose 기본값은 `spark-rest`다. `emr-serverless`는 AWS S3 일반 Batch만 지원하고 Parquet source inspection, Kafka Continuous, maintenance는 지원하지 않는다.
 - `ASKLAKE_SPARK_RUNNER=docker|rest`는 기존 배포를 위한 호환 alias다. 새 설정은 `ASKLAKE_SPARK_RUNTIME`을 사용하고 두 변수를 함께 둘 때는 `docker`/`docker` 또는 `spark-rest`/`rest`처럼 의미가 같아야 한다. 충돌, 미지원 값, production Docker 선택은 `SPARK_RUNNER_CONFIGURATION_INVALID`로 작업 제출 전에 실패한다.
 - EMR opt in은 `ASKLAKE_EMR_SERVERLESS_ENABLED=true`, application ID, execution role ARN, PySpark entry-point S3 URI, Run artifact prefix, log prefix, `AWS_REGION`을 모두 요구한다. backend AWS principal에는 EMR Serverless Job Run 제어, manifest/artifact S3 접근, execution role `iam:PassRole`이 필요하다. 장기 access key/secret/session token은 env나 API payload에 넣지 않는다.
+- `ASKLAKE_KAFKA_RUNTIME`은 HTTP shape가 아닌 Kafka provider 계약이며 기본값은 `redpanda`, AWS opt in 값은 `msk`다. `msk`는 feature flag, IAM bootstrap broker, region, IAM auth, TLS를 fail-fast 검증하고 Node Source test·Snapshot ingest·replay producer가 같은 client options를 사용한다. MSK Serverless client는 AWS default credential chain과 SASL/OAUTHBEARER signer를 사용한다.
+- MSK topic은 기본 `asklake.<ASKLAKE_KAFKA_ENVIRONMENT>.*` namespace와 최소 3 partitions, 7일 retention 정책을 사용한다. 기존 topic의 자동 partition 증가·감소·삭제·재생성은 API 계약에 포함하지 않는다. `npm run kafka:msk-probe -- --topic <topic>`만 metadata/config와 producer → bounded consumer 왕복을 검사하며 `--create-topic`은 없는 topic의 명시적 생성만 허용한다.
 - Storage Layout V1 자동 root는 `s3a://<output-bucket>/<base-prefix>/<environment>/datasets/<datasetId>/<layer>`다. Batch는 저장된 `datasetId`를 그대로 사용한다. 명시적인 `storagePath`는 object key 의미를 유지한 canonical percent encoding으로 사용하고, Job checkpoint는 `_checkpoints/<jobId>`로 격리한다. 기존 Continuous Job의 `storagePath`가 없으면 저장된 checkpoint에서 원래 root를 복원한다. `ASKLAKE_STORAGE_*_RETENTION_DAYS`는 lifecycle 정책의 계약값이며 bucket lifecycle 적용 자체는 배포 운영자가 담당한다.
 - 잘못된 scheme·bucket·percent encoding, 빈 segment, decoded slash, 경로 traversal은 `422 STORAGE_LAYOUT_INVALID`, production local data-plane 경로는 `422 STORAGE_LAYOUT_LOCAL_PATH_FORBIDDEN`으로 거부한다. Batch manifest의 `errorCode`/`errorStatus`와 Continuous control 응답은 object storage 실패를 `OBJECT_STORAGE_ACCESS_DENIED`, `OBJECT_STORAGE_NOT_FOUND`, `OBJECT_STORAGE_UNAVAILABLE` 중 하나로 보존하며 provider 원문, stack, credential은 사용자 메시지에 포함하지 않는다.
 - Query AI live mode는 backend env의 `OPENAI_API_KEY`와 `OPENAI_QUERY_AI_MODEL`을 사용한다. 브라우저 env에는 OpenAI 키를 두지 않는다.
@@ -175,9 +177,11 @@ Canonical status values:
 | `POST` | `/api/catalog/trino-runs/{runId}/materializations` | source run submitter/admin | 완료된 Trino run의 1회성 Iceberg CTAS 등록 시작. SQL 결과 toolbar에는 노출하지 않음 | `docs/trino-query-run-contract.md` |
 | `GET` | `/api/catalog/trino-materializations/{materializationId}` | submitter/admin + current `query` access | persisted CTAS/등록 상태 조회 | `docs/trino-query-run-contract.md` |
 
-`GET /api/etl/sources/defaults`는 `{ "kafkaBroker": "..." }`를 반환한다. 새 Kafka Source 화면은 build-time 상수가 아니라 이 값을 사용하므로 `ASKLAKE_KAFKA_BROKER`를 바꾼 backend와 같은 endpoint를 기본 표시한다.
+`GET /api/etl/sources/defaults`는 `{ "kafkaBroker": "..." }`를 반환한다. 새 Kafka Source 화면은 build-time 상수가 아니라 이 값을 사용한다. 기본 `redpanda` Runtime은 `ASKLAKE_KAFKA_BROKER`, `msk` Runtime은 comma-separated `ASKLAKE_MSK_BOOTSTRAP_BROKERS`를 반환한다. MSK feature flag·region·IAM/TLS 설정이 불완전하면 기본값 요청부터 `KAFKA_RUNTIME_CONFIGURATION_INVALID`로 실패한다.
 
 Kafka `POST /api/etl/sources/test`와 Snapshot ingest consumer는 uncompressed 및 Snappy-compressed record batch를 지원한다. Source test는 consumer 오류를 빈 metadata preview로 바꾸지 않는다. 첫 메시지 이후 최소 샘플 수에 도달하면 idle window로 종료하고, 도달하지 못해도 bounded settle window 뒤 현재 샘플을 반환한다.
+
+MSK Runtime의 Kafka 오류는 `KAFKA_AUTHENTICATION_FAILED`(IAM 인증/인가), `KAFKA_CONNECTION_TIMEOUT`(network/timeout), `KAFKA_TOPIC_NOT_FOUND`, `KAFKA_TOPIC_NAMESPACE_INVALID`, `KAFKA_TOPIC_POLICY_MISMATCH`로 구분한다. error message/details에는 bootstrap broker 원문이나 credential/provider stack을 반환하지 않는다.
 
 `POST /api/etl/jobs/{jobId}/commands`의 일반 배치 `run`/`retry`는 Airflow 접수 직후 `queued` 또는 `running` 상태를 응답한다. Airflow의 `spark_process_write` task가 bearer token으로 FastAPI internal execution API를 호출해 실제 PySpark 처리를 수행하고, 최종 Run/DAG/Spark manifest는 `GET /api/etl/jobs/{jobId}` polling으로 반영한다.
 

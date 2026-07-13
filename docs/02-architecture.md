@@ -147,6 +147,16 @@ EMR Batch는 `FastAPI -> Airflow -> Node bridge -> EMR Serverless -> S3 Parquet/
 - `cancelRun`은 제출 전 cancellation marker를 남겨 race를 차단하고, 제출 뒤에는 persisted Job Run ID로 `CancelJobRun`을 요청한다. 취소된 Run은 뒤늦은 Airflow poll이나 Spark 결과가 success로 덮어쓰지 못하며 Catalog reconciliation도 거부된다.
 - driver/executor cores·memory와 dynamic allocation min/initial/max는 환경 변수로 조정한다. 이 설정은 확장 가능성의 제어면일 뿐 처리량 보장이 아니며 실제 target workload 부하 시험은 별도다.
 
+### Kafka Runtime과 Amazon MSK 연결 경계
+
+Kafka 연결 설정의 source of truth는 `backend/src/kafkaRuntime.mjs`다. 기본 `redpanda` Runtime은 기존 `ASKLAKE_KAFKA_BROKER`와 무인증 plaintext 연결을 유지한다. `ASKLAKE_KAFKA_RUNTIME=msk`는 `ASKLAKE_MSK_ENABLED=true`, IAM bootstrap broker, AWS region을 모두 요구하고 MSK Serverless의 IAM SASL/OAUTHBEARER + TLS만 허용한다. Node client는 AWS 공식 signer와 default credential chain을 사용하며 access key, secret, session token을 별도 Kafka 설정이나 로그에 저장하지 않는다.
+
+- Phase 4의 공통 client factory는 Node Source test/schema sampling, Kafka Snapshot ingest, replay producer, bounded MSK probe에 적용한다. Spark Structured Streaming의 MSK IAM connector와 EMR Continuous 실행은 Phase 5 범위이므로 현재 `emr-serverless`의 Batch-only capability는 바뀌지 않는다.
+- MSK topic은 기본 `asklake.<environment>.*` namespace를 사용한다. 기본 정책은 최소 3 partitions와 `retention.ms=604800000`이며 배포 환경 변수로 기대값을 명시할 수 있다. 메시지 건수만 보고 partition을 자동 증가시키지 않고, consumer 병렬성·key ordering·평균 record 크기·broker 처리량을 검토한 변경 승인으로 분리한다. partition 감소와 기존 topic 자동 삭제/재생성은 지원하지 않는다.
+- `npm run kafka:msk-probe`는 topic metadata/config를 먼저 검사한 뒤 고유 correlation event를 produce하고 새 bounded consumer group이 같은 event를 제한 시간 안에 읽는지 확인한다. `--create-topic`은 topic이 없을 때만 명시적으로 생성하며 기존 topic의 partition이나 retention을 자동 수정하지 않는다.
+- probe와 공통 Runtime은 authentication/authorization, connection timeout, topic 없음, topic policy mismatch를 서로 다른 code로 정규화한다. 오류 응답과 probe 로그에는 bootstrap broker 원문, provider stack, credential 값을 포함하지 않는다.
+- 실제 MSK cluster, VPC/subnet/security group과 EMR role의 network/IAM 권한은 배포 인프라가 소유한다. repo 기본 검증은 fake client 계약이며 실제 roundtrip은 MSK에 접근 가능한 staging VPC에서 opt in으로 실행한다. local/Compose Redpanda는 rollback과 회귀 검증 경로로 계속 유지한다.
+
 CSV source와 source inspect는 `quote="`와 `escape="`를 명시해 RFC 4180의 quoted comma와 doubled quote를 같은 field로 해석한다. 예를 들어 `"안녕, 나는 ""해건"""`은 `안녕, 나는 "해건"`이라는 리뷰 하나로 유지된다.
 
 Spark manifest의 input/output row count, output path, schema, quality, failure stage는 `etl_runs.task_states.sparkResult`와 Run summary에 보존한다. Phase 2는 물리 Parquet와 Spark/Airflow 결과 전파까지 책임지며 Catalog materialization/lineage와 최종 성공 gate는 Phase 3 경계다.
@@ -184,7 +194,7 @@ Phase 4부터 Schema Transform 화면은 원본 `sourceType`과 target `type`을
 
 Rule 계약의 API와 저장 source of truth는 versioned `rules[]`다. Frontend는 현재 편집기의 transform/quality draft를 canonical Rule로 컴파일해 create/update/review에 보내고, backend는 실행 전에 operation 지원 범위와 출력 스키마를 다시 검증한다. 새로 생성하거나 수정한 Job은 nullable `rule_contract_version`과 `rules` 컬럼에 canonical payload를 그대로 저장하며, `transformSteps`와 `qualityRules`는 현재 Spark/Kafka runner와 이전 client를 위한 파생 호환 표현으로만 유지한다. 두 canonical 컬럼이 비어 있는 기존 행만 저장된 legacy 표현에서 Rule을 재구성하고, `rule_contract_version="1.0"`과 `rules=[]`가 저장된 행은 legacy 필드가 남아 있어도 명시적인 pass-through로 읽는다.
 
-Source 설정 기본값은 backend runtime이 소유한다. Frontend는 `GET /api/etl/sources/defaults`로 `ASKLAKE_KAFKA_BROKER`의 공개 기본값을 읽고, 저장된 Source 설정이나 사용자가 편집 중인 값을 덮어쓰지 않는다.
+Source 설정 기본값은 backend runtime이 소유한다. Frontend는 `GET /api/etl/sources/defaults`로 Redpanda의 `ASKLAKE_KAFKA_BROKER` 또는 MSK의 canonical bootstrap broker 목록을 읽고, 저장된 Source 설정이나 사용자가 편집 중인 값을 덮어쓰지 않는다.
 
 Phase 3부터 일반 Spark Snapshot과 Kafka Snapshot은 실행 직전에 저장된 canonical Rule을 다시 compile한다. 공통 operation은 같은 conformance fixture로 검증하며 Spark는 portable/SQL transform 순서를 보존하고 quality disposition을 run별 staging output에 적용한 뒤 성공한 결과만 최종 Parquet 경로로 publish한다. 따라서 `fail_batch`는 target을 만들지 않고, `quarantine`, `drop_row`, `set_null`은 실제 출력 행과 실행 근거에 반영된다. Kafka는 같은 의미를 JSON event에 적용한 뒤 compiled output schema로 정확히 projection하지만 partition offset capture와 성공 후 commit 책임은 기존 Kafka bridge에 남는다. 일반 Spark의 text analysis와 classifier처럼 공통 범위를 벗어난 operation은 기존 전용 실행 경로를 유지한다.
 

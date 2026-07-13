@@ -33,11 +33,15 @@ AWS EC2
   - postgres
   - mongo
   - airflow
-  - redpanda
+  - redpanda (기본/rollback Kafka)
 
 AWS S3
   - raw
   - spark output
+
+Amazon MSK Serverless (opt in)
+  - IAM/TLS Kafka endpoint
+  - staging/production topic namespace
 ```
 
 Iceberg Warehouse와 Query Result bucket은 이미 만들어 두어도 되지만 현재 `dev` runtime은 사용하지 않는다. Trino/query engine 복원은 별도 이슈와 검증을 거쳐야 한다.
@@ -83,7 +87,7 @@ mongo
 PostgreSQL fixture는 메인 데모 시나리오에 사용한다.
 MongoDB fixture는 다른 source type도 처리할 수 있다는 보조 시나리오에 사용한다.
 로컬 개발은 root Compose의 MinIO를 사용한다. EC2 production은 MinIO를 띄우지 않고 AWS S3를 사용한다.
-File / S3, Data Lake source, Target S3 picker, Spark S3A, DuckDB는 EC2 instance profile IAM Role/default credential chain을 사용하며 browser와 서버 `.env`에는 AWS access key/secret을 두지 않는다. 기본 Batch Runtime은 Compose의 Spark Standalone REST지만, AWS 리소스가 준비된 배포는 일반 Batch만 EMR Serverless로 opt in할 수 있다.
+File / S3, Data Lake source, Target S3 picker, Spark S3A, DuckDB는 EC2 instance profile IAM Role/default credential chain을 사용하며 browser와 서버 `.env`에는 AWS access key/secret을 두지 않는다. 기본 Batch Runtime은 Compose의 Spark Standalone REST지만, AWS 리소스가 준비된 배포는 일반 Batch만 EMR Serverless로 opt in할 수 있다. Kafka 기본값은 Compose Redpanda이며, VPC/IAM이 준비된 배포는 Node Source test·Snapshot ingest·replay producer를 MSK Serverless로 opt in할 수 있다. MSK와 EMR Continuous 연결은 다음 Phase이므로 두 opt in을 같은 기능으로 간주하지 않는다.
 
 기본 fixture는 다음처럼 고정한다.
 
@@ -119,6 +123,7 @@ File / S3, Data Lake source, Target S3 picker, Spark S3A, DuckDB는 EC2 instance
 | EC2 IAM Role 연결 | Raw list/read와 Output list/read/write/delete 최소 권한을 instance profile로 연결한다. |
 | S3 bucket 생성 | Raw와 Spark Output bucket을 같은 리전에 private으로 만든다. Warehouse/Query Result bucket은 현재 runtime에 연결하지 않는다. |
 | EMR Serverless 선택 준비 | opt in 배포만 Application, Job execution role, artifact/log prefix와 backend의 Start/Get/Cancel 및 `iam:PassRole` 권한을 준비한다. |
+| MSK Serverless 선택 준비 | opt in 배포만 VPC/subnet/security group, IAM cluster/topic/group 권한, IAM bootstrap brokers와 환경별 topic을 준비한다. backend/probe 실행 주체가 같은 VPC 경로로 접근해야 한다. |
 | IMDSv2 설정 | token required, container credential용 response hop limit 2를 설정한다. |
 | Elastic IP 연결 | 서버 public IP를 고정한다. |
 | 보안 그룹 설정 | 22, 80, 443 포트를 연다. |
@@ -312,7 +317,15 @@ Backend deploy image dependencies:
 
 - OS packages from `backend/Dockerfile`: `nodejs`, `npm`, `ca-certificates`. The backend image intentionally omits Docker CLI.
 - Python packages from `backend/requirements.txt`: FastAPI/Uvicorn, SQLAlchemy, psycopg, pydantic settings, dotenv, and DuckDB.
-- Node connector packages from `backend/package.json`: S3, EMR Serverless, Kafka, MongoDB, Parquet, and PostgreSQL clients.
+- Node connector packages from `backend/package.json`: S3, EMR Serverless, KafkaJS, AWS MSK IAM SASL signer, MongoDB, Parquet, and PostgreSQL clients.
+
+Kafka runtime dependencies:
+
+- 기본 `ASKLAKE_KAFKA_RUNTIME=redpanda`는 Compose의 `redpanda:9092`를 사용해 rollback과 로컬 회귀 경로를 유지한다.
+- opt-in `msk`는 MSK Serverless IAM bootstrap brokers, TLS, AWS region과 default credential chain을 요구한다. `asklake.<environment>.*` namespace와 partition/retention 정책은 `npm run verify:msk-connection-contract`로 검증한다.
+- probe role에는 cluster `Connect`, topic `DescribeTopic`/`DescribeTopicDynamicConfiguration`/`ReadData`/`WriteData`, group `DescribeGroup`/`AlterGroup`만 부여한다. 없는 probe topic을 명시적으로 만들 때만 `CreateTopic`을 추가하고 delete/alter 권한은 부여하지 않는다.
+- 실제 배포 전에는 MSK에 접근 가능한 staging VPC에서 `npm run kafka:msk-probe -- --topic asklake.staging.probe`를 실행한다. 이 probe는 기존 topic을 삭제하거나 partition을 변경하지 않는다.
+- 현재 Spark Structured Streaming worker는 MSK IAM 연결 대상이 아니다. EMR Continuous/MSK Spark connector는 후속 Phase에서 별도 검증한다.
 
 Spark runtime dependencies:
 

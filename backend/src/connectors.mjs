@@ -5,7 +5,7 @@ import { NodeHttpHandler } from "@smithy/node-http-handler";
 import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadKafkaJs } from "./kafka-codecs.mjs";
+import { createKafkaClient, normalizeKafkaError, validateKafkaTopic } from "./kafkaRuntime.mjs";
 import {
   isMinioProvider,
   objectStorageDockerEnv,
@@ -745,22 +745,22 @@ export async function testMongoSource(fields) {
 }
 
 export async function testKafkaSource(fields, sourceType = "Stream / Kafka") {
-  const { Kafka } = await loadKafkaJs();
   const broker = requiredSourceField(fields, "Broker / Endpoint", "Kafka broker endpoint is required.");
   const topic = requiredSourceField(fields, "TOPIC / QUEUE NAME", "Kafka topic name is required.");
   const configuredGroupId = fieldValue(fields, "CONSUMER GROUP ID") || "asklake-schema-preview";
   const sampleGroupId = `asklake-schema-preview-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const samplePolicy = samplePolicyForFields(fields, "rows");
-  const kafka = new Kafka({
-    brokers: [broker],
+  const { client: kafka, config } = await createKafkaClient({
+    broker,
     clientId: "asklake-source-test",
-    connectionTimeout: sourceConnectTimeoutMs("ASKLAKE_KAFKA_CONNECT_TIMEOUT_MS", 3000),
-    requestTimeout: sourceConnectTimeoutMs("ASKLAKE_KAFKA_REQUEST_TIMEOUT_MS", 5000),
-    retry: { retries: 0 },
+    connectionTimeoutMs: sourceConnectTimeoutMs("ASKLAKE_KAFKA_CONNECT_TIMEOUT_MS", 3000),
+    requestTimeoutMs: sourceConnectTimeoutMs("ASKLAKE_KAFKA_REQUEST_TIMEOUT_MS", 5000),
+    retries: 0,
   });
+  validateKafkaTopic(topic, config);
   const admin = kafka.admin();
-  await admin.connect();
   try {
+    await admin.connect();
     const metadata = await admin.fetchTopicMetadata({ topics: [topic] });
     const topicMeta = metadata.topics.find((item) => item.name === topic);
     if (!topicMeta || topicMeta.partitions.length === 0) {
@@ -828,6 +828,8 @@ export async function testKafkaSource(fields, sourceType = "Stream / Kafka") {
       status: "success",
       testItems: [["Broker", broker], ["Topic", topic], ["Partitions", String(topicMeta.partitions.length)]],
     };
+  } catch (error) {
+    throw normalizeKafkaError(error, { runtime: config.runtime, stage: "source-test" });
   } finally {
     await admin.disconnect().catch(() => undefined);
   }
@@ -1622,13 +1624,12 @@ async function inspectParquetObjectWithJs({ bucket, client, key, rowLimit }) {
 }
 
 async function sampleKafkaMessages({ broker, groupId, rowLimit, topic }) {
-  const { Kafka } = await loadKafkaJs();
-  const kafka = new Kafka({
-    brokers: [broker],
+  const { client: kafka, config } = await createKafkaClient({
+    broker,
     clientId: "asklake-source-sampler",
-    connectionTimeout: sourceConnectTimeoutMs("ASKLAKE_KAFKA_CONNECT_TIMEOUT_MS", 3000),
-    requestTimeout: sourceConnectTimeoutMs("ASKLAKE_KAFKA_REQUEST_TIMEOUT_MS", 5000),
-    retry: { retries: 0 },
+    connectionTimeoutMs: sourceConnectTimeoutMs("ASKLAKE_KAFKA_CONNECT_TIMEOUT_MS", 3000),
+    requestTimeoutMs: sourceConnectTimeoutMs("ASKLAKE_KAFKA_REQUEST_TIMEOUT_MS", 5000),
+    retries: 0,
   });
   const consumer = kafka.consumer({ groupId });
   const messages = [];
@@ -1639,8 +1640,8 @@ async function sampleKafkaMessages({ broker, groupId, rowLimit, topic }) {
     sourceConnectTimeoutMs("ASKLAKE_KAFKA_SAMPLE_MIN_MESSAGES", 3),
   );
   const settleMs = sourceConnectTimeoutMs("ASKLAKE_KAFKA_SAMPLE_SETTLE_MS", 1500);
-  await consumer.connect();
   try {
+    await consumer.connect();
     await consumer.subscribe({ fromBeginning: true, topic });
     await new Promise((resolve, reject) => {
       let idleTimer;
@@ -1673,6 +1674,8 @@ async function sampleKafkaMessages({ broker, groupId, rowLimit, topic }) {
         },
       }).catch((error) => finish(error));
     });
+  } catch (error) {
+    throw normalizeKafkaError(error, { runtime: config.runtime, stage: "source-sample" });
   } finally {
     await consumer.disconnect().catch(() => undefined);
   }
