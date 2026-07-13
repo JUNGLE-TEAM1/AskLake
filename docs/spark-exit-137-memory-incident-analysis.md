@@ -114,23 +114,23 @@ Spark가 결과 manifest와 Parquet commit을 완료하기 전에 강제 종료�
 로컬 환경에서는 다음 두 방법 중 하나를 선택한다.
 
 1. Docker Desktop 메모리를 늘린다. 현재 4g/8g Spark 요청을 유지한다면 JVM overhead와 Compose 서비스까지 고려해 최소 14 GiB 이상, 가능하면 16 GiB를 할당한다.
-2. 79,409행 수준의 로컬 검증은 Spark를 경량 profile로 실행한다. 시작점은 driver 1g, executor 1g, cores 2, shuffle partitions 8이며, 동시 실행 서비스를 줄이고 실제 peak memory를 확인해 조정한다.
+2. 79,409행 수준의 로컬 검증은 Spark를 경량 profile로 실행한다. root Compose의 local 기본값은 driver 768m, executor 768m, executor/total core 1개, shuffle partitions 4이며, 동시에 하나의 executor만 실행한다. 동시 서비스 사용량과 실제 peak memory를 확인해 조정한다.
 
 예시 환경변수:
 
 ```bash
-ASKLAKE_SPARK_DRIVER_MEMORY=1g
-ASKLAKE_SPARK_EXECUTOR_MEMORY=1g
-ASKLAKE_SPARK_EXECUTOR_CORES=2
-ASKLAKE_SPARK_CORES_MAX=2
-ASKLAKE_SPARK_SQL_SHUFFLE_PARTITIONS=8
+ASKLAKE_SPARK_DRIVER_MEMORY=768m
+ASKLAKE_SPARK_EXECUTOR_MEMORY=768m
+ASKLAKE_SPARK_EXECUTOR_CORES=1
+ASKLAKE_SPARK_CORES_MAX=1
+ASKLAKE_SPARK_SQL_SHUFFLE_PARTITIONS=4
 ```
 
 환경변수를 바꾼 뒤 backend container를 다시 만들고 실패한 Job을 재실행한다. 성공 기준은 입력/출력 79,409행 일치, Spark exit code 0, Catalog materialization 생성이다.
 
 ### 코드/운영 개선 후보
 
-- local Compose에 명시적인 경량 Spark profile을 둔다.
+- local Compose의 명시적인 경량 Spark profile을 전체 79,409행 회귀 검증으로 유지한다.
 - launcher가 실행 전 driver/executor 요청과 Docker 가용 메모리를 비교해 명백한 oversubscription을 fail-fast 처리한다.
 - exit code 137을 별도 오류 코드와 사용자 메시지로 매핑한다.
 - 오류 요약은 dependency 로그보다 stderr 마지막 예외와 종료 코드를 우선 보존한다.
@@ -153,3 +153,32 @@ ASKLAKE_SPARK_SQL_SHUFFLE_PARTITIONS=8
 - `inputRows=79,409`, `outputRows=79,409`인지 확인한다.
 - `publish_run_result=success`와 Catalog materialization을 확인한다.
 - Run 상세에 exit code 137 원인이 짧고 직접적으로 보이는지 확인한다.
+
+## 8. 경량 profile 적용 결과
+
+2026-07-13 같은 Docker Desktop 메모리 한도와 전체 Compose 서비스가 실행 중인 조건에서 두 경량 profile을 비교했다.
+
+첫 시도는 driver 768m, executor 1g, executor core 1개, `cores.max=2`, shuffle partition 8을 사용했다. Parquet write commit까지 진행했지만 후처리 중 exit code 137로 종료됐다. executor core가 1개여도 `cores.max=2`이면 1g executor가 동시에 두 개 할당될 수 있으므로 충분한 peak memory 여유를 만들지 못했다.
+
+두 번째 시도는 root Compose 기본값을 다음처럼 낮췄다.
+
+- driver: 768m
+- executor: 768m
+- executor cores: 1
+- total cores: 1
+- shuffle partitions: 4
+
+재시도 Run `run_7d9c945fe301`의 결과:
+
+- Spark exit code: 0
+- 실행 시간: 1분 7초
+- 입력: 79,409행
+- 출력: 79,409행
+- 품질 점수: 100
+- Parquet object: 1개
+- 저장 크기: 2,037,824 bytes
+- `spark_process_write`: success
+- `publish_run_result`: success
+- Catalog dataset: `ds_customer_review_gold`, available
+
+따라서 3.827 GiB 로컬 Docker 환경의 기본 profile은 단순히 heap 크기만 낮추는 것보다 executor 동시 개수를 하나로 제한하는 설정까지 포함해야 안정적이다.

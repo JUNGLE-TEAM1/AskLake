@@ -112,7 +112,7 @@ Backend connector 응답은 secret field를 redacted value로 내려준다. 프�
 
 현재 local `docker-compose.yml`에는 health-managed FastAPI backend, Postgres/MinIO와 함께 Airflow API server, scheduler, DAG processor, Airflow metadata Postgres가 포함되어 있다. Airflow internal task는 `http://backend:8080` service DNS를 사용하고 backend health 이후 시작한다. `airflow/dags/asklake_etl_job.py`는 독립 smoke mode와 실제 Spark execution mode를 함께 지원한다. Airflow 설정이 없으면 backend는 `AIRFLOW_CONFIG_MISSING` 503 error envelope로 실패한다.
 
-로컬 Spark resource profile은 아직 Compose capacity preflight를 강제하지 않는다. 코드 기본 driver 4g/executor 8g보다 Docker Desktop 메모리가 작으면 `spark_process_write`가 exit code 137로 강제 종료될 수 있다. 이때 결과 manifest가 없어서 입력/출력 행 수가 0으로 보일 수 있으나 source가 0행이라는 의미는 아니다. 재현 근거와 경량 profile 복구 기준은 [Local Spark Exit 137 메모리 장애 분석](spark-exit-137-memory-incident-analysis.md)에 기록한다.
+로컬 Spark resource profile은 아직 Compose capacity preflight를 강제하지 않는다. Spark launcher의 standalone 기본 driver 4g/executor 8g 대신 root Compose backend는 driver 768m, executor 768m, executor/total core 1개, shuffle partition 4개를 local 기본값으로 주입한다. `cores.max=1`로 동시에 하나의 executor만 허용하며 각 값은 같은 이름의 host 환경변수로 override할 수 있다. 이 profile보다 Docker Desktop 메모리가 작거나 동시 서비스 사용량이 높으면 `spark_process_write`가 exit code 137로 강제 종료될 수 있다. 이때 결과 manifest가 없어서 입력/출력 행 수가 0으로 보일 수 있으나 source가 0행이라는 의미는 아니다. 재현 근거와 경량 profile 복구 기준은 [Local Spark Exit 137 메모리 장애 분석](spark-exit-137-memory-incident-analysis.md)에 기록한다.
 
 필수 Airflow 환경변수:
 

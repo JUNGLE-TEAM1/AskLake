@@ -62,7 +62,7 @@ Backend `DATABASE_URL`은 미설정 시 `postgres://asklake:asklake_dev@127.0.0.
 
 Airflow run polling과 실제 Spark batch를 확인할 때는 root Compose의 health-managed FastAPI backend와 local Airflow API server를 함께 사용한다. Airflow는 `http://127.0.0.1:8081`, backend는 `http://127.0.0.1:8080`에서 열리며 기본 Airflow 계정은 local 전용 `airflow` / `airflow`다. `AIRFLOW_EXECUTION_API_TOKEN`은 Airflow task와 FastAPI에 같은 값을 설정하고 저장소나 로그에 운영 token을 남기지 않는다.
 
-Docker Desktop 메모리보다 Spark driver/executor 요청이 크면 `spark_process_write`가 exit code 137로 종료될 수 있다. 현재 코드 기본값은 driver 4g, executor 8g이므로 Docker 메모리가 작은 로컬 환경에서는 명시적인 경량 profile을 사용하거나 Docker 메모리를 늘린다. 현상, 증거, 복구 기준은 [Local Spark Exit 137 메모리 장애 분석](./spark-exit-137-memory-incident-analysis.md)을 참고한다.
+Docker Desktop 메모리보다 Spark driver/executor 요청이 크면 `spark_process_write`가 exit code 137로 종료될 수 있다. Spark launcher의 standalone 기본값은 driver 4g, executor 8g이지만 root `docker-compose.yml`은 4 GiB 안팎의 Docker Desktop에서도 전체 행 검증을 수행할 수 있도록 driver 768m, executor 768m, executor/total core 1개, shuffle partition 4개의 local 경량 profile을 기본 주입한다. `cores.max=1`은 768m executor가 동시에 하나만 실행되게 한다. host 환경변수로 각 값을 override할 수 있으며 대규모 처리에서는 Docker 메모리와 함께 늘린다. 현상, 증거, 복구 기준은 [Local Spark Exit 137 메모리 장애 분석](./spark-exit-137-memory-incident-analysis.md)을 참고한다.
 
 ```bash
 export AIRFLOW_EXECUTION_API_TOKEN=asklake-local-airflow-execution
