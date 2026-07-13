@@ -13,10 +13,10 @@ FastAPI 전환의 공통 구조와 의사결정은 `docs/backend-fastapi-transit
 | 새 수집/처리 생성 | Source -> Schema -> Rule -> Schedule -> Permission -> Target -> Review -> Create가 `POST /api/etl/jobs`로 연결되고 `etl_jobs`에 저장. 응답의 `catalogTarget`은 pending identity이며 아직 Catalog row를 만들지 않음 | 중간 단계별 서버 저장 API는 후속 범위 |
 | Target 저장경로 선택 | `GET /api/s3/buckets`, `GET /api/s3/prefixes`로 S3 bucket/prefix를 서버에서 lazy 조회하고 `target.storagePath` string에 반영. EC2 prod compose는 MinIO를 S3-compatible endpoint로 제공하고 서버 `deploy/.env`의 `S3_ALLOWED_BUCKETS` allowlist를 사용 | 운영 IAM/credential rotation, external S3 전환 |
 | Target DB 선택 | `GET /api/target/databases`로 허용 DB 목록을 조회하고 `target.databaseName` string에 반영. 테이블명 입력은 노출하지 않고 datasetName을 create payload 호환값으로 사용 | 운영 catalog DB 목록/권한 API |
-| Source/Schema | mock mode에서는 `SourceConnectorAnalysis` fallback으로 schema/sampleRows 반영, live mode에서는 `POST /api/etl/sources/test`로 실제 connector 확인. MongoDB connector는 Node MongoDB driver로 컬렉션과 제한 문서 샘플을 조회하며, 사용자가 선택한 File / S3 Parquet 객체는 Spark reader로 물리 스키마를 읽음. `npm run minio:seed-click-log`는 조건부 1.5단계 개발용 헤더 없는 공백 구분 click event TXT 100줄을 `m3-raw`에 준비함. `.txt`/`.log` raw sample은 조건부 `Record Parsing` 단계에서 `POST /api/etl/record-parsing/preview`로 검증하고 확정 규칙을 Job과 Spark batch runtime에 전달함 | Kafka Snapshot/Continuous 원시 TXT 구조화, 임의 정규식, 오류 행 quarantine·재처리, 다중 Parquet 파일의 통합 스키마 추론 |
-| Rule | 현재 schema/sampleRows 기반 preview, create payload에 transform/quality detail 포함 | 별도 backend rule preview API |
-| Job command | Kafka Snapshot Job은 `POST /api/etl/jobs/{jobId}/commands`의 run/retry로 fixed range ingest를 실행하고, non-Kafka Job은 Airflow DAG Run을 접수. Continuous Kafka Job은 Docker로 long-running Spark Structured Streaming submit container를 시작하거나 signal을 보내며, S3A checkpoint, `_SUCCESS` + offset manifest 게시, Catalog 복구, partition lag/throughput/schema drift report, bounded worker log, policy-aware quarantine replay, lease 기반 maintenance, non-destructive compaction을 제공 | pause/cancel의 실제 Airflow/Spark interrupt, production soak, async Airflow maintenance scheduling, compaction retention switch |
-| Run/DAG | local Airflow DAG가 token-authenticated FastAPI internal API를 통해 실제 PySpark를 실행하고 MinIO/S3 Parquet를 생성. `publish_run_result`가 Catalog endpoint를 호출하고 `GET /api/etl/jobs/{jobId}`가 DAG/task/Spark/Catalog evidence를 동기화. Continuous는 start-to-terminal session과 하위 micro-batch 이력을 별도 table/API로 영속화하고 active 실행 이력 화면을 자동 갱신 | Spark log object storage 분리, session history 장기 retention/pagination |
+| Source/Schema | mock mode에서는 `SourceConnectorAnalysis` fallback으로 schema/sampleRows 반영, live mode에서는 `POST /api/etl/sources/test`로 실제 connector 확인. JSON/JSONL은 native token으로 `String`/`Long`/`Double`/`Boolean`/`JSON`을 구분하고 dotted source path와 물리 target alias를 분리한다. File / S3의 `.txt`/`.log` raw sample은 `POST /api/etl/record-parsing/preview`로 공백 구분 규칙과 필드 수를 검증하며, `npm run minio:seed-click-log`가 100줄 fixture를 준비한다 | Kafka Snapshot/Continuous 원시 TXT 구조화, 임의 정규식, 오류 행 quarantine·재처리, 다중 Parquet 파일의 통합 스키마 추론 |
+| Rule | versioned canonical `rules[]` compiler, legacy transform/quality adapter, create/update/review 사전 검증, pass-through output schema와 bounded Rule Preview를 제공한다. Snapshot conformance를 통과한 stateless Rule은 Continuous `foreachBatch`와 replay에도 같은 Spark runtime으로 적용한다 | stateful join/aggregation과 engine-specific SQL은 후속 범위 |
+| Job command | Kafka Snapshot Job은 fixed range ingest를 실행하고, non-Kafka Job은 Airflow DAG Run을 접수한다. Continuous Kafka Job은 long-running Spark worker를 제어하며, S3A checkpoint contract fingerprint, `_SUCCESS` + Rule/offset manifest, Catalog 복구, partition lag/throughput/schema/Rule report, quarantine replay와 compaction을 제공한다 | pause/cancel의 실제 Airflow/Spark interrupt, production soak, async Airflow maintenance scheduling, compaction retention switch |
+| Run/DAG | local Airflow DAG는 일반 batch의 Spark/Catalog 단계를 관리한다. Continuous는 start-to-terminal session과 하위 micro-batch 이력에 Source부터 Catalog까지 7단계 증적을 영속화하고 active 실행 이력 화면을 자동 갱신한다 | Spark log object storage 분리, session history 장기 retention/pagination |
 | Catalog | `GET /api/catalog/datasets` hydrate, `GET /api/catalog/datasets/{datasetId}/lineage`, SQL derived/Kafka 결과를 Postgres JSONB payload로 반영. 일반 Airflow/Spark batch의 멱등 reconciliation endpoint, transaction, final-task 연결, frontend terminal-success 1회 refresh, live E2E 구현 | 상세/lineage/search API 고도화 |
 | SQL 분석 | `POST /api/query/runs`가 local JSONL/Parquet, sampleRows와 MinIO/S3 Parquet를 DuckDB Preview context로 등록. 원격 Parquet는 query-scoped cache와 byte limit을 사용하고 storage 실패를 명시적 오류로 반환. `POST /api/query/ai-suggestions`, `POST /api/catalog/derived-datasets` 호출 지점 유지. SQL run 결과는 `sql_runs.payload`에 snapshot 저장 | 운영 Trino/full-run 분리, remote cache 성능/관측 고도화 |
 | Dashboard | FastAPI dashboard card/list와 draft/published runtime API 연결. 프론트는 404 local fallback 유지. Dashboard 목록/runtime/title/draft/delete 권한 enforcement 연결 | 공유 링크/API, export API, cross-pair E2E QA |
@@ -29,6 +29,9 @@ FastAPI 1차 scaffold의 범위는 서버 실행, CORS, PostgreSQL 연결, 공�
 FastAPI 공통 schema 기준은 `backend/app/schemas/common.py`에 두며, 각 Pair는 도메인별 schema 파일에서 `CamelModel`, `ErrorResponse`, pagination 관련 schema를 재사용한다.
 Demo hydrate endpoint는 live ETL/Catalog API를 가리지 않도록 `/api/demo/etl/jobs`, `/api/demo/catalog/datasets`에 둔다.
 Amazon review Kafka replay/ingest 병렬 개발은 `backend/fixtures/kafka/amazon-review-fixture.jsonl` 100건 mock fixture와 `npm run kafka:reviews-fixture`로 `reviews.raw` topic에 표준 JSON fixture를 넣어 시작한다. fixture를 다시 만들 때는 `npm run kafka:reviews-fixture:generate -- --count 100`을 사용한다. 실제 Amazon review JSONL/JSONL.gz 파일은 `npm run kafka:reviews-replay -- --input <path> --limit 100 --rate 100`으로 같은 메시지 계약에 맞춰 replay한다. `npm run kafka:reviews-loop -- --rate 2 --max-messages 500`는 cycle별 고유 event ID와 증가 offset을 갖는 Continuous 검증용 입력을 만든다. topic 재생성은 `--recreate-topic`을 명시한 경우에만 수행한다. 배포 환경은 `GET|POST|DELETE /api/etl/kafka/replay-producer`로 한 개의 producer subprocess를 관리하며, 대용량 파일은 `ASKLAKE_REPLAY_INPUT_DIR` mount 아래 상대 `inputPath`로만 지정한다. 이 스크립트는 Kafka 입력 계약 검증과 replay를 담당하며, Lake 적재 로직은 별도 ingest 작업 범위다.
+Kafka Source Preview와 Snapshot bridge는 공통 KafkaJS Snappy codec을 등록한다. Source Preview는 최소 샘플/idle/settle bound로 실제 payload를 반환하고 consumer decode/run 오류를 metadata-only 성공으로 바꾸지 않는다. `GET /api/etl/sources/defaults`는 backend의 Kafka runtime 기본값을 frontend에 제공한다. `ASKLAKE_VERIFY_KAFKA=true npm run verify:fastapi-sources`는 3건의 임시 Snappy 토픽을 생성해 `event_id` schema/sample까지 검증한다.
+
+Rule/target 변경의 빠른 검증은 `npm run verify:rule-compiler`, `npm run verify:rule-preview`, `npm run verify:snapshot-spark-pipeline`, `npm run verify:kafka-target-projection`, `npm run verify:target-mode-contract` 순서로 실행한다. Kafka Snapshot Job bridge는 확정 schema와 compiler output schema를 전달하고 direct JSONL/Catalog metadata를 동일 projection으로 생성한다. `npm run verify:kafka-review-scheduled-ingest`는 실제 Job create/command, 물리 S3 JSONL, Catalog schema까지 이 계약을 end-to-end로 검증한다.
 
 ## 2. Pair A Live Contract
 
@@ -40,9 +43,12 @@ Frontend baseline은 `VITE_USE_MOCK_API`가 미설정이면 live mode로 동작�
 
 - Source: `sourceType`, `sourceLabel`, `sourceConfig`
 - Schema: `schemaColumns`, `schemaSampleRows`, `schemaSummary`, `schemaFingerprint`
-- Transform: `transformSteps`, `transformOutputColumns`
-- Quality: `qualityRules`, `qualityScore`, `qualityStatus`, `qualityInvalidRows`
+- Rule: `ruleContractVersion`, canonical `rules`, compiler `transformOutputColumns`
+- Snapshot runtime: canonical Rule 재compile, Spark/Kafka 공통 disposition, write 전 Fail Batch, physical quarantine evidence
+- Legacy execution compatibility: `transformSteps`, `qualityRules`, `qualityScore`, `qualityStatus`, `qualityInvalidRows`
 - Schedule/Permission/Target: `scheduleLabel`, `scheduleSummary`, `startDate`, optional `endDate`, `nextRunUtc`, `overlapPolicy`, `timezone`, `watermarkPolicy`, `retryPolicy`, `retryPolicySummary`, `runLimitSummary`, `owner`, `permissionSummary`, `targetDataset`, optional `targetDatabase`, `targetDescription`, `targetTags`, `targetLayer`, `targetFormat`, `storageType`, `storagePath`, `partition`, `partitionColumns`, `indexColumns`, `compression`
+
+Schema type은 새 payload에서 `String`, `Integer`, `Long`, `Double`, `Boolean`, `Timestamp`, `Date`, `JSON`을 사용한다. 기존 `Float`는 읽기 호환하며 새 draft에서는 `Double`로 canonicalize한다. `sourceName`은 dotted source path를 그대로 유지하고 `targetName`만 물리 alias로 정규화한다. 사용자가 target 타입을 바꾸면 optional `sourceType`이 원본 타입을 보존하며, 기존 payload는 `sourceType`이 없을 때 `type`으로 fallback한다.
 
 Schedule UI는 `직접 실행`, `반복 실행`을 사용하며 `직접 실행`을 payload의 `스케줄링 건너뛰기`로 저장한다. 즉시 실행은 스케줄 생성 옵션이 아니라 기존 Job command API의 `run` action으로 분리한다. 반복 실행을 선택한 때만 반복 주기, 실행 시각, IANA `timezone`, 겹침 처리를 노출하고, 재시도 설정은 사용 여부에 따라 상세 필드를 표시한다. `startDate`, 빈 값이면 종료일 없음으로 처리하는 `endDate`, watermark 수집 기준, 2배 지수 백오프 재시도 정책은 생성 payload와 Job hydrate 응답에 보존한다. 기본 겹침 처리는 `skip_if_running`이다. 현재 배치 Run 취소는 `cancelRun`으로 분리한다. 반복 예약 일시중지는 스케줄 설정을 보존하는 `stopSchedule`, 복원은 `resumeSchedule`을 사용한다. 실행 중인 실시간 Job의 `stopSchedule`은 UI에서 `수집 중지`로 표시하고 현재 Run을 `canceled`로 종료한다. 실시간 Job의 `수집 시작`은 `run` 또는 실패 후 `retry`로 실제 새 Run을 시작한다.
 
@@ -207,8 +213,11 @@ npm run verify:fastapi-pair2
 npm run verify:permission-dataset
 npm run verify:permission-job-dashboard
 npm run verify:fastapi-etl-catalog
-python3 scripts/verify-etl-job-hydrate-contract.py
-python3 scripts/verify-etl-job-update-contract.py
+npm run verify:rule-compiler
+npm run verify:kafka-continuous-contract
+npm run verify:kafka-continuous-rules
+PYTHONPATH=. .venv/bin/python scripts/verify-etl-job-hydrate-contract.py
+PYTHONPATH=. .venv/bin/python scripts/verify-etl-job-update-contract.py
 npm run verify:sources
 npm run verify:spark-run
 npm run verify:record-parsing
@@ -228,8 +237,10 @@ FastAPI Pair2 smoke:
 - `npm run verify:airflow-spark`는 ETL Job 생성, Airflow 비동기 접수, authenticated FastAPI internal execution, 실제 PySpark 2행 처리, MinIO Parquet object, terminal Run/task/Spark manifest 동기화를 확인한다. `ASKLAKE_FASTAPI_ETL_EXPECT_SPARK_FAILURE=true`를 주면 Quality `Fail Run`의 Spark/Airflow/AskLake 실패 전파를 검사한다.
 - `npm run verify:fastapi-etl-catalog`는 같은 script의 기존 호환 이름이다. Airflow URL이 없으면 내장 mock 계약을 확인하고, 실제 Airflow URL을 사용하면 Spark 성공 뒤 `catalogResult`, Catalog dataset, materialization, physical size, lineage까지 검사한다.
 - `npm run verify:etl-lineage`는 text source 하나가 `text`, `sentiment`, `severity`로 파생되는 경우 source node가 `text`만 갖고 one-to-many transform edge를 만들며 `_asklake_*` metadata에 가짜 source edge를 만들지 않는지 확인한다. 또한 Parquet source를 `SOURCE · PARQUET`, Spark Job을 `PROCESS · SPARK`, 현재 Spark physical output을 요청 포맷과 무관하게 실제 `PARQUET` engine으로 표시하는지 검증한다.
-- `python3 scripts/verify-etl-job-hydrate-contract.py`는 저장된 Kafka source/schema/rule/permission/target metadata가 `JobRowData` hydrate 응답에서 손실되지 않는지 확인한다.
-- `python3 scripts/verify-etl-job-update-contract.py`는 update request가 source field를 거부하고 source config를 보존한 채 editable metadata만 반영하는지, 성공 Run 뒤 target identity 변경이 `422`로 막히는지, 실행 중 update가 `409`로 막히는지 확인한다.
+- `npm run verify:rule-compiler`는 공통 JSON fixture로 Python FastAPI와 local Node backend의 version/policy/parameter 판정을 비교하고, canonical Rule 생성·수정·조회 영속성 및 legacy fallback까지 확인한다. 프론트는 `cd frontend && npm run verify:rule-compiler`로 같은 fixture와 falsy/null parameter 왕복을 검증한다.
+- `npm run verify:kafka-continuous-contract`는 Continuous config/runtime, Rule payload/fingerprint, Catalog 근거와 checkpoint 불변 정책을 프로젝트 가상환경에서 검증한다. `npm run verify:kafka-continuous-rules`는 Docker Spark 4에서 Transform/Quality, Rule quarantine, replay 재검증, final projection과 checkpoint fingerprint mismatch를 실행한다.
+- `PYTHONPATH=. .venv/bin/python scripts/verify-etl-job-hydrate-contract.py`는 저장된 Kafka source/schema/rule/permission/target metadata가 `JobRowData` hydrate 응답에서 손실되지 않는지, explicit canonical empty가 legacy Rule을 되살리지 않는지 확인한다.
+- `PYTHONPATH=. .venv/bin/python scripts/verify-etl-job-update-contract.py`는 실제 DB session에서 canonical Rule 저장을 확인하고 source config 보존, 성공 Run 뒤 target identity 변경 `422`, 실행 중 update `409`를 검증한다.
 - `npm run verify:record-parsing`은 공백 구분 규칙의 10필드 추론, 타입 추론, 사용자 컬럼명 반영, 필드 개수가 다른 행의 line/count 오류 계약을 FastAPI service 수준에서 확인한다.
 - `npm run verify:record-parsing:e2e`는 `s3://m3-raw/asklake-fixtures/txt/click-events-whitespace-100.log`를 실제 Source API로 읽고 Preview 100/100, Job 계약 저장, Airflow/Spark input/output 100행, MinIO Parquet, Catalog의 10개 사용자 컬럼을 확인한다. 실행 중인 FastAPI/Airflow와 올바른 `ASKLAKE_DOCKER_NETWORK`가 필요하다.
 
@@ -271,6 +282,7 @@ Live Airflow verification through 2026-07-11:
 - Source/Schema/Create/Run 흐름에서 seed나 fixture job을 사용자 화면에 표시하지 않는다.
 - Source credential은 connector 응답의 redacted config로 덮어쓰이지 않는다.
 - Transform/Quality는 summary 문자열만이 아니라 실행 가능한 payload로 create request에 들어간다.
+- 일반 Spark Snapshot과 Kafka Snapshot은 같은 canonical fixture 결과를 만들고, `Fail Batch`는 target publication 또는 Kafka offset commit 전에 중단된다.
 - Airflow run 후 선택 Run 실행 흐름은 Airflow DAG Run 접수와 Task Instance 상태를 selected run 기준으로 표시한다.
 - 실패 상태는 실제 실패 단계와 원인을 표시하고, 고정된 fake failed flow를 보여주지 않는다.
 

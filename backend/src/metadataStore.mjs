@@ -97,6 +97,21 @@ export async function resetMetadata() {
   await pool.query(`
     DO $$
     BEGIN
+      IF to_regclass('public.kafka_continuous_maintenance_runs') IS NOT NULL THEN
+        DELETE FROM kafka_continuous_maintenance_runs;
+      END IF;
+      IF to_regclass('public.kafka_continuous_batches') IS NOT NULL THEN
+        DELETE FROM kafka_continuous_batches;
+      END IF;
+      IF to_regclass('public.kafka_continuous_sessions') IS NOT NULL THEN
+        DELETE FROM kafka_continuous_sessions;
+      END IF;
+      IF to_regclass('public.kafka_continuous_runtimes') IS NOT NULL THEN
+        DELETE FROM kafka_continuous_runtimes;
+      END IF;
+      IF to_regclass('public.kafka_snapshots') IS NOT NULL THEN
+        DELETE FROM kafka_snapshots;
+      END IF;
       IF to_regclass('public.etl_runs') IS NOT NULL THEN
         DELETE FROM etl_runs;
       END IF;

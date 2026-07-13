@@ -23,6 +23,8 @@ from app.schemas.etl import (
     JobStatus,
     ReviewPipelineRequest,
     ReviewSnapshot,
+    RulePreviewRequest,
+    RulePreviewResponse,
     RecordParsingPreviewRequest,
     RecordParsingPreviewResponse,
     KafkaReviewIngestRequest,
@@ -37,6 +39,7 @@ from app.schemas.etl import (
     SourceAssetsRequest,
     SourceAssetsResponse,
     SourceConnectorAnalysis,
+    SourceConnectorDefaults,
     SourceConnectorRequest,
     UpdatePipelineRequest,
 )
@@ -44,6 +47,11 @@ from app.services import etl_service
 from app.services.kafka_replay_producer_service import replay_producer_manager
 
 router = APIRouter(prefix="/etl", tags=["etl"])
+
+
+@router.get("/sources/defaults", response_model=SourceConnectorDefaults)
+def get_source_connector_defaults() -> SourceConnectorDefaults:
+    return etl_service.source_connector_defaults()
 
 
 @router.post("/sources/test", response_model=SourceConnectorAnalysis)
@@ -59,6 +67,11 @@ def list_source_assets(request: SourceAssetsRequest) -> SourceAssetsResponse:
 @router.post("/schema-inference", response_model=SchemaDraft)
 def infer_schema(request: SourceConnectorRequest) -> SchemaDraft:
     return etl_service.infer_schema(request)
+
+
+@router.post("/rules/preview", response_model=RulePreviewResponse)
+def preview_rules(request: RulePreviewRequest) -> RulePreviewResponse:
+    return etl_service.preview_rules(request)
 
 
 @router.post("/record-parsing/preview", response_model=RecordParsingPreviewResponse)

@@ -4,7 +4,16 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CreateBucketCommand, HeadBucketCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { closeMetadataStore, getDataset, saveDataset } from "../src/metadataStore.mjs";
+import { loadKafkaJs } from "../src/kafka-codecs.mjs";
 import { formatBytes, inferSchemaColumns, normalizeColumnName, parseSourceSample, schemaFingerprint } from "../src/profile.mjs";
+import {
+  buildKafkaTargetSchema,
+  getKafkaRecordValue,
+  projectKafkaTargetRecord,
+  standardKafkaReviewSchema,
+} from "../src/kafkaTargetProjection.mjs";
+import { canonicalRulesFromLegacy } from "../src/ruleCompiler.mjs";
+import { applySnapshotRules, supportsSnapshotRules } from "../src/snapshotRuleRuntime.mjs";
 
 const backendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const apiPayload = readJsonPayload();
@@ -24,6 +33,19 @@ const targetFormat = stringOption("targetFormat", process.env.ASKLAKE_REVIEW_TAR
 const targetDescription = stringOption("targetDescription", process.env.ASKLAKE_REVIEW_TARGET_DESCRIPTION || "Kafka snapshot direct target dataset");
 const transformSteps = objectArrayOption("transformSteps");
 const qualityRules = objectArrayOption("qualityRules");
+const suppliedRules = objectArrayOption("rules");
+const configuredSchemaColumns = objectArrayOption("schemaColumns");
+const configuredOutputSchema = tupleArrayOption("outputSchema");
+const canonicalRules = apiPayload.ruleContractVersion || suppliedRules.length > 0
+  ? suppliedRules
+  : canonicalRulesFromLegacy(
+      transformSteps,
+      qualityRules,
+      standardKafkaReviewSchema(),
+      transformSteps
+        .filter((step) => step?.enabled !== false && step?.output)
+        .map((step) => [String(step.output), "String"]),
+    );
 const testFailAfterTargetWrite = process.env.ASKLAKE_ENABLE_KAFKA_TEST_HOOKS === "true"
   && booleanOption("testFailAfterTargetWrite", false);
 const suppliedSnapshot = isSnapshotPayload(apiPayload.snapshot) ? apiPayload.snapshot : null;
@@ -54,11 +76,13 @@ try {
     endedAt: new Date().toISOString(),
     failedStage: error?.failedStage || "Kafka ingest",
     message: error?.message || String(error),
+    quality: error?.quality,
     runId,
     snapshot: activeSnapshot,
     status: 502,
     startedAt,
     topic,
+    transform: error?.transform,
   })}`);
   process.exitCode = 1;
 } finally {
@@ -72,7 +96,10 @@ async function ingestReviews() {
   if (targetFormat !== "jsonl") {
     throw new Error(`Kafka direct target currently supports jsonl only: ${targetFormat}`);
   }
-  const { Kafka } = await import("kafkajs");
+  if (!supportsSnapshotRules(canonicalRules)) {
+    throw pipelineError("transform", "Kafka Snapshot received an unsupported canonical Rule operation.");
+  }
+  const { Kafka } = await loadKafkaJs();
   const kafka = new Kafka({
     brokers: [broker],
     clientId: "asklake-review-ingest",
@@ -95,19 +122,25 @@ async function ingestReviews() {
       throw new Error(`No valid review messages consumed from ${topic} at ${broker}.`);
     }
 
-    const processed = applyPipelineRules(consumed.records);
+    const processed = applySnapshotRules(consumed.records, canonicalRules);
     const quarantined = [
       ...consumed.invalidRecords.map((item) => ({ ...item, stage: "parse" })),
       ...processed.quarantined,
     ];
-    const jsonl = processed.records.map((record) => JSON.stringify(record)).join("\n");
-    const dataBody = processed.records.length > 0 ? `${jsonl}\n` : "";
+    const schemaColumns = buildKafkaTargetSchema({
+      outputSchema: configuredOutputSchema,
+      records: processed.records,
+      rules: canonicalRules,
+      schemaColumns: configuredSchemaColumns,
+    });
+    const projectedRecords = processed.records.map((record) => projectKafkaTargetRecord(record, schemaColumns));
+    const jsonl = projectedRecords.map((record) => JSON.stringify(record)).join("\n");
+    const dataBody = projectedRecords.length > 0 ? `${jsonl}\n` : "";
     const localLocation = writeLocalTarget(dataBody);
 
     const endedAt = new Date().toISOString();
     const parsedSample = parseSourceSample("reviews.raw.jsonl", jsonl, { maxRows: Math.min(consumed.records.length, 20) });
     const inferredSchemaColumns = inferSchemaColumns(parsedSample);
-    const schemaColumns = targetSchema(processed.records);
     const metadata = {
       broker,
       consumedCount: consumed.records.length,
@@ -122,9 +155,10 @@ async function ingestReviews() {
       metadataPath,
       offsetPolicy,
       runId,
+      ruleContractVersion: "1.0",
       snapshot,
       inferredSchema: inferredSchemaColumns.map((column) => [column.targetName, column.type]),
-      sampleRows: processed.records.slice(0, 10).map((record) => reviewSampleRow(record, schemaColumns)),
+      sampleRows: projectedRecords.slice(0, 10).map((record) => reviewSampleRow(record, schemaColumns)),
       schema: schemaColumns.map((column) => [column.targetName, column.type]),
       schemaFingerprint: schemaFingerprint(schemaColumns),
       startedAt,
@@ -132,7 +166,7 @@ async function ingestReviews() {
       storageFormat: "jsonl",
       storageLocation: localLocation,
       storageSizeBytes: statSync(dataPath).size,
-      storedCount: processed.records.length,
+      storedCount: projectedRecords.length,
       targetBucket: s3Bucket,
       targetFormat,
       targetLayer,
@@ -164,6 +198,7 @@ async function ingestReviews() {
       const dataset = await registerCatalogDataset(metadata);
       metadata.catalogDataset = {
         id: dataset.id,
+        layer: dataset.layer,
         materializationRuns: dataset.materializationRuns?.length ?? 0,
         name: dataset.name,
         rows: dataset.rows,
@@ -578,286 +613,15 @@ function parseReviewMessage(value, context) {
   }
 }
 
-function applyPipelineRules(records) {
-  const transform = {
-    appliedStepCount: 0,
-    configuredStepCount: transformSteps.filter((step) => step.enabled !== false).length,
-    errorCount: 0,
-  };
-  const transformed = [];
-  const quarantined = [];
-
-  for (const sourceRecord of records) {
-    let record = structuredClone(sourceRecord);
-    let discard = false;
-    for (const step of transformSteps) {
-      if (step.enabled === false || !step.output) continue;
-      try {
-        setRecordValue(record, step.output, applyTransformStep(record, step));
-        transform.appliedStepCount += 1;
-      } catch (error) {
-        transform.errorCount += 1;
-        const failure = transformFailure(step, error);
-        if (failure.action === "Fail Run") throw pipelineError("transform", `Transform rule ${step.id || step.output} failed: ${failure.reason}`);
-        if (failure.action === "Drop Row") {
-          discard = true;
-          break;
-        }
-        if (failure.action === "Quarantine") {
-          quarantined.push(quarantineEntry(record, "transform", step, failure.reason));
-          discard = true;
-          break;
-        }
-        setRecordValue(record, step.output, failure.action === "Set Null" ? null : getRecordValue(record, step.input));
-      }
-    }
-    if (!discard) transformed.push(record);
-  }
-
-  const quality = {
-    configuredRuleCount: qualityRules.filter((rule) => rule.enabled !== false).length,
-    droppedCount: 0,
-    invalidRowCount: 0,
-    quarantinedCount: 0,
-    setNullCount: 0,
-    status: "pass",
-    summary: "품질 규칙 없음",
-    warnCount: 0,
-  };
-  const validRecords = [];
-  const uniqueValuesByRule = new Map();
-  for (const record of transformed) {
-    const failures = qualityRules
-      .filter((rule) => rule.enabled !== false)
-      .map((rule) => {
-        const value = getRecordValue(record, rule.targetColumn);
-        const duplicate = isDuplicateValue(value, rule, uniqueValuesByRule);
-        return { reason: qualityFailureReason(value, rule, duplicate), rule };
-      })
-      .filter((item) => item.reason);
-    if (failures.length === 0) {
-      validRecords.push(record);
-      continue;
-    }
-    quality.invalidRowCount += 1;
-    let discard = false;
-    for (const { rule, reason } of failures) {
-      const action = normalizeFailureAction(rule.failureAction);
-      if (action === "Fail Run") throw pipelineError("quality", `Quality rule ${rule.id || rule.targetColumn} failed: ${reason}`);
-      if (action === "Drop Row") {
-        quality.droppedCount += 1;
-        discard = true;
-        break;
-      }
-      if (action === "Quarantine") {
-        quarantined.push(quarantineEntry(record, "quality", rule, reason));
-        quality.quarantinedCount += 1;
-        discard = true;
-        break;
-      }
-      if (action === "Set Null") {
-        setRecordValue(record, rule.targetColumn, null);
-        quality.setNullCount += 1;
-      } else {
-        quality.warnCount += 1;
-      }
-    }
-    if (!discard) validRecords.push(record);
-  }
-  const invalidTotal = quality.invalidRowCount;
-  const inputCount = records.length;
-  const passRate = inputCount ? Number((((inputCount - invalidTotal) / inputCount) * 100).toFixed(1)) : 100;
-  quality.status = invalidTotal > 0 ? "warn" : "pass";
-  quality.summary = quality.configuredRuleCount > 0
-    ? `Quality score ${passRate}% - invalid rows ${invalidTotal} - dropped ${quality.droppedCount} - quarantined ${quality.quarantinedCount}`
-    : "품질 규칙 없음";
-  return { quarantined, records: validRecords, transform, quality };
-}
-
-function applyTransformStep(record, step) {
-  const input = getRecordValue(record, step.input);
-  const value = input === null || input === undefined ? "" : String(input);
-  const operation = `${step.kind || ""} ${step.operation || ""}`.toLowerCase();
-  if (operation.includes("default")) return value.trim() ? input : step.params ?? "";
-  if (operation.includes("null guard") || operation.includes("not null")) {
-    if (!value.trim()) throw new Error("Missing required value");
-    return input;
-  }
-  if (operation.includes("json")) return readJsonPath(input, step.params);
-  if (operation.includes("lower") || operation.includes("trim")) return value.trim().toLowerCase();
-  if (operation.includes("decimal") || operation.includes("cast")) {
-    const numeric = Number(value);
-    if (!Number.isFinite(numeric)) throw new Error("Numeric cast failed");
-    return numeric.toFixed(2);
-  }
-  if (operation.includes("timestamp") || operation.includes("date")) {
-    const timestamp = new Date(value);
-    if (Number.isNaN(timestamp.getTime())) throw new Error("Timestamp cast failed");
-    return timestamp.toISOString();
-  }
-  if (operation.includes("mask")) return maskPhoneNumber(value);
-  return input;
-}
-
-function transformFailure(step, error) {
-  return { action: normalizeFailureAction(step.onError), reason: error?.message || String(error) };
-}
-
 function pipelineError(failedStage, message) {
   const error = new Error(message);
   error.failedStage = failedStage;
   return error;
 }
 
-function normalizeFailureAction(value) {
-  const text = String(value || "Warn").trim().toLowerCase();
-  if (text.includes("fail")) return "Fail Run";
-  if (text.includes("drop")) return "Drop Row";
-  if (text.includes("quarantine")) return "Quarantine";
-  if (text.includes("null")) return "Set Null";
-  return "Warn";
-}
-
-function qualityFailureReason(value, rule, duplicate = false) {
-  const text = value === null || value === undefined ? "" : String(value);
-  const validation = String(rule.validationType || rule.kind || "").toLowerCase();
-  const params = qualityRuleParams(rule);
-  if (validation.includes("not null") || validation.includes("notnull")) return text.trim() ? "" : "Missing required value";
-  if (validation.includes("range")) {
-    const numeric = Number(text);
-    const minimum = Number(params.min ?? 0);
-    const maximum = params.max === undefined || params.max === "" ? Number.POSITIVE_INFINITY : Number(params.max);
-    const inclusive = params.inclusive !== false;
-    const valid = Number.isFinite(numeric) && Number.isFinite(minimum) && Number.isFinite(maximum)
-      && (inclusive ? numeric >= minimum && numeric <= maximum : numeric > minimum && numeric < maximum);
-    return valid ? "" : "Numeric range check failed";
-  }
-  if (validation.includes("regex")) {
-    try {
-      return new RegExp(String(params.pattern || "^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$")).test(text) ? "" : "Regex match failed";
-    } catch {
-      return "Invalid regex pattern";
-    }
-  }
-  if (validation.includes("accepted")) {
-    const values = Array.isArray(params.values) ? params.values.map(String) : ["KOR", "JPN", "USA", "KR", "US"];
-    return values.includes(text) ? "" : "Value is outside accepted set";
-  }
-  if (validation.includes("unique")) return duplicate ? "Duplicate value" : "";
-  return "";
-}
-
-function qualityRuleParams(rule) {
-  if (rule.params && typeof rule.params === "object" && !Array.isArray(rule.params)) return rule.params;
-  if (typeof rule.params !== "string" || !rule.params.trim()) return {};
-  try {
-    const parsed = JSON.parse(rule.params);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-function isDuplicateValue(value, rule, valuesByRule) {
-  const validation = String(rule.validationType || rule.kind || "").toLowerCase();
-  if (!validation.includes("unique")) return false;
-  const normalized = value === null || value === undefined ? "" : String(value);
-  if (!normalized) return false;
-  const key = rule.id || rule.targetColumn || "unique";
-  const values = valuesByRule.get(key) || new Set();
-  const duplicate = values.has(normalized);
-  values.add(normalized);
-  valuesByRule.set(key, values);
-  return duplicate;
-}
-
-function getRecordValue(record, field) {
-  const pathParts = String(field || "").split(".").filter(Boolean);
-  if (pathParts.length === 0) return undefined;
-  if (Object.hasOwn(record, field)) return record[field];
-  let value = record;
-  for (const part of pathParts) {
-    if (!value || typeof value !== "object") return undefined;
-    value = value[part];
-  }
-  if (value !== undefined) return value;
-  if (record.raw && typeof record.raw === "object") {
-    const rawField = String(field).replace(/^raw[_.]/, "");
-    return record.raw[rawField] ?? record.raw[field];
-  }
-  return undefined;
-}
-
-function setRecordValue(record, field, value) {
-  const parts = String(field || "").split(".").filter(Boolean);
-  if (parts.length === 0) return;
-  if (parts.length === 1) {
-    record[parts[0]] = value;
-    return;
-  }
-  let target = record;
-  for (const part of parts.slice(0, -1)) {
-    if (!target[part] || typeof target[part] !== "object") target[part] = {};
-    target = target[part];
-  }
-  target[parts.at(-1)] = value;
-}
-
-function readJsonPath(input, expression) {
-  const source = typeof input === "string" ? JSON.parse(input) : input;
-  const pathParts = String(expression || "$").replace(/^\$\.?/, "").split(".").filter(Boolean);
-  return pathParts.reduce((value, part) => value?.[part], source);
-}
-
-function maskPhoneNumber(value) {
-  return value.replace(/(\d{3})-?\d{4}-?(\d{4})/, "$1-****-$2");
-}
-
-function quarantineEntry(record, stage, rule, reason) {
-  return { reason, record, ruleId: rule.id || "", stage, targetColumn: rule.targetColumn || rule.output || "" };
-}
-
-function targetSchema(records) {
-  const base = standardReviewSchema();
-  const known = new Set(base.map((column) => column.targetName));
-  for (const step of transformSteps) {
-    if (step.enabled !== false && step.output && !known.has(step.output)) {
-      base.push({ nullable: true, sourceName: step.output, targetName: step.output, type: "String" });
-      known.add(step.output);
-    }
-  }
-  for (const record of records) {
-    for (const [name, value] of Object.entries(record)) {
-      if (known.has(name)) continue;
-      base.push({ nullable: value === null || value === undefined, sourceName: name, targetName: name, type: inferRecordType(value) });
-      known.add(name);
-    }
-  }
-  return base;
-}
-
-function inferRecordType(value) {
-  if (typeof value === "boolean") return "Boolean";
-  if (typeof value === "number") return Number.isInteger(value) ? "Integer" : "Float";
-  if (value && typeof value === "object") return "Object";
-  return "String";
-}
-
-function standardReviewSchema() {
-  return [
-    { nullable: false, sourceName: "schema_version", targetName: "schema_version", type: "String" },
-    { nullable: false, role: "Identifier", sourceName: "event_id", targetName: "event_id", type: "String" },
-    { nullable: false, sourceName: "source", targetName: "source", type: "String" },
-    { nullable: false, sourceName: "offset", targetName: "offset", type: "Integer" },
-    { nullable: false, sourceName: "review", targetName: "review", type: "String" },
-    { nullable: false, role: "Event Time", sourceName: "created_at", targetName: "created_at", type: "Timestamp" },
-    { nullable: false, sourceName: "raw", targetName: "raw", type: "Object" },
-  ];
-}
-
-function reviewSampleRow(record, schema = standardReviewSchema()) {
+function reviewSampleRow(record, schema = standardKafkaReviewSchema()) {
   return schema.map((column) => {
-    const value = getRecordValue(record, column.targetName);
+    const value = getKafkaRecordValue(record, column.targetName);
     return value && typeof value === "object" ? JSON.stringify(value) : String(value ?? "");
   });
 }
@@ -912,4 +676,11 @@ function booleanOption(key, fallback) {
 function objectArrayOption(key) {
   const value = apiPayload[key];
   return Array.isArray(value) ? value.filter((item) => item && typeof item === "object") : [];
+}
+
+function tupleArrayOption(key) {
+  const value = apiPayload[key];
+  return Array.isArray(value)
+    ? value.filter((item) => Array.isArray(item) && item.length >= 2)
+    : [];
 }

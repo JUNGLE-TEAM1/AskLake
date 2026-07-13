@@ -16,6 +16,10 @@ export type SourceConnectorAnalysis = {
   testItems: Array<[string, string]>;
 };
 
+export type SourceConnectorDefaults = {
+  kafkaBroker: string;
+};
+
 type BackendSourceConnectorResponse = SourceConnectorAnalysis;
 
 export type SourceAssetsResponse = {
@@ -40,6 +44,11 @@ export async function testSourceConnector(sourceType: string, fields: SourceFiel
 export async function previewRecordParsing(rawLines: string[], recordParsing: RecordParsingDraft): Promise<RecordParsingPreviewResponse> {
   if (apiConfig.useMock) return buildMockRecordParsingPreview(rawLines, recordParsing);
   return apiClient.post<RecordParsingPreviewResponse>("/api/etl/record-parsing/preview", { rawLines, recordParsing });
+}
+
+export async function getSourceConnectorDefaults(): Promise<SourceConnectorDefaults> {
+  if (apiConfig.useMock) return { kafkaBroker: "127.0.0.1:19092" };
+  return getWithDevFallback<SourceConnectorDefaults>("/api/etl/sources/defaults");
 }
 
 export async function listSourceAssets(sourceType: string, fields: SourceFieldRows, prefix = ""): Promise<SourceAssetsResponse> {
@@ -121,6 +130,25 @@ async function postWithDevFallback<T>(path: string, body: unknown): Promise<T> {
     }
     throw error;
   }
+}
+
+async function getWithDevFallback<T>(path: string): Promise<T> {
+  if (import.meta.env.DEV) {
+    try {
+      return await getBackendDirect<T>(path);
+    } catch (error) {
+      if (!isNetworkError(error) && !isNotFoundError(error)) throw error;
+    }
+  }
+
+  return apiClient.get<T>(path);
+}
+
+async function getBackendDirect<T>(path: string): Promise<T> {
+  const response = await fetch(`http://127.0.0.1:8080${path}`);
+  if (response.ok) return await response.json() as T;
+  const text = await response.text().catch(() => "");
+  throw new Error(text || `Backend ${response.status} ${response.statusText}`);
 }
 
 async function postBackendDirect<T>(path: string, body: unknown): Promise<T> {
@@ -293,7 +321,7 @@ function inferPreviewColumnType(values: string[]) {
   if (nonEmptyValues.length === 0) return "String";
   if (nonEmptyValues.every((value) => /^(true|false)$/i.test(value))) return "Boolean";
   if (nonEmptyValues.every((value) => /^-?\d+$/.test(value))) return "Integer";
-  if (nonEmptyValues.every((value) => /^-?\d+(\.\d+)?$/.test(value))) return "Float";
+  if (nonEmptyValues.every((value) => /^-?\d+(\.\d+)?$/.test(value))) return "Double";
   if (nonEmptyValues.every((value) => !Number.isNaN(Date.parse(value)) && /[-T:]/.test(value))) return "Timestamp";
   if (nonEmptyValues.some((value) => /^[\[{]/.test(value))) return "JSON";
   return "String";

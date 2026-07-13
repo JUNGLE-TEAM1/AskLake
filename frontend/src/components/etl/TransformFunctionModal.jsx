@@ -17,6 +17,39 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs';
 import { Textarea } from '../ui/textarea';
 
+const PORTABLE_OPERATIONS = [
+    { label: '추가 변환 없음', operation: '', value: 'none' },
+    { label: '소문자 + 공백 정리', operation: 'Lowercase + Trim', value: 'lowercase_trim' },
+    { label: 'JSON 경로 추출', operation: 'Extract JSONPath', parameterLabel: 'JSONPath', value: 'json_extract' },
+    { label: '마스킹', operation: 'Mask', parameterLabel: '마스킹 정책', value: 'mask' },
+    { label: 'Timestamp 파싱', operation: 'Parse Timestamp', parameterLabel: '입력 형식', value: 'parse_timestamp' },
+    { label: '값 복사', operation: 'Copy', value: 'copy' },
+];
+
+function portableOperationValue(operation = '') {
+    const normalized = String(operation).toLowerCase().replace(/[^a-z0-9]+/g, '_');
+    if (normalized.includes('lower') || normalized.includes('trim')) return 'lowercase_trim';
+    if (normalized.includes('json')) return 'json_extract';
+    if (normalized.includes('mask')) return 'mask';
+    if (normalized.includes('timestamp')) return 'parse_timestamp';
+    if (normalized.includes('copy')) return 'copy';
+    return 'none';
+}
+
+function portableDefaultParams(operation) {
+    if (operation === 'json_extract') return '$.value';
+    if (operation === 'mask') return 'phone';
+    if (operation === 'parse_timestamp') return 'ISO-8601';
+    return '';
+}
+
+function portableNormalizedParams(operation, value) {
+    const normalized = String(value || '').trim();
+    if (operation === 'mask' && normalized.toLowerCase() === 'keep first 3 digits') return 'phone';
+    if (operation === 'parse_timestamp' && normalized.toUpperCase() === 'UTC') return 'ISO-8601';
+    return normalized || portableDefaultParams(operation);
+}
+
 const QUALITY_RULE_DEFINITIONS = [
     {
         defaultParams: '',
@@ -51,13 +84,22 @@ const QUALITY_RULE_DEFINITIONS = [
     },
 ];
 
-export default function TransformFunctionModal({ column, qualityRules = [], onApply, onClose }) {
+/**
+ * TransformFunctionModal - Modal for editing column transform and quality rules.
+ */
+export default function TransformFunctionModal({ column, qualityRules = [], onApply, onClose, portable = false }) {
     const editorRef = useRef(null);
     const [newName, setNewName] = useState(column.name);
     const [newType, setNewType] = useState(column.type);
     const [transformExpr, setTransformExpr] = useState(column.transform || column.originalName || column.name);
     const [selectedFunction, setSelectedFunction] = useState('');
     const [showAI, setShowAI] = useState(false);
+    const [portableOperation, setPortableOperation] = useState(() => portableOperationValue(column.transformOperation));
+    const [portableParams, setPortableParams] = useState(() => {
+        const operation = portableOperationValue(column.transformOperation);
+        return portableNormalizedParams(operation, column.transformParams);
+    });
+    const [portableOnError, setPortableOnError] = useState(column.onError || 'Warn');
     const [required, setRequired] = useState(Boolean(column.notNull));
     const [transformOnError, setTransformOnError] = useState(column.onError || 'Warn');
     const [ruleDrafts, setRuleDrafts] = useState(() => buildInitialRuleDrafts(column, qualityRules));
@@ -111,23 +153,59 @@ export default function TransformFunctionModal({ column, qualityRules = [], onAp
         )));
     };
 
+    const qualityRulePayload = (targetColumn) => ruleDrafts
+        .filter((rule) => rule.enabled)
+        .map((rule) => ({
+            enabled: true,
+            failureAction: rule.failureAction,
+            id: rule.id || `schema-quality-${rule.kind}-${slugify(targetColumn)}`,
+            kind: rule.kind,
+            params: rule.params.trim() || undefined,
+            severity: rule.severity,
+            targetColumn,
+            validationType: rule.validationType,
+        }));
+
     const applyFieldRules = () => {
         const targetColumn = newName.trim() || column.name;
-        onApply(transformExpr, targetColumn, newType, {
+        const sourceExpression = column.originalName || column.name;
+        const hasExpression = transformExpr.trim() && transformExpr.trim() !== sourceExpression;
+        onApply(hasExpression ? transformExpr : '', targetColumn, newType, {
+            mode: hasExpression ? undefined : 'clear',
             onError: transformOnError,
-            qualityRules: ruleDrafts
-                .filter((rule) => rule.enabled)
-                .map((rule) => ({
-                    enabled: true,
-                    failureAction: rule.failureAction,
-                    id: rule.id || `schema-quality-${rule.kind}-${slugify(targetColumn)}`,
-                    kind: rule.kind,
-                    params: rule.params.trim() || undefined,
-                    severity: rule.severity,
-                    targetColumn,
-                    validationType: rule.validationType,
-                })),
+            qualityRules: qualityRulePayload(targetColumn),
             required,
+        });
+    };
+
+    const selectedPortableOperation = PORTABLE_OPERATIONS.find((operation) => operation.value === portableOperation)
+        || PORTABLE_OPERATIONS[0];
+    const applyPortableFieldRules = () => {
+        const targetColumn = newName.trim() || column.name;
+        const common = {
+            onError: portableOnError,
+            qualityRules: qualityRulePayload(targetColumn),
+            required,
+            type: newType,
+        };
+        if (!selectedPortableOperation.operation) {
+            onApply('', targetColumn, newType, { ...common, mode: 'clear' });
+            return;
+        }
+        const step = {
+            display: selectedPortableOperation.label,
+            expression: '',
+            onError: portableOnError,
+            operation: selectedPortableOperation.operation,
+            params: portableParams,
+            type: newType,
+        };
+        onApply('', targetColumn, newType, {
+            ...common,
+            chain: [step],
+            display: selectedPortableOperation.label,
+            operation: selectedPortableOperation.operation,
+            params: portableParams,
         });
     };
 
@@ -139,7 +217,7 @@ export default function TransformFunctionModal({ column, qualityRules = [], onAp
             footer={(
                 <ActionGroup density="compact">
                     <Button type="button" onClick={onClose} size="sm" variant="outline">취소</Button>
-                    <Button type="button" onClick={applyFieldRules} size="sm">필드 규칙 적용</Button>
+                    <Button type="button" onClick={portable ? applyPortableFieldRules : applyFieldRules} size="sm">필드 규칙 적용</Button>
                 </ActionGroup>
             )}
             footerClassName="bg-slate-50/50"
@@ -179,64 +257,118 @@ export default function TransformFunctionModal({ column, qualityRules = [], onAp
                                     <SelectItem value="integer">integer</SelectItem>
                                     <SelectItem value="long">long</SelectItem>
                                     <SelectItem value="double">double</SelectItem>
-                                    <SelectItem value="float">float</SelectItem>
                                     <SelectItem value="boolean">boolean</SelectItem>
                                     <SelectItem value="timestamp">timestamp</SelectItem>
                                     <SelectItem value="date">date</SelectItem>
+                                    <SelectItem value="json">json</SelectItem>
                                 </SelectContent>
                             </Select>
                         </Field>
                     </div>
 
-                    <div>
-                        <span className="mb-2 block text-sm font-bold text-slate-600">빠른 변환</span>
-                        <div className="flex flex-wrap gap-2">
-                            {functions.map((func) => (
-                                <Button
-                                    key={func.name}
-                                    onClick={() => applyFunction(func)}
-                                    size="sm"
-                                    title={func.desc}
-                                    type="button"
-                                    variant={selectedFunction === func.name ? 'default' : 'outline'}
+                    {portable ? (
+                        <div className="grid gap-4">
+                            <Field>
+                                <FieldLabel htmlFor="field-portable-operation">변환 방식</FieldLabel>
+                                <Select
+                                    onValueChange={(value) => {
+                                        setPortableOperation(value);
+                                        setPortableParams(portableDefaultParams(value));
+                                        if (value === 'parse_timestamp') setNewType('timestamp');
+                                    }}
+                                    value={portableOperation}
                                 >
-                                    {func.name}
-                                </Button>
-                            ))}
+                                    <SelectTrigger id="field-portable-operation">
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {PORTABLE_OPERATIONS.map((operation) => (
+                                            <SelectItem key={operation.value} value={operation.value}>{operation.label}</SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                                <FieldDescription>Kafka Snapshot과 실시간 실행에서 동일하게 지원되는 변환만 표시합니다.</FieldDescription>
+                            </Field>
+                            {selectedPortableOperation.parameterLabel ? (
+                                <Field>
+                                    <FieldLabel htmlFor="field-portable-params">{selectedPortableOperation.parameterLabel}</FieldLabel>
+                                    {portableOperation === 'mask' || portableOperation === 'parse_timestamp' ? (
+                                        <Select onValueChange={setPortableParams} value={portableParams}>
+                                            <SelectTrigger id="field-portable-params">
+                                                <SelectValue />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                {portableOperation === 'mask' ? (
+                                                    <SelectItem value="phone">전화번호</SelectItem>
+                                                ) : (
+                                                    <SelectItem value="ISO-8601">ISO-8601</SelectItem>
+                                                )}
+                                            </SelectContent>
+                                        </Select>
+                                    ) : (
+                                        <Input
+                                            className="font-mono"
+                                            id="field-portable-params"
+                                            onChange={(event) => setPortableParams(event.target.value)}
+                                            value={portableParams}
+                                        />
+                                    )}
+                                </Field>
+                            ) : null}
                         </div>
-                    </div>
+                    ) : (
+                        <>
+                            <div>
+                                <span className="mb-2 block text-sm font-bold text-slate-600">빠른 변환</span>
+                                <div className="flex flex-wrap gap-2">
+                                    {functions.map((func) => (
+                                        <Button
+                                            key={func.name}
+                                            onClick={() => applyFunction(func)}
+                                            size="sm"
+                                            title={func.desc}
+                                            type="button"
+                                            variant={selectedFunction === func.name ? 'default' : 'outline'}
+                                        >
+                                            {func.name}
+                                        </Button>
+                                    ))}
+                                </div>
+                            </div>
 
-                    <Field>
-                        <div className="mb-2 flex items-center justify-between gap-3">
-                            <FieldLabel htmlFor="field-transform-expression">변환식 (SQL)</FieldLabel>
-                            <Button type="button" onClick={() => setShowAI(!showAI)} size="sm" variant="outline">
-                                <Sparkles size={14} /> AI
-                            </Button>
-                        </div>
-                        {showAI && (
-                            <InlineAIInput
-                                promptType="field_transform"
-                                metadata={{ column_name: column.originalName, column_type: column.type }}
-                                placeholder="예: 대문자로 변환, 앞 3글자 추출"
-                                onApply={(suggestion) => {
-                                    setTransformExpr(suggestion);
-                                    setShowAI(false);
-                                    if (editorRef.current) setTimeout(() => editorRef.current.focus(), 0);
-                                }}
-                                onCancel={() => setShowAI(false)}
-                            />
-                        )}
-                        <Textarea
-                            className="min-h-28 resize-y bg-slate-50/30 font-mono text-sm"
-                            id="field-transform-expression"
-                            ref={editorRef}
-                            value={transformExpr}
-                            onChange={(event) => setTransformExpr(event.target.value)}
-                            rows={4}
-                            placeholder={`예: CAST(${column.originalName} AS STRING)`}
-                        />
-                        <FieldDescription>출력 타입 변경과 함께 적용할 SQL 표현식을 입력합니다.</FieldDescription>
-                    </Field>
+                            <Field>
+                                <div className="mb-2 flex items-center justify-between gap-3">
+                                    <FieldLabel htmlFor="field-transform-expression">변환식 (SQL)</FieldLabel>
+                                    <Button type="button" onClick={() => setShowAI(!showAI)} size="sm" variant="outline">
+                                        <Sparkles size={14} /> AI
+                                    </Button>
+                                </div>
+                                {showAI && (
+                                    <InlineAIInput
+                                        promptType="field_transform"
+                                        metadata={{ column_name: column.originalName, column_type: column.type }}
+                                        placeholder="예: 대문자로 변환, 앞 3글자 추출"
+                                        onApply={(suggestion) => {
+                                            setTransformExpr(suggestion);
+                                            setShowAI(false);
+                                            if (editorRef.current) setTimeout(() => editorRef.current.focus(), 0);
+                                        }}
+                                        onCancel={() => setShowAI(false)}
+                                    />
+                                )}
+                                <Textarea
+                                    className="min-h-28 resize-y bg-slate-50/30 font-mono text-sm"
+                                    id="field-transform-expression"
+                                    ref={editorRef}
+                                    value={transformExpr}
+                                    onChange={(event) => setTransformExpr(event.target.value)}
+                                    rows={4}
+                                    placeholder={`예: CAST(${column.originalName} AS STRING)`}
+                                />
+                                <FieldDescription>출력 타입 변경과 함께 적용할 SQL 표현식을 입력합니다.</FieldDescription>
+                            </Field>
+                        </>
+                    )}
                 </TabsContent>
 
                 <TabsContent className="space-y-4" value="quality">
@@ -276,9 +408,9 @@ export default function TransformFunctionModal({ column, qualityRules = [], onAp
 
                 <TabsContent className="space-y-4" value="failure">
                     <FailureRuleRow
-                        action={transformOnError}
+                        action={portable ? portableOnError : transformOnError}
                         label="필드 변환 실패"
-                        onActionChange={setTransformOnError}
+                        onActionChange={portable ? setPortableOnError : setTransformOnError}
                         onSeverityChange={() => undefined}
                         severity="Error"
                         showSeverity={false}

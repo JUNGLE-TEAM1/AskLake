@@ -48,6 +48,9 @@ TARGET_DATABASES=asklake,asklake_gold,analytics,marketing
 - Status values: API and frontend internal state use English canonical values. UI labels are translated in the frontend.
 - Error envelope: `docs/api-contract.md`의 Error Envelope를 따른다.
 - Authentication: local Phase 0는 httpOnly `asklake_session` cookie와 `/api/auth/session` actor 확인을 사용한다. 세션이 없을 때만 기존 `X-AskLake-*` actor header fallback을 사용하며, 운영 IdP/SSO는 후속 범위다.
+- Schema type은 `String`, `Integer`, `Long`, `Double`, `Boolean`, `Timestamp`, `Date`, `JSON`을 canonical 값으로 사용한다. 기존 payload의 `Float`는 읽기 호환하되 새 source draft와 Transform UI는 `Double`로 저장한다.
+- JSON/JSONL source는 native token을 기준으로 type을 추론한다. 숫자처럼 보이는 JSON string은 `String`, integer number는 `Long`, real number는 `Double`이며 timestamp string은 명시적 변환 전까지 `String`이다.
+- `schemaColumns[].sourceName`은 `raw.reviewerID` 같은 원본 dotted path를 보존하고, `targetName`만 물리 컬럼 규칙에 맞게 별도로 정규화한다.
 
 FastAPI schema 구현 기준:
 
@@ -81,8 +84,10 @@ Canonical status values:
 | `GET/POST/PATCH/DELETE` | `/api/admin/permissions` | Admin | permission grant 관리 | `docs/api-contract.md` |
 | `GET/PATCH` | `/api/admin/governance-controls` | Admin | principal block과 resource lock 관리 | `docs/api-contract.md` |
 | `GET` | `/api/admin/audit-logs` | Admin | 감사 로그 필터 조회 | `docs/api-contract.md` |
+| `GET` | `/api/etl/sources/defaults` | TBD | backend 실행 환경 기준 Source 기본값 반환 | `docs/api-contract.md` |
 | `POST` | `/api/etl/sources/test` | TBD | Source 연결 테스트와 schema draft patch 반환 | `docs/api-contract.md` |
 | `POST` | `/api/etl/schema-inference` | TBD | Source 테스트 결과 기반 schema 반환 | `docs/api-contract.md` |
+| `POST` | `/api/etl/rules/preview` | Session | 최대 100개 샘플에 canonical Snapshot Rule을 실제 runtime으로 적용 | `docs/api-contract.md` |
 | `POST` | `/api/etl/record-parsing/preview` | TBD | 이름 없는 TXT 제한 샘플을 연속 공백으로 구조화하고 필드 개수·컬럼 타입 초안 반환 | `docs/api-contract.md` |
 | `POST` | `/api/etl/jobs` | TBD | 새 수집/처리 job 생성 | `docs/api-contract.md` |
 | `PATCH` | `/api/etl/jobs/{jobId}` | `manage` | 생성된 Job의 허용 설정 업데이트. source identity는 요청에 포함할 수 없음 | `docs/etl-job-edit-contract.md` |
@@ -100,6 +105,10 @@ Canonical status values:
 | `POST` | `/api/query/ai-suggestions` | TBD | 선택 테이블 context 기반 Query AI SQL 초안 생성 | `docs/api-contract.md` |
 | `POST` | `/api/catalog/derived-datasets` | TBD | SQL 결과 기반 Lake Dataset 생성 | `docs/api-contract.md` |
 
+`GET /api/etl/sources/defaults`는 `{ "kafkaBroker": "..." }`를 반환한다. 새 Kafka Source 화면은 build-time 상수가 아니라 이 값을 사용하므로 `ASKLAKE_KAFKA_BROKER`를 바꾼 backend와 같은 endpoint를 기본 표시한다.
+
+Kafka `POST /api/etl/sources/test`와 Snapshot ingest consumer는 uncompressed 및 Snappy-compressed record batch를 지원한다. Source test는 consumer 오류를 빈 metadata preview로 바꾸지 않는다. 첫 메시지 이후 최소 샘플 수에 도달하면 idle window로 종료하고, 도달하지 못해도 bounded settle window 뒤 현재 샘플을 반환한다.
+
 `POST /api/etl/jobs/{jobId}/commands`의 일반 배치 `run`/`retry`는 Airflow 접수 직후 `queued` 또는 `running` 상태를 응답한다. Airflow의 `spark_process_write` task가 bearer token으로 FastAPI internal execution API를 호출해 실제 PySpark 처리를 수행하고, 최종 Run/DAG/Spark manifest는 `GET /api/etl/jobs/{jobId}` polling으로 반영한다.
 
 내부 실행 API는 `AIRFLOW_EXECUTION_API_TOKEN`이 없으면 `503 AIRFLOW_EXECUTION_NOT_CONFIGURED`, token이 다르면 `401 AIRFLOW_EXECUTION_UNAUTHORIZED`, 저장된 Job/Run/Airflow DAG Run identity가 일치하지 않으면 `409 AIRFLOW_RUN_MISMATCH`를 반환한다. 성공/실패 Spark manifest는 `JobRunSummary.taskStates.sparkResult`에 보존되며, Phase 2에서는 Catalog Dataset을 생성하거나 materialization history를 갱신하지 않는다.
@@ -116,13 +125,15 @@ ETL 성공 dataset의 `lineageGraph`는 transform-aware column lineage를 사용
 
 Issue #500은 같은 command endpoint에 `startContinuous`, `pauseContinuous`, `resumeContinuous`, `stopContinuous`를 추가한다. 이 명령은 `executionMode: "continuous"` Kafka Job에만 적용하며, Docker가 시작한 long-running Spark Structured Streaming worker를 제어한다. 사용자 화면은 checkpoint를 보존하는 `중지`와 `스트림 시작`만 제공한다. Continuous 생성은 일반 cron 스케줄 단계를 건너뛰며 request에는 `scheduleLabel: "스케줄링 건너뛰기"`와 스트림 lifecycle 설명을 저장한다. `pauseContinuous`/`resumeContinuous`는 기존 API 호환을 위해 유지하지만 별도 UI 흐름으로 노출하지 않는다. 응답의 `processingResult.controlPlaneOnly`는 `false`, `worker`는 `spark_structured_streaming`이다. `GET /api/etl/jobs/{jobId}`는 worker container liveness와 heartbeat를 검사해 runtime을 hydrate하며, 요청 없이 종료되거나 heartbeat가 만료된 active worker는 `failed`로 반영한다. `pausing`/`stopping`에서의 의도된 worker 종료는 각각 `paused`/`stopped`로 완료한다. Continuous Job은 장기 실행 Spark query와 checkpoint로 상태를 복원하므로 `run`/`retry` Snapshot command와 섞어 사용할 수 없다. 상세 request/response와 충돌 정책은 [Kafka Continuous Ingestion Contract](kafka-continuous-ingestion-contract.md)를 따른다.
 
-Continuous 운영 API는 `GET /api/etl/jobs/{jobId}/continuous/logs`, `GET /api/etl/jobs/{jobId}/continuous/sessions`, `GET /api/etl/jobs/{jobId}/continuous/sessions/{sessionId}`, `GET /api/etl/jobs/{jobId}/continuous/sessions/{sessionId}/batches?limit=100`, `GET /api/etl/jobs/{jobId}/continuous/quarantine`, `GET /api/etl/jobs/{jobId}/continuous/maintenance-runs`, `POST /api/etl/jobs/{jobId}/continuous/quarantine/replays`, `POST /api/etl/jobs/{jobId}/continuous/compactions`를 제공한다. session은 한 번의 stream start부터 terminal 전환까지를 나타내고 batch endpoint는 그 session에 속한 최근 micro-batch를 최신순으로 반환한다. 세 조회 API는 worker report와 liveness를 먼저 동기화하므로 별도 새로고침 명령 없이 최신 durable 상태를 읽는다. 로그는 bounded/redacted response이고 replay/compaction은 checkpoint를 변경하지 않는 유한 maintenance run이다. Replay body는 `offsets?: string[]`와 `approveUnknownFields?: boolean`을 받는다. 기본값은 현재 schema evolution policy를 재적용하며, `approveUnknownFields: true`는 unknown field만 고정 projection으로 승인하는 `manage` 권한 작업으로 감사 로그와 result의 `policyOverride`를 남긴다. Maintenance run은 기본 900초 lease를 가지며 만료된 DB 상태와 Docker container를 다음 동기화에서 정리한다.
+Issue #567 Phase 5부터 Continuous create/review/preview는 Snapshot conformance를 통과한 stateless canonical Rule을 허용한다. `GET /api/etl/jobs/{jobId}`의 `continuousRuntime`은 `ruleContractVersion`, `ruleFingerprint`, `runtimeFingerprint`, `ruleMetrics`, `lastRuleResult`를 추가로 반환한다. Worker report, batch manifest와 Catalog `materializationRuns`도 schema/rule/runtime fingerprint와 Transform/Quality 결과를 보존한다. 실행 중 processing contract 변경은 `409 CONTINUOUS_IMMUTABLE_CONFIG_ACTIVE`, checkpoint가 초기화된 뒤의 schema/Rule/physical target 변경은 `409 CONTINUOUS_CHECKPOINT_CONTRACT_IMMUTABLE`이며 Job copy와 새 checkpoint가 필요하다.
+
+Continuous 운영 API는 `GET /api/etl/jobs/{jobId}/continuous/logs`, `GET /api/etl/jobs/{jobId}/continuous/sessions`, `GET /api/etl/jobs/{jobId}/continuous/sessions/{sessionId}`, `GET /api/etl/jobs/{jobId}/continuous/sessions/{sessionId}/batches?limit=100`, `GET /api/etl/jobs/{jobId}/continuous/quarantine`, `GET /api/etl/jobs/{jobId}/continuous/maintenance-runs`, `POST /api/etl/jobs/{jobId}/continuous/quarantine/replays`, `POST /api/etl/jobs/{jobId}/continuous/compactions`를 제공한다. session은 한 번의 stream start부터 terminal 전환까지를 나타내고 batch endpoint는 그 session에 속한 최근 micro-batch를 최신순으로 반환한다. session과 batch의 `dagSteps`는 Source, Schema, Transform, Quality, Target, Manifest/Checkpoint, Catalog 7단계 근거를 제공하며 Catalog cursor 확인 전 publication은 마지막 단계가 `pending`이다. manifest 전에 Rule이 실패한 batch도 `failed` 이력과 오류를 반환하고, 규칙이 없는 Transform/Quality 단계는 `pass-through`다. 세 조회 API는 worker report와 liveness를 먼저 동기화하므로 별도 새로고침 명령 없이 최신 durable 상태를 읽는다. 로그는 bounded/redacted response이고 replay/compaction은 checkpoint를 변경하지 않는 유한 maintenance run이다. Replay body는 `offsets?: string[]`와 `approveUnknownFields?: boolean`을 받는다. 기본값은 현재 schema evolution policy를 재적용하며, `approveUnknownFields: true`는 unknown field만 고정 projection으로 승인하는 `manage` 권한 작업으로 감사 로그와 result의 `policyOverride`를 남긴다. Maintenance run은 기본 900초 lease를 가지며 만료된 DB 상태와 Docker container를 다음 동기화에서 정리한다.
 
 Kafka replay producer API는 Continuous worker와 분리된 테스트 입력 도구다. `POST /api/etl/kafka/replay-producer`는 `topic`, `rate`, `batchSize`, `loop`, `maxCycles?`, `maxMessages?`, `cycleDelayMs?`, `burstMinMessages?`, `burstMaxMessages?`, `burstIntervalSeconds?`, `inputPath?`를 받으며 한 번에 하나만 실행한다. burst 세 값은 함께 쓰며 loop mode에서 매 interval마다 min~max의 랜덤 건수를 rate 제한 없이 전송한다. loop 모드는 cycle별 고유 `event_id`와 증가하는 논리 `offset`을 만들고, 기존 topic을 삭제하지 않는다. `inputPath`는 배포 설정의 `ASKLAKE_REPLAY_INPUT_DIR` 아래 상대 경로만 허용한다.
 
 `GET /api/etl/jobs/{jobId}`는 Job 상세, 실행 polling, 수정 화면 hydrate의 source of truth다. 응답은 source config, schema columns/fingerprint/sample/summary, transform/quality, schedule/retry/watermark, permission summary/roles, target database/metadata를 함께 유지한다.
 
-`PATCH /api/etl/jobs/{jobId}`는 `manage` 권한이 필요하다. request는 source field를 허용하지 않으며, 실행 중인 Job은 `409`, 성공 Run이 있는 Job의 target dataset/database/layer/format/storage identity 변경은 `422`로 차단한다. update는 Job metadata만 바꾸고 Kafka consumer group offset 및 durable snapshot은 변경하지 않는다.
+`PATCH /api/etl/jobs/{jobId}`는 `manage` 권한이 필요하다. request는 source field를 허용하지 않으며, 실행 중인 Job은 `409`, 성공 Run이 있는 Snapshot Job의 target dataset/database/layer/format/storage identity 변경은 `422`로 차단한다. Continuous는 checkpoint contract 초기화 전까지만 schema/Rule/physical target을 수정할 수 있고, 초기화 후에는 위 전용 `409` 오류로 Job copy를 요구한다. update는 Kafka consumer group offset, Snapshot 경계 또는 Continuous checkpoint를 변경하지 않는다.
 
 Kafka Source Job의 `run`/`retry`는 Airflow/Spark 대신 backend Kafka ingest bridge를 실행한다. bridge는 Job 시작 시 partition별 end offset snapshot을 고정하고, 해당 range만 consume한 뒤 `topic -> direct target object(jsonl) -> Catalog materializationRuns append -> consumer offset commit` 순서로 처리한다. 같은 consumer group을 쓰면 마지막 성공 snapshot의 end offset 이후만 target에 저장되고, lag가 없으면 0건 JSONL target run도 성공으로 남긴다.
 
@@ -134,7 +145,7 @@ Request:
 
 ```ts
 type KafkaReviewIngestRequest = {
-  broker?: string; // default "127.0.0.1:19092"
+  broker?: string; // default ASKLAKE_KAFKA_BROKER, fallback "127.0.0.1:19092"
   topic?: string; // default "reviews.raw"
   consumerGroupId?: string;
   maxMessages?: number; // default 100, snapshot maximum per partition
@@ -149,8 +160,12 @@ type KafkaReviewIngestRequest = {
   targetLayer?: "RAW" | "BRONZE" | "SILVER";
   targetFormat?: "jsonl"; // direct Kafka target currently supports JSONL only
   targetDescription?: string;
-  transformSteps?: TransformStepDraft[]; // Job 실행 시 Job에 저장된 규칙이 전달됨
-  qualityRules?: QualityRuleDraft[];
+  schemaColumns?: SchemaColumnDraft[]; // Job에서 확정한 included/source/target schema
+  outputSchema?: Array<[string, string]>; // compiler가 확정한 최종 output schema
+  ruleContractVersion?: "1.0";
+  rules?: CanonicalRuleDraft[]; // Job 실행의 source of truth
+  transformSteps?: TransformStepDraft[]; // legacy/debug compatibility
+  qualityRules?: QualityRuleDraft[]; // legacy/debug compatibility
   runId?: string;
   storageMode?: "local" | "s3";
   localLandingDir?: string;
@@ -213,6 +228,8 @@ type KafkaReviewEvent = {
 
 필수 필드는 `event_id`, `review`, `offset`, `created_at`이다. direct target object는 `s3://{targetBucket}/{targetPrefix}/snapshots/{snapshotId}/data.jsonl` 형태이며, metadata는 같은 snapshot directory의 `metadata.json`에 저장한다.
 
+Job command는 저장된 `ruleContractVersion`과 `rules`를 실행 직전에 다시 compile해 이 endpoint의 bridge payload로 전달한다. direct debug 호출에서 canonical 필드가 없을 때만 legacy `transformSteps`/`qualityRules`를 adapter로 변환한다. legacy의 빈 Regex, Accepted Values, Range 파라미터는 각각 기존 이메일 패턴, 국가 집합, 최소 0 기본값을 유지한다. schema가 `raw: JSON`을 선언하면 `raw.email` 같은 dotted Rule input도 유효하며, JSON root가 아닌 임의의 미등록 path는 계속 거절한다.
+
 ### Kafka snapshot direct target
 
 Issue #455 Phase 3는 아래 direct target 계약을 구현한다. 저장 경로는 `s3://{targetBucket}/{targetPrefix}/snapshots/{snapshotId}/data.jsonl` 형식이며 중간 `kafka-landing/...` RAW object를 만들지 않는다.
@@ -230,7 +247,7 @@ partition offset snapshot
 
 `Fail Run` 같은 Kafka bridge 오류가 일반 Job command에서 발생하면 API는 실패 Run을 정상 응답의 `run`으로 반환하며, `run.taskStates.kafkaSnapshot`과 `failedStage`를 보존한다. 직접 `POST /api/etl/kafka/reviews/ingest` 호출은 `502` error response를 반환하고 `error.details.bridge.snapshot` 및 `failedStage`로 동일 진단을 제공한다.
 
-target dataset의 layer는 `RAW`, `BRONZE`, `SILVER`를 지원하며 기본값은 `BRONZE`다. target layer는 Catalog/target metadata이며 Kafka bridge의 transform/quality 실행 여부를 임의로 바꾸지 않는다. bridge는 Job에 저장된 지원 field transform과 quality action을 적용한 뒤 사용자가 선택한 target에 저장한다. `Fail Run`은 offset commit 전에 실행을 실패시키며, `Quarantine`은 snapshot directory의 `quarantine.jsonl`로 분리한다. malformed payload도 raw payload와 Kafka context를 보존해 quarantine한다. `GOLD` join/aggregation과 범용 SQL expression runtime은 이 전환 범위에 포함하지 않는다. 상세 계약은 [Kafka Snapshot Direct Target Contract](kafka-snapshot-direct-target-contract.md)를 따른다.
+target dataset의 layer는 `RAW`, `BRONZE`, `SILVER`를 지원하며 기본값은 `BRONZE`, 물리 포맷은 `JSONL`이다. target layer는 Catalog/target metadata이며 Kafka bridge의 transform/quality 실행 여부를 임의로 바꾸지 않는다. bridge는 Job에 저장된 지원 field transform과 quality action을 적용한 뒤 compiled output schema로 projection하므로 rename 전 source field와 `included: false` field는 target JSONL, Catalog schema, sample에 남지 않는다. `Fail Run`은 offset commit 전에 실행을 실패시키며, `Quarantine`은 snapshot directory의 `quarantine.jsonl`로 분리한다. malformed payload도 raw payload와 Kafka context를 보존해 quarantine한다. `GOLD` join/aggregation과 범용 SQL expression runtime은 이 전환 범위에 포함하지 않는다. 상세 계약은 [Kafka Snapshot Direct Target Contract](kafka-snapshot-direct-target-contract.md)를 따른다.
 
 ### Scheduled job tick
 
@@ -547,7 +564,9 @@ type CreateJobResponse = {
 };
 ```
 
-Day1 Pair A create request는 Review Summary용 `ruleSummary`만 보내지 않는다. `transformSteps`, `transformOutputColumns`, `qualityRules`, `qualityScore`, `qualityStatus`, `qualityInvalidRows`를 함께 보내고, backend는 이 payload를 job에 저장한 뒤 run command에서 Spark transform/quality 실행에 사용한다.
+Create/update/review request의 Rule source of truth는 `ruleContractVersion: "1.0"`과 `rules[]`다. Backend는 저장 전에 canonical Rule을 검증하고 `ruleCompilation.status`, 정확한 `issues[]`, 결정된 `outputSchema`를 반환하며 create/append/update에서 version과 Rule JSON을 그대로 영속화한다. `1.0 + []`는 source schema 그대로의 명시적 pass-through이고 legacy 필드를 되살리지 않는다. canonical 컬럼이 없는 기존 Job만 `transformSteps`, `transformOutputColumns`, `qualityRules`에서 Rule을 재구성하며, 이 호환 표현의 `canonicalParameters`는 `0`, `false`, 빈 문자열, `null`을 손실 없이 보존한다. `fail_batch`와 `quarantine`은 `failureDisposition: "keep"`만 허용하고, `warn`은 `keep`, `drop_row`, `set_null`을 사용할 수 있다. 버전 누락/불일치, 잘못된 kind·오류 정책·severity, 지원하지 않는 parameter는 각각 구조화된 `RULE_*` issue로 거절한다. Continuous는 Snapshot conformance를 통과한 stateless 공통 operation을 허용하고 임의 SQL/stateful operation만 `RULE_EXECUTION_MODE_UNSUPPORTED`로 거절한다.
+
+Schema Transform UI는 원본 `SchemaColumnDraft.sourceType`과 target `type`을 별도로 보존한다. 컬럼명, 타입, 기본값, NOT NULL 변경은 각각 `rename`, `cast`, `default_value`, `null_guard` Rule로 순서대로 직렬화한다. `POST /api/etl/rules/preview`는 canonical Rule을 다시 compile한 뒤 portable Rule은 bounded 공통 runtime, 일반 Snapshot SQL expression은 bounded Spark runtime에 적용하므로 브라우저 전용 변환 해석을 사용하지 않는다. Preview는 최대 100개 sample만 처리하며 target, Catalog, source progress를 변경하지 않는다. Continuous도 streaming-safe Visual Transform과 Preview를 사용하며 임의 SQL은 노출하거나 실행하지 않는다. Regex pattern, Accepted Values, Range bounds, mask policy, timestamp format은 compiler가 실행 전에 검증하며 V1 mask는 phone, timestamp는 ISO-8601(`UTC` legacy alias 포함)만 지원한다.
 
 필수 확인:
 
@@ -558,7 +577,7 @@ Day1 Pair A create request는 Review Summary용 `ruleSummary`만 보내지 않�
 - 생성 후 ETL 목록과 Catalog 목록에 같은 `job.id`와 `dataset.id` 기준 결과가 보여야 한다.
 - 같은 Job 또는 같은 `targetDataset`으로 생성/실행한 결과는 새 Catalog row를 늘리지 않고 기존 dataset의 `materializationRuns`에 append한다. Catalog 목록 row는 하나만 보이고, row 펼침에서 append history를 최대 5개씩 pagination으로 표시한다.
 - Target draft의 `storageType`, `partition`, `partitionColumns`, `indexColumns`, `compression`, `storagePath`, `targetDatabase`, `targetDescription`, `targetTags`는 `targetDataset`, `targetLayer`, `targetFormat`과 함께 create request에 전달된다. 다중 파티션 컬럼은 선택 순서를 유지한 `partitionColumns` 배열과 `/`로 연결한 하위 호환용 `partition` 문자열로 함께 전송한다. SQL 결과 처리 Job wizard도 같은 target metadata를 구성한 뒤 기존 create request로 변환한다.
-- 현재 Target 화면에서는 `targetLayer` 선택 버튼을 노출하지 않고 기존 draft/default layer 값을 사용한다.
+- Target 화면은 모든 Source에서 `targetLayer`를 명시적으로 선택한다. Kafka Snapshot은 `RAW/BRONZE/SILVER + JSONL`, Kafka Continuous는 Parquet 포맷만 노출하고 backend review/create/update도 같은 조합을 검증한다.
 - `rag` 필드는 호환을 위해 create request에 남아 있지만, 현재 Target 화면에서는 노출하지 않고 frontend 기본값은 `false`다.
 - Target 화면은 기본정보, 태그, 파티션 단위로 구성되며 태그/파티션 섹션은 접고 펼칠 수 있다.
 - Source/schema sample이 `data` JSON 단일 컬럼으로 들어오면 frontend가 JSON을 dot-path 컬럼으로 펼쳐 `schemaRules`와 preview를 만든다. 원본 JSON 보존용 `raw_data` 컬럼은 기본 미사용 optional 컬럼으로 제공한다.
@@ -566,7 +585,7 @@ Day1 Pair A create request는 Review Summary용 `ruleSummary`만 보내지 않�
 
 Mock mode에서는 Pair A pipeline 생성 dataset과 backend direct SQL derived dataset을 모두 `window.localStorage["asklake.catalogDatasets"]`에 저장하고 앱 로드시 mock catalog dataset 앞에 병합한다. 현재 SQL 화면의 `처리 Job 생성` UI는 직접 localStorage에 dataset을 쓰지 않고, 모달에서 만든 설정을 SQL Result 기반 `DraftPipeline`으로 변환해 기존 Job 생성 경로를 사용한다. 이때 접근 범위는 권한 요약과 역할 metadata에 동기화하고, 스케줄·DB·파일 포맷·압축·다중 파티션·태그·저장 경로·설명은 mock Job과 dataset에도 보존한다. 기존 `asklake.derivedDatasets` 값은 읽기 호환만 유지한다. Live API mode에서는 localStorage fallback을 사용하지 않고 backend catalog persistence와 `GET /api/catalog/datasets` 응답을 source of truth로 둔다.
 
-Catalog dataset의 `materializationRuns` 항목은 `runId`, `jobId`, `status`, `createdAt`, `rowCount`, `storageSizeBytes`, `storageLocation`, `sourceKind`, `sourceLabel`을 포함한다. 부모 dataset의 `rows`, `size`, `storageSizeBytes`, `lastUpdated`, `sourceRunId`는 삭제되지 않은 성공 append 결과 기준 합산/최신값으로 계산한다.
+Catalog dataset의 `materializationRuns` 항목은 `runId`, `jobId`, `status`, `createdAt`, `rowCount`, `storageSizeBytes`, `storageLocation`, `sourceKind`, `sourceLabel`을 포함한다. Kafka Continuous materialization은 추가로 `sourceRanges`, `publicationManifest`, schema/rule/runtime fingerprint, `transform`, `quality` 실행 결과를 반환하며 replay에도 같은 Rule 실행 정체성을 유지한다. 부모 dataset의 `rows`, `size`, `storageSizeBytes`, `lastUpdated`, `sourceRunId`는 삭제되지 않은 성공 append 결과 기준 합산/최신값으로 계산한다.
 
 ### Pair A -> Pair C
 

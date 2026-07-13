@@ -175,6 +175,9 @@ function writeSparkJobManifest(manifestPath, job) {
     createdAt: new Date().toISOString(),
     partitionColumns: job.partition || "",
     qualityRules: job.qualityRules ?? [],
+    ruleContractVersion: job.ruleContractVersion ?? "1.0",
+    ruleOutputSchema: job.ruleOutputSchema ?? job.transformOutputColumns ?? [],
+    rules: job.rules ?? [],
     recordParsing: job.recordParsing ?? null,
     schemaColumns: job.schemaColumns ?? [],
     textStructuring: {

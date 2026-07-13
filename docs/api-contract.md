@@ -61,6 +61,7 @@ TARGET_DATABASES=asklake,asklake_gold,analytics,marketing
 - `DATABASE_URL`: backend metadata DB입니다. 미설정 시 `docker-compose.yml`의 local Postgres 기본값을 사용합니다.
 - mock mode에서는 Source/Schema 연결 테스트도 `sourceConnectorService.ts`의 mock `SourceConnectorAnalysis`를 사용합니다.
 - live mode에서는 Source/Schema/Create/Run 흐름이 실제 백엔드를 호출합니다.
+- 새 Kafka Source의 broker 기본값은 `GET /api/etl/sources/defaults`가 반환하는 backend runtime 값이며 frontend build에 복제하지 않습니다.
 - Target 저장경로 선택은 브라우저가 AWS SDK나 secret을 갖지 않고 `/api/s3/buckets`, `/api/s3/prefixes` 서버 API만 호출합니다. 서버는 `S3_ALLOWED_BUCKETS` allowlist를 검증하고 AWS SDK v3 `ListObjectsV2`로 prefix를 조회합니다.
 - Target DB 선택은 `/api/target/databases` 서버 API만 호출합니다. 서버는 `TARGET_DATABASES` 또는 `ASKLAKE_TARGET_DATABASES` allowlist를 사용하고, 값이 없으면 local demo 기본 DB 목록을 반환합니다.
 
@@ -405,6 +406,9 @@ type JobRowData = {
   schemaSampleRows?: string[][];
   schemaSummary?: string;
   ruleSummary?: string;
+  ruleContractVersion?: "1.0";
+  rules?: CanonicalRuleDraft[];
+  ruleCompilation?: RuleCompilationResult;
   permissionSummary?: string;
   permissionRoles?: PermissionDraft["roles"];
   targetDatabase?: string;
@@ -517,6 +521,14 @@ type CatalogDataset = {
     storageLocation?: string;
     sourceKind: "etl" | "sql" | "kafka";
     sourceLabel: string;
+    sourceRanges?: Array<Record<string, unknown>>;
+    publicationManifest?: string;
+    ruleContractVersion?: string;
+    ruleFingerprint?: string;
+    runtimeFingerprint?: string;
+    schemaFingerprint?: string;
+    transform?: Record<string, unknown>;
+    quality?: Record<string, unknown>;
   }>;
   upstream: string[];
   downstream: string[];
@@ -527,9 +539,35 @@ type CatalogDataset = {
 `size`는 화면 표시용 저장 크기 문자열입니다. 물리 저장 위치와 원시 byte 값은 `storageLocation`, `storageFormat`, `storageSizeBytes`를 사용합니다.
 `materializationRuns`는 같은 Job/같은 dataset 이름으로 누적된 실행 또는 SQL materialize 결과 history입니다. 부모 dataset의 `rows`, `size`, `storageSizeBytes`, `lastUpdated`, `sourceRunId`는 삭제되지 않은 성공 run 기준으로 계산합니다.
 
+### Source Connector Defaults
+
+`GET /api/etl/sources/defaults`는 새 Source draft에 사용할 비밀이 아닌 runtime 기본값을 반환합니다.
+
+```ts
+type SourceConnectorDefaults = {
+  kafkaBroker: string; // ASKLAKE_KAFKA_BROKER, fallback 127.0.0.1:19092
+};
+```
+
+저장된 Job을 수정할 때는 이 응답이 기존 `sourceConfig`를 덮어쓰지 않습니다. 실제 연결과 실행은 request에 저장된 broker를 사용합니다.
+
+### Schema Type and Source Path Contract
+
+Source connector의 JSON/JSONL profile은 preview cell 문자열을 다시 정규식으로 추측하지 않고 원본 JSON token을 사용한다. JSON string은 내용이 숫자나 ISO timestamp 형태여도 `String`, integer number는 `Long`, real number는 `Double`, object/array는 `JSON`이다. CSV/TSV/TXT처럼 native token 정보가 없는 source만 기존 문자열 기반 추론을 사용하며 실수 결과는 `Double`로 정규화한다.
+
+Canonical schema type은 `String`, `Integer`, `Long`, `Double`, `Boolean`, `Timestamp`, `Date`, `JSON`이다. 기존 Job과 외부 payload의 `Float`는 `Double` 호환 alias로 수용하지만 frontend가 새 draft를 생성하거나 수정 저장할 때는 `Double`을 보낸다.
+
+`SchemaColumnDraft.sourceName`은 `raw.reviewerID` 같은 원본 source path이고 `targetName`은 `raw_reviewerID` 같은 물리 output alias다. Transform step의 `input`과 lineage는 source path를 사용하며 target write는 alias를 사용한다. Kafka Continuous는 dotted path로 nested Spark schema를 구성하고 root/nested object별 unknown field를 검사하므로 `raw` object 자체를 unknown field로 오인하지 않는다. scalar/object가 같은 path를 동시에 점유하는 모호한 schema는 worker 시작 전에 거절한다.
+
+`nullable: false`는 output schema 제약이며 그 자체로 Quality Rule 수에 포함되지 않습니다. 실제 NULL 검사는 canonical `quality:not_null`, 값 누락 시 transform 오류 정책을 적용하는 Null Guard는 명시적인 `transform:null_guard`로 각각 저장합니다. 사용자가 NOT NULL을 해제하면 편집기에 남은 explicit Null Guard marker도 함께 제거합니다.
+
+Rule compiler는 Regex의 비어 있지 않은 유효 pattern, Accepted Values의 1개 이상 값, Range의 유효한 min/max와 `min <= max`, boolean inclusive를 검증합니다. V1 mask policy는 `phone`(`keep first 3 digits` legacy alias), timestamp format은 `ISO-8601`(`UTC` legacy alias)만 허용합니다. Frontend, FastAPI, Node compiler는 같은 fixture와 `RULE_PARAMETER_REQUIRED`/`RULE_PARAMETER_INVALID` issue code를 사용하고 JSON root의 dotted input path를 동일하게 판정합니다.
+
 ### Kafka Snapshot Metadata and Direct Target
 
 Issue #455 Phase 3부터 Kafka run은 다음 snapshot metadata를 response, Run metadata, Catalog materialization run에 보존하고, 중간 RAW landing 없이 direct target object를 저장한다. Current direct bridge applies supported configured transforms and quality actions before writing normalized review JSONL.
+
+Job command bridge는 `schemaColumns`와 compiled `outputSchema`를 ingest runtime에 전달한다. runtime은 Rule 적용 뒤 이 계약으로 exact projection하며 rename 전 source field와 `included: false` field를 물리 JSONL, Catalog schema, sample에 포함하지 않는다. Kafka Snapshot은 `RAW/BRONZE/SILVER + JSONL`, Kafka Continuous는 Parquet 포맷을 사용하며 review/create/update/command가 지원하지 않는 조합을 `TARGET_LAYER_UNSUPPORTED` 또는 `TARGET_FORMAT_UNSUPPORTED`로 선제 거절한다.
 
 ```ts
 type KafkaPartitionSnapshot = {
@@ -555,9 +593,11 @@ Kafka Job command가 실패하면 `JobRunSummary.status`는 `failed`이며 `task
 
 ### Kafka Continuous Runtime
 
-Issue #500 defines `executionMode: "snapshot" | "continuous"` on Kafka Job creation. Existing and migrated Kafka Jobs default to `snapshot`. `continuous` is immutable after creation and adds `continuousConfig` (`initialOffsetPolicy`, `triggerIntervalSeconds`, `maxOffsetsPerTrigger`, `schemaEvolutionPolicy`, `checkpointPath`) plus `continuousRuntime` (`status`, heartbeat, lag, last flush, counters, last error) to `JobRowData`.
+Issue #500 defines `executionMode: "snapshot" | "continuous"` on Kafka Job creation. Existing and migrated Kafka Jobs default to `snapshot`. `continuous` is immutable after creation and adds `continuousConfig` (`initialOffsetPolicy`, `triggerIntervalSeconds`, `maxOffsetsPerTrigger`, `schemaEvolutionPolicy`, `checkpointPath`) plus `continuousRuntime` (`status`, heartbeat, lag, last flush, counters, Rule identity, last error) to `JobRowData`.
 
 `startContinuous`, `pauseContinuous`, `resumeContinuous`, and `stopContinuous` are command extensions of `POST /api/etl/jobs/{jobId}/commands`. They launch or signal a Spark Structured Streaming worker, reject conflicting active Snapshot or Continuous consumer identity with `409`, and use a durable Spark checkpoint as source-progress authority. Each batch publishes `batch_id=<id>` Parquet paths with `_SUCCESS` plus a hidden count/offset signature, then writes an immutable full-batch manifest. A pre-manifest retry may reuse an output only when its signature matches; a committed manifest may be reused only when its batch ID and source ranges match. Job hydrate reconciles all reported publication manifests into Catalog before worker liveness failure handling. An exited/missing/stale worker becomes `failed` only while active, and the same container attempt increments `failedCount` once. An intentional exit after `pauseContinuous` or `stopContinuous` completes as `paused` or `stopped`. See [Kafka Continuous Ingestion Contract](kafka-continuous-ingestion-contract.md).
+
+Issue #567 Phase 5 compiles supported stateless `rules[]` into the Continuous worker. Every micro-batch applies canonical Transform/Quality before target publication. `_asklake_contract` checkpoint metadata and every publication signature/manifest bind `schemaFingerprint`, `ruleFingerprint`, and `runtimeFingerprint`; mismatch fails before query start. `Fail Batch` leaves the micro-batch uncommitted, while Rule quarantine stores Kafka position plus `ruleId`, `stage`, `targetColumn`, and fingerprints. Catalog `materializationRuns` retain the same execution identity and Transform/Quality result.
 
 Frontend `DraftPipeline.source` carries optional `executionMode` and `continuousConfig`; `executionMode: "continuous"` serializes them into Job creation. `JobRowData` includes optional `continuousRuntime` for lifecycle controls and runtime display.
 
@@ -601,6 +641,8 @@ POST /api/etl/jobs/{jobId}/continuous/compactions
 
 `startContinuous`와 `resumeContinuous`는 각각 새 `KafkaContinuousSession`을 만들고 시작 시점의 누적 runtime counter를 baseline으로 저장한다. worker report를 읽을 때 session counter는 `현재 누적값 - baseline`으로 계산되므로 checkpoint를 이어받는 재시작에서도 이전 세션 수치가 섞이지 않는다. pause와 stop은 session을 `stopping`에서 `stopped`로, worker/container/heartbeat 실패는 `failed`로 끝내며 `endedAt`, `endReason`, `lastError`를 보존한다. `publishedBatches`는 `(sessionId, batchId)` unique key로 멱등 저장되고 시작 전 `lastBatchId` 이하의 복구 manifest는 새 session batch로 다시 기록하지 않는다.
 
+Phase 6부터 session과 batch는 `dagSteps`로 Source, Schema, Transform, Quality, Target, Manifest/Checkpoint, Catalog 7단계 증적을 반환한다. 각 단계는 status, input/output 근거, duration, error를 포함할 수 있다. 성공 publication의 Catalog 단계는 `catalogBatchCursor >= batchId`일 때만 `success`이고 그 전에는 `pending`이다. `Fail Batch`는 checkpoint와 manifest를 전진시키지 않지만 worker의 `lastBatchEvidence`로 `status: "failed"`, `lastError`, 실패 단계와 이후 `blocked` 단계를 DB에 남긴다. 규칙이 없는 Transform/Quality는 `meta: "pass-through"`로 표시한다.
+
 ```ts
 type KafkaContinuousSession = {
   sessionId: string;
@@ -619,11 +661,13 @@ type KafkaContinuousSession = {
   lag: number | null;
   checkpointPath: string;
   lastError: string | null;
+  dagSteps: JobDagStep[];
 };
 
 type KafkaContinuousBatch = {
   batchId: number;
   sessionId: string;
+  status: "running" | "success" | "failed";
   publishedAt: string | null;
   consumedCount: number;
   storedCount: number;
@@ -633,12 +677,14 @@ type KafkaContinuousBatch = {
   dataPath: string | null;
   quarantinePath: string | null;
   manifestPath: string | null;
+  lastError: string | null;
+  dagSteps: JobDagStep[];
 };
 ```
 
-`continuousRuntime` additionally exposes `maxPartitionLag`, `laggingPartitionCount`, `lagAvailable`, `partitionProgress`, `lastBatchDurationMs`, `lastBatchInputRows`, `throughputRowsPerSecond`, `replayedCount`, `schemaVersion`, `schemaFingerprint`, `schemaStatus`, and `schemaChanges`. `replayedCount` prevents recovered quarantine rows from being double-counted: `storedCount + quarantinedCount - replayedCount = consumedCount`. Worker logs are limited to 1,000 lines, ANSI-stripped, and redact common key/token/password assignments.
+`continuousRuntime` additionally exposes `maxPartitionLag`, `laggingPartitionCount`, `lagAvailable`, `partitionProgress`, `lastBatchDurationMs`, `lastBatchInputRows`, `throughputRowsPerSecond`, `replayedCount`, `schemaVersion`, `schemaFingerprint`, `schemaStatus`, `schemaChanges`, `ruleContractVersion`, `ruleFingerprint`, `runtimeFingerprint`, `ruleMetrics`, and `lastRuleResult`. `ruleMetrics` contains cumulative transform/quality warn, quarantine, drop, set-null, invalid/error, and failed-batch counts. `replayedCount` prevents recovered quarantine rows from being double-counted: `storedCount + quarantinedCount - replayedCount = consumedCount`. Worker logs are limited to 1,000 lines, ANSI-stripped, and redact common key/token/password assignments.
 
-Quarantine replay accepts optional `offsets` values in `partition:offset` form and `approveUnknownFields` (default `false`). It reads only `_SUCCESS` batch paths, reapplies the Job's current schema evolution policy, anti-joins target Kafka offsets, and appends recovered rows under the same `batch_id=replay_<runId>` partition layout. `approveUnknownFields: true` requires Job `manage` permission, relaxes only unknown-field handling, and records an audit event plus `policyOverride`. It never rewinds the Kafka consumer group. Compaction accepts `targetFileSizeMb` from 128 to 512, calculates partitions from completed Parquet bytes, and writes a run-specific staged result without deleting source batches. Quarantine inspection/replay and compaction serialize on the runtime row, require an idle worker, and return `409` while another maintenance run is active. Each persisted run has a lease (`ASKLAKE_CONTINUOUS_MAINTENANCE_LEASE_SECONDS`, default 900); expiry marks it failed and removes its named Docker container.
+Quarantine replay accepts optional `offsets` values in `partition:offset` form and `approveUnknownFields` (default `false`). It reads only `_SUCCESS` batch paths, reapplies the Job's current schema evolution policy and canonical Rule set, anti-joins target Kafka offsets, and appends recovered rows under the same `batch_id=replay_<runId>` partition layout. `ruleRejectedCount` identifies rows still rejected by current Rules. `approveUnknownFields: true` requires Job `manage` permission, relaxes only unknown-field handling, and records an audit event plus `policyOverride`; it cannot bypass Transform/Quality. Replay never rewinds the Kafka consumer group. Compaction accepts `targetFileSizeMb` from 128 to 512, calculates partitions from completed Parquet bytes, and writes a run-specific staged result without deleting source batches. Quarantine inspection/replay and compaction serialize on the runtime row, require an idle worker, and return `409` while another maintenance run is active. Each persisted run has a lease (`ASKLAKE_CONTINUOUS_MAINTENANCE_LEASE_SECONDS`, default 900); expiry marks it failed and removes its named Docker container.
 
 ### LineageGraph
 
@@ -867,6 +913,34 @@ Rules:
 - 서버는 `TARGET_DATABASES` 또는 `ASKLAKE_TARGET_DATABASES`에 지정된 이름만 반환할 수 있습니다.
 - 환경변수가 없으면 local demo 기본값으로 `asklake`, `asklake_gold`, `analytics`, `marketing`을 반환합니다.
 
+### 7.1.2 Snapshot Rule Preview
+
+`POST /api/etl/rules/preview`
+
+```ts
+type RulePreviewRequest = {
+  executionMode: "snapshot" | "continuous";
+  records: Array<Record<string, unknown>>; // 최대 100개
+  ruleContractVersion: "1.0";
+  rules: CanonicalRuleDraft[];
+  schemaColumns: Array<SchemaColumnDraft & { sourceType?: string }>;
+  sourceType: string;
+};
+
+type RulePreviewResponse = {
+  compilation: RuleCompilationResult;
+  records: Array<Record<string, unknown>>;
+  quarantined: Array<Record<string, unknown>>;
+  transform: Record<string, unknown>;
+  quality: Record<string, unknown>;
+};
+```
+
+- backend는 request를 canonical compiler로 먼저 검증하고 실제 Snapshot Rule runtime에 적용합니다.
+- `schemaColumns[].sourceType`은 원본 필드 타입, 같은 컬럼의 `type`은 target 타입입니다. 값이 없던 기존 payload는 `type`을 원본 타입으로도 사용합니다. 요청 최상위 `sourceType`은 Kafka 등 connector 종류를 뜻합니다.
+- 허용 operation은 Snapshot 공통 목록입니다. Continuous 요청도 같은 bounded runtime으로 streaming-safe Rule 의미를 확인할 수 있으며 임의 SQL과 stateful/engine-specific operation은 거절합니다.
+- 이 endpoint는 bounded UI Preview 전용이며 Job, offset, checkpoint, target object, Catalog를 변경하지 않습니다.
+
 ### 7.2 Review snapshot
 
 `POST /api/etl/review`
@@ -887,6 +961,7 @@ type ReviewSnapshot = {
   schema: Array<{ columnName: string; type: string; nullable: string; transform: string }>;
   destination: Array<{ label: string; value: string }>;
   permission: Array<{ label: string; value: string }>;
+  ruleCompilation: RuleCompilationResult;
   validation: Array<{ label: string; status: "ready" | "warning"; value: string }>;
   canCreate: boolean;
 };
@@ -895,6 +970,7 @@ type ReviewSnapshot = {
 - `targetDatabase`, `targetDescription`은 Review 표시용으로 create/review request에 함께 보냅니다.
 - live mode는 source connector 결과를 재확인하고, mock mode는 동일한 response shape를 fixture로 반환합니다.
 - Review UI는 local draft를 직접 조합하지 않고 이 response를 표시합니다.
+- `ruleCompilation.status`가 `pass`일 때만 `canCreate`가 true가 될 수 있습니다. `rules`가 비어 있으면 output schema는 포함된 source schema와 같은 pass-through 결과이며 `ruleSummary`가 비어 있어도 실패하지 않습니다.
 
 ### 7.3 작업 목록 조회
 
@@ -956,6 +1032,35 @@ type WatermarkPolicyDraft = {
   mode: "last_success_to_scheduled_at" | "last_success_to_run_started_at" | "full_refresh";
 };
 
+type CanonicalRuleDraft = {
+  contractVersion: "1.0";
+  id: string;
+  kind: "transform" | "quality";
+  operation: string;
+  inputColumns: string[];
+  outputColumns: string[];
+  parameters: Record<string, unknown>;
+  outputType?: string;
+  enabled: boolean;
+  onError: "fail_batch" | "quarantine" | "warn";
+  failureDisposition: "keep" | "drop_row" | "set_null";
+  severity?: "warning" | "error";
+  label?: string;
+};
+
+type RuleCompilationResult = {
+  contractVersion: "1.0";
+  status: "pass" | "fail";
+  rules: CanonicalRuleDraft[];
+  outputSchema: Array<[string, string]>;
+  issues: Array<{
+    code: string;
+    message: string;
+    ruleId?: string;
+    field?: string;
+  }>;
+};
+
 type CreatePipelineRequest = {
   id: string;
   jobName: string;
@@ -964,7 +1069,10 @@ type CreatePipelineRequest = {
   sourceLabel: string;
   schemaSummary: string;
   ruleSummary: string;
+  ruleContractVersion: "1.0";
+  rules: CanonicalRuleDraft[];
   transformSteps: Array<{
+    canonicalParameters?: Record<string, unknown>;
     enabled: boolean;
     id: string;
     input: string;
@@ -977,10 +1085,12 @@ type CreatePipelineRequest = {
   }>;
   transformOutputColumns: Array<[string, string]>;
   qualityRules: Array<{
+    canonicalParameters?: Record<string, unknown>;
     enabled: boolean;
     failureAction: "Warn" | "Quarantine" | "Fail Run" | "Drop Row" | "Set Null";
     id: string;
     kind: "notNull" | "range" | "acceptedValues" | "regex" | "unique";
+    params?: string;
     severity: "Warning" | "Error";
     targetColumn: string;
     validationType: "Not Null" | "Range Check" | "Regex Match" | "Accepted Values";
@@ -1027,6 +1137,22 @@ type CreatePipelineRequest = {
 
 `permissionSummary`, `permissionRoles`, `permissionGrants`, `owner`, `createdBy`, `createdByProfile`은 현재 생성 결과를 설명하고 표시하기 위한 governance/identity metadata입니다. 이 값만으로 dataset 조회, SQL 실행, job command 권한을 허용하거나 거부하지 않습니다. Backend는 `asklake_session` 쿠키 actor를 우선 사용하고, 세션이 없을 때만 `X-AskLake-User` header 또는 demo actor를 `createdBy` fallback으로 사용할 수 있습니다.
 
+Rule contract rules:
+
+- 새 client는 `ruleContractVersion: "1.0"`과 `rules[]`를 source of truth로 함께 보냅니다. `transformSteps`, `qualityRules`와 `transformOutputColumns`는 현재 runner와 기존 Job을 위한 파생 호환 필드입니다.
+- `ruleContractVersion: "1.0"`, `rules: []`는 명시적 pass-through입니다. 같은 payload나 저장 행에 legacy 규칙이 남아 있어도 다시 활성화하지 않습니다.
+- version과 canonical Rule이 없는 기존 client/저장 행만 backend adapter가 legacy 규칙을 canonical Rule로 변환합니다. 호환 필드의 `canonicalParameters`는 legacy 표시 문자열로 표현할 수 없는 `0`, `false`, 빈 문자열, `null`과 operation parameter를 보존합니다.
+- legacy Regex, Accepted Values, Range가 parameter를 생략한 경우에는 기존 실행 의미인 이메일 pattern, `KOR/JPN/USA/KR/US`, 최소값 `0`을 canonical parameter로 명시합니다.
+- 새 create, 기존 target append, `PATCH`는 canonical version과 Rule JSON을 nullable DB 컬럼에 저장합니다. 기존 행은 backfill하지 않고 조회 시에만 legacy adapter를 사용합니다.
+- `rules`, `transformSteps`, `qualityRules`가 모두 비어 있으면 pass-through로 유효합니다.
+- 생성/수정 전 compiler가 contract version, kind, operation, input/output column, parameter key, severity, 오류 정책, 실행 mode와 결정된 output schema를 검증합니다.
+- schema에 JSON root가 있으면 그 아래 dotted input path를 허용합니다. JSON root가 없는 dotted path나 일반 미등록 컬럼은 `RULE_INPUT_NOT_FOUND`로 거절합니다.
+- `fail_batch`/`quarantine`은 `failureDisposition: "keep"`만 허용합니다. `warn`은 `keep`, `drop_row`, `set_null`을 사용할 수 있습니다.
+- 실패 응답은 `400 RULE_COMPILATION_FAILED`이며 `error.details`에 `contractVersion`, `issues`, `outputSchema`를 포함합니다.
+- 대표 issue code는 `RULE_CONTRACT_VERSION_REQUIRED`, `RULE_CONTRACT_VERSION_UNSUPPORTED`, `RULE_KIND_UNSUPPORTED`, `RULE_ERROR_POLICY_UNSUPPORTED`, `RULE_FAILURE_DISPOSITION_UNSUPPORTED`, `RULE_FAILURE_POLICY_CONFLICT`, `RULE_SEVERITY_UNSUPPORTED`, `RULE_PARAMETER_UNSUPPORTED`입니다.
+- backend 응답은 persisted canonical Rule을 우선 반환하고, canonical 컬럼이 없는 legacy 저장 Job만 `ruleContractVersion`, `rules`, `ruleCompilation`을 재구성해 반환합니다.
+- 일반 Snapshot과 Kafka Snapshot은 저장된 Rule을 실행 직전에 다시 compile합니다. 공통 operation의 `fail_batch`, `quarantine`, `drop_row`, `set_null`은 target publication 전에 실행되며, Spark `fail_batch`는 Parquet target을 만들지 않고 Kafka `fail_batch`는 consumer offset을 commit하지 않습니다.
+
 Request 예시:
 
 ```json
@@ -1042,6 +1168,22 @@ Request 예시:
   ],
   "schemaSummary": "5 columns inferred, review_id bigint primary key candidate",
   "ruleSummary": "3 quality rules enabled",
+  "ruleContractVersion": "1.0",
+  "rules": [
+    {
+      "contractVersion": "1.0",
+      "id": "review-required",
+      "kind": "quality",
+      "operation": "not_null",
+      "inputColumns": ["review"],
+      "outputColumns": [],
+      "parameters": {},
+      "enabled": true,
+      "onError": "fail_batch",
+      "failureDisposition": "keep",
+      "severity": "error"
+    }
+  ],
   "scheduleLabel": "매일 09:00",
   "scheduleSummary": "반복 실행 · 매일 09:00 · Asia/Seoul · 저장 후 다음 예약부터 시작",
   "retryPolicy": {
@@ -1165,7 +1307,7 @@ Validation:
 - `targetLayer`는 `RAW`, `BRONZE`, `SILVER`, `GOLD` 중 하나여야 합니다.
 - `storageType`, `partition`, `compression`, `storagePath`는 Target 화면의 draft 값이며, 없으면 frontend는 기존 기본값을 채웁니다.
 - Target metadata는 flat create contract를 유지하기 위해 `targetDescription`, `targetTags`, `partitionColumns`, `indexColumns`로 전달합니다. 기존 `partition`은 하위 호환용 표시/저장 문자열이며 `partitionColumns.join("/")` 값과 같아야 합니다.
-- 현재 Target 화면에서는 layer 선택 버튼을 노출하지 않고 기존 draft/default `targetLayer` 값을 사용합니다.
+- Target 화면은 모든 Source에서 `targetLayer`를 RAW/BRONZE/SILVER/GOLD 중 명시적으로 선택하게 하며 기존 draft/default layer를 초기값으로 사용합니다. 자동 생성 storage path는 선택 layer를 반영합니다.
 - `rag`는 호환 필드로 유지하지만, 현재 Target 화면에서는 설정을 노출하지 않고 frontend는 기본값 `false`를 전송합니다.
 - 현재 Target 화면은 저장소 선택 화면이 아니라 최종 dataset 저장 명세 화면입니다. `data` JSON 단일 컬럼 sample은 frontend에서 dot-path 컬럼으로 펼쳐 `schemaRules`와 preview를 구성하고, 원본 보존용 `raw_data`는 optional 미사용 컬럼으로 둡니다.
 - 현재 Target 화면의 파티션은 실제 사용 컬럼 중 partition 가능한 컬럼을 checkbox로 여러 개 선택하며, 선택 순서를 유지해 `/`로 연결한 뒤 create request의 `partition`에 반영합니다. 예: `event_date/region`.
@@ -1195,7 +1337,10 @@ Rules:
 - `manage` 권한이 필요하다.
 - `running` Job은 `409 CONFLICT`로 수정할 수 없다.
 - 성공 Run이 하나라도 있으면 `targetDataset`, `targetDatabase`, `targetLayer`, `targetFormat`, `storageType`, `storagePath` 변경을 `422`로 차단한다.
+- Continuous worker가 active인 동안 schema/Rule/physical target 변경은 `409 CONTINUOUS_IMMUTABLE_CONFIG_ACTIVE`다.
+- Continuous `_asklake_contract` checkpoint가 한 번이라도 초기화된 뒤 같은 변경을 요청하면 worker가 정지 상태여도 `409 CONTINUOUS_CHECKPOINT_CONTRACT_IMMUTABLE`다. source progress를 섞지 않도록 Job copy와 새 checkpoint를 사용한다.
 - source config와 Kafka consumer group offset, `kafka_snapshots` row는 update 대상이 아니다.
+- 수정 request의 canonical Rule도 create와 같은 compiler를 통과해야 하며, 실패 시 기존 Job payload를 변경하지 않는다.
 - 성공 시 같은 Job ID를 반환하며 새 Job이나 Catalog Dataset을 만들지 않는다.
 - 실패하면 서버 Job은 변경하지 않고 frontend edit draft는 유지한다.
 

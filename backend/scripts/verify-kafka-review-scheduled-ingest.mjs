@@ -2,6 +2,7 @@ import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { loadKafkaJs } from "../src/kafka-codecs.mjs";
 
 const backendDir = fileURLToPath(new URL("..", import.meta.url));
 process.env.KAFKAJS_NO_PARTITIONER_WARNING = process.env.KAFKAJS_NO_PARTITIONER_WARNING || "1";
@@ -12,6 +13,7 @@ const shouldStartServer = process.env.ASKLAKE_KAFKA_SCHEDULE_VERIFY_START_SERVER
 const suffix = Date.now().toString(36);
 const topic = process.env.ASKLAKE_KAFKA_SCHEDULE_VERIFY_TOPIC || `reviews.raw.verify.${suffix}`;
 const minimalTopic = `reviews.raw.minimal.${suffix}`;
+const snappyTopic = `reviews.raw.snappy.${suffix}`;
 const groupId = `asklake-verify-${suffix}`;
 const targetDataset = `reviews_raw_verify_${suffix}`;
 const fixtureMessageCount = 100;
@@ -38,7 +40,9 @@ try {
   await waitForHealth();
   await verifyScheduledKafkaIngest();
   await verifyMinimalReviewContractIngest();
+  await verifySnappyReviewIngest();
   await verifyTransformAndQualityIngest();
+  await verifyJobTargetProjection();
   await verifyFailRunLeavesOffsetsForRetry();
   await verifyMultiPartitionSnapshots();
   await verifyTargetWriteRetryIsIdempotent();
@@ -168,6 +172,52 @@ async function verifyMinimalReviewContractIngest() {
   assert((await readS3Object(malformedResult.quality.quarantineLocation)).includes("{invalid json"), "Malformed quarantine must retain raw payload.");
 }
 
+async function verifySnappyReviewIngest() {
+  const { CompressionTypes, Kafka } = await loadKafkaJs();
+  const kafka = new Kafka({ brokers: [env.ASKLAKE_KAFKA_BROKER], clientId: "asklake-snappy-ingest-verify" });
+  const admin = kafka.admin();
+  const producer = kafka.producer();
+  await admin.connect();
+  await producer.connect();
+  try {
+    await admin.createTopics({ topics: [{ numPartitions: 1, replicationFactor: 1, topic: snappyTopic }] });
+    await producer.send({
+      compression: CompressionTypes.Snappy,
+      messages: [{ value: JSON.stringify({
+        created_at: "2026-07-12T00:00:00Z",
+        event_id: `snappy-review-${suffix}`,
+        offset: 0,
+        review: "snappy snapshot review",
+      }) }],
+      topic: snappyTopic,
+    });
+  } finally {
+    await producer.disconnect();
+    await admin.disconnect();
+  }
+
+  const result = await post("/api/etl/kafka/reviews/ingest", {
+    allowEmpty: false,
+    broker: env.ASKLAKE_KAFKA_BROKER,
+    consumerGroupId: `asklake-snappy-${suffix}`,
+    datasetId: `ds_reviews_snappy_${suffix}`,
+    datasetName: `reviews_snappy_${suffix}`,
+    landingEndpoint: env.MINIO_ENDPOINT,
+    maxMessages: 10,
+    offsetPolicy: "earliest",
+    registerCatalog: true,
+    storageMode: "s3",
+    targetBucket: "asklake-output",
+    targetFormat: "jsonl",
+    targetLayer: "BRONZE",
+    targetPrefix: `verify/${snappyTopic}/bronze`,
+    topic: snappyTopic,
+  });
+  assert(result.status === "success", "Snappy Kafka ingest should succeed.");
+  assert(result.consumedCount === 1, `Snappy Kafka ingest should consume one event: ${result.consumedCount}`);
+  assert(result.storedCount === 1, `Snappy Kafka ingest should store one event: ${result.storedCount}`);
+}
+
 async function verifyTransformAndQualityIngest() {
   const transformTopic = `reviews.raw.transform.${suffix}`;
   await produceReviewEvents(transformTopic, [
@@ -209,6 +259,74 @@ async function verifyTransformAndQualityIngest() {
   assert(targetRecords[0].normalized_review === "great review", `Transform output should be written to direct target: ${targetBody}`);
   const quarantineBody = await readS3Object(result.quality.quarantineLocation);
   assert(quarantineBody.includes(`transform-${suffix}-2`), "Quarantine object should contain the rejected Kafka row.");
+}
+
+async function verifyJobTargetProjection() {
+  const projectionTopic = `reviews.raw.projection.${suffix}`;
+  const projectionGroup = `asklake-projection-${suffix}`;
+  const projectionDataset = `reviews_projection_${suffix}`;
+  await produceReviewEvents(projectionTopic, [{
+    created_at: "2026-07-09T02:30:00Z",
+    event_id: `projection-${suffix}-1`,
+    offset: 1,
+    raw: { private_note: "must-not-leak" },
+    review: "Projection contract review",
+    source: "projection-fixture",
+  }]);
+
+  const basePayload = kafkaJobPayload();
+  const created = await post("/api/etl/jobs", {
+    ...basePayload,
+    id: `kafka-review-projection-verify-${suffix}`,
+    jobName: `Kafka Review Projection Verify ${suffix}`,
+    nextRunUtc: null,
+    ruleContractVersion: "1.0",
+    rules: [{
+      contractVersion: "1.0",
+      enabled: true,
+      failureDisposition: "keep",
+      id: "rename-review",
+      inputColumns: ["review"],
+      kind: "transform",
+      onError: "warn",
+      operation: "rename",
+      outputColumns: ["review_clean"],
+      outputType: "String",
+      parameters: {},
+    }],
+    schemaColumns: [
+      { included: true, nullable: false, sourceName: "event_id", targetName: "event_id", type: "String" },
+      { included: true, nullable: true, sourceName: "review", targetName: "review_clean", type: "String" },
+      { included: false, nullable: true, sourceName: "source", targetName: "source", type: "String" },
+      { included: false, nullable: true, sourceName: "raw", targetName: "raw", type: "JSON" },
+    ],
+    sourceConfig: basePayload.sourceConfig.map(([key, value]) => {
+      if (key === "TOPIC / QUEUE NAME") return [key, projectionTopic];
+      if (key === "CONSUMER GROUP ID") return [key, projectionGroup];
+      return [key, value];
+    }),
+    sourceLabel: projectionTopic,
+    storagePath: `s3://asklake-output/${projectionDataset}/silver`,
+    targetDataset: projectionDataset,
+    targetLayer: "SILVER",
+  });
+  const command = await post(`/api/etl/jobs/${encodeURIComponent(created.job.id)}/commands`, { command: "run" });
+  assert(command.run?.status === "success", `Projection Job should succeed: ${JSON.stringify(command)}`);
+  const targetBody = await readS3Object(command.run.outputPath);
+  const records = targetBody.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+  assert(records.length === 1, `Projection Job should write one record: ${targetBody}`);
+  assert(
+    JSON.stringify(Object.keys(records[0])) === JSON.stringify(["event_id", "review_clean"]),
+    `Projection Job must write only compiled target columns: ${targetBody}`,
+  );
+  assert(records[0].review_clean === "Projection contract review", `Renamed target value is missing: ${targetBody}`);
+  const catalogColumnNames = (command.dataset?.schema || []).map((column) => (
+    Array.isArray(column) ? column[0] : column?.name
+  ));
+  assert(
+    JSON.stringify(catalogColumnNames) === JSON.stringify(["event_id", "review_clean"]),
+    `Catalog schema must match the physical projection: ${JSON.stringify(command.dataset?.schema)}`,
+  );
 }
 
 async function verifyFailRunLeavesOffsetsForRetry() {

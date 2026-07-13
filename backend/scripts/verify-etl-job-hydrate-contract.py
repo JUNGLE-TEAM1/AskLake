@@ -50,8 +50,18 @@ def main() -> None:
             target_format="jsonl",
             target_layer="BRONZE",
             rag=False,
-            transform_output_columns=[["event_id", "string"]],
-            transform_steps=[],
+            transform_output_columns=[["event_id", "string"], ["event_id_copy", "string"]],
+            transform_steps=[{
+                "enabled": True,
+                "id": "legacy-copy",
+                "input": "event_id",
+                "kind": "derive",
+                "label": "legacy copy",
+                "onError": "Warn",
+                "operation": "Copy",
+                "output": "event_id_copy",
+                "params": "",
+            }],
             quality_invalid_rows=[],
             quality_rules=[],
             quality_status="pass",
@@ -66,6 +76,9 @@ def main() -> None:
     etl_repository.list_runs_for_job = lambda _db, _job_id: []
     try:
         response = etl_repository.job_to_schema(None, job).model_dump(by_alias=True)
+        job.rule_contract_version = "1.0"
+        job.rules = []
+        explicit_empty_response = etl_repository.job_to_schema(None, job).model_dump(by_alias=True)
     finally:
         etl_repository.list_runs_for_job = original_list_runs_for_job
 
@@ -81,6 +94,11 @@ def main() -> None:
     assert response["targetTags"] == ["#review", "#bronze"]
     assert response["partitionColumns"] == ["created_at"]
     assert response["indexColumns"] == ["event_id"]
+    assert response["ruleContractVersion"] == "1.0"
+    assert response["rules"][0]["id"] == "legacy-copy"
+    assert response["rules"][0]["operation"] == "copy"
+    assert explicit_empty_response["rules"] == []
+    assert explicit_empty_response["ruleCompilation"]["status"] == "pass"
 
     print("verify-etl-job-hydrate-contract: ok")
 

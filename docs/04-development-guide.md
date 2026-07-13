@@ -38,6 +38,31 @@ npm run build
 ETL Schedule 화면은 shadcn `Card`, `ToggleGroup`, `Field`, `Select`, `Switch`, `Separator`를 조합한다. 예전 `schedule-config-*` 전용 CSS와 중복 안내·상태 카드는 제거했으며, regression check는 실행 방식에 따른 조건부 필드와 저장 계약 문구가 다시 갈라지지 않는지 확인한다.
 Dashboard CSS는 `dashboard.css`와 `dashboard-runtime.css` manifest가 책임별 하위 파일을 import한다. regression script는 로컬 CSS import를 같은 순서로 확장해 검사하므로 selector를 다른 모듈로 옮길 때 manifest 순서와 해당 check를 함께 유지한다.
 
+Source schema의 JSON native type, legacy `Float` 호환, CSV fallback을 확인하고 Continuous dotted source path 계약을 검증할 때는 프로젝트 Python 가상환경을 사용한다.
+
+```bash
+cd backend
+npm run verify:schema-type-contract
+npm run verify:rule-compiler
+npm run verify:rule-preview
+npm run verify:snapshot-rule-conformance
+npm run verify:snapshot-spark-pipeline
+npm run verify:kafka-target-projection
+npm run verify:target-mode-contract
+npm run verify:kafka-continuous-contract
+npm run verify:kafka-continuous-rules
+
+cd ../frontend
+npm run verify:rule-compiler
+npm run verify:schema-transform-rules
+```
+
+backend의 `npm run verify:rule-compiler`는 FastAPI와 local Node compiler의 공통 fixture, canonical Rule DB 영속성, legacy fallback을 함께 검사한다. frontend의 같은 명령은 동일 fixture와 `canonicalParameters`를 통한 `0`, `false`, 빈 문자열, `null` 왕복을 확인한다. create/update/review 변경 시 explicit empty pass-through, output schema, 구조화된 validation issue가 유지돼야 한다.
+
+`npm run verify:schema-transform-rules`는 Visual Transform의 rename/cast/default/null guard 순서, canonical parameter, portable operation, 초기 pass-through를 실제 adapter 함수로 검증한다.
+
+`npm run verify:rule-preview`는 portable bounded Preview와 일반 Snapshot SQL Spark Preview를 모두 실행한다. `npm run verify:snapshot-rule-conformance`는 같은 JSON fixture를 Node Kafka runtime과 실제 Spark 4 DataFrame runtime에 적용하므로 두 명령을 함께 실행하면 Preview와 Spark 의미의 동등성을 검증한다. `npm run verify:snapshot-spark-pipeline`은 `spark_job_run.py`를 직접 실행해 drop/quarantine/set-null 결과가 Parquet에 반영되고 portable/SQL 혼합 `Fail Batch` target과 staging 경로가 남지 않는지 확인한다. `npm run verify:kafka-target-projection`과 `npm run verify:target-mode-contract`은 Kafka exact projection과 mode별 layer/format 선제 검증을 확인한다. `npm run verify:kafka-review-scheduled-ingest`는 실제 Job create/command bridge를 거쳐 물리 JSONL과 Catalog schema가 같은 projection인지까지 확인한다. Continuous Rule 변경 시에는 `npm run verify:kafka-continuous-rules`까지 실행해 foreachBatch final projection, Rule quarantine/replay와 checkpoint fingerprint를 확인한다.
+
 ## 3) Backend Live Mode
 
 프론트는 기본적으로 live backend API를 호출한다. local backend는 Postgres metadata DB를 필요로 하므로 먼저 `docker-compose.yml`의 Postgres를 올린다.
@@ -224,7 +249,7 @@ npm run build
 
 ```bash
 cd backend
-python3 scripts/verify-etl-job-hydrate-contract.py
+PYTHONPATH=. .venv/bin/python scripts/verify-etl-job-hydrate-contract.py
 ```
 
 브라우저에서는 생성된 Kafka Job의 `수정`을 열어 broker, topic, consumer group 값이 저장된 값으로 표시되고 편집할 수 없는지 확인한다. 목록에서 다른 Job의 `수정`을 직접 선택한 경우에도 해당 Job이 상세 기준으로 선택되고, 성공 Run 유무에 맞춰 target identity 잠금이 적용돼야 한다. Review 단계의 `변경사항 저장`은 기존 Job을 update하며 새 Job을 만들지 않아야 한다.
@@ -235,7 +260,7 @@ python3 scripts/verify-etl-job-hydrate-contract.py
 
 ```bash
 cd backend
-.venv/bin/python scripts/verify-etl-job-update-contract.py
+PYTHONPATH=. .venv/bin/python scripts/verify-etl-job-update-contract.py
 ```
 
 이 검증은 source field 요청 거부, source config 보존, 성공 Run 이후 target identity 변경 차단, 실행 중 update 차단을 함께 확인한다.
@@ -317,20 +342,25 @@ curl -X DELETE -H 'X-AskLake-Role: admin' "$ASKLAKE_API_URL/api/etl/kafka/replay
 
 Kafka Source -> direct target -> Catalog 등록 -> schedule tick 계약까지 한 번에 확인하려면 아래 smoke를 실행한다. 이 스크립트는 고유 `reviews.raw.verify.*` topic에 100건 fixture를 넣고, due 상태의 Kafka ETL Job을 만든 뒤 `/api/etl/schedules/run-due`로 실행해 다음 예약 시각이 advance되는지까지 확인한다. 이 smoke는 durable snapshot range 재사용, 실패 후 capture 이후 메시지 append, malformed payload raw quarantine, custom Regex quality parameter, `Fail Run` offset 미커밋, failed Job Run/DAG, 2개 partition의 독립된 max range/offset commit, target write 뒤 Catalog 실패 후 idempotent retry까지 함께 검증한다.
 
+Snapshot Rule 실행 변경 후에는 위 smoke와 함께 `npm run verify:snapshot-rule-conformance`, `npm run verify:snapshot-spark-pipeline`을 실행한다. 첫 명령은 언어별 의미를 비교하고, 둘째 명령은 실제 Spark target publication 순서를 검증한다.
+
 Kafka Continuous Ingestion은 Issue #500 Phase 3에서 long-running Spark Structured Streaming worker까지 연결됐다. Snapshot Job은 wizard의 스케줄 단계에서 수동/반복 실행을 고르고, Continuous Job은 해당 단계를 건너뛰어 생성 후 스트림 시작/중지로 제어한다. Continuous Source 고급 설정은 시작 위치, trigger 간격, micro-batch 최대 메시지를 제공한다. production-like smoke에서는 continuous Job 시작, retained backlog 처리, 새 이벤트 자동 append, pause/resume API 호환, checkpoint restart, lag/heartbeat, conflicting consumer identity `409`을 검증한다. Snapshot smoke는 계속 유지하며 Continuous 검증으로 대체하지 않는다.
 
-계약 검증은 Spark worker를 시작하지 않으며, Continuous Job의 기본 config/runtime identity, start request 상태, 중복 start `409`을 확인한다. Worker 실동작은 Docker, Redpanda, MinIO가 모두 떠 있는 production-like smoke에서 별도로 확인한다.
+`verify:kafka-continuous-contract`는 long-running worker를 시작하지 않고 Continuous Job의 기본 config/runtime identity, Rule payload/fingerprint, start request 상태와 충돌 정책을 확인한다. `verify:kafka-continuous-rules`는 독립 Docker Spark에서 bounded micro-batch Rule 의미와 checkpoint contract를 실행한다. Kafka/MinIO/Catalog를 포함한 실동작은 production-like smoke에서 별도로 확인한다.
 
 ```bash
 cd backend
-.venv/bin/python scripts/verify-kafka-continuous-contract.py
+npm run verify:kafka-continuous-contract
+npm run verify:kafka-continuous-rules
 ```
 
 Phase 2부터 prod-like Compose는 내부 broker `redpanda:9092`를 제공한다. 이 broker는 Snapshot fixture와 이후 Continuous Spark worker가 같은 Docker network에서 사용할 endpoint이며, 외부 Kafka endpoint를 쓰려면 배포 env에서 `ASKLAKE_KAFKA_BROKER`를 바꾼다.
+ETL 생성 화면은 `GET /api/etl/sources/defaults`에서 backend의 `ASKLAKE_KAFKA_BROKER` 값을 읽는다. 로컬 backend 기본값은 `127.0.0.1:19092`, prod-like Compose 기본값은 `redpanda:9092`이며 frontend build 변수로 같은 값을 중복 관리하지 않는다.
+Kafka 소스 연결 테스트는 새 샘플 consumer group이 첫 메시지를 받을 때까지 `ASKLAKE_KAFKA_SAMPLE_TIMEOUT_MS`(기본 8초)를 기다린다. 첫 메시지 이후 `ASKLAKE_KAFKA_SAMPLE_MIN_MESSAGES`(기본 3건)에 도달하면 `ASKLAKE_KAFKA_SAMPLE_IDLE_MS`(기본 0.5초) idle window로 종료한다. 최소 건수에 도달하지 못한 희소 topic은 `ASKLAKE_KAFKA_SAMPLE_SETTLE_MS`(기본 1.5초)까지만 추가 메시지를 기다린 뒤 현재 샘플을 반환한다.
 
 Continuous worker는 Spark 4.0.1/Scala 2.13 Kafka connector를 사용한다. `ASKLAKE_SPARK_KAFKA_PACKAGE=org.apache.spark:spark-sql-kafka-0-10_2.13:4.0.1`과 `ASKLAKE_SPARK_HADOOP_AWS_PACKAGE`을 함께 설정하고, backend Docker socket 및 `ASKLAKE_SPARK_REPORT_DIR` 공유 mount를 유지해야 한다.
 
-Production-like Continuous E2E는 Compose를 먼저 올린 뒤 opt-in으로 실행한다. retained backlog, malformed JSON quarantine, 신규 이벤트, pause/resume, worker kill 후 checkpoint restart, UI polling 없이 Catalog materialization, duplicate-free counter를 검증한다. worker 시작 시 target `s3a://` bucket은 MinIO에 없으면 자동 생성된다. 사용자 요청으로 인한 pause/stop의 SIGTERM 종료는 각각 `paused`/`stopped`로 처리하고, 요청 없이 종료된 worker만 `failed`가 된다.
+Production-like Continuous E2E는 Compose를 먼저 올린 뒤 opt-in으로 실행한다. retained backlog, schema/Rule quarantine, Transform/Quality 카운터, Rule-aware replay, 신규 이벤트, pause/resume, worker kill 후 checkpoint restart, Catalog fingerprint materialization, duplicate-free counter를 검증한다. worker 시작 시 target `s3a://` bucket은 MinIO에 없으면 자동 생성된다. 사용자 요청으로 인한 pause/stop의 SIGTERM 종료는 각각 `paused`/`stopped`로 처리하고, 요청 없이 종료된 worker만 `failed`가 된다.
 
 Backend는 `CONTINUOUS_RUNTIME_SYNC_INTERVAL_SECONDS`(기본 5초)마다 active Continuous worker report를 동기화한다. 이 control-plane sync가 Catalog materialization을 수행하므로 Job 목록/상세 조회가 없어도 적재 batch가 Catalog에 등록된다. Worker는 target의 `_batch-manifests/batch_id=*`에 valid/quarantine count를 함께 기록하고, 재시작 때 이 manifest를 읽어 runtime counter를 복구한다.
 
@@ -363,7 +393,7 @@ ASKLAKE_CONTINUOUS_SOAK_BATCH_SIZE=500 \
 npm run verify:kafka-continuous-soak
 ```
 
-Job 상세의 Continuous Runtime은 partition lag, 처리량, schema drift, bounded/redacted worker log를 표시한다. Quarantine inspection/replay와 compaction은 worker를 일시정지하거나 중지한 상태에서 실행한다. Replay는 Lake의 격리 Parquet를 읽어 `partition:offset` anti-join 후 정상 target과 Catalog materialization에 기록한다. Compaction은 `_compactions/run_id=*`에 staged output을 만들며 V1에서는 원본 batch를 삭제하거나 active Catalog path를 교체하지 않는다.
+Job 상세의 Continuous Runtime은 partition lag, 처리량, schema drift, Rule fingerprint/경고/격리/실패 카운터와 bounded/redacted worker log를 표시한다. Quarantine inspection/replay와 compaction은 worker를 일시정지하거나 중지한 상태에서 실행한다. Replay는 Lake의 격리 Parquet를 읽어 `partition:offset` anti-join 후 현재 schema policy와 canonical Rule을 다시 적용하며, 여전히 실패하는 Rule 행은 target으로 우회하지 않는다. Compaction은 `_compactions/run_id=*`에 staged output을 만들며 V1에서는 원본 batch를 삭제하거나 active Catalog path를 교체하지 않는다.
 
 수동 UI 확인에서는 Kafka Source 연결 화면에서 `Continuous`를 선택해 target format이 Parquet로 유지되는지 확인한다. 생성 후 수집/처리 목록과 상세에서 `스트림 시작`, `일시정지`, `체크포인트 재개`, `스트림 중지`가 Snapshot의 run/retry와 섞이지 않는지, runtime counter/heartbeat/checkpoint가 polling으로 갱신되는지 확인한다.
 
