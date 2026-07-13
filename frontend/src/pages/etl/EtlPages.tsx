@@ -5740,6 +5740,26 @@ export function TargetPage({
             <FormFieldGroup className="field wide" label="설명">
               <Input className="input control-input" value={targetDescription} onChange={(event) => setTargetDescription(event.target.value)} />
             </FormFieldGroup>
+            <FormFieldGroup className="field wide target-tags-field" label="태그">
+              {targetTags.length > 0 ? (
+                <TagList className="target-chip-grid" density="compact" role="group" aria-label="타겟 태그">
+                  {targetTags.map((tag) => (
+                    <Button aria-pressed={targetTags.includes(tag)} key={tag} size="sm" type="button" variant="secondary" onClick={() => toggleTag(tag)}>
+                      {tag}
+                    </Button>
+                  ))}
+                </TagList>
+              ) : null}
+              <div className="target-inline-controls">
+                <Input className="input control-input" placeholder="태그 입력" value={customTag} onChange={(event) => setCustomTag(event.target.value)} onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    addCustomTag();
+                  }
+                }} />
+                <Button type="button" variant="outline" onClick={addCustomTag}><Plus data-icon="inline-start" />추가</Button>
+              </div>
+            </FormFieldGroup>
           </div>
         </section>
 
@@ -5763,43 +5783,18 @@ export function TargetPage({
           <div className="etl-review-card-header">
             <span className="etl-review-icon permission"><SlidersHorizontal size={17} /></span>
             <div>
-              <h2>데이터 구성</h2>
+              <h2>파티션 설정</h2>
             </div>
           </div>
-          <div className="target-config-split">
-            <div className="target-config-subsection partition-config">
-              <div className="target-config-subheader">
-                <SlidersHorizontal size={18} />
-                <h3>파티션</h3>
+          <div className="target-partition-settings">
+            <div className="target-partition-table">
+              <div className="target-partition-header" aria-hidden="true">
+                <span>선택</span>
+                <span>컬럼명</span>
+                <span>데이터 타입</span>
               </div>
-              <div className="target-partition-settings">
-                <div className="target-partition-grid" role="group" aria-label="파티션 컬럼 다중 선택">
-                  {partitionCandidates.map(renderPartitionOption)}
-                </div>
-              </div>
-            </div>
-            <div className="target-config-subsection tags-config">
-              <div className="target-config-subheader">
-                <BookOpen size={18} />
-                <h3>태그</h3>
-              </div>
-              {targetTags.length > 0 ? (
-                <TagList className="target-chip-grid" density="compact" role="group" aria-label="타겟 태그">
-                  {targetTags.map((tag) => (
-                    <Button aria-pressed={targetTags.includes(tag)} key={tag} size="sm" type="button" variant="secondary" onClick={() => toggleTag(tag)}>
-                      {tag}
-                    </Button>
-                  ))}
-                </TagList>
-              ) : null}
-              <div className="target-inline-controls">
-                <Input className="input control-input" placeholder="태그 입력" value={customTag} onChange={(event) => setCustomTag(event.target.value)} onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    addCustomTag();
-                  }
-                }} />
-                <Button type="button" variant="outline" onClick={addCustomTag}><Plus data-icon="inline-start" />추가</Button>
+              <div className="target-partition-grid" role="group" aria-label="파티션 컬럼 다중 선택">
+                {partitionCandidates.map(renderPartitionOption)}
               </div>
             </div>
           </div>

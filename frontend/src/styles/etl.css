@@ -6897,6 +6897,11 @@
   grid-template-columns: minmax(0, 1fr);
 }
 
+.target-tags-field {
+  display: grid;
+  gap: 12px;
+}
+
 .target-config-schema {
   margin-top: 18px;
 }
@@ -7453,37 +7458,65 @@
 
 .target-partition-settings {
   display: grid;
-  gap: 8px;
   min-width: 0;
+  padding: 24px;
+}
+
+.target-partition-table {
+  overflow: hidden;
+  border: 1px solid #d7deea;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.target-partition-header,
+.target-partition-option {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr) minmax(160px, 0.45fr);
+  align-items: center;
+}
+
+.target-partition-header {
+  min-height: 54px;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 18px;
+  font-weight: 850;
+}
+
+.target-partition-header span,
+.target-partition-option > span {
+  padding: 0 20px;
+}
+
+.target-partition-header span:first-child {
+  text-align: center;
 }
 
 .target-partition-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
 }
 
 .target-partition-option {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: 10px;
-  align-items: center;
-  min-height: 54px;
-  border: 1px solid #dee1e6;
-  border-radius: 8px;
+  min-height: 64px;
+  border-top: 1px solid #e2e8f0;
   background: #fff;
   cursor: pointer;
-  padding: 0 14px;
+  transition: background-color 160ms ease;
 }
 
 .target-partition-option > button {
-  width: 22px;
-  height: 22px;
+  justify-self: center;
+  width: 24px;
+  height: 24px;
 }
 
 .target-partition-option.active {
-  border-color: #3865e6;
   background: #eff6ff;
+}
+
+.target-partition-option:not(.disabled):hover {
+  background: #f8fbff;
 }
 
 .target-partition-option.disabled {
@@ -7509,7 +7542,7 @@
 .target-partition-type {
   color: #64748b;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 850;
 }
 
@@ -7723,6 +7756,16 @@
   .target-lineage,
   .target-inline-controls {
     grid-template-columns: 1fr;
+  }
+
+  .target-partition-header,
+  .target-partition-option {
+    grid-template-columns: 68px minmax(0, 1fr) minmax(120px, 0.55fr);
+  }
+
+  .target-partition-header span,
+  .target-partition-option > span {
+    padding: 0 12px;
   }
 
   .database-field,

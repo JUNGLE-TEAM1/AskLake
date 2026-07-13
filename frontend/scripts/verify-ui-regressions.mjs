@@ -732,6 +732,11 @@ const checks = [
       /const targetLayer = initialTargetLayer;/,
       /const targetFormat = initialTargetFormat;/,
       /className="field wide target-storage-field" label="저장 경로"/,
+      /className="field wide target-tags-field" label="태그"/,
+      /<h2>파티션 설정<\/h2>/,
+      /className="target-partition-header"/,
+      /<span>컬럼명<\/span>/,
+      /<span>데이터 타입<\/span>/,
       /targetLayer,/,
     ],
     forbiddenPatterns: [
