@@ -430,6 +430,8 @@ class CatalogMaterializationLockingTests(unittest.TestCase):
     "set ASKLAKE_TEST_POSTGRES_CONCURRENCY=1 to run the PostgreSQL lock test",
 )
 class CatalogMaterializationPostgresConcurrencyTests(unittest.TestCase):
+    """Catalog snapshot/delta lock coverage; Kafka runtimes are tested elsewhere."""
+
     def test_delete_waits_for_append_lock_and_preserves_committed_delta(self) -> None:
         engine = create_engine(settings.database_url, pool_pre_ping=True)
         if engine.dialect.name != "postgresql":
@@ -456,6 +458,8 @@ class CatalogMaterializationPostgresConcurrencyTests(unittest.TestCase):
         concurrent_delta = materialization_run(
             "delta-concurrent", created_at="2026-07-12T03:00:00Z", mode="delta", row_count=2,
         )
+        for run in (snapshot_current, snapshot_old, concurrent_delta):
+            run["sourceKind"] = "etl"
 
         def append_worker() -> None:
             try:
