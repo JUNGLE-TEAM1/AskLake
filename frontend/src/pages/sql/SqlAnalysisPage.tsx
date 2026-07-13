@@ -3,7 +3,7 @@ import { PanelLeftOpen, Table2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/ui/page-header";
 import { cn } from "@/lib/utils";
-import { executeQueryPreview } from "../../services/mockApi";
+import { executeQueryPreview, getQueryPreviewPage } from "../../services/mockApi";
 import type { AuditResult, CatalogDataset, CreateDerivedDatasetRequest, SqlResultDraft } from "../../types";
 import styles from "./SqlAnalysisPage.module.css";
 import { SqlDatasetContextPanel } from "./SqlDatasetContextPanel";
@@ -68,6 +68,9 @@ export function SqlAnalysisPage({
   const [previewRowLimit, setPreviewRowLimit] = useState(PREVIEW_ROW_LIMIT);
   const [cursorIndex, setCursorIndex] = useState(defaultQuery.length);
   const [resultDraft, setResultDraft] = useState<SqlResultDraft | null>(null);
+  const [dialogResultDraft, setDialogResultDraft] = useState<SqlResultDraft | null>(null);
+  const [resultPagePending, setResultPagePending] = useState(false);
+  const [resultPageError, setResultPageError] = useState<string | null>(null);
   const [preflightResult, setPreflightResult] = useState<SqlPreflightResult | null>(null);
   const [chartConfig, setChartConfig] = useState<SqlChartConfig | null>(null);
   const [resultView, setResultView] = useState<SqlResultView>("table");
@@ -165,6 +168,8 @@ export function SqlAnalysisPage({
       setChartConfig(null);
       setResultView("table");
       setResultDialogOpen(false);
+      setDialogResultDraft(null);
+      setResultPageError(null);
       setReferenceDatasetIds([]);
       onResultChange(null);
       return;
@@ -180,6 +185,8 @@ export function SqlAnalysisPage({
     setChartConfig(null);
     setResultView("table");
     setResultDialogOpen(false);
+    setDialogResultDraft(null);
+    setResultPageError(null);
     setReferenceDatasetIds((ids) => ids.filter((id) => id !== baseDataset.id));
     onResultChange(null);
   }, [baseDataset, canRestoreCachedResult, defaultQuery]);
@@ -198,6 +205,8 @@ export function SqlAnalysisPage({
     setChartConfig(null);
     setResultView("table");
     setResultDialogOpen(false);
+    setDialogResultDraft(null);
+    setResultPageError(null);
   }, [baseDataset, cachedResult, canRestoreCachedResult]);
 
   const queryContextPath = (mode: "preflight" | "preview" = "preview") => {
@@ -236,6 +245,9 @@ export function SqlAnalysisPage({
     setChartConfig(null);
     setResultView("table");
     setResultDialogOpen(false);
+    setDialogResultDraft(null);
+    setResultPagePending(false);
+    setResultPageError(null);
     setMaterializeDialogOpen(false);
     onResultChange(null);
   };
@@ -306,6 +318,8 @@ export function SqlAnalysisPage({
     try {
       const resultDraft = await buildPreviewDraft();
       setResultDraft(resultDraft);
+      setDialogResultDraft(null);
+      setResultPageError(null);
       setChartConfig(null);
       setResultView("table");
       onResultChange(resultDraft);
@@ -348,6 +362,39 @@ export function SqlAnalysisPage({
     updateQuery(defaultQuery);
     setCursorIndex(defaultQuery.length);
     onAction("analysis.query.reset", "/api/query/reset", baseDataset?.id ?? "sql-empty");
+  };
+
+  const changeResultDialogOpen = (open: boolean) => {
+    setResultDialogOpen(open);
+    setResultPageError(null);
+    if (open && resultDraft) setDialogResultDraft(resultDraft);
+  };
+
+  const loadResultPage = async (offset: number) => {
+    if (!resultDraft || resultPagePending) return;
+    const limit = resultDraft.pageLimit ?? resultDraft.previewLimit ?? PREVIEW_ROW_LIMIT;
+    setResultPagePending(true);
+    setResultPageError(null);
+    try {
+      const page = await getQueryPreviewPage(resultDraft.runId, { limit, offset });
+      setDialogResultDraft(page);
+      onAction(
+        "analysis.query.preview_page_loaded",
+        `/api/query/runs/${encodeURIComponent(resultDraft.runId)}?offset=${offset}&limit=${limit}`,
+        resultDraft.datasetId,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "SQL Preview 페이지를 불러오지 못했습니다.";
+      setResultPageError(message);
+      onAction(
+        "analysis.query.preview_page_failed",
+        `/api/query/runs/${encodeURIComponent(resultDraft.runId)}?offset=${offset}&limit=${limit}`,
+        resultDraft.datasetId,
+        "failed",
+      );
+    } finally {
+      setResultPagePending(false);
+    }
   };
 
   const insertSqlText = (text: string) => {
@@ -572,10 +619,14 @@ export function SqlAnalysisPage({
           activeChartSource={activeChartSource}
           baseDatasetSelected={Boolean(baseDataset)}
           chartConfig={chartConfig}
+          dialogResultDraft={dialogResultDraft}
           dialogOpen={resultDialogOpen}
-          onDialogOpenChange={setResultDialogOpen}
+          pageError={resultPageError}
+          pagePending={resultPagePending}
+          onDialogOpenChange={changeResultDialogOpen}
           onDownloadCsv={downloadCsv}
           onOpenJobWizard={() => setMaterializeDialogOpen(true)}
+          onPageChange={loadResultPage}
           onResultViewChange={setResultView}
           resultDraft={resultDraft}
           resultView={resultView}

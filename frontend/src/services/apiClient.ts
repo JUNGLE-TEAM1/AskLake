@@ -12,10 +12,11 @@ export const apiConfig = {
 type RequestOptions = {
   body?: unknown;
   method?: "DELETE" | "GET" | "PATCH" | "POST" | "PUT";
+  signal?: AbortSignal;
 };
 
 export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const { body, method = body ? "POST" : "GET" } = options;
+  const { body, method = body ? "POST" : "GET", signal } = options;
   const response = await fetch(`${apiConfig.baseUrl}${path}`, {
     body: body === undefined ? undefined : JSON.stringify(body),
     credentials: "include",
@@ -24,6 +25,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
       ...(body === undefined ? {} : { "Content-Type": "application/json" }),
     },
     method,
+    signal,
   });
 
   if (!response.ok) {
@@ -58,7 +60,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
 
 export const apiClient = {
   delete: <T>(path: string) => request<T>(path, { method: "DELETE" }),
-  get: <T>(path: string) => request<T>(path),
+  get: <T>(path: string, options?: Pick<RequestOptions, "signal">) => request<T>(path, options),
   patch: <T>(path: string, body: unknown) => request<T>(path, { body, method: "PATCH" }),
   post: <T>(path: string, body: unknown) => request<T>(path, { body, method: "POST" }),
   put: <T>(path: string, body: unknown) => request<T>(path, { body, method: "PUT" }),
