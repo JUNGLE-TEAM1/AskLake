@@ -498,13 +498,19 @@ def get_demo_dataset(dataset_id: str | None) -> dict[str, Any] | None:
     return next((dataset for dataset in DEMO_DATASETS if dataset["id"] == dataset_id), None)
 
 
-def dataset_rows_to_widget_data(dataset: dict[str, Any] | None, limit: int = 100) -> list[dict[str, Any]]:
+def dataset_rows_to_widget_data(
+    dataset: dict[str, Any] | None,
+    limit: int = 100,
+    *,
+    prefer_storage: bool = True,
+) -> list[dict[str, Any]]:
     if dataset is None:
         return []
 
-    storage_rows = _storage_rows_to_widget_data(dataset, limit)
-    if storage_rows:
-        return storage_rows
+    if prefer_storage:
+        storage_rows = _storage_rows_to_widget_data(dataset, limit)
+        if storage_rows:
+            return storage_rows
 
     rows = dataset.get("dataRows")
     if not isinstance(rows, list):

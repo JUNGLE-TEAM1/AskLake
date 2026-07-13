@@ -37,6 +37,7 @@ type KafkaExecutionMode = "snapshot" | "continuous";
 type KafkaContinuousConfig = {
   initialOffsetPolicy: "earliest" | "latest";
   triggerIntervalSeconds: number; // default 30
+  dashboardSyncIntervalMinutes: number; // 1..60, default 5
   maxOffsetsPerTrigger: number; // default 10000, total across partitions
   checkpointPath: string; // generated from immutable job/target identity
 };
@@ -44,6 +45,7 @@ type KafkaContinuousConfig = {
 
 - Existing Kafka Jobs hydrate as `executionMode: "snapshot"`.
 - `executionMode` is selected on creation and becomes immutable after creation. Changing the mode, source identity, consumer group, target identity, or checkpoint identity requires Job copy and new Job creation.
+- `dashboardSyncIntervalMinutes` is configured in the Kafka Continuous Source advanced settings when the Job is created. It is a Published Dashboard presentation policy, separate from the Spark micro-batch `triggerIntervalSeconds`. It accepts integer minutes from 1 through 60; omitted legacy Continuous Jobs hydrate as `5`. It is not written into `_asklake_contract` and does not contribute to the schema, Rule, runtime, or checkpoint fingerprint.
 - A fresh continuous Job with `initialOffsetPolicy: "earliest"` first consumes retained Kafka backlog and then tails new messages. `latest` processes only messages available after the streaming query begins.
 - Continuous Job source progress is owned by the durable Spark checkpoint. `consumerGroupId` remains source identity metadata and must not be shared with another active Snapshot or Continuous Job.
 - Target layer selection remains independent from Rule presence. `RAW`, `BRONZE`, `SILVER`, and `GOLD` labels may be selected, while GOLD streaming join/aggregation semantics remain excluded. V1 accepts only the stateless canonical operations proven by Snapshot conformance and rejects arbitrary SQL, joins, aggregations, and other stateful/engine-specific Rules before creation.
@@ -136,6 +138,7 @@ type JobCommand =
 4. Pause, resume, stop, and worker restart preserve checkpoint progress without target duplicates or skipped committed ranges.
 5. The Job detail/list shows runtime status, heartbeat, lag, last flush, and processed counters.
 6. Existing Snapshot execution, schedule tick, direct target retry, Catalog materialization, and RAW/BRONZE/SILVER target selection remain valid.
+7. A Published Dashboard automatically refreshes only widgets backed by Kafka Continuous materializations, using the minimum configured `dashboardSyncIntervalMinutes` across its eligible Jobs. A Dashboard without an eligible widget does not poll automatically, while one manual `scope=all` request refreshes every dataset-linked widget in the Published revision.
 
 ## 9. Runtime Observability Contract
 
@@ -143,10 +146,12 @@ type JobCommand =
 - Runtime summary exposes `lag`, `maxPartitionLag`, `laggingPartitionCount`, `lastBatchDurationMs`, `lastBatchInputRows`, `throughputRowsPerSecond`, cumulative `replayedCount`, Rule fingerprints, `ruleMetrics`, and `lastRuleResult`.
 - Kafka latest-offset lookup failure does not stop a healthy stream. The report marks lag availability and preserves the previous processed offset.
 - Worker logs are read through `GET /api/etl/jobs/{jobId}/continuous/logs`. The response is bounded, strips ANSI control sequences, masks common credential/token forms, and requires Job `view` permission.
+- Every non-empty published batch manifest may include up to 20 latest valid projected rows in `sampleRows`. The backend maps this bounded object snapshot into Catalog schema order for Kafka Continuous Dashboard preview/refresh. Reports without `sampleRows` preserve the previous Catalog sample for backward compatibility.
 - A stream start/resume creates one durable session row. Pause, stop, or failure closes that row; a later restart creates a new session while reusing the same checkpoint.
 - Session counters are deltas from the cumulative runtime baseline captured at session start. Worker `publishedBatches` become idempotent child records keyed by session and Spark batch ID, while the main execution history remains one row per session.
 - Session and micro-batch rows persist a seven-stage Streaming DAG: Source, Schema, Transform, Quality, Target, Manifest/Checkpoint, and Catalog. A successful manifest keeps Catalog pending until the control plane cursor acknowledges that batch. A pre-manifest Rule failure persists `lastBatchEvidence` with the failed stage and blocks downstream stages without advancing the checkpoint. Empty Transform/Quality rule sets are recorded as successful pass-through stages.
 - The execution-history UI polls session and selected batch APIs every three seconds only while a session is active. It prevents overlapping/stale responses, backs off on errors without clearing the last good state, defers polling for hidden tabs, and stops after terminal state or unmount. Manual refresh calls the same live APIs.
+- Published Dashboard automatic data refresh uses `GET /api/dashboards/{dashboardId}/published/data?scope=continuous_kafka`. The backend includes only widgets whose Catalog provenance has `sourceExecutionMode: "continuous"`; legacy payloads fall back to a `sourceRunId` beginning with `continuous:`. S3/Parquet, SQL, general ETL, and Kafka Snapshot datasets are excluded. `refreshScope` echoes `continuous_kafka`, and `autoRefreshIntervalMinutes` is the minimum eligible persisted setting, using 5 minutes for a legacy dataset without the field. No eligible widget returns an empty widget list and a null interval, so the frontend does not schedule another automatic request. An omitted scope defaults to `all`; the Published top-bar manual sync uses that default once to refresh every dataset-linked widget across the revision, without changing the automatic policy. Automatic polling pauses for hidden tabs, deduplicates an in-flight dashboard/revision/scope request, and preserves the last successful chart when refresh fails. This is bounded sample refresh, not sub-second event serving.
 
 ## 10. Schema Evolution Contract
 

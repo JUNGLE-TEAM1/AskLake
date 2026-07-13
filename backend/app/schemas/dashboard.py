@@ -23,6 +23,9 @@ class DashboardRuntimeMode(str, Enum):
     DRAFT = "draft"
 
 
+DashboardRefreshScope = Literal["all", "continuous_kafka"]
+
+
 class DashboardAssistantMode(str, Enum):
     DASHBOARD_QUESTION = "dashboard_question"
     VISUALIZATION_REQUEST = "visualization_request"
@@ -338,6 +341,23 @@ class DashboardRuntimeResponse(CamelModel):
     pages: list[DashboardRuntimePage]
     widgets_by_page_id: dict[str, list[DashboardRuntimeWidget]]
     filters: list[DashboardFilter] = Field(default_factory=list)
+
+
+class DashboardPublishedWidgetData(CamelModel):
+    widget_id: str
+    dataset_id: str
+    data: list[dict[str, Any]] = Field(default_factory=list)
+    dataset_updated_at: str | None = None
+    source_run_id: str | None = None
+
+
+class DashboardPublishedDataResponse(CamelModel):
+    auto_refresh_interval_minutes: int | None = Field(default=None, ge=1, le=60)
+    dashboard_id: str
+    refresh_scope: DashboardRefreshScope = "all"
+    revision_id: str
+    refreshed_at: str
+    widgets: list[DashboardPublishedWidgetData] = Field(default_factory=list)
 
 
 class CreateDraftPageRequest(CamelModel):

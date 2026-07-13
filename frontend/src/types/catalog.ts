@@ -31,6 +31,7 @@ export type LineageGraph = {
 };
 
 export type CatalogDataset = {
+  dashboardSyncIntervalMinutes?: number;
   description: string;
   downstream: string[];
   freshness: "latest" | "stale" | "approval";
@@ -56,6 +57,8 @@ export type CatalogDataset = {
   schema: Array<[string, string]>;
   size: string;
   source: string;
+  sourceExecutionMode?: "snapshot" | "continuous";
+  sourceKind?: "etl" | "sql" | "kafka";
   sourceRunId?: string;
   status: "available" | "approval_required";
   storageFormat?: string;

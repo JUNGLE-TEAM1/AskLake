@@ -199,6 +199,7 @@ export default function SchemaTransformEditor({
   const [sqlPreviewVisible, setSqlPreviewVisible] = useState(false);
   const [sqlPreviewPanelOpen, setSqlPreviewPanelOpen] = useState(true);
   const [sqlValidation, setSqlValidation] = useState({ tone: "idle", message: "SQL 입력 후 문법 검증을 실행하세요." });
+  const sqlLineNumberRef = useRef(null);
   const lastVisualSqlRef = useRef("");
   const dragSensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -215,6 +216,16 @@ export default function SchemaTransformEditor({
     const name = String(column.name || column.field || "");
     return name.toLowerCase().includes(sqlSourceQuery.trim().toLowerCase());
   });
+  const sqlLineNumbers = Array.from(
+    { length: Math.max(customSql.split("\n").length, 7) },
+    (_, index) => index + 1,
+  ).join("\n");
+
+  const syncSqlLineNumberScroll = (event) => {
+    if (sqlLineNumberRef.current) {
+      sqlLineNumberRef.current.scrollTop = event.currentTarget.scrollTop;
+    }
+  };
 
   const validateCustomSql = () => {
     const normalized = customSql.trim().toLowerCase();
@@ -1157,17 +1168,22 @@ export default function SchemaTransformEditor({
                     {sqlValidation.tone === "error" ? <AlertCircle className="size-4" /> : sqlValidation.tone === "success" ? <CheckCircle2 className="size-4" /> : <Sparkles className="size-4" />}
                     <span>{sqlValidation.message}</span>
                   </div>
-                  <Textarea
-                    id="schema-sql-transform-editor"
-                    value={customSql}
-                    onChange={(event) => {
-                      setCustomSql(event.target.value);
-                      setSqlPreviewVisible(false);
-                      setSqlValidation({ tone: "idle", message: "변경된 SQL을 다시 검증하세요." });
-                    }}
-                    placeholder="SELECT text, sentiment FROM input"
-                    className="min-h-[210px] flex-1 resize-none rounded-none border-0 bg-white px-4 py-4 font-mono text-sm font-semibold leading-6 text-slate-950 caret-blue-600 shadow-none outline-none placeholder:text-slate-400 focus-visible:ring-0"
-                  />
+                  <div className="schema-sql-editor-surface">
+                    <pre ref={sqlLineNumberRef} aria-hidden="true" className="schema-sql-line-numbers">{sqlLineNumbers}</pre>
+                    <Textarea
+                      id="schema-sql-transform-editor"
+                      value={customSql}
+                      onChange={(event) => {
+                        setCustomSql(event.target.value);
+                        setSqlPreviewVisible(false);
+                        setSqlValidation({ tone: "idle", message: "변경된 SQL을 다시 검증하세요." });
+                      }}
+                      onScroll={syncSqlLineNumberScroll}
+                      placeholder="SELECT text, sentiment FROM input"
+                      className="schema-sql-editor-input"
+                      spellCheck={false}
+                    />
+                  </div>
                 </div>
               </div>
             </section>
