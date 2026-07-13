@@ -30,6 +30,12 @@ export async function testSourceConnector(sourceType, fields) {
 }
 
 export async function listSourceAssets(sourceType, fields, requestedPrefix) {
+  if (sourceType === "Database" || sourceType === "PostgreSQL") {
+    return listPostgresSourceAssets(fields);
+  }
+  if (sourceType === "MongoDB") {
+    return listMongoSourceAssets(fields);
+  }
   if (!objectStorageSourceTypes.has(sourceType) && !dataLakeSourceTypes.has(sourceType)) {
     throw apiError("UNSUPPORTED_SOURCE_ASSETS", `${sourceType} source asset listing is not supported.`, 400);
   }
@@ -460,6 +466,75 @@ export async function testRestSource(fields) {
   };
 }
 
+async function listPostgresSourceAssets(fields) {
+  const { Client } = await import("pg");
+  const host = requiredSourceField(fields, "Endpoint / Host", "PostgreSQL host is required.");
+  const port = Number(requiredSourceField(fields, "Port", "PostgreSQL port is required."));
+  const database = requiredSourceField(fields, "Database Name", "PostgreSQL database name is required.");
+  const schema = fieldValue(fields, "Schema") || "public";
+  const user = requiredSourceField(fields, "Username", "PostgreSQL username is required.");
+  const password = requiredSourceField(fields, "Password / Auth Token", "PostgreSQL password is required.");
+  const limit = 20;
+  const client = new Client({
+    connectionTimeoutMillis: sourceConnectTimeoutMs("ASKLAKE_POSTGRES_CONNECT_TIMEOUT_MS", 3000),
+    database,
+    host,
+    password,
+    port,
+    query_timeout: sourceConnectTimeoutMs("ASKLAKE_POSTGRES_QUERY_TIMEOUT_MS", 5000),
+    statement_timeout: sourceConnectTimeoutMs("ASKLAKE_POSTGRES_QUERY_TIMEOUT_MS", 5000),
+    user,
+  });
+
+  await client.connect();
+  try {
+    const result = await client.query(
+      "select table_name from information_schema.tables where table_schema = $1 and table_type = 'BASE TABLE' order by table_name limit $2",
+      [schema, limit],
+    );
+    const assets = result.rows.map((row) => [String(row.table_name), schema, "detected"]);
+    return { assets, count: assets.length, limit, prefix: schema };
+  } finally {
+    await client.end().catch(() => undefined);
+  }
+}
+
+async function listMongoSourceAssets(fields) {
+  const { MongoClient } = await import("mongodb");
+  const endpoint = process.env.ASKLAKE_MONGO_HOST || fieldValue(fields, "Endpoint / Host") || "127.0.0.1";
+  const port = Number(process.env.ASKLAKE_MONGO_PORT || fieldValue(fields, "Port") || 27018);
+  const database = fieldValue(fields, "Database Name") || process.env.ASKLAKE_MONGO_DATABASE || "asklake_sources";
+  const username = process.env.ASKLAKE_MONGO_USER || fieldValue(fields, "Username") || "";
+  const password = process.env.ASKLAKE_MONGO_PASSWORD || fieldValue(fields, "Password / Auth Token") || "";
+  const authPart = username ? `${encodeURIComponent(username)}:${encodeURIComponent(password)}@` : "";
+  const uri = process.env.ASKLAKE_MONGO_HOST
+    ? `mongodb://${authPart}${endpoint}:${port}/${database}${username ? "?authSource=admin" : ""}`
+    : fieldValue(fields, "Connection URI") || `mongodb://${authPart}${endpoint}:${port}/${database}${username ? "?authSource=admin" : ""}`;
+  const client = new MongoClient(uri, {
+    connectTimeoutMS: sourceConnectTimeoutMs("ASKLAKE_MONGO_CONNECT_TIMEOUT_MS", 3000),
+    serverSelectionTimeoutMS: sourceConnectTimeoutMs("ASKLAKE_MONGO_SERVER_SELECTION_TIMEOUT_MS", 3000),
+    socketTimeoutMS: sourceConnectTimeoutMs("ASKLAKE_MONGO_SOCKET_TIMEOUT_MS", 5000),
+  });
+
+  try {
+    await client.connect();
+    const collections = (await client.db(database).listCollections({}, { nameOnly: true }).toArray())
+      .map((collectionInfo) => String(collectionInfo.name ?? ""))
+      .filter(Boolean)
+      .sort();
+    return {
+      assets: collections.map((collection) => [collection, database, "detected"]),
+      count: collections.length,
+      limit: collections.length,
+      prefix: database,
+    };
+  } catch (error) {
+    throw apiError("MONGO_SOURCE_FAILED", `MongoDB 연결 실패: ${tailText(error?.message || error)}`, 502);
+  } finally {
+    await client.close().catch(() => undefined);
+  }
+}
+
 export async function testPostgresSource(fields) {
   const { Client } = await import("pg");
   const host = requiredSourceField(fields, "Endpoint / Host", "PostgreSQL host is required.");
@@ -468,7 +543,11 @@ export async function testPostgresSource(fields) {
   const schema = fieldValue(fields, "Schema") || "public";
   const user = requiredSourceField(fields, "Username", "PostgreSQL username is required.");
   const password = requiredSourceField(fields, "Password / Auth Token", "PostgreSQL password is required.");
-  const tableSelector = fieldValue(fields, "DATASET OR TABLE SELECTOR");
+  const tableSelector = requiredSourceField(
+    fields,
+    "DATASET OR TABLE SELECTOR",
+    "PostgreSQL table selection is required before schema preview.",
+  );
   const samplePolicy = samplePolicyForFields(fields, "rows");
 
   const client = new Client({
@@ -487,9 +566,8 @@ export async function testPostgresSource(fields) {
       "select table_name from information_schema.tables where table_schema = $1 and table_type = 'BASE TABLE' order by table_name limit 20",
       [schema],
     );
-    const table = tableSelector || tableResult.rows[0]?.table_name;
-    if (!table) throw apiError("POSTGRES_NO_TABLES", `${schema} 스키마에서 기본 테이블을 찾지 못했습니다.`, 404);
-    if (!tableResult.rows.some((row) => row.table_name === table) && tableSelector) {
+    const table = tableSelector;
+    if (!tableResult.rows.some((row) => row.table_name === table)) {
       throw apiError("POSTGRES_TABLE_NOT_FOUND", `${schema}.${table} 테이블을 찾지 못했습니다.`, 404);
     }
 
@@ -558,6 +636,13 @@ export async function testMongoSource(fields) {
   const username = process.env.ASKLAKE_MONGO_USER || fieldValue(fields, "Username") || "";
   const password = process.env.ASKLAKE_MONGO_PASSWORD || fieldValue(fields, "Password / Auth Token") || "";
   const collectionSelector = fieldValue(fields, "DATASET OR TABLE SELECTOR") || fieldValue(fields, "Collection");
+  if (!collectionSelector) {
+    throw apiError(
+      "MONGO_COLLECTION_REQUIRED",
+      "MongoDB collection selection is required before schema preview.",
+      400,
+    );
+  }
   const samplePolicy = samplePolicyForFields(fields, "documents");
   const authPart = username ? `${encodeURIComponent(username)}:${encodeURIComponent(password)}@` : "";
   const uri = process.env.ASKLAKE_MONGO_HOST
@@ -1613,7 +1698,7 @@ async function runMongoDriverSample({ collectionSelector, database, rowLimit, ur
       .map((collectionInfo) => String(collectionInfo.name ?? ""))
       .filter(Boolean)
       .sort();
-    const collection = collectionSelector || collections[0] || "";
+    const collection = collectionSelector || "";
     const docs = collection ? await dbh.collection(collection).find({}).limit(limit).toArray() : [];
     return { collection, collections, docs };
   } catch (error) {
