@@ -52,6 +52,18 @@ class MaterializationContractTests(unittest.TestCase):
             "snapshot",
         )
 
+    def test_materialization_mode_uses_first_nonblank_compatible_alias(self) -> None:
+        self.assertEqual(materialization_mode({
+            "materializationMode": " ",
+            "materialization_mode": "delta",
+            "sourceKind": "etl",
+        }), "delta")
+        self.assertEqual(materialization_mode({
+            "materializationMode": " ",
+            "spark_materialization_mode": "snapshot",
+            "sourceKind": "kafka",
+        }), "snapshot")
+
     def test_bounded_window_requires_version_and_upper_bound(self) -> None:
         self.assertTrue(has_bounded_source_window({
             "sourceWindow": {"contractVersion": 1, "upperBound": "2026-07-12T00:10:00Z"},

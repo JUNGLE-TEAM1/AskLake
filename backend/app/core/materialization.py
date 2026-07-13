@@ -6,12 +6,13 @@ SUPPORTED_SOURCE_WINDOW_CONTRACT_VERSIONS = frozenset({1, SOURCE_WINDOW_CONTRACT
 
 
 def materialization_mode(run: dict[str, Any]) -> str:
-    has_explicit_mode = "materializationMode" in run or "materialization_mode" in run
-    raw_mode = (
-        run.get("materializationMode")
-        if "materializationMode" in run
-        else run.get("materialization_mode")
-    )
+    mode_values = [
+        run.get("materializationMode"),
+        run.get("materialization_mode"),
+        run.get("spark_materialization_mode"),
+    ]
+    raw_mode = next((value for value in mode_values if str(value or "").strip()), None)
+    has_explicit_mode = raw_mode is not None
     mode = str(raw_mode or "").strip().casefold()
     if mode in {"snapshot", "delta"}:
         return mode
