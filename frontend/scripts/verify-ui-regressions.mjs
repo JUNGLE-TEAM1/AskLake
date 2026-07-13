@@ -855,8 +855,10 @@ const checks = [
     file: "src/pages/etl/EtlPages.tsx",
     patterns: [
       /<Card className="overflow-hidden" size="none">/,
-      /<ToggleGroup[\s\S]*aria-label="실행 방식"[\s\S]*value=\{selectedOption\}/,
-      /<ToggleGroupItem className="min-w-28" value="skip">[\s\S]*직접 실행/,
+      /<div aria-label="실행 방식" className="grid gap-4 md:grid-cols-2" role="group">/,
+      /<ScheduleModeCard[\s\S]*selected=\{selectedOption === "skip"\}[\s\S]*title="직접 실행"/,
+      /<ScheduleModeCard[\s\S]*selected=\{selectedOption === "repeat"\}[\s\S]*title="반복 실행"/,
+      /aria-pressed=\{selected\}/,
       /selectedOption === "repeat" && <RepeatSettings/,
       /<FieldSet>/,
       /<Switch[\s\S]*id="schedule-retry-enabled"/,

@@ -160,27 +160,28 @@ export function SchedulePage({
           title={title}
         />
         <Card className="overflow-hidden" size="none">
-          <CardHeader className="flex flex-col gap-4 border-b border-slate-200 p-5 sm:flex-row sm:items-center sm:justify-between">
+          <CardHeader className="border-b border-slate-200 p-5">
             <CardTitle>실행 방식</CardTitle>
-            <ToggleGroup
-              aria-label="실행 방식"
-              className="grid w-full grid-cols-2 sm:w-auto"
-              type="single"
-              value={selectedOption}
-              onValueChange={(value) => value && selectOption(value as ScheduleOptionId)}
-            >
-              <ToggleGroupItem className="min-w-28" value="skip">
-                <PlayCircle />
-                직접 실행
-              </ToggleGroupItem>
-              <ToggleGroupItem className="min-w-28" value="repeat">
-                <Repeat2 />
-                반복 실행
-              </ToggleGroupItem>
-            </ToggleGroup>
           </CardHeader>
           <CardContent className="grid gap-6 p-5">
-          {selectedOption === "repeat" && <RepeatSettings customCron={customCron} frequency={repeatFrequency} minute={repeatMinute} overlapPolicy={draftSchedule.overlapPolicy ?? DEFAULT_OVERLAP_POLICY} selectedDay={repeatDay} time={repeatTime} timezone={scheduleTimezone} onCronChange={(cron) => {
+            <div aria-label="실행 방식" className="grid gap-4 md:grid-cols-2" role="group">
+              <ScheduleModeCard
+                description="필요할 때 Job 목록에서 실행합니다."
+                icon={<PlayCircle size={24} />}
+                selected={selectedOption === "skip"}
+                title="직접 실행"
+                onClick={() => selectOption("skip")}
+              />
+              <ScheduleModeCard
+                description="정해진 주기마다 자동으로 데이터를 처리합니다."
+                icon={<Repeat2 size={24} />}
+                selected={selectedOption === "repeat"}
+                title="반복 실행"
+                onClick={() => selectOption("repeat")}
+              />
+            </div>
+            <Separator />
+            {selectedOption === "repeat" && <RepeatSettings customCron={customCron} frequency={repeatFrequency} minute={repeatMinute} overlapPolicy={draftSchedule.overlapPolicy ?? DEFAULT_OVERLAP_POLICY} selectedDay={repeatDay} time={repeatTime} timezone={scheduleTimezone} onCronChange={(cron) => {
             const sanitizedCron = sanitizeCronInput(cron);
             setCustomCron(sanitizedCron);
             onDraftChange(buildSchedulePatch("repeat", { cron: sanitizedCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime }, scheduleTimezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }));
@@ -205,11 +206,48 @@ export function SchedulePage({
             setRepeatTime(time);
             onDraftChange(buildSchedulePatch("repeat", { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time }, scheduleTimezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }));
           }} onOverlapPolicyChange={(overlapPolicy) => onDraftChange({ overlapPolicy, schedule: { overlapPolicy } })} onTimezoneChange={(timezone) => onDraftChange(buildSchedulePatch("repeat", repeatDraft, timezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }))} />}
-            {selectedOption === "repeat" && <Separator />}
             <ScheduleRetrySettings retryPolicy={draftRetryPolicy} onRetryPolicyChange={updateRetryPolicy} />
           </CardContent>
         </Card>
     </CreationFlowLayout>
+  );
+}
+
+function ScheduleModeCard({
+  description,
+  icon,
+  selected,
+  title,
+  onClick,
+}: {
+  description: string;
+  icon: React.ReactNode;
+  selected: boolean;
+  title: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      aria-pressed={selected}
+      className={cn(
+        "relative flex min-h-32 items-center gap-4 rounded-xl border bg-white p-5 text-left transition-colors",
+        "hover:border-blue-300 hover:bg-blue-50/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2",
+        selected && "border-blue-500 bg-blue-50/70 shadow-[inset_3px_0_0_#2563eb]",
+      )}
+      type="button"
+      onClick={onClick}
+    >
+      <span className={cn("flex size-11 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-600", selected && "bg-blue-100 text-blue-600")}>
+        {icon}
+      </span>
+      <span className="grid gap-1.5">
+        <strong className="text-base font-semibold text-slate-950">{title}</strong>
+        <span className="text-sm leading-6 text-slate-600">{description}</span>
+      </span>
+      <span className={cn("absolute right-5 top-5 flex size-5 items-center justify-center rounded-full border border-slate-300 text-transparent", selected && "border-blue-600 bg-blue-600 text-white")}>
+        <Check aria-hidden="true" size={13} strokeWidth={3} />
+      </span>
+    </button>
   );
 }
 
