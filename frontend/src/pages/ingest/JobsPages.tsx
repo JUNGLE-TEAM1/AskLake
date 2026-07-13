@@ -2459,6 +2459,8 @@ function ContinuousRuntimeCard({ job }: { job: JobRowData }) {
       <h3>Continuous Runtime</h3>
       <div className="detail-kv-grid">
         <Field label="상태" value={continuousRuntimeLabel(job)} />
+        <Field label="실행 Runtime" value={runtime?.runtimeProvider ? `${runtime.runtimeProvider}${runtime.runtimeState ? ` · ${runtime.runtimeState}` : ""}` : "local / spark-rest"} />
+        <Field label="Remote Job Run" value={runtime?.runtimeJobId ? `${runtime.runtimeJobId}${runtime.runtimeAttempt ? ` · attempt ${runtime.runtimeAttempt}` : ""}` : "-"} />
         <Field label="마지막 batch" value={runtime?.lastBatchId ?? "-"} />
         <Field label="소비 / 적재" value={`${runtime?.consumedCount?.toLocaleString() ?? "0"} / ${runtime?.storedCount?.toLocaleString() ?? "0"}`} />
         <Field label="격리 / 재처리" value={`${runtime?.quarantinedCount?.toLocaleString() ?? "0"} / ${runtime?.replayedCount?.toLocaleString() ?? "0"}`} />

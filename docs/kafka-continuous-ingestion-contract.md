@@ -63,6 +63,13 @@ type ContinuousRuntimeStatus =
 type KafkaContinuousRuntime = {
   status: ContinuousRuntimeStatus;
   checkpointPath: string;
+  runtimeProvider: string | null;
+  runtimeApplicationId: string | null;
+  runtimeJobId: string | null;
+  runtimeAttempt: number | null;
+  runtimeState: string | null;
+  runtimeLogReference: Record<string, unknown> | null;
+  lastSuccessfulCheckpoint: string | null;
   heartbeatAt: string | null;
   lastFlushAt: string | null;
   lastBatchId: string | null;
@@ -81,6 +88,7 @@ type KafkaContinuousRuntime = {
 ```
 
 - A continuous query runs as a long-lived Spark Structured Streaming application. It processes Kafka as micro-batches; it does not write a Lake object per source event.
+- Docker and Spark REST keep the local/prod-like execution paths. The opt-in EMR Serverless path requires Amazon MSK IAM and AWS S3, submits `mode=STREAMING` without an execution timeout, and exposes Job Run/attempt/log identity through the nullable remote runtime fields above. EMR retries the same Job Run from the S3 checkpoint until its configured hourly failure threshold is reached.
 - Each successful micro-batch applies the compiled canonical Rule set before appending the selected target dataset and advancing the checkpoint. The supported Transform operations are `cast`, `copy`, `default_value`, `json_extract`, `lowercase_trim`, `mask`, `null_guard`, `parse_timestamp`, and `rename`; Quality supports `accepted_values`, `not_null`, `range`, and `regex`.
 - `Fail Batch` aborts the current `foreachBatch` invocation before manifest/checkpoint completion. `Quarantine` stores raw payload, Kafka identity, Rule/stage/column identity, and schema/rule fingerprints. Warn, drop-row, set-null, invalid, quarantine, and failed-batch counters are persisted in the worker report and per-batch manifest.
 - `_asklake_contract` under the checkpoint records schema, Rule, source/target, output schema, and a combined runtime fingerprint. A mismatched runtime cannot reuse that checkpoint. Once this contract is initialized, schema, Rule, or physical target changes require a copied Job and new checkpoint.
@@ -112,7 +120,7 @@ type JobCommand =
 - `stopContinuous`: persists a stop request while leaving checkpoint state available for a later explicit resume or Job copy policy.
 - `run` and `retry` remain Snapshot-only commands. A continuous Job never creates a one-time snapshot run through those commands.
 - `GET /api/etl/jobs/{jobId}` includes `executionMode`, `continuousConfig`, and `continuousRuntime` after implementation.
-- Command responses identify `controlPlaneOnly: false` and `worker: "spark_structured_streaming"`. Worker heartbeats and counters are written to the Spark report volume, then hydrated by Job reads together with Docker container liveness. An exited, missing, or stale active worker transitions to `failed`. Failure accounting is keyed by Docker container attempt and reason, so polling the same terminal attempt does not repeatedly increment `failedCount`. Heartbeat cleanup uses an internal terminate signal and cannot be mistaken for an operator stop.
+- Command responses identify `controlPlaneOnly: false` and `worker: "spark_structured_streaming"`. Worker heartbeats and counters are written to a local report volume for Docker/REST or a deterministic S3 report for EMR, then hydrated with the selected runtime liveness. An exited, missing, or stale active worker transitions to `failed`. Failure accounting is keyed by worker attempt and reason, so polling the same terminal attempt does not repeatedly increment `failedCount`. Heartbeat cleanup uses an internal terminate/cancel signal and cannot be mistaken for an operator stop.
 
 ## 6. Mutual Exclusion and Backfill
 

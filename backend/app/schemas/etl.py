@@ -200,6 +200,13 @@ class KafkaContinuousConfigDraft(CamelModel):
 class KafkaContinuousRuntime(CamelModel):
     status: ContinuousRuntimeStatus
     checkpoint_path: str
+    runtime_provider: str | None = None
+    runtime_application_id: str | None = None
+    runtime_job_id: str | None = None
+    runtime_attempt: int | None = None
+    runtime_state: str | None = None
+    runtime_log_reference: dict[str, Any] | None = None
+    last_successful_checkpoint: str | None = None
     heartbeat_at: str | None = None
     last_flush_at: str | None = None
     last_batch_id: str | None = None

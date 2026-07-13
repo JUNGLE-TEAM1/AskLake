@@ -87,7 +87,7 @@ mongo
 PostgreSQL fixture는 메인 데모 시나리오에 사용한다.
 MongoDB fixture는 다른 source type도 처리할 수 있다는 보조 시나리오에 사용한다.
 로컬 개발은 root Compose의 MinIO를 사용한다. EC2 production은 MinIO를 띄우지 않고 AWS S3를 사용한다.
-File / S3, Data Lake source, Target S3 picker, Spark S3A, DuckDB는 EC2 instance profile IAM Role/default credential chain을 사용하며 browser와 서버 `.env`에는 AWS access key/secret을 두지 않는다. 기본 Batch Runtime은 Compose의 Spark Standalone REST지만, AWS 리소스가 준비된 배포는 일반 Batch만 EMR Serverless로 opt in할 수 있다. Kafka 기본값은 Compose Redpanda이며, VPC/IAM이 준비된 배포는 Node Source test·Snapshot ingest·replay producer를 MSK Serverless로 opt in할 수 있다. MSK와 EMR Continuous 연결은 다음 Phase이므로 두 opt in을 같은 기능으로 간주하지 않는다.
+File / S3, Data Lake source, Target S3 picker, Spark S3A, DuckDB는 EC2 instance profile IAM Role/default credential chain을 사용하며 browser와 서버 `.env`에는 AWS access key/secret을 두지 않는다. 기본 Runtime은 Compose의 Spark Standalone REST지만, AWS 리소스가 준비된 배포는 일반 Batch와 MSK Continuous를 EMR Serverless로 opt in할 수 있다. Kafka 기본값은 Compose Redpanda이며, VPC/IAM이 준비된 배포는 Node Source test·Snapshot ingest·replay producer와 EMR Structured Streaming을 MSK Serverless에 연결할 수 있다. EMR Continuous는 별도 feature flag, streaming artifact, S3 checkpoint/report와 EMR 7.1.0 이상을 요구한다.
 
 기본 fixture는 다음처럼 고정한다.
 
@@ -325,12 +325,12 @@ Kafka runtime dependencies:
 - opt-in `msk`는 MSK Serverless IAM bootstrap brokers, TLS, AWS region과 default credential chain을 요구한다. `asklake.<environment>.*` namespace와 partition/retention 정책은 `npm run verify:msk-connection-contract`로 검증한다.
 - probe role에는 cluster `Connect`, topic `DescribeTopic`/`DescribeTopicDynamicConfiguration`/`ReadData`/`WriteData`, group `DescribeGroup`/`AlterGroup`만 부여한다. 없는 probe topic을 명시적으로 만들 때만 `CreateTopic`을 추가하고 delete/alter 권한은 부여하지 않는다.
 - 실제 배포 전에는 MSK에 접근 가능한 staging VPC에서 `npm run kafka:msk-probe -- --topic asklake.staging.probe`를 실행한다. 이 probe는 기존 topic을 삭제하거나 partition을 변경하지 않는다.
-- 현재 Spark Structured Streaming worker는 MSK IAM 연결 대상이 아니다. EMR Continuous/MSK Spark connector는 후속 Phase에서 별도 검증한다.
+- EMR Structured Streaming worker는 `SASL_SSL`/`AWS_MSK_IAM`, execution role default credential chain과 S3 checkpoint/report를 사용한다. repo fake-client 계약 뒤 실제 staging VPC에서 MSK/EMR 통합을 별도 검증한다.
 
 Spark runtime dependencies:
 
 - Spark services use the `apache/spark:4.0.1`-based `spark-runtime` image with application scripts baked in.
-- Production 기본값은 internal Spark Standalone REST에 cluster-mode driver를 제출한다. `ASKLAKE_SPARK_RUNTIME=emr-serverless` opt in은 S3 일반 Batch만 EMR Job Run으로 제출·조회·취소한다. 어느 경우에도 backend는 Docker socket을 받지 않는다.
+- Production 기본값은 internal Spark Standalone REST에 cluster-mode driver를 제출한다. `ASKLAKE_SPARK_RUNTIME=emr-serverless` opt in은 S3 일반 Batch와 MSK Continuous를 EMR Job Run으로 제출·조회·취소한다. EMR Runtime의 maintenance/source inspection은 아직 지원하지 않으며 어느 remote 경로에서도 backend는 Docker socket을 받지 않는다.
 - S3A jobs use `ASKLAKE_SPARK_HADOOP_AWS_PACKAGE`, default `org.apache.hadoop:hadoop-aws:3.4.1`.
 - Spark output/report/sample host directories are rooted at `ASKLAKE_HOST_DATA_DIR`, default `/tmp/asklake`.
 

@@ -133,11 +133,11 @@ Backend `DATABASE_URL`은 미설정 시 `postgres://asklake:asklake_dev@127.0.0.
 
 Airflow run polling과 실제 Spark batch를 확인하려면 AskLake backend와 별도로 local Airflow API server를 띄운다. Airflow는 `http://127.0.0.1:8081`에서 열리며 기본 계정은 local 전용 `airflow` / `airflow`다. `AIRFLOW_EXECUTION_API_TOKEN`은 Airflow task와 FastAPI에 같은 값을 설정하고 저장소나 로그에 운영 token을 남기지 않는다.
 
-Spark Runtime의 canonical 설정은 `ASKLAKE_SPARK_RUNTIME`이다. 로컬 batch/source inspection은 미설정 시에도 `docker`가 기본이지만 Kafka Continuous와 maintenance는 `ASKLAKE_SPARK_RUNTIME=docker`를 명시한다. Production은 remote `spark-rest` 또는 일반 Batch 전용 `emr-serverless`를 허용하고 기본값은 `spark-rest`다. 기존 `ASKLAKE_SPARK_RUNNER=docker|rest`는 호환되지만 새 환경 파일에는 사용하지 않는다.
+Spark Runtime의 canonical 설정은 `ASKLAKE_SPARK_RUNTIME`이다. 로컬 batch/source inspection은 미설정 시에도 `docker`가 기본이지만 Kafka Continuous와 maintenance는 `ASKLAKE_SPARK_RUNTIME=docker`를 명시한다. Production은 remote `spark-rest` 또는 Batch/MSK Continuous용 `emr-serverless`를 허용하고 기본값은 `spark-rest`다. 기존 `ASKLAKE_SPARK_RUNNER=docker|rest`는 호환되지만 새 환경 파일에는 사용하지 않는다.
 
-### AWS EMR Serverless Batch opt in
+### AWS EMR Serverless Batch / Continuous opt in
 
-로컬 개발과 기존 production 배포는 바꾸지 않는다. AWS에서 일반 Batch를 EMR Serverless로 실행할 때만 `deploy/.env.example`의 `ASKLAKE_EMR_SERVERLESS_*` 값을 채우고 `ASKLAKE_SPARK_RUNTIME=emr-serverless`로 전환한다. 이 Runtime은 현재 Batch 전용이므로 같은 backend에서 Kafka Continuous, maintenance, Parquet source inspection이 필요하면 `spark-rest`를 유지한다.
+로컬 개발과 기존 production 배포는 바꾸지 않는다. AWS에서 일반 Batch 또는 MSK Continuous를 EMR Serverless로 실행할 때만 `deploy/.env.example`의 공통 `ASKLAKE_EMR_SERVERLESS_*` 값을 채우고 `ASKLAKE_SPARK_RUNTIME=emr-serverless`로 전환한다. maintenance와 Parquet source inspection도 같은 backend에서 필요하면 아직 `spark-rest`를 유지해야 한다.
 
 필수 준비 순서는 EMR Serverless Application 생성, Job execution role/S3 권한 구성, backend AWS principal의 `StartJobRun`·`GetJobRun`·`CancelJobRun`·`iam:PassRole` 권한 구성, S3 artifact/log prefix 생성, entry point 업로드다. AWS 인증은 default credential chain을 사용한다.
 
@@ -145,13 +145,19 @@ Spark Runtime의 canonical 설정은 `ASKLAKE_SPARK_RUNTIME`이다. 로컬 batch
 cd backend
 npm run verify:spark-runtime-contract
 npm run verify:emr-serverless-contract
+npm run verify:emr-serverless-continuous-contract
 npm run verify:emr-serverless-fastapi
 
 # ASKLAKE_EMR_SERVERLESS_*와 AWS_REGION을 export한 AWS 환경에서만 실행
 npm run emr:upload-artifact
+
+# Continuous feature flag, entry point와 MSK 설정까지 export한 뒤 실행
+npm run emr:upload-continuous-artifact
 ```
 
 `ASKLAKE_EMR_SERVERLESS_MIN_EXECUTORS <= INITIAL_EXECUTORS <= MAX_EXECUTORS`를 만족해야 한다. 첫 운영 검증은 작은 S3 Parquet/CSV로 성공, 잘못된 schema 실패, `cancelRun`, backend 재시작 뒤 같은 Job Run 재사용, Docker 결과와 schema/row count 비교 순서로 수행한다. 실제 처리량과 비용 목표는 이 연결 검증과 분리해 부하 데이터로 측정한다.
+
+Continuous는 EMR release 7.1.0 이상 Spark application, MSK와 통신 가능한 VPC/subnet/security group, 실행 role의 S3 data/checkpoint/report 및 `kafka-cluster:Connect/DescribeTopic/ReadData/DescribeGroup/AlterGroup` 권한이 필요하다. `ASKLAKE_EMR_SERVERLESS_CONTINUOUS_MAX_FAILED_ATTEMPTS_PER_HOUR`는 1~10이며 총 retry 횟수가 아니다. Streaming Job Run에는 `ASKLAKE_EMR_SERVERLESS_EXECUTION_TIMEOUT_MINUTES`를 적용하지 않는다.
 
 ```bash
 export AIRFLOW_EXECUTION_API_TOKEN=asklake-local-airflow-execution
@@ -444,7 +450,7 @@ Kafka 소스 연결 테스트는 새 샘플 consumer group이 첫 메시지를 �
 
 ### Amazon MSK Serverless 연결 검증
 
-Phase 4의 MSK 연결은 Node Source test/schema sample, Kafka Snapshot ingest, replay producer와 bounded probe까지다. EMR Serverless Spark Structured Streaming의 IAM connector는 Phase 5이므로, 이 설정만으로 Continuous Job Runtime이 EMR로 전환되지는 않는다. 실제 cluster/VPC/subnet/security group은 AWS 배포 인프라에서 먼저 준비하고 probe 실행 주체가 bootstrap broker에 network reachability를 가져야 한다.
+Phase 4의 Node Source/Snapshot/replay/probe와 Phase 5의 EMR Structured Streaming은 같은 MSK namespace/identity 정책을 사용한다. Continuous를 EMR로 전환하려면 아래 Kafka 설정에 더해 `ASKLAKE_SPARK_RUNTIME=emr-serverless`, 공통 EMR 설정, `ASKLAKE_EMR_SERVERLESS_CONTINUOUS_ENABLED=true`를 명시해야 한다. 실제 cluster/VPC/subnet/security group은 AWS 배포 인프라에서 먼저 준비하고 backend와 EMR application이 bootstrap broker에 network reachability를 가져야 한다.
 
 staging의 최소 설정은 다음과 같다. MSK Serverless는 IAM 인증이 필수이므로 auth/TLS 값은 다른 mode로 바꿀 수 없다. AWS 인증은 EC2 instance profile, task role, 또는 실행 환경의 default credential chain을 사용하고 repo/env 파일에 장기 access key/secret/session token을 추가하지 않는다.
 
@@ -488,7 +494,7 @@ npm run kafka:msk-probe -- --topic asklake.staging.probe --create-topic
 
 실패 code는 설정 오류 `KAFKA_RUNTIME_CONFIGURATION_INVALID`, IAM 인증/인가 `KAFKA_AUTHENTICATION_FAILED`, network/timeout `KAFKA_CONNECTION_TIMEOUT`, topic 없음 `KAFKA_TOPIC_NOT_FOUND`, namespace 위반 `KAFKA_TOPIC_NAMESPACE_INVALID`, partition/retention 불일치 `KAFKA_TOPIC_POLICY_MISMATCH`, bounded 수신 실패 `KAFKA_ROUNDTRIP_TIMEOUT`으로 구분한다. 인증 오류를 해결할 때 원문 stack이나 credential을 로그에 추가하지 말고 VPC route/security group, IAM cluster/topic/group 권한, region과 IAM bootstrap broker를 순서대로 확인한다.
 
-Continuous worker는 Spark 4.0.1/Scala 2.13 Kafka connector를 사용한다. 현재 Continuous worker/maintenance manager는 Docker container lifecycle API에 의존하므로 socketless production backend에서는 지원되지 않는다. 이번 REST 전환 범위는 일반 batch와 Parquet source inspect이며, Continuous production 전환은 별도 작업으로 관리한다.
+로컬 Docker Continuous는 Spark 4.0.1/Scala 2.13 connector를, EMR Continuous 기본값은 EMR 7.1 계열과 맞는 Spark 3.5/Scala 2.12 connector를 사용한다. EMR release를 바꾸면 `ASKLAKE_EMR_SERVERLESS_CONTINUOUS_KAFKA_PACKAGE`도 그 release의 Spark/Scala 조합에 맞춰 검증한다. MSK IAM auth package는 execution role credential chain을 사용하며 static key를 JAAS/env에 넣지 않는다.
 
 Production-like Continuous E2E는 Compose를 먼저 올린 뒤 opt-in으로 실행한다. retained backlog, schema/Rule quarantine, Transform/Quality 카운터, Rule-aware replay, 신규 이벤트, pause/resume, worker kill 후 checkpoint restart, Catalog fingerprint materialization, duplicate-free counter를 검증한다. worker 시작 시 target `s3a://` bucket은 MinIO에 없으면 자동 생성된다. 사용자 요청으로 인한 pause/stop의 SIGTERM 종료는 각각 `paused`/`stopped`로 처리하고, 요청 없이 종료된 worker만 `failed`가 된다.
 

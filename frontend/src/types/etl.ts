@@ -24,6 +24,13 @@ export type KafkaContinuousConfigDraft = {
 export type KafkaContinuousRuntime = {
   status: ContinuousRuntimeStatus;
   checkpointPath: string;
+  runtimeProvider?: string | null;
+  runtimeApplicationId?: string | null;
+  runtimeJobId?: string | null;
+  runtimeAttempt?: number | null;
+  runtimeState?: string | null;
+  runtimeLogReference?: Record<string, unknown> | null;
+  lastSuccessfulCheckpoint?: string | null;
   heartbeatAt?: string | null;
   lastFlushAt?: string | null;
   lastBatchId?: string | null;

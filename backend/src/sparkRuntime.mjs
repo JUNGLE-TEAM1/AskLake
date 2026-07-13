@@ -39,7 +39,7 @@ const runtimeDefinitions = Object.freeze({
   [SPARK_RUNTIME_IDS.EMR_SERVERLESS]: Object.freeze({
     capabilities: Object.freeze({
       [SPARK_RUNTIME_OPERATIONS.BATCH]: true,
-      [SPARK_RUNTIME_OPERATIONS.CONTINUOUS]: false,
+      [SPARK_RUNTIME_OPERATIONS.CONTINUOUS]: true,
       [SPARK_RUNTIME_OPERATIONS.MAINTENANCE]: false,
       [SPARK_RUNTIME_OPERATIONS.SOURCE_INSPECT]: false,
     }),

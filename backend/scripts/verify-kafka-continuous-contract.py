@@ -222,6 +222,13 @@ def main() -> None:
         "runtimeFingerprint": "runtime-v1",
         "ruleMetrics": {"qualityQuarantinedCount": 2, "failedBatchCount": 0},
         "lastRuleResult": {"status": "success"},
+        "runtimeProvider": "emr-serverless",
+        "runtimeApplicationId": "00streamapplication",
+        "runtimeJobId": "jr-stream-contract",
+        "runtimeAttempt": 2,
+        "runtimeState": "RUNNING",
+        "runtimeLogReference": {"provider": "s3", "uri": "s3://asklake-logs/attempts/2/"},
+        "lastSuccessfulCheckpoint": runtime.checkpoint_path,
     }
     runtime.schema_state = {
         "schemaVersion": 1,
@@ -237,6 +244,10 @@ def main() -> None:
     assert runtime_schema.schema_status == "drift_detected"
     assert runtime_schema.rule_fingerprint == "rule-v1"
     assert runtime_schema.rule_metrics["qualityQuarantinedCount"] == 2
+    assert runtime_schema.runtime_provider == "emr-serverless"
+    assert runtime_schema.runtime_job_id == "jr-stream-contract"
+    assert runtime_schema.runtime_attempt == 2
+    assert runtime_schema.last_successful_checkpoint == runtime.checkpoint_path
 
     captured_worker_payload = {}
     original_node_bridge = etl_service.run_node_bridge
@@ -520,6 +531,36 @@ def main() -> None:
             previous_report_dir = os.environ.get("ASKLAKE_SPARK_REPORT_DIR")
             os.environ["ASKLAKE_SPARK_REPORT_DIR"] = report_dir
             report_path = etl_service.continuous_runtime_report_path(job.id)
+            runtime.status = "starting"
+            runtime.metrics = {**(runtime.metrics or {}), "currentWorkerAttemptId": "emr-attempt-1"}
+            etl_service.continuous_worker_status = lambda _job, _runtime: {
+                "applicationId": "00streamapplication",
+                "attempt": 3,
+                "containerState": "running",
+                "driverState": "RUNNING",
+                "jobRunId": "jr-stream-live",
+                "lastSuccessfulCheckpoint": runtime.checkpoint_path,
+                "report": {
+                    "status": "running",
+                    "workerAttemptId": "emr-attempt-1",
+                    "heartbeatAt": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+                    "consumedCount": 5,
+                    "storedCount": 5,
+                    "quarantinedCount": 0,
+                    "failedCount": 0,
+                },
+                "runtime": "emr-serverless",
+                "runtimeLogReference": {"provider": "s3", "uri": "s3://asklake-logs/attempts/3/"},
+                "workerAttemptId": "emr-attempt-1",
+            }
+            etl_service.refresh_kafka_continuous_runtime(None, job)
+            assert runtime.status == "running"
+            assert runtime.stored_count == 5
+            assert runtime.metrics["runtimeProvider"] == "emr-serverless"
+            assert runtime.metrics["runtimeJobId"] == "jr-stream-live"
+            assert runtime.metrics["runtimeAttempt"] == 3
+            assert runtime.metrics["runtimeLogReference"]["provider"] == "s3"
+
             report_path.write_text(json.dumps({
                 "status": "running",
                 "heartbeatAt": datetime.now(UTC).isoformat().replace("+00:00", "Z"),

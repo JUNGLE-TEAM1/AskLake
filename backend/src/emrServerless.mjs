@@ -38,6 +38,25 @@ const driverEnvironmentNames = Object.freeze([
   "S3_FORCE_PATH_STYLE",
 ]);
 
+const continuousScopedEnvironmentNames = Object.freeze([
+  "APPLICATION_ID",
+  "ARTIFACT_URI",
+  "CANCEL_GRACE_SECONDS",
+  "DRIVER_CORES",
+  "DRIVER_MEMORY",
+  "ENTRY_POINT_URI",
+  "EXECUTION_ROLE_ARN",
+  "EXECUTOR_CORES",
+  "EXECUTOR_MEMORY",
+  "INITIAL_EXECUTORS",
+  "LOG_URI",
+  "MAX_EXECUTORS",
+  "MIN_EXECUTORS",
+  "POLL_INTERVAL_MS",
+]);
+
+export const EMR_SERVERLESS_CONTINUOUS_MANIFEST_FILE = "asklake-continuous-manifest.json";
+
 export function emrServerlessConfig(environment = process.env) {
   if (!environmentFlag(environment.ASKLAKE_EMR_SERVERLESS_ENABLED, false)) {
     throw emrConfigurationError(
@@ -157,6 +176,163 @@ export function emrServerlessArtifactUris(runId, environment = process.env) {
   });
 }
 
+export function emrServerlessContinuousConfig(environment = process.env) {
+  if (!environmentFlag(environment.ASKLAKE_EMR_SERVERLESS_CONTINUOUS_ENABLED, false)) {
+    throw emrConfigurationError(
+      "EMR Serverless Continuous runtime is disabled. Set ASKLAKE_EMR_SERVERLESS_CONTINUOUS_ENABLED=true to opt in.",
+      "EMR_SERVERLESS_CONTINUOUS_DISABLED",
+    );
+  }
+  const scopedEnvironment = { ...environment };
+  for (const suffix of continuousScopedEnvironmentNames) {
+    const scopedName = `ASKLAKE_EMR_SERVERLESS_CONTINUOUS_${suffix}`;
+    const commonName = `ASKLAKE_EMR_SERVERLESS_${suffix}`;
+    if (String(environment[scopedName] || "").trim()) scopedEnvironment[commonName] = environment[scopedName];
+  }
+  const common = emrServerlessConfig(scopedEnvironment);
+  const kafkaPackage = optionalPackage(
+    environment.ASKLAKE_EMR_SERVERLESS_CONTINUOUS_KAFKA_PACKAGE,
+    "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0",
+    "ASKLAKE_EMR_SERVERLESS_CONTINUOUS_KAFKA_PACKAGE",
+  );
+  const mskIamPackage = optionalPackage(
+    environment.ASKLAKE_EMR_SERVERLESS_CONTINUOUS_MSK_IAM_PACKAGE,
+    "software.amazon.msk:aws-msk-iam-auth:2.3.6",
+    "ASKLAKE_EMR_SERVERLESS_CONTINUOUS_MSK_IAM_PACKAGE",
+  );
+  const explicitPyFiles = String(environment.ASKLAKE_EMR_SERVERLESS_CONTINUOUS_PYFILES_URIS || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  if (explicitPyFiles.length > 0 && explicitPyFiles.length !== 3) {
+    throw emrConfigurationError(
+      "ASKLAKE_EMR_SERVERLESS_CONTINUOUS_PYFILES_URIS must contain exactly three helper .py URIs.",
+    );
+  }
+  const entryPointRoot = common.entryPointUri.slice(0, common.entryPointUri.lastIndexOf("/"));
+  const pyFilesUris = (explicitPyFiles.length > 0
+    ? explicitPyFiles
+    : [
+        "kafka_schema_paths.py",
+        "object_storage_runtime.py",
+        "snapshot_rule_runtime.py",
+      ].map((name) => `${entryPointRoot}/python/${name}`))
+    .map((value, index) => canonicalAwsS3Uri(
+      value,
+      `ASKLAKE_EMR_SERVERLESS_CONTINUOUS_PYFILES_URIS[${index}]`,
+      environment,
+    ));
+  if (pyFilesUris.some((value) => !/\.py$/i.test(value))) {
+    throw emrConfigurationError("EMR Continuous helper artifacts must identify .py files.");
+  }
+  return Object.freeze({
+    ...common,
+    kafkaPackage,
+    maxFailedAttemptsPerHour: boundedInteger(
+      environment.ASKLAKE_EMR_SERVERLESS_CONTINUOUS_MAX_FAILED_ATTEMPTS_PER_HOUR,
+      5,
+      1,
+      10,
+      "ASKLAKE_EMR_SERVERLESS_CONTINUOUS_MAX_FAILED_ATTEMPTS_PER_HOUR",
+    ),
+    mskIamPackage,
+    pyFilesUris: Object.freeze(pyFilesUris),
+  });
+}
+
+export function emrServerlessContinuousArtifactUris(jobId, workerAttemptId, environment = process.env) {
+  const config = emrServerlessContinuousConfig(environment);
+  const jobSegment = safeEmrSegment(jobId, "jobId").toLowerCase();
+  const attemptSegment = safeEmrSegment(workerAttemptId, "workerAttemptId").toLowerCase();
+  const jobRoot = `${config.artifactRootUri}/continuous/jobs/${jobSegment}`;
+  return Object.freeze({
+    attemptRoot: `${jobRoot}/attempts/${attemptSegment}`,
+    jobRoot,
+    manifestUri: `${jobRoot}/attempts/${attemptSegment}/job-manifest.json`,
+    reportUri: `${jobRoot}/job-report.json`,
+  });
+}
+
+export function createEmrServerlessContinuousSubmission({
+  appName,
+  checkpointPath,
+  jobId,
+  manifestUri,
+  outputPath,
+  reportUri,
+  workerAttemptId,
+}, environment = process.env) {
+  const config = emrServerlessContinuousConfig(environment);
+  const safeJobId = safeEmrSegment(jobId, "jobId");
+  const safeAttemptId = safeEmrSegment(workerAttemptId, "workerAttemptId");
+  const canonicalManifestUri = canonicalAwsS3Uri(manifestUri, "EMR Continuous manifest URI", environment);
+  canonicalAwsS3Uri(reportUri, "EMR Continuous report URI", environment);
+  canonicalSparkS3APath(checkpointPath, "EMR Continuous checkpoint path", environment);
+  canonicalSparkS3APath(outputPath, "EMR Continuous output path", environment);
+  if (config.minExecutors > config.initialExecutors || config.initialExecutors > config.maxExecutors) {
+    throw emrConfigurationError(
+      "EMR Continuous executor bounds must satisfy minExecutors <= initialExecutors <= maxExecutors.",
+    );
+  }
+  const driverEnvironment = {
+    ASKLAKE_CONTINUOUS_MANIFEST_FILE: EMR_SERVERLESS_CONTINUOUS_MANIFEST_FILE,
+    ASKLAKE_OBJECT_STORAGE_PROVIDER: "aws",
+    AWS_REGION: config.region,
+    S3_FORCE_PATH_STYLE: "false",
+  };
+  const sparkArguments = [
+    "--files",
+    `${canonicalManifestUri}#${EMR_SERVERLESS_CONTINUOUS_MANIFEST_FILE}`,
+    "--py-files",
+    config.pyFilesUris.join(","),
+    ...sparkConf("spark.driver.cores", config.driverCores),
+    ...sparkConf("spark.driver.memory", config.driverMemory),
+    ...sparkConf("spark.executor.cores", config.executorCores),
+    ...sparkConf("spark.executor.memory", config.executorMemory),
+    ...sparkConf("spark.dynamicAllocation.enabled", "true"),
+    ...sparkConf("spark.dynamicAllocation.initialExecutors", config.initialExecutors),
+    ...sparkConf("spark.dynamicAllocation.minExecutors", config.minExecutors),
+    ...sparkConf("spark.dynamicAllocation.maxExecutors", config.maxExecutors),
+    ...sparkConf("spark.sql.streaming.stopGracefullyOnShutdown", "true"),
+    ...Object.entries(driverEnvironment).flatMap(([name, value]) => (
+      sparkConf(`spark.emr-serverless.driverEnv.${name}`, value)
+    )),
+  ];
+  const packages = [config.kafkaPackage, config.mskIamPackage].filter(Boolean);
+  if (packages.length > 0) sparkArguments.push(...sparkConf("spark.jars.packages", packages.join(",")));
+  const sparkSubmitParameters = sparkArguments.map(shellToken).join(" ");
+  if (sparkSubmitParameters.length > 102_400) {
+    throw emrConfigurationError("EMR Continuous sparkSubmitParameters exceed the 102400 character API limit.");
+  }
+  return Object.freeze({
+    applicationId: config.applicationId,
+    clientToken: `asklake-cont-${safeAttemptId}`.slice(0, 64),
+    configurationOverrides: {
+      applicationConfiguration: [{
+        classification: "spark",
+        properties: { dynamicAllocationOptimization: "true" },
+      }],
+      monitoringConfiguration: {
+        s3MonitoringConfiguration: { logUri: config.logUri },
+      },
+    },
+    executionRoleArn: config.executionRoleArn,
+    jobDriver: {
+      sparkSubmit: {
+        entryPoint: config.entryPointUri,
+        sparkSubmitParameters,
+      },
+    },
+    mode: "STREAMING",
+    name: String(appName || `asklake-continuous-${safeJobId}`).trim().slice(0, 256),
+    retryPolicy: { maxFailedAttemptsPerHour: config.maxFailedAttemptsPerHour },
+    tags: {
+      AskLakeJobId: safeJobId.slice(0, 256),
+      AskLakeWorkerAttemptId: safeAttemptId.slice(0, 256),
+    },
+  });
+}
+
 export function createEmrServerlessBatchSubmission({
   appName,
   jobId,
@@ -265,14 +441,15 @@ export function normalizeEmrServerlessState(value) {
   return "unknown";
 }
 
-export function emrServerlessLogReference({ applicationId, jobRunId, logUri }) {
+export function emrServerlessLogReference({ applicationId, attempt, attemptPath = false, jobRunId, logUri }) {
   const base = String(logUri || "").replace(/\/+$/, "");
+  const attemptSuffix = attemptPath && Number(attempt) > 0 ? `/attempts/${Number(attempt)}` : "";
   return Object.freeze({
     applicationId: String(applicationId || ""),
     jobRunId: String(jobRunId || ""),
     provider: "s3",
     runtime: EMR_SERVERLESS_RUNTIME_ID,
-    uri: `${base}/applications/${applicationId}/jobs/${jobRunId}/`,
+    uri: `${base}/applications/${applicationId}/jobs/${jobRunId}${attemptSuffix}/`,
   });
 }
 
@@ -363,6 +540,15 @@ function sparkMemory(value, name) {
   const text = String(value || "").trim().toLowerCase();
   if (!/^[1-9][0-9]*(?:g|m)$/.test(text)) {
     throw emrConfigurationError(`EMR ${name} must use a positive Spark memory value such as 4g.`);
+  }
+  return text;
+}
+
+function optionalPackage(value, fallback, name) {
+  const text = String(value === undefined || value === null || value === "" ? fallback : value).trim();
+  if (text.toLowerCase() === "none") return "";
+  if (!/^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+:[A-Za-z0-9_.+-]+$/.test(text)) {
+    throw emrConfigurationError(`${name} must be a Maven coordinate or none.`);
   }
   return text;
 }

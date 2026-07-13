@@ -11,6 +11,12 @@ import {
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CreateBucketCommand, HeadBucketCommand, S3Client } from "@aws-sdk/client-s3";
+import { manageEmrServerlessContinuous } from "../src/emrContinuous.mjs";
+import {
+  KAFKA_RUNTIME_IDS,
+  resolveKafkaRuntimeConfig,
+  validateKafkaTopic,
+} from "../src/kafkaRuntime.mjs";
 import {
   isMinioProvider,
   objectStorageDockerEnv,
@@ -90,6 +96,9 @@ function continuousRuntime() {
     [SPARK_RUNTIME_IDS.SPARK_REST]: {
       [SPARK_RUNTIME_OPERATIONS.CONTINUOUS]: manageContinuousRest,
     },
+    [SPARK_RUNTIME_IDS.EMR_SERVERLESS]: {
+      [SPARK_RUNTIME_OPERATIONS.CONTINUOUS]: manageContinuousEmr,
+    },
   });
   if (runtime.id === SPARK_RUNTIME_IDS.DOCKER && !hasExplicitSparkRuntime(process.env)) {
     throw new Error(
@@ -98,6 +107,47 @@ function continuousRuntime() {
     );
   }
   return runtime;
+}
+
+async function manageContinuousEmr({ action, containerName, jobId, request }) {
+  const kafka = resolveKafkaRuntimeConfig({ broker: request.broker, env: process.env });
+  if (kafka.runtime !== KAFKA_RUNTIME_IDS.MSK) {
+    const error = new Error("EMR Serverless Continuous requires ASKLAKE_KAFKA_RUNTIME=msk.");
+    error.code = "EMR_CONTINUOUS_MSK_REQUIRED";
+    error.status = 422;
+    throw error;
+  }
+  validateKafkaTopic(request.topic, kafka);
+  const result = await manageEmrServerlessContinuous({
+    action,
+    catalogAckFile: catalogAckFile(jobId),
+    environment: process.env,
+    request: {
+      ...request,
+      broker: kafka.brokers.join(","),
+    },
+    sparkEnvironment: (workerAttemptId, reportUri) => ({
+      ...continuousEnvironment(
+        { ...request, broker: kafka.brokers.join(",") },
+        workerAttemptId,
+        "",
+        false,
+        {
+          commandFile: "",
+          reportFile: String(reportUri).replace(/^s3:\/\//, "s3a://"),
+        },
+      ),
+      ASKLAKE_CONTINUOUS_KAFKA_SECURITY_PROTOCOL: "SASL_SSL",
+      ASKLAKE_CONTINUOUS_KAFKA_SASL_CALLBACK_HANDLER_CLASS: "software.amazon.msk.auth.iam.IAMClientCallbackHandler",
+      ASKLAKE_CONTINUOUS_KAFKA_SASL_JAAS_CONFIG: "software.amazon.msk.auth.iam.IAMLoginModule required;",
+      ASKLAKE_CONTINUOUS_KAFKA_SASL_MECHANISM: "AWS_MSK_IAM",
+      ASKLAKE_OBJECT_STORAGE_PROVIDER: "aws",
+      AWS_REGION: kafka.region,
+      S3_FORCE_PATH_STYLE: "false",
+    }),
+    stateFile: emrStateFile(jobId),
+  });
+  return { ...result, containerName };
 }
 
 async function manageContinuousRest({ action, containerName, jobId, request }) {
@@ -329,7 +379,13 @@ function continuousRestRuntime() {
   return { ...runtime, reportRuntimeDir, scriptPath };
 }
 
-function continuousEnvironment(request, workerAttemptId, runtimeReportDir, includeCredentials = true) {
+function continuousEnvironment(
+  request,
+  workerAttemptId,
+  runtimeReportDir,
+  includeCredentials = true,
+  locations = {},
+) {
   const jobId = required(request.jobId, "jobId");
   const storageEnvironment = Object.fromEntries(
     objectStorageDockerEnv().filter(([name]) => (
@@ -351,11 +407,15 @@ function continuousEnvironment(request, workerAttemptId, runtimeReportDir, inclu
     ASKLAKE_CONTINUOUS_INITIAL_COUNTS: JSON.stringify(request.initialCounts || {}),
     ASKLAKE_CONTINUOUS_INITIAL_METRICS: JSON.stringify(request.initialMetrics || {}),
     ASKLAKE_CONTINUOUS_INITIAL_SCHEMA_STATE: JSON.stringify(request.initialSchemaState || {}),
+    ASKLAKE_CONTINUOUS_RULE_CONTRACT_VERSION: request.ruleContractVersion || "1.0",
+    ASKLAKE_CONTINUOUS_RULE_FINGERPRINT: required(request.ruleFingerprint, "ruleFingerprint"),
+    ASKLAKE_CONTINUOUS_RULE_OUTPUT_SCHEMA: JSON.stringify(request.ruleOutputSchema || []),
+    ASKLAKE_CONTINUOUS_RULES: JSON.stringify(request.rules || []),
     ASKLAKE_CONTINUOUS_SCHEMA_COLUMNS: JSON.stringify(request.schemaColumns || []),
     ASKLAKE_CONTINUOUS_SCHEMA_POLICY: JSON.stringify(request.schemaEvolutionPolicy || {}),
     ASKLAKE_CONTINUOUS_FAIL_AFTER_DATA_WRITE_ONCE: process.env.ASKLAKE_CONTINUOUS_FAIL_AFTER_DATA_WRITE_ONCE || "false",
-    ASKLAKE_CONTINUOUS_REPORT_FILE: path.posix.join(runtimeReportDir, reportFileName(jobId)),
-    ASKLAKE_CONTINUOUS_COMMAND_FILE: path.posix.join(runtimeReportDir, commandFileName(jobId)),
+    ASKLAKE_CONTINUOUS_REPORT_FILE: locations.reportFile ?? path.posix.join(runtimeReportDir, reportFileName(jobId)),
+    ASKLAKE_CONTINUOUS_COMMAND_FILE: locations.commandFile ?? path.posix.join(runtimeReportDir, commandFileName(jobId)),
     ...storageEnvironment,
     HOME: "/tmp",
   };
@@ -644,9 +704,13 @@ function absoluteRuntimePath(value, name) {
 function reportFileName(jobId) { return `kafka-continuous-${safeSegment(jobId)}.json`; }
 function commandFileName(jobId) { return `kafka-continuous-${safeSegment(jobId)}.command.json`; }
 function stateFileName(jobId) { return `kafka-continuous-${safeSegment(jobId)}.state.json`; }
+function emrStateFileName(jobId) { return `kafka-continuous-${safeSegment(jobId)}.emr-state.json`; }
+function catalogAckFileName(jobId) { return `kafka-continuous-${safeSegment(jobId)}.catalog-ack.json`; }
 function reportFile(jobId) { return path.join(reportDir, reportFileName(jobId)); }
 function commandFile(jobId) { return path.join(reportDir, commandFileName(jobId)); }
 function stateFile(jobId) { return path.join(reportDir, stateFileName(jobId)); }
+function emrStateFile(jobId) { return path.join(reportDir, emrStateFileName(jobId)); }
+function catalogAckFile(jobId) { return path.join(reportDir, catalogAckFileName(jobId)); }
 function clearCommand(jobId) { if (existsSync(commandFile(jobId))) writeFileSync(commandFile(jobId), "", "utf8"); }
 function writeCommand(jobId, action) {
   writeFileSync(commandFile(jobId), `${JSON.stringify({ action, requestedAt: new Date().toISOString() })}\n`, "utf8");

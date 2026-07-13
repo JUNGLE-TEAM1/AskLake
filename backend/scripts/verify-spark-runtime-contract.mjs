@@ -55,7 +55,7 @@ assert.equal(canonicalEmr.remote, true);
 assert.equal(canonicalEmr.requiresDockerSocket, false);
 assert.deepEqual(canonicalEmr.capabilities, {
   batch: true,
-  continuous: false,
+  continuous: true,
   maintenance: false,
   sourceInspect: false,
 });
@@ -145,6 +145,10 @@ const emrRuntime = createSparkRuntime(
         dispatchTrace.push(`${definition.id}:${payload.runId}`);
         return "emr-result";
       },
+      [SPARK_RUNTIME_OPERATIONS.CONTINUOUS]: (payload, definition) => {
+        dispatchTrace.push(`${definition.id}:${payload.action}`);
+        return "emr-continuous-result";
+      },
     },
   },
 );
@@ -152,11 +156,11 @@ assert.equal(
   emrRuntime.execute(SPARK_RUNTIME_OPERATIONS.BATCH, { runId: "run-emr" }),
   "emr-result",
 );
-assert.throws(
-  () => emrRuntime.execute(SPARK_RUNTIME_OPERATIONS.CONTINUOUS, {}),
-  (error) => error?.code === "SPARK_RUNTIME_OPERATION_UNAVAILABLE",
+assert.equal(
+  emrRuntime.execute(SPARK_RUNTIME_OPERATIONS.CONTINUOUS, { action: "status" }),
+  "emr-continuous-result",
 );
-assert.deepEqual(dispatchTrace, ["docker:run-docker", "spark-rest:status", "emr-serverless:run-emr"]);
+assert.deepEqual(dispatchTrace, ["docker:run-docker", "spark-rest:status", "emr-serverless:run-emr", "emr-serverless:status"]);
 
 assert.throws(
   () => createSparkRuntime({ ASKLAKE_SPARK_RUNTIME: "docker" }).execute(

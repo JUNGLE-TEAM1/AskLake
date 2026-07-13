@@ -1376,6 +1376,7 @@ def command_kafka_continuous_job(
         runtime.metrics = {
             **(runtime.metrics or {}),
             "currentWorkerAttemptId": worker_attempt_id,
+            **continuous_worker_runtime_metrics(worker_result),
         }
         runtime.last_error = None
         job.status = "running"
@@ -5662,6 +5663,10 @@ def refresh_kafka_continuous_runtime(db: Session, job: ETLJobModel) -> None:
         return
     report_path = continuous_runtime_report_path(job.id)
     worker_status = continuous_worker_status(job, runtime)
+    runtime.metrics = {
+        **(runtime.metrics or {}),
+        **continuous_worker_runtime_metrics(worker_status),
+    }
     container_state = str(worker_status.get("containerState") or "unknown")
     requested_action = optional_string(worker_status.get("requestedAction"))
     requested_terminal_status = "paused" if requested_action == "pause" else "stopped" if requested_action == "stop" else None
@@ -5671,7 +5676,13 @@ def refresh_kafka_continuous_runtime(db: Session, job: ETLJobModel) -> None:
         # checkpoint. Reconcile a final report when one exists, but keep the
         # requested terminal transition authoritative over its stale status.
         forced_terminal_status = requested_terminal_status or ("paused" if runtime.status == "pausing" else "stopped")
-    if not report_path.exists():
+    payload = worker_status.get("report") if isinstance(worker_status.get("report"), dict) else None
+    if payload is None and report_path.exists():
+        try:
+            payload = json.loads(report_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            payload = None
+    if payload is None:
         if forced_terminal_status:
             runtime.status = forced_terminal_status
             runtime.last_error = None
@@ -5689,10 +5700,8 @@ def refresh_kafka_continuous_runtime(db: Session, job: ETLJobModel) -> None:
             mark_continuous_runtime_failed(job, runtime, f"Continuous worker container is {container_state} without a runtime report.")
             sync_kafka_continuous_session(db, runtime)
             etl_repository.save_kafka_continuous_command(db, job, runtime)
-        return
-    try:
-        payload = json.loads(report_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        elif db is not None:
+            etl_repository.save_kafka_continuous_command(db, job, runtime)
         return
     previous_metrics = runtime.metrics or {}
     worker_attempt_id = optional_string(payload.get("workerAttemptId"))
@@ -5813,6 +5822,25 @@ def continuous_worker_status(job: ETLJobModel, runtime: KafkaContinuousRuntimeMo
         return run_kafka_continuous_worker(job, runtime, "status")
     except ApiError as exc:
         return {"containerState": "unknown", "error": exc.message}
+
+
+def continuous_worker_runtime_metrics(worker_result: dict[str, Any]) -> dict[str, Any]:
+    runtime_provider = optional_string(worker_result.get("runtime"))
+    runtime_job_id = None
+    if runtime_provider == "emr-serverless":
+        runtime_job_id = optional_string(worker_result.get("jobRunId")) or optional_string(worker_result.get("containerId"))
+    values = {
+        "runtimeProvider": runtime_provider,
+        "runtimeApplicationId": optional_string(worker_result.get("applicationId")),
+        "runtimeJobId": runtime_job_id,
+        "runtimeAttempt": optional_int(worker_result.get("attempt")),
+        "runtimeState": optional_string(worker_result.get("driverState")),
+        "lastSuccessfulCheckpoint": optional_string(worker_result.get("lastSuccessfulCheckpoint")),
+    }
+    log_reference = worker_result.get("runtimeLogReference")
+    if isinstance(log_reference, dict):
+        values["runtimeLogReference"] = log_reference
+    return {key: value for key, value in values.items() if value is not None}
 
 
 def continuous_heartbeat_is_stale(heartbeat_at: str | None, job: ETLJobModel) -> bool:

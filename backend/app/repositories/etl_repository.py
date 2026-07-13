@@ -727,6 +727,13 @@ def continuous_runtime_to_schema(runtime: KafkaContinuousRuntimeModel | None) ->
     return KafkaContinuousRuntime(
         status=runtime.status,
         checkpoint_path=runtime.checkpoint_path,
+        runtime_provider=metrics.get("runtimeProvider"),
+        runtime_application_id=metrics.get("runtimeApplicationId"),
+        runtime_job_id=metrics.get("runtimeJobId"),
+        runtime_attempt=metrics.get("runtimeAttempt"),
+        runtime_state=metrics.get("runtimeState"),
+        runtime_log_reference=metrics.get("runtimeLogReference"),
+        last_successful_checkpoint=metrics.get("lastSuccessfulCheckpoint"),
         heartbeat_at=runtime.heartbeat_at,
         last_flush_at=runtime.last_flush_at,
         last_batch_id=runtime.last_batch_id,

@@ -19,6 +19,31 @@ from object_storage_runtime import configure_spark_hadoop
 from snapshot_rule_runtime import SnapshotRuleExecutionError, apply_snapshot_rules, supports_snapshot_rules
 
 
+def load_manifest_environment() -> None:
+    manifest_file = os.environ.get("ASKLAKE_CONTINUOUS_MANIFEST_FILE", "").strip()
+    if not manifest_file:
+        return
+    try:
+        payload = json.loads(Path(manifest_file).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError("Continuous manifest is unreadable.") from exc
+    environment = payload.get("environment") if isinstance(payload, dict) else None
+    if not isinstance(environment, dict):
+        raise RuntimeError("Continuous manifest environment is invalid.")
+    for name, value in environment.items():
+        environment_name = str(name)
+        if not environment_name.startswith("ASKLAKE_") and environment_name not in {
+            "AWS_REGION",
+            "HOME",
+            "S3_FORCE_PATH_STYLE",
+        }:
+            raise RuntimeError(f"Continuous manifest contains an unsupported environment name: {name}")
+        os.environ[environment_name] = str(value)
+
+
+load_manifest_environment()
+
+
 def json_object_env(name: str) -> dict[str, Any]:
     try:
         value = json.loads(os.environ.get(name, "{}"))
@@ -42,10 +67,11 @@ def canonical_hash(value: Any) -> str:
 
 JOB_ID = os.environ["ASKLAKE_CONTINUOUS_JOB_ID"]
 WORKER_ATTEMPT_ID = os.environ.get("ASKLAKE_CONTINUOUS_WORKER_ATTEMPT_ID")
-REPORT_FILE = Path(os.environ["ASKLAKE_CONTINUOUS_REPORT_FILE"])
-COMMAND_FILE = Path(os.environ["ASKLAKE_CONTINUOUS_COMMAND_FILE"])
+REPORT_LOCATION = os.environ["ASKLAKE_CONTINUOUS_REPORT_FILE"]
+COMMAND_LOCATION = os.environ.get("ASKLAKE_CONTINUOUS_COMMAND_FILE", "")
 STOP_REQUESTED = False
 QUERY = None
+SPARK_SESSION = None
 INITIAL_COUNTS = json.loads(os.environ.get("ASKLAKE_CONTINUOUS_INITIAL_COUNTS", "{}"))
 INITIAL_METRICS = json_object_env("ASKLAKE_CONTINUOUS_INITIAL_METRICS")
 INITIAL_SCHEMA_STATE = json_object_env("ASKLAKE_CONTINUOUS_INITIAL_SCHEMA_STATE")
@@ -143,6 +169,78 @@ CURRENT_BATCH_CONTEXT: dict[str, Any] = {}
 
 def now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def remote_runtime_location(value: str) -> bool:
+    return bool(re.match(r"^s3a?://", str(value or ""), re.IGNORECASE))
+
+
+def runtime_location_with_suffix(value: str, suffix: str) -> str:
+    return re.sub(r"(?:\.[^./]+)?$", suffix, str(value))
+
+
+def runtime_path(value: str):
+    if SPARK_SESSION is None:
+        raise RuntimeError("Spark session is not ready for remote runtime state.")
+    jvm = SPARK_SESSION.sparkContext._jvm
+    hadoop = SPARK_SESSION.sparkContext._jsc.hadoopConfiguration()
+    target = jvm.org.apache.hadoop.fs.Path(value)
+    return jvm, target, target.getFileSystem(hadoop)
+
+
+def runtime_text_exists(value: str) -> bool:
+    if not value:
+        return False
+    if not remote_runtime_location(value):
+        return Path(value).exists()
+    _jvm, target, file_system = runtime_path(value)
+    return bool(file_system.exists(target))
+
+
+def read_runtime_text(value: str) -> str:
+    if not remote_runtime_location(value):
+        return Path(value).read_text(encoding="utf-8")
+    jvm, target, file_system = runtime_path(value)
+    stream = file_system.open(target)
+    reader = jvm.java.io.BufferedReader(
+        jvm.java.io.InputStreamReader(stream, jvm.java.nio.charset.StandardCharsets.UTF_8)
+    )
+    lines = []
+    try:
+        while True:
+            line = reader.readLine()
+            if line is None:
+                break
+            lines.append(str(line))
+    finally:
+        reader.close()
+    return "\n".join(lines)
+
+
+def write_runtime_text(value: str, payload: str) -> None:
+    if not remote_runtime_location(value):
+        target = Path(value)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary = target.with_name(f"{target.name}.{os.getpid()}.{time.time_ns()}.tmp")
+        temporary.write_text(payload, encoding="utf-8")
+        temporary.replace(target)
+        return
+    jvm, target, file_system = runtime_path(value)
+    temporary = jvm.org.apache.hadoop.fs.Path(f"{value}.{os.getpid()}.{time.time_ns()}.tmp")
+    writer = jvm.java.io.OutputStreamWriter(
+        file_system.create(temporary, True),
+        jvm.java.nio.charset.StandardCharsets.UTF_8,
+    )
+    try:
+        writer.write(payload)
+    finally:
+        writer.close()
+    if file_system.exists(target) and not file_system.delete(target, False):
+        file_system.delete(temporary, False)
+        raise RuntimeError(f"Could not replace remote runtime state: {value}")
+    if not file_system.rename(temporary, target):
+        file_system.delete(temporary, False)
+        raise RuntimeError(f"Could not publish remote runtime state: {value}")
 
 
 def duration_label(value: Any) -> str:
@@ -346,11 +444,13 @@ def fail_current_batch(error: Exception) -> None:
 
 def apply_catalog_ack() -> None:
     global PUBLISHED_BATCHES
-    ack_path = REPORT_FILE.with_suffix(".catalog-ack.json")
+    ack_path = runtime_location_with_suffix(REPORT_LOCATION, ".catalog-ack.json")
     try:
-        payload = json.loads(ack_path.read_text(encoding="utf-8"))
+        if not runtime_text_exists(ack_path):
+            return
+        payload = json.loads(read_runtime_text(ack_path))
         acknowledged_batch = int(payload.get("batchId"))
-    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+    except Exception:  # noqa: BLE001 - acknowledgement is best-effort control-plane state.
         return
     PUBLISHED_BATCHES = [
         item for item in PUBLISHED_BATCHES
@@ -364,7 +464,6 @@ def report(status: str, *, batch_id: int | None = None, error: str | None = None
         LAST_BATCH_ID = batch_id
         LAST_FLUSH_AT = now()
     apply_catalog_ack()
-    REPORT_FILE.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "status": status,
         "workerAttemptId": WORKER_ATTEMPT_ID,
@@ -386,14 +485,14 @@ def report(status: str, *, batch_id: int | None = None, error: str | None = None
         "lastBatchEvidence": LAST_BATCH_EVIDENCE,
         "lastError": error,
     }
-    temp_file = REPORT_FILE.with_suffix(".tmp")
-    temp_file.write_text(json.dumps(payload), encoding="utf-8")
-    temp_file.replace(REPORT_FILE)
+    write_runtime_text(REPORT_LOCATION, json.dumps(payload))
 
 
 def requested_action() -> str:
+    if not COMMAND_LOCATION:
+        return ""
     try:
-        raw = COMMAND_FILE.read_text(encoding="utf-8").strip()
+        raw = read_runtime_text(COMMAND_LOCATION).strip()
         return str(json.loads(raw).get("action") or "") if raw else ""
     except (OSError, json.JSONDecodeError):
         return ""
@@ -936,7 +1035,7 @@ def validate_manifest_retry(manifest: dict[str, Any], source_ranges: list[dict[s
 
 
 def main() -> None:
-    global QUERY, LAST_BATCH_ID, LAST_FLUSH_AT, LAST_BATCH_STORED_COUNT, LAST_BATCH_QUARANTINED_COUNT, LAST_BATCH_WRITTEN, PUBLISHED_BATCHES, LAST_BATCH_EVIDENCE, CURRENT_BATCH_CONTEXT
+    global QUERY, SPARK_SESSION, LAST_BATCH_ID, LAST_FLUSH_AT, LAST_BATCH_STORED_COUNT, LAST_BATCH_QUARANTINED_COUNT, LAST_BATCH_WRITTEN, PUBLISHED_BATCHES, LAST_BATCH_EVIDENCE, CURRENT_BATCH_CONTEXT
     signal.signal(signal.SIGTERM, on_signal)
     signal.signal(signal.SIGINT, on_signal)
     schema, aliases, required_fields = source_schema()
@@ -947,6 +1046,7 @@ def main() -> None:
     trigger_seconds = int(os.environ.get("ASKLAKE_CONTINUOUS_TRIGGER_SECONDS", "30"))
 
     spark = SparkSession.builder.appName(f"asklake-kafka-continuous-{JOB_ID}").getOrCreate()
+    SPARK_SESSION = spark
     configure_s3a(spark)
     ensure_checkpoint_contract(spark, checkpoint_path, output_path)
     recovered = recover_published_state(spark, output_path)
@@ -985,13 +1085,22 @@ def main() -> None:
                 checkpoint_path=checkpoint_path,
             )
         LAST_BATCH_EVIDENCE = {**latest, "status": "success", "lastError": None, "dagSteps": latest_steps}
-    source = (spark.readStream.format("kafka")
+    source_builder = (spark.readStream.format("kafka")
         .option("kafka.bootstrap.servers", os.environ["ASKLAKE_CONTINUOUS_BROKER"])
         .option("subscribe", os.environ["ASKLAKE_CONTINUOUS_TOPIC"])
         .option("startingOffsets", os.environ.get("ASKLAKE_CONTINUOUS_OFFSET_POLICY", "earliest"))
         .option("maxOffsetsPerTrigger", os.environ.get("ASKLAKE_CONTINUOUS_MAX_OFFSETS", "10000"))
-        .option("kafka.group.id", os.environ["ASKLAKE_CONTINUOUS_CONSUMER_GROUP_ID"])
-        .load())
+        .option("kafka.group.id", os.environ["ASKLAKE_CONTINUOUS_CONSUMER_GROUP_ID"]))
+    kafka_security_options = {
+        "kafka.security.protocol": os.environ.get("ASKLAKE_CONTINUOUS_KAFKA_SECURITY_PROTOCOL"),
+        "kafka.sasl.mechanism": os.environ.get("ASKLAKE_CONTINUOUS_KAFKA_SASL_MECHANISM"),
+        "kafka.sasl.jaas.config": os.environ.get("ASKLAKE_CONTINUOUS_KAFKA_SASL_JAAS_CONFIG"),
+        "kafka.sasl.client.callback.handler.class": os.environ.get("ASKLAKE_CONTINUOUS_KAFKA_SASL_CALLBACK_HANDLER_CLASS"),
+    }
+    for option_name, option_value in kafka_security_options.items():
+        if option_value:
+            source_builder = source_builder.option(option_name, option_value)
+    source = source_builder.load()
     parsed = source.select(
         col("topic"), col("partition"), col("offset"), col("timestamp").alias("kafka_timestamp"),
         col("value").cast("string").alias("raw_payload"),
@@ -1249,9 +1358,9 @@ def main() -> None:
             "stored_count": stored_count,
         })
         if os.environ.get("ASKLAKE_CONTINUOUS_FAIL_AFTER_DATA_WRITE_ONCE", "").lower() == "true":
-            fault_marker = REPORT_FILE.with_suffix(".publish-fault-applied")
-            if not fault_marker.exists():
-                fault_marker.write_text(now(), encoding="utf-8")
+            fault_marker = runtime_location_with_suffix(REPORT_LOCATION, ".publish-fault-applied")
+            if not runtime_text_exists(fault_marker):
+                write_runtime_text(fault_marker, now())
                 raise RuntimeError("Injected failure after data write and before manifest publication.")
         published_at = now()
         stage_durations["manifestDurationMs"] = 0
@@ -1344,5 +1453,8 @@ if __name__ == "__main__":
     except Exception as exc:  # noqa: BLE001 - report worker failures to the control plane.
         fail_current_batch(exc)
         COUNTERS["failedCount"] += 1
-        report("failed", error=str(exc)[:2000])
+        try:
+            report("failed", error=str(exc)[:2000])
+        except Exception:  # noqa: BLE001 - preserve the original worker failure.
+            print(json.dumps({"status": "failed", "lastError": str(exc)[:2000]}), flush=True)
         raise

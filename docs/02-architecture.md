@@ -133,9 +133,9 @@ Airflow task는 Docker socket이나 object storage credential을 직접 받지 �
 Spark 실행 환경 선택의 source of truth는 `backend/src/sparkRuntime.mjs`다. Runtime은 `docker`, `spark-rest`, `emr-serverless` canonical ID, `batch`·`sourceInspect`·`continuous`·`maintenance` capability, remote 여부, backend Docker socket 필요 여부를 함께 정의한다. 배치 실행, Parquet source inspection, Kafka Continuous lifecycle, replay/compaction maintenance는 각자 실행 구현을 보유하되 최상위 선택과 operation dispatch는 같은 Runtime 계약을 사용한다.
 
 - 로컬 batch/source inspection은 설정이 없으면 기존처럼 `docker`가 기본이다. Kafka Continuous와 maintenance는 실수로 장기 container를 만드는 것을 막기 위해 `ASKLAKE_SPARK_RUNTIME=docker`를 명시해야 한다.
-- production Compose 기본값은 `ASKLAKE_SPARK_RUNTIME=spark-rest`다. 일반 Batch를 EMR Serverless로 전환한 AWS 배포만 `emr-serverless`를 선택한다. `APP_ENV=production`에서 local Docker Runtime은 작업 제출 전에 configuration error로 차단한다.
+- production Compose 기본값은 `ASKLAKE_SPARK_RUNTIME=spark-rest`다. 일반 Batch 또는 Amazon MSK Continuous를 EMR Serverless로 전환한 AWS 배포만 `emr-serverless`를 선택한다. `APP_ENV=production`에서 local Docker Runtime은 작업 제출 전에 configuration error로 차단한다.
 - `ASKLAKE_SPARK_RUNNER=docker|rest`는 기존 환경을 위한 호환 alias다. canonical 값과 legacy 값이 의미상 다르면 fail-fast하며 다른 Runtime으로 fallback하지 않는다.
-- `emr-serverless`는 이번 단계에서 `batch` capability만 제공한다. Kafka Continuous, maintenance, Parquet source inspection은 지원하지 않으며 다른 Runtime으로 묵시적 fallback하지 않는다.
+- `emr-serverless`는 `batch`와 `continuous` capability를 제공한다. `continuous`는 MSK IAM과 AWS S3 layout만 허용한다. maintenance와 Parquet source inspection은 아직 지원하지 않으며 다른 Runtime으로 묵시적 fallback하지 않는다.
 
 ### EMR Serverless Batch control plane
 
@@ -151,11 +151,22 @@ EMR Batch는 `FastAPI -> Airflow -> Node bridge -> EMR Serverless -> S3 Parquet/
 
 Kafka 연결 설정의 source of truth는 `backend/src/kafkaRuntime.mjs`다. 기본 `redpanda` Runtime은 기존 `ASKLAKE_KAFKA_BROKER`와 무인증 plaintext 연결을 유지한다. `ASKLAKE_KAFKA_RUNTIME=msk`는 `ASKLAKE_MSK_ENABLED=true`, IAM bootstrap broker, AWS region을 모두 요구하고 MSK Serverless의 IAM SASL/OAUTHBEARER + TLS만 허용한다. Node client는 AWS 공식 signer와 default credential chain을 사용하며 access key, secret, session token을 별도 Kafka 설정이나 로그에 저장하지 않는다.
 
-- Phase 4의 공통 client factory는 Node Source test/schema sampling, Kafka Snapshot ingest, replay producer, bounded MSK probe에 적용한다. Spark Structured Streaming의 MSK IAM connector와 EMR Continuous 실행은 Phase 5 범위이므로 현재 `emr-serverless`의 Batch-only capability는 바뀌지 않는다.
+- Phase 4의 공통 client factory는 Node Source test/schema sampling, Kafka Snapshot ingest, replay producer, bounded MSK probe에 적용한다. Phase 5는 Spark Kafka source에 `SASL_SSL`/`AWS_MSK_IAM` 옵션과 IAM auth library를 주입하고 EMR Serverless Continuous adapter를 연결한다. Node는 OAUTHBEARER signer를, JVM Spark는 execution role의 default credential chain을 사용하는 AWS 공식 IAM 방식을 각각 사용한다.
 - MSK topic은 기본 `asklake.<environment>.*` namespace를 사용한다. 기본 정책은 최소 3 partitions와 `retention.ms=604800000`이며 배포 환경 변수로 기대값을 명시할 수 있다. 메시지 건수만 보고 partition을 자동 증가시키지 않고, consumer 병렬성·key ordering·평균 record 크기·broker 처리량을 검토한 변경 승인으로 분리한다. partition 감소와 기존 topic 자동 삭제/재생성은 지원하지 않는다.
 - `npm run kafka:msk-probe`는 topic metadata/config를 먼저 검사한 뒤 고유 correlation event를 produce하고 새 bounded consumer group이 같은 event를 제한 시간 안에 읽는지 확인한다. `--create-topic`은 topic이 없을 때만 명시적으로 생성하며 기존 topic의 partition이나 retention을 자동 수정하지 않는다.
 - probe와 공통 Runtime은 authentication/authorization, connection timeout, topic 없음, topic policy mismatch를 서로 다른 code로 정규화한다. 오류 응답과 probe 로그에는 bootstrap broker 원문, provider stack, credential 값을 포함하지 않는다.
 - 실제 MSK cluster, VPC/subnet/security group과 EMR role의 network/IAM 권한은 배포 인프라가 소유한다. repo 기본 검증은 fake client 계약이며 실제 roundtrip은 MSK에 접근 가능한 staging VPC에서 opt in으로 실행한다. local/Compose Redpanda는 rollback과 회귀 검증 경로로 계속 유지한다.
+
+### EMR Serverless Continuous control plane
+
+AWS Continuous 경로는 `FastAPI command -> Node bridge -> EMR Serverless STREAMING Job Run -> MSK -> S3A output/checkpoint/report -> FastAPI Catalog reconciliation` 순서다. `ASKLAKE_SPARK_RUNTIME=emr-serverless`, `ASKLAKE_KAFKA_RUNTIME=msk`, 두 feature flag를 모두 명시해야 하며 Redpanda broker를 EMR로 묵시적으로 전달하지 않는다.
+
+- Start 전 로컬 durable state에 worker attempt, idempotent client token, application, manifest/report URI, checkpoint/output identity를 원자적으로 기록한다. backend가 제출 도중 또는 실행 중 재시작해도 같은 token/Job Run을 재연결하며 active state에서는 두 번째 `StartJobRun`을 보내지 않는다.
+- 제출은 `mode=STREAMING`, `retryPolicy.maxFailedAttemptsPerHour=1..10`을 사용하고 `executionTimeoutMinutes`를 보내지 않는다. EMR 7.1.0 이상의 streaming resiliency가 같은 Job Run attempt와 S3 checkpoint에서 복구하며 로그는 attempt별 S3 prefix를 참조한다.
+- Job manifest는 S3에 저장하고 worker 환경에는 static AWS key가 아니라 MSK IAM SASL 옵션과 S3 경로만 전달한다. Python entry point와 세 helper module은 `npm run emr:upload-continuous-artifact`로 업로드한다.
+- worker heartbeat/batch/lag/report와 Catalog ack는 deterministic S3 object로 왕복한다. API는 기존 Docker/Spark REST report shape로 정규화하고 `runtimeProvider`, application/Job Run ID, attempt, raw runtime state, log reference, last successful checkpoint를 추가한다.
+- pause/stop은 먼저 의도를 durable state에 기록한 뒤 `CancelJobRun(shutdownGracePeriodInSeconds)`을 호출한다. Spark graceful shutdown과 S3 checkpoint가 경계이며 resume은 같은 checkpoint로 새 Job Run/worker attempt를 만든다. `terminate`는 stale worker 정리를 위한 1초 forced cancel 경로다.
+- 같은 broker/topic/group 충돌은 기존 DB row lock과 conflict query가 제출 전에 막는다. EMR 내부 retry는 같은 Job Run이므로 새 consumer identity를 만들지 않는다.
 
 CSV source와 source inspect는 `quote="`와 `escape="`를 명시해 RFC 4180의 quoted comma와 doubled quote를 같은 field로 해석한다. 예를 들어 `"안녕, 나는 ""해건"""`은 `안녕, 나는 "해건"`이라는 리뷰 하나로 유지된다.
 
