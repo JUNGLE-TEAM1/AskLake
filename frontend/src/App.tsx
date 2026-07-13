@@ -1,13 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import type React from "react";
-import { BookOpen, CircleHelp, Database, History, LogOut, Settings, ShieldCheck, Workflow } from "lucide-react";
+import { CircleHelp } from "lucide-react";
 import { useLocation, useNavigate } from "react-router";
-import asklakeLogo from "./assets/asklake-logo.png";
 import { steps, wizardFlows } from "./data/appShellData";
 import { Sidebar } from "./components/layout/Sidebar";
 import { Topbar } from "./components/layout/Topbar";
 import { Stepper } from "./components/layout/Stepper";
-import { Footer } from "./components/layout/Footer";
 import { CatalogDetailPage, CatalogPage } from "./pages/catalog/CatalogPage";
 import { SqlAnalysisPage } from "./pages/sql/SqlAnalysisPage";
 import { DashboardPage } from "./pages/dashboard/DashboardPage";
@@ -20,12 +17,9 @@ import { PermissionPage, RecordParsingPage, ReviewPage, RuleApplicationPage, Sch
 import { useAuditLogs } from "./hooks/useAuditLogs";
 import { useAskLakeData } from "./hooks/useAskLakeData";
 import { fetchAuthSession, logout as logoutSession } from "./services/authApi";
-import { Avatar, AvatarFallback } from "./components/ui/avatar";
 import { Alert, AlertDescription, AlertTitle } from "./components/ui/alert";
-import { IconButton } from "./components/ui/icon-button";
 import { Skeleton } from "./components/ui/skeleton";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./components/ui/tooltip";
-import type { AuditEntry, CatalogDataset, CurrentUserResponse, DashboardEntry, DraftPipeline, FlowId, JobRowData, NavId, NavItem, ScheduleFlowId } from "./types";
+import type { CatalogDataset, CurrentUserResponse, DashboardEntry, DraftPipeline, FlowId, JobRowData, NavId, NavItem, ScheduleFlowId } from "./types";
 import type { DashboardRuntimeMode } from "./types";
 
 const scheduleFlows: ScheduleFlowId[] = ["repeat", "manual"];
@@ -221,12 +215,13 @@ export function App() {
   const [activeFlow, setActiveFlow] = useState<FlowId>(initialRoute.flow);
   const [currentUser, setCurrentUser] = useState<CurrentUserResponse | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
+  const [logoutPending, setLogoutPending] = useState(false);
   const [lastScheduleFlow, setLastScheduleFlow] = useState<ScheduleFlowId>(() => isScheduleFlow(initialRoute.flow) ? initialRoute.flow : defaultScheduleFlow);
   const [dashboardEntry, setDashboardEntry] = useState<DashboardEntry>(() => (
     initialRoute.dashboardRoute ? dashboardEntryFromRoute(initialRoute.dashboardRoute, 0) : { source: "sidebar", view: "list", version: 0 }
   ));
   const [sqlInitialDatasetId, setSqlInitialDatasetId] = useState<string | null>(null);
-  const { auditLogs, auditOpen, auditSignal, setAuditOpen, showToast, toast, writeAuditLog } = useAuditLogs();
+  const { auditSignal, showToast, toast, writeAuditLog } = useAuditLogs();
   const changeFlowFromData = (flow: FlowId) => {
     const nextFlow = flow === "rules" ? lastScheduleFlow : flow;
     const nextScheduleFlow = isScheduleFlow(nextFlow) ? nextFlow : lastScheduleFlow;
@@ -249,7 +244,6 @@ export function App() {
     datasets,
     draftPipeline,
     filterJobs,
-    refreshData,
     handleJobCommand,
     jobExecutionEvidence,
     jobListFacets,
@@ -466,25 +460,25 @@ export function App() {
     moveToFlow("profile");
   };
 
+  const handleLogout = async () => {
+    if (logoutPending) return;
+    setLogoutPending(true);
+    try {
+      await logoutSession();
+      setCurrentUser(null);
+      navigate("/login", { replace: true });
+      setActiveFlow("login");
+    } catch {
+      showToast("로그아웃에 실패했습니다. 잠시 후 다시 시도해 주세요.", "info");
+    } finally {
+      setLogoutPending(false);
+    }
+  };
+
   const handleAuthenticated = (user: CurrentUserResponse) => {
     setCurrentUser(user);
     showToast(`${user.profile.displayName || user.displayName} 계정으로 로그인했습니다.`, "success");
     moveToFlow("jobs");
-  };
-
-  const handleLogout = () => {
-    void logoutSession()
-      .then(() => {
-        setCurrentUser(null);
-        showToast("로그아웃되었습니다.", "info");
-        moveToFlow("login");
-      })
-      .catch(() => showToast("로그아웃 요청을 처리하지 못했습니다.", "info"));
-  };
-
-  const refreshWorkspaceData = async () => {
-    const refreshed = await refreshData();
-    writeAuditLog("etl.job.status_refreshed", "/api/etl/jobs", "jobs", refreshed ? "success" : "failed");
   };
 
   const openDatasetInSqlWithSelection = (dataset: CatalogDataset) => {
@@ -527,44 +521,20 @@ export function App() {
     return <AuthPage onAction={writeAuditLog} onAuthenticated={handleAuthenticated} />;
   }
 
-  if (activeFlow === "rules") {
-    return (
-      <RuleBuilderShell
-        auditOpen={auditOpen}
-        auditLogs={auditLogs}
-        auditCount={auditLogs.length}
-        onAccount={openProfilePage}
-        onAuditToggle={() => setAuditOpen((open) => !open)}
-        onDocs={() => {
-          writeAuditLog("etl.builder.docs_opened", "/docs/etl-builder", "rule-application", "success", { targetType: "ui" });
-          showToast("ETL Builder 도움말을 확인할 수 있도록 기록했습니다.", "info");
-        }}
-        onLogout={handleLogout}
-        onBrandClick={navigateIngestLanding}
-        onNavigate={(flow, label) => {
-          writeAuditLog("ui.builder_menu.clicked", `/app/${flow}`, label);
-          moveToFlow(flow);
-        }}
-        onRefresh={() => writeAuditLog("etl.job.status_refreshed", "/api/etl/jobs/customer_review_gold", "customer_review_gold")}
-      >
-        {toast && <div className={`app-toast ${toast.tone}`}>{toast.message}</div>}
-        {apiPending && <div className="app-api-pending">API 요청 처리 중...</div>}
-        <RuleApplicationPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("schema")} onNext={() => moveToFlow(continuousKafkaDraft ? "permission" : lastScheduleFlow)} onSave={() => saveDraft("rules")} onAction={writeAuditLog} onNotify={showToast} />
-      </RuleBuilderShell>
-    );
-  }
-
   return (
     <div className="app-shell" data-last-action={auditSignal}>
       <Sidebar
         activeNavId={activeNavId}
         canAccessAdmin={canAccessAdmin}
+        currentUser={currentUser}
+        logoutPending={logoutPending}
         onAccount={openProfilePage}
         onBrandClick={navigateIngestLanding}
+        onLogout={handleLogout}
         onNavigate={navigateSidebar}
       />
       <main className={activeFlow === "schema" ? "main-shell schema-shell" : "main-shell"}>
-        <Topbar auditLogs={auditLogs} auditOpen={auditOpen} currentUser={currentUser} onAccount={openProfilePage} onAuditToggle={() => setAuditOpen((open) => !open)} onLogin={() => moveToFlow("login")} onLogout={handleLogout} onRefresh={() => void refreshWorkspaceData()} />
+        <Topbar />
         {toast && <div className={`app-toast ${toast.tone}`}>{toast.message}</div>}
         {(apiPending || (dataLoading && (hasShellRows || isIngestShellFlow))) && <div className="app-api-pending">{pendingMessage}</div>}
         {wizardFlows.includes(activeFlow) && <Stepper activeIndex={wizardActiveIndex} steps={wizardStepLabels} onStepSelect={navigateWizardStep} />}
@@ -598,6 +568,7 @@ export function App() {
           {activeFlow === "source" && <SourceConnectionPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("jobs")} onNext={() => moveToFlow(requiresRecordParsing ? "recordParsing" : "schema")} onSave={() => saveDraft("source")} onAction={writeAuditLog} onNotify={showToast} />}
           {activeFlow === "recordParsing" && <RecordParsingPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("source")} onNext={() => moveToFlow("schema")} onAction={writeAuditLog} onNotify={showToast} />}
           {activeFlow === "schema" && <SchemaInferencePage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow(requiresRecordParsing ? "recordParsing" : "source")} onNext={() => moveToFlow(continuousKafkaDraft ? "permission" : lastScheduleFlow)} onSave={() => saveDraft("schema")} onAction={writeAuditLog} onNotify={showToast} />}
+          {activeFlow === "rules" && <RuleApplicationPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("schema")} onNext={() => moveToFlow(continuousKafkaDraft ? "permission" : lastScheduleFlow)} onSave={() => saveDraft("rules")} onAction={writeAuditLog} onNotify={showToast} />}
           {isScheduleFlow(activeFlow) && <SchedulePage draftSchedule={draftPipeline.schedule} mode={activeFlow} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("schema")} onModeChange={moveToFlow} onNext={() => moveToFlow("permission")} onSave={() => saveDraft(activeFlow)} />}
           {activeFlow === "target" && <TargetPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("permission")} onNext={() => moveToFlow("review")} onSave={() => saveDraft("target")} />}
           {activeFlow === "permission" && <PermissionPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow(continuousKafkaDraft ? "schema" : lastScheduleFlow)} onNext={() => moveToFlow("target")} onSave={() => saveDraft("permission")} />}
@@ -612,156 +583,6 @@ export function App() {
             </>
           )}
         </section>
-        <Footer />
-      </main>
-    </div>
-  );
-}
-
-function RuleBuilderShell({
-  auditCount,
-  auditLogs,
-  auditOpen,
-  children,
-  onAccount,
-  onAuditToggle,
-  onBrandClick,
-  onDocs,
-  onLogout,
-  onNavigate,
-  onRefresh,
-}: {
-  auditCount: number;
-  auditLogs: AuditEntry[];
-  auditOpen: boolean;
-  children: React.ReactNode;
-  onAccount: () => void;
-  onAuditToggle: () => void;
-  onBrandClick: () => void;
-  onDocs: () => void;
-  onLogout: () => void;
-  onNavigate: (flow: FlowId, label: string) => void;
-  onRefresh: () => void;
-}) {
-  const workspaceItems = [
-    { icon: Workflow, label: "파이프라인", flow: "jobs" as FlowId },
-    { icon: Database, label: "데이터셋", flow: "catalog" as FlowId },
-    { icon: History, label: "실행 이력", flow: "jobRuns" as FlowId },
-  ];
-  const managementItems = [
-    { icon: ShieldCheck, label: "거버넌스", flow: "permission" as FlowId },
-    { icon: Settings, label: "설정", flow: "admin" as FlowId },
-  ];
-  const stepItems = [
-    ["1", "소스 연결"],
-    ["2", "스키마 추론"],
-    ["3", "규칙 적용"],
-  ];
-
-  return (
-    <div className="etl-builder-shell" data-audit-open={auditOpen}>
-      <header className="etl-builder-header">
-        <button className="etl-builder-brand" type="button" aria-label="수집/처리 랜딩 페이지로 이동" onClick={onBrandClick}>
-          <img src={asklakeLogo} alt="AskLake" />
-        </button>
-        <nav className="etl-builder-stepper" aria-label="데이터셋 생성 단계">
-          {stepItems.map(([index, label], itemIndex) => (
-            <span className={index === "3" ? "etl-builder-step active" : "etl-builder-step"} key={index}>
-              <span>{index}</span>
-              {label}
-              {itemIndex < stepItems.length - 1 && <i aria-hidden="true">›</i>}
-            </span>
-          ))}
-        </nav>
-        <TooltipProvider delayDuration={300}>
-        <div className="etl-builder-header-actions">
-          <div className="audit-menu">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <IconButton className={auditOpen ? "icon-button active" : "icon-button"} label="최근 API 호출" size="sm" type="button" onClick={onAuditToggle}>
-                  <CircleHelp />
-                  {auditCount > 0 && <span className="audit-dot" />}
-                </IconButton>
-              </TooltipTrigger>
-              <TooltipContent>최근 API 호출</TooltipContent>
-            </Tooltip>
-            {auditOpen && (
-              <section className="audit-popover">
-                <div className="audit-popover-header">
-                  <strong>최근 API 호출</strong>
-                  <span>{auditLogs.length}건</span>
-                </div>
-                <div className="audit-log-list">
-                  {auditLogs.slice(0, 8).map((log) => (
-                    <article className="audit-log-item" key={log.request_id}>
-                      <div>
-                        <strong>{log.action}</strong>
-                        <span>{log.api_path}</span>
-                      </div>
-                      <em>{log.result}</em>
-                    </article>
-                  ))}
-                  {auditLogs.length === 0 && <p>아직 기록된 호출이 없습니다.</p>}
-                </div>
-              </section>
-            )}
-          </div>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <IconButton className="icon-button" label="문서" size="sm" type="button" onClick={onDocs}><BookOpen /></IconButton>
-            </TooltipTrigger>
-            <TooltipContent>문서</TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <IconButton className="icon-button" label="새로고침" size="sm" type="button" onClick={onRefresh}><History /></IconButton>
-            </TooltipTrigger>
-            <TooltipContent>새로고침</TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <IconButton className="p-0" label="계정" size="sm" type="button" onClick={onAccount}>
-                <Avatar><AvatarFallback>AL</AvatarFallback></Avatar>
-              </IconButton>
-            </TooltipTrigger>
-            <TooltipContent>계정</TooltipContent>
-          </Tooltip>
-        </div>
-        </TooltipProvider>
-      </header>
-      <aside className="etl-builder-sidebar">
-        <div>
-          <p className="etl-builder-nav-heading">작업 공간</p>
-          <nav className="etl-builder-nav">
-            {workspaceItems.map(({ flow, icon: Icon, label }) => (
-              <button key={label} type="button" onClick={() => onNavigate(flow, label)}>
-                <Icon size={17} />
-                {label}
-              </button>
-            ))}
-          </nav>
-          <p className="etl-builder-nav-heading">관리</p>
-          <nav className="etl-builder-nav">
-            {managementItems.map(({ flow, icon: Icon, label }) => (
-              <button key={label} type="button" onClick={() => onNavigate(flow, label)}>
-                <Icon size={17} />
-                {label}
-              </button>
-            ))}
-          </nav>
-        </div>
-        <div className="etl-builder-sidebar-foot">
-          <button type="button" onClick={onLogout}>
-            <LogOut size={16} />
-            로그아웃
-          </button>
-          <span><i /> 시스템 정상</span>
-          <span>버전 2.4.0-stable</span>
-        </div>
-      </aside>
-      <main className="etl-builder-main">
-        {children}
-        <footer className="etl-builder-footer">© 2024 AskLake ETL Builder. All rights reserved.</footer>
       </main>
     </div>
   );
