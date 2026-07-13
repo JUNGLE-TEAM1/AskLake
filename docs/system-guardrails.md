@@ -28,6 +28,7 @@
 | --- | --- | --- | --- | --- | --- |
 | Frontend UI checks before merge | GitHub Actions workflow running `cd frontend && npm run verify:ui-regressions && npm run build` | `enabled` | block merge when required check is enabled and the workflow fails | maintainer | PR에서 SQL/Catalog/Dashboard UI regression contract와 Vite build를 함께 확인 |
 | Prod compose config check | `docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml config --quiet` and `backend/scripts/verify-production-spark-contract.mjs` | `manual` | block operator deploy when Compose, Spark REST, UID 185 mounts, or Docker-socket contract is invalid | maintainer | CI required check 전환 전까지 PR과 배포 직전에 수동 실행 |
+| Kafka/Spark performance evidence | `npm run verify:kafka-continuous-baseline:config` plus opt-in baseline JSON/Markdown | `manual` | reject unsupported TPS/latency/backlog claims when revision, resources, partition, message size, tuning, integrity, and cost context are absent | data platform maintainer | 실제 baseline은 topic/Job/fault를 변경하므로 전용 prod-like 환경에서만 실행 |
 | Backend deploy image build | CI/deploy workflow candidate running `docker build -t asklake-backend-deploy-check:local backend` | `planned` | catch Python/package incompatibility before EC2 compose rebuild | maintainer | FastAPI backend uses `python:3.13-slim` and `backend/requirements.txt` |
 | Secret scanning / push protection | GitHub repository setting | `unknown` | block or warn on secret push | repo admin | repository admin 확인 필요 |
 | Protected integration branches | GitHub repository ruleset on `main`, `dev`, and `pair` | `enabled` | block direct push or force push; require changes through PR | repo admin | ruleset: `Push 금지` |
@@ -56,6 +57,7 @@
 | API contract drift | endpoint, response shape, env var가 바뀌면 docs를 같이 고친다. |
 | Frontend build risk | UI/API adapter 변경 후 `npm run verify:ui-regressions`와 `npm run build`를 실행한다. |
 | PR/Issue template completion | GitHub 기본 템플릿을 채워 scope, 검증, 영향도, 완료 기준을 남긴다. |
+| Kafka/Spark 성능 주장 | baseline 리포트 없이 초당 처리량, P95 latency, backlog 복구 시간을 제품 보장으로 표현하지 않는다. |
 
 ### What Is Deferred
 
@@ -108,6 +110,8 @@ Scenario audit은 새 hard rule을 추가하는 절차가 아니다.
 | Deploy dependency verification | manual | deploy Compose/env, health JSON readiness, Spark REST create/status contract, backend/frontend/Spark/Trino images, Airflow DAG import | `tests/deploy/deploy-scripts-regression.sh`, `backend/scripts/verify-production-spark-contract.mjs`, and `scripts/verify-deploy-dependencies.sh` pass before deploy |
 | Trino contract verification | matching backend/frontend paths | Query Run, registration, result storage, collector fencing, actor reservation, timeline state | `verify:trino-query-foundation`, `verify:query-engine-registration`, `verify:trino-result-storage`, `verify:trino-collector-resilience`, `verify:trino-submission-guard`, `test:trino-timeline` pass |
 | Trino production readiness | deploy-time when `TRINO_ENABLED=true` | TLS/auth, read-only query identity, materializer CTAS/describe/drop, AWS S3 Warehouse/Query Result bucket round trip through EC2 instance profile | `verify:trino-production-readiness` passes after Compose health |
+| Kafka/Spark baseline config | yes for Phase 0 changes | scenario validation, backlog/fault conflict, report schema, reconciliation hard gate | `npm run verify:kafka-continuous-baseline:config` passes without mutating Docker services |
+| Kafka/Spark baseline run | no, manual opt-in | dedicated prod-like Kafka/Spark/object-storage environment | JSON/Markdown evidence records revision, resources, tuning, integrity, lag, throughput, batch duration, recovery and cost context |
 | AWS S3 startup readiness | every production Compose startup | Raw bucket list, Output bucket put/head/delete with EC2 instance role | `aws-s3-readiness` completes before backend starts; bucket auto-create and static AWS keys are forbidden |
 | AWS S3 output identity | frontend build and every Spark run/Catalog publish | Target UI bucket, Spark writer bucket, Catalog storage location | production frontend receives `ASKLAKE_SPARK_OUTPUT_BUCKET`; only legacy `asklake-output` roots are normalized and explicit custom buckets remain unchanged |
 | PR event checks | no | future GitHub Actions | changed code satisfies required checks |

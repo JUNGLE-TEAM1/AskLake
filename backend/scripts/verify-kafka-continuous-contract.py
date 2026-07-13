@@ -211,6 +211,7 @@ def main() -> None:
     original_worker = etl_service.run_kafka_continuous_worker
     original_status = etl_service.continuous_worker_status
     original_dataset_get = etl_repository.get_dataset_by_id
+    original_dataset_get_for_update = etl_repository.get_dataset_by_id_for_update
     original_dataset_save = etl_repository.save_dataset
     original_maintenance_list = etl_repository.list_kafka_continuous_maintenance_run_models
     original_maintenance_save = etl_repository.save_kafka_continuous_maintenance_run
@@ -412,6 +413,7 @@ def main() -> None:
         captured_dataset = {}
         dataset_save_count = {"value": 0}
         etl_repository.get_dataset_by_id = lambda _db, dataset_id: captured_dataset.get(dataset_id)
+        etl_repository.get_dataset_by_id_for_update = lambda _db, dataset_id: captured_dataset.get(dataset_id)
 
         def capture_dataset(_db, dataset):
             captured_dataset[dataset.id] = dataset
@@ -583,6 +585,7 @@ def main() -> None:
         etl_service.run_kafka_continuous_worker = original_worker
         etl_service.continuous_worker_status = original_status
         etl_repository.get_dataset_by_id = original_dataset_get
+        etl_repository.get_dataset_by_id_for_update = original_dataset_get_for_update
         etl_repository.save_dataset = original_dataset_save
         etl_repository.list_kafka_continuous_maintenance_run_models = original_maintenance_list
         etl_repository.save_kafka_continuous_maintenance_run = original_maintenance_save

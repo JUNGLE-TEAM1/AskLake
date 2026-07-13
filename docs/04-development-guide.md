@@ -446,6 +446,24 @@ ASKLAKE_CONTINUOUS_SOAK_BATCH_SIZE=500 \
 npm run verify:kafka-continuous-soak
 ```
 
+Issue #694의 대용량 처리 Phase 0은 기존 soak를 직접 실행하기 전에 시나리오와 리포트 계약을 검증한다. 설정 검증은 Docker/Kafka/Job을 변경하지 않는다.
+
+```bash
+cd backend
+npm run verify:kafka-continuous-baseline:config
+```
+
+실제 기준선은 전용 prod-like 환경에서만 opt-in으로 실행한다. `steady`, `burst`, `backlog`, `worker-recovery` 중 하나를 고르며 결과는 기본 `backend/tmp/kafka-continuous-baseline`에 JSON과 Markdown으로 남는다. `backlog`는 worker 시작 전에 메시지를 생산하며, 모든 결과는 count/rate/producer batch/trigger/max offsets, 정합성, final lag, batch duration, recovery와 best-effort Docker resource sample을 포함한다.
+
+```bash
+cd backend
+ASKLAKE_RUN_KAFKA_CONTINUOUS_BASELINE=true \
+ASKLAKE_CONTINUOUS_BASELINE_SCENARIO=steady \
+npm run verify:kafka-continuous-baseline
+```
+
+운영 TPS 또는 latency 목표는 이 리포트 하나만으로 선언하지 않는다. 같은 revision과 자원에서 반복 측정하고 partition/message byte/cost 조건을 함께 고정한다. 상세 계약과 Phase 1 진입 조건은 [Kafka·Spark Capacity Phase 0](kafka-spark-capacity-phase0.md)을 따른다.
+
 Job 상세의 Continuous Runtime은 partition lag, 처리량, schema drift, Rule fingerprint/경고/격리/실패 카운터와 bounded/redacted worker log를 표시한다. Quarantine inspection/replay와 compaction은 worker를 일시정지하거나 중지한 상태에서 실행한다. Replay는 Lake의 격리 Parquet를 읽어 `partition:offset` anti-join 후 현재 schema policy와 canonical Rule을 다시 적용하며, 여전히 실패하는 Rule 행은 target으로 우회하지 않는다. Compaction은 `_compactions/run_id=*`에 staged output을 만들며 V1에서는 원본 batch를 삭제하거나 active Catalog path를 교체하지 않는다.
 
 수동 UI 확인에서는 Kafka Source 연결 화면에서 `Continuous`를 선택해 target format이 Parquet로 유지되는지 확인한다. 생성 후 수집/처리 목록과 상세에서 `스트림 시작`, `일시정지`, `체크포인트 재개`, `스트림 중지`가 Snapshot의 run/retry와 섞이지 않는지, runtime counter/heartbeat/checkpoint가 polling으로 갱신되는지 확인한다.
@@ -628,6 +646,7 @@ Day 4에는 신규 기능을 멈추고 Source -> ETL -> Catalog -> Lineage -> SQ
 - [ ] architecture, routing, state ownership 변경이 있으면 `docs/02-architecture.md`가 최신 상태다.
 - [ ] 배포 파일이나 env key가 바뀌면 `docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml config`를 실행했다.
 - [ ] repository/CI/platform guardrail 변경이 있으면 `docs/system-guardrails.md`가 최신 상태다.
+- [ ] Kafka/Spark 성능 주장이 있으면 재현 가능한 baseline JSON/Markdown, revision, 자원, partition, message size, 비용 조건을 함께 남겼다.
 
 ## 10) 테스트 전략
 

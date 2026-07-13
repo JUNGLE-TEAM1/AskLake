@@ -157,6 +157,14 @@ Continuous 실행 이력은 Snapshot `ETLRun`과 분리한다. 한 번의 `start
 
 운영 보강 경로는 streaming hot path와 유한 maintenance task를 분리한다. Backend control-plane은 worker liveness, partition lag, bounded log 조회, schema drift metadata를 동기화한다. Quarantine replay와 compaction은 run ID를 가진 유한 Spark batch로 실행하며 동일 `batch_id` partition layout과 완료 경로만 읽는다. 기본 replay는 현재 schema evolution policy를 다시 적용하고, unknown field 승인은 `manage` 권한과 감사 로그가 필요한 명시적 예외다. Maintenance run은 lease 만료 시 실패 처리되고 고아 Docker container를 정리한다. 향후 Airflow 예약은 이 maintenance task만 감싸며 Continuous worker 자체를 장기 Airflow DAG task로 실행하지 않는다.
 
+### Kafka·Spark Capacity Phase 0
+
+Issue #694의 구조 결정은 로컬 Docker 경로를 제거하지 않고 실행 Runtime의 책임을 분리하는 것이다. 현재 `Redpanda -> Spark Standalone -> object storage` 경로는 기능 개발과 회귀 검증에 유지한다. 후속 운영 경로는 공통 Job 계약 아래 별도 Runtime으로 추가하며, AWS 후보는 `MSK -> EMR Serverless Spark -> S3`다. Kubernetes는 이번 확장에 포함하지 않는다.
+
+현재 prod-like Compose의 Redpanda는 1 broker/1 SMP/1 GiB, Spark worker는 기본 4 cores/10 GiB이고 Spark master는 기본 driver 최대 2개와 driver당 기본 2 cores 경계를 갖는다. 따라서 broker, partition, Spark 병렬성, `triggerIntervalSeconds`, `maxOffsetsPerTrigger`, storage 처리량을 분리하지 않고 단일 TPS 숫자로 성능을 보장할 수 없다. 여러 Continuous/Batch Job은 같은 유한 worker 경계에서 경쟁하므로 후속 Runtime은 workload별 자원 상한, 동시 실행 수, queue/reject admission 정책을 가져야 한다.
+
+Phase 0은 [Kafka·Spark Capacity Phase 0](kafka-spark-capacity-phase0.md)의 steady, burst, backlog, worker-recovery 측정 계약을 사용한다. 처리량·latency·backlog SLO는 실행 revision, 자원, partition, message size, micro-batch 설정과 정합성 evidence가 함께 있는 리포트로만 승인한다. 이 단계는 제품 API나 현재 checkpoint 계약을 변경하지 않는다.
+
 ### ETL Job 수정 계약
 
 Issue #460에서 Job 상세/목록의 수정은 `GET /api/etl/jobs/{jobId}` 결과를 `edit draft`로 hydrate해 Source 단계에 표시하고, `PATCH /api/etl/jobs/{jobId}`로 같은 Job ID에 저장한다. 수정 mode의 Kafka source identity는 읽기 전용이며, 수정 저장은 새 Job 생성을 호출하지 않는다.

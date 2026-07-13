@@ -233,6 +233,26 @@ npm run verify:kafka-continuous-soak
 
 게시 경계 fault 검증은 backend에 `ASKLAKE_CONTINUOUS_FAIL_AFTER_DATA_WRITE_ONCE=true`, E2E runner에 `ASKLAKE_CONTINUOUS_E2E_PUBLICATION_FAULT=true`를 설정한다. 첫 worker는 data `_SUCCESS` 뒤 manifest 전에 한 번 실패하고, harness가 resume한 뒤 같은 batch/offset을 중복 저장하지 않고 manifest와 Catalog를 복구해야 한다. 이 변수는 테스트 전용이며 운영에서는 반드시 `false`로 둔다.
 
+Issue #694 Phase 0 기준선은 위 soak에 재현 가능한 시나리오 설정과 파일 evidence를 추가한다. 먼저 설정 계약을 검증한다.
+
+```bash
+cd backend
+npm run verify:kafka-continuous-baseline:config
+```
+
+실제 실행은 전용 prod-like 환경에서만 수행한다.
+
+```bash
+cd backend
+ASKLAKE_RUN_KAFKA_CONTINUOUS_BASELINE=true \
+ASKLAKE_CONTINUOUS_BASELINE_SCENARIO=backlog \
+ASKLAKE_CONTINUOUS_BASELINE_COUNT=100000 \
+ASKLAKE_CONTINUOUS_BASELINE_MAX_OFFSETS_PER_TRIGGER=5000 \
+npm run verify:kafka-continuous-baseline
+```
+
+`steady`, `burst`, `backlog`, `worker-recovery` 기본 시나리오와 모든 env, 리포트 필드, 정합성 gate는 [Kafka·Spark Capacity Phase 0](kafka-spark-capacity-phase0.md)을 따른다. 결과는 기본 `backend/tmp/kafka-continuous-baseline/<run-id>.json|md`에 저장되며 credential이나 원본 민감 payload를 포함하지 않는다.
+
 ## 9. Frontend
 
 ```powershell
