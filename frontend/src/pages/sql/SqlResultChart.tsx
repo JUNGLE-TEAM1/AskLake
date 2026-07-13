@@ -34,12 +34,19 @@ export type SqlChartConfig = {
   type: SqlChartType;
 };
 
+function getSqlResultChartLabel(resultDraft: SqlResultDraft) {
+  if (resultDraft.rangeStart == null || resultDraft.rangeEnd == null) {
+    return `${resultDraft.datasetName} · SQL 결과`;
+  }
+  return `${resultDraft.datasetName} · 현재 결과 ${resultDraft.rangeStart.toLocaleString()}-${resultDraft.rangeEnd.toLocaleString()}행`;
+}
+
 export function createSqlResultChartSource(resultDraft: SqlResultDraft): SqlChartSource {
   return {
     dataset: sqlResultToDashboardOption(resultDraft),
     id: `sql-result:${resultDraft.runId}`,
     kind: "sql_result",
-    label: `${resultDraft.datasetName} · SQL 결과`,
+    label: getSqlResultChartLabel(resultDraft),
   };
 }
 

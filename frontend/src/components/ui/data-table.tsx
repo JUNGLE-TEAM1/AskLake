@@ -51,6 +51,17 @@ export type DataTablePaginationOptions = {
   showPageSize?: boolean;
 };
 
+export type DataTableRemotePagination = {
+  currentPage: number;
+  label?: string;
+  nextDisabled: boolean;
+  onNext: () => void;
+  onPrevious: () => void;
+  previousDisabled: boolean;
+  rangeLabel?: React.ReactNode;
+  totalPages: number | null;
+};
+
 export interface DataTableProps<TData, TValue>
   extends Omit<React.HTMLAttributes<HTMLDivElement>, "children"> {
   bodyRowClassName?: string;
@@ -68,6 +79,7 @@ export interface DataTableProps<TData, TValue>
   loadingRowCount?: number;
   onRowClick?: (row: Row<TData>) => void;
   pagination?: false | DataTablePaginationOptions;
+  remotePagination?: DataTableRemotePagination;
   renderRowActions?: (row: Row<TData>) => React.ReactNode;
   resetPaginationKey?: React.Key;
   rowActionsAlign?: DataTableColumnAlign;
@@ -140,6 +152,7 @@ export function DataTable<TData, TValue>({
   loadingRowCount = 4,
   onRowClick,
   pagination,
+  remotePagination,
   renderRowActions,
   resetPaginationKey,
   rowActionsAlign = "right",
@@ -336,23 +349,24 @@ export function DataTable<TData, TValue>({
         </Table>
       </div>
 
-      {paginationOptions && (
+      {(paginationOptions || remotePagination) && (
         <PaginationBar
-          aria-label={`${paginationOptions.label} 페이지`}
+          aria-label={`${remotePagination?.label ?? paginationOptions?.label ?? "table"} 페이지`}
           className="min-h-10"
-          currentPage={paginationState.pageIndex + 1}
-          nextDisabled={!table.getCanNextPage()}
-          onNext={() => table.nextPage()}
-          onPrevious={() => table.previousPage()}
-          previousDisabled={!table.getCanPreviousPage()}
-          rangeLabel={paginationOptions.showSummary ? (
+          currentPage={remotePagination?.totalPages == null ? undefined : remotePagination.currentPage}
+          nextDisabled={remotePagination?.nextDisabled ?? !table.getCanNextPage()}
+          onNext={remotePagination?.onNext ?? (() => table.nextPage())}
+          onPrevious={remotePagination?.onPrevious ?? (() => table.previousPage())}
+          pageLabel={remotePagination?.totalPages == null ? remotePagination?.currentPage : undefined}
+          previousDisabled={remotePagination?.previousDisabled ?? !table.getCanPreviousPage()}
+          rangeLabel={remotePagination?.rangeLabel ?? (paginationOptions?.showSummary ? (
             <span className="flex min-w-0 flex-wrap items-center gap-3">
               <span className="min-w-0">
                 {pageStart}-{pageEnd} / {totalRows} rows
               </span>
               <span className="text-slate-400" aria-hidden="true">·</span>
               <span className="whitespace-nowrap">{paginationState.pageIndex + 1} / {pageCount} pages</span>
-              {paginationOptions.showPageSize ? (
+              {paginationOptions?.showPageSize ? (
                 <span className="inline-flex items-center gap-2">
                   Rows
                   <NativeSelect
@@ -371,9 +385,9 @@ export function DataTable<TData, TValue>({
                 </span>
               ) : null}
             </span>
-          ) : undefined}
+          ) : undefined)}
           summaryClassName="flex min-w-0 flex-wrap items-center gap-3 text-xs font-semibold text-slate-500"
-          totalPages={pageCount}
+          totalPages={remotePagination ? remotePagination.totalPages ?? undefined : pageCount}
         />
       )}
     </div>

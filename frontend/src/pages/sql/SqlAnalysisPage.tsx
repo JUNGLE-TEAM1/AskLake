@@ -5,10 +5,8 @@ import {
   BarChart3,
   CheckCircle2,
   Clock3,
-  Download,
   History,
   Loader2,
-  Maximize2,
   PanelLeftClose,
   PanelLeftOpen,
   PlayCircle,
@@ -16,18 +14,10 @@ import {
   Search,
   Square,
   Table2,
-  Workflow,
 } from "lucide-react";
 import { ActionGroup } from "@/components/ui/action-group";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { DialogShell } from "@/components/ui/dialog-shell";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 import { FieldLabel, FieldTitle } from "@/components/ui/field";
@@ -39,7 +29,6 @@ import { Progress, ProgressLabel, ProgressValue } from "@/components/ui/progress
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { cn } from "@/lib/utils";
 import { apiConfig } from "../../services/apiClient";
 import { executeQueryPreview } from "../../services/mockApi";
@@ -60,10 +49,9 @@ import {
   SqlJobWizardDialog,
   type SqlJobWizardCreateRequest,
 } from "./SqlJobWizardDialog";
-import { SqlPreviewTable } from "./SqlPreviewTable";
+import { SqlResultsPanel } from "./SqlResultsPanel";
 import {
   buildSqlChartSources,
-  SqlResultChart,
   type SqlChartConfig,
 } from "./SqlResultChart";
 import {
@@ -85,11 +73,11 @@ import {
 } from "./sqlLogic";
 import {
   buildTrinoExecutionTimelineModel,
-  isTrinoQueryExecutionComplete,
   isTrinoResultCollectionActive,
   shouldShowTrinoSubmissionTimeline,
   type TrinoExecutionStageStatus,
 } from "./trinoExecutionTimeline";
+import styles from "./SqlAnalysisPage.module.css";
 
 function createClientRequestId() {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
@@ -104,27 +92,17 @@ function isSqlCandidateDataset(dataset: CatalogDataset) {
     && !normalizedTags.includes("#legacy");
 }
 
-function getTrinoResultStatusLabel(run: TrinoQueryRun | null) {
-  if (!run) return "대기 중";
-  if (isTrinoResultCollectionActive(run)) return "결과 수집 중";
-  if (run.result?.storageStatus === "available") return "결과 준비됨";
-  if (run.result?.storageStatus === "expired") return "보관 기간 만료";
-  if (run.result?.storageStatus === "unavailable") return "결과 저장 실패";
-  if (isTrinoQueryExecutionComplete(run) && !run.result?.storageStatus) return "결과 상태 확인 중";
-  if (run.status === "failed") return "실행 실패";
-  if (run.status === "cancelled") return "실행 취소됨";
-  return run.status === "queued" ? "실행 대기 중" : "실행 중";
-}
-
 const LARGE_RESULT_ROW_THRESHOLD = 100_000;
 
 function TrinoExecutionStage({
+  actions,
   badge,
   children,
   status,
   summary,
   title,
 }: {
+  actions?: ReactNode;
   badge?: string;
   children?: ReactNode;
   status: TrinoExecutionStageStatus | "expired";
@@ -148,6 +126,7 @@ function TrinoExecutionStage({
         <span className="sql-run-stage-header-meta">
           {badge && <Badge size="sm" variant="outline">{badge}</Badge>}
           {summary && <span className="sql-run-stage-summary">{summary}</span>}
+          {actions}
         </span>
       </div>
       {status === "active" && children ? <div className="sql-run-stage-body">{children}</div> : null}
@@ -156,16 +135,20 @@ function TrinoExecutionStage({
 }
 
 function TrinoExecutionTimeline({
+  cancelDisabled,
   firstPageError,
   firstPageDisplayMs,
   firstPageRowCount,
+  onCancel,
   run,
   submissionError,
   submissionPending,
 }: {
+  cancelDisabled?: boolean;
   firstPageError?: string | null;
   firstPageDisplayMs?: number | null;
   firstPageRowCount?: number | null;
+  onCancel?: () => void;
   run: TrinoQueryRun | null;
   submissionError?: string | null;
   submissionPending: boolean;
@@ -271,6 +254,11 @@ function TrinoExecutionTimeline({
       </div>
       <div className="sql-run-stage-list" role="list">
         <TrinoExecutionStage
+          actions={onCancel && ["queued", "running"].includes(run.status) ? (
+            <Button aria-label="실행 취소" disabled={cancelDisabled} onClick={onCancel} size="sm" type="button" variant="outline">
+              <Square data-icon="inline-start" /> 취소
+            </Button>
+          ) : undefined}
           status={queryStageStatus}
           summary={queryStageStatus === "completed"
             ? completedQuerySummary
@@ -463,7 +451,6 @@ export function SqlAnalysisPage({
     [baseDatasetId, dataset, datasets],
   );
   const defaultQuery = useMemo(() => baseDataset ? buildDefaultQuery(baseDataset) : "", [baseDataset]);
-  const [executed, setExecuted] = useState(false);
   const [contextCollapsed, setContextCollapsed] = useState(false);
   const [contextPanelTab, setContextPanelTab] = useState<"chart" | "tables">("tables");
   const [datasetSearch, setDatasetSearch] = useState("");
@@ -471,7 +458,6 @@ export function SqlAnalysisPage({
   const [contextPageSize, setContextPageSize] = useState(() => Math.max(1, datasets.length));
   const [expandedDatasetId, setExpandedDatasetId] = useState<string | null>(null);
   const [referenceDatasetIds, setReferenceDatasetIds] = useState<string[]>([]);
-  const [executionMs, setExecutionMs] = useState<number | null>(null);
   const [queryPending, setQueryPending] = useState(false);
   const [query, setQuery] = useState(defaultQuery);
   const [previewRowLimit, setPreviewRowLimit] = useState(PREVIEW_ROW_LIMIT);
@@ -543,14 +529,6 @@ export function SqlAnalysisPage({
         ]
       : [],
     [baseDataset, datasets, referenceDatasetIds],
-  );
-  const chartSources = useMemo(
-    () => resultDraft ? buildSqlChartSources(resultDraft, selectedContextDatasets) : [],
-    [resultDraft, selectedContextDatasets],
-  );
-  const activeChartSource = useMemo(
-    () => chartConfig ? chartSources.find((source) => source.id === chartConfig.sourceId) : undefined,
-    [chartConfig, chartSources],
   );
   const selectedDatasetIdSet = useMemo(
     () => new Set(selectedContextDatasets.map((item) => item.id)),
@@ -964,7 +942,6 @@ export function SqlAnalysisPage({
     setTrinoSubmissionError(null);
     queryClientRequestRef.current = null;
     setEstimateDialogOpen(false);
-    setExecutionMs(null);
     setPreflightResult(null);
     setChartConfig(null);
     setResultView("table");
@@ -1038,7 +1015,6 @@ export function SqlAnalysisPage({
       onAction("analysis.query.preview_blocked", queryContextPath("preview"), baseDataset?.id ?? "sql-empty", "failed");
       return;
     }
-    const startedAt = performance.now();
     const reusableRequest = queryClientRequestRef.current?.key === queryValidationKey
       ? queryClientRequestRef.current
       : null;
@@ -1062,8 +1038,6 @@ export function SqlAnalysisPage({
         const response = await submitSqlQueryRun(baseDataset, query, [...referenceDatasetIds].sort(), confirmationToken, requestId);
         queryClientRequestRef.current = null;
         if (isTrinoQueryRun(response)) {
-          setExecuted(true);
-          setExecutionMs(Math.round(performance.now() - startedAt));
           setResultDraft(null);
           setTrinoRun(response);
           setTrinoStatusPollError(null);
@@ -1082,8 +1056,6 @@ export function SqlAnalysisPage({
           onAction("analysis.query.run_submitted", queryContextPath("run"), baseDataset.id);
           return;
         }
-        setExecuted(true);
-        setExecutionMs(Math.round(performance.now() - startedAt));
         setResultDraft(response);
         onResultChange(response);
         onAction("analysis.query.compatibility_executed", queryContextPath("run"), baseDataset.id);
@@ -1091,8 +1063,6 @@ export function SqlAnalysisPage({
       }
       const resultDraft = await buildPreviewDraft();
       queryClientRequestRef.current = null;
-      setExecuted(true);
-      setExecutionMs(Math.round(performance.now() - startedAt));
       setResultDraft(resultDraft);
       setChartConfig(null);
       setResultView("table");
@@ -1131,7 +1101,6 @@ export function SqlAnalysisPage({
   };
 
   const activeTrinoPage = trinoResultPage;
-  const trinoResultStatusLabel = getTrinoResultStatusLabel(trinoRun);
   const trinoResultReady = trinoRun?.result?.storageStatus === "available";
 
   const trinoDisplayResult = useMemo<SqlResultDraft | null>(() => {
@@ -1142,15 +1111,36 @@ export function SqlAnalysisPage({
       datasetId: baseDataset.id,
       datasetName: baseDataset.name,
       executedAt: trinoRun.completedAt ?? trinoRun.startedAt ?? trinoRun.submittedAt,
+      hasNext: Boolean(activeTrinoPage.nextCursor),
       mode: "run",
+      pageLimit: activeTrinoPage.pageSize,
+      pageOffset: Math.max(0, activeTrinoPage.rowStart - 1),
       query: trinoRun.query,
+      rangeEnd: activeTrinoPage.rowEnd,
+      rangeStart: activeTrinoPage.rowStart,
       referenceDatasetIds: trinoRun.referenceDatasetIds,
+      returnedRows: activeTrinoPage.rows.length,
       rowCount: trinoRun.result?.rowCount ?? activeTrinoPage.pageSize,
       rows: activeTrinoPage.rows.map((row) => row.map((cell) => cell == null ? "" : String(cell))),
       runId: trinoRun.runId,
     };
   }, [activeTrinoPage, baseDataset, trinoRun]);
   const visibleResult = resultDraft ?? (trinoResultReady ? trinoDisplayResult : null);
+  const showTrinoExecutionProgress = Boolean(
+    trinoSubmissionPending
+      || trinoRun
+      || trinoSubmissionError
+      || trinoStatusPollError,
+  );
+  const showTrinoEmptyState = Boolean(usesTrinoRuntime || showTrinoExecutionProgress);
+  const chartSources = useMemo(
+    () => visibleResult ? buildSqlChartSources(visibleResult, selectedContextDatasets) : [],
+    [selectedContextDatasets, visibleResult],
+  );
+  const activeChartSource = useMemo(
+    () => chartConfig ? chartSources.find((source) => source.id === chartConfig.sourceId) : undefined,
+    [chartConfig, chartSources],
+  );
   const trinoJobResultDraft = useMemo<SqlResultDraft | null>(() => {
     if (!trinoRun || trinoRun.status !== "succeeded" || !baseDataset) return null;
     const columns = trinoRun.result?.columns ?? activeTrinoPage?.columns ?? [];
@@ -1160,9 +1150,15 @@ export function SqlAnalysisPage({
       datasetId: baseDataset.id,
       datasetName: baseDataset.name,
       executedAt: trinoRun.completedAt ?? trinoRun.startedAt ?? trinoRun.submittedAt,
+      hasNext: Boolean(activeTrinoPage?.nextCursor),
       mode: "run",
+      pageLimit: activeTrinoPage?.pageSize,
+      pageOffset: activeTrinoPage ? Math.max(0, activeTrinoPage.rowStart - 1) : 0,
       query: trinoRun.query,
+      rangeEnd: activeTrinoPage?.rowEnd,
+      rangeStart: activeTrinoPage?.rowStart,
       referenceDatasetIds: trinoRun.referenceDatasetIds,
+      returnedRows: activeTrinoPage?.rows.length ?? 0,
       rowCount: trinoRun.result?.rowCount ?? 0,
       rows: (activeTrinoPage?.rows ?? []).map((row) => row.map((cell) => cell == null ? "" : String(cell))),
       runId: trinoRun.runId,
@@ -1285,8 +1281,6 @@ export function SqlAnalysisPage({
       setExpandedDatasetId(null);
       setQuery(selectedRun.query);
       setCursorIndex(selectedRun.query.length);
-      setExecuted(true);
-      setExecutionMs(null);
       setResultDraft(null);
       setTrinoRun(selectedRun);
       setTrinoStatusPollError(null);
@@ -1551,7 +1545,7 @@ export function SqlAnalysisPage({
         },
         sourceRunId: context.sourceRunId,
         target: {
-          partitionColumn: configuration.target.partitionColumn || undefined,
+          partitionColumn: configuration.target.partitionColumns[0] || undefined,
           writeMode: "full_refresh",
         },
       };
@@ -1574,7 +1568,7 @@ export function SqlAnalysisPage({
         compression: configuration.target.compression,
         owner: configuration.governance.owner.trim(),
         overlapPolicy: configuration.schedule.overlapPolicy,
-        partitionColumn: configuration.target.partitionColumn || undefined,
+        partitionColumn: configuration.target.partitionColumns[0] || undefined,
         permissionSummary: configuration.governance.permissionSummary.trim(),
         scheduleLabel: formatSqlJobWizardScheduleLabel(configuration.schedule),
         scheduleMode: configuration.schedule.mode === "manual" ? "manual" : "repeat",
@@ -1596,23 +1590,23 @@ export function SqlAnalysisPage({
   };
 
   const applyChartConfig = (nextConfig: SqlChartConfig) => {
-    if (!resultDraft) return;
+    if (!visibleResult) return;
     setChartConfig(nextConfig);
     setResultView("chart");
-    onAction("analysis.chart.configured", `/api/query/runs/${resultDraft.runId}/visualization`, resultDraft.datasetId);
+    onAction("analysis.chart.configured", `/api/query/runs/${visibleResult.runId}/visualization`, visibleResult.datasetId);
   };
 
   return (
-    <div className={cn("sql-page", contextCollapsed && "context-collapsed")}>
+    <div className={cn(styles.page, contextCollapsed && styles.collapsed)}>
       <PageHeader
-        className="sql-page-header"
+        className={styles.pageHeader}
         icon={<Table2 size={18} />}
         leadingAlign="center"
         title="SQL 분석"
       />
       {!contextCollapsed && (
         <Panel asChild>
-          <aside className="sql-dataset-panel" ref={contextPanelRef}>
+          <aside className={styles.datasetPanel} ref={contextPanelRef}>
             <Tabs
               className="grid h-full min-h-0 grid-rows-[max-content_minmax(0,1fr)] gap-4"
               onValueChange={(value) => setContextPanelTab(value as "chart" | "tables")}
@@ -1649,7 +1643,7 @@ export function SqlAnalysisPage({
                   <FieldTitle>데이터셋</FieldTitle>
                   <div className="relative min-h-0 overflow-hidden">
                     <Panel asChild>
-                      <ScrollArea className="sql-dataset-scroll min-h-0" style={{ inset: 0, position: "absolute" }} type="always">
+                      <ScrollArea className={cn(styles.datasetScroll, "min-h-0")} style={{ inset: 0, position: "absolute" }} type="always">
                         <div className="grid min-w-0 gap-0 pr-3" ref={contextListRef}>
                           <SqlDatasetTree
                             datasets={paginatedContextDatasets}
@@ -1684,7 +1678,7 @@ export function SqlAnalysisPage({
                   )}
                 </section>
               </TabsContent>
-              <TabsContent className="sql-chart-configurator mt-0 min-w-0" value="chart">
+              <TabsContent className={cn(styles.chartConfigurator, "mt-0 min-w-0")} value="chart">
                 <SqlChartConfigurator
                   initialConfig={chartConfig}
                   onApply={applyChartConfig}
@@ -1696,13 +1690,13 @@ export function SqlAnalysisPage({
         </Panel>
       )}
 
-      <main className="sql-workspace grid min-w-0 content-start gap-3">
+      <main className={cn(styles.workspace, "grid min-w-0 content-start gap-3")}>
         {contextCollapsed && (
-          <Button className="sql-context-rail-button" type="button" onClick={toggleContext} aria-label="분석 테이블 열기" title="분석 테이블 열기" size="icon" variant="outline">
+          <Button className={styles.contextRailButton} type="button" onClick={toggleContext} aria-label="분석 테이블 열기" title="분석 테이블 열기" size="icon" variant="outline">
             <PanelLeftOpen data-icon="inline-start" />
           </Button>
         )}
-        <Panel className="sql-query-panel grid gap-4 p-5">
+        <Panel className={cn(styles.queryPanel, "grid gap-4 p-5")}>
           <PanelHeader
             actions={(
               <ActionGroup density="compact" wrap="wrap">
@@ -1859,112 +1853,13 @@ export function SqlAnalysisPage({
           )}
         </Panel>
 
-        <Panel className={cn("sql-result-panel grid gap-4 p-5", visibleResult && "has-result")}>
-          <div className="sql-result-summary">
-            <PanelHeader
-              actions={(
-                <ActionGroup density="compact" wrap="wrap">
-                  <Badge size="sm" variant={trinoRun?.status === "failed" || (usesTrinoRuntime && trinoSubmissionError) ? "destructive" : "secondary"}>
-                    {trinoSubmissionPending
-                      ? "실행 준비 중"
-                      : usesTrinoRuntime && trinoSubmissionError
-                        ? "실행 실패"
-                        : trinoRun ? trinoResultStatusLabel : queryPending ? "실행 중" : executed ? "완료" : "대기 중"}
-                  </Badge>
-                  {trinoRun && ["queued", "running"].includes(trinoRun.status) && (
-                    <Button type="button" onClick={() => void cancelActiveTrinoRun()} disabled={queryPending} size="sm" variant="outline"><Square data-icon="inline-start" /> 취소</Button>
-                  )}
-                  {executionMs !== null && !trinoRun && <Badge size="sm" variant="outline">{formatDuration(executionMs)}</Badge>}
-                </ActionGroup>
-              )}
-              bordered={false}
-              className="min-h-0 p-0"
-              icon={<Table2 size={16} />}
-              title={trinoSubmissionPending
-                ? "실행 준비 중"
-                : usesTrinoRuntime && trinoSubmissionError
-                  ? "실행 실패"
-                  : visibleResult
-                    ? `${visibleResult.rowCount.toLocaleString()}행 ${trinoRun?.result?.storageStatus === "collecting" ? "수집됨" : "조회됨"}`
-                    : trinoRun && isTrinoResultCollectionActive(trinoRun) ? "전체 결과 수집 중" : trinoRun ? "실행 상태 확인 중" : "결과 대기 중"}
-            />
-            <TrinoExecutionTimeline
-              firstPageError={trinoResultError}
-              firstPageDisplayMs={trinoFirstPageDisplayMs}
-              firstPageRowCount={trinoFirstPageRowCount}
-              run={trinoSubmissionPending || (usesTrinoRuntime && trinoSubmissionError) ? null : trinoRun}
-              submissionError={usesTrinoRuntime ? trinoSubmissionError : null}
-              submissionPending={trinoSubmissionPending}
-            />
-            {((!usesTrinoRuntime && trinoSubmissionError) || trinoStatusPollError) && (
-              <div className="sql-result-toolbar error" role="alert">
-                <span>{!usesTrinoRuntime && trinoSubmissionError ? trinoSubmissionError : `${trinoStatusPollError} 자동으로 다시 확인합니다.`}</span>
-              </div>
-            )}
-            {visibleResult && (
-              <>
-                <div className="sql-result-toolbar">
-                  {!trinoRun ? (
-                    <ToggleGroup
-                      aria-label="SQL 결과 보기"
-                      onValueChange={(value) => value && setResultView(value as "chart" | "table")}
-                      type="single"
-                      value={resultView}
-                    >
-                      <ToggleGroupItem aria-label="차트 보기" size="sm" value="chart"><BarChart3 /> 차트 보기</ToggleGroupItem>
-                      <ToggleGroupItem aria-label="데이터 미리보기" size="sm" value="table"><Table2 /> 데이터 미리보기</ToggleGroupItem>
-                    </ToggleGroup>
-                  ) : (
-                    <span className="text-xs font-semibold text-slate-500">
-                      실행 ID {visibleResult.runId} · {visibleResult.rows.length.toLocaleString()}/{visibleResult.rowCount.toLocaleString()}행 표시 · {formatResultTimestamp(visibleResult.executedAt)}
-                    </span>
-                  )}
-                  <ActionGroup density="compact" wrap="wrap">
-                    {!trinoRun && <Button type="button" onClick={downloadCsv} size="sm" variant="outline"><Download data-icon="inline-start" /> CSV 다운로드</Button>}
-                    {!trinoRun && <Button type="button" onClick={() => setJobDialogOpen(true)} size="sm" variant="outline"><Workflow data-icon="inline-start" /> 처리 Job 생성</Button>}
-                    {trinoRun?.status === "succeeded" && (
-                      <>
-                        <Button type="button" onClick={() => downloadTrinoCsv(trinoRun.runId)} size="sm" variant="primary"><Download data-icon="inline-start" /> CSV 다운로드</Button>
-                        <Button type="button" onClick={() => setJobDialogOpen(true)} size="sm" variant="outline"><Workflow data-icon="inline-start" /> 반복 Job 만들기</Button>
-                      </>
-                    )}
-                    <Button type="button" onClick={() => setResultDialogOpen(true)} size="sm" variant="outline"><Maximize2 data-icon="inline-start" /> 전체 보기</Button>
-                  </ActionGroup>
-                </div>
-                {trinoResultError && (
-                  <div className="sql-result-toolbar error" role="alert">
-                    <span>{trinoResultError}</span>
-                    <Button type="button" onClick={() => void retryTrinoResultPage()} size="sm" variant="outline"><RotateCcw data-icon="inline-start" /> 다시 시도</Button>
-                  </div>
-                )}
-              </>
-            )}
-          </div>
-          <div className="sql-result-body">
-            {visibleResult ? (
-              <ScrollArea className="sql-result-scroll" scrollbars="both" type="always">
-                {!trinoRun && resultView === "chart"
-                  ? chartConfig && activeChartSource
-                    ? <SqlResultChart chartConfig={chartConfig} source={activeChartSource} />
-                    : <SqlChartEmptyState />
-                  : (
-                    <SqlPreviewTable
-                      resultDraft={visibleResult}
-                      remotePageIndex={trinoRun ? trinoResultPageIndex : undefined}
-                      remotePageNumber={activeTrinoPage?.pageNumber}
-                      remotePageSize={activeTrinoPage?.pageSize}
-                      remoteNextCursor={activeTrinoPage?.nextCursor}
-                      remotePending={trinoResultPagePending}
-                      remoteRowEnd={activeTrinoPage?.rowEnd}
-                      remoteRowStart={activeTrinoPage?.rowStart}
-                      remoteTotalPages={activeTrinoPage?.totalPages}
-                      remoteTotalRows={activeTrinoPage?.totalRows}
-                      onRemoteNext={trinoRun ? () => void loadNextTrinoResultPage() : undefined}
-                      onRemotePrevious={trinoRun && trinoResultPageIndex > 0 ? () => void loadPreviousTrinoResultPage() : undefined}
-                    />
-                  )}
-              </ScrollArea>
-            ) : (
+        <SqlResultsPanel
+          activeChartSource={activeChartSource}
+          baseDatasetSelected={Boolean(baseDataset)}
+          chartConfig={chartConfig}
+          dialogOpen={resultDialogOpen}
+          emptyStateContent={showTrinoEmptyState ? (
+            <div className="sql-result-body">
               <Empty className="sql-result-empty" size="sm" variant="bordered">
                 <EmptyHeader>
                   <EmptyTitle>{trinoResultError ? "결과를 불러오지 못했습니다." : getTrinoResultEmptyTitle(trinoRun)}</EmptyTitle>
@@ -1972,46 +1867,45 @@ export function SqlAnalysisPage({
                 </EmptyHeader>
                 {trinoResultError ? <Button type="button" onClick={() => void retryTrinoResultPage()} size="sm" variant="outline"><RotateCcw data-icon="inline-start" /> 다시 시도</Button> : null}
               </Empty>
-            )}
-          </div>
-        </Panel>
+            </div>
+          ) : undefined}
+          onDialogOpenChange={setResultDialogOpen}
+          onDownloadCsv={trinoRun ? () => downloadTrinoCsv(trinoRun.runId) : downloadCsv}
+          onOpenJobWizard={() => setJobDialogOpen(true)}
+          onResultViewChange={(view) => setResultView(view)}
+          remotePagination={trinoRun && activeTrinoPage ? {
+            currentPage: activeTrinoPage.pageNumber ?? trinoResultPageIndex + 1,
+            label: "SQL 실행 결과 원격",
+            nextDisabled: trinoResultPagePending || !activeTrinoPage.nextCursor,
+            onNext: () => void loadNextTrinoResultPage(),
+            onPrevious: () => void loadPreviousTrinoResultPage(),
+            previousDisabled: trinoResultPagePending || trinoResultPageIndex < 1,
+            rangeLabel: `${activeTrinoPage.rowStart.toLocaleString()}-${activeTrinoPage.rowEnd.toLocaleString()}행 · ${activeTrinoPage.totalRows == null ? "전체 행 확인 중" : `전체 ${activeTrinoPage.totalRows.toLocaleString()}행`}`,
+            totalPages: activeTrinoPage.totalPages ?? null,
+          } : undefined}
+          resultDraft={visibleResult}
+          resultView={resultView}
+          progressContent={showTrinoExecutionProgress ? (
+            <div className="sql-result-summary">
+              <TrinoExecutionTimeline
+                cancelDisabled={queryPending}
+                firstPageError={trinoResultError}
+                firstPageDisplayMs={trinoFirstPageDisplayMs}
+                firstPageRowCount={trinoFirstPageRowCount}
+                onCancel={() => void cancelActiveTrinoRun()}
+                run={trinoSubmissionPending || (usesTrinoRuntime && trinoSubmissionError) ? null : trinoRun}
+                submissionError={usesTrinoRuntime ? trinoSubmissionError : null}
+                submissionPending={trinoSubmissionPending}
+              />
+              {((!usesTrinoRuntime && trinoSubmissionError) || trinoStatusPollError) && (
+                <div className="sql-result-error" role="alert">
+                  <span>{!usesTrinoRuntime && trinoSubmissionError ? trinoSubmissionError : `${trinoStatusPollError} 자동으로 다시 확인합니다.`}</span>
+                </div>
+              )}
+            </div>
+          ) : undefined}
+        />
       </main>
-      {visibleResult && (
-        <Dialog onOpenChange={setResultDialogOpen} open={resultDialogOpen}>
-          <DialogContent className="grid h-[min(900px,calc(100vh-2rem))] w-[min(1440px,calc(100vw-2rem))] max-w-none grid-rows-[max-content_minmax(0,1fr)] overflow-hidden">
-            <DialogHeader>
-              <DialogTitle>SQL 결과 전체 보기</DialogTitle>
-              <DialogDescription>
-                {visibleResult.rows.length}/{visibleResult.rowCount}행 · {visibleResult.columns.length}컬럼 · {!trinoRun && resultView === "chart" ? "차트" : "표"} 보기
-              </DialogDescription>
-            </DialogHeader>
-            <ScrollArea className="min-h-0" scrollbars="both" type="always">
-              {!trinoRun && resultView === "chart"
-                ? chartConfig && activeChartSource
-                  ? <SqlResultChart chartConfig={chartConfig} source={activeChartSource} />
-                  : <SqlChartEmptyState />
-                  : (
-                  <div className="min-w-0 px-4 pb-4 pt-6">
-                    <SqlPreviewTable
-                      resultDraft={visibleResult}
-                      remotePageIndex={trinoRun ? trinoResultPageIndex : undefined}
-                      remotePageNumber={activeTrinoPage?.pageNumber}
-                      remotePageSize={activeTrinoPage?.pageSize}
-                      remoteNextCursor={activeTrinoPage?.nextCursor}
-                      remotePending={trinoResultPagePending}
-                      remoteRowEnd={activeTrinoPage?.rowEnd}
-                      remoteRowStart={activeTrinoPage?.rowStart}
-                      remoteTotalPages={activeTrinoPage?.totalPages}
-                      remoteTotalRows={activeTrinoPage?.totalRows}
-                      onRemoteNext={trinoRun ? () => void loadNextTrinoResultPage() : undefined}
-                      onRemotePrevious={trinoRun && trinoResultPageIndex > 0 ? () => void loadPreviousTrinoResultPage() : undefined}
-                    />
-                  </div>
-                )}
-            </ScrollArea>
-          </DialogContent>
-        </Dialog>
-      )}
       {estimateDialogOpen && queryEstimate && (
         <DialogShell
           footer={(
@@ -2063,7 +1957,6 @@ export function SqlAnalysisPage({
             description: buildDefaultDerivedDatasetDescription(baseDataset),
             name: buildDefaultDerivedDatasetName(baseDataset),
           }}
-          engine={trinoJobResultDraft ? "trino" : "compatibility"}
           onClose={() => setJobDialogOpen(false)}
           onCreate={createDerivedDatasetJob}
           open={jobDialogOpen}

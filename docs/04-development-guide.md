@@ -474,7 +474,7 @@ uvicorn app.main:app --reload --port 8080
 
 로컬 환경 변수는 `backend/.env.example`을 기준으로 둔다. 실제 OpenAI 키는 git에 올리지 않는 `backend/.env.local`의 `OPENAI_API_KEY`에 둔다. Query AI live mode는 backend가 이 값을 읽어 `POST /api/query/ai-suggestions`에서만 사용하며, frontend env에는 OpenAI 키를 두지 않는다.
 
-SQL UI를 변경할 때는 desktop에서 좌측 SQL 도구와 우측 editor/result workspace의 하단이 SQL 실행 전후 모두 일치하는지 확인한다. Catalog 미리보기의 `SQL 분석에서 열기`가 선택 Dataset을 유지한 채 `/sql`로 이동하는지 확인하고, editor 상단 Nessie Popover에서 자연어 요청 → 입력 폼 접힘 → Bubble 생성 상태 → 초안 적용이 동작하되 자동 실행되지 않는지 확인한다. SQL 실행 후에는 Dashboard와 같은 위젯 설정의 데이터 소스·유형·필드·집계·색상 변경과 오른쪽 `차트 보기`/`데이터 미리보기` 전환, 상단 CSV/Job/전체 보기 액션, 처리 Job 모달의 기본 정보 → 스케줄 → 거버넌스 → 저장 및 검토 흐름이 `/etl/review` 이동 없이 동작하는지 확인한다. 마지막 단계에서는 DB 찾아보기, 포맷·압축 선택, S3 경로 찾아보기/복사, 태그 추가·삭제, 결과 컬럼 다중 파티션 선택을 확인하고 생성된 Job metadata에 같은 값이 남는지 검증한다.
+SQL UI를 변경할 때는 desktop에서 좌측 SQL 도구가 shell/footer 안에서 잘리지 않고, 우측 editor/result workspace는 결과 행 수와 무관하게 표를 bounded 내부 viewport에서 scroll하는지 확인한다. 내용 폭이 viewport 안에 들어오면 가로 scrollbar가 없어야 하고 실제 overflow가 있을 때만 나타나야 한다. Catalog 미리보기의 `SQL 분석에서 열기`가 선택 Dataset을 유지한 채 `/sql`로 이동하는지 확인하고, editor 상단 Nessie Popover에서 자연어 요청 → 입력 폼 접힘 → Bubble 생성 상태 → 초안 적용이 동작하되 자동 실행되지 않는지 확인한다. SQL 실행 후에는 bounded compatibility 결과와 현재 로드된 Trino 논리 page가 같은 `DataTable` renderer를 사용하고, Dashboard와 같은 위젯 설정의 데이터 소스·유형·필드·집계·색상 변경과 오른쪽 `차트 보기`/`데이터 미리보기` 전환, 상단 CSV/Job/전체 보기 액션, 처리 Job 모달의 기본 정보 → 스케줄 → 거버넌스 → 저장 및 검토 흐름이 `/etl/review` 이동 없이 동작하는지 확인한다. Trino page 차트에는 현재 표시 범위가 드러나야 하며 persistent Dashboard source로 저장하지 않는다. 마지막 단계에서는 DB 찾아보기, 포맷·압축 선택, S3 경로 찾아보기/복사, 태그 추가·삭제, 결과 컬럼 다중 파티션 선택을 확인하고 생성된 Job metadata에 같은 값이 남는지 검증한다.
 FastAPI 폴더 구조와 설계 결정은 `docs/backend-fastapi-transition-plan.md`를 기준으로 한다.
 
 ## 4) Prod-Like Docker Compose

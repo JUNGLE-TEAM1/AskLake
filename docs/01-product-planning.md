@@ -45,7 +45,7 @@ AskLake는 사용자가 데이터셋의 출처, 품질, 권한, 실행 결과, �
 - Catalog 목록/상세/lineage fallback
 - Dataset 범위의 read-only SQL 실행. 기본 SQL 초안에는 preview용 `LIMIT`을 넣지 않으며, 목표 runtime은 Trino 기반 실제 전체 실행이다. Query Run의 validation/lifecycle은 `docs/trino-query-run-contract.md`, 대용량 전체 결과의 private page storage/retention은 `docs/trino-query-result-storage-contract.md`를 따른다.
 - SQL 편집기 상단의 Nessie SQL 작성 Popover: 선택 데이터셋 context와 사용자 프롬프트로 SQL 초안을 제안한다. 입력 후에는 폼을 접고 생성 상태와 편집기 적용 action을 Bubble로 표시하며, SQL은 사용자가 적용한 뒤 별도로 실행한다.
-- SQL 좌측 도구의 차트 생성하기: bounded compatibility 결과 또는 선택 데이터셋을 소스로 Dashboard와 같은 위젯 설정에서 유형, 필드, 집계, 색상을 설정한다. Trino 전체 실행 결과는 현재 페이지 단위 표와 전체 보기로 탐색한다.
+- SQL 좌측 도구의 차트 생성하기: bounded compatibility 결과, 선택 데이터셋, 또는 현재 로드된 Trino 논리 결과 page를 소스로 Dashboard와 같은 위젯 설정에서 유형, 필드, 집계, 색상을 설정한다. Trino page 차트는 현재 100행 범위의 임시 시각화이며 전체 Query Run 결과나 저장 가능한 Dashboard source로 해석하지 않는다. Trino 전체 실행 결과는 현재 페이지 단위 표와 전체 보기로 탐색한다.
 - AI 활용 메뉴의 ChatGPT형 대화 UI: Catalog Dataset 컨텍스트를 고르는 대화 화면을 제공하며, 실제 AI 호출과 RAG runtime은 후속 범위로 둔다.
 - 수집/처리 Transform 화면은 필드 매핑과 quick transform function 중심으로 유지하며, AI 기반 필드 transform 버튼은 현재 MVP 범위에서 노출하지 않는다.
 - Issue #567은 일반 Snapshot, Kafka Snapshot, Kafka Continuous의 스키마 타입과 Transform/Quality 실행 계약을 통합한다. 작업은 [Transform/Quality 공통 실행 통합 계획](transform-quality-unification-plan.md)의 Phase별 검증 게이트를 따르며, 전체 검증 전까지 Draft PR로 유지한다.
@@ -119,7 +119,7 @@ Phase 0에서는 용어와 경계를 먼저 고정한다. `createdBy`, `owner`, 
 8. 성공 Run 결과는 CSV로 다운로드할 수 있다. 1회성 Iceberg CTAS materialization은 결과 화면에서 제공하지 않으며, 별도 운영 경로로만 호출한다.
 9. `반복 Job 만들기`는 SQL recipe와 스케줄을 저장한다. 이후 각 Run은 실행 시점 권한을 다시 확인하고 전체 SQL을 CTAS로 실행한 뒤 검증된 새 table로 같은 Dataset mapping을 교체한다.
 10. 반복 Job의 새 Run이 실패하거나 취소되면 마지막 정상 Dataset mapping과 성공 materialization history를 유지한다.
-11. bounded compatibility 결과는 차트로 전환하거나 처리 Job 위저드에서 기본 정보, 스케줄, 거버넌스, 저장 설정을 완료해 기존 Job 생성 API로 연결할 수 있다.
+11. bounded compatibility 결과와 현재 로드된 Trino 논리 page는 차트로 전환할 수 있다. 이 차트는 SQL 화면의 임시 시각화이고, 반복 사용이나 전체 결과 기반 시각화는 materialized Dataset이 필요하다. 처리 Job 위저드는 기본 정보, 스케줄, 거버넌스, 저장 설정을 완료해 기존 Job 생성 API로 연결한다.
 
 ### Flow C. FastAPI live backend 연결
 

@@ -9,10 +9,16 @@ export type SqlResultDraft = {
   datasetId: string;
   datasetName: string;
   executedAt: string;
+  hasNext?: boolean;
   mode?: "preview" | "run";
+  pageLimit?: number;
+  pageOffset?: number;
   previewLimit?: number;
   query: string;
+  rangeEnd?: number;
+  rangeStart?: number;
   referenceDatasetIds?: string[];
+  returnedRows?: number;
   rowCount: number;
   rows: string[][];
   runId: string;

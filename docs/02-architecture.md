@@ -185,7 +185,7 @@ Kafka Job의 source identity(`sourceType`, `sourceLabel`, `sourceConfig`)는 bro
 - SQL route 전용 layout·interaction style은 각 component의 CSS Module에 함께 둔다. global stylesheet는 App Shell과 공용 token만 소유하며, `.page-body.sql-body` gutter 외의 SQL 내부 component selector를 추가하지 않는다.
 - Trino 문법의 최종 판정은 `POST /api/query/validate`의 Trino parser/compiler 계약이며 frontend PostgreSQL parser는 UX 보조다. 실행 전 비용 평가는 Plan/metadata의 스캔량만 표시하며, 신뢰 가능한 실행 시간 예측은 제공하지 않는다. Trino 결과 표는 물리 결과 chunk가 아닌 논리 100행 page를 cursor로 조회하며, 전체 행 수·전체 page 수는 결과 수집 완료 후에만 표시한다. CSV export는 이미 저장된 Query Run 결과를 backend streaming으로 내려보내며 쿼리를 재실행하지 않는다.
 - Query AI 생성 기능은 SQL editor 상단의 `Nessie로 SQL 작성` 버튼에 붙는 shadcn `Popover`에서 진입한다. prompt 제출 후 `Collapsible` 입력 폼을 접고 `Bubble`로 생성 중·완료·적용 상태를 표시한다. live mode에서는 `frontend/src/services/queryAiService.ts`가 `POST /api/query/ai-suggestions`를 호출하고, FastAPI가 backend env의 `OPENAI_API_KEY`로 OpenAI Responses API에 요청한다. mock mode에서는 같은 request shape로 프론트 로컬 SQL 초안 fallback을 사용한다. AI는 선택 테이블 context 안에서만 SQL 초안을 만들 수 있고, backend는 AI 응답도 read-only SQL과 선택 dataset scope로 재검증한다. AI가 만든 SQL은 자동 실행하지 않고 editor 적용 후 기존 read-only/preflight 검증을 다시 통과해야 실행된다. 차트 생성은 AI prompt와 분리하며, SQL 결과와 선택 데이터셋을 공용 `DashboardDatasetOption`으로 변환한 뒤 Dashboard `WidgetConfigPanel`과 `WidgetRenderer`를 재사용한다.
-- SQL desktop layout은 좌측 분석 테이블 panel과 우측 editor/result workspace가 같은 height token을 공유한다. 결과 전/후 모두 하단 경계를 맞추고 result 영역만 남은 높이 안에서 scroll한다. Catalog 미리보기의 `SQL 분석에서 열기`는 선택 Dataset을 `App.tsx`의 `openDatasetInSqlWithSelection`에 전달해 `/sql` route와 editor context를 함께 갱신한다.
+- SQL desktop layout은 좌측 분석 테이블 panel의 실제 viewport 가용 높이와 우측 editor/result workspace의 최소 높이를 별도 token으로 관리한다. 좌측 panel은 shell 상단 바, footer, page padding을 제외한 높이 안에서 sticky를 유지하고 데이터셋 목록만 내부 scroll하며, 우측 workspace는 결과 내용에 따라 확장된다. Catalog 미리보기의 `SQL 분석에서 열기`는 선택 Dataset을 `App.tsx`의 `openDatasetInSqlWithSelection`에 전달해 `/sql` route와 editor context를 함께 갱신한다.
 - `/login`은 `AuthPage`와 `/api/auth/*` session API를 사용하고, workspace hydrate는 session actor 확인 이후 시작한다.
 - `AiChatPage`는 AI 활용 메뉴의 실제 화면이며 선택 가능한 Catalog Dataset context만 대화 초안에 사용한다.
 - `AdminConsolePage`는 admin actor에게만 노출하고 `/api/admin/*`를 통해 사용자·그룹·permission grant·governance control·감사 로그를 관리한다.
@@ -372,10 +372,10 @@ Dashboard endpoint와 Catalog 물리 데이터는 FastAPI 응답을 source of tr
 
 ## 12) SQL 결과 시각화 경계
 
-- SQL 화면의 왼쪽 `차트 생성하기` 탭은 `SqlResultDraft` 또는 선택한 Catalog dataset sample을 로컬 `DashboardDatasetOption`으로 변환하고 Dashboard `WidgetConfigPanel`과 `WidgetRenderer`를 재사용한다.
+- SQL 화면의 왼쪽 `차트 생성하기` 탭은 bounded `SqlResultDraft`, 현재 로드된 Trino 논리 결과 page, 또는 선택한 Catalog dataset sample을 로컬 `DashboardDatasetOption`으로 변환하고 Dashboard `WidgetConfigPanel`과 `WidgetRenderer`를 재사용한다. Trino page는 range metadata를 함께 보존해 차트 source label이 현재 표시 범위를 명시한다.
 - 적용한 차트 설정은 SQL 화면 메모리에만 유지하며, SQL 결과 toolbar에는 대시보드 생성 action을 제공하지 않는다.
 - 대시보드 생성과 저장은 별도 대시보드 메뉴의 runtime/builder 계약을 사용한다. 기존 `DashboardEntry.source = "sql"` 호환 타입은 즉시 제거하지 않지만 SQL 화면에서는 해당 entry를 만들지 않는다.
-- Trino 원격 결과 한 page를 persistent Dashboard source로 저장하는 것은 금지한다. 반복 사용하려면 먼저 materialized Dataset으로 전환한다.
+- Trino 원격 결과 한 page의 차트는 SQL 화면 메모리에만 존재하는 임시 시각화다. 이를 전체 Query Run 차트 또는 persistent Dashboard source로 저장하는 것은 금지하며, 반복 사용하려면 먼저 materialized Dataset으로 전환한다.
 ## ETL Permission 데이터 소유권
 
 - 사용자·그룹 후보의 source of truth는 backend `GET /api/etl/permission-options`다.

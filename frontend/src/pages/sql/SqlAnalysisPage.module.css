@@ -1,6 +1,32 @@
 .page {
   --sql-side-panel-width: clamp(320px, 22vw, 400px);
-  --sql-workspace-height: min(860px, calc(100dvh - 24px));
+  --sql-sticky-offset: 12px;
+  --sql-page-header-height: 76px;
+  --sql-page-row-gap: 12px;
+  --sql-dataset-panel-height: clamp(
+    0px,
+    calc(
+      100dvh
+      - var(--layout-topbar-height)
+      - var(--layout-footer-min-height)
+      - var(--layout-page-padding-block-start)
+      - var(--layout-page-padding-block-end)
+      - var(--sql-page-header-height)
+      - var(--sql-page-row-gap)
+    ),
+    860px
+  );
+  --sql-workspace-min-height: clamp(
+    0px,
+    calc(
+      100dvh
+      - var(--layout-topbar-height)
+      - var(--layout-footer-min-height)
+      - var(--layout-page-padding-block-start)
+      - var(--layout-page-padding-block-end)
+    ),
+    860px
+  );
   position: relative;
   display: grid;
   width: 100%;
@@ -8,7 +34,7 @@
   grid-template-columns: var(--sql-side-panel-width) minmax(0, 1fr);
   grid-template-rows: max-content auto;
   align-items: stretch;
-  gap: 12px;
+  gap: var(--sql-page-row-gap);
   font-family: var(--jobs-font-family);
 }
 
@@ -19,7 +45,7 @@
 .pageHeader {
   grid-column: 1 / -1;
   min-width: 0;
-  min-height: var(--sql-masthead-height, 76px);
+  min-height: var(--sql-page-header-height);
 }
 
 .pageHeader > div {
@@ -29,15 +55,15 @@
 .datasetPanel {
   position: sticky;
   z-index: 20;
-  top: 12px;
+  top: var(--sql-sticky-offset);
   display: grid;
   grid-column: 1;
   grid-row: 2;
   grid-template-rows: minmax(0, 1fr);
   align-self: start;
-  height: var(--sql-workspace-height);
-  min-height: min(620px, var(--sql-workspace-height));
-  max-height: var(--sql-workspace-height);
+  height: var(--sql-dataset-panel-height);
+  min-height: 0;
+  max-height: var(--sql-dataset-panel-height);
   min-width: 0;
   overflow: hidden;
   padding: 20px;
@@ -63,10 +89,10 @@
 .workspace {
   grid-column: 2;
   grid-row: 2;
-  height: var(--sql-workspace-height);
-  min-height: min(620px, var(--sql-workspace-height));
-  max-height: var(--sql-workspace-height);
-  grid-template-rows: max-content minmax(0, 1fr);
+  height: auto;
+  min-height: var(--sql-workspace-min-height);
+  max-height: none;
+  grid-template-rows: max-content auto;
 }
 
 .collapsed .workspace {
@@ -171,6 +197,12 @@
   overflow: hidden;
 }
 
+.resultHeaderStack {
+  display: grid;
+  min-width: 0;
+  gap: 16px;
+}
+
 .resultToolbar {
   display: flex;
   min-width: 0;
@@ -196,6 +228,10 @@
   min-width: 0;
 }
 
+.resultScroll {
+  height: clamp(320px, 48dvh, 460px);
+}
+
 .resultScroll :global(.schema-table) {
   min-width: 0;
 }
@@ -214,32 +250,31 @@
   }
 }
 
-@media (max-width: 860px) {
+@media (max-width: 1180px) {
   .page,
   .page.collapsed {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .collapsed .workspace {
-    padding-left: 0;
+    grid-template-columns: 1fr;
   }
 
   .datasetPanel {
-    position: relative;
-    height: min(720px, 80dvh);
-    min-height: min(560px, 80dvh);
-    max-height: 80dvh;
-  }
-
-  .workspace {
+    position: static;
     grid-column: 1;
     grid-row: auto;
-    height: auto;
+    height: min(680px, 72dvh);
     min-height: 0;
-    max-height: none;
-    grid-template-rows: none;
+    max-height: 72dvh;
+    order: 1;
   }
 
+  .workspace,
+  .collapsed .workspace {
+    grid-column: 1;
+    grid-row: auto;
+    order: 2;
+  }
+}
+
+@media (max-width: 860px) {
   .resultPanel {
     grid-template-rows: auto;
     overflow: visible;
@@ -271,36 +306,13 @@
   }
 }
 
-@media (max-width: 1180px) {
-  .page,
-  .page.collapsed {
-    grid-template-columns: 1fr;
-  }
-
-  .datasetPanel {
-    position: static;
-    grid-column: 1;
-    grid-row: auto;
-    height: min(680px, calc(100vh - 24px));
-    min-height: min(560px, calc(100vh - 24px));
-    max-height: none;
-    order: 1;
-  }
-
-  .workspace,
-  .collapsed .workspace {
-    grid-column: 1;
-    grid-row: auto;
-    order: 2;
-  }
-}
-
 @media (max-width: 780px) {
   .datasetPanel {
     position: static;
-    height: auto;
-    max-height: none;
-    overflow: visible;
+    height: min(560px, 70dvh);
+    min-height: 0;
+    max-height: 70dvh;
+    overflow: hidden;
   }
 
   .pageHeader {
