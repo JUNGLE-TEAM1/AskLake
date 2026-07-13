@@ -2461,6 +2461,7 @@ function ContinuousRuntimeCard({ job }: { job: JobRowData }) {
         <Field label="상태" value={continuousRuntimeLabel(job)} />
         <Field label="실행 Runtime" value={runtime?.runtimeProvider ? `${runtime.runtimeProvider}${runtime.runtimeState ? ` · ${runtime.runtimeState}` : ""}` : "local / spark-rest"} />
         <Field label="Remote Job Run" value={runtime?.runtimeJobId ? `${runtime.runtimeJobId}${runtime.runtimeAttempt ? ` · attempt ${runtime.runtimeAttempt}` : ""}` : "-"} />
+        {runtime?.runtimeCancelRequestState && <Field label="취소 처리" value={`${runtime.runtimeRequestedAction ?? "cancel"} · ${runtime.runtimeCancelRequestState}`} />}
         <Field label="마지막 batch" value={runtime?.lastBatchId ?? "-"} />
         <Field label="소비 / 적재" value={`${runtime?.consumedCount?.toLocaleString() ?? "0"} / ${runtime?.storedCount?.toLocaleString() ?? "0"}`} />
         <Field label="격리 / 재처리" value={`${runtime?.quarantinedCount?.toLocaleString() ?? "0"} / ${runtime?.replayedCount?.toLocaleString() ?? "0"}`} />
@@ -2473,6 +2474,8 @@ function ContinuousRuntimeCard({ job }: { job: JobRowData }) {
         <Field label="Rule 처리" value={`경고 ${(Number(ruleMetrics.transformWarnCount ?? 0) + Number(ruleMetrics.qualityWarnCount ?? 0)).toLocaleString()} · 격리 ${(Number(ruleMetrics.transformQuarantinedCount ?? 0) + Number(ruleMetrics.qualityQuarantinedCount ?? 0)).toLocaleString()} · 실패 batch ${Number(ruleMetrics.failedBatchCount ?? 0).toLocaleString()}`} />
         <Field label="Heartbeat" value={runtime?.heartbeatAt ? formatCompactDateTime(runtime.heartbeatAt) : "-"} />
         <Field label="Checkpoint" value={runtime?.checkpointPath ?? "-"} />
+        {runtime?.runtimeCancelError && <Field label="취소 오류" value={runtime.runtimeCancelError} />}
+        {runtime?.lastCatalogAckError && <Field label="Catalog ACK 재시도" value={runtime.lastCatalogAckError} />}
         {runtime?.lastError && <Field label="최근 오류" value={runtime.lastError} />}
       </div>
       <div className="job-runtime-log-header">

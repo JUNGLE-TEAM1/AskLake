@@ -157,7 +157,7 @@ npm run emr:upload-continuous-artifact
 
 `ASKLAKE_EMR_SERVERLESS_MIN_EXECUTORS <= INITIAL_EXECUTORS <= MAX_EXECUTORS`를 만족해야 한다. 첫 운영 검증은 작은 S3 Parquet/CSV로 성공, 잘못된 schema 실패, `cancelRun`, backend 재시작 뒤 같은 Job Run 재사용, Docker 결과와 schema/row count 비교 순서로 수행한다. 실제 처리량과 비용 목표는 이 연결 검증과 분리해 부하 데이터로 측정한다.
 
-Continuous는 EMR release 7.1.0 이상 Spark application, MSK와 통신 가능한 VPC/subnet/security group, 실행 role의 S3 data/checkpoint/report 및 `kafka-cluster:Connect/DescribeTopic/ReadData/DescribeGroup/AlterGroup` 권한이 필요하다. `ASKLAKE_EMR_SERVERLESS_CONTINUOUS_MAX_FAILED_ATTEMPTS_PER_HOUR`는 1~10이며 총 retry 횟수가 아니다. Streaming Job Run에는 `ASKLAKE_EMR_SERVERLESS_EXECUTION_TIMEOUT_MINUTES`를 적용하지 않는다.
+EMR Serverless 자체의 STREAMING Job Run은 7.1.0부터 지원하지만 AskLake Continuous의 안전한 pause/stop 계약은 graceful shutdown이 제공되는 `emr-7.9.0` 이상 Spark application만 허용한다. 제출 전에 backend가 `GetApplication`으로 application type, release label, state를 검증하므로 control-plane role에는 `emr-serverless:GetApplication/StartApplication/StartJobRun/GetJobRun/CancelJobRun`과 execution role에 대한 `iam:PassRole`이 필요하다. MSK와 통신 가능한 VPC/subnet/security group, 실행 role의 S3 data/checkpoint/report 및 `kafka-cluster:Connect/DescribeTopic/ReadData/DescribeGroup/AlterGroup` 권한도 필요하다. `ASKLAKE_EMR_SERVERLESS_CONTINUOUS_MAX_FAILED_ATTEMPTS_PER_HOUR`는 1~10이며 총 retry 횟수가 아니다. Streaming Job Run에는 `ASKLAKE_EMR_SERVERLESS_EXECUTION_TIMEOUT_MINUTES`를 적용하지 않는다. graceful cancel은 기본 120초이며 15~1800초만 허용하고 force cancel만 `0`을 사용한다.
 
 ```bash
 export AIRFLOW_EXECUTION_API_TOKEN=asklake-local-airflow-execution
@@ -436,11 +436,13 @@ Snapshot Rule 실행 변경 후에는 위 smoke와 함께 `npm run verify:snapsh
 
 Kafka Continuous Ingestion은 Issue #500 Phase 3에서 long-running Spark Structured Streaming worker까지 연결됐다. Snapshot Job은 wizard의 스케줄 단계에서 수동/반복 실행을 고르고, Continuous Job은 해당 단계를 건너뛰어 생성 후 스트림 시작/중지로 제어한다. Continuous Source 고급 설정은 시작 위치, trigger 간격, micro-batch 최대 메시지를 제공한다. production-like smoke에서는 continuous Job 시작, retained backlog 처리, 새 이벤트 자동 append, pause/resume API 호환, checkpoint restart, lag/heartbeat, conflicting consumer identity `409`을 검증한다. Snapshot smoke는 계속 유지하며 Continuous 검증으로 대체하지 않는다.
 
-`verify:kafka-continuous-contract`는 long-running worker를 시작하지 않고 Continuous Job의 기본 config/runtime identity, Rule payload/fingerprint, start request 상태와 충돌 정책을 확인한다. `verify:kafka-continuous-rules`는 독립 Docker Spark에서 bounded micro-batch Rule 의미와 checkpoint contract를 실행한다. Kafka/MinIO/Catalog를 포함한 실동작은 production-like smoke에서 별도로 확인한다.
+`verify:kafka-continuous-contract`는 long-running worker를 시작하지 않고 Continuous Job의 기본 config/runtime identity, Rule payload/fingerprint, start request 상태와 충돌 정책을 확인한다. `verify:kafka-consumer-identity-lock`은 실제 PostgreSQL session 경합에서 broker/topic/group identity 예약이 직렬화되는지 확인하고, `verify:kafka-continuous-graceful-shutdown`은 signal handler가 현재 `foreachBatch`를 중간 중단하지 않는지 정적 계약으로 고정한다. `verify:kafka-continuous-rules`는 독립 Docker Spark에서 bounded micro-batch Rule 의미와 checkpoint contract를 실행한다. Kafka/MinIO/Catalog를 포함한 실동작은 production-like smoke에서 별도로 확인한다.
 
 ```bash
 cd backend
 npm run verify:kafka-continuous-contract
+npm run verify:kafka-consumer-identity-lock
+npm run verify:kafka-continuous-graceful-shutdown
 npm run verify:kafka-continuous-rules
 ```
 
@@ -494,7 +496,22 @@ npm run kafka:msk-probe -- --topic asklake.staging.probe --create-topic
 
 실패 code는 설정 오류 `KAFKA_RUNTIME_CONFIGURATION_INVALID`, IAM 인증/인가 `KAFKA_AUTHENTICATION_FAILED`, network/timeout `KAFKA_CONNECTION_TIMEOUT`, topic 없음 `KAFKA_TOPIC_NOT_FOUND`, namespace 위반 `KAFKA_TOPIC_NAMESPACE_INVALID`, partition/retention 불일치 `KAFKA_TOPIC_POLICY_MISMATCH`, bounded 수신 실패 `KAFKA_ROUNDTRIP_TIMEOUT`으로 구분한다. 인증 오류를 해결할 때 원문 stack이나 credential을 로그에 추가하지 말고 VPC route/security group, IAM cluster/topic/group 권한, region과 IAM bootstrap broker를 순서대로 확인한다.
 
-로컬 Docker Continuous는 Spark 4.0.1/Scala 2.13 connector를, EMR Continuous 기본값은 EMR 7.1 계열과 맞는 Spark 3.5/Scala 2.12 connector를 사용한다. EMR release를 바꾸면 `ASKLAKE_EMR_SERVERLESS_CONTINUOUS_KAFKA_PACKAGE`도 그 release의 Spark/Scala 조합에 맞춰 검증한다. MSK IAM auth package는 execution role credential chain을 사용하며 static key를 JAAS/env에 넣지 않는다.
+로컬 Docker Continuous는 Spark 4.0.1/Scala 2.13 connector를 사용한다. EMR Continuous 기본값은 `emr-7.9.0`의 Spark 3.5.5에 맞춘 `spark-sql-kafka-0-10_2.12:3.5.5`다. EMR release를 바꾸면 `ASKLAKE_EMR_SERVERLESS_CONTINUOUS_KAFKA_PACKAGE`도 그 release의 Spark/Scala 조합에 맞춰 검증한다. `packages` mode는 private subnet의 NAT/Maven egress를 실제 확인한 뒤 `ASKLAKE_EMR_SERVERLESS_CONTINUOUS_ALLOW_MAVEN_EGRESS=true`로 명시 승인해야 한다. 외부 Maven 접근을 허용하지 않는 배포는 connector와 모든 transitive dependency를 immutable S3 artifact로 고정하고 `DEPENDENCY_MODE=jars`, `JAR_URIS=s3://...`를 사용한다. MSK IAM auth package는 execution role credential chain을 사용하며 static key를 JAAS/env에 넣지 않는다.
+
+### EMR/MSK staging graceful pause 검증
+
+이 검증은 실제 AWS 리소스와 비용을 사용하므로 기본 verifier나 CI에서 자동 실행하지 않는다. 전용 staging topic/group/target을 사용하고 운영 topic 또는 checkpoint를 재사용하지 않는다.
+
+1. EMR Serverless application이 `SPARK`, `emr-7.9.0` 이상, `STARTED`인지 확인하고 backend role의 `GetApplication/StartApplication/StartJobRun/GetJobRun/CancelJobRun/iam:PassRole`, execution role의 S3/MSK 권한을 확인한다.
+2. `packages` mode면 private subnet에서 Maven repository까지 NAT egress를 확인하고 명시 승인한다. egress가 없으면 checksum을 검증한 connector/transitive JAR를 immutable S3 prefix에 업로드해 `jars` mode로 전환한다.
+3. `npm run kafka:msk-probe -- --topic asklake.staging.probe`로 backend 실행 주체의 IAM/network roundtrip을 먼저 검증한다.
+4. 고유 topic/group/target과 기존에 사용하지 않은 checkpoint로 Continuous Job을 시작하고 backlog와 신규 메시지를 넣는다. Job 상세의 source range, stored/quarantine count, manifest와 checkpoint를 기록한다.
+5. micro-batch가 처리 중일 때 pause를 요청한다. `runtimeCancelRequestState`가 `requested -> accepted -> completed`, remote state가 `CANCELLED`가 되는지, 마지막 batch manifest가 완결됐는지 확인한다. cancel API 실패 또는 remote `FAILED`는 pause 성공으로 판정하면 안 된다.
+6. 같은 checkpoint로 resume하고 추가 메시지를 넣은 뒤 stop한다. 입력 수와 `stored + quarantine` 합계, partition별 source range의 gap/overlap 부재, Catalog materialization fingerprint를 pause 전후로 비교한다.
+7. Catalog ack를 일시 실패시킨 경우 worker 상태 조회가 계속 성공하고 `lastCatalogAckError`가 노출되며, 다음 poll에서 같은 manifest ack가 재시도되어 오류가 해소되는지 확인한다.
+8. 검증이 끝나면 이 테스트에서 만든 Job과 전용 artifact만 정리한다. shared topic, checkpoint, output prefix는 자동 삭제하지 않는다.
+
+현재 repo 검증은 fake EMR/S3와 로컬 PostgreSQL 경쟁 조건까지 자동화하며, 위 실제 AWS staging 시나리오는 배포 환경에서 opt-in으로 수행한다.
 
 Production-like Continuous E2E는 Compose를 먼저 올린 뒤 opt-in으로 실행한다. retained backlog, schema/Rule quarantine, Transform/Quality 카운터, Rule-aware replay, 신규 이벤트, pause/resume, worker kill 후 checkpoint restart, Catalog fingerprint materialization, duplicate-free counter를 검증한다. worker 시작 시 target `s3a://` bucket은 MinIO에 없으면 자동 생성된다. 사용자 요청으로 인한 pause/stop의 SIGTERM 종료는 각각 `paused`/`stopped`로 처리하고, 요청 없이 종료된 worker만 `failed`가 된다.
 

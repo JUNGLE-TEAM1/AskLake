@@ -206,6 +206,14 @@ class KafkaContinuousRuntime(CamelModel):
     runtime_attempt: int | None = None
     runtime_state: str | None = None
     runtime_log_reference: dict[str, Any] | None = None
+    runtime_requested_action: str | None = None
+    runtime_cancel_request_state: str | None = None
+    runtime_cancel_requested_at: str | None = None
+    runtime_cancel_accepted_at: str | None = None
+    runtime_cancel_completed_at: str | None = None
+    runtime_cancel_failed_at: str | None = None
+    runtime_cancel_error: str | None = None
+    last_catalog_ack_error: str | None = None
     last_successful_checkpoint: str | None = None
     heartbeat_at: str | None = None
     last_flush_at: str | None = None

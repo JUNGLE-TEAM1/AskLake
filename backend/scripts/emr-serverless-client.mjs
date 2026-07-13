@@ -205,11 +205,11 @@ export async function getEmrServerlessJob(client, applicationId, jobRunId) {
   return jobRun;
 }
 
-export async function cancelEmrServerlessJob(client, applicationId, jobRunId, graceSeconds = 60) {
+export async function cancelEmrServerlessJob(client, applicationId, jobRunId, graceSeconds = 120) {
   return sendEmr(client, new CancelJobRunCommand({
     applicationId: requiredText(applicationId, "EMR application ID"),
     jobRunId: requiredText(jobRunId, "EMR Job Run ID"),
-    shutdownGracePeriodInSeconds: boundedInteger(graceSeconds, 60, 1, 3600),
+    shutdownGracePeriodInSeconds: boundedInteger(graceSeconds, 120, 15, 1800),
   }), "cancel");
 }
 

@@ -1327,6 +1327,13 @@ def command_kafka_continuous_job(
     active_statuses = {"starting", "running", "pausing", "stopping"}
 
     if command in {"startContinuous", "resumeContinuous"}:
+        if db is not None:
+            etl_repository.lock_kafka_consumer_identity(
+                db,
+                broker=runtime.broker,
+                topic=runtime.topic,
+                consumer_group_id=runtime.consumer_group_id,
+            )
         if runtime.status in active_statuses:
             raise ApiError(ErrorCode.CONFLICT, f"Continuous Job is already active: {job.id}", status.HTTP_409_CONFLICT)
         conflict = etl_repository.find_conflicting_kafka_continuous_runtime(
@@ -1782,6 +1789,13 @@ def kafka_request_with_durable_snapshot(
     topic = str(request.get("topic") or "reviews.raw")
     consumer_group_id = str(request.get("consumerGroupId") or "")
     broker = str(request.get("broker") or "")
+    if db is not None:
+        etl_repository.lock_kafka_consumer_identity(
+            db,
+            broker=broker,
+            topic=topic,
+            consumer_group_id=consumer_group_id,
+        )
     continuous_conflict = etl_repository.find_conflicting_kafka_continuous_runtime(
         db,
         broker=broker,
@@ -1795,6 +1809,20 @@ def kafka_request_with_durable_snapshot(
             f"Continuous Kafka worker is already active on Job: {continuous_conflict.job_id}",
             status.HTTP_409_CONFLICT,
             {"activeJobId": continuous_conflict.job_id, "runtimeStatus": continuous_conflict.status},
+        )
+    snapshot_conflict = etl_repository.find_conflicting_kafka_snapshot(
+        db,
+        broker=broker,
+        topic=topic,
+        consumer_group_id=consumer_group_id,
+        excluded_job_id=job_id,
+    )
+    if snapshot_conflict is not None:
+        raise ApiError(
+            ErrorCode.CONFLICT,
+            f"Kafka snapshot is already active: {snapshot_conflict.snapshot_id}",
+            status.HTTP_409_CONFLICT,
+            {"activeSnapshotId": snapshot_conflict.snapshot_id, "activeJobId": snapshot_conflict.job_id},
         )
     existing = etl_repository.get_active_kafka_snapshot(db, topic, consumer_group_id, job_id)
     if existing is None:
@@ -5671,7 +5699,30 @@ def refresh_kafka_continuous_runtime(db: Session, job: ETLJobModel) -> None:
     requested_action = optional_string(worker_status.get("requestedAction"))
     requested_terminal_status = "paused" if requested_action == "pause" else "stopped" if requested_action == "stop" else None
     forced_terminal_status = None
-    if (runtime.status in {"pausing", "stopping"} or requested_terminal_status) and container_state in {"exited", "missing"}:
+    runtime_provider = (
+        optional_string(worker_status.get("runtime"))
+        or optional_string((runtime.metrics or {}).get("runtimeProvider"))
+    )
+    driver_state = str(worker_status.get("driverState") or "").upper()
+    cancel_request_state = optional_string(worker_status.get("cancelRequestState"))
+    emr_cancel_completed = (
+        runtime_provider == "emr-serverless"
+        and driver_state == "CANCELLED"
+        and cancel_request_state == "completed"
+        and requested_terminal_status is not None
+    )
+    emr_cancel_in_progress = (
+        runtime_provider == "emr-serverless"
+        and driver_state == "CANCELLING"
+        and cancel_request_state in {"requested", "accepted"}
+        and requested_terminal_status is not None
+    )
+    local_cancel_completed = (
+        runtime_provider != "emr-serverless"
+        and (runtime.status in {"pausing", "stopping"} or requested_terminal_status)
+        and container_state in {"exited", "missing"}
+    )
+    if emr_cancel_completed or local_cancel_completed:
         # Pause and stop intentionally terminate the worker after persisting its
         # checkpoint. Reconcile a final report when one exists, but keep the
         # requested terminal transition authoritative over its stale status.
@@ -5723,7 +5774,10 @@ def refresh_kafka_continuous_runtime(db: Session, job: ETLJobModel) -> None:
         **({"lastRuleResult": last_rule_result} if last_rule_result is not None else {}),
         **({"lastBatchEvidence": last_batch_evidence} if last_batch_evidence is not None else {}),
     }
-    runtime_status = forced_terminal_status or str(payload.get("status") or runtime.status)
+    if emr_cancel_in_progress:
+        runtime_status = "pausing" if requested_terminal_status == "paused" else "stopping"
+    else:
+        runtime_status = forced_terminal_status or str(payload.get("status") or runtime.status)
     if runtime_status not in {"starting", "running", "pausing", "paused", "stopping", "stopped", "failed"}:
         return
     runtime.status = runtime_status
@@ -5784,7 +5838,11 @@ def refresh_kafka_continuous_runtime(db: Session, job: ETLJobModel) -> None:
             f"Continuous worker container is {container_state} (exitCode={worker_status.get('exitCode')}).",
             continuous_failure_identity(job, runtime, worker_status, "container_exit"),
         )
-    elif runtime_status in {"starting", "running", "pausing", "stopping"} and heartbeat_stale:
+    elif (
+        runtime_status in {"starting", "running", "pausing", "stopping"}
+        and heartbeat_stale
+        and not emr_cancel_in_progress
+    ):
         mark_continuous_runtime_failed(
             job,
             runtime,
@@ -5836,11 +5894,34 @@ def continuous_worker_runtime_metrics(worker_result: dict[str, Any]) -> dict[str
         "runtimeAttempt": optional_int(worker_result.get("attempt")),
         "runtimeState": optional_string(worker_result.get("driverState")),
         "lastSuccessfulCheckpoint": optional_string(worker_result.get("lastSuccessfulCheckpoint")),
+        "runtimeRequestedAction": optional_string(worker_result.get("requestedAction")),
+        "runtimeCancelRequestState": optional_string(worker_result.get("cancelRequestState")),
+        "runtimeCancelRequestedAt": optional_string(worker_result.get("cancelRequestedAt")),
+        "runtimeCancelAcceptedAt": optional_string(worker_result.get("cancelAcceptedAt")),
+        "runtimeCancelCompletedAt": optional_string(worker_result.get("cancelCompletedAt")),
+        "runtimeCancelFailedAt": optional_string(worker_result.get("cancelFailedAt")),
+        "runtimeCancelError": optional_string(worker_result.get("cancelError")),
+        "lastCatalogAckError": optional_string(worker_result.get("lastCatalogAckError")),
     }
     log_reference = worker_result.get("runtimeLogReference")
     if isinstance(log_reference, dict):
         values["runtimeLogReference"] = log_reference
-    return {key: value for key, value in values.items() if value is not None}
+    result = {key: value for key, value in values.items() if value is not None}
+    if runtime_provider is not None:
+        # These fields are state-machine snapshots. Persist explicit nulls so a
+        # successful retry/resume clears stale cancellation and ack errors.
+        for key in (
+            "runtimeRequestedAction",
+            "runtimeCancelRequestState",
+            "runtimeCancelRequestedAt",
+            "runtimeCancelAcceptedAt",
+            "runtimeCancelCompletedAt",
+            "runtimeCancelFailedAt",
+            "runtimeCancelError",
+            "lastCatalogAckError",
+        ):
+            result[key] = values[key]
+    return result
 
 
 def continuous_heartbeat_is_stale(heartbeat_at: str | None, job: ETLJobModel) -> bool:

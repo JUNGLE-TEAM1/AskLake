@@ -345,6 +345,7 @@ function restWorkerResult(jobId, containerName, state, overrides = {}) {
     jobId,
     report: readReport(jobId),
     requestedAction: command?.action || null,
+    runtime: "spark-rest",
     workerAttemptId: state?.workerAttemptId || null,
     ...overrides,
   };
@@ -393,6 +394,9 @@ function continuousEnvironment(
       || !["MINIO_ACCESS_KEY", "MINIO_SECRET_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"].includes(name)
     )),
   );
+  const testMode = String(process.env.APP_ENV || "").trim().toLowerCase() === "production"
+    ? "false"
+    : process.env.ASKLAKE_CONTINUOUS_TEST_MODE || "false";
   return {
     ASKLAKE_CONTINUOUS_JOB_ID: jobId,
     ASKLAKE_CONTINUOUS_WORKER_ATTEMPT_ID: workerAttemptId,
@@ -414,6 +418,13 @@ function continuousEnvironment(
     ASKLAKE_CONTINUOUS_SCHEMA_COLUMNS: JSON.stringify(request.schemaColumns || []),
     ASKLAKE_CONTINUOUS_SCHEMA_POLICY: JSON.stringify(request.schemaEvolutionPolicy || {}),
     ASKLAKE_CONTINUOUS_FAIL_AFTER_DATA_WRITE_ONCE: process.env.ASKLAKE_CONTINUOUS_FAIL_AFTER_DATA_WRITE_ONCE || "false",
+    ASKLAKE_CONTINUOUS_TEST_MODE: testMode,
+    ASKLAKE_CONTINUOUS_TEST_BATCH_DELAY_MS: testMode === "true"
+      ? process.env.ASKLAKE_CONTINUOUS_TEST_BATCH_DELAY_MS || "0"
+      : "0",
+    ASKLAKE_CONTINUOUS_TEST_BATCH_DELAY_STAGE: testMode === "true"
+      ? process.env.ASKLAKE_CONTINUOUS_TEST_BATCH_DELAY_STAGE || "batch_started"
+      : "batch_started",
     ASKLAKE_CONTINUOUS_REPORT_FILE: locations.reportFile ?? path.posix.join(runtimeReportDir, reportFileName(jobId)),
     ASKLAKE_CONTINUOUS_COMMAND_FILE: locations.commandFile ?? path.posix.join(runtimeReportDir, commandFileName(jobId)),
     ...storageEnvironment,
@@ -551,6 +562,7 @@ async function startWorkerDocker(request, containerName) {
     containerState: "starting",
     jobId,
     report: readReport(jobId),
+    runtime: "docker",
     started: true,
     workerAttemptId,
   };
@@ -583,6 +595,7 @@ function stopWorkerDocker(jobId, action, containerName) {
     containerState: existing?.State?.Running ? `${action}Requested` : "not_running",
     jobId,
     report: readReport(jobId),
+    runtime: "docker",
   };
 }
 
@@ -597,6 +610,7 @@ function workerStatusDocker(jobId, containerName) {
     jobId,
     report: readReport(jobId),
     requestedAction: command?.action || null,
+    runtime: "docker",
     workerAttemptId: existing?.Config?.Labels?.["asklake.worker-attempt-id"] || null,
   };
 }
@@ -610,6 +624,7 @@ function terminateWorkerDocker(jobId, containerName) {
     containerState: existing?.State?.Running ? "terminateRequested" : "not_running",
     jobId,
     report: readReport(jobId),
+    runtime: "docker",
     workerAttemptId: existing?.Config?.Labels?.["asklake.worker-attempt-id"] || null,
   };
 }

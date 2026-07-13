@@ -30,6 +30,14 @@ export type KafkaContinuousRuntime = {
   runtimeAttempt?: number | null;
   runtimeState?: string | null;
   runtimeLogReference?: Record<string, unknown> | null;
+  runtimeRequestedAction?: string | null;
+  runtimeCancelRequestState?: "requested" | "accepted" | "completed" | "failed" | null;
+  runtimeCancelRequestedAt?: string | null;
+  runtimeCancelAcceptedAt?: string | null;
+  runtimeCancelCompletedAt?: string | null;
+  runtimeCancelFailedAt?: string | null;
+  runtimeCancelError?: string | null;
+  lastCatalogAckError?: string | null;
   lastSuccessfulCheckpoint?: string | null;
   heartbeatAt?: string | null;
   lastFlushAt?: string | null;

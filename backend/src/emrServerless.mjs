@@ -55,6 +55,8 @@ const continuousScopedEnvironmentNames = Object.freeze([
   "POLL_INTERVAL_MS",
 ]);
 
+const EMR_CONTINUOUS_DEPENDENCY_MODES = Object.freeze(new Set(["jars", "packages"]));
+
 export const EMR_SERVERLESS_CONTINUOUS_MANIFEST_FILE = "asklake-continuous-manifest.json";
 
 export function emrServerlessConfig(environment = process.env) {
@@ -102,9 +104,9 @@ export function emrServerlessConfig(environment = process.env) {
     artifactRootUri,
     cancelGracePeriodSeconds: boundedInteger(
       environment.ASKLAKE_EMR_SERVERLESS_CANCEL_GRACE_SECONDS,
-      60,
-      1,
-      3600,
+      120,
+      15,
+      1800,
       "ASKLAKE_EMR_SERVERLESS_CANCEL_GRACE_SECONDS",
     ),
     driverCores: boundedInteger(
@@ -190,9 +192,26 @@ export function emrServerlessContinuousConfig(environment = process.env) {
     if (String(environment[scopedName] || "").trim()) scopedEnvironment[commonName] = environment[scopedName];
   }
   const common = emrServerlessConfig(scopedEnvironment);
+  const dependencyMode = String(
+    environment.ASKLAKE_EMR_SERVERLESS_CONTINUOUS_DEPENDENCY_MODE || "packages",
+  ).trim().toLowerCase();
+  if (!EMR_CONTINUOUS_DEPENDENCY_MODES.has(dependencyMode)) {
+    throw emrConfigurationError(
+      "ASKLAKE_EMR_SERVERLESS_CONTINUOUS_DEPENDENCY_MODE must be packages or jars.",
+    );
+  }
+  const allowMavenEgress = environmentFlag(
+    environment.ASKLAKE_EMR_SERVERLESS_CONTINUOUS_ALLOW_MAVEN_EGRESS,
+    false,
+  );
+  if (dependencyMode === "packages" && !allowMavenEgress) {
+    throw emrConfigurationError(
+      "EMR Continuous packages mode requires ASKLAKE_EMR_SERVERLESS_CONTINUOUS_ALLOW_MAVEN_EGRESS=true after NAT/Maven egress is verified.",
+    );
+  }
   const kafkaPackage = optionalPackage(
     environment.ASKLAKE_EMR_SERVERLESS_CONTINUOUS_KAFKA_PACKAGE,
-    "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0",
+    "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.5",
     "ASKLAKE_EMR_SERVERLESS_CONTINUOUS_KAFKA_PACKAGE",
   );
   const mskIamPackage = optionalPackage(
@@ -225,8 +244,28 @@ export function emrServerlessContinuousConfig(environment = process.env) {
   if (pyFilesUris.some((value) => !/\.py$/i.test(value))) {
     throw emrConfigurationError("EMR Continuous helper artifacts must identify .py files.");
   }
+  const jarUris = String(environment.ASKLAKE_EMR_SERVERLESS_CONTINUOUS_JAR_URIS || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .map((value, index) => canonicalAwsS3Uri(
+      value,
+      `ASKLAKE_EMR_SERVERLESS_CONTINUOUS_JAR_URIS[${index}]`,
+      environment,
+    ));
+  if (dependencyMode === "jars" && jarUris.length === 0) {
+    throw emrConfigurationError(
+      "EMR Continuous jars mode requires ASKLAKE_EMR_SERVERLESS_CONTINUOUS_JAR_URIS.",
+    );
+  }
+  if (jarUris.some((value) => !/\.jar$/i.test(value))) {
+    throw emrConfigurationError("EMR Continuous dependency artifacts must identify .jar files.");
+  }
   return Object.freeze({
     ...common,
+    allowMavenEgress,
+    dependencyMode,
+    jarUris: Object.freeze(jarUris),
     kafkaPackage,
     maxFailedAttemptsPerHour: boundedInteger(
       environment.ASKLAKE_EMR_SERVERLESS_CONTINUOUS_MAX_FAILED_ATTEMPTS_PER_HOUR,
@@ -298,8 +337,12 @@ export function createEmrServerlessContinuousSubmission({
       sparkConf(`spark.emr-serverless.driverEnv.${name}`, value)
     )),
   ];
-  const packages = [config.kafkaPackage, config.mskIamPackage].filter(Boolean);
-  if (packages.length > 0) sparkArguments.push(...sparkConf("spark.jars.packages", packages.join(",")));
+  if (config.dependencyMode === "packages") {
+    const packages = [config.kafkaPackage, config.mskIamPackage].filter(Boolean);
+    if (packages.length > 0) sparkArguments.push(...sparkConf("spark.jars.packages", packages.join(",")));
+  } else {
+    sparkArguments.push("--jars", config.jarUris.join(","));
+  }
   const sparkSubmitParameters = sparkArguments.map(shellToken).join(" ");
   if (sparkSubmitParameters.length > 102_400) {
     throw emrConfigurationError("EMR Continuous sparkSubmitParameters exceed the 102400 character API limit.");

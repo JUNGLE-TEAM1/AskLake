@@ -73,6 +73,8 @@
     "verify:kafka-review-scheduled-ingest": "node scripts/verify-kafka-review-scheduled-ingest.mjs",
     "verify:kafka-target-projection": "node scripts/verify-kafka-target-projection.mjs",
     "verify:kafka-continuous-contract": "PYTHONPATH=. .venv/bin/python scripts/verify-kafka-continuous-contract.py",
+    "verify:kafka-continuous-graceful-shutdown": "PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-.venv/bin/python} scripts/verify-kafka-continuous-graceful-shutdown-contract.py",
+    "verify:kafka-consumer-identity-lock": "PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-.venv/bin/python} scripts/verify-kafka-consumer-identity-lock.py",
     "verify:kafka-continuous-rules": "node scripts/verify-kafka-continuous-rules.mjs",
     "verify:kafka-replay-producer": "PYTHONPATH=. .venv/bin/python scripts/verify-kafka-replay-producer.py",
     "verify:kafka-continuous-e2e": "node scripts/verify-kafka-continuous-e2e.mjs",

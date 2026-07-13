@@ -280,6 +280,7 @@ def main() -> None:
 
     original_get = etl_repository.get_kafka_continuous_runtime
     original_lock = etl_repository.lock_kafka_continuous_runtime
+    original_identity_lock = etl_repository.lock_kafka_consumer_identity
     original_find = etl_repository.find_conflicting_kafka_continuous_runtime
     original_snapshot_find = etl_repository.find_conflicting_kafka_snapshot
     original_list_runs = etl_repository.list_runs_for_job
@@ -301,6 +302,7 @@ def main() -> None:
     try:
         etl_repository.get_kafka_continuous_runtime = lambda _db, _job_id: runtime
         etl_repository.lock_kafka_continuous_runtime = lambda _db, _job_id: runtime
+        etl_repository.lock_kafka_consumer_identity = lambda _db, **_kwargs: "fixture-identity"
         etl_repository.find_conflicting_kafka_continuous_runtime = lambda _db, **_kwargs: None
         etl_repository.find_conflicting_kafka_snapshot = lambda _db, **_kwargs: None
         etl_repository.list_runs_for_job = lambda _db, _job_id: []
@@ -561,6 +563,61 @@ def main() -> None:
             assert runtime.metrics["runtimeAttempt"] == 3
             assert runtime.metrics["runtimeLogReference"]["provider"] == "s3"
 
+            runtime.status = "pausing"
+            etl_service.continuous_worker_status = lambda _job, _runtime: {
+                "cancelRequestState": "accepted",
+                "containerState": "stopping",
+                "driverState": "CANCELLING",
+                "report": {
+                    "status": "running",
+                    "workerAttemptId": "emr-attempt-1",
+                    "heartbeatAt": "2026-01-01T00:00:00Z",
+                },
+                "requestedAction": "pause",
+                "runtime": "emr-serverless",
+                "workerAttemptId": "emr-attempt-1",
+            }
+            etl_service.refresh_kafka_continuous_runtime(None, job)
+            assert runtime.status == "pausing", "A stale report must not erase an accepted EMR pause."
+            assert runtime.metrics["runtimeCancelRequestState"] == "accepted"
+
+            etl_service.continuous_worker_status = lambda _job, _runtime: {
+                "cancelRequestState": "completed",
+                "containerState": "exited",
+                "driverState": "CANCELLED",
+                "exitCode": 143,
+                "report": {
+                    "status": "running",
+                    "workerAttemptId": "emr-attempt-1",
+                    "heartbeatAt": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+                },
+                "requestedAction": "pause",
+                "runtime": "emr-serverless",
+                "workerAttemptId": "emr-attempt-1",
+            }
+            etl_service.refresh_kafka_continuous_runtime(None, job)
+            assert runtime.status == "paused"
+
+            runtime.status = "pausing"
+            etl_service.continuous_worker_status = lambda _job, _runtime: {
+                "cancelRequestState": "failed",
+                "containerState": "exited",
+                "driverState": "FAILED",
+                "exitCode": 1,
+                "report": {
+                    "failedCount": 1,
+                    "lastError": "stream failed after cancellation rejection",
+                    "status": "failed",
+                    "workerAttemptId": "emr-attempt-1",
+                },
+                "requestedAction": "pause",
+                "runtime": "emr-serverless",
+                "workerAttemptId": "emr-attempt-1",
+            }
+            etl_service.refresh_kafka_continuous_runtime(None, job)
+            assert runtime.status == "failed", "A rejected EMR cancel must not be reported as paused."
+            assert runtime.last_error == "stream failed after cancellation rejection"
+
             report_path.write_text(json.dumps({
                 "status": "running",
                 "heartbeatAt": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
@@ -571,7 +628,13 @@ def main() -> None:
             }), encoding="utf-8")
             runtime.status = "pausing"
             runtime.failed_count = 0
-            etl_service.continuous_worker_status = lambda _job, _runtime: {"containerState": "exited", "containerId": "attempt-graceful", "exitCode": 143}
+            etl_service.continuous_worker_status = lambda _job, _runtime: {
+                "containerState": "exited",
+                "containerId": "attempt-graceful",
+                "exitCode": 143,
+                "requestedAction": "pause" if runtime.status == "pausing" else "stop",
+                "runtime": "docker",
+            }
             etl_service.refresh_kafka_continuous_runtime(None, job)
             assert runtime.status == "paused"
             assert runtime.failed_count == 0
@@ -684,6 +747,7 @@ def main() -> None:
     finally:
         etl_repository.get_kafka_continuous_runtime = original_get
         etl_repository.lock_kafka_continuous_runtime = original_lock
+        etl_repository.lock_kafka_consumer_identity = original_identity_lock
         etl_repository.find_conflicting_kafka_continuous_runtime = original_find
         etl_repository.find_conflicting_kafka_snapshot = original_snapshot_find
         etl_repository.list_runs_for_job = original_list_runs

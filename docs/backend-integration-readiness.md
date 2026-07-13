@@ -147,8 +147,8 @@ Spark runner 입력:
 - `ASKLAKE_SPARK_QUALITY_RULES`: create payload의 quality rules
 - `ASKLAKE_SPARK_PARTITION_COLUMNS`: Target에서 선택한 다중 파티션 컬럼을 `/` 구분 문자열로 전달하며 Spark writer가 순서대로 `partitionBy`에 적용
 - `ASKLAKE_SPARK_RUNTIME`: canonical 실행 provider. 로컬은 `docker`, production 기본은 `spark-rest`, AWS S3 Batch/MSK Continuous는 opt-in `emr-serverless`; 기존 `ASKLAKE_SPARK_RUNNER=docker|rest`는 호환 alias
-- `ASKLAKE_EMR_SERVERLESS_*`: 공통 enabled/application/execution role/entry-point/artifact/log S3 URI, polling/Batch timeout/cancel, driver/executor와 dynamic allocation 범위
-- `ASKLAKE_EMR_SERVERLESS_CONTINUOUS_*`: 별도 feature flag/application/entry point, helper py-files, Kafka/MSK IAM package와 시간당 실패 임계치. Streaming에는 Batch execution timeout을 전달하지 않는다.
+- `ASKLAKE_EMR_SERVERLESS_*`: 공통 enabled/application/execution role/entry-point/artifact/log S3 URI, polling/Batch timeout/cancel, driver/executor와 dynamic allocation 범위. graceful cancel은 기본 120초, 허용 범위 15~1800초이고 force cancel만 0초다.
+- `ASKLAKE_EMR_SERVERLESS_CONTINUOUS_*`: 별도 feature flag/application/entry point, helper py-files, Kafka/MSK IAM package와 시간당 실패 임계치. 제출 전에 `GetApplication`으로 `SPARK`, `emr-7.9.0` 이상, 시작 가능 상태를 검증한다. 기본 connector는 Spark 3.5.5/Scala 2.12이며, `packages` mode는 NAT/Maven egress 명시 승인을 요구하고 `jars` mode는 immutable S3 JAR URI를 요구한다. Streaming에는 Batch execution timeout을 전달하지 않는다.
 
 Spark runner 결과:
 
@@ -229,6 +229,8 @@ npm run verify:trino-result-storage
 npm run verify:trino-collector-resilience
 npm run verify:trino-submission-guard
 npm run verify:kafka-continuous-contract
+npm run verify:kafka-consumer-identity-lock
+npm run verify:kafka-continuous-graceful-shutdown
 npm run verify:storage-layout-contract
 npm run verify:kafka-continuous-rules
 PYTHONPATH=. .venv/bin/python scripts/verify-etl-job-hydrate-contract.py
@@ -255,9 +257,9 @@ FastAPI Pair2 smoke:
 - `npm run verify:fastapi-etl-catalog`는 같은 script의 기존 호환 이름이다. Airflow URL이 없으면 내장 mock 계약을 확인하고, 실제 Airflow URL을 사용하면 Spark 성공 뒤 `catalogResult`, Catalog dataset, materialization, physical size, lineage까지 검사한다.
 - `npm run verify:etl-lineage`는 text source 하나가 `text`, `sentiment`, `severity`로 파생되는 경우 source node가 `text`만 갖고 one-to-many transform edge를 만들며 `_asklake_*` metadata에 가짜 source edge를 만들지 않는지 확인한다. 또한 Parquet source를 `SOURCE · PARQUET`, Spark Job을 `PROCESS · SPARK`, 현재 Spark physical output을 요청 포맷과 무관하게 실제 `PARQUET` engine으로 표시하는지 검증한다.
 - `npm run verify:rule-compiler`는 공통 JSON fixture로 Python FastAPI와 local Node backend의 version/policy/parameter 판정을 비교하고, canonical Rule 생성·수정·조회 영속성 및 legacy fallback까지 확인한다. 프론트는 `cd frontend && npm run verify:rule-compiler`로 같은 fixture와 falsy/null parameter 왕복을 검증한다.
-- `npm run verify:kafka-continuous-contract`는 Continuous config/runtime, Rule payload/fingerprint, Catalog 근거, 기존 checkpoint root 복원과 output/checkpoint 불일치 차단을 프로젝트 가상환경에서 검증한다. `npm run verify:kafka-continuous-rules`는 Docker Spark 4에서 Transform/Quality, Rule quarantine, replay 재검증, final projection과 checkpoint fingerprint mismatch를 실행한다.
+- `npm run verify:kafka-continuous-contract`는 Continuous config/runtime, cancel lifecycle, Rule payload/fingerprint, Catalog 근거, 기존 checkpoint root 복원과 output/checkpoint 불일치 차단을 프로젝트 가상환경에서 검증한다. `npm run verify:kafka-consumer-identity-lock`은 실제 PostgreSQL session 경쟁으로 동일 broker/topic/group의 Snapshot·Continuous 중복 예약을 차단하고 다른 group은 허용하는지 확인한다. `npm run verify:kafka-continuous-graceful-shutdown`은 signal 이후 현재 micro-batch write/manifest가 drain되고 production에서 test delay 주입이 꺼지는 정적 계약을 확인한다. `npm run verify:kafka-continuous-rules`는 Docker Spark 4에서 Transform/Quality, Rule quarantine, replay 재검증, final projection과 checkpoint fingerprint mismatch를 실행한다.
 - `npm run verify:spark-runtime-contract`는 canonical/legacy Runtime 선택, production Docker 차단, capability, 배치·source inspection·Continuous·maintenance dispatcher 연결을 확인한다. `npm run verify:spark-rest-client`, `npm run verify:kafka-continuous-rest`, `npm run verify:production-spark-contract`는 REST lifecycle, zero-Docker backend, Compose 경계를 이어서 검증한다.
-- `npm run verify:emr-serverless-continuous-contract`는 fake EMR/S3 client로 STREAMING 제출, MSK IAM manifest, helper artifact, S3 report/Catalog ack, active 중복 방지, backend restart 재연결, graceful pause와 동일 checkpoint resume, attempt/failure/log evidence를 검증한다. 실제 VPC/MSK/EMR 실행은 staging opt-in이다.
+- `npm run verify:emr-serverless-continuous-contract`는 fake EMR/S3 client로 `GetApplication`의 SPARK/7.9+/state preflight, STREAMING 제출, packages/jars dependency 정책, S3 report와 retry 가능한 Catalog ack, cancel `requested/accepted/completed/failed`, backend restart 재연결, graceful pause와 동일 checkpoint resume를 검증한다. 실제 VPC/MSK/EMR 실행은 `docs/04-development-guide.md`의 staging graceful pause runbook에 따라 opt-in한다.
 - `npm run verify:msk-connection-contract`는 local Redpanda 기본값, MSK feature flag/IAM/TLS fail-fast, environment topic namespace, partition/retention policy, AWS signer client options, producer → bounded consumer roundtrip와 안전한 오류 정규화를 fake Kafka client로 검증한다. 실제 AWS roundtrip은 MSK bootstrap broker에 접근 가능한 staging VPC에서 `npm run kafka:msk-probe -- --topic asklake.staging.probe`로 opt in한다. `--create-topic`은 없는 probe topic만 생성하며 기존 topic 삭제·재생성이나 partition 증가는 수행하지 않는다.
 - `npm run verify:storage-layout-contract`는 MinIO/AWS provider-neutral root, Node/Python 결과 일치, 명시 경로의 canonical percent encoding과 malformed 입력 거부, legacy bucket 호환, artifact 경로, Job별 checkpoint, retention 설정, production local path 차단, 안전한 object-storage 오류를 확인한다. `npm run verify:target-metadata`는 persisted `datasetId`와 자동·명시 Catalog output identity를 함께 확인한다.
 - `PYTHONPATH=. .venv/bin/python scripts/verify-etl-job-hydrate-contract.py`는 저장된 Kafka source/schema/rule/permission/target metadata가 `JobRowData` hydrate 응답에서 손실되지 않는지, explicit canonical empty가 legacy Rule을 되살리지 않는지 확인한다.

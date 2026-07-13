@@ -501,8 +501,19 @@ def requested_action() -> str:
 def on_signal(_signum: int, _frame: Any) -> None:
     global STOP_REQUESTED
     STOP_REQUESTED = True
-    if QUERY is not None:
-        QUERY.stop()
+
+
+def test_batch_delay(stage: str) -> None:
+    if os.environ.get("ASKLAKE_CONTINUOUS_TEST_MODE", "").lower() != "true":
+        return
+    if os.environ.get("ASKLAKE_CONTINUOUS_TEST_BATCH_DELAY_STAGE", "batch_started") != stage:
+        return
+    try:
+        delay_ms = max(0, min(int(os.environ.get("ASKLAKE_CONTINUOUS_TEST_BATCH_DELAY_MS", "0")), 60_000))
+    except ValueError:
+        delay_ms = 0
+    if delay_ms:
+        time.sleep(delay_ms / 1000)
 
 
 def spark_type(value: str):
@@ -1109,18 +1120,26 @@ def main() -> None:
     )
 
     def write_batch(batch: DataFrame, batch_id: int) -> None:
+        persisted_frames = [batch.persist()]
+        try:
+            write_persisted_batch(batch, batch_id, persisted_frames)
+        finally:
+            for frame in reversed(persisted_frames):
+                try:
+                    frame.unpersist()
+                except Exception:  # noqa: BLE001 - cleanup must not mask the batch result.
+                    pass
+
+    def write_persisted_batch(batch: DataFrame, batch_id: int, persisted_frames: list[DataFrame]) -> None:
         global LAST_BATCH_STORED_COUNT, LAST_BATCH_QUARANTINED_COUNT, LAST_BATCH_WRITTEN, PUBLISHED_BATCHES, LAST_BATCH_EVIDENCE, CURRENT_BATCH_CONTEXT
-        if STOP_REQUESTED:
-            return
         batch_started_at = time.monotonic()
-        batch.persist()
         total = batch.count()
+        test_batch_delay("batch_started")
         if total == 0:
             # Keep the last non-empty batch publication visible to the control
             # plane. Spark can invoke foreachBatch for empty microbatches while
             # the stream is idle, and those must not erase Catalog retry state.
             report("running")
-            batch.unpersist()
             return
         source_ranges = batch_source_ranges(batch)
         stage_durations = {
@@ -1178,7 +1197,6 @@ def main() -> None:
             LAST_BATCH_EVIDENCE = {**published, "status": "success", "lastError": None, "dagSteps": dag_steps}
             CURRENT_BATCH_CONTEXT = {}
             report("running", batch_id=batch_id)
-            batch.unpersist()
             return
         required_missing = lit(False)
         incompatible_type = lit(False)
@@ -1271,7 +1289,6 @@ def main() -> None:
                 error=str(exc)[:2000],
             )
             report("failed", error=str(exc)[:2000])
-            batch.unpersist()
             raise
         stage_durations.update(rule_execution.get("timings") or {})
         target_started_at = time.monotonic()
@@ -1281,7 +1298,9 @@ def main() -> None:
             "transform": rule_execution["transform"],
         })
         transformed = rule_execution["frame"].persist()
+        persisted_frames.append(transformed)
         target_frame = select_continuous_target(transformed).persist()
+        persisted_frames.append(target_frame)
         stored_count = target_frame.count()
         rule_quarantine = rule_execution["quarantine"]
         rule_quarantine_count = rule_quarantine.count() if rule_quarantine is not None else 0
@@ -1349,6 +1368,7 @@ def main() -> None:
                     "sourceRanges": batch_source_ranges(evidence),
                 },
             )
+        test_batch_delay("after_data_write")
         stage_durations["targetDurationMs"] = max(0, round((time.monotonic() - target_started_at) * 1000))
         CURRENT_BATCH_CONTEXT.update({
             "current_stage": "manifest-checkpoint",
@@ -1427,9 +1447,6 @@ def main() -> None:
         COUNTERS["quarantinedCount"] += quarantined_count
         update_rule_metrics(rule_execution["transform"], rule_execution["quality"])
         report("running", batch_id=batch_id)
-        target_frame.unpersist()
-        transformed.unpersist()
-        batch.unpersist()
 
     report("starting")
     QUERY = (parsed.writeStream.foreachBatch(write_batch)
@@ -1438,9 +1455,16 @@ def main() -> None:
         .start())
     if STOP_REQUESTED:
         QUERY.stop()
-    report("running")
+    else:
+        report("running")
     while QUERY.isActive:
         QUERY.awaitTermination(5)
+        if STOP_REQUESTED and QUERY.isActive:
+            # Run outside the signal handler. Spark's graceful stop waits for an
+            # in-flight foreachBatch callback instead of allowing it to return
+            # successfully without publishing its source range.
+            QUERY.stop()
+            break
         if QUERY.isActive:
             refresh_query_metrics(QUERY)
             report("running")

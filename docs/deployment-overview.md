@@ -87,7 +87,7 @@ mongo
 PostgreSQL fixture는 메인 데모 시나리오에 사용한다.
 MongoDB fixture는 다른 source type도 처리할 수 있다는 보조 시나리오에 사용한다.
 로컬 개발은 root Compose의 MinIO를 사용한다. EC2 production은 MinIO를 띄우지 않고 AWS S3를 사용한다.
-File / S3, Data Lake source, Target S3 picker, Spark S3A, DuckDB는 EC2 instance profile IAM Role/default credential chain을 사용하며 browser와 서버 `.env`에는 AWS access key/secret을 두지 않는다. 기본 Runtime은 Compose의 Spark Standalone REST지만, AWS 리소스가 준비된 배포는 일반 Batch와 MSK Continuous를 EMR Serverless로 opt in할 수 있다. Kafka 기본값은 Compose Redpanda이며, VPC/IAM이 준비된 배포는 Node Source test·Snapshot ingest·replay producer와 EMR Structured Streaming을 MSK Serverless에 연결할 수 있다. EMR Continuous는 별도 feature flag, streaming artifact, S3 checkpoint/report와 EMR 7.1.0 이상을 요구한다.
+File / S3, Data Lake source, Target S3 picker, Spark S3A, DuckDB는 EC2 instance profile IAM Role/default credential chain을 사용하며 browser와 서버 `.env`에는 AWS access key/secret을 두지 않는다. 기본 Runtime은 Compose의 Spark Standalone REST지만, AWS 리소스가 준비된 배포는 일반 Batch와 MSK Continuous를 EMR Serverless로 opt in할 수 있다. Kafka 기본값은 Compose Redpanda이며, VPC/IAM이 준비된 배포는 Node Source test·Snapshot ingest·replay producer와 EMR Structured Streaming을 MSK Serverless에 연결할 수 있다. AskLake EMR Continuous는 별도 feature flag, streaming artifact, S3 checkpoint/report와 graceful shutdown을 지원하는 `emr-7.9.0` 이상 Spark application을 요구한다.
 
 기본 fixture는 다음처럼 고정한다.
 
@@ -122,7 +122,7 @@ File / S3, Data Lake source, Target S3 picker, Spark S3A, DuckDB는 EC2 instance
 | EC2 생성 | Docker Compose를 실행할 서버를 만든다. |
 | EC2 IAM Role 연결 | Raw list/read와 Output list/read/write/delete 최소 권한을 instance profile로 연결한다. |
 | S3 bucket 생성 | Raw와 Spark Output bucket을 같은 리전에 private으로 만든다. Warehouse/Query Result bucket은 현재 runtime에 연결하지 않는다. |
-| EMR Serverless 선택 준비 | opt in 배포만 Application, Job execution role, artifact/log prefix와 backend의 Start/Get/Cancel 및 `iam:PassRole` 권한을 준비한다. |
+| EMR Serverless 선택 준비 | opt in 배포만 `SPARK`/`emr-7.9.0` 이상 Application, Job execution role, artifact/log prefix와 backend의 `GetApplication`/Start/Get/Cancel 및 `iam:PassRole` 권한을 준비한다. |
 | MSK Serverless 선택 준비 | opt in 배포만 VPC/subnet/security group, IAM cluster/topic/group 권한, IAM bootstrap brokers와 환경별 topic을 준비한다. backend/probe 실행 주체가 같은 VPC 경로로 접근해야 한다. |
 | IMDSv2 설정 | token required, container credential용 response hop limit 2를 설정한다. |
 | Elastic IP 연결 | 서버 public IP를 고정한다. |
@@ -325,7 +325,8 @@ Kafka runtime dependencies:
 - opt-in `msk`는 MSK Serverless IAM bootstrap brokers, TLS, AWS region과 default credential chain을 요구한다. `asklake.<environment>.*` namespace와 partition/retention 정책은 `npm run verify:msk-connection-contract`로 검증한다.
 - probe role에는 cluster `Connect`, topic `DescribeTopic`/`DescribeTopicDynamicConfiguration`/`ReadData`/`WriteData`, group `DescribeGroup`/`AlterGroup`만 부여한다. 없는 probe topic을 명시적으로 만들 때만 `CreateTopic`을 추가하고 delete/alter 권한은 부여하지 않는다.
 - 실제 배포 전에는 MSK에 접근 가능한 staging VPC에서 `npm run kafka:msk-probe -- --topic asklake.staging.probe`를 실행한다. 이 probe는 기존 topic을 삭제하거나 partition을 변경하지 않는다.
-- EMR Structured Streaming worker는 `SASL_SSL`/`AWS_MSK_IAM`, execution role default credential chain과 S3 checkpoint/report를 사용한다. repo fake-client 계약 뒤 실제 staging VPC에서 MSK/EMR 통합을 별도 검증한다.
+- EMR Structured Streaming worker는 `SASL_SSL`/`AWS_MSK_IAM`, execution role default credential chain과 S3 checkpoint/report를 사용한다. 제출 전 `GetApplication`으로 `SPARK`, `emr-7.9.0` 이상과 시작 가능 상태를 확인한다. repo fake-client 계약 뒤 실제 staging VPC에서 micro-batch 처리 중 pause/resume 및 source-range 연속성을 별도 검증한다.
+- 기본 Kafka connector는 EMR 7.9의 Spark 3.5.5/Scala 2.12에 맞춘다. `packages` mode는 private subnet NAT/Maven egress를 확인하고 명시 승인해야 하며, egress가 없는 배포는 connector와 transitive JAR를 immutable S3 URI로 고정한 `jars` mode를 사용한다.
 
 Spark runtime dependencies:
 

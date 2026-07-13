@@ -1,3 +1,4 @@
+import json
 from typing import Any
 
 from sqlalchemy import inspect, select, text
@@ -395,6 +396,45 @@ def get_active_kafka_snapshot(
     return db.scalars(statement).first()
 
 
+def canonical_kafka_consumer_identity(broker: str, topic: str, consumer_group_id: str) -> str:
+    brokers = sorted({
+        item.strip().lower()
+        for item in str(broker or "").split(",")
+        if item.strip()
+    })
+    canonical_broker = ",".join(brokers)
+    return json.dumps(
+        ["kafka-consumer-v1", canonical_broker, str(topic or "").strip(), str(consumer_group_id or "").strip()],
+        ensure_ascii=True,
+        separators=(",", ":"),
+    )
+
+
+def lock_kafka_consumer_identity(
+    db: Session,
+    *,
+    broker: str,
+    topic: str,
+    consumer_group_id: str,
+) -> str:
+    """Serialize reservation of a Kafka consumer identity, including absent rows."""
+    ensure_schema(db)
+    identity = canonical_kafka_consumer_identity(broker, topic, consumer_group_id)
+    dialect = db.get_bind().dialect.name
+    if dialect == "postgresql":
+        db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:identity, 0))"),
+            {"identity": identity},
+        )
+    elif dialect == "sqlite":
+        # SQLite has no advisory locks. A no-op write acquires its database-level
+        # writer lock and preserves the same transaction boundary for tests.
+        db.execute(text("UPDATE etl_jobs SET id = id WHERE 0"))
+    else:
+        raise RuntimeError(f"Kafka consumer identity locking is unsupported for database dialect: {dialect}")
+    return identity
+
+
 def find_conflicting_kafka_snapshot(
     db: Session,
     *,
@@ -414,13 +454,18 @@ def find_conflicting_kafka_snapshot(
         )
         .order_by(KafkaSnapshotModel.created_at.desc())
     ).all()
+    expected_identity = canonical_kafka_consumer_identity(broker, topic, consumer_group_id)
     for snapshot in snapshots:
         if excluded_job_id is not None and snapshot.job_id == excluded_job_id:
             continue
         snapshot_broker = str((snapshot.snapshot or {}).get("broker") or "")
         # Older records predate the broker field; blocking them is safer than
         # allowing two consumers to advance an unknown shared identity.
-        if not snapshot_broker or snapshot_broker == broker:
+        if not snapshot_broker or canonical_kafka_consumer_identity(
+            snapshot_broker,
+            snapshot.topic,
+            snapshot.consumer_group_id,
+        ) == expected_identity:
             return snapshot
     return None
 
@@ -462,17 +507,21 @@ def find_conflicting_kafka_continuous_runtime(
     excluded_job_id: str,
 ) -> KafkaContinuousRuntimeModel | None:
     ensure_schema(db)
-    return db.scalars(
+    candidates = db.scalars(
         select(KafkaContinuousRuntimeModel)
         .where(
             KafkaContinuousRuntimeModel.job_id != excluded_job_id,
-            KafkaContinuousRuntimeModel.broker == broker,
             KafkaContinuousRuntimeModel.topic == topic,
             KafkaContinuousRuntimeModel.consumer_group_id == consumer_group_id,
             KafkaContinuousRuntimeModel.status.in_(["starting", "running", "pausing", "stopping"]),
         )
         .order_by(KafkaContinuousRuntimeModel.updated_at.desc())
-    ).first()
+    ).all()
+    expected_identity = canonical_kafka_consumer_identity(broker, topic, consumer_group_id)
+    return next((
+        runtime for runtime in candidates
+        if canonical_kafka_consumer_identity(runtime.broker, runtime.topic, runtime.consumer_group_id) == expected_identity
+    ), None)
 
 
 def save_kafka_continuous_runtime(db: Session, runtime: KafkaContinuousRuntimeModel) -> KafkaContinuousRuntimeModel:
@@ -733,6 +782,14 @@ def continuous_runtime_to_schema(runtime: KafkaContinuousRuntimeModel | None) ->
         runtime_attempt=metrics.get("runtimeAttempt"),
         runtime_state=metrics.get("runtimeState"),
         runtime_log_reference=metrics.get("runtimeLogReference"),
+        runtime_requested_action=metrics.get("runtimeRequestedAction"),
+        runtime_cancel_request_state=metrics.get("runtimeCancelRequestState"),
+        runtime_cancel_requested_at=metrics.get("runtimeCancelRequestedAt"),
+        runtime_cancel_accepted_at=metrics.get("runtimeCancelAcceptedAt"),
+        runtime_cancel_completed_at=metrics.get("runtimeCancelCompletedAt"),
+        runtime_cancel_failed_at=metrics.get("runtimeCancelFailedAt"),
+        runtime_cancel_error=metrics.get("runtimeCancelError"),
+        last_catalog_ack_error=metrics.get("lastCatalogAckError"),
         last_successful_checkpoint=metrics.get("lastSuccessfulCheckpoint"),
         heartbeat_at=runtime.heartbeat_at,
         last_flush_at=runtime.last_flush_at,

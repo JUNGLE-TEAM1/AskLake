@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
   CancelJobRunCommand,
   EMRServerlessClient,
+  GetApplicationCommand,
   GetJobRunCommand,
   StartJobRunCommand,
 } from "@aws-sdk/client-emr-serverless";
@@ -57,8 +58,10 @@ export async function manageEmrServerlessContinuous({
 
   if (action === "start") return withStateLock(context, () => startContinuous(context));
   if (action === "status") return statusContinuous(context);
-  if (action === "pause" || action === "stop") return stopContinuous(context, action, false);
-  if (action === "terminate") return stopContinuous(context, null, true);
+  if (action === "pause" || action === "stop") {
+    return withStateLock(context, () => stopContinuous(context, action, false));
+  }
+  if (action === "terminate") return withStateLock(context, () => stopContinuous(context, null, true));
   if (action === "logs") return logsContinuous(context, boundedInteger(request?.tail, 200, 1, 1000));
   throw emrContinuousError(`Unsupported EMR Continuous action: ${String(action || "(empty)")}.`, "EMR_CONTINUOUS_ACTION_INVALID", 422);
 }
@@ -80,6 +83,12 @@ async function startContinuous(context) {
   const now = new Date().toISOString();
   state = appendEvent({
     applicationId: context.config.applicationId,
+    cancelAcceptedAt: null,
+    cancelCompletedAt: null,
+    cancelError: null,
+    cancelFailedAt: null,
+    cancelRequestState: null,
+    cancelRequestedAt: null,
     checkpointPath: requiredText(context.request.checkpointPath, "checkpointPath"),
     clientToken: submission.clientToken,
     createdAt: now,
@@ -105,6 +114,7 @@ async function startContinuous(context) {
 async function ensureSubmitted(context, state) {
   assertRequestIdentity(context, state);
   if (state.jobRunId || state.requestedAction) return state;
+  await validateContinuousApplication(context);
   const artifacts = {
     manifestUri: state.manifestUri,
     reportUri: state.reportUri,
@@ -149,6 +159,47 @@ async function ensureSubmitted(context, state) {
   return submitted;
 }
 
+async function validateContinuousApplication(context) {
+  const result = await sendEmr(
+    context.clients.emr,
+    new GetApplicationCommand({ applicationId: context.config.applicationId }),
+    "application validation",
+  );
+  const application = result?.application;
+  if (!application || String(application.applicationId || "") !== context.config.applicationId) {
+    throw emrContinuousError(
+      "EMR Serverless application validation did not identify the configured application.",
+      "EMR_CONTINUOUS_APPLICATION_INVALID",
+      422,
+    );
+  }
+  if (String(application.type || "").trim().toUpperCase() !== "SPARK") {
+    throw emrContinuousError(
+      "EMR Serverless Continuous requires a SPARK application.",
+      "EMR_CONTINUOUS_APPLICATION_INCOMPATIBLE",
+      422,
+    );
+  }
+  if (compareEmrRelease(application.releaseLabel, "emr-7.9.0") < 0) {
+    throw emrContinuousError(
+      "EMR Serverless graceful streaming cancellation requires release emr-7.9.0 or newer.",
+      "EMR_CONTINUOUS_APPLICATION_INCOMPATIBLE",
+      422,
+    );
+  }
+  const applicationState = String(application.state || "").trim().toUpperCase();
+  const autoStartEnabled = application.autoStartConfiguration?.enabled !== false;
+  const submissionReady = applicationState === "STARTED"
+    || (autoStartEnabled && ["CREATED", "STOPPED"].includes(applicationState));
+  if (!submissionReady) {
+    throw emrContinuousError(
+      `EMR Serverless application is not ready for submission: ${applicationState || "UNKNOWN"}.`,
+      "EMR_CONTINUOUS_APPLICATION_NOT_READY",
+      409,
+    );
+  }
+}
+
 async function statusContinuous(context) {
   const state = readContinuousState(context.stateFile, false);
   if (!state) return workerResult(context, null);
@@ -172,6 +223,11 @@ async function stopContinuous(context, requestedAction, force) {
   const now = new Date().toISOString();
   state = appendEvent({
     ...state,
+    cancelAcceptedAt: null,
+    cancelCompletedAt: null,
+    cancelError: null,
+    cancelFailedAt: null,
+    cancelRequestState: "requested",
     cancelRequestedAt: now,
     requestedAction,
   }, "cancel_requested", force
@@ -179,7 +235,13 @@ async function stopContinuous(context, requestedAction, force) {
     : `${requestedAction} requested with graceful Spark shutdown.`);
   writeContinuousState(context.stateFile, state);
   if (!state.jobRunId) {
-    state = appendEvent({ ...state, state: "CANCELLED" }, "cancelled", "Submission was cancelled before StartJobRun.", "CANCELLED");
+    state = appendEvent({
+      ...state,
+      cancelAcceptedAt: now,
+      cancelCompletedAt: now,
+      cancelRequestState: "completed",
+      state: "CANCELLED",
+    }, "cancelled", "Submission was cancelled before StartJobRun.", "CANCELLED");
     writeContinuousState(context.stateFile, state);
     return workerResult(context, state, { containerState: force ? "terminateRequested" : `${requestedAction}Requested` });
   }
@@ -187,15 +249,27 @@ async function stopContinuous(context, requestedAction, force) {
     await sendEmr(context.clients.emr, new CancelJobRunCommand({
       applicationId: state.applicationId,
       jobRunId: state.jobRunId,
-      shutdownGracePeriodInSeconds: force ? 1 : context.config.cancelGracePeriodSeconds,
+      shutdownGracePeriodInSeconds: force ? 0 : context.config.cancelGracePeriodSeconds,
     }), "cancel");
   } catch (error) {
+    const failedAt = new Date().toISOString();
     writeContinuousState(context.stateFile, appendEvent({
       ...state,
-      lastError: safeEmrServerlessMessage(error?.message || error),
+      cancelError: safeEmrServerlessMessage(error?.message || error),
+      cancelFailedAt: failedAt,
+      cancelRequestState: "failed",
     }, "cancel_failed", "EMR Serverless cancellation request failed."));
     throw error;
   }
+  const acceptedAt = new Date().toISOString();
+  state = appendEvent({
+    ...state,
+    cancelAcceptedAt: acceptedAt,
+    cancelError: null,
+    cancelRequestState: "accepted",
+    state: "CANCELLING",
+  }, "cancel_accepted", "EMR Serverless accepted the cancellation request.", "CANCELLING");
+  writeContinuousState(context.stateFile, state);
   return workerResult(context, state, {
     containerState: force ? "terminateRequested" : `${requestedAction}Requested`,
   });
@@ -224,8 +298,12 @@ async function logsContinuous(context, tail) {
 }
 
 async function refreshState(context, state) {
-  if (!state?.jobRunId || EMR_SERVERLESS_TERMINAL_STATES.has(state.state)) return state;
-  await publishCatalogAck(context, state);
+  if (!state?.jobRunId) return state;
+  if (EMR_SERVERLESS_TERMINAL_STATES.has(state.state)) {
+    const terminal = await refreshCatalogAck(context, state);
+    writeContinuousState(context.stateFile, terminal);
+    return terminal;
+  }
   const result = await sendEmr(context.clients.emr, new GetJobRunCommand({
     applicationId: state.applicationId,
     jobRunId: state.jobRunId,
@@ -247,8 +325,47 @@ async function refreshState(context, state) {
   if (nextState !== state.state) {
     next = appendEvent(next, "state_changed", `EMR Serverless state changed from ${state.state} to ${nextState}.`, nextState);
   }
+  if (nextState === "CANCELLING" && next.cancelRequestState === "requested") {
+    next = appendEvent({
+      ...next,
+      cancelAcceptedAt: next.cancelAcceptedAt || new Date().toISOString(),
+      cancelRequestState: "accepted",
+    }, "cancel_accepted", "EMR Serverless entered CANCELLING after the persisted request.", nextState);
+  } else if (nextState === "CANCELLED" && ["requested", "accepted", "completed"].includes(next.cancelRequestState)) {
+    next = appendEvent({
+      ...next,
+      cancelAcceptedAt: next.cancelAcceptedAt || new Date().toISOString(),
+      cancelCompletedAt: next.cancelCompletedAt || new Date().toISOString(),
+      cancelRequestState: "completed",
+    }, "cancel_completed", "EMR Serverless cancellation completed.", nextState);
+  } else if (["FAILED", "SUCCESS"].includes(nextState) && next.cancelRequestState === "accepted") {
+    next = appendEvent({
+      ...next,
+      cancelError: next.stateDetails || `EMR Serverless ended in ${nextState} instead of CANCELLED.`,
+      cancelFailedAt: next.cancelFailedAt || new Date().toISOString(),
+      cancelRequestState: "failed",
+    }, "cancel_failed", `EMR Serverless ended in ${nextState} instead of completing cancellation.`, nextState);
+  }
+  next = await refreshCatalogAck(context, next);
   writeContinuousState(context.stateFile, next);
   return next;
+}
+
+async function refreshCatalogAck(context, state) {
+  try {
+    const published = await publishCatalogAck(context, state);
+    if (!published) return state;
+    return {
+      ...state,
+      catalogAckUploadedAt: new Date().toISOString(),
+      lastCatalogAckError: null,
+    };
+  } catch (error) {
+    return appendEvent({
+      ...state,
+      lastCatalogAckError: safeEmrServerlessMessage(error?.message || error),
+    }, "catalog_ack_retry", "Catalog acknowledgement upload failed; status polling will retry.", state.state);
+  }
 }
 
 async function workerResult(context, state, overrides = {}) {
@@ -259,7 +376,7 @@ async function workerResult(context, state, overrides = {}) {
   const terminalFailure = state && ["FAILED", "SUCCESS"].includes(state.state)
     ? {
         ...(currentReport || {}),
-        failedCount: 1,
+        failedCount: Math.max(1, Number(currentReport?.failedCount || 0) + 1),
         heartbeatAt: state.updatedAt,
         lastError: state.state === "SUCCESS"
           ? "EMR Serverless streaming Job Run ended in SUCCESS unexpectedly; long-running streaming jobs must be cancelled explicitly."
@@ -275,6 +392,12 @@ async function workerResult(context, state, overrides = {}) {
   return {
     applicationId: state?.applicationId || context.config.applicationId,
     attempt: state ? attempt : null,
+    cancelAcceptedAt: state?.cancelAcceptedAt || null,
+    cancelCompletedAt: state?.cancelCompletedAt || null,
+    cancelError: state?.cancelError || null,
+    cancelFailedAt: state?.cancelFailedAt || null,
+    cancelRequestState: state?.cancelRequestState || null,
+    cancelRequestedAt: state?.cancelRequestedAt || null,
     containerId: state?.jobRunId || null,
     containerName: `asklake-emr-stream-${safeSegment(context.request.jobId)}`,
     containerState: overrides.containerState || containerState(state?.state),
@@ -283,6 +406,7 @@ async function workerResult(context, state, overrides = {}) {
     jobId: context.request.jobId,
     jobRunId: state?.jobRunId || null,
     lastSuccessfulCheckpoint: state?.checkpointPath || context.request.checkpointPath,
+    lastCatalogAckError: state?.lastCatalogAckError || null,
     report: terminalFailure || currentReport,
     requestedAction: state?.requestedAction || null,
     runtime: EMR_SERVERLESS_RUNTIME_ID,
@@ -353,7 +477,30 @@ function readContinuousState(stateFile, required) {
   ) {
     throw emrContinuousError("EMR Continuous state file is invalid.", "EMR_CONTINUOUS_STATE_INVALID", 409);
   }
-  return state;
+  return normalizeContinuousState(state);
+}
+
+function normalizeContinuousState(state) {
+  const validCancelStates = new Set(["requested", "accepted", "failed", "completed"]);
+  let cancelRequestState = validCancelStates.has(state.cancelRequestState)
+    ? state.cancelRequestState
+    : null;
+  if (!cancelRequestState && state.requestedAction) {
+    if (state.state === "CANCELLED") cancelRequestState = "completed";
+    else if (state.state === "CANCELLING") cancelRequestState = "accepted";
+    else cancelRequestState = "requested";
+  }
+  return {
+    ...state,
+    cancelAcceptedAt: state.cancelAcceptedAt || null,
+    cancelCompletedAt: state.cancelCompletedAt || null,
+    cancelError: state.cancelError || null,
+    cancelFailedAt: state.cancelFailedAt || null,
+    cancelRequestState,
+    cancelRequestedAt: state.cancelRequestedAt || null,
+    catalogAckUploadedAt: state.catalogAckUploadedAt || null,
+    lastCatalogAckError: state.lastCatalogAckError || null,
+  };
 }
 
 function writeContinuousState(stateFile, state) {
@@ -435,14 +582,15 @@ function appendEvent(state, type, message, driverState = state.state) {
 }
 
 async function publishCatalogAck(context, state) {
-  if (!existsSync(context.catalogAckFile)) return;
+  if (!existsSync(context.catalogAckFile)) return false;
   let payload;
   try {
     payload = JSON.parse(readFileSync(context.catalogAckFile, "utf8"));
   } catch {
-    return;
+    return false;
   }
   await putS3Json(context.clients.s3, catalogAckUri(state.reportUri), payload, "catalog ack upload");
+  return true;
 }
 
 function catalogAckUri(reportUri) {
@@ -562,6 +710,21 @@ function isoDate(value) {
   if (!value) return null;
   const date = value instanceof Date ? value : new Date(value);
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function compareEmrRelease(value, minimum) {
+  const parse = (candidate) => {
+    const match = /^emr-(\d+)\.(\d+)\.(\d+)$/i.exec(String(candidate || "").trim());
+    if (!match) return null;
+    return match.slice(1).map(Number);
+  };
+  const current = parse(value);
+  const required = parse(minimum);
+  if (!current || !required) return -1;
+  for (let index = 0; index < required.length; index += 1) {
+    if (current[index] !== required[index]) return current[index] > required[index] ? 1 : -1;
+  }
+  return 0;
 }
 
 function safeSegment(value) {

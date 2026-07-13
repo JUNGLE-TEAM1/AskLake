@@ -162,11 +162,12 @@ Kafka 연결 설정의 source of truth는 `backend/src/kafkaRuntime.mjs`다. 기
 AWS Continuous 경로는 `FastAPI command -> Node bridge -> EMR Serverless STREAMING Job Run -> MSK -> S3A output/checkpoint/report -> FastAPI Catalog reconciliation` 순서다. `ASKLAKE_SPARK_RUNTIME=emr-serverless`, `ASKLAKE_KAFKA_RUNTIME=msk`, 두 feature flag를 모두 명시해야 하며 Redpanda broker를 EMR로 묵시적으로 전달하지 않는다.
 
 - Start 전 로컬 durable state에 worker attempt, idempotent client token, application, manifest/report URI, checkpoint/output identity를 원자적으로 기록한다. backend가 제출 도중 또는 실행 중 재시작해도 같은 token/Job Run을 재연결하며 active state에서는 두 번째 `StartJobRun`을 보내지 않는다.
-- 제출은 `mode=STREAMING`, `retryPolicy.maxFailedAttemptsPerHour=1..10`을 사용하고 `executionTimeoutMinutes`를 보내지 않는다. EMR 7.1.0 이상의 streaming resiliency가 같은 Job Run attempt와 S3 checkpoint에서 복구하며 로그는 attempt별 S3 prefix를 참조한다.
+- 제출은 `mode=STREAMING`, `retryPolicy.maxFailedAttemptsPerHour=1..10`을 사용하고 `executionTimeoutMinutes`를 보내지 않는다. EMR 7.1.0 이상의 streaming resiliency가 같은 Job Run attempt와 S3 checkpoint에서 복구하지만, AskLake pause/stop이 사용하는 built-in graceful cancellation은 7.9.0 이상만 허용한다. 제출 직전 `GetApplication`으로 SPARK type, release와 제출 가능 상태를 검증하며 로그는 attempt별 S3 prefix를 참조한다.
 - Job manifest는 S3에 저장하고 worker 환경에는 static AWS key가 아니라 MSK IAM SASL 옵션과 S3 경로만 전달한다. Python entry point와 세 helper module은 `npm run emr:upload-continuous-artifact`로 업로드한다.
-- worker heartbeat/batch/lag/report와 Catalog ack는 deterministic S3 object로 왕복한다. API는 기존 Docker/Spark REST report shape로 정규화하고 `runtimeProvider`, application/Job Run ID, attempt, raw runtime state, log reference, last successful checkpoint를 추가한다.
-- pause/stop은 먼저 의도를 durable state에 기록한 뒤 `CancelJobRun(shutdownGracePeriodInSeconds)`을 호출한다. Spark graceful shutdown과 S3 checkpoint가 경계이며 resume은 같은 checkpoint로 새 Job Run/worker attempt를 만든다. `terminate`는 stale worker 정리를 위한 1초 forced cancel 경로다.
-- 같은 broker/topic/group 충돌은 기존 DB row lock과 conflict query가 제출 전에 막는다. EMR 내부 retry는 같은 Job Run이므로 새 consumer identity를 만들지 않는다.
+- worker heartbeat/batch/lag/report와 Catalog ack는 deterministic S3 object로 왕복한다. API는 기존 Docker/Spark REST report shape로 정규화하고 `runtimeProvider`, application/Job Run ID, attempt, raw runtime state, log reference, last successful checkpoint를 추가한다. Catalog ack 업로드는 상태 조회와 분리해 실패를 `lastCatalogAckError`로 남기고 다음 polling에서 재시도한다.
+- pause/stop은 `requested -> accepted -> completed|failed` 취소 상태를 durable state에 기록한다. `CancelJobRun` 성공 뒤에만 accepted가 되며 원격 `CANCELLED`에서만 각각 paused/stopped로 확정한다. `FAILED`/예상하지 못한 `SUCCESS`는 요청 의도가 있어도 실패다. Graceful 값은 15~1800초이며 기본 120초, stale worker `terminate`는 즉시 취소 값 0을 사용한다. resume은 같은 checkpoint로 새 Job Run/worker attempt를 만든다.
+- 같은 broker/topic/group 충돌은 canonical identity에 대한 PostgreSQL transaction advisory lock을 Snapshot/Continuous 시작 경로가 공유하고, lock 안에서 active row를 다시 확인해 제출 전에 막는다. 아직 runtime row가 없는 동시 요청도 직렬화하며 EMR 내부 retry는 같은 Job Run이므로 새 consumer identity를 만들지 않는다.
+- Connector는 `packages` 또는 `jars` mode를 명시한다. `packages`는 private subnet NAT/Maven egress를 확인하고 opt in해야 하며, `jars`는 release 호환 버전과 checksum을 고정한 Kafka/MSK IAM 및 transitive JAR의 S3 URI를 사용해 runtime Maven 의존을 제거한다.
 
 CSV source와 source inspect는 `quote="`와 `escape="`를 명시해 RFC 4180의 quoted comma와 doubled quote를 같은 field로 해석한다. 예를 들어 `"안녕, 나는 ""해건"""`은 `안녕, 나는 "해건"`이라는 리뷰 하나로 유지된다.
 

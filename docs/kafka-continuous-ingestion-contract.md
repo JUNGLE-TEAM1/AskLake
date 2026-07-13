@@ -69,6 +69,14 @@ type KafkaContinuousRuntime = {
   runtimeAttempt: number | null;
   runtimeState: string | null;
   runtimeLogReference: Record<string, unknown> | null;
+  runtimeRequestedAction: string | null;
+  runtimeCancelRequestState: "requested" | "accepted" | "completed" | "failed" | null;
+  runtimeCancelRequestedAt: string | null;
+  runtimeCancelAcceptedAt: string | null;
+  runtimeCancelCompletedAt: string | null;
+  runtimeCancelFailedAt: string | null;
+  runtimeCancelError: string | null;
+  lastCatalogAckError: string | null;
   lastSuccessfulCheckpoint: string | null;
   heartbeatAt: string | null;
   lastFlushAt: string | null;
@@ -88,7 +96,7 @@ type KafkaContinuousRuntime = {
 ```
 
 - A continuous query runs as a long-lived Spark Structured Streaming application. It processes Kafka as micro-batches; it does not write a Lake object per source event.
-- Docker and Spark REST keep the local/prod-like execution paths. The opt-in EMR Serverless path requires Amazon MSK IAM and AWS S3, submits `mode=STREAMING` without an execution timeout, and exposes Job Run/attempt/log identity through the nullable remote runtime fields above. EMR retries the same Job Run from the S3 checkpoint until its configured hourly failure threshold is reached.
+- Docker and Spark REST keep the local/prod-like execution paths. The opt-in EMR Serverless path requires Amazon MSK IAM, AWS S3 and a SPARK application on EMR 7.9.0+, submits `mode=STREAMING` without an execution timeout, and exposes Job Run/attempt/log/cancellation identity through the nullable remote runtime fields above. EMR retries the same Job Run from the S3 checkpoint until its configured hourly failure threshold is reached.
 - Each successful micro-batch applies the compiled canonical Rule set before appending the selected target dataset and advancing the checkpoint. The supported Transform operations are `cast`, `copy`, `default_value`, `json_extract`, `lowercase_trim`, `mask`, `null_guard`, `parse_timestamp`, and `rename`; Quality supports `accepted_values`, `not_null`, `range`, and `regex`.
 - `Fail Batch` aborts the current `foreachBatch` invocation before manifest/checkpoint completion. `Quarantine` stores raw payload, Kafka identity, Rule/stage/column identity, and schema/rule fingerprints. Warn, drop-row, set-null, invalid, quarantine, and failed-batch counters are persisted in the worker report and per-batch manifest.
 - `_asklake_contract` under the checkpoint records schema, Rule, source/target, output schema, and a combined runtime fingerprint. A mismatched runtime cannot reuse that checkpoint. Once this contract is initialized, schema, Rule, or physical target changes require a copied Job and new checkpoint.
@@ -121,10 +129,11 @@ type JobCommand =
 - `run` and `retry` remain Snapshot-only commands. A continuous Job never creates a one-time snapshot run through those commands.
 - `GET /api/etl/jobs/{jobId}` includes `executionMode`, `continuousConfig`, and `continuousRuntime` after implementation.
 - Command responses identify `controlPlaneOnly: false` and `worker: "spark_structured_streaming"`. Worker heartbeats and counters are written to a local report volume for Docker/REST or a deterministic S3 report for EMR, then hydrated with the selected runtime liveness. An exited, missing, or stale active worker transitions to `failed`. Failure accounting is keyed by worker attempt and reason, so polling the same terminal attempt does not repeatedly increment `failedCount`. Heartbeat cleanup uses an internal terminate/cancel signal and cannot be mistaken for an operator stop.
+- EMR cancellation records `requested -> accepted -> completed|failed`; only accepted cancellation followed by remote `CANCELLED` becomes `paused`/`stopped`. Graceful cancellation uses 15~1800 seconds and forced cleanup uses 0. A rejected Cancel API or remote `FAILED` remains failed even if an operator action was requested.
 
 ## 6. Mutual Exclusion and Backfill
 
-- A broker/topic/consumer group has at most one active Continuous consumer. Independent fan-out targets must use distinct consumer groups.
+- A broker/topic/consumer group has at most one active Continuous consumer. Independent fan-out targets must use distinct consumer groups. PostgreSQL advisory transaction locking serializes the canonical identity before either Snapshot capture or Continuous StartJobRun, including the no-existing-row race.
 - Snapshot and Continuous Jobs cannot run concurrently when they share the same broker/topic/consumer group. Both start paths reject the conflict with `409`.
 - Backfill is normally handled by first starting a continuous Job with `earliest`, which drains retained backlog before tailing new events. Snapshot Jobs remain available for controlled historical replay, deterministic range retry, and manual/scheduled ingestion.
 - The system must reject a conflicting command with `409` and identify the active Job/runtime in the error details.
