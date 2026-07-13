@@ -79,6 +79,7 @@ export function SqlAnalysisPage({
   const [autocompleteIndex, setAutocompleteIndex] = useState(0);
   const [dismissedAutocompleteKey, setDismissedAutocompleteKey] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const lineNumberRef = useRef<HTMLPreElement | null>(null);
   const initializedBaseDatasetIdRef = useRef<string | null | undefined>(undefined);
   const referenceDatasetIdSet = useMemo(() => new Set(referenceDatasetIds), [referenceDatasetIds]);
   const queryValidationKey = useMemo(
@@ -121,6 +122,11 @@ export function SqlAnalysisPage({
     selectedDatasetIds: selectedDatasetIdSet,
   });
   const canRunPreview = Boolean(baseDataset && preflightResult?.canExecute === true && preflightResult.key === queryValidationKey);
+  const lineNumbers = useMemo(() => {
+    if (!baseDataset) return "";
+    const lineCount = Math.max(query.split("\n").length, 7);
+    return Array.from({ length: lineCount }, (_, index) => index + 1).join("\n");
+  }, [baseDataset, query]);
   const autocompleteContext = useMemo(() => getAutocompleteContext(query, cursorIndex), [cursorIndex, query]);
   const autocompleteCandidates = useMemo(() => {
     if (!baseDataset) return [];
@@ -255,6 +261,12 @@ export function SqlAnalysisPage({
 
   const updateCursorFromTextarea = (textarea: HTMLTextAreaElement) => {
     setCursorIndex(textarea.selectionStart);
+    syncLineNumberScroll();
+  };
+
+  const syncLineNumberScroll = () => {
+    if (!textareaRef.current || !lineNumberRef.current) return;
+    lineNumberRef.current.scrollTop = textareaRef.current.scrollTop;
   };
 
   const applyAutocompleteCandidate = (candidate: AutocompleteCandidate) => {
@@ -271,6 +283,7 @@ export function SqlAnalysisPage({
     requestAnimationFrame(() => {
       textareaRef.current?.focus();
       textareaRef.current?.setSelectionRange(nextCursorIndex, nextCursorIndex);
+      syncLineNumberScroll();
     });
   };
 
@@ -334,6 +347,7 @@ export function SqlAnalysisPage({
     requestAnimationFrame(() => {
       textareaRef.current?.focus();
       textareaRef.current?.setSelectionRange(nextQuery.length, nextQuery.length);
+      syncLineNumberScroll();
     });
   };
   const queryAi = useSqlQueryAi({
@@ -579,6 +593,8 @@ export function SqlAnalysisPage({
           autocompleteIndex={autocompleteIndex}
           canExecute={canRunPreview}
           disabled={!baseDataset}
+          lineNumberRef={lineNumberRef}
+          lineNumbers={lineNumbers}
           onAutocompleteSelect={applyAutocompleteCandidate}
           onEditorBlur={() => setDismissedAutocompleteKey(autocompleteContext.key)}
           onEditorCursorChange={updateCursorFromTextarea}
@@ -590,6 +606,7 @@ export function SqlAnalysisPage({
             setDismissedAutocompleteKey(null);
           }}
           onReset={resetQuery}
+          onScroll={syncLineNumberScroll}
           pending={queryPending}
           preflightSummary={visiblePreflightSummary}
           query={query}

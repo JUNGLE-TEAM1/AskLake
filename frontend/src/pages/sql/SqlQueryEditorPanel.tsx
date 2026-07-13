@@ -4,9 +4,10 @@ import { PlayCircle, RotateCcw, Table2 } from "lucide-react";
 import { ActionGroup } from "@/components/ui/action-group";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { SqlCodeEditor } from "@/components/sql/SqlCodeEditor";
+import { FieldLabel } from "@/components/ui/field";
 import { Panel, PanelHeader } from "@/components/ui/panel";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Textarea } from "@/components/ui/textarea";
 import type { QueryAiSuggestion } from "../../services/queryAiService";
 import styles from "./SqlAnalysisPage.module.css";
 import { SqlAiWriterDialog } from "./SqlAiWriterDialog";
@@ -35,6 +36,8 @@ type SqlQueryEditorPanelProps = {
   autocompleteIndex: number;
   canExecute: boolean;
   disabled: boolean;
+  lineNumberRef: RefObject<HTMLPreElement | null>;
+  lineNumbers: string;
   onAutocompleteSelect: (candidate: AutocompleteCandidate) => void;
   onEditorBlur: () => void;
   onEditorCursorChange: (textarea: HTMLTextAreaElement) => void;
@@ -42,6 +45,7 @@ type SqlQueryEditorPanelProps = {
   onExecute: () => void;
   onQueryChange: (query: string, cursorIndex: number) => void;
   onReset: () => void;
+  onScroll: () => void;
   pending: boolean;
   preflightSummary: PreflightSummary | null;
   query: string;
@@ -54,6 +58,8 @@ export function SqlQueryEditorPanel({
   autocompleteIndex,
   canExecute,
   disabled,
+  lineNumberRef,
+  lineNumbers,
   onAutocompleteSelect,
   onEditorBlur,
   onEditorCursorChange,
@@ -61,6 +67,7 @@ export function SqlQueryEditorPanel({
   onExecute,
   onQueryChange,
   onReset,
+  onScroll,
   pending,
   preflightSummary,
   query,
@@ -86,21 +93,29 @@ export function SqlQueryEditorPanel({
         title="선택 데이터셋 기준 SQL"
       />
 
-      <SqlCodeEditor
-        id="sql-query-editor"
-        textareaRef={textareaRef}
-        disabled={disabled}
-        placeholder={disabled ? "왼쪽 분석 테이블에서 데이터셋을 선택하면 SQL을 작성할 수 있습니다." : "SQL을 입력하세요."}
-        value={query}
-        onChange={(event) => onQueryChange(event.target.value, event.target.selectionStart)}
-        onClick={(event) => onEditorCursorChange(event.currentTarget)}
-        onBlur={onEditorBlur}
-        onKeyDown={onEditorKeyDown}
-        onKeyUp={(event) => {
-          if (["ArrowDown", "ArrowUp", "Tab", "Escape"].includes(event.key)) return;
-          onEditorCursorChange(event.currentTarget);
-        }}
-        overlay={autocompleteCandidates.length > 0 ? (
+      <div className={styles.editorSurface}>
+        <pre ref={lineNumberRef} aria-hidden="true">{lineNumbers}</pre>
+        <div className={styles.editorInputWrap}>
+          <FieldLabel className="sr-only" htmlFor="sql-query-editor">SQL editor</FieldLabel>
+          <Textarea
+            className="focus-visible:ring-0 focus-visible:ring-offset-0"
+            id="sql-query-editor"
+            ref={textareaRef}
+            disabled={disabled}
+            placeholder={disabled ? "왼쪽 분석 테이블에서 데이터셋을 선택하면 SQL을 작성할 수 있습니다." : "SQL을 입력하세요."}
+            value={query}
+            onChange={(event) => onQueryChange(event.target.value, event.target.selectionStart)}
+            onClick={(event) => onEditorCursorChange(event.currentTarget)}
+            onBlur={onEditorBlur}
+            onKeyDown={onEditorKeyDown}
+            onKeyUp={(event) => {
+              if (["ArrowDown", "ArrowUp", "Tab", "Escape"].includes(event.key)) return;
+              onEditorCursorChange(event.currentTarget);
+            }}
+            onScroll={onScroll}
+            spellCheck={false}
+          />
+          {autocompleteCandidates.length > 0 && (
             <Panel className={styles.autocompletePopover}>
               <ScrollArea className="h-[220px]" type="always">
                 <div className="grid gap-1 p-1.5 pr-3">
@@ -121,8 +136,9 @@ export function SqlQueryEditorPanel({
                 </div>
               </ScrollArea>
             </Panel>
-          ) : null}
-      />
+          )}
+        </div>
+      </div>
 
       {preflightSummary && (
         <div className={styles.editorFooter}>
