@@ -6829,18 +6829,58 @@
 }
 
 .target-config-stack {
-  gap: 18px;
+  gap: 24px;
 }
 
 .target-config-card .field {
   margin: 0;
 }
 
+.target-page-layout .etl-step-header h2 {
+  font-size: 30px;
+}
+
+.target-page-layout .creation-top-actions .primary-button,
+.target-page-layout .creation-top-actions .secondary-button {
+  min-height: 48px;
+  font-size: 18px;
+}
+
+.target-config-card .etl-review-card-header {
+  padding: 22px 24px;
+}
+
+.target-config-card .etl-review-card-header h2 {
+  font-size: 22px;
+}
+
+.target-config-card .etl-review-icon {
+  width: 36px;
+  height: 36px;
+}
+
+.target-config-card .etl-review-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.target-config-card .field > span {
+  color: #334155;
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.target-config-card .input {
+  min-height: 52px;
+  padding: 0 16px;
+  font-size: 20px;
+}
+
 .target-config-form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px 20px;
-  padding: 18px 20px 20px;
+  gap: 20px 24px;
+  padding: 24px;
 }
 
 .target-config-form-grid .field.wide {
@@ -6853,15 +6893,19 @@
   max-width: none;
 }
 
+.target-config-form-grid.storage-only {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .target-config-schema {
   margin-top: 18px;
 }
 
 .target-config-split {
   display: grid;
-  grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
-  gap: 20px;
-  padding: 18px 20px 20px;
+  grid-template-columns: minmax(0, 1.18fr) minmax(0, 0.82fr);
+  gap: 28px;
+  padding: 24px;
 }
 
 .target-config-subsection {
@@ -6874,15 +6918,15 @@
 .target-config-subheader {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  min-height: 28px;
+  gap: 10px;
+  min-height: 36px;
   color: #2563eb;
 }
 
 .target-config-subheader h3 {
   margin: 0;
   color: #111827;
-  font-size: 14px;
+  font-size: 21px;
   font-weight: 850;
 }
 
@@ -6920,13 +6964,19 @@
 .target-chip-grid {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  min-height: 40px;
+  gap: 10px;
+  min-height: 52px;
   align-items: center;
   border: 1px solid #dee1e6;
   border-radius: 8px;
   background: #fff;
-  padding: 8px;
+  padding: 10px;
+}
+
+.target-config-card .target-chip-grid button {
+  min-height: 42px;
+  padding: 0 14px;
+  font-size: 18px;
 }
 
 .target-chip-grid.partition {
@@ -6938,7 +6988,13 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px;
-  margin-top: 12px;
+}
+
+.target-config-card .target-inline-controls button,
+.target-config-card .s3-path-field button {
+  min-height: 52px;
+  padding: 0 18px;
+  font-size: 18px;
 }
 
 .target-metadata-grid .target-db-field,
@@ -6964,14 +7020,14 @@
 
 .target-validation-summary {
   display: grid;
-  gap: 6px;
+  gap: 8px;
   border: 1px solid #fecaca;
   border-radius: 8px;
   background: #fef2f2;
   color: #991b1b;
-  font-size: 12px;
+  font-size: 17px;
   font-weight: 800;
-  padding: 12px 14px;
+  padding: 16px 18px;
 }
 
 .s3-path-field {
@@ -6993,6 +7049,11 @@
   padding: 0 10px;
 }
 
+.target-config-card .s3-path-display {
+  min-height: 52px;
+  padding: 0 16px;
+}
+
 .s3-path-empty {
   color: #565d6d;
   font-size: 12px;
@@ -7009,6 +7070,11 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.target-config-card .s3-path-empty,
+.target-config-card .s3-path-text {
+  font-size: 18px;
 }
 
 .s3-path-action {
@@ -7394,20 +7460,25 @@
 .target-partition-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  gap: 10px;
 }
 
 .target-partition-option {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: 8px;
+  gap: 10px;
   align-items: center;
-  min-height: 40px;
+  min-height: 54px;
   border: 1px solid #dee1e6;
   border-radius: 8px;
   background: #fff;
   cursor: pointer;
-  padding: 0 10px;
+  padding: 0 14px;
+}
+
+.target-partition-option > button {
+  width: 22px;
+  height: 22px;
 }
 
 .target-partition-option.active {
@@ -7424,7 +7495,7 @@
 .target-partition-name {
   min-width: 0;
   color: #171a1f;
-  font-size: 12px;
+  font-size: 18px;
   font-weight: 850;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -7438,7 +7509,7 @@
 .target-partition-type {
   color: #64748b;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-  font-size: 10px;
+  font-size: 16px;
   font-weight: 850;
 }
 
@@ -7638,6 +7709,15 @@
 }
 
 @media (max-width: 820px) {
+  .target-config-form-grid,
+  .target-config-split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .target-config-form-grid .field.wide {
+    grid-column: auto;
+  }
+
   .target-partition-grid,
   .target-test-row,
   .target-lineage,
