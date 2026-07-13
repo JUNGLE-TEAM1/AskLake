@@ -2,10 +2,16 @@ import { randomUUID } from "node:crypto";
 import {
   CancelJobRunCommand,
   EMRServerlessClient,
+  GetApplicationCommand,
   GetJobRunCommand,
   StartJobRunCommand,
 } from "@aws-sdk/client-emr-serverless";
 import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import {
+  assertEmrAdmissionApplication,
+  emrAdmissionPolicy,
+  estimateEmrJobResources,
+} from "../src/emrAdmission.mjs";
 import {
   closeSync,
   existsSync,
@@ -42,7 +48,8 @@ export class TerminalEmrServerlessError extends Error {
 }
 
 export async function runEmrServerlessRequest(request, dependencies = {}) {
-  const config = request?.config || emrServerlessConfig(dependencies.environment || process.env);
+  const environment = dependencies.environment || request?.environment || process.env;
+  const config = request?.config || emrServerlessConfig(environment);
   const stateFile = validateStateFile(request?.stateFile);
   const manifestFile = validateInputFile(request?.manifestFile, "EMR manifest file");
   const manifestUri = requiredText(request?.manifestUri, "EMR manifest URI");
@@ -107,6 +114,36 @@ export async function runEmrServerlessRequest(request, dependencies = {}) {
           "EMR_SERVERLESS_CANCELLED",
           409,
         );
+      }
+      const admissionPolicy = emrAdmissionPolicy(environment, "batch");
+      if (admissionPolicy.enabled) {
+        const applicationResult = await sendEmr(
+          clients.emr,
+          new GetApplicationCommand({ applicationId: config.applicationId }),
+          "admission application validation",
+        );
+        const application = applicationResult?.application;
+        if (
+          !application
+          || String(application.applicationId || "") !== config.applicationId
+          || String(application.type || "").trim().toUpperCase() !== "SPARK"
+        ) {
+          throw emrClientError(
+            "EMR admission validation requires the configured SPARK application.",
+            "EMR_ADMISSION_APPLICATION_INVALID",
+            422,
+          );
+        }
+        state = {
+          ...state,
+          applicationAdmission: assertEmrAdmissionApplication(
+            application,
+            admissionPolicy,
+            estimateEmrJobResources(config),
+          ),
+          updatedAt: new Date().toISOString(),
+        };
+        writeEmrServerlessState(stateFile, state);
       }
       await putS3Text(clients.s3, manifestUri, readFileSync(manifestFile, "utf8"));
       const created = await sendEmr(
@@ -350,6 +387,7 @@ function enrichReport(report, state) {
     },
     runtimeJobId: state.jobRunId,
     runtimeLogReference: logReference,
+    emrApplicationAdmission: state.applicationAdmission || null,
   };
 }
 

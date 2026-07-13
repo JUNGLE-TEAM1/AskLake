@@ -2,6 +2,7 @@ import type { AuditResult, AuditTargetType } from "./audit";
 import type { CurrentUserResponse, IdentityGroup } from "./identity";
 import type { PermissionGrant, ResourcePermissions } from "./permissions";
 import type { PermissionAction, PermissionPrincipalType } from "./permissions";
+import type { EmrAdmissionReservation } from "./etl";
 
 export type AdminUserStatus = "active" | "invited" | "disabled";
 
@@ -119,4 +120,45 @@ export type AdminAuditLogQuery = {
   resourceType?: string;
   result?: AuditResult;
   to?: string;
+};
+
+export type EmrAdmissionPolicy = {
+  enabled: boolean;
+  workload: "batch" | "continuous";
+  applicationId: string;
+  projectKey: string;
+  maxConcurrentRuns: number;
+  maxQueuedRuns: number;
+  queueTimeoutMinutes: number;
+  maxIdleMinutes: number;
+  requireJobCostAllocation: boolean;
+  maxVcpu: number;
+  maxMemoryGb: number;
+  maxDiskGb: number;
+  actorMaxConcurrentRuns: number;
+  projectMaxConcurrentRuns: number;
+  priority: number;
+};
+
+export type EmrCapacityUsage = {
+  workload: "batch" | "continuous";
+  applicationId: string;
+  activeRuns: number;
+  queuedRuns: number;
+  reservedVcpu: number;
+  reservedMemoryGb: number;
+  reservedDiskGb: number;
+  maxConcurrentRuns: number;
+  maxQueuedRuns: number;
+  maxVcpu: number;
+  maxMemoryGb: number;
+  maxDiskGb: number;
+};
+
+export type RuntimeCapacityResponse = {
+  enabled: boolean;
+  queueDiscipline: string;
+  policies: EmrAdmissionPolicy[];
+  usage: EmrCapacityUsage[];
+  reservations: EmrAdmissionReservation[];
 };

@@ -43,13 +43,16 @@ const continuousScopedEnvironmentNames = Object.freeze([
   "ARTIFACT_URI",
   "CANCEL_GRACE_SECONDS",
   "DRIVER_CORES",
+  "DRIVER_DISK_GB",
   "DRIVER_MEMORY",
   "ENTRY_POINT_URI",
   "EXECUTION_ROLE_ARN",
   "EXECUTOR_CORES",
+  "EXECUTOR_DISK_GB",
   "EXECUTOR_MEMORY",
   "INITIAL_EXECUTORS",
   "LOG_URI",
+  "MEMORY_OVERHEAD_FACTOR",
   "MAX_EXECUTORS",
   "MIN_EXECUTORS",
   "POLL_INTERVAL_MS",
@@ -116,6 +119,13 @@ export function emrServerlessConfig(environment = process.env) {
       16,
       "ASKLAKE_EMR_SERVERLESS_DRIVER_CORES",
     ),
+    driverDiskGb: boundedInteger(
+      environment.ASKLAKE_EMR_SERVERLESS_DRIVER_DISK_GB,
+      20,
+      20,
+      200,
+      "ASKLAKE_EMR_SERVERLESS_DRIVER_DISK_GB",
+    ),
     driverMemory: sparkMemory(environment.ASKLAKE_EMR_SERVERLESS_DRIVER_MEMORY || "4g", "driver memory"),
     entryPointUri,
     executionRoleArn,
@@ -133,6 +143,13 @@ export function emrServerlessConfig(environment = process.env) {
       16,
       "ASKLAKE_EMR_SERVERLESS_EXECUTOR_CORES",
     ),
+    executorDiskGb: boundedInteger(
+      environment.ASKLAKE_EMR_SERVERLESS_EXECUTOR_DISK_GB,
+      20,
+      20,
+      200,
+      "ASKLAKE_EMR_SERVERLESS_EXECUTOR_DISK_GB",
+    ),
     executorMemory: sparkMemory(environment.ASKLAKE_EMR_SERVERLESS_EXECUTOR_MEMORY || "4g", "executor memory"),
     initialExecutors: boundedInteger(
       environment.ASKLAKE_EMR_SERVERLESS_INITIAL_EXECUTORS,
@@ -142,6 +159,13 @@ export function emrServerlessConfig(environment = process.env) {
       "ASKLAKE_EMR_SERVERLESS_INITIAL_EXECUTORS",
     ),
     logUri,
+    memoryOverheadFactor: boundedNumber(
+      environment.ASKLAKE_EMR_SERVERLESS_MEMORY_OVERHEAD_FACTOR,
+      0.1,
+      0,
+      1,
+      "ASKLAKE_EMR_SERVERLESS_MEMORY_OVERHEAD_FACTOR",
+    ),
     maxExecutors: boundedInteger(
       environment.ASKLAKE_EMR_SERVERLESS_MAX_EXECUTORS,
       10,
@@ -325,8 +349,10 @@ export function createEmrServerlessContinuousSubmission({
     "--py-files",
     config.pyFilesUris.join(","),
     ...sparkConf("spark.driver.cores", config.driverCores),
+    ...sparkConf("spark.emr-serverless.driver.disk", `${config.driverDiskGb}g`),
     ...sparkConf("spark.driver.memory", config.driverMemory),
     ...sparkConf("spark.executor.cores", config.executorCores),
+    ...sparkConf("spark.emr-serverless.executor.disk", `${config.executorDiskGb}g`),
     ...sparkConf("spark.executor.memory", config.executorMemory),
     ...sparkConf("spark.dynamicAllocation.enabled", "true"),
     ...sparkConf("spark.dynamicAllocation.initialExecutors", config.initialExecutors),
@@ -421,8 +447,10 @@ export function createEmrServerlessBatchSubmission({
     "--files",
     `${canonicalManifestUri}#asklake-job-manifest.json`,
     ...sparkConf("spark.driver.cores", config.driverCores),
+    ...sparkConf("spark.emr-serverless.driver.disk", `${config.driverDiskGb}g`),
     ...sparkConf("spark.driver.memory", config.driverMemory),
     ...sparkConf("spark.executor.cores", config.executorCores),
+    ...sparkConf("spark.emr-serverless.executor.disk", `${config.executorDiskGb}g`),
     ...sparkConf("spark.executor.memory", config.executorMemory),
     ...sparkConf("spark.dynamicAllocation.enabled", "true"),
     ...sparkConf("spark.dynamicAllocation.initialExecutors", config.initialExecutors),
@@ -601,6 +629,15 @@ function boundedInteger(value, fallback, minimum, maximum, name) {
   const parsed = Number(value);
   if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum) {
     throw emrConfigurationError(`${name} must be an integer between ${minimum} and ${maximum}.`);
+  }
+  return parsed;
+}
+
+function boundedNumber(value, fallback, minimum, maximum, name) {
+  if (value === undefined || value === null || String(value).trim() === "") return fallback;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < minimum || parsed > maximum) {
+    throw emrConfigurationError(`${name} must be a number between ${minimum} and ${maximum}.`);
   }
   return parsed;
 }

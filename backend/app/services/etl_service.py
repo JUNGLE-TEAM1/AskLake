@@ -33,6 +33,7 @@ from app.core.permission_metadata import permission_grants_from_roles, resource_
 from app.core.s3_policy import resolve_s3_source_location, s3_source_config_fields, validate_s3_source_config
 from app.models import (
     CatalogDatasetModel,
+    EmrAdmissionReservationModel,
     ETLJobModel,
     ETLRunModel,
     KafkaContinuousBatchModel,
@@ -46,7 +47,7 @@ from app.models import (
 from app.models.base import Base
 from app.models.identity import AuthUserModel
 from app.repositories.audit_repository import add_audit_event, safe_record_audit_event
-from app.repositories import etl_repository
+from app.repositories import emr_admission_repository, etl_repository
 from app.repositories.catalog_repository import CatalogRepository
 from app.repositories.sql_repository import SqlRepository
 from app.repositories.permission_repository import replace_permission_ui_grants
@@ -113,6 +114,14 @@ from app.services.trino_sql_job_service import TrinoSqlJobService
 from app.services.identity_service import DEMO_GROUPS, DEMO_USERS
 from app.services.object_storage import object_storage_runtime
 from app.services.materialization_projection import aggregate_materialization_runs
+from app.services.emr_admission_service import (
+    actor_key as emr_admission_actor_key,
+    cleanup_expired_reservations,
+    fail_emr_reservation,
+    reservation_to_dict as emr_reservation_to_dict,
+    reserve_emr_capacity,
+    sync_emr_reservation,
+)
 from app.services.rule_compiler import CompiledRuleSet, compile_rule_set
 from app.services.resource_permission_service import job_with_persisted_permission_grants, permission_grants_for_resource, permissions_for_actor_with_governance
 from app.services.storage_layout import canonical_object_storage_uri, create_storage_layout
@@ -587,6 +596,7 @@ def sync_active_kafka_continuous_runtimes() -> None:
     active_statuses = {"starting", "running", "pausing", "stopping"}
     with SessionLocal() as db:
         reconcile_stale_continuous_maintenance_runs(db)
+        cleanup_expired_reservations(db)
         for job in etl_repository.list_job_models(db):
             if job.execution_mode != "continuous":
                 continue
@@ -871,6 +881,7 @@ def delete_job(db: Session, job_id: str, actor: ActorContext | None = None) -> s
     db.execute(delete(KafkaContinuousRuntimeModel).where(KafkaContinuousRuntimeModel.job_id == job.id))
     db.execute(delete(ETLRunModel).where(ETLRunModel.job_id == job.id))
     db.execute(delete(KafkaSnapshotModel).where(KafkaSnapshotModel.job_id == job.id))
+    db.execute(delete(EmrAdmissionReservationModel).where(EmrAdmissionReservationModel.job_id == job.id))
     db.execute(delete(PermissionGrantModel).where(
         PermissionGrantModel.resource_type == "etl_job",
         PermissionGrantModel.resource_id == job.id,
@@ -1365,9 +1376,22 @@ def command_kafka_continuous_job(
                 {"activeSnapshotId": snapshot_conflict.snapshot_id, "activeJobId": snapshot_conflict.job_id},
             )
         session = begin_kafka_continuous_session(db, job, runtime)
+        session_reference = (
+            session.session_id
+            if session is not None
+            else str((runtime.metrics or {}).get("currentSessionId") or f"continuous-{job.id}")
+        )
+        reservation = reserve_emr_capacity(
+            db,
+            job=job,
+            workload="continuous",
+            run_reference=session_reference,
+            actor_key=emr_admission_actor_key(actor, job),
+        ) if configured_spark_runtime_id() == "emr-serverless" else None
         try:
             worker_result = run_kafka_continuous_worker(job, runtime, "start")
         except ApiError as exc:
+            fail_emr_reservation(db, reservation, exc.message)
             runtime.status = "failed"
             runtime.failed_count += 1
             runtime.last_error = exc.message
@@ -1376,6 +1400,7 @@ def command_kafka_continuous_job(
             job.last_state = "Continuous worker 시작 실패"
             etl_repository.save_kafka_continuous_command(db, job, runtime)
             raise
+        reservation = sync_emr_reservation(db, reservation, worker_result, commit=False)
         worker_attempt_id = optional_string(worker_result.get("workerAttemptId")) or optional_string(worker_result.get("containerId"))
         if session is not None:
             session.worker_attempt_id = worker_attempt_id
@@ -1384,6 +1409,7 @@ def command_kafka_continuous_job(
             **(runtime.metrics or {}),
             "currentWorkerAttemptId": worker_attempt_id,
             **continuous_worker_runtime_metrics(worker_result),
+            **({"emrAdmission": emr_reservation_to_dict(reservation)} if reservation is not None else {}),
         }
         runtime.last_error = None
         job.status = "running"
@@ -2007,29 +2033,43 @@ def run_spark_job(db: Session, job: ETLJobModel, command: str, run_id: str) -> d
         if source_object_inventory is not None
         else None
     )
-    result = run_node_bridge(
-        "run-spark-job-once.mjs",
-        "ASKLAKE_SPARK_RUN_RESULT",
-        {
-            "command": command,
-            "job": job_payload_for_spark(
-                job,
-                incremental_since,
-                incremental_before,
-                source_object_keys,
-                source_object_inventory,
-                source_window_rebaseline=source_window_rebaseline,
-            ),
-            "runId": run_id,
-            **({
-                "sparkRuntimeStateFile": str(state_file),
-                "sparkRuntimeTimeoutMs": poll_timeout_ms,
-            } if remote_batch_mode else {}),
-        },
-        error_marker="ASKLAKE_SPARK_RUN_ERROR",
-        timeout_seconds=spark_python_bridge_timeout_seconds(poll_timeout_ms) if remote_batch_mode else 900,
-        timeout_recovery=(lambda: recover_spark_submission(runtime_id, state_file)) if remote_batch_mode else None,
-    )
+    reservation = reserve_emr_capacity(
+        db,
+        job=job,
+        workload="batch",
+        run_reference=run_id,
+        actor_key=emr_admission_actor_key(None, job),
+    ) if runtime_id == "emr-serverless" else None
+    try:
+        result = run_node_bridge(
+            "run-spark-job-once.mjs",
+            "ASKLAKE_SPARK_RUN_RESULT",
+            {
+                "command": command,
+                "job": job_payload_for_spark(
+                    job,
+                    incremental_since,
+                    incremental_before,
+                    source_object_keys,
+                    source_object_inventory,
+                    source_window_rebaseline=source_window_rebaseline,
+                ),
+                "runId": run_id,
+                **({
+                    "sparkRuntimeStateFile": str(state_file),
+                    "sparkRuntimeTimeoutMs": poll_timeout_ms,
+                } if remote_batch_mode else {}),
+            },
+            error_marker="ASKLAKE_SPARK_RUN_ERROR",
+            timeout_seconds=spark_python_bridge_timeout_seconds(poll_timeout_ms) if remote_batch_mode else 900,
+            timeout_recovery=(lambda: recover_spark_submission(runtime_id, state_file)) if remote_batch_mode else None,
+        )
+    except Exception as exc:
+        fail_emr_reservation(db, reservation, compact_storage_text(exc, limit=1000))
+        raise
+    reservation = sync_emr_reservation(db, reservation, result)
+    if reservation is not None:
+        result["emrAdmission"] = emr_reservation_to_dict(reservation)
     if source_object_inventory is not None:
         source_collection = result.get("sourceCollection")
         result["sourceCollection"] = {
@@ -2568,6 +2608,7 @@ def spark_result_manifest(result: dict[str, Any], run_id: str) -> dict[str, Any]
         for key in (
             "durationMs",
             "endedAt",
+            "emrAdmission",
             "error",
             "errorCode",
             "errorStatus",
@@ -5691,9 +5732,21 @@ def refresh_kafka_continuous_runtime(db: Session, job: ETLJobModel) -> None:
         return
     report_path = continuous_runtime_report_path(job.id)
     worker_status = continuous_worker_status(job, runtime)
+    admission_reservation = emr_admission_repository.latest_for_job(
+        db,
+        job.id,
+        workload="continuous",
+    )
+    admission_reservation = sync_emr_reservation(
+        db,
+        admission_reservation,
+        worker_status,
+        commit=False,
+    )
     runtime.metrics = {
         **(runtime.metrics or {}),
         **continuous_worker_runtime_metrics(worker_status),
+        **({"emrAdmission": emr_reservation_to_dict(admission_reservation)} if admission_reservation is not None else {}),
     }
     container_state = str(worker_status.get("containerState") or "unknown")
     requested_action = optional_string(worker_status.get("requestedAction"))

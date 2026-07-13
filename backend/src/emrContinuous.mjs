@@ -1,5 +1,10 @@
 import { randomUUID } from "node:crypto";
 import {
+  assertEmrAdmissionApplication,
+  emrAdmissionPolicy,
+  estimateEmrJobResources,
+} from "./emrAdmission.mjs";
+import {
   CancelJobRunCommand,
   EMRServerlessClient,
   GetApplicationCommand,
@@ -114,7 +119,15 @@ async function startContinuous(context) {
 async function ensureSubmitted(context, state) {
   assertRequestIdentity(context, state);
   if (state.jobRunId || state.requestedAction) return state;
-  await validateContinuousApplication(context);
+  const applicationAdmission = await validateContinuousApplication(context);
+  if (applicationAdmission.enabled) {
+    state = {
+      ...state,
+      applicationAdmission,
+      updatedAt: new Date().toISOString(),
+    };
+    writeContinuousState(context.stateFile, state);
+  }
   const artifacts = {
     manifestUri: state.manifestUri,
     reportUri: state.reportUri,
@@ -198,6 +211,11 @@ async function validateContinuousApplication(context) {
       409,
     );
   }
+  return assertEmrAdmissionApplication(
+    application,
+    emrAdmissionPolicy(context.environment, "continuous"),
+    estimateEmrJobResources(context.config),
+  );
 }
 
 async function statusContinuous(context) {
@@ -391,6 +409,7 @@ async function workerResult(context, state, overrides = {}) {
     : null;
   return {
     applicationId: state?.applicationId || context.config.applicationId,
+    applicationAdmission: state?.applicationAdmission || null,
     attempt: state ? attempt : null,
     cancelAcceptedAt: state?.cancelAcceptedAt || null,
     cancelCompletedAt: state?.cancelCompletedAt || null,

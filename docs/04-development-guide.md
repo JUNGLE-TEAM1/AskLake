@@ -159,6 +159,24 @@ npm run emr:upload-continuous-artifact
 
 EMR Serverless 자체의 STREAMING Job Run은 7.1.0부터 지원하지만 AskLake Continuous의 안전한 pause/stop 계약은 graceful shutdown이 제공되는 `emr-7.9.0` 이상 Spark application만 허용한다. 제출 전에 backend가 `GetApplication`으로 application type, release label, state를 검증하므로 control-plane role에는 `emr-serverless:GetApplication/StartApplication/StartJobRun/GetJobRun/CancelJobRun`과 execution role에 대한 `iam:PassRole`이 필요하다. MSK와 통신 가능한 VPC/subnet/security group, 실행 role의 S3 data/checkpoint/report 및 `kafka-cluster:Connect/DescribeTopic/ReadData/DescribeGroup/AlterGroup` 권한도 필요하다. `ASKLAKE_EMR_SERVERLESS_CONTINUOUS_MAX_FAILED_ATTEMPTS_PER_HOUR`는 1~10이며 총 retry 횟수가 아니다. Streaming Job Run에는 `ASKLAKE_EMR_SERVERLESS_EXECUTION_TIMEOUT_MINUTES`를 적용하지 않는다. graceful cancel은 기본 120초이며 15~1800초만 허용하고 force cancel만 `0`을 사용한다.
 
+### EMR admission 개발·배포 검증
+
+admission은 로컬 Docker/Spark REST 기본 경로를 바꾸지 않는다. AWS 배포에서 `ASKLAKE_SPARK_RUNTIME=emr-serverless`와 EMR Batch/Continuous가 먼저 정상 동작한 뒤에만 `ASKLAKE_EMR_SERVERLESS_ADMISSION_ENABLED=true`로 켠다. 활성화 전에 각 application의 `maximumCapacity`를 `*_MAX_VCPU|MEMORY_GB|DISK_GB` 이하로, scheduler의 `maxConcurrentRuns`와 `queueTimeoutMinutes`를 동일한 AskLake 값 이하로 맞추고 auto-stop과 Job-level cost allocation을 켠다. scheduler queue timeout의 AWS 허용 범위는 15~720분이다.
+
+driver/executor core·memory·disk와 `MAX_EXECUTORS`, memory overhead factor는 Job 하나의 안전 상한 계산 입력이다. actor/project quota는 active와 queued 예약을 함께 제한하고 application 자원 합계는 active slot만 계산한다. 비용 표시를 사용하려면 배포 region과 architecture에 맞는 vCPU/memory/disk 시간당 단가를 `ASKLAKE_EMR_SERVERLESS_*_HOUR_USD`에 넣고 검토 날짜를 배포 기록에 남긴다. 0은 단가 미설정이며 실제 비용 0을 의미하지 않는다.
+
+```bash
+cd backend
+npm run verify:emr-admission
+npm run verify:emr-serverless-contract
+npm run verify:emr-serverless-continuous-contract
+
+cd ../frontend
+npm run build
+```
+
+첫 명령은 resource estimator/application preflight와 file DB의 동시 요청을 실행해 정확히 한 요청만 active slot을 받고 다음 요청은 queued가 되는지, queue overflow·actor quota·단일 Job 자원 초과·terminal release·admin projection을 검증한다. 실제 PostgreSQL/EMR staging에서는 동시에 두 Run을 제출해 `GET /api/admin/runtime-capacity`의 active/queued 수와 AWS Job Run 상태가 일치하는지 추가 확인한다. 이 검증은 처리량/실제 청구액 측정이 아니며 Phase 7 부하·비용 시험과 분리한다.
+
 ```bash
 export AIRFLOW_EXECUTION_API_TOKEN=asklake-local-airflow-execution
 docker compose up airflow-init

@@ -53,6 +53,7 @@
     "verify:emr-serverless-contract": "node scripts/verify-emr-serverless-contract.mjs",
     "verify:emr-serverless-continuous-contract": "node scripts/verify-emr-serverless-continuous-contract.mjs",
     "verify:emr-serverless-fastapi": "PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-.venv/bin/python} scripts/verify-emr-serverless-fastapi-contract.py",
+    "verify:emr-admission": "node scripts/verify-emr-admission-contract.mjs && PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-.venv/bin/python} scripts/verify-emr-admission-contract.py",
     "emr:upload-artifact": "node scripts/upload-emr-serverless-artifact.mjs",
     "emr:upload-continuous-artifact": "node scripts/upload-emr-serverless-artifact.mjs --continuous",
     "verify:spark-rest-client": "node scripts/verify-spark-rest-client.mjs",

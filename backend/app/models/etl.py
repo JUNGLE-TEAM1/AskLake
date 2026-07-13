@@ -1,4 +1,6 @@
-from sqlalchemy import JSON, Boolean, Float, ForeignKey, Index, Integer, String, Text
+from datetime import datetime
+
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -89,6 +91,39 @@ class ETLRunModel(TimestampMixin, Base):
     task_states: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     last_synced_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
     sync_error: Mapped[str | None] = mapped_column(String(512), nullable=True)
+
+
+class EmrAdmissionReservationModel(TimestampMixin, Base):
+    __tablename__ = "emr_admission_reservations"
+    __table_args__ = (
+        Index("ix_emr_admission_application_status", "application_id", "workload", "status"),
+        Index("ix_emr_admission_actor_status", "actor_key", "workload", "status"),
+        Index("ix_emr_admission_project_status", "project_key", "workload", "status"),
+        Index("ix_emr_admission_job_reference", "job_id", "run_reference"),
+    )
+
+    reservation_id: Mapped[str] = mapped_column(String(120), primary_key=True)
+    workload: Mapped[str] = mapped_column(String(32), nullable=False)
+    application_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    job_id: Mapped[str] = mapped_column(String(120), ForeignKey("etl_jobs.id"), nullable=False)
+    run_reference: Mapped[str] = mapped_column(String(160), nullable=False)
+    actor_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    project_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    requested_vcpu: Mapped[float] = mapped_column(Float, nullable=False)
+    requested_memory_gb: Mapped[float] = mapped_column(Float, nullable=False)
+    requested_disk_gb: Mapped[float] = mapped_column(Float, nullable=False)
+    estimated_cost_usd_per_hour: Mapped[float | None] = mapped_column(Float, nullable=True)
+    decision_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    runtime_job_id: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    queued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    admitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    resource_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
 
 
 class KafkaSnapshotModel(TimestampMixin, Base):

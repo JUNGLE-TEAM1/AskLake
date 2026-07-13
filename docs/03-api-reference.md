@@ -146,6 +146,7 @@ Canonical status values:
 | `GET/POST/PATCH/DELETE` | `/api/admin/permissions` | Admin | permission grant 관리 | `docs/api-contract.md` |
 | `GET/PATCH` | `/api/admin/governance-controls` | Admin | principal block과 resource lock 관리 | `docs/api-contract.md` |
 | `GET` | `/api/admin/audit-logs` | Admin | 감사 로그 필터 조회 | `docs/api-contract.md` |
+| `GET` | `/api/admin/runtime-capacity` | Admin | EMR admission 정책·사용량·최근 예약 조회 | `docs/api-contract.md` |
 | `GET` | `/api/etl/sources/defaults` | TBD | backend 실행 환경 기준 Source 기본값 반환 | `docs/api-contract.md` |
 | `POST` | `/api/etl/sources/assets` | TBD | Source 연결 검증 후 탐색 가능한 파일·테이블·컬렉션 목록 반환 | `docs/api-contract.md` |
 | `POST` | `/api/etl/sources/test` | TBD | 사용자가 명시적으로 선택한 Source 대상의 제한 샘플과 schema draft patch 반환 | `docs/api-contract.md` |
@@ -404,6 +405,7 @@ type ScheduledJobRunResponse = {
 | `POST` | `/api/dashboards/{dashboardId}/publish` | dashboard 게시 |
 | `GET` | `/api/users/me` | 현재 actor 프로필, role, group, 권한 요약 조회 |
 | `GET` | `/api/admin/users` | 관리자 사용자 목록 조회. admin role 필요 |
+| `GET` | `/api/admin/runtime-capacity?limit=100` | EMR application/workload별 admission 정책, 활성/대기 사용량, 최근 예약 조회. admin role 필요 |
 | `GET` | `/api/admin/groups` | 관리자 그룹 목록 조회. admin role 필요 |
 | `GET` | `/api/admin/permissions` | resource별 permission grant/현재 actor 권한 요약 조회. admin role 필요 |
 | `POST` | `/api/admin/permissions` | permission grant 생성. admin role 필요 |
@@ -417,6 +419,8 @@ type ScheduledJobRunResponse = {
 Dataset 기반 widget 생성은 top-level `datasetId`, `type`, type별 `config`를 함께 전송한다. 지원 runtime widget type은 `metric`, `table`, ApexCharts 차트 8종(`bar_chart`, `line_chart`, `area_chart`, `donut_chart`, `pie_chart`, `radial_bar_chart`, `heatmap_chart`, `treemap_chart`)으로 둔다. Draft runtime 응답은 각 widget의 `queryId`, `datasetId`, `type`, `config`, `data` snapshot을 유지해야 한다.
 
 Profile/Admin Console API는 `asklake_session` 쿠키가 있으면 session actor를 우선 사용하고, 세션이 없으면 임시 actor header(`X-AskLake-User`, `X-AskLake-Role`, `X-AskLake-Groups`) fallback으로 동작한다. `/api/users/me`는 모든 actor가 호출할 수 있고, `/api/admin/*`는 admin role이 아니면 `403 FORBIDDEN`을 반환한다. 관리 콘솔 권한 편집 API는 `dataset`, `etl_job`, `dashboard` resource에 대해 `user`, `group`, `role`, `public` principal grant를 저장할 수 있다. 지원 action은 `view`, `query`, `run`, `manage`, `delete`, `share`이며, 운영 UI의 기본 흐름은 group grant와 user 예외 grant를 우선 사용한다. Admin 권한은 resource 접근 그룹이 아니라 `role=admin`으로 부여되며, 로컬 demo admin 계정은 groups를 비워 둔다. `role`/`public` grant는 계약상 지원하지만 운영 위험이 크므로 관리 콘솔의 기본 추가 옵션으로 노출하지 않는다. Governance controls는 user/group principal을 `blocked`로 전환하거나 resource를 잠글 수 있다. 관리 콘솔에서는 user 차단은 사용자 탭, group 차단은 그룹 탭, resource lock은 권한 탭의 선택 resource action으로 배치한다. 차단/잠금 사유는 관리자 내부 표시와 감사 로그용이며 일반 사용자-facing 메시지에는 노출하지 않는다. 차단된 actor는 grant가 있어도 resource 접근/실행에서 403을 받고, 잠긴 resource는 view를 제외한 `query/run/manage/delete/share` action을 403으로 차단한다.
+
+EMR admission 응답의 `policies[]`는 workload별 application ID, 동시 실행/queue timeout과 vCPU·memory·disk 상한, actor/project 동시 예약 상한을 반환한다. `usage[]`는 active/queued run 수와 활성 예약 자원 합계를, `reservations[]`는 Job/Run/actor/project, 상태, 요청 자원, runtime Job ID, 판단 사유, 선택적 `estimatedCostUsdPerHour`를 반환한다. admission이 꺼져도 endpoint는 `enabled=false`와 정책 기본값을 반환한다. Batch 성공/실패 manifest의 `emrAdmission`과 Continuous runtime의 `admission`은 같은 예약 shape다. queue overflow와 quota는 각각 `429 EMR_ADMISSION_QUEUE_FULL`, `429 EMR_ADMISSION_QUOTA_EXCEEDED`, 단일 Job 자원 초과는 `422 EMR_ADMISSION_RESOURCE_LIMIT_EXCEEDED`, 실제 AWS application 불일치는 `422 EMR_ADMISSION_APPLICATION_MISMATCH`다.
 
 Dashboard FastAPI 구현은 두 lane으로 나눈다.
 

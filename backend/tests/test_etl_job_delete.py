@@ -16,6 +16,7 @@ from app.core.errors import ApiError
 from app.repositories import etl_repository
 from app.models import (
     AuditEventModel,
+    EmrAdmissionReservationModel,
     ETLJobModel,
     ETLRunModel,
     KafkaContinuousBatchModel,
@@ -82,6 +83,7 @@ def kafka_fixture_job(job_id: str) -> ETLJobModel:
     ]
     job.target = "reviews_bronze"
     job.target_layer = "BRONZE"
+    job.target_format = "jsonl"
     return job
 
 
@@ -93,6 +95,7 @@ class EtlJobDeleteTests(unittest.TestCase):
             tables=[
                 ETLJobModel.__table__,
                 ETLRunModel.__table__,
+                EmrAdmissionReservationModel.__table__,
                 KafkaSnapshotModel.__table__,
                 KafkaContinuousRuntimeModel.__table__,
                 KafkaContinuousSessionModel.__table__,
@@ -121,7 +124,23 @@ class EtlJobDeleteTests(unittest.TestCase):
             actions=["view", "run", "manage", "delete"],
             source="test",
         )
-        self.db.add_all([job, grant])
+        reservation = EmrAdmissionReservationModel(
+            reservation_id="emr-admission-delete-test",
+            workload="batch",
+            application_id="00deletecontract",
+            job_id=job.id,
+            run_reference="run-delete-test",
+            actor_key="Test Admin",
+            project_key="default",
+            status="completed",
+            priority=50,
+            requested_vcpu=1,
+            requested_memory_gb=4,
+            requested_disk_gb=20,
+            resource_snapshot={},
+        )
+        reservation_id = reservation.reservation_id
+        self.db.add_all([job, grant, reservation])
         self.db.commit()
 
         with patch("app.repositories.etl_repository.ensure_schema", return_value=None):
@@ -130,6 +149,7 @@ class EtlJobDeleteTests(unittest.TestCase):
         self.assertEqual(deleted_job_id, job.id)
         self.assertIsNone(self.db.get(ETLJobModel, job.id))
         self.assertIsNone(self.db.get(PermissionGrantModel, grant.id))
+        self.assertIsNone(self.db.get(EmrAdmissionReservationModel, reservation_id))
         audit_event = self.db.scalar(select(AuditEventModel).where(
             AuditEventModel.action == "etl_job.deleted",
             AuditEventModel.target_id == job.id,
@@ -325,6 +345,7 @@ class EtlJobDeleteRunConcurrencyTests(unittest.TestCase):
             tables=[
                 ETLJobModel.__table__,
                 ETLRunModel.__table__,
+                EmrAdmissionReservationModel.__table__,
                 KafkaSnapshotModel.__table__,
                 KafkaContinuousRuntimeModel.__table__,
                 KafkaContinuousSessionModel.__table__,

@@ -23,6 +23,7 @@ import { uploadEmrServerlessArtifact } from "./upload-emr-serverless-artifact.mj
 const backendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 const environment = {
+  ASKLAKE_EMR_SERVERLESS_ADMISSION_ENABLED: "true",
   ASKLAKE_EMR_SERVERLESS_APPLICATION_ID: "00fakeapplication",
   ASKLAKE_EMR_SERVERLESS_ARTIFACT_URI: "s3://asklake-artifacts/emr-serverless",
   ASKLAKE_EMR_SERVERLESS_ENABLED: "true",
@@ -78,6 +79,8 @@ assert.equal(submission.applicationId, config.applicationId);
 assert.equal(submission.mode, "BATCH");
 assert.equal(submission.jobDriver.sparkSubmit.entryPoint, config.entryPointUri);
 assert.match(submission.jobDriver.sparkSubmit.sparkSubmitParameters, /spark\.dynamicAllocation\.maxExecutors=10/);
+assert.match(submission.jobDriver.sparkSubmit.sparkSubmitParameters, /spark\.emr-serverless\.driver\.disk=20g/);
+assert.match(submission.jobDriver.sparkSubmit.sparkSubmitParameters, /spark\.emr-serverless\.executor\.disk=20g/);
 assert.match(submission.jobDriver.sparkSubmit.sparkSubmitParameters, /spark\.emr-serverless\.driverEnv\.ASKLAKE_SPARK_REPORT_FILE=/);
 assert.match(submission.jobDriver.sparkSubmit.sparkSubmitParameters, /org\.postgresql:postgresql:42\.7\.5/);
 assert.doesNotMatch(submission.jobDriver.sparkSubmit.sparkSubmitParameters, /hadoop-aws/);
@@ -119,6 +122,7 @@ try {
   const s3 = new FakeS3Client(report);
   const request = {
     config,
+    environment,
     manifestFile,
     manifestUri: artifacts.manifestUri,
     pollIntervalMs: 25,
@@ -135,6 +139,7 @@ try {
   assert.equal(completed.report.status, "success");
   assert.equal(completed.report.runtime.id, "emr-serverless");
   assert.equal(completed.report.runtimeJobId, "jr-phase-3");
+  assert.equal(completed.report.emrApplicationAdmission.enabled, true);
   assert.match(completed.report.runtimeLogReference.uri, /applications\/00fakeapplication\/jobs\/jr-phase-3\/$/);
   assert.equal(emr.startCount, 1);
   assert.equal(s3.putCount, 1);
@@ -292,12 +297,27 @@ class FakeEmrClient {
   constructor(states, jobRunId = "jr-phase-3") {
     this.cancelCount = 0;
     this.getCount = 0;
+    this.getApplicationCount = 0;
     this.jobRunId = jobRunId;
     this.startCount = 0;
     this.states = [...states];
   }
 
   async send(command) {
+    if (command.constructor.name === "GetApplicationCommand") {
+      this.getApplicationCount += 1;
+      return {
+        application: {
+          applicationId: config.applicationId,
+          autoStopConfiguration: { enabled: true, idleTimeoutMinutes: 15 },
+          jobLevelCostAllocationConfiguration: { enabled: true },
+          maximumCapacity: { cpu: "80 vCPU", memory: "320 GB", disk: "2000 GB" },
+          schedulerConfiguration: { maxConcurrentRuns: 4, queueTimeoutMinutes: 60 },
+          state: "STARTED",
+          type: "SPARK",
+        },
+      };
+    }
     if (command.constructor.name === "StartJobRunCommand") {
       this.startCount += 1;
       this.lastStartInput = command.input;

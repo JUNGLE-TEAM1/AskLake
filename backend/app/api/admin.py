@@ -17,6 +17,8 @@ from app.schemas.identity import (
     AdminResourceLockRequest,
     AdminUsersResponse,
 )
+from app.schemas.etl import RuntimeCapacityResponse
+from app.services.emr_admission_service import runtime_capacity_overview
 from app.services.identity_service import IdentityService
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -24,6 +26,15 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 
 def get_identity_service(db: Annotated[Session, Depends(get_db)]) -> IdentityService:
     return IdentityService(db)
+
+
+@router.get("/runtime-capacity", response_model=RuntimeCapacityResponse)
+def get_runtime_capacity(
+    db: Annotated[Session, Depends(get_db)],
+    actor: Annotated[ActorContext, Depends(get_actor_context)],
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+) -> RuntimeCapacityResponse:
+    return RuntimeCapacityResponse.model_validate(runtime_capacity_overview(db, actor, limit))
 
 
 @router.get("/users", response_model=AdminUsersResponse)

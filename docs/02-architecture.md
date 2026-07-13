@@ -147,6 +147,17 @@ EMR Batch는 `FastAPI -> Airflow -> Node bridge -> EMR Serverless -> S3 Parquet/
 - `cancelRun`은 제출 전 cancellation marker를 남겨 race를 차단하고, 제출 뒤에는 persisted Job Run ID로 `CancelJobRun`을 요청한다. 취소된 Run은 뒤늦은 Airflow poll이나 Spark 결과가 success로 덮어쓰지 못하며 Catalog reconciliation도 거부된다.
 - driver/executor cores·memory와 dynamic allocation min/initial/max는 환경 변수로 조정한다. 이 설정은 확장 가능성의 제어면일 뿐 처리량 보장이 아니며 실제 target workload 부하 시험은 별도다.
 
+### EMR Serverless admission과 비용 경계
+
+`ASKLAKE_EMR_SERVERLESS_ADMISSION_ENABLED=true`인 배포에서는 Batch Run과 Continuous session이 외부 제출 전에 `emr_admission_reservations`에 durable 예약을 만든다. application/workload scope의 PostgreSQL transaction advisory lock 안에서 활성 run/queue 수, 활성 예약의 vCPU·memory·disk 합계, actor/project quota를 다시 읽기 때문에 여러 FastAPI process의 동시 요청도 같은 결정을 공유한다. 예약은 `admitted|queued|submitted|running` 비종료 상태와 `completed|failed|canceled|expired` 종료 상태를 가지며 runtime Job ID와 판단 snapshot을 보존한다.
+
+- 요청 자원은 driver 1개와 dynamic allocation `maxExecutors`까지 모두 사용한다고 가정한 안전 상한이다. memory는 overhead factor, disk는 driver/executor disk를 포함한다.
+- 활성 slot 또는 자원 합계가 찼지만 queue 여유가 있으면 StartJobRun을 계속 보내고 EMR Serverless scheduler의 native FIFO queue에 dispatch를 위임한다. AskLake priority 값은 관측 metadata이며 AWS FIFO 순서를 바꾸지 않는다. queue가 가득 차거나 actor/project quota가 차면 외부 side effect 전에 `429`, 단일 Job이 policy/application cap보다 크면 `422`로 거절한다.
+- Node adapter는 `GetApplication`으로 실제 `maximumCapacity`, `schedulerConfiguration`, auto-stop, Job cost allocation을 검증한 뒤에만 manifest upload/StartJobRun을 진행한다. 실제 AWS 설정이 AskLake 상한보다 넓으면 fail-closed한다.
+- FastAPI 예약은 실행 결과/상태 동기화에서 terminal로 해제한다. runtime Job ID를 기록하기 전 죽은 `admitted/queued` lease만 background sync가 만료하며, 이미 제출된 원격 Job을 시간만으로 임의 해제하지 않는다.
+- 비용은 configured vCPU/memory/disk 시간당 단가에 요청 상한을 곱한 비교용 최대 시간당 추정치다. 실제 사용량/청구액은 Phase 7 부하·비용 검증에서 CloudWatch와 Cost Explorer 근거로 별도 측정한다.
+- `GET /api/admin/runtime-capacity`와 관리 콘솔 실행 용량 탭이 정책, 현재 예약량, 최근 판단을 제공한다. Batch는 `taskStates.sparkResult.emrAdmission`, Continuous는 `continuousRuntime.admission`으로 같은 예약을 사용자 실행 상세에 투영한다.
+
 ### Kafka Runtime과 Amazon MSK 연결 경계
 
 Kafka 연결 설정의 source of truth는 `backend/src/kafkaRuntime.mjs`다. 기본 `redpanda` Runtime은 기존 `ASKLAKE_KAFKA_BROKER`와 무인증 plaintext 연결을 유지한다. `ASKLAKE_KAFKA_RUNTIME=msk`는 `ASKLAKE_MSK_ENABLED=true`, IAM bootstrap broker, AWS region을 모두 요구하고 MSK Serverless의 IAM SASL/OAUTHBEARER + TLS만 허용한다. Node client는 AWS 공식 signer와 default credential chain을 사용하며 access key, secret, session token을 별도 Kafka 설정이나 로그에 저장하지 않는다.

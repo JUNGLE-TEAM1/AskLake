@@ -1,4 +1,4 @@
-import { Activity, AlertCircle, Boxes, Check, CircleUser, Plus, Save, Search, ShieldCheck, Trash2, X } from "lucide-react";
+import { Activity, AlertCircle, Boxes, Check, CircleUser, HardDrive, Plus, Save, Search, ShieldCheck, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type React from "react";
 import { InfoBox, PageTitle } from "../../components/common";
@@ -10,6 +10,7 @@ import {
   fetchAdminGroups,
   fetchAdminPermissions,
   fetchAdminUsers,
+  fetchRuntimeCapacity,
   updateAdminPrincipalControl,
   updateAdminPermissionGrant,
   updateAdminResourceLock,
@@ -29,9 +30,10 @@ import type {
   PermissionAction,
   PermissionGrant,
   PermissionPrincipalType,
+  RuntimeCapacityResponse,
 } from "../../types";
 
-type AdminTab = "users" | "groups" | "permissions" | "audit";
+type AdminTab = "users" | "groups" | "permissions" | "capacity" | "audit";
 
 type AdminConsolePageProps = {
   onAction: (action: string, apiPath: string, targetId: string, result?: "success" | "failed", options?: { targetType?: "admin_module" }) => void;
@@ -42,6 +44,7 @@ const tabs: Array<{ id: AdminTab; label: string; icon: typeof CircleUser }> = [
   { id: "users", label: "사용자", icon: CircleUser },
   { id: "groups", label: "그룹", icon: Boxes },
   { id: "permissions", label: "권한", icon: ShieldCheck },
+  { id: "capacity", label: "실행 용량", icon: HardDrive },
   { id: "audit", label: "감사 로그", icon: Activity },
 ];
 
@@ -61,6 +64,7 @@ export function AdminConsolePage({ onAction, onNotify }: AdminConsolePageProps) 
   const [principalControls, setPrincipalControls] = useState<AdminPrincipalControl[]>([]);
   const [resourceLocks, setResourceLocks] = useState<AdminResourceLock[]>([]);
   const [auditLogs, setAuditLogs] = useState<AdminAuditLogEntry[]>([]);
+  const [runtimeCapacity, setRuntimeCapacity] = useState<RuntimeCapacityResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [permissionDraft, setPermissionDraft] = useState({
@@ -92,15 +96,17 @@ export function AdminConsolePage({ onAction, onNotify }: AdminConsolePageProps) 
       fetchAdminGroups(),
       fetchAdminPermissions(),
       fetchAdminGovernanceControls(),
+      fetchRuntimeCapacity(),
       fetchAdminAuditLogs(),
     ])
-      .then(([userResponse, groupResponse, permissionResponse, controlResponse, auditResponse]) => {
+      .then(([userResponse, groupResponse, permissionResponse, controlResponse, capacityResponse, auditResponse]) => {
         if (!active) return;
         setUsers(userResponse.users);
         setGroups(groupResponse.groups);
         setPermissions(permissionResponse.resources);
         setPrincipalControls(controlResponse.principalControls);
         setResourceLocks(controlResponse.resourceLocks);
+        setRuntimeCapacity(capacityResponse);
         setPermissionDraft((draft) => ({
           ...draft,
           resourceKey: draft.resourceKey || resourceKey(permissionResponse.resources[0]),
@@ -390,6 +396,7 @@ export function AdminConsolePage({ onAction, onNotify }: AdminConsolePageProps) 
                   onUpdate={handleUpdateGrant}
                 />
               )}
+              {activeTab === "capacity" && runtimeCapacity && <RuntimeCapacityPanel capacity={runtimeCapacity} />}
               {activeTab === "audit" && <AuditLogTable logs={auditLogs} pending={auditPending} query={auditQuery} onQueryChange={refreshAuditLogs} />}
             </>
           )}
@@ -416,6 +423,49 @@ function AdminMetric({ label, value }: { label: string; value: string }) {
       <strong>{value}</strong>
       <span>{label}</span>
     </article>
+  );
+}
+
+function RuntimeCapacityPanel({ capacity }: { capacity: RuntimeCapacityResponse }) {
+  return (
+    <div className="admin-console-table-scroll">
+      <InfoBox
+        title={capacity.enabled ? "EMR admission 제어 사용 중" : "EMR admission 제어 꺼짐"}
+        body={`큐 방식: ${capacity.queueDiscipline}. 요청 우선순위는 관측용이며 실제 배치는 EMR Serverless FIFO가 담당합니다.`}
+      />
+      <table className="schema-table admin-console-table">
+        <thead><tr><th>Workload</th><th>사용량</th><th>예약 자원</th><th>정책 상한</th><th>큐</th></tr></thead>
+        <tbody>
+          {capacity.policies.map((policy) => {
+            const usage = capacity.usage.find((item) => item.workload === policy.workload);
+            return (
+              <tr key={policy.workload}>
+                <td><strong>{policy.workload}</strong><span>{policy.applicationId || "application 미설정"}</span></td>
+                <td>{usage?.activeRuns ?? 0} active · {usage?.queuedRuns ?? 0} queued</td>
+                <td>{usage?.reservedVcpu ?? 0} vCPU · {usage?.reservedMemoryGb ?? 0} GB · {usage?.reservedDiskGb ?? 0} GB disk</td>
+                <td>{policy.maxConcurrentRuns} runs · {policy.maxVcpu} vCPU · {policy.maxMemoryGb} GB</td>
+                <td>최대 {policy.maxQueuedRuns} · {policy.queueTimeoutMinutes}분</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      <table className="schema-table admin-console-table">
+        <thead><tr><th>최근 예약</th><th>상태</th><th>요청 자원</th><th>비용 추정</th><th>판단</th></tr></thead>
+        <tbody>
+          {capacity.reservations.length === 0 && <tr><td colSpan={5}>기록된 EMR admission 예약이 없습니다.</td></tr>}
+          {capacity.reservations.map((reservation) => (
+            <tr key={reservation.reservationId}>
+              <td><strong>{reservation.jobId}</strong><span>{reservation.workload} · {reservation.actorKey}</span></td>
+              <td><AdminChip tone={reservation.status === "failed" || reservation.status === "expired" ? "danger" : "default"}>{reservation.status}</AdminChip></td>
+              <td>{reservation.requestedVcpu} vCPU · {reservation.requestedMemoryGb} GB · {reservation.requestedDiskGb} GB disk</td>
+              <td>{reservation.estimatedCostUsdPerHour != null ? `$${reservation.estimatedCostUsdPerHour.toFixed(4)}/hour` : "단가 미설정"}</td>
+              <td>{reservation.decisionReason || "-"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 

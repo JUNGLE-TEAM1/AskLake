@@ -136,6 +136,14 @@ Phase 0에서는 용어와 경계를 먼저 고정한다. `createdBy`, `owner`, 
 4. 실패하면 사용자에게 알리고 rollback 또는 retry 경로를 제공한다.
 5. Dashboard API는 FastAPI 응답을 우선하고, 이전 backend 호환을 위해 404 local/mock fallback을 사용한다.
 
+### Flow D. EMR 실행 용량 승인
+
+1. 배포 운영자가 EMR Serverless admission을 명시적으로 켜면 Batch Run과 Continuous session은 `StartJobRun` 전에 요청 가능한 최대 executor 기준 vCPU, memory, disk를 계산한다.
+2. 시스템은 application/workload별 활성 slot, 사용자·프로젝트 quota와 대기열 상한을 PostgreSQL transaction 안에서 판정한다. 동시 요청도 같은 application advisory lock으로 직렬화한다.
+3. 즉시 실행 용량이 있으면 `admitted`, 없으면 EMR Serverless native FIFO queue에 위임하는 `queued` 예약을 남긴다. queue·actor·project 상한을 넘으면 외부 제출 전에 원인과 한도를 포함한 `429`를 반환하고, Job 하나가 application 자원 상한보다 크면 `422`를 반환한다.
+4. 제출 직전 실제 EMR application의 `maximumCapacity`, scheduler 동시 실행/timeout, auto-stop, Job cost allocation 설정이 AskLake 정책보다 넓지 않은지 다시 확인한다.
+5. 사용자 Run 상세와 Continuous Runtime은 요청 자원, admission 상태, 판단 사유, 단가가 설정된 경우 최대 시간당 비용 추정을 표시한다. 관리자는 실행 용량 탭에서 Batch/Continuous 사용량과 최근 예약을 확인한다.
+
 ## 7) 성공 기준
 
 - `npm run build`가 통과한다.
@@ -163,6 +171,7 @@ Phase 0에서는 용어와 경계를 먼저 고정한다. `createdBy`, `owner`, 
 - Kafka Snapshot/Continuous 원시 TXT 구조화, 임의 정규식 작성, 복수 구분자, 멀티라인 로그, 오류 행 자동 보정·quarantine·재처리
 - 대용량 처리 성능 검증
 - EMR Serverless의 maintenance와 Parquet source inspection 지원. Kafka Continuous 제출·재연결 계약은 구현됐지만 실제 VPC/MSK/EMR 통합, 처리량·비용 기준 검증은 별도 배포/부하 테스트 범위
+- EMR admission은 자원 상한·동시성·queue/quota를 제어하지만 처리량과 실제 청구액을 보장하지 않는다. region별 실제 단가 검증, CloudWatch/Cost Explorer 실측, 부하·비용 SLO는 다음 성능 검증 단계다.
 - Kafka Continuous Ingestion V1 운영 확장: 지속 실행 Spark worker, checkpoint 재개, Catalog 등록, partition lag, bounded log, quarantine replay, staged compaction은 Issue #500에서 구현했다. autoscaling, alerting/SLA, 장기 로그 object storage, compaction 결과의 atomic reader 전환/retention, 다중 worker 운영은 후속 범위
 - Spark, Trino, Kafka, Airflow 전체 운영 완성
 - 완전한 인증/인가 시스템

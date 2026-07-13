@@ -776,6 +776,7 @@ def continuous_runtime_to_schema(runtime: KafkaContinuousRuntimeModel | None) ->
     return KafkaContinuousRuntime(
         status=runtime.status,
         checkpoint_path=runtime.checkpoint_path,
+        admission=metrics.get("emrAdmission"),
         runtime_provider=metrics.get("runtimeProvider"),
         runtime_application_id=metrics.get("runtimeApplicationId"),
         runtime_job_id=metrics.get("runtimeJobId"),

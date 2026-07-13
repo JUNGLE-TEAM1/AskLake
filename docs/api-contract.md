@@ -103,7 +103,7 @@ X-Request-Id: req_20260703_000001
 
 현재 로컬 인증은 `/api/auth/login` 또는 `/api/auth/signup`이 발급하는 httpOnly `asklake_session` 쿠키를 사용합니다. 외부 IdP/OAuth/SSO, refresh token, 비밀번호 재설정, 이메일 인증은 아직 범위 밖이며, 기존 smoke와 수동 검증을 위해 `X-AskLake-*` actor header fallback은 유지합니다. 이 fallback은 로컬 smoke/manual 검증용이며, 운영에서는 session/IdP 또는 trusted gateway 검증 없이 client-provided header만으로 role/user/group을 신뢰하면 안 됩니다.
 
-Frontend는 `/api/auth/session` actor 확인 이후 보호 route와 backend hydrate를 시작합니다. Session/identity/admin 계약은 `/api/auth/signup`, `/api/auth/login`, `/api/auth/session`, `/api/auth/logout`, `/api/users/me`, `/api/admin/users`, `/api/admin/groups`, `/api/admin/permissions`, `/api/admin/governance-controls`, `/api/admin/audit-logs`를 사용하며, `/api/admin/*`는 현재 ActorContext가 admin이 아니면 `403 FORBIDDEN`을 반환합니다.
+Frontend는 `/api/auth/session` actor 확인 이후 보호 route와 backend hydrate를 시작합니다. Session/identity/admin 계약은 `/api/auth/signup`, `/api/auth/login`, `/api/auth/session`, `/api/auth/logout`, `/api/users/me`, `/api/admin/users`, `/api/admin/groups`, `/api/admin/permissions`, `/api/admin/governance-controls`, `/api/admin/audit-logs`, `/api/admin/runtime-capacity`를 사용하며, `/api/admin/*`는 현재 ActorContext가 admin이 아니면 `403 FORBIDDEN`을 반환합니다.
 
 ### Permission/Governance Phase 0 용어
 
@@ -3403,6 +3403,81 @@ Response `200 OK`:
 - 없는 grant면 `404 NOT_FOUND`.
 
 ### 9.5 관리자 감사 로그 조회
+
+### EMR Runtime Capacity
+
+`GET /api/admin/runtime-capacity?limit=100`
+
+admin actor만 호출할 수 있으며 admission이 꺼져 있어도 `enabled=false`와 workload별 정책 기본값을 반환합니다. `limit`은 1~500이고 최근 reservation 수를 제한합니다.
+
+```json
+{
+  "enabled": true,
+  "queueDiscipline": "emr-native-fifo",
+  "policies": [
+    {
+      "enabled": true,
+      "workload": "batch",
+      "applicationId": "00example",
+      "projectKey": "default",
+      "maxConcurrentRuns": 4,
+      "maxQueuedRuns": 20,
+      "queueTimeoutMinutes": 60,
+      "maxIdleMinutes": 15,
+      "requireJobCostAllocation": true,
+      "maxVcpu": 80,
+      "maxMemoryGb": 320,
+      "maxDiskGb": 2000,
+      "actorMaxConcurrentRuns": 24,
+      "projectMaxConcurrentRuns": 24,
+      "priority": 50
+    }
+  ],
+  "usage": [
+    {
+      "workload": "batch",
+      "applicationId": "00example",
+      "activeRuns": 1,
+      "queuedRuns": 1,
+      "reservedVcpu": 21,
+      "reservedMemoryGb": 48.4,
+      "reservedDiskGb": 220,
+      "maxConcurrentRuns": 4,
+      "maxQueuedRuns": 20,
+      "maxVcpu": 80,
+      "maxMemoryGb": 320,
+      "maxDiskGb": 2000
+    }
+  ],
+  "reservations": [
+    {
+      "reservationId": "emr-admission-...",
+      "workload": "batch",
+      "applicationId": "00example",
+      "jobId": "JOB-001",
+      "runReference": "RUN-001",
+      "actorKey": "user-001",
+      "projectKey": "default",
+      "status": "running",
+      "priority": 50,
+      "requestedVcpu": 21,
+      "requestedMemoryGb": 48.4,
+      "requestedDiskGb": 220,
+      "estimatedCostUsdPerHour": 1.2345,
+      "decisionReason": "AskLake capacity slot reserved; EMR application preflight is still required.",
+      "runtimeJobId": "jr-...",
+      "resourceSnapshot": {}
+    }
+  ]
+}
+```
+
+예약은 `(workload, jobId, runReference)`의 deterministic ID로 멱등 처리합니다. `admitted|queued|submitted|running`은 비종료, `completed|failed|canceled|expired|rejected`는 종료 상태입니다. 즉시 slot이 없으면 AskLake가 별도 dispatcher를 흉내 내지 않고 EMR Serverless native FIFO queue에 제출합니다. `priority`는 관측 metadata이며 AWS queue 순서를 바꾸지 않습니다. Batch `taskStates.sparkResult.emrAdmission`과 Continuous `continuousRuntime.admission`은 위 reservation과 같은 자원/비용/판단 필드를 반환합니다.
+
+- queue overflow: `429 EMR_ADMISSION_QUEUE_FULL`
+- actor/project quota: `429 EMR_ADMISSION_QUOTA_EXCEEDED`
+- 단일 Job이 AskLake 자원 상한 초과: `422 EMR_ADMISSION_RESOURCE_LIMIT_EXCEEDED`
+- 실제 EMR application/scheduler/auto-stop/cost allocation 불일치: `422 EMR_ADMISSION_APPLICATION_MISMATCH`
 
 `GET /api/admin/audit-logs`
 

@@ -96,7 +96,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { StatusBadge, type StatusBadgeTone } from "@/components/ui/status-badge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import type { AuditResult, JobCommand, JobDagStep, JobDagStepStatus, JobExecutionEvidence, JobListFacets, JobListQuery, JobRowData, JobRunStatus, JobRunSummary, JobScheduleKind, JobStats, JobStatus, RealtimeOperationalHealth } from "../../types";
+import type { AuditResult, EmrAdmissionReservation, JobCommand, JobDagStep, JobDagStepStatus, JobExecutionEvidence, JobListFacets, JobListQuery, JobRowData, JobRunStatus, JobRunSummary, JobScheduleKind, JobStats, JobStatus, RealtimeOperationalHealth } from "../../types";
 import { jobStatusMeta } from "../../utils/statusMeta";
 
 const runStatusMeta: Record<JobRunStatus, { className: string; label: string }> = {
@@ -2461,6 +2461,9 @@ function ContinuousRuntimeCard({ job }: { job: JobRowData }) {
         <Field label="상태" value={continuousRuntimeLabel(job)} />
         <Field label="실행 Runtime" value={runtime?.runtimeProvider ? `${runtime.runtimeProvider}${runtime.runtimeState ? ` · ${runtime.runtimeState}` : ""}` : "local / spark-rest"} />
         <Field label="Remote Job Run" value={runtime?.runtimeJobId ? `${runtime.runtimeJobId}${runtime.runtimeAttempt ? ` · attempt ${runtime.runtimeAttempt}` : ""}` : "-"} />
+        {runtime?.admission && <Field label="EMR Admission" value={`${runtime.admission.status} · ${runtime.admission.requestedVcpu} vCPU / ${runtime.admission.requestedMemoryGb} GB / ${runtime.admission.requestedDiskGb} GB disk`} />}
+        {runtime?.admission && <Field label="시간당 비용 추정" value={runtime.admission.estimatedCostUsdPerHour != null ? `$${runtime.admission.estimatedCostUsdPerHour.toFixed(4)} / hour` : "단가 미설정"} />}
+        {runtime?.admission?.decisionReason && <Field label="Admission 판단" value={runtime.admission.decisionReason} />}
         {runtime?.runtimeCancelRequestState && <Field label="취소 처리" value={`${runtime.runtimeRequestedAction ?? "cancel"} · ${runtime.runtimeCancelRequestState}`} />}
         <Field label="마지막 batch" value={runtime?.lastBatchId ?? "-"} />
         <Field label="소비 / 적재" value={`${runtime?.consumedCount?.toLocaleString() ?? "0"} / ${runtime?.storedCount?.toLocaleString() ?? "0"}`} />
@@ -3024,6 +3027,13 @@ function formatContinuousEndReason(reason?: string | null) {
   return reason ? labels[reason] ?? reason : "-";
 }
 
+function runEmrAdmission(run: JobRunSummary): EmrAdmissionReservation | null {
+  const sparkResult = run.taskStates?.sparkResult;
+  if (!sparkResult || typeof sparkResult !== "object" || !("emrAdmission" in sparkResult)) return null;
+  const admission = sparkResult.emrAdmission;
+  return admission && typeof admission === "object" ? admission as EmrAdmissionReservation : null;
+}
+
 function formatSourceRanges(ranges: KafkaContinuousBatch["sourceRanges"]) {
   if (!ranges.length) return "-";
   return ranges.map((range) => `${range.partition ?? 0}:${range.startOffset ?? 0}-${range.endOffset ?? 0}`).join(", ");
@@ -3293,6 +3303,7 @@ function RunDagModal({
   const currentPoint = currentRun.failedStage !== "-"
     ? currentRun.failedStage
     : activeOrFailedStep?.title ?? (currentRun.status === "success" ? "전체 단계 완료" : "단계 정보 대기");
+  const admission = runEmrAdmission(currentRun);
 
   return (
     <DialogShell
@@ -3342,6 +3353,18 @@ function RunDagModal({
             value={currentRun.inputRows}
           />
         </div>
+
+        {admission && (
+          <Alert>
+            <HardDrive aria-hidden="true" />
+            <AlertTitle>EMR 자원 승인 · {admission.status}</AlertTitle>
+            <AlertDescription>
+              {`${admission.requestedVcpu} vCPU · memory ${admission.requestedMemoryGb} GB · disk ${admission.requestedDiskGb} GB`}
+              {admission.estimatedCostUsdPerHour != null ? ` · 최대 $${admission.estimatedCostUsdPerHour.toFixed(4)}/hour` : " · 비용 단가 미설정"}
+              {admission.decisionReason ? ` · ${admission.decisionReason}` : ""}
+            </AlertDescription>
+          </Alert>
+        )}
 
         <article className="dag-workbench">
           <section className="dag-timeline-panel" aria-label="실행 타임라인">

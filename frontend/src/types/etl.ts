@@ -21,9 +21,30 @@ export type KafkaContinuousConfigDraft = {
   schemaEvolutionPolicy?: KafkaSchemaEvolutionPolicy;
 };
 
+export type EmrAdmissionReservation = {
+  reservationId: string;
+  workload: "batch" | "continuous";
+  applicationId: string;
+  jobId: string;
+  runReference: string;
+  actorKey: string;
+  projectKey: string;
+  status: "admitted" | "queued" | "submitted" | "running" | "completed" | "failed" | "canceled" | "expired" | "rejected";
+  priority: number;
+  requestedVcpu: number;
+  requestedMemoryGb: number;
+  requestedDiskGb: number;
+  estimatedCostUsdPerHour?: number | null;
+  decisionReason?: string | null;
+  runtimeJobId?: string | null;
+  leaseExpiresAt?: string | null;
+  resourceSnapshot?: Record<string, unknown>;
+};
+
 export type KafkaContinuousRuntime = {
   status: ContinuousRuntimeStatus;
   checkpointPath: string;
+  admission?: EmrAdmissionReservation | null;
   runtimeProvider?: string | null;
   runtimeApplicationId?: string | null;
   runtimeJobId?: string | null;

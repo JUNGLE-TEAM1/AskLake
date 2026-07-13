@@ -197,9 +197,78 @@ class KafkaContinuousConfigDraft(CamelModel):
     schema_evolution_policy: KafkaSchemaEvolutionPolicy = Field(default_factory=KafkaSchemaEvolutionPolicy)
 
 
+class EmrAdmissionReservation(CamelModel):
+    reservation_id: str
+    workload: Literal["batch", "continuous"]
+    application_id: str
+    job_id: str
+    run_reference: str
+    actor_key: str
+    project_key: str
+    status: Literal["admitted", "queued", "submitted", "running", "completed", "failed", "canceled", "expired", "rejected"]
+    priority: int = 0
+    requested_vcpu: float
+    requested_memory_gb: float
+    requested_disk_gb: float
+    estimated_cost_usd_per_hour: float | None = None
+    decision_reason: str | None = None
+    runtime_job_id: str | None = None
+    lease_expires_at: str | None = None
+    queued_at: str | None = None
+    admitted_at: str | None = None
+    submitted_at: str | None = None
+    started_at: str | None = None
+    ended_at: str | None = None
+    resource_snapshot: dict[str, Any] = Field(default_factory=dict)
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+class EmrAdmissionPolicy(CamelModel):
+    enabled: bool
+    workload: Literal["batch", "continuous"]
+    application_id: str
+    project_key: str
+    max_concurrent_runs: int
+    max_queued_runs: int
+    queue_timeout_minutes: int
+    max_idle_minutes: int
+    require_job_cost_allocation: bool
+    max_vcpu: float
+    max_memory_gb: float
+    max_disk_gb: float
+    actor_max_concurrent_runs: int
+    project_max_concurrent_runs: int
+    priority: int
+
+
+class EmrCapacityUsage(CamelModel):
+    workload: Literal["batch", "continuous"]
+    application_id: str
+    active_runs: int
+    queued_runs: int
+    reserved_vcpu: float
+    reserved_memory_gb: float
+    reserved_disk_gb: float
+    max_concurrent_runs: int
+    max_queued_runs: int
+    max_vcpu: float
+    max_memory_gb: float
+    max_disk_gb: float
+
+
+class RuntimeCapacityResponse(CamelModel):
+    enabled: bool
+    queue_discipline: str
+    policies: list[EmrAdmissionPolicy] = Field(default_factory=list)
+    usage: list[EmrCapacityUsage] = Field(default_factory=list)
+    reservations: list[EmrAdmissionReservation] = Field(default_factory=list)
+
+
 class KafkaContinuousRuntime(CamelModel):
     status: ContinuousRuntimeStatus
     checkpoint_path: str
+    admission: EmrAdmissionReservation | None = None
     runtime_provider: str | None = None
     runtime_application_id: str | None = None
     runtime_job_id: str | None = None

@@ -9,6 +9,7 @@ import type {
   AdminPrincipalControlRequest,
   AdminResourceLockRequest,
   AdminUsersResponse,
+  RuntimeCapacityResponse,
 } from "../types";
 import { apiClient } from "./apiClient";
 
@@ -56,4 +57,8 @@ export async function fetchAdminAuditLogs(query: AdminAuditLogQuery = {}): Promi
   });
   const suffix = params.toString() ? `?${params.toString()}` : "";
   return apiClient.get<AdminAuditLogsResponse>(`/api/admin/audit-logs${suffix}`);
+}
+
+export async function fetchRuntimeCapacity(): Promise<RuntimeCapacityResponse> {
+  return apiClient.get<RuntimeCapacityResponse>("/api/admin/runtime-capacity");
 }

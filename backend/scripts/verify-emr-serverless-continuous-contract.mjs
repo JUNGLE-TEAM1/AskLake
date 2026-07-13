@@ -17,6 +17,7 @@ import { manageEmrServerlessContinuous } from "../src/emrContinuous.mjs";
 import { uploadEmrServerlessArtifact } from "./upload-emr-serverless-artifact.mjs";
 
 const environment = {
+  ASKLAKE_EMR_SERVERLESS_ADMISSION_ENABLED: "true",
   ASKLAKE_EMR_SERVERLESS_APPLICATION_ID: "00batchapplication",
   ASKLAKE_EMR_SERVERLESS_ARTIFACT_URI: "s3://asklake-artifacts/emr-serverless",
   ASKLAKE_EMR_SERVERLESS_CONTINUOUS_APPLICATION_ID: "00streamapplication",
@@ -78,6 +79,8 @@ assert.equal(submission.executionTimeoutMinutes, undefined);
 assert.equal(submission.jobDriver.sparkSubmit.entryPoint, config.entryPointUri);
 assert.match(submission.jobDriver.sparkSubmit.sparkSubmitParameters, /asklake-continuous-manifest\.json/);
 assert.match(submission.jobDriver.sparkSubmit.sparkSubmitParameters, /spark\.sql\.streaming\.stopGracefullyOnShutdown=true/);
+assert.match(submission.jobDriver.sparkSubmit.sparkSubmitParameters, /spark\.emr-serverless\.driver\.disk=20g/);
+assert.match(submission.jobDriver.sparkSubmit.sparkSubmitParameters, /spark\.emr-serverless\.executor\.disk=20g/);
 assert.match(submission.jobDriver.sparkSubmit.sparkSubmitParameters, /aws-msk-iam-auth:2\.3\.6/);
 assert.doesNotMatch(JSON.stringify(submission), /AWS_(?:ACCESS_KEY_ID|SECRET_ACCESS_KEY|SESSION_TOKEN)/);
 const jarsEnvironment = {
@@ -170,6 +173,7 @@ try {
   assert.equal(started.runtime, "emr-serverless");
   assert.equal(started.jobRunId, "jr-stream-1");
   assert.equal(started.attempt, 1);
+  assert.equal(started.applicationAdmission.enabled, true);
   assert(started.workerAttemptId);
   assert.equal(emr.startCount, 1);
   assert.equal(emr.getApplicationCount, 1);
@@ -284,7 +288,11 @@ class FakeEmrClient {
         application: {
           applicationId: input.applicationId,
           autoStartConfiguration: { enabled: true },
+          autoStopConfiguration: { enabled: true, idleTimeoutMinutes: 15 },
+          jobLevelCostAllocationConfiguration: { enabled: true },
+          maximumCapacity: { cpu: "40 vCPU", memory: "160 GB", disk: "1000 GB" },
           releaseLabel: this.releaseLabel || "emr-7.9.0",
+          schedulerConfiguration: { maxConcurrentRuns: 5, queueTimeoutMinutes: 60 },
           state: this.applicationState || "STARTED",
           type: this.applicationType || "SPARK",
         },
