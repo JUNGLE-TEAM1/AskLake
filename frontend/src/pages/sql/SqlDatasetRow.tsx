@@ -114,6 +114,9 @@ export function SqlDatasetTree({
           onFocus: (event) => showSqlNodeHover(node.data, event.currentTarget, setHoverInfo),
           onMouseEnter: (event) => showSqlNodeHover(node.data, event.currentTarget, setHoverInfo),
           onMouseLeave: () => setHoverInfo(null),
+          onClick: node.data.kind === "dataset" && node.data.dataset
+            ? () => onSelect(node.data.dataset as CatalogDataset)
+            : undefined,
           title: node.data.label,
         })}
         initialOpenState={{
@@ -127,9 +130,6 @@ export function SqlDatasetTree({
         openByDefault={false}
         rowHeight={40}
         toggleOnRowPress={false}
-        onNodePress={(node) => {
-          if (node.data.kind === "dataset" && node.data.dataset) onSelect(node.data.dataset);
-        }}
         onToggle={(nodeId) => {
           if (!nodeId.startsWith(DATASET_NODE_PREFIX)) return;
           const datasetId = nodeId.slice(DATASET_NODE_PREFIX.length);

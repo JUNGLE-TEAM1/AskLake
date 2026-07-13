@@ -506,7 +506,7 @@ const checks = [
       /data=\{treeData\}/,
       /data-sql-dataset-row/,
       /initialOpenState=\{\{/,
-      /onNodePress=\{\(node\) =>/,
+      /onClick: node\.data\.kind === "dataset"[\s\S]*?onSelect\(node\.data\.dataset as CatalogDataset\)/,
       /selectedDatasetIds: ReadonlySet<string>;/,
       /selected: selectedDatasetIds\.has\(dataset\.id\)/,
       /data-sql-dataset-selected/,
