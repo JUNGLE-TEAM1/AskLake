@@ -1,5 +1,6 @@
 from fastapi import APIRouter
 
+from app.core.config import settings
 from app.api.admin import router as admin_router
 from app.api.airflow_execution import router as airflow_execution_router
 from app.api.auth import router as auth_router
@@ -17,7 +18,6 @@ from app.api.users import router as users_router
 
 api_router = APIRouter()
 api_router.include_router(health_router, tags=["health"])
-api_router.include_router(harness_router)
 api_router.include_router(auth_router)
 api_router.include_router(users_router)
 api_router.include_router(admin_router)
@@ -29,4 +29,6 @@ api_router.include_router(sql_test_router)
 api_router.include_router(dashboard_card_router)
 api_router.include_router(dashboard_runtime_router)
 api_router.include_router(dashboard_assistant_router)
-api_router.include_router(demo_hydration_router, prefix="/demo")
+if settings.app_env.strip().lower() in {"local", "development", "dev", "test", "testing"}:
+    api_router.include_router(harness_router)
+    api_router.include_router(demo_hydration_router, prefix="/demo")
