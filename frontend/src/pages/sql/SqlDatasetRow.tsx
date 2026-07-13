@@ -2,7 +2,6 @@ import { Calendar, Database, Hash, Server, Table2, Type } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { NodeApi } from "react-arborist";
 import { ExplorerTree, type ExplorerTreeNode } from "@/components/ui/explorer-tree";
-import { StatusBadge } from "@/components/ui/status-badge";
 import { TreeHoverCard } from "@/components/ui/tree-hover-card";
 import { cn } from "@/lib/utils";
 import type { CatalogDataset } from "../../types";
@@ -106,9 +105,6 @@ export function SqlDatasetTree({
           if (node.id === DATASETS_NODE_ID) return <Database className="text-cyan-600" />;
           return <Table2 className="text-indigo-600" />;
         }}
-        getRowClassName={(node) => cn(
-          node.data.selected && "border-blue-200 bg-blue-50 text-blue-700",
-        )}
         getRowProps={(node) => ({
           "aria-pressed": node.data.selected || undefined,
           "data-sql-dataset-node": node.data.kind === "dataset" ? "" : undefined,
@@ -120,7 +116,6 @@ export function SqlDatasetTree({
           onMouseLeave: () => setHoverInfo(null),
           title: node.data.label,
         })}
-        getTrailing={(node) => node.data.selected ? <StatusBadge size="sm" tone="success">선택됨</StatusBadge> : null}
         initialOpenState={{
           [SYSTEM_NODE_ID]: true,
           [DATASETS_NODE_ID]: true,

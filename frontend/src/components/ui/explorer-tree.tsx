@@ -9,7 +9,7 @@ import {
   type MouseEventHandler,
   type ReactNode,
 } from "react";
-import { ChevronRight, FileText, Folder, FolderOpen } from "lucide-react";
+import { CheckCircle2, ChevronRight, FileText, Folder, FolderOpen } from "lucide-react";
 import {
   Tree,
   type NodeApi,
@@ -26,6 +26,7 @@ export type ExplorerTreeNode = {
   label: string;
   meta?: ReactNode;
   selectable?: boolean;
+  selected?: boolean;
 };
 
 type ExplorerTreeRowProps<T extends ExplorerTreeNode> = {
@@ -175,6 +176,7 @@ function ExplorerTreeRow<T extends ExplorerTreeNode>({
   toggleOnRowPress,
 }: ExplorerTreeRowProps<T>) {
   const rowProps = getRowProps?.(node);
+  const isSelected = node.isSelected || Boolean(node.data.selected);
   const icon = getIcon?.(node) ?? (
     node.isInternal
       ? node.isOpen
@@ -184,12 +186,13 @@ function ExplorerTreeRow<T extends ExplorerTreeNode>({
   );
 
   return (
-    <div className="box-border px-1 py-0.5" style={style}>
+    <div className="box-border h-full px-1" style={style}>
       <div
+        data-selected={isSelected ? "" : undefined}
         className={cn(
-          "group relative flex h-full w-full min-w-0 items-center rounded-md border border-transparent pr-2 text-[15px] font-semibold text-slate-700 transition-colors",
-          "hover:bg-slate-50 focus-within:border-blue-300 focus-within:ring-2 focus-within:ring-blue-500/30",
-          node.isSelected && "border-blue-200 bg-blue-50 text-slate-950",
+          "asklake-explorer-tree-row-content group relative flex h-full w-full min-w-0 items-center rounded-sm pr-2 text-[15px] font-semibold text-slate-700 transition-colors",
+          "hover:bg-slate-50",
+          isSelected && "bg-blue-50 text-blue-950",
           node.data.disabled && "cursor-not-allowed opacity-50",
           getRowClassName?.(node),
         )}
@@ -215,7 +218,7 @@ function ExplorerTreeRow<T extends ExplorerTreeNode>({
         <button
           {...rowProps}
           aria-expanded={node.isInternal ? node.isOpen : undefined}
-          aria-selected={node.isSelected || undefined}
+          aria-selected={isSelected || undefined}
           className={cn(
             "flex h-full min-w-0 flex-1 items-center bg-transparent text-left outline-none",
             rowProps?.className,
@@ -232,9 +235,12 @@ function ExplorerTreeRow<T extends ExplorerTreeNode>({
         >
           <span
             aria-hidden="true"
-            className="mr-2 flex size-4 shrink-0 items-center justify-center text-slate-500 [&_svg]:size-4"
+            className={cn(
+              "mr-2 flex size-4 shrink-0 items-center justify-center text-slate-500 [&_svg]:size-4",
+              isSelected && "text-blue-600",
+            )}
           >
-            {icon}
+            {isSelected ? <CheckCircle2 className="fill-blue-50 text-blue-600" /> : icon}
           </span>
           <span className="min-w-0 flex-1 truncate">{getLabel?.(node) ?? node.data.label}</span>
           {node.data.meta ? (

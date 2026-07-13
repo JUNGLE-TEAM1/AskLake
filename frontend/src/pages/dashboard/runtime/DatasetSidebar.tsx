@@ -321,7 +321,6 @@ export function DatasetSidebar({
                 title={node.data.title}
               />
             )}
-            getRowClassName={(node) => cn(node.data.selected && "border-blue-200 bg-blue-50")}
             getRowProps={(node) => ({
               "data-dashboard-dataset-node": node.data.kind,
               title: node.data.title,
