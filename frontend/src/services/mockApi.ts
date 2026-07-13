@@ -65,8 +65,10 @@ export type DashboardPageResult = {
 };
 
 const mockLatencyMs = 120;
+const queryResultPageTimeoutMs = 15_000;
 const commerceRoiResultDatasetName = "gold_commerce_channel_roi";
 const commerceRoiJoinTables = ["commerce_orders_daily", "commerce_marketing_spend_daily"];
+const mockQueryRuns = new Map<string, SqlResultDraft>();
 let mockJobs = etlJobs.map((job) => ({ ...job }));
 
 function normalizeJob(job: JobRowData): JobRowData {
@@ -669,24 +671,73 @@ export async function executeQueryPreview(dataset: CatalogDataset, query: string
   const columns = previewDataset === dataset
     ? previewDataset.schema.slice(0, 6).map(([name]) => name)
     : previewDataset.schema.map(([name]) => name);
-  const rows = previewDataset.sampleRows
-    .slice(0, options.limit)
+  const allRows = previewDataset.sampleRows
     .map((row) => row.slice(0, Math.max(columns.length, 1)));
-
-  return resolveMock({
+  const runId = `sql_preview_${Date.now()}`;
+  const result: SqlResultDraft = {
     baseDatasetId: dataset.id,
     columns,
     datasetId: previewDataset.id,
     datasetName: previewDataset.name,
     executedAt: new Date().toISOString(),
     mode: "preview",
+    hasNext: allRows.length > options.limit,
+    pageLimit: options.limit,
+    pageOffset: 0,
     previewLimit: options.limit,
     query,
     referenceDatasetIds: options.referenceDatasetIds,
-    rowCount: rows.length,
-    rows,
-    runId: `sql_preview_${Date.now()}`,
+    returnedRows: Math.min(allRows.length, options.limit),
+    rangeEnd: Math.min(allRows.length, options.limit),
+    rangeStart: allRows.length === 0 ? 0 : 1,
+    rowCount: allRows.length,
+    rows: allRows.slice(0, options.limit),
+    runId,
     validationKey: options.validationKey,
+  };
+  mockQueryRuns.set(runId, { ...result, rows: allRows });
+  return resolveMock(result);
+}
+
+export type QueryResultPageOptions = {
+  limit?: number;
+  offset: number;
+};
+
+export async function getQueryPreviewPage(runId: string, options: QueryResultPageOptions): Promise<SqlResultDraft> {
+  const limit = options.limit ?? 100;
+  const offset = Math.max(options.offset, 0);
+  if (!apiConfig.useMock) {
+    const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), queryResultPageTimeoutMs);
+    try {
+      return await apiClient.get<SqlResultDraft>(
+        `/api/query/runs/${encodeURIComponent(runId)}?${params.toString()}`,
+        { signal: controller.signal },
+      );
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        throw new Error("SQL Preview 페이지 요청 시간이 초과되었습니다. 다시 시도해 주세요.");
+      }
+      throw error;
+    } finally {
+      window.clearTimeout(timeoutId);
+    }
+  }
+
+  const stored = mockQueryRuns.get(runId);
+  if (!stored) throw new Error("저장된 SQL Preview 실행 결과를 찾지 못했습니다.");
+  const pageRows = stored.rows.slice(offset, offset + limit);
+  return resolveMock({
+    ...stored,
+    hasNext: pageRows.length > 0 && offset + pageRows.length < stored.rowCount,
+    pageLimit: limit,
+    pageOffset: offset,
+    rangeEnd: pageRows.length === 0 ? 0 : offset + pageRows.length,
+    rangeStart: pageRows.length === 0 ? 0 : offset + 1,
+    returnedRows: pageRows.length,
+    rows: pageRows,
   });
 }
 

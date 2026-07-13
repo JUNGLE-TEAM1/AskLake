@@ -158,6 +158,8 @@ def normalize_materialization_runs(materialization_runs: list[Any]) -> list[dict
         normalized_run = dict(run)
         if normalized_run.get("sourceKind") not in {"etl", "sql", "kafka"}:
             normalized_run["sourceKind"] = "etl"
+        if normalized_run.get("materializationMode") not in {"snapshot", "delta"}:
+            normalized_run["materializationMode"] = "delta" if normalized_run["sourceKind"] == "kafka" else "snapshot"
         normalized_runs.append(normalized_run)
     return normalized_runs
 

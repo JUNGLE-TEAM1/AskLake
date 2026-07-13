@@ -12,9 +12,11 @@
 | 1a | P0 | `PATCH /api/etl/jobs/{jobId}` | 생성 Job의 허용 설정 update (Issue #460) |
 | 2 | P0 | `POST /api/etl/jobs/{jobId}/commands` | 즉시 실행, 재실행, 일시정지, 현재 Run 취소, 스케줄 중지 |
 | 3 | P0 | `POST /api/query/runs` | 읽기 전용 SQL 실행 |
+| 3b | P0 | `GET /api/query/runs/{runId}` | 저장된 SQL 결과 페이지 조회 |
 | 4 | P0 | `POST /api/query/ai-suggestions` | 선택 테이블 context 기반 Query AI SQL 초안 생성 |
 | 5 | P1 | `GET /api/catalog/datasets` | 카탈로그 목록 hydrate |
 | 6 | P1 | `GET /api/catalog/datasets/{datasetId}` | 데이터셋 상세 hydrate |
+| 6b | P1 | `GET /api/catalog/datasets/{datasetId}/rows` | 최신 성공 materialization sample page 조회 |
 | 7 | P1 | `POST /api/dashboards` | 대시보드 초안 생성 |
 | 8 | P1 | `GET /api/s3/buckets`, `GET /api/s3/prefixes` | Target 저장경로 S3 bucket/prefix 선택 |
 | 9 | P1 | `GET /api/target/databases` | Target 기본정보 DB 선택 |
@@ -155,9 +157,11 @@ Resource/action 기준:
 | --- | --- | --- |
 | `GET /api/catalog/datasets` | `view` | actor가 볼 수 있는 dataset만 목록에 포함 |
 | `GET /api/catalog/datasets/{datasetId}` | `view` | 권한 없으면 `403 FORBIDDEN` |
+| `GET /api/catalog/datasets/{datasetId}/rows` | `view` + `query` | 상세 열람 후 실제 row를 query하므로 두 검사를 모두 통과 |
 | `GET /api/catalog/datasets/{datasetId}/lineage` | `view` | dataset detail과 같은 기준 |
 | `DELETE /api/catalog/datasets/{datasetId}/materialization-runs/{runId}` | `manage` 또는 `delete` | materialization metadata 수정/삭제로 간주 |
 | `POST /api/query/runs` | `query` | base/reference dataset 모두 검사 |
+| `GET /api/query/runs/{runId}` | `query` | 저장된 run의 base/reference dataset 모두 다시 검사 |
 | `POST /api/query/ai-suggestions` | `query` | 선택 dataset metadata를 AI context로 사용하기 전 모두 검사 |
 | `POST /api/etl/jobs/{jobId}/commands` | `run` 또는 `manage` | `run`/`retry`는 `run`, pause/cancel/stop은 `manage` |
 | `PATCH /api/etl/jobs/{jobId}` | `manage` | source identity와 successful target identity 보호 |
@@ -518,6 +522,7 @@ type CatalogDataset = {
   materializationRuns?: Array<{
     runId: string;
     jobId: string;
+    materializationMode?: "snapshot" | "delta";
     status: "queued" | "running" | "success" | "failed" | "canceled";
     createdAt: string;
     rowCount: number;
@@ -541,7 +546,7 @@ type CatalogDataset = {
 ```
 
 `size`는 화면 표시용 저장 크기 문자열입니다. 물리 저장 위치와 원시 byte 값은 `storageLocation`, `storageFormat`, `storageSizeBytes`를 사용합니다.
-`materializationRuns`는 같은 Job/같은 dataset 이름으로 누적된 실행 또는 SQL materialize 결과 history입니다. 부모 dataset의 `rows`, `size`, `storageSizeBytes`, `lastUpdated`, `sourceRunId`는 삭제되지 않은 성공 run 기준으로 계산합니다.
+`materializationRuns`는 같은 Job/같은 dataset 이름으로 누적된 실행 또는 SQL materialize 결과 history입니다. 일반 ETL/SQL full refresh는 `materializationMode: "snapshot"`, Kafka 추가분은 `materializationMode: "delta"`입니다. 부모 dataset의 `rows`, `size`, `storageSizeBytes`, `lastUpdated`, `sourceRunId`는 newest-first 성공 history에서 첫 snapshot까지의 active segment만 기준으로 계산합니다. mode가 없는 legacy Kafka Run은 delta, 그 외 Run은 snapshot으로 읽습니다.
 
 ### Source Connector Defaults
 
@@ -735,13 +740,37 @@ type SqlResultDraft = {
   executedAt: string;
   mode?: "preview" | "run";
   previewLimit?: number;
+  pageLimit: number;
+  pageOffset: number;
+  returnedRows: number;
+  rangeStart: number;
+  rangeEnd: number;
+  hasNext: boolean;
   validationKey?: string;
 };
 ```
 
 ## 7. P0 API
 
-### 7.0 Record Parsing Preview
+### 7.0 Source 연결 검증과 대상 선택
+
+Source 연결 검증과 schema preview는 서로 다른 요청이다.
+
+- `POST /api/etl/sources/assets`는 S3·PostgreSQL·MongoDB 연결 정보를 검증하고 탐색 가능한 파일·테이블·컬렉션 목록만 반환한다.
+- 이 응답은 schema draft를 확정하지 않으며 특정 대상을 자동 선택하지 않는다.
+- 사용자가 탐색 화면에서 대상을 선택하면 frontend는 선택값을 `DATASET OR TABLE SELECTOR` 또는 `__Selected Object`에 넣어 `POST /api/etl/sources/test`를 호출한다.
+- PostgreSQL과 MongoDB의 `/sources/test`는 선택값이 없으면 `400`을 반환한다. 첫 테이블이나 첫 컬렉션으로 자동 대체하지 않는다.
+
+```ts
+type SourceAssetsResponse = {
+  assets: Array<[name: string, namespaceOrType: string, status: string]>;
+  count: number;
+  limit: number;
+  prefix: string;
+};
+```
+
+### 7.0.1 Record Parsing Preview
 
 조건부 1.5단계는 이름 있는 필드가 없는 MinIO/S3 TXT 입력에만 적용한다. Source 단계에서 선택한 `.txt`/`.log`의 제한 샘플이 `line_number`, `value` 형태이면 frontend는 `requiresRecordParsing=true`로 판단하고 `/etl/record-parsing`으로 이동한다. PostgreSQL, MongoDB JSON, Kafka JSON, JSON/JSONL, Parquet, 이름 있는 CSV는 이 단계를 건너뛴다.
 
@@ -1607,6 +1636,8 @@ Response 예시:
   "referenceDatasetIds": ["ds_product_master"],
   "mode": "preview",
   "previewLimit": 100,
+  "pageLimit": 100,
+  "pageOffset": 0,
   "columns": ["review_id", "rating", "sentiment"],
   "rows": [
     ["10001", "5", "positive"],
@@ -1614,6 +1645,10 @@ Response 예시:
     ["10003", "1", "negative"]
   ],
   "rowCount": 3,
+  "returnedRows": 3,
+  "rangeStart": 1,
+  "rangeEnd": 3,
+  "hasNext": false,
   "executedAt": "2026-07-03T11:35:00.000Z",
   "validationKey": "frontend-generated-context-key"
 }
@@ -1622,7 +1657,10 @@ Response 예시:
 Validation:
 
 - `datasetId`, `query`는 필수입니다.
-- `mode: "preview"`일 때 백엔드는 원본 SQL을 저장/변경하지 않고 서버 쪽에서 preview row limit을 적용해야 합니다.
+- `limit`는 `1..500`이며 `POST`가 반환할 첫 page 크기입니다. 기본값은 100입니다.
+- `mode: "preview"`일 때 백엔드는 원본 SQL을 저장용으로 변경하지 않고 전체 결과를 한 번 실행해 Run별 Parquet snapshot으로 저장합니다. 총 결과 행 수에 별도 상한을 추가하지 않습니다.
+- PostgreSQL `sql_runs.payload`에는 Run metadata, Parquet 위치와 정확한 `rowCount`만 저장하며 전체 행 배열은 넣지 않습니다. API 응답과 DOM에는 현재 page만 포함합니다.
+- `rowCount`는 snapshot의 전체 결과 행 수, `returnedRows`는 현재 page 행 수, `rangeStart`/`rangeEnd`는 1-base 표시 범위입니다. 빈 결과는 범위 `0..0`을 사용합니다.
 - Preview runtime은 선택된 catalog dataset을 DuckDB table context로 등록하고 projection/filter/group/order/limit/JOIN을 실제 SQL로 실행합니다.
 - `baseDatasetId`와 `referenceDatasetIds`는 접근 권한 검증과 SQL table context 검증에 사용합니다.
 - frontend preflight는 PostgreSQL parser로 `SELECT` 단일 문장, CTE, `FROM`/`JOIN` table context를 검사합니다. backend는 같은 기준을 서버에서 다시 검증해야 합니다.
@@ -1636,17 +1674,26 @@ Validation:
 - 읽기 전용 SQL만 허용합니다.
 - `INSERT`, `UPDATE`, `DELETE`, `DROP`, `ALTER`, `CREATE`, `TRUNCATE`, `MERGE` 등 변경 쿼리는 `403 FORBIDDEN` 또는 `422 VALIDATION_ERROR`를 권장합니다.
 - SQL 문법 오류는 `422 SQL_SYNTAX_ERROR`.
-- 결과 row는 데모 단계에서 최대 500행 이하를 권장합니다.
+- 페이지 이동은 원본 SQL을 재실행하지 않고 저장된 같은 run snapshot을 조회합니다.
 
 프론트 기대 동작:
 
 - `columns`, `rows`를 SQL 결과 테이블에 표시합니다.
+- DOM에는 현재 page만 렌더링하고 `rowCount`와 `rangeStart`~`rangeEnd`를 표시합니다. 0, 100, 101, 10,000행 경계와 20,001행 이상의 결과에서도 첫/중간/마지막 page가 도달 가능해야 합니다.
+- 인라인 결과와 전체 보기 modal은 같은 `runId`, `pageOffset`, `pageLimit` 상태를 공유합니다.
 - 대시보드 생성 시 같은 `SqlResultDraft`를 전달합니다.
 - 실패 시 `analysis.query.preview_failed` 감사 로그를 남깁니다.
 
 #### 7.7.1 SQL 실행 snapshot 조회
 
-`GET /api/query/runs/{runId}`
+`GET /api/query/runs/{runId}?offset={offset}&limit={limit}`
+
+Query parameter:
+
+| 이름 | 타입 | 기본/제한 | 설명 |
+| --- | --- | --- | --- |
+| `offset` | number | 기본 0, `0..rowCount` | 저장된 전체 결과 snapshot의 0-base 시작 위치. 고정 총행 상한 없음 |
+| `limit` | number | 기본 100, `1..500` | 반환할 page 행 수 |
 
 Response `200 OK`:
 
@@ -1657,7 +1704,9 @@ type GetQueryRunResponse = SqlResultDraft;
 Validation:
 
 - 존재하지 않는 `runId`는 `404 NOT_FOUND`.
-- 응답은 `POST /api/query/runs`가 저장한 SQL Preview snapshot과 같은 shape를 반환합니다.
+- 응답은 `POST /api/query/runs`가 저장한 SQL Preview snapshot과 같은 shape를 반환하되 `rows`, `pageOffset`, `pageLimit`, `returnedRows`, `rangeStart`, `rangeEnd`, `hasNext`는 요청 page에 맞게 바뀝니다.
+- `offset == rowCount`이면 빈 `rows`, `returnedRows=0`, `rangeStart=0`, `rangeEnd=0`, `hasNext=false`를 반환합니다.
+- 과거 pagination 이전에 저장된 run은 저장된 기존 preview page만 탐색 가능한 호환 fallback을 사용합니다.
 
 프론트 기대 동작:
 
@@ -1924,10 +1973,10 @@ Response `200 OK`:
 
 - 앱 초기 로딩 때 `GET /api/catalog/datasets`로 hydrate합니다.
 - 생성 직후에는 Catalog에 추가하지 않습니다.
-- 비동기 `POST /api/etl/jobs/{jobId}/commands` 응답은 Catalog dataset을 포함하지 않습니다. frontend polling이 `publish_run_result`까지 끝난 terminal success를 처음 관찰한 시점에 `GET /api/catalog/datasets`를 다시 호출해 dataset과 append history를 반영합니다.
+- 비동기 `POST /api/etl/jobs/{jobId}/commands` 응답은 Catalog dataset을 포함하지 않습니다. frontend polling이 `publish_run_result`까지 끝난 terminal success를 처음 관찰한 시점에 `GET /api/catalog/datasets`를 다시 호출해 dataset과 materialization history를 반영합니다.
 - Spark run 결과 dataset과 SQL derived dataset은 모두 `catalog_datasets.payload`를 Catalog API의 source of truth로 저장합니다. 기존 컬럼 기반 row는 읽기 호환 fallback으로만 사용합니다.
 - Spark run 결과 dataset과 SQL derived dataset은 모두 `size`를 표시용 저장 크기로 내려주고, 물리 위치/포맷/byte 크기는 `storageLocation`, `storageFormat`, `storageSizeBytes`에 담습니다.
-- Spark run 결과 dataset과 SQL derived dataset은 같은 `dataset.id`에 대해 `materializationRuns`를 idempotent하게 append합니다. 같은 `runId`가 다시 처리되면 기존 항목을 교체하고 중복 추가하지 않습니다.
+- Spark run 결과 dataset과 SQL derived dataset은 같은 `dataset.id`의 `materializationRuns` history를 idempotent하게 갱신합니다. 같은 `runId`가 다시 처리되면 기존 항목을 교체하고 중복 추가하지 않습니다. 일반 full-refresh 결과는 snapshot이므로 새 성공 Run이 현재 Dataset을 교체하고, 과거 Run은 history로만 남습니다.
 - Spark run 결과 dataset은 source -> Spark job -> target 기본 `lineageGraph`를 payload에 저장합니다. SQL derived dataset은 source dataset lineage를 이어받아 source -> derived column edge를 저장합니다.
 - SQL derived dataset 생성은 `CatalogService`와 `CatalogRepository.saveDatasetPayload` 경로만 사용합니다. ETL service는 pipeline/job/run 생성과 Spark 결과 dataset 저장만 소유합니다.
 - mock mode에서는 pipeline 생성 dataset과 SQL derived dataset이 같은 stored catalog dataset fallback(`asklake.catalogDatasets`)을 사용합니다.
@@ -1942,13 +1991,50 @@ Response `200 OK`:
 type DatasetDetailResponse = CatalogDataset;
 ```
 
-추가 상세 API를 분리할 경우 권장 endpoint:
+상세 보조 API:
 
 ```text
 GET /api/catalog/datasets/{datasetId}/schema
-GET /api/catalog/datasets/{datasetId}/sample-rows
+GET /api/catalog/datasets/{datasetId}/rows?offset=0&limit=100
 GET /api/catalog/datasets/{datasetId}/lineage
 ```
+
+#### 8.2.1 데이터셋 실제 row page
+
+`GET /api/catalog/datasets/{datasetId}/rows?offset={offset}&limit={limit}`
+
+Catalog 상세와 `전체 스키마 상세보기` modal은 payload의 제한 `sampleRows`가 아닌 이 endpoint로 실제 materialized row를 탐색합니다.
+
+Query parameter:
+
+| 이름 | 타입 | 기본/제한 | 설명 |
+| --- | --- | --- | --- |
+| `offset` | number | 기본 0, 0 이상 | 0-base 시작 위치 |
+| `limit` | number | 기본 100, `1..500` | 반환할 page 행 수 |
+
+Response `200 OK`:
+
+```json
+{
+  "datasetId": "ds_customer_review_silver",
+  "datasetName": "customer_review_silver",
+  "columns": ["review_id", "rating"],
+  "rows": [["10101", "4"], ["10102", "5"]],
+  "rowCount": 10000,
+  "returnedRows": 2,
+  "offset": 100,
+  "limit": 2,
+  "hasNext": true
+}
+```
+
+Runtime/permission:
+
+- Dataset 상세 `view` 권한과 row 조회 `query` 권한을 모두 검사하며, 없으면 `403 FORBIDDEN`을 반환합니다.
+- `materializationRuns`에 저장 위치가 있는 성공 run이 여러 개면 `createdAt`이 가장 최신인 run의 `storageLocation`을 읽습니다. 성공 history가 없으면 dataset 자체의 storage metadata를 사용하며, 물리 저장 위치가 없거나 읽을 수 없으면 실제 row 조회 실패를 반환합니다.
+- Backend는 DuckDB에 dataset을 등록한 뒤 `COUNT(*)`와 `LIMIT`/`OFFSET`을 실행하므로 response/DOM에 전체 row를 적재하지 않습니다.
+- `rowCount`는 선택된 materialization의 전체 행 수, `returnedRows`는 현재 page 행 수입니다. `offset == rowCount`이면 빈 `rows`와 `hasNext=false`를 반환합니다.
+- 스키마 상세 modal은 스키마와 row page를 함께 표시하고, 새로고침·첫/이전/다음/마지막 page·수평 스크롤·고정 header를 제공합니다. modal을 닫아도 Catalog 검색/필터 상태는 유지합니다.
 
 `GET /api/catalog/datasets/{datasetId}/lineage` Response `200 OK`:
 
@@ -1995,11 +2081,11 @@ Response 예시:
 현재 프론트는 `CatalogDataset` 하나에 schema, sampleRows, upstream, downstream을 포함해서 표시하고, lineage modal은 `LineageGraph`를 우선 사용합니다.
 Lineage API나 `lineageGraph` fixture가 없으면 mock adapter가 `CatalogDataset.upstream`으로 fallback graph를 생성합니다.
 
-### 8.3 데이터셋 append 결과 삭제
+### 8.3 데이터셋 materialization 결과 삭제
 
 `DELETE /api/catalog/datasets/{datasetId}/materialization-runs/{runId}`
 
-이 API는 dataset 전체를 삭제하지 않고, dataset 안의 특정 append/materialize 결과 metadata만 제거합니다. 현재 범위에서는 물리 lake 파일 삭제나 compaction을 수행하지 않습니다.
+이 API는 dataset 전체를 삭제하지 않고, dataset 안의 특정 snapshot/delta materialization metadata만 제거합니다. 현재 범위에서는 물리 lake 파일 삭제나 compaction을 수행하지 않습니다.
 
 Response `200 OK`:
 
@@ -2010,7 +2096,7 @@ type DeleteMaterializationRunResponse = {
 };
 ```
 
-서버는 삭제 후 남아 있는 성공 `materializationRuns` 기준으로 부모 dataset의 `rows`, `size`, `storageSizeBytes`, `lastUpdated`, `sourceRunId`를 재계산합니다. 마지막 append 결과까지 삭제되면 dataset shell은 남고 합산 값은 `0 rows`, `0B`가 됩니다. 전체 dataset 삭제는 별도 API/UX로 분리합니다.
+서버는 삭제 후 남아 있는 성공 `materializationRuns` 중 최신 snapshot과 그 이후 delta를 기준으로 부모 dataset의 `rows`, `size`, `storageSizeBytes`, `lastUpdated`, `sourceRunId`, `storageLocation`을 재계산합니다. 현재 snapshot을 삭제하면 직전 성공 snapshot이 다시 active 기준점이 됩니다. active 결과를 모두 삭제하면 dataset shell은 남고 합산 값은 `0 rows`, `0B`가 됩니다. 전체 dataset 삭제는 별도 API/UX로 분리합니다.
 
 ### 8.4 Dashboard FastAPI 구현 경계
 
@@ -3245,7 +3331,7 @@ type AuditEntry = {
 2. 백엔드 서버를 실행합니다.
 3. `frontend/.env`에 `VITE_API_BASE_URL`과 `VITE_USE_MOCK_API=false`를 설정합니다.
 4. 프론트 dev 서버를 재시작합니다.
-5. `POST /api/etl/sources/test` Source/Schema live 연결 흐름을 확인합니다.
+5. `POST /api/etl/sources/assets`로 연결 검증과 대상 탐색을 확인한 뒤, 선택값을 포함한 `POST /api/etl/sources/test`로 Source/Schema live preview 흐름을 확인합니다.
 6. `POST /api/etl/jobs` 생성 플로우를 확인합니다.
 7. `POST /api/etl/jobs/{jobId}/commands` 버튼 흐름과 Spark 실행 흐름 갱신을 확인합니다.
 8. `POST /api/query/runs` SQL 실행 흐름을 확인합니다.

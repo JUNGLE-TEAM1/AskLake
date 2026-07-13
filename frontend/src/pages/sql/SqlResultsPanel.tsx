@@ -10,6 +10,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
+import { NativeSelect } from "@/components/ui/native-select";
 import { Panel, PanelHeader } from "@/components/ui/panel";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
@@ -24,10 +25,14 @@ type SqlResultsPanelProps = {
   activeChartSource?: SqlChartSource;
   baseDatasetSelected: boolean;
   chartConfig: SqlChartConfig | null;
+  dialogResultDraft: SqlResultDraft | null;
   dialogOpen: boolean;
+  pageError: string | null;
+  pagePending: boolean;
   onDialogOpenChange: (open: boolean) => void;
   onDownloadCsv: () => void;
   onOpenJobWizard: () => void;
+  onPageChange: (offset: number) => void;
   onResultViewChange: (view: SqlResultView) => void;
   resultDraft: SqlResultDraft | null;
   resultView: SqlResultView;
@@ -49,27 +54,51 @@ function SqlResultContent({
   chartConfig,
   resultDraft,
   resultView,
-}: Pick<SqlResultsPanelProps, "activeChartSource" | "chartConfig" | "resultDraft" | "resultView">) {
+  isLoading = false,
+}: Pick<SqlResultsPanelProps, "activeChartSource" | "chartConfig" | "resultDraft" | "resultView"> & { isLoading?: boolean }) {
   if (!resultDraft) return null;
-  if (resultView === "table") return <SqlPreviewTable resultDraft={resultDraft} />;
+  if (resultView === "table") return <SqlPreviewTable isLoading={isLoading} resultDraft={resultDraft} />;
   if (chartConfig && activeChartSource) {
     return <SqlResultChart chartConfig={chartConfig} source={activeChartSource} />;
   }
   return <SqlChartEmptyState />;
 }
 
+function getResultRange(resultDraft: SqlResultDraft) {
+  const limit = resultDraft.pageLimit ?? resultDraft.previewLimit ?? 100;
+  const offset = resultDraft.pageOffset ?? 0;
+  const total = resultDraft.rowCount;
+  return {
+    currentPage: total === 0 ? 1 : Math.floor(offset / limit) + 1,
+    end: total === 0 ? 0 : Math.min(offset + resultDraft.rows.length, total),
+    limit,
+    offset,
+    start: total === 0 ? 0 : offset + 1,
+    total,
+    totalPages: Math.max(Math.ceil(total / limit), 1),
+  };
+}
+
 export function SqlResultsPanel({
   activeChartSource,
   baseDatasetSelected,
   chartConfig,
+  dialogResultDraft,
   dialogOpen,
+  pageError,
+  pagePending,
   onDialogOpenChange,
   onDownloadCsv,
   onOpenJobWizard,
+  onPageChange,
   onResultViewChange,
   resultDraft,
   resultView,
 }: SqlResultsPanelProps) {
+  const previewRange = resultDraft ? getResultRange(resultDraft) : null;
+  const dialogDraft = dialogResultDraft ?? resultDraft;
+  const dialogRange = dialogDraft ? getResultRange(dialogDraft) : null;
+
   return (
     <>
       <Panel className={`${styles.resultPanel} grid gap-4 p-5`}>
@@ -89,6 +118,11 @@ export function SqlResultsPanel({
                   <Table2 /> 데이터 미리보기
                 </ToggleGroupItem>
               </ToggleGroup>
+              {previewRange && resultView === "table" ? (
+                <strong className={styles.resultRange}>
+                  {previewRange.start.toLocaleString()}–{previewRange.end.toLocaleString()} / {previewRange.total.toLocaleString()}행
+                </strong>
+              ) : null}
               <ActionGroup density="compact" wrap="wrap">
                 <Button type="button" onClick={onDownloadCsv} size="sm" variant="outline">
                   <Download data-icon="inline-start" /> CSV 다운로드
@@ -125,34 +159,99 @@ export function SqlResultsPanel({
         )}
       </Panel>
 
-      {resultDraft && (
+      {resultDraft && dialogDraft && dialogRange && (
         <Dialog onOpenChange={onDialogOpenChange} open={dialogOpen}>
           <DialogContent className="grid h-[min(900px,calc(100vh-2rem))] w-[min(1440px,calc(100vw-2rem))] max-w-none grid-rows-[max-content_minmax(0,1fr)] overflow-hidden">
             <DialogHeader>
               <DialogTitle>SQL 결과 전체 보기</DialogTitle>
               <DialogDescription>
-                {resultDraft.rows.length}/{resultDraft.rowCount}행 · {resultDraft.columns.length}컬럼 · {resultView === "chart" ? "차트" : "표"} 보기
+                {dialogRange.start.toLocaleString()}–{dialogRange.end.toLocaleString()} / {dialogRange.total.toLocaleString()}행 · {dialogDraft.columns.length}컬럼 · {resultView === "chart" ? "차트" : "표"} 보기
               </DialogDescription>
             </DialogHeader>
-            <ScrollArea className="min-h-0" scrollbars="both" type="always">
+            <div className={styles.resultDialogBody}>
               {resultView === "table" ? (
-                <div className="min-w-0 px-4 pb-4 pt-6">
+                <>
+                  <div className={styles.resultDialogControls}>
+                    <div className={styles.resultPagination} aria-label="SQL 결과 페이지 탐색">
+                      <strong>
+                        {dialogRange.start.toLocaleString()}–{dialogRange.end.toLocaleString()} / {dialogRange.total.toLocaleString()}행
+                      </strong>
+                      <div className={styles.resultPaginationActions}>
+                      <Button
+                        disabled={dialogRange.currentPage <= 1 || pagePending}
+                        onClick={() => onPageChange(0)}
+                        size="sm"
+                        type="button"
+                        variant="outline"
+                      >
+                        처음
+                      </Button>
+                      <Button
+                        disabled={dialogRange.currentPage <= 1 || pagePending}
+                        onClick={() => onPageChange(Math.max(0, dialogRange.offset - dialogRange.limit))}
+                        size="sm"
+                        type="button"
+                        variant="outline"
+                      >
+                        이전
+                      </Button>
+                      <NativeSelect
+                        aria-label="SQL 결과 페이지"
+                        disabled={pagePending}
+                        onChange={(event) => onPageChange((Number(event.target.value) - 1) * dialogRange.limit)}
+                        size="sm"
+                        value={dialogRange.currentPage}
+                        wrapperClassName="w-[112px]"
+                      >
+                        {Array.from({ length: dialogRange.totalPages }, (_, index) => (
+                          <option key={index + 1} value={index + 1}>{index + 1} / {dialogRange.totalPages}</option>
+                        ))}
+                      </NativeSelect>
+                      <Button
+                        disabled={dialogRange.currentPage >= dialogRange.totalPages || pagePending}
+                        onClick={() => onPageChange(dialogRange.offset + dialogRange.limit)}
+                        size="sm"
+                        type="button"
+                        variant="outline"
+                      >
+                        다음
+                      </Button>
+                      <Button
+                        disabled={dialogRange.currentPage >= dialogRange.totalPages || pagePending}
+                        onClick={() => onPageChange((dialogRange.totalPages - 1) * dialogRange.limit)}
+                        size="sm"
+                        type="button"
+                        variant="outline"
+                      >
+                        마지막
+                      </Button>
+                      </div>
+                    </div>
+                    {pageError ? <div className={styles.resultPageError} role="alert">{pageError}</div> : null}
+                  </div>
+                  <ScrollArea className="min-h-0" scrollbars="both" type="always">
+                    <div className="min-w-0 px-4 pb-4 pt-6">
+                      <SqlResultContent
+                        activeChartSource={activeChartSource}
+                        chartConfig={chartConfig}
+                        isLoading={pagePending}
+                        resultDraft={dialogDraft}
+                        resultView={resultView}
+                      />
+                    </div>
+                  </ScrollArea>
+                </>
+              ) : (
+                <ScrollArea className="row-span-2 min-h-0" scrollbars="both" type="always">
                   <SqlResultContent
                     activeChartSource={activeChartSource}
                     chartConfig={chartConfig}
-                    resultDraft={resultDraft}
+                    resultDraft={dialogDraft}
                     resultView={resultView}
                   />
-                </div>
-              ) : (
-                <SqlResultContent
-                  activeChartSource={activeChartSource}
-                  chartConfig={chartConfig}
-                  resultDraft={resultDraft}
-                  resultView={resultView}
-                />
+                </ScrollArea>
               )}
-            </ScrollArea>
+            </div>
           </DialogContent>
         </Dialog>
       )}

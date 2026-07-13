@@ -75,6 +75,7 @@ export type CatalogDataset = {
 export type DatasetMaterializationRun = {
   createdAt: string;
   jobId: string;
+  materializationMode?: "snapshot" | "delta";
   publicationManifest?: string;
   materializationMode?: "snapshot" | "delta";
   quality?: Record<string, unknown> | null;

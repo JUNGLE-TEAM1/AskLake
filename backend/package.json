@@ -13,6 +13,7 @@
     "verify:airflow-smoke": "node scripts/verify-airflow-smoke.mjs",
     "verify:airflow-spark": "node scripts/verify-fastapi-etl-catalog.mjs",
     "verify:fastapi-etl-catalog": "node scripts/verify-fastapi-etl-catalog.mjs",
+    "verify:materialization-projection": "PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-.venv/bin/python} -m unittest tests.test_materialization_run_projection tests.test_sql_storage_formats",
     "verify:etl-lineage": "node scripts/verify-etl-text-lineage.mjs",
     "verify:identity-admin": "node scripts/verify-identity-admin.mjs",
     "verify:auth-session": "node scripts/verify-auth-session.mjs",
