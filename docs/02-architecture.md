@@ -303,6 +303,8 @@ Runtime은 `dashboard_revisions`, `dashboard_pages`, `dashboard_widgets`를 중�
 두 흐름은 `dashboardId`, `publishedRevisionId`, `DashboardCard`, `DashboardRuntimeResponse` 계약만 공유한다.
 Runtime chart widget은 backend가 Catalog 물리 데이터에서 만든 bounded `widget.data`와 type별 `config`를 frontend에서 ApexCharts option/series로 변환해 렌더링한다. 집계 응답은 `dataMode: "server_aggregated"`, table preview는 `dataMode: "server_preview"`를 사용하고, 편집 가능한 원본 설정은 `sourceConfig`에 유지한다. `materializationMode`가 명시되면 그 값을 우선하고, 미지정 run은 Kafka만 `delta`, 나머지는 `snapshot`으로 판정한다. 원격 S3 segment는 allowlist와 runtime 응답 전체의 누적 byte/object 예산을 먼저 검사하고, DuckDB는 memory/thread/temp/timeout 제한 안에서 실행한다. `httpfs` extension은 backend image build에서 설치하며 runtime 요청은 `LOAD`만 수행한다. Dashboard runtime widget contract는 `metric`, `table`, ApexCharts 차트 8종(`bar_chart`, `line_chart`, `area_chart`, `donut_chart`, `pie_chart`, `radial_bar_chart`, `heatmap_chart`, `treemap_chart`)을 기준으로 확장한다. 사람이 설정 패널에서 고르는 옵션과 향후 AI widget 생성기가 만드는 옵션은 같은 widget type/config 계약을 사용한다.
 
+Kafka Continuous Dataset의 자동 갱신 결과는 PostgreSQL metadata DB를 원본으로 사용한다. Dataset별 `latestRevision`, 위젯별 `calculationVersion`과 `appliedRevision`, 작은 집계 결과를 저장하고, S3 원본 행을 PostgreSQL이나 browser로 복사하지 않는다. Redis는 초기 필수 구성요소가 아니라 반복 조회 부하가 측정된 뒤 추가하는 cache로만 사용한다. 저장 책임, 권장 테이블과 갱신 순서는 [대시보드 실시간 결과 저장 DB와 버전 관리](dashboard-widget-result-storage-design.md)를 따른다.
+
 ## 9) API Boundary
 
 Live mode 진입:
