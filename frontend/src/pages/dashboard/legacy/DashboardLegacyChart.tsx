@@ -10,6 +10,10 @@ export function DashboardLegacyChart({
   kind: ExpandedChart["kind"];
   model: DashboardLegacyModel;
 }) {
+  if (!model.hasRealResult) {
+    return <div className="dashboard-empty-state">실행된 SQL 결과가 없습니다.</div>;
+  }
+
   if (kind === "category") {
     return (
       <div className={expanded ? "dashboard-category-chart expanded" : "dashboard-category-chart"}>
