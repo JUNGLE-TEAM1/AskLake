@@ -6,7 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { fieldValue, formatBytes, inferSchemaColumns, parseSourceSample, schemaFingerprint, sourceId, upsertFields } from "./profile.mjs";
 
-const textFileExtensions = [".csv", ".json", ".jsonl", ".txt", ".tsv"];
+const textFileExtensions = [".csv", ".json", ".jsonl", ".log", ".txt", ".tsv"];
 const backendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const scriptsDir = path.join(backendDir, "scripts");
 const ivyDir = path.join(backendDir, "tmp", "spark-ivy");
@@ -969,7 +969,7 @@ function parentPrefix(value) {
 }
 
 function looksLikeObjectKey(value) {
-  return /\.(csv|json|jsonl|parquet|tsv|txt)$/i.test(String(value ?? "").trim());
+  return /\.(csv|json|jsonl|log|parquet|tsv|txt)$/i.test(String(value ?? "").trim());
 }
 
 function sourceListLimit() {
@@ -1612,6 +1612,7 @@ async function runMongoDriverSample({ collectionSelector, database, rowLimit, ur
 
 function stringifyCell(value) {
   if (value === null || value === undefined) return "";
+  if (value instanceof Date) return value.toISOString();
   if (typeof value === "object") return JSON.stringify(value);
   return String(value);
 }

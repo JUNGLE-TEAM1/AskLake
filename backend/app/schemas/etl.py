@@ -3,7 +3,7 @@ from typing import Any, Literal
 from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.common import CamelModel, to_camel
-from app.schemas.permissions import PermissionGrant, ResourcePermissions
+from app.schemas.permissions import PermissionAction, PermissionGrant, ResourcePermissions
 
 TargetLayer = Literal["RAW", "BRONZE", "SILVER", "GOLD"]
 JobStatus = Literal["scheduled", "failed", "running", "paused", "canceled", "stopped"]
@@ -46,6 +46,43 @@ class SchemaColumnDraft(CamelModel):
     source_name: str
     target_name: str
     type: str
+
+
+class RecordParsingColumnDraft(CamelModel):
+    position: int = Field(ge=0, le=999)
+    name: str
+    inferred_type: Literal["String", "Integer", "Float", "Boolean", "Timestamp"] = "String"
+
+
+class RecordParsingDraft(CamelModel):
+    enabled: bool = False
+    delimiter_kind: Literal["whitespace"] = "whitespace"
+    delimiter_pattern: Literal["\\s+"] = "\\s+"
+    header: bool = False
+    expected_field_count: int = Field(default=0, ge=0, le=1000)
+    columns: list[RecordParsingColumnDraft] = Field(default_factory=list)
+
+
+class RecordParsingInvalidRow(CamelModel):
+    line_number: int
+    expected_field_count: int
+    actual_field_count: int
+    raw_preview: str
+
+
+class RecordParsingPreviewRequest(CamelModel):
+    raw_lines: list[str] = Field(default_factory=list, max_length=500)
+    record_parsing: RecordParsingDraft
+
+
+class RecordParsingPreviewResponse(CamelModel):
+    can_apply: bool
+    columns: list[SchemaColumnDraft]
+    sample_rows: list[list[str]]
+    record_parsing: RecordParsingDraft
+    total_rows: int
+    valid_rows: int
+    invalid_rows: list[RecordParsingInvalidRow]
 
 
 class TransformStepDraft(CamelModel):
@@ -273,6 +310,7 @@ class JobRowData(CamelModel):
     execution_mode: KafkaExecutionMode = "snapshot"
     continuous_config: dict[str, Any] | None = None
     continuous_runtime: KafkaContinuousRuntime | None = None
+    record_parsing: RecordParsingDraft | dict[str, Any] | None = None
     schema_columns: list[SchemaColumnDraft] | list[dict[str, Any]] | None = None
     schema_fingerprint: str | None = None
     schema_sample_rows: list[list[str]] | None = None
@@ -321,6 +359,26 @@ class JobListFacets(CamelModel):
 class JobListResponse(CamelModel):
     facets: JobListFacets
     jobs: list[JobRowData]
+
+
+class PermissionOptionGroup(CamelModel):
+    id: str
+    name: str
+    description: str | None = None
+    actions: list[PermissionAction] = Field(default_factory=list)
+
+
+class PermissionOptionUser(CamelModel):
+    id: str
+    name: str
+    email: str
+    initials: str
+    role: str
+
+
+class PermissionOptionsResponse(CamelModel):
+    groups: list[PermissionOptionGroup] = Field(default_factory=list)
+    users: list[PermissionOptionUser] = Field(default_factory=list)
 
 
 class CatalogDataset(CamelModel):
@@ -388,6 +446,7 @@ class CreatePipelineRequest(CamelModel):
     source_label: str
     execution_mode: KafkaExecutionMode = "snapshot"
     continuous_config: KafkaContinuousConfigDraft | None = None
+    record_parsing: RecordParsingDraft | None = None
     schema_summary: str = ""
     rule_summary: str = ""
     transform_output_columns: SourceFieldRows = Field(default_factory=list)
@@ -492,6 +551,7 @@ class UpdatePipelineRequest(CamelModel):
     watermark_policy: WatermarkPolicyDraft | dict[str, Any] | None = None
     permission_summary: str = ""
     permission_roles: list[dict[str, Any]] | None = None
+    permission_grants: list[PermissionGrant] | None = None
     storage_type: str | None = None
     partition: str | None = None
     partition_columns: list[str] | None = None

@@ -83,6 +83,7 @@ Canonical status values:
 | `GET` | `/api/admin/audit-logs` | Admin | 감사 로그 필터 조회 | `docs/api-contract.md` |
 | `POST` | `/api/etl/sources/test` | TBD | Source 연결 테스트와 schema draft patch 반환 | `docs/api-contract.md` |
 | `POST` | `/api/etl/schema-inference` | TBD | Source 테스트 결과 기반 schema 반환 | `docs/api-contract.md` |
+| `POST` | `/api/etl/record-parsing/preview` | TBD | 이름 없는 TXT 제한 샘플을 연속 공백으로 구조화하고 필드 개수·컬럼 타입 초안 반환 | `docs/api-contract.md` |
 | `POST` | `/api/etl/jobs` | TBD | 새 수집/처리 job 생성 | `docs/api-contract.md` |
 | `PATCH` | `/api/etl/jobs/{jobId}` | `manage` | 생성된 Job의 허용 설정 업데이트. source identity는 요청에 포함할 수 없음 | `docs/etl-job-edit-contract.md` |
 | `POST` | `/api/etl/jobs/{jobId}/commands` | TBD | 실행, 재실행, 일시정지, 현재 Run 취소, 스케줄 중지 | `docs/api-contract.md` |
@@ -341,6 +342,7 @@ Runtime lane은 `DashboardRuntimeResponse`와 `DashboardRuntimeWidget`을 기준
 | Target 저장경로 | S3 bucket/prefix picker가 `target.storagePath` string을 갱신 | `GET /api/s3/buckets`, `GET /api/s3/prefixes`, `POST /api/etl/jobs` |
 | Target DB 선택 | DB picker가 `target.databaseName` string을 갱신하고 hidden tableName은 datasetName을 사용 | `GET /api/target/databases`, `POST /api/etl/jobs` |
 | Source/Schema 연결 | `testSourceConnector` mock/live adapter | `POST /api/etl/sources/test` |
+| 조건부 레코드 구조화 | Source에서 선택한 `.txt`/`.log` raw preview와 `DraftPipeline.recordParsing` | `POST /api/etl/record-parsing/preview` |
 | 카탈로그 | Postgres JSONB-backed live backend hydrate | `GET /api/catalog/datasets` |
 | 카탈로그 상세 | selected dataset state | `GET /api/catalog/datasets/{datasetId}` |
 | Lineage | `LineageGraph` mock/fallback | `GET /api/catalog/datasets/{datasetId}/lineage` |
@@ -773,6 +775,30 @@ type DashboardAssistantResponse = {
 ## 9) 변경 규칙
 
 - Endpoint, request, response, status code, error code가 바뀌면 이 문서와 `docs/api-contract.md`를 함께 업데이트한다.
+
+## 10) ETL Permission 옵션 및 grant 저장
+
+`GET /api/etl/permission-options`는 ETL 생성 화면에서 선택할 수 있는 조직 그룹과 사용자를 반환한다. 직접 사용자·그룹 권한을 설정하는 기능이므로 현재 actor의 `role`이 `admin`이어야 하며, 그렇지 않으면 `403 FORBIDDEN`을 반환한다. 이 응답은 권한 요약이나 전체 resource 목록을 계산하지 않는 경량 디렉터리 조회다.
+
+```ts
+type PermissionOptionsResponse = {
+  groups: Array<{
+    id: string;
+    name: string;
+    description?: string;
+    actions: Array<"view" | "query" | "run" | "manage" | "delete" | "share">;
+  }>;
+  users: Array<{
+    id: string;
+    name: string;
+    email: string;
+    initials: string;
+    role: string;
+  }>;
+};
+```
+
+`POST /api/etl/jobs`와 `PATCH /api/etl/jobs/{jobId}`는 기존 `permissionGrants?: PermissionGrant[]` 계약을 실제 저장 경로로 사용한다. 전달된 grant는 해당 Job의 `permission_ui` source 행으로 저장되며, 수정 시 기존 `permission_ui` 행만 교체한다. 관리 콘솔에서 생성한 `admin` source grant는 유지한다. 생성·수정 응답의 `permissionGrants`와 actor별 `permissions`에는 저장 결과가 즉시 반영된다.
 - Mock/live 전환 순서가 바뀌면 `docs/backend-integration-readiness.md`를 업데이트한다.
 - Frontend 타입이 바뀌면 관련 `frontend/src/types/`와 문서를 함께 업데이트한다.
 ## Text Structuring Runtime Contract

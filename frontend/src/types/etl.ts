@@ -179,6 +179,7 @@ export type JobRowData = {
   executionMode?: KafkaExecutionMode;
   continuousConfig?: KafkaContinuousConfigDraft & { checkpointPath?: string };
   continuousRuntime?: KafkaContinuousRuntime | null;
+  recordParsing?: RecordParsingDraft;
   schemaColumns?: SchemaColumnDraft[];
   schemaFingerprint?: string;
   schemaSampleRows?: string[][];
@@ -265,6 +266,41 @@ export type SourceDraft = {
   sourceType: string;
   executionMode?: KafkaExecutionMode;
   continuousConfig?: KafkaContinuousConfigDraft;
+  detectedFormat?: string;
+  rawPreviewLines?: string[];
+  requiresRecordParsing?: boolean;
+};
+
+export type RecordParsingColumnDraft = {
+  position: number;
+  name: string;
+  inferredType: "String" | "Integer" | "Float" | "Boolean" | "Timestamp";
+};
+
+export type RecordParsingDraft = {
+  enabled: boolean;
+  delimiterKind: "whitespace";
+  delimiterPattern: "\\s+";
+  header: boolean;
+  expectedFieldCount: number;
+  columns: RecordParsingColumnDraft[];
+};
+
+export type RecordParsingInvalidRow = {
+  lineNumber: number;
+  expectedFieldCount: number;
+  actualFieldCount: number;
+  rawPreview: string;
+};
+
+export type RecordParsingPreviewResponse = {
+  canApply: boolean;
+  columns: SchemaColumnDraft[];
+  sampleRows: string[][];
+  recordParsing: RecordParsingDraft;
+  totalRows: number;
+  validRows: number;
+  invalidRows: RecordParsingInvalidRow[];
 };
 
 export type TransformChainStepDraft = {
@@ -390,6 +426,7 @@ export type WatermarkPolicyDraft = {
 };
 
 export type PermissionDraft = {
+  grants?: PermissionGrant[];
   owner: string;
   roles?: Array<{
     access: string[];
@@ -397,6 +434,8 @@ export type PermissionDraft = {
     name: string;
   }>;
   summary: string;
+  template?: string;
+  visibility?: "조직 내부" | "프로젝트 멤버" | "외부 공유";
 };
 
 export type TargetDraft = {
@@ -443,6 +482,7 @@ export type DraftPipeline = {
   id: string;
   permission: PermissionDraft;
   quality: QualityDraft;
+  recordParsing: RecordParsingDraft;
   schedule: ScheduleDraft;
   schema: SchemaDraft;
   source: SourceDraft;
@@ -499,17 +539,19 @@ export type CreatePipelineRequest = {
   rag: boolean;
   executionMode?: KafkaExecutionMode;
   continuousConfig?: KafkaContinuousConfigDraft;
+  recordParsing?: RecordParsingDraft;
 };
 
 export type UpdatePipelineRequest = Omit<
   CreatePipelineRequest,
-  "id" | "sourceConfig" | "sourceLabel" | "sourceType" | "createdBy" | "createdByProfile" | "permissionGrants"
+  "id" | "sourceConfig" | "sourceLabel" | "sourceType" | "recordParsing" | "createdBy" | "createdByProfile"
 >;
 
 export type DraftPipelineSlicePatch = {
   id?: string;
   permission?: Partial<PermissionDraft>;
   quality?: Partial<QualityDraft>;
+  recordParsing?: Partial<RecordParsingDraft>;
   schedule?: Partial<ScheduleDraft>;
   schema?: Partial<SchemaDraft>;
   source?: Partial<SourceDraft>;
