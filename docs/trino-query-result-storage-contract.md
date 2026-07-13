@@ -47,12 +47,15 @@ type QueryRunResultManifest = {
   pageCount: number;
   availablePageCount: number;
   rowCount?: number;
+  collectedRowCount?: number;
+  expectedRowCount?: number;
+  collectionProgressPercentage?: number;
   byteSize: number;
   retentionExpiresAt: string;
 };
 ```
 
-Run이 수집 중이면 `availablePageCount`와 현재까지 저장된 `rowCount`는 계속 증가할 수 있다. `rowCount`는 terminal 전에는 누적 중인 값이며, 이를 확정하기 위해 별도 `COUNT(*)`를 실행하지 않는다.
+Run이 수집 중이면 `availablePageCount`, `rowCount`, `collectedRowCount`는 계속 증가할 수 있다. `rowCount`는 terminal 전에는 누적 중인 값이다. QueryInfo가 작업 progress 100%와 `outputPositions`를 제공하거나 state가 `FINISHING`/`FINISHED`이면 이를 `expectedRowCount`로 저장하고 실제 누적 행과 비교해 `collectionProgressPercentage`를 계산한다. 총 출력 행을 얻지 못하면 별도 `COUNT(*)`를 실행하지 않고 수집 progress를 생략한다. Collector는 `collectionStartedAt`, `firstPageAvailableAt`, `collectionCompletedAt`과 대응 경과값을 durable manifest에 저장하며 최초 timestamp를 retry/restart/takeover에서 유지한다.
 
 ### 2.2 Object lifecycle
 
@@ -82,7 +85,7 @@ Result storage: collecting -> available | unavailable | expired
 
 `GET /api/query/runs/{runId}`는 result manifest를 포함한다. Frontend는 `storageStatus`, `availablePageCount`, `pageCount`, `retentionExpiresAt`로 수집 중인 결과와 만료된 결과를 구분한다.
 
-`GET /api/query/runs/{runId}/results?cursor=<opaque>`는 submit 시 고정한 `resultPageSize` 이하의 API page를 반환한다. 하나의 Trino storage page가 더 커도 backend가 row offset cursor로 나누며 results endpoint에서 크기를 변경하지 않는다.
+`GET /api/query/runs/{runId}/results?cursor=<opaque>`는 submit 시 고정한 `resultPageSize`의 논리 API page를 반환한다. Trino/MinIO 물리 chunk 경계를 넘어서 행을 합쳐 반환하므로 첫 physical chunk가 1행이어도 완료된 결과의 100행 API page는 100행을 반환한다.
 
 ```ts
 type QueryRunResultPage = {
@@ -90,6 +93,11 @@ type QueryRunResultPage = {
   columns: string[];
   rows: Array<Array<string | number | boolean | null>>;
   pageSize: number;
+  pageNumber: number;
+  rowStart: number;
+  rowEnd: number;
+  totalRows?: number;
+  totalPages?: number;
   nextCursor: string | null;
   rowCount?: number;
 };
@@ -106,7 +114,7 @@ type QueryRunResultPage = {
 - 현재 `TRINO_MAX_RESULT_BYTES=50MB`, `TRINO_MAX_RESULT_PAGES=1000`은 PostgreSQL 보호를 위한 전환기 제한이다. Phase 1은 일반 result path에서 이 제한을 제거한다.
 - Result retention은 deployment별로 설정한다. Phase 1의 기본 목표는 24시간(`TRINO_RESULT_RETENTION_SECONDS=86400`)이며, 배포 환경은 더 짧게 설정할 수 있다.
 - Storage quota, concurrent run quota, timeout, estimate 기반 확인은 organization policy다. 실행 전에 경고하거나 거절할 수 있지만, 완료된 결과를 조용히 truncate해서는 안 된다.
-- Download/export는 별도 후속 API다. 같은 permission과 retention check를 사용하며 raw object storage credential을 노출하지 않는다.
+- `GET /api/query/runs/{runId}/exports/csv`는 완료된 Query Run의 MinIO page를 다시 읽어 CSV를 server-side stream으로 반환한다. SQL을 재실행하거나 browser memory에서 전체 파일을 만들지 않으며, 같은 permission과 retention check를 사용하고 raw object storage credential을 노출하지 않는다.
 
 ## 6. 보안과 감사
 

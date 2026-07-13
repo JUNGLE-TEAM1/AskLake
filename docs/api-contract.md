@@ -694,6 +694,77 @@ type SqlResultDraft = {
 
 새 Trino Query Run의 canonical type은 7.3과 `docs/trino-query-run-contract.md`를 따릅니다. 이 type은 전환 전 DuckDB snapshot/기존 Dashboard 호환에만 사용합니다.
 
+### 6.8 Trino SQL Validation And Repeat Job
+
+`POST /api/query/validate`는 SQL을 실행하지 않고 Trino dialect 기준 단일 read-only statement, 선택 Dataset mapping, 현재 actor의 `query` 권한과 governance control을 검증합니다. Frontend PostgreSQL parser는 자동완성/오타 안내용이며 이 endpoint의 성공이 Trino 실행 버튼 활성화의 canonical 조건입니다.
+
+Request:
+
+```ts
+type TrinoQueryValidationRequest = {
+  baseDatasetId: string;
+  query: string;
+  referenceDatasetIds: string[];
+};
+```
+
+Response `200 OK`:
+
+```ts
+type TrinoQueryValidationResponse = {
+  canExecute: true;
+  normalizedQuery: string;
+  referencedDatasetIds: string[];
+};
+```
+
+`POST /api/etl/sql-jobs`는 성공한 Trino Query Run에서 반복 실행용 SQL recipe Job을 생성합니다. source Run 제출자 또는 admin만 호출할 수 있고, Dataset을 조회할 수 있더라도 다른 사용자의 Run이면 `403`을 반환합니다. request의 query/base/reference identity도 persisted Run과 정확히 일치해야 합니다.
+
+```ts
+type CreateTrinoSqlJobRequest = {
+  baseDatasetId: string;
+  dataset: {
+    description: string;
+    layer: "SILVER" | "GOLD";
+    name: string;
+    rag: false;
+    refreshPolicy: "manual";
+    tags: string[];
+  };
+  governance: {
+    accessScope: "organization" | "private" | "project";
+    owner: string;
+    permissionSummary: string;
+  };
+  jobName?: string;
+  query: string;
+  referenceDatasetIds: string[];
+  schedule: {
+    mode: "manual" | "daily" | "weekly";
+    overlapPolicy: "skip_if_running";
+    time: string;
+    timezone: string;
+    weekday: "월" | "화" | "수" | "목" | "금" | "토" | "일";
+  };
+  sourceRunId: string;
+  target: {
+    partitionColumn?: string;
+    writeMode: "full_refresh";
+  };
+};
+```
+
+Response는 기존 `CreatePipelineResponse`를 재사용하며 `job.jobKind="trino_sql_materialization"`, `job.sqlRecipe`, `catalogTarget.status="pending_run"`을 포함합니다. Job 생성 자체는 Dataset을 만들지 않습니다.
+
+이 Job의 `POST /api/etl/jobs/{jobId}/commands` 규칙:
+
+- `run`/`retry`: 실행 시점 Dataset 권한을 다시 검사하고 저장 SQL을 고유 Iceberg table에 CTAS한다.
+- `cancelRun`: collector generation을 먼저 fence하고 Trino cancel을 요청하며 공개되지 않은 target을 정리한다.
+- 성공: `DESCRIBE` 검증 뒤 같은 논리 Dataset ID의 `queryEngineTable`을 새 table로 교체하고 `materializationRuns`에 run-keyed 성공 이력을 추가한다.
+- 실패/취소: 기존 정상 Dataset mapping과 성공 이력을 보존한다.
+- collector 재시작: terminal이지만 `finalized=true`가 없는 SQL Job Run을 다시 claim해 Catalog 확정을 멱등 수행한다.
+- `schedule.mode=daily|weekly` Job은 `POST /api/etl/schedules/run-due`를 `kafkaOnly=false`로 호출해야 하며, source 권한은 `sqlRecipe.runAs` actor로 재검사한다.
+
 ## 7. P0 API
 
 ### 7.1 Target S3 Path Picker
@@ -1369,10 +1440,14 @@ type SubmitQueryRunResponse = {
 };
 
 type QueryRunEstimateSnapshot = {
+  durationEstimateSource: "query_history" | "dataset_history" | "configured_throughput";
   estimatedBytes?: number;
   estimatedDurationSeconds?: number;
-  estimateSource: "trino_plan" | "catalog_heuristic";
+  estimatedThroughputBytesPerSecond?: number;
+  estimateSource: "iceberg_metadata" | "trino_plan" | "catalog_heuristic" | "conservative_bound";
+  icebergEstimatedBytes?: number;
   knownInputBytes: number;
+  planEstimatedBytes?: number;
   riskLevel: "low" | "medium" | "high";
   warnings: string[];
 };
@@ -1477,10 +1552,17 @@ type GetQueryRunResponse = {
     processedRows?: number;
     processedBytes?: number;
     peakMemoryBytes?: number;
+    completedDrivers?: number;
     completedSplits?: number;
+    totalDrivers?: number;
     totalSplits?: number;
     // Trino가 제공하면 사용하고, 없으면 split 비율을 사용한다. 알 수 없으면 생략한다.
     progressPercentage?: number;
+    progressObservedAt?: string;
+    queryCompletedAt?: string;
+    queryState?: string;
+    outputRows?: number;
+    outputBytes?: number;
   };
   result?: {
     storage: "minio";
@@ -1489,12 +1571,23 @@ type GetQueryRunResponse = {
     pageCount: number;
     availablePageCount: number;
     rowCount?: number;
+    collectedRowCount?: number;
+    expectedRowCount?: number;
+    collectionProgressPercentage?: number;
+    collectionStartedAt?: string;
+    firstPageAvailableAt?: string;
+    collectionCompletedAt?: string;
+    firstPageElapsedMs?: number;
+    collectionElapsedMs?: number;
+    totalReadyMs?: number;
     nextCursor?: string | null;
     retentionExpiresAt?: string;
   };
   error?: { code: string; message: string };
 };
 ```
+
+`queryCompletedAt`, `collectionStartedAt`, `firstPageAvailableAt`, `collectionCompletedAt`은 UTC ISO 8601 optional timestamp다. 최초 관측값을 유지하므로 collector retry, 프로세스 재시작, lease takeover가 기존 시각을 덮어쓰지 않는다. `firstPageElapsedMs`는 `submittedAt -> firstPageAvailableAt`, `collectionElapsedMs`는 `collectionStartedAt -> 현재/collectionCompletedAt`, `totalReadyMs`는 `submittedAt -> collectionCompletedAt`의 서버 측 경과다. 기존 payload에 이 field가 없으면 frontend는 사용 가능한 timestamp로 보완 계산하거나 값을 생략해야 한다.
 
 `GET /api/query/runs?limit=10`
 
@@ -1532,7 +1625,7 @@ type QueryRunResultPage = {
 ```
 
 - 결과 행은 이 endpoint에서만 cursor page로 조회합니다.
-- `GET /api/query/runs/{runId}`는 durable collector state만 반환하며 Trino continuation URL을 fetch하지 않습니다. 결과 retention이 만료되어도 run의 SQL, 상태, 통계, `storageStatus=expired` metadata는 조회할 수 있습니다.
+- `GET /api/query/runs/{runId}`는 durable collector state만 반환하며 Trino continuation URL이나 QueryInfo를 직접 fetch하지 않습니다. Collector는 `nextUri` 대기 중 별도 읽기 전용 QueryInfo sampler가 저장한 progress/driver와 elapsed/queued/CPU time, processed input bytes/rows, peak memory를 응답에 병합합니다. QueryInfo와 statement page는 같은 단조 증가 병합 규칙을 사용하므로 누적 지표와 `FINISHING`/`FINISHED` state는 stale sample로 감소하거나 되돌아가지 않습니다. 결과 retention이 만료되어도 run의 SQL, 상태, 통계, 완료 milestone, `storageStatus=expired` metadata는 조회할 수 있습니다.
 - `nextCursor`는 storage page index와 그 안의 row offset을 노출하지 않는 signed opaque token이다. token은 해당 `runId`와 `retentionExpiresAt`에만 유효하며 변조, 다른 run 재사용, 만료 후 사용은 거절한다.
 - submit 시 정한 `resultPageSize`는 results endpoint에서 바꿀 수 없습니다. Trino가 더 큰 storage page를 반환해도 backend가 고정 크기 API page로 나누며 마지막 page만 작을 수 있습니다.
 - frontend는 현재 page row와 이전/다음 cursor history만 유지하고 전체 결과를 memory에 적재하거나 offset SQL을 생성하지 않습니다.
@@ -1541,7 +1634,7 @@ type QueryRunResultPage = {
 - 결과 retention 또는 cursor가 만료되면 명시적 오류를 반환하고, 사용자에게 재실행 또는 materialization을 안내합니다.
 - cleanup worker는 terminal run을 keyset batch로 끝까지 순회하므로 최근 N건만 정리하지 않습니다. 실행 중 run과 durable materialized Dataset은 cleanup 대상이 아닙니다.
 
-`POST /api/query/runs/{runId}/cancel`은 `queued` 또는 `running` run만 취소합니다. `POST /api/query/estimates`는 SQL을 실행하지 않고 Catalog metadata heuristic 기반 예상 처리량과 위험도를 반환합니다. 예상값은 실제 Query Run stats를 대체하지 않습니다. 제출 시점에 계산한 예상값은 run response에 snapshot으로 남겨 실행 이력을 다시 열어도 비교할 수 있지만, 재실행 승인용 `confirmationToken`은 persistence와 Query Run response에 포함하지 않습니다.
+`POST /api/query/runs/{runId}/cancel`은 `queued` 또는 `running` run만 취소합니다. `POST /api/query/estimates`는 SQL을 실행하지 않고 Iceberg 참조 컬럼의 물리 스캔량과 최근 실행 기반 예상 시간을 반환합니다. 예상값은 실제 Query Run stats를 대체하지 않습니다. 제출 시점에 계산한 예상값은 run response에 snapshot으로 남겨 실행 이력을 다시 열어도 비교할 수 있지만, 재실행 승인용 `confirmationToken`은 persistence와 Query Run response에 포함하지 않습니다.
 
 `POST /api/query/estimates`
 
@@ -1553,10 +1646,14 @@ type QueryEstimateRequest = {
 };
 
 type QueryEstimateResponse = {
+  durationEstimateSource: "query_history" | "dataset_history" | "configured_throughput";
   estimatedBytes?: number;
   estimatedDurationSeconds?: number;
-  estimateSource: "trino_plan" | "catalog_heuristic";
+  estimatedThroughputBytesPerSecond?: number;
+  estimateSource: "iceberg_metadata" | "trino_plan" | "catalog_heuristic" | "conservative_bound";
+  icebergEstimatedBytes?: number;
   knownInputBytes: number;
+  planEstimatedBytes?: number;
   riskLevel: "low" | "medium" | "high";
   warnings: string[];
   confirmationRequired: boolean;
@@ -1564,7 +1661,10 @@ type QueryEstimateResponse = {
 };
 ```
 
-- backend는 먼저 `EXPLAIN (TYPE DISTRIBUTED)`의 byte estimate를 사용하고, Trino plan을 읽지 못하면 Catalog 저장 크기와 JOIN 복잡도 heuristic으로 fallback한다. `estimateSource`는 어느 경로가 사용됐는지 표시한다. 어느 경우도 actual Trino stats나 청구 금액은 아니다.
+- Iceberg Dataset은 SQL AST가 참조한 컬럼을 찾고 `$files.readable_metrics`의 컬럼별 `column_size`를 합산해 `icebergEstimatedBytes`를 계산한다. 모든 컬럼을 읽는 쿼리는 Catalog의 실제 `storageSizeBytes`를 하한으로 사용하며 `estimateSource="iceberg_metadata"`를 반환한다.
+- Iceberg metadata를 얻지 못한 경우에만 `EXPLAIN (TYPE DISTRIBUTED)`의 `planEstimatedBytes`와 Catalog `storageSizeBytes` 기반 heuristic으로 fallback한다. Catalog 기반 값이 Plan보다 크면 `conservative_bound`, Plan이 크거나 같으면 `trino_plan`, Catalog 값만 있으면 `catalog_heuristic`이다.
+- 예상 시간은 실행 이력을 보정에 사용하지 않고, 현재 SQL의 `estimatedBytes / TRINO_QUERY_ESTIMATED_THROUGHPUT_BYTES_PER_SECOND`를 0.1초 단위로 계산해 `durationEstimateSource="configured_throughput"`으로 반환한다. 적용한 기준 처리속도는 `estimatedThroughputBytesPerSecond`로 응답한다. 과거 run의 실제 시간과 처리량은 실행 이력 화면에서만 조회한다.
+- `estimatedBytes`는 warning, confirmation, hard limit에 사용한다. 실제 처리량과 시간은 완료 Query Run의 `stats.processedBytes`, `stats.elapsedMs`가 source of truth다.
 - `TRINO_QUERY_WARNING_BYTES` 이상이면 `confirmationRequired=true`와 query/actor/dataset/TTL-bound signed token을 반환한다.
 - Catalog 크기가 없어도 Trino plan byte estimate가 있으면 그 estimate로 threshold를 판정한다. plan과 Catalog 크기를 모두 얻지 못한 경우에만 불확실성 확인용 `confirmationRequired=true`를 반환한다.
 - 같은 조건에서 `POST /api/query/runs`는 `confirmationToken` 없이는 `409 QUERY_CONFIRMATION_REQUIRED`를 반환한다. token은 다른 SQL, 다른 사용자, 다른 Dataset에 재사용할 수 없다.
@@ -1575,7 +1675,10 @@ type QueryEstimateResponse = {
 - `실행` 클릭은 Trino 전체 실행을 제출하고 status polling을 시작합니다.
 - SQL 분석 화면은 유효한 SQL을 editor 아래에서 자동 평가하고, 최대 5개의 내 최근 실행을 표시합니다. 항목을 선택하면 저장된 Query Run과 cursor 결과 첫 페이지를 다시 엽니다.
 - 결과 table은 server cursor page를 요청해 렌더링합니다.
-- 실행 중 결과 영역은 실행 단계, `stats.queuedMs`, `elapsedMs`, `processedBytes`, `processedRows`, `peakMemoryBytes`, 예상/남은 시간을 표시하며, estimate가 있으면 예상 처리량과 실제 처리량을 함께 비교합니다. 진행률은 Trino `progressPercentage`를 우선하고 `completedSplits / totalSplits`를 fallback으로 사용한다. 둘 다 없으면 숫자를 표시하지 않고 indeterminate 상태로 렌더링한다. `succeeded` terminal run만 100%로 확정하며, 결과 page를 object storage에 쓰는 시간은 query progress가 아닌 별도 `결과 수집 중` 단계다.
+- 실행 중 결과 영역은 `쿼리 실행 -> 첫 결과 준비 -> 전체 결과 수집` 세 컨테이너를 순서대로 렌더링한다. 요청 접수와 Trino 대기는 첫 컨테이너의 phase label로 표현한다. 시작한 단계만 추가하고, 완료 단계는 실제 시간·처리량·행 수 요약으로 압축하며 현재 단계만 세부 지표를 펼친다. 세 컨테이너는 같은 폭·간격·상태 표현을 사용한다.
+- 쿼리 진행 bar는 active 상태가 2초 이상이고 Trino `progressPercentage` 또는 완료 driver/split 비율이 있을 때만 표시한다. 둘 다 없으면 숫자/bar를 생략한다. Dataset 물리 크기나 frontend timer로 중간 퍼센트를 만들지 않으며 estimate risk는 `대용량 처리 예상` 안내에만 사용한다.
+- `첫 결과 준비`는 서버의 첫 durable page 준비 시간과 브라우저의 첫 page 요청·렌더링 시간을 보여 주되 퍼센트를 표시하지 않는다. 조회 가능한 최초 page 자동 조회는 현재 page가 없을 때 한 번만 수행한다. 조회 실패는 단계 실패와 재시도 action으로 표시하며, 재시도 성공 시 화면 표시 시간을 다시 측정한다. `expired`/`unavailable` 이력은 page를 자동 재요청하지 않고 저장된 첫 결과 milestone을 유지한다. `전체 결과 수집`은 2초 이상 active이고 `collectedRowCount`와 `expectedRowCount`가 모두 있을 때만 두 값의 비율을 표시한다. 행 비율이 100%여도 manifest가 `collecting`이면 `마무리 중`으로 유지한다. backend percentage 단독값, Query 예상 남은 시간, Dataset 크기를 수집 퍼센트로 재사용하거나 서로 다른 단계를 하나의 가중 퍼센트로 합치지 않는다.
+- 완료 시 가능한 경우 `Trino 실행 · 첫 결과 · 전체 준비` 시간을 상단에 요약한다. API timing field가 없는 legacy run은 가능한 timestamp 차이만 사용하고 알 수 없는 시간은 만들지 않는다.
 - Dashboard draft는 retention 내 completed run을 임시 source로 쓸 수 있으나, publish 또는 반복 사용은 materialized Dataset을 source로 사용합니다.
 - 실패·취소·권한 차단은 Query Run 상태와 admin audit log에 기록합니다.
 

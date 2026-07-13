@@ -61,7 +61,7 @@ class SqlRepository:
         model.client_request_id = string_or_none(payload.get("clientRequestId")) or model.client_request_id
         model.request_fingerprint = string_or_none(payload.get("requestFingerprint")) or model.request_fingerprint
 
-        if payload.get("engine") in {"trino", "trino-materialization"}:
+        if payload.get("engine") in {"trino", "trino-materialization", "trino-job-materialization"}:
             model.collector_next_uri = string_or_none(payload.get("trinoNextUri"))
             if str(payload.get("status") or "") in {"succeeded", "failed", "cancelled"} or not model.collector_next_uri:
                 model.collector_owner = None
@@ -388,9 +388,21 @@ class SqlRepository:
         statement = (
             select(SqlRunModel)
             .where(
-                SqlRunModel.collector_next_uri.is_not(None),
-                SqlRunModel.payload["engine"].astext.in_(["trino", "trino-materialization"]),
-                SqlRunModel.payload["status"].astext.in_(["queued", "running"]),
+                SqlRunModel.payload["engine"].astext.in_(["trino", "trino-materialization", "trino-job-materialization"]),
+                or_(
+                    and_(
+                        SqlRunModel.collector_next_uri.is_not(None),
+                        SqlRunModel.payload["status"].astext.in_(["queued", "running"]),
+                    ),
+                    and_(
+                        SqlRunModel.payload["engine"].astext == "trino-job-materialization",
+                        SqlRunModel.payload["status"].astext.in_(["succeeded", "failed", "cancelled"]),
+                        or_(
+                            SqlRunModel.payload["finalized"].astext.is_(None),
+                            SqlRunModel.payload["finalized"].astext != "true",
+                        ),
+                    ),
+                ),
                 or_(
                     SqlRunModel.collector_lease_expires_at.is_(None),
                     SqlRunModel.collector_lease_expires_at < now,
@@ -409,7 +421,12 @@ class SqlRepository:
             return None
         payload = model.payload or {}
         next_uri = string_or_none(model.collector_next_uri)
-        if not next_uri:
+        terminal_sql_job = (
+            payload.get("engine") == "trino-job-materialization"
+            and str(payload.get("status") or "") in {"succeeded", "failed", "cancelled"}
+            and payload.get("finalized") is not True
+        )
+        if not next_uri and not terminal_sql_job:
             self.db.rollback()
             return None
         recovered = model.collector_lease_expires_at is not None
@@ -421,10 +438,23 @@ class SqlRepository:
         return TrinoCollectorClaim(
             engine=str(payload.get("engine") or ""),
             generation=model.collector_generation,
-            next_uri=next_uri,
+            next_uri=next_uri or "",
             recovered=recovered,
             run_id=model.id,
         )
+
+    def get_active_trino_job_run_payload(self, job_id: str) -> dict[str, Any] | None:
+        ensure_sql_schema(self.db)
+        model = self.db.scalar(
+            select(SqlRunModel)
+            .where(
+                SqlRunModel.payload["engine"].astext == "trino-job-materialization",
+                SqlRunModel.payload["jobId"].astext == job_id,
+                SqlRunModel.payload["status"].astext.in_(["queued", "running"]),
+            )
+            .order_by(SqlRunModel.created_at.desc(), SqlRunModel.id.desc())
+        )
+        return dict(model.payload or {}) if model is not None else None
 
     def renew_trino_collector_lease(self, run_id: str, worker_id: str, generation: int, lease_seconds: int) -> bool:
         ensure_sql_schema(self.db)

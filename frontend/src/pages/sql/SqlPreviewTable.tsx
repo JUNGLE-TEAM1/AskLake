@@ -57,14 +57,24 @@ export function SqlPreviewTable({
   resultDraft,
   remoteNextCursor,
   remotePageIndex,
+  remotePageNumber,
   remotePending = false,
+  remoteRowEnd,
+  remoteRowStart,
+  remoteTotalPages,
+  remoteTotalRows,
   onRemoteNext,
   onRemotePrevious,
 }: {
   resultDraft: SqlResultDraft;
   remoteNextCursor?: string | null;
   remotePageIndex?: number;
+  remotePageNumber?: number;
   remotePending?: boolean;
+  remoteRowEnd?: number;
+  remoteRowStart?: number;
+  remoteTotalPages?: number | null;
+  remoteTotalRows?: number | null;
   onRemoteNext?: () => void;
   onRemotePrevious?: () => void;
 }) {
@@ -95,8 +105,8 @@ export function SqlPreviewTable({
     [resultDraft.columns.length, resultDraft.rows],
   );
   const remote = remotePageIndex !== undefined;
-  const currentRemotePage = (remotePageIndex ?? 0) + 1;
-  const remoteTotalPages = currentRemotePage + (remoteNextCursor ? 1 : 0);
+  const currentRemotePage = remotePageNumber ?? (remotePageIndex ?? 0) + 1;
+  const shownRows = `${remoteRowStart?.toLocaleString() ?? 0}-${remoteRowEnd?.toLocaleString() ?? data.length.toLocaleString()}행`;
 
   return (
     <div className="grid min-w-0 gap-3">
@@ -110,6 +120,7 @@ export function SqlPreviewTable({
           icon: <Table2 size={18} />,
           title: "SQL 실행 결과가 비어 있습니다.",
         }}
+        enableSorting={!remote}
         pagination={remote ? false : { label: "SQL 실행 결과", pageSize: SQL_RESULT_PAGE_SIZE }}
         resetPaginationKey={`${resultDraft.runId}:${remotePageIndex ?? "local"}`}
         tableClassName="schema-table sql-preview-table"
@@ -123,8 +134,8 @@ export function SqlPreviewTable({
           onNext={() => onRemoteNext?.()}
           onPrevious={() => onRemotePrevious?.()}
           previousDisabled={remotePending || !onRemotePrevious}
-          rangeLabel={`${data.length.toLocaleString()}행 표시 · 전체 ${resultDraft.rowCount.toLocaleString()}행`}
-          totalPages={remoteTotalPages}
+          rangeLabel={`${shownRows} · 전체 ${(remoteTotalRows ?? resultDraft.rowCount).toLocaleString()}행`}
+          totalPages={remoteTotalPages ?? currentRemotePage}
         />
       ) : null}
     </div>

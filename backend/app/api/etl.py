@@ -6,6 +6,7 @@ from app.core.database import get_db
 from app.schemas.etl import (
     CreatePipelineRequest,
     CreatePipelineResponse,
+    CreateTrinoSqlJobRequest,
     ContinuousCompactionRequest,
     ContinuousMaintenanceRun,
     ContinuousQuarantineResponse,
@@ -120,9 +121,18 @@ def execute_airflow_run(
 def create_job(
     request: CreatePipelineRequest,
     db: Session = Depends(get_db),
-    actor_name: str = Header(default="demo-user", alias="X-AskLake-User"),
+    actor: ActorContext = Depends(get_actor_context),
 ) -> CreatePipelineResponse:
-    return etl_service.create_pipeline(db, request, actor_name)
+    return etl_service.create_pipeline(db, request, actor.name)
+
+
+@router.post("/sql-jobs", response_model=CreatePipelineResponse, status_code=status.HTTP_201_CREATED)
+def create_trino_sql_job(
+    request: CreateTrinoSqlJobRequest,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(get_actor_context),
+) -> CreatePipelineResponse:
+    return etl_service.create_trino_sql_job(db, request, actor)
 
 
 @router.get("/jobs", response_model=JobListResponse)

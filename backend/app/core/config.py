@@ -58,6 +58,8 @@ class Settings(BaseSettings):
     trino_collector_lease_seconds: int = Field(default=60, ge=10, le=3600)
     trino_collector_pages_per_lease: int = Field(default=100, ge=1, le=10_000)
     trino_collector_poll_seconds: float = Field(default=1.0, ge=0.2, le=60.0)
+    trino_progress_poll_seconds: float = Field(default=0.5, ge=0.1, le=10.0)
+    trino_progress_timeout_seconds: float = Field(default=1.0, ge=0.1, le=10.0)
     trino_cleanup_poll_seconds: float = Field(default=3600.0, ge=60.0, le=86_400.0)
     minio_endpoint: str | None = None
     minio_access_key: str | None = None

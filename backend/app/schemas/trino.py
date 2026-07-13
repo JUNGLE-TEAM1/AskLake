@@ -15,34 +15,55 @@ class TrinoQueryRunError(CamelModel):
 
 class TrinoQueryRunStats(CamelModel):
     cpu_ms: int | None = None
+    completed_drivers: int | None = None
     completed_splits: int | None = None
     elapsed_ms: int | None = None
+    output_bytes: int | None = None
+    output_rows: int | None = None
     peak_memory_bytes: int | None = None
     progress_percentage: float | None = Field(default=None, ge=0, le=100)
+    progress_observed_at: str | None = None
     processed_bytes: int | None = None
     processed_rows: int | None = None
+    query_completed_at: str | None = None
+    query_state: str | None = None
     queued_ms: int | None = None
+    total_drivers: int | None = None
     total_splits: int | None = None
 
 
 class TrinoQueryRunResult(CamelModel):
     available_page_count: int | None = None
     byte_size: int | None = None
+    collected_row_count: int | None = None
+    collection_completed_at: str | None = None
+    collection_elapsed_ms: int | None = Field(default=None, ge=0)
+    collection_progress_percentage: float | None = Field(default=None, ge=0, le=100)
+    collection_started_at: str | None = None
     columns: list[str] = Field(default_factory=list)
+    expected_row_count: int | None = None
+    first_page_available_at: str | None = None
+    first_page_elapsed_ms: int | None = Field(default=None, ge=0)
     next_cursor: str | None = None
     page_count: int | None = None
     retention_expires_at: str | None = None
     row_count: int | None = None
     storage: Literal["postgres", "minio"] | None = None
     storage_status: Literal["collecting", "available", "expired", "unavailable"] | None = None
+    total_ready_ms: int | None = Field(default=None, ge=0)
 
 
 class TrinoQueryRunResultPage(CamelModel):
     columns: list[str] = Field(default_factory=list)
     next_cursor: str | None = None
     page_size: int
+    page_number: int = Field(ge=1)
+    row_end: int = Field(ge=0)
+    row_start: int = Field(ge=0)
     rows: list[list[object]] = Field(default_factory=list)
     run_id: str
+    total_pages: int | None = Field(default=None, ge=0)
+    total_rows: int | None = Field(default=None, ge=0)
 
 
 class TrinoMaterializationRunResponse(CamelModel):
@@ -80,22 +101,42 @@ class TrinoQueryEstimateRequest(CamelModel):
     reference_dataset_ids: list[str] = Field(default_factory=list)
 
 
+class TrinoQueryValidationRequest(CamelModel):
+    base_dataset_id: str
+    query: str
+    reference_dataset_ids: list[str] = Field(default_factory=list)
+
+
+class TrinoQueryValidationResponse(CamelModel):
+    can_execute: Literal[True] = True
+    normalized_query: str
+    referenced_dataset_ids: list[str] = Field(default_factory=list)
+
+
 class TrinoQueryEstimate(CamelModel):
     confirmation_required: bool = False
     confirmation_token: str | None = None
+    duration_estimate_source: Literal["query_history", "dataset_history", "configured_throughput"] = "configured_throughput"
     estimated_bytes: int | None = None
-    estimated_duration_seconds: int | None = None
-    estimate_source: Literal["trino_plan", "catalog_heuristic"] = "catalog_heuristic"
+    estimated_duration_seconds: float | None = None
+    estimated_throughput_bytes_per_second: int | None = None
+    estimate_source: Literal["iceberg_metadata", "trino_plan", "catalog_heuristic", "conservative_bound"] = "catalog_heuristic"
+    iceberg_estimated_bytes: int | None = None
     known_input_bytes: int = 0
+    plan_estimated_bytes: int | None = None
     risk_level: Literal["low", "medium", "high"]
     warnings: list[str] = Field(default_factory=list)
 
 
 class TrinoQueryRunEstimate(CamelModel):
+    duration_estimate_source: Literal["query_history", "dataset_history", "configured_throughput"] = "configured_throughput"
     estimated_bytes: int | None = None
-    estimated_duration_seconds: int | None = None
-    estimate_source: Literal["trino_plan", "catalog_heuristic"] = "catalog_heuristic"
+    estimated_duration_seconds: float | None = None
+    estimated_throughput_bytes_per_second: int | None = None
+    estimate_source: Literal["iceberg_metadata", "trino_plan", "catalog_heuristic", "conservative_bound"] = "catalog_heuristic"
+    iceberg_estimated_bytes: int | None = None
     known_input_bytes: int = 0
+    plan_estimated_bytes: int | None = None
     risk_level: Literal["low", "medium", "high"]
     warnings: list[str] = Field(default_factory=list)
 
@@ -187,3 +228,4 @@ class TrinoClientPage(CamelModel):
     raw_stats: dict[str, Any] = Field(default_factory=dict)
     rows: list[list[object]] = Field(default_factory=list)
     state: str | None = None
+    update_count: int | None = None

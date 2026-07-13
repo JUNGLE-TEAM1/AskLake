@@ -1,4 +1,4 @@
-import type { CatalogDataset, ContinuousMaintenanceRun, ContinuousQuarantineResponse, ContinuousWorkerLogsResponse, CreateDerivedDatasetRequest, DraftPipeline, JobCommand, JobDagStep, JobRowData, JobRunSummary, KafkaContinuousBatch, KafkaContinuousSession, SqlResultDraft, TrinoMaterializationRun, TrinoQueryEstimate, TrinoQueryRun, TrinoQueryRunListResponse, TrinoQueryRunResultPage } from "../types";
+import type { CatalogDataset, ContinuousMaintenanceRun, ContinuousQuarantineResponse, ContinuousWorkerLogsResponse, CreateDerivedDatasetRequest, CreateTrinoSqlJobRequest, DraftPipeline, JobCommand, JobDagStep, JobRowData, JobRunSummary, KafkaContinuousBatch, KafkaContinuousSession, SqlResultDraft, TrinoMaterializationRun, TrinoQueryEstimate, TrinoQueryRun, TrinoQueryRunListResponse, TrinoQueryRunResultPage, TrinoQueryValidation } from "../types";
 import { toCreatePipelineRequest, toUpdatePipelineRequest } from "./draftPipelineContract";
 import { apiClient } from "./apiClient";
 
@@ -109,6 +109,18 @@ export async function estimateSqlQueryRun(dataset: CatalogDataset, query: string
     query,
     referenceDatasetIds,
   });
+}
+
+export async function validateSqlQueryRun(dataset: CatalogDataset, query: string, referenceDatasetIds: string[]): Promise<TrinoQueryValidation> {
+  return apiClient.post<TrinoQueryValidation>("/api/query/validate", {
+    baseDatasetId: dataset.id,
+    query,
+    referenceDatasetIds,
+  });
+}
+
+export async function createTrinoSqlJob(request: CreateTrinoSqlJobRequest): Promise<PipelineCreationResult> {
+  return apiClient.post<PipelineCreationResult>("/api/etl/sql-jobs", request);
 }
 
 export async function getTrinoQueryRun(runId: string): Promise<TrinoQueryRun> {

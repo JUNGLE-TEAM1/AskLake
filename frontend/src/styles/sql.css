@@ -1,6 +1,6 @@
 .sql-page {
   --sql-side-panel-width: clamp(320px, 22vw, 400px);
-  --sql-workspace-height: min(860px, calc(100dvh - 24px));
+  --sql-workspace-height: clamp(820px, calc(100dvh - 24px), 900px);
   position: relative;
   display: grid;
   width: 100%;
@@ -56,24 +56,52 @@
 .sql-workspace {
   grid-column: 2;
   grid-row: 2;
-  height: var(--sql-workspace-height);
-  min-height: min(620px, var(--sql-workspace-height));
-  max-height: var(--sql-workspace-height);
-  grid-template-rows: max-content minmax(0, 1fr);
+  height: auto;
+  min-height: var(--sql-workspace-height);
+  max-height: none;
+  grid-template-rows: max-content auto;
 }
 
 .sql-query-panel {
   align-self: start;
 }
 
+@media (max-width: 1400px) {
+  .sql-query-panel-header {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .sql-query-panel-header > :last-child {
+    grid-column: 1 / -1;
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+}
+
 .sql-result-panel {
-  min-height: 0;
+  min-height: 360px;
   grid-template-rows: max-content minmax(0, 1fr);
   overflow: hidden;
 }
 
 .sql-result-panel.has-result {
+  height: 640px;
+  min-height: 640px;
+  max-height: 640px;
   grid-template-rows: max-content minmax(0, 1fr);
+}
+
+.sql-result-summary {
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+}
+
+.sql-result-body {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .sql-result-toolbar {
@@ -568,8 +596,7 @@
   gap: 4px;
 }
 
-.sql-query-evaluation-heading span,
-.sql-run-monitor-heading span {
+.sql-query-evaluation-heading span {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -578,8 +605,7 @@
   font-weight: 800;
 }
 
-.sql-query-evaluation-heading strong,
-.sql-run-monitor-heading strong {
+.sql-query-evaluation-heading strong {
   color: #0f172a;
   font-size: 13px;
   font-weight: 850;
@@ -645,16 +671,82 @@
   gap: 6px;
 }
 
-.sql-run-monitor {
+.sql-run-timeline {
   display: grid;
-  gap: 10px;
+  gap: 6px;
   border-top: 1px solid #dbe3ef;
   border-bottom: 1px solid #dbe3ef;
-  margin: 0 0 14px;
-  padding: 14px 0;
+  padding: 12px 0;
 }
 
-.sql-run-monitor-heading {
+.sql-run-timeline-heading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.sql-run-timeline-heading > span {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.sql-run-timeline-heading > strong {
+  min-width: 0;
+  color: #475569;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.sql-run-stage-list {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+}
+
+.sql-run-stage {
+  display: grid;
+  min-width: 0;
+  min-height: 48px;
+  align-content: center;
+  border: 1px solid #dbe3ef;
+  border-radius: 6px;
+  background: #ffffff;
+  padding: 10px 12px;
+}
+
+.sql-run-stage.completed,
+.sql-run-stage.expired {
+  background: #f8fafc;
+}
+
+.sql-run-stage.active {
+  min-height: 92px;
+  border-color: #bfdbfe;
+  border-left: 3px solid #2563eb;
+  background: #f8fbff;
+}
+
+.sql-run-stage.failed,
+.sql-run-stage.cancelled {
+  border-color: #fecaca;
+  border-left: 3px solid #dc2626;
+  background: #fffafa;
+}
+
+.sql-run-stage.cancelled {
+  border-left-color: #64748b;
+}
+
+.sql-run-stage-header {
   display: flex;
   min-width: 0;
   align-items: center;
@@ -662,28 +754,110 @@
   gap: 12px;
 }
 
-.sql-run-monitor-heading strong {
-  color: #2563eb;
+.sql-run-stage-title {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+  color: #166534;
+  font-size: 12px;
+  font-weight: 850;
 }
 
-.sql-run-progress {
-  display: block;
+.sql-run-stage-title strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.sql-run-stage.active .sql-run-stage-title {
+  color: #1d4ed8;
+}
+
+.sql-run-stage.failed .sql-run-stage-title {
+  color: #b91c1c;
+}
+
+.sql-run-stage.cancelled .sql-run-stage-title {
+  color: #475569;
+}
+
+.sql-run-stage.expired .sql-run-stage-title {
+  color: #92400e;
+}
+
+.sql-run-stage-header-meta {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.sql-run-stage-summary {
+  min-width: 0;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.sql-run-stage.failed .sql-run-stage-summary {
+  color: #b91c1c;
+}
+
+.sql-run-stage-body {
+  display: grid;
+  min-width: 0;
+  gap: 9px;
+  padding: 10px 0 0 23px;
+}
+
+.sql-run-stage-state {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.sql-run-stage-spinner {
+  animation: sql-run-stage-spin 0.9s linear infinite;
+}
+
+@keyframes sql-run-stage-spin {
+  to { transform: rotate(360deg); }
+}
+
+.sql-run-progress-control {
+  min-width: 0;
+}
+
+.sql-run-progress-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #334155;
+}
+
+.sql-run-progress-state,
+.sql-run-progress-value {
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 850;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.sql-run-progress-track {
   height: 6px;
-  overflow: hidden;
-  border-radius: 999px;
   background: #dbeafe;
 }
 
-.sql-run-progress > span {
-  display: block;
-  width: 0;
-  height: 100%;
-  border-radius: inherit;
+.sql-run-progress-indicator {
   background: #2563eb;
-  transition: width 240ms ease;
 }
 
-.sql-run-progress.indeterminate > span {
+.sql-run-progress-indicator.indeterminate {
   width: 36%;
   animation: sql-run-progress-indeterminate 1.2s ease-in-out infinite;
 }
@@ -693,15 +867,16 @@
   100% { transform: translateX(310%); }
 }
 
-.sql-run-monitor-metrics {
+.sql-run-stage-metrics {
   display: flex;
   min-width: 0;
   flex-wrap: wrap;
   gap: 8px 16px;
 }
 
-.sql-run-monitor-metrics span {
+.sql-run-stage-metrics span {
   display: inline-flex;
+  min-width: 0;
   align-items: center;
   gap: 5px;
   color: #64748b;
@@ -709,9 +884,10 @@
   font-weight: 750;
 }
 
-.sql-run-monitor-metrics strong {
+.sql-run-stage-metrics strong {
   color: #334155;
   font-weight: 850;
+  white-space: nowrap;
 }
 
 @media (max-width: 760px) {
@@ -720,12 +896,49 @@
     gap: 10px;
   }
 
-  .sql-run-monitor-heading {
-    align-items: flex-start;
+  .sql-run-stage-metrics {
+    gap: 8px 12px;
   }
 
-  .sql-run-monitor-metrics {
-    gap: 8px 12px;
+  .sql-run-stage-header {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .sql-run-timeline-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .sql-run-timeline-heading > strong {
+    text-align: left;
+  }
+
+  .sql-run-stage-header-meta {
+    width: 100%;
+    justify-content: flex-start;
+    padding-left: 23px;
+  }
+
+  .sql-run-stage-summary {
+    text-align: left;
+  }
+
+  .sql-run-stage-body {
+    padding-left: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sql-run-progress-indicator.indeterminate,
+  .sql-run-stage-spinner {
+    animation: none;
+  }
+
+  .sql-run-progress-indicator.indeterminate {
+    transform: translateX(0);
+    opacity: 0.65;
   }
 }
 
@@ -1455,7 +1668,14 @@
 
   .sql-result-panel,
   .sql-result-panel.has-result {
+    height: auto;
+    min-height: 0;
+    max-height: none;
     grid-template-rows: auto;
+    overflow: visible;
+  }
+
+  .sql-result-body {
     overflow: visible;
   }
 

@@ -1,10 +1,16 @@
 import base64
 import binascii
+import csv
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from datetime import datetime, timedelta, timezone
 import hmac
 import hashlib
 import json
-from typing import Iterable
+import logging
+import re
+from time import monotonic
+from io import StringIO
+from typing import Iterable, Iterator
 from uuid import uuid4
 
 from fastapi import status
@@ -31,18 +37,23 @@ from app.schemas.trino import (
     TrinoQueryRunStats,
     TrinoQueryEstimate,
     TrinoQueryEstimateRequest,
+    TrinoQueryValidationRequest,
+    TrinoQueryValidationResponse,
     TrinoQueryRunEstimate,
 )
 from app.services.governance_enforcement import require_governed_access
 from app.services.resource_permission_service import dataset_with_persisted_permission_grants
-from app.services.trino_client import TrinoClient
+from app.services.trino_client import TrinoClient, TrinoQueryInfo
 from app.services.trino_result_storage import TrinoResultStorage
-from app.services.trino_query_estimate import build_query_estimate, parse_plan_estimated_bytes, require_estimate_confirmation
+from app.services.trino_query_estimate import build_query_estimate, estimate_iceberg_scan_bytes, parse_plan_estimated_bytes, require_estimate_confirmation
 from app.services.trino_sql_compiler import compile_trino_read_query
 
 
 class CollectorLeaseLost(RuntimeError):
     pass
+
+
+logger = logging.getLogger(__name__)
 
 
 class TrinoQueryRunService:
@@ -53,6 +64,7 @@ class TrinoQueryRunService:
         repository: SqlRepository,
         catalog_repository: CatalogRepository,
         client: TrinoClient | None = None,
+        progress_client: TrinoClient | None = None,
         result_storage: TrinoResultStorage | None = None,
         runtime_settings: Settings | None = None,
     ) -> None:
@@ -60,6 +72,7 @@ class TrinoQueryRunService:
         self.catalog_repository = catalog_repository
         self.settings = runtime_settings or settings
         self.client = client or TrinoClient(self.settings)
+        self.progress_client = progress_client or (TrinoClient(self.settings) if client is None else self.client)
         self.result_storage = result_storage or TrinoResultStorage(self.settings)
 
     def submit(self, request: SubmitTrinoQueryRunRequest, actor: ActorContext | None = None) -> TrinoQueryRunResponse:
@@ -209,6 +222,43 @@ class TrinoQueryRunService:
             query=request.query,
         )
 
+    def validate(self, request: TrinoQueryValidationRequest, actor: ActorContext | None = None) -> TrinoQueryValidationResponse:
+        compiled_query, referenced_datasets = self.compile_for_actor(
+            base_dataset_id=request.base_dataset_id,
+            reference_dataset_ids=request.reference_dataset_ids,
+            query=request.query,
+            actor=actor or ActorContext(),
+            api_path="/api/query/validate",
+        )
+        return TrinoQueryValidationResponse(
+            normalized_query=compiled_query,
+            referenced_dataset_ids=[dataset.id for dataset in referenced_datasets],
+        )
+
+    def compile_for_actor(
+        self,
+        *,
+        base_dataset_id: str,
+        reference_dataset_ids: list[str],
+        query: str,
+        actor: ActorContext,
+        api_path: str,
+        http_method: str = "POST",
+    ) -> tuple[str, list[CatalogDatasetResponse]]:
+        context_datasets = self._resolve_context(SubmitTrinoQueryRunRequest(
+            baseDatasetId=base_dataset_id,
+            query=query,
+            referenceDatasetIds=reference_dataset_ids,
+        ))
+        self._require_query_access(
+            context_datasets,
+            actor,
+            query,
+            api_path=api_path,
+            http_method=http_method,
+        )
+        return compile_trino_read_query(query, context_datasets)
+
     def list_for_actor(self, actor: ActorContext | None = None, *, limit: int = 20) -> TrinoQueryRunListResponse:
         """Return only runs submitted by the current principal; opening a run still rechecks dataset access."""
         actor_context = actor or ActorContext()
@@ -241,16 +291,29 @@ class TrinoQueryRunService:
         query: str,
     ) -> TrinoQueryEstimate:
         try:
-            plan_estimated_bytes = parse_plan_estimated_bytes(self.client.explain(compiled_query))
-            plan_unavailable = False
+            iceberg_estimated_bytes = estimate_iceberg_scan_bytes(
+                client=self.client,
+                context_datasets=context_datasets,
+                query=query,
+            )
         except ApiError:
+            iceberg_estimated_bytes = None
+        if iceberg_estimated_bytes is None:
+            try:
+                plan_estimated_bytes = parse_plan_estimated_bytes(self.client.explain(compiled_query))
+                plan_unavailable = False
+            except ApiError:
+                plan_estimated_bytes = None
+                plan_unavailable = True
+        else:
             plan_estimated_bytes = None
-            plan_unavailable = True
+            plan_unavailable = False
         return build_query_estimate(
             actor=actor,
             context_datasets=context_datasets,
             query=query,
             runtime_settings=self.settings,
+            iceberg_estimated_bytes=iceberg_estimated_bytes,
             plan_estimated_bytes=plan_estimated_bytes,
             plan_unavailable=plan_unavailable,
         )
@@ -282,7 +345,27 @@ class TrinoQueryRunService:
             ):
                 return response
 
-            page = self.client.fetch(next_uri)
+            if response.result is None or response.result.collection_started_at is None:
+                response = with_result_collection_timing(response)
+                if not self._save_collector_response(
+                    response,
+                    compiled_query=str(payload.get("compiledQuery") or ""),
+                    trino_next_uri=next_uri,
+                    worker_id=worker_id,
+                    generation=generation,
+                ):
+                    return TrinoQueryRunResponse.model_validate(self._get_payload(run_id))
+                payload = self._get_payload(run_id)
+
+            page, response = self._fetch_with_live_progress(
+                response,
+                next_uri=next_uri,
+                compiled_query=str(payload.get("compiledQuery") or ""),
+                worker_id=worker_id,
+                generation=generation,
+            )
+            if page is None:
+                return response
             if not self.repository.renew_trino_collector_lease(
                 run_id,
                 worker_id,
@@ -291,6 +374,10 @@ class TrinoQueryRunService:
             ):
                 return TrinoQueryRunResponse.model_validate(self._get_payload(run_id))
             updated = apply_trino_page(response, page)
+            if (page.state or "").upper() == "FINISHED" and (
+                updated.stats is None or updated.stats.output_rows is None
+            ):
+                updated = self._sample_query_info(updated)
             try:
                 updated = self._finalize_result_storage(
                     self._store_result_page(
@@ -328,6 +415,75 @@ class TrinoQueryRunService:
 
         self.repository.release_trino_collector_lease(run_id, worker_id, generation)
         return response
+
+    def _fetch_with_live_progress(
+        self,
+        response: TrinoQueryRunResponse,
+        *,
+        next_uri: str,
+        compiled_query: str,
+        worker_id: str,
+        generation: int,
+    ) -> tuple[TrinoClientPage | None, TrinoQueryRunResponse]:
+        query_info_fetcher = getattr(self.progress_client, "query_info", None)
+        if not response.trino_query_id or not callable(query_info_fetcher):
+            return self.client.fetch(next_uri), response
+
+        executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="trino-page-fetch")
+        try:
+            fetch_future = executor.submit(self.client.fetch, next_uri)
+            progress_poll_seconds = self.settings.trino_progress_poll_seconds
+            lease_refresh_seconds = max(1.0, self.settings.trino_collector_lease_seconds / 3)
+            now = monotonic()
+            next_progress_at = now + progress_poll_seconds
+            next_lease_refresh_at = now + lease_refresh_seconds
+            while True:
+                now = monotonic()
+                wait_seconds = max(0.01, min(next_progress_at, next_lease_refresh_at) - now)
+                try:
+                    return fetch_future.result(timeout=wait_seconds), response
+                except FutureTimeoutError:
+                    now = monotonic()
+                    if now >= next_lease_refresh_at:
+                        if not self.repository.renew_trino_collector_lease(
+                            response.run_id,
+                            worker_id,
+                            generation,
+                            self.settings.trino_collector_lease_seconds,
+                        ):
+                            return None, TrinoQueryRunResponse.model_validate(self._get_payload(response.run_id))
+                        next_lease_refresh_at = now + lease_refresh_seconds
+                    if now < next_progress_at:
+                        continue
+                    next_progress_at = now + progress_poll_seconds
+                    sampled = self._sample_query_info(response)
+                    if sampled == response:
+                        continue
+                    if not self._save_collector_response(
+                        sampled,
+                        compiled_query=compiled_query,
+                        trino_next_uri=next_uri,
+                        worker_id=worker_id,
+                        generation=generation,
+                    ):
+                        return None, TrinoQueryRunResponse.model_validate(self._get_payload(response.run_id))
+                    response = sampled
+        finally:
+            # A fenced collector must return immediately even if its HTTP fetch is still unwinding.
+            executor.shutdown(wait=False, cancel_futures=True)
+
+    def _sample_query_info(self, response: TrinoQueryRunResponse) -> TrinoQueryRunResponse:
+        query_info_fetcher = getattr(self.progress_client, "query_info", None)
+        if not response.trino_query_id or not callable(query_info_fetcher):
+            return response
+        try:
+            query_info = query_info_fetcher(response.trino_query_id)
+        except Exception as exc:  # Live telemetry must never fail the canonical Query Run.
+            logger.debug("Trino QueryInfo sampling failed for %s: %s", response.run_id, exc)
+            return response
+        if not isinstance(query_info, TrinoQueryInfo):
+            return response
+        return apply_trino_query_info(response, query_info)
 
     def cancel(self, run_id: str, actor: ActorContext | None = None) -> TrinoQueryRunResponse:
         payload = self._get_payload(run_id)
@@ -379,7 +535,7 @@ class TrinoQueryRunService:
         self._require_result_retention(response)
         payload = self._get_payload(run_id)
         retention_expires_at = response.result.retention_expires_at if response.result else None
-        page_index, row_offset = decode_cursor_position(
+        page_index, row_offset, logical_page_index = decode_cursor_position(
             cursor,
             run_id=run_id,
             retention_expires_at=retention_expires_at,
@@ -404,23 +560,39 @@ class TrinoQueryRunService:
             target_id=run_id,
             target_type="query_run",
         )
-        if page.storage_backend == "minio" and page.object_key:
-            columns, rows = self.result_storage.read_page(
-                object_key=page.object_key,
-                expected_checksum=page.checksum,
-            )
-        else:
-            columns = page.columns
-            rows = page.rows
         result_page_size = normalized_result_page_size(payload.get("resultPageSize"))
-        visible_rows = rows[row_offset:row_offset + result_page_size]
-        next_page = self.repository.get_result_page(run_id, page_index + 1)
-        if row_offset + len(visible_rows) < len(rows):
-            next_position = (page_index, row_offset + len(visible_rows))
-        elif next_page is not None:
-            next_position = (page_index + 1, 0)
-        else:
-            next_position = None
+        columns: list[str] = []
+        visible_rows: list[list[object]] = []
+        current_page_index = page_index
+        current_row_offset = row_offset
+        while len(visible_rows) < result_page_size:
+            current_page = self.repository.get_result_page(run_id, current_page_index)
+            if current_page is None:
+                break
+            if current_page.storage_backend == "minio" and current_page.object_key:
+                current_columns, current_rows = self.result_storage.read_page(
+                    object_key=current_page.object_key,
+                    expected_checksum=current_page.checksum,
+                )
+            else:
+                current_columns, current_rows = current_page.columns, current_page.rows
+            if not columns:
+                columns = current_columns
+            remaining = result_page_size - len(visible_rows)
+            visible_rows.extend(current_rows[current_row_offset:current_row_offset + remaining])
+            current_row_offset += min(remaining, max(0, len(current_rows) - current_row_offset))
+            if current_row_offset < len(current_rows):
+                break
+            current_page_index += 1
+            current_row_offset = 0
+
+        next_position = None
+        if self.repository.get_result_page(run_id, current_page_index) is not None:
+            next_position = (current_page_index, current_row_offset)
+        total_rows = response.result.row_count if response.result and response.result.storage_status == "available" else None
+        total_pages = ((total_rows + result_page_size - 1) // result_page_size) if total_rows is not None else None
+        row_start = logical_page_index * result_page_size + 1 if visible_rows else 0
+        row_end = row_start + len(visible_rows) - 1 if visible_rows else 0
         return TrinoQueryRunResultPage(
             columns=columns,
             next_cursor=encode_cursor(
@@ -429,11 +601,65 @@ class TrinoQueryRunService:
                 retention_expires_at=retention_expires_at,
                 secret=self.settings.trino_result_cursor_secret,
                 row_offset=next_position[1],
+                logical_page_index=logical_page_index + 1,
             ) if next_position else None,
-            page_size=len(visible_rows),
+            page_size=result_page_size,
+            page_number=logical_page_index + 1,
+            row_end=row_end,
+            row_start=row_start,
             rows=visible_rows,
             run_id=run_id,
+            total_pages=total_pages,
+            total_rows=total_rows,
         )
+
+    def prepare_csv_export(self, run_id: str, actor: ActorContext | None = None) -> Iterator[bytes]:
+        response = TrinoQueryRunResponse.model_validate(self._get_payload(run_id))
+        actor_context = actor or ActorContext()
+        self._require_access_for_response(response, actor_context, operation="view")
+        self._require_result_retention(response)
+        if response.status != "succeeded" or response.result is None or response.result.storage_status != "available":
+            raise ApiError(
+                ErrorCode.RESULT_PAGE_NOT_READY,
+                "CSV export is available after the full query result is prepared",
+                status.HTTP_409_CONFLICT,
+            )
+        safe_record_audit_event(
+            self.repository.db,
+            action="query_run.csv_export.download",
+            actor=actor_context,
+            api_path=f"/api/query/runs/{run_id}/exports/csv",
+            http_method="GET",
+            metadata={"rowCount": response.result.row_count},
+            result="success",
+            status_code=status.HTTP_200_OK,
+            target_id=run_id,
+            target_type="query_run",
+        )
+
+        pages = self.repository.list_result_pages(run_id)
+
+        def stream() -> Iterator[bytes]:
+            wrote_header = False
+            for page in pages:
+                if page.storage_backend == "minio" and page.object_key:
+                    columns, rows = self.result_storage.read_page(
+                        object_key=page.object_key,
+                        expected_checksum=page.checksum,
+                    )
+                else:
+                    columns, rows = page.columns, page.rows
+                buffer = StringIO(newline="")
+                writer = csv.writer(buffer, lineterminator="\n")
+                if not wrote_header:
+                    writer.writerow(columns)
+                    wrote_header = True
+                writer.writerows(rows)
+                content = buffer.getvalue()
+                if content:
+                    yield content.encode("utf-8")
+
+        return stream()
 
     def _resolve_context(self, request: SubmitTrinoQueryRunRequest) -> list[CatalogDatasetResponse]:
         base_dataset = self._get_dataset(request.base_dataset_id, label="Base dataset")
@@ -566,6 +792,7 @@ class TrinoQueryRunService:
         worker_id: str | None = None,
         generation: int | None = None,
     ) -> TrinoQueryRunResponse:
+        response = with_result_collection_timing(response)
         if source_next_uri and self.repository.get_result_page_by_source_uri(response.run_id, source_next_uri):
             return self._with_result_manifest(response, page.columns, next_uri=page.next_uri)
         page_count = self.repository.count_result_pages(response.run_id)
@@ -618,29 +845,59 @@ class TrinoQueryRunService:
         *,
         next_uri: str | None,
     ) -> TrinoQueryRunResponse:
-        result = response.result or TrinoQueryRunResult()
         page_count = self.repository.count_result_pages(response.run_id)
+        response = with_result_collection_timing(
+            response,
+            first_page_available=page_count > 0,
+        )
+        result = response.result or TrinoQueryRunResult()
         total_bytes = self.repository.total_result_bytes(response.run_id)
+        collected_rows = self.repository.total_result_rows(response.run_id)
+        expected_rows = response.stats.output_rows if response.stats else None
+        storage_status = "available" if response.status == "succeeded" and not next_uri else "collecting"
         return response.model_copy(update={
             "result": result.model_copy(update={
                 "available_page_count": page_count,
                 "byte_size": total_bytes,
+                "collected_row_count": collected_rows,
+                "collection_progress_percentage": result_collection_progress_percentage(
+                    collected_rows,
+                    expected_rows,
+                    storage_status=storage_status,
+                ),
                 "columns": columns or result.columns,
+                "expected_row_count": expected_rows,
                 "page_count": page_count,
-                "row_count": self.repository.total_result_rows(response.run_id),
+                "row_count": collected_rows,
                 "storage": "minio",
-                "storage_status": "available" if response.status == "succeeded" and not next_uri else "collecting",
+                "storage_status": storage_status,
             }),
         })
 
     def _finalize_result_storage(self, response: TrinoQueryRunResponse) -> TrinoQueryRunResponse:
         if response.status != "succeeded" or response.result is None:
             return response
+        response = with_result_collection_timing(
+            response,
+            collection_completed=True,
+            first_page_available=(response.result.available_page_count or 0) > 0,
+        )
+        if response.result is None:
+            return response
+        expected_rows = response.result.expected_row_count
+        if expected_rows is None:
+            expected_rows = response.stats.output_rows if response.stats else response.result.row_count
         return response.model_copy(update={
-            "result": response.result.model_copy(update={"storage_status": "available"}),
+            "result": response.result.model_copy(update={
+                "collected_row_count": response.result.row_count,
+                "collection_progress_percentage": 100,
+                "expected_row_count": expected_rows,
+                "storage_status": "available",
+            }),
         })
 
     def _result_persistence_failed(self, response: TrinoQueryRunResponse) -> TrinoQueryRunResponse:
+        response = with_result_collection_timing(response)
         result = response.result or TrinoQueryRunResult()
         return response.model_copy(update={
             "completed_at": current_utc_timestamp(),
@@ -767,6 +1024,7 @@ def build_run_response(
     submitted_at: str | None = None,
 ) -> TrinoQueryRunResponse:
     submitted_at = submitted_at or current_utc_timestamp()
+    collection_started_at = current_utc_timestamp()
     response = TrinoQueryRunResponse(
         base_dataset_id=request.base_dataset_id,
         estimate=estimate,
@@ -774,8 +1032,10 @@ def build_run_response(
         query=request.query,
         reference_dataset_ids=unique_values(request.reference_dataset_ids),
         result=TrinoQueryRunResult(
+            collection_started_at=collection_started_at,
             columns=page.columns,
             retention_expires_at=(datetime.now(timezone.utc) + timedelta(seconds=retention_seconds)).isoformat(),
+            storage_status="collecting",
         ),
         run_id=run_id or f"trino_{uuid4().hex[:12]}",
         stats=trino_stats(page.raw_stats),
@@ -816,10 +1076,11 @@ def apply_trino_page(response: TrinoQueryRunResponse, page: TrinoClientPage) -> 
     result = response.result or TrinoQueryRunResult()
     if page.columns:
         result = result.model_copy(update={"columns": page.columns})
+    page_stats = trino_stats(page.raw_stats)
     updated = response.model_copy(update={
         "error": page.error,
         "result": result,
-        "stats": trino_stats(page.raw_stats),
+        "stats": merge_trino_run_stats(response.stats, page_stats),
         "status": trino_status(page),
         "trino_query_id": page.query_id or response.trino_query_id,
     })
@@ -832,7 +1093,14 @@ def apply_terminal_timestamps(response: TrinoQueryRunResponse) -> TrinoQueryRunR
         updates["started_at"] = current_utc_timestamp()
     if response.status in {"succeeded", "failed", "cancelled"} and response.completed_at is None:
         updates["completed_at"] = current_utc_timestamp()
-    return response.model_copy(update=updates) if updates else response
+    updated = response.model_copy(update=updates) if updates else response
+    if updated.status == "succeeded" and (updated.stats is None or updated.stats.query_completed_at is None):
+        completed_at = updated.completed_at or current_utc_timestamp()
+        stats = updated.stats or TrinoQueryRunStats()
+        updated = updated.model_copy(update={
+            "stats": stats.model_copy(update={"query_completed_at": completed_at}),
+        })
+    return updated
 
 
 def trino_status(page: TrinoClientPage) -> str:
@@ -851,6 +1119,7 @@ def trino_status(page: TrinoClientPage) -> str:
 def trino_stats(raw_stats: dict[str, object]) -> TrinoQueryRunStats | None:
     if not raw_stats:
         return None
+    query_state = str(raw_stats.get("state") or "").strip().upper() or None
     completed_splits = int_or_none(raw_stats.get("completedSplits"))
     total_splits = int_or_none(raw_stats.get("totalSplits"))
     progress_percentage = float_or_none(raw_stats.get("progressPercentage"))
@@ -866,11 +1135,228 @@ def trino_stats(raw_stats: dict[str, object]) -> TrinoQueryRunStats | None:
         elapsed_ms=int_or_none(raw_stats.get("elapsedTimeMillis")),
         peak_memory_bytes=int_or_none(raw_stats.get("peakMemoryBytes")),
         progress_percentage=progress_percentage,
+        progress_observed_at=current_utc_timestamp(),
         processed_bytes=int_or_none(raw_stats.get("processedBytes")),
         processed_rows=int_or_none(raw_stats.get("processedRows")),
+        query_completed_at=current_utc_timestamp() if query_state in {"FINISHING", "FINISHED"} else None,
+        query_state=query_state,
         queued_ms=int_or_none(raw_stats.get("queuedTimeMillis")),
         total_splits=total_splits,
     )
+
+
+def merge_trino_run_stats(
+    current: TrinoQueryRunStats | None,
+    incoming: TrinoQueryRunStats | None,
+) -> TrinoQueryRunStats | None:
+    if current is None:
+        return incoming
+    if incoming is None:
+        return current
+    monotonic_fields = {
+        "completed_drivers",
+        "completed_splits",
+        "cpu_ms",
+        "elapsed_ms",
+        "output_bytes",
+        "output_rows",
+        "peak_memory_bytes",
+        "processed_bytes",
+        "processed_rows",
+        "progress_percentage",
+        "queued_ms",
+        "total_drivers",
+        "total_splits",
+    }
+    updates: dict[str, object] = {}
+    for field_name in TrinoQueryRunStats.model_fields:
+        incoming_value = getattr(incoming, field_name)
+        if incoming_value is None or field_name == "progress_observed_at":
+            continue
+        current_value = getattr(current, field_name)
+        if field_name in monotonic_fields:
+            merged_value = max_observed(current_value, incoming_value)
+        elif field_name == "query_completed_at":
+            merged_value = current_value or incoming_value
+        elif field_name == "query_state":
+            merged_value = merge_trino_query_state(current_value, incoming_value)
+        else:
+            merged_value = incoming_value
+        if merged_value != current_value:
+            updates[field_name] = merged_value
+    if updates and incoming.progress_observed_at is not None:
+        updates["progress_observed_at"] = incoming.progress_observed_at
+    return current.model_copy(update=updates) if updates else current
+
+
+def apply_trino_query_info(
+    response: TrinoQueryRunResponse,
+    query_info: TrinoQueryInfo,
+) -> TrinoQueryRunResponse:
+    raw_stats = query_info.raw_stats
+    query_state = str(query_info.state or raw_stats.get("state") or "").strip().upper() or None
+    completed_drivers = int_or_none(raw_stats.get("completedDrivers"))
+    total_drivers = int_or_none(raw_stats.get("totalDrivers"))
+    progress_percentage = float_or_none(raw_stats.get("progressPercentage"))
+    if progress_percentage is None and completed_drivers is not None and total_drivers and total_drivers > 0:
+        progress_percentage = (completed_drivers / total_drivers) * 100
+    if progress_percentage is None and query_state == "FINISHED":
+        progress_percentage = 100.0
+    if progress_percentage is not None:
+        progress_percentage = max(0.0, min(100.0, progress_percentage))
+
+    current = response.stats or TrinoQueryRunStats()
+    query_state = merge_trino_query_state(current.query_state, query_state)
+    elapsed_ms = first_not_none(
+        int_or_none(raw_stats.get("elapsedTimeMillis")),
+        parse_trino_duration_ms(raw_stats.get("elapsedTime")),
+    )
+    queued_ms = first_not_none(
+        int_or_none(raw_stats.get("queuedTimeMillis")),
+        parse_trino_duration_ms(raw_stats.get("queuedTime")),
+    )
+    cpu_ms = first_not_none(
+        int_or_none(raw_stats.get("cpuTimeMillis")),
+        parse_trino_duration_ms(raw_stats.get("totalCpuTime")),
+    )
+    processed_bytes = first_not_none(
+        int_or_none(raw_stats.get("processedBytes")),
+        parse_trino_data_size_bytes(raw_stats.get("processedInputDataSize")),
+        parse_trino_data_size_bytes(raw_stats.get("physicalInputDataSize")),
+        parse_trino_data_size_bytes(raw_stats.get("rawInputDataSize")),
+    )
+    processed_rows = first_not_none(
+        int_or_none(raw_stats.get("processedRows")),
+        int_or_none(raw_stats.get("processedInputPositions")),
+        int_or_none(raw_stats.get("physicalInputPositions")),
+        int_or_none(raw_stats.get("rawInputPositions")),
+    )
+    peak_memory_bytes = first_not_none(
+        int_or_none(raw_stats.get("peakMemoryBytes")),
+        parse_trino_data_size_bytes(raw_stats.get("peakUserMemoryReservation")),
+        parse_trino_data_size_bytes(raw_stats.get("peakTotalMemoryReservation")),
+    )
+    candidate_updates: dict[str, object] = {
+        "completed_drivers": max_observed(current.completed_drivers, completed_drivers),
+        "cpu_ms": max_observed(current.cpu_ms, cpu_ms),
+        "elapsed_ms": max_observed(current.elapsed_ms, elapsed_ms),
+        "peak_memory_bytes": max_observed(current.peak_memory_bytes, peak_memory_bytes),
+        "processed_bytes": max_observed(current.processed_bytes, processed_bytes),
+        "processed_rows": max_observed(current.processed_rows, processed_rows),
+        "progress_percentage": max_observed(current.progress_percentage, progress_percentage),
+        "query_state": query_state,
+        "queued_ms": max_observed(current.queued_ms, queued_ms),
+        "total_drivers": max_observed(current.total_drivers, total_drivers),
+    }
+    output_is_final = query_state in {"FINISHING", "FINISHED"} or candidate_updates["progress_percentage"] == 100
+    if output_is_final:
+        candidate_updates.update({
+            "output_bytes": max_observed(
+                current.output_bytes,
+                parse_trino_data_size_bytes(raw_stats.get("outputDataSize")),
+            ),
+            "output_rows": max_observed(current.output_rows, int_or_none(raw_stats.get("outputPositions"))),
+        })
+        if current.query_completed_at is None:
+            candidate_updates["query_completed_at"] = current_utc_timestamp()
+
+    changed_updates = {
+        field_name: value
+        for field_name, value in candidate_updates.items()
+        if value is not None and getattr(current, field_name) != value
+    }
+    if not changed_updates:
+        return response
+    changed_updates["progress_observed_at"] = current_utc_timestamp()
+    return response.model_copy(update={"stats": current.model_copy(update=changed_updates)})
+
+
+_TRINO_DATA_SIZE_PATTERN = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*(B|kB|MB|GB|TB|PB)\s*$", re.IGNORECASE)
+_TRINO_DATA_SIZE_FACTORS = {
+    "B": 1,
+    "KB": 1024,
+    "MB": 1024**2,
+    "GB": 1024**3,
+    "TB": 1024**4,
+    "PB": 1024**5,
+}
+
+_TRINO_DURATION_PATTERN = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*(ns|us|µs|ms|s|m|h|d)\s*$", re.IGNORECASE)
+_TRINO_DURATION_MILLISECOND_FACTORS = {
+    "NS": 0.000001,
+    "US": 0.001,
+    "ΜS": 0.001,
+    "MS": 1,
+    "S": 1_000,
+    "M": 60_000,
+    "H": 3_600_000,
+    "D": 86_400_000,
+}
+
+
+def parse_trino_data_size_bytes(value: object) -> int | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return max(0, int(value))
+    match = _TRINO_DATA_SIZE_PATTERN.fullmatch(str(value))
+    if match is None:
+        return None
+    amount = float(match.group(1))
+    return max(0, int(amount * _TRINO_DATA_SIZE_FACTORS[match.group(2).upper()]))
+
+
+def parse_trino_duration_ms(value: object) -> int | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return max(0, round(float(value)))
+    match = _TRINO_DURATION_PATTERN.fullmatch(str(value))
+    if match is None:
+        return None
+    amount = float(match.group(1))
+    unit = match.group(2).upper().replace("µ", "Μ")
+    return max(0, round(amount * _TRINO_DURATION_MILLISECOND_FACTORS[unit]))
+
+
+def first_not_none(*values: int | None) -> int | None:
+    return next((value for value in values if value is not None), None)
+
+
+def max_observed(current: int | float | None, incoming: int | float | None) -> int | float | None:
+    if current is None:
+        return incoming
+    if incoming is None:
+        return current
+    return max(current, incoming)
+
+
+def merge_trino_query_state(current: str | None, incoming: str | None) -> str | None:
+    current_state = str(current or "").strip().upper() or None
+    incoming_state = str(incoming or "").strip().upper() or None
+    if current_state in {"FINISHED", "FAILED", "CANCELED", "CANCELLED"}:
+        return current_state
+    if current_state == "FINISHING" and incoming_state not in {
+        "FINISHED",
+        "FAILED",
+        "CANCELED",
+        "CANCELLED",
+    }:
+        return current_state
+    return incoming_state or current_state
+
+
+def result_collection_progress_percentage(
+    collected_rows: int | None,
+    expected_rows: int | None,
+    *,
+    storage_status: str,
+) -> float | None:
+    if storage_status == "available":
+        return 100.0
+    if collected_rows is None or expected_rows is None or expected_rows <= 0:
+        return None
+    return max(0.0, min(100.0, (collected_rows / expected_rows) * 100))
 
 
 def int_or_none(value: object) -> int | None:
@@ -893,10 +1379,14 @@ def float_or_none(value: object) -> float | None:
 
 def query_run_estimate_snapshot(estimate: TrinoQueryEstimate) -> TrinoQueryRunEstimate:
     return TrinoQueryRunEstimate(
+        duration_estimate_source=estimate.duration_estimate_source,
         estimated_bytes=estimate.estimated_bytes,
         estimated_duration_seconds=estimate.estimated_duration_seconds,
+        estimated_throughput_bytes_per_second=estimate.estimated_throughput_bytes_per_second,
         estimate_source=estimate.estimate_source,
+        iceberg_estimated_bytes=estimate.iceberg_estimated_bytes,
         known_input_bytes=estimate.known_input_bytes,
+        plan_estimated_bytes=estimate.plan_estimated_bytes,
         risk_level=estimate.risk_level,
         warnings=estimate.warnings,
     )
@@ -966,9 +1456,9 @@ def decode_cursor_position(
     run_id: str,
     retention_expires_at: str | None,
     secret: str,
-) -> tuple[int, int]:
+) -> tuple[int, int, int]:
     if cursor is None:
-        return 0, 0
+        return 0, 0, 0
     try:
         payload_encoded, signature = cursor.split(".", maxsplit=1)
         expected_signature = sign_cursor(payload_encoded, secret)
@@ -977,10 +1467,11 @@ def decode_cursor_position(
         payload = json.loads(base64.urlsafe_b64decode(pad_base64(payload_encoded)).decode("utf-8"))
         page_index = int(payload["pageIndex"])
         row_offset = int(payload.get("rowOffset") or 0)
+        logical_page_index = int(payload.get("logicalPageIndex") or 0)
         expires_at = str(payload["expiresAt"])
     except (AttributeError, KeyError, TypeError, ValueError, UnicodeDecodeError, binascii.Error, json.JSONDecodeError) as exc:
         raise ApiError(ErrorCode.VALIDATION_ERROR, "Invalid query result cursor", status.HTTP_422_UNPROCESSABLE_ENTITY) from exc
-    if payload.get("version") != 1 or payload.get("runId") != run_id or page_index < 0 or row_offset < 0:
+    if payload.get("version") != 1 or payload.get("runId") != run_id or page_index < 0 or row_offset < 0 or logical_page_index < 0:
         raise ApiError(ErrorCode.VALIDATION_ERROR, "Invalid query result cursor", status.HTTP_422_UNPROCESSABLE_ENTITY)
     if not retention_expires_at or expires_at != retention_expires_at:
         raise ApiError(ErrorCode.VALIDATION_ERROR, "Query result cursor does not match this run", status.HTTP_422_UNPROCESSABLE_ENTITY)
@@ -990,7 +1481,7 @@ def decode_cursor_position(
         raise ApiError(ErrorCode.VALIDATION_ERROR, "Invalid query result cursor", status.HTTP_422_UNPROCESSABLE_ENTITY) from exc
     if expiry <= datetime.now(timezone.utc):
         raise ApiError(ErrorCode.RESULT_EXPIRED, "Query result cursor has expired", status.HTTP_410_GONE)
-    return page_index, row_offset
+    return page_index, row_offset, logical_page_index
 
 
 def encode_cursor(
@@ -1000,12 +1491,14 @@ def encode_cursor(
     retention_expires_at: str | None,
     secret: str,
     row_offset: int = 0,
+    logical_page_index: int = 0,
 ) -> str:
-    if page_index < 0 or row_offset < 0 or not retention_expires_at:
+    if page_index < 0 or row_offset < 0 or logical_page_index < 0 or not retention_expires_at:
         raise ApiError(ErrorCode.RESULT_EXPIRED, "Query result is unavailable", status.HTTP_410_GONE)
     payload = json.dumps({
         "expiresAt": retention_expires_at,
         "pageIndex": page_index,
+        "logicalPageIndex": logical_page_index,
         "rowOffset": row_offset,
         "runId": run_id,
         "version": 1,
@@ -1020,6 +1513,53 @@ def sign_cursor(payload_encoded: str, secret: str) -> str:
 
 def pad_base64(value: str) -> str:
     return value + "=" * (-len(value) % 4)
+
+
+def parse_utc_timestamp(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
+
+
+def elapsed_milliseconds(started_at: str | None, ended_at: str | None) -> int | None:
+    started = parse_utc_timestamp(started_at)
+    ended = parse_utc_timestamp(ended_at)
+    if started is None or ended is None:
+        return None
+    return max(0, round((ended - started).total_seconds() * 1000))
+
+
+def with_result_collection_timing(
+    response: TrinoQueryRunResponse,
+    *,
+    at: str | None = None,
+    collection_completed: bool = False,
+    first_page_available: bool = False,
+) -> TrinoQueryRunResponse:
+    observed_at = at or current_utc_timestamp()
+    result = response.result or TrinoQueryRunResult()
+    collection_started_at = result.collection_started_at or observed_at
+    first_page_available_at = result.first_page_available_at
+    if first_page_available and first_page_available_at is None:
+        first_page_available_at = observed_at
+    collection_completed_at = result.collection_completed_at
+    if collection_completed and collection_completed_at is None:
+        collection_completed_at = observed_at
+    collection_end = collection_completed_at or observed_at
+    return response.model_copy(update={
+        "result": result.model_copy(update={
+            "collection_completed_at": collection_completed_at,
+            "collection_elapsed_ms": elapsed_milliseconds(collection_started_at, collection_end),
+            "collection_started_at": collection_started_at,
+            "first_page_available_at": first_page_available_at,
+            "first_page_elapsed_ms": elapsed_milliseconds(response.submitted_at, first_page_available_at),
+            "total_ready_ms": elapsed_milliseconds(response.submitted_at, collection_completed_at),
+        }),
+    })
 
 
 def current_utc_timestamp() -> str:

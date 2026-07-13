@@ -8,6 +8,7 @@ import secrets
 import subprocess
 from typing import Any
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import status
 from sqlalchemy.exc import IntegrityError
@@ -29,6 +30,8 @@ from app.models import (
 )
 from app.repositories.audit_repository import safe_record_audit_event
 from app.repositories import etl_repository
+from app.repositories.catalog_repository import CatalogRepository
+from app.repositories.sql_repository import SqlRepository
 from app.schemas.common import ErrorCode
 from app.schemas.etl import (
     AirflowCatalogReconciliationResponse,
@@ -41,6 +44,7 @@ from app.schemas.etl import (
     AirflowRunExecutionResponse,
     CreatePipelineRequest,
     CreatePipelineResponse,
+    CreateTrinoSqlJobRequest,
     JobCommandResponse,
     JobListFacets,
     JobListResponse,
@@ -72,6 +76,9 @@ from app.schemas.etl import (
 
 from app.services.airflow_client import AirflowDagRun, AirflowTaskInstance, build_airflow_client
 from app.services.governance_enforcement import require_governed_access
+from app.services.trino_materialization_service import materialized_dataset_id
+from app.services.trino_query_run_service import TrinoQueryRunService
+from app.services.trino_sql_job_service import TrinoSqlJobService
 from app.services.resource_permission_service import job_with_persisted_permission_grants, permission_grants_for_resource, permissions_for_actor_with_governance
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
@@ -192,6 +199,235 @@ def create_pipeline(db: Session, request: CreatePipelineRequest, actor_name: str
     )
 
 
+def create_trino_sql_job(
+    db: Session,
+    request: CreateTrinoSqlJobRequest,
+    actor: ActorContext,
+) -> CreatePipelineResponse:
+    if not settings.trino_enabled:
+        raise ApiError(
+            ErrorCode.CONFLICT,
+            "Trino query runtime is not enabled",
+            status.HTTP_409_CONFLICT,
+            {"setting": "TRINO_ENABLED"},
+        )
+
+    sql_repository = SqlRepository(db)
+    query_service = TrinoQueryRunService(sql_repository, CatalogRepository(db))
+    source_run = query_service.get(request.source_run_id, actor)
+    source_payload = sql_repository.get_run_payload(request.source_run_id) or {}
+    if not actor.is_admin and not trino_query_run_belongs_to_actor(source_payload, actor):
+        safe_record_audit_event(
+            db,
+            action="trino_sql_job.create.forbidden",
+            actor=actor,
+            api_path="/api/etl/sql-jobs",
+            http_method="POST",
+            metadata={"reason": "source_run_owner_mismatch"},
+            result="forbidden",
+            status_code=status.HTTP_403_FORBIDDEN,
+            target_id=request.source_run_id,
+            target_name=request.source_run_id,
+            target_type="query_run",
+        )
+        raise ApiError(
+            ErrorCode.FORBIDDEN,
+            "Only the source Query Run submitter or an admin can create this SQL Job",
+            status.HTTP_403_FORBIDDEN,
+            {"runId": request.source_run_id},
+        )
+    if source_run.status != "succeeded":
+        raise ApiError(
+            ErrorCode.INVALID_JOB_STATE,
+            "Only succeeded Trino query runs can create a SQL Job",
+            status.HTTP_409_CONFLICT,
+            {"runId": source_run.run_id, "status": source_run.status},
+        )
+    if (
+        request.base_dataset_id != source_run.base_dataset_id
+        or request.query.strip() != source_run.query.strip()
+        or set(request.reference_dataset_ids) != set(source_run.reference_dataset_ids)
+    ):
+        raise ApiError(
+            ErrorCode.VALIDATION_ERROR,
+            "SQL Job recipe does not match the source Query Run",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
+
+    dataset_name = request.dataset.name.strip()
+    if not dataset_name:
+        raise ApiError(ErrorCode.VALIDATION_ERROR, "Dataset name is required", status.HTTP_422_UNPROCESSABLE_ENTITY)
+    dataset_id = materialized_dataset_id(dataset_name)
+    catalog_repository = CatalogRepository(db)
+    existing_dataset = catalog_repository.get_dataset_payload(dataset_id) or catalog_repository.get_dataset_payload_by_name(dataset_name)
+    existing_job = etl_repository.get_job_by_dataset_id(db, dataset_id) or etl_repository.get_job_by_target(db, dataset_name)
+    if existing_dataset is not None or existing_job is not None:
+        raise ApiError(
+            ErrorCode.CONFLICT,
+            "A Dataset or Job with this target name already exists",
+            status.HTTP_409_CONFLICT,
+            {"datasetId": dataset_id, "datasetName": dataset_name},
+        )
+
+    schedule_label = trino_sql_job_schedule_label(request)
+    next_run_utc = trino_sql_job_next_run_utc(request)
+    job_name = (request.job_name or f"{dataset_name} SQL Job").strip()
+    job_id = make_job_id(f"sql-{job_name}-{dataset_id}")
+    columns = list(source_run.result.columns if source_run.result else [])
+    if request.target.partition_column and request.target.partition_column not in columns:
+        raise ApiError(
+            ErrorCode.VALIDATION_ERROR,
+            "SQL Job partition column must exist in the Query Run result",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            {"partitionColumn": request.target.partition_column, "columns": columns},
+        )
+    schema_columns = [
+        {
+            "confidence": 1,
+            "included": True,
+            "nullable": True,
+            "role": "primary" if index == 0 else "derived",
+            "sourceName": column,
+            "targetName": column,
+            "type": "unknown",
+        }
+        for index, column in enumerate(columns)
+    ]
+    permission_roles = trino_sql_job_permission_roles(
+        request.governance.access_scope,
+        request.governance.owner,
+    )
+    sql_recipe = {
+        "baseDatasetId": request.base_dataset_id,
+        "query": request.query,
+        "referenceDatasetIds": request.reference_dataset_ids,
+        "runAs": {
+            "email": actor.email,
+            "groups": list(actor.groups),
+            "id": actor.id,
+            "name": actor.name,
+            "role": actor.role,
+        },
+        "sourceRunId": request.source_run_id,
+        "target": {
+            "datasetId": dataset_id,
+            "datasetName": dataset_name,
+            "description": request.dataset.description,
+            "layer": request.dataset.layer,
+            "partitionColumns": [request.target.partition_column] if request.target.partition_column else [],
+            "tags": request.dataset.tags,
+        },
+        "writeMode": request.target.write_mode,
+    }
+    dag_steps = [
+        {"id": "validate", "title": "1. SQL recipe 검증", "meta": "Trino SQL · full refresh", "status": "pending"},
+        {"id": "materialize", "title": "2. Iceberg table 생성", "meta": "versioned CTAS", "status": "pending"},
+        {"id": "register", "title": "3. Catalog mapping 교체", "meta": "DESCRIBE 검증 후 공개", "status": "pending"},
+    ]
+    job = ETLJobModel(
+        id=job_id,
+        name=job_name,
+        owner=request.governance.owner.strip() or actor.name,
+        created_by=actor.name,
+        created_by_profile=identity_profile(actor.name),
+        status="scheduled",
+        tag="[SQL]",
+        source=f"Trino SQL / {source_run.run_id}",
+        target=dataset_name,
+        schedule=schedule_label,
+        schedule_policy={
+            "mode": request.schedule.mode,
+            "nextRunUtc": next_run_utc,
+            "overlapPolicy": request.schedule.overlap_policy,
+            "time": request.schedule.time,
+            "timezone": request.schedule.timezone,
+            "weekday": request.schedule.weekday,
+            "writeMode": request.target.write_mode,
+        },
+        schedule_summary=trino_sql_job_schedule_summary(request),
+        retry_policy=None,
+        retry_policy_summary="Trino collector 재시도 정책",
+        run_limit_summary="동시 실행 1개",
+        source_config=[
+            ["Base Dataset ID", request.base_dataset_id],
+            ["Reference Dataset IDs", ", ".join(request.reference_dataset_ids) or "-"],
+            ["Source Query Run ID", request.source_run_id],
+        ],
+        source_label=f"{source_run.base_dataset_id} / {source_run.run_id}",
+        source_type="Trino SQL",
+        job_kind="trino_sql_materialization",
+        sql_recipe=sql_recipe,
+        execution_mode="snapshot",
+        continuous_config=None,
+        schema_columns=schema_columns,
+        schema_fingerprint=f"{source_run.run_id}:{'|'.join(columns)}",
+        schema_sample_rows=[],
+        schema_summary=f"{len(columns)}개 컬럼 · Trino Query Run 검증 완료",
+        rule_summary="저장된 SQL recipe를 생성 시점 데이터에 다시 실행",
+        permission_summary=request.governance.permission_summary,
+        permission_roles=permission_roles,
+        storage_type="Iceberg",
+        partition=request.target.partition_column,
+        partition_columns=[request.target.partition_column] if request.target.partition_column else [],
+        index_columns=[],
+        compression="Snappy",
+        storage_path=f"iceberg://{settings.trino_catalog}/{settings.trino_schema}/{dataset_id}",
+        target_description=request.dataset.description,
+        target_database=settings.trino_schema,
+        target_tags=request.dataset.tags,
+        target_format="Iceberg",
+        target_layer=request.dataset.layer,
+        target_path=None,
+        rag=False,
+        transform_output_columns=[[column, "unknown"] for column in columns],
+        transform_steps=[],
+        quality_invalid_rows=[],
+        quality_rules=[],
+        quality_score=None,
+        quality_status="idle",
+        last_run="생성 후 미실행",
+        last_state="Trino SQL recipe 저장 완료",
+        next_run=next_run_utc or "-",
+        progress=None,
+        stats={
+            "averageDuration": "-",
+            "currentStage": "실행 대기",
+            "inputRows": "-",
+            "lastSuccess": "-",
+            "outputRows": "-",
+            "sampleScope": "전체 SQL",
+            "schemaColumns": f"{len(columns)}개",
+            "sourceUnits": f"{1 + len(request.reference_dataset_ids)} datasets",
+            "successRate": "-",
+            "totalRuns": "0회",
+        },
+        dag_steps=dag_steps,
+        dag_steps_by_run_id={},
+        dataset_id=dataset_id,
+    )
+    saved_job = etl_repository.create_job(db, job)
+    safe_record_audit_event(
+        db,
+        action="trino_sql_job.create",
+        actor=actor,
+        api_path="/api/etl/sql-jobs",
+        http_method="POST",
+        metadata={"baseDatasetId": request.base_dataset_id, "sourceRunId": request.source_run_id},
+        target_id=job.id,
+        target_name=job.name,
+        target_type="etl_job",
+    )
+    return CreatePipelineResponse(
+        catalog_target={
+            "id": dataset_id,
+            "layer": request.dataset.layer,
+            "name": dataset_name,
+            "status": "pending_run",
+        },
+        job=saved_job,
+    )
+
+
 def list_jobs(
     db: Session,
     actor: ActorContext | None = None,
@@ -285,7 +521,13 @@ def run_due_scheduled_jobs(
             ))
             continue
 
-        response = command_job(db, job.id, "run", actor_context)
+        response = command_job(
+            db,
+            job.id,
+            "run",
+            actor_context,
+            execution_actor=trino_sql_job_run_as_actor(job) if job.job_kind == "trino_sql_materialization" else None,
+        )
         if reason == "due":
             advance_scheduled_job_after_tick(db, job.id)
         items.append(ScheduledJobRunItem(
@@ -423,7 +665,14 @@ def execute_query(db: Session, request: QueryRunRequest) -> QueryRunResponse:
     )
 
 
-def command_job(db: Session, job_id: str, command: str, actor: ActorContext | None = None) -> JobCommandResponse:
+def command_job(
+    db: Session,
+    job_id: str,
+    command: str,
+    actor: ActorContext | None = None,
+    *,
+    execution_actor: ActorContext | None = None,
+) -> JobCommandResponse:
     job = etl_repository.get_job(db, job_id)
     if job is None:
         raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
@@ -505,6 +754,31 @@ def command_job(db: Session, job_id: str, command: str, actor: ActorContext | No
             ErrorCode.INVALID_JOB_STATE,
             f"Job has no paused schedule to resume: {job_id}",
             status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
+
+    if job.job_kind == "trino_sql_materialization" and command in {"run", "retry", "cancelRun"}:
+        service = TrinoSqlJobService(SqlRepository(db), CatalogRepository(db))
+        result = (
+            service.cancel(job, execution_actor or actor_context)
+            if command == "cancelRun"
+            else service.submit(job, command, execution_actor or actor_context)
+        )
+        return JobCommandResponse(
+            action={
+                "cancelRun": "etl.run.cancel_requested",
+                "retry": "etl.run.retry_requested",
+                "run": "etl.run.requested",
+            }[command],
+            api_path=f"/api/etl/jobs/{job_id}/commands",
+            dataset=result.dataset,
+            job=with_job_permissions(db, result.job, actor_context),
+            run=result.run,
+            dag_steps=result.job.dag_steps,
+            processing_result={
+                "engine": "trino",
+                "jobKind": "trino_sql_materialization",
+                "writeMode": "full_refresh",
+            },
         )
 
     action_by_command = {
@@ -3664,6 +3938,87 @@ def schedule_next_run_label(schedule_label: str | None, fallback: str | None = N
     if "1회" in schedule or "예약" in schedule:
         return fallback_label if fallback_label and fallback_label != "-" else re.sub(r"\s*(예약\s*)?1회 실행\s*$", "", schedule).strip()
     return fallback_label if fallback_label and fallback_label != "-" else schedule
+
+
+def trino_sql_job_permission_roles(access_scope: str, owner: str) -> list[dict[str, Any]]:
+    access = ["조회", "쿼리 실행", "메타데이터", "관리"]
+    if access_scope == "private":
+        return [{"access": access, "checked": True, "name": owner}]
+    return [
+        {"access": access, "checked": True, "name": "Data Engineer Group"},
+        {"access": access, "checked": access_scope != "project", "name": "Data Analyst Group"},
+        {"access": access, "checked": access_scope == "project", "name": "Project Members"},
+    ]
+
+
+def trino_sql_job_schedule_label(request: CreateTrinoSqlJobRequest) -> str:
+    schedule = request.schedule
+    if schedule.mode == "manual":
+        return "스케줄링 건너뛰기"
+    if schedule.mode == "daily":
+        return f"매일 {schedule.time}"
+    return f"매주 {schedule.weekday}요일 {schedule.time}"
+
+
+def trino_sql_job_schedule_summary(request: CreateTrinoSqlJobRequest) -> str:
+    if request.schedule.mode == "manual":
+        return "스케줄링 건너뛰기 · Job 목록에서 직접 실행 · full refresh"
+    return (
+        f"반복 실행 · {trino_sql_job_schedule_label(request)} · "
+        f"{request.schedule.timezone} · {request.schedule.overlap_policy} · full refresh"
+    )
+
+
+def trino_sql_job_next_run_utc(request: CreateTrinoSqlJobRequest) -> str | None:
+    schedule = request.schedule
+    if schedule.mode == "manual":
+        return None
+    try:
+        hour_text, minute_text = schedule.time.split(":", maxsplit=1)
+        hour = int(hour_text)
+        minute = int(minute_text)
+        if not 0 <= hour <= 23 or not 0 <= minute <= 59:
+            raise ValueError
+        timezone = ZoneInfo(schedule.timezone)
+    except (ValueError, ZoneInfoNotFoundError) as exc:
+        raise ApiError(
+            ErrorCode.VALIDATION_ERROR,
+            "SQL Job schedule time or timezone is invalid",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+        ) from exc
+
+    now = datetime.now(timezone)
+    candidate = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if schedule.mode == "daily":
+        if candidate <= now:
+            candidate += timedelta(days=1)
+    else:
+        weekdays = {"월": 0, "화": 1, "수": 2, "목": 3, "금": 4, "토": 5, "일": 6}
+        candidate += timedelta(days=(weekdays[schedule.weekday] - candidate.weekday()) % 7)
+        if candidate <= now:
+            candidate += timedelta(days=7)
+    return candidate.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+def trino_sql_job_run_as_actor(job: ETLJobModel) -> ActorContext:
+    recipe = job.sql_recipe if isinstance(job.sql_recipe, dict) else {}
+    run_as = recipe.get("runAs") if isinstance(recipe.get("runAs"), dict) else {}
+    return ActorContext(
+        name=str(run_as.get("name") or job.created_by or job.owner),
+        role=str(run_as.get("role") or "viewer"),
+        groups=tuple(str(group) for group in run_as.get("groups") or []),
+        id=str(run_as.get("id") or "") or None,
+        email=str(run_as.get("email") or "") or None,
+    )
+
+
+def trino_query_run_belongs_to_actor(payload: dict[str, Any], actor: ActorContext) -> bool:
+    submitted_user_id = str(payload.get("submittedByUserId") or "").strip()
+    submitted_name = str(payload.get("submittedByName") or "").strip()
+    return bool(
+        (actor.id and submitted_user_id and actor.id == submitted_user_id)
+        or (actor.name and submitted_name and actor.name == submitted_name)
+    )
 
 
 def has_scheduled_label(schedule_label: str | None) -> bool:

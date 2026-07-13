@@ -11,6 +11,7 @@ from app.repositories.catalog_repository import CatalogRepository
 from app.repositories.sql_repository import SqlRepository
 from app.services.trino_query_run_service import TrinoQueryRunService
 from app.services.trino_materialization_service import TrinoMaterializationService
+from app.services.trino_sql_job_service import TrinoSqlJobService
 
 
 @dataclass(frozen=True)
@@ -44,6 +45,11 @@ class TrinoResultCollector:
             catalog_repository=catalog_repository,
             runtime_settings=self.settings,
         )
+        self.sql_job_service = TrinoSqlJobService(
+            repository=repository,
+            catalog_repository=catalog_repository,
+            runtime_settings=self.settings,
+        )
 
     def collect_available(self, *, max_runs: int = 20) -> TrinoCollectorSummary:
         claimed_runs = 0
@@ -59,13 +65,13 @@ class TrinoResultCollector:
                 break
             claimed_runs += 1
             is_materialization = claim.engine == "trino-materialization"
+            is_sql_job = claim.engine == "trino-job-materialization"
+            collector_action = "trino_sql_job.collector" if is_sql_job else (
+                "trino_materialization.collector" if is_materialization else "query_run.collector"
+            )
             safe_record_audit_event(
                 self.repository.db,
-                action=(
-                    "trino_materialization.collector.recovered" if claim.recovered else "trino_materialization.collector.started"
-                ) if is_materialization else (
-                    "query_run.collector.recovered" if claim.recovered else "query_run.collector.started"
-                ),
+                action=f"{collector_action}.{'recovered' if claim.recovered else 'started'}",
                 actor=ActorContext(name="AskLake Collector", role="admin"),
                 api_path="/internal/trino-result-collector",
                 http_method="POST",
@@ -73,15 +79,16 @@ class TrinoResultCollector:
                 result="success",
                 status_code=status.HTTP_202_ACCEPTED,
                 target_id=claim.run_id,
-                target_type="dataset" if is_materialization else "query_run",
+                target_type="etl_job" if is_sql_job else ("dataset" if is_materialization else "query_run"),
             )
             try:
-                response = (
-                    self.materialization_service.collect_claimed_run(claim.run_id, self.worker_id, claim.generation)
-                    if is_materialization
-                    else self.query_service.collect_claimed_run(claim.run_id, self.worker_id, claim.generation)
-                )
-                if response.status in {"succeeded", "failed", "cancelled"}:
+                if is_sql_job:
+                    response = self.sql_job_service.collect_claimed_run(claim.run_id, self.worker_id, claim.generation)
+                elif is_materialization:
+                    response = self.materialization_service.collect_claimed_run(claim.run_id, self.worker_id, claim.generation)
+                else:
+                    response = self.query_service.collect_claimed_run(claim.run_id, self.worker_id, claim.generation)
+                if response.status in {"succeeded", "success", "failed", "cancelled", "canceled"}:
                     completed_runs += 1
             except ApiError as exc:
                 # Lease expiry makes this run recoverable by a later worker.
@@ -93,7 +100,7 @@ class TrinoResultCollector:
                 )
                 safe_record_audit_event(
                     self.repository.db,
-                    action="trino_materialization.collector.retry" if is_materialization else "query_run.collector.retry",
+                    action=f"{collector_action}.retry",
                     actor=ActorContext(name="AskLake Collector", role="admin"),
                     api_path="/internal/trino-result-collector",
                     http_method="POST",
@@ -106,7 +113,7 @@ class TrinoResultCollector:
                     result="failed",
                     status_code=exc.status_code,
                     target_id=claim.run_id,
-                    target_type="dataset" if is_materialization else "query_run",
+                    target_type="etl_job" if is_sql_job else ("dataset" if is_materialization else "query_run"),
                 )
 
         return TrinoCollectorSummary(

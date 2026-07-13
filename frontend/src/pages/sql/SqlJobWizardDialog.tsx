@@ -98,6 +98,7 @@ export type SqlJobWizardDefaultMetadata = Partial<SqlJobWizardDatasetInfo>;
 export interface SqlJobWizardDialogProps {
   baseDataset: Pick<CatalogDataset, "id" | "name" | "owner">;
   defaultMetadata?: SqlJobWizardDefaultMetadata;
+  engine?: "compatibility" | "trino";
   onClose: () => void;
   onCreate: (request: SqlJobWizardCreateRequest) => Promise<boolean | void>;
   open: boolean;
@@ -197,7 +198,7 @@ function isValidTime(value: string) {
   return /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
 }
 
-function validateStep(step: WizardStepId, configuration: SqlJobWizardConfiguration) {
+function validateStep(step: WizardStepId, configuration: SqlJobWizardConfiguration, engine: "compatibility" | "trino") {
   const errors: string[] = [];
   if (step === "dataset") {
     if (!configuration.dataset.name.trim()) errors.push("데이터셋 이름을 입력해 주세요.");
@@ -211,7 +212,7 @@ function validateStep(step: WizardStepId, configuration: SqlJobWizardConfigurati
     if (!configuration.governance.owner.trim()) errors.push("데이터 오너를 입력해 주세요.");
     if (!configuration.governance.permissionSummary.trim()) errors.push("권한 정책 요약을 입력해 주세요.");
   }
-  if (step === "review") {
+  if (step === "review" && engine === "compatibility") {
     if (!configuration.target.storagePath.trim()) errors.push("저장 경로를 입력해 주세요.");
     if (configuration.target.storagePath && !/^s3a?:\/\//i.test(configuration.target.storagePath)) {
       errors.push("저장 경로는 s3:// 또는 s3a:// 형식이어야 합니다.");
@@ -247,6 +248,7 @@ function createRequest(
 export function SqlJobWizardDialog({
   baseDataset,
   defaultMetadata,
+  engine = "compatibility",
   onClose,
   onCreate,
   open,
@@ -263,11 +265,11 @@ export function SqlJobWizardDialog({
   const previousContextRef = useRef<string | null>(null);
   const contextKey = `${baseDataset.id}:${resultDraft.runId}`;
   const activeStep = wizardSteps[stepIndex];
-  const activeErrors = validateStep(activeStep.id, configuration);
+  const activeErrors = validateStep(activeStep.id, configuration, engine);
   const isBusy = pending || submitting;
   const allErrors = useMemo(
-    () => wizardSteps.flatMap((step) => validateStep(step.id, configuration)),
-    [configuration],
+    () => wizardSteps.flatMap((step) => validateStep(step.id, configuration, engine)),
+    [configuration, engine],
   );
 
   useEffect(() => {
@@ -321,7 +323,7 @@ export function SqlJobWizardDialog({
 
   const createJob = async () => {
     if (allErrors.length > 0) {
-      const firstInvalidIndex = wizardSteps.findIndex((step) => validateStep(step.id, configuration).length > 0);
+      const firstInvalidIndex = wizardSteps.findIndex((step) => validateStep(step.id, configuration, engine).length > 0);
       setStepIndex(Math.max(firstInvalidIndex, 0));
       setHighestStepIndex((current) => Math.max(current, Math.max(firstInvalidIndex, 0)));
       setShowErrors(true);
@@ -353,7 +355,7 @@ export function SqlJobWizardDialog({
       ) : (
         <Button type="button" disabled={isBusy || allErrors.length > 0} onClick={() => void createJob()} size="sm" variant="primary">
           {isBusy ? <Spinner /> : <Database data-icon="inline-start" />}
-          {isBusy ? "생성 중..." : "처리 Job 생성"}
+          {isBusy ? "생성 중..." : engine === "trino" ? "반복 SQL Job 생성" : "처리 Job 생성"}
         </Button>
       )}
     </>
@@ -368,10 +370,10 @@ export function SqlJobWizardDialog({
       open={open}
       showCloseButton={!isBusy}
       size="wide"
-      title="SQL 결과 처리 Job 생성"
+      title={engine === "trino" ? "반복 SQL Job 생성" : "SQL 결과 처리 Job 생성"}
     >
       <div className="grid gap-5">
-        <nav aria-label="처리 Job 생성 단계" className="grid grid-cols-4 gap-2 max-[760px]:grid-cols-2">
+        <nav aria-label={engine === "trino" ? "반복 SQL Job 생성 단계" : "처리 Job 생성 단계"} className="grid grid-cols-4 gap-2 max-[760px]:grid-cols-2">
           {wizardSteps.map((step, index) => {
             const Icon = step.icon;
             const complete = index < stepIndex;
@@ -480,9 +482,13 @@ export function SqlJobWizardDialog({
                 </Field>
                 <Field className={configuration.schedule.mode === "daily" ? "col-span-2 max-[760px]:col-span-1" : undefined}>
                   <FieldLabel htmlFor="sql-job-wizard-overlap">실행 겹침 정책</FieldLabel>
-                  <NativeSelect id="sql-job-wizard-overlap" value={configuration.schedule.overlapPolicy} onChange={(event) => setConfiguration((current) => ({ ...current, schedule: { ...current.schedule, overlapPolicy: event.target.value as ScheduleOverlapPolicy } }))}>
-                    {Object.entries(overlapPolicyLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                  </NativeSelect>
+                  {engine === "trino" ? (
+                    <Input id="sql-job-wizard-overlap" readOnly value={overlapPolicyLabels.skip_if_running} />
+                  ) : (
+                    <NativeSelect id="sql-job-wizard-overlap" value={configuration.schedule.overlapPolicy} onChange={(event) => setConfiguration((current) => ({ ...current, schedule: { ...current.schedule, overlapPolicy: event.target.value as ScheduleOverlapPolicy } }))}>
+                      {Object.entries(overlapPolicyLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                    </NativeSelect>
+                  )}
                 </Field>
               </div>
             ) : null}
@@ -526,13 +532,16 @@ export function SqlJobWizardDialog({
 
         {activeStep.id === "review" ? (
           <div className="grid gap-5">
-            <FieldGroup className="grid-cols-3 max-[760px]:grid-cols-1">
-              <Field>
+            <FieldGroup className={engine === "trino" ? "grid-cols-2 max-[760px]:grid-cols-1" : "grid-cols-3 max-[760px]:grid-cols-1"}>
+              {engine === "compatibility" ? <Field>
                 <FieldLabel htmlFor="sql-job-wizard-compression">압축 방식</FieldLabel>
                 <NativeSelect id="sql-job-wizard-compression" value={configuration.target.compression} onChange={(event) => setConfiguration((current) => ({ ...current, target: { ...current.target, compression: event.target.value as SqlJobWizardCompression } }))}>
                   <option value="Snappy">Snappy</option><option value="Gzip">Gzip</option><option value="None">압축 없음</option>
                 </NativeSelect>
-              </Field>
+              </Field> : <Field>
+                <FieldLabel>갱신 방식</FieldLabel>
+                <Input readOnly value="전체 갱신 (full refresh)" />
+              </Field>}
               <Field>
                 <FieldLabel htmlFor="sql-job-wizard-partition">파티션 컬럼</FieldLabel>
                 <NativeSelect id="sql-job-wizard-partition" value={configuration.target.partitionColumn || "__none__"} onChange={(event) => setConfiguration((current) => ({ ...current, target: { ...current.target, partitionColumn: event.target.value === "__none__" ? "" : event.target.value } }))}>
@@ -540,18 +549,18 @@ export function SqlJobWizardDialog({
                   {resultDraft.columns.map((column) => <option key={column} value={column}>{column}</option>)}
                 </NativeSelect>
               </Field>
-              <Field>
+              {engine === "compatibility" ? <Field>
                 <FieldLabel htmlFor="sql-job-wizard-storage">저장 경로</FieldLabel>
                 <Input id="sql-job-wizard-storage" value={configuration.target.storagePath} onChange={(event) => { setStoragePathTouched(true); setConfiguration((current) => ({ ...current, target: { ...current.target, storagePath: event.target.value } })); }} />
-                {showErrors && validateStep("review", configuration).length > 0 ? <FieldError>유효한 S3 저장 경로를 입력해 주세요.</FieldError> : null}
-              </Field>
+                {showErrors && validateStep("review", configuration, engine).length > 0 ? <FieldError>유효한 S3 저장 경로를 입력해 주세요.</FieldError> : null}
+              </Field> : null}
             </FieldGroup>
 
             <div className="grid grid-cols-2 gap-3 max-[760px]:grid-cols-1">
-              <Card className="grid gap-2" size="sm" variant="muted"><span className="text-xs font-semibold text-slate-500">데이터셋</span><strong>{configuration.dataset.name}</strong><small className="text-slate-500">{configuration.target.compression} 압축</small></Card>
+              <Card className="grid gap-2" size="sm" variant="muted"><span className="text-xs font-semibold text-slate-500">데이터셋</span><strong>{configuration.dataset.name}</strong><small className="text-slate-500">{engine === "trino" ? "Iceberg · 전체 갱신" : `${configuration.target.compression} 압축`}</small></Card>
               <Card className="grid gap-2" size="sm" variant="muted"><span className="text-xs font-semibold text-slate-500">실행 정책</span><strong>{formatSqlJobWizardScheduleLabel(configuration.schedule)}</strong><small className="text-slate-500">{configuration.schedule.mode === "manual" ? "직접 실행" : configuration.schedule.timezone}</small></Card>
               <Card className="grid gap-2" size="sm" variant="muted"><span className="text-xs font-semibold text-slate-500">거버넌스</span><strong>{configuration.governance.owner}</strong><small className="text-slate-500">{accessScopeLabels[configuration.governance.accessScope]}</small></Card>
-              <Card className="grid gap-2" size="sm" variant="muted"><span className="text-xs font-semibold text-slate-500">저장 위치</span><strong className="truncate" title={configuration.target.storagePath}>{configuration.target.storagePath}</strong><small className="text-slate-500">{configuration.target.partitionColumn ? `${configuration.target.partitionColumn} 파티션` : "파티션 없음"}</small></Card>
+              <Card className="grid gap-2" size="sm" variant="muted"><span className="text-xs font-semibold text-slate-500">저장 위치</span><strong className="truncate" title={engine === "trino" ? "Trino 관리 Iceberg" : configuration.target.storagePath}>{engine === "trino" ? "Trino 관리 Iceberg" : configuration.target.storagePath}</strong><small className="text-slate-500">{configuration.target.partitionColumn ? `${configuration.target.partitionColumn} 파티션` : "파티션 없음"}</small></Card>
             </div>
 
             <section className="grid gap-3" aria-labelledby="sql-job-wizard-preview-title">

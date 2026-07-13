@@ -1,9 +1,10 @@
 import base64
+from dataclasses import dataclass
 import json
 import ssl
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
 
 from fastapi import status
@@ -12,6 +13,13 @@ from app.core.config import Settings, settings
 from app.core.errors import ApiError
 from app.schemas.common import ErrorCode
 from app.schemas.trino import TrinoClientPage, TrinoQueryRunError
+
+
+@dataclass(frozen=True)
+class TrinoQueryInfo:
+    query_id: str
+    raw_stats: dict[str, Any]
+    state: str | None
 
 
 class TrinoClient:
@@ -49,6 +57,28 @@ class TrinoClient:
         validate_next_uri(next_uri, self.settings.trino_base_url)
         self._request(next_uri, method="DELETE", headers=self._identity_headers(), allow_empty_response=True)
 
+    def query_info(self, query_id: str) -> TrinoQueryInfo:
+        normalized_query_id = query_id.strip()
+        if not normalized_query_id or len(normalized_query_id) > 200:
+            raise ApiError(
+                ErrorCode.VALIDATION_ERROR,
+                "Invalid Trino query ID",
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+            )
+        endpoint = f"{self.settings.trino_base_url.rstrip('/')}/v1/query/{quote(normalized_query_id, safe='')}"
+        payload = self._request_json(
+            endpoint,
+            method="GET",
+            headers=self._identity_headers(),
+            timeout_seconds=self.settings.trino_progress_timeout_seconds,
+        )
+        query_stats = payload.get("queryStats") if isinstance(payload.get("queryStats"), dict) else {}
+        return TrinoQueryInfo(
+            query_id=str(payload.get("queryId") or normalized_query_id),
+            raw_stats=query_stats,
+            state=string_or_none(payload.get("state")),
+        )
+
     def explain(self, query: str) -> str:
         """Return a bounded distributed plan without running the user query."""
         page = self.submit(f"EXPLAIN (TYPE DISTRIBUTED) {query}")
@@ -81,6 +111,27 @@ class TrinoClient:
         headers: dict[str, str] | None = None,
         allow_empty_response: bool = False,
     ) -> TrinoClientPage:
+        payload = self._request_json(
+            url,
+            method=method,
+            body=body,
+            headers=headers,
+            allow_empty_response=allow_empty_response,
+        )
+        if payload is None:
+            return TrinoClientPage(query_id="", raw_stats={})
+        return parse_trino_page(payload)
+
+    def _request_json(
+        self,
+        url: str,
+        *,
+        method: str,
+        body: bytes | None = None,
+        headers: dict[str, str] | None = None,
+        allow_empty_response: bool = False,
+        timeout_seconds: float | None = None,
+    ) -> dict[str, Any] | None:
         request = Request(
             url,
             data=body,
@@ -88,7 +139,10 @@ class TrinoClient:
             method=method,
         )
         try:
-            with self.opener.open(request, timeout=self.settings.trino_query_timeout_seconds) as response:
+            with self.opener.open(
+                request,
+                timeout=timeout_seconds or self.settings.trino_query_timeout_seconds,
+            ) as response:
                 raw_response = response.read(self.settings.trino_max_response_bytes + 1)
         except HTTPError as exc:
             raise ApiError(
@@ -121,7 +175,7 @@ class TrinoClient:
             ) from exc
 
         if allow_empty_response and not response_text.strip():
-            return TrinoClientPage(query_id="", raw_stats={})
+            return None
 
         try:
             payload = json.loads(response_text)
@@ -131,7 +185,13 @@ class TrinoClient:
                 "Trino returned an invalid response",
                 status.HTTP_502_BAD_GATEWAY,
             ) from exc
-        return parse_trino_page(payload)
+        if not isinstance(payload, dict):
+            raise ApiError(
+                ErrorCode.INTERNAL_ERROR,
+                "Trino returned an invalid response",
+                status.HTTP_502_BAD_GATEWAY,
+            )
+        return payload
 
 
 def parse_trino_page(payload: dict[str, Any]) -> TrinoClientPage:
@@ -157,6 +217,7 @@ def parse_trino_page(payload: dict[str, Any]) -> TrinoClientPage:
         raw_stats=raw_stats,
         rows=[row for row in payload.get("data", []) if isinstance(row, list)],
         state=string_or_none(raw_stats.get("state")),
+        update_count=int(payload["updateCount"]) if isinstance(payload.get("updateCount"), int) else None,
     )
 
 

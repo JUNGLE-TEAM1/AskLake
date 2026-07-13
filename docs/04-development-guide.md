@@ -29,12 +29,13 @@ Dashboard table widget은 chart renderer 전환 범위에 포함하지 않으며
 
 ```bash
 cd frontend
+npm run test:trino-timeline
 npm run verify:ui-regressions
 npm run build
 ```
 
 현재 package script는 TypeScript build와 Vite build를 함께 실행한다.
-`npm run verify:ui-regressions`는 SQL 분석의 Nessie Popover/Bubble/Collapsible 흐름, Dashboard `WidgetConfigPanel` 재사용, 오른쪽 차트/데이터 전환, SQL 내부 Job wizard, Preview `limit` 전달, Catalog -> SQL wide button, Dashboard 목록의 `Alert`/`Skeleton`/`Empty`, edit의 radial range `Slider`와 Kibo dataset Tree, ApexCharts CSS 텍스트 누수 방지처럼 최근 UI 회귀가 있었던 핵심 UI 계약을 정적으로 확인한다.
+`npm run test:trino-timeline`은 `쿼리 실행 -> 첫 결과 준비 -> 전체 결과 수집` 세 단계의 노출 순서, terminal/만료 상태, 2초 progress 지연, 실제 분자/분모 없는 bar 생략, 수집 100% 이후 manifest 마무리, legacy timing fallback을 production 순수 상태 모델에 직접 넣어 검증한다. `npm run verify:ui-regressions`는 이 상태 테스트를 먼저 실행한 뒤 첫 page 최초 1회 자동 조회/재시도 측정, SQL 분석의 Nessie Popover/Bubble/Collapsible 흐름, Dashboard `WidgetConfigPanel` 재사용, 오른쪽 차트/데이터 전환, SQL 내부 Job wizard, Preview `limit` 전달, Catalog -> SQL wide button, Dashboard 목록의 `Alert`/`Skeleton`/`Empty`, edit의 radial range `Slider`와 Kibo dataset Tree, ApexCharts CSS 텍스트 누수 방지처럼 최근 UI 회귀가 있었던 핵심 UI 계약을 정적으로 확인한다.
 
 Trino Query Run 이력 repository filter는 `cd backend && ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-query-history`로 확인한다. 이 검증은 임시 실행 레코드를 만들고 현재 사용자 ID/name 필터가 다른 사용자의 run을 반환하지 않는지 확인한 뒤 정리한다.
 
@@ -67,12 +68,30 @@ Production cleanup은 Compose의 `trino-result-cleanup` worker가 `TRINO_CLEANUP
 
 Collector retry는 `5s -> 15s -> 60s -> max 5m` backoff를 사용한다. `trino:collect-results`를 반복 실행해도 `nextAttemptAt` 전의 실패 run은 다시 claim하지 않는다. cancel은 collector generation을 무효화하므로 이미 진행 중인 fetch가 취소된 run을 다시 running/succeeded로 저장할 수 없다.
 
+Query Run live progress는 collector가 blocking `nextUri`를 기다리는 동안 `TRINO_PROGRESS_POLL_SECONDS`(기본 0.5초)마다 QueryInfo를 읽기 전용으로 조회한다. QueryInfo timeout은 `TRINO_PROGRESS_TIMEOUT_SECONDS`(기본 1초)이며 오류는 기존 statement stats fallback으로 처리한다. `verify:trino-query-foundation`은 QueryInfo duration/data-size parser, QueryInfo/statement 누적 지표 monotonic merge, UTC milestone set-once timing, 수집 퍼센트, 숫자형 Catalog 크기 우선, IEC 단위 파싱, Plan/Catalog 보수적 상한, warning/confirmation/hard-limit snapshot을 확인한다. `verify:trino-collector-resilience`는 장기 fetch 중 lease 주기 갱신, 중간 progress/실제 지표와 collection timing 저장이 lease/cancel/takeover/result page 계약을 깨지 않고 최초 시각을 보존하는지 확인한다.
+
 Collector generation fencing, stale worker takeover, 고정 크기 API pagination, 100건 초과 retention cleanup 경계는 아래 검증으로 확인한다. Actor별 idempotency와 동시 실행 slot의 PostgreSQL 원자성은 두 번째 명령이 실제 두 session을 경합시켜 확인한다.
 
 ```bash
 cd backend
 ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-collector-resilience
 ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-submission-guard
+```
+
+반복 Trino SQL Job의 실제 Iceberg 갱신과 장애 보존 계약은 PostgreSQL, MinIO, Trino를 올린 뒤 아래 E2E로 확인한다. 스크립트는 한글 표시명 Dataset과 `TRY_CAST` Query Run을 만들고, 같은 Job을 두 번 실행해 물리 table version이 교체되는지 확인한다. 마지막에는 원본 table을 제거해 실패 Run을 만들고 직전 정상 Catalog mapping이 유지되는지 검사한 뒤 fixture를 정리한다.
+
+```bash
+docker compose up -d postgres minio trino
+cd backend
+TRINO_ENABLED=true \
+MINIO_ENDPOINT=http://127.0.0.1:9000 \
+MINIO_ACCESS_KEY=m3admin \
+MINIO_SECRET_KEY=wishuponastar \
+TRINO_RESULT_STORAGE_ACCESS_KEY=m3admin \
+TRINO_RESULT_STORAGE_SECRET_KEY=wishuponastar \
+TRINO_RESULT_STORAGE_AUTO_CREATE_BUCKET=true \
+ASKLAKE_FASTAPI_PYTHON=.venv/bin/python \
+npm run verify:trino-sql-job-e2e
 ```
 
 Trino Query Run collector는 API request와 분리된 worker다. local에서 query를 제출한 뒤 브라우저 polling 없이 한 번 수집하려면 아래 명령을 실행한다. production Compose의 `trino-result-collector` service는 같은 명령을 poll loop로 계속 실행하며, DB lease가 만료된 run을 다른 worker가 재시작 뒤 이어받는다.

@@ -1,11 +1,14 @@
-import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type KeyboardEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
+  AlertCircle,
   BarChart3,
+  CheckCircle2,
   Clock3,
   Database,
   Download,
   History,
+  Loader2,
   Maximize2,
   PanelLeftClose,
   PanelLeftOpen,
@@ -14,6 +17,7 @@ import {
   Search,
   Square,
   Table2,
+  Workflow,
 } from "lucide-react";
 import { ActionGroup } from "@/components/ui/action-group";
 import { Badge } from "@/components/ui/badge";
@@ -34,6 +38,7 @@ import { NativeSelect } from "@/components/ui/native-select";
 import { PageHeader } from "@/components/ui/page-header";
 import { PaginationBar } from "@/components/ui/pagination-bar";
 import { Panel, PanelHeader } from "@/components/ui/panel";
+import { Progress, ProgressLabel, ProgressValue } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
@@ -41,13 +46,13 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { cn } from "@/lib/utils";
 import { apiConfig } from "../../services/apiClient";
 import { executeQueryPreview } from "../../services/mockApi";
-import { cancelTrinoQueryRun, estimateSqlQueryRun, getTrinoMaterialization, getTrinoQueryRun, getTrinoQueryRunResultPage, isTrinoQueryRun, listTrinoQueryRuns, materializeTrinoQueryRun, submitSqlQueryRun } from "../../services/pipelineApi";
+import { cancelTrinoQueryRun, estimateSqlQueryRun, getTrinoMaterialization, getTrinoQueryRun, getTrinoQueryRunResultPage, isTrinoQueryRun, listTrinoQueryRuns, materializeTrinoQueryRun, submitSqlQueryRun, validateSqlQueryRun } from "../../services/pipelineApi";
 import {
   generateQueryAiSuggestion,
   type QueryAiSuggestion,
 } from "../../services/queryAiService";
 import { ApiError } from "../../types";
-import type { AuditResult, CatalogDataset, CreateDerivedDatasetRequest, CurrentUserResponse, DerivedDatasetLayer, SqlResultDraft, TrinoMaterializationRun, TrinoQueryEstimate, TrinoQueryRun, TrinoQueryRunHistoryItem, TrinoQueryRunResultPage } from "../../types";
+import type { AuditResult, CatalogDataset, CreateDerivedDatasetRequest, CreateTrinoSqlJobRequest, CurrentUserResponse, DerivedDatasetLayer, SqlResultDraft, TrinoMaterializationRun, TrinoQueryEstimate, TrinoQueryRun, TrinoQueryRunHistoryItem, TrinoQueryRunResultPage } from "../../types";
 import { canQueryDatasetAs, datasetQueryBlockedMessage } from "../../utils/permissions";
 import { SqlAiWriterDialog } from "./SqlAiWriterDialog";
 import { SqlChartConfigurator } from "./SqlChartConfigurator";
@@ -81,6 +86,13 @@ import {
   type AutocompleteCandidate,
   type SqlPreflightResult,
 } from "./sqlLogic";
+import {
+  buildTrinoExecutionTimelineModel,
+  isTrinoQueryExecutionComplete,
+  isTrinoResultCollectionActive,
+  shouldShowTrinoSubmissionTimeline,
+  type TrinoExecutionStageStatus,
+} from "./trinoExecutionTimeline";
 
 function createClientRequestId() {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
@@ -97,34 +109,248 @@ function isSqlCandidateDataset(dataset: CatalogDataset) {
 
 function getTrinoResultStatusLabel(run: TrinoQueryRun | null) {
   if (!run) return "대기 중";
-  if (run.result?.storageStatus === "collecting") return "결과 수집 중";
+  if (isTrinoResultCollectionActive(run)) return "결과 수집 중";
   if (run.result?.storageStatus === "available") return "결과 준비됨";
   if (run.result?.storageStatus === "expired") return "보관 기간 만료";
   if (run.result?.storageStatus === "unavailable") return "결과 저장 실패";
+  if (isTrinoQueryExecutionComplete(run) && !run.result?.storageStatus) return "결과 상태 확인 중";
   if (run.status === "failed") return "실행 실패";
   if (run.status === "cancelled") return "실행 취소됨";
   return run.status === "queued" ? "실행 대기 중" : "실행 중";
 }
 
-function getTrinoExecutionPhase(run: TrinoQueryRun) {
-  if (run.status === "failed") return "실행 실패";
-  if (run.status === "cancelled") return "실행 취소됨";
-  if (run.result?.storageStatus === "collecting") return "결과 수집 중";
-  if (run.status === "queued") return "실행 대기 중";
-  if (run.status === "running") return "실행 중";
-  return "실행 완료";
+const LARGE_RESULT_ROW_THRESHOLD = 100_000;
+
+function TrinoExecutionStage({
+  badge,
+  children,
+  status,
+  summary,
+  title,
+}: {
+  badge?: string;
+  children?: ReactNode;
+  status: TrinoExecutionStageStatus | "expired";
+  summary?: string;
+  title: string;
+}) {
+  const StageIcon = status === "completed"
+    ? CheckCircle2
+    : status === "active" ? Loader2 : status === "expired" ? Clock3 : AlertCircle;
+  return (
+    <div
+      aria-current={status === "active" ? "step" : undefined}
+      className={`sql-run-stage ${status}`}
+      role="listitem"
+    >
+      <div className="sql-run-stage-header">
+        <span className="sql-run-stage-title">
+          <StageIcon className={status === "active" ? "sql-run-stage-spinner" : undefined} size={16} />
+          <strong>{title}</strong>
+        </span>
+        <span className="sql-run-stage-header-meta">
+          {badge && <Badge size="sm" variant="outline">{badge}</Badge>}
+          {summary && <span className="sql-run-stage-summary">{summary}</span>}
+        </span>
+      </div>
+      {status === "active" && children ? <div className="sql-run-stage-body">{children}</div> : null}
+    </div>
+  );
 }
 
-function getRunProgressPercentage(run: TrinoQueryRun) {
-  const value = run.stats?.progressPercentage;
-  if (typeof value === "number" && Number.isFinite(value)) return Math.max(0, Math.min(100, value));
-  if (run.status === "succeeded") return 100;
-  return null;
-}
+function TrinoExecutionTimeline({
+  firstPageError,
+  firstPageDisplayMs,
+  firstPageRowCount,
+  run,
+  submissionError,
+  submissionPending,
+}: {
+  firstPageError?: string | null;
+  firstPageDisplayMs?: number | null;
+  firstPageRowCount?: number | null;
+  run: TrinoQueryRun | null;
+  submissionError?: string | null;
+  submissionPending: boolean;
+}) {
+  if (!run && !submissionPending && !submissionError) return null;
 
-function getEstimatedRemainingMs(estimatedDurationSeconds: number | null | undefined, elapsedMs: number | null | undefined) {
-  if (estimatedDurationSeconds == null || elapsedMs == null) return null;
-  return Math.max(0, (estimatedDurationSeconds * 1000) - elapsedMs);
+  if (submissionPending || submissionError) {
+    return (
+      <section aria-label="실행 과정" aria-live="polite" className="sql-run-timeline">
+        <div className="sql-run-timeline-heading"><Activity size={15} /> 실행 과정</div>
+        <div className="sql-run-stage-list" role="list">
+          <TrinoExecutionStage
+            status={submissionError ? "failed" : "active"}
+            summary={submissionError ?? "요청 접수 중"}
+            title="쿼리 실행"
+          />
+        </div>
+      </section>
+    );
+  }
+
+  if (!run) return null;
+
+  const timeline = buildTrinoExecutionTimelineModel(run);
+  const {
+    collectedRows,
+    collectionActive,
+    collectionElapsedMs,
+    collectionFinalizing,
+    collectionProgressPercentage,
+    collectionProgressVisible,
+    collectionStageStatus,
+    collectionStageVisible,
+    collectionStateUnknown,
+    completedWork,
+    expectedRows,
+    firstResultElapsedMs,
+    firstResultReady,
+    firstResultStageStatus,
+    firstResultStageVisible,
+    queryElapsedMs,
+    queryPhaseLabel,
+    queryProgressVisible,
+    queryStageStatus,
+    runProgressPercentage,
+    storageFailed,
+    terminalStageStatus,
+    totalReadyMs,
+  } = timeline;
+  const largeResult = expectedRows != null && expectedRows >= LARGE_RESULT_ROW_THRESHOLD;
+  const terminalSummary = run.error?.message ?? (run.status === "cancelled" ? "실행 취소됨" : "실행 실패");
+  const collectionFailureSummary = run.error?.message ?? (storageFailed ? "결과 저장 실패" : terminalSummary);
+  const collectionCompletedRows = expectedRows ?? collectedRows;
+  const collectionSummary = collectionStageStatus === "completed"
+    ? [
+        collectionCompletedRows == null ? "수집 완료" : `${collectionCompletedRows.toLocaleString()}행`,
+        collectionElapsedMs != null ? formatDuration(collectionElapsedMs) : null,
+        run.result?.byteSize != null ? formatEstimateBytes(run.result.byteSize) : null,
+      ].filter((value): value is string => Boolean(value)).join(" · ")
+    : collectionStageStatus === "active"
+      ? collectionStateUnknown ? "저장 상태 확인 중" : undefined
+      : collectionFailureSummary;
+  const completedQuerySummary = [
+    run.stats?.queuedMs != null ? `대기 ${formatDuration(run.stats.queuedMs)}` : null,
+    run.stats?.elapsedMs != null ? formatDuration(run.stats.elapsedMs) : null,
+    run.stats?.processedBytes != null ? formatEstimateBytes(run.stats.processedBytes) : null,
+    run.stats?.peakMemoryBytes != null ? `피크 ${formatEstimateBytes(run.stats.peakMemoryBytes)}` : null,
+  ].filter((value): value is string => Boolean(value)).join(" · ") || "완료";
+  const firstResultPageUnavailable = ["expired", "unavailable"].includes(run.result?.storageStatus ?? "");
+  const firstResultDisplayed = firstResultReady && (
+    firstPageDisplayMs != null
+    || (run.result?.availablePageCount ?? 0) === 0
+    || firstResultPageUnavailable
+  );
+  const firstResultDisplayFailed = firstResultReady && !firstResultDisplayed && Boolean(firstPageError);
+  const visibleFirstResultStatus = firstResultDisplayFailed
+    ? "failed"
+    : firstResultReady && !firstResultDisplayed && firstResultStageStatus === "completed"
+      ? "active"
+      : firstResultStageStatus;
+  const firstResultSummary = firstResultDisplayed
+    ? [
+        firstResultElapsedMs != null ? `제출 후 ${formatDuration(firstResultElapsedMs)}` : "첫 결과 준비",
+        firstPageDisplayMs != null ? `화면 ${formatDuration(firstPageDisplayMs)}` : null,
+        firstPageRowCount != null ? `${firstPageRowCount.toLocaleString()}행 표시` : null,
+      ].filter((value): value is string => Boolean(value)).join(" · ")
+    : firstResultDisplayFailed
+      ? firstPageError ?? "첫 결과를 불러오지 못했습니다."
+      : visibleFirstResultStatus === "failed" || visibleFirstResultStatus === "cancelled" ? terminalSummary : undefined;
+  const timelineSummary = ["available", "expired"].includes(run.result?.storageStatus ?? "")
+    ? [
+        run.stats?.elapsedMs != null ? `Trino ${formatDuration(run.stats.elapsedMs)}` : null,
+        firstResultElapsedMs != null ? `첫 결과 ${formatDuration(firstResultElapsedMs)}` : null,
+        totalReadyMs != null ? `전체 준비 ${formatDuration(totalReadyMs)}` : null,
+      ].filter((value): value is string => Boolean(value)).join(" · ")
+    : "";
+
+  return (
+    <section aria-label="실행 과정" aria-live="polite" className="sql-run-timeline">
+      <div className="sql-run-timeline-heading">
+        <span><Activity size={15} /> 실행 과정</span>
+        {timelineSummary && <strong>{timelineSummary}</strong>}
+      </div>
+      <div className="sql-run-stage-list" role="list">
+        <TrinoExecutionStage
+          status={queryStageStatus}
+          summary={queryStageStatus === "completed"
+            ? completedQuerySummary
+            : terminalStageStatus ? terminalSummary : queryPhaseLabel}
+          title="쿼리 실행"
+        >
+          {queryProgressVisible && (
+            <Progress
+              aria-label="쿼리 실행 진행률"
+              className="sql-run-progress-control"
+              indicatorClassName="sql-run-progress-indicator"
+              trackClassName="sql-run-progress-track"
+              value={runProgressPercentage ?? 0}
+            >
+              <ProgressLabel className="sql-run-progress-label">Trino 작업</ProgressLabel>
+              <ProgressValue className="sql-run-progress-value" maximumFractionDigits={1} />
+            </Progress>
+          )}
+          {!queryProgressVisible && (queryElapsedMs ?? 0) >= 2_000 && runProgressPercentage == null && (
+            <span className="sql-run-stage-state">Trino 진행률 정보를 확인하고 있습니다.</span>
+          )}
+          <div className="sql-run-stage-metrics">
+            <span>상태 <strong>{queryPhaseLabel}</strong></span>
+            <span>대기 <strong>{run.stats?.queuedMs != null ? formatDuration(run.stats.queuedMs) : "-"}</strong></span>
+            <span><Clock3 size={14} /> 실행 <strong>{queryElapsedMs != null ? formatDuration(queryElapsedMs) : "-"}</strong></span>
+            <span>처리량 <strong>{formatEstimateBytes(run.stats?.processedBytes)}</strong></span>
+            <span>처리 행 <strong>{formatMetricNumber(run.stats?.processedRows)}</strong></span>
+            {completedWork && <span>작업 <strong>{completedWork.completed.toLocaleString()} / {completedWork.total.toLocaleString()}</strong></span>}
+          </div>
+        </TrinoExecutionStage>
+        {firstResultStageVisible && (
+          <TrinoExecutionStage
+            status={visibleFirstResultStatus}
+            summary={firstResultSummary}
+            title="첫 결과 준비"
+          >
+            <div className="sql-run-stage-metrics">
+              <span><Clock3 size={14} /> 제출 후 경과 <strong>{firstResultElapsedMs != null ? formatDuration(firstResultElapsedMs) : "-"}</strong></span>
+              <span>저장 페이지 <strong>{run.result?.availablePageCount?.toLocaleString() ?? "0"}</strong></span>
+              <span>화면 표시 <strong>{firstPageDisplayMs != null ? formatDuration(firstPageDisplayMs) : "불러오는 중"}</strong></span>
+            </div>
+          </TrinoExecutionStage>
+        )}
+        {collectionStageVisible && (
+          <TrinoExecutionStage
+            badge={collectionActive && largeResult ? "대용량 결과 수집" : undefined}
+            status={run.result?.storageStatus === "expired" ? "expired" : collectionStageStatus}
+            summary={run.result?.storageStatus === "expired" ? "보관 기간 종료" : collectionSummary}
+            title={collectionStateUnknown ? "전체 결과 상태 확인 중" : "전체 결과 수집"}
+          >
+            {collectionProgressVisible && (
+              <Progress
+                aria-label="전체 결과 수집 진행률"
+                className="sql-run-progress-control"
+                indicatorClassName="sql-run-progress-indicator"
+                trackClassName="sql-run-progress-track"
+                value={collectionProgressPercentage ?? 0}
+              >
+                <ProgressLabel className="sql-run-progress-label">{collectionFinalizing ? "수집 데이터 확인 완료" : "수집 진행률"}</ProgressLabel>
+                <ProgressValue className="sql-run-progress-value" maximumFractionDigits={1} />
+              </Progress>
+            )}
+            {collectionFinalizing && <span className="sql-run-stage-state">결과 저장을 마무리하고 있습니다.</span>}
+            {!collectionProgressVisible && (collectionElapsedMs ?? 0) >= 2_000 && collectionProgressPercentage == null && (
+              <span className="sql-run-stage-state">{collectionStateUnknown ? "저장 상태 확인 중" : "전체 행을 확인하고 있습니다."}</span>
+            )}
+            <div className="sql-run-stage-metrics">
+              <span><Clock3 size={14} /> 수집 경과 <strong>{collectionElapsedMs != null ? formatDuration(collectionElapsedMs) : "-"}</strong></span>
+              <span>수집 행 <strong>{collectedRows == null ? "-" : collectedRows.toLocaleString()}</strong></span>
+              <span>전체 행 <strong>{expectedRows == null ? "확인 중" : expectedRows.toLocaleString()}</strong></span>
+              <span>저장량 <strong>{formatEstimateBytes(run.result?.byteSize)}</strong></span>
+            </div>
+          </TrinoExecutionStage>
+        )}
+      </div>
+    </section>
+  );
 }
 
 function getTrinoHistoryStatusLabel(run: TrinoQueryRunHistoryItem) {
@@ -164,7 +390,8 @@ function toTrinoHistoryItem(run: TrinoQueryRun): TrinoQueryRunHistoryItem {
 
 function getTrinoResultEmptyTitle(run: TrinoQueryRun | null) {
   if (run?.result?.storageStatus === "expired") return "결과 보관 기간이 만료되었습니다.";
-  if (run?.result?.storageStatus === "collecting") return "결과를 수집하고 있습니다.";
+  if (run && isTrinoResultCollectionActive(run)) return "결과를 수집하고 있습니다.";
+  if (run && ["queued", "running"].includes(run.status)) return "쿼리를 실행하고 있습니다.";
   if (run?.status === "failed") return "실행에 실패했습니다.";
   if (run?.status === "cancelled") return "실행이 취소되었습니다.";
   return "아직 결과가 없습니다.";
@@ -172,7 +399,8 @@ function getTrinoResultEmptyTitle(run: TrinoQueryRun | null) {
 
 function getTrinoResultEmptyMessage(run: TrinoQueryRun | null, hasBaseDataset: boolean) {
   if (run?.result?.storageStatus === "expired") return "보관 기간이 지난 결과는 다시 실행하거나 Iceberg Dataset으로 생성해 주세요.";
-  if (run?.result?.storageStatus === "collecting") return "서버가 결과 페이지를 저장하는 중입니다. 완료되는 대로 첫 페이지를 표시합니다.";
+  if (run && isTrinoResultCollectionActive(run)) return "서버가 결과 페이지를 저장하는 중입니다. 완료되는 대로 첫 페이지를 표시합니다.";
+  if (run && ["queued", "running"].includes(run.status)) return "Trino 실행 통계를 확인하는 중입니다.";
   return hasBaseDataset ? "SQL을 실행하면 실제 실행 결과가 여기에 페이지 단위로 표시됩니다." : "먼저 분석 테이블에서 데이터셋을 선택해 주세요.";
 }
 
@@ -186,6 +414,21 @@ function formatEstimateBytes(bytes: number | null | undefined) {
     unitIndex += 1;
   }
   return `${value >= 10 || unitIndex === 0 ? Math.round(value) : value.toFixed(1)} ${units[unitIndex]}`;
+}
+
+function getQueryEstimateSourceLabel(estimate: TrinoQueryEstimate) {
+  if (estimate.estimateSource === "iceberg_metadata") return "Iceberg 메타데이터 기준";
+  if (estimate.estimateSource === "conservative_bound") return "보수적 추정";
+  if (estimate.estimateSource === "trino_plan") return "Trino plan 기준";
+  return "Catalog 기준";
+}
+
+function getQueryEstimateSourceDetail(estimate: TrinoQueryEstimate) {
+  if (estimate.estimateSource === "iceberg_metadata") {
+    return `참조 컬럼 ${formatEstimateBytes(estimate.icebergEstimatedBytes)} · Dataset 저장 ${formatEstimateBytes(estimate.knownInputBytes)}`;
+  }
+  if (estimate.estimateSource !== "conservative_bound") return undefined;
+  return `Trino plan ${formatEstimateBytes(estimate.planEstimatedBytes)} · 원본 ${formatEstimateBytes(estimate.knownInputBytes)}`;
 }
 
 function formatMetricNumber(value: number | null | undefined) {
@@ -210,8 +453,10 @@ export function SqlAnalysisPage({
   dataset,
   datasets,
   onAction,
+  onCatalogRefresh,
   onNotify,
   onCreateDatasetJob,
+  onCreateTrinoSqlJob,
   onResultChange,
 }: {
   cachedResult?: SqlResultDraft | null;
@@ -220,8 +465,10 @@ export function SqlAnalysisPage({
   dataset: CatalogDataset | null;
   datasets: CatalogDataset[];
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
+  onCatalogRefresh: () => Promise<void> | void;
   onNotify: (message: string, tone?: "success" | "info") => void;
   onCreateDatasetJob: (request: CreateDerivedDatasetRequest) => Promise<boolean>;
+  onCreateTrinoSqlJob: (request: CreateTrinoSqlJobRequest) => Promise<boolean>;
   onResultChange: (result: SqlResultDraft | null) => void;
 }) {
   const [baseDatasetId, setBaseDatasetId] = useState<string | null>(dataset?.id ?? null);
@@ -245,8 +492,13 @@ export function SqlAnalysisPage({
   const [cursorIndex, setCursorIndex] = useState(defaultQuery.length);
   const [resultDraft, setResultDraft] = useState<SqlResultDraft | null>(null);
   const [trinoRun, setTrinoRun] = useState<TrinoQueryRun | null>(null);
+  const [trinoSubmissionPending, setTrinoSubmissionPending] = useState(false);
+  const [trinoStatusPollError, setTrinoStatusPollError] = useState<string | null>(null);
+  const [trinoStatusPollRetry, setTrinoStatusPollRetry] = useState(0);
   const [trinoRunHistory, setTrinoRunHistory] = useState<TrinoQueryRunHistoryItem[]>([]);
   const [trinoRunHistoryError, setTrinoRunHistoryError] = useState<string | null>(null);
+  const [trinoFirstPageDisplayMs, setTrinoFirstPageDisplayMs] = useState<number | null>(null);
+  const [trinoFirstPageRowCount, setTrinoFirstPageRowCount] = useState<number | null>(null);
   const [trinoResultPage, setTrinoResultPage] = useState<TrinoQueryRunResultPage | null>(null);
   const [trinoResultCursors, setTrinoResultCursors] = useState<Array<string | null>>([null]);
   const [trinoResultPageIndex, setTrinoResultPageIndex] = useState(0);
@@ -261,6 +513,10 @@ export function SqlAnalysisPage({
   const [queryEstimateError, setQueryEstimateError] = useState<string | null>(null);
   const [queryEstimateKey, setQueryEstimateKey] = useState<string | null>(null);
   const [queryEstimatePending, setQueryEstimatePending] = useState(false);
+  const [trinoValidationKey, setTrinoValidationKey] = useState<string | null>(null);
+  const [trinoValidationError, setTrinoValidationError] = useState<string | null>(null);
+  const [trinoValidationPending, setTrinoValidationPending] = useState(false);
+  const [trinoSubmissionError, setTrinoSubmissionError] = useState<string | null>(null);
   const [estimateDialogOpen, setEstimateDialogOpen] = useState(false);
   const [preflightResult, setPreflightResult] = useState<SqlPreflightResult | null>(null);
   const [queryAiPrompt, setQueryAiPrompt] = useState("");
@@ -276,6 +532,8 @@ export function SqlAnalysisPage({
   const [resultView, setResultView] = useState<"chart" | "table">("table");
   const [resultDialogOpen, setResultDialogOpen] = useState(false);
   const [materializeDialogOpen, setMaterializeDialogOpen] = useState(false);
+  const [jobDialogOpen, setJobDialogOpen] = useState(false);
+  const [historyDialogOpen, setHistoryDialogOpen] = useState(false);
   const [autocompleteIndex, setAutocompleteIndex] = useState(0);
   const [dismissedAutocompleteKey, setDismissedAutocompleteKey] = useState<string | null>(null);
   const contextPanelRef = useRef<HTMLElement | null>(null);
@@ -287,6 +545,7 @@ export function SqlAnalysisPage({
   const queryClientRequestRef = useRef<{ id: string; key: string } | null>(null);
   const skipNextBaseDatasetResetRef = useRef(false);
   const trinoResultLoadKeyRef = useRef("");
+  const catalogRefreshedMaterializationRef = useRef<string | null>(null);
   const derivedDatasetTagList = useMemo(() => parseDerivedDatasetTags(derivedDatasetTags), [derivedDatasetTags]);
   const referenceDatasetIdSet = useMemo(() => new Set(referenceDatasetIds), [referenceDatasetIds]);
   const queryValidationKey = useMemo(
@@ -335,7 +594,13 @@ export function SqlAnalysisPage({
     : selectedReferenceDatasets.find((item) => !canQueryDatasetAs(item, currentUser));
   const queryPermissionMessage = hasQueryPermission ? "" : datasetQueryBlockedMessage(blockedQueryDataset, "선택 데이터셋");
   const usesTrinoRuntime = Boolean(baseDataset?.queryEngineRequired);
-  const canRunPreview = Boolean(baseDataset && hasQueryPermission && preflightResult?.canExecute === true && preflightResult.key === queryValidationKey);
+  const canRunPreview = Boolean(
+    baseDataset
+      && hasQueryPermission
+      && preflightResult?.canExecute === true
+      && preflightResult.key === queryValidationKey
+      && (!usesTrinoRuntime || apiConfig.useMock || trinoValidationKey === queryValidationKey),
+  );
   const activeQueryEstimate = queryEstimateKey === queryValidationKey ? queryEstimate : null;
   const activeQueryEstimateError = queryEstimateKey === queryValidationKey ? queryEstimateError : null;
   const lineNumbers = useMemo(() => {
@@ -421,6 +686,7 @@ export function SqlAnalysisPage({
       setResultDraft(null);
       setPreflightResult(null);
       setMaterializeDialogOpen(false);
+      setJobDialogOpen(false);
       setQueryAiPrompt("");
       setQueryAiSuggestion(null);
       setQueryAiError(null);
@@ -440,6 +706,7 @@ export function SqlAnalysisPage({
     setResultDraft(null);
     setPreflightResult(null);
     setMaterializeDialogOpen(false);
+    setJobDialogOpen(false);
     setQueryAiPrompt("");
     setQueryAiSuggestion(null);
     setQueryAiError(null);
@@ -462,6 +729,7 @@ export function SqlAnalysisPage({
     setReferenceDatasetIds(cachedReferences);
     setResultDraft(cachedResult);
     setMaterializeDialogOpen(false);
+    setJobDialogOpen(false);
     setQueryAiSuggestion(null);
     setQueryAiError(null);
     setQueryAiDialogOpen(false);
@@ -469,6 +737,19 @@ export function SqlAnalysisPage({
     setResultView("table");
     setResultDialogOpen(false);
   }, [baseDataset, cachedResult, canRestoreCachedResult]);
+
+  useEffect(() => {
+    if (!baseDataset) {
+      setDerivedDatasetName("");
+      setDerivedDatasetDescription("");
+      setDerivedDatasetTags("");
+      return;
+    }
+    setDerivedDatasetName(buildDefaultDerivedDatasetName(baseDataset));
+    setDerivedDatasetDescription(buildDefaultDerivedDatasetDescription(baseDataset));
+    setDerivedDatasetTags(buildDefaultDerivedDatasetTags(baseDataset));
+    setDerivedDatasetLayer("GOLD");
+  }, [baseDataset?.id]);
 
   const queryContextPath = (mode: "preflight" | "preview" | "run" = "preview") => {
     const params = new URLSearchParams({ baseDatasetId: baseDataset?.id ?? "" });
@@ -559,6 +840,43 @@ export function SqlAnalysisPage({
   }, [baseDataset, hasQueryPermission, previewRowLimit, query, queryPermissionMessage, queryValidationKey, selectedReferenceDatasets, usesTrinoRuntime]);
 
   useEffect(() => {
+    if (
+      !usesTrinoRuntime
+      || apiConfig.useMock
+      || !baseDataset
+      || preflightResult?.key !== queryValidationKey
+      || !preflightResult.canExecute
+    ) {
+      setTrinoValidationPending(false);
+      setTrinoValidationKey(null);
+      setTrinoValidationError(null);
+      return;
+    }
+    let disposed = false;
+    const validationKey = queryValidationKey;
+    const timeoutId = window.setTimeout(() => {
+      setTrinoValidationPending(true);
+      setTrinoValidationError(null);
+      void validateSqlQueryRun(baseDataset, query, [...referenceDatasetIds].sort())
+        .then(() => {
+          if (!disposed) setTrinoValidationKey(validationKey);
+        })
+        .catch((error) => {
+          if (disposed) return;
+          setTrinoValidationKey(null);
+          setTrinoValidationError(error instanceof Error ? error.message : "Trino SQL 검증에 실패했습니다.");
+        })
+        .finally(() => {
+          if (!disposed) setTrinoValidationPending(false);
+        });
+    }, 300);
+    return () => {
+      disposed = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [baseDataset, preflightResult, query, queryValidationKey, referenceDatasetIds, usesTrinoRuntime]);
+
+  useEffect(() => {
     if (!usesTrinoRuntime || apiConfig.useMock || !baseDataset || !canRunPreview) {
       setQueryEstimatePending(false);
       return;
@@ -603,6 +921,8 @@ export function SqlAnalysisPage({
     const timeoutId = window.setTimeout(() => {
       void getTrinoQueryRun(trinoRun.runId)
         .then((nextRun) => {
+          setTrinoStatusPollError(null);
+          setTrinoStatusPollRetry(0);
           setTrinoRun(nextRun);
           setTrinoRunHistory((items) => [
             toTrinoHistoryItem(nextRun),
@@ -611,37 +931,55 @@ export function SqlAnalysisPage({
         })
         .catch((error) => {
           const message = error instanceof Error ? error.message : "Trino 실행 상태를 확인하지 못했습니다.";
-          setTrinoRun((current) => current ? {
-            ...current,
-            error: { code: "STATUS_POLL_FAILED", message },
-            status: "failed",
-          } : current);
-          setPreflightResult({ key: queryValidationKey, canExecute: false, messages: [{ tone: "error", text: message }] });
+          setTrinoStatusPollError(message);
+          setTrinoStatusPollRetry((attempt) => attempt + 1);
         });
-    }, 800);
+    }, Math.min(5_000, 500 * (trinoStatusPollRetry + 1)));
     return () => window.clearTimeout(timeoutId);
-  }, [queryValidationKey, trinoRun]);
+  }, [trinoRun, trinoStatusPollRetry]);
 
   useEffect(() => {
     const availablePageCount = trinoRun?.result?.availablePageCount ?? 0;
-    if (!trinoRun || availablePageCount < 1 || trinoResultPagePending || trinoResultPage?.nextCursor) return;
+    const storageStatus = trinoRun?.result?.storageStatus;
+    if (
+      !trinoRun
+      || availablePageCount < 1
+      || storageStatus === "expired"
+      || storageStatus === "unavailable"
+      || trinoResultPagePending
+      || trinoResultPage
+      || trinoResultPageIndex !== 0
+    ) return;
     const cursor = trinoResultCursors[trinoResultPageIndex] ?? null;
     const loadKey = [trinoRun.runId, trinoRun.status, availablePageCount, trinoResultPageIndex, cursor ?? "first"].join(":");
     if (trinoResultLoadKeyRef.current === loadKey) return;
     trinoResultLoadKeyRef.current = loadKey;
+    const firstPageLoadStartedAt = trinoResultPageIndex === 0 && !trinoResultPage ? performance.now() : null;
     setTrinoResultPagePending(true);
     void getTrinoQueryRunResultPage(trinoRun.runId, cursor)
       .then((page) => {
+        if (trinoResultLoadKeyRef.current !== loadKey) return;
         setTrinoResultPage(page);
+        if (firstPageLoadStartedAt != null) {
+          setTrinoFirstPageRowCount(page.rows.length);
+          window.requestAnimationFrame(() => {
+            if (trinoResultLoadKeyRef.current === loadKey) {
+              setTrinoFirstPageDisplayMs(Math.max(0, Math.round(performance.now() - firstPageLoadStartedAt)));
+            }
+          });
+        }
         setTrinoResultError(null);
         setTrinoResultRetryCursor(undefined);
       })
       .catch((error) => {
+        if (trinoResultLoadKeyRef.current !== loadKey) return;
         setTrinoResultError(error instanceof Error ? error.message : "실행 결과를 불러오지 못했습니다.");
         setTrinoResultRetryCursor(cursor);
         setTrinoResultRetryTargetIndex(trinoResultPageIndex);
       })
-      .finally(() => setTrinoResultPagePending(false));
+      .finally(() => {
+        if (trinoResultLoadKeyRef.current === loadKey) setTrinoResultPagePending(false);
+      });
   }, [trinoResultCursors, trinoResultPage, trinoResultPageIndex, trinoResultPagePending, trinoRun]);
 
   useEffect(() => {
@@ -665,9 +1003,22 @@ export function SqlAnalysisPage({
     return () => window.clearTimeout(timeoutId);
   }, [trinoMaterialization]);
 
+  useEffect(() => {
+    if (
+      trinoMaterialization?.queryEngineStatus !== "available"
+      || catalogRefreshedMaterializationRef.current === trinoMaterialization.materializationId
+    ) return;
+    catalogRefreshedMaterializationRef.current = trinoMaterialization.materializationId;
+    void onCatalogRefresh();
+  }, [onCatalogRefresh, trinoMaterialization]);
+
   const resetResultState = () => {
     setResultDraft(null);
     setTrinoRun(null);
+    setTrinoStatusPollError(null);
+    setTrinoStatusPollRetry(0);
+    setTrinoFirstPageDisplayMs(null);
+    setTrinoFirstPageRowCount(null);
     setTrinoResultPage(null);
     setTrinoResultCursors([null]);
     setTrinoResultPageIndex(0);
@@ -680,6 +1031,11 @@ export function SqlAnalysisPage({
     setQueryEstimate(null);
     setQueryEstimateError(null);
     setQueryEstimateKey(null);
+    setTrinoValidationKey(null);
+    setTrinoValidationError(null);
+    setTrinoValidationPending(false);
+    setTrinoSubmissionPending(false);
+    setTrinoSubmissionError(null);
     queryClientRequestRef.current = null;
     setEstimateDialogOpen(false);
     setExecutionMs(null);
@@ -688,6 +1044,7 @@ export function SqlAnalysisPage({
     setResultView("table");
     setResultDialogOpen(false);
     setMaterializeDialogOpen(false);
+    setJobDialogOpen(false);
     trinoResultLoadKeyRef.current = "";
     onResultChange(null);
   };
@@ -762,7 +1119,9 @@ export function SqlAnalysisPage({
       : null;
     const requestId = clientRequestId ?? reusableRequest?.id ?? createClientRequestId();
     queryClientRequestRef.current = { id: requestId, key: queryValidationKey };
+    setTrinoSubmissionError(null);
     setQueryPending(true);
+    setTrinoSubmissionPending(shouldShowTrinoSubmissionTimeline(usesTrinoRuntime, apiConfig.useMock));
     try {
       if (!apiConfig.useMock) {
         if (usesTrinoRuntime && !confirmationToken) {
@@ -782,6 +1141,10 @@ export function SqlAnalysisPage({
           setExecutionMs(Math.round(performance.now() - startedAt));
           setResultDraft(null);
           setTrinoRun(response);
+          setTrinoStatusPollError(null);
+          setTrinoStatusPollRetry(0);
+          setTrinoFirstPageDisplayMs(null);
+          setTrinoFirstPageRowCount(null);
           setTrinoResultPage(null);
           setTrinoResultCursors([null]);
           setTrinoResultPageIndex(0);
@@ -827,13 +1190,10 @@ export function SqlAnalysisPage({
         }
       }
       const message = error instanceof Error ? error.message : "실행에 실패했습니다. 쿼리 또는 데이터셋 상태를 확인해 주세요.";
-      setPreflightResult({
-        key: queryValidationKey,
-        canExecute: false,
-        messages: [{ tone: "error", text: message }],
-      });
+      setTrinoSubmissionError(message);
       onAction("analysis.query.preview_failed", queryContextPath("preview"), baseDataset.id, "failed");
     } finally {
+      setTrinoSubmissionPending(false);
       setQueryPending(false);
     }
   };
@@ -849,14 +1209,8 @@ export function SqlAnalysisPage({
   };
 
   const activeTrinoPage = trinoResultPage;
-  const runEstimate = trinoRun?.estimate ?? activeQueryEstimate;
-  const runProgressPercentage = trinoRun ? getRunProgressPercentage(trinoRun) : null;
-  const runPhase = trinoRun ? getTrinoExecutionPhase(trinoRun) : null;
-  const runIsActive = Boolean(trinoRun && (["queued", "running"].includes(trinoRun.status) || trinoRun.result?.storageStatus === "collecting"));
-  const runRemainingMs = trinoRun && runIsActive
-    ? getEstimatedRemainingMs(runEstimate?.estimatedDurationSeconds, trinoRun.stats?.elapsedMs)
-    : null;
   const trinoResultStatusLabel = getTrinoResultStatusLabel(trinoRun);
+
   const trinoDisplayResult = useMemo<SqlResultDraft | null>(() => {
     if (!trinoRun || !activeTrinoPage || !baseDataset) return null;
     return {
@@ -874,6 +1228,23 @@ export function SqlAnalysisPage({
     };
   }, [activeTrinoPage, baseDataset, trinoRun]);
   const visibleResult = resultDraft ?? trinoDisplayResult;
+  const trinoJobResultDraft = useMemo<SqlResultDraft | null>(() => {
+    if (!trinoRun || trinoRun.status !== "succeeded" || !baseDataset) return null;
+    const columns = trinoRun.result?.columns ?? activeTrinoPage?.columns ?? [];
+    return {
+      baseDatasetId: trinoRun.baseDatasetId,
+      columns,
+      datasetId: baseDataset.id,
+      datasetName: baseDataset.name,
+      executedAt: trinoRun.completedAt ?? trinoRun.startedAt ?? trinoRun.submittedAt,
+      mode: "run",
+      query: trinoRun.query,
+      referenceDatasetIds: trinoRun.referenceDatasetIds,
+      rowCount: trinoRun.result?.rowCount ?? 0,
+      rows: (activeTrinoPage?.rows ?? []).map((row) => row.map((cell) => cell == null ? "" : String(cell))),
+      runId: trinoRun.runId,
+    };
+  }, [activeTrinoPage, baseDataset, trinoRun]);
 
   const loadNextTrinoResultPage = async () => {
     if (!trinoRun || !activeTrinoPage?.nextCursor || trinoResultPagePending) return;
@@ -921,23 +1292,38 @@ export function SqlAnalysisPage({
   const retryTrinoResultPage = async () => {
     if (!trinoRun || trinoResultRetryCursor === undefined || trinoResultPagePending) return;
     const retryCursor = trinoResultRetryCursor;
+    const retryTargetIndex = trinoResultRetryTargetIndex;
+    const retryLoadKey = ["retry", trinoRun.runId, retryTargetIndex, retryCursor ?? "first"].join(":");
+    const firstPageRetryStartedAt = retryTargetIndex === 0 && trinoFirstPageDisplayMs == null
+      ? performance.now()
+      : null;
+    trinoResultLoadKeyRef.current = retryLoadKey;
     setTrinoResultPagePending(true);
     setTrinoResultError(null);
     try {
       const page = await getTrinoQueryRunResultPage(trinoRun.runId, retryCursor);
+      if (trinoResultLoadKeyRef.current !== retryLoadKey) return;
       setTrinoResultCursors((cursors) => {
         const next = [...cursors];
-        next[trinoResultRetryTargetIndex] = retryCursor;
-        return next.slice(0, trinoResultRetryTargetIndex + 1);
+        next[retryTargetIndex] = retryCursor;
+        return next.slice(0, retryTargetIndex + 1);
       });
       setTrinoResultPage(page);
-      setTrinoResultPageIndex(trinoResultRetryTargetIndex);
+      setTrinoResultPageIndex(retryTargetIndex);
       setTrinoResultRetryCursor(undefined);
-      trinoResultLoadKeyRef.current = "";
+      if (firstPageRetryStartedAt != null) {
+        setTrinoFirstPageRowCount(page.rows.length);
+        window.requestAnimationFrame(() => {
+          if (trinoResultLoadKeyRef.current === retryLoadKey) {
+            setTrinoFirstPageDisplayMs(Math.max(0, Math.round(performance.now() - firstPageRetryStartedAt)));
+          }
+        });
+      }
     } catch (error) {
+      if (trinoResultLoadKeyRef.current !== retryLoadKey) return;
       setTrinoResultError(error instanceof Error ? error.message : "실행 결과를 다시 불러오지 못했습니다.");
     } finally {
-      setTrinoResultPagePending(false);
+      if (trinoResultLoadKeyRef.current === retryLoadKey) setTrinoResultPagePending(false);
     }
   };
 
@@ -947,8 +1333,18 @@ export function SqlAnalysisPage({
     try {
       const cancelledRun = await cancelTrinoQueryRun(trinoRun.runId);
       setTrinoRun(cancelledRun);
+      setTrinoFirstPageDisplayMs(null);
+      setTrinoFirstPageRowCount(null);
+      setTrinoResultPage(null);
+      setTrinoResultCursors([null]);
+      setTrinoResultPageIndex(0);
+      setTrinoResultError(null);
+      setTrinoResultRetryCursor(undefined);
+      trinoResultLoadKeyRef.current = "";
       setTrinoRunHistory((items) => items.map((item) => item.runId === cancelledRun.runId ? toTrinoHistoryItem(cancelledRun) : item));
       onAction("analysis.query.run_cancelled", `/api/query/runs/${trinoRun.runId}/cancel`, trinoRun.baseDatasetId);
+    } catch (error) {
+      setTrinoSubmissionError(error instanceof Error ? error.message : "실행을 취소하지 못했습니다.");
     } finally {
       setQueryPending(false);
     }
@@ -970,6 +1366,10 @@ export function SqlAnalysisPage({
       setExecutionMs(null);
       setResultDraft(null);
       setTrinoRun(selectedRun);
+      setTrinoStatusPollError(null);
+      setTrinoStatusPollRetry(0);
+      setTrinoFirstPageDisplayMs(null);
+      setTrinoFirstPageRowCount(null);
       setTrinoResultPage(null);
       setTrinoResultCursors([null]);
       setTrinoResultPageIndex(0);
@@ -984,6 +1384,8 @@ export function SqlAnalysisPage({
       setQueryEstimateKey(null);
       queryClientRequestRef.current = null;
       setPreflightResult(null);
+      setTrinoSubmissionError(null);
+      setHistoryDialogOpen(false);
       trinoResultLoadKeyRef.current = "";
       onResultChange(null);
       onAction("analysis.query.history_opened", `/api/query/runs/${selectedRun.runId}`, selectedRun.baseDatasetId);
@@ -1194,7 +1596,50 @@ export function SqlAnalysisPage({
     onAction("analysis.result.downloaded", `/api/query/runs/${resultDraft.runId}/download`, resultDraft.datasetId);
   };
 
+  const downloadTrinoCsv = (runId: string) => {
+    const url = `${apiConfig.baseUrl}/api/query/runs/${encodeURIComponent(runId)}/exports/csv`;
+    window.open(url, "_blank", "noopener,noreferrer");
+    onAction("analysis.query_run.csv_export.download", `/api/query/runs/${runId}/exports/csv`, runId);
+  };
+
   const createDerivedDatasetJob = async ({ configuration, context }: SqlJobWizardCreateRequest) => {
+    if (trinoRun?.runId === context.sourceRunId) {
+      const request: CreateTrinoSqlJobRequest = {
+        baseDatasetId: context.baseDatasetId,
+        dataset: {
+          description: configuration.dataset.description.trim(),
+          layer: configuration.dataset.layer,
+          name: configuration.dataset.name.trim(),
+          rag: false,
+          refreshPolicy: "manual",
+          tags: derivedDatasetTagList,
+        },
+        governance: {
+          accessScope: configuration.governance.accessScope,
+          owner: configuration.governance.owner.trim(),
+          permissionSummary: configuration.governance.permissionSummary.trim(),
+        },
+        jobName: `${configuration.dataset.name.trim()} SQL Job`,
+        query: context.query,
+        referenceDatasetIds: context.referenceDatasetIds,
+        schedule: {
+          mode: configuration.schedule.mode,
+          overlapPolicy: "skip_if_running",
+          time: configuration.schedule.time,
+          timezone: configuration.schedule.timezone,
+          weekday: configuration.schedule.weekday,
+        },
+        sourceRunId: context.sourceRunId,
+        target: {
+          partitionColumn: configuration.target.partitionColumn || undefined,
+          writeMode: "full_refresh",
+        },
+      };
+      const created = await onCreateTrinoSqlJob(request);
+      if (created) setJobDialogOpen(false);
+      return created;
+    }
+
     const request: CreateDerivedDatasetRequest = {
       dataset: {
         description: configuration.dataset.description.trim(),
@@ -1226,7 +1671,7 @@ export function SqlAnalysisPage({
     };
 
     const created = await onCreateDatasetJob(request);
-    if (created) setMaterializeDialogOpen(false);
+    if (created) setJobDialogOpen(false);
     return created;
   };
 
@@ -1392,6 +1837,11 @@ export function SqlAnalysisPage({
                   promptRef={queryAiPromptRef}
                   suggestion={queryAiSuggestion}
                 />
+                {!apiConfig.useMock && (
+                  <Button type="button" onClick={() => { setHistoryDialogOpen(true); void refreshTrinoRunHistory(); }} size="sm" variant="outline">
+                    <History data-icon="inline-start" /> 실행 이력
+                  </Button>
+                )}
                 <Button type="button" onClick={resetQuery} size="sm" variant="outline">
                   <RotateCcw data-icon="inline-start" /> SQL 초기화
                 </Button>
@@ -1408,7 +1858,7 @@ export function SqlAnalysisPage({
               </ActionGroup>
             )}
             bordered={false}
-            className="min-h-0 p-0"
+            className="sql-query-panel-header min-h-0 p-0"
             icon={<Table2 size={16} />}
             title="선택 데이터셋 기준 SQL"
           />
@@ -1491,150 +1941,133 @@ export function SqlAnalysisPage({
             <section className={`sql-query-evaluation ${activeQueryEstimate?.riskLevel ?? "neutral"}`} aria-live="polite">
               <div className="sql-query-evaluation-heading">
                 <span><Activity size={14} /> 실행 평가</span>
-                <strong>
-                  {queryEstimatePending
-                    ? "Trino plan 평가 중"
-                    : activeQueryEstimateError
+                <strong
+                  aria-label={activeQueryEstimate ? getQueryEstimateSourceDetail(activeQueryEstimate) : undefined}
+                  title={activeQueryEstimate ? getQueryEstimateSourceDetail(activeQueryEstimate) : undefined}
+                >
+                  {trinoValidationPending
+                    ? "Trino SQL 검증 중"
+                    : trinoValidationError
+                      ? "Trino SQL 검증 실패"
+                    : queryEstimatePending
+                    ? "Iceberg 스캔량 계산 중"
+                      : activeQueryEstimateError
                       ? "평가를 완료하지 못했습니다"
                       : activeQueryEstimate
-                        ? activeQueryEstimate.estimateSource === "trino_plan" ? "Trino plan 기준" : "Catalog 기준"
+                        ? getQueryEstimateSourceLabel(activeQueryEstimate)
                         : canRunPreview ? "평가 대기 중" : "실행 불가"}
                 </strong>
               </div>
               {activeQueryEstimate && (
                 <div className="sql-query-evaluation-metrics">
-                  <span>예상 처리량 <strong>{formatEstimateBytes(activeQueryEstimate.estimatedBytes)}</strong></span>
-                  <span>예상 시간 <strong>{activeQueryEstimate.estimatedDurationSeconds != null ? formatDuration(activeQueryEstimate.estimatedDurationSeconds * 1000) : "계산 중"}</strong></span>
+                  <span>
+                    {activeQueryEstimate.estimateSource === "conservative_bound" ? "보수적 예상 스캔량" : "예상 스캔량"}{" "}
+                    <strong>{formatEstimateBytes(activeQueryEstimate.estimatedBytes)}</strong>
+                  </span>
                   {activeQueryEstimate.warnings[0] && <span className="sql-query-evaluation-warning">{activeQueryEstimate.warnings[0]}</span>}
                 </div>
               )}
               {activeQueryEstimateError && <span className="sql-query-evaluation-warning">{activeQueryEstimateError}</span>}
+              {trinoValidationError && <span className="sql-query-evaluation-warning">{trinoValidationError}</span>}
             </section>
           )}
         </Panel>
 
         <Panel className={cn("sql-result-panel grid gap-4 p-5", visibleResult && "has-result")}>
-          <PanelHeader
-            actions={(
-              <ActionGroup density="compact" wrap="wrap">
-                <Badge size="sm" variant={trinoRun?.status === "failed" ? "destructive" : "secondary"}>
-                  {trinoRun ? trinoResultStatusLabel : queryPending ? "실행 중" : executed ? "완료" : "대기 중"}
-                </Badge>
-              {trinoRun && ["queued", "running"].includes(trinoRun.status) && (
-                  <Button type="button" onClick={() => void cancelActiveTrinoRun()} disabled={queryPending} size="sm" variant="outline"><Square data-icon="inline-start" /> 취소</Button>
-              )}
-                {executionMs !== null && <Badge size="sm" variant="outline">{formatDuration(executionMs)}</Badge>}
-              </ActionGroup>
-            )}
-            bordered={false}
-            className="min-h-0 p-0"
-            icon={<Table2 size={16} />}
-            title={visibleResult ? `${visibleResult.rowCount.toLocaleString()}행 조회됨` : trinoRun ? "실행 상태 확인 중" : "결과 대기 중"}
-          />
-          {trinoRun && runIsActive && (
-            <section className="sql-run-monitor" aria-live="polite">
-              <div className="sql-run-monitor-heading">
-                <span><Activity size={15} /> {runPhase}</span>
-                <strong>{runProgressPercentage == null ? "진행률 계산 중" : `${Math.round(runProgressPercentage)}%`}</strong>
-              </div>
-              <div
-                className={runProgressPercentage == null ? "sql-run-progress indeterminate" : "sql-run-progress"}
-                role="progressbar"
-                aria-label={runPhase ?? "쿼리 실행 상태"}
-                aria-valuemin={0}
-                aria-valuemax={100}
-                aria-valuenow={runProgressPercentage ?? undefined}
-              >
-                <span style={runProgressPercentage == null ? undefined : { width: `${runProgressPercentage}%` }} />
-              </div>
-              <div className="sql-run-monitor-metrics">
-                <span><Clock3 size={14} /> 경과 <strong>{trinoRun.stats?.elapsedMs != null ? formatDuration(trinoRun.stats.elapsedMs) : "-"}</strong></span>
-                <span>예상 <strong>{runEstimate?.estimatedDurationSeconds != null ? formatDuration(runEstimate.estimatedDurationSeconds * 1000) : "계산 중"}</strong></span>
-                <span>남은 시간 <strong>{runRemainingMs == null ? "계산 중" : formatDuration(runRemainingMs)}</strong></span>
-                <span>처리량 <strong>{formatEstimateBytes(trinoRun.stats?.processedBytes)}</strong></span>
-              </div>
-            </section>
-          )}
-          {!apiConfig.useMock && (
-            <section className="sql-run-history" aria-label="내 최근 실행">
-              <div className="sql-run-history-header">
-                <span><History size={14} /> 내 최근 실행</span>
-                <button type="button" onClick={() => void refreshTrinoRunHistory()} disabled={queryPending}>새로고침</button>
-              </div>
-              {trinoRunHistory.length > 0 ? (
-                <div className="sql-run-history-list">
-                  {trinoRunHistory.slice(0, 5).map((item) => (
-                    <button
-                      className={item.runId === trinoRun?.runId ? "active" : ""}
-                      key={item.runId}
-                      type="button"
-                      onClick={() => void openTrinoRunHistoryItem(item)}
-                      disabled={queryPending}
-                    >
-                      <span className={`sql-run-history-status ${item.status}`}>{getTrinoHistoryStatusLabel(item)}</span>
-                      <strong>{item.query.replace(/\s+/g, " ").trim()}</strong>
-                      <em>{formatResultTimestamp(item.submittedAt)}</em>
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <span className="sql-run-history-empty">{trinoRunHistoryError ?? "최근 실행이 없습니다."}</span>
-              )}
-            </section>
-          )}
-          {trinoRun && (trinoRun.stats || runEstimate) && (
-            <div className="sql-execution-metrics" aria-label="쿼리 실행 지표">
-              <div><span>대기</span><strong>{trinoRun.stats?.queuedMs != null ? formatDuration(trinoRun.stats.queuedMs) : "-"}</strong></div>
-              <div><span>경과</span><strong>{trinoRun.stats?.elapsedMs != null ? formatDuration(trinoRun.stats.elapsedMs) : "-"}</strong></div>
-              <div><span>실제 처리량</span><strong>{formatEstimateBytes(trinoRun.stats?.processedBytes)}</strong></div>
-              <div><span>피크 메모리</span><strong>{formatEstimateBytes(trinoRun.stats?.peakMemoryBytes)}</strong></div>
-              <div><span>처리 행</span><strong>{formatMetricNumber(trinoRun.stats?.processedRows)}</strong></div>
-              {runEstimate && <div><span>예상 처리량</span><strong>{formatEstimateBytes(runEstimate.estimatedBytes)}</strong></div>}
-            </div>
-          )}
-          {visibleResult ? (
-            <>
-              <div className="sql-result-toolbar">
-                {!trinoRun ? (
-                  <ToggleGroup
-                    aria-label="SQL 결과 보기"
-                    onValueChange={(value) => value && setResultView(value as "chart" | "table")}
-                    type="single"
-                    value={resultView}
-                  >
-                    <ToggleGroupItem aria-label="차트 보기" size="sm" value="chart"><BarChart3 /> 차트 보기</ToggleGroupItem>
-                    <ToggleGroupItem aria-label="데이터 미리보기" size="sm" value="table"><Table2 /> 데이터 미리보기</ToggleGroupItem>
-                  </ToggleGroup>
-                ) : (
-                  <span className="text-xs font-semibold text-slate-500">
-                    실행 ID {visibleResult.runId} · {visibleResult.rows.length.toLocaleString()}/{visibleResult.rowCount.toLocaleString()}행 표시 · {formatResultTimestamp(visibleResult.executedAt)}
-                  </span>
-                )}
+          <div className="sql-result-summary">
+            <PanelHeader
+              actions={(
                 <ActionGroup density="compact" wrap="wrap">
-                  {!trinoRun && <Button type="button" onClick={downloadCsv} size="sm" variant="outline"><Download data-icon="inline-start" /> CSV 다운로드</Button>}
-                  {(!trinoRun || trinoRun.status === "succeeded") && (
-                    <Button type="button" onClick={() => setMaterializeDialogOpen(true)} size="sm" variant="outline"><Database data-icon="inline-start" /> {trinoRun ? "Iceberg Dataset 생성" : "처리 Job 생성"}</Button>
+                  <Badge size="sm" variant={trinoRun?.status === "failed" || (usesTrinoRuntime && trinoSubmissionError) ? "destructive" : "secondary"}>
+                    {trinoSubmissionPending
+                      ? "실행 준비 중"
+                      : usesTrinoRuntime && trinoSubmissionError
+                        ? "실행 실패"
+                        : trinoRun ? trinoResultStatusLabel : queryPending ? "실행 중" : executed ? "완료" : "대기 중"}
+                  </Badge>
+                  {trinoRun && ["queued", "running"].includes(trinoRun.status) && (
+                    <Button type="button" onClick={() => void cancelActiveTrinoRun()} disabled={queryPending} size="sm" variant="outline"><Square data-icon="inline-start" /> 취소</Button>
                   )}
-                  <Button type="button" onClick={() => setResultDialogOpen(true)} size="sm" variant="outline"><Maximize2 data-icon="inline-start" /> 전체 보기</Button>
+                  {executionMs !== null && !trinoRun && <Badge size="sm" variant="outline">{formatDuration(executionMs)}</Badge>}
                 </ActionGroup>
+              )}
+              bordered={false}
+              className="min-h-0 p-0"
+              icon={<Table2 size={16} />}
+              title={trinoSubmissionPending
+                ? "실행 준비 중"
+                : usesTrinoRuntime && trinoSubmissionError
+                  ? "실행 실패"
+                  : visibleResult
+                    ? `${visibleResult.rowCount.toLocaleString()}행 ${trinoRun?.result?.storageStatus === "collecting" ? "수집됨" : "조회됨"}`
+                    : trinoRun ? "실행 상태 확인 중" : "결과 대기 중"}
+            />
+            <TrinoExecutionTimeline
+              firstPageError={trinoResultError}
+              firstPageDisplayMs={trinoFirstPageDisplayMs}
+              firstPageRowCount={trinoFirstPageRowCount}
+              run={trinoSubmissionPending || (usesTrinoRuntime && trinoSubmissionError) ? null : trinoRun}
+              submissionError={usesTrinoRuntime ? trinoSubmissionError : null}
+              submissionPending={trinoSubmissionPending}
+            />
+            {((!usesTrinoRuntime && trinoSubmissionError) || trinoStatusPollError) && (
+              <div className="sql-result-toolbar error" role="alert">
+                <span>{!usesTrinoRuntime && trinoSubmissionError ? trinoSubmissionError : `${trinoStatusPollError} 자동으로 다시 확인합니다.`}</span>
               </div>
-              {trinoResultError && (
-                <div className="sql-result-toolbar error" role="alert">
-                  <span>{trinoResultError}</span>
-                  <Button type="button" onClick={() => void retryTrinoResultPage()} size="sm" variant="outline"><RotateCcw data-icon="inline-start" /> 다시 시도</Button>
-                </div>
-              )}
-              {trinoMaterialization && (
-                <div
-                  className={trinoMaterializationError || trinoMaterialization.queryEngineStatus === "registration_failed" ? "sql-result-toolbar error" : "sql-result-toolbar"}
-                  role={trinoMaterializationError || trinoMaterialization.queryEngineStatus === "registration_failed" ? "alert" : undefined}
-                >
-                  <span>{trinoMaterializationError ?? `${trinoMaterialization.datasetName}: ${getTrinoMaterializationStatusLabel(trinoMaterialization)}`}</span>
-                  {(trinoMaterializationError || trinoMaterialization.queryEngineStatus === "registration_failed") && (
-                    <Button type="button" onClick={() => void retryTrinoMaterializationStatus()} size="sm" variant="outline"><RotateCcw data-icon="inline-start" /> 등록 다시 확인</Button>
+            )}
+            {visibleResult && (
+              <>
+                <div className="sql-result-toolbar">
+                  {!trinoRun ? (
+                    <ToggleGroup
+                      aria-label="SQL 결과 보기"
+                      onValueChange={(value) => value && setResultView(value as "chart" | "table")}
+                      type="single"
+                      value={resultView}
+                    >
+                      <ToggleGroupItem aria-label="차트 보기" size="sm" value="chart"><BarChart3 /> 차트 보기</ToggleGroupItem>
+                      <ToggleGroupItem aria-label="데이터 미리보기" size="sm" value="table"><Table2 /> 데이터 미리보기</ToggleGroupItem>
+                    </ToggleGroup>
+                  ) : (
+                    <span className="text-xs font-semibold text-slate-500">
+                      실행 ID {visibleResult.runId} · {visibleResult.rows.length.toLocaleString()}/{visibleResult.rowCount.toLocaleString()}행 표시 · {formatResultTimestamp(visibleResult.executedAt)}
+                    </span>
                   )}
+                  <ActionGroup density="compact" wrap="wrap">
+                    {!trinoRun && <Button type="button" onClick={downloadCsv} size="sm" variant="outline"><Download data-icon="inline-start" /> CSV 다운로드</Button>}
+                    {!trinoRun && <Button type="button" onClick={() => setJobDialogOpen(true)} size="sm" variant="outline"><Workflow data-icon="inline-start" /> 처리 Job 생성</Button>}
+                    {trinoRun?.status === "succeeded" && (
+                      <>
+                        <Button type="button" onClick={() => downloadTrinoCsv(trinoRun.runId)} size="sm" variant="primary"><Download data-icon="inline-start" /> CSV 다운로드</Button>
+                        <Button type="button" onClick={() => setMaterializeDialogOpen(true)} size="sm" variant="outline"><Database data-icon="inline-start" /> Dataset으로 저장</Button>
+                        <Button type="button" onClick={() => setJobDialogOpen(true)} size="sm" variant="outline"><Workflow data-icon="inline-start" /> 반복 Job 만들기</Button>
+                      </>
+                    )}
+                    <Button type="button" onClick={() => setResultDialogOpen(true)} size="sm" variant="outline"><Maximize2 data-icon="inline-start" /> 전체 보기</Button>
+                  </ActionGroup>
                 </div>
-              )}
+                {trinoResultError && (
+                  <div className="sql-result-toolbar error" role="alert">
+                    <span>{trinoResultError}</span>
+                    <Button type="button" onClick={() => void retryTrinoResultPage()} size="sm" variant="outline"><RotateCcw data-icon="inline-start" /> 다시 시도</Button>
+                  </div>
+                )}
+                {trinoMaterialization && (
+                  <div
+                    className={trinoMaterializationError || trinoMaterialization.queryEngineStatus === "registration_failed" ? "sql-result-toolbar error" : "sql-result-toolbar"}
+                    role={trinoMaterializationError || trinoMaterialization.queryEngineStatus === "registration_failed" ? "alert" : undefined}
+                  >
+                    <span>{trinoMaterializationError ?? `${trinoMaterialization.datasetName}: ${getTrinoMaterializationStatusLabel(trinoMaterialization)}`}</span>
+                    {(trinoMaterializationError || trinoMaterialization.queryEngineStatus === "registration_failed") && (
+                      <Button type="button" onClick={() => void retryTrinoMaterializationStatus()} size="sm" variant="outline"><RotateCcw data-icon="inline-start" /> 등록 다시 확인</Button>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+          <div className="sql-result-body">
+            {visibleResult ? (
               <ScrollArea className="sql-result-scroll" scrollbars="both" type="always">
                 {!trinoRun && resultView === "chart"
                   ? chartConfig && activeChartSource
@@ -1644,16 +2077,19 @@ export function SqlAnalysisPage({
                     <SqlPreviewTable
                       resultDraft={visibleResult}
                       remotePageIndex={trinoRun ? trinoResultPageIndex : undefined}
+                      remotePageNumber={activeTrinoPage?.pageNumber}
                       remoteNextCursor={activeTrinoPage?.nextCursor}
                       remotePending={trinoResultPagePending}
+                      remoteRowEnd={activeTrinoPage?.rowEnd}
+                      remoteRowStart={activeTrinoPage?.rowStart}
+                      remoteTotalPages={activeTrinoPage?.totalPages}
+                      remoteTotalRows={activeTrinoPage?.totalRows}
                       onRemoteNext={trinoRun ? () => void loadNextTrinoResultPage() : undefined}
                       onRemotePrevious={trinoRun && trinoResultPageIndex > 0 ? () => void loadPreviousTrinoResultPage() : undefined}
                     />
                   )}
               </ScrollArea>
-            </>
-          ) : (
-            <>
+            ) : (
               <Empty className="sql-result-empty" size="sm" variant="bordered">
                 <EmptyHeader>
                   <EmptyTitle>{trinoResultError ? "결과를 불러오지 못했습니다." : getTrinoResultEmptyTitle(trinoRun)}</EmptyTitle>
@@ -1661,8 +2097,8 @@ export function SqlAnalysisPage({
                 </EmptyHeader>
                 {trinoResultError ? <Button type="button" onClick={() => void retryTrinoResultPage()} size="sm" variant="outline"><RotateCcw data-icon="inline-start" /> 다시 시도</Button> : null}
               </Empty>
-            </>
-          )}
+            )}
+          </div>
         </Panel>
       </main>
       {visibleResult && (
@@ -1684,8 +2120,13 @@ export function SqlAnalysisPage({
                     <SqlPreviewTable
                       resultDraft={visibleResult}
                       remotePageIndex={trinoRun ? trinoResultPageIndex : undefined}
+                      remotePageNumber={activeTrinoPage?.pageNumber}
                       remoteNextCursor={activeTrinoPage?.nextCursor}
                       remotePending={trinoResultPagePending}
+                      remoteRowEnd={activeTrinoPage?.rowEnd}
+                      remoteRowStart={activeTrinoPage?.rowStart}
+                      remoteTotalPages={activeTrinoPage?.totalPages}
+                      remoteTotalRows={activeTrinoPage?.totalRows}
                       onRemoteNext={trinoRun ? () => void loadNextTrinoResultPage() : undefined}
                       onRemotePrevious={trinoRun && trinoResultPageIndex > 0 ? () => void loadPreviousTrinoResultPage() : undefined}
                     />
@@ -1737,7 +2178,6 @@ export function SqlAnalysisPage({
               <Input id="trino-materialize-tags" placeholder="#sql-derived #analysis" value={derivedDatasetTags} onChange={(event) => setDerivedDatasetTags(event.target.value)} />
             </Field>
           </FieldGroup>
-          <p className="m-0 text-xs font-semibold text-slate-500">실행 {trinoRun.runId} · 태그 {derivedDatasetTagList.length}개 · 컬럼 {trinoRun.result?.columns.length ?? 0}개</p>
         </DialogShell>
       )}
       {estimateDialogOpen && queryEstimate && (
@@ -1754,24 +2194,49 @@ export function SqlAnalysisPage({
           title="이 쿼리를 실행할까요?"
         >
           <div className="grid gap-3 text-sm text-slate-700">
-            <strong>예상 처리량 {formatEstimateBytes(queryEstimate.estimatedBytes)}</strong>
-            <span>{queryEstimate.estimatedDurationSeconds != null ? `예상 시간 약 ${formatDuration(queryEstimate.estimatedDurationSeconds * 1000)}` : "예상 시간을 계산할 수 없습니다."}</span>
+            <strong>{queryEstimate.estimateSource === "conservative_bound" ? "보수적 예상 스캔량" : "예상 스캔량"} {formatEstimateBytes(queryEstimate.estimatedBytes)}</strong>
+            {getQueryEstimateSourceDetail(queryEstimate) && <span>{getQueryEstimateSourceDetail(queryEstimate)}</span>}
             {queryEstimate.warnings.map((warning) => <span className="text-amber-700" key={warning}>{warning}</span>)}
           </div>
         </DialogShell>
       )}
-      {resultDraft && baseDataset && materializeDialogOpen && (
+      {historyDialogOpen && (
+        <DialogShell
+          onClose={() => setHistoryDialogOpen(false)}
+          open
+          size="lg"
+          title="내 실행 이력"
+        >
+          <div className="sql-run-history-list" aria-label="내 최근 실행">
+            {trinoRunHistory.length > 0 ? trinoRunHistory.map((item) => (
+              <button
+                className={item.runId === trinoRun?.runId ? "active" : ""}
+                disabled={queryPending}
+                key={item.runId}
+                onClick={() => void openTrinoRunHistoryItem(item)}
+                type="button"
+              >
+                <span className={`sql-run-history-status ${item.status}`}>{getTrinoHistoryStatusLabel(item)}</span>
+                <strong>{item.query.replace(/\s+/g, " ").trim()}</strong>
+                <em>{formatResultTimestamp(item.submittedAt)}</em>
+              </button>
+            )) : <span className="sql-run-history-empty">{trinoRunHistoryError ?? "최근 실행이 없습니다."}</span>}
+          </div>
+        </DialogShell>
+      )}
+      {(trinoJobResultDraft ?? resultDraft) && baseDataset && jobDialogOpen && (
         <SqlJobWizardDialog
           baseDataset={baseDataset}
           defaultMetadata={{
             description: buildDefaultDerivedDatasetDescription(baseDataset),
             name: buildDefaultDerivedDatasetName(baseDataset),
           }}
-          onClose={() => setMaterializeDialogOpen(false)}
+          engine={trinoJobResultDraft ? "trino" : "compatibility"}
+          onClose={() => setJobDialogOpen(false)}
           onCreate={createDerivedDatasetJob}
-          open={materializeDialogOpen}
+          open={jobDialogOpen}
           pending={createPending}
-          resultDraft={resultDraft}
+          resultDraft={trinoJobResultDraft ?? resultDraft!}
         />
       )}
     </div>

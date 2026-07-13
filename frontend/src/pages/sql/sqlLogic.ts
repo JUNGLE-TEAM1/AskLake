@@ -448,6 +448,16 @@ export function runSqlPreflight(
         }],
       };
     }
+    if (trinoRuntime && /^\s*(select|with)\b/i.test(normalizedQuery)) {
+      return {
+        key,
+        canExecute: true,
+        messages: [{
+          tone: "info",
+          text: "Trino 확장 문법은 서버의 Trino 파서와 권한 계약으로 최종 검증합니다.",
+        }],
+      };
+    }
     return {
       key,
       canExecute: false,

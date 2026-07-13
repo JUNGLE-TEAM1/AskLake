@@ -108,20 +108,24 @@ class QueryEngineRegistrationService:
         return CatalogDatasetResponse.model_validate(saved)
 
     def _verify_table(self, target: QueryEngineTableRef) -> None:
+        self.describe_table(target)
+
+    def describe_table(self, target: QueryEngineTableRef) -> list[list[object]]:
         query = "DESCRIBE " + ".".join(quote_identifier(value) for value in [target.catalog, target.schema_, target.table])
         page = self.client.submit(query)
         pages = 0
-        has_columns = bool(page.rows)
+        rows = list(page.rows)
         while page.next_uri and page.error is None:
             if pages >= 20:
                 raise RuntimeError("TRINO_TABLE_VERIFICATION_PAGE_LIMIT")
             page = self.client.fetch(page.next_uri)
             pages += 1
-            has_columns = has_columns or bool(page.rows)
+            rows.extend(page.rows)
         if page.error is not None:
             raise RuntimeError(page.error.code or "TRINO_TABLE_VERIFICATION_FAILED")
-        if not has_columns:
+        if not rows:
             raise RuntimeError("TRINO_TABLE_VERIFICATION_EMPTY_SCHEMA")
+        return rows
 
     def _registration_payload(
         self,
