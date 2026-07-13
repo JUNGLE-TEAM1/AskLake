@@ -34,6 +34,7 @@ from app.services.resource_permission_service import (
     datasets_with_persisted_permission_grants,
     permissions_for_actor_with_governance,
 )
+from app.services.sql_service import full_query_run_response_from_payload
 
 
 class CatalogService:
@@ -359,7 +360,7 @@ class CatalogService:
                 status.HTTP_404_NOT_FOUND,
                 {"sourceRunId": run_id},
             )
-        return QueryRunResponse.model_validate(payload)
+        return full_query_run_response_from_payload(payload)
 
 
 def validate_derived_dataset_request(

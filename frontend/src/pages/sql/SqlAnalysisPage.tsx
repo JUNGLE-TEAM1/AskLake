@@ -3,7 +3,7 @@ import { PanelLeftOpen, Table2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/ui/page-header";
 import { cn } from "@/lib/utils";
-import { executeQueryPreview } from "../../services/mockApi";
+import { executeQueryPreview, getQueryPreviewPage } from "../../services/mockApi";
 import type { AuditResult, CatalogDataset, CreateDerivedDatasetRequest, SqlResultDraft } from "../../types";
 import styles from "./SqlAnalysisPage.module.css";
 import { SqlDatasetContextPanel } from "./SqlDatasetContextPanel";
@@ -68,6 +68,9 @@ export function SqlAnalysisPage({
   const [previewRowLimit, setPreviewRowLimit] = useState(PREVIEW_ROW_LIMIT);
   const [cursorIndex, setCursorIndex] = useState(defaultQuery.length);
   const [resultDraft, setResultDraft] = useState<SqlResultDraft | null>(null);
+  const [dialogResultDraft, setDialogResultDraft] = useState<SqlResultDraft | null>(null);
+  const [resultPagePending, setResultPagePending] = useState(false);
+  const [resultPageError, setResultPageError] = useState<string | null>(null);
   const [preflightResult, setPreflightResult] = useState<SqlPreflightResult | null>(null);
   const [chartConfig, setChartConfig] = useState<SqlChartConfig | null>(null);
   const [resultView, setResultView] = useState<SqlResultView>("table");
@@ -77,7 +80,7 @@ export function SqlAnalysisPage({
   const [dismissedAutocompleteKey, setDismissedAutocompleteKey] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const lineNumberRef = useRef<HTMLPreElement | null>(null);
-  const skipNextBaseDatasetResetRef = useRef(false);
+  const initializedBaseDatasetIdRef = useRef<string | null | undefined>(undefined);
   const referenceDatasetIdSet = useMemo(() => new Set(referenceDatasetIds), [referenceDatasetIds]);
   const queryValidationKey = useMemo(
     () => JSON.stringify({
@@ -150,11 +153,12 @@ export function SqlAnalysisPage({
     contextPanel.setExpandedDatasetId(null);
   }, [dataset?.id]);
 
+  // 데이터셋이 실제로 바뀔 때만 기본 쿼리를 초기화한다. 결과 상태나 사용자가
+  // 입력한 SQL이 바뀌었다는 이유로 빈 편집 내용을 다시 덮어쓰면 안 된다.
   useEffect(() => {
-    if (skipNextBaseDatasetResetRef.current) {
-      skipNextBaseDatasetResetRef.current = false;
-      return;
-    }
+    const nextBaseDatasetId = baseDataset?.id ?? null;
+    if (initializedBaseDatasetIdRef.current === nextBaseDatasetId) return;
+    initializedBaseDatasetIdRef.current = nextBaseDatasetId;
 
     if (!baseDataset) {
       setQuery("");
@@ -165,6 +169,8 @@ export function SqlAnalysisPage({
       setChartConfig(null);
       setResultView("table");
       setResultDialogOpen(false);
+      setDialogResultDraft(null);
+      setResultPageError(null);
       setReferenceDatasetIds([]);
       onResultChange(null);
       return;
@@ -180,10 +186,10 @@ export function SqlAnalysisPage({
     setChartConfig(null);
     setResultView("table");
     setResultDialogOpen(false);
+    setDialogResultDraft(null);
+    setResultPageError(null);
     setReferenceDatasetIds((ids) => ids.filter((id) => id !== baseDataset.id));
     onResultChange(null);
-  // 데이터셋이 실제로 바뀔 때만 기본 쿼리를 초기화한다. 결과 상태나 사용자가
-  // 입력한 SQL이 바뀌었다는 이유로 빈 편집 내용을 다시 덮어쓰면 안 된다.
   }, [baseDataset?.id]);
 
   useEffect(() => {
@@ -200,6 +206,8 @@ export function SqlAnalysisPage({
     setChartConfig(null);
     setResultView("table");
     setResultDialogOpen(false);
+    setDialogResultDraft(null);
+    setResultPageError(null);
   }, [baseDataset, cachedResult, canRestoreCachedResult]);
 
   const queryContextPath = (mode: "preflight" | "preview" = "preview") => {
@@ -238,6 +246,9 @@ export function SqlAnalysisPage({
     setChartConfig(null);
     setResultView("table");
     setResultDialogOpen(false);
+    setDialogResultDraft(null);
+    setResultPagePending(false);
+    setResultPageError(null);
     setMaterializeDialogOpen(false);
     onResultChange(null);
   };
@@ -308,6 +319,8 @@ export function SqlAnalysisPage({
     try {
       const resultDraft = await buildPreviewDraft();
       setResultDraft(resultDraft);
+      setDialogResultDraft(null);
+      setResultPageError(null);
       setChartConfig(null);
       setResultView("table");
       onResultChange(resultDraft);
@@ -350,6 +363,39 @@ export function SqlAnalysisPage({
     updateQuery(defaultQuery);
     setCursorIndex(defaultQuery.length);
     onAction("analysis.query.reset", "/api/query/reset", baseDataset?.id ?? "sql-empty");
+  };
+
+  const changeResultDialogOpen = (open: boolean) => {
+    setResultDialogOpen(open);
+    setResultPageError(null);
+    if (open && resultDraft) setDialogResultDraft(resultDraft);
+  };
+
+  const loadResultPage = async (offset: number) => {
+    if (!resultDraft || resultPagePending) return;
+    const limit = resultDraft.pageLimit ?? resultDraft.previewLimit ?? PREVIEW_ROW_LIMIT;
+    setResultPagePending(true);
+    setResultPageError(null);
+    try {
+      const page = await getQueryPreviewPage(resultDraft.runId, { limit, offset });
+      setDialogResultDraft(page);
+      onAction(
+        "analysis.query.preview_page_loaded",
+        `/api/query/runs/${encodeURIComponent(resultDraft.runId)}?offset=${offset}&limit=${limit}`,
+        resultDraft.datasetId,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "SQL Preview 페이지를 불러오지 못했습니다.";
+      setResultPageError(message);
+      onAction(
+        "analysis.query.preview_page_failed",
+        `/api/query/runs/${encodeURIComponent(resultDraft.runId)}?offset=${offset}&limit=${limit}`,
+        resultDraft.datasetId,
+        "failed",
+      );
+    } finally {
+      setResultPagePending(false);
+    }
   };
 
   const insertSqlText = (text: string) => {
@@ -407,10 +453,7 @@ export function SqlAnalysisPage({
     const nextBaseDatasetId = targetDataset.id === baseDataset?.id ? nextSelectedIds[0] ?? null : baseDataset?.id ?? null;
     const nextReferenceDatasetIds = nextSelectedIds.filter((id) => id !== nextBaseDatasetId);
 
-    if (targetDataset.id === baseDataset?.id) {
-      skipNextBaseDatasetResetRef.current = true;
-      setBaseDatasetId(nextBaseDatasetId);
-    }
+    if (targetDataset.id === baseDataset?.id) setBaseDatasetId(nextBaseDatasetId);
 
     setReferenceDatasetIds(nextReferenceDatasetIds);
     if (nextSelectedIds.length === 0) {
@@ -574,10 +617,14 @@ export function SqlAnalysisPage({
           activeChartSource={activeChartSource}
           baseDatasetSelected={Boolean(baseDataset)}
           chartConfig={chartConfig}
+          dialogResultDraft={dialogResultDraft}
           dialogOpen={resultDialogOpen}
-          onDialogOpenChange={setResultDialogOpen}
+          pageError={resultPageError}
+          pagePending={resultPagePending}
+          onDialogOpenChange={changeResultDialogOpen}
           onDownloadCsv={downloadCsv}
           onOpenJobWizard={() => setMaterializeDialogOpen(true)}
+          onPageChange={loadResultPage}
           onResultViewChange={setResultView}
           resultDraft={resultDraft}
           resultView={resultView}
