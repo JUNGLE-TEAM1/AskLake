@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, Header, Query, status
 from sqlalchemy.orm import Session
 
-from app.core.auth_context import ActorContext, get_actor_context
+from app.core.auth_context import ActorContext, get_actor_context, require_permission
 from app.core.database import get_db
 from app.schemas.etl import (
     CreatePipelineRequest,
@@ -13,6 +13,11 @@ from app.schemas.etl import (
     ContinuousWorkerLogsResponse,
     AirflowRunExecutionRequest,
     AirflowRunExecutionResponse,
+    PermissionOptionsResponse,
+    RecordParsingPreviewRequest,
+    RecordParsingPreviewResponse,
+    RulePreviewRequest,
+    RulePreviewResponse,
     JobCommandRequest,
     JobCommandResponse,
     JobListResponse,
@@ -34,6 +39,7 @@ from app.schemas.etl import (
     SourceAssetsRequest,
     SourceAssetsResponse,
     SourceConnectorAnalysis,
+    SourceConnectorDefaults,
     SourceConnectorRequest,
     UpdatePipelineRequest,
 )
@@ -46,6 +52,29 @@ router = APIRouter(prefix="/etl", tags=["etl"])
 @router.post("/sources/test", response_model=SourceConnectorAnalysis)
 def test_source_connector(request: SourceConnectorRequest) -> SourceConnectorAnalysis:
     return etl_service.test_source_connector(request)
+
+
+@router.get("/sources/defaults", response_model=SourceConnectorDefaults)
+def get_source_connector_defaults() -> SourceConnectorDefaults:
+    return etl_service.source_connector_defaults()
+
+
+@router.post("/rules/preview", response_model=RulePreviewResponse)
+def preview_rules(request: RulePreviewRequest) -> RulePreviewResponse:
+    return etl_service.preview_rules(request)
+
+
+@router.post("/record-parsing/preview", response_model=RecordParsingPreviewResponse)
+def preview_record_parsing(request: RecordParsingPreviewRequest) -> RecordParsingPreviewResponse:
+    return etl_service.preview_record_parsing(request)
+
+
+@router.get("/permission-options", response_model=PermissionOptionsResponse)
+def get_permission_options(
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(get_actor_context),
+) -> PermissionOptionsResponse:
+    return etl_service.get_permission_options(db, actor)
 
 
 @router.post("/sources/assets", response_model=SourceAssetsResponse)
@@ -120,9 +149,11 @@ def execute_airflow_run(
 def create_job(
     request: CreatePipelineRequest,
     db: Session = Depends(get_db),
-    actor_name: str = Header(default="demo-user", alias="X-AskLake-User"),
+    actor: ActorContext = Depends(get_actor_context),
 ) -> CreatePipelineResponse:
-    return etl_service.create_pipeline(db, request, actor_name)
+    require_permission(actor, "manage", resource_label="job collection")
+    owned_request = request.model_copy(update={"created_by": actor.name})
+    return etl_service.create_pipeline(db, owned_request, actor)
 
 
 @router.get("/jobs", response_model=JobListResponse)
