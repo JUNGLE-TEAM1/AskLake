@@ -57,9 +57,9 @@ function columnTypeLabel(type: DashboardDatasetColumn["type"]) {
 }
 
 function ColumnTypeIcon({ type }: { type: DashboardDatasetColumn["type"] }) {
-  if (type === "number") return <Hash />;
-  if (type === "date") return <CalendarDays />;
-  return <LetterText />;
+  if (type === "number") return <Hash className="text-violet-600" />;
+  if (type === "date") return <CalendarDays className="text-emerald-600" />;
+  return <LetterText className="text-sky-600" />;
 }
 
 function columnDescription(column: DashboardDatasetColumn) {
@@ -101,19 +101,16 @@ function DatasetHoverCard({
 
 function DatasetTreeLabel({
   hoverCard,
-  meta,
   selected = false,
   title,
 }: {
   hoverCard?: ReactNode;
-  meta?: string;
   selected?: boolean;
   title: string;
 }) {
   const label = (
-    <span className={cn("grid min-w-0 gap-0.5", selected && "text-blue-700")}>
-      <strong className="truncate text-sm font-semibold text-slate-950">{title}</strong>
-      {meta && <span className="truncate text-xs font-medium text-slate-500">{meta}</span>}
+    <span className={cn("block min-w-0 truncate font-semibold", selected && "text-blue-700")}>
+      {title}
     </span>
   );
 
@@ -204,11 +201,11 @@ export function DatasetSidebar({
                       title={dataset.name}
                     />
                   ),
-                  icon: <Table2 />,
+                  icon: <Table2 className="text-blue-600" />,
                   id: datasetTreeItemId(dataset.id),
                   kind: "dataset" as const,
                   label: dataset.name,
-                  meta: `${dataset.columns.length} columns`,
+                  meta: `${dataset.columns.length}개`,
                   selected: dataset.id === selectedDatasetId,
                   title: dataset.name,
                 };
@@ -226,11 +223,11 @@ export function DatasetSidebar({
                   title={`tables (${datasets.length})`}
                 />
               ),
-              icon: <Table2 />,
+              icon: <Table2 className="text-indigo-600" />,
               id: tablesItemId,
               kind: "group",
-              label: `tables (${datasets.length})`,
-              title: `tables (${datasets.length})`,
+              label: `테이블(${datasets.length})`,
+              title: `테이블(${datasets.length})`,
             },
           ],
           hoverCard: (
@@ -246,7 +243,7 @@ export function DatasetSidebar({
               title="datasets"
             />
           ),
-          icon: <Database />,
+          icon: <Database className="text-cyan-600" />,
           id: schemaItemId,
           kind: "group",
           label: "datasets",
@@ -265,7 +262,7 @@ export function DatasetSidebar({
           title="system"
         />
       ),
-      icon: <Server />,
+      icon: <Server className="text-blue-700" />,
       id: systemItemId,
       kind: "group",
       label: "system",
@@ -311,7 +308,7 @@ export function DatasetSidebar({
         <TooltipProvider delayDuration={250}>
           <ExplorerTree<DatasetTreeNode>
             ariaLabel="Dashboard dataset tree"
-            className="min-h-0 flex-1 pr-2"
+            className="mt-2 min-h-0 flex-1 pr-2"
             data={treeData}
             defaultHeight={620}
             disableMultiSelection
@@ -320,12 +317,11 @@ export function DatasetSidebar({
             getLabel={(node) => (
               <DatasetTreeLabel
                 hoverCard={node.data.hoverCard}
-                meta={node.data.meta}
                 selected={node.data.selected}
                 title={node.data.title}
               />
             )}
-            getRowClassName={(node) => cn("min-h-10", node.data.selected && "border-blue-200 bg-blue-50")}
+            getRowClassName={(node) => cn(node.data.selected && "border-blue-200 bg-blue-50")}
             getRowProps={(node) => ({
               "data-dashboard-dataset-node": node.data.kind,
               title: node.data.title,
@@ -335,7 +331,10 @@ export function DatasetSidebar({
               [schemaItemId]: true,
               [tablesItemId]: true,
             }}
+            indent={12}
             minHeight={320}
+            rowHeight={40}
+            toggleOnRowPress={false}
             onNodePress={(node: NodeApi<DatasetTreeNode>) => {
               const item = node.data;
               if (item.kind === "dataset" && item.datasetId) {
