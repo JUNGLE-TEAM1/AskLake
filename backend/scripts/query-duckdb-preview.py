@@ -98,7 +98,9 @@ def unique_datasets(datasets: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def register_dataset(connection: duckdb.DuckDBPyConnection, dataset: dict[str, Any]) -> None:
     table_name = str(dataset.get("name") or dataset.get("id") or "dataset")
     if not register_storage_location(connection, dataset, table_name):
-        register_sample_rows(connection, dataset, table_name)
+        raise RuntimeError(
+            f"Dataset physical storage is unavailable; refusing sampleRows fallback for {table_name}."
+        )
 
     dataset_id = str(dataset.get("id") or "")
     if dataset_id and dataset_id != table_name:
@@ -126,40 +128,6 @@ def register_storage_location(connection: duckdb.DuckDBPyConnection, dataset: di
         f"CREATE TEMP VIEW {quote_identifier(table_name)} AS SELECT * FROM {reader}({quote_literal(scan_path)})",
     )
     return True
-
-
-def register_sample_rows(connection: duckdb.DuckDBPyConnection, dataset: dict[str, Any], table_name: str) -> None:
-    columns = dataset_columns(dataset)
-    sample_rows = dataset.get("sampleRows") or dataset.get("sample_rows") or []
-    if not columns:
-        max_width = max((len(row) for row in sample_rows if isinstance(row, list)), default=0)
-        columns = [(f"column_{index + 1}", "string") for index in range(max_width)]
-    if not columns:
-        columns = [("empty_row", "string")]
-
-    column_defs = ", ".join(
-        f"{quote_identifier(name)} {duckdb_column_type(column_type)}"
-        for name, column_type in columns
-    )
-    connection.execute(f"CREATE TEMP TABLE {quote_identifier(table_name)} ({column_defs})")
-
-    if not sample_rows:
-        return
-
-    placeholders = ", ".join("?" for _ in columns)
-    rows = [
-        [
-            coerce_cell(row[index] if index < len(row) else None, column_type)
-            for index, (_, column_type) in enumerate(columns)
-        ]
-        for row in sample_rows
-        if isinstance(row, list)
-    ]
-    if rows:
-        connection.executemany(
-            f"INSERT INTO {quote_identifier(table_name)} VALUES ({placeholders})",
-            rows,
-        )
 
 
 def dataset_columns(dataset: dict[str, Any]) -> list[tuple[str, str]]:
