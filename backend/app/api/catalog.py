@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
 from app.core.auth_context import ActorContext, get_actor_context
@@ -9,16 +9,15 @@ from app.repositories.catalog_repository import CatalogRepository
 from app.repositories.sql_repository import SqlRepository
 from app.schemas.catalog import (
     CatalogDatasetListResponse,
+    CatalogDatasetRowsResponse,
     CatalogDatasetResponse,
     CreateDerivedDatasetRequest,
     CreateDerivedDatasetResponse,
     DeleteMaterializationRunResponse,
     LineageGraphResponse,
 )
-from app.schemas.trino import TrinoMaterializationRunResponse
 from app.services.catalog_service import CatalogService
 from app.services.lake_storage_service import LocalLakeStorageService
-from app.services.trino_materialization_service import TrinoMaterializationService
 
 router = APIRouter(prefix="/catalog", tags=["catalog"])
 
@@ -29,10 +28,6 @@ def get_catalog_service(db: Annotated[Session, Depends(get_db)]) -> CatalogServi
         repository=CatalogRepository(db),
         sql_repository=SqlRepository(db),
     )
-
-
-def get_trino_materialization_service(db: Annotated[Session, Depends(get_db)]) -> TrinoMaterializationService:
-    return TrinoMaterializationService(SqlRepository(db), CatalogRepository(db))
 
 
 @router.get("/datasets", response_model=CatalogDatasetListResponse)
@@ -50,6 +45,17 @@ def get_dataset(
     actor: Annotated[ActorContext, Depends(get_actor_context)],
 ) -> CatalogDatasetResponse:
     return service.get_dataset(dataset_id, actor)
+
+
+@router.get("/datasets/{dataset_id}/rows", response_model=CatalogDatasetRowsResponse)
+def get_dataset_rows(
+    dataset_id: str,
+    service: Annotated[CatalogService, Depends(get_catalog_service)],
+    actor: Annotated[ActorContext, Depends(get_actor_context)],
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> CatalogDatasetRowsResponse:
+    return service.get_dataset_rows(dataset_id, actor, limit=limit, offset=offset)
 
 
 @router.get("/datasets/{dataset_id}/lineage", response_model=LineageGraphResponse)
@@ -85,22 +91,3 @@ def create_derived_dataset(
     actor: Annotated[ActorContext, Depends(get_actor_context)],
 ) -> CatalogDatasetResponse:
     return service.create_derived_dataset(request, actor)
-
-
-@router.post("/trino-runs/{run_id}/materializations", response_model=TrinoMaterializationRunResponse, status_code=status.HTTP_202_ACCEPTED)
-def create_trino_materialization(
-    run_id: str,
-    request: CreateDerivedDatasetRequest,
-    service: Annotated[TrinoMaterializationService, Depends(get_trino_materialization_service)],
-    actor: Annotated[ActorContext, Depends(get_actor_context)],
-) -> TrinoMaterializationRunResponse:
-    return service.submit(run_id, request, actor)
-
-
-@router.get("/trino-materializations/{materialization_id}", response_model=TrinoMaterializationRunResponse)
-def get_trino_materialization(
-    materialization_id: str,
-    service: Annotated[TrinoMaterializationService, Depends(get_trino_materialization_service)],
-    actor: Annotated[ActorContext, Depends(get_actor_context)],
-) -> TrinoMaterializationRunResponse:
-    return service.refresh(materialization_id, actor)

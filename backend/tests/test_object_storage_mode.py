@@ -2,12 +2,8 @@ import os
 from unittest import TestCase
 from unittest.mock import patch
 
-from app.core.config import Settings
-from app.core.errors import ApiError
 from app.services.dashboard_physical_data import configure_duckdb_s3
 from app.services.object_storage import object_storage_runtime
-from app.services import trino_result_storage
-from app.services.trino_result_storage import TrinoResultStorage
 from scripts.object_storage_runtime import (
     AWS_ENV_AND_INSTANCE_PROVIDERS,
     MINIO_SIMPLE_PROVIDER,
@@ -98,35 +94,3 @@ class ObjectStorageModeTest(TestCase):
         self.assertIn("PROVIDER credential_chain", statements)
         self.assertIn("REFRESH auto", statements)
         self.assertNotIn("s3_access_key_id", statements)
-
-    def test_trino_result_storage_aws_client_uses_default_chain(self) -> None:
-        runtime_settings = Settings(
-            _env_file=None,
-            asklake_object_storage_provider="aws",
-            aws_region="ap-northeast-2",
-            minio_access_key="must-not-leak",
-            minio_endpoint="http://m3-minio:9000",
-            minio_secret_key="must-not-leak",
-            trino_result_storage_bucket="asklake-query-results",
-        )
-        with patch.object(trino_result_storage.boto3, "client", return_value=object()) as client:
-            TrinoResultStorage(runtime_settings)._client()
-
-        _, kwargs = client.call_args
-        self.assertEqual(kwargs["region_name"], "ap-northeast-2")
-        self.assertEqual(kwargs["config"].s3["addressing_style"], "auto")
-        self.assertNotIn("endpoint_url", kwargs)
-        self.assertNotIn("aws_access_key_id", kwargs)
-        self.assertNotIn("aws_secret_access_key", kwargs)
-
-    def test_trino_result_storage_rejects_static_keys_in_aws_mode(self) -> None:
-        runtime_settings = Settings(
-            _env_file=None,
-            asklake_object_storage_provider="aws",
-            trino_result_storage_access_key="static-access",
-            trino_result_storage_secret_key="static-secret",
-        )
-        with self.assertRaises(ApiError) as raised:
-            TrinoResultStorage(runtime_settings)._client()
-
-        self.assertIn("default credential chain", raised.exception.message)

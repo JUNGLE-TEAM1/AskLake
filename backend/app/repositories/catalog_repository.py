@@ -31,13 +31,6 @@ class CatalogRepository:
         model = self.get_dataset_model(dataset_id)
         return dataset_model_to_payload(model) if model else None
 
-    def get_dataset_payload_by_name(self, dataset_name: str) -> dict[str, Any] | None:
-        ensure_catalog_schema(self.db)
-        model = self.db.scalar(
-            select(CatalogDatasetModel).where(CatalogDatasetModel.name == dataset_name)
-        )
-        return dataset_model_to_payload(model) if model else None
-
     def get_lineage_payload(self, dataset_id: str) -> dict[str, Any] | None:
         payload = self.get_dataset_payload(dataset_id)
         lineage_graph = payload.get("lineageGraph") if payload else None
@@ -153,6 +146,8 @@ def normalize_materialization_runs(materialization_runs: list[Any]) -> list[dict
         normalized_run = dict(run)
         if normalized_run.get("sourceKind") not in {"etl", "sql", "kafka"}:
             normalized_run["sourceKind"] = "etl"
+        if normalized_run.get("materializationMode") not in {"snapshot", "delta"}:
+            normalized_run["materializationMode"] = "delta" if normalized_run["sourceKind"] == "kafka" else "snapshot"
         normalized_runs.append(normalized_run)
     return normalized_runs
 

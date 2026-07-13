@@ -1,4 +1,6 @@
 import type {
+  DashboardPublishedDataRefreshScope,
+  DashboardPublishedDataResponse,
   DashboardRuntimeResponse,
   DashboardRuntimeWidgetType,
   DashboardWidgetLayout,
@@ -25,6 +27,15 @@ export type UpdateDraftWidgetInput = {
 export function getPublishedDashboard(dashboardId: string) {
   return apiClient.get<DashboardRuntimeResponse>(
     `/api/dashboards/${encodeURIComponent(dashboardId)}/published`,
+  );
+}
+
+export function getPublishedDashboardData(
+  dashboardId: string,
+  scope: DashboardPublishedDataRefreshScope = "all",
+) {
+  return apiClient.get<DashboardPublishedDataResponse>(
+    `/api/dashboards/${encodeURIComponent(dashboardId)}/published/data?scope=${encodeURIComponent(scope)}`,
   );
 }
 

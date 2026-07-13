@@ -25,6 +25,7 @@ import type {
   ToolbarDraftWidgetKind,
   UpdateDraftWidgetFormInput,
 } from "./dashboardRuntimeTypes";
+import type { DashboardPublishedRefreshStatus } from "./useDashboardRuntimeResources";
 
 type RuntimeNotice = {
   message: string;
@@ -54,7 +55,11 @@ type DashboardRuntimeState = {
   mode: DashboardRuntimeMode;
   notice: RuntimeNotice | null;
   pages: DashboardRuntimePage[];
+  publishedAutoRefreshIntervalMinutes: number | null;
   publishedRuntime: DashboardRuntimeResponse | null;
+  publishedRefreshError: string | null;
+  publishedRefreshedAt: string | null;
+  publishedRefreshStatus: DashboardPublishedRefreshStatus;
   renamingPageId: string | null;
   runtimeError: string | null;
   runtimeLoading: boolean;
@@ -166,7 +171,11 @@ export function DashboardRuntimeView({
     mode,
     notice,
     pages,
+    publishedAutoRefreshIntervalMinutes,
     publishedRuntime,
+    publishedRefreshError,
+    publishedRefreshedAt,
+    publishedRefreshStatus,
     renamingPageId,
     runtimeError,
     runtimeLoading,
@@ -506,6 +515,10 @@ export function DashboardRuntimeView({
         mode={mode}
         notice={notice}
         pages={pages}
+        publishedAutoRefreshIntervalMinutes={publishedAutoRefreshIntervalMinutes}
+        publishedRefreshError={publishedRefreshError}
+        publishedRefreshedAt={publishedRefreshedAt}
+        publishedRefreshStatus={publishedRefreshStatus}
         renamingPageId={renamingPageId}
         selectedPageId={selectedPageId}
         shareLink={shareLink}

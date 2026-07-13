@@ -200,33 +200,10 @@ show_status() {
   fi
 }
 
-bootstrap_trino_dependencies() {
-  remote_compose 'up -d postgres'
-  remote_compose 'run --rm trino-postgres-bootstrap'
-  remote_compose 'build aws-s3-readiness'
-  remote_compose 'run --rm aws-s3-readiness'
-}
-
-verify_trino_runtime() {
-  local attempt
-  for attempt in $(seq 1 12); do
-    if remote_compose 'exec -T backend python scripts/verify-trino-production-readiness.py --allow-disabled'; then
-      return
-    fi
-    if [[ "$attempt" -lt 12 ]]; then
-      printf 'Trino readiness is not ready yet (attempt %s/12).\n' "$attempt"
-      sleep 5
-    fi
-  done
-  die "Trino production readiness failed"
-}
-
 start_stack() {
   ensure_started
-  bootstrap_trino_dependencies
   remote_compose 'up -d'
   health_check
-  verify_trino_runtime
   remote_compose 'ps'
 }
 
@@ -256,19 +233,15 @@ stop_stack() {
 deploy_stack() {
   ensure_started
   ssh_run "cd '$DEPLOY_PATH' && git fetch origin '$DEPLOY_BRANCH' && git checkout '$DEPLOY_BRANCH' && git pull --ff-only origin '$DEPLOY_BRANCH'"
-  bootstrap_trino_dependencies
   remote_compose 'up -d --build'
   health_check
-  verify_trino_runtime
   remote_compose 'ps'
 }
 
 restart_stack() {
   ensure_started
-  bootstrap_trino_dependencies
   remote_compose 'up -d --build'
   health_check
-  verify_trino_runtime
   remote_compose 'ps'
 }
 

@@ -50,7 +50,7 @@ Job A Phase 4의 체크리스트만 진행해줘.
   -> Spark가 Output S3에 Parquet 쓰기
   -> Backend가 물리 결과 검증
   -> Catalog 등록
-  -> DuckDB 또는 Trino SQL 분석
+  -> DuckDB SQL 분석
 ```
 
 ## 3. Job A와 Job B 경계
@@ -76,19 +76,19 @@ Job A Phase 4의 체크리스트만 진행해줘.
 | AWS 계정 연결 | `[x]` | profile `asklake`, account `215819604878`, 서울 리전 |
 | Raw 버킷 | `[x]` | `asklake-dev-raw-215819604878-apne2` |
 | Spark Output 버킷 | `[x]` | `asklake-dev-output-215819604878-apne2` |
-| Iceberg Warehouse 버킷 | `[x]` | `asklake-dev-warehouse-215819604878-apne2` |
-| Query Result 버킷 | `[x]` | `asklake-dev-query-results-215819604878-apne2` |
+| Iceberg Warehouse 버킷 | `[x]` | 생성됨. 현재 `dev` runtime에서는 사용하지 않는 예약 자원 |
+| Query Result 버킷 | `[x]` | 생성됨. 현재 `dev` runtime에서는 사용하지 않는 예약 자원 |
 | 버킷 보안 | `[x]` | Public Access Block 4개 값 true, AES256, BucketOwnerEnforced |
 | provider mode 계약 테스트 | `[x]` | Node 검증과 Python 단위 테스트 통과 |
 | 로컬 MinIO 객체 왕복 | `[x]` | put/list/get/stat/delete 확인 |
 | 로컬 Spark S3A 읽기 | `[x]` | Spark 4.0.1에서 MinIO 입력 3행 읽기 확인 |
 | 실제 AWS S3 객체 왕복 | `[ ]` | 아직 put/list/get/delete 미검증 |
 | 실제 AWS S3 Spark 읽기 | `[ ]` | 아직 미검증 |
-| 배포 브랜치 안정화 | `[-]` | 변경 49개 기준점 검증 통과, 최신 `origin/dev`보다 19커밋 뒤라 통합 필요 |
+| 배포 브랜치 안정화 | `[-]` | 최신 `origin/dev` 19커밋 통합·충돌 해결·병합 후 검증 통과, merge commit과 push 대기 |
 | EC2·IAM Role | `[ ]` | 존재 여부와 설정 미확인 |
 | AWS 배포 | `[ ]` | 미실행 |
 | 작은 파일 E2E | `[ ]` | 미실행 |
-| Trino·SQL 분석 E2E | `[ ]` | 미실행 |
+| DuckDB SQL 분석 E2E | `[ ]` | 미실행 |
 | 256 MiB Job B 통합 | `[ ]` | Job B 결과 대기 |
 
 ## 5. 버킷 역할
@@ -97,10 +97,10 @@ Job A Phase 4의 체크리스트만 진행해줘.
 | --- | --- | --- |
 | 원본 입력 | `asklake-dev-raw-215819604878-apne2` | Phase 1 |
 | Spark Parquet 결과 | `asklake-dev-output-215819604878-apne2` | Phase 1·6 |
-| Trino/Iceberg table data | `asklake-dev-warehouse-215819604878-apne2` | Phase 7 |
-| SQL 결과 page object | `asklake-dev-query-results-215819604878-apne2` | Phase 7 |
+| 후속 Iceberg Warehouse | `asklake-dev-warehouse-215819604878-apne2` | 현재 미사용·별도 query engine 복원 이슈 |
+| 후속 Query Result storage | `asklake-dev-query-results-215819604878-apne2` | 현재 미사용·별도 query engine 복원 이슈 |
 
-초기 core E2E는 Raw와 Output 버킷을 먼저 검증한다. Warehouse와 Query Result 문제를 Spark ingestion 문제와 섞지 않는다.
+현재 core E2E와 SQL 분석은 Raw와 Output 버킷만 사용한다. Warehouse와 Query Result는 생성 상태만 보존하고 현재 배포 성공 조건에 포함하지 않는다.
 
 ## 6. Phase 지도
 
@@ -113,7 +113,7 @@ Job A Phase 4의 체크리스트만 진행해줘.
 | 4 | Production Compose 배포 | 이미지 build, container 기동, 배포 script 성공 |
 | 5 | 서비스 health 증거 | 외부·내부 health와 DB 지속성 성공 |
 | 6 | 작은 파일 core E2E | Raw → Spark → Output → Catalog 성공 |
-| 7 | SQL·Trino 분석 E2E | Warehouse·Query Result 포함 분석 성공 |
+| 7 | DuckDB SQL 분석 E2E | Output Parquet 기반 분석과 insight 성공 |
 | 8 | Job B 256 MiB 통합 | 다중 파일 전체 처리와 분석 성공 |
 | 9 | 운영 증거·정리·handoff | 재현 절차와 한계 기록 완료 |
 
@@ -129,13 +129,13 @@ EC2가 실제로 pull할 수 있는 하나의 원격 브랜치를 만든다. 로
 
 - [x] `codex/aws-s3-storage-mode`의 변경 파일과 미추적 파일을 검토한다.
 - [x] 다른 작업의 변경이 섞이지 않았는지 확인한다.
-- [ ] 최신 `origin/dev` 19개 커밋의 영향 범위를 확인한다.
-- [ ] 충돌이 나면 사용자 변경을 보존하고 파일별로 해결한다.
+- [x] 최신 `origin/dev` 19개 커밋의 영향 범위를 확인한다.
+- [x] 충돌을 파일별로 해결하고 최신 `dev`의 Trino revert를 보존한다.
 - [x] `npm run verify:object-storage-mode`를 실행한다.
 - [x] 관련 Python object-storage 테스트를 실행한다.
 - [x] Production Compose config를 렌더링한다.
-- [ ] Backend·Frontend build와 배포 dependency 검증을 실행한다.
-- [ ] 관련 문서와 실제 env key가 일치하는지 확인한다.
+- [x] Backend·Frontend build와 배포 dependency 검증을 실행한다.
+- [x] 관련 문서와 실제 env key가 일치하는지 확인한다.
 - [x] secret·token·실제 credential이 diff에 없는지 확인한다.
 - [ ] 의도한 파일만 commit하고 원격 task branch에 push한다.
 
@@ -161,11 +161,11 @@ EC2 문제를 섞기 전에 현재 AWS 계정과 실제 버킷이 데이터 파�
 
 ### 체크리스트
 
-- [ ] 네 버킷의 region·Public Access Block·encryption·ownership을 다시 읽는다.
+- [ ] 네 버킷의 region·Public Access Block·encryption·ownership을 다시 읽는다. 현재 runtime 접근 검증은 Raw·Output만 대상으로 한다.
 - [ ] Raw 버킷에 작은 deterministic fixture를 업로드한다.
 - [ ] 같은 key가 목록에 나타나는지 확인한다.
 - [ ] 같은 객체를 다시 읽고 원본 checksum과 비교한다.
-- [ ] Output·Warehouse·Query Result 버킷에서 임시 put/head/delete를 확인한다.
+- [ ] Output 버킷에서 임시 put/head/delete를 확인한다.
 - [ ] `verify-aws-s3-readiness.py`가 통과하는지 확인한다.
 - [ ] Spark 4.0.1이 `s3a://<raw-bucket>/<smoke-key>`를 읽는지 확인한다.
 - [ ] Spark가 읽은 schema와 행 수를 기록한다.
@@ -215,14 +215,14 @@ AskLake 컨테이너들이 장기 access key 없이 S3를 사용할 수 있는 �
 - [ ] 기존 EC2 instance, VPC, subnet, Security Group, Elastic IP 상태를 읽기 전용으로 조사한다.
 - [ ] 기존 서버가 없다면 비용·용량·운영 시간을 확인한 뒤 EC2 생성 범위를 확정한다.
 - [ ] EC2용 IAM Role과 Instance Profile을 준비한다.
-- [ ] Raw에는 list/get, 나머지 세 버킷에는 list/get/put/delete/multipart 권한을 준다.
+- [ ] Raw에는 list/get, Output에는 list/get/put/delete/multipart 권한을 준다.
 - [ ] bucket ARN과 object ARN을 분리해 정책에 작성한다.
 - [ ] IAM Role을 EC2에 연결한다.
 - [ ] IMDSv2 token required와 hop limit 2를 적용한다.
-- [ ] EC2 host에서 caller identity와 네 버킷 접근을 확인한다.
+- [ ] EC2 host에서 caller identity와 Raw·Output 버킷 접근을 확인한다.
 - [ ] container에서도 동일 Role credential로 S3 readiness가 통과하는지 확인한다.
 - [ ] Security Group은 80·443과 제한된 관리용 SSH만 허용한다.
-- [ ] Postgres·Airflow·Spark·Trino port를 public ingress에 열지 않는다.
+- [ ] Postgres·Airflow·Spark port를 public ingress에 열지 않는다.
 
 ### 완료 기준
 
@@ -251,11 +251,10 @@ Production Compose가 요구하는 디렉터리, 프로그램, env, secret file�
 - [ ] `/opt/asklake/deploy/.env`를 만들고 Git ignore 상태를 확인한다.
 - [ ] domain, CORS, Postgres, Mongo, Airflow 내부 token을 설정한다.
 - [ ] object storage provider를 `aws`로 설정한다.
-- [ ] 실제 네 버킷 이름을 올바른 env key에 연결한다.
+- [ ] 실제 Raw·Output 버킷 이름을 올바른 env key에 연결한다.
 - [ ] `S3_ENDPOINT`는 비우고 `S3_FORCE_PATH_STYLE=false`로 둔다.
 - [ ] Spark output mode를 `s3a`로 둔다.
 - [ ] AWS access key·secret key를 `.env`에 넣지 않는다.
-- [ ] Trino TLS keystore·CA·password file을 `/opt/asklake/secrets`에 준비한다.
 - [ ] Airflow와 Backend의 execution token이 같은지 확인한다.
 - [ ] secret file 권한을 최소화하고 내용을 출력하지 않는다.
 
@@ -270,13 +269,13 @@ ASKLAKE_SPARK_OUTPUT_BUCKET=asklake-dev-output-215819604878-apne2
 S3_ENDPOINT=
 S3_FORCE_PATH_STYLE=false
 S3_ALLOWED_BUCKETS=asklake-dev-raw-215819604878-apne2,asklake-dev-output-215819604878-apne2
-TRINO_ICEBERG_WAREHOUSE_BUCKET=asklake-dev-warehouse-215819604878-apne2
-TRINO_RESULT_STORAGE_BUCKET=asklake-dev-query-results-215819604878-apne2
+ASKLAKE_S3_READINESS_READ_BUCKETS=asklake-dev-raw-215819604878-apne2
+ASKLAKE_S3_READINESS_WRITE_BUCKETS=asklake-dev-output-215819604878-apne2
 ```
 
 ### 알려진 주의점
 
-현재 Production Compose는 `TRINO_ENABLED=false`여도 Trino service와 TLS mount를 구성한다. 초기 Spark core E2E에서 Trino를 완전히 제외하려면 Compose profile 분리가 필요하다. 그렇지 않다면 Phase 3에서 Trino secret file까지 준비해야 한다.
+최신 `origin/dev`는 Trino/query engine 기능을 의도적으로 되돌린 상태다. Production Compose에는 Trino service나 TLS mount가 없으며, 이 브랜치에서 되살리지 않는다. Warehouse·Query Result 연결은 별도 기능 복원 결정과 테스트가 필요하다.
 
 ### 완료 기준
 
@@ -335,7 +334,6 @@ TRINO_RESULT_STORAGE_BUCKET=asklake-dev-query-results-215819604878-apne2
 - [ ] Airflow scheduler와 DAG processor가 healthy다.
 - [ ] `asklake_etl_job` DAG import error가 없다.
 - [ ] AWS S3 readiness가 재실행해도 통과한다.
-- [ ] Trino health가 성공한다. Trino가 제외된 구성이라면 그 결정을 기록한다.
 - [ ] Backend가 Docker socket을 통해 Spark runtime을 시작할 수 있다.
 - [ ] 컨테이너 restart count와 최근 error log를 확인한다.
 - [ ] 테스트 metadata를 만든 뒤 backend restart 후에도 Postgres에 남는지 확인한다.
@@ -391,35 +389,33 @@ TRINO_RESULT_STORAGE_BUCKET=asklake-dev-query-results-215819604878-apne2
 
 ---
 
-## Phase 7. SQL·Trino 분석 E2E
+## Phase 7. DuckDB SQL 분석 E2E
 
 ### 목적
 
-Spark 결과가 저장된 것으로 끝내지 않고 실제 분석과 결과 저장까지 검증한다.
+Spark 결과가 저장된 것으로 끝내지 않고 현재 SQL runtime이 Output S3 Parquet를 읽어 유의미한 분석을 만들 수 있는지 검증한다.
 
 ### 체크리스트
 
 - [ ] core E2E Catalog Dataset을 SQL 분석에서 연다.
-- [ ] bounded DuckDB compatibility query가 S3 Parquet 전체를 읽는지 확인한다.
-- [ ] Trino production readiness를 실행한다.
-- [ ] Trino가 EC2 Role로 Warehouse 버킷에 접근한다.
-- [ ] Iceberg catalog metadata가 전용 Postgres identity로 저장된다.
-- [ ] Query Result 버킷에 결과 page object가 생성된다.
-- [ ] 첫 page와 다음 page cursor를 조회한다.
-- [ ] 결과 retention·cleanup이 임시 object를 정리한다.
+- [ ] bounded DuckDB query가 EC2 Role로 Output S3 Parquet를 읽는지 확인한다.
+- [ ] 전체 SQL 결과가 Run별 Parquet snapshot으로 저장되고 첫 page가 반환되는지 확인한다.
+- [ ] `GET /api/query/runs/{runId}?offset=&limit=`로 같은 snapshot의 다음 page를 조회한다.
+- [ ] Catalog `storageLocation`과 실제 Output S3 object가 일치하는지 확인한다.
 - [ ] 대표 분석 SQL과 결과 요약을 기록한다.
+- [ ] 합성 데이터의 의도된 분포나 상관관계를 설명하는 insight를 최소 1개 확인한다.
 
 ### 완료 기준
 
 - Catalog Dataset을 기반으로 SQL 결과 반환
-- Warehouse와 Query Result storage evidence 확보
-- 임시 검증 table·result object cleanup 완료
+- 같은 Run snapshot pagination과 실제 Output S3 read 증거 확보
+- 재현 가능한 SQL과 유의미한 insight 기록
 
 ### 중단 조건
 
-- Spark Parquet를 Trino Iceberg table로 자동 간주함
 - Query 성공을 Postgres sample row만으로 판단함
-- cleanup 실패로 검증 object가 계속 남음
+- 원격 Parquet 대신 local/mock fallback을 읽음
+- byte budget을 넘는 데이터를 무제한 Preview로 처리하려고 함
 
 ---
 
@@ -478,7 +474,7 @@ Job B가 만든 같은-schema shard들을 실제 AWS 배포 환경에서 prefix 
 - [ ] Job ID·Run ID·input/output S3 URI를 기록한다.
 - [ ] input/output row·object·byte를 기록한다.
 - [ ] SQL과 insight 요약을 기록한다.
-- [ ] 임시 smoke object와 검증 Iceberg table을 정리한다.
+- [ ] 임시 smoke object와 검증 SQL snapshot을 정리한다.
 - [ ] EC2를 계속 유지할지 중지할지 결정한다.
 - [ ] 알려진 한계와 다음 backlog를 기록한다.
 - [ ] 실제 credential과 개인 SSH 경로가 문서에 없는지 확인한다.
@@ -497,6 +493,7 @@ Phase 완료 시 아래 표에 한 줄을 추가한다.
 | --- | --- | --- | --- | --- | --- | --- |
 | 2026-07-13 | S3 bucket bootstrap | local AWS profile | 4 bucket names | create·security verify 성공 | region, Public Access Block, AES256, ownership 확인 | 실제 object·Spark AWS smoke 필요 |
 | 2026-07-13 | Phase 0 baseline | `codex/aws-s3-storage-mode` pre-integration | tracked 41개, untracked 8개 | provider 계약, Python 13 tests, Compose config 통과 | secret pattern 미검출, diff check 통과 | 최신 `origin/dev` 19 commits, 겹치는 파일 24개 통합 필요 |
+| 2026-07-13 | Phase 0 dev integration | merge commit 전 | `origin/dev` 19 commits와 S3 provider 변경 | Trino revert 보존, Node provider 검증, Python 11+25 tests, UI 101 checks, frontend/Docker build, deploy dependency 검증 통과 | Production Compose는 AWS S3 readiness 뒤 backend 시작, 최신 dev 대비 diff check 통과 | merge commit·task branch push 필요; npm audit 1 moderate·1 high는 별도 dependency backlog |
 
 E2E Run은 아래 형식으로 추가 기록한다.
 
@@ -521,7 +518,7 @@ Known limitation:
 - `main`과 `dev`에 직접 push하지 않는다.
 - 실제 secret·token·private key·AWS access key를 commit하거나 출력하지 않는다.
 - EC2에서는 장기 access key 대신 Instance Role을 사용한다.
-- S3 readiness가 실패하면 backend·Trino를 강제로 통과시키지 않는다.
+- S3 readiness가 실패하면 backend를 강제로 통과시키지 않는다.
 - 배포 실패를 해결하려고 Postgres volume이나 S3 prefix를 자동 삭제하지 않는다.
 - 작은 fixture E2E가 성공하기 전에 256 MiB 입력으로 원인을 복잡하게 만들지 않는다.
 - Health 성공과 business E2E 성공을 구분한다.

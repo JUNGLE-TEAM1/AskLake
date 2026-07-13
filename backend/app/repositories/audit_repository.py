@@ -10,7 +10,7 @@ from app.models.identity import AuditEventModel
 from app.schemas.identity import AdminAuditLogEntry
 
 ALLOWED_AUDIT_RESULTS = {"success", "failed", "forbidden"}
-ALLOWED_AUDIT_TARGET_TYPES = {"etl_job", "dataset", "dashboard", "query_run", "ai_module", "admin_module", "ui", "auth", "user", "group"}
+ALLOWED_AUDIT_TARGET_TYPES = {"etl_job", "dataset", "dashboard", "ai_module", "admin_module", "ui", "auth", "user", "group"}
 
 
 def ensure_audit_event_table(db: Session) -> None:
