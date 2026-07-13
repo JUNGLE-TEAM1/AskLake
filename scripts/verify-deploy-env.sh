@@ -24,8 +24,41 @@ for required_command in docker python3; do
   }
 done
 
-declare -A env_values=()
-declare -A env_key_counts=()
+env_keys=()
+env_values=()
+env_key_counts=()
+
+env_key_index() {
+  local sought_key="$1"
+  local index
+  for index in "${!env_keys[@]}"; do
+    if [[ "${env_keys[$index]}" == "$sought_key" ]]; then
+      printf '%s' "$index"
+      return 0
+    fi
+  done
+  printf '%s' '-1'
+}
+
+env_value_for() {
+  local sought_key="$1"
+  local index
+  index="$(env_key_index "$sought_key")"
+  if (( index >= 0 )); then
+    printf '%s' "${env_values[$index]}"
+  fi
+}
+
+env_count_for() {
+  local sought_key="$1"
+  local index
+  index="$(env_key_index "$sought_key")"
+  if (( index >= 0 )); then
+    printf '%s' "${env_key_counts[$index]}"
+  else
+    printf '%s' '0'
+  fi
+}
 
 while IFS= read -r env_line || [[ -n "$env_line" ]]; do
   env_line="${env_line%$'\r'}"
@@ -36,8 +69,16 @@ while IFS= read -r env_line || [[ -n "$env_line" ]]; do
   env_raw_value="${env_line#*=}"
   [[ "$env_key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
 
-  env_key_counts["$env_key"]=$(( ${env_key_counts["$env_key"]:-0} + 1 ))
-  if (( env_key_counts["$env_key"] == 1 )); then
+  env_key_index_value="$(env_key_index "$env_key")"
+  if (( env_key_index_value < 0 )); then
+    env_keys+=("$env_key")
+    env_values+=("")
+    env_key_counts+=("1")
+    env_key_index_value=$((${#env_keys[@]} - 1))
+  else
+    env_key_counts[$env_key_index_value]=$(( ${env_key_counts[$env_key_index_value]} + 1 ))
+  fi
+  if (( ${env_key_counts[$env_key_index_value]} == 1 )); then
     if (( ${#env_raw_value} >= 2 )); then
       env_first_character="${env_raw_value:0:1}"
       env_last_character="${env_raw_value: -1}"
@@ -46,7 +87,7 @@ while IFS= read -r env_line || [[ -n "$env_line" ]]; do
         env_raw_value="${env_raw_value:1:${#env_raw_value}-2}"
       fi
     fi
-    env_values["$env_key"]="$env_raw_value"
+    env_values[$env_key_index_value]="$env_raw_value"
   fi
 done < "$ENV_FILE"
 
@@ -77,20 +118,20 @@ required_keys=(
 )
 
 for key in "${required_keys[@]}"; do
-  key_count="${env_key_counts["$key"]:-0}"
+  key_count="$(env_count_for "$key")"
   if (( key_count > 1 )); then
     printf 'error: %s must be defined exactly once in %s\n' "$key" "$ENV_FILE" >&2
     exit 1
   fi
 
-  value="${env_values["$key"]:-}"
+  value="$(env_value_for "$key")"
   if is_blank "$value" || [[ "$value" == *replace-with-* || "$value" == *example.invalid* ]]; then
     printf 'error: %s must be set to a non-placeholder value in %s\n' "$key" "$ENV_FILE" >&2
     exit 1
   fi
 done
 
-airflow_fernet_key="${env_values[AIRFLOW_FERNET_KEY]:-}"
+airflow_fernet_key="$(env_value_for AIRFLOW_FERNET_KEY)"
 if ! printf '%s' "$airflow_fernet_key" | python3 -c '
 import base64
 import binascii
@@ -115,29 +156,29 @@ raw_db_secret_keys=(
 )
 
 for key in "${raw_db_secret_keys[@]}"; do
-  value="${env_values["$key"]:-}"
+  value="$(env_value_for "$key")"
   if [[ ! "$value" =~ ^[A-Za-z0-9_-]+$ ]]; then
     printf 'error: %s must use only the unpadded base64url alphabet because Compose interpolates it into a connection URL\n' "$key" >&2
     exit 1
   fi
 done
 
-minio_root_user="${env_values[MINIO_ROOT_USER]:-}"
-minio_root_password="${env_values[MINIO_ROOT_PASSWORD]:-}"
-minio_access_key="${env_values[MINIO_ACCESS_KEY]:-}"
-minio_secret_key="${env_values[MINIO_SECRET_KEY]:-}"
+minio_root_user="$(env_value_for MINIO_ROOT_USER)"
+minio_root_password="$(env_value_for MINIO_ROOT_PASSWORD)"
+minio_access_key="$(env_value_for MINIO_ACCESS_KEY)"
+minio_secret_key="$(env_value_for MINIO_SECRET_KEY)"
 if [[ "$minio_access_key" == "$minio_root_user" || "$minio_secret_key" == "$minio_root_password" ]]; then
   printf 'error: MinIO application credentials must be distinct from MinIO root credentials\n' >&2
   exit 1
 fi
 
-app_env="${env_values[APP_ENV]:-}"
+app_env="$(env_value_for APP_ENV)"
 [[ "$app_env" == "production" ]] || {
   printf 'error: APP_ENV must be production in %s\n' "$ENV_FILE" >&2
   exit 1
 }
 
-app_domain="${env_values[APP_DOMAIN]:-}"
+app_domain="$(env_value_for APP_DOMAIN)"
 if [[ ! "$app_domain" =~ ^[A-Za-z0-9.-]+$ \
   || "$app_domain" == "localhost" \
   || "$app_domain" == "asklake.example.com" \
@@ -160,8 +201,8 @@ require_host_directory() {
   fi
 }
 
-spark_host_data_dir="${env_values[ASKLAKE_HOST_DATA_DIR]:-}"
-spark_replay_input_dir="${env_values[ASKLAKE_REPLAY_HOST_INPUT_DIR]:-}"
+spark_host_data_dir="$(env_value_for ASKLAKE_HOST_DATA_DIR)"
+spark_replay_input_dir="$(env_value_for ASKLAKE_REPLAY_HOST_INPUT_DIR)"
 
 require_host_directory ASKLAKE_HOST_DATA_DIR "$spark_host_data_dir"
 for spark_data_subdirectory in spark-ivy spark-output spark-runs samples review-text-models; do
