@@ -86,7 +86,7 @@ Job A Phase 4의 체크리스트만 진행해줘.
 | 실제 AWS S3 Spark 읽기 | `[x]` | Spark 4.0.1 + S3A가 Raw CSV 4컬럼·5행을 정확히 읽음 |
 | 배포 브랜치 안정화 | `[x]` | 최신 `origin/dev` 19커밋 통합·충돌 해결·병합 후 검증 통과, 원격 task branch push 완료 |
 | EC2·IAM Role | `[x]` | 기존 `asklake-prod` 재사용, Instance Role 최소 권한과 host·container S3 접근 검증 완료 |
-| AWS 배포 | `[ ]` | 미실행 |
+| AWS 배포 | `[x]` | 격리된 `asklake-release` project로 commit `d157792e` build·up 및 외부 HTTPS health 성공 |
 | 작은 파일 E2E | `[ ]` | 미실행 |
 | DuckDB SQL 분석 E2E | `[ ]` | 미실행 |
 | 256 MiB Job B 통합 | `[ ]` | Job B 결과 대기 |
@@ -264,17 +264,17 @@ Production Compose가 요구하는 디렉터리, 프로그램, env, secret file�
 
 ### 체크리스트
 
-- [ ] Docker·Docker Compose·Git·AWS CLI 설치 상태를 확인한다.
-- [ ] repo가 `/opt/asklake`에 있고 배포 branch를 받을 수 있는지 확인한다.
-- [ ] `/opt/asklake/deploy/.env`를 만들고 Git ignore 상태를 확인한다.
-- [ ] domain, CORS, Postgres, Mongo, Airflow 내부 token을 설정한다.
-- [ ] object storage provider를 `aws`로 설정한다.
-- [ ] 실제 Raw·Output 버킷 이름을 올바른 env key에 연결한다.
-- [ ] `S3_ENDPOINT`는 비우고 `S3_FORCE_PATH_STYLE=false`로 둔다.
-- [ ] Spark output mode를 `s3a`로 둔다.
-- [ ] AWS access key·secret key를 `.env`에 넣지 않는다.
-- [ ] Airflow와 Backend의 execution token이 같은지 확인한다.
-- [ ] secret file 권한을 최소화하고 내용을 출력하지 않는다.
+- [x] Docker·Docker Compose·Git·AWS CLI 설치 상태를 확인한다.
+- [x] 기존 dirty `/opt/asklake`를 보존하고 `/opt/asklake-release`에 배포 branch를 clean checkout한다.
+- [x] `/opt/asklake-release/deploy/.env`를 만들고 Git ignore 상태를 확인한다.
+- [x] domain, CORS, Postgres, Mongo, Airflow 내부 token을 설정한다.
+- [x] object storage provider를 `aws`로 설정한다.
+- [x] 실제 Raw·Output 버킷 이름을 올바른 env key에 연결한다.
+- [x] `S3_ENDPOINT`는 비우고 `S3_FORCE_PATH_STYLE=false`로 둔다.
+- [x] Spark output mode를 `s3a`로 둔다.
+- [x] AWS access key·secret key를 `.env`에 넣지 않는다.
+- [x] Airflow와 Backend의 execution token이 같은지 확인한다.
+- [x] secret file 권한을 `600`으로 제한하고 내용을 출력하지 않는다.
 
 ### 주요 object-storage 값
 
@@ -311,15 +311,26 @@ ASKLAKE_S3_READINESS_WRITE_BUCKETS=asklake-dev-output-215819604878-apne2
 
 ### 체크리스트
 
-- [ ] 로컬에서 `scripts/verify-deploy-dependencies.sh`를 통과한다.
-- [ ] `deploy/ec2.env`에 instance ID, host, SSH key, deploy branch를 설정한다.
-- [ ] `scripts/deploy.sh status`로 현재 상태를 확인한다.
-- [ ] EC2 server worktree가 clean한지 확인한다.
-- [ ] 배포 branch와 commit SHA를 기록한다.
-- [ ] `scripts/deploy.sh deploy`를 실행한다.
-- [ ] `aws-s3-readiness`가 backend보다 먼저 성공하는지 확인한다.
-- [ ] 이미지 build 실패와 container restart loop가 없는지 확인한다.
-- [ ] `docker compose ps` 전체 결과를 기록한다.
+- [x] Phase 0에서 로컬 `scripts/verify-deploy-dependencies.sh`를 통과한다.
+- [x] 로컬 SSH key가 없는 상태를 확인하고 이번 실행 transport를 AWS SSM으로 고정한다.
+- [x] SSM으로 EC2·기존 Compose·disk 상태를 읽기 전용으로 확인한다.
+- [x] EC2 release worktree가 clean한지 확인한다.
+- [x] 배포 branch와 commit SHA를 기록한다.
+- [x] `scripts/deploy.sh deploy`와 같은 checkout → config gate → `compose up -d --build` → health 순서를 SSM으로 실행한다.
+- [x] `aws-s3-readiness`가 backend보다 먼저 성공하는지 확인한다.
+- [x] 이미지 build 실패와 container restart loop가 없는지 확인한다.
+- [x] `docker compose ps` 전체 결과를 기록한다.
+
+### 2026-07-13 Phase 3·4 통합 실행 메모
+
+- Phase 3 설정 검증이 성공한 경우에만 Phase 4를 이어서 실행하는 하나의 gated deployment로 합쳤다.
+- 기존 `/opt/asklake`는 `dev` commit `a982afb6`와 143개 dirty entry가 있어 수정하지 않았다. 새 `/opt/asklake-release`에는 `codex/aws-s3-storage-mode` commit `d157792e`를 clean checkout했다.
+- 기존 `asklake` project의 Redpanda `v24.3.6`과 데이터 volume을 보존하기 위해 새 Compose project를 `asklake-release`로 분리했다. Spark master·worker·output volume 이름도 release 전용으로 분리했다.
+- 기존 server secret은 값을 출력하지 않고 release `.env`로 옮겼다. 누락된 Airflow execution/internal token은 server에서 생성했으며 `.env` mode는 `600`, AWS static access key 관련 key는 absent다.
+- 이 머신에는 `deploy/ec2.env`와 기본 SSH private key가 없어 `scripts/deploy.sh` 자체의 SSH transport는 실행하지 못했다. 대신 같은 배포 순서를 SSM으로 실행했으며, SSH 기반 경로 검증은 알려진 한계로 남긴다.
+- Production Compose config와 서비스 목록, 8 GiB 이상 disk 여유, DNS, backend image build를 먼저 검사했다. 이어 실행한 S3 readiness는 `region=ap-northeast-2, readBuckets=1, writeBuckets=1`로 성공했다.
+- `docker compose up -d --build`는 2분 54초에 성공했다. 장기 실행 container 10개의 restart count는 모두 0이고, `aws-s3-readiness`와 `airflow-init`은 exit code 0이다.
+- 외부 `https://3-39-98-211.sslip.io/`는 HTTP 200, `https://3-39-98-211.sslip.io/api/health`는 DB 연결을 포함해 `ok=true`, status 200을 반환했다.
 
 ### 완료 기준
 
@@ -343,17 +354,18 @@ ASKLAKE_S3_READINESS_WRITE_BUCKETS=asklake-dev-output-215819604878-apne2
 
 ### 체크리스트
 
-- [ ] 공개 HTTPS frontend가 응답한다.
-- [ ] `/api/health`가 성공한다.
-- [ ] Caddy가 backend·frontend로 정상 proxy한다.
-- [ ] AskLake Postgres가 healthy다.
-- [ ] Airflow metadata Postgres가 healthy다.
-- [ ] Airflow API server가 healthy다.
-- [ ] Airflow scheduler와 DAG processor가 healthy다.
+- [x] 공개 HTTPS frontend가 응답한다.
+- [x] `/api/health`가 성공한다.
+- [x] Caddy가 backend·frontend로 정상 proxy한다.
+- [x] AskLake Postgres가 healthy다.
+- [x] Airflow metadata Postgres가 healthy다.
+- [x] Airflow API server가 healthy다.
+- [x] Airflow scheduler와 DAG processor가 healthy다.
 - [ ] `asklake_etl_job` DAG import error가 없다.
-- [ ] AWS S3 readiness가 재실행해도 통과한다.
+- [x] AWS S3 readiness가 재실행해도 통과한다.
 - [ ] Backend가 Docker socket을 통해 Spark runtime을 시작할 수 있다.
-- [ ] 컨테이너 restart count와 최근 error log를 확인한다.
+- [x] 장기 실행 컨테이너 restart count가 모두 0인지 확인한다.
+- [ ] 최근 error log를 확인한다.
 - [ ] 테스트 metadata를 만든 뒤 backend restart 후에도 Postgres에 남는지 확인한다.
 
 ### 완료 기준
@@ -517,6 +529,9 @@ Phase 완료 시 아래 표에 한 줄을 추가한다.
 | 2026-07-13 | Phase 1 Spark S3A | Spark 4.0.1 / hadoop-aws 3.4.1 | 실제 Raw `s3a://` CSV, STS 1-hour session | schema 4컬럼과 5행을 정확히 읽음 | `event_id:int`, `user_id:string`, `event_type:string`, `amount:int`; row 5개 | EC2 IAM Role은 Phase 2에서 별도 검증 |
 | 2026-07-13 | Phase 2 EC2·IAM baseline | `codex/aws-s3-storage-mode` / `a203ebf6` | 기존 `asklake-prod`, `AskLakeEC2SSMRole`, Raw·Output 2개 bucket | 최소 권한 inline policy 적용, IAM simulation과 network guardrail 통과 | baseline Raw list는 AccessDenied; policy 적용 후 host SSM `bd972ccc-a2af-406c-96e6-8e6590563cac` 성공 | VPC endpoint는 후속 보안 강화 선택 사항 |
 | 2026-07-13 | Phase 2 host·container S3 | EC2 `i-0573d3ffce42e2eb6` | Raw 85 bytes, SHA-256 `5d0c7b5343402efb45113a96fb14551b953e2c589977cfbfd44869f4913e6e72` | host와 Docker bridge가 Role로 Raw read·Output write/delete 성공, Raw write 거부 | container SSM `3d69dfce-5fc9-42ab-8559-2e4fd860fab9`; cleanup SSM `2646da72-cc2c-4e6f-9d56-d6cd8ef2fa75`; Raw·Output `__asklake_phase2/` 최종 empty | 서버 repo dirty 상태 보존, 실제 배포는 Phase 3 이후 |
+| 2026-07-13 | Phase 3 release bootstrap | `codex/aws-s3-storage-mode` / `d157792e` | 기존 dirty repo와 server secret, 새 `/opt/asklake-release` | clean checkout, release env mode 600, S3 계약과 내부 token 준비, static AWS key absent | checkout SSM `1f9fc96f-9df9-4c8e-b522-ed334dd1d996`; env SSM `66d85fed-775f-4f7c-bf15-541694d94ce5` | SSH 기반 `deploy.sh` transport는 미검증 |
+| 2026-07-13 | Phase 4 Production Compose | EC2 `i-0573d3ffce42e2eb6` / `d157792e` | 격리 project `asklake-release`, Raw·Output AWS S3 | preflight·S3 readiness·build·up 성공, 10개 장기 container healthy·restart 0 | preflight SSM `b957965e-3ae9-41dc-a91d-5f5481c868e0`; deploy SSM `4d37b685-7ce1-4a52-b424-b38923f74f2a`; final audit `a6d95379-f083-480a-bd94-2c9c4950a150` | frontend npm audit 1 moderate·1 high는 dependency backlog |
+| 2026-07-13 | Phase 5 partial health | `https://3-39-98-211.sslip.io` | public frontend와 `/api/health` | 외부 HTTP 200, API `ok=true`, DB `ok=true`, 내부·외부 health 성공 | health SSM `a1a8923f-3407-4af5-b0c2-009910ad2f89`; 로컬 외부 curl도 200 | DAG import·Spark runtime·최근 error log·DB restart 지속성 미검증 |
 
 E2E Run은 아래 형식으로 추가 기록한다.
 
