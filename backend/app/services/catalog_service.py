@@ -28,6 +28,7 @@ from app.services.lake_storage_service import (
     MaterializedDatasetResult,
 )
 from app.services.governance_enforcement import require_governed_access
+from app.services.sql_service import full_query_run_response_from_payload
 from app.services.materialization_projection import aggregate_materialization_runs
 from app.services.resource_permission_service import (
     dataset_with_persisted_permission_grants,
@@ -311,7 +312,9 @@ class CatalogService:
                 status.HTTP_404_NOT_FOUND,
                 {"sourceRunId": run_id},
             )
-        return QueryRunResponse.model_validate(payload)
+        # Derived datasets must materialize the complete stored result, not the
+        # page-sized rows returned by the interactive SQL API.
+        return full_query_run_response_from_payload(payload)
 
 
 def validate_derived_dataset_request(
