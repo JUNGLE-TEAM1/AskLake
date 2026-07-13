@@ -500,27 +500,14 @@ const checks = [
     ],
   },
   {
-    name: "Catalog schema modal includes a paged actual-data viewer",
+    name: "Catalog schema modal excludes the duplicate sample-data viewer",
     file: "src/pages/catalog/CatalogPage.tsx",
     patterns: [
       /<CatalogDatasetViewer dataset=\{previewDataset\} \/>/,
-      /<CatalogSchema dataset=\{dataset\} \/>[\s\S]*<CatalogSample dataset=\{dataset\} \/>/,
-      /getCatalogDatasetRows\(dataset\.id, \{ limit: pageSize, offset \}\)/,
-      /latestSuccessfulRun/,
-      /aria-label="샘플 데이터 새로고침"/,
-      />\s*처음\s*<\/Button>/,
-      />\s*마지막\s*<\/Button>/,
-      /표시할 데이터 행이 없습니다\./,
-      /rowsErrorStatus === 403/,
+      /function CatalogDatasetViewer\([\s\S]*<CatalogSchema dataset=\{dataset\} \/>[\s\S]*<\/div>/,
     ],
-  },
-  {
-    name: "Catalog sample table keeps a bounded viewport and sticky header",
-    file: "src/styles/catalog.css",
-    patterns: [
-      /\.catalog-sample-scroll\s*\{[^}]*max-height:\s*min\(480px, 55vh\);/s,
-      /\.catalog-sample-table th\s*\{[^}]*position:\s*sticky;[^}]*top:\s*0;/s,
-      /\.catalog-dataset-viewer\s*\{[^}]*display:\s*grid;/s,
+    forbiddenPatterns: [
+      /function CatalogDatasetViewer\([\s\S]*?<CatalogSample dataset=\{dataset\} \/>[\s\S]*?function CatalogSchemaTable/,
     ],
   },
   {
