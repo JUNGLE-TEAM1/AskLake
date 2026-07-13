@@ -1,7 +1,5 @@
 import type { TrinoQueryRun } from "../../types";
 
-export const PROGRESS_VISIBILITY_DELAY_MS = 2_000;
-
 const QUEUED_QUERY_STATES = new Set(["QUEUED", "WAITING", "PLANNING", "STARTING"]);
 
 export type TrinoExecutionStageStatus = "active" | "cancelled" | "completed" | "failed";
@@ -196,9 +194,7 @@ export function buildTrinoExecutionTimelineModel(
     collectionElapsedMs,
     collectionFinalizing,
     collectionProgressPercentage,
-    collectionProgressVisible: collectionActive
-      && (collectionElapsedMs ?? 0) >= PROGRESS_VISIBILITY_DELAY_MS
-      && collectionProgressPercentage != null,
+    collectionProgressVisible: collectionActive && collectionProgressPercentage != null,
     collectionRemainingMs: getCollectionRemainingMs(collectionElapsedMs, collectedRows, expectedRows),
     collectionStageStatus,
     collectionStageVisible,
@@ -218,9 +214,7 @@ export function buildTrinoExecutionTimelineModel(
     queryExecutionComplete,
     queryElapsedMs,
     queryPhaseLabel,
-    queryProgressVisible: queryStageStatus === "active"
-      && (queryActiveElapsedMs ?? 0) >= PROGRESS_VISIBILITY_DELAY_MS
-      && runProgressPercentage != null,
+    queryProgressVisible: queryStageStatus === "active" && runProgressPercentage != null,
     queryStageStatus,
     runProgressPercentage,
     storageFailed,

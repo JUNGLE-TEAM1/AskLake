@@ -1,5 +1,14 @@
 import type { ReactNode } from "react";
-import { Activity, BarChart3, Database, Download, Maximize2, RotateCcw, Table2 } from "lucide-react";
+import {
+  SQL_PAGE_PANEL_ICON_CLASS_NAME,
+  SqlPageIcon as Activity,
+  SqlPageIcon as BarChart3,
+  SqlPageIcon as Database,
+  SqlPageIcon as Download,
+  SqlPageIcon as Maximize2,
+  SqlPageIcon as RotateCcw,
+  SqlPageIcon as Table2,
+} from "./SqlPageIcon";
 
 import { ActionGroup } from "@/components/ui/action-group";
 import { Button } from "@/components/ui/button";
@@ -173,9 +182,9 @@ export function SqlResultsPanel({
 
   return (
     <>
-      <Panel className={`${styles.resultPanel} grid gap-4 p-5`}>
+      <Panel className={`${styles.resultPanel} grid gap-0 p-0`}>
         {showResultWorkspace ? (
-          <>
+          <div className="grid min-h-0 grid-rows-[max-content_minmax(0,1fr)] gap-4 p-5">
             <div className={styles.resultToolbar}>
               <ToggleGroup
                 aria-label="SQL 결과 보기"
@@ -229,18 +238,26 @@ export function SqlResultsPanel({
                 <SqlResultPageError message={pageError} onRetry={onPageRetry} />
               ) : null}
             </div>
-          </>
+          </div>
         ) : (
           <>
-            <PanelHeader bordered={false} className="min-h-0 p-0" icon={<Table2 size={16} />} title="결과 대기 중" />
-            <Empty className={styles.resultEmpty} size="sm" variant="bordered">
-              <EmptyHeader>
-                <EmptyTitle>아직 결과가 없습니다.</EmptyTitle>
-                <EmptyDescription>
-                  {baseDatasetSelected ? "SQL을 실행하면 Preview 결과가 여기에 표시됩니다." : "먼저 분석 테이블에서 데이터셋을 선택해 주세요."}
-                </EmptyDescription>
-              </EmptyHeader>
-            </Empty>
+            <PanelHeader
+              icon={<Table2 size={16} />}
+              iconClassName={SQL_PAGE_PANEL_ICON_CLASS_NAME}
+              iconVariant="outline"
+              size="section"
+              title="결과 대기 중"
+            />
+            <div className="grid min-h-0 p-5 pt-4">
+              <Empty className={styles.resultEmpty} size="sm" variant="bordered">
+                <EmptyHeader>
+                  <EmptyTitle>아직 결과가 없습니다.</EmptyTitle>
+                  <EmptyDescription>
+                    {baseDatasetSelected ? "SQL을 실행하면 Preview 결과가 여기에 표시됩니다." : "먼저 분석 테이블에서 데이터셋을 선택해 주세요."}
+                  </EmptyDescription>
+                </EmptyHeader>
+              </Empty>
+            </div>
           </>
         )}
       </Panel>

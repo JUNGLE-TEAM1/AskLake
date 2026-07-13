@@ -224,10 +224,45 @@ const checks = [
       /aria-label="실행 과정"/,
       /buildTrinoExecutionTimelineModel/,
       /className=\{styles\.root\}/,
+      /function IndeterminateProgress/,
+      /role="progressbar"/,
+      /행 읽음/,
+      /<span>읽은 행 <strong>/,
     ],
     forbiddenPatterns: [
       /sql-query-evaluation/,
       /sql-run-timeline/,
+    ],
+  },
+  {
+    name: "SQL page feature icons share the requested table glyph",
+    file: "src/pages/sql/SqlPageIcon.tsx",
+    patterns: [
+      /import \{ Table2, type LucideProps \} from "lucide-react";/,
+      /SQL_PAGE_PANEL_ICON_CLASS_NAME = "rounded-xl border border-slate-200 bg-white text-blue-700 shadow-sm"/,
+      /export function SqlPageIcon\(props: LucideProps\)/,
+      /<Table2 \{\.\.\.props\} \/>/,
+    ],
+  },
+  {
+    name: "SQL panel headers use the reference white framed icon treatment",
+    file: "src/pages/sql/SqlDatasetContextPanel.tsx",
+    patterns: [
+      /iconClassName=\{SQL_PAGE_PANEL_ICON_CLASS_NAME\}/,
+    ],
+  },
+  {
+    name: "SQL editor header uses the reference white framed icon treatment",
+    file: "src/pages/sql/SqlQueryEditorPanel.tsx",
+    patterns: [
+      /iconClassName=\{SQL_PAGE_PANEL_ICON_CLASS_NAME\}/,
+    ],
+  },
+  {
+    name: "SQL result header uses the reference white framed icon treatment",
+    file: "src/pages/sql/SqlResultsPanel.tsx",
+    patterns: [
+      /iconClassName=\{SQL_PAGE_PANEL_ICON_CLASS_NAME\}/,
     ],
   },
   {
@@ -1451,15 +1486,31 @@ const checks = [
     ],
   },
   {
-    name: "Global top-bar refresh awaits the authoritative workspace rehydrate",
+    name: "Authenticated routes share the compact global app shell",
     file: "src/App.tsx",
     patterns: [
-      /filterJobs,\s*refreshData,\s*handleJobCommand,/,
-      /const refreshWorkspaceData = async \(\) => \{\s*const refreshed = await refreshData\(\);\s*writeAuditLog\("etl\.job\.status_refreshed", "\/api\/etl\/jobs", "jobs", refreshed \? "success" : "failed"\);\s*\};/,
-      /<Topbar[^\n]*onRefresh=\{\(\) => void refreshWorkspaceData\(\)\}/,
+      /<Sidebar[\s\S]*currentUser=\{currentUser\}/,
+      /<Topbar \/>/,
+      /activeFlow === "rules" && <RuleApplicationPage/,
     ],
     forbiddenPatterns: [
-      /<Topbar[^\n]*onRefresh=\{\(\) => writeAuditLog\("etl\.job\.status_refreshed"/,
+      /<Footer \/>/,
+      /onRefresh=\{/,
+      /<Topbar[^>]*onLogout=/,
+    ],
+  },
+  {
+    name: "Global top bar exposes only appearance and language placeholders",
+    file: "src/components/layout/Topbar.tsx",
+    patterns: [
+      /import \{ Languages, Moon \} from "lucide-react";/,
+      /label="다크 모드"/,
+      /label="한국어·영어 전환"/,
+    ],
+    forbiddenPatterns: [
+      /RefreshCw/,
+      /LogOut/,
+      /CircleUser/,
     ],
   },
 ];

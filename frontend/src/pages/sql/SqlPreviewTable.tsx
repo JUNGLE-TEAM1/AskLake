@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import type { ColumnDef, SortingFn } from "@tanstack/react-table";
-import { Table2 } from "lucide-react";
+import { SqlPageIcon as Table2 } from "./SqlPageIcon";
 
 import { DataTable, type DataTableColumnMeta } from "@/components/ui/data-table";
 import { cn } from "@/lib/utils";

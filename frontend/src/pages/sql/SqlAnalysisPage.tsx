@@ -1,5 +1,8 @@
 import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
-import { PanelLeftOpen, Table2 } from "lucide-react";
+import {
+  SqlPageIcon as PanelLeftOpen,
+  SqlPageIcon as Table2,
+} from "./SqlPageIcon";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,

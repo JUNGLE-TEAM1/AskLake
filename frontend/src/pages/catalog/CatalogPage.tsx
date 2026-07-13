@@ -9,6 +9,7 @@ import "@xyflow/react/dist/style.css";
 import {
   AlertCircle,
   ArrowUpDown,
+  BookOpen,
   ExternalLink,
   Filter,
   LayoutGrid,
@@ -66,7 +67,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Slider } from "@/components/ui/slider";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { TagList } from "@/components/ui/tag-list";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { IconButton } from "@/components/ui/icon-button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -600,11 +600,6 @@ export function CatalogPage({
           >
             <ExternalLink data-icon="inline-start" /> SQL 분석에서 열기
           </Button>
-          <TagList align="center" className="catalog-preview-tags" density="compact">
-            {previewDataset.tags.map((tag) => (
-              <Badge key={tag} shape="compact" size="sm" variant="secondary">{tag}</Badge>
-            ))}
-          </TagList>
         </div>
       </ScrollArea>
     </>
@@ -648,8 +643,10 @@ export function CatalogPage({
             <div className="catalog-results-header">
               <PanelHeader
                 bordered={false}
-                icon={<LayoutGrid size={16} />}
-                title="검색 결과"
+                icon={<BookOpen size={16} />}
+                iconVariant="outline"
+                size="section"
+                title="카탈로그 목록"
               />
               <FilterToolbar className="py-3" layout="actions">
                 <FilterToolbarSearch icon={<Search size={18} />}>
@@ -1443,7 +1440,8 @@ function CatalogLineage({ compact = false, dataset }: { compact?: boolean; datas
               bordered={false}
               className="catalog-lineage-title min-h-0 p-0"
               description="리니지"
-              icon={<LayoutGrid size={18} />}
+              icon={<Share2 size={18} />}
+              iconVariant="outline"
               title={dataset.name}
             />
           )}
