@@ -8,7 +8,7 @@
   grid-template-columns: var(--sql-side-panel-width) minmax(0, 1fr);
   grid-template-rows: max-content auto;
   align-items: stretch;
-  gap: 12px;
+  gap: 20px;
   font-family: var(--jobs-font-family);
 }
 
@@ -19,7 +19,7 @@
 .pageHeader {
   grid-column: 1 / -1;
   min-width: 0;
-  min-height: var(--sql-masthead-height, 76px);
+  min-height: 64px;
 }
 
 .pageHeader > div {
@@ -40,7 +40,7 @@
   max-height: var(--sql-workspace-height);
   min-width: 0;
   overflow: hidden;
-  padding: 20px;
+  padding: 0;
 }
 
 .datasetScroll [data-slot="scroll-area-scrollbar"][data-orientation="vertical"] {

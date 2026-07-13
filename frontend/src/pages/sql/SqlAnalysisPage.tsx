@@ -1,5 +1,5 @@
 import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
-import { PanelLeftOpen, Table2 } from "lucide-react";
+import { PanelLeftOpen, TerminalSquare } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/ui/page-header";
 import { cn } from "@/lib/utils";
@@ -539,7 +539,7 @@ export function SqlAnalysisPage({
     <div className={cn(styles.page, contextPanel.collapsed && styles.collapsed)}>
       <PageHeader
         className={styles.pageHeader}
-        icon={<Table2 size={18} />}
+        icon={<TerminalSquare size={18} />}
         leadingAlign="center"
         title="SQL 분석"
       />
