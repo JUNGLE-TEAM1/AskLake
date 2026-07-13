@@ -439,10 +439,9 @@ export function JobsLandingPage({
             새 수집/처리 생성
           </Button>
         )}
-        descriptionClassName="text-xl leading-8"
-        description="데이터 소스를 연결하고 ETL 작업의 상태, 실행, 로그를 관리합니다."
         icon={<Database size={30} />}
         iconClassName="mt-0 size-16 rounded-xl"
+        leadingAlign="center"
         size="lg"
         title="수집/처리"
         titleClassName="text-4xl"
@@ -451,8 +450,8 @@ export function JobsLandingPage({
         <Panel className="jobs-metrics-card">
           <PanelHeader
             className="min-h-[68px] [&_h2]:text-xl"
-            icon={<BarChart3 size={16} />}
-            iconClassName="size-11 [&_svg]:size-[22px]"
+            icon={<Activity size={16} />}
+            iconClassName="size-11 border border-blue-100 bg-white text-blue-700 shadow-sm [&_svg]:size-[22px]"
             title="작업 현황"
           />
           <div className="jobs-panel-metrics grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -992,8 +991,8 @@ function JobsTableSection({
       <Panel aria-label={ariaLabel}>
         <PanelHeader
           className="min-h-[68px] [&_h2]:text-xl"
-          icon={<Table2 size={16} />}
-          iconClassName="size-11 [&_svg]:size-[22px]"
+          icon={<ListChecks size={16} />}
+          iconClassName="size-11 border border-blue-100 bg-white text-blue-700 shadow-sm [&_svg]:size-[22px]"
           title={title}
         />
         {toolbar}
