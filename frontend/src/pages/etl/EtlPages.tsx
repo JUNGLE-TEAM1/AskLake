@@ -93,10 +93,6 @@ import {
 import type { QualityRuleOption, TransformQualityInvalidRow, TransformQualityPreviewSample, TransformQualitySampleRow, TransformQualityStepPreview, TransformQualityValidationResult } from "../../data/transformQualityPreview";
 import { SourceAssetTree } from "./SourceAssetTree";
 import { SourceExplorerWorkbench } from "./SourceExplorerWorkbench";
-
-const OBJECT_STORAGE_IS_AWS = String(import.meta.env.VITE_OBJECT_STORAGE_PROVIDER ?? "minio").trim().toLowerCase() === "aws";
-const OBJECT_STORAGE_PROVIDER_LABEL = OBJECT_STORAGE_IS_AWS ? "Amazon S3" : "MinIO";
-const OBJECT_STORAGE_REGION = String(import.meta.env.VITE_S3_REGION ?? (OBJECT_STORAGE_IS_AWS ? "ap-northeast-2" : "us-east-1"));
 import { SourcePreviewDataTable } from "./SourcePreviewDataTable";
 import { SchemaTransformWorkbench } from "./SchemaTransformWorkbench";
 import { SchemaRuleSummary } from "./SchemaRuleSummary";
@@ -107,6 +103,14 @@ import apacheKafkaIconUrl from "../../assets/apachekafka.svg";
 import askLakeLogoUrl from "../../assets/asklake-logo.png";
 import mongoDbIconUrl from "../../assets/mongodb.svg";
 import postgreSqlIconUrl from "../../assets/postgresql.svg";
+
+const OBJECT_STORAGE_IS_AWS = String(import.meta.env.VITE_OBJECT_STORAGE_PROVIDER ?? "minio").trim().toLowerCase() === "aws";
+const OBJECT_STORAGE_PROVIDER_LABEL = OBJECT_STORAGE_IS_AWS ? "Amazon S3" : "MinIO";
+const OBJECT_STORAGE_REGION = String(import.meta.env.VITE_S3_REGION ?? (OBJECT_STORAGE_IS_AWS ? "ap-northeast-2" : "us-east-1"));
+const SPARK_OUTPUT_BUCKET = String(import.meta.env.VITE_SPARK_OUTPUT_BUCKET ?? "asklake-output")
+  .trim()
+  .replace(/^s3a?:\/\//i, "")
+  .replace(/\/+.*$/, "") || "asklake-output";
 
 type RepeatFrequency = "hourly" | "daily" | "weekly" | "custom";
 type RepeatScheduleDraft = {
@@ -824,7 +828,7 @@ function normalizeTargetLayer(value: string | undefined): TargetLayer {
 }
 
 function buildTargetStoragePath(targetDataset: string, targetLayer: TargetLayer) {
-  return `s3a://asklake-output/${targetDataset}/${targetLayer.toLowerCase()}/`;
+  return `s3a://${SPARK_OUTPUT_BUCKET}/${targetDataset}/${targetLayer.toLowerCase()}/`;
 }
 
 function normalizeKafkaDatasetName(topic: string) {

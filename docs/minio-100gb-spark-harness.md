@@ -17,6 +17,7 @@ This document records the Pair A person-1 backend validation path for Source, Sc
 - `backend/scripts/start-spark-server.mjs`: Spark standalone master/worker startup
 - `backend/scripts/spark_validate.py`: Spark validation and transform type checks
 - `backend/scripts/verify-spark-job-run.mjs`: create -> run -> Spark -> DAG -> Catalog verifier
+- `backend/scripts/verify-spark-csv-quoting.mjs`: RFC 4180 comma/quote CSV -> Spark -> Parquet regression verifier
 - `backend/scripts/verify-kafka-continuous-soak.mjs`: generated or JSONL/GZIP Kafka replay -> continuous worker -> reconciliation/fault/compaction verifier
 - `backend/scripts/kafka_continuous_maintenance.py`: quarantine inspect/replay and staged Parquet compaction
 - `backend/scripts/setup-source-fixtures.mjs`: PostgreSQL, MongoDB, and Redpanda fixtures
@@ -77,6 +78,13 @@ $env:TARGET_DATABASES = "asklake,asklake_gold,analytics,marketing"
 ```
 
 운영에서는 AWS SDK credential provider chain과 EC2 IAM Role을 사용한다. 브라우저나 `deploy/.env`에는 AWS access key / secret key를 넣지 않는다. 전체 EC2 절차는 `docs/deployment-runbook.md`를 따른다.
+
+Spark CSV quoting 회귀는 원본 값을 바꾸지 않고 실제 Spark reader와 Parquet writer를 통과시켜 검증한다.
+
+```bash
+cd backend
+npm run verify:spark-csv-quoting
+```
 
 ## 3. Source Fixtures
 

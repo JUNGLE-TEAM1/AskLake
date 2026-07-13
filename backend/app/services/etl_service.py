@@ -1602,7 +1602,7 @@ def validate_catalog_output_identity(job: ETLJobModel, run_id: str, output_path:
             "Successful Spark result does not include an output path.",
             {"jobId": job.id, "runId": run_id},
         )
-    configured_root = str(job.storage_path or "").strip()
+    configured_root = normalize_spark_output_storage_path(job.storage_path)
     if not configured_root:
         return
     expected = canonical_storage_path(f"{configured_root.rstrip('/')}/{run_id}")
@@ -1612,6 +1612,20 @@ def validate_catalog_output_identity(job: ETLJobModel, run_id: str, output_path:
             "Spark output path does not match the persisted Job destination.",
             {"expected": expected, "outputPath": actual, "runId": run_id},
         )
+
+
+def normalize_spark_output_storage_path(value: str | None) -> str:
+    configured_root = str(value or "").strip()
+    if not re.match(r"^s3a?://", configured_root, re.IGNORECASE):
+        return configured_root
+    configured_bucket = str(os.environ.get("ASKLAKE_SPARK_OUTPUT_BUCKET") or "asklake-output").strip()
+    if not configured_bucket or configured_bucket.lower() == "asklake-output":
+        return configured_root
+    parsed = urlparse(re.sub(r"^s3a://", "s3://", configured_root, flags=re.IGNORECASE))
+    if parsed.netloc.lower() != "asklake-output":
+        return configured_root
+    suffix = f"/{parsed.path.lstrip('/')}" if parsed.path else ""
+    return f"s3a://{configured_bucket}{suffix}"
 
 
 def canonical_storage_path(value: str) -> str:

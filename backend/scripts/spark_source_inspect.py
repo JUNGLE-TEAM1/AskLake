@@ -50,7 +50,13 @@ def read_source(spark, source_format, source_path):
     if source_format == "parquet":
         return spark.read.parquet(source_path)
     if source_format == "csv":
-        return spark.read.option("header", "true").option("inferSchema", "true").csv(source_path)
+        return (
+            spark.read.option("header", "true")
+            .option("inferSchema", "true")
+            .option("quote", '"')
+            .option("escape", '"')
+            .csv(source_path)
+        )
     if source_format == "jsonl":
         return spark.read.option("multiLine", "false").json(source_path)
     if source_format == "json":

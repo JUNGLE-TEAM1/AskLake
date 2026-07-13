@@ -4,6 +4,7 @@ import {
   resolveObjectStorageConfig,
   s3ClientOptions,
 } from "../src/objectStorageConfig.mjs";
+import { normalizeSparkOutputTargetPath } from "../src/sparkRunner.mjs";
 
 const managedNames = [
   "ASKLAKE_OBJECT_STORAGE_PROVIDER",
@@ -58,6 +59,15 @@ try {
   assert.equal("endpoint" in awsOptions, false);
   assert.equal(awsDockerEnv.some(([name]) => name.startsWith("MINIO_")), false);
   assert.equal(awsDockerEnv.some(([name]) => name === "AWS_ACCESS_KEY_ID" || name === "AWS_SECRET_ACCESS_KEY"), false);
+  process.env.ASKLAKE_SPARK_OUTPUT_BUCKET = "asklake-dev-output-123-apne2";
+  assert.equal(
+    normalizeSparkOutputTargetPath("s3a://asklake-output/products/gold/"),
+    "s3a://asklake-dev-output-123-apne2/products/gold",
+  );
+  assert.equal(
+    normalizeSparkOutputTargetPath("s3://custom-output/products/gold/"),
+    "s3a://custom-output/products/gold",
+  );
 
   console.log("Object storage mode verification passed.");
 } finally {

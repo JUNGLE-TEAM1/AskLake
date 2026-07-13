@@ -67,6 +67,7 @@ services:
         VITE_DASHBOARD_ASSISTANT_API_PATH: ${VITE_DASHBOARD_ASSISTANT_API_PATH:-/api/dashboards/assistant}
         VITE_OBJECT_STORAGE_PROVIDER: ${ASKLAKE_OBJECT_STORAGE_PROVIDER:-aws}
         VITE_S3_REGION: ${AWS_REGION:-ap-northeast-2}
+        VITE_SPARK_OUTPUT_BUCKET: ${ASKLAKE_SPARK_OUTPUT_BUCKET:?ASKLAKE_SPARK_OUTPUT_BUCKET is required}
     restart: unless-stopped
     expose:
       - "80"

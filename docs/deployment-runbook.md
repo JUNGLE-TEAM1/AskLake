@@ -118,7 +118,7 @@ ASKLAKE_S3_READINESS_READ_BUCKETS=replace-with-asklake-raw-bucket
 ASKLAKE_S3_READINESS_WRITE_BUCKETS=replace-with-asklake-output-bucket
 ```
 
-`aws-s3-readiness` one-shot service가 Raw bucket list와 Output bucket put/head/delete를 검증한다. 이 검증이 실패하면 backend 시작도 실패해야 하며, bucket 자동 생성이나 static AWS key 추가로 우회하지 않는다. Warehouse와 Query Result bucket은 현재 runtime에서 사용하지 않는다.
+`aws-s3-readiness` one-shot service가 Raw bucket list와 Output bucket put/head/delete를 검증한다. Production frontend build는 Compose가 `ASKLAKE_SPARK_OUTPUT_BUCKET` 값을 `VITE_SPARK_OUTPUT_BUCKET`으로 전달해 Target 경로와 Spark 출력 경로를 일치시킨다. 이 검증이 실패하면 backend 시작도 실패해야 하며, bucket 자동 생성이나 static AWS key 추가로 우회하지 않는다. Warehouse와 Query Result bucket은 현재 runtime에서 사용하지 않는다.
 
 ## 4. 재배포
 

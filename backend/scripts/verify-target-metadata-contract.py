@@ -1,3 +1,5 @@
+import os
+
 from app.models.etl import ETLJobModel
 from app.schemas.catalog import CatalogDatasetResponse
 from app.schemas.etl import CreatePipelineRequest
@@ -5,8 +7,10 @@ from app.services.etl_service import (
     dataset_from_spark_result,
     job_payload_for_spark,
     normalize_optional_text,
+    normalize_spark_output_storage_path,
     normalize_string_list,
     normalize_target_tags,
+    validate_catalog_output_identity,
 )
 
 
@@ -140,6 +144,22 @@ def main() -> None:
     assert response["partition"] == "event_date"
     assert response["partitionColumns"] == ["event_date"]
     assert response["indexColumns"] == ["amount"]
+
+    previous_output_bucket = os.environ.get("ASKLAKE_SPARK_OUTPUT_BUCKET")
+    try:
+        os.environ["ASKLAKE_SPARK_OUTPUT_BUCKET"] = "asklake-dev-output-123-apne2"
+        job.storage_path = "s3a://asklake-output/products/gold/"
+        assert normalize_spark_output_storage_path(job.storage_path) == "s3a://asklake-dev-output-123-apne2/products/gold/"
+        validate_catalog_output_identity(
+            job,
+            "run_target_metadata_contract",
+            "s3a://asklake-dev-output-123-apne2/products/gold/run_target_metadata_contract",
+        )
+    finally:
+        if previous_output_bucket is None:
+            os.environ.pop("ASKLAKE_SPARK_OUTPUT_BUCKET", None)
+        else:
+            os.environ["ASKLAKE_SPARK_OUTPUT_BUCKET"] = previous_output_bucket
 
     print("verify-target-metadata-contract: ok")
 

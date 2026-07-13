@@ -457,7 +457,7 @@ function sparkOutputPath(job, runId) {
   if ((process.env.ASKLAKE_SPARK_OUTPUT_MODE || "local").toLowerCase() === "s3a") {
     // storagePath is the configured destination root. targetPath is the latest
     // observed Run output and must not become the next Run's parent directory.
-    const configuredTarget = String(job.storagePath || "").trim();
+    const configuredTarget = normalizeSparkOutputTargetPath(job.storagePath);
     const targetBase = /^s3a?:\/\//i.test(configuredTarget)
       ? toS3APath(configuredTarget).replace(/\/+$/, "")
       : `s3a://${process.env.ASKLAKE_SPARK_OUTPUT_BUCKET || "asklake-output"}/${prefix}${layer}/${dataset}`;
@@ -472,6 +472,18 @@ function sparkOutputPath(job, runId) {
     displayPath: path.join(localOutputDir, relativePath),
     sparkPath: `file://${outputContainerDir}/${relativePath.replace(/\\/g, "/")}`,
   };
+}
+
+export function normalizeSparkOutputTargetPath(value) {
+  const configuredTarget = String(value || "").trim();
+  if (!/^s3a?:\/\//i.test(configuredTarget)) return configuredTarget;
+  const normalizedTarget = toS3APath(configuredTarget).replace(/\/+$/, "");
+  const configuredBucket = normalizeBucketName(process.env.ASKLAKE_SPARK_OUTPUT_BUCKET || "asklake-output");
+  if (!configuredBucket || configuredBucket.toLowerCase() === "asklake-output") return normalizedTarget;
+  return normalizedTarget.replace(
+    /^s3a:\/\/asklake-output(?=\/|$)/i,
+    `s3a://${configuredBucket}`,
+  );
 }
 
 function sparkRowLimitFromJob(job) {

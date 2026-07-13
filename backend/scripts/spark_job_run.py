@@ -301,7 +301,13 @@ def make_spark():
 def read_source(spark, source_format, source_path, schema_columns, record_parsing=None):
     if source_format == "csv":
         infer_schema = "false" if schema_columns else "true"
-        return spark.read.option("header", "true").option("inferSchema", infer_schema).csv(source_path)
+        return (
+            spark.read.option("header", "true")
+            .option("inferSchema", infer_schema)
+            .option("quote", '"')
+            .option("escape", '"')
+            .csv(source_path)
+        )
     if source_format == "jsonl":
         return spark.read.option("multiLine", "false").json(source_path)
     if source_format == "json":

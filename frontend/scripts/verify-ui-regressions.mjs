@@ -22,6 +22,17 @@ const read = (path) => {
 
 const checks = [
   {
+    name: "ETL target storage path uses the deployed Spark output bucket",
+    file: "src/pages/etl/EtlPages.tsx",
+    patterns: [
+      /VITE_SPARK_OUTPUT_BUCKET \?\? "asklake-output"/,
+      /return `s3a:\/\/\$\{SPARK_OUTPUT_BUCKET\}\/\$\{targetDataset\}\/\$\{targetLayer\.toLowerCase\(\)\}\//,
+    ],
+    forbiddenPatterns: [
+      /return `s3a:\/\/asklake-output\/\$\{targetDataset\}/,
+    ],
+  },
+  {
     name: "ETL permission composes the governance, policy, and searchable grant workflow with shadcn controls",
     file: "src/pages/etl/EtlPages.tsx",
     patterns: [
