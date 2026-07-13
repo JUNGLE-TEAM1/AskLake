@@ -42,8 +42,9 @@ AskLake는 사용자가 데이터셋의 출처, 품질, 권한, 실행 결과, �
 - 작업 명령 UI: 실행, 재실행, 일시정지, 취소
 - Run History와 Run별 DAG 표시
 - 실행 성공 후 Catalog dataset 등록
-- Catalog 목록/상세/lineage fallback
-- Dataset 범위의 read-only SQL preview
+- Catalog 목록/상세/lineage와 최신 성공 materialization을 기준으로 한 스키마·실제 sample row 페이지 탐색
+- Dataset 범위의 read-only SQL preview. 쿼리 전체 결과 snapshot을 서버에 보관하고 페이지로 끝까지 탐색하며 총행 수와 현재 범위를 표시한다. 10,000행은 제한값이 아니라 회귀 검증 경계값이다.
+- SQL 편집기는 약 10행 보기 높이와 하나의 스크롤만 사용한다. 사용자가 전체 삭제한 빈 SQL은 유지하고 기본 쿼리는 초기 dataset 선택, dataset 변경, 명시적 reset에서만 복원한다.
 - SQL 편집기 상단의 Nessie SQL 작성 Popover: 선택 데이터셋 context와 사용자 프롬프트로 SQL 초안을 제안한다. 입력 후에는 폼을 접고 생성 상태와 편집기 적용 action을 Bubble로 표시하며, SQL은 사용자가 적용한 뒤 별도로 실행한다.
 - SQL 좌측 도구의 차트 생성하기: SQL 결과 또는 선택 데이터셋을 소스로 Dashboard와 같은 위젯 설정에서 유형, 필드, 집계, 색상을 설정한다. 오른쪽 결과 영역은 `차트 보기`와 `데이터 미리보기`를 항상 제공한다.
 - AI 활용 메뉴의 ChatGPT형 대화 UI: Catalog Dataset 컨텍스트를 고르는 대화 화면을 제공하며, 실제 AI 호출과 RAG runtime은 후속 범위로 둔다.
@@ -62,7 +63,7 @@ FastAPI live backend에서 현재 우선 구현하는 범위:
 | ETL job 생성 | 생성 flow 최종 제출을 서버 리소스로 저장 | High | `docs/api-contract.md` |
 | Job command | 실행/재실행/일시정지/취소 상태 전이 | High | `docs/api-contract.md` |
 | Job hydrate | 목록/상세를 서버 데이터로 조회 | High | `docs/backend-integration-readiness.md` |
-| Catalog hydrate | 데이터셋 목록/상세를 서버 데이터로 조회 | High | `docs/backend-integration-readiness.md` |
+| Catalog hydrate | 데이터셋 목록/상세와 최신 성공 materialization의 실제 row 페이지를 서버 데이터로 조회 | High | `docs/backend-integration-readiness.md` |
 | Catalog lineage | 저장된 lineage 또는 fallback graph 반환 | Medium | `docs/api-contract.md` |
 | SQL run | read-only SQL preview 결과 반환 | Medium | `docs/api-contract.md` |
 | Query AI 생성 | 선택 테이블 context와 자연어 요청으로 read-only SQL 초안을 생성 | Medium | `docs/api-contract.md` |
@@ -95,24 +96,25 @@ Phase 0에서는 용어와 경계를 먼저 고정한다. `createdBy`, `owner`, 
 
 ### Flow A. 수집/처리 생성
 
-1. 사용자는 source를 연결하고 제한 샘플을 확인한다.
+1. 사용자는 source 연결을 검증한 뒤 탐색 목록에서 파일, 테이블 또는 컬렉션을 명시적으로 선택하고 해당 대상의 제한 샘플을 확인한다. 연결 검증만으로 임의 대상을 자동 선택하지 않는다.
 2. 소스에 이름 있는 필드가 있으면 바로 Schema 단계로 이동한다. MinIO/S3 TXT처럼 필드명이 없는 원시 레코드이면 조건부 `레코드 구조화` 단계에서 연속 공백(`\\s+`) 분리, 헤더 여부, 컬럼명과 타입 초안을 확정한다.
 3. 사용자는 schema, rule, schedule, permission, target을 설정한다.
 4. 시스템은 레코드 구조화 설정을 포함한 draft를 검증하고 `POST /api/etl/jobs` request로 만든다.
 5. 성공 시 Job이 목록에 추가되고 Catalog target은 pending 상태로 안내된다.
 6. 사용자가 PostgreSQL Snapshot Job을 실행하거나 재실행하면 스키마 Preview 행 수와 무관하게 선택한 기본 테이블 전체를 일관된 DB snapshot으로 읽는다.
-7. 사용자가 TXT Job을 실행하면 Spark는 Preview와 같은 구조화 규칙을 전체 TXT 입력에 다시 적용한다.
-8. 모든 비어 있지 않은 행의 필드 개수가 확정된 컬럼 수와 같을 때만 target을 쓰고 Catalog dataset을 생성 또는 갱신한다. 불일치가 있으면 Run을 실패시키고 Catalog materialization을 만들지 않는다.
-9. 실패하면 toast와 audit log에 실패 기록을 남기고 optimistic 상태를 되돌린다.
+7. 일반 Snapshot Job의 성공 결과는 새 물리 경로에 전체 데이터로 저장하고, Catalog의 현재 Dataset은 최신 성공 snapshot만 가리킨다. 이전 성공 snapshot은 실행 이력으로 보존하지만 현재 행 수와 기본 SQL 조회에는 합산하지 않는다.
+8. 사용자가 TXT Job을 실행하면 Spark는 Preview와 같은 구조화 규칙을 전체 TXT 입력에 다시 적용한다.
+9. 모든 비어 있지 않은 행의 필드 개수가 확정된 컬럼 수와 같을 때만 target을 쓰고 Catalog dataset을 생성 또는 갱신한다. 불일치가 있으면 Run을 실패시키고 Catalog materialization을 만들지 않는다.
+10. 실패하면 toast와 audit log에 실패 기록을 남기고 optimistic 상태를 되돌린다.
 
 ### Flow B. 카탈로그에서 SQL 분석
 
 1. 사용자는 Catalog dataset을 연다.
-2. 시스템은 schema, sample rows, lineage를 보여준다.
-3. 사용자는 SQL 화면으로 이동해 read-only preview를 실행한다.
+2. 시스템은 schema, lineage와 최신 성공 materialization에서 읽은 실제 sample rows를 보여준다. 스키마 상세 모달에서도 전체 스키마와 sample page를 함께 탐색한다.
+3. 사용자는 SQL 화면으로 이동해 read-only preview를 실행하고, 첫 page 이후는 저장된 같은 run을 `offset`/`limit`로 조회해 쿼리 전체 결과의 마지막 행까지 탐색한다.
 4. 사용자는 편집기 상단 `Nessie로 SQL 작성` Popover를 열고 선택 테이블과 schema context를 기반으로 SQL 초안을 받을 수 있다. 제출 후 입력 폼은 접히고 생성 상태와 적용 action이 Bubble로 표시된다.
 5. AI 제안은 자동 실행되지 않고 editor에 반영한 뒤 기존 read-only/preflight 검증을 통과해야 실행할 수 있다.
-6. 실행 결과는 고정 높이 결과 영역과 전체 보기 모달에서 표로 탐색할 수 있다.
+6. 실행 결과는 고정 높이 결과 영역과 전체 보기 모달에서 표로 탐색할 수 있으며, 정확한 총행 수와 현재 범위를 표시한다.
 7. 실행 결과가 있으면 왼쪽 `차트 생성하기`에서 Dashboard와 같은 위젯 설정으로 소스, 유형, 필드, 집계, 색상을 설정하고 오른쪽 `차트 보기`/`데이터 미리보기`에서 결과를 전환할 수 있다. 차트가 없을 때 `차트 보기`는 생성 안내를 표시한다.
 8. Preview 결과는 SQL 화면의 처리 Job 모달에서 기본 정보, 스케줄, 거버넌스, 저장 설정을 순서대로 완료한 뒤 Lake Dataset materialize Job으로 생성할 수 있다.
 

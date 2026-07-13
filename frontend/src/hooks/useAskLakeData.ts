@@ -23,6 +23,7 @@ import type {
   CatalogDataset,
   CreateDerivedDatasetRequest,
   DagStepsByRunId,
+  DatasetMaterializationRun,
   DraftPipeline,
   DraftPipelinePatch,
   FlowId,
@@ -644,7 +645,13 @@ function formatStorageSize(sizeBytes: number) {
 
 function recalculateDatasetFromMaterializationRuns(dataset: CatalogDataset): CatalogDataset {
   const materializationRuns = dataset.materializationRuns ?? [];
-  const activeRuns = materializationRuns.filter((run) => run.status === "success");
+  const activeRuns: DatasetMaterializationRun[] = [];
+  for (const run of materializationRuns) {
+    if (run.status !== "success") continue;
+    activeRuns.push(run);
+    const mode = run.materializationMode ?? (run.sourceKind === "kafka" ? "delta" : "snapshot");
+    if (mode === "snapshot") break;
+  }
   const latestRun = activeRuns[0];
   const rowCount = activeRuns.reduce((total, run) => total + Math.max(run.rowCount || 0, 0), 0);
   const storageSizeBytes = activeRuns.reduce((total, run) => total + Math.max(run.storageSizeBytes || 0, 0), 0);
@@ -655,6 +662,7 @@ function recalculateDatasetFromMaterializationRuns(dataset: CatalogDataset): Cat
     rows: `${rowCount.toLocaleString()} rows`,
     size: storageSizeBytes > 0 ? formatStorageSize(storageSizeBytes) : "0B",
     sourceRunId: latestRun?.runId,
+    storageLocation: latestRun?.storageLocation,
     storageSizeBytes,
   });
 }

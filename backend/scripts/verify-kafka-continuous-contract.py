@@ -444,6 +444,7 @@ def main() -> None:
         etl_repository.lock_kafka_continuous_runtime = lambda _db, _job_id: runtime
         dataset_id = f"ds_{etl_service.normalize_column_name(job.target)}"
         assert captured_dataset[dataset_id].payload["materializationRuns"][0]["sourceKind"] == "kafka"
+        assert captured_dataset[dataset_id].payload["materializationRuns"][0]["materializationMode"] == "delta"
         assert captured_dataset[dataset_id].payload["materializationRuns"][0]["rowCount"] == 2
         assert captured_dataset[dataset_id].payload["storageLocation"].endswith("/_batches")
 
@@ -536,6 +537,7 @@ def main() -> None:
             etl_service.sync_kafka_continuous_session = original_session_sync
             recovered_run = captured_dataset[dataset_id].payload["materializationRuns"][0]
             assert recovered_run["runId"] == f"continuous:{job.id}:batch:8"
+            assert recovered_run["materializationMode"] == "delta"
             assert recovered_run["sourceRanges"][0]["endOffset"] == 8
             assert recovered_run["ruleFingerprint"] == "rule-v2"
             assert recovered_run["quality"]["invalidRowCount"] == 1

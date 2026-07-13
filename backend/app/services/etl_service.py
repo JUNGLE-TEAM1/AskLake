@@ -3923,17 +3923,6 @@ def identity_profile(name: str) -> dict[str, str]:
     }
 
 
-def aggregate_materialization_runs(runs: list[dict[str, Any]]) -> dict[str, Any]:
-    active_runs = active_materialization_runs(runs)
-    latest_run = active_runs[0] if active_runs else None
-    return {
-        "latestRunId": latest_run.get("runId") if latest_run else None,
-        "lastUpdated": latest_run.get("createdAt") if latest_run else None,
-        "rowCount": sum(parse_count_value(run.get("rowCount")) for run in active_runs),
-        "storageSizeBytes": sum(parse_count_value(run.get("storageSizeBytes")) for run in active_runs),
-    }
-
-
 def parse_count_value(value: Any) -> int:
     if isinstance(value, bool) or value is None:
         return 0

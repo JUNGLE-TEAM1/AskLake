@@ -475,12 +475,12 @@ const checks = [
     name: "ETL source can select a folder and persist its collection policy",
     file: "src/pages/etl/EtlPages.tsx",
     patterns: [
-      /sourceConfigValue\(editableFields, "Collection Scope"\)/,
-      /\["Collection Scope", "folder"\]/,
-      /\["Collection Mode", "incremental"\]/,
-      /\["Recursive", "true"\]/,
-      /sampleSourceAsset\(samplePath \|\| folderPath/,
-      /aria-label="새 파일 key만 수집"/,
+      /const updateCollectionConfig = \(patches:/,
+      /const loadSourceAssetChildren = async \(folderPath: string\) =>/,
+      /const folderPrefix = normalizeFolderPrefix\(folderPath\)/,
+      /listSourceAssets\(activeSourceType, editableFields, folderPrefix\)/,
+      /if \(assetMeta === "folder" \|\| assetPath\.endsWith\("\/"\)\)/,
+      /onAction\("etl\.source\.asset_selected"/,
     ],
   },
   {
@@ -522,6 +522,20 @@ const checks = [
       /if \(!apiConfig\.useMock\) await deleteLivePipelineJob\(job\.id\);/,
       /setJobListFacets\(\(facets\) => removeJobFacetCounts\(facets, job\)\);/,
       /writeAuditLog\("etl\.job\.delete_failed"/,
+    ],
+  },
+  {
+    name: "Jobs landing run modal follows centrally polled state by stable run identity",
+    file: "src/pages/ingest/JobsPages.tsx",
+    patterns: [
+      /type LatestRunModalSelection = \{[\s\S]*jobId: string;[\s\S]*runId: string;/,
+      /const latestRunModal = useMemo\(\(\) => \{[\s\S]*jobs\.find\(\(candidate\) => candidate\.id === latestRunModalSelection\.jobId\)/,
+      /job\.runHistory\?\.find\(\(candidate\) => candidate\.runId === latestRunModalSelection\.runId\)/,
+      /setLatestRunModalSelection\(\{[\s\S]*jobId: job\.id,[\s\S]*runId: latestRun\.runId,/,
+      /onClose=\{\(\) => setLatestRunModalSelection\(null\)\}/,
+    ],
+    forbiddenPatterns: [
+      /setLatestRunModal\(\{ job, run: latestRun \}\)/,
     ],
   },
   {

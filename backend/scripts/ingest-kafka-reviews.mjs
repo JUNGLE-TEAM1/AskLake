@@ -486,6 +486,7 @@ async function registerCatalogDataset(metadata) {
     createdAt: metadata.endedAt,
     jobId: "kafka-review-ingest",
     kafkaSnapshot: metadata.snapshot,
+    materializationMode: "delta",
     rowCount: metadata.storedCount,
     runId: metadata.runId,
     sourceKind: "kafka",
