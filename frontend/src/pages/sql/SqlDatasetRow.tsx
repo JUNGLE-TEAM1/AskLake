@@ -64,7 +64,7 @@ export function SqlDatasetTree({
           id: getDatasetNodeId(dataset.id),
           kind: "dataset" as const,
           label: dataset.name,
-          meta: `${dataset.schema.length} columns`,
+          meta: `${dataset.schema.length}개`,
           selected: selectedDatasetIds.has(dataset.id),
           selectable: false,
         })),
@@ -128,9 +128,10 @@ export function SqlDatasetTree({
           [TABLES_NODE_ID]: true,
           ...(expandedDatasetId ? { [getDatasetNodeId(expandedDatasetId)]: true } : {}),
         }}
+        indent={12}
         minHeight={320}
         openByDefault={false}
-        rowHeight={(node) => node.data.kind === "dataset" ? 56 : 40}
+        rowHeight={(node) => node.data.kind === "dataset" ? 44 : 36}
         toggleOnRowPress={false}
         onNodePress={(node) => {
           if (node.data.kind === "dataset" && node.data.dataset) onSelect(node.data.dataset);

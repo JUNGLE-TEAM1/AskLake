@@ -76,6 +76,7 @@ export type ExplorerTreeProps<T extends ExplorerTreeNode> = {
   openByDefault?: boolean;
   overscanCount?: number;
   rowHeight?: number | ((node: NodeApi<T>) => number);
+  rowClassName?: string;
   searchMatch?: (node: NodeApi<T>, searchTerm: string) => boolean;
   searchTerm?: string;
   selection?: string;
@@ -97,6 +98,7 @@ export function ExplorerTree<T extends ExplorerTreeNode>({
   minHeight = 160,
   onNodePress,
   rowHeight = 40,
+  rowClassName,
   toggleOnRowPress = true,
   treeRef,
   ...treeProps
@@ -151,6 +153,7 @@ export function ExplorerTree<T extends ExplorerTreeNode>({
         indent={indent}
         overscanCount={treeProps.overscanCount ?? 8}
         rowHeight={rowHeight}
+        rowClassName={cn("asklake-explorer-tree-row", rowClassName)}
         width="100%"
       >
         {NodeRenderer}
@@ -190,7 +193,7 @@ function ExplorerTreeRow<T extends ExplorerTreeNode>({
           node.data.disabled && "cursor-not-allowed opacity-50",
           getRowClassName?.(node),
         )}
-        style={{ paddingLeft: node.level * indent + 8 }}
+        style={{ paddingLeft: 8 }}
       >
         <button
           aria-label={node.isInternal ? `${node.data.label} ${node.isOpen ? "접기" : "펼치기"}` : undefined}

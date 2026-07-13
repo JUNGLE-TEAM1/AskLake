@@ -710,3 +710,9 @@ p {
   background: #eff6ff;
   color: #2563eb;
 }
+
+.asklake-explorer-tree-row {
+  width: 100% !important;
+  min-width: 0 !important;
+  overflow: hidden;
+}
