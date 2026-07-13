@@ -1493,7 +1493,7 @@ type AirflowSparkExecutionRequest = {
 
 PostgreSQL Snapshot source는 Source/Schema Preview와 실행 입력을 분리한다. `schemaSampleRows`, `__Schema Sample Scope`, `__Sample Row Limit`, `ASKLAKE_SPARK_RUN_ROW_LIMIT`은 PostgreSQL `run`/`retry`의 행 상한이 아니다. 실행 시 저장된 connector identity와 credential로 선택한 base table을 `REPEATABLE READ READ ONLY` transaction과 cursor batch로 끝까지 JSONL export한 뒤 Spark에 전달한다. batch 크기는 `ASKLAKE_POSTGRES_EXECUTION_BATCH_ROWS`로 조절하되 전체 행 수는 자르지 않는다. 테이블이 비어 있거나 export가 중단되면 Run을 실패시키고 Catalog materialization을 만들지 않는다.
 
-Spark manifest에는 `status`, `runId`, `startedAt`, `endedAt`, `durationMs`, `inputRows`, `outputRows`, `outputPath`, `schema`, `quality`, `failedStage`, `error`가 포함될 수 있다. Storage Layout 또는 object storage 실패에는 안전한 `errorCode`, `errorStatus`도 포함한다. provider 원문, stack, credential은 manifest의 사용자 오류 메시지로 전달하지 않는다. Phase 2는 이 manifest와 물리 Parquet까지 저장하지만 Catalog materialization/lineage 갱신은 수행하지 않는다.
+Spark manifest에는 `status`, `runId`, `startedAt`, `endedAt`, `durationMs`, `inputRows`, `outputRows`, `outputPath`, `schema`, `quality`, `failedStage`, `error`가 포함될 수 있다. Remote Runtime은 `runtime`, `runtimeJobId`, `runtimeLogReference`도 포함한다. Storage Layout 또는 object storage 실패에는 안전한 `errorCode`, `errorStatus`도 포함한다. provider 원문, stack, credential은 manifest의 사용자 오류 메시지로 전달하지 않는다.
 
 S3A 출력은 Job의 변경 불가능한 설정값 `storagePath`가 있으면 destination root로 보존하고 그 아래에 `runId`를 붙인다. 명시 경로는 segment를 slug로 바꾸지 않고 canonical UTF-8 percent encoding을 사용하며 마지막 `/` 하나만 제거한다. 빈 segment, malformed percent/UTF-8, decoded slash, traversal, query/fragment는 `STORAGE_LAYOUT_INVALID`로 거부한다. 값이 없으면 persisted `datasetId`로 Storage Layout V1의 환경 격리 root를 생성하고 Catalog는 실제 output이 정확히 `<root>/<runId>`인지 확인한다. `targetPath`는 최신 Run에서 관측한 실제 `outputPath`이므로 일반 Batch 재실행의 destination root로 재사용하지 않는다. Continuous data/checkpoint/manifest/quarantine은 같은 root의 `_batches`, `_checkpoints/<jobId>`, `_batch-manifests`, `_quarantine`을 사용한다. 다만 기존 Continuous Job에 `storagePath`가 없으면 저장된 `checkpointPath`, 그다음 legacy S3A `targetPath`의 `_batches` root를 호환 입력으로 사용한다. output root와 checkpoint가 다르면 `STORAGE_LAYOUT_INVALID`로 실패한다. Production에서는 `file://` 같은 local data-plane 경로를 허용하지 않는다.
 
@@ -1587,6 +1587,7 @@ type JobCommandResponse = {
   job?: JobRowData;
   run?: JobRunSummary;
   dagSteps?: JobDagStep[];
+  processingResult?: Record<string, unknown>;
 };
 ```
 
@@ -1648,6 +1649,8 @@ Response 예시:
 | `resumeSchedule` | `etl.schedule.resume_requested` | 보존한 스케줄 설정으로 `scheduled`, 다음 예약 재계산. 실시간 Job은 `실시간 수집 재개됨`으로 기록 |
 
 `run`과 `retry`는 Airflow DAG Run을 제출한 뒤 non-terminal `job`/`run`을 즉시 응답한다. Airflow `spark_process_write` task는 `POST /api/internal/airflow/spark-runs/{runId}/execute`를 호출해 실제 input/output row count와 output path를 Run의 `sparkResult`에 저장한다. 다음 `publish_run_result` task가 `POST /api/internal/airflow/spark-runs/{runId}/catalog`를 호출해 물리 Parquet를 검증하고 Catalog dataset/materialization을 transaction으로 확정한다. 프론트는 `GET /api/etl/jobs/{jobId}`를 polling해 최종 `scheduled` 또는 `failed` 상태와 `runHistory`, `dagSteps`를 다시 반영한다.
+
+일반 Batch `cancelRun`은 새 취소 이력을 만들지 않고 현재 active Run을 갱신한다. `emr-serverless`에서 제출 전이면 Run별 cancellation marker가 `StartJobRun`을 차단하고, 제출 뒤이면 persisted `applicationId`/`jobRunId`로 `CancelJobRun`을 호출한다. 응답 `processingResult.runtimeCancellation`은 runtime, 요청 상태, remote control-state 존재 여부와 안전한 runtime 결과만 포함한다. 취소 evidence는 Airflow task snapshot보다 우선하며 Spark 결과 확정과 Catalog reconciliation은 `409 AIRFLOW_RUN_CANCELED`로 거부된다. Runtime 취소 요청 자체가 실패하면 `502 SPARK_RUNTIME_CANCEL_FAILED`, 이미 terminal이면 `409 INVALID_JOB_STATE`다.
 
 분리된 내부 endpoint는 bearer token과 backend의 `AIRFLOW_EXECUTION_API_TOKEN`을 우선 사용하며 `AIRFLOW_INTERNAL_TOKEN`을 호환 fallback으로 허용한다. `POST /api/etl/internal/airflow/jobs/{jobId}/runs/{runId}/execute`와 `X-AskLake-Airflow-Token`은 기존 단일 호출 Spark/Catalog 경로 호환용으로 유지한다. 동일 `runId`가 이미 Catalog에 materialize된 경우 기존 결과를 반환하고 Spark를 중복 실행하지 않는다. Airflow DAG가 `success`여도 해당 `runId`의 성공 Catalog evidence 또는 기존 persisted Spark result가 없으면 Run을 `failed`로 보정한다. `dag_run.conf`에는 `jobId`, `runId`, `command`, `executionMode`, 제출 시각만 전달하며 source credential과 전체 Job payload는 전달하지 않는다.
 

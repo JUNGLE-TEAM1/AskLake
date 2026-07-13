@@ -83,7 +83,7 @@ mongo
 PostgreSQL fixture는 메인 데모 시나리오에 사용한다.
 MongoDB fixture는 다른 source type도 처리할 수 있다는 보조 시나리오에 사용한다.
 로컬 개발은 root Compose의 MinIO를 사용한다. EC2 production은 MinIO를 띄우지 않고 AWS S3를 사용한다.
-File / S3, Data Lake source, Target S3 picker, Spark S3A, DuckDB는 EC2 instance profile IAM Role/default credential chain을 사용하며 browser와 서버 `.env`에는 AWS access key/secret을 두지 않는다.
+File / S3, Data Lake source, Target S3 picker, Spark S3A, DuckDB는 EC2 instance profile IAM Role/default credential chain을 사용하며 browser와 서버 `.env`에는 AWS access key/secret을 두지 않는다. 기본 Batch Runtime은 Compose의 Spark Standalone REST지만, AWS 리소스가 준비된 배포는 일반 Batch만 EMR Serverless로 opt in할 수 있다.
 
 기본 fixture는 다음처럼 고정한다.
 
@@ -118,6 +118,7 @@ File / S3, Data Lake source, Target S3 picker, Spark S3A, DuckDB는 EC2 instance
 | EC2 생성 | Docker Compose를 실행할 서버를 만든다. |
 | EC2 IAM Role 연결 | Raw list/read와 Output list/read/write/delete 최소 권한을 instance profile로 연결한다. |
 | S3 bucket 생성 | Raw와 Spark Output bucket을 같은 리전에 private으로 만든다. Warehouse/Query Result bucket은 현재 runtime에 연결하지 않는다. |
+| EMR Serverless 선택 준비 | opt in 배포만 Application, Job execution role, artifact/log prefix와 backend의 Start/Get/Cancel 및 `iam:PassRole` 권한을 준비한다. |
 | IMDSv2 설정 | token required, container credential용 response hop limit 2를 설정한다. |
 | Elastic IP 연결 | 서버 public IP를 고정한다. |
 | 보안 그룹 설정 | 22, 80, 443 포트를 연다. |
@@ -311,12 +312,12 @@ Backend deploy image dependencies:
 
 - OS packages from `backend/Dockerfile`: `nodejs`, `npm`, `ca-certificates`. The backend image intentionally omits Docker CLI.
 - Python packages from `backend/requirements.txt`: FastAPI/Uvicorn, SQLAlchemy, psycopg, pydantic settings, dotenv, and DuckDB.
-- Node connector packages from `backend/package.json`: S3, Kafka, MongoDB, Parquet, and PostgreSQL clients.
+- Node connector packages from `backend/package.json`: S3, EMR Serverless, Kafka, MongoDB, Parquet, and PostgreSQL clients.
 
 Spark runtime dependencies:
 
 - Spark services use the `apache/spark:4.0.1`-based `spark-runtime` image with application scripts baked in.
-- Production backend submits cluster-mode drivers to the internal Spark Standalone REST endpoint and polls terminal state; it does not receive the Docker socket.
+- Production 기본값은 internal Spark Standalone REST에 cluster-mode driver를 제출한다. `ASKLAKE_SPARK_RUNTIME=emr-serverless` opt in은 S3 일반 Batch만 EMR Job Run으로 제출·조회·취소한다. 어느 경우에도 backend는 Docker socket을 받지 않는다.
 - S3A jobs use `ASKLAKE_SPARK_HADOOP_AWS_PACKAGE`, default `org.apache.hadoop:hadoop-aws:3.4.1`.
 - Spark output/report/sample host directories are rooted at `ASKLAKE_HOST_DATA_DIR`, default `/tmp/asklake`.
 

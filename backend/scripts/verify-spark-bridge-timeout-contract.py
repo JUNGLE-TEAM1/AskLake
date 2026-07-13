@@ -43,11 +43,23 @@ try:
     etl_service.source_incremental_window = lambda *_args, **_kwargs: (None, None)
     etl_service.run_spark_job(object(), object(), "run", "run-timeout-contract")
 
-    assert captured["payload"]["sparkRestTimeoutMs"] == 1000
+    assert captured["payload"]["sparkRuntimeTimeoutMs"] == 1000
+    assert captured["payload"]["sparkRuntimeStateFile"].endswith(
+        "run-timeout-contract.spark-rest-state.json"
+    )
     assert captured["options"]["timeout_seconds"] == 61
-    assert captured["options"]["timeout_seconds"] * 1000 > captured["payload"]["sparkRestTimeoutMs"]
+    assert captured["options"]["timeout_seconds"] * 1000 > captured["payload"]["sparkRuntimeTimeoutMs"]
     assert captured["options"]["timeout_recovery"] is not None
     assert etl_service.continuous_maintenance_bridge_timeout_seconds(1000) == 31
+
+    os.environ["ASKLAKE_SPARK_RUNTIME"] = "emr-serverless"
+    captured.clear()
+    etl_service.run_spark_job(object(), object(), "run", "run-emr-timeout-contract")
+    assert captured["payload"]["sparkRuntimeTimeoutMs"] == 1000
+    assert captured["payload"]["sparkRuntimeStateFile"].endswith(
+        "run-emr-timeout-contract.emr-serverless-state.json"
+    )
+    assert captured["options"]["timeout_recovery"] is not None
 
     recovery_calls = []
 

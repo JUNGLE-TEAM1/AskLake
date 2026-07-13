@@ -1,5 +1,6 @@
 export const SPARK_RUNTIME_IDS = Object.freeze({
   DOCKER: "docker",
+  EMR_SERVERLESS: "emr-serverless",
   SPARK_REST: "spark-rest",
 });
 
@@ -35,6 +36,18 @@ const runtimeDefinitions = Object.freeze({
     remote: true,
     requiresDockerSocket: false,
   }),
+  [SPARK_RUNTIME_IDS.EMR_SERVERLESS]: Object.freeze({
+    capabilities: Object.freeze({
+      [SPARK_RUNTIME_OPERATIONS.BATCH]: true,
+      [SPARK_RUNTIME_OPERATIONS.CONTINUOUS]: false,
+      [SPARK_RUNTIME_OPERATIONS.MAINTENANCE]: false,
+      [SPARK_RUNTIME_OPERATIONS.SOURCE_INSPECT]: false,
+    }),
+    id: SPARK_RUNTIME_IDS.EMR_SERVERLESS,
+    legacyRunner: "emr-serverless",
+    remote: true,
+    requiresDockerSocket: false,
+  }),
 });
 
 const supportedOperations = new Set(Object.values(SPARK_RUNTIME_OPERATIONS));
@@ -57,7 +70,7 @@ export function resolveSparkRuntime(environment = process.env) {
 
   if (isProductionEnvironment(environment) && !definition.remote) {
     throw sparkRuntimeConfigurationError(
-      "Production Spark execution requires ASKLAKE_SPARK_RUNTIME=spark-rest "
+      "Production Spark execution requires ASKLAKE_SPARK_RUNTIME=spark-rest or emr-serverless "
       + "(or legacy ASKLAKE_SPARK_RUNNER=rest); Docker-based submission is not allowed.",
     );
   }
@@ -107,7 +120,7 @@ function canonicalRuntimeId(value) {
   if (!normalized) return null;
   if (Object.hasOwn(runtimeDefinitions, normalized)) return normalized;
   throw sparkRuntimeConfigurationError(
-    `Unsupported ASKLAKE_SPARK_RUNTIME value: ${normalized}. Expected docker or spark-rest.`,
+    `Unsupported ASKLAKE_SPARK_RUNTIME value: ${normalized}. Expected docker, spark-rest, or emr-serverless.`,
   );
 }
 

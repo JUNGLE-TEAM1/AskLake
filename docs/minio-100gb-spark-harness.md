@@ -41,6 +41,8 @@ docker compose up -d minio
 
 이 문서의 MinIO harness는 로컬 회귀 전용이다. EC2 production은 MinIO를 띄우지 않고 AWS S3와 instance profile IAM Role을 사용한다. 서버 `deploy/.env`에는 최소 아래 값이 필요하다.
 
+EMR Serverless Batch opt in은 이 MinIO harness를 직접 실행하지 않는다. 먼저 이 harness로 동일 PySpark script와 schema/row count의 로컬 기준을 남기고, 실제 AWS S3 입력에서 `npm run verify:emr-serverless-contract`와 운영 smoke를 별도로 수행해 결과를 비교한다. 현재 계약 검증은 fake AWS client를 사용하므로 실제 100GB 처리량·비용 수치를 보장하지 않는다.
+
 ```text
 ASKLAKE_OBJECT_STORAGE_PROVIDER=aws
 AWS_REGION=ap-northeast-2

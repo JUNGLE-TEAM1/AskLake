@@ -130,7 +130,7 @@ Backend connector 응답은 secret field를 redacted value로 내려준다. 프�
 - `AIRFLOW_EXECUTION_API_TOKEN`: Airflow task가 FastAPI internal Spark endpoint를 호출할 때 사용하는 shared bearer token. Airflow/FastAPI 양쪽 값이 같아야 한다.
 - `AIRFLOW_INTERNAL_BASE_URL`, `AIRFLOW_INTERNAL_TOKEN`, `AIRFLOW_INTERNAL_TIMEOUT_SECONDS`: 기존 단일 호출 internal endpoint 호환 설정. 신규 DAG는 execution bearer endpoint를 우선 사용한다.
 
-일반 배치 `run`/`retry`는 `executionMode=spark`로 DAG를 시작한다. `spark_process_write`가 FastAPI internal endpoint를 호출하면 FastAPI가 persisted Job/Run/Airflow identity를 확인하고 PySpark runner를 실행한다. Airflow에는 Docker socket과 MinIO credential을 직접 제공하지 않는다. Spark 실행 provider는 공통 Runtime 계약의 `batch`, `sourceInspect`, `continuous`, `maintenance` operation으로 분리되며 로컬 `docker`와 production `spark-rest`가 같은 선택기를 사용한다. Production backend도 Docker socket/CLI 없이 Spark Standalone REST create/status/kill API를 사용하며, `APP_ENV=production`에서 Docker Runtime 설정은 configuration error로 차단한다. `executionMode=smoke`는 backend 없이 DAG 성공/강제 실패만 검증할 때 사용한다.
+일반 배치 `run`/`retry`는 `executionMode=spark`로 DAG를 시작한다. `spark_process_write`가 FastAPI internal endpoint를 호출하면 FastAPI가 persisted Job/Run/Airflow identity를 확인하고 PySpark runner를 실행한다. Airflow에는 Docker socket과 object storage credential을 직접 제공하지 않는다. Spark 실행 provider는 공통 Runtime 계약의 `batch`, `sourceInspect`, `continuous`, `maintenance` operation으로 분리된다. 로컬은 `docker`, production 기본값은 `spark-rest`, AWS 일반 Batch opt in은 `emr-serverless`다. EMR 경로는 S3 manifest/report와 durable Job Run state로 submit/status/cancel/restart를 복구하며 static AWS credential을 payload/state/log에 넣지 않는다. `APP_ENV=production`에서 Docker Runtime 설정은 configuration error로 차단한다. `executionMode=smoke`는 backend 없이 DAG 성공/강제 실패만 검증할 때 사용한다.
 `publish_run_result`는 성공 Spark manifest와 실제 Parquet를 검증한 뒤 Catalog dataset/materialization을 transaction으로 저장한다. Batch bridge는 persisted `datasetId`를 Spark에 전달하고 Catalog는 실제 S3A output이 Storage Layout의 `<root>/<runId>`와 일치하는지 확인한다. Airflow terminal state만 성공이고 같은 `runId`의 Catalog evidence 또는 기존 persisted Spark result가 없으면 backend가 Run을 실패로 보정한다.
 
 Spark runner 입력:
@@ -146,7 +146,8 @@ Spark runner 입력:
 - `ASKLAKE_SPARK_TRANSFORM_STEPS`: create payload의 transform steps
 - `ASKLAKE_SPARK_QUALITY_RULES`: create payload의 quality rules
 - `ASKLAKE_SPARK_PARTITION_COLUMNS`: Target에서 선택한 다중 파티션 컬럼을 `/` 구분 문자열로 전달하며 Spark writer가 순서대로 `partitionBy`에 적용
-- `ASKLAKE_SPARK_RUNTIME`: canonical 실행 provider. 로컬은 `docker`, production은 `spark-rest`; 기존 `ASKLAKE_SPARK_RUNNER=docker|rest`는 호환 alias
+- `ASKLAKE_SPARK_RUNTIME`: canonical 실행 provider. 로컬은 `docker`, production 기본은 `spark-rest`, AWS S3 일반 Batch는 opt-in `emr-serverless`; 기존 `ASKLAKE_SPARK_RUNNER=docker|rest`는 호환 alias
+- `ASKLAKE_EMR_SERVERLESS_*`: enabled flag, application/execution role, entry-point/artifact/log S3 URI, polling/timeout/cancel, driver/executor와 dynamic allocation 범위. `emr-serverless`는 Batch만 지원한다.
 
 Spark runner 결과:
 
@@ -165,6 +166,7 @@ Airflow sync 결과:
 - `JobRunSummary.airflowDagId`, `airflowDagRunId`, `airflowRunUrl`, `airflowState`
 - `JobRunSummary.taskStates`, `lastSyncedAt`, `syncError`
 - `JobRunSummary.taskStates.sparkResult`: input/output rows, outputPath, schema, quality, Spark failure stage/error manifest
+- EMR Batch `sparkResult.runtime`, `runtimeJobId`, `runtimeLogReference`와 `taskStates.runtimeCancellation`
 - selected run 기준 `dagStepsByRunId`
 
 ### Phase 3 Catalog reconciliation target

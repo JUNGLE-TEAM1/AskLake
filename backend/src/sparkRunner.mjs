@@ -22,9 +22,15 @@ import {
   canonicalObjectStorageUri,
   createStorageLayout,
 } from "./storageLayout.mjs";
+import {
+  createEmrServerlessBatchSubmission,
+  emrServerlessArtifactUris,
+  emrServerlessConfig,
+} from "./emrServerless.mjs";
 
 const backendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const scriptsDir = path.join(backendDir, "scripts");
+const emrServerlessClientScript = path.join(scriptsDir, "emr-serverless-client.mjs");
 const sparkRestClientScript = path.join(scriptsDir, "spark-rest-client.mjs");
 const sparkHostScriptsDir = path.resolve(process.env.ASKLAKE_SPARK_HOST_SCRIPTS_DIR || scriptsDir);
 const ivyDir = path.resolve(process.env.ASKLAKE_SPARK_IVY_DIR || path.join(backendDir, "tmp", "spark-ivy"));
@@ -46,14 +52,21 @@ export function runSparkPipeline(job, command, runId, options = {}) {
   const runtime = sparkBatchRuntime();
   if (runtime.id === SPARK_RUNTIME_IDS.DOCKER) ensureSparkServer();
   const allowWorldWritable = runtime.id === SPARK_RUNTIME_IDS.DOCKER;
-  ensureWritableDir(ivyDir, allowWorldWritable);
   ensureWritableDir(reportDir, allowWorldWritable);
-  ensureWritableDir(localOutputDir, allowWorldWritable);
-  ensureWritableDir(sampleHostDir, allowWorldWritable);
-  ensureWritableDir(reviewTextModelHostDir, allowWorldWritable);
+  if (runtime.id !== SPARK_RUNTIME_IDS.EMR_SERVERLESS) {
+    ensureWritableDir(ivyDir, allowWorldWritable);
+    ensureWritableDir(localOutputDir, allowWorldWritable);
+    ensureWritableDir(sampleHostDir, allowWorldWritable);
+    ensureWritableDir(reviewTextModelHostDir, allowWorldWritable);
+  }
 
   const source = sparkSourceFromJob(job, runId);
   try {
+    if (runtime.id === SPARK_RUNTIME_IDS.EMR_SERVERLESS && !/^s3a?:\/\//i.test(source.path)) {
+      throw sparkConfigurationError(
+        "EMR Serverless Batch Phase 3 requires an S3 source path; local exports and inline fixtures are not supported.",
+      );
+    }
     return runSparkPipelineWithSource(job, command, runId, source, runtime, options);
   } finally {
     cleanupSparkSource(source);
@@ -67,6 +80,9 @@ function sparkBatchRuntime(environment = process.env) {
     },
     [SPARK_RUNTIME_IDS.SPARK_REST]: {
       [SPARK_RUNTIME_OPERATIONS.BATCH]: (payload) => runSparkBatchRest(payload, environment),
+    },
+    [SPARK_RUNTIME_IDS.EMR_SERVERLESS]: {
+      [SPARK_RUNTIME_OPERATIONS.BATCH]: (payload) => runSparkBatchEmrServerless(payload, environment),
     },
   });
 }
@@ -84,12 +100,46 @@ function runSparkBatchRest({ options, packages, runId, sparkEnvironment, sparkEx
       scriptPath: sparkRestRuntimeConfig(environment).jobScript,
       sparkProperties: sparkExecutorProperties,
     }, environment),
-    positiveInteger(options.sparkRestTimeoutMs, sparkRunTimeoutMs(environment)),
+    positiveInteger(options.sparkRuntimeTimeoutMs || options.sparkRestTimeoutMs, sparkRunTimeoutMs(environment)),
     environment,
     {
-      stateFile: sparkRestStateFileForRun(runId, options.sparkRestStateFile),
+      stateFile: sparkRestStateFileForRun(
+        runId,
+        options.sparkRuntimeStateFile || options.sparkRestStateFile,
+      ),
     },
   );
+}
+
+function runSparkBatchEmrServerless({
+  jobId,
+  manifestPath,
+  options,
+  packages,
+  runId,
+  sparkEnvironment,
+}, environment) {
+  const artifacts = emrServerlessArtifactUris(runId, environment);
+  const submission = createEmrServerlessBatchSubmission({
+    appName: sparkEnvironment.ASKLAKE_SPARK_APP_NAME,
+    jobId,
+    manifestUri: artifacts.manifestUri,
+    packages,
+    reportUri: artifacts.reportUri,
+    runId,
+    sparkEnvironment,
+  }, environment);
+  return runEmrServerlessSubmission({
+    artifacts,
+    manifestPath,
+    stateFile: runtimeStateFileForRun(
+      runId,
+      options.sparkRuntimeStateFile || options.sparkRestStateFile,
+      SPARK_RUNTIME_IDS.EMR_SERVERLESS,
+    ),
+    submission,
+    timeoutMs: positiveInteger(options.sparkRuntimeTimeoutMs || options.sparkRestTimeoutMs, sparkRunTimeoutMs(environment)),
+  }, environment);
 }
 
 function runSparkPipelineWithSource(job, command, runId, source, runtime, options = {}) {
@@ -99,6 +149,9 @@ function runSparkPipelineWithSource(job, command, runId, source, runtime, option
   const dockerReportPath = `${reportContainerDir}/${runId}.json`;
   const manifestPath = path.join(reportDir, `${runId}.manifest.json`);
   const dockerManifestPath = `${reportContainerDir}/${runId}.manifest.json`;
+  const emrArtifacts = runtime.id === SPARK_RUNTIME_IDS.EMR_SERVERLESS
+    ? emrServerlessArtifactUris(runId)
+    : null;
   const packages = sparkPackages(source, output);
   const packageArgs = sparkPackageArgs(packages);
   const localLlmEndpoint = process.env.ASKLAKE_LOCAL_LLM_ENDPOINT_IN_DOCKER
@@ -123,9 +176,9 @@ function runSparkPipelineWithSource(job, command, runId, source, runtime, option
     ASKLAKE_SPARK_OUTPUT_PATH: output.sparkPath,
     ASKLAKE_SPARK_RUN_ROW_LIMIT: sparkRowLimitFromJob(job),
     ASKLAKE_SPARK_RUN_ID: runId,
-    ASKLAKE_SPARK_JOB_MANIFEST_FILE: dockerManifestPath,
-    ASKLAKE_SPARK_TEXT_STRUCTURING_DEFINITION_FILE: dockerManifestPath,
-    ASKLAKE_SPARK_REPORT_FILE: dockerReportPath,
+    ASKLAKE_SPARK_JOB_MANIFEST_FILE: emrArtifacts ? "asklake-job-manifest.json" : dockerManifestPath,
+    ASKLAKE_SPARK_TEXT_STRUCTURING_DEFINITION_FILE: emrArtifacts ? "asklake-job-manifest.json" : dockerManifestPath,
+    ASKLAKE_SPARK_REPORT_FILE: emrArtifacts ? emrArtifacts.reportUri.replace(/^s3:\/\//, "s3a://") : dockerReportPath,
     ASKLAKE_SPARK_APP_NAME: `asklake-${command}-${job.id}`,
     ASKLAKE_LOCAL_LLM_ENDPOINT: localLlmEndpoint,
     ASKLAKE_LOCAL_LLM_MODEL: localLlmModel,
@@ -232,6 +285,8 @@ function runSparkPipelineWithSource(job, command, runId, source, runtime, option
 
   const runtimePayload = {
     dockerArgs,
+    jobId: job.id,
+    manifestPath,
     options,
     packages,
     runId,
@@ -255,6 +310,10 @@ function runSparkPipelineWithSource(job, command, runId, source, runtime, option
     return {
       ...report,
       error: report.error || result.stderr || result.stdout || spawnError || "Spark job failed.",
+      ...(result.runtimeError?.code ? {
+        errorCode: result.runtimeError.code,
+        errorStatus: result.runtimeError.status,
+      } : {}),
       sparkExitCode: result.status ?? 1,
       stderr: tail(result.stderr),
       stdout: tail(result.stdout),
@@ -374,6 +433,52 @@ export function runSparkRestSubmission(submission, timeoutMs, environment = proc
     : `Spark REST timeout recovery failed: ${recovery.stderr || recovery.error?.message || "unknown error"}`;
   return {
     ...result,
+    stderr: [result.stderr, recoveryDetail].filter(Boolean).join("\n"),
+  };
+}
+
+export function runEmrServerlessSubmission({
+  artifacts,
+  manifestPath,
+  stateFile,
+  submission,
+  timeoutMs,
+}, environment = process.env) {
+  const config = emrServerlessConfig(environment);
+  const effectiveTimeoutMs = positiveInteger(timeoutMs, sparkRunTimeoutMs(environment));
+  const result = spawnSync(process.execPath, [emrServerlessClientScript], {
+    cwd: backendDir,
+    encoding: "utf8",
+    env: environment,
+    input: JSON.stringify({
+      manifestFile: manifestPath,
+      manifestUri: artifacts.manifestUri,
+      pollIntervalMs: config.pollIntervalMs,
+      reportUri: artifacts.reportUri,
+      stateFile,
+      submission,
+      timeoutMs: effectiveTimeoutMs,
+    }),
+    maxBuffer: 4 * 1024 * 1024,
+    timeout: sparkRestBridgeTimeoutMs(effectiveTimeoutMs),
+  });
+  const runtimeError = markerPayload(result.stdout, "ASKLAKE_EMR_SERVERLESS_ERROR");
+  if (!result.error && !result.signal) return { ...result, runtimeError };
+
+  const recovery = spawnSync(process.execPath, [emrServerlessClientScript], {
+    cwd: backendDir,
+    encoding: "utf8",
+    env: environment,
+    input: JSON.stringify({ operation: "cancel-state", stateFile }),
+    maxBuffer: 1024 * 1024,
+    timeout: 15_000,
+  });
+  const recoveryDetail = recovery.status === 0
+    ? String(recovery.stdout || "").trim()
+    : "EMR Serverless timeout recovery failed.";
+  return {
+    ...result,
+    runtimeError: runtimeError || markerPayload(recovery.stdout, "ASKLAKE_EMR_SERVERLESS_ERROR"),
     stderr: [result.stderr, recoveryDetail].filter(Boolean).join("\n"),
   };
 }
@@ -850,6 +955,17 @@ function readSparkReport(reportPath, stdout) {
   return { status: "failed" };
 }
 
+function markerPayload(stdout, markerName) {
+  const prefix = `${markerName}=`;
+  const line = String(stdout || "").split(/\r?\n/).findLast((item) => item.startsWith(prefix));
+  if (!line) return null;
+  try {
+    return JSON.parse(line.slice(prefix.length));
+  } catch {
+    return null;
+  }
+}
+
 function normalizeSparkReport(report, output) {
   if (!report || typeof report !== "object") return report;
   return {
@@ -973,20 +1089,28 @@ export function sparkRestBridgeTimeoutMs(pollTimeoutMs) {
 }
 
 function sparkRestStateFileForRun(runId, configured) {
+  return runtimeStateFileForRun(runId, configured, SPARK_RUNTIME_IDS.SPARK_REST);
+}
+
+function runtimeStateFileForRun(runId, configured, runtimeId) {
   const candidate = configured
-    || path.join(reportDir, `${safeArtifactSegment(runId)}.spark-rest-state.json`);
-  const resolved = requiredSparkRestStateFile(candidate);
+    || path.join(reportDir, `${safeArtifactSegment(runId)}.${safeArtifactSegment(runtimeId)}-state.json`);
+  const resolved = requiredRuntimeStateFile(candidate);
   const relative = path.relative(reportDir, resolved);
   if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
-    throw sparkConfigurationError("Spark REST state file must be below ASKLAKE_SPARK_REPORT_DIR.");
+    throw sparkConfigurationError("Spark runtime state file must be below ASKLAKE_SPARK_REPORT_DIR.");
   }
   return resolved;
 }
 
 function requiredSparkRestStateFile(value) {
+  return requiredRuntimeStateFile(value, "Spark REST state file");
+}
+
+function requiredRuntimeStateFile(value, label = "Spark runtime state file") {
   const raw = String(value || "");
   if (!raw || raw.includes("\0") || !path.isAbsolute(raw)) {
-    throw sparkConfigurationError("Spark REST state file must be an absolute path.");
+    throw sparkConfigurationError(`${label} must be an absolute path.`);
   }
   return path.resolve(raw);
 }

@@ -126,16 +126,26 @@ Batch bridge는 표시명에서 다시 slug를 만들지 않고 저장된 `datas
 
 일반 배치 Job의 `run`/`retry`는 `FastAPI -> Airflow DAG Run -> token-authenticated FastAPI internal execution API -> PySpark -> MinIO/S3 Parquet` 순서로 실행한다. Airflow는 orchestration 상태의 source of truth이고 FastAPI/PostgreSQL은 Job 설정과 사용자-facing Run metadata의 source of truth다.
 
-Airflow task는 Docker socket이나 MinIO credential을 직접 받지 않는다. `spark_process_write` task가 `AIRFLOW_EXECUTION_API_TOKEN`으로 FastAPI 내부 API를 호출하면 FastAPI가 저장된 Job/Run identity를 재검증한다. 로컬 개발은 기존 Docker launcher를 사용할 수 있지만 production Compose는 backend에 Docker socket/CLI를 제공하지 않고 내부 `spark-master:6066` Standalone REST API로 cluster-mode driver를 제출하고 상태를 확인한다. 데이터 읽기·변환·품질 검사·Parquet 쓰기는 Spark worker의 PySpark가 수행하며 report/output/sample/Ivy 경로는 UID 185 bind mount로 공유한다.
+Airflow task는 Docker socket이나 object storage credential을 직접 받지 않는다. `spark_process_write` task가 `AIRFLOW_EXECUTION_API_TOKEN`으로 FastAPI 내부 API를 호출하면 FastAPI가 저장된 Job/Run identity를 재검증한다. 로컬 개발은 기존 Docker launcher를 사용한다. production 기본값은 내부 `spark-master:6066` Standalone REST API이고, AWS 배포가 명시적으로 opt in하면 일반 Batch만 EMR Serverless `StartJobRun`으로 제출한다. 두 remote 경로 모두 Airflow DAG shape는 바꾸지 않는다.
 
 ### Spark Runtime boundary
 
-Spark 실행 환경 선택의 source of truth는 `backend/src/sparkRuntime.mjs`다. Runtime은 `docker`와 `spark-rest`라는 canonical ID, `batch`·`sourceInspect`·`continuous`·`maintenance` capability, remote 여부, backend Docker socket 필요 여부를 함께 정의한다. 배치 실행, Parquet source inspection, Kafka Continuous lifecycle, replay/compaction maintenance는 각자 실행 구현을 보유하되 최상위 선택과 operation dispatch는 같은 Runtime 계약을 사용한다.
+Spark 실행 환경 선택의 source of truth는 `backend/src/sparkRuntime.mjs`다. Runtime은 `docker`, `spark-rest`, `emr-serverless` canonical ID, `batch`·`sourceInspect`·`continuous`·`maintenance` capability, remote 여부, backend Docker socket 필요 여부를 함께 정의한다. 배치 실행, Parquet source inspection, Kafka Continuous lifecycle, replay/compaction maintenance는 각자 실행 구현을 보유하되 최상위 선택과 operation dispatch는 같은 Runtime 계약을 사용한다.
 
 - 로컬 batch/source inspection은 설정이 없으면 기존처럼 `docker`가 기본이다. Kafka Continuous와 maintenance는 실수로 장기 container를 만드는 것을 막기 위해 `ASKLAKE_SPARK_RUNTIME=docker`를 명시해야 한다.
-- production Compose는 `ASKLAKE_SPARK_RUNTIME=spark-rest`를 사용한다. `APP_ENV=production`에서 local Docker Runtime은 작업 제출 전에 configuration error로 차단한다.
+- production Compose 기본값은 `ASKLAKE_SPARK_RUNTIME=spark-rest`다. 일반 Batch를 EMR Serverless로 전환한 AWS 배포만 `emr-serverless`를 선택한다. `APP_ENV=production`에서 local Docker Runtime은 작업 제출 전에 configuration error로 차단한다.
 - `ASKLAKE_SPARK_RUNNER=docker|rest`는 기존 환경을 위한 호환 alias다. canonical 값과 legacy 값이 의미상 다르면 fail-fast하며 다른 Runtime으로 fallback하지 않는다.
-- EMR Serverless는 이번 Phase의 구현이 아니다. 후속 Phase에서 새 canonical ID와 네 operation adapter를 등록하되 현재 `docker`/`spark-rest` 코드를 다시 분기 확장하지 않는다.
+- `emr-serverless`는 이번 단계에서 `batch` capability만 제공한다. Kafka Continuous, maintenance, Parquet source inspection은 지원하지 않으며 다른 Runtime으로 묵시적 fallback하지 않는다.
+
+### EMR Serverless Batch control plane
+
+EMR Batch는 `FastAPI -> Airflow -> Node bridge -> EMR Serverless -> S3 Parquet/report -> Catalog reconciliation` 순서다. backend는 Run별 manifest를 S3에 올린 뒤 `StartJobRun`을 한 번 호출하고 `GetJobRun`으로 상태를 poll한다. `applicationId`와 `jobRunId`는 durable control-state file에 원자적으로 저장하므로 backend가 재시작돼도 같은 Run을 다시 제출하지 않는다. PySpark report는 S3 object로 기록하고 backend는 성공·실패 manifest에 `runtime`, `runtimeJobId`, `runtimeLogReference`를 보존한다.
+
+- 입력과 출력은 실제 AWS S3/S3A URI만 허용한다. 로컬 export/inline fixture source는 EMR Batch에서 fail-fast한다.
+- backend는 EC2/ECS 등의 default AWS credential chain으로 `StartJobRun`, `GetJobRun`, `CancelJobRun`, manifest/artifact S3 작업을 수행하고 execution role을 `StartJobRun`에 전달한다. static access key/secret/session token은 제출 payload, state, log, API response에 저장하지 않는다.
+- PySpark entry point는 `npm run emr:upload-artifact`로 versioned 운영 prefix에 업로드하며 SHA-256 metadata를 남긴다. Run manifest/report와 S3 monitoring log는 별도 configured prefix를 사용한다.
+- `cancelRun`은 제출 전 cancellation marker를 남겨 race를 차단하고, 제출 뒤에는 persisted Job Run ID로 `CancelJobRun`을 요청한다. 취소된 Run은 뒤늦은 Airflow poll이나 Spark 결과가 success로 덮어쓰지 못하며 Catalog reconciliation도 거부된다.
+- driver/executor cores·memory와 dynamic allocation min/initial/max는 환경 변수로 조정한다. 이 설정은 확장 가능성의 제어면일 뿐 처리량 보장이 아니며 실제 target workload 부하 시험은 별도다.
 
 CSV source와 source inspect는 `quote="`와 `escape="`를 명시해 RFC 4180의 quoted comma와 doubled quote를 같은 field로 해석한다. 예를 들어 `"안녕, 나는 ""해건"""`은 `안녕, 나는 "해건"`이라는 리뷰 하나로 유지된다.
 

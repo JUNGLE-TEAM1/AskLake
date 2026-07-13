@@ -40,6 +40,7 @@ AskLake는 사용자가 데이터셋의 출처, 품질, 권한, 실행 결과, �
 - 이름 있는 필드가 없는 MinIO/S3 TXT 소스의 조건부 레코드 구조화: 한 줄을 하나의 레코드로 보고 연속 공백(`\\s+`)으로 분리한 뒤 컬럼명·타입 초안을 Schema 단계에 전달
 - 새 수집/처리 Job 생성
 - Batch와 Kafka Continuous의 Output을 MinIO/AWS 공통 Storage Layout V1에 저장하고, 자동 경로는 환경별로 분리하며 Continuous checkpoint는 Job별로 격리
+- AWS 배포에서 일반 Batch Job을 선택적으로 EMR Serverless에 제출하고, S3 manifest/report와 EMR Job Run ID로 성공·실패·취소·재시작 복구 상태를 같은 Run History에 반영. 로컬 기본 실행은 기존 Docker를 유지한다.
 - 작업 명령 UI: 실행, 재실행, 일시정지, 취소
 - Run History와 Run별 DAG 표시
 - 실행 성공 후 Catalog dataset 등록
@@ -66,6 +67,7 @@ FastAPI live backend에서 현재 우선 구현하는 범위:
 | ETL job 생성 | 생성 flow 최종 제출을 서버 리소스로 저장 | High | `docs/api-contract.md` |
 | Job command | 실행/재실행/일시정지/취소 상태 전이 | High | `docs/api-contract.md` |
 | Spark storage layout | 명시한 Target 경로 호환, 환경별 자동 root, data/checkpoint/manifest/quarantine 경로와 보존 계약 통일 | High | `docs/02-architecture.md` |
+| EMR Serverless Batch | AWS S3 입력 Batch를 remote Job Run으로 제출하고 상태·취소·로그 참조·재시작 복구를 Run에 연결 | High | `docs/02-architecture.md` |
 | Job hydrate | 목록/상세를 서버 데이터로 조회 | High | `docs/backend-integration-readiness.md` |
 | Catalog hydrate | 데이터셋 목록/상세와 최신 성공 materialization의 실제 row 페이지를 서버 데이터로 조회 | High | `docs/backend-integration-readiness.md` |
 | Catalog lineage | 저장된 lineage 또는 fallback graph 반환 | Medium | `docs/api-contract.md` |
@@ -160,6 +162,7 @@ Phase 0에서는 용어와 경계를 먼저 고정한다. `createdBy`, `owner`, 
 - 모든 source type의 production 연결
 - Kafka Snapshot/Continuous 원시 TXT 구조화, 임의 정규식 작성, 복수 구분자, 멀티라인 로그, 오류 행 자동 보정·quarantine·재처리
 - 대용량 처리 성능 검증
+- EMR Serverless의 Kafka Continuous, maintenance, Parquet source inspection 지원. 현재 `emr-serverless` Runtime은 일반 Batch 전용이며 실제 처리량·비용 기준 검증은 별도 부하 테스트 범위
 - Kafka Continuous Ingestion V1 운영 확장: 지속 실행 Spark worker, checkpoint 재개, Catalog 등록, partition lag, bounded log, quarantine replay, staged compaction은 Issue #500에서 구현했다. autoscaling, alerting/SLA, 장기 로그 object storage, compaction 결과의 atomic reader 전환/retention, 다중 worker 운영은 후속 범위
 - Spark, Trino, Kafka, Airflow 전체 운영 완성
 - 완전한 인증/인가 시스템

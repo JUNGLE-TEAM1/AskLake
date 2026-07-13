@@ -957,7 +957,7 @@ def command_job(
         raise ApiError(ErrorCode.VALIDATION_ERROR, f"Unsupported job command: {command}", status.HTTP_400_BAD_REQUEST)
     job = (
         etl_repository.get_job_for_update(db, job_id)
-        if command in {"run", "retry", "startContinuous", "resumeContinuous"}
+        if command in {"run", "retry", "cancelRun", "startContinuous", "resumeContinuous"}
         else etl_repository.get_job(db, job_id)
     )
     if job is None:
@@ -1077,6 +1077,7 @@ def command_job(
     dataset_schema = None
     run_model = None
     dataset_model = None
+    processing_result = None
     if command in {"run", "retry"}:
         if is_kafka_job(job):
             run_id = stable_id("run", f"{job.id}:{command}:kafka:{iso_now()}")
@@ -1171,12 +1172,19 @@ def command_job(
             ],
         ])
     elif command == "cancelRun":
-        run_model = run_from_command(job, command)
+        run_model, processing_result = cancel_active_spark_run(db, job)
         run_schema = etl_repository.run_to_schema(run_model)
         apply_job_command(job, command)
         job.dag_steps = dag_steps_from_command(job, command, run_schema.model_dump(by_alias=True))
         job.dag_steps_by_run_id = {**(job.dag_steps_by_run_id or {}), run_schema.run_id: job.dag_steps}
-        job.stats = stats_from_runs(job, [run_schema, *etl_repository.list_runs_for_job(db, job.id)])
+        job.stats = stats_from_runs(job, [
+            run_schema,
+            *[
+                previous_run
+                for previous_run in etl_repository.list_runs_for_job(db, job.id)
+                if previous_run.run_id != run_schema.run_id
+            ],
+        ])
     else:
         apply_job_command(job, command)
 
@@ -1192,7 +1200,105 @@ def command_job(
         job=with_job_permissions(db, saved_job, actor or ActorContext()),
         run=run_schema,
         dag_steps=[JobDagStep(**step) for step in job.dag_steps] if job.dag_steps else None,
+        processing_result=processing_result,
     )
+
+
+def cancel_active_spark_run(
+    db: Session,
+    job: ETLJobModel,
+) -> tuple[ETLRunModel, dict[str, Any]]:
+    run = next(
+        (
+            candidate
+            for candidate in etl_repository.list_run_models_for_job(db, job.id)
+            if candidate.status in ACTIVE_RUN_STATUSES
+        ),
+        None,
+    )
+    if run is None:
+        raise ApiError(
+            ErrorCode.INVALID_JOB_STATE,
+            "The active Run could not be found for cancellation.",
+            status.HTTP_409_CONFLICT,
+            {"jobId": job.id},
+        )
+    etl_repository.refresh_run_for_update(db, run)
+
+    runtime_id = configured_spark_runtime_id()
+    state_file = spark_runtime_submission_state_file(run.run_id, runtime_id)
+    cancel_file = Path(f"{state_file}.cancel-requested")
+    cancel_file.parent.mkdir(parents=True, exist_ok=True)
+    temporary_cancel_file = Path(f"{cancel_file}.{os.getpid()}.{secrets.token_hex(8)}.tmp")
+    try:
+        temporary_cancel_file.write_text(
+            json.dumps({
+                "requestedAt": iso_now(),
+                "runId": run.run_id,
+                "runtime": runtime_id,
+            }) + "\n",
+            encoding="utf-8",
+        )
+        os.replace(temporary_cancel_file, cancel_file)
+    finally:
+        temporary_cancel_file.unlink(missing_ok=True)
+
+    runtime_result: dict[str, Any] | None = None
+    cancellation_status = "requested"
+    if runtime_id in {"spark-rest", "emr-serverless"} and state_file.exists():
+        try:
+            runtime_result = recover_spark_submission(runtime_id, state_file)
+        except Exception as exc:
+            raise ApiError(
+                "SPARK_RUNTIME_CANCEL_FAILED",
+                "The Spark runtime did not accept the cancellation request.",
+                status.HTTP_502_BAD_GATEWAY,
+                {
+                    "reason": compact_storage_text(exc, limit=1000),
+                    "runId": run.run_id,
+                    "runtime": runtime_id,
+                },
+            ) from exc
+        cancellation_accepted = bool(
+            runtime_result.get("canceled") is True
+            or runtime_result.get("killed") is True
+        )
+        if not cancellation_accepted:
+            raise ApiError(
+                ErrorCode.INVALID_JOB_STATE,
+                "The Spark runtime had already reached a terminal state before cancellation.",
+                status.HTTP_409_CONFLICT,
+                {
+                    "runId": run.run_id,
+                    "runtime": runtime_id,
+                    "runtimeResult": runtime_result,
+                },
+            )
+        cancellation_status = "canceled"
+
+    canceled_at = iso_now()
+    runtime_cancellation = {
+        "requestedAt": canceled_at,
+        "runId": run.run_id,
+        "runtime": runtime_id,
+        "controlStatePersisted": state_file.exists(),
+        "status": cancellation_status,
+        **({"runtimeResult": runtime_result} if runtime_result is not None else {}),
+    }
+    run.status = "canceled"
+    run.ended_at = canceled_at
+    run.duration = format_iso_duration(run.started_at, canceled_at)
+    run.failed_stage = "실행 취소"
+    run.error_summary = "사용자 취소"
+    run.task_states = {
+        **(run.task_states or {}),
+        "runtimeCancellation": runtime_cancellation,
+    }
+    return run, {
+        "operation": "cancel",
+        "runtime": runtime_id,
+        "runtimeCancellation": runtime_cancellation,
+    }
 
 
 def command_kafka_continuous_job(
@@ -1855,9 +1961,10 @@ def is_kafka_job(job: ETLJobModel) -> bool:
 
 
 def run_spark_job(db: Session, job: ETLJobModel, command: str, run_id: str) -> dict[str, Any]:
-    rest_mode = spark_rest_mode_enabled()
-    poll_timeout_ms = spark_rest_poll_timeout_ms()
-    state_file = spark_rest_submission_state_file(run_id)
+    runtime_id = configured_spark_runtime_id()
+    remote_batch_mode = runtime_id in {"spark-rest", "emr-serverless"}
+    poll_timeout_ms = spark_runtime_poll_timeout_ms()
+    state_file = spark_runtime_submission_state_file(run_id, runtime_id)
     incremental_since, incremental_before = source_incremental_window(db, job, run_id)
     source_window_rebaseline = source_uses_incremental_folder_window(job) and incremental_since is None
     source_object_inventory = incremental_source_object_inventory(
@@ -1885,18 +1992,14 @@ def run_spark_job(db: Session, job: ETLJobModel, command: str, run_id: str) -> d
                 source_window_rebaseline=source_window_rebaseline,
             ),
             "runId": run_id,
-            **(
-                {
-                    "sparkRestStateFile": str(state_file),
-                    "sparkRestTimeoutMs": poll_timeout_ms,
-                }
-                if rest_mode
-                else {}
-            ),
+            **({
+                "sparkRuntimeStateFile": str(state_file),
+                "sparkRuntimeTimeoutMs": poll_timeout_ms,
+            } if remote_batch_mode else {}),
         },
         error_marker="ASKLAKE_SPARK_RUN_ERROR",
-        timeout_seconds=spark_python_bridge_timeout_seconds(poll_timeout_ms) if rest_mode else 900,
-        timeout_recovery=(lambda: recover_spark_rest_submission(state_file)) if rest_mode else None,
+        timeout_seconds=spark_python_bridge_timeout_seconds(poll_timeout_ms) if remote_batch_mode else 900,
+        timeout_recovery=(lambda: recover_spark_submission(runtime_id, state_file)) if remote_batch_mode else None,
     )
     if source_object_inventory is not None:
         source_collection = result.get("sourceCollection")
@@ -1927,6 +2030,15 @@ def execute_airflow_spark_run(
             {"jobId": job_id, "runId": run_id},
         )
     etl_repository.refresh_run_for_update(db, run)
+
+    if airflow_run_cancellation_requested(run):
+        db.rollback()
+        raise ApiError(
+            "AIRFLOW_RUN_CANCELED",
+            "The persisted AskLake Run was canceled before Spark execution.",
+            status.HTTP_409_CONFLICT,
+            {"jobId": job_id, "runId": run_id},
+        )
 
     existing_result = (run.task_states or {}).get("sparkResult")
     if isinstance(existing_result, dict) and existing_result.get("status") == "success":
@@ -1976,6 +2088,24 @@ def execute_airflow_spark_run(
     if run is None or run.job_id != job.id:
         raise ApiError(ErrorCode.INVALID_JOB_STATE, "Spark Run disappeared during finalization", status.HTTP_409_CONFLICT)
     etl_repository.refresh_run_for_update(db, run)
+    if airflow_run_cancellation_requested(run):
+        execution = (run.task_states or {}).get("sparkExecution")
+        if isinstance(execution, dict) and execution.get("attemptId") == attempt_id:
+            run.task_states = {
+                **(run.task_states or {}),
+                "sparkExecution": {
+                    **execution,
+                    "endedAt": iso_now(),
+                    "status": "canceled",
+                },
+            }
+        db.commit()
+        raise ApiError(
+            "AIRFLOW_RUN_CANCELED",
+            "The Spark result was discarded because the AskLake Run was canceled.",
+            status.HTTP_409_CONFLICT,
+            {"jobId": job_id, "runId": run_id},
+        )
     execution = (run.task_states or {}).get("sparkExecution")
     if not isinstance(execution, dict) or execution.get("attemptId") != attempt_id:
         raise ApiError(
@@ -2018,6 +2148,14 @@ def spark_execution_lease_is_active(value: Any) -> bool:
     return datetime.now(UTC) < started_at + timedelta(seconds=spark_execution_lease_seconds())
 
 
+def airflow_run_cancellation_requested(run: ETLRunModel) -> bool:
+    cancellation = (run.task_states or {}).get("runtimeCancellation")
+    return run.status == "canceled" or (
+        isinstance(cancellation, dict)
+        and cancellation.get("status") in {"requested", "canceled"}
+    )
+
+
 def spark_execution_lease_seconds() -> int:
     try:
         run_timeout = max(1, int(os.environ.get("ASKLAKE_SPARK_RUN_TIMEOUT_SECONDS") or "900"))
@@ -2054,13 +2192,14 @@ def finalize_spark_execution_attempt(
     if not isinstance(execution, dict) or execution.get("attemptId") != attempt_id:
         db.rollback()
         return
+    canceled = airflow_run_cancellation_requested(run)
     run.task_states = {
         **(run.task_states or {}),
         "sparkExecution": {
             **execution,
             "endedAt": iso_now(),
-            "error": error,
-            "status": "failed",
+            **({} if canceled else {"error": error}),
+            "status": "canceled" if canceled else "failed",
         },
     }
     db.commit()
@@ -2073,6 +2212,13 @@ def reconcile_airflow_catalog(
     run_id: str,
 ) -> AirflowCatalogReconciliationResponse:
     job, run = airflow_catalog_identity(db, job_id, run_id)
+    if airflow_run_cancellation_requested(run):
+        raise ApiError(
+            "AIRFLOW_RUN_CANCELED",
+            "Catalog reconciliation is disabled for a canceled AskLake Run.",
+            status.HTTP_409_CONFLICT,
+            {"jobId": job_id, "runId": run_id},
+        )
     dataset_id = str(job.dataset_id or "").strip()
     if not dataset_id:
         error = catalog_reconciliation_error(
@@ -2402,6 +2548,9 @@ def spark_result_manifest(result: dict[str, Any], run_id: str) -> dict[str, Any]
             "outputPath",
             "outputRows",
             "quality",
+            "runtime",
+            "runtimeJobId",
+            "runtimeLogReference",
             "schema",
             "sourceCollection",
             "sourcePath",
@@ -3596,6 +3745,7 @@ def sync_airflow_run(
     spark_result = previous_task_states.get("sparkResult")
     catalog_result = previous_task_states.get("catalogResult")
     airflow_reservation = previous_task_states.get("airflowReservation")
+    runtime_cancellation = previous_task_states.get("runtimeCancellation")
     run.task_states = task_state_snapshot(task_instances)
     if isinstance(spark_execution, dict):
         run.task_states["sparkExecution"] = spark_execution
@@ -3605,6 +3755,15 @@ def sync_airflow_run(
         run.task_states["catalogResult"] = catalog_result
     if isinstance(airflow_reservation, dict):
         run.task_states["airflowReservation"] = airflow_reservation
+    if isinstance(runtime_cancellation, dict):
+        run.task_states["runtimeCancellation"] = runtime_cancellation
+        if runtime_cancellation.get("status") in {"requested", "canceled"}:
+            run.status = "canceled"
+            if run.ended_at == "-":
+                run.ended_at = synced_at
+                run.duration = format_iso_duration(run.started_at, synced_at)
+            run.failed_stage = "실행 취소"
+            run.error_summary = "사용자 취소"
     run.last_synced_at = synced_at
     run.sync_error = None
 
@@ -4685,14 +4844,55 @@ def recover_spark_rest_submission(state_file: Path) -> dict[str, Any]:
     return recovered
 
 
-def spark_rest_mode_enabled() -> bool:
+def recover_emr_serverless_submission(state_file: Path) -> dict[str, Any]:
+    result = subprocess.run(
+        ["node", str(SCRIPTS_DIR / "emr-serverless-client.mjs")],
+        cwd=str(BACKEND_DIR),
+        input=json.dumps({
+            "operation": "cancel-state",
+            "stateFile": str(state_file),
+        }),
+        text=True,
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=15,
+    )
+    recovered = marker_payload(result.stdout or "", "ASKLAKE_EMR_SERVERLESS_RECOVERY")
+    if result.returncode != 0 or recovered is None:
+        error_payload = marker_payload(result.stdout or "", "ASKLAKE_EMR_SERVERLESS_ERROR") or {}
+        message = str(error_payload.get("message") or "EMR Serverless submission recovery failed.")
+        raise RuntimeError(message)
+    return recovered
+
+
+def recover_spark_submission(runtime_id: str, state_file: Path) -> dict[str, Any]:
+    if runtime_id == "emr-serverless":
+        return recover_emr_serverless_submission(state_file)
+    if runtime_id == "spark-rest":
+        return recover_spark_rest_submission(state_file)
+    raise RuntimeError(f"Spark runtime does not support remote recovery: {runtime_id}")
+
+
+def configured_spark_runtime_id() -> str:
     canonical_runtime = str(os.environ.get("ASKLAKE_SPARK_RUNTIME") or "").strip().lower()
     if canonical_runtime:
-        return canonical_runtime == "spark-rest"
-    return str(os.environ.get("ASKLAKE_SPARK_RUNNER") or "").strip().lower() == "rest"
+        return canonical_runtime
+    legacy_runtime = str(os.environ.get("ASKLAKE_SPARK_RUNNER") or "").strip().lower()
+    if legacy_runtime == "rest":
+        return "spark-rest"
+    return "docker"
+
+
+def spark_rest_mode_enabled() -> bool:
+    return configured_spark_runtime_id() == "spark-rest"
 
 
 def spark_rest_poll_timeout_ms() -> int:
+    return spark_runtime_poll_timeout_ms()
+
+
+def spark_runtime_poll_timeout_ms() -> int:
     timeout_seconds = bounded_environment_integer(
         "ASKLAKE_SPARK_RUN_TIMEOUT_SECONDS",
         default=7200,
@@ -4722,11 +4922,16 @@ def continuous_maintenance_bridge_timeout_seconds(poll_timeout_ms: int) -> int:
 
 
 def spark_rest_submission_state_file(run_id: str) -> Path:
+    return spark_runtime_submission_state_file(run_id, "spark-rest")
+
+
+def spark_runtime_submission_state_file(run_id: str, runtime_id: str) -> Path:
     report_dir = Path(os.environ.get("ASKLAKE_SPARK_REPORT_DIR") or BACKEND_DIR / "tmp" / "spark-runs")
     if not report_dir.is_absolute():
         report_dir = BACKEND_DIR / report_dir
     safe_run_id = re.sub(r"[^a-zA-Z0-9_.-]+", "-", str(run_id)).strip("-") or "run"
-    return (report_dir.resolve() / f"{safe_run_id.lower()}.spark-rest-state.json")
+    safe_runtime_id = re.sub(r"[^a-zA-Z0-9_.-]+", "-", str(runtime_id)).strip("-") or "runtime"
+    return (report_dir.resolve() / f"{safe_run_id.lower()}.{safe_runtime_id.lower()}-state.json")
 
 
 def continuous_maintenance_state_file(run_id: str) -> Path:

@@ -145,7 +145,7 @@ def main():
                 "status": "failed",
                 "textStructuring": text_structuring,
             }
-            write_report(report_file, result)
+            write_report(report_file, result, spark)
             print(f"ASKLAKE_SPARK_JOB_RESULT={json.dumps(result, ensure_ascii=False, sort_keys=True)}")
             return 1
         quarantine_df = None
@@ -244,7 +244,7 @@ def main():
                 "textStructuring": text_structuring,
                 "transform": transform,
             }
-            write_report(report_file, result)
+            write_report(report_file, result, spark)
             print(f"ASKLAKE_SPARK_JOB_RESULT={json.dumps(result, ensure_ascii=False, sort_keys=True)}")
             return 1
         publish_spark_paths(spark, staging_path, output_path, quarantine_staging_path)
@@ -276,7 +276,7 @@ def main():
             "textStructuring": text_structuring,
             "transform": transform,
         }
-        write_report(report_file, result)
+        write_report(report_file, result, spark)
         print(f"ASKLAKE_SPARK_JOB_RESULT={json.dumps(result, ensure_ascii=False, sort_keys=True)}")
         return 0
     except Exception as exc:
@@ -320,7 +320,7 @@ def main():
                 "errors": cleanup_errors,
                 "status": "failed" if cleanup_errors else "success",
             }
-        write_report(report_file, result)
+        write_report(report_file, result, spark)
         print(f"ASKLAKE_SPARK_JOB_RESULT={json.dumps(result, ensure_ascii=False, sort_keys=True)}")
         print(f"Spark job failed: {exc}", file=sys.stderr)
         return 1
@@ -2637,12 +2637,23 @@ def now_iso():
     return datetime.now(timezone.utc).isoformat()
 
 
-def write_report(path, result):
+def write_report(path, result, spark=None):
     if not path:
         return
+    payload = json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    if re.match(r"^s3a?://", str(path), flags=re.IGNORECASE):
+        if spark is None:
+            return
+        hadoop_path = spark.sparkContext._jvm.org.apache.hadoop.fs.Path(path)
+        filesystem = hadoop_path.getFileSystem(spark.sparkContext._jsc.hadoopConfiguration())
+        stream = filesystem.create(hadoop_path, True)
+        try:
+            stream.write(bytearray(payload.encode("utf-8")))
+        finally:
+            stream.close()
+        return
     with open(path, "w", encoding="utf-8") as handle:
-        json.dump(result, handle, ensure_ascii=False, indent=2, sort_keys=True)
-        handle.write("\n")
+        handle.write(payload)
 
 
 if __name__ == "__main__":

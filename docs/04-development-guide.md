@@ -133,7 +133,25 @@ Backend `DATABASE_URL`은 미설정 시 `postgres://asklake:asklake_dev@127.0.0.
 
 Airflow run polling과 실제 Spark batch를 확인하려면 AskLake backend와 별도로 local Airflow API server를 띄운다. Airflow는 `http://127.0.0.1:8081`에서 열리며 기본 계정은 local 전용 `airflow` / `airflow`다. `AIRFLOW_EXECUTION_API_TOKEN`은 Airflow task와 FastAPI에 같은 값을 설정하고 저장소나 로그에 운영 token을 남기지 않는다.
 
-Spark Runtime의 canonical 설정은 `ASKLAKE_SPARK_RUNTIME`이다. 로컬 batch/source inspection은 미설정 시에도 `docker`가 기본이지만 Kafka Continuous와 maintenance는 `ASKLAKE_SPARK_RUNTIME=docker`를 명시한다. Production은 `spark-rest`만 허용한다. 기존 `ASKLAKE_SPARK_RUNNER=docker|rest`는 호환되지만 새 환경 파일에는 사용하지 않는다.
+Spark Runtime의 canonical 설정은 `ASKLAKE_SPARK_RUNTIME`이다. 로컬 batch/source inspection은 미설정 시에도 `docker`가 기본이지만 Kafka Continuous와 maintenance는 `ASKLAKE_SPARK_RUNTIME=docker`를 명시한다. Production은 remote `spark-rest` 또는 일반 Batch 전용 `emr-serverless`를 허용하고 기본값은 `spark-rest`다. 기존 `ASKLAKE_SPARK_RUNNER=docker|rest`는 호환되지만 새 환경 파일에는 사용하지 않는다.
+
+### AWS EMR Serverless Batch opt in
+
+로컬 개발과 기존 production 배포는 바꾸지 않는다. AWS에서 일반 Batch를 EMR Serverless로 실행할 때만 `deploy/.env.example`의 `ASKLAKE_EMR_SERVERLESS_*` 값을 채우고 `ASKLAKE_SPARK_RUNTIME=emr-serverless`로 전환한다. 이 Runtime은 현재 Batch 전용이므로 같은 backend에서 Kafka Continuous, maintenance, Parquet source inspection이 필요하면 `spark-rest`를 유지한다.
+
+필수 준비 순서는 EMR Serverless Application 생성, Job execution role/S3 권한 구성, backend AWS principal의 `StartJobRun`·`GetJobRun`·`CancelJobRun`·`iam:PassRole` 권한 구성, S3 artifact/log prefix 생성, entry point 업로드다. AWS 인증은 default credential chain을 사용한다.
+
+```bash
+cd backend
+npm run verify:spark-runtime-contract
+npm run verify:emr-serverless-contract
+npm run verify:emr-serverless-fastapi
+
+# ASKLAKE_EMR_SERVERLESS_*와 AWS_REGION을 export한 AWS 환경에서만 실행
+npm run emr:upload-artifact
+```
+
+`ASKLAKE_EMR_SERVERLESS_MIN_EXECUTORS <= INITIAL_EXECUTORS <= MAX_EXECUTORS`를 만족해야 한다. 첫 운영 검증은 작은 S3 Parquet/CSV로 성공, 잘못된 schema 실패, `cancelRun`, backend 재시작 뒤 같은 Job Run 재사용, Docker 결과와 schema/row count 비교 순서로 수행한다. 실제 처리량과 비용 목표는 이 연결 검증과 분리해 부하 데이터로 측정한다.
 
 ```bash
 export AIRFLOW_EXECUTION_API_TOKEN=asklake-local-airflow-execution

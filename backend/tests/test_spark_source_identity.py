@@ -317,7 +317,7 @@ class SparkSourceIdentityTests(unittest.TestCase):
         read = source.index("source_df = read_source")
         last_action = source.index("sample_rows = collect_sample_rows")
         after = source.index('phase="after_read"')
-        quality_report = source.index("write_report(report_file, result)", after)
+        quality_report = source.index("write_report(report_file, result, spark)", after)
         success_result = source.index('"status": "success"', after)
 
         self.assertLess(before, read)

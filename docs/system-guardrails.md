@@ -73,8 +73,9 @@
 | `npm run verify:ui-regressions` failed | SQL 분석의 editor 불변 높이·Nessie Popover/Bubble/Collapsible·Dashboard WidgetConfigPanel 재사용·차트/데이터/실행 정보 전환·Trino timeline/cursor pagination/server CSV·Job wizard, Catalog wide button, Dashboard 목록, ApexCharts 위젯의 최근 회귀 방지 계약을 확인하고 관련 파일을 수정한다. |
 | `npm run build` failed | TypeScript error와 Vite build output을 확인하고 관련 파일을 수정한다. |
 | Live API mode failed | `VITE_API_BASE_URL`, backend server 상태, `docs/api-contract.md` response shape를 확인한다. |
-| Spark Runtime contract failed | `ASKLAKE_SPARK_RUNTIME`, legacy `ASKLAKE_SPARK_RUNNER`, `backend/src/sparkRuntime.mjs`의 capability와 네 operation adapter 등록을 확인한다. 서로 다른 Runtime으로 묵시적 fallback하지 않는다. |
-| Prod compose config failed | `deploy/.env.example`의 필수 env key, `deploy/docker-compose.prod.yml`, canonical `ASKLAKE_SPARK_RUNTIME=spark-rest`, Dockerfile path를 확인한다. |
+| Spark Runtime contract failed | `ASKLAKE_SPARK_RUNTIME`, legacy `ASKLAKE_SPARK_RUNNER`, `backend/src/sparkRuntime.mjs`의 capability와 operation adapter 등록을 확인한다. `emr-serverless`는 Batch만 허용하며 서로 다른 Runtime으로 묵시적 fallback하지 않는다. |
+| EMR Serverless contract failed | enabled/application/role/S3 URI/region, executor 범위, default AWS credential chain, PySpark artifact checksum, persisted Job Run state를 확인한다. static credential을 env·payload·state·log에 추가하지 않는다. |
+| Prod compose config failed | `deploy/.env.example`의 필수 env key, `deploy/docker-compose.prod.yml`, 기본 `ASKLAKE_SPARK_RUNTIME=spark-rest` 또는 명시적 Batch opt-in `emr-serverless`, Dockerfile path를 확인한다. |
 | API contract mismatch | `docs/03-api-reference.md`, `docs/api-contract.md`, frontend types/API adapter를 함께 맞춘다. |
 | PR branch policy failed | base/head 조합, 지원 브랜치 패턴, linked issue의 `Target Branch`를 확인한다. `main <- dev`; `dev <- pair1|pair2|pair3|지원 work branch|<type>-#issue`가 허용된다. |
 | Merged PR did not close its issue | PR footer가 `Closes/Fixes/Resolves #N`인지, base branch에 최신 Notion Issue Sync가 있는지, lifecycle smoke가 통과했는지 확인한다. 정기 복구는 기본 브랜치 `main`의 workflow를 사용하므로 자동화 변경은 `dev -> main`까지 반영한다. |

@@ -9,6 +9,8 @@ const runId = payload.runId;
 
 try {
   const result = runSparkPipeline(job, command, runId, {
+    sparkRuntimeStateFile: payload.sparkRuntimeStateFile,
+    sparkRuntimeTimeoutMs: payload.sparkRuntimeTimeoutMs,
     sparkRestStateFile: payload.sparkRestStateFile,
     sparkRestTimeoutMs: payload.sparkRestTimeoutMs,
   });
