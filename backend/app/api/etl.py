@@ -9,6 +9,7 @@ from app.schemas.etl import (
     CreateTrinoSqlJobRequest,
     DeleteJobResponse,
     ContinuousCompactionRequest,
+    ContinuousIcebergMaintenanceRequest,
     ContinuousMaintenanceRun,
     ContinuousQuarantineResponse,
     ContinuousReplayRequest,
@@ -320,6 +321,16 @@ def compact_continuous_target(
     actor: ActorContext = Depends(get_actor_context),
 ) -> ContinuousMaintenanceRun:
     return etl_service.compact_kafka_continuous_target(db, job_id, request, actor)
+
+
+@router.post("/jobs/{job_id}/continuous/iceberg-maintenance", response_model=ContinuousMaintenanceRun)
+def maintain_continuous_iceberg_target(
+    job_id: str,
+    request: ContinuousIcebergMaintenanceRequest,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(get_actor_context),
+) -> ContinuousMaintenanceRun:
+    return etl_service.maintain_kafka_continuous_iceberg_target(db, job_id, request, actor)
 
 
 @router.post("/schedules/run-due", response_model=ScheduledJobRunResponse)

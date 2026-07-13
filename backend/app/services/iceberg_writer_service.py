@@ -98,11 +98,18 @@ class IcebergWriterService:
         source_boundary: dict[str, Any] | None = None,
     ) -> IcebergCommitEvidence:
         self.describe_table(target)
-        snapshot_id, committed_at, warehouse_location = (
-            self.snapshot(target, str(expected_snapshot_id))
-            if expected_snapshot_id is not None
-            else self.latest_snapshot(target)
-        )
+        if expected_snapshot_id is not None:
+            try:
+                snapshot_id, committed_at, warehouse_location = self.snapshot(
+                    target,
+                    str(expected_snapshot_id),
+                )
+            except IcebergWriterError as exc:
+                if exc.code == "ICEBERG_SNAPSHOT_EVIDENCE_MISSING":
+                    raise IcebergWriterError("ICEBERG_SNAPSHOT_ID_MISMATCH") from exc
+                raise
+        else:
+            snapshot_id, committed_at, warehouse_location = self.current_snapshot(target)
         if expected_snapshot_id is not None and snapshot_id != str(expected_snapshot_id):
             raise IcebergWriterError("ICEBERG_SNAPSHOT_ID_MISMATCH")
         return IcebergCommitEvidence(
@@ -141,6 +148,7 @@ class IcebergWriterService:
         return rows
 
     def latest_snapshot(self, target: IcebergWriterTarget) -> tuple[str, str, str]:
+        """Return the newest historical snapshot, including snapshots abandoned by rollback."""
         snapshots_table = qualified_identifier(
             target.catalog,
             target.namespace,
@@ -151,6 +159,20 @@ class IcebergWriterService:
             f"FROM {snapshots_table} ORDER BY committed_at DESC, snapshot_id DESC LIMIT 1"
         )
         return self._snapshot_evidence(rows)
+
+    def current_snapshot(self, target: IcebergWriterTarget) -> tuple[str, str, str]:
+        refs_table = qualified_identifier(
+            target.catalog,
+            target.namespace,
+            f"{target.table}$refs",
+        )
+        rows = self._execute(
+            "SELECT CAST(snapshot_id AS VARCHAR) "
+            f"FROM {refs_table} WHERE name = 'main' LIMIT 1"
+        )
+        if not rows or not rows[0] or not str(rows[0][0] or "").strip():
+            raise IcebergWriterError("ICEBERG_CURRENT_SNAPSHOT_EVIDENCE_MISSING")
+        return self.snapshot(target, str(rows[0][0]).strip())
 
     def snapshot(self, target: IcebergWriterTarget, snapshot_id: str) -> tuple[str, str, str]:
         snapshots_table = qualified_identifier(
@@ -176,7 +198,25 @@ class IcebergWriterService:
             raise IcebergWriterError("ICEBERG_SNAPSHOT_EVIDENCE_INCOMPLETE")
         return snapshot_id, committed_at, warehouse_location
 
-    def table_storage_metrics(self, target: IcebergWriterTarget) -> tuple[int, int]:
+    def table_storage_metrics(
+        self,
+        target: IcebergWriterTarget,
+        *,
+        snapshot_id: str | None = None,
+    ) -> tuple[int, int]:
+        if snapshot_id is not None:
+            snapshots_table = qualified_identifier(
+                target.catalog,
+                target.namespace,
+                f"{target.table}$snapshots",
+            )
+            snapshot_literal = snapshot_version_literal(snapshot_id)
+            rows = self._execute(
+                "SELECT TRY_CAST(element_at(summary, 'total-data-files') AS BIGINT), "
+                "TRY_CAST(element_at(summary, 'total-files-size') AS BIGINT) "
+                f"FROM {snapshots_table} WHERE snapshot_id = {snapshot_literal} LIMIT 1"
+            )
+            return self._storage_metrics(rows)
         files_table = qualified_identifier(
             target.catalog,
             target.namespace,
@@ -186,8 +226,14 @@ class IcebergWriterService:
             "SELECT COUNT(*), COALESCE(SUM(file_size_in_bytes), 0) "
             f"FROM {files_table}"
         )
+        return self._storage_metrics(rows)
+
+    @staticmethod
+    def _storage_metrics(rows: list[list[Any]]) -> tuple[int, int]:
         if not rows or len(rows[0]) < 2:
             raise IcebergWriterError("ICEBERG_FILE_EVIDENCE_MISSING")
+        if rows[0][0] is None or rows[0][1] is None:
+            raise IcebergWriterError("ICEBERG_FILE_EVIDENCE_INCOMPLETE")
         file_count = int(rows[0][0] or 0)
         storage_size_bytes = int(rows[0][1] or 0)
         if file_count < 0 or storage_size_bytes < 0:
@@ -265,6 +311,13 @@ def quote_identifier(value: str) -> str:
 
 def sql_literal(value: str) -> str:
     return f"'{str(value).replace(chr(39), chr(39) * 2)}'"
+
+
+def snapshot_version_literal(value: str) -> str:
+    normalized = str(value or "").strip()
+    if not normalized or not normalized.lstrip("-").isdigit():
+        raise IcebergWriterError("ICEBERG_SNAPSHOT_ID_INVALID")
+    return str(int(normalized))
 
 
 def warehouse_location_from_manifest(value: object) -> str:

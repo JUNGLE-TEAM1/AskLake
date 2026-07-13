@@ -104,12 +104,18 @@ try {
   const dataset = (await datasets()).find((item) => item.id === `ds_${target}`);
   assert(dataset?.materializationRuns?.some((run) => run.runId === replay.runId), "Replay must append a Catalog materialization run.");
   assert(dataset?.materializationRuns?.some((run) => run.ruleFingerprint?.length === 64), "Catalog materialization must retain Rule execution identity.");
-  const compaction = await postError(
+  const compaction = await post(
     `/api/etl/jobs/${encodeURIComponent(jobId)}/continuous/compactions`,
     { targetFileSizeMb: 128 },
-    422,
   );
-  assert(compaction.error?.code === "KAFKA_CONTINUOUS_ICEBERG_COMPACTION_UNAVAILABLE", "Legacy Parquet compaction must not mutate an Iceberg target.");
+  assert(compaction.status === "success", "Iceberg data-file rewrite must complete successfully.");
+  assert(compaction.result?.queryEngineVerified === true, "Trino must verify the maintained Iceberg snapshot.");
+  assert(compaction.result?.icebergSnapshotId, "Maintenance must expose the verified Iceberg snapshot ID.");
+  const catalogTableUri = dataset?.queryEngineTable
+    ? `iceberg://${dataset.queryEngineTable.catalog}/${dataset.queryEngineTable.schema}/${dataset.queryEngineTable.table}`
+    : "";
+  assert(compaction.result?.tableUri === catalogTableUri, "Maintenance must target the Catalog Iceberg table.");
+  assert(compaction.result?.operations?.some((item) => item.operation === "rewrite_data_files"), "Compaction must use Iceberg rewrite_data_files.");
   console.log("verify-kafka-continuous-e2e: ok");
 } finally {
   if (jobId) await post(`/api/etl/jobs/${encodeURIComponent(jobId)}/commands`, { command: "stopContinuous" }).catch(() => undefined);
@@ -212,18 +218,6 @@ async function datasets() {
 }
 async function get(path) { return request(path); }
 async function post(path, body) { return request(path, { method: "POST", body: JSON.stringify(body) }); }
-async function postError(path, body, expectedStatus) {
-  const response = await fetch(`${baseUrl}${path}`, {
-    method: "POST",
-    body: JSON.stringify(body),
-    headers: { "Content-Type": "application/json", "X-AskLake-Role": "admin" },
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (response.status !== expectedStatus) {
-    throw new Error(`POST ${path} expected ${expectedStatus}, received ${response.status}: ${JSON.stringify(payload)}`);
-  }
-  return payload;
-}
 async function expectStatus(path, expectedStatus) {
   const response = await fetch(`${baseUrl}${path}`, { headers: { "X-AskLake-Role": "admin" } });
   if (response.status !== expectedStatus) throw new Error(`GET ${path} expected ${expectedStatus}, received ${response.status}: ${await response.text()}`);

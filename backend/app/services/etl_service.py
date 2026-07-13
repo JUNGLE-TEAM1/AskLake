@@ -55,6 +55,7 @@ from app.schemas.etl import (
     AirflowCatalogReconciliationResponse,
     CatalogDataset,
     ContinuousCompactionRequest,
+    ContinuousIcebergMaintenanceRequest,
     ContinuousMaintenanceRun,
     ContinuousQuarantineResponse,
     ContinuousReplayRequest,
@@ -119,7 +120,10 @@ from app.services.iceberg_writer_service import (
     writer_mode_for_source,
 )
 from app.services.object_storage import object_storage_runtime
-from app.services.materialization_projection import aggregate_materialization_runs
+from app.services.materialization_projection import (
+    aggregate_materialization_runs,
+    upsert_materialization_run,
+)
 from app.services.rule_compiler import CompiledRuleSet, compile_rule_set
 from app.services.resource_permission_service import job_with_persisted_permission_grants, permission_grants_for_resource, permissions_for_actor_with_governance
 
@@ -1233,6 +1237,9 @@ def command_kafka_continuous_job(
     active_statuses = {"starting", "running", "pausing", "stopping"}
 
     if command in {"startContinuous", "resumeContinuous"}:
+        if callable(getattr(db, "get_bind", None)):
+            reconcile_stale_continuous_maintenance_runs(db, job.id, commit=False)
+            require_no_active_continuous_maintenance(db, job.id)
         if runtime.status in active_statuses:
             raise ApiError(ErrorCode.CONFLICT, f"Continuous Job is already active: {job.id}", status.HTTP_409_CONFLICT)
         conflict = etl_repository.find_conflicting_kafka_continuous_runtime(
@@ -2611,7 +2618,10 @@ def verify_spark_iceberg_result(
             rule_fingerprint=expected_rule_fingerprint,
             source_boundary=commit.get("sourceBoundary") if isinstance(commit.get("sourceBoundary"), dict) else {},
         )
-        data_file_count, storage_size_bytes = service.table_storage_metrics(target)
+        data_file_count, storage_size_bytes = service.table_storage_metrics(
+            target,
+            snapshot_id=snapshot_id,
+        )
     except IcebergWriterError as exc:
         raise catalog_reconciliation_error(
             "Iceberg commit could not be verified through Trino.",
@@ -4395,12 +4405,19 @@ def dataset_payload_from_spark_result(
     partition_columns = normalize_string_list(job.partition_columns)
     index_columns = normalize_string_list(job.index_columns)
     partition = "/".join(partition_columns) if partition_columns else normalize_optional_text(job.partition)
-    source_kind = result.get("sourceKind") or ("sql" if job.source_type == "SQL Result" else "etl")
-    materialization_mode = result.get("materializationMode") or ("delta" if source_kind == "kafka" else "snapshot")
+    iceberg_commit = result.get("icebergCommit") if isinstance(result.get("icebergCommit"), dict) else {}
+    query_engine_table = result.get("queryEngineTable")
+    query_engine_available = (
+        result.get("queryEngineVerified") is True
+        and isinstance(query_engine_table, dict)
+        and all(str(query_engine_table.get(key) or "").strip() for key in ("catalog", "schema", "table", "format"))
+    )
+    run_storage_format = "iceberg" if query_engine_available else SPARK_OUTPUT_FORMAT
     materialization_runs = append_materialization_run(
         previous_payload.get("materializationRuns") if previous_payload else [],
         {
             "createdAt": last_updated,
+            **({"icebergCommittedAt": str(iceberg_commit.get("committedAt") or "")} if iceberg_commit.get("committedAt") else {}),
             "jobId": job.id,
             "materializationMode": spark_materialization_mode(job, result),
             "rowCount": parse_count_value(result.get("materializationRows", result.get("outputRows"))),
@@ -4408,6 +4425,7 @@ def dataset_payload_from_spark_result(
             "sourceKind": result.get("sourceKind") or ("sql" if job.source_type == "SQL Result" else "etl"),
             "sourceLabel": job.name or job.source or job.source_label or job.id,
             "status": "success" if result.get("status") == "success" else "failed",
+            "storageFormat": run_storage_format,
             "storageLocation": str(result.get("materializationOutputPath") or output_path),
             "storageSizeBytes": storage_size_bytes,
             **spark_source_window_metadata(result),
@@ -4426,17 +4444,21 @@ def dataset_payload_from_spark_result(
         },
     )
     aggregate = aggregate_materialization_runs(materialization_runs)
-    query_engine_table = result.get("queryEngineTable")
-    query_engine_available = (
-        result.get("queryEngineVerified") is True
-        and isinstance(query_engine_table, dict)
-        and all(str(query_engine_table.get(key) or "").strip() for key in ("catalog", "schema", "table", "format"))
-    )
     storage_format = "iceberg" if query_engine_available else SPARK_OUTPUT_FORMAT
     storage_location = str(result.get("warehouseLocation") or output_path)
     current_storage_size_bytes = storage_size_bytes if query_engine_available else aggregate["storageSizeBytes"]
-    iceberg_commit = result.get("icebergCommit") if isinstance(result.get("icebergCommit"), dict) else {}
     downstream = (["SQL 분석"] if query_engine_available else []) + (["RAG 인덱싱"] if job.rag else [])
+    result_run_id = str(result.get("runId") or "")
+    if previous_payload and aggregate["latestRunId"] != result_run_id:
+        return {
+            **previous_payload,
+            "lastUpdated": aggregate["lastUpdated"] or previous_payload.get("lastUpdated") or last_updated,
+            "materializationRuns": materialization_runs,
+            "rows": format_rows(aggregate["rowCount"]),
+            "size": previous_payload.get("size", display_size),
+            "sourceRunId": aggregate["latestRunId"],
+            "storageSizeBytes": previous_payload.get("storageSizeBytes", current_storage_size_bytes),
+        }
     return {
         "description": target_dataset_description(job),
         "downstream": downstream,
@@ -4553,23 +4575,7 @@ def update_existing_append_job(
 
 
 def append_materialization_run(previous_runs: Any, next_run: dict[str, Any]) -> list[dict[str, Any]]:
-    runs = [run for run in previous_runs if isinstance(run, dict)] if isinstance(previous_runs, list) else []
-    run_id = str(next_run.get("runId") or "")
-    if not run_id:
-        return runs
-    snapshot_id = str((next_run.get("kafkaSnapshot") or {}).get("snapshotId") or "")
-    return [
-        next_run,
-        *[
-            run
-            for run in runs
-            if str(run.get("runId") or "") != run_id
-            and (
-                not snapshot_id
-                or str((run.get("kafkaSnapshot") or {}).get("snapshotId") or "") != snapshot_id
-            )
-        ],
-    ]
+    return upsert_materialization_run(previous_runs, next_run)
 
 
 def spark_materialization_mode(job: ETLJobModel, result: dict[str, Any]) -> str:
@@ -5365,9 +5371,13 @@ def get_kafka_continuous_quarantine(
     limit: int,
 ) -> ContinuousQuarantineResponse:
     job = require_continuous_job_access(db, job_id, actor, "view", "GET", "continuous/quarantine")
-    require_continuous_maintenance_idle(db, job)
-    reconcile_stale_continuous_maintenance_runs(db, job.id)
-    etl_repository.lock_kafka_continuous_runtime(db, job.id)
+    locked_job = etl_repository.get_job_for_update(db, job.id)
+    if locked_job is None:
+        raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job.id}", status.HTTP_404_NOT_FOUND)
+    job = locked_job
+    reconcile_stale_continuous_maintenance_runs(db, job.id, commit=False)
+    runtime = etl_repository.lock_kafka_continuous_runtime(db, job.id)
+    require_continuous_maintenance_idle(db, job, runtime=runtime)
     require_no_active_continuous_maintenance(db, job.id)
     result = run_kafka_continuous_maintenance(job, "inspect_quarantine", stable_id("inspect", iso_now()), {"limit": limit})
     return ContinuousQuarantineResponse(job_id=job.id, records=result.get("records") or [], total=int(result.get("total") or 0))
@@ -5407,11 +5417,28 @@ def compact_kafka_continuous_target(
     request: ContinuousCompactionRequest,
     actor: ActorContext,
 ) -> ContinuousMaintenanceRun:
-    require_continuous_job_access(db, job_id, actor, "run", "POST", "continuous/compaction")
-    raise ApiError(
-        "KAFKA_CONTINUOUS_ICEBERG_COMPACTION_UNAVAILABLE",
-        "Continuous Iceberg compaction is not available yet; the legacy Parquet compaction path cannot mutate an Iceberg table.",
-        status.HTTP_422_UNPROCESSABLE_ENTITY,
+    return execute_kafka_continuous_maintenance(
+        db,
+        job_id,
+        "compaction",
+        request.model_dump(mode="json", by_alias=True),
+        actor,
+    )
+
+
+def maintain_kafka_continuous_iceberg_target(
+    db: Session,
+    job_id: str,
+    request: ContinuousIcebergMaintenanceRequest,
+    actor: ActorContext,
+) -> ContinuousMaintenanceRun:
+    return execute_kafka_continuous_maintenance(
+        db,
+        job_id,
+        "iceberg_maintenance",
+        request.model_dump(mode="json", by_alias=True),
+        actor,
+        access_action="manage" if request.expire_snapshots or request.remove_orphan_files else "run",
     )
 
 
@@ -5424,9 +5451,13 @@ def execute_kafka_continuous_maintenance(
     access_action: str = "run",
 ) -> ContinuousMaintenanceRun:
     job = require_continuous_job_access(db, job_id, actor, access_action, "POST", f"continuous/{kind}")
-    require_continuous_maintenance_idle(db, job)
-    reconcile_stale_continuous_maintenance_runs(db, job.id)
-    etl_repository.lock_kafka_continuous_runtime(db, job.id)
+    locked_job = etl_repository.get_job_for_update(db, job.id)
+    if locked_job is None:
+        raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job.id}", status.HTTP_404_NOT_FOUND)
+    job = locked_job
+    reconcile_stale_continuous_maintenance_runs(db, job.id, commit=False)
+    runtime = etl_repository.lock_kafka_continuous_runtime(db, job.id)
+    require_continuous_maintenance_idle(db, job, runtime=runtime)
     require_no_active_continuous_maintenance(db, job.id)
     run_id = stable_id("continuous-maint", f"{job.id}:{kind}:{iso_now()}")
     started_at = iso_now()
@@ -5448,6 +5479,8 @@ def execute_kafka_continuous_maintenance(
     etl_repository.save_kafka_continuous_maintenance_run(db, run)
     try:
         result = run_kafka_continuous_maintenance(job, kind, run_id, persisted_config)
+        if kind in {"compaction", "iceberg_maintenance"}:
+            result = verify_continuous_iceberg_maintenance(job, run_id, result)
     except Exception as exc:
         cleanup_result: dict[str, Any] = {}
         try:
@@ -5490,11 +5523,61 @@ def execute_kafka_continuous_maintenance(
     return etl_repository.save_kafka_continuous_maintenance_run(db, run)
 
 
+def verify_continuous_iceberg_maintenance(
+    job: ETLJobModel,
+    run_id: str,
+    result: dict[str, Any],
+    *,
+    writer_service: IcebergWriterService | None = None,
+) -> dict[str, Any]:
+    try:
+        target = IcebergWriterTarget.model_validate(job.iceberg_target)
+        if str(result.get("tableUri") or "") != target.table_uri:
+            raise IcebergWriterError("ICEBERG_MAINTENANCE_TARGET_MISMATCH")
+        snapshot_id = str(result.get("snapshotIdAfter") or "").strip()
+        if not snapshot_id:
+            raise IcebergWriterError("ICEBERG_MAINTENANCE_SNAPSHOT_MISSING")
+        service = writer_service or IcebergWriterService()
+        evidence = service.verify_commit(
+            target,
+            created_table=False,
+            job_id=job.id,
+            run_id=run_id,
+            expected_snapshot_id=snapshot_id,
+        )
+        data_file_count, storage_size_bytes = service.table_storage_metrics(
+            target,
+            snapshot_id=snapshot_id,
+        )
+    except (IcebergWriterError, ValueError) as exc:
+        code = exc.code if isinstance(exc, IcebergWriterError) else "ICEBERG_MAINTENANCE_VERIFICATION_FAILED"
+        raise ApiError(
+            code,
+            "Iceberg maintenance could not be verified through Trino.",
+            status.HTTP_502_BAD_GATEWAY,
+            {"jobId": job.id, "maintenanceRunId": run_id},
+        ) from exc
+    return {
+        **result,
+        "dataFileCount": data_file_count,
+        "icebergSnapshotId": evidence.snapshot_id,
+        "queryEngineTable": evidence.query_engine_table.model_dump(mode="json", by_alias=True),
+        "queryEngineVerified": True,
+        "storageSizeBytes": storage_size_bytes,
+        "warehouseLocation": evidence.warehouse_location,
+    }
+
+
 def reconcile_continuous_replay_catalog(db: Session, job: ETLJobModel) -> None:
     runtime = etl_repository.get_kafka_continuous_runtime(db, job.id)
     if runtime is None:
         return
-    for run in etl_repository.list_kafka_continuous_maintenance_run_models(db, job.id, active_only=False):
+    maintenance_runs = etl_repository.list_kafka_continuous_maintenance_run_models(
+        db,
+        job.id,
+        active_only=False,
+    )
+    for run in reversed(maintenance_runs):
         result = run.result if isinstance(run.result, dict) else {}
         if (
             run.kind != "quarantine_replay"
@@ -5604,6 +5687,63 @@ def continuous_maintenance_lease_seconds() -> int:
     return max(120, min(configured, 86_400))
 
 
+def continuous_maintenance_runner_stale_seconds() -> int:
+    return bounded_environment_integer(
+        "ASKLAKE_CONTINUOUS_MAINTENANCE_RUNNER_STALE_SECONDS",
+        default=30,
+        minimum=10,
+        maximum=3600,
+    )
+
+
+def continuous_maintenance_runner_observation(run_id: str) -> dict[str, Any] | None:
+    state_file = continuous_maintenance_state_file(run_id)
+    try:
+        state = json.loads(state_file.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, ValueError, TypeError):
+        return None
+    if (
+        not isinstance(state, dict)
+        or state.get("runner") != "rest"
+        or str(state.get("runId") or "") != str(run_id)
+        or not str(state.get("submissionId") or "").strip()
+    ):
+        return None
+    updated_at = parse_maintenance_datetime(state.get("updatedAt"))
+    driver_state = str(state.get("driverState") or "UNKNOWN").strip().upper() or "UNKNOWN"
+    terminal = driver_state in {"ERROR", "FAILED", "FINISHED", "KILLED"}
+    return {
+        "driverState": driver_state,
+        "submissionId": str(state.get("submissionId") or "").strip(),
+        "terminal": terminal,
+        "updatedAt": updated_at,
+    }
+
+
+def parse_maintenance_datetime(value: Any) -> datetime | None:
+    normalized = optional_string(value)
+    if not normalized:
+        return None
+    try:
+        parsed = datetime.fromisoformat(normalized.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+
+def persist_reconciled_maintenance_run(
+    db: Session,
+    run: KafkaContinuousMaintenanceRunModel,
+    *,
+    commit: bool,
+) -> None:
+    if commit:
+        etl_repository.save_kafka_continuous_maintenance_run(db, run)
+        return
+    db.add(run)
+    db.flush()
+
+
 def reconcile_stale_continuous_maintenance_runs(
     db: Session,
     job_id: str | None = None,
@@ -5613,16 +5753,57 @@ def reconcile_stale_continuous_maintenance_runs(
     current = datetime.now(UTC)
     for run in etl_repository.list_kafka_continuous_maintenance_run_models(db, job_id, active_only=True):
         lease_value = optional_string((run.config or {}).get("leaseExpiresAt"))
-        try:
-            lease_expires_at = datetime.fromisoformat(lease_value.replace("Z", "+00:00")) if lease_value else None
-        except ValueError:
-            lease_expires_at = None
+        lease_expires_at = parse_maintenance_datetime(lease_value)
         if lease_expires_at is None and run.started_at:
-            try:
-                lease_expires_at = datetime.fromisoformat(run.started_at.replace("Z", "+00:00")) + timedelta(seconds=continuous_maintenance_lease_seconds())
-            except ValueError:
-                lease_expires_at = current
+            started_at = parse_maintenance_datetime(run.started_at)
+            lease_expires_at = (
+                started_at + timedelta(seconds=continuous_maintenance_lease_seconds())
+                if started_at is not None
+                else current
+            )
         if lease_expires_at is None or current <= lease_expires_at:
+            continue
+        runner = continuous_maintenance_runner_observation(run.run_id)
+        runner_updated_at = runner.get("updatedAt") if runner else None
+        runner_fresh = bool(
+            isinstance(runner_updated_at, datetime)
+            and current - runner_updated_at <= timedelta(seconds=continuous_maintenance_runner_stale_seconds())
+        )
+        if runner and runner_fresh:
+            if runner.get("terminal"):
+                terminal_grace_until = runner_updated_at + timedelta(
+                    seconds=continuous_maintenance_runner_stale_seconds()
+                )
+                if current <= terminal_grace_until:
+                    run.config = {
+                        **(run.config or {}),
+                        "heartbeatAt": runner_updated_at.isoformat().replace("+00:00", "Z"),
+                        "leaseExpiresAt": terminal_grace_until.isoformat().replace("+00:00", "Z"),
+                        "runnerState": runner.get("driverState"),
+                    }
+                    persist_reconciled_maintenance_run(db, run, commit=commit)
+                    continue
+            else:
+                renewed_until = current + timedelta(seconds=continuous_maintenance_lease_seconds())
+                run.config = {
+                    **(run.config or {}),
+                    "heartbeatAt": runner_updated_at.isoformat().replace("+00:00", "Z"),
+                    "leaseExpiresAt": renewed_until.isoformat().replace("+00:00", "Z"),
+                    "runnerState": runner.get("driverState"),
+                }
+                persist_reconciled_maintenance_run(db, run, commit=commit)
+                continue
+        if runner and runner.get("terminal"):
+            run.status = "failed"
+            run.ended_at = iso_now()
+            run.last_error = "Continuous maintenance runner ended before control-plane finalization."
+            run.result = {
+                "cleanupSkipped": True,
+                "leaseExpired": True,
+                "runnerState": runner.get("driverState"),
+                "submissionId": runner.get("submissionId"),
+            }
+            persist_reconciled_maintenance_run(db, run, commit=commit)
             continue
         cleanup_result: dict[str, Any] = {}
         try:
@@ -5633,11 +5814,7 @@ def reconcile_stale_continuous_maintenance_runs(
         run.ended_at = iso_now()
         run.last_error = "Continuous maintenance lease expired before completion."
         run.result = {"leaseExpired": True, **cleanup_result}
-        if commit:
-            etl_repository.save_kafka_continuous_maintenance_run(db, run)
-        else:
-            db.add(run)
-            db.flush()
+        persist_reconciled_maintenance_run(db, run, commit=commit)
 
 
 def require_no_active_continuous_maintenance(db: Session, job_id: str) -> None:
@@ -5678,8 +5855,13 @@ def require_continuous_job_access(
     return job
 
 
-def require_continuous_maintenance_idle(db: Session, job: ETLJobModel) -> None:
-    runtime = etl_repository.get_kafka_continuous_runtime(db, job.id)
+def require_continuous_maintenance_idle(
+    db: Session,
+    job: ETLJobModel,
+    *,
+    runtime: KafkaContinuousRuntimeModel | None = None,
+) -> None:
+    runtime = runtime or etl_repository.get_kafka_continuous_runtime(db, job.id)
     if runtime is not None and runtime.status not in {"paused", "stopped"}:
         raise ApiError(
             ErrorCode.CONFLICT,
@@ -6078,6 +6260,12 @@ def refresh_kafka_continuous_runtime(db: Session, job: ETLJobModel) -> None:
         runtime.metrics = previous_metrics
         if runtime.lag is None and previous_metrics.get("lagAvailable"):
             runtime.lag = optional_int(previous_metrics.get("lag"))
+    runtime.metrics = {
+        **runtime.metrics,
+        "publicationBacklogCount": nonnegative_int(payload.get("publicationBacklogCount"), 0),
+        "publicationWindowLimit": nonnegative_int(payload.get("publicationWindowLimit"), 0),
+        "catalogAckBatchId": optional_int(payload.get("catalogAckBatchId")),
+    }
     previous_schema_state = runtime.schema_state or {}
     runtime.schema_state = {
         "schemaVersion": nonnegative_int(payload.get("schemaVersion"), nonnegative_int(previous_schema_state.get("schemaVersion"), 1)),

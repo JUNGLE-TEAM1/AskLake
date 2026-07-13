@@ -58,7 +58,7 @@ iceberg://{catalog}/{namespace}/{table}
 구현 결과:
 
 - 새 ETL Job은 backend가 생성한 optional `icebergTarget`을 저장하며 기존 `storagePath`와 기존 Job null row를 읽기 호환한다.
-- 공통 adapter는 최초 append CTAS, 후속 `INSERT INTO`, 원자적 `CREATE OR REPLACE TABLE AS`, `$snapshots` snapshot ID/manifest 기반 warehouse location 수집, `DESCRIBE` 검증을 제공한다. Spark 같은 외부 native writer는 commit SQL 없이 같은 `verify_commit`과 expected snapshot ID 검증을 재사용할 수 있다.
+- 공통 adapter는 최초 append CTAS, 후속 `INSERT INTO`, 원자적 `CREATE OR REPLACE TABLE AS`, `$refs`의 `main` current snapshot, `$snapshots` manifest 기반 warehouse location 수집, `DESCRIBE` 검증을 제공한다. Spark 같은 외부 native writer는 commit SQL 없이 같은 `verify_commit`과 expected snapshot ID 검증을 재사용할 수 있다. 시간상 newest historical snapshot은 rollback 뒤 abandoned될 수 있으므로 current 판정에 사용하지 않는다.
 - commit evidence의 `queryEngineTable`은 검증한 target과 같은 catalog/namespace/table을 사용한다.
 - `npm run verify:iceberg-writer-foundation`은 단위 계약을 검증하고, `ASKLAKE_VERIFY_ICEBERG_LIVE=true`일 때 고유 로컬 Trino/MinIO fixture를 실제 commit한 뒤 정리한다.
 - 이 단계는 Spark/Kafka direct writer를 호출 경로에서 교체하지 않는다. 따라서 해당 Dataset은 Phase 2~4 전까지 계속 `queryEngineStatus=unavailable`이다.
@@ -73,7 +73,7 @@ iceberg://{catalog}/{namespace}/{table}
 
 - 일반 non-Kafka Spark Job은 backend-owned `icebergTarget`을 Spark manifest에 받고 Spark DataFrameWriterV2로 JDBC catalog의 Iceberg table에 commit한다. 일반 full batch는 `replace`, 증분 S3/Data Lake folder는 최초 rebaseline `replace` 후 `append`를 사용한다.
 - 실제 data file은 warehouse의 Parquet이고, `outputPath`는 `iceberg://catalog/namespace/table` 논리 URI다. 성공 manifest는 `snapshotId`, warehouse location, schema/rule fingerprint, source boundary를 포함한다.
-- `publish_run_result`는 저장된 Spark evidence와 Trino `DESCRIBE`, `$snapshots`, `$files`를 대조한다. snapshot, target, fingerprint 또는 양수 output의 물리 data-file 증거가 맞지 않으면 Catalog와 Airflow를 성공 처리하지 않는다.
+- `publish_run_result`는 저장된 Spark evidence와 Trino `DESCRIBE`, `$refs`, exact `$snapshots`를 대조한다. snapshot별 file/byte 증거는 `$snapshots.summary`의 `total-data-files`와 `total-files-size`를 사용하고, current `$files`는 보조 확인에만 사용한다. snapshot, target, fingerprint 또는 양수 output의 물리 data-file 증거가 맞지 않으면 Catalog와 Airflow를 성공 처리하지 않는다.
 - replace 재실행은 새 snapshot을 만들며, commit 직후 후속 처리가 실패하면 이전 snapshot으로 rollback한다. catalog/namespace 이름이 같은 경우에도 procedure target을 완전 수식한다.
 - Spark 외부 commit을 즉시 검증할 수 있도록 Trino Iceberg coordinator metadata cache를 비활성화한다. Kafka Snapshot은 Phase 3에서 같은 검증 adapter를 사용하며 Continuous writer는 Phase 4까지 기존 경로를 유지한다.
 - `ASKLAKE_VERIFY_ICEBERG_LIVE=true npm run verify:spark-iceberg-batch`는 최초 replace, 재실행 replace, commit 후 강제 실패 rollback과 Trino row/snapshot 정합성을 실제 Spark 4/MinIO/PostgreSQL/Trino로 검증한다.
@@ -89,7 +89,7 @@ iceberg://{catalog}/{namespace}/{table}
 
 - Kafka Snapshot Job은 시작 시 저장한 partition별 `[startOffset, endOffset)`만 consume하고 기존 canonical transform/quality와 exact output projection을 적용한 뒤, backend-owned append `icebergTarget`에 Spark DataFrameWriterV2로 commit한다. 최종 data file은 warehouse의 Parquet이며 target JSONL data object는 만들지 않는다.
 - Iceberg commit evidence의 `sourceBoundary`에 snapshot ID, topic, consumer group, capturedAt과 partition offset range를 함께 저장한다. 같은 snapshot 재시도는 table의 내부 snapshot marker를 확인해 이미 commit된 범위를 `reuse`하고 새 append를 만들지 않는다.
-- FastAPI는 Iceberg snapshot/warehouse/fingerprint와 Trino `DESCRIBE`, `$snapshots`, `$files`를 검증한 뒤 AskLake Catalog materialization을 저장하고, 이 단계까지 성공한 후에만 Kafka consumer group offset을 `endOffset`으로 확정한다.
+- FastAPI는 Iceberg snapshot/warehouse/fingerprint와 Trino `DESCRIBE`, `$refs`, exact `$snapshots`와 snapshot summary를 검증한 뒤 AskLake Catalog materialization을 저장하고, 이 단계까지 성공한 후에만 Kafka consumer group offset을 `endOffset`으로 확정한다.
 - Iceberg/Catalog 성공 후 offset 확정이 실패하면 Run은 실패로 남지만 물리 commit과 Catalog 이력을 보존한다. `retry`는 같은 durable snapshot을 재사용하고 materialization history를 snapshot ID로 deduplicate한 뒤 offset만 안전하게 이어서 확정한다.
 - 첫 Iceberg materialization은 기존 JSONL history와 섞이지 않도록 `snapshot` rebaseline으로 기록하고, 후속 새 Kafka snapshot은 `delta`로 기록한다. 빈 offset range는 새 Iceberg data file/Catalog run 없이 성공하며 offset 경계만 확정한다.
 - `ASKLAKE_VERIFY_ICEBERG_LIVE=true npm run verify:kafka-snapshot-iceberg`는 commit 뒤 offset 직전 강제 실패, 같은 snapshot retry, 중복 없는 Trino row count, 단일 Catalog materialization, 후속 empty run을 격리 Redpanda/Spark/Trino/MinIO 환경에서 검증한다.
@@ -105,16 +105,19 @@ iceberg://{catalog}/{namespace}/{table}
 
 - 각 non-empty `foreachBatch`는 Job, Spark batch ID, checkpoint, consumer group, topic, partition별 `[startOffset, endOffset)`을 결합한 deterministic `sourceBoundary`와 `runId`를 만든다. target row에는 `_asklake_run_id`와 `_asklake_ingested_at`을 추가하고 backend-owned append Iceberg table에 commit한다.
 - Iceberg snapshot commit 뒤 manifest/checkpoint 단계가 실패하면 재시도는 같은 `_asklake_run_id`를 table에서 확인해 기존 snapshot을 `reuse`하고 중복 append하지 않는다. checkpoint contract에는 Iceberg target과 schema/rule fingerprint를 포함하므로 기존 direct-Parquet checkpoint는 새 Job copy와 새 checkpoint 없이 재사용할 수 없다.
-- worker manifest, session batch API와 Catalog materialization은 `sourceBoundary`, source range, Iceberg snapshot ID/table URI를 보존한다. Backend는 해당 snapshot을 Trino로 검증한 뒤에만 Catalog cursor를 전진시키며, 과거 publication snapshot도 `$snapshots`에서 정확히 검증한다.
+- worker manifest, session batch API와 Catalog materialization은 `sourceBoundary`, source range, Iceberg snapshot ID/table URI를 보존한다. Backend는 해당 snapshot을 Trino로 검증한 뒤에만 Catalog cursor를 전진시키며, 과거 publication snapshot도 `$snapshots`와 그 snapshot summary에서 정확히 검증한다. current table 판정은 항상 `$refs.name='main'`을 사용한다.
+- worker는 모든 publication을 report memory에 누적하지 않고 durable manifest를 source of truth로 유지한다. report에는 가장 오래된 미확인 publication을 bounded window로만 노출하고 Catalog ack가 전진할 때 다음 window를 복구한다.
+- Catalog row page와 Dashboard는 검증된 `queryEngineTable`을 Trino로 읽으며 Iceberg warehouse data file 직접 scan을 금지한다. Row page는 요청당 main snapshot을 한 번 고정하고 Catalog 사용자 schema만 projection한다. Dashboard도 Catalog/physical schema 교집합만 사용하며 timeout 시 Trino query를 취소한다. 늦게 복구된 과거 snapshot은 commit 시각 순서로 history에 삽입하고 현재 projection을 되돌리지 않는다.
 - quarantine 보조 증적은 target-adjacent Parquet로 유지하되 replay 성공 행은 같은 Iceberg table에 deterministic maintenance run ID로 append한다. Replay Catalog 반영이 일시 실패하면 maintenance result를 `catalogApplied=false`로 남기고 maintenance 조회에서 같은 commit을 재검증한다.
-- 기존 `_batches` Parquet를 재작성하던 compaction은 Iceberg table에 적용하지 않는다. API는 `422 KAFKA_CONTINUOUS_ICEBERG_COMPACTION_UNAVAILABLE`을 반환하며 Iceberg rewrite/retention은 Phase 5 운영 Job 범위다.
+- 기존 `_batches` Parquet 재작성은 Iceberg table에 적용하지 않는다. 같은 compaction API는 Phase 5에서 Iceberg-native `rewrite_data_files`로 교체되며 checkpoint와 논리 materialization을 변경하지 않는다.
 - `ASKLAKE_VERIFY_ICEBERG_LIVE=true npm run verify:kafka-continuous-iceberg`는 격리 Redpanda/Spark/Trino/MinIO에서 정상 append, manifest 직전 장애, 같은 boundary 재사용, checkpoint 재시작을 거쳐 Trino row count `4 -> 7 -> 9`와 중복 없는 Catalog history를 검증한다.
 
-### Phase 5. 운영 전환
+### Phase 5. 운영 전환 (maintenance foundation 완료, 대용량 운영 검증 진행)
 
-- small-file compaction, snapshot retention/expiration, orphan file cleanup, schema evolution 정책을 운영 Job으로 정의한다.
-- 대용량 soak, concurrent writer, query/read during write, rollback/time-travel을 검증한다.
+- small-file compaction, snapshot retention/expiration, orphan file cleanup을 worker-idle finite Spark maintenance로 정의했다. Rewrite는 기본 활성, 삭제성 cleanup은 기본 비활성이며 `manage` 권한과 최소 retention을 요구한다. Worker start/resume과 maintenance 시작은 동일한 Job/runtime row lock 순서로 직렬화한다. Spark 결과의 snapshot/file 지표는 Trino current main ref, exact snapshot과 `$snapshots.summary`로 재검증하고 maintenance history에 남긴다. 만료된 DB lease는 durable runner heartbeat가 fresh이면 갱신하며 stale/absent runner만 한 번 정리한다.
+- opt-in Continuous live verifier는 append 중 Trino concurrent read가 이전/다음 snapshot의 완전한 행 수만 노출하는지, manifest fault retry가 commit을 재사용하는지, native maintenance 뒤 현재 row count와 과거 snapshot time-travel이 유지되는지 검증한다. 대용량 Electronics soak와 장시간 부하 수치는 배포 후보 환경에서 별도로 실행한다.
 - 기존 S3 direct Dataset은 read-only compatibility 기간을 거친 뒤 별도 migration 정책으로 다룬다.
+- Iceberg materialization 개별 삭제는 snapshot expiration/retention 운영 계약이 생기기 전까지 거절한다. metadata-only 삭제로 AskLake Catalog와 Iceberg table 상태를 분리하지 않는다.
 
 ## 5. 호환성과 금지 사항
 

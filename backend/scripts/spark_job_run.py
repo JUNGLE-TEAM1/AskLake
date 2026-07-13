@@ -530,13 +530,14 @@ def iceberg_table_exists(spark, target):
         raise
 
 
-def latest_iceberg_snapshot(spark, target):
+def iceberg_snapshot(spark, target, snapshot_id):
     table_identifier = spark_iceberg_table_identifier(target)
     rows = spark.sql(
         "SELECT CAST(snapshot_id AS STRING) AS snapshot_id, "
         "CAST(committed_at AS STRING) AS committed_at, manifest_list "
         f"FROM {table_identifier}.snapshots "
-        "ORDER BY committed_at DESC, snapshot_id DESC LIMIT 1"
+        f"WHERE CAST(snapshot_id AS STRING) = '{str(snapshot_id).replace(chr(39), chr(39) * 2)}' "
+        "LIMIT 1"
     ).collect()
     if not rows:
         raise RuntimeError("ICEBERG_SNAPSHOT_EVIDENCE_MISSING")
@@ -551,6 +552,15 @@ def latest_iceberg_snapshot(spark, target):
         "snapshotId": snapshot_id,
         "warehouseLocation": warehouse_location,
     }
+
+
+def current_iceberg_snapshot(spark, target):
+    return iceberg_snapshot(spark, target, current_iceberg_snapshot_id(spark, target))
+
+
+def latest_iceberg_snapshot(spark, target):
+    """Compatibility alias; commit state must follow the current main ref."""
+    return current_iceberg_snapshot(spark, target)
 
 
 def current_iceberg_snapshot_id(spark, target):

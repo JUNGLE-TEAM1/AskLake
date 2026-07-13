@@ -2,10 +2,9 @@
 
 import json
 import hashlib
-import math
 import os
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from pyspark.sql import SparkSession
@@ -19,9 +18,12 @@ from object_storage_runtime import configure_spark_hadoop
 from snapshot_rule_runtime import apply_snapshot_rules, supports_snapshot_rules
 from spark_job_run import (
     commit_iceberg_table,
+    current_iceberg_snapshot,
     iceberg_table_exists,
     make_spark,
     parse_iceberg_target,
+    quote_spark_identifier,
+    spark_iceberg_catalog_name,
     spark_iceberg_table_identifier,
 )
 
@@ -160,38 +162,6 @@ def completed_batch_paths(spark: SparkSession, root: str) -> list[str]:
         if status.isDirectory() and status.getPath().getName().startswith("batch_id=") and output_committed(spark, child):
             paths.append(child)
     return sorted(paths)
-
-
-def read_completed_batches(spark: SparkSession, root: str):
-    paths = completed_batch_paths(spark, root)
-    if not paths:
-        return None
-    return spark.read.option("basePath", root).parquet(*paths)
-
-
-def parquet_file_stats(spark: SparkSession, path: str) -> dict[str, int]:
-    if not output_exists(spark, path):
-        return {"count": 0, "bytes": 0}
-    jvm = spark.sparkContext._jvm
-    hadoop = spark.sparkContext._jsc.hadoopConfiguration()
-    root = jvm.org.apache.hadoop.fs.Path(path)
-    iterator = root.getFileSystem(hadoop).listFiles(root, True)
-    count, total_bytes = 0, 0
-    while iterator.hasNext():
-        status = iterator.next()
-        if status.getPath().getName().endswith(".parquet"):
-            count += 1
-            total_bytes += int(status.getLen())
-    return {"count": count, "bytes": total_bytes}
-
-
-def parquet_paths_stats(spark: SparkSession, paths: list[str]) -> dict[str, int]:
-    result = {"count": 0, "bytes": 0}
-    for path in paths:
-        current = parquet_file_stats(spark, path)
-        result["count"] += current["count"]
-        result["bytes"] += current["bytes"]
-    return result
 
 
 def read_quarantine(spark: SparkSession, output_path: str):
@@ -393,39 +363,146 @@ def replay_quarantine(spark: SparkSession, output_path: str, run_id: str, iceber
     }
 
 
-def compact(spark: SparkSession, output_path: str, run_id: str):
-    if os.environ.get("ASKLAKE_MAINTENANCE_ICEBERG_TARGET"):
-        raise RuntimeError(
-            "KAFKA_CONTINUOUS_ICEBERG_COMPACTION_UNAVAILABLE: "
-            "legacy Parquet compaction cannot mutate an Iceberg table"
-        )
-    source_path = f"{output_path.rstrip('/')}/_batches"
-    frame = read_completed_batches(spark, source_path)
-    if frame is None:
-        return {"inputRows": 0, "inputFiles": 0, "outputFiles": 0, "outputPath": None}
-    input_rows = frame.count()
-    input_stats = parquet_paths_stats(spark, completed_batch_paths(spark, source_path))
-    target_mb = min(max(int(os.environ.get("ASKLAKE_MAINTENANCE_TARGET_MB", "256")), 128), 512)
-    target_bytes = target_mb * 1024 * 1024
-    partitions = max(1, math.ceil(input_stats["bytes"] / target_bytes))
-    destination = f"{output_path.rstrip('/')}/_compactions/run_id={run_id}"
-    source_partitions = frame.rdd.getNumPartitions()
-    compacted = frame.coalesce(partitions) if partitions <= source_partitions else frame.repartition(partitions)
-    compacted.write.mode("errorifexists").parquet(destination)
-    output_stats = parquet_file_stats(spark, destination)
+def environment_flag(name: str, default: bool = False) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def bounded_environment_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.environ.get(name, str(default)))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be an integer") from exc
+    if value < minimum or value > maximum:
+        raise ValueError(f"{name} must be between {minimum} and {maximum}")
+    return value
+
+
+def sql_string_literal(value: str) -> str:
+    return f"'{str(value).replace(chr(39), chr(39) * 2)}'"
+
+
+def sql_timestamp_literal(value: datetime) -> str:
+    normalized = value.astimezone(timezone.utc).replace(tzinfo=None, microsecond=0)
+    return f"TIMESTAMP {sql_string_literal(normalized.isoformat(sep=' '))}"
+
+
+def iceberg_maintenance_config() -> dict:
     return {
-        "inputRows": input_rows,
-        "inputFiles": input_stats["count"],
-        "inputBytes": input_stats["bytes"],
-        "averageInputFileSizeBytes": round(input_stats["bytes"] / input_stats["count"]) if input_stats["count"] else 0,
-        "outputFiles": output_stats["count"],
-        "outputBytes": output_stats["bytes"],
-        "averageOutputFileSizeBytes": round(output_stats["bytes"] / output_stats["count"]) if output_stats["count"] else 0,
-        "outputPath": destination,
-        "targetFileSizeMb": target_mb,
-        "sourcePartitions": source_partitions,
-        "targetPartitions": partitions,
-        "sourceDeleted": False,
+        "rewriteDataFiles": environment_flag("ASKLAKE_MAINTENANCE_REWRITE_DATA_FILES", True),
+        "targetFileSizeMb": bounded_environment_int("ASKLAKE_MAINTENANCE_TARGET_MB", 256, 128, 512),
+        "expireSnapshots": environment_flag("ASKLAKE_MAINTENANCE_EXPIRE_SNAPSHOTS"),
+        "snapshotRetentionHours": bounded_environment_int(
+            "ASKLAKE_MAINTENANCE_SNAPSHOT_RETENTION_HOURS", 168, 24, 8760
+        ),
+        "retainLastSnapshots": bounded_environment_int(
+            "ASKLAKE_MAINTENANCE_RETAIN_LAST_SNAPSHOTS", 10, 1, 1000
+        ),
+        "removeOrphanFiles": environment_flag("ASKLAKE_MAINTENANCE_REMOVE_ORPHAN_FILES"),
+        "orphanRetentionHours": bounded_environment_int(
+            "ASKLAKE_MAINTENANCE_ORPHAN_RETENTION_HOURS", 168, 72, 8760
+        ),
+    }
+
+
+def iceberg_maintenance_plan(iceberg_target: dict, config: dict, now: datetime | None = None) -> list[dict]:
+    timestamp = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    catalog_name = spark_iceberg_catalog_name()
+    catalog = quote_spark_identifier(catalog_name)
+    table_name = f"{catalog_name}.{iceberg_target['namespace']}.{iceberg_target['table']}"
+    table_argument = sql_string_literal(table_name)
+    plan = []
+    if config.get("rewriteDataFiles"):
+        target_bytes = int(config["targetFileSizeMb"]) * 1024 * 1024
+        plan.append({
+            "operation": "rewrite_data_files",
+            "sql": (
+                f"CALL {catalog}.system.rewrite_data_files("
+                f"table => {table_argument}, "
+                f"options => map('target-file-size-bytes', '{target_bytes}'))"
+            ),
+        })
+    if config.get("expireSnapshots"):
+        cutoff = timestamp - timedelta(hours=int(config["snapshotRetentionHours"]))
+        plan.append({
+            "operation": "expire_snapshots",
+            "sql": (
+                f"CALL {catalog}.system.expire_snapshots("
+                f"table => {table_argument}, older_than => {sql_timestamp_literal(cutoff)}, "
+                f"retain_last => {int(config['retainLastSnapshots'])})"
+            ),
+        })
+    if config.get("removeOrphanFiles"):
+        cutoff = timestamp - timedelta(hours=int(config["orphanRetentionHours"]))
+        plan.append({
+            "operation": "remove_orphan_files",
+            "sql": (
+                f"CALL {catalog}.system.remove_orphan_files("
+                f"table => {table_argument}, older_than => {sql_timestamp_literal(cutoff)})"
+            ),
+        })
+    if not plan:
+        raise ValueError("At least one Iceberg maintenance operation must be enabled.")
+    return plan
+
+
+def json_safe(value):
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, datetime):
+        return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z") if value.tzinfo else value.isoformat()
+    if isinstance(value, dict):
+        return {str(key): json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [json_safe(item) for item in value]
+    return str(value)
+
+
+def iceberg_table_stats(spark: SparkSession, iceberg_target: dict) -> dict[str, int]:
+    table_identifier = spark_iceberg_table_identifier(iceberg_target)
+    file_row = spark.sql(
+        "SELECT COUNT(*) AS file_count, "
+        "COALESCE(SUM(file_size_in_bytes), 0) AS total_bytes "
+        f"FROM {table_identifier}.files"
+    ).first()
+    snapshot_row = spark.sql(
+        f"SELECT COUNT(*) AS snapshot_count FROM {table_identifier}.snapshots"
+    ).first()
+    return {
+        "files": int(file_row["file_count"] or 0),
+        "bytes": int(file_row["total_bytes"] or 0),
+        "snapshots": int(snapshot_row["snapshot_count"] or 0),
+    }
+
+
+def maintain_iceberg(spark: SparkSession, iceberg_target: dict, config: dict) -> dict:
+    if not iceberg_table_exists(spark, iceberg_target):
+        raise RuntimeError("ICEBERG_MAINTENANCE_TABLE_NOT_FOUND")
+    before_snapshot = current_iceberg_snapshot(spark, iceberg_target)
+    before_stats = iceberg_table_stats(spark, iceberg_target)
+    operations = []
+    for step in iceberg_maintenance_plan(iceberg_target, config):
+        rows = spark.sql(step["sql"]).collect()
+        operations.append({
+            "operation": step["operation"],
+            "result": [json_safe(row.asDict(recursive=True)) for row in rows],
+        })
+    after_snapshot = current_iceberg_snapshot(spark, iceberg_target)
+    after_stats = iceberg_table_stats(spark, iceberg_target)
+    return {
+        "tableUri": iceberg_target["tableUri"],
+        "snapshotIdBefore": before_snapshot["snapshotId"],
+        "snapshotIdAfter": after_snapshot["snapshotId"],
+        "inputFiles": before_stats["files"],
+        "outputFiles": after_stats["files"],
+        "inputBytes": before_stats["bytes"],
+        "outputBytes": after_stats["bytes"],
+        "snapshotCountBefore": before_stats["snapshots"],
+        "snapshotCountAfter": after_stats["snapshots"],
+        "operations": operations,
+        **config,
     }
 
 
@@ -456,7 +533,14 @@ def main():
     elif kind == "quarantine_replay":
         result = replay_quarantine(spark, output_path, run_id, iceberg_target)
     elif kind == "compaction":
-        result = compact(spark, output_path, run_id)
+        result = maintain_iceberg(spark, iceberg_target, {
+            **iceberg_maintenance_config(),
+            "rewriteDataFiles": True,
+            "expireSnapshots": False,
+            "removeOrphanFiles": False,
+        })
+    elif kind == "iceberg_maintenance":
+        result = maintain_iceberg(spark, iceberg_target, iceberg_maintenance_config())
     else:
         raise ValueError(f"Unsupported maintenance kind: {kind}")
     result.update({"endedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"), "runId": run_id})

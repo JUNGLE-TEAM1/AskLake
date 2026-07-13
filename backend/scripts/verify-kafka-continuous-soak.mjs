@@ -20,9 +20,8 @@ if (!["none", "worker", "backend", "kafka", "minio"].includes(faultMode)) throw 
 const faultAfter = positiveInt(process.env.ASKLAKE_CONTINUOUS_SOAK_FAULT_AFTER || process.env.ASKLAKE_CONTINUOUS_SOAK_KILL_AFTER, Math.floor((requestedCount || 1000) / 2));
 const faultDurationMs = positiveInt(process.env.ASKLAKE_CONTINUOUS_SOAK_FAULT_DURATION_MS, 5000);
 const verifyCompaction = process.env.ASKLAKE_CONTINUOUS_SOAK_COMPACT === "true";
-if (verifyCompaction) {
-  throw new Error("ASKLAKE_CONTINUOUS_SOAK_COMPACT is unavailable for Iceberg targets until the Phase 5 Iceberg maintenance job is implemented.");
-}
+const verifyConcurrentReads = process.env.ASKLAKE_CONTINUOUS_SOAK_CONCURRENT_READ !== "false";
+const readProbeIntervalMs = positiveInt(process.env.ASKLAKE_CONTINUOUS_SOAK_READ_INTERVAL_MS, 1000);
 const baseUrl = process.env.ASKLAKE_CONTINUOUS_E2E_BASE_URL || "http://127.0.0.1:8080";
 const composeFile = process.env.ASKLAKE_CONTINUOUS_COMPOSE_FILE || "../deploy/docker-compose.prod.yml";
 const envFile = process.env.ASKLAKE_CONTINUOUS_ENV_FILE || "../deploy/.env";
@@ -37,6 +36,13 @@ let recoveryMs = null;
 let faultInjected = false;
 let streamStopped = false;
 let pausedService = "";
+let readProbeStop = false;
+let readProbePromise = null;
+let readProbeError = "";
+let readSampleCount = 0;
+let minReadCount = null;
+let maxReadCount = null;
+let lastReadCount = null;
 const startedAt = Date.now();
 
 try {
@@ -45,6 +51,7 @@ try {
   jobId = created.job.id;
   await post(`/api/etl/jobs/${encodeURIComponent(jobId)}/commands`, { command: "startContinuous" });
   await waitFor(async () => (await getJob()).continuousRuntime?.status === "running", "worker startup");
+  if (verifyConcurrentReads) readProbePromise = monitorConcurrentReads();
   if (inputPath) await produceInputFile();
   else await produceSynthetic();
   if (producedCount === 0) throw new Error("The soak input did not contain any records.");
@@ -65,6 +72,33 @@ try {
     return list.find((item) => item.name === target) || null;
   }, "Catalog materialization", 120000);
   const logs = await request(`/api/etl/jobs/${encodeURIComponent(jobId)}/continuous/logs?tail=100`);
+  readProbeStop = true;
+  if (readProbePromise) await readProbePromise;
+  if (readProbeError) throw new Error(`Concurrent Iceberg read failed: ${readProbeError}`);
+  if (verifyConcurrentReads && readSampleCount === 0) {
+    throw new Error("Concurrent Iceberg read did not collect a verified Catalog row-count sample.");
+  }
+  const currentRows = await request(`/api/catalog/datasets/${encodeURIComponent(`ds_${target}`)}/rows?limit=1&offset=0`);
+  if (Number(currentRows.rowCount) !== Number(runtime.storedCount)) {
+    throw new Error(`Current Iceberg row count does not match storedCount: ${JSON.stringify({ rowCount: currentRows.rowCount, storedCount: runtime.storedCount })}`);
+  }
+  let compaction = null;
+  if (verifyCompaction) {
+    await post(`/api/etl/jobs/${encodeURIComponent(jobId)}/commands`, { command: "stopContinuous" });
+    await waitFor(async () => (await getJob()).continuousRuntime?.status === "stopped", "stop before Iceberg maintenance");
+    streamStopped = true;
+    compaction = await post(
+      `/api/etl/jobs/${encodeURIComponent(jobId)}/continuous/compactions`,
+      { targetFileSizeMb: 256 },
+    );
+    if (compaction.status !== "success" || compaction.result?.queryEngineVerified !== true) {
+      throw new Error(`Iceberg compaction verification failed: ${JSON.stringify(compaction)}`);
+    }
+    const maintainedRows = await request(`/api/catalog/datasets/${encodeURIComponent(`ds_${target}`)}/rows?limit=1&offset=0`);
+    if (Number(maintainedRows.rowCount) !== Number(runtime.storedCount)) {
+      throw new Error(`Iceberg compaction changed logical row count: ${JSON.stringify({ rowCount: maintainedRows.rowCount, storedCount: runtime.storedCount })}`);
+    }
+  }
   const report = {
     inputPath: inputPath || null,
     producedCount,
@@ -81,7 +115,15 @@ try {
     elapsedMs: Date.now() - startedAt,
     catalogMaterializationCount: dataset.materializationRuns?.length || 0,
     workerLogLineCount: logs.lines?.length || 0,
-    compaction: null,
+    concurrentRead: {
+      enabled: verifyConcurrentReads,
+      sampleCount: readSampleCount,
+      minRowCount: minReadCount,
+      maxRowCount: maxReadCount,
+      monotonic: !readProbeError,
+    },
+    verifiedCurrentRowCount: Number(currentRows.rowCount),
+    compaction,
     topic,
     target,
   };
@@ -90,6 +132,8 @@ try {
   }
   console.log(`ASKLAKE_CONTINUOUS_SOAK_RESULT=${JSON.stringify(report)}`);
 } finally {
+  readProbeStop = true;
+  if (readProbePromise) await readProbePromise.catch(() => undefined);
   if (pausedService) {
     try { compose(["unpause", pausedService]); } catch { /* Best-effort fault cleanup. */ }
   }
@@ -228,6 +272,33 @@ function shouldInjectMalformed(index) {
 function observe(runtime) {
   peakLag = Math.max(peakLag, Number(runtime?.lag || 0));
   peakThroughput = Math.max(peakThroughput, Number(runtime?.throughputRowsPerSecond || 0));
+}
+
+async function monitorConcurrentReads() {
+  while (!readProbeStop) {
+    try {
+      const response = await fetch(
+        `${baseUrl}/api/catalog/datasets/${encodeURIComponent(`ds_${target}`)}/rows?limit=1&offset=0`,
+        { headers: { "X-AskLake-Role": "admin" } },
+      );
+      if (response.status !== 404) {
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(`GET dataset rows failed (${response.status}): ${JSON.stringify(payload)}`);
+        const count = Number(payload.rowCount);
+        if (!Number.isSafeInteger(count) || count < 0) throw new Error(`Invalid rowCount: ${JSON.stringify(payload.rowCount)}`);
+        if (lastReadCount !== null && count < lastReadCount) throw new Error(`rowCount regressed from ${lastReadCount} to ${count}`);
+        if (count > producedCount) throw new Error(`rowCount ${count} exceeds producedCount ${producedCount}`);
+        readSampleCount += 1;
+        minReadCount = minReadCount === null ? count : Math.min(minReadCount, count);
+        maxReadCount = maxReadCount === null ? count : Math.max(maxReadCount, count);
+        lastReadCount = count;
+      }
+    } catch (error) {
+      readProbeError = error?.message || String(error);
+      return;
+    }
+    await sleep(readProbeIntervalMs);
+  }
 }
 
 function rpk(args, input = "") { run("docker", ["compose", "--env-file", envFile, "-f", composeFile, "exec", "-T", "redpanda", "rpk", ...args], input); }

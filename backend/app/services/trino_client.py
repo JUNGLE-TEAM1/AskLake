@@ -35,7 +35,7 @@ class TrinoClient:
             handlers.append(HTTPSHandler(context=ssl_context))
         self.opener = build_opener(*handlers)
 
-    def submit(self, query: str) -> TrinoClientPage:
+    def submit(self, query: str, *, timeout_seconds: float | None = None) -> TrinoClientPage:
         endpoint = f"{self.settings.trino_base_url.rstrip('/')}/v1/statement"
         return self._request(
             endpoint,
@@ -47,15 +47,27 @@ class TrinoClient:
                 "X-Trino-Schema": self.settings.trino_schema,
                 **self._identity_headers(),
             },
+            timeout_seconds=timeout_seconds,
         )
 
-    def fetch(self, next_uri: str) -> TrinoClientPage:
+    def fetch(self, next_uri: str, *, timeout_seconds: float | None = None) -> TrinoClientPage:
         validate_next_uri(next_uri, self.settings.trino_base_url)
-        return self._request(next_uri, method="GET", headers=self._identity_headers())
+        return self._request(
+            next_uri,
+            method="GET",
+            headers=self._identity_headers(),
+            timeout_seconds=timeout_seconds,
+        )
 
-    def cancel(self, next_uri: str) -> None:
+    def cancel(self, next_uri: str, *, timeout_seconds: float | None = None) -> None:
         validate_next_uri(next_uri, self.settings.trino_base_url)
-        self._request(next_uri, method="DELETE", headers=self._identity_headers(), allow_empty_response=True)
+        self._request(
+            next_uri,
+            method="DELETE",
+            headers=self._identity_headers(),
+            allow_empty_response=True,
+            timeout_seconds=timeout_seconds,
+        )
 
     def query_info(self, query_id: str) -> TrinoQueryInfo:
         normalized_query_id = query_id.strip()
@@ -110,6 +122,7 @@ class TrinoClient:
         body: bytes | None = None,
         headers: dict[str, str] | None = None,
         allow_empty_response: bool = False,
+        timeout_seconds: float | None = None,
     ) -> TrinoClientPage:
         payload = self._request_json(
             url,
@@ -117,6 +130,7 @@ class TrinoClient:
             body=body,
             headers=headers,
             allow_empty_response=allow_empty_response,
+            timeout_seconds=timeout_seconds,
         )
         if payload is None:
             return TrinoClientPage(query_id="", raw_stats={})

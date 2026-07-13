@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import threading
 import time
 import uuid
 
@@ -44,6 +45,7 @@ def main() -> None:
     dataset_id = ""
     target = None
     actor = None
+    read_probe = None
 
     with tempfile.TemporaryDirectory(prefix="asklake-kafka-continuous-iceberg-") as report_dir:
         try:
@@ -60,8 +62,19 @@ def main() -> None:
             from app.core.auth_context import ActorContext
             from app.core.database import SessionLocal
             from app.repositories import etl_repository
-            from app.schemas.etl import CreatePipelineRequest
-            from app.services.etl_service import command_job, create_pipeline, get_job
+            from app.schemas.etl import (
+                ContinuousCompactionRequest,
+                ContinuousIcebergMaintenanceRequest,
+                CreatePipelineRequest,
+            )
+            from app.services.etl_service import (
+                command_job,
+                compact_kafka_continuous_target,
+                create_pipeline,
+                get_job,
+                list_kafka_continuous_maintenance_runs,
+                maintain_kafka_continuous_iceberg_target,
+            )
 
             actor = ActorContext(name="Phase 4 Verifier", role="admin")
             with SessionLocal() as db:
@@ -81,6 +94,8 @@ def main() -> None:
             wait_for_count(SessionLocal, get_job, actor, job_id, 4)
             assert harness.trino_scalar(target, "SELECT count(*)") == "4"
             assert_catalog(SessionLocal, etl_repository, dataset_id, expected_rows=4)
+            first_snapshot_id = current_snapshot_id(harness, target)
+            assert time_travel_count(harness, target, first_snapshot_id) == 4
 
             command(SessionLocal, command_job, actor, job_id, "stopContinuous")
             wait_for_status(SessionLocal, get_job, actor, job_id, "stopped")
@@ -100,10 +115,72 @@ def main() -> None:
             wait_for_status(SessionLocal, get_job, actor, job_id, "stopped")
             harness.produce(topic, events(suffix, 7, 2))
             command(SessionLocal, command_job, actor, job_id, "resumeContinuous")
+            read_probe = ConcurrentReadProbe(harness, target)
+            read_probe.start()
             wait_for_count(SessionLocal, get_job, actor, job_id, 9)
+            time.sleep(1)
+            read_probe.stop()
+            read_probe.assert_atomic_append(7, 9)
+            read_probe = None
             assert harness.trino_scalar(target, "SELECT count(*)") == "9"
             assert_catalog(SessionLocal, etl_repository, dataset_id, expected_rows=9)
+            final_snapshot_id = current_snapshot_id(harness, target)
+            assert final_snapshot_id != first_snapshot_id
+            assert time_travel_count(harness, target, first_snapshot_id) == 4
+            assert time_travel_count(harness, target, final_snapshot_id) == 9
+
+            command(SessionLocal, command_job, actor, job_id, "stopContinuous")
+            wait_for_status(SessionLocal, get_job, actor, job_id, "stopped")
+            checkpoint_before = read_job(SessionLocal, get_job, actor, job_id).continuous_runtime.checkpoint_path
+            with SessionLocal() as db:
+                compaction = compact_kafka_continuous_target(
+                    db,
+                    job_id,
+                    ContinuousCompactionRequest(target_file_size_mb=128),
+                    actor,
+                )
+            assert compaction.status == "success"
+            assert compaction.result and compaction.result.get("queryEngineVerified") is True
+            assert any(
+                operation.get("operation") == "rewrite_data_files"
+                for operation in compaction.result.get("operations", [])
+            )
+            assert harness.trino_scalar(target, "SELECT count(*)") == "9"
+            assert time_travel_count(harness, target, first_snapshot_id) == 4
+
+            with SessionLocal() as db:
+                cleanup = maintain_kafka_continuous_iceberg_target(
+                    db,
+                    job_id,
+                    ContinuousIcebergMaintenanceRequest(
+                        rewrite_data_files=False,
+                        expire_snapshots=True,
+                        snapshot_retention_hours=24,
+                        retain_last_snapshots=10,
+                        remove_orphan_files=True,
+                        orphan_retention_hours=72,
+                    ),
+                    actor,
+                )
+            assert cleanup.status == "success"
+            assert cleanup.result and cleanup.result.get("queryEngineVerified") is True
+            assert [
+                operation.get("operation")
+                for operation in cleanup.result.get("operations", [])
+            ] == ["expire_snapshots", "remove_orphan_files"]
+            assert harness.trino_scalar(target, "SELECT count(*)") == "9"
+            assert time_travel_count(harness, target, first_snapshot_id) == 4
+
+            maintained_job = read_job(SessionLocal, get_job, actor, job_id)
+            assert maintained_job.continuous_runtime.checkpoint_path == checkpoint_before
+            assert maintained_job.continuous_runtime.stored_count == 9
+            with SessionLocal() as db:
+                maintenance_runs = list_kafka_continuous_maintenance_runs(db, job_id, actor)
+            successful_kinds = {run.kind for run in maintenance_runs if run.status == "success"}
+            assert {"compaction", "iceberg_maintenance"}.issubset(successful_kinds)
         finally:
+            if read_probe is not None:
+                read_probe.stop()
             os.environ.pop("ASKLAKE_CONTINUOUS_FAIL_AFTER_DATA_WRITE_ONCE", None)
             if job_id and actor is not None:
                 try:
@@ -235,6 +312,85 @@ def wait_for(predicate, label: str, timeout_seconds: int = 300) -> None:
             return
         time.sleep(2)
     raise AssertionError(f"Timed out waiting for {label}.")
+
+
+class ConcurrentReadProbe:
+    def __init__(self, harness, target: dict) -> None:
+        self.harness = harness
+        self.target = target
+        self.counts: list[int] = []
+        self.errors: list[str] = []
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, name="asklake-continuous-read-probe", daemon=True)
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._thread.join(timeout=130)
+        if self._thread.is_alive():
+            raise AssertionError("Concurrent Trino read probe did not stop.")
+
+    def assert_atomic_append(self, before_count: int, after_count: int) -> None:
+        if self.errors:
+            raise AssertionError(f"Concurrent Trino read failed: {self.errors[0]}")
+        if not self.counts:
+            raise AssertionError("Concurrent Trino read did not collect a sample.")
+        if any(count not in {before_count, after_count} for count in self.counts):
+            raise AssertionError(f"Concurrent read observed a partial Iceberg commit: {self.counts}")
+        if any(current < previous for previous, current in zip(self.counts, self.counts[1:])):
+            raise AssertionError(f"Concurrent read row count regressed: {self.counts}")
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            try:
+                self.counts.append(int(self.harness.trino_scalar(self.target, "SELECT count(*)")))
+            except Exception as exc:
+                self.errors.append(str(exc))
+                return
+            self._stop.wait(0.25)
+
+
+def qualified_table(target: dict, *, suffix: str = "") -> str:
+    table = f'{target["table"]}{suffix}'
+    return ".".join(
+        f'"{str(value).replace(chr(34), chr(34) * 2)}"'
+        for value in (target["catalog"], target["namespace"], table)
+    )
+
+
+def trino_query_scalar(harness, query: str) -> str:
+    completed = subprocess.run(
+        [
+            "docker", "exec", harness.TRINO_CONTAINER, "trino",
+            "--output-format", "CSV", "--execute", query,
+        ],
+        text=True,
+        capture_output=True,
+        timeout=120,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(f"Trino query failed: {completed.stderr or completed.stdout}")
+    return completed.stdout.strip().strip('"')
+
+
+def current_snapshot_id(harness, target: dict) -> str:
+    snapshot_id = trino_query_scalar(
+        harness,
+        f"SELECT snapshot_id FROM {qualified_table(target, suffix='$refs')} "
+        "WHERE name = 'main' LIMIT 1",
+    )
+    if not snapshot_id.isdigit():
+        raise AssertionError(f"Invalid Iceberg snapshot ID: {snapshot_id}")
+    return snapshot_id
+
+
+def time_travel_count(harness, target: dict, snapshot_id: str) -> int:
+    return int(trino_query_scalar(
+        harness,
+        f"SELECT count(*) FROM {qualified_table(target)} FOR VERSION AS OF {int(snapshot_id)}",
+    ))
 
 
 def assert_catalog(session_factory, repository, dataset_id: str, *, expected_rows: int) -> None:

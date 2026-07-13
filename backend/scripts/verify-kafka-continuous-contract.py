@@ -13,7 +13,7 @@ from app.core.errors import ApiError
 from app.models.etl import ETLJobModel, KafkaContinuousMaintenanceRunModel
 from app.repositories import etl_repository
 from app.schemas.catalog import DatasetMaterializationRun
-from app.schemas.etl import CanonicalRuleDraft, ContinuousCompactionRequest, ContinuousReplayRequest, CreatePipelineRequest, SchemaColumnDraft, UpdatePipelineRequest
+from app.schemas.etl import CanonicalRuleDraft, ContinuousCompactionRequest, ContinuousIcebergMaintenanceRequest, ContinuousReplayRequest, CreatePipelineRequest, SchemaColumnDraft, UpdatePipelineRequest
 from app.services import etl_service
 from app.services.iceberg_writer_service import build_iceberg_writer_target
 from scripts.kafka_schema_paths import build_nested_schema_tree, expected_object_keys, json_path, split_source_path
@@ -145,27 +145,56 @@ def main() -> None:
         "checkpointPath": "s3a://asklake-output/reviews_continuous/bronze/_checkpoints/JOB-CONTINUOUS-CONTRACT",
     }
 
-    job = continuous_job()
-    original_job_get = etl_repository.get_job
-    original_governed_access = etl_service.require_governed_access
+    assert ContinuousIcebergMaintenanceRequest().rewrite_data_files is True
     try:
-        etl_repository.get_job = lambda _db, _job_id: job
-        etl_service.require_governed_access = lambda *_args, **_kwargs: None
-        try:
-            etl_service.compact_kafka_continuous_target(
-                None,
-                job.id,
-                ContinuousCompactionRequest(target_file_size_mb=128),
-                ActorContext(role="admin"),
-            )
-        except ApiError as exc:
-            assert exc.status_code == 422
-            assert exc.code == "KAFKA_CONTINUOUS_ICEBERG_COMPACTION_UNAVAILABLE"
-        else:
-            raise AssertionError("Legacy Parquet compaction must be rejected for an Iceberg target.")
+        ContinuousIcebergMaintenanceRequest(
+            rewrite_data_files=False,
+            expire_snapshots=False,
+            remove_orphan_files=False,
+        )
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("Iceberg maintenance must enable at least one operation.")
+
+    job = continuous_job()
+    dispatched = {}
+    original_execute_maintenance = etl_service.execute_kafka_continuous_maintenance
+    try:
+        def capture_maintenance(_db, job_id, kind, config, _actor, access_action="run"):
+            dispatched.update({
+                "accessAction": access_action,
+                "config": config,
+                "jobId": job_id,
+                "kind": kind,
+            })
+            return dispatched
+
+        etl_service.execute_kafka_continuous_maintenance = capture_maintenance
+        result = etl_service.compact_kafka_continuous_target(
+            None,
+            job.id,
+            ContinuousCompactionRequest(target_file_size_mb=128),
+            ActorContext(role="admin"),
+        )
+        assert result["kind"] == "compaction"
+        assert result["config"] == {"targetFileSizeMb": 128}
+        assert result["accessAction"] == "run"
+        result = etl_service.maintain_kafka_continuous_iceberg_target(
+            None,
+            job.id,
+            ContinuousIcebergMaintenanceRequest(
+                rewrite_data_files=False,
+                expire_snapshots=True,
+                snapshot_retention_hours=48,
+            ),
+            ActorContext(role="admin"),
+        )
+        assert result["kind"] == "iceberg_maintenance"
+        assert result["config"]["expireSnapshots"] is True
+        assert result["accessAction"] == "manage"
     finally:
-        etl_repository.get_job = original_job_get
-        etl_service.require_governed_access = original_governed_access
+        etl_service.execute_kafka_continuous_maintenance = original_execute_maintenance
     runtime = etl_service.continuous_runtime_from_job(job)
     assert runtime.topic == "reviews.continuous"
     assert runtime.consumer_group_id == "asklake-continuous-contract"
@@ -673,10 +702,12 @@ def main() -> None:
             etl_service.refresh_kafka_continuous_runtime(None, job)
             assert session_sync_count["value"] == 1, "A runtime report must stage session batches exactly once per refresh."
             etl_service.sync_kafka_continuous_session = original_session_sync
-            recovered_run = captured_dataset[dataset_id].payload["materializationRuns"][0]
-            assert recovered_run["runId"] == iceberg_publication(8, 1, [
+            recovered_run_id = iceberg_publication(8, 1, [
                 {"topic": "reviews.continuous", "partition": 0, "startOffset": 6, "endOffset": 8},
             ])["runId"]
+            recovered_runs = captured_dataset[dataset_id].payload["materializationRuns"]
+            recovered_run = next(run for run in recovered_runs if run["runId"] == recovered_run_id)
+            assert recovered_runs[0]["runId"] == replay_run_id, "Late historical recovery must not replace the current Catalog head."
             assert recovered_run["materializationMode"] == "delta"
             assert recovered_run["sourceRanges"][0]["endOffset"] == 8
             assert recovered_run["ruleFingerprint"] == persisted_rule_fingerprint

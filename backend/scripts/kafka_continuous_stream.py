@@ -46,6 +46,14 @@ def canonical_hash(value: Any) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def bounded_int_env(name: str, default: int, *, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.environ.get(name, str(default)))
+    except ValueError:
+        value = default
+    return max(minimum, min(value, maximum))
+
+
 JOB_ID = os.environ["ASKLAKE_CONTINUOUS_JOB_ID"]
 WORKER_ATTEMPT_ID = os.environ.get("ASKLAKE_CONTINUOUS_WORKER_ATTEMPT_ID")
 REPORT_FILE = Path(os.environ["ASKLAKE_CONTINUOUS_REPORT_FILE"])
@@ -81,6 +89,17 @@ LAST_BATCH_QUARANTINED_COUNT = 0
 LAST_BATCH_WRITTEN = False
 PROCESSED_OFFSETS: dict[str, int] = {}
 PUBLISHED_BATCHES: list[dict[str, Any]] = []
+PUBLISHED_BATCH_LIMIT = bounded_int_env(
+    "ASKLAKE_CONTINUOUS_PUBLICATION_WINDOW",
+    100,
+    minimum=1,
+    maximum=1_000,
+)
+PUBLISHED_BACKLOG_COUNT = 0
+CATALOG_ACK_BATCH_ID = -1
+LATEST_DURABLE_BATCH_ID = -1
+RECOVERY_SPARK: SparkSession | None = None
+RECOVERY_ROOT: str | None = None
 METRICS: dict[str, Any] = {
     "lag": None,
     "lagAvailable": False,
@@ -363,18 +382,54 @@ def fail_current_batch(error: Exception) -> None:
     LAST_BATCH_EVIDENCE = build_batch_evidence(**context)
 
 
-def apply_catalog_ack() -> None:
-    global PUBLISHED_BATCHES
+def catalog_ack_batch_id() -> int:
     ack_path = REPORT_FILE.with_suffix(".catalog-ack.json")
     try:
         payload = json.loads(ack_path.read_text(encoding="utf-8"))
-        acknowledged_batch = int(payload.get("batchId"))
+        return int(payload.get("batchId"))
     except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return -1
+
+
+def apply_catalog_ack() -> None:
+    global CATALOG_ACK_BATCH_ID, PUBLISHED_BACKLOG_COUNT, PUBLISHED_BATCHES
+    acknowledged_batch = catalog_ack_batch_id()
+    if acknowledged_batch <= CATALOG_ACK_BATCH_ID:
         return
+    CATALOG_ACK_BATCH_ID = acknowledged_batch
     PUBLISHED_BATCHES = [
         item for item in PUBLISHED_BATCHES
         if int(item.get("batchId") or 0) > acknowledged_batch
     ]
+    if RECOVERY_SPARK is not None and RECOVERY_ROOT:
+        recovered = recover_published_state(
+            RECOVERY_SPARK,
+            RECOVERY_ROOT,
+            acknowledged_batch=acknowledged_batch,
+            batch_limit=PUBLISHED_BATCH_LIMIT,
+        )
+        PUBLISHED_BATCHES = recovered["batches"]
+        PUBLISHED_BACKLOG_COUNT = recovered["backlogCount"]
+
+
+def remember_published_batch(publication: dict[str, Any]) -> None:
+    global LATEST_DURABLE_BATCH_ID, PUBLISHED_BACKLOG_COUNT, PUBLISHED_BATCHES
+    batch_id = int(publication.get("batchId") or 0)
+    if batch_id > LATEST_DURABLE_BATCH_ID:
+        LATEST_DURABLE_BATCH_ID = batch_id
+        if batch_id > CATALOG_ACK_BATCH_ID:
+            PUBLISHED_BACKLOG_COUNT += 1
+    existing = [
+        item
+        for item in PUBLISHED_BATCHES
+        if int(item.get("batchId") or 0) != batch_id
+    ]
+    if batch_id > CATALOG_ACK_BATCH_ID:
+        existing.append(publication)
+    PUBLISHED_BATCHES = sorted(
+        existing,
+        key=lambda item: int(item.get("batchId") or 0),
+    )[:PUBLISHED_BATCH_LIMIT]
 
 
 def report(status: str, *, batch_id: int | None = None, error: str | None = None) -> None:
@@ -394,6 +449,9 @@ def report(status: str, *, batch_id: int | None = None, error: str | None = None
         "lastBatchQuarantinedCount": LAST_BATCH_QUARANTINED_COUNT,
         "lastBatchWritten": LAST_BATCH_WRITTEN,
         "publishedBatches": PUBLISHED_BATCHES,
+        "publicationBacklogCount": PUBLISHED_BACKLOG_COUNT,
+        "publicationWindowLimit": PUBLISHED_BATCH_LIMIT,
+        "catalogAckBatchId": CATALOG_ACK_BATCH_ID if CATALOG_ACK_BATCH_ID >= 0 else None,
         **METRICS,
         **SCHEMA_STATE,
         **COUNTERS,
@@ -908,25 +966,54 @@ def committed_child_paths(spark: SparkSession, root: str) -> list[str]:
     return sorted(paths)
 
 
-def recover_published_state(spark: SparkSession, root: str) -> dict[str, Any]:
+def recover_published_state(
+    spark: SparkSession,
+    root: str,
+    *,
+    acknowledged_batch: int = -1,
+    batch_limit: int = PUBLISHED_BATCH_LIMIT,
+) -> dict[str, Any]:
     manifest_root = f"{root.rstrip('/')}/_batch-manifests"
     paths = committed_child_paths(spark, manifest_root)
     if not paths:
-        return {"counts": {"consumedCount": 0, "storedCount": 0, "quarantinedCount": 0}, "batches": []}
-    batches = []
+        return {
+            "backlogCount": 0,
+            "batches": [],
+            "counts": {"consumedCount": 0, "storedCount": 0, "quarantinedCount": 0},
+            "latest": None,
+            "ruleMetrics": {},
+        }
+    batches: list[dict[str, Any]] = []
+    counts = {"consumedCount": 0, "storedCount": 0, "quarantinedCount": 0}
+    rule_metrics: dict[str, int] = {}
+    latest: dict[str, Any] | None = None
+    backlog_count = 0
+    manifest_paths: list[tuple[int, str]] = []
     for path in paths:
         match = re.search(r"/batch_id=(\d+)$", path.rstrip("/"))
         if not match:
             continue
-        batches.append(load_committed_manifest(spark, root, path, int(match.group(1))))
+        manifest_paths.append((int(match.group(1)), path))
+    for batch_id, path in sorted(manifest_paths, key=lambda item: item[0]):
+        batch = load_committed_manifest(spark, root, path, batch_id)
+        for key in counts:
+            counts[key] += int(batch.get(key) or 0)
+        for key, value in recovered_rule_metrics([batch]).items():
+            rule_metrics[key] = rule_metrics.get(key, 0) + value
+        if latest is None or batch_id > int(latest.get("batchId") or -1):
+            latest = batch
+        if batch_id <= acknowledged_batch:
+            continue
+        backlog_count += 1
+        if len(batches) < batch_limit:
+            batches.append(batch)
     batches.sort(key=lambda item: int(item.get("batchId") or 0))
-    counts = {
-        key: sum(int(batch.get(key) or 0) for batch in batches)
-        for key in ("consumedCount", "storedCount", "quarantinedCount")
-    }
     return {
+        "backlogCount": backlog_count,
         "counts": counts,
         "batches": batches,
+        "latest": latest,
+        "ruleMetrics": rule_metrics,
     }
 
 
@@ -1013,7 +1100,7 @@ def validate_manifest_retry(
 
 
 def main() -> None:
-    global QUERY, LAST_BATCH_ID, LAST_FLUSH_AT, LAST_BATCH_STORED_COUNT, LAST_BATCH_QUARANTINED_COUNT, LAST_BATCH_WRITTEN, PUBLISHED_BATCHES, LAST_BATCH_EVIDENCE, CURRENT_BATCH_CONTEXT
+    global CATALOG_ACK_BATCH_ID, LATEST_DURABLE_BATCH_ID, PUBLISHED_BACKLOG_COUNT, QUERY, LAST_BATCH_ID, LAST_FLUSH_AT, LAST_BATCH_STORED_COUNT, LAST_BATCH_QUARANTINED_COUNT, LAST_BATCH_WRITTEN, PUBLISHED_BATCHES, LAST_BATCH_EVIDENCE, CURRENT_BATCH_CONTEXT, RECOVERY_ROOT, RECOVERY_SPARK
     signal.signal(signal.SIGTERM, on_signal)
     signal.signal(signal.SIGINT, on_signal)
     schema, aliases, required_fields = source_schema()
@@ -1028,16 +1115,27 @@ def main() -> None:
 
     os.environ.setdefault("ASKLAKE_SPARK_APP_NAME", f"asklake-kafka-continuous-{JOB_ID}")
     spark = make_spark({}, iceberg_target)
+    RECOVERY_SPARK = spark
+    RECOVERY_ROOT = output_path
     configure_s3a(spark)
     ensure_checkpoint_contract(spark, checkpoint_path, output_path, iceberg_target)
-    recovered = recover_published_state(spark, output_path)
+    CATALOG_ACK_BATCH_ID = catalog_ack_batch_id()
+    recovered = recover_published_state(
+        spark,
+        output_path,
+        acknowledged_batch=CATALOG_ACK_BATCH_ID,
+        batch_limit=PUBLISHED_BATCH_LIMIT,
+    )
     for key, value in recovered["counts"].items():
         COUNTERS[key] = max(COUNTERS[key], value)
     PUBLISHED_BATCHES = recovered["batches"]
-    for key, value in recovered_rule_metrics(PUBLISHED_BATCHES).items():
+    PUBLISHED_BACKLOG_COUNT = recovered["backlogCount"]
+    latest_recovered = recovered.get("latest")
+    LATEST_DURABLE_BATCH_ID = int(latest_recovered.get("batchId") or -1) if isinstance(latest_recovered, dict) else -1
+    for key, value in recovered["ruleMetrics"].items():
         RULE_METRICS[key] = max(RULE_METRICS[key], value)
-    if PUBLISHED_BATCHES:
-        latest = PUBLISHED_BATCHES[-1]
+    if isinstance(latest_recovered, dict):
+        latest = latest_recovered
         LAST_BATCH_ID = int(latest.get("batchId") or 0)
         LAST_FLUSH_AT = str(latest.get("publishedAt") or "") or None
         LAST_BATCH_STORED_COUNT = int(latest.get("storedCount") or 0)
@@ -1131,13 +1229,7 @@ def main() -> None:
             LAST_BATCH_STORED_COUNT = int(published.get("storedCount") or 0)
             LAST_BATCH_QUARANTINED_COUNT = int(published.get("quarantinedCount") or 0)
             LAST_BATCH_WRITTEN = True
-            PUBLISHED_BATCHES = sorted(
-                [
-                    item for item in PUBLISHED_BATCHES
-                    if (int(item["batchId"]) if item.get("batchId") is not None else -1) != batch_id
-                ] + [published],
-                key=lambda item: int(item.get("batchId") or 0),
-            )
+            remember_published_batch(published)
             LAST_RULE_RESULT.update({
                 "quality": published.get("quality") if isinstance(published.get("quality"), dict) else {},
                 "status": "success",
@@ -1416,13 +1508,7 @@ def main() -> None:
             "dagSteps": batch_dag_steps,
         }
         write_batch_manifest(spark, output_path, batch_id, published_manifest)
-        PUBLISHED_BATCHES = sorted(
-            [
-                item for item in PUBLISHED_BATCHES
-                if (int(item["batchId"]) if item.get("batchId") is not None else -1) != batch_id
-            ] + [published_manifest],
-            key=lambda item: int(item.get("batchId") or 0),
-        )
+        remember_published_batch(published_manifest)
         LAST_BATCH_STORED_COUNT = stored_count
         LAST_BATCH_QUARANTINED_COUNT = quarantined_count
         LAST_BATCH_WRITTEN = True

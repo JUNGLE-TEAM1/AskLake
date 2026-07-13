@@ -76,6 +76,30 @@ def main() -> None:
                     f"error={failed.get('error')!r}\nrefs:\n{refs}\nhistory:\n{history}"
                 )
             assert trino_scalar(f'SELECT count(*) FROM iceberg.asklake."{table}"') == "1"
+
+            third = run_spark(runtime, network, target, "run-phase2-after-rollback", [{"id": 7}, {"id": 8}])
+            assert third["status"] == "success"
+            third_snapshot = str(third["icebergCommit"]["snapshotId"])
+            assert third_snapshot not in {first_snapshot, second_snapshot}
+            assert trino_current_snapshot(table) == third_snapshot
+            assert trino_scalar(f'SELECT count(*) FROM iceberg.asklake."{table}"') == "2"
+            assert int(trino_snapshot_file_count(table, second_snapshot)) > 0
+            assert int(trino_snapshot_file_count(table, third_snapshot)) > 0
+            assert int(trino_snapshot_file_size(table, second_snapshot)) > 0
+            assert int(trino_snapshot_file_size(table, third_snapshot)) > 0
+
+            failed_again = run_spark(
+                runtime,
+                network,
+                target,
+                "run-phase2-second-rollback",
+                [{"id": 9}],
+                fail_after_commit=True,
+                expect_success=False,
+            )
+            assert failed_again["status"] == "failed"
+            assert trino_current_snapshot(table) == third_snapshot
+            assert trino_scalar(f'SELECT count(*) FROM iceberg.asklake."{table}"') == "2"
         finally:
             trino_execute(f'DROP TABLE IF EXISTS iceberg.asklake."{table}"', check=False)
             stop_test_trino(TRINO_CONTAINER)
@@ -167,6 +191,22 @@ def trino_current_snapshot(table: str) -> str:
     return trino_scalar(
         f'SELECT snapshot_id FROM iceberg.asklake."{table}$refs" '
         "WHERE name = 'main' LIMIT 1"
+    )
+
+
+def trino_snapshot_file_count(table: str, snapshot_id: str) -> str:
+    return trino_snapshot_summary_metric(table, snapshot_id, "total-data-files")
+
+
+def trino_snapshot_file_size(table: str, snapshot_id: str) -> str:
+    return trino_snapshot_summary_metric(table, snapshot_id, "total-files-size")
+
+
+def trino_snapshot_summary_metric(table: str, snapshot_id: str, metric: str) -> str:
+    return trino_scalar(
+        f"SELECT TRY_CAST(element_at(summary, '{metric}') AS BIGINT) "
+        f'FROM iceberg.asklake."{table}$snapshots" '
+        f"WHERE snapshot_id = {int(snapshot_id)} LIMIT 1"
     )
 
 

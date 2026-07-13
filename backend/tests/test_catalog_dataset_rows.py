@@ -6,8 +6,29 @@ import duckdb
 
 from app.core.errors import ApiError
 from app.schemas.catalog import CatalogDatasetResponse, DatasetMaterializationRun
+from app.schemas.trino import TrinoClientPage
 from app.services.catalog_service import dataset_for_latest_successful_materialization
 from app.services.dataset_rows_service import read_dataset_rows
+
+
+class FakeCatalogRowsTrinoClient:
+    def __init__(self) -> None:
+        self.queries: list[str] = []
+
+    def submit(self, query: str, **_kwargs) -> TrinoClientPage:
+        self.queries.append(query)
+        if "$refs" in query:
+            return TrinoClientPage(columns=["snapshot_id"], rows=[[101]], queryId="refs")
+        if "COUNT(*)" in query:
+            return TrinoClientPage(columns=["row_count"], rows=[[3]], queryId="count")
+        return TrinoClientPage(
+            columns=["id", "label"],
+            rows=[[2, "row-2"]],
+            queryId="page",
+        )
+
+    def fetch(self, _next_uri: str, **_kwargs) -> TrinoClientPage:
+        raise AssertionError("fixture query should fit in one Trino page")
 
 
 def build_dataset(storage_location: str) -> CatalogDatasetResponse:
@@ -112,6 +133,40 @@ class CatalogDatasetRowsTest(unittest.TestCase):
 
         self.assertEqual(selected.source_run_id, "run-success")
         self.assertEqual(selected.storage_location, str(self.parquet_path))
+
+    def test_iceberg_dataset_rows_use_the_verified_trino_mapping(self) -> None:
+        dataset = self.dataset.model_copy(update={
+            "query_engine_status": "available",
+            "query_engine_table": {
+                "catalog": "iceberg",
+                "schema": "asklake",
+                "table": "catalog_rows_fixture",
+                "format": "iceberg",
+            },
+            "storage_format": "iceberg",
+            "storage_location": "s3://warehouse/asklake/catalog_rows_fixture",
+        })
+        client = FakeCatalogRowsTrinoClient()
+
+        page = read_dataset_rows(
+            dataset,
+            limit=1,
+            offset=2,
+            trino_client=client,  # type: ignore[arg-type]
+        )
+
+        self.assertEqual(page.row_count, 3)
+        self.assertEqual(page.rows, [["2", "row-2"]])
+        self.assertFalse(page.has_next)
+        self.assertEqual(
+            client.queries,
+            [
+                'SELECT CAST(snapshot_id AS VARCHAR) AS snapshot_id FROM "iceberg"."asklake"."catalog_rows_fixture$refs" WHERE name = \'main\' LIMIT 1',
+                'SELECT COUNT(*) AS row_count FROM "iceberg"."asklake"."catalog_rows_fixture" FOR VERSION AS OF 101',
+                'SELECT "id", "label" FROM "iceberg"."asklake"."catalog_rows_fixture" FOR VERSION AS OF 101 OFFSET 2 LIMIT 1',
+            ],
+        )
+        self.assertTrue(all("_asklake_" not in query for query in client.queries))
 
 if __name__ == "__main__":
     unittest.main()

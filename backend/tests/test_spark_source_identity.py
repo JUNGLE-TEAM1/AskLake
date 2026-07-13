@@ -102,6 +102,30 @@ class FakeSpark:
 
 
 class SparkSourceIdentityTests(unittest.TestCase):
+    def test_current_iceberg_snapshot_uses_main_ref_not_newest_history(self) -> None:
+        target = {
+            "catalog": "iceberg",
+            "namespace": "asklake",
+            "table": "reviews_batch",
+        }
+
+        def execute(query: str):
+            if ".refs" in query:
+                return SimpleNamespace(collect=lambda: [{"snapshot_id": "123"}])
+            self.assertIn("WHERE CAST(snapshot_id AS STRING) = '123'", query)
+            return SimpleNamespace(collect=lambda: [{
+                "committed_at": "2026-07-14T00:00:00Z",
+                "manifest_list": "s3://warehouse/reviews/metadata/snap-123.avro",
+                "snapshot_id": "123",
+            }])
+
+        spark = SimpleNamespace(sql=Mock(side_effect=execute))
+
+        snapshot = spark_job_run.current_iceberg_snapshot(spark, target)
+
+        self.assertEqual(snapshot["snapshotId"], "123")
+        self.assertEqual(spark.sql.call_count, 2)
+
     def test_kafka_snapshot_retry_reuses_existing_iceberg_commit(self) -> None:
         spark = SimpleNamespace(sql=Mock())
         frame = SimpleNamespace(writeTo=Mock())

@@ -22,7 +22,7 @@ This document records the Pair A person-1 backend validation path for Source, Sc
 - `backend/scripts/verify-spark-csv-quoting.mjs`: RFC 4180 comma/quote CSV -> Spark -> Parquet regression verifier
 - `backend/scripts/verify-kafka-continuous-soak.mjs`: generated or JSONL/GZIP Kafka replay -> continuous Iceberg worker -> reconciliation/fault verifier
 - `backend/scripts/verify-kafka-continuous-iceberg.py`: isolated Redpanda/Spark/Trino/MinIO append, pre-manifest fault, checkpoint restart verifier
-- `backend/scripts/kafka_continuous_maintenance.py`: quarantine inspect and Iceberg replay; legacy Parquet compaction is disabled
+- `backend/scripts/kafka_continuous_maintenance.py`: quarantine inspect/replay plus Iceberg data-file rewrite, snapshot expiration and orphan cleanup
 - `backend/scripts/setup-source-fixtures.mjs`: PostgreSQL, MongoDB, and Redpanda fixtures
 - `backend/scripts/verify-all-sources.mjs`: source connector verifier
 
@@ -211,7 +211,7 @@ npm run verify:spark-run
 
 This verifier starts from an empty ETL/Catalog metadata state, creates one live job from a MinIO sample, submits a run command, verifies that the command response immediately returns `running`, then polls `GET /api/etl/jobs/{jobId}` until Spark commits an Iceberg snapshot and the job returns to its final state. The create payload includes submitted `transformSteps`, `transformOutputColumns`, `qualityRules`, and the multi-column `partition` value. Catalog success requires the same target/snapshot/fingerprint plus Trino-visible schema and physical data files; the warehouse data files remain Parquet.
 
-The focused writer verifier uses a unique Iceberg table and checks full-replace re-runs and rollback without starting the AskLake API or Airflow:
+The focused writer verifier uses a unique Iceberg table and checks full-replace re-runs and rollback without starting the AskLake API or Airflow. It proves that rollback restores the `$refs` `main` snapshot even when a newer abandoned historical snapshot remains, then commits once more and validates exact historical `total-data-files`/`total-files-size` from `$snapshots.summary`:
 
 ```bash
 cd backend
@@ -243,16 +243,16 @@ ASKLAKE_CONTINUOUS_SOAK_FAULT=worker \
 npm run verify:kafka-continuous-soak
 ```
 
-`ASKLAKE_CONTINUOUS_SOAK_FAULT`는 `worker`, `backend`, `kafka`, `minio` 중 하나를 선택한다. Kafka/MinIO fault는 해당 Compose service를 잠시 pause한 뒤 반드시 unpause하고, worker가 실패 상태로 전이되면 checkpoint resume을 수행한다. 결과에는 input/output row와 reconciliation/lag/throughput/recovery/Catalog 지표가 포함된다. `ASKLAKE_CONTINUOUS_SOAK_COMPACT=true`는 Iceberg-native maintenance가 추가될 때까지 명시적으로 실패한다.
+`ASKLAKE_CONTINUOUS_SOAK_FAULT`는 `worker`, `backend`, `kafka`, `minio` 중 하나를 선택한다. Kafka/MinIO fault는 해당 Compose service를 잠시 pause한 뒤 반드시 unpause하고, worker가 실패 상태로 전이되면 checkpoint resume을 수행한다. 결과에는 input/output row와 reconciliation/lag/throughput/recovery/Catalog 지표가 포함된다. `ASKLAKE_CONTINUOUS_SOAK_COMPACT=true`면 모든 입력 reconciliation 뒤 worker를 중지하고 Iceberg-native `rewrite_data_files`를 실행한 다음 Trino snapshot/file 검증 결과를 report의 `compaction`에 포함한다.
 
-`npm run verify:kafka-continuous-contract`는 같은 worker attempt의 실패 카운터 멱등성, 종료 worker의 manifest 기반 Catalog 복구, Iceberg replay 경계와 maintenance lease 정리를 검증한다. E2E는 기본 replay가 현재 schema policy를 다시 적용하는지, `approveUnknownFields` 관리자 예외만 unknown-field 행을 복구하는지, replay snapshot이 Trino 검증 후 Catalog에 반영되는지 확인한다. Stream manifest는 deterministic source boundary, Iceberg snapshot/table URI와 topic/partition별 `[startOffset, endOffset)`을 포함해야 한다.
+`npm run verify:kafka-continuous-contract`는 같은 worker attempt의 실패 카운터 멱등성, 종료 worker의 manifest 기반 Catalog 복구, Iceberg replay 경계, worker/maintenance 양방향 fencing, durable runner heartbeat 기반 lease 갱신과 stale cleanup 1회를 검증한다. E2E는 기본 replay가 현재 schema policy를 다시 적용하는지, `approveUnknownFields` 관리자 예외만 unknown-field 행을 복구하는지, replay snapshot이 Trino 검증 후 Catalog에 반영되는지, rewrite 결과가 같은 Iceberg target으로 Trino 재검증되는지 확인한다. Stream manifest는 deterministic source boundary, Iceberg snapshot/table URI와 topic/partition별 `[startOffset, endOffset)`을 포함해야 한다.
 
 ```bash
 cd backend
 ASKLAKE_VERIFY_ICEBERG_LIVE=true npm run verify:kafka-continuous-iceberg
 ```
 
-이 격리 검증은 정상 append 4행, manifest 전 fault로 commit된 3행의 중복 없는 재사용, checkpoint 재시작 후 신규 2행을 처리해 Trino count `4 -> 7 -> 9`를 확인하고 생성한 table/container/metadata를 정리한다.
+이 격리 검증은 정상 append 4행, manifest 전 fault로 commit된 3행의 중복 없는 재사용, checkpoint 재시작 후 신규 2행을 처리해 Trino count `4 -> 7 -> 9`를 확인한다. 마지막 append 중 반복 Trino read는 7 또는 9만 관찰해야 하며 부분 count나 감소를 실패 처리한다. worker 중지 후 Iceberg data-file rewrite와 보존기간 내 snapshot expiration/orphan cleanup을 실행하고, 현재 9행과 최초 4행 snapshot time-travel, checkpoint identity, maintenance history를 재검증한 뒤 생성한 table/container/metadata를 정리한다.
 
 게시 경계 fault 검증은 backend에 `ASKLAKE_CONTINUOUS_FAIL_AFTER_DATA_WRITE_ONCE=true`, E2E runner에 `ASKLAKE_CONTINUOUS_E2E_PUBLICATION_FAULT=true`를 설정한다. 첫 worker는 data `_SUCCESS` 뒤 manifest 전에 한 번 실패하고, harness가 resume한 뒤 같은 batch/offset을 중복 저장하지 않고 manifest와 Catalog를 복구해야 한다. 이 변수는 테스트 전용이며 운영에서는 반드시 `false`로 둔다.
 

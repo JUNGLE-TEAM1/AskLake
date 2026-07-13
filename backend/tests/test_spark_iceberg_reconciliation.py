@@ -5,6 +5,7 @@ from app.core.errors import ApiError
 from app.schemas.iceberg import IcebergCommitEvidence
 from app.services.etl_service import (
     canonical_rule_fingerprint,
+    dataset_payload_from_spark_result,
     verify_spark_iceberg_result,
 )
 from app.services.iceberg_writer_service import build_iceberg_writer_target
@@ -41,7 +42,9 @@ class FakeIcebergWriterService:
             sourceBoundary=source_boundary,
         )
 
-    def table_storage_metrics(self, _target):
+    def table_storage_metrics(self, _target, *, snapshot_id=None):
+        if snapshot_id != "123456789":
+            raise AssertionError(f"expected exact snapshot metrics, got {snapshot_id}")
         return self.file_count, self.storage_size_bytes
 
 
@@ -116,6 +119,111 @@ class SparkIcebergReconciliationTests(unittest.TestCase):
             )
 
         self.assertEqual(str(context.exception.code), "CATALOG_RECONCILIATION_FAILED")
+
+    def test_late_historical_snapshot_does_not_regress_current_catalog_projection(self) -> None:
+        job = SimpleNamespace(
+            created_by="qa",
+            created_by_profile=None,
+            dataset_id="ds_orders",
+            id="JOB-ICEBERG-BATCH",
+            index_columns=[],
+            name="orders_pipeline",
+            owner="qa",
+            partition=None,
+            partition_columns=[],
+            permission_roles=[],
+            quality_score=100,
+            quality_status="passed",
+            rag=False,
+            schedule="manual",
+            schema_columns=[{
+                "included": True,
+                "sourceName": "id",
+                "targetName": "id",
+                "type": "Long",
+            }],
+            source="File / S3 / orders",
+            source_label="orders.parquet",
+            source_type="File / S3",
+            target="orders",
+            target_description="orders current dataset",
+            target_layer="SILVER",
+            target_tags=["orders"],
+            transform_steps=[],
+        )
+        previous = {
+            "description": "orders current dataset",
+            "freshness": "latest",
+            "id": "ds_orders",
+            "lastUpdated": "2026-07-14T02:00:00Z",
+            "layer": "SILVER",
+            "materializationRuns": [{
+                "createdAt": "2026-07-14T02:00:00Z",
+                "icebergCommittedAt": "2026-07-14T02:00:00Z",
+                "icebergSnapshotId": "200",
+                "jobId": job.id,
+                "materializationMode": "snapshot",
+                "rowCount": 10,
+                "runId": "RUN-NEW",
+                "sourceKind": "etl",
+                "sourceLabel": job.name,
+                "status": "success",
+                "storageFormat": "iceberg",
+                "storageLocation": "s3://warehouse/orders",
+                "storageSizeBytes": 2000,
+            }],
+            "name": "orders",
+            "nextRefresh": "manual",
+            "owner": "qa",
+            "quality": "current-quality",
+            "queryEngineStatus": "available",
+            "queryEngineTable": {"catalog": "iceberg", "schema": "asklake", "table": "orders", "format": "iceberg"},
+            "rag": False,
+            "rows": "10 rows",
+            "sampleRows": [["10"]],
+            "schema": [["id", "bigint"]],
+            "size": "2KB",
+            "source": job.name,
+            "sourceRunId": "RUN-NEW",
+            "status": "available",
+            "storageFormat": "iceberg",
+            "storageLocation": "s3://warehouse/orders",
+            "storageSizeBytes": 2000,
+            "tags": ["#orders"],
+        }
+        historical_result = {
+            "endedAt": "2026-07-14T01:00:00Z",
+            "icebergCommit": {"committedAt": "2026-07-14T01:00:00Z", "snapshotId": "100"},
+            "materializationRows": 2,
+            "outputPath": "iceberg://iceberg/asklake/orders",
+            "outputRows": 2,
+            "quality": {"summary": "historical-quality"},
+            "queryEngineTable": {"catalog": "iceberg", "schema": "asklake", "table": "orders", "format": "iceberg"},
+            "queryEngineVerified": True,
+            "runId": "RUN-OLD",
+            "sampleRows": [["1"]],
+            "schema": [{"name": "legacy_id", "type": "string"}],
+            "status": "success",
+            "storageSizeBytes": 500,
+            "warehouseLocation": "s3://warehouse/orders",
+        }
+
+        payload = dataset_payload_from_spark_result(
+            job,
+            historical_result,
+            "ds_orders",
+            [["legacy_id", "string"]],
+            historical_result["endedAt"],
+            previous,
+        )
+
+        self.assertEqual([run["runId"] for run in payload["materializationRuns"]], ["RUN-NEW", "RUN-OLD"])
+        self.assertEqual(payload["sourceRunId"], "RUN-NEW")
+        self.assertEqual(payload["schema"], [["id", "bigint"]])
+        self.assertEqual(payload["sampleRows"], [["10"]])
+        self.assertEqual(payload["quality"], "current-quality")
+        self.assertEqual(payload["size"], "2KB")
+        self.assertEqual(payload["storageSizeBytes"], 2000)
 
 
 if __name__ == "__main__":

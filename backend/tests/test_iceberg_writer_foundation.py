@@ -1,3 +1,4 @@
+import re
 import unittest
 
 from pydantic import ValidationError
@@ -19,6 +20,8 @@ class FakeTrinoClient:
     def __init__(self) -> None:
         self.exists = False
         self.snapshot_id = 1000
+        self.current_snapshot_id = 1000
+        self.available_snapshot_ids = {1000}
         self.queries: list[str] = []
         self.fail_describe = False
 
@@ -30,21 +33,33 @@ class FakeTrinoClient:
         if query.startswith("CREATE TABLE ") or query.startswith("CREATE OR REPLACE TABLE "):
             self.exists = True
             self.snapshot_id += 1
+            self.current_snapshot_id = self.snapshot_id
+            self.available_snapshot_ids.add(self.snapshot_id)
             return finished_page()
         if query.startswith("INSERT INTO "):
             if not self.exists:
                 return failed_page("TABLE_NOT_FOUND")
             self.snapshot_id += 1
+            self.current_snapshot_id = self.snapshot_id
+            self.available_snapshot_ids.add(self.snapshot_id)
             return finished_page()
         if query.startswith("DESCRIBE "):
             if self.fail_describe:
                 return failed_page("TABLE_NOT_FOUND")
             return finished_page(rows=[["event_id", "varchar", "", ""]])
+        if "$refs" in query:
+            return finished_page(rows=[[str(self.current_snapshot_id)]])
         if "$snapshots" in query:
+            if "total-data-files" in query:
+                return finished_page(rows=[[2, 4096]])
+            requested = re.search(r"= '(-?\d+)'", query)
+            snapshot_id = int(requested.group(1)) if requested else self.snapshot_id
+            if snapshot_id not in self.available_snapshot_ids:
+                return finished_page()
             return finished_page(rows=[[
-                str(self.snapshot_id),
+                str(snapshot_id),
                 "2026-07-13 12:00:00.000 UTC",
-                f"s3://asklake-warehouse/warehouse/reviews/metadata/snap-{self.snapshot_id}.avro",
+                f"s3://asklake-warehouse/warehouse/reviews/metadata/snap-{snapshot_id}.avro",
             ]])
         if "$files" in query:
             return finished_page(rows=[[2, 4096]])
@@ -197,11 +212,37 @@ class IcebergWriterFoundationTest(unittest.TestCase):
             runtime_settings=self.settings,
         )
 
-        file_count, storage_size_bytes = self.service.table_storage_metrics(target)
+        file_count, storage_size_bytes = self.service.table_storage_metrics(
+            target,
+            snapshot_id="1000",
+        )
 
         self.assertEqual(file_count, 2)
         self.assertEqual(storage_size_bytes, 4096)
-        self.assertTrue(any("$files" in query for query in self.client.queries))
+        self.assertTrue(any(
+            "$snapshots" in query
+            and "total-data-files" in query
+            and "snapshot_id = 1000" in query
+            for query in self.client.queries
+        ))
+
+    def test_current_snapshot_follows_main_ref_after_rollback(self) -> None:
+        target = build_iceberg_writer_target(
+            "reviews",
+            "ds_reviews",
+            write_mode="replace",
+            runtime_settings=self.settings,
+        )
+        self.client.snapshot_id = 1002
+        self.client.current_snapshot_id = 1001
+        self.client.available_snapshot_ids.update({1001, 1002})
+
+        snapshot_id, _, warehouse_location = self.service.current_snapshot(target)
+
+        self.assertEqual(snapshot_id, "1001")
+        self.assertTrue(warehouse_location.endswith("/reviews"))
+        self.assertTrue(any("$refs" in query for query in self.client.queries))
+        self.assertFalse(any("ORDER BY committed_at DESC" in query for query in self.client.queries))
 
     def test_unsafe_identifiers_and_non_select_statements_are_rejected(self) -> None:
         with self.assertRaises(ValidationError):

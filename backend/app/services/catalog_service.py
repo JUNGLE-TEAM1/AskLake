@@ -13,6 +13,7 @@ from app.repositories.audit_repository import safe_record_audit_event
 from app.repositories.sql_repository import SqlRepository
 from app.schemas.catalog import (
     CatalogDatasetListResponse,
+    CatalogDatasetRowsResponse,
     CatalogDatasetResponse,
     CreateDerivedDatasetRequest,
     DeleteMaterializationRunResponse,
@@ -29,8 +30,12 @@ from app.services.lake_storage_service import (
     MaterializedDatasetResult,
 )
 from app.services.governance_enforcement import require_governed_access
+from app.services.dataset_rows_service import read_dataset_rows
 from app.services.sql_service import full_query_run_response_from_payload
-from app.services.materialization_projection import aggregate_materialization_runs
+from app.services.materialization_projection import (
+    aggregate_materialization_runs,
+    upsert_materialization_run,
+)
 from app.services.resource_permission_service import (
     dataset_with_persisted_permission_grants,
     datasets_with_persisted_permission_grants,
@@ -116,6 +121,40 @@ class CatalogService:
             return LineageGraphResponse.model_validate(lineage_payload)
         return build_fallback_lineage_graph(dataset)
 
+    def get_dataset_rows(
+        self,
+        dataset_id: str,
+        actor: ActorContext | None = None,
+        *,
+        limit: int,
+        offset: int,
+    ) -> CatalogDatasetRowsResponse:
+        actor_context = actor or ActorContext()
+        dataset = self.get_dataset(dataset_id, actor_context)
+        require_governed_access(
+            self.repository.db,
+            actor_context,
+            action="query",
+            api_path=f"/api/catalog/datasets/{dataset_id}/rows",
+            http_method="GET",
+            metadata={"owner": dataset.owner},
+            resource_id=dataset.id,
+            resource_name=dataset.name,
+            resource_type="dataset",
+        )
+        require_permission(
+            actor_context,
+            "query",
+            owner=dataset.owner,
+            grants=dataset.permission_grants,
+            resource_label="dataset",
+        )
+        return read_dataset_rows(
+            dataset_for_latest_successful_materialization(dataset),
+            limit=limit,
+            offset=offset,
+        )
+
     def delete_materialization_run(
         self,
         dataset_id: str,
@@ -174,6 +213,13 @@ class CatalogService:
                 ErrorCode.NOT_FOUND,
                 "Materialization run not found",
                 status.HTTP_404_NOT_FOUND,
+                {"datasetId": dataset_id, "runId": run_id},
+            )
+        if dataset_is_iceberg_backed(payload):
+            raise ApiError(
+                "ICEBERG_MATERIALIZATION_DELETE_UNAVAILABLE",
+                "Iceberg materialization history cannot be deleted without an Iceberg-native table operation",
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
                 {"datasetId": dataset_id, "runId": run_id},
             )
         validate_materialization_run_delete(materialization_runs, run_id)
@@ -673,11 +719,34 @@ def append_materialization_run(
     previous_runs: object,
     next_run: dict[str, object],
 ) -> list[dict[str, object]]:
-    runs = [run for run in previous_runs if isinstance(run, dict)] if isinstance(previous_runs, list) else []
-    run_id = str(next_run.get("runId") or "")
-    if not run_id:
-        return runs
-    return [next_run, *[run for run in runs if str(run.get("runId") or "") != run_id]]
+    return upsert_materialization_run(previous_runs, next_run)
+
+
+def dataset_for_latest_successful_materialization(
+    dataset: CatalogDatasetResponse,
+) -> CatalogDatasetResponse:
+    latest = next(
+        (run for run in dataset.materialization_runs if run.status == "success"),
+        None,
+    )
+    if latest is None:
+        return dataset
+    return dataset.model_copy(update={
+        "source_run_id": latest.run_id,
+        "storage_format": latest.storage_format or dataset.storage_format,
+        "storage_location": latest.storage_location or dataset.storage_location,
+    })
+
+
+def dataset_is_iceberg_backed(payload: dict[str, object]) -> bool:
+    if str(payload.get("storageFormat") or "").strip().casefold() == "iceberg":
+        return True
+    mapping = payload.get("queryEngineTable")
+    return (
+        str(payload.get("queryEngineStatus") or "").strip().casefold() == "available"
+        and isinstance(mapping, dict)
+        and str(mapping.get("format") or "").strip().casefold() == "iceberg"
+    )
 
 
 def validate_materialization_run_delete(runs: list[dict[str, object]], run_id: str) -> None:
