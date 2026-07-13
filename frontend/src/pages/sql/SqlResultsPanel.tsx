@@ -232,7 +232,14 @@ export function SqlResultsPanel({
           </>
         ) : (
           <>
-            <PanelHeader bordered={false} className="min-h-0 p-0" icon={<Table2 size={16} />} title="결과 대기 중" />
+            <PanelHeader
+              bordered={false}
+              className="min-h-0 p-0"
+              icon={
+                <img alt="" aria-hidden="true" className={styles.resultEmptyIcon} src="/sql-result-table-icon.svg" />
+              }
+              title="결과 대기 중"
+            />
             <Empty className={styles.resultEmpty} size="sm" variant="bordered">
               <EmptyHeader>
                 <EmptyTitle>아직 결과가 없습니다.</EmptyTitle>
