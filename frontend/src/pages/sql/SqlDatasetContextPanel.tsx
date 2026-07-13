@@ -7,7 +7,6 @@ import { FieldTitle } from "@/components/ui/field";
 import { FilterToolbarInput, FilterToolbarSearch } from "@/components/ui/filter-toolbar";
 import { PaginationBar } from "@/components/ui/pagination-bar";
 import { Panel, PanelHeader } from "@/components/ui/panel";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { CatalogDataset } from "../../types";
 import styles from "./SqlAnalysisPage.module.css";
@@ -108,8 +107,8 @@ export function SqlDatasetContextPanel({
               <FieldTitle>데이터셋</FieldTitle>
               <div className="relative min-h-0 overflow-hidden">
                 <Panel asChild>
-                  <ScrollArea className={`${styles.datasetScroll} min-h-0`} style={{ inset: 0, position: "absolute" }} type="always">
-                    <div className="grid min-w-0 gap-0 pr-3" ref={contextListRef}>
+                  <div className="absolute inset-0 min-h-0 overflow-hidden">
+                    <div className="h-full min-w-0 pr-1" ref={contextListRef}>
                       <SqlDatasetTree
                         datasets={pageDatasets}
                         expandedDatasetId={expandedDatasetId}
@@ -126,7 +125,7 @@ export function SqlDatasetContextPanel({
                         </Empty>
                       )}
                     </div>
-                  </ScrollArea>
+                  </div>
                 </Panel>
               </div>
               {filteredDatasetCount > contextPageSize && (

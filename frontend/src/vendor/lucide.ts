@@ -64,6 +64,7 @@ export { default as History } from "lucide-react/dist/esm/icons/history.mjs";
 export { default as Info } from "lucide-react/dist/esm/icons/info.mjs";
 export { default as LayoutGrid } from "lucide-react/dist/esm/icons/layout-grid.mjs";
 export { default as LetterText } from "lucide-react/dist/esm/icons/letter-text.mjs";
+export { default as ListChecks } from "lucide-react/dist/esm/icons/list-checks.mjs";
 export { default as Loader2 } from "lucide-react/dist/esm/icons/loader-circle.mjs";
 export { default as LogIn } from "lucide-react/dist/esm/icons/log-in.mjs";
 export { default as LogOut } from "lucide-react/dist/esm/icons/log-out.mjs";
