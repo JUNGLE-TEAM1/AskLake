@@ -10,6 +10,26 @@ export type PermissionGrant = {
   source?: string;
 };
 
+export type PermissionOptionGroup = {
+  actions: PermissionAction[];
+  description?: string;
+  id: string;
+  name: string;
+};
+
+export type PermissionOptionUser = {
+  email: string;
+  id: string;
+  initials: string;
+  name: string;
+  role: string;
+};
+
+export type PermissionOptionsResponse = {
+  groups: PermissionOptionGroup[];
+  users: PermissionOptionUser[];
+};
+
 export type ResourcePermissions = {
   canView: boolean;
   canQuery: boolean;

@@ -43,15 +43,14 @@ export interface SqlJobWizardDialogProps {
 }
 
 const wizardSteps: Array<{
-  description: string;
   icon: typeof Database;
   id: SqlJobWizardStepId;
   label: string;
 }> = [
-  { description: "생성할 데이터셋", icon: Database, id: "dataset", label: "기본 정보" },
-  { description: "실행 주기와 정책", icon: Calendar, id: "schedule", label: "스케줄" },
-  { description: "소유자와 접근 범위", icon: ShieldCheck, id: "governance", label: "거버넌스" },
-  { description: "저장 위치와 결과 확인", icon: HardDrive, id: "review", label: "저장 및 검토" },
+  { icon: Database, id: "dataset", label: "기본 정보" },
+  { icon: Calendar, id: "schedule", label: "스케줄" },
+  { icon: ShieldCheck, id: "governance", label: "거버넌스" },
+  { icon: HardDrive, id: "review", label: "저장 및 검토" },
 ];
 
 export function SqlJobWizardDialog({
@@ -221,10 +220,7 @@ export function SqlJobWizardDialog({
                 <span className={cn("grid size-8 shrink-0 place-items-center rounded-lg", active || complete ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-500")}>
                   {complete ? <Check size={16} /> : <Icon size={16} />}
                 </span>
-                <span className="min-w-0">
-                  <strong className="block truncate text-sm text-slate-950">{step.label}</strong>
-                  <small className="block truncate text-xs text-slate-500">{step.description}</small>
-                </span>
+                <strong className="min-w-0 truncate text-sm text-slate-950">{step.label}</strong>
               </button>
             );
           })}
@@ -262,6 +258,7 @@ export function SqlJobWizardDialog({
 
         {activeStep.id === "review" ? (
           <SqlJobReviewStep
+            baseDataset={baseDataset}
             configuration={configuration}
             disabled={isBusy}
             onStoragePathTouched={() => setStoragePathTouched(true)}

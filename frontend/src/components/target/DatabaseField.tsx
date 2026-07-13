@@ -7,6 +7,7 @@ import { PickerDialog } from "@/components/ui/picker-dialog";
 import { listTargetDatabases, type TargetDatabaseOption } from "../../services/targetDatabaseApi";
 
 type DatabaseFieldProps = {
+  disabled?: boolean;
   onChange: (databaseName: string) => void;
   useShadcnStyles?: boolean;
   value: string;
@@ -25,7 +26,7 @@ function mergeCurrentDatabase(databases: TargetDatabaseOption[], currentName: st
   return [{ description: "현재 설정된 DB", name: normalizedName }, ...databases];
 }
 
-export function DatabaseField({ onChange, useShadcnStyles = false, value }: DatabaseFieldProps) {
+export function DatabaseField({ disabled = false, onChange, useShadcnStyles = false, value }: DatabaseFieldProps) {
   const [pickerOpen, setPickerOpen] = useState(false);
 
   return (
@@ -33,7 +34,7 @@ export function DatabaseField({ onChange, useShadcnStyles = false, value }: Data
       <div className="database-display" title={value}>
         {value.trim() ? <span>{value}</span> : <em>DB를 선택하세요</em>}
       </div>
-      <Button className={useShadcnStyles ? undefined : "secondary-button database-field-action"} type="button" variant="outline" onClick={() => setPickerOpen(true)}>
+      <Button className={useShadcnStyles ? undefined : "secondary-button database-field-action"} disabled={disabled} type="button" variant="outline" onClick={() => setPickerOpen(true)}>
         <Database data-icon="inline-start" />
         찾아보기
       </Button>

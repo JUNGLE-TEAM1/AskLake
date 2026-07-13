@@ -9,20 +9,22 @@ import type { FlowId } from "../../types";
 export function CreationFlowLayout({
   actions,
   children,
+  className,
   side,
   variant,
 }: {
   actions?: React.ReactNode;
   children: React.ReactNode;
+  className?: string;
   side?: React.ReactNode;
   variant?: "permission" | "review";
 }) {
-  const className = ["content-grid", "creation-flow-grid", side ? "" : "creation-flow-grid-no-side", variant === "permission" ? "permission-grid" : "", variant === "review" ? "review-grid" : ""]
+  const layoutClassName = ["content-grid", "creation-flow-grid", side ? "" : "creation-flow-grid-no-side", variant === "permission" ? "permission-grid" : "", variant === "review" ? "review-grid" : "", className]
     .filter(Boolean)
     .join(" ");
 
   return (
-    <div className={className}>
+    <div className={layoutClassName}>
       <div className="content-main">
         {actions && <div className="creation-flow-topbar">{actions}</div>}
         {children}
@@ -38,6 +40,8 @@ export function CreationTopActions({
   onNext,
   onPrev,
   prevLabel = "이전",
+  showPrev = true,
+  split = false,
   useShadcnStyles = false,
 }: {
   nextDisabled?: boolean;
@@ -45,11 +49,13 @@ export function CreationTopActions({
   onNext: () => void;
   onPrev: () => void;
   prevLabel?: string;
+  showPrev?: boolean;
+  split?: boolean;
   useShadcnStyles?: boolean;
 }) {
   return (
-    <CommandBar className="creation-top-actions" density="compact">
-      <Button className={useShadcnStyles ? undefined : "secondary-button"} type="button" variant="outline" onClick={onPrev}>{prevLabel}</Button>
+    <CommandBar className={split ? "creation-top-actions is-split" : "creation-top-actions"} density="compact">
+      {showPrev ? <Button className={useShadcnStyles ? undefined : "secondary-button"} type="button" variant="outline" onClick={onPrev}>{prevLabel}</Button> : null}
       <Button className={useShadcnStyles ? undefined : "primary-button"} type="button" disabled={nextDisabled} onClick={onNext}>{nextLabel}</Button>
     </CommandBar>
   );

@@ -44,6 +44,9 @@ async function runSmoke() {
 
   await waitForHealth();
   await cleanupPrincipalGrants(viewerHeaders["X-AskLake-User"]);
+  const permissionOptions = await get("/api/etl/permission-options");
+  assert(permissionOptions.groups.some((group) => group.id === "data-platform"), "Permission options should expose backend groups.");
+  assert(permissionOptions.users.some((user) => user.id === "demo-user"), "Permission options should expose backend users.");
 
   const suffix = Date.now().toString(36);
   const jobPayload = buildSmokeJobPayload(suffix);
@@ -69,6 +72,11 @@ async function verifyJobPermissions(jobId, jobPayload) {
   const adminPermissions = await get("/api/admin/permissions");
   const jobResource = adminPermissions.resources.find((resource) => resource.resourceType === "etl_job" && resource.resourceId === jobId);
   assert(jobResource, `Admin permissions should include etl_job ${jobId}.`);
+  const permissionUiGrant = jobResource.grants.find((grant) => (
+    grant.principalType === "user" && grant.principalId === "permission-ui-user"
+  ));
+  assert(permissionUiGrant?.source === "permission_ui", "Create flow permission grant should be persisted with permission_ui source.");
+  assert(permissionUiGrant.actions.includes("run"), "Create flow permission grant should preserve requested actions.");
 
   const manageGrant = await createGrant({
     actions: ["manage"],
@@ -240,6 +248,12 @@ function buildSmokeJobPayload(suffix) {
     jobName: `Permission Job Dashboard Smoke ${suffix}`,
     owner: "admin",
     permissionRoles: [],
+    permissionGrants: [{
+      actions: ["view", "run"],
+      principalId: "permission-ui-user",
+      principalType: "user",
+      source: "permission_ui",
+    }],
     permissionSummary: "admin only",
     rag: false,
     retryPolicy: { backoffMultiplier: 2, backoffStrategy: "exponential", failureAction: "retry_then_fail", initialRetryDelayMinutes: 1, maxRetries: 0, maxRetryDelayMinutes: 30, retryIntervalMinutes: 1, timeoutMinutes: 60 },

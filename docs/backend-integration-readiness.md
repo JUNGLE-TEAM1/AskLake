@@ -13,7 +13,7 @@ FastAPI 전환의 공통 구조와 의사결정은 `docs/backend-fastapi-transit
 | 새 수집/처리 생성 | Source -> Schema -> Rule -> Schedule -> Permission -> Target -> Review -> Create가 `POST /api/etl/jobs`로 연결되고 `etl_jobs`에 저장. 응답의 `catalogTarget`은 pending identity이며 아직 Catalog row를 만들지 않음 | 중간 단계별 서버 저장 API는 후속 범위 |
 | Target 저장경로 선택 | `GET /api/s3/buckets`, `GET /api/s3/prefixes`로 S3 bucket/prefix를 서버에서 lazy 조회하고 `target.storagePath` string에 반영. EC2 prod compose는 MinIO를 S3-compatible endpoint로 제공하고 서버 `deploy/.env`의 `S3_ALLOWED_BUCKETS` allowlist를 사용 | 운영 IAM/credential rotation, external S3 전환 |
 | Target DB 선택 | `GET /api/target/databases`로 허용 DB 목록을 조회하고 `target.databaseName` string에 반영. 테이블명 입력은 노출하지 않고 datasetName을 create payload 호환값으로 사용 | 운영 catalog DB 목록/권한 API |
-| Source/Schema | mock mode에서는 `SourceConnectorAnalysis` fallback으로 schema/sampleRows 반영, live mode에서는 `POST /api/etl/sources/test`로 실제 connector 확인. PostgreSQL은 인라인 10행과 전체 row count를 반환하고 `POST /api/etl/sources/rows`로 전체 상한 없는 100행 단위 Dialog paging을 제공. MongoDB connector는 Node MongoDB driver로 컬렉션과 제한 문서 샘플을 조회하며, 사용자가 선택한 File / S3 Parquet 객체는 Spark reader로 물리 스키마를 읽음 | Kafka message payload sampling, 다중 Parquet 파일의 통합 스키마 추론 |
+| Source/Schema | mock mode에서는 `SourceConnectorAnalysis` fallback으로 schema/sampleRows 반영, live mode에서는 `POST /api/etl/sources/test`로 실제 connector 확인. PostgreSQL은 인라인 10행과 전체 row count를 반환하고 `POST /api/etl/sources/rows`로 전체 상한 없는 100행 단위 Dialog paging을 제공. MongoDB connector는 Node MongoDB driver로 컬렉션과 제한 문서 샘플을 조회하며, 사용자가 선택한 File / S3 Parquet 객체는 Spark reader로 물리 스키마를 읽음. `npm run minio:seed-click-log`는 조건부 1.5단계 개발용 헤더 없는 공백 구분 click event TXT 100줄을 `m3-raw`에 준비함. `.txt`/`.log` raw sample은 조건부 `Record Parsing` 단계에서 `POST /api/etl/record-parsing/preview`로 검증하고 확정 규칙을 Job과 Spark batch runtime에 전달함 | Kafka Snapshot/Continuous 원시 TXT 구조화, 임의 정규식, 오류 행 quarantine·재처리, 다중 Parquet 파일의 통합 스키마 추론 |
 | Rule | 현재 schema/sampleRows 기반 preview, create payload에 transform/quality detail 포함 | 별도 backend rule preview API |
 | Job command | Kafka Snapshot Job은 `POST /api/etl/jobs/{jobId}/commands`의 run/retry로 fixed range ingest를 실행하고, non-Kafka Job은 Airflow DAG Run을 접수. Continuous Kafka Job은 Docker로 long-running Spark Structured Streaming submit container를 시작하거나 signal을 보내며, S3A checkpoint, `_SUCCESS` + offset manifest 게시, Catalog 복구, partition lag/throughput/schema drift report, bounded worker log, policy-aware quarantine replay, lease 기반 maintenance, non-destructive compaction을 제공 | pause/cancel의 실제 Airflow/Spark interrupt, production soak, async Airflow maintenance scheduling, compaction retention switch |
 | Run/DAG | local Airflow DAG가 token-authenticated FastAPI internal API를 통해 실제 PySpark를 실행하고 MinIO/S3 Parquet를 생성. `publish_run_result`가 Catalog endpoint를 호출하고 `GET /api/etl/jobs/{jobId}`가 DAG/task/Spark/Catalog evidence를 동기화. Continuous는 start-to-terminal session과 하위 micro-batch 이력을 별도 table/API로 영속화하고 active 실행 이력 화면을 자동 갱신 | Spark log object storage 분리, session history 장기 retention/pagination |
@@ -215,6 +215,8 @@ python3 scripts/verify-etl-job-hydrate-contract.py
 python3 scripts/verify-etl-job-update-contract.py
 npm run verify:sources
 npm run verify:spark-run
+npm run verify:record-parsing
+npm run verify:record-parsing:e2e
 ```
 
 FastAPI Pair2 smoke:
@@ -232,6 +234,8 @@ FastAPI Pair2 smoke:
 - `npm run verify:etl-lineage`는 text source 하나가 `text`, `sentiment`, `severity`로 파생되는 경우 source node가 `text`만 갖고 one-to-many transform edge를 만들며 `_asklake_*` metadata에 가짜 source edge를 만들지 않는지 확인한다. 또한 Parquet source를 `SOURCE · PARQUET`, Spark Job을 `PROCESS · SPARK`, 현재 Spark physical output을 요청 포맷과 무관하게 실제 `PARQUET` engine으로 표시하는지 검증한다.
 - `python3 scripts/verify-etl-job-hydrate-contract.py`는 저장된 Kafka source/schema/rule/permission/target metadata가 `JobRowData` hydrate 응답에서 손실되지 않는지 확인한다.
 - `python3 scripts/verify-etl-job-update-contract.py`는 update request가 source field를 거부하고 source config를 보존한 채 editable metadata만 반영하는지, 성공 Run 뒤 target identity 변경이 `422`로 막히는지, 실행 중 update가 `409`로 막히는지 확인한다.
+- `npm run verify:record-parsing`은 공백 구분 규칙의 10필드 추론, 타입 추론, 사용자 컬럼명 반영, 필드 개수가 다른 행의 line/count 오류 계약을 FastAPI service 수준에서 확인한다.
+- `npm run verify:record-parsing:e2e`는 `s3://m3-raw/asklake-fixtures/txt/click-events-whitespace-100.log`를 실제 Source API로 읽고 Preview 100/100, Job 계약 저장, Airflow/Spark input/output 100행, MinIO Parquet, Catalog의 10개 사용자 컬럼을 확인한다. 실행 중인 FastAPI/Airflow와 올바른 `ASKLAKE_DOCKER_NETWORK`가 필요하다.
 
 Frontend:
 
@@ -468,3 +472,13 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 - SQL engine read-only guard 고도화
 - Dashboard 권한/공유/export API
 - Audit log server persistence
+## ETL Permission create-flow readiness
+
+- [x] `GET /api/etl/permission-options` 그룹·사용자 경량 조회
+- [x] admin actor guard와 `403 FORBIDDEN`
+- [x] create/update `permissionGrants` validation
+- [x] `permission_ui` grant 저장 및 교체
+- [x] admin source grant 보존
+- [x] 생성·수정 응답과 접근 판정에 persisted grant 병합
+- [x] `backend/scripts/verify-permission-create-flow-contract.py` 생성·교체 계약 검증
+- [ ] Docker/PostgreSQL 기반 `verify:permission-job-dashboard` 전체 스모크는 metadata DB가 응답 가능한 환경에서 실행

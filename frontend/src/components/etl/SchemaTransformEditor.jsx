@@ -1,14 +1,45 @@
 import React, { useState, useEffect, useRef } from "react";
 import {
-  ChevronRight,
-  ChevronsRight,
-  ChevronUp,
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  arrayMove,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import {
   ChevronDown,
-  Braces,
+  ChevronRight,
+  ChevronUp,
+  ChevronsRight,
+  GripVertical,
+  AlertCircle,
+  CheckCircle2,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Play,
+  Search,
+  Sparkles,
+  SlidersHorizontal,
   Trash2,
 } from "lucide-react";
 import TransformFunctionModal from "./TransformFunctionModal";
+import { EtlStepHeader } from "./EtlStepHeader";
+import InlineAIInput from "../ai/InlineAIInput";
+import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
+import { apiConfig } from "@/services/apiClient";
+import askLakeNessiIconUrl from "../../assets/asklake-nessi-icon.png";
 
 /**
  * SchemaTransformEditor - Dual List Box style schema transformation UI
@@ -46,6 +77,55 @@ const normalizeType = (type) => {
 
 const FIELD_ONLY_TRANSFORMS = new Set(["Default Value", "Null Guard"]);
 
+const dataTypeBadgeClass = (type) => {
+  const normalized = normalizeType(type);
+  if (["integer", "long", "float", "double", "decimal", "number"].includes(normalized)) {
+    return "border-blue-200 bg-blue-50 text-blue-700";
+  }
+  if (["date", "timestamp", "datetime", "time"].includes(normalized)) {
+    return "border-teal-200 bg-teal-50 text-teal-700";
+  }
+  if (["boolean", "bool"].includes(normalized)) {
+    return "border-amber-200 bg-amber-50 text-amber-700";
+  }
+  if (["array", "map", "struct", "object", "json"].includes(normalized)) {
+    return "border-slate-200 bg-slate-100 text-slate-700";
+  }
+  return "border-sky-200 bg-sky-50 text-sky-700";
+};
+
+const DataTypeBadge = ({ type }) => (
+  <Badge
+    className={`shrink-0 font-mono ${dataTypeBadgeClass(type)}`}
+    shape="compact"
+    size="sm"
+    variant="outline"
+  >
+    {normalizeType(type)}
+  </Badge>
+);
+
+const SortableTargetColumn = ({ id, className, children }) => {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id });
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      className={`${className} ${isDragging ? "relative z-10 shadow-lg ring-2 ring-blue-300" : ""}`}
+    >
+      {children({ attributes, listeners })}
+    </div>
+  );
+};
+
 const formatTransformChainStep = (step) => {
   if (!step) return "";
   if (step.display) return step.display;
@@ -76,11 +156,14 @@ const dataTransformChain = (chain) => (Array.isArray(chain) ? chain.filter((step
 
 export default function SchemaTransformEditor({
   sourceSchema = [],
+  sourceSampleRows = [],
   sourceName = "Source",
   sourceId,
   sourceDatasetId,
   targetSchema = [],
+  qualityRules = [],
   onSchemaChange,
+  onQualityRulesChange,
   onTestStatusChange,
   onSqlChange,
   initialTargetSchema = [],
@@ -102,6 +185,62 @@ export default function SchemaTransformEditor({
   // Tab UI: Column Selection vs SQL Transform
   const [activeTab, setActiveTab] = useState("columns"); // 'columns' | 'sql'
   const [customSql, setCustomSql] = useState("");
+  const [sourceQuery, setSourceQuery] = useState("");
+  const [sourceType, setSourceType] = useState("all");
+  const [sqlSourceQuery, setSqlSourceQuery] = useState("");
+  const [sqlSourceCollapsed, setSqlSourceCollapsed] = useState(false);
+  const [showSqlAssistant, setShowSqlAssistant] = useState(false);
+  const [sqlPreviewVisible, setSqlPreviewVisible] = useState(false);
+  const [sqlPreviewPanelOpen, setSqlPreviewPanelOpen] = useState(true);
+  const [sqlValidation, setSqlValidation] = useState({ tone: "idle", message: "SQL 입력 후 문법 검증을 실행하세요." });
+  const lastVisualSqlRef = useRef("");
+  const dragSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  const sourceTypes = [...new Set(beforeColumns.map((column) => column.type))].sort();
+  const filteredBeforeColumns = beforeColumns.filter((column) => {
+    const matchesQuery = column.name.toLowerCase().includes(sourceQuery.trim().toLowerCase());
+    const matchesType = sourceType === "all" || column.type === sourceType;
+    return matchesQuery && matchesType;
+  });
+  const filteredSqlSources = sourceSchema.filter((column) => {
+    const name = String(column.name || column.field || "");
+    return name.toLowerCase().includes(sqlSourceQuery.trim().toLowerCase());
+  });
+
+  const validateCustomSql = () => {
+    const normalized = customSql.trim().toLowerCase();
+    if (!normalized.startsWith("select")) {
+      setSqlValidation({ tone: "error", message: "SELECT 문으로 시작해야 합니다." });
+      return false;
+    }
+    if (!/\bfrom\s+input\b/i.test(customSql)) {
+      setSqlValidation({ tone: "error", message: "소스 테이블은 FROM input으로 참조해야 합니다." });
+      return false;
+    }
+    setSqlValidation({ tone: "success", message: "Spark SQL 기본 문법과 input 참조를 확인했습니다." });
+    return true;
+  };
+
+  const insertSqlColumn = (columnName) => {
+    const editor = document.getElementById("schema-sql-transform-editor");
+    if (!editor) return;
+    const start = editor.selectionStart ?? customSql.length;
+    const end = editor.selectionEnd ?? start;
+    const nextSql = `${customSql.slice(0, start)}${columnName}${customSql.slice(end)}`;
+    setCustomSql(nextSql);
+    window.requestAnimationFrame(() => {
+      editor.focus();
+      editor.setSelectionRange(start + columnName.length, start + columnName.length);
+    });
+  };
+
+  const runSqlPreview = () => {
+    if (!validateCustomSql()) return;
+    setSqlPreviewVisible(true);
+  };
 
   // Initialize beforeColumns when sourceSchema changes (source tab switches)
   useEffect(() => {
@@ -113,6 +252,10 @@ export default function SchemaTransformEditor({
       }));
       setBeforeColumns(columns);
       // Clear selections when source changes
+      setSelectedBefore(new Set());
+      setSelectedAfter(new Set());
+    } else {
+      setBeforeColumns([]);
       setSelectedBefore(new Set());
       setSelectedAfter(new Set());
     }
@@ -312,19 +455,13 @@ export default function SchemaTransformEditor({
     setSelectedAfter(checked ? new Set(targetSchema.map(targetColumnKey)) : new Set());
   };
 
-  // Reorder handlers
-  const moveUp = (index) => {
-    if (index <= 0) return;
-    const next = [...targetSchema];
-    [next[index - 1], next[index]] = [next[index], next[index - 1]];
-    onSchemaChange(next);
-  };
-
-  const moveDown = (index) => {
-    if (index >= targetSchema.length - 1) return;
-    const next = [...targetSchema];
-    [next[index], next[index + 1]] = [next[index + 1], next[index]];
-    onSchemaChange(next);
+  const handleTargetDragEnd = ({ active, over }) => {
+    if (!over || active.id === over.id) return;
+    const oldIndex = targetSchema.findIndex((column) => targetColumnKey(column) === active.id);
+    const newIndex = targetSchema.findIndex((column) => targetColumnKey(column) === over.id);
+    if (oldIndex < 0 || newIndex < 0) return;
+    onSchemaChange(arrayMove(targetSchema, oldIndex, newIndex));
+    if (onTestStatusChange) onTestStatusChange(false);
   };
 
   // Column property handlers
@@ -341,11 +478,23 @@ export default function SchemaTransformEditor({
     setShowFunctionModal(true);
   };
 
+  const syncColumnQualityRules = (existing, nextName, nextRules) => {
+    if (!onQualityRulesChange || !Array.isArray(nextRules)) return;
+    const aliases = new Set([existing.name, existing.originalName].filter(Boolean));
+    const retainedRules = qualityRules.filter((rule) => !aliases.has(rule.targetColumn));
+    onQualityRulesChange([
+      ...retainedRules,
+      ...nextRules.map((rule) => ({ ...rule, targetColumn: nextName })),
+    ]);
+  };
+
   // Apply transform function
   const applyTransform = (transformExpr, newName, newType, transformMeta = {}) => {
     if (editingColumn) {
       const next = [...targetSchema];
       const existing = next[editingColumn.index];
+      const nextName = newName || existing.name;
+      syncColumnQualityRules(existing, nextName, transformMeta.qualityRules);
       if (transformMeta.mode === "csvMultiOutput" && Array.isArray(transformMeta.columns)) {
         const sourceField = transformMeta.sourceField || existing.originalName || existing.sourceName || existing.name || newName;
         const outputColumns = transformMeta.columns
@@ -461,10 +610,10 @@ export default function SchemaTransformEditor({
       const display = chain.map(formatTransformChainStep).filter(Boolean).join(" -> ");
       next[editingColumn.index] = {
         ...existing,
-        name: newName || existing.name,
+        name: nextName,
         type: newType || transformMeta.type || existing.type,
         defaultValue: defaultStep ? defaultStep.params : existing.defaultValue,
-        notNull: hasNullGuard ? true : existing.notNull,
+        notNull: typeof transformMeta.required === "boolean" ? transformMeta.required : hasNullGuard ? true : existing.notNull,
         onError: dataStep?.onError || transformMeta.onError || existing.onError || "Warn",
         transform: dataStep?.expression || (dataStep?.operation === "SQL Expression" ? dataStep.params : null),
         transformChain: chain,
@@ -574,33 +723,39 @@ export default function SchemaTransformEditor({
   useEffect(() => {
     if (onSqlChange && activeTab === "columns" && targetSchema.length > 0) {
       const sql = generateSql();
+      if (lastVisualSqlRef.current === sql) return;
+      lastVisualSqlRef.current = sql;
       onSqlChange(sql, "columns");
     }
   }, [targetSchema, activeTab]);
 
   return (
-    <div className="flex flex-col bg-gray-50 rounded-lg border border-gray-200">
+    <div className="flex flex-col overflow-hidden bg-gray-50 rounded-lg border border-gray-200">
+      <EtlStepHeader
+        icon={<SlidersHorizontal />}
+        title="변환 설정"
+      />
       {/* Tab Header */}
-      <div className="flex border-b border-slate-200 bg-white rounded-t-lg">
+      <div className="flex border-b border-slate-200 bg-white">
         <button
           onClick={() => setActiveTab("columns")}
-          className={`flex-1 px-6 py-3 text-sm font-semibold transition-all border-b-2 ${
+          className={`flex-1 px-6 py-3.5 text-base font-semibold transition-all border-b-2 ${
             activeTab === "columns"
-              ? "text-indigo-700 border-indigo-600 bg-indigo-50/30"
-              : "text-slate-600 border-transparent hover:text-slate-900 hover:bg-slate-50"
+              ? "text-blue-700 border-blue-600 bg-blue-50/60"
+              : "text-slate-600 border-transparent hover:text-blue-700 hover:bg-blue-50/40"
           }`}
         >
-          Visual Transform
+          비주얼 변환
         </button>
         <button
           onClick={() => setActiveTab("sql")}
-          className={`flex-1 px-6 py-3 text-sm font-semibold transition-all border-b-2 ${
+          className={`flex-1 px-6 py-3.5 text-base font-semibold transition-all border-b-2 ${
             activeTab === "sql"
-              ? "text-indigo-700 border-indigo-600 bg-indigo-50/30"
-              : "text-slate-600 border-transparent hover:text-slate-900 hover:bg-slate-50"
+              ? "text-blue-700 border-blue-600 bg-blue-50/60"
+              : "text-slate-600 border-transparent hover:text-blue-700 hover:bg-blue-50/40"
           }`}
         >
-          SQL Transform
+          SQL 변환
         </button>
       </div>
 
@@ -608,12 +763,13 @@ export default function SchemaTransformEditor({
       {activeTab === "columns" && (
         <div className="flex flex-1 p-4 gap-4 min-h-[500px]">
           {/* Before Schema (Left) */}
-          <div className="flex-1 basis-0 flex flex-col bg-white rounded-xl border border-slate-200 shadow-sm transition-all overflow-hidden min-w-0">
-            <div className="px-4 py-3 border-b border-slate-200 bg-slate-50/50 flex items-center justify-between">
-              <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-2">
-                <span className="w-1 h-3 bg-indigo-600 rounded-full"></span>
+          <div className="flex-1 basis-0 flex flex-col bg-white rounded-xl border-2 border-blue-300 shadow-sm transition-all overflow-hidden min-w-0 focus-within:border-blue-400 focus-within:ring-2 focus-within:ring-blue-100">
+            <div className="flex items-center justify-between border-b border-blue-200 bg-blue-50 px-4 py-3.5">
+              <h3 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-blue-950">
+                <span className="w-1 h-3 bg-blue-600 rounded-full"></span>
                 Before (Source)
               </h3>
+              <span className="text-xs font-bold text-blue-700">{beforeColumns.length}개 필드</span>
             </div>
 
             {/* Source tabs for switching between multiple sources */}
@@ -622,57 +778,65 @@ export default function SchemaTransformEditor({
                 {sourceTabs}
               </div>
             )}
+            <div className="grid grid-cols-[minmax(0,1fr)_132px] gap-2 border-b border-slate-100 bg-white p-3">
+              <label className="relative min-w-0">
+                <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="search"
+                  value={sourceQuery}
+                  onChange={(event) => setSourceQuery(event.target.value)}
+                  placeholder="필드 검색"
+                  className="h-9 w-full rounded-md border border-slate-200 bg-white pl-9 pr-3 text-sm font-semibold text-slate-800 outline-none transition-colors placeholder:text-slate-400 focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                />
+              </label>
+              <Select value={sourceType} onValueChange={setSourceType}>
+                <SelectTrigger aria-label="소스 필드 타입 필터" className="h-9 w-full bg-white text-sm font-semibold">
+                  <SelectValue placeholder="모든 타입" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">모든 타입</SelectItem>
+                  {sourceTypes.map((type) => <SelectItem key={type} value={type}>{type}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid grid-cols-[28px_minmax(0,1fr)_110px] items-center border-b border-slate-100 bg-slate-50/60 px-3 py-2 text-[11px] font-bold uppercase text-slate-500">
+              <span />
+              <span>필드</span>
+              <span className="text-center">타입</span>
+            </div>
             <div className="flex-1 overflow-y-auto p-2">
-              {beforeColumns.length === 0 ? (
-                <div className="flex items-center justify-center h-full text-gray-400 text-sm">
-                  All columns moved to target
+              {filteredBeforeColumns.length === 0 ? (
+                <div className="flex h-full items-center justify-center text-sm font-semibold text-slate-400">
+                  검색 조건에 맞는 필드가 없습니다.
                 </div>
               ) : (
-                <div className="space-y-1">
-                  {beforeColumns.map((col) => {
+                <div className="divide-y divide-slate-100 overflow-hidden rounded-lg border border-slate-200 bg-white">
+                  {filteredBeforeColumns.map((col) => {
                     const isInTarget = isColumnInTarget(col.name);
                     const isSelected = selectedBefore.has(col.name);
                     return (
                       <div
                         key={col.name}
                         onClick={() => toggleBeforeSelection(col.name)}
-                        className={`flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-all border ${
+                        className={`grid min-h-11 cursor-pointer grid-cols-[28px_minmax(0,1fr)_110px] items-center px-3 py-2 transition-colors ${
                           isSelected
-                            ? "bg-indigo-50 border-indigo-200 shadow-sm"
-                            : "bg-white border-transparent hover:bg-slate-50"
+                            ? "bg-blue-50"
+                            : "bg-white hover:bg-slate-50"
                         }`}
                       >
-                        <div
-                          className={`w-4 h-4 rounded border transition-colors flex items-center justify-center ${
-                            isSelected
-                              ? "bg-indigo-600 border-indigo-600"
-                              : "bg-white border-slate-300"
-                          }`}
-                        >
-                          {isSelected && (
-                            <div className="w-1.5 h-1.5 bg-white rounded-full"></div>
-                          )}
+                        <Checkbox
+                          aria-label={`${col.name} 소스 필드 선택`}
+                          checked={isSelected}
+                          onClick={(event) => event.stopPropagation()}
+                          onCheckedChange={() => toggleBeforeSelection(col.name)}
+                        />
+                        <div className="flex min-w-0 items-center gap-2 pr-3">
+                          <span className={`truncate text-sm font-bold ${isSelected ? "text-blue-950" : "text-slate-900"}`}>
+                            {col.name}
+                          </span>
+                          {isInTarget && <span className="size-1.5 shrink-0 rounded-full bg-emerald-500" title="타겟 포함" />}
                         </div>
-                        <div className="flex flex-col min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span
-                              className={`font-semibold text-sm truncate ${isSelected ? "text-indigo-900" : "text-slate-700"}`}
-                            >
-                              {col.name}
-                            </span>
-                            {isInTarget && (
-                              <span
-                                className="w-1.5 h-1.5 rounded-full bg-slate-300 shrink-0"
-                                title="Already in target"
-                              ></span>
-                            )}
-                          </div>
-                        </div>
-                        <span
-                          className={`ml-auto px-1.5 py-0.5 text-[10px] font-bold rounded font-mono shrink-0 ${isSelected ? "bg-indigo-100 text-indigo-700" : "bg-slate-100 text-slate-500"}`}
-                        >
-                          {col.type}
-                        </span>
+                        <span className="justify-self-center"><DataTypeBadge type={col.type} /></span>
                       </div>
                     );
                   })}
@@ -686,75 +850,100 @@ export default function SchemaTransformEditor({
             <button
               onClick={moveSelectedToRight}
               disabled={selectedBefore.size === 0}
-              className="p-2 rounded-md bg-white border border-gray-300 hover:bg-blue-50 hover:border-blue-300 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="rounded-md border-2 border-blue-400 bg-blue-50 p-2 text-blue-700 shadow-sm transition-colors hover:border-blue-600 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50"
               title="Move selected"
             >
-              <ChevronRight className="w-5 h-5 text-gray-600" />
+              <ChevronRight className="w-5 h-5" />
             </button>
             <button
               onClick={moveAllToRight}
               disabled={beforeColumns.length === 0}
-              className="p-2 rounded-md bg-white border border-gray-300 hover:bg-blue-50 hover:border-blue-300 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="rounded-md border-2 border-blue-400 bg-blue-50 p-2 text-blue-700 shadow-sm transition-colors hover:border-blue-600 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50"
               title="Move all"
             >
-              <ChevronsRight className="w-5 h-5 text-gray-600" />
+              <ChevronsRight className="w-5 h-5" />
             </button>
             <div className="h-4" />
             <button
               onClick={moveSelectedToLeft}
               disabled={selectedAfter.size === 0}
-              className="p-2 rounded-md bg-white border border-gray-300 hover:bg-red-50 hover:border-red-300 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="rounded-md border-2 border-red-400 bg-red-50 p-2 text-red-600 shadow-sm transition-colors hover:border-red-600 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
               aria-label="Remove selected target columns"
               title="Remove selected target columns"
             >
-              <Trash2 className="w-5 h-5 text-gray-600" />
+              <Trash2 className="w-5 h-5" />
             </button>
           </div>
 
           {/* After Schema (Right) */}
-          <div className="flex-1 basis-0 flex flex-col bg-white rounded-xl border border-slate-200 shadow-sm transition-all overflow-hidden min-w-0">
-            <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-slate-200 bg-slate-50/50">
-              <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-2">
-                <span className="w-1 h-3 bg-indigo-600 rounded-full"></span>
+          <div className="flex-1 basis-0 flex flex-col bg-white rounded-xl border-2 border-blue-300 shadow-sm transition-all overflow-hidden min-w-0 focus-within:border-blue-400 focus-within:ring-2 focus-within:ring-blue-100">
+            <div className="flex items-center justify-between gap-3 border-b border-blue-200 bg-blue-50 px-4 py-3.5">
+              <h3 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-blue-950">
+                <span className="w-1 h-3 bg-blue-600 rounded-full"></span>
                 After (Target)
               </h3>
-              <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-slate-600">
+              <div className="flex items-center gap-3">
+                <span className="text-xs font-bold text-blue-700">{targetSchema.length}개 필드</span>
+                <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-slate-600">
                 <Checkbox
-                  aria-label="전체 타겟 컬럼 선택"
+                  aria-label="전체 타겟 필드 선택"
                   checked={targetSchema.length > 0 && selectedAfter.size === targetSchema.length ? true : selectedAfter.size > 0 ? "indeterminate" : false}
                   disabled={targetSchema.length === 0}
                   onCheckedChange={(checked) => toggleAllTargetColumns(checked === true)}
                 />
                 전체 선택
-              </label>
+                </label>
+              </div>
             </div>
             <div className="flex-1 overflow-y-auto p-2">
               {targetSchema.length === 0 ? (
-                <div className="flex items-center justify-center h-full text-gray-400 text-sm">
-                  Select columns from the left
+                <div className="flex h-full items-center justify-center text-sm font-semibold text-slate-400">
+                  왼쪽에서 출력할 필드를 선택하세요.
                 </div>
               ) : (
+                <DndContext
+                  sensors={dragSensors}
+                  collisionDetection={closestCenter}
+                  onDragEnd={handleTargetDragEnd}
+                >
+                  <SortableContext
+                    items={targetSchema.map(targetColumnKey)}
+                    strategy={verticalListSortingStrategy}
+                  >
                 <div className="space-y-2">
                   {targetSchema.map((col, index) => (
-                    <div
+                    <SortableTargetColumn
                       key={targetColumnKey(col)}
-                      className={`p-2.5 rounded-xl border transition-all ${
+                      id={targetColumnKey(col)}
+                      className={`rounded-lg border px-3 py-2.5 transition-all ${
                         selectedAfter.has(targetColumnKey(col))
-                          ? "bg-slate-50 border-indigo-300 shadow-sm ring-1 ring-indigo-300"
+                          ? "bg-slate-50 border-blue-300 shadow-sm ring-1 ring-blue-300"
                           : col.expandedFrom
-                            ? "bg-indigo-50/60 border-indigo-200 hover:border-indigo-300"
+                            ? "bg-blue-50/60 border-blue-200 hover:border-blue-300"
                             : "bg-white border-slate-200 hover:border-slate-300"
-                      }`}
+                          }`}
                     >
+                      {({ attributes, listeners }) => (
+                      <>
                       {/* Column Header */}
                       <div className="flex items-center gap-2 mb-2">
+                        <button
+                          type="button"
+                          className="touch-none cursor-grab rounded-md p-1 text-slate-400 transition-colors hover:bg-blue-50 hover:text-blue-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 active:cursor-grabbing"
+                          aria-label={`${col.name} 순서 변경`}
+                          title="드래그하여 필드 순서 변경"
+                          {...attributes}
+                          {...listeners}
+                        >
+                          <GripVertical className="h-4 w-4" />
+                        </button>
                         <Checkbox
                           aria-label={`${col.name} 선택`}
                           checked={selectedAfter.has(targetColumnKey(col))}
                           onCheckedChange={() => toggleAfterSelection(targetColumnKey(col))}
                         />
                         {col.expandedFrom && (
-                          <span className="shrink-0 rounded-full bg-indigo-100 px-2 py-1 text-[10px] font-bold text-indigo-700" title={`Expanded from ${col.expandedFrom}`}>
+                          <span className="shrink-0 rounded-full bg-blue-100 px-2 py-1 text-[10px] font-bold text-blue-700" title={`Expanded from ${col.expandedFrom}`}>
                             expanded {col.expandedIndex || index + 1}/{col.expandedTotal || 1}
                           </span>
                         )}
@@ -764,49 +953,22 @@ export default function SchemaTransformEditor({
                           onChange={(e) =>
                             updateColumnProperty(index, "name", e.target.value)
                           }
-                          className="flex-1 px-1.5 py-1 text-sm font-semibold text-slate-900 bg-white border border-slate-200 rounded-md focus:outline-none focus:border-indigo-500 transition-colors"
+                          className="flex-1 px-1.5 py-1 text-sm font-semibold text-slate-900 bg-white border border-slate-200 rounded-md focus:outline-none focus:border-blue-500 transition-colors"
                         />
-                        <select
-                          value={col.type}
-                          onChange={(e) =>
-                            updateColumnProperty(index, "type", e.target.value)
-                          }
-                          className="px-1 py-1 text-[10px] font-bold border border-slate-200 rounded-md bg-white text-slate-700 focus:outline-none focus:border-indigo-500 transition-colors"
-                        >
-                          <option value="string">string</option>
-                          <option value="integer">integer</option>
-                          <option value="long">long</option>
-                          <option value="double">double</option>
-                          <option value="boolean">boolean</option>
-                          <option value="timestamp">timestamp</option>
-                          <option value="date">date</option>
-                        </select>
-                        {/* Transform Function Button */}
+                        <DataTypeBadge type={col.type} />
+                        {/* Field Rule Button */}
                         <button
                           onClick={() => openFunctionEditor(col, index)}
-                          className={`p-1.5 rounded transition-colors ${
+                          className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border px-2.5 text-xs font-bold transition-colors ${
                             col.transform || col.transformOperation || dataTransformChain(col.transformChain).length
-                              ? "bg-purple-100 text-purple-600 hover:bg-purple-200"
-                              : "bg-gray-100 text-gray-500 hover:bg-gray-200"
+                              ? "border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100"
+                              : "border-slate-200 bg-white text-slate-600 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
                           }`}
-                          title="Add transform function"
+                          aria-label={`${col.name} 필드 규칙 설정`}
+                          title="필드 규칙 설정"
                         >
-                          <Braces className="w-4 h-4" />
-                        </button>
-                        {/* Reorder Buttons */}
-                        <button
-                          onClick={() => moveUp(index)}
-                          disabled={index === 0}
-                          className="p-1 rounded hover:bg-gray-200 disabled:opacity-30 disabled:cursor-not-allowed"
-                        >
-                          <ChevronUp className="w-4 h-4 text-gray-500" />
-                        </button>
-                        <button
-                          onClick={() => moveDown(index)}
-                          disabled={index === targetSchema.length - 1}
-                          className="p-1 rounded hover:bg-gray-200 disabled:opacity-30 disabled:cursor-not-allowed"
-                        >
-                          <ChevronDown className="w-4 h-4 text-gray-500" />
+                          <SlidersHorizontal className="h-3.5 w-3.5" />
+                          필드 규칙
                         </button>
                       </div>
 
@@ -854,9 +1016,13 @@ export default function SchemaTransformEditor({
                           </span>
                         )}
                       </div>
-                    </div>
+                      </>
+                      )}
+                    </SortableTargetColumn>
                   ))}
                 </div>
+                  </SortableContext>
+                </DndContext>
               )}
             </div>
           </div>
@@ -865,88 +1031,185 @@ export default function SchemaTransformEditor({
 
       {/* SQL Transform Tab */}
       {activeTab === "sql" && (
-        <div className="flex flex-1 p-4 gap-4 min-h-[500px]">
-          {/* Left: Source Panel (Read-only reference) */}
-          <div className="w-1/3 flex flex-col bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-            <div className="px-4 py-3 border-b border-slate-200 bg-slate-50/50">
-              <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-2">
-                <span className="w-1 h-3 bg-indigo-600 rounded-full"></span>
-                Available Sources
-              </h3>
-            </div>
-            <div className="flex-1 overflow-y-auto p-4">
-              {allSources && allSources.length > 0 ? (
-                <div className="space-y-4">
-                  {allSources.map((source, idx) => (
-                    <div
-                      key={source.id || idx}
-                      className="border border-slate-200 rounded-lg p-3 bg-slate-50/30"
-                    >
-                      <h4 className="text-sm font-semibold text-slate-900 mb-2">
-                        {source.name}
-                      </h4>
-                      {source.schema && source.schema.length > 0 ? (
-                        <ul className="space-y-1">
-                          {source.schema.map((col, colIdx) => (
-                            <li
-                              key={colIdx}
-                              className="flex items-center justify-between text-xs"
-                            >
-                              <span className="text-slate-700 font-mono">
-                                {col.name}
-                              </span>
-                              <span className="text-slate-500 text-[10px]">
-                                {col.type}
-                              </span>
-                            </li>
-                          ))}
-                        </ul>
-                      ) : (
-                        <p className="text-xs text-slate-400 italic">
-                          No schema available
-                        </p>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="flex items-center justify-center h-full text-slate-400 text-sm">
-                  No sources available
-                </div>
+        <div className="flex flex-1 flex-col gap-4 p-4 min-h-[500px]">
+          <div className={`grid min-h-[440px] gap-4 ${sqlSourceCollapsed ? "grid-cols-[52px_minmax(0,1fr)]" : "grid-cols-[minmax(220px,28%)_minmax(0,1fr)]"}`}>
+            <section className="flex min-w-0 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+              <div className={`flex items-center border-b border-slate-200 bg-slate-50/50 px-3 py-3 ${sqlSourceCollapsed ? "justify-center" : "justify-between gap-3"}`}>
+                {!sqlSourceCollapsed && (
+                  <h3 className="flex items-center gap-2 text-sm font-bold text-slate-900">
+                    <span className="h-3 w-1 rounded-full bg-blue-600" />
+                    소스 스키마
+                  </h3>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setSqlSourceCollapsed((current) => !current)}
+                  className="rounded-md p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+                  aria-label={sqlSourceCollapsed ? "소스 스키마 펼치기" : "소스 스키마 접기"}
+                  title={sqlSourceCollapsed ? "소스 스키마 펼치기" : "소스 스키마 접기"}
+                >
+                  {sqlSourceCollapsed ? <PanelLeftOpen className="size-4" /> : <PanelLeftClose className="size-4" />}
+                </button>
+              </div>
+              {!sqlSourceCollapsed && (
+                <>
+                  <div className="border-b border-slate-100 p-3">
+                    <label className="relative block">
+                      <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
+                      <input
+                        type="search"
+                        value={sqlSourceQuery}
+                        onChange={(event) => setSqlSourceQuery(event.target.value)}
+                        placeholder="필드 검색"
+                        className="h-9 w-full rounded-md border border-slate-200 bg-white pl-9 pr-3 text-sm font-semibold text-slate-800 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                      />
+                    </label>
+                  </div>
+                  <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/50 px-3 py-2 text-[11px] font-bold text-slate-500">
+                <span>{apiConfig.useMock ? `확인용 ${String(allSources?.[0]?.name || sourceName).toUpperCase()}` : String(allSources?.[0]?.name || sourceName).toUpperCase()}</span>
+                    <span>{filteredSqlSources.length}개 필드</span>
+                  </div>
+                  <div className="flex-1 overflow-y-auto">
+                    {filteredSqlSources.length > 0 ? filteredSqlSources.map((column, index) => {
+                      const name = column.name || column.field;
+                      return (
+                        <button
+                          key={`${name}-${index}`}
+                          type="button"
+                          onClick={() => insertSqlColumn(name)}
+                          className="flex w-full items-center justify-between gap-3 border-b border-slate-100 px-3 py-2.5 text-left transition-colors hover:bg-blue-50"
+                          title={`${name} 삽입`}
+                        >
+                          <span className="min-w-0 truncate font-mono text-sm font-semibold text-slate-800">{name}</span>
+                          <DataTypeBadge type={column.type} />
+                        </button>
+                      );
+                    }) : (
+                      <div className="grid h-full place-items-center p-6 text-sm font-semibold text-slate-400">일치하는 필드가 없습니다.</div>
+                    )}
+                  </div>
+                </>
               )}
-            </div>
+            </section>
+
+            <section className="flex min-w-0 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-slate-50/50 px-4 py-3">
+                <h3 className="flex items-center gap-2 text-sm font-bold text-slate-900">
+                  <span className="h-3 w-1 rounded-full bg-blue-600" />
+                  SQL 변환
+                </h3>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowSqlAssistant((current) => !current)}
+                    className="inline-flex h-9 items-center gap-2 rounded-md border border-blue-200 bg-blue-50 px-3 text-sm font-bold text-blue-700 hover:bg-blue-100"
+                  >
+                    <img alt="" aria-hidden="true" className="size-5 rounded-full object-cover" src={askLakeNessiIconUrl} />
+                    Nessie로 작성
+                  </button>
+                  <button
+                    type="button"
+                    onClick={validateCustomSql}
+                    className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-sm font-bold text-slate-700 hover:bg-slate-50"
+                  >
+                    <CheckCircle2 className="size-4" /> 문법 검증
+                  </button>
+                  <button
+                    type="button"
+                    onClick={runSqlPreview}
+                    className="inline-flex h-9 items-center gap-2 rounded-md bg-blue-600 px-3 text-sm font-bold text-white hover:bg-blue-700"
+                  >
+                    <Play className="size-4" /> 미리보기 실행
+                  </button>
+                </div>
+              </div>
+              <div className="flex min-h-0 flex-1 flex-col gap-3 p-4">
+                {showSqlAssistant && (
+                  <div className="rounded-lg border border-blue-200 bg-blue-50/40 p-3">
+                    <div className="mb-2 flex items-center gap-2 text-sm font-bold text-slate-900">
+                      <img alt="" aria-hidden="true" className="size-6 rounded-full object-cover" src={askLakeNessiIconUrl} />
+                      Nessie에게 원하는 변환을 설명하세요
+                    </div>
+                    <InlineAIInput
+                      engine="spark"
+                      metadata={{
+                        columns: sourceSchema.map((column) => ({ name: column.name || column.field, type: column.type })),
+                        source: "input",
+                      }}
+                      onApply={(sql) => {
+                        setCustomSql(sql);
+                        setShowSqlAssistant(false);
+                        setSqlValidation({ tone: "idle", message: "Nessie가 작성한 SQL을 검증해 주세요." });
+                      }}
+                      onCancel={() => setShowSqlAssistant(false)}
+                      placeholder="예: sentiment별 리뷰 수와 평균 심각도를 계산해줘"
+                      promptType="sql_transform"
+                    />
+                  </div>
+                )}
+                <div className="flex min-h-[250px] flex-1 flex-col overflow-hidden rounded-lg border-2 border-blue-400 bg-white shadow-sm transition-shadow focus-within:border-blue-500 focus-within:ring-4 focus-within:ring-blue-100">
+                  <div className="flex items-center justify-between gap-3 border-b border-blue-200 bg-blue-50 px-4 py-2 text-xs font-semibold text-blue-900">
+                    <span className="inline-flex items-center gap-2"><span className="size-2 rounded-full bg-blue-500" />Spark SQL</span>
+                    <span>소스 데이터 참조: <code className="font-mono font-bold text-blue-950">FROM input</code></span>
+                  </div>
+                  <div className={`schema-sql-validation flex items-center justify-center gap-2 border-b border-blue-100 px-3 text-center text-sm font-semibold ${sqlValidation.tone === "error" ? "bg-red-50 text-red-600" : sqlValidation.tone === "success" ? "bg-emerald-50 text-emerald-700" : "bg-blue-50/60 text-slate-600"}`}>
+                    {sqlValidation.tone === "error" ? <AlertCircle className="size-4" /> : sqlValidation.tone === "success" ? <CheckCircle2 className="size-4" /> : <Sparkles className="size-4" />}
+                    <span>{sqlValidation.message}</span>
+                  </div>
+                  <Textarea
+                    id="schema-sql-transform-editor"
+                    value={customSql}
+                    onChange={(event) => {
+                      setCustomSql(event.target.value);
+                      setSqlPreviewVisible(false);
+                      setSqlValidation({ tone: "idle", message: "변경된 SQL을 다시 검증하세요." });
+                    }}
+                    placeholder="SELECT text, sentiment FROM input"
+                    className="min-h-[210px] flex-1 resize-none rounded-none border-0 bg-white px-4 py-4 font-mono text-sm font-semibold leading-6 text-slate-950 caret-blue-600 shadow-none outline-none placeholder:text-slate-400 focus-visible:ring-0"
+                  />
+                </div>
+              </div>
+            </section>
           </div>
 
-          {/* Right: SQL Editor */}
-          <div className="flex-1 flex flex-col bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-            <div className="px-4 py-3 border-b border-slate-200 bg-slate-50/50 flex items-center justify-between">
-              <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-2">
-                <span className="w-1 h-3 bg-purple-600 rounded-full"></span>
-                SQL Query Editor
-              </h3>
-            </div>
-            <div className="flex-1 flex flex-col p-4">
-              <textarea
-                value={customSql}
-                onChange={(e) => setCustomSql(e.target.value)}
-                placeholder="SELECT id, name FROM input"
-                className="flex-1 px-4 py-3 border border-slate-200 rounded-lg font-mono text-sm text-slate-800 placeholder-slate-400 focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none"
-                style={{
-                  fontFamily: 'Consolas, Monaco, "Courier New", monospace',
-                  minHeight: "300px",
-                }}
-              />
-              <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                <p className="text-xs text-blue-800">
-                  <strong>Advanced SQL Transform:</strong> Write complex queries
-                  with JOIN, GROUP BY, and aggregations. Note that previews run
-                  on <strong>DuckDB</strong> for fast feedback, while the actual
-                  ETL executes on <strong>Spark SQL</strong> for scale.
-                  Reference sources by their dataset names.
-                </p>
+          <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+            <div className="flex items-center justify-between gap-3 border-b border-slate-200 bg-slate-50/50 px-4 py-3">
+              <h3 className="text-sm font-bold text-slate-900">결과 미리보기</h3>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold text-slate-500">최대 {Math.min(sourceSampleRows.length, 10)}개 행</span>
+                <button
+                  aria-expanded={sqlPreviewPanelOpen}
+                  aria-label={sqlPreviewPanelOpen ? "결과 미리보기 접기" : "결과 미리보기 펼치기"}
+                  className="inline-flex size-8 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-blue-50 hover:text-blue-700"
+                  title={sqlPreviewPanelOpen ? "결과 미리보기 접기" : "결과 미리보기 펼치기"}
+                  type="button"
+                  onClick={() => setSqlPreviewPanelOpen((open) => !open)}
+                >
+                  {sqlPreviewPanelOpen ? <ChevronUp className="size-4" /> : <ChevronDown className="size-4" />}
+                </button>
               </div>
             </div>
-          </div>
+            {sqlPreviewPanelOpen && (sqlPreviewVisible && sourceSampleRows.length > 0 ? (
+              <div className="overflow-auto">
+                <table className="w-full min-w-[720px] border-collapse text-sm">
+                  <thead className="bg-slate-50 text-left text-xs font-bold text-slate-500">
+                    <tr>{sourceSchema.map((column) => <th key={column.name || column.field} className="border-b border-slate-200 px-4 py-3">{column.name || column.field}</th>)}</tr>
+                  </thead>
+                  <tbody>
+                    {sourceSampleRows.slice(0, 10).map((row, rowIndex) => (
+                      <tr key={rowIndex} className="border-b border-slate-100 last:border-0">
+                        {sourceSchema.map((column, columnIndex) => <td key={`${column.name || column.field}-${columnIndex}`} className="max-w-64 truncate px-4 py-3 font-medium text-slate-800">{String(row[columnIndex] ?? "-")}</td>)}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="grid min-h-[150px] place-items-center px-6 py-8 text-center text-sm font-semibold text-slate-400">
+                <span>{sqlPreviewVisible ? "표시할 샘플 행이 없습니다." : "먼저 문법 검증을 완료한 뒤 미리보기를 실행하세요."}</span>
+              </div>
+            ))}
+          </section>
         </div>
       )}
 
@@ -954,6 +1217,7 @@ export default function SchemaTransformEditor({
       {showFunctionModal && editingColumn && (
         <TransformFunctionModal
           column={editingColumn}
+          qualityRules={qualityRules}
           onApply={applyTransform}
           onClose={() => {
             setShowFunctionModal(false);

@@ -7,6 +7,220 @@
   scrollbar-width: thin;
 }
 
+.schema-workbench-content {
+  box-sizing: border-box;
+  height: 100%;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding-bottom: 92px;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+}
+
+.schema-workbench-content > .asklake-schema-transform-adapter,
+.schema-workbench-content > .schema-applied-rules,
+.schema-workbench-content > .schema-result-preview {
+  width: 100%;
+}
+
+.schema-result-preview-table {
+  max-height: none;
+  overflow-x: auto;
+  overflow-y: hidden;
+  border: 0;
+  border-radius: 0;
+  scrollbar-width: thin;
+}
+
+.schema-result-preview-table.is-expanded {
+  max-height: min(420px, 48vh);
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+
+.schema-result-preview-shadcn-table {
+  width: 100%;
+  min-width: 720px;
+}
+
+.schema-result-preview-shadcn-table th,
+.schema-result-preview-shadcn-table td {
+  height: 58px;
+  color: #0f172a;
+  font-size: 16px;
+  padding: 12px 18px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.schema-result-preview-shadcn-table th {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  background: #f8fafc;
+  color: #475569;
+  font-weight: 800;
+}
+
+.schema-result-preview-heading,
+.schema-result-preview-heading strong,
+.schema-result-preview-heading small {
+  display: block;
+}
+
+.schema-result-preview-heading strong {
+  color: #334155;
+  font-size: 15px;
+  font-weight: 850;
+}
+
+.schema-result-preview-heading small {
+  margin-top: 2px;
+  color: #94a3b8;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.schema-result-preview-shadcn-table td {
+  max-width: 260px;
+  overflow: hidden;
+  font-weight: 650;
+  text-overflow: ellipsis;
+}
+
+.schema-result-column {
+  position: sticky;
+  right: 0;
+  min-width: 136px;
+  background: #fff;
+  box-shadow: -1px 0 0 #e2e8f0;
+}
+
+th.schema-result-column {
+  background: #f8fafc;
+}
+
+.schema-preview-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 800;
+  padding: 4px 9px;
+}
+
+.schema-preview-status svg {
+  width: 13px;
+  height: 13px;
+}
+
+.schema-preview-status.success {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.schema-preview-status.warning {
+  background: #fff7ed;
+  color: #c2410c;
+}
+
+.schema-sql-validation {
+  flex: 0 0 auto;
+  min-height: 42px;
+  line-height: 1.4;
+  white-space: normal;
+}
+
+.schema-sql-preview-empty {
+  display: grid;
+  min-height: 150px;
+  place-items: center;
+  padding: 24px;
+}
+
+.schema-result-preview-empty {
+  display: grid;
+  min-height: 150px;
+  place-items: center;
+  color: #64748b;
+  font-size: 14px;
+  font-weight: 700;
+  padding: 24px;
+}
+
+.schema-result-preview-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 52px;
+  align-items: center;
+  border-top: 1px solid #e2e8f0;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 7px 16px;
+}
+
+.schema-result-preview-footer button {
+  flex: 0 0 auto;
+  min-width: 132px;
+  justify-content: center;
+}
+
+.schema-bottom-bar .schema-result-preview-button {
+  margin-left: auto;
+}
+
+.schema-bottom-bar .schema-result-preview-button + .primary-button {
+  margin-left: 0;
+}
+
+.schema-workbench.schema-workbench-focused {
+  grid-template-rows: auto minmax(0, 1fr);
+  padding-bottom: 0;
+}
+
+.schema-bottom-bar.schema-top-actions {
+  position: static;
+  z-index: auto;
+  display: flex;
+  min-height: 58px;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid #e2e8f0;
+  background: #fff;
+  padding: 8px 12px;
+  pointer-events: auto;
+}
+
+.schema-bottom-bar.schema-top-actions .secondary-button,
+.schema-bottom-bar.schema-top-actions .primary-button {
+  height: 40px;
+  min-width: 96px;
+  padding: 0 18px;
+  font-size: 16px;
+  font-weight: 600;
+  box-shadow: none;
+}
+
+.schema-bottom-bar.schema-top-actions .schema-result-preview-button {
+  width: auto;
+  min-width: 132px;
+}
+
+@media (max-width: 720px) {
+  .schema-workbench.schema-workbench-focused {
+    padding-bottom: 0;
+  }
+
+  .schema-bottom-bar.schema-top-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 .asklake-schema-transform-scroll-frame {
   min-width: 960px;
 }
