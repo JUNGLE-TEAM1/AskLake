@@ -1,4 +1,4 @@
-import { AlertCircle, BarChart3, Plus, Table2 } from "lucide-react";
+import { AlertCircle, BarChart3, ListChecks, Plus } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/ui/page-header";
@@ -119,7 +119,9 @@ export function DashboardLandingPage({
       <div className="dashboard-panel-stack">
         <Panel className="dashboard-table-list">
           <PanelHeader
-            icon={<Table2 size={16} />}
+            icon={<ListChecks size={16} />}
+            iconVariant="outline"
+            size="section"
             title="대시보드 목록"
           />
           <DashboardListToolbar
