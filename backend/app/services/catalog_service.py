@@ -11,6 +11,7 @@ from app.repositories.audit_repository import safe_record_audit_event
 from app.repositories.sql_repository import SqlRepository
 from app.schemas.catalog import (
     CatalogDatasetListResponse,
+    CatalogDatasetRowsResponse,
     CatalogDatasetResponse,
     CreateDerivedDatasetRequest,
     DeleteMaterializationRunResponse,
@@ -27,11 +28,13 @@ from app.services.lake_storage_service import (
     MaterializedDatasetResult,
 )
 from app.services.governance_enforcement import require_governed_access
+from app.services.dataset_rows_service import read_dataset_rows
 from app.services.resource_permission_service import (
     dataset_with_persisted_permission_grants,
     datasets_with_persisted_permission_grants,
     permissions_for_actor_with_governance,
 )
+from app.services.sql_service import full_query_run_response_from_payload
 
 
 class CatalogService:
@@ -111,6 +114,55 @@ class CatalogService:
         if lineage_payload is not None:
             return LineageGraphResponse.model_validate(lineage_payload)
         return build_fallback_lineage_graph(dataset)
+
+    def get_dataset_rows(
+        self,
+        dataset_id: str,
+        actor: ActorContext | None = None,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> CatalogDatasetRowsResponse:
+        actor_context = actor or ActorContext()
+        dataset = self.get_dataset(dataset_id, actor_context)
+        api_path = f"/api/catalog/datasets/{dataset_id}/rows"
+        require_governed_access(
+            self.repository.db,
+            actor_context,
+            action="query",
+            api_path=api_path,
+            http_method="GET",
+            metadata={"limit": limit, "offset": offset, "owner": dataset.owner},
+            resource_id=dataset.id,
+            resource_name=dataset.name,
+            resource_type="dataset",
+        )
+        try:
+            require_permission(
+                actor_context,
+                "query",
+                owner=dataset.owner,
+                grants=dataset.permission_grants,
+                resource_label="dataset",
+            )
+        except ApiError as exc:
+            record_forbidden_dataset_event(
+                self.repository.db,
+                actor_context,
+                action="dataset.rows.query.forbidden",
+                dataset=dataset,
+                api_path=api_path,
+                http_method="GET",
+                metadata={"limit": limit, "offset": offset},
+                status_code=exc.status_code,
+            )
+            raise
+
+        return read_dataset_rows(
+            dataset_for_latest_successful_materialization(dataset),
+            limit=limit,
+            offset=offset,
+        )
 
     def delete_materialization_run(
         self,
@@ -308,7 +360,7 @@ class CatalogService:
                 status.HTTP_404_NOT_FOUND,
                 {"sourceRunId": run_id},
             )
-        return QueryRunResponse.model_validate(payload)
+        return full_query_run_response_from_payload(payload)
 
 
 def validate_derived_dataset_request(
@@ -840,6 +892,27 @@ def get_lineage_table_name(value: str) -> str:
 def normalize_lineage_id(value: str) -> str:
     normalized_value = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
     return normalized_value or "lineage"
+
+
+def dataset_for_latest_successful_materialization(
+    dataset: CatalogDatasetResponse,
+) -> CatalogDatasetResponse:
+    successful_runs = [
+        run
+        for run in dataset.materialization_runs
+        if run.status == "success" and run.storage_location
+    ]
+    if not successful_runs:
+        return dataset
+
+    latest_run = max(successful_runs, key=lambda run: run.created_at)
+    return dataset.model_copy(
+        update={
+            "source_run_id": latest_run.run_id,
+            "storage_location": latest_run.storage_location,
+            "storage_size_bytes": latest_run.storage_size_bytes,
+        }
+    )
 
 
 def record_forbidden_dataset_event(

@@ -12,9 +12,11 @@
 | 1a | P0 | `PATCH /api/etl/jobs/{jobId}` | 생성 Job의 허용 설정 update (Issue #460) |
 | 2 | P0 | `POST /api/etl/jobs/{jobId}/commands` | 즉시 실행, 재실행, 일시정지, 현재 Run 취소, 스케줄 중지 |
 | 3 | P0 | `POST /api/query/runs` | 읽기 전용 SQL 실행 |
+| 3b | P0 | `GET /api/query/runs/{runId}` | 저장된 SQL 결과 페이지 조회 |
 | 4 | P0 | `POST /api/query/ai-suggestions` | 선택 테이블 context 기반 Query AI SQL 초안 생성 |
 | 5 | P1 | `GET /api/catalog/datasets` | 카탈로그 목록 hydrate |
 | 6 | P1 | `GET /api/catalog/datasets/{datasetId}` | 데이터셋 상세 hydrate |
+| 6b | P1 | `GET /api/catalog/datasets/{datasetId}/rows` | 최신 성공 materialization sample page 조회 |
 | 7 | P1 | `POST /api/dashboards` | 대시보드 초안 생성 |
 | 8 | P1 | `GET /api/s3/buckets`, `GET /api/s3/prefixes` | Target 저장경로 S3 bucket/prefix 선택 |
 | 9 | P1 | `GET /api/target/databases` | Target 기본정보 DB 선택 |
@@ -155,9 +157,11 @@ Resource/action 기준:
 | --- | --- | --- |
 | `GET /api/catalog/datasets` | `view` | actor가 볼 수 있는 dataset만 목록에 포함 |
 | `GET /api/catalog/datasets/{datasetId}` | `view` | 권한 없으면 `403 FORBIDDEN` |
+| `GET /api/catalog/datasets/{datasetId}/rows` | `view` + `query` | 상세 열람 후 실제 row를 query하므로 두 검사를 모두 통과 |
 | `GET /api/catalog/datasets/{datasetId}/lineage` | `view` | dataset detail과 같은 기준 |
 | `DELETE /api/catalog/datasets/{datasetId}/materialization-runs/{runId}` | `manage` 또는 `delete` | materialization metadata 수정/삭제로 간주 |
 | `POST /api/query/runs` | `query` | base/reference dataset 모두 검사 |
+| `GET /api/query/runs/{runId}` | `query` | 저장된 run의 base/reference dataset 모두 다시 검사 |
 | `POST /api/query/ai-suggestions` | `query` | 선택 dataset metadata를 AI context로 사용하기 전 모두 검사 |
 | `POST /api/etl/jobs/{jobId}/commands` | `run` 또는 `manage` | `run`/`retry`는 `run`, pause/cancel/stop은 `manage` |
 | `PATCH /api/etl/jobs/{jobId}` | `manage` | source identity와 successful target identity 보호 |
@@ -735,6 +739,12 @@ type SqlResultDraft = {
   executedAt: string;
   mode?: "preview" | "run";
   previewLimit?: number;
+  pageLimit: number;
+  pageOffset: number;
+  returnedRows: number;
+  rangeStart: number;
+  rangeEnd: number;
+  hasNext: boolean;
   validationKey?: string;
 };
 ```
@@ -1625,6 +1635,8 @@ Response 예시:
   "referenceDatasetIds": ["ds_product_master"],
   "mode": "preview",
   "previewLimit": 100,
+  "pageLimit": 100,
+  "pageOffset": 0,
   "columns": ["review_id", "rating", "sentiment"],
   "rows": [
     ["10001", "5", "positive"],
@@ -1632,6 +1644,10 @@ Response 예시:
     ["10003", "1", "negative"]
   ],
   "rowCount": 3,
+  "returnedRows": 3,
+  "rangeStart": 1,
+  "rangeEnd": 3,
+  "hasNext": false,
   "executedAt": "2026-07-03T11:35:00.000Z",
   "validationKey": "frontend-generated-context-key"
 }
@@ -1640,7 +1656,10 @@ Response 예시:
 Validation:
 
 - `datasetId`, `query`는 필수입니다.
-- `mode: "preview"`일 때 백엔드는 원본 SQL을 저장/변경하지 않고 서버 쪽에서 preview row limit을 적용해야 합니다.
+- `limit`는 `1..500`이며 `POST`가 반환할 첫 page 크기입니다. 기본값은 100입니다.
+- `mode: "preview"`일 때 백엔드는 원본 SQL을 저장용으로 변경하지 않고 전체 결과를 한 번 실행해 Run별 Parquet snapshot으로 저장합니다. 총 결과 행 수에 별도 상한을 추가하지 않습니다.
+- PostgreSQL `sql_runs.payload`에는 Run metadata, Parquet 위치와 정확한 `rowCount`만 저장하며 전체 행 배열은 넣지 않습니다. API 응답과 DOM에는 현재 page만 포함합니다.
+- `rowCount`는 snapshot의 전체 결과 행 수, `returnedRows`는 현재 page 행 수, `rangeStart`/`rangeEnd`는 1-base 표시 범위입니다. 빈 결과는 범위 `0..0`을 사용합니다.
 - Preview runtime은 선택된 catalog dataset을 DuckDB table context로 등록하고 projection/filter/group/order/limit/JOIN을 실제 SQL로 실행합니다.
 - `baseDatasetId`와 `referenceDatasetIds`는 접근 권한 검증과 SQL table context 검증에 사용합니다.
 - frontend preflight는 PostgreSQL parser로 `SELECT` 단일 문장, CTE, `FROM`/`JOIN` table context를 검사합니다. backend는 같은 기준을 서버에서 다시 검증해야 합니다.
@@ -1654,17 +1673,26 @@ Validation:
 - 읽기 전용 SQL만 허용합니다.
 - `INSERT`, `UPDATE`, `DELETE`, `DROP`, `ALTER`, `CREATE`, `TRUNCATE`, `MERGE` 등 변경 쿼리는 `403 FORBIDDEN` 또는 `422 VALIDATION_ERROR`를 권장합니다.
 - SQL 문법 오류는 `422 SQL_SYNTAX_ERROR`.
-- 결과 row는 데모 단계에서 최대 500행 이하를 권장합니다.
+- 페이지 이동은 원본 SQL을 재실행하지 않고 저장된 같은 run snapshot을 조회합니다.
 
 프론트 기대 동작:
 
 - `columns`, `rows`를 SQL 결과 테이블에 표시합니다.
+- DOM에는 현재 page만 렌더링하고 `rowCount`와 `rangeStart`~`rangeEnd`를 표시합니다. 0, 100, 101, 10,000행 경계와 20,001행 이상의 결과에서도 첫/중간/마지막 page가 도달 가능해야 합니다.
+- 인라인 결과와 전체 보기 modal은 같은 `runId`, `pageOffset`, `pageLimit` 상태를 공유합니다.
 - 대시보드 생성 시 같은 `SqlResultDraft`를 전달합니다.
 - 실패 시 `analysis.query.preview_failed` 감사 로그를 남깁니다.
 
 #### 7.7.1 SQL 실행 snapshot 조회
 
-`GET /api/query/runs/{runId}`
+`GET /api/query/runs/{runId}?offset={offset}&limit={limit}`
+
+Query parameter:
+
+| 이름 | 타입 | 기본/제한 | 설명 |
+| --- | --- | --- | --- |
+| `offset` | number | 기본 0, `0..rowCount` | 저장된 전체 결과 snapshot의 0-base 시작 위치. 고정 총행 상한 없음 |
+| `limit` | number | 기본 100, `1..500` | 반환할 page 행 수 |
 
 Response `200 OK`:
 
@@ -1675,7 +1703,9 @@ type GetQueryRunResponse = SqlResultDraft;
 Validation:
 
 - 존재하지 않는 `runId`는 `404 NOT_FOUND`.
-- 응답은 `POST /api/query/runs`가 저장한 SQL Preview snapshot과 같은 shape를 반환합니다.
+- 응답은 `POST /api/query/runs`가 저장한 SQL Preview snapshot과 같은 shape를 반환하되 `rows`, `pageOffset`, `pageLimit`, `returnedRows`, `rangeStart`, `rangeEnd`, `hasNext`는 요청 page에 맞게 바뀝니다.
+- `offset == rowCount`이면 빈 `rows`, `returnedRows=0`, `rangeStart=0`, `rangeEnd=0`, `hasNext=false`를 반환합니다.
+- 과거 pagination 이전에 저장된 run은 저장된 기존 preview page만 탐색 가능한 호환 fallback을 사용합니다.
 
 프론트 기대 동작:
 
@@ -1960,13 +1990,50 @@ Response `200 OK`:
 type DatasetDetailResponse = CatalogDataset;
 ```
 
-추가 상세 API를 분리할 경우 권장 endpoint:
+상세 보조 API:
 
 ```text
 GET /api/catalog/datasets/{datasetId}/schema
-GET /api/catalog/datasets/{datasetId}/sample-rows
+GET /api/catalog/datasets/{datasetId}/rows?offset=0&limit=100
 GET /api/catalog/datasets/{datasetId}/lineage
 ```
+
+#### 8.2.1 데이터셋 실제 row page
+
+`GET /api/catalog/datasets/{datasetId}/rows?offset={offset}&limit={limit}`
+
+Catalog 상세와 `전체 스키마 상세보기` modal은 payload의 제한 `sampleRows`가 아닌 이 endpoint로 실제 materialized row를 탐색합니다.
+
+Query parameter:
+
+| 이름 | 타입 | 기본/제한 | 설명 |
+| --- | --- | --- | --- |
+| `offset` | number | 기본 0, 0 이상 | 0-base 시작 위치 |
+| `limit` | number | 기본 100, `1..500` | 반환할 page 행 수 |
+
+Response `200 OK`:
+
+```json
+{
+  "datasetId": "ds_customer_review_silver",
+  "datasetName": "customer_review_silver",
+  "columns": ["review_id", "rating"],
+  "rows": [["10101", "4"], ["10102", "5"]],
+  "rowCount": 10000,
+  "returnedRows": 2,
+  "offset": 100,
+  "limit": 2,
+  "hasNext": true
+}
+```
+
+Runtime/permission:
+
+- Dataset 상세 `view` 권한과 row 조회 `query` 권한을 모두 검사하며, 없으면 `403 FORBIDDEN`을 반환합니다.
+- `materializationRuns`에 저장 위치가 있는 성공 run이 여러 개면 `createdAt`이 가장 최신인 run의 `storageLocation`을 읽습니다. 성공 history가 없으면 dataset 자체의 storage metadata를 사용하며, 물리 저장 위치가 없거나 읽을 수 없으면 실제 row 조회 실패를 반환합니다.
+- Backend는 DuckDB에 dataset을 등록한 뒤 `COUNT(*)`와 `LIMIT`/`OFFSET`을 실행하므로 response/DOM에 전체 row를 적재하지 않습니다.
+- `rowCount`는 선택된 materialization의 전체 행 수, `returnedRows`는 현재 page 행 수입니다. `offset == rowCount`이면 빈 `rows`와 `hasNext=false`를 반환합니다.
+- 스키마 상세 modal은 스키마와 row page를 함께 표시하고, 새로고침·첫/이전/다음/마지막 page·수평 스크롤·고정 header를 제공합니다. modal을 닫아도 Catalog 검색/필터 상태는 유지합니다.
 
 `GET /api/catalog/datasets/{datasetId}/lineage` Response `200 OK`:
 

@@ -5,7 +5,6 @@ import { Table2 } from "lucide-react";
 import { DataTable, type DataTableColumnMeta } from "@/components/ui/data-table";
 import { cn } from "@/lib/utils";
 import type { SqlResultDraft } from "../../types";
-import { SQL_RESULT_PAGE_SIZE } from "./sqlLogic";
 import styles from "./SqlPreviewTable.module.css";
 
 type SqlPreviewRow = {
@@ -54,7 +53,7 @@ function buildSqlSortingFn(kind: SqlPreviewCellKind): SortingFn<SqlPreviewRow> {
   };
 }
 
-export function SqlPreviewTable({ resultDraft }: { resultDraft: SqlResultDraft }) {
+export function SqlPreviewTable({ isLoading = false, resultDraft }: { isLoading?: boolean; resultDraft: SqlResultDraft }) {
   const columns = useMemo<ColumnDef<SqlPreviewRow>[]>(
     () => resultDraft.columns.map((column, index) => {
       const columnKind = getColumnKind(resultDraft.rows, index);
@@ -93,8 +92,10 @@ export function SqlPreviewTable({ resultDraft }: { resultDraft: SqlResultDraft }
         icon: <Table2 size={18} />,
         title: "SQL preview 결과가 비어 있습니다.",
       }}
-      pagination={{ label: "SQL preview", pageSize: SQL_RESULT_PAGE_SIZE }}
-      resetPaginationKey={resultDraft.runId}
+      isLoading={isLoading}
+      loadingRowCount={8}
+      pagination={false}
+      resetPaginationKey={`${resultDraft.runId}:${resultDraft.pageOffset ?? 0}`}
       tableClassName={cn("schema-table", styles.table)}
       viewportClassName="overflow-visible"
     />

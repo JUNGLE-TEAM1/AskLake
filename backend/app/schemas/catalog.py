@@ -102,6 +102,18 @@ class CatalogDatasetListResponse(CamelModel):
     page: CursorPageMeta = Field(default_factory=CursorPageMeta)
 
 
+class CatalogDatasetRowsResponse(CamelModel):
+    columns: list[str]
+    dataset_id: str
+    dataset_name: str
+    has_next: bool
+    limit: int
+    offset: int
+    returned_rows: int
+    row_count: int
+    rows: list[list[str]]
+
+
 class DeleteMaterializationRunResponse(CamelModel):
     dataset: CatalogDatasetResponse
     deleted_run_id: str
