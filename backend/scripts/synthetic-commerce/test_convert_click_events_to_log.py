@@ -76,6 +76,7 @@ class FakeS3Client:
         self.next_upload_id = 1
         self.fail_upload_part: int | None = None
         self.fail_complete = False
+        self.fail_put_key: tuple[str, str] | None = None
         self.aborted_uploads: list[tuple[str, str, str]] = []
         self.completed_uploads: list[tuple[str, str, str]] = []
         self.completed_part_counts: list[int] = []
@@ -169,6 +170,8 @@ class FakeS3Client:
 
     def put_object(self, **request: Any) -> dict[str, Any]:
         identity = (request["Bucket"], request["Key"])
+        if self.fail_put_key == identity:
+            raise FakeClientError("InternalError", 500, "injected manifest write failure")
         if request.get("IfNoneMatch") == "*" and identity in self.objects:
             raise FakeClientError("PreconditionFailed", 412, "already exists")
         payload = bytes(request["Body"])
@@ -395,6 +398,33 @@ class ClickLogConverterTests(unittest.TestCase):
         client.fail_complete = True
 
         with self.assertRaisesRegex(FakeClientError, "injected completion failure"):
+            converter.convert_click_events_s3(
+                client,
+                "s3://raw/clicks/",
+                "s3://processed/click-events.log",
+                overwrite=True,
+            )
+
+        self.assertEqual(client.objects[("processed", "click-events.log")], previous_output)
+        self.assertEqual(
+            client.objects[("processed", "click-events.log.manifest.json")],
+            previous_manifest,
+        )
+        self.assertEqual(len(client.aborted_uploads), 1)
+
+    def test_s3_manifest_write_failure_aborts_upload_and_keeps_previous_result(self) -> None:
+        previous_output = b"previous-good-output"
+        previous_manifest = b'{"previous":true}\n'
+        client = FakeS3Client(
+            {
+                ("raw", "clicks/part-00000.jsonl"): encode_jsonl([click_event(1)]),
+                ("processed", "click-events.log"): previous_output,
+                ("processed", "click-events.log.manifest.json"): previous_manifest,
+            }
+        )
+        client.fail_put_key = ("processed", "click-events.log.manifest.json")
+
+        with self.assertRaisesRegex(FakeClientError, "injected manifest write failure"):
             converter.convert_click_events_s3(
                 client,
                 "s3://raw/clicks/",
