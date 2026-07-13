@@ -205,7 +205,6 @@ export function DatasetSidebar({
                   id: datasetTreeItemId(dataset.id),
                   kind: "dataset" as const,
                   label: dataset.name,
-                  meta: `${dataset.columns.length}개`,
                   selected: dataset.id === selectedDatasetId,
                   title: dataset.name,
                 };

@@ -64,7 +64,6 @@ export function SqlDatasetTree({
           id: getDatasetNodeId(dataset.id),
           kind: "dataset" as const,
           label: dataset.name,
-          meta: `${dataset.schema.length}개`,
           selected: selectedDatasetIds.has(dataset.id),
           selectable: false,
         })),
