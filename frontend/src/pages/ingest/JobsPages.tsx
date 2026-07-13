@@ -184,6 +184,13 @@ type JobMetric = {
   value: string;
 };
 
+type LatestRunModalSelection = {
+  fallbackJob: JobRowData;
+  fallbackRun: JobRunSummary;
+  jobId: string;
+  runId: string;
+};
+
 function getJobMetrics(facets: JobListFacets): JobMetric[] {
   return [
     { label: "전체 작업", tone: "total", value: String(facets.total) },
@@ -383,7 +390,7 @@ export function JobsLandingPage({
   const [searchQuery, setSearchQuery] = useState("");
   const [jobQuery, setJobQuery] = useState<JobListQuery>({});
   const [excludedJobIds, setExcludedJobIds] = useState<Set<string>>(() => new Set());
-  const [latestRunModal, setLatestRunModal] = useState<{ job: JobRowData; run: JobRunSummary } | null>(null);
+  const [latestRunModalSelection, setLatestRunModalSelection] = useState<LatestRunModalSelection | null>(null);
   const metrics = getJobMetrics(jobListFacets);
   const failureFilterActive = jobQuery.lastRunOutcome === "failed";
   const failedRunCount = jobListFacets.latestRunOutcomeCounts.failed;
@@ -391,6 +398,14 @@ export function JobsLandingPage({
     () => filterJobsBySearch(jobs, searchQuery).filter((job) => !excludedJobIds.has(job.id)),
     [excludedJobIds, jobs, searchQuery],
   );
+  const latestRunModal = useMemo(() => {
+    if (!latestRunModalSelection) return null;
+    const job = jobs.find((candidate) => candidate.id === latestRunModalSelection.jobId)
+      ?? latestRunModalSelection.fallbackJob;
+    const run = job.runHistory?.find((candidate) => candidate.runId === latestRunModalSelection.runId)
+      ?? latestRunModalSelection.fallbackRun;
+    return { job, run };
+  }, [jobs, latestRunModalSelection]);
   const hasSearchQuery = searchQuery.trim().length > 0;
 
   const updateJobQuery = (nextQuery: JobListQuery) => {
@@ -415,7 +430,12 @@ export function JobsLandingPage({
     const latestRun = job.runHistory?.[0];
     if (!latestRun) return;
     onAction("etl.run.detail_opened", `/api/etl/jobs/${job.id}/runs/${latestRun.runId}`, latestRun.runId);
-    setLatestRunModal({ job, run: latestRun });
+    setLatestRunModalSelection({
+      fallbackJob: job,
+      fallbackRun: latestRun,
+      jobId: job.id,
+      runId: latestRun.runId,
+    });
   };
 
   const toggleFailureFilter = () => {
@@ -503,7 +523,7 @@ export function JobsLandingPage({
         <RunDagModal
           job={latestRunModal.job}
           onAction={onAction}
-          onClose={() => setLatestRunModal(null)}
+          onClose={() => setLatestRunModalSelection(null)}
           run={latestRunModal.run}
         />
       )}
@@ -2398,6 +2418,7 @@ export function JobDetailPage({
 
 function ContinuousRuntimeCard({ job }: { job: JobRowData }) {
   const runtime = job.continuousRuntime;
+  const ruleMetrics = runtime?.ruleMetrics ?? {};
   const maintenanceBlocked = runtime ? !["paused", "stopped"].includes(runtime.status) : true;
   const [logs, setLogs] = useState<string[]>([]);
   const [logError, setLogError] = useState("");
@@ -2467,6 +2488,8 @@ function ContinuousRuntimeCard({ job }: { job: JobRowData }) {
         <Field label="처리량" value={runtime?.throughputRowsPerSecond != null ? `${runtime.throughputRowsPerSecond.toLocaleString()} rows/s` : "-"} />
         <Field label="최근 Batch" value={runtime?.lastBatchDurationMs != null ? `${runtime.lastBatchInputRows.toLocaleString()}건 · ${runtime.lastBatchDurationMs.toLocaleString()}ms` : "-"} />
         <Field label="Schema" value={`v${runtime?.schemaVersion ?? 1} · ${runtime?.schemaStatus ?? "stable"}`} />
+        <Field label="Rule 계약" value={`v${runtime?.ruleContractVersion ?? "1.0"} · ${runtime?.ruleFingerprint?.slice(0, 10) ?? "대기"}`} />
+        <Field label="Rule 처리" value={`경고 ${(Number(ruleMetrics.transformWarnCount ?? 0) + Number(ruleMetrics.qualityWarnCount ?? 0)).toLocaleString()} · 격리 ${(Number(ruleMetrics.transformQuarantinedCount ?? 0) + Number(ruleMetrics.qualityQuarantinedCount ?? 0)).toLocaleString()} · 실패 batch ${Number(ruleMetrics.failedBatchCount ?? 0).toLocaleString()}`} />
         <Field label="Heartbeat" value={runtime?.heartbeatAt ? formatCompactDateTime(runtime.heartbeatAt) : "-"} />
         <Field label="Checkpoint" value={runtime?.checkpointPath ?? "-"} />
         {runtime?.lastError && <Field label="최근 오류" value={runtime.lastError} />}
@@ -2489,7 +2512,7 @@ function ContinuousRuntimeCard({ job }: { job: JobRowData }) {
         <span>실행 이력 {maintenanceRuns.length.toLocaleString()}건</span>
         <span>최근 {maintenanceRuns[0] ? `${maintenanceRuns[0].kind} · ${maintenanceRuns[0].status}` : "-"}</span>
       </div>
-      {quarantine.length > 0 && <div className="job-quarantine-list">{quarantine.slice(0, 5).map((item) => <div key={`${item.partition}:${item.offset}`}><code>{item.partition}:{item.offset}</code><span>{item.reason}</span><span>{item.replayStatus}</span><span>{item.rawPayload}</span></div>)}</div>}
+      {quarantine.length > 0 && <div className="job-quarantine-list">{quarantine.slice(0, 5).map((item) => <div key={`${item.partition}:${item.offset}`}><code>{item.partition}:{item.offset}</code><span>{item.stage === "schema" ? "스키마" : item.ruleId ? `${item.stage ?? "rule"} · ${item.ruleId}` : "규칙"} · {item.reason}</span><span>{item.replayStatus}</span><span>{item.rawPayload}</span></div>)}</div>}
     </article>
   );
 }
@@ -2513,6 +2536,16 @@ const continuousSessionStatusMeta: Record<KafkaContinuousSessionStatus, { label:
   stopped: { label: "종료", tone: "muted" },
   stopping: { label: "종료 중", tone: "default" },
 };
+
+const continuousBatchStatusMeta: Record<KafkaContinuousBatch["status"], { label: string; tone: StatusBadgeTone }> = {
+  failed: { label: "실패", tone: "danger" },
+  running: { label: "진행", tone: "default" },
+  success: { label: "성공", tone: "success" },
+};
+
+type ContinuousDagSelection =
+  | { id: string; kind: "session" }
+  | { id: number; kind: "batch" };
 
 export function JobRunsPage(props: JobRunsPageProps) {
   if (props.job.executionMode === "continuous") {
@@ -2539,6 +2572,7 @@ function ContinuousJobRunsPage({
   const [lastRefreshedAt, setLastRefreshedAt] = useState<string | null>(null);
   const [currentCatalogRowCount, setCurrentCatalogRowCount] = useState(catalogRowCount);
   const [sessionPollingActive, setSessionPollingActive] = useState(false);
+  const [dagSelection, setDagSelection] = useState<ContinuousDagSelection | null>(null);
   const inFlightRef = useRef(false);
   const requestSequenceRef = useRef(0);
   const activeSessionsRef = useRef(false);
@@ -2599,6 +2633,7 @@ function ContinuousJobRunsPage({
     setSessionPollingActive(false);
     setLoading(true);
     setRefreshError(null);
+    setDagSelection(null);
   }, [job.id]);
 
   const runtimeActive = job.continuousRuntime
@@ -2646,6 +2681,7 @@ function ContinuousJobRunsPage({
     setSelectedSessionId(session.sessionId);
     setSelectedSession(session);
     setBatches([]);
+    setDagSelection(null);
     onAction("etl.continuous.session_opened", `/api/etl/jobs/${job.id}/continuous/sessions/${session.sessionId}`, session.sessionId);
   };
 
@@ -2661,6 +2697,19 @@ function ContinuousJobRunsPage({
 
   const latestSession = sessions[0] ?? null;
   const metricSession = selectedSession ?? latestSession;
+  const activeDagTarget = dagSelection?.kind === "session"
+    ? sessions.find((session) => session.sessionId === dagSelection.id) ?? null
+    : dagSelection?.kind === "batch"
+      ? batches.find((batch) => batch.batchId === dagSelection.id) ?? null
+      : null;
+  const openSessionDag = (session: KafkaContinuousSession) => {
+    setDagSelection({ id: session.sessionId, kind: "session" });
+    onAction("etl.continuous.session_dag_opened", `/api/etl/jobs/${job.id}/continuous/sessions/${session.sessionId}`, session.sessionId);
+  };
+  const openBatchDag = (batch: KafkaContinuousBatch) => {
+    setDagSelection({ id: batch.batchId, kind: "batch" });
+    onAction("etl.continuous.batch_dag_opened", `/api/etl/jobs/${job.id}/continuous/sessions/${batch.sessionId}/batches`, `${batch.sessionId}:${batch.batchId}`);
+  };
   const sessionColumns: ColumnDef<KafkaContinuousSession>[] = [
     {
       accessorKey: "sessionId",
@@ -2719,6 +2768,12 @@ function ContinuousJobRunsPage({
       header: "Batch",
       cell: ({ row }) => <strong className="tabular-nums">#{row.original.batchId}</strong>,
       meta: { widthClassName: "w-[90px]" } satisfies DataTableColumnMeta,
+    },
+    {
+      accessorKey: "status",
+      header: "상태",
+      cell: ({ row }) => <ContinuousBatchStatus status={row.original.status} />,
+      meta: { align: "center", widthClassName: "w-[90px]" } satisfies DataTableColumnMeta,
     },
     {
       accessorKey: "publishedAt",
@@ -2801,7 +2856,15 @@ function ContinuousJobRunsPage({
               emptyState={{ title: loading ? "세션 이력을 불러오는 중입니다." : "아직 실시간 실행 세션이 없습니다." }}
               getRowClassName={(row) => row.original.sessionId === selectedSessionId ? "bg-blue-50/70" : row.original.status === "failed" ? "bg-red-50/45" : undefined}
               pagination={{ label: "스트림 세션", pageSize: 5, showSummary: false }}
+              renderRowActions={(row) => (
+                <IconButton label={`${row.original.sessionId} 세션 DAG 보기`} size="xs" variant="outline" onClick={() => openSessionDag(row.original)}>
+                  <Workflow aria-hidden="true" />
+                </IconButton>
+              )}
               resetPaginationKey={`${sessions.length}-${selectedSessionId ?? "none"}`}
+              rowActionsAlign="center"
+              rowActionsClassName="w-[70px]"
+              rowActionsHeader="DAG"
               tableClassName="min-w-[960px] table-fixed"
               viewportClassName="rounded-none border-0 bg-transparent"
             />
@@ -2827,12 +2890,29 @@ function ContinuousJobRunsPage({
               data={batches}
               emptyState={{ title: selectedSession ? "이 세션에 기록된 micro-batch가 없습니다." : "확인할 세션을 선택해 주세요." }}
               pagination={{ label: "micro-batch", pageSize: 10, showSummary: false }}
+              renderRowActions={(row) => (
+                <IconButton label={`Batch ${row.original.batchId} DAG 보기`} size="xs" variant="outline" onClick={() => openBatchDag(row.original)}>
+                  <Workflow aria-hidden="true" />
+                </IconButton>
+              )}
               resetPaginationKey={`${selectedSessionId ?? "none"}-${batches.length}`}
-              tableClassName="min-w-[1180px] table-fixed"
+              rowActionsAlign="center"
+              rowActionsClassName="w-[70px]"
+              rowActionsHeader="DAG"
+              tableClassName="min-w-[1280px] table-fixed"
               viewportClassName="rounded-none border-0 bg-transparent"
             />
           </Panel>
         </section>
+        {dagSelection && activeDagTarget && (
+          <ContinuousDagModal
+            job={job}
+            onAction={onAction}
+            onClose={() => setDagSelection(null)}
+            target={activeDagTarget}
+            targetKind={dagSelection.kind}
+          />
+        )}
       </div>
     </TooltipProvider>
   );
@@ -2841,6 +2921,101 @@ function ContinuousJobRunsPage({
 function ContinuousSessionStatus({ status }: { status: KafkaContinuousSessionStatus }) {
   const meta = continuousSessionStatusMeta[status];
   return <StatusBadge className="min-w-[76px] justify-center" shape="compact" size="lg" tone={meta.tone}>{meta.label}</StatusBadge>;
+}
+
+function ContinuousBatchStatus({ status }: { status: KafkaContinuousBatch["status"] }) {
+  const meta = continuousBatchStatusMeta[status];
+  return <StatusBadge className="min-w-[58px] justify-center" shape="compact" tone={meta.tone}>{meta.label}</StatusBadge>;
+}
+
+function ContinuousDagModal({
+  job,
+  onAction,
+  onClose,
+  target,
+  targetKind,
+}: {
+  job: JobRowData;
+  onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
+  onClose: () => void;
+  target: KafkaContinuousSession | KafkaContinuousBatch;
+  targetKind: ContinuousDagSelection["kind"];
+}) {
+  const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
+  const session = targetKind === "session" ? target as KafkaContinuousSession : null;
+  const batch = targetKind === "batch" ? target as KafkaContinuousBatch : null;
+  const dagSteps = target.dagSteps ?? [];
+  const selectedStep = getSelectedDagStep(dagSteps, selectedStepId);
+  const selectedStepIndex = Math.max(dagSteps.findIndex((step) => step.id === selectedStep?.id), 0);
+  const completedSteps = dagSteps.filter((step) => step.status === "success").length;
+  const contextId = session?.sessionId ?? `${batch?.sessionId}:batch:${batch?.batchId}`;
+  const title = session?.sessionId ?? `Batch #${batch?.batchId}`;
+  const statusLabel = session
+    ? continuousSessionStatusMeta[session.status].label
+    : batch ? continuousBatchStatusMeta[batch.status].label : "-";
+  const statusTone = session?.status === "failed" || batch?.status === "failed"
+    ? "failed"
+    : session?.status === "running" || batch?.status === "running"
+      ? "running"
+      : "total";
+  const consumedCount = session?.consumedCount ?? batch?.consumedCount ?? 0;
+  const storedCount = session?.storedCount ?? batch?.storedCount ?? 0;
+  const duration = session
+    ? formatContinuousDuration(session.startedAt, session.endedAt)
+    : batch?.durationMs == null ? "-" : `${batch.durationMs.toLocaleString()}ms`;
+  const observedAt = session?.startedAt ?? batch?.publishedAt ?? undefined;
+
+  return (
+    <DialogShell
+      aria-label={`${title} Streaming DAG`}
+      bodyClassName="run-dag-modal-body"
+      contentClassName="run-dag-modal-panel"
+      description={`${job.target} · ${observedAt ? formatCompactDateTime(observedAt) : "시각 미수집"}`}
+      eyebrow={session ? "Streaming session" : "Streaming micro-batch"}
+      headerActions={<Button size="sm" type="button" variant="outline" aria-label="닫기" onClick={onClose}><X size={16} />닫기</Button>}
+      headerClassName="run-dag-modal-header"
+      onClose={onClose}
+      showCloseButton={false}
+      size="wide"
+      title={title}
+    >
+      <section className="dag-body-content">
+        <div className="dag-summary-grid">
+          <MetricCard detail={session ? "세션 누적 상태" : "micro-batch 처리 상태"} icon={<Activity aria-hidden="true" />} label="상태" size="compact" tone={statusTone} value={statusLabel} />
+          <MetricCard detail={observedAt ? formatCompactDateTime(observedAt) : "시각 미수집"} icon={<Clock3 aria-hidden="true" />} label="소요 시간" size="compact" value={duration} />
+          <MetricCard detail="성공한 단계 / 전체 단계" icon={<Workflow aria-hidden="true" />} label="완료 단계" size="compact" tone="total" value={`${completedSteps}/${dagSteps.length}`} />
+          <MetricCard detail={`출력 ${storedCount.toLocaleString()}건`} icon={<Table2 aria-hidden="true" />} label="입력 행" size="compact" value={`${consumedCount.toLocaleString()}건`} />
+        </div>
+
+        <article className="dag-workbench">
+          <section className="dag-timeline-panel" aria-label="Streaming DAG">
+            <PanelHeader className="min-h-16" description="실제 worker·manifest·Catalog 증적을 단계별로 확인합니다." icon={<Workflow aria-hidden="true" size={18} />} title="Streaming DAG" />
+            <ScrollArea className="h-[430px]">
+              {dagSteps.length ? (
+                <Timeline aria-label="Streaming 실행 단계 목록" className="px-5 py-4" role="list" value={selectedStepIndex + 1}>
+                  {dagSteps.map((step, index) => (
+                    <DagTimelineItem
+                      active={selectedStep?.id === step.id}
+                      index={index}
+                      key={step.id}
+                      onSelect={() => {
+                        setSelectedStepId(step.id);
+                        onAction("etl.continuous.dag_node_selected", `/api/etl/jobs/${job.id}/continuous/sessions/${session?.sessionId ?? batch?.sessionId}/steps/${step.id}`, `${contextId}:${step.id}`);
+                      }}
+                      step={step}
+                    />
+                  ))}
+                </Timeline>
+              ) : (
+                <div className="grid min-h-[280px] place-items-center px-6 text-center text-sm font-bold text-slate-500">수집된 Streaming 단계 증적이 없습니다.</div>
+              )}
+            </ScrollArea>
+          </section>
+          <DagStepInspector contextId={contextId} key={selectedStep?.id ?? "empty"} step={selectedStep} />
+        </article>
+      </section>
+    </DialogShell>
+  );
 }
 
 function formatContinuousDuration(startedAt: string, endedAt?: string | null) {
@@ -3221,7 +3396,7 @@ function RunDagModal({
             </ScrollArea>
           </section>
 
-          <DagStepInspector currentRun={currentRun} key={selectedStep?.id ?? "empty"} step={selectedStep} />
+          <DagStepInspector contextId={currentRun.runId} key={selectedStep?.id ?? "empty"} step={selectedStep} />
         </article>
       </section>
     </DialogShell>
@@ -3282,7 +3457,7 @@ function DagTimelineItem({
   );
 }
 
-function DagStepInspector({ currentRun, step }: { currentRun: JobRunSummary; step?: JobDagStep }) {
+function DagStepInspector({ contextId, step }: { contextId: string; step?: JobDagStep }) {
   if (!step) {
     return (
       <aside className="dag-step-inspector dag-step-inspector-empty">
@@ -3319,7 +3494,7 @@ function DagStepInspector({ currentRun, step }: { currentRun: JobRunSummary; ste
         {messages.length ? (
           <ul>{messages.map((message, index) => <li key={`${index}-${message}`}>{message}</li>)}</ul>
         ) : (
-          <p>{step.note || `${currentRun.runId}의 단계 메시지가 아직 수집되지 않았습니다.`}</p>
+          <p>{step.note || `${contextId}의 단계 메시지가 아직 수집되지 않았습니다.`}</p>
         )}
       </section>
     </aside>
@@ -3369,7 +3544,7 @@ function getDagStepTimingLabel(step: JobDagStep) {
   const duration = step.duration
     ?? (step.status === "running" ? "진행 중" : step.status === "pending" || step.status === "blocked" ? "미실행" : "소요시간 미수집");
   const completedAt = step.completedAt
-    ? `${step.completedAt} 완료`
+    ? `${formatCompactDateTime(step.completedAt)} 완료`
     : step.status === "running"
       ? "현재 실행 중"
       : step.status === "blocked"

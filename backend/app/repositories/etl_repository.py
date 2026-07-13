@@ -23,6 +23,7 @@ from app.schemas.etl import (
     KafkaContinuousRuntime,
     KafkaContinuousSession,
 )
+from app.services.rule_compiler import compile_rule_set
 
 _schema_ready_bind_ids: set[int] = set()
 
@@ -56,6 +57,7 @@ def ensure_schema(db: Session) -> None:
             "partition": "VARCHAR(255)",
             "partition_columns": "JSON",
             "index_columns": "JSON",
+            "job_kind": "VARCHAR(64)",
             "permission_roles": "JSON",
             "permission_summary": "TEXT",
             "progress": "JSON",
@@ -76,10 +78,13 @@ def ensure_schema(db: Session) -> None:
             "schema_sample_rows": "JSON",
             "schema_summary": "TEXT",
             "rule_summary": "TEXT",
+            "rule_contract_version": "VARCHAR(16)",
+            "rules": "JSON",
             "source": "VARCHAR(255)",
             "source_config": "JSON",
             "source_label": "VARCHAR(255)",
             "source_type": "VARCHAR(120)",
+            "sql_recipe": "JSON",
             "stats": "JSON",
             "status": "VARCHAR(64)",
             "storage_path": "VARCHAR(512)",
@@ -104,9 +109,27 @@ def ensure_schema(db: Session) -> None:
             if column_name not in runtime_columns:
                 connection.execute(text(f"ALTER TABLE kafka_continuous_runtimes ADD COLUMN {column_name} JSON"))
 
+        session_columns = {column["name"] for column in inspector.get_columns("kafka_continuous_sessions")}
+        if "dag_steps" not in session_columns:
+            connection.execute(text("ALTER TABLE kafka_continuous_sessions ADD COLUMN dag_steps JSON"))
+        connection.execute(text("UPDATE kafka_continuous_sessions SET dag_steps = '[]' WHERE dag_steps IS NULL"))
+
+        batch_columns = {column["name"] for column in inspector.get_columns("kafka_continuous_batches")}
+        batch_column_defs = {
+            "status": "VARCHAR(32)",
+            "last_error": "TEXT",
+            "dag_steps": "JSON",
+        }
+        for column_name, column_type in batch_column_defs.items():
+            if column_name not in batch_columns:
+                connection.execute(text(f"ALTER TABLE kafka_continuous_batches ADD COLUMN {column_name} {column_type}"))
+        connection.execute(text("UPDATE kafka_continuous_batches SET status = 'success' WHERE status IS NULL"))
+        connection.execute(text("UPDATE kafka_continuous_batches SET dag_steps = '[]' WHERE dag_steps IS NULL"))
+
         job_defaults = {
             "dag_steps": "[]",
             "execution_mode": "snapshot",
+            "job_kind": "pipeline",
             "last_run": "-",
             "last_state": "대기",
             "name": "Untitled ETL Job",
@@ -141,6 +164,7 @@ def ensure_schema(db: Session) -> None:
                 "schema_columns",
                 "schema_sample_rows",
                 "source_config",
+                "sql_recipe",
                 "stats",
                 "transform_output_columns",
                 "transform_steps",
@@ -484,6 +508,7 @@ def stage_kafka_continuous_batch(db: Session, batch: KafkaContinuousBatchModel) 
     if existing is None:
         db.add(batch)
         return batch
+    existing.status = batch.status
     existing.published_at = batch.published_at or existing.published_at
     existing.consumed_count = batch.consumed_count
     existing.stored_count = batch.stored_count
@@ -493,6 +518,8 @@ def stage_kafka_continuous_batch(db: Session, batch: KafkaContinuousBatchModel) 
     existing.data_path = batch.data_path or existing.data_path
     existing.quarantine_path = batch.quarantine_path or existing.quarantine_path
     existing.manifest_path = batch.manifest_path or existing.manifest_path
+    existing.last_error = batch.last_error
+    existing.dag_steps = batch.dag_steps
     db.add(existing)
     return existing
 
@@ -578,6 +605,17 @@ def refresh_run_for_update(db: Session, run: ETLRunModel) -> None:
 
 def job_to_schema(db: Session, job: ETLJobModel) -> JobRowData:
     runtime = get_kafka_continuous_runtime(db, job.id) if db is not None and job.execution_mode == "continuous" else None
+    persisted_rules = job.rules if job.rule_contract_version is not None and job.rules is not None else None
+    compiled_rules = compile_rule_set(
+        contract_version=job.rule_contract_version,
+        rules=persisted_rules,
+        transform_steps=job.transform_steps,
+        quality_rules=job.quality_rules,
+        schema_columns=job.schema_columns,
+        transform_output_columns=job.transform_output_columns,
+        execution_mode=job.execution_mode or "snapshot",
+        source_type=job.source_type or "",
+    )
     return JobRowData(
         created_at=job.created_at.isoformat() if job.created_at else None,
         id=job.id,
@@ -598,6 +636,8 @@ def job_to_schema(db: Session, job: ETLJobModel) -> JobRowData:
         source_config=job.source_config,
         source_label=job.source_label,
         source_type=job.source_type,
+        job_kind=job.job_kind or "pipeline",
+        sql_recipe=job.sql_recipe,
         execution_mode=job.execution_mode or "snapshot",
         continuous_config=job.continuous_config,
         continuous_runtime=continuous_runtime_to_schema(runtime),
@@ -607,6 +647,9 @@ def job_to_schema(db: Session, job: ETLJobModel) -> JobRowData:
         schema_sample_rows=job.schema_sample_rows,
         schema_summary=job.schema_summary,
         rule_summary=job.rule_summary,
+        rule_contract_version=compiled_rules.result.contract_version,
+        rules=compiled_rules.result.rules,
+        rule_compilation=compiled_rules.result,
         retry_policy=job.retry_policy,
         retry_policy_summary=job.retry_policy_summary,
         run_limit_summary=job.run_limit_summary,
@@ -664,6 +707,11 @@ def continuous_runtime_to_schema(runtime: KafkaContinuousRuntimeModel | None) ->
         schema_fingerprint=schema_state.get("schemaFingerprint"),
         schema_status=str(schema_state.get("schemaStatus") or "stable"),
         schema_changes=schema_state.get("schemaChanges") or [],
+        rule_contract_version=str(metrics.get("ruleContractVersion") or "1.0"),
+        rule_fingerprint=metrics.get("ruleFingerprint"),
+        runtime_fingerprint=metrics.get("runtimeFingerprint"),
+        rule_metrics=metrics.get("ruleMetrics") or {},
+        last_rule_result=metrics.get("lastRuleResult") or {},
         consumed_count=int(runtime.consumed_count or 0),
         stored_count=int(runtime.stored_count or 0),
         quarantined_count=int(runtime.quarantined_count or 0),
@@ -691,6 +739,7 @@ def continuous_session_to_schema(session: KafkaContinuousSessionModel) -> KafkaC
         lag=session.lag,
         checkpoint_path=session.checkpoint_path,
         last_error=session.last_error,
+        dag_steps=session.dag_steps or [],
     )
 
 
@@ -698,6 +747,7 @@ def continuous_batch_to_schema(batch: KafkaContinuousBatchModel) -> KafkaContinu
     return KafkaContinuousBatch(
         batch_id=batch.batch_id,
         session_id=batch.session_id,
+        status=batch.status,
         published_at=batch.published_at,
         consumed_count=int(batch.consumed_count or 0),
         stored_count=int(batch.stored_count or 0),
@@ -707,6 +757,8 @@ def continuous_batch_to_schema(batch: KafkaContinuousBatchModel) -> KafkaContinu
         data_path=batch.data_path,
         quarantine_path=batch.quarantine_path,
         manifest_path=batch.manifest_path,
+        last_error=batch.last_error,
+        dag_steps=batch.dag_steps or [],
     )
 
 

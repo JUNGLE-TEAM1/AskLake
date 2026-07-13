@@ -31,6 +31,14 @@ export function runSparkPipeline(job, command, runId) {
   ensureWritableDir(reviewTextModelHostDir);
 
   const source = sparkSourceFromJob(job, runId);
+  try {
+    return runSparkPipelineWithSource(job, command, runId, source);
+  } finally {
+    cleanupSparkSource(source);
+  }
+}
+
+function runSparkPipelineWithSource(job, command, runId, source) {
   const output = sparkOutputPath(job, runId);
   const reportPath = path.join(reportDir, `${runId}.json`);
   const dockerReportPath = `${reportContainerDir}/${runId}.json`;
@@ -175,6 +183,9 @@ function writeSparkJobManifest(manifestPath, job) {
     createdAt: new Date().toISOString(),
     partitionColumns: job.partition || "",
     qualityRules: job.qualityRules ?? [],
+    ruleContractVersion: job.ruleContractVersion ?? "1.0",
+    ruleOutputSchema: job.ruleOutputSchema ?? job.transformOutputColumns ?? [],
+    rules: job.rules ?? [],
     recordParsing: job.recordParsing ?? null,
     schemaColumns: job.schemaColumns ?? [],
     textStructuring: {
@@ -287,6 +298,15 @@ function sparkSourceFromJob(job, runId) {
     };
   }
 
+  if (isPostgresSource(sourceType)) {
+    const exportPath = exportPostgresExecutionSource(job, runId);
+    return {
+      format: "jsonl",
+      path: `file://${reportContainerDir}/${path.basename(exportPath)}`,
+      temporaryPath: exportPath,
+    };
+  }
+
   const samplePath = hasInlineSampleEndpoint(job)
     ? writeSampleRowsSource(job, runId) || writeConnectorSampleRowsSource(job, runId)
     : isConnectorSampleSource(sourceType)
@@ -306,6 +326,51 @@ function isConnectorSampleSource(sourceType) {
   return ["mongodb", "postgresql", "database", "rest api", "stream / kafka", "kafka json"].includes(
     String(sourceType || "").trim().toLowerCase(),
   );
+}
+
+function isPostgresSource(sourceType) {
+  return ["postgresql", "database"].includes(String(sourceType || "").trim().toLowerCase());
+}
+
+function exportPostgresExecutionSource(job, runId) {
+  const outputPath = path.join(reportDir, `${runId}-source.jsonl`);
+  const result = spawnSync(process.execPath, [path.join(scriptsDir, "export-postgres-execution-source.mjs")], {
+    cwd: backendDir,
+    encoding: "utf8",
+    env: process.env,
+    input: JSON.stringify({
+      outputPath,
+      runId,
+      sourceConfig: Array.isArray(job.sourceConfig) ? job.sourceConfig : [],
+    }),
+    maxBuffer: 16 * 1024 * 1024,
+  });
+  if (result.status !== 0) {
+    throw sparkError(`PostgreSQL full-table execution export failed.\n${result.stdout}\n${result.stderr}`);
+  }
+  const marker = String(result.stdout || "").split(/\r?\n/)
+    .findLast((line) => line.startsWith("ASKLAKE_POSTGRES_EXECUTION_SOURCE="));
+  if (!marker) throw sparkError("PostgreSQL full-table execution export returned no result marker.");
+  const exported = safeJsonParse(marker.slice("ASKLAKE_POSTGRES_EXECUTION_SOURCE=".length));
+  if (exported.runId !== runId || Number(exported.rowCount) <= 0 || path.resolve(exported.outputPath || "") !== outputPath) {
+    throw sparkError(`PostgreSQL full-table execution export identity mismatch for runId=${runId}.`);
+  }
+  return outputPath;
+}
+
+function cleanupSparkSource(source) {
+  const temporaryPath = String(source?.temporaryPath || "").trim();
+  if (!temporaryPath) return;
+  const resolved = path.resolve(temporaryPath);
+  if (path.dirname(resolved) !== reportDir) {
+    console.error(`Refusing to remove Spark source outside report directory: ${resolved}`);
+    return;
+  }
+  try {
+    rmSync(resolved, { force: true });
+  } catch (error) {
+    console.error(`Spark temporary source cleanup failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 function hasInlineSampleEndpoint(job) {
@@ -416,6 +481,7 @@ function sparkOutputPath(job, runId) {
 }
 
 function sparkRowLimitFromJob(job) {
+  if (isPostgresSource(job.sourceType)) return "0";
   const sourceConfig = Array.isArray(job.sourceConfig) ? job.sourceConfig : [];
   const configuredLimit = fieldValue(sourceConfig, "__Execution Row Limit") || fieldValue(sourceConfig, "Execution Row Limit");
   if (configuredLimit && Number(configuredLimit) > 0) return configuredLimit;

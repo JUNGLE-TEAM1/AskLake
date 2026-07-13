@@ -1,3 +1,4 @@
+import os
 from typing import Any, Literal
 
 from pydantic import ConfigDict, Field, field_validator, model_validator
@@ -11,7 +12,12 @@ JobScheduleKind = Literal["daily", "weekly", "monthly", "realtime", "none", "oth
 JobRunStatus = Literal["queued", "running", "success", "failed", "canceled"]
 JobRunOutcome = Literal["success", "failed", "canceled"]
 JobDagStepStatus = Literal["pending", "running", "success", "failed", "blocked"]
+JobKind = Literal["pipeline", "trino_sql_materialization"]
 KafkaExecutionMode = Literal["snapshot", "continuous"]
+RuleContractVersion = Literal["1.0"]
+CanonicalRuleKind = Literal["transform", "quality"]
+CanonicalRuleErrorPolicy = Literal["fail_batch", "quarantine", "warn"]
+CanonicalRuleFailureDisposition = Literal["keep", "drop_row", "set_null"]
 ContinuousRuntimeStatus = Literal["starting", "running", "pausing", "paused", "stopping", "stopped", "failed"]
 JobCommand = Literal["run", "retry", "pause", "cancelRun", "stopSchedule", "resumeSchedule", "startContinuous", "pauseContinuous", "resumeContinuous", "stopContinuous"]
 
@@ -44,6 +50,7 @@ class SchemaColumnDraft(CamelModel):
     nullable: bool = False
     role: str | None = None
     source_name: str
+    source_type: str | None = None
     target_name: str
     type: str
 
@@ -86,6 +93,7 @@ class RecordParsingPreviewResponse(CamelModel):
 
 
 class TransformStepDraft(CamelModel):
+    canonical_parameters: dict[str, Any] | None = None
     enabled: bool = True
     id: str
     input: str
@@ -98,6 +106,7 @@ class TransformStepDraft(CamelModel):
 
 
 class QualityRuleDraft(CamelModel):
+    canonical_parameters: dict[str, Any] | None = None
     enabled: bool = True
     failure_action: str
     id: str
@@ -106,6 +115,54 @@ class QualityRuleDraft(CamelModel):
     severity: str
     target_column: str
     validation_type: str
+
+
+class CanonicalRuleDraft(CamelModel):
+    contract_version: str = "1.0"
+    enabled: bool = True
+    failure_disposition: str = "keep"
+    id: str
+    input_columns: list[str] = Field(default_factory=list)
+    kind: str
+    label: str | None = None
+    on_error: str = "warn"
+    operation: str
+    output_columns: list[str] = Field(default_factory=list)
+    output_type: str | None = None
+    parameters: dict[str, Any] = Field(default_factory=dict)
+    severity: str | None = None
+
+
+class RuleCompilationIssue(CamelModel):
+    code: str
+    field: str | None = None
+    message: str
+    rule_id: str | None = None
+
+
+class RuleCompilationResult(CamelModel):
+    contract_version: RuleContractVersion = "1.0"
+    issues: list[RuleCompilationIssue] = Field(default_factory=list)
+    output_schema: SourceFieldRows = Field(default_factory=list)
+    rules: list[CanonicalRuleDraft] = Field(default_factory=list)
+    status: Literal["pass", "fail"] = "pass"
+
+
+class RulePreviewRequest(CamelModel):
+    execution_mode: KafkaExecutionMode = "snapshot"
+    records: list[dict[str, Any]] = Field(default_factory=list, max_length=100)
+    rule_contract_version: str = "1.0"
+    rules: list[CanonicalRuleDraft] = Field(default_factory=list)
+    schema_columns: list[SchemaColumnDraft] = Field(default_factory=list)
+    source_type: str = ""
+
+
+class RulePreviewResponse(CamelModel):
+    compilation: RuleCompilationResult
+    quality: dict[str, Any] = Field(default_factory=dict)
+    quarantined: list[dict[str, Any]] = Field(default_factory=list)
+    records: list[dict[str, Any]] = Field(default_factory=list)
+    transform: dict[str, Any] = Field(default_factory=dict)
 
 
 class RetryPolicyDraft(CamelModel):
@@ -158,6 +215,11 @@ class KafkaContinuousRuntime(CamelModel):
     schema_fingerprint: str | None = None
     schema_status: str = "stable"
     schema_changes: list[dict[str, Any]] = Field(default_factory=list)
+    rule_contract_version: str = "1.0"
+    rule_fingerprint: str | None = None
+    runtime_fingerprint: str | None = None
+    rule_metrics: dict[str, int] = Field(default_factory=dict)
+    last_rule_result: dict[str, Any] = Field(default_factory=dict)
     consumed_count: int = 0
     stored_count: int = 0
     quarantined_count: int = 0
@@ -190,11 +252,13 @@ class KafkaContinuousSession(CamelModel):
     lag: int | None = None
     checkpoint_path: str
     last_error: str | None = None
+    dag_steps: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class KafkaContinuousBatch(CamelModel):
     batch_id: int
     session_id: str
+    status: Literal["running", "success", "failed"] = "success"
     published_at: str | None = None
     consumed_count: int = 0
     stored_count: int = 0
@@ -204,6 +268,8 @@ class KafkaContinuousBatch(CamelModel):
     data_path: str | None = None
     quarantine_path: str | None = None
     manifest_path: str | None = None
+    last_error: str | None = None
+    dag_steps: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ContinuousQuarantineRecord(CamelModel):
@@ -213,6 +279,10 @@ class ContinuousQuarantineRecord(CamelModel):
     raw_payload: str
     reason: str
     schema_fingerprint: str | None = None
+    rule_fingerprint: str | None = None
+    rule_id: str | None = None
+    stage: str | None = None
+    target_column: str | None = None
     quarantined_at: str | None = None
     replay_status: str = "pending"
 
@@ -278,7 +348,9 @@ class JobRunSummary(CamelModel):
 
 
 class JobDagStep(CamelModel):
+    completed_at: str | None = None
     details: SourceFieldRows | None = None
+    duration: str | None = None
     id: str
     logs: list[str] | None = None
     meta: str
@@ -307,6 +379,8 @@ class JobRowData(CamelModel):
     source_config: SourceFieldRows | None = None
     source_label: str | None = None
     source_type: str | None = None
+    job_kind: JobKind = "pipeline"
+    sql_recipe: dict[str, Any] | None = None
     execution_mode: KafkaExecutionMode = "snapshot"
     continuous_config: dict[str, Any] | None = None
     continuous_runtime: KafkaContinuousRuntime | None = None
@@ -316,6 +390,9 @@ class JobRowData(CamelModel):
     schema_sample_rows: list[list[str]] | None = None
     schema_summary: str | None = None
     rule_summary: str | None = None
+    rule_contract_version: RuleContractVersion = "1.0"
+    rules: list[CanonicalRuleDraft] = Field(default_factory=list)
+    rule_compilation: RuleCompilationResult | None = None
     retry_policy: RetryPolicyDraft | dict[str, Any] | None = None
     retry_policy_summary: str | None = None
     run_limit_summary: str | None = None
@@ -435,6 +512,37 @@ class CreateDerivedDatasetRequest(CamelModel):
     validation_key: str | None = None
 
 
+class TrinoSqlJobSchedule(CamelModel):
+    mode: Literal["manual", "daily", "weekly"] = "manual"
+    overlap_policy: Literal["skip_if_running"] = "skip_if_running"
+    time: str = "09:00"
+    timezone: str = "Asia/Seoul"
+    weekday: Literal["월", "화", "수", "목", "금", "토", "일"] = "월"
+
+
+class TrinoSqlJobGovernance(CamelModel):
+    access_scope: Literal["organization", "private", "project"] = "organization"
+    owner: str
+    permission_summary: str
+
+
+class TrinoSqlJobTarget(CamelModel):
+    partition_column: str | None = None
+    write_mode: Literal["full_refresh"] = "full_refresh"
+
+
+class CreateTrinoSqlJobRequest(CamelModel):
+    base_dataset_id: str
+    dataset: DerivedDatasetSpec
+    governance: TrinoSqlJobGovernance
+    job_name: str | None = None
+    query: str
+    reference_dataset_ids: list[str] = Field(default_factory=list)
+    schedule: TrinoSqlJobSchedule = Field(default_factory=TrinoSqlJobSchedule)
+    source_run_id: str
+    target: TrinoSqlJobTarget = Field(default_factory=TrinoSqlJobTarget)
+
+
 class CreatePipelineRequest(CamelModel):
     id: str
     job_name: str
@@ -449,6 +557,8 @@ class CreatePipelineRequest(CamelModel):
     record_parsing: RecordParsingDraft | None = None
     schema_summary: str = ""
     rule_summary: str = ""
+    rule_contract_version: str | None = None
+    rules: list[CanonicalRuleDraft] = Field(default_factory=list)
     transform_output_columns: SourceFieldRows = Field(default_factory=list)
     transform_steps: list[TransformStepDraft] = Field(default_factory=list)
     quality_invalid_rows: list[list[str]] = Field(default_factory=list)
@@ -519,6 +629,7 @@ class ReviewSnapshot(CamelModel):
     can_create: bool
     destination: list[ReviewEntry]
     permission: list[ReviewEntry]
+    rule_compilation: RuleCompilationResult
     schema_: list[ReviewSchemaRow] = Field(alias="schema")
     validation: list[ReviewValidationRow]
 
@@ -532,6 +643,8 @@ class UpdatePipelineRequest(CamelModel):
     schema_sample_rows: list[list[str]] = Field(default_factory=list)
     schema_summary: str = ""
     rule_summary: str = ""
+    rule_contract_version: str | None = None
+    rules: list[CanonicalRuleDraft] = Field(default_factory=list)
     transform_output_columns: SourceFieldRows = Field(default_factory=list)
     transform_steps: list[TransformStepDraft] = Field(default_factory=list)
     quality_invalid_rows: list[list[str]] = Field(default_factory=list)
@@ -640,16 +753,20 @@ class ScheduledJobRunResponse(CamelModel):
 
 class KafkaReviewIngestRequest(CamelModel):
     allow_empty: bool = False
-    broker: str = "127.0.0.1:19092"
+    broker: str = Field(default_factory=lambda: os.environ.get("ASKLAKE_KAFKA_BROKER") or "127.0.0.1:19092")
     topic: str = "reviews.raw"
     consumer_group_id: str | None = None
     dataset_id: str | None = None
     dataset_name: str = "reviews_raw"
     target_bucket: str = "asklake-output"
     target_description: str | None = None
-    target_format: str = "jsonl"
+    target_format: Literal["jsonl"] = "jsonl"
     target_layer: Literal["RAW", "BRONZE", "SILVER"] = "BRONZE"
     target_prefix: str = ""
+    schema_columns: list[SchemaColumnDraft] = Field(default_factory=list)
+    output_schema: SourceFieldRows = Field(default_factory=list)
+    rule_contract_version: str | None = None
+    rules: list[CanonicalRuleDraft] = Field(default_factory=list)
     transform_steps: list[TransformStepDraft] = Field(default_factory=list)
     quality_rules: list[QualityRuleDraft] = Field(default_factory=list)
     landing_bucket: str = "m3-raw"
@@ -790,6 +907,10 @@ class DraftPipelinePatch(CamelModel):
 class SourceConnectorRequest(CamelModel):
     source_config: SourceFieldRows = Field(default_factory=list)
     source_type: str
+
+
+class SourceConnectorDefaults(CamelModel):
+    kafka_broker: str
 
 
 class SourceAssetsRequest(CamelModel):

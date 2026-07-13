@@ -3,15 +3,25 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from pydantic import ValidationError
+from sqlalchemy import create_engine
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.orm import Session
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.models.etl import ETLJobModel
+from app.models.base import Base
 from app.core.auth_context import ActorContext
 from app.core.errors import ApiError
 from app.repositories import etl_repository
 from app.schemas.etl import UpdatePipelineRequest
 from app.services import etl_service
+
+
+@compiles(JSONB, "sqlite")
+def compile_jsonb_for_sqlite(_type, _compiler, **_kwargs) -> str:
+    return "JSON"
 
 
 def request_payload() -> dict:
@@ -26,6 +36,20 @@ def request_payload() -> dict:
         }],
         "schemaSampleRows": [["review-001"]],
         "schemaSummary": "1개 필드",
+        "ruleContractVersion": "1.0",
+        "rules": [{
+            "contractVersion": "1.0",
+            "enabled": True,
+            "failureDisposition": "keep",
+            "id": "event-id-default",
+            "inputColumns": ["event_id"],
+            "kind": "transform",
+            "onError": "warn",
+            "operation": "default_value",
+            "outputColumns": ["event_id"],
+            "outputType": "String",
+            "parameters": {"value": ""},
+        }],
         "ruleSummary": "필수값 검사 1개",
         "transformOutputColumns": [["event_id", "string"]],
         "transformSteps": [],
@@ -88,38 +112,55 @@ def main() -> None:
     assert job.source_type == "Stream / Kafka"
     assert job.permission_summary == "Data Engineer Group · 조직 내부"
     assert job.target_database == "asklake"
+    assert job.rule_contract_version == "1.0"
+    assert job.rules[0]["parameters"] == {"value": ""}
     assert job.last_state == "설정 수정됨"
     assert not etl_service.target_identity_changed(job, request)
 
     changed_target = UpdatePipelineRequest.model_validate({**request_payload(), "targetDataset": "reviews_snapshot_v2"})
     assert etl_service.target_identity_changed(job, changed_target)
 
-    original_get_job = etl_repository.get_job
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    etl_repository._schema_ready_bind_ids.add(id(engine))
     original_list_runs_for_job = etl_repository.list_runs_for_job
-    original_permission_grants = etl_service.permission_grants_for_resource
-    etl_repository.get_job = lambda _db, _job_id: job
-    etl_service.permission_grants_for_resource = lambda *_args, **_kwargs: []
-    try:
-        etl_repository.list_runs_for_job = lambda _db, _job_id: [SimpleNamespace(status="success")]
-        try:
-            etl_service.update_pipeline(None, job.id, changed_target, ActorContext(name="admin", role="admin"))
-        except ApiError as error:
-            assert error.status_code == 422
-        else:
-            raise AssertionError("Successful jobs must reject target identity changes")
+    with Session(engine) as db:
+        db.add(job)
+        db.commit()
 
-        etl_repository.list_runs_for_job = lambda _db, _job_id: []
-        job.status = "running"
+        updated = etl_service.update_pipeline(
+            db,
+            job.id,
+            request,
+            ActorContext(name="admin", role="admin"),
+        )
+        assert updated.rule_contract_version == "1.0"
+        assert updated.rules[0].parameters == {"value": ""}
+        stored = etl_repository.get_job(db, job.id)
+        assert stored is not None
+        assert stored.rule_contract_version == "1.0"
+        assert stored.rules[0]["parameters"] == {"value": ""}
+
         try:
-            etl_service.update_pipeline(None, job.id, request, ActorContext(name="admin", role="admin"))
-        except ApiError as error:
-            assert error.status_code == 409
-        else:
-            raise AssertionError("Running jobs must reject updates")
-    finally:
-        etl_repository.get_job = original_get_job
-        etl_repository.list_runs_for_job = original_list_runs_for_job
-        etl_service.permission_grants_for_resource = original_permission_grants
+            etl_repository.list_runs_for_job = lambda _db, _job_id: [SimpleNamespace(status="success")]
+            try:
+                etl_service.update_pipeline(db, job.id, changed_target, ActorContext(name="admin", role="admin"))
+            except ApiError as error:
+                assert error.status_code == 422
+            else:
+                raise AssertionError("Successful jobs must reject target identity changes")
+
+            etl_repository.list_runs_for_job = lambda _db, _job_id: []
+            stored.status = "running"
+            db.commit()
+            try:
+                etl_service.update_pipeline(db, job.id, request, ActorContext(name="admin", role="admin"))
+            except ApiError as error:
+                assert error.status_code == 409
+            else:
+                raise AssertionError("Running jobs must reject updates")
+        finally:
+            etl_repository.list_runs_for_job = original_list_runs_for_job
 
     print("verify-etl-job-update-contract: ok")
 

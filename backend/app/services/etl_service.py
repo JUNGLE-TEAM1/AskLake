@@ -8,7 +8,9 @@ import secrets
 import subprocess
 from types import SimpleNamespace
 from typing import Any
+import unicodedata
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import status
 from sqlalchemy import select
@@ -33,6 +35,8 @@ from app.models.base import Base
 from app.models.identity import AuthUserModel
 from app.repositories.audit_repository import safe_record_audit_event
 from app.repositories import etl_repository
+from app.repositories.catalog_repository import CatalogRepository
+from app.repositories.sql_repository import SqlRepository
 from app.repositories.permission_repository import replace_permission_ui_grants
 from app.schemas.common import ErrorCode
 from app.schemas.etl import (
@@ -46,6 +50,7 @@ from app.schemas.etl import (
     AirflowRunExecutionResponse,
     CreatePipelineRequest,
     CreatePipelineResponse,
+    CreateTrinoSqlJobRequest,
     JobCommandResponse,
     JobListFacets,
     JobListResponse,
@@ -68,6 +73,8 @@ from app.schemas.etl import (
     ReviewSchemaRow,
     ReviewSnapshot,
     ReviewValidationRow,
+    RulePreviewRequest,
+    RulePreviewResponse,
     KafkaReviewIngestRequest,
     KafkaReviewIngestResponse,
     QueryRunRequest,
@@ -80,13 +87,18 @@ from app.schemas.etl import (
     SourceAssetsRequest,
     SourceAssetsResponse,
     SourceConnectorAnalysis,
+    SourceConnectorDefaults,
     SourceConnectorRequest,
     UpdatePipelineRequest,
 )
 
 from app.services.airflow_client import AirflowDagRun, AirflowTaskInstance, build_airflow_client
 from app.services.governance_enforcement import require_governed_access
+from app.services.trino_materialization_service import materialized_dataset_id
+from app.services.trino_query_run_service import TrinoQueryRunService
+from app.services.trino_sql_job_service import TrinoSqlJobService
 from app.services.identity_service import DEMO_GROUPS, DEMO_USERS
+from app.services.rule_compiler import CompiledRuleSet, compile_rule_set
 from app.services.resource_permission_service import job_with_persisted_permission_grants, permission_grants_for_resource, permissions_for_actor_with_governance
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
@@ -100,6 +112,12 @@ PERMISSION_GROUP_ACTIONS = {
     "data-platform": ["view", "run", "manage"],
     "ops": ["view", "run"],
 }
+
+
+def source_connector_defaults() -> SourceConnectorDefaults:
+    return SourceConnectorDefaults(
+        kafka_broker=os.environ.get("ASKLAKE_KAFKA_BROKER") or "127.0.0.1:19092",
+    )
 
 
 def get_permission_options(db: Session, actor: ActorContext) -> PermissionOptionsResponse:
@@ -144,13 +162,16 @@ def create_pipeline(
     request: CreatePipelineRequest,
     actor: ActorContext | str = "demo-user",
 ) -> CreatePipelineResponse:
+    compiled_rules = compile_pipeline_rules(request)
+    require_compiled_rules(compiled_rules)
+    apply_compiled_rules(request, compiled_rules)
     validate_create_request(request)
     actor_context = actor if isinstance(actor, ActorContext) else ActorContext(name=actor)
     actor_name = actor_context.name
     created_by = identity_name(request.created_by or actor_name or request.owner)
     created_by_profile = request.created_by_profile or identity_profile(created_by)
-    dataset_id = f"ds_{normalize_column_name(request.target_dataset)}"
-    existing_job = etl_repository.get_job_by_dataset_id(db, dataset_id) or etl_repository.get_job_by_target(db, request.target_dataset)
+    existing_job = etl_repository.get_job_by_target(db, request.target_dataset)
+    dataset_id = str(existing_job.dataset_id) if existing_job is not None and existing_job.dataset_id else make_dataset_id(request.target_dataset)
     if existing_job is not None:
         if existing_job.execution_mode != request.execution_mode:
             raise ApiError(
@@ -212,6 +233,8 @@ def create_pipeline(
         schema_sample_rows=request.schema_sample_rows,
         schema_summary=request.schema_summary,
         rule_summary=request.rule_summary,
+        rule_contract_version=request.rule_contract_version,
+        rules=[rule.model_dump(mode="json", by_alias=True) for rule in request.rules],
         permission_summary=request.permission_summary,
         permission_roles=request.permission_roles,
         storage_type=request.storage_type,
@@ -252,6 +275,235 @@ def create_pipeline(
             "id": dataset_id,
             "layer": request.target_layer,
             "name": request.target_dataset,
+            "status": "pending_run",
+        },
+        job=saved_job,
+    )
+
+
+def create_trino_sql_job(
+    db: Session,
+    request: CreateTrinoSqlJobRequest,
+    actor: ActorContext,
+) -> CreatePipelineResponse:
+    if not settings.trino_enabled:
+        raise ApiError(
+            ErrorCode.CONFLICT,
+            "Trino query runtime is not enabled",
+            status.HTTP_409_CONFLICT,
+            {"setting": "TRINO_ENABLED"},
+        )
+
+    sql_repository = SqlRepository(db)
+    query_service = TrinoQueryRunService(sql_repository, CatalogRepository(db))
+    source_run = query_service.get(request.source_run_id, actor)
+    source_payload = sql_repository.get_run_payload(request.source_run_id) or {}
+    if not actor.is_admin and not trino_query_run_belongs_to_actor(source_payload, actor):
+        safe_record_audit_event(
+            db,
+            action="trino_sql_job.create.forbidden",
+            actor=actor,
+            api_path="/api/etl/sql-jobs",
+            http_method="POST",
+            metadata={"reason": "source_run_owner_mismatch"},
+            result="forbidden",
+            status_code=status.HTTP_403_FORBIDDEN,
+            target_id=request.source_run_id,
+            target_name=request.source_run_id,
+            target_type="query_run",
+        )
+        raise ApiError(
+            ErrorCode.FORBIDDEN,
+            "Only the source Query Run submitter or an admin can create this SQL Job",
+            status.HTTP_403_FORBIDDEN,
+            {"runId": request.source_run_id},
+        )
+    if source_run.status != "succeeded":
+        raise ApiError(
+            ErrorCode.INVALID_JOB_STATE,
+            "Only succeeded Trino query runs can create a SQL Job",
+            status.HTTP_409_CONFLICT,
+            {"runId": source_run.run_id, "status": source_run.status},
+        )
+    if (
+        request.base_dataset_id != source_run.base_dataset_id
+        or request.query.strip() != source_run.query.strip()
+        or set(request.reference_dataset_ids) != set(source_run.reference_dataset_ids)
+    ):
+        raise ApiError(
+            ErrorCode.VALIDATION_ERROR,
+            "SQL Job recipe does not match the source Query Run",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
+
+    dataset_name = request.dataset.name.strip()
+    if not dataset_name:
+        raise ApiError(ErrorCode.VALIDATION_ERROR, "Dataset name is required", status.HTTP_422_UNPROCESSABLE_ENTITY)
+    dataset_id = materialized_dataset_id(dataset_name)
+    catalog_repository = CatalogRepository(db)
+    existing_dataset = catalog_repository.get_dataset_payload(dataset_id) or catalog_repository.get_dataset_payload_by_name(dataset_name)
+    existing_job = etl_repository.get_job_by_dataset_id(db, dataset_id) or etl_repository.get_job_by_target(db, dataset_name)
+    if existing_dataset is not None or existing_job is not None:
+        raise ApiError(
+            ErrorCode.CONFLICT,
+            "A Dataset or Job with this target name already exists",
+            status.HTTP_409_CONFLICT,
+            {"datasetId": dataset_id, "datasetName": dataset_name},
+        )
+
+    schedule_label = trino_sql_job_schedule_label(request)
+    next_run_utc = trino_sql_job_next_run_utc(request)
+    job_name = (request.job_name or f"{dataset_name} SQL Job").strip()
+    job_id = make_job_id(f"sql-{job_name}-{dataset_id}")
+    columns = list(source_run.result.columns if source_run.result else [])
+    if request.target.partition_column and request.target.partition_column not in columns:
+        raise ApiError(
+            ErrorCode.VALIDATION_ERROR,
+            "SQL Job partition column must exist in the Query Run result",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            {"partitionColumn": request.target.partition_column, "columns": columns},
+        )
+    schema_columns = [
+        {
+            "confidence": 1,
+            "included": True,
+            "nullable": True,
+            "role": "primary" if index == 0 else "derived",
+            "sourceName": column,
+            "targetName": column,
+            "type": "unknown",
+        }
+        for index, column in enumerate(columns)
+    ]
+    permission_roles = trino_sql_job_permission_roles(
+        request.governance.access_scope,
+        request.governance.owner,
+    )
+    sql_recipe = {
+        "baseDatasetId": request.base_dataset_id,
+        "query": request.query,
+        "referenceDatasetIds": request.reference_dataset_ids,
+        "runAs": {
+            "email": actor.email,
+            "groups": list(actor.groups),
+            "id": actor.id,
+            "name": actor.name,
+            "role": actor.role,
+        },
+        "sourceRunId": request.source_run_id,
+        "target": {
+            "datasetId": dataset_id,
+            "datasetName": dataset_name,
+            "description": request.dataset.description,
+            "layer": request.dataset.layer,
+            "partitionColumns": [request.target.partition_column] if request.target.partition_column else [],
+            "tags": request.dataset.tags,
+        },
+        "writeMode": request.target.write_mode,
+    }
+    dag_steps = [
+        {"id": "validate", "title": "1. SQL recipe 검증", "meta": "Trino SQL · full refresh", "status": "pending"},
+        {"id": "materialize", "title": "2. Iceberg table 생성", "meta": "versioned CTAS", "status": "pending"},
+        {"id": "register", "title": "3. Catalog mapping 교체", "meta": "DESCRIBE 검증 후 공개", "status": "pending"},
+    ]
+    job = ETLJobModel(
+        id=job_id,
+        name=job_name,
+        owner=request.governance.owner.strip() or actor.name,
+        created_by=actor.name,
+        created_by_profile=identity_profile(actor.name),
+        status="scheduled",
+        tag="[SQL]",
+        source=f"Trino SQL / {source_run.run_id}",
+        target=dataset_name,
+        schedule=schedule_label,
+        schedule_policy={
+            "mode": request.schedule.mode,
+            "nextRunUtc": next_run_utc,
+            "overlapPolicy": request.schedule.overlap_policy,
+            "time": request.schedule.time,
+            "timezone": request.schedule.timezone,
+            "weekday": request.schedule.weekday,
+            "writeMode": request.target.write_mode,
+        },
+        schedule_summary=trino_sql_job_schedule_summary(request),
+        retry_policy=None,
+        retry_policy_summary="Trino collector 재시도 정책",
+        run_limit_summary="동시 실행 1개",
+        source_config=[
+            ["Base Dataset ID", request.base_dataset_id],
+            ["Reference Dataset IDs", ", ".join(request.reference_dataset_ids) or "-"],
+            ["Source Query Run ID", request.source_run_id],
+        ],
+        source_label=f"{source_run.base_dataset_id} / {source_run.run_id}",
+        source_type="Trino SQL",
+        job_kind="trino_sql_materialization",
+        sql_recipe=sql_recipe,
+        execution_mode="snapshot",
+        continuous_config=None,
+        schema_columns=schema_columns,
+        schema_fingerprint=f"{source_run.run_id}:{'|'.join(columns)}",
+        schema_sample_rows=[],
+        schema_summary=f"{len(columns)}개 컬럼 · Trino Query Run 검증 완료",
+        rule_summary="저장된 SQL recipe를 생성 시점 데이터에 다시 실행",
+        permission_summary=request.governance.permission_summary,
+        permission_roles=permission_roles,
+        storage_type="Iceberg",
+        partition=request.target.partition_column,
+        partition_columns=[request.target.partition_column] if request.target.partition_column else [],
+        index_columns=[],
+        compression="Snappy",
+        storage_path=f"iceberg://{settings.trino_catalog}/{settings.trino_schema}/{dataset_id}",
+        target_description=request.dataset.description,
+        target_database=settings.trino_schema,
+        target_tags=request.dataset.tags,
+        target_format="Iceberg",
+        target_layer=request.dataset.layer,
+        target_path=None,
+        rag=False,
+        transform_output_columns=[[column, "unknown"] for column in columns],
+        transform_steps=[],
+        quality_invalid_rows=[],
+        quality_rules=[],
+        quality_score=None,
+        quality_status="idle",
+        last_run="생성 후 미실행",
+        last_state="Trino SQL recipe 저장 완료",
+        next_run=next_run_utc or "-",
+        progress=None,
+        stats={
+            "averageDuration": "-",
+            "currentStage": "실행 대기",
+            "inputRows": "-",
+            "lastSuccess": "-",
+            "outputRows": "-",
+            "sampleScope": "전체 SQL",
+            "schemaColumns": f"{len(columns)}개",
+            "sourceUnits": f"{1 + len(request.reference_dataset_ids)} datasets",
+            "successRate": "-",
+            "totalRuns": "0회",
+        },
+        dag_steps=dag_steps,
+        dag_steps_by_run_id={},
+        dataset_id=dataset_id,
+    )
+    saved_job = etl_repository.create_job(db, job)
+    safe_record_audit_event(
+        db,
+        action="trino_sql_job.create",
+        actor=actor,
+        api_path="/api/etl/sql-jobs",
+        http_method="POST",
+        metadata={"baseDatasetId": request.base_dataset_id, "sourceRunId": request.source_run_id},
+        target_id=job.id,
+        target_name=job.name,
+        target_type="etl_job",
+    )
+    return CreatePipelineResponse(
+        catalog_target={
+            "id": dataset_id,
+            "layer": request.dataset.layer,
+            "name": dataset_name,
             "status": "pending_run",
         },
         job=saved_job,
@@ -351,7 +603,13 @@ def run_due_scheduled_jobs(
             ))
             continue
 
-        response = command_job(db, job.id, "run", actor_context)
+        response = command_job(
+            db,
+            job.id,
+            "run",
+            actor_context,
+            execution_actor=trino_sql_job_run_as_actor(job) if job.job_kind == "trino_sql_materialization" else None,
+        )
         if reason == "due":
             advance_scheduled_job_after_tick(db, job.id)
         items.append(ScheduledJobRunItem(
@@ -429,10 +687,36 @@ def update_pipeline(
         ),
         resource_label="job",
     )
+    compiled_rules = compile_pipeline_rules(
+        request,
+        execution_mode=job.execution_mode or "snapshot",
+        source_type=job.source_type or "",
+    )
+    require_compiled_rules(compiled_rules)
+    apply_compiled_rules(request, compiled_rules)
+    validate_update_request(request)
+    validate_target_contract(
+        source_type=job.source_type or "",
+        execution_mode=job.execution_mode or "snapshot",
+        target_layer=request.target_layer,
+        target_format=request.target_format,
+    )
+    runtime = etl_repository.get_kafka_continuous_runtime(db, job.id) if job.execution_mode == "continuous" else None
+    continuous_contract_changed = continuous_processing_contract_changed(job, request)
+    if runtime is not None and continuous_contract_changed and runtime.status in {"starting", "running", "pausing", "stopping"}:
+        raise ApiError(
+            "CONTINUOUS_IMMUTABLE_CONFIG_ACTIVE",
+            "Stop the Continuous worker before changing schema, Rules, or target configuration.",
+            status.HTTP_409_CONFLICT,
+        )
     if job.status == "running":
         raise ApiError(ErrorCode.CONFLICT, f"Job is running and cannot be updated: {job_id}", status.HTTP_409_CONFLICT)
-
-    validate_update_request(request)
+    if runtime is not None and continuous_contract_changed and continuous_checkpoint_initialized(runtime):
+        raise ApiError(
+            "CONTINUOUS_CHECKPOINT_CONTRACT_IMMUTABLE",
+            "This Continuous checkpoint already has a schema and Rule contract. Copy the Job to use a new checkpoint.",
+            status.HTTP_409_CONFLICT,
+        )
     target_changed = target_identity_changed(job, request)
     if target_changed and has_successful_run(db, job.id):
         raise ApiError(
@@ -516,7 +800,14 @@ def execute_query(db: Session, request: QueryRunRequest) -> QueryRunResponse:
     )
 
 
-def command_job(db: Session, job_id: str, command: str, actor: ActorContext | None = None) -> JobCommandResponse:
+def command_job(
+    db: Session,
+    job_id: str,
+    command: str,
+    actor: ActorContext | None = None,
+    *,
+    execution_actor: ActorContext | None = None,
+) -> JobCommandResponse:
     job = etl_repository.get_job(db, job_id)
     if job is None:
         raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
@@ -598,6 +889,31 @@ def command_job(db: Session, job_id: str, command: str, actor: ActorContext | No
             ErrorCode.INVALID_JOB_STATE,
             f"Job has no paused schedule to resume: {job_id}",
             status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
+
+    if job.job_kind == "trino_sql_materialization" and command in {"run", "retry", "cancelRun"}:
+        service = TrinoSqlJobService(SqlRepository(db), CatalogRepository(db))
+        result = (
+            service.cancel(job, execution_actor or actor_context)
+            if command == "cancelRun"
+            else service.submit(job, command, execution_actor or actor_context)
+        )
+        return JobCommandResponse(
+            action={
+                "cancelRun": "etl.run.cancel_requested",
+                "retry": "etl.run.retry_requested",
+                "run": "etl.run.requested",
+            }[command],
+            api_path=f"/api/etl/jobs/{job_id}/commands",
+            dataset=result.dataset,
+            job=with_job_permissions(db, result.job, actor_context),
+            run=result.run,
+            dag_steps=result.job.dag_steps,
+            processing_result={
+                "engine": "trino",
+                "jobKind": "trino_sql_materialization",
+                "writeMode": "full_refresh",
+            },
         )
 
     action_by_command = {
@@ -829,6 +1145,46 @@ def infer_schema(request: SourceConnectorRequest) -> SchemaDraft:
     return analysis.draft_patch.schema_
 
 
+def preview_rules(request: RulePreviewRequest) -> RulePreviewResponse:
+    compiled = compile_rule_set(
+        contract_version=request.rule_contract_version,
+        rules=request.rules,
+        transform_steps=[],
+        quality_rules=[],
+        schema_columns=request.schema_columns,
+        transform_output_columns=[],
+        execution_mode=request.execution_mode,
+        source_type=request.source_type,
+    )
+    require_compiled_rules(compiled)
+    compiled_rule_payload = [rule.model_dump(mode="json", by_alias=True) for rule in compiled.result.rules]
+    spark_preview = (
+        request.execution_mode == "snapshot"
+        and "kafka" not in request.source_type.lower()
+        and any(rule.get("operation") == "sql_expression" and rule.get("enabled") is not False for rule in compiled_rule_payload)
+    )
+    result = run_node_bridge(
+        "preview-spark-rules.mjs" if spark_preview else "preview-snapshot-rules.mjs",
+        "ASKLAKE_RULE_PREVIEW_RESULT",
+        {
+            "records": request.records,
+            "outputSchema": [list(column) for column in compiled.result.output_schema],
+            "rules": compiled_rule_payload,
+            "schemaColumns": [column.model_dump(mode="json", by_alias=True) for column in request.schema_columns],
+            "transformSteps": [step.model_dump(mode="json", by_alias=True) for step in compiled.transform_steps],
+        },
+        error_marker="ASKLAKE_RULE_PREVIEW_ERROR",
+        timeout_seconds=90 if spark_preview else 20,
+    )
+    return RulePreviewResponse(
+        compilation=compiled.result,
+        quality=result.get("quality") or {},
+        quarantined=result.get("quarantined") or [],
+        records=result.get("records") or [],
+        transform=result.get("transform") or {},
+    )
+
+
 def preview_record_parsing(request: RecordParsingPreviewRequest) -> RecordParsingPreviewResponse:
     raw_rows = [
         (line_number, line.strip())
@@ -977,24 +1333,39 @@ def review_pipeline(request: ReviewPipelineRequest) -> ReviewSnapshot:
             source_ready = False
 
     included_columns = [column for column in request.schema_columns if column.included and column.target_name.strip()]
-    output_columns = request.transform_output_columns or [
-        (column.target_name, column.type) for column in included_columns
-    ]
+    compiled_rules = compile_pipeline_rules(request)
+    output_columns = compiled_rules.result.output_schema
     schema_ready = bool(included_columns)
+    rules_ready = compiled_rules.result.status == "pass"
+    enabled_rule_count = sum(1 for rule in compiled_rules.result.rules if rule.enabled)
+    rule_ready_value = "pass-through" if enabled_rule_count == 0 else f"{enabled_rule_count}개 규칙 compile 완료"
+    rule_warning_value = compiled_rules.result.issues[0].message if compiled_rules.result.issues else "규칙 확인 필요"
     record_parsing_ready = not (request.record_parsing and request.record_parsing.enabled) or (
         request.record_parsing.expected_field_count > 0
         and len(request.record_parsing.columns) == request.record_parsing.expected_field_count
         and len({normalize_column_name(column.name) for column in request.record_parsing.columns}) == len(request.record_parsing.columns)
     )
-    processing_ready = bool(request.rule_summary.strip())
-    continuous_rules_supported = request.execution_mode != "continuous" or (
-        not any(step.enabled for step in request.transform_steps)
-        and not any(rule.enabled for rule in request.quality_rules)
-    )
     schedule_ready = bool(request.schedule_label.strip())
     retry_ready = bool(request.retry_policy_summary.strip())
-    permission_ready = bool(request.permission_summary.strip() and request.target_dataset.strip() and request.owner.strip())
-    can_create = source_ready and schema_ready and record_parsing_ready and continuous_rules_supported and bool(request.source_type.strip()) and bool(request.source_label.strip()) and bool(request.target_dataset.strip()) and bool(request.owner.strip())
+    target_issue = target_contract_issue(
+        source_type=request.source_type,
+        execution_mode=request.execution_mode,
+        target_layer=request.target_layer,
+        target_format=request.target_format,
+    )
+    target_ready = target_issue is None
+    permission_ready = bool(request.permission_summary.strip() and request.target_dataset.strip() and request.owner.strip()) and target_ready
+    can_create = (
+        source_ready
+        and schema_ready
+        and rules_ready
+        and record_parsing_ready
+        and target_ready
+        and bool(request.source_type.strip())
+        and bool(request.source_label.strip())
+        and bool(request.target_dataset.strip())
+        and bool(request.owner.strip())
+    )
 
     source_type = "PostgreSQL" if request.source_type == "Database" else request.source_type
     source_display = " · ".join(value for value in [source_type, request.source_label] if value.strip())
@@ -1021,6 +1392,7 @@ def review_pipeline(request: ReviewPipelineRequest) -> ReviewSnapshot:
             review_entry("담당자", request.owner),
             review_entry("요약", request.permission_summary),
         ],
+        rule_compilation=compiled_rules.result,
         schema=[
             ReviewSchemaRow(
                 column_name=name,
@@ -1034,11 +1406,10 @@ def review_pipeline(request: ReviewPipelineRequest) -> ReviewSnapshot:
             review_validation("소스 연결", source_ready, "완료", "확인 필요"),
             *([review_validation("레코드 구조화", record_parsing_ready, "확정됨", "구조화 규칙 확인 필요")] if request.record_parsing and request.record_parsing.enabled else []),
             review_validation("스키마", schema_ready, "확정됨", "추론 필요"),
-            review_validation("처리 테스트", processing_ready, "통과", "확인 필요"),
-            *([review_validation("Continuous 규칙", continuous_rules_supported, "지원 범위 확인", "Continuous에서는 transform/quality rule을 제거하세요")] if request.execution_mode == "continuous" else []),
+            review_validation("처리 규칙", rules_ready, rule_ready_value, rule_warning_value),
             review_validation("스트림 제어" if request.execution_mode == "continuous" else "스케줄", schedule_ready, "시작/중지로 제어" if request.execution_mode == "continuous" else "유효함", "확인 필요"),
             review_validation("실패 재시도", retry_ready, "유효함", "확인 필요"),
-            review_validation("권한/타겟", permission_ready, "유효함", "확인 필요"),
+            review_validation("권한/타겟", permission_ready, "유효함", target_issue or "확인 필요"),
         ],
     )
 
@@ -1148,6 +1519,14 @@ def kafka_failure_result(request: dict[str, Any], run_id: str, error: ApiError, 
 
 
 def kafka_ingest_request_from_job(job: ETLJobModel, run_id: str) -> dict[str, Any]:
+    compiled_rules = compile_job_rules(job)
+    require_compiled_rules(compiled_rules)
+    validate_target_contract(
+        source_type=job.source_type or "",
+        execution_mode=job.execution_mode or "snapshot",
+        target_layer=job.target_layer or "BRONZE",
+        target_format=job.target_format or "jsonl",
+    )
     fields = job.source_config or []
     topic = (
         field_value(fields, "TOPIC / QUEUE NAME")
@@ -1176,9 +1555,9 @@ def kafka_ingest_request_from_job(job: ETLJobModel, run_id: str) -> dict[str, An
     offset_policy = kafka_offset_policy(field_value(fields, "Offset Policy") or field_value(fields, "offsetPolicy"))
     return {
         "allowEmpty": True,
-        "broker": field_value(fields, "Broker / Endpoint") or field_value(fields, "Broker") or "127.0.0.1:19092",
+        "broker": field_value(fields, "Broker / Endpoint") or field_value(fields, "Broker") or os.environ.get("ASKLAKE_KAFKA_BROKER") or "127.0.0.1:19092",
         "consumerGroupId": consumer_group_id,
-        "datasetId": job.dataset_id or f"ds_{normalize_column_name(job.target)}",
+        "datasetId": job.dataset_id or make_dataset_id(job.target),
         "datasetName": job.target or "reviews_raw",
         "landingBucket": target["bucket"],
         "landingEndpoint": (
@@ -1192,6 +1571,16 @@ def kafka_ingest_request_from_job(job: ETLJobModel, run_id: str) -> dict[str, An
         "maxMessages": max_messages,
         "offsetPolicy": offset_policy,
         "registerCatalog": True,
+        "schemaColumns": [
+            SchemaColumnDraft.model_validate(column).model_dump(mode="json", by_alias=True)
+            for column in (job.schema_columns or [])
+        ],
+        "outputSchema": [list(column) for column in compiled_rules.result.output_schema],
+        "ruleContractVersion": compiled_rules.result.contract_version,
+        "rules": [
+            rule.model_dump(mode="json", by_alias=True)
+            for rule in compiled_rules.result.rules
+        ],
         "runId": run_id,
         "storageMode": target["storageMode"],
         "targetBucket": target["bucket"],
@@ -1201,8 +1590,14 @@ def kafka_ingest_request_from_job(job: ETLJobModel, run_id: str) -> dict[str, An
         "targetPrefix": target["prefix"],
         "timeoutMs": timeout_ms,
         "topic": topic,
-        "transformSteps": job.transform_steps or [],
-        "qualityRules": job.quality_rules or [],
+        "transformSteps": [
+            step.model_dump(mode="json", by_alias=True)
+            for step in compiled_rules.transform_steps
+        ],
+        "qualityRules": [
+            rule.model_dump(mode="json", by_alias=True)
+            for rule in compiled_rules.quality_rules
+        ],
     }
 
 
@@ -1214,7 +1609,7 @@ def kafka_offset_policy(value: str) -> str:
 
 
 def parse_kafka_target_path(storage_path: str | None, target_dataset: str, target_layer: str | None) -> dict[str, str]:
-    default_prefix = f"{normalize_column_name(target_dataset or 'reviews_raw')}/{str(target_layer or 'BRONZE').lower()}"
+    default_prefix = f"{dataset_storage_key(target_dataset or 'reviews_raw')}/{str(target_layer or 'BRONZE').lower()}"
     if storage_path:
         match = re.match(r"^s3a?://([^/]+)(?:/(.*))?$", storage_path.strip())
         if match:
@@ -1646,7 +2041,7 @@ def execute_airflow_run(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
         )
 
-    dataset_id = job.dataset_id or f"ds_{normalize_column_name(job.target)}"
+    dataset_id = job.dataset_id or make_dataset_id(job.target)
     job.dataset_id = dataset_id
     existing_dataset = etl_repository.get_dataset_by_id(db, dataset_id)
     if airflow_run_has_materialization(run, existing_dataset):
@@ -1797,16 +2192,27 @@ def airflow_dag_run_conf(job: ETLJobModel, command: str, run_id: str, submitted_
 
 
 def job_payload_for_spark(job: ETLJobModel) -> dict[str, Any]:
+    compiled_rules = compile_job_rules(job)
+    require_compiled_rules(compiled_rules)
     return {
         "id": job.id,
         "name": job.name,
         "owner": job.owner,
         "partition": job.partition,
         "qualityInvalidRows": job.quality_invalid_rows or [],
-        "qualityRules": job.quality_rules or [],
+        "qualityRules": [
+            rule.model_dump(mode="json", by_alias=True)
+            for rule in compiled_rules.quality_rules
+        ],
         "qualityScore": job.quality_score,
         "qualityStatus": job.quality_status,
         "rag": job.rag,
+        "ruleContractVersion": compiled_rules.result.contract_version,
+        "ruleOutputSchema": compiled_rules.result.output_schema,
+        "rules": [
+            rule.model_dump(mode="json", by_alias=True)
+            for rule in compiled_rules.result.rules
+        ],
         "recordParsing": job.record_parsing or None,
         "schedule": job.schedule,
         "schemaColumns": job.schema_columns or [],
@@ -1828,8 +2234,11 @@ def job_payload_for_spark(job: ETLJobModel) -> dict[str, Any]:
         "partitionColumns": job.partition_columns or [],
         "indexColumns": job.index_columns or [],
         "compression": job.compression,
-        "transformOutputColumns": job.transform_output_columns or [],
-        "transformSteps": job.transform_steps or [],
+        "transformOutputColumns": compiled_rules.result.output_schema,
+        "transformSteps": [
+            step.model_dump(mode="json", by_alias=True)
+            for step in compiled_rules.transform_steps
+        ],
     }
 
 
@@ -1927,7 +2336,7 @@ def apply_airflow_submit_job_state(job: ETLJobModel, command: str, run: ETLRunMo
 
 def sync_airflow_runs_for_job(db: Session, job: ETLJobModel) -> None:
     runs = etl_repository.list_run_models_for_job(db, job.id)
-    dataset_id = job.dataset_id or f"ds_{normalize_column_name(job.target)}"
+    dataset_id = job.dataset_id or make_dataset_id(job.target)
     dataset = etl_repository.get_dataset_by_id(db, dataset_id)
     repaired_success = repair_incomplete_airflow_successes(runs, dataset)
     active_runs = [
@@ -2294,7 +2703,7 @@ def dataset_from_spark_result(job: ETLJobModel, result: dict[str, Any], existing
         [str(field.get("name") or "-"), str(field.get("type") or "string")]
         for field in schema
     ] if isinstance(schema, list) and schema else schema_from_job(job)
-    dataset_id = str(job.dataset_id or f"ds_{normalize_column_name(job.target)}")
+    dataset_id = str(job.dataset_id or make_dataset_id(job.target))
     previous_payload = existing_dataset.payload if existing_dataset and existing_dataset.payload else None
     dataset_payload = dataset_payload_from_spark_result(job, result, dataset_id, schema_json, now, previous_payload)
     storage_size_bytes = int(dataset_payload.get("storageSizeBytes") or 0)
@@ -2322,7 +2731,7 @@ def dataset_from_spark_result(job: ETLJobModel, result: dict[str, Any], existing
         schema_json=schema_json,
         sample_rows=sample_rows,
         upstream=[job.source_label, job.name],
-        downstream=["SQL 분석", "RAG 인덱싱"] if job.rag else ["SQL 분석"],
+        downstream=dataset_payload["downstream"],
     )
 
 
@@ -2356,12 +2765,25 @@ def dataset_payload_from_spark_result(
             "storageSizeBytes": storage_size_bytes,
             **({"sourceRanges": result["sourceRanges"]} if isinstance(result.get("sourceRanges"), list) and result["sourceRanges"] else {}),
             **({"publicationManifest": str(result["publicationManifest"])} if result.get("publicationManifest") else {}),
+            **({"ruleContractVersion": str(result["ruleContractVersion"])} if result.get("ruleContractVersion") else {}),
+            **({"ruleFingerprint": str(result["ruleFingerprint"])} if result.get("ruleFingerprint") else {}),
+            **({"runtimeFingerprint": str(result["runtimeFingerprint"])} if result.get("runtimeFingerprint") else {}),
+            **({"schemaFingerprint": str(result["schemaFingerprint"])} if result.get("schemaFingerprint") else {}),
+            **({"transform": result["transform"]} if isinstance(result.get("transform"), dict) else {}),
+            **({"quality": result["quality"]} if isinstance(result.get("quality"), dict) else {}),
         },
     )
     aggregate = aggregate_materialization_runs(materialization_runs)
+    query_engine_table = result.get("queryEngineTable")
+    query_engine_available = (
+        result.get("queryEngineVerified") is True
+        and isinstance(query_engine_table, dict)
+        and all(str(query_engine_table.get(key) or "").strip() for key in ("catalog", "schema", "table", "format"))
+    )
+    downstream = (["SQL 분석"] if query_engine_available else []) + (["RAG 인덱싱"] if job.rag else [])
     return {
         "description": target_dataset_description(job),
-        "downstream": ["SQL 분석", "RAG 인덱싱"] if job.rag else ["SQL 분석"],
+        "downstream": downstream,
         "freshness": "latest",
         "id": dataset_id,
         "layer": job.target_layer,
@@ -2387,11 +2809,13 @@ def dataset_payload_from_spark_result(
         "storageFormat": SPARK_OUTPUT_FORMAT,
         "storageLocation": output_path,
         "storageSizeBytes": aggregate["storageSizeBytes"],
+        "queryEngineStatus": "available" if query_engine_available else "unavailable",
         "partition": partition,
         "partitionColumns": partition_columns,
         "indexColumns": index_columns,
         "tags": target_dataset_tags(job),
         "upstream": [job.source_label, job.name],
+        **({"queryEngineTable": query_engine_table} if query_engine_available else {}),
     }
 
 
@@ -2429,6 +2853,8 @@ def update_existing_append_job(
     job.schema_sample_rows = request.schema_sample_rows
     job.schema_summary = request.schema_summary
     job.rule_summary = request.rule_summary
+    job.rule_contract_version = request.rule_contract_version
+    job.rules = [rule.model_dump(mode="json", by_alias=True) for rule in request.rules]
     job.permission_summary = request.permission_summary
     job.permission_roles = request.permission_roles
     job.storage_type = request.storage_type
@@ -2762,7 +3188,7 @@ def dag_steps_from_kafka_result(job: ETLJobModel, command: str, run: dict[str, A
     topic = str(result.get("topic") or field_value(job.source_config or [], "TOPIC / QUEUE NAME") or "-")
     broker = str(result.get("broker") or field_value(job.source_config or [], "Broker / Endpoint") or "-")
     storage_location = str(result.get("storageLocation") or run.get("outputPath") or "-")
-    dataset_id = str(result.get("datasetId") or job.dataset_id or f"ds_{normalize_column_name(job.target)}")
+    dataset_id = str(result.get("datasetId") or job.dataset_id or make_dataset_id(job.target))
     consumer_group_id = str(result.get("consumerGroupId") or field_value(job.source_config or [], "CONSUMER GROUP ID") or "-")
     snapshot = result.get("snapshot") or {}
     transform = result.get("transform") or {}
@@ -2905,6 +3331,13 @@ def run_kafka_continuous_worker(
     options: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     config = job.continuous_config or {}
+    compiled_rules = compile_job_rules(job)
+    require_compiled_rules(compiled_rules)
+    canonical_rules = [
+        rule.model_dump(mode="json", by_alias=True)
+        for rule in compiled_rules.result.rules
+    ]
+    rule_fingerprint = canonical_rule_fingerprint(compiled_rules.result.contract_version, canonical_rules)
     target = parse_kafka_target_path(job.storage_path or job.target_path, job.target, job.target_layer)
     output_path = f"s3a://{target['bucket']}/{target['prefix'].strip('/')}"
     return run_node_bridge(
@@ -2930,6 +3363,10 @@ def run_kafka_continuous_worker(
             "jobId": job.id,
             "maxOffsetsPerTrigger": config.get("maxOffsetsPerTrigger", 10000),
             "outputPath": output_path,
+            "ruleContractVersion": compiled_rules.result.contract_version,
+            "ruleFingerprint": rule_fingerprint,
+            "ruleOutputSchema": compiled_rules.result.output_schema,
+            "rules": canonical_rules,
             "schemaColumns": job.schema_columns or [],
             "schemaEvolutionPolicy": config.get("schemaEvolutionPolicy") or {},
             "topic": runtime.topic,
@@ -3153,6 +3590,12 @@ def run_kafka_continuous_maintenance(
     run_id: str,
     config: dict[str, Any],
 ) -> dict[str, Any]:
+    compiled_rules = compile_job_rules(job)
+    require_compiled_rules(compiled_rules)
+    canonical_rules = [
+        rule.model_dump(mode="json", by_alias=True)
+        for rule in compiled_rules.result.rules
+    ]
     target = parse_kafka_target_path(job.storage_path or job.target_path, job.target, job.target_layer)
     output_path = f"s3a://{target['bucket']}/{target['prefix'].strip('/')}"
     return run_node_bridge(
@@ -3163,6 +3606,10 @@ def run_kafka_continuous_maintenance(
             "kind": kind,
             "runId": run_id,
             "outputPath": output_path,
+            "ruleContractVersion": compiled_rules.result.contract_version,
+            "ruleFingerprint": canonical_rule_fingerprint(compiled_rules.result.contract_version, canonical_rules),
+            "ruleOutputSchema": compiled_rules.result.output_schema,
+            "rules": canonical_rules,
             "schemaColumns": job.schema_columns or [],
             "schemaEvolutionPolicy": (job.continuous_config or {}).get("schemaEvolutionPolicy") or {},
             **config,
@@ -3350,6 +3797,9 @@ def sync_kafka_continuous_session(
     if session is None or db is None:
         return
     if session.status in {"stopped", "failed"} and session.ended_at:
+        sync_kafka_continuous_batches(db, runtime, session, payload or {})
+        session.dag_steps = continuous_session_dag_steps(session, runtime, payload or {})
+        db.add(session)
         return
     metrics = runtime.metrics or {}
     worker_attempt_id = optional_string((payload or {}).get("workerAttemptId")) or optional_string(metrics.get("currentWorkerAttemptId"))
@@ -3378,6 +3828,7 @@ def sync_kafka_continuous_session(
         session.ended_at = session.ended_at or iso_now()
         session.end_reason = optional_string(metrics.get("currentSessionEndReason")) or ("worker_failed" if session.status == "failed" else "worker_stopped")
     sync_kafka_continuous_batches(db, runtime, session, payload or {})
+    session.dag_steps = continuous_session_dag_steps(session, runtime, payload or {})
     db.add(session)
 
 
@@ -3388,22 +3839,41 @@ def sync_kafka_continuous_batches(
     payload: dict[str, Any],
 ) -> None:
     publications = payload.get("publishedBatches")
-    if not isinstance(publications, list):
+    publications = publications if isinstance(publications, list) else []
+    candidates: dict[int, dict[str, Any]] = {}
+    for publication in publications:
+        if not isinstance(publication, dict):
+            continue
+        publication_batch_id = optional_int(publication.get("batchId"))
+        if publication_batch_id is not None:
+            candidates[publication_batch_id] = {**publication, "status": "success"}
+    last_evidence = payload.get("lastBatchEvidence")
+    if not isinstance(last_evidence, dict):
+        last_evidence = (runtime.metrics or {}).get("lastBatchEvidence")
+    if isinstance(last_evidence, dict):
+        evidence_batch_id = optional_int(last_evidence.get("batchId"))
+        if evidence_batch_id is not None:
+            candidates[evidence_batch_id] = last_evidence
+    if not candidates:
         return
     baseline_batch_id = optional_int((session.baseline_counts or {}).get("lastBatchId"))
     latest_batch_id = optional_int(payload.get("lastBatchId"))
     latest_duration_ms = optional_int((runtime.metrics or {}).get("lastBatchDurationMs"))
-    for publication in publications:
-        if not isinstance(publication, dict):
-            continue
-        batch_id = optional_int(publication.get("batchId"))
+    catalog_cursor = optional_int((runtime.metrics or {}).get("catalogBatchCursor"))
+    for batch_id, publication in sorted(candidates.items()):
         if batch_id is None or (baseline_batch_id is not None and batch_id <= baseline_batch_id):
             continue
+        status = str(publication.get("status") or "success")
+        if status not in {"running", "success", "failed"}:
+            status = "success"
+        catalog_applied = status == "success" and catalog_cursor is not None and batch_id <= catalog_cursor
+        dag_steps = continuous_batch_dag_steps(publication, status=status, catalog_applied=catalog_applied)
         batch = KafkaContinuousBatchModel(
             id=f"{session.session_id}:{batch_id}",
             job_id=session.job_id,
             session_id=session.session_id,
             batch_id=batch_id,
+            status=status,
             published_at=optional_string(publication.get("publishedAt")),
             consumed_count=nonnegative_int(publication.get("consumedCount"), 0),
             stored_count=nonnegative_int(publication.get("storedCount"), 0),
@@ -3413,8 +3883,123 @@ def sync_kafka_continuous_batches(
             data_path=optional_string(publication.get("dataPath")),
             quarantine_path=optional_string(publication.get("quarantinePath")),
             manifest_path=optional_string(publication.get("manifestPath")),
+            last_error=optional_string(publication.get("lastError")),
+            dag_steps=dag_steps,
         )
         etl_repository.stage_kafka_continuous_batch(db, batch)
+
+
+def continuous_batch_dag_steps(
+    publication: dict[str, Any],
+    *,
+    status: str,
+    catalog_applied: bool,
+) -> list[dict[str, Any]]:
+    raw_steps = publication.get("dagSteps")
+    if isinstance(raw_steps, list) and raw_steps:
+        steps = [dict(step) for step in raw_steps if isinstance(step, dict)]
+    else:
+        consumed_count = nonnegative_int(publication.get("consumedCount"), 0)
+        stored_count = nonnegative_int(publication.get("storedCount"), 0)
+        quarantined_count = nonnegative_int(publication.get("quarantinedCount"), 0)
+        failed_stage = optional_string(publication.get("failedStage"))
+        order = ["source", "schema", "transform", "quality", "target", "manifest-checkpoint", "catalog"]
+        failed_index = order.index(failed_stage) if failed_stage in order else -1
+
+        def fallback_status(stage: str) -> str:
+            index = order.index(stage)
+            if status == "failed" and failed_index >= 0:
+                if index < failed_index:
+                    return "success"
+                if index == failed_index:
+                    return "failed"
+                return "blocked"
+            if stage == "catalog":
+                return "success" if catalog_applied else "pending"
+            return "success" if status == "success" else "pending"
+
+        steps = [
+            {"id": "source", "title": "1. Source", "status": fallback_status("source"), "meta": f"Kafka {consumed_count:,}건 소비", "details": [["입력 행", f"{consumed_count:,}"]]},
+            {"id": "schema", "title": "2. Schema", "status": fallback_status("schema"), "meta": "스키마 검증 완료", "details": []},
+            {"id": "transform", "title": "3. Transform", "status": fallback_status("transform"), "meta": "규칙 실행 결과", "details": []},
+            {"id": "quality", "title": "4. Quality", "status": fallback_status("quality"), "meta": "품질 검사 결과", "details": []},
+            {"id": "target", "title": "5. Target", "status": fallback_status("target"), "meta": f"Parquet {stored_count:,}건 적재", "details": [["출력 행", f"{stored_count:,}"], ["격리 행", f"{quarantined_count:,}"]]},
+            {"id": "manifest-checkpoint", "title": "6. Manifest / Checkpoint", "status": fallback_status("manifest-checkpoint"), "meta": "publication과 offset 근거 저장", "details": [["Manifest", optional_string(publication.get("manifestPath")) or "-"]]},
+            {"id": "catalog", "title": "7. Catalog", "status": fallback_status("catalog"), "meta": "Catalog 반영 완료" if catalog_applied else "Catalog 반영 대기", "details": []},
+        ]
+    completed_at = optional_string(publication.get("publishedAt"))
+    patched = []
+    for step in steps:
+        next_step = dict(step)
+        if next_step.get("id") == "catalog" and status == "success":
+            next_step["status"] = "success" if catalog_applied else "pending"
+            next_step["meta"] = "Catalog 반영 완료" if catalog_applied else "Catalog 반영 대기"
+            next_step["details"] = [["상태", "반영 완료" if catalog_applied else "반영 대기"]]
+            if catalog_applied and completed_at:
+                next_step["completedAt"] = completed_at
+            elif not catalog_applied:
+                next_step.pop("completedAt", None)
+        patched.append(next_step)
+    return patched
+
+
+def continuous_session_dag_steps(
+    session: KafkaContinuousSessionModel,
+    runtime: KafkaContinuousRuntimeModel,
+    payload: dict[str, Any],
+) -> list[dict[str, Any]]:
+    evidence = payload.get("lastBatchEvidence")
+    if not isinstance(evidence, dict):
+        evidence = (runtime.metrics or {}).get("lastBatchEvidence")
+    if not isinstance(evidence, dict):
+        publications = payload.get("publishedBatches")
+        evidence = next((item for item in reversed(publications) if isinstance(item, dict)), None) if isinstance(publications, list) else None
+    baseline_batch_id = optional_int((session.baseline_counts or {}).get("lastBatchId"))
+    evidence_batch_id = optional_int(evidence.get("batchId")) if isinstance(evidence, dict) else None
+    if baseline_batch_id is not None and evidence_batch_id is not None and evidence_batch_id <= baseline_batch_id:
+        evidence = None
+    if not isinstance(evidence, dict):
+        source_status = "running" if session.status in {"starting", "running", "stopping"} else "failed" if session.status == "failed" else "success"
+        source_logs = [session.last_error] if session.last_error and source_status == "failed" else []
+        return [
+            {"id": "source", "title": "1. Source", "status": source_status, "meta": "Kafka worker 연결 및 소비 대기", "details": [["세션 소비", f"{session.consumed_count:,}"]], "logs": source_logs},
+            {"id": "schema", "title": "2. Schema", "status": "blocked" if source_status == "failed" else "pending", "meta": "첫 batch 대기", "details": []},
+            {"id": "transform", "title": "3. Transform", "status": "blocked" if source_status == "failed" else "pending", "meta": "첫 batch 대기", "details": []},
+            {"id": "quality", "title": "4. Quality", "status": "blocked" if source_status == "failed" else "pending", "meta": "첫 batch 대기", "details": []},
+            {"id": "target", "title": "5. Target", "status": "blocked" if source_status == "failed" else "pending", "meta": "첫 batch 대기", "details": []},
+            {"id": "manifest-checkpoint", "title": "6. Manifest / Checkpoint", "status": "blocked" if source_status == "failed" else "pending", "meta": "첫 batch 대기", "details": [["Checkpoint", session.checkpoint_path]]},
+            {"id": "catalog", "title": "7. Catalog", "status": "blocked" if source_status == "failed" else "pending", "meta": "첫 batch 대기", "details": []},
+        ]
+    batch_id = optional_int(evidence.get("batchId"))
+    catalog_cursor = optional_int((runtime.metrics or {}).get("catalogBatchCursor"))
+    evidence_status = str(evidence.get("status") or "success")
+    steps = continuous_batch_dag_steps(
+        evidence,
+        status=evidence_status,
+        catalog_applied=evidence_status == "success" and batch_id is not None and catalog_cursor is not None and batch_id <= catalog_cursor,
+    )
+    for step in steps:
+        if step.get("id") == "source":
+            step["meta"] = f"세션 누적 {session.consumed_count:,}건 소비"
+            step["details"] = [["세션 소비", f"{session.consumed_count:,}"], ["Kafka Lag", "-" if session.lag is None else f"{session.lag:,}"]]
+            if session.status in {"starting", "running", "stopping"} and evidence_status != "failed":
+                step["status"] = "running"
+                step.pop("completedAt", None)
+                step.pop("duration", None)
+        elif step.get("id") == "target":
+            step["meta"] = f"세션 누적 {session.stored_count:,}건 적재 · 격리 {session.quarantined_count:,}"
+        elif step.get("id") == "manifest-checkpoint":
+            details = [item for item in step.get("details", []) if isinstance(item, list) and item and item[0] != "Checkpoint"]
+            step["details"] = [*details, ["Checkpoint", session.checkpoint_path]]
+    if session.status == "failed" and evidence_status != "failed":
+        for index, step in enumerate(steps):
+            if index == 0:
+                step.update({"status": "failed", "meta": "Kafka worker 실행 실패", "logs": [session.last_error or "Continuous worker failed"]})
+            else:
+                step["status"] = "blocked"
+                step.pop("completedAt", None)
+                step.pop("duration", None)
+    return steps
 
 
 def refresh_kafka_continuous_runtime(db: Session, job: ETLJobModel) -> None:
@@ -3465,6 +4050,18 @@ def refresh_kafka_continuous_runtime(db: Session, job: ETLJobModel) -> None:
             return
         payload = {}
         worker_attempt_id = None
+    rule_metrics = payload.get("ruleMetrics") if isinstance(payload.get("ruleMetrics"), dict) else None
+    last_rule_result = payload.get("lastRuleResult") if isinstance(payload.get("lastRuleResult"), dict) else None
+    last_batch_evidence = payload.get("lastBatchEvidence") if isinstance(payload.get("lastBatchEvidence"), dict) else None
+    previous_metrics = {
+        **previous_metrics,
+        **({"ruleContractVersion": optional_string(payload.get("ruleContractVersion"))} if payload.get("ruleContractVersion") else {}),
+        **({"ruleFingerprint": optional_string(payload.get("ruleFingerprint"))} if payload.get("ruleFingerprint") else {}),
+        **({"runtimeFingerprint": optional_string(payload.get("runtimeFingerprint"))} if payload.get("runtimeFingerprint") else {}),
+        **({"ruleMetrics": rule_metrics} if rule_metrics is not None else {}),
+        **({"lastRuleResult": last_rule_result} if last_rule_result is not None else {}),
+        **({"lastBatchEvidence": last_batch_evidence} if last_batch_evidence is not None else {}),
+    }
     runtime_status = forced_terminal_status or str(payload.get("status") or runtime.status)
     if runtime_status not in {"starting", "running", "pausing", "paused", "stopping", "stopped", "failed"}:
         return
@@ -3515,9 +4112,8 @@ def refresh_kafka_continuous_runtime(db: Session, job: ETLJobModel) -> None:
     if forced_terminal_status:
         runtime.last_error = None
     # A publication manifest is durable independently from the worker process.
-    # Reconcile it before liveness handling so a crash cannot strand Lake data
-    # outside Catalog merely because the worker is no longer running.
-    sync_kafka_continuous_session(db, runtime, payload)
+    # Reconcile Catalog before liveness handling so a crash cannot strand Lake
+    # data outside Catalog merely because the worker is no longer running.
     catalog_ack_cursor = materialize_continuous_batch(db, job, runtime, payload)
     heartbeat_stale = continuous_heartbeat_is_stale(runtime.heartbeat_at, job)
     if runtime_status in {"starting", "running", "pausing", "stopping"} and container_state in {"exited", "missing"}:
@@ -3551,6 +4147,9 @@ def refresh_kafka_continuous_runtime(db: Session, job: ETLJobModel) -> None:
         job.status = "failed"
         job.last_state = "Continuous worker 실패"
         job.progress = None
+    # Sync each report once after the terminal state is known. Calling this
+    # before and after Catalog reconciliation can stage the same zero-row
+    # publication twice when no intermediate Catalog commit occurs.
     sync_kafka_continuous_session(db, runtime, payload)
     etl_repository.save_kafka_continuous_command(db, job, runtime)
     if catalog_ack_cursor is not None and db is not None:
@@ -3642,13 +4241,28 @@ def materialize_continuous_batch(
     normalized.sort(key=lambda item: nonnegative_int(item.get("batchId"), 0))
     metrics = dict(runtime.metrics or {})
     cursor = optional_int(metrics.get("catalogBatchCursor"))
+    job_id = job.id
     for publication in normalized:
         publication_batch_id = nonnegative_int(publication.get("batchId"), 0)
         if cursor is not None and publication_batch_id <= cursor:
             continue
-        if not materialize_continuous_publication(db, job, runtime, publication):
+        materialized = materialize_continuous_publication(db, job, runtime, publication)
+        if db is not None:
+            # Catalog persistence commits independently. Reacquire the runtime
+            # row before any pending Job/runtime state can autoflush so every
+            # concurrent reconciler keeps the same runtime -> Job lock order.
+            with db.no_autoflush:
+                locked_runtime = etl_repository.lock_kafka_continuous_runtime(db, job_id)
+            if locked_runtime is not None:
+                runtime = locked_runtime
+                persisted_metrics = dict(runtime.metrics or {})
+                persisted_cursor = optional_int(persisted_metrics.get("catalogBatchCursor"))
+                if persisted_cursor is not None and (cursor is None or persisted_cursor > cursor):
+                    cursor = persisted_cursor
+                metrics = {**metrics, **persisted_metrics}
+        if not materialized:
             break
-        cursor = publication_batch_id
+        cursor = publication_batch_id if cursor is None else max(cursor, publication_batch_id)
         metrics["catalogBatchCursor"] = cursor
         runtime.metrics = metrics
     return cursor
@@ -3677,7 +4291,7 @@ def materialize_continuous_publication(
     if nonnegative_int(publication.get("storedCount"), 0) == 0:
         return True
     run_id = f"continuous:{job.id}:batch:{batch_id}"
-    existing = etl_repository.get_dataset_by_id(db, job.dataset_id or f"ds_{normalize_column_name(job.target)}")
+    existing = etl_repository.get_dataset_by_id(db, job.dataset_id or make_dataset_id(job.target))
     existing_runs = (existing.payload or {}).get("materializationRuns") if existing and existing.payload else []
     if any(str(item.get("runId") or "") == run_id for item in existing_runs if isinstance(item, dict)):
         return True
@@ -3690,6 +4304,12 @@ def materialize_continuous_publication(
         "materializationRows": nonnegative_int(publication.get("storedCount"), 0),
         "materializationOutputPath": optional_string(publication.get("dataPath")) or f"{output_path}/batch_id={batch_id}",
         "publicationManifest": optional_string(publication.get("manifestPath")),
+        "ruleContractVersion": optional_string(publication.get("ruleContractVersion")),
+        "ruleFingerprint": optional_string(publication.get("ruleFingerprint")),
+        "runtimeFingerprint": optional_string(publication.get("runtimeFingerprint")),
+        "schemaFingerprint": optional_string(publication.get("schemaFingerprint")),
+        "transform": publication.get("transform") if isinstance(publication.get("transform"), dict) else {},
+        "quality": publication.get("quality") if isinstance(publication.get("quality"), dict) else {},
         "runId": run_id,
         "sourceRanges": publication.get("sourceRanges") if isinstance(publication.get("sourceRanges"), list) else [],
         "sourceKind": "kafka",
@@ -3726,18 +4346,26 @@ def materialize_continuous_replay(
     replayed_count = nonnegative_int(replay_result.get("storedCount"), 0)
     if replayed_count == 0:
         return
-    existing = etl_repository.get_dataset_by_id(db, job.dataset_id or f"ds_{normalize_column_name(job.target)}")
+    existing = etl_repository.get_dataset_by_id(db, job.dataset_id or make_dataset_id(job.target))
     target = parse_kafka_target_path(job.storage_path or job.target_path, job.target, job.target_layer)
     target_root = f"s3a://{target['bucket']}/{target['prefix'].strip('/')}/_batches"
+    metrics = runtime.metrics or {}
+    schema_state = runtime.schema_state or {}
     result = {
         "endedAt": optional_string(replay_result.get("endedAt")) or iso_now(),
         "outputPath": target_root,
         "outputRows": runtime.stored_count,
         "materializationRows": replayed_count,
         "materializationOutputPath": replay_result.get("outputPath") or target_root,
+        "quality": replay_result.get("quality") if isinstance(replay_result.get("quality"), dict) else {},
+        "ruleContractVersion": optional_string(replay_result.get("ruleContractVersion")) or optional_string(metrics.get("ruleContractVersion")),
+        "ruleFingerprint": optional_string(replay_result.get("ruleFingerprint")) or optional_string(metrics.get("ruleFingerprint")),
         "runId": replay_result.get("runId"),
+        "runtimeFingerprint": optional_string(metrics.get("runtimeFingerprint")),
+        "schemaFingerprint": optional_string(schema_state.get("schemaFingerprint")),
         "sourceKind": "kafka",
         "status": "success",
+        "transform": replay_result.get("transform") if isinstance(replay_result.get("transform"), dict) else {},
     }
     try:
         etl_repository.save_dataset(db, dataset_from_spark_result(job, result, existing))
@@ -3768,6 +4396,72 @@ def nonnegative_int(value: Any, fallback: int) -> int:
     return parsed if parsed is not None and parsed >= 0 else fallback
 
 
+def compile_pipeline_rules(
+    request: CreatePipelineRequest | UpdatePipelineRequest,
+    *,
+    execution_mode: str | None = None,
+    source_type: str | None = None,
+) -> CompiledRuleSet:
+    canonical_requested = request.rule_contract_version is not None or bool(request.rules)
+    return compile_rule_set(
+        contract_version=request.rule_contract_version,
+        rules=request.rules if canonical_requested else None,
+        transform_steps=request.transform_steps,
+        quality_rules=request.quality_rules,
+        schema_columns=request.schema_columns,
+        transform_output_columns=request.transform_output_columns,
+        execution_mode=execution_mode or getattr(request, "execution_mode", "snapshot"),
+        source_type=source_type or getattr(request, "source_type", ""),
+    )
+
+
+def compile_job_rules(job: ETLJobModel) -> CompiledRuleSet:
+    canonical_rules = job.rules if job.rule_contract_version is not None else None
+    return compile_rule_set(
+        contract_version=job.rule_contract_version,
+        rules=canonical_rules,
+        transform_steps=job.transform_steps or [],
+        quality_rules=job.quality_rules or [],
+        schema_columns=job.schema_columns or [],
+        transform_output_columns=job.transform_output_columns or [],
+        execution_mode=job.execution_mode or "snapshot",
+        source_type=job.source_type or "",
+    )
+
+
+def canonical_rule_fingerprint(contract_version: str, rules: list[dict[str, Any]]) -> str:
+    payload = json.dumps(
+        {"contractVersion": contract_version, "rules": rules},
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def require_compiled_rules(compiled: CompiledRuleSet) -> None:
+    if compiled.result.status == "pass":
+        return
+    raise ApiError(
+        "RULE_COMPILATION_FAILED",
+        compiled.result.issues[0].message if compiled.result.issues else "Rule compilation failed.",
+        status.HTTP_400_BAD_REQUEST,
+        {
+            "contractVersion": compiled.result.contract_version,
+            "issues": [issue.model_dump(mode="json", by_alias=True) for issue in compiled.result.issues],
+            "outputSchema": compiled.result.output_schema,
+        },
+    )
+
+
+def apply_compiled_rules(request: CreatePipelineRequest | UpdatePipelineRequest, compiled: CompiledRuleSet) -> None:
+    request.rule_contract_version = "1.0"
+    request.rules = compiled.result.rules
+    request.transform_steps = compiled.transform_steps
+    request.quality_rules = compiled.quality_rules
+    request.transform_output_columns = compiled.result.output_schema
+
+
 def validate_create_request(request: CreatePipelineRequest) -> None:
     validate_requested_permission_grants(request.permission_grants)
     missing = []
@@ -3788,8 +4482,12 @@ def validate_create_request(request: CreatePipelineRequest) -> None:
             missing.append("continuousKafkaSource")
         if request.target_format.lower() != "parquet":
             missing.append("continuousTargetFormat=parquet")
-        if any(step.enabled for step in request.transform_steps) or any(rule.enabled for rule in request.quality_rules):
-            missing.append("continuousTransformAndQualityRules=unsupported")
+    validate_target_contract(
+        source_type=request.source_type,
+        execution_mode=request.execution_mode,
+        target_layer=request.target_layer,
+        target_format=request.target_format,
+    )
     if request.record_parsing and request.record_parsing.enabled:
         parsing_names = [normalize_column_name(column.name) for column in request.record_parsing.columns]
         if request.source_type != "File / S3":
@@ -3835,6 +4533,50 @@ def validate_update_request(request: UpdatePipelineRequest) -> None:
         )
 
 
+def validate_target_contract(*, source_type: str, execution_mode: str, target_layer: str, target_format: str) -> None:
+    if "kafka" not in str(source_type or "").lower():
+        return
+    normalized_mode = str(execution_mode or "snapshot").lower()
+    normalized_layer = str(target_layer or "").upper()
+    normalized_format = str(target_format or "").lower()
+    if normalized_mode == "continuous":
+        if normalized_format != "parquet":
+            raise ApiError(
+                "TARGET_FORMAT_UNSUPPORTED",
+                "Kafka Continuous target format must be parquet.",
+                status.HTTP_400_BAD_REQUEST,
+                {"executionMode": normalized_mode, "supportedFormats": ["parquet"]},
+            )
+        return
+    if normalized_layer not in {"RAW", "BRONZE", "SILVER"}:
+        raise ApiError(
+            "TARGET_LAYER_UNSUPPORTED",
+            "Kafka Snapshot target layer must be RAW, BRONZE, or SILVER.",
+            status.HTTP_400_BAD_REQUEST,
+            {"executionMode": normalized_mode, "supportedLayers": ["RAW", "BRONZE", "SILVER"]},
+        )
+    if normalized_format != "jsonl":
+        raise ApiError(
+            "TARGET_FORMAT_UNSUPPORTED",
+            "Kafka Snapshot target format must be jsonl.",
+            status.HTTP_400_BAD_REQUEST,
+            {"executionMode": normalized_mode, "supportedFormats": ["jsonl"]},
+        )
+
+
+def target_contract_issue(*, source_type: str, execution_mode: str, target_layer: str, target_format: str) -> str | None:
+    try:
+        validate_target_contract(
+            source_type=source_type,
+            execution_mode=execution_mode,
+            target_layer=target_layer,
+            target_format=target_format,
+        )
+    except ApiError as exc:
+        return exc.message
+    return None
+
+
 def validate_requested_permission_grants(grants: list[Any] | None) -> None:
     for grant in grants or []:
         principal_type = str(getattr(grant, "principal_type", "") or "").strip()
@@ -3865,6 +4607,60 @@ def target_identity_changed(job: ETLJobModel, request: UpdatePipelineRequest) ->
     ))
 
 
+def continuous_processing_contract_changed(job: ETLJobModel, request: UpdatePipelineRequest) -> bool:
+    if job.execution_mode != "continuous":
+        return False
+    compiled_job = compile_job_rules(job)
+    require_compiled_rules(compiled_job)
+    current = {
+        "compression": job.compression,
+        "indexColumns": normalize_string_list(job.index_columns),
+        "partition": job.partition,
+        "partitionColumns": normalize_string_list(job.partition_columns),
+        "ruleContractVersion": compiled_job.result.contract_version,
+        "rules": [rule.model_dump(mode="json", by_alias=True) for rule in compiled_job.result.rules],
+        "schemaColumns": [
+            SchemaColumnDraft.model_validate(column).model_dump(mode="json", by_alias=True)
+            for column in (job.schema_columns or [])
+        ],
+        "storagePath": job.storage_path,
+        "storageType": job.storage_type,
+        "targetDatabase": normalize_optional_text(job.target_database) or "asklake",
+        "targetDataset": job.target,
+        "targetFormat": job.target_format,
+        "targetLayer": job.target_layer,
+    }
+    requested = {
+        "compression": request.compression,
+        "indexColumns": normalize_string_list(request.index_columns),
+        "partition": request.partition,
+        "partitionColumns": normalize_string_list(request.partition_columns),
+        "ruleContractVersion": request.rule_contract_version,
+        "rules": [rule.model_dump(mode="json", by_alias=True) for rule in request.rules],
+        "schemaColumns": [column.model_dump(mode="json", by_alias=True) for column in request.schema_columns],
+        "storagePath": request.storage_path,
+        "storageType": request.storage_type,
+        "targetDatabase": normalize_optional_text(request.target_database) or "asklake",
+        "targetDataset": request.target_dataset,
+        "targetFormat": request.target_format,
+        "targetLayer": request.target_layer,
+    }
+    return json.dumps(current, ensure_ascii=False, separators=(",", ":"), sort_keys=True) != json.dumps(
+        requested,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+def continuous_checkpoint_initialized(runtime: KafkaContinuousRuntimeModel) -> bool:
+    return any((
+        runtime.last_batch_id is not None,
+        int(runtime.consumed_count or 0) > 0,
+        bool((runtime.metrics or {}).get("runtimeFingerprint")),
+    ))
+
+
 def has_successful_run(db: Session, job_id: str) -> bool:
     return any(run.status == "success" for run in etl_repository.list_runs_for_job(db, job_id))
 
@@ -3884,6 +4680,8 @@ def apply_update_request(job: ETLJobModel, request: UpdatePipelineRequest, targe
     job.schema_sample_rows = request.schema_sample_rows
     job.schema_summary = request.schema_summary
     job.rule_summary = request.rule_summary
+    job.rule_contract_version = request.rule_contract_version
+    job.rules = [rule.model_dump(mode="json", by_alias=True) for rule in request.rules]
     job.permission_summary = request.permission_summary
     job.permission_roles = request.permission_roles
     job.storage_type = request.storage_type
@@ -3913,7 +4711,7 @@ def apply_update_request(job: ETLJobModel, request: UpdatePipelineRequest, targe
         "schemaColumns": f"{len(dataset_schema_from_request(request)):,}개",
     }
     if target_changed:
-        job.dataset_id = f"ds_{normalize_column_name(request.target_dataset)}"
+        job.dataset_id = make_dataset_id(request.target_dataset)
 
 
 def schedule_next_run_label(schedule_label: str | None, fallback: str | None = None) -> str:
@@ -3924,6 +4722,87 @@ def schedule_next_run_label(schedule_label: str | None, fallback: str | None = N
     if "1회" in schedule or "예약" in schedule:
         return fallback_label if fallback_label and fallback_label != "-" else re.sub(r"\s*(예약\s*)?1회 실행\s*$", "", schedule).strip()
     return fallback_label if fallback_label and fallback_label != "-" else schedule
+
+
+def trino_sql_job_permission_roles(access_scope: str, owner: str) -> list[dict[str, Any]]:
+    access = ["조회", "쿼리 실행", "메타데이터", "관리"]
+    if access_scope == "private":
+        return [{"access": access, "checked": True, "name": owner}]
+    return [
+        {"access": access, "checked": True, "name": "Data Engineer Group"},
+        {"access": access, "checked": access_scope != "project", "name": "Data Analyst Group"},
+        {"access": access, "checked": access_scope == "project", "name": "Project Members"},
+    ]
+
+
+def trino_sql_job_schedule_label(request: CreateTrinoSqlJobRequest) -> str:
+    schedule = request.schedule
+    if schedule.mode == "manual":
+        return "스케줄링 건너뛰기"
+    if schedule.mode == "daily":
+        return f"매일 {schedule.time}"
+    return f"매주 {schedule.weekday}요일 {schedule.time}"
+
+
+def trino_sql_job_schedule_summary(request: CreateTrinoSqlJobRequest) -> str:
+    if request.schedule.mode == "manual":
+        return "스케줄링 건너뛰기 · Job 목록에서 직접 실행 · full refresh"
+    return (
+        f"반복 실행 · {trino_sql_job_schedule_label(request)} · "
+        f"{request.schedule.timezone} · {request.schedule.overlap_policy} · full refresh"
+    )
+
+
+def trino_sql_job_next_run_utc(request: CreateTrinoSqlJobRequest) -> str | None:
+    schedule = request.schedule
+    if schedule.mode == "manual":
+        return None
+    try:
+        hour_text, minute_text = schedule.time.split(":", maxsplit=1)
+        hour = int(hour_text)
+        minute = int(minute_text)
+        if not 0 <= hour <= 23 or not 0 <= minute <= 59:
+            raise ValueError
+        timezone = ZoneInfo(schedule.timezone)
+    except (ValueError, ZoneInfoNotFoundError) as exc:
+        raise ApiError(
+            ErrorCode.VALIDATION_ERROR,
+            "SQL Job schedule time or timezone is invalid",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+        ) from exc
+
+    now = datetime.now(timezone)
+    candidate = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if schedule.mode == "daily":
+        if candidate <= now:
+            candidate += timedelta(days=1)
+    else:
+        weekdays = {"월": 0, "화": 1, "수": 2, "목": 3, "금": 4, "토": 5, "일": 6}
+        candidate += timedelta(days=(weekdays[schedule.weekday] - candidate.weekday()) % 7)
+        if candidate <= now:
+            candidate += timedelta(days=7)
+    return candidate.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+def trino_sql_job_run_as_actor(job: ETLJobModel) -> ActorContext:
+    recipe = job.sql_recipe if isinstance(job.sql_recipe, dict) else {}
+    run_as = recipe.get("runAs") if isinstance(recipe.get("runAs"), dict) else {}
+    return ActorContext(
+        name=str(run_as.get("name") or job.created_by or job.owner),
+        role=str(run_as.get("role") or "viewer"),
+        groups=tuple(str(group) for group in run_as.get("groups") or []),
+        id=str(run_as.get("id") or "") or None,
+        email=str(run_as.get("email") or "") or None,
+    )
+
+
+def trino_query_run_belongs_to_actor(payload: dict[str, Any], actor: ActorContext) -> bool:
+    submitted_user_id = str(payload.get("submittedByUserId") or "").strip()
+    submitted_name = str(payload.get("submittedByName") or "").strip()
+    return bool(
+        (actor.id and submitted_user_id and actor.id == submitted_user_id)
+        or (actor.name and submitted_name and actor.name == submitted_name)
+    )
 
 
 def has_scheduled_label(schedule_label: str | None) -> bool:
@@ -4278,7 +5157,7 @@ def continuous_config_from_request(request: CreatePipelineRequest, job_id: str) 
     if request.execution_mode != "continuous":
         return None
     config = request.continuous_config
-    base_path = (request.storage_path or f"s3a://asklake-output/{normalize_column_name(request.target_dataset)}/").rstrip("/")
+    base_path = (request.storage_path or f"s3a://asklake-output/{dataset_storage_key(request.target_dataset)}/").rstrip("/")
     return {
         "initialOffsetPolicy": config.initial_offset_policy if config else "earliest",
         "triggerIntervalSeconds": config.trigger_interval_seconds if config else 30,
@@ -4295,11 +5174,11 @@ def continuous_config_from_request(request: CreatePipelineRequest, job_id: str) 
 
 def continuous_runtime_from_job(job: ETLJobModel) -> KafkaContinuousRuntimeModel:
     fields = job.source_config or []
-    broker = kafka_field_value(fields, "Broker / Endpoint", "BROKER / ENDPOINT") or "127.0.0.1:19092"
+    broker = kafka_field_value(fields, "Broker / Endpoint", "BROKER / ENDPOINT") or os.environ.get("ASKLAKE_KAFKA_BROKER") or "127.0.0.1:19092"
     topic = kafka_field_value(fields, "TOPIC / QUEUE NAME", "Topic") or "reviews.raw"
     consumer_group_id = kafka_field_value(fields, "Consumer Group ID", "CONSUMER GROUP ID") or f"asklake-stream-{job.id.lower()}"
     config = job.continuous_config or {}
-    checkpoint_path = str(config.get("checkpointPath") or f"s3a://asklake-output/{normalize_column_name(job.target)}/_checkpoints/{job.id}")
+    checkpoint_path = str(config.get("checkpointPath") or f"s3a://asklake-output/{dataset_storage_key(job.target)}/_checkpoints/{job.id}")
     return KafkaContinuousRuntimeModel(
         job_id=job.id,
         broker=broker,
@@ -4323,6 +5202,19 @@ def source_unit_label(source_type: str) -> str:
 
 def make_job_id(value: str) -> str:
     return f"JOB-{stable_id('job', f'{value}:{iso_now()}')[-8:].upper()}"
+
+
+def make_dataset_id(value: str) -> str:
+    display_name = unicodedata.normalize("NFC", value.strip())
+    slug = normalize_column_name(display_name)
+    if display_name == slug and re.fullmatch(r"[a-z0-9_]+", display_name):
+        return f"ds_{slug}"
+    digest = hashlib.sha1(display_name.encode("utf-8")).hexdigest()[:12]
+    return f"ds_{slug}_{digest}"
+
+
+def dataset_storage_key(value: str) -> str:
+    return make_dataset_id(value).removeprefix("ds_")
 
 
 def stable_id(prefix: str, value: str) -> str:

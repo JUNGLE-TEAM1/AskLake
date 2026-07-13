@@ -65,8 +65,11 @@ const normalizeType = (type) => {
     int32: "integer",
     int64: "long",
     bigint: "long",
-    float32: "float",
+    float: "double",
+    float32: "double",
     float64: "double",
+    decimal: "double",
+    number: "double",
     bool: "boolean",
     str: "string",
     datetime: "timestamp",
@@ -170,6 +173,9 @@ export default function SchemaTransformEditor({
   initialCustomSql = "",
   sourceTabs = null,
   allSources = [], // All source nodes info: [{ id, datasetId, name, schema }]
+  allowSqlTransform = true,
+  portableTransforms = true,
+  transformsDisabled = false,
 }) {
   // State - beforeColumns is local, targetSchema is managed by parent
   const [beforeColumns, setBeforeColumns] = useState([]);
@@ -268,30 +274,6 @@ export default function SchemaTransformEditor({
       initialTargetSchema &&
       initialTargetSchema.length > 0
     ) {
-      const initialAfter = initialTargetSchema.map((col) => {
-        const normalizedType = normalizeType(col.type);
-        const normalizedChain = normalizeTransformChain(col.transformChain, normalizedType);
-        const visibleChain = dataTransformChain(normalizedChain);
-        const visibleStep = primaryTransformStep(visibleChain);
-        const visibleDisplay = visibleChain.map(formatTransformChainStep).filter(Boolean).join(" -> ");
-        return {
-          ...col,
-          type: normalizedType,
-          notNull: col.notNull || false,
-          defaultValue: col.defaultValue || "",
-          transform: visibleStep?.expression || (visibleStep?.operation === "SQL Expression" ? visibleStep.params : col.transform || null),
-          transformDisplay: visibleDisplay || (visibleStep ? col.transformDisplay : null) || (col.transform ? `${col.transform}` : null),
-          transformChain: visibleChain,
-          transformOperation: visibleStep?.operation || col.transformOperation || null,
-          transformParams: visibleStep?.params || col.transformParams || "",
-          onError: col.onError || "Warn",
-          originalName: col.originalName || col.name,
-          originalType: normalizeType(col.originalType) || normalizedType,
-          sourceId: col.sourceId || sourceId,
-          sourceName: col.sourceName || sourceName,
-        };
-      });
-      onSchemaChange(initialAfter);
       setIsInitialized(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -303,6 +285,10 @@ export default function SchemaTransformEditor({
       onSqlChange(customSql, "sql");
     }
   }, [customSql, activeTab]);
+
+  useEffect(() => {
+    if (!allowSqlTransform && activeTab === "sql") setActiveTab("columns");
+  }, [activeTab, allowSqlTransform]);
 
   // Initialize customSql from prop only once (edit mode)
   useEffect(() => {
@@ -337,30 +323,56 @@ export default function SchemaTransformEditor({
     });
   };
 
-  const targetColumnKey = (column) => `${column.sourceId || sourceId || "source"}:${String(column.originalName || column.name).replace(/\./g, "_")}`;
+  const targetColumnKey = (column) => `${column.sourceId || sourceId || "source"}:${String(column.originalName || column.name)}`;
 
   // Check if column from current source is already in target
   const isColumnInTarget = (colName) => {
-    const normalizedName = String(colName).replace(/\./g, "_");
     return targetSchema.some(
-      (ac) => String(ac.originalName || ac.name).replace(/\./g, "_") === normalizedName && ac.sourceId === sourceId,
+      (ac) => String(ac.originalName || ac.name) === String(colName) && ac.sourceId === sourceId,
     );
   };
 
-  // Generate unique name with prefix if needed
-  const getUniqueColumnName = (colName) => {
-    if (allSources.length <= 1) {
-      return colName;
-    }
-    // Check if this exact name already exists in target (from different source)
-    const nameExists = targetSchema.some(
+  const getUniqueColumnName = (colName, usedNames) => {
+    const nameExistsFromDifferentSource = targetSchema.some(
       (ac) => ac.name === colName && ac.sourceId !== sourceId,
     );
-    if (nameExists) {
-      // Add source name as prefix
-      return `${sourceName}_${colName}`;
+    const baseName = allSources.length > 1 && nameExistsFromDifferentSource
+      ? `${sourceName}_${colName}`
+      : colName;
+    let candidate = baseName;
+    let suffix = 2;
+    while (usedNames.has(candidate)) {
+      candidate = `${baseName}_${suffix}`;
+      suffix += 1;
     }
-    return colName;
+    usedNames.add(candidate);
+    return candidate;
+  };
+
+  const enrichTargetColumns = (columns) => {
+    const usedNames = new Set(targetSchema.map((column) => column.name));
+    return columns.map((column) => {
+      const physicalName = column.name.replace(/\./g, "_");
+      const normalizedType = normalizeType(column.type);
+      return {
+        ...column,
+        name: getUniqueColumnName(physicalName, usedNames),
+        originalName: column.originalName,
+        type: normalizedType,
+        originalType: normalizedType,
+        notNull: false,
+        nullGuardExplicit: false,
+        defaultValue: "",
+        transform: null,
+        transformDisplay: null,
+        transformChain: [],
+        transformOperation: null,
+        transformParams: "",
+        onError: "Warn",
+        sourceId,
+        sourceName,
+      };
+    });
   };
 
   // Move handlers
@@ -374,29 +386,7 @@ export default function SchemaTransformEditor({
       return;
     }
 
-    const enriched = newColumns.map((c) => {
-      // Convert dot notation to underscore for MongoDB fields
-      const convertedName = c.name.replace(/\./g, "_");
-      const normalizedType = normalizeType(c.type);
-
-      return {
-        ...c,
-        name: getUniqueColumnName(convertedName),
-        originalName: c.originalName,
-        type: normalizedType,
-        originalType: normalizedType,
-        notNull: false,
-        defaultValue: "",
-        transform: null,
-        transformDisplay: null,
-        transformChain: [],
-        transformOperation: null,
-        transformParams: "",
-        onError: "Warn",
-        sourceId: sourceId,
-        sourceName: sourceName,
-      };
-    });
+    const enriched = enrichTargetColumns(newColumns);
 
     onSchemaChange([...targetSchema, ...enriched]);
     setSelectedBefore(new Set());
@@ -414,29 +404,7 @@ export default function SchemaTransformEditor({
       return;
     }
 
-    const enriched = newColumns.map((c) => {
-      // Convert dot notation to underscore for MongoDB fields
-      const convertedName = c.name.replace(/\./g, "_");
-      const normalizedType = normalizeType(c.type);
-
-      return {
-        ...c,
-        name: getUniqueColumnName(convertedName),
-        originalName: c.originalName,
-        type: normalizedType,
-        originalType: normalizedType,
-        notNull: false,
-        defaultValue: "",
-        transform: null,
-        transformDisplay: null,
-        transformChain: [],
-        transformOperation: null,
-        transformParams: "",
-        onError: "Warn",
-        sourceId: sourceId,
-        sourceName: sourceName,
-      };
-    });
+    const enriched = enrichTargetColumns(newColumns);
 
     onSchemaChange([...targetSchema, ...enriched]);
     setSelectedBefore(new Set());
@@ -467,7 +435,11 @@ export default function SchemaTransformEditor({
   // Column property handlers
   const updateColumnProperty = (index, property, value) => {
     const next = [...targetSchema];
-    next[index] = { ...next[index], [property]: value };
+    next[index] = {
+      ...next[index],
+      [property]: value,
+      ...(property === "notNull" ? { nullGuardExplicit: Boolean(value) } : {}),
+    };
     onSchemaChange(next);
     if (onTestStatusChange) onTestStatusChange(false);
   };
@@ -495,6 +467,26 @@ export default function SchemaTransformEditor({
       const existing = next[editingColumn.index];
       const nextName = newName || existing.name;
       syncColumnQualityRules(existing, nextName, transformMeta.qualityRules);
+      if (transformMeta.mode === "clear") {
+        const nextRequired = typeof transformMeta.required === "boolean" ? transformMeta.required : existing.notNull;
+        next[editingColumn.index] = {
+          ...existing,
+          name: nextName,
+          notNull: nextRequired,
+          nullGuardExplicit: nextRequired ? Boolean(existing.nullGuardExplicit) : false,
+          type: newType || existing.type,
+          transform: null,
+          transformChain: [],
+          transformDisplay: null,
+          transformOperation: null,
+          transformParams: "",
+        };
+        onSchemaChange(next);
+        if (onTestStatusChange) onTestStatusChange(false);
+        setShowFunctionModal(false);
+        setEditingColumn(null);
+        return;
+      }
       if (transformMeta.mode === "csvMultiOutput" && Array.isArray(transformMeta.columns)) {
         const sourceField = transformMeta.sourceField || existing.originalName || existing.sourceName || existing.name || newName;
         const outputColumns = transformMeta.columns
@@ -534,6 +526,7 @@ export default function SchemaTransformEditor({
             name: column.targetName,
             nullable: column.nullable,
             notNull: existing.notNull || false,
+            nullGuardExplicit: existing.nullGuardExplicit || false,
             originalName: sourceField,
             originalType: existing.originalType || existing.type,
             role: `text-row-analysis:${column.instruction || column.targetName}`,
@@ -608,12 +601,14 @@ export default function SchemaTransformEditor({
       const defaultStep = rawChain.find((step) => step.operation === "Default Value");
       const hasNullGuard = rawChain.some((step) => step.operation === "Null Guard");
       const display = chain.map(formatTransformChainStep).filter(Boolean).join(" -> ");
+      const nextRequired = typeof transformMeta.required === "boolean" ? transformMeta.required : hasNullGuard ? true : existing.notNull;
       next[editingColumn.index] = {
         ...existing,
         name: nextName,
         type: newType || transformMeta.type || existing.type,
         defaultValue: defaultStep ? defaultStep.params : existing.defaultValue,
-        notNull: typeof transformMeta.required === "boolean" ? transformMeta.required : hasNullGuard ? true : existing.notNull,
+        notNull: nextRequired,
+        nullGuardExplicit: nextRequired ? hasNullGuard || Boolean(existing.nullGuardExplicit) : false,
         onError: dataStep?.onError || transformMeta.onError || existing.onError || "Warn",
         transform: dataStep?.expression || (dataStep?.operation === "SQL Expression" ? dataStep.params : null),
         transformChain: chain,
@@ -638,6 +633,7 @@ export default function SchemaTransformEditor({
     boolean: "BOOLEAN",
     timestamp: "TIMESTAMP",
     date: "DATE",
+    json: "STRING",
   };
 
   // Generate SQL from targetSchema (optionally filter by sourceId for testing)
@@ -747,16 +743,18 @@ export default function SchemaTransformEditor({
         >
           비주얼 변환
         </button>
-        <button
-          onClick={() => setActiveTab("sql")}
-          className={`flex-1 px-6 py-3.5 text-base font-semibold transition-all border-b-2 ${
-            activeTab === "sql"
-              ? "text-blue-700 border-blue-600 bg-blue-50/60"
-              : "text-slate-600 border-transparent hover:text-blue-700 hover:bg-blue-50/40"
-          }`}
-        >
-          SQL 변환
-        </button>
+        {allowSqlTransform && (
+          <button
+            onClick={() => setActiveTab("sql")}
+            className={`flex-1 px-6 py-3.5 text-base font-semibold transition-all border-b-2 ${
+              activeTab === "sql"
+                ? "text-blue-700 border-blue-600 bg-blue-50/60"
+                : "text-slate-600 border-transparent hover:text-blue-700 hover:bg-blue-50/40"
+            }`}
+          >
+            SQL 변환
+          </button>
+        )}
       </div>
 
       {/* Column Selection Tab */}
@@ -949,6 +947,7 @@ export default function SchemaTransformEditor({
                         )}
                         <input
                           type="text"
+                          aria-label={`${col.originalName || col.name} 타겟 컬럼명`}
                           value={col.name}
                           onChange={(e) =>
                             updateColumnProperty(index, "name", e.target.value)
@@ -959,11 +958,12 @@ export default function SchemaTransformEditor({
                         {/* Field Rule Button */}
                         <button
                           onClick={() => openFunctionEditor(col, index)}
+                          disabled={transformsDisabled}
                           className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border px-2.5 text-xs font-bold transition-colors ${
                             col.transform || col.transformOperation || dataTransformChain(col.transformChain).length
                               ? "border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100"
                               : "border-slate-200 bg-white text-slate-600 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
-                          }`}
+                          } disabled:cursor-not-allowed disabled:opacity-40`}
                           aria-label={`${col.name} 필드 규칙 설정`}
                           title="필드 규칙 설정"
                         >
@@ -997,6 +997,7 @@ export default function SchemaTransformEditor({
                           <input
                             type="text"
                             value={col.defaultValue || ""}
+                            disabled={transformsDisabled}
                             onChange={(e) =>
                               updateColumnProperty(
                                 index,
@@ -1223,6 +1224,7 @@ export default function SchemaTransformEditor({
             setShowFunctionModal(false);
             setEditingColumn(null);
           }}
+          portable={portableTransforms}
         />
       )}
     </div>

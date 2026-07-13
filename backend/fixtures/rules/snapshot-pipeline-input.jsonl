@@ -1,0 +1,3 @@
+{"email":"valid@example.com","event_id":"pipeline-1","rating":"4.5","raw":{"reviewerID":"reviewer-1"},"status":"active"}
+{"email":"invalid-email","event_id":"pipeline-2","rating":"bad","raw":{"reviewerID":"reviewer-2"},"status":"active"}
+{"email":"next@example.com","event_id":"pipeline-3","rating":"7","raw":{"reviewerID":"reviewer-3"},"status":""}

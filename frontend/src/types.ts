@@ -5,6 +5,8 @@ export type { ApiErrorResponse, AuditEntry, AuditResult, AuditTargetType } from 
 export type { CatalogDataset, CatalogDatasetRowsResponse, CatalogModelArtifact, DatasetMaterializationRun, LineageGraph, LineageGraphColumn, LineageGraphDataset, LineageGraphEdge, LineageLayer } from "./types/catalog";
 export type { AreaChartWidgetConfig, BarChartWidgetConfig, DashboardEntry, DashboardFilter, DashboardListFilterOptions, DashboardListQuery, DashboardListResponse, DashboardMeta, DashboardRevision, DashboardRuntimeMode, DashboardRuntimePage, DashboardRuntimeResponse, DashboardRuntimeWidget, DashboardWidgetColorConfig, DashboardRuntimeWidgetConfig, DashboardRuntimeWidgetConfigByType, DashboardRuntimeWidgetType, DashboardSortOption, DashboardStatus, DashboardView, DashboardWidgetAggregation, DashboardWidgetDateUnit, DashboardWidgetFormat, DashboardWidgetLayout, DashboardWidgetLineCurve, DashboardWidgetOrientation, DashboardWidgetPlaceholderKind, DashboardWidgetSortDirection, DashboardWidgetType, DonutChartWidgetConfig, HeatmapChartWidgetConfig, LineChartWidgetConfig, MetricWidgetConfig, PieChartWidgetConfig, RadialBarChartWidgetConfig, SavedDashboardCard, TableWidgetConfig, TreemapChartWidgetConfig } from "./types/dashboard";
 export type {
+  CanonicalRuleDraft,
+  CanonicalRuleOperation,
   CreatePipelineRequest,
   ContinuousWorkerLogsResponse,
   ContinuousMaintenanceRun,
@@ -30,15 +32,18 @@ export type {
   JobRunSummary,
   JobStats,
   JobStatus,
+  KafkaExecutionMode,
   KafkaContinuousBatch,
   KafkaContinuousSession,
   KafkaContinuousSessionStatus,
   PermissionDraft,
-  QualityDraft,
-  QualityRuleDraft,
   RecordParsingDraft,
   RecordParsingInvalidRow,
   RecordParsingPreviewResponse,
+  QualityDraft,
+  QualityRuleDraft,
+  RuleCompilationIssue,
+  RuleCompilationResult,
   RealtimeOperationalHealth,
   RealtimeOperationalMetrics,
   RetryBackoffStrategy,
@@ -64,4 +69,4 @@ export type {
 export type { FlowId, NavId, NavItem, ScheduleFlowId } from "./types/navigation";
 export type { CurrentUserResponse, IdentityGroup, IdentityProfile, PermissionSummary } from "./types/identity";
 export type { PermissionAction, PermissionGrant, PermissionOptionGroup, PermissionOptionsResponse, PermissionOptionUser, PermissionPrincipalType, ResourcePermissions } from "./types/permissions";
-export type { CreateDerivedDatasetRequest, DerivedDatasetLayer, SqlResultDraft } from "./types/sql";
+export type { CreateDerivedDatasetRequest, CreateTrinoSqlJobRequest, DerivedDatasetLayer, SqlResultDraft, TrinoMaterializationRun, TrinoQueryEstimate, TrinoQueryRun, TrinoQueryRunHistoryItem, TrinoQueryRunListResponse, TrinoQueryRunResultPage, TrinoQueryRunStatus, TrinoQueryValidation } from "./types/sql";

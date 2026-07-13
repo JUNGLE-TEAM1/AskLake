@@ -21,6 +21,17 @@ on:
       - labeled
       - unlabeled
       - deleted
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - edited
+      - ready_for_review
+      - converted_to_draft
+      - closed
+      - labeled
+      - unlabeled
   repository_dispatch:
     types:
       - notion-issue-sync
@@ -28,6 +39,7 @@ on:
 permissions:
   contents: read
   issues: write
+  pull-requests: read
   repository-projects: write
 
 concurrency:
@@ -42,6 +54,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22.23.1"
+
+      - name: Verify issue and PR lifecycle contracts
+        run: |
+          node tests/notion-issue-sync-hotfix-smoke.js
+          node tests/notion-issue-sync-pr-lifecycle-smoke.js
+
       - name: Sync GitHub Project issues and Notion board
         uses: actions/github-script@v9
         env:
@@ -50,7 +72,7 @@ jobs:
           GITHUB_PROJECT_OWNER: JUNGLE-TEAM1
           GITHUB_PROJECT_NUMBER: "4"
           GITHUB_PROJECT_STATUS_FIELD: Status
-          GITHUB_PROJECT_STATUS_ALIASES: '{"In Progress":"In progress","Blocked":"blocked","Review":"In review"}'
+          GITHUB_PROJECT_STATUS_ALIASES: '{"In Progress":"In progress","Blocked":"blocked","Review":"In review","Preview":"Ready"}'
           NOTION_PROJECT_STATUS_PROPERTY: Project Status
           DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
         with:

@@ -33,6 +33,7 @@ The workflow runs on:
 
 - Manual dispatch with the `dry_run` input.
 - GitHub issue events: open, edit, close, reopen, assign, label, delete.
+- GitHub pull request events: open, edit, synchronize, draft/review transition, label, close, and merge.
 - Repository dispatch event type: `notion-issue-sync`.
 - Cron: `*/5 * * * *`.
 
@@ -46,8 +47,22 @@ GitHub-hosted scheduled workflows are not guaranteed to run exactly every 5 minu
 - New open issues default to `Backlog`.
 - Reopened issues default to `Ready`.
 - Closed issues are moved to `Done`.
+- A merged PR with an explicit `Closes #N`, `Fixes #N`, or `Resolves #N` footer closes the linked open issue and moves it to `Done`, including PRs merged into `dev`.
+- A PR closed without merge, or a merged PR that only says `Refs #N`, does not close the issue.
+- Scheduled/manual/repository-dispatch runs list repository PRs and recover a missed merge event. If the issue was deliberately reopened after that merge, the recovery keeps it open and recalculates it as `Ready`.
 - Issues labeled `blocked` or `blocker` move to `blocked`.
+- Explicit `차단 사유`, `Blocked Reason`, `Dependency`, or `의존 작업` content also moves an issue to `blocked`. A normal `필요한 결정 사항` section is not a blocking signal.
+- When every blocking signal is removed, the next event or recovery run recalculates the status instead of preserving the old `blocked` value.
 - Issues labeled `review`, `needs review`, or `in review` move to `In review`.
+
+The workflow executes the lifecycle smoke checks before every remote mutation. Pull-request events use the workflow version from the PR base branch, while scheduled runs use the default branch (`main`). Therefore lifecycle automation changes must reach both `dev` and the later `dev -> main` integration before every trigger path is covered.
+
+## Verification
+
+```bash
+node tests/notion-issue-sync-hotfix-smoke.js
+node tests/notion-issue-sync-pr-lifecycle-smoke.js
+```
 
 ## First-run check
 

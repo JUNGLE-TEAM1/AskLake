@@ -9,15 +9,16 @@
 - Source, Schema, Create, Run은 `VITE_API_BASE_URL`을 통해 live backend를 호출한다.
 - 생성 wizard는 Source 결과의 `requiresRecordParsing`에 따라 `Source -> Record Parsing -> Schema` 또는 `Source -> Schema`로 분기한다. 이번 vertical slice에서 `requiresRecordParsing`은 선택한 MinIO/S3 `.txt`/`.log`가 이름 없는 `line_number + value` 샘플로 반환될 때만 활성화한다.
 - Record Parsing Preview와 Spark batch runtime은 Job에 저장된 동일 `recordParsing` 계약을 사용한다. Preview는 제한 샘플을, Spark는 전체 입력을 검증하며 어느 쪽도 부족한 필드를 null로 채우거나 초과 필드를 버리지 않는다.
+- PostgreSQL Source의 연결 테스트와 Schema 단계는 제한 Preview를 사용하지만 Snapshot `run`/`retry`는 `__Schema Sample Scope`와 무관하게 선택한 기본 테이블 전체를 읽는다. backend는 `REPEATABLE READ READ ONLY` transaction 안의 server-side cursor를 배치 fetch해 Run 전용 JSONL을 만들고, Spark는 그 파일 전체를 처리한다. 고정 행 상한은 두지 않으며 한 번에 메모리에 보관하는 행 수만 `ASKLAKE_POSTGRES_EXECUTION_BATCH_ROWS`로 제한한다.
 - 초기 ETL job과 Catalog dataset은 backend hydrate 결과를 따른다. 둘 다 비어 있을 수 있다.
 - 파이프라인 생성은 Job과 pending `catalogTarget`을 만들고, Catalog dataset은 실행 성공 후 생성 또는 갱신한다.
-- 같은 Job 또는 같은 `targetDataset`으로 다시 생성/실행한 결과는 기본적으로 기존 Catalog dataset에 append한다. Catalog 검색 목록은 dataset row를 하나만 유지하고, 실행/SQL materialize 결과는 dataset payload의 `materializationRuns` history로 관리한다.
+- 같은 Job 또는 표시명이 정확히 같은 `targetDataset`으로 다시 생성/실행한 결과는 기본적으로 기존 Catalog dataset에 append한다. 다른 표시명은 ASCII slug가 같더라도 별도 Job/dataset identity를 가져야 한다. backend는 안전한 소문자 ASCII 이름에는 기존 `ds_<name>`을 유지하고, 한글·공백·특수문자·대소문자 변환처럼 slug에서 정보가 손실되는 이름에는 원문 기반 안정 해시 suffix를 붙인다. backend가 storage path를 자동 생성할 때도 같은 충돌 방지 key를 사용한다. Catalog 검색 목록은 dataset row를 하나만 유지하고, 실행/SQL materialize 결과는 dataset payload의 `materializationRuns` history로 관리한다.
 - ETL 컬럼 리니지는 source와 target에 같은 스키마를 복제하지 않는다. source node는 실제 입력/transform input 컬럼만 가지며, transform step의 `input -> output`을 source-to-job edge로, 실제 output column 이름 일치를 job-to-target edge로 저장한다. source engine은 파일 확장자나 connector type을, 가운데 Spark job은 dataset layer가 아닌 `PROCESS` node를, target engine은 현재 Spark runner가 실제 저장한 physical output format(`PARQUET`)을 사용한다. `_asklake_*` 실행 메타데이터는 Spark job에서 생성되므로 source edge를 만들지 않는다.
 - Run state는 `runId` 기준으로 관리한다.
-- 일반 File/Data Lake Run은 `Frontend -> FastAPI command -> Airflow DAG -> token-authenticated FastAPI internal execution -> Spark runner -> Run/Catalog transaction` 순서다. Airflow에는 Job 전체나 source credential을 넘기지 않고 `jobId`, `runId`, `command`만 전달한다.
+- 일반 File/Data Lake/PostgreSQL Snapshot Run은 `Frontend -> FastAPI command -> Airflow DAG -> token-authenticated FastAPI internal execution -> source export 또는 direct object read -> Spark runner -> Run/Catalog transaction` 순서다. Airflow에는 Job 전체나 source credential을 넘기지 않고 `jobId`, `runId`, `command`만 전달한다.
 - Airflow의 terminal `success`만으로 데이터 처리를 성공 처리하지 않는다. 같은 `runId`의 실제 Spark output metadata와 Catalog materialization이 모두 저장되어야 Run이 `success`가 된다.
 - 실행 흐름/DAG는 별도 top-level 화면이 아니라 Run History에서 선택한 `runId`의 단계 흐름으로 표시한다.
-- Dashboard card/list와 draft/published runtime API는 FastAPI에 등록되어 있다. 프론트는 이전 backend 호환을 위해 404 local fallback을 유지한다.
+- Dashboard card/list와 draft/published runtime API는 FastAPI 응답만 source of truth로 사용한다. Catalog 기반 runtime widget은 `sampleRows` snapshot 대신 성공한 물리 materialization을 DuckDB로 제한 집계하거나 최대 500행 preview로 읽는다.
 
 ### Text Structuring Model Artifact Ownership
 
@@ -77,7 +78,21 @@ flowchart LR
     API --> AUDIT[(Audit Log)]
 ```
 
-현재 FastAPI가 직접 소유하는 영역은 ETL, Run, Catalog hydrate, Catalog lineage fallback, SQL preview, SQL derived dataset 저장, Dashboard card/list, Dashboard draft/published runtime이다.
+현재 FastAPI가 직접 소유하는 영역은 ETL, Run, Catalog hydrate, Catalog lineage fallback, SQL query compatibility runtime, SQL derived dataset 저장, Dashboard card/list, Dashboard draft/published runtime이다. Issue #488은 Compose 내부 Trino 482 coordinator, Iceberg JDBC catalog, MinIO S3 warehouse, Trino HTTP adapter, canonical Query Run persistence/compiler와 Catalog `queryEngineTable` mapping을 추가했다. 일반 Trino result page는 private MinIO gzip object에 저장하고 PostgreSQL에는 page metadata/checksum/manifest만 남긴다. `trino-result-collector` worker가 Query Run, 1회성 Iceberg CTAS, 반복 SQL Job CTAS의 continuation을 모두 수집하므로 browser polling과 상태 GET은 persisted state만 읽는다.
+
+Collector claim은 DB lease와 증가하는 generation을 사용한다. fetch 전후로 lease를 갱신하고, page object는 generation별 attempt key에 쓴 뒤 현재 worker/generation이 여전히 유효한 transaction에서만 metadata로 공개한다. 오래된 worker는 자신이 쓴 attempt object만 삭제할 수 있으며, 새 worker가 저장한 page나 run payload를 덮어쓰거나 지울 수 없다. continuation URI는 page metadata에도 기록해 동일 fetch retry가 중복 page를 만들지 않게 한다.
+
+Query result API page size는 submit의 `resultPageSize`로 고정한다. 한 Trino storage page가 더 커도 signed cursor가 storage page index와 row offset을 감춘 채 API page를 일정한 크기로 잘라 반환한다. Frontend는 현재 page와 이전/다음 cursor만 유지하고 전체 결과를 memory에 누적하지 않는다. terminal result cleanup은 keyset batch로 전체 run을 순회하는 별도 `trino-result-cleanup` worker가 수행한다.
+
+Query submit은 `(actorKey, clientRequestId)` unique reservation과 PostgreSQL actor별 advisory lock을 사용한다. 같은 요청 key/fingerprint 재시도는 기존 run을 반환하고, 다른 요청에 같은 key를 쓰면 `409`, 동시 실행 slot을 넘으면 `429`를 반환한다. 실행 이력과 소유자 판정은 user ID를 우선하며 ID가 없는 legacy record에만 display name fallback을 허용한다. user grant는 ID, email, legacy display name을 모두 principal identity로 인식한다. run 재열기, 결과 조회, 취소, materialization 제출/조회는 현재 Dataset 권한·사용자/그룹 차단·리소스 잠금을 다시 검사한다.
+
+결과 retention은 result page에만 적용하므로 만료된 run도 SQL, 상태, 통계는 재확인할 수 있다. 기존 PostgreSQL row page는 migration read compatibility로만 유지한다. production Trino는 backend-only network, HTTPS/password/file access control, 분리된 JDBC/warehouse/result-storage service account를 사용한다. 배포 전 bootstrap job이 기존 volume에도 계정·bucket·Iceberg metadata table을 멱등 생성하고, 배포 후 readiness가 read-only query identity, materializer CTAS와 result-storage 왕복을 검증한다. API routing과 SQL runtime은 `TRINO_ENABLED` flag에 따라 전환된다. 상세 계약은 `docs/trino-query-run-contract.md`와 `docs/trino-query-result-storage-contract.md`를 따른다.
+
+Query Engine 등록은 Dataset 표시명과 물리 table 이름을 분리한다. SQL 결과 Dataset은 이름 기반 안정적인 Dataset ID와 materialization별 충돌 없는 ASCII table 이름을 만들고, Catalog에 `pending`을 먼저 저장한 뒤 Iceberg CTAS terminal success와 `DESCRIBE` 검증이 모두 끝나야 `queryEngineStatus=available` 및 `queryEngineTable`을 공개한다. CTAS continuation은 collector가 처리하며 상태 GET은 Trino 진행을 소비하지 않는다. terminal success인데 등록 확인만 실패한 경우 GET이 같은 table 검증을 안전하게 재시도할 수 있다. 실패 시 mapping은 공개하지 않고 `registration_failed`와 안전한 오류 코드만 저장한다. `TRINO_ENABLED=true`에서는 mapping이 검증되지 않은 Dataset의 `permissions.canQuery`를 false로 계산해 frontend와 backend가 같은 기준으로 차단한다. 현재 Spark Parquet와 Kafka JSONL writer는 Iceberg table을 만들지 않으므로 거짓 mapping을 생성하지 않고 `unavailable`로 저장한다. 향후 writer가 `queryEngineVerified=true`와 검증된 mapping을 반환할 때만 SQL 대상으로 자동 승격한다.
+
+반복 SQL Job은 `jobKind=trino_sql_materialization`과 `sqlRecipe`를 ETL Job에 저장한다. `run`/`retry`와 scheduler tick은 Airflow/Spark 경로가 아니라 Trino SQL Job service로 분기되고, 실행 시점 actor의 Dataset query 권한·차단·잠금을 다시 검사한다. 각 Run은 고유한 물리 Iceberg table에 full-refresh CTAS를 수행한다. `DESCRIBE`가 성공한 뒤에만 안정적인 논리 Dataset row의 `queryEngineTable`을 새 table로 교체하며, 실패·취소·collector 재시작 중에는 마지막 정상 mapping을 유지한다. terminal 상태인데 Catalog 확정 marker가 없는 Run은 collector가 다시 claim하며, 같은 `runId` 재확정은 materialization history를 중복시키지 않는다.
+
+Estimate & Guardrail phase는 Iceberg `$files.readable_metrics`의 컬럼별 `column_size`를 SQL AST가 참조한 컬럼 기준으로 합산해 실행 전 스캔량을 계산한다. 전체 컬럼을 읽으면 Catalog의 실제 `storageSizeBytes`를 하한으로 사용한다. 예상 시간은 최근 동일 쿼리의 실제 `elapsedMs`를 우선하고, 없으면 같은 Dataset의 `processedBytes / elapsedMs` 중앙값, 그것도 없으면 설정된 초기 처리속도를 사용한다. 유효한 SQL은 editor 아래에서 자동 평가하며, submit 시점 snapshot은 Query Run metadata에 보존하되 재실행 승인용 confirmation token은 저장하지 않는다. warning threshold를 넘으면 backend가 actor/query/dataset/TTL-bound confirmation token을 요구하고, optional hard byte limit은 서버에서 실행을 차단한다. Iceberg metadata를 얻을 수 없는 Dataset에만 `EXPLAIN (TYPE DISTRIBUTED)`와 Catalog heuristic을 fallback으로 사용한다. 완료 run stats가 실제 처리량과 시간의 source of truth다. Collector는 canonical `nextUri` fetch가 대기하는 동안 backend-only QueryInfo를 읽기 전용으로 샘플링해 progress/driver뿐 아니라 실제 elapsed/queued/CPU time, processed input bytes/rows, peak memory를 persisted run에 보강한다. 누적 지표와 terminal state는 stale sample로 되돌리지 않으며 QueryInfo 실패는 실행 실패로 승격하지 않고 기존 statement stats로 fallback한다. 장기 fetch 중에는 telemetry 변경 여부와 독립적으로 lease를 주기 갱신한다. continuation과 result page는 기존 lease owner만 소비하고, fenced worker는 진행 중 HTTP fetch 종료를 기다리지 않고 반환한다. Query 완료, 수집 시작, 첫 durable page, 전체 manifest 완료 시각과 경과값은 Query Run에 최초 관측값으로 저장해 재시작과 lease takeover 뒤에도 유지한다. Frontend는 persisted 상태를 `쿼리 실행`, `첫 결과 준비`, `전체 결과 수집` 세 컨테이너로 파생하고 접수/대기는 첫 단계의 phase로 표시한다. 2초 이상 active인 단계 중 쿼리는 Trino progress/driver/split, 전체 수집은 `collectedRowCount / expectedRowCount`가 있을 때만 진행 bar를 보이며 서로 다른 분모를 하나의 전체 퍼센트로 합산하지 않는다.
 Node demo API는 기존 동작 비교용 reference로 남긴다.
 
 ### Airflow batch execution
@@ -113,7 +128,21 @@ Issue #500은 Snapshot direct-target 경로를 제거하지 않고, Kafka Job �
 
 Continuous 수동 검증용 입력은 `seed-kafka-review-fixture.mjs` replay producer가 책임진다. producer는 finite replay와 `--loop`를 모두 지원하며, loop의 각 cycle에는 고유 `event_id`와 단조 증가 `offset`을 부여한다. 배포 환경에서는 FastAPI의 admin-only replay producer endpoint가 subprocess를 소유해 시작/상태 조회/graceful stop을 제공한다. producer는 Kafka source의 durable offset이나 Continuous checkpoint를 직접 변경하지 않는다.
 
-Continuous target은 V1에서 `batch_id=<id>`별 Parquet output과 별도 compaction을 사용한다. 디렉터리 존재가 아니라 `_SUCCESS`를 게시 완료 기준으로 삼고, 각 output의 숨김 signature와 최종 manifest에 topic/partition별 `[startOffset, endOffset)`과 건수를 기록한다. manifest 없는 재시도는 signature가 같은 부분 범위를 증명할 때만 output을 재사용하고, 불완전하거나 다른 signature의 경로는 다시 쓴다. Backend는 report가 전달한 완료 manifest를 worker liveness 판정보다 먼저 멱등 Catalog materialization으로 복구하고, 성공 cursor를 ack 파일로 돌려줘 worker report에서 이미 반영된 목록을 정리한다. 현재 streaming-safe schema projection과 malformed JSON quarantine만 지원하므로 enabled transform/quality rule은 Continuous Job 생성에서 거절한다. Kafka Source 화면은 `Snapshot`과 `Continuous`를 분리해 선택하며 Continuous 선택 시 Parquet target을 사용한다. Snapshot과 Continuous는 같은 broker/topic/consumer group을 공유한 상태로 동시 실행할 수 없다. 같은 worker attempt의 종료/heartbeat 실패는 한 번만 집계하고, 사용자 `pausing`/`stopping` 종료만 각각 `paused`/`stopped`로 확정한다. 상세 계약은 [Kafka Continuous Ingestion Contract](kafka-continuous-ingestion-contract.md)를 따른다.
+Continuous target은 V1에서 `batch_id=<id>`별 Parquet output과 별도 compaction을 사용한다. 디렉터리 존재가 아니라 `_SUCCESS`를 게시 완료 기준으로 삼고, 각 output의 숨김 signature와 최종 manifest에 topic/partition별 `[startOffset, endOffset)`, 건수, schema/rule/runtime fingerprint를 기록한다. manifest 없는 재시도는 signature가 같은 범위를 증명할 때만 output을 재사용하고, 불완전하거나 다른 signature의 경로는 다시 쓴다. Backend는 report가 전달한 완료 manifest를 worker liveness 판정보다 먼저 멱등 Catalog materialization으로 복구하고, 성공 cursor를 ack 파일로 돌려줘 worker report에서 이미 반영된 목록을 정리한다. `foreachBatch`는 schema policy 뒤에 Snapshot conformance를 통과한 stateless canonical Transform/Quality를 실행하며 Fail Batch는 checkpoint 전진을 막고 Quarantine은 Kafka와 Rule identity를 보존한다. 임의 SQL과 stateful 연산은 compiler가 거절한다. Kafka Source 화면은 `Snapshot`과 `Continuous`를 분리해 선택하며 Continuous 선택 시 Parquet target을 사용한다. Snapshot과 Continuous는 같은 broker/topic/consumer group을 공유한 상태로 동시 실행할 수 없다. 같은 worker attempt의 종료/heartbeat 실패는 한 번만 집계하고, 사용자 `pausing`/`stopping` 종료만 각각 `paused`/`stopped`로 확정한다. 상세 계약은 [Kafka Continuous Ingestion Contract](kafka-continuous-ingestion-contract.md)를 따른다.
+
+Issue #567은 현재 차단을 즉시 제거하지 않고 일반 Snapshot, Kafka Snapshot, Kafka Continuous가 공유할 canonical Rule과 타입 계약을 먼저 확정한 뒤 지원 operation을 단계적으로 Continuous에 연결한다. Kafka offset capture/commit과 checkpoint 책임은 각 입력 경로에 유지하고 Transform/Quality 의미와 단계 결과만 통일한다. 구현 및 검증 순서는 [Transform/Quality 공통 실행 통합 계획](transform-quality-unification-plan.md)을 따른다.
+
+Phase 4부터 Schema Transform 화면은 원본 `sourceType`과 target `type`을 분리하고, 필드 편집을 `rename -> cast -> portable transform -> default_value -> null_guard` canonical Rule 순서로 직렬화한다. bounded Preview는 `POST /api/etl/rules/preview`에서 같은 Snapshot runtime을 호출하며 Job이나 source progress를 변경하지 않는다. Portable Rule은 bounded Node runtime을 사용하고 일반 Snapshot의 SQL expression은 bounded Spark runtime으로 분기한다. Target layer는 Transform/Quality 적용 여부와 독립된 사용자 선택으로 노출하되 Kafka Snapshot은 실제 direct bridge가 지원하는 `RAW/BRONZE/SILVER + JSONL`, Kafka Continuous는 Parquet 포맷만 선택할 수 있다. Output schema의 `nullable: false`, Quality `not_null`, Transform `null_guard`는 서로 다른 계약이며 UI 요약도 실제 canonical Quality Rule만 검사 건수로 센다.
+
+Rule 계약의 API와 저장 source of truth는 versioned `rules[]`다. Frontend는 현재 편집기의 transform/quality draft를 canonical Rule로 컴파일해 create/update/review에 보내고, backend는 실행 전에 operation 지원 범위와 출력 스키마를 다시 검증한다. 새로 생성하거나 수정한 Job은 nullable `rule_contract_version`과 `rules` 컬럼에 canonical payload를 그대로 저장하며, `transformSteps`와 `qualityRules`는 현재 Spark/Kafka runner와 이전 client를 위한 파생 호환 표현으로만 유지한다. 두 canonical 컬럼이 비어 있는 기존 행만 저장된 legacy 표현에서 Rule을 재구성하고, `rule_contract_version="1.0"`과 `rules=[]`가 저장된 행은 legacy 필드가 남아 있어도 명시적인 pass-through로 읽는다.
+
+Source 설정 기본값은 backend runtime이 소유한다. Frontend는 `GET /api/etl/sources/defaults`로 `ASKLAKE_KAFKA_BROKER`의 공개 기본값을 읽고, 저장된 Source 설정이나 사용자가 편집 중인 값을 덮어쓰지 않는다.
+
+Phase 3부터 일반 Spark Snapshot과 Kafka Snapshot은 실행 직전에 저장된 canonical Rule을 다시 compile한다. 공통 operation은 같은 conformance fixture로 검증하며 Spark는 portable/SQL transform 순서를 보존하고 quality disposition을 run별 staging output에 적용한 뒤 성공한 결과만 최종 Parquet 경로로 publish한다. 따라서 `fail_batch`는 target을 만들지 않고, `quarantine`, `drop_row`, `set_null`은 실제 출력 행과 실행 근거에 반영된다. Kafka는 같은 의미를 JSON event에 적용한 뒤 compiled output schema로 정확히 projection하지만 partition offset capture와 성공 후 commit 책임은 기존 Kafka bridge에 남는다. 일반 Spark의 text analysis와 classifier처럼 공통 범위를 벗어난 operation은 기존 전용 실행 경로를 유지한다.
+
+Phase 5부터 Kafka Continuous도 같은 공통 Spark Rule runtime을 bounded micro-batch에 적용한다. Worker 시작 시 `_asklake_contract` checkpoint metadata에 configured schema, canonical Rule, output schema와 source/target identity의 결합 fingerprint를 기록하며 불일치 checkpoint 재사용을 거절한다. Worker report와 Catalog materialization은 Rule fingerprint와 누적 Fail/Quarantine/Warn 근거를 보존한다. 초기화된 checkpoint의 처리 계약은 in-place로 바꾸지 않고 Job copy와 새 checkpoint를 사용한다. 격리 replay 역시 현재 schema policy와 canonical Rule을 다시 적용한다.
+
+Phase 1부터 source profile은 JSON/JSONL의 native scalar type을 화면용 문자열 preview와 분리해 보존한다. `Float`는 legacy 입력 호환값으로만 받고 새 draft는 `Double`을 사용한다. Dotted `sourceName`은 lineage와 실행 projection의 논리 경로이며, underscore로 정규화한 `targetName`과 동일시하지 않는다. Continuous worker는 이 경로로 nested `StructType`을 구성하고 root 및 nested object의 unknown field를 각각 검사한다.
 
 Continuous 실행 이력은 Snapshot `ETLRun`과 분리한다. 한 번의 `startContinuous` 또는 `resumeContinuous`부터 stop/pause/failure까지를 durable stream session 한 행으로 저장하고, worker가 보고한 micro-batch manifest는 해당 session의 하위 batch 이력으로 멱등 저장한다. 재시작은 checkpoint와 누적 runtime counter를 이어가되 새 session을 만들며, session counter는 시작 당시 runtime baseline과 현재 누적값의 차이로 계산한다. 실행 이력 화면은 active session 동안 3초 polling을 수행하고 hidden tab에서는 요청을 유예하며, terminal 전환 뒤 자동 polling을 멈춘다. 세션 누적 적재량과 Catalog의 현재 데이터셋 행 수는 서로 다른 값으로 표시한다.
 
@@ -144,7 +173,8 @@ Kafka Job의 source identity(`sourceType`, `sourceLabel`, `sourceConfig`)는 bro
 - API boundary: `frontend/src/services/apiClient.ts`, `frontend/src/services/pipelineApi.ts`, `frontend/src/services/mockApi.ts`
 - Query AI helper: `frontend/src/services/queryAiService.ts`
 - AI 활용 Chat UI 계약: `docs/ai-chat-ui-contract.md`
-- dashboard list/runtime API adapter와 fallback: `frontend/src/services/dashboardApi.ts`, `frontend/src/services/dashboardRuntimeApi.ts`
+- dashboard list/runtime API adapter: `frontend/src/services/dashboardApi.ts`, `frontend/src/services/dashboardRuntimeApi.ts`
+- compatibility 결과는 `useAskLakeData.createSqlDatasetJob`이 기존 `POST /api/etl/jobs`를 사용한다. Trino 반복 Job은 같은 `SqlJobWizardDialog`의 Trino mode에서 managed Iceberg/full-refresh를 명시하고 `POST /api/etl/sql-jobs`를 호출한다. SQL 결과 화면은 1회성 Dataset materialization을 노출하지 않고 CSV 다운로드와 반복 Job 생성만 제공한다.
 - Dashboard frontend composition은 `DashboardPage.tsx`가 route/list/legacy 전환과 상위 상태를 조정하고, `legacy/`가 기존 builder/detail/chart 표시와 순수 view model을, `runtime/useDashboardRuntimeResources.ts`가 published/draft hydrate와 page 선택을, `runtime/useDashboardLayoutHistory.ts`가 layout undo/redo를 소유한다. `DashboardRuntimeView.tsx`는 runtime 화면 composition을 유지하고 편집 toolbar는 `DashboardEditToolbar.tsx`로 분리한다. `dashboard.css`와 `dashboard-runtime.css`는 `styles.css`의 기존 import 위치를 보존하는 manifest이며, 하위 `dashboard-*` CSS 모듈을 base/list/builder/detail과 shell/dataset/canvas/widget/config/assistant/responsive 순서로 import해 기존 cascade를 유지한다.
 - SQL 결과 저장 UI는 `SqlJobWizardDialog`가 SQL 화면 안에서 기본 정보, 스케줄, 거버넌스, 저장 설정을 로컬로 유지한다. 저장 및 검토 단계는 ETL Target과 같은 `DatabaseField`, `S3PathField`를 재사용하고 DB, 파일 포맷, 압축, 태그, 다중 파티션을 `SqlJobWizardTarget`에 보존한다. 최종 제출 시 `useAskLakeData.createSqlDatasetJob`이 이 값을 명시적인 `DraftPipeline.target`으로 옮겨 기존 `POST /api/etl/jobs` 경로를 호출하므로 ETL Review route로 이동하지 않는다.
 - SQL 결과 영역은 표, 로컬 차트, CSV 다운로드, 처리 Job 생성만 제공한다. SQL 화면에서는 `DashboardPage`를 열거나 대시보드 생성 action을 노출하지 않으며, 대시보드 생성·편집은 별도 대시보드 메뉴에서 수행한다.
@@ -153,6 +183,7 @@ Kafka Job의 source identity(`sourceType`, `sourceLabel`, `sourceConfig`)는 bro
 - `sqlLogic.ts`는 기존 import 경로를 보존하는 호환 façade다. 실제 책임은 AST/참조 분석(`sqlAst.ts`), preflight(`sqlPreflight.ts`), autocomplete(`sqlAutocomplete.ts`), JOIN 검증(`sqlJoinLogic.ts`), identifier·결과 formatting·derived dataset helper 모듈로 나눈다. `queryAiService.ts`는 SQL 초안 생성 요청을 담당한다.
 - `SqlAiWriterDialog.tsx`는 파일명 호환을 유지하면서 내부에서 shadcn `Popover`, `Bubble`, `Collapsible`로 Nessie prompt, 생성 상태, 초안 적용을 구성한다. SQL 결과 기반 Job wizard는 `SqlJobWizardDialog.tsx`가 dialog 흐름, `SqlJobWizardSteps.tsx`가 단계별 composition, `SqlJobWizardTargetSettings.tsx`가 ETL Target과 일치하는 저장 대상 form, `SqlJobWizardFields.tsx`가 공용 입력 control, `sqlJobWizardModel.ts`가 초기값·컬럼 타입 추론·검증·request formatting을 담당한다. Preview는 선택한 10~100행 값을 기존 `POST /api/query/runs`의 `limit` 계약으로 전달하며, 결과 표와 위젯은 shadcn `ScrollArea` 안에서 탐색하고 `Dialog` 전체 보기로 확장한다.
 - SQL route 전용 layout·interaction style은 각 component의 CSS Module에 함께 둔다. global stylesheet는 App Shell과 공용 token만 소유하며, `.page-body.sql-body` gutter 외의 SQL 내부 component selector를 추가하지 않는다.
+- Trino 문법의 최종 판정은 `POST /api/query/validate`의 Trino parser/compiler 계약이며 frontend PostgreSQL parser는 UX 보조다. 실행 전 비용 평가는 Plan/metadata의 스캔량만 표시하며, 신뢰 가능한 실행 시간 예측은 제공하지 않는다. Trino 결과 표는 물리 결과 chunk가 아닌 논리 100행 page를 cursor로 조회하며, 전체 행 수·전체 page 수는 결과 수집 완료 후에만 표시한다. CSV export는 이미 저장된 Query Run 결과를 backend streaming으로 내려보내며 쿼리를 재실행하지 않는다.
 - Query AI 생성 기능은 SQL editor 상단의 `Nessie로 SQL 작성` 버튼에 붙는 shadcn `Popover`에서 진입한다. prompt 제출 후 `Collapsible` 입력 폼을 접고 `Bubble`로 생성 중·완료·적용 상태를 표시한다. live mode에서는 `frontend/src/services/queryAiService.ts`가 `POST /api/query/ai-suggestions`를 호출하고, FastAPI가 backend env의 `OPENAI_API_KEY`로 OpenAI Responses API에 요청한다. mock mode에서는 같은 request shape로 프론트 로컬 SQL 초안 fallback을 사용한다. AI는 선택 테이블 context 안에서만 SQL 초안을 만들 수 있고, backend는 AI 응답도 read-only SQL과 선택 dataset scope로 재검증한다. AI가 만든 SQL은 자동 실행하지 않고 editor 적용 후 기존 read-only/preflight 검증을 다시 통과해야 실행된다. 차트 생성은 AI prompt와 분리하며, SQL 결과와 선택 데이터셋을 공용 `DashboardDatasetOption`으로 변환한 뒤 Dashboard `WidgetConfigPanel`과 `WidgetRenderer`를 재사용한다.
 - SQL desktop layout은 좌측 분석 테이블 panel과 우측 editor/result workspace가 같은 height token을 공유한다. 결과 전/후 모두 하단 경계를 맞추고 result 영역만 남은 높이 안에서 scroll한다. Catalog 미리보기의 `SQL 분석에서 열기`는 선택 Dataset을 `App.tsx`의 `openDatasetInSqlWithSelection`에 전달해 `/sql` route와 editor context를 함께 갱신한다.
 - `/login`은 `AuthPage`와 `/api/auth/*` session API를 사용하고, workspace hydrate는 session actor 확인 이후 시작한다.
@@ -169,6 +200,7 @@ route param은 기존 `selectedJob`, `selectedDataset`, `dashboardEntry` 상태�
 수집/처리의 작업 진행 순서 시각화는 독립 메뉴가 아니라 실행 이력의 `실행 단계 보기` 모달에서 표시한다.
 live mode에서는 마지막으로 성공한 ETL job/catalog hydrate 결과를 브라우저 localStorage에 보관해, job 실행 중 새로고침해도 수집/처리 shell과 직전 job 목록을 먼저 렌더링한다.
 live mode에서 run/retry 명령 응답의 `running` 상태를 즉시 반영하고, `GET /api/etl/jobs/{jobId}` polling으로 Spark 완료 후 최종 상태를 반영한다.
+Job 생성 응답은 frontend 목록에서 `job.id` 기준으로 upsert한다. 표시 이름 변경이나 동일 target append 응답이 와도 같은 ID를 여러 행으로 쌓지 않으며, polling reconciliation도 중복 ID 행을 한 행으로 축약한다.
 
 ## 6) Job Run State Contract
 
@@ -184,7 +216,7 @@ Ownership rules:
 
 - `job.id`는 `runsByJobId`의 key다.
 - `run.runId`는 `selectedRunIdByJobId[job.id]`에 저장되는 값이다.
-- `run.runId`는 `dagStepsByRunId`의 key다.
+- `run.runId`는 Snapshot `dagStepsByRunId`의 key다. Continuous는 Airflow Run을 만들지 않고 durable session과 `(sessionId, batchId)` micro-batch row가 각자의 `dagSteps`를 소유한다.
 - History는 `selectedRunIdByJobId[job.id]`만 바꿔 선택 Run을 변경한다.
 - Run History 안의 실행 흐름 카드는 `dagStepsByRunId[selectedRunIdByJobId[job.id]]`만 렌더링한다.
 - 초기 hydrate는 `job.runHistory`를 `runsByJobId`로 옮기고, 가능한 경우 최신 run id에 `job.dagSteps`를 연결한다.
@@ -201,9 +233,10 @@ FastAPI가 현재 소유하는 책임:
 - Job hydrate와 Run hydrate
 - Catalog dataset hydrate
 - Catalog lineage fallback
-- SQL preview 실행
-- SQL preview 결과 기반 derived dataset 저장
-- SQL preview 결과 기반 ETL job draft handoff
+- SQL query compatibility runtime (DuckDB current, Trino Query Run target)
+- SQL 결과 기반 derived dataset 저장
+- SQL 결과 기반 ETL job draft handoff
+- Trino SQL recipe Job 생성, 수동/예약 실행, versioned Iceberg Dataset mapping 교체
 - Dashboard list/query/create/delete
 - Dashboard draft/published runtime
 - Dashboard page/widget/layout persistence
@@ -219,15 +252,16 @@ FastAPI가 현재 소유하는 책임:
 
 권한 판정은 공통 `ActorContext`와 permission engine을 기준으로 한다. `ActorContext`는 세션 쿠키가 있으면 session user를 우선 사용하고, 로컬 smoke/수동 검증 호환을 위해 세션이 없을 때만 `X-AskLake-User`, `X-AskLake-Role`, `X-AskLake-Groups` 임시 header fallback을 사용한다.
 
-권한 모델을 확장할 때는 identity metadata와 access control을 분리한다. `createdBy`, `owner`, profile/avatar는 화면 표시와 감사 로그 문맥을 위한 값이고, 실제 허용 여부는 `actor -> resource -> action` 형태의 permission check에서 계산한다. Job/Dataset/Dashboard 응답은 optional `permissionGrants`와 `permissions` 계약을 받을 수 있다. Backend에는 `ActorContext`와 공통 `can(actor, action, resource)` 판정기가 있으며, 현재 allow-only 우선순위는 `user/group blocked 차단 -> resource lock 차단 -> admin 전체 허용 -> owner fallback -> user/group/role/public grant 허용 -> 차단`이다. Admin 권한은 resource 접근 그룹이 아니라 `role=admin`으로 설명하며, 로컬 demo admin 계정의 groups는 빈 배열로 유지한다. Group grant/block은 일반 사용자 권한 운영 단위다. 명시적 deny grant는 아직 지원하지 않고, 여러 grant는 합산된다. Resource lock은 `view`는 유지하고 `query/run/manage/delete/share` action만 차단한다. 목록 API는 block 상태를 반영해 해당 actor에게 resource를 숨기고, resource lock은 목록 노출을 유지하되 응답 `permissions`의 실행/변경 action을 false로 내려 프론트 버튼 상태와 backend 403이 같은 기준을 보도록 한다. Catalog dataset 조회/lineage/materialization-run 삭제, SQL preview 실행, Query AI 생성, Job command/update, Dashboard 삭제/runtime 편집은 공통 permission check를 거쳐 `403 FORBIDDEN`을 반환할 수 있다.
+권한 모델을 확장할 때는 identity metadata와 access control을 분리한다. `createdBy`, `owner`, profile/avatar는 화면 표시와 감사 로그 문맥을 위한 값이고, 실제 허용 여부는 `actor -> resource -> action` 형태의 permission check에서 계산한다. Job/Dataset/Dashboard 응답은 optional `permissionGrants`와 `permissions` 계약을 받을 수 있다. Backend에는 `ActorContext`와 공통 `can(actor, action, resource)` 판정기가 있으며, 현재 allow-only 우선순위는 `user/group blocked 차단 -> resource lock 차단 -> admin 전체 허용 -> owner fallback -> user/group/role/public grant 허용 -> 차단`이다. Admin 권한은 resource 접근 그룹이 아니라 `role=admin`으로 설명하며, 로컬 demo admin 계정의 groups는 빈 배열로 유지한다. Group grant/block은 일반 사용자 권한 운영 단위다. 명시적 deny grant는 아직 지원하지 않고, 여러 grant는 합산된다. Resource lock은 `view`는 유지하고 `query/run/manage/delete/share` action만 차단한다. 목록 API는 block 상태를 반영해 해당 actor에게 resource를 숨기고, resource lock은 목록 노출을 유지하되 응답 `permissions`의 실행/변경 action을 false로 내려 프론트 버튼 상태와 backend 403이 같은 기준을 보도록 한다. Catalog dataset 조회/lineage/materialization-run 삭제, SQL Query Run 제출/결과 조회/취소, Query AI 생성, Job command/update, Dashboard 삭제/runtime 편집은 공통 permission check를 거쳐 `403 FORBIDDEN`을 반환할 수 있다.
 
-Frontend는 resource별 `permissions`를 읽어 권한 없는 SQL 실행, Query AI 생성, Job command, Dataset materialization-run 삭제, Dashboard 삭제/편집 버튼을 비활성화하고, backend `403`은 권한 안내 toast/preflight message로 표시한다. 프론트의 비활성화는 사용성 보조이며 보안 근거는 backend enforcement다. Query AI 생성도 선택 dataset 전체에 대해 backend `query` permission check를 통과해야 하며, 권한 없는 dataset metadata는 AI 프롬프트 context로 전달하지 않는다. Dashboard runtime draft 생성, page/widget/layout 변경, publish는 dashboard `manage` permission check를 통과해야 한다.
+Frontend는 resource별 `permissions`를 읽어 권한 없는 SQL 실행, Query AI 생성, Job command, Dataset materialization-run 삭제, Dashboard 삭제/편집 버튼을 비활성화하고, backend `403`은 권한 안내 toast/preflight message로 표시한다. 프론트의 비활성화는 사용성 보조이며 보안 근거는 backend enforcement다. Query AI 생성도 선택 dataset 전체에 대해 backend `query` permission check를 통과해야 하며, 권한 없는 dataset metadata는 AI 프롬프트 context로 전달하지 않는다. Dashboard runtime draft 생성, page/widget/layout 변경, publish는 dashboard `manage` permission check를 통과해야 한다. Runtime widget의 Catalog 물리 데이터도 현재 actor의 dataset `query` permission과 governance lock을 먼저 통과해야 하며, 거부된 widget은 storage를 열지 않고 빈 data와 안정적인 error config를 반환한다.
 
 프로필/관리 화면은 Phase 0 기준에서 별도 Identity/Admin resource로 취급한다. 프로필 페이지는 `GET /api/users/me`로 현재 actor의 표시 프로필, role, group, 권한 요약을 읽고, 관리 페이지는 `/api/admin/users`, `/api/admin/groups`, `/api/admin/permissions`, `/api/admin/governance-controls`, `/api/admin/audit-logs` API를 사용한다. 로그인/회원가입은 `/api/auth/login`, `/api/auth/signup`, `/api/auth/session`, `/api/auth/logout`의 로컬 session API로 제공하며, backend는 httpOnly `asklake_session` 쿠키를 actor context로 변환한다. 기존 smoke와 수동 검증 호환을 위해 세션이 없으면 임시 actor header(`X-AskLake-User`, `X-AskLake-Role`, `X-AskLake-Groups`) fallback을 유지한다. 이 header fallback은 로컬/검증용이며, 운영에서는 session/IdP 또는 trusted gateway 검증 없이 client가 보낸 header만으로 admin actor를 허용하면 안 된다. 프론트는 `/login`의 로그인/회원가입 화면만 공개 route로 취급하고, 그 외 앱 route는 `/api/auth/session` 확인 전에는 앱 shell을 렌더링하지 않는다. 세션이 없으면 직접 URL 진입도 `/login`으로 대체하며, 로그인 후에만 사이드바/상단바와 업무 화면을 표시한다. `/api/admin/*`는 admin role이 아니면 `403 FORBIDDEN`을 반환한다. 관리 콘솔은 사용자 탭에서 user 차단/해제, 그룹 탭에서 group 차단/해제, 권한 탭에서 permission grant 추가/수정/삭제와 resource lock/unlock을 지원한다. 차단/잠금 사유는 관리자 내부 표시와 감사 로그용이며, 일반 사용자-facing 메시지에는 노출하지 않는다. payload에서 유래한 owner/permissionRoles grant는 원본 리소스 metadata로 남기고, 관리 콘솔에서는 읽기 전용으로 표시한다. 서버 감사 로그는 `audit_events` table에 저장하며, admin permission grant 생성/수정/삭제, governance control 변경, auth login/logout/login 실패, Dataset/Job/Dashboard의 직접 접근 또는 실행 403 이벤트를 저장한다. `/api/admin/audit-logs`는 actor/resource/result/text/date/limit 필터로 조회한다. Topbar 최근 API 호출 로그는 frontend local/localStorage 상태로 유지하며 서버 감사 로그와 합치지 않는다.
 
 Dashboard Assistant는 `POST /api/dashboards/assistant`를 FastAPI가 소유한다.
+이 endpoint는 `get_actor_context`를 필수 dependency로 사용하고, `dashboardId`가 있으면 해당 actor의 dashboard `view` 권한을 확인한 뒤에만 Assistant context를 구성한다. 운영 환경의 유효한 session이 없는 요청은 `401 UNAUTHORIZED`, dashboard 접근 권한이 없는 요청은 `403 FORBIDDEN`을 반환한다.
 이 endpoint는 요청의 `dashboardId`/`pageId`를 기준으로 DB에서 draft 우선, 없으면 published runtime을 읽고,
-대시보드에서 사용할 수 있는 available catalog dataset과 현재 page widget, 지원 가능한 widget type/config option을 OpenAI에 전달한다.
+현재 actor의 dataset `query` permission과 governance 검사를 통과한 available catalog dataset과 그 dataset에 연결된 현재 page widget, 지원 가능한 widget type/config option만 OpenAI에 전달한다. 제외된 dataset의 `sampleRows`와 widget data sample은 provider context에 포함하지 않는다.
 OpenAI 응답은 backend guard를 통과해야 하며, guard는 없는 datasetId, 없는 widgetId, 지원하지 않는 widget type,
 데이터셋 컬럼과 맞지 않는 config를 제외하고 `warnings`로 돌려준다.
 `OPENAI_API_KEY`가 없거나 `OPENAI_ASSISTANT_ENABLED=false`이거나 OpenAI 호출이 실패하면 응답 `message`/`warnings`에 `mock fallback`을 명시한 fallback 응답을 반환한다.
@@ -244,7 +278,7 @@ RAG 검색과 action 자동 적용 고도화는 후속 작업 범위다.
 | ETL Run | `JobRunSummary` | FastAPI persisted run resource |
 | Dataset | `CatalogDataset` | FastAPI catalog dataset resource |
 | Dataset Lineage | `LineageGraph` | FastAPI 저장 graph 또는 fallback graph |
-| SQL Run | `SqlResultDraft` | FastAPI query preview resource |
+| SQL Run | `QueryRun` (target), `SqlResultDraft` (legacy) | Trino Query Run resource와 DuckDB 전환 호환 snapshot |
 | Dashboard | `DashboardEntry`, runtime response | FastAPI dashboard card/runtime resource |
 | Audit Log | `useAuditLogs` local/localStorage state | future audit log resource |
 | Identity Metadata | `owner`, optional `createdBy`/`createdByProfile` 표시 값 | display/audit context metadata |
@@ -259,7 +293,7 @@ Dashboard backend ownership은 card/list와 runtime snapshot으로 나눈다.
 Card/List는 `dashboards`, `dashboard_tags`를 중심으로 목록, 생성, 제목 수정, 삭제를 담당한다.
 Runtime은 `dashboard_revisions`, `dashboard_pages`, `dashboard_widgets`를 중심으로 published 조회, draft 편집, page/widget/layout/publish를 담당한다.
 두 흐름은 `dashboardId`, `publishedRevisionId`, `DashboardCard`, `DashboardRuntimeResponse` 계약만 공유한다.
-Runtime chart widget은 `widget.data`와 type별 `config`를 frontend에서 ApexCharts option/series로 변환해 렌더링한다. Dashboard runtime widget contract는 `metric`, `table`, ApexCharts 차트 8종(`bar_chart`, `line_chart`, `area_chart`, `donut_chart`, `pie_chart`, `radial_bar_chart`, `heatmap_chart`, `treemap_chart`)을 기준으로 확장한다. 사람이 설정 패널에서 고르는 옵션과 향후 AI widget 생성기가 만드는 옵션은 같은 widget type/config 계약을 사용한다. `table` 위젯은 후속 작업에서 TanStack Table 기반으로 별도 전환한다.
+Runtime chart widget은 backend가 Catalog 물리 데이터에서 만든 bounded `widget.data`와 type별 `config`를 frontend에서 ApexCharts option/series로 변환해 렌더링한다. 집계 응답은 `dataMode: "server_aggregated"`, table preview는 `dataMode: "server_preview"`를 사용하고, 편집 가능한 원본 설정은 `sourceConfig`에 유지한다. `materializationMode`가 명시되면 그 값을 우선하고, 미지정 run은 Kafka만 `delta`, 나머지는 `snapshot`으로 판정한다. 원격 S3 segment는 allowlist와 runtime 응답 전체의 누적 byte/object 예산을 먼저 검사하고, DuckDB는 memory/thread/temp/timeout 제한 안에서 실행한다. `httpfs` extension은 backend image build에서 설치하며 runtime 요청은 `LOAD`만 수행한다. Dashboard runtime widget contract는 `metric`, `table`, ApexCharts 차트 8종(`bar_chart`, `line_chart`, `area_chart`, `donut_chart`, `pie_chart`, `radial_bar_chart`, `heatmap_chart`, `treemap_chart`)을 기준으로 확장한다. 사람이 설정 패널에서 고르는 옵션과 향후 AI widget 생성기가 만드는 옵션은 같은 widget type/config 계약을 사용한다.
 
 ## 9) API Boundary
 
@@ -281,10 +315,12 @@ FastAPI 현재 구현 범위:
 - `GET /api/admin/groups`
 - `GET /api/admin/permissions`
 - `GET /api/admin/audit-logs`
+- `POST /api/etl/sources/assets`: Source 연결을 검증하고 탐색 가능한 파일·테이블·컬렉션 목록을 반환한다. schema draft는 만들지 않는다.
 - `POST /api/etl/sources/test`
 - `POST /api/etl/record-parsing/preview`: 이름 없는 TXT 샘플에 연속 공백 구조화 규칙을 적용하고 필드 개수·타입 초안을 검증
 - `POST /api/etl/review`: Review 화면의 표시값과 생성 가능 상태를 서버 기준으로 정규화
 - `POST /api/etl/schema-inference`
+- `POST /api/etl/rules/preview`: canonical Rule compile 후 bounded Snapshot runtime Preview
 - `POST /api/etl/jobs`
 - `GET /api/etl/jobs`
 - `GET /api/etl/jobs/{jobId}`: 수집/처리 상세 hydrate와 실행 중 job 최종 상태 polling에 사용
@@ -316,14 +352,14 @@ Demo/reference endpoint는 live ETL/Catalog API를 가리지 않도록 `/api/dem
 - `GET /api/demo/etl/jobs`
 - `GET /api/demo/catalog/datasets`
 
-현재 프론트는 Dashboard endpoint가 FastAPI에서 404를 반환하면 local/mock fallback으로 목록, 생성, runtime 화면을 유지한다. FastAPI 응답이 성공하면 서버 응답을 source of truth로 사용한다.
+Dashboard endpoint와 Catalog 물리 데이터는 FastAPI 응답을 source of truth로 사용하며 API 오류는 명시적인 오류/재시도 상태로 표시한다.
 
 ## 10) 설계 원칙
 
 - Mock data는 demo baseline이며 최종 persistence model로 간주하지 않는다.
 - API response shape는 frontend type과 문서가 함께 바뀌어야 한다.
 - API, mock fixture, frontend internal state의 status 값은 영어 canonical value를 유지하고 UI label mapper에서 한국어로 표시한다.
-- SQL runtime은 read-only guard를 가져야 하며, 선택된 catalog dataset을 DuckDB table context로 등록해 projection/filter/group/order/limit/JOIN을 실제 preview SQL로 실행한다.
+- SQL runtime은 read-only guard를 가져야 하며, 선택된 Catalog Dataset의 physical mapping을 Trino catalog/schema/table로 해석해 전체 SQL 실행을 제출한다. lifecycle, cursor 결과 조회, retention, materialization 기준은 `docs/trino-query-run-contract.md`를 따른다.
 - 빈 backend state는 정상 상태다. 상세/SQL/builder처럼 실제 resource가 필요한 화면만 방어한다.
 - Dashboard adapter는 FastAPI 응답을 우선하고, 이전 backend 호환을 위한 local fallback은 실패/404 경로로만 사용한다.
 
@@ -339,6 +375,7 @@ Demo/reference endpoint는 live ETL/Catalog API를 가리지 않도록 `/api/dem
 - SQL 화면의 왼쪽 `차트 생성하기` 탭은 `SqlResultDraft` 또는 선택한 Catalog dataset sample을 로컬 `DashboardDatasetOption`으로 변환하고 Dashboard `WidgetConfigPanel`과 `WidgetRenderer`를 재사용한다.
 - 적용한 차트 설정은 SQL 화면 메모리에만 유지하며, SQL 결과 toolbar에는 대시보드 생성 action을 제공하지 않는다.
 - 대시보드 생성과 저장은 별도 대시보드 메뉴의 runtime/builder 계약을 사용한다. 기존 `DashboardEntry.source = "sql"` 호환 타입은 즉시 제거하지 않지만 SQL 화면에서는 해당 entry를 만들지 않는다.
+- Trino 원격 결과 한 page를 persistent Dashboard source로 저장하는 것은 금지한다. 반복 사용하려면 먼저 materialized Dataset으로 전환한다.
 ## ETL Permission 데이터 소유권
 
 - 사용자·그룹 후보의 source of truth는 backend `GET /api/etl/permission-options`다.

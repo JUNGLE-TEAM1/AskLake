@@ -1,0 +1,800 @@
+import os
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from threading import Event
+from types import SimpleNamespace
+import time
+import unittest
+from unittest.mock import patch
+
+import duckdb
+
+from app.core.auth_context import ActorContext
+from app.core.errors import ApiError
+from app.schemas.common import ErrorCode
+from app.schemas.dashboard import DashboardRuntimeWidgetType, DonutChartWidgetConfig
+from app.services import dashboard_physical_data
+from app.services.dashboard_physical_data import (
+    DASHBOARD_VALUE_ALIAS,
+    DashboardDatasetQuerySession,
+    DashboardRemoteScanBudget,
+    canonical_materialization_mode,
+    configure_dashboard_duckdb_resources,
+    dataset_storage_segments,
+    execute_dashboard_query,
+    preflight_dashboard_s3_segments,
+)
+from app.services.dashboard_runtime_service import (
+    DASHBOARD_DATA_FORBIDDEN,
+    DASHBOARD_DATA_UNAVAILABLE,
+    DashboardRuntimeService,
+    MAX_EXPLICIT_WIDGET_ROWS,
+)
+
+
+def catalog_dataset_payload(
+    *,
+    dataset_id: str = "catalog-dataset",
+    owner: str = "dataset-owner",
+    sample_rows: list[list[str]] | None = None,
+    storage_format: str | None = None,
+    storage_location: str | None = None,
+) -> dict[str, object]:
+    return {
+        "description": "test dataset",
+        "freshness": "latest",
+        "id": dataset_id,
+        "lastUpdated": "2026-07-12T00:00:00Z",
+        "layer": "GOLD",
+        "materializationRuns": [],
+        "name": dataset_id,
+        "nextRefresh": "-",
+        "owner": owner,
+        "permissionGrants": [{
+            "actions": ["query", "view"],
+            "principalId": "dashboard-viewer",
+            "principalType": "user",
+        }],
+        "quality": "passed",
+        "rag": False,
+        "rows": "2 rows",
+        "sampleRows": sample_rows or [["sample-only", "999"]],
+        "schema": [["category", "string"], ["amount", "number"]],
+        "size": "1 KiB",
+        "source": "test",
+        "status": "available",
+        "storageFormat": storage_format,
+        "storageLocation": storage_location,
+        "tags": ["test"],
+    }
+
+
+def runtime_widget(
+    *,
+    dataset_id: str | None = "catalog-dataset",
+    query_id: str | None = None,
+    data: list[dict[str, object]] | None = None,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        config={"aggregation": "sum", "xKey": "category", "yKey": "amount"},
+        data=data or [{"category": "stored", "amount": 999}],
+        dataset_id=dataset_id,
+        id="widget-1",
+        layout={"x": 0, "y": 0, "w": 4, "h": 3},
+        page_id="page-1",
+        query_id=query_id,
+        title="Sales",
+        type="bar_chart",
+    )
+
+
+def render_runtime_widget(
+    service: DashboardRuntimeService,
+    widget: SimpleNamespace,
+    *,
+    sessions: dict[str, object] | None = None,
+):
+    return service._widget_to_schema(
+        widget,
+        sessions if sessions is not None else {},
+        {},
+        {},
+        {},
+        actor=ActorContext(name="dashboard-viewer", role="viewer"),
+        remote_budget=DashboardRemoteScanBudget(max_bytes=1024 * 1024, max_objects=32),
+        api_path="/api/dashboards/dashboard-a/published",
+        http_method="GET",
+    )
+
+
+class FakeDashboardS3Client:
+    def __init__(self, objects_by_prefix: dict[str, list[dict[str, object]]]) -> None:
+        self.objects_by_prefix = objects_by_prefix
+        self.calls: list[dict[str, object]] = []
+
+    def list_objects_v2(self, **request: object) -> dict[str, object]:
+        self.calls.append(dict(request))
+        return {
+            "Contents": self.objects_by_prefix.get(str(request.get("Prefix") or ""), []),
+            "IsTruncated": False,
+        }
+
+
+class InterruptibleDuckDbConnection:
+    def __init__(self) -> None:
+        self.interrupted = False
+        self.finished = Event()
+
+    def execute(self, _query: str) -> None:
+        self.finished.wait(1)
+        raise duckdb.Error("Interrupted" if self.interrupted else "Timed out")
+
+    def interrupt(self) -> None:
+        self.interrupted = True
+        self.finished.set()
+
+
+class FakeCatalogRepository:
+    def __init__(self, payloads=None):
+        self.db = SimpleNamespace()
+        self.payloads = (
+            {"catalog-dataset": {"id": "catalog-dataset"}}
+            if payloads is None
+            else payloads
+        )
+
+    def get_dataset_payload(self, dataset_id: str):
+        return self.payloads.get(dataset_id)
+
+
+class DashboardPhysicalWidgetDataTests(unittest.TestCase):
+    def test_chart_aggregation_reads_all_materializations_instead_of_sample_rows(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            first = root / "run-1"
+            second = root / "run-2"
+            first.mkdir()
+            second.mkdir()
+            (first / "part.csv").write_text(
+                "category,amount\nphones,10\naccessories,7\n",
+                encoding="utf-8",
+            )
+            (second / "part.csv").write_text(
+                "category,amount\nphones,5\n",
+                encoding="utf-8",
+            )
+            dataset = SimpleNamespace(
+                id="catalog-dataset",
+                materialization_runs=[
+                    SimpleNamespace(materialization_mode="delta", status="success", storage_format="csv", storage_location=str(first)),
+                    SimpleNamespace(materialization_mode="delta", status="success", storage_format="csv", storage_location=str(second)),
+                ],
+                name="dashboard_physical",
+                sample_rows=[["sample-only", "999"]],
+                storage_format="csv",
+                storage_location=str(second),
+            )
+            session = DashboardDatasetQuerySession(dataset)
+            try:
+                result = session.read_widget("bar_chart", {
+                    "aggregation": "sum",
+                    "xKey": "category",
+                    "yKey": "amount",
+                })
+            finally:
+                session.close()
+
+        self.assertEqual(
+            result["data"],
+            [
+                {"category": "phones", "amount": 15.0},
+                {"category": "accessories", "amount": 7.0},
+            ],
+        )
+        self.assertEqual(result["config"]["dataMode"], "server_aggregated")
+        self.assertEqual(result["config"]["sourceConfig"]["aggregation"], "sum")
+
+    def test_count_aggregation_preserves_edit_config_and_returns_exact_counts(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "part.csv").write_text(
+                "category\nphones\nphones\nphones\naccessories\naccessories\n",
+                encoding="utf-8",
+            )
+            dataset = SimpleNamespace(
+                id="catalog-dataset",
+                materialization_runs=[],
+                name="dashboard_counts",
+                sample_rows=[["sample-only"]],
+                storage_format="csv",
+                storage_location=str(root),
+            )
+            session = DashboardDatasetQuerySession(dataset)
+            try:
+                result = session.read_widget("donut_chart", {
+                    "aggregation": "count",
+                    "labelKey": "category",
+                    "valueKey": "",
+                })
+            finally:
+                session.close()
+
+        self.assertEqual(result["config"]["aggregation"], "sum")
+        self.assertEqual(result["config"]["valueKey"], DASHBOARD_VALUE_ALIAS)
+        self.assertEqual(result["config"]["sourceConfig"]["aggregation"], "count")
+        self.assertEqual(
+            result["data"],
+            [
+                {"category": "phones", DASHBOARD_VALUE_ALIAS: 3},
+                {"category": "accessories", DASHBOARD_VALUE_ALIAS: 2},
+            ],
+        )
+
+    def test_table_preview_is_sorted_and_capped_before_browser_response(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            rows = "\n".join(f"{index},value-{index}" for index in range(1, 506))
+            (root / "part.csv").write_text(f"id,value\n{rows}\n", encoding="utf-8")
+            dataset = SimpleNamespace(
+                id="catalog-dataset",
+                materialization_runs=[],
+                name="dashboard_table",
+                sample_rows=[["sample-only", "sample-only"]],
+                storage_format="csv",
+                storage_location=str(root),
+            )
+            session = DashboardDatasetQuerySession(dataset)
+            try:
+                result = session.read_widget("table", {
+                    "columns": ["id", "value"],
+                    "limit": 10_000,
+                    "sortDirection": "desc",
+                    "sortKey": "id",
+                })
+            finally:
+                session.close()
+
+        self.assertEqual(len(result["data"]), 500)
+        self.assertEqual(result["data"][0], {"id": 505, "value": "value-505"})
+        self.assertEqual(result["data"][-1], {"id": 6, "value": "value-6"})
+        self.assertEqual(result["config"]["dataMode"], "server_preview")
+
+    def test_catalog_widgets_ignore_client_rows_but_bounded_query_snapshots_remain_supported(self) -> None:
+        service = DashboardRuntimeService(SimpleNamespace(), FakeCatalogRepository())
+        client_rows = [{"value": index} for index in range(MAX_EXPLICIT_WIDGET_ROWS + 25)]
+
+        self.assertEqual(service._resolve_widget_data(client_rows, "catalog-dataset"), [])
+        self.assertEqual(
+            len(service._resolve_widget_data(client_rows, "sql-result-run-1")),
+            MAX_EXPLICIT_WIDGET_ROWS,
+        )
+
+    def test_dashboard_session_never_falls_back_to_catalog_sample_rows(self) -> None:
+        dataset = SimpleNamespace(
+            id="catalog-dataset",
+            materialization_runs=[],
+            name="sample_only_dashboard",
+            sample_rows=[["sample-only", 999]],
+            storage_format=None,
+            storage_location=None,
+        )
+
+        with self.assertRaises(ApiError) as context:
+            DashboardDatasetQuerySession(dataset)
+
+        self.assertEqual(context.exception.status_code, 503)
+        self.assertIn("physical", context.exception.message.lower())
+
+    def test_runtime_widget_replaces_stored_sample_data_with_physical_aggregation(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "part.csv").write_text(
+                "category,amount\nphones,4\nphones,6\naccessories,3\n",
+                encoding="utf-8",
+            )
+            payload = catalog_dataset_payload(
+                storage_format="csv",
+                storage_location=str(root),
+            )
+            payload["name"] = "runtime_physical"
+            service = DashboardRuntimeService(
+                SimpleNamespace(),
+                FakeCatalogRepository({"catalog-dataset": payload}),
+            )
+            widget = runtime_widget(data=[{"category": "sample-only", "amount": 999}])
+            sessions = {}
+            try:
+                with (
+                    patch(
+                        "app.services.dashboard_runtime_service.dataset_with_persisted_permission_grants",
+                        side_effect=lambda _db, dataset: dataset,
+                    ),
+                    patch(
+                        "app.services.dashboard_runtime_service.require_dashboard_dataset_query_access"
+                    ),
+                ):
+                    response = render_runtime_widget(service, widget, sessions=sessions)
+            finally:
+                for session in sessions.values():
+                    session.close()
+
+        self.assertEqual(
+            response.data,
+            [
+                {"category": "phones", "amount": 10.0},
+                {"category": "accessories", "amount": 3.0},
+            ],
+        )
+        self.assertEqual(response.config.data_mode, "server_aggregated")
+
+    def test_runtime_widget_returns_a_stable_error_when_physical_storage_is_unavailable(self) -> None:
+        payload = catalog_dataset_payload(
+            storage_format="csv",
+            storage_location="missing/dashboard/data",
+        )
+        payload["name"] = "runtime_missing"
+        service = DashboardRuntimeService(
+            SimpleNamespace(),
+            FakeCatalogRepository({"catalog-dataset": payload}),
+        )
+        widget = runtime_widget(data=[{"category": "sample-only", "amount": 999}])
+
+        with (
+            patch(
+                "app.services.dashboard_runtime_service.dataset_with_persisted_permission_grants",
+                side_effect=lambda _db, dataset: dataset,
+            ),
+            patch(
+                "app.services.dashboard_runtime_service.require_dashboard_dataset_query_access"
+            ),
+        ):
+            response = render_runtime_widget(service, widget)
+
+        self.assertEqual(response.data, [])
+        self.assertEqual(response.config.error, "DASHBOARD_DATA_UNAVAILABLE")
+
+    def test_runtime_checks_dataset_governance_and_query_permission_before_storage(self) -> None:
+        payload = catalog_dataset_payload(
+            storage_format="csv",
+            storage_location="unused/authorized/path",
+        )
+        service = DashboardRuntimeService(
+            SimpleNamespace(),
+            FakeCatalogRepository({"catalog-dataset": payload}),
+        )
+        events: list[str] = []
+
+        class FakeQuerySession:
+            def read_widget(self, _widget_type: str, config: dict[str, object]):
+                return {
+                    "config": {
+                        **config,
+                        "dataMode": "server_aggregated",
+                        "sourceConfig": dict(config),
+                    },
+                    "data": [{"category": "authorized", "amount": 1}],
+                }
+
+            def close(self) -> None:
+                return None
+
+        def create_session(_payload: object, *, remote_budget: object) -> FakeQuerySession:
+            self.assertIsNotNone(remote_budget)
+            events.append("storage")
+            return FakeQuerySession()
+
+        with (
+            patch(
+                "app.services.dashboard_runtime_service.dataset_with_persisted_permission_grants",
+                side_effect=lambda _db, dataset: dataset,
+            ),
+            patch(
+                "app.services.dashboard_dataset_access.require_governed_access",
+                side_effect=lambda *_args, **_kwargs: events.append("governance"),
+            ),
+            patch(
+                "app.services.dashboard_dataset_access.require_permission",
+                side_effect=lambda *_args, **_kwargs: events.append("permission"),
+            ),
+            patch(
+                "app.services.dashboard_runtime_service.DashboardDatasetQuerySession",
+                side_effect=create_session,
+            ),
+        ):
+            response = render_runtime_widget(service, runtime_widget())
+
+        self.assertEqual(events, ["governance", "permission", "storage"])
+        self.assertEqual(response.data, [{"category": "authorized", "amount": 1}])
+
+    def test_runtime_permission_denial_never_opens_dataset_storage(self) -> None:
+        payload = catalog_dataset_payload(
+            storage_format="csv",
+            storage_location="must/not/be/opened",
+        )
+        service = DashboardRuntimeService(
+            SimpleNamespace(),
+            FakeCatalogRepository({"catalog-dataset": payload}),
+        )
+        events: list[str] = []
+
+        def deny_permission(*_args: object, **_kwargs: object) -> None:
+            events.append("permission")
+            raise ApiError(ErrorCode.FORBIDDEN, "denied", 403)
+
+        with (
+            patch(
+                "app.services.dashboard_runtime_service.dataset_with_persisted_permission_grants",
+                side_effect=lambda _db, dataset: dataset,
+            ),
+            patch(
+                "app.services.dashboard_dataset_access.require_governed_access",
+                side_effect=lambda *_args, **_kwargs: events.append("governance"),
+            ),
+            patch(
+                "app.services.dashboard_dataset_access.require_permission",
+                side_effect=deny_permission,
+            ),
+            patch("app.services.dashboard_dataset_access.safe_record_audit_event"),
+            patch(
+                "app.services.dashboard_runtime_service.DashboardDatasetQuerySession"
+            ) as query_session,
+        ):
+            response = render_runtime_widget(service, runtime_widget())
+
+        self.assertEqual(events, ["governance", "permission"])
+        query_session.assert_not_called()
+        self.assertEqual(response.data, [])
+        self.assertEqual(response.config.error, DASHBOARD_DATA_FORBIDDEN)
+
+    def test_runtime_governance_lock_stops_before_permission_and_storage(self) -> None:
+        payload = catalog_dataset_payload(
+            storage_format="csv",
+            storage_location="must/not/be-opened",
+        )
+        service = DashboardRuntimeService(
+            SimpleNamespace(),
+            FakeCatalogRepository({"catalog-dataset": payload}),
+        )
+
+        with (
+            patch(
+                "app.services.dashboard_runtime_service.dataset_with_persisted_permission_grants",
+                side_effect=lambda _db, dataset: dataset,
+            ),
+            patch(
+                "app.services.dashboard_dataset_access.require_governed_access",
+                side_effect=ApiError(ErrorCode.FORBIDDEN, "locked", 403),
+            ),
+            patch(
+                "app.services.dashboard_dataset_access.require_permission"
+            ) as require_permission,
+            patch(
+                "app.services.dashboard_runtime_service.DashboardDatasetQuerySession"
+            ) as query_session,
+        ):
+            response = render_runtime_widget(service, runtime_widget())
+
+        require_permission.assert_not_called()
+        query_session.assert_not_called()
+        self.assertEqual(response.data, [])
+        self.assertEqual(response.config.error, DASHBOARD_DATA_FORBIDDEN)
+
+    def test_deleted_catalog_dataset_is_empty_but_sql_snapshot_is_preserved(self) -> None:
+        service = DashboardRuntimeService(SimpleNamespace(), FakeCatalogRepository({}))
+        deleted_catalog_widget = runtime_widget(
+            data=[{"category": "must-not-leak", "amount": 999}],
+        )
+        sql_rows = [{"category": f"row-{index}", "amount": index} for index in range(525)]
+        sql_snapshot_widget = runtime_widget(
+            dataset_id="sql-result-dataset",
+            query_id="sql-run-1",
+            data=sql_rows,
+        )
+
+        deleted_response = render_runtime_widget(service, deleted_catalog_widget)
+        sql_response = render_runtime_widget(service, sql_snapshot_widget)
+
+        self.assertEqual(deleted_response.data, [])
+        self.assertEqual(deleted_response.config.error, DASHBOARD_DATA_UNAVAILABLE)
+        self.assertEqual(len(sql_response.data), MAX_EXPLICIT_WIDGET_ROWS)
+        self.assertEqual(sql_response.data[0]["category"], "row-0")
+        self.assertIsNone(sql_response.config.error)
+
+    def test_materialization_mode_uses_explicit_value_then_source_kind_fallback(self) -> None:
+        cases = [
+            ({"materializationMode": "delta", "sourceKind": "etl"}, "delta"),
+            ({"materializationMode": "snapshot", "sourceKind": "kafka"}, "snapshot"),
+            ({"materializationMode": "unexpected", "sourceKind": "kafka"}, "snapshot"),
+            ({"materializationMode": "snapshot", "materialization_mode": "delta"}, "snapshot"),
+            ({"materializationMode": "", "materialization_mode": "delta"}, "delta"),
+            ({"sourceKind": "kafka"}, "delta"),
+            ({"sourceKind": "kafka", "source_kind": "etl"}, "delta"),
+            ({"sourceKind": "", "source_kind": "kafka"}, "delta"),
+            ({"sourceKind": "etl"}, "snapshot"),
+            ({}, "snapshot"),
+        ]
+        for run, expected in cases:
+            with self.subTest(run=run):
+                self.assertEqual(canonical_materialization_mode(run), expected)
+
+    def test_active_segments_match_snapshot_and_kafka_delta_boundaries(self) -> None:
+        dataset = {
+            "storageFormat": "csv",
+            "storageLocation": "fallback",
+            "materializationRuns": [
+                {
+                    "runId": "kafka-newest",
+                    "sourceKind": "kafka",
+                    "status": "success",
+                    "storageFormat": "csv",
+                    "storageLocation": "segment-kafka",
+                },
+                {
+                    "materializationMode": "delta",
+                    "runId": "etl-delta",
+                    "sourceKind": "etl",
+                    "status": "success",
+                    "storageFormat": "csv",
+                    "storageLocation": "segment-delta",
+                },
+                {
+                    "materializationMode": "snapshot",
+                    "runId": "snapshot",
+                    "sourceKind": "etl",
+                    "status": "success",
+                    "storageFormat": "csv",
+                    "storageLocation": "segment-snapshot",
+                },
+                {
+                    "materializationMode": "delta",
+                    "runId": "obsolete",
+                    "status": "success",
+                    "storageFormat": "csv",
+                    "storageLocation": "segment-obsolete",
+                },
+            ],
+        }
+
+        self.assertEqual(
+            dataset_storage_segments(dataset),
+            [
+                ("segment-snapshot", "csv"),
+                ("segment-delta", "csv"),
+                ("segment-kafka", "csv"),
+            ],
+        )
+
+        dataset["materializationRuns"] = [
+            {
+                "runId": "etl-no-mode",
+                "sourceKind": "etl",
+                "status": "success",
+                "storageFormat": "csv",
+                "storageLocation": "segment-etl-snapshot",
+            },
+            {
+                "materializationMode": "delta",
+                "runId": "older",
+                "status": "success",
+                "storageFormat": "csv",
+                "storageLocation": "segment-older",
+            },
+        ]
+        self.assertEqual(
+            dataset_storage_segments(dataset),
+            [("segment-etl-snapshot", "csv")],
+        )
+
+    def test_s3_allowlist_is_checked_before_creating_a_remote_client(self) -> None:
+        budget = DashboardRemoteScanBudget(max_bytes=1024, max_objects=10)
+        with (
+            patch.dict(os.environ, {"S3_ALLOWED_BUCKETS": "allowed-bucket"}, clear=True),
+            patch.object(dashboard_physical_data, "build_dashboard_s3_client") as build_client,
+            self.assertRaises(ApiError) as raised,
+        ):
+            preflight_dashboard_s3_segments(
+                {"id": "catalog-dataset"},
+                [("s3://blocked-bucket/path", "parquet")],
+                budget,
+            )
+
+        build_client.assert_not_called()
+        self.assertEqual(raised.exception.code, DASHBOARD_DATA_UNAVAILABLE)
+        self.assertIn("allowlisted", str(raised.exception.details.get("reason")))
+
+    def test_s3_byte_budget_is_cumulative_across_active_segments(self) -> None:
+        client = FakeDashboardS3Client({
+            "first/": [{"Key": "first/part-1.parquet", "Size": 60}],
+            "second/": [{"Key": "second/part-2.parquet", "Size": 50}],
+        })
+        budget = DashboardRemoteScanBudget(max_bytes=100, max_objects=10)
+        with (
+            patch.dict(os.environ, {"S3_ALLOWED_BUCKETS": "asklake-output"}, clear=True),
+            patch.object(
+                dashboard_physical_data,
+                "build_dashboard_s3_client",
+                return_value=client,
+            ),
+            self.assertRaises(ApiError) as raised,
+        ):
+            preflight_dashboard_s3_segments(
+                {"id": "catalog-dataset"},
+                [
+                    ("s3://asklake-output/first", "parquet"),
+                    ("s3://asklake-output/second", "parquet"),
+                ],
+                budget,
+            )
+
+        self.assertEqual(budget.used_bytes, 60)
+        self.assertEqual(budget.used_objects, 1)
+        self.assertIn("byte budget", str(raised.exception.details.get("reason")))
+
+    def test_s3_object_budget_stops_large_prefix_listing(self) -> None:
+        client = FakeDashboardS3Client({
+            "many/": [
+                {"Key": "many/part-1.csv", "Size": 10},
+                {"Key": "many/part-2.csv", "Size": 10},
+            ],
+        })
+        budget = DashboardRemoteScanBudget(max_bytes=100, max_objects=1)
+        with (
+            patch.dict(os.environ, {"S3_ALLOWED_BUCKETS": "asklake-output"}, clear=True),
+            patch.object(
+                dashboard_physical_data,
+                "build_dashboard_s3_client",
+                return_value=client,
+            ),
+            self.assertRaises(ApiError) as raised,
+        ):
+            preflight_dashboard_s3_segments(
+                {"id": "catalog-dataset"},
+                [("s3://asklake-output/many", "csv")],
+                budget,
+            )
+
+        self.assertEqual(budget.used_objects, 1)
+        self.assertIn("object budget", str(raised.exception.details.get("reason")))
+
+    def test_duckdb_resource_limits_are_applied_from_bounded_environment_values(self) -> None:
+        connection = duckdb.connect(database=":memory:")
+        try:
+            with patch.dict(
+                os.environ,
+                {
+                    "ASKLAKE_DASHBOARD_DUCKDB_MEMORY_BYTES": str(64 * 1024 * 1024),
+                    "ASKLAKE_DASHBOARD_DUCKDB_TEMP_BYTES": str(32 * 1024 * 1024),
+                    "ASKLAKE_DASHBOARD_DUCKDB_THREADS": "1",
+                },
+                clear=True,
+            ):
+                configure_dashboard_duckdb_resources(connection)
+            settings = connection.execute(
+                "SELECT current_setting('memory_limit'), "
+                "current_setting('max_temp_directory_size'), current_setting('threads')"
+            ).fetchone()
+        finally:
+            connection.close()
+
+        self.assertEqual(settings, ("64.0 MiB", "32.0 MiB", 1))
+
+    def test_duckdb_query_timeout_interrupts_the_connection(self) -> None:
+        connection = InterruptibleDuckDbConnection()
+        started_at = time.monotonic()
+
+        with self.assertRaises(duckdb.Error):
+            execute_dashboard_query(
+                connection,
+                "SELECT 1",
+                timeout_seconds=0.01,
+            )
+
+        self.assertTrue(connection.interrupted)
+        self.assertLess(time.monotonic() - started_at, 0.5)
+
+    def test_httpfs_is_prepared_by_the_image_without_runtime_install(self) -> None:
+        backend_root = Path(__file__).resolve().parents[1]
+        service_source = (
+            backend_root / "app" / "services" / "dashboard_physical_data.py"
+        ).read_text(encoding="utf-8")
+        dockerfile = (backend_root / "Dockerfile").read_text(encoding="utf-8")
+
+        self.assertNotIn('execute("INSTALL httpfs")', service_source)
+        self.assertIn("INSTALL httpfs", dockerfile)
+
+    def test_server_runtime_config_is_not_persisted_over_the_editable_count_config(self) -> None:
+        service = DashboardRuntimeService(SimpleNamespace(), FakeCatalogRepository())
+        config = DonutChartWidgetConfig.model_validate({
+            "aggregation": "sum",
+            "color": {"colors": ["#dc2626"]},
+            "dataMode": "server_aggregated",
+            "labelKey": "category",
+            "sourceConfig": {
+                "aggregation": "count",
+                "color": {"colors": ["#2563eb"]},
+                "labelKey": "category",
+                "valueKey": "",
+            },
+            "valueKey": DASHBOARD_VALUE_ALIAS,
+        })
+
+        persisted = service._config_to_json(DashboardRuntimeWidgetType.DONUT_CHART, config)
+
+        self.assertEqual(persisted["aggregation"], "count")
+        self.assertEqual(persisted["valueKey"], "")
+        self.assertEqual(persisted["color"], {"colors": ["#dc2626"]})
+        self.assertNotIn("dataMode", persisted)
+        self.assertNotIn("sourceConfig", persisted)
+
+    def test_every_existing_widget_type_has_a_bounded_physical_query(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "part.csv").write_text(
+                "category,series,event_date,amount\n"
+                "phones,web,2026-06-01,4\n"
+                "phones,store,2026-06-15,6\n"
+                "accessories,web,2026-07-01,3\n",
+                encoding="utf-8",
+            )
+            dataset = SimpleNamespace(
+                id="catalog-dataset",
+                materialization_runs=[],
+                name="dashboard_all_widgets",
+                sample_rows=[["sample-only", "sample-only", "2000-01-01", "999"]],
+                storage_format="csv",
+                storage_location=str(root),
+            )
+            cases = {
+                "metric": {"aggregation": "sum", "valueKey": "amount"},
+                "table": {"columns": ["category", "amount"], "limit": 2},
+                "bar_chart": {"aggregation": "sum", "groupKey": "series", "xKey": "category", "yKey": "amount"},
+                "line_chart": {"aggregation": "sum", "dateUnit": "month", "seriesKey": "series", "xKey": "event_date", "yKey": "amount"},
+                "area_chart": {"aggregation": "sum", "dateUnit": "month", "seriesKey": "series", "xKey": "event_date", "yKey": "amount"},
+                "donut_chart": {"aggregation": "sum", "labelKey": "category", "valueKey": "amount"},
+                "pie_chart": {"aggregation": "sum", "labelKey": "category", "valueKey": "amount"},
+                "radial_bar_chart": {"aggregation": "avg", "labelKey": "category", "valueKey": "amount"},
+                "heatmap_chart": {"aggregation": "sum", "valueKey": "amount", "xKey": "category", "yKey": "series"},
+                "treemap_chart": {"aggregation": "sum", "labelKey": "category", "valueKey": "amount"},
+            }
+            session = DashboardDatasetQuerySession(dataset)
+            try:
+                for widget_type, config in cases.items():
+                    with self.subTest(widget_type=widget_type):
+                        result = session.read_widget(widget_type, config)
+                        self.assertGreater(len(result["data"]), 0)
+                        self.assertLessEqual(len(result["data"]), 500)
+                        self.assertEqual(result["config"]["sourceConfig"], config)
+            finally:
+                session.close()
+
+    def test_parquet_physical_data_is_read_without_sample_rows(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            parquet_path = root / "part.parquet"
+            connection = duckdb.connect(database=":memory:")
+            try:
+                connection.execute(
+                    "COPY (SELECT * FROM (VALUES ('phones', 4), ('phones', 6)) rows(category, amount)) "
+                    f"TO '{parquet_path.as_posix()}' (FORMAT PARQUET)"
+                )
+            finally:
+                connection.close()
+            dataset = SimpleNamespace(
+                id="catalog-dataset",
+                materialization_runs=[],
+                name="dashboard_parquet",
+                sample_rows=[["sample-only", 999]],
+                storage_format="parquet",
+                storage_location=str(root),
+            )
+            session = DashboardDatasetQuerySession(dataset)
+            try:
+                result = session.read_widget("metric", {"aggregation": "sum", "valueKey": "amount"})
+            finally:
+                session.close()
+
+        self.assertEqual(result["data"], [{"amount": 10.0}])
+
+
+if __name__ == "__main__":
+    unittest.main()

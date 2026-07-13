@@ -53,12 +53,12 @@ endOffset = min(highWatermark, startOffset + snapshotMaxMessagesPerPartition)
 
 The selected target dataset is the only Lake data output for the default path.
 
-- `RAW`, `BRONZE`, and `SILVER`: target layer is selected target metadata. Supported Job transform and quality rules run before the single target write regardless of this label.
+- `RAW`, `BRONZE`, and `SILVER`: target layer is selected target metadata. Supported Job transform and quality rules run before the single JSONL target write regardless of this label.
 - `GOLD`: out of scope until join/aggregation execution semantics are implemented.
 
 The target physical path must be derived from the target dataset and `snapshotId`, rather than the removed `kafka-landing/<topic>/<runId>` convention. The Catalog materialization run must expose the target path, target layer, `sourceKind: "kafka"`, and snapshot metadata.
 
-Supported transform operations follow the existing pipeline rule semantics: copy/rename, trim/lowercase, numeric and timestamp casts, JSONPath extraction, default/null guard, and phone masking. Quality rule `params` stores Regex `pattern`, Accepted Values `values`, Range `min`/`max`/`inclusive`, and unique scope. Unsupported expression-style transforms preserve the input value until an expression runtime is added. `Fail Run` stops before target write and offset commit. `Warn` retains the row, `Set Null` clears the invalid target field, `Drop Row` excludes it, and `Quarantine` writes the rejected row to `snapshots/{snapshotId}/quarantine.jsonl` beside the direct target object. Malformed Kafka payloads are also quarantined with their raw payload and Kafka context; their offset is committed only after this object is stored.
+Supported transform operations follow the existing pipeline rule semantics: copy/rename, trim/lowercase, numeric and timestamp casts, JSONPath extraction, default/null guard, and phone masking. Quality rule `params` stores Regex `pattern`, Accepted Values `values`, and Range `min`/`max`/`inclusive`; compiler validation rejects missing or invalid values before execution. Unsupported expression-style transforms are rejected before Job creation. `Fail Run` stops before target write and offset commit. `Warn` retains the row, `Set Null` clears the invalid target field, `Drop Row` excludes it, and `Quarantine` writes the rejected row to `snapshots/{snapshotId}/quarantine.jsonl` beside the direct target object. Successful records are projected to the configured included target columns and compiled Rule output schema before JSONL/Catalog publication, so rename source fields and excluded fields are not retained. Malformed Kafka payloads are also quarantined with their raw payload and Kafka context; their offset is committed only after this object is stored.
 
 ## 5. Completion and Failure Semantics
 

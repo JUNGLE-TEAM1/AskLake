@@ -1,6 +1,12 @@
 import { apiClient, apiConfig } from "./apiClient";
 import type { DraftPipelinePatch, RecordParsingDraft, RecordParsingPreviewResponse, SchemaColumnDraft, SourceDraft } from "../types";
 
+const directBackendBaseUrl = String(
+  import.meta.env.VITE_BACKEND_DIRECT_URL
+    || import.meta.env.VITE_API_BASE_URL
+    || "http://127.0.0.1:8080",
+).replace(/\/$/, "");
+
 type SourceFieldRows = Array<[string, string]>;
 
 export type SourceConnectorAnalysis = {
@@ -14,6 +20,10 @@ export type SourceConnectorAnalysis = {
   previewRows: string[][];
   status: SourceDraft["connectionStatus"];
   testItems: Array<[string, string]>;
+};
+
+export type SourceConnectorDefaults = {
+  kafkaBroker: string;
 };
 
 type BackendSourceConnectorResponse = SourceConnectorAnalysis;
@@ -40,6 +50,11 @@ export async function testSourceConnector(sourceType: string, fields: SourceFiel
 export async function previewRecordParsing(rawLines: string[], recordParsing: RecordParsingDraft): Promise<RecordParsingPreviewResponse> {
   if (apiConfig.useMock) return buildMockRecordParsingPreview(rawLines, recordParsing);
   return apiClient.post<RecordParsingPreviewResponse>("/api/etl/record-parsing/preview", { rawLines, recordParsing });
+}
+
+export async function getSourceConnectorDefaults(): Promise<SourceConnectorDefaults> {
+  if (apiConfig.useMock) return { kafkaBroker: "127.0.0.1:19092" };
+  return getWithDevFallback<SourceConnectorDefaults>("/api/etl/sources/defaults");
 }
 
 export async function listSourceAssets(sourceType: string, fields: SourceFieldRows, prefix = ""): Promise<SourceAssetsResponse> {
@@ -95,7 +110,19 @@ function resolveMockConnectorAnalysis(sourceType: string, fields: SourceFieldRow
 }
 
 function mockSourceAssets(sourceType: string, prefix: string): Array<[string, string, string]> {
-  const basePath = prefix.trim() || (sourceType === "PostgreSQL" ? "public" : "sample");
+  if (sourceType === "PostgreSQL") {
+    return [
+      ["customer_reviews", prefix.trim() || "public", "detected"],
+      ["product_metadata", prefix.trim() || "public", "detected"],
+    ];
+  }
+  if (sourceType === "MongoDB") {
+    return [
+      ["app_events", prefix.trim() || "asklake_sources", "detected"],
+      ["customer_profiles", prefix.trim() || "asklake_sources", "detected"],
+    ];
+  }
+  const basePath = prefix.trim() || "sample";
   return [
     [`${basePath}/customer_reviews.parquet`, "Parquet", "준비됨"],
     [`${basePath}/customer_reviews.csv`, "CSV", "준비됨"],
@@ -123,8 +150,27 @@ async function postWithDevFallback<T>(path: string, body: unknown): Promise<T> {
   }
 }
 
+async function getWithDevFallback<T>(path: string): Promise<T> {
+  if (import.meta.env.DEV) {
+    try {
+      return await getBackendDirect<T>(path);
+    } catch (error) {
+      if (!isNetworkError(error) && !isNotFoundError(error)) throw error;
+    }
+  }
+
+  return apiClient.get<T>(path);
+}
+
+async function getBackendDirect<T>(path: string): Promise<T> {
+  const response = await fetch(`${directBackendBaseUrl}${path}`);
+  if (response.ok) return await response.json() as T;
+  const text = await response.text().catch(() => "");
+  throw new Error(text || `Backend ${response.status} ${response.statusText}`);
+}
+
 async function postBackendDirect<T>(path: string, body: unknown): Promise<T> {
-  const response = await fetch(`http://127.0.0.1:8080${path}`, {
+  const response = await fetch(`${directBackendBaseUrl}${path}`, {
     body: JSON.stringify(body),
     headers: { "Content-Type": "application/json" },
     method: "POST",
@@ -293,7 +339,7 @@ function inferPreviewColumnType(values: string[]) {
   if (nonEmptyValues.length === 0) return "String";
   if (nonEmptyValues.every((value) => /^(true|false)$/i.test(value))) return "Boolean";
   if (nonEmptyValues.every((value) => /^-?\d+$/.test(value))) return "Integer";
-  if (nonEmptyValues.every((value) => /^-?\d+(\.\d+)?$/.test(value))) return "Float";
+  if (nonEmptyValues.every((value) => /^-?\d+(\.\d+)?$/.test(value))) return "Double";
   if (nonEmptyValues.every((value) => !Number.isNaN(Date.parse(value)) && /[-T:]/.test(value))) return "Timestamp";
   if (nonEmptyValues.some((value) => /^[\[{]/.test(value))) return "JSON";
   return "String";

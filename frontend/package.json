@@ -7,7 +7,10 @@
     "api": "node server/index.js",
     "dev": "vite --config vite.config.ts --host 127.0.0.1 --port 5174 --strictPort",
     "db:seed": "node server/seed.js",
-    "verify:ui-regressions": "node scripts/verify-ui-regressions.mjs",
+    "test:trino-timeline": "node --test scripts/trino-execution-timeline.test.mts",
+    "verify:ui-regressions": "npm run test:trino-timeline && node scripts/verify-ui-regressions.mjs",
+    "verify:rule-compiler": "node scripts/verify-rule-compiler-contract.mjs",
+    "verify:schema-transform-rules": "node scripts/verify-schema-transform-rules.mjs",
     "build": "tsc -b && vite build --config vite.config.ts",
     "preview": "vite preview --config vite.config.ts --host 0.0.0.0"
   },

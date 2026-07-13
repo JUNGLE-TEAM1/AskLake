@@ -1,0 +1,285 @@
+{
+  "contractVersion": "1.0",
+  "cases": [
+    {
+      "name": "pass-through",
+      "records": [
+        { "event_id": "pass-1", "rating": "4.0", "review": "Original review" }
+      ],
+      "rules": [],
+      "expected": {
+        "status": "success",
+        "records": [
+          { "event_id": "pass-1", "rating": "4.0", "review": "Original review" }
+        ],
+        "quarantine": [],
+        "transform": { "appliedStepCount": 0, "configuredStepCount": 0, "errorCount": 0 },
+        "quality": { "configuredRuleCount": 0, "invalidRowCount": 0, "status": "pass" }
+      }
+    },
+    {
+      "name": "portable transforms and quality quarantine",
+      "records": [
+        {
+          "email": "valid@example.com",
+          "event_id": "portable-1",
+          "event_time": "2026-07-09T00:00:00Z",
+          "nickname": "",
+          "payload": "{\"code\":\"A1\"}",
+          "phone": "010-1234-5678",
+          "rating": "4.5",
+          "review": "  GREAT REVIEW  "
+        },
+        {
+          "email": "invalid-email",
+          "event_id": "portable-2",
+          "event_time": "2026-07-09T00:01:00Z",
+          "nickname": null,
+          "payload": "{\"code\":\"B2\"}",
+          "phone": "010-9999-0000",
+          "rating": "bad",
+          "review": "  BAD REVIEW  "
+        },
+        {
+          "email": "next@example.com",
+          "event_id": "portable-3",
+          "event_time": "2026-07-09T00:02:00Z",
+          "nickname": "Neo",
+          "payload": "{\"code\":\"C3\"}",
+          "phone": "010-2222-3333",
+          "rating": "",
+          "review": "  FINE REVIEW  "
+        }
+      ],
+      "rules": [
+        {
+          "contractVersion": "1.0", "enabled": true, "failureDisposition": "keep", "id": "copy-review",
+          "inputColumns": ["review"], "kind": "transform", "onError": "warn", "operation": "copy",
+          "outputColumns": ["review_copy"], "outputType": "String", "parameters": {}
+        },
+        {
+          "contractVersion": "1.0", "enabled": true, "failureDisposition": "keep", "id": "rename-review",
+          "inputColumns": ["review_copy"], "kind": "transform", "onError": "warn", "operation": "rename",
+          "outputColumns": ["review_alias"], "outputType": "String", "parameters": {}
+        },
+        {
+          "contractVersion": "1.0", "enabled": true, "failureDisposition": "keep", "id": "normalize-review",
+          "inputColumns": ["review_alias"], "kind": "transform", "onError": "warn", "operation": "lowercase_trim",
+          "outputColumns": ["review_normalized"], "outputType": "String", "parameters": {}
+        },
+        {
+          "contractVersion": "1.0", "enabled": true, "failureDisposition": "set_null", "id": "cast-rating",
+          "inputColumns": ["rating"], "kind": "transform", "onError": "warn", "operation": "cast",
+          "outputColumns": ["rating_value"], "outputType": "Double", "parameters": { "targetType": "Double" }
+        },
+        {
+          "contractVersion": "1.0", "enabled": true, "failureDisposition": "keep", "id": "default-nickname",
+          "inputColumns": ["nickname"], "kind": "transform", "onError": "warn", "operation": "default_value",
+          "outputColumns": ["nickname_clean"], "outputType": "String", "parameters": { "value": "anonymous" }
+        },
+        {
+          "contractVersion": "1.0", "enabled": true, "failureDisposition": "keep", "id": "extract-code",
+          "inputColumns": ["payload"], "kind": "transform", "onError": "warn", "operation": "json_extract",
+          "outputColumns": ["payload_code"], "outputType": "String", "parameters": { "path": "$.code" }
+        },
+        {
+          "contractVersion": "1.0", "enabled": true, "failureDisposition": "keep", "id": "mask-phone",
+          "inputColumns": ["phone"], "kind": "transform", "onError": "warn", "operation": "mask",
+          "outputColumns": ["phone_masked"], "outputType": "String", "parameters": { "policy": "phone" }
+        },
+        {
+          "contractVersion": "1.0", "enabled": true, "failureDisposition": "keep", "id": "parse-event-time",
+          "inputColumns": ["event_time"], "kind": "transform", "onError": "warn", "operation": "parse_timestamp",
+          "outputColumns": ["event_ts"], "outputType": "Timestamp", "parameters": { "format": "ISO-8601" }
+        },
+        {
+          "contractVersion": "1.0", "enabled": true, "failureDisposition": "keep", "id": "email-valid",
+          "inputColumns": ["email"], "kind": "quality", "onError": "quarantine", "operation": "regex",
+          "outputColumns": [], "parameters": { "pattern": "^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$" }, "severity": "error"
+        }
+      ],
+      "expected": {
+        "status": "success",
+        "records": [
+          {
+            "event_id": "portable-1", "event_ts": "2026-07-09T00:00:00Z", "nickname_clean": "anonymous",
+            "payload_code": "A1", "phone_masked": "010-****-5678", "rating_value": 4.5,
+            "review_normalized": "great review"
+          },
+          {
+            "event_id": "portable-3", "event_ts": "2026-07-09T00:02:00Z", "nickname_clean": "Neo",
+            "payload_code": "C3", "phone_masked": "010-****-3333", "rating_value": null,
+            "review_normalized": "fine review"
+          }
+        ],
+        "quarantine": [
+          { "event_id": "portable-2", "ruleId": "email-valid", "stage": "quality" }
+        ],
+        "transform": {
+          "appliedStepCount": 23, "configuredStepCount": 8, "errorCount": 1, "setNullCount": 1
+        },
+        "quality": {
+          "configuredRuleCount": 1, "invalidRowCount": 1, "passRate": 66.7,
+          "quarantinedCount": 1, "status": "warn"
+        }
+      }
+    },
+    {
+      "name": "transform quarantine",
+      "records": [
+        { "code": "ok", "event_id": "guard-1" },
+        { "code": "", "event_id": "guard-2" }
+      ],
+      "rules": [
+        {
+          "contractVersion": "1.0", "enabled": true, "failureDisposition": "keep", "id": "code-required",
+          "inputColumns": ["code"], "kind": "transform", "onError": "quarantine", "operation": "null_guard",
+          "outputColumns": ["code_required"], "outputType": "String", "parameters": {}
+        }
+      ],
+      "expected": {
+        "status": "success",
+        "records": [{ "code_required": "ok", "event_id": "guard-1" }],
+        "quarantine": [{ "event_id": "guard-2", "ruleId": "code-required", "stage": "transform" }],
+        "transform": {
+          "appliedStepCount": 1, "configuredStepCount": 1, "errorCount": 1, "quarantinedCount": 1
+        },
+        "quality": { "configuredRuleCount": 0, "invalidRowCount": 0, "status": "pass" }
+      }
+    },
+    {
+      "name": "quality drop rows",
+      "records": [
+        { "event_id": "drop-1", "score": "8", "status": "active" },
+        { "event_id": "drop-2", "score": "5", "status": "" },
+        { "event_id": "drop-3", "score": "20", "status": "active" }
+      ],
+      "rules": [
+        {
+          "contractVersion": "1.0", "enabled": true, "failureDisposition": "drop_row", "id": "status-required",
+          "inputColumns": ["status"], "kind": "quality", "onError": "warn", "operation": "not_null",
+          "outputColumns": [], "parameters": {}, "severity": "warning"
+        },
+        {
+          "contractVersion": "1.0", "enabled": true, "failureDisposition": "drop_row", "id": "score-range",
+          "inputColumns": ["score"], "kind": "quality", "onError": "warn", "operation": "range",
+          "outputColumns": [], "parameters": { "inclusive": true, "max": 10, "min": 0 }, "severity": "warning"
+        }
+      ],
+      "expected": {
+        "status": "success",
+        "records": [{ "event_id": "drop-1", "score": "8", "status": "active" }],
+        "quarantine": [],
+        "quality": {
+          "configuredRuleCount": 2, "droppedCount": 2, "invalidRowCount": 2, "passRate": 33.3, "status": "warn"
+        }
+      }
+    },
+    {
+      "name": "quality set null and warn",
+      "records": [
+        { "country": "KR", "email": "bad", "event_id": "warn-1" },
+        { "country": "XX", "email": "next@example.com", "event_id": "warn-2" }
+      ],
+      "rules": [
+        {
+          "contractVersion": "1.0", "enabled": true, "failureDisposition": "keep", "id": "country-accepted",
+          "inputColumns": ["country"], "kind": "quality", "onError": "warn", "operation": "accepted_values",
+          "outputColumns": [], "parameters": { "values": ["KR", "US"] }, "severity": "warning"
+        },
+        {
+          "contractVersion": "1.0", "enabled": true, "failureDisposition": "set_null", "id": "email-pattern",
+          "inputColumns": ["email"], "kind": "quality", "onError": "warn", "operation": "regex",
+          "outputColumns": [], "parameters": { "pattern": "^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$" }, "severity": "warning"
+        }
+      ],
+      "expected": {
+        "status": "success",
+        "records": [
+          { "country": "KR", "email": null, "event_id": "warn-1" },
+          { "country": "XX", "email": "next@example.com", "event_id": "warn-2" }
+        ],
+        "quarantine": [],
+        "quality": {
+          "configuredRuleCount": 2, "invalidRowCount": 2, "passRate": 0,
+          "setNullCount": 1, "status": "warn", "warnCount": 1
+        }
+      }
+    },
+    {
+      "name": "nested json extraction",
+      "records": [
+        { "event_id": "json-1", "payload": { "code": "N1" } }
+      ],
+      "rules": [
+        {
+          "contractVersion": "1.0", "enabled": true, "failureDisposition": "keep", "id": "extract-nested-code",
+          "inputColumns": ["payload"], "kind": "transform", "onError": "warn", "operation": "json_extract",
+          "outputColumns": ["payload_code"], "outputType": "String", "parameters": { "path": "$.code" }
+        }
+      ],
+      "expected": {
+        "status": "success",
+        "records": [{ "event_id": "json-1", "payload_code": "N1" }],
+        "quarantine": [],
+        "transform": { "appliedStepCount": 1, "configuredStepCount": 1, "errorCount": 0 },
+        "quality": { "configuredRuleCount": 0, "invalidRowCount": 0, "status": "pass" }
+      }
+    },
+    {
+      "name": "null quality values are invalid",
+      "records": [
+        { "country": null, "email": null, "event_id": "null-quality-1" }
+      ],
+      "rules": [
+        {
+          "contractVersion": "1.0", "enabled": true, "failureDisposition": "keep", "id": "null-country-accepted",
+          "inputColumns": ["country"], "kind": "quality", "onError": "warn", "operation": "accepted_values",
+          "outputColumns": [], "parameters": { "values": ["KR", "US"] }, "severity": "warning"
+        },
+        {
+          "contractVersion": "1.0", "enabled": true, "failureDisposition": "keep", "id": "null-email-pattern",
+          "inputColumns": ["email"], "kind": "quality", "onError": "warn", "operation": "regex",
+          "outputColumns": [], "parameters": { "pattern": "^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$" }, "severity": "warning"
+        }
+      ],
+      "expected": {
+        "status": "success",
+        "records": [{ "country": null, "email": null, "event_id": "null-quality-1" }],
+        "quarantine": [],
+        "quality": {
+          "configuredRuleCount": 2, "invalidRowCount": 1, "passRate": 0,
+          "status": "warn", "warnCount": 2
+        }
+      }
+    },
+    {
+      "name": "transform fail batch",
+      "records": [{ "event_id": "transform-fail-1", "rating": "bad" }],
+      "rules": [
+        {
+          "contractVersion": "1.0", "enabled": true, "failureDisposition": "keep", "id": "rating-cast-required",
+          "inputColumns": ["rating"], "kind": "transform", "onError": "fail_batch", "operation": "cast",
+          "outputColumns": ["rating_value"], "outputType": "Double", "parameters": { "targetType": "Double" }
+        }
+      ],
+      "expected": {
+        "status": "failed", "failedStage": "transform", "ruleId": "rating-cast-required"
+      }
+    },
+    {
+      "name": "quality fail batch",
+      "records": [{ "event_id": "quality-fail-1", "required_value": "" }],
+      "rules": [
+        {
+          "contractVersion": "1.0", "enabled": true, "failureDisposition": "keep", "id": "required-value",
+          "inputColumns": ["required_value"], "kind": "quality", "onError": "fail_batch", "operation": "not_null",
+          "outputColumns": [], "parameters": {}, "severity": "error"
+        }
+      ],
+      "expected": {
+        "status": "failed", "failedStage": "quality", "ruleId": "required-value"
+      }
+    }
+  ]
+}

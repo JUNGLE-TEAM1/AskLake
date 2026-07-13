@@ -104,4 +104,3 @@ export const PaginationEllipsis = ({
   </span>
 );
 PaginationEllipsis.displayName = "PaginationEllipsis";
-
