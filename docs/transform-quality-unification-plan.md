@@ -213,9 +213,15 @@ Phase 7 결과:
 - 최신 `origin/dev`의 Schema Workbench/field rule UI와 기존 canonical Rule 계약을 통합했다. 일반 Snapshot은 SQL 변환을 유지하고 Kafka Snapshot/Continuous는 portable Transform만 표시하되 schema rename/cast, Quality, 실패 정책을 같은 field rule modal에서 설정한다.
 - Snapshot Spark conformance, Kafka fixed-range ingest, malformed quarantine, Fail Batch offset 미커밋, 다중 partition, post-write retry 멱등성, Snappy-compressed source/snapshot을 자동 검증했다.
 - Continuous production-like E2E는 정상 실행과 post-data-write/pre-manifest fault 주입을 각각 통과했다. worker 강제 종료와 backend 재시작 뒤 같은 checkpoint에서 `consumed=6`, `stored=3`, `quarantined=3` 및 Rule counter를 중복 없이 복원했고 Catalog cursor, replay 멱등성, compaction을 확인했다.
-- production build의 Kafka 기본 broker를 `redpanda:9092`로 정합화하고 backend fallback은 `ASKLAKE_KAFKA_BROKER`를 사용한다. Source sampler는 첫 메시지 이후 bounded idle window를 사용하며 decode/run 오류를 metadata-only 성공으로 숨기지 않는다.
+- Kafka 기본 broker는 `GET /api/etl/sources/defaults`가 backend의 `ASKLAKE_KAFKA_BROKER`를 내려주는 runtime 단일 계약으로 정합화했다. Source sampler는 최소 샘플, bounded idle/settle window를 사용하며 decode/run 오류를 metadata-only 성공으로 숨기지 않는다.
+- Output schema의 필수 여부는 실제 Quality Rule 건수와 분리해 표시하고, NOT NULL 해제 시 stale explicit Null Guard가 남지 않도록 field rule 상태 전이를 보강했다.
 
 Phase 7 검증:
+
+- 일반 Snapshot의 portable/SQL 혼합 규칙은 Spark coordinator가 canonical quality를 publication 전에 실행하고 run staging 성공 결과만 최종 경로로 publish한다.
+- 일반 Snapshot SQL Preview는 bounded Spark runtime으로 분기하며 portable Preview와 동일 API 응답 계약을 유지한다.
+- Kafka Snapshot Job은 configured/compiled target schema로 exact projection하고 mode별 target layer/format을 UI와 backend에서 함께 검증한다.
+- 공통 compiler fixture는 nested JSON input과 Regex/Accepted Values/Range/Mask 파라미터 오류를 Frontend/Python/Node에서 동일하게 검증한다.
 
 ```bash
 cd backend
@@ -225,6 +231,8 @@ npm run verify:snapshot-rule-conformance
 npm run verify:snapshot-spark-pipeline
 npm run verify:rule-preview
 npm run verify:target-metadata
+npm run verify:kafka-target-projection
+npm run verify:target-mode-contract
 ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:kafka-review-scheduled-ingest
 ASKLAKE_VERIFY_KAFKA=true npm run verify:fastapi-sources
 npm run verify:kafka-continuous-contract

@@ -43,6 +43,13 @@ const server = http.createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === "GET" && url.pathname === "/api/etl/sources/defaults") {
+      sendJson(response, 200, {
+        kafkaBroker: process.env.ASKLAKE_KAFKA_BROKER || "127.0.0.1:19092",
+      });
+      return;
+    }
+
     if (await handleAuthRoute(request, response, url, readJson, sendJson)) {
       return;
     }

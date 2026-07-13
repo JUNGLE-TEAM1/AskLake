@@ -239,9 +239,15 @@ def _transform_expression(frame, rule):
         expression = F.get_json_object(_json_text(frame, resolved, source), str(parameters.get("path") or "$"))
         return expression, expression.isNull(), "json_path_not_found", source
     if operation == "mask":
+        policy = str(parameters.get("policy") or "").strip().lower()
+        if policy not in {"phone", "keep first 3 digits"}:
+            return source, F.lit(True), "unsupported_mask_policy", source
         expression = F.regexp_replace(source.cast("string"), r"(\d{3})-?\d{4}-?(\d{4})", "$1-****-$2")
         return expression, F.lit(False), "", source
     if operation == "parse_timestamp":
+        timestamp_format = str(parameters.get("format") or "").strip().upper()
+        if timestamp_format not in {"ISO-8601", "UTC"}:
+            return source, F.lit(True), "unsupported_timestamp_format", source
         expression = F.to_timestamp(source.cast("string"))
         return expression, (~missing) & expression.isNull(), "timestamp_cast_failed", source
     if operation in {"cast", "copy", "rename"}:
@@ -297,6 +303,8 @@ def _quality_failure_condition(frame, rule):
         condition = numeric.isNull()
         minimum = parameters.get("min")
         maximum = parameters.get("max")
+        if minimum in (None, "") and maximum in (None, ""):
+            return F.lit(True), "range_bounds_missing"
         inclusive = parameters.get("inclusive") is not False
         if minimum not in (None, ""):
             try:
@@ -313,6 +321,8 @@ def _quality_failure_condition(frame, rule):
         return condition, "numeric_range_check_failed"
     if operation == "regex":
         pattern = str(parameters.get("pattern") or "")
+        if not pattern:
+            return F.lit(True), "regex_pattern_missing"
         try:
             re.compile(pattern)
         except re.error:
@@ -320,6 +330,8 @@ def _quality_failure_condition(frame, rule):
         return value.isNull() | ~value.cast("string").rlike(pattern), "regex_match_failed"
     if operation == "accepted_values":
         values = [str(item) for item in parameters.get("values", [])] if isinstance(parameters.get("values"), list) else []
+        if not values:
+            return F.lit(True), "accepted_values_missing"
         return value.isNull() | ~value.cast("string").isin(*values), "value_not_accepted"
     return F.lit(True), "unsupported_quality_operation"
 

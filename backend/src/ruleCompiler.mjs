@@ -134,12 +134,7 @@ export function compileRuleContract(request = {}) {
       if (kind === "quality" && outputColumns.length > 0) {
         issues.push(issue("RULE_OUTPUT_NOT_ALLOWED", "outputColumns", "Quality rules do not create output columns.", id));
       }
-      if (operation === "json_extract" && !text(parameters.path).startsWith("$")) {
-        issues.push(issue("RULE_PARAMETER_INVALID", "parameters.path", "JSON extract path must start with '$'.", id));
-      }
-      if (operation === "sql_expression" && !text(parameters.expression)) {
-        issues.push(issue("RULE_PARAMETER_REQUIRED", "parameters.expression", "SQL expression is required.", id));
-      }
+      validateRuleParameters(operation, parameters, id, issues);
     }
 
     const inputType = availableInputType(available, inputColumns[0]) || "String";
@@ -401,6 +396,60 @@ function availableInputType(available, name) {
   if (available.has(name)) return available.get(name);
   const [root, ...path] = text(name).split(".");
   return path.length > 0 && available.get(root) === "JSON" ? "String" : undefined;
+}
+
+function validateRuleParameters(operation, parameters, ruleId, issues) {
+  if (operation === "json_extract") {
+    const path = text(parameters.path);
+    if (!path) issues.push(issue("RULE_PARAMETER_REQUIRED", "parameters.path", "JSON extract path is required.", ruleId));
+    else if (!path.startsWith("$")) issues.push(issue("RULE_PARAMETER_INVALID", "parameters.path", "JSON extract path must start with '$'.", ruleId));
+  }
+  if (operation === "sql_expression" && !text(parameters.expression)) {
+    issues.push(issue("RULE_PARAMETER_REQUIRED", "parameters.expression", "SQL expression is required.", ruleId));
+  }
+  if (operation === "regex") {
+    const pattern = String(parameters.pattern ?? "");
+    if (!pattern) issues.push(issue("RULE_PARAMETER_REQUIRED", "parameters.pattern", "Regex pattern is required.", ruleId));
+    else {
+      try {
+        new RegExp(pattern);
+      } catch {
+        issues.push(issue("RULE_PARAMETER_INVALID", "parameters.pattern", "Regex pattern is invalid.", ruleId));
+      }
+    }
+  }
+  if (operation === "accepted_values") {
+    const values = Array.isArray(parameters.values)
+      ? parameters.values.map((value) => text(value)).filter(Boolean)
+      : [];
+    if (values.length === 0) issues.push(issue("RULE_PARAMETER_REQUIRED", "parameters.values", "Accepted values require at least one value.", ruleId));
+  }
+  if (operation === "range") {
+    const hasMin = parameters.min !== undefined && parameters.min !== null && parameters.min !== "";
+    const hasMax = parameters.max !== undefined && parameters.max !== null && parameters.max !== "";
+    if (!hasMin && !hasMax) {
+      issues.push(issue("RULE_PARAMETER_REQUIRED", "parameters", "Range requires min or max.", ruleId));
+    } else {
+      const min = hasMin ? Number(parameters.min) : Number.NEGATIVE_INFINITY;
+      const max = hasMax ? Number(parameters.max) : Number.POSITIVE_INFINITY;
+      if ((hasMin && !Number.isFinite(min)) || (hasMax && !Number.isFinite(max)) || min > max) {
+        issues.push(issue("RULE_PARAMETER_INVALID", "parameters", "Range min/max must be finite numbers and min must not exceed max.", ruleId));
+      }
+    }
+    if (parameters.inclusive !== undefined && typeof parameters.inclusive !== "boolean") {
+      issues.push(issue("RULE_PARAMETER_INVALID", "parameters.inclusive", "Range inclusive must be boolean.", ruleId));
+    }
+  }
+  if (operation === "mask") {
+    const policy = text(parameters.policy).toLowerCase();
+    if (!policy) issues.push(issue("RULE_PARAMETER_REQUIRED", "parameters.policy", "Mask policy is required.", ruleId));
+    else if (!["phone", "keep first 3 digits"].includes(policy)) issues.push(issue("RULE_PARAMETER_INVALID", "parameters.policy", "Mask policy must be phone.", ruleId));
+  }
+  if (operation === "parse_timestamp") {
+    const format = text(parameters.format).toUpperCase();
+    if (!format) issues.push(issue("RULE_PARAMETER_REQUIRED", "parameters.format", "Timestamp format is required.", ruleId));
+    else if (!["ISO-8601", "UTC"].includes(format)) issues.push(issue("RULE_PARAMETER_INVALID", "parameters.format", "Timestamp format must be ISO-8601.", ruleId));
+  }
 }
 
 function canonicalSchemaType(value) {

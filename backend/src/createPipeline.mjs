@@ -716,6 +716,29 @@ function validateCreatePipelineRequest(request) {
     missing.push("schemaColumns[included]");
   }
   if (missing.length > 0) throw validationError(`Missing required fields: ${missing.join(", ")}`);
+  validateTargetContract(request);
+}
+
+function validateTargetContract(request) {
+  if (!String(request.sourceType || "").toLowerCase().includes("kafka")) return;
+  const executionMode = String(request.executionMode || "snapshot").toLowerCase();
+  const targetFormat = String(request.targetFormat || "").toLowerCase();
+  const targetLayer = String(request.targetLayer || "").toUpperCase();
+  if (executionMode === "continuous" && targetFormat !== "parquet") {
+    const error = validationError("Kafka Continuous target format must be parquet.");
+    error.code = "TARGET_FORMAT_UNSUPPORTED";
+    throw error;
+  }
+  if (executionMode !== "continuous" && !["RAW", "BRONZE", "SILVER"].includes(targetLayer)) {
+    const error = validationError("Kafka Snapshot target layer must be RAW, BRONZE, or SILVER.");
+    error.code = "TARGET_LAYER_UNSUPPORTED";
+    throw error;
+  }
+  if (executionMode !== "continuous" && targetFormat !== "jsonl") {
+    const error = validationError("Kafka Snapshot target format must be jsonl.");
+    error.code = "TARGET_FORMAT_UNSUPPORTED";
+    throw error;
+  }
 }
 
 function scheduleNextRunLabel(scheduleLabel, fallback) {

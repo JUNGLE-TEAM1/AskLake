@@ -69,6 +69,7 @@ from app.schemas.etl import (
     SourceAssetsRequest,
     SourceAssetsResponse,
     SourceConnectorAnalysis,
+    SourceConnectorDefaults,
     SourceConnectorRequest,
     UpdatePipelineRequest,
 )
@@ -84,6 +85,12 @@ JOB_STATUSES = ("scheduled", "failed", "running", "paused", "canceled", "stopped
 ACTIVE_RUN_STATUSES = {"queued", "running"}
 TERMINAL_RUN_STATUSES = {"success", "failed", "canceled"}
 SPARK_OUTPUT_FORMAT = "parquet"
+
+
+def source_connector_defaults() -> SourceConnectorDefaults:
+    return SourceConnectorDefaults(
+        kafka_broker=os.environ.get("ASKLAKE_KAFKA_BROKER") or "127.0.0.1:19092",
+    )
 
 
 def create_pipeline(db: Session, request: CreatePipelineRequest, actor_name: str = "demo-user") -> CreatePipelineResponse:
@@ -380,6 +387,12 @@ def update_pipeline(
     require_compiled_rules(compiled_rules)
     apply_compiled_rules(request, compiled_rules)
     validate_update_request(request)
+    validate_target_contract(
+        source_type=job.source_type or "",
+        execution_mode=job.execution_mode or "snapshot",
+        target_layer=request.target_layer,
+        target_format=request.target_format,
+    )
     runtime = etl_repository.get_kafka_continuous_runtime(db, job.id) if job.execution_mode == "continuous" else None
     continuous_contract_changed = continuous_processing_contract_changed(job, request)
     if runtime is not None and continuous_contract_changed and runtime.status in {"starting", "running", "pausing", "stopping"}:
@@ -777,15 +790,24 @@ def preview_rules(request: RulePreviewRequest) -> RulePreviewResponse:
         source_type=request.source_type,
     )
     require_compiled_rules(compiled)
+    compiled_rule_payload = [rule.model_dump(mode="json", by_alias=True) for rule in compiled.result.rules]
+    spark_preview = (
+        request.execution_mode == "snapshot"
+        and "kafka" not in request.source_type.lower()
+        and any(rule.get("operation") == "sql_expression" and rule.get("enabled") is not False for rule in compiled_rule_payload)
+    )
     result = run_node_bridge(
-        "preview-snapshot-rules.mjs",
+        "preview-spark-rules.mjs" if spark_preview else "preview-snapshot-rules.mjs",
         "ASKLAKE_RULE_PREVIEW_RESULT",
         {
             "records": request.records,
-            "rules": [rule.model_dump(mode="json", by_alias=True) for rule in compiled.result.rules],
+            "outputSchema": [list(column) for column in compiled.result.output_schema],
+            "rules": compiled_rule_payload,
+            "schemaColumns": [column.model_dump(mode="json", by_alias=True) for column in request.schema_columns],
+            "transformSteps": [step.model_dump(mode="json", by_alias=True) for step in compiled.transform_steps],
         },
         error_marker="ASKLAKE_RULE_PREVIEW_ERROR",
-        timeout_seconds=20,
+        timeout_seconds=90 if spark_preview else 20,
     )
     return RulePreviewResponse(
         compilation=compiled.result,
@@ -816,8 +838,15 @@ def review_pipeline(request: ReviewPipelineRequest) -> ReviewSnapshot:
     rule_warning_value = compiled_rules.result.issues[0].message if compiled_rules.result.issues else "규칙 확인 필요"
     schedule_ready = bool(request.schedule_label.strip())
     retry_ready = bool(request.retry_policy_summary.strip())
-    permission_ready = bool(request.permission_summary.strip() and request.target_dataset.strip() and request.owner.strip())
-    can_create = source_ready and schema_ready and rules_ready and bool(request.source_type.strip()) and bool(request.source_label.strip()) and bool(request.target_dataset.strip()) and bool(request.owner.strip())
+    target_issue = target_contract_issue(
+        source_type=request.source_type,
+        execution_mode=request.execution_mode,
+        target_layer=request.target_layer,
+        target_format=request.target_format,
+    )
+    target_ready = target_issue is None
+    permission_ready = bool(request.permission_summary.strip() and request.target_dataset.strip() and request.owner.strip()) and target_ready
+    can_create = source_ready and schema_ready and rules_ready and target_ready and bool(request.source_type.strip()) and bool(request.source_label.strip()) and bool(request.target_dataset.strip()) and bool(request.owner.strip())
 
     source_type = "PostgreSQL" if request.source_type == "Database" else request.source_type
     source_display = " · ".join(value for value in [source_type, request.source_label] if value.strip())
@@ -860,7 +889,7 @@ def review_pipeline(request: ReviewPipelineRequest) -> ReviewSnapshot:
             review_validation("처리 규칙", rules_ready, rule_ready_value, rule_warning_value),
             review_validation("스트림 제어" if request.execution_mode == "continuous" else "스케줄", schedule_ready, "시작/중지로 제어" if request.execution_mode == "continuous" else "유효함", "확인 필요"),
             review_validation("실패 재시도", retry_ready, "유효함", "확인 필요"),
-            review_validation("권한/타겟", permission_ready, "유효함", "확인 필요"),
+            review_validation("권한/타겟", permission_ready, "유효함", target_issue or "확인 필요"),
         ],
     )
 
@@ -972,6 +1001,12 @@ def kafka_failure_result(request: dict[str, Any], run_id: str, error: ApiError, 
 def kafka_ingest_request_from_job(job: ETLJobModel, run_id: str) -> dict[str, Any]:
     compiled_rules = compile_job_rules(job)
     require_compiled_rules(compiled_rules)
+    validate_target_contract(
+        source_type=job.source_type or "",
+        execution_mode=job.execution_mode or "snapshot",
+        target_layer=job.target_layer or "BRONZE",
+        target_format=job.target_format or "jsonl",
+    )
     fields = job.source_config or []
     topic = (
         field_value(fields, "TOPIC / QUEUE NAME")
@@ -1016,6 +1051,11 @@ def kafka_ingest_request_from_job(job: ETLJobModel, run_id: str) -> dict[str, An
         "maxMessages": max_messages,
         "offsetPolicy": offset_policy,
         "registerCatalog": True,
+        "schemaColumns": [
+            SchemaColumnDraft.model_validate(column).model_dump(mode="json", by_alias=True)
+            for column in (job.schema_columns or [])
+        ],
+        "outputSchema": [list(column) for column in compiled_rules.result.output_schema],
         "ruleContractVersion": compiled_rules.result.contract_version,
         "rules": [
             rule.model_dump(mode="json", by_alias=True)
@@ -3910,6 +3950,12 @@ def validate_create_request(request: CreatePipelineRequest) -> None:
             missing.append("continuousKafkaSource")
         if request.target_format.lower() != "parquet":
             missing.append("continuousTargetFormat=parquet")
+    validate_target_contract(
+        source_type=request.source_type,
+        execution_mode=request.execution_mode,
+        target_layer=request.target_layer,
+        target_format=request.target_format,
+    )
     if not request.schema_columns:
         missing.append("schemaColumns")
     elif not any(column.included and column.target_name.strip() for column in request.schema_columns):
@@ -3942,6 +3988,50 @@ def validate_update_request(request: UpdatePipelineRequest) -> None:
             f"Missing required fields: {', '.join(missing)}",
             status.HTTP_400_BAD_REQUEST,
         )
+
+
+def validate_target_contract(*, source_type: str, execution_mode: str, target_layer: str, target_format: str) -> None:
+    if "kafka" not in str(source_type or "").lower():
+        return
+    normalized_mode = str(execution_mode or "snapshot").lower()
+    normalized_layer = str(target_layer or "").upper()
+    normalized_format = str(target_format or "").lower()
+    if normalized_mode == "continuous":
+        if normalized_format != "parquet":
+            raise ApiError(
+                "TARGET_FORMAT_UNSUPPORTED",
+                "Kafka Continuous target format must be parquet.",
+                status.HTTP_400_BAD_REQUEST,
+                {"executionMode": normalized_mode, "supportedFormats": ["parquet"]},
+            )
+        return
+    if normalized_layer not in {"RAW", "BRONZE", "SILVER"}:
+        raise ApiError(
+            "TARGET_LAYER_UNSUPPORTED",
+            "Kafka Snapshot target layer must be RAW, BRONZE, or SILVER.",
+            status.HTTP_400_BAD_REQUEST,
+            {"executionMode": normalized_mode, "supportedLayers": ["RAW", "BRONZE", "SILVER"]},
+        )
+    if normalized_format != "jsonl":
+        raise ApiError(
+            "TARGET_FORMAT_UNSUPPORTED",
+            "Kafka Snapshot target format must be jsonl.",
+            status.HTTP_400_BAD_REQUEST,
+            {"executionMode": normalized_mode, "supportedFormats": ["jsonl"]},
+        )
+
+
+def target_contract_issue(*, source_type: str, execution_mode: str, target_layer: str, target_format: str) -> str | None:
+    try:
+        validate_target_contract(
+            source_type=source_type,
+            execution_mode=execution_mode,
+            target_layer=target_layer,
+            target_format=target_format,
+        )
+    except ApiError as exc:
+        return exc.message
+    return None
 
 
 def target_identity_changed(job: ETLJobModel, request: UpdatePipelineRequest) -> bool:

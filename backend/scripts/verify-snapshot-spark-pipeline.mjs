@@ -31,6 +31,15 @@ try {
   assert(failed.report.quality?.blockingFailures === 1, `Expected blocking quality evidence: ${JSON.stringify(failed.report.quality)}`);
   assert(!existsSync(path.join(tempDir, "failed-output")), "Fail Batch must not create a target directory.");
 
+  const mixedSqlFailed = runPipeline("mixed-sql-failed", mixedSqlFailBatchManifest());
+  assert(mixedSqlFailed.process.status !== 0, "Mixed SQL + Fail Batch pipeline unexpectedly succeeded.");
+  assert(mixedSqlFailed.report.failedStage === "quality", `Expected mixed SQL quality failure: ${JSON.stringify(mixedSqlFailed.report)}`);
+  assert(!existsSync(path.join(tempDir, "mixed-sql-failed-output")), "Mixed SQL + Fail Batch must not publish a target directory.");
+  assert(
+    !readdirSync(tempDir).some((name) => name.startsWith("mixed-sql-failed-output.__staging__")),
+    "Mixed SQL + Fail Batch must clean its staging directory.",
+  );
+
   console.log("verify-snapshot-spark-pipeline: ok");
 } finally {
   rmSync(tempDir, { force: true, recursive: true });
@@ -135,6 +144,50 @@ function failBatchManifest() {
     })],
     schemaColumns: baseSchema(),
     transformSteps: [],
+  };
+}
+
+function mixedSqlFailBatchManifest() {
+  return {
+    partitionColumns: "",
+    qualityRules: [{
+      enabled: true,
+      failureAction: "Fail Run",
+      id: "status-blocking",
+      kind: "notNull",
+      severity: "Error",
+      targetColumn: "status",
+      validationType: "Not Null",
+    }],
+    ruleContractVersion: "1.0",
+    ruleOutputSchema: [...baseOutputSchema(), ["status_upper", "String"]],
+    rules: [
+      canonicalRule({
+        id: "status-sql",
+        inputColumns: ["status"],
+        kind: "transform",
+        operation: "sql_expression",
+        outputColumns: ["status_upper"],
+        outputType: "String",
+        parameters: { expression: "upper(status)" },
+      }),
+      canonicalRule({
+        id: "status-blocking",
+        inputColumns: ["status"],
+        kind: "quality",
+        onError: "fail_batch",
+        operation: "not_null",
+        severity: "error",
+      }),
+    ],
+    schemaColumns: baseSchema(),
+    transformSteps: [{
+      enabled: true,
+      input: "status",
+      operation: "SQL Expression",
+      output: "status_upper",
+      params: "upper(status)",
+    }],
   };
 }
 

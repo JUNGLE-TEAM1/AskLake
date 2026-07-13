@@ -36,6 +36,7 @@ from app.schemas.etl import (
     SourceAssetsRequest,
     SourceAssetsResponse,
     SourceConnectorAnalysis,
+    SourceConnectorDefaults,
     SourceConnectorRequest,
     UpdatePipelineRequest,
 )
@@ -43,6 +44,11 @@ from app.services import etl_service
 from app.services.kafka_replay_producer_service import replay_producer_manager
 
 router = APIRouter(prefix="/etl", tags=["etl"])
+
+
+@router.get("/sources/defaults", response_model=SourceConnectorDefaults)
+def get_source_connector_defaults() -> SourceConnectorDefaults:
+    return etl_service.source_connector_defaults()
 
 
 @router.post("/sources/test", response_model=SourceConnectorAnalysis)

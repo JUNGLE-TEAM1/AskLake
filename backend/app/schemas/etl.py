@@ -666,9 +666,11 @@ class KafkaReviewIngestRequest(CamelModel):
     dataset_name: str = "reviews_raw"
     target_bucket: str = "asklake-output"
     target_description: str | None = None
-    target_format: str = "jsonl"
+    target_format: Literal["jsonl"] = "jsonl"
     target_layer: Literal["RAW", "BRONZE", "SILVER"] = "BRONZE"
     target_prefix: str = ""
+    schema_columns: list[SchemaColumnDraft] = Field(default_factory=list)
+    output_schema: SourceFieldRows = Field(default_factory=list)
     rule_contract_version: str | None = None
     rules: list[CanonicalRuleDraft] = Field(default_factory=list)
     transform_steps: list[TransformStepDraft] = Field(default_factory=list)
@@ -811,6 +813,10 @@ class DraftPipelinePatch(CamelModel):
 class SourceConnectorRequest(CamelModel):
     source_config: SourceFieldRows = Field(default_factory=list)
     source_type: str
+
+
+class SourceConnectorDefaults(CamelModel):
+    kafka_broker: str
 
 
 class SourceAssetsRequest(CamelModel):

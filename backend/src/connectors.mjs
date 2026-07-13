@@ -1378,17 +1378,24 @@ async function sampleKafkaMessages({ broker, groupId, rowLimit, topic }) {
   const messages = [];
   const timeoutMs = sourceConnectTimeoutMs("ASKLAKE_KAFKA_SAMPLE_TIMEOUT_MS", 8000);
   const idleMs = sourceConnectTimeoutMs("ASKLAKE_KAFKA_SAMPLE_IDLE_MS", 500);
+  const minimumMessages = Math.min(
+    rowLimit,
+    sourceConnectTimeoutMs("ASKLAKE_KAFKA_SAMPLE_MIN_MESSAGES", 3),
+  );
+  const settleMs = sourceConnectTimeoutMs("ASKLAKE_KAFKA_SAMPLE_SETTLE_MS", 1500);
   await consumer.connect();
   try {
     await consumer.subscribe({ fromBeginning: true, topic });
     await new Promise((resolve, reject) => {
       let idleTimer;
+      let settleTimer;
       let settled = false;
       const finish = (error) => {
         if (settled) return;
         settled = true;
         clearTimeout(timeoutTimer);
         if (idleTimer) clearTimeout(idleTimer);
+        if (settleTimer) clearTimeout(settleTimer);
         if (error) reject(error);
         else resolve();
       };
@@ -1402,8 +1409,11 @@ async function sampleKafkaMessages({ broker, groupId, rowLimit, topic }) {
             finish();
             return;
           }
+          if (!settleTimer) settleTimer = setTimeout(finish, settleMs);
           if (idleTimer) clearTimeout(idleTimer);
-          idleTimer = setTimeout(finish, idleMs);
+          idleTimer = setTimeout(() => {
+            if (messages.length >= minimumMessages) finish();
+          }, idleMs);
         },
       }).catch((error) => finish(error));
     });

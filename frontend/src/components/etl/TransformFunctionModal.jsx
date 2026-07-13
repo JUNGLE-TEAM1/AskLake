@@ -43,6 +43,13 @@ function portableDefaultParams(operation) {
     return '';
 }
 
+function portableNormalizedParams(operation, value) {
+    const normalized = String(value || '').trim();
+    if (operation === 'mask' && normalized.toLowerCase() === 'keep first 3 digits') return 'phone';
+    if (operation === 'parse_timestamp' && normalized.toUpperCase() === 'UTC') return 'ISO-8601';
+    return normalized || portableDefaultParams(operation);
+}
+
 const QUALITY_RULE_DEFINITIONS = [
     {
         defaultParams: '',
@@ -88,7 +95,10 @@ export default function TransformFunctionModal({ column, qualityRules = [], onAp
     const [selectedFunction, setSelectedFunction] = useState('');
     const [showAI, setShowAI] = useState(false);
     const [portableOperation, setPortableOperation] = useState(() => portableOperationValue(column.transformOperation));
-    const [portableParams, setPortableParams] = useState(column.transformParams || portableDefaultParams(portableOperationValue(column.transformOperation)));
+    const [portableParams, setPortableParams] = useState(() => {
+        const operation = portableOperationValue(column.transformOperation);
+        return portableNormalizedParams(operation, column.transformParams);
+    });
     const [portableOnError, setPortableOnError] = useState(column.onError || 'Warn');
     const [required, setRequired] = useState(Boolean(column.notNull));
     const [transformOnError, setTransformOnError] = useState(column.onError || 'Warn');
@@ -282,12 +292,27 @@ export default function TransformFunctionModal({ column, qualityRules = [], onAp
                             {selectedPortableOperation.parameterLabel ? (
                                 <Field>
                                     <FieldLabel htmlFor="field-portable-params">{selectedPortableOperation.parameterLabel}</FieldLabel>
-                                    <Input
-                                        className="font-mono"
-                                        id="field-portable-params"
-                                        onChange={(event) => setPortableParams(event.target.value)}
-                                        value={portableParams}
-                                    />
+                                    {portableOperation === 'mask' || portableOperation === 'parse_timestamp' ? (
+                                        <Select onValueChange={setPortableParams} value={portableParams}>
+                                            <SelectTrigger id="field-portable-params">
+                                                <SelectValue />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                {portableOperation === 'mask' ? (
+                                                    <SelectItem value="phone">전화번호</SelectItem>
+                                                ) : (
+                                                    <SelectItem value="ISO-8601">ISO-8601</SelectItem>
+                                                )}
+                                            </SelectContent>
+                                        </Select>
+                                    ) : (
+                                        <Input
+                                            className="font-mono"
+                                            id="field-portable-params"
+                                            onChange={(event) => setPortableParams(event.target.value)}
+                                            value={portableParams}
+                                        />
+                                    )}
                                 </Field>
                             ) : null}
                         </div>

@@ -25,6 +25,19 @@ assert(source, "Schema Transform adapter bundle was empty.");
 const moduleUrl = `data:text/javascript;base64,${Buffer.from(source).toString("base64")}`;
 const { buildTransformSteps, ensureRequiredFieldTransformSteps } = await import(moduleUrl);
 
+const summaryBundle = await build({
+  bundle: true,
+  entryPoints: [fileURLToPath(new URL("../src/services/schemaRuleSummary.ts", import.meta.url))],
+  format: "esm",
+  platform: "node",
+  target: "es2022",
+  write: false,
+});
+const summarySource = summaryBundle.outputFiles[0]?.text;
+assert(summarySource, "Schema rule summary bundle was empty.");
+const summaryModuleUrl = `data:text/javascript;base64,${Buffer.from(summarySource).toString("base64")}`;
+const { summarizeSchemaRuleState } = await import(summaryModuleUrl);
+
 const passThrough = buildTransformSteps([{
   name: "review",
   notNull: true,
@@ -87,5 +100,35 @@ const portable = buildTransformSteps([{
 assert.deepEqual(portable.map((step) => step.operation), ["Rename", "Lowercase + Trim"]);
 assert.equal(portable[1].input, "review_clean");
 assert.equal(portable[1].onError, "Quarantine");
+
+const schemaOnlyRequired = summarizeSchemaRuleState([{
+  included: true,
+  nullable: false,
+  sourceName: "review",
+  targetName: "review",
+  type: "String",
+}], [], []);
+assert.equal(schemaOnlyRequired.requiredColumnCount, 1);
+assert.equal(schemaOnlyRequired.qualityRuleCount, 0, "Required output schema must not count as a quality Rule.");
+
+const explicitQuality = summarizeSchemaRuleState([{
+  included: true,
+  nullable: false,
+  sourceName: "review",
+  targetName: "review",
+  type: "String",
+}], [{
+  enabled: true,
+  failureAction: "Quarantine",
+  id: "review-not-null",
+  kind: "notNull",
+  params: "",
+  severity: "Error",
+  targetColumn: "review",
+  validationType: "Not Null",
+}], []);
+assert.equal(explicitQuality.requiredColumnCount, 1);
+assert.equal(explicitQuality.qualityRuleCount, 1);
+assert.deepEqual(explicitQuality.failureActions, ["Quarantine"]);
 
 console.log("verify-schema-transform-rules: ok");

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import math
 import re
 from typing import Any, Iterable
 
@@ -223,12 +224,11 @@ def compile_rule_set(
             if kind == "transform":
                 if len(outputs) != 1:
                     issues.append(_issue("RULE_OUTPUT_ARITY", "outputColumns", "Transform rules require exactly one output column.", rule_id))
-                if operation == "json_extract" and not str(parameters.get("path") or "").startswith("$"):
-                    issues.append(_issue("RULE_PARAMETER_INVALID", "parameters.path", "JSON extract path must start with '$'.", rule_id))
-                if operation == "sql_expression" and not str(parameters.get("expression") or "").strip():
-                    issues.append(_issue("RULE_PARAMETER_REQUIRED", "parameters.expression", "SQL expression is required.", rule_id))
+                _validate_rule_parameters(operation, parameters, rule_id, issues)
             elif kind == "quality" and outputs:
                 issues.append(_issue("RULE_OUTPUT_NOT_ALLOWED", "outputColumns", "Quality rules do not create output columns.", rule_id))
+            elif kind == "quality":
+                _validate_rule_parameters(operation, parameters, rule_id, issues)
 
         input_type = (available_input_type(available_types, inputs[0]) or "String") if inputs else "String"
         output_type = infer_output_type(operation, rule.output_type, parameters, input_type, outputs, declared_types)
@@ -519,6 +519,65 @@ def available_input_type(available_types: dict[str, str], name: str) -> str | No
     if separator and available_types.get(root) == "JSON":
         return "String"
     return None
+
+
+def _validate_rule_parameters(
+    operation: str,
+    parameters: dict[str, Any],
+    rule_id: str,
+    issues: list[RuleCompilationIssue],
+) -> None:
+    if operation == "json_extract":
+        path = str(parameters.get("path") or "").strip()
+        if not path:
+            issues.append(_issue("RULE_PARAMETER_REQUIRED", "parameters.path", "JSON extract path is required.", rule_id))
+        elif not path.startswith("$"):
+            issues.append(_issue("RULE_PARAMETER_INVALID", "parameters.path", "JSON extract path must start with '$'.", rule_id))
+    if operation == "sql_expression" and not str(parameters.get("expression") or "").strip():
+        issues.append(_issue("RULE_PARAMETER_REQUIRED", "parameters.expression", "SQL expression is required.", rule_id))
+    if operation == "regex":
+        pattern = str(parameters.get("pattern") or "")
+        if not pattern:
+            issues.append(_issue("RULE_PARAMETER_REQUIRED", "parameters.pattern", "Regex pattern is required.", rule_id))
+        else:
+            try:
+                re.compile(pattern)
+            except re.error:
+                issues.append(_issue("RULE_PARAMETER_INVALID", "parameters.pattern", "Regex pattern is invalid.", rule_id))
+    if operation == "accepted_values":
+        values = parameters.get("values")
+        normalized = [str(value).strip() for value in values if str(value).strip()] if isinstance(values, list) else []
+        if not normalized:
+            issues.append(_issue("RULE_PARAMETER_REQUIRED", "parameters.values", "Accepted values require at least one value.", rule_id))
+    if operation == "range":
+        has_min = parameters.get("min") not in (None, "")
+        has_max = parameters.get("max") not in (None, "")
+        if not has_min and not has_max:
+            issues.append(_issue("RULE_PARAMETER_REQUIRED", "parameters", "Range requires min or max.", rule_id))
+        else:
+            try:
+                minimum = float(parameters["min"]) if has_min else float("-inf")
+                maximum = float(parameters["max"]) if has_max else float("inf")
+                valid = math.isfinite(minimum) if has_min else True
+                valid = valid and (math.isfinite(maximum) if has_max else True) and minimum <= maximum
+            except (TypeError, ValueError):
+                valid = False
+            if not valid:
+                issues.append(_issue("RULE_PARAMETER_INVALID", "parameters", "Range min/max must be finite numbers and min must not exceed max.", rule_id))
+        if "inclusive" in parameters and not isinstance(parameters.get("inclusive"), bool):
+            issues.append(_issue("RULE_PARAMETER_INVALID", "parameters.inclusive", "Range inclusive must be boolean.", rule_id))
+    if operation == "mask":
+        policy = str(parameters.get("policy") or "").strip().lower()
+        if not policy:
+            issues.append(_issue("RULE_PARAMETER_REQUIRED", "parameters.policy", "Mask policy is required.", rule_id))
+        elif policy not in {"phone", "keep first 3 digits"}:
+            issues.append(_issue("RULE_PARAMETER_INVALID", "parameters.policy", "Mask policy must be phone.", rule_id))
+    if operation == "parse_timestamp":
+        timestamp_format = str(parameters.get("format") or "").strip().upper()
+        if not timestamp_format:
+            issues.append(_issue("RULE_PARAMETER_REQUIRED", "parameters.format", "Timestamp format is required.", rule_id))
+        elif timestamp_format not in {"ISO-8601", "UTC"}:
+            issues.append(_issue("RULE_PARAMETER_INVALID", "parameters.format", "Timestamp format must be ISO-8601.", rule_id))
 
 
 def legacy_transform_operation(operation: str, output_type: str | None) -> tuple[str, str]:

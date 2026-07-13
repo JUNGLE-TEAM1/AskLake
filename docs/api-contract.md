@@ -60,6 +60,7 @@ TARGET_DATABASES=asklake,asklake_gold,analytics,marketing
 - `DATABASE_URL`: backend metadata DB입니다. 미설정 시 `docker-compose.yml`의 local Postgres 기본값을 사용합니다.
 - mock mode에서는 Source/Schema 연결 테스트도 `sourceConnectorService.ts`의 mock `SourceConnectorAnalysis`를 사용합니다.
 - live mode에서는 Source/Schema/Create/Run 흐름이 실제 백엔드를 호출합니다.
+- 새 Kafka Source의 broker 기본값은 `GET /api/etl/sources/defaults`가 반환하는 backend runtime 값이며 frontend build에 복제하지 않습니다.
 - Target 저장경로 선택은 브라우저가 AWS SDK나 secret을 갖지 않고 `/api/s3/buckets`, `/api/s3/prefixes` 서버 API만 호출합니다. 서버는 `S3_ALLOWED_BUCKETS` allowlist를 검증하고 AWS SDK v3 `ListObjectsV2`로 prefix를 조회합니다.
 - Target DB 선택은 `/api/target/databases` 서버 API만 호출합니다. 서버는 `TARGET_DATABASES` 또는 `ASKLAKE_TARGET_DATABASES` allowlist를 사용하고, 값이 없으면 local demo 기본 DB 목록을 반환합니다.
 
@@ -537,6 +538,18 @@ type CatalogDataset = {
 `size`는 화면 표시용 저장 크기 문자열입니다. 물리 저장 위치와 원시 byte 값은 `storageLocation`, `storageFormat`, `storageSizeBytes`를 사용합니다.
 `materializationRuns`는 같은 Job/같은 dataset 이름으로 누적된 실행 또는 SQL materialize 결과 history입니다. 부모 dataset의 `rows`, `size`, `storageSizeBytes`, `lastUpdated`, `sourceRunId`는 삭제되지 않은 성공 run 기준으로 계산합니다.
 
+### Source Connector Defaults
+
+`GET /api/etl/sources/defaults`는 새 Source draft에 사용할 비밀이 아닌 runtime 기본값을 반환합니다.
+
+```ts
+type SourceConnectorDefaults = {
+  kafkaBroker: string; // ASKLAKE_KAFKA_BROKER, fallback 127.0.0.1:19092
+};
+```
+
+저장된 Job을 수정할 때는 이 응답이 기존 `sourceConfig`를 덮어쓰지 않습니다. 실제 연결과 실행은 request에 저장된 broker를 사용합니다.
+
 ### Schema Type and Source Path Contract
 
 Source connector의 JSON/JSONL profile은 preview cell 문자열을 다시 정규식으로 추측하지 않고 원본 JSON token을 사용한다. JSON string은 내용이 숫자나 ISO timestamp 형태여도 `String`, integer number는 `Long`, real number는 `Double`, object/array는 `JSON`이다. CSV/TSV/TXT처럼 native token 정보가 없는 source만 기존 문자열 기반 추론을 사용하며 실수 결과는 `Double`로 정규화한다.
@@ -545,9 +558,15 @@ Canonical schema type은 `String`, `Integer`, `Long`, `Double`, `Boolean`, `Time
 
 `SchemaColumnDraft.sourceName`은 `raw.reviewerID` 같은 원본 source path이고 `targetName`은 `raw_reviewerID` 같은 물리 output alias다. Transform step의 `input`과 lineage는 source path를 사용하며 target write는 alias를 사용한다. Kafka Continuous는 dotted path로 nested Spark schema를 구성하고 root/nested object별 unknown field를 검사하므로 `raw` object 자체를 unknown field로 오인하지 않는다. scalar/object가 같은 path를 동시에 점유하는 모호한 schema는 worker 시작 전에 거절한다.
 
+`nullable: false`는 output schema 제약이며 그 자체로 Quality Rule 수에 포함되지 않습니다. 실제 NULL 검사는 canonical `quality:not_null`, 값 누락 시 transform 오류 정책을 적용하는 Null Guard는 명시적인 `transform:null_guard`로 각각 저장합니다. 사용자가 NOT NULL을 해제하면 편집기에 남은 explicit Null Guard marker도 함께 제거합니다.
+
+Rule compiler는 Regex의 비어 있지 않은 유효 pattern, Accepted Values의 1개 이상 값, Range의 유효한 min/max와 `min <= max`, boolean inclusive를 검증합니다. V1 mask policy는 `phone`(`keep first 3 digits` legacy alias), timestamp format은 `ISO-8601`(`UTC` legacy alias)만 허용합니다. Frontend, FastAPI, Node compiler는 같은 fixture와 `RULE_PARAMETER_REQUIRED`/`RULE_PARAMETER_INVALID` issue code를 사용하고 JSON root의 dotted input path를 동일하게 판정합니다.
+
 ### Kafka Snapshot Metadata and Direct Target
 
 Issue #455 Phase 3부터 Kafka run은 다음 snapshot metadata를 response, Run metadata, Catalog materialization run에 보존하고, 중간 RAW landing 없이 direct target object를 저장한다. Current direct bridge applies supported configured transforms and quality actions before writing normalized review JSONL.
+
+Job command bridge는 `schemaColumns`와 compiled `outputSchema`를 ingest runtime에 전달한다. runtime은 Rule 적용 뒤 이 계약으로 exact projection하며 rename 전 source field와 `included: false` field를 물리 JSONL, Catalog schema, sample에 포함하지 않는다. Kafka Snapshot은 `RAW/BRONZE/SILVER + JSONL`, Kafka Continuous는 Parquet 포맷을 사용하며 review/create/update/command가 지원하지 않는 조합을 `TARGET_LAYER_UNSUPPORTED` 또는 `TARGET_FORMAT_UNSUPPORTED`로 선제 거절한다.
 
 ```ts
 type KafkaPartitionSnapshot = {

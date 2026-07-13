@@ -233,6 +233,118 @@
       "expectedOutputSchema": [["rating", "Double"], ["rating_copy", "String"]]
     },
     {
+      "name": "nested JSON input is accepted",
+      "request": {
+        "ruleContractVersion": "1.0",
+        "schemaColumns": [{
+          "included": true,
+          "nullable": true,
+          "sourceName": "raw",
+          "targetName": "raw",
+          "type": "JSON"
+        }],
+        "rules": [{
+          "contractVersion": "1.0",
+          "enabled": true,
+          "failureDisposition": "keep",
+          "id": "nested-email",
+          "inputColumns": ["raw.email"],
+          "kind": "quality",
+          "onError": "warn",
+          "operation": "regex",
+          "outputColumns": [],
+          "parameters": { "pattern": ".+@.+" },
+          "severity": "warning"
+        }]
+      },
+      "expectedStatus": "pass",
+      "expectedIssueCodes": [],
+      "expectedOutputSchema": [["raw", "JSON"]]
+    },
+    {
+      "name": "blank regex is rejected",
+      "request": {
+        "ruleContractVersion": "1.0",
+        "rules": [{
+          "contractVersion": "1.0",
+          "enabled": true,
+          "failureDisposition": "keep",
+          "id": "blank-regex",
+          "inputColumns": ["review"],
+          "kind": "quality",
+          "onError": "warn",
+          "operation": "regex",
+          "outputColumns": [],
+          "parameters": {},
+          "severity": "warning"
+        }]
+      },
+      "expectedStatus": "fail",
+      "expectedIssueCodes": ["RULE_PARAMETER_REQUIRED"]
+    },
+    {
+      "name": "blank accepted values are rejected",
+      "request": {
+        "ruleContractVersion": "1.0",
+        "rules": [{
+          "contractVersion": "1.0",
+          "enabled": true,
+          "failureDisposition": "keep",
+          "id": "blank-accepted-values",
+          "inputColumns": ["review"],
+          "kind": "quality",
+          "onError": "warn",
+          "operation": "accepted_values",
+          "outputColumns": [],
+          "parameters": { "values": [] },
+          "severity": "warning"
+        }]
+      },
+      "expectedStatus": "fail",
+      "expectedIssueCodes": ["RULE_PARAMETER_REQUIRED"]
+    },
+    {
+      "name": "inverted range is rejected",
+      "request": {
+        "ruleContractVersion": "1.0",
+        "rules": [{
+          "contractVersion": "1.0",
+          "enabled": true,
+          "failureDisposition": "keep",
+          "id": "inverted-range",
+          "inputColumns": ["rating"],
+          "kind": "quality",
+          "onError": "warn",
+          "operation": "range",
+          "outputColumns": [],
+          "parameters": { "max": 1, "min": 10 },
+          "severity": "warning"
+        }]
+      },
+      "expectedStatus": "fail",
+      "expectedIssueCodes": ["RULE_PARAMETER_INVALID"]
+    },
+    {
+      "name": "unsupported mask policy is rejected",
+      "request": {
+        "ruleContractVersion": "1.0",
+        "rules": [{
+          "contractVersion": "1.0",
+          "enabled": true,
+          "failureDisposition": "keep",
+          "id": "email-mask",
+          "inputColumns": ["review"],
+          "kind": "transform",
+          "onError": "warn",
+          "operation": "mask",
+          "outputColumns": ["review_masked"],
+          "parameters": { "policy": "email" }
+        }]
+      },
+      "expectedStatus": "fail",
+      "expectedIssueCodes": ["RULE_PARAMETER_INVALID"]
+    },
+    {
       "name": "explicit empty does not revive legacy",
       "request": {
         "ruleContractVersion": "1.0",

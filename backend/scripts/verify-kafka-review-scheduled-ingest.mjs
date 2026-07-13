@@ -42,6 +42,7 @@ try {
   await verifyMinimalReviewContractIngest();
   await verifySnappyReviewIngest();
   await verifyTransformAndQualityIngest();
+  await verifyJobTargetProjection();
   await verifyFailRunLeavesOffsetsForRetry();
   await verifyMultiPartitionSnapshots();
   await verifyTargetWriteRetryIsIdempotent();
@@ -258,6 +259,74 @@ async function verifyTransformAndQualityIngest() {
   assert(targetRecords[0].normalized_review === "great review", `Transform output should be written to direct target: ${targetBody}`);
   const quarantineBody = await readS3Object(result.quality.quarantineLocation);
   assert(quarantineBody.includes(`transform-${suffix}-2`), "Quarantine object should contain the rejected Kafka row.");
+}
+
+async function verifyJobTargetProjection() {
+  const projectionTopic = `reviews.raw.projection.${suffix}`;
+  const projectionGroup = `asklake-projection-${suffix}`;
+  const projectionDataset = `reviews_projection_${suffix}`;
+  await produceReviewEvents(projectionTopic, [{
+    created_at: "2026-07-09T02:30:00Z",
+    event_id: `projection-${suffix}-1`,
+    offset: 1,
+    raw: { private_note: "must-not-leak" },
+    review: "Projection contract review",
+    source: "projection-fixture",
+  }]);
+
+  const basePayload = kafkaJobPayload();
+  const created = await post("/api/etl/jobs", {
+    ...basePayload,
+    id: `kafka-review-projection-verify-${suffix}`,
+    jobName: `Kafka Review Projection Verify ${suffix}`,
+    nextRunUtc: null,
+    ruleContractVersion: "1.0",
+    rules: [{
+      contractVersion: "1.0",
+      enabled: true,
+      failureDisposition: "keep",
+      id: "rename-review",
+      inputColumns: ["review"],
+      kind: "transform",
+      onError: "warn",
+      operation: "rename",
+      outputColumns: ["review_clean"],
+      outputType: "String",
+      parameters: {},
+    }],
+    schemaColumns: [
+      { included: true, nullable: false, sourceName: "event_id", targetName: "event_id", type: "String" },
+      { included: true, nullable: true, sourceName: "review", targetName: "review_clean", type: "String" },
+      { included: false, nullable: true, sourceName: "source", targetName: "source", type: "String" },
+      { included: false, nullable: true, sourceName: "raw", targetName: "raw", type: "JSON" },
+    ],
+    sourceConfig: basePayload.sourceConfig.map(([key, value]) => {
+      if (key === "TOPIC / QUEUE NAME") return [key, projectionTopic];
+      if (key === "CONSUMER GROUP ID") return [key, projectionGroup];
+      return [key, value];
+    }),
+    sourceLabel: projectionTopic,
+    storagePath: `s3://asklake-output/${projectionDataset}/silver`,
+    targetDataset: projectionDataset,
+    targetLayer: "SILVER",
+  });
+  const command = await post(`/api/etl/jobs/${encodeURIComponent(created.job.id)}/commands`, { command: "run" });
+  assert(command.run?.status === "success", `Projection Job should succeed: ${JSON.stringify(command)}`);
+  const targetBody = await readS3Object(command.run.outputPath);
+  const records = targetBody.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+  assert(records.length === 1, `Projection Job should write one record: ${targetBody}`);
+  assert(
+    JSON.stringify(Object.keys(records[0])) === JSON.stringify(["event_id", "review_clean"]),
+    `Projection Job must write only compiled target columns: ${targetBody}`,
+  );
+  assert(records[0].review_clean === "Projection contract review", `Renamed target value is missing: ${targetBody}`);
+  const catalogColumnNames = (command.dataset?.schema || []).map((column) => (
+    Array.isArray(column) ? column[0] : column?.name
+  ));
+  assert(
+    JSON.stringify(catalogColumnNames) === JSON.stringify(["event_id", "review_clean"]),
+    `Catalog schema must match the physical projection: ${JSON.stringify(command.dataset?.schema)}`,
+  );
 }
 
 async function verifyFailRunLeavesOffsetsForRetry() {

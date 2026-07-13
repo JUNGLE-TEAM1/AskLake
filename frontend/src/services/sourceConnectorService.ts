@@ -16,6 +16,10 @@ export type SourceConnectorAnalysis = {
   testItems: Array<[string, string]>;
 };
 
+export type SourceConnectorDefaults = {
+  kafkaBroker: string;
+};
+
 type BackendSourceConnectorResponse = SourceConnectorAnalysis;
 
 export type SourceAssetsResponse = {
@@ -35,6 +39,11 @@ export async function testSourceConnector(sourceType: string, fields: SourceFiel
     normalizedSourceType,
     fields,
   );
+}
+
+export async function getSourceConnectorDefaults(): Promise<SourceConnectorDefaults> {
+  if (apiConfig.useMock) return { kafkaBroker: "127.0.0.1:19092" };
+  return getWithDevFallback<SourceConnectorDefaults>("/api/etl/sources/defaults");
 }
 
 export async function listSourceAssets(sourceType: string, fields: SourceFieldRows, prefix = ""): Promise<SourceAssetsResponse> {
@@ -116,6 +125,25 @@ async function postWithDevFallback<T>(path: string, body: unknown): Promise<T> {
     }
     throw error;
   }
+}
+
+async function getWithDevFallback<T>(path: string): Promise<T> {
+  if (import.meta.env.DEV) {
+    try {
+      return await getBackendDirect<T>(path);
+    } catch (error) {
+      if (!isNetworkError(error) && !isNotFoundError(error)) throw error;
+    }
+  }
+
+  return apiClient.get<T>(path);
+}
+
+async function getBackendDirect<T>(path: string): Promise<T> {
+  const response = await fetch(`http://127.0.0.1:8080${path}`);
+  if (response.ok) return await response.json() as T;
+  const text = await response.text().catch(() => "");
+  throw new Error(text || `Backend ${response.status} ${response.statusText}`);
 }
 
 async function postBackendDirect<T>(path: string, body: unknown): Promise<T> {

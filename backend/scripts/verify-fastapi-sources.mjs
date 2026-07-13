@@ -60,11 +60,11 @@ async function seedSnappyKafkaFixture() {
     await admin.createTopics({ topics: [{ numPartitions: 1, replicationFactor: 1, topic }] });
     await producer.send({
       compression: CompressionTypes.Snappy,
-      messages: [{ value: JSON.stringify({
-        created_at: "2026-07-12T00:00:00Z",
-        event_id: `snappy-${Date.now()}`,
-        review: "snappy source preview",
-      }) }],
+      messages: Array.from({ length: 3 }, (_, index) => ({ value: JSON.stringify({
+        created_at: `2026-07-12T00:00:0${index}Z`,
+        event_id: `snappy-${Date.now()}-${index}`,
+        review: `snappy source preview ${index}`,
+      }) })),
       topic,
     });
   } finally {
@@ -89,6 +89,12 @@ async function deleteKafkaFixture(topic) {
 }
 
 async function verifyAllSources() {
+  const defaults = await get("/api/etl/sources/defaults");
+  const expectedBroker = process.env.ASKLAKE_KAFKA_BROKER || "127.0.0.1:19092";
+  if (defaults.kafkaBroker !== expectedBroker) {
+    throw new Error(`Source defaults broker mismatch: expected ${expectedBroker}, got ${defaults.kafkaBroker}.`);
+  }
+  console.log("Source connector defaults: ok");
   await verify("File / S3 CSV", objectStorageConfig("asklake-fixtures/csv/"));
   await verify("File / S3 JSON", objectStorageConfig("asklake-fixtures/json/"));
   await verify("File / S3 JSONL", objectStorageConfig("asklake-fixtures/jsonl/"));
@@ -129,7 +135,7 @@ async function verifyAllSources() {
       ["CONSUMER GROUP ID", "asklake-fastapi-source-verify"],
     ], (result) => (
       result.draftPatch?.schema?.columns?.some((column) => column.sourceName === "event_id")
-      && result.draftPatch?.schema?.sampleRows?.length > 0
+      && result.draftPatch?.schema?.sampleRows?.length >= (generatedKafkaTopic ? 3 : 1)
     ));
   } else {
     console.log("Kafka verification skipped. Set ASKLAKE_VERIFY_KAFKA=true after running source fixtures.");

@@ -71,7 +71,7 @@ import { DatabaseField } from "../../components/target/DatabaseField";
 import { runTransformQualitySamplePreview } from "../../data/transformQualityPreview";
 import { toCreatePipelineRequest } from "../../services/draftPipelineContract";
 import { getReviewSnapshot, type ReviewSnapshot } from "../../services/reviewApi";
-import { listSourceAssets, testSourceConnector, type SourceConnectorAnalysis } from "../../services/sourceConnectorService";
+import { getSourceConnectorDefaults, listSourceAssets, testSourceConnector, type SourceConnectorAnalysis } from "../../services/sourceConnectorService";
 import type { AuditResult, DraftPipeline, DraftPipelinePatch, FlowId, ScheduleFlowId, SchemaColumnDraft, SourceDraft, TargetLayer } from "../../types";
 import type { QualityRuleDraft, RetryPolicyDraft, ScheduleDraft, ScheduleOverlapPolicy, TransformStepDraft, WatermarkPolicyDraft, WatermarkWindowMode } from "../../types/etl";
 import type { QualityRuleOption, TransformQualityInvalidRow, TransformQualityPreviewSample, TransformQualitySampleRow, TransformQualityStepPreview, TransformQualityValidationResult } from "../../data/transformQualityPreview";
@@ -91,8 +91,7 @@ type RepeatScheduleDraft = {
 };
 type ScheduleOptionId = "skip" | "repeat";
 
-const DEFAULT_KAFKA_BROKER = import.meta.env.VITE_KAFKA_DEFAULT_BROKER
-  || (import.meta.env.DEV ? "127.0.0.1:19092" : "redpanda:9092");
+const FALLBACK_KAFKA_BROKER = import.meta.env.DEV ? "127.0.0.1:19092" : "";
 
 export function SchedulePage({
   draftSchedule,
@@ -624,7 +623,10 @@ const PERMISSION_TEMPLATES = ["Data Engineer Group", "Data Analyst Group", "ML T
 const VISIBILITY_OPTIONS = ["조직 내부", "프로젝트 멤버", "외부 공유"] as const;
 const APPROVAL_STATUS_OPTIONS = ["승인 검토", "승인 완료", "오너 승인 필요"] as const;
 const TARGET_LAYER_OPTIONS: TargetLayer[] = ["RAW", "BRONZE", "SILVER", "GOLD"];
-const TARGET_FORMAT_OPTIONS: TargetFileFormat[] = ["parquet", "csv", "json"];
+const KAFKA_SNAPSHOT_TARGET_LAYER_OPTIONS: TargetLayer[] = ["RAW", "BRONZE", "SILVER"];
+const TARGET_FORMAT_OPTIONS: TargetFileFormat[] = ["parquet", "csv", "json", "jsonl"];
+const KAFKA_SNAPSHOT_TARGET_FORMAT_OPTIONS: TargetFileFormat[] = ["jsonl"];
+const KAFKA_CONTINUOUS_TARGET_FORMAT_OPTIONS: TargetFileFormat[] = ["parquet"];
 
 const PERMISSION_ACCESS_ITEMS = ["조회", "쿼리 실행", "메타데이터", "관리"] as const;
 
@@ -672,7 +674,7 @@ type TargetDraftSlice = {
   testStatus?: "idle" | "success" | "failed";
 };
 
-type TargetFileFormat = "parquet" | "csv" | "json";
+type TargetFileFormat = "parquet" | "csv" | "json" | "jsonl";
 type TargetTestStatus = "idle" | "pending" | "success" | "failed";
 type TargetColumnType = "string" | "number" | "boolean" | "datetime" | "json";
 
@@ -784,7 +786,7 @@ function isDefaultTargetDescription(value: string | undefined) {
 }
 
 const TARGET_CONFIG_STORAGE_KEY = "asklake.targetConfigDraft";
-const TARGET_FILE_FORMAT_VALUES: TargetFileFormat[] = ["parquet", "csv", "json"];
+const TARGET_FILE_FORMAT_VALUES: TargetFileFormat[] = ["parquet", "csv", "json", "jsonl"];
 const SAMPLE_TARGET_SCHEMA_COLUMNS: SchemaColumnDraft[] = [
   { included: true, nullable: false, sourceName: "order_date", targetName: "order_date", type: "date" },
   { included: true, nullable: false, sourceName: "order_count", targetName: "order_count", type: "integer" },
@@ -1030,9 +1032,14 @@ function getTargetDraftValues(draft: DraftPipeline) {
       ? "jsonl"
       : getKnownOption(rawTargetFormat, TARGET_FORMAT_OPTIONS, isKafkaSource ? "jsonl" : DEFAULT_TARGET_FORMAT);
   const rawTargetLayer = target?.targetLayer ?? target?.layer ?? compatDraft.targetLayer ?? draft.target.layer;
-  const targetLayer = isKafkaSource && (!rawTargetLayer || rawTargetLayer === DEFAULT_TARGET_LAYER)
-    ? "BRONZE"
-    : normalizeTargetLayer(rawTargetLayer);
+  const normalizedTargetLayer = normalizeTargetLayer(rawTargetLayer);
+  const targetLayer = isKafkaSource && !isContinuousKafka
+    ? getKnownOption(
+        !rawTargetLayer || rawTargetLayer === DEFAULT_TARGET_LAYER ? "BRONZE" : normalizedTargetLayer,
+        KAFKA_SNAPSHOT_TARGET_LAYER_OPTIONS,
+        "BRONZE",
+      )
+    : normalizedTargetLayer;
   const storedPath = target?.storagePath ?? draft.target.storagePath;
   const defaultTargetPath = buildTargetStoragePath(targetDataset, targetLayer);
   const storagePath = isKafkaSource && (isDefaultTargetStoragePath(storedPath) || isLegacyKafkaLandingPath(storedPath))
@@ -1089,6 +1096,7 @@ export function SourceConnectionPage({
   const [loadingAssetPath, setLoadingAssetPath] = useState("");
   const [selectedAssetPath, setSelectedAssetPath] = useState("");
   const [continuousAdvancedOpen, setContinuousAdvancedOpen] = useState(false);
+  const [defaultKafkaBroker, setDefaultKafkaBroker] = useState(FALLBACK_KAFKA_BROKER);
   const sourceLocked = connectionStatus === "testing";
   const continuousConfig = draft.source.continuousConfig ?? {
     initialOffsetPolicy: "earliest" as const,
@@ -1104,6 +1112,17 @@ export function SourceConnectionPage({
       target: { format: "parquet" },
     });
   };
+  useEffect(() => {
+    let active = true;
+    getSourceConnectorDefaults()
+      .then((defaults) => {
+        if (active && defaults.kafkaBroker.trim()) setDefaultKafkaBroker(defaults.kafkaBroker.trim());
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, []);
   const connectorMeta: Record<string, { icon: React.ReactNode; label: string; status: string }> = {
     "File / S3": { icon: <SourceBrandIcon kind="s3" />, label: "MinIO", status: "실제 연결" },
     PostgreSQL: { icon: <SourceBrandIcon kind="postgres" />, label: "Postgres", status: "실제 연결" },
@@ -1273,7 +1292,7 @@ export function SourceConnectionPage({
       description: "실시간 데이터 스트림 엔드포인트를 설정합니다.",
       fields: [
         ["Stream Type", "Apache Kafka"],
-        ["Broker / Endpoint", DEFAULT_KAFKA_BROKER],
+        ["Broker / Endpoint", defaultKafkaBroker],
         ["TOPIC / QUEUE NAME", "asklake-source-events"],
         ["CONSUMER GROUP ID", "asklake-etl-consumer-01"],
         ["Offset Policy", "Earliest (Start from beginning)"],
@@ -4770,6 +4789,26 @@ export function TargetPage({
 }) {
   const initialTarget = getTargetDraftValues(draft);
   const draftTarget = (draft as DraftPipelineWithSlices).target;
+  const isKafkaSource = draft.source.sourceType === "Stream / Kafka" || draft.source.sourceType === "Kafka JSON";
+  const isKafkaContinuous = isKafkaSource && draft.source.executionMode === "continuous";
+  const isKafkaSnapshot = isKafkaSource && !isKafkaContinuous;
+  const targetLayerOptions = isKafkaSnapshot ? KAFKA_SNAPSHOT_TARGET_LAYER_OPTIONS : TARGET_LAYER_OPTIONS;
+  const targetFormatOptions = isKafkaContinuous
+    ? KAFKA_CONTINUOUS_TARGET_FORMAT_OPTIONS
+    : isKafkaSnapshot
+      ? KAFKA_SNAPSHOT_TARGET_FORMAT_OPTIONS
+      : TARGET_FORMAT_OPTIONS.filter((format) => format !== "jsonl");
+  const initialTargetLayer = targetLayerOptions.includes(initialTarget.targetLayer)
+    ? initialTarget.targetLayer
+    : targetLayerOptions[0] ?? "BRONZE";
+  const normalizedInitialTargetFormat = normalizeTargetFileFormat(initialTarget.targetFormat);
+  const initialTargetFormat = targetFormatOptions.includes(normalizedInitialTargetFormat)
+    ? normalizedInitialTargetFormat
+    : targetFormatOptions[0] ?? "parquet";
+  const initialStoragePath = initialTargetLayer !== initialTarget.targetLayer
+    && initialTarget.storagePath === buildTargetStoragePath(initialTarget.targetDataset, initialTarget.targetLayer)
+    ? buildTargetStoragePath(initialTarget.targetDataset, initialTargetLayer)
+    : initialTarget.storagePath;
   const inferredTarget = useMemo(
     () => inferTargetSchema(draft.schema.columns, draft.schema.sampleRows, draftTarget?.schemaRules),
     [draft.schema.columns, draft.schema.sampleRows, draftTarget?.schemaRules],
@@ -4777,13 +4816,13 @@ export function TargetPage({
   const sampleTargetSchema = useMemo(() => inferTargetSchema([], [], undefined), []);
   const [targetDataset, setTargetDataset] = useState(initialTarget.targetDataset);
   const [databaseName, setDatabaseName] = useState(draftTarget?.databaseName ?? "asklake");
-  const [targetLayer, setTargetLayer] = useState<TargetLayer>(initialTarget.targetLayer);
-  const [targetStoragePath, setTargetStoragePath] = useState(initialTarget.storagePath);
+  const [targetLayer, setTargetLayer] = useState<TargetLayer>(initialTargetLayer);
+  const [targetStoragePath, setTargetStoragePath] = useState(initialStoragePath);
   const [storagePathCustomized, setStoragePathCustomized] = useState(
-    initialTarget.storagePath !== buildTargetStoragePath(initialTarget.targetDataset, initialTarget.targetLayer),
+    initialStoragePath !== buildTargetStoragePath(initialTarget.targetDataset, initialTargetLayer),
   );
   const [targetDescription, setTargetDescription] = useState(initialTarget.description);
-  const [targetFormat, setTargetFormat] = useState<TargetFileFormat>(normalizeTargetFileFormat(initialTarget.targetFormat));
+  const [targetFormat, setTargetFormat] = useState<TargetFileFormat>(initialTargetFormat);
   const [targetOwner, setTargetOwner] = useState(draftTarget?.owner ?? initialTarget.owner);
   const [targetManager, setTargetManager] = useState(draftTarget?.manager ?? initialTarget.owner);
   const [targetTags, setTargetTags] = useState<string[]>(initialTarget.tags);
@@ -4922,6 +4961,8 @@ export function TargetPage({
   const saveTargetConfig = () => {
     const config = buildConfig();
     const errors = validateTargetConfig(config, activeJsonParseFailed);
+    if (!targetLayerOptions.includes(targetLayer)) errors.push(`현재 실행 방식에서 ${targetLayer} 레이어를 사용할 수 없습니다.`);
+    if (!targetFormatOptions.includes(targetFormat)) errors.push(`현재 실행 방식에서 ${targetFormat.toUpperCase()} 포맷을 사용할 수 없습니다.`);
     setValidationErrors(errors);
 
     if (errors.length > 0) {
@@ -5014,7 +5055,7 @@ export function TargetPage({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {TARGET_LAYER_OPTIONS.map((layer) => <SelectItem key={layer} value={layer}>{layer}</SelectItem>)}
+                  {targetLayerOptions.map((layer) => <SelectItem key={layer} value={layer}>{layer}</SelectItem>)}
                 </SelectContent>
               </Select>
             </FormFieldGroup>
@@ -5024,7 +5065,7 @@ export function TargetPage({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {TARGET_FORMAT_OPTIONS.map((format) => (
+                  {targetFormatOptions.map((format) => (
                     <SelectItem key={format} value={format}>{format.toUpperCase()}</SelectItem>
                   ))}
                 </SelectContent>

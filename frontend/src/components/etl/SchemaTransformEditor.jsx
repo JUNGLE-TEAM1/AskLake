@@ -401,7 +401,7 @@ export default function SchemaTransformEditor({
     next[index] = {
       ...next[index],
       [property]: value,
-      ...(property === "notNull" ? { nullGuardExplicit: true } : {}),
+      ...(property === "notNull" ? { nullGuardExplicit: Boolean(value) } : {}),
     };
     onSchemaChange(next);
     if (onTestStatusChange) onTestStatusChange(false);
@@ -431,10 +431,12 @@ export default function SchemaTransformEditor({
       const nextName = newName || existing.name;
       syncColumnQualityRules(existing, nextName, transformMeta.qualityRules);
       if (transformMeta.mode === "clear") {
+        const nextRequired = typeof transformMeta.required === "boolean" ? transformMeta.required : existing.notNull;
         next[editingColumn.index] = {
           ...existing,
           name: nextName,
-          notNull: typeof transformMeta.required === "boolean" ? transformMeta.required : existing.notNull,
+          notNull: nextRequired,
+          nullGuardExplicit: nextRequired ? Boolean(existing.nullGuardExplicit) : false,
           type: newType || existing.type,
           transform: null,
           transformChain: [],
@@ -562,13 +564,14 @@ export default function SchemaTransformEditor({
       const defaultStep = rawChain.find((step) => step.operation === "Default Value");
       const hasNullGuard = rawChain.some((step) => step.operation === "Null Guard");
       const display = chain.map(formatTransformChainStep).filter(Boolean).join(" -> ");
+      const nextRequired = typeof transformMeta.required === "boolean" ? transformMeta.required : hasNullGuard ? true : existing.notNull;
       next[editingColumn.index] = {
         ...existing,
         name: nextName,
         type: newType || transformMeta.type || existing.type,
         defaultValue: defaultStep ? defaultStep.params : existing.defaultValue,
-        notNull: typeof transformMeta.required === "boolean" ? transformMeta.required : hasNullGuard ? true : existing.notNull,
-        nullGuardExplicit: hasNullGuard ? true : existing.nullGuardExplicit,
+        notNull: nextRequired,
+        nullGuardExplicit: nextRequired ? hasNullGuard || Boolean(existing.nullGuardExplicit) : false,
         onError: dataStep?.onError || transformMeta.onError || existing.onError || "Warn",
         transform: dataStep?.expression || (dataStep?.operation === "SQL Expression" ? dataStep.params : null),
         transformChain: chain,

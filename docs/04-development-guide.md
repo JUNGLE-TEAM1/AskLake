@@ -46,6 +46,8 @@ npm run verify:rule-compiler
 npm run verify:rule-preview
 npm run verify:snapshot-rule-conformance
 npm run verify:snapshot-spark-pipeline
+npm run verify:kafka-target-projection
+npm run verify:target-mode-contract
 npm run verify:kafka-continuous-contract
 npm run verify:kafka-continuous-rules
 
@@ -58,7 +60,7 @@ backend의 `npm run verify:rule-compiler`는 FastAPI와 local Node compiler의 �
 
 `npm run verify:schema-transform-rules`는 Visual Transform의 rename/cast/default/null guard 순서, canonical parameter, portable operation, 초기 pass-through를 실제 adapter 함수로 검증한다.
 
-`npm run verify:rule-preview`는 UI가 호출하는 bounded Preview bridge가 Snapshot conformance fixture와 같은 결과를 내고 임의 SQL을 거절하는지 확인한다. `npm run verify:snapshot-rule-conformance`는 같은 JSON fixture를 Node Kafka runtime과 실제 Spark 4 DataFrame runtime에 적용하므로 두 명령을 함께 실행하면 Preview와 Spark 의미의 동등성을 검증한다. `npm run verify:snapshot-spark-pipeline`은 `spark_job_run.py`를 직접 실행해 drop/quarantine/set-null 결과가 Parquet에 반영되고 `Fail Batch` target이 생성되지 않는지 확인한다. Continuous Rule 변경 시에는 `npm run verify:kafka-continuous-rules`까지 실행해 foreachBatch final projection, Rule quarantine/replay와 checkpoint fingerprint를 확인한다.
+`npm run verify:rule-preview`는 portable bounded Preview와 일반 Snapshot SQL Spark Preview를 모두 실행한다. `npm run verify:snapshot-rule-conformance`는 같은 JSON fixture를 Node Kafka runtime과 실제 Spark 4 DataFrame runtime에 적용하므로 두 명령을 함께 실행하면 Preview와 Spark 의미의 동등성을 검증한다. `npm run verify:snapshot-spark-pipeline`은 `spark_job_run.py`를 직접 실행해 drop/quarantine/set-null 결과가 Parquet에 반영되고 portable/SQL 혼합 `Fail Batch` target과 staging 경로가 남지 않는지 확인한다. `npm run verify:kafka-target-projection`과 `npm run verify:target-mode-contract`은 Kafka exact projection과 mode별 layer/format 선제 검증을 확인한다. `npm run verify:kafka-review-scheduled-ingest`는 실제 Job create/command bridge를 거쳐 물리 JSONL과 Catalog schema가 같은 projection인지까지 확인한다. Continuous Rule 변경 시에는 `npm run verify:kafka-continuous-rules`까지 실행해 foreachBatch final projection, Rule quarantine/replay와 checkpoint fingerprint를 확인한다.
 
 ## 3) Backend Live Mode
 
@@ -332,8 +334,8 @@ npm run verify:kafka-continuous-rules
 ```
 
 Phase 2부터 prod-like Compose는 내부 broker `redpanda:9092`를 제공한다. 이 broker는 Snapshot fixture와 이후 Continuous Spark worker가 같은 Docker network에서 사용할 endpoint이며, 외부 Kafka endpoint를 쓰려면 배포 env에서 `ASKLAKE_KAFKA_BROKER`를 바꾼다.
-ETL 생성 화면의 Kafka 기본 broker도 production build에서는 `redpanda:9092`, Vite 개발 모드에서는 `127.0.0.1:19092`를 사용한다. 별도 frontend 배포 토폴로지에서는 `VITE_KAFKA_DEFAULT_BROKER`로 화면 기본값을 지정하며, backend의 요청 기본값은 `ASKLAKE_KAFKA_BROKER`를 따른다.
-Kafka 소스 연결 테스트는 새 샘플 consumer group이 첫 메시지를 받을 때까지 `ASKLAKE_KAFKA_SAMPLE_TIMEOUT_MS`(기본 8초)를 기다린다. 메시지가 시작된 뒤에는 `ASKLAKE_KAFKA_SAMPLE_IDLE_MS`(기본 0.5초) 동안 추가 메시지가 없으면 즉시 샘플을 반환하므로, 작은 토픽도 group 초기화와 경합하지 않고 불필요하게 전체 timeout을 채우지 않는다.
+ETL 생성 화면은 `GET /api/etl/sources/defaults`에서 backend의 `ASKLAKE_KAFKA_BROKER` 값을 읽는다. 로컬 backend 기본값은 `127.0.0.1:19092`, prod-like Compose 기본값은 `redpanda:9092`이며 frontend build 변수로 같은 값을 중복 관리하지 않는다.
+Kafka 소스 연결 테스트는 새 샘플 consumer group이 첫 메시지를 받을 때까지 `ASKLAKE_KAFKA_SAMPLE_TIMEOUT_MS`(기본 8초)를 기다린다. 첫 메시지 이후 `ASKLAKE_KAFKA_SAMPLE_MIN_MESSAGES`(기본 3건)에 도달하면 `ASKLAKE_KAFKA_SAMPLE_IDLE_MS`(기본 0.5초) idle window로 종료한다. 최소 건수에 도달하지 못한 희소 topic은 `ASKLAKE_KAFKA_SAMPLE_SETTLE_MS`(기본 1.5초)까지만 추가 메시지를 기다린 뒤 현재 샘플을 반환한다.
 
 Continuous worker는 Spark 4.0.1/Scala 2.13 Kafka connector를 사용한다. `ASKLAKE_SPARK_KAFKA_PACKAGE=org.apache.spark:spark-sql-kafka-0-10_2.13:4.0.1`과 `ASKLAKE_SPARK_HADOOP_AWS_PACKAGE`을 함께 설정하고, backend Docker socket 및 `ASKLAKE_SPARK_REPORT_DIR` 공유 mount를 유지해야 한다.
 

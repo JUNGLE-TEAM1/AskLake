@@ -84,6 +84,7 @@ Canonical status values:
 | `GET/POST/PATCH/DELETE` | `/api/admin/permissions` | Admin | permission grant 관리 | `docs/api-contract.md` |
 | `GET/PATCH` | `/api/admin/governance-controls` | Admin | principal block과 resource lock 관리 | `docs/api-contract.md` |
 | `GET` | `/api/admin/audit-logs` | Admin | 감사 로그 필터 조회 | `docs/api-contract.md` |
+| `GET` | `/api/etl/sources/defaults` | TBD | backend 실행 환경 기준 Source 기본값 반환 | `docs/api-contract.md` |
 | `POST` | `/api/etl/sources/test` | TBD | Source 연결 테스트와 schema draft patch 반환 | `docs/api-contract.md` |
 | `POST` | `/api/etl/schema-inference` | TBD | Source 테스트 결과 기반 schema 반환 | `docs/api-contract.md` |
 | `POST` | `/api/etl/rules/preview` | Session | 최대 100개 샘플에 canonical Snapshot Rule을 실제 runtime으로 적용 | `docs/api-contract.md` |
@@ -103,7 +104,9 @@ Canonical status values:
 | `POST` | `/api/query/ai-suggestions` | TBD | 선택 테이블 context 기반 Query AI SQL 초안 생성 | `docs/api-contract.md` |
 | `POST` | `/api/catalog/derived-datasets` | TBD | SQL 결과 기반 Lake Dataset 생성 | `docs/api-contract.md` |
 
-Kafka `POST /api/etl/sources/test`와 Snapshot ingest consumer는 uncompressed 및 Snappy-compressed record batch를 지원한다. Source test는 consumer 오류를 빈 metadata preview로 바꾸지 않으며, 첫 메시지 수신 후 bounded idle window가 끝나면 실제 payload schema/sample을 반환한다.
+`GET /api/etl/sources/defaults`는 `{ "kafkaBroker": "..." }`를 반환한다. 새 Kafka Source 화면은 build-time 상수가 아니라 이 값을 사용하므로 `ASKLAKE_KAFKA_BROKER`를 바꾼 backend와 같은 endpoint를 기본 표시한다.
+
+Kafka `POST /api/etl/sources/test`와 Snapshot ingest consumer는 uncompressed 및 Snappy-compressed record batch를 지원한다. Source test는 consumer 오류를 빈 metadata preview로 바꾸지 않는다. 첫 메시지 이후 최소 샘플 수에 도달하면 idle window로 종료하고, 도달하지 못해도 bounded settle window 뒤 현재 샘플을 반환한다.
 
 `POST /api/etl/jobs/{jobId}/commands`의 일반 배치 `run`/`retry`는 Airflow 접수 직후 `queued` 또는 `running` 상태를 응답한다. Airflow의 `spark_process_write` task가 bearer token으로 FastAPI internal execution API를 호출해 실제 PySpark 처리를 수행하고, 최종 Run/DAG/Spark manifest는 `GET /api/etl/jobs/{jobId}` polling으로 반영한다.
 
@@ -156,6 +159,8 @@ type KafkaReviewIngestRequest = {
   targetLayer?: "RAW" | "BRONZE" | "SILVER";
   targetFormat?: "jsonl"; // direct Kafka target currently supports JSONL only
   targetDescription?: string;
+  schemaColumns?: SchemaColumnDraft[]; // Job에서 확정한 included/source/target schema
+  outputSchema?: Array<[string, string]>; // compiler가 확정한 최종 output schema
   ruleContractVersion?: "1.0";
   rules?: CanonicalRuleDraft[]; // Job 실행의 source of truth
   transformSteps?: TransformStepDraft[]; // legacy/debug compatibility
@@ -241,7 +246,7 @@ partition offset snapshot
 
 `Fail Run` 같은 Kafka bridge 오류가 일반 Job command에서 발생하면 API는 실패 Run을 정상 응답의 `run`으로 반환하며, `run.taskStates.kafkaSnapshot`과 `failedStage`를 보존한다. 직접 `POST /api/etl/kafka/reviews/ingest` 호출은 `502` error response를 반환하고 `error.details.bridge.snapshot` 및 `failedStage`로 동일 진단을 제공한다.
 
-target dataset의 layer는 `RAW`, `BRONZE`, `SILVER`를 지원하며 기본값은 `BRONZE`다. target layer는 Catalog/target metadata이며 Kafka bridge의 transform/quality 실행 여부를 임의로 바꾸지 않는다. bridge는 Job에 저장된 지원 field transform과 quality action을 적용한 뒤 사용자가 선택한 target에 저장한다. `Fail Run`은 offset commit 전에 실행을 실패시키며, `Quarantine`은 snapshot directory의 `quarantine.jsonl`로 분리한다. malformed payload도 raw payload와 Kafka context를 보존해 quarantine한다. `GOLD` join/aggregation과 범용 SQL expression runtime은 이 전환 범위에 포함하지 않는다. 상세 계약은 [Kafka Snapshot Direct Target Contract](kafka-snapshot-direct-target-contract.md)를 따른다.
+target dataset의 layer는 `RAW`, `BRONZE`, `SILVER`를 지원하며 기본값은 `BRONZE`, 물리 포맷은 `JSONL`이다. target layer는 Catalog/target metadata이며 Kafka bridge의 transform/quality 실행 여부를 임의로 바꾸지 않는다. bridge는 Job에 저장된 지원 field transform과 quality action을 적용한 뒤 compiled output schema로 projection하므로 rename 전 source field와 `included: false` field는 target JSONL, Catalog schema, sample에 남지 않는다. `Fail Run`은 offset commit 전에 실행을 실패시키며, `Quarantine`은 snapshot directory의 `quarantine.jsonl`로 분리한다. malformed payload도 raw payload와 Kafka context를 보존해 quarantine한다. `GOLD` join/aggregation과 범용 SQL expression runtime은 이 전환 범위에 포함하지 않는다. 상세 계약은 [Kafka Snapshot Direct Target Contract](kafka-snapshot-direct-target-contract.md)를 따른다.
 
 ### Scheduled job tick
 
@@ -559,7 +564,7 @@ type CreateJobResponse = {
 
 Create/update/review request의 Rule source of truth는 `ruleContractVersion: "1.0"`과 `rules[]`다. Backend는 저장 전에 canonical Rule을 검증하고 `ruleCompilation.status`, 정확한 `issues[]`, 결정된 `outputSchema`를 반환하며 create/append/update에서 version과 Rule JSON을 그대로 영속화한다. `1.0 + []`는 source schema 그대로의 명시적 pass-through이고 legacy 필드를 되살리지 않는다. canonical 컬럼이 없는 기존 Job만 `transformSteps`, `transformOutputColumns`, `qualityRules`에서 Rule을 재구성하며, 이 호환 표현의 `canonicalParameters`는 `0`, `false`, 빈 문자열, `null`을 손실 없이 보존한다. `fail_batch`와 `quarantine`은 `failureDisposition: "keep"`만 허용하고, `warn`은 `keep`, `drop_row`, `set_null`을 사용할 수 있다. 버전 누락/불일치, 잘못된 kind·오류 정책·severity, 지원하지 않는 parameter는 각각 구조화된 `RULE_*` issue로 거절한다. Continuous는 Snapshot conformance를 통과한 stateless 공통 operation을 허용하고 임의 SQL/stateful operation만 `RULE_EXECUTION_MODE_UNSUPPORTED`로 거절한다.
 
-Schema Transform UI는 원본 `SchemaColumnDraft.sourceType`과 target `type`을 별도로 보존한다. 컬럼명, 타입, 기본값, NOT NULL 변경은 각각 `rename`, `cast`, `default_value`, `null_guard` Rule로 순서대로 직렬화한다. `POST /api/etl/rules/preview`는 이 canonical Rule을 다시 compile하고 bounded 공통 runtime에 적용하므로 브라우저 전용 변환 해석을 사용하지 않는다. Continuous도 streaming-safe Visual Transform과 Preview를 사용하며 임의 SQL은 노출하거나 실행하지 않는다.
+Schema Transform UI는 원본 `SchemaColumnDraft.sourceType`과 target `type`을 별도로 보존한다. 컬럼명, 타입, 기본값, NOT NULL 변경은 각각 `rename`, `cast`, `default_value`, `null_guard` Rule로 순서대로 직렬화한다. `POST /api/etl/rules/preview`는 canonical Rule을 다시 compile한 뒤 portable Rule은 bounded 공통 runtime, 일반 Snapshot SQL expression은 bounded Spark runtime에 적용하므로 브라우저 전용 변환 해석을 사용하지 않는다. Preview는 최대 100개 sample만 처리하며 target, Catalog, source progress를 변경하지 않는다. Continuous도 streaming-safe Visual Transform과 Preview를 사용하며 임의 SQL은 노출하거나 실행하지 않는다. Regex pattern, Accepted Values, Range bounds, mask policy, timestamp format은 compiler가 실행 전에 검증하며 V1 mask는 phone, timestamp는 ISO-8601(`UTC` legacy alias 포함)만 지원한다.
 
 필수 확인:
 
@@ -570,7 +575,7 @@ Schema Transform UI는 원본 `SchemaColumnDraft.sourceType`과 target `type`을
 - 생성 후 ETL 목록과 Catalog 목록에 같은 `job.id`와 `dataset.id` 기준 결과가 보여야 한다.
 - 같은 Job 또는 같은 `targetDataset`으로 생성/실행한 결과는 새 Catalog row를 늘리지 않고 기존 dataset의 `materializationRuns`에 append한다. Catalog 목록 row는 하나만 보이고, row 펼침에서 append history를 최대 5개씩 pagination으로 표시한다.
 - Target draft의 `storageType`, `partition`, `partitionColumns`, `indexColumns`, `compression`, `storagePath`, `targetDatabase`, `targetDescription`, `targetTags`는 `targetDataset`, `targetLayer`, `targetFormat`과 함께 create request에 전달된다. 다중 파티션 컬럼은 선택 순서를 유지한 `partitionColumns` 배열과 `/`로 연결한 하위 호환용 `partition` 문자열로 함께 전송한다. SQL 결과 처리 Job wizard도 같은 target metadata를 구성한 뒤 기존 create request로 변환한다.
-- 현재 Target 화면에서는 `targetLayer` 선택 버튼을 노출하지 않고 기존 draft/default layer 값을 사용한다.
+- Target 화면은 모든 Source에서 `targetLayer`를 명시적으로 선택한다. Kafka Snapshot은 `RAW/BRONZE/SILVER + JSONL`, Kafka Continuous는 Parquet 포맷만 노출하고 backend review/create/update도 같은 조합을 검증한다.
 - `rag` 필드는 호환을 위해 create request에 남아 있지만, 현재 Target 화면에서는 노출하지 않고 frontend 기본값은 `false`다.
 - Target 화면은 기본정보, 태그, 파티션 단위로 구성되며 태그/파티션 섹션은 접고 펼칠 수 있다.
 - Source/schema sample이 `data` JSON 단일 컬럼으로 들어오면 frontend가 JSON을 dot-path 컬럼으로 펼쳐 `schemaRules`와 preview를 만든다. 원본 JSON 보존용 `raw_data` 컬럼은 기본 미사용 optional 컬럼으로 제공한다.

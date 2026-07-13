@@ -6,6 +6,12 @@ import { CreateBucketCommand, HeadBucketCommand, PutObjectCommand, S3Client } fr
 import { closeMetadataStore, getDataset, saveDataset } from "../src/metadataStore.mjs";
 import { loadKafkaJs } from "../src/kafka-codecs.mjs";
 import { formatBytes, inferSchemaColumns, normalizeColumnName, parseSourceSample, schemaFingerprint } from "../src/profile.mjs";
+import {
+  buildKafkaTargetSchema,
+  getKafkaRecordValue,
+  projectKafkaTargetRecord,
+  standardKafkaReviewSchema,
+} from "../src/kafkaTargetProjection.mjs";
 import { canonicalRulesFromLegacy } from "../src/ruleCompiler.mjs";
 import { applySnapshotRules, supportsSnapshotRules } from "../src/snapshotRuleRuntime.mjs";
 
@@ -28,12 +34,14 @@ const targetDescription = stringOption("targetDescription", process.env.ASKLAKE_
 const transformSteps = objectArrayOption("transformSteps");
 const qualityRules = objectArrayOption("qualityRules");
 const suppliedRules = objectArrayOption("rules");
+const configuredSchemaColumns = objectArrayOption("schemaColumns");
+const configuredOutputSchema = tupleArrayOption("outputSchema");
 const canonicalRules = apiPayload.ruleContractVersion || suppliedRules.length > 0
   ? suppliedRules
   : canonicalRulesFromLegacy(
       transformSteps,
       qualityRules,
-      standardReviewSchema(),
+      standardKafkaReviewSchema(),
       transformSteps
         .filter((step) => step?.enabled !== false && step?.output)
         .map((step) => [String(step.output), "String"]),
@@ -119,14 +127,20 @@ async function ingestReviews() {
       ...consumed.invalidRecords.map((item) => ({ ...item, stage: "parse" })),
       ...processed.quarantined,
     ];
-    const jsonl = processed.records.map((record) => JSON.stringify(record)).join("\n");
-    const dataBody = processed.records.length > 0 ? `${jsonl}\n` : "";
+    const schemaColumns = buildKafkaTargetSchema({
+      outputSchema: configuredOutputSchema,
+      records: processed.records,
+      rules: canonicalRules,
+      schemaColumns: configuredSchemaColumns,
+    });
+    const projectedRecords = processed.records.map((record) => projectKafkaTargetRecord(record, schemaColumns));
+    const jsonl = projectedRecords.map((record) => JSON.stringify(record)).join("\n");
+    const dataBody = projectedRecords.length > 0 ? `${jsonl}\n` : "";
     const localLocation = writeLocalTarget(dataBody);
 
     const endedAt = new Date().toISOString();
     const parsedSample = parseSourceSample("reviews.raw.jsonl", jsonl, { maxRows: Math.min(consumed.records.length, 20) });
     const inferredSchemaColumns = inferSchemaColumns(parsedSample);
-    const schemaColumns = targetSchema(processed.records, canonicalRules);
     const metadata = {
       broker,
       consumedCount: consumed.records.length,
@@ -144,7 +158,7 @@ async function ingestReviews() {
       ruleContractVersion: "1.0",
       snapshot,
       inferredSchema: inferredSchemaColumns.map((column) => [column.targetName, column.type]),
-      sampleRows: processed.records.slice(0, 10).map((record) => reviewSampleRow(record, schemaColumns)),
+      sampleRows: projectedRecords.slice(0, 10).map((record) => reviewSampleRow(record, schemaColumns)),
       schema: schemaColumns.map((column) => [column.targetName, column.type]),
       schemaFingerprint: schemaFingerprint(schemaColumns),
       startedAt,
@@ -152,7 +166,7 @@ async function ingestReviews() {
       storageFormat: "jsonl",
       storageLocation: localLocation,
       storageSizeBytes: statSync(dataPath).size,
-      storedCount: processed.records.length,
+      storedCount: projectedRecords.length,
       targetBucket: s3Bucket,
       targetFormat,
       targetLayer,
@@ -605,65 +619,9 @@ function pipelineError(failedStage, message) {
   return error;
 }
 
-function getRecordValue(record, field) {
-  const pathParts = String(field || "").split(".").filter(Boolean);
-  if (pathParts.length === 0) return undefined;
-  if (Object.hasOwn(record, field)) return record[field];
-  let value = record;
-  for (const part of pathParts) {
-    if (!value || typeof value !== "object") return undefined;
-    value = value[part];
-  }
-  if (value !== undefined) return value;
-  if (record.raw && typeof record.raw === "object") {
-    const rawField = String(field).replace(/^raw[_.]/, "");
-    return record.raw[rawField] ?? record.raw[field];
-  }
-  return undefined;
-}
-
-function targetSchema(records, rules) {
-  const base = standardReviewSchema();
-  const known = new Set(base.map((column) => column.targetName));
-  for (const rule of rules) {
-    const output = rule?.kind === "transform" && rule?.enabled !== false ? rule.outputColumns?.[0] : "";
-    if (output && !known.has(output)) {
-      base.push({ nullable: true, sourceName: output, targetName: output, type: rule.outputType || "String" });
-      known.add(output);
-    }
-  }
-  for (const record of records) {
-    for (const [name, value] of Object.entries(record)) {
-      if (known.has(name)) continue;
-      base.push({ nullable: value === null || value === undefined, sourceName: name, targetName: name, type: inferRecordType(value) });
-      known.add(name);
-    }
-  }
-  return base;
-}
-
-function inferRecordType(value) {
-  if (typeof value === "boolean") return "Boolean";
-  if (typeof value === "number") return Number.isInteger(value) ? "Long" : "Double";
-  if (value && typeof value === "object") return "JSON";
-  return "String";
-}
-
-function standardReviewSchema() {
-  return [
-    { nullable: false, sourceName: "schema_version", targetName: "schema_version", type: "String" },
-    { nullable: false, role: "Identifier", sourceName: "event_id", targetName: "event_id", type: "String" },
-    { nullable: false, sourceName: "source", targetName: "source", type: "String" },
-    { nullable: false, sourceName: "offset", targetName: "offset", type: "Long" },
-    { nullable: false, sourceName: "review", targetName: "review", type: "String" },
-    { nullable: false, role: "Event Time", sourceName: "created_at", targetName: "created_at", type: "Timestamp" },
-    { nullable: false, sourceName: "raw", targetName: "raw", type: "JSON" },
-  ];
-}
-
-function reviewSampleRow(record, schema = standardReviewSchema()) {
+function reviewSampleRow(record, schema = standardKafkaReviewSchema()) {
   return schema.map((column) => {
-    const value = getRecordValue(record, column.targetName);
+    const value = getKafkaRecordValue(record, column.targetName);
     return value && typeof value === "object" ? JSON.stringify(value) : String(value ?? "");
   });
 }
@@ -718,4 +676,11 @@ function booleanOption(key, fallback) {
 function objectArrayOption(key) {
   const value = apiPayload[key];
   return Array.isArray(value) ? value.filter((item) => item && typeof item === "object") : [];
+}
+
+function tupleArrayOption(key) {
+  const value = apiPayload[key];
+  return Array.isArray(value)
+    ? value.filter((item) => Array.isArray(item) && item.length >= 2)
+    : [];
 }

@@ -512,9 +512,9 @@ const checks = [
     name: "Target layer is an explicit setting for every ETL source",
     file: "src/pages/etl/EtlPages.tsx",
     patterns: [
-      /const \[targetLayer, setTargetLayer\] = useState<TargetLayer>\(initialTarget\.targetLayer\);/,
+      /const \[targetLayer, setTargetLayer\] = useState<TargetLayer>\(initialTargetLayer\);/,
       /label="데이터 레이어"/,
-      /TARGET_LAYER_OPTIONS\.map\(\(layer\) => <SelectItem/,
+      /targetLayerOptions\.map\(\(layer\) => <SelectItem/,
       /targetLayer,/,
     ],
   },
@@ -954,8 +954,39 @@ const checks = [
       /label="시작 위치"/,
       /label="Trigger 간격"/,
       /label="Micro-batch 최대 메시지"/,
-      /const DEFAULT_KAFKA_BROKER = import\.meta\.env\.VITE_KAFKA_DEFAULT_BROKER/,
-      /import\.meta\.env\.DEV \? "127\.0\.0\.1:19092" : "redpanda:9092"/,
+      /getSourceConnectorDefaults\(\)/,
+      /\["Broker \/ Endpoint", defaultKafkaBroker\]/,
+    ],
+  },
+  {
+    name: "Schema required state stays separate from explicit quality and null-guard rules",
+    file: "src/components/etl/SchemaTransformEditor.jsx",
+    patterns: [
+      /property === "notNull" \? \{ nullGuardExplicit: Boolean\(value\) \}/,
+      /nullGuardExplicit: nextRequired \? Boolean\(existing\.nullGuardExplicit\) : false/,
+      /nullGuardExplicit: nextRequired \? hasNullGuard \|\| Boolean\(existing\.nullGuardExplicit\) : false/,
+    ],
+  },
+  {
+    name: "Schema rule summary counts only configured quality rules",
+    file: "src/services/schemaRuleSummary.ts",
+    patterns: [
+      /qualityRuleCount: enabledQualityRules\.length/,
+      /requiredColumnCount/,
+    ],
+    forbiddenPatterns: [
+      /enabledQualityRules\.length \+ requiredColumnCount/,
+    ],
+  },
+  {
+    name: "Kafka target controls expose only runtime-supported layer and format combinations",
+    file: "src/pages/etl/EtlPages.tsx",
+    patterns: [
+      /const KAFKA_SNAPSHOT_TARGET_LAYER_OPTIONS: TargetLayer\[\] = \["RAW", "BRONZE", "SILVER"\]/,
+      /const KAFKA_SNAPSHOT_TARGET_FORMAT_OPTIONS: TargetFileFormat\[\] = \["jsonl"\]/,
+      /const KAFKA_CONTINUOUS_TARGET_FORMAT_OPTIONS: TargetFileFormat\[\] = \["parquet"\]/,
+      /targetLayerOptions\.map/,
+      /targetFormatOptions\.map/,
     ],
   },
   {

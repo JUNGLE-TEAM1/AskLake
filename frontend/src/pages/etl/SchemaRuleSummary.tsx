@@ -1,6 +1,7 @@
 import { AlertTriangle, ShieldCheck, SlidersHorizontal } from "lucide-react";
 
 import { Panel, PanelHeader } from "../../components/ui/panel";
+import { summarizeSchemaRuleState } from "../../services/schemaRuleSummary";
 import type { QualityRuleDraft, SchemaColumnDraft, TransformStepDraft } from "../../types";
 
 type SchemaRuleSummaryProps = {
@@ -25,27 +26,14 @@ const FAILURE_ACTION_LABELS: Record<string, string> = {
 };
 
 export function SchemaRuleSummary({ columns, qualityRules, transformSteps }: SchemaRuleSummaryProps) {
-  const enabledSteps = transformSteps.filter((step) => step.enabled);
-  const transformRules = enabledSteps.filter((step) => step.operation !== "Null Guard");
-  const enabledQualityRules = qualityRules.filter((rule) => rule.enabled);
-  const explicitNotNullColumns = new Set(
-    enabledQualityRules
-      .filter((rule) => rule.validationType === "Not Null")
-      .map((rule) => rule.targetColumn),
-  );
-  const requiredColumns = columns.filter((column) => (
-    column.included !== false
-      && column.nullable === false
-      && !explicitNotNullColumns.has(column.targetName || column.sourceName)
-  ));
-  const qualityRuleCount = enabledQualityRules.length + requiredColumns.length;
-  const transformedColumns = new Set(
-    transformRules.map((step) => step.output || step.input).filter(Boolean),
-  );
-  const failureActions = [
-    ...enabledSteps.map((step) => step.onError),
-    ...enabledQualityRules.map((rule) => rule.failureAction),
-  ].filter(Boolean);
+  const {
+    enabledQualityRules,
+    failureActions,
+    qualityRuleCount,
+    requiredColumnCount,
+    transformedColumnCount,
+    transformRules,
+  } = summarizeSchemaRuleState(columns, qualityRules, transformSteps);
 
   return (
     <Panel className="schema-applied-rules mt-4" variant="plain">
@@ -57,13 +45,13 @@ export function SchemaRuleSummary({ columns, qualityRules, transformSteps }: Sch
       />
       <div className="grid grid-cols-1 px-5 py-4 md:grid-cols-3 md:px-6">
         <RuleSummaryItem
-          detail={transformRules.length > 0 ? `적용 컬럼 ${transformedColumns.size}개` : "설정된 변환 없음"}
+          detail={transformRules.length > 0 ? `적용 컬럼 ${transformedColumnCount}개` : "설정된 변환 없음"}
           icon={<SlidersHorizontal />}
           label="변환 규칙"
           value={`${transformRules.length}개 변환`}
         />
         <RuleSummaryItem
-          detail={summarizeQualityRules(requiredColumns.length, enabledQualityRules)}
+          detail={summarizeQualityRules(requiredColumnCount, enabledQualityRules)}
           icon={<ShieldCheck />}
           label="품질 규칙"
           value={`${qualityRuleCount}개 검사`}
@@ -106,15 +94,17 @@ function RuleSummaryItem({
 
 function summarizeQualityRules(requiredColumnCount: number, rules: QualityRuleDraft[]) {
   const counts = new Map<string, number>();
-  if (requiredColumnCount > 0) counts.set("필수", requiredColumnCount);
   rules.forEach((rule) => {
     const label = QUALITY_RULE_LABELS[rule.validationType];
     counts.set(label, (counts.get(label) ?? 0) + 1);
   });
-  if (counts.size === 0) return "필수 컬럼 및 품질 검사 없음";
-  return Array.from(counts.entries())
+  const qualitySummary = counts.size === 0
+    ? "품질 검사 없음"
+    : Array.from(counts.entries())
     .map(([label, count]) => `${label} ${count}`)
     .join(" · ");
+  const schemaSummary = requiredColumnCount > 0 ? `출력 필수 ${requiredColumnCount}개` : "출력 필수 없음";
+  return `${qualitySummary} · ${schemaSummary}`;
 }
 
 function summarizeFailureActions(actions: string[]) {

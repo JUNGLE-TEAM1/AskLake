@@ -199,9 +199,13 @@ function applyTransformRule(record, rule) {
     return castValue(value, outputType || "String");
   }
   if (operation === "mask") {
+    const policy = String(parameters.policy || "").trim().toLowerCase();
+    if (!["phone", "keep first 3 digits"].includes(policy)) throw ruleError("unsupported_mask_policy");
     return input === null || input === undefined ? null : maskPhoneNumber(String(input));
   }
   if (operation === "parse_timestamp") {
+    const format = String(parameters.format || "").trim().toUpperCase();
+    if (!["ISO-8601", "UTC"].includes(format)) throw ruleError("unsupported_timestamp_format");
     return castValue(input, "Timestamp");
   }
   if (operation === "cast" || operation === "copy" || operation === "rename") {
@@ -258,6 +262,9 @@ function qualityFailureReason(value, rule) {
   const parameters = object(rule.parameters);
   if (operation === "not_null") return isMissing(value) ? "missing_required_value" : "";
   if (operation === "range") {
+    const hasMinimum = parameters.min !== undefined && parameters.min !== null && parameters.min !== "";
+    const hasMaximum = parameters.max !== undefined && parameters.max !== null && parameters.max !== "";
+    if (!hasMinimum && !hasMaximum) return "range_bounds_missing";
     if (isMissing(value)) return "numeric_range_check_failed";
     const numeric = Number(String(value).trim());
     const minimum = parameters.min === undefined || parameters.min === null || parameters.min === ""
@@ -274,6 +281,7 @@ function qualityFailureReason(value, rule) {
     return valid ? "" : "numeric_range_check_failed";
   }
   if (operation === "regex") {
+    if (!String(parameters.pattern || "")) return "regex_pattern_missing";
     try {
       return new RegExp(String(parameters.pattern || "")).test(String(value ?? "")) ? "" : "regex_match_failed";
     } catch {
@@ -282,6 +290,7 @@ function qualityFailureReason(value, rule) {
   }
   if (operation === "accepted_values") {
     const values = Array.isArray(parameters.values) ? parameters.values.map(String) : [];
+    if (values.length === 0) return "accepted_values_missing";
     return values.includes(String(value ?? "")) ? "" : "value_not_accepted";
   }
   return "unsupported_quality_operation";
