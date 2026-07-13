@@ -176,13 +176,13 @@ def main():
         resolved_partition_columns = resolve_partition_columns(output_df, partition_columns)
         staging_path = spark_staging_path(output_path, run_id)
         delete_spark_path(spark, staging_path)
+        quarantine_staging_path = f"{staging_path}_quarantine"
         if quarantine_df is not None:
             quarantine_rows = quarantine_df.count()
             if quarantine_rows:
-                quarantine_path = f"{output_path.rstrip('/')}_quarantine"
-                quarantine_df.write.mode("overwrite").parquet(quarantine_path)
-                quality["quarantine"] = {"count": quarantine_rows, "path": quarantine_path}
-                quality["quarantineLocation"] = quarantine_path
+                quarantine_df.write.mode("overwrite").parquet(quarantine_staging_path)
+                quality["quarantine"] = {"count": quarantine_rows, "path": f"{output_path.rstrip('/')}_quarantine"}
+                quality["quarantineLocation"] = f"{output_path.rstrip('/')}_quarantine"
         writer = output_df.write.mode("overwrite")
         if resolved_partition_columns:
             writer = writer.partitionBy(*resolved_partition_columns)
@@ -246,7 +246,7 @@ def main():
             write_report(report_file, result)
             print(f"ASKLAKE_SPARK_JOB_RESULT={json.dumps(result, ensure_ascii=False, sort_keys=True)}")
             return 1
-        publish_spark_path(spark, staging_path, output_path)
+        publish_spark_paths(spark, staging_path, output_path, quarantine_staging_path)
         written_df = spark.read.parquet(output_path)
         output_rows = written_df.count()
         ended_at = now_iso()
@@ -334,28 +334,54 @@ def spark_staging_path(output_path, run_id):
 
 
 def delete_spark_path(spark, path_value):
-    if not hasattr(getattr(spark, "sparkContext", None), "_jvm"):
-        return
     path = spark.sparkContext._jvm.org.apache.hadoop.fs.Path(path_value)
     filesystem = path.getFileSystem(spark.sparkContext._jsc.hadoopConfiguration())
     if filesystem.exists(path) and not filesystem.delete(path, True):
         raise RuntimeError(f"Could not delete Spark path: {path_value}")
 
 
-def publish_spark_path(spark, staging_path, output_path):
-    if not hasattr(getattr(spark, "sparkContext", None), "_jvm"):
-        return
+def publish_spark_paths(spark, staging_path, output_path, quarantine_staging_path):
     jvm = spark.sparkContext._jvm
     hadoop = spark.sparkContext._jsc.hadoopConfiguration()
     staging = jvm.org.apache.hadoop.fs.Path(staging_path)
     target = jvm.org.apache.hadoop.fs.Path(output_path)
+    quarantine_staging = jvm.org.apache.hadoop.fs.Path(quarantine_staging_path)
+    quarantine_target = jvm.org.apache.hadoop.fs.Path(f"{output_path.rstrip('/')}_quarantine")
     filesystem = staging.getFileSystem(hadoop)
     if not filesystem.exists(staging):
         raise RuntimeError(f"Spark staging output is missing: {staging_path}")
-    if filesystem.exists(target) and not filesystem.delete(target, True):
-        raise RuntimeError(f"Could not replace Spark target path: {output_path}")
-    if not filesystem.rename(staging, target):
-        raise RuntimeError(f"Could not publish Spark staging output: {staging_path} -> {output_path}")
+    suffix = f".__previous__{re.sub(r'[^0-9A-Za-z_-]+', '_', str(os.environ.get('ASKLAKE_SPARK_RUN_ID') or 'run'))}"
+    target_backup = jvm.org.apache.hadoop.fs.Path(f"{output_path.rstrip('/')}{suffix}")
+    quarantine_backup = jvm.org.apache.hadoop.fs.Path(f"{output_path.rstrip('/')}_quarantine{suffix}")
+    moved_target = False
+    moved_quarantine = False
+    published_target = False
+    try:
+        for backup in (target_backup, quarantine_backup):
+            if filesystem.exists(backup) and not filesystem.delete(backup, True):
+                raise RuntimeError(f"Could not remove stale Spark backup: {backup}")
+        if filesystem.exists(target) and not filesystem.rename(target, target_backup):
+            raise RuntimeError(f"Could not stage previous Spark target: {output_path}")
+        moved_target = True
+        if filesystem.exists(quarantine_target) and not filesystem.rename(quarantine_target, quarantine_backup):
+            raise RuntimeError(f"Could not stage previous Spark quarantine: {quarantine_target}")
+        moved_quarantine = True
+        if not filesystem.rename(staging, target):
+            raise RuntimeError(f"Could not publish Spark staging output: {staging_path} -> {output_path}")
+        published_target = True
+        if filesystem.exists(quarantine_staging) and not filesystem.rename(quarantine_staging, quarantine_target):
+            raise RuntimeError(f"Could not publish Spark quarantine: {quarantine_staging} -> {quarantine_target}")
+        for backup in (target_backup, quarantine_backup):
+            if filesystem.exists(backup) and not filesystem.delete(backup, True):
+                raise RuntimeError(f"Could not remove published Spark backup: {backup}")
+    except Exception:
+        if published_target and filesystem.exists(target):
+            filesystem.delete(target, True)
+        if moved_target and filesystem.exists(target_backup):
+            filesystem.rename(target_backup, target)
+        if moved_quarantine and filesystem.exists(quarantine_backup):
+            filesystem.rename(quarantine_backup, quarantine_target)
+        raise
 
 
 def merge_rule_output_schema(schema_columns, rule_output_schema):

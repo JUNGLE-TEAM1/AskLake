@@ -229,6 +229,10 @@ class SparkSourceIdentityTests(unittest.TestCase):
             "ASKLAKE_SPARK_SOURCE_PATH": "s3a://m3-raw/incoming/",
         }
 
+        original_delete = spark_job_run.delete_spark_path
+        original_publish = spark_job_run.publish_spark_paths
+        spark_job_run.delete_spark_path = lambda _spark, _path: None
+        spark_job_run.publish_spark_paths = lambda _spark, _staging, _output, _quarantine: None
         with (
             patch.dict(os.environ, environment, clear=True),
             patch.object(spark_job_run, "load_spark_job_manifest", return_value={"sourceCollection": collection}),
@@ -257,6 +261,8 @@ class SparkSourceIdentityTests(unittest.TestCase):
             patch("builtins.print"),
         ):
             exit_code = spark_job_run.main()
+        spark_job_run.delete_spark_path = original_delete
+        spark_job_run.publish_spark_paths = original_publish
 
         self.assertEqual(exit_code, 1)
         self.assertEqual([call.kwargs["phase"] for call in verify.call_args_list], ["before_read", "after_read"])
