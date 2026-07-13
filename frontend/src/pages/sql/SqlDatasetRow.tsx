@@ -30,6 +30,7 @@ type SqlDatasetNode = ExplorerTreeNode & {
   columnName?: string;
   columnType?: string;
   dataset?: CatalogDataset;
+  firstColumn?: boolean;
   kind: "column" | "dataset" | "group";
   selected?: boolean;
 };
@@ -54,6 +55,7 @@ export function SqlDatasetTree({
             columnName: name,
             columnType: type,
             dataset,
+            firstColumn: index === 0,
             id: `${getDatasetNodeId(dataset.id)}:column:${name}:${index}`,
             kind: "column" as const,
             label: name,
@@ -91,23 +93,23 @@ export function SqlDatasetTree({
       <ExplorerTree<SqlDatasetNode>
         key={expandedDatasetId ?? "closed"}
         ariaLabel="분석 데이터셋 트리"
-        className="min-w-0"
+        className="sql-dataset-tree mt-2 h-[calc(100%-0.5rem)] min-w-0"
         data={treeData}
         defaultHeight={520}
         disableMultiSelection
         disableSelect
         getIcon={(node) => {
-          if (node.data.kind === "dataset") return <Table2 />;
+          if (node.data.kind === "dataset") return <Table2 className="text-blue-600" />;
           if (node.data.kind === "column") {
             const Icon = getColumnIcon(node.data.columnType ?? "");
-            return <Icon />;
+            return <Icon className={getColumnIconClassName(node.data.columnType ?? "")} />;
           }
-          if (node.id === SYSTEM_NODE_ID) return <Server />;
-          if (node.id === DATASETS_NODE_ID) return <Database />;
-          return <Table2 />;
+          if (node.id === SYSTEM_NODE_ID) return <Server className="text-blue-700" />;
+          if (node.id === DATASETS_NODE_ID) return <Database className="text-cyan-600" />;
+          return <Table2 className="text-indigo-600" />;
         }}
         getRowClassName={(node) => cn(
-          node.data.kind === "dataset" && "min-h-14",
+          node.data.firstColumn && "pt-2",
           node.data.selected && "border-blue-200 bg-blue-50 text-blue-700",
         )}
         getRowProps={(node) => ({
@@ -131,7 +133,12 @@ export function SqlDatasetTree({
         indent={12}
         minHeight={320}
         openByDefault={false}
-        rowHeight={(node) => node.data.kind === "dataset" ? 44 : 36}
+        rowHeight={(node) => {
+          if (node.data.kind === "dataset") return 48;
+          if (node.data.firstColumn) return 44;
+          if (node.data.kind === "group") return 40;
+          return 36;
+        }}
         toggleOnRowPress={false}
         onNodePress={(node) => {
           if (node.data.kind === "dataset" && node.data.dataset) onSelect(node.data.dataset);
@@ -212,6 +219,13 @@ function getColumnIcon(type: string) {
   if (kind === "number") return Hash;
   if (kind === "date") return Calendar;
   return Type;
+}
+
+function getColumnIconClassName(type: string) {
+  const kind = getColumnKind(type);
+  if (kind === "number") return "text-violet-600";
+  if (kind === "date") return "text-emerald-600";
+  return "text-sky-600";
 }
 
 function renderColumnIcon(type: string) {

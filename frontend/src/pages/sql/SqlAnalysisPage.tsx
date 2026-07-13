@@ -1649,8 +1649,8 @@ export function SqlAnalysisPage({
                   <FieldTitle>데이터셋</FieldTitle>
                   <div className="relative min-h-0 overflow-hidden">
                     <Panel asChild>
-                      <ScrollArea className="sql-dataset-scroll min-h-0" style={{ inset: 0, position: "absolute" }} type="always">
-                        <div className="grid min-w-0 gap-0 pr-3" ref={contextListRef}>
+                      <div className="absolute inset-0 min-h-0 overflow-hidden">
+                        <div className="h-full min-w-0 pr-1" ref={contextListRef}>
                           <SqlDatasetTree
                             datasets={paginatedContextDatasets}
                             expandedDatasetId={expandedDatasetId}
@@ -1667,7 +1667,7 @@ export function SqlAnalysisPage({
                             </Empty>
                           )}
                         </div>
-                      </ScrollArea>
+                      </div>
                     </Panel>
                   </div>
                   {filteredDatasets.length > contextPageSize && (
