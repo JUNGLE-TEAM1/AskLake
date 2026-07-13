@@ -85,7 +85,7 @@ Job A Phase 4의 체크리스트만 진행해줘.
 | 실제 AWS S3 객체 왕복 | `[x]` | Raw 121 bytes put/list/get/checksum/delete, Output readiness put/head/delete 성공 |
 | 실제 AWS S3 Spark 읽기 | `[x]` | Spark 4.0.1 + S3A가 Raw CSV 4컬럼·5행을 정확히 읽음 |
 | 배포 브랜치 안정화 | `[x]` | 최신 `origin/dev` 19커밋 통합·충돌 해결·병합 후 검증 통과, 원격 task branch push 완료 |
-| EC2·IAM Role | `[ ]` | 존재 여부와 설정 미확인 |
+| EC2·IAM Role | `[x]` | 기존 `asklake-prod` 재사용, Instance Role 최소 권한과 host·container S3 접근 검증 완료 |
 | AWS 배포 | `[ ]` | 미실행 |
 | 작은 파일 E2E | `[ ]` | 미실행 |
 | DuckDB SQL 분석 E2E | `[ ]` | 미실행 |
@@ -108,7 +108,7 @@ Job A Phase 4의 체크리스트만 진행해줘.
 | --- | --- | --- |
 | 0 | 배포 가능한 원격 브랜치 | 변경 범위·문서·테스트·commit/push 완료 |
 | 1 | 실제 AWS S3와 Spark의 직접 연결 증거 | 객체 왕복과 Spark S3A 읽기 성공 |
-| 2 | EC2·IAM·네트워크 기반 | Instance Role과 private S3 접근 성공 |
+| 2 | EC2·IAM·네트워크 기반 | Instance Role과 비공개 S3 버킷 접근 성공 |
 | 3 | 서버 bootstrap·env·secret 준비 | Compose가 요구하는 파일과 값 준비 |
 | 4 | Production Compose 배포 | 이미지 build, container 기동, 배포 script 성공 |
 | 5 | 서비스 health 증거 | 외부·내부 health와 DB 지속성 성공 |
@@ -219,17 +219,28 @@ AskLake 컨테이너들이 장기 access key 없이 S3를 사용할 수 있는 �
 
 ### 체크리스트
 
-- [ ] 기존 EC2 instance, VPC, subnet, Security Group, Elastic IP 상태를 읽기 전용으로 조사한다.
-- [ ] 기존 서버가 없다면 비용·용량·운영 시간을 확인한 뒤 EC2 생성 범위를 확정한다.
-- [ ] EC2용 IAM Role과 Instance Profile을 준비한다.
-- [ ] Raw에는 list/get, Output에는 list/get/put/delete/multipart 권한을 준다.
-- [ ] bucket ARN과 object ARN을 분리해 정책에 작성한다.
-- [ ] IAM Role을 EC2에 연결한다.
-- [ ] IMDSv2 token required와 hop limit 2를 적용한다.
-- [ ] EC2 host에서 caller identity와 Raw·Output 버킷 접근을 확인한다.
-- [ ] container에서도 동일 Role credential로 S3 readiness가 통과하는지 확인한다.
-- [ ] Security Group은 80·443과 제한된 관리용 SSH만 허용한다.
-- [ ] Postgres·Airflow·Spark port를 public ingress에 열지 않는다.
+- [x] 기존 EC2 instance, VPC, subnet, Security Group, Elastic IP 상태를 읽기 전용으로 조사한다.
+- [x] 기존 `t3.xlarge` 서버를 재사용해 이번 Phase에서 새 EC2와 추가 고정 비용 자원을 만들지 않는다.
+- [x] EC2용 IAM Role과 Instance Profile을 준비한다.
+- [x] Raw에는 list/get, Output에는 list/get/put/delete/multipart 권한을 준다.
+- [x] bucket ARN과 object ARN을 분리해 정책에 작성한다.
+- [x] IAM Role을 EC2에 연결한다.
+- [x] IMDSv2 token required와 hop limit 2를 적용한다.
+- [x] EC2 host에서 caller identity와 Raw·Output 버킷 접근을 확인한다.
+- [x] container에서도 동일 Role credential로 S3 readiness가 통과하는지 확인한다.
+- [x] Security Group은 80·443과 제한된 관리용 SSH만 허용한다.
+- [x] Postgres·Airflow·Spark port를 public ingress에 열지 않는다.
+
+### 2026-07-13 실행 메모
+
+- 기존 서울 리전 EC2 `i-0573d3ffce42e2eb6`(`asklake-prod`, `t3.xlarge`)와 Elastic IP, 기본 VPC의 public subnet을 재사용했다. 새 EC2, NAT Gateway, VPC endpoint는 만들지 않았다.
+- instance profile과 role은 기존 `AskLakeEC2SSMRole`을 재사용했다. 기존 SSM managed policy는 보존하고 inline policy `AskLakeS3DataPlaneAccess`만 추가했다.
+- `AskLakeS3DataPlaneAccess`는 Raw bucket의 `ListBucket`·`GetBucketLocation`과 Raw object의 `GetObject`만 허용한다. Output에는 같은 bucket 조회 권한과 object `GetObject`·`PutObject`·`DeleteObject`·multipart 정리 권한만 허용한다. Warehouse와 Query Result bucket, `s3:*`, `Resource: "*"`는 포함하지 않았다.
+- IAM simulation에서 Raw `GetObject`와 Output `PutObject`는 `allowed`, Raw `PutObject`와 Warehouse `ListBucket`은 `implicitDeny`였다. EC2 container의 실제 Raw put도 `AccessDenied`로 실패했다.
+- host와 기본 Docker bridge container 모두 AWS key 환경 변수나 credential mount 없이 Instance Role `AskLakeEC2SSMRole`을 인식했다. 85-byte Raw fixture의 SHA-256을 확인하고 Output put/head/delete를 완료했다.
+- Security Group은 80·443 public ingress와 단일 `/32` 관리용 SSH만 허용한다. Postgres·Airflow·Spark port는 열려 있지 않다. IMDSv2 token은 required, hop limit은 2다.
+- `/opt/asklake`에는 팀원이 소유한 것으로 보이는 미커밋 변경이 있어 pull·checkout·clean·배포를 실행하지 않았다. Phase 2는 SSM과 격리된 일회성 container로만 검증했다.
+- S3 bucket은 Public Access Block이 적용된 비공개 bucket이다. 이번 Phase는 기존 Internet Gateway 경로와 TLS S3 endpoint를 사용했으며 VPC endpoint 추가는 필수 조건으로 두지 않았다.
 
 ### 완료 기준
 
@@ -504,6 +515,8 @@ Phase 완료 시 아래 표에 한 줄을 추가한다.
 | 2026-07-13 | Phase 0 remote checkpoint | `codex/aws-s3-storage-mode` / `25ba2b1b` | 검증된 merge tree | GitHub 원격 branch push 성공 | 원격 branch가 최신 `origin/dev`와 S3 provider merge commit을 포함 | 다음 단계는 실제 AWS S3 객체·Spark 직접 검증 |
 | 2026-07-13 | Phase 1 S3 round-trip | `codex/aws-s3-storage-mode` / `02b479a3` | `__asklake_phase1/02b479a3/phase1-smoke.csv`, 121 bytes, data 5 rows | Raw put/list/get/checksum/delete와 Output readiness 성공 | SHA-256 `83bbb2037ede1f7ed313d19f21abc6bc1b31d6691bb5004253632cac5c055ddd`; Raw·Output test prefix 최종 empty | 없음 |
 | 2026-07-13 | Phase 1 Spark S3A | Spark 4.0.1 / hadoop-aws 3.4.1 | 실제 Raw `s3a://` CSV, STS 1-hour session | schema 4컬럼과 5행을 정확히 읽음 | `event_id:int`, `user_id:string`, `event_type:string`, `amount:int`; row 5개 | EC2 IAM Role은 Phase 2에서 별도 검증 |
+| 2026-07-13 | Phase 2 EC2·IAM baseline | `codex/aws-s3-storage-mode` / `a203ebf6` | 기존 `asklake-prod`, `AskLakeEC2SSMRole`, Raw·Output 2개 bucket | 최소 권한 inline policy 적용, IAM simulation과 network guardrail 통과 | baseline Raw list는 AccessDenied; policy 적용 후 host SSM `bd972ccc-a2af-406c-96e6-8e6590563cac` 성공 | VPC endpoint는 후속 보안 강화 선택 사항 |
+| 2026-07-13 | Phase 2 host·container S3 | EC2 `i-0573d3ffce42e2eb6` | Raw 85 bytes, SHA-256 `5d0c7b5343402efb45113a96fb14551b953e2c589977cfbfd44869f4913e6e72` | host와 Docker bridge가 Role로 Raw read·Output write/delete 성공, Raw write 거부 | container SSM `3d69dfce-5fc9-42ab-8559-2e4fd860fab9`; cleanup SSM `2646da72-cc2c-4e6f-9d56-d6cd8ef2fa75`; Raw·Output `__asklake_phase2/` 최종 empty | 서버 repo dirty 상태 보존, 실제 배포는 Phase 3 이후 |
 
 E2E Run은 아래 형식으로 추가 기록한다.
 
