@@ -1,13 +1,12 @@
 import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
 
 import duckdb
 
 from app.core.errors import ApiError
 from app.schemas.catalog import CatalogDatasetResponse, DatasetMaterializationRun
-from app.services.catalog_service import CatalogService, dataset_for_latest_successful_materialization
+from app.services.catalog_service import dataset_for_latest_successful_materialization
 from app.services.dataset_rows_service import read_dataset_rows
 
 
@@ -113,32 +112,6 @@ class CatalogDatasetRowsTest(unittest.TestCase):
 
         self.assertEqual(selected.source_run_id, "run-success")
         self.assertEqual(selected.storage_location, str(self.parquet_path))
-
-    def test_sql_materialization_restores_the_full_stored_result(self) -> None:
-        stored_rows = [[str(index)] for index in range(10_000)]
-        payload = {
-            "columns": ["id"],
-            "datasetId": "catalog_rows_fixture",
-            "datasetName": "catalog_rows_fixture",
-            "executedAt": "2026-07-13T00:00:00Z",
-            "query": "SELECT id FROM catalog_rows_fixture",
-            "resultRows": stored_rows,
-            "rowCount": 10_000,
-            "rows": stored_rows[:100],
-            "runId": "sql-materialization-fixture",
-        }
-        service = CatalogService(
-            lake_storage=SimpleNamespace(),
-            repository=SimpleNamespace(),
-            sql_repository=SimpleNamespace(get_run_payload=lambda _: payload),
-        )
-
-        result = service.get_sql_result("sql-materialization-fixture")
-
-        self.assertEqual(result.row_count, 10_000)
-        self.assertEqual(len(result.rows), 10_000)
-        self.assertEqual(result.rows[-1], ["9999"])
-
 
 if __name__ == "__main__":
     unittest.main()

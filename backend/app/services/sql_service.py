@@ -1,8 +1,9 @@
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
+from hashlib import sha256
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -21,23 +22,15 @@ from app.repositories.catalog_repository import CatalogRepository
 from app.repositories.sql_repository import SqlRepository
 from app.schemas.catalog import CatalogDatasetResponse
 from app.schemas.common import ErrorCode
-from app.schemas.sql import (
-    DEFAULT_QUERY_PAGE_LIMIT,
-    MAX_QUERY_PAGE_LIMIT,
-    QueryRunRequest,
-    QueryRunResponse,
-)
+from app.schemas.sql import QueryRunRequest, QueryRunResponse
 from app.services.governance_enforcement import require_governed_access
-from app.services.lake_storage_service import default_storage_root
 from app.services.resource_permission_service import dataset_with_persisted_permission_grants
 
-DEFAULT_PREVIEW_LIMIT = DEFAULT_QUERY_PAGE_LIMIT
+DEFAULT_PREVIEW_LIMIT = 100
 DEFAULT_REMOTE_PREVIEW_MAX_BYTES = 512 * 1024 * 1024
-STORED_RESULT_ROWS_KEY = "resultRows"
-RESULT_STORAGE_FORMAT_KEY = "resultStorageFormat"
-RESULT_STORAGE_LOCATION_KEY = "resultStorageLocation"
-SQL_RESULT_STORAGE_FORMAT = "parquet"
 REMOTE_STORAGE_SCHEMES = {"s3", "s3a"}
+SUPPORTED_SQL_STORAGE_FORMATS = {"csv", "json", "jsonl", "parquet"}
+SQL_MATERIALIZATION_RUNS_ATTR = "_sql_materialization_runs"
 MUTATION_KEYWORDS = (
     "insert",
     "update",
@@ -102,6 +95,17 @@ class RemotePreviewBudget:
         self.used_bytes = next_used_bytes
 
 
+@dataclass(frozen=True)
+class RemoteStorageDownloadPlan:
+    bucket: str
+    client: Any
+    dataset_id: str
+    objects: tuple[tuple[str, int], ...]
+    prefix: str
+    storage_format: str
+    storage_location: str
+
+
 class SqlService:
     def __init__(
         self,
@@ -129,33 +133,50 @@ class SqlService:
         ]
         context_datasets = [base_dataset, *reference_datasets]
         for dataset in context_datasets:
-            self.require_dataset_query_access(
-                dataset,
+            require_governed_access(
+                self.repository.db,
                 actor_context,
+                action="query",
                 api_path="/api/query/runs",
                 http_method="POST",
-                query=query,
+                metadata={"owner": dataset.owner, "query": query[:500]},
+                resource_id=dataset.id,
+                resource_name=dataset.name,
+                resource_type="dataset",
             )
+            try:
+                require_permission(
+                    actor_context,
+                    "query",
+                    owner=dataset.owner,
+                    grants=dataset.permission_grants,
+                    resource_label="dataset",
+                )
+            except ApiError as exc:
+                safe_record_audit_event(
+                    self.repository.db,
+                    action="dataset.query.forbidden",
+                    actor=actor_context,
+                    api_path="/api/query/runs",
+                    http_method="POST",
+                    metadata={"owner": dataset.owner, "query": query[:500]},
+                    result="forbidden",
+                    status_code=exc.status_code,
+                    target_id=dataset.id,
+                    target_name=dataset.name,
+                    target_type="dataset",
+                )
+                raise
         referenced_datasets = resolve_referenced_datasets(
             mask_sql_comments_and_literals(statement),
             context_datasets,
         )
         result_dataset = resolve_result_dataset(base_dataset, referenced_datasets)
-        page_limit = request.limit or DEFAULT_PREVIEW_LIMIT
-        run_id = f"sql_{uuid4().hex[:12]}"
-        result_path = query_result_storage_path(run_id)
-        query_result = execute_duckdb_query_to_artifact(
+        preview_limit = request.limit or DEFAULT_PREVIEW_LIMIT
+        query_result = execute_duckdb_preview(
             statement,
             context_datasets=context_datasets,
-            page_limit=page_limit,
-            result_path=result_path,
-        )
-
-        first_page_rows = query_result["rows"]
-        page_metadata = query_page_metadata(
-            total_rows=query_result["row_count"],
-            returned_rows=len(first_page_rows),
-            offset=0,
+            preview_limit=preview_limit,
         )
 
         response = QueryRunResponse(
@@ -165,35 +186,24 @@ class SqlService:
             dataset_name=result_dataset.name,
             executed_at=current_utc_timestamp(),
             mode=request.mode,
-            page_limit=page_limit,
-            page_offset=0,
-            preview_limit=page_limit,
+            preview_limit=preview_limit,
             query=query,
             reference_dataset_ids=reference_dataset_ids,
             row_count=query_result["row_count"],
-            rows=first_page_rows,
-            run_id=run_id,
+            rows=query_result["rows"],
+            run_id=f"sql_{uuid4().hex[:12]}",
             validation_key=request.validation_key,
-            **page_metadata,
         )
 
-        stored_payload = response.model_dump(by_alias=True, exclude_none=True, mode="json")
-        stored_payload[RESULT_STORAGE_FORMAT_KEY] = SQL_RESULT_STORAGE_FORMAT
-        stored_payload[RESULT_STORAGE_LOCATION_KEY] = str(result_path)
-        try:
-            self.repository.save_run_payload(stored_payload)
-        except Exception:
-            result_path.unlink(missing_ok=True)
-            raise
+        self.repository.save_run_payload(
+            response.model_dump(by_alias=True, exclude_none=True, mode="json")
+        )
         return response
 
     def get_query_run(
         self,
         run_id: str,
-        *,
-        actor: ActorContext | None = None,
-        limit: int = DEFAULT_QUERY_PAGE_LIMIT,
-        offset: int = 0,
+        actor: ActorContext,
     ) -> QueryRunResponse:
         payload = self.repository.get_run_payload(run_id)
         if payload is None:
@@ -203,48 +213,25 @@ class SqlService:
                 status.HTTP_404_NOT_FOUND,
                 {"runId": run_id},
             )
-
-        actor_context = actor or ActorContext()
-        query = str(payload.get("query") or "")
+        response = QueryRunResponse.model_validate(payload)
         dataset_ids = unique_dataset_ids([
-            str(payload.get("datasetId") or ""),
-            str(payload.get("baseDatasetId") or ""),
-            *[str(value) for value in payload.get("referenceDatasetIds") or []],
+            response.dataset_id,
+            response.base_dataset_id or "",
+            *response.reference_dataset_ids,
         ])
         for dataset_id in dataset_ids:
             dataset = self.get_catalog_dataset(dataset_id)
-            self.require_dataset_query_access(
-                dataset,
-                actor_context,
+            require_governed_access(
+                self.catalog_repository.db,
+                actor,
+                action="query",
                 api_path=f"/api/query/runs/{run_id}",
                 http_method="GET",
-                query=query,
+                metadata={"owner": dataset.owner},
+                resource_id=dataset.id,
+                resource_name=dataset.name,
+                resource_type="dataset",
             )
-
-        return query_run_response_from_payload(payload, limit=limit, offset=offset)
-
-    def require_dataset_query_access(
-        self,
-        dataset: CatalogDatasetResponse,
-        actor: ActorContext,
-        *,
-        api_path: str,
-        http_method: str,
-        query: str,
-    ) -> None:
-        metadata = {"owner": dataset.owner, "query": query[:500]}
-        require_governed_access(
-            self.repository.db,
-            actor,
-            action="query",
-            api_path=api_path,
-            http_method=http_method,
-            metadata=metadata,
-            resource_id=dataset.id,
-            resource_name=dataset.name,
-            resource_type="dataset",
-        )
-        try:
             require_permission(
                 actor,
                 "query",
@@ -252,21 +239,7 @@ class SqlService:
                 grants=dataset.permission_grants,
                 resource_label="dataset",
             )
-        except ApiError as exc:
-            safe_record_audit_event(
-                self.repository.db,
-                action="dataset.query.forbidden",
-                actor=actor,
-                api_path=api_path,
-                http_method=http_method,
-                metadata=metadata,
-                result="forbidden",
-                status_code=exc.status_code,
-                target_id=dataset.id,
-                target_name=dataset.name,
-                target_type="dataset",
-            )
-            raise
+        return response
 
     def get_catalog_dataset(
         self,
@@ -282,142 +255,12 @@ class SqlService:
                 status.HTTP_404_NOT_FOUND,
                 {"datasetId": dataset_id},
             )
-        return dataset_with_persisted_permission_grants(
+        dataset = dataset_with_persisted_permission_grants(
             self.catalog_repository.db,
             CatalogDatasetResponse.model_validate(payload),
         )
-
-
-def query_page_metadata(
-    *,
-    total_rows: int,
-    returned_rows: int,
-    offset: int,
-) -> dict[str, int | bool]:
-    range_start = offset + 1 if returned_rows else 0
-    range_end = offset + returned_rows if returned_rows else 0
-    return {
-        "has_next": range_end < total_rows,
-        "range_end": range_end,
-        "range_start": range_start,
-        "returned_rows": returned_rows,
-    }
-
-
-def query_run_response_from_payload(
-    payload: dict[str, Any],
-    *,
-    limit: int,
-    offset: int,
-) -> QueryRunResponse:
-    page_limit = min(max(int(limit), 1), MAX_QUERY_PAGE_LIMIT)
-    page_offset = max(int(offset), 0)
-    page_rows, total_rows = stored_query_run_page(
-        payload,
-        limit=page_limit,
-        offset=page_offset,
-    )
-    page_metadata = query_page_metadata(
-        total_rows=total_rows,
-        returned_rows=len(page_rows),
-        offset=page_offset,
-    )
-
-    response_payload = query_run_public_payload(payload)
-    response_payload.update({
-        "pageLimit": page_limit,
-        "pageOffset": page_offset,
-        "rowCount": total_rows,
-        "rows": page_rows,
-        **{
-            "hasNext": page_metadata["has_next"],
-            "rangeEnd": page_metadata["range_end"],
-            "rangeStart": page_metadata["range_start"],
-            "returnedRows": page_metadata["returned_rows"],
-        },
-    })
-    return QueryRunResponse.model_validate(response_payload)
-
-
-def full_query_run_response_from_payload(payload: dict[str, Any]) -> QueryRunResponse:
-    """Restore the complete persisted SQL snapshot for internal materialization."""
-    result_path = stored_query_result_path(payload)
-    stored_rows = stored_query_run_rows(payload)
-    total_rows = (
-        stored_query_run_row_count(payload, result_path=result_path)
-        if result_path is not None
-        else len(stored_rows)
-    )
-    response_payload = query_run_public_payload(payload)
-    response_payload.update({
-        "hasNext": False,
-        "pageLimit": total_rows or DEFAULT_QUERY_PAGE_LIMIT,
-        "pageOffset": 0,
-        "rangeEnd": total_rows,
-        "rangeStart": 1 if total_rows else 0,
-        "returnedRows": total_rows,
-        "rowCount": total_rows,
-        "rows": stored_rows,
-    })
-    return QueryRunResponse.model_validate(response_payload)
-
-
-def stored_query_run_rows(payload: dict[str, Any]) -> list[list[str]]:
-    result_path = stored_query_result_path(payload)
-    if result_path is not None:
-        return read_query_result_artifact(result_path)
-
-    stored_rows_value = payload.get(STORED_RESULT_ROWS_KEY)
-    if not isinstance(stored_rows_value, list):
-        # Runs created before pagination only persisted their original preview page.
-        stored_rows_value = payload.get("rows") or []
-    return [
-        [str(cell) for cell in row]
-        for row in stored_rows_value
-        if isinstance(row, list)
-    ]
-
-
-def stored_query_run_page(
-    payload: dict[str, Any],
-    *,
-    limit: int,
-    offset: int,
-) -> tuple[list[list[str]], int]:
-    result_path = stored_query_result_path(payload)
-    if result_path is not None:
-        return (
-            read_query_result_artifact(result_path, limit=limit, offset=offset),
-            stored_query_run_row_count(payload, result_path=result_path),
-        )
-
-    stored_rows = stored_query_run_rows(payload)
-    return stored_rows[offset:offset + limit], len(stored_rows)
-
-
-def stored_query_run_row_count(
-    payload: dict[str, Any],
-    *,
-    fallback: int | None = None,
-    result_path: Path | None = None,
-) -> int:
-    raw_row_count = payload.get("rowCount")
-    if isinstance(raw_row_count, int) and raw_row_count >= 0:
-        return raw_row_count
-    if result_path is not None:
-        return count_query_result_artifact_rows(result_path)
-    return max(fallback or 0, 0)
-
-
-def query_run_public_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    response_payload = dict(payload)
-    response_payload.pop(STORED_RESULT_ROWS_KEY, None)
-    response_payload.pop(RESULT_STORAGE_FORMAT_KEY, None)
-    response_payload.pop(RESULT_STORAGE_LOCATION_KEY, None)
-    # Old capped-run metadata is accepted on read but is no longer part of the API.
-    response_payload.pop("resultLimit", None)
-    response_payload.pop("resultTruncated", None)
-    return response_payload
+        attach_sql_materialization_runs(dataset, payload)
+        return dataset
 
 
 def validate_read_only_query(query: str) -> str:
@@ -539,135 +382,6 @@ def resolve_result_dataset(
     return base_dataset
 
 
-def query_result_storage_path(run_id: str) -> Path:
-    return default_storage_root() / "sql-runs" / f"{safe_cache_directory_name(run_id)}.parquet"
-
-
-def execute_duckdb_query_to_artifact(
-    statement: str,
-    *,
-    context_datasets: list[CatalogDatasetResponse],
-    page_limit: int,
-    result_path: Path,
-) -> dict[str, Any]:
-    """Execute the full read-only query once and persist its complete snapshot."""
-    connection = duckdb.connect(database=":memory:")
-    result_path.parent.mkdir(parents=True, exist_ok=True)
-    result_path.unlink(missing_ok=True)
-    try:
-        with TemporaryDirectory(prefix="asklake-sql-preview-") as remote_cache_dir:
-            remote_budget = RemotePreviewBudget(remote_preview_max_bytes())
-            for dataset in unique_datasets_by_id(context_datasets):
-                register_duckdb_dataset(
-                    connection,
-                    dataset,
-                    remote_cache_root=Path(remote_cache_dir),
-                    remote_budget=remote_budget,
-                )
-
-            connection.execute(
-                f"COPY ({statement}) TO {quote_duckdb_string_literal(str(result_path))} "
-                "(FORMAT PARQUET)"
-            )
-            row_count = count_query_result_artifact_rows(result_path, connection=connection)
-            page_cursor = connection.execute(
-                f"SELECT * FROM read_parquet({quote_duckdb_string_literal(str(result_path))}) "
-                "LIMIT ? OFFSET 0",
-                [page_limit],
-            )
-            raw_rows = page_cursor.fetchall()
-            columns = [str(description[0]) for description in (page_cursor.description or [])]
-            return {
-                "columns": columns,
-                "row_count": row_count,
-                "rows": [
-                    [format_sql_cell(cell) for cell in row]
-                    for row in raw_rows
-                ],
-            }
-    except ApiError:
-        result_path.unlink(missing_ok=True)
-        raise
-    except (duckdb.Error, OSError) as error:
-        result_path.unlink(missing_ok=True)
-        raise ApiError(
-            ErrorCode.SQL_SYNTAX_ERROR,
-            "DuckDB SQL execution failed",
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-            {"message": str(error)},
-        ) from error
-    finally:
-        connection.close()
-
-
-def stored_query_result_path(payload: dict[str, Any]) -> Path | None:
-    raw_location = payload.get(RESULT_STORAGE_LOCATION_KEY)
-    if not raw_location:
-        return None
-    storage_format = str(payload.get(RESULT_STORAGE_FORMAT_KEY) or "").lower()
-    if storage_format != SQL_RESULT_STORAGE_FORMAT:
-        raise sql_storage_error(
-            "Stored SQL result format is not supported",
-            {"storageFormat": storage_format},
-        )
-    result_path = Path(str(raw_location))
-    if not result_path.is_file():
-        raise sql_storage_error(
-            "Stored SQL result snapshot is unavailable",
-            {"storageLocation": str(result_path)},
-        )
-    return result_path
-
-
-def read_query_result_artifact(
-    result_path: Path,
-    *,
-    limit: int | None = None,
-    offset: int = 0,
-) -> list[list[str]]:
-    connection = duckdb.connect(database=":memory:")
-    try:
-        query = f"SELECT * FROM read_parquet({quote_duckdb_string_literal(str(result_path))})"
-        parameters: list[int] = []
-        if limit is not None:
-            query += " LIMIT ? OFFSET ?"
-            parameters = [limit, offset]
-        cursor = connection.execute(query, parameters)
-        return [
-            [format_sql_cell(cell) for cell in row]
-            for row in cursor.fetchall()
-        ]
-    except (duckdb.Error, OSError) as error:
-        raise sql_storage_error(
-            "Stored SQL result snapshot could not be read",
-            {"storageLocation": str(result_path), "reason": str(error)[:500]},
-        ) from error
-    finally:
-        connection.close()
-
-
-def count_query_result_artifact_rows(
-    result_path: Path,
-    *,
-    connection: duckdb.DuckDBPyConnection | None = None,
-) -> int:
-    owned_connection = connection is None
-    active_connection = connection or duckdb.connect(database=":memory:")
-    try:
-        row = active_connection.execute(
-            f"SELECT COUNT(*) FROM read_parquet({quote_duckdb_string_literal(str(result_path))})"
-        ).fetchone()
-        return int(row[0] if row else 0)
-    except (duckdb.Error, OSError) as error:
-        raise sql_storage_error(
-            "Stored SQL result snapshot could not be counted",
-            {"storageLocation": str(result_path), "reason": str(error)[:500]},
-        ) from error
-    finally:
-        if owned_connection:
-            active_connection.close()
-
-
 def execute_duckdb_preview(
     statement: str,
     *,
@@ -688,12 +402,10 @@ def execute_duckdb_preview(
 
             cursor = connection.execute(
                 f"SELECT * FROM ({statement}) AS asklake_query_result LIMIT ?",
-                [preview_limit + 1],
+                [preview_limit],
             )
             raw_rows = cursor.fetchall()
             columns = [str(description[0]) for description in (cursor.description or [])]
-            result_truncated = len(raw_rows) > preview_limit
-            raw_rows = raw_rows[:preview_limit]
             rows = [
                 [format_sql_cell(cell) for cell in row]
                 for row in raw_rows
@@ -701,7 +413,6 @@ def execute_duckdb_preview(
             return {
                 "columns": columns,
                 "row_count": len(rows),
-                "result_truncated": result_truncated,
                 "rows": rows,
             }
     except duckdb.Error as error:
@@ -731,7 +442,14 @@ def register_duckdb_dataset(
         remote_budget=remote_budget,
     )
     if not registered:
-        register_duckdb_sample_rows(connection, dataset, table_name)
+        raise sql_storage_error(
+            "Dataset physical storage is unavailable; SQL Preview will not use sample rows",
+            {
+                "datasetId": dataset_identifier(dataset, fallback=table_name),
+                "storageLocation": object_field(dataset, "storage_location", "storageLocation"),
+                "storageFormat": object_field(dataset, "storage_format", "storageFormat"),
+            },
+        )
 
     if dataset.id != dataset.name:
         connection.execute(
@@ -747,57 +465,301 @@ def register_duckdb_storage_location(
     remote_cache_root: Path | None = None,
     remote_budget: RemotePreviewBudget | None = None,
 ) -> bool:
-    storage_location = dataset.storage_location
-    if not storage_location:
-        return False
-
-    storage_format = str(dataset.storage_format or "").lower()
-    if is_remote_storage_location(storage_location):
-        if storage_format != "parquet":
-            return False
-        if remote_cache_root is None or remote_budget is None:
-            raise sql_storage_error(
-                "Remote SQL Preview cache is not configured",
-                {"datasetId": dataset.id},
-            )
-        parquet_path = download_remote_parquet_dataset(
-            storage_location,
-            dataset_id=dataset.id,
-            cache_root=remote_cache_root,
-            budget=remote_budget,
-        )
-        connection.execute(
-            f"CREATE TEMP VIEW {quote_duckdb_identifier(table_name)} AS "
-            f"SELECT * FROM read_parquet({quote_duckdb_string_literal(parquet_path)}, "
-            "union_by_name = true, hive_partitioning = true)"
-        )
-        return True
-
-    storage_path = Path(storage_location)
-    if not storage_path.exists():
-        return False
-
+    storage_segments: list[tuple[str, str]] = []
+    dataset_id = dataset_identifier(dataset, fallback=table_name)
     try:
-        if storage_format == "jsonl" and storage_path.is_file():
-            records = read_jsonl_records(storage_path)
-            if not records:
-                return False
-            register_duckdb_records(connection, table_name, records)
-            return True
+        storage_segments = dataset_storage_segments(dataset)
+        if not storage_segments:
+            return False
 
-        if storage_format == "parquet":
-            parquet_path = parquet_scan_path(storage_path)
-            if not parquet_path:
-                return False
-            connection.execute(
-                f"CREATE TEMP VIEW {quote_duckdb_identifier(table_name)} AS "
-                f"SELECT * FROM read_parquet({quote_duckdb_string_literal(parquet_path)})"
+        unsupported_segments = [
+            {"storageFormat": storage_format or None, "storageLocation": storage_location}
+            for storage_location, storage_format in storage_segments
+            if storage_format not in SUPPORTED_SQL_STORAGE_FORMATS
+        ]
+        if unsupported_segments:
+            raise sql_storage_error(
+                "Dataset storage format is not supported for SQL Preview",
+                {
+                    "datasetId": dataset_id,
+                    "segments": unsupported_segments,
+                },
             )
-            return True
-    except (OSError, duckdb.Error, json.JSONDecodeError):
-        return False
 
-    return False
+        scan_segments: list[tuple[str, str] | None] = [None] * len(storage_segments)
+        remote_plans: list[tuple[int, RemoteStorageDownloadPlan]] = []
+        for index, (storage_location, storage_format) in enumerate(storage_segments):
+            if is_remote_storage_location(storage_location):
+                if remote_cache_root is None or remote_budget is None:
+                    raise sql_storage_error(
+                        "Remote SQL Preview cache is not configured",
+                        {"datasetId": dataset_id},
+                    )
+                remote_plans.append(
+                    (
+                        index,
+                        plan_remote_storage_dataset(
+                            storage_location,
+                            dataset_id=dataset_id,
+                            storage_format=storage_format,
+                        ),
+                    )
+                )
+                continue
+
+            storage_path = Path(storage_location)
+            if not storage_path.exists():
+                raise FileNotFoundError(f"Storage location does not exist: {storage_location}")
+            scan_path = (
+                parquet_scan_path(storage_path)
+                if storage_format == "parquet"
+                else delimited_scan_path(storage_path, storage_format)
+            )
+            if not scan_path:
+                raise FileNotFoundError(
+                    f"{storage_format.upper()} storage does not contain readable files: {storage_location}"
+                )
+            scan_segments[index] = (scan_path, storage_format)
+
+        if remote_budget is not None:
+            for _, plan in remote_plans:
+                remote_budget.reserve(
+                    sum(size_bytes for _, size_bytes in plan.objects),
+                    bucket=plan.bucket,
+                    prefix=plan.prefix,
+                )
+        if remote_cache_root is not None:
+            for index, plan in remote_plans:
+                scan_segments[index] = (
+                    download_remote_storage_plan(plan, cache_root=remote_cache_root),
+                    plan.storage_format,
+                )
+
+        resolved_scan_segments = [segment for segment in scan_segments if segment is not None]
+        if len(resolved_scan_segments) != len(storage_segments):
+            raise ValueError("Not all active storage segments were prepared")
+        register_duckdb_scan_segments_view(connection, table_name, resolved_scan_segments)
+        return True
+    except ApiError:
+        raise
+    except (OSError, ValueError, duckdb.Error, json.JSONDecodeError) as error:
+        raise sql_storage_error(
+            "Dataset physical storage could not be read for SQL Preview",
+            {
+                "datasetId": dataset_id,
+                "storageFormats": sorted({storage_format for _, storage_format in storage_segments}),
+                "storageLocations": [storage_location for storage_location, _ in storage_segments],
+                "reason": str(error)[:500],
+            },
+        ) from error
+
+
+def register_duckdb_scan_view(
+    connection: duckdb.DuckDBPyConnection,
+    table_name: str,
+    scan_path: str,
+    storage_format: str,
+) -> None:
+    register_duckdb_scan_segments_view(
+        connection,
+        table_name,
+        [(scan_path, storage_format)],
+    )
+
+
+def register_duckdb_scan_segments_view(
+    connection: duckdb.DuckDBPyConnection,
+    table_name: str,
+    scan_segments: list[tuple[str, str]],
+) -> None:
+    table = quote_duckdb_identifier(table_name)
+    sources = [
+        duckdb_scan_source(scan_path, storage_format)
+        for scan_path, storage_format in scan_segments
+    ]
+    union_sql = " UNION ALL BY NAME ".join(f"SELECT * FROM {source}" for source in sources)
+    connection.execute(f"CREATE TEMP VIEW {table} AS {union_sql}")
+
+
+def duckdb_scan_source(scan_path: str, storage_format: str) -> str:
+    path = quote_duckdb_string_literal(scan_path)
+    if storage_format == "parquet":
+        return f"read_parquet({path}, union_by_name = true, hive_partitioning = true)"
+    if storage_format == "csv":
+        return f"read_csv_auto({path}, header = true, union_by_name = true, hive_partitioning = true)"
+    if storage_format in {"json", "jsonl"}:
+        return f"read_json_auto({path}, union_by_name = true, hive_partitioning = true)"
+    raise ValueError(f"Unsupported storage format: {storage_format or '-'}")
+
+
+def attach_sql_materialization_runs(
+    dataset: CatalogDatasetResponse,
+    payload: Mapping[str, Any],
+) -> None:
+    raw_runs = payload.get("materializationRuns")
+    if raw_runs is None:
+        raw_runs = payload.get("materialization_runs")
+    if isinstance(raw_runs, list):
+        object.__setattr__(dataset, SQL_MATERIALIZATION_RUNS_ATTR, list(raw_runs))
+
+
+def dataset_storage_segments(dataset: CatalogDatasetResponse) -> list[tuple[str, str]]:
+    fallback_format = normalize_storage_format(
+        object_field(dataset, "storage_format", "storageFormat")
+    )
+    materialization_runs = dataset_materialization_runs(dataset)
+    if not materialization_runs:
+        fallback_location = normalize_storage_location(
+            object_field(dataset, "storage_location", "storageLocation")
+        )
+        return [(fallback_location, fallback_format)] if fallback_location else []
+
+    active_runs = active_dataset_materialization_runs(dataset)
+    if not active_runs:
+        raise sql_storage_error(
+            "Dataset materialization history has no successful active segments",
+            {
+                "datasetId": dataset_identifier(dataset),
+                "runStatuses": [
+                    str(object_field(run, "status") or "")
+                    for run in materialization_runs
+                ],
+            },
+        )
+
+    newest_segments: list[tuple[str, str]] = []
+    seen_locations: dict[str, str] = {}
+    missing_run_ids: list[str] = []
+    for run in active_runs:
+        location = normalize_storage_location(run.get("storageLocation"))
+        if not location:
+            missing_run_ids.append(str(run.get("runId") or "unknown"))
+            continue
+        storage_format = normalize_storage_format(run.get("storageFormat") or fallback_format)
+        location_key = canonical_storage_location(location)
+        previous_format = seen_locations.get(location_key)
+        if previous_format is not None:
+            if previous_format != storage_format:
+                raise sql_storage_error(
+                    "Duplicate dataset storage location has conflicting formats",
+                    {
+                        "datasetId": dataset_identifier(dataset),
+                        "storageFormats": sorted({previous_format, storage_format}),
+                        "storageLocation": location,
+                    },
+                )
+            continue
+        seen_locations[location_key] = storage_format
+        newest_segments.append((location, storage_format))
+
+    if missing_run_ids:
+        raise sql_storage_error(
+            "Active dataset materialization segment has no storage location",
+            {
+                "datasetId": dataset_identifier(dataset),
+                "runIds": missing_run_ids,
+            },
+        )
+    if not newest_segments:
+        raise sql_storage_error(
+            "Dataset materialization history has no readable active segments",
+            {"datasetId": dataset_identifier(dataset)},
+        )
+
+    return list(reversed(newest_segments))
+
+
+def active_dataset_materialization_runs(
+    dataset: CatalogDatasetResponse,
+) -> list[dict[str, Any]]:
+    active_runs: list[dict[str, Any]] = []
+    for raw_run in dataset_materialization_runs(dataset):
+        run = normalize_materialization_run(raw_run)
+        if str(run.get("status") or "").strip().casefold() != "success":
+            continue
+        active_runs.append(run)
+        if materialization_mode(run) == "snapshot":
+            break
+    return active_runs
+
+
+def dataset_materialization_runs(dataset: CatalogDatasetResponse) -> list[Any]:
+    attached_runs = getattr(dataset, SQL_MATERIALIZATION_RUNS_ATTR, None)
+    if isinstance(attached_runs, (list, tuple)):
+        return list(attached_runs)
+
+    candidates = [
+        object_field(dataset, "materialization_runs"),
+        object_field(dataset, "materializationRuns"),
+    ]
+    for candidate in candidates:
+        if isinstance(candidate, (list, tuple)) and candidate:
+            return list(candidate)
+    for candidate in candidates:
+        if isinstance(candidate, (list, tuple)):
+            return list(candidate)
+    return []
+
+
+def normalize_materialization_run(run: Any) -> dict[str, Any]:
+    return {
+        "materializationMode": object_field(
+            run,
+            "materializationMode",
+            "materialization_mode",
+        ),
+        "runId": object_field(run, "runId", "run_id"),
+        "sourceKind": object_field(run, "sourceKind", "source_kind"),
+        "status": object_field(run, "status"),
+        "storageFormat": object_field(run, "storageFormat", "storage_format"),
+        "storageLocation": object_field(run, "storageLocation", "storage_location"),
+    }
+
+
+def materialization_mode(run: Mapping[str, Any]) -> str:
+    raw_mode = run.get("materializationMode") or run.get("materialization_mode")
+    mode = str(raw_mode or "").strip().casefold()
+    if mode:
+        return mode if mode in {"snapshot", "delta"} else "snapshot"
+
+    source_kind = str(
+        run.get("sourceKind")
+        or run.get("source_kind")
+        or ""
+    ).strip().casefold()
+    return "delta" if source_kind == "kafka" else "snapshot"
+
+
+def object_field(value: Any, *names: str) -> Any:
+    for name in names:
+        if isinstance(value, Mapping):
+            field_value = value.get(name)
+        else:
+            field_value = getattr(value, name, None)
+        if field_value is not None:
+            return field_value
+    return None
+
+
+def dataset_identifier(dataset: CatalogDatasetResponse, *, fallback: str = "dataset") -> str:
+    return str(object_field(dataset, "id") or fallback)
+
+
+def normalize_storage_format(value: Any) -> str:
+    return str(value or "").strip().casefold()
+
+
+def normalize_storage_location(value: Any) -> str:
+    location = str(value or "").strip()
+    return "" if location.casefold() in {"", "-", "pending"} else location
+
+
+def canonical_storage_location(storage_location: str) -> str:
+    if is_remote_storage_location(storage_location):
+        parsed = urlparse(storage_location)
+        prefix = re.sub(r"/+", "/", parsed.path).rstrip("/")
+        return f"s3://{parsed.netloc.casefold()}{prefix}"
+    return os.path.normcase(str(Path(storage_location).expanduser().resolve(strict=False)))
 
 
 def is_remote_storage_location(storage_location: str) -> bool:
@@ -822,6 +784,43 @@ def download_remote_parquet_dataset(
     cache_root: Path,
     budget: RemotePreviewBudget,
 ) -> str:
+    return download_remote_storage_dataset(
+        storage_location,
+        dataset_id=dataset_id,
+        storage_format="parquet",
+        cache_root=cache_root,
+        budget=budget,
+    )
+
+
+def download_remote_storage_dataset(
+    storage_location: str,
+    *,
+    dataset_id: str,
+    storage_format: str,
+    cache_root: Path,
+    budget: RemotePreviewBudget,
+) -> str:
+    plan = plan_remote_storage_dataset(
+        storage_location,
+        dataset_id=dataset_id,
+        storage_format=storage_format,
+    )
+    budget.reserve(
+        sum(size_bytes for _, size_bytes in plan.objects),
+        bucket=plan.bucket,
+        prefix=plan.prefix,
+    )
+    return download_remote_storage_plan(plan, cache_root=cache_root)
+
+
+def plan_remote_storage_dataset(
+    storage_location: str,
+    *,
+    dataset_id: str,
+    storage_format: str,
+) -> RemoteStorageDownloadPlan:
+    format_label = storage_format_label(storage_format)
     parsed = urlparse(storage_location)
     bucket = parsed.netloc.strip()
     prefix = parsed.path.lstrip("/").rstrip("/")
@@ -834,30 +833,12 @@ def download_remote_parquet_dataset(
 
     try:
         client = build_sql_preview_s3_client()
-        parquet_objects = list_remote_parquet_objects(client, bucket, prefix)
-        if not parquet_objects:
-            raise sql_storage_error(
-                "Remote dataset does not contain Parquet objects",
-                {"datasetId": dataset_id, "bucket": bucket, "prefix": prefix},
-            )
-
-        budget.reserve(
-            sum(size_bytes for _, size_bytes in parquet_objects),
-            bucket=bucket,
-            prefix=prefix,
-        )
-        dataset_cache_dir = cache_root / safe_cache_directory_name(dataset_id)
-        dataset_cache_dir.mkdir(parents=True, exist_ok=True)
-        for object_key, _ in parquet_objects:
-            destination = remote_object_cache_path(dataset_cache_dir, object_key, prefix)
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            client.download_file(bucket, object_key, str(destination))
-        return str(dataset_cache_dir / "**" / "*.parquet")
+        storage_objects = list_remote_storage_objects(client, bucket, prefix, storage_format)
     except ApiError:
         raise
     except Exception as exc:
         raise sql_storage_error(
-            "Remote Parquet dataset could not be loaded for SQL Preview",
+            f"Remote {format_label} dataset could not be loaded for SQL Preview",
             {
                 "datasetId": dataset_id,
                 "bucket": bucket,
@@ -866,9 +847,82 @@ def download_remote_parquet_dataset(
             },
         ) from exc
 
+    if not storage_objects:
+        raise sql_storage_error(
+            f"Remote dataset does not contain {format_label} objects",
+            {
+                "datasetId": dataset_id,
+                "bucket": bucket,
+                "prefix": prefix,
+                "storageFormat": storage_format,
+            },
+        )
+    return RemoteStorageDownloadPlan(
+        bucket=bucket,
+        client=client,
+        dataset_id=dataset_id,
+        objects=tuple(storage_objects),
+        prefix=prefix,
+        storage_format=storage_format,
+        storage_location=storage_location,
+    )
+
+
+def download_remote_storage_plan(
+    plan: RemoteStorageDownloadPlan,
+    *,
+    cache_root: Path,
+) -> str:
+    format_label = storage_format_label(plan.storage_format)
+    segment_cache_dir = (
+        cache_root
+        / safe_cache_directory_name(plan.dataset_id)
+        / remote_segment_cache_directory_name(plan.storage_location)
+    )
+    try:
+        segment_cache_dir.mkdir(parents=True, exist_ok=True)
+        for object_key, _ in plan.objects:
+            destination = remote_object_cache_path(
+                segment_cache_dir,
+                object_key,
+                plan.prefix,
+            )
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            plan.client.download_file(plan.bucket, object_key, str(destination))
+        return str(segment_cache_dir / "**" / f"*.{plan.storage_format}")
+    except Exception as exc:
+        raise sql_storage_error(
+            f"Remote {format_label} dataset could not be loaded for SQL Preview",
+            {
+                "datasetId": plan.dataset_id,
+                "bucket": plan.bucket,
+                "prefix": plan.prefix,
+                "reason": str(exc)[:500],
+            },
+        ) from exc
+
+
+def storage_format_label(storage_format: str) -> str:
+    return {
+        "csv": "CSV",
+        "json": "JSON",
+        "jsonl": "JSONL",
+        "parquet": "Parquet",
+    }.get(storage_format, storage_format.upper())
+
 
 def list_remote_parquet_objects(client: Any, bucket: str, prefix: str) -> list[tuple[str, int]]:
+    return list_remote_storage_objects(client, bucket, prefix, "parquet")
+
+
+def list_remote_storage_objects(
+    client: Any,
+    bucket: str,
+    prefix: str,
+    storage_format: str,
+) -> list[tuple[str, int]]:
     objects: list[tuple[str, int]] = []
+    suffix = f".{storage_format.lower()}"
     continuation_token: str | None = None
     while True:
         request: dict[str, Any] = {"Bucket": bucket, "Prefix": prefix}
@@ -878,7 +932,7 @@ def list_remote_parquet_objects(client: Any, bucket: str, prefix: str) -> list[t
         for item in response.get("Contents") or []:
             object_key = str(item.get("Key") or "")
             size_bytes = max(int(item.get("Size") or 0), 0)
-            if object_key.lower().endswith(".parquet") and size_bytes > 0:
+            if object_key.lower().endswith(suffix) and size_bytes > 0:
                 objects.append((object_key, size_bytes))
         if not response.get("IsTruncated"):
             break
@@ -940,6 +994,10 @@ def safe_cache_directory_name(dataset_id: str) -> str:
     return normalized or "dataset"
 
 
+def remote_segment_cache_directory_name(storage_location: str) -> str:
+    return sha256(storage_location.encode("utf-8")).hexdigest()[:16]
+
+
 def remote_object_cache_path(cache_dir: Path, object_key: str, prefix: str) -> Path:
     relative_key = object_key[len(prefix):].lstrip("/") if object_key.startswith(prefix) else ""
     safe_parts = [
@@ -958,45 +1016,6 @@ def sql_storage_error(message: str, details: dict[str, Any] | None = None) -> Ap
         message,
         status.HTTP_502_BAD_GATEWAY,
         details,
-    )
-
-
-def register_duckdb_sample_rows(
-    connection: duckdb.DuckDBPyConnection,
-    dataset: CatalogDatasetResponse,
-    table_name: str,
-) -> None:
-    columns = dataset_columns(dataset)
-    if not columns:
-        max_width = max((len(row) for row in dataset.sample_rows), default=0)
-        columns = [(f"column_{index + 1}", "string") for index in range(max_width)]
-
-    column_defs = ", ".join(
-        f"{quote_duckdb_identifier(column_name)} {duckdb_column_type(column_type)}"
-        for column_name, column_type in columns
-    )
-    if not column_defs:
-        column_defs = "empty_row VARCHAR"
-        columns = [("empty_row", "string")]
-
-    connection.execute(
-        f"CREATE TEMP TABLE {quote_duckdb_identifier(table_name)} ({column_defs})"
-    )
-
-    if not dataset.sample_rows:
-        return
-
-    placeholders = ", ".join("?" for _ in columns)
-    rows = [
-        [
-            coerce_duckdb_cell(row[index] if index < len(row) else None, column_type)
-            for index, (_, column_type) in enumerate(columns)
-        ]
-        for row in dataset.sample_rows
-    ]
-    connection.executemany(
-        f"INSERT INTO {quote_duckdb_identifier(table_name)} VALUES ({placeholders})",
-        rows,
     )
 
 
@@ -1133,6 +1152,15 @@ def parquet_scan_path(storage_path: Path) -> str:
         parquet_files = list(storage_path.rglob("*.parquet"))
         if parquet_files:
             return str(storage_path / "**" / "*.parquet")
+    return ""
+
+
+def delimited_scan_path(storage_path: Path, storage_format: str) -> str:
+    suffix = f".{storage_format.lower()}"
+    if storage_path.is_file() and storage_path.suffix.lower() == suffix:
+        return str(storage_path)
+    if storage_path.is_dir() and any(storage_path.rglob(f"*{suffix}")):
+        return str(storage_path / "**" / f"*{suffix}")
     return ""
 
 

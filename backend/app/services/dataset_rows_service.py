@@ -8,7 +8,6 @@ from app.services.sql_service import (
     RemotePreviewBudget,
     format_sql_cell,
     quote_duckdb_identifier,
-    register_duckdb_sample_rows,
     register_duckdb_storage_location,
     remote_preview_max_bytes,
     sql_storage_error,
@@ -34,15 +33,13 @@ def read_dataset_rows(
                 remote_budget=RemotePreviewBudget(remote_preview_max_bytes()),
             )
             if not registered:
-                if dataset.storage_location:
-                    raise sql_storage_error(
-                        "Catalog dataset materialization is unavailable",
-                        {
-                            "datasetId": dataset.id,
-                            "storageLocation": dataset.storage_location,
-                        },
-                    )
-                register_duckdb_sample_rows(connection, dataset, dataset.name)
+                raise sql_storage_error(
+                    "Catalog dataset materialization is unavailable",
+                    {
+                        "datasetId": dataset.id,
+                        "storageLocation": dataset.storage_location,
+                    },
+                )
             table_name = quote_duckdb_identifier(dataset.name)
             row_count = int(
                 connection.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]

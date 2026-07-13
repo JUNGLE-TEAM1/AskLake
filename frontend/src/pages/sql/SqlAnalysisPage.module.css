@@ -90,7 +90,6 @@
 .editorSurface {
   display: grid;
   grid-template-columns: 42px minmax(0, 1fr);
-  height: clamp(276px, 36vh, 480px);
   min-height: 276px;
   overflow: hidden;
   border: 1px solid #cbd5e1;
@@ -99,9 +98,7 @@
 }
 
 .editorSurface pre {
-  box-sizing: border-box;
-  height: 100%;
-  min-height: 0;
+  min-height: 276px;
   overflow: hidden;
   border-right: 1px solid rgb(148 163 184 / 22%);
   margin: 0;
@@ -115,15 +112,11 @@
 }
 
 .editorSurface textarea {
-  display: block;
-  box-sizing: border-box;
-  height: 100%;
   width: 100%;
   min-width: 0;
-  min-height: 0;
-  max-height: none;
-  resize: none;
-  overflow: auto;
+  min-height: 276px;
+  max-height: 560px;
+  resize: vertical;
   border: 0;
   outline: 0;
   background: #0f172a;
@@ -136,10 +129,7 @@
 
 .editorInputWrap {
   position: relative;
-  height: 100%;
   min-width: 0;
-  min-height: 0;
-  overflow: hidden;
 }
 
 .autocompletePopover {
@@ -196,57 +186,6 @@
 
 .resultToolbar > :last-child {
   margin-left: auto;
-}
-
-.resultRange {
-  color: #64748b;
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-.resultDialogBody {
-  display: grid;
-  min-width: 0;
-  min-height: 0;
-  grid-template-rows: max-content minmax(0, 1fr);
-  overflow: hidden;
-}
-
-.resultDialogControls {
-  border-bottom: 1px solid #e2e8f0;
-}
-
-.resultPagination {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 16px;
-  color: #64748b;
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-}
-
-.resultPaginationActions {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-.resultPageError {
-  margin: 0 16px 10px;
-  border: 1px solid #fecaca;
-  border-radius: 8px;
-  background: #fef2f2;
-  color: #b91c1c;
-  font-size: 12px;
-  font-weight: 700;
-  padding: 10px 12px;
 }
 
 .resultScroll,
@@ -319,11 +258,6 @@
 
   .resultToolbar > :last-child {
     margin-left: 0;
-  }
-
-  .resultPagination {
-    align-items: flex-start;
-    flex-direction: column;
   }
 
   .resultScroll {

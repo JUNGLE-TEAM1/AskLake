@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from fastapi import status
 
 from app.core.auth_context import ActorContext, require_any_permission, require_permission
+from app.core.config import settings
 from app.core.errors import ApiError
 from app.core.permission_metadata import permission_grants_from_roles, resource_permissions
 from app.repositories.catalog_repository import CatalogRepository, dataset_model_to_payload
@@ -34,7 +35,6 @@ from app.services.resource_permission_service import (
     datasets_with_persisted_permission_grants,
     permissions_for_actor_with_governance,
 )
-from app.services.sql_service import full_query_run_response_from_payload
 
 
 class CatalogService:
@@ -360,7 +360,14 @@ class CatalogService:
                 status.HTTP_404_NOT_FOUND,
                 {"sourceRunId": run_id},
             )
-        return full_query_run_response_from_payload(payload)
+        if payload.get("engine") == "trino":
+            raise ApiError(
+                ErrorCode.CONFLICT,
+                "Trino query runs require Iceberg materialization and cannot use the legacy derived dataset path",
+                status.HTTP_409_CONFLICT,
+                {"sourceRunId": run_id},
+            )
+        return QueryRunResponse.model_validate(payload)
 
 
 def validate_derived_dataset_request(
@@ -514,8 +521,15 @@ def with_dataset_permissions(dataset: CatalogDatasetResponse, actor: ActorContex
         if db is not None
         else None
     )
+    if (
+        permissions is not None
+        and settings.trino_enabled
+        and (dataset.query_engine_status != "available" or dataset.query_engine_table is None)
+    ):
+        permissions = permissions.model_copy(update={"can_query": False})
     return dataset.model_copy(update={
         "permissions": permissions,
+        "query_engine_required": settings.trino_enabled,
     })
 
 

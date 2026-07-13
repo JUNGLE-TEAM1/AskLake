@@ -1,21 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
-import type { CatalogDataset } from "../../../types";
-import { getDatasets } from "../../../services/mockApi";
 import type { DashboardDatasetOption } from "./dashboardRuntimeTypes";
+import { getDashboardCatalogDatasets } from "./dashboardCatalogApi";
 import {
   catalogDatasetToDashboardOption,
   isUsableDashboardDataset,
-  mergeDashboardDatasets,
 } from "./dashboardDatasetAdapters";
 
-export function useDashboardDatasets(fallbackCatalogDatasets: CatalogDataset[] = []) {
-  const fallbackDatasets = useMemo(
-    () => fallbackCatalogDatasets
-      .filter(isUsableDashboardDataset)
-      .map(catalogDatasetToDashboardOption),
-    [fallbackCatalogDatasets],
-  );
-  const [datasets, setDatasets] = useState<DashboardDatasetOption[]>(fallbackDatasets);
+export function useDashboardDatasets() {
+  const [datasets, setDatasets] = useState<DashboardDatasetOption[]>([]);
   const [error, setError] = useState<Error | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -24,22 +16,17 @@ export function useDashboardDatasets(fallbackCatalogDatasets: CatalogDataset[] =
 
     setIsLoading(true);
     setError(null);
-    if (fallbackDatasets.length) setDatasets(fallbackDatasets);
-    void getDatasets()
+    void getDashboardCatalogDatasets()
       .then((catalogDatasets) => {
         if (ignore) return;
-        const liveDatasets = catalogDatasets
+        setDatasets(
+          catalogDatasets
             .filter(isUsableDashboardDataset)
-          .map(catalogDatasetToDashboardOption);
-        setDatasets(mergeDashboardDatasets(liveDatasets, fallbackDatasets));
+            .map(catalogDatasetToDashboardOption),
+        );
       })
       .catch((unknownError) => {
         if (ignore) return;
-        if (fallbackDatasets.length) {
-          setError(null);
-          setDatasets(fallbackDatasets);
-          return;
-        }
         setError(unknownError instanceof Error ? unknownError : new Error("Dataset request failed."));
         setDatasets([]);
       })
@@ -50,7 +37,7 @@ export function useDashboardDatasets(fallbackCatalogDatasets: CatalogDataset[] =
     return () => {
       ignore = true;
     };
-  }, [fallbackDatasets]);
+  }, []);
 
   return useMemo(
     () => ({

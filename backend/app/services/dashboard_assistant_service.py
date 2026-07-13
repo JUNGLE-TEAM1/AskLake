@@ -4,6 +4,7 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from app.core.auth_context import ActorContext
 from app.core.config import Settings
 from app.repositories.catalog_repository import CatalogRepository
 from app.repositories.dashboard_runtime_repository import DashboardRuntimeRepository
@@ -43,11 +44,16 @@ class DashboardAssistantService:
         self.catalog_repository = catalog_repository
         self.settings = settings
 
-    def generate_response(self, request: DashboardAssistantRequest) -> DashboardAssistantResponse:
+    def generate_response(
+        self,
+        request: DashboardAssistantRequest,
+        actor: ActorContext,
+    ) -> DashboardAssistantResponse:
         context = build_assistant_context(
             request,
             self.runtime_repository,
             self.catalog_repository,
+            actor=actor,
             max_sample_rows=self.settings.openai_assistant_max_sample_rows,
         )
 
@@ -132,13 +138,11 @@ class DashboardAssistantService:
         context: AssistantDashboardContext,
         warning: str,
     ) -> DashboardAssistantResponse:
-        response = (
-            _build_visualization_mock_fallback(request, context)
-            if request.mode == DashboardAssistantMode.VISUALIZATION_REQUEST
-            else _build_dashboard_question_mock_fallback(request, context)
+        return DashboardAssistantResponse(
+            message="AI Assistant를 사용할 수 없어 요청을 실행하지 않았습니다.",
+            actions=[],
+            warnings=[*context.warnings, warning],
         )
-        response.warnings = [*context.warnings, warning, *response.warnings]
-        return response
 
     @staticmethod
     def _with_context_warnings(

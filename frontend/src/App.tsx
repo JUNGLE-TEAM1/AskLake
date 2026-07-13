@@ -255,6 +255,8 @@ export function App() {
     jobsLoading,
     jobs,
     createSqlDatasetJob,
+    createTrinoSqlJob,
+    refreshCatalogDatasets,
     runsByJobId,
     selectedDataset,
     selectedJob,
@@ -265,7 +267,7 @@ export function App() {
     setSqlResultDraft,
     sqlResultDraft,
     updateDraftPipeline,
-  } = useAskLakeData({ enabled: Boolean(currentUser), onFlowChange: changeFlowFromData, showToast, writeAuditLog });
+  } = useAskLakeData({ currentUser, enabled: Boolean(currentUser), onFlowChange: changeFlowFromData, showToast, writeAuditLog });
   const canAccessAdmin = currentUser?.role?.toLowerCase() === "admin";
   const activeNavId = useMemo<NavId | null>(() => {
     if (activeFlow === "catalog" || activeFlow === "catalogDetail") return "catalog";
@@ -595,9 +597,9 @@ export function App() {
           {activeFlow === "target" && <TargetPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("permission")} onNext={() => moveToFlow("review")} onSave={() => saveDraft("target")} />}
           {activeFlow === "permission" && <PermissionPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow(continuousKafkaDraft ? "schema" : lastScheduleFlow)} onNext={() => moveToFlow("target")} onSave={() => saveDraft("permission")} />}
           {activeFlow === "review" && <ReviewPage createPending={apiPending} draft={draftPipeline} onEdit={moveToFlow} onSave={() => saveDraft("review")} onCreate={createPipeline} />}
-          {activeFlow === "catalog" && <CatalogPage datasets={datasets} error={dataError} loading={dataLoading} selectedDataset={selectedDataset} onAction={writeAuditLog} onOpenSql={openDatasetInSqlWithSelection} />}
-          {activeFlow === "catalogDetail" && <CatalogDetailPage dataset={selectedDataset} onAction={writeAuditLog} onBack={() => moveToFlow("catalog")} onLineage={() => writeAuditLog("catalog.lineage.opened", `/api/catalog/datasets/${selectedDataset.id}/lineage`, selectedDataset.id)} onOpenSql={() => openDatasetInSqlWithSelection(selectedDataset)} />}
-          {activeFlow === "sql" && <SqlAnalysisPage cachedResult={sqlResultDraft} createPending={apiPending} dataset={sqlInitialDataset} datasets={datasets} onAction={writeAuditLog} onCreateDatasetJob={createSqlDatasetJob} onResultChange={setSqlResultDraft} />}
+          {activeFlow === "catalog" && <CatalogPage currentUser={currentUser} datasets={datasets} error={dataError} loading={dataLoading} selectedDataset={selectedDataset} onAction={writeAuditLog} onOpenSql={openDatasetInSqlWithSelection} />}
+          {activeFlow === "catalogDetail" && <CatalogDetailPage currentUser={currentUser} dataset={selectedDataset} onAction={writeAuditLog} onBack={() => moveToFlow("catalog")} onLineage={() => writeAuditLog("catalog.lineage.opened", `/api/catalog/datasets/${selectedDataset.id}/lineage`, selectedDataset.id)} onOpenSql={() => openDatasetInSqlWithSelection(selectedDataset)} />}
+          {activeFlow === "sql" && <SqlAnalysisPage currentUser={currentUser} cachedResult={sqlResultDraft} createPending={apiPending} dataset={sqlInitialDataset} datasets={datasets} onAction={writeAuditLog} onCreateDatasetJob={createSqlDatasetJob} onCreateTrinoSqlJob={createTrinoSqlJob} onNotify={showToast} onResultChange={setSqlResultDraft} />}
           {activeFlow === "dashboard" && <DashboardPage dataset={selectedDataset} datasets={datasets} entry={dashboardEntry} sqlResult={sqlResultDraft} onAction={writeAuditLog} onRuntimeNavigate={navigateDashboardRuntime} />}
           {activeFlow === "ai" && <AiChatPage datasets={datasets} onAction={writeAuditLog} />}
           {activeFlow === "profile" && <ProfilePage onAction={writeAuditLog} />}

@@ -1,6 +1,12 @@
 import { apiClient, apiConfig } from "./apiClient";
 import type { DraftPipelinePatch, RecordParsingDraft, RecordParsingPreviewResponse, SchemaColumnDraft, SourceDraft } from "../types";
 
+const directBackendBaseUrl = String(
+  import.meta.env.VITE_BACKEND_DIRECT_URL
+    || import.meta.env.VITE_API_BASE_URL
+    || "http://127.0.0.1:8080",
+).replace(/\/$/, "");
+
 type SourceFieldRows = Array<[string, string]>;
 
 export type SourceConnectorAnalysis = {
@@ -104,7 +110,19 @@ function resolveMockConnectorAnalysis(sourceType: string, fields: SourceFieldRow
 }
 
 function mockSourceAssets(sourceType: string, prefix: string): Array<[string, string, string]> {
-  const basePath = prefix.trim() || (sourceType === "PostgreSQL" ? "public" : "sample");
+  if (sourceType === "PostgreSQL") {
+    return [
+      ["customer_reviews", prefix.trim() || "public", "detected"],
+      ["product_metadata", prefix.trim() || "public", "detected"],
+    ];
+  }
+  if (sourceType === "MongoDB") {
+    return [
+      ["app_events", prefix.trim() || "asklake_sources", "detected"],
+      ["customer_profiles", prefix.trim() || "asklake_sources", "detected"],
+    ];
+  }
+  const basePath = prefix.trim() || "sample";
   return [
     [`${basePath}/customer_reviews.parquet`, "Parquet", "준비됨"],
     [`${basePath}/customer_reviews.csv`, "CSV", "준비됨"],
@@ -145,14 +163,14 @@ async function getWithDevFallback<T>(path: string): Promise<T> {
 }
 
 async function getBackendDirect<T>(path: string): Promise<T> {
-  const response = await fetch(`http://127.0.0.1:8080${path}`);
+  const response = await fetch(`${directBackendBaseUrl}${path}`);
   if (response.ok) return await response.json() as T;
   const text = await response.text().catch(() => "");
   throw new Error(text || `Backend ${response.status} ${response.statusText}`);
 }
 
 async function postBackendDirect<T>(path: string, body: unknown): Promise<T> {
-  const response = await fetch(`http://127.0.0.1:8080${path}`, {
+  const response = await fetch(`${directBackendBaseUrl}${path}`, {
     body: JSON.stringify(body),
     headers: { "Content-Type": "application/json" },
     method: "POST",
