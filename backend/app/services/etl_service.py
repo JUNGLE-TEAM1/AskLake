@@ -115,6 +115,7 @@ from app.services.object_storage import object_storage_runtime
 from app.services.materialization_projection import aggregate_materialization_runs
 from app.services.rule_compiler import CompiledRuleSet, compile_rule_set
 from app.services.resource_permission_service import job_with_persisted_permission_grants, permission_grants_for_resource, permissions_for_actor_with_governance
+from app.services.storage_layout import create_storage_layout
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 SCRIPTS_DIR = BACKEND_DIR / "scripts"
@@ -1824,20 +1825,25 @@ def kafka_offset_policy(value: str) -> str:
 
 
 def parse_kafka_target_path(storage_path: str | None, target_dataset: str, target_layer: str | None) -> dict[str, str]:
-    default_prefix = f"{dataset_storage_key(target_dataset or 'reviews_raw')}/{str(target_layer or 'BRONZE').lower()}"
-    default_bucket = os.environ.get("ASKLAKE_SPARK_OUTPUT_BUCKET") or "asklake-output"
+    explicit_root = storage_path
     if storage_path:
-        match = re.match(r"^s3a?://([^/]+)(?:/(.*))?$", storage_path.strip())
-        if match:
-            prefix = (match.group(2) or default_prefix).strip("/") or default_prefix
-            if prefix == "kafka-landing" or prefix.startswith("kafka-landing/"):
-                return {"bucket": default_bucket, "prefix": default_prefix, "storageMode": "s3"}
-            return {
-                "bucket": match.group(1),
-                "prefix": prefix,
-                "storageMode": "s3",
-            }
-    return {"bucket": default_bucket, "prefix": default_prefix, "storageMode": "s3"}
+        legacy_match = re.match(r"^s3a?://[^/]+(?:/(.*))?$", storage_path.strip(), flags=re.IGNORECASE)
+        legacy_prefix = (legacy_match.group(1) or "").strip("/") if legacy_match else ""
+        if legacy_prefix == "kafka-landing" or legacy_prefix.startswith("kafka-landing/"):
+            explicit_root = None
+    layout = create_storage_layout(
+        dataset_id=make_dataset_id(target_dataset or "reviews_raw"),
+        explicit_root=explicit_root,
+        layer=target_layer or "BRONZE",
+    )
+    match = re.fullmatch(r"s3a://([^/]+)(?:/(.*))?", layout["root"])
+    if match is None:  # Storage Layout V1 always returns canonical s3a:// URIs.
+        raise ApiError("STORAGE_LAYOUT_INVALID", "Canonical Kafka target path is invalid", status.HTTP_422_UNPROCESSABLE_ENTITY)
+    return {
+        "bucket": match.group(1),
+        "prefix": (match.group(2) or "").strip("/"),
+        "storageMode": "s3",
+    }
 
 
 def is_kafka_job(job: ETLJobModel) -> bool:
@@ -4749,8 +4755,8 @@ def run_kafka_continuous_worker(
         for rule in compiled_rules.result.rules
     ]
     rule_fingerprint = canonical_rule_fingerprint(compiled_rules.result.contract_version, canonical_rules)
-    target = parse_kafka_target_path(job.storage_path or job.target_path, job.target, job.target_layer)
-    output_path = f"s3a://{target['bucket']}/{target['prefix'].strip('/')}"
+    layout = storage_layout_from_job(job)
+    output_path = layout["root"]
     return run_node_bridge(
         "manage-kafka-continuous.mjs",
         "ASKLAKE_KAFKA_CONTINUOUS_RESULT",
@@ -5007,8 +5013,8 @@ def run_kafka_continuous_maintenance(
         rule.model_dump(mode="json", by_alias=True)
         for rule in compiled_rules.result.rules
     ]
-    target = parse_kafka_target_path(job.storage_path or job.target_path, job.target, job.target_layer)
-    output_path = f"s3a://{target['bucket']}/{target['prefix'].strip('/')}"
+    layout = storage_layout_from_job(job)
+    output_path = layout["root"]
     rest_mode = spark_rest_mode_enabled()
     poll_timeout_ms = continuous_maintenance_poll_timeout_ms()
     state_file = continuous_maintenance_state_file(run_id)
@@ -5723,8 +5729,8 @@ def materialize_continuous_publication(
     existing_runs = (existing.payload or {}).get("materializationRuns") if existing and existing.payload else []
     if any(str(item.get("runId") or "") == run_id for item in existing_runs if isinstance(item, dict)):
         return True
-    target = parse_kafka_target_path(job.storage_path or job.target_path, job.target, job.target_layer)
-    output_path = f"s3a://{target['bucket']}/{target['prefix'].strip('/')}/_batches"
+    layout = storage_layout_from_job(job)
+    output_path = layout["continuousDataRoot"]
     result = {
         "endedAt": optional_string(publication.get("publishedAt")) or runtime.last_flush_at or runtime.heartbeat_at or iso_now(),
         "outputPath": output_path,
@@ -5775,8 +5781,8 @@ def materialize_continuous_replay(
     if replayed_count == 0:
         return
     existing = etl_repository.get_dataset_by_id_for_update(db, job.dataset_id or make_dataset_id(job.target))
-    target = parse_kafka_target_path(job.storage_path or job.target_path, job.target, job.target_layer)
-    target_root = f"s3a://{target['bucket']}/{target['prefix'].strip('/')}/_batches"
+    layout = storage_layout_from_job(job)
+    target_root = layout["continuousDataRoot"]
     metrics = runtime.metrics or {}
     schema_state = runtime.schema_state or {}
     result = {
@@ -6622,7 +6628,12 @@ def continuous_config_from_request(request: CreatePipelineRequest, job_id: str) 
     if request.execution_mode != "continuous":
         return None
     config = request.continuous_config
-    base_path = (request.storage_path or f"s3a://asklake-output/{dataset_storage_key(request.target_dataset)}/").rstrip("/")
+    layout = create_storage_layout(
+        dataset_id=make_dataset_id(request.target_dataset),
+        explicit_root=request.storage_path,
+        job_id=job_id,
+        layer=request.target_layer or "BRONZE",
+    )
     return {
         "initialOffsetPolicy": config.initial_offset_policy if config else "earliest",
         "triggerIntervalSeconds": config.trigger_interval_seconds if config else 30,
@@ -6633,7 +6644,7 @@ def continuous_config_from_request(request: CreatePipelineRequest, job_id: str) 
             "incompatibleType": "quarantine",
             "unknownField": "preserve",
         },
-        "checkpointPath": f"{base_path}/_checkpoints/{job_id}",
+        "checkpointPath": layout["checkpointPath"],
     }
 
 
@@ -6643,7 +6654,8 @@ def continuous_runtime_from_job(job: ETLJobModel) -> KafkaContinuousRuntimeModel
     topic = kafka_field_value(fields, "TOPIC / QUEUE NAME", "Topic") or "reviews.raw"
     consumer_group_id = kafka_field_value(fields, "Consumer Group ID", "CONSUMER GROUP ID") or f"asklake-stream-{job.id.lower()}"
     config = job.continuous_config or {}
-    checkpoint_path = str(config.get("checkpointPath") or f"s3a://asklake-output/{dataset_storage_key(job.target)}/_checkpoints/{job.id}")
+    layout = storage_layout_from_job(job)
+    checkpoint_path = str(config.get("checkpointPath") or layout["checkpointPath"])
     return KafkaContinuousRuntimeModel(
         job_id=job.id,
         broker=broker,
@@ -6652,6 +6664,16 @@ def continuous_runtime_from_job(job: ETLJobModel) -> KafkaContinuousRuntimeModel
         target_identity=str(job.storage_path or job.target_path or job.target),
         checkpoint_path=checkpoint_path,
         status="stopped",
+    )
+
+
+def storage_layout_from_job(job: ETLJobModel, run_id: str | None = None) -> dict[str, Any]:
+    return create_storage_layout(
+        dataset_id=job.dataset_id or make_dataset_id(job.target),
+        explicit_root=job.storage_path,
+        job_id=job.id,
+        layer=job.target_layer or "BRONZE",
+        run_id=run_id,
     )
 
 

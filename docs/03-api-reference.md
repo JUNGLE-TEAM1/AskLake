@@ -34,6 +34,14 @@ ASKLAKE_DASHBOARD_QUERY_TIMEOUT_SECONDS=15
 TARGET_DATABASES=asklake,asklake_gold,analytics,marketing
 ASKLAKE_SPARK_RUNTIME=docker
 # Legacy compatibility only: ASKLAKE_SPARK_RUNNER=docker|rest
+ASKLAKE_SPARK_OUTPUT_BUCKET=asklake-output
+ASKLAKE_STORAGE_BASE_PREFIX=asklake
+ASKLAKE_STORAGE_ENVIRONMENT=local
+ASKLAKE_STORAGE_DATA_RETENTION_DAYS=0
+ASKLAKE_STORAGE_CHECKPOINT_RETENTION_DAYS=30
+ASKLAKE_STORAGE_MANIFEST_RETENTION_DAYS=90
+ASKLAKE_STORAGE_QUARANTINE_RETENTION_DAYS=30
+ASKLAKE_STORAGE_LOG_RETENTION_DAYS=14
 TRINO_ENABLED=false
 TRINO_BASE_URL=http://localhost:8088
 TRINO_CATALOG=iceberg
@@ -78,6 +86,8 @@ TRINO_CLEANUP_POLL_SECONDS=3600
 - Target DB 선택은 `GET /api/target/databases` 서버 API를 통해 허용 DB 목록을 조회한다. `TARGET_DATABASES`가 없으면 local demo 기본값을 사용한다.
 - `ASKLAKE_SPARK_RUNTIME`은 HTTP API shape가 아니라 backend 실행 provider 계약이다. 지원값은 로컬 `docker`와 remote `spark-rest`이며 production Compose는 `spark-rest`를 고정한다. 배치, Parquet source inspection, Kafka Continuous, maintenance가 같은 선택기를 사용한다.
 - `ASKLAKE_SPARK_RUNNER=docker|rest`는 기존 배포를 위한 호환 alias다. 새 설정은 `ASKLAKE_SPARK_RUNTIME`을 사용하고 두 변수를 함께 둘 때는 `docker`/`docker` 또는 `spark-rest`/`rest`처럼 의미가 같아야 한다. 충돌, 미지원 값, production Docker 선택은 `SPARK_RUNNER_CONFIGURATION_INVALID`로 작업 제출 전에 실패한다.
+- Storage Layout V1 자동 root는 `s3a://<output-bucket>/<base-prefix>/<environment>/datasets/<datasetId>/<layer>`다. 명시적인 `storagePath`는 유지하고, Job checkpoint는 `_checkpoints/<jobId>`로 격리한다. `ASKLAKE_STORAGE_*_RETENTION_DAYS`는 lifecycle 정책의 계약값이며 bucket lifecycle 적용 자체는 배포 운영자가 담당한다.
+- 잘못된 scheme·bucket·경로 traversal은 `422 STORAGE_LAYOUT_INVALID`, production local data-plane 경로는 `422 STORAGE_LAYOUT_LOCAL_PATH_FORBIDDEN`으로 거부한다. Continuous worker가 bucket에 접근할 수 없으면 원인에 따라 `OBJECT_STORAGE_ACCESS_DENIED`, `OBJECT_STORAGE_NOT_FOUND`, `OBJECT_STORAGE_UNAVAILABLE`을 반환하며 provider 원문이나 credential은 메시지에 포함하지 않는다.
 - Query AI live mode는 backend env의 `OPENAI_API_KEY`와 `OPENAI_QUERY_AI_MODEL`을 사용한다. 브라우저 env에는 OpenAI 키를 두지 않는다.
 - Query AI 요청은 선택된 dataset id와 dataset metadata 전체를 함께 전달해 backend가 선택 context 안에서 JOIN SQL 초안을 생성할 수 있게 한다. live 응답이 선택 reference JOIN을 포함하지 않으면 frontend가 동일 metadata로 JOIN 초안 fallback을 적용한다.
 - `TRINO_ENABLED=false`에서는 `/api/query/runs`가 DuckDB compatibility response를 유지한다. `true`이면 같은 endpoint가 Trino full Query Run을 `202 Accepted`로 접수하고 실행 이력, 상태, cursor 결과, CSV export, cancel lifecycle을 사용한다. `POST /api/query/estimates`는 Iceberg metadata 또는 plan/Catalog fallback으로 스캔량을 추정하고 `POST /api/query/validate`가 canonical Trino 문법·Dataset context·권한을 판정한다.

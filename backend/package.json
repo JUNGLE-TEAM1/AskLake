@@ -54,6 +54,7 @@
     "verify:kafka-continuous-rest": "node scripts/verify-kafka-continuous-rest.mjs",
     "verify:production-spark-contract": "ASKLAKE_FASTAPI_PYTHON=${ASKLAKE_FASTAPI_PYTHON:-.venv/bin/python} node scripts/verify-production-spark-contract.mjs",
     "verify:object-storage-mode": "node scripts/verify-object-storage-mode.mjs",
+    "verify:storage-layout-contract": "node scripts/verify-storage-layout-contract.mjs",
     "minio:seed-click-log": "node scripts/seed-minio-click-log.mjs",
     "minio:seed-verify": "node scripts/seed-minio-verify-sample.mjs",
     "minio:prepare-samples": "node scripts/prepare-minio-samples.mjs",

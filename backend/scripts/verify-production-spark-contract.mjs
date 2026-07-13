@@ -14,6 +14,7 @@ import {
   sparkRunTimeoutMs,
 } from "../src/sparkRunner.mjs";
 import { resolveSparkRuntime, SPARK_RUNTIME_IDS } from "../src/sparkRuntime.mjs";
+import { createStorageLayout } from "../src/storageLayout.mjs";
 import { validateSubmission } from "./spark-rest-client.mjs";
 
 const backendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -74,6 +75,13 @@ assert.equal(
 assert.equal(compose.services.minio, undefined, "AWS production Compose must not include MinIO.");
 assert.equal(compose.services["minio-init"], undefined, "AWS production Compose must not include MinIO bootstrap.");
 assert.equal(backendEnvironment.ASKLAKE_OBJECT_STORAGE_PROVIDER, "aws");
+assert.equal(backendEnvironment.ASKLAKE_STORAGE_BASE_PREFIX, "asklake");
+assert.equal(backendEnvironment.ASKLAKE_STORAGE_ENVIRONMENT, "production");
+assert.equal(backendEnvironment.ASKLAKE_STORAGE_DATA_RETENTION_DAYS, "0");
+assert.equal(backendEnvironment.ASKLAKE_STORAGE_CHECKPOINT_RETENTION_DAYS, "30");
+assert.equal(backendEnvironment.ASKLAKE_STORAGE_MANIFEST_RETENTION_DAYS, "90");
+assert.equal(backendEnvironment.ASKLAKE_STORAGE_QUARANTINE_RETENTION_DAYS, "30");
+assert.equal(backendEnvironment.ASKLAKE_STORAGE_LOG_RETENTION_DAYS, "14");
 assert.equal(worker.environment?.ASKLAKE_OBJECT_STORAGE_PROVIDER, "aws");
 assert.equal(worker.environment?.AWS_REGION, backendEnvironment.AWS_REGION);
 assert.equal(readiness.environment?.ASKLAKE_OBJECT_STORAGE_PROVIDER, "aws");
@@ -134,6 +142,18 @@ assert.doesNotThrow(
   () => assertSparkRestStorageCredentials([["Storage Provider", "aws"]], "rest"),
   "AWS Spark REST execution must not resolve or require MinIO credentials.",
 );
+const productionLayout = createStorageLayout({
+  datasetId: "ds_contract",
+  jobId: "JOB-CONTRACT",
+  layer: "SILVER",
+  runId: "RUN-CONTRACT",
+}, backendEnvironment);
+assert.equal(
+  productionLayout.root,
+  `s3a://${backendEnvironment.ASKLAKE_SPARK_OUTPUT_BUCKET}/asklake/production/datasets/ds_contract/silver`,
+);
+assert.match(productionLayout.checkpointPath, /\/_checkpoints\/JOB-CONTRACT$/);
+assert.doesNotMatch(productionLayout.root, /^file:/);
 
 const pipelineSubmission = createSparkRestSubmission({
   appName: "contract-pipeline",

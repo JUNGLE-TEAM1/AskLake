@@ -1,0 +1,118 @@
+{
+  "version": "1.0",
+  "defaults": {
+    "basePrefix": "asklake",
+    "environment": "local",
+    "retentionDays": {
+      "data": 0,
+      "checkpoints": 30,
+      "manifests": 90,
+      "quarantine": 30,
+      "logs": 14
+    }
+  },
+  "segments": {
+    "datasets": "datasets",
+    "continuousData": "_batches",
+    "checkpoints": "_checkpoints",
+    "manifests": "_batch-manifests",
+    "quarantine": "_quarantine",
+    "logs": "_logs"
+  },
+  "cases": [
+    {
+      "name": "auto scoped root",
+      "environment": {
+        "ASKLAKE_SPARK_OUTPUT_BUCKET": "asklake-output",
+        "ASKLAKE_STORAGE_BASE_PREFIX": "platform",
+        "ASKLAKE_STORAGE_ENVIRONMENT": "staging"
+      },
+      "input": {
+        "datasetId": "ds_orders_clean",
+        "jobId": "JOB-123",
+        "layer": "SILVER",
+        "runId": "RUN-456"
+      },
+      "expected": {
+        "root": "s3a://asklake-output/platform/staging/datasets/ds_orders_clean/silver",
+        "batchDataPath": "s3a://asklake-output/platform/staging/datasets/ds_orders_clean/silver/RUN-456",
+        "batchQuarantinePath": "s3a://asklake-output/platform/staging/datasets/ds_orders_clean/silver/RUN-456_quarantine",
+        "continuousDataRoot": "s3a://asklake-output/platform/staging/datasets/ds_orders_clean/silver/_batches",
+        "checkpointPath": "s3a://asklake-output/platform/staging/datasets/ds_orders_clean/silver/_checkpoints/JOB-123",
+        "manifestRoot": "s3a://asklake-output/platform/staging/datasets/ds_orders_clean/silver/_batch-manifests",
+        "quarantineRoot": "s3a://asklake-output/platform/staging/datasets/ds_orders_clean/silver/_quarantine",
+        "logReferenceRoot": "s3a://asklake-output/platform/staging/datasets/ds_orders_clean/silver/_logs/JOB-123"
+      }
+    },
+    {
+      "name": "explicit root remains stable",
+      "environment": {
+        "ASKLAKE_SPARK_OUTPUT_BUCKET": "asklake-output",
+        "ASKLAKE_STORAGE_ENVIRONMENT": "production"
+      },
+      "input": {
+        "datasetId": "ds_orders_clean",
+        "explicitRoot": "s3://custom-output/existing/orders/gold/",
+        "jobId": "JOB-ABC",
+        "layer": "GOLD",
+        "runId": "RUN-XYZ"
+      },
+      "expected": {
+        "root": "s3a://custom-output/existing/orders/gold",
+        "batchDataPath": "s3a://custom-output/existing/orders/gold/RUN-XYZ",
+        "batchQuarantinePath": "s3a://custom-output/existing/orders/gold/RUN-XYZ_quarantine",
+        "continuousDataRoot": "s3a://custom-output/existing/orders/gold/_batches",
+        "checkpointPath": "s3a://custom-output/existing/orders/gold/_checkpoints/JOB-ABC",
+        "manifestRoot": "s3a://custom-output/existing/orders/gold/_batch-manifests",
+        "quarantineRoot": "s3a://custom-output/existing/orders/gold/_quarantine",
+        "logReferenceRoot": "s3a://custom-output/existing/orders/gold/_logs/JOB-ABC"
+      }
+    },
+    {
+      "name": "legacy default bucket remaps to configured output",
+      "environment": {
+        "ASKLAKE_SPARK_OUTPUT_BUCKET": "asklake-prod-output",
+        "ASKLAKE_STORAGE_ENVIRONMENT": "production"
+      },
+      "input": {
+        "datasetId": "ds_reviews",
+        "explicitRoot": "s3a://asklake-output/reviews/bronze/",
+        "jobId": "JOB-REVIEW",
+        "layer": "BRONZE",
+        "runId": "RUN-REVIEW"
+      },
+      "expected": {
+        "root": "s3a://asklake-prod-output/reviews/bronze",
+        "batchDataPath": "s3a://asklake-prod-output/reviews/bronze/RUN-REVIEW",
+        "batchQuarantinePath": "s3a://asklake-prod-output/reviews/bronze/RUN-REVIEW_quarantine",
+        "continuousDataRoot": "s3a://asklake-prod-output/reviews/bronze/_batches",
+        "checkpointPath": "s3a://asklake-prod-output/reviews/bronze/_checkpoints/JOB-REVIEW",
+        "manifestRoot": "s3a://asklake-prod-output/reviews/bronze/_batch-manifests",
+        "quarantineRoot": "s3a://asklake-prod-output/reviews/bronze/_quarantine",
+        "logReferenceRoot": "s3a://asklake-prod-output/reviews/bronze/_logs/JOB-REVIEW"
+      }
+    }
+  ],
+  "invalidCases": [
+    {
+      "name": "http is not a data-plane URI",
+      "value": "https://example.com/bucket/path"
+    },
+    {
+      "name": "bucket is required",
+      "value": "s3a:///missing-bucket"
+    },
+    {
+      "name": "parent traversal is forbidden",
+      "value": "s3a://asklake-output/orders/../secret"
+    },
+    {
+      "name": "query strings are forbidden",
+      "value": "s3a://asklake-output/orders?token=secret"
+    },
+    {
+      "name": "file URI is forbidden",
+      "value": "file:///tmp/output"
+    }
+  ]
+}

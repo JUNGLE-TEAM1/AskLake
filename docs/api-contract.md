@@ -54,6 +54,9 @@ VITE_OBJECT_STORAGE_PROVIDER=minio
 VITE_S3_REGION=us-east-1
 DATABASE_URL=postgres://asklake:asklake_dev@127.0.0.1:54328/asklake
 ASKLAKE_OBJECT_STORAGE_PROVIDER=minio
+ASKLAKE_SPARK_OUTPUT_BUCKET=asklake-output
+ASKLAKE_STORAGE_BASE_PREFIX=asklake
+ASKLAKE_STORAGE_ENVIRONMENT=local
 S3_ALLOWED_BUCKETS=asklake-output
 S3_ENDPOINT=http://localhost:9000
 S3_FORCE_PATH_STYLE=true
@@ -70,6 +73,7 @@ TARGET_DATABASES=asklake,asklake_gold,analytics,marketing
 - 로컬 object storage는 `ASKLAKE_OBJECT_STORAGE_PROVIDER=minio`, MinIO endpoint/static local credential, path-style URL을 사용합니다.
 - EC2 production은 `ASKLAKE_OBJECT_STORAGE_PROVIDER=aws`, `AWS_REGION`, `S3_FORCE_PATH_STYLE=false`를 사용합니다. custom endpoint와 장기 AWS access key/secret은 설정하지 않고 EC2 instance profile IAM Role/default credential chain으로 인증합니다.
 - `TRINO_ENABLED=true`이면 production은 사전 생성한 Warehouse와 Query Result S3 bucket도 같은 default credential chain으로 사용합니다. Query Result page는 canonical `storage="s3"`로 응답하며 local MinIO와 legacy PostgreSQL page는 read compatibility로만 구분합니다.
+- Spark data-plane 자동 root는 provider와 무관하게 `s3a://<output-bucket>/<base-prefix>/<environment>/datasets/<datasetId>/<layer>`를 사용합니다. 보존 계약은 data/checkpoint/manifest/quarantine/log 순서로 기본 `0/30/90/30/14일`이며 `ASKLAKE_STORAGE_*_RETENTION_DAYS`로 변경합니다. 실제 object 삭제는 같은 값의 bucket lifecycle 정책이 필요합니다.
 - AWS Source request는 provider, region, bucket/prefix만 받으며 frontend는 endpoint/access key/secret 입력을 노출하거나 API payload에 포함하지 않습니다.
 - mock mode에서는 Source/Schema 연결 테스트도 `sourceConnectorService.ts`의 mock `SourceConnectorAnalysis`를 사용합니다.
 - live mode에서는 Source/Schema/Create/Run 흐름이 실제 백엔드를 호출합니다.
@@ -361,6 +365,11 @@ INVALID_JOB_STATE
 SQL_SYNTAX_ERROR
 BACKEND_TIMEOUT
 INTERNAL_ERROR
+STORAGE_LAYOUT_INVALID
+STORAGE_LAYOUT_LOCAL_PATH_FORBIDDEN
+OBJECT_STORAGE_ACCESS_DENIED
+OBJECT_STORAGE_NOT_FOUND
+OBJECT_STORAGE_UNAVAILABLE
 ```
 
 ## 5. 리소스 ID 규칙
@@ -1486,7 +1495,7 @@ PostgreSQL Snapshot source는 Source/Schema Preview와 실행 입력을 분리�
 
 Spark manifest에는 `status`, `runId`, `startedAt`, `endedAt`, `durationMs`, `inputRows`, `outputRows`, `outputPath`, `schema`, `quality`, `failedStage`, `error`가 포함될 수 있다. Phase 2는 이 manifest와 물리 Parquet까지 저장하지만 Catalog materialization/lineage 갱신은 수행하지 않는다.
 
-S3A 출력은 Job의 변경 불가능한 설정값 `storagePath`를 destination root로 사용하고 그 아래에 `runId`를 붙인다. `targetPath`는 최신 Run에서 관측한 실제 `outputPath`이므로 다음 재실행의 destination root로 재사용하지 않는다.
+S3A 출력은 Job의 변경 불가능한 설정값 `storagePath`가 있으면 destination root로 보존하고 그 아래에 `runId`를 붙인다. 값이 없으면 Storage Layout V1의 환경 격리 root를 생성한다. `targetPath`는 최신 Run에서 관측한 실제 `outputPath`이므로 다음 재실행의 destination root로 재사용하지 않는다. Continuous data/checkpoint/manifest/quarantine은 같은 root의 `_batches`, `_checkpoints/<jobId>`, `_batch-manifests`, `_quarantine`을 사용한다. Production에서는 `file://` 같은 local data-plane 경로를 허용하지 않는다.
 
 Phase 3의 마지막 Airflow task는 Spark 실행 endpoint와 분리된 Catalog endpoint를 호출한다.
 

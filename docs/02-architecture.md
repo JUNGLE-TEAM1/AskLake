@@ -102,6 +102,26 @@ Node demo API는 기존 동작 비교용 reference로 남긴다.
 - Production Compose는 `TRINO_ENABLED=true`와 `COMPOSE_PROFILES=trino`를 함께 설정할 때만 coordinator, PostgreSQL bootstrap, collector, cleanup service를 포함한다. `false`에서는 profile을 비워 기존 DuckDB 호환 배포가 Trino bucket/secret/TLS file 없이 기동한다. Trino는 backend/PostgreSQL용 internal network와 AWS S3·IMDS default credential chain에 접근하는 전용 outbound network를 함께 사용하며 public port는 열지 않는다.
 - 로컬 root Compose는 매 기동 시 idempotent PostgreSQL bootstrap service를 거쳐 기존 volume에도 Iceberg JDBC catalog table/권한을 보정한 뒤 Trino를 시작한다. `docker-entrypoint-initdb.d`는 새 volume 초기화만 담당한다.
 
+### Storage Layout V1
+
+Spark data-plane의 논리 경로는 MinIO와 AWS S3에서 같은 계약을 사용한다. 사용자가 `storagePath`를 명시하면 그 root를 보존하고 `s3://`만 `s3a://`로 정규화한다. 저장된 legacy `asklake-output` bucket만 현재 Output bucket으로 치환한다. 경로를 생략하면 아래 환경 격리 root를 만든다.
+
+```text
+s3a://<ASKLAKE_SPARK_OUTPUT_BUCKET>/<ASKLAKE_STORAGE_BASE_PREFIX>/<ASKLAKE_STORAGE_ENVIRONMENT>/datasets/<datasetId>/<layer>
+```
+
+| Artifact | Storage Layout V1 path |
+| --- | --- |
+| Batch data | `<root>/<runId>` |
+| Batch quarantine compatibility | `<root>/<runId>_quarantine` |
+| Continuous data | `<root>/_batches` |
+| Job checkpoint | `<root>/_checkpoints/<jobId>` |
+| Publication manifest | `<root>/_batch-manifests` |
+| Continuous quarantine | `<root>/_quarantine` |
+| Log reference | `<root>/_logs/<jobId>` |
+
+checkpoint는 Job ID까지 포함해 여러 Continuous Job이 같은 dataset/layer를 사용해도 충돌하지 않는다. data/checkpoint/manifest/quarantine/log 보존 기간은 각각 `ASKLAKE_STORAGE_*_RETENTION_DAYS`로 선언하며 기본값은 `0(무기한)/30/90/30/14일`이다. 이 값은 애플리케이션 계약이며 실제 삭제는 MinIO/AWS bucket lifecycle을 같은 값으로 별도 구성해야 한다. Production data-plane은 object storage URI만 허용한다. Spark REST 상태 파일과 backend control-plane report는 아직 공유 host volume에 남으며 log reference object 적재와 중앙 로그 수집은 운영 관측 Phase의 범위다.
+
 ### Airflow batch execution
 
 일반 배치 Job의 `run`/`retry`는 `FastAPI -> Airflow DAG Run -> token-authenticated FastAPI internal execution API -> PySpark -> MinIO/S3 Parquet` 순서로 실행한다. Airflow는 orchestration 상태의 source of truth이고 FastAPI/PostgreSQL은 Job 설정과 사용자-facing Run metadata의 source of truth다.

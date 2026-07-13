@@ -134,6 +134,36 @@ def main() -> None:
         },
         "checkpointPath": "s3a://asklake-output/reviews_continuous/bronze/_checkpoints/JOB-CONTINUOUS-CONTRACT",
     }
+    storage_environment_names = (
+        "ASKLAKE_SPARK_OUTPUT_BUCKET",
+        "ASKLAKE_STORAGE_BASE_PREFIX",
+        "ASKLAKE_STORAGE_ENVIRONMENT",
+    )
+    previous_storage_environment = {
+        name: os.environ.get(name)
+        for name in storage_environment_names
+    }
+    try:
+        os.environ["ASKLAKE_SPARK_OUTPUT_BUCKET"] = "asklake-output"
+        os.environ["ASKLAKE_STORAGE_BASE_PREFIX"] = "asklake"
+        os.environ["ASKLAKE_STORAGE_ENVIRONMENT"] = "local"
+        auto_request = request.model_copy(update={"storage_path": None})
+        auto_config = etl_service.continuous_config_from_request(auto_request, "JOB-AUTO")
+        assert auto_config["checkpointPath"] == (
+            "s3a://asklake-output/asklake/local/datasets/ds_reviews_continuous/bronze/"
+            "_checkpoints/JOB-AUTO"
+        )
+        assert etl_service.parse_kafka_target_path(
+            "s3a://asklake-output/kafka-landing",
+            "reviews_continuous",
+            "BRONZE",
+        )["prefix"] == "asklake/local/datasets/ds_reviews_continuous/bronze"
+    finally:
+        for name, value in previous_storage_environment.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
 
     job = continuous_job()
     runtime = etl_service.continuous_runtime_from_job(job)
@@ -211,6 +241,7 @@ def main() -> None:
     original_worker = etl_service.run_kafka_continuous_worker
     original_status = etl_service.continuous_worker_status
     original_dataset_get = etl_repository.get_dataset_by_id
+    original_dataset_get_for_update = etl_repository.get_dataset_by_id_for_update
     original_dataset_save = etl_repository.save_dataset
     original_maintenance_list = etl_repository.list_kafka_continuous_maintenance_run_models
     original_maintenance_save = etl_repository.save_kafka_continuous_maintenance_run
@@ -412,6 +443,7 @@ def main() -> None:
         captured_dataset = {}
         dataset_save_count = {"value": 0}
         etl_repository.get_dataset_by_id = lambda _db, dataset_id: captured_dataset.get(dataset_id)
+        etl_repository.get_dataset_by_id_for_update = lambda _db, dataset_id: captured_dataset.get(dataset_id)
 
         def capture_dataset(_db, dataset):
             captured_dataset[dataset.id] = dataset
@@ -583,6 +615,7 @@ def main() -> None:
         etl_service.run_kafka_continuous_worker = original_worker
         etl_service.continuous_worker_status = original_status
         etl_repository.get_dataset_by_id = original_dataset_get
+        etl_repository.get_dataset_by_id_for_update = original_dataset_get_for_update
         etl_repository.save_dataset = original_dataset_save
         etl_repository.list_kafka_continuous_maintenance_run_models = original_maintenance_list
         etl_repository.save_kafka_continuous_maintenance_run = original_maintenance_save

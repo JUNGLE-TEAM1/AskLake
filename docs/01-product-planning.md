@@ -39,6 +39,7 @@ AskLake는 사용자가 데이터셋의 출처, 품질, 권한, 실행 결과, �
 - Source 연결 테스트와 Schema 추론
 - 이름 있는 필드가 없는 MinIO/S3 TXT 소스의 조건부 레코드 구조화: 한 줄을 하나의 레코드로 보고 연속 공백(`\\s+`)으로 분리한 뒤 컬럼명·타입 초안을 Schema 단계에 전달
 - 새 수집/처리 Job 생성
+- Batch와 Kafka Continuous의 Output을 MinIO/AWS 공통 Storage Layout V1에 저장하고, 자동 경로는 환경별로 분리하며 Continuous checkpoint는 Job별로 격리
 - 작업 명령 UI: 실행, 재실행, 일시정지, 취소
 - Run History와 Run별 DAG 표시
 - 실행 성공 후 Catalog dataset 등록
@@ -64,6 +65,7 @@ FastAPI live backend에서 현재 우선 구현하는 범위:
 | --- | --- | --- | --- |
 | ETL job 생성 | 생성 flow 최종 제출을 서버 리소스로 저장 | High | `docs/api-contract.md` |
 | Job command | 실행/재실행/일시정지/취소 상태 전이 | High | `docs/api-contract.md` |
+| Spark storage layout | 명시한 Target 경로 호환, 환경별 자동 root, data/checkpoint/manifest/quarantine 경로와 보존 계약 통일 | High | `docs/02-architecture.md` |
 | Job hydrate | 목록/상세를 서버 데이터로 조회 | High | `docs/backend-integration-readiness.md` |
 | Catalog hydrate | 데이터셋 목록/상세와 최신 성공 materialization의 실제 row 페이지를 서버 데이터로 조회 | High | `docs/backend-integration-readiness.md` |
 | Catalog lineage | 저장된 lineage 또는 fallback graph 반환 | Medium | `docs/api-contract.md` |
@@ -105,9 +107,10 @@ Phase 0에서는 용어와 경계를 먼저 고정한다. `createdBy`, `owner`, 
 5. 성공 시 Job이 목록에 추가되고 Catalog target은 pending 상태로 안내된다.
 6. 사용자가 PostgreSQL Snapshot Job을 실행하거나 재실행하면 스키마 Preview 행 수와 무관하게 선택한 기본 테이블 전체를 일관된 DB snapshot으로 읽는다.
 7. 일반 Snapshot Job의 성공 결과는 새 물리 경로에 전체 데이터로 저장하고, Catalog의 현재 Dataset은 최신 성공 snapshot만 가리킨다. 이전 성공 snapshot은 실행 이력으로 보존하지만 현재 행 수와 기본 SQL 조회에는 합산하지 않는다.
-8. 사용자가 TXT Job을 실행하면 Spark는 Preview와 같은 구조화 규칙을 전체 TXT 입력에 다시 적용한다.
-9. 모든 비어 있지 않은 행의 필드 개수가 확정된 컬럼 수와 같을 때만 target을 쓰고 Catalog dataset을 생성 또는 갱신한다. 불일치가 있으면 Run을 실패시키고 Catalog materialization을 만들지 않는다.
-10. 실패하면 toast와 audit log에 실패 기록을 남기고 optimistic 상태를 되돌린다.
+8. Target 경로를 명시하지 않으면 시스템은 Output bucket 안의 환경별 dataset/layer root를 만들고 Run data를 그 아래에 저장한다. Continuous checkpoint는 같은 root 안에서도 Job ID별로 분리한다.
+9. 사용자가 TXT Job을 실행하면 Spark는 Preview와 같은 구조화 규칙을 전체 TXT 입력에 다시 적용한다.
+10. 모든 비어 있지 않은 행의 필드 개수가 확정된 컬럼 수와 같을 때만 target을 쓰고 Catalog dataset을 생성 또는 갱신한다. 불일치가 있으면 Run을 실패시키고 Catalog materialization을 만들지 않는다.
+11. 실패하면 toast와 audit log에 실패 기록을 남기고 optimistic 상태를 되돌린다.
 
 ### Flow B. 카탈로그에서 SQL 분석
 

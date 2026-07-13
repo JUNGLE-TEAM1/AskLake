@@ -17,6 +17,11 @@ import {
   SPARK_RUNTIME_IDS,
   SPARK_RUNTIME_OPERATIONS,
 } from "./sparkRuntime.mjs";
+import {
+  assertProductionDataPlanePath,
+  canonicalObjectStorageUri,
+  createStorageLayout,
+} from "./storageLayout.mjs";
 
 const backendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const scriptsDir = path.join(backendDir, "scripts");
@@ -757,37 +762,35 @@ function setSourceField(item, name, value) {
 function sparkOutputPath(job, runId) {
   const layer = normalizeColumnName(job.targetLayer || "gold") || "gold";
   const dataset = normalizeColumnName(job.target || job.name || "asklake_dataset");
-  const prefix = normalizePrefix(process.env.ASKLAKE_SPARK_OUTPUT_PREFIX || "asklake-output");
   if ((process.env.ASKLAKE_SPARK_OUTPUT_MODE || "local").toLowerCase() === "s3a") {
     // storagePath is the configured destination root. targetPath is the latest
     // observed Run output and must not become the next Run's parent directory.
-    const configuredTarget = normalizeSparkOutputTargetPath(job.storagePath);
-    const targetBase = /^s3a?:\/\//i.test(configuredTarget)
-      ? toS3APath(configuredTarget).replace(/\/+$/, "")
-      : `s3a://${process.env.ASKLAKE_SPARK_OUTPUT_BUCKET || "asklake-output"}/${prefix}${layer}/${dataset}`;
-    const sparkPath = targetBase.endsWith(`/${runId}`) ? targetBase : `${targetBase}/${runId}`;
-    return { displayPath: sparkPath, sparkPath };
+    const layout = createStorageLayout({
+      datasetId: job.datasetId || dataset,
+      explicitRoot: job.storagePath,
+      jobId: job.id,
+      layer,
+      runId,
+    });
+    const sparkPath = assertProductionDataPlanePath(layout.batchDataPath);
+    return { displayPath: sparkPath, sparkPath, storageLayout: layout };
   }
 
   const relativePath = path.join(layer, dataset, runId);
+  const sparkPath = `file://${outputContainerDir}/${relativePath.replace(/\\/g, "/")}`;
+  assertProductionDataPlanePath(sparkPath);
   return {
     hostPath: path.join(localOutputDir, relativePath),
     relativePath: relativePath.replace(/\\/g, "/"),
     displayPath: path.join(localOutputDir, relativePath),
-    sparkPath: `file://${outputContainerDir}/${relativePath.replace(/\\/g, "/")}`,
+    sparkPath,
   };
 }
 
 export function normalizeSparkOutputTargetPath(value) {
   const configuredTarget = String(value || "").trim();
   if (!/^s3a?:\/\//i.test(configuredTarget)) return configuredTarget;
-  const normalizedTarget = toS3APath(configuredTarget).replace(/\/+$/, "");
-  const configuredBucket = normalizeBucketName(process.env.ASKLAKE_SPARK_OUTPUT_BUCKET || "asklake-output");
-  if (!configuredBucket || configuredBucket.toLowerCase() === "asklake-output") return normalizedTarget;
-  return normalizedTarget.replace(
-    /^s3a:\/\/asklake-output(?=\/|$)/i,
-    `s3a://${configuredBucket}`,
-  );
+  return canonicalObjectStorageUri(configuredTarget);
 }
 
 function sparkRowLimitFromJob(job) {
@@ -816,12 +819,6 @@ function inferFormat(sourceConfig, prefix, fallback) {
 
 function toS3APath(value) {
   return String(value).replace(/^s3:\/\//, "s3a://");
-}
-
-function normalizePrefix(value) {
-  const cleaned = String(value ?? "").replace(/^\/+/, "");
-  if (!cleaned) return "";
-  return cleaned.endsWith("/") ? cleaned : `${cleaned}/`;
 }
 
 function normalizeSourcePath(value) {

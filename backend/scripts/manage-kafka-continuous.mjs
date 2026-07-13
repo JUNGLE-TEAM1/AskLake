@@ -28,6 +28,10 @@ import {
   SPARK_RUNTIME_OPERATIONS,
 } from "../src/sparkRuntime.mjs";
 import {
+  isMissingObjectStorageResource,
+  normalizeObjectStorageError,
+} from "../src/storageLayout.mjs";
+import {
   createSparkRestDriver,
   getSparkRestDriverStatus,
   isTerminalSparkDriverState,
@@ -51,9 +55,9 @@ try {
   console.log(`ASKLAKE_KAFKA_CONTINUOUS_RESULT=${JSON.stringify(result)}`);
 } catch (error) {
   console.log(`ASKLAKE_KAFKA_CONTINUOUS_ERROR=${JSON.stringify({
-    code: "KAFKA_CONTINUOUS_WORKER_FAILED",
+    code: error?.code || "KAFKA_CONTINUOUS_WORKER_FAILED",
     message: error?.message || String(error),
-    status: 502,
+    status: error?.status || 502,
   })}`);
   process.exitCode = 1;
 }
@@ -494,8 +498,14 @@ async function ensureOutputBucket(outputPath) {
   try {
     await client.send(new HeadBucketCommand({ Bucket: bucket }));
   } catch (error) {
-    if (!isMinioProvider()) throw error;
-    await client.send(new CreateBucketCommand({ Bucket: bucket }));
+    if (!isMinioProvider() || !isMissingObjectStorageResource(error)) {
+      throw normalizeObjectStorageError(error, { bucket, operation: "bucket access" });
+    }
+    try {
+      await client.send(new CreateBucketCommand({ Bucket: bucket }));
+    } catch (createError) {
+      throw normalizeObjectStorageError(createError, { bucket, operation: "bucket creation" });
+    }
   }
 }
 
