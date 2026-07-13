@@ -5,19 +5,33 @@ import {
   getPublishedDashboardData,
 } from "../../../services/dashboardRuntimeApi";
 import type {
+  DashboardPublishedDataRefreshScope,
+  DashboardPublishedDataResponse,
   DashboardRuntimeMode,
   DashboardRuntimeResponse,
-  DashboardWidgetDataRefreshResponse,
 } from "../../../types";
 import { ApiError } from "../../../types";
+import {
+  DEFAULT_DASHBOARD_SYNC_INTERVAL_MINUTES,
+  MAX_DASHBOARD_SYNC_INTERVAL_MINUTES,
+  MIN_DASHBOARD_SYNC_INTERVAL_MINUTES,
+} from "../../../types/etl";
 
-export const PUBLISHED_WIDGET_REFRESH_INTERVAL_MS = 10_000;
+const MINUTES_TO_MILLISECONDS = 60_000;
 
-export type DashboardPublishedRefreshStatus = "idle" | "refreshing" | "live" | "paused" | "error";
+export type DashboardPublishedRefreshStatus = "idle" | "refreshing" | "live" | "manual" | "paused" | "error";
+
+function normalizeAutoRefreshIntervalMinutes(value: number | null): number | null {
+  if (value === null || !Number.isFinite(value)) return null;
+  return Math.min(
+    MAX_DASHBOARD_SYNC_INTERVAL_MINUTES,
+    Math.max(MIN_DASHBOARD_SYNC_INTERVAL_MINUTES, Math.round(value)),
+  );
+}
 
 function mergePublishedWidgetData(
   runtime: DashboardRuntimeResponse,
-  response: DashboardWidgetDataRefreshResponse,
+  response: DashboardPublishedDataResponse,
 ) {
   if (runtime.dashboard.id !== response.dashboardId || runtime.revision?.id !== response.revisionId) {
     return runtime;
@@ -59,10 +73,12 @@ export function useDashboardRuntimeResources({
   const [publishedRefreshError, setPublishedRefreshError] = useState<string | null>(null);
   const [publishedRefreshStatus, setPublishedRefreshStatus] = useState<DashboardPublishedRefreshStatus>("idle");
   const [publishedRefreshedAt, setPublishedRefreshedAt] = useState<string | null>(null);
+  const [publishedAutoRefreshIntervalMinutes, setPublishedAutoRefreshIntervalMinutes] = useState<number | null>(null);
   const refreshScopeRef = useRef("");
   const refreshRequestRef = useRef<{
-    promise: Promise<DashboardWidgetDataRefreshResponse | null>;
-    scope: string;
+    activeScope: string;
+    promise: Promise<DashboardPublishedDataResponse | null>;
+    requestKey: string;
   } | null>(null);
   const publishedRuntimeScopeRef = useRef("");
   const publishedRuntimeRequestRef = useRef<{
@@ -72,6 +88,7 @@ export function useDashboardRuntimeResources({
   const publishedRuntimeRequestSequenceRef = useRef(0);
   const publishedRuntimeCommitRequestRef = useRef(0);
   const publishedRefreshRetryableRef = useRef(true);
+  const publishedAutoRefreshIntervalMinutesRef = useRef<number | null>(DEFAULT_DASHBOARD_SYNC_INTERVAL_MINUTES);
   const publishedScheduleNextRefreshRef = useRef<(() => void) | null>(null);
 
   const selectPageFromResponse = useCallback((runtime: DashboardRuntimeResponse) => {
@@ -166,48 +183,62 @@ export function useDashboardRuntimeResources({
   const refreshPublishedWidgetData = useCallback((
     nextDashboardId: string,
     revisionId: string | null | undefined,
-  ): Promise<DashboardWidgetDataRefreshResponse | null> => {
+    dataScope: DashboardPublishedDataRefreshScope = "all",
+  ): Promise<DashboardPublishedDataResponse | null> => {
     if (!revisionId) return Promise.resolve(null);
-    const scope = `${nextDashboardId}:${revisionId}`;
+    const activeScope = `${nextDashboardId}:${revisionId}`;
+    const requestKey = `${activeScope}:${dataScope}`;
     const existingRequest = refreshRequestRef.current;
-    if (existingRequest?.scope === scope) return existingRequest.promise;
+    if (existingRequest?.requestKey === requestKey) return existingRequest.promise;
 
-    if (refreshScopeRef.current === scope) setPublishedRefreshStatus("refreshing");
-    const promise = getPublishedDashboardData(nextDashboardId)
+    if (refreshScopeRef.current === activeScope) setPublishedRefreshStatus("refreshing");
+    const promise = getPublishedDashboardData(nextDashboardId, dataScope)
       .then(async (response) => {
-        if (refreshScopeRef.current !== scope) return null;
+        if (refreshScopeRef.current !== activeScope) return null;
+        const autoRefreshIntervalMinutes = normalizeAutoRefreshIntervalMinutes(
+          response.autoRefreshIntervalMinutes,
+        );
         if (response.revisionId !== revisionId) {
           const runtime = await loadPublishedRuntime(nextDashboardId, { silent: true });
-          if (!runtime || refreshScopeRef.current !== scope) return null;
+          if (!runtime || refreshScopeRef.current !== activeScope) return null;
           publishedRefreshRetryableRef.current = true;
-          publishedScheduleNextRefreshRef.current?.();
+          publishedAutoRefreshIntervalMinutesRef.current = autoRefreshIntervalMinutes;
+          setPublishedAutoRefreshIntervalMinutes(autoRefreshIntervalMinutes);
           setPublishedRefreshError(null);
-          setPublishedRefreshStatus("refreshing");
+          setPublishedRefreshStatus(autoRefreshIntervalMinutes === null
+            ? "manual"
+            : document.visibilityState === "hidden" ? "paused" : "refreshing");
+          publishedScheduleNextRefreshRef.current?.();
           return response;
         }
         setPublishedRuntime((runtime) => runtime ? mergePublishedWidgetData(runtime, response) : runtime);
         publishedRefreshRetryableRef.current = true;
-        publishedScheduleNextRefreshRef.current?.();
+        publishedAutoRefreshIntervalMinutesRef.current = autoRefreshIntervalMinutes;
+        setPublishedAutoRefreshIntervalMinutes(autoRefreshIntervalMinutes);
         setPublishedRefreshError(null);
         setPublishedRefreshedAt(response.refreshedAt);
-        setPublishedRefreshStatus(document.visibilityState === "hidden" ? "paused" : "live");
+        setPublishedRefreshStatus(autoRefreshIntervalMinutes === null
+          ? "manual"
+          : document.visibilityState === "hidden" ? "paused" : "live");
+        publishedScheduleNextRefreshRef.current?.();
         return response;
       })
       .catch((error: unknown) => {
-        if (refreshScopeRef.current !== scope) return null;
+        if (refreshScopeRef.current !== activeScope) return null;
         publishedRefreshRetryableRef.current = !(error instanceof ApiError)
           || error.status >= 500
           || error.status === 408
           || error.status === 429;
         setPublishedRefreshError(error instanceof Error ? error.message : "Failed to refresh published dashboard data.");
         setPublishedRefreshStatus("error");
+        publishedScheduleNextRefreshRef.current?.();
         return null;
       })
       .finally(() => {
-        if (refreshRequestRef.current?.scope === scope) refreshRequestRef.current = null;
+        if (refreshRequestRef.current?.requestKey === requestKey) refreshRequestRef.current = null;
       });
 
-    refreshRequestRef.current = { promise, scope };
+    refreshRequestRef.current = { activeScope, promise, requestKey };
     return promise;
   }, [loadPublishedRuntime]);
 
@@ -238,18 +269,33 @@ export function useDashboardRuntimeResources({
   useEffect(() => {
     const revisionId = publishedRuntime?.revision?.id;
     const runtimeMatchesRoute = publishedRuntime?.dashboard.id === dashboardId;
-    if (!active || mode !== "published" || !revisionId || !runtimeMatchesRoute) {
+    if (!active || mode !== "published" || !runtimeMatchesRoute) {
       refreshScopeRef.current = "";
       publishedRefreshRetryableRef.current = true;
+      publishedAutoRefreshIntervalMinutesRef.current = null;
       setPublishedRefreshError(null);
       setPublishedRefreshStatus("idle");
       setPublishedRefreshedAt(null);
+      setPublishedAutoRefreshIntervalMinutes(null);
+      return undefined;
+    }
+
+    if (!revisionId) {
+      refreshScopeRef.current = "";
+      publishedRefreshRetryableRef.current = true;
+      publishedAutoRefreshIntervalMinutesRef.current = null;
+      setPublishedRefreshError(null);
+      setPublishedRefreshStatus("manual");
+      setPublishedRefreshedAt(null);
+      setPublishedAutoRefreshIntervalMinutes(null);
       return undefined;
     }
 
     const scope = `${dashboardId}:${revisionId}`;
     refreshScopeRef.current = scope;
     publishedRefreshRetryableRef.current = true;
+    publishedAutoRefreshIntervalMinutesRef.current = DEFAULT_DASHBOARD_SYNC_INTERVAL_MINUTES;
+    setPublishedAutoRefreshIntervalMinutes(null);
     let cancelled = false;
     let timeoutId: number | undefined;
 
@@ -259,8 +305,14 @@ export function useDashboardRuntimeResources({
     };
     const scheduleNextRefresh = () => {
       clearScheduledRefresh();
-      if (!cancelled && publishedRefreshRetryableRef.current && document.visibilityState !== "hidden") {
-        timeoutId = window.setTimeout(() => void poll(), PUBLISHED_WIDGET_REFRESH_INTERVAL_MS);
+      const intervalMinutes = publishedAutoRefreshIntervalMinutesRef.current;
+      if (
+        !cancelled
+        && intervalMinutes !== null
+        && publishedRefreshRetryableRef.current
+        && document.visibilityState !== "hidden"
+      ) {
+        timeoutId = window.setTimeout(() => void poll(), intervalMinutes * MINUTES_TO_MILLISECONDS);
       }
     };
     publishedScheduleNextRefreshRef.current = scheduleNextRefresh;
@@ -268,19 +320,32 @@ export function useDashboardRuntimeResources({
       clearScheduledRefresh();
       if (cancelled) return;
       if (document.visibilityState === "hidden") {
-        if (publishedRefreshRetryableRef.current) setPublishedRefreshStatus("paused");
+        if (publishedRefreshRetryableRef.current && publishedAutoRefreshIntervalMinutesRef.current !== null) {
+          setPublishedRefreshStatus("paused");
+        }
         return;
       }
-      await refreshPublishedWidgetData(dashboardId, revisionId);
-      scheduleNextRefresh();
+      const inFlightRequest = refreshRequestRef.current;
+      if (inFlightRequest?.activeScope === scope) {
+        await inFlightRequest.promise;
+        scheduleNextRefresh();
+        return;
+      }
+      await refreshPublishedWidgetData(dashboardId, revisionId, "continuous_kafka");
     };
     const handleVisibilityChange = () => {
       clearScheduledRefresh();
       if (document.visibilityState === "hidden") {
-        if (publishedRefreshRetryableRef.current) setPublishedRefreshStatus("paused");
+        if (publishedRefreshRetryableRef.current && publishedAutoRefreshIntervalMinutesRef.current !== null) {
+          setPublishedRefreshStatus("paused");
+        }
         return;
       }
-      if (publishedRefreshRetryableRef.current) void poll();
+      if (publishedRefreshRetryableRef.current && publishedAutoRefreshIntervalMinutesRef.current !== null) {
+        void poll();
+      } else if (publishedAutoRefreshIntervalMinutesRef.current === null) {
+        setPublishedRefreshStatus("manual");
+      }
     };
 
     document.addEventListener("visibilitychange", handleVisibilityChange);
@@ -322,6 +387,7 @@ export function useDashboardRuntimeResources({
     loadPublishedRuntime,
     pages,
     publishedRuntime: activePublishedRuntime,
+    publishedAutoRefreshIntervalMinutes,
     publishedRefreshError,
     publishedRefreshedAt,
     publishedRefreshStatus,

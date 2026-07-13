@@ -52,6 +52,7 @@ export function DashboardRuntimeShell({
   onShare,
   onToggleDatasetSidebar,
   pages,
+  publishedAutoRefreshIntervalMinutes,
   publishedRefreshError,
   publishedRefreshedAt,
   publishedRefreshStatus = "idle",
@@ -84,6 +85,7 @@ export function DashboardRuntimeShell({
   onShare?: () => void;
   onToggleDatasetSidebar?: () => void;
   pages: DashboardPageTab[];
+  publishedAutoRefreshIntervalMinutes?: number | null;
   publishedRefreshError?: string | null;
   publishedRefreshedAt?: string | null;
   publishedRefreshStatus?: DashboardPublishedRefreshStatus;
@@ -149,6 +151,7 @@ export function DashboardRuntimeShell({
         onRefresh={onRefresh}
         onRenameTitle={onRenameTitle}
         onShare={onShare}
+        publishedAutoRefreshIntervalMinutes={publishedAutoRefreshIntervalMinutes}
         publishedRefreshedAt={publishedRefreshedAt}
         publishedRefreshStatus={publishedRefreshStatus}
       />
@@ -168,7 +171,7 @@ export function DashboardRuntimeShell({
           variant="destructive"
         >
           <AlertDescription>
-            자동 갱신에 실패했습니다. 마지막으로 불러온 데이터를 표시합니다. {publishedRefreshError}
+            데이터 동기화에 실패했습니다. 마지막으로 불러온 데이터를 표시합니다. {publishedRefreshError}
           </AlertDescription>
         </Alert>
       ) : null}

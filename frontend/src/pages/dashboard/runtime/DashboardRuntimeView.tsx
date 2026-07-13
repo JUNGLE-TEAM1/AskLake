@@ -55,6 +55,7 @@ type DashboardRuntimeState = {
   mode: DashboardRuntimeMode;
   notice: RuntimeNotice | null;
   pages: DashboardRuntimePage[];
+  publishedAutoRefreshIntervalMinutes: number | null;
   publishedRuntime: DashboardRuntimeResponse | null;
   publishedRefreshError: string | null;
   publishedRefreshedAt: string | null;
@@ -170,6 +171,7 @@ export function DashboardRuntimeView({
     mode,
     notice,
     pages,
+    publishedAutoRefreshIntervalMinutes,
     publishedRuntime,
     publishedRefreshError,
     publishedRefreshedAt,
@@ -513,6 +515,7 @@ export function DashboardRuntimeView({
         mode={mode}
         notice={notice}
         pages={pages}
+        publishedAutoRefreshIntervalMinutes={publishedAutoRefreshIntervalMinutes}
         publishedRefreshError={publishedRefreshError}
         publishedRefreshedAt={publishedRefreshedAt}
         publishedRefreshStatus={publishedRefreshStatus}

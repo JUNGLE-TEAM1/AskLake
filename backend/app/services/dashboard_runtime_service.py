@@ -25,6 +25,7 @@ from app.schemas.dashboard import (
     DashboardPageResponse,
     DashboardPublishedDataResponse,
     DashboardPublishedWidgetData,
+    DashboardRefreshScope,
     DashboardRevision,
     DashboardRuntimeMode,
     DashboardRuntimePage,
@@ -66,6 +67,39 @@ from app.services.resource_permission_service import (
 from app.services.demo_catalog import dataset_rows_to_widget_data, get_demo_dataset
 
 
+DASHBOARD_SYNC_INTERVAL_MINUTES_DEFAULT = 5
+DASHBOARD_SYNC_INTERVAL_MINUTES_MIN = 1
+DASHBOARD_SYNC_INTERVAL_MINUTES_MAX = 60
+
+
+def is_continuous_kafka_dataset(payload: dict[str, Any]) -> bool:
+    raw_execution_mode = payload.get("sourceExecutionMode")
+    if raw_execution_mode is None:
+        raw_execution_mode = payload.get("source_execution_mode")
+    if raw_execution_mode is not None:
+        execution_mode = str(raw_execution_mode).strip().lower()
+        source_kind = str(payload.get("sourceKind") or payload.get("source_kind") or "").strip().lower()
+        return execution_mode == "continuous" and source_kind == "kafka"
+    source_run_id = str(payload.get("sourceRunId") or payload.get("source_run_id") or "").strip().lower()
+    return source_run_id.startswith("continuous:")
+
+
+def dashboard_sync_interval_minutes(payload: dict[str, Any]) -> int:
+    value = payload.get("dashboardSyncIntervalMinutes")
+    if value is None:
+        value = payload.get("dashboard_sync_interval_minutes")
+    if value is None:
+        value = DASHBOARD_SYNC_INTERVAL_MINUTES_DEFAULT
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = DASHBOARD_SYNC_INTERVAL_MINUTES_DEFAULT
+    return max(
+        DASHBOARD_SYNC_INTERVAL_MINUTES_MIN,
+        min(DASHBOARD_SYNC_INTERVAL_MINUTES_MAX, parsed),
+    )
+
+
 class DashboardRuntimeService:
     _legacy_color_map = {
         "blue": "#2563eb",
@@ -95,6 +129,8 @@ class DashboardRuntimeService:
         self,
         dashboard_id: str,
         actor: ActorContext | None = None,
+        *,
+        scope: DashboardRefreshScope = "all",
     ) -> DashboardPublishedDataResponse:
         actor_context = actor or ActorContext()
         self._require_dashboard_permission(dashboard_id, actor_context, "view")
@@ -116,19 +152,35 @@ class DashboardRuntimeService:
             if widget.dataset_id
         ]
         datasets_by_id: dict[str, tuple[dict[str, Any], list[dict[str, Any]]]] = {}
+        continuous_intervals: list[int] = []
         for dataset_id in dict.fromkeys(str(widget.dataset_id) for widget in widgets):
-            payload = self._require_dataset_query_permission(
-                dataset_id,
-                actor_context,
-                dashboard_id=dashboard_id,
-            )
+            if scope == "continuous_kafka":
+                candidate = self.catalog_repository.get_dataset_payload(dataset_id)
+                if candidate is None or not is_continuous_kafka_dataset(candidate):
+                    continue
+                payload = self._require_dataset_query_permission(
+                    dataset_id,
+                    actor_context,
+                    dashboard_id=dashboard_id,
+                    payload=candidate,
+                )
+            else:
+                payload = self._require_dataset_query_permission(
+                    dataset_id,
+                    actor_context,
+                    dashboard_id=dashboard_id,
+                )
+            if is_continuous_kafka_dataset(payload):
+                continuous_intervals.append(dashboard_sync_interval_minutes(payload))
             datasets_by_id[dataset_id] = (
                 payload,
                 dataset_rows_to_widget_data(payload, limit=100, prefer_storage=False),
             )
 
         return DashboardPublishedDataResponse(
+            auto_refresh_interval_minutes=min(continuous_intervals) if continuous_intervals else None,
             dashboard_id=dashboard_id,
+            refresh_scope=scope,
             revision_id=revision.id,
             refreshed_at=datetime.now(UTC).isoformat(),
             widgets=[
@@ -147,6 +199,7 @@ class DashboardRuntimeService:
                     ),
                 )
                 for widget in widgets
+                if str(widget.dataset_id) in datasets_by_id
             ],
         )
 
@@ -387,8 +440,10 @@ class DashboardRuntimeService:
         actor: ActorContext,
         *,
         dashboard_id: str,
+        payload: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        payload = self.catalog_repository.get_dataset_payload(dataset_id)
+        if payload is None:
+            payload = self.catalog_repository.get_dataset_payload(dataset_id)
         if payload is None:
             raise ApiError(
                 ErrorCode.NOT_FOUND,

@@ -267,9 +267,15 @@ export type DashboardWidgetDataRefreshItem = {
   widgetId: string;
 };
 
-export type DashboardWidgetDataRefreshResponse = {
+export type DashboardPublishedDataRefreshScope = "all" | "continuous_kafka";
+
+export type DashboardPublishedDataResponse = {
+  autoRefreshIntervalMinutes: number | null;
   dashboardId: string;
+  refreshScope: DashboardPublishedDataRefreshScope;
   refreshedAt: string;
   revisionId: string;
   widgets: DashboardWidgetDataRefreshItem[];
 };
+
+export type DashboardWidgetDataRefreshResponse = DashboardPublishedDataResponse;

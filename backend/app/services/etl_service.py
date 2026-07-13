@@ -99,6 +99,9 @@ JOB_STATUSES = ("scheduled", "failed", "running", "paused", "canceled", "stopped
 ACTIVE_RUN_STATUSES = {"queued", "running"}
 TERMINAL_RUN_STATUSES = {"success", "failed", "canceled"}
 SPARK_OUTPUT_FORMAT = "parquet"
+DASHBOARD_SYNC_INTERVAL_MINUTES_DEFAULT = 5
+DASHBOARD_SYNC_INTERVAL_MINUTES_MIN = 1
+DASHBOARD_SYNC_INTERVAL_MINUTES_MAX = 60
 PERMISSION_GROUP_ACTIONS = {
     "analytics": ["view", "query"],
     "data-platform": ["view", "run", "manage"],
@@ -1101,6 +1104,10 @@ def review_pipeline(request: ReviewPipelineRequest) -> ReviewSnapshot:
             review_entry("작업명", request.job_name),
             review_entry("소스", source_display),
             review_entry("실행 방식", "실시간 스트림" if request.execution_mode == "continuous" else "Snapshot batch"),
+            *([review_entry(
+                "대시보드 자동 동기화",
+                f"{dashboard_sync_interval_minutes_from_request(request)}분",
+            )] if request.execution_mode == "continuous" else []),
             review_entry("대상 데이터셋", request.target_dataset),
             review_entry("설명", request.target_description),
         ],
@@ -2476,6 +2483,8 @@ def dataset_payload_from_spark_result(
     partition_columns = normalize_string_list(job.partition_columns)
     index_columns = normalize_string_list(job.index_columns)
     partition = "/".join(partition_columns) if partition_columns else normalize_optional_text(job.partition)
+    source_execution_mode = str(job.execution_mode or "snapshot")
+    source_kind = str(result.get("sourceKind") or ("sql" if job.source_type == "SQL Result" else "etl"))
     materialization_runs = append_materialization_run(
         previous_payload.get("materializationRuns") if previous_payload else [],
         {
@@ -2483,7 +2492,7 @@ def dataset_payload_from_spark_result(
             "jobId": job.id,
             "rowCount": parse_count_value(result.get("materializationRows", result.get("outputRows"))),
             "runId": str(result.get("runId") or ""),
-            "sourceKind": result.get("sourceKind") or ("sql" if job.source_type == "SQL Result" else "etl"),
+            "sourceKind": source_kind,
             "sourceLabel": job.name or job.source or job.source_label or job.id,
             "status": "success" if result.get("status") == "success" else "failed",
             "storageLocation": str(result.get("materializationOutputPath") or output_path),
@@ -2522,6 +2531,8 @@ def dataset_payload_from_spark_result(
         "schema": schema_json,
         "size": format_storage_size(aggregate["storageSizeBytes"]) if aggregate["storageSizeBytes"] > 0 else display_size,
         "source": job.name,
+        "sourceExecutionMode": source_execution_mode,
+        "sourceKind": source_kind,
         "sourceRunId": aggregate["latestRunId"] or result.get("runId"),
         "status": "available",
         "storageFormat": SPARK_OUTPUT_FORMAT,
@@ -2532,6 +2543,9 @@ def dataset_payload_from_spark_result(
         "indexColumns": index_columns,
         "tags": target_dataset_tags(job),
         "upstream": [job.source_label, job.name],
+        **({
+            "dashboardSyncIntervalMinutes": dashboard_sync_interval_minutes_for_job(job),
+        } if source_execution_mode == "continuous" and is_kafka_job(job) else {}),
     }
 
 
@@ -4801,6 +4815,7 @@ def continuous_config_from_request(request: CreatePipelineRequest, job_id: str) 
     return {
         "initialOffsetPolicy": config.initial_offset_policy if config else "earliest",
         "triggerIntervalSeconds": config.trigger_interval_seconds if config else 30,
+        "dashboardSyncIntervalMinutes": dashboard_sync_interval_minutes_from_request(request),
         "maxOffsetsPerTrigger": config.max_offsets_per_trigger if config else 10000,
         "schemaEvolutionPolicy": config.schema_evolution_policy.model_dump(mode="json", by_alias=True) if config else {
             "additiveNullable": "allow",
@@ -4810,6 +4825,26 @@ def continuous_config_from_request(request: CreatePipelineRequest, job_id: str) 
         },
         "checkpointPath": f"{base_path}/_checkpoints/{job_id}",
     }
+
+
+def dashboard_sync_interval_minutes_from_request(request: CreatePipelineRequest) -> int:
+    config = request.continuous_config
+    return config.dashboard_sync_interval_minutes if config else DASHBOARD_SYNC_INTERVAL_MINUTES_DEFAULT
+
+
+def dashboard_sync_interval_minutes_for_job(job: ETLJobModel) -> int:
+    value = (job.continuous_config or {}).get(
+        "dashboardSyncIntervalMinutes",
+        DASHBOARD_SYNC_INTERVAL_MINUTES_DEFAULT,
+    )
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = DASHBOARD_SYNC_INTERVAL_MINUTES_DEFAULT
+    return max(
+        DASHBOARD_SYNC_INTERVAL_MINUTES_MIN,
+        min(DASHBOARD_SYNC_INTERVAL_MINUTES_MAX, parsed),
+    )
 
 
 def continuous_runtime_from_job(job: ETLJobModel) -> KafkaContinuousRuntimeModel:

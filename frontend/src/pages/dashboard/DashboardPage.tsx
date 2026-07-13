@@ -203,6 +203,7 @@ export function DashboardPage({
     loadDraftRuntime,
     loadPublishedRuntime,
     pages: runtimePages,
+    publishedAutoRefreshIntervalMinutes,
     publishedRuntime,
     publishedRefreshError,
     publishedRefreshedAt,
@@ -690,14 +691,16 @@ export function DashboardPage({
         const refreshed = await refreshPublishedWidgetData(
           runtimeSelection.dashboardId,
           publishedRuntime?.revision?.id,
+          "all",
         );
         setRuntimeNotice(refreshed
-          ? { message: "대시보드를 새로고침했습니다.", tone: "info" }
-          : null);
+          ? { message: "대시보드 전체 데이터를 동기화했습니다.", tone: "info" }
+          : { message: "대시보드 전체 데이터를 동기화하지 못했습니다.", tone: "error" });
         onAction(
           "dashboard.runtime.refreshed",
-          `/api/dashboards/${runtimeSelection.dashboardId}/published/data`,
+          `/api/dashboards/${runtimeSelection.dashboardId}/published/data?scope=all`,
           runtimeSelection.dashboardId,
+          refreshed ? "success" : "failed",
         );
       } else {
         const refreshed = await loadDraftRuntime(runtimeSelection.dashboardId);
@@ -708,6 +711,7 @@ export function DashboardPage({
           "dashboard.runtime.refreshed",
           `/api/dashboards/${runtimeSelection.dashboardId}/draft/ensure`,
           runtimeSelection.dashboardId,
+          refreshed ? "success" : "failed",
         );
       }
     } finally {
@@ -947,6 +951,7 @@ export function DashboardPage({
       mode: runtimeSelection.mode,
       notice: runtimeNotice,
       pages: runtimePages,
+      publishedAutoRefreshIntervalMinutes,
       publishedRuntime,
       publishedRefreshError,
       publishedRefreshedAt,

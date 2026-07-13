@@ -192,6 +192,7 @@ class KafkaSchemaEvolutionPolicy(CamelModel):
 class KafkaContinuousConfigDraft(CamelModel):
     initial_offset_policy: Literal["earliest", "latest"] = "earliest"
     trigger_interval_seconds: int = Field(default=30, ge=1, le=3600)
+    dashboard_sync_interval_minutes: int = Field(default=5, ge=1, le=60)
     max_offsets_per_trigger: int = Field(default=10000, ge=1, le=1_000_000)
     schema_evolution_policy: KafkaSchemaEvolutionPolicy = Field(default_factory=KafkaSchemaEvolutionPolicy)
 

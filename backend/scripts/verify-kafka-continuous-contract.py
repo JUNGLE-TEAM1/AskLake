@@ -13,7 +13,15 @@ from app.core.errors import ApiError
 from app.models.etl import ETLJobModel, KafkaContinuousMaintenanceRunModel
 from app.repositories import etl_repository
 from app.schemas.catalog import DatasetMaterializationRun
-from app.schemas.etl import CanonicalRuleDraft, ContinuousReplayRequest, CreatePipelineRequest, SchemaColumnDraft, UpdatePipelineRequest
+from app.schemas.etl import (
+    CanonicalRuleDraft,
+    ContinuousReplayRequest,
+    CreatePipelineRequest,
+    KafkaContinuousConfigDraft,
+    ReviewPipelineRequest,
+    SchemaColumnDraft,
+    UpdatePipelineRequest,
+)
 from app.services import etl_service
 from scripts.kafka_schema_paths import build_nested_schema_tree, expected_object_keys, json_path, split_source_path
 
@@ -125,6 +133,7 @@ def main() -> None:
     assert config == {
         "initialOffsetPolicy": "earliest",
         "triggerIntervalSeconds": 30,
+        "dashboardSyncIntervalMinutes": 5,
         "maxOffsetsPerTrigger": 10000,
         "schemaEvolutionPolicy": {
             "additiveNullable": "allow",
@@ -134,6 +143,17 @@ def main() -> None:
         },
         "checkpointPath": "s3a://asklake-output/reviews_continuous/bronze/_checkpoints/JOB-CONTINUOUS-CONTRACT",
     }
+    request.continuous_config = KafkaContinuousConfigDraft(dashboard_sync_interval_minutes=17)
+    custom_config = etl_service.continuous_config_from_request(request, "JOB-CONTINUOUS-CUSTOM")
+    assert custom_config["dashboardSyncIntervalMinutes"] == 17
+    review = etl_service.review_pipeline(ReviewPipelineRequest.model_validate({
+        **request.model_dump(mode="json", by_alias=True),
+        "sourceConnectionStatus": "success",
+    }))
+    assert any(
+        item.label == "대시보드 자동 동기화" and item.value == "17분"
+        for item in review.basic_information
+    )
 
     job = continuous_job()
     runtime = etl_service.continuous_runtime_from_job(job)
@@ -183,6 +203,7 @@ def main() -> None:
     assert captured_worker_payload["rules"][0]["operation"] == "not_null"
     assert captured_worker_payload["ruleOutputSchema"] == [("event_id", "String")]
     assert len(captured_worker_payload["ruleFingerprint"]) == 64
+    assert "dashboardSyncIntervalMinutes" not in captured_worker_payload
 
     update_request = UpdatePipelineRequest(
         job_name=job.name,
@@ -445,6 +466,9 @@ def main() -> None:
         etl_repository.lock_kafka_continuous_runtime = lambda _db, _job_id: runtime
         dataset_id = f"ds_{etl_service.normalize_column_name(job.target)}"
         assert captured_dataset[dataset_id].payload["materializationRuns"][0]["sourceKind"] == "kafka"
+        assert captured_dataset[dataset_id].payload["sourceKind"] == "kafka"
+        assert captured_dataset[dataset_id].payload["sourceExecutionMode"] == "continuous"
+        assert captured_dataset[dataset_id].payload["dashboardSyncIntervalMinutes"] == 5
         assert captured_dataset[dataset_id].payload["materializationRuns"][0]["rowCount"] == 2
         assert captured_dataset[dataset_id].payload["storageLocation"].endswith("/_batches")
         assert captured_dataset[dataset_id].payload["sampleRows"] == [["evt-2"], ["evt-1"]]
