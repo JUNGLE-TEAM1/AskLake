@@ -4,6 +4,13 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CreateBucketCommand, HeadBucketCommand, S3Client } from "@aws-sdk/client-s3";
 import { randomUUID } from "node:crypto";
+import {
+  isMinioProvider,
+  objectStorageDockerEnv,
+  resolveObjectStorageConfig,
+  s3ClientOptions,
+  toDockerEnvArgs,
+} from "../src/objectStorageConfig.mjs";
 
 const backendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const scriptsDir = path.resolve(process.env.ASKLAKE_SPARK_HOST_SCRIPTS_DIR || path.join(backendDir, "scripts"));
@@ -87,10 +94,7 @@ async function startWorker(request, containerName) {
     "-e", `ASKLAKE_CONTINUOUS_FAIL_AFTER_DATA_WRITE_ONCE=${process.env.ASKLAKE_CONTINUOUS_FAIL_AFTER_DATA_WRITE_ONCE || "false"}`,
     "-e", `ASKLAKE_CONTINUOUS_REPORT_FILE=${reportContainerDir}/${reportFileName(jobId)}`,
     "-e", `ASKLAKE_CONTINUOUS_COMMAND_FILE=${reportContainerDir}/${commandFileName(jobId)}`,
-    "-e", `MINIO_ENDPOINT=${process.env.MINIO_ENDPOINT_IN_DOCKER || "http://minio:9000"}`,
-    "-e", `MINIO_ACCESS_KEY=${process.env.MINIO_ACCESS_KEY || ""}`,
-    "-e", `MINIO_SECRET_KEY=${process.env.MINIO_SECRET_KEY || ""}`,
-    "-e", `MINIO_REGION=${process.env.MINIO_REGION || "us-east-1"}`,
+    ...toDockerEnvArgs(objectStorageDockerEnv()),
     "-e", "HOME=/tmp",
     image,
     "/opt/spark/bin/spark-submit", "--master", masterUrl,
@@ -106,18 +110,11 @@ async function startWorker(request, containerName) {
 async function ensureOutputBucket(outputPath) {
   const bucket = /^s3a?:\/\/([^/]+)/i.exec(outputPath)?.[1];
   if (!bucket) return;
-  const client = new S3Client({
-    credentials: {
-      accessKeyId: process.env.MINIO_ACCESS_KEY || "",
-      secretAccessKey: process.env.MINIO_SECRET_KEY || "",
-    },
-    endpoint: process.env.MINIO_ENDPOINT_IN_DOCKER || "http://minio:9000",
-    forcePathStyle: true,
-    region: process.env.MINIO_REGION || "us-east-1",
-  });
+  const client = new S3Client(s3ClientOptions(resolveObjectStorageConfig([], { docker: true })));
   try {
     await client.send(new HeadBucketCommand({ Bucket: bucket }));
-  } catch {
+  } catch (error) {
+    if (!isMinioProvider()) throw error;
     await client.send(new CreateBucketCommand({ Bucket: bucket }));
   }
 }

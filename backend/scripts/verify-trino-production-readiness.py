@@ -43,10 +43,14 @@ def main(*, allow_disabled: bool = False) -> None:
             raise RuntimeError("Production Trino materializer credentials are required")
         if settings.trino_auth_username == settings.trino_materializer_username:
             raise RuntimeError("Query and materializer Trino identities must be separate")
-        if not settings.trino_result_storage_access_key or not settings.trino_result_storage_secret_key:
-            raise RuntimeError("Dedicated query result storage credentials are required")
-        if settings.trino_result_storage_access_key == settings.minio_access_key:
-            raise RuntimeError("Query result storage must not use the MinIO root identity")
+        if settings.asklake_object_storage_provider == "aws":
+            if settings.trino_result_storage_access_key or settings.trino_result_storage_secret_key:
+                raise RuntimeError("AWS query result storage must use the EC2 IAM Role")
+        else:
+            if not settings.trino_result_storage_access_key or not settings.trino_result_storage_secret_key:
+                raise RuntimeError("Dedicated MinIO query result storage credentials are required")
+            if settings.trino_result_storage_access_key == settings.minio_access_key:
+                raise RuntimeError("Query result storage must not use the MinIO root identity")
 
     query_client = TrinoClient(settings)
     materializer = TrinoClient(

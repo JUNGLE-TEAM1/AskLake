@@ -34,7 +34,9 @@
 | PR source branch policy | GitHub Actions check required by ruleset on `main` and `dev` | `enabled` | block PR merge when source branch does not match the allowed chain or linked issue target | repo admin | `main <- dev`; `dev <- pair1/2/3` 또는 지원 work/`<type>-#<issue>` 브랜치 + linked issue `Target Branch: dev` |
 | PR merge / Issue lifecycle sync | `.github/workflows/notion-issue-sync.yml` and lifecycle smoke checks | `enabled` | fail before remote mutation when lifecycle contracts break; recover missed merge events on the next scheduled/manual dispatch | maintainer | explicit `Closes/Fixes/Resolves #N` merge closes Issue and sets Project/Notion `Done`; reopen after merge is preserved |
 | Default PR and issue templates | GitHub `.github` templates | `enabled` | prompt contributors to document scope, verification, impact, and acceptance criteria | maintainer | advisory template, not a hard gate |
-| Deployment env files ignored | `.gitignore`, review checklist | `enabled` | prevent committing server `.env` and local EC2 env values | maintainer | `deploy/.env` and `deploy/ec2.env` are ignored; only examples are committed. MinIO access key/secret and `AIRFLOW_EXECUTION_API_TOKEN` stay in server `.env` or secret storage. The Airflow and backend token values must match. Kafka replay input은 `ASKLAKE_REPLAY_HOST_INPUT_DIR`의 읽기 전용 mount만 사용하며 arbitrary host path API 입력은 금지한다. |
+| Deployment env files ignored | `.gitignore`, review checklist | `enabled` | prevent committing server `.env` and local EC2 env values | maintainer | `deploy/.env` and `deploy/ec2.env` are ignored; only examples are committed. Production S3는 EC2 IAM Role을 사용하며 AWS access key/secret을 `.env`에 저장하지 않는다. `AIRFLOW_EXECUTION_API_TOKEN`은 server `.env`/secret storage에 두고 Airflow와 backend 값을 맞춘다. Kafka replay input은 `ASKLAKE_REPLAY_HOST_INPUT_DIR`의 읽기 전용 mount만 사용하며 arbitrary host path API 입력은 금지한다. |
+| AWS S3 startup readiness | production Compose `aws-s3-readiness` one-shot service | `enabled` | block backend/Trino startup when bucket visibility or required write/delete permission is missing | maintainer | raw bucket list/read와 output/warehouse/result bucket put/head/delete를 EC2 IAM Role로 검사한다. AWS bucket은 runtime이 만들지 않는다. |
+| Production object-storage static key ban | provider adapters, env example, review checklist | `partial` | adapters ignore/reject dedicated static S3 credentials in AWS mode; review prevents server env drift | maintainer | backend/Spark/DuckDB/Trino는 default credential chain을 사용한다. 단일 EC2 container들은 같은 instance role을 공유하므로 서비스별 권한 분리는 ECS task role/assume-role 후속 범위다. |
 | API contract drift check | repo-local script or review checklist | `planned` | warn or block when API docs and code drift | maintainer | backend 구현 후 후보 |
 
 ## 3) Team Guide
@@ -75,7 +77,7 @@
 | API contract mismatch | `docs/03-api-reference.md`, `docs/api-contract.md`, frontend types/API adapter를 함께 맞춘다. |
 | PR branch policy failed | base/head 조합, 지원 브랜치 패턴, linked issue의 `Target Branch`를 확인한다. `main <- dev`; `dev <- pair1|pair2|pair3|지원 work branch|<type>-#issue`가 허용된다. |
 | Merged PR did not close its issue | PR footer가 `Closes/Fixes/Resolves #N`인지, base branch에 최신 Notion Issue Sync가 있는지, lifecycle smoke가 통과했는지 확인한다. 정기 복구는 기본 브랜치 `main`의 workflow를 사용하므로 자동화 변경은 `dev -> main`까지 반영한다. |
-| EC2 deploy script failed | `source deploy/ec2.env`, AWS auth, SSH key, instance state, server `deploy/.env`, Compose logs를 순서대로 확인한다. |
+| EC2 deploy script failed | `source deploy/ec2.env`, AWS auth, SSH key, EC2 instance role/IMDSv2 hop limit, S3 readiness bucket 목록, server `deploy/.env`, Compose logs를 순서대로 확인한다. |
 
 ## 4) Lifecycle Guardrails
 
@@ -106,7 +108,8 @@ Scenario audit은 새 hard rule을 추가하는 절차가 아니다.
 | Prod compose config | no, local/manual until CI exists | `deploy/docker-compose.prod.yml` | Docker Compose config renders with `deploy/.env.example` |
 | Backend deploy image build | no, local/manual until CI exists | `backend/Dockerfile`, `backend/requirements.txt` | backend Docker image builds with production Python base image |
 | Deploy dependency verification | manual | deploy Compose, local Airflow Compose, backend image, frontend image, Spark image, Airflow image, Trino image, Airflow DAG import | `scripts/verify-deploy-dependencies.sh` passes before deploy |
-| Trino production readiness | deploy-time when enabled | TLS/auth, read-only query identity, materializer CTAS/describe/drop, dedicated result bucket round trip | `verify-trino-production-readiness.py` passes after Compose health |
+| AWS S3 startup readiness | every production Compose start | instance role credential chain, bucket head/list, write bucket put/head/delete | `aws-s3-readiness` completes successfully before backend/Trino start |
+| Trino production readiness | deploy-time when enabled | TLS/auth, read-only query identity, materializer CTAS/describe/drop, private result bucket round trip | `verify-trino-production-readiness.py` passes after Compose health |
 | PR event checks | no | future GitHub Actions | changed code satisfies required checks |
 | Read-only lifecycle audit | manual | docs, PR, branch status | drift is reported without changing remote state |
 | Admin setting audit | manual | branch protection, secrets, rulesets | actual settings match inventory or gap is recorded |

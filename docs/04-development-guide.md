@@ -486,13 +486,21 @@ AWS 배포 전에는 로컬에서 prod-like compose 구성이 유효한지 먼�
 docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml config
 ```
 
-로컬에서 전체 stack을 띄울 때는 예시 env를 기준으로 실행할 수 있다.
+`deploy/.env.example`은 AWS production Compose의 interpolation/contract 검증용이며 실제 S3 bucket이나 IAM Role 없이 전체 stack을 올리는 용도가 아니다. 로컬 전체 stack은 root Compose의 MinIO를 사용한다.
 
 ```bash
-docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml up -d --build
-curl http://localhost:8080/api/health
-docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml down
+docker compose up -d postgres minio trino
+cd backend
+npm run verify:object-storage-mode
+npm run verify:snapshot-spark-pipeline
 ```
+
+Object storage 환경 경계:
+
+- local 기본값: `ASKLAKE_OBJECT_STORAGE_PROVIDER=minio`, `MINIO_ENDPOINT`, local access/secret, `S3_FORCE_PATH_STYLE=true`.
+- EC2 production: `ASKLAKE_OBJECT_STORAGE_PROVIDER=aws`, `AWS_REGION`, `S3_FORCE_PATH_STYLE=false`. `S3_ENDPOINT`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`는 서버 `.env`에 저장하지 않고 EC2 instance profile IAM Role을 사용한다.
+- 로컬 backend만 실제 AWS S3를 시험할 수 있다. AWS SSO/profile에서 받은 임시 credential을 shell 환경으로 export하면 Node가 시작하는 Spark container에도 session token까지 전달된다. 이 값은 `.env`에 저장하거나 커밋하지 않는다.
+- production 시작 전 `aws-s3-readiness`가 read bucket list와 write bucket put/head/delete를 확인한다. AWS bucket은 자동 생성하지 않는다.
 
 `VITE_API_BASE_URL`은 `/api`를 붙이지 않은 origin까지만 넣는다.
 예를 들어 로컬은 `http://localhost:8080`, EC2 HTTPS 배포는 `https://asklake.example.com` 형태를 사용한다.
@@ -641,9 +649,9 @@ ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:query-engine-registration
 
 `verify:query-engine-registration`은 한글 Dataset의 안정적 ID/물리 table 이름, user ID owner grant, materialization 전 현재 query 권한 재검사, browser-independent collector 완료, Catalog `pending -> available`, `registration_failed` mapping 제거/재검증 복구, coordinator 제출 실패 후 재생성, Spark ETL의 검증된 mapping만 SQL 노출하는 조건을 확인한다. 실제 local Trino E2E에서는 임시 Iceberg CTAS 뒤 `DESCRIBE`와 Catalog mapping을 확인하고 검증 table/metadata를 반드시 정리한다.
 
-Query Result Phase 0 이후 대용량 결과 작업은 `docs/trino-query-result-storage-contract.md`를 먼저 따른다. Phase 1~3에서는 MinIO page storage, collector restart recovery, signed cursor, expiry cleanup을 각각 검증하며, PostgreSQL에 result row를 저장하는 현재 smoke만으로 대용량 결과 완료를 주장하지 않는다.
+Query Result Phase 0 이후 대용량 결과 작업은 `docs/trino-query-result-storage-contract.md`를 먼저 따른다. Phase 1~3에서는 provider-backed page storage, collector restart recovery, signed cursor, expiry cleanup을 각각 검증하며, PostgreSQL에 result row를 저장하는 현재 smoke만으로 대용량 결과 완료를 주장하지 않는다.
 
-Production Trino를 켜기 전에는 `deploy/.env`의 `TRINO_TLS_CA_FILE`, `TRINO_TLS_KEYSTORE_FILE`, `TRINO_PASSWORD_FILE`가 서버에 존재하는지 확인한다. Password file은 bcrypt/PBKDF2 hash만 포함하며, Trino JDBC, warehouse MinIO, query-result MinIO credential은 backend/Postgres/MinIO root credential과 각각 분리한다. `scripts/deploy.sh`는 bootstrap service를 실행하고 Trino health 뒤 아래 readiness를 자동 호출한다. 수동 확인도 같은 명령을 사용한다.
+Production Trino를 켜기 전에는 `deploy/.env`의 `TRINO_TLS_CA_FILE`, `TRINO_TLS_KEYSTORE_FILE`, `TRINO_PASSWORD_FILE`가 서버에 존재하는지 확인한다. Password file은 bcrypt/PBKDF2 hash만 포함하고 Trino JDBC identity는 application DB user와 분리한다. S3는 static service key가 아니라 EC2 IAM Role을 사용한다. `scripts/deploy.sh`는 Postgres bootstrap과 AWS S3 readiness를 실행하고 Trino health 뒤 아래 readiness를 자동 호출한다. 수동 확인도 같은 명령을 사용한다.
 
 ```bash
 cd backend

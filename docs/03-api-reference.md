@@ -21,7 +21,10 @@
 VITE_API_BASE_URL=http://localhost:8080
 VITE_USE_MOCK_API=false
 VITE_DASHBOARD_ASSISTANT_API_PATH=/api/dashboards/assistant
+VITE_OBJECT_STORAGE_PROVIDER=minio
+VITE_S3_REGION=us-east-1
 DATABASE_URL=postgres://asklake:asklake_dev@127.0.0.1:54328/asklake
+ASKLAKE_OBJECT_STORAGE_PROVIDER=minio
 S3_ALLOWED_BUCKETS=asklake-output
 S3_ENDPOINT=http://localhost:9000
 S3_FORCE_PATH_STYLE=true
@@ -43,8 +46,6 @@ TRINO_MAX_CONCURRENT_RUNS_PER_USER=2
 TRINO_RESULT_STORAGE_BUCKET=asklake-query-results
 TRINO_RESULT_STORAGE_PREFIX=query-results
 TRINO_RESULT_STORAGE_AUTO_CREATE_BUCKET=false
-TRINO_RESULT_STORAGE_ACCESS_KEY=<dedicated server-only value>
-TRINO_RESULT_STORAGE_SECRET_KEY=<dedicated server-only value>
 TRINO_RESULT_CURSOR_SECRET=<server-only random secret>
 TRINO_QUERY_CONFIRMATION_SECRET=<server-only random secret>
 TRINO_QUERY_CONFIRMATION_TTL_SECONDS=300
@@ -61,7 +62,13 @@ MINIO_SECRET_KEY=<server-only value>
 MINIO_REGION=us-east-1
 ```
 
-`TRINO_MAX_RESULT_BYTES`, `TRINO_MAX_RESULT_PAGES`는 legacy PostgreSQL page read의 호환 설정으로만 남겨 둔다. Trino Query Run 일반 결과는 private MinIO gzip page object에 저장하고 PostgreSQL에는 manifest/page metadata만 저장한다. Production은 MinIO root가 아닌 `TRINO_RESULT_STORAGE_ACCESS_KEY` 전용 계정을 사용하고 `TRINO_RESULT_STORAGE_AUTO_CREATE_BUCKET=false`로 둔다. `trino-result-cleanup` worker는 `TRINO_CLEANUP_POLL_SECONDS`마다 terminal run 전체를 batch 순회한다. 상세 lifecycle은 `docs/trino-query-result-storage-contract.md`를 따른다.
+`TRINO_MAX_RESULT_BYTES`, `TRINO_MAX_RESULT_PAGES`는 legacy PostgreSQL page read의 호환 설정으로만 남겨 둔다. Trino Query Run 일반 결과는 private object-storage gzip page object에 저장하고 PostgreSQL에는 manifest/page metadata만 저장한다. Local MinIO는 전용 result credential을 선택적으로 사용하고, production AWS는 EC2 IAM Role/default credential chain과 `TRINO_RESULT_STORAGE_AUTO_CREATE_BUCKET=false`를 사용한다. `trino-result-cleanup` worker는 `TRINO_CLEANUP_POLL_SECONDS`마다 terminal run 전체를 batch 순회한다. 상세 lifecycle은 `docs/trino-query-result-storage-contract.md`를 따른다.
+
+Object storage mode contract:
+
+- Local: `ASKLAKE_OBJECT_STORAGE_PROVIDER=minio`, MinIO endpoint/static local credential, `S3_FORCE_PATH_STYLE=true`.
+- EC2 production: `ASKLAKE_OBJECT_STORAGE_PROVIDER=aws`, `AWS_REGION`, `S3_FORCE_PATH_STYLE=false`; `S3_ENDPOINT`, AWS access key, AWS secret key는 비워 두고 instance profile IAM Role을 사용한다.
+- AWS Source request의 `Endpoint URL`, `Access Key`, `Secret Key`는 비워 둔다. `Storage Provider=Amazon S3`, `Region`, bucket/prefix만 전송하며 backend가 default credential chain으로 검증한다.
 
 - 개발 서버에서 `VITE_API_BASE_URL`을 생략하면 프론트는 같은 출처의 `/api`를 호출하고, Vite proxy가 FastAPI `http://127.0.0.1:8080`으로 전달한다.
 - `VITE_USE_MOCK_API=false` 또는 미설정: live backend mode. Source connector, create/run/query/catalog/dashboard API를 실제 backend로 보낸다.
@@ -77,7 +84,7 @@ MINIO_REGION=us-east-1
 - `TRINO_ENABLED=false`에서는 `/api/query/runs`가 DuckDB compatibility response를 유지한다. `true`이면 같은 endpoint가 Trino full Query Run을 `202 Accepted`로 접수하고, `GET /api/query/runs`(현재 사용자 실행 이력), `GET /api/query/runs/{runId}`, `GET /api/query/runs/{runId}/results`, `GET /api/query/runs/{runId}/exports/csv`, `POST /api/query/runs/{runId}/cancel` lifecycle를 사용한다. `POST /api/query/estimates`는 Iceberg `$files.readable_metrics`에서 쿼리 참조 컬럼의 물리 스캔량을 계산한다. 실행 시간은 결과 행 수·전송·저장 비용까지 신뢰성 있게 예측할 수 있을 때까지 UI에 노출하지 않는다. Query Run은 token 없는 estimate snapshot, Trino progress/split stats, Query 완료·수집 시작·첫 page·전체 준비 milestone 시각/경과를 보존한다. milestone 시각은 UTC 최초 관측값이며 collector 인계에서 덮어쓰지 않는다. Catalog는 `queryEngineStatus`로 등록 상태를 응답하며, 실제 `DESCRIBE` 검증을 통과한 `available` Dataset에만 `queryEngineTable`을 포함한다.
 - Trino 전환 시에는 backend만 coordinator continuation URL을 보관한다. result는 cursor page로만 반환하며, run 조회/결과 조회는 submitter 또는 admin, 취소는 submitter/admin/base Dataset `manage` 권한자로 제한한다.
 - Query submit의 `clientRequestId`는 actor 범위 idempotency key다. 같은 key와 동일 request fingerprint는 기존 run을 반환하고, 같은 key를 다른 SQL/context에 재사용하면 `409 CONFLICT`다. actor별 실행 slot reservation은 PostgreSQL advisory lock 안에서 원자적으로 처리하며 한도를 넘으면 `429`다.
-- 현재 Trino result page는 private MinIO object로 저장하고 PostgreSQL에는 metadata만 남긴다. 기존 PostgreSQL page row는 migration compatibility read 경로로만 유지한다. `GET /api/query/runs/{runId}`와 materialization GET은 collector가 저장한 상태만 읽고, Trino continuation fetch는 `trino-result-collector` worker만 수행한다. Query Run collector는 blocking `nextUri` 대기 중 QueryInfo를 읽기 전용으로 샘플링해 진행률을 보강하지만 result page를 소비하지 않으며, 실패 시 기존 statement stats로 fallback한다. signed cursor는 storage page 내부 row offset까지 감추고 submit 시 고정한 API page size를 유지한다. 상세 계약은 `docs/trino-query-result-storage-contract.md`를 따른다.
+- 현재 Trino result page는 private provider-backed object로 저장하고 PostgreSQL에는 metadata만 남긴다. 기존 PostgreSQL page row는 migration compatibility read 경로로만 유지한다. `GET /api/query/runs/{runId}`와 materialization GET은 collector가 저장한 상태만 읽고, Trino continuation fetch는 `trino-result-collector` worker만 수행한다. Query Run collector는 blocking `nextUri` 대기 중 QueryInfo를 읽기 전용으로 샘플링해 진행률을 보강하지만 result page를 소비하지 않으며, 실패 시 기존 statement stats로 fallback한다. signed cursor는 storage page 내부 row offset까지 감추고 submit 시 고정한 API page size를 유지한다. 상세 계약은 `docs/trino-query-result-storage-contract.md`를 따른다.
 - 현재 actor의 user ID가 있으면 run submitter/owner 판정과 user grant는 ID를 우선한다. 동일 display name은 다른 ID의 run 소유권을 얻지 못하며, ID 없는 legacy run/grant만 이름 호환을 유지한다.
 
 ## 3) 공통 규칙

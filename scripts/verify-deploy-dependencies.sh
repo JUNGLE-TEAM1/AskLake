@@ -72,6 +72,8 @@ docker build \
   --build-arg VITE_API_BASE_URL="${VITE_API_BASE_URL:-http://localhost:8080}" \
   --build-arg VITE_USE_MOCK_API="${VITE_USE_MOCK_API:-false}" \
   --build-arg VITE_DASHBOARD_ASSISTANT_API_PATH="${VITE_DASHBOARD_ASSISTANT_API_PATH:-/api/dashboards/assistant}" \
+  --build-arg VITE_OBJECT_STORAGE_PROVIDER="${VITE_OBJECT_STORAGE_PROVIDER:-aws}" \
+  --build-arg VITE_S3_REGION="${VITE_S3_REGION:-ap-northeast-2}" \
   -t "$FRONTEND_IMAGE" frontend
 
 echo "Deploy dependency verification passed."

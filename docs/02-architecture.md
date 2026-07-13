@@ -78,7 +78,16 @@ flowchart LR
     API --> AUDIT[(Audit Log)]
 ```
 
-현재 FastAPI가 직접 소유하는 영역은 ETL, Run, Catalog hydrate, Catalog lineage fallback, SQL query compatibility runtime, SQL derived dataset 저장, Dashboard card/list, Dashboard draft/published runtime이다. Issue #488은 Compose 내부 Trino 482 coordinator, Iceberg JDBC catalog, MinIO S3 warehouse, Trino HTTP adapter, canonical Query Run persistence/compiler와 Catalog `queryEngineTable` mapping을 추가했다. 일반 Trino result page는 private MinIO gzip object에 저장하고 PostgreSQL에는 page metadata/checksum/manifest만 남긴다. `trino-result-collector` worker가 Query Run, 1회성 Iceberg CTAS, 반복 SQL Job CTAS의 continuation을 모두 수집하므로 browser polling과 상태 GET은 persisted state만 읽는다.
+현재 FastAPI가 직접 소유하는 영역은 ETL, Run, Catalog hydrate, Catalog lineage fallback, SQL query compatibility runtime, SQL derived dataset 저장, Dashboard card/list, Dashboard draft/published runtime이다. Issue #488은 Compose 내부 Trino 482 coordinator, Iceberg JDBC catalog, S3-compatible warehouse, Trino HTTP adapter, canonical Query Run persistence/compiler와 Catalog `queryEngineTable` mapping을 추가했다. 일반 Trino result page는 private object-storage gzip object에 저장하고 PostgreSQL에는 page metadata/checksum/manifest만 남긴다. `trino-result-collector` worker가 Query Run, 1회성 Iceberg CTAS, 반복 SQL Job CTAS의 continuation을 모두 수집하므로 browser polling과 상태 GET은 persisted state만 읽는다.
+
+### Object storage provider boundary
+
+- `ASKLAKE_OBJECT_STORAGE_PROVIDER=minio`가 로컬 기본값이다. Node/FastAPI/Spark/DuckDB는 `MINIO_ENDPOINT`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, path-style URL을 사용하고 root `docker-compose.yml`의 MinIO/로컬 Trino catalog를 유지한다.
+- `ASKLAKE_OBJECT_STORAGE_PROVIDER=aws`가 EC2 production 기준이다. custom endpoint와 저장된 access key/secret 없이 AWS SDK 기본 credential chain을 사용한다. EC2 instance profile IAM Role이 backend, Spark container, DuckDB, Trino가 읽는 단일 자격 증명 경계다.
+- Production Compose에는 MinIO가 없고 Trino는 `deploy/trino/etc/catalog-aws`를 mount한다. raw, Spark output, Iceberg warehouse, Query Result bucket은 배포 전에 AWS S3에 생성한다.
+- `aws-s3-readiness`가 시작 전에 bucket head/list와 write bucket put/head/delete를 검사한다. bucket 자동 생성은 로컬 MinIO에서만 허용하고 AWS에서는 잘못된 bucket/권한을 즉시 실패시킨다.
+- frontend는 provider build variable에 따라 local에서는 MinIO endpoint/key 입력을, production에서는 bucket만 표시한다. AWS credential은 browser/API payload에 넣지 않는다.
+- 단일 EC2의 Docker container는 모두 같은 instance role을 공유한다. 이는 demo 배포 경계이며, 서비스별 S3 권한 분리가 필요해지면 ECS task role 또는 개별 assume-role 경계로 이동한다.
 
 Collector claim은 DB lease와 증가하는 generation을 사용한다. fetch 전후로 lease를 갱신하고, page object는 generation별 attempt key에 쓴 뒤 현재 worker/generation이 여전히 유효한 transaction에서만 metadata로 공개한다. 오래된 worker는 자신이 쓴 attempt object만 삭제할 수 있으며, 새 worker가 저장한 page나 run payload를 덮어쓰거나 지울 수 없다. continuation URI는 page metadata에도 기록해 동일 fetch retry가 중복 page를 만들지 않게 한다.
 
@@ -86,7 +95,7 @@ Query result API page size는 submit의 `resultPageSize`로 고정한다. 한 Tr
 
 Query submit은 `(actorKey, clientRequestId)` unique reservation과 PostgreSQL actor별 advisory lock을 사용한다. 같은 요청 key/fingerprint 재시도는 기존 run을 반환하고, 다른 요청에 같은 key를 쓰면 `409`, 동시 실행 slot을 넘으면 `429`를 반환한다. 실행 이력과 소유자 판정은 user ID를 우선하며 ID가 없는 legacy record에만 display name fallback을 허용한다. user grant는 ID, email, legacy display name을 모두 principal identity로 인식한다. run 재열기, 결과 조회, 취소, materialization 제출/조회는 현재 Dataset 권한·사용자/그룹 차단·리소스 잠금을 다시 검사한다.
 
-결과 retention은 result page에만 적용하므로 만료된 run도 SQL, 상태, 통계는 재확인할 수 있다. 기존 PostgreSQL row page는 migration read compatibility로만 유지한다. production Trino는 backend-only network, HTTPS/password/file access control, 분리된 JDBC/warehouse/result-storage service account를 사용한다. 배포 전 bootstrap job이 기존 volume에도 계정·bucket·Iceberg metadata table을 멱등 생성하고, 배포 후 readiness가 read-only query identity, materializer CTAS와 result-storage 왕복을 검증한다. API routing과 SQL runtime은 `TRINO_ENABLED` flag에 따라 전환된다. 상세 계약은 `docs/trino-query-run-contract.md`와 `docs/trino-query-result-storage-contract.md`를 따른다.
+결과 retention은 result page에만 적용하므로 만료된 run도 SQL, 상태, 통계는 재확인할 수 있다. 기존 PostgreSQL row page는 migration read compatibility로만 유지한다. production Trino는 backend-only network, HTTPS/password/file access control, 분리된 JDBC identity를 사용하며 S3 접근은 EC2 instance role을 사용한다. 배포 전 `trino-postgres-bootstrap`이 Iceberg metadata table/role을 멱등 생성하고, 사전 생성한 S3 bucket은 `aws-s3-readiness`가 검증한다. 배포 후 readiness가 read-only query identity, materializer CTAS와 result-storage 왕복을 검증한다. API routing과 SQL runtime은 `TRINO_ENABLED` flag에 따라 전환된다. 상세 계약은 `docs/trino-query-run-contract.md`와 `docs/trino-query-result-storage-contract.md`를 따른다.
 
 Query Engine 등록은 Dataset 표시명과 물리 table 이름을 분리한다. SQL 결과 Dataset은 이름 기반 안정적인 Dataset ID와 materialization별 충돌 없는 ASCII table 이름을 만들고, Catalog에 `pending`을 먼저 저장한 뒤 Iceberg CTAS terminal success와 `DESCRIBE` 검증이 모두 끝나야 `queryEngineStatus=available` 및 `queryEngineTable`을 공개한다. CTAS continuation은 collector가 처리하며 상태 GET은 Trino 진행을 소비하지 않는다. terminal success인데 등록 확인만 실패한 경우 GET이 같은 table 검증을 안전하게 재시도할 수 있다. 실패 시 mapping은 공개하지 않고 `registration_failed`와 안전한 오류 코드만 저장한다. `TRINO_ENABLED=true`에서는 mapping이 검증되지 않은 Dataset의 `permissions.canQuery`를 false로 계산해 frontend와 backend가 같은 기준으로 차단한다. 현재 Spark Parquet와 Kafka JSONL writer는 Iceberg table을 만들지 않으므로 거짓 mapping을 생성하지 않고 `unavailable`로 저장한다. 향후 writer가 `queryEngineVerified=true`와 검증된 mapping을 반환할 때만 SQL 대상으로 자동 승격한다.
 

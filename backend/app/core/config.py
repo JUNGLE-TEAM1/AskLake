@@ -61,6 +61,10 @@ class Settings(BaseSettings):
     trino_progress_poll_seconds: float = Field(default=0.5, ge=0.1, le=10.0)
     trino_progress_timeout_seconds: float = Field(default=1.0, ge=0.1, le=10.0)
     trino_cleanup_poll_seconds: float = Field(default=3600.0, ge=60.0, le=86_400.0)
+    asklake_object_storage_provider: str = "minio"
+    s3_endpoint: str | None = None
+    s3_force_path_style: bool = False
+    aws_region: str = "ap-northeast-2"
     minio_endpoint: str | None = None
     minio_access_key: str | None = None
     minio_secret_key: str | None = None
@@ -96,6 +100,16 @@ class Settings(BaseSettings):
         if isinstance(value, list):
             return value
         return []
+
+    @field_validator("asklake_object_storage_provider", mode="before")
+    @classmethod
+    def normalize_object_storage_provider(cls, value: object) -> str:
+        normalized = str(value or "minio").strip().lower()
+        if normalized in {"aws", "amazon s3", "s3"}:
+            return "aws"
+        if normalized in {"minio", "minio/s3"}:
+            return "minio"
+        raise ValueError("ASKLAKE_OBJECT_STORAGE_PROVIDER must be minio or aws")
 
 
 @lru_cache

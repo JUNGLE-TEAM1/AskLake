@@ -38,23 +38,23 @@ npm run dev
 docker compose up -d minio
 ```
 
-EC2 prod deploy에서는 MinIO가 `deploy/docker-compose.prod.yml`의 `minio` service로 실행된다. 서버 `deploy/.env`에는 최소 아래 값이 필요하다.
+이 문서의 MinIO harness는 로컬 회귀 전용이다. EC2 production은 MinIO를 띄우지 않고 AWS S3와 instance profile IAM Role을 사용한다. 서버 `deploy/.env`에는 최소 아래 값이 필요하다.
 
 ```text
-MINIO_ENDPOINT=http://minio:9000
-MINIO_ENDPOINT_IN_DOCKER=http://minio:9000
-MINIO_ACCESS_KEY=<server-only value>
-MINIO_SECRET_KEY=<server-only value>
-MINIO_BUCKET=m3-raw
-S3_ENDPOINT=http://minio:9000
-S3_FORCE_PATH_STYLE=true
-S3_ALLOWED_BUCKETS=m3-raw,asklake-output
+ASKLAKE_OBJECT_STORAGE_PROVIDER=aws
+AWS_REGION=ap-northeast-2
+ASKLAKE_RAW_BUCKET=<raw-bucket>
+ASKLAKE_SPARK_OUTPUT_MODE=s3a
+ASKLAKE_SPARK_OUTPUT_BUCKET=<output-bucket>
+S3_ENDPOINT=
+S3_FORCE_PATH_STYLE=false
+S3_ALLOWED_BUCKETS=<raw-bucket>,<output-bucket>
 ```
 
-초기 object sample은 EC2 backend container에서 준비한다.
+초기 object sample은 IAM 권한이 있는 로컬 shell 또는 EC2에서 AWS CLI로 업로드한다.
 
 ```bash
-docker compose --env-file deploy/.env -f deploy/docker-compose.prod.yml exec backend npm run minio:seed-verify
+aws s3 cp /path/to/sample.csv s3://<raw-bucket>/asklake-fixtures/sample.csv
 ```
 
 Initial endpoints:
@@ -76,7 +76,7 @@ $env:S3_FORCE_PATH_STYLE = "true"
 $env:TARGET_DATABASES = "asklake,asklake_gold,analytics,marketing"
 ```
 
-운영에서는 AWS SDK credential provider chain 또는 IAM role을 사용한다. 브라우저에는 AWS access key / secret key를 넣지 않는다.
+운영에서는 AWS SDK credential provider chain과 EC2 IAM Role을 사용한다. 브라우저나 `deploy/.env`에는 AWS access key / secret key를 넣지 않는다. 전체 EC2 절차는 `docs/deployment-runbook.md`를 따른다.
 
 ## 3. Source Fixtures
 

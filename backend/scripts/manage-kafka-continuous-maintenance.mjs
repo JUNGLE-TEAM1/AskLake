@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { objectStorageDockerEnv, toDockerEnvArgs } from "../src/objectStorageConfig.mjs";
 
 const backendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const scriptsDir = path.resolve(process.env.ASKLAKE_SPARK_HOST_SCRIPTS_DIR || path.join(backendDir, "scripts"));
@@ -59,9 +60,7 @@ function runMaintenance(input) {
     "-e", `ASKLAKE_MAINTENANCE_OFFSETS=${JSON.stringify(input.offsets || [])}`,
     "-e", `ASKLAKE_MAINTENANCE_TARGET_MB=${input.targetFileSizeMb || 256}`,
     "-e", `ASKLAKE_MAINTENANCE_LIMIT=${input.limit || 100}`,
-    "-e", `MINIO_ENDPOINT=${process.env.MINIO_ENDPOINT_IN_DOCKER || "http://minio:9000"}`,
-    "-e", `MINIO_ACCESS_KEY=${process.env.MINIO_ACCESS_KEY || ""}`,
-    "-e", `MINIO_SECRET_KEY=${process.env.MINIO_SECRET_KEY || ""}`,
+    ...toDockerEnvArgs(objectStorageDockerEnv()),
     "-e", "HOME=/tmp",
     image,
     "/opt/spark/bin/spark-submit", "--master", masterUrl,

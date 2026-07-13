@@ -201,9 +201,10 @@ show_status() {
 }
 
 bootstrap_trino_dependencies() {
-  remote_compose 'up -d postgres minio'
+  remote_compose 'up -d postgres'
   remote_compose 'run --rm trino-postgres-bootstrap'
-  remote_compose 'run --rm trino-storage-bootstrap'
+  remote_compose 'build aws-s3-readiness'
+  remote_compose 'run --rm aws-s3-readiness'
 }
 
 verify_trino_runtime() {

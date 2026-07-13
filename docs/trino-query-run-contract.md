@@ -132,7 +132,7 @@ type QueryRunResultPage = {
 - Frontend는 현재 page row와 cursor history만 보관하고 이전 page 이동 시 서버에서 다시 읽는다.
 - row count는 Trino가 확정할 수 있을 때만 반환하며, pagination을 위해 별도 `COUNT(*)`를 강제하지 않는다.
 - 결과 retention 만료 또는 cursor 만료는 결과 page endpoint에서 명시적 오류로 응답한다. run metadata 조회는 만료 후에도 유지해 사용자가 SQL, 상태, 통계를 확인할 수 있게 한다. 재실행 여부는 사용자에게 선택하게 한다.
-- 새 Trino Query Run 결과는 private MinIO gzip page object에 저장하고 PostgreSQL에는 page metadata만 남긴다. 기존 PostgreSQL JSONB page storage는 migration read compatibility로만 유지한다. browser-independent collector lifecycle은 `docs/trino-query-result-storage-contract.md`를 canonical source로 둔다.
+- 새 Trino Query Run 결과는 private provider-backed gzip page object에 저장하고 PostgreSQL에는 page metadata만 남긴다. Local은 MinIO, EC2 production은 AWS S3/IAM Role을 사용한다. 기존 PostgreSQL JSONB page storage는 migration read compatibility로만 유지한다. browser-independent collector lifecycle은 `docs/trino-query-result-storage-contract.md`를 canonical source로 둔다.
 
 ## 6. Validation, Governance, Audit
 

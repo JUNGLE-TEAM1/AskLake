@@ -27,7 +27,7 @@ class StoredTrinoResultPage:
 
 
 class TrinoResultStorage:
-    """Private MinIO-backed storage for collected Trino result pages."""
+    """Private provider-backed storage for collected Trino result pages."""
 
     def __init__(self, runtime_settings: Settings | None = None) -> None:
         self.settings = runtime_settings or settings
@@ -162,7 +162,10 @@ class TrinoResultStorage:
             if error_code not in {"404", "NoSuchBucket", "NoSuchBucketPolicy"} or not self.settings.trino_result_storage_auto_create_bucket:
                 raise self._storage_error("Trino result storage bucket is unavailable") from exc
             try:
-                client.create_bucket(Bucket=self.bucket)
+                create_kwargs: dict[str, Any] = {"Bucket": self.bucket}
+                if self.settings.asklake_object_storage_provider == "aws" and self.settings.aws_region != "us-east-1":
+                    create_kwargs["CreateBucketConfiguration"] = {"LocationConstraint": self.settings.aws_region}
+                client.create_bucket(**create_kwargs)
             except (BotoCoreError, ClientError) as create_exc:
                 raise self._storage_error("Unable to create Trino result storage bucket") from create_exc
         except BotoCoreError as exc:
@@ -172,36 +175,45 @@ class TrinoResultStorage:
     def _client(self) -> Any:
         if self.client is not None:
             return self.client
-        endpoint = self.settings.minio_endpoint
+        provider = self.settings.asklake_object_storage_provider
+        endpoint = self.settings.s3_endpoint or (self.settings.minio_endpoint if provider == "minio" else None)
         dedicated_access_key = self.settings.trino_result_storage_access_key
         dedicated_secret_key = self.settings.trino_result_storage_secret_key
+        if provider == "aws" and (dedicated_access_key or dedicated_secret_key):
+            raise ApiError(
+                ErrorCode.RESULT_STORAGE_UNAVAILABLE,
+                "AWS Trino result storage must use the default credential chain",
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
         if bool(dedicated_access_key) != bool(dedicated_secret_key):
             raise ApiError(
                 ErrorCode.RESULT_STORAGE_UNAVAILABLE,
                 "Trino result storage credentials are incomplete",
                 status.HTTP_503_SERVICE_UNAVAILABLE,
             )
-        access_key = dedicated_access_key or self.settings.minio_access_key
-        secret_key = dedicated_secret_key or self.settings.minio_secret_key
-        if not self.bucket or not endpoint or not access_key or not secret_key:
+        access_key = (dedicated_access_key or self.settings.minio_access_key) if provider == "minio" else None
+        secret_key = (dedicated_secret_key or self.settings.minio_secret_key) if provider == "minio" else None
+        if not self.bucket or (provider == "minio" and (not endpoint or not access_key or not secret_key)):
             raise ApiError(
                 ErrorCode.RESULT_STORAGE_UNAVAILABLE,
                 "Trino result storage is not configured",
                 status.HTTP_503_SERVICE_UNAVAILABLE,
             )
-        self.client = boto3.client(
-            "s3",
-            endpoint_url=endpoint,
-            aws_access_key_id=access_key,
-            aws_secret_access_key=secret_key,
-            region_name=self.settings.minio_region,
-            config=Config(
+        kwargs: dict[str, Any] = {
+            "region_name": self.settings.aws_region if provider == "aws" else self.settings.minio_region,
+            "config": Config(
                 connect_timeout=3,
                 read_timeout=15,
                 retries={"max_attempts": 2, "mode": "standard"},
-                s3={"addressing_style": "path"},
+                s3={"addressing_style": "path" if provider == "minio" or self.settings.s3_force_path_style else "auto"},
             ),
-        )
+        }
+        if endpoint:
+            kwargs["endpoint_url"] = endpoint
+        if access_key and secret_key:
+            kwargs["aws_access_key_id"] = access_key
+            kwargs["aws_secret_access_key"] = secret_key
+        self.client = boto3.client("s3", **kwargs)
         return self.client
 
     @staticmethod

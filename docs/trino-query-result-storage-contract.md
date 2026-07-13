@@ -1,12 +1,12 @@
 # Trino Query Result Storage Contract
 
-이 문서는 Query Result Phase 0에서 확정한 대용량 결과 lifecycle을 정의한다. Query Result Phase 1은 일반 Trino 결과 행을 private MinIO page object로 전환했으며, PostgreSQL JSONB row는 migration read compatibility로만 남아 있다. SQL 검증, runtime identity, Query Run의 상위 동작은 `docs/trino-query-run-contract.md`를 따른다.
+이 문서는 Query Result Phase 0에서 확정한 대용량 결과 lifecycle을 정의한다. Query Result Phase 1은 일반 Trino 결과 행을 private object-storage page object로 전환했으며, PostgreSQL JSONB row는 migration read compatibility로만 남아 있다. Local은 MinIO, EC2 production은 AWS S3/IAM Role을 사용한다. SQL 검증, runtime identity, Query Run의 상위 동작은 `docs/trino-query-run-contract.md`를 따른다.
 
 ## 1. 핵심 결정
 
 - 성공한 Query Run은 read-only query 전체를 실행한다. 브라우저는 전체 결과를 한 번에 받거나 렌더링하지 않는다.
 - PostgreSQL은 Query Run metadata, 페이지 순서, object reference, 접근 상태, checksum, retention 정보만 저장한다. 결과 행은 저장하지 않는다.
-- backend는 결과 페이지를 private MinIO의 `query-results/<runId>/pages/<pageIndex>[.<attempt>].json.gz`에 저장한다. Collector page의 attempt는 lease generation에 묶이며 최초 request page는 suffix가 없을 수 있다.
+- backend는 결과 페이지를 private provider-backed bucket의 `query-results/<runId>/pages/<pageIndex>[.<attempt>].json.gz`에 저장한다. Collector page의 attempt는 lease generation에 묶이며 최초 request page는 suffix가 없을 수 있다.
 - 압축 페이지에는 versioned JSON의 `columns`, `rows`를 넣는다. object upload가 끝난 뒤 현재 worker/generation을 DB row lock으로 다시 확인하고 metadata가 commit된 page만 조회 가능 상태로 만든다.
 - 결과 object는 backend만 읽는다. API는 browser에 MinIO URL, access key, bucket path를 반환하지 않는다.
 - frontend polling이 아니라 backend collector가 Query Run과 Iceberg CTAS materialization의 Trino continuation URL을 terminal state까지 소비한다. 브라우저 탭을 닫아도 수집은 멈추지 않는다.
@@ -18,7 +18,7 @@
 ```text
 Trino pages
   -> backend result collector
-  -> private MinIO page objects
+  -> private object-storage page objects
   -> PostgreSQL page metadata / manifest
   -> permission-checked result API
   -> frontend page renderer
@@ -114,11 +114,11 @@ type QueryRunResultPage = {
 - 현재 `TRINO_MAX_RESULT_BYTES=50MB`, `TRINO_MAX_RESULT_PAGES=1000`은 PostgreSQL 보호를 위한 전환기 제한이다. Phase 1은 일반 result path에서 이 제한을 제거한다.
 - Result retention은 deployment별로 설정한다. Phase 1의 기본 목표는 24시간(`TRINO_RESULT_RETENTION_SECONDS=86400`)이며, 배포 환경은 더 짧게 설정할 수 있다.
 - Storage quota, concurrent run quota, timeout, estimate 기반 확인은 organization policy다. 실행 전에 경고하거나 거절할 수 있지만, 완료된 결과를 조용히 truncate해서는 안 된다.
-- `GET /api/query/runs/{runId}/exports/csv`는 완료된 Query Run의 MinIO page를 다시 읽어 CSV를 server-side stream으로 반환한다. SQL을 재실행하거나 browser memory에서 전체 파일을 만들지 않으며, 같은 permission과 retention check를 사용하고 raw object storage credential을 노출하지 않는다.
+- `GET /api/query/runs/{runId}/exports/csv`는 완료된 Query Run의 object-storage page를 다시 읽어 CSV를 server-side stream으로 반환한다. SQL을 재실행하거나 browser memory에서 전체 파일을 만들지 않으며, 같은 permission과 retention check를 사용하고 raw object storage credential을 노출하지 않는다.
 
 ## 6. 보안과 감사
 
-- Query execution은 `asklake-api` Trino service identity를 유지한다. Result collection은 MinIO root/warehouse identity와 분리된 query-result 전용 credential만 사용한다.
+- Query execution은 `asklake-api` Trino service identity를 유지한다. Local MinIO result collection은 root/warehouse와 분리된 전용 credential을 사용할 수 있다. EC2 production result collection은 EC2 IAM Role/default credential chain을 사용하며 static key를 저장하지 않는다.
 - CTAS materialization은 `asklake-materializer`를 유지하며 temporary result page retention과 독립적이다.
 - AskLake audit event는 submit, collector start/recovery, result persistence failure, cancel, terminal state, result page access, expiry, cleanup을 기록한다.
 - 실제 사용자 identity는 AskLake audit actor로 남는다. Trino service account identity로 대체하지 않는다.
@@ -127,7 +127,7 @@ type QueryRunResultPage = {
 
 ### Phase 1: Storage migration
 
-완료: MinIO page storage, metadata-only page row, manifest persistence, integrity check, expiry cleanup primitive을 추가했다. Migration 중 기존 PostgreSQL row page는 backward compatibility를 위해 read만 허용한다.
+완료: provider-backed page storage, metadata-only page row, manifest persistence, integrity check, expiry cleanup primitive을 추가했다. Migration 중 기존 PostgreSQL row page는 backward compatibility를 위해 read만 허용한다.
 
 ### Phase 2: Collector worker
 
@@ -139,7 +139,7 @@ type QueryRunResultPage = {
 
 ## 8. Phase 0 완료 기준
 
-- Architecture, API, 운영 문서가 같은 MinIO page-store 모델을 설명한다.
+- Architecture, API, 운영 문서가 같은 provider-backed page-store 모델을 설명한다.
 - Result storage와 Query Run execution state가 모호하지 않다.
 - Schema 또는 worker code를 추가하기 전에 retention, cleanup, access check, recovery, failure semantics가 확정된다.
 - Phase 0 code 변경이 대용량 result persistence가 이미 구현됐다고 주장하지 않는다.

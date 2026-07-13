@@ -701,6 +701,7 @@ class DashboardPhysicalWidgetDataTests(unittest.TestCase):
 
         self.assertNotIn('execute("INSTALL httpfs")', service_source)
         self.assertIn("INSTALL httpfs", dockerfile)
+        self.assertIn("INSTALL aws", dockerfile)
 
     def test_server_runtime_config_is_not_persisted_over_the_editable_count_config(self) -> None:
         service = DashboardRuntimeService(SimpleNamespace(), FakeCatalogRepository())
