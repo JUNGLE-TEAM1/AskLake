@@ -37,6 +37,7 @@ import InlineAIInput from "../ai/InlineAIInput";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { SqlCodeEditor } from "@/components/sql/SqlCodeEditor";
 import { Textarea } from "@/components/ui/textarea";
 import { apiConfig } from "@/services/apiClient";
 import askLakeNessiIconUrl from "../../assets/asklake-nessi-icon.png";
@@ -1157,7 +1158,7 @@ export default function SchemaTransformEditor({
                     {sqlValidation.tone === "error" ? <AlertCircle className="size-4" /> : sqlValidation.tone === "success" ? <CheckCircle2 className="size-4" /> : <Sparkles className="size-4" />}
                     <span>{sqlValidation.message}</span>
                   </div>
-                  <Textarea
+                  <SqlCodeEditor
                     id="schema-sql-transform-editor"
                     value={customSql}
                     onChange={(event) => {
@@ -1166,7 +1167,7 @@ export default function SchemaTransformEditor({
                       setSqlValidation({ tone: "idle", message: "변경된 SQL을 다시 검증하세요." });
                     }}
                     placeholder="SELECT text, sentiment FROM input"
-                    className="min-h-[210px] flex-1 resize-none rounded-none border-0 bg-white px-4 py-4 font-mono text-sm font-semibold leading-6 text-slate-950 caret-blue-600 shadow-none outline-none placeholder:text-slate-400 focus-visible:ring-0"
+                    variant="compact"
                   />
                 </div>
               </div>

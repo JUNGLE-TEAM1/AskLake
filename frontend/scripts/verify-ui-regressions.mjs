@@ -151,7 +151,7 @@ const checks = [
       /<SqlAiWriterDialog disabled=\{disabled\} \{\.\.\.ai\} \/>/,
       /<Button type="button" onClick=\{onReset\}/,
       /<Button type="button" onClick=\{onExecute\}/,
-      /className="focus-visible:ring-0 focus-visible:ring-offset-0"[\s\S]*id="sql-query-editor"/,
+      /<SqlCodeEditor[\s\S]*id="sql-query-editor"/,
       /autocompleteCandidates\.map/,
       /title="선택 데이터셋 기준 SQL"/,
     ],
@@ -223,12 +223,22 @@ const checks = [
   },
   {
     name: "SQL editor surface, gutter, and textarea share one responsive viewport",
-    file: "src/pages/sql/SqlAnalysisPage.module.css",
+    file: "src/components/sql/SqlCodeEditor.module.css",
     patterns: [
       /\.editorSurface \{[\s\S]*height: clamp\(276px, 36vh, 480px\);[\s\S]*overflow: hidden;/,
-      /\.editorSurface pre \{[\s\S]*height: 100%;[\s\S]*min-height: 0;[\s\S]*overflow: hidden;/,
-      /\.editorSurface textarea \{[\s\S]*height: 100%;[\s\S]*min-height: 0;[\s\S]*max-height: none;[\s\S]*resize: none;[\s\S]*overflow: auto;/,
+      /\.lineNumbers \{[\s\S]*height: 100%;[\s\S]*min-height: 0;[\s\S]*overflow: hidden;/,
+      /\.editorInput \{[\s\S]*height: 100%;[\s\S]*min-height: 0;[\s\S]*max-height: none;[\s\S]*resize: none;[\s\S]*overflow: auto;/,
       /\.editorInputWrap \{[\s\S]*height: 100%;[\s\S]*min-height: 0;[\s\S]*overflow: hidden;/,
+    ],
+  },
+  {
+    name: "Spark SQL transform reuses the shared line-numbered SQL editor",
+    file: "src/components/etl/SchemaTransformEditor.jsx",
+    patterns: [
+      /import \{ SqlCodeEditor \} from "@\/components\/sql\/SqlCodeEditor";/,
+      /<SqlCodeEditor[\s\S]*id="schema-sql-transform-editor"[\s\S]*variant="compact"/,
+      /setCustomSql\(event\.target\.value\)/,
+      /setSqlValidation\(\{ tone: "idle"/,
     ],
   },
   {
