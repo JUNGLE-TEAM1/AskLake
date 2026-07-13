@@ -1812,6 +1812,9 @@ def execute_airflow_run(
     apply_spark_result_to_airflow_run(run, spark_run)
     dataset_model = None
     if result.get("status") == "success":
+        # Do not hold the dataset lock while Spark is running. Re-read and
+        # lock immediately before merging the new materialization history.
+        existing_dataset = etl_repository.get_dataset_by_id_for_update(db, dataset_id)
         dataset_model = dataset_from_spark_result(job, result, existing_dataset)
         job.target_path = result.get("outputPath") or job.target_path
         job.last_state = "Spark 적재 및 카탈로그 등록 완료 · Airflow 종료 확인 중"
@@ -4134,7 +4137,7 @@ def materialize_continuous_publication(
     if nonnegative_int(publication.get("storedCount"), 0) == 0:
         return True
     run_id = f"continuous:{job.id}:batch:{batch_id}"
-    existing = etl_repository.get_dataset_by_id(db, job.dataset_id or make_dataset_id(job.target))
+    existing = etl_repository.get_dataset_by_id_for_update(db, job.dataset_id or make_dataset_id(job.target))
     existing_runs = (existing.payload or {}).get("materializationRuns") if existing and existing.payload else []
     if any(str(item.get("runId") or "") == run_id for item in existing_runs if isinstance(item, dict)):
         return True
@@ -4194,7 +4197,7 @@ def materialize_continuous_replay(
     replayed_count = nonnegative_int(replay_result.get("storedCount"), 0)
     if replayed_count == 0:
         return
-    existing = etl_repository.get_dataset_by_id(db, job.dataset_id or make_dataset_id(job.target))
+    existing = etl_repository.get_dataset_by_id_for_update(db, job.dataset_id or make_dataset_id(job.target))
     target = parse_kafka_target_path(job.storage_path or job.target_path, job.target, job.target_layer)
     target_root = f"s3a://{target['bucket']}/{target['prefix'].strip('/')}/_batches"
     metrics = runtime.metrics or {}

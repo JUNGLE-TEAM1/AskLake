@@ -249,6 +249,7 @@ export function App() {
     datasets,
     draftPipeline,
     filterJobs,
+    refreshData,
     handleJobCommand,
     jobExecutionEvidence,
     jobListFacets,
@@ -480,6 +481,11 @@ export function App() {
       .catch(() => showToast("로그아웃 요청을 처리하지 못했습니다.", "info"));
   };
 
+  const refreshWorkspaceData = async () => {
+    const refreshed = await refreshData();
+    writeAuditLog("etl.job.status_refreshed", "/api/etl/jobs", "jobs", refreshed ? "success" : "failed");
+  };
+
   const openDatasetInSqlWithSelection = (dataset: CatalogDataset) => {
     setSqlInitialDatasetId(dataset.id);
     setSelectedDataset(dataset);
@@ -557,7 +563,7 @@ export function App() {
         onNavigate={navigateSidebar}
       />
       <main className={activeFlow === "schema" ? "main-shell schema-shell" : "main-shell"}>
-        <Topbar auditLogs={auditLogs} auditOpen={auditOpen} currentUser={currentUser} onAccount={openProfilePage} onAuditToggle={() => setAuditOpen((open) => !open)} onLogin={() => moveToFlow("login")} onLogout={handleLogout} onRefresh={() => writeAuditLog("etl.job.status_refreshed", "/api/etl/jobs", "jobs")} />
+        <Topbar auditLogs={auditLogs} auditOpen={auditOpen} currentUser={currentUser} onAccount={openProfilePage} onAuditToggle={() => setAuditOpen((open) => !open)} onLogin={() => moveToFlow("login")} onLogout={handleLogout} onRefresh={() => void refreshWorkspaceData()} />
         {toast && <div className={`app-toast ${toast.tone}`}>{toast.message}</div>}
         {(apiPending || (dataLoading && (hasShellRows || isIngestShellFlow))) && <div className="app-api-pending">{pendingMessage}</div>}
         {wizardFlows.includes(activeFlow) && <Stepper activeIndex={wizardActiveIndex} steps={wizardStepLabels} onStepSelect={navigateWizardStep} />}

@@ -1506,6 +1506,38 @@ const checks = [
       /<SelectItem value="float">/,
     ],
   },
+  {
+    name: "Manual workspace refresh replaces Jobs and Catalog data from live APIs",
+    file: "src/hooks/useAskLakeData.ts",
+    patterns: [
+      /const dataHydrationRequestRef = useRef\(0\);/,
+      /const refreshData = async \(\) =>/,
+      /const \[jobsResult, datasetsResult\] = await Promise\.all\(\[\s*getJobs\(\),\s*getDatasets\(\),?\s*\]\);/,
+      /const applyHydratedJobs[\s\S]*setJobs\(normalizedJobs\);[\s\S]*setJobListFacets\(result\.facets\);/,
+      /const applyHydratedDatasets[\s\S]*setDatasets\(normalizedDatasets\);[\s\S]*normalizedDatasets\.find\(\(dataset\) => dataset\.id === current\.id\)/,
+      /filterJobs,\s*refreshData,\s*createSqlDatasetJob,/,
+    ],
+  },
+  {
+    name: "Catalog materialization totals stop at the newest snapshot",
+    file: "src/hooks/useAskLakeData.ts",
+    patterns: [
+      /activeDatasetMaterializationRuns\(materializationRuns\)/,
+      /if \(run\.materializationMode !== "delta"\) break;/,
+    ],
+  },
+  {
+    name: "Global top-bar refresh awaits the authoritative workspace rehydrate",
+    file: "src/App.tsx",
+    patterns: [
+      /filterJobs,\s*refreshData,\s*handleJobCommand,/,
+      /const refreshWorkspaceData = async \(\) => \{\s*const refreshed = await refreshData\(\);\s*writeAuditLog\("etl\.job\.status_refreshed", "\/api\/etl\/jobs", "jobs", refreshed \? "success" : "failed"\);\s*\};/,
+      /<Topbar[^\n]*onRefresh=\{\(\) => void refreshWorkspaceData\(\)\}/,
+    ],
+    forbiddenPatterns: [
+      /<Topbar[^\n]*onRefresh=\{\(\) => writeAuditLog\("etl\.job\.status_refreshed"/,
+    ],
+  },
 ];
 
 const failures = [];
