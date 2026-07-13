@@ -68,7 +68,15 @@ class FakeSqlService:
     def __init__(self) -> None:
         self.called = False
 
-    def get_query_run(self, _run_id: str, _actor: ActorContext) -> dict[str, object]:
+    def get_query_run(
+        self,
+        _run_id: str,
+        _actor: ActorContext,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> dict[str, object]:
+        del limit, offset
         self.called = True
         return query_run_payload()
 

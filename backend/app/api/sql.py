@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.core.auth_context import ActorContext, get_actor_context
@@ -8,6 +8,8 @@ from app.core.database import get_db
 from app.repositories.catalog_repository import CatalogRepository
 from app.repositories.sql_repository import SqlRepository
 from app.schemas.sql import (
+    DEFAULT_QUERY_PAGE_LIMIT,
+    MAX_QUERY_PAGE_LIMIT,
     QueryAiSuggestionRequest,
     QueryAiSuggestionResponse,
     QueryRunRequest,
@@ -46,8 +48,10 @@ def get_query_run(
     run_id: str,
     service: Annotated[SqlService, Depends(get_sql_service)],
     actor: Annotated[ActorContext, Depends(get_actor_context)],
+    limit: Annotated[int, Query(ge=1, le=MAX_QUERY_PAGE_LIMIT)] = DEFAULT_QUERY_PAGE_LIMIT,
+    offset: Annotated[int, Query(ge=0)] = 0,
 ) -> QueryRunResponse:
-    return service.get_query_run(run_id, actor)
+    return service.get_query_run(run_id, actor, limit=limit, offset=offset)
 
 
 @router.post("/ai-suggestions", response_model=QueryAiSuggestionResponse)
