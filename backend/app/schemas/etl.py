@@ -453,6 +453,8 @@ class PermissionOptionUser(CamelModel):
 class PermissionOptionsResponse(CamelModel):
     groups: list[PermissionOptionGroup] = Field(default_factory=list)
     users: list[PermissionOptionUser] = Field(default_factory=list)
+class DeleteJobResponse(CamelModel):
+    deleted_job_id: str
 
 
 class CatalogDataset(CamelModel):

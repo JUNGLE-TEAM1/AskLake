@@ -12,6 +12,7 @@ import {
 } from "../services/mockApi";
 import {
   createPipelineDraft as createLivePipelineDraft,
+  deletePipelineJob as deleteLivePipelineJob,
   getJob as getLiveJob,
   runJobCommand as runLiveJobCommand,
 } from "../services/pipelineApi";
@@ -601,6 +602,24 @@ function moveJobFacetCounts(facets: JobListFacets, previousJob: JobRowData, next
     ...facets,
     latestRunOutcomeCounts,
     statusCounts,
+  };
+}
+
+function removeJobFacetCounts(facets: JobListFacets, job: JobRowData): JobListFacets {
+  const latestRunOutcome = getLatestRunOutcome(job);
+  return {
+    ...facets,
+    latestRunOutcomeCounts: {
+      ...facets.latestRunOutcomeCounts,
+      ...(latestRunOutcome
+        ? { [latestRunOutcome]: Math.max(0, (facets.latestRunOutcomeCounts[latestRunOutcome] ?? 0) - 1) }
+        : {}),
+    },
+    statusCounts: {
+      ...facets.statusCounts,
+      [job.status]: Math.max(0, (facets.statusCounts[job.status] ?? 0) - 1),
+    },
+    total: Math.max(0, facets.total - 1),
   };
 }
 
@@ -1254,20 +1273,32 @@ export function useAskLakeData({
     }
 
     if (command === "delete") {
+      if (commandPendingRef.current.has(job.id)) {
+        showToast("이미 해당 Job 삭제를 처리 중입니다.", "info");
+        return undefined;
+      }
+      commandPendingRef.current.add(job.id);
+      setApiPending(true);
       writeAuditLog("etl.job.delete_requested", `/api/etl/jobs/${job.id}`, job.id);
-      const remaining = jobs.filter((item) => item.id !== job.id);
-      const deletedRunIds = new Set((runsByJobId[job.id] ?? []).map((run) => run.runId));
-      setJobs(remaining);
-      setSelectedJob(remaining[0] ?? emptySelectedJob);
-      setRunsByJobId((state) => withoutRecordKey(state, job.id));
-      setSelectedRunIdByJobId((state) => withoutRecordKey(state, job.id));
-      setDagStepsByRunId((state) => Object.fromEntries(Object.entries(state).filter(([runId]) => !deletedRunIds.has(runId))));
-      commandPendingRef.current.delete(job.id);
-      setCommandPendingByJobId((state) => {
-        const { [job.id]: _pendingCommand, ...rest } = state;
-        return rest;
-      });
-      onFlowChange("jobs");
+      try {
+        if (!apiConfig.useMock) await deleteLivePipelineJob(job.id);
+        const remaining = jobs.filter((item) => item.id !== job.id);
+        const deletedRunIds = new Set((runsByJobId[job.id] ?? []).map((run) => run.runId));
+        setJobs(remaining);
+        setJobListFacets((facets) => removeJobFacetCounts(facets, job));
+        setSelectedJob(remaining[0] ?? emptySelectedJob);
+        setRunsByJobId((state) => withoutRecordKey(state, job.id));
+        setSelectedRunIdByJobId((state) => withoutRecordKey(state, job.id));
+        setDagStepsByRunId((state) => Object.fromEntries(Object.entries(state).filter(([runId]) => !deletedRunIds.has(runId))));
+        writeAuditLog("etl.job.deleted", `/api/etl/jobs/${job.id}`, job.id);
+        onFlowChange("jobs");
+      } catch (error) {
+        writeAuditLog("etl.job.delete_failed", `/api/etl/jobs/${job.id}`, job.id, "failed");
+        showToast(error instanceof Error ? error.message : "Job 삭제에 실패했습니다.", "info");
+      } finally {
+        commandPendingRef.current.delete(job.id);
+        setApiPending(false);
+      }
       return undefined;
     }
 

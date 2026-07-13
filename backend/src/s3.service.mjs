@@ -66,46 +66,6 @@ function toFile(key, currentPrefix) {
   };
 }
 
-function fixtureFoldersForPrefix(prefix) {
-  const fixturePrefixes = [
-    "pair_a_customer_review_gold/",
-    "pair_a_customer_review_gold/gold/",
-    "pair_a_customer_review_gold/silver/",
-    "pair_a/",
-    "pair_a/customer_review_gold/",
-    "pair_a/customer_review_gold/gold/",
-    "sales/",
-    "sales/order_date=2026-07-07/",
-    "sales/order_date=2026-07-08/",
-  ];
-  const children = new Map();
-
-  fixturePrefixes.forEach((fixturePrefix) => {
-    if (!fixturePrefix.startsWith(prefix) || fixturePrefix === prefix) return;
-    const remainder = fixturePrefix.slice(prefix.length);
-    const [nextSegment] = remainder.split("/").filter(Boolean);
-    if (!nextSegment) return;
-    const childPrefix = `${prefix}${nextSegment}/`;
-    children.set(childPrefix, toFolder(childPrefix));
-  });
-
-  return Array.from(children.values());
-}
-
-function fixturePrefixResponse(bucket, prefix) {
-  return {
-    bucket,
-    files: [],
-    folders: fixtureFoldersForPrefix(prefix),
-    nextContinuationToken: null,
-    prefix,
-  };
-}
-
-function shouldUseFixtureFallback() {
-  return String(process.env.S3_DISABLE_FIXTURE_FALLBACK ?? "false").toLowerCase() !== "true";
-}
-
 export function listS3Buckets() {
   return { buckets: allowedBuckets() };
 }
@@ -135,10 +95,6 @@ export async function listS3Prefixes({ bucket, continuationToken, prefix }) {
       prefix: safePrefix,
     };
   } catch (error) {
-    if (shouldUseFixtureFallback()) {
-      return fixturePrefixResponse(allowedBucket, safePrefix);
-    }
-
     throw Object.assign(new Error(error.message || "S3 prefix list failed."), {
       code: "S3_LIST_FAILED",
       status: 502,

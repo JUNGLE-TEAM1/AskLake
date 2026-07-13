@@ -6,6 +6,7 @@ from app.core.database import get_db
 from app.schemas.etl import (
     CreatePipelineRequest,
     CreatePipelineResponse,
+    DeleteJobResponse,
     ContinuousCompactionRequest,
     ContinuousMaintenanceRun,
     ContinuousQuarantineResponse,
@@ -50,8 +51,30 @@ router = APIRouter(prefix="/etl", tags=["etl"])
 
 
 @router.post("/sources/test", response_model=SourceConnectorAnalysis)
-def test_source_connector(request: SourceConnectorRequest) -> SourceConnectorAnalysis:
+def test_source_connector(
+    request: SourceConnectorRequest,
+    actor: ActorContext = Depends(get_actor_context),
+) -> SourceConnectorAnalysis:
+    require_permission(actor, "manage", resource_label="source connector")
     return etl_service.test_source_connector(request)
+
+
+@router.post("/sources/assets", response_model=SourceAssetsResponse)
+def list_source_assets(
+    request: SourceAssetsRequest,
+    actor: ActorContext = Depends(get_actor_context),
+) -> SourceAssetsResponse:
+    require_permission(actor, "manage", resource_label="source connector")
+    return etl_service.list_source_assets(request)
+
+
+@router.post("/schema-inference", response_model=SchemaDraft)
+def infer_schema(
+    request: SourceConnectorRequest,
+    actor: ActorContext = Depends(get_actor_context),
+) -> SchemaDraft:
+    require_permission(actor, "manage", resource_label="source connector")
+    return etl_service.infer_schema(request)
 
 
 @router.get("/sources/defaults", response_model=SourceConnectorDefaults)
@@ -77,18 +100,12 @@ def get_permission_options(
     return etl_service.get_permission_options(db, actor)
 
 
-@router.post("/sources/assets", response_model=SourceAssetsResponse)
-def list_source_assets(request: SourceAssetsRequest) -> SourceAssetsResponse:
-    return etl_service.list_source_assets(request)
-
-
-@router.post("/schema-inference", response_model=SchemaDraft)
-def infer_schema(request: SourceConnectorRequest) -> SchemaDraft:
-    return etl_service.infer_schema(request)
-
-
 @router.post("/review", response_model=ReviewSnapshot)
-def review_pipeline(request: ReviewPipelineRequest) -> ReviewSnapshot:
+def review_pipeline(
+    request: ReviewPipelineRequest,
+    actor: ActorContext = Depends(get_actor_context),
+) -> ReviewSnapshot:
+    require_permission(actor, "manage", resource_label="source connector")
     return etl_service.review_pipeline(request)
 
 
@@ -96,7 +113,9 @@ def review_pipeline(request: ReviewPipelineRequest) -> ReviewSnapshot:
 def ingest_kafka_reviews(
     request: KafkaReviewIngestRequest,
     db: Session = Depends(get_db),
+    actor: ActorContext = Depends(get_actor_context),
 ) -> KafkaReviewIngestResponse:
+    require_permission(actor, "run", resource_label="Kafka review ingest")
     return etl_service.ingest_kafka_reviews(db, request)
 
 
@@ -192,6 +211,15 @@ def update_job(
     actor: ActorContext = Depends(get_actor_context),
 ) -> JobRowData:
     return etl_service.update_pipeline(db, job_id, request, actor)
+
+
+@router.delete("/jobs/{job_id}", response_model=DeleteJobResponse)
+def delete_job(
+    job_id: str,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(get_actor_context),
+) -> DeleteJobResponse:
+    return DeleteJobResponse(deletedJobId=etl_service.delete_job(db, job_id, actor))
 
 
 @router.post("/jobs/{job_id}/commands", response_model=JobCommandResponse)

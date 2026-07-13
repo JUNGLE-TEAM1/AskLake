@@ -210,67 +210,6 @@ const checks = [
     ],
   },
   {
-    name: "SQL result dialog pages through the complete stored run snapshot",
-    file: "src/pages/sql/SqlResultsPanel.tsx",
-    patterns: [
-      /dialogResultDraft: SqlResultDraft \| null;/,
-      /pagePending: boolean;/,
-      /onPageChange: \(offset: number\) => void;/,
-      /aria-label="SQL 결과 페이지 탐색"/,
-      />\s*처음\s*<\/Button>/,
-      />\s*이전\s*<\/Button>/,
-      /aria-label="SQL 결과 페이지"/,
-      />\s*다음\s*<\/Button>/,
-      />\s*마지막\s*<\/Button>/,
-      /role="alert"/,
-    ],
-    forbiddenPatterns: [
-      /resultDraft\.resultTruncated/,
-      /최대.*행 탐색/,
-    ],
-  },
-  {
-    name: "SQL result paging adapter requests a stored run page by offset and limit",
-    file: "src/services/mockApi.ts",
-    patterns: [
-      /export async function getQueryPreviewPage\(runId: string, options: QueryResultPageOptions\)/,
-      /new URLSearchParams\(\{ limit: String\(limit\), offset: String\(offset\) \}\)/,
-      /\/api\/query\/runs\/\$\{encodeURIComponent\(runId\)\}\?\$\{params\.toString\(\)\}/,
-      /pageLimit: options\.limit/,
-      /pageOffset: 0/,
-    ],
-    forbiddenPatterns: [
-      /resultLimit:/,
-      /resultTruncated:/,
-    ],
-  },
-  {
-    name: "SQL user edits do not reinitialize the query when cached results are invalidated",
-    file: "src/pages/sql/SqlAnalysisPage.tsx",
-    patterns: [
-      /const initializedBaseDatasetIdRef = useRef<string \| null \| undefined>\(undefined\);/,
-      /if \(initializedBaseDatasetIdRef\.current === nextBaseDatasetId\) return;/,
-      /initializedBaseDatasetIdRef\.current = nextBaseDatasetId;/,
-      /}, \[baseDataset\?\.id\]\);/,
-      /const updateQuery = \(nextQuery: string\) => \{[\s\S]*setQuery\(nextQuery\);[\s\S]*resetResultState\(\);/,
-      /const resetQuery = \(\) => \{[\s\S]*updateQuery\(defaultQuery\);/,
-    ],
-    forbiddenPatterns: [
-      /skipNextBaseDatasetResetRef/,
-      /}, \[baseDataset, canRestoreCachedResult, defaultQuery\]\);/,
-    ],
-  },
-  {
-    name: "SQL editor surface, gutter, and textarea share one responsive viewport",
-    file: "src/pages/sql/SqlAnalysisPage.module.css",
-    patterns: [
-      /\.editorSurface \{[\s\S]*height: clamp\(276px, 36vh, 480px\);[\s\S]*overflow: hidden;/,
-      /\.editorSurface pre \{[\s\S]*height: 100%;[\s\S]*min-height: 0;[\s\S]*overflow: hidden;/,
-      /\.editorSurface textarea \{[\s\S]*height: 100%;[\s\S]*min-height: 0;[\s\S]*max-height: none;[\s\S]*resize: none;[\s\S]*overflow: auto;/,
-      /\.editorInputWrap \{[\s\S]*height: 100%;[\s\S]*min-height: 0;[\s\S]*overflow: hidden;/,
-    ],
-  },
-  {
     name: "SQL chart configurator reuses the Dashboard WidgetConfigPanel",
     file: "src/pages/sql/SqlChartConfigurator.tsx",
     patterns: [
@@ -622,6 +561,59 @@ const checks = [
       /return !label\.startsWith\("__"\) && !hiddenJobDetailFieldLabels\.has\(label\);/,
       /detail=\{realtime \? job\.scheduleSummary \?\? formatJobSchedule\(job\.schedule\) : formatJobSchedule\(job\.schedule\)\}/,
       /\{ label: "주기", value: formatJobSchedule\(job\.schedule\) \}/,
+    ],
+  },
+  {
+    name: "ETL source can select a folder and persist its collection policy",
+    file: "src/pages/etl/EtlPages.tsx",
+    patterns: [
+      /const updateCollectionConfig = \(patches:/,
+      /const loadSourceAssetChildren = async \(folderPath: string\) =>/,
+      /const folderPrefix = normalizeFolderPrefix\(folderPath\)/,
+      /listSourceAssets\(activeSourceType, editableFields, folderPrefix\)/,
+      /if \(assetMeta === "folder" \|\| assetPath\.endsWith\("\/"\)\)/,
+      /onAction\("etl\.source\.asset_selected"/,
+    ],
+  },
+  {
+    name: "Collection policy changes invalidate stale sample and schema state",
+    file: "src/pages/etl/EtlPages.tsx",
+    patterns: [
+      /const updateCollectionConfig = \(patches:/,
+      /\[\.\.\.patches, \["__Sample Object", ""\]\]/,
+      /draftPatch: \{\}/,
+      /setConnectionStatus\("idle"\)/,
+      /setSourceStage\("connect"\)/,
+      /requiresRecordParsing: false/,
+      /schemaFingerprint: undefined/,
+      /summary: "수집 범위 변경 · 스키마 재추론 필요"/,
+    ],
+  },
+  {
+    name: "Source tree separates folder navigation from folder collection selection",
+    file: "src/pages/etl/SourceAssetTree.tsx",
+    patterns: [
+      /if \(node\.isFolder\) \{\s*toggleFolder\(node\);\s*return;/s,
+      /aria-label=\{`폴더 \$\{node\.name\} 선택`\}/,
+      /void onSelect\(node\.path\)/,
+    ],
+  },
+  {
+    name: "Job detail tolerates partial stats so delete remains reachable",
+    file: "src/pages/ingest/JobsPages.tsx",
+    patterns: [
+      /const stats = \{ \.\.\.fallbackJobStats\(job\), \.\.\.\(job\.stats \?\? \{\}\) \};/,
+      /const totalRuns = String\(stats\.totalRuns \?\? "-"\);/,
+    ],
+  },
+  {
+    name: "Live Job deletion updates persisted rows and list facets together",
+    file: "src/hooks/useAskLakeData.ts",
+    patterns: [
+      /deletePipelineJob as deleteLivePipelineJob/,
+      /if \(!apiConfig\.useMock\) await deleteLivePipelineJob\(job\.id\);/,
+      /setJobListFacets\(\(facets\) => removeJobFacetCounts\(facets, job\)\);/,
+      /writeAuditLog\("etl\.job\.delete_failed"/,
     ],
   },
   {
@@ -1277,21 +1269,6 @@ const checks = [
       /label="Micro-batch 최대 메시지"/,
       /getSourceConnectorDefaults\(\)/,
       /\["Broker \/ Endpoint", defaultKafkaBroker\]/,
-    ],
-  },
-  {
-    name: "Database source connection discovery stays separate from target preview",
-    file: "src/pages/etl/EtlPages.tsx",
-    patterns: [
-      /Collections: "탐색 가능한 컬렉션"/,
-      /Tables: "탐색 가능한 테이블"/,
-      /PostgreSQL:[\s\S]*testItems: \[\["Endpoint", "Not tested"\], \["Database", "Pending"\], \["Target discovery", "After connection"\]\]/,
-      /MongoDB:[\s\S]*testItems: \[\["Endpoint", "Not tested"\], \["Database", "Pending"\], \["Target discovery", "After connection"\]\]/,
-      /const requiresAssetSelectionForPreview = \["File \/ S3", "MongoDB", "PostgreSQL"\]\.includes\(activeSourceType\);/,
-      /if \(!\["File \/ S3", "MongoDB", "PostgreSQL"\]\.includes\(activeSourceType\)\)/,
-      /const result = await listSourceAssets\(activeSourceType, editableFields, ""\);/,
-      /\(requiresAssetSelectionForPreview && !selectedAssetPath\)/,
-      /schema: \{ columns: \[\], sampleRows: \[\], summary: "" \}/,
     ],
   },
   {

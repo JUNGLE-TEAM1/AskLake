@@ -215,6 +215,26 @@ def get_job(db: Session, job_id: str) -> ETLJobModel | None:
     return db.get(ETLJobModel, job_id)
 
 
+def get_job_for_update(db: Session, job_id: str) -> ETLJobModel | None:
+    ensure_schema(db)
+    statement = (
+        select(ETLJobModel)
+        .where(ETLJobModel.id == job_id)
+        .with_for_update()
+    )
+    if db.get_bind().dialect.name == "sqlite":
+        # SQLite ignores SELECT FOR UPDATE. A no-op write takes its database-level
+        # writer lock before any external side effect while preserving row values.
+        result = db.execute(
+            text("UPDATE etl_jobs SET id = id WHERE id = :job_id"),
+            {"job_id": job_id},
+        )
+        if result.rowcount == 0:
+            return None
+        return db.get(ETLJobModel, job_id, populate_existing=True)
+    return db.scalar(statement)
+
+
 def get_job_schema(db: Session, job_id: str) -> JobRowData | None:
     job = get_job(db, job_id)
     if job is None:

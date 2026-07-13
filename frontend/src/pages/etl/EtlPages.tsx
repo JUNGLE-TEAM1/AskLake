@@ -1603,6 +1603,59 @@ export function SourceConnectionPage({
     });
   };
 
+  const updateCollectionConfig = (patches: Array<[string, string]>) => {
+    const nextFields = upsertSourceFields(editableFields, [...patches, ["__Sample Object", ""]]);
+    const nextMessage = "파일 수집 범위가 변경되었습니다. 대표 파일을 다시 샘플링하세요.";
+    setSourceFields((fields) => ({ ...fields, [activeSourceType]: nextFields }));
+    setSourceRuntime((runtime) => runtime ? {
+      ...runtime,
+      draftPatch: {},
+      logs: [nextMessage],
+      message: nextMessage,
+      previewColumns: [],
+      previewNote: "수집 범위를 다시 검증한 뒤 미리보기를 확인할 수 있습니다.",
+      previewRows: [],
+      status: "idle",
+    } : null);
+    setConnectionStatus("idle");
+    setConnectionMessage(nextMessage);
+    setSourceStage("connect");
+    applySourceDraft(activeSourceType, nextFields, "idle", nextMessage);
+    onDraftChange({
+      quality: {
+        invalidRows: [],
+        rules: [],
+        score: undefined,
+        status: "idle",
+        summary: "스키마 재추론 후 품질 규칙 설정 필요",
+      },
+      recordParsing: {
+        columns: [],
+        delimiterKind: "whitespace",
+        delimiterPattern: "\\s+",
+        enabled: false,
+        expectedFieldCount: 0,
+        header: false,
+      },
+      schema: {
+        columns: [],
+        sampleRows: [],
+        schemaFingerprint: undefined,
+        summary: "수집 범위 변경 · 스키마 재추론 필요",
+      },
+      source: {
+        detectedFormat: undefined,
+        rawPreviewLines: [],
+        requiresRecordParsing: false,
+      },
+      transform: {
+        outputColumns: [],
+        steps: [],
+        summary: "스키마 재추론 후 변환 설정 필요",
+      },
+    });
+  };
+
   const loadSourceAssetChildren = async (folderPath: string) => {
     if (!hasSelectedSource || activeSourceType !== "File / S3") return;
     const folderPrefix = normalizeFolderPrefix(folderPath);

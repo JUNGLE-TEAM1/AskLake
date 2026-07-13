@@ -7,15 +7,18 @@ import time
 import hashlib
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
 
-from object_storage_runtime import configure_spark_builder
 from snapshot_rule_runtime import SnapshotRuleExecutionError, apply_snapshot_rules
 from spark_snapshot_rules import apply_spark_snapshot_rules, supports_spark_snapshot_rules
+from spark_source_identity import (
+    source_change_detection_mode,
+    verify_incremental_source_inventory,
+)
 
 
 REVIEW_ROW_ANALYSIS_SUPPORTED_METHODS = {
@@ -57,12 +60,14 @@ def main():
     source_format = os.environ.get("ASKLAKE_SPARK_SOURCE_FORMAT", "unknown").lower()
     output_path = os.environ.get("ASKLAKE_SPARK_OUTPUT_PATH", "-")
     run_id = os.environ.get("ASKLAKE_SPARK_RUN_ID", "unknown")
+    source_collection = {}
     spark = None
+    staging_path = None
+    output_write_started = False
     input_rows = 0
     quality = None
     transform = None
     canonical_snapshot = False
-    staging_path = None
     try:
         source_path = required_env("ASKLAKE_SPARK_SOURCE_PATH")
         source_format = required_env("ASKLAKE_SPARK_SOURCE_FORMAT").lower()
@@ -74,6 +79,7 @@ def main():
             manifest.get("partitionColumns") or os.environ.get("ASKLAKE_SPARK_PARTITION_COLUMNS")
         )
         schema_columns = manifest.get("schemaColumns") or load_json_env("ASKLAKE_SPARK_SCHEMA_COLUMNS", [])
+        source_collection = manifest.get("sourceCollection") or {}
         record_parsing = manifest.get("recordParsing") or {}
         transform_steps = manifest.get("transformSteps") or load_json_env("ASKLAKE_SPARK_TRANSFORM_STEPS", [])
         quality_rules = manifest.get("qualityRules") or load_json_env("ASKLAKE_SPARK_QUALITY_RULES", [])
@@ -81,8 +87,21 @@ def main():
         canonical_snapshot = manifest.get("ruleContractVersion") == "1.0" and canonical_rules is not None
         canonical_runtime_supported = canonical_snapshot and supports_spark_snapshot_rules(canonical_rules)
         final_schema_columns = merge_rule_output_schema(schema_columns, manifest.get("ruleOutputSchema") or [])
-        spark = make_spark()
-        source_df = read_source(spark, source_format, source_path, schema_columns, record_parsing)
+        spark = make_spark(source_collection)
+        verify_spark_source_inventory(
+            spark,
+            source_path,
+            source_collection,
+            phase="before_read",
+        )
+        source_df = read_source(
+            spark,
+            source_format,
+            source_path,
+            schema_columns,
+            record_parsing,
+            source_collection,
+        )
         input_rows = source_df.count() if row_limit <= 0 else source_df.limit(row_limit).count()
         working_df = source_df if row_limit <= 0 else source_df.limit(row_limit)
         normalized_df = normalize_columns(working_df)
@@ -119,6 +138,7 @@ def main():
                 "outputRows": 0,
                 "quality": quality,
                 "runId": run_id,
+                "sourceCollection": source_collection,
                 "sourcePath": source_path,
                 "startedAt": started_at,
                 "status": "failed",
@@ -128,6 +148,8 @@ def main():
             print(f"ASKLAKE_SPARK_JOB_RESULT={json.dumps(result, ensure_ascii=False, sort_keys=True)}")
             return 1
         quarantine_df = None
+        review_analysis_checks = []
+        transform = None
         if canonical_runtime_supported:
             execution = apply_spark_snapshot_rules(spark, contracted_df, canonical_rules)
             transformed_df = execution["frame"]
@@ -137,8 +159,7 @@ def main():
         elif canonical_snapshot:
             transformed_df = apply_transform_steps(spark, contracted_df, transform_steps)
             canonical_quality_rules = [
-                rule
-                for rule in canonical_rules
+                rule for rule in canonical_rules
                 if rule and rule.get("kind") == "quality" and rule.get("enabled") is not False
             ]
             quality_execution = apply_snapshot_rules(transformed_df, canonical_quality_rules)
@@ -152,39 +173,44 @@ def main():
             "_asklake_ingested_at",
             F.current_timestamp(),
         )
+        resolved_partition_columns = resolve_partition_columns(output_df, partition_columns)
         staging_path = spark_staging_path(output_path, run_id)
+        delete_spark_path(spark, staging_path)
+        quarantine_staging_path = f"{staging_path}_quarantine"
         if quarantine_df is not None:
             quarantine_rows = quarantine_df.count()
             if quarantine_rows:
-                quarantine_path = f"{output_path.rstrip('/')}_quarantine"
-                quarantine_df.write.mode("overwrite").parquet(quarantine_path)
-                quality["quarantine"] = {"count": quarantine_rows, "path": quarantine_path}
-                quality["quarantineLocation"] = quarantine_path
-        resolved_partition_columns = resolve_partition_columns(output_df, partition_columns)
-        delete_spark_path(spark, staging_path)
+                quarantine_df.write.mode("overwrite").parquet(quarantine_staging_path)
+                quality["quarantine"] = {"count": quarantine_rows, "path": f"{output_path.rstrip('/')}_quarantine"}
+                quality["quarantineLocation"] = f"{output_path.rstrip('/')}_quarantine"
         writer = output_df.write.mode("overwrite")
         if resolved_partition_columns:
             writer = writer.partitionBy(*resolved_partition_columns)
+        output_write_started = True
         writer.parquet(staging_path)
-        staged_df = spark.read.parquet(staging_path)
-        output_rows = staged_df.count()
-        review_analysis_checks = []
+        written_df = spark.read.parquet(staging_path)
+        output_rows = written_df.count()
         if not canonical_snapshot:
-            quality = evaluate_quality_rules(staged_df, quality_rules, total_rows=output_rows)
-        if not canonical_runtime_supported:
-            classifier_checks = evaluate_custom_csv_classifier_checks(staged_df, transform_steps, total_rows=output_rows)
+            quality = evaluate_quality_rules(written_df, quality_rules, total_rows=output_rows)
+            classifier_checks = evaluate_custom_csv_classifier_checks(written_df, transform_steps, total_rows=output_rows)
             if classifier_checks:
                 quality["classifierChecks"] = classifier_checks
-            review_analysis_checks = evaluate_review_row_analysis_checks(staged_df, transform_steps, total_rows=output_rows)
+            review_analysis_checks = evaluate_review_row_analysis_checks(written_df, transform_steps, total_rows=output_rows)
             if review_analysis_checks:
                 quality["reviewRowAnalysisChecks"] = review_analysis_checks
-                merge_text_structuring_quality(quality, staged_df, review_analysis_checks, staging_path, total_rows=output_rows)
+                merge_text_structuring_quality(quality, written_df, review_analysis_checks, staging_path, total_rows=output_rows)
         text_structuring = text_structuring_manifest(transform_steps, review_analysis_checks)
         if text_structuring.get("definition", {}).get("columns"):
             quality["textStructuringExecution"] = text_structuring.get("execution", {})
-        sample_rows = collect_sample_rows(staged_df, 10)
+        sample_rows = collect_sample_rows(written_df, 10)
+        verify_spark_source_inventory(
+            spark,
+            source_path,
+            source_collection,
+            phase="after_read",
+        )
         if quality["status"] == "fail":
-            delete_spark_path(spark, staging_path)
+            cleanup_errors = cleanup_failed_output_paths(spark, staging_path)
             ended_at = now_iso()
             result = {
                 "durationMs": int(time.time() * 1000) - started_ms,
@@ -195,6 +221,10 @@ def main():
                 "inputRows": input_rows,
                 "outputPath": output_path,
                 "outputRows": output_rows,
+                "outputCleanup": {
+                    "errors": cleanup_errors,
+                    "status": "failed" if cleanup_errors else "success",
+                },
                 "quality": quality,
                 "runId": run_id,
                 "sampleRows": sample_rows,
@@ -207,6 +237,7 @@ def main():
                     for field in output_df.schema.fields
                 ],
                 "sourcePath": source_path,
+                "sourceCollection": source_collection,
                 "startedAt": started_at,
                 "status": "failed",
                 "textStructuring": text_structuring,
@@ -215,7 +246,7 @@ def main():
             write_report(report_file, result)
             print(f"ASKLAKE_SPARK_JOB_RESULT={json.dumps(result, ensure_ascii=False, sort_keys=True)}")
             return 1
-        publish_spark_path(spark, staging_path, output_path)
+        publish_spark_paths(spark, staging_path, output_path, quarantine_staging_path)
         written_df = spark.read.parquet(output_path)
         output_rows = written_df.count()
         ended_at = now_iso()
@@ -238,6 +269,7 @@ def main():
                 for field in output_df.schema.fields
             ],
             "sourcePath": source_path,
+            "sourceCollection": source_collection,
             "startedAt": started_at,
             "status": "success",
             "textStructuring": text_structuring,
@@ -247,38 +279,46 @@ def main():
         print(f"ASKLAKE_SPARK_JOB_RESULT={json.dumps(result, ensure_ascii=False, sort_keys=True)}")
         return 0
     except Exception as exc:
-        if spark is not None and staging_path:
-            try:
-                delete_spark_path(spark, staging_path)
-            except Exception:
-                pass
         ended_at = now_iso()
-        error_message = str(exc)
+        cleanup_errors = (
+            cleanup_failed_output_paths(spark, staging_path or output_path)
+            if spark is not None and output_write_started
+            else []
+        )
         result = {
             "durationMs": int(time.time() * 1000) - started_ms,
             "endedAt": ended_at,
-            "error": error_message,
-            "failedStage": "Record Parsing" if "RECORD_FIELD_COUNT_MISMATCH" in error_message or "RECORD_PARSING_" in error_message else "Spark ETL",
+            "error": str(exc),
+            "failedStage": getattr(
+                exc,
+                "failed_stage",
+                "Record Parsing"
+                if "RECORD_FIELD_COUNT_MISMATCH" in str(exc) or "RECORD_PARSING_" in str(exc)
+                else "Source Inventory"
+                if "SOURCE_OBJECT_" in str(exc)
+                else "Spark ETL",
+            ),
             "format": source_format,
-            "failedStage": getattr(exc, "failed_stage", "Spark"),
             "inputRows": input_rows,
             "outputPath": output_path,
             "outputRows": 0,
             "runId": run_id,
+            "sourceCollection": source_collection,
             "sourcePath": source_path,
             "startedAt": started_at,
             "status": "failed",
         }
         error_quality = getattr(exc, "quality", None) or quality
-        error_transform = getattr(exc, "transform", None) or transform
         if error_quality is not None:
-            result["quality"] = (
-                snapshot_quality_report(error_quality)
-                if canonical_snapshot or isinstance(exc, SnapshotRuleExecutionError)
-                else error_quality
-            )
+            result["quality"] = snapshot_quality_report(error_quality) if canonical_snapshot else error_quality
+        error_transform = getattr(exc, "transform", None) or transform
         if error_transform is not None:
             result["transform"] = error_transform
+        if output_write_started:
+            result["outputCleanup"] = {
+                "errors": cleanup_errors,
+                "status": "failed" if cleanup_errors else "success",
+            }
         write_report(report_file, result)
         print(f"ASKLAKE_SPARK_JOB_RESULT={json.dumps(result, ensure_ascii=False, sort_keys=True)}")
         print(f"Spark job failed: {exc}", file=sys.stderr)
@@ -286,107 +326,6 @@ def main():
     finally:
         if spark is not None:
             spark.stop()
-
-
-def make_spark():
-    builder = (
-        SparkSession.builder.appName(os.environ.get("ASKLAKE_SPARK_APP_NAME", "asklake-pipeline-run"))
-        .config("spark.sql.caseSensitive", "true")
-    )
-    spark = configure_spark_builder(builder).getOrCreate()
-    spark.sparkContext.setLogLevel("INFO")
-    return spark
-
-
-def read_source(spark, source_format, source_path, schema_columns, record_parsing=None):
-    if source_format == "csv":
-        infer_schema = "false" if schema_columns else "true"
-        return (
-            spark.read.option("header", "true")
-            .option("inferSchema", infer_schema)
-            .option("quote", '"')
-            .option("escape", '"')
-            .csv(source_path)
-        )
-    if source_format == "jsonl":
-        return spark.read.option("multiLine", "false").json(source_path)
-    if source_format == "json":
-        return spark.read.option("multiLine", "true").json(source_path)
-    if source_format == "parquet":
-        return spark.read.parquet(source_path)
-    if source_format in {"txt", "text"}:
-        if isinstance(record_parsing, dict) and record_parsing.get("enabled"):
-            return read_whitespace_records(spark, source_path, record_parsing)
-        return spark.read.text(source_path)
-    raise ValueError(f"Unsupported Spark source format: {source_format}")
-
-
-def read_whitespace_records(spark, source_path, record_parsing):
-    if str(record_parsing.get("delimiterKind") or "whitespace") != "whitespace":
-        raise ValueError("RECORD_PARSING_UNSUPPORTED_DELIMITER only whitespace is supported")
-    expected_field_count = int(record_parsing.get("expectedFieldCount") or 0)
-    columns = sorted(record_parsing.get("columns") or [], key=lambda column: int(column.get("position") or 0))
-    if expected_field_count <= 0 or len(columns) != expected_field_count:
-        raise ValueError(
-            f"RECORD_PARSING_INVALID_CONTRACT expectedFieldCount={expected_field_count} columns={len(columns)}"
-        )
-    column_names = [normalize_column_name(column.get("name") or f"field_{index + 1}") for index, column in enumerate(columns)]
-    if any(not name for name in column_names) or len(set(column_names)) != len(column_names):
-        raise ValueError("RECORD_PARSING_INVALID_COLUMNS column names must be non-empty and unique")
-
-    indexed_lines = spark.sparkContext.textFile(source_path).zipWithIndex().map(
-        lambda item: (int(item[1]) + 1, str(item[0]))
-    )
-    raw = spark.createDataFrame(indexed_lines, schema="line_number long, raw_record string")
-    non_empty = raw.where(F.length(F.trim(F.col("raw_record"))) > 0)
-    if bool(record_parsing.get("header")):
-        header_row = non_empty.orderBy("line_number").limit(1).collect()
-        if not header_row:
-            raise ValueError("RECORD_PARSING_EMPTY_INPUT no non-empty records were found")
-        non_empty = non_empty.where(F.col("line_number") != F.lit(int(header_row[0]["line_number"])))
-
-    parsed = non_empty.withColumn("record_fields", F.split(F.trim(F.col("raw_record")), r"\s+"))
-    invalid = parsed.where(F.size(F.col("record_fields")) != expected_field_count)
-    invalid_count = invalid.count()
-    if invalid_count:
-        samples = [
-            {
-                "lineNumber": int(row["line_number"]),
-                "actualFieldCount": len(row["record_fields"] or []),
-                "rawPreview": str(row["raw_record"] or "")[:200],
-            }
-            for row in invalid.orderBy("line_number").limit(20).collect()
-        ]
-        raise ValueError(
-            "RECORD_FIELD_COUNT_MISMATCH "
-            f"expectedFieldCount={expected_field_count} invalidRows={invalid_count} samples={json.dumps(samples, ensure_ascii=False)}"
-        )
-
-    return parsed.select(*[
-        F.col("record_fields").getItem(index).alias(column_name)
-        for index, column_name in enumerate(column_names)
-    ])
-
-
-def parse_partition_columns(value):
-    text = str(value or "").strip()
-    if not text or text.lower() in {"-", "none", "null", "없음"}:
-        return []
-    return list(dict.fromkeys(part.strip() for part in text.split("/") if part.strip()))
-
-
-def resolve_partition_columns(frame, partition_columns):
-    resolved = []
-    missing = []
-    for column_name in partition_columns:
-        actual_name = resolve_column_name(frame, column_name)
-        if not actual_name:
-            missing.append(column_name)
-        elif actual_name not in resolved:
-            resolved.append(actual_name)
-    if missing:
-        raise ValueError(f"Partition columns missing from Spark output: {', '.join(missing)}")
-    return resolved
 
 
 def spark_staging_path(output_path, run_id):
@@ -401,18 +340,48 @@ def delete_spark_path(spark, path_value):
         raise RuntimeError(f"Could not delete Spark path: {path_value}")
 
 
-def publish_spark_path(spark, staging_path, output_path):
+def publish_spark_paths(spark, staging_path, output_path, quarantine_staging_path):
     jvm = spark.sparkContext._jvm
     hadoop = spark.sparkContext._jsc.hadoopConfiguration()
     staging = jvm.org.apache.hadoop.fs.Path(staging_path)
     target = jvm.org.apache.hadoop.fs.Path(output_path)
+    quarantine_staging = jvm.org.apache.hadoop.fs.Path(quarantine_staging_path)
+    quarantine_target = jvm.org.apache.hadoop.fs.Path(f"{output_path.rstrip('/')}_quarantine")
     filesystem = staging.getFileSystem(hadoop)
     if not filesystem.exists(staging):
         raise RuntimeError(f"Spark staging output is missing: {staging_path}")
-    if filesystem.exists(target) and not filesystem.delete(target, True):
-        raise RuntimeError(f"Could not replace Spark target path: {output_path}")
-    if not filesystem.rename(staging, target):
-        raise RuntimeError(f"Could not publish Spark staging output: {staging_path} -> {output_path}")
+    suffix = f".__previous__{re.sub(r'[^0-9A-Za-z_-]+', '_', str(os.environ.get('ASKLAKE_SPARK_RUN_ID') or 'run'))}"
+    target_backup = jvm.org.apache.hadoop.fs.Path(f"{output_path.rstrip('/')}{suffix}")
+    quarantine_backup = jvm.org.apache.hadoop.fs.Path(f"{output_path.rstrip('/')}_quarantine{suffix}")
+    moved_target = False
+    moved_quarantine = False
+    published_target = False
+    try:
+        for backup in (target_backup, quarantine_backup):
+            if filesystem.exists(backup) and not filesystem.delete(backup, True):
+                raise RuntimeError(f"Could not remove stale Spark backup: {backup}")
+        if filesystem.exists(target) and not filesystem.rename(target, target_backup):
+            raise RuntimeError(f"Could not stage previous Spark target: {output_path}")
+        moved_target = True
+        if filesystem.exists(quarantine_target) and not filesystem.rename(quarantine_target, quarantine_backup):
+            raise RuntimeError(f"Could not stage previous Spark quarantine: {quarantine_target}")
+        moved_quarantine = True
+        if not filesystem.rename(staging, target):
+            raise RuntimeError(f"Could not publish Spark staging output: {staging_path} -> {output_path}")
+        published_target = True
+        if filesystem.exists(quarantine_staging) and not filesystem.rename(quarantine_staging, quarantine_target):
+            raise RuntimeError(f"Could not publish Spark quarantine: {quarantine_staging} -> {quarantine_target}")
+        for backup in (target_backup, quarantine_backup):
+            if filesystem.exists(backup) and not filesystem.delete(backup, True):
+                raise RuntimeError(f"Could not remove published Spark backup: {backup}")
+    except Exception:
+        if published_target and filesystem.exists(target):
+            filesystem.delete(target, True)
+        if moved_target and filesystem.exists(target_backup):
+            filesystem.rename(target_backup, target)
+        if moved_quarantine and filesystem.exists(quarantine_backup):
+            filesystem.rename(quarantine_backup, quarantine_target)
+        raise
 
 
 def merge_rule_output_schema(schema_columns, rule_output_schema):
@@ -452,7 +421,240 @@ def snapshot_quality_report(quality):
     report["invalidRows"] = invalid_rows
     report["sampleRows"] = int(report.get("evaluatedRowCount") or 0)
     report["score"] = pass_rate
+    report["status"] = "fail" if report.get("blockingFailures", 0) else report.get("status", "pass")
     return report
+
+
+def cleanup_failed_output_paths(spark, output_path):
+    errors = []
+    paths = [str(output_path).rstrip("/"), f"{str(output_path).rstrip('/')}_quarantine"]
+    for path in paths:
+        try:
+            hadoop_path = spark._jvm.org.apache.hadoop.fs.Path(path)
+            file_system = hadoop_path.getFileSystem(spark._jsc.hadoopConfiguration())
+            file_system.delete(hadoop_path, True)
+        except Exception as exc:
+            reason = " ".join(str(exc).split()) or exc.__class__.__name__
+            errors.append({"path": path, "reason": reason[:500]})
+    return errors
+
+
+def make_spark(source_collection=None):
+    endpoint = os.environ.get("MINIO_ENDPOINT", "http://m3-minio:9000")
+    access_key = os.environ.get("MINIO_ACCESS_KEY") or os.environ.get("MINIO_ROOT_USER", "")
+    secret_key = os.environ.get("MINIO_SECRET_KEY") or os.environ.get("MINIO_ROOT_PASSWORD", "")
+    region = os.environ.get("MINIO_REGION", "us-east-1")
+    ssl_enabled = os.environ.get("MINIO_SSL_ENABLED")
+    if ssl_enabled is None:
+        ssl_enabled = "true" if endpoint.lower().startswith("https://") else "false"
+
+    change_detection_source = source_change_detection_mode(source_collection)
+    builder = (
+        SparkSession.builder.appName(os.environ.get("ASKLAKE_SPARK_APP_NAME", "asklake-pipeline-run"))
+        .config("spark.sql.caseSensitive", "true")
+        .config("spark.hadoop.fs.s3a.endpoint", endpoint)
+        .config("spark.hadoop.fs.s3a.access.key", access_key)
+        .config("spark.hadoop.fs.s3a.secret.key", secret_key)
+        .config("spark.hadoop.fs.s3a.endpoint.region", region)
+        .config("spark.hadoop.fs.s3a.path.style.access", "true")
+        .config("spark.hadoop.fs.s3a.connection.ssl.enabled", ssl_enabled)
+        .config("spark.hadoop.fs.s3a.aws.credentials.provider", "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider")
+        .config("spark.hadoop.fs.s3a.change.detection.source", change_detection_source)
+        .config("spark.hadoop.fs.s3a.change.detection.mode", "server")
+        .config("spark.hadoop.fs.s3a.change.detection.version.required", "true")
+    )
+    if change_detection_source == "versionid":
+        builder = builder.config("spark.hadoop.fs.s3a.versioned.store", "true")
+    spark = builder.getOrCreate()
+    spark.sparkContext.setLogLevel("INFO")
+    return spark
+
+
+def s3a_source_object_identity(spark, source_path):
+    path = spark._jvm.org.apache.hadoop.fs.Path(source_path)
+    status = path.getFileSystem(spark._jsc.hadoopConfiguration()).getFileStatus(path)
+    try:
+        e_tag = status.getEtag()
+    except Exception:
+        e_tag = status.getETag()
+    try:
+        version_id = status.getVersionId()
+    except Exception:
+        version_id = None
+    last_modified = datetime.fromtimestamp(
+        int(status.getModificationTime()) / 1000,
+        tz=timezone.utc,
+    ).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    return {
+        "eTag": str(e_tag or ""),
+        "versionId": str(version_id or "") or None,
+        "lastModified": last_modified,
+        "size": int(status.getLen()),
+    }
+
+
+def verify_spark_source_inventory(spark, source_path, source_collection, *, phase):
+    try:
+        return verify_incremental_source_inventory(
+            source_path,
+            source_collection,
+            lambda path: s3a_source_object_identity(spark, path),
+        )
+    except ValueError as exc:
+        raise ValueError(f"{exc} phase={phase}") from exc
+
+
+def read_source(
+    spark,
+    source_format,
+    source_path,
+    schema_columns,
+    record_parsing=None,
+    source_collection=None,
+):
+    source_collection = source_collection or {}
+    exact_paths = incremental_source_paths(source_path, source_collection)
+    if exact_paths == []:
+        return empty_source_frame(spark, schema_columns)
+    read_path = exact_paths if exact_paths is not None else source_path
+    base_reader = spark.read if exact_paths is not None else apply_source_collection(spark.read, source_collection)
+    if source_format == "csv":
+        infer_schema = "false" if schema_columns else "true"
+        return base_reader.option("header", "true").option("inferSchema", infer_schema).csv(read_path)
+    if source_format == "jsonl":
+        return base_reader.option("multiLine", "false").json(read_path)
+    if source_format == "json":
+        return base_reader.option("multiLine", "true").json(read_path)
+    if source_format == "parquet":
+        return base_reader.parquet(*read_path) if isinstance(read_path, list) else base_reader.parquet(read_path)
+    if source_format in {"txt", "text"}:
+        if isinstance(record_parsing, dict) and record_parsing.get("enabled"):
+            return read_whitespace_records(spark, read_path, record_parsing)
+        return base_reader.text(read_path)
+    raise ValueError(f"Unsupported Spark source format: {source_format}")
+
+
+def read_whitespace_records(spark, source_path, record_parsing):
+    if str(record_parsing.get("delimiterKind") or "whitespace") != "whitespace":
+        raise ValueError("RECORD_PARSING_UNSUPPORTED_DELIMITER only whitespace is supported")
+    expected_field_count = int(record_parsing.get("expectedFieldCount") or 0)
+    columns = sorted(record_parsing.get("columns") or [], key=lambda column: int(column.get("position") or 0))
+    if expected_field_count <= 0 or len(columns) != expected_field_count:
+        raise ValueError(f"RECORD_PARSING_INVALID_CONTRACT expectedFieldCount={expected_field_count} columns={len(columns)}")
+    column_names = [normalize_column_name(column.get("name") or f"field_{index + 1}") for index, column in enumerate(columns)]
+    if any(not name for name in column_names) or len(set(column_names)) != len(column_names):
+        raise ValueError("RECORD_PARSING_INVALID_COLUMNS column names must be non-empty and unique")
+    source_paths = source_path if isinstance(source_path, list) else [source_path]
+    indexed_rdds = []
+    line_offset = 0
+    for path in source_paths:
+        lines = spark.sparkContext.textFile(path)
+        indexed_rdds.append(
+            lines.zipWithIndex().map(
+                lambda item, offset=line_offset: (int(item[1]) + offset + 1, str(item[0]))
+            )
+        )
+        line_offset += lines.count()
+    indexed_lines = spark.sparkContext.union(indexed_rdds)
+    raw = spark.createDataFrame(indexed_lines, schema="line_number long, raw_record string")
+    non_empty = raw.where(F.length(F.trim(F.col("raw_record"))) > 0)
+    if bool(record_parsing.get("header")):
+        header_row = non_empty.orderBy("line_number").limit(1).collect()
+        if not header_row:
+            raise ValueError("RECORD_PARSING_EMPTY_INPUT no non-empty records were found")
+        non_empty = non_empty.where(F.col("line_number") != F.lit(int(header_row[0]["line_number"])))
+    parsed = non_empty.withColumn("record_fields", F.split(F.trim(F.col("raw_record")), r"\s+"))
+    invalid = parsed.where(F.size(F.col("record_fields")) != expected_field_count)
+    invalid_count = invalid.count()
+    if invalid_count:
+        raise ValueError(f"RECORD_FIELD_COUNT_MISMATCH expectedFieldCount={expected_field_count} invalidRows={invalid_count}")
+    return parsed.select(*[F.col("record_fields").getItem(index).alias(column_name) for index, column_name in enumerate(column_names)])
+
+
+def incremental_source_paths(source_path, source_collection):
+    if str(source_collection.get("scope") or "file").lower() != "folder":
+        return None
+    if str(source_collection.get("mode") or "full").lower() != "incremental":
+        return None
+    object_keys = source_collection.get("objectKeys")
+    if not isinstance(object_keys, list):
+        return None
+    match = re.match(r"^(s3a?)://([^/]+)(?:/.*)?$", str(source_path or ""), flags=re.IGNORECASE)
+    if not match:
+        raise ValueError("Incremental folder object inventory requires an s3:// or s3a:// source path.")
+    scheme, bucket = match.group(1).lower(), match.group(2)
+    return [
+        f"{scheme}://{bucket}/{str(key).lstrip('/')}"
+        for key in object_keys
+        if str(key).strip()
+    ]
+
+
+def empty_source_frame(spark, schema_columns):
+    names = []
+    for index, column in enumerate(schema_columns or []):
+        if not isinstance(column, dict):
+            continue
+        name = normalize_column_name(column.get("sourceName") or column.get("targetName") or f"column_{index + 1}")
+        if name and name not in names:
+            names.append(name)
+    schema = T.StructType([T.StructField(name, T.StringType(), True) for name in names])
+    return spark.createDataFrame([], schema)
+
+
+def apply_source_collection(reader, source_collection):
+    if str(source_collection.get("scope") or "file").lower() != "folder":
+        return reader
+    file_pattern = str(source_collection.get("filePattern") or "").strip()
+    if file_pattern:
+        reader = reader.option("pathGlobFilter", file_pattern)
+    if bool(source_collection.get("recursive")):
+        reader = reader.option("recursiveFileLookup", "true")
+    incremental_since = str(source_collection.get("incrementalSince") or "").strip()
+    incremental_before = str(source_collection.get("incrementalBefore") or "").strip()
+    if str(source_collection.get("mode") or "full").lower() == "incremental":
+        if incremental_since:
+            reader = reader.option("modifiedAfter", spark_modified_timestamp(incremental_since, inclusive_lower=True))
+        if incremental_before:
+            reader = reader.option("modifiedBefore", spark_modified_timestamp(incremental_before))
+    return reader
+
+
+def spark_modified_timestamp(value, *, inclusive_lower=False):
+    normalized = str(value or "").strip()
+    if not normalized:
+        return ""
+    try:
+        parsed = datetime.fromisoformat(normalized.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(f"Invalid incremental source watermark: {value}") from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    parsed = parsed.astimezone(timezone.utc)
+    if inclusive_lower:
+        parsed -= timedelta(microseconds=1)
+    return parsed.strftime("%Y-%m-%dT%H:%M:%S.%f")
+
+
+def parse_partition_columns(value):
+    text = str(value or "").strip()
+    if not text or text.lower() in {"-", "none", "null", "없음"}:
+        return []
+    return list(dict.fromkeys(part.strip() for part in text.split("/") if part.strip()))
+
+
+def resolve_partition_columns(frame, partition_columns):
+    resolved = []
+    missing = []
+    for column_name in partition_columns:
+        actual_name = resolve_column_name(frame, column_name)
+        if not actual_name:
+            missing.append(column_name)
+        elif actual_name not in resolved:
+            resolved.append(actual_name)
+    if missing:
+        raise ValueError(f"Partition columns missing from Spark output: {', '.join(missing)}")
+    return resolved
 
 
 def apply_schema_contract(frame, schema_columns, transform_steps=None):

@@ -48,7 +48,9 @@ export function SourceAssetTree({
     () => new Set(loadedFolderPaths ?? []),
     [loadedFolderPaths],
   );
-  const selectedNodeId = selectedPath ? `file:${selectedPath}` : undefined;
+  const selectedNodeId = selectedPath
+    ? (nodeById.has(`file:${selectedPath}`) ? `file:${selectedPath}` : `folder:${selectedPath}`)
+    : undefined;
 
   const requestFolderChildren = useCallback((node: SourceAssetTreeNode) => {
     if (!onOpenFolder) return;
@@ -62,15 +64,33 @@ export function SourceAssetTree({
     });
   }, [loadedFolderPathSet, loadingPath, onOpenFolder]);
 
+  const toggleFolder = useCallback((node: SourceAssetTreeNode) => {
+    requestFolderChildren(node);
+    void onSelect(node.path);
+  }, [onSelect, requestFolderChildren]);
+
+  const selectSourceNode = useCallback((node: SourceAssetTreeNode) => {
+    if (node.isFolder) {
+      toggleFolder(node);
+      return;
+    }
+    void onSelect(node.path);
+  }, [onSelect, toggleFolder]);
+
   const getIcon = useCallback((node: NodeApi<SourceAssetTreeNode>) => {
     if (!node.data.isFolder) return <FileText className="text-indigo-500" />;
     return node.isOpen ? <FolderOpen className="text-blue-600" /> : <Folder className="text-blue-600" />;
   }, []);
 
   const getTrailing = useCallback((node: NodeApi<SourceAssetTreeNode>) => (
-    node.data.path === loadingPath
-      ? <Loader2 className="size-3.5 animate-spin text-blue-600" />
-      : null
+    <>
+      {node.data.isFolder ? (
+        folderSelectionControl(node.data)
+      ) : null}
+      {node.data.path === loadingPath
+        ? <Loader2 className="size-3.5 animate-spin text-blue-600" />
+        : null}
+    </>
   ), [loadingPath]);
 
   if (nodes.length === 0) {
@@ -90,7 +110,6 @@ export function SourceAssetTree({
         className="h-full min-w-0"
         data={nodes}
         disableMultiSelection
-        disableSelect={(asset) => asset.isFolder}
         getIcon={getIcon}
         getRowProps={(node) => ({ title: node.data.path })}
         getTrailing={getTrailing}
@@ -98,7 +117,7 @@ export function SourceAssetTree({
         openByDefault={false}
         selection={selectedNodeId}
         onNodePress={(node) => {
-          if (!node.data.isFolder) void onSelect(node.data.path);
+          selectSourceNode(node.data);
         }}
         onToggle={(nodeId) => {
           const asset = nodeById.get(nodeId);
@@ -106,6 +125,17 @@ export function SourceAssetTree({
         }}
       />
     </TreePanel>
+  );
+}
+
+function folderSelectionControl(node: SourceAssetTreeNode) {
+  return (
+    <span
+      aria-label={`폴더 ${node.name} 선택`}
+      className="source-asset-folder-select"
+      role="img"
+      title="이 폴더를 수집 범위로 선택"
+    />
   );
 }
 
