@@ -184,6 +184,13 @@ type JobMetric = {
   value: string;
 };
 
+type LatestRunModalSelection = {
+  fallbackJob: JobRowData;
+  fallbackRun: JobRunSummary;
+  jobId: string;
+  runId: string;
+};
+
 function getJobMetrics(facets: JobListFacets): JobMetric[] {
   return [
     { label: "전체 작업", tone: "total", value: String(facets.total) },
@@ -383,7 +390,7 @@ export function JobsLandingPage({
   const [searchQuery, setSearchQuery] = useState("");
   const [jobQuery, setJobQuery] = useState<JobListQuery>({});
   const [excludedJobIds, setExcludedJobIds] = useState<Set<string>>(() => new Set());
-  const [latestRunModal, setLatestRunModal] = useState<{ job: JobRowData; run: JobRunSummary } | null>(null);
+  const [latestRunModalSelection, setLatestRunModalSelection] = useState<LatestRunModalSelection | null>(null);
   const metrics = getJobMetrics(jobListFacets);
   const failureFilterActive = jobQuery.lastRunOutcome === "failed";
   const failedRunCount = jobListFacets.latestRunOutcomeCounts.failed;
@@ -391,6 +398,14 @@ export function JobsLandingPage({
     () => filterJobsBySearch(jobs, searchQuery).filter((job) => !excludedJobIds.has(job.id)),
     [excludedJobIds, jobs, searchQuery],
   );
+  const latestRunModal = useMemo(() => {
+    if (!latestRunModalSelection) return null;
+    const job = jobs.find((candidate) => candidate.id === latestRunModalSelection.jobId)
+      ?? latestRunModalSelection.fallbackJob;
+    const run = job.runHistory?.find((candidate) => candidate.runId === latestRunModalSelection.runId)
+      ?? latestRunModalSelection.fallbackRun;
+    return { job, run };
+  }, [jobs, latestRunModalSelection]);
   const hasSearchQuery = searchQuery.trim().length > 0;
 
   const updateJobQuery = (nextQuery: JobListQuery) => {
@@ -415,7 +430,12 @@ export function JobsLandingPage({
     const latestRun = job.runHistory?.[0];
     if (!latestRun) return;
     onAction("etl.run.detail_opened", `/api/etl/jobs/${job.id}/runs/${latestRun.runId}`, latestRun.runId);
-    setLatestRunModal({ job, run: latestRun });
+    setLatestRunModalSelection({
+      fallbackJob: job,
+      fallbackRun: latestRun,
+      jobId: job.id,
+      runId: latestRun.runId,
+    });
   };
 
   const toggleFailureFilter = () => {
@@ -504,7 +524,7 @@ export function JobsLandingPage({
         <RunDagModal
           job={latestRunModal.job}
           onAction={onAction}
-          onClose={() => setLatestRunModal(null)}
+          onClose={() => setLatestRunModalSelection(null)}
           run={latestRunModal.run}
         />
       )}

@@ -47,7 +47,23 @@ ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:fastapi-pair2
 - `POST /api/catalog/derived-datasets`
 - 생성된 derived dataset의 catalog 재조회와 lineage 조회
 
-`POST /api/query/runs` live mode는 DuckDB in-memory query runtime을 사용한다. Catalog dataset의 로컬 `storageLocation`이 `jsonl`/`parquet`이면 물리 파일을 우선 읽고, 없으면 catalog `schema`/`sampleRows`를 DuckDB 임시 table로 등록해 preview SQL을 실행한다.
+`POST /api/query/runs`는 `TRINO_ENABLED=true`일 때 idempotent reservation 뒤 Trino full Query Run을 제출한다. `false`일 때만 DuckDB in-memory compatibility runtime을 사용하며, Catalog dataset의 물리 `storageLocation`을 읽어 bounded SQL을 실행한다. 물리 저장소가 없거나 읽기에 실패하면 `SQL_STORAGE_ERROR`로 종료하며 catalog `sampleRows`는 SQL 실행 데이터로 사용하지 않는다.
+
+Issue #488은 Trino 482 coordinator, Iceberg JDBC catalog, MinIO S3 warehouse와 canonical Query Run service를 제공한다. Query Run과 Iceberg CTAS continuation은 `trino-result-collector`가 browser와 독립적으로 처리하고, result는 private MinIO page와 signed cursor로 조회한다. Query Run의 live telemetry는 collector가 `TRINO_PROGRESS_POLL_SECONDS` 간격으로 읽기 전용 QueryInfo를 샘플링해 progress/driver, elapsed/queued/CPU time, processed bytes/rows, peak memory를 보강하며 실패 시 기존 statement stats로 fallback한다. QueryInfo와 statement page 누적값은 같은 단조 증가 규칙으로 병합해 stale sample로 감소하지 않는다. Query 완료, 결과 수집 시작, 첫 page, 전체 준비 milestone은 UTC 최초 관측값으로 저장해 collector retry/restart/takeover에서 보존한다. SQL 결과 Dataset은 CTAS 뒤 `DESCRIBE` 검증을 통과해야 `queryEngineStatus=available`과 `queryEngineTable` mapping이 자동 저장된다. Spark Parquet/Kafka JSONL처럼 아직 Iceberg table을 만들지 않는 writer는 `unavailable`로 남는다. 기본값은 전환 호환을 위해 `false`다.
+
+Trino client protocol/compiler unit verification:
+
+```bash
+cd backend
+ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-query-foundation
+ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:query-engine-registration
+ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-collector-resilience
+ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-submission-guard
+```
+
+반복 SQL Job의 versioned Iceberg CTAS, 한글 표시명, Catalog mapping 교체, 실패 시 마지막 정상 mapping 보존은 `postgres`, `minio`, `trino`를 올린 뒤 `npm run verify:trino-sql-job-e2e`로 확인한다. 필요한 local MinIO/Trino 환경변수는 `docs/04-development-guide.md`에 정리되어 있다.
+
+Production 환경의 TLS/ACL/materializer/result bucket은 `npm run verify:trino-production-readiness`로 확인한다. `scripts/deploy.sh`는 Trino가 enabled일 때 같은 검증을 자동 실행한다.
 
 Node demo API 전체 검증은 MinIO 샘플 fixture가 필요하다.
 

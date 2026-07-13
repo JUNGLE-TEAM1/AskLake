@@ -233,24 +233,29 @@ function fallbackColorLabels(count: number) {
 }
 
 function configDraftFromConfig(config: DashboardRuntimeWidgetConfig): WidgetConfigDraft {
+  const runtimeConfig = configRecord(config);
+  const sourceConfig = runtimeConfig.sourceConfig;
+  const editableConfig = typeof sourceConfig === "object" && sourceConfig !== null && !Array.isArray(sourceConfig)
+    ? sourceConfig as DashboardRuntimeWidgetConfig
+    : config;
   return {
-    aggregation: configString(config, "aggregation") as DashboardWidgetAggregation | undefined,
-    columns: configStringArray(config, "columns"),
-    curve: configString(config, "curve") as DashboardWidgetLineCurve | undefined,
-    dateUnit: configString(config, "dateUnit") as DashboardWidgetDateUnit | undefined,
-    format: configString(config, "format") as DashboardWidgetFormat | undefined,
-    labelKey: configString(config, "labelKey"),
-    limit: configNumber(config, "limit"),
-    max: configNumber(config, "max"),
-    min: configNumber(config, "min"),
-    orientation: configString(config, "orientation") as DashboardWidgetOrientation | undefined,
-    seriesKey: configString(config, "seriesKey"),
-    sortDirection: configString(config, "sortDirection") as DashboardWidgetSortDirection | undefined,
-    sortKey: configString(config, "sortKey"),
-    stacked: configBoolean(config, "stacked"),
-    valueKey: configString(config, "valueKey"),
-    xKey: configString(config, "xKey"),
-    yKey: configString(config, "yKey"),
+    aggregation: configString(editableConfig, "aggregation") as DashboardWidgetAggregation | undefined,
+    columns: configStringArray(editableConfig, "columns"),
+    curve: configString(editableConfig, "curve") as DashboardWidgetLineCurve | undefined,
+    dateUnit: configString(editableConfig, "dateUnit") as DashboardWidgetDateUnit | undefined,
+    format: configString(editableConfig, "format") as DashboardWidgetFormat | undefined,
+    labelKey: configString(editableConfig, "labelKey"),
+    limit: configNumber(editableConfig, "limit"),
+    max: configNumber(editableConfig, "max"),
+    min: configNumber(editableConfig, "min"),
+    orientation: configString(editableConfig, "orientation") as DashboardWidgetOrientation | undefined,
+    seriesKey: configString(editableConfig, "seriesKey"),
+    sortDirection: configString(editableConfig, "sortDirection") as DashboardWidgetSortDirection | undefined,
+    sortKey: configString(editableConfig, "sortKey"),
+    stacked: configBoolean(editableConfig, "stacked"),
+    valueKey: configString(editableConfig, "valueKey"),
+    xKey: configString(editableConfig, "xKey"),
+    yKey: configString(editableConfig, "yKey"),
   };
 }
 
@@ -451,11 +456,22 @@ function buildConfig(
 function preserveRuntimeOnlyConfig(
   widget: DashboardRuntimeWidget | null | undefined,
   config: DashboardRuntimeWidgetConfig,
-  options: { preserveVisualizationRequest?: boolean } = {},
+  options: { forPreview?: boolean; preserveVisualizationRequest?: boolean } = {},
 ): DashboardRuntimeWidgetConfig {
   if (!widget) return config;
 
   const source = configRecord(widget.config);
+  const dataMode = source.dataMode;
+  if (options.forPreview && (dataMode === "server_aggregated" || dataMode === "server_preview")) {
+    const nextConfig = configRecord(config);
+    return {
+      ...source,
+      ...(nextConfig.color ? { color: nextConfig.color } : {}),
+      ...(Object.hasOwn(nextConfig, "description") ? { description: nextConfig.description } : {}),
+      sourceConfig: nextConfig,
+    } as unknown as DashboardRuntimeWidgetConfig;
+  }
+
   const placeholderKind = source.placeholderKind;
   if (placeholderKind === "text") {
     return {
@@ -694,7 +710,7 @@ export function WidgetConfigPanel({
           color,
           description: description.trim() || undefined,
         }),
-        { preserveVisualizationRequest: true },
+        { forPreview: true, preserveVisualizationRequest: true },
       ),
       title: title.trim() || "제목 없는 위젯",
       type,

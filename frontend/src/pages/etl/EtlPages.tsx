@@ -320,10 +320,12 @@ const sourceFieldLabels: Record<string, string> = {
   "CONSUMER GROUP ID": "컨슈머 그룹 ID",
   "CATALOG / NAMESPACE": "카탈로그 / 네임스페이스",
   Collection: "컬렉션",
+  Collections: "탐색 가능한 컬렉션",
   "Connection URI": "연결 URI",
   "DATASET OR TABLE SELECTOR": "데이터셋 또는 테이블 선택자",
   "DATABASE / SCHEMA": "데이터베이스 / 스키마",
   "Database Name": "데이터베이스 이름",
+  Database: "데이터베이스",
   Delimiter: "구분자",
   Encoding: "인코딩",
   Endpoint: "엔드포인트",
@@ -356,8 +358,9 @@ const sourceFieldLabels: Record<string, string> = {
   "SQL Run ID": "SQL Run ID",
   "Storage Provider": "스토리지 제공자",
   "Stream Type": "스트림 유형",
+  "Target discovery": "대상 탐색",
   Table: "테이블",
-  Tables: "테이블",
+  Tables: "탐색 가능한 테이블",
   "Token / Secret": "토큰 / 시크릿",
   Topic: "토픽",
   "Topic Access": "토픽 접근",
@@ -404,6 +407,7 @@ const sourceColumnLabels: Record<string, string> = {
 };
 
 const sourceValueLabels: Record<string, string> = {
+  "After connection": "연결 후 확인",
   detected: "감지됨",
   failed: "실패",
   listed: "목록 확인",
@@ -1261,7 +1265,7 @@ export function SourceConnectionPage({
         ["Password / Auth Token", "asklake"],
         ["DATASET OR TABLE SELECTOR", ""],
       ],
-      testItems: [["Endpoint", "Not tested"], ["Backend connector", "Required"], ["Tables", "Pending"]],
+      testItems: [["Endpoint", "Not tested"], ["Database", "Pending"], ["Target discovery", "After connection"]],
       logs: ["PostgreSQL 소스 식별은 백엔드 커넥터 러너에서 검증합니다.", "브라우저는 원시 데이터베이스 소켓을 열지 않습니다."],
       assetsTitle: "PostgreSQL 테이블 탐색",
       assets: [],
@@ -1282,7 +1286,7 @@ export function SourceConnectionPage({
         ["Password / Auth Token", ""],
         ["DATASET OR TABLE SELECTOR", ""],
       ],
-      testItems: [["Endpoint", "Not tested"], ["Database", "Pending"], ["Collection", "Pending"]],
+      testItems: [["Endpoint", "Not tested"], ["Database", "Pending"], ["Target discovery", "After connection"]],
       logs: ["MongoDB 소스 식별이 아직 검증되지 않았습니다.", "연결 테스트를 실행하면 제한 문서 샘플을 가져옵니다."],
       assetsTitle: "MongoDB 컬렉션 탐색",
       assets: [],
@@ -1432,7 +1436,7 @@ export function SourceConnectionPage({
   const connectionStatusCopy: Record<SourceDraft["connectionStatus"], { badge: string; title: string }> = {
     failed: { badge: "확인 실패", title: "연결 실패" },
     idle: { badge: "테스트 필요", title: "연결 검증 필요" },
-    success: { badge: "미리보기 가능", title: "연결 검증 완료" },
+    success: { badge: "탐색 가능", title: "연결 검증 완료" },
     testing: { badge: "테스트 중", title: "연결 테스트 실행 중" },
   };
   const visibleEditableFields = editableFields.filter(([label]) => isVisibleSourceField(activeSourceType, label));
@@ -1443,7 +1447,7 @@ export function SourceConnectionPage({
   const filteredDisplayAssets = displayAssets.filter((asset) => sourceAssetMatchesExplorer(asset, assetSearchQuery, assetFilter, explorerConfig.filterMode));
   const hasDetectedAssets = displayAssets.length > 0;
   const selectedAsset = selectedAssetPath ? displayAssets.find(([path]) => path === selectedAssetPath) ?? null : null;
-  const requiresAssetSelectionForPreview = activeSourceType === "File / S3";
+  const requiresAssetSelectionForPreview = ["File / S3", "MongoDB", "PostgreSQL"].includes(activeSourceType);
   const selectedAssetHasSample = Boolean(
     (!requiresAssetSelectionForPreview || selectedAsset) && sourceRuntime?.draftPatch.schema?.columns?.length,
   );
@@ -1523,7 +1527,10 @@ export function SourceConnectionPage({
     setConnectionStatus(nextStatus);
     setConnectionMessage(nextMessage);
     applySourceDraft(value, nextFields, nextStatus, nextMessage);
-    onDraftChange({ recordParsing: { columns: [], delimiterKind: "whitespace", delimiterPattern: "\\s+", enabled: false, expectedFieldCount: 0, header: false } });
+    onDraftChange({
+      recordParsing: { columns: [], delimiterKind: "whitespace", delimiterPattern: "\\s+", enabled: false, expectedFieldCount: 0, header: false },
+      schema: { columns: [], sampleRows: [], summary: "" },
+    });
     onAction("etl.source.connector_selected", "/api/etl/sources/connectors", value);
   };
 
@@ -1586,7 +1593,10 @@ export function SourceConnectionPage({
     setConnectionStatus(nextStatus);
     setConnectionMessage(nextMessage);
     applySourceDraft(activeSourceType, nextFields, nextStatus, nextMessage);
-    onDraftChange({ recordParsing: { columns: [], delimiterKind: "whitespace", delimiterPattern: "\\s+", enabled: false, expectedFieldCount: 0, header: false } });
+    onDraftChange({
+      recordParsing: { columns: [], delimiterKind: "whitespace", delimiterPattern: "\\s+", enabled: false, expectedFieldCount: 0, header: false },
+      schema: { columns: [], sampleRows: [], summary: "" },
+    });
   };
 
   const loadSourceAssetChildren = async (folderPath: string) => {
@@ -1643,7 +1653,14 @@ export function SourceConnectionPage({
       ["__Selected Object", assetPath],
       ["__Sample Object", assetPath],
     ]);
-    const nextMessage = `${assetMeta === "folder" ? "폴더" : "파일"} ${assetPath} 선택됨`;
+    const selectedTargetKind = activeSourceType === "PostgreSQL"
+      ? "테이블"
+      : activeSourceType === "MongoDB"
+        ? "컬렉션"
+        : assetMeta === "folder"
+          ? "폴더"
+          : "파일";
+    const nextMessage = `${selectedTargetKind} ${assetPath} 선택됨`;
     setSelectedAssetPath(assetPath);
     setSourceFields((fields) => ({ ...fields, [activeSourceType]: nextFields }));
     setConnectionMessage(nextMessage);
@@ -1708,7 +1725,7 @@ export function SourceConnectionPage({
     setSelectedAssetPath("");
     applySourceDraft(activeSourceType, editableFields, "testing", testingMessage);
     try {
-      if (activeSourceType !== "File / S3") {
+      if (!["File / S3", "MongoDB", "PostgreSQL"].includes(activeSourceType)) {
         const result = mergeConnectorAnalysisSourceConfig(
           publicConnectorAnalysis(await testSourceConnector(activeSourceType, editableFields)),
           editableFields,
@@ -1726,7 +1743,29 @@ export function SourceConnectionPage({
         return;
       }
       const result = await listSourceAssets(activeSourceType, editableFields, "");
-      const successMessage = `${sourceTypeLabel(activeSourceType)} 연결 성공: 하위 항목 ${result.assets.length}개`;
+      const discoveredTargetLabel = activeSourceType === "PostgreSQL"
+        ? "테이블"
+        : activeSourceType === "MongoDB"
+          ? "컬렉션"
+          : "하위 항목";
+      const successMessage = `${sourceTypeLabel(activeSourceType)} 연결 성공: ${discoveredTargetLabel} ${result.assets.length}개 탐색 가능`;
+      const connectionTestItems: Array<[string, string]> = activeSourceType === "PostgreSQL"
+        ? [
+            ["Endpoint", `${sourceConfigValue(editableFields, "Endpoint / Host")}:${sourceConfigValue(editableFields, "Port")}`],
+            ["Database", sourceConfigValue(editableFields, "Database Name")],
+            ["Tables", String(result.assets.length)],
+          ]
+        : activeSourceType === "MongoDB"
+          ? [
+              ["Endpoint", `${sourceConfigValue(editableFields, "Endpoint / Host")}:${sourceConfigValue(editableFields, "Port")}`],
+              ["Database", sourceConfigValue(editableFields, "Database Name")],
+              ["Collections", String(result.assets.length)],
+            ]
+          : [
+              ["Connector", activeSourceType],
+              ["Result", "Verified"],
+              ["Objects", String(result.assets.length)],
+            ];
       const connectorResult: SourceConnectorAnalysis = {
         actionPath: "/api/etl/sources/assets",
         assets: result.assets,
@@ -1742,16 +1781,19 @@ export function SourceConnectionPage({
         logs: [successMessage],
         message: successMessage,
         previewColumns: [],
-        previewNote: "파일을 선택하면 제한 샘플과 스키마 추론 결과가 표시됩니다.",
+        previewNote: `${discoveredTargetLabel}을 선택하면 제한 샘플과 스키마 추론 결과가 표시됩니다.`,
         previewRows: [],
         status: "success",
-        testItems: [["Connector", activeSourceType], ["Result", "Verified"], ["Objects", `${result.assets.length}`]],
+        testItems: connectionTestItems,
       };
       setSourceRuntime(connectorResult);
       setSelectedAssetPath("");
       setConnectionStatus("success");
       setConnectionMessage(successMessage);
-      onDraftChange(connectorResult.draftPatch);
+      onDraftChange({
+        ...connectorResult.draftPatch,
+        schema: { columns: [], sampleRows: [], summary: "" },
+      });
       onAction("etl.source.connection_tested", connectorResult.actionPath, activeSourceType);
       onNotify(successMessage);
     } catch (error) {
@@ -1796,7 +1838,9 @@ export function SourceConnectionPage({
       ? connectionStatus !== "success"
       : isInternalDataLake
         ? !selectedCatalogDatasetId || !hasValidatedSchema
-        : connectionStatus !== "success" || !hasValidatedSchema;
+        : connectionStatus !== "success"
+          || (requiresAssetSelectionForPreview && !selectedAssetPath)
+          || !hasValidatedSchema;
 
   const sourceChoiceConnectors = ["PostgreSQL", "MongoDB", "File / S3", "REST API", "Stream / Kafka", "Data Lake"];
 

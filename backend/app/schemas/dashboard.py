@@ -172,11 +172,13 @@ class DeleteDashboardResponse(CamelModel):
 
 class DashboardWidgetConfigBase(CamelModel):
     body: str | None = None
+    data_mode: Literal["server_aggregated", "server_preview"] | None = None
     description: str | None = None
     error: str | None = None
     error_message: str | None = None
     placeholder_kind: str | None = None
     prompt: str | None = None
+    source_config: dict[str, Any] | None = None
 
 
 class DashboardWidgetColorConfig(CamelModel):
