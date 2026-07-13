@@ -77,18 +77,13 @@ import { cn } from "@/lib/utils";
 import { S3PathField } from "../../components/s3/S3PathField";
 import { DatabaseField } from "../../components/target/DatabaseField";
 import { runTransformQualitySamplePreview } from "../../data/transformQualityPreview";
-import { normalizeDashboardSyncIntervalMinutes, normalizeRetryPolicy, retryFailureActionLabels, scheduleOverlapPolicyLabels, toCreatePipelineRequest } from "../../services/draftPipelineContract";
+import { normalizeRetryPolicy, retryFailureActionLabels, scheduleOverlapPolicyLabels, toCreatePipelineRequest } from "../../services/draftPipelineContract";
 import { getDatasets } from "../../services/mockApi";
 import { getReviewSnapshot, type ReviewSnapshot } from "../../services/reviewApi";
 import { fetchPermissionOptions } from "../../services/permissionApi";
 import { getSourceConnectorDefaults, listSourceAssets, previewRecordParsing, testSourceConnector, type SourceConnectorAnalysis } from "../../services/sourceConnectorService";
 import type { AuditResult, CatalogDataset, DraftPipeline, DraftPipelinePatch, FlowId, PermissionAction, PermissionOptionsResponse, RecordParsingDraft, RecordParsingPreviewResponse, ScheduleFlowId, SchemaColumnDraft, SourceDraft, TargetLayer } from "../../types";
 import type { QualityRuleDraft, RetryPolicyDraft, ScheduleDraft, ScheduleOverlapPolicy, TransformStepDraft, WatermarkPolicyDraft, WatermarkWindowMode } from "../../types/etl";
-import {
-  DEFAULT_DASHBOARD_SYNC_INTERVAL_MINUTES,
-  MAX_DASHBOARD_SYNC_INTERVAL_MINUTES,
-  MIN_DASHBOARD_SYNC_INTERVAL_MINUTES,
-} from "../../types/etl";
 import type { QualityRuleOption, TransformQualityInvalidRow, TransformQualityPreviewSample, TransformQualitySampleRow, TransformQualityStepPreview, TransformQualityValidationResult } from "../../data/transformQualityPreview";
 import { SourceAssetTree } from "./SourceAssetTree";
 import { SourceExplorerWorkbench } from "./SourceExplorerWorkbench";
@@ -1181,14 +1176,10 @@ export function SourceConnectionPage({
     setAssetFilter("all");
   }, [sourceType]);
 
-  const continuousConfig = {
-    dashboardSyncIntervalMinutes: normalizeDashboardSyncIntervalMinutes(
-      draft.source.continuousConfig?.dashboardSyncIntervalMinutes,
-    ),
-    initialOffsetPolicy: draft.source.continuousConfig?.initialOffsetPolicy ?? ("earliest" as const),
-    maxOffsetsPerTrigger: draft.source.continuousConfig?.maxOffsetsPerTrigger ?? 10000,
-    schemaEvolutionPolicy: draft.source.continuousConfig?.schemaEvolutionPolicy,
-    triggerIntervalSeconds: draft.source.continuousConfig?.triggerIntervalSeconds ?? 30,
+  const continuousConfig = draft.source.continuousConfig ?? {
+    initialOffsetPolicy: "earliest" as const,
+    triggerIntervalSeconds: 30,
+    maxOffsetsPerTrigger: 10000,
   };
   const updateContinuousConfig = (patch: Partial<typeof continuousConfig>) => {
     onDraftChange({
@@ -2010,26 +2001,6 @@ export function SourceConnectionPage({
                                 const value = Number(event.target.value);
                                 if (Number.isInteger(value) && value >= 1 && value <= 1_000_000) updateContinuousConfig({ maxOffsetsPerTrigger: value });
                               }} />
-                            </FormFieldGroup>
-                            <FormFieldGroup className="field" hint="게시된 대시보드의 Kafka 데이터를 1~60분 주기로 동기화합니다." label="대시보드 자동 동기화 주기">
-                              <Input
-                                aria-label="대시보드 자동 동기화 주기(분)"
-                                disabled={sourceLocked}
-                                max={MAX_DASHBOARD_SYNC_INTERVAL_MINUTES}
-                                min={MIN_DASHBOARD_SYNC_INTERVAL_MINUTES}
-                                type="number"
-                                value={continuousConfig.dashboardSyncIntervalMinutes ?? DEFAULT_DASHBOARD_SYNC_INTERVAL_MINUTES}
-                                onChange={(event) => {
-                                  const value = Number(event.target.value);
-                                  if (
-                                    Number.isInteger(value)
-                                    && value >= MIN_DASHBOARD_SYNC_INTERVAL_MINUTES
-                                    && value <= MAX_DASHBOARD_SYNC_INTERVAL_MINUTES
-                                  ) {
-                                    updateContinuousConfig({ dashboardSyncIntervalMinutes: value });
-                                  }
-                                }}
-                              />
                             </FormFieldGroup>
                           </div>
                         )}

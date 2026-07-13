@@ -226,24 +226,6 @@ cd backend
 .venv/bin/python -m app.seed.seed_dashboard_demo
 ```
 
-Kafka Continuous Job 생성 화면의 Source 고급 설정은 Spark micro-batch `triggerIntervalSeconds`와 별도로 `dashboardSyncIntervalMinutes`를 받는다. Dashboard 동기화 주기는 1~60분 정수이고 기본값은 5분이며 checkpoint fingerprint에는 포함하지 않는다. 기존 Continuous Job에 이 필드가 없으면 backend와 frontend hydrate 모두 5분으로 해석한다.
-
-Published Dashboard는 runtime snapshot을 처음 hydrate한 뒤 `GET /api/dashboards/{dashboardId}/published/data?scope=continuous_kafka`를 즉시 호출한다. 응답의 Kafka Continuous widget만 갱신하고 `autoRefreshIntervalMinutes`가 있으면 성공 요청 종료 시점부터 해당 분만큼 뒤에 다음 요청을 예약한다. 여러 Kafka Continuous Job이 연결되면 backend가 가장 짧은 주기를 반환한다. S3/Parquet, SQL, 일반 ETL, Kafka Snapshot widget만 있거나 대상이 전혀 없으면 interval이 `null`이므로 자동 polling을 시작하지 않는다. Draft 화면에서는 실행하지 않으며, 브라우저 탭이 hidden이면 예약을 취소하고 visible 복귀 시 대상이 있을 때 즉시 재개한다. Background 오류는 마지막 성공 chart를 유지한다. 상단 수동 동기화는 query를 생략한 기본 `scope=all` 요청 한 번으로 현재 Published revision의 모든 page에 있는 dataset 연결 widget 전체를 갱신한다.
-
-Dashboard live-data 계약과 Kafka sample 전파를 외부 인프라 없이 확인하려면 아래 검증을 실행한다.
-
-```powershell
-cd backend
-npm run verify:dashboard-published-data
-python scripts/verify-kafka-continuous-contract.py
-
-cd ..\frontend
-npm run verify:ui-regressions
-npm run build
-```
-
-수동 smoke에서는 기본 설정 Kafka Continuous widget이 있는 Published 화면의 상태 배지가 `자동 동기화 · 5분`으로 전환되는지 확인한다. 서로 다른 주기의 Kafka Continuous widget을 함께 두면 가장 짧은 분 값이 표시되어야 하고, legacy 설정 누락 Job도 5분이어야 한다. Kafka Continuous widget이 없는 Dashboard에서는 자동 요청이 반복되지 않아야 하며 S3/Parquet, SQL, 일반 ETL, Kafka Snapshot widget은 `continuous_kafka` 응답으로 바뀌지 않아야 한다. hidden tab에서 요청이 멈추고 복귀 즉시 한 번 재개되는지, backend 오류 중에도 기존 차트가 유지되는지, 상단 수동 동기화를 누르면 `scope=all` 한 번으로 source 종류와 관계없이 Dashboard 전체 widget이 갱신되는지도 확인한다.
-
 OpenAI API key는 프론트가 아니라 backend env에만 둔다. 로컬에서는 `backend/.env` 또는 실행 환경에 아래 값을 둔다.
 `OPENAI_API_KEY`가 없거나 `OPENAI_ASSISTANT_ENABLED=false`이면 backend는 응답에 `mock fallback`을 명시한 fallback 응답을 반환한다.
 Assistant guard는 OpenAI가 없는 컬럼/부적절한 값축을 반환해도 catalog schema와 sample rows 기준으로 보정한다. 차원 컬럼만 제시된 요청은 `count` 집계 차트로, 매출/금액 지표가 포함된 요청은 `revenue`/`total_amount` 같은 실제 수치 컬럼으로 보정한다. OpenAI 응답이 비어 있으면 요청 문장과 available dataset 기준의 기본 막대 차트 action을 생성한다.
@@ -438,7 +420,7 @@ npm run verify:kafka-continuous-soak
 
 Job 상세의 Continuous Runtime은 partition lag, 처리량, schema drift, Rule fingerprint/경고/격리/실패 카운터와 bounded/redacted worker log를 표시한다. Quarantine inspection/replay와 compaction은 worker를 일시정지하거나 중지한 상태에서 실행한다. Replay는 Lake의 격리 Parquet를 읽어 `partition:offset` anti-join 후 현재 schema policy와 canonical Rule을 다시 적용하며, 여전히 실패하는 Rule 행은 target으로 우회하지 않는다. Compaction은 `_compactions/run_id=*`에 staged output을 만들며 V1에서는 원본 batch를 삭제하거나 active Catalog path를 교체하지 않는다.
 
-수동 UI 확인에서는 Kafka Source 연결 화면에서 `Continuous`를 선택해 target format이 Parquet로 유지되는지 확인한다. Source 고급 설정에서 Dashboard 동기화 주기가 기본 5분이고 1~60분만 허용되는지, Spark trigger 간격을 바꿔도 두 값이 별도로 저장되는지 확인한다. 생성 후 수집/처리 목록과 상세에서 `스트림 시작`, `일시정지`, `체크포인트 재개`, `스트림 중지`가 Snapshot의 run/retry와 섞이지 않는지, runtime counter/heartbeat/checkpoint가 polling으로 갱신되는지 확인한다.
+수동 UI 확인에서는 Kafka Source 연결 화면에서 `Continuous`를 선택해 target format이 Parquet로 유지되는지 확인한다. 생성 후 수집/처리 목록과 상세에서 `스트림 시작`, `일시정지`, `체크포인트 재개`, `스트림 중지`가 Snapshot의 run/retry와 섞이지 않는지, runtime counter/heartbeat/checkpoint가 polling으로 갱신되는지 확인한다.
 
 ```bash
 cd backend

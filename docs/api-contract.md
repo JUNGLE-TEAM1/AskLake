@@ -173,7 +173,6 @@ Resource/action 기준:
 | `PATCH /api/etl/jobs/{jobId}` | `manage` | source identity와 successful target identity 보호 |
 | `GET /api/dashboards`, `POST /api/dashboards/query` | `view` | actor가 볼 수 있는 dashboard만 목록에 포함 |
 | `GET /api/dashboards/{dashboardId}/published` | `view` | published revision이 없어도 권한 통과 후 빈 runtime 응답 가능 |
-| `GET /api/dashboards/{dashboardId}/published/data[?scope=all\|continuous_kafka]` | Dashboard `view` + 조회 대상 Dataset `query` | 기본 `all`은 수동 전체 동기화, `continuous_kafka`는 Kafka Continuous 자동 갱신 범위 |
 | `PATCH /api/dashboards/{dashboardId}` | `manage` | dashboard card title 수정 |
 | `POST /api/dashboards/{dashboardId}/draft/ensure` | `manage` | draft revision 생성/복사 가능 여부 검사 |
 | `POST/PATCH/DELETE /api/dashboards/{dashboardId}/draft/**` | `manage` | page/widget/layout draft 변경 전체 |
@@ -404,15 +403,6 @@ type JobRowData = {
   source: string;
   target: string;
   schedule: string;
-  executionMode?: "snapshot" | "continuous";
-  continuousConfig?: {
-    initialOffsetPolicy: "earliest" | "latest";
-    triggerIntervalSeconds: number;
-    dashboardSyncIntervalMinutes: number;
-    maxOffsetsPerTrigger: number;
-    schemaEvolutionPolicy?: Record<string, string>;
-    checkpointPath?: string;
-  };
   schedulePolicy?: {
     endDate?: string;
     nextRunUtc?: string;
@@ -519,9 +509,6 @@ type CatalogDataset = {
   status: "available" | "approval_required";
   freshness: "latest" | "stale" | "approval";
   source: string;
-  dashboardSyncIntervalMinutes?: number;
-  sourceKind?: "etl" | "sql" | "kafka";
-  sourceExecutionMode?: "snapshot" | "continuous";
   rows: string;
   size: string;
   quality: string;
@@ -621,15 +608,15 @@ Kafka Job command가 실패하면 `JobRunSummary.status`는 `failed`이며 `task
 
 ### Kafka Continuous Runtime
 
-Issue #500 defines `executionMode: "snapshot" | "continuous"` on Kafka Job creation. Existing and migrated Kafka Jobs default to `snapshot`. `continuous` is immutable after creation and adds `continuousConfig` (`initialOffsetPolicy`, `triggerIntervalSeconds`, `dashboardSyncIntervalMinutes`, `maxOffsetsPerTrigger`, `schemaEvolutionPolicy`, `checkpointPath`) plus `continuousRuntime` (`status`, heartbeat, lag, last flush, counters, Rule identity, last error) to `JobRowData`. `dashboardSyncIntervalMinutes`는 Published Dashboard 자동 갱신용 1~60 정수이며 기본값과 필드가 없는 legacy Continuous Job의 hydrate fallback은 `5`다. Spark micro-batch를 제어하는 `triggerIntervalSeconds`와 별도이고 `_asklake_contract`, `runtimeFingerprint`, checkpoint 호환성 판정에 포함하지 않는다.
+Issue #500 defines `executionMode: "snapshot" | "continuous"` on Kafka Job creation. Existing and migrated Kafka Jobs default to `snapshot`. `continuous` is immutable after creation and adds `continuousConfig` (`initialOffsetPolicy`, `triggerIntervalSeconds`, `maxOffsetsPerTrigger`, `schemaEvolutionPolicy`, `checkpointPath`) plus `continuousRuntime` (`status`, heartbeat, lag, last flush, counters, Rule identity, last error) to `JobRowData`.
 
 `startContinuous`, `pauseContinuous`, `resumeContinuous`, and `stopContinuous` are command extensions of `POST /api/etl/jobs/{jobId}/commands`. They launch or signal a Spark Structured Streaming worker, reject conflicting active Snapshot or Continuous consumer identity with `409`, and use a durable Spark checkpoint as source-progress authority. Each batch publishes `batch_id=<id>` Parquet paths with `_SUCCESS` plus a hidden count/offset signature, then writes an immutable full-batch manifest. A pre-manifest retry may reuse an output only when its signature matches; a committed manifest may be reused only when its batch ID and source ranges match. Job hydrate reconciles all reported publication manifests into Catalog before worker liveness failure handling. An exited/missing/stale worker becomes `failed` only while active, and the same container attempt increments `failedCount` once. An intentional exit after `pauseContinuous` or `stopContinuous` completes as `paused` or `stopped`. See [Kafka Continuous Ingestion Contract](kafka-continuous-ingestion-contract.md).
 
 Issue #567 Phase 5 compiles supported stateless `rules[]` into the Continuous worker. Every micro-batch applies canonical Transform/Quality before target publication. `_asklake_contract` checkpoint metadata and every publication signature/manifest bind `schemaFingerprint`, `ruleFingerprint`, and `runtimeFingerprint`; mismatch fails before query start. `Fail Batch` leaves the micro-batch uncommitted, while Rule quarantine stores Kafka position plus `ruleId`, `stage`, `targetColumn`, and fingerprints. Catalog `materializationRuns` retain the same execution identity and Transform/Quality result.
 
-Frontend `DraftPipeline.source` carries optional `executionMode` and `continuousConfig`; `executionMode: "continuous"` serializes them into Job creation. `JobRowData` includes optional `continuousRuntime` for lifecycle controls and runtime display. Source 고급 설정의 `dashboardSyncIntervalMinutes`는 Job 생성 및 hydrate에 보존하되 stream 처리 계약 변경으로 취급하지 않는다.
+Frontend `DraftPipeline.source` carries optional `executionMode` and `continuousConfig`; `executionMode: "continuous"` serializes them into Job creation. `JobRowData` includes optional `continuousRuntime` for lifecycle controls and runtime display.
 
-Snapshot Job은 기존 스케줄 단계에서 수동 또는 반복 실행 정책을 저장한다. Continuous Job은 그 단계를 건너뛰며 `scheduleLabel: "스케줄링 건너뛰기"`, stream lifecycle 설명, `continuousConfig`만 생성 request에 보낸다. Continuous의 시작 위치, trigger 간격, micro-batch 최대 메시지와 Dashboard 동기화 주기는 Source 단계의 접힌 고급 설정에서 지정한다. Dashboard 동기화 주기는 Kafka Continuous 전용이며 S3/Parquet, SQL, 일반 ETL 또는 Kafka Snapshot Job에는 저장하거나 적용하지 않는다.
+Snapshot Job은 기존 스케줄 단계에서 수동 또는 반복 실행 정책을 저장한다. Continuous Job은 그 단계를 건너뛰며 `scheduleLabel: "스케줄링 건너뛰기"`, stream lifecycle 설명, `continuousConfig`만 생성 request에 보낸다. Continuous의 시작 위치, trigger 간격, micro-batch 최대 메시지는 Source 단계의 접힌 고급 설정에서 지정한다.
 
 ### Kafka Replay Producer
 
@@ -2128,7 +2115,7 @@ Dashboard FastAPI 전환은 `dashboard card`와 `dashboard runtime`을 분리해
 | Lane | 담당 범위 | 주요 schema | 주요 endpoint |
 | --- | --- | --- | --- |
 | Dashboard card/list | 랜딩 페이지 목록, 검색/필터/정렬, 생성, 제목 수정, 삭제 | `DashboardCard`, `DashboardListQuery`, `DashboardListResponse`, `CreateDashboardRequest`, `UpdateDashboardRequest` | `GET /api/dashboards`, `POST /api/dashboards/query`, `POST /api/dashboards`, `PATCH /api/dashboards/{dashboardId}`, `DELETE /api/dashboards/{dashboardId}` |
-| Dashboard runtime | 내부 조회/편집 화면, draft/published revision, page, widget, layout, publish, published live data | `DashboardRuntimeResponse`, `DashboardPublishedDataResponse`, `DashboardRuntimeWidget`, `CreateDraftWidgetRequest`, `SaveDraftLayoutsRequest`, `PublishDashboardResponse` | `GET /api/dashboards/{dashboardId}/published`, `GET /api/dashboards/{dashboardId}/published/data`, `POST /api/dashboards/{dashboardId}/draft/ensure`, page/widget/layout/publish APIs |
+| Dashboard runtime | 내부 조회/편집 화면, draft/published revision, page, widget, layout, publish | `DashboardRuntimeResponse`, `DashboardRuntimeWidget`, `CreateDraftWidgetRequest`, `SaveDraftLayoutsRequest`, `PublishDashboardResponse` | `GET /api/dashboards/{dashboardId}/published`, `POST /api/dashboards/{dashboardId}/draft/ensure`, page/widget/layout/publish APIs |
 
 Card/list lane은 `dashboards`와 `dashboard_tags` 중심으로 작업한다.
 Runtime lane은 `dashboard_revisions`, `dashboard_pages`, `dashboard_widgets` 중심으로 작업한다.
@@ -2555,37 +2542,6 @@ Response `200 OK`:
 
 - dashboard가 없으면 `404 NOT_FOUND`.
 - dashboard `view` 권한이 없으면 `403 FORBIDDEN`.
-
-#### 8.5.1.1 Published live data 조회
-
-`GET /api/dashboards/{dashboardId}/published/data?scope=all|continuous_kafka`
-
-이 endpoint는 published revision의 layout/config/data snapshot을 수정하지 않습니다. `scope`를 생략하면 `all`이며 `datasetId`가 있는 모든 widget을 대상으로 같은 dataset을 한 번만 조회합니다. Published 상단 수동 동기화는 이 기본 범위를 한 번 호출해 현재 revision의 모든 page에 있는 dataset 연결 widget 전체를 갱신합니다.
-
-`scope=continuous_kafka`는 Published 자동 polling 전용입니다. Backend는 Catalog payload의 `sourceExecutionMode: "continuous"`를 우선 사용하고, 이 provenance가 없는 legacy payload는 `sourceRunId`의 `continuous:` prefix로 보완합니다. `sourceKind: "kafka"`만으로 판정하지 않으므로 Kafka Snapshot은 포함되지 않으며 S3/Parquet, SQL, 일반 ETL dataset도 제외합니다. 대용량 storage를 다시 읽지 않고 Continuous publication이 갱신한 bounded Catalog sample을 사용합니다. 각 대상 payload에 Job 생성 설정에서 전파된 `dashboardSyncIntervalMinutes` 중 최솟값을 `autoRefreshIntervalMinutes`로 반환하며, 필드가 없는 legacy Continuous dataset은 5분으로 계산합니다. 대상이 없으면 `200 OK`와 `widgets: []`, `autoRefreshIntervalMinutes: null`을 반환하고 frontend는 자동 polling을 시작하지 않습니다.
-
-응답은 적용한 범위를 `refreshScope`로 echo하고 브라우저·중간 cache에 오래된 sample이 남지 않도록 `Cache-Control: private, no-store`를 사용합니다. Dashboard `view`와 해당 scope에서 실제 조회하는 각 Dataset `query` 권한을 모두 확인합니다. published revision 또는 `scope=all`에서 참조한 dataset이 없으면 `404`, 권한/governance 정책에 막히면 `403`으로 실패합니다. dataset 연결 widget 자체가 없는 Dashboard는 빈 성공 응답이며, `continuous_kafka`에서는 payload가 없거나 자동 대상이 아닌 dataset을 건너뛰고 최종 대상이 없어도 정상적으로 빈 성공 응답을 반환합니다.
-
-```json
-{
-  "dashboardId": "dash_live",
-  "revisionId": "dashrev_published_1",
-  "refreshedAt": "2026-07-13T12:00:00Z",
-  "refreshScope": "continuous_kafka",
-  "autoRefreshIntervalMinutes": 5,
-  "widgets": [
-    {
-      "widgetId": "dashwidget_1",
-      "datasetId": "ds_live_reviews",
-      "data": [{ "event_id": "evt-2", "rating": 5 }],
-      "datasetUpdatedAt": "2026-07-13T11:59:58Z",
-      "sourceRunId": "continuous:job:batch:2"
-    }
-  ]
-}
-```
-
-Kafka Continuous worker는 non-empty micro-batch의 최신 정상 행을 최대 20개까지 publication manifest의 `sampleRows`로 함께 남깁니다. Catalog materialization은 schema column 순서로 이 sample을 갱신하고, sample이 없는 구버전 report/retry에서는 이전 Catalog sample을 유지합니다. Dashboard live data는 이 bounded sample을 사용하며 전체 Parquet 결과나 row count를 대체하지 않습니다. 자동 client는 첫 `continuous_kafka` 응답 직후가 아니라 성공 응답이 끝난 시점부터 `autoRefreshIntervalMinutes` 뒤에 다음 요청을 self-schedule합니다. hidden tab, in-flight dedupe, 마지막 성공 chart 보존과 hard-error 수동 재시도 규칙은 유지합니다. 수동 `all` 요청은 자동 timer의 Kafka 전용 범위나 저장된 interval을 변경하지 않습니다.
 
 #### 8.5.2 Draft 조회/생성
 
