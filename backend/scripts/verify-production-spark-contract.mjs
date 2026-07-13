@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import { createSparkSourceInspectRestSubmission } from "../src/connectors.mjs";
 import {
+  assertSparkRestStorageCredentials,
   createSparkRestSubmission,
   sparkExecutionMode,
   sparkRestBridgeTimeoutMs,
@@ -122,6 +123,10 @@ assert.throws(
   () => sparkExecutionMode({ APP_ENV: "production", ASKLAKE_SPARK_RUNNER: "docker" }),
   (error) => error?.code === "SPARK_RUNNER_CONFIGURATION_INVALID",
   "Production must fail closed when Docker execution is selected.",
+);
+assert.doesNotThrow(
+  () => assertSparkRestStorageCredentials([["Storage Provider", "aws"]], "rest"),
+  "AWS Spark REST execution must not resolve or require MinIO credentials.",
 );
 
 const pipelineSubmission = createSparkRestSubmission({
