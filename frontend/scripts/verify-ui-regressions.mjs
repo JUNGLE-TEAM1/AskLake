@@ -1486,15 +1486,31 @@ const checks = [
     ],
   },
   {
-    name: "Global top-bar refresh awaits the authoritative workspace rehydrate",
+    name: "Authenticated routes share the compact global app shell",
     file: "src/App.tsx",
     patterns: [
-      /filterJobs,\s*refreshData,\s*handleJobCommand,/,
-      /const refreshWorkspaceData = async \(\) => \{\s*const refreshed = await refreshData\(\);\s*writeAuditLog\("etl\.job\.status_refreshed", "\/api\/etl\/jobs", "jobs", refreshed \? "success" : "failed"\);\s*\};/,
-      /<Topbar[^\n]*onRefresh=\{\(\) => void refreshWorkspaceData\(\)\}/,
+      /<Sidebar[\s\S]*currentUser=\{currentUser\}/,
+      /<Topbar \/>/,
+      /activeFlow === "rules" && <RuleApplicationPage/,
     ],
     forbiddenPatterns: [
-      /<Topbar[^\n]*onRefresh=\{\(\) => writeAuditLog\("etl\.job\.status_refreshed"/,
+      /<Footer \/>/,
+      /onRefresh=\{/,
+      /<Topbar[^>]*onLogout=/,
+    ],
+  },
+  {
+    name: "Global top bar exposes only appearance and language placeholders",
+    file: "src/components/layout/Topbar.tsx",
+    patterns: [
+      /import \{ Languages, Moon \} from "lucide-react";/,
+      /label="다크 모드"/,
+      /label="한국어·영어 전환"/,
+    ],
+    forbiddenPatterns: [
+      /RefreshCw/,
+      /LogOut/,
+      /CircleUser/,
     ],
   },
 ];
