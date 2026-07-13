@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import type React from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChevronRight, FileText, Folder, FolderOpen, Loader2 } from "lucide-react";
+import { Tree, type NodeRendererProps } from "react-arborist";
 import { TreePanel } from "@/components/ui/tree-panel";
-import { TreeGroup, TreeRow, TreeView } from "@/components/ui/tree-view";
+import { cn } from "@/lib/utils";
 
 export type SourceAsset = [path: string, meta: string, status: string];
 
@@ -17,7 +18,6 @@ type SourceAssetTreeProps = {
 
 type SourceAssetTreeNode = {
   assetIndex?: number;
-  childMap: Map<string, SourceAssetTreeNode>;
   children: SourceAssetTreeNode[];
   id: string;
   isFolder: boolean;
@@ -28,11 +28,9 @@ type SourceAssetTreeNode = {
 };
 
 const LABELS = {
-  empty: "\uD45C\uC2DC\uD560 \uC18C\uC2A4 \uD56D\uBAA9\uC774 \uC5C6\uC2B5\uB2C8\uB2E4.",
-  file: "\uD30C\uC77C",
-  folder: "\uD3F4\uB354",
-  loading: "\uBD88\uB7EC\uC624\uB294 \uC911",
-  open: "\uC5F4\uAE30",
+  empty: "표시할 소스 항목이 없습니다.",
+  loading: "불러오는 중",
+  open: "열기",
 };
 
 export function SourceAssetTree({
@@ -43,21 +41,31 @@ export function SourceAssetTree({
   onOpenFolder,
   onSelect,
 }: SourceAssetTreeProps) {
-  const { nodeIds, nodes } = useMemo(() => buildSourceAssetTree(assets), [assets]);
-  const nodeIdsKey = nodeIds.join("\0");
-  const [expandedItems, setExpandedItems] = useState<string[]>([]);
+  const { nodeById, nodes } = useMemo(() => buildSourceAssetTree(assets), [assets]);
   const requestedFolderPaths = useRef(new Set<string>());
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const [treeHeight, setTreeHeight] = useState(320);
   const loadedFolderPathSet = useMemo(
     () => new Set(loadedFolderPaths ?? []),
     [loadedFolderPaths],
   );
+  const selectedNodeId = selectedPath ? `file:${selectedPath}` : undefined;
 
   useEffect(() => {
-    const availableNodeIds = new Set(nodeIds);
-    setExpandedItems((current) => current.filter((itemId) => availableNodeIds.has(itemId)));
-  }, [nodeIdsKey]);
+    const viewport = viewportRef.current;
+    if (!viewport) return;
 
-  const requestFolderChildren = (node: SourceAssetTreeNode) => {
+    const updateHeight = () => {
+      setTreeHeight(Math.max(260, Math.floor(viewport.getBoundingClientRect().height)));
+    };
+
+    updateHeight();
+    const observer = new ResizeObserver(updateHeight);
+    observer.observe(viewport);
+    return () => observer.disconnect();
+  }, []);
+
+  const requestFolderChildren = useCallback((node: SourceAssetTreeNode) => {
     if (!onOpenFolder) return;
     if (node.path === loadingPath) return;
     if (loadedFolderPathSet.has(node.path)) return;
@@ -67,71 +75,54 @@ export function SourceAssetTree({
     void Promise.resolve(onOpenFolder(node.path)).catch(() => {
       requestedFolderPaths.current.delete(node.path);
     });
-  };
+  }, [loadedFolderPathSet, loadingPath, onOpenFolder]);
 
-  const toggleFolder = (node: SourceAssetTreeNode) => {
-    const isOpen = expandedItems.includes(node.id);
-    if (!isOpen) {
-      requestFolderChildren(node);
-    }
-    setExpandedItems((current) => (
-      current.includes(node.id)
-        ? current.filter((itemId) => itemId !== node.id)
-        : [...current, node.id]
-    ));
-  };
-
-  const renderNode = (node: SourceAssetTreeNode, depth = 0): React.ReactNode => {
-    const canSelectFile = !node.isFolder && typeof node.assetIndex === "number";
-    const isSelected = canSelectFile && node.path === selectedPath;
-    const isExpanded = expandedItems.includes(node.id);
-    const folderMeta = node.path === loadingPath
+  const SourceTreeNode = useCallback(({ node, style }: NodeRendererProps<SourceAssetTreeNode>) => {
+    const asset = node.data;
+    const isLoading = asset.isFolder && asset.path === loadingPath;
+    const folderMeta = isLoading
       ? LABELS.loading
-      : node.children.length > 0
-        ? `${node.children.length}\uAC1C`
+      : asset.children.length > 0
+        ? `${asset.children.length}개`
         : LABELS.open;
 
     return (
-      <div className="source-asset-tree-item" key={node.id}>
-        <TreeRow
-          aria-expanded={node.isFolder ? isExpanded : undefined}
-          className={isSelected ? "source-asset-tree-label active" : "source-asset-tree-label"}
-          expanded={node.isFolder ? isExpanded : undefined}
-          leaf={!node.isFolder}
-          level={depth}
-          selected={isSelected}
-          title={node.path}
-          onClick={(event) => {
-            event.stopPropagation();
-            if (node.isFolder) {
-              toggleFolder(node);
+      <div className="source-arborist-row-wrap" style={style}>
+        <button
+          aria-expanded={asset.isFolder ? node.isOpen : undefined}
+          className={cn(
+            "source-arborist-row",
+            asset.isFolder && "is-folder",
+            node.isOpen && "is-open",
+            node.isSelected && "is-selected",
+          )}
+          title={asset.path}
+          type="button"
+          onClick={() => {
+            if (asset.isFolder) {
+              node.toggle();
               return;
             }
-            if (canSelectFile) {
-              void onSelect(node.path);
-            }
+            void onSelect(asset.path);
           }}
         >
-          <span
-            className={node.isFolder ? "source-asset-disclosure folder" : "source-asset-disclosure"}
-            aria-hidden="true"
-          >
-            {node.isFolder ? (isExpanded ? "v" : ">") : ""}
+          <span className="source-arborist-expander" aria-hidden="true">
+            {asset.isFolder ? <ChevronRight size={15} strokeWidth={2.2} /> : null}
           </span>
-          <span className={node.isFolder ? "source-asset-kind folder" : "source-asset-kind file"}>
-            {node.isFolder ? LABELS.folder : LABELS.file}
+          {asset.isFolder ? (
+            node.isOpen ? <FolderOpen className="source-arborist-icon folder" size={16} /> : <Folder className="source-arborist-icon folder" size={16} />
+          ) : (
+            <FileText className="source-arborist-icon file" size={16} />
+          )}
+          <strong className="source-arborist-name">{asset.name}</strong>
+          <span className="source-arborist-meta">
+            {isLoading ? <Loader2 className="source-arborist-loading" size={13} /> : null}
+            {asset.isFolder ? folderMeta : asset.meta}
           </span>
-          <strong>{node.name}</strong>
-          <em>{node.isFolder ? folderMeta : node.meta}</em>
-        </TreeRow>
-        {node.isFolder && isExpanded ? (
-          <TreeGroup className="source-asset-tree-group" level={depth + 1}>
-            {node.children.map((child) => renderNode(child, depth + 1))}
-          </TreeGroup>
-        ) : null}
+        </button>
       </div>
     );
-  };
+  }, [loadingPath, onSelect]);
 
   if (nodes.length === 0) {
     return (
@@ -145,19 +136,41 @@ export function SourceAssetTree({
 
   return (
     <TreePanel className="source-asset-tree-panel">
-      <TreeView
-        className="source-asset-tree"
-        label="소스 에셋 트리"
-      >
-        {nodes.map((node) => renderNode(node))}
-      </TreeView>
+      <div ref={viewportRef} className="source-asset-tree-viewport">
+        <Tree<SourceAssetTreeNode>
+          aria-label="소스 에셋 트리"
+          className="source-arborist-tree"
+          data={nodes}
+          disableDrag
+          disableDrop
+          disableEdit
+          disableMultiSelection
+          disableSelect={(asset) => asset.isFolder}
+          height={treeHeight}
+          indent={18}
+          openByDefault={false}
+          overscanCount={8}
+          rowHeight={40}
+          selection={selectedNodeId}
+          width="100%"
+          onSelect={(selectedNodes) => {
+            const asset = selectedNodes.find((selectedNode) => !selectedNode.data.isFolder)?.data;
+            if (asset) void onSelect(asset.path);
+          }}
+          onToggle={(nodeId) => {
+            const asset = nodeById.get(nodeId);
+            if (asset?.isFolder) requestFolderChildren(asset);
+          }}
+        >
+          {SourceTreeNode}
+        </Tree>
+      </div>
     </TreePanel>
   );
 }
 
 function buildSourceAssetTree(assets: SourceAsset[]) {
   const root: SourceAssetTreeNode = {
-    childMap: new Map(),
     children: [],
     id: "root",
     isFolder: true,
@@ -166,17 +179,19 @@ function buildSourceAssetTree(assets: SourceAsset[]) {
     path: "",
     status: "",
   };
+  const childMaps = new Map<string, Map<string, SourceAssetTreeNode>>([[root.id, new Map()]]);
 
   const ensureChild = (parent: SourceAssetTreeNode, name: string, path: string, isFolder: boolean) => {
     const id = `${isFolder ? "folder" : "file"}:${path || name}`;
-    const existing = parent.childMap.get(id);
+    const childMap = childMaps.get(parent.id) ?? new Map<string, SourceAssetTreeNode>();
+    childMaps.set(parent.id, childMap);
+    const existing = childMap.get(id);
     if (existing) {
       if (isFolder) existing.isFolder = true;
       return existing;
     }
 
     const node: SourceAssetTreeNode = {
-      childMap: new Map(),
       children: [],
       id,
       isFolder,
@@ -185,7 +200,8 @@ function buildSourceAssetTree(assets: SourceAsset[]) {
       path,
       status: "",
     };
-    parent.childMap.set(id, node);
+    childMap.set(id, node);
+    childMaps.set(id, new Map());
     parent.children.push(node);
     return node;
   };
@@ -199,7 +215,7 @@ function buildSourceAssetTree(assets: SourceAsset[]) {
     let current = root;
     segments.forEach((segment, segmentIndex) => {
       const isLast = segmentIndex === segments.length - 1;
-      const segmentPath = segments.slice(0, segmentIndex + 1).join("/") + (!isLast || isFolderAsset ? "/" : "");
+      const segmentPath = `${segments.slice(0, segmentIndex + 1).join("/")}${!isLast || isFolderAsset ? "/" : ""}`;
       current = ensureChild(current, segment, segmentPath, !isLast || isFolderAsset);
       if (isLast) {
         current.assetIndex = assetIndex;
@@ -210,23 +226,18 @@ function buildSourceAssetTree(assets: SourceAsset[]) {
     });
   });
 
+  const nodeById = new Map<string, SourceAssetTreeNode>();
   const sortTree = (node: SourceAssetTreeNode) => {
     node.children.sort((left, right) => {
       if (left.isFolder !== right.isFolder) return left.isFolder ? -1 : 1;
       return left.name.localeCompare(right.name);
     });
-    node.children.forEach(sortTree);
+    node.children.forEach((child) => {
+      nodeById.set(child.id, child);
+      sortTree(child);
+    });
   };
   sortTree(root);
 
-  const nodeIds: string[] = [];
-  const collectNodeIds = (node: SourceAssetTreeNode) => {
-    if (node.id !== "root") {
-      nodeIds.push(node.id);
-    }
-    node.children.forEach(collectNodeIds);
-  };
-  collectNodeIds(root);
-
-  return { nodeIds, nodes: root.children };
+  return { nodeById, nodes: root.children };
 }
