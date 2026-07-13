@@ -104,7 +104,7 @@ def get_query_run(
 ) -> QueryRunResponse | TrinoQueryRunResponse:
     if run_id.startswith("trino_"):
         return trino_service.refresh(run_id, actor)
-    return service.get_query_run(run_id)
+    return service.get_query_run(run_id, actor)
 
 
 @router.get("/runs/{run_id}/results", response_model=TrinoQueryRunResultPage)

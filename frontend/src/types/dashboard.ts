@@ -31,11 +31,13 @@ export type DashboardWidgetColorConfig = {
 
 export type DashboardWidgetConfigBase = {
   body?: string;
+  dataMode?: "server_aggregated" | "server_preview";
   description?: string;
   error?: string;
   errorMessage?: string;
   placeholderKind?: DashboardWidgetPlaceholderKind;
   prompt?: string;
+  sourceConfig?: Record<string, unknown>;
 };
 
 export type MetricWidgetConfig = DashboardWidgetConfigBase & {

@@ -587,6 +587,57 @@ const checks = [
     ],
   },
   {
+    name: "Dashboard API adapters do not hide backend failures with local state",
+    file: "src/services/dashboardRuntimeApi.ts",
+    patterns: [
+      /return apiClient\.get<DashboardRuntimeResponse>/,
+      /return apiClient\.post<DashboardRuntimeResponse>/,
+      /return apiClient\.patch<\{ ok: true \}>/,
+    ],
+    forbiddenPatterns: [
+      /apiConfig/,
+      /runtimeStore/,
+      /withRuntimeFallback/,
+      /defaultWidgetData/,
+    ],
+  },
+  {
+    name: "Dashboard list uses backend state without mock responses",
+    file: "src/services/dashboardApi.ts",
+    patterns: [
+      /apiClient\.post<DashboardListResponse \| DashboardPageResponse>/,
+      /apiClient\.post<CreateDashboardResponse>/,
+      /apiClient\.delete<DeleteDashboardResponse>/,
+    ],
+    forbiddenPatterns: [
+      /apiConfig/,
+      /createLocalDashboard/,
+      /getMockDashboardListResponse/,
+      /shouldUseLocalDashboardFallback/,
+    ],
+  },
+  {
+    name: "Dashboard Catalog options keep schema metadata without sample rows",
+    file: "src/pages/dashboard/runtime/dashboardDatasetAdapters.ts",
+    patterns: [
+      /catalogDatasetToDashboardOption/,
+      /dataset\.permissions\?\.canQuery !== false/,
+    ],
+    forbiddenPatterns: [
+      /dataset\.sampleRows/,
+      /catalogRowsToRecords/,
+    ],
+  },
+  {
+    name: "Dashboard widget editing restores server source config",
+    file: "src/pages/dashboard/runtime/WidgetConfigPanel.tsx",
+    patterns: [
+      /const sourceConfig = runtimeConfig\.sourceConfig;/,
+      /dataMode === "server_aggregated" \|\| dataMode === "server_preview"/,
+      /sourceConfig: nextConfig/,
+    ],
+  },
+  {
     name: "Dashboard assistant reuses the visualization prompt input composition",
     file: "src/pages/dashboard/runtime/DashboardAssistantPanel.tsx",
     patterns: [
@@ -829,18 +880,14 @@ const checks = [
     ],
   },
   {
-    name: "Dashboard list fixtures and status labels stay localized",
+    name: "Dashboard list fixtures stay empty",
     file: "src/pages/dashboard/dashboardListData.ts",
     patterns: [
-      /name: "매출 분석 데모/,
-      /tags: "영업 · 매출 · 데모"/,
-      /name: "마케팅 캠페인 수익률 추적"/,
-      /name: "데이터 품질 운영 현황"/,
-      /owner: "관리자"/,
+      /defaultDashboardCards: SavedDashboardCard\[\] = \[\]/,
     ],
     forbiddenPatterns: [
-      /name: "Sales Analytics Demo/,
-      /tags: "Marketing · ROI"/,
+      /dash_sales_demo/,
+      /매출 분석 데모/,
     ],
   },
   {
