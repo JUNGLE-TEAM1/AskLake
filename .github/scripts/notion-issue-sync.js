@@ -96,6 +96,12 @@ module.exports = async function sync({ github, context, core }) {
     restoredNotion += result.restoredNotion;
     conflicts += result.conflicts;
     updatedMarkers += result.updatedMarkers;
+    if (result.projectIssue) {
+      const eventIssueIndex = projectIssues.findIndex((issue) => issue.issueUrl === result.projectIssue.issueUrl);
+      if (eventIssueIndex >= 0) {
+        projectIssues[eventIssueIndex] = result.projectIssue;
+      }
+    }
   } else if (eventIssue && existingEventProjectIssue) {
     const eventIssueWithProjectStatus = {
       ...eventIssue,
@@ -125,9 +131,47 @@ module.exports = async function sync({ github, context, core }) {
     }
   }
 
+  const shouldRecoverPullRequestState = ["schedule", "repository_dispatch", "workflow_dispatch"].includes(context.eventName);
+  const repositoryPullRequests = shouldRecoverPullRequestState
+    ? await fetchRepositoryPullRequests({ github, config })
+    : [];
+
   for (const issue of projectIssues) {
     let githubIssue = issueForGitHubSource(issue);
-    githubIssue = await inferProjectStatusDuringFullSync({ github, config, project, issue: githubIssue });
+    let pullRequest = findPreferredPullRequestForIssue(repositoryPullRequests, githubIssue.number);
+    if (pullRequest?.merged && pullRequestClosesIssue(pullRequest, githubIssue.number)) {
+      const reopenedAfterMerge = await wasIssueReopenedAfterPullRequestMerge({
+        github,
+        config,
+        issue: githubIssue,
+        pullRequest,
+      });
+      if (reopenedAfterMerge) {
+        pullRequest = findPreferredPullRequestForIssue(
+          repositoryPullRequests.filter((candidate) => !candidate.merged),
+          githubIssue.number,
+        );
+        githubIssue = { ...githubIssue, eventAction: "reopened" };
+      } else {
+        const closeResult = await ensureMergedPullRequestClosesIssue({
+          github,
+          config,
+          issue: githubIssue,
+          pullRequest,
+        });
+        githubIssue = closeResult.issue;
+        if (closeResult.issueClosed) {
+          updatedGitHub += 1;
+        }
+      }
+    }
+    githubIssue = await inferProjectStatusDuringFullSync({
+      github,
+      config,
+      project,
+      issue: githubIssue,
+      pullRequest,
+    });
     if (githubIssue.projectStatusUpdated) {
       updatedGitHub += 1;
     }
@@ -1003,6 +1047,12 @@ async function fetchGitHubIssue({ github, config, issueNumber }) {
     issue_number: issueNumber,
   });
 
+  if (data.pull_request) {
+    const error = new Error(`GitHub item #${issueNumber} is a pull request, not an issue.`);
+    error.code = "GITHUB_PULL_REQUEST_NOT_ISSUE";
+    throw error;
+  }
+
   return issueFromRest(data, config);
 }
 
@@ -1010,7 +1060,7 @@ async function fetchGitHubIssueOrNull({ github, config, issueNumber }) {
   try {
     return await fetchGitHubIssue({ github, config, issueNumber });
   } catch (error) {
-    if (error.status === 404 || error.status === 410) {
+    if (error.status === 404 || error.status === 410 || error.code === "GITHUB_PULL_REQUEST_NOT_ISSUE") {
       return null;
     }
 
@@ -1219,6 +1269,7 @@ async function syncProjectIssueFromPullRequestEvent({
     restoredNotion: 0,
     conflicts: 0,
     updatedMarkers: 0,
+    projectIssue: null,
   };
 
   const issueNumber = findLinkedIssueNumberFromPullRequest(pullRequest);
@@ -1229,14 +1280,21 @@ async function syncProjectIssueFromPullRequestEvent({
     return result;
   }
 
-  const issue = await fetchGitHubIssueOrNull({ github, config, issueNumber });
+  let issue = await fetchGitHubIssueOrNull({ github, config, issueNumber });
   if (!issue) {
     console.warn(`Skipping Project status update for PR #${pullRequest.number}: issue #${issueNumber} was not found.`);
     return result;
   }
 
+  const closeResult = await ensureMergedPullRequestClosesIssue({ github, config, issue, pullRequest });
+  issue = closeResult.issue;
+  if (closeResult.issueClosed) {
+    result.updatedGitHub += 1;
+  }
+
   const wanted = wantedProjectStatusDecisionForIssueEvent({ issue, config, project, pullRequest });
   const projectIssue = await ensureProjectItem({ github, config, project, issue, wantedStatus: wanted.status });
+  result.projectIssue = projectIssue;
   if (projectIssue.wasAddedToProject) {
     result.eventProjectItems += 1;
   }
@@ -1285,12 +1343,84 @@ async function syncProjectIssueFromPullRequestEvent({
   return result;
 }
 
-async function inferProjectStatusDuringFullSync({ github, config, project, issue }) {
-  if (!shouldInferProjectStatusDuringFullSync(issue, config)) {
+async function ensureMergedPullRequestClosesIssue({ github, config, issue, pullRequest }) {
+  if (
+    pullRequest?.state !== "closed" ||
+    !pullRequest.merged ||
+    !pullRequestClosesIssue(pullRequest, issue.number) ||
+    issue.state === "closed"
+  ) {
+    return { issue, issueClosed: false };
+  }
+
+  const closedAt = new Date().toISOString();
+  if (config.dryRun) {
+    console.log(`[dry-run] Would close GitHub issue ${issue.issueUrl} after merged PR #${pullRequest.number}.`);
+    return {
+      issue: {
+        ...issue,
+        state: "closed",
+        updatedAt: closedAt,
+        githubUpdatedAt: closedAt,
+      },
+      issueClosed: true,
+    };
+  }
+
+  const { data } = await github.rest.issues.update({
+    owner: config.owner,
+    repo: config.repo,
+    issue_number: issue.number,
+    state: "closed",
+    state_reason: "completed",
+  });
+
+  return {
+    issue: {
+      ...issue,
+      state: data.state || "closed",
+      updatedAt: data.updated_at || closedAt,
+      githubUpdatedAt: data.updated_at || closedAt,
+    },
+    issueClosed: true,
+  };
+}
+
+async function wasIssueReopenedAfterPullRequestMerge({ github, config, issue, pullRequest }) {
+  if (issue.state !== "open" || !pullRequest?.mergedAt) {
+    return false;
+  }
+
+  const events = await github.paginate("GET /repos/{owner}/{repo}/issues/{issue_number}/events", {
+    owner: config.owner,
+    repo: config.repo,
+    issue_number: issue.number,
+    per_page: 100,
+  });
+  return issueWasReopenedAfterPullRequestMerge(events, pullRequest);
+}
+
+function issueWasReopenedAfterPullRequestMerge(events, pullRequest) {
+  const mergedAt = new Date(pullRequest?.mergedAt || 0).getTime();
+  if (!Number.isFinite(mergedAt) || mergedAt <= 0) {
+    return false;
+  }
+
+  return (events || []).some((event) => {
+    if (event?.event !== "reopened") {
+      return false;
+    }
+    const reopenedAt = new Date(event.created_at || 0).getTime();
+    return Number.isFinite(reopenedAt) && reopenedAt > mergedAt;
+  });
+}
+
+async function inferProjectStatusDuringFullSync({ github, config, project, issue, pullRequest = null }) {
+  if (!shouldInferProjectStatusDuringFullSync(issue, config, pullRequest)) {
     return issue;
   }
 
-  const wanted = wantedProjectStatusDecisionForIssueEvent({ issue, config, project });
+  const wanted = wantedProjectStatusDecisionForIssueEvent({ issue, config, project, pullRequest });
   const projectIssue = await ensureProjectItem({ github, config, project, issue, wantedStatus: wanted.status });
 
   if (config.dryRun) {
@@ -1302,13 +1432,22 @@ async function inferProjectStatusDuringFullSync({ github, config, project, issue
   return projectIssue;
 }
 
-function shouldInferProjectStatusDuringFullSync(issue, config) {
+function shouldInferProjectStatusDuringFullSync(issue, config, pullRequest = null) {
   if (issue.state === "closed") {
     return true;
   }
 
+  if (pullRequest) {
+    return true;
+  }
+
   const currentStatus = normalizeProjectStatusName(issue.projectStatus);
-  if (!currentStatus || currentStatus === normalizeProjectStatusName(config.openedProjectStatus)) {
+  if (
+    !currentStatus ||
+    currentStatus === normalizeProjectStatusName(config.openedProjectStatus) ||
+    currentStatus === normalizeProjectStatusName(config.blockedProjectStatus) ||
+    currentStatus === normalizeProjectStatusName(CLOSED_PROJECT_STATUS)
+  ) {
     return true;
   }
 
@@ -1381,8 +1520,8 @@ function inferProjectStatusFromIssue(issue, config, pullRequest = null) {
     return statusDecision(config.blockedProjectStatus, "blocked label or body field", { targetBranch });
   }
 
-  if (pullRequest?.state === "closed") {
-    return statusDecision(CLOSED_PROJECT_STATUS, pullRequest.merged ? "linked PR merged" : "linked PR closed", {
+  if (pullRequest?.merged && pullRequestClosesIssue(pullRequest, issue.number)) {
+    return statusDecision(CLOSED_PROJECT_STATUS, "linked closing PR merged", {
       targetBranch,
     });
   }
@@ -1411,7 +1550,8 @@ function inferProjectStatusFromIssue(issue, config, pullRequest = null) {
   }
 
   const initialStatus = readIssueBodyFieldFromParsed(bodyFields, ["초기 상태", "Initial Status", "Project Status"]);
-  if (initialStatus && !sameProjectStatus(initialStatus, config.openedProjectStatus)) {
+  const shouldApplyInitialStatus = issue.eventAction === "opened" || !issue.projectStatus;
+  if (shouldApplyInitialStatus && initialStatus && !sameProjectStatus(initialStatus, config.openedProjectStatus)) {
     return statusDecision(initialStatus, "initial status field", { targetBranch });
   }
 
@@ -1421,6 +1561,16 @@ function inferProjectStatusFromIssue(issue, config, pullRequest = null) {
 
   if (targetBranch && hasEnoughIssueDetail(issue)) {
     return statusDecision(config.readyProjectStatus, "target branch and required issue details are present", { targetBranch });
+  }
+
+  const currentStatus = normalizeProjectStatusName(issue.projectStatus);
+  const shouldResetTransientStatus =
+    currentStatus === normalizeProjectStatusName(config.blockedProjectStatus) ||
+    currentStatus === normalizeProjectStatusName(CLOSED_PROJECT_STATUS) ||
+    pullRequest?.state === "closed";
+  if (shouldResetTransientStatus) {
+    const status = targetBranch && hasEnoughIssueDetail(issue) ? config.readyProjectStatus : config.openedProjectStatus;
+    return statusDecision(status, "blocking or PR context ended; status recalculated", { targetBranch });
   }
 
   return statusDecision(issue.projectStatus || config.openedProjectStatus, "not enough information for a later status", {
@@ -1565,22 +1715,99 @@ function extractLinkedIssueNumberFromBranch(branch) {
   return match ? Number(match[1]) : null;
 }
 
-function extractLinkedIssueNumberFromPrBody(body) {
-  const closing = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)/i.exec(body || "");
-  if (closing) {
-    return Number(closing[1]);
-  }
+function extractExplicitLinkedIssueNumberFromPrBody(body) {
+  const match = /(?:연결된\s+Issue|Linked\s+Issue)\s*:\s*#(\d+)/i.exec(body || "");
+  return match ? Number(match[1]) : null;
+}
 
-  const anyReference = /#(\d+)/.exec(body || "");
-  return anyReference ? Number(anyReference[1]) : null;
+function extractRelatedIssueNumberFromPrBody(body) {
+  const match = /\b(?:Refs?|References?|Relates\s+to)\s+#(\d+)/i.exec(body || "");
+  return match ? Number(match[1]) : null;
+}
+
+function extractAnyIssueNumber(value) {
+  const match = /#(\d+)/.exec(value || "");
+  return match ? Number(match[1]) : null;
+}
+
+function extractClosingIssueNumbersFromPrBody(body) {
+  const issueNumbers = [];
+  const closingPattern = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)/gi;
+  for (const match of String(body || "").matchAll(closingPattern)) {
+    const issueNumber = Number(match[1]);
+    if (Number.isInteger(issueNumber) && !issueNumbers.includes(issueNumber)) {
+      issueNumbers.push(issueNumber);
+    }
+  }
+  return issueNumbers;
+}
+
+function pullRequestClosesIssue(pullRequest, issueNumber) {
+  return extractClosingIssueNumbersFromPrBody(pullRequest?.body).includes(Number(issueNumber));
 }
 
 function findLinkedIssueNumberFromPullRequest(pullRequest) {
+  const closingIssueNumbers = extractClosingIssueNumbersFromPrBody(pullRequest.body);
   return (
-    extractLinkedIssueNumberFromPrBody(pullRequest.body) ||
+    closingIssueNumbers[0] ||
     extractLinkedIssueNumberFromBranch(pullRequest.headRefName) ||
-    extractLinkedIssueNumberFromPrBody(pullRequest.title)
+    extractExplicitLinkedIssueNumberFromPrBody(pullRequest.body) ||
+    extractRelatedIssueNumberFromPrBody(pullRequest.body) ||
+    extractAnyIssueNumber(pullRequest.title)
   );
+}
+
+async function fetchRepositoryPullRequests({ github, config }) {
+  const pullRequests = await github.paginate("GET /repos/{owner}/{repo}/pulls", {
+    owner: config.owner,
+    repo: config.repo,
+    state: "all",
+    sort: "updated",
+    direction: "desc",
+    per_page: 100,
+  });
+  return pullRequests.map(normalizeRepositoryPullRequest);
+}
+
+function normalizeRepositoryPullRequest(pullRequest) {
+  return {
+    number: pullRequest.number,
+    title: pullRequest.title || "",
+    body: pullRequest.body || "",
+    state: pullRequest.state || "open",
+    draft: Boolean(pullRequest.draft),
+    merged: Boolean(pullRequest.merged_at),
+    mergedAt: pullRequest.merged_at || null,
+    updatedAt: pullRequest.updated_at || null,
+    labels: (pullRequest.labels || []).map((label) => (typeof label === "string" ? label : label.name)).filter(Boolean),
+    headRefName: pullRequest.head?.ref || "",
+    baseRefName: pullRequest.base?.ref || "",
+  };
+}
+
+function findPreferredPullRequestForIssue(pullRequests, issueNumber) {
+  const candidates = (pullRequests || []).filter(
+    (pullRequest) =>
+      pullRequestClosesIssue(pullRequest, issueNumber) || findLinkedIssueNumberFromPullRequest(pullRequest) === Number(issueNumber),
+  );
+  candidates.sort((left, right) => {
+    const priorityDiff = pullRequestContextPriority(right, issueNumber) - pullRequestContextPriority(left, issueNumber);
+    if (priorityDiff !== 0) {
+      return priorityDiff;
+    }
+    return new Date(right.updatedAt || right.mergedAt || 0).getTime() - new Date(left.updatedAt || left.mergedAt || 0).getTime();
+  });
+  return candidates[0] || null;
+}
+
+function pullRequestContextPriority(pullRequest, issueNumber) {
+  if (pullRequest?.merged && pullRequestClosesIssue(pullRequest, issueNumber)) {
+    return 3;
+  }
+  if (pullRequest?.state === "open") {
+    return 2;
+  }
+  return 1;
 }
 
 function pullRequestFromSyncableEvent(context) {
@@ -1596,6 +1823,8 @@ function pullRequestFromSyncableEvent(context) {
     state: pullRequest.state || "open",
     draft: Boolean(pullRequest.draft),
     merged: Boolean(pullRequest.merged),
+    mergedAt: pullRequest.merged_at || null,
+    updatedAt: pullRequest.updated_at || null,
     labels: (pullRequest.labels || []).map((label) => label.name).filter(Boolean),
     headRefName: pullRequest.head?.ref || "",
     baseRefName: pullRequest.base?.ref || "",
@@ -1608,7 +1837,7 @@ function hasBlockedSignal(issue, bodyFields) {
     return true;
   }
 
-  return hasMeaningfulSectionContent(issue.body, ["필요한 결정 사항", "차단 사유", "의존 작업"]);
+  return hasMeaningfulSectionContent(issue.body, ["차단 사유", "의존 작업"]);
 }
 
 function hasPreviewSignal({ issue, labels, pullRequest }) {
@@ -2179,8 +2408,15 @@ function parseBoolean(value) {
 module.exports._private = {
   chooseSyncDirection,
   diffIssueAndRow,
+  ensureMergedPullRequestClosesIssue,
+  extractClosingIssueNumbersFromPrBody,
+  fetchGitHubIssueOrNull,
+  findLinkedIssueNumberFromPullRequest,
+  findPreferredPullRequestForIssue,
   issueForGitHubSource,
+  issueWasReopenedAfterPullRequestMerge,
   parseIssueBodyFields,
+  pullRequestClosesIssue,
   readIssueBodyField,
   sameList,
   wantedProjectStatusDecisionForIssueEvent,

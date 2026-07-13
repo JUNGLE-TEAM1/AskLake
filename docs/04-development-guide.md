@@ -473,17 +473,23 @@ scripts/deploy.sh stop
 - `pair1` -> `dev`
 - `pair2` -> `dev`
 - `pair3` -> `dev`
+- 이슈에 `Target Branch: dev`가 명시된 `feature/*`, `bugfix/*`, `hotfix/*`, `chore/*`, `refactor/*`, `docs/*`, `test/*` 작업 브랜치 -> `dev`
+- 이슈에 `Target Branch: dev`가 명시된 개인 issue-first 브랜치 `<type>-#<issue-number>` -> `dev`
 - `dev` -> `main`
 
-`main`으로 직접 여는 feature PR이나, `dev`로 직접 여는 임의 작업 브랜치 PR은 branch policy check에서 실패한다.
+`main`으로 직접 여는 feature PR이나, 연결 이슈·지원되는 이름 규칙·이슈의 대상 브랜치 선언이 없는 `dev` PR은 branch policy check에서 실패한다.
 
 권장 브랜치 타입:
 
 - `feature/<name>`
+- `bugfix/<name>`
 - `fix/<name>`
 - `docs/<name>`
 - `test/<name>`
 - `chore/<name>`
+- 개인 issue-first workflow에서는 `feat-#123`, `fix-#123`, `hotfix-#123`, `docs-#123` 형식
+
+PR 본문 마지막에는 `Closes #<issue-number>`를 둔다. `dev`처럼 기본 브랜치가 아닌 곳에 머지돼도 Notion Issue Sync가 연결 이슈를 명시적으로 닫고 Project/Notion을 `Done`으로 맞춘다. `Refs #<issue-number>`는 연관 관계만 표시하며 이슈를 닫지 않는다. 동기화 자동화 자체를 변경한 PR은 `dev` 반영 뒤 `dev -> main` 통합까지 완료해야 기본 브랜치에서 실행되는 5분 주기 복구에도 적용된다.
 
 작업 분리 기준:
 
