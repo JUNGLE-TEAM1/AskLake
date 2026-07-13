@@ -97,9 +97,9 @@ export function canonicalObjectStorageUri(value, environment = process.env) {
   if (bucket === "asklake-output" && configuredBucket !== "asklake-output") {
     bucket = configuredBucket;
   }
-  const segments = normalizePathSegments(match[2] || "", "storage path");
-  return segments.length > 0
-    ? `s3a://${bucket}/${segments.join("/")}`
+  const objectPath = canonicalObjectKeyPath(match[2] || "", "storage path");
+  return objectPath
+    ? `s3a://${bucket}/${objectPath}`
     : `s3a://${bucket}`;
 }
 
@@ -120,14 +120,23 @@ export function assertProductionDataPlanePath(value, environment = process.env) 
 export function normalizeObjectStorageError(error, { bucket = "configured bucket", operation = "access" } = {}) {
   const name = String(error?.name || error?.code || "").trim();
   const httpStatus = Number(error?.$metadata?.httpStatusCode || error?.statusCode || error?.status || 0);
+  const probe = `${name} ${String(error?.message || "")}`.toLowerCase();
   let code = "OBJECT_STORAGE_UNAVAILABLE";
   let status = 503;
   let reason = "is temporarily unavailable";
-  if (httpStatus === 403 || ["AccessDenied", "Forbidden", "Unauthorized"].includes(name)) {
+  if (
+    httpStatus === 403
+    || ["AccessDenied", "Forbidden", "Unauthorized", "OBJECT_STORAGE_ACCESS_DENIED"].includes(name)
+    || /access\s*denied|forbidden|not authorized/.test(probe)
+  ) {
     code = "OBJECT_STORAGE_ACCESS_DENIED";
     status = 403;
     reason = "denied the requested operation";
-  } else if (httpStatus === 404 || ["NoSuchBucket", "NotFound", "NoSuchKey"].includes(name)) {
+  } else if (
+    httpStatus === 404
+    || ["NoSuchBucket", "NotFound", "NoSuchKey", "OBJECT_STORAGE_NOT_FOUND"].includes(name)
+    || /no\s*such\s*(bucket|key)|not\s*found/.test(probe)
+  ) {
     code = "OBJECT_STORAGE_NOT_FOUND";
     status = 404;
     reason = "does not contain the requested resource";
@@ -138,6 +147,24 @@ export function normalizeObjectStorageError(error, { bucket = "configured bucket
   return normalized;
 }
 
+export function normalizeObjectStorageFailure(error, options = {}) {
+  const code = String(error?.code || error?.name || "").trim();
+  if (["STORAGE_LAYOUT_INVALID", "STORAGE_LAYOUT_LOCAL_PATH_FORBIDDEN"].includes(code)) {
+    const normalized = new Error(error?.message || "Storage Layout validation failed.");
+    normalized.code = code;
+    normalized.status = Number(error?.status || error?.statusCode || 422);
+    return normalized;
+  }
+  const probe = `${code} ${String(error?.message || "")}`;
+  if (
+    !code.startsWith("OBJECT_STORAGE_")
+    && !/(s3a:\/\/|fs\.s3a|amazon\s*s3|amazons3|minio|object storage|NoSuchBucket|NoSuchKey|AccessDenied)/i.test(probe)
+  ) {
+    return null;
+  }
+  return normalizeObjectStorageError(error, options);
+}
+
 export function isMissingObjectStorageResource(error) {
   const name = String(error?.name || error?.code || "").trim();
   const httpStatus = Number(error?.$metadata?.httpStatusCode || error?.statusCode || error?.status || 0);
@@ -146,29 +173,48 @@ export function isMissingObjectStorageResource(error) {
 
 function joinObjectStorageUri(root, ...segments) {
   const normalizedRoot = String(root || "").replace(/\/+$/, "");
-  const suffix = segments.flatMap((segment) => normalizePathSegments(segment, "storage segment"));
+  const suffix = segments.flatMap((segment) => normalizeGeneratedPathSegments(segment, "storage segment"));
   return suffix.length > 0 ? `${normalizedRoot}/${suffix.join("/")}` : normalizedRoot;
 }
 
 function normalizePrefix(value, name) {
-  return normalizePathSegments(value, name).join("/");
+  return normalizeGeneratedPathSegments(value, name).join("/");
 }
 
-function normalizePathSegments(value, name) {
+function normalizeGeneratedPathSegments(value, name) {
   const raw = String(value || "").trim().replace(/^\/+|\/+$/g, "");
   if (!raw) return [];
-  return raw.split("/").filter(Boolean).map((segment) => {
+  return raw.split("/").filter(Boolean).map((segment) => safeStorageSegment(segment, name));
+}
+
+function canonicalObjectKeyPath(value, name) {
+  let raw = String(value || "");
+  if (!raw) return "";
+  if (raw.endsWith("/")) raw = raw.slice(0, -1);
+  if (!raw) return "";
+  if (raw.startsWith("/") || raw.endsWith("/") || raw.includes("//")) {
+    throw storageLayoutError(`${name} must not contain empty path segments.`);
+  }
+  const segments = raw.split("/").map((segment) => {
+    if (/%(?![0-9A-Fa-f]{2})/.test(segment)) {
+      throw storageLayoutError(`${name} contains invalid percent encoding.`);
+    }
     let decoded = segment;
     try {
       decoded = decodeURIComponent(segment);
     } catch {
       throw storageLayoutError(`${name} contains invalid percent encoding.`);
     }
-    if ([".", ".."].includes(decoded) || /[\\\u0000-\u001f\u007f]/.test(decoded)) {
+    if ([".", ".."].includes(decoded) || /[/\\\u0000-\u001f\u007f]/.test(decoded)) {
       throw storageLayoutError(`${name} contains a forbidden path segment.`);
     }
-    return safeStorageSegment(decoded, name);
+    try {
+      return encodeURIComponent(decoded);
+    } catch {
+      throw storageLayoutError(`${name} contains invalid UTF-8 text.`);
+    }
   });
+  return segments.join("/");
 }
 
 function safeStorageSegment(value, name) {

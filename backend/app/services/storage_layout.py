@@ -8,7 +8,7 @@ import re
 import unicodedata
 from pathlib import Path
 from typing import Any, Mapping
-from urllib.parse import unquote
+from urllib.parse import quote, unquote_to_bytes
 
 from fastapi import status
 
@@ -130,8 +130,8 @@ def canonical_object_storage_uri(
     )
     if storage_bucket == "asklake-output" and configured_bucket != "asklake-output":
         storage_bucket = configured_bucket
-    segments = _normalize_segments(match.group(2) or "", "storage path")
-    suffix = f"/{'/'.join(segments)}" if segments else ""
+    object_path = _canonical_object_key_path(match.group(2) or "", "storage path")
+    suffix = f"/{object_path}" if object_path else ""
     return f"s3a://{storage_bucket}{suffix}"
 
 
@@ -155,25 +155,43 @@ def _join_uri(root: str, *segments: str | None) -> str:
     suffix: list[str] = []
     for segment in segments:
         if segment is not None:
-            suffix.extend(_normalize_segments(segment, "storage segment"))
+            suffix.extend(_normalize_generated_segments(segment, "storage segment"))
     return f"{str(root).rstrip('/')}/{'/'.join(suffix)}" if suffix else str(root).rstrip("/")
 
 
 def _normalize_prefix(value: str, name: str) -> str:
-    return "/".join(_normalize_segments(value, name))
+    return "/".join(_normalize_generated_segments(value, name))
 
 
-def _normalize_segments(value: str, name: str) -> list[str]:
+def _normalize_generated_segments(value: str, name: str) -> list[str]:
     raw = str(value or "").strip().strip("/")
     if not raw:
         return []
-    segments: list[str] = []
-    for segment in (part for part in raw.split("/") if part):
-        decoded = unquote(segment)
-        if decoded in {".", ".."} or re.search(r"[\\\x00-\x1f\x7f]", decoded):
+    return [_safe_segment(segment, name) for segment in raw.split("/") if segment]
+
+
+def _canonical_object_key_path(value: str, name: str) -> str:
+    raw = str(value or "")
+    if not raw:
+        return ""
+    if raw.endswith("/"):
+        raw = raw[:-1]
+    if not raw:
+        return ""
+    if raw.startswith("/") or raw.endswith("/") or "//" in raw:
+        raise _storage_error(f"{name} must not contain empty path segments.")
+    canonical: list[str] = []
+    for segment in raw.split("/"):
+        if re.search(r"%(?![0-9A-Fa-f]{2})", segment):
+            raise _storage_error(f"{name} contains invalid percent encoding.")
+        try:
+            decoded = unquote_to_bytes(segment).decode("utf-8", errors="strict")
+        except UnicodeDecodeError as error:
+            raise _storage_error(f"{name} contains invalid percent encoding.") from error
+        if decoded in {".", ".."} or re.search(r"[/\\\x00-\x1f\x7f]", decoded):
             raise _storage_error(f"{name} contains a forbidden path segment.")
-        segments.append(_safe_segment(decoded, name))
-    return segments
+        canonical.append(quote(decoded, safe="-_.!~*'()"))
+    return "/".join(canonical)
 
 
 def _safe_segment(value: str | None, name: str) -> str:

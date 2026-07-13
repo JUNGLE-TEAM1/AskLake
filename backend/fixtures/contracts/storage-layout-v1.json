@@ -69,6 +69,30 @@
       }
     },
     {
+      "name": "explicit root preserves object key meaning",
+      "environment": {
+        "ASKLAKE_SPARK_OUTPUT_BUCKET": "asklake-output",
+        "ASKLAKE_STORAGE_ENVIRONMENT": "production"
+      },
+      "input": {
+        "datasetId": "ds_unicode_orders",
+        "explicitRoot": "s3://custom-output/team data/매출+원본/",
+        "jobId": "JOB-UNICODE",
+        "layer": "GOLD",
+        "runId": "RUN-UNICODE"
+      },
+      "expected": {
+        "root": "s3a://custom-output/team%20data/%EB%A7%A4%EC%B6%9C%2B%EC%9B%90%EB%B3%B8",
+        "batchDataPath": "s3a://custom-output/team%20data/%EB%A7%A4%EC%B6%9C%2B%EC%9B%90%EB%B3%B8/RUN-UNICODE",
+        "batchQuarantinePath": "s3a://custom-output/team%20data/%EB%A7%A4%EC%B6%9C%2B%EC%9B%90%EB%B3%B8/RUN-UNICODE_quarantine",
+        "continuousDataRoot": "s3a://custom-output/team%20data/%EB%A7%A4%EC%B6%9C%2B%EC%9B%90%EB%B3%B8/_batches",
+        "checkpointPath": "s3a://custom-output/team%20data/%EB%A7%A4%EC%B6%9C%2B%EC%9B%90%EB%B3%B8/_checkpoints/JOB-UNICODE",
+        "manifestRoot": "s3a://custom-output/team%20data/%EB%A7%A4%EC%B6%9C%2B%EC%9B%90%EB%B3%B8/_batch-manifests",
+        "quarantineRoot": "s3a://custom-output/team%20data/%EB%A7%A4%EC%B6%9C%2B%EC%9B%90%EB%B3%B8/_quarantine",
+        "logReferenceRoot": "s3a://custom-output/team%20data/%EB%A7%A4%EC%B6%9C%2B%EC%9B%90%EB%B3%B8/_logs/JOB-UNICODE"
+      }
+    },
+    {
       "name": "legacy default bucket remaps to configured output",
       "environment": {
         "ASKLAKE_SPARK_OUTPUT_BUCKET": "asklake-prod-output",
@@ -105,6 +129,30 @@
     {
       "name": "parent traversal is forbidden",
       "value": "s3a://asklake-output/orders/../secret"
+    },
+    {
+      "name": "encoded parent traversal is forbidden",
+      "value": "s3a://asklake-output/orders/%2e%2e/secret"
+    },
+    {
+      "name": "encoded slash is forbidden",
+      "value": "s3a://asklake-output/orders/%2F/secret"
+    },
+    {
+      "name": "empty object key segment is forbidden",
+      "value": "s3a://asklake-output/orders//secret"
+    },
+    {
+      "name": "incomplete percent escape is forbidden",
+      "value": "s3a://asklake-output/orders/%A/secret"
+    },
+    {
+      "name": "malformed UTF-8 percent encoding is forbidden",
+      "value": "s3a://asklake-output/orders/%E0%A4%A/secret"
+    },
+    {
+      "name": "invalid UTF-8 byte is forbidden",
+      "value": "s3a://asklake-output/orders/%FF/secret"
     },
     {
       "name": "query strings are forbidden",

@@ -54,7 +54,7 @@ S3_FORCE_PATH_STYLE=false
 S3_ALLOWED_BUCKETS=<raw-bucket>,<output-bucket>
 ```
 
-Storage Layout V1의 논리 경로는 MinIO와 AWS S3에서 동일하다. 자동 경로는 `<output-bucket>/<base-prefix>/<environment>/datasets/<datasetId>/<layer>`이며 batch Run, Continuous `_batches`, Job별 `_checkpoints`, manifest, quarantine을 그 아래에 둔다. 빠른 계약 검증은 `cd backend && npm run verify:storage-layout-contract`로 실행한다. `ASKLAKE_STORAGE_*_RETENTION_DAYS`는 기대 보존 기간이며 이 harness가 MinIO/AWS lifecycle을 생성하거나 object를 삭제하지 않는다.
+Storage Layout V1의 논리 경로는 MinIO와 AWS S3에서 동일하다. 자동 경로는 `<output-bucket>/<base-prefix>/<environment>/datasets/<datasetId>/<layer>`이며 batch Run, Continuous `_batches`, Job별 `_checkpoints`, manifest, quarantine을 그 아래에 둔다. 명시 경로는 object key 의미를 유지하는 canonical UTF-8 percent encoding을 사용하고 malformed encoding·decoded slash·빈 segment·traversal은 실행 전에 거부한다. 기존 Continuous checkpoint는 같은 root로 복원되어야 한다. 빠른 계약 검증은 `cd backend && npm run verify:storage-layout-contract && npm run verify:kafka-continuous-contract`로 실행한다. `ASKLAKE_STORAGE_*_RETENTION_DAYS`는 기대 보존 기간이며 이 harness가 MinIO/AWS lifecycle을 생성하거나 object를 삭제하지 않는다.
 
 초기 object sample은 IAM 권한이 있는 로컬 shell 또는 EC2에서 AWS CLI로 업로드한다.
 

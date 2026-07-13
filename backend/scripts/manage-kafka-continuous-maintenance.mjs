@@ -11,6 +11,7 @@ import {
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { objectStorageDockerEnv, toDockerEnvArgs } from "../src/objectStorageConfig.mjs";
+import { normalizeObjectStorageFailure } from "../src/storageLayout.mjs";
 
 import {
   createSparkRestSubmission,
@@ -46,10 +47,14 @@ try {
   const result = await manageMaintenance(request);
   console.log(`ASKLAKE_KAFKA_MAINTENANCE_RESULT=${JSON.stringify(result)}`);
 } catch (error) {
+  const storageFailure = normalizeObjectStorageFailure(
+    error,
+    { bucket: "configured continuous output", operation: "continuous maintenance" },
+  );
   console.log(`ASKLAKE_KAFKA_MAINTENANCE_ERROR=${JSON.stringify({
-    code: "KAFKA_CONTINUOUS_MAINTENANCE_FAILED",
-    message: error?.message || String(error),
-    status: 502,
+    code: storageFailure?.code || error?.code || "KAFKA_CONTINUOUS_MAINTENANCE_FAILED",
+    message: storageFailure?.message || error?.message || String(error),
+    status: storageFailure?.status || error?.status || 502,
   })}`);
   process.exitCode = 1;
 }

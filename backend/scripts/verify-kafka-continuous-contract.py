@@ -165,6 +165,42 @@ def main() -> None:
             else:
                 os.environ[name] = value
 
+    legacy_job = continuous_job()
+    legacy_job.storage_path = None
+    legacy_job.target_path = None
+    legacy_job.continuous_config = {
+        **(legacy_job.continuous_config or {}),
+        "checkpointPath": (
+            "s3a://asklake-output/legacy/reviews_continuous/bronze/"
+            "_checkpoints/JOB-CONTINUOUS-CONTRACT"
+        ),
+    }
+    legacy_layout = etl_service.storage_layout_from_job(legacy_job)
+    legacy_runtime = etl_service.continuous_runtime_from_job(legacy_job)
+    assert legacy_layout["root"] == "s3a://asklake-output/legacy/reviews_continuous/bronze"
+    assert legacy_runtime.checkpoint_path == legacy_layout["checkpointPath"]
+    assert legacy_runtime.target_identity == legacy_layout["root"]
+
+    target_fallback_job = continuous_job()
+    target_fallback_job.storage_path = None
+    target_fallback_job.target_path = "s3a://asklake-output/legacy/target-root/bronze/_batches/batch_id=5"
+    target_fallback_job.continuous_config = {}
+    assert etl_service.storage_layout_from_job(target_fallback_job)["root"] == (
+        "s3a://asklake-output/legacy/target-root/bronze"
+    )
+
+    mismatched_job = continuous_job()
+    mismatched_job.continuous_config = {
+        **(mismatched_job.continuous_config or {}),
+        "checkpointPath": "s3a://asklake-output/wrong/_checkpoints/JOB-CONTINUOUS-CONTRACT",
+    }
+    try:
+        etl_service.continuous_runtime_from_job(mismatched_job)
+    except Exception as error:
+        assert getattr(error, "code", None) == "STORAGE_LAYOUT_INVALID"
+    else:
+        raise AssertionError("Continuous output/checkpoint root mismatch must fail")
+
     job = continuous_job()
     runtime = etl_service.continuous_runtime_from_job(job)
     assert runtime.topic == "reviews.continuous"

@@ -502,10 +502,13 @@ Object storage provider 회귀는 별도 계약 검증으로 확인한다.
 cd backend
 npm run verify:object-storage-mode
 npm run verify:storage-layout-contract
+npm run verify:target-metadata
+npm run verify:kafka-continuous-contract
+npm run verify:production-spark-contract
 PYTHONPATH=. .venv/bin/python -m unittest tests.test_object_storage_mode tests.test_sql_service_object_storage -v
 ```
 
-`verify:storage-layout-contract`는 공유 JSON fixture를 기준으로 Node batch와 Python Continuous 경로가 같은 V1 결과를 만드는지, Job별 checkpoint가 분리되는지, explicit path/legacy bucket 호환, production local path 차단, 안전한 object-storage 오류를 검사한다.
+`verify:storage-layout-contract`는 공유 JSON fixture를 기준으로 Node batch와 Python Continuous 경로가 같은 V1 결과를 만드는지, Job별 checkpoint가 분리되는지, explicit path의 공백·한글·`+` canonical encoding, malformed percent/UTF-8·decoded slash·traversal 거부, legacy bucket 호환, production local path 차단, 안전한 object-storage 오류를 검사한다. `verify:target-metadata`는 persisted `datasetId`와 Catalog output identity를, `verify:kafka-continuous-contract`는 기존 checkpoint root 복원과 root 불일치 차단을, `verify:production-spark-contract`는 Batch wrapper의 구조화된 local-path 오류와 민감정보 비노출을 확인한다.
 
 로컬 root Compose는 MinIO를 사용한다. Production Compose는 실제 AWS S3만 사용하며, `ASKLAKE_OBJECT_STORAGE_PROVIDER=aws`, `AWS_REGION`, Raw/Output/Warehouse/Query Result bucket을 설정하고 EC2 IAM Role/default credential chain으로 인증한다. 자동 생성 Output 경로는 `ASKLAKE_STORAGE_BASE_PREFIX`와 `ASKLAKE_STORAGE_ENVIRONMENT`로 local/staging/production을 분리한다. Warehouse와 Query Result bucket은 `TRINO_ENABLED=true`일 때만 runtime에 사용하며 배포 전에 생성하고 readiness 대상에 포함한다. Production frontend image에는 Compose가 `ASKLAKE_SPARK_OUTPUT_BUCKET`을 `VITE_SPARK_OUTPUT_BUCKET`으로 주입하므로 Target UI와 Spark writer가 같은 bucket을 사용한다. Production `.env`에는 장기 AWS access key/secret 또는 MinIO credential을 넣지 않는다. 보존 기간 env는 실제 MinIO/AWS lifecycle과 같은 값으로 운영자가 적용한다.
 

@@ -115,7 +115,7 @@ from app.services.object_storage import object_storage_runtime
 from app.services.materialization_projection import aggregate_materialization_runs
 from app.services.rule_compiler import CompiledRuleSet, compile_rule_set
 from app.services.resource_permission_service import job_with_persisted_permission_grants, permission_grants_for_resource, permissions_for_actor_with_governance
-from app.services.storage_layout import create_storage_layout
+from app.services.storage_layout import canonical_object_storage_uri, create_storage_layout
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 SCRIPTS_DIR = BACKEND_DIR / "scripts"
@@ -2248,6 +2248,22 @@ def validate_catalog_output_identity(job: ETLJobModel, run_id: str, output_path:
             "Successful Spark result does not include an output path.",
             {"jobId": job.id, "runId": run_id},
         )
+    if re.match(r"^s3a?://", output_path, re.IGNORECASE):
+        layout = create_storage_layout(
+            dataset_id=job.dataset_id or make_dataset_id(job.target),
+            explicit_root=job.storage_path,
+            job_id=job.id,
+            layer=job.target_layer or "BRONZE",
+            run_id=run_id,
+        )
+        expected = layout["batchDataPath"]
+        actual = canonical_object_storage_uri(output_path)
+        if actual != expected:
+            raise catalog_reconciliation_error(
+                "Spark output path does not match the persisted Job destination.",
+                {"expected": expected, "outputPath": actual, "runId": run_id},
+            )
+        return
     configured_root = normalize_spark_output_storage_path(job.storage_path)
     if not configured_root:
         return
@@ -2264,20 +2280,13 @@ def normalize_spark_output_storage_path(value: str | None) -> str:
     configured_root = str(value or "").strip()
     if not re.match(r"^s3a?://", configured_root, re.IGNORECASE):
         return configured_root
-    configured_bucket = str(os.environ.get("ASKLAKE_SPARK_OUTPUT_BUCKET") or "asklake-output").strip()
-    if not configured_bucket or configured_bucket.lower() == "asklake-output":
-        return configured_root
-    parsed = urlparse(re.sub(r"^s3a://", "s3://", configured_root, flags=re.IGNORECASE))
-    if parsed.netloc.lower() != "asklake-output":
-        return configured_root
-    suffix = f"/{parsed.path.lstrip('/')}" if parsed.path else ""
-    return f"s3a://{configured_bucket}{suffix}"
+    return canonical_object_storage_uri(configured_root)
 
 
 def canonical_storage_path(value: str) -> str:
     text_value = str(value or "").strip()
     if re.match(r"^s3a?://", text_value, re.IGNORECASE):
-        return re.sub(r"^s3://", "s3a://", text_value, flags=re.IGNORECASE).rstrip("/")
+        return canonical_object_storage_uri(text_value)
     return str(Path(text_value).expanduser().resolve()).rstrip("/")
 
 
@@ -2385,6 +2394,8 @@ def spark_result_manifest(result: dict[str, Any], run_id: str) -> dict[str, Any]
             "durationMs",
             "endedAt",
             "error",
+            "errorCode",
+            "errorStatus",
             "failedStage",
             "format",
             "inputRows",
@@ -2671,6 +2682,7 @@ def job_payload_for_spark(
     require_compiled_rules(compiled_rules)
     return {
         "id": job.id,
+        "datasetId": job.dataset_id or make_dataset_id(job.target),
         "name": job.name,
         "owner": job.owner,
         "partition": job.partition,
@@ -4755,7 +4767,8 @@ def run_kafka_continuous_worker(
         for rule in compiled_rules.result.rules
     ]
     rule_fingerprint = canonical_rule_fingerprint(compiled_rules.result.contract_version, canonical_rules)
-    layout = storage_layout_from_job(job)
+    layout = storage_layout_from_job(job, checkpoint_path=runtime.checkpoint_path)
+    assert_continuous_checkpoint_matches_layout(runtime.checkpoint_path, layout)
     output_path = layout["root"]
     return run_node_bridge(
         "manage-kafka-continuous.mjs",
@@ -6654,27 +6667,71 @@ def continuous_runtime_from_job(job: ETLJobModel) -> KafkaContinuousRuntimeModel
     topic = kafka_field_value(fields, "TOPIC / QUEUE NAME", "Topic") or "reviews.raw"
     consumer_group_id = kafka_field_value(fields, "Consumer Group ID", "CONSUMER GROUP ID") or f"asklake-stream-{job.id.lower()}"
     config = job.continuous_config or {}
-    layout = storage_layout_from_job(job)
-    checkpoint_path = str(config.get("checkpointPath") or layout["checkpointPath"])
+    configured_checkpoint = str(config.get("checkpointPath") or "").strip() or None
+    layout = storage_layout_from_job(job, checkpoint_path=configured_checkpoint)
+    checkpoint_path = canonical_object_storage_uri(configured_checkpoint) if configured_checkpoint else layout["checkpointPath"]
+    assert_continuous_checkpoint_matches_layout(checkpoint_path, layout)
     return KafkaContinuousRuntimeModel(
         job_id=job.id,
         broker=broker,
         topic=topic,
         consumer_group_id=consumer_group_id,
-        target_identity=str(job.storage_path or job.target_path or job.target),
+        target_identity=layout["root"],
         checkpoint_path=checkpoint_path,
         status="stopped",
     )
 
 
-def storage_layout_from_job(job: ETLJobModel, run_id: str | None = None) -> dict[str, Any]:
+def storage_layout_from_job(
+    job: ETLJobModel,
+    run_id: str | None = None,
+    checkpoint_path: str | None = None,
+) -> dict[str, Any]:
+    explicit_root = continuous_destination_root(job, checkpoint_path)
     return create_storage_layout(
         dataset_id=job.dataset_id or make_dataset_id(job.target),
-        explicit_root=job.storage_path,
+        explicit_root=explicit_root,
         job_id=job.id,
         layer=job.target_layer or "BRONZE",
         run_id=run_id,
     )
+
+
+def continuous_destination_root(job: ETLJobModel, checkpoint_path: str | None = None) -> str | None:
+    configured_root = str(job.storage_path or "").strip()
+    if configured_root:
+        return configured_root
+    configured_checkpoint = str(
+        checkpoint_path
+        or (job.continuous_config or {}).get("checkpointPath")
+        or ""
+    ).strip()
+    if configured_checkpoint:
+        canonical_checkpoint = canonical_object_storage_uri(configured_checkpoint)
+        checkpoint_suffix = f"/_checkpoints/{job.id}"
+        if not canonical_checkpoint.endswith(checkpoint_suffix):
+            raise ApiError(
+                "STORAGE_LAYOUT_INVALID",
+                "Continuous checkpoint path does not match the Job identity.",
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+            )
+        return canonical_checkpoint[:-len(checkpoint_suffix)]
+    legacy_target = str(job.target_path or "").strip()
+    if legacy_target and re.match(r"^s3a?://", legacy_target, re.IGNORECASE):
+        canonical_target = canonical_object_storage_uri(legacy_target)
+        batches_marker = "/_batches"
+        marker_index = canonical_target.find(batches_marker)
+        return canonical_target[:marker_index] if marker_index >= 0 else canonical_target
+    return None
+
+
+def assert_continuous_checkpoint_matches_layout(checkpoint_path: str, layout: dict[str, Any]) -> None:
+    if canonical_object_storage_uri(checkpoint_path) != layout["checkpointPath"]:
+        raise ApiError(
+            "STORAGE_LAYOUT_INVALID",
+            "Continuous output and checkpoint paths must share the same Storage Layout root.",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
 
 
 def source_unit_label(source_type: str) -> str:

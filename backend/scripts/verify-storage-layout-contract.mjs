@@ -7,6 +7,7 @@ import {
   assertProductionDataPlanePath,
   canonicalObjectStorageUri,
   createStorageLayout,
+  normalizeObjectStorageFailure,
   normalizeObjectStorageError,
   storageLayoutConfig,
 } from "../src/storageLayout.mjs";
@@ -82,6 +83,25 @@ assert.equal(denied.status, 403);
 assert.doesNotMatch(denied.message, /must-not-leak/);
 assert.equal(normalizeObjectStorageError({ name: "NoSuchBucket" }).code, "OBJECT_STORAGE_NOT_FOUND");
 assert.equal(normalizeObjectStorageError({ name: "TimeoutError" }).code, "OBJECT_STORAGE_UNAVAILABLE");
+const sparkStorageFailure = normalizeObjectStorageFailure(
+  { message: "AmazonS3Exception: AccessDenied secret=must-not-leak" },
+  { bucket: "asklake-provider-test", operation: "Spark batch write" },
+);
+assert.equal(sparkStorageFailure.code, "OBJECT_STORAGE_ACCESS_DENIED");
+assert.equal(sparkStorageFailure.status, 403);
+assert.doesNotMatch(sparkStorageFailure.message, /must-not-leak/);
+assert.equal(
+  normalizeObjectStorageFailure({ code: "OBJECT_STORAGE_NOT_FOUND", message: "safe worker result" }).code,
+  "OBJECT_STORAGE_NOT_FOUND",
+);
+assert.equal(normalizeObjectStorageFailure(new Error("ordinary Spark transform failure")), null);
+assert.equal(
+  normalizeObjectStorageFailure(Object.assign(new Error("Production path must use object storage."), {
+    code: "STORAGE_LAYOUT_LOCAL_PATH_FORBIDDEN",
+    status: 422,
+  })).code,
+  "STORAGE_LAYOUT_LOCAL_PATH_FORBIDDEN",
+);
 
 const configuredPython = process.env.ASKLAKE_FASTAPI_PYTHON;
 const venvPython = path.join(backendDir, ".venv", "bin", "python");

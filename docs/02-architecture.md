@@ -104,7 +104,7 @@ Node demo API는 기존 동작 비교용 reference로 남긴다.
 
 ### Storage Layout V1
 
-Spark data-plane의 논리 경로는 MinIO와 AWS S3에서 같은 계약을 사용한다. 사용자가 `storagePath`를 명시하면 그 root를 보존하고 `s3://`만 `s3a://`로 정규화한다. 저장된 legacy `asklake-output` bucket만 현재 Output bucket으로 치환한다. 경로를 생략하면 아래 환경 격리 root를 만든다.
+Spark data-plane의 논리 경로는 MinIO와 AWS S3에서 같은 계약을 사용한다. 사용자가 `storagePath`를 명시하면 object key의 segment 의미를 바꾸지 않고 canonical percent encoding으로 보존하며 `s3://`는 `s3a://`로, bucket은 소문자로 정규화하고 마지막 `/` 하나를 제거한다. 공백·한글·`+`는 각각 의미가 유지되는 percent encoding으로 변환한다. 저장된 legacy `asklake-output` bucket만 현재 Output bucket으로 치환한다. 빈 segment(`//`), 잘못된 percent/UTF-8, percent-decoded slash, traversal, query/fragment는 `STORAGE_LAYOUT_INVALID`로 거부한다. 경로를 생략하면 아래 환경 격리 root를 만든다.
 
 ```text
 s3a://<ASKLAKE_SPARK_OUTPUT_BUCKET>/<ASKLAKE_STORAGE_BASE_PREFIX>/<ASKLAKE_STORAGE_ENVIRONMENT>/datasets/<datasetId>/<layer>
@@ -120,7 +120,7 @@ s3a://<ASKLAKE_SPARK_OUTPUT_BUCKET>/<ASKLAKE_STORAGE_BASE_PREFIX>/<ASKLAKE_STORA
 | Continuous quarantine | `<root>/_quarantine` |
 | Log reference | `<root>/_logs/<jobId>` |
 
-checkpoint는 Job ID까지 포함해 여러 Continuous Job이 같은 dataset/layer를 사용해도 충돌하지 않는다. data/checkpoint/manifest/quarantine/log 보존 기간은 각각 `ASKLAKE_STORAGE_*_RETENTION_DAYS`로 선언하며 기본값은 `0(무기한)/30/90/30/14일`이다. 이 값은 애플리케이션 계약이며 실제 삭제는 MinIO/AWS bucket lifecycle을 같은 값으로 별도 구성해야 한다. Production data-plane은 object storage URI만 허용한다. Spark REST 상태 파일과 backend control-plane report는 아직 공유 host volume에 남으며 log reference object 적재와 중앙 로그 수집은 운영 관측 Phase의 범위다.
+Batch bridge는 표시명에서 다시 slug를 만들지 않고 저장된 `datasetId`를 Spark에 전달하며, Catalog 확정 시 실제 output이 같은 Storage Layout의 `<root>/<runId>`인지 검증한다. checkpoint는 Job ID까지 포함해 여러 Continuous Job이 같은 dataset/layer를 사용해도 충돌하지 않는다. 기존 Continuous Job에 `storagePath`가 없지만 `continuousConfig.checkpointPath`가 있으면 `/_checkpoints/<jobId>`를 제거해 원래 root를 복원한다. checkpoint와 root가 다르면 새 위치로 조용히 전환하지 않고 `STORAGE_LAYOUT_INVALID`로 중단한다. data/checkpoint/manifest/quarantine/log 보존 기간은 각각 `ASKLAKE_STORAGE_*_RETENTION_DAYS`로 선언하며 기본값은 `0(무기한)/30/90/30/14일`이다. 이 값은 애플리케이션 계약이며 실제 삭제는 MinIO/AWS bucket lifecycle을 같은 값으로 별도 구성해야 한다. Production data-plane은 object storage URI만 허용한다. Spark REST 상태 파일과 backend control-plane report는 아직 공유 host volume에 남으며 log reference object 적재와 중앙 로그 수집은 운영 관측 Phase의 범위다.
 
 ### Airflow batch execution
 

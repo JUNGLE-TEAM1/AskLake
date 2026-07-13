@@ -29,6 +29,7 @@ import {
 } from "../src/sparkRuntime.mjs";
 import {
   isMissingObjectStorageResource,
+  normalizeObjectStorageFailure,
   normalizeObjectStorageError,
 } from "../src/storageLayout.mjs";
 import {
@@ -54,10 +55,14 @@ try {
   const result = await manage(payload);
   console.log(`ASKLAKE_KAFKA_CONTINUOUS_RESULT=${JSON.stringify(result)}`);
 } catch (error) {
+  const storageFailure = normalizeObjectStorageFailure(
+    error,
+    { bucket: "configured continuous output", operation: "continuous worker startup" },
+  );
   console.log(`ASKLAKE_KAFKA_CONTINUOUS_ERROR=${JSON.stringify({
-    code: error?.code || "KAFKA_CONTINUOUS_WORKER_FAILED",
-    message: error?.message || String(error),
-    status: error?.status || 502,
+    code: storageFailure?.code || error?.code || "KAFKA_CONTINUOUS_WORKER_FAILED",
+    message: storageFailure?.message || error?.message || String(error),
+    status: storageFailure?.status || error?.status || 502,
   })}`);
   process.exitCode = 1;
 }

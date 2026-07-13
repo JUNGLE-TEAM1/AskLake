@@ -155,6 +155,54 @@ assert.equal(
 assert.match(productionLayout.checkpointPath, /\/_checkpoints\/JOB-CONTRACT$/);
 assert.doesNotMatch(productionLayout.root, /^file:/);
 
+const localPathGuardResult = spawnSync(process.execPath, [
+  path.join(backendDir, "scripts", "run-spark-job-once.mjs"),
+], {
+  cwd: backendDir,
+  encoding: "utf8",
+  env: {
+    ...process.env,
+    APP_ENV: "production",
+    ASKLAKE_SPARK_OUTPUT_MODE: "local",
+    ASKLAKE_SPARK_RUNTIME: "spark-rest",
+  },
+  input: JSON.stringify({
+    command: "run",
+    runId: "RUN-LOCAL-PATH-GUARD",
+    job: {
+      datasetId: "ds_local_path_guard",
+      id: "JOB-LOCAL-PATH-GUARD",
+      name: "production-local-path-guard",
+      owner: "contract",
+      qualityRules: [],
+      rules: [],
+      schemaColumns: [{ included: true, sourceName: "id", targetName: "id", type: "String" }],
+      schemaSampleRows: [["1"]],
+      source: "Fixture / inline",
+      sourceConfig: [],
+      sourceType: "Fixture",
+      target: "local_path_guard",
+      targetFormat: "Parquet",
+      targetLayer: "GOLD",
+      transformSteps: [],
+    },
+  }),
+});
+assert.equal(localPathGuardResult.status, 0, localPathGuardResult.stderr);
+const localPathMarker = (localPathGuardResult.stdout || "")
+  .split(/\r?\n/)
+  .find((line) => line.startsWith("ASKLAKE_SPARK_RUN_RESULT="));
+assert(localPathMarker, "Production local-path guard did not return a Spark result marker.");
+const localPathFailure = JSON.parse(localPathMarker.slice("ASKLAKE_SPARK_RUN_RESULT=".length));
+assert.equal(localPathFailure.status, "failed");
+assert.equal(
+  localPathFailure.errorCode,
+  "STORAGE_LAYOUT_LOCAL_PATH_FORBIDDEN",
+  JSON.stringify({ failure: localPathFailure, stderr: localPathGuardResult.stderr }),
+);
+assert.equal(localPathFailure.errorStatus, 422);
+assert.doesNotMatch(localPathGuardResult.stderr, /AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN|secret=/i);
+
 const pipelineSubmission = createSparkRestSubmission({
   appName: "contract-pipeline",
   environmentVariables: {

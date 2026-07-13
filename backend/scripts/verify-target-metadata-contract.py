@@ -105,6 +105,7 @@ def main() -> None:
         next_run="-",
         stats={},
         dag_steps=[],
+        dataset_id="ds_target_metadata_contract",
     )
 
     assert job.partition_columns == ["event_date"]
@@ -118,6 +119,7 @@ def main() -> None:
     assert spark_payload["partitionColumns"] == ["event_date"]
     assert spark_payload["indexColumns"] == ["amount"]
     assert spark_payload["compression"] == "Snappy"
+    assert spark_payload["datasetId"] == "ds_target_metadata_contract"
 
     dataset = dataset_from_spark_result(
         job,
@@ -145,21 +147,54 @@ def main() -> None:
     assert response["partitionColumns"] == ["event_date"]
     assert response["indexColumns"] == ["amount"]
 
-    previous_output_bucket = os.environ.get("ASKLAKE_SPARK_OUTPUT_BUCKET")
+    storage_environment_names = (
+        "ASKLAKE_SPARK_OUTPUT_BUCKET",
+        "ASKLAKE_STORAGE_BASE_PREFIX",
+        "ASKLAKE_STORAGE_ENVIRONMENT",
+    )
+    previous_storage_environment = {
+        name: os.environ.get(name)
+        for name in storage_environment_names
+    }
     try:
         os.environ["ASKLAKE_SPARK_OUTPUT_BUCKET"] = "asklake-dev-output-123-apne2"
+        os.environ["ASKLAKE_STORAGE_BASE_PREFIX"] = "asklake"
+        os.environ["ASKLAKE_STORAGE_ENVIRONMENT"] = "staging"
         job.storage_path = "s3a://asklake-output/products/gold/"
-        assert normalize_spark_output_storage_path(job.storage_path) == "s3a://asklake-dev-output-123-apne2/products/gold/"
+        assert normalize_spark_output_storage_path(job.storage_path) == "s3a://asklake-dev-output-123-apne2/products/gold"
         validate_catalog_output_identity(
             job,
             "run_target_metadata_contract",
             "s3a://asklake-dev-output-123-apne2/products/gold/run_target_metadata_contract",
         )
-    finally:
-        if previous_output_bucket is None:
-            os.environ.pop("ASKLAKE_SPARK_OUTPUT_BUCKET", None)
+        job.storage_path = "s3a://custom-output/team data/매출+원본/"
+        validate_catalog_output_identity(
+            job,
+            "run_target_metadata_contract",
+            "s3a://custom-output/team%20data/%EB%A7%A4%EC%B6%9C%2B%EC%9B%90%EB%B3%B8/run_target_metadata_contract",
+        )
+        job.storage_path = None
+        auto_output = (
+            "s3a://asklake-dev-output-123-apne2/asklake/staging/datasets/"
+            "ds_target_metadata_contract/gold/run_target_metadata_contract"
+        )
+        validate_catalog_output_identity(job, "run_target_metadata_contract", auto_output)
+        try:
+            validate_catalog_output_identity(
+                job,
+                "run_target_metadata_contract",
+                auto_output.replace("ds_target_metadata_contract", "ds_wrong"),
+            )
+        except Exception as error:
+            assert getattr(error, "code", None) == "CATALOG_RECONCILIATION_FAILED"
         else:
-            os.environ["ASKLAKE_SPARK_OUTPUT_BUCKET"] = previous_output_bucket
+            raise AssertionError("Auto Storage Layout output identity mismatch must fail")
+    finally:
+        for name, value in previous_storage_environment.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
 
     print("verify-target-metadata-contract: ok")
 
