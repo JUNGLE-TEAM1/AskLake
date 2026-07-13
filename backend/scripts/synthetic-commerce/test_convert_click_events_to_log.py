@@ -75,10 +75,12 @@ class FakeS3Client:
         self.uploads: dict[str, dict[str, Any]] = {}
         self.next_upload_id = 1
         self.fail_upload_part: int | None = None
+        self.fail_complete = False
         self.aborted_uploads: list[tuple[str, str, str]] = []
         self.completed_uploads: list[tuple[str, str, str]] = []
         self.completed_part_counts: list[int] = []
         self.get_requests: list[tuple[str, str, str | None]] = []
+        self.deleted_objects: list[tuple[str, str]] = []
 
     def list_objects_v2(self, **request: Any) -> dict[str, Any]:
         bucket = request["Bucket"]
@@ -119,7 +121,12 @@ class FakeS3Client:
         if expected and expected != etag(payload):
             raise FakeClientError("PreconditionFailed", 412, "etag changed")
         self.get_requests.append((identity[0], identity[1], expected))
-        return {"Body": io.BytesIO(payload), "ContentLength": len(payload)}
+        return {
+            "Body": io.BytesIO(payload),
+            "ContentLength": len(payload),
+            "ContentType": "application/json; charset=utf-8",
+            "Metadata": {},
+        }
 
     def create_multipart_upload(self, **request: Any) -> dict[str, Any]:
         upload_id = f"upload-{self.next_upload_id}"
@@ -141,6 +148,8 @@ class FakeS3Client:
         return {"ETag": etag(payload)}
 
     def complete_multipart_upload(self, **request: Any) -> dict[str, Any]:
+        if self.fail_complete:
+            raise FakeClientError("InternalError", 500, "injected completion failure")
         upload_id = request["UploadId"]
         upload = self.uploads[upload_id]
         part_numbers = [item["PartNumber"] for item in request["MultipartUpload"]["Parts"]]
@@ -165,6 +174,12 @@ class FakeS3Client:
         payload = bytes(request["Body"])
         self.objects[identity] = payload
         return {"ETag": etag(payload)}
+
+    def delete_object(self, **request: Any) -> dict[str, Any]:
+        identity = (request["Bucket"], request["Key"])
+        self.objects.pop(identity, None)
+        self.deleted_objects.append(identity)
+        return {}
 
 
 class ClickLogConverterTests(unittest.TestCase):
@@ -366,6 +381,53 @@ class ClickLogConverterTests(unittest.TestCase):
 
         self.assertEqual(client.objects[("processed", "large-click-events.log")], payload)
         self.assertEqual(client.completed_part_counts, [2])
+
+    def test_s3_completion_failure_restores_previous_manifest_and_output(self) -> None:
+        previous_output = b"previous-good-output"
+        previous_manifest = b'{"previous":true}\n'
+        client = FakeS3Client(
+            {
+                ("raw", "clicks/part-00000.jsonl"): encode_jsonl([click_event(1)]),
+                ("processed", "click-events.log"): previous_output,
+                ("processed", "click-events.log.manifest.json"): previous_manifest,
+            }
+        )
+        client.fail_complete = True
+
+        with self.assertRaisesRegex(FakeClientError, "injected completion failure"):
+            converter.convert_click_events_s3(
+                client,
+                "s3://raw/clicks/",
+                "s3://processed/click-events.log",
+                overwrite=True,
+            )
+
+        self.assertEqual(client.objects[("processed", "click-events.log")], previous_output)
+        self.assertEqual(
+            client.objects[("processed", "click-events.log.manifest.json")],
+            previous_manifest,
+        )
+        self.assertEqual(len(client.aborted_uploads), 1)
+
+    def test_s3_completion_failure_removes_new_manifest_when_no_previous_result_exists(self) -> None:
+        client = FakeS3Client(
+            {("raw", "clicks/part-00000.jsonl"): encode_jsonl([click_event(1)])}
+        )
+        client.fail_complete = True
+
+        with self.assertRaisesRegex(FakeClientError, "injected completion failure"):
+            converter.convert_click_events_s3(
+                client,
+                "s3://raw/clicks/",
+                "s3://processed/click-events.log",
+            )
+
+        self.assertNotIn(("processed", "click-events.log"), client.objects)
+        self.assertNotIn(("processed", "click-events.log.manifest.json"), client.objects)
+        self.assertEqual(
+            client.deleted_objects,
+            [("processed", "click-events.log.manifest.json")],
+        )
 
     def test_s3_rejects_local_option_mixing_and_too_small_parts(self) -> None:
         stderr = io.StringIO()

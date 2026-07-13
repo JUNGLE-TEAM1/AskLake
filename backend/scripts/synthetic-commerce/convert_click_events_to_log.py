@@ -31,6 +31,7 @@ DEFAULT_OUTPUT = (
 DEFAULT_MULTIPART_PART_SIZE = 64 * 1024 * 1024
 MIN_MULTIPART_PART_SIZE = 5 * 1024 * 1024
 MAX_MULTIPART_PARTS = 10_000
+MAX_MANIFEST_BACKUP_SIZE = 16 * 1024 * 1024
 S3_READ_CHUNK_SIZE = 1024 * 1024
 WHITESPACE = re.compile(r"\s", re.UNICODE)
 SUPPORTED_INPUT_SUFFIXES = (".jsonl", ".ndjson")
@@ -58,6 +59,14 @@ class S3ObjectRef:
     location: S3Location
     size: int
     etag: str
+
+
+@dataclass(frozen=True)
+class S3ManifestBackup:
+    existed: bool
+    body: bytes = b""
+    content_type: str = "application/json; charset=utf-8"
+    metadata: dict[str, str] | None = None
 
 
 FIELD_SPECS = (
@@ -383,19 +392,26 @@ def convert_click_events_s3(
         )
 
     input_objects = discover_s3_input_objects(client, source)
+    output_exists = s3_object_exists(client, output)
+    manifest_exists = s3_object_exists(client, manifest)
     if not overwrite:
         existing = [
             location.uri
-            for location in (output, manifest)
-            if s3_object_exists(client, location)
+            for location, exists in (
+                (output, output_exists),
+                (manifest, manifest_exists),
+            )
+            if exists
         ]
         if existing:
             raise ConversionError(
                 "S3 output already exists; use --overwrite to replace it: "
                 + ", ".join(existing)
             )
+    manifest_backup = backup_s3_manifest(client, manifest) if manifest_exists else S3ManifestBackup(False)
 
     writer: MultipartUploadWriter | None = None
+    manifest_published = False
     output_digest = hashlib.sha256()
     output_rows = 0
     output_bytes = 0
@@ -429,7 +445,6 @@ def convert_click_events_s3(
             output_bytes=output_bytes,
             output_sha256=output_digest.hexdigest(),
         )
-        writer.complete()
         manifest_body = (json.dumps(result, ensure_ascii=False, indent=2) + "\n").encode(
             "utf-8"
         )
@@ -443,9 +458,11 @@ def convert_click_events_s3(
                 "asklake-output-rows": str(result["output"]["rows"]),
             },
         }
-        if not overwrite:
+        if not manifest_exists:
             put_request["IfNoneMatch"] = "*"
         client.put_object(**put_request)
+        manifest_published = True
+        writer.complete()
         result["manifest_path"] = manifest.uri
         return result
     except Exception:
@@ -455,6 +472,15 @@ def convert_click_events_s3(
             except Exception as cleanup_error:
                 print(
                     f"warning: failed to abort S3 multipart upload for {output.uri}: "
+                    f"{cleanup_error}",
+                    file=os.sys.stderr,
+                )
+        if manifest_published and (writer is None or not writer.completed):
+            try:
+                restore_s3_manifest(client, manifest, manifest_backup)
+            except Exception as cleanup_error:
+                print(
+                    f"warning: failed to restore S3 manifest for {manifest.uri}: "
                     f"{cleanup_error}",
                     file=os.sys.stderr,
                 )
@@ -673,6 +699,49 @@ def s3_object_exists(client: Any, location: S3Location) -> bool:
         if code in {"404", "NoSuchKey", "NotFound"} or status == 404:
             return False
         raise
+
+
+def backup_s3_manifest(client: Any, location: S3Location) -> S3ManifestBackup:
+    response = client.get_object(Bucket=location.bucket, Key=location.key)
+    body_handle = response.get("Body")
+    if body_handle is None or not hasattr(body_handle, "read"):
+        raise ConversionError(f"S3 manifest has no readable body: {location.uri}")
+    try:
+        body = body_handle.read(MAX_MANIFEST_BACKUP_SIZE + 1)
+    finally:
+        close = getattr(body_handle, "close", None)
+        if callable(close):
+            close()
+    if not isinstance(body, bytes):
+        raise ConversionError(f"S3 manifest body must be bytes: {location.uri}")
+    if len(body) > MAX_MANIFEST_BACKUP_SIZE:
+        raise ConversionError(
+            f"Existing S3 manifest is too large to back up safely: {location.uri}"
+        )
+    metadata = response.get("Metadata")
+    return S3ManifestBackup(
+        existed=True,
+        body=body,
+        content_type=str(response.get("ContentType") or "application/json; charset=utf-8"),
+        metadata=dict(metadata) if isinstance(metadata, dict) else {},
+    )
+
+
+def restore_s3_manifest(
+    client: Any,
+    location: S3Location,
+    backup: S3ManifestBackup,
+) -> None:
+    if not backup.existed:
+        client.delete_object(Bucket=location.bucket, Key=location.key)
+        return
+    client.put_object(
+        Bucket=location.bucket,
+        Key=location.key,
+        Body=backup.body,
+        ContentType=backup.content_type,
+        Metadata=backup.metadata or {},
+    )
 
 
 def create_s3_client(

@@ -144,7 +144,7 @@ ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run synthetic-commerce:click-log -- 
   --s3-force-path-style
 ```
 
-운영 IAM에는 source prefix의 `s3:ListBucket`, `s3:GetObject`와 target prefix의 `s3:PutObject`, `s3:AbortMultipartUpload`가 필요합니다. 기본 multipart part 크기는 64 MiB이고 `--multipart-part-size-mib`로 조정할 수 있습니다. 기존 output 또는 manifest가 있으면 기본적으로 중단하며 명시적인 `--overwrite`에서만 교체합니다. 변환 또는 part upload가 실패하면 진행 중 multipart upload를 abort하므로 기존 `.log` object는 유지됩니다. `.log` 완료 후 manifest 저장이 실패하면 명령은 실패로 종료하며, 같은 명령을 `--overwrite`로 재실행해 manifest까지 다시 확정해야 합니다.
+운영 IAM에는 source prefix의 `s3:ListBucket`, `s3:GetObject`와 target prefix의 `s3:PutObject`, `s3:AbortMultipartUpload`, `s3:DeleteObject`가 필요합니다. 기본 multipart part 크기는 64 MiB이고 `--multipart-part-size-mib`로 조정할 수 있습니다. 기존 output 또는 manifest가 있으면 기본적으로 중단하며 명시적인 `--overwrite`에서만 교체합니다. 변환기는 최대 16 MiB의 기존 manifest를 메모리에 백업하고 새 manifest를 먼저 저장한 뒤 multipart `.log`를 마지막에 commit합니다. 변환, manifest 저장 또는 multipart 완료가 실패하면 upload를 abort하고 이전 manifest를 복원하거나 새 manifest를 삭제하므로 기존 정상 결과를 유지합니다.
 
 ## 테스트
 

@@ -123,7 +123,7 @@ ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run synthetic-commerce:click-log -- 
   --output-s3-uri s3://raw-bucket/commerce/click-events.log
 ```
 
-MinIO 검증은 `--s3-endpoint-url http://127.0.0.1:9000 --s3-force-path-style`을 추가한다. 입력 object는 key 순서와 ETag `If-Match`로 고정하고 결과는 multipart upload한다. 변환/part upload 실패 시 upload를 abort하며 기존 결과는 `--overwrite` 없이는 건드리지 않는다. 상세 IAM, manifest와 실패 복구 계약은 `backend/scripts/synthetic-commerce/README.md`를 따른다.
+MinIO 검증은 `--s3-endpoint-url http://127.0.0.1:9000 --s3-force-path-style`을 추가한다. 입력 object는 key 순서와 ETag `If-Match`로 고정하고 결과는 multipart upload한다. 새 manifest를 먼저 저장하고 `.log`를 마지막에 commit하며 실패 시 upload abort와 manifest 복원/삭제로 기존 결과를 유지한다. 상세 IAM, manifest와 실패 복구 계약은 `backend/scripts/synthetic-commerce/README.md`를 따른다.
 
 Preview 계약과 전체 runtime을 함께 검증할 때는 FastAPI, Airflow, MinIO, Spark가 같은 local Compose network를 사용하도록 한 뒤 아래 명령을 실행한다.
 
