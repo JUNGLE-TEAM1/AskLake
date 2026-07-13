@@ -10,7 +10,6 @@ import {
   BarChart3,
   BookOpen,
   Bot,
-  Braces,
   Cable,
   Calendar,
   Check,
@@ -93,11 +92,7 @@ import { SchemaTransformWorkbench } from "./SchemaTransformWorkbench";
 import { SchemaRuleSummary } from "./SchemaRuleSummary";
 import { SchemaResultPreview } from "./SchemaResultPreview";
 import { EtlStepHeader } from "../../components/etl/EtlStepHeader";
-import amazonS3IconUrl from "../../assets/amazons3.svg";
-import apacheKafkaIconUrl from "../../assets/apachekafka.svg";
-import askLakeLogoUrl from "../../assets/asklake-logo.png";
-import mongoDbIconUrl from "../../assets/mongodb.svg";
-import postgreSqlIconUrl from "../../assets/postgresql.svg";
+import { getSourceBrandMeta, SourceBrandIcon } from "../../components/source/SourceBrand";
 
 type RepeatFrequency = "hourly" | "daily" | "weekly" | "custom";
 type RepeatScheduleDraft = {
@@ -1199,13 +1194,13 @@ export function SourceConnectionPage({
     };
   }, []);
   const connectorMeta: Record<string, { description: string; icon: React.ReactNode; label: string; status: string }> = {
-    "File / S3": { description: "S3 버킷의 CSV, JSON, Parquet 파일을 가져옵니다.", icon: <SourceBrandIcon kind="s3" />, label: "Amazon S3", status: "실제 연결" },
-    PostgreSQL: { description: "PostgreSQL 테이블에서 데이터를 가져옵니다.", icon: <SourceBrandIcon kind="postgres" />, label: "PostgreSQL", status: "실제 연결" },
-    MongoDB: { description: "MongoDB 컬렉션에서 문서를 가져옵니다.", icon: <SourceBrandIcon kind="mongo" />, label: "MongoDB", status: "실제 연결" },
-    "REST API": { description: "API를 호출해 응답 데이터를 가져옵니다.", icon: <SourceBrandIcon kind="rest" />, label: "REST API", status: "실제 연결" },
-    "Data Lake": { description: "AskLake에 저장된 데이터셋을 다시 사용합니다.", icon: <SourceBrandIcon kind="lake" />, label: "AskLake 데이터 레이크", status: "목록 조회" },
-    "SQL Result": { description: "검증된 SQL 분석 결과를 다시 사용합니다.", icon: <TerminalSquare size={20} />, label: "SQL Result", status: "검증 완료" },
-    "Stream / Kafka": { description: "Kafka에서 들어오는 데이터를 실시간 또는 구간별로 가져옵니다.", icon: <SourceBrandIcon kind="kafka" />, label: "Apache Kafka", status: "메타데이터" },
+    "File / S3": { description: "S3 버킷의 CSV, JSON, Parquet 파일을 가져옵니다.", icon: <SourceBrandIcon kind="s3" />, label: getSourceBrandMeta("File / S3").label, status: "실제 연결" },
+    PostgreSQL: { description: "PostgreSQL 테이블에서 데이터를 가져옵니다.", icon: <SourceBrandIcon kind="postgres" />, label: getSourceBrandMeta("PostgreSQL").label, status: "실제 연결" },
+    MongoDB: { description: "MongoDB 컬렉션에서 문서를 가져옵니다.", icon: <SourceBrandIcon kind="mongo" />, label: getSourceBrandMeta("MongoDB").label, status: "실제 연결" },
+    "REST API": { description: "API를 호출해 응답 데이터를 가져옵니다.", icon: <SourceBrandIcon kind="rest" />, label: getSourceBrandMeta("REST API").label, status: "실제 연결" },
+    "Data Lake": { description: "AskLake에 저장된 데이터셋을 다시 사용합니다.", icon: <SourceBrandIcon kind="lake" />, label: getSourceBrandMeta("Data Lake").label, status: "목록 조회" },
+    "SQL Result": { description: "검증된 SQL 분석 결과를 다시 사용합니다.", icon: <SourceBrandIcon kind="sql" />, label: getSourceBrandMeta("SQL Result").label, status: "검증 완료" },
+    "Stream / Kafka": { description: "Kafka에서 들어오는 데이터를 실시간 또는 구간별로 가져옵니다.", icon: <SourceBrandIcon kind="kafka" />, label: getSourceBrandMeta("Stream / Kafka").label, status: "메타데이터" },
   };
   const sourceConfigs: Record<string, {
     title: string;
@@ -1452,17 +1447,6 @@ export function SourceConnectionPage({
   const publicDisplayPreviewNote = publicSourceLog(displayPreviewNote);
   const runtimeSourceConfig = sourceRuntime?.draftPatch.source?.sourceConfig;
   const verifiedSourceFields = connectionStatus === "success" && runtimeSourceConfig ? runtimeSourceConfig : editableFields;
-  const displayPreviewFormat = activeSourceType === "File / S3" ? sourceFormatFromConfig(verifiedSourceFields, activeSourceType) : sourceTypeLabel(activeSourceType);
-  const explorerScope = activeSourceType === "PostgreSQL"
-    ? sourceConfigValue(verifiedSourceFields, "Schema") || displayAssets[0]?.[1] || "public"
-    : activeSourceType === "MongoDB"
-      ? sourceConfigValue(verifiedSourceFields, "Database Name") || displayAssets[0]?.[1] || "-"
-      : "";
-  const explorerScopeLabel = activeSourceType === "PostgreSQL"
-    ? `스키마 ${explorerScope}`
-    : activeSourceType === "MongoDB"
-      ? `데이터베이스 ${explorerScope}`
-      : "";
   const previewShowsFileList = activeSourceType === "File / S3"
     && displayPreviewColumns.includes("Object Key");
   const previewShowsTopicInfo = activeSourceType === "Stream / Kafka"
@@ -2055,7 +2039,6 @@ export function SourceConnectionPage({
                         onSelect={selectCatalogDataset}
                       />
                     )}
-                    explorerMeta={<Badge variant="outline" className="border-blue-200 bg-white text-blue-700">{filteredCatalogDatasets.length}개</Badge>}
                     explorerTitle="접근 가능한 데이터셋"
                     filterOptions={explorerConfig.filterOptions}
                     filterValue={assetFilter}
@@ -2071,7 +2054,6 @@ export function SourceConnectionPage({
                     )}
                     previewMeta={selectedCatalogDataset ? (
                       <div className="source-explorer-preview-meta">
-                        <Badge variant="outline" className="border-blue-200 bg-white text-blue-700">{selectedCatalogDataset.layer}</Badge>
                         <span>{selectedCatalogDataset.sampleRows.length}행 · {selectedCatalogDataset.schema.length}필드</span>
                       </div>
                     ) : undefined}
@@ -2097,12 +2079,6 @@ export function SourceConnectionPage({
                     ) : (
                       <p className="source-empty-note">연결 테스트 후 탐색 가능한 항목이 표시됩니다.</p>
                     )}
-                    explorerMeta={(
-                      <div className="source-explorer-preview-meta">
-                        {explorerScopeLabel ? <Badge variant="outline" className="border-blue-200 bg-white text-blue-700">{explorerScopeLabel}</Badge> : null}
-                        <Badge variant="outline" className="border-blue-200 bg-white text-blue-700">{filteredDisplayAssets.length}개</Badge>
-                      </div>
-                    )}
                     explorerTitle={current.assetsTitle}
                     filterOptions={explorerConfig.filterOptions}
                     filterValue={assetFilter}
@@ -2120,7 +2096,6 @@ export function SourceConnectionPage({
                     )}
                     previewMeta={(
                       <div className="source-explorer-preview-meta">
-                        <Badge variant="outline" className="border-blue-200 bg-white text-blue-700">{displayPreviewFormat}</Badge>
                         <span>{displayPreviewRows.length}행 · {displayPreviewColumns.length}필드</span>
                       </div>
                     )}
@@ -2397,27 +2372,6 @@ export function RecordParsingPage({
   );
 }
 
-function sourceFormatFromConfig(fields: Array<[string, string]>, _sourceType?: string) {
-  const fieldMap = new Map(fields.map(([label, value]) => [label, value]));
-  const declaredFormat = (fieldMap.get("File Type") || "").trim().toLowerCase();
-  const selectedPath = [
-    fieldMap.get("Path / Prefix"),
-    fieldMap.get("Path"),
-    fieldMap.get("DATASET OR TABLE SELECTOR"),
-  ].find((value) => value && value.trim().length > 0)?.trim().toLowerCase() || "";
-  const rawFormat = declaredFormat && declaredFormat !== "auto"
-    ? declaredFormat
-    : selectedPath.replace(/^.*\./, "");
-  if (rawFormat.includes("jsonl")) return "JSONL";
-  if (rawFormat.includes("json")) return "JSON";
-  if (rawFormat.includes("csv")) return "CSV";
-  if (rawFormat.includes("tsv")) return "TSV";
-  if (rawFormat.includes("txt")) return "TXT";
-  if (rawFormat.includes("log")) return "TXT";
-  if (rawFormat.includes("parquet")) return "PARQUET";
-  return "AUTO";
-}
-
 function mergeSourceAssets(currentAssets: Array<[string, string, string]>, nextAssets: Array<[string, string, string]>) {
   const merged = new Map<string, [string, string, string]>();
   [...currentAssets, ...nextAssets].forEach(([path, meta, status]) => {
@@ -2600,36 +2554,6 @@ function sourceAssetMatchesExplorer(
 
 function isSecretSourceField(label: string) {
   return ["Access Key", "Password / Auth Token", "Secret Key", "Token / Secret"].includes(label);
-}
-
-function SourceBrandIcon({ kind }: { kind: "s3" | "postgres" | "mongo" | "rest" | "lake" | "kafka" }) {
-  if (kind === "rest") {
-    return (
-      <div className="source-brand-icon source-brand-rest" aria-hidden="true">
-        <Braces size={38} strokeWidth={2.2} />
-      </div>
-    );
-  }
-  if (kind === "lake") {
-    return (
-      <div className="source-brand-icon source-brand-asklake" aria-hidden="true">
-        <img alt="" src={askLakeLogoUrl} />
-      </div>
-    );
-  }
-  const brand = {
-    s3: { color: "#569a31", url: amazonS3IconUrl },
-    postgres: { color: "#4169e1", url: postgreSqlIconUrl },
-    mongo: { color: "#47a248", url: mongoDbIconUrl },
-    kafka: { color: "#231f20", url: apacheKafkaIconUrl },
-  }[kind];
-  return (
-    <div
-      className={`source-brand-icon source-brand-${kind}`}
-      aria-hidden="true"
-      style={{ backgroundColor: brand.color, maskImage: `url(${brand.url})`, WebkitMaskImage: `url(${brand.url})` }}
-    />
-  );
 }
 
 function sourceCheckIcon(label: string) {
