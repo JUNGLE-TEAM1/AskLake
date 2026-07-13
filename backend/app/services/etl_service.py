@@ -335,9 +335,7 @@ def list_jobs(
 
 
 def normalize_list_job(job: JobRowData) -> JobRowData:
-    if job.status not in {"failed", "canceled", "paused"}:
-        return job
-    return job.model_copy(update={"status": "scheduled"})
+    return job
 
 
 def latest_run_outcome(job: JobRowData) -> JobRunOutcome | None:

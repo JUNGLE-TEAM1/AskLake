@@ -6,6 +6,7 @@ import { deleteDatasetMaterializationRun } from "../services/catalogApi";
 import { applyDraftPipelinePatch, hydrateDraftPipelineFromJob } from "../services/draftPipelineContract";
 import {
   createPipelineDraft as createMockPipelineDraft,
+  updatePipelineDraft as updateMockPipelineDraft,
   getDatasets,
   getJobs,
   runJobCommand as runMockJobCommand,
@@ -14,6 +15,7 @@ import {
   createPipelineDraft as createLivePipelineDraft,
   deletePipelineJob as deleteLivePipelineJob,
   getJob as getLiveJob,
+  updatePipelineDraft as updateLivePipelineDraft,
   runJobCommand as runLiveJobCommand,
 } from "../services/pipelineApi";
 import { normalizeDatasetStatus, normalizeJobStatus } from "../utils/statusMeta";
@@ -543,7 +545,7 @@ function normalizeJobRow(job: JobRowData): JobRowData {
   const status = normalizeJobStatus(String(job.status));
   return {
     ...job,
-    status: status === "failed" || status === "canceled" || status === "paused" ? "scheduled" : status,
+    status,
   };
 }
 
@@ -867,6 +869,7 @@ export function useAskLakeData({
   const [jobListFacets, setJobListFacets] = useState<JobListFacets>(() => getJobListFacets(getInitialJobs()));
   const [datasets, setDatasets] = useState<CatalogDataset[]>(getInitialDatasets);
   const [draftPipeline, setDraftPipeline] = useState<DraftPipeline>(initialDraftPipeline);
+  const [editingJobId, setEditingJobId] = useState<string | null>(null);
   const [selectedDataset, setSelectedDataset] = useState<CatalogDataset>(() => getInitialDatasets()[0] ?? emptySelectedDataset);
   const [selectedJob, setSelectedJob] = useState<JobRowData>(() => getInitialJobs()[0] ?? emptySelectedJob);
   const [runsByJobId, setRunsByJobId] = useState<RunsByJobId>({});
@@ -1055,21 +1058,30 @@ export function useAskLakeData({
     createPendingRef.current = true;
     setApiPending(true);
     try {
-      const result = apiConfig.useMock
-        ? await createMockPipelineDraft(pipelineDraft, jobs.length)
-        : await createLivePipelineDraft(pipelineDraft);
+      const activeEditJobId = editingJobId === pipelineDraft.id ? editingJobId : null;
+      const updatedJob = activeEditJobId
+        ? await (apiConfig.useMock
+          ? updateMockPipelineDraft(activeEditJobId, pipelineDraft)
+          : updateLivePipelineDraft(activeEditJobId, pipelineDraft))
+        : null;
+      const result = updatedJob
+        ? { job: updatedJob }
+        : apiConfig.useMock
+          ? await createMockPipelineDraft(pipelineDraft, jobs.length)
+          : await createLivePipelineDraft(pipelineDraft);
       const normalizedJob = normalizeJobRow(result.job);
-      const normalizedDataset = result.dataset ? normalizeDatasetRow(result.dataset) : null;
+      const normalizedDataset = "dataset" in result && result.dataset ? normalizeDatasetRow(result.dataset) : null;
 
       setJobs((items) => upsertJobById(items, normalizedJob));
       setSelectedJob(normalizedJob);
+      setEditingJobId(null);
       if (normalizedDataset) {
         saveStoredCatalogDataset(normalizedDataset);
         setDatasets((items) => [normalizedDataset, ...items.filter((item) => item.id !== normalizedDataset.id)]);
         setSelectedDataset(normalizedDataset);
       }
-      writeAuditLog("etl.job.created", "/api/etl/jobs", pipelineDraft.id);
-      writeAuditLog("etl.run.queued", `/api/etl/jobs/${pipelineDraft.id}/runs`, pipelineDraft.id);
+      writeAuditLog(activeEditJobId ? "etl.job.updated" : "etl.job.created", activeEditJobId ? `/api/etl/jobs/${normalizedJob.id}` : "/api/etl/jobs", normalizedJob.id);
+      if (!activeEditJobId) writeAuditLog("etl.run.queued", `/api/etl/jobs/${pipelineDraft.id}/runs`, pipelineDraft.id);
       showToast(normalizedDataset ? "파이프라인 생성 요청이 접수되었습니다." : "파이프라인 생성 요청을 접수했습니다. 실행 성공 후 카탈로그에 등록됩니다.");
       if (resetDraft) setDraftPipeline(initialDraftPipeline);
       if (navigateToJobs) onFlowChange("jobs");
@@ -1268,6 +1280,7 @@ export function useAskLakeData({
       }
       setSelectedJob(editableJob);
       setDraftPipeline(hydrateDraftPipelineFromJob(editableJob, initialDraftPipeline));
+      setEditingJobId(editableJob.id);
       onFlowChange("source");
       return undefined;
     }
