@@ -219,14 +219,15 @@ export function DatasetSidebar({
                     { label: "metrics", value: `${totalMetricCount}` },
                   ]}
                   subtitle="system.datasets"
-                  title={`tables (${datasets.length})`}
+                  title="테이블"
                 />
               ),
               icon: <Table2 className="text-indigo-600" />,
               id: tablesItemId,
               kind: "group",
-              label: `테이블(${datasets.length})`,
-              title: `테이블(${datasets.length})`,
+              label: "테이블",
+              meta: `${datasets.length}개`,
+              title: "테이블",
             },
           ],
           hoverCard: (
