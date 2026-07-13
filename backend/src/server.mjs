@@ -18,6 +18,8 @@ import { ensureMetadataSchema, resetMetadata } from "./metadataStore.mjs";
 import { listTargetDatabases } from "./targetDatabase.service.mjs";
 import { getCellphonesReviewAnalysisStatus, runCellphonesReviewAnalysis, suggestReviewAnalysisSchema } from "./reviewRowAnalysis.mjs";
 import { handleAuthRoute } from "./authService.mjs";
+import { compileRuleContract } from "./ruleCompiler.mjs";
+import { applySnapshotRules, supportsSnapshotRules } from "./snapshotRuleRuntime.mjs";
 
 const port = Number(process.env.PORT || 8080);
 
@@ -38,6 +40,13 @@ const server = http.createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
     if (request.method === "GET" && url.pathname === "/api/health") {
       sendJson(response, 200, { ok: true, service: "asklake-backend", time: new Date().toISOString() });
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/etl/sources/defaults") {
+      sendJson(response, 200, {
+        kafkaBroker: process.env.ASKLAKE_KAFKA_BROKER || "127.0.0.1:19092",
+      });
       return;
     }
 
@@ -181,6 +190,36 @@ const server = http.createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === "POST" && url.pathname === "/api/etl/rules/preview") {
+      const body = await readJson(request);
+      const compilation = compileRuleContract({
+        executionMode: body.executionMode || "snapshot",
+        ruleContractVersion: body.ruleContractVersion,
+        rules: Array.isArray(body.rules) ? body.rules : [],
+        schemaColumns: Array.isArray(body.schemaColumns) ? body.schemaColumns : [],
+        sourceType: body.sourceType || "",
+      });
+      if (compilation.status !== "pass") {
+        throw Object.assign(new Error(compilation.issues[0]?.message || "Rule compilation failed."), {
+          code: "RULE_COMPILATION_FAILED",
+          details: { issues: compilation.issues },
+          status: 400,
+        });
+      }
+      if (!supportsSnapshotRules(compilation.rules)) {
+        throw Object.assign(new Error("Preview supports canonical Snapshot operations only."), {
+          code: "RULE_PREVIEW_OPERATION_UNSUPPORTED",
+          status: 422,
+        });
+      }
+      const records = Array.isArray(body.records) ? body.records.slice(0, 100) : [];
+      sendJson(response, 200, {
+        compilation,
+        ...applySnapshotRules(records, compilation.rules),
+      });
+      return;
+    }
+
     if (request.method === "POST" && url.pathname === "/api/etl/jobs") {
       const body = await readJson(request);
       sendJson(response, 201, await createPipeline(body));
@@ -207,6 +246,7 @@ const server = http.createServer(async (request, response) => {
     sendJson(response, status, {
       error: {
         code,
+        ...(error.details && typeof error.details === "object" ? { details: error.details } : {}),
         message: error.message || "Internal server error",
       },
     });

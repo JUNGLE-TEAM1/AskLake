@@ -5,6 +5,8 @@ export type { ApiErrorResponse, AuditEntry, AuditResult, AuditTargetType } from 
 export type { CatalogDataset, CatalogDatasetRowsResponse, CatalogModelArtifact, DatasetMaterializationRun, LineageGraph, LineageGraphColumn, LineageGraphDataset, LineageGraphEdge, LineageLayer } from "./types/catalog";
 export type { AreaChartWidgetConfig, BarChartWidgetConfig, DashboardEntry, DashboardFilter, DashboardListFilterOptions, DashboardListQuery, DashboardListResponse, DashboardMeta, DashboardRevision, DashboardRuntimeMode, DashboardRuntimePage, DashboardRuntimeResponse, DashboardRuntimeWidget, DashboardWidgetColorConfig, DashboardRuntimeWidgetConfig, DashboardRuntimeWidgetConfigByType, DashboardRuntimeWidgetType, DashboardSortOption, DashboardStatus, DashboardView, DashboardWidgetAggregation, DashboardWidgetDateUnit, DashboardWidgetFormat, DashboardWidgetLayout, DashboardWidgetLineCurve, DashboardWidgetOrientation, DashboardWidgetPlaceholderKind, DashboardWidgetSortDirection, DashboardWidgetType, DonutChartWidgetConfig, HeatmapChartWidgetConfig, LineChartWidgetConfig, MetricWidgetConfig, PieChartWidgetConfig, RadialBarChartWidgetConfig, SavedDashboardCard, TableWidgetConfig, TreemapChartWidgetConfig } from "./types/dashboard";
 export type {
+  CanonicalRuleDraft,
+  CanonicalRuleOperation,
   CreatePipelineRequest,
   ContinuousWorkerLogsResponse,
   ContinuousMaintenanceRun,
@@ -30,14 +32,18 @@ export type {
   JobRunSummary,
   JobStats,
   JobStatus,
+  KafkaExecutionMode,
   KafkaContinuousBatch,
   KafkaContinuousSession,
   KafkaContinuousSessionStatus,
   PermissionDraft,
   RecordParsingDraft,
+  RecordParsingInvalidRow,
   RecordParsingPreviewResponse,
   QualityDraft,
   QualityRuleDraft,
+  RuleCompilationIssue,
+  RuleCompilationResult,
   RealtimeOperationalHealth,
   RealtimeOperationalMetrics,
   RetryBackoffStrategy,

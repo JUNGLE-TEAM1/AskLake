@@ -39,6 +39,11 @@ export type KafkaContinuousRuntime = {
   schemaFingerprint?: string | null;
   schemaStatus: string;
   schemaChanges: Array<Record<string, unknown>>;
+  ruleContractVersion: string;
+  ruleFingerprint?: string | null;
+  runtimeFingerprint?: string | null;
+  ruleMetrics: Record<string, number>;
+  lastRuleResult: Record<string, unknown>;
   consumedCount: number;
   storedCount: number;
   quarantinedCount: number;
@@ -73,11 +78,13 @@ export type KafkaContinuousSession = {
   lag?: number | null;
   checkpointPath: string;
   lastError?: string | null;
+  dagSteps: JobDagStep[];
 };
 
 export type KafkaContinuousBatch = {
   batchId: number;
   sessionId: string;
+  status: "running" | "success" | "failed";
   publishedAt?: string | null;
   consumedCount: number;
   storedCount: number;
@@ -92,6 +99,8 @@ export type KafkaContinuousBatch = {
   dataPath?: string | null;
   quarantinePath?: string | null;
   manifestPath?: string | null;
+  lastError?: string | null;
+  dagSteps: JobDagStep[];
 };
 
 export type ContinuousQuarantineRecord = {
@@ -101,6 +110,10 @@ export type ContinuousQuarantineRecord = {
   rawPayload: string;
   reason: string;
   schemaFingerprint?: string | null;
+  ruleFingerprint?: string | null;
+  ruleId?: string | null;
+  stage?: string | null;
+  targetColumn?: string | null;
   quarantinedAt?: string | null;
   replayStatus: string;
 };
@@ -187,6 +200,9 @@ export type JobRowData = {
   schemaSampleRows?: string[][];
   schemaSummary?: string;
   ruleSummary?: string;
+  ruleContractVersion?: "1.0";
+  rules?: CanonicalRuleDraft[];
+  ruleCompilation?: RuleCompilationResult;
   retryPolicy?: RetryPolicyDraft;
   retryPolicySummary?: string;
   runLimitSummary?: string;
@@ -331,6 +347,7 @@ export type SchemaColumnDraft = {
   reviewAnalysisRequireModel?: boolean;
   role?: string;
   sourceName: string;
+  sourceType?: string;
   targetName: string;
   targetOrder?: number;
   transformChain?: TransformChainStepDraft[];
@@ -345,6 +362,7 @@ export type SchemaDraft = {
 };
 
 export type TransformStepDraft = {
+  canonicalParameters?: Record<string, unknown>;
   enabled: boolean;
   id: string;
   input: string;
@@ -363,6 +381,7 @@ export type TransformDraft = {
 };
 
 export type QualityRuleDraft = {
+  canonicalParameters?: Record<string, unknown>;
   enabled: boolean;
   failureAction: "Warn" | "Quarantine" | "Fail Run" | "Drop Row" | "Set Null";
   id: string;
@@ -371,6 +390,57 @@ export type QualityRuleDraft = {
   severity: "Warning" | "Error";
   targetColumn: string;
   validationType: "Not Null" | "Range Check" | "Regex Match" | "Accepted Values";
+};
+
+export type CanonicalRuleOperation =
+  | "accepted_values"
+  | "cast"
+  | "copy"
+  | "custom_csv_classifier"
+  | "default_value"
+  | "json_extract"
+  | "lowercase_trim"
+  | "mask"
+  | "not_null"
+  | "null_guard"
+  | "parse_timestamp"
+  | "range"
+  | "regex"
+  | "rename"
+  | "sql_expression"
+  | "sql_result_materialize"
+  | "text_row_analysis"
+  | "unique";
+
+export type CanonicalRuleDraft = {
+  contractVersion: "1.0";
+  enabled: boolean;
+  failureDisposition: "keep" | "drop_row" | "set_null";
+  id: string;
+  inputColumns: string[];
+  kind: "transform" | "quality";
+  label?: string;
+  onError: "fail_batch" | "quarantine" | "warn";
+  operation: CanonicalRuleOperation | string;
+  outputColumns: string[];
+  outputType?: string;
+  parameters: Record<string, unknown>;
+  severity?: "warning" | "error";
+};
+
+export type RuleCompilationIssue = {
+  code: string;
+  field?: string;
+  message: string;
+  ruleId?: string;
+};
+
+export type RuleCompilationResult = {
+  contractVersion: "1.0";
+  issues: RuleCompilationIssue[];
+  outputSchema: Array<[string, string]>;
+  rules: CanonicalRuleDraft[];
+  status: "pass" | "fail";
 };
 
 export type QualityDraft = {
@@ -503,6 +573,8 @@ export type CreatePipelineRequest = {
   sourceLabel: string;
   schemaSummary: string;
   ruleSummary: string;
+  ruleContractVersion: "1.0";
+  rules: CanonicalRuleDraft[];
   transformOutputColumns: Array<[string, string]>;
   transformSteps: TransformStepDraft[];
   qualityInvalidRows: string[][];

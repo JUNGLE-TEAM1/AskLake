@@ -84,6 +84,7 @@ export type CatalogDataset = {
 export type DatasetMaterializationRun = {
   createdAt: string;
   jobId: string;
+  publicationManifest?: string;
   quality?: Record<string, unknown> | null;
   quarantine?: {
     format?: string;
@@ -92,14 +93,20 @@ export type DatasetMaterializationRun = {
     rows?: number;
   } | null;
   rowCount: number;
+  ruleContractVersion?: string;
+  ruleFingerprint?: string;
   runId: string;
+  runtimeFingerprint?: string;
+  schemaFingerprint?: string;
   sourceKind: "etl" | "sql" | "kafka";
   sourceLabel: string;
+  sourceRanges?: Array<Record<string, unknown>>;
   status: "success" | "failed" | "canceled" | "running" | "queued";
   storageLocation?: string;
   storageSizeBytes: number;
   textStructuring?: TextStructuringRuntimeCheck[];
   textStructuringExecution?: TextStructuringExecutionSummary;
+  transform?: Record<string, unknown> | null;
 };
 
 export type TextStructuringRuntimeCheck = {

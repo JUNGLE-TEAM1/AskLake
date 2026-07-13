@@ -48,7 +48,8 @@ AskLake는 사용자가 데이터셋의 출처, 품질, 권한, 실행 결과, �
 - SQL 좌측 도구의 차트 생성하기: bounded compatibility 결과 또는 선택 데이터셋을 소스로 Dashboard와 같은 위젯 설정에서 유형, 필드, 집계, 색상을 설정한다. Trino 전체 실행 결과는 현재 페이지 단위 표와 전체 보기로 탐색한다.
 - AI 활용 메뉴의 ChatGPT형 대화 UI: Catalog Dataset 컨텍스트를 고르는 대화 화면을 제공하며, 실제 AI 호출과 RAG runtime은 후속 범위로 둔다.
 - 수집/처리 Transform 화면은 필드 매핑과 quick transform function 중심으로 유지하며, AI 기반 필드 transform 버튼은 현재 MVP 범위에서 노출하지 않는다.
-- bounded compatibility 결과 기반 처리 Job 생성: SQL 화면의 다단계 모달에서 기본 정보, 스케줄, 거버넌스, 저장 설정을 완료한 뒤 기존 Job 생성 API를 호출한다.
+- Issue #567은 일반 Snapshot, Kafka Snapshot, Kafka Continuous의 스키마 타입과 Transform/Quality 실행 계약을 통합한다. 작업은 [Transform/Quality 공통 실행 통합 계획](transform-quality-unification-plan.md)의 Phase별 검증 게이트를 따르며, 전체 검증 전까지 Draft PR로 유지한다.
+- SQL preview 결과 기반 처리 Job 생성: SQL 화면의 다단계 모달에서 기본 정보, 스케줄, 거버넌스, 저장 설정을 완료한 뒤 기존 Job 생성 API를 호출한다.
 - 완료된 Trino Query Run은 Iceberg CTAS materialization으로 1회성 Dataset을 생성하고 physical table 확인 후 Catalog와 SQL 분석 대상에 자동 등록한다.
 - 완료된 Trino Query Run은 별도로 반복 SQL Job을 만들 수 있다. Job은 결과 page를 저장하지 않고 SQL recipe, 실행 actor, 스케줄, target metadata를 저장하며, 수동/예약 Run마다 전체 SQL을 다시 실행해 같은 논리 Dataset을 새 Iceberg table 버전으로 갱신한다.
 - Dashboard 목록/빌더/런타임은 FastAPI API를 우선 사용하고, 이전 backend 호환을 위해 404 local/mock fallback을 유지
@@ -101,9 +102,10 @@ Phase 0에서는 용어와 경계를 먼저 고정한다. `createdBy`, `owner`, 
 3. 사용자는 schema, rule, schedule, permission, target을 설정한다.
 4. 시스템은 레코드 구조화 설정을 포함한 draft를 검증하고 `POST /api/etl/jobs` request로 만든다.
 5. 성공 시 Job이 목록에 추가되고 Catalog target은 pending 상태로 안내된다.
-6. 사용자가 Job을 실행하면 Spark는 Preview와 같은 구조화 규칙을 전체 TXT 입력에 다시 적용한다.
-7. 모든 비어 있지 않은 행의 필드 개수가 확정된 컬럼 수와 같을 때만 target을 쓰고 Catalog dataset을 생성 또는 갱신한다. 불일치가 있으면 Run을 실패시키고 Catalog materialization을 만들지 않는다.
-8. 실패하면 toast와 audit log에 실패 기록을 남기고 optimistic 상태를 되돌린다.
+6. 사용자가 PostgreSQL Snapshot Job을 실행하거나 재실행하면 스키마 Preview 행 수와 무관하게 선택한 기본 테이블 전체를 일관된 DB snapshot으로 읽는다.
+7. 사용자가 TXT Job을 실행하면 Spark는 Preview와 같은 구조화 규칙을 전체 TXT 입력에 다시 적용한다.
+8. 모든 비어 있지 않은 행의 필드 개수가 확정된 컬럼 수와 같을 때만 target을 쓰고 Catalog dataset을 생성 또는 갱신한다. 불일치가 있으면 Run을 실패시키고 Catalog materialization을 만들지 않는다.
+9. 실패하면 toast와 audit log에 실패 기록을 남기고 optimistic 상태를 되돌린다.
 
 ### Flow B. 카탈로그에서 SQL 분석
 

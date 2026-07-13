@@ -30,6 +30,9 @@ child.stderr.on("data", (chunk) => process.stderr.write(`[backend] ${chunk}`));
 try {
   await waitForHealth();
   await waitForRestFixture();
+  await assertGet("/api/etl/sources/defaults", {
+    kafkaBroker: env.ASKLAKE_KAFKA_BROKER || "127.0.0.1:19092",
+  });
   await assertGet("/api/etl/jobs", {
     facets: {
       latestRunOutcomeCounts: { success: 0, failed: 0, canceled: 0 },
@@ -122,6 +125,49 @@ try {
     targetFormat: "Parquet",
     targetLayer: "GOLD",
   }, 400, "All-excluded schema should be rejected.");
+
+  const kafkaTargetRequest = {
+    id: "pair_a_verify_kafka_target",
+    jobName: "pair_a_verify_kafka_target_pipeline",
+    owner: "data-team-01",
+    permissionSummary: "verify",
+    rag: false,
+    retryPolicy: { backoffMultiplier: 2, backoffStrategy: "exponential", failureAction: "retry_then_fail", initialRetryDelayMinutes: 1, maxRetries: 0, maxRetryDelayMinutes: 30, retryIntervalMinutes: 1, timeoutMinutes: 60 },
+    retryPolicySummary: "재시도 없음 · 재시도 후 실패 처리",
+    runLimitSummary: "60분 초과 시 Run 실패 처리",
+    ruleSummary: "Kafka target contract verify",
+    transformOutputColumns: [],
+    transformSteps: [],
+    qualityInvalidRows: [],
+    qualityRules: [],
+    qualityScore: 100,
+    qualityStatus: "pass",
+    scheduleLabel: "manual",
+    schemaColumns: minio.draftPatch.schema.columns,
+    schemaFingerprint: minio.draftPatch.schema.schemaFingerprint,
+    schemaSampleRows: minio.draftPatch.schema.sampleRows,
+    schemaSummary: minio.draftPatch.schema.summary,
+    sourceConfig: [["Broker / Endpoint", "127.0.0.1:19092"], ["TOPIC / QUEUE NAME", "reviews.verify"]],
+    sourceLabel: "reviews.verify",
+    sourceType: "Stream / Kafka",
+    targetDataset: "pair_a_verify_kafka_target",
+    targetFormat: "parquet",
+    targetLayer: "BRONZE",
+  };
+  await assertPostFails(
+    "/api/etl/jobs",
+    kafkaTargetRequest,
+    400,
+    "Kafka Snapshot parquet target should be rejected.",
+    "TARGET_FORMAT_UNSUPPORTED",
+  );
+  await assertPostFails(
+    "/api/etl/jobs",
+    { ...kafkaTargetRequest, targetFormat: "jsonl", targetLayer: "GOLD" },
+    400,
+    "Kafka Snapshot GOLD target should be rejected.",
+    "TARGET_LAYER_UNSUPPORTED",
+  );
 
   const createRequest = {
     id: "pair_a_verify",
@@ -217,15 +263,18 @@ async function waitForRestFixture() {
   throw new Error(`REST source fixture did not become healthy at ${restFixtureUrl}/health.`);
 }
 
-async function assertPostFails(path, body, status, message) {
+async function assertPostFails(path, body, status, message, expectedCode) {
   const response = await fetch(`${baseUrl}${path}`, {
     body: JSON.stringify(body),
     headers: { "Content-Type": "application/json" },
     method: "POST",
   });
+  const payload = await response.json().catch(() => ({}));
   if (response.status !== status) {
-    const payload = await response.json().catch(() => ({}));
     throw new Error(`${message} Expected ${status}, got ${response.status}: ${JSON.stringify(payload)}`);
+  }
+  if (expectedCode && payload?.error?.code !== expectedCode) {
+    throw new Error(`${message} Expected ${expectedCode}, got ${JSON.stringify(payload)}`);
   }
 }
 

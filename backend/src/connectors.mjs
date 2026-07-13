@@ -4,7 +4,8 @@ import { NodeHttpHandler } from "@smithy/node-http-handler";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { fieldValue, formatBytes, inferSchemaColumns, parseSourceSample, schemaFingerprint, sourceId, upsertFields } from "./profile.mjs";
+import { loadKafkaJs } from "./kafka-codecs.mjs";
+import { canonicalSchemaType, fieldValue, formatBytes, inferSchemaColumns, parseSourceSample, schemaFingerprint, sourceId, upsertFields } from "./profile.mjs";
 
 const textFileExtensions = [".csv", ".json", ".jsonl", ".log", ".txt", ".tsv"];
 const backendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -627,7 +628,7 @@ export async function testMongoSource(fields) {
 }
 
 export async function testKafkaSource(fields, sourceType = "Stream / Kafka") {
-  const { Kafka } = await import("kafkajs");
+  const { Kafka } = await loadKafkaJs();
   const broker = requiredSourceField(fields, "Broker / Endpoint", "Kafka broker endpoint is required.");
   const topic = requiredSourceField(fields, "TOPIC / QUEUE NAME", "Kafka topic name is required.");
   const configuredGroupId = fieldValue(fields, "CONSUMER GROUP ID") || "asklake-schema-preview";
@@ -1365,7 +1366,7 @@ async function inspectParquetObjectWithJs({ bucket, client, key, rowLimit }) {
 }
 
 async function sampleKafkaMessages({ broker, groupId, rowLimit, topic }) {
-  const { Kafka } = await import("kafkajs");
+  const { Kafka } = await loadKafkaJs();
   const kafka = new Kafka({
     brokers: [broker],
     clientId: "asklake-source-sampler",
@@ -1375,26 +1376,46 @@ async function sampleKafkaMessages({ broker, groupId, rowLimit, topic }) {
   });
   const consumer = kafka.consumer({ groupId });
   const messages = [];
-  const timeoutMs = sourceConnectTimeoutMs("ASKLAKE_KAFKA_SAMPLE_TIMEOUT_MS", 3000);
+  const timeoutMs = sourceConnectTimeoutMs("ASKLAKE_KAFKA_SAMPLE_TIMEOUT_MS", 8000);
+  const idleMs = sourceConnectTimeoutMs("ASKLAKE_KAFKA_SAMPLE_IDLE_MS", 500);
+  const minimumMessages = Math.min(
+    rowLimit,
+    sourceConnectTimeoutMs("ASKLAKE_KAFKA_SAMPLE_MIN_MESSAGES", 3),
+  );
+  const settleMs = sourceConnectTimeoutMs("ASKLAKE_KAFKA_SAMPLE_SETTLE_MS", 1500);
   await consumer.connect();
   try {
     await consumer.subscribe({ fromBeginning: true, topic });
-    await new Promise((resolve) => {
-      const timer = setTimeout(resolve, timeoutMs);
+    await new Promise((resolve, reject) => {
+      let idleTimer;
+      let settleTimer;
+      let settled = false;
+      const finish = (error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutTimer);
+        if (idleTimer) clearTimeout(idleTimer);
+        if (settleTimer) clearTimeout(settleTimer);
+        if (error) reject(error);
+        else resolve();
+      };
+      const timeoutTimer = setTimeout(finish, timeoutMs);
       consumer.run({
         eachMessage: async ({ message }) => {
           if (messages.length >= rowLimit) return;
           const value = message.value?.toString("utf8") ?? "";
           if (value.trim()) messages.push(value);
           if (messages.length >= rowLimit) {
-            clearTimeout(timer);
-            resolve();
+            finish();
+            return;
           }
+          if (!settleTimer) settleTimer = setTimeout(finish, settleMs);
+          if (idleTimer) clearTimeout(idleTimer);
+          idleTimer = setTimeout(() => {
+            if (messages.length >= minimumMessages) finish();
+          }, idleMs);
         },
-      }).catch(() => {
-        clearTimeout(timer);
-        resolve();
-      });
+      }).catch((error) => finish(error));
     });
   } finally {
     await consumer.disconnect().catch(() => undefined);
@@ -1439,13 +1460,7 @@ function normalizeSparkColumnName(value) {
 
 function sparkLogicalType(value) {
   const normalized = String(value ?? "").toLowerCase();
-  if (normalized.includes("bool")) return "Boolean";
-  if (/(int|long|bigint|smallint|tinyint)/.test(normalized)) return "Integer";
-  if (/(float|double|decimal|numeric)/.test(normalized)) return "Float";
-  if (normalized.includes("timestamp")) return "Timestamp";
-  if (normalized.includes("date")) return "Date";
-  if (normalized.includes("array") || normalized.includes("struct") || normalized.includes("map")) return "JSON";
-  return "String";
+  return canonicalSchemaType(normalized);
 }
 
 function parquetJsLogicalType(name, field) {
@@ -1455,9 +1470,7 @@ function parquetJsLogicalType(name, field) {
   if (primitive.includes("boolean")) return "Boolean";
   if (logical.includes("timestamp") || normalizedName.includes("time") || normalizedName.endsWith("_at")) return "Timestamp";
   if (logical.includes("date")) return "Date";
-  if (primitive.includes("int") || logical.includes("int")) return "Integer";
-  if (primitive.includes("float") || primitive.includes("double") || primitive.includes("decimal")) return "Float";
-  return "String";
+  return canonicalSchemaType(`${primitive} ${logical}`);
 }
 
 function tail(value) {
