@@ -11,6 +11,7 @@ from app.schemas.dashboard import (
     DashboardAssistantResponse,
 )
 from app.services.dashboard_assistant_service import DashboardAssistantService
+from app.services.dashboard_runtime_service import DashboardRuntimeService
 
 router = APIRouter(prefix="/dashboards", tags=["dashboard-assistant"])
 
@@ -26,4 +27,9 @@ def request_dashboard_assistant(
         CatalogRepository(db),
         settings,
     )
+    if request.dashboard_id:
+        DashboardRuntimeService(
+            DashboardRuntimeRepository(db),
+            CatalogRepository(db),
+        ).require_assistant_access(request.dashboard_id, actor)
     return service.generate_response(request, actor)
