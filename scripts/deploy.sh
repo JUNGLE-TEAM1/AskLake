@@ -174,6 +174,7 @@ except (json.JSONDecodeError, TypeError, UnicodeDecodeError):
 ready = (
     isinstance(payload, dict)
     and payload.get("ok") is True
+    and payload.get("statusCode", 200) == 200
     and isinstance(payload.get("database"), dict)
     and payload["database"].get("ok") is True
 )
@@ -197,7 +198,7 @@ health_check() {
           printf 'Backend health is deployment-ready.\n'
           return
         fi
-        printf 'Backend health is not ready; expected JSON booleans .ok=true and .database.ok=true.\n' >&2
+        printf 'Backend health is not ready; expected JSON booleans .ok=true and .database.ok=true with .statusCode=200.\n' >&2
       fi
     fi
 
