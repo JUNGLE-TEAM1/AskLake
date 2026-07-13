@@ -151,7 +151,7 @@ Spark runner 입력:
 - `ASKLAKE_EMR_SERVERLESS_CONTINUOUS_*`: 별도 feature flag/application/entry point, helper py-files, Kafka/MSK IAM package와 시간당 실패 임계치. 제출 전에 `GetApplication`으로 `SPARK`, `emr-7.9.0` 이상, 시작 가능 상태를 검증한다. 기본 connector는 Spark 3.5.5/Scala 2.12이며, `packages` mode는 NAT/Maven egress 명시 승인을 요구하고 `jars` mode는 immutable S3 JAR URI를 요구한다. Streaming에는 Batch execution timeout을 전달하지 않는다.
 - `ASKLAKE_EMR_SERVERLESS_ADMISSION_*` 및 workload별 `BATCH|CONTINUOUS_MAX_*`: durable admission feature flag, application scheduler/maximumCapacity 상한, queue timeout, actor/project quota를 정의한다. driver/executor disk, `MAX_EXECUTORS`, memory overhead까지 Job 안전 상한에 포함한다. optional 시간당 단가가 0이면 비용 미설정으로 표시한다.
 - Phase 7 performance harness는 제품 env와 분리된 `ASKLAKE_RUN_STREAMING_LOAD_FAULT=true`, `ASKLAKE_STREAMING_TEST_DEDICATED_ENVIRONMENT=true` 두 gate를 실제 local fault 실행에 요구한다. count/rate/partitions/trigger/max offsets override는 `ASKLAKE_STREAMING_TEST_*`로만 적용하며 기본 verifier와 CI는 Docker/AWS side effect가 없는 config-only 계약만 실행한다.
-- Phase 8 Runtime cutover는 `ASKLAKE_RUNTIME_CUTOVER_REPORT_FILE`과 `ASKLAKE_RUNTIME_CUTOVER_PHASE7_REPORT_FILE`을 제품 process에 주입하지 않고 host deployment preflight에서만 읽는다. Production 후보 Runtime은 `promotion-ready` report, 현재 commit, env/region/Runtime, Phase 7 원본 SHA가 일치해야 하며 기본 `spark-rest + redpanda` rollback에는 report가 필요 없다.
+- Phase 8 Runtime cutover의 report/policy/evidence/Phase 7 절대 경로는 제품 process에 주입하지 않고 host deployment preflight에서만 읽는다. Production 후보 Runtime은 저장소 고정 plan을 포함한 네 원본 파일의 바이트 SHA, `promotion-ready` report, 정확한 gate 집합, 현재 commit, env/region/Runtime, stored 결과 재계산, 단계 artifact와 시간 순서, Phase 7의 16개 scenario/run 내부 gate, 롤백 commit/runbook이 모두 일치해야 한다. 기본 `spark-rest + redpanda` rollback에는 report가 필요 없다.
 
 Spark runner 결과:
 

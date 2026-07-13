@@ -224,6 +224,7 @@ npm run verify:runtime-cutover-contract
 
 ```bash
 npm run runtime:cutover-report -- \
+  --plan fixtures/runtime-cutover/phase8-rollout-plan.json \
   --policy /var/lib/asklake/evidence/phase8/cutover-policy.approved.json \
   --evidence /var/lib/asklake/evidence/phase8/cutover-evidence.json \
   --phase7-report /var/lib/asklake/evidence/phase7/approved-report.json \
@@ -231,7 +232,7 @@ npm run runtime:cutover-report -- \
   --run-id production-cutover-review
 ```
 
-Production `.env`가 `emr-serverless` 또는 `msk` 중 하나라도 선택하면 `ASKLAKE_RUNTIME_CUTOVER_REPORT_FILE`과 `ASKLAKE_RUNTIME_CUTOVER_PHASE7_REPORT_FILE`의 절대 경로가 필요하다. `scripts/verify-deploy-env.sh`는 `promotion-ready`, 모든 gate, 승인 정보, env/region/Runtime, 현재 commit SHA, Phase 7 원본 SHA/승인 요약을 대조한다. 기본 `spark-rest + redpanda`는 리포트 없이 롤백할 수 있다. Shadow 격리, 단계별 증거, 관측과 롤백 명령은 [Kafka·Spark Phase 8 점진적 Runtime 전환](kafka-spark-phase8-cutover.md)을 따른다.
+Production `.env`가 `emr-serverless` 또는 `msk` 중 하나라도 선택하면 `ASKLAKE_RUNTIME_CUTOVER_REPORT_FILE`, `ASKLAKE_RUNTIME_CUTOVER_POLICY_FILE`, `ASKLAKE_RUNTIME_CUTOVER_EVIDENCE_FILE`, `ASKLAKE_RUNTIME_CUTOVER_PHASE7_REPORT_FILE`의 절대 경로가 필요하다. `scripts/verify-deploy-env.sh`는 저장소의 고정 plan까지 포함한 네 원본 바이트 SHA, `promotion-ready`, 정확한 gate 집합, 승인 정보, env/region/Runtime, 현재 commit SHA, stored 결과 요약, 단계 `artifactRef`와 시간 순서, Phase 7의 16개 scenario/run 내부 gate, 롤백 커밋·런북을 독립적으로 대조한다. 기본 `spark-rest + redpanda`는 후보 리포트가 손상되어도 리포트 없이 롤백할 수 있다. Shadow 격리, 단계별 증거, 관측과 롤백 명령은 [Kafka·Spark Phase 8 점진적 Runtime 전환](kafka-spark-phase8-cutover.md)을 따른다.
 
 ```bash
 export AIRFLOW_EXECUTION_API_TOKEN=asklake-local-airflow-execution

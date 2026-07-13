@@ -16,6 +16,7 @@ REPLAY_INPUT_DIR="$TMP_DIR/replay-input"
 TRINO_CA_FILE="$TMP_DIR/trino-ca.pem"
 TRINO_KEYSTORE_FILE="$TMP_DIR/trino-keystore.jks"
 TRINO_PASSWORD_FILE="$TMP_DIR/trino-password.db"
+CUTOVER_DIR="$TMP_DIR/runtime-cutover"
 SECRET_SENTINEL="MinioAppSecret_DO_NOT_PRINT_7uQ"
 
 pass_count=0
@@ -137,6 +138,51 @@ write_valid_trino_aws_env() {
   } >> "$target"
 }
 
+write_runtime_cutover_bundle() {
+  rm -rf -- "$CUTOVER_DIR"
+  node "$ROOT_DIR/backend/scripts/verify-runtime-cutover-contract.mjs" \
+    --write-test-bundle "$CUTOVER_DIR" >/dev/null
+}
+
+append_candidate_runtime_env() {
+  local target="$1"
+  {
+    printf '%s\n' \
+      'ASKLAKE_SPARK_RUNTIME=emr-serverless' \
+      'ASKLAKE_KAFKA_RUNTIME=msk' \
+      'ASKLAKE_STORAGE_ENVIRONMENT=production' \
+      "ASKLAKE_RUNTIME_CUTOVER_REPORT_FILE=$CUTOVER_DIR/report.json" \
+      "ASKLAKE_RUNTIME_CUTOVER_POLICY_FILE=$CUTOVER_DIR/policy.json" \
+      "ASKLAKE_RUNTIME_CUTOVER_EVIDENCE_FILE=$CUTOVER_DIR/evidence.json" \
+      "ASKLAKE_RUNTIME_CUTOVER_PHASE7_REPORT_FILE=$CUTOVER_DIR/phase7.json" \
+      'ASKLAKE_EMR_SERVERLESS_ENABLED=true' \
+      'ASKLAKE_EMR_SERVERLESS_APPLICATION_ID=00fak3applicationid' \
+      'ASKLAKE_EMR_SERVERLESS_EXECUTION_ROLE_ARN=arn:aws:iam::123456789012:role/asklake-emr-runtime' \
+      'ASKLAKE_EMR_SERVERLESS_ENTRY_POINT_URI=s3://asklake-test-runtime/jobs/batch.py' \
+      'ASKLAKE_EMR_SERVERLESS_ARTIFACT_URI=s3://asklake-test-runtime/artifacts/asklake.zip' \
+      'ASKLAKE_EMR_SERVERLESS_LOG_URI=s3://asklake-test-runtime/logs/' \
+      'ASKLAKE_EMR_SERVERLESS_ADMISSION_ENABLED=true' \
+      'ASKLAKE_EMR_SERVERLESS_REQUIRE_JOB_COST_ALLOCATION=true' \
+      'ASKLAKE_EMR_SERVERLESS_CONTINUOUS_ENABLED=true' \
+      'ASKLAKE_EMR_SERVERLESS_CONTINUOUS_APPLICATION_ID=00fak3continuousid' \
+      'ASKLAKE_EMR_SERVERLESS_CONTINUOUS_ENTRY_POINT_URI=s3://asklake-test-runtime/jobs/continuous.py' \
+      'ASKLAKE_EMR_SERVERLESS_CONTINUOUS_DEPENDENCY_MODE=jars' \
+      'ASKLAKE_EMR_SERVERLESS_CONTINUOUS_JAR_URIS=s3://asklake-test-runtime/jars/spark-kafka.jar,s3://asklake-test-runtime/jars/msk-iam.jar' \
+      'ASKLAKE_MSK_ENABLED=true' \
+      'ASKLAKE_MSK_BOOTSTRAP_BROKERS=b-1.asklake-test.kafka.ap-northeast-2.amazonaws.com:9098' \
+      'ASKLAKE_MSK_REGION=ap-northeast-2' \
+      'ASKLAKE_MSK_AUTH_MODE=iam' \
+      'ASKLAKE_MSK_TLS_ENABLED=true'
+  } >> "$target"
+}
+
+write_valid_candidate_env() {
+  local target="$1"
+  write_valid_aws_env "$target"
+  write_runtime_cutover_bundle
+  append_candidate_runtime_env "$target"
+}
+
 replace_env_value() {
   local target="$1"
   local key="$2"
@@ -157,9 +203,10 @@ run_preflight() {
 
 expect_preflight_pass() {
   local name="$1"
+  local compose_file="${2:-$VALID_COMPOSE}"
   local output
 
-  if output="$(run_preflight 2>&1)"; then
+  if output="$(run_preflight "$compose_file" 2>&1)"; then
     if [[ "$output" == *"$SECRET_SENTINEL"* ]]; then
       record_fail "$name (secret appeared in output)"
     else
@@ -221,6 +268,60 @@ printf '%s\n' 'ASKLAKE_SPARK_RUNTIME=emr-serverless' >> "$ENV_FILE"
 expect_preflight_failure \
   'production candidate Runtime requires a Phase 8 promotion report' \
   'ASKLAKE_RUNTIME_CUTOVER_PHASE7_REPORT_FILE must be set' \
+  "$ROOT_DIR/deploy/docker-compose.prod.yml"
+
+write_valid_candidate_env "$ENV_FILE"
+expect_preflight_pass \
+  'approved candidate Runtime bundle passes actual production preflight' \
+  "$ROOT_DIR/deploy/docker-compose.prod.yml"
+
+write_valid_candidate_env "$ENV_FILE"
+printf ' ' >> "$CUTOVER_DIR/evidence.json"
+expect_preflight_failure \
+  'candidate Runtime rejects byte-level evidence tampering' \
+  'sourceArtifacts.evidence.sha256 mismatch' \
+  "$ROOT_DIR/deploy/docker-compose.prod.yml"
+
+write_valid_candidate_env "$ENV_FILE"
+printf ' ' >> "$CUTOVER_DIR/phase7.json"
+expect_preflight_failure \
+  'candidate Runtime rejects byte-level Phase 7 tampering' \
+  'embedded Phase 7 report SHA-256 mismatch' \
+  "$ROOT_DIR/deploy/docker-compose.prod.yml"
+
+write_valid_candidate_env "$ENV_FILE"
+python3 - "$CUTOVER_DIR/report.json" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+report = json.loads(path.read_text(encoding="utf-8"))
+report["gates"].pop()
+path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+PY
+expect_preflight_failure \
+  'candidate Runtime rejects a missing promotion gate' \
+  'cutover report gate set does not match' \
+  "$ROOT_DIR/deploy/docker-compose.prod.yml"
+
+write_valid_candidate_env "$ENV_FILE"
+replace_env_value "$ENV_FILE" ASKLAKE_STORAGE_ENVIRONMENT staging
+expect_preflight_failure \
+  'candidate Runtime rejects deployment environment drift' \
+  'target storageEnvironment mismatch' \
+  "$ROOT_DIR/deploy/docker-compose.prod.yml"
+
+write_valid_aws_env "$ENV_FILE"
+printf '%s\n' \
+  'ASKLAKE_SPARK_RUNTIME=spark-rest' \
+  'ASKLAKE_KAFKA_RUNTIME=redpanda' \
+  'ASKLAKE_RUNTIME_CUTOVER_REPORT_FILE=/does/not/exist/report.json' \
+  'ASKLAKE_RUNTIME_CUTOVER_POLICY_FILE=/does/not/exist/policy.json' \
+  'ASKLAKE_RUNTIME_CUTOVER_EVIDENCE_FILE=/does/not/exist/evidence.json' \
+  'ASKLAKE_RUNTIME_CUTOVER_PHASE7_REPORT_FILE=/does/not/exist/phase7.json' >> "$ENV_FILE"
+expect_preflight_pass \
+  'default rollback Runtime bypasses damaged candidate artifacts' \
   "$ROOT_DIR/deploy/docker-compose.prod.yml"
 
 write_valid_trino_aws_env "$ENV_FILE"

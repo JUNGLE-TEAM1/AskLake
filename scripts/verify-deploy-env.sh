@@ -171,6 +171,8 @@ if [[ "$spark_runtime" != "spark-rest" || "$kafka_runtime" != "redpanda" ]]; the
   required_keys+=(
     ASKLAKE_RUNTIME_CUTOVER_PHASE7_REPORT_FILE
     ASKLAKE_RUNTIME_CUTOVER_REPORT_FILE
+    ASKLAKE_RUNTIME_CUTOVER_POLICY_FILE
+    ASKLAKE_RUNTIME_CUTOVER_EVIDENCE_FILE
     ASKLAKE_SPARK_RUNTIME
     ASKLAKE_KAFKA_RUNTIME
     ASKLAKE_STORAGE_ENVIRONMENT
@@ -320,7 +322,10 @@ fi
 
 if [[ "$runtime_promotion" == "true" ]]; then
   cutover_report_file="$(env_value_for ASKLAKE_RUNTIME_CUTOVER_REPORT_FILE)"
+  cutover_policy_file="$(env_value_for ASKLAKE_RUNTIME_CUTOVER_POLICY_FILE)"
+  cutover_evidence_file="$(env_value_for ASKLAKE_RUNTIME_CUTOVER_EVIDENCE_FILE)"
   phase7_report_file="$(env_value_for ASKLAKE_RUNTIME_CUTOVER_PHASE7_REPORT_FILE)"
+  cutover_plan_file="$ROOT_DIR/backend/fixtures/runtime-cutover/phase8-rollout-plan.json"
   require_runtime_report_file() {
     local runtime_report_key="$1"
     local runtime_report_path="$2"
@@ -330,11 +335,18 @@ if [[ "$runtime_promotion" == "true" ]]; then
     fi
   }
   require_runtime_report_file ASKLAKE_RUNTIME_CUTOVER_REPORT_FILE "$cutover_report_file"
+  require_runtime_report_file ASKLAKE_RUNTIME_CUTOVER_POLICY_FILE "$cutover_policy_file"
+  require_runtime_report_file ASKLAKE_RUNTIME_CUTOVER_EVIDENCE_FILE "$cutover_evidence_file"
   require_runtime_report_file ASKLAKE_RUNTIME_CUTOVER_PHASE7_REPORT_FILE "$phase7_report_file"
+  require_runtime_report_file PHASE8_ROLLOUT_PLAN "$cutover_plan_file"
+  env_file_absolute="$(cd "$(dirname "$ENV_FILE")" && pwd)/$(basename "$ENV_FILE")"
   python3 backend/scripts/verify-runtime-cutover-gate.py \
     --report "$cutover_report_file" \
+    --plan "$cutover_plan_file" \
+    --policy "$cutover_policy_file" \
+    --evidence "$cutover_evidence_file" \
     --phase7-report "$phase7_report_file" \
-    --env-file "$ENV_FILE" \
+    --env-file "$env_file_absolute" \
     --repository-root "$ROOT_DIR"
 fi
 

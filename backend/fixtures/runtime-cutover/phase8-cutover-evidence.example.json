@@ -27,22 +27,26 @@
     "docker-regression": {
       "status": "passed",
       "completedAt": "2026-07-14T00:00:00.000Z",
-      "evidenceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      "evidenceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "artifactRef": "s3://asklake-phase8-test/evidence/docker-regression.json"
     },
     "aws-batch-staging": {
       "status": "passed",
       "completedAt": "2026-07-14T01:00:00.000Z",
-      "evidenceSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      "evidenceSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "artifactRef": "s3://asklake-phase8-test/evidence/aws-batch-staging.json"
     },
     "aws-continuous-staging": {
       "status": "passed",
       "completedAt": "2026-07-14T02:00:00.000Z",
-      "evidenceSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      "evidenceSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "artifactRef": "s3://asklake-phase8-test/evidence/aws-continuous-staging.json"
     },
     "small-workload-cutover": {
       "status": "passed",
       "completedAt": "2026-07-14T03:00:00.000Z",
-      "evidenceSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      "evidenceSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "artifactRef": "s3://asklake-phase8-test/evidence/small-workload-cutover.json"
     }
   },
   "shadowRuns": [
@@ -142,7 +146,7 @@
     "kafkaRuntime": "redpanda",
     "previousGoodRevision": "1111111111111111111111111111111111111111",
     "owner": "data-platform-oncall",
-    "runbookRef": "docs/kafka-spark-phase8-cutover.md#rollback",
+    "runbookRef": "docs/kafka-spark-phase8-cutover.md#9-rollback",
     "lastTestedAt": "2026-07-14T06:30:00.000Z"
   },
   "escalation": {

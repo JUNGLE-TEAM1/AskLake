@@ -16,7 +16,7 @@
   "minimumShadowRuns": null,
   "minimumObservationMinutes": null,
   "thresholds": {
-    "maxRowCountDelta": null,
+    "maxStoredCountDelta": null,
     "maxQuarantineCountDelta": null,
     "maxErrorRate": null,
     "maxLag": null,

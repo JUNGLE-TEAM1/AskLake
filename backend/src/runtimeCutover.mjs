@@ -26,8 +26,26 @@ const EXPLICIT_STAGE_EVIDENCE = Object.freeze([
 ]);
 const SPARK_RUNTIMES = Object.freeze(new Set(["spark-rest", "emr-serverless"]));
 const KAFKA_RUNTIMES = Object.freeze(new Set(["redpanda", "msk"]));
+const PHASE7_SCENARIOS = Object.freeze(new Set([
+  "small-steady",
+  "ramp",
+  "burst",
+  "backlog",
+  "capacity-cap",
+  "scale-down",
+  "multi-continuous",
+  "continuous-with-batch",
+  "kafka-disconnect",
+  "s3-write-failure",
+  "schema-quarantine-surge",
+  "emr-job-failure",
+  "backend-restart",
+  "checkpoint-permission",
+  "invalid-authentication",
+  "poison-records",
+]));
 const THRESHOLD_NAMES = Object.freeze([
-  "maxRowCountDelta",
+  "maxStoredCountDelta",
   "maxQuarantineCountDelta",
   "maxErrorRate",
   "maxLag",
@@ -99,9 +117,13 @@ export function validateRuntimeCutoverPolicy(policy) {
     for (const [name, value] of Object.entries(thresholds)) {
       if (value === null) throw new Error(`Approved runtime cutover policy threshold cannot be null: ${name}`);
     }
+    for (const name of ["requireSchemaMatch", "requireValueChecksumMatch", "requireQuarantineChecksumMatch"]) {
+      if (policy[name] !== true) throw new Error(`Approved runtime cutover policy requires ${name}=true.`);
+    }
   }
   return {
     ...policy,
+    approvedAt: policy.approvedAt ? new Date(isoTimestamp(policy.approvedAt, "approvedAt")).toISOString() : null,
     target,
     minimumShadowRuns,
     minimumObservationMinutes,
@@ -146,11 +168,13 @@ export function normalizeRuntimeCutoverEvidence(evidence) {
   };
 }
 
-export function evaluateRuntimeCutover({ plan: planValue, policy: policyValue, evidence: evidenceValue, phase7Report, phase7ReportSha256 }) {
+export function evaluateRuntimeCutover({ plan: planValue, policy: policyValue, evidence: evidenceValue, phase7Report, phase7ReportSha256, sourceArtifacts: sourceArtifactsValue }) {
   const plan = validateRuntimeCutoverPlan(planValue);
   const policy = validateRuntimeCutoverPolicy(policyValue);
   const evidence = normalizeRuntimeCutoverEvidence(evidenceValue);
   const phase7 = normalizePhase7Report(phase7Report, phase7ReportSha256);
+  const sourceArtifacts = normalizeSourceArtifacts(sourceArtifactsValue, phase7ReportSha256);
+  const generatedAt = new Date().toISOString();
   const gates = [];
 
   addPhase7Gate(gates, phase7);
@@ -161,11 +185,12 @@ export function evaluateRuntimeCutover({ plan: planValue, policy: policyValue, e
   addObservationGates(gates, policy, evidence.observation);
   addRollbackGates(gates, plan, evidence.rollback, evidence.escalation);
   addApprovalGates(gates, plan, policy);
+  addChronologyGates(gates, { generatedAt, phase7, policy, evidence });
 
   const status = cutoverStatus(gates.map((item) => item.status));
   return {
     schemaVersion: RUNTIME_CUTOVER_REPORT_SCHEMA,
-    generatedAt: new Date().toISOString(),
+    generatedAt,
     campaignId: evidence.campaignId,
     evidenceKind: evidence.exampleOnly === true ? "example" : "operational",
     status,
@@ -186,6 +211,7 @@ export function evaluateRuntimeCutover({ plan: planValue, policy: policyValue, e
       requireQuarantineChecksumMatch: policy.requireQuarantineChecksumMatch,
     },
     phase7Report: phase7,
+    sourceArtifacts,
     target: {
       ...policy.target,
       sourceRevision: evidence.environment.sourceRevision,
@@ -216,12 +242,13 @@ export function renderRuntimeCutoverMarkdown(report) {
     `- Target: ${report.target.sparkRuntime} + ${report.target.kafkaRuntime} / ${report.target.appEnvironment} / ${report.target.region}`,
     `- Source revision: ${report.target.sourceRevision}`,
     `- Phase 7 report SHA-256: ${report.phase7Report.sha256 || "-"}`,
+    `- Plan / policy / evidence SHA-256: ${report.sourceArtifacts.plan.sha256} / ${report.sourceArtifacts.policy.sha256} / ${report.sourceArtifacts.evidence.sha256}`,
     "",
     "## Shadow 요약",
     "",
-    "| 반복 | 최대 row delta | 최대 quarantine delta | schema 불일치 | value 불일치 | quarantine 불일치 |",
+    "| 반복 | 최대 stored row delta | 최대 quarantine delta | schema 불일치 | value 불일치 | quarantine 불일치 |",
     "|---:|---:|---:|---:|---:|---:|",
-    `| ${report.shadowSummary.runCount} | ${report.shadowSummary.maxRowCountDelta} | ${report.shadowSummary.maxQuarantineCountDelta} | ${report.shadowSummary.schemaMismatchRuns} | ${report.shadowSummary.valueMismatchRuns} | ${report.shadowSummary.quarantineMismatchRuns} |`,
+    `| ${report.shadowSummary.runCount} | ${report.shadowSummary.maxStoredCountDelta} | ${report.shadowSummary.maxQuarantineCountDelta} | ${report.shadowSummary.schemaMismatchRuns} | ${report.shadowSummary.valueMismatchRuns} | ${report.shadowSummary.quarantineMismatchRuns} |`,
     "",
     "## 판정 근거",
     "",
@@ -297,6 +324,7 @@ function normalizeStageEvidence(value) {
       status: item.status,
       completedAt: item.completedAt ? new Date(isoTimestamp(item.completedAt, `stageEvidence.${stage}.completedAt`)).toISOString() : null,
       evidenceSha256: item.evidenceSha256 ? checksum(item.evidenceSha256, `stageEvidence.${stage}.evidenceSha256`) : null,
+      artifactRef: item.artifactRef ? evidenceArtifactUri(item.artifactRef, `stageEvidence.${stage}.artifactRef`) : null,
     };
   }
   return result;
@@ -368,19 +396,62 @@ function normalizeEscalation(value) {
 
 function normalizePhase7Report(value, shaValue) {
   if (!value || typeof value !== "object") {
-    return { schemaVersion: null, status: null, profileId: null, approvalStatus: null, approvedBy: null, approvedAt: null, evidenceKind: null, sha256: null };
+    return { schemaVersion: null, status: null, profileId: null, approvalStatus: null, approvedBy: null, approvedAt: null, evidenceKind: null, contractComplete: false, sha256: null };
   }
   const sha256 = SHA256_PATTERN.test(String(shaValue || "").toLowerCase()) ? String(shaValue).toLowerCase() : null;
+  const approvedAt = safeIsoTimestamp(value.profile?.approvedAt);
   return {
     schemaVersion: value.schemaVersion || null,
     status: value.status || null,
     profileId: value.profile?.profileId || null,
     approvalStatus: value.profile?.approvalStatus || null,
     approvedBy: value.profile?.approvedBy || null,
-    approvedAt: value.profile?.approvedAt || null,
+    approvedAt,
     evidenceKind: value.evidenceKind || null,
+    contractComplete: phase7ContractComplete(value),
     sha256,
   };
+}
+
+function normalizeSourceArtifacts(value, phase7ReportSha256) {
+  assertObject(value, "runtime cutover sourceArtifacts");
+  const normalized = {};
+  for (const name of ["plan", "policy", "evidence", "phase7"]) {
+    assertObject(value[name], `sourceArtifacts.${name}`);
+    normalized[name] = { sha256: checksum(value[name].sha256, `sourceArtifacts.${name}.sha256`) };
+  }
+  if (normalized.phase7.sha256 !== String(phase7ReportSha256 || "").toLowerCase()) {
+    throw new Error("sourceArtifacts.phase7.sha256 must match the Phase 7 report SHA-256.");
+  }
+  return normalized;
+}
+
+function phase7ContractComplete(value) {
+  const minimumRuns = value?.profile?.minimumSuccessfulRuns;
+  const coverage = value?.scenarioCoverage;
+  const scenarios = value?.scenarios;
+  if (!Number.isSafeInteger(minimumRuns) || minimumRuns <= 0 || !coverage || !Array.isArray(scenarios)) return false;
+  if (!exactStringSet(coverage.requiredScenarioIds, PHASE7_SCENARIOS) || !Array.isArray(coverage.missingScenarioIds) || coverage.missingScenarioIds.length) return false;
+  if (scenarios.length !== PHASE7_SCENARIOS.size) return false;
+  const scenarioIds = new Set();
+  for (const scenario of scenarios) {
+    if (!scenario || typeof scenario !== "object" || Array.isArray(scenario)) return false;
+    scenarioIds.add(scenario.scenarioId);
+    if (scenario.status !== "passed" || !Number.isSafeInteger(scenario.runCount) || scenario.runCount < minimumRuns) return false;
+    if (!allPassedGates(scenario.gates) || !Array.isArray(scenario.runs) || scenario.runs.length !== scenario.runCount) return false;
+    for (const run of scenario.runs) {
+      if (!run || run.status !== "passed" || !allPassedGates(run.gates)) return false;
+    }
+  }
+  return scenarioIds.size === PHASE7_SCENARIOS.size && [...scenarioIds].every((scenarioId) => PHASE7_SCENARIOS.has(scenarioId));
+}
+
+function allPassedGates(value) {
+  return Array.isArray(value) && value.length > 0 && value.every((item) => item && item.status === "passed" && typeof item.name === "string" && item.name);
+}
+
+function exactStringSet(value, expected) {
+  return Array.isArray(value) && value.length === expected.size && new Set(value).size === expected.size && value.every((item) => expected.has(item));
 }
 
 function addPhase7Gate(gates, phase7) {
@@ -390,12 +461,13 @@ function addPhase7Gate(gates, phase7) {
     && phase7.approvedBy
     && phase7.approvedAt
     && phase7.evidenceKind === "operational"
+    && phase7.contractComplete === true
     && phase7.sha256;
   gates.push(gate(
     "phase7-approved-report",
     complete ? "passed" : "insufficient-evidence",
     complete ? phase7.status : null,
-    "passed + approved + SHA-256",
+    "all 16 scenarios passed + approved + SHA-256",
     "Phase 8 promotion requires the exact approved operational Phase 7 performance report.",
   ));
 }
@@ -428,12 +500,12 @@ function addExplicitStageGates(gates, stageEvidence) {
     const item = stageEvidence[stage];
     let status = "insufficient-evidence";
     if (item?.status === "failed") status = "failed";
-    if (item?.status === "passed" && item.completedAt && item.evidenceSha256) status = "passed";
+    if (item?.status === "passed" && item.completedAt && item.evidenceSha256 && item.artifactRef) status = "passed";
     gates.push(gate(
       `stage:${stage}`,
       status,
       item?.status || null,
-      "passed + timestamp + SHA-256",
+      "passed + timestamp + artifactRef + SHA-256",
       `Phase 8 stage ${stage} must have durable evidence.`,
     ));
   }
@@ -480,7 +552,7 @@ function addShadowRunGates(gates, policy, evidence) {
 
   const summary = summarizeShadowRuns(evidence.shadowRuns);
   for (const run of evidence.shadowRuns) addRunIntegrityGates(gates, run);
-  addThresholdGate(gates, "row-count-delta", summary.maxRowCountDelta, policy.thresholds.maxRowCountDelta, "Baseline/candidate consumed counts must stay within the approved delta.");
+  addThresholdGate(gates, "stored-count-delta", summary.maxStoredCountDelta, policy.thresholds.maxStoredCountDelta, "Baseline/candidate stored output counts must stay within the approved delta.");
   addThresholdGate(gates, "quarantine-count-delta", summary.maxQuarantineCountDelta, policy.thresholds.maxQuarantineCountDelta, "Baseline/candidate quarantine counts must stay within the approved delta.");
   gates.push(requirementGate("schema-match", summary.schemaMismatchRuns === 0, policy.requireSchemaMatch, summary.schemaMismatchRuns, "Schema fingerprints must match when required."));
   gates.push(requirementGate("value-checksum-match", summary.valueMismatchRuns === 0, policy.requireValueChecksumMatch, summary.valueMismatchRuns, "Canonical value checksums must match when required."));
@@ -561,11 +633,37 @@ function addApprovalGates(gates, plan, policy) {
   ));
 }
 
+function addChronologyGates(gates, { generatedAt, phase7, policy, evidence }) {
+  const stageTimes = EXPLICIT_STAGE_EVIDENCE.map((stage) => timestampOrNull(evidence.stageEvidence[stage]?.completedAt));
+  const phase7ApprovedAt = timestampOrNull(phase7.approvedAt);
+  const observationStartedAt = timestampOrNull(evidence.observation.startedAt);
+  const observationCompletedAt = timestampOrNull(evidence.observation.completedAt);
+  const approvedAt = timestampOrNull(policy.approvedAt);
+  const rollbackTestedAt = timestampOrNull(evidence.rollback.lastTestedAt);
+  const generatedAtTime = timestampOrNull(generatedAt);
+
+  addTimeGate(gates, "chronology:phase7-before-phase8", [phase7ApprovedAt, stageTimes[0]], ([phase7Time, dockerTime]) => phase7Time <= dockerTime, "Phase 7 approval must precede Phase 8 execution.");
+  addTimeGate(gates, "chronology:stage-order", stageTimes, (values) => values.every((value, index) => index === 0 || values[index - 1] <= value), "Phase 8 explicit stages must complete in plan order.");
+  addTimeGate(gates, "chronology:observation-after-small-workload", [stageTimes.at(-1), observationStartedAt], ([smallWorkloadTime, observationTime]) => smallWorkloadTime <= observationTime, "Observation must start after the small-workload cutover evidence completes.");
+  addTimeGate(gates, "chronology:approval-after-observation", [observationCompletedAt, approvedAt], ([observationTime, approvalTime]) => observationTime <= approvalTime, "Promotion approval must occur after observation completes.");
+  addTimeGate(gates, "chronology:rollback-test-before-approval", [rollbackTestedAt, approvedAt], ([rollbackTime, approvalTime]) => rollbackTime <= approvalTime, "Rollback readiness must be tested before promotion approval.");
+  const evidenceTimes = [phase7ApprovedAt, ...stageTimes, observationStartedAt, observationCompletedAt, rollbackTestedAt, approvedAt];
+  addTimeGate(gates, "chronology:no-future-evidence", [...evidenceTimes, generatedAtTime], (values) => values.slice(0, -1).every((value) => value <= values.at(-1)), "Evidence and approvals must not be later than report generation.");
+}
+
+function addTimeGate(gates, name, values, predicate, detail) {
+  if (values.some((value) => !Number.isFinite(value))) {
+    gates.push(gate(name, "insufficient-evidence", null, "ordered timestamps", `${detail} One or more timestamps are missing.`));
+    return;
+  }
+  gates.push(gate(name, predicate(values) ? "passed" : "failed", values.map((value) => new Date(value).toISOString()).join(" <= "), "ordered timestamps", detail));
+}
+
 function summarizeShadowRuns(runs) {
   return {
     runCount: runs.length,
     integrityFailureSides: runs.flatMap((run) => ["baseline", "candidate"].map((side) => runIntegrityPassed(run, side))).filter((passed) => !passed).length,
-    maxRowCountDelta: maximum(runs.map((run) => Math.abs(run.baseline.consumedCount - run.candidate.consumedCount))),
+    maxStoredCountDelta: maximum(runs.map((run) => Math.abs(run.baseline.storedCount - run.candidate.storedCount))),
     maxQuarantineCountDelta: maximum(runs.map((run) => Math.abs(run.baseline.quarantinedCount - run.candidate.quarantinedCount))),
     schemaMismatchRuns: runs.filter((run) => run.baseline.schemaFingerprint !== run.candidate.schemaFingerprint).length,
     valueMismatchRuns: runs.filter((run) => run.baseline.valueChecksum !== run.candidate.valueChecksum).length,
@@ -651,6 +749,10 @@ function objectStorageUri(value, name) {
     throw new Error(`${name} contains an unsafe path segment.`);
   }
   return normalized.replace(/^s3:\/\//, "s3a://");
+}
+
+function evidenceArtifactUri(value, name) {
+  return objectStorageUri(value, name);
 }
 
 function safeRepositoryPath(value, name) {
@@ -745,6 +847,19 @@ function isoTimestamp(value, name) {
   const parsed = Date.parse(normalized);
   if (!Number.isFinite(parsed)) throw new Error(`${name} must be an ISO timestamp.`);
   return parsed;
+}
+
+function safeIsoTimestamp(value) {
+  try {
+    return value ? new Date(isoTimestamp(value, "timestamp")).toISOString() : null;
+  } catch {
+    return null;
+  }
+}
+
+function timestampOrNull(value) {
+  const parsed = Date.parse(String(value || ""));
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function nullablePositiveInteger(value, name) {
