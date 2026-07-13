@@ -199,6 +199,67 @@ const checks = [
     ],
   },
   {
+    name: "SQL result dialog pages through the complete stored run snapshot",
+    file: "src/pages/sql/SqlResultsPanel.tsx",
+    patterns: [
+      /dialogResultDraft: SqlResultDraft \| null;/,
+      /pagePending: boolean;/,
+      /onPageChange: \(offset: number\) => void;/,
+      /aria-label="SQL 결과 페이지 탐색"/,
+      />\s*처음\s*<\/Button>/,
+      />\s*이전\s*<\/Button>/,
+      /aria-label="SQL 결과 페이지"/,
+      />\s*다음\s*<\/Button>/,
+      />\s*마지막\s*<\/Button>/,
+      /role="alert"/,
+    ],
+    forbiddenPatterns: [
+      /resultDraft\.resultTruncated/,
+      /최대.*행 탐색/,
+    ],
+  },
+  {
+    name: "SQL result paging adapter requests a stored run page by offset and limit",
+    file: "src/services/mockApi.ts",
+    patterns: [
+      /export async function getQueryPreviewPage\(runId: string, options: QueryResultPageOptions\)/,
+      /new URLSearchParams\(\{ limit: String\(limit\), offset: String\(offset\) \}\)/,
+      /\/api\/query\/runs\/\$\{encodeURIComponent\(runId\)\}\?\$\{params\.toString\(\)\}/,
+      /pageLimit: options\.limit/,
+      /pageOffset: 0/,
+    ],
+    forbiddenPatterns: [
+      /resultLimit:/,
+      /resultTruncated:/,
+    ],
+  },
+  {
+    name: "SQL user edits do not reinitialize the query when cached results are invalidated",
+    file: "src/pages/sql/SqlAnalysisPage.tsx",
+    patterns: [
+      /const initializedBaseDatasetIdRef = useRef<string \| null \| undefined>\(undefined\);/,
+      /if \(initializedBaseDatasetIdRef\.current === nextBaseDatasetId\) return;/,
+      /initializedBaseDatasetIdRef\.current = nextBaseDatasetId;/,
+      /}, \[baseDataset\?\.id\]\);/,
+      /const updateQuery = \(nextQuery: string\) => \{[\s\S]*setQuery\(nextQuery\);[\s\S]*resetResultState\(\);/,
+      /const resetQuery = \(\) => \{[\s\S]*updateQuery\(defaultQuery\);/,
+    ],
+    forbiddenPatterns: [
+      /skipNextBaseDatasetResetRef/,
+      /}, \[baseDataset, canRestoreCachedResult, defaultQuery\]\);/,
+    ],
+  },
+  {
+    name: "SQL editor surface, gutter, and textarea share one responsive viewport",
+    file: "src/pages/sql/SqlAnalysisPage.module.css",
+    patterns: [
+      /\.editorSurface \{[\s\S]*height: clamp\(276px, 36vh, 480px\);[\s\S]*overflow: hidden;/,
+      /\.editorSurface pre \{[\s\S]*height: 100%;[\s\S]*min-height: 0;[\s\S]*overflow: hidden;/,
+      /\.editorSurface textarea \{[\s\S]*height: 100%;[\s\S]*min-height: 0;[\s\S]*max-height: none;[\s\S]*resize: none;[\s\S]*overflow: auto;/,
+      /\.editorInputWrap \{[\s\S]*height: 100%;[\s\S]*min-height: 0;[\s\S]*overflow: hidden;/,
+    ],
+  },
+  {
     name: "SQL chart configurator reuses the Dashboard WidgetConfigPanel",
     file: "src/pages/sql/SqlChartConfigurator.tsx",
     patterns: [
@@ -455,6 +516,30 @@ const checks = [
     ],
   },
   {
+    name: "Catalog schema modal includes a paged actual-data viewer",
+    file: "src/pages/catalog/CatalogPage.tsx",
+    patterns: [
+      /<CatalogDatasetViewer dataset=\{previewDataset\} \/>/,
+      /<CatalogSchema dataset=\{dataset\} \/>[\s\S]*<CatalogSample dataset=\{dataset\} \/>/,
+      /getCatalogDatasetRows\(dataset\.id, \{ limit: pageSize, offset \}\)/,
+      /latestSuccessfulRun/,
+      /aria-label="샘플 데이터 새로고침"/,
+      />\s*처음\s*<\/Button>/,
+      />\s*마지막\s*<\/Button>/,
+      /표시할 데이터 행이 없습니다\./,
+      /rowsErrorStatus === 403/,
+    ],
+  },
+  {
+    name: "Catalog sample table keeps a bounded viewport and sticky header",
+    file: "src/styles/catalog.css",
+    patterns: [
+      /\.catalog-sample-scroll\s*\{[^}]*max-height:\s*min\(480px, 55vh\);/s,
+      /\.catalog-sample-table th\s*\{[^}]*position:\s*sticky;[^}]*top:\s*0;/s,
+      /\.catalog-dataset-viewer\s*\{[^}]*display:\s*grid;/s,
+    ],
+  },
+  {
     name: "SQL analysis uses visible shadcn slider styling",
     file: "src/components/ui/slider.tsx",
     patterns: [
@@ -497,6 +582,20 @@ const checks = [
       /return !label\.startsWith\("__"\) && !hiddenJobDetailFieldLabels\.has\(label\);/,
       /detail=\{realtime \? job\.scheduleSummary \?\? formatJobSchedule\(job\.schedule\) : formatJobSchedule\(job\.schedule\)\}/,
       /\{ label: "주기", value: formatJobSchedule\(job\.schedule\) \}/,
+    ],
+  },
+  {
+    name: "Jobs landing run modal follows centrally polled state by stable run identity",
+    file: "src/pages/ingest/JobsPages.tsx",
+    patterns: [
+      /type LatestRunModalSelection = \{[\s\S]*jobId: string;[\s\S]*runId: string;/,
+      /const latestRunModal = useMemo\(\(\) => \{[\s\S]*jobs\.find\(\(candidate\) => candidate\.id === latestRunModalSelection\.jobId\)/,
+      /job\.runHistory\?\.find\(\(candidate\) => candidate\.runId === latestRunModalSelection\.runId\)/,
+      /setLatestRunModalSelection\(\{[\s\S]*jobId: job\.id,[\s\S]*runId: latestRun\.runId,/,
+      /onClose=\{\(\) => setLatestRunModalSelection\(null\)\}/,
+    ],
+    forbiddenPatterns: [
+      /setLatestRunModal\(\{ job, run: latestRun \}\)/,
     ],
   },
   {
@@ -1105,6 +1204,21 @@ const checks = [
       /label="Micro-batch 최대 메시지"/,
       /getSourceConnectorDefaults\(\)/,
       /\["Broker \/ Endpoint", defaultKafkaBroker\]/,
+    ],
+  },
+  {
+    name: "Database source connection discovery stays separate from target preview",
+    file: "src/pages/etl/EtlPages.tsx",
+    patterns: [
+      /Collections: "탐색 가능한 컬렉션"/,
+      /Tables: "탐색 가능한 테이블"/,
+      /PostgreSQL:[\s\S]*testItems: \[\["Endpoint", "Not tested"\], \["Database", "Pending"\], \["Target discovery", "After connection"\]\]/,
+      /MongoDB:[\s\S]*testItems: \[\["Endpoint", "Not tested"\], \["Database", "Pending"\], \["Target discovery", "After connection"\]\]/,
+      /const requiresAssetSelectionForPreview = \["File \/ S3", "MongoDB", "PostgreSQL"\]\.includes\(activeSourceType\);/,
+      /if \(!\["File \/ S3", "MongoDB", "PostgreSQL"\]\.includes\(activeSourceType\)\)/,
+      /const result = await listSourceAssets\(activeSourceType, editableFields, ""\);/,
+      /\(requiresAssetSelectionForPreview && !selectedAssetPath\)/,
+      /schema: \{ columns: \[\], sampleRows: \[\], summary: "" \}/,
     ],
   },
   {

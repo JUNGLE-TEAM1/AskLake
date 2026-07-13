@@ -7,11 +7,14 @@ from app.schemas.common import CamelModel
 QueryRunMode = Literal["preview", "run"]
 QueryAiMode = Literal["draft_sql"]
 
+DEFAULT_QUERY_PAGE_LIMIT = 100
+MAX_QUERY_PAGE_LIMIT = 500
+
 
 class QueryRunRequest(CamelModel):
     base_dataset_id: str | None = None
     dataset_id: str
-    limit: int | None = Field(default=None, ge=1, le=500)
+    limit: int | None = Field(default=None, ge=1, le=MAX_QUERY_PAGE_LIMIT)
     mode: QueryRunMode = "preview"
     query: str
     reference_dataset_ids: list[str] = Field(default_factory=list)
@@ -24,10 +27,16 @@ class QueryRunResponse(CamelModel):
     dataset_id: str
     dataset_name: str
     executed_at: str
+    has_next: bool = False
     mode: QueryRunMode | None = None
+    page_limit: int = DEFAULT_QUERY_PAGE_LIMIT
+    page_offset: int = 0
     preview_limit: int | None = None
     query: str
+    range_end: int = 0
+    range_start: int = 0
     reference_dataset_ids: list[str] = Field(default_factory=list)
+    returned_rows: int = 0
     row_count: int
     rows: list[list[str]]
     run_id: str
