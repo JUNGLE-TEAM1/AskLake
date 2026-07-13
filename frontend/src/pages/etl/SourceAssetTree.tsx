@@ -87,7 +87,7 @@ export function SourceAssetTree({
     <TreePanel className="source-asset-tree-panel">
       <ExplorerTree<SourceAssetTreeNode>
         ariaLabel="소스 에셋 트리"
-        className="h-full"
+        className="mt-2 h-[calc(100%-0.5rem)]"
         data={nodes}
         disableMultiSelection
         disableSelect={(asset) => asset.isFolder}
