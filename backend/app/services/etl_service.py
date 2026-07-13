@@ -3815,9 +3815,17 @@ def append_materialization_run(previous_runs: Any, next_run: dict[str, Any]) -> 
 
 
 def spark_materialization_mode(job: ETLJobModel, result: dict[str, Any]) -> str:
-    explicit_mode = str(result.get("materializationMode") or "").strip().casefold()
+    has_explicit_mode = "materializationMode" in result or "materialization_mode" in result
+    raw_mode = (
+        result.get("materializationMode")
+        if "materializationMode" in result
+        else result.get("materialization_mode")
+    )
+    explicit_mode = str(raw_mode or "").strip().casefold()
     if explicit_mode in {"snapshot", "delta"}:
         return explicit_mode
+    if has_explicit_mode:
+        return "snapshot"
     if str(result.get("sourceKind") or "").strip().casefold() == "kafka":
         return "delta"
     source_collection = result.get("sourceCollection")

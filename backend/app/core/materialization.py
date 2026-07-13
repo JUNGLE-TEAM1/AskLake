@@ -6,9 +6,17 @@ SUPPORTED_SOURCE_WINDOW_CONTRACT_VERSIONS = frozenset({1, SOURCE_WINDOW_CONTRACT
 
 
 def materialization_mode(run: dict[str, Any]) -> str:
-    mode = str(run.get("materializationMode") or run.get("materialization_mode") or "").strip().casefold()
+    has_explicit_mode = "materializationMode" in run or "materialization_mode" in run
+    raw_mode = (
+        run.get("materializationMode")
+        if "materializationMode" in run
+        else run.get("materialization_mode")
+    )
+    mode = str(raw_mode or "").strip().casefold()
     if mode in {"snapshot", "delta"}:
         return mode
+    if has_explicit_mode:
+        return "snapshot"
     source_kind = str(run.get("sourceKind") or run.get("source_kind") or "").strip().casefold()
     return "delta" if source_kind == "kafka" else "snapshot"
 

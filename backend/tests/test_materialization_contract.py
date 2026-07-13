@@ -39,6 +39,19 @@ class MaterializationContractTests(unittest.TestCase):
             "sourceKind": "kafka",
         }), "snapshot")
 
+    def test_invalid_explicit_mode_is_snapshot_even_for_kafka(self) -> None:
+        self.assertEqual(materialization_mode({
+            "materializationMode": "unexpected",
+            "sourceKind": "kafka",
+        }), "snapshot")
+        self.assertEqual(
+            spark_materialization_mode(SimpleNamespace(), {
+                "materializationMode": "unexpected",
+                "sourceKind": "kafka",
+            }),
+            "snapshot",
+        )
+
     def test_bounded_window_requires_version_and_upper_bound(self) -> None:
         self.assertTrue(has_bounded_source_window({
             "sourceWindow": {"contractVersion": 1, "upperBound": "2026-07-12T00:10:00Z"},

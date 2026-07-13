@@ -40,7 +40,7 @@ def normalize_s3_endpoint(value: str) -> str:
         raise ApiError(
             ErrorCode.VALIDATION_ERROR,
             "S3 endpoint must be an http(s) origin without credentials",
-            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
         )
     path = parsed.path.rstrip("/")
     return f"{parsed.scheme.casefold()}://{parsed.netloc.casefold()}{path}"
@@ -132,7 +132,7 @@ def resolve_s3_source_location(
         raise ApiError(
             ErrorCode.VALIDATION_ERROR,
             "S3 source bucket does not match the bucket in the source path",
-            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
             {"declaredBucket": declared_bucket, "pathBucket": path_bucket},
         )
     bucket = path_bucket or declared_bucket
