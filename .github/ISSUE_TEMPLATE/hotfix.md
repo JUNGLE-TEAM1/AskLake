@@ -6,6 +6,20 @@ labels: ["hotfix"]
 assignees: ""
 ---
 
+## 작업 기준 브랜치
+
+- 담당 브랜치:
+  - 예: pair1, pair2, pair3, dev
+- 작업 브랜치:
+  - 예: hotfix/123-payment, bugfix/124-auth-error
+
+## Project Status 판단 정보
+
+- 초기 상태: Backlog
+- 차단 사유: 없음
+- Preview 필요 여부: no
+- Preview URL: 없음
+
 ## 1. Hotfix 요약
 
 <!-- 긴급하게 고쳐야 하는 이유를 명확히 적어주세요. -->
