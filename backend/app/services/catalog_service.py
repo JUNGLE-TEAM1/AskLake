@@ -37,6 +37,26 @@ from app.services.resource_permission_service import (
 )
 
 
+def dataset_for_latest_successful_materialization(
+    dataset: CatalogDatasetResponse,
+) -> CatalogDatasetResponse:
+    """Project the newest successful materialization onto the dataset shell."""
+    successful_runs = [
+        run
+        for run in dataset.materialization_runs
+        if run.status == "success" and run.storage_location
+    ]
+    if not successful_runs:
+        return dataset
+
+    selected = max(successful_runs, key=lambda run: (run.created_at, run.run_id))
+    return dataset.model_copy(update={
+        "source_run_id": selected.run_id,
+        "storage_location": selected.storage_location,
+        "storage_size_bytes": selected.storage_size_bytes,
+    })
+
+
 class CatalogService:
     def __init__(
         self,
