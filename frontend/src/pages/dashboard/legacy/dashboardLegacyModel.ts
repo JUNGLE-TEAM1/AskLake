@@ -16,6 +16,7 @@ export type DashboardLegacyWidgetConfig = Record<
 >;
 
 export type DashboardLegacyModel = {
+  hasRealResult: boolean;
   barSeries: number[];
   categorySales: Array<[string, number]>;
   channelRows: Array<[string, string, string, string]>;
@@ -54,7 +55,7 @@ export function createDashboardLegacyModel({
   const sourceRunId = activeSqlResult?.runId;
   const dashboardTitle = activeSqlResult
     ? `${activeSqlResult.datasetName} SQL Result Dashboard`
-    : "Sales Analytics Demo 2026-06-26 22:04:05";
+    : `${dataset.name} Dashboard`;
 
   const widgetTypes: DashboardLegacyWidgetOption[] = [
     { id: "kpi", label: "KPI", desc: "핵심 수치 카드" },
@@ -84,41 +85,27 @@ export function createDashboardLegacyModel({
       title: "SQL 결과 테이블",
       fields: [
         ["Columns", columns.slice(0, 4).join(", ")],
-        ["Rows", String(activeSqlResult?.rowCount ?? dataset.sampleRows.length)],
+         ["Rows", activeSqlResult ? String(activeSqlResult.rowCount) : "-"],
         ["Sort", `${primaryColumn} ASC`],
       ],
     },
   };
 
   return {
-    barSeries: [62, 84, 71, 96, 78, 88, 104],
-    categorySales: [
-      ["전자제품", 124500],
-      ["의류", 93375],
-      ["식료품", 62250],
-      ["가구", 31125],
-      ["취미용품", 68500],
-    ],
-    channelRows: [
-      ["Mobile", "62,140", "₩3.9억", "48.4%"],
-      ["Web", "41,880", "₩2.7억", "32.6%"],
-      ["Partner", "24,400", "₩1.6억", "19.0%"],
-    ],
+    hasRealResult: Boolean(activeSqlResult),
+    barSeries: [],
+    categorySales: [],
+    channelRows: [],
     columns,
     dashboardId: `dash_${dataset.id}_${activeSqlResult?.runId ?? "draft"}`,
     dashboardTitle,
-    metricCards: [
-      ["총 주문", "128,420", "+12.4%", "SQL 결과 기준"],
-      ["매출", "₩8.2억", "+8.1%", "집계 mart 반영"],
-      ["전환율", "4.8%", "-0.3%", "모바일 유입 감소"],
-      ["품질 점수", dataset.quality, "안정", dataset.lastUpdated],
-    ],
-    rowsPreview: activeSqlResult?.rows.length ? activeSqlResult.rows : dataset.sampleRows,
+    metricCards: [],
+    rowsPreview: activeSqlResult?.rows ?? [],
     snapshotWidgets: builderWidgets.length
       ? builderWidgets
       : activeSqlResult
         ? ["table", "bar"]
-        : ["bar", "line", "donut", "table"],
+      : [],
     sourceRunId,
     sqlResultSnapshot: activeSqlResult
       ? {
