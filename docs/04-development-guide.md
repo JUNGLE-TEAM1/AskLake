@@ -75,6 +75,13 @@ backend의 `npm run verify:rule-compiler`는 FastAPI와 local Node compiler의 �
 
 ## 3) Backend Live Mode
 
+Catalog snapshot/delta projection의 순수 회귀 테스트는 공유 DB나 object storage를 사용하지 않는다.
+
+```bash
+cd backend
+npm run verify:materialization-projection
+```
+
 프론트는 기본적으로 live backend API를 호출한다. local backend는 Postgres metadata DB를 필요로 하므로 먼저 `docker-compose.yml`의 Postgres를 올린다.
 프론트 dev server는 같은 출처의 `/api` 요청을 FastAPI `http://127.0.0.1:8080`으로 proxy한다.
 

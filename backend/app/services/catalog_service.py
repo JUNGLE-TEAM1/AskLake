@@ -29,6 +29,7 @@ from app.services.lake_storage_service import (
 )
 from app.services.governance_enforcement import require_governed_access
 from app.services.dataset_rows_service import read_dataset_rows
+from app.services.materialization_projection import aggregate_materialization_runs
 from app.services.resource_permission_service import (
     dataset_with_persisted_permission_grants,
     datasets_with_persisted_permission_grants,
@@ -448,6 +449,7 @@ def build_derived_dataset_payload(
         {
             "createdAt": current_utc_timestamp(),
             "jobId": "sql-derived",
+            "materializationMode": "snapshot",
             "rowCount": materialized_result.row_count,
             "runId": request.source_run_id,
             "sourceKind": "sql",
@@ -721,30 +723,10 @@ def recalculate_dataset_payload_from_runs(payload: dict[str, object]) -> dict[st
     next_payload["rows"] = f"{aggregate['rowCount']:,} rows"
     next_payload["size"] = format_storage_size(aggregate["storageSizeBytes"])
     next_payload["sourceRunId"] = aggregate["latestRunId"]
+    next_payload["storageFormat"] = aggregate["latestStorageFormat"] or payload.get("storageFormat")
+    next_payload["storageLocation"] = aggregate["latestStorageLocation"]
     next_payload["storageSizeBytes"] = aggregate["storageSizeBytes"]
     return next_payload
-
-
-def aggregate_materialization_runs(runs: list[dict[str, object]]) -> dict[str, object]:
-    active_runs = [run for run in runs if run.get("status") == "success"]
-    latest_run = active_runs[0] if active_runs else None
-    return {
-        "latestRunId": latest_run.get("runId") if latest_run else None,
-        "lastUpdated": latest_run.get("createdAt") if latest_run else None,
-        "rowCount": sum(parse_count_value(run.get("rowCount")) for run in active_runs),
-        "storageSizeBytes": sum(parse_count_value(run.get("storageSizeBytes")) for run in active_runs),
-    }
-
-
-def parse_count_value(value: object) -> int:
-    if isinstance(value, bool) or value is None:
-        return 0
-    if isinstance(value, int):
-        return max(value, 0)
-    if isinstance(value, float):
-        return max(int(value), 0)
-    digits = re.sub(r"[^0-9]", "", str(value))
-    return int(digits) if digits else 0
 
 
 def format_storage_size(size_bytes: int) -> str:
