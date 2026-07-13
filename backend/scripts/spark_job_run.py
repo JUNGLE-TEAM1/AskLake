@@ -169,6 +169,7 @@ def main():
             phase="after_read",
         )
         if quality["status"] == "fail":
+            cleanup_errors = cleanup_failed_output_paths(spark, output_path)
             ended_at = now_iso()
             result = {
                 "durationMs": int(time.time() * 1000) - started_ms,
@@ -179,6 +180,10 @@ def main():
                 "inputRows": input_rows,
                 "outputPath": output_path,
                 "outputRows": output_rows,
+                "outputCleanup": {
+                    "errors": cleanup_errors,
+                    "status": "failed" if cleanup_errors else "success",
+                },
                 "quality": quality,
                 "runId": run_id,
                 "sampleRows": sample_rows,
@@ -389,7 +394,18 @@ def read_whitespace_records(spark, source_path, record_parsing):
     column_names = [normalize_column_name(column.get("name") or f"field_{index + 1}") for index, column in enumerate(columns)]
     if any(not name for name in column_names) or len(set(column_names)) != len(column_names):
         raise ValueError("RECORD_PARSING_INVALID_COLUMNS column names must be non-empty and unique")
-    indexed_lines = spark.sparkContext.textFile(source_path).zipWithIndex().map(lambda item: (int(item[1]) + 1, str(item[0])))
+    source_paths = source_path if isinstance(source_path, list) else [source_path]
+    indexed_rdds = []
+    line_offset = 0
+    for path in source_paths:
+        lines = spark.sparkContext.textFile(path)
+        indexed_rdds.append(
+            lines.zipWithIndex().map(
+                lambda item, offset=line_offset: (int(item[1]) + offset + 1, str(item[0]))
+            )
+        )
+        line_offset += lines.count()
+    indexed_lines = spark.sparkContext.union(indexed_rdds)
     raw = spark.createDataFrame(indexed_lines, schema="line_number long, raw_record string")
     non_empty = raw.where(F.length(F.trim(F.col("raw_record"))) > 0)
     if bool(record_parsing.get("header")):
