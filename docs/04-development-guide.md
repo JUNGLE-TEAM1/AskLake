@@ -89,7 +89,7 @@ backend의 `npm run verify:rule-compiler`는 FastAPI와 local Node compiler의 �
 
 `npm run verify:schema-transform-rules`는 Visual Transform의 rename/cast/default/null guard 순서, canonical parameter, portable operation, 초기 pass-through를 실제 adapter 함수로 검증한다.
 
-`npm run verify:rule-preview`는 portable bounded Preview와 일반 Snapshot SQL Spark Preview를 모두 실행한다. `npm run verify:snapshot-rule-conformance`는 같은 JSON fixture를 Node Kafka runtime과 실제 Spark 4 DataFrame runtime에 적용하므로 두 명령을 함께 실행하면 Preview와 Spark 의미의 동등성을 검증한다. `npm run verify:snapshot-spark-pipeline`은 `spark_job_run.py`를 직접 실행해 drop/quarantine/set-null 결과가 Parquet에 반영되고 portable/SQL 혼합 `Fail Batch` target과 staging 경로가 남지 않는지 확인한다. `npm run verify:kafka-target-projection`과 `npm run verify:target-mode-contract`은 Kafka exact projection과 mode별 layer/format 선제 검증을 확인한다. `npm run verify:kafka-review-scheduled-ingest`는 실제 Job create/command bridge를 거쳐 물리 JSONL과 Catalog schema가 같은 projection인지까지 확인한다. Continuous Rule 변경 시에는 `npm run verify:kafka-continuous-rules`까지 실행해 foreachBatch final projection, Rule quarantine/replay와 checkpoint fingerprint를 확인한다.
+`npm run verify:rule-preview`는 portable bounded Preview와 일반 Snapshot SQL Spark Preview를 모두 실행한다. `npm run verify:snapshot-rule-conformance`는 같은 JSON fixture를 Node Kafka runtime과 실제 Spark 4 DataFrame runtime에 적용하므로 두 명령을 함께 실행하면 Preview와 Spark 의미의 동등성을 검증한다. `npm run verify:snapshot-spark-pipeline`은 `spark_job_run.py`를 직접 실행해 drop/quarantine/set-null 결과가 Parquet에 반영되고 portable/SQL 혼합 `Fail Batch` target과 staging 경로가 남지 않는지 확인한다. `npm run verify:kafka-target-projection`과 `npm run verify:target-mode-contract`은 Kafka exact projection과 mode별 layer/format 선제 검증을 확인한다. `npm run verify:kafka-review-scheduled-ingest`는 Job identity가 없는 direct JSONL compatibility 경로를 검증하고, Kafka Snapshot Job의 Iceberg/Catalog/offset E2E는 `ASKLAKE_VERIFY_ICEBERG_LIVE=true npm run verify:kafka-snapshot-iceberg`로 확인한다. Continuous Rule 변경 시에는 `npm run verify:kafka-continuous-rules`까지 실행해 foreachBatch final projection, Rule quarantine/replay와 checkpoint fingerprint를 확인한다.
 
 ## 3) Backend Live Mode
 
@@ -121,13 +121,16 @@ ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-query-foundation
 
 브라우저 polling 없이 collector를 한 번만 실행할 때는 `npm run trino:collect-results`, 만료 결과를 one-shot 정리할 때는 `npm run trino:cleanup-results`를 사용한다. Production에서는 worker가 같은 작업을 계속 실행하며 DB lease/generation으로 재시작과 takeover를 복구한다. 실제 Iceberg 반복 갱신은 local stack에서 `ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-sql-job-e2e`로 확인한다.
 
-일반 non-Kafka Spark batch는 backend-owned `icebergTarget`에 native Iceberg commit하고 Trino physical mapping 검증 뒤 Catalog를 확정한다. Kafka Snapshot/Continuous writer는 아직 direct JSONL/Parquet 경로를 유지하므로 Iceberg `queryEngineTable`을 임의로 추가하지 않는다. writer별 전환 순서와 검증 경계는 [Iceberg Writer Migration Plan](iceberg-writer-migration-plan.md)을 따른다.
+일반 non-Kafka Spark batch와 Kafka Snapshot Job은 backend-owned `icebergTarget`에 native Iceberg commit하고 Trino physical mapping 검증 뒤 Catalog를 확정한다. Kafka Continuous writer와 Job identity가 없는 direct ingest endpoint는 기존 Parquet/JSONL 경로를 유지하므로 Iceberg `queryEngineTable`을 임의로 추가하지 않는다. writer별 전환 순서와 검증 경계는 [Iceberg Writer Migration Plan](iceberg-writer-migration-plan.md)을 따른다.
 
 일반 Spark Iceberg writer의 실제 commit/replace/rollback 검증은 로컬 PostgreSQL, MinIO, Docker와 Trino가 실행 중일 때 아래처럼 수행한다. 이 검증은 고유 table을 만들고 종료 시 삭제하며 기존 Trino container를 재시작하지 않는다.
 
 ```bash
 cd backend
 ASKLAKE_VERIFY_ICEBERG_LIVE=true npm run verify:spark-iceberg-batch
+
+# Kafka Snapshot: commit 후 offset 직전 실패, 같은 snapshot retry, 중복 방지, empty run
+ASKLAKE_VERIFY_ICEBERG_LIVE=true npm run verify:kafka-snapshot-iceberg
 ```
 
 Spark 4 runtime에는 `ASKLAKE_SPARK_ICEBERG_PACKAGE`와 `ASKLAKE_SPARK_POSTGRES_PACKAGE`를 추가하며 기본값은 각각 Iceberg Spark 4 runtime과 PostgreSQL JDBC driver다. Spark와 Trino가 같은 JDBC catalog를 공유하므로 외부 Spark commit을 즉시 확인해야 하는 Trino catalog는 `iceberg.metadata-cache.enabled=false`를 사용한다.

@@ -18,6 +18,7 @@ This document records the Pair A person-1 backend validation path for Source, Sc
 - `backend/scripts/spark_validate.py`: Spark validation and transform type checks
 - `backend/scripts/verify-spark-job-run.mjs`: create -> run -> Spark -> DAG -> Catalog verifier
 - `backend/scripts/verify-spark-iceberg-batch.py`: native Spark Iceberg replace/re-run/rollback live verifier
+- `backend/scripts/verify-kafka-snapshot-iceberg.py`: Kafka fixed snapshot -> Spark Iceberg append -> Trino/Catalog -> offset commit/retry live verifier
 - `backend/scripts/verify-spark-csv-quoting.mjs`: RFC 4180 comma/quote CSV -> Spark -> Parquet regression verifier
 - `backend/scripts/verify-kafka-continuous-soak.mjs`: generated or JSONL/GZIP Kafka replay -> continuous worker -> reconciliation/fault/compaction verifier
 - `backend/scripts/kafka_continuous_maintenance.py`: quarantine inspect/replay and staged Parquet compaction
@@ -214,6 +215,13 @@ The focused writer verifier uses a unique Iceberg table and checks full-replace 
 ```bash
 cd backend
 ASKLAKE_VERIFY_ICEBERG_LIVE=true npm run verify:spark-iceberg-batch
+```
+
+Kafka Snapshot writer verifier는 고유 Redpanda topic, Spark cluster, Trino catalog와 Iceberg table을 격리해서 만든다. 첫 실행은 Iceberg/Catalog 성공 후 offset commit 직전에 테스트 전용 실패를 주입하고, retry가 같은 snapshot append를 재사용해 Trino row count와 Catalog materialization을 중복시키지 않는지 확인한다. 마지막 0건 Run은 새 data file 없이 성공해야 한다.
+
+```bash
+cd backend
+ASKLAKE_VERIFY_ICEBERG_LIVE=true npm run verify:kafka-snapshot-iceberg
 ```
 
 Connector-backed jobs such as REST, PostgreSQL, and MongoDB write bounded sample rows to `ASKLAKE_SPARK_REPORT_DIR` as JSONL before Spark reads them. `start-spark-server.mjs` mounts that same host directory into the submit, master, and worker containers at `ASKLAKE_SPARK_REPORT_CONTAINER_DIR` (`/work/reports` by default). If a Codex worktree or repo path changes, the Spark containers must be recreated with the new report mount before run command verification.

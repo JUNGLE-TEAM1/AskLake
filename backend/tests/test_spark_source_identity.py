@@ -102,6 +102,49 @@ class FakeSpark:
 
 
 class SparkSourceIdentityTests(unittest.TestCase):
+    def test_kafka_snapshot_retry_reuses_existing_iceberg_commit(self) -> None:
+        spark = SimpleNamespace(sql=Mock())
+        frame = SimpleNamespace(writeTo=Mock())
+        target = {
+            "catalog": "iceberg",
+            "namespace": "asklake",
+            "partitionColumns": [],
+            "table": "reviews_snapshot",
+            "tableUri": "iceberg://iceberg/asklake/reviews_snapshot",
+            "writeMode": "append",
+        }
+        boundary = {
+            "kind": "kafka_snapshot",
+            "snapshotId": "kafka_snapshot_1234",
+        }
+        committed = {
+            "committedAt": "2026-07-14T00:00:00Z",
+            "snapshotId": "999",
+            "warehouseLocation": "s3://asklake-warehouse/warehouse/reviews_snapshot",
+        }
+
+        with (
+            patch.object(spark_job_run, "iceberg_table_exists", return_value=True),
+            patch.object(spark_job_run, "latest_iceberg_snapshot", return_value=committed),
+            patch.object(spark_job_run, "iceberg_source_boundary_exists", return_value=True),
+        ):
+            result = spark_job_run.commit_iceberg_table(
+                spark,
+                frame,
+                target,
+                job_id="JOB-KAFKA",
+                run_id="RUN-RETRY",
+                partition_columns=[],
+                schema_fingerprint="schema-v1",
+                rule_fingerprint="rules-v1",
+                source_boundary=boundary,
+            )
+
+        self.assertEqual(result["operation"], "reuse")
+        self.assertEqual(result["snapshotId"], "999")
+        self.assertEqual(result["sourceBoundary"], boundary)
+        frame.writeTo.assert_not_called()
+
     def test_iceberg_rollback_uses_fully_qualified_table_name(self) -> None:
         spark = SimpleNamespace(sql=Mock())
         target = {

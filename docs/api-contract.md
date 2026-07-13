@@ -594,11 +594,11 @@ Canonical schema type은 `String`, `Integer`, `Long`, `Double`, `Boolean`, `Time
 
 Rule compiler는 Regex의 비어 있지 않은 유효 pattern, Accepted Values의 1개 이상 값, Range의 유효한 min/max와 `min <= max`, boolean inclusive를 검증합니다. V1 mask policy는 `phone`(`keep first 3 digits` legacy alias), timestamp format은 `ISO-8601`(`UTC` legacy alias)만 허용합니다. Frontend, FastAPI, Node compiler는 같은 fixture와 `RULE_PARAMETER_REQUIRED`/`RULE_PARAMETER_INVALID` issue code를 사용하고 JSON root의 dotted input path를 동일하게 판정합니다.
 
-### Kafka Snapshot Metadata and Direct Target
+### Kafka Snapshot Metadata and Iceberg Target
 
-Issue #455 Phase 3부터 Kafka run은 다음 snapshot metadata를 response, Run metadata, Catalog materialization run에 보존하고, 중간 RAW landing 없이 direct target object를 저장한다. Current direct bridge applies supported configured transforms and quality actions before writing normalized review JSONL.
+Kafka run은 다음 snapshot metadata를 response, Run metadata, Catalog materialization run에 보존한다. Job command 경로는 중간 RAW landing과 final JSONL data object 없이 supported transform/quality와 exact projection을 적용한 뒤 backend-owned Iceberg append target에 저장한다. Job identity가 없는 direct ingest endpoint만 fixture/debug 호환용 normalized review JSONL을 유지한다.
 
-Job command bridge는 `schemaColumns`와 compiled `outputSchema`를 ingest runtime에 전달한다. runtime은 Rule 적용 뒤 이 계약으로 exact projection하며 rename 전 source field와 `included: false` field를 물리 JSONL, Catalog schema, sample에 포함하지 않는다. Kafka Snapshot은 `RAW/BRONZE/SILVER + JSONL`, Kafka Continuous는 Parquet 포맷을 사용하며 review/create/update/command가 지원하지 않는 조합을 `TARGET_LAYER_UNSUPPORTED` 또는 `TARGET_FORMAT_UNSUPPORTED`로 선제 거절한다.
+Job command bridge는 `schemaColumns`와 compiled `outputSchema`를 ingest runtime에 전달한다. runtime은 Rule 적용 뒤 이 계약으로 exact projection하며 rename 전 source field와 `included: false` field를 Iceberg target schema, Catalog schema, sample에 포함하지 않는다. Kafka Snapshot create/update의 `RAW/BRONZE/SILVER + JSONL` 조합은 기존 UI/저장 row 호환 계약이고, 실제 Job Dataset은 검증된 `storageFormat=iceberg`와 warehouse Parquet를 사용한다. Kafka Continuous는 아직 Parquet direct 포맷을 사용하며 review/create/update/command가 지원하지 않는 조합을 `TARGET_LAYER_UNSUPPORTED` 또는 `TARGET_FORMAT_UNSUPPORTED`로 선제 거절한다.
 
 ```ts
 type KafkaPartitionSnapshot = {
@@ -618,7 +618,7 @@ type KafkaSnapshot = {
 };
 ```
 
-Direct target write의 성공 run은 `sourceKind: "kafka"`, target layer, target storage location, `KafkaSnapshot`, transform/quality summary를 함께 기록한다. target write 또는 Catalog 등록이 실패하면 Kafka offset을 commit하지 않으며, quality `Fail Run`도 target write 전에 같은 방식으로 중단한다. `Quarantine` 행은 같은 snapshot directory의 별도 object로 분리한다. 같은 `snapshotId` 재시도는 target과 materialization run을 idempotent하게 갱신한다. 상세 전환 계약은 `docs/kafka-snapshot-direct-target-contract.md`를 따른다.
+성공한 Snapshot Job run은 `sourceKind: "kafka"`, target layer, Iceberg warehouse location, `KafkaSnapshot`, `icebergCommit.sourceBoundary`, transform/quality summary와 `queryEngineTable`을 함께 기록한다. Iceberg commit 또는 Trino/Catalog 검증이 실패하면 Kafka offset을 commit하지 않으며, quality `Fail Run`도 Iceberg commit 전에 중단한다. `Quarantine` 행은 같은 snapshot metadata prefix의 별도 JSONL object로 분리한다. 같은 `snapshotId` 재시도는 Iceberg table의 source marker를 조회해 이미 commit된 append를 `reuse`하고 Catalog materialization run도 snapshot ID로 deduplicate한다. offset은 이 모든 검증 뒤에만 `endOffset`으로 확정한다. 상세 전환 계약은 `docs/kafka-snapshot-direct-target-contract.md`를 따른다.
 
 Kafka Job command가 실패하면 `JobRunSummary.status`는 `failed`이며 `taskStates.kafkaSnapshot`으로 captured range를, `failedStage`로 실패 위치를 유지한다. direct ingest endpoint error response의 `error.details.bridge`도 같은 snapshot diagnostic을 포함한다.
 
@@ -1752,9 +1752,9 @@ Materialization 제출과 조회는 source run submitter ID 또는 admin 여부�
 
 전환 전 내부 writer가 저장한 payload 중 `queryEngineTable`은 있지만 `queryEngineStatus`가 없는 row는 migration read compatibility로 `available`을 추론한다. 새 writer와 API는 이 fallback에 의존하지 않고 상태를 명시해야 하며, 사용자 입력만으로 mapping을 생성하는 endpoint는 제공하지 않는다.
 
-일반 non-Kafka Spark ETL 결과는 Iceberg metadata와 warehouse Parquet를 생성하고 snapshot ID, 실제 warehouse location, `queryEngineVerified=true`, 완전한 `queryEngineTable`을 Trino로 재검증한 경우에만 `available`로 저장한다. Kafka direct JSONL/Continuous Parquet 결과는 아직 `queryEngineStatus=unavailable`이며 SQL downstream을 표시하지 않는다. Catalog row 생성이나 `icebergTarget` 선언만으로 물리 table 등록 성공을 추정해서는 안 된다. writer 전환 계약과 단계는 [Iceberg Writer Migration Plan](iceberg-writer-migration-plan.md)을 따른다.
+일반 non-Kafka Spark ETL과 Kafka Snapshot Job 결과는 Iceberg metadata와 warehouse Parquet를 생성하고 snapshot ID, 실제 warehouse location, `queryEngineVerified=true`, 완전한 `queryEngineTable`을 Trino로 재검증한 경우에만 `available`로 저장한다. Job identity가 없는 Kafka direct JSONL과 Kafka Continuous Parquet 결과는 아직 `queryEngineStatus=unavailable`이며 SQL downstream을 표시하지 않는다. Catalog row 생성이나 `icebergTarget` 선언만으로 물리 table 등록 성공을 추정해서는 안 된다. writer 전환 계약과 단계는 [Iceberg Writer Migration Plan](iceberg-writer-migration-plan.md)을 따른다.
 
-공통 Iceberg commit evidence는 `jobId`, `runId`, `target`, `queryEngineTable`, `snapshotId`(64-bit 안전성을 위해 string), `committedAt`, `warehouseLocation`, `queryEngineVerified: true`, optional schema/rule fingerprint와 source boundary를 포함한다. Trino adapter의 `replace`는 원자적 `CREATE OR REPLACE TABLE AS`, `append`는 최초 CTAS 이후 `INSERT INTO`를 사용한다. 일반 Spark batch는 DataFrameWriterV2 `create`/`append`/`overwrite`로 같은 JDBC catalog에 commit하고 replace 시 snapshot history를 유지해 post-commit failure rollback이 가능해야 한다. 서비스는 commit 뒤 `$snapshots`, `$files`, `DESCRIBE`가 모두 성공한 경우에만 evidence를 확정하며 writer가 보고한 expected snapshot ID와 실제 최신 snapshot이 다르면 mapping을 저장하지 않는다.
+공통 Iceberg commit evidence는 `jobId`, `runId`, `target`, `queryEngineTable`, `snapshotId`(64-bit 안전성을 위해 string), `committedAt`, `warehouseLocation`, `queryEngineVerified: true`, optional schema/rule fingerprint와 source boundary를 포함한다. Trino adapter의 `replace`는 원자적 `CREATE OR REPLACE TABLE AS`, `append`는 최초 CTAS 이후 `INSERT INTO`를 사용한다. 일반 Spark batch와 Kafka Snapshot Job은 DataFrameWriterV2 `create`/`append`/`overwrite`로 같은 JDBC catalog에 commit한다. Kafka `sourceBoundary.kind=kafka_snapshot`이면 table 내부 `_asklake_kafka_snapshot_id` marker로 같은 snapshot append 여부를 확인해 retry에서 `operation=reuse`를 반환한다. 서비스는 commit 뒤 `$snapshots`, `$files`, `DESCRIBE`가 모두 성공한 경우에만 evidence를 확정하며 writer가 보고한 expected snapshot ID와 실제 최신 snapshot이 다르면 mapping을 저장하지 않는다.
 
 ```ts
 type TrinoMaterializationRunResponse = {

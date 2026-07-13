@@ -1663,20 +1663,114 @@ def run_kafka_ingest_job(db: Session, job: ETLJobModel, command: str, run_id: st
 
 def run_kafka_ingest_request(db: Session, request: dict[str, Any], command: str, job_id: str | None) -> dict[str, Any]:
     snapshot_record, request_with_snapshot = kafka_request_with_durable_snapshot(db, request, job_id)
+    result: dict[str, Any] | None = None
+    ingest_timeout_seconds = max(
+        30,
+        int(request["timeoutMs"] / 1000) + 30,
+        900 if request_with_snapshot.get("icebergTarget") else 0,
+    )
     try:
         result = run_node_bridge(
             "ingest-kafka-reviews.mjs",
             "ASKLAKE_KAFKA_REVIEW_INGEST_RESULT",
             request_with_snapshot,
             error_marker="ASKLAKE_KAFKA_REVIEW_INGEST_ERROR",
-            timeout_seconds=max(30, int(request["timeoutMs"] / 1000) + 30),
+            timeout_seconds=ingest_timeout_seconds,
         )
+        if job_id:
+            job = etl_repository.get_job(db, job_id)
+            if job is None:
+                raise ApiError(ErrorCode.NOT_FOUND, f"Job not found during Kafka ingest: {job_id}", status.HTTP_404_NOT_FOUND)
+            if parse_count_value(result.get("storedCount")) > 0:
+                result = publish_kafka_snapshot_iceberg_result(db, job, result)
+            if (
+                os.environ.get("ASKLAKE_ENABLE_KAFKA_TEST_HOOKS") == "true"
+                and os.environ.get("ASKLAKE_KAFKA_SNAPSHOT_FAIL_BEFORE_OFFSET_COMMIT") == "true"
+            ):
+                raise ApiError(
+                    "KAFKA_OFFSET_COMMIT_TEST_FAILURE",
+                    "Test-only failure before Kafka Snapshot offset commit.",
+                    status.HTTP_502_BAD_GATEWAY,
+                )
+            offset_result = run_node_bridge(
+                "ingest-kafka-reviews.mjs",
+                "ASKLAKE_KAFKA_REVIEW_INGEST_RESULT",
+                {
+                    "broker": request_with_snapshot.get("broker"),
+                    "commitOnly": True,
+                    "consumerGroupId": request_with_snapshot.get("consumerGroupId"),
+                    "landingEndpoint": request_with_snapshot.get("landingEndpoint"),
+                    "metadata": result,
+                    "runId": result.get("runId"),
+                    "snapshot": result.get("snapshot"),
+                    "storageMode": request_with_snapshot.get("storageMode"),
+                    "targetBucket": request_with_snapshot.get("targetBucket"),
+                    "targetFormat": request_with_snapshot.get("targetFormat"),
+                    "targetLayer": request_with_snapshot.get("targetLayer"),
+                    "targetPrefix": request_with_snapshot.get("targetPrefix"),
+                    "topic": request_with_snapshot.get("topic"),
+                },
+                error_marker="ASKLAKE_KAFKA_REVIEW_INGEST_ERROR",
+                timeout_seconds=max(30, int(request["timeoutMs"] / 1000) + 30),
+            )
+            result["offsetCommit"] = offset_result.get("offsetCommit")
+            result["metadataUpdate"] = offset_result.get("metadataUpdate")
     except ApiError as exc:
         etl_repository.update_kafka_snapshot(db, snapshot_record, "failed", exc.message)
+        if result is not None:
+            exc.details = {
+                **(exc.details or {}),
+                "bridge": kafka_post_ingest_failure_details(result, exc.message),
+            }
         raise
+    except Exception as exc:
+        message = compact_storage_text(exc, limit=1000)
+        etl_repository.update_kafka_snapshot(
+            db,
+            snapshot_record,
+            "failed",
+            message,
+        )
+        raise ApiError(
+            ErrorCode.INTERNAL_ERROR,
+            "Kafka Snapshot finalization failed unexpectedly",
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            {
+                **(
+                    {"bridge": kafka_post_ingest_failure_details(result, message)}
+                    if result is not None
+                    else {}
+                ),
+                "reason": message,
+            },
+        ) from exc
     etl_repository.update_kafka_snapshot(db, snapshot_record, "success")
     result["command"] = command
     return result
+
+
+def kafka_post_ingest_failure_details(result: dict[str, Any], message: str) -> dict[str, Any]:
+    return {
+        "catalogDataset": result.get("catalogDataset"),
+        "consumedCount": parse_count_value(result.get("consumedCount")),
+        "endedAt": result.get("endedAt") or iso_now(),
+        "failedCount": parse_count_value(result.get("failedCount")),
+        "failedStage": "offset commit" if result.get("queryEngineVerified") is True else "catalog",
+        "icebergCommit": result.get("icebergCommit"),
+        "message": message,
+        "offsetCommit": result.get("offsetCommit") or {"status": "pending"},
+        "quality": result.get("quality"),
+        "queryEngineTable": result.get("queryEngineTable"),
+        "queryEngineVerified": result.get("queryEngineVerified") is True,
+        "runId": result.get("runId"),
+        "snapshot": result.get("snapshot"),
+        "startedAt": result.get("startedAt") or iso_now(),
+        "storageFormat": result.get("storageFormat"),
+        "storageLocation": result.get("storageLocation") or result.get("warehouseLocation"),
+        "storedCount": parse_count_value(result.get("storedCount")),
+        "topic": result.get("topic"),
+        "transform": result.get("transform"),
+    }
 
 
 def kafka_request_with_durable_snapshot(
@@ -1730,16 +1824,23 @@ def kafka_request_with_durable_snapshot(
 def kafka_failure_result(request: dict[str, Any], run_id: str, error: ApiError, bridge_error: dict[str, Any]) -> dict[str, Any]:
     return {
         "broker": bridge_error.get("broker") or request.get("broker"),
+        "catalogDataset": bridge_error.get("catalogDataset"),
         "consumedCount": int(bridge_error.get("consumedCount") or 0),
         "endedAt": bridge_error.get("endedAt") or iso_now(),
         "error": bridge_error.get("message") or error.message,
         "failedCount": int(bridge_error.get("failedCount") or 0),
         "failedStage": bridge_error.get("failedStage") or "Kafka ingest",
+        "icebergCommit": bridge_error.get("icebergCommit"),
+        "offsetCommit": bridge_error.get("offsetCommit"),
+        "queryEngineTable": bridge_error.get("queryEngineTable"),
+        "queryEngineVerified": bridge_error.get("queryEngineVerified") is True,
         "runId": bridge_error.get("runId") or run_id,
         "snapshot": bridge_error.get("snapshot"),
         "startedAt": bridge_error.get("startedAt") or iso_now(),
         "status": "failed",
-        "storedCount": 0,
+        "storageFormat": bridge_error.get("storageFormat"),
+        "storageLocation": bridge_error.get("storageLocation"),
+        "storedCount": int(bridge_error.get("storedCount") or 0),
         "targetLayer": request.get("targetLayer") or "BRONZE",
         "topic": bridge_error.get("topic") or request.get("topic"),
         "transform": bridge_error.get("transform"),
@@ -1782,12 +1883,28 @@ def kafka_ingest_request_from_job(job: ETLJobModel, run_id: str) -> dict[str, An
         or f"asklake-{normalize_column_name(job.id)}"
     )
     offset_policy = kafka_offset_policy(field_value(fields, "Offset Policy") or field_value(fields, "offsetPolicy"))
+    if not job.iceberg_target:
+        dataset_id = str(job.dataset_id or make_dataset_id(job.target))
+        job.dataset_id = dataset_id
+        job.iceberg_target = build_iceberg_writer_target(
+            job.target,
+            dataset_id,
+            write_mode="append",
+            partition_columns=normalize_string_list(job.partition_columns),
+        ).model_dump(mode="json", by_alias=True)
+    canonical_rules = [
+        rule.model_dump(mode="json", by_alias=True)
+        for rule in compiled_rules.result.rules
+    ]
     return {
         "allowEmpty": True,
         "broker": field_value(fields, "Broker / Endpoint") or field_value(fields, "Broker") or os.environ.get("ASKLAKE_KAFKA_BROKER") or "127.0.0.1:19092",
         "consumerGroupId": consumer_group_id,
+        "deferOffsetCommit": True,
         "datasetId": job.dataset_id or make_dataset_id(job.target),
         "datasetName": job.target or "reviews_raw",
+        "icebergTarget": job.iceberg_target,
+        "jobId": job.id,
         "landingBucket": target["bucket"],
         "landingEndpoint": (
             field_value(fields, "Landing Endpoint URL")
@@ -1798,18 +1915,23 @@ def kafka_ingest_request_from_job(job: ETLJobModel, run_id: str) -> dict[str, An
         "landingPrefix": target["prefix"],
         "maxMessages": max_messages,
         "offsetPolicy": offset_policy,
-        "registerCatalog": True,
+        "registerCatalog": False,
         "schemaColumns": [
             SchemaColumnDraft.model_validate(column).model_dump(mode="json", by_alias=True)
             for column in (job.schema_columns or [])
         ],
         "outputSchema": [list(column) for column in compiled_rules.result.output_schema],
         "ruleContractVersion": compiled_rules.result.contract_version,
+        "ruleFingerprint": canonical_rule_fingerprint(
+            compiled_rules.result.contract_version,
+            canonical_rules,
+        ),
         "rules": [
-            rule.model_dump(mode="json", by_alias=True)
-            for rule in compiled_rules.result.rules
+            rule
+            for rule in canonical_rules
         ],
         "runId": run_id,
+        "schemaFingerprint": job.schema_fingerprint,
         "storageMode": target["storageMode"],
         "targetBucket": target["bucket"],
         "targetDescription": job.target_description or None,
@@ -1827,6 +1949,110 @@ def kafka_ingest_request_from_job(job: ETLJobModel, run_id: str) -> dict[str, An
             for rule in compiled_rules.quality_rules
         ],
     }
+
+
+def publish_kafka_snapshot_iceberg_result(
+    db: Session,
+    job: ETLJobModel,
+    result: dict[str, Any],
+) -> dict[str, Any]:
+    run_id = str(result.get("runId") or "").strip()
+    snapshot = result.get("snapshot")
+    if not run_id or not isinstance(snapshot, dict):
+        raise catalog_reconciliation_error(
+            "Kafka Snapshot Iceberg result identity is incomplete.",
+            {"jobId": job.id, "runId": run_id},
+        )
+    expected_boundary = kafka_snapshot_source_boundary(snapshot)
+    commit = result.get("icebergCommit")
+    committed_boundary = commit.get("sourceBoundary") if isinstance(commit, dict) else None
+    if committed_boundary != expected_boundary:
+        raise catalog_reconciliation_error(
+            "Kafka Snapshot Iceberg source boundary does not match the persisted snapshot.",
+            {"jobId": job.id, "runId": run_id, "snapshotId": snapshot.get("snapshotId")},
+        )
+    verified = verify_spark_iceberg_result(job, run_id, result)
+    dataset_id = str(job.dataset_id or make_dataset_id(job.target))
+    existing = etl_repository.get_dataset_by_id_for_update(db, dataset_id)
+    previous_payload = existing.payload if existing and isinstance(existing.payload, dict) else {}
+    previous_run = kafka_materialization_for_snapshot(
+        previous_payload.get("materializationRuns"),
+        str(snapshot.get("snapshotId") or ""),
+    )
+    existing_mapping = previous_payload.get("queryEngineTable")
+    target = IcebergWriterTarget.model_validate(job.iceberg_target)
+    same_mapping = isinstance(existing_mapping, dict) and all(
+        str(existing_mapping.get(key) or "") == expected
+        for key, expected in (
+            ("catalog", target.catalog),
+            ("schema", target.namespace),
+            ("table", target.table),
+            ("format", "iceberg"),
+        )
+    )
+    materialization_mode = (
+        str(previous_run.get("materializationMode") or "delta")
+        if previous_run
+        else "delta" if same_mapping else "snapshot"
+    )
+    verified = {
+        **verified,
+        "kafkaSnapshot": snapshot,
+        "materializationMode": materialization_mode,
+        "materializationRows": parse_count_value(result.get("storedCount")),
+        "sourceBoundary": expected_boundary,
+        "sourceKind": "kafka",
+        "sourceRanges": expected_boundary["partitions"],
+        "storageLocation": verified.get("warehouseLocation"),
+        "storedCount": parse_count_value(result.get("storedCount")),
+    }
+    dataset = dataset_from_spark_result(job, verified, existing)
+    saved_dataset = etl_repository.save_dataset(db, dataset)
+    return {
+        **verified,
+        "catalogDataset": {
+            "id": saved_dataset.id,
+            "layer": saved_dataset.layer,
+            "materializationRuns": len(saved_dataset.materialization_runs),
+            "name": saved_dataset.name,
+            "rows": saved_dataset.rows,
+            "storageLocation": saved_dataset.storage_location,
+        },
+    }
+
+
+def kafka_snapshot_source_boundary(snapshot: dict[str, Any]) -> dict[str, Any]:
+    partitions = snapshot.get("partitions") if isinstance(snapshot.get("partitions"), list) else []
+    return {
+        "capturedAt": str(snapshot.get("capturedAt") or ""),
+        "consumerGroupId": str(snapshot.get("consumerGroupId") or ""),
+        "kind": "kafka_snapshot",
+        "partitions": [
+            {
+                "endOffset": str(partition.get("endOffset") or ""),
+                "partition": int(partition.get("partition") or 0),
+                "startOffset": str(partition.get("startOffset") or ""),
+            }
+            for partition in partitions
+            if isinstance(partition, dict)
+        ],
+        "snapshotId": str(snapshot.get("snapshotId") or ""),
+        "topic": str(snapshot.get("topic") or ""),
+    }
+
+
+def kafka_materialization_for_snapshot(previous_runs: Any, snapshot_id: str) -> dict[str, Any] | None:
+    if not snapshot_id or not isinstance(previous_runs, list):
+        return None
+    return next(
+        (
+            run
+            for run in previous_runs
+            if isinstance(run, dict)
+            and str((run.get("kafkaSnapshot") or {}).get("snapshotId") or "") == snapshot_id
+        ),
+        None,
+    )
 
 
 def kafka_offset_policy(value: str) -> str:
@@ -3445,9 +3671,14 @@ def run_from_kafka_result(job: ETLJobModel, result: dict[str, Any]) -> ETLRunMod
         failed_stage="-" if success else str(result.get("failedStage") or "Kafka ingest"),
         error_summary="-" if success else str(result.get("error") or "Kafka ingest failed."),
         task_states={
+            "catalogDataset": result.get("catalogDataset"),
+            "icebergCommit": result.get("icebergCommit"),
             "kafkaSnapshot": result.get("snapshot"),
+            "metadataUpdate": result.get("metadataUpdate"),
+            "offsetCommit": result.get("offsetCommit"),
             "transform": result.get("transform"),
             "quality": result.get("quality"),
+            "queryEngineTable": result.get("queryEngineTable"),
         } if result.get("snapshot") else None,
     )
 
@@ -4097,11 +4328,7 @@ def spark_output_sample_rows(result: dict[str, Any], schema_json: list[list[str]
 
 def dataset_from_spark_result(job: ETLJobModel, result: dict[str, Any], existing_dataset: CatalogDatasetModel | None = None) -> CatalogDatasetModel:
     now = str(result.get("endedAt") or iso_now())
-    schema = result.get("schema")
-    schema_json = [
-        [str(field.get("name") or "-"), str(field.get("type") or "string")]
-        for field in schema
-    ] if isinstance(schema, list) and schema else schema_from_job(job)
+    schema_json = spark_result_schema(result.get("schema")) or schema_from_job(job)
     dataset_id = str(job.dataset_id or make_dataset_id(job.target))
     previous_payload = existing_dataset.payload if existing_dataset and existing_dataset.payload else None
     dataset_payload = dataset_payload_from_spark_result(job, result, dataset_id, schema_json, now, previous_payload)
@@ -4132,6 +4359,24 @@ def dataset_from_spark_result(job: ETLJobModel, result: dict[str, Any], existing
         upstream=[job.source_label, job.name],
         downstream=dataset_payload["downstream"],
     )
+
+
+def spark_result_schema(value: Any) -> list[list[str]]:
+    if not isinstance(value, list):
+        return []
+    normalized: list[list[str]] = []
+    for field in value:
+        if isinstance(field, dict):
+            name = str(field.get("name") or "").strip()
+            type_value = str(field.get("type") or "string").strip() or "string"
+        elif isinstance(field, (list, tuple)) and field:
+            name = str(field[0] or "").strip()
+            type_value = str(field[1] if len(field) > 1 else "string").strip() or "string"
+        else:
+            continue
+        if name and not name.startswith("_asklake_"):
+            normalized.append([name, type_value])
+    return normalized
 
 
 def dataset_payload_from_spark_result(
@@ -4167,6 +4412,7 @@ def dataset_payload_from_spark_result(
             "storageSizeBytes": storage_size_bytes,
             **spark_source_window_metadata(result),
             **({"sourceRanges": result["sourceRanges"]} if isinstance(result.get("sourceRanges"), list) and result["sourceRanges"] else {}),
+            **({"kafkaSnapshot": result["kafkaSnapshot"]} if isinstance(result.get("kafkaSnapshot"), dict) else {}),
             **({"publicationManifest": str(result["publicationManifest"])} if result.get("publicationManifest") else {}),
             **({"ruleContractVersion": str(result["ruleContractVersion"])} if result.get("ruleContractVersion") else {}),
             **({"ruleFingerprint": str(result["ruleFingerprint"])} if result.get("ruleFingerprint") else {}),
@@ -4187,6 +4433,7 @@ def dataset_payload_from_spark_result(
     )
     storage_format = "iceberg" if query_engine_available else SPARK_OUTPUT_FORMAT
     storage_location = str(result.get("warehouseLocation") or output_path)
+    current_storage_size_bytes = storage_size_bytes if query_engine_available else aggregate["storageSizeBytes"]
     iceberg_commit = result.get("icebergCommit") if isinstance(result.get("icebergCommit"), dict) else {}
     downstream = (["SQL 분석"] if query_engine_available else []) + (["RAG 인덱싱"] if job.rag else [])
     return {
@@ -4210,13 +4457,13 @@ def dataset_payload_from_spark_result(
         "rows": format_rows(aggregate["rowCount"]),
         "sampleRows": sample_rows,
         "schema": schema_json,
-        "size": format_storage_size(aggregate["storageSizeBytes"]) if aggregate["storageSizeBytes"] > 0 else display_size,
+        "size": format_storage_size(current_storage_size_bytes) if current_storage_size_bytes > 0 else display_size,
         "source": job.name,
         "sourceRunId": aggregate["latestRunId"] or result.get("runId"),
         "status": "available",
         "storageFormat": storage_format,
         "storageLocation": storage_location,
-        "storageSizeBytes": aggregate["storageSizeBytes"],
+        "storageSizeBytes": current_storage_size_bytes,
         "queryEngineStatus": "available" if query_engine_available else "unavailable",
         "partition": partition,
         "partitionColumns": partition_columns,
@@ -4309,7 +4556,19 @@ def append_materialization_run(previous_runs: Any, next_run: dict[str, Any]) -> 
     run_id = str(next_run.get("runId") or "")
     if not run_id:
         return runs
-    return [next_run, *[run for run in runs if str(run.get("runId") or "") != run_id]]
+    snapshot_id = str((next_run.get("kafkaSnapshot") or {}).get("snapshotId") or "")
+    return [
+        next_run,
+        *[
+            run
+            for run in runs
+            if str(run.get("runId") or "") != run_id
+            and (
+                not snapshot_id
+                or str((run.get("kafkaSnapshot") or {}).get("snapshotId") or "") != snapshot_id
+            )
+        ],
+    ]
 
 
 def spark_materialization_mode(job: ETLJobModel, result: dict[str, Any]) -> str:
@@ -4688,17 +4947,46 @@ def dag_steps_from_kafka_result(job: ETLJobModel, command: str, run: dict[str, A
     consume_failed = failed and failed_stage in {"kafka ingest", "consume", "source"}
     transform_failed = failed and failed_stage == "transform"
     quality_failed = failed and failed_stage == "quality"
+    target_failed = failed and any(value in failed_stage for value in ("iceberg", "spark", "storage", "target", "write"))
+    catalog_failed = failed and failed_stage == "catalog"
+    offset_failed = failed and "offset" in failed_stage
     topic = str(result.get("topic") or field_value(job.source_config or [], "TOPIC / QUEUE NAME") or "-")
     broker = str(result.get("broker") or field_value(job.source_config or [], "Broker / Endpoint") or "-")
     storage_location = str(result.get("storageLocation") or run.get("outputPath") or "-")
     dataset_id = str(result.get("datasetId") or job.dataset_id or make_dataset_id(job.target))
     consumer_group_id = str(result.get("consumerGroupId") or field_value(job.source_config or [], "CONSUMER GROUP ID") or "-")
-    snapshot = result.get("snapshot") or {}
-    transform = result.get("transform") or {}
-    quality = result.get("quality") or {}
+    snapshot = result.get("snapshot") if isinstance(result.get("snapshot"), dict) else {}
+    transform = result.get("transform") if isinstance(result.get("transform"), dict) else {}
+    quality = result.get("quality") if isinstance(result.get("quality"), dict) else {}
+    iceberg_commit = result.get("icebergCommit") if isinstance(result.get("icebergCommit"), dict) else {}
+    catalog_dataset = result.get("catalogDataset") if isinstance(result.get("catalogDataset"), dict) else {}
+    offset_commit = result.get("offsetCommit") if isinstance(result.get("offsetCommit"), dict) else {}
+    stored_count = parse_count_value(result.get("storedCount"))
+    no_new_rows = stored_count == 0 and not any((consume_failed, transform_failed, quality_failed, target_failed))
+    target_committed = bool(str(iceberg_commit.get("snapshotId") or "").strip())
+    catalog_committed = bool(catalog_dataset.get("id"))
+    target_status = (
+        "success" if target_committed or no_new_rows
+        else "failed" if target_failed
+        else "blocked" if failed
+        else "success"
+    )
+    catalog_status = (
+        "success" if catalog_committed or no_new_rows
+        else "failed" if catalog_failed
+        else "blocked" if target_status != "success" or failed
+        else "success"
+    )
+    offset_status = (
+        "success" if offset_commit.get("status") == "success"
+        else "failed" if offset_failed
+        else "blocked" if failed
+        else "success"
+    )
     snapshot_ranges = ", ".join(
         f"p{item.get('partition')}:{item.get('startOffset')}~{item.get('endOffset')}"
         for item in snapshot.get("partitions", [])
+        if isinstance(item, dict)
     ) or "-"
     return [
         dag_step("source", "1. Kafka 소스 연결", topic, "failed" if consume_failed else "success", [
@@ -4712,27 +5000,48 @@ def dag_steps_from_kafka_result(job: ETLJobModel, command: str, run: dict[str, A
             ["Consumed", format_rows(result.get("consumedCount"))],
             ["Failed", format_rows(result.get("failedCount"))],
         ], [f"Kafka consume 실패: {run.get('errorSummary')}" if consume_failed else "Kafka 메시지를 batch 단위로 읽었습니다."]),
-        dag_step("transform", "3. 변환 규칙 적용", f"{transform.get('appliedStepCount', 0)}개 규칙", "failed" if transform_failed else "blocked" if failed else "success", [
+        dag_step("transform", "3. 변환 규칙 적용", f"{transform.get('appliedStepCount', 0)}개 규칙", "failed" if transform_failed else "blocked" if consume_failed else "success", [
             ["Configured", str(transform.get("configuredStepCount", 0))],
             ["Applied", str(transform.get("appliedStepCount", 0))],
             ["Transform errors", str(transform.get("errorCount", 0))],
-        ], [f"변환 규칙 적용 실패: {run.get('errorSummary')}" if transform_failed else "이전 단계 실패로 변환이 수행되지 않았습니다." if failed else "Kafka snapshot 레코드에 변환 규칙을 적용했습니다."]),
-        dag_step("quality", "4. 품질 검증", str(quality.get("summary") or "규칙 없음"), "failed" if quality_failed else "blocked" if failed else "success", [
+        ], [f"변환 규칙 적용 실패: {run.get('errorSummary')}" if transform_failed else "Kafka consume 실패로 변환이 수행되지 않았습니다." if consume_failed else "Kafka snapshot 레코드에 변환 규칙을 적용했습니다."]),
+        dag_step("quality", "4. 품질 검증", str(quality.get("summary") or "규칙 없음"), "failed" if quality_failed else "blocked" if consume_failed or transform_failed else "success", [
             ["Configured", str(quality.get("configuredRuleCount", 0))],
             ["Invalid", str(quality.get("invalidRowCount", 0))],
             ["Quarantined", str(quality.get("quarantinedCount", 0))],
             ["Dropped", str(quality.get("droppedCount", 0))],
-        ], [f"품질 검증 실패: {run.get('errorSummary')}" if quality_failed else "이전 단계 실패로 품질 검증이 수행되지 않았습니다." if failed else str(quality.get("summary") or "품질 규칙 없음")]),
-        dag_step("target", "5. Direct target 저장", storage_location, "blocked" if failed else "success", [
-            ["Storage", str(result.get("storageMode") or "s3")],
-            ["Format", str(result.get("storageFormat") or "jsonl")],
+        ], [f"품질 검증 실패: {run.get('errorSummary')}" if quality_failed else "이전 단계 실패로 품질 검증이 수행되지 않았습니다." if consume_failed or transform_failed else str(quality.get("summary") or "품질 규칙 없음")]),
+        dag_step("target", "5. Iceberg target 커밋", storage_location, target_status, [
+            ["Table", str((iceberg_commit.get("target") or {}).get("tableUri") or result.get("outputPath") or "-")],
+            ["Format", "Iceberg (Parquet)"],
             ["Layer", str(result.get("targetLayer") or job.target_layer)],
+            ["Snapshot", str(iceberg_commit.get("snapshotId") or ("변경 없음" if no_new_rows else "-"))],
             ["Stored", format_rows(result.get("storedCount"))],
-        ], ["이전 단계 실패로 target 저장이 수행되지 않았습니다." if failed else f"Kafka snapshot 결과를 target에 저장했습니다: {storage_location}"]),
-        dag_step("catalog", "6. 카탈로그 갱신", dataset_id, "blocked" if failed else "success", [
+        ], [
+            f"Iceberg target 커밋 실패: {run.get('errorSummary')}" if target_failed
+            else "새 offset 범위가 없어 Iceberg snapshot을 변경하지 않았습니다." if no_new_rows
+            else "이전 단계 실패로 Iceberg target 커밋이 수행되지 않았습니다." if target_status == "blocked"
+            else f"Kafka snapshot 결과를 Iceberg table에 커밋했습니다: {storage_location}"
+        ]),
+        dag_step("catalog", "6. Trino 검증 및 카탈로그 갱신", dataset_id, catalog_status, [
             ["Dataset", dataset_id],
             ["Run ID", run.get("runId", "-")],
-        ], ["이전 단계 실패로 카탈로그 갱신이 중단되었습니다." if failed else "Catalog materialization run이 Kafka sourceKind로 갱신되었습니다."]),
+            ["Trino", "verified" if result.get("queryEngineVerified") is True else "변경 없음" if no_new_rows else "pending"],
+        ], [
+            f"Trino/Catalog 검증 실패: {run.get('errorSummary')}" if catalog_failed
+            else "새 Iceberg snapshot이 없어 기존 카탈로그 매핑을 유지했습니다." if no_new_rows
+            else "이전 단계 실패로 Trino/Catalog 검증이 중단되었습니다." if catalog_status == "blocked"
+            else "Iceberg snapshot을 Trino로 검증하고 Catalog materialization을 갱신했습니다."
+        ]),
+        dag_step("offset", "7. Kafka offset 확정", str(snapshot.get("snapshotId") or "-"), offset_status, [
+            ["Consumer group", consumer_group_id],
+            ["Offset ranges", snapshot_ranges],
+            ["Commit status", str(offset_commit.get("status") or "pending")],
+        ], [
+            f"Kafka offset 확정 실패: {run.get('errorSummary')}" if offset_failed
+            else "이전 단계 실패로 Kafka offset을 확정하지 않았습니다." if offset_status == "blocked"
+            else "Iceberg와 Catalog 검증 완료 후 Kafka consumer offset을 확정했습니다."
+        ]),
     ]
 
 
@@ -6336,7 +6645,7 @@ def apply_update_request(job: ETLJobModel, request: UpdatePipelineRequest, targe
     job.iceberg_target = build_iceberg_writer_target(
         request.target_dataset,
         job.dataset_id or make_dataset_id(request.target_dataset),
-        write_mode=writer_mode_for_pipeline(job.source_type, request.source_config),
+        write_mode=writer_mode_for_pipeline(job.source_type, job.source_config),
         partition_columns=normalize_string_list(request.partition_columns),
     ).model_dump(mode="json", by_alias=True)
 

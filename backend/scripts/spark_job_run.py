@@ -88,6 +88,7 @@ def main():
         )
         schema_columns = manifest.get("schemaColumns") or load_json_env("ASKLAKE_SPARK_SCHEMA_COLUMNS", [])
         source_collection = manifest.get("sourceCollection") or {}
+        source_boundary = manifest.get("sourceBoundary") or source_collection
         record_parsing = manifest.get("recordParsing") or {}
         transform_steps = manifest.get("transformSteps") or load_json_env("ASKLAKE_SPARK_TRANSFORM_STEPS", [])
         quality_rules = manifest.get("qualityRules") or load_json_env("ASKLAKE_SPARK_QUALITY_RULES", [])
@@ -181,6 +182,12 @@ def main():
             "_asklake_ingested_at",
             F.current_timestamp(),
         )
+        kafka_snapshot_id = kafka_snapshot_boundary_id(source_boundary)
+        if kafka_snapshot_id:
+            output_df = output_df.withColumn(
+                "_asklake_kafka_snapshot_id",
+                F.lit(kafka_snapshot_id),
+            )
         resolved_partition_columns = resolve_partition_columns(output_df, partition_columns)
         if iceberg_target and iceberg_target["partitionColumns"] != resolved_partition_columns:
             raise ValueError(
@@ -275,7 +282,7 @@ def main():
                 partition_columns=resolved_partition_columns,
                 schema_fingerprint=manifest.get("schemaFingerprint"),
                 rule_fingerprint=manifest.get("ruleFingerprint"),
-                source_boundary=source_collection,
+                source_boundary=source_boundary,
             )
             iceberg_previous_snapshot = iceberg_commit.pop("_previousSnapshot", None)
             publish_spark_quarantine(spark, quarantine_staging_path, output_path)
@@ -305,6 +312,7 @@ def main():
             ],
             "sourcePath": source_path,
             "sourceCollection": source_collection,
+            "sourceBoundary": source_boundary,
             "startedAt": started_at,
             "status": "success",
             "textStructuring": text_structuring,
@@ -583,6 +591,26 @@ def commit_iceberg_table(
     effective_write_mode = target["writeMode"]
     if effective_write_mode == "append" and bool((source_boundary or {}).get("rebaseline")):
         effective_write_mode = "replace"
+    if (
+        effective_write_mode == "append"
+        and existed_before
+        and iceberg_source_boundary_exists(spark, target, source_boundary)
+    ):
+        snapshot = latest_iceberg_snapshot(spark, target)
+        return {
+            "createdTable": False,
+            "jobId": job_id,
+            "operation": "reuse",
+            "runId": run_id,
+            "target": target,
+            "snapshotId": snapshot["snapshotId"],
+            "committedAt": snapshot["committedAt"],
+            "warehouseLocation": snapshot["warehouseLocation"],
+            "schemaFingerprint": schema_fingerprint,
+            "ruleFingerprint": rule_fingerprint,
+            "sourceBoundary": source_boundary or {},
+            "_previousSnapshot": None,
+        }
     committed = False
     try:
         writer = frame.writeTo(table_identifier)
@@ -653,6 +681,26 @@ def rollback_iceberg_commit(spark, target, previous_snapshot):
             raise RuntimeError("ICEBERG_ROLLBACK_VERIFICATION_FAILED")
         return
     spark.sql(f"DROP TABLE IF EXISTS {table_identifier}")
+
+
+def kafka_snapshot_boundary_id(source_boundary):
+    if not isinstance(source_boundary, dict):
+        return ""
+    if str(source_boundary.get("kind") or "").strip() != "kafka_snapshot":
+        return ""
+    return str(source_boundary.get("snapshotId") or "").strip()
+
+
+def iceberg_source_boundary_exists(spark, target, source_boundary):
+    snapshot_id = kafka_snapshot_boundary_id(source_boundary)
+    if not snapshot_id:
+        return False
+    table = spark.table(spark_iceberg_table_identifier(target))
+    if "_asklake_kafka_snapshot_id" not in table.columns:
+        return False
+    return table.where(
+        F.col("_asklake_kafka_snapshot_id") == F.lit(snapshot_id)
+    ).limit(1).count() > 0
 
 
 def merge_rule_output_schema(schema_columns, rule_output_schema):

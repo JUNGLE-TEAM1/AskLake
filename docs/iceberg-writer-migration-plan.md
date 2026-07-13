@@ -19,11 +19,11 @@
 | writer | 현재 물리 출력 | 현재 등록 | Trino query 상태 | Iceberg writer 전환 후 |
 | --- | --- | --- | --- | --- |
 | 일반 Spark 배치 | Iceberg table의 S3/MinIO Parquet | Iceberg JDBC catalog + AskLake Catalog materialization | `available` | Phase 2 완료 |
-| Kafka Snapshot | S3 JSONL direct snapshot | AskLake Catalog materialization | `unavailable` | offset range 단위 Iceberg append commit |
+| Kafka Snapshot | Iceberg table의 S3/MinIO Parquet | Iceberg JDBC catalog + AskLake Catalog materialization | `available` | Phase 3 완료 |
 | Kafka Continuous | S3 Parquet micro-batch | AskLake Catalog materialization/checkpoint | `unavailable` | foreachBatch Iceberg append commit |
 | Trino SQL materialization | Iceberg CTAS | AskLake Catalog + `queryEngineTable` | `available` | 기준 구현으로 유지 |
 
-현재 Trino/Iceberg 인프라와 SQL CTAS 경로가 존재해도 Spark/Kafka writer가 Iceberg metadata를 만들지 않으므로, 단순히 `storagePath`가 S3인 Dataset을 Iceberg table로 추정하면 안 된다.
+현재 Kafka Continuous writer는 아직 Iceberg metadata를 만들지 않으므로, 단순히 `storagePath`가 S3인 Dataset을 Iceberg table로 추정하면 안 된다. 일반 Spark 배치와 Kafka Snapshot도 persisted `icebergTarget`, 실제 snapshot commit, Trino 물리 검증이 모두 확인된 경우에만 Iceberg Dataset으로 취급한다.
 
 ## 3. 목표 저장 계약
 
@@ -75,15 +75,24 @@ iceberg://{catalog}/{namespace}/{table}
 - 실제 data file은 warehouse의 Parquet이고, `outputPath`는 `iceberg://catalog/namespace/table` 논리 URI다. 성공 manifest는 `snapshotId`, warehouse location, schema/rule fingerprint, source boundary를 포함한다.
 - `publish_run_result`는 저장된 Spark evidence와 Trino `DESCRIBE`, `$snapshots`, `$files`를 대조한다. snapshot, target, fingerprint 또는 양수 output의 물리 data-file 증거가 맞지 않으면 Catalog와 Airflow를 성공 처리하지 않는다.
 - replace 재실행은 새 snapshot을 만들며, commit 직후 후속 처리가 실패하면 이전 snapshot으로 rollback한다. catalog/namespace 이름이 같은 경우에도 procedure target을 완전 수식한다.
-- Spark 외부 commit을 즉시 검증할 수 있도록 Trino Iceberg coordinator metadata cache를 비활성화한다. Kafka Snapshot/Continuous writer는 Phase 3~4까지 기존 경로를 유지한다.
+- Spark 외부 commit을 즉시 검증할 수 있도록 Trino Iceberg coordinator metadata cache를 비활성화한다. Kafka Snapshot은 Phase 3에서 같은 검증 adapter를 사용하며 Continuous writer는 Phase 4까지 기존 경로를 유지한다.
 - `ASKLAKE_VERIFY_ICEBERG_LIVE=true npm run verify:spark-iceberg-batch`는 최초 replace, 재실행 replace, commit 후 강제 실패 rollback과 Trino row/snapshot 정합성을 실제 Spark 4/MinIO/PostgreSQL/Trino로 검증한다.
 
-### Phase 3. Kafka Snapshot 전환
+### Phase 3. Kafka Snapshot 전환 (완료)
 
 - direct JSONL snapshot target을 Iceberg append target으로 대체한다.
 - Kafka partition별 fixed end offset range와 Iceberg snapshot ID를 같은 manifest에 저장한다.
 - offset commit은 Iceberg commit과 physical verification 이후에만 실행한다.
 - 성공 기준: 재시도와 consumer group 재개에서 이미 commit된 offset range가 중복 append되지 않는다.
+
+구현 결과:
+
+- Kafka Snapshot Job은 시작 시 저장한 partition별 `[startOffset, endOffset)`만 consume하고 기존 canonical transform/quality와 exact output projection을 적용한 뒤, backend-owned append `icebergTarget`에 Spark DataFrameWriterV2로 commit한다. 최종 data file은 warehouse의 Parquet이며 target JSONL data object는 만들지 않는다.
+- Iceberg commit evidence의 `sourceBoundary`에 snapshot ID, topic, consumer group, capturedAt과 partition offset range를 함께 저장한다. 같은 snapshot 재시도는 table의 내부 snapshot marker를 확인해 이미 commit된 범위를 `reuse`하고 새 append를 만들지 않는다.
+- FastAPI는 Iceberg snapshot/warehouse/fingerprint와 Trino `DESCRIBE`, `$snapshots`, `$files`를 검증한 뒤 AskLake Catalog materialization을 저장하고, 이 단계까지 성공한 후에만 Kafka consumer group offset을 `endOffset`으로 확정한다.
+- Iceberg/Catalog 성공 후 offset 확정이 실패하면 Run은 실패로 남지만 물리 commit과 Catalog 이력을 보존한다. `retry`는 같은 durable snapshot을 재사용하고 materialization history를 snapshot ID로 deduplicate한 뒤 offset만 안전하게 이어서 확정한다.
+- 첫 Iceberg materialization은 기존 JSONL history와 섞이지 않도록 `snapshot` rebaseline으로 기록하고, 후속 새 Kafka snapshot은 `delta`로 기록한다. 빈 offset range는 새 Iceberg data file/Catalog run 없이 성공하며 offset 경계만 확정한다.
+- `ASKLAKE_VERIFY_ICEBERG_LIVE=true npm run verify:kafka-snapshot-iceberg`는 commit 뒤 offset 직전 강제 실패, 같은 snapshot retry, 중복 없는 Trino row count, 단일 Catalog materialization, 후속 empty run을 격리 Redpanda/Spark/Trino/MinIO 환경에서 검증한다.
 
 ### Phase 4. Kafka Continuous 전환
 
@@ -100,10 +109,10 @@ iceberg://{catalog}/{namespace}/{table}
 
 ## 5. 호환성과 금지 사항
 
-- Phase 2 완료 시점에도 Kafka writer와 frontend create payload는 변경하지 않는다.
+- Kafka Snapshot의 frontend create payload와 기존 `targetFormat=jsonl` 저장값은 읽기 호환으로 유지한다. 이 필드는 Phase 3 Job의 최종 물리 포맷 근거가 아니며, 검증된 Catalog `storageFormat=iceberg`와 `queryEngineTable`이 최종 저장 계약이다.
 - 기존 JSONL/Parquet S3 output을 Iceberg table로 표시하거나 `queryEngineStatus=available`로 승격하지 않는다.
 - Iceberg metadata를 생성하지 않는 writer의 Dataset은 Trino query target으로 노출하지 않는다.
-- Kafka offset commit, Continuous checkpoint, Iceberg snapshot commit의 원자성 기준을 정의하기 전에는 Kafka writer를 전환하지 않는다.
+- Kafka Snapshot offset/Iceberg commit 순서는 Phase 3 계약을 따른다. Continuous checkpoint와 Iceberg snapshot commit의 정합성 기준은 Phase 4 전환 전에 별도로 확정한다.
 
 ## 6. Phase 0 검수 기준
 

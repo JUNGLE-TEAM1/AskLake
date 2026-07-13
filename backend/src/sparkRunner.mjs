@@ -371,6 +371,7 @@ function writeSparkJobManifest(manifestPath, job) {
     ruleFingerprint: job.ruleFingerprint ?? null,
     schemaColumns: job.schemaColumns ?? [],
     schemaFingerprint: job.schemaFingerprint ?? null,
+    sourceBoundary: job.sourceBoundary ?? null,
     sourceCollection: sourceCollectionFromConfig(
       job.sourceConfig ?? [],
       job.sourceIncrementalSince,
@@ -649,6 +650,7 @@ function sparkSourceFromJob(job, runId) {
     return {
       format: "jsonl",
       path: `file://${reportContainerDir}/${path.basename(samplePath)}`,
+      ...(job.cleanupSource ? { temporaryPath: samplePath } : {}),
     };
   }
 
