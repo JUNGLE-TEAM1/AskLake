@@ -1,0 +1,152 @@
+{
+  "schemaVersion": "asklake.runtime-cutover-evidence.v1",
+  "campaignId": "example-phase8-shadow",
+  "exampleOnly": true,
+  "environment": {
+    "name": "staging",
+    "region": "ap-northeast-2",
+    "sourceRevision": "1111111111111111111111111111111111111111"
+  },
+  "baseline": {
+    "sparkRuntime": "spark-rest",
+    "kafkaRuntime": "redpanda",
+    "topic": "asklake.phase8.fixture",
+    "consumerGroup": "asklake-phase8-baseline",
+    "outputPrefix": "s3a://asklake-phase8-test/baseline/output",
+    "checkpointPath": "s3a://asklake-phase8-test/baseline/checkpoint"
+  },
+  "candidate": {
+    "sparkRuntime": "emr-serverless",
+    "kafkaRuntime": "msk",
+    "topic": "asklake.phase8.fixture",
+    "consumerGroup": "asklake-phase8-candidate",
+    "outputPrefix": "s3a://asklake-phase8-test/candidate/output",
+    "checkpointPath": "s3a://asklake-phase8-test/candidate/checkpoint"
+  },
+  "stageEvidence": {
+    "docker-regression": {
+      "status": "passed",
+      "completedAt": "2026-07-14T00:00:00.000Z",
+      "evidenceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "aws-batch-staging": {
+      "status": "passed",
+      "completedAt": "2026-07-14T01:00:00.000Z",
+      "evidenceSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "aws-continuous-staging": {
+      "status": "passed",
+      "completedAt": "2026-07-14T02:00:00.000Z",
+      "evidenceSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    "small-workload-cutover": {
+      "status": "passed",
+      "completedAt": "2026-07-14T03:00:00.000Z",
+      "evidenceSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    }
+  },
+  "shadowRuns": [
+    {
+      "runId": "shadow-001",
+      "inputFingerprint": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "producedCount": 1000,
+      "baseline": {
+        "consumedCount": 1000,
+        "storedCount": 990,
+        "quarantinedCount": 10,
+        "replayedCount": 0,
+        "missingCount": 0,
+        "unexplainedDuplicateCount": 0,
+        "schemaFingerprint": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "valueChecksum": "1212121212121212121212121212121212121212121212121212121212121212",
+        "quarantineChecksum": "3434343434343434343434343434343434343434343434343434343434343434"
+      },
+      "candidate": {
+        "consumedCount": 1000,
+        "storedCount": 990,
+        "quarantinedCount": 10,
+        "replayedCount": 0,
+        "missingCount": 0,
+        "unexplainedDuplicateCount": 0,
+        "schemaFingerprint": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "valueChecksum": "1212121212121212121212121212121212121212121212121212121212121212",
+        "quarantineChecksum": "3434343434343434343434343434343434343434343434343434343434343434"
+      }
+    },
+    {
+      "runId": "shadow-002",
+      "inputFingerprint": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "producedCount": 1000,
+      "baseline": {
+        "consumedCount": 1000,
+        "storedCount": 990,
+        "quarantinedCount": 10,
+        "replayedCount": 0,
+        "missingCount": 0,
+        "unexplainedDuplicateCount": 0,
+        "schemaFingerprint": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "valueChecksum": "1212121212121212121212121212121212121212121212121212121212121212",
+        "quarantineChecksum": "3434343434343434343434343434343434343434343434343434343434343434"
+      },
+      "candidate": {
+        "consumedCount": 1000,
+        "storedCount": 990,
+        "quarantinedCount": 10,
+        "replayedCount": 0,
+        "missingCount": 0,
+        "unexplainedDuplicateCount": 0,
+        "schemaFingerprint": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "valueChecksum": "1212121212121212121212121212121212121212121212121212121212121212",
+        "quarantineChecksum": "3434343434343434343434343434343434343434343434343434343434343434"
+      }
+    },
+    {
+      "runId": "shadow-003",
+      "inputFingerprint": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "producedCount": 1000,
+      "baseline": {
+        "consumedCount": 1000,
+        "storedCount": 990,
+        "quarantinedCount": 10,
+        "replayedCount": 0,
+        "missingCount": 0,
+        "unexplainedDuplicateCount": 0,
+        "schemaFingerprint": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "valueChecksum": "1212121212121212121212121212121212121212121212121212121212121212",
+        "quarantineChecksum": "3434343434343434343434343434343434343434343434343434343434343434"
+      },
+      "candidate": {
+        "consumedCount": 1000,
+        "storedCount": 990,
+        "quarantinedCount": 10,
+        "replayedCount": 0,
+        "missingCount": 0,
+        "unexplainedDuplicateCount": 0,
+        "schemaFingerprint": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "valueChecksum": "1212121212121212121212121212121212121212121212121212121212121212",
+        "quarantineChecksum": "3434343434343434343434343434343434343434343434343434343434343434"
+      }
+    }
+  ],
+  "observation": {
+    "startedAt": "2026-07-14T04:00:00.000Z",
+    "completedAt": "2026-07-14T06:00:00.000Z",
+    "totalRuns": 100,
+    "failedRuns": 0,
+    "maxLag": 0,
+    "p95LatencyMs": 900,
+    "costUsd": 10
+  },
+  "rollback": {
+    "sparkRuntime": "spark-rest",
+    "kafkaRuntime": "redpanda",
+    "previousGoodRevision": "1111111111111111111111111111111111111111",
+    "owner": "data-platform-oncall",
+    "runbookRef": "docs/kafka-spark-phase8-cutover.md#rollback",
+    "lastTestedAt": "2026-07-14T06:30:00.000Z"
+  },
+  "escalation": {
+    "owner": "data-platform-oncall",
+    "channel": "data-platform-incident"
+  }
+}

@@ -216,6 +216,13 @@ else
   record_fail 'actual production Compose passes preflight (unexpected failure)'
 fi
 
+write_valid_aws_env "$ENV_FILE"
+printf '%s\n' 'ASKLAKE_SPARK_RUNTIME=emr-serverless' >> "$ENV_FILE"
+expect_preflight_failure \
+  'production candidate Runtime requires a Phase 8 promotion report' \
+  'ASKLAKE_RUNTIME_CUTOVER_PHASE7_REPORT_FILE must be set' \
+  "$ROOT_DIR/deploy/docker-compose.prod.yml"
+
 write_valid_trino_aws_env "$ENV_FILE"
 if output="$(run_preflight "$ROOT_DIR/deploy/docker-compose.prod.yml" 2>&1)"; then
   record_pass 'Trino-enabled production Compose passes strict preflight'

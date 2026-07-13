@@ -172,6 +172,19 @@ EMR Batch는 `FastAPI -> Airflow -> Node bridge -> EMR Serverless -> S3 Parquet/
 
 실제 부하 실행은 제품 API가 자동으로 AWS 인프라를 생성하거나 장애를 주입하는 흐름이 아니다. repo runner는 명시적 opt-in과 전용 local 환경을 요구하며, AWS-only scenario는 placeholder template만 만든다. 운영자는 승인된 staging에서 export한 증적으로 report를 생성한 뒤에만 Phase 8 Runtime 전환을 검토한다. 상세 절차는 [Kafka·Spark Phase 7 부하·장애·비용 검증](kafka-spark-phase7-validation.md)을 따른다.
 
+### Phase 8 Runtime 전환 경계
+
+Phase 8은 데이터 처리 Runtime 구현을 하나 더 만드는 단계가 아니라, 이미 존재하는 `spark-rest/redpanda`와 `emr-serverless/msk` 사이의 운영 전환 제어면이다. `asklake.runtime-cutover-plan.v1`이 고정 단계와 안전 규칙을, approved policy가 target/반복/관측 임계치를, evidence가 격리 식별자·Shadow 결과·관측·롤백 책임을 소유한다. report engine은 승인된 Phase 7 원본의 SHA와 요약을 포함한 `asklake.runtime-cutover-report.v1`을 생성한다.
+
+- Baseline은 `spark-rest + redpanda`, Candidate는 승인 policy의 Runtime이어야 한다.
+- 같은 논리 topic을 비교하되 consumer group, output prefix, checkpoint는 서로 달라야 하며 prefix 상하위 중첩도 실패다.
+- 반복별 produced/consumed/sink 정합성과 누락·설명 안 된 중복 0을 먼저 확인한 뒤 row/quarantine delta와 schema/value/quarantine checksum을 비교한다.
+- 단계 실패나 정합성/임계치 불일치는 `rollback-required`, 승인·반복·관측 부족은 `insufficient-evidence`다. 모든 gate가 통과한 `promotion-ready`도 Runtime을 자동 변경하지 않는다.
+- Production preflight는 후보 Runtime을 선택한 경우 리포트 target과 env, 현재 전체 commit SHA, 원본 Phase 7 파일의 바이트 SHA를 대조한다. 기본 `spark-rest + redpanda` 롤백은 리포트 없이 가능하다.
+- Batch의 `sparkResult.runtime`, Continuous의 `continuousRuntime.runtimeProvider`, admin runtime capacity를 실제 실행 Runtime 근거로 그대로 사용하며 Phase 8 전용 제품 API는 추가하지 않는다.
+
+실제 AWS 실행, 승인과 운영 전환은 [Kafka·Spark Phase 8 점진적 Runtime 전환](kafka-spark-phase8-cutover.md)의 사람 승인 절차를 따른다. 배포 스크립트는 증거를 판정할 뿐 AWS 리소스 생성, topic 변경, Runtime promotion, output/checkpoint 삭제를 수행하지 않는다.
+
 ### Kafka Runtime과 Amazon MSK 연결 경계
 
 Kafka 연결 설정의 source of truth는 `backend/src/kafkaRuntime.mjs`다. 기본 `redpanda` Runtime은 기존 `ASKLAKE_KAFKA_BROKER`와 무인증 plaintext 연결을 유지한다. `ASKLAKE_KAFKA_RUNTIME=msk`는 `ASKLAKE_MSK_ENABLED=true`, IAM bootstrap broker, AWS region을 모두 요구하고 MSK Serverless의 IAM SASL/OAUTHBEARER + TLS만 허용한다. Node client는 AWS 공식 signer와 default credential chain을 사용하며 access key, secret, session token을 별도 Kafka 설정이나 로그에 저장하지 않는다.

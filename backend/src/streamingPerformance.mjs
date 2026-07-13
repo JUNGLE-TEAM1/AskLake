@@ -192,6 +192,13 @@ export function evaluateStreamingEvidence(profileValue, evidenceValue) {
   const evidence = normalizeStreamingEvidence(evidenceValue);
   const thresholds = profile.scenarioThresholds[evidence.scenarioId];
   const gates = [];
+  gates.push(gate(
+    "operational-evidence",
+    evidence.exampleOnly === true ? "insufficient-evidence" : "passed",
+    evidence.exampleOnly === true ? "example" : "operational",
+    "operational",
+    "Checked-in example evidence cannot approve a real performance campaign.",
+  ));
   addIntegrityGates(gates, evidence.counts);
   addLatencyIntegrityGates(gates, evidence);
   addEnvironmentGates(gates, profile, evidence);
@@ -226,6 +233,7 @@ export function evaluateStreamingEvidence(profileValue, evidenceValue) {
   return {
     runId: evidence.runId,
     scenarioId: evidence.scenarioId,
+    evidenceKind: evidence.exampleOnly === true ? "example" : "operational",
     status: overallStatus(gates.map((item) => item.status)),
     configurationFingerprint: evidence.configurationFingerprint,
     metrics: evidence.metrics,
@@ -250,6 +258,9 @@ export function evaluateStreamingCampaign(profileValue, evidenceValues) {
     items.push(evaluation);
     grouped.set(evaluation.scenarioId, items);
   }
+  for (const scenarioId of Object.keys(profile.scenarioThresholds)) {
+    if (!grouped.has(scenarioId)) grouped.set(scenarioId, []);
+  }
   const scenarios = [...grouped.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([scenarioId, runs]) => {
     const fingerprints = [...new Set(runs.map((run) => run.configurationFingerprint))];
     const uniqueRunIds = new Set(runs.map((run) => run.runId));
@@ -270,13 +281,13 @@ export function evaluateStreamingCampaign(profileValue, evidenceValues) {
       ),
       gate(
         "comparable-configuration",
-        fingerprints.length === 1 ? "passed" : "failed",
+        runs.length === 0 ? "insufficient-evidence" : fingerprints.length === 1 ? "passed" : "failed",
         fingerprints.length,
         1,
         "Repeated runs must use the same workload and tuning configuration.",
       ),
     ];
-    const runStatus = overallStatus(runs.map((run) => run.status));
+    const runStatus = runs.length ? overallStatus(runs.map((run) => run.status)) : "insufficient-evidence";
     gates.push(gate("run-evaluations", runStatus, runStatus, "passed", "All repeated runs must pass."));
     return {
       scenarioId,
@@ -291,6 +302,11 @@ export function evaluateStreamingCampaign(profileValue, evidenceValues) {
   return {
     schemaVersion: STREAMING_REPORT_SCHEMA,
     generatedAt: new Date().toISOString(),
+    evidenceKind: evaluations.every((evaluation) => evaluation.evidenceKind === "operational") ? "operational" : "example",
+    scenarioCoverage: {
+      requiredScenarioIds: Object.keys(profile.scenarioThresholds).sort(),
+      missingScenarioIds: Object.keys(profile.scenarioThresholds).filter((scenarioId) => !evaluations.some((evaluation) => evaluation.scenarioId === scenarioId)).sort(),
+    },
     profile: {
       profileId: profile.profileId,
       approvalStatus: profile.approvalStatus,

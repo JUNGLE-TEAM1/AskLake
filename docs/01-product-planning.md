@@ -42,6 +42,7 @@ AskLake는 사용자가 데이터셋의 출처, 품질, 권한, 실행 결과, �
 - Batch와 Kafka Continuous의 Output을 MinIO/AWS 공통 Storage Layout V1에 저장하고, 자동 경로는 환경별로 분리하며 Continuous checkpoint는 Job별로 격리
 - AWS 배포에서 일반 Batch와 Amazon MSK Continuous Job을 선택적으로 EMR Serverless에 제출한다. Continuous는 MSK IAM, S3 checkpoint/output/report, 장기 STREAMING Job Run의 상태·취소·재시작 복구를 기존 Job/session 이력에 반영하며 로컬 기본 실행은 기존 Docker를 유지한다.
 - Kafka/Spark Phase 7 검증은 versioned 부하·장애 plan, SLO profile과 evidence를 사용한다. Continuous worker는 Kafka record timestamp부터 target commit까지의 P50/P95/P99를 기록하고, 하네스는 정합성·lag·복구·장애 주입/결과·실제 자원 표본·EMR billed resource 비용을 JSON/Markdown으로 판정한다. 초안 SLO나 필수 AWS 증적 누락은 성공이 아니라 `insufficient-evidence`다.
+- Kafka/Spark Phase 8 전환은 Docker/Redpanda와 EMR/MSK를 다른 consumer group·output prefix·checkpoint로 Shadow 비교하고, row/schema/value/quarantine 정합성, 관측 임계치, 승인, 롤백 준비를 모두 통과한 `promotion-ready` 리포트만 운영 후보 배포에 사용한다. 기본 Runtime은 계속 `spark-rest + redpanda`이며 실제 AWS 전환이나 기본값 변경은 자동 수행하지 않는다.
 - 작업 명령 UI: 실행, 재실행, 일시정지, 취소
 - Run History와 Run별 DAG 표시
 - 실행 성공 후 Catalog dataset 등록
@@ -171,6 +172,7 @@ Phase 0에서는 용어와 경계를 먼저 고정한다. `createdBy`, `owner`, 
 - 모든 source type의 production 연결
 - Kafka Snapshot/Continuous 원시 TXT 구조화, 임의 정규식 작성, 복수 구분자, 멀티라인 로그, 오류 행 자동 보정·quarantine·재처리
 - 실제 AWS staging의 대용량 처리 성능·비용 승인. 저장소의 Phase 7 하네스와 P50/P95/P99 계측은 구현됐지만 실제 VPC/MSK/EMR/S3 반복 부하, CloudWatch/Cost Explorer export와 운영 SLO 승인은 별도 opt-in 배포 검증이다.
+- Phase 8 실제 운영 전환. 전환 계약과 production preflight는 구현됐지만 승인된 Phase 7 AWS 리포트, 격리 Shadow 반복, 작은 운영 부하와 관측 증거 없이는 EMR/MSK를 기본 Runtime으로 바꾸지 않는다.
 - EMR Serverless의 maintenance와 Parquet source inspection 지원. Kafka Continuous 제출·재연결 계약은 구현됐지만 실제 VPC/MSK/EMR 통합, 처리량·비용 기준 검증은 별도 배포/부하 테스트 범위
 - EMR admission은 자원 상한·동시성·queue/quota를 제어하지만 처리량과 실제 청구액을 보장하지 않는다. region/architecture별 실제 단가 검증, CloudWatch/Cost Explorer 실측, 부하·비용 SLO 승인은 Phase 7 하네스를 사용한 AWS staging 실행에서 남아 있다.
 - Kafka Continuous Ingestion V1 운영 확장: 지속 실행 Spark worker, checkpoint 재개, Catalog 등록, partition lag, bounded log, quarantine replay, staged compaction은 Issue #500에서 구현했다. autoscaling, alerting/SLA, 장기 로그 object storage, compaction 결과의 atomic reader 전환/retention, 다중 worker 운영은 후속 범위

@@ -1,0 +1,28 @@
+{
+  "schemaVersion": "asklake.runtime-cutover-plan.v1",
+  "planId": "kafka-spark-phase8",
+  "stages": [
+    "docker-regression",
+    "aws-batch-staging",
+    "aws-continuous-staging",
+    "shadow-isolation",
+    "result-comparison",
+    "small-workload-cutover",
+    "observation",
+    "promotion-approval",
+    "rollback-readiness"
+  ],
+  "safety": {
+    "requireApprovedPhase7Report": true,
+    "requireDistinctConsumerGroups": true,
+    "requireDistinctOutputPrefixes": true,
+    "requireDistinctCheckpoints": true,
+    "requireExplicitPromotionApproval": true,
+    "requireRollbackReadiness": true,
+    "allowAutomaticPromotion": false
+  },
+  "defaultRuntime": {
+    "sparkRuntime": "spark-rest",
+    "kafkaRuntime": "redpanda"
+  }
+}

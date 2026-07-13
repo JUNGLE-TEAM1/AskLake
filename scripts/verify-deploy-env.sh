@@ -146,6 +146,61 @@ required_keys=(
   POSTGRES_USER
 )
 
+spark_runtime="$(printf '%s' "$(env_value_for ASKLAKE_SPARK_RUNTIME)" | tr '[:upper:]' '[:lower:]')"
+kafka_runtime="$(printf '%s' "$(env_value_for ASKLAKE_KAFKA_RUNTIME)" | tr '[:upper:]' '[:lower:]')"
+spark_runtime="${spark_runtime:-spark-rest}"
+kafka_runtime="${kafka_runtime:-redpanda}"
+case "$spark_runtime" in
+  spark-rest|emr-serverless) ;;
+  *)
+    printf 'error: ASKLAKE_SPARK_RUNTIME must be spark-rest or emr-serverless in %s\n' "$ENV_FILE" >&2
+    exit 1
+    ;;
+esac
+case "$kafka_runtime" in
+  redpanda|msk) ;;
+  *)
+    printf 'error: ASKLAKE_KAFKA_RUNTIME must be redpanda or msk in %s\n' "$ENV_FILE" >&2
+    exit 1
+    ;;
+esac
+
+runtime_promotion=false
+if [[ "$spark_runtime" != "spark-rest" || "$kafka_runtime" != "redpanda" ]]; then
+  runtime_promotion=true
+  required_keys+=(
+    ASKLAKE_RUNTIME_CUTOVER_PHASE7_REPORT_FILE
+    ASKLAKE_RUNTIME_CUTOVER_REPORT_FILE
+    ASKLAKE_SPARK_RUNTIME
+    ASKLAKE_KAFKA_RUNTIME
+    ASKLAKE_STORAGE_ENVIRONMENT
+  )
+fi
+
+if [[ "$spark_runtime" == "emr-serverless" ]]; then
+  required_keys+=(
+    ASKLAKE_EMR_SERVERLESS_APPLICATION_ID
+    ASKLAKE_EMR_SERVERLESS_ARTIFACT_URI
+    ASKLAKE_EMR_SERVERLESS_ENTRY_POINT_URI
+    ASKLAKE_EMR_SERVERLESS_EXECUTION_ROLE_ARN
+    ASKLAKE_EMR_SERVERLESS_LOG_URI
+  )
+fi
+
+if [[ "$kafka_runtime" == "msk" ]]; then
+  required_keys+=(
+    ASKLAKE_MSK_BOOTSTRAP_BROKERS
+    ASKLAKE_MSK_REGION
+  )
+fi
+
+if [[ "$spark_runtime" == "emr-serverless" && "$kafka_runtime" == "msk" ]]; then
+  required_keys+=(
+    ASKLAKE_EMR_SERVERLESS_CONTINUOUS_APPLICATION_ID
+    ASKLAKE_EMR_SERVERLESS_CONTINUOUS_ENTRY_POINT_URI
+  )
+fi
+
 storage_provider="$(env_value_for ASKLAKE_OBJECT_STORAGE_PROVIDER)"
 storage_provider="$(printf '%s' "$storage_provider" | tr '[:upper:]' '[:lower:]')"
 case "$storage_provider" in
@@ -212,6 +267,76 @@ for key in "${required_keys[@]}"; do
     exit 1
   fi
 done
+
+require_true_env() {
+  local key="$1"
+  local value
+  value="$(printf '%s' "$(env_value_for "$key")" | tr '[:upper:]' '[:lower:]')"
+  if [[ "$value" != "true" && "$value" != "1" && "$value" != "yes" ]]; then
+    printf 'error: %s must be true for the selected production Runtime\n' "$key" >&2
+    exit 1
+  fi
+}
+
+if [[ "$spark_runtime" == "emr-serverless" ]]; then
+  require_true_env ASKLAKE_EMR_SERVERLESS_ENABLED
+  require_true_env ASKLAKE_EMR_SERVERLESS_ADMISSION_ENABLED
+  require_true_env ASKLAKE_EMR_SERVERLESS_REQUIRE_JOB_COST_ALLOCATION
+fi
+
+if [[ "$kafka_runtime" == "msk" ]]; then
+  require_true_env ASKLAKE_MSK_ENABLED
+  require_true_env ASKLAKE_MSK_TLS_ENABLED
+  [[ "$(printf '%s' "$(env_value_for ASKLAKE_MSK_AUTH_MODE)" | tr '[:upper:]' '[:lower:]')" == "iam" ]] || {
+    printf 'error: ASKLAKE_MSK_AUTH_MODE must be iam for the production MSK Runtime\n' >&2
+    exit 1
+  }
+  [[ "$(env_value_for ASKLAKE_MSK_REGION)" == "$(env_value_for AWS_REGION)" ]] || {
+    printf 'error: ASKLAKE_MSK_REGION must match AWS_REGION for the production MSK Runtime\n' >&2
+    exit 1
+  }
+fi
+
+if [[ "$spark_runtime" == "emr-serverless" && "$kafka_runtime" == "msk" ]]; then
+  require_true_env ASKLAKE_EMR_SERVERLESS_CONTINUOUS_ENABLED
+  dependency_mode="$(printf '%s' "$(env_value_for ASKLAKE_EMR_SERVERLESS_CONTINUOUS_DEPENDENCY_MODE)" | tr '[:upper:]' '[:lower:]')"
+  case "$dependency_mode" in
+    packages)
+      require_true_env ASKLAKE_EMR_SERVERLESS_CONTINUOUS_ALLOW_MAVEN_EGRESS
+      ;;
+    jars)
+      jar_uris="$(env_value_for ASKLAKE_EMR_SERVERLESS_CONTINUOUS_JAR_URIS)"
+      if is_blank "$jar_uris" || [[ "$jar_uris" == *replace-with-* || "$jar_uris" == *example.invalid* ]]; then
+        printf 'error: ASKLAKE_EMR_SERVERLESS_CONTINUOUS_JAR_URIS is required in jars dependency mode\n' >&2
+        exit 1
+      fi
+      ;;
+    *)
+      printf 'error: ASKLAKE_EMR_SERVERLESS_CONTINUOUS_DEPENDENCY_MODE must be packages or jars\n' >&2
+      exit 1
+      ;;
+  esac
+fi
+
+if [[ "$runtime_promotion" == "true" ]]; then
+  cutover_report_file="$(env_value_for ASKLAKE_RUNTIME_CUTOVER_REPORT_FILE)"
+  phase7_report_file="$(env_value_for ASKLAKE_RUNTIME_CUTOVER_PHASE7_REPORT_FILE)"
+  require_runtime_report_file() {
+    local runtime_report_key="$1"
+    local runtime_report_path="$2"
+    if [[ "$runtime_report_path" != /* || ! -f "$runtime_report_path" || ! -r "$runtime_report_path" ]]; then
+      printf 'error: %s must be an absolute readable host file: %s\n' "$runtime_report_key" "$runtime_report_path" >&2
+      exit 1
+    fi
+  }
+  require_runtime_report_file ASKLAKE_RUNTIME_CUTOVER_REPORT_FILE "$cutover_report_file"
+  require_runtime_report_file ASKLAKE_RUNTIME_CUTOVER_PHASE7_REPORT_FILE "$phase7_report_file"
+  python3 backend/scripts/verify-runtime-cutover-gate.py \
+    --report "$cutover_report_file" \
+    --phase7-report "$phase7_report_file" \
+    --env-file "$ENV_FILE" \
+    --repository-root "$ROOT_DIR"
+fi
 
 if [[ "$trino_enabled" == "true" ]]; then
   [[ "$(env_value_for TRINO_BASE_URL)" == "https://trino:8443" ]] || {

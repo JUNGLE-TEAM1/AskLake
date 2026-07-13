@@ -1,0 +1,29 @@
+{
+  "schemaVersion": "asklake.runtime-cutover-policy.v1",
+  "policyId": "phase8-production-draft",
+  "approvalStatus": "draft",
+  "approvedBy": null,
+  "approvedAt": null,
+  "changeTicket": null,
+  "evidenceEnvironment": "staging",
+  "target": {
+    "appEnvironment": "production",
+    "storageEnvironment": "production",
+    "region": "ap-northeast-2",
+    "sparkRuntime": "emr-serverless",
+    "kafkaRuntime": "msk"
+  },
+  "minimumShadowRuns": null,
+  "minimumObservationMinutes": null,
+  "thresholds": {
+    "maxRowCountDelta": null,
+    "maxQuarantineCountDelta": null,
+    "maxErrorRate": null,
+    "maxLag": null,
+    "maxP95LatencyMs": null,
+    "maxCostUsd": null
+  },
+  "requireSchemaMatch": true,
+  "requireValueChecksumMatch": true,
+  "requireQuarantineChecksumMatch": true
+}

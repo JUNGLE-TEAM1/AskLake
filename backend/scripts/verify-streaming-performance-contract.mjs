@@ -50,15 +50,21 @@ function verifyContract() {
   );
 
   const approvedProfile = approvedExampleProfile(draftProfile);
-  const passed = evaluateStreamingEvidence(approvedProfile, evidence);
+  const operationalEvidence = structuredClone(evidence);
+  operationalEvidence.exampleOnly = false;
+  operationalEvidence.cost.priceSnapshot.exampleOnly = false;
+  const exampleResult = evaluateStreamingEvidence(approvedProfile, evidence);
+  assert.equal(exampleResult.status, "insufficient-evidence");
+  assert(exampleResult.gates.some((gate) => gate.name === "operational-evidence" && gate.status === "insufficient-evidence"));
+  const passed = evaluateStreamingEvidence(approvedProfile, operationalEvidence);
   assert.equal(passed.status, "passed");
   assert(passed.gates.every((gate) => gate.status === "passed"));
 
-  const draft = evaluateStreamingEvidence(draftProfile, evidence);
+  const draft = evaluateStreamingEvidence(draftProfile, operationalEvidence);
   assert.equal(draft.status, "insufficient-evidence");
   assert(draft.gates.some((gate) => gate.name === "profile-approval" && gate.status === "insufficient-evidence"));
 
-  const duplicate = structuredClone(evidence);
+  const duplicate = structuredClone(operationalEvidence);
   duplicate.runId = "example-duplicate";
   duplicate.counts.stored += 1;
   duplicate.counts.unexplainedDuplicates = 1;
@@ -66,30 +72,30 @@ function verifyContract() {
   assert.equal(duplicateResult.status, "failed");
   assert(duplicateResult.gates.some((gate) => gate.name === "unexplained-duplicates" && gate.status === "failed"));
 
-  const missingCostEvidence = structuredClone(evidence);
+  const missingCostEvidence = structuredClone(operationalEvidence);
   missingCostEvidence.runId = "example-no-billed-resource";
   delete missingCostEvidence.emrJobRun.billedResourceUtilization;
   const incompleteResult = evaluateStreamingEvidence(approvedProfile, missingCostEvidence);
   assert.equal(incompleteResult.status, "insufficient-evidence");
   assert(incompleteResult.gates.some((gate) => gate.name === "evidence:billedResourceUtilization" && gate.status === "insufficient-evidence"));
 
-  const emptyBilledResource = structuredClone(evidence);
+  const emptyBilledResource = structuredClone(operationalEvidence);
   emptyBilledResource.runId = "example-empty-billed-resource";
   emptyBilledResource.emrJobRun.billedResourceUtilization = {};
   assert.throws(() => normalizeStreamingEvidence(emptyBilledResource), /vCPUHour must be a non-negative number/);
 
-  const mismatchedPriceRegion = structuredClone(evidence);
+  const mismatchedPriceRegion = structuredClone(operationalEvidence);
   mismatchedPriceRegion.runId = "example-mismatched-price-region";
   mismatchedPriceRegion.cost.priceSnapshot.region = "us-east-1";
   assert.throws(() => normalizeStreamingEvidence(mismatchedPriceRegion), /cost\.priceSnapshot\.region must be ap-northeast-2/);
 
-  const missingCloudWatchSamples = structuredClone(evidence);
+  const missingCloudWatchSamples = structuredClone(operationalEvidence);
   missingCloudWatchSamples.runId = "example-no-cloudwatch-samples";
   missingCloudWatchSamples.executorSamples = [];
   const missingCloudWatchResult = evaluateStreamingEvidence(approvedProfile, missingCloudWatchSamples);
   assert(missingCloudWatchResult.gates.some((gate) => gate.name === "evidence:cloudWatchMetrics" && gate.status === "insufficient-evidence"));
 
-  const wrongEnvironment = structuredClone(evidence);
+  const wrongEnvironment = structuredClone(operationalEvidence);
   wrongEnvironment.runId = "example-wrong-environment";
   wrongEnvironment.environment.name = "production";
   const wrongEnvironmentResult = evaluateStreamingEvidence(approvedProfile, wrongEnvironment);
@@ -100,7 +106,7 @@ function verifyContract() {
     profileId: "contract-test-fault-approved",
     scenarioThresholds: { "kafka-disconnect": { maxFaultRecoverySeconds: 10, maxFinalLag: 0 } },
   };
-  const faultEvidence = structuredClone(evidence);
+  const faultEvidence = structuredClone(operationalEvidence);
   faultEvidence.runId = "example-kafka-disconnect";
   faultEvidence.scenarioId = "kafka-disconnect";
   faultEvidence.recovery.faultRecoverySeconds = 5;
@@ -111,13 +117,13 @@ function verifyContract() {
   const missingFaultResult = evaluateStreamingEvidence(faultProfile, faultEvidence);
   assert.equal(missingFaultResult.status, "insufficient-evidence");
 
-  const untrustedPrice = structuredClone(evidence);
+  const untrustedPrice = structuredClone(operationalEvidence);
   untrustedPrice.runId = "example-untrusted-price";
   untrustedPrice.cost.priceSnapshot.sourceUrl = "https://example.com/pricing";
   assert.throws(() => normalizeStreamingEvidence(untrustedPrice), /official AWS HTTPS URL/);
 
   assert.throws(
-    () => normalizeStreamingEvidence({ ...evidence, authorization: "Bearer secret" }),
+    () => normalizeStreamingEvidence({ ...operationalEvidence, authorization: "Bearer secret" }),
     /Sensitive key is not allowed/,
   );
   assert.deepEqual(
@@ -125,11 +131,11 @@ function verifyContract() {
     { nested: { password: "[REDACTED]", safe: "value" } },
   );
   assert.throws(
-    () => normalizeStreamingEvidence({ ...evidence, note: "Bearer should-not-be-recorded" }),
+    () => normalizeStreamingEvidence({ ...operationalEvidence, note: "Bearer should-not-be-recorded" }),
     /Sensitive value is not allowed/,
   );
 
-  const repeated = [1, 2, 3].map((index) => ({ ...structuredClone(evidence), runId: `example-backlog-00${index}` }));
+  const repeated = [1, 2, 3].map((index) => ({ ...structuredClone(operationalEvidence), runId: `example-backlog-00${index}` }));
   const campaign = evaluateStreamingCampaign({ ...approvedProfile, minimumSuccessfulRuns: 3 }, repeated);
   assert.equal(campaign.schemaVersion, STREAMING_REPORT_SCHEMA);
   assert.equal(campaign.status, "passed");
@@ -144,6 +150,16 @@ function verifyContract() {
   const duplicatedRun = evaluateStreamingCampaign({ ...approvedProfile, minimumSuccessfulRuns: 3 }, [repeated[0], repeated[1], repeated[1]]);
   assert.equal(duplicatedRun.status, "failed");
   assert(duplicatedRun.scenarios[0].gates.some((gate) => gate.name === "unique-run-identity" && gate.status === "failed"));
+
+  const incompleteCoverage = evaluateStreamingCampaign({
+    ...approvedProfile,
+    scenarioThresholds: {
+      ...approvedProfile.scenarioThresholds,
+      burst: { minAverageThroughputRowsPerSecond: 1 },
+    },
+  }, [operationalEvidence]);
+  assert.equal(incompleteCoverage.status, "insufficient-evidence");
+  assert.deepEqual(incompleteCoverage.scenarioCoverage.missingScenarioIds, ["burst"]);
 
   const markdown = renderStreamingCampaignMarkdown(campaign);
   assert(markdown.includes("Kafka·Spark Phase 7 성능 검증 리포트"));

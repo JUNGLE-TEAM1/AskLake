@@ -211,6 +211,28 @@ npm run streaming:performance-report -- \
 
 `failed`는 exit 1, `insufficient-evidence`는 exit 2다. SLO threshold `null`, draft approval, 반복 부족, 장애 주입/결과 누락 또는 필수 latency/CloudWatch/billed resource/output file 누락을 통과로 처리하지 않는다. `streaming-evidence.example.json`은 parser 테스트용이며 실제 성능·단가가 아니다. 전체 시나리오, evidence shape와 AWS 절차는 [Kafka·Spark Phase 7 부하·장애·비용 검증](kafka-spark-phase7-validation.md)을 따른다.
 
+### Phase 8 점진적 Runtime 전환
+
+Phase 8 계약 검증은 Docker/AWS side effect 없이 실행한다.
+
+```bash
+cd backend
+npm run verify:runtime-cutover-contract
+```
+
+실제 전환은 승인된 Phase 7 JSON, approved Phase 8 policy와 실제 Shadow evidence를 외부 증거 디렉터리에 준비한 뒤 리포트를 생성한다. 예제 policy/evidence는 parser 검증용이며 운영 승인 근거가 아니다.
+
+```bash
+npm run runtime:cutover-report -- \
+  --policy /var/lib/asklake/evidence/phase8/cutover-policy.approved.json \
+  --evidence /var/lib/asklake/evidence/phase8/cutover-evidence.json \
+  --phase7-report /var/lib/asklake/evidence/phase7/approved-report.json \
+  --output-dir /var/lib/asklake/evidence/phase8 \
+  --run-id production-cutover-review
+```
+
+Production `.env`가 `emr-serverless` 또는 `msk` 중 하나라도 선택하면 `ASKLAKE_RUNTIME_CUTOVER_REPORT_FILE`과 `ASKLAKE_RUNTIME_CUTOVER_PHASE7_REPORT_FILE`의 절대 경로가 필요하다. `scripts/verify-deploy-env.sh`는 `promotion-ready`, 모든 gate, 승인 정보, env/region/Runtime, 현재 commit SHA, Phase 7 원본 SHA/승인 요약을 대조한다. 기본 `spark-rest + redpanda`는 리포트 없이 롤백할 수 있다. Shadow 격리, 단계별 증거, 관측과 롤백 명령은 [Kafka·Spark Phase 8 점진적 Runtime 전환](kafka-spark-phase8-cutover.md)을 따른다.
+
 ```bash
 export AIRFLOW_EXECUTION_API_TOKEN=asklake-local-airflow-execution
 docker compose up airflow-init
