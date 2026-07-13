@@ -600,9 +600,14 @@
 }
 
 .source-explorer-tree-slot .source-asset-tree-panel {
+  box-sizing: border-box;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
   border: 0;
   border-radius: 0;
   box-shadow: none;
+  padding-top: 8px;
 }
 
 .data-lake-dataset-list {
