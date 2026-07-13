@@ -50,15 +50,6 @@ export type CatalogDataset = {
   permissionGrants?: PermissionGrant[];
   permissions?: ResourcePermissions;
   quality: string;
-  queryEngineStatus?: "pending" | "available" | "registration_failed" | "unavailable";
-  queryEngineRequired?: boolean;
-  queryEngineTable?: {
-    catalog: string;
-    schema: string;
-    table: string;
-    format: "iceberg" | "parquet";
-    partitionColumns: string[];
-  };
   rag: boolean;
   rows: string;
   sampleRows: string[][];
