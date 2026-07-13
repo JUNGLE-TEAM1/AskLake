@@ -9,7 +9,7 @@ import re
 import secrets
 import subprocess
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Callable
 import unicodedata
 from urllib.parse import urlparse
 
@@ -103,6 +103,7 @@ from app.schemas.etl import (
 from app.services.airflow_client import AirflowDagRun, AirflowTaskInstance, build_airflow_client
 from app.services.governance_enforcement import require_governed_access
 from app.services.identity_service import DEMO_GROUPS, DEMO_USERS
+from app.services.materialization_projection import aggregate_materialization_runs
 from app.services.rule_compiler import CompiledRuleSet, compile_rule_set
 from app.services.resource_permission_service import job_with_persisted_permission_grants, permission_grants_for_resource, permissions_for_actor_with_governance
 
@@ -124,6 +125,7 @@ DEFAULT_SOURCE_IDENTITY_WORKERS = 16
 MAX_SOURCE_IDENTITY_WORKERS = 64
 DEFAULT_SPARK_EXECUTION_LEASE_SECONDS = 1200
 AIRFLOW_MISSING_RUN_FAILURE_LIMIT = 3
+SPARK_REST_BRIDGE_GRACE_SECONDS = 30
 
 
 def source_connector_defaults() -> SourceConnectorDefaults:
@@ -1584,6 +1586,9 @@ def is_kafka_job(job: ETLJobModel) -> bool:
 
 
 def run_spark_job(db: Session, job: ETLJobModel, command: str, run_id: str) -> dict[str, Any]:
+    rest_mode = spark_rest_mode_enabled()
+    poll_timeout_ms = spark_rest_poll_timeout_ms()
+    state_file = spark_rest_submission_state_file(run_id)
     incremental_since, incremental_before = source_incremental_window(db, job, run_id)
     source_window_rebaseline = source_uses_incremental_folder_window(job) and incremental_since is None
     source_object_inventory = incremental_source_object_inventory(
@@ -1613,7 +1618,8 @@ def run_spark_job(db: Session, job: ETLJobModel, command: str, run_id: str) -> d
             "runId": run_id,
         },
         error_marker="ASKLAKE_SPARK_RUN_ERROR",
-        timeout_seconds=900,
+        timeout_seconds=spark_python_bridge_timeout_seconds(poll_timeout_ms) if rest_mode else 900,
+        timeout_recovery=(lambda: recover_spark_rest_submission(state_file)) if rest_mode else None,
     )
     if source_object_inventory is not None:
         source_collection = result.get("sourceCollection")
@@ -2166,6 +2172,9 @@ def execute_airflow_run(
     apply_spark_result_to_airflow_run(run, spark_run)
     dataset_model = None
     if result.get("status") == "success":
+        # Do not hold the dataset lock while Spark is running. Re-read and
+        # lock immediately before merging the new materialization history.
+        existing_dataset = etl_repository.get_dataset_by_id_for_update(db, dataset_id)
         dataset_model = dataset_from_spark_result(job, result, existing_dataset)
         job.target_path = result.get("outputPath") or job.target_path
         job.last_state = "Spark 적재 및 카탈로그 등록 완료 · Airflow 종료 확인 중"
@@ -4300,18 +4309,40 @@ def quality_summary_from_spark_result(job: ETLJobModel, result: dict[str, Any]) 
     return f"품질 점수 {job.quality_score if job.quality_score is not None else '-'}% · 상태 {quality_status_label(job.quality_status)}"
 
 
-def run_node_bridge(script_name: str, success_marker: str, payload: dict[str, Any], *, error_marker: str, timeout_seconds: int) -> dict[str, Any]:
+def run_node_bridge(
+    script_name: str,
+    success_marker: str,
+    payload: dict[str, Any],
+    *,
+    error_marker: str,
+    timeout_seconds: int,
+    timeout_recovery: Callable[[], dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     script_path = SCRIPTS_DIR / script_name
-    result = subprocess.run(
-        ["node", str(script_path)],
-        cwd=str(BACKEND_DIR),
-        input=json.dumps(payload, ensure_ascii=False),
-        text=True,
-        capture_output=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=timeout_seconds,
-    )
+    try:
+        result = subprocess.run(
+            ["node", str(script_path)],
+            cwd=str(BACKEND_DIR),
+            input=json.dumps(payload, ensure_ascii=False),
+            text=True,
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired as exc:
+        recovery: dict[str, Any] = {"attempted": timeout_recovery is not None}
+        if timeout_recovery is not None:
+            try:
+                recovery.update({"result": timeout_recovery(), "succeeded": True})
+            except Exception as recovery_error:
+                recovery.update({"error": str(recovery_error), "succeeded": False})
+        raise ApiError(
+            "BACKEND_BRIDGE_TIMEOUT",
+            f"{script_name} exceeded its derived {timeout_seconds}s bridge timeout.",
+            status.HTTP_504_GATEWAY_TIMEOUT,
+            {"recovery": recovery, "timeoutSeconds": timeout_seconds},
+        ) from exc
     stdout = result.stdout or ""
     stderr = result.stderr or ""
     if result.returncode != 0:
@@ -4334,6 +4365,85 @@ def run_node_bridge(script_name: str, success_marker: str, payload: dict[str, An
         payload_result.setdefault("stdout", stdout)
         payload_result.setdefault("stderr", stderr)
     return payload_result
+
+
+def recover_spark_rest_submission(state_file: Path) -> dict[str, Any]:
+    result = subprocess.run(
+        ["node", str(SCRIPTS_DIR / "spark-rest-client.mjs")],
+        cwd=str(BACKEND_DIR),
+        input=json.dumps({
+            "operation": "kill-state",
+            "restUrl": os.environ.get("ASKLAKE_SPARK_REST_URL") or "http://spark-master:6066",
+            "stateFile": str(state_file),
+        }),
+        text=True,
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=10,
+    )
+    recovered = marker_payload(result.stdout or "", "ASKLAKE_SPARK_REST_RECOVERY")
+    if result.returncode != 0 or recovered is None:
+        message = (result.stderr or "").strip() or "Spark REST submission recovery failed."
+        raise RuntimeError(message)
+    return recovered
+
+
+def spark_rest_mode_enabled() -> bool:
+    return str(os.environ.get("ASKLAKE_SPARK_RUNNER") or "").strip().lower() == "rest"
+
+
+def spark_rest_poll_timeout_ms() -> int:
+    timeout_seconds = bounded_environment_integer(
+        "ASKLAKE_SPARK_RUN_TIMEOUT_SECONDS",
+        default=7200,
+        minimum=1,
+        maximum=24 * 60 * 60,
+    )
+    return timeout_seconds * 1000
+
+
+def spark_python_bridge_timeout_seconds(poll_timeout_ms: int) -> int:
+    poll_timeout_seconds = (max(1000, int(poll_timeout_ms)) + 999) // 1000
+    return poll_timeout_seconds + (2 * SPARK_REST_BRIDGE_GRACE_SECONDS)
+
+
+def continuous_maintenance_poll_timeout_ms() -> int:
+    return bounded_environment_integer(
+        "ASKLAKE_CONTINUOUS_MAINTENANCE_TIMEOUT_MS",
+        default=540_000,
+        minimum=1000,
+        maximum=24 * 60 * 60 * 1000,
+    )
+
+
+def continuous_maintenance_bridge_timeout_seconds(poll_timeout_ms: int) -> int:
+    poll_timeout_seconds = (max(1000, int(poll_timeout_ms)) + 999) // 1000
+    return poll_timeout_seconds + SPARK_REST_BRIDGE_GRACE_SECONDS
+
+
+def spark_rest_submission_state_file(run_id: str) -> Path:
+    report_dir = Path(os.environ.get("ASKLAKE_SPARK_REPORT_DIR") or BACKEND_DIR / "tmp" / "spark-runs")
+    if not report_dir.is_absolute():
+        report_dir = BACKEND_DIR / report_dir
+    safe_run_id = re.sub(r"[^a-zA-Z0-9_.-]+", "-", str(run_id)).strip("-") or "run"
+    return (report_dir.resolve() / f"{safe_run_id.lower()}.spark-rest-state.json")
+
+
+def continuous_maintenance_state_file(run_id: str) -> Path:
+    report_dir = Path(os.environ.get("ASKLAKE_SPARK_REPORT_DIR") or BACKEND_DIR / "tmp" / "spark-runs")
+    if not report_dir.is_absolute():
+        report_dir = BACKEND_DIR / report_dir
+    safe_run_id = re.sub(r"[^a-zA-Z0-9_.-]+", "-", str(run_id)).strip("-") or "run"
+    return (report_dir.resolve() / f"kafka-continuous-maintenance-{safe_run_id.lower()}.state.json")
+
+
+def bounded_environment_integer(name: str, *, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.environ.get(name) or default)
+    except (TypeError, ValueError):
+        return default
+    return value if minimum <= value <= maximum else default
 
 
 def marker_payload(output: str, marker: str) -> dict[str, Any] | None:
@@ -4618,6 +4728,9 @@ def run_kafka_continuous_maintenance(
     ]
     target = parse_kafka_target_path(job.storage_path or job.target_path, job.target, job.target_layer)
     output_path = f"s3a://{target['bucket']}/{target['prefix'].strip('/')}"
+    rest_mode = spark_rest_mode_enabled()
+    poll_timeout_ms = continuous_maintenance_poll_timeout_ms()
+    state_file = continuous_maintenance_state_file(run_id)
     return run_node_bridge(
         "manage-kafka-continuous-maintenance.mjs",
         "ASKLAKE_KAFKA_MAINTENANCE_RESULT",
@@ -4635,7 +4748,12 @@ def run_kafka_continuous_maintenance(
             **config,
         },
         error_marker="ASKLAKE_KAFKA_MAINTENANCE_ERROR",
-        timeout_seconds=600,
+        timeout_seconds=(
+            continuous_maintenance_bridge_timeout_seconds(poll_timeout_ms)
+            if rest_mode
+            else 600
+        ),
+        timeout_recovery=(lambda: recover_spark_rest_submission(state_file)) if rest_mode else None,
     )
 
 
@@ -5320,7 +5438,7 @@ def materialize_continuous_publication(
     if nonnegative_int(publication.get("storedCount"), 0) == 0:
         return True
     run_id = f"continuous:{job.id}:batch:{batch_id}"
-    existing = etl_repository.get_dataset_by_id(db, job.dataset_id or make_dataset_id(job.target))
+    existing = etl_repository.get_dataset_by_id_for_update(db, job.dataset_id or make_dataset_id(job.target))
     existing_runs = (existing.payload or {}).get("materializationRuns") if existing and existing.payload else []
     if any(str(item.get("runId") or "") == run_id for item in existing_runs if isinstance(item, dict)):
         return True
@@ -5380,7 +5498,7 @@ def materialize_continuous_replay(
     replayed_count = nonnegative_int(replay_result.get("storedCount"), 0)
     if replayed_count == 0:
         return
-    existing = etl_repository.get_dataset_by_id(db, job.dataset_id or make_dataset_id(job.target))
+    existing = etl_repository.get_dataset_by_id_for_update(db, job.dataset_id or make_dataset_id(job.target))
     target = parse_kafka_target_path(job.storage_path or job.target_path, job.target, job.target_layer)
     target_root = f"s3a://{target['bucket']}/{target['prefix'].strip('/')}/_batches"
     metrics = runtime.metrics or {}

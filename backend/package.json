@@ -17,6 +17,7 @@
     "verify:etl-lineage": "node scripts/verify-etl-text-lineage.mjs",
     "verify:identity-admin": "node scripts/verify-identity-admin.mjs",
     "verify:auth-session": "node scripts/verify-auth-session.mjs",
+    "verify:auth-password": "node scripts/verify-auth-password-compat.mjs",
     "verify:permission-dataset": "node scripts/verify-permission-dataset-access.mjs",
     "verify:permission-job-dashboard": "node scripts/verify-permission-job-dashboard.mjs",
     "verify:dashboard-published-data": "python scripts/verify-dashboard-published-data-contract.py",

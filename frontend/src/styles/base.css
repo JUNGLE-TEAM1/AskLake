@@ -710,3 +710,35 @@ p {
   background: #eff6ff;
   color: #2563eb;
 }
+
+.asklake-explorer-tree-row {
+  width: 100% !important;
+  min-width: 0 !important;
+  overflow: hidden;
+  outline: none;
+}
+
+.asklake-explorer-tree {
+  scrollbar-color: #94a3b8 transparent;
+  scrollbar-width: thin;
+}
+
+.asklake-explorer-tree::-webkit-scrollbar {
+  width: 8px;
+}
+
+.asklake-explorer-tree::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.asklake-explorer-tree::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: #94a3b8;
+  background-clip: padding-box;
+}
+
+.asklake-explorer-tree-row:focus .asklake-explorer-tree-row-content:not([data-selected]) {
+  background: #f8fafc;
+  box-shadow: inset 0 0 0 1px #bfdbfe;
+}

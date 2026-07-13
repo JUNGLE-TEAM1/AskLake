@@ -5,13 +5,13 @@ from fastapi import status
 
 from app.core.auth_context import ActorContext, require_any_permission, require_permission
 from app.core.errors import ApiError
+from app.core.materialization import active_materialization_runs, materialization_mode
 from app.core.permission_metadata import permission_grants_from_roles, resource_permissions
 from app.repositories.catalog_repository import CatalogRepository, dataset_model_to_payload
 from app.repositories.audit_repository import safe_record_audit_event
 from app.repositories.sql_repository import SqlRepository
 from app.schemas.catalog import (
     CatalogDatasetListResponse,
-    CatalogDatasetRowsResponse,
     CatalogDatasetResponse,
     CreateDerivedDatasetRequest,
     DeleteMaterializationRunResponse,
@@ -28,14 +28,13 @@ from app.services.lake_storage_service import (
     MaterializedDatasetResult,
 )
 from app.services.governance_enforcement import require_governed_access
-from app.services.dataset_rows_service import read_dataset_rows
+from app.services.sql_service import full_query_run_response_from_payload
 from app.services.materialization_projection import aggregate_materialization_runs
 from app.services.resource_permission_service import (
     dataset_with_persisted_permission_grants,
     datasets_with_persisted_permission_grants,
     permissions_for_actor_with_governance,
 )
-from app.services.sql_service import full_query_run_response_from_payload
 
 
 class CatalogService:
@@ -116,62 +115,13 @@ class CatalogService:
             return LineageGraphResponse.model_validate(lineage_payload)
         return build_fallback_lineage_graph(dataset)
 
-    def get_dataset_rows(
-        self,
-        dataset_id: str,
-        actor: ActorContext | None = None,
-        *,
-        limit: int = 100,
-        offset: int = 0,
-    ) -> CatalogDatasetRowsResponse:
-        actor_context = actor or ActorContext()
-        dataset = self.get_dataset(dataset_id, actor_context)
-        api_path = f"/api/catalog/datasets/{dataset_id}/rows"
-        require_governed_access(
-            self.repository.db,
-            actor_context,
-            action="query",
-            api_path=api_path,
-            http_method="GET",
-            metadata={"limit": limit, "offset": offset, "owner": dataset.owner},
-            resource_id=dataset.id,
-            resource_name=dataset.name,
-            resource_type="dataset",
-        )
-        try:
-            require_permission(
-                actor_context,
-                "query",
-                owner=dataset.owner,
-                grants=dataset.permission_grants,
-                resource_label="dataset",
-            )
-        except ApiError as exc:
-            record_forbidden_dataset_event(
-                self.repository.db,
-                actor_context,
-                action="dataset.rows.query.forbidden",
-                dataset=dataset,
-                api_path=api_path,
-                http_method="GET",
-                metadata={"limit": limit, "offset": offset},
-                status_code=exc.status_code,
-            )
-            raise
-
-        return read_dataset_rows(
-            dataset_for_latest_successful_materialization(dataset),
-            limit=limit,
-            offset=offset,
-        )
-
     def delete_materialization_run(
         self,
         dataset_id: str,
         run_id: str,
         actor: ActorContext | None = None,
     ) -> DeleteMaterializationRunResponse:
-        payload = self.repository.get_dataset_payload(dataset_id)
+        payload = self.repository.get_dataset_payload_for_update(dataset_id)
         if payload is None:
             raise ApiError(ErrorCode.NOT_FOUND, "Dataset not found", status.HTTP_404_NOT_FOUND)
         dataset = dataset_with_persisted_permission_grants(
@@ -225,6 +175,7 @@ class CatalogService:
                 status.HTTP_404_NOT_FOUND,
                 {"datasetId": dataset_id, "runId": run_id},
             )
+        validate_materialization_run_delete(materialization_runs, run_id)
 
         saved_payload = self.repository.save_dataset_payload(
             recalculate_dataset_payload_from_runs({
@@ -361,6 +312,8 @@ class CatalogService:
                 status.HTTP_404_NOT_FOUND,
                 {"sourceRunId": run_id},
             )
+        # Derived datasets must materialize the complete stored result, not the
+        # page-sized rows returned by the interactive SQL API.
         return full_query_run_response_from_payload(payload)
 
 
@@ -449,7 +402,6 @@ def build_derived_dataset_payload(
         {
             "createdAt": current_utc_timestamp(),
             "jobId": "sql-derived",
-            "materializationMode": "snapshot",
             "rowCount": materialized_result.row_count,
             "runId": request.source_run_id,
             "sourceKind": "sql",
@@ -713,6 +665,26 @@ def append_materialization_run(
     return [next_run, *[run for run in runs if str(run.get("runId") or "") != run_id]]
 
 
+def validate_materialization_run_delete(runs: list[dict[str, object]], run_id: str) -> None:
+    active_runs = active_materialization_runs(runs)
+    target = next((run for run in active_runs if str(run.get("runId") or "") == run_id), None)
+    if target is None or materialization_mode(target) != "snapshot":
+        return
+    dependent_delta_ids = [
+        str(run.get("runId") or "")
+        for run in active_runs
+        if materialization_mode(run) == "delta" and str(run.get("runId") or "")
+    ]
+    if not dependent_delta_ids:
+        return
+    raise ApiError(
+        ErrorCode.CONFLICT,
+        "Delete newer delta materializations before deleting their active snapshot",
+        status.HTTP_409_CONFLICT,
+        {"dependentDeltaRunIds": dependent_delta_ids, "snapshotRunId": run_id},
+    )
+
+
 def recalculate_dataset_payload_from_runs(payload: dict[str, object]) -> dict[str, object]:
     runs = payload.get("materializationRuns")
     materialization_runs = [run for run in runs if isinstance(run, dict)] if isinstance(runs, list) else []
@@ -727,6 +699,17 @@ def recalculate_dataset_payload_from_runs(payload: dict[str, object]) -> dict[st
     next_payload["storageLocation"] = aggregate["latestStorageLocation"]
     next_payload["storageSizeBytes"] = aggregate["storageSizeBytes"]
     return next_payload
+
+
+def parse_count_value(value: object) -> int:
+    if isinstance(value, bool) or value is None:
+        return 0
+    if isinstance(value, int):
+        return max(value, 0)
+    if isinstance(value, float):
+        return max(int(value), 0)
+    digits = re.sub(r"[^0-9]", "", str(value))
+    return int(digits) if digits else 0
 
 
 def format_storage_size(size_bytes: int) -> str:
@@ -874,27 +857,6 @@ def get_lineage_table_name(value: str) -> str:
 def normalize_lineage_id(value: str) -> str:
     normalized_value = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
     return normalized_value or "lineage"
-
-
-def dataset_for_latest_successful_materialization(
-    dataset: CatalogDatasetResponse,
-) -> CatalogDatasetResponse:
-    successful_runs = [
-        run
-        for run in dataset.materialization_runs
-        if run.status == "success" and run.storage_location
-    ]
-    if not successful_runs:
-        return dataset
-
-    latest_run = max(successful_runs, key=lambda run: run.created_at)
-    return dataset.model_copy(
-        update={
-            "source_run_id": latest_run.run_id,
-            "storage_location": latest_run.storage_location,
-            "storage_size_bytes": latest_run.storage_size_bytes,
-        }
-    )
 
 
 def record_forbidden_dataset_event(

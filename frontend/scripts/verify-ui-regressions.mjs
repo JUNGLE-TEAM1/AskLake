@@ -43,7 +43,7 @@ const checks = [
       /principalType: "user" as const/,
       /data-testid="permission-options-loading"/,
     ],
-    forbiddenPatterns: [
+    additionalForbiddenPatterns: [
       /<CardTitle>Governance Check<\/CardTitle>/,
       /<CardTitle>Access Policy<\/CardTitle>/,
       /<CardTitle>Role Grants<\/CardTitle>/,
@@ -67,6 +67,34 @@ const checks = [
       /APPROVAL_STATUS_OPTIONS/,
       /label: "승인자"/,
       /label: "승인 상태"/,
+    ],
+  },
+  {
+    name: "Production login hides demo credentials and public signup by default",
+    file: "src/pages/auth/AuthPage.tsx",
+    patterns: [
+      /const demoDefaultsEnabled = import\.meta\.env\.DEV;/,
+      /const publicSignupEnabled = import\.meta\.env\.DEV \|\| import\.meta\.env\.VITE_AUTH_PUBLIC_SIGNUP === "true";/,
+      /useState\(demoDefaultsEnabled \? "admin\.user@asklake\.local" : ""\)/,
+      /\{publicSignupEnabled && \(/,
+      /demoDefaultsEnabled\s*\? <small>Admin/,
+    ],
+  },
+  {
+    name: "Authentication failures stay server-side instead of creating browser-local users",
+    file: "src/services/authApi.ts",
+    patterns: [
+      /return apiClient\.get<AuthSessionResponse>\("\/api\/auth\/session"\);/,
+      /return apiClient\.post<AuthUserResponse>\("\/api\/auth\/login", payload\);/,
+      /return apiClient\.post<AuthUserResponse>\("\/api\/auth\/signup", payload\);/,
+    ],
+    forbiddenPatterns: [
+      /asklake\.tempAuth/,
+      /asklake\.mockAuthUser/,
+      /shouldUseTempAuth/,
+      /localStorage/,
+      /sessionStorage/,
+      /apiConfig\.useMock/,
     ],
   },
   {
@@ -439,27 +467,14 @@ const checks = [
     ],
   },
   {
-    name: "Catalog schema modal includes a paged actual-data viewer",
+    name: "Catalog schema modal excludes the duplicate sample-data viewer",
     file: "src/pages/catalog/CatalogPage.tsx",
     patterns: [
       /<CatalogDatasetViewer dataset=\{previewDataset\} \/>/,
-      /<CatalogSchema dataset=\{dataset\} \/>[\s\S]*<CatalogSample dataset=\{dataset\} \/>/,
-      /getCatalogDatasetRows\(dataset\.id, \{ limit: pageSize, offset \}\)/,
-      /latestSuccessfulRun/,
-      /aria-label="샘플 데이터 새로고침"/,
-      />\s*처음\s*<\/Button>/,
-      />\s*마지막\s*<\/Button>/,
-      /표시할 데이터 행이 없습니다\./,
-      /rowsErrorStatus === 403/,
+      /function CatalogDatasetViewer\([\s\S]*<CatalogSchema dataset=\{dataset\} \/>[\s\S]*<\/div>/,
     ],
-  },
-  {
-    name: "Catalog sample table keeps a bounded viewport and sticky header",
-    file: "src/styles/catalog.css",
-    patterns: [
-      /\.catalog-sample-scroll\s*\{[^}]*max-height:\s*min\(480px, 55vh\);/s,
-      /\.catalog-sample-table th\s*\{[^}]*position:\s*sticky;[^}]*top:\s*0;/s,
-      /\.catalog-dataset-viewer\s*\{[^}]*display:\s*grid;/s,
+    forbiddenPatterns: [
+      /function CatalogDatasetViewer\([\s\S]*?<CatalogSample dataset=\{dataset\} \/>[\s\S]*?function CatalogSchemaTable/,
     ],
   },
   {
@@ -472,20 +487,50 @@ const checks = [
     ],
   },
   {
-    name: "SQL dataset browser uses the Shadcnblocks line tree",
+    name: "SQL dataset browser uses the shared virtualized explorer tree",
     file: "src/pages/sql/SqlDatasetRow.tsx",
     patterns: [
-      /from "@\/components\/kibo-ui\/tree";/,
-      /<TreeProvider[\s\S]*expandedIds=\{expandedIds\}[\s\S]*showLines/,
-      /<TreeNodeTrigger[\s\S]*data-sql-dataset-row=""/,
-      /onClick=\{\(\) => onSelect\(dataset\)\}[\s\S]*toggleOnClick=\{false\}/,
-      /<TreeExpander hasChildren \/>/,
-      /<TreeNodeContent className="pb-2" hasChildren>/,
-      /import \{ StatusBadge \} from "@\/components\/ui\/status-badge";/,
+      /import \{ ExplorerTree, type ExplorerTreeNode \} from "@\/components\/ui\/explorer-tree";/,
+      /<ExplorerTree<SqlDatasetNode>/,
+      /data=\{treeData\}/,
+      /data-sql-dataset-row/,
+      /initialOpenState=\{\{/,
+      /onNodePress=\{\(node\) =>/,
       /selectedDatasetIds: ReadonlySet<string>;/,
-      /data-sql-dataset-selected=\{selected \? "" : undefined\}/,
-      /onClick=\{\(\) => onSelect\(dataset\)\}/,
-      /<StatusBadge className="ml-auto shrink-0" size="sm" tone="success">선택됨<\/StatusBadge>/,
+      /selected: selectedDatasetIds\.has\(dataset\.id\)/,
+      /data-sql-dataset-selected/,
+      /onToggle=\{\(nodeId\) =>/,
+      /toggleOnRowPress=\{false\}/,
+    ],
+    forbiddenPatterns: [
+      /components\/kibo-ui\/tree/,
+      /components\/ui\/tree-view/,
+      /StatusBadge/,
+      /getTrailing=/,
+    ],
+  },
+  {
+    name: "SQL base dataset re-click preserves the active editor context",
+    file: "src/pages/sql/SqlAnalysisPage.tsx",
+    patterns: [
+      /const addSelectedDataset = \(targetDataset: CatalogDataset\) => \{\s*if \(targetDataset\.id === baseDataset\?\.id\) return;/,
+      /if \(selectedDatasetIdSet\.has\(targetDataset\.id\)\) \{\s*removeSelectedDataset\(targetDataset\);/,
+    ],
+  },
+  {
+    name: "Shared explorer tree composes react-arborist behavior with AskLake row UI",
+    file: "src/components/ui/explorer-tree.tsx",
+    patterns: [
+      /from "react-arborist";/,
+      /new ResizeObserver\(updateHeight\)/,
+      /<Tree<T>/,
+      /disableDrag=\{treeProps\.disableDrag \?\? true\}/,
+      /disableDrop=\{treeProps\.disableDrop \?\? true\}/,
+      /disableEdit=\{treeProps\.disableEdit \?\? true\}/,
+      /aria-expanded=\{node\.isInternal \? node\.isOpen : undefined\}/,
+      /aria-selected=\{isSelected \|\| undefined\}/,
+      /if \(toggleOnRowPress && node\.isInternal\) node\.toggle\(\);/,
+      /node\.handleClick\(event\);/,
     ],
   },
   {
@@ -897,22 +942,55 @@ const checks = [
     ],
   },
   {
-    name: "Dashboard dataset sidebar uses shadcn-compatible tree states",
+    name: "Dashboard dataset sidebar uses the shared virtualized explorer tree",
     file: "src/pages/dashboard/runtime/DatasetSidebar.tsx",
     patterns: [
-      /from "@\/components\/kibo-ui\/tree";/,
+      /import \{ ExplorerTree, type ExplorerTreeNode \} from "@\/components\/ui\/explorer-tree";/,
       /import \{ Alert, AlertDescription, AlertTitle \} from "@\/components\/ui\/alert";/,
       /import \{ Empty, EmptyDescription, EmptyHeader, EmptyTitle \} from "@\/components\/ui\/empty";/,
-      /import \{ ScrollArea \} from "@\/components\/ui\/scroll-area";/,
       /import \{ Skeleton \} from "@\/components\/ui\/skeleton";/,
-      /<TreeProvider[\s\S]*showLines/,
-      /<TreeView aria-label="Dashboard dataset tree"/,
-      /data-dashboard-dataset-node=\{item\.kind\}/,
+      /<ExplorerTree<DatasetTreeNode>/,
+      /ariaLabel="Dashboard dataset tree"/,
+      /data-dashboard-dataset-node/,
+      /onNodePress=\{\(node: NodeApi<DatasetTreeNode>\) =>/,
     ],
     forbiddenPatterns: [
-      /react-arborist/,
+      /components\/kibo-ui\/tree/,
+      /components\/ui\/tree-view/,
       /<TreePanel/,
     ],
+  },
+  {
+    name: "ETL source asset browser uses the shared explorer tree",
+    file: "src/pages/etl/SourceAssetTree.tsx",
+    patterns: [
+      /import \{ ExplorerTree \} from "@\/components\/ui\/explorer-tree";/,
+      /<ExplorerTree<SourceAssetTreeNode>/,
+      /ariaLabel="소스 에셋 트리"/,
+      /onToggle=\{\(nodeId\) =>/,
+    ],
+    forbiddenPatterns: [/components\/ui\/tree-view/, /<Tree<SourceAssetTreeNode>/],
+  },
+  {
+    name: "S3 and JSON explorers use the shared explorer tree",
+    file: "src/components/s3/S3PathField.tsx",
+    patterns: [
+      /import \{ ExplorerTree, type ExplorerTreeNode \} from "@\/components\/ui\/explorer-tree";/,
+      /<ExplorerTree<S3TreeNode>/,
+      /ariaLabel="S3 prefix tree"/,
+      /onToggle=\{\(nodeId\) =>/,
+    ],
+    forbiddenPatterns: [/components\/ui\/tree-view/],
+  },
+  {
+    name: "JSON sample hierarchy uses the shared explorer tree",
+    file: "src/pages/etl/SourceJsonSampleTree.tsx",
+    patterns: [
+      /import \{ ExplorerTree, type ExplorerTreeNode \} from "@\/components\/ui\/explorer-tree";/,
+      /<ExplorerTree<JsonTreeNode>/,
+      /ariaLabel="JSON 샘플 트리"/,
+    ],
+    forbiddenPatterns: [/components\/ui\/tree-view/],
   },
   {
     name: "Dashboard list reuses Jobs shadcn table composition",
@@ -1405,6 +1483,38 @@ const checks = [
       /<SelectItem value="float">/,
     ],
   },
+  {
+    name: "Manual workspace refresh replaces Jobs and Catalog data from live APIs",
+    file: "src/hooks/useAskLakeData.ts",
+    patterns: [
+      /const dataHydrationRequestRef = useRef\(0\);/,
+      /const refreshData = async \(\) =>/,
+      /const \[jobsResult, datasetsResult\] = await Promise\.all\(\[\s*getJobs\(\),\s*getDatasets\(\),?\s*\]\);/,
+      /const applyHydratedJobs[\s\S]*setJobs\(normalizedJobs\);[\s\S]*setJobListFacets\(result\.facets\);/,
+      /const applyHydratedDatasets[\s\S]*setDatasets\(normalizedDatasets\);[\s\S]*normalizedDatasets\.find\(\(dataset\) => dataset\.id === current\.id\)/,
+      /filterJobs,\s*refreshData,\s*createSqlDatasetJob,/,
+    ],
+  },
+  {
+    name: "Catalog materialization totals stop at the newest snapshot",
+    file: "src/hooks/useAskLakeData.ts",
+    patterns: [
+      /activeDatasetMaterializationRuns\(materializationRuns\)/,
+      /if \(run\.materializationMode !== "delta"\) break;/,
+    ],
+  },
+  {
+    name: "Global top-bar refresh awaits the authoritative workspace rehydrate",
+    file: "src/App.tsx",
+    patterns: [
+      /filterJobs,\s*refreshData,\s*handleJobCommand,/,
+      /const refreshWorkspaceData = async \(\) => \{\s*const refreshed = await refreshData\(\);\s*writeAuditLog\("etl\.job\.status_refreshed", "\/api\/etl\/jobs", "jobs", refreshed \? "success" : "failed"\);\s*\};/,
+      /<Topbar[^\n]*onRefresh=\{\(\) => void refreshWorkspaceData\(\)\}/,
+    ],
+    forbiddenPatterns: [
+      /<Topbar[^\n]*onRefresh=\{\(\) => writeAuditLog\("etl\.job\.status_refreshed"/,
+    ],
+  },
 ];
 
 const failures = [];
@@ -1416,7 +1526,7 @@ for (const check of checks) {
       failures.push(`${check.name}: missing pattern #${index + 1} in ${check.file}`);
     }
   });
-  check.forbiddenPatterns?.forEach((pattern, index) => {
+  [...(check.forbiddenPatterns ?? []), ...(check.additionalForbiddenPatterns ?? [])].forEach((pattern, index) => {
     if (pattern.test(contents)) {
       failures.push(`${check.name}: forbidden pattern #${index + 1} found in ${check.file}`);
     }

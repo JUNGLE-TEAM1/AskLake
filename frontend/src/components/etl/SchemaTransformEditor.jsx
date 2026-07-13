@@ -1164,10 +1164,6 @@ export default function SchemaTransformEditor({
                     <span className="inline-flex items-center gap-2"><span className="size-2 rounded-full bg-blue-500" />Spark SQL</span>
                     <span>소스 데이터 참조: <code className="font-mono font-bold text-blue-950">FROM input</code></span>
                   </div>
-                  <div className={`schema-sql-validation flex items-center justify-center gap-2 border-b border-blue-100 px-3 text-center text-sm font-semibold ${sqlValidation.tone === "error" ? "bg-red-50 text-red-600" : sqlValidation.tone === "success" ? "bg-emerald-50 text-emerald-700" : "bg-blue-50/60 text-slate-600"}`}>
-                    {sqlValidation.tone === "error" ? <AlertCircle className="size-4" /> : sqlValidation.tone === "success" ? <CheckCircle2 className="size-4" /> : <Sparkles className="size-4" />}
-                    <span>{sqlValidation.message}</span>
-                  </div>
                   <div className="schema-sql-editor-surface">
                     <pre ref={sqlLineNumberRef} aria-hidden="true" className="schema-sql-line-numbers">{sqlLineNumbers}</pre>
                     <Textarea
@@ -1183,6 +1179,10 @@ export default function SchemaTransformEditor({
                       className="schema-sql-editor-input"
                       spellCheck={false}
                     />
+                  </div>
+                  <div className={`schema-sql-validation flex items-center justify-start gap-2 border-t border-blue-100 px-4 py-2.5 text-left text-sm font-semibold ${sqlValidation.tone === "error" ? "bg-red-50 text-red-600" : sqlValidation.tone === "success" ? "bg-emerald-50 text-emerald-700" : "bg-blue-50/60 text-slate-600"}`}>
+                    {sqlValidation.tone === "error" ? <AlertCircle className="size-4 shrink-0" /> : sqlValidation.tone === "success" ? <CheckCircle2 className="size-4 shrink-0" /> : <Sparkles className="size-4 shrink-0" />}
+                    <span>{sqlValidation.message}</span>
                   </div>
                 </div>
               </div>

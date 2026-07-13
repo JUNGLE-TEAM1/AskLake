@@ -31,8 +31,6 @@ def active_materialization_runs(runs: Iterable[dict[str, Any]]) -> list[dict[str
         if materialization_mode(run) == "snapshot":
             break
     return active
-
-
 def materialization_source_window(run: dict[str, Any]) -> dict[str, Any] | None:
     value = run.get("sourceWindow") or run.get("source_window")
     return value if isinstance(value, dict) else None

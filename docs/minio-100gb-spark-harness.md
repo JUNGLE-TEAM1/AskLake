@@ -43,13 +43,17 @@ EC2 prod deploy에서는 MinIO가 `deploy/docker-compose.prod.yml`의 `minio` se
 ```text
 MINIO_ENDPOINT=http://minio:9000
 MINIO_ENDPOINT_IN_DOCKER=http://minio:9000
-MINIO_ACCESS_KEY=<server-only value>
-MINIO_SECRET_KEY=<server-only value>
+MINIO_ROOT_USER=<server-only root identity>
+MINIO_ROOT_PASSWORD=<server-only root secret>
+MINIO_ACCESS_KEY=<distinct application identity>
+MINIO_SECRET_KEY=<distinct application secret>
 MINIO_BUCKET=m3-raw
 S3_ENDPOINT=http://minio:9000
 S3_FORCE_PATH_STYLE=true
 S3_ALLOWED_BUCKETS=m3-raw,asklake-output
 ```
+
+`minio-init`는 root identity로 source/output bucket과 non-root application user를 준비한다. Backend와 Spark에는 application credential만 전달한다. Production Spark master의 REST 6066, master 7077, UI 8080/8081은 Compose network 내부에서만 사용하고 host에 publish하지 않는다.
 
 초기 object sample은 EC2 backend container에서 준비한다.
 

@@ -1102,7 +1102,6 @@ function CatalogDatasetViewer({ dataset }: { dataset: CatalogDataset }) {
   return (
     <div className="catalog-dataset-viewer">
       <CatalogSchema dataset={dataset} />
-      <CatalogSample dataset={dataset} />
     </div>
   );
 }
