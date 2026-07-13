@@ -31,7 +31,7 @@ Demo hydrate endpoint는 live ETL/Catalog API를 가리지 않도록 `/api/demo/
 Amazon review Kafka replay/ingest 병렬 개발은 `backend/fixtures/kafka/amazon-review-fixture.jsonl` 100건 mock fixture와 `npm run kafka:reviews-fixture`로 `reviews.raw` topic에 표준 JSON fixture를 넣어 시작한다. fixture를 다시 만들 때는 `npm run kafka:reviews-fixture:generate -- --count 100`을 사용한다. 실제 Amazon review JSONL/JSONL.gz 파일은 `npm run kafka:reviews-replay -- --input <path> --limit 100 --rate 100`으로 같은 메시지 계약에 맞춰 replay한다. `npm run kafka:reviews-loop -- --rate 2 --max-messages 500`는 cycle별 고유 event ID와 증가 offset을 갖는 Continuous 검증용 입력을 만든다. topic 재생성은 `--recreate-topic`을 명시한 경우에만 수행한다. 배포 환경은 `GET|POST|DELETE /api/etl/kafka/replay-producer`로 한 개의 producer subprocess를 관리하며, 대용량 파일은 `ASKLAKE_REPLAY_INPUT_DIR` mount 아래 상대 `inputPath`로만 지정한다. 이 스크립트는 Kafka 입력 계약 검증과 replay를 담당하며, Lake 적재 로직은 별도 ingest 작업 범위다.
 Kafka Source Preview와 Snapshot bridge는 공통 KafkaJS Snappy codec을 등록한다. Source Preview는 최소 샘플/idle/settle bound로 실제 payload를 반환하고 consumer decode/run 오류를 metadata-only 성공으로 바꾸지 않는다. `GET /api/etl/sources/defaults`는 backend의 Kafka runtime 기본값을 frontend에 제공한다. `ASKLAKE_VERIFY_KAFKA=true npm run verify:fastapi-sources`는 3건의 임시 Snappy 토픽을 생성해 `event_id` schema/sample까지 검증한다.
 
-Rule/target 변경의 빠른 검증은 `npm run verify:rule-compiler`, `npm run verify:rule-preview`, `npm run verify:snapshot-spark-pipeline`, `npm run verify:kafka-target-projection`, `npm run verify:target-mode-contract` 순서로 실행한다. Kafka Snapshot Job bridge는 확정 schema와 compiler output schema를 전달하고 direct JSONL/Catalog metadata를 동일 projection으로 생성한다. `npm run verify:kafka-review-scheduled-ingest`는 실제 Job create/command, 물리 S3 JSONL, Catalog schema까지 이 계약을 end-to-end로 검증한다.
+Rule/target 변경의 빠른 검증은 `npm run verify:dataset-identity`, `npm run verify:rule-compiler`, `npm run verify:rule-preview`, `npm run verify:snapshot-spark-pipeline`, `npm run verify:kafka-target-projection`, `npm run verify:target-mode-contract` 순서로 실행한다. `verify:dataset-identity`는 서로 다른 한글/slug-collision target의 Job·dataset ID 분리와 정확히 같은 target의 append 재사용을 격리 SQLite metadata DB에서 확인한다. Kafka Snapshot Job bridge는 확정 schema와 compiler output schema를 전달하고 direct JSONL/Catalog metadata를 동일 projection으로 생성한다. `npm run verify:kafka-review-scheduled-ingest`는 실제 Job create/command, 물리 S3 JSONL, Catalog schema까지 이 계약을 end-to-end로 검증한다.
 
 ## 2. Pair A Live Contract
 
@@ -67,6 +67,8 @@ type CreateJobResponse = {
   };
 };
 ```
+
+Job append identity는 저장된 `targetDataset` 표시명의 정확한 일치를 기준으로 판정한다. 새 dataset의 내부 ID는 안전한 소문자 ASCII 이름에는 `ds_<name>`을 유지하고, 한글·공백·특수문자·대소문자 변환처럼 ASCII slug에서 정보가 손실되면 원문 기반 12자리 안정 해시 suffix를 붙인다. 자동 storage prefix/checkpoint도 같은 충돌 방지 key를 사용한다. 서로 다른 표시명이 같은 slug로 축약돼도 기존 Job이나 자동 저장 경로를 공유하지 않아야 하며, frontend는 create/polling 응답을 `job.id` 기준으로 upsert해 동일 ID를 여러 목록 행으로 보존하지 않는다.
 
 Backend command response:
 
@@ -137,7 +139,8 @@ Spark runner 입력:
 - Target S3 picker: `S3_ALLOWED_BUCKETS` allowlist 안의 bucket만 선택 가능하며 prefix 조회는 backend AWS SDK v3 `ListObjectsV2`에서 처리한다. 프론트에는 AWS credential을 넣지 않는다.
 - EC2 prod compose: MinIO endpoint는 `http://minio:9000`이고, backend/Spark는 `MINIO_ENDPOINT`, `MINIO_ENDPOINT_IN_DOCKER`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `MINIO_BUCKET`을 서버 `deploy/.env`에서 읽는다.
 - Target DB picker: `TARGET_DATABASES` 또는 `ASKLAKE_TARGET_DATABASES` allowlist를 서버에서 읽어 허용 DB만 내려준다.
-- REST/PostgreSQL/MongoDB 등 connector source: bounded schema sample rows를 JSONL로 기록한 뒤 Spark source로 사용
+- PostgreSQL Snapshot connector: Preview scope와 무관하게 선택 base table 전체를 repeatable-read cursor로 배치 export한 Run 전용 JSONL을 Spark source로 사용. `ASKLAKE_POSTGRES_EXECUTION_BATCH_ROWS`는 메모리 batch 크기이며 전체 행 상한이 아니다.
+- REST/MongoDB 등 나머지 connector source: bounded schema sample rows를 JSONL로 기록한 뒤 Spark source로 사용
 - connector sample JSONL은 `ASKLAKE_SPARK_REPORT_DIR`에 쓰고 Spark submit/master/worker 모두 `ASKLAKE_SPARK_REPORT_CONTAINER_DIR` 기본값 `/work/reports`로 같은 host directory를 mount해야 한다. worktree가 바뀌면 Spark container는 mount source가 달라지므로 자동 재생성되어야 한다.
 - `ASKLAKE_SPARK_TRANSFORM_STEPS`: create payload의 transform steps
 - `ASKLAKE_SPARK_QUALITY_RULES`: create payload의 quality rules

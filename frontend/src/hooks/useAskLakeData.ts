@@ -546,6 +546,24 @@ function normalizeJobRow(job: JobRowData): JobRowData {
   };
 }
 
+function upsertJobById(jobs: JobRowData[], nextJob: JobRowData): JobRowData[] {
+  return [nextJob, ...jobs.filter((job) => job.id !== nextJob.id)];
+}
+
+function replaceJobById(
+  jobs: JobRowData[],
+  jobId: string,
+  updater: (job: JobRowData) => JobRowData,
+): JobRowData[] {
+  let replaced = false;
+  return jobs.flatMap((job) => {
+    if (job.id !== jobId) return [job];
+    if (replaced) return [];
+    replaced = true;
+    return [updater(job)];
+  });
+}
+
 const jobStatuses = ["scheduled", "failed", "running", "paused", "canceled", "stopped"] as const;
 
 function getLatestRunOutcome(job: JobRowData): JobRunOutcome | undefined {
@@ -959,7 +977,7 @@ export function useAskLakeData({
       const normalizedJob = normalizeJobRow(result.job);
       const normalizedDataset = result.dataset ? normalizeDatasetRow(result.dataset) : null;
 
-      setJobs((items) => [normalizedJob, ...items.filter((item) => item.name !== normalizedJob.name)]);
+      setJobs((items) => upsertJobById(items, normalizedJob));
       setSelectedJob(normalizedJob);
       if (normalizedDataset) {
         saveStoredCatalogDataset(normalizedDataset);
@@ -1044,7 +1062,7 @@ export function useAskLakeData({
   };
 
   const updateJobState = (jobId: string, updater: (job: JobRowData) => JobRowData) => {
-    setJobs((items) => items.map((job) => (job.id === jobId ? updater(job) : job)));
+    setJobs((items) => replaceJobById(items, jobId, updater));
     setSelectedJob((job) => (job.id === jobId ? updater(job) : job));
   };
 

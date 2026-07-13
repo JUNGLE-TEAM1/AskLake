@@ -111,6 +111,8 @@ Kafka `POST /api/etl/sources/test`와 Snapshot ingest consumer는 uncompressed �
 
 `POST /api/etl/jobs/{jobId}/commands`의 일반 배치 `run`/`retry`는 Airflow 접수 직후 `queued` 또는 `running` 상태를 응답한다. Airflow의 `spark_process_write` task가 bearer token으로 FastAPI internal execution API를 호출해 실제 PySpark 처리를 수행하고, 최종 Run/DAG/Spark manifest는 `GET /api/etl/jobs/{jobId}` polling으로 반영한다.
 
+PostgreSQL Snapshot Job의 `run`/`retry`는 생성 시 저장된 `schemaSampleRows`, `__Schema Sample Scope`, `__Sample Row Limit`을 실행 행 제한으로 사용하지 않는다. 내부 실행 API는 선택한 `DATASET OR TABLE SELECTOR` 기본 테이블을 repeatable-read cursor로 끝까지 export하고 Spark manifest의 `inputRows`/`outputRows`에 실제 전체 행 수를 기록한다. 연결 실패, 테이블 부재, 빈 테이블, export 실패는 Spark/Catalog 성공으로 처리하지 않는다.
+
 내부 실행 API는 `AIRFLOW_EXECUTION_API_TOKEN`이 없으면 `503 AIRFLOW_EXECUTION_NOT_CONFIGURED`, token이 다르면 `401 AIRFLOW_EXECUTION_UNAUTHORIZED`, 저장된 Job/Run/Airflow DAG Run identity가 일치하지 않으면 `409 AIRFLOW_RUN_MISMATCH`를 반환한다. 성공/실패 Spark manifest는 `JobRunSummary.taskStates.sparkResult`에 보존되며, Phase 2에서는 Catalog Dataset을 생성하거나 materialization history를 갱신하지 않는다.
 
 Phase 3의 `publish_run_result` task는 `POST /api/internal/airflow/spark-runs/{runId}/catalog`에 `{ "jobId": "..." }`를 보낸다. backend는 저장된 `sparkResult.status=success`, 실제 Parquet object, Job의 `datasetId`를 검증한 뒤 같은 Run의 materialization과 lineage를 `catalog_datasets.payload`에 저장한다. 성공 response는 `status`, `runId`, `reconciledAt`, `dataset`을 반환하고 `JobRunSummary.taskStates.catalogResult`에도 같은 식별자와 결과를 보존한다.
@@ -575,7 +577,7 @@ Schema Transform UI는 원본 `SchemaColumnDraft.sourceType`과 target `type`을
 - `dataset.upstream`이 있으면 Catalog lineage modal의 source/upstream -> current fallback을 만들 수 있다.
 - `dataset.downstream`은 SQL, dashboard, mart 같은 영향도/소비처 context에 사용할 수 있다.
 - 생성 후 ETL 목록과 Catalog 목록에 같은 `job.id`와 `dataset.id` 기준 결과가 보여야 한다.
-- 같은 Job 또는 같은 `targetDataset`으로 생성/실행한 결과는 새 Catalog row를 늘리지 않고 기존 dataset의 `materializationRuns`에 append한다. Catalog 목록 row는 하나만 보이고, row 펼침에서 append history를 최대 5개씩 pagination으로 표시한다.
+- 같은 Job 또는 표시명이 정확히 같은 `targetDataset`으로 생성/실행한 결과는 새 Catalog row를 늘리지 않고 기존 dataset의 `materializationRuns`에 append한다. append 대상 판정은 손실 가능한 slug가 아니라 저장된 `targetDataset` 표시명으로 수행한다. 새 dataset의 내부 `datasetId`는 안전한 소문자 ASCII 이름이면 `ds_<name>`, 그 외에는 `ds_<slug>_<stable-hash>` 형식이므로 서로 다른 한글·공백·특수문자 이름이 같은 ID로 합쳐지지 않는다. Catalog 목록 row는 하나만 보이고, row 펼침에서 append history를 최대 5개씩 pagination으로 표시한다.
 - Target draft의 `storageType`, `partition`, `partitionColumns`, `indexColumns`, `compression`, `storagePath`, `targetDatabase`, `targetDescription`, `targetTags`는 `targetDataset`, `targetLayer`, `targetFormat`과 함께 create request에 전달된다. 다중 파티션 컬럼은 선택 순서를 유지한 `partitionColumns` 배열과 `/`로 연결한 하위 호환용 `partition` 문자열로 함께 전송한다. SQL 결과 처리 Job wizard도 같은 target metadata를 구성한 뒤 기존 create request로 변환한다.
 - Target 화면은 모든 Source에서 `targetLayer`를 명시적으로 선택한다. Kafka Snapshot은 `RAW/BRONZE/SILVER + JSONL`, Kafka Continuous는 Parquet 포맷만 노출하고 backend review/create/update도 같은 조합을 검증한다.
 - `rag` 필드는 호환을 위해 create request에 남아 있지만, 현재 Target 화면에서는 노출하지 않고 frontend 기본값은 `false`다.

@@ -100,9 +100,10 @@ Phase 0에서는 용어와 경계를 먼저 고정한다. `createdBy`, `owner`, 
 3. 사용자는 schema, rule, schedule, permission, target을 설정한다.
 4. 시스템은 레코드 구조화 설정을 포함한 draft를 검증하고 `POST /api/etl/jobs` request로 만든다.
 5. 성공 시 Job이 목록에 추가되고 Catalog target은 pending 상태로 안내된다.
-6. 사용자가 Job을 실행하면 Spark는 Preview와 같은 구조화 규칙을 전체 TXT 입력에 다시 적용한다.
-7. 모든 비어 있지 않은 행의 필드 개수가 확정된 컬럼 수와 같을 때만 target을 쓰고 Catalog dataset을 생성 또는 갱신한다. 불일치가 있으면 Run을 실패시키고 Catalog materialization을 만들지 않는다.
-8. 실패하면 toast와 audit log에 실패 기록을 남기고 optimistic 상태를 되돌린다.
+6. 사용자가 PostgreSQL Snapshot Job을 실행하거나 재실행하면 스키마 Preview 행 수와 무관하게 선택한 기본 테이블 전체를 일관된 DB snapshot으로 읽는다.
+7. 사용자가 TXT Job을 실행하면 Spark는 Preview와 같은 구조화 규칙을 전체 TXT 입력에 다시 적용한다.
+8. 모든 비어 있지 않은 행의 필드 개수가 확정된 컬럼 수와 같을 때만 target을 쓰고 Catalog dataset을 생성 또는 갱신한다. 불일치가 있으면 Run을 실패시키고 Catalog materialization을 만들지 않는다.
+9. 실패하면 toast와 audit log에 실패 기록을 남기고 optimistic 상태를 되돌린다.
 
 ### Flow B. 카탈로그에서 SQL 분석
 
