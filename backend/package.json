@@ -25,6 +25,7 @@
     "verify:trino-query-foundation": "PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-python3} scripts/verify-trino-query-run-foundation.py",
     "verify:query-engine-registration": "PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-python3} scripts/verify-query-engine-registration.py",
     "verify:iceberg-writer-foundation": "PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-.venv/bin/python} -m unittest tests.test_iceberg_writer_foundation && PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-.venv/bin/python} scripts/verify-iceberg-writer-foundation.py",
+    "verify:spark-iceberg-batch": "PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-.venv/bin/python} scripts/verify-spark-iceberg-batch.py",
     "verify:trino-query-history": "PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-python3} scripts/verify-trino-query-run-history.py",
     "verify:trino-result-storage": "PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-python3} scripts/verify-trino-result-storage.py",
     "verify:trino-collector-resilience": "PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-python3} scripts/verify-trino-collector-resilience.py",

@@ -14,11 +14,11 @@
 
 따라서 “Iceberg에 저장한다”는 표현은 S3를 생략한다. 실제로는 S3/MinIO warehouse에 Parquet와 Iceberg metadata가 저장되고, Iceberg JDBC catalog와 AskLake Catalog가 서로 다른 책임으로 그 테이블을 참조한다.
 
-## 2. Phase 0 현재 상태
+## 2. 현재 전환 상태
 
 | writer | 현재 물리 출력 | 현재 등록 | Trino query 상태 | Iceberg writer 전환 후 |
 | --- | --- | --- | --- | --- |
-| 일반 Spark 배치 | S3/MinIO Parquet | AskLake Catalog materialization | `unavailable` | Iceberg append/replace commit + 검증된 mapping |
+| 일반 Spark 배치 | Iceberg table의 S3/MinIO Parquet | Iceberg JDBC catalog + AskLake Catalog materialization | `available` | Phase 2 완료 |
 | Kafka Snapshot | S3 JSONL direct snapshot | AskLake Catalog materialization | `unavailable` | offset range 단위 Iceberg append commit |
 | Kafka Continuous | S3 Parquet micro-batch | AskLake Catalog materialization/checkpoint | `unavailable` | foreachBatch Iceberg append commit |
 | Trino SQL materialization | Iceberg CTAS | AskLake Catalog + `queryEngineTable` | `available` | 기준 구현으로 유지 |
@@ -63,11 +63,20 @@ iceberg://{catalog}/{namespace}/{table}
 - `npm run verify:iceberg-writer-foundation`은 단위 계약을 검증하고, `ASKLAKE_VERIFY_ICEBERG_LIVE=true`일 때 고유 로컬 Trino/MinIO fixture를 실제 commit한 뒤 정리한다.
 - 이 단계는 Spark/Kafka direct writer를 호출 경로에서 교체하지 않는다. 따라서 해당 Dataset은 Phase 2~4 전까지 계속 `queryEngineStatus=unavailable`이다.
 
-### Phase 2. 일반 Spark 배치 전환
+### Phase 2. 일반 Spark 배치 전환 (완료)
 
 - Spark Parquet direct write를 Iceberg commit으로 교체한다.
 - Airflow 성공 조건을 Parquet object 존재가 아니라 Iceberg commit + physical mapping 검증으로 바꾼다.
 - 성공 기준: batch 재실행, 실패 rollback, Catalog/lineage/Trino query가 같은 table snapshot을 가리킨다.
+
+구현 결과:
+
+- 일반 non-Kafka Spark Job은 backend-owned `icebergTarget`을 Spark manifest에 받고 Spark DataFrameWriterV2로 JDBC catalog의 Iceberg table에 commit한다. 일반 full batch는 `replace`, 증분 S3/Data Lake folder는 최초 rebaseline `replace` 후 `append`를 사용한다.
+- 실제 data file은 warehouse의 Parquet이고, `outputPath`는 `iceberg://catalog/namespace/table` 논리 URI다. 성공 manifest는 `snapshotId`, warehouse location, schema/rule fingerprint, source boundary를 포함한다.
+- `publish_run_result`는 저장된 Spark evidence와 Trino `DESCRIBE`, `$snapshots`, `$files`를 대조한다. snapshot, target, fingerprint 또는 양수 output의 물리 data-file 증거가 맞지 않으면 Catalog와 Airflow를 성공 처리하지 않는다.
+- replace 재실행은 새 snapshot을 만들며, commit 직후 후속 처리가 실패하면 이전 snapshot으로 rollback한다. catalog/namespace 이름이 같은 경우에도 procedure target을 완전 수식한다.
+- Spark 외부 commit을 즉시 검증할 수 있도록 Trino Iceberg coordinator metadata cache를 비활성화한다. Kafka Snapshot/Continuous writer는 Phase 3~4까지 기존 경로를 유지한다.
+- `ASKLAKE_VERIFY_ICEBERG_LIVE=true npm run verify:spark-iceberg-batch`는 최초 replace, 재실행 replace, commit 후 강제 실패 rollback과 Trino row/snapshot 정합성을 실제 Spark 4/MinIO/PostgreSQL/Trino로 검증한다.
 
 ### Phase 3. Kafka Snapshot 전환
 
@@ -91,7 +100,7 @@ iceberg://{catalog}/{namespace}/{table}
 
 ## 5. 호환성과 금지 사항
 
-- 이 계획의 Phase 0은 현재 Spark/Kafka writer, create payload, 배포 환경을 바꾸지 않는다.
+- Phase 2 완료 시점에도 Kafka writer와 frontend create payload는 변경하지 않는다.
 - 기존 JSONL/Parquet S3 output을 Iceberg table로 표시하거나 `queryEngineStatus=available`로 승격하지 않는다.
 - Iceberg metadata를 생성하지 않는 writer의 Dataset은 Trino query target으로 노출하지 않는다.
 - Kafka offset commit, Continuous checkpoint, Iceberg snapshot commit의 원자성 기준을 정의하기 전에는 Kafka writer를 전환하지 않는다.

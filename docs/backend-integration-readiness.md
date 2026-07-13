@@ -17,8 +17,8 @@ FastAPI 전환의 공통 구조와 의사결정은 `docs/backend-fastapi-transit
 | Rule | versioned canonical `rules[]` compiler, legacy transform/quality adapter, create/update/review 사전 검증, pass-through output schema와 bounded Rule Preview를 제공한다. Snapshot conformance를 통과한 stateless Rule은 Continuous `foreachBatch`와 replay에도 같은 Spark runtime으로 적용한다 | stateful join/aggregation과 engine-specific SQL은 후속 범위 |
 | Job command | Kafka Snapshot Job은 fixed range ingest를 실행하고, non-Kafka Job은 Airflow DAG Run을 접수한다. Continuous Kafka Job은 long-running Spark worker를 제어하며, S3A checkpoint contract fingerprint, `_SUCCESS` + Rule/offset manifest, Catalog 복구, partition lag/throughput/schema/Rule report, quarantine replay와 compaction을 제공한다 | pause/cancel의 실제 Airflow/Spark interrupt, production soak, async Airflow maintenance scheduling, compaction retention switch |
 | Run/DAG | local Airflow DAG는 일반 batch의 Spark/Catalog 단계를 관리한다. Continuous는 start-to-terminal session과 하위 micro-batch 이력에 Source부터 Catalog까지 7단계 증적을 영속화하고 active 실행 이력 화면을 자동 갱신한다 | Spark log object storage 분리, session history 장기 retention/pagination |
-| Catalog | `GET /api/catalog/datasets` hydrate, `GET /api/catalog/datasets/{datasetId}/lineage`, `GET /api/catalog/datasets/{datasetId}/rows` 기반 최신 성공 materialization row pagination, SQL derived/Kafka 결과를 Postgres JSONB payload로 반영. 일반 Airflow/Spark batch의 멱등 reconciliation endpoint, transaction, final-task 연결, frontend terminal-success 1회 refresh, live E2E 구현 | 서버 검색/정렬 API 고도화 |
-| SQL 분석 | DuckDB compatibility snapshot과 Trino Query Run을 분리 지원. Trino mode는 canonical `/api/query/validate`, idempotent submit, durable collector, signed-cursor 결과 page, server-side CSV, Iceberg CTAS 등록과 반복 full-refresh SQL Job을 제공한다. ETL Job의 backend-owned `icebergTarget`과 공통 append/atomic replace commit·snapshot/warehouse/DESCRIBE 검증 adapter도 제공한다. 실행 평가와 timeline은 기존 SQL editor를 변경하지 않고 결과 panel의 `실행 정보` view에 표시한다. | Spark/Kafka runtime의 공통 Iceberg adapter 연결([계획](iceberg-writer-migration-plan.md) Phase 2~4), old SQL Job table retention/cleanup policy, org quota 고도화 |
+| Catalog | `GET /api/catalog/datasets` hydrate, `GET /api/catalog/datasets/{datasetId}/lineage`, `GET /api/catalog/datasets/{datasetId}/rows` 기반 최신 성공 materialization row pagination, SQL derived/Kafka 결과를 Postgres JSONB payload로 반영. 일반 Airflow/Spark batch는 Iceberg snapshot/warehouse/data-file evidence를 검증하는 멱등 reconciliation endpoint, transaction, final-task 연결, frontend terminal-success 1회 refresh, live E2E 구현 | 서버 검색/정렬 API 고도화 |
+| SQL 분석 | DuckDB compatibility snapshot과 Trino Query Run을 분리 지원. Trino mode는 canonical `/api/query/validate`, idempotent submit, durable collector, signed-cursor 결과 page, server-side CSV, Iceberg CTAS 등록과 반복 full-refresh SQL Job을 제공한다. ETL Job의 backend-owned `icebergTarget`, 일반 Spark native Iceberg commit/replace/rollback, 공통 snapshot/warehouse/`DESCRIBE`/`$files` 검증 adapter도 제공한다. 실행 평가와 timeline은 기존 SQL editor를 변경하지 않고 결과 panel의 `실행 정보` view에 표시한다. | Kafka Snapshot/Continuous Iceberg writer 연결([계획](iceberg-writer-migration-plan.md) Phase 3~4), old SQL Job table retention/cleanup policy, org quota 고도화 |
 | Dashboard | FastAPI dashboard card/list와 draft/published runtime API 연결. 프론트는 404 local fallback 유지. Dashboard 목록/runtime/title/draft/delete 권한 enforcement 연결 | 공유 링크/API, export API, cross-pair E2E QA |
 | Permission/Governance | Create flow의 `owner`, `permissionSummary`, `permissionRoles`는 metadata로 저장/표시. Job/Dataset/Dashboard 응답은 optional identity/grant/permission metadata를 제공. Backend는 session 또는 local header fallback을 `ActorContext`로 읽고 공통 `can()`을 적용한다. Dashboard/Catalog/Job뿐 아니라 Trino Query Run submit/history/result/CSV/cancel/materialization도 현재 Dataset 권한, principal block, resource lock과 submitter identity를 재검사한다. Frontend 비활성화는 UX 보조이고 backend 403이 최종 경계다. | dataset 생성/삭제 전체로 permission check 확대 |
 | Auth / Admin | httpOnly `asklake_session` cookie 기반 local login/signup/session/logout, 현재 사용자 profile, admin 사용자·그룹·permission grant·governance control API 연결. Frontend는 session actor 확인 이후 보호 route와 hydrate를 시작하고, admin actor에게만 관리 콘솔을 노출 | 운영 IdP/SSO, production session hardening, Alembic migration |
@@ -54,7 +54,7 @@ Schedule UI는 `직접 실행`, `반복 실행`을 사용하며 `직접 실행`�
 
 Target metadata는 Review에서 보이는 값과 create payload, Spark run 성공 후 Catalog dataset metadata가 같은 값을 사용해야 한다. `partition`은 기존 호환 문자열로 유지하고, 실제 선택 컬럼 목록은 `partitionColumns`에 보존한다.
 
-새 ETL Job의 `icebergTarget`은 frontend payload가 아니라 backend가 생성한다. `etl_jobs.iceberg_target` JSON은 `catalog`, `namespace`, stable `table`, `writeMode`, `partitionColumns`, 계산된 `tableUri`를 보존하고 Job response와 Spark payload에 전달한다. 기존 row의 null 값과 `storagePath`는 읽기 호환한다. Phase 1 adapter가 직접 fixture append/replace commit과 `$snapshots`/`DESCRIBE` 증거 수집을 검증하지만, Spark/Kafka writer가 이 adapter를 아직 호출하지 않는 동안 Catalog 상태는 `unavailable`이다.
+새 ETL Job의 `icebergTarget`은 frontend payload가 아니라 backend가 생성한다. `etl_jobs.iceberg_target` JSON은 `catalog`, `namespace`, stable `table`, `writeMode`, `partitionColumns`, 계산된 `tableUri`를 보존하고 Job response와 Spark payload에 전달한다. 기존 row의 null 값과 `storagePath`는 읽기 호환하며 첫 일반 batch 실행 전에 target을 backfill한다. 일반 Spark writer는 native Iceberg commit과 `$snapshots`/`$files`/`DESCRIBE` 검증 뒤 Catalog를 `available`로 확정한다. Kafka writer는 전환 전까지 `unavailable`을 유지한다.
 
 Backend create response:
 
@@ -165,14 +165,14 @@ Airflow sync 결과:
 
 - `JobRunSummary.airflowDagId`, `airflowDagRunId`, `airflowRunUrl`, `airflowState`
 - `JobRunSummary.taskStates`, `lastSyncedAt`, `syncError`
-- `JobRunSummary.taskStates.sparkResult`: input/output rows, outputPath, schema, quality, Spark failure stage/error manifest
+- `JobRunSummary.taskStates.sparkResult`: input/output rows, logical Iceberg outputPath, `icebergCommit`, schema, quality, Spark failure stage/error manifest
 - selected run 기준 `dagStepsByRunId`
 
 ### Phase 3 Catalog reconciliation target
 
 Status: contract, FastAPI backend implementation, real-mode Airflow DAG call, frontend terminal-success Catalog refresh, and live end-to-end verification are complete on the current branch.
 
-Phase 3에서는 `publish_run_result`가 `POST /api/internal/airflow/spark-runs/{runId}/catalog`를 호출한다. FastAPI는 bearer token과 저장된 Job/Run/Airflow identity를 다시 검증하고 `taskStates.sparkResult`에서만 실행 결과를 읽는다. 성공 Spark manifest와 실제 Parquet가 모두 확인된 경우에만 Catalog dataset을 create/upsert한다.
+`publish_run_result`는 `POST /api/internal/airflow/spark-runs/{runId}/catalog`를 호출한다. FastAPI는 bearer token과 저장된 Job/Run/Airflow identity를 다시 검증하고 `taskStates.sparkResult`에서만 실행 결과를 읽는다. 일반 Spark batch는 persisted target과 reported snapshot/fingerprint가 Trino table/snapshot/data-file evidence와 일치한 경우에만 Catalog dataset을 create/upsert한다.
 
 Transaction boundary:
 
@@ -187,7 +187,7 @@ Transaction boundary:
 Failure/recovery boundary:
 
 - Spark failure는 `spark_process_write`에서 DAG를 실패시키며 Catalog endpoint를 호출하지 않는다.
-- Catalog 실패는 성공 Parquet와 `sparkResult`를 남긴 채 `publish_run_result`를 실패시킨다. 실패 `catalogResult`에는 `runId`, `datasetId`, compact error, failed timestamp를 남긴다.
+- Catalog 실패는 검증된 Iceberg snapshot과 `sparkResult`를 남긴 채 `publish_run_result`를 실패시킨다. Spark commit 직후 report 확정 실패는 이전 snapshot으로 rollback한다. 실패 `catalogResult`에는 `runId`, `datasetId`, compact error, failed timestamp를 남긴다.
 - `publish_run_result`는 30초 간격으로 최대 2회 재시도하며, 같은 Airflow DAG Run의 persisted manifest로 Catalog만 최대 3회 시도하고 Spark를 다시 실행하지 않는다.
 - commit 뒤 response가 유실돼도 retry는 기존 성공 `catalogResult`를 읽어 같은 success를 반환한다.
 - Catalog commit 전에는 Airflow DAG Run과 AskLake Run을 최종 `success`로 간주하지 않는다.
@@ -248,6 +248,7 @@ FastAPI Pair2 smoke:
 - `npm run verify:permission-job-dashboard`는 권한 없는 viewer의 Job command, Dashboard 목록/runtime/title/draft/delete 차단과 user grant 변경 후 즉시 허용되는 흐름을 검증한다. 기본 포트는 `18088`이며 `ASKLAKE_PERMISSION_JOB_DASHBOARD_PORT`로 바꿀 수 있다.
 - `npm run verify:airflow-smoke`는 실행 중인 Airflow API에서 `asklake_etl_job` 발견, import error 0건, smoke 성공 Run의 4개 task 성공, `forceFail` Run의 `spark_process_write` 실패를 확인한다. 기본 API는 `http://127.0.0.1:8081`이며 `AIRFLOW_*`와 `ASKLAKE_AIRFLOW_SMOKE_*` 환경변수로 바꿀 수 있다.
 - `npm run verify:airflow-catalog-wiring`은 Airflow runtime 없이 실제 mode의 Catalog endpoint 경로, bearer token, `jobId` body, 최소 XCom 결과, smoke 우회, Run identity mismatch, Catalog HTTP 실패 전파를 확인한다.
+- `ASKLAKE_VERIFY_ICEBERG_LIVE=true npm run verify:spark-iceberg-batch`는 고유 일반 batch table의 최초 replace, 재실행 replace, commit 후 강제 실패 rollback, Trino row/snapshot 정합성을 실제 Spark 4/MinIO/PostgreSQL/Trino로 확인한다.
 - `npm run verify:airflow-spark`는 ETL Job 생성, Airflow 비동기 접수, authenticated FastAPI internal execution, 실제 PySpark 2행 처리, MinIO Parquet object, terminal Run/task/Spark manifest 동기화를 확인한다. `ASKLAKE_FASTAPI_ETL_EXPECT_SPARK_FAILURE=true`를 주면 Quality `Fail Run`의 Spark/Airflow/AskLake 실패 전파를 검사한다.
 - `npm run verify:fastapi-etl-catalog`는 같은 script의 기존 호환 이름이다. Airflow URL이 없으면 내장 mock 계약을 확인하고, 실제 Airflow URL을 사용하면 Spark 성공 뒤 `catalogResult`, Catalog dataset, materialization, physical size, lineage까지 검사한다.
 - `npm run verify:etl-lineage`는 text source 하나가 `text`, `sentiment`, `severity`로 파생되는 경우 source node가 `text`만 갖고 one-to-many transform edge를 만들며 `_asklake_*` metadata에 가짜 source edge를 만들지 않는지 확인한다. 또한 Parquet source를 `SOURCE · PARQUET`, Spark Job을 `PROCESS · SPARK`, 현재 Spark physical output을 요청 포맷과 무관하게 실제 `PARQUET` engine으로 표시하는지 검증한다.

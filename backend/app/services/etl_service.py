@@ -103,6 +103,7 @@ from app.schemas.etl import (
     SourceConnectorRequest,
     UpdatePipelineRequest,
 )
+from app.schemas.iceberg import IcebergWriterTarget
 
 from app.services.airflow_client import AirflowDagRun, AirflowTaskInstance, build_airflow_client
 from app.services.auth_service import load_active_actor_by_user_id
@@ -111,7 +112,12 @@ from app.services.trino_materialization_service import materialized_dataset_id
 from app.services.trino_query_run_service import TrinoQueryRunService
 from app.services.trino_sql_job_service import TrinoSqlJobService
 from app.services.identity_service import DEMO_GROUPS, DEMO_USERS
-from app.services.iceberg_writer_service import build_iceberg_writer_target, writer_mode_for_source
+from app.services.iceberg_writer_service import (
+    IcebergWriterError,
+    IcebergWriterService,
+    build_iceberg_writer_target,
+    writer_mode_for_source,
+)
 from app.services.object_storage import object_storage_runtime
 from app.services.materialization_projection import aggregate_materialization_runs
 from app.services.rule_compiler import CompiledRuleSet, compile_rule_set
@@ -267,7 +273,7 @@ def create_pipeline(
         iceberg_target=build_iceberg_writer_target(
             request.target_dataset,
             dataset_id,
-            write_mode=writer_mode_for_source(request.source_type),
+            write_mode=writer_mode_for_pipeline(request.source_type, request.source_config),
             partition_columns=normalize_string_list(request.partition_columns),
         ).model_dump(mode="json", by_alias=True),
         target_description=normalize_optional_text(request.target_description),
@@ -1855,7 +1861,21 @@ def is_kafka_job(job: ETLJobModel) -> bool:
     return bool(field_value(fields, "Broker / Endpoint") and (field_value(fields, "TOPIC / QUEUE NAME") or field_value(fields, "Topic")))
 
 
+def writer_mode_for_pipeline(source_type: str, source_config: Any) -> str:
+    default_mode = writer_mode_for_source(source_type)
+    if default_mode == "append":
+        return default_mode
+    fields = s3_source_config_fields(source_config or [])
+    incremental_folder = (
+        str(source_type or "").strip().casefold().startswith(("file / s3", "data lake"))
+        and fields.get("collection scope", "").casefold() == "folder"
+        and fields.get("collection mode", "incremental").casefold() == "incremental"
+    )
+    return "append" if incremental_folder else "replace"
+
+
 def run_spark_job(db: Session, job: ETLJobModel, command: str, run_id: str) -> dict[str, Any]:
+    ensure_batch_iceberg_target(db, job)
     rest_mode = spark_rest_mode_enabled()
     poll_timeout_ms = spark_rest_poll_timeout_ms()
     state_file = spark_rest_submission_state_file(run_id)
@@ -1899,6 +1919,26 @@ def run_spark_job(db: Session, job: ETLJobModel, command: str, run_id: str) -> d
             "objectInventory": source_object_inventory,
         }
     return result
+
+
+def ensure_batch_iceberg_target(db: Session, job: ETLJobModel) -> None:
+    if is_kafka_job(job):
+        return
+    expected_write_mode = writer_mode_for_pipeline(job.source_type, job.source_config)
+    if job.iceberg_target:
+        existing_target = IcebergWriterTarget.model_validate(job.iceberg_target)
+        if existing_target.write_mode == expected_write_mode:
+            return
+    dataset_id = str(job.dataset_id or make_dataset_id(job.target))
+    job.dataset_id = dataset_id
+    job.iceberg_target = build_iceberg_writer_target(
+        job.target,
+        dataset_id,
+        write_mode=expected_write_mode,
+        partition_columns=normalize_string_list(job.partition_columns),
+    ).model_dump(mode="json", by_alias=True)
+    db.add(job)
+    db.commit()
 
 
 def execute_airflow_spark_run(
@@ -2109,13 +2149,16 @@ def reconcile_airflow_catalog(
 
     output_path = str(spark_result.get("outputPath") or "").strip()
     try:
-        validate_catalog_output_identity(job, run_id, output_path)
-        physical = inspect_spark_output(output_path)
-        enriched_result = {
-            **spark_result,
-            "parquetObjectCount": physical["parquetObjectCount"],
-            "storageSizeBytes": physical["storageSizeBytes"],
-        }
+        if job.iceberg_target and not is_kafka_job(job):
+            enriched_result = verify_spark_iceberg_result(job, run_id, spark_result)
+        else:
+            validate_catalog_output_identity(job, run_id, output_path)
+            physical = inspect_spark_output(output_path)
+            enriched_result = {
+                **spark_result,
+                "parquetObjectCount": physical["parquetObjectCount"],
+                "storageSizeBytes": physical["storageSizeBytes"],
+            }
         return commit_airflow_catalog_reconciliation(
             db,
             job_id=job_id,
@@ -2171,13 +2214,16 @@ def commit_airflow_catalog_reconciliation(
 
     reconciled_at = iso_now()
     dataset_model = dataset_from_spark_result(job, result, existing_dataset)
+    iceberg_commit = result.get("icebergCommit") if isinstance(result.get("icebergCommit"), dict) else {}
     catalog_result = {
+        "dataFileCount": parse_count_value(result.get("dataFileCount")),
         "datasetId": dataset_id,
+        "icebergSnapshotId": optional_string(iceberg_commit.get("snapshotId")),
         "parquetObjectCount": parse_count_value(result.get("parquetObjectCount")),
         "reconciledAt": reconciled_at,
         "runId": run_id,
         "status": "success",
-        "storageLocation": result.get("outputPath"),
+        "storageLocation": result.get("materializationOutputPath") or result.get("outputPath"),
         "storageSizeBytes": parse_count_value(result.get("storageSizeBytes")),
     }
     run.task_states = {
@@ -2251,6 +2297,132 @@ def validate_catalog_output_identity(job: ETLJobModel, run_id: str, output_path:
             "Spark output path does not match the persisted Job destination.",
             {"expected": expected, "outputPath": actual, "runId": run_id},
         )
+
+
+def verify_spark_iceberg_result(
+    job: ETLJobModel,
+    run_id: str,
+    result: dict[str, Any],
+    *,
+    writer_service: IcebergWriterService | None = None,
+) -> dict[str, Any]:
+    try:
+        target = IcebergWriterTarget.model_validate(job.iceberg_target)
+    except Exception as exc:
+        raise catalog_reconciliation_error(
+            "Persisted Job does not have a valid Iceberg target.",
+            {"jobId": job.id, "runId": run_id},
+        ) from exc
+    commit = result.get("icebergCommit")
+    if not isinstance(commit, dict):
+        raise catalog_reconciliation_error(
+            "Successful Spark result does not include Iceberg commit evidence.",
+            {"jobId": job.id, "runId": run_id, "target": target.table_uri},
+        )
+    if str(commit.get("jobId") or "") != job.id or str(commit.get("runId") or "") != run_id:
+        raise catalog_reconciliation_error(
+            "Spark Iceberg commit identity does not match the persisted Run.",
+            {
+                "commitJobId": commit.get("jobId"),
+                "commitRunId": commit.get("runId"),
+                "jobId": job.id,
+                "runId": run_id,
+            },
+        )
+    try:
+        committed_target = IcebergWriterTarget.model_validate(commit.get("target"))
+    except Exception as exc:
+        raise catalog_reconciliation_error(
+            "Spark Iceberg commit target is invalid.",
+            {"jobId": job.id, "runId": run_id},
+        ) from exc
+    if committed_target != target or str(result.get("outputPath") or "") != target.table_uri:
+        raise catalog_reconciliation_error(
+            "Spark Iceberg commit target does not match the persisted Job target.",
+            {
+                "commitTarget": committed_target.table_uri,
+                "expectedTarget": target.table_uri,
+                "outputPath": result.get("outputPath"),
+            },
+        )
+    snapshot_id = str(commit.get("snapshotId") or "").strip()
+    if not snapshot_id:
+        raise catalog_reconciliation_error(
+            "Spark Iceberg commit does not include snapshotId.",
+            {"jobId": job.id, "runId": run_id},
+        )
+    expected_schema_fingerprint = str(job.schema_fingerprint or "").strip()
+    committed_schema_fingerprint = str(commit.get("schemaFingerprint") or "").strip()
+    if expected_schema_fingerprint and committed_schema_fingerprint != expected_schema_fingerprint:
+        raise catalog_reconciliation_error(
+            "Spark Iceberg schema fingerprint does not match the persisted Job.",
+            {"jobId": job.id, "runId": run_id},
+        )
+    compiled_rules = compile_job_rules(job)
+    require_compiled_rules(compiled_rules)
+    canonical_rules = [
+        rule.model_dump(mode="json", by_alias=True)
+        for rule in compiled_rules.result.rules
+    ]
+    expected_rule_fingerprint = canonical_rule_fingerprint(
+        compiled_rules.result.contract_version,
+        canonical_rules,
+    )
+    if str(commit.get("ruleFingerprint") or "") != expected_rule_fingerprint:
+        raise catalog_reconciliation_error(
+            "Spark Iceberg rule fingerprint does not match the persisted Job.",
+            {"jobId": job.id, "runId": run_id},
+        )
+    service = writer_service or IcebergWriterService()
+    try:
+        evidence = service.verify_commit(
+            target,
+            created_table=commit.get("createdTable") is True,
+            job_id=job.id,
+            run_id=run_id,
+            expected_snapshot_id=snapshot_id,
+            schema_fingerprint=committed_schema_fingerprint or None,
+            rule_fingerprint=expected_rule_fingerprint,
+            source_boundary=commit.get("sourceBoundary") if isinstance(commit.get("sourceBoundary"), dict) else {},
+        )
+        data_file_count, storage_size_bytes = service.table_storage_metrics(target)
+    except IcebergWriterError as exc:
+        raise catalog_reconciliation_error(
+            "Iceberg commit could not be verified through Trino.",
+            {
+                "jobId": job.id,
+                "reason": exc.code,
+                "runId": run_id,
+                "snapshotId": snapshot_id,
+                "target": target.table_uri,
+            },
+        ) from exc
+    if parse_count_value(result.get("outputRows")) > 0 and (
+        data_file_count <= 0 or storage_size_bytes <= 0
+    ):
+        raise catalog_reconciliation_error(
+            "Iceberg commit does not expose physical data-file evidence.",
+            {
+                "dataFileCount": data_file_count,
+                "jobId": job.id,
+                "runId": run_id,
+                "snapshotId": snapshot_id,
+                "storageSizeBytes": storage_size_bytes,
+            },
+        )
+    verified = evidence.model_dump(mode="json", by_alias=True)
+    return {
+        **result,
+        "dataFileCount": data_file_count,
+        "icebergCommit": verified,
+        "materializationOutputPath": evidence.warehouse_location,
+        "queryEngineTable": evidence.query_engine_table.model_dump(mode="json", by_alias=True),
+        "queryEngineVerified": True,
+        "ruleFingerprint": evidence.rule_fingerprint,
+        "schemaFingerprint": evidence.schema_fingerprint,
+        "storageSizeBytes": storage_size_bytes,
+        "warehouseLocation": evidence.warehouse_location,
+    }
 
 
 def normalize_spark_output_storage_path(value: str | None) -> str:
@@ -2381,6 +2553,7 @@ def spark_result_manifest(result: dict[str, Any], run_id: str) -> dict[str, Any]
             "failedStage",
             "format",
             "inputRows",
+            "icebergCommit",
             "outputPath",
             "outputRows",
             "quality",
@@ -2390,6 +2563,7 @@ def spark_result_manifest(result: dict[str, Any], run_id: str) -> dict[str, Any]
             "sparkExitCode",
             "startedAt",
             "status",
+            "warehouseLocation",
         )
         if result.get(key) is not None
     }
@@ -2662,6 +2836,10 @@ def job_payload_for_spark(
 ) -> dict[str, Any]:
     compiled_rules = compile_job_rules(job)
     require_compiled_rules(compiled_rules)
+    canonical_rules = [
+        rule.model_dump(mode="json", by_alias=True)
+        for rule in compiled_rules.result.rules
+    ]
     return {
         "id": job.id,
         "name": job.name,
@@ -2677,13 +2855,15 @@ def job_payload_for_spark(
         "rag": job.rag,
         "ruleContractVersion": compiled_rules.result.contract_version,
         "ruleOutputSchema": compiled_rules.result.output_schema,
-        "rules": [
-            rule.model_dump(mode="json", by_alias=True)
-            for rule in compiled_rules.result.rules
-        ],
+        "rules": canonical_rules,
+        "ruleFingerprint": canonical_rule_fingerprint(
+            compiled_rules.result.contract_version,
+            canonical_rules,
+        ),
         "recordParsing": job.record_parsing or None,
         "schedule": job.schedule,
         "schemaColumns": job.schema_columns or [],
+        "schemaFingerprint": job.schema_fingerprint,
         "schemaSampleRows": job.schema_sample_rows or [],
         "source": job.source,
         "sourceConfig": job.source_config or [],
@@ -3992,6 +4172,8 @@ def dataset_payload_from_spark_result(
             **({"ruleFingerprint": str(result["ruleFingerprint"])} if result.get("ruleFingerprint") else {}),
             **({"runtimeFingerprint": str(result["runtimeFingerprint"])} if result.get("runtimeFingerprint") else {}),
             **({"schemaFingerprint": str(result["schemaFingerprint"])} if result.get("schemaFingerprint") else {}),
+            **({"icebergSnapshotId": str(result["icebergCommit"].get("snapshotId") or "")} if isinstance(result.get("icebergCommit"), dict) else {}),
+            **({"queryEngineTable": result["queryEngineTable"]} if isinstance(result.get("queryEngineTable"), dict) else {}),
             **({"transform": result["transform"]} if isinstance(result.get("transform"), dict) else {}),
             **({"quality": result["quality"]} if isinstance(result.get("quality"), dict) else {}),
         },
@@ -4003,6 +4185,9 @@ def dataset_payload_from_spark_result(
         and isinstance(query_engine_table, dict)
         and all(str(query_engine_table.get(key) or "").strip() for key in ("catalog", "schema", "table", "format"))
     )
+    storage_format = "iceberg" if query_engine_available else SPARK_OUTPUT_FORMAT
+    storage_location = str(result.get("warehouseLocation") or output_path)
+    iceberg_commit = result.get("icebergCommit") if isinstance(result.get("icebergCommit"), dict) else {}
     downstream = (["SQL 분석"] if query_engine_available else []) + (["RAG 인덱싱"] if job.rag else [])
     return {
         "description": target_dataset_description(job),
@@ -4029,8 +4214,8 @@ def dataset_payload_from_spark_result(
         "source": job.name,
         "sourceRunId": aggregate["latestRunId"] or result.get("runId"),
         "status": "available",
-        "storageFormat": SPARK_OUTPUT_FORMAT,
-        "storageLocation": output_path,
+        "storageFormat": storage_format,
+        "storageLocation": storage_location,
         "storageSizeBytes": aggregate["storageSizeBytes"],
         "queryEngineStatus": "available" if query_engine_available else "unavailable",
         "partition": partition,
@@ -4038,6 +4223,11 @@ def dataset_payload_from_spark_result(
         "indexColumns": index_columns,
         "tags": target_dataset_tags(job),
         "upstream": [job.source_label, job.name],
+        **(
+            {"icebergSnapshotId": str(iceberg_commit.get("snapshotId") or "")}
+            if query_engine_available
+            else {}
+        ),
         **({"queryEngineTable": query_engine_table} if query_engine_available else {}),
     }
 
@@ -4089,7 +4279,7 @@ def update_existing_append_job(
     job.iceberg_target = build_iceberg_writer_target(
         request.target_dataset,
         dataset_id,
-        write_mode=writer_mode_for_source(request.source_type),
+        write_mode=writer_mode_for_pipeline(request.source_type, request.source_config),
         partition_columns=normalize_string_list(request.partition_columns),
     ).model_dump(mode="json", by_alias=True)
     job.target_description = normalize_optional_text(request.target_description)
@@ -6146,7 +6336,7 @@ def apply_update_request(job: ETLJobModel, request: UpdatePipelineRequest, targe
     job.iceberg_target = build_iceberg_writer_target(
         request.target_dataset,
         job.dataset_id or make_dataset_id(request.target_dataset),
-        write_mode=writer_mode_for_source(job.source_type),
+        write_mode=writer_mode_for_pipeline(job.source_type, request.source_config),
         partition_columns=normalize_string_list(request.partition_columns),
     ).model_dump(mode="json", by_alias=True)
 

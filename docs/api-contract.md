@@ -467,7 +467,7 @@ type JobRowData = {
 };
 ```
 
-`icebergTarget`은 backend-owned writer destination 선언이다. create/update request에서 사용자가 보내는 값이 아니며 backend가 Dataset ID와 Trino catalog/schema 설정으로 생성한다. Kafka source는 `append`, 그 외 일반 ETL source는 `replace`를 사용한다. `tableUri`는 논리 식별자이고 `storagePath`는 전환 전 writer와 기존 Job의 읽기 호환 필드다. 이 값이 존재해도 Iceberg commit과 Trino 물리 검증 전에는 `queryEngineStatus=unavailable`이다.
+`icebergTarget`은 backend-owned writer destination 선언이다. create/update request에서 사용자가 보내는 값이 아니며 backend가 Dataset ID와 Trino catalog/schema 설정으로 생성한다. Kafka source와 증분 S3/Data Lake folder는 `append`, 그 외 일반 ETL source는 `replace`를 사용한다. 증분 folder의 첫 rebaseline run은 target이 append여도 실제 operation을 replace로 실행한다. `tableUri`는 논리 식별자이고 `storagePath`는 기존 Job의 읽기 호환 필드다. 이 값이 존재해도 Iceberg commit과 Trino 물리 검증 전에는 `queryEngineStatus=unavailable`이다.
 
 `GET /api/etl/jobs/{jobId}`는 위 설정값을 편집 복원용으로 반환한다. `sourceConfig`에는 Kafka broker, topic, consumer group, batch/timeout, offset policy, authentication 같은 source identity가 포함될 수 있으므로 UI는 값을 보이되 Issue #460 수정 모드에서는 변경하지 않는다. 기존 Job에는 새 선택형 metadata가 없을 수 있으므로 해당 값은 optional로 유지한다.
 
@@ -1493,7 +1493,7 @@ type AirflowSparkExecutionRequest = {
 };
 ```
 
-이 endpoint는 브라우저용 API가 아니다. FastAPI는 path `runId`, body `jobId`, 저장된 `etl_runs.airflow_dag_run_id`가 모두 일치하는지 확인한 뒤 PySpark를 실행한다. 성공한 manifest가 이미 `taskStates.sparkResult`에 있으면 같은 Airflow task retry는 물리 출력을 다시 만들지 않고 기존 manifest를 반환한다.
+이 endpoint는 브라우저용 API가 아니다. FastAPI는 path `runId`, body `jobId`, 저장된 `etl_runs.airflow_dag_run_id`가 모두 일치하는지 확인한 뒤 PySpark를 실행한다. 일반 non-Kafka Job은 실행 전에 backend-owned `icebergTarget`을 보정하고 Spark DataFrameWriterV2가 공유 JDBC catalog에 commit한다. 성공한 manifest가 이미 `taskStates.sparkResult`에 있으면 같은 Airflow task retry는 물리 출력을 다시 만들지 않고 기존 manifest를 반환한다.
 
 PostgreSQL Snapshot source는 Source/Schema Preview와 실행 입력을 분리한다. `schemaSampleRows`, `__Schema Sample Scope`, `__Sample Row Limit`, `ASKLAKE_SPARK_RUN_ROW_LIMIT`은 PostgreSQL `run`/`retry`의 행 상한이 아니다. 실행 시 저장된 connector identity와 credential로 선택한 base table을 `REPEATABLE READ READ ONLY` transaction과 cursor batch로 끝까지 JSONL export한 뒤 Spark에 전달한다. batch 크기는 `ASKLAKE_POSTGRES_EXECUTION_BATCH_ROWS`로 조절하되 전체 행 수는 자르지 않는다. 테이블이 비어 있거나 export가 중단되면 Run을 실패시키고 Catalog materialization을 만들지 않는다.
 
@@ -1528,7 +1528,8 @@ type AirflowCatalogReconciliationResponse = {
 - 저장된 `ETLRunModel.job_id`, `airflow_dag_run_id`
 - 저장된 `taskStates.sparkResult.status=success`
 - Job에 저장된 `datasetId`와 변경 불가능한 target identity
-- Spark `outputPath` 아래의 실제 Parquet object
+- Spark `icebergCommit`의 Job/Run/target/snapshot/schema/rule identity
+- Trino `DESCRIBE`, `$snapshots`, `$files`로 확인한 같은 Iceberg table과 물리 data file
 
 Catalog mapping:
 
@@ -1539,13 +1540,13 @@ Catalog mapping:
 | `materializationRuns[].jobId` | 저장된 Job id |
 | `rowCount` | `sparkResult.outputRows` |
 | `createdAt` | `sparkResult.endedAt` |
-| `storageLocation` | `sparkResult.outputPath` |
+| `storageLocation` | 검증된 Iceberg warehouse location |
 | `storageSizeBytes` | S3A prefix 또는 local output path의 실제 file byte 합계 |
 | `schema` | `sparkResult.schema` |
 | `quality` | `sparkResult.quality` |
 | `lineageGraph` | source -> Spark Job -> target dataset |
 
-S3A output은 정확한 bucket/prefix를 list해 Parquet object가 하나 이상 있는지 확인하고 byte를 합산한다. local output은 directory를 재귀 확인한다. 물리 output을 확인할 수 없으면 size를 `0`으로 성공 저장하지 않고 reconciliation을 실패시킨다. Catalog `sampleRows`는 Spark가 제공한 제한된 transformed output sample을 사용할 수 있으며, 그런 sample이 없으면 빈 배열을 사용한다. schema나 값이 달라질 수 있는 pre-transform source sample을 output sample로 가장해서는 안 된다.
+일반 Spark batch는 logical `outputPath=iceberg://catalog/namespace/table`을 사용한다. backend는 reported snapshot ID를 Trino의 실제 최신 snapshot과 대조하고 `$files`의 data-file count와 byte를 저장한다. `outputRows>0`인데 data file 또는 byte 증거가 0이면 reconciliation을 실패시킨다. 기존 non-Iceberg 호환 결과만 S3A/local path의 Parquet object를 직접 검사한다. Catalog `sampleRows`는 Spark가 제공한 제한된 transformed output sample을 사용할 수 있으며, 그런 sample이 없으면 빈 배열을 사용한다. schema나 값이 달라질 수 있는 pre-transform source sample을 output sample로 가장해서는 안 된다.
 
 Catalog dataset upsert와 `taskStates.catalogResult` 성공 기록은 같은 PostgreSQL transaction으로 확정한다. `catalogResult`는 최소한 `status`, `runId`, `datasetId`, `reconciledAt`을 포함한다. 같은 `runId`가 다시 들어오면 기존 materialization을 교체해 하나만 유지하고, 다른 Run은 같은 dataset row에 append한다. append read-modify-write 동안 target dataset row를 lock해 동시 실행의 history 손실을 막는다. dataset이 아직 없을 때의 동시 create는 id/name unique constraint로 한 row만 허용하고, 충돌한 호출은 그 row를 다시 읽어 같은 run-keyed update를 적용한다. Airflow state sync가 Task Instance snapshot을 다시 만들 때도 `sparkResult`와 `catalogResult`를 모두 보존해야 한다.
 
@@ -1554,7 +1555,7 @@ Failure contract:
 - 성공 Spark manifest가 없거나 아직 저장되지 않았으면 `409 SPARK_RESULT_NOT_READY`
 - Job/Run/Airflow identity가 다르면 `409 AIRFLOW_RUN_MISMATCH`
 - physical output 검증 또는 Catalog transaction이 실패하면 `500 CATALOG_RECONCILIATION_FAILED`
-- 실패 시 Catalog partial update는 rollback한다. Parquet와 성공 `sparkResult`는 삭제하지 않는다.
+- 실패 시 Catalog partial update는 rollback한다. 검증된 Iceberg snapshot과 성공 `sparkResult`는 삭제하지 않는다. Spark commit 뒤 report 확정 전에 실패한 경우에는 writer가 이전 snapshot으로 rollback한다.
 - rollback 후 같은 Run에 `taskStates.catalogResult={ status: "failed", ... }`와 compact error를 별도 저장해 원인을 관찰할 수 있게 한다.
 - `publish_run_result`는 endpoint 실패를 Airflow task 실패로 전파한다. 따라서 Airflow DAG Run과 AskLake Run은 성공으로 표시되지 않으며 failed stage는 `Catalog reconciliation`이다.
 - `publish_run_result`는 30초 간격으로 최대 2회 재시도하며, 같은 DAG Run의 성공 `sparkResult`를 재사용해 Catalog만 최대 3회 시도하고 Spark output을 다시 만들지 않는다.
@@ -1651,7 +1652,7 @@ Response 예시:
 | `stopSchedule` | `etl.schedule.stop_requested` | 스케줄 설정을 보존한 채 `stopped`, `nextRun: "-"`. 실행 중인 실시간 Job은 현재 Run도 `canceled`로 종료하고 `실시간 수집 중지`로 기록 |
 | `resumeSchedule` | `etl.schedule.resume_requested` | 보존한 스케줄 설정으로 `scheduled`, 다음 예약 재계산. 실시간 Job은 `실시간 수집 재개됨`으로 기록 |
 
-`run`과 `retry`는 Airflow DAG Run을 제출한 뒤 non-terminal `job`/`run`을 즉시 응답한다. Airflow `spark_process_write` task는 `POST /api/internal/airflow/spark-runs/{runId}/execute`를 호출해 실제 input/output row count와 output path를 Run의 `sparkResult`에 저장한다. 다음 `publish_run_result` task가 `POST /api/internal/airflow/spark-runs/{runId}/catalog`를 호출해 물리 Parquet를 검증하고 Catalog dataset/materialization을 transaction으로 확정한다. 프론트는 `GET /api/etl/jobs/{jobId}`를 polling해 최종 `scheduled` 또는 `failed` 상태와 `runHistory`, `dagSteps`를 다시 반영한다.
+`run`과 `retry`는 Airflow DAG Run을 제출한 뒤 non-terminal `job`/`run`을 즉시 응답한다. Airflow `spark_process_write` task는 `POST /api/internal/airflow/spark-runs/{runId}/execute`를 호출해 실제 input/output row count, Iceberg 논리 table URI와 commit evidence를 Run의 `sparkResult`에 저장한다. 다음 `publish_run_result` task가 `POST /api/internal/airflow/spark-runs/{runId}/catalog`를 호출해 Trino table/snapshot/data-file mapping을 검증하고 Catalog dataset/materialization을 transaction으로 확정한다. 프론트는 `GET /api/etl/jobs/{jobId}`를 polling해 최종 `scheduled` 또는 `failed` 상태와 `runHistory`, `dagSteps`를 다시 반영한다.
 
 분리된 내부 endpoint는 bearer token과 backend의 `AIRFLOW_EXECUTION_API_TOKEN`을 우선 사용하며 `AIRFLOW_INTERNAL_TOKEN`을 호환 fallback으로 허용한다. `POST /api/etl/internal/airflow/jobs/{jobId}/runs/{runId}/execute`와 `X-AskLake-Airflow-Token`은 기존 단일 호출 Spark/Catalog 경로 호환용으로 유지한다. 동일 `runId`가 이미 Catalog에 materialize된 경우 기존 결과를 반환하고 Spark를 중복 실행하지 않는다. Airflow DAG가 `success`여도 해당 `runId`의 성공 Catalog evidence 또는 기존 persisted Spark result가 없으면 Run을 `failed`로 보정한다. `dag_run.conf`에는 `jobId`, `runId`, `command`, `executionMode`, 제출 시각만 전달하며 source credential과 전체 Job payload는 전달하지 않는다.
 
@@ -1751,9 +1752,9 @@ Materialization 제출과 조회는 source run submitter ID 또는 admin 여부�
 
 전환 전 내부 writer가 저장한 payload 중 `queryEngineTable`은 있지만 `queryEngineStatus`가 없는 row는 migration read compatibility로 `available`을 추론한다. 새 writer와 API는 이 fallback에 의존하지 않고 상태를 명시해야 하며, 사용자 입력만으로 mapping을 생성하는 endpoint는 제공하지 않는다.
 
-현재 Spark ETL Parquet 및 Kafka direct JSONL/Continuous Parquet 결과는 Iceberg metadata를 생성하지 않는다. 새 Job의 `icebergTarget`은 후속 writer가 사용할 destination 계약일 뿐 물리 mapping 증거가 아니다. 이 경로는 `queryEngineStatus=unavailable`이며 SQL downstream을 표시하지 않는다. ETL runtime이 Iceberg snapshot ID, 실제 warehouse location, `queryEngineVerified=true`, 완전한 `queryEngineTable`을 반환한 경우에만 `available`로 저장한다. Catalog row 생성만으로 물리 table 등록 성공을 추정해서는 안 된다. writer 전환 계약과 단계는 [Iceberg Writer Migration Plan](iceberg-writer-migration-plan.md)을 따른다.
+일반 non-Kafka Spark ETL 결과는 Iceberg metadata와 warehouse Parquet를 생성하고 snapshot ID, 실제 warehouse location, `queryEngineVerified=true`, 완전한 `queryEngineTable`을 Trino로 재검증한 경우에만 `available`로 저장한다. Kafka direct JSONL/Continuous Parquet 결과는 아직 `queryEngineStatus=unavailable`이며 SQL downstream을 표시하지 않는다. Catalog row 생성이나 `icebergTarget` 선언만으로 물리 table 등록 성공을 추정해서는 안 된다. writer 전환 계약과 단계는 [Iceberg Writer Migration Plan](iceberg-writer-migration-plan.md)을 따른다.
 
-공통 Iceberg commit evidence는 `jobId`, `runId`, `target`, `queryEngineTable`, `snapshotId`(64-bit 안전성을 위해 string), `committedAt`, `warehouseLocation`, `queryEngineVerified: true`, optional schema/rule fingerprint와 source boundary를 포함한다. `replace`는 Iceberg의 원자적 `CREATE OR REPLACE TABLE AS`, `append`는 최초 CTAS 이후 `INSERT INTO`를 사용한다. 서비스는 commit 뒤 `$snapshots`와 `DESCRIBE`가 모두 성공한 경우에만 evidence를 반환한다. Spark 같은 native writer가 외부에서 commit한 경우에도 `verifyCommit` 경계를 재사용하며 writer가 보고한 expected snapshot ID와 실제 최신 snapshot이 다르면 mapping을 확정하지 않는다.
+공통 Iceberg commit evidence는 `jobId`, `runId`, `target`, `queryEngineTable`, `snapshotId`(64-bit 안전성을 위해 string), `committedAt`, `warehouseLocation`, `queryEngineVerified: true`, optional schema/rule fingerprint와 source boundary를 포함한다. Trino adapter의 `replace`는 원자적 `CREATE OR REPLACE TABLE AS`, `append`는 최초 CTAS 이후 `INSERT INTO`를 사용한다. 일반 Spark batch는 DataFrameWriterV2 `create`/`append`/`overwrite`로 같은 JDBC catalog에 commit하고 replace 시 snapshot history를 유지해 post-commit failure rollback이 가능해야 한다. 서비스는 commit 뒤 `$snapshots`, `$files`, `DESCRIBE`가 모두 성공한 경우에만 evidence를 확정하며 writer가 보고한 expected snapshot ID와 실제 최신 snapshot이 다르면 mapping을 저장하지 않는다.
 
 ```ts
 type TrinoMaterializationRunResponse = {

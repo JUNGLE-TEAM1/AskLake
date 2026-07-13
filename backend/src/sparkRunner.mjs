@@ -55,7 +55,7 @@ function runSparkPipelineWithSource(job, command, runId, source, executionMode, 
   const dockerReportPath = `${reportContainerDir}/${runId}.json`;
   const manifestPath = path.join(reportDir, `${runId}.manifest.json`);
   const dockerManifestPath = `${reportContainerDir}/${runId}.manifest.json`;
-  const packages = sparkPackages(source, output);
+  const packages = sparkPackages(job, source, output);
   const packageArgs = sparkPackageArgs(packages);
   const localLlmEndpoint = process.env.ASKLAKE_LOCAL_LLM_ENDPOINT_IN_DOCKER
     || process.env.ASKLAKE_LOCAL_LLM_ENDPOINT
@@ -64,6 +64,7 @@ function runSparkPipelineWithSource(job, command, runId, source, executionMode, 
   const localLlmTimeoutSeconds = process.env.ASKLAKE_LOCAL_LLM_TIMEOUT_SECONDS
     || String(Math.ceil(Number(process.env.ASKLAKE_LOCAL_LLM_TIMEOUT_MS || 120000) / 1000));
   const reviewAnalysisRuntime = process.env.ASKLAKE_REVIEW_ANALYSIS_RUNTIME || "scalable";
+  const icebergEnvironment = sparkIcebergEnvironment(job);
   assertSparkRestStorageCredentials(job.sourceConfig ?? [], executionMode);
   writeSparkJobManifest(manifestPath, job);
   const storageEnvironment = Object.fromEntries(
@@ -89,6 +90,7 @@ function runSparkPipelineWithSource(job, command, runId, source, executionMode, 
     ASKLAKE_LOCAL_LLM_MAX_INPUT_CHARS: process.env.ASKLAKE_LOCAL_LLM_MAX_INPUT_CHARS || "9000",
     ASKLAKE_REVIEW_ANALYSIS_RUNTIME: reviewAnalysisRuntime,
     ASKLAKE_REVIEW_TEXT_MODEL_ROOT: reviewTextModelContainerDir,
+    ...icebergEnvironment,
     HOME: "/tmp",
   };
   const sparkExecutorProperties = Object.fromEntries(
@@ -151,6 +153,7 @@ function runSparkPipelineWithSource(job, command, runId, source, executionMode, 
     `ASKLAKE_REVIEW_ANALYSIS_RUNTIME=${reviewAnalysisRuntime}`,
     "-e",
     `ASKLAKE_REVIEW_TEXT_MODEL_ROOT=${reviewTextModelContainerDir}`,
+    ...Object.entries(icebergEnvironment).flatMap(([name, value]) => ["-e", `${name}=${value}`]),
     "-e",
     "HOME=/tmp",
     process.env.ASKLAKE_SPARK_IMAGE || "apache/spark:4.0.1",
@@ -209,7 +212,7 @@ function runSparkPipelineWithSource(job, command, runId, source, executionMode, 
     report = readSparkReport(reportPath, result.stdout);
   }
   if (executionMode === "docker" && report.status === "success") {
-    copySparkOutputToHost(output);
+    if (!report.icebergCommit) copySparkOutputToHost(output);
     copySparkReportArtifactsToHost(report);
   }
   report = normalizeSparkReport(report, output);
@@ -357,13 +360,17 @@ function writeSparkJobManifest(manifestPath, job) {
   const textStructuringColumns = textStructuringDefinitionColumns(job.transformSteps ?? []);
   const manifest = {
     createdAt: new Date().toISOString(),
-    partitionColumns: job.partition || "",
+    icebergTarget: job.icebergTarget ?? null,
+    jobId: job.id,
+    partitionColumns: job.partitionColumns ?? job.partition ?? "",
     qualityRules: job.qualityRules ?? [],
     ruleContractVersion: job.ruleContractVersion ?? "1.0",
     ruleOutputSchema: job.ruleOutputSchema ?? job.transformOutputColumns ?? [],
     rules: job.rules ?? [],
     recordParsing: job.recordParsing ?? null,
+    ruleFingerprint: job.ruleFingerprint ?? null,
     schemaColumns: job.schemaColumns ?? [],
+    schemaFingerprint: job.schemaFingerprint ?? null,
     sourceCollection: sourceCollectionFromConfig(
       job.sourceConfig ?? [],
       job.sourceIncrementalSince,
@@ -507,10 +514,58 @@ function safeJsonParse(value) {
   }
 }
 
-function sparkPackages(source, output) {
-  if (process.env.ASKLAKE_SPARK_HADOOP_AWS_PACKAGE === "none") return [];
-  if (!usesS3A(source.path) && !usesS3A(output.sparkPath)) return [];
-  return [process.env.ASKLAKE_SPARK_HADOOP_AWS_PACKAGE || "org.apache.hadoop:hadoop-aws:3.4.1"];
+function sparkPackages(job, source, output) {
+  const packages = [];
+  if (
+    process.env.ASKLAKE_SPARK_HADOOP_AWS_PACKAGE !== "none"
+    && (usesS3A(source.path) || usesS3A(output.sparkPath) || job?.icebergTarget)
+  ) {
+    packages.push(process.env.ASKLAKE_SPARK_HADOOP_AWS_PACKAGE || "org.apache.hadoop:hadoop-aws:3.4.1");
+  }
+  if (job?.icebergTarget) {
+    packages.push(
+      process.env.ASKLAKE_SPARK_ICEBERG_PACKAGE
+        || "org.apache.iceberg:iceberg-spark-runtime-4.0_2.13:1.11.0",
+      process.env.ASKLAKE_SPARK_POSTGRES_PACKAGE
+        || "org.postgresql:postgresql:42.7.7",
+    );
+  }
+  return [...new Set(packages.filter((item) => item && item !== "none"))];
+}
+
+function sparkIcebergEnvironment(job) {
+  if (!job?.icebergTarget) return {};
+  const database = String(process.env.TRINO_ICEBERG_JDBC_DATABASE || process.env.POSTGRES_DB || "asklake");
+  const warehouseBucket = String(process.env.TRINO_ICEBERG_WAREHOUSE_BUCKET || "").trim();
+  const warehousePrefix = normalizePrefix(process.env.TRINO_ICEBERG_WAREHOUSE_PREFIX || "warehouse");
+  const warehouse = String(
+    process.env.ASKLAKE_SPARK_ICEBERG_WAREHOUSE
+      || (warehouseBucket ? `s3a://${warehouseBucket}/${warehousePrefix}` : ""),
+  ).replace(/\/+$/, "");
+  const jdbcUrl = String(
+    process.env.ASKLAKE_SPARK_ICEBERG_JDBC_URL
+      || `jdbc:postgresql://postgres:5432/${database}`,
+  ).trim();
+  const jdbcUser = String(process.env.TRINO_ICEBERG_JDBC_USER || "").trim();
+  const jdbcPassword = String(process.env.TRINO_ICEBERG_JDBC_PASSWORD || "");
+  if (!jdbcUrl || !jdbcUser || !jdbcPassword || !warehouse) {
+    throw sparkConfigurationError(
+      "Iceberg Spark execution requires TRINO_ICEBERG_JDBC_USER, "
+      + "TRINO_ICEBERG_JDBC_PASSWORD, and TRINO_ICEBERG_WAREHOUSE_BUCKET "
+      + "or ASKLAKE_SPARK_ICEBERG_WAREHOUSE.",
+    );
+  }
+  return {
+    ASKLAKE_SPARK_ICEBERG_CATALOG_NAME: String(
+      process.env.ASKLAKE_SPARK_ICEBERG_CATALOG_NAME
+        || process.env.TRINO_ICEBERG_CATALOG_NAME
+        || "asklake",
+    ),
+    ASKLAKE_SPARK_ICEBERG_JDBC_PASSWORD: jdbcPassword,
+    ASKLAKE_SPARK_ICEBERG_JDBC_URL: jdbcUrl,
+    ASKLAKE_SPARK_ICEBERG_JDBC_USER: jdbcUser,
+    ASKLAKE_SPARK_ICEBERG_WAREHOUSE: warehouse,
+  };
 }
 
 function sparkPackageArgs(packages) {

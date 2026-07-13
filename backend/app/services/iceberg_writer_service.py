@@ -155,6 +155,24 @@ class IcebergWriterService:
             raise IcebergWriterError("ICEBERG_SNAPSHOT_EVIDENCE_INCOMPLETE")
         return snapshot_id, committed_at, warehouse_location
 
+    def table_storage_metrics(self, target: IcebergWriterTarget) -> tuple[int, int]:
+        files_table = qualified_identifier(
+            target.catalog,
+            target.namespace,
+            f"{target.table}$files",
+        )
+        rows = self._execute(
+            "SELECT COUNT(*), COALESCE(SUM(file_size_in_bytes), 0) "
+            f"FROM {files_table}"
+        )
+        if not rows or len(rows[0]) < 2:
+            raise IcebergWriterError("ICEBERG_FILE_EVIDENCE_MISSING")
+        file_count = int(rows[0][0] or 0)
+        storage_size_bytes = int(rows[0][1] or 0)
+        if file_count < 0 or storage_size_bytes < 0:
+            raise IcebergWriterError("ICEBERG_FILE_EVIDENCE_INVALID")
+        return file_count, storage_size_bytes
+
     def drop_table(self, target: IcebergWriterTarget) -> None:
         self._execute(f"DROP TABLE IF EXISTS {qualified_target(target)}")
 

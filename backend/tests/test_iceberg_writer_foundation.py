@@ -46,6 +46,8 @@ class FakeTrinoClient:
                 "2026-07-13 12:00:00.000 UTC",
                 f"s3://asklake-warehouse/warehouse/reviews/metadata/snap-{self.snapshot_id}.avro",
             ]])
+        if "$files" in query:
+            return finished_page(rows=[[2, 4096]])
         return finished_page()
 
     def fetch(self, next_uri: str) -> TrinoClientPage:
@@ -186,6 +188,20 @@ class IcebergWriterFoundationTest(unittest.TestCase):
                 expected_snapshot_id="999999",
             )
         self.assertEqual(context.exception.code, "ICEBERG_SNAPSHOT_ID_MISMATCH")
+
+    def test_external_writer_physical_file_metrics_are_queryable(self) -> None:
+        target = build_iceberg_writer_target(
+            "reviews",
+            "ds_reviews",
+            write_mode="replace",
+            runtime_settings=self.settings,
+        )
+
+        file_count, storage_size_bytes = self.service.table_storage_metrics(target)
+
+        self.assertEqual(file_count, 2)
+        self.assertEqual(storage_size_bytes, 4096)
+        self.assertTrue(any("$files" in query for query in self.client.queries))
 
     def test_unsafe_identifiers_and_non_select_statements_are_rejected(self) -> None:
         with self.assertRaises(ValidationError):

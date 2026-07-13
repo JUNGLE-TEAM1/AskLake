@@ -53,6 +53,10 @@ REVIEW_ROW_ANALYSIS_LLM_CACHE = {}
 REVIEW_TEXT_MODEL_CACHE = {}
 
 
+class IcebergCommitError(RuntimeError):
+    failed_stage = "Iceberg commit"
+
+
 def main():
     started_at = now_iso()
     started_ms = int(time.time() * 1000)
@@ -69,6 +73,8 @@ def main():
     quality = None
     transform = None
     canonical_snapshot = False
+    iceberg_commit = None
+    iceberg_previous_snapshot = None
     try:
         source_path = required_env("ASKLAKE_SPARK_SOURCE_PATH")
         source_format = required_env("ASKLAKE_SPARK_SOURCE_FORMAT").lower()
@@ -76,6 +82,7 @@ def main():
         run_id = required_env("ASKLAKE_SPARK_RUN_ID")
         row_limit = int(os.environ.get("ASKLAKE_SPARK_RUN_ROW_LIMIT", "0") or "0")
         manifest = load_spark_job_manifest()
+        iceberg_target = parse_iceberg_target(manifest.get("icebergTarget"))
         partition_columns = parse_partition_columns(
             manifest.get("partitionColumns") or os.environ.get("ASKLAKE_SPARK_PARTITION_COLUMNS")
         )
@@ -88,7 +95,7 @@ def main():
         canonical_snapshot = manifest.get("ruleContractVersion") == "1.0" and canonical_rules is not None
         canonical_runtime_supported = canonical_snapshot and supports_spark_snapshot_rules(canonical_rules)
         final_schema_columns = merge_rule_output_schema(schema_columns, manifest.get("ruleOutputSchema") or [])
-        spark = make_spark(source_collection)
+        spark = make_spark(source_collection, iceberg_target)
         verify_spark_source_inventory(
             spark,
             source_path,
@@ -175,6 +182,11 @@ def main():
             F.current_timestamp(),
         )
         resolved_partition_columns = resolve_partition_columns(output_df, partition_columns)
+        if iceberg_target and iceberg_target["partitionColumns"] != resolved_partition_columns:
+            raise ValueError(
+                "ICEBERG_PARTITION_CONTRACT_MISMATCH "
+                f"expected={iceberg_target['partitionColumns']} resolved={resolved_partition_columns}"
+            )
         staging_path = spark_staging_path(output_path, run_id)
         delete_spark_path(spark, staging_path)
         quarantine_staging_path = f"{staging_path}_quarantine"
@@ -184,13 +196,17 @@ def main():
                 quarantine_df.write.mode("overwrite").parquet(quarantine_staging_path)
                 quality["quarantine"] = {"count": quarantine_rows, "path": f"{output_path.rstrip('/')}_quarantine"}
                 quality["quarantineLocation"] = f"{output_path.rstrip('/')}_quarantine"
-        writer = output_df.write.mode("overwrite")
-        if resolved_partition_columns:
-            writer = writer.partitionBy(*resolved_partition_columns)
-        output_write_started = True
-        writer.parquet(staging_path)
-        written_df = spark.read.parquet(staging_path)
-        output_rows = written_df.count()
+        if iceberg_target:
+            written_df = output_df.persist()
+            output_rows = written_df.count()
+        else:
+            writer = output_df.write.mode("overwrite")
+            if resolved_partition_columns:
+                writer = writer.partitionBy(*resolved_partition_columns)
+            output_write_started = True
+            writer.parquet(staging_path)
+            written_df = spark.read.parquet(staging_path)
+            output_rows = written_df.count()
         if not canonical_snapshot:
             quality = evaluate_quality_rules(written_df, quality_rules, total_rows=output_rows)
             classifier_checks = evaluate_custom_csv_classifier_checks(written_df, transform_steps, total_rows=output_rows)
@@ -247,16 +263,34 @@ def main():
             write_report(report_file, result)
             print(f"ASKLAKE_SPARK_JOB_RESULT={json.dumps(result, ensure_ascii=False, sort_keys=True)}")
             return 1
-        publish_spark_paths(spark, staging_path, output_path, quarantine_staging_path)
-        written_df = spark.read.parquet(output_path)
-        output_rows = written_df.count()
+        published_output_path = output_path
+        if iceberg_target:
+            output_write_started = True
+            iceberg_commit = commit_iceberg_table(
+                spark,
+                written_df,
+                iceberg_target,
+                job_id=str(manifest.get("jobId") or "unknown"),
+                run_id=run_id,
+                partition_columns=resolved_partition_columns,
+                schema_fingerprint=manifest.get("schemaFingerprint"),
+                rule_fingerprint=manifest.get("ruleFingerprint"),
+                source_boundary=source_collection,
+            )
+            iceberg_previous_snapshot = iceberg_commit.pop("_previousSnapshot", None)
+            publish_spark_quarantine(spark, quarantine_staging_path, output_path)
+            published_output_path = iceberg_commit["target"]["tableUri"]
+        else:
+            publish_spark_paths(spark, staging_path, output_path, quarantine_staging_path)
+            written_df = spark.read.parquet(output_path)
+            output_rows = written_df.count()
         ended_at = now_iso()
         result = {
             "durationMs": int(time.time() * 1000) - started_ms,
             "endedAt": ended_at,
             "format": source_format,
             "inputRows": input_rows,
-            "outputPath": output_path,
+            "outputPath": published_output_path,
             "outputRows": output_rows,
             "quality": quality,
             "runId": run_id,
@@ -276,10 +310,20 @@ def main():
             "textStructuring": text_structuring,
             "transform": transform,
         }
+        if iceberg_commit:
+            result["icebergCommit"] = iceberg_commit
+            result["warehouseLocation"] = iceberg_commit["warehouseLocation"]
         write_report(report_file, result)
         print(f"ASKLAKE_SPARK_JOB_RESULT={json.dumps(result, ensure_ascii=False, sort_keys=True)}")
         return 0
     except Exception as exc:
+        if spark is not None and iceberg_commit is not None:
+            try:
+                rollback_iceberg_commit(spark, iceberg_target, iceberg_previous_snapshot)
+            except Exception as rollback_exc:
+                exc = IcebergCommitError(f"{exc}; rollback failed: {rollback_exc}")
+            else:
+                exc = IcebergCommitError(str(exc))
         ended_at = now_iso()
         cleanup_errors = (
             cleanup_failed_output_paths(spark, staging_path or output_path)
@@ -385,6 +429,232 @@ def publish_spark_paths(spark, staging_path, output_path, quarantine_staging_pat
         raise
 
 
+def publish_spark_quarantine(spark, quarantine_staging_path, output_path):
+    jvm = spark.sparkContext._jvm
+    hadoop = spark.sparkContext._jsc.hadoopConfiguration()
+    staging = jvm.org.apache.hadoop.fs.Path(quarantine_staging_path)
+    target = jvm.org.apache.hadoop.fs.Path(f"{output_path.rstrip('/')}_quarantine")
+    filesystem = staging.getFileSystem(hadoop)
+    if not filesystem.exists(staging):
+        return
+    backup = jvm.org.apache.hadoop.fs.Path(
+        f"{output_path.rstrip('/')}_quarantine.__previous__{safe_identifier(os.environ.get('ASKLAKE_SPARK_RUN_ID') or 'run')}"
+    )
+    moved_target = False
+    try:
+        if filesystem.exists(backup) and not filesystem.delete(backup, True):
+            raise RuntimeError(f"Could not remove stale Spark quarantine backup: {backup}")
+        if filesystem.exists(target) and not filesystem.rename(target, backup):
+            raise RuntimeError(f"Could not stage previous Spark quarantine: {target}")
+        moved_target = True
+        if not filesystem.rename(staging, target):
+            raise RuntimeError(f"Could not publish Spark quarantine: {staging} -> {target}")
+        if filesystem.exists(backup) and not filesystem.delete(backup, True):
+            raise RuntimeError(f"Could not remove published Spark quarantine backup: {backup}")
+    except Exception:
+        if moved_target and filesystem.exists(backup):
+            if filesystem.exists(target):
+                filesystem.delete(target, True)
+            filesystem.rename(backup, target)
+        raise
+
+
+def parse_iceberg_target(value):
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError("ICEBERG_TARGET_INVALID expected an object")
+    target = {
+        "catalog": required_iceberg_identifier(value.get("catalog"), "catalog"),
+        "namespace": required_iceberg_identifier(value.get("namespace"), "namespace"),
+        "table": required_iceberg_identifier(value.get("table"), "table"),
+        "writeMode": str(value.get("writeMode") or "").strip().lower(),
+        "partitionColumns": parse_partition_columns(value.get("partitionColumns")),
+    }
+    if target["writeMode"] not in {"append", "replace"}:
+        raise ValueError("ICEBERG_TARGET_INVALID writeMode must be append or replace")
+    target["tableUri"] = str(
+        value.get("tableUri")
+        or f"iceberg://{target['catalog']}/{target['namespace']}/{target['table']}"
+    )
+    expected_uri = f"iceberg://{target['catalog']}/{target['namespace']}/{target['table']}"
+    if target["tableUri"] != expected_uri:
+        raise ValueError("ICEBERG_TARGET_INVALID tableUri does not match catalog identity")
+    return target
+
+
+def required_iceberg_identifier(value, field):
+    identifier = str(value or "").strip()
+    if not identifier or len(identifier) > 255 or any(character in identifier for character in ('`', '"', "'", ";", "\x00")):
+        raise ValueError(f"ICEBERG_TARGET_INVALID {field}")
+    return identifier
+
+
+def safe_identifier(value):
+    return re.sub(r"[^0-9A-Za-z_-]+", "_", str(value or "value")).strip("_") or "value"
+
+
+def spark_iceberg_catalog_name():
+    return required_iceberg_identifier(
+        os.environ.get("ASKLAKE_SPARK_ICEBERG_CATALOG_NAME") or "asklake",
+        "sparkCatalog",
+    )
+
+
+def quote_spark_identifier(value):
+    return f"`{str(value).replace('`', '``')}`"
+
+
+def spark_iceberg_table_identifier(target):
+    return ".".join(
+        quote_spark_identifier(item)
+        for item in (spark_iceberg_catalog_name(), target["namespace"], target["table"])
+    )
+
+
+def iceberg_table_exists(spark, target):
+    try:
+        spark.table(spark_iceberg_table_identifier(target)).schema
+        return True
+    except Exception as exc:
+        if "TABLE_OR_VIEW_NOT_FOUND" in str(exc) or "NoSuchTableException" in str(exc):
+            return False
+        raise
+
+
+def latest_iceberg_snapshot(spark, target):
+    table_identifier = spark_iceberg_table_identifier(target)
+    rows = spark.sql(
+        "SELECT CAST(snapshot_id AS STRING) AS snapshot_id, "
+        "CAST(committed_at AS STRING) AS committed_at, manifest_list "
+        f"FROM {table_identifier}.snapshots "
+        "ORDER BY committed_at DESC, snapshot_id DESC LIMIT 1"
+    ).collect()
+    if not rows:
+        raise RuntimeError("ICEBERG_SNAPSHOT_EVIDENCE_MISSING")
+    row = rows[0]
+    snapshot_id = str(row["snapshot_id"] or "").strip()
+    committed_at = str(row["committed_at"] or "").strip()
+    warehouse_location = warehouse_location_from_manifest(row["manifest_list"])
+    if not snapshot_id or not committed_at or not warehouse_location:
+        raise RuntimeError("ICEBERG_SNAPSHOT_EVIDENCE_INCOMPLETE")
+    return {
+        "committedAt": committed_at,
+        "snapshotId": snapshot_id,
+        "warehouseLocation": warehouse_location,
+    }
+
+
+def current_iceberg_snapshot_id(spark, target):
+    table_identifier = spark_iceberg_table_identifier(target)
+    rows = spark.sql(
+        "SELECT CAST(snapshot_id AS STRING) AS snapshot_id "
+        f"FROM {table_identifier}.refs WHERE name = 'main' LIMIT 1"
+    ).collect()
+    if not rows or not str(rows[0]["snapshot_id"] or "").strip():
+        raise RuntimeError("ICEBERG_CURRENT_SNAPSHOT_EVIDENCE_MISSING")
+    return str(rows[0]["snapshot_id"]).strip()
+
+
+def warehouse_location_from_manifest(value):
+    manifest_list = str(value or "").strip()
+    marker = "/metadata/"
+    return manifest_list.split(marker, 1)[0].rstrip("/") if marker in manifest_list else ""
+
+
+def commit_iceberg_table(
+    spark,
+    frame,
+    target,
+    *,
+    job_id,
+    run_id,
+    partition_columns,
+    schema_fingerprint,
+    rule_fingerprint,
+    source_boundary,
+):
+    spark_catalog = quote_spark_identifier(spark_iceberg_catalog_name())
+    namespace = quote_spark_identifier(target["namespace"])
+    table_identifier = spark_iceberg_table_identifier(target)
+    spark.sql(f"CREATE NAMESPACE IF NOT EXISTS {spark_catalog}.{namespace}")
+    existed_before = iceberg_table_exists(spark, target)
+    previous_snapshot = latest_iceberg_snapshot(spark, target) if existed_before else None
+    effective_write_mode = target["writeMode"]
+    if effective_write_mode == "append" and bool((source_boundary or {}).get("rebaseline")):
+        effective_write_mode = "replace"
+    committed = False
+    try:
+        writer = frame.writeTo(table_identifier)
+        if not existed_before:
+            writer = (
+                writer
+                .using("iceberg")
+                .tableProperty("format-version", "2")
+                .tableProperty("write.format.default", "parquet")
+            )
+            if partition_columns:
+                writer = writer.partitionedBy(*[F.col(quote_identifier(column)) for column in partition_columns])
+        if effective_write_mode == "append" and existed_before:
+            writer.append()
+        elif effective_write_mode == "append":
+            writer.create()
+        elif existed_before:
+            writer.overwrite(F.lit(True))
+        else:
+            writer.create()
+        committed = True
+        if truthy(os.environ.get("ASKLAKE_SPARK_FAIL_AFTER_ICEBERG_COMMIT")):
+            raise RuntimeError("ICEBERG_FAIL_AFTER_COMMIT_INJECTED")
+        snapshot = latest_iceberg_snapshot(spark, target)
+        if previous_snapshot and snapshot["snapshotId"] == previous_snapshot["snapshotId"]:
+            raise RuntimeError("ICEBERG_SNAPSHOT_DID_NOT_ADVANCE")
+        return {
+            "createdTable": not existed_before,
+            "jobId": job_id,
+            "operation": effective_write_mode,
+            "runId": run_id,
+            "target": target,
+            "snapshotId": snapshot["snapshotId"],
+            "committedAt": snapshot["committedAt"],
+            "warehouseLocation": snapshot["warehouseLocation"],
+            "schemaFingerprint": schema_fingerprint,
+            "ruleFingerprint": rule_fingerprint,
+            "sourceBoundary": source_boundary or {},
+            "_previousSnapshot": previous_snapshot,
+        }
+    except Exception as exc:
+        if committed:
+            try:
+                rollback_iceberg_commit(spark, target, previous_snapshot)
+            except Exception as rollback_exc:
+                raise IcebergCommitError(
+                    f"{exc}; rollback failed: {rollback_exc}"
+                ) from exc
+        raise IcebergCommitError(str(exc)) from exc
+
+
+def rollback_iceberg_commit(spark, target, previous_snapshot):
+    table_identifier = spark_iceberg_table_identifier(target)
+    if previous_snapshot:
+        catalog_name = spark_iceberg_catalog_name()
+        catalog = quote_spark_identifier(catalog_name)
+        namespace_table = (
+            f"{catalog_name}.{target['namespace']}.{target['table']}"
+            .replace("'", "''")
+        )
+        snapshot_id = int(previous_snapshot["snapshotId"])
+        spark.sql(
+            f"CALL {catalog}.system.rollback_to_snapshot("
+            f"table => '{namespace_table}', snapshot_id => {snapshot_id})"
+        )
+        restored_snapshot_id = current_iceberg_snapshot_id(spark, target)
+        if restored_snapshot_id != previous_snapshot["snapshotId"]:
+            raise RuntimeError("ICEBERG_ROLLBACK_VERIFICATION_FAILED")
+        return
+    spark.sql(f"DROP TABLE IF EXISTS {table_identifier}")
+
+
 def merge_rule_output_schema(schema_columns, rule_output_schema):
     merged = [dict(column) for column in (schema_columns or []) if isinstance(column, dict)]
     index_by_name = {}
@@ -440,7 +710,7 @@ def cleanup_failed_output_paths(spark, output_path):
     return errors
 
 
-def make_spark(source_collection=None):
+def make_spark(source_collection=None, iceberg_target=None):
     change_detection_source = source_change_detection_mode(source_collection)
     builder = configure_spark_builder(
         SparkSession.builder.appName(os.environ.get("ASKLAKE_SPARK_APP_NAME", "asklake-pipeline-run"))
@@ -449,6 +719,28 @@ def make_spark(source_collection=None):
         .config("spark.hadoop.fs.s3a.change.detection.mode", "server")
         .config("spark.hadoop.fs.s3a.change.detection.version.required", "true")
     )
+    if iceberg_target:
+        catalog = spark_iceberg_catalog_name()
+        jdbc_url = required_env("ASKLAKE_SPARK_ICEBERG_JDBC_URL")
+        jdbc_user = required_env("ASKLAKE_SPARK_ICEBERG_JDBC_USER")
+        jdbc_password = required_env("ASKLAKE_SPARK_ICEBERG_JDBC_PASSWORD")
+        warehouse = required_env("ASKLAKE_SPARK_ICEBERG_WAREHOUSE")
+        prefix = f"spark.sql.catalog.{catalog}"
+        builder = (
+            builder
+            .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
+            .config(prefix, "org.apache.iceberg.spark.SparkCatalog")
+            .config(f"{prefix}.type", "jdbc")
+            .config(f"{prefix}.uri", jdbc_url)
+            .config(f"{prefix}.warehouse", warehouse)
+            .config(f"{prefix}.jdbc.user", jdbc_user)
+            .config(f"{prefix}.jdbc.password", jdbc_password)
+            .config(f"{prefix}.jdbc.init-catalog-tables", "false")
+            .config(f"{prefix}.jdbc.schema-version", "V1")
+            .config(f"{prefix}.cache-enabled", "false")
+            .config(f"{prefix}.table-default.format-version", "2")
+            .config(f"{prefix}.table-default.write.format.default", "parquet")
+        )
     if change_detection_source == "versionid":
         builder = builder.config("spark.hadoop.fs.s3a.versioned.store", "true")
     spark = builder.getOrCreate()

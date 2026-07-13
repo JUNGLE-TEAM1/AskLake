@@ -102,6 +102,28 @@ class FakeSpark:
 
 
 class SparkSourceIdentityTests(unittest.TestCase):
+    def test_iceberg_rollback_uses_fully_qualified_table_name(self) -> None:
+        spark = SimpleNamespace(sql=Mock())
+        target = {
+            "catalog": "iceberg",
+            "namespace": "asklake",
+            "partitionColumns": [],
+            "table": "reviews_batch",
+            "tableUri": "iceberg://iceberg/asklake/reviews_batch",
+            "writeMode": "replace",
+        }
+        previous_snapshot = {"snapshotId": "123"}
+
+        with (
+            patch.object(spark_job_run, "spark_iceberg_catalog_name", return_value="asklake"),
+            patch.object(spark_job_run, "current_iceberg_snapshot_id", return_value="123"),
+        ):
+            spark_job_run.rollback_iceberg_commit(spark, target, previous_snapshot)
+
+        sql = spark.sql.call_args.args[0]
+        self.assertIn("table => 'asklake.asklake.reviews_batch'", sql)
+        self.assertIn("snapshot_id => 123", sql)
+
     def test_matching_versioned_identity_is_verified_before_read(self) -> None:
         expected = identity("incoming/a.jsonl", version_id="version-1")
         loader = Mock(return_value={

@@ -13,10 +13,11 @@ This document records the Pair A person-1 backend validation path for Source, Sc
 - `backend/scripts/prepare-minio-samples.mjs`: local 1GB-style sample preparation
 - `backend/scripts/seed-minio-click-log.mjs`: whitespace-delimited raw click log 100-row fixture
 - `backend/scripts/verify-record-parsing-contract.py`: record parsing preview and row-width validation contract verifier
-- `backend/scripts/verify-record-parsing-e2e.mjs`: real MinIO TXT -> FastAPI -> Airflow -> Spark -> Parquet -> Catalog verifier
+- `backend/scripts/verify-record-parsing-e2e.mjs`: real MinIO TXT -> FastAPI -> Airflow -> Spark -> Iceberg -> Catalog verifier
 - `backend/scripts/start-spark-server.mjs`: Spark standalone master/worker startup
 - `backend/scripts/spark_validate.py`: Spark validation and transform type checks
 - `backend/scripts/verify-spark-job-run.mjs`: create -> run -> Spark -> DAG -> Catalog verifier
+- `backend/scripts/verify-spark-iceberg-batch.py`: native Spark Iceberg replace/re-run/rollback live verifier
 - `backend/scripts/verify-spark-csv-quoting.mjs`: RFC 4180 comma/quote CSV -> Spark -> Parquet regression verifier
 - `backend/scripts/verify-kafka-continuous-soak.mjs`: generated or JSONL/GZIP Kafka replay -> continuous worker -> reconciliation/fault/compaction verifier
 - `backend/scripts/kafka_continuous_maintenance.py`: quarantine inspect/replay and staged Parquet compaction
@@ -206,7 +207,14 @@ cd backend
 npm run verify:spark-run
 ```
 
-This verifier starts from an empty ETL/Catalog metadata state, creates one live job from a MinIO sample, submits a run command, verifies that the command response immediately returns `running`, then polls `GET /api/etl/jobs/{jobId}` until Spark writes Parquet output and the job returns to its final state. The create payload includes submitted `transformSteps`, `transformOutputColumns`, `qualityRules`, and the multi-column `partition` value; the verifier checks that Spark writes nested `event_type=.../category_id=...` partition directories. The expected DAG includes Source, Schema, Spark source read, Transform, Quality, Parquet write, and Catalog update steps.
+This verifier starts from an empty ETL/Catalog metadata state, creates one live job from a MinIO sample, submits a run command, verifies that the command response immediately returns `running`, then polls `GET /api/etl/jobs/{jobId}` until Spark commits an Iceberg snapshot and the job returns to its final state. The create payload includes submitted `transformSteps`, `transformOutputColumns`, `qualityRules`, and the multi-column `partition` value. Catalog success requires the same target/snapshot/fingerprint plus Trino-visible schema and physical data files; the warehouse data files remain Parquet.
+
+The focused writer verifier uses a unique Iceberg table and checks full-replace re-runs and rollback without starting the AskLake API or Airflow:
+
+```bash
+cd backend
+ASKLAKE_VERIFY_ICEBERG_LIVE=true npm run verify:spark-iceberg-batch
+```
 
 Connector-backed jobs such as REST, PostgreSQL, and MongoDB write bounded sample rows to `ASKLAKE_SPARK_REPORT_DIR` as JSONL before Spark reads them. `start-spark-server.mjs` mounts that same host directory into the submit, master, and worker containers at `ASKLAKE_SPARK_REPORT_CONTAINER_DIR` (`/work/reports` by default). If a Codex worktree or repo path changes, the Spark containers must be recreated with the new report mount before run command verification.
 
