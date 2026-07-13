@@ -31,6 +31,7 @@ export type LineageGraph = {
 };
 
 export type CatalogDataset = {
+  dashboardSyncIntervalMinutes?: number;
   description: string;
   downstream: string[];
   freshness: "latest" | "stale" | "approval";
@@ -50,21 +51,14 @@ export type CatalogDataset = {
   permissionGrants?: PermissionGrant[];
   permissions?: ResourcePermissions;
   quality: string;
-  queryEngineStatus?: "pending" | "available" | "registration_failed" | "unavailable";
-  queryEngineRequired?: boolean;
-  queryEngineTable?: {
-    catalog: string;
-    schema: string;
-    table: string;
-    format: "iceberg" | "parquet";
-    partitionColumns: string[];
-  };
   rag: boolean;
   rows: string;
   sampleRows: string[][];
   schema: Array<[string, string]>;
   size: string;
   source: string;
+  sourceExecutionMode?: "snapshot" | "continuous";
+  sourceKind?: "etl" | "sql" | "kafka";
   sourceRunId?: string;
   status: "available" | "approval_required";
   storageFormat?: string;
@@ -84,6 +78,7 @@ export type CatalogDataset = {
 export type DatasetMaterializationRun = {
   createdAt: string;
   jobId: string;
+  materializationMode?: "snapshot" | "delta";
   publicationManifest?: string;
   quality?: Record<string, unknown> | null;
   quarantine?: {

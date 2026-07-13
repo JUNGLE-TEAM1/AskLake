@@ -116,6 +116,10 @@ remote_compose() {
   ssh_run "cd '$DEPLOY_PATH' && $(compose_cmd) $command"
 }
 
+remote_deploy_preflight() {
+  ssh_run "cd '$DEPLOY_PATH' && bash scripts/verify-deploy-env.sh '$COMPOSE_ENV_FILE' '$COMPOSE_FILE'"
+}
+
 wait_for_ssh() {
   local host
   host="$(resolve_host)"
@@ -157,17 +161,43 @@ ensure_started() {
   wait_for_ssh
 }
 
+health_payload_ready() {
+  python3 -c '
+import json
+import sys
+
+try:
+    payload = json.load(sys.stdin)
+except (json.JSONDecodeError, TypeError, UnicodeDecodeError):
+    raise SystemExit(1)
+
+ready = (
+    isinstance(payload, dict)
+    and payload.get("ok") is True
+    and isinstance(payload.get("database"), dict)
+    and payload["database"].get("ok") is True
+)
+raise SystemExit(0 if ready else 1)
+'
+}
+
 health_check() {
   local url
+  local health_payload
+
+  need_command python3
   url="$(resolve_app_url)"
 
   for attempt in $(seq 1 "$HEALTH_RETRIES"); do
     printf 'Checking frontend: %s (attempt %s/%s)\n' "$url" "$attempt" "$HEALTH_RETRIES"
     if curl -fsSI --max-time 20 "$url" >/dev/null; then
       printf 'Checking backend: %s%s (attempt %s/%s)\n' "$url" "$HEALTH_PATH" "$attempt" "$HEALTH_RETRIES"
-      if curl -fsS --max-time 20 "${url}${HEALTH_PATH}"; then
-        printf '\n'
-        return
+      if health_payload="$(curl -fsS --max-time 20 "${url}${HEALTH_PATH}")"; then
+        if printf '%s' "$health_payload" | health_payload_ready; then
+          printf 'Backend health is deployment-ready.\n'
+          return
+        fi
+        printf 'Backend health is not ready; expected JSON booleans .ok=true and .database.ok=true.\n' >&2
       fi
     fi
 
@@ -200,32 +230,11 @@ show_status() {
   fi
 }
 
-bootstrap_trino_dependencies() {
-  remote_compose 'up -d postgres minio'
-  remote_compose 'run --rm trino-postgres-bootstrap'
-  remote_compose 'run --rm trino-storage-bootstrap'
-}
-
-verify_trino_runtime() {
-  local attempt
-  for attempt in $(seq 1 12); do
-    if remote_compose 'exec -T backend python scripts/verify-trino-production-readiness.py --allow-disabled'; then
-      return
-    fi
-    if [[ "$attempt" -lt 12 ]]; then
-      printf 'Trino readiness is not ready yet (attempt %s/12).\n' "$attempt"
-      sleep 5
-    fi
-  done
-  die "Trino production readiness failed"
-}
-
 start_stack() {
   ensure_started
-  bootstrap_trino_dependencies
+  remote_deploy_preflight
   remote_compose 'up -d'
   health_check
-  verify_trino_runtime
   remote_compose 'ps'
 }
 
@@ -255,19 +264,17 @@ stop_stack() {
 deploy_stack() {
   ensure_started
   ssh_run "cd '$DEPLOY_PATH' && git fetch origin '$DEPLOY_BRANCH' && git checkout '$DEPLOY_BRANCH' && git pull --ff-only origin '$DEPLOY_BRANCH'"
-  bootstrap_trino_dependencies
+  remote_deploy_preflight
   remote_compose 'up -d --build'
   health_check
-  verify_trino_runtime
   remote_compose 'ps'
 }
 
 restart_stack() {
   ensure_started
-  bootstrap_trino_dependencies
+  remote_deploy_preflight
   remote_compose 'up -d --build'
   health_check
-  verify_trino_runtime
   remote_compose 'ps'
 }
 
@@ -323,4 +330,6 @@ main() {
   esac
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

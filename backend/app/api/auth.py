@@ -1,32 +1,54 @@
-from typing import Annotated
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Cookie, Depends, Response, status
+from fastapi import APIRouter, Cookie, Depends, Request, Response, status
 from sqlalchemy.orm import Session
 
 from app.core.auth_context import ActorContext, get_actor_context
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.errors import ApiError
 from app.repositories.audit_repository import safe_record_audit_event
 from app.schemas.auth import AuthSessionResponse, AuthUserResponse, LoginRequest, LogoutResponse, SignupRequest
-from app.services.auth_service import SESSION_COOKIE_NAME, SESSION_TTL_DAYS, AuthService
+from app.services.auth_service import (
+    SESSION_COOKIE_NAME,
+    SESSION_TTL_DAYS,
+    AuthService,
+    login_failure_key,
+)
 from app.services.identity_service import IdentityService
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+SESSION_COOKIE_PATH = "/"
+SESSION_COOKIE_SAMESITE = "lax"
 
 
 def get_auth_service(db: Annotated[Session, Depends(get_db)]) -> AuthService:
     return AuthService(db)
 
 
+def session_cookie_options() -> dict[str, Any]:
+    return {
+        "httponly": True,
+        "path": SESSION_COOKIE_PATH,
+        "samesite": SESSION_COOKIE_SAMESITE,
+        "secure": not settings.allows_header_auth_fallback,
+    }
+
+
 def issue_session_cookie(response: Response, token: str) -> None:
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
         value=token,
-        httponly=True,
         max_age=SESSION_TTL_DAYS * 24 * 60 * 60,
-        path="/",
-        samesite="lax",
-        secure=False,
+        **session_cookie_options(),
+    )
+
+
+def delete_session_cookie(response: Response) -> None:
+    response.delete_cookie(
+        key=SESSION_COOKIE_NAME,
+        **session_cookie_options(),
     )
 
 
@@ -46,25 +68,34 @@ def signup(
 @router.post("/login", response_model=AuthUserResponse)
 def login(
     payload: LoginRequest,
+    request: Request,
     response: Response,
     service: Annotated[AuthService, Depends(get_auth_service)],
     db: Annotated[Session, Depends(get_db)],
 ) -> AuthUserResponse:
     try:
-        session = service.login(email=payload.email, password=payload.password)
-    except ApiError as exc:
-        safe_record_audit_event(
-            db,
-            action="auth.login.failed",
-            actor=ActorContext(name=payload.email, role="anonymous", email=payload.email),
-            api_path="/api/auth/login",
-            http_method="POST",
-            metadata={"email": payload.email},
-            result="forbidden" if exc.status_code == status.HTTP_403_FORBIDDEN else "failed",
-            status_code=exc.status_code,
-            target_id=payload.email,
-            target_type="auth",
+        session = service.login(
+            email=payload.email,
+            password=payload.password,
+            rate_limit_key=login_failure_key(
+                payload.email,
+                login_client_address(request),
+            ),
         )
+    except ApiError as exc:
+        if exc.status_code != status.HTTP_429_TOO_MANY_REQUESTS:
+            safe_record_audit_event(
+                db,
+                action="auth.login.failed",
+                actor=ActorContext(name=payload.email, role="anonymous", email=payload.email),
+                api_path="/api/auth/login",
+                http_method="POST",
+                metadata={"email": payload.email},
+                result="forbidden" if exc.status_code == status.HTTP_403_FORBIDDEN else "failed",
+                status_code=exc.status_code,
+                target_id=payload.email,
+                target_type="auth",
+            )
         raise
     issue_session_cookie(response, str(session["token"]))
     actor = actor_context_from_session(session)
@@ -82,6 +113,13 @@ def login(
         target_type="auth",
     )
     return AuthUserResponse(user=IdentityService(db).get_current_user(actor))
+
+
+def login_client_address(request: Request) -> str | None:
+    forwarded_for = request.headers.get("x-forwarded-for", "")
+    if forwarded_for:
+        return forwarded_for.split(",", 1)[0].strip() or None
+    return request.client.host if request.client is not None else None
 
 
 @router.get("/session", response_model=AuthSessionResponse)
@@ -141,7 +179,7 @@ def logout(
         target_name=actor.name,
         target_type="auth",
     )
-    response.delete_cookie(key=SESSION_COOKIE_NAME, path="/", samesite="lax")
+    delete_session_cookie(response)
     return LogoutResponse()
 
 

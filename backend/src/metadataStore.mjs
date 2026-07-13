@@ -12,6 +12,13 @@ const pool = new Pool({
 
 let schemaReady;
 let useMemoryStore = false;
+
+function allowsMetadataMemoryFallback(environment = process.env) {
+  const appEnvironment = String(environment.APP_ENV || "local").trim().toLowerCase();
+  const allowsDevelopmentFallback = ["local", "development", "dev", "test", "testing"].includes(appEnvironment);
+  return allowsDevelopmentFallback
+    && String(environment.ASKLAKE_METADATA_MEMORY_FALLBACK || "true").trim().toLowerCase() !== "false";
+}
 const memoryStore = {
   datasets: new Map(),
   jobs: new Map(),
@@ -77,7 +84,7 @@ export function ensureMetadataSchema() {
       CREATE INDEX IF NOT EXISTS model_artifacts_job_idx
         ON model_artifacts ((payload->>'jobId'));
     `).catch((error) => {
-      if (process.env.ASKLAKE_METADATA_MEMORY_FALLBACK === "false") throw error;
+      if (!allowsMetadataMemoryFallback()) throw error;
       useMemoryStore = true;
       console.warn(`AskLake metadata DB unavailable; using in-memory metadata store. ${error.message}`);
     });

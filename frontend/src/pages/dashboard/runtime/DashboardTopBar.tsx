@@ -1,7 +1,21 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Check, Eye, Pencil, RefreshCw, Save, Share2, X } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import type { DashboardPublishedRefreshStatus } from "./useDashboardRuntimeResources";
+
+function refreshStatusLabel(
+  status: DashboardPublishedRefreshStatus,
+  autoRefreshIntervalMinutes: number | null | undefined,
+) {
+  if (status === "error") return "데이터 동기화 실패";
+  if (status === "idle") return "자동 동기화 확인 중";
+  if (status === "live") return `자동 동기화 · ${autoRefreshIntervalMinutes ?? "-"}분`;
+  if (status === "manual") return "Kafka 자동 동기화 없음";
+  if (status === "paused") return "탭 숨김 · 일시정지";
+  return "데이터 동기화 중";
+}
 
 export function DashboardTopBar({
   hasPublishedRevision,
@@ -15,6 +29,9 @@ export function DashboardTopBar({
   onRefresh,
   onRenameTitle,
   onShare,
+  publishedAutoRefreshIntervalMinutes,
+  publishedRefreshedAt,
+  publishedRefreshStatus = "idle",
   title,
 }: {
   hasPublishedRevision?: boolean;
@@ -28,11 +45,24 @@ export function DashboardTopBar({
   onRefresh?: () => void;
   onRenameTitle?: (title: string) => Promise<void> | void;
   onShare?: () => void;
+  publishedAutoRefreshIntervalMinutes?: number | null;
+  publishedRefreshedAt?: string | null;
+  publishedRefreshStatus?: DashboardPublishedRefreshStatus;
   title: string;
 }) {
   const [draftTitle, setDraftTitle] = useState(title);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const canRename = mode === "draft" && Boolean(onRenameTitle);
+  const lastRefreshedLabel = publishedRefreshedAt
+    ? new Date(publishedRefreshedAt).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+    : null;
+  const effectivePublishedRefreshStatus = mode === "published" && hasPublishedRevision === false
+    ? "manual"
+    : publishedRefreshStatus;
+  const publishedRefreshStatusLabel = refreshStatusLabel(
+    effectivePublishedRefreshStatus,
+    publishedAutoRefreshIntervalMinutes,
+  );
 
   useEffect(() => {
     if (!isEditingTitle) setDraftTitle(title);
@@ -97,6 +127,17 @@ export function DashboardTopBar({
       </div>
       <div className="asklake-dashboard-actions">
         {mode === "published" ? (
+          <Badge
+            aria-label={`${publishedRefreshStatusLabel}${lastRefreshedLabel ? `, 마지막 동기화 ${lastRefreshedLabel}` : ""}`}
+            shape="compact"
+            size="sm"
+            title={lastRefreshedLabel ? `마지막 동기화 ${lastRefreshedLabel}` : undefined}
+            variant={effectivePublishedRefreshStatus === "error" ? "destructive" : effectivePublishedRefreshStatus === "paused" || effectivePublishedRefreshStatus === "manual" ? "muted" : "success"}
+          >
+            {publishedRefreshStatusLabel}
+          </Badge>
+        ) : null}
+        {mode === "published" ? (
           <Button className="asklake-dashboard-action primary" type="button" onClick={onOpenDraft} size="sm" variant="primary">
             <Pencil size={16} />
             편집 모드
@@ -123,10 +164,10 @@ export function DashboardTopBar({
           </>
         )}
         <Button
-          aria-label="대시보드 새로고침"
+          aria-label="대시보드 전체 동기화"
           className="asklake-dashboard-icon-action"
           disabled={isRefreshing}
-          title="새로고침"
+          title="대시보드 전체 동기화"
           type="button"
           size="icon"
           variant="outline"

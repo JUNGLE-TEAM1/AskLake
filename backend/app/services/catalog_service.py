@@ -4,7 +4,6 @@ from datetime import datetime, timezone
 from fastapi import status
 
 from app.core.auth_context import ActorContext, require_any_permission, require_permission
-from app.core.config import settings
 from app.core.errors import ApiError
 from app.core.permission_metadata import permission_grants_from_roles, resource_permissions
 from app.repositories.catalog_repository import CatalogRepository, dataset_model_to_payload
@@ -12,6 +11,7 @@ from app.repositories.audit_repository import safe_record_audit_event
 from app.repositories.sql_repository import SqlRepository
 from app.schemas.catalog import (
     CatalogDatasetListResponse,
+    CatalogDatasetRowsResponse,
     CatalogDatasetResponse,
     CreateDerivedDatasetRequest,
     DeleteMaterializationRunResponse,
@@ -28,11 +28,14 @@ from app.services.lake_storage_service import (
     MaterializedDatasetResult,
 )
 from app.services.governance_enforcement import require_governed_access
+from app.services.dataset_rows_service import read_dataset_rows
+from app.services.materialization_projection import aggregate_materialization_runs
 from app.services.resource_permission_service import (
     dataset_with_persisted_permission_grants,
     datasets_with_persisted_permission_grants,
     permissions_for_actor_with_governance,
 )
+from app.services.sql_service import full_query_run_response_from_payload
 
 
 class CatalogService:
@@ -112,6 +115,55 @@ class CatalogService:
         if lineage_payload is not None:
             return LineageGraphResponse.model_validate(lineage_payload)
         return build_fallback_lineage_graph(dataset)
+
+    def get_dataset_rows(
+        self,
+        dataset_id: str,
+        actor: ActorContext | None = None,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> CatalogDatasetRowsResponse:
+        actor_context = actor or ActorContext()
+        dataset = self.get_dataset(dataset_id, actor_context)
+        api_path = f"/api/catalog/datasets/{dataset_id}/rows"
+        require_governed_access(
+            self.repository.db,
+            actor_context,
+            action="query",
+            api_path=api_path,
+            http_method="GET",
+            metadata={"limit": limit, "offset": offset, "owner": dataset.owner},
+            resource_id=dataset.id,
+            resource_name=dataset.name,
+            resource_type="dataset",
+        )
+        try:
+            require_permission(
+                actor_context,
+                "query",
+                owner=dataset.owner,
+                grants=dataset.permission_grants,
+                resource_label="dataset",
+            )
+        except ApiError as exc:
+            record_forbidden_dataset_event(
+                self.repository.db,
+                actor_context,
+                action="dataset.rows.query.forbidden",
+                dataset=dataset,
+                api_path=api_path,
+                http_method="GET",
+                metadata={"limit": limit, "offset": offset},
+                status_code=exc.status_code,
+            )
+            raise
+
+        return read_dataset_rows(
+            dataset_for_latest_successful_materialization(dataset),
+            limit=limit,
+            offset=offset,
+        )
 
     def delete_materialization_run(
         self,
@@ -309,14 +361,7 @@ class CatalogService:
                 status.HTTP_404_NOT_FOUND,
                 {"sourceRunId": run_id},
             )
-        if payload.get("engine") == "trino":
-            raise ApiError(
-                ErrorCode.CONFLICT,
-                "Trino query runs require Iceberg materialization and cannot use the legacy derived dataset path",
-                status.HTTP_409_CONFLICT,
-                {"sourceRunId": run_id},
-            )
-        return QueryRunResponse.model_validate(payload)
+        return full_query_run_response_from_payload(payload)
 
 
 def validate_derived_dataset_request(
@@ -404,6 +449,7 @@ def build_derived_dataset_payload(
         {
             "createdAt": current_utc_timestamp(),
             "jobId": "sql-derived",
+            "materializationMode": "snapshot",
             "rowCount": materialized_result.row_count,
             "runId": request.source_run_id,
             "sourceKind": "sql",
@@ -470,15 +516,8 @@ def with_dataset_permissions(dataset: CatalogDatasetResponse, actor: ActorContex
         if db is not None
         else None
     )
-    if (
-        permissions is not None
-        and settings.trino_enabled
-        and (dataset.query_engine_status != "available" or dataset.query_engine_table is None)
-    ):
-        permissions = permissions.model_copy(update={"can_query": False})
     return dataset.model_copy(update={
         "permissions": permissions,
-        "query_engine_required": settings.trino_enabled,
     })
 
 
@@ -684,30 +723,10 @@ def recalculate_dataset_payload_from_runs(payload: dict[str, object]) -> dict[st
     next_payload["rows"] = f"{aggregate['rowCount']:,} rows"
     next_payload["size"] = format_storage_size(aggregate["storageSizeBytes"])
     next_payload["sourceRunId"] = aggregate["latestRunId"]
+    next_payload["storageFormat"] = aggregate["latestStorageFormat"] or payload.get("storageFormat")
+    next_payload["storageLocation"] = aggregate["latestStorageLocation"]
     next_payload["storageSizeBytes"] = aggregate["storageSizeBytes"]
     return next_payload
-
-
-def aggregate_materialization_runs(runs: list[dict[str, object]]) -> dict[str, object]:
-    active_runs = [run for run in runs if run.get("status") == "success"]
-    latest_run = active_runs[0] if active_runs else None
-    return {
-        "latestRunId": latest_run.get("runId") if latest_run else None,
-        "lastUpdated": latest_run.get("createdAt") if latest_run else None,
-        "rowCount": sum(parse_count_value(run.get("rowCount")) for run in active_runs),
-        "storageSizeBytes": sum(parse_count_value(run.get("storageSizeBytes")) for run in active_runs),
-    }
-
-
-def parse_count_value(value: object) -> int:
-    if isinstance(value, bool) or value is None:
-        return 0
-    if isinstance(value, int):
-        return max(value, 0)
-    if isinstance(value, float):
-        return max(int(value), 0)
-    digits = re.sub(r"[^0-9]", "", str(value))
-    return int(digits) if digits else 0
 
 
 def format_storage_size(size_bytes: int) -> str:
@@ -855,6 +874,27 @@ def get_lineage_table_name(value: str) -> str:
 def normalize_lineage_id(value: str) -> str:
     normalized_value = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
     return normalized_value or "lineage"
+
+
+def dataset_for_latest_successful_materialization(
+    dataset: CatalogDatasetResponse,
+) -> CatalogDatasetResponse:
+    successful_runs = [
+        run
+        for run in dataset.materialization_runs
+        if run.status == "success" and run.storage_location
+    ]
+    if not successful_runs:
+        return dataset
+
+    latest_run = max(successful_runs, key=lambda run: run.created_at)
+    return dataset.model_copy(
+        update={
+            "source_run_id": latest_run.run_id,
+            "storage_location": latest_run.storage_location,
+            "storage_size_bytes": latest_run.storage_size_bytes,
+        }
+    )
 
 
 def record_forbidden_dataset_event(

@@ -14,7 +14,12 @@ export type KafkaSchemaEvolutionPolicy = {
   unknownField: "preserve" | "ignore" | "quarantine" | "pause";
 };
 
+export const DEFAULT_DASHBOARD_SYNC_INTERVAL_MINUTES = 5;
+export const MIN_DASHBOARD_SYNC_INTERVAL_MINUTES = 1;
+export const MAX_DASHBOARD_SYNC_INTERVAL_MINUTES = 60;
+
 export type KafkaContinuousConfigDraft = {
+  dashboardSyncIntervalMinutes: number;
   initialOffsetPolicy: "earliest" | "latest";
   triggerIntervalSeconds: number;
   maxOffsetsPerTrigger: number;
@@ -189,8 +194,6 @@ export type JobRowData = {
   sourceConfig?: Array<[string, string]>;
   sourceLabel?: string;
   sourceType?: string;
-  jobKind?: "pipeline" | "trino_sql_materialization";
-  sqlRecipe?: Record<string, unknown> | null;
   executionMode?: KafkaExecutionMode;
   continuousConfig?: KafkaContinuousConfigDraft & { checkpointPath?: string };
   continuousRuntime?: KafkaContinuousRuntime | null;

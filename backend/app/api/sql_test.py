@@ -2,6 +2,8 @@ import re
 from typing import Any
 
 import duckdb
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
@@ -25,7 +27,7 @@ class SqlTestRequest(BaseModel):
 @router.post("/test")
 def test_sql_transform(
     request: SqlTestRequest,
-    _actor: ActorContext = Depends(get_actor_context),
+    _actor: Annotated[ActorContext, Depends(get_actor_context)],
 ) -> dict[str, Any]:
     limit = request.limit or 5
     columns = unique_columns(

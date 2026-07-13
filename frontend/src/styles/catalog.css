@@ -162,6 +162,18 @@
   overflow-wrap: anywhere;
 }
 
+.catalog-result-description {
+  min-width: 0;
+  max-width: min(52%, 520px);
+  overflow: hidden;
+  color: #94a3b8;
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .catalog-help-text,
 .catalog-overview-card p {
   color: #64748b;
@@ -199,6 +211,11 @@
   display: grid;
   gap: 16px;
   padding: 16px 0 20px;
+}
+
+.catalog-preview-detail-error {
+  width: calc(100% - 40px);
+  margin-inline: 20px;
 }
 
 .catalog-preview-accordion {
@@ -411,12 +428,18 @@
 }
 
 .catalog-schema-name-cell span,
-.catalog-schema-description-cell span {
+.catalog-schema-description-cell span,
+.catalog-schema-sample-cell {
   display: block;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.catalog-schema-sample-cell {
+  color: #475569;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
 }
 
 .catalog-text-button {
@@ -475,6 +498,12 @@
 .catalog-modal-body .catalog-lineage-card {
   border: 0;
   padding: 0;
+}
+
+.catalog-dataset-viewer {
+  display: grid;
+  gap: 24px;
+  min-width: 0;
 }
 
 .catalog-modal-body .catalog-lineage-card {
@@ -542,7 +571,35 @@
 
 .catalog-sample-scroll {
   width: 100%;
+  max-height: min(480px, 55vh);
   min-width: 0;
+}
+
+.catalog-sample-actions,
+.catalog-sample-pagination {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.catalog-sample-pagination {
+  justify-content: center;
+}
+
+.catalog-sample-pagination .catalog-pagination {
+  margin: 0;
+}
+
+.catalog-sample-version {
+  display: block;
+  max-width: min(48vw, 520px);
+  margin-top: 4px;
+  overflow: hidden;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .catalog-sample-slider {
@@ -557,6 +614,26 @@
 .catalog-sample-table th,
 .catalog-sample-table td {
   min-width: 140px;
+}
+
+.catalog-sample-table th {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  background: #f8fafc;
+}
+
+@media (max-width: 720px) {
+  .catalog-sample-header,
+  .catalog-sample-actions,
+  .catalog-sample-pagination {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .catalog-sample-pagination .catalog-pagination {
+    width: 100%;
+  }
 }
 
 .catalog-lineage-flow {

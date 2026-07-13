@@ -7,10 +7,9 @@ import re
 import secrets
 import subprocess
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Callable
 import unicodedata
 from urllib.parse import urlparse
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import status
 from sqlalchemy import select
@@ -35,8 +34,6 @@ from app.models.base import Base
 from app.models.identity import AuthUserModel
 from app.repositories.audit_repository import safe_record_audit_event
 from app.repositories import etl_repository
-from app.repositories.catalog_repository import CatalogRepository
-from app.repositories.sql_repository import SqlRepository
 from app.repositories.permission_repository import replace_permission_ui_grants
 from app.schemas.common import ErrorCode
 from app.schemas.etl import (
@@ -50,7 +47,6 @@ from app.schemas.etl import (
     AirflowRunExecutionResponse,
     CreatePipelineRequest,
     CreatePipelineResponse,
-    CreateTrinoSqlJobRequest,
     JobCommandResponse,
     JobListFacets,
     JobListResponse,
@@ -94,10 +90,8 @@ from app.schemas.etl import (
 
 from app.services.airflow_client import AirflowDagRun, AirflowTaskInstance, build_airflow_client
 from app.services.governance_enforcement import require_governed_access
-from app.services.trino_materialization_service import materialized_dataset_id
-from app.services.trino_query_run_service import TrinoQueryRunService
-from app.services.trino_sql_job_service import TrinoSqlJobService
 from app.services.identity_service import DEMO_GROUPS, DEMO_USERS
+from app.services.materialization_projection import aggregate_materialization_runs
 from app.services.rule_compiler import CompiledRuleSet, compile_rule_set
 from app.services.resource_permission_service import job_with_persisted_permission_grants, permission_grants_for_resource, permissions_for_actor_with_governance
 
@@ -107,11 +101,15 @@ JOB_STATUSES = ("scheduled", "failed", "running", "paused", "canceled", "stopped
 ACTIVE_RUN_STATUSES = {"queued", "running"}
 TERMINAL_RUN_STATUSES = {"success", "failed", "canceled"}
 SPARK_OUTPUT_FORMAT = "parquet"
+DASHBOARD_SYNC_INTERVAL_MINUTES_DEFAULT = 5
+DASHBOARD_SYNC_INTERVAL_MINUTES_MIN = 1
+DASHBOARD_SYNC_INTERVAL_MINUTES_MAX = 60
 PERMISSION_GROUP_ACTIONS = {
     "analytics": ["view", "query"],
     "data-platform": ["view", "run", "manage"],
     "ops": ["view", "run"],
 }
+SPARK_REST_BRIDGE_GRACE_SECONDS = 30
 
 
 def source_connector_defaults() -> SourceConnectorDefaults:
@@ -281,235 +279,6 @@ def create_pipeline(
     )
 
 
-def create_trino_sql_job(
-    db: Session,
-    request: CreateTrinoSqlJobRequest,
-    actor: ActorContext,
-) -> CreatePipelineResponse:
-    if not settings.trino_enabled:
-        raise ApiError(
-            ErrorCode.CONFLICT,
-            "Trino query runtime is not enabled",
-            status.HTTP_409_CONFLICT,
-            {"setting": "TRINO_ENABLED"},
-        )
-
-    sql_repository = SqlRepository(db)
-    query_service = TrinoQueryRunService(sql_repository, CatalogRepository(db))
-    source_run = query_service.get(request.source_run_id, actor)
-    source_payload = sql_repository.get_run_payload(request.source_run_id) or {}
-    if not actor.is_admin and not trino_query_run_belongs_to_actor(source_payload, actor):
-        safe_record_audit_event(
-            db,
-            action="trino_sql_job.create.forbidden",
-            actor=actor,
-            api_path="/api/etl/sql-jobs",
-            http_method="POST",
-            metadata={"reason": "source_run_owner_mismatch"},
-            result="forbidden",
-            status_code=status.HTTP_403_FORBIDDEN,
-            target_id=request.source_run_id,
-            target_name=request.source_run_id,
-            target_type="query_run",
-        )
-        raise ApiError(
-            ErrorCode.FORBIDDEN,
-            "Only the source Query Run submitter or an admin can create this SQL Job",
-            status.HTTP_403_FORBIDDEN,
-            {"runId": request.source_run_id},
-        )
-    if source_run.status != "succeeded":
-        raise ApiError(
-            ErrorCode.INVALID_JOB_STATE,
-            "Only succeeded Trino query runs can create a SQL Job",
-            status.HTTP_409_CONFLICT,
-            {"runId": source_run.run_id, "status": source_run.status},
-        )
-    if (
-        request.base_dataset_id != source_run.base_dataset_id
-        or request.query.strip() != source_run.query.strip()
-        or set(request.reference_dataset_ids) != set(source_run.reference_dataset_ids)
-    ):
-        raise ApiError(
-            ErrorCode.VALIDATION_ERROR,
-            "SQL Job recipe does not match the source Query Run",
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-        )
-
-    dataset_name = request.dataset.name.strip()
-    if not dataset_name:
-        raise ApiError(ErrorCode.VALIDATION_ERROR, "Dataset name is required", status.HTTP_422_UNPROCESSABLE_ENTITY)
-    dataset_id = materialized_dataset_id(dataset_name)
-    catalog_repository = CatalogRepository(db)
-    existing_dataset = catalog_repository.get_dataset_payload(dataset_id) or catalog_repository.get_dataset_payload_by_name(dataset_name)
-    existing_job = etl_repository.get_job_by_dataset_id(db, dataset_id) or etl_repository.get_job_by_target(db, dataset_name)
-    if existing_dataset is not None or existing_job is not None:
-        raise ApiError(
-            ErrorCode.CONFLICT,
-            "A Dataset or Job with this target name already exists",
-            status.HTTP_409_CONFLICT,
-            {"datasetId": dataset_id, "datasetName": dataset_name},
-        )
-
-    schedule_label = trino_sql_job_schedule_label(request)
-    next_run_utc = trino_sql_job_next_run_utc(request)
-    job_name = (request.job_name or f"{dataset_name} SQL Job").strip()
-    job_id = make_job_id(f"sql-{job_name}-{dataset_id}")
-    columns = list(source_run.result.columns if source_run.result else [])
-    if request.target.partition_column and request.target.partition_column not in columns:
-        raise ApiError(
-            ErrorCode.VALIDATION_ERROR,
-            "SQL Job partition column must exist in the Query Run result",
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-            {"partitionColumn": request.target.partition_column, "columns": columns},
-        )
-    schema_columns = [
-        {
-            "confidence": 1,
-            "included": True,
-            "nullable": True,
-            "role": "primary" if index == 0 else "derived",
-            "sourceName": column,
-            "targetName": column,
-            "type": "unknown",
-        }
-        for index, column in enumerate(columns)
-    ]
-    permission_roles = trino_sql_job_permission_roles(
-        request.governance.access_scope,
-        request.governance.owner,
-    )
-    sql_recipe = {
-        "baseDatasetId": request.base_dataset_id,
-        "query": request.query,
-        "referenceDatasetIds": request.reference_dataset_ids,
-        "runAs": {
-            "email": actor.email,
-            "groups": list(actor.groups),
-            "id": actor.id,
-            "name": actor.name,
-            "role": actor.role,
-        },
-        "sourceRunId": request.source_run_id,
-        "target": {
-            "datasetId": dataset_id,
-            "datasetName": dataset_name,
-            "description": request.dataset.description,
-            "layer": request.dataset.layer,
-            "partitionColumns": [request.target.partition_column] if request.target.partition_column else [],
-            "tags": request.dataset.tags,
-        },
-        "writeMode": request.target.write_mode,
-    }
-    dag_steps = [
-        {"id": "validate", "title": "1. SQL recipe 검증", "meta": "Trino SQL · full refresh", "status": "pending"},
-        {"id": "materialize", "title": "2. Iceberg table 생성", "meta": "versioned CTAS", "status": "pending"},
-        {"id": "register", "title": "3. Catalog mapping 교체", "meta": "DESCRIBE 검증 후 공개", "status": "pending"},
-    ]
-    job = ETLJobModel(
-        id=job_id,
-        name=job_name,
-        owner=request.governance.owner.strip() or actor.name,
-        created_by=actor.name,
-        created_by_profile=identity_profile(actor.name),
-        status="scheduled",
-        tag="[SQL]",
-        source=f"Trino SQL / {source_run.run_id}",
-        target=dataset_name,
-        schedule=schedule_label,
-        schedule_policy={
-            "mode": request.schedule.mode,
-            "nextRunUtc": next_run_utc,
-            "overlapPolicy": request.schedule.overlap_policy,
-            "time": request.schedule.time,
-            "timezone": request.schedule.timezone,
-            "weekday": request.schedule.weekday,
-            "writeMode": request.target.write_mode,
-        },
-        schedule_summary=trino_sql_job_schedule_summary(request),
-        retry_policy=None,
-        retry_policy_summary="Trino collector 재시도 정책",
-        run_limit_summary="동시 실행 1개",
-        source_config=[
-            ["Base Dataset ID", request.base_dataset_id],
-            ["Reference Dataset IDs", ", ".join(request.reference_dataset_ids) or "-"],
-            ["Source Query Run ID", request.source_run_id],
-        ],
-        source_label=f"{source_run.base_dataset_id} / {source_run.run_id}",
-        source_type="Trino SQL",
-        job_kind="trino_sql_materialization",
-        sql_recipe=sql_recipe,
-        execution_mode="snapshot",
-        continuous_config=None,
-        schema_columns=schema_columns,
-        schema_fingerprint=f"{source_run.run_id}:{'|'.join(columns)}",
-        schema_sample_rows=[],
-        schema_summary=f"{len(columns)}개 컬럼 · Trino Query Run 검증 완료",
-        rule_summary="저장된 SQL recipe를 생성 시점 데이터에 다시 실행",
-        permission_summary=request.governance.permission_summary,
-        permission_roles=permission_roles,
-        storage_type="Iceberg",
-        partition=request.target.partition_column,
-        partition_columns=[request.target.partition_column] if request.target.partition_column else [],
-        index_columns=[],
-        compression="Snappy",
-        storage_path=f"iceberg://{settings.trino_catalog}/{settings.trino_schema}/{dataset_id}",
-        target_description=request.dataset.description,
-        target_database=settings.trino_schema,
-        target_tags=request.dataset.tags,
-        target_format="Iceberg",
-        target_layer=request.dataset.layer,
-        target_path=None,
-        rag=False,
-        transform_output_columns=[[column, "unknown"] for column in columns],
-        transform_steps=[],
-        quality_invalid_rows=[],
-        quality_rules=[],
-        quality_score=None,
-        quality_status="idle",
-        last_run="생성 후 미실행",
-        last_state="Trino SQL recipe 저장 완료",
-        next_run=next_run_utc or "-",
-        progress=None,
-        stats={
-            "averageDuration": "-",
-            "currentStage": "실행 대기",
-            "inputRows": "-",
-            "lastSuccess": "-",
-            "outputRows": "-",
-            "sampleScope": "전체 SQL",
-            "schemaColumns": f"{len(columns)}개",
-            "sourceUnits": f"{1 + len(request.reference_dataset_ids)} datasets",
-            "successRate": "-",
-            "totalRuns": "0회",
-        },
-        dag_steps=dag_steps,
-        dag_steps_by_run_id={},
-        dataset_id=dataset_id,
-    )
-    saved_job = etl_repository.create_job(db, job)
-    safe_record_audit_event(
-        db,
-        action="trino_sql_job.create",
-        actor=actor,
-        api_path="/api/etl/sql-jobs",
-        http_method="POST",
-        metadata={"baseDatasetId": request.base_dataset_id, "sourceRunId": request.source_run_id},
-        target_id=job.id,
-        target_name=job.name,
-        target_type="etl_job",
-    )
-    return CreatePipelineResponse(
-        catalog_target={
-            "id": dataset_id,
-            "layer": request.dataset.layer,
-            "name": dataset_name,
-            "status": "pending_run",
-        },
-        job=saved_job,
-    )
-
-
 def list_jobs(
     db: Session,
     actor: ActorContext | None = None,
@@ -603,13 +372,7 @@ def run_due_scheduled_jobs(
             ))
             continue
 
-        response = command_job(
-            db,
-            job.id,
-            "run",
-            actor_context,
-            execution_actor=trino_sql_job_run_as_actor(job) if job.job_kind == "trino_sql_materialization" else None,
-        )
+        response = command_job(db, job.id, "run", actor_context)
         if reason == "due":
             advance_scheduled_job_after_tick(db, job.id)
         items.append(ScheduledJobRunItem(
@@ -800,14 +563,7 @@ def execute_query(db: Session, request: QueryRunRequest) -> QueryRunResponse:
     )
 
 
-def command_job(
-    db: Session,
-    job_id: str,
-    command: str,
-    actor: ActorContext | None = None,
-    *,
-    execution_actor: ActorContext | None = None,
-) -> JobCommandResponse:
+def command_job(db: Session, job_id: str, command: str, actor: ActorContext | None = None) -> JobCommandResponse:
     job = etl_repository.get_job(db, job_id)
     if job is None:
         raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
@@ -889,31 +645,6 @@ def command_job(
             ErrorCode.INVALID_JOB_STATE,
             f"Job has no paused schedule to resume: {job_id}",
             status.HTTP_422_UNPROCESSABLE_ENTITY,
-        )
-
-    if job.job_kind == "trino_sql_materialization" and command in {"run", "retry", "cancelRun"}:
-        service = TrinoSqlJobService(SqlRepository(db), CatalogRepository(db))
-        result = (
-            service.cancel(job, execution_actor or actor_context)
-            if command == "cancelRun"
-            else service.submit(job, command, execution_actor or actor_context)
-        )
-        return JobCommandResponse(
-            action={
-                "cancelRun": "etl.run.cancel_requested",
-                "retry": "etl.run.retry_requested",
-                "run": "etl.run.requested",
-            }[command],
-            api_path=f"/api/etl/jobs/{job_id}/commands",
-            dataset=result.dataset,
-            job=with_job_permissions(db, result.job, actor_context),
-            run=result.run,
-            dag_steps=result.job.dag_steps,
-            processing_result={
-                "engine": "trino",
-                "jobKind": "trino_sql_materialization",
-                "writeMode": "full_refresh",
-            },
         )
 
     action_by_command = {
@@ -1376,6 +1107,10 @@ def review_pipeline(request: ReviewPipelineRequest) -> ReviewSnapshot:
             review_entry("작업명", request.job_name),
             review_entry("소스", source_display),
             review_entry("실행 방식", "실시간 스트림" if request.execution_mode == "continuous" else "Snapshot batch"),
+            *([review_entry(
+                "대시보드 자동 동기화",
+                f"{dashboard_sync_interval_minutes_from_request(request)}분",
+            )] if request.execution_mode == "continuous" else []),
             review_entry("대상 데이터셋", request.target_dataset),
             review_entry("설명", request.target_description),
         ],
@@ -1633,16 +1368,26 @@ def is_kafka_job(job: ETLJobModel) -> bool:
 
 
 def run_spark_job(job: ETLJobModel, command: str, run_id: str) -> dict[str, Any]:
+    rest_mode = spark_rest_mode_enabled()
+    poll_timeout_ms = spark_rest_poll_timeout_ms()
+    state_file = spark_rest_submission_state_file(run_id)
+    payload = {
+        "command": command,
+        "job": job_payload_for_spark(job),
+        "runId": run_id,
+    }
+    if rest_mode:
+        payload.update({
+            "sparkRestStateFile": str(state_file),
+            "sparkRestTimeoutMs": poll_timeout_ms,
+        })
     return run_node_bridge(
         "run-spark-job-once.mjs",
         "ASKLAKE_SPARK_RUN_RESULT",
-        {
-            "command": command,
-            "job": job_payload_for_spark(job),
-            "runId": run_id,
-        },
+        payload,
         error_marker="ASKLAKE_SPARK_RUN_ERROR",
-        timeout_seconds=900,
+        timeout_seconds=spark_python_bridge_timeout_seconds(poll_timeout_ms) if rest_mode else 900,
+        timeout_recovery=(lambda: recover_spark_rest_submission(state_file)) if rest_mode else None,
     )
 
 
@@ -2731,7 +2476,7 @@ def dataset_from_spark_result(job: ETLJobModel, result: dict[str, Any], existing
         schema_json=schema_json,
         sample_rows=sample_rows,
         upstream=[job.source_label, job.name],
-        downstream=dataset_payload["downstream"],
+        downstream=["SQL 분석", "RAG 인덱싱"] if job.rag else ["SQL 분석"],
     )
 
 
@@ -2751,14 +2496,18 @@ def dataset_payload_from_spark_result(
     partition_columns = normalize_string_list(job.partition_columns)
     index_columns = normalize_string_list(job.index_columns)
     partition = "/".join(partition_columns) if partition_columns else normalize_optional_text(job.partition)
+    source_execution_mode = str(job.execution_mode or "snapshot")
+    source_kind = str(result.get("sourceKind") or ("sql" if job.source_type == "SQL Result" else "etl"))
+    materialization_mode = result.get("materializationMode") or ("delta" if source_kind == "kafka" else "snapshot")
     materialization_runs = append_materialization_run(
         previous_payload.get("materializationRuns") if previous_payload else [],
         {
             "createdAt": last_updated,
             "jobId": job.id,
+            "materializationMode": materialization_mode,
             "rowCount": parse_count_value(result.get("materializationRows", result.get("outputRows"))),
             "runId": str(result.get("runId") or ""),
-            "sourceKind": result.get("sourceKind") or ("sql" if job.source_type == "SQL Result" else "etl"),
+            "sourceKind": source_kind,
             "sourceLabel": job.name or job.source or job.source_label or job.id,
             "status": "success" if result.get("status") == "success" else "failed",
             "storageLocation": str(result.get("materializationOutputPath") or output_path),
@@ -2774,16 +2523,9 @@ def dataset_payload_from_spark_result(
         },
     )
     aggregate = aggregate_materialization_runs(materialization_runs)
-    query_engine_table = result.get("queryEngineTable")
-    query_engine_available = (
-        result.get("queryEngineVerified") is True
-        and isinstance(query_engine_table, dict)
-        and all(str(query_engine_table.get(key) or "").strip() for key in ("catalog", "schema", "table", "format"))
-    )
-    downstream = (["SQL 분석"] if query_engine_available else []) + (["RAG 인덱싱"] if job.rag else [])
     return {
         "description": target_dataset_description(job),
-        "downstream": downstream,
+        "downstream": ["SQL 분석", "RAG 인덱싱"] if job.rag else ["SQL 분석"],
         "freshness": "latest",
         "id": dataset_id,
         "layer": job.target_layer,
@@ -2804,18 +2546,21 @@ def dataset_payload_from_spark_result(
         "schema": schema_json,
         "size": format_storage_size(aggregate["storageSizeBytes"]) if aggregate["storageSizeBytes"] > 0 else display_size,
         "source": job.name,
+        "sourceExecutionMode": source_execution_mode,
+        "sourceKind": source_kind,
         "sourceRunId": aggregate["latestRunId"] or result.get("runId"),
         "status": "available",
         "storageFormat": SPARK_OUTPUT_FORMAT,
         "storageLocation": output_path,
         "storageSizeBytes": aggregate["storageSizeBytes"],
-        "queryEngineStatus": "available" if query_engine_available else "unavailable",
         "partition": partition,
         "partitionColumns": partition_columns,
         "indexColumns": index_columns,
         "tags": target_dataset_tags(job),
         "upstream": [job.source_label, job.name],
-        **({"queryEngineTable": query_engine_table} if query_engine_available else {}),
+        **({
+            "dashboardSyncIntervalMinutes": dashboard_sync_interval_minutes_for_job(job),
+        } if source_execution_mode == "continuous" and is_kafka_job(job) else {}),
     }
 
 
@@ -2904,17 +2649,6 @@ def identity_profile(name: str) -> dict[str, str]:
     return {
         "avatarInitials": initials[:2],
         "displayName": display_name,
-    }
-
-
-def aggregate_materialization_runs(runs: list[dict[str, Any]]) -> dict[str, Any]:
-    active_runs = [run for run in runs if run.get("status") == "success"]
-    latest_run = active_runs[0] if active_runs else None
-    return {
-        "latestRunId": latest_run.get("runId") if latest_run else None,
-        "lastUpdated": latest_run.get("createdAt") if latest_run else None,
-        "rowCount": sum(parse_count_value(run.get("rowCount")) for run in active_runs),
-        "storageSizeBytes": sum(parse_count_value(run.get("storageSizeBytes")) for run in active_runs),
     }
 
 
@@ -3280,18 +3014,40 @@ def quality_summary_from_spark_result(job: ETLJobModel, result: dict[str, Any]) 
     return f"품질 점수 {job.quality_score if job.quality_score is not None else '-'}% · 상태 {quality_status_label(job.quality_status)}"
 
 
-def run_node_bridge(script_name: str, success_marker: str, payload: dict[str, Any], *, error_marker: str, timeout_seconds: int) -> dict[str, Any]:
+def run_node_bridge(
+    script_name: str,
+    success_marker: str,
+    payload: dict[str, Any],
+    *,
+    error_marker: str,
+    timeout_seconds: int,
+    timeout_recovery: Callable[[], dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     script_path = SCRIPTS_DIR / script_name
-    result = subprocess.run(
-        ["node", str(script_path)],
-        cwd=str(BACKEND_DIR),
-        input=json.dumps(payload, ensure_ascii=False),
-        text=True,
-        capture_output=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=timeout_seconds,
-    )
+    try:
+        result = subprocess.run(
+            ["node", str(script_path)],
+            cwd=str(BACKEND_DIR),
+            input=json.dumps(payload, ensure_ascii=False),
+            text=True,
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired as exc:
+        recovery: dict[str, Any] = {"attempted": timeout_recovery is not None}
+        if timeout_recovery is not None:
+            try:
+                recovery.update({"result": timeout_recovery(), "succeeded": True})
+            except Exception as recovery_error:
+                recovery.update({"error": str(recovery_error), "succeeded": False})
+        raise ApiError(
+            "BACKEND_BRIDGE_TIMEOUT",
+            f"{script_name} exceeded its derived {timeout_seconds}s bridge timeout.",
+            status.HTTP_504_GATEWAY_TIMEOUT,
+            {"recovery": recovery, "timeoutSeconds": timeout_seconds},
+        ) from exc
     stdout = result.stdout or ""
     stderr = result.stderr or ""
     if result.returncode != 0:
@@ -3314,6 +3070,85 @@ def run_node_bridge(script_name: str, success_marker: str, payload: dict[str, An
         payload_result.setdefault("stdout", stdout)
         payload_result.setdefault("stderr", stderr)
     return payload_result
+
+
+def recover_spark_rest_submission(state_file: Path) -> dict[str, Any]:
+    result = subprocess.run(
+        ["node", str(SCRIPTS_DIR / "spark-rest-client.mjs")],
+        cwd=str(BACKEND_DIR),
+        input=json.dumps({
+            "operation": "kill-state",
+            "restUrl": os.environ.get("ASKLAKE_SPARK_REST_URL") or "http://spark-master:6066",
+            "stateFile": str(state_file),
+        }),
+        text=True,
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=10,
+    )
+    recovered = marker_payload(result.stdout or "", "ASKLAKE_SPARK_REST_RECOVERY")
+    if result.returncode != 0 or recovered is None:
+        message = (result.stderr or "").strip() or "Spark REST submission recovery failed."
+        raise RuntimeError(message)
+    return recovered
+
+
+def spark_rest_mode_enabled() -> bool:
+    return str(os.environ.get("ASKLAKE_SPARK_RUNNER") or "").strip().lower() == "rest"
+
+
+def spark_rest_poll_timeout_ms() -> int:
+    timeout_seconds = bounded_environment_integer(
+        "ASKLAKE_SPARK_RUN_TIMEOUT_SECONDS",
+        default=7200,
+        minimum=1,
+        maximum=24 * 60 * 60,
+    )
+    return timeout_seconds * 1000
+
+
+def spark_python_bridge_timeout_seconds(poll_timeout_ms: int) -> int:
+    poll_timeout_seconds = (max(1000, int(poll_timeout_ms)) + 999) // 1000
+    return poll_timeout_seconds + (2 * SPARK_REST_BRIDGE_GRACE_SECONDS)
+
+
+def continuous_maintenance_poll_timeout_ms() -> int:
+    return bounded_environment_integer(
+        "ASKLAKE_CONTINUOUS_MAINTENANCE_TIMEOUT_MS",
+        default=540_000,
+        minimum=1000,
+        maximum=24 * 60 * 60 * 1000,
+    )
+
+
+def continuous_maintenance_bridge_timeout_seconds(poll_timeout_ms: int) -> int:
+    poll_timeout_seconds = (max(1000, int(poll_timeout_ms)) + 999) // 1000
+    return poll_timeout_seconds + SPARK_REST_BRIDGE_GRACE_SECONDS
+
+
+def spark_rest_submission_state_file(run_id: str) -> Path:
+    report_dir = Path(os.environ.get("ASKLAKE_SPARK_REPORT_DIR") or BACKEND_DIR / "tmp" / "spark-runs")
+    if not report_dir.is_absolute():
+        report_dir = BACKEND_DIR / report_dir
+    safe_run_id = re.sub(r"[^a-zA-Z0-9_.-]+", "-", str(run_id)).strip("-") or "run"
+    return (report_dir.resolve() / f"{safe_run_id.lower()}.spark-rest-state.json")
+
+
+def continuous_maintenance_state_file(run_id: str) -> Path:
+    report_dir = Path(os.environ.get("ASKLAKE_SPARK_REPORT_DIR") or BACKEND_DIR / "tmp" / "spark-runs")
+    if not report_dir.is_absolute():
+        report_dir = BACKEND_DIR / report_dir
+    safe_run_id = re.sub(r"[^a-zA-Z0-9_.-]+", "-", str(run_id)).strip("-") or "run"
+    return (report_dir.resolve() / f"kafka-continuous-maintenance-{safe_run_id.lower()}.state.json")
+
+
+def bounded_environment_integer(name: str, *, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.environ.get(name) or default)
+    except (TypeError, ValueError):
+        return default
+    return value if minimum <= value <= maximum else default
 
 
 def marker_payload(output: str, marker: str) -> dict[str, Any] | None:
@@ -3598,6 +3433,9 @@ def run_kafka_continuous_maintenance(
     ]
     target = parse_kafka_target_path(job.storage_path or job.target_path, job.target, job.target_layer)
     output_path = f"s3a://{target['bucket']}/{target['prefix'].strip('/')}"
+    rest_mode = spark_rest_mode_enabled()
+    poll_timeout_ms = continuous_maintenance_poll_timeout_ms()
+    state_file = continuous_maintenance_state_file(run_id)
     return run_node_bridge(
         "manage-kafka-continuous-maintenance.mjs",
         "ASKLAKE_KAFKA_MAINTENANCE_RESULT",
@@ -3615,7 +3453,12 @@ def run_kafka_continuous_maintenance(
             **config,
         },
         error_marker="ASKLAKE_KAFKA_MAINTENANCE_ERROR",
-        timeout_seconds=600,
+        timeout_seconds=(
+            continuous_maintenance_bridge_timeout_seconds(poll_timeout_ms)
+            if rest_mode
+            else 600
+        ),
+        timeout_recovery=(lambda: recover_spark_rest_submission(state_file)) if rest_mode else None,
     )
 
 
@@ -4295,6 +4138,10 @@ def materialize_continuous_publication(
     existing_runs = (existing.payload or {}).get("materializationRuns") if existing and existing.payload else []
     if any(str(item.get("runId") or "") == run_id for item in existing_runs if isinstance(item, dict)):
         return True
+    publication_sample_rows = publication.get("sampleRows")
+    if not isinstance(publication_sample_rows, list):
+        previous_sample_rows = (existing.payload or {}).get("sampleRows") if existing and existing.payload else None
+        publication_sample_rows = previous_sample_rows if isinstance(previous_sample_rows, list) else []
     target = parse_kafka_target_path(job.storage_path or job.target_path, job.target, job.target_layer)
     output_path = f"s3a://{target['bucket']}/{target['prefix'].strip('/')}/_batches"
     result = {
@@ -4311,6 +4158,7 @@ def materialize_continuous_publication(
         "transform": publication.get("transform") if isinstance(publication.get("transform"), dict) else {},
         "quality": publication.get("quality") if isinstance(publication.get("quality"), dict) else {},
         "runId": run_id,
+        "sampleRows": publication_sample_rows,
         "sourceRanges": publication.get("sourceRanges") if isinstance(publication.get("sourceRanges"), list) else [],
         "sourceKind": "kafka",
         "status": "success",
@@ -4724,87 +4572,6 @@ def schedule_next_run_label(schedule_label: str | None, fallback: str | None = N
     return fallback_label if fallback_label and fallback_label != "-" else schedule
 
 
-def trino_sql_job_permission_roles(access_scope: str, owner: str) -> list[dict[str, Any]]:
-    access = ["조회", "쿼리 실행", "메타데이터", "관리"]
-    if access_scope == "private":
-        return [{"access": access, "checked": True, "name": owner}]
-    return [
-        {"access": access, "checked": True, "name": "Data Engineer Group"},
-        {"access": access, "checked": access_scope != "project", "name": "Data Analyst Group"},
-        {"access": access, "checked": access_scope == "project", "name": "Project Members"},
-    ]
-
-
-def trino_sql_job_schedule_label(request: CreateTrinoSqlJobRequest) -> str:
-    schedule = request.schedule
-    if schedule.mode == "manual":
-        return "스케줄링 건너뛰기"
-    if schedule.mode == "daily":
-        return f"매일 {schedule.time}"
-    return f"매주 {schedule.weekday}요일 {schedule.time}"
-
-
-def trino_sql_job_schedule_summary(request: CreateTrinoSqlJobRequest) -> str:
-    if request.schedule.mode == "manual":
-        return "스케줄링 건너뛰기 · Job 목록에서 직접 실행 · full refresh"
-    return (
-        f"반복 실행 · {trino_sql_job_schedule_label(request)} · "
-        f"{request.schedule.timezone} · {request.schedule.overlap_policy} · full refresh"
-    )
-
-
-def trino_sql_job_next_run_utc(request: CreateTrinoSqlJobRequest) -> str | None:
-    schedule = request.schedule
-    if schedule.mode == "manual":
-        return None
-    try:
-        hour_text, minute_text = schedule.time.split(":", maxsplit=1)
-        hour = int(hour_text)
-        minute = int(minute_text)
-        if not 0 <= hour <= 23 or not 0 <= minute <= 59:
-            raise ValueError
-        timezone = ZoneInfo(schedule.timezone)
-    except (ValueError, ZoneInfoNotFoundError) as exc:
-        raise ApiError(
-            ErrorCode.VALIDATION_ERROR,
-            "SQL Job schedule time or timezone is invalid",
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-        ) from exc
-
-    now = datetime.now(timezone)
-    candidate = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-    if schedule.mode == "daily":
-        if candidate <= now:
-            candidate += timedelta(days=1)
-    else:
-        weekdays = {"월": 0, "화": 1, "수": 2, "목": 3, "금": 4, "토": 5, "일": 6}
-        candidate += timedelta(days=(weekdays[schedule.weekday] - candidate.weekday()) % 7)
-        if candidate <= now:
-            candidate += timedelta(days=7)
-    return candidate.astimezone(UTC).isoformat().replace("+00:00", "Z")
-
-
-def trino_sql_job_run_as_actor(job: ETLJobModel) -> ActorContext:
-    recipe = job.sql_recipe if isinstance(job.sql_recipe, dict) else {}
-    run_as = recipe.get("runAs") if isinstance(recipe.get("runAs"), dict) else {}
-    return ActorContext(
-        name=str(run_as.get("name") or job.created_by or job.owner),
-        role=str(run_as.get("role") or "viewer"),
-        groups=tuple(str(group) for group in run_as.get("groups") or []),
-        id=str(run_as.get("id") or "") or None,
-        email=str(run_as.get("email") or "") or None,
-    )
-
-
-def trino_query_run_belongs_to_actor(payload: dict[str, Any], actor: ActorContext) -> bool:
-    submitted_user_id = str(payload.get("submittedByUserId") or "").strip()
-    submitted_name = str(payload.get("submittedByName") or "").strip()
-    return bool(
-        (actor.id and submitted_user_id and actor.id == submitted_user_id)
-        or (actor.name and submitted_name and actor.name == submitted_name)
-    )
-
-
 def has_scheduled_label(schedule_label: str | None) -> bool:
     schedule = str(schedule_label or "").strip().lower()
     if not schedule or schedule == "-":
@@ -5161,6 +4928,7 @@ def continuous_config_from_request(request: CreatePipelineRequest, job_id: str) 
     return {
         "initialOffsetPolicy": config.initial_offset_policy if config else "earliest",
         "triggerIntervalSeconds": config.trigger_interval_seconds if config else 30,
+        "dashboardSyncIntervalMinutes": dashboard_sync_interval_minutes_from_request(request),
         "maxOffsetsPerTrigger": config.max_offsets_per_trigger if config else 10000,
         "schemaEvolutionPolicy": config.schema_evolution_policy.model_dump(mode="json", by_alias=True) if config else {
             "additiveNullable": "allow",
@@ -5170,6 +4938,26 @@ def continuous_config_from_request(request: CreatePipelineRequest, job_id: str) 
         },
         "checkpointPath": f"{base_path}/_checkpoints/{job_id}",
     }
+
+
+def dashboard_sync_interval_minutes_from_request(request: CreatePipelineRequest) -> int:
+    config = request.continuous_config
+    return config.dashboard_sync_interval_minutes if config else DASHBOARD_SYNC_INTERVAL_MINUTES_DEFAULT
+
+
+def dashboard_sync_interval_minutes_for_job(job: ETLJobModel) -> int:
+    value = (job.continuous_config or {}).get(
+        "dashboardSyncIntervalMinutes",
+        DASHBOARD_SYNC_INTERVAL_MINUTES_DEFAULT,
+    )
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = DASHBOARD_SYNC_INTERVAL_MINUTES_DEFAULT
+    return max(
+        DASHBOARD_SYNC_INTERVAL_MINUTES_MIN,
+        min(DASHBOARD_SYNC_INTERVAL_MINUTES_MAX, parsed),
+    )
 
 
 def continuous_runtime_from_job(job: ETLJobModel) -> KafkaContinuousRuntimeModel:

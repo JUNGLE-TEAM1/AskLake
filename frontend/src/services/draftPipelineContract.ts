@@ -1,5 +1,10 @@
 import type { CreatePipelineRequest, DraftPipeline, DraftPipelinePatch, JobRowData, RetryBackoffStrategy, RetryFailureAction, RetryPolicyDraft, ScheduleDraft, ScheduleOverlapPolicy, UpdatePipelineRequest, WatermarkPolicyDraft, WatermarkWindowMode } from "../types";
 import {
+  DEFAULT_DASHBOARD_SYNC_INTERVAL_MINUTES,
+  MAX_DASHBOARD_SYNC_INTERVAL_MINUTES,
+  MIN_DASHBOARD_SYNC_INTERVAL_MINUTES,
+} from "../types/etl";
+import {
   canonicalRulesFromLegacy,
   compileRuleContract,
   legacyRulesFromCanonical,
@@ -32,6 +37,7 @@ export const watermarkWindowModeLabels: Record<WatermarkWindowMode, string> = {
 export function toCreatePipelineRequest(draft: DraftPipeline): CreatePipelineRequest {
   const targetDataset = draft.target.datasetName.trim();
   const continuousKafka = draft.source.executionMode === "continuous" && ["Stream / Kafka", "Kafka JSON"].includes(draft.source.sourceType);
+  const continuousConfig = draft.source.continuousConfig;
   const partitionColumns = normalizeStringList(draft.target.partitionColumns);
   const targetTags = normalizeStringList(draft.target.tags);
   const retryPolicy = normalizeRetryPolicy(draft.schedule.retryPolicy);
@@ -82,7 +88,15 @@ export function toCreatePipelineRequest(draft: DraftPipeline): CreatePipelineReq
     executionMode: draft.source.executionMode ?? "snapshot",
     recordParsing: draft.recordParsing.enabled ? draft.recordParsing : undefined,
     continuousConfig: draft.source.executionMode === "continuous"
-      ? draft.source.continuousConfig ?? { initialOffsetPolicy: "earliest", triggerIntervalSeconds: 30, maxOffsetsPerTrigger: 10000 }
+      ? {
+          dashboardSyncIntervalMinutes: normalizeDashboardSyncIntervalMinutes(
+            continuousConfig?.dashboardSyncIntervalMinutes,
+          ),
+          initialOffsetPolicy: continuousConfig?.initialOffsetPolicy ?? "earliest",
+          maxOffsetsPerTrigger: continuousConfig?.maxOffsetsPerTrigger ?? 10000,
+          schemaEvolutionPolicy: continuousConfig?.schemaEvolutionPolicy,
+          triggerIntervalSeconds: continuousConfig?.triggerIntervalSeconds ?? 30,
+        }
       : undefined,
     compression: draft.target.compression,
     partition: partitionColumns.length > 0 ? partitionColumns.join("/") : draft.target.partition,
@@ -164,6 +178,9 @@ export function hydrateDraftPipelineFromJob(job: JobRowData, fallback: DraftPipe
       sourceType,
       executionMode: job.executionMode ?? "snapshot",
       continuousConfig: job.continuousConfig ? {
+        dashboardSyncIntervalMinutes: normalizeDashboardSyncIntervalMinutes(
+          job.continuousConfig.dashboardSyncIntervalMinutes,
+        ),
         initialOffsetPolicy: job.continuousConfig.initialOffsetPolicy,
         triggerIntervalSeconds: job.continuousConfig.triggerIntervalSeconds,
         maxOffsetsPerTrigger: job.continuousConfig.maxOffsetsPerTrigger,
@@ -316,6 +333,16 @@ export function formatWatermarkPolicySummary(policy?: WatermarkPolicyDraft): str
   const normalized = normalizeWatermarkPolicy(policy);
   if (!normalized.enabled || normalized.mode === "full_refresh") return watermarkWindowModeLabels.full_refresh;
   return `${normalized.column} · ${watermarkWindowModeLabels[normalized.mode]} · ${normalized.lookbackMinutes}분 lookback`;
+}
+
+export function normalizeDashboardSyncIntervalMinutes(value: unknown): number {
+  if (value === null || value === undefined || value === "") return DEFAULT_DASHBOARD_SYNC_INTERVAL_MINUTES;
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed)) return DEFAULT_DASHBOARD_SYNC_INTERVAL_MINUTES;
+  return Math.min(
+    MAX_DASHBOARD_SYNC_INTERVAL_MINUTES,
+    Math.max(MIN_DASHBOARD_SYNC_INTERVAL_MINUTES, Math.round(parsed)),
+  );
 }
 
 export function normalizeRetryPolicy(policy: RetryPolicyDraft): RetryPolicyDraft {

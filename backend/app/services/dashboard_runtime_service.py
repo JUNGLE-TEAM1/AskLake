@@ -15,8 +15,8 @@ from app.repositories.audit_repository import safe_record_audit_event
 from app.repositories.dashboard_card_repository import get_dashboard_card
 from app.repositories.dashboard_runtime_repository import DashboardRuntimeMetaRecord, DashboardRuntimeRepository
 from app.repositories.catalog_repository import CatalogRepository
-from app.schemas.common import ErrorCode
 from app.schemas.catalog import CatalogDatasetResponse
+from app.schemas.common import ErrorCode
 from app.schemas.dashboard import (
     AreaChartWidgetConfig,
     BarChartWidgetConfig,
@@ -25,6 +25,9 @@ from app.schemas.dashboard import (
     DashboardCard,
     DashboardMeta,
     DashboardPageResponse,
+    DashboardPublishedDataResponse,
+    DashboardPublishedWidgetData,
+    DashboardRefreshScope,
     DashboardRevision,
     DashboardRuntimeMode,
     DashboardRuntimePage,
@@ -56,22 +59,57 @@ from app.schemas.dashboard import (
     UpdateDraftPageRequest,
     UpdateDraftWidgetRequest,
 )
-from app.services.governance_enforcement import require_governed_access
+from app.services.catalog_service import record_forbidden_dataset_event
 from app.services.dashboard_dataset_access import require_dashboard_dataset_query_access
+from app.services.dashboard_physical_data import (
+    DashboardDatasetQuerySession,
+    DashboardRemoteScanBudget,
+)
+from app.services.demo_catalog import dataset_rows_to_widget_data
+from app.services.governance_enforcement import require_governed_access
 from app.services.resource_permission_service import (
     dashboard_with_persisted_permission_grants,
     dataset_with_persisted_permission_grants,
     permissions_for_actor_with_governance,
-)
-from app.services.dashboard_physical_data import (
-    DashboardDatasetQuerySession,
-    DashboardRemoteScanBudget,
 )
 
 
 MAX_EXPLICIT_WIDGET_ROWS = 500
 DASHBOARD_DATA_FORBIDDEN = "DASHBOARD_DATA_FORBIDDEN"
 DASHBOARD_DATA_UNAVAILABLE = "DASHBOARD_DATA_UNAVAILABLE"
+
+
+DASHBOARD_SYNC_INTERVAL_MINUTES_DEFAULT = 5
+DASHBOARD_SYNC_INTERVAL_MINUTES_MIN = 1
+DASHBOARD_SYNC_INTERVAL_MINUTES_MAX = 60
+
+
+def is_continuous_kafka_dataset(payload: dict[str, Any]) -> bool:
+    raw_execution_mode = payload.get("sourceExecutionMode")
+    if raw_execution_mode is None:
+        raw_execution_mode = payload.get("source_execution_mode")
+    if raw_execution_mode is not None:
+        execution_mode = str(raw_execution_mode).strip().lower()
+        source_kind = str(payload.get("sourceKind") or payload.get("source_kind") or "").strip().lower()
+        return execution_mode == "continuous" and source_kind == "kafka"
+    source_run_id = str(payload.get("sourceRunId") or payload.get("source_run_id") or "").strip().lower()
+    return source_run_id.startswith("continuous:")
+
+
+def dashboard_sync_interval_minutes(payload: dict[str, Any]) -> int:
+    value = payload.get("dashboardSyncIntervalMinutes")
+    if value is None:
+        value = payload.get("dashboard_sync_interval_minutes")
+    if value is None:
+        value = DASHBOARD_SYNC_INTERVAL_MINUTES_DEFAULT
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = DASHBOARD_SYNC_INTERVAL_MINUTES_DEFAULT
+    return max(
+        DASHBOARD_SYNC_INTERVAL_MINUTES_MIN,
+        min(DASHBOARD_SYNC_INTERVAL_MINUTES_MAX, parsed),
+    )
 
 
 class DashboardRuntimeService:
@@ -98,6 +136,84 @@ class DashboardRuntimeService:
 
         revision = self.repository.get_published_revision(dashboard_id)
         return self._build_runtime_response(dashboard_meta, DashboardRuntimeMode.PUBLISHED, revision, actor_context, dashboard_card)
+
+    def get_published_data(
+        self,
+        dashboard_id: str,
+        actor: ActorContext | None = None,
+        *,
+        scope: DashboardRefreshScope = "all",
+    ) -> DashboardPublishedDataResponse:
+        actor_context = actor or ActorContext()
+        self._require_dashboard_permission(dashboard_id, actor_context, "view")
+        revision = self.repository.get_published_revision(dashboard_id)
+        if revision is None:
+            raise ApiError(
+                ErrorCode.NOT_FOUND,
+                "Published dashboard revision not found.",
+                status.HTTP_404_NOT_FOUND,
+                {"dashboardId": dashboard_id},
+            )
+
+        pages = self.repository.list_pages(revision.id)
+        widgets_by_page_id = self.repository.list_widgets_by_page_ids([page.id for page in pages])
+        widgets = [
+            widget
+            for page in pages
+            for widget in widgets_by_page_id.get(page.id, [])
+            if widget.dataset_id
+        ]
+        datasets_by_id: dict[str, tuple[dict[str, Any], list[dict[str, Any]]]] = {}
+        continuous_intervals: list[int] = []
+        for dataset_id in dict.fromkeys(str(widget.dataset_id) for widget in widgets):
+            if scope == "continuous_kafka":
+                candidate = self.catalog_repository.get_dataset_payload(dataset_id)
+                if candidate is None or not is_continuous_kafka_dataset(candidate):
+                    continue
+                payload = self._require_dataset_query_permission(
+                    dataset_id,
+                    actor_context,
+                    dashboard_id=dashboard_id,
+                    payload=candidate,
+                )
+            else:
+                payload = self._require_dataset_query_permission(
+                    dataset_id,
+                    actor_context,
+                    dashboard_id=dashboard_id,
+                )
+            if is_continuous_kafka_dataset(payload):
+                continuous_intervals.append(dashboard_sync_interval_minutes(payload))
+            datasets_by_id[dataset_id] = (
+                payload,
+                dataset_rows_to_widget_data(payload, limit=100, prefer_storage=False),
+            )
+
+        return DashboardPublishedDataResponse(
+            auto_refresh_interval_minutes=min(continuous_intervals) if continuous_intervals else None,
+            dashboard_id=dashboard_id,
+            refresh_scope=scope,
+            revision_id=revision.id,
+            refreshed_at=datetime.now(UTC).isoformat(),
+            widgets=[
+                DashboardPublishedWidgetData(
+                    widget_id=widget.id,
+                    dataset_id=str(widget.dataset_id),
+                    data=datasets_by_id[str(widget.dataset_id)][1],
+                    dataset_updated_at=self._optional_payload_text(
+                        datasets_by_id[str(widget.dataset_id)][0],
+                        "lastUpdated",
+                        "updatedAt",
+                    ),
+                    source_run_id=self._optional_payload_text(
+                        datasets_by_id[str(widget.dataset_id)][0],
+                        "sourceRunId",
+                    ),
+                )
+                for widget in widgets
+                if str(widget.dataset_id) in datasets_by_id
+            ],
+        )
 
     def require_assistant_access(self, dashboard_id: str, actor: ActorContext) -> None:
         self._require_dashboard_permission(dashboard_id, actor, "view")
@@ -360,6 +476,61 @@ class DashboardRuntimeService:
             )
             raise
         return dashboard
+
+    def _require_dataset_query_permission(
+        self,
+        dataset_id: str,
+        actor: ActorContext,
+        *,
+        dashboard_id: str,
+        payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        if payload is None:
+            payload = self.catalog_repository.get_dataset_payload(dataset_id)
+        if payload is None:
+            raise ApiError(
+                ErrorCode.NOT_FOUND,
+                "Dataset not found.",
+                status.HTTP_404_NOT_FOUND,
+                {"dashboardId": dashboard_id, "datasetId": dataset_id},
+            )
+        dataset = dataset_with_persisted_permission_grants(
+            self.repository.db,
+            CatalogDatasetResponse.model_validate(payload),
+        )
+        api_path = f"/api/dashboards/{dashboard_id}/published/data"
+        require_governed_access(
+            self.repository.db,
+            actor,
+            action="query",
+            api_path=api_path,
+            http_method="GET",
+            metadata={"dashboardId": dashboard_id, "owner": dataset.owner},
+            resource_id=dataset.id,
+            resource_name=dataset.name,
+            resource_type="dataset",
+        )
+        try:
+            require_permission(
+                actor,
+                "query",
+                owner=dataset.owner,
+                grants=dataset.permission_grants,
+                resource_label="dataset",
+            )
+        except ApiError as exc:
+            record_forbidden_dataset_event(
+                self.repository.db,
+                action="dataset.query.forbidden",
+                actor=actor,
+                api_path=api_path,
+                http_method="GET",
+                dataset=dataset,
+                metadata={"dashboardId": dashboard_id},
+                status_code=exc.status_code,
+            )
+            raise
+        return payload
 
     def _ensure_draft_revision(self, dashboard_id: str) -> DashboardRevisionModel:
         revision = self.repository.get_draft_revision(dashboard_id)
@@ -668,6 +839,14 @@ class DashboardRuntimeService:
         if explicit_data is not None:
             return explicit_data[:MAX_EXPLICIT_WIDGET_ROWS]
         return []
+
+    @staticmethod
+    def _optional_payload_text(payload: dict[str, Any], *keys: str) -> str | None:
+        for key in keys:
+            value = payload.get(key)
+            if value is not None and str(value).strip():
+                return str(value)
+        return None
 
     @staticmethod
     def _default_config(widget_type: DashboardRuntimeWidgetType) -> DashboardWidgetConfigBase:

@@ -12,20 +12,17 @@ import {
 } from "../services/mockApi";
 import {
   createPipelineDraft as createLivePipelineDraft,
-  createTrinoSqlJob as createLiveTrinoSqlJob,
   getJob as getLiveJob,
   runJobCommand as runLiveJobCommand,
 } from "../services/pipelineApi";
-import { canQueryDatasetAs, canRunJobCommand, datasetQueryBlockedMessage, permissionDeniedMessage } from "../utils/permissions";
 import { normalizeDatasetStatus, normalizeJobStatus } from "../utils/statusMeta";
 import type {
   AuditResult,
   AuditTargetType,
   CatalogDataset,
   CreateDerivedDatasetRequest,
-  CreateTrinoSqlJobRequest,
-  CurrentUserResponse,
   DagStepsByRunId,
+  DatasetMaterializationRun,
   DraftPipeline,
   DraftPipelinePatch,
   FlowId,
@@ -629,7 +626,13 @@ function formatStorageSize(sizeBytes: number) {
 
 function recalculateDatasetFromMaterializationRuns(dataset: CatalogDataset): CatalogDataset {
   const materializationRuns = dataset.materializationRuns ?? [];
-  const activeRuns = materializationRuns.filter((run) => run.status === "success");
+  const activeRuns: DatasetMaterializationRun[] = [];
+  for (const run of materializationRuns) {
+    if (run.status !== "success") continue;
+    activeRuns.push(run);
+    const mode = run.materializationMode ?? (run.sourceKind === "kafka" ? "delta" : "snapshot");
+    if (mode === "snapshot") break;
+  }
   const latestRun = activeRuns[0];
   const rowCount = activeRuns.reduce((total, run) => total + Math.max(run.rowCount || 0, 0), 0);
   const storageSizeBytes = activeRuns.reduce((total, run) => total + Math.max(run.storageSizeBytes || 0, 0), 0);
@@ -640,6 +643,7 @@ function recalculateDatasetFromMaterializationRuns(dataset: CatalogDataset): Cat
     rows: `${rowCount.toLocaleString()} rows`,
     size: storageSizeBytes > 0 ? formatStorageSize(storageSizeBytes) : "0B",
     sourceRunId: latestRun?.runId,
+    storageLocation: latestRun?.storageLocation,
     storageSizeBytes,
   });
 }
@@ -828,13 +832,11 @@ function isTerminalRunStatus(status: JobRunSummary["status"]) {
 }
 
 export function useAskLakeData({
-  currentUser,
   enabled = true,
   onFlowChange,
   showToast,
   writeAuditLog,
 }: {
-  currentUser?: CurrentUserResponse | null;
   enabled?: boolean;
   onFlowChange: (flow: FlowId) => void;
   showToast: (message: string, tone?: "success" | "info") => void;
@@ -1028,48 +1030,6 @@ export function useAskLakeData({
     const nextDraft = buildSqlDatasetJobDraft(request, sourceDataset, currentSqlResult);
     writeAuditLog("analysis.derived_dataset.job_draft_prepared", "/api/etl/jobs", nextDraft.id);
     return createPipelineFromDraft(nextDraft, { resetDraft: false });
-  };
-
-  const createTrinoSqlJob = async (request: CreateTrinoSqlJobRequest) => {
-    if (createPendingRef.current) {
-      showToast("이미 생성 요청이 처리 중입니다.", "info");
-      return false;
-    }
-    if (apiConfig.useMock) {
-      showToast("Trino SQL Job은 실제 API 모드에서 생성할 수 있습니다.", "info");
-      return false;
-    }
-
-    createPendingRef.current = true;
-    setApiPending(true);
-    try {
-      const result = await createLiveTrinoSqlJob(request);
-      const normalizedJob = normalizeJobRow(result.job);
-      setJobs((items) => [normalizedJob, ...items.filter((item) => item.id !== normalizedJob.id)]);
-      setSelectedJob(normalizedJob);
-      writeAuditLog("analysis.trino_sql_job.created", "/api/etl/sql-jobs", normalizedJob.id);
-      showToast("반복 SQL Job을 생성했습니다.", "success");
-      onFlowChange("jobs");
-      return true;
-    } catch (error) {
-      writeAuditLog("analysis.trino_sql_job.create_failed", "/api/etl/sql-jobs", request.baseDatasetId, "failed");
-      showToast(error instanceof ApiError ? error.message : "반복 SQL Job 생성에 실패했습니다.", "info");
-      return false;
-    } finally {
-      createPendingRef.current = false;
-      setApiPending(false);
-    }
-  };
-
-  const refreshCatalogDatasets = async () => {
-    if (apiConfig.useMock) return;
-    try {
-      const refreshed = (await getDatasets()).map(normalizeDatasetRow);
-      setDatasets(refreshed);
-      setSelectedDataset((current) => refreshed.find((item) => item.id === current.id) ?? current);
-    } catch (error) {
-      showToast(error instanceof ApiError ? error.message : "카탈로그를 새로고침하지 못했습니다.", "info");
-    }
   };
 
   const deleteMaterializationRun = async (datasetId: string, runId: string) => {
@@ -1374,11 +1334,6 @@ export function useAskLakeData({
   };
 
   const openDatasetInSql = (dataset: CatalogDataset) => {
-    if (!canQueryDatasetAs(dataset, currentUser)) {
-      writeAuditLog("catalog.open_in_sql.forbidden", `/api/catalog/datasets/${dataset.id}/query`, dataset.id, "failed", { targetType: "dataset" });
-      showToast(datasetQueryBlockedMessage(dataset), "info");
-      return;
-    }
     setSelectedDataset(dataset);
     setSqlResultDraft(null);
     writeAuditLog("catalog.open_in_sql.clicked", `/api/catalog/datasets/${dataset.id}/query`, dataset.id, "success", { targetType: "dataset" });
@@ -1405,9 +1360,7 @@ export function useAskLakeData({
     openJobRuns,
     filterJobs,
     createSqlDatasetJob,
-    createTrinoSqlJob,
     deleteMaterializationRun,
-    refreshCatalogDatasets,
     runsByJobId,
     selectedDataset,
     selectedJob,

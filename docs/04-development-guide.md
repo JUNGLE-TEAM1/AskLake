@@ -29,20 +29,24 @@ Dashboard table widget은 chart renderer 전환 범위에 포함하지 않으며
 
 ```bash
 cd frontend
-npm run test:trino-timeline
 npm run verify:ui-regressions
 npm run build
 ```
 
 현재 package script는 TypeScript build와 Vite build를 함께 실행한다.
-`npm run test:trino-timeline`은 `쿼리 실행 -> 첫 결과 준비 -> 전체 결과 수집` 세 단계의 노출 순서, terminal/만료 상태, 2초 progress 지연, 실제 분자/분모 없는 bar 생략, 수집 100% 이후 manifest 마무리, legacy timing fallback을 production 순수 상태 모델에 직접 넣어 검증한다.
+`npm run verify:ui-regressions`는 SQL 분석의 Nessie Popover/Bubble/Collapsible 흐름, Dashboard Assistant Bubble의 AskLake 화이트 팔레트 variant와 reduced-motion 대응 spring entry, Dashboard `WidgetConfigPanel` 재사용, 오른쪽 차트/데이터 전환, SQL 내부 Job wizard, ETL Job의 `job.id` 기준 목록 upsert/reconciliation, Preview `limit` 전달, Catalog -> SQL wide button, Dashboard 목록의 `Alert`/`Skeleton`/`Empty`, edit의 radial range `Slider`와 Kibo dataset Tree, ApexCharts CSS 텍스트 누수 방지처럼 최근 UI 회귀가 있었던 핵심 UI 계약을 정적으로 확인한다.
+SQL/Catalog pagination 변경 시에는 같은 script가 SQL 전체 snapshot의 페이지 조작, 편집기 단일 스크롤·빈 SQL 유지, Catalog schema/sample viewer와 새로고침·첫/마지막 page 연결을 함께 확인한다. Backend unit test는 10,000행 경계뿐 아니라 20,001행 결과의 마지막 page까지 검증해 총행 제한이 다시 생기지 않게 한다.
 
-`npm run verify:ui-regressions`는 이 상태 테스트를 먼저 실행한 뒤 SQL 분석의 Nessie Popover/Bubble/Collapsible 흐름, Trino 실행 단계와 논리 페이지네이션, server-side CSV export, ETL Job의 `job.id` 기준 목록 upsert/reconciliation, Dashboard Assistant Bubble의 AskLake 화이트 팔레트 variant와 reduced-motion 대응 spring entry, Dashboard `WidgetConfigPanel` 재사용, 오른쪽 차트/데이터 전환, SQL 내부 Job wizard, Preview `limit` 전달, Catalog -> SQL wide button, Dashboard 목록의 `Alert`/`Skeleton`/`Empty`, edit의 radial range `Slider`와 Kibo dataset Tree, ApexCharts CSS 텍스트 누수 방지를 정적으로 확인한다.
+SQL run/Catalog row page의 backend 경계값은 전체 metadata를 초기화하는 `npm run verify`대신 다음 격리 unit test로 확인한다.
 
- ETL Schedule 화면은 shadcn `Card`, `ToggleGroup`, `Field`, `Select`, `Switch`, `Separator`를 조합한다. 예전 `schedule-config-*` 전용 CSS와 중복 안내·상태 카드는 제거했으며, regression check는 실행 방식에 따른 조건부 필드와 저장 계약 문구가 다시 갈라지지 않는지 확인한다.
- Dashboard CSS는 `dashboard.css`와 `dashboard-runtime.css` manifest가 책임별 하위 파일을 import한다. regression script는 로컬 CSS import를 같은 순서로 확장해 검사하므로 selector를 다른 모듈로 옮길 때 manifest 순서와 해당 check를 함께 유지한다.
-
-Trino Query Run 이력 repository filter는 `cd backend && ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-query-history`로 확인한다. 이 검증은 임시 실행 레코드를 만들고 현재 사용자 ID/name 필터가 다른 사용자의 run을 반환하지 않는지 확인한 뒤 정리한다.
+```bash
+cd backend
+PYTHONPATH=. .venv/bin/python -m unittest \
+  tests.test_sql_service_pagination \
+  tests.test_catalog_dataset_rows
+```
+ETL Schedule 화면은 shadcn `Card`, `ToggleGroup`, `Field`, `Select`, `Switch`, `Separator`를 조합한다. 예전 `schedule-config-*` 전용 CSS와 중복 안내·상태 카드는 제거했으며, regression check는 실행 방식에 따른 조건부 필드와 저장 계약 문구가 다시 갈라지지 않는지 확인한다.
+Dashboard CSS는 `dashboard.css`와 `dashboard-runtime.css` manifest가 책임별 하위 파일을 import한다. regression script는 로컬 CSS import를 같은 순서로 확장해 검사하므로 selector를 다른 모듈로 옮길 때 manifest 순서와 해당 check를 함께 유지한다.
 
 Source schema의 JSON native type, legacy `Float` 호환, CSV fallback을 확인하고 Continuous dotted source path 계약을 검증할 때는 프로젝트 Python 가상환경을 사용한다.
 
@@ -71,6 +75,13 @@ backend의 `npm run verify:rule-compiler`는 FastAPI와 local Node compiler의 �
 
 ## 3) Backend Live Mode
 
+Catalog snapshot/delta projection의 순수 회귀 테스트는 공유 DB나 object storage를 사용하지 않는다.
+
+```bash
+cd backend
+npm run verify:materialization-projection
+```
+
 프론트는 기본적으로 live backend API를 호출한다. local backend는 Postgres metadata DB를 필요로 하므로 먼저 `docker-compose.yml`의 Postgres를 올린다.
 프론트 dev server는 같은 출처의 `/api` 요청을 FastAPI `http://127.0.0.1:8080`으로 proxy한다.
 
@@ -80,55 +91,6 @@ docker compose up -d postgres
 cd backend
 npm install
 npm run dev
-```
-
-Trino Query Run 결과 page storage를 로컬에서 확인할 때는 MinIO도 함께 올리고 FastAPI에 MinIO credential을 준다. 결과 object는 `asklake-query-results` bucket에 gzip JSON으로 저장되고, metadata DB에는 object key/checksum만 남는다.
-
-```bash
-docker compose up -d postgres minio trino
-cd backend
-MINIO_ENDPOINT=http://127.0.0.1:9000 \\
-MINIO_ACCESS_KEY=m3admin \\
-MINIO_SECRET_KEY=wishuponastar \\
-TRINO_RESULT_STORAGE_AUTO_CREATE_BUCKET=true \\
-ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run trino:cleanup-results
-```
-
-Production cleanup은 Compose의 `trino-result-cleanup` worker가 `TRINO_CLEANUP_POLL_SECONDS` 간격으로 수행한다. 결과 retention은 `TRINO_RESULT_RETENTION_SECONDS`이며, worker는 terminal run을 keyset batch로 끝까지 순회해 만료 object와 metadata page를 지우고 Query Run/audit metadata는 유지한다. `npm run trino:cleanup-results`는 local one-shot 검증용이다.
-
-Collector retry는 `5s -> 15s -> 60s -> max 5m` backoff를 사용한다. `trino:collect-results`를 반복 실행해도 `nextAttemptAt` 전의 실패 run은 다시 claim하지 않는다. cancel은 collector generation을 무효화하므로 이미 진행 중인 fetch가 취소된 run을 다시 running/succeeded로 저장할 수 없다.
-
-Query Run live progress는 collector가 blocking `nextUri`를 기다리는 동안 `TRINO_PROGRESS_POLL_SECONDS`(기본 0.5초)마다 QueryInfo를 읽기 전용으로 조회한다. QueryInfo timeout은 `TRINO_PROGRESS_TIMEOUT_SECONDS`(기본 1초)이며 오류는 기존 statement stats fallback으로 처리한다. `verify:trino-query-foundation`은 QueryInfo duration/data-size parser, QueryInfo/statement 누적 지표 monotonic merge, UTC milestone set-once timing, 수집 퍼센트, 숫자형 Catalog 크기 우선, IEC 단위 파싱, Plan/Catalog 보수적 상한, warning/confirmation/hard-limit snapshot을 확인한다. `verify:trino-collector-resilience`는 장기 fetch 중 lease 주기 갱신, 중간 progress/실제 지표와 collection timing 저장이 lease/cancel/takeover/result page 계약을 깨지 않고 최초 시각을 보존하는지 확인한다.
-
-Collector generation fencing, stale worker takeover, 고정 크기 API pagination, 100건 초과 retention cleanup 경계는 아래 검증으로 확인한다. Actor별 idempotency와 동시 실행 slot의 PostgreSQL 원자성은 두 번째 명령이 실제 두 session을 경합시켜 확인한다.
-
-```bash
-cd backend
-ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-collector-resilience
-ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-submission-guard
-```
-
-반복 Trino SQL Job의 실제 Iceberg 갱신과 장애 보존 계약은 PostgreSQL, MinIO, Trino를 올린 뒤 아래 E2E로 확인한다. 스크립트는 한글 표시명 Dataset과 `TRY_CAST` Query Run을 만들고, 같은 Job을 두 번 실행해 물리 table version이 교체되는지 확인한다. 마지막에는 원본 table을 제거해 실패 Run을 만들고 직전 정상 Catalog mapping이 유지되는지 검사한 뒤 fixture를 정리한다.
-
-```bash
-docker compose up -d postgres minio trino
-cd backend
-TRINO_ENABLED=true \
-MINIO_ENDPOINT=http://127.0.0.1:9000 \
-MINIO_ACCESS_KEY=m3admin \
-MINIO_SECRET_KEY=wishuponastar \
-TRINO_RESULT_STORAGE_ACCESS_KEY=m3admin \
-TRINO_RESULT_STORAGE_SECRET_KEY=wishuponastar \
-TRINO_RESULT_STORAGE_AUTO_CREATE_BUCKET=true \
-ASKLAKE_FASTAPI_PYTHON=.venv/bin/python \
-npm run verify:trino-sql-job-e2e
-```
-
-Trino Query Run collector는 API request와 분리된 worker다. local에서 query를 제출한 뒤 브라우저 polling 없이 한 번 수집하려면 아래 명령을 실행한다. production Compose의 `trino-result-collector` service는 같은 명령을 poll loop로 계속 실행하며, DB lease가 만료된 run을 다른 worker가 재시작 뒤 이어받는다.
-
-```bash
-cd backend
-ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run trino:collect-results
 ```
 
 `frontend/.env` 또는 로컬 env에는 API base URL만 둔다.
@@ -256,6 +218,24 @@ PYTHONPATH=. .venv/bin/python scripts/verify-airflow-catalog-reconciliation.py
 cd backend
 .venv/bin/python -m app.seed.seed_dashboard_demo
 ```
+
+Kafka Continuous Job 생성 화면의 Source 고급 설정은 Spark micro-batch `triggerIntervalSeconds`와 별도로 `dashboardSyncIntervalMinutes`를 받는다. Dashboard 동기화 주기는 1~60분 정수이고 기본값은 5분이며 checkpoint fingerprint에는 포함하지 않는다. 기존 Continuous Job에 이 필드가 없으면 backend와 frontend hydrate 모두 5분으로 해석한다.
+
+Published Dashboard는 runtime snapshot을 처음 hydrate한 뒤 `GET /api/dashboards/{dashboardId}/published/data?scope=continuous_kafka`를 즉시 호출한다. 응답의 Kafka Continuous widget만 갱신하고 `autoRefreshIntervalMinutes`가 있으면 성공 요청 종료 시점부터 해당 분만큼 뒤에 다음 요청을 예약한다. 여러 Kafka Continuous Job이 연결되면 backend가 가장 짧은 주기를 반환한다. S3/Parquet, SQL, 일반 ETL, Kafka Snapshot widget만 있거나 대상이 전혀 없으면 interval이 `null`이므로 자동 polling을 시작하지 않는다. Draft 화면에서는 실행하지 않으며, 브라우저 탭이 hidden이면 예약을 취소하고 visible 복귀 시 대상이 있을 때 즉시 재개한다. Background 오류는 마지막 성공 chart를 유지한다. 상단 수동 동기화는 query를 생략한 기본 `scope=all` 요청 한 번으로 현재 Published revision의 모든 page에 있는 dataset 연결 widget 전체를 갱신한다.
+
+Dashboard live-data 계약과 Kafka sample 전파를 외부 인프라 없이 확인하려면 아래 검증을 실행한다.
+
+```powershell
+cd backend
+npm run verify:dashboard-published-data
+python scripts/verify-kafka-continuous-contract.py
+
+cd ..\frontend
+npm run verify:ui-regressions
+npm run build
+```
+
+수동 smoke에서는 기본 설정 Kafka Continuous widget이 있는 Published 화면의 상태 배지가 `자동 동기화 · 5분`으로 전환되는지 확인한다. 서로 다른 주기의 Kafka Continuous widget을 함께 두면 가장 짧은 분 값이 표시되어야 하고, legacy 설정 누락 Job도 5분이어야 한다. Kafka Continuous widget이 없는 Dashboard에서는 자동 요청이 반복되지 않아야 하며 S3/Parquet, SQL, 일반 ETL, Kafka Snapshot widget은 `continuous_kafka` 응답으로 바뀌지 않아야 한다. hidden tab에서 요청이 멈추고 복귀 즉시 한 번 재개되는지, backend 오류 중에도 기존 차트가 유지되는지, 상단 수동 동기화를 누르면 `scope=all` 한 번으로 source 종류와 관계없이 Dashboard 전체 widget이 갱신되는지도 확인한다.
 
 OpenAI API key는 프론트가 아니라 backend env에만 둔다. 로컬에서는 `backend/.env` 또는 실행 환경에 아래 값을 둔다.
 `OPENAI_API_KEY`가 없거나 `OPENAI_ASSISTANT_ENABLED=false`이면 backend는 응답에 `mock fallback`을 명시한 fallback 응답을 반환한다.
@@ -414,7 +394,7 @@ Phase 2부터 prod-like Compose는 내부 broker `redpanda:9092`를 제공한다
 ETL 생성 화면은 `GET /api/etl/sources/defaults`에서 backend의 `ASKLAKE_KAFKA_BROKER` 값을 읽는다. 로컬 backend 기본값은 `127.0.0.1:19092`, prod-like Compose 기본값은 `redpanda:9092`이며 frontend build 변수로 같은 값을 중복 관리하지 않는다.
 Kafka 소스 연결 테스트는 새 샘플 consumer group이 첫 메시지를 받을 때까지 `ASKLAKE_KAFKA_SAMPLE_TIMEOUT_MS`(기본 8초)를 기다린다. 첫 메시지 이후 `ASKLAKE_KAFKA_SAMPLE_MIN_MESSAGES`(기본 3건)에 도달하면 `ASKLAKE_KAFKA_SAMPLE_IDLE_MS`(기본 0.5초) idle window로 종료한다. 최소 건수에 도달하지 못한 희소 topic은 `ASKLAKE_KAFKA_SAMPLE_SETTLE_MS`(기본 1.5초)까지만 추가 메시지를 기다린 뒤 현재 샘플을 반환한다.
 
-Continuous worker는 Spark 4.0.1/Scala 2.13 Kafka connector를 사용한다. `ASKLAKE_SPARK_KAFKA_PACKAGE=org.apache.spark:spark-sql-kafka-0-10_2.13:4.0.1`과 `ASKLAKE_SPARK_HADOOP_AWS_PACKAGE`을 함께 설정하고, backend Docker socket 및 `ASKLAKE_SPARK_REPORT_DIR` 공유 mount를 유지해야 한다.
+Continuous worker는 Spark 4.0.1/Scala 2.13 Kafka connector를 사용한다. 현재 Continuous worker/maintenance manager는 Docker container lifecycle API에 의존하므로 socketless production backend에서는 지원되지 않는다. 이번 REST 전환 범위는 일반 batch와 Parquet source inspect이며, Continuous production 전환은 별도 작업으로 관리한다.
 
 Production-like Continuous E2E는 Compose를 먼저 올린 뒤 opt-in으로 실행한다. retained backlog, schema/Rule quarantine, Transform/Quality 카운터, Rule-aware replay, 신규 이벤트, pause/resume, worker kill 후 checkpoint restart, Catalog fingerprint materialization, duplicate-free counter를 검증한다. worker 시작 시 target `s3a://` bucket은 MinIO에 없으면 자동 생성된다. 사용자 요청으로 인한 pause/stop의 SIGTERM 종료는 각각 `paused`/`stopped`로 처리하고, 요청 없이 종료된 worker만 `failed`가 된다.
 
@@ -451,7 +431,7 @@ npm run verify:kafka-continuous-soak
 
 Job 상세의 Continuous Runtime은 partition lag, 처리량, schema drift, Rule fingerprint/경고/격리/실패 카운터와 bounded/redacted worker log를 표시한다. Quarantine inspection/replay와 compaction은 worker를 일시정지하거나 중지한 상태에서 실행한다. Replay는 Lake의 격리 Parquet를 읽어 `partition:offset` anti-join 후 현재 schema policy와 canonical Rule을 다시 적용하며, 여전히 실패하는 Rule 행은 target으로 우회하지 않는다. Compaction은 `_compactions/run_id=*`에 staged output을 만들며 V1에서는 원본 batch를 삭제하거나 active Catalog path를 교체하지 않는다.
 
-수동 UI 확인에서는 Kafka Source 연결 화면에서 `Continuous`를 선택해 target format이 Parquet로 유지되는지 확인한다. 생성 후 수집/처리 목록과 상세에서 `스트림 시작`, `일시정지`, `체크포인트 재개`, `스트림 중지`가 Snapshot의 run/retry와 섞이지 않는지, runtime counter/heartbeat/checkpoint가 polling으로 갱신되는지 확인한다.
+수동 UI 확인에서는 Kafka Source 연결 화면에서 `Continuous`를 선택해 target format이 Parquet로 유지되는지 확인한다. Source 고급 설정에서 Dashboard 동기화 주기가 기본 5분이고 1~60분만 허용되는지, Spark trigger 간격을 바꿔도 두 값이 별도로 저장되는지 확인한다. 생성 후 수집/처리 목록과 상세에서 `스트림 시작`, `일시정지`, `체크포인트 재개`, `스트림 중지`가 Snapshot의 run/retry와 섞이지 않는지, runtime counter/heartbeat/checkpoint가 polling으로 갱신되는지 확인한다.
 
 ```bash
 cd backend
@@ -485,6 +465,15 @@ AWS 배포 전에는 로컬에서 prod-like compose 구성이 유효한지 먼�
 ```bash
 docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml config
 ```
+
+실제 서버에서는 Compose 실행 전에 host directory와 env를 준비하고 preflight를 통과시킨다. `ASKLAKE_HOST_DATA_DIR` 아래 `spark-ivy`, `spark-output`, `spark-runs`, `samples`, `review-text-models`와 `ASKLAKE_REPLAY_HOST_INPUT_DIR`가 먼저 존재해야 한다. `spark-dir-init`가 공유 경로를 Spark image의 UID/GID `185:185`로 정규화한다.
+
+```bash
+mkdir -p /var/lib/asklake/{spark-ivy,spark-output,spark-runs,samples,review-text-models,replay-input}
+scripts/verify-deploy-env.sh deploy/.env deploy/docker-compose.prod.yml
+```
+
+Production backend에는 `/var/run/docker.sock`과 Docker CLI를 넣지 않는다. Batch/Parquet inspect는 내부 전용 `spark-master:6066` REST endpoint에 제출하고 terminal 상태와 timeout을 확인한다. REST/UI/master port는 host에 publish하지 않는다.
 
 로컬에서 전체 stack을 띄울 때는 예시 env를 기준으로 실행할 수 있다.
 
@@ -630,27 +619,6 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:fastapi-pair2
 ```
-
-Issue #488 Phase 2의 Trino protocol parser, Query Run lifecycle mapping, Dataset physical table compiler는 coordinator 없이 아래 unit verification으로 확인한다.
-
-```bash
-cd backend
-ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-query-foundation
-ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:query-engine-registration
-```
-
-`verify:query-engine-registration`은 한글 Dataset의 안정적 ID/물리 table 이름, user ID owner grant, materialization 전 현재 query 권한 재검사, browser-independent collector 완료, Catalog `pending -> available`, `registration_failed` mapping 제거/재검증 복구, coordinator 제출 실패 후 재생성, Spark ETL의 검증된 mapping만 SQL 노출하는 조건을 확인한다. 실제 local Trino E2E에서는 임시 Iceberg CTAS 뒤 `DESCRIBE`와 Catalog mapping을 확인하고 검증 table/metadata를 반드시 정리한다.
-
-Query Result Phase 0 이후 대용량 결과 작업은 `docs/trino-query-result-storage-contract.md`를 먼저 따른다. Phase 1~3에서는 MinIO page storage, collector restart recovery, signed cursor, expiry cleanup을 각각 검증하며, PostgreSQL에 result row를 저장하는 현재 smoke만으로 대용량 결과 완료를 주장하지 않는다.
-
-Production Trino를 켜기 전에는 `deploy/.env`의 `TRINO_TLS_CA_FILE`, `TRINO_TLS_KEYSTORE_FILE`, `TRINO_PASSWORD_FILE`가 서버에 존재하는지 확인한다. Password file은 bcrypt/PBKDF2 hash만 포함하며, Trino JDBC, warehouse MinIO, query-result MinIO credential은 backend/Postgres/MinIO root credential과 각각 분리한다. `scripts/deploy.sh`는 bootstrap service를 실행하고 Trino health 뒤 아래 readiness를 자동 호출한다. 수동 확인도 같은 명령을 사용한다.
-
-```bash
-cd backend
-ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-production-readiness
-```
-
-Readiness는 query identity `SELECT`, production read-only CTAS 차단, materializer schema/CTAS/`DESCRIBE`/drop, 전용 result bucket write/read/delete를 확인한다. `TRINO_ENABLED=false`인 배포는 deploy script에서 명시적으로 skip한다.
 
 Dataset 권한 기준을 확인할 때는 아래 smoke를 실행한다. 권한 없는 viewer의 Catalog 목록/상세/SQL preview 차단, user grant에 따른 view/query 허용, group grant에 따른 detail 허용, `delete` grant의 materialization-run 삭제 허용을 검증한다.
 

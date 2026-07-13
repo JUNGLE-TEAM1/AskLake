@@ -260,3 +260,24 @@ export type DashboardRuntimeResponse = {
   revision: DashboardRevision | null;
   widgetsByPageId: Record<string, DashboardRuntimeWidget[]>;
 };
+
+export type DashboardWidgetDataRefreshItem = {
+  data: Array<Record<string, unknown>>;
+  datasetId: string;
+  datasetUpdatedAt?: string | null;
+  sourceRunId?: string | null;
+  widgetId: string;
+};
+
+export type DashboardPublishedDataRefreshScope = "all" | "continuous_kafka";
+
+export type DashboardPublishedDataResponse = {
+  autoRefreshIntervalMinutes: number | null;
+  dashboardId: string;
+  refreshScope: DashboardPublishedDataRefreshScope;
+  refreshedAt: string;
+  revisionId: string;
+  widgets: DashboardWidgetDataRefreshItem[];
+};
+
+export type DashboardWidgetDataRefreshResponse = DashboardPublishedDataResponse;
