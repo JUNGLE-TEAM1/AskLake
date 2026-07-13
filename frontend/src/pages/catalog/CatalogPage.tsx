@@ -70,7 +70,8 @@ import { TagList } from "@/components/ui/tag-list";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { IconButton } from "@/components/ui/icon-button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { getCatalogDatasetRows } from "../../services/catalogApi";
+import { getCatalogDataset, getCatalogDatasetRows } from "../../services/catalogApi";
+import { apiConfig } from "../../services/apiClient";
 import { getDatasetLineageGraph } from "../../services/mockApi";
 import type { AuditResult, CatalogDataset, CatalogDatasetRowsResponse, DatasetMaterializationRun, LineageGraph, LineageGraphDataset, LineageLayer } from "../../types";
 import { canDeleteDatasetMaterializationRun, canQueryDatasetAs, permissionDeniedMessage } from "../../utils/permissions";
@@ -120,7 +121,7 @@ type CatalogSchemaRow = {
   description: string;
   id: string;
   name: string;
-  nullable: "NO" | "YES";
+  sample: string;
   type: string;
 };
 
@@ -177,6 +178,16 @@ function getCatalogTagsByFrequency(datasets: CatalogDataset[]) {
   return Array.from(tagCounts.values())
     .sort((left, right) => right.count - left.count || left.firstIndex - right.firstIndex)
     .map(({ tag }) => tag);
+}
+
+function formatCatalogDateTime(value: string) {
+  const parsed = Date.parse(value);
+  if (Number.isNaN(parsed)) return value || "-";
+  return new Intl.DateTimeFormat("ko-KR", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "Asia/Seoul",
+  }).format(new Date(parsed));
 }
 
 function formatRunCreatedAt(value: string) {
@@ -325,6 +336,8 @@ export function CatalogPage({
   const [currentPage, setCurrentPage] = useState(1);
   const [mobilePreviewOpen, setMobilePreviewOpen] = useState(false);
   const [pinnedDatasetIds, setPinnedDatasetIds] = useState<string[]>([]);
+  const [previewDetailError, setPreviewDetailError] = useState<string | null>(null);
+  const [previewDetailLoading, setPreviewDetailLoading] = useState(false);
   const [selectedSqlDatasetId, setSelectedSqlDatasetId] = useState<string | null>(null);
   const [searchText, setSearchText] = useState("");
   const [debouncedSearchText, setDebouncedSearchText] = useState("");
@@ -383,6 +396,36 @@ export function CatalogPage({
   }, [currentCatalogPage, currentPage]);
 
   useEffect(() => {
+    if (apiConfig.useMock) {
+      setPreviewDetailError(null);
+      setPreviewDetailLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    const datasetId = previewDataset.id;
+    setPreviewDetailError(null);
+    setPreviewDetailLoading(true);
+
+    getCatalogDataset(datasetId)
+      .then((dataset) => {
+        if (cancelled) return;
+        setPreviewDataset((currentDataset) => currentDataset.id === datasetId ? dataset : currentDataset);
+      })
+      .catch((detailError) => {
+        if (cancelled) return;
+        setPreviewDetailError(detailError instanceof Error ? detailError.message : "데이터셋 상세 정보를 불러오지 못했습니다.");
+      })
+      .finally(() => {
+        if (!cancelled) setPreviewDetailLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [previewDataset.id]);
+
+  useEffect(() => {
     if (!hasCatalogResults || paginatedDatasets.length === 0) return;
 
     const selectedInResults = paginatedDatasets.find((dataset) => dataset.id === selectedDataset.id);
@@ -391,7 +434,7 @@ export function CatalogPage({
       ? selectedInResults ?? previewInResults ?? paginatedDatasets[0]
       : previewInResults ?? selectedInResults ?? paginatedDatasets[0];
 
-    if (nextPreview !== previewDataset) {
+    if (nextPreview.id !== previewDataset.id) {
       setPreviewDataset(nextPreview);
     }
   }, [hasCatalogResults, paginatedDatasets, previewDataset, selectedDataset.id]);
@@ -496,15 +539,22 @@ export function CatalogPage({
       <Separator />
       <ScrollArea className="catalog-preview-scroll" type="auto">
         <div className="catalog-preview-body">
+          {previewDetailError ? (
+            <Alert className="catalog-preview-detail-error" variant="destructive">
+              <AlertCircle />
+              <AlertTitle>기본 정보를 불러오지 못했습니다.</AlertTitle>
+              <AlertDescription>{previewDetailError}</AlertDescription>
+            </Alert>
+          ) : null}
           <Accordion className="catalog-preview-accordion" type="multiple">
             <AccordionItem value="overview">
               <AccordionTrigger>
                 <span className="catalog-preview-accordion-label"><LayoutGrid /> 기본 정보</span>
               </AccordionTrigger>
               <AccordionContent>
-                <div className="catalog-overview-metrics catalog-preview-metrics">
+                <div aria-busy={previewDetailLoading} className="catalog-overview-metrics catalog-preview-metrics">
                   <CatalogMiniMetric label="품질 지표" value={previewDataset.quality} />
-                  <CatalogMiniMetric label="최근 갱신 일시" value={previewDataset.lastUpdated} />
+                  <CatalogMiniMetric label="최근 갱신 일시" value={formatCatalogDateTime(previewDataset.lastUpdated)} />
                   <CatalogMiniMetric label="데이터 담당자" value={previewDataset.owner} />
                   <CatalogMiniMetric label="행 수" value={previewDataset.rows} />
                   <CatalogMiniMetric label="파일 크기" value={previewDataset.size} />
@@ -698,6 +748,9 @@ export function CatalogPage({
                               <TooltipContent>{dataset.name}</TooltipContent>
                             </Tooltip>
                             <DatasetStatusBadge dataset={dataset} shape="compact" />
+                            {dataset.description.trim() ? (
+                              <span aria-hidden="true" className="catalog-result-description" title={dataset.description}>{dataset.description}</span>
+                            ) : null}
                             {isPinned && (
                               <Badge className="catalog-result-pin-badge" aria-label="상단 고정된 데이터셋" shape="compact" size="sm">
                                 <Pin />
@@ -1049,21 +1102,28 @@ function CatalogDatasetViewer({ dataset }: { dataset: CatalogDataset }) {
   return (
     <div className="catalog-dataset-viewer">
       <CatalogSchema dataset={dataset} />
-      <CatalogSample dataset={dataset} />
     </div>
   );
 }
 
 function CatalogSchemaTable({ dataset, maxRows, variant = "full" }: { dataset: CatalogDataset; maxRows?: number; variant?: CatalogSchemaTableVariant }) {
   const data = useMemo(
-    () => dataset.schema.slice(0, maxRows ?? dataset.schema.length).map(([name, type], index) => ({
-      description: `${dataset.name}의 ${name} 필드`,
-      id: `${name}-${index}`,
-      name,
-      nullable: index % 2 === 0 ? "NO" as const : "YES" as const,
-      type,
-    })),
-    [dataset.name, dataset.schema, maxRows],
+    () => {
+      const firstSampleRow = dataset.sampleRows[0] ?? [];
+
+      return dataset.schema.slice(0, maxRows ?? dataset.schema.length).map(([name, type], index) => {
+        const sampleValue = firstSampleRow[index];
+
+        return {
+          description: `${dataset.name}의 ${name} 필드`,
+          id: `${name}-${index}`,
+          name,
+          sample: sampleValue === undefined || String(sampleValue).trim() === "" ? "-" : String(sampleValue),
+          type,
+        };
+      });
+    },
+    [dataset.name, dataset.sampleRows, dataset.schema, maxRows],
   );
   const columns = useMemo<ColumnDef<CatalogSchemaRow>[]>(
     () => {
@@ -1094,12 +1154,12 @@ function CatalogSchemaTable({ dataset, maxRows, variant = "full" }: { dataset: C
       return [
         ...baseColumns,
         {
-          accessorKey: "nullable",
-          cell: (info) => info.getValue<string>(),
+          accessorKey: "sample",
+          cell: (info) => <span className="catalog-schema-sample-cell" title={info.getValue<string>()}>{info.getValue<string>()}</span>,
           enableSorting: true,
-          header: "NULL 허용",
+          header: "샘플",
           meta: {
-            widthClassName: "w-[16%]",
+            widthClassName: "w-[28%]",
           } as DataTableColumnMeta,
         },
         {
@@ -1109,7 +1169,7 @@ function CatalogSchemaTable({ dataset, maxRows, variant = "full" }: { dataset: C
           header: "설명",
           meta: {
             cellClassName: "catalog-schema-description-cell",
-            widthClassName: "w-[38%]",
+            widthClassName: "w-[26%]",
           } as DataTableColumnMeta,
         },
       ];

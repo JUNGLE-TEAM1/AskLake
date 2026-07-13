@@ -51,6 +51,7 @@ import {
   Zap,
 } from "lucide-react";
 import { Field, PageTitle } from "../../components/common";
+import { getSourceBrandMeta, SourceBrandIcon } from "../../components/source/SourceBrand";
 import { getCatalogDataset } from "../../services/catalogApi";
 import { getCellphonesReviewAnalysis, runCellphonesReviewAnalysis, type ReviewAnalysisSummary } from "../../services/reviewAnalysisApi";
 import { compactContinuousTarget, getContinuousMaintenanceRuns, getContinuousQuarantine, getContinuousSessionBatches, getContinuousSessions, getContinuousWorkerLogs, replayContinuousQuarantine } from "../../services/pipelineApi";
@@ -459,10 +460,9 @@ export function JobsLandingPage({
             새 수집/처리 생성
           </Button>
         )}
-        descriptionClassName="text-xl leading-8"
-        description="데이터 소스를 연결하고 ETL 작업의 상태, 실행, 로그를 관리합니다."
         icon={<Database size={30} />}
         iconClassName="mt-0 size-16 rounded-xl"
+        leadingAlign="center"
         size="lg"
         title="수집/처리"
         titleClassName="text-4xl"
@@ -471,8 +471,8 @@ export function JobsLandingPage({
         <Panel className="jobs-metrics-card">
           <PanelHeader
             className="min-h-[68px] [&_h2]:text-xl"
-            icon={<BarChart3 size={16} />}
-            iconClassName="size-11 [&_svg]:size-[22px]"
+            icon={<Activity size={16} />}
+            iconClassName="size-11 border border-blue-100 bg-white text-blue-700 shadow-sm [&_svg]:size-[22px]"
             title="작업 현황"
           />
           <div className="jobs-panel-metrics grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -873,7 +873,7 @@ function JobsTableSection({
       accessorFn: (row) => row.job.target,
       cell: ({ row }) => {
         const { job } = row.original;
-        const { path: sourcePath, type: sourceType } = getJobListSourceDisplay(job);
+        const { brandKind, path: sourcePath, type: sourceType } = getJobListSourceDisplay(job);
 
         return (
           <DataTableStackedCell className="gap-1.5">
@@ -881,7 +881,7 @@ function JobsTableSection({
             <Tooltip>
               <TooltipTrigger asChild>
                 <div className="flex min-w-0 cursor-help items-center gap-1.5 text-sm text-slate-500">
-                  <Database aria-hidden="true" className="size-3.5 shrink-0 text-slate-400" />
+                  <SourceBrandIcon className="shrink-0" kind={brandKind} size={17} />
                   <span className="shrink-0 font-semibold">{sourceType}</span>
                 </div>
               </TooltipTrigger>
@@ -1012,8 +1012,8 @@ function JobsTableSection({
       <Panel aria-label={ariaLabel}>
         <PanelHeader
           className="min-h-[68px] [&_h2]:text-xl"
-          icon={<Table2 size={16} />}
-          iconClassName="size-11 [&_svg]:size-[22px]"
+          icon={<ListChecks size={16} />}
+          iconClassName="size-11 border border-blue-100 bg-white text-blue-700 shadow-sm [&_svg]:size-[22px]"
           title={title}
         />
         {toolbar}
@@ -1605,22 +1605,12 @@ const hiddenJobDetailFieldLabels = new Set([
   "Token / Secret",
 ]);
 
-const jobSourceTypeLabelMap: Record<string, string> = {
-  "Data Lake": "데이터 레이크",
-  "File / S3": "파일 / 오브젝트 스토리지",
-  "Stream / Kafka": "스트림 / Kafka",
-};
-
 function getJobDetailFieldLabel(label: string) {
   return jobDetailFieldLabelMap[label] ?? label;
 }
 
 function isVisibleJobDetailField(label: string) {
   return !label.startsWith("__") && !hiddenJobDetailFieldLabels.has(label);
-}
-
-function getJobSourceTypeLabel(value: string) {
-  return jobSourceTypeLabelMap[value] ?? value;
 }
 
 type JobEndpointItem = {
@@ -1742,9 +1732,12 @@ function getJobListSourceDisplay(job: JobRowData) {
 
   const path = job.sourceLabel?.trim() || inferredPath || job.source;
 
+  const brand = getSourceBrandMeta(rawType);
+
   return {
+    brandKind: brand.kind,
     path,
-    type: getJobSourceTypeLabel(rawType),
+    type: brand.label,
   };
 }
 
@@ -2099,7 +2092,7 @@ export function JobDetailPage({
   onRuns: () => void;
 }) {
   const rawSourceType = job.sourceType ?? job.source.split(" / ")[0] ?? job.source;
-  const sourceType = getJobSourceTypeLabel(rawSourceType);
+  const sourceType = getSourceBrandMeta(rawSourceType).label;
   const sourcePath = job.sourceLabel ?? (job.source.split(" / ").slice(1).join(" / ") || job.source);
   const stats = job.stats ?? fallbackJobStats(job);
   const realtime = isRealtimeJob(job);

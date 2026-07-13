@@ -23,7 +23,6 @@ export function Sidebar({
       <button className="brand" type="button" aria-label="수집/처리 랜딩 페이지로 이동" onClick={onBrandClick}>
         <img src={asklakeLogo} alt="AskLake" />
       </button>
-      <p className="nav-eyebrow">나만무 Data Lake</p>
       <nav className="nav-list">
         {visibleNavItems.map((item) => {
           const { icon: Icon, id, label } = item;

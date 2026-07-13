@@ -284,7 +284,7 @@ Host prerequisites:
 
 - Docker Engine and the Docker Compose plugin.
 - Git, SSH, curl, and AWS CLI for `scripts/deploy.sh`.
-- A writable Docker socket at `/var/run/docker.sock`; the backend uses it to start Spark submit/master/worker containers.
+- Host directories under `ASKLAKE_HOST_DATA_DIR`; Compose prepares them for Spark UID/GID `185:185`.
 - EC2 repo checkout at `ASKLAKE_DEPLOY_PATH`, default `/opt/asklake`.
 
 Compose/runtime services declared in `deploy/docker-compose.prod.yml`:
@@ -298,6 +298,7 @@ Compose/runtime services declared in `deploy/docker-compose.prod.yml`:
 - Airflow metadata `postgres:16-alpine`
 - `redpandadata/redpanda:v24.3.1`
 - one-shot `aws-s3-readiness`, built from `backend/Dockerfile`
+- `spark-master`, `spark-worker`, and `spark-dir-init`, built from the `spark-runtime` target
 
 Airflow orchestration dependencies:
 
@@ -308,14 +309,14 @@ Airflow orchestration dependencies:
 
 Backend deploy image dependencies:
 
-- OS packages from `backend/Dockerfile`: `nodejs`, `npm`, `docker-cli`, `ca-certificates`.
+- OS packages from `backend/Dockerfile`: `nodejs`, `npm`, `ca-certificates`. The backend image intentionally omits Docker CLI.
 - Python packages from `backend/requirements.txt`: FastAPI/Uvicorn, SQLAlchemy, psycopg, pydantic settings, dotenv, and DuckDB.
 - Node connector packages from `backend/package.json`: S3, Kafka, MongoDB, Parquet, and PostgreSQL clients.
 
 Spark runtime dependencies:
 
-- Spark jobs run in `ASKLAKE_SPARK_IMAGE`, default `apache/spark:4.0.1`.
-- The backend starts/uses `ASKLAKE_SPARK_MASTER_CONTAINER` and `ASKLAKE_SPARK_WORKER_CONTAINER` through Docker.
+- Spark services use the `apache/spark:4.0.1`-based `spark-runtime` image with application scripts baked in.
+- Production backend submits cluster-mode drivers to the internal Spark Standalone REST endpoint and polls terminal state; it does not receive the Docker socket.
 - S3A jobs use `ASKLAKE_SPARK_HADOOP_AWS_PACKAGE`, default `org.apache.hadoop:hadoop-aws:3.4.1`.
 - Spark output/report/sample host directories are rooted at `ASKLAKE_HOST_DATA_DIR`, default `/tmp/asklake`.
 
@@ -331,4 +332,4 @@ Local deploy dependency verification:
 scripts/verify-deploy-dependencies.sh
 ```
 
-This renders the production Compose config, renders the local Airflow orchestration Compose config, builds backend/frontend deploy images, checks backend Python and Node imports, checks Docker CLI availability in the backend image, verifies that the Spark and Airflow images are available, and imports the Airflow DAG inside the Airflow image. 실제 AWS bucket/IAM 검증은 EC2에서 `aws-s3-readiness`가 수행한다.
+This renders the production and local Airflow Compose configs, builds backend/frontend/Spark runtime images, checks backend Python and Node imports, verifies Docker CLI is absent from backend, verifies UID 185 and embedded Spark scripts, checks Spark/Airflow image availability, and imports the Airflow DAG inside the Airflow image. 실제 AWS bucket/IAM 검증은 EC2에서 one-shot `aws-s3-readiness`가 수행한다.

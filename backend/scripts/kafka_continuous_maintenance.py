@@ -5,6 +5,7 @@ import math
 import os
 import re
 from datetime import datetime, timezone
+from pathlib import Path
 
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import array, array_except, array_union, col, concat, concat_ws, from_json, get_json_object, lit, map_keys, size, transform, when
@@ -347,6 +348,17 @@ def compact(spark: SparkSession, output_path: str, run_id: str):
     }
 
 
+def publish_result(result: dict) -> None:
+    result_file = os.environ.get("ASKLAKE_MAINTENANCE_RESULT_FILE", "").strip()
+    if result_file:
+        target = Path(result_file)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary = target.with_name(f"{target.name}.{os.getpid()}.tmp")
+        temporary.write_text(f"{json.dumps(result)}\n", encoding="utf-8")
+        os.replace(temporary, target)
+    print(f"ASKLAKE_CONTINUOUS_MAINTENANCE_RESULT={json.dumps(result)}")
+
+
 def main():
     kind = os.environ["ASKLAKE_MAINTENANCE_KIND"]
     run_id = os.environ["ASKLAKE_MAINTENANCE_RUN_ID"]
@@ -362,7 +374,7 @@ def main():
     else:
         raise ValueError(f"Unsupported maintenance kind: {kind}")
     result.update({"endedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"), "runId": run_id})
-    print(f"ASKLAKE_CONTINUOUS_MAINTENANCE_RESULT={json.dumps(result)}")
+    publish_result(result)
 
 
 if __name__ == "__main__":

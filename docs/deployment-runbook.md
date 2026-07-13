@@ -57,7 +57,7 @@ Before deploying a branch, run the dependency verification from the repo root:
 scripts/verify-deploy-dependencies.sh
 ```
 
-It checks the production Compose file, local Airflow orchestration Compose file, backend Python dependencies, backend Node connector dependencies, Docker CLI availability for the Spark runner, Spark image availability, Airflow image availability, Airflow DAG import, and the frontend production build image. If this fails, fix the declared dependency or env key before running `scripts/deploy.sh deploy`.
+It checks the production Compose file, local Airflow orchestration Compose file, backend Python and Node dependencies, absence of Docker CLI in the backend image, UID 185 and embedded scripts in the Spark runtime image, Spark/Airflow image availability, Airflow DAG import, and the frontend production build image. If this fails, fix the declared dependency or env key before running `scripts/deploy.sh deploy`.
 
 Backend run/retry actions require these Airflow variables in the server `deploy/.env` when DAG submission is expected:
 
@@ -70,7 +70,7 @@ AIRFLOW_USERNAME=airflow
 AIRFLOW_PASSWORD=replace-with-strong-airflow-password
 AIRFLOW_REQUEST_TIMEOUT_SECONDS=10
 AIRFLOW_EXECUTION_API_TOKEN=replace-with-strong-airflow-execution-token
-ASKLAKE_EXECUTION_API_TIMEOUT_SECONDS=930
+ASKLAKE_EXECUTION_API_TIMEOUT_SECONDS=7500
 AIRFLOW_INTERNAL_BASE_URL=http://backend:8080
 AIRFLOW_INTERNAL_TOKEN=replace-with-strong-internal-token
 AIRFLOW_INTERNAL_TIMEOUT_SECONDS=1800

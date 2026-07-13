@@ -54,6 +54,8 @@ S3_ALLOWED_BUCKETS=<raw-bucket>,<output-bucket>
 
 초기 object sample은 IAM 권한이 있는 로컬 shell 또는 EC2에서 AWS CLI로 업로드한다.
 
+Production Spark master의 REST 6066, master 7077, UI 8080/8081은 Compose network 내부에서만 사용하고 host에 publish하지 않는다. Backend에는 Docker socket이나 Docker CLI를 제공하지 않고 Spark REST로 batch와 source inspect를 제출한다.
+
 ```bash
 aws s3 cp /path/to/sample.csv s3://<raw-bucket>/asklake-fixtures/sample.csv
 ```

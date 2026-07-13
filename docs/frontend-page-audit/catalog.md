@@ -110,12 +110,11 @@
 - dataset status, RAG, row/size/run metric, dataset tag, schema type, materialization status를 shadcn `Badge`로 통일했다.
 - 카탈로그의 badge와 action은 기본 pill 대신 `compact` shape를 사용해 작은 반경의 사각형으로 표시한다.
 - 검색 결과 없음과 preview 없음은 shadcn `Empty`, append 결과 삭제 확인은 shadcn `AlertDialog`를 사용한다.
-- append 결과 목록, sample table, schema modal의 내부 스크롤을 shadcn `ScrollArea`로 전환했다. ReactFlow lineage viewport는 graph engine 소유이므로 유지한다.
+- append 결과 목록과 schema modal의 내부 스크롤을 shadcn `ScrollArea`로 전환했다. ReactFlow lineage viewport는 graph engine 소유이므로 유지한다.
 - 공통 `Button`/`Badge`의 기본 variant와 shape는 유지하고, 선택형 `compact` shape만 추가해 다른 화면의 기본 UI는 변경하지 않는다.
 
 - 검색 조건의 빠른 태그 버튼 영역을 제거하고 텍스트 검색만 유지했다. 결과 카드 안의 데이터셋 태그는 식별 정보이므로 유지한다.
 - 결과 카드 본문 클릭은 우측 미리보기 선택만 수행하고, append 결과는 별도 화살표 버튼으로만 열고 닫는다.
-- 샘플 데이터의 가로 이동 컨트롤을 실제 스크롤 위치와 동기화된 shadcn `Slider`로 교체했다.
 - 우측 지표의 긴 날짜/담당자 값은 카드 내부에서 줄바꿈하고, append 삭제는 작은 shadcn 휴지통 아이콘 버튼으로 교체했다.
 - 우측 스키마 미리보기 헤더의 컬럼 수 메타를 제거했다.
 - shadcn 재점검으로 append 선택 행을 `Panel`과 `Button`으로 분리하고, preview/card surface와 상세 탭·표·리니지 컨트롤을 `Card`, `Panel`, `Tabs`, `Table`, `Button`, `Badge`로 교체했다.
@@ -155,3 +154,17 @@
 - Dataset materialization run Card에는 `textStructuringExecution`을 기반으로 대상 컬럼, 실제 모델 또는 rule fallback을 `모델 기반 변환` provenance로 표시한다.
 - text structuring 검증에서 quarantine이 발생하면 같은 Card에 격리 행 수를 표시하고 전체 path는 title로 확인할 수 있다.
 - 모델별 accuracy, macro F1, validation rows의 상세 진단은 Catalog 목록이 아니라 Job Run의 선택 단계 상세가 담당한다.
+
+## Live Metadata And Schema Sample - Issue #649
+
+- 검색 결과 행은 Catalog API의 `description`을 데이터셋 이름·상태 옆 회색 보조 문구로 표시한다. ETL Target의 기본 정보에서 입력한 설명은 `targetDescription`으로 저장된 뒤 같은 Catalog 필드로 조회된다.
+- 우측 미리보기는 데이터셋 선택 시 `GET /api/catalog/datasets/{datasetId}`를 다시 조회해 목록 snapshot이 아닌 권한 적용된 최신 상세 payload로 기본 정보와 schema를 갱신한다. mock mode에서는 기존 fixture를 유지한다.
+- wire 계약의 `lastUpdated` ISO 값은 변경하지 않고 화면에서 `Asia/Seoul` 기준의 초 없는 한국어 날짜·시간으로 포맷한다. 상대 시간처럼 날짜로 파싱할 수 없는 기존 문구는 그대로 유지한다.
+- 전체 스키마 표의 임의 `NULL 허용` 값은 제거한다. `샘플` 열은 backend Catalog payload의 첫 `sampleRows` 행을 schema 컬럼 순서로 매핑하며 값이 없으면 `-`를 표시한다.
+- API request/response shape는 변경하지 않는다. `description`, `lastUpdated`, `schema`, `sampleRows`의 기존 Catalog 계약을 사용한다.
+
+## Schema Detail Focus - Issue #654
+
+- 전체 스키마 상세보기는 컬럼명, 타입, 샘플, 설명을 제공하는 스키마 표만 렌더링한다.
+- 스키마 표의 `샘플` 열과 중복되던 하단 `CatalogSample` viewer는 렌더링하지 않는다. 따라서 materialization 조회 오류 배너, 새로고침, 가로 슬라이더, 원본 데이터 표와 페이지네이션도 상세 modal에서 노출되지 않는다.
+- Catalog API와 `CatalogDataset` schema는 변경하지 않는다.
