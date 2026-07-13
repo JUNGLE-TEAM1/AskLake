@@ -6,7 +6,7 @@
 
 ## Screen Purpose
 
-- catalog dataset을 선택하고 schema를 참고해 SQL을 작성, preflight 검증, preview 실행, CSV 다운로드를 수행한다.
+- catalog dataset을 선택하고 schema를 참고해 SQL을 작성, canonical Trino 검증/실행, cursor 결과 탐색, server-side CSV 다운로드를 수행한다. `TRINO_ENABLED=false`에서는 DuckDB compatibility 실행을 유지한다.
 - Query AI 제안, autocomplete, 다중 dataset 선택, derived dataset Job 생성, dashboard draft 진입을 제공한다.
 - mock dataset과 query preview fixture를 사용해 editor, result, empty, dialog 상태를 확인할 수 있다.
 
@@ -17,6 +17,7 @@
 - AskLake composition: `PageHeader`, `Panel`, `PanelHeader`, `ActionGroup`, `FilterToolbarSearch`, `FilterToolbarInput`, `PaginationBar`, `DialogShell`.
 - `SqlDatasetTree`: 공통 `ExplorerTree`, `TreeHoverCard`, shadcn `Button`을 조합한 dataset browser다.
 - `SqlPreviewTable`: TanStack 기반 `DataTable`로 결과 sorting, pagination, empty state를 처리한다.
+- `SqlResultsPanel`: `차트 보기`, `데이터 미리보기`, `실행 정보`를 같은 bounded panel에서 전환한다. 실행 정보는 평가와 Trino timeline을 담고 SQL editor 아래 별도 block을 만들지 않는다.
 - `SchemaDetailsPanel`: 선택 dataset 전환·해제와 column insert를 담당하는 도메인 panel이다.
 - `DashboardPage`: SQL 결과로 dashboard draft를 만드는 embedded flow에 재사용된다.
 
@@ -53,6 +54,7 @@
 - `/sql` 본문과 처리 Job/Dashboard Dialog는 `--jobs-font-family`를 상속해 `/jobs`의 SUIT typography 기준을 사용한다. SQL editor와 line-number gutter의 monospace는 코드 가독성을 위해 유지한다.
 - route layout과 editor/result workspace는 `SqlAnalysisPage.module.css`, dataset row·Nessie·preview table의 세부 style은 각각 co-located CSS Module이 소유한다.
 - SQL preflight와 결과 실행 상태는 Jobs 기준 `StatusBadge`를 사용한다. SQL editor의 직접 작성 JOIN 문법은 유지하지만 선택 테이블의 자동 JOIN action은 제공하지 않는다.
+- SQL editor는 Trino 통합 전과 같은 높이·toolbar·단일 textarea scroll을 유지한다. `실행 정보`는 `쿼리 실행`, `첫 결과 준비`, `전체 결과 수집`의 실제 가능한 지표만 표시한다.
 - global `frontend/src/styles/sql.css`는 제거했다. App Shell의 `.page-body.sql-body` gutter 외에는 SQL 전용 selector를 global stylesheet에 두지 않는다.
 - shadcn이 소유하는 panel/header/form/list/separator/table/scroll/tree surface는 CSS Module에서도 다시 정의하지 않는다.
 
@@ -114,7 +116,7 @@
 - Query AI 안내, 응답, 오류 surface를 `Bubble`/`BubbleContent`로 교체했다.
 - embedded Dashboard builder는 raw backdrop과 `role="dialog"` 대신 `Dialog`/`DialogContent`를 사용한다.
 - SQL 도구, editor, schema, result surface는 `Panel`, 실행 상태는 Jobs 기준 `StatusBadge`, metadata는 `Badge`, 빈 상태는 `Empty`, action은 `Button`, label/control 조합은 `Field`를 사용한다.
-- 오른쪽 선택 테이블/schema 패널을 제거하고, 왼쪽 tree table 행 클릭으로 선택한다. 기준 테이블 재클릭은 선택을 유지하고 추가 참조 테이블만 재클릭으로 해제한다. 선택 행은 왼쪽 파란 체크로 표시한다. 자동 JOIN과 column 삽입 action은 제공하지 않는다.
+- 오른쪽 선택 테이블/schema 패널을 제거하고, 왼쪽 tree table 행 클릭으로 선택한다. 기준 테이블과 추가 참조 테이블 모두 재클릭으로 해제한다. 기준 테이블 해제 시 참조 테이블이 남아 있으면 첫 참조 테이블을 기준으로 승격하고, 남은 선택이 없으면 editor context를 비운다. 선택 행은 왼쪽 파란 체크로 표시한다. 자동 JOIN과 column 삽입 action은 제공하지 않는다.
 - desktop 2열 layout에서 왼쪽 SQL 도구 panel은 콘텐츠 높이만 사용한다. dataset ScrollArea는 250px로 제한해 `결과 대기 중` panel과 비슷한 높이를 유지하고, 데이터가 많으면 내부 스크롤로 탐색한다.
 - 미사용 `SqlDatasetSchemaPreview.tsx`를 삭제했다.
 - `sql.css`는 2,547줄에서 401줄로 줄였다. `PanelHeader`, `FieldGroup`, `NativeSelect`, `Separator`, shadcn Table/ScrollArea와 Shadcnblocks Tree 기본 surface로 header/form/list/table/scroll/tree CSS를 추가 제거했다.

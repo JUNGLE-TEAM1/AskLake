@@ -183,12 +183,7 @@ export function DashboardPage({
     loadDraftRuntime,
     loadPublishedRuntime,
     pages: runtimePages,
-    publishedAutoRefreshIntervalMinutes,
     publishedRuntime,
-    publishedRefreshError,
-    publishedRefreshedAt,
-    publishedRefreshStatus,
-    refreshPublishedWidgetData,
     runtimeError,
     runtimeLoading,
     selectedPageId: selectedRuntimePageId,
@@ -662,37 +657,14 @@ export function DashboardPage({
 
   const refreshRuntimeDashboard = async () => {
     setIsRefreshingRuntime(true);
-    try {
-      if (runtimeSelection.mode === "published") {
-        const refreshed = await refreshPublishedWidgetData(
-          runtimeSelection.dashboardId,
-          publishedRuntime?.revision?.id,
-          "all",
-        );
-        setRuntimeNotice(refreshed
-          ? { message: "대시보드 전체 데이터를 동기화했습니다.", tone: "info" }
-          : { message: "대시보드 전체 데이터를 동기화하지 못했습니다.", tone: "error" });
-        onAction(
-          "dashboard.runtime.refreshed",
-          `/api/dashboards/${runtimeSelection.dashboardId}/published/data?scope=all`,
-          runtimeSelection.dashboardId,
-          refreshed ? "success" : "failed",
-        );
-      } else {
-        const refreshed = await loadDraftRuntime(runtimeSelection.dashboardId);
-        setRuntimeNotice(refreshed
-          ? { message: "대시보드를 새로고침했습니다.", tone: "info" }
-          : { message: "대시보드를 새로고침하지 못했습니다.", tone: "error" });
-        onAction(
-          "dashboard.runtime.refreshed",
-          `/api/dashboards/${runtimeSelection.dashboardId}/draft/ensure`,
-          runtimeSelection.dashboardId,
-          refreshed ? "success" : "failed",
-        );
-      }
-    } finally {
-      setIsRefreshingRuntime(false);
-    }
+    const runtime = runtimeSelection.mode === "published"
+      ? await loadPublishedRuntime(runtimeSelection.dashboardId)
+      : await loadDraftRuntime(runtimeSelection.dashboardId);
+    setIsRefreshingRuntime(false);
+    setRuntimeNotice(runtime
+      ? { message: "대시보드를 새로고침했습니다.", tone: "info" }
+      : { message: "대시보드를 새로고침하지 못했습니다.", tone: "error" });
+    onAction("dashboard.runtime.refreshed", `/api/dashboards/${runtimeSelection.dashboardId}`, runtimeSelection.dashboardId);
   };
 
   const shareRuntimeDashboard = () => {
@@ -923,15 +895,11 @@ export function DashboardPage({
       isCreatingToolbarWidget,
       isPublishing: isPublishingRuntime,
       isRenamingTitle: isRenamingRuntimeTitle,
-      isRefreshing: isRefreshingRuntime || publishedRefreshStatus === "refreshing",
+      isRefreshing: isRefreshingRuntime,
       mode: runtimeSelection.mode,
       notice: runtimeNotice,
       pages: runtimePages,
-      publishedAutoRefreshIntervalMinutes,
       publishedRuntime,
-      publishedRefreshError,
-      publishedRefreshedAt,
-      publishedRefreshStatus,
       renamingPageId: renamingRuntimePageId,
       runtimeError,
       runtimeLoading,

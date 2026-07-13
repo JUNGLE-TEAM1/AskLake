@@ -5,26 +5,18 @@ import sys
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
+from object_storage_runtime import configure_spark_builder
 
 
 def main():
-    endpoint = os.environ.get("MINIO_ENDPOINT", "http://m3-minio:9000")
-    access_key = os.environ.get("MINIO_ACCESS_KEY", "m3admin")
-    secret_key = os.environ.get("MINIO_SECRET_KEY", "wishuponastar")
     bucket = os.environ.get("ASKLAKE_SAMPLE_BUCKET", "m3-raw")
     prefix = os.environ.get("ASKLAKE_SAMPLE_PREFIX", "asklake-test-samples").strip("/")
     full_count = os.environ.get("ASKLAKE_SPARK_FULL_COUNT", "false").lower() == "true"
 
-    spark = (
+    spark = configure_spark_builder(
         SparkSession.builder.appName("asklake-source-schema-spark-validation")
         .config("spark.sql.caseSensitive", "true")
-        .config("spark.hadoop.fs.s3a.endpoint", endpoint)
-        .config("spark.hadoop.fs.s3a.access.key", access_key)
-        .config("spark.hadoop.fs.s3a.secret.key", secret_key)
-        .config("spark.hadoop.fs.s3a.path.style.access", "true")
-        .config("spark.hadoop.fs.s3a.connection.ssl.enabled", "false")
-        .getOrCreate()
-    )
+    ).getOrCreate()
     spark.sparkContext.setLogLevel("WARN")
 
     results = []

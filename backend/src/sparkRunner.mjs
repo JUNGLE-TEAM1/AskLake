@@ -3,6 +3,13 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync }
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  defaultRawBucket,
+  isMinioProvider,
+  objectStorageDockerEnv,
+  resolveObjectStorageConfig,
+  toDockerEnvArgs,
+} from "./objectStorageConfig.mjs";
 import { fieldValue, normalizeColumnName } from "./profile.mjs";
 
 const backendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -57,19 +64,16 @@ function runSparkPipelineWithSource(job, command, runId, source, executionMode, 
   const localLlmTimeoutSeconds = process.env.ASKLAKE_LOCAL_LLM_TIMEOUT_SECONDS
     || String(Math.ceil(Number(process.env.ASKLAKE_LOCAL_LLM_TIMEOUT_MS || 120000) / 1000));
   const reviewAnalysisRuntime = process.env.ASKLAKE_REVIEW_ANALYSIS_RUNTIME || "scalable";
-  const sourceAccessKey = fieldValue(job.sourceConfig ?? [], "Access Key") || minioAccessKey();
-  const sourceSecretKey = fieldValue(job.sourceConfig ?? [], "Secret Key") || minioSecretKey();
-  if (executionMode === "rest") {
-    assertInheritedMinioCredentials(sourceAccessKey, sourceSecretKey);
-  }
+  assertSparkRestStorageCredentials(job.sourceConfig ?? [], executionMode);
   writeSparkJobManifest(manifestPath, job);
+  const storageEnvironment = Object.fromEntries(
+    objectStorageDockerEnv(job.sourceConfig ?? []).filter(([name]) => (
+      executionMode === "docker"
+      || !["MINIO_ACCESS_KEY", "MINIO_SECRET_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"].includes(name)
+    )),
+  );
   const sparkEnvironment = {
-    MINIO_ENDPOINT: process.env.MINIO_ENDPOINT_IN_DOCKER || "http://m3-minio:9000",
-    MINIO_REGION: process.env.MINIO_REGION || "us-east-1",
-    ...(executionMode === "docker" ? {
-      MINIO_ACCESS_KEY: sourceAccessKey,
-      MINIO_SECRET_KEY: sourceSecretKey,
-    } : {}),
+    ...storageEnvironment,
     ASKLAKE_SPARK_SOURCE_PATH: source.path,
     ASKLAKE_SPARK_SOURCE_FORMAT: source.format,
     ASKLAKE_SPARK_OUTPUT_PATH: output.sparkPath,
@@ -116,14 +120,7 @@ function runSparkPipelineWithSource(job, command, runId, source, executionMode, 
     `${reviewTextModelHostDir}:${reviewTextModelContainerDir}:ro`,
     "-v",
     `${outputVolumeName}:${outputContainerDir}`,
-    "-e",
-    `MINIO_ENDPOINT=${process.env.MINIO_ENDPOINT_IN_DOCKER || "http://m3-minio:9000"}`,
-    "-e",
-    `MINIO_ACCESS_KEY=${fieldValue(job.sourceConfig ?? [], "Access Key") || minioAccessKey()}`,
-    "-e",
-    `MINIO_SECRET_KEY=${fieldValue(job.sourceConfig ?? [], "Secret Key") || minioSecretKey()}`,
-    "-e",
-    `MINIO_REGION=${process.env.MINIO_REGION || "us-east-1"}`,
+    ...toDockerEnvArgs(objectStorageDockerEnv(job.sourceConfig ?? [])),
     "-e",
     `ASKLAKE_SPARK_SOURCE_PATH=${source.path}`,
     "-e",
@@ -367,6 +364,15 @@ function writeSparkJobManifest(manifestPath, job) {
     rules: job.rules ?? [],
     recordParsing: job.recordParsing ?? null,
     schemaColumns: job.schemaColumns ?? [],
+    sourceCollection: sourceCollectionFromConfig(
+      job.sourceConfig ?? [],
+      job.sourceIncrementalSince,
+      job.sourceIncrementalBefore,
+      job.sourceWindowContractVersion,
+      job.sourceWindowRebaseline,
+      job.sourceObjectKeys,
+      job.sourceObjectInventory,
+    ),
     textStructuring: {
       columns: textStructuringColumns,
       specVersion: textStructuringColumns.length > 0 ? 1 : undefined,
@@ -374,6 +380,98 @@ function writeSparkJobManifest(manifestPath, job) {
     transformSteps: job.transformSteps ?? [],
   };
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+}
+
+export function sourceCollectionFromConfig(
+  sourceConfig,
+  incrementalSince = undefined,
+  incrementalBefore = undefined,
+  windowContractVersion = undefined,
+  sourceWindowRebaseline = false,
+  sourceObjectKeys = undefined,
+  sourceObjectInventory = undefined,
+) {
+  const scope = String(fieldValue(sourceConfig, "Collection Scope") || "file").trim().toLowerCase() === "folder"
+    ? "folder"
+    : "file";
+  const collectionMode = String(fieldValue(sourceConfig, "Collection Mode") || "incremental").trim().toLowerCase();
+  const mode = scope === "folder" && collectionMode !== "full" ? "incremental" : "full";
+  const requestedWindowVersion = Number(windowContractVersion);
+  const boundedWindowVersion = mode === "incremental" && [1, 2].includes(requestedWindowVersion)
+    ? requestedWindowVersion
+    : null;
+  const objectInventory = boundedWindowVersion === 2
+    ? normalizeSourceObjectInventory(sourceObjectInventory)
+    : null;
+  const objectKeys = boundedWindowVersion === 2 && Array.isArray(objectInventory)
+    ? objectInventory.map((item) => item.key)
+    : mode === "incremental" && Array.isArray(sourceObjectKeys)
+    ? [...new Set(sourceObjectKeys.map((key) => String(key || "").trim()).filter(Boolean))].sort()
+    : null;
+  return {
+    filePattern: scope === "folder" ? fieldValue(sourceConfig, "File Pattern") || null : null,
+    incrementalBefore: mode === "incremental" && incrementalBefore ? String(incrementalBefore) : null,
+    incrementalSince: mode === "incremental" && incrementalSince ? String(incrementalSince) : null,
+    mode,
+    ...(boundedWindowVersion === 2 ? { objectInventory } : {}),
+    objectKeys,
+    rebaseline: boundedWindowVersion !== null && sourceWindowRebaseline === true,
+    recursive: scope === "folder" && parseConfigBoolean(fieldValue(sourceConfig, "Recursive")),
+    scope,
+    windowContractVersion: boundedWindowVersion,
+  };
+}
+
+function normalizeSourceObjectInventory(value) {
+  if (!Array.isArray(value)) return null;
+  const inventoryByKey = new Map();
+  let invalid = false;
+  value.forEach((item) => {
+    if (!item || typeof item !== "object") {
+      invalid = true;
+      return;
+    }
+    const key = String(item.key ?? item.Key ?? "").trim();
+    const eTag = normalizeEtag(item.eTag ?? item.ETag ?? item.etag);
+    const lastModified = String(item.lastModified ?? item.LastModified ?? "").trim();
+    const rawSize = item.size ?? item.Size;
+    const size = Number(rawSize);
+    const hasValidRawSize = typeof rawSize !== "boolean"
+      && rawSize !== null
+      && rawSize !== undefined
+      && String(rawSize).trim() !== "";
+    if (!key || !eTag || !lastModified || !hasValidRawSize || !Number.isSafeInteger(size) || size < 0) {
+      invalid = true;
+      return;
+    }
+    const rawVersionId = String(item.versionId ?? item.VersionId ?? "").trim();
+    const normalized = {
+      key,
+      eTag,
+      versionId: rawVersionId && rawVersionId.toLowerCase() !== "null" ? rawVersionId : null,
+      lastModified,
+      size,
+    };
+    if (inventoryByKey.has(key) && JSON.stringify(inventoryByKey.get(key)) !== JSON.stringify(normalized)) {
+      invalid = true;
+      return;
+    }
+    inventoryByKey.set(key, normalized);
+  });
+  return invalid ? null : [...inventoryByKey.values()].sort((left, right) => left.key.localeCompare(right.key));
+}
+
+function normalizeEtag(value) {
+  let normalized = String(value ?? "").trim();
+  if (normalized.startsWith("W/")) normalized = normalized.slice(2).trim();
+  if (normalized.length >= 2 && normalized.startsWith('"') && normalized.endsWith('"')) {
+    normalized = normalized.slice(1, -1);
+  }
+  return normalized;
+}
+
+function parseConfigBoolean(value) {
+  return ["true", "1", "yes", "on"].includes(String(value || "").trim().toLowerCase());
 }
 
 function textStructuringDefinitionColumns(transformSteps) {
@@ -455,7 +553,7 @@ function sparkSourceFromJob(job, runId) {
   const sourceType = job.sourceType || "";
   const sourceConfig = Array.isArray(job.sourceConfig) ? job.sourceConfig : [];
   if (sourceType === "File / S3") {
-    const bucket = normalizeBucketName(fieldValue(sourceConfig, "Bucket / Stage Name") || process.env.MINIO_BUCKET || "m3-raw");
+    const bucket = normalizeBucketName(fieldValue(sourceConfig, "Bucket / Stage Name") || defaultRawBucket());
     const prefix = normalizeBucketRelativePath(
       normalizeSourcePath(fieldValue(sourceConfig, "Path / Prefix")),
       bucket,
@@ -643,7 +741,7 @@ function sparkOutputPath(job, runId) {
   if ((process.env.ASKLAKE_SPARK_OUTPUT_MODE || "local").toLowerCase() === "s3a") {
     // storagePath is the configured destination root. targetPath is the latest
     // observed Run output and must not become the next Run's parent directory.
-    const configuredTarget = String(job.storagePath || "").trim();
+    const configuredTarget = normalizeSparkOutputTargetPath(job.storagePath);
     const targetBase = /^s3a?:\/\//i.test(configuredTarget)
       ? toS3APath(configuredTarget).replace(/\/+$/, "")
       : `s3a://${process.env.ASKLAKE_SPARK_OUTPUT_BUCKET || "asklake-output"}/${prefix}${layer}/${dataset}`;
@@ -658,6 +756,18 @@ function sparkOutputPath(job, runId) {
     displayPath: path.join(localOutputDir, relativePath),
     sparkPath: `file://${outputContainerDir}/${relativePath.replace(/\\/g, "/")}`,
   };
+}
+
+export function normalizeSparkOutputTargetPath(value) {
+  const configuredTarget = String(value || "").trim();
+  if (!/^s3a?:\/\//i.test(configuredTarget)) return configuredTarget;
+  const normalizedTarget = toS3APath(configuredTarget).replace(/\/+$/, "");
+  const configuredBucket = normalizeBucketName(process.env.ASKLAKE_SPARK_OUTPUT_BUCKET || "asklake-output");
+  if (!configuredBucket || configuredBucket.toLowerCase() === "asklake-output") return normalizedTarget;
+  return normalizedTarget.replace(
+    /^s3a:\/\/asklake-output(?=\/|$)/i,
+    `s3a://${configuredBucket}`,
+  );
 }
 
 function sparkRowLimitFromJob(job) {
@@ -872,10 +982,15 @@ function safeArtifactSegment(value) {
     || "run";
 }
 
-function assertInheritedMinioCredentials(accessKey, secretKey) {
-  const configuredAccessKey = minioAccessKey();
-  const configuredSecretKey = minioSecretKey();
-  if (accessKey !== configuredAccessKey || secretKey !== configuredSecretKey) {
+export function assertSparkRestStorageCredentials(sourceConfig = [], executionMode = "rest") {
+  if (executionMode !== "rest" || !isMinioProvider(sourceConfig)) return;
+
+  const sourceStorage = resolveObjectStorageConfig(sourceConfig, { docker: true });
+  const inheritedStorage = resolveObjectStorageConfig([], { docker: true });
+  if (
+    sourceStorage.accessKeyId !== inheritedStorage.accessKeyId
+    || sourceStorage.secretAccessKey !== inheritedStorage.secretAccessKey
+  ) {
     throw sparkConfigurationError(
       "Spark REST execution only supports the MinIO application credentials inherited by the worker.",
     );
@@ -931,14 +1046,6 @@ function positiveInteger(value, fallback) {
 function boundedInteger(value, fallback, minimum, maximum) {
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed >= minimum && parsed <= maximum ? parsed : fallback;
-}
-
-function minioAccessKey() {
-  return process.env.MINIO_ACCESS_KEY || process.env.MINIO_ROOT_USER || "m3admin";
-}
-
-function minioSecretKey() {
-  return process.env.MINIO_SECRET_KEY || process.env.MINIO_ROOT_PASSWORD || "wishuponastar";
 }
 
 function shellQuote(value) {

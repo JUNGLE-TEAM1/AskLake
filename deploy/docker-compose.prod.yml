@@ -73,6 +73,9 @@ services:
         VITE_AUTH_PUBLIC_SIGNUP: ${VITE_AUTH_PUBLIC_SIGNUP:-false}
         VITE_USE_MOCK_API: ${VITE_USE_MOCK_API:-false}
         VITE_DASHBOARD_ASSISTANT_API_PATH: ${VITE_DASHBOARD_ASSISTANT_API_PATH:-/api/dashboards/assistant}
+        VITE_OBJECT_STORAGE_PROVIDER: ${ASKLAKE_OBJECT_STORAGE_PROVIDER:-aws}
+        VITE_S3_REGION: ${AWS_REGION:-ap-northeast-2}
+        VITE_SPARK_OUTPUT_BUCKET: ${ASKLAKE_SPARK_OUTPUT_BUCKET:?ASKLAKE_SPARK_OUTPUT_BUCKET is required}
     restart: unless-stopped
     expose:
       - "80"
@@ -90,9 +93,7 @@ services:
     depends_on:
       airflow-apiserver:
         condition: service_healthy
-      minio:
-        condition: service_healthy
-      minio-init:
+      aws-s3-readiness:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
@@ -131,6 +132,35 @@ services:
       AIRFLOW_REQUEST_TIMEOUT_SECONDS: ${AIRFLOW_REQUEST_TIMEOUT_SECONDS:-10}
       AIRFLOW_EXECUTION_API_TOKEN: ${AIRFLOW_EXECUTION_API_TOKEN:?AIRFLOW_EXECUTION_API_TOKEN is required}
       AIRFLOW_INTERNAL_TOKEN: ${AIRFLOW_INTERNAL_TOKEN:?AIRFLOW_INTERNAL_TOKEN is required}
+      TRINO_ENABLED: ${TRINO_ENABLED:-false}
+      TRINO_BASE_URL: ${TRINO_BASE_URL:-https://trino:8443}
+      TRINO_CATALOG: ${TRINO_CATALOG:-iceberg}
+      TRINO_SCHEMA: ${TRINO_SCHEMA:-asklake}
+      TRINO_USER: ${TRINO_USER:-asklake-api}
+      TRINO_QUERY_TIMEOUT_SECONDS: ${TRINO_QUERY_TIMEOUT_SECONDS:-300}
+      TRINO_MAX_RESPONSE_BYTES: ${TRINO_MAX_RESPONSE_BYTES:-2000000}
+      TRINO_MAX_RESULT_BYTES: ${TRINO_MAX_RESULT_BYTES:-50000000}
+      TRINO_MAX_RESULT_PAGES: ${TRINO_MAX_RESULT_PAGES:-1000}
+      TRINO_RESULT_RETENTION_SECONDS: ${TRINO_RESULT_RETENTION_SECONDS:-86400}
+      TRINO_MAX_CONCURRENT_RUNS_PER_USER: ${TRINO_MAX_CONCURRENT_RUNS_PER_USER:-2}
+      TRINO_RESULT_STORAGE_BUCKET: ${TRINO_RESULT_STORAGE_BUCKET:-}
+      TRINO_RESULT_STORAGE_PREFIX: ${TRINO_RESULT_STORAGE_PREFIX:-query-results}
+      TRINO_RESULT_STORAGE_AUTO_CREATE_BUCKET: ${TRINO_RESULT_STORAGE_AUTO_CREATE_BUCKET:-false}
+      TRINO_RESULT_CURSOR_SECRET: ${TRINO_RESULT_CURSOR_SECRET:-}
+      TRINO_QUERY_CONFIRMATION_SECRET: ${TRINO_QUERY_CONFIRMATION_SECRET:-}
+      TRINO_QUERY_CONFIRMATION_TTL_SECONDS: ${TRINO_QUERY_CONFIRMATION_TTL_SECONDS:-300}
+      TRINO_QUERY_WARNING_BYTES: ${TRINO_QUERY_WARNING_BYTES:-1073741824}
+      TRINO_QUERY_MAX_ESTIMATED_BYTES: ${TRINO_QUERY_MAX_ESTIMATED_BYTES:-0}
+      TRINO_QUERY_ESTIMATED_THROUGHPUT_BYTES_PER_SECOND: ${TRINO_QUERY_ESTIMATED_THROUGHPUT_BYTES_PER_SECOND:-268435456}
+      TRINO_COLLECTOR_LEASE_SECONDS: ${TRINO_COLLECTOR_LEASE_SECONDS:-60}
+      TRINO_COLLECTOR_PAGES_PER_LEASE: ${TRINO_COLLECTOR_PAGES_PER_LEASE:-100}
+      TRINO_COLLECTOR_POLL_SECONDS: ${TRINO_COLLECTOR_POLL_SECONDS:-1}
+      TRINO_CLEANUP_POLL_SECONDS: ${TRINO_CLEANUP_POLL_SECONDS:-3600}
+      TRINO_AUTH_USERNAME: ${TRINO_AUTH_USERNAME:-}
+      TRINO_AUTH_PASSWORD: ${TRINO_AUTH_PASSWORD:-}
+      TRINO_MATERIALIZER_USERNAME: ${TRINO_MATERIALIZER_USERNAME:-}
+      TRINO_MATERIALIZER_PASSWORD: ${TRINO_MATERIALIZER_PASSWORD:-}
+      TRINO_TLS_CA_FILE: ${TRINO_TLS_CA_CONTAINER_FILE:-}
       ASKLAKE_MONGO_HOST: ${ASKLAKE_MONGO_HOST:-mongo}
       ASKLAKE_MONGO_PORT: ${ASKLAKE_MONGO_PORT:-27017}
       ASKLAKE_MONGO_DATABASE: ${MONGO_INITDB_DATABASE:-asklake_sources}
@@ -167,7 +197,7 @@ services:
       ASKLAKE_SPARK_HADOOP_AWS_PACKAGE: ${ASKLAKE_SPARK_HADOOP_AWS_PACKAGE:-org.apache.hadoop:hadoop-aws:3.4.1}
       ASKLAKE_SPARK_KAFKA_PACKAGE: ${ASKLAKE_SPARK_KAFKA_PACKAGE:-org.apache.spark:spark-sql-kafka-0-10_2.13:4.0.1}
       ASKLAKE_SPARK_OUTPUT_MODE: ${ASKLAKE_SPARK_OUTPUT_MODE:-s3a}
-      ASKLAKE_SPARK_OUTPUT_BUCKET: ${ASKLAKE_SPARK_OUTPUT_BUCKET:-asklake-output}
+      ASKLAKE_SPARK_OUTPUT_BUCKET: ${ASKLAKE_SPARK_OUTPUT_BUCKET:?ASKLAKE_SPARK_OUTPUT_BUCKET is required}
       ASKLAKE_SPARK_OUTPUT_PREFIX: ${ASKLAKE_SPARK_OUTPUT_PREFIX:-asklake-output}
       ASKLAKE_SPARK_REPORT_DIR: /var/lib/asklake/spark-runs
       ASKLAKE_SPARK_REPORT_CONTAINER_DIR: /var/lib/asklake/spark-runs
@@ -185,19 +215,12 @@ services:
       ASKLAKE_LOCAL_LLM_MAX_INPUT_CHARS: ${ASKLAKE_LOCAL_LLM_MAX_INPUT_CHARS:-9000}
       ASKLAKE_REVIEW_TEXT_MODEL_HOST_DIR: /var/lib/asklake/review-text-models
       ASKLAKE_REVIEW_TEXT_MODEL_CONTAINER_DIR: /var/lib/asklake/review-text-models
-      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-http://minio:9000}
-      MINIO_ENDPOINT_IN_DOCKER: ${MINIO_ENDPOINT_IN_DOCKER:-http://minio:9000}
-      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY is required}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
-      MINIO_BUCKET: ${MINIO_BUCKET:-m3-raw}
-      MINIO_REGION: ${MINIO_REGION:-us-east-1}
-      S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
-      S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-true}
-      S3_ALLOWED_BUCKETS: ${S3_ALLOWED_BUCKETS:-m3-raw,asklake-output}
-      S3_ALLOWED_ENDPOINTS: ${S3_ALLOWED_ENDPOINTS:-http://minio:9000}
-      AWS_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY is required}
-      AWS_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
-      AWS_REGION: ${MINIO_REGION:-us-east-1}
+      ASKLAKE_OBJECT_STORAGE_PROVIDER: ${ASKLAKE_OBJECT_STORAGE_PROVIDER:-aws}
+      ASKLAKE_RAW_BUCKET: ${ASKLAKE_RAW_BUCKET:?ASKLAKE_RAW_BUCKET is required}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-false}
+      S3_ALLOWED_BUCKETS: ${S3_ALLOWED_BUCKETS:?S3_ALLOWED_BUCKETS is required}
+      AWS_REGION: ${AWS_REGION:-ap-northeast-2}
     expose:
       - "8080"
     volumes:
@@ -208,12 +231,28 @@ services:
       - ${ASKLAKE_HOST_DATA_DIR:-/var/lib/asklake}/samples:/var/lib/asklake/samples
       - ${ASKLAKE_HOST_DATA_DIR:-/var/lib/asklake}/review-text-models:/var/lib/asklake/review-text-models:ro
       - ${ASKLAKE_REPLAY_HOST_INPUT_DIR:-/var/lib/asklake/replay-input}:${ASKLAKE_REPLAY_INPUT_DIR:-/var/lib/asklake/replay-input}:ro
+      - ${TRINO_TLS_CA_FILE:-/dev/null}:${TRINO_TLS_CA_CONTAINER_FILE:-/run/secrets/trino-ca.pem}:ro
+    networks:
+      - default
+      - trino_internal
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/health', timeout=5).read()\""]
       interval: 30s
       timeout: 5s
       retries: 5
       start_period: 20s
+
+  aws-s3-readiness:
+    build:
+      context: ../backend
+      target: backend-runtime
+    restart: "no"
+    command: ["python", "scripts/verify-aws-s3-readiness.py"]
+    environment:
+      ASKLAKE_OBJECT_STORAGE_PROVIDER: ${ASKLAKE_OBJECT_STORAGE_PROVIDER:-aws}
+      ASKLAKE_S3_READINESS_READ_BUCKETS: ${ASKLAKE_S3_READINESS_READ_BUCKETS:?ASKLAKE_S3_READINESS_READ_BUCKETS is required}
+      ASKLAKE_S3_READINESS_WRITE_BUCKETS: ${ASKLAKE_S3_READINESS_WRITE_BUCKETS:?ASKLAKE_S3_READINESS_WRITE_BUCKETS is required}
+      AWS_REGION: ${AWS_REGION:-ap-northeast-2}
 
   spark-dir-init:
     <<: *spark-runtime
@@ -287,10 +326,10 @@ services:
     user: "185:185"
     environment:
       HOME: /tmp
-      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-http://minio:9000}
-      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY is required}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
-      MINIO_REGION: ${MINIO_REGION:-us-east-1}
+      ASKLAKE_OBJECT_STORAGE_PROVIDER: ${ASKLAKE_OBJECT_STORAGE_PROVIDER:-aws}
+      AWS_REGION: ${AWS_REGION:-ap-northeast-2}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-false}
       PYSPARK_DRIVER_PYTHON: /usr/bin/python3
       PYSPARK_PYTHON: /usr/bin/python3
       SPARK_WORKER_OPTS: >-
@@ -325,6 +364,22 @@ services:
       timeout: 3s
       retries: 12
       start_period: 10s
+
+  trino-result-collector:
+    profiles: ["trino"]
+    extends:
+      service: backend
+    command: ["python", "scripts/collect-trino-results.py"]
+    healthcheck:
+      disable: true
+
+  trino-result-cleanup:
+    profiles: ["trino"]
+    extends:
+      service: backend
+    command: ["python", "scripts/cleanup-expired-trino-results.py", "--loop"]
+    healthcheck:
+      disable: true
 
   airflow-postgres:
     image: postgres:16-alpine
@@ -425,6 +480,9 @@ services:
       interval: 10s
       timeout: 5s
       retries: 12
+    networks:
+      - default
+      - trino_internal
 
   mongo:
     image: mongo:7
@@ -443,47 +501,61 @@ services:
       timeout: 5s
       retries: 12
 
-  minio:
-    image: minio/minio:RELEASE.2025-07-23T15-54-02Z
-    restart: unless-stopped
-    command: server /data --console-address ":9001"
+  trino-postgres-bootstrap:
+    profiles: ["trino"]
+    image: postgres:16-alpine
+    restart: "no"
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
-    expose:
-      - "9000"
-      - "9001"
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      TRINO_ICEBERG_JDBC_USER: ${TRINO_ICEBERG_JDBC_USER:-}
+      TRINO_ICEBERG_JDBC_PASSWORD: ${TRINO_ICEBERG_JDBC_PASSWORD:-}
+    entrypoint: ["/bin/sh", "/bootstrap/bootstrap-trino-catalog.sh"]
     volumes:
-      - minio_data:/data
+      - ./postgres/bootstrap-trino-catalog.sh:/bootstrap/bootstrap-trino-catalog.sh:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - trino_internal
+
+  trino:
+    profiles: ["trino"]
+    image: ${TRINO_IMAGE:-trinodb/trino:482}
+    restart: unless-stopped
+    environment:
+      TRINO_ICEBERG_CATALOG_NAME: ${TRINO_ICEBERG_CATALOG_NAME:-asklake}
+      TRINO_ICEBERG_JDBC_DATABASE: ${POSTGRES_DB:?POSTGRES_DB is required}
+      TRINO_ICEBERG_JDBC_PASSWORD: ${TRINO_ICEBERG_JDBC_PASSWORD:-}
+      TRINO_ICEBERG_JDBC_USER: ${TRINO_ICEBERG_JDBC_USER:-}
+      TRINO_ICEBERG_WAREHOUSE_BUCKET: ${TRINO_ICEBERG_WAREHOUSE_BUCKET:-}
+      TRINO_ICEBERG_WAREHOUSE_PREFIX: ${TRINO_ICEBERG_WAREHOUSE_PREFIX:-warehouse}
+      TRINO_INTERNAL_SHARED_SECRET: ${TRINO_INTERNAL_SHARED_SECRET:-}
+      TRINO_S3_REGION: ${AWS_REGION:-ap-northeast-2}
+      TRINO_TLS_KEYSTORE_PASSWORD: ${TRINO_TLS_KEYSTORE_PASSWORD:-}
+    expose:
+      - "8443"
+    volumes:
+      - ./trino/etc/catalog-prod:/etc/trino/catalog:ro
+      - ./trino/etc/config.properties:/etc/trino/config.properties:ro
+      - ./trino/etc/password-authenticator.properties:/etc/trino/password-authenticator.properties:ro
+      - ./trino/etc/access-control.properties:/etc/trino/access-control.properties:ro
+      - ./trino/etc/access-control:/etc/trino/access-control:ro
+      - ${TRINO_PASSWORD_FILE:-/dev/null}:/etc/trino/auth/password.db:ro
+      - ${TRINO_TLS_KEYSTORE_FILE:-/dev/null}:/etc/trino/tls/keystore.jks:ro
+    depends_on:
+      trino-postgres-bootstrap:
+        condition: service_completed_successfully
     healthcheck:
-      test: ["CMD-SHELL", "mc ready local >/dev/null 2>&1"]
+      test: ["CMD-SHELL", "curl -ksSf https://127.0.0.1:8443/v1/info >/dev/null || exit 1"]
       interval: 10s
       timeout: 5s
-      retries: 12
-
-  minio-init:
-    image: minio/minio:RELEASE.2025-07-23T15-54-02Z
-    restart: "no"
-    depends_on:
-      minio:
-        condition: service_healthy
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
-      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY is required}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
-      MINIO_SOURCE_BUCKET: ${MINIO_BUCKET:-m3-raw}
-      MINIO_OUTPUT_BUCKET: ${ASKLAKE_SPARK_OUTPUT_BUCKET:-asklake-output}
-    entrypoint: /bin/sh
-    command:
-      - -c
-      - |
-        set -eu
-        mc alias set asklake http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
-        mc mb --ignore-existing "asklake/$$MINIO_SOURCE_BUCKET"
-        mc mb --ignore-existing "asklake/$$MINIO_OUTPUT_BUCKET"
-        mc admin user add asklake "$$MINIO_ACCESS_KEY" "$$MINIO_SECRET_KEY"
-        mc admin policy attach asklake readwrite --user "$$MINIO_ACCESS_KEY"
+      retries: 18
+      start_period: 30s
+    networks:
+      - trino_internal
+      - trino_egress
 
   redpanda:
     image: redpandadata/redpanda:v24.3.1
@@ -521,6 +593,10 @@ volumes:
   postgres_data:
   airflow_postgres_data:
   mongo_data:
-  minio_data:
   redpanda_data:
   lake_data:
+
+networks:
+  trino_internal:
+    internal: true
+  trino_egress:

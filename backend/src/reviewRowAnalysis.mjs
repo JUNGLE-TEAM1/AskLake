@@ -4,13 +4,15 @@ import { createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync }
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import readline from "node:readline";
+import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { canonicalSchemaType } from "./profile.mjs";
+import { defaultRawBucket, objectStorageProvider, resolveObjectStorageConfig, s3ClientOptions } from "./objectStorageConfig.mjs";
 
 const backendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const outputRoot = path.resolve(process.env.ASKLAKE_REVIEW_ANALYSIS_DIR || path.join(backendDir, "tmp", "review-row-analysis"));
 const latestSummaryPath = path.join(outputRoot, "cellphones-latest-summary.json");
 
-const sourceBucket = process.env.ASKLAKE_CELLPHONES_REVIEW_BUCKET || "m3-raw";
+const sourceBucket = process.env.ASKLAKE_CELLPHONES_REVIEW_BUCKET || defaultRawBucket();
 const sourceKey = process.env.ASKLAKE_CELLPHONES_REVIEW_KEY || "amazon_reviews/cell_phones_and_accessories/reviews/Cell_Phones_and_Accessories.jsonl";
 const defaultLimit = boundedPositiveInt(process.env.ASKLAKE_REVIEW_ANALYSIS_DEFAULT_LIMIT, 50000, 1, 500000);
 const maxInteractiveLimit = boundedPositiveInt(process.env.ASKLAKE_REVIEW_ANALYSIS_MAX_LIMIT, 200000, 1000, 1000000);
@@ -208,18 +210,17 @@ export async function runCellphonesReviewAnalysis(request = {}) {
   const output = createWriteStream(outputPath, { encoding: "utf8" });
   const csvOutput = createWriteStream(csvOutputPath, { encoding: "utf8" });
   csvOutput.write(`${outputSchema.map((column) => csvEscape(column.targetName)).join(",")}\n`);
-  const child = spawnMinioCat(limit);
-  const childExit = waitForProcess(child);
+  const source = await openReviewSource(limit);
   let stderr = "";
 
-  child.stderr.on("data", (chunk) => {
+  source.stderr?.on("data", (chunk) => {
     stderr += chunk.toString("utf8");
     if (stderr.length > 12000) stderr = stderr.slice(-12000);
   });
 
   const lineReader = readline.createInterface({
     crlfDelay: Infinity,
-    input: child.stdout,
+    input: source.input,
   });
 
   try {
@@ -234,12 +235,16 @@ export async function runCellphonesReviewAnalysis(request = {}) {
       recordClassifiedRow(result, analyzed.metricsRow, projected);
       output.write(`${JSON.stringify(projected)}\n`);
       csvOutput.write(`${outputSchema.map((column) => csvEscape(projected[column.targetName])).join(",")}\n`);
+      if (limit > 0 && result.processedRows >= limit) {
+        source.stop();
+        break;
+      }
     }
   } finally {
     await Promise.all([closeWritable(output), closeWritable(csvOutput)]);
   }
 
-  const exit = await childExit;
+  const exit = await source.wait;
   if (exit !== 0 && result.processedRows === 0) {
     throw Object.assign(new Error(`Cell phones review stream failed. ${stderr || `exit=${exit}`}`), {
       code: "REVIEW_ANALYSIS_STREAM_FAILED",
@@ -258,6 +263,7 @@ export async function runCellphonesReviewAnalysis(request = {}) {
 
 function initialSummary({ csvOutputPath, limit, outputPath, outputSchema, runId, runtime, startedAt, summaryPath }) {
   const usesLocalLlm = runtime === "local_llm";
+  const storageLabel = objectStorageProvider() === "aws" ? "AWS S3" : "MinIO";
   return {
     analysis: {
       engine: "text-row-to-structured-csv",
@@ -295,8 +301,8 @@ function initialSummary({ csvOutputPath, limit, outputPath, outputSchema, runId,
     method: {
       name: "text-row-structuring",
       note: usesLocalLlm
-        ? "Streams the real MinIO JSONL source and writes the user-defined final CSV schema. Local LLM row calls are explicit opt-in."
-        : "Streams the real MinIO JSONL source and writes the user-defined final CSV schema with scalable text-signal transforms.",
+        ? `Streams the real ${storageLabel} JSONL source and writes the user-defined final CSV schema. Local LLM row calls are explicit opt-in.`
+        : `Streams the real ${storageLabel} JSONL source and writes the user-defined final CSV schema with scalable text-signal transforms.`,
       schema: outputSchema.map((column) => column.targetName),
     },
     output: {
@@ -317,11 +323,13 @@ function initialSummary({ csvOutputPath, limit, outputPath, outputSchema, runId,
 }
 
 function sourceDescriptor() {
+  const provider = objectStorageProvider();
   return {
     bucket: sourceBucket,
     key: sourceKey,
     object: `s3://${sourceBucket}/${sourceKey}`,
-    runtime: "docker exec m3-minio mc cat",
+    provider,
+    runtime: provider === "minio" ? "docker exec m3-minio mc cat" : "AWS SDK default credential chain",
   };
 }
 
@@ -715,6 +723,37 @@ function spawnMinioCat(limit) {
   return spawn("docker", ["exec", "-i", container, "sh", "-lc", script], {
     stdio: ["ignore", "pipe", "pipe"],
   });
+}
+
+async function openReviewSource(limit) {
+  if (objectStorageProvider() === "minio") {
+    const child = spawnMinioCat(limit);
+    return {
+      input: child.stdout,
+      stderr: child.stderr,
+      stop: () => child.stdout.destroy(),
+      wait: waitForProcess(child),
+    };
+  }
+
+  const config = resolveObjectStorageConfig();
+  const client = new S3Client(s3ClientOptions(config));
+  const response = await client.send(new GetObjectCommand({
+    Bucket: sourceBucket,
+    Key: sourceKey,
+  }));
+  if (!response.Body || typeof response.Body[Symbol.asyncIterator] !== "function") {
+    throw Object.assign(new Error("AWS S3 review object did not return a readable body."), {
+      code: "REVIEW_ANALYSIS_STREAM_FAILED",
+      status: 502,
+    });
+  }
+  return {
+    input: response.Body,
+    stderr: null,
+    stop: () => response.Body.destroy?.(),
+    wait: Promise.resolve(0),
+  };
 }
 
 function parseJsonLine(line, result) {

@@ -29,6 +29,7 @@ from app.schemas.sql import (
     QueryRunResponse,
 )
 from app.services.governance_enforcement import require_governed_access
+from app.services.object_storage import object_storage_runtime
 from app.services.lake_storage_service import default_storage_root
 from app.services.resource_permission_service import dataset_with_persisted_permission_grants
 
@@ -1259,26 +1260,16 @@ def build_sql_preview_s3_client() -> Any:
     except ImportError as exc:
         raise sql_storage_error("Python S3 client dependency is not installed") from exc
 
-    endpoint = os.environ.get("S3_ENDPOINT") or os.environ.get("MINIO_ENDPOINT")
-    access_key = os.environ.get("AWS_ACCESS_KEY_ID") or os.environ.get("MINIO_ACCESS_KEY")
-    secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY") or os.environ.get("MINIO_SECRET_KEY")
-    region = os.environ.get("AWS_REGION") or os.environ.get("MINIO_REGION") or "us-east-1"
-    force_path_style = str(os.environ.get("S3_FORCE_PATH_STYLE") or "true").lower() != "false"
+    runtime = object_storage_runtime()
     kwargs: dict[str, Any] = {
         "config": Config(
             connect_timeout=5,
             read_timeout=30,
             retries={"max_attempts": 2, "mode": "standard"},
-            s3={"addressing_style": "path" if force_path_style else "auto"},
+            s3={"addressing_style": "path" if runtime.force_path_style else "auto"},
         ),
-        "region_name": region,
+        **runtime.boto3_kwargs(),
     }
-    if endpoint:
-        kwargs["endpoint_url"] = endpoint
-    if access_key:
-        kwargs["aws_access_key_id"] = access_key
-    if secret_key:
-        kwargs["aws_secret_access_key"] = secret_key
     return boto3.client("s3", **kwargs)
 
 

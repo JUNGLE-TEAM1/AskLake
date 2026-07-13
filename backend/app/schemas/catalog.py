@@ -1,6 +1,6 @@
 from typing import Any, Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from app.schemas.common import CamelModel, CursorPageMeta
 from app.schemas.permissions import PermissionGrant, ResourcePermissions
@@ -14,6 +14,8 @@ QueryRefreshPolicy = Literal["manual"]
 MaterializationRunStatus = Literal["queued", "running", "success", "failed", "canceled"]
 MaterializationSourceKind = Literal["etl", "sql", "kafka"]
 MaterializationMode = Literal["snapshot", "delta"]
+QueryEngineTableFormat = Literal["iceberg", "parquet"]
+QueryEngineStatus = Literal["pending", "available", "registration_failed", "unavailable"]
 
 
 class LineageGraphColumn(CamelModel):
@@ -49,6 +51,7 @@ class DatasetMaterializationRun(CamelModel):
     materialization_mode: MaterializationMode | None = None
     publication_manifest: str | None = None
     quality: dict[str, Any] | None = None
+    materialization_mode: Literal["snapshot", "delta"] = "snapshot"
     row_count: int = 0
     rule_contract_version: str | None = None
     rule_fingerprint: str | None = None
@@ -64,10 +67,17 @@ class DatasetMaterializationRun(CamelModel):
     transform: dict[str, Any] | None = None
 
 
+class QueryEngineTableRef(CamelModel):
+    catalog: str
+    schema_: str = Field(alias="schema")
+    table: str
+    format: QueryEngineTableFormat
+    partition_columns: list[str] = Field(default_factory=list)
+
+
 class CatalogDatasetResponse(CamelModel):
     created_by: str | None = None
     created_by_profile: dict[str, Any] | None = None
-    dashboard_sync_interval_minutes: int | None = None
     permission_grants: list[PermissionGrant] = Field(default_factory=list)
     permissions: ResourcePermissions = Field(default_factory=ResourcePermissions)
     description: str
@@ -88,8 +98,6 @@ class CatalogDatasetResponse(CamelModel):
     schema_: list[tuple[str, str]] = Field(alias="schema")
     size: str
     source: str
-    source_execution_mode: Literal["snapshot", "continuous"] | None = None
-    source_kind: MaterializationSourceKind | None = None
     source_run_id: str | None = None
     status: DatasetStatus
     storage_format: str | None = None
@@ -97,9 +105,30 @@ class CatalogDatasetResponse(CamelModel):
     storage_size_bytes: int | None = None
     partition: str | None = None
     partition_columns: list[str] | None = None
+    query_engine_table: QueryEngineTableRef | None = None
+    query_engine_status: QueryEngineStatus = "unavailable"
+    query_engine_error: str | None = None
+    query_engine_required: bool = False
     index_columns: list[str] | None = None
     tags: list[str]
     upstream: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def infer_query_engine_status(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        payload = dict(value)
+        if payload.get("queryEngineStatus") is None and payload.get("query_engine_status") is None:
+            payload["queryEngineStatus"] = "available" if payload.get("queryEngineTable") or payload.get("query_engine_table") else "unavailable"
+        query_engine_status = payload.get("queryEngineStatus") or payload.get("query_engine_status")
+        if query_engine_status != "available":
+            payload.pop("queryEngineTable", None)
+            payload.pop("query_engine_table", None)
+        if query_engine_status != "registration_failed":
+            payload.pop("queryEngineError", None)
+            payload.pop("query_engine_error", None)
+        return payload
 
 
 class CatalogDatasetListResponse(CamelModel):

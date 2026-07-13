@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { CreateBucketCommand, HeadBucketCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { closeMetadataStore, getDataset, saveDataset } from "../src/metadataStore.mjs";
 import { loadKafkaJs } from "../src/kafka-codecs.mjs";
+import { defaultOutputBucket, isMinioProvider, resolveObjectStorageConfig, s3ClientOptions } from "../src/objectStorageConfig.mjs";
 import { formatBytes, inferSchemaColumns, normalizeColumnName, parseSourceSample, schemaFingerprint } from "../src/profile.mjs";
 import {
   buildKafkaTargetSchema,
@@ -52,8 +53,9 @@ const suppliedSnapshot = isSnapshotPayload(apiPayload.snapshot) ? apiPayload.sna
 const snapshotOnly = booleanOption("snapshotOnly", false);
 const landingMode = stringOption("storageMode", process.env.ASKLAKE_REVIEW_LANDING_MODE || "local").toLowerCase();
 const targetRoot = path.resolve(stringOption("localLandingDir", process.env.ASKLAKE_REVIEW_TARGET_LOCAL_DIR || path.join(backendDir, "tmp", "kafka-target")));
-const s3Endpoint = stringOption("landingEndpoint", process.env.ASKLAKE_REVIEW_LANDING_ENDPOINT || process.env.MINIO_ENDPOINT || "http://127.0.0.1:19000");
-const s3Bucket = stringOption("targetBucket", apiPayload.landingBucket || process.env.ASKLAKE_REVIEW_TARGET_BUCKET || "asklake-output");
+const defaultStorage = resolveObjectStorageConfig();
+const s3Endpoint = stringOption("landingEndpoint", process.env.ASKLAKE_REVIEW_LANDING_ENDPOINT || defaultStorage.endpoint);
+const s3Bucket = stringOption("targetBucket", apiPayload.landingBucket || process.env.ASKLAKE_REVIEW_TARGET_BUCKET || defaultOutputBucket());
 const s3Prefix = normalizePrefix(stringOption("targetPrefix", apiPayload.landingPrefix || process.env.ASKLAKE_REVIEW_TARGET_PREFIX || `${normalizeColumnName(datasetName)}/${targetLayer.toLowerCase()}`));
 let s3DataKey = "";
 let s3MetadataKey = "";
@@ -406,15 +408,7 @@ function writeLocalTarget(dataBody) {
 }
 
 async function writeS3Landing(dataBody, metadata) {
-  const client = new S3Client({
-    credentials: {
-      accessKeyId: process.env.ASKLAKE_REVIEW_LANDING_ACCESS_KEY || process.env.MINIO_ACCESS_KEY || "m3admin",
-      secretAccessKey: process.env.ASKLAKE_REVIEW_LANDING_SECRET_KEY || process.env.MINIO_SECRET_KEY || "wishuponastar",
-    },
-    endpoint: s3Endpoint,
-    forcePathStyle: String(process.env.ASKLAKE_REVIEW_LANDING_FORCE_PATH_STYLE || "true").toLowerCase() !== "false",
-    region: process.env.ASKLAKE_REVIEW_LANDING_REGION || process.env.MINIO_REGION || "us-east-1",
-  });
+  const client = s3LandingClient();
   await ensureBucket(client, s3Bucket);
   await client.send(new PutObjectCommand({
     Body: Buffer.from(dataBody, "utf8"),
@@ -460,21 +454,21 @@ async function putS3Json(client, key, value) {
 }
 
 function s3LandingClient() {
-  return new S3Client({
-    credentials: {
-      accessKeyId: process.env.ASKLAKE_REVIEW_LANDING_ACCESS_KEY || process.env.MINIO_ACCESS_KEY || "m3admin",
-      secretAccessKey: process.env.ASKLAKE_REVIEW_LANDING_SECRET_KEY || process.env.MINIO_SECRET_KEY || "wishuponastar",
-    },
-    endpoint: s3Endpoint,
-    forcePathStyle: String(process.env.ASKLAKE_REVIEW_LANDING_FORCE_PATH_STYLE || "true").toLowerCase() !== "false",
-    region: process.env.ASKLAKE_REVIEW_LANDING_REGION || process.env.MINIO_REGION || "us-east-1",
-  });
+  const fields = [
+    ["Endpoint URL", s3Endpoint],
+    ["Region", process.env.ASKLAKE_REVIEW_LANDING_REGION || defaultStorage.region],
+    ["Access Key", process.env.ASKLAKE_REVIEW_LANDING_ACCESS_KEY || ""],
+    ["Secret Key", process.env.ASKLAKE_REVIEW_LANDING_SECRET_KEY || ""],
+    ["Use Path Style", process.env.ASKLAKE_REVIEW_LANDING_FORCE_PATH_STYLE || String(defaultStorage.forcePathStyle)],
+  ];
+  return new S3Client(s3ClientOptions(resolveObjectStorageConfig(fields)));
 }
 
 async function ensureBucket(client, bucket) {
   try {
     await client.send(new HeadBucketCommand({ Bucket: bucket }));
-  } catch {
+  } catch (error) {
+    if (!isMinioProvider()) throw error;
     await client.send(new CreateBucketCommand({ Bucket: bucket }));
   }
 }
@@ -510,6 +504,7 @@ async function registerCatalogDataset(metadata) {
     nextRefresh: "-",
     owner: process.env.ASKLAKE_REVIEW_DATASET_OWNER || "AskLake",
     quality: metadata.quality?.summary || (metadata.failedCount > 0 ? `적재 완료 · 실패 ${metadata.failedCount}건` : "Kafka snapshot 적재 완료"),
+    queryEngineStatus: "unavailable",
     rag: false,
     rows: String(aggregate.rowCount),
     sampleRows: metadata.sampleRows,

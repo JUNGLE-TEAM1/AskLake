@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import { createSparkSourceInspectRestSubmission } from "../src/connectors.mjs";
 import {
+  assertSparkRestStorageCredentials,
   createSparkRestSubmission,
   sparkExecutionMode,
   sparkRestBridgeTimeoutMs,
@@ -43,8 +44,7 @@ const compose = JSON.parse(composeResult.stdout);
 const backend = requiredService(compose, "backend");
 const init = requiredService(compose, "spark-dir-init");
 const master = requiredService(compose, "spark-master");
-const minio = requiredService(compose, "minio");
-const minioInit = requiredService(compose, "minio-init");
+const readiness = requiredService(compose, "aws-s3-readiness");
 const worker = requiredService(compose, "spark-worker");
 const backendEnvironment = backend.environment || {};
 
@@ -69,16 +69,25 @@ assert.equal(
   backendEnvironment.ASKLAKE_SPARK_CONTINUOUS_MAINTENANCE_SCRIPT,
   "/opt/asklake/scripts/kafka_continuous_maintenance.py",
 );
-assert.equal(minio.environment?.MINIO_ROOT_USER, minioInit.environment?.MINIO_ROOT_USER);
-assert.equal(minio.environment?.MINIO_ROOT_PASSWORD, minioInit.environment?.MINIO_ROOT_PASSWORD);
-assert.equal(backendEnvironment.MINIO_ACCESS_KEY, minioInit.environment?.MINIO_ACCESS_KEY);
-assert.equal(backendEnvironment.MINIO_SECRET_KEY, minioInit.environment?.MINIO_SECRET_KEY);
-assert.notEqual(backendEnvironment.MINIO_ACCESS_KEY, minio.environment?.MINIO_ROOT_USER);
-assert.notEqual(backendEnvironment.MINIO_SECRET_KEY, minio.environment?.MINIO_ROOT_PASSWORD);
-assert.equal(worker.environment?.MINIO_ACCESS_KEY, backendEnvironment.MINIO_ACCESS_KEY);
-assert.equal(worker.environment?.MINIO_SECRET_KEY, backendEnvironment.MINIO_SECRET_KEY);
-assert.notEqual(worker.environment?.MINIO_ACCESS_KEY, minio.environment?.MINIO_ROOT_USER);
-assert.notEqual(worker.environment?.MINIO_SECRET_KEY, minio.environment?.MINIO_ROOT_PASSWORD);
+assert.equal(compose.services.minio, undefined, "AWS production Compose must not include MinIO.");
+assert.equal(compose.services["minio-init"], undefined, "AWS production Compose must not include MinIO bootstrap.");
+assert.equal(backendEnvironment.ASKLAKE_OBJECT_STORAGE_PROVIDER, "aws");
+assert.equal(worker.environment?.ASKLAKE_OBJECT_STORAGE_PROVIDER, "aws");
+assert.equal(worker.environment?.AWS_REGION, backendEnvironment.AWS_REGION);
+assert.equal(readiness.environment?.ASKLAKE_OBJECT_STORAGE_PROVIDER, "aws");
+assert.equal(readiness.environment?.AWS_REGION, backendEnvironment.AWS_REGION);
+for (const name of [
+  "AWS_ACCESS_KEY_ID",
+  "AWS_SECRET_ACCESS_KEY",
+  "AWS_SESSION_TOKEN",
+  "MINIO_ACCESS_KEY",
+  "MINIO_SECRET_KEY",
+  "MINIO_ROOT_USER",
+  "MINIO_ROOT_PASSWORD",
+]) {
+  assert.equal(backendEnvironment[name], undefined, `Backend must not receive static credential ${name}.`);
+  assert.equal(worker.environment?.[name], undefined, `Spark worker must not receive static credential ${name}.`);
+}
 
 const sharedPaths = [
   "/var/lib/asklake/spark-ivy",
@@ -115,12 +124,16 @@ assert.throws(
   (error) => error?.code === "SPARK_RUNNER_CONFIGURATION_INVALID",
   "Production must fail closed when Docker execution is selected.",
 );
+assert.doesNotThrow(
+  () => assertSparkRestStorageCredentials([["Storage Provider", "aws"]], "rest"),
+  "AWS Spark REST execution must not resolve or require MinIO credentials.",
+);
 
 const pipelineSubmission = createSparkRestSubmission({
   appName: "contract-pipeline",
   environmentVariables: {
     ASKLAKE_SPARK_JOB_MANIFEST_FILE: "/var/lib/asklake/spark-runs/run.manifest.json",
-    ASKLAKE_SPARK_OUTPUT_PATH: "s3a://asklake-output/contract/run",
+    ASKLAKE_SPARK_OUTPUT_PATH: `s3a://${backendEnvironment.ASKLAKE_SPARK_OUTPUT_BUCKET}/contract/run`,
     ASKLAKE_SPARK_REPORT_FILE: "/var/lib/asklake/spark-runs/run.json",
   },
   packages: [backendEnvironment.ASKLAKE_SPARK_HADOOP_AWS_PACKAGE],
@@ -137,14 +150,12 @@ assert.equal(
   undefined,
   "Generic submissions must not invent ETL business environment values.",
 );
-assert.doesNotMatch(JSON.stringify(pipelineSubmission), new RegExp(escapeRegExp(backendEnvironment.MINIO_ACCESS_KEY)));
-assert.doesNotMatch(JSON.stringify(pipelineSubmission), new RegExp(escapeRegExp(backendEnvironment.MINIO_SECRET_KEY)));
 assert.throws(
   () => validateSubmission({
     ...pipelineSubmission,
     environmentVariables: {
       ...pipelineSubmission.environmentVariables,
-      MINIO_SECRET_KEY: backendEnvironment.MINIO_SECRET_KEY,
+      AWS_SECRET_ACCESS_KEY: "must-not-cross-rest-boundary",
     },
   }),
   /inherit application credentials from the worker environment/,
@@ -153,7 +164,7 @@ assert.throws(
 const inspectSubmission = createSparkSourceInspectRestSubmission({
   environmentVariables: {
     ASKLAKE_SOURCE_INSPECT_REPORT_FILE: "/var/lib/asklake/spark-runs/source-inspect.json",
-    ASKLAKE_SOURCE_PATH: "s3a://m3-raw/contract.parquet",
+    ASKLAKE_SOURCE_PATH: `s3a://${backendEnvironment.ASKLAKE_RAW_BUCKET}/contract.parquet`,
   },
 }, backendEnvironment);
 assert.deepEqual(inspectSubmission.appArgs, [backendEnvironment.ASKLAKE_SPARK_SOURCE_INSPECT_SCRIPT]);
@@ -161,8 +172,6 @@ assert.equal(
   inspectSubmission.environmentVariables.ASKLAKE_SOURCE_INSPECT_REPORT_FILE,
   backendEnvironment.ASKLAKE_SPARK_REPORT_CONTAINER_DIR + "/source-inspect.json",
 );
-assert.doesNotMatch(JSON.stringify(inspectSubmission), new RegExp(escapeRegExp(backendEnvironment.MINIO_ACCESS_KEY)));
-assert.doesNotMatch(JSON.stringify(inspectSubmission), new RegExp(escapeRegExp(backendEnvironment.MINIO_SECRET_KEY)));
 assert.equal(sparkRunTimeoutMs({ ASKLAKE_SPARK_RUN_TIMEOUT_SECONDS: "1" }), 1_000);
 assert.equal(sparkRunTimeoutMs({ ASKLAKE_SPARK_RUN_TIMEOUT_SECONDS: "0" }), 7_200_000);
 assert.equal(sparkRestBridgeTimeoutMs(1_000), 31_000);
@@ -217,8 +226,4 @@ function requiredService(config, name) {
 
 function hasVolumeTarget(service, target) {
   return (service.volumes || []).some((volume) => volume.target === target);
-}
-
-function escapeRegExp(value) {
-  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

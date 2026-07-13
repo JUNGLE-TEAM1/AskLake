@@ -2094,9 +2094,10 @@ export function JobDetailPage({
   const rawSourceType = job.sourceType ?? job.source.split(" / ")[0] ?? job.source;
   const sourceType = getSourceBrandMeta(rawSourceType).label;
   const sourcePath = job.sourceLabel ?? (job.source.split(" / ").slice(1).join(" / ") || job.source);
-  const stats = job.stats ?? fallbackJobStats(job);
+  const stats = { ...fallbackJobStats(job), ...(job.stats ?? {}) };
   const realtime = isRealtimeJob(job);
-  const totalRunsLabel = stats.totalRuns === "-" || stats.totalRuns.endsWith("회") ? stats.totalRuns : `${stats.totalRuns}회`;
+  const totalRuns = String(stats.totalRuns ?? "-");
+  const totalRunsLabel = totalRuns === "-" || totalRuns.endsWith("회") ? totalRuns : `${totalRuns}회`;
   const realtimeMetrics = job.operationalMetrics?.metricType === "realtime" ? job.operationalMetrics : undefined;
   const realtimeHealth = realtimeHealthMeta[realtimeMetrics?.healthStatus ?? "unknown"];
   const physicalOutputPath = job.targetPath ?? stats.outputPath ?? `lake/${job.target}`;
@@ -2480,7 +2481,6 @@ function ContinuousRuntimeCard({ job }: { job: JobRowData }) {
         <Field label="실패" value={runtime?.failedCount?.toLocaleString() ?? "0"} />
         <Field label="Kafka Lag" value={runtime?.lagAvailable ? `${runtime.lag?.toLocaleString() ?? 0}건 · 최대 ${runtime.maxPartitionLag?.toLocaleString() ?? 0}` : "측정 대기"} />
         <Field label="처리량" value={runtime?.throughputRowsPerSecond != null ? `${runtime.throughputRowsPerSecond.toLocaleString()} rows/s` : "-"} />
-        <Field label="대시보드 동기화" value={`${job.continuousConfig?.dashboardSyncIntervalMinutes ?? 5}분`} />
         <Field label="최근 Batch" value={runtime?.lastBatchDurationMs != null ? `${runtime.lastBatchInputRows.toLocaleString()}건 · ${runtime.lastBatchDurationMs.toLocaleString()}ms` : "-"} />
         <Field label="Schema" value={`v${runtime?.schemaVersion ?? 1} · ${runtime?.schemaStatus ?? "stable"}`} />
         <Field label="Rule 계약" value={`v${runtime?.ruleContractVersion ?? "1.0"} · ${runtime?.ruleFingerprint?.slice(0, 10) ?? "대기"}`} />

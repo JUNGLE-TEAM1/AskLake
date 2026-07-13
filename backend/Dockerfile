@@ -10,6 +10,7 @@ FROM python:3.13-slim AS backend-runtime
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV APP_ENV=production
+ENV PYTHONPATH=/app
 
 WORKDIR /app
 
@@ -19,7 +20,7 @@ RUN apt-get update \
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-RUN python -c "import duckdb; connection = duckdb.connect(); connection.execute('INSTALL httpfs'); connection.close()"
+RUN python -c "import duckdb; connection = duckdb.connect(); connection.execute('INSTALL httpfs'); connection.execute('INSTALL aws'); connection.close()"
 
 COPY package*.json ./
 RUN npm ci --omit=dev

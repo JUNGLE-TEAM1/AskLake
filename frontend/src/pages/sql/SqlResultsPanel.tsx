@@ -1,4 +1,5 @@
-import { BarChart3, Database, Download, Maximize2, Table2 } from "lucide-react";
+import type { ReactNode } from "react";
+import { Activity, BarChart3, Database, Download, Maximize2, RotateCcw, Table2 } from "lucide-react";
 
 import { ActionGroup } from "@/components/ui/action-group";
 import { Button } from "@/components/ui/button";
@@ -19,7 +20,18 @@ import styles from "./SqlAnalysisPage.module.css";
 import { SqlPreviewTable } from "./SqlPreviewTable";
 import { SqlResultChart, type SqlChartConfig, type SqlChartSource } from "./SqlResultChart";
 
-export type SqlResultView = "chart" | "table";
+export type SqlResultView = "chart" | "execution" | "table";
+
+export type SqlRemoteResultPagination = {
+  currentPage: number;
+  nextDisabled: boolean;
+  onNext: () => void;
+  onPrevious: () => void;
+  pending?: boolean;
+  previousDisabled: boolean;
+  rangeLabel: string;
+  totalPages?: number | null;
+};
 
 type SqlResultsPanelProps = {
   activeChartSource?: SqlChartSource;
@@ -27,13 +39,19 @@ type SqlResultsPanelProps = {
   chartConfig: SqlChartConfig | null;
   dialogResultDraft: SqlResultDraft | null;
   dialogOpen: boolean;
+  downloadDisabled?: boolean;
+  executionEnabled?: boolean;
+  executionInfo?: ReactNode;
+  jobCreationDisabled?: boolean;
   pageError: string | null;
   pagePending: boolean;
   onDialogOpenChange: (open: boolean) => void;
   onDownloadCsv: () => void;
   onOpenJobWizard: () => void;
   onPageChange: (offset: number) => void;
+  onPageRetry?: () => void;
   onResultViewChange: (view: SqlResultView) => void;
+  remotePagination?: SqlRemoteResultPagination;
   resultDraft: SqlResultDraft | null;
   resultView: SqlResultView;
 };
@@ -55,13 +73,60 @@ function SqlResultContent({
   resultDraft,
   resultView,
   isLoading = false,
-}: Pick<SqlResultsPanelProps, "activeChartSource" | "chartConfig" | "resultDraft" | "resultView"> & { isLoading?: boolean }) {
+  executionInfo,
+}: Pick<SqlResultsPanelProps, "activeChartSource" | "chartConfig" | "executionInfo" | "resultDraft" | "resultView"> & { isLoading?: boolean }) {
+  if (resultView === "execution") return executionInfo;
   if (!resultDraft) return null;
   if (resultView === "table") return <SqlPreviewTable isLoading={isLoading} resultDraft={resultDraft} />;
   if (chartConfig && activeChartSource) {
     return <SqlResultChart chartConfig={chartConfig} source={activeChartSource} />;
   }
   return <SqlChartEmptyState />;
+}
+
+function SqlRemotePaginationControls({ pagination }: { pagination: SqlRemoteResultPagination }) {
+  return (
+    <div aria-label="Trino 결과 페이지 탐색" className={styles.resultRemotePagination}>
+      <strong>{pagination.rangeLabel}</strong>
+      <div className={styles.resultPaginationActions}>
+        <Button
+          disabled={pagination.previousDisabled || pagination.pending}
+          onClick={pagination.onPrevious}
+          size="sm"
+          type="button"
+          variant="outline"
+        >
+          이전
+        </Button>
+        <span>
+          {pagination.currentPage}
+          {pagination.totalPages ? ` / ${pagination.totalPages}` : ""}
+        </span>
+        <Button
+          disabled={pagination.nextDisabled || pagination.pending}
+          onClick={pagination.onNext}
+          size="sm"
+          type="button"
+          variant="outline"
+        >
+          다음
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function SqlResultPageError({ message, onRetry }: { message: string; onRetry?: () => void }) {
+  return (
+    <div className={styles.resultPageError} role="alert">
+      <span>{message}</span>
+      {onRetry ? (
+        <Button onClick={onRetry} size="sm" type="button" variant="outline">
+          <RotateCcw data-icon="inline-start" /> 다시 시도
+        </Button>
+      ) : null}
+    </div>
+  );
 }
 
 function getResultRange(resultDraft: SqlResultDraft) {
@@ -85,24 +150,31 @@ export function SqlResultsPanel({
   chartConfig,
   dialogResultDraft,
   dialogOpen,
+  downloadDisabled = false,
+  executionEnabled = false,
+  executionInfo,
+  jobCreationDisabled = false,
   pageError,
   pagePending,
   onDialogOpenChange,
   onDownloadCsv,
   onOpenJobWizard,
   onPageChange,
+  onPageRetry,
   onResultViewChange,
+  remotePagination,
   resultDraft,
   resultView,
 }: SqlResultsPanelProps) {
   const previewRange = resultDraft ? getResultRange(resultDraft) : null;
   const dialogDraft = dialogResultDraft ?? resultDraft;
   const dialogRange = dialogDraft ? getResultRange(dialogDraft) : null;
+  const showResultWorkspace = Boolean(resultDraft || executionEnabled);
 
   return (
     <>
       <Panel className={`${styles.resultPanel} grid gap-0 p-0`}>
-        {resultDraft ? (
+        {showResultWorkspace ? (
           <div className="grid min-h-0 grid-rows-[max-content_minmax(0,1fr)] gap-4 p-5">
             <div className={styles.resultToolbar}>
               <ToggleGroup
@@ -111,38 +183,52 @@ export function SqlResultsPanel({
                 type="single"
                 value={resultView}
               >
-                <ToggleGroupItem aria-label="차트 보기" size="sm" value="chart">
+                <ToggleGroupItem aria-label="차트 보기" disabled={!resultDraft} size="sm" value="chart">
                   <BarChart3 /> 차트 보기
                 </ToggleGroupItem>
-                <ToggleGroupItem aria-label="데이터 미리보기" size="sm" value="table">
+                <ToggleGroupItem aria-label="데이터 미리보기" disabled={!resultDraft} size="sm" value="table">
                   <Table2 /> 데이터 미리보기
                 </ToggleGroupItem>
+                {executionEnabled ? (
+                  <ToggleGroupItem aria-label="실행 정보" size="sm" value="execution">
+                    <Activity /> 실행 정보
+                  </ToggleGroupItem>
+                ) : null}
               </ToggleGroup>
               {previewRange && resultView === "table" ? (
                 <strong className={styles.resultRange}>
-                  {previewRange.start.toLocaleString()}–{previewRange.end.toLocaleString()} / {previewRange.total.toLocaleString()}행
+                  {remotePagination?.rangeLabel ?? `${previewRange.start.toLocaleString()}–${previewRange.end.toLocaleString()} / ${previewRange.total.toLocaleString()}행`}
                 </strong>
               ) : null}
-              <ActionGroup density="compact" wrap="wrap">
-                <Button type="button" onClick={onDownloadCsv} size="sm" variant="outline">
-                  <Download data-icon="inline-start" /> CSV 다운로드
-                </Button>
-                <Button type="button" onClick={onOpenJobWizard} size="sm" variant="outline">
-                  <Database data-icon="inline-start" /> 처리 Job 생성
-                </Button>
-                <Button type="button" onClick={() => onDialogOpenChange(true)} size="sm" variant="outline">
-                  <Maximize2 data-icon="inline-start" /> 전체 보기
-                </Button>
-              </ActionGroup>
+              {resultDraft && resultView !== "execution" ? (
+                <ActionGroup density="compact" wrap="wrap">
+                  <Button disabled={downloadDisabled} type="button" onClick={onDownloadCsv} size="sm" variant="outline">
+                    <Download data-icon="inline-start" /> CSV 다운로드
+                  </Button>
+                  <Button disabled={jobCreationDisabled} type="button" onClick={onOpenJobWizard} size="sm" variant="outline">
+                    <Database data-icon="inline-start" /> 처리 Job 생성
+                  </Button>
+                  <Button type="button" onClick={() => onDialogOpenChange(true)} size="sm" variant="outline">
+                    <Maximize2 data-icon="inline-start" /> 전체 보기
+                  </Button>
+                </ActionGroup>
+              ) : null}
             </div>
-            <ScrollArea className={styles.resultScroll} scrollbars="both" type="always">
-              <SqlResultContent
-                activeChartSource={activeChartSource}
-                chartConfig={chartConfig}
-                resultDraft={resultDraft}
-                resultView={resultView}
-              />
-            </ScrollArea>
+            <div className={styles.resultBody}>
+              <ScrollArea className={styles.resultScroll} scrollbars={resultView === "execution" ? "vertical" : "both"} type="always">
+                <SqlResultContent
+                  activeChartSource={activeChartSource}
+                  chartConfig={chartConfig}
+                  executionInfo={executionInfo}
+                  resultDraft={resultDraft}
+                  resultView={resultView}
+                />
+              </ScrollArea>
+              {resultDraft && resultView === "table" && remotePagination ? <SqlRemotePaginationControls pagination={remotePagination} /> : null}
+              {resultDraft && resultView === "table" && remotePagination && pageError ? (
+                <SqlResultPageError message={pageError} onRetry={onPageRetry} />
+              ) : null}
+            </div>
           </div>
         ) : (
           <>
@@ -166,7 +252,7 @@ export function SqlResultsPanel({
         )}
       </Panel>
 
-      {resultDraft && dialogDraft && dialogRange && (
+      {resultDraft && dialogDraft && dialogRange && resultView !== "execution" && (
         <Dialog onOpenChange={onDialogOpenChange} open={dialogOpen}>
           <DialogContent className="grid h-[min(900px,calc(100vh-2rem))] w-[min(1440px,calc(100vw-2rem))] max-w-none grid-rows-[max-content_minmax(0,1fr)] overflow-hidden">
             <DialogHeader>
@@ -179,7 +265,9 @@ export function SqlResultsPanel({
               {resultView === "table" ? (
                 <>
                   <div className={styles.resultDialogControls}>
-                    <div className={styles.resultPagination} aria-label="SQL 결과 페이지 탐색">
+                    {remotePagination ? (
+                      <SqlRemotePaginationControls pagination={remotePagination} />
+                    ) : <div className={styles.resultPagination} aria-label="SQL 결과 페이지 탐색">
                       <strong>
                         {dialogRange.start.toLocaleString()}–{dialogRange.end.toLocaleString()} / {dialogRange.total.toLocaleString()}행
                       </strong>
@@ -233,14 +321,15 @@ export function SqlResultsPanel({
                         마지막
                       </Button>
                       </div>
-                    </div>
-                    {pageError ? <div className={styles.resultPageError} role="alert">{pageError}</div> : null}
+                    </div>}
+                    {pageError ? <SqlResultPageError message={pageError} onRetry={remotePagination ? onPageRetry : undefined} /> : null}
                   </div>
                   <ScrollArea className="min-h-0" scrollbars="both" type="always">
                     <div className="min-w-0 px-4 pb-4 pt-6">
                       <SqlResultContent
                         activeChartSource={activeChartSource}
                         chartConfig={chartConfig}
+                        executionInfo={executionInfo}
                         isLoading={pagePending}
                         resultDraft={dialogDraft}
                         resultView={resultView}
@@ -253,6 +342,7 @@ export function SqlResultsPanel({
                   <SqlResultContent
                     activeChartSource={activeChartSource}
                     chartConfig={chartConfig}
+                    executionInfo={executionInfo}
                     resultDraft={dialogDraft}
                     resultView={resultView}
                   />

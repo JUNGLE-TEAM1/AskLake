@@ -13,6 +13,9 @@ TMP_DIR="$(mktemp -d "$TMP_PARENT/asklake-deploy-regression.XXXXXX")"
 ENV_FILE="$TMP_DIR/deploy.env"
 SPARK_DATA_DIR="$TMP_DIR/spark-data"
 REPLAY_INPUT_DIR="$TMP_DIR/replay-input"
+TRINO_CA_FILE="$TMP_DIR/trino-ca.pem"
+TRINO_KEYSTORE_FILE="$TMP_DIR/trino-keystore.jks"
+TRINO_PASSWORD_FILE="$TMP_DIR/trino-password.db"
 SECRET_SENTINEL="MinioAppSecret_DO_NOT_PRINT_7uQ"
 
 pass_count=0
@@ -52,6 +55,7 @@ write_valid_env() {
   {
     printf '%s\n' \
       'APP_ENV=production' \
+      'ASKLAKE_OBJECT_STORAGE_PROVIDER=minio' \
       'APP_DOMAIN=deploy.asklake.test' \
       'VITE_API_BASE_URL=https://deploy.asklake.test' \
       'BACKEND_CORS_ORIGINS=https://deploy.asklake.test' \
@@ -75,6 +79,62 @@ write_valid_env() {
       "ASKLAKE_HOST_DATA_DIR=$SPARK_DATA_DIR" \
       "ASKLAKE_REPLAY_HOST_INPUT_DIR=$REPLAY_INPUT_DIR"
   } > "$target"
+}
+
+write_valid_aws_env() {
+  local target="$1"
+  write_valid_env "$target"
+  awk -F= '
+    $1 ~ /^MINIO_(ROOT_USER|ROOT_PASSWORD|ACCESS_KEY|SECRET_KEY)$/ { next }
+    $1 == "ASKLAKE_OBJECT_STORAGE_PROVIDER" { print "ASKLAKE_OBJECT_STORAGE_PROVIDER=aws"; next }
+    { print }
+  ' "$target" > "$target.next"
+  mv "$target.next" "$target"
+  {
+    printf '%s\n' \
+      'AWS_REGION=ap-northeast-2' \
+      'ASKLAKE_RAW_BUCKET=asklake-test-raw' \
+      'ASKLAKE_SPARK_OUTPUT_BUCKET=asklake-test-output' \
+      'S3_ENDPOINT=' \
+      'S3_FORCE_PATH_STYLE=false' \
+      'S3_ALLOWED_BUCKETS=asklake-test-raw,asklake-test-output' \
+      'ASKLAKE_S3_READINESS_READ_BUCKETS=asklake-test-raw' \
+      'ASKLAKE_S3_READINESS_WRITE_BUCKETS=asklake-test-output'
+  } >> "$target"
+}
+
+write_valid_trino_aws_env() {
+  local target="$1"
+  write_valid_aws_env "$target"
+  replace_env_value \
+    "$target" \
+    ASKLAKE_S3_READINESS_WRITE_BUCKETS \
+    'asklake-test-output,asklake-test-warehouse,asklake-test-query-results'
+  {
+    printf '%s\n' \
+      'COMPOSE_PROFILES=trino' \
+      'TRINO_ENABLED=true' \
+      'TRINO_BASE_URL=https://trino:8443' \
+      'TRINO_CATALOG=iceberg' \
+      'TRINO_SCHEMA=asklake' \
+      'TRINO_USER=asklake-api' \
+      'TRINO_AUTH_USERNAME=asklake-api' \
+      'TRINO_AUTH_PASSWORD=TrinoApiPassword_123' \
+      'TRINO_MATERIALIZER_USERNAME=asklake-materializer' \
+      'TRINO_MATERIALIZER_PASSWORD=TrinoMaterializerPassword_123' \
+      'TRINO_RESULT_STORAGE_BUCKET=asklake-test-query-results' \
+      'TRINO_RESULT_CURSOR_SECRET=TrinoResultCursorSecret_12345678901234567890' \
+      'TRINO_QUERY_CONFIRMATION_SECRET=TrinoConfirmationSecret_12345678901234567890' \
+      'TRINO_INTERNAL_SHARED_SECRET=TrinoInternalSharedSecret_12345678901234567890' \
+      'TRINO_ICEBERG_JDBC_USER=asklake_trino' \
+      'TRINO_ICEBERG_JDBC_PASSWORD=TrinoJdbcPassword_123' \
+      'TRINO_ICEBERG_WAREHOUSE_BUCKET=asklake-test-warehouse' \
+      'TRINO_TLS_KEYSTORE_PASSWORD=TrinoKeystorePassword_123' \
+      "TRINO_TLS_CA_FILE=$TRINO_CA_FILE" \
+      'TRINO_TLS_CA_CONTAINER_FILE=/run/secrets/trino-ca.pem' \
+      "TRINO_TLS_KEYSTORE_FILE=$TRINO_KEYSTORE_FILE" \
+      "TRINO_PASSWORD_FILE=$TRINO_PASSWORD_FILE"
+  } >> "$target"
 }
 
 replace_env_value() {
@@ -138,10 +198,14 @@ mkdir -p \
   "$SPARK_DATA_DIR/samples" \
   "$SPARK_DATA_DIR/review-text-models" \
   "$REPLAY_INPUT_DIR"
+printf '%s\n' 'test certificate' > "$TRINO_CA_FILE"
+printf '%s\n' 'test keystore' > "$TRINO_KEYSTORE_FILE"
+printf '%s\n' 'asklake-api:test' 'asklake-materializer:test' > "$TRINO_PASSWORD_FILE"
 
 write_valid_env "$ENV_FILE"
 expect_preflight_pass 'valid production environment passes'
 
+write_valid_aws_env "$ENV_FILE"
 if output="$(run_preflight "$ROOT_DIR/deploy/docker-compose.prod.yml" 2>&1)"; then
   if [[ "$output" == *"$SECRET_SENTINEL"* ]]; then
     record_fail 'actual production Compose passes preflight (secret appeared in output)'
@@ -151,6 +215,48 @@ if output="$(run_preflight "$ROOT_DIR/deploy/docker-compose.prod.yml" 2>&1)"; th
 else
   record_fail 'actual production Compose passes preflight (unexpected failure)'
 fi
+
+write_valid_trino_aws_env "$ENV_FILE"
+if output="$(run_preflight "$ROOT_DIR/deploy/docker-compose.prod.yml" 2>&1)"; then
+  record_pass 'Trino-enabled production Compose passes strict preflight'
+else
+  record_fail 'Trino-enabled production Compose passes strict preflight (unexpected failure)'
+fi
+
+write_valid_trino_aws_env "$ENV_FILE"
+replace_env_value "$ENV_FILE" COMPOSE_PROFILES ''
+expect_preflight_failure \
+  'Trino-enabled deployment requires its Compose profile' \
+  'COMPOSE_PROFILES must include trino' \
+  "$ROOT_DIR/deploy/docker-compose.prod.yml"
+
+write_valid_aws_env "$ENV_FILE"
+printf '%s\n' 'COMPOSE_PROFILES=trino' 'TRINO_ENABLED=false' >> "$ENV_FILE"
+expect_preflight_failure \
+  'Trino-disabled deployment rejects a stale Trino Compose profile' \
+  'COMPOSE_PROFILES must not include trino' \
+  "$ROOT_DIR/deploy/docker-compose.prod.yml"
+
+write_valid_trino_aws_env "$ENV_FILE"
+replace_env_value "$ENV_FILE" TRINO_AUTH_USERNAME 'renamed-api-user'
+expect_preflight_failure \
+  'Trino ACL identity drift is rejected' \
+  'usernames must match the checked-in ACL' \
+  "$ROOT_DIR/deploy/docker-compose.prod.yml"
+
+write_valid_trino_aws_env "$ENV_FILE"
+replace_env_value "$ENV_FILE" TRINO_TLS_CA_FILE "$TMP_DIR/missing-trino-ca.pem"
+expect_preflight_failure \
+  'Trino-enabled deployment requires readable TLS files' \
+  'TRINO_TLS_CA_FILE file does not exist or is not readable' \
+  "$ROOT_DIR/deploy/docker-compose.prod.yml"
+
+write_valid_trino_aws_env "$ENV_FILE"
+replace_env_value "$ENV_FILE" ASKLAKE_S3_READINESS_WRITE_BUCKETS 'asklake-test-output'
+expect_preflight_failure \
+  'Trino buckets must be covered by S3 readiness' \
+  'ASKLAKE_S3_READINESS_WRITE_BUCKETS must include asklake-test-query-results' \
+  "$ROOT_DIR/deploy/docker-compose.prod.yml"
 
 write_valid_env "$ENV_FILE"
 replace_env_value "$ENV_FILE" AIRFLOW_FERNET_KEY ''
@@ -200,12 +306,44 @@ expect_preflight_failure 'missing replay host directory is rejected' 'ASKLAKE_RE
 write_valid_env "$ENV_FILE"
 expect_preflight_failure \
   'Compose wiring that reuses application credentials as root is rejected' \
-  'Compose must wire MINIO_ROOT_*' \
+  'Compose object-storage wiring does not match the selected minio provider contract' \
   "$UNSAFE_COMPOSE"
 
 # Source without executing main so the real health_check function can be exercised
 # with deterministic curl fixtures.
 source "$DEPLOY_SCRIPT"
+
+mock_trino_deploy_control() (
+  local enabled="$1"
+
+  remote_trino_enabled() {
+    printf '%s\n' "$enabled"
+  }
+  remote_compose() {
+    printf 'compose:%s\n' "$1"
+  }
+
+  bootstrap_trino_dependencies
+  verify_trino_runtime
+)
+
+if output="$(mock_trino_deploy_control false 2>&1)" \
+  && [[ "$output" == *'compose:rm -sf trino-result-collector trino-result-cleanup trino trino-postgres-bootstrap'* ]] \
+  && [[ "$output" != *'verify-trino-production-readiness.py'* ]]; then
+  record_pass 'deploy control removes stale Trino services and skips readiness when disabled'
+else
+  record_fail 'deploy control removes stale Trino services and skips readiness when disabled'
+fi
+
+if output="$(mock_trino_deploy_control true 2>&1)" \
+  && [[ "$output" == *'compose:up -d postgres'* ]] \
+  && [[ "$output" == *'compose:run --rm trino-postgres-bootstrap'* ]] \
+  && [[ "$output" == *'verify-trino-production-readiness.py'* ]] \
+  && [[ "$output" != *'--allow-disabled'* ]]; then
+  record_pass 'deploy control bootstraps and strictly verifies Trino when enabled'
+else
+  record_fail 'deploy control bootstraps and strictly verifies Trino when enabled'
+fi
 
 mock_health_check() (
   local payload="$1"

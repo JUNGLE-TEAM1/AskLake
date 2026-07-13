@@ -75,20 +75,14 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { ValidationList } from "@/components/ui/validation-list";
 import { cn } from "@/lib/utils";
 import { S3PathField } from "../../components/s3/S3PathField";
-import { DatabaseField } from "../../components/target/DatabaseField";
 import { runTransformQualitySamplePreview } from "../../data/transformQualityPreview";
-import { normalizeDashboardSyncIntervalMinutes, normalizeRetryPolicy, retryFailureActionLabels, scheduleOverlapPolicyLabels, toCreatePipelineRequest } from "../../services/draftPipelineContract";
+import { normalizeRetryPolicy, retryFailureActionLabels, scheduleOverlapPolicyLabels, toCreatePipelineRequest } from "../../services/draftPipelineContract";
 import { getDatasets } from "../../services/mockApi";
 import { getReviewSnapshot, type ReviewSnapshot } from "../../services/reviewApi";
 import { fetchPermissionOptions } from "../../services/permissionApi";
 import { getSourceConnectorDefaults, listSourceAssets, previewRecordParsing, testSourceConnector, type SourceConnectorAnalysis } from "../../services/sourceConnectorService";
 import type { AuditResult, CatalogDataset, DraftPipeline, DraftPipelinePatch, FlowId, PermissionAction, PermissionOptionsResponse, RecordParsingDraft, RecordParsingPreviewResponse, ScheduleFlowId, SchemaColumnDraft, SourceDraft, TargetLayer } from "../../types";
 import type { QualityRuleDraft, RetryPolicyDraft, ScheduleDraft, ScheduleOverlapPolicy, TransformStepDraft, WatermarkPolicyDraft, WatermarkWindowMode } from "../../types/etl";
-import {
-  DEFAULT_DASHBOARD_SYNC_INTERVAL_MINUTES,
-  MAX_DASHBOARD_SYNC_INTERVAL_MINUTES,
-  MIN_DASHBOARD_SYNC_INTERVAL_MINUTES,
-} from "../../types/etl";
 import type { QualityRuleOption, TransformQualityInvalidRow, TransformQualityPreviewSample, TransformQualitySampleRow, TransformQualityStepPreview, TransformQualityValidationResult } from "../../data/transformQualityPreview";
 import { SourceAssetTree } from "./SourceAssetTree";
 import { SourceExplorerWorkbench } from "./SourceExplorerWorkbench";
@@ -98,6 +92,14 @@ import { SchemaRuleSummary } from "./SchemaRuleSummary";
 import { SchemaResultPreview } from "./SchemaResultPreview";
 import { EtlStepHeader } from "../../components/etl/EtlStepHeader";
 import { getSourceBrandMeta, SourceBrandIcon } from "../../components/source/SourceBrand";
+
+const OBJECT_STORAGE_IS_AWS = String(import.meta.env.VITE_OBJECT_STORAGE_PROVIDER ?? "minio").trim().toLowerCase() === "aws";
+const OBJECT_STORAGE_PROVIDER_LABEL = OBJECT_STORAGE_IS_AWS ? "Amazon S3" : "MinIO";
+const OBJECT_STORAGE_REGION = String(import.meta.env.VITE_S3_REGION ?? (OBJECT_STORAGE_IS_AWS ? "ap-northeast-2" : "us-east-1"));
+const SPARK_OUTPUT_BUCKET = String(import.meta.env.VITE_SPARK_OUTPUT_BUCKET ?? "asklake-output")
+  .trim()
+  .replace(/^s3a?:\/\//i, "")
+  .replace(/\/+.*$/, "") || "asklake-output";
 
 type RepeatFrequency = "hourly" | "daily" | "weekly" | "custom";
 type RepeatScheduleDraft = {
@@ -815,7 +817,7 @@ function normalizeTargetLayer(value: string | undefined): TargetLayer {
 }
 
 function buildTargetStoragePath(targetDataset: string, targetLayer: TargetLayer) {
-  return `s3a://asklake-output/${targetDataset}/${targetLayer.toLowerCase()}/`;
+  return `s3a://${SPARK_OUTPUT_BUCKET}/${targetDataset}/${targetLayer.toLowerCase()}/`;
 }
 
 function normalizeKafkaDatasetName(topic: string) {
@@ -1173,14 +1175,10 @@ export function SourceConnectionPage({
     setAssetFilter("all");
   }, [sourceType]);
 
-  const continuousConfig = {
-    dashboardSyncIntervalMinutes: normalizeDashboardSyncIntervalMinutes(
-      draft.source.continuousConfig?.dashboardSyncIntervalMinutes,
-    ),
-    initialOffsetPolicy: draft.source.continuousConfig?.initialOffsetPolicy ?? ("earliest" as const),
-    maxOffsetsPerTrigger: draft.source.continuousConfig?.maxOffsetsPerTrigger ?? 10000,
-    schemaEvolutionPolicy: draft.source.continuousConfig?.schemaEvolutionPolicy,
-    triggerIntervalSeconds: draft.source.continuousConfig?.triggerIntervalSeconds ?? 30,
+  const continuousConfig = draft.source.continuousConfig ?? {
+    initialOffsetPolicy: "earliest" as const,
+    triggerIntervalSeconds: 30,
+    maxOffsetsPerTrigger: 10000,
   };
   const updateContinuousConfig = (patch: Partial<typeof continuousConfig>) => {
     onDraftChange({
@@ -1293,23 +1291,25 @@ export function SourceConnectionPage({
     },
     "File / S3": {
       title: "Amazon S3 연결 설정",
-      description: "MinIO 오브젝트 스토리지에서 버킷과 제한 샘플을 실제 조회합니다.",
+      description: OBJECT_STORAGE_IS_AWS
+        ? "배포 서버의 IAM Role로 AWS S3 버킷과 제한 샘플을 조회합니다."
+        : "MinIO 오브젝트 스토리지에서 버킷과 제한 샘플을 실제 조회합니다.",
       fields: [
-        ["Storage Provider", "MinIO"],
+        ["Storage Provider", OBJECT_STORAGE_PROVIDER_LABEL],
         ["Endpoint URL", ""],
-        ["Region", ""],
+        ["Region", OBJECT_STORAGE_REGION],
         ["Bucket / Stage Name", ""],
         ["Path / Prefix", ""],
         ["Access Key", ""],
         ["Secret Key", ""],
-        ["Use Path Style", "true"],
+        ["Use Path Style", String(!OBJECT_STORAGE_IS_AWS)],
         ["File Type", "auto"],
         ["Delimiter", ","],
         ["Encoding", "UTF-8"],
         ["Header", "Treat first row as header"],
       ],
       testItems: [["Endpoint", "Not tested"], ["Bucket", "Not listed"], ["샘플 프로파일", "Pending"]],
-      logs: ["MinIO 소스 식별이 아직 검증되지 않았습니다.", "연결 테스트를 실행하면 제한 샘플을 가져옵니다."],
+      logs: [`${OBJECT_STORAGE_PROVIDER_LABEL} 소스 식별이 아직 검증되지 않았습니다.`, "연결 테스트를 실행하면 제한 샘플을 가져옵니다."],
       assetsTitle: "Amazon S3 파일 탐색",
       assets: [],
       previewTitle: "데이터 미리보기",
@@ -1469,7 +1469,7 @@ export function SourceConnectionPage({
     ["선택 커넥터", hasSelectedSource ? sourceTypeLabel(activeSourceType) : "미선택"],
     ["연결 상태", isSqlResultSource ? (hasSqlResultPreview && connectionStatus === "success" ? "SQL Preview 검증됨" : "SQL Preview 필요") : connectionStatus === "success" ? publicConnectionMessage : connectionStatus === "testing" ? "테스트 중" : connectionStatus === "failed" ? "실패" : "테스트 필요"],
     ["감지 파일", isSqlResultSource ? `${sourceConfigValue(editableFields, "Preview Row Count") || "0"} rows` : `${displayAssets.length}개`],
-    ["인증 방식", isSqlResultSource ? "SQL Preview 검증" : isInternalDataLake ? "AskLake 로그인 권한" : activeSourceType === "File / S3" ? "MinIO 액세스 키" : "백엔드 커넥터"],
+    ["인증 방식", isSqlResultSource ? "SQL Preview 검증" : isInternalDataLake ? "AskLake 로그인 권한" : activeSourceType === "File / S3" ? (OBJECT_STORAGE_IS_AWS ? "EC2 IAM Role" : "MinIO 액세스 키") : "백엔드 커넥터"],
     ["다음 단계", isSqlResultSource ? "Review 확인" : (sourceRuntime?.draftPatch.source?.requiresRecordParsing ? "레코드 구조화" : "스키마 추론")],
   ];
 
@@ -1599,6 +1599,59 @@ export function SourceConnectionPage({
     onDraftChange({
       recordParsing: { columns: [], delimiterKind: "whitespace", delimiterPattern: "\\s+", enabled: false, expectedFieldCount: 0, header: false },
       schema: { columns: [], sampleRows: [], summary: "" },
+    });
+  };
+
+  const updateCollectionConfig = (patches: Array<[string, string]>) => {
+    const nextFields = upsertSourceFields(editableFields, [...patches, ["__Sample Object", ""]]);
+    const nextMessage = "파일 수집 범위가 변경되었습니다. 대표 파일을 다시 샘플링하세요.";
+    setSourceFields((fields) => ({ ...fields, [activeSourceType]: nextFields }));
+    setSourceRuntime((runtime) => runtime ? {
+      ...runtime,
+      draftPatch: {},
+      logs: [nextMessage],
+      message: nextMessage,
+      previewColumns: [],
+      previewNote: "수집 범위를 다시 검증한 뒤 미리보기를 확인할 수 있습니다.",
+      previewRows: [],
+      status: "idle",
+    } : null);
+    setConnectionStatus("idle");
+    setConnectionMessage(nextMessage);
+    setSourceStage("connect");
+    applySourceDraft(activeSourceType, nextFields, "idle", nextMessage);
+    onDraftChange({
+      quality: {
+        invalidRows: [],
+        rules: [],
+        score: undefined,
+        status: "idle",
+        summary: "스키마 재추론 후 품질 규칙 설정 필요",
+      },
+      recordParsing: {
+        columns: [],
+        delimiterKind: "whitespace",
+        delimiterPattern: "\\s+",
+        enabled: false,
+        expectedFieldCount: 0,
+        header: false,
+      },
+      schema: {
+        columns: [],
+        sampleRows: [],
+        schemaFingerprint: undefined,
+        summary: "수집 범위 변경 · 스키마 재추론 필요",
+      },
+      source: {
+        detectedFormat: undefined,
+        rawPreviewLines: [],
+        requiresRecordParsing: false,
+      },
+      transform: {
+        outputColumns: [],
+        steps: [],
+        summary: "스키마 재추론 후 변환 설정 필요",
+      },
     });
   };
 
@@ -2000,26 +2053,6 @@ export function SourceConnectionPage({
                                 const value = Number(event.target.value);
                                 if (Number.isInteger(value) && value >= 1 && value <= 1_000_000) updateContinuousConfig({ maxOffsetsPerTrigger: value });
                               }} />
-                            </FormFieldGroup>
-                            <FormFieldGroup className="field" hint="게시된 대시보드의 Kafka 데이터를 1~60분 주기로 동기화합니다." label="대시보드 자동 동기화 주기">
-                              <Input
-                                aria-label="대시보드 자동 동기화 주기(분)"
-                                disabled={sourceLocked}
-                                max={MAX_DASHBOARD_SYNC_INTERVAL_MINUTES}
-                                min={MIN_DASHBOARD_SYNC_INTERVAL_MINUTES}
-                                type="number"
-                                value={continuousConfig.dashboardSyncIntervalMinutes ?? DEFAULT_DASHBOARD_SYNC_INTERVAL_MINUTES}
-                                onChange={(event) => {
-                                  const value = Number(event.target.value);
-                                  if (
-                                    Number.isInteger(value)
-                                    && value >= MIN_DASHBOARD_SYNC_INTERVAL_MINUTES
-                                    && value <= MAX_DASHBOARD_SYNC_INTERVAL_MINUTES
-                                  ) {
-                                    updateContinuousConfig({ dashboardSyncIntervalMinutes: value });
-                                  }
-                                }}
-                              />
                             </FormFieldGroup>
                           </div>
                         )}
@@ -2437,6 +2470,7 @@ function sourceStatusIcon(status: SourceDraft["connectionStatus"]) {
 function isVisibleSourceField(sourceType: string, label: string) {
   if (isInternalSourceField(label)) return false;
   if (sourceType === "File / S3") {
+    if (OBJECT_STORAGE_IS_AWS && ["Endpoint URL", "Access Key", "Secret Key"].includes(label)) return false;
     return !["Storage Provider", "Region", "Use Path Style", "Header", "Path / Prefix", "File Type", "Delimiter", "Encoding"].includes(label);
   }
   if (sourceType === "PostgreSQL") {
@@ -2460,7 +2494,7 @@ function isVisibleSourceField(sourceType: string, label: string) {
 function requiredSourceConnectionFields(sourceType: string) {
   const fields: Record<string, string[]> = {
     "Data Lake": [],
-    "File / S3": ["Endpoint URL", "Bucket / Stage Name", "Access Key", "Secret Key"],
+    "File / S3": OBJECT_STORAGE_IS_AWS ? ["Bucket / Stage Name"] : ["Endpoint URL", "Bucket / Stage Name", "Access Key", "Secret Key"],
     MongoDB: ["Endpoint / Host", "Port", "Database Name"],
     PostgreSQL: ["Endpoint / Host", "Port", "Database Name", "Username", "Password / Auth Token"],
     "REST API": ["Method", "Endpoint URL"],
@@ -5495,15 +5529,15 @@ export function TargetPage({
   );
   const sampleTargetSchema = useMemo(() => inferTargetSchema([], [], undefined), []);
   const [targetDataset, setTargetDataset] = useState(initialTarget.targetDataset);
-  const [databaseName, setDatabaseName] = useState(draftTarget?.databaseName ?? "asklake");
-  const [targetLayer, setTargetLayer] = useState<TargetLayer>(initialTargetLayer);
+  const databaseName = draftTarget?.databaseName ?? "asklake";
+  const targetLayer = initialTargetLayer;
   const [targetStoragePath, setTargetStoragePath] = useState(initialStoragePath);
   const [storagePathCustomized, setStoragePathCustomized] = useState(
     initialStoragePath !== buildTargetStoragePath(initialTarget.targetDataset, initialTargetLayer),
   );
   const [targetDescription, setTargetDescription] = useState(initialTarget.description);
-  const [targetFormat, setTargetFormat] = useState<TargetFileFormat>(initialTargetFormat);
-  const [targetOwner, setTargetOwner] = useState(draftTarget?.owner ?? initialTarget.owner);
+  const targetFormat = initialTargetFormat;
+  const targetOwner = draftTarget?.owner ?? initialTarget.owner;
   const [targetManager, setTargetManager] = useState(draftTarget?.manager ?? initialTarget.owner);
   const [targetTags, setTargetTags] = useState<string[]>(initialTarget.tags);
   const [customTag, setCustomTag] = useState("");
@@ -5631,13 +5665,6 @@ export function TargetPage({
     }
   };
 
-  const changeTargetLayer = (nextLayer: TargetLayer) => {
-    setTargetLayer(nextLayer);
-    if (!storagePathCustomized) {
-      setTargetStoragePath(buildTargetStoragePath(targetDataset.trim() || "target_dataset", nextLayer));
-    }
-  };
-
   const saveTargetConfig = () => {
     const config = buildConfig();
     const errors = validateTargetConfig(config, activeJsonParseFailed);
@@ -5684,7 +5711,7 @@ export function TargetPage({
   };
 
   return (
-    <CreationFlowLayout actions={<CreationTopActions nextDisabled={targetNextDisabled} prevLabel="이전" nextLabel="다음" split onPrev={onPrev} onNext={handleNext} />}>
+    <CreationFlowLayout className="target-page-layout" actions={<CreationTopActions nextDisabled={targetNextDisabled} prevLabel="이전" nextLabel="다음" split onPrev={onPrev} onNext={handleNext} />}>
       <EtlStepHeader
         className="etl-step-standalone-header"
         icon={<HardDrive />}
@@ -5707,14 +5734,31 @@ export function TargetPage({
             <FormFieldGroup className="field wide" label="데이터셋명">
               <Input className="input control-input" value={targetDataset} onChange={(event) => changeTargetDataset(event.target.value)} />
             </FormFieldGroup>
-            <FormFieldGroup className="field" label="오너">
-              <Input className="input control-input" value={targetOwner} onChange={(event) => setTargetOwner(event.target.value)} />
-            </FormFieldGroup>
-            <FormFieldGroup className="field" label="담당자">
+            <FormFieldGroup className="field target-manager-field" label="담당자">
               <Input className="input control-input" value={targetManager} onChange={(event) => setTargetManager(event.target.value)} />
             </FormFieldGroup>
             <FormFieldGroup className="field wide" label="설명">
               <Input className="input control-input" value={targetDescription} onChange={(event) => setTargetDescription(event.target.value)} />
+            </FormFieldGroup>
+            <FormFieldGroup className="field wide target-tags-field" label="태그">
+              {targetTags.length > 0 ? (
+                <TagList className="target-chip-grid" density="compact" role="group" aria-label="타겟 태그">
+                  {targetTags.map((tag) => (
+                    <Button aria-pressed={targetTags.includes(tag)} key={tag} size="sm" type="button" variant="secondary" onClick={() => toggleTag(tag)}>
+                      {tag}
+                    </Button>
+                  ))}
+                </TagList>
+              ) : null}
+              <div className="target-inline-controls">
+                <Input className="input control-input" placeholder="태그 입력" value={customTag} onChange={(event) => setCustomTag(event.target.value)} onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    addCustomTag();
+                  }
+                }} />
+                <Button type="button" variant="outline" onClick={addCustomTag}><Plus data-icon="inline-start" />추가</Button>
+              </div>
             </FormFieldGroup>
           </div>
         </section>
@@ -5726,33 +5770,8 @@ export function TargetPage({
               <h2>저장 위치 설정</h2>
             </div>
           </div>
-          <div className="target-config-form-grid destination">
-            <FormFieldGroup className="field target-db-field" label="DB 선택">
-              <DatabaseField useShadcnStyles value={databaseName} onChange={setDatabaseName} />
-            </FormFieldGroup>
-            <FormFieldGroup className="field" label="데이터 레이어">
-              <Select value={targetLayer} onValueChange={(layer) => changeTargetLayer(layer as TargetLayer)}>
-                <SelectTrigger aria-label="데이터 레이어 선택" size="sm">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {targetLayerOptions.map((layer) => <SelectItem key={layer} value={layer}>{layer}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </FormFieldGroup>
-            <FormFieldGroup className="field target-format-field" label="포맷">
-              <Select value={targetFormat} onValueChange={(format) => setTargetFormat(format as TargetFileFormat)}>
-                <SelectTrigger aria-label="파일 포맷 선택" className="target-format-select" size="sm">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {targetFormatOptions.map((format) => (
-                    <SelectItem key={format} value={format}>{format.toUpperCase()}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </FormFieldGroup>
-            <FormFieldGroup className="field wide target-storage-field" label="저장경로">
+          <div className="target-config-form-grid destination storage-only">
+            <FormFieldGroup className="field wide target-storage-field" label="저장 경로">
               <S3PathField useShadcnStyles value={targetStoragePath} onChange={(path) => {
                 setTargetStoragePath(path);
                 setStoragePathCustomized(true);
@@ -5764,43 +5783,18 @@ export function TargetPage({
           <div className="etl-review-card-header">
             <span className="etl-review-icon permission"><SlidersHorizontal size={17} /></span>
             <div>
-              <h2>파티션 및 태그</h2>
+              <h2>파티션 설정</h2>
             </div>
           </div>
-          <div className="target-config-split">
-            <div className="target-config-subsection">
-              <div className="target-config-subheader">
-                <BookOpen size={16} />
-                <h3>태그</h3>
+          <div className="target-partition-settings">
+            <div className="target-partition-table">
+              <div className="target-partition-header" aria-hidden="true">
+                <span>선택</span>
+                <span>컬럼명</span>
+                <span>데이터 타입</span>
               </div>
-              {targetTags.length > 0 ? (
-                <TagList className="target-chip-grid" density="compact" role="group" aria-label="타겟 태그">
-                  {targetTags.map((tag) => (
-                    <Button aria-pressed={targetTags.includes(tag)} key={tag} size="sm" type="button" variant="secondary" onClick={() => toggleTag(tag)}>
-                      {tag}
-                    </Button>
-                  ))}
-                </TagList>
-              ) : null}
-              <div className="target-inline-controls">
-                <Input className="input control-input" placeholder="직접 태그 추가" value={customTag} onChange={(event) => setCustomTag(event.target.value)} onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    addCustomTag();
-                  }
-                }} />
-                <Button type="button" variant="outline" onClick={addCustomTag}><Plus data-icon="inline-start" />추가</Button>
-              </div>
-            </div>
-            <div className="target-config-subsection">
-              <div className="target-config-subheader">
-                <SlidersHorizontal size={16} />
-                <h3>파티션</h3>
-              </div>
-              <div className="target-partition-settings">
-                <div className="target-partition-grid" role="group" aria-label="파티션 컬럼 다중 선택">
-                  {partitionCandidates.map(renderPartitionOption)}
-                </div>
+              <div className="target-partition-grid" role="group" aria-label="파티션 컬럼 다중 선택">
+                {partitionCandidates.map(renderPartitionOption)}
               </div>
             </div>
           </div>
