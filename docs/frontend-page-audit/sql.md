@@ -116,7 +116,7 @@
 - Query AI 안내, 응답, 오류 surface를 `Bubble`/`BubbleContent`로 교체했다.
 - embedded Dashboard builder는 raw backdrop과 `role="dialog"` 대신 `Dialog`/`DialogContent`를 사용한다.
 - SQL 도구, editor, schema, result surface는 `Panel`, 실행 상태는 Jobs 기준 `StatusBadge`, metadata는 `Badge`, 빈 상태는 `Empty`, action은 `Button`, label/control 조합은 `Field`를 사용한다.
-- 오른쪽 선택 테이블/schema 패널을 제거하고, 왼쪽 tree table 행 클릭으로 선택한다. 기준 테이블 재클릭은 선택을 유지하고 추가 참조 테이블만 재클릭으로 해제한다. 선택 행은 왼쪽 파란 체크로 표시한다. 자동 JOIN과 column 삽입 action은 제공하지 않는다.
+- 오른쪽 선택 테이블/schema 패널을 제거하고, 왼쪽 tree table 행 클릭으로 선택한다. 기준 테이블과 추가 참조 테이블 모두 재클릭으로 해제한다. 기준 테이블 해제 시 참조 테이블이 남아 있으면 첫 참조 테이블을 기준으로 승격하고, 남은 선택이 없으면 editor context를 비운다. 선택 행은 왼쪽 파란 체크로 표시한다. 자동 JOIN과 column 삽입 action은 제공하지 않는다.
 - desktop 2열 layout에서 왼쪽 SQL 도구 panel은 콘텐츠 높이만 사용한다. dataset ScrollArea는 250px로 제한해 `결과 대기 중` panel과 비슷한 높이를 유지하고, 데이터가 많으면 내부 스크롤로 탐색한다.
 - 미사용 `SqlDatasetSchemaPreview.tsx`를 삭제했다.
 - `sql.css`는 2,547줄에서 401줄로 줄였다. `PanelHeader`, `FieldGroup`, `NativeSelect`, `Separator`, shadcn Table/ScrollArea와 Shadcnblocks Tree 기본 surface로 header/form/list/table/scroll/tree CSS를 추가 제거했다.

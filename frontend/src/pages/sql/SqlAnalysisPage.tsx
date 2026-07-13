@@ -985,7 +985,6 @@ export function SqlAnalysisPage({
   };
 
   const addSelectedDataset = (targetDataset: CatalogDataset) => {
-    if (targetDataset.id === baseDataset?.id) return;
     if (selectedDatasetIdSet.has(targetDataset.id)) {
       removeSelectedDataset(targetDataset);
       return;

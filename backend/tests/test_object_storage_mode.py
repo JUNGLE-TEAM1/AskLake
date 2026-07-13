@@ -1,4 +1,6 @@
 import os
+from ast import Call, FunctionDef, Name, parse, walk
+from pathlib import Path
 from unittest import TestCase
 from unittest.mock import patch
 
@@ -30,6 +32,21 @@ class FakeDuckDbConnection:
 
 
 class ObjectStorageModeTest(TestCase):
+    def test_spark_etl_entrypoint_uses_provider_aware_builder(self) -> None:
+        source = (Path(__file__).parents[1] / "scripts" / "spark_job_run.py").read_text(encoding="utf-8")
+        tree = parse(source)
+        make_spark = next(
+            node for node in tree.body if isinstance(node, FunctionDef) and node.name == "make_spark"
+        )
+        called_names = {
+            node.func.id
+            for node in walk(make_spark)
+            if isinstance(node, Call) and isinstance(node.func, Name)
+        }
+
+        self.assertIn("configure_spark_builder", called_names)
+        self.assertNotIn("SimpleAWSCredentialsProvider", source[source.index("def make_spark"):])
+
     def test_minio_runtime_keeps_endpoint_static_credentials_and_path_style(self) -> None:
         with patch.dict(
             os.environ,
