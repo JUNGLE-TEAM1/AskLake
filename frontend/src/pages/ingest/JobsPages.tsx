@@ -470,9 +470,9 @@ export function JobsLandingPage({
       <div className="content-main jobs-panel-stack">
         <Panel className="jobs-metrics-card">
           <PanelHeader
-            className="min-h-[68px] [&_h2]:text-xl"
             icon={<Activity size={16} />}
             iconClassName="size-11 border border-blue-100 bg-white text-blue-700 shadow-sm [&_svg]:size-[22px]"
+            size="section"
             title="작업 현황"
           />
           <div className="jobs-panel-metrics grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -1011,9 +1011,9 @@ function JobsTableSection({
     <TooltipProvider delayDuration={250}>
       <Panel aria-label={ariaLabel}>
         <PanelHeader
-          className="min-h-[68px] [&_h2]:text-xl"
           icon={<ListChecks size={16} />}
           iconClassName="size-11 border border-blue-100 bg-white text-blue-700 shadow-sm [&_svg]:size-[22px]"
+          size="section"
           title={title}
         />
         {toolbar}
