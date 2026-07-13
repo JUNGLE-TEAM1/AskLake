@@ -109,6 +109,16 @@ class CatalogMaterializationDeleteGuardTests(unittest.TestCase):
                 {"materializationMode": "append", "sourceKind": "kafka"},
                 "snapshot",
             ),
+            (
+                "blank camel-case mode does not mask snake-case delta",
+                {"materializationMode": " ", "materialization_mode": "delta", "sourceKind": "etl"},
+                "delta",
+            ),
+            (
+                "blank camel-case mode does not mask spark snapshot",
+                {"materializationMode": " ", "spark_materialization_mode": "snapshot", "sourceKind": "kafka"},
+                "snapshot",
+            ),
         ]
 
         for label, run, expected in cases:

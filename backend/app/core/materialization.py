@@ -2,7 +2,14 @@ from typing import Any, Iterable
 
 
 def materialization_mode(run: dict[str, Any]) -> str:
-    raw_mode = run.get("materializationMode") or run.get("materialization_mode")
+    raw_mode = next(
+        (
+            run.get(key)
+            for key in ("materializationMode", "materialization_mode", "spark_materialization_mode")
+            if str(run.get(key) or "").strip()
+        ),
+        None,
+    )
     mode = str(raw_mode or "").strip().casefold()
     if mode:
         return mode if mode in {"snapshot", "delta"} else "snapshot"
