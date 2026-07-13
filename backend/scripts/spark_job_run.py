@@ -13,6 +13,7 @@ from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
 
+from object_storage_runtime import configure_spark_builder
 from snapshot_rule_runtime import SnapshotRuleExecutionError, apply_snapshot_rules
 from spark_snapshot_rules import apply_spark_snapshot_rules, supports_spark_snapshot_rules
 from spark_source_identity import (
@@ -440,25 +441,10 @@ def cleanup_failed_output_paths(spark, output_path):
 
 
 def make_spark(source_collection=None):
-    endpoint = os.environ.get("MINIO_ENDPOINT", "http://m3-minio:9000")
-    access_key = os.environ.get("MINIO_ACCESS_KEY") or os.environ.get("MINIO_ROOT_USER", "")
-    secret_key = os.environ.get("MINIO_SECRET_KEY") or os.environ.get("MINIO_ROOT_PASSWORD", "")
-    region = os.environ.get("MINIO_REGION", "us-east-1")
-    ssl_enabled = os.environ.get("MINIO_SSL_ENABLED")
-    if ssl_enabled is None:
-        ssl_enabled = "true" if endpoint.lower().startswith("https://") else "false"
-
     change_detection_source = source_change_detection_mode(source_collection)
-    builder = (
+    builder = configure_spark_builder(
         SparkSession.builder.appName(os.environ.get("ASKLAKE_SPARK_APP_NAME", "asklake-pipeline-run"))
         .config("spark.sql.caseSensitive", "true")
-        .config("spark.hadoop.fs.s3a.endpoint", endpoint)
-        .config("spark.hadoop.fs.s3a.access.key", access_key)
-        .config("spark.hadoop.fs.s3a.secret.key", secret_key)
-        .config("spark.hadoop.fs.s3a.endpoint.region", region)
-        .config("spark.hadoop.fs.s3a.path.style.access", "true")
-        .config("spark.hadoop.fs.s3a.connection.ssl.enabled", ssl_enabled)
-        .config("spark.hadoop.fs.s3a.aws.credentials.provider", "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider")
         .config("spark.hadoop.fs.s3a.change.detection.source", change_detection_source)
         .config("spark.hadoop.fs.s3a.change.detection.mode", "server")
         .config("spark.hadoop.fs.s3a.change.detection.version.required", "true")
@@ -520,7 +506,13 @@ def read_source(
     base_reader = spark.read if exact_paths is not None else apply_source_collection(spark.read, source_collection)
     if source_format == "csv":
         infer_schema = "false" if schema_columns else "true"
-        return base_reader.option("header", "true").option("inferSchema", infer_schema).csv(read_path)
+        return (
+            base_reader.option("header", "true")
+            .option("inferSchema", infer_schema)
+            .option("quote", '"')
+            .option("escape", '"')
+            .csv(read_path)
+        )
     if source_format == "jsonl":
         return base_reader.option("multiLine", "false").json(read_path)
     if source_format == "json":
