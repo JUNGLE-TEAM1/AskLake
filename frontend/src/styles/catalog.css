@@ -35,7 +35,6 @@
   min-width: 0;
 }
 
-.catalog-results-header h2,
 .catalog-overview-card h2,
 .catalog-section-header h2 {
   color: #0f172a;
@@ -298,13 +297,7 @@
 }
 
 .catalog-preview-title {
-  display: grid;
-  grid-template-columns: 20px minmax(0, 1fr) 32px;
-  gap: 12px;
-}
-
-.catalog-preview-title {
-  grid-template-columns: 32px minmax(0, 1fr) 36px;
+  column-gap: 16px;
   border-bottom: 1px solid #e5e7eb;
 }
 
