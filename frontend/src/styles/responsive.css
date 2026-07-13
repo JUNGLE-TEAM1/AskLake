@@ -1,6 +1,6 @@
 .footer {
   display: flex;
-  min-height: 56px;
+  min-height: 62px;
   align-items: center;
   justify-content: space-between;
   border-top: 1px solid #dee1e6;
@@ -15,8 +15,58 @@
 }
 
 @media (max-width: 1180px) {
+  .main-shell.schema-shell {
+    height: auto;
+    overflow: visible;
+  }
+
+  .schema-shell .topbar {
+    min-height: 64px;
+  }
+
+  .schema-shell .stepper-inner {
+    height: auto;
+  }
+
+  .page-body.schema-body {
+    height: auto;
+    overflow: visible;
+    padding: 20px;
+  }
+
+  .schema-shell .footer {
+    display: flex;
+  }
+
+  .schema-workbench {
+    height: auto;
+    grid-template-rows: auto;
+  }
+
+  .schema-flow-preview {
+    grid-template-columns: 1fr;
+  }
+
+  .schema-flow-summary {
+    border-right: 0;
+    border-bottom: 1px solid #e5e7eb;
+  }
+
+  .schema-flow-column-head,
+  .schema-flow-card {
+    grid-template-columns: minmax(0, 1fr) 118px minmax(0, 1fr);
+  }
+
+  .schema-preview-comparison-grid {
+    grid-template-columns: 1fr;
+  }
+
   .app-shell {
-    grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .main-shell {
+    grid-column: 1 / -1;
   }
 
   .content-grid,
@@ -27,31 +77,18 @@
     grid-template-columns: 1fr;
   }
 
-  .job-detail-card-grid.two-up,
-  .job-detail-card-grid.summary-grid,
-  .detail-kv-grid.summary-kv {
-    grid-template-columns: 1fr;
-  }
-
   .catalog-page,
+  .catalog-content-grid,
   .catalog-detail-grid,
-  .sql-page,
-  .sql-page.context-collapsed,
-  .sql-editor-layout,
   .dashboard-layout,
   .dashboard-builder-layout {
     grid-template-columns: 1fr;
   }
 
-  .sql-history-panel {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
   .dashboard-filter-bar,
   .dashboard-metric-grid,
   .hegun-connector-grid,
-  .hegun-field-grid,
-  .dashboard-list-toolbar {
+  .hegun-field-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -62,11 +99,42 @@
   }
 
   .catalog-preview-panel {
+    position: static;
+    top: auto;
+    height: auto;
+    max-height: none;
     width: 100%;
+  }
+
+  .catalog-preview-desktop {
+    display: none;
+  }
+
+  .catalog-preview-mobile-trigger {
+    display: inline-flex;
   }
 
   .dag-summary-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .creation-validation-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .etl-review-kv,
+  .target-config-form-grid,
+  .target-config-split,
+  .etl-review-validation {
+    grid-template-columns: 1fr;
+  }
+
+  .etl-review-schema-row {
+    grid-template-columns: 28px minmax(0, 1fr) auto;
+  }
+
+  .etl-review-schema-null {
+    display: none;
   }
 
   .summary-panel,
@@ -81,71 +149,20 @@
     margin-top: 0;
   }
 
-  .review-card-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
   .connector-row,
   .compact-cards {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .jobs-page-header {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .create-job-button {
-    width: 100%;
-  }
-
-  .metric-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .jobs-toolbar {
-    grid-template-columns: 1fr 1fr;
-  }
-
-  .jobs-search,
-  .reset-filter {
-    grid-column: 1 / -1;
-  }
-
-  .job-row {
-    grid-template-columns: 1fr;
-  }
-
-  .job-row-main {
-    grid-template-areas:
-      "title"
-      "progress"
-      "details"
-      "actions";
-    grid-template-columns: 1fr;
-  }
-
-  .job-row-status {
-    justify-content: flex-start;
-  }
-
-  .job-row-details {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .job-row-actions {
-    justify-content: flex-start;
-  }
-
-  .job-card dl,
-  .dag-node {
-    grid-template-columns: 1fr;
-  }
 }
 
 @media (max-width: 780px) {
   .app-shell {
     grid-template-columns: 1fr;
+  }
+
+  .main-shell {
+    grid-column: 1 / -1;
   }
 
   .sidebar {
@@ -155,6 +172,7 @@
 
   .stepper-inner {
     height: auto;
+    justify-content: flex-start;
     padding: 18px 20px;
   }
 
@@ -162,34 +180,29 @@
     padding: 20px;
   }
 
-  .sql-dataset-panel {
-    top: 76px;
-    left: 16px;
-    width: min(320px, calc(100vw - 32px));
-    max-height: calc(100vh - 96px);
+  .creation-flow-topbar {
+    justify-content: stretch;
   }
 
-  .sql-collapse-button {
-    top: 390px;
-    left: min(calc(320px + 15px), calc(100vw - 17px));
+  .creation-top-actions {
+    width: 100%;
   }
 
-  .sql-page.context-collapsed .sql-collapse-button {
-    left: 16px;
+  .creation-top-actions .primary-button,
+  .creation-top-actions .secondary-button {
+    flex: 1 1 0;
+    min-width: 0;
   }
 
   .option-grid,
   .form-grid,
   .form-grid.compact,
+  .creation-validation-list,
   .creation-flow-grid .summary-panel dl,
+  .source-choice-grid,
   .format-grid,
   .connector-row,
   .compact-cards,
-  .metric-grid,
-  .jobs-toolbar,
-  .job-row-details,
-  .sql-history-panel,
-  .sql-estimation-bar,
   .dashboard-filter-bar,
   .dashboard-metric-grid,
   .dashboard-canvas,
@@ -211,68 +224,76 @@
     width: 100%;
   }
 
-  .job-title-row,
-  .job-detail-title-row,
-  .job-table-footer {
+  .source-choice-screen {
+    padding-top: 20px;
+  }
+
+  .source-choice-card {
+    min-height: 168px;
+    padding: 24px;
+  }
+
+  .job-log-modal-header,
+  .run-dag-modal-header {
     align-items: flex-start;
     flex-direction: column;
   }
 
-  .detail-kv-grid,
-  .detail-metric-grid {
-    grid-template-columns: 1fr;
+  .run-dag-modal {
+    padding: 12px;
   }
 
-  .stats-card {
-    grid-template-areas:
-      "heading"
-      "metrics"
-      "meta"
-      "progress";
-    grid-template-columns: 1fr;
+  .run-dag-modal > section,
+  .run-dag-modal-panel {
+    max-height: calc(100vh - 24px);
   }
 
-  .stats-card-heading p {
-    max-width: none;
+  .run-dag-modal-body {
+    padding: 14px;
   }
 
-  .detail-status-strip {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .dag-run-select {
-    width: 100%;
-    min-width: 0;
-  }
-
-  .dag-summary-grid,
-  .runs-stats-summary > div {
-    grid-template-columns: 1fr;
+  .job-runs-page,
+  .runs-body-content {
+    min-height: 0;
+    height: auto;
   }
 
   .dag-flow-topbar,
-  .dag-selected-strip,
+  .dag-output-strip,
   .panel-header,
-  .sql-editor-header,
-  .sql-result-header,
-  .sql-editor-footer,
   .dashboard-header,
   .dashboard-card-header,
   .dashboard-workspace-header,
-  .dashboard-intro-card,
   .dashboard-publish-card {
     align-items: flex-start;
     flex-direction: column;
   }
 
-  .sql-editor-actions,
-  .sql-result-actions,
-  .sql-result-status {
-    justify-content: flex-start;
+  .dag-output-strip {
+    align-items: stretch;
   }
 
-  .sql-estimation-bar div {
+  .dag-workspace-grid,
+  .dag-workspace-grid.with-inspector {
+    grid-template-columns: 1fr;
+  }
+
+  .dag-step-inspector {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "head"
+      "title"
+      "meta"
+      "details"
+      "error"
+      "logs";
+    max-height: 280px;
+    overflow: auto;
+  }
+
+  .dag-output-strip > span,
+  .dag-output-strip em,
+  .dag-output-strip button {
     width: 100%;
   }
 
@@ -306,6 +327,10 @@
     text-align: left;
   }
 
+  .permission-config-access-row {
+    grid-column: 1 / -1;
+  }
+
   .form-actions.inline {
     justify-content: stretch;
   }
@@ -314,9 +339,13 @@
     flex: 1 1 100%;
   }
 
-  .dashboard-list-toolbar,
   .dashboard-category-chart {
     grid-template-columns: 1fr;
+  }
+
+  .dashboard-list-toolbar .dashboard-filter-button {
+    width: 100%;
+    justify-content: space-between;
   }
 
   .dashboard-axis-labels {
@@ -327,14 +356,7 @@
     overflow-x: auto;
   }
 
-  .job-detail-tabs {
-    overflow-x: auto;
-  }
-
-  .job-owner,
-  .job-detail-actions,
-  .job-row-actions,
-  .job-table-footer div {
+  .job-detail-actions {
     flex-wrap: wrap;
     gap: 12px;
   }

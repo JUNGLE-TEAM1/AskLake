@@ -5,10 +5,10 @@
 | 항목 | 내용 |
 |---|---|
 | 담당 Pair | Pair A - ETL Creation & Job Operations |
-| 사용자 관점 결과물 | Review에서 `파이프라인 생성`을 누르면 ETL 목록에 새 Job이 보이고 Catalog에 새 Dataset이 보인다. |
-| 구현해야 하는 코드 결과물 | `createPipelineDraft` adapter 정리, `jobs/datasets` prepend, `selectedJob/selectedDataset` 갱신, 중복 클릭 방지, 실패 Toast와 rollback |
+| 사용자 관점 결과물 | Review에서 `파이프라인 생성`을 누르면 ETL 목록에 새 Job이 보이고, Spark run 성공 후 Catalog에 새 Dataset이 보인다. |
+| 구현해야 하는 코드 결과물 | `createPipelineDraft` adapter 정리, `jobs` prepend, run 성공 `datasets` prepend, `selectedJob/selectedDataset` 갱신, 중복 클릭 방지, 실패 Toast와 rollback |
 | 연결 API / Mock | `POST /api/etl/jobs` 또는 `createPipelineDraft(draftPipeline, jobCount)` |
-| 성공 기준 | 생성 후 앱이 멈추지 않고 새 Job/Dataset이 보인다. 실패 시 입력값이 유지된다. |
+| 성공 기준 | 생성 후 앱이 멈추지 않고 새 Job이 보인다. 실행 성공 후 Dataset이 보인다. 실패 시 입력값이 유지된다. |
 | Fallback | API가 준비되지 않으면 mock 생성 응답을 사용한다. |
 
 ## DAY1-B-CATALOG-LINEAGE-BASIC. Catalog 상세와 기본 Lineage 표시
@@ -36,7 +36,7 @@
 ### Day 1 종료 데모 상태
 
 - Review 생성 후 ETL 목록 최상단에 새 Job이 보인다.
-- Catalog 최상단에 새 Dataset이 보인다.
+- Spark run 성공 후 Catalog 최상단에 새 Dataset이 보인다.
 - Dataset 상세에 schema와 기본 lineage가 보인다.
 - Dashboard 목록/Builder 진입 화면이 깨지지 않는다.
 

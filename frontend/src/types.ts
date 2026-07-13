@@ -1,7 +1,72 @@
 export { ApiError } from "./types/audit";
+export type { AuthSessionResponse, AuthUserResponse, LoginRequest, LogoutResponse, SignupRequest } from "./types/auth";
+export type { AdminAuditLogEntry, AdminAuditLogQuery, AdminAuditLogsResponse, AdminGovernanceControlsResponse, AdminGroupsResponse, AdminPermissionGrantRequest, AdminPermissionGrantUpdateRequest, AdminPermissionSummary, AdminPermissionsResponse, AdminPrincipalControl, AdminPrincipalControlRequest, AdminPrincipalControlType, AdminPrincipalStatus, AdminResourceLock, AdminResourceLockRequest, AdminResourceType, AdminUser, AdminUsersResponse, AdminUserStatus } from "./types/admin";
 export type { ApiErrorResponse, AuditEntry, AuditResult, AuditTargetType } from "./types/audit";
-export type { CatalogDataset } from "./types/catalog";
-export type { DashboardEntry, DashboardStatus, DashboardView, DashboardWidgetType } from "./types/dashboard";
-export type { DraftPipeline, JobCommand, JobDagStep, JobDagStepStatus, JobExecutionEvidence, JobRowData, JobRunStatus, JobRunSummary, JobStatus } from "./types/etl";
+export type { CatalogDataset, CatalogDatasetRowsResponse, CatalogModelArtifact, DatasetMaterializationRun, LineageGraph, LineageGraphColumn, LineageGraphDataset, LineageGraphEdge, LineageLayer } from "./types/catalog";
+export type { AreaChartWidgetConfig, BarChartWidgetConfig, DashboardEntry, DashboardFilter, DashboardListFilterOptions, DashboardListQuery, DashboardListResponse, DashboardMeta, DashboardRevision, DashboardRuntimeMode, DashboardRuntimePage, DashboardRuntimeResponse, DashboardRuntimeWidget, DashboardWidgetColorConfig, DashboardRuntimeWidgetConfig, DashboardRuntimeWidgetConfigByType, DashboardRuntimeWidgetType, DashboardSortOption, DashboardStatus, DashboardView, DashboardWidgetAggregation, DashboardWidgetDateUnit, DashboardWidgetFormat, DashboardWidgetLayout, DashboardWidgetLineCurve, DashboardWidgetOrientation, DashboardWidgetPlaceholderKind, DashboardWidgetSortDirection, DashboardWidgetType, DonutChartWidgetConfig, HeatmapChartWidgetConfig, LineChartWidgetConfig, MetricWidgetConfig, PieChartWidgetConfig, RadialBarChartWidgetConfig, SavedDashboardCard, TableWidgetConfig, TreemapChartWidgetConfig } from "./types/dashboard";
+export type {
+  CanonicalRuleDraft,
+  CanonicalRuleOperation,
+  CreatePipelineRequest,
+  ContinuousWorkerLogsResponse,
+  ContinuousMaintenanceRun,
+  ContinuousQuarantineRecord,
+  ContinuousQuarantineResponse,
+  BatchOperationalMetrics,
+  DagStepsByRunId,
+  DraftPipeline,
+  DraftPipelinePatch,
+  DraftPipelineSlicePatch,
+  JobCommand,
+  JobDagStep,
+  JobDagStepStatus,
+  JobExecutionEvidence,
+  JobListFacets,
+  JobListQuery,
+  JobListResult,
+  JobOperationalMetrics,
+  JobRowData,
+  JobScheduleKind,
+  JobRunStatus,
+  JobRunOutcome,
+  JobRunSummary,
+  JobStats,
+  JobStatus,
+  KafkaExecutionMode,
+  KafkaContinuousBatch,
+  KafkaContinuousSession,
+  KafkaContinuousSessionStatus,
+  PermissionDraft,
+  QualityDraft,
+  QualityRuleDraft,
+  RuleCompilationIssue,
+  RuleCompilationResult,
+  RecordParsingDraft,
+  RecordParsingInvalidRow,
+  RecordParsingPreviewResponse,
+  RealtimeOperationalHealth,
+  RealtimeOperationalMetrics,
+  RetryBackoffStrategy,
+  RetryFailureAction,
+  RetryPolicyDraft,
+  ScheduleDraft,
+  ScheduleOverlapPolicy,
+  SchedulePolicyDraft,
+  SchemaColumnDraft,
+  SchemaDraft,
+  RunsByJobId,
+  SelectedRunIdByJobId,
+  SourceDraft,
+  TargetDraft,
+  TargetLayer,
+  TransformChainStepDraft,
+  TransformDraft,
+  TransformStepDraft,
+  UpdatePipelineRequest,
+  WatermarkPolicyDraft,
+  WatermarkWindowMode,
+} from "./types/etl";
 export type { FlowId, NavId, NavItem, ScheduleFlowId } from "./types/navigation";
-export type { SqlResultDraft } from "./types/sql";
+export type { CurrentUserResponse, IdentityGroup, IdentityProfile, PermissionSummary } from "./types/identity";
+export type { PermissionAction, PermissionGrant, PermissionOptionGroup, PermissionOptionsResponse, PermissionOptionUser, PermissionPrincipalType, ResourcePermissions } from "./types/permissions";
+export type { CreateDerivedDatasetRequest, DerivedDatasetLayer, SqlResultDraft } from "./types/sql";

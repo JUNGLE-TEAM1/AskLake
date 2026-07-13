@@ -1,0 +1,17 @@
+[Unit]
+Description=AskLake backend API
+After=network.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/asklake/backend
+EnvironmentFile=/etc/asklake/backend.env
+ExecStart=/usr/bin/node src/server.mjs
+Restart=always
+RestartSec=5
+User=ubuntu
+Group=ubuntu
+
+[Install]
+WantedBy=multi-user.target

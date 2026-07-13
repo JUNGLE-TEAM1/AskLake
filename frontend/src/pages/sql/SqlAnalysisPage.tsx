@@ -1,318 +1,600 @@
-import { useEffect, useMemo, useState } from "react";
+import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import { PanelLeftOpen, Table2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { PageHeader } from "@/components/ui/page-header";
+import { cn } from "@/lib/utils";
+import { executeQueryPreview } from "../../services/mockApi";
+import type { AuditResult, CatalogDataset, CreateDerivedDatasetRequest, SqlResultDraft } from "../../types";
+import styles from "./SqlAnalysisPage.module.css";
+import { SqlDatasetContextPanel } from "./SqlDatasetContextPanel";
 import {
-  BarChart3,
-  BookOpen,
-  Bot,
-  Calendar,
-  Check,
-  CircleUser,
-  Clock3,
-  Database,
-  Download,
-  ExternalLink,
-  FileText,
-  HardDrive,
-  Info,
-  LayoutGrid,
-  Maximize2,
-  Minus,
-  PlayCircle,
-  Plus,
-  RefreshCw,
-  Repeat2,
-  Save,
-  Star,
-  Search,
-  Settings,
-  Share2,
-  ShieldCheck,
-  SlidersHorizontal,
-  Table2,
-  TerminalSquare,
-} from "lucide-react";
-import { DatasetStatusBadge } from "../catalog/CatalogPage";
-import { executeQueryDraft } from "../../services/mockApi";
-import type { AuditResult, CatalogDataset, SqlResultDraft } from "../../types";
+  formatSqlJobWizardScheduleLabel,
+  formatSqlJobWizardScheduleSummary,
+  SqlJobWizardDialog,
+  type SqlJobWizardCreateRequest,
+} from "./SqlJobWizardDialog";
+import {
+  buildSqlChartSources,
+  type SqlChartConfig,
+} from "./SqlResultChart";
+import { SqlQueryEditorPanel } from "./SqlQueryEditorPanel";
+import { SqlResultsPanel, type SqlResultView } from "./SqlResultsPanel";
+import {
+  PREVIEW_ROW_LIMIT,
+  buildAutocompleteCandidates,
+  buildDefaultDerivedDatasetDescription,
+  buildDefaultDerivedDatasetName,
+  buildDefaultQuery,
+  escapeCsvCell,
+  getAutocompleteContext,
+  getPreflightSummary,
+  runSqlPreflight,
+  type AutocompleteCandidate,
+  type SqlPreflightResult,
+} from "./sqlLogic";
+import { useSqlContextPanel } from "./useSqlContextPanel";
+import { useSqlQueryAi } from "./useSqlQueryAi";
 
 export function SqlAnalysisPage({
+  cachedResult,
+  createPending,
   dataset,
   datasets,
   onAction,
-  onDashboard,
+  onCreateDatasetJob,
   onResultChange,
 }: {
-  dataset: CatalogDataset;
+  cachedResult?: SqlResultDraft | null;
+  createPending: boolean;
+  dataset: CatalogDataset | null;
   datasets: CatalogDataset[];
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
-  onDashboard: (result: SqlResultDraft) => void;
-  onResultChange: (result: SqlResultDraft) => void;
+  onCreateDatasetJob: (request: CreateDerivedDatasetRequest) => Promise<boolean>;
+  onResultChange: (result: SqlResultDraft | null) => void;
 }) {
-  const defaultQuery = useMemo(() => {
-    const columns = dataset.schema.slice(0, 4).map(([name]) => name).join(", ") || "*";
-    return `SELECT ${columns}
-FROM ${dataset.name}
-LIMIT 100;`;
-  }, [dataset.name, dataset.schema]);
-  const [executed, setExecuted] = useState(false);
-  const [contextCollapsed, setContextCollapsed] = useState(false);
-  const [datasetSearch, setDatasetSearch] = useState("");
+  const [baseDatasetId, setBaseDatasetId] = useState<string | null>(dataset?.id ?? null);
+  const datasetById = useMemo(
+    () => new Map(datasets.map((item) => [item.id, item])),
+    [datasets],
+  );
+  const baseDataset = useMemo(
+    () => baseDatasetId ? datasetById.get(baseDatasetId) ?? (dataset?.id === baseDatasetId ? dataset : null) : null,
+    [baseDatasetId, dataset, datasetById],
+  );
+  const defaultQuery = useMemo(() => baseDataset ? buildDefaultQuery(baseDataset) : "", [baseDataset]);
+  const [referenceDatasetIds, setReferenceDatasetIds] = useState<string[]>([]);
   const [queryPending, setQueryPending] = useState(false);
   const [query, setQuery] = useState(defaultQuery);
-  const relatedDatasets = useMemo(() => [dataset, ...datasets.filter((item) => item.id !== dataset.id).slice(0, 2)], [dataset, datasets]);
-  const scopeDatasets = relatedDatasets.map((item, index) => ({ checked: index < 2, label: index === 0 ? "BASE" : "JOIN", name: item.name }));
-  const schemaChips = dataset.schema.slice(0, 5).map(([name]) => name);
-  const resultColumns = dataset.schema.slice(0, 6).map(([name]) => name);
-  const resultRows = dataset.sampleRows.map((row) => row.slice(0, Math.max(resultColumns.length, 1)));
-  const savedQueries = [
-    ["Risk score Top 100", "product_health_gold", "성공", "방금 전"],
-    ["Behavior join 검증", "silver_behavior_events", "성공", "2026-07-02 10:11"],
-    ["Commerce orders 매핑", "commerce.orders", "성공", "2026-07-02 01:05"],
-  ];
-  const filteredDatasets = useMemo(() => {
-    const keyword = datasetSearch.trim().toLowerCase();
-    const searchableDatasets = keyword
-      ? datasets.filter((item) => {
-          const searchableText = [
-            item.name,
-            item.description,
-            item.source,
-            item.owner,
-            item.layer,
-            ...item.tags,
-            ...item.schema.map(([name, type]) => `${name} ${type}`),
-          ].join(" ").toLowerCase();
-          return searchableText.includes(keyword);
-        })
-      : datasets;
+  const [previewRowLimit, setPreviewRowLimit] = useState(PREVIEW_ROW_LIMIT);
+  const [cursorIndex, setCursorIndex] = useState(defaultQuery.length);
+  const [resultDraft, setResultDraft] = useState<SqlResultDraft | null>(null);
+  const [preflightResult, setPreflightResult] = useState<SqlPreflightResult | null>(null);
+  const [chartConfig, setChartConfig] = useState<SqlChartConfig | null>(null);
+  const [resultView, setResultView] = useState<SqlResultView>("table");
+  const [resultDialogOpen, setResultDialogOpen] = useState(false);
+  const [materializeDialogOpen, setMaterializeDialogOpen] = useState(false);
+  const [autocompleteIndex, setAutocompleteIndex] = useState(0);
+  const [dismissedAutocompleteKey, setDismissedAutocompleteKey] = useState<string | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const lineNumberRef = useRef<HTMLPreElement | null>(null);
+  const skipNextBaseDatasetResetRef = useRef(false);
+  const referenceDatasetIdSet = useMemo(() => new Set(referenceDatasetIds), [referenceDatasetIds]);
+  const queryValidationKey = useMemo(
+    () => JSON.stringify({
+      baseDatasetId: baseDataset?.id ?? null,
+      previewRowLimit,
+      query,
+      referenceDatasetIds: [...referenceDatasetIds].sort(),
+    }),
+    [baseDataset?.id, previewRowLimit, query, referenceDatasetIds],
+  );
+  const selectedContextDatasets = useMemo(
+    () => baseDataset
+      ? [
+          baseDataset,
+          ...referenceDatasetIds
+            .map((id) => datasetById.get(id))
+            .filter((item): item is CatalogDataset => Boolean(item)),
+        ]
+      : [],
+    [baseDataset, datasetById, referenceDatasetIds],
+  );
+  const chartSources = useMemo(
+    () => resultDraft ? buildSqlChartSources(resultDraft, selectedContextDatasets) : [],
+    [resultDraft, selectedContextDatasets],
+  );
+  const activeChartSource = useMemo(
+    () => chartConfig ? chartSources.find((source) => source.id === chartConfig.sourceId) : undefined,
+    [chartConfig, chartSources],
+  );
+  const selectedDatasetIdSet = useMemo(
+    () => new Set(selectedContextDatasets.map((item) => item.id)),
+    [selectedContextDatasets],
+  );
+  const contextPanel = useSqlContextPanel({
+    baseDatasetId: baseDataset?.id ?? null,
+    datasets,
+    onAction,
+    selectedDatasetCount: selectedContextDatasets.length,
+    selectedDatasetIds: selectedDatasetIdSet,
+  });
+  const canRunPreview = Boolean(baseDataset && preflightResult?.canExecute === true && preflightResult.key === queryValidationKey);
+  const lineNumbers = useMemo(() => {
+    if (!baseDataset) return "";
+    const lineCount = Math.max(query.split("\n").length, 7);
+    return Array.from({ length: lineCount }, (_, index) => index + 1).join("\n");
+  }, [baseDataset, query]);
+  const autocompleteContext = useMemo(() => getAutocompleteContext(query, cursorIndex), [cursorIndex, query]);
+  const autocompleteCandidates = useMemo(() => {
+    if (!baseDataset) return [];
+    if (dismissedAutocompleteKey === autocompleteContext.key) return [];
+    return buildAutocompleteCandidates({
+      baseDataset,
+      context: autocompleteContext,
+      datasets: contextPanel.candidateDatasets,
+      referenceDatasetIdSet,
+    });
+  }, [autocompleteContext, baseDataset, contextPanel.candidateDatasets, dismissedAutocompleteKey, referenceDatasetIdSet]);
+  const cachedResultBaseDatasetId = cachedResult ? cachedResult.baseDatasetId ?? cachedResult.datasetId : null;
+  const canRestoreCachedResult = Boolean(cachedResult && baseDataset && cachedResultBaseDatasetId === baseDataset.id);
+  useEffect(() => {
+    if (!dataset) {
+      setBaseDatasetId(null);
+      setReferenceDatasetIds([]);
+      contextPanel.setExpandedDatasetId(null);
+      return;
+    }
 
-    return searchableDatasets.slice(0, 4);
-  }, [datasetSearch, datasets]);
+    setBaseDatasetId(dataset.id);
+    setReferenceDatasetIds([]);
+    contextPanel.setExpandedDatasetId(null);
+  }, [dataset?.id]);
 
   useEffect(() => {
-    setExecuted(false);
+    if (skipNextBaseDatasetResetRef.current) {
+      skipNextBaseDatasetResetRef.current = false;
+      return;
+    }
+
+    if (!baseDataset) {
+      setQuery("");
+      setCursorIndex(0);
+      setResultDraft(null);
+      setPreflightResult(null);
+      setMaterializeDialogOpen(false);
+      setChartConfig(null);
+      setResultView("table");
+      setResultDialogOpen(false);
+      setReferenceDatasetIds([]);
+      onResultChange(null);
+      return;
+    }
+
+    if (canRestoreCachedResult) return;
+
     setQuery(defaultQuery);
-  }, [defaultQuery, dataset.id]);
+    setCursorIndex(defaultQuery.length);
+    setResultDraft(null);
+    setPreflightResult(null);
+    setMaterializeDialogOpen(false);
+    setChartConfig(null);
+    setResultView("table");
+    setResultDialogOpen(false);
+    setReferenceDatasetIds((ids) => ids.filter((id) => id !== baseDataset.id));
+    onResultChange(null);
+  }, [baseDataset, canRestoreCachedResult, defaultQuery]);
 
-  const buildResultDraft = (): Promise<SqlResultDraft> => executeQueryDraft(dataset, query);
+  useEffect(() => {
+    if (!baseDataset || !cachedResult || !canRestoreCachedResult) return;
 
-  const executeQuery = async () => {
+    const cachedReferences = (cachedResult.referenceDatasetIds ?? []).filter((id) => id !== baseDataset.id);
+
+    setQuery(cachedResult.query);
+    setPreviewRowLimit(cachedResult.previewLimit ?? PREVIEW_ROW_LIMIT);
+    setCursorIndex(cachedResult.query.length);
+    setReferenceDatasetIds(cachedReferences);
+    setResultDraft(cachedResult);
+    setMaterializeDialogOpen(false);
+    setChartConfig(null);
+    setResultView("table");
+    setResultDialogOpen(false);
+  }, [baseDataset, cachedResult, canRestoreCachedResult]);
+
+  const queryContextPath = (mode: "preflight" | "preview" = "preview") => {
+    const params = new URLSearchParams({ baseDatasetId: baseDataset?.id ?? "" });
+    referenceDatasetIds.forEach((id) => params.append("referenceDatasetIds", id));
+    params.set("mode", mode);
+    if (mode === "preview") params.set("previewLimit", String(previewRowLimit));
+    return `/api/query/runs?${params.toString()}`;
+  };
+
+  useEffect(() => {
+    setAutocompleteIndex(0);
+  }, [autocompleteCandidates.length, autocompleteContext.key]);
+
+  useEffect(() => {
+    if (!baseDataset) {
+      setPreflightResult(null);
+      return;
+    }
+    const referenceDatasets = datasets.filter((item) => referenceDatasetIdSet.has(item.id));
+    setPreflightResult(runSqlPreflight(query, baseDataset, referenceDatasets, queryValidationKey, previewRowLimit));
+  }, [baseDataset, datasets, previewRowLimit, query, queryValidationKey, referenceDatasetIdSet]);
+
+  const buildPreviewDraft = (): Promise<SqlResultDraft> => {
+    if (!baseDataset) return Promise.reject(new Error("No dataset selected"));
+    return executeQueryPreview(baseDataset, query, {
+      limit: previewRowLimit,
+      referenceDatasetIds: [...referenceDatasetIds].sort(),
+      validationKey: queryValidationKey,
+    });
+  };
+
+  const resetResultState = () => {
+    setResultDraft(null);
+    setPreflightResult(null);
+    setChartConfig(null);
+    setResultView("table");
+    setResultDialogOpen(false);
+    setMaterializeDialogOpen(false);
+    onResultChange(null);
+  };
+
+  const updateQuery = (nextQuery: string) => {
+    setQuery(nextQuery);
+    setPreflightResult(null);
+    resetResultState();
+  };
+
+  const updateCursorFromTextarea = (textarea: HTMLTextAreaElement) => {
+    setCursorIndex(textarea.selectionStart);
+    syncLineNumberScroll();
+  };
+
+  const syncLineNumberScroll = () => {
+    if (!textareaRef.current || !lineNumberRef.current) return;
+    lineNumberRef.current.scrollTop = textareaRef.current.scrollTop;
+  };
+
+  const applyAutocompleteCandidate = (candidate: AutocompleteCandidate) => {
+    const nextQuery = `${query.slice(0, autocompleteContext.start)}${candidate.insertText}${query.slice(autocompleteContext.end)}`;
+    const nextCursorIndex = autocompleteContext.start + candidate.insertText.length;
+    updateQuery(nextQuery);
+    setCursorIndex(nextCursorIndex);
+    setDismissedAutocompleteKey(null);
+    if (candidate.type === "table" && candidate.datasetId && candidate.datasetId !== baseDataset?.id) {
+      const datasetId = candidate.datasetId;
+      setReferenceDatasetIds((ids) => (ids.includes(datasetId) ? ids : [...ids, datasetId]));
+    }
+    onAction("analysis.autocomplete.inserted", `/api/query/autocomplete/${candidate.type}/${encodeURIComponent(candidate.label)}`, candidate.datasetId ?? baseDataset?.id ?? "sql-empty");
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(nextCursorIndex, nextCursorIndex);
+      syncLineNumberScroll();
+    });
+  };
+
+  const handleQueryKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (autocompleteCandidates.length === 0) return;
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setAutocompleteIndex((index) => (index + 1) % autocompleteCandidates.length);
+      return;
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setAutocompleteIndex((index) => (index - 1 + autocompleteCandidates.length) % autocompleteCandidates.length);
+      return;
+    }
+    if (event.key === "Tab") {
+      event.preventDefault();
+      applyAutocompleteCandidate(autocompleteCandidates[autocompleteIndex] ?? autocompleteCandidates[0]);
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setDismissedAutocompleteKey(autocompleteContext.key);
+    }
+  };
+
+  const executePreview = async () => {
+    if (!baseDataset || !canRunPreview) {
+      onAction("analysis.query.preview_blocked", queryContextPath("preview"), baseDataset?.id ?? "sql-empty", "failed");
+      return;
+    }
     setQueryPending(true);
     try {
-      const resultDraft = await buildResultDraft();
-      setExecuted(true);
+      const resultDraft = await buildPreviewDraft();
+      setResultDraft(resultDraft);
+      setChartConfig(null);
+      setResultView("table");
       onResultChange(resultDraft);
-      onAction("analysis.query.executed", `/api/query/runs`, dataset.id);
-    } catch {
-      onAction("analysis.query.failed", `/api/query/runs`, dataset.id, "failed");
+      onAction("analysis.query.preview_executed", queryContextPath("preview"), baseDataset.id);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "실행에 실패했습니다. 쿼리 또는 데이터셋 상태를 확인해 주세요.";
+      setPreflightResult({
+        key: queryValidationKey,
+        canExecute: false,
+        messages: [{ tone: "error", text: message }],
+      });
+      onAction("analysis.query.preview_failed", queryContextPath("preview"), baseDataset.id, "failed");
     } finally {
       setQueryPending(false);
     }
   };
 
-  const formatQuery = () => {
-    setQuery(defaultQuery);
-    onAction("analysis.query.formatted", "/api/query/format", dataset.id);
+  const preflightSummary = getPreflightSummary(preflightResult);
+  const visiblePreflightSummary = preflightSummary?.tone === "success" ? null : preflightSummary;
+
+  const applyAiQuery = (nextQuery: string) => {
+    updateQuery(nextQuery);
+    setCursorIndex(nextQuery.length);
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(nextQuery.length, nextQuery.length);
+      syncLineNumberScroll();
+    });
+  };
+  const queryAi = useSqlQueryAi({
+    baseDataset,
+    onAction,
+    onApplyQuery: applyAiQuery,
+    preflightResult,
+    query,
+    selectedDatasets: selectedContextDatasets,
+  });
+
+  const resetQuery = () => {
+    updateQuery(defaultQuery);
+    setCursorIndex(defaultQuery.length);
+    onAction("analysis.query.reset", "/api/query/reset", baseDataset?.id ?? "sql-empty");
   };
 
-  const toggleContext = () => {
-    const nextCollapsed = !contextCollapsed;
-    setContextCollapsed(nextCollapsed);
-    onAction(nextCollapsed ? "analysis.context.collapsed" : "analysis.context.expanded", "/api/query/context", dataset.id);
-  };
-
-  const createDashboard = async () => {
-    setQueryPending(true);
-    try {
-      const resultDraft = await buildResultDraft();
-      onResultChange(resultDraft);
-      onDashboard(resultDraft);
-    } catch {
-      onAction("analysis.dashboard.create_failed", "/api/dashboards", dataset.id, "failed");
-    } finally {
-      setQueryPending(false);
+  const insertSqlText = (text: string) => {
+    const textarea = textareaRef.current;
+    if (!textarea) {
+      updateQuery(`${query.replace(/;$/, "")} ${text};`);
+      return;
     }
+    const shouldUseRememberedCursor = document.activeElement !== textarea
+      && textarea.selectionStart === 0
+      && textarea.selectionEnd === 0
+      && cursorIndex > 0;
+    const selectionStart = shouldUseRememberedCursor ? Math.min(cursorIndex, query.length) : textarea.selectionStart;
+    const selectionEnd = shouldUseRememberedCursor ? selectionStart : textarea.selectionEnd;
+    const nextQuery = `${query.slice(0, selectionStart)}${text}${query.slice(selectionEnd)}`;
+    const caret = selectionStart + text.length;
+    updateQuery(nextQuery);
+    setCursorIndex(caret);
+    requestAnimationFrame(() => {
+      textarea.focus();
+      textarea.setSelectionRange(caret, caret);
+    });
   };
 
-  const openDatasetInQuery = (targetDataset: CatalogDataset) => {
-    setQuery(`SELECT *\nFROM ${targetDataset.name}\nLIMIT 100;`);
-    onAction("analysis.context.dataset_selected", `/api/query/context/datasets/${targetDataset.id}`, targetDataset.id);
+  const addSelectedDataset = (targetDataset: CatalogDataset) => {
+    if (selectedDatasetIdSet.has(targetDataset.id)) {
+      removeSelectedDataset(targetDataset);
+      return;
+    }
+    if (!baseDataset) {
+      setBaseDatasetId(targetDataset.id);
+      setReferenceDatasetIds([]);
+      contextPanel.setExpandedDatasetId(null);
+      resetResultState();
+      onAction(
+        "analysis.context.dataset_selected",
+        `/api/query/context/datasets/${targetDataset.id}/select`,
+        targetDataset.id,
+      );
+      return;
+    }
+    setReferenceDatasetIds((ids) => (ids.includes(targetDataset.id) ? ids : [...ids, targetDataset.id]));
+    contextPanel.setExpandedDatasetId(null);
+    resetResultState();
+    onAction(
+      "analysis.context.dataset_selected",
+      `/api/query/context/datasets/${targetDataset.id}/select`,
+      targetDataset.id,
+    );
+  };
+
+  const removeSelectedDataset = (targetDataset: CatalogDataset) => {
+    const selectedIds = selectedContextDatasets.map((item) => item.id);
+    const nextSelectedIds = selectedIds.filter((id) => id !== targetDataset.id);
+    const nextBaseDatasetId = targetDataset.id === baseDataset?.id ? nextSelectedIds[0] ?? null : baseDataset?.id ?? null;
+    const nextReferenceDatasetIds = nextSelectedIds.filter((id) => id !== nextBaseDatasetId);
+
+    if (targetDataset.id === baseDataset?.id) {
+      skipNextBaseDatasetResetRef.current = true;
+      setBaseDatasetId(nextBaseDatasetId);
+    }
+
+    setReferenceDatasetIds(nextReferenceDatasetIds);
+    if (nextSelectedIds.length === 0) {
+      setQuery("");
+      setCursorIndex(0);
+      setPreflightResult(null);
+    }
+    resetResultState();
+    onAction(
+      "analysis.context.dataset_removed",
+      `/api/query/context/datasets/${targetDataset.id}/remove`,
+      targetDataset.id,
+    );
+  };
+
+  const downloadCsv = () => {
+    if (!resultDraft) return;
+    const csv = [
+      resultDraft.columns.map(escapeCsvCell).join(","),
+      ...resultDraft.rows.map((row) => resultDraft.columns.map((_, index) => escapeCsvCell(row[index] ?? "")).join(",")),
+    ].join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${resultDraft.datasetName}_${resultDraft.runId}.csv`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+    onAction("analysis.result.downloaded", `/api/query/runs/${resultDraft.runId}/download`, resultDraft.datasetId);
+  };
+
+  const createDerivedDatasetJob = async ({ configuration, context }: SqlJobWizardCreateRequest) => {
+    const request: CreateDerivedDatasetRequest = {
+      dataset: {
+        description: configuration.dataset.description.trim(),
+        layer: configuration.dataset.layer,
+        name: configuration.dataset.name.trim(),
+        rag: false,
+        refreshPolicy: "manual",
+        tags: configuration.target.tags,
+      },
+      job: {
+        accessScope: configuration.governance.accessScope,
+        compression: configuration.target.compression,
+        databaseName: configuration.target.databaseName.trim(),
+        fileFormat: configuration.target.fileFormat,
+        owner: configuration.governance.owner.trim(),
+        overlapPolicy: configuration.schedule.overlapPolicy,
+        partitionColumn: configuration.target.partitionColumns[0] || undefined,
+        partitionColumns: configuration.target.partitionColumns,
+        permissionSummary: configuration.governance.permissionSummary.trim(),
+        scheduleLabel: formatSqlJobWizardScheduleLabel(configuration.schedule),
+        scheduleMode: configuration.schedule.mode === "manual" ? "manual" : "repeat",
+        scheduleSummary: formatSqlJobWizardScheduleSummary(configuration.schedule),
+        storagePath: configuration.target.storagePath.trim(),
+        tags: configuration.target.tags,
+        timezone: configuration.schedule.timezone,
+      },
+      previewLimit: context.previewLimit,
+      query: context.query,
+      referenceDatasetIds: context.referenceDatasetIds,
+      sourceDatasetId: context.baseDatasetId,
+      sourceRunId: context.sourceRunId,
+      validationKey: context.validationKey,
+    };
+
+    const created = await onCreateDatasetJob(request);
+    if (created) setMaterializeDialogOpen(false);
+    return created;
+  };
+
+  const applyChartConfig = (nextConfig: SqlChartConfig) => {
+    if (!resultDraft) return;
+    setChartConfig(nextConfig);
+    setResultView("chart");
+    onAction("analysis.chart.configured", `/api/query/runs/${resultDraft.runId}/visualization`, resultDraft.datasetId);
   };
 
   return (
-    <div className={contextCollapsed ? "sql-page context-collapsed" : "sql-page"}>
-      <aside className="sql-dataset-panel" aria-hidden={contextCollapsed}>
-        <div className="sql-panel-header">
-          <span>SQL CONTEXT</span>
-          <div>
-            <strong>선택 데이터셋</strong>
-          <em>{scopeDatasets.filter((item) => item.checked).length} checked</em>
-          </div>
-        </div>
-        <label className="sql-context-search">
-          <Search size={15} />
-          <input
-            value={datasetSearch}
-            onChange={(event) => setDatasetSearch(event.target.value)}
-            placeholder="데이터셋, 컬럼, 태그 검색"
-          />
-        </label>
-        <section className="sql-dataset-search-results">
-          <h2>dataset search</h2>
-          <div>
-            {filteredDatasets.map((item) => (
-              <button key={item.id} type="button" onClick={() => openDatasetInQuery(item)}>
-                <span>{item.layer}</span>
-                <strong>{item.name}</strong>
-                <small>{item.schema.slice(0, 3).map(([name]) => name).join(" · ")}</small>
-              </button>
-            ))}
-            {filteredDatasets.length === 0 && <p>검색 결과가 없습니다.</p>}
-          </div>
-        </section>
-        <div className="sql-selected-list">
-          {scopeDatasets.map((item) => (
-            <article className={item.checked ? "sql-selected-item active" : "sql-selected-item"} key={item.name}>
-              <span>{item.label}</span>
-              <strong>{item.name}</strong>
-              <i className={item.checked ? "sql-checkmark checked" : "sql-checkmark"} aria-label={item.checked ? "checked" : "unchecked"} />
-            </article>
-          ))}
-        </div>
-        <section className="sql-schema-panel chip-mode">
-          <h2>schema</h2>
-          <div>
-            {schemaChips.map((name, index) => (
-              <button key={`${name}-${index}`} type="button" onClick={() => setQuery(`${query.replace(/;$/, "")}\n-- ${name};`)}>
-                {name}
-              </button>
-            ))}
-          </div>
-        </section>
-        <section className="sql-mini-result">
-          <h2>result table</h2>
-          <div className="sql-mini-result-scroll">
-            <table>
-              <thead><tr>{resultColumns.map((column, index) => <th key={`${column}-${index}`}>{column}</th>)}</tr></thead>
-              <tbody>{resultRows.map((row, rowIndex) => <tr key={`mini-${rowIndex}`}>{row.map((cell, cellIndex) => <td key={`${rowIndex}-${cellIndex}`}>{cell}</td>)}</tr>)}</tbody>
-            </table>
-          </div>
-        </section>
-        <div className="sql-context-source">
-          <span>선택 데이터셋</span>
-          <strong>{dataset.name}</strong>
-          <DatasetStatusBadge dataset={dataset} />
-        </div>
-      </aside>
+    <div className={cn(styles.page, contextPanel.collapsed && styles.collapsed)}>
+      <PageHeader
+        className={styles.pageHeader}
+        icon={<Table2 size={18} />}
+        leadingAlign="center"
+        title="SQL 분석"
+      />
+      {!contextPanel.collapsed && (
+        <SqlDatasetContextPanel
+          chartConfig={chartConfig}
+          chartSources={chartSources}
+          contextListRef={contextPanel.listRef}
+          contextPageSize={contextPanel.pageSize}
+          contextPaginationRef={contextPanel.paginationRef}
+          contextPanelRef={contextPanel.panelRef}
+          currentPage={contextPanel.currentPage}
+          datasetSearch={contextPanel.datasetSearch}
+          expandedDatasetId={contextPanel.expandedDatasetId}
+          filteredDatasetCount={contextPanel.filteredDatasetCount}
+          onApplyChartConfig={applyChartConfig}
+          onCollapse={contextPanel.toggleCollapsed}
+          onDatasetSearchChange={contextPanel.setDatasetSearch}
+          onNextPage={contextPanel.nextPage}
+          onPreviousPage={contextPanel.previousPage}
+          onSelectDataset={addSelectedDataset}
+          onTabChange={contextPanel.setTab}
+          onToggleDataset={contextPanel.toggleDatasetPreview}
+          pageDatasets={contextPanel.pageDatasets}
+          rangeLabel={contextPanel.rangeLabel}
+          selectedDatasetIds={selectedDatasetIdSet}
+          tab={contextPanel.tab}
+          totalPages={contextPanel.totalPages}
+        />
+      )}
 
-      <button className="sql-collapse-button" type="button" onClick={toggleContext} aria-label={contextCollapsed ? "SQL context 펼치기" : "SQL context 접기"}>
-        {contextCollapsed ? "›" : "‹"}
-      </button>
+      <main className={cn(styles.workspace, "grid min-w-0 content-start gap-3")}>
+        {contextPanel.collapsed && (
+          <Button className={styles.contextRailButton} type="button" onClick={contextPanel.toggleCollapsed} aria-label="분석 테이블 열기" title="분석 테이블 열기" size="icon" variant="outline">
+            <PanelLeftOpen data-icon="inline-start" />
+          </Button>
+        )}
+        <SqlQueryEditorPanel
+          ai={{
+            error: queryAi.error,
+            onApply: queryAi.apply,
+            onGenerate: queryAi.generate,
+            onOpenChange: queryAi.changeOpen,
+            onPromptChange: queryAi.changePrompt,
+            open: queryAi.open,
+            pending: queryAi.pending,
+            prompt: queryAi.prompt,
+            promptRef: queryAi.promptRef,
+            suggestion: queryAi.suggestion,
+          }}
+          autocompleteCandidates={autocompleteCandidates}
+          autocompleteIndex={autocompleteIndex}
+          canExecute={canRunPreview}
+          disabled={!baseDataset}
+          lineNumberRef={lineNumberRef}
+          lineNumbers={lineNumbers}
+          onAutocompleteSelect={applyAutocompleteCandidate}
+          onEditorBlur={() => setDismissedAutocompleteKey(autocompleteContext.key)}
+          onEditorCursorChange={updateCursorFromTextarea}
+          onEditorKeyDown={handleQueryKeyDown}
+          onExecute={executePreview}
+          onQueryChange={(nextQuery, nextCursorIndex) => {
+            updateQuery(nextQuery);
+            setCursorIndex(nextCursorIndex);
+            setDismissedAutocompleteKey(null);
+          }}
+          onReset={resetQuery}
+          onScroll={syncLineNumberScroll}
+          pending={queryPending}
+          preflightSummary={visiblePreflightSummary}
+          query={query}
+          textareaRef={textareaRef}
+        />
 
-      <main className="sql-workspace">
-        <header className="sql-page-header">
-          <span>Analyze / Dataset-scoped SQL</span>
-          <h1>읽기 전용 SQL 실행</h1>
-          <p>{dataset.name} 데이터셋 범위에서 쿼리를 작성하고 결과를 저장/내보냅니다.</p>
-        </header>
-
-        <section className="sql-editor-card">
-          <div className="sql-editor-header">
-            <div>
-              <span>QUERY EDITOR</span>
-              <h2>선택 데이터셋 기준 SQL</h2>
-            </div>
-            <div className="sql-editor-actions">
-              <button className="primary-button" type="button" onClick={executeQuery} disabled={queryPending}><PlayCircle size={16} /> {queryPending ? "실행 중" : "실행"}</button>
-              <button className="secondary-button" type="button" onClick={() => onAction("analysis.query.saved", "/api/query/saved", dataset.id)}><Save size={15} /> 저장</button>
-              <span><Check size={13} /> policy passed</span>
-            </div>
-          </div>
-          <div className="sql-editor-layout">
-            <div className="sql-editor-surface">
-              <pre aria-hidden="true">1{`\n`}2{`\n`}3{`\n`}4{`\n`}5{`\n`}6{`\n`}7</pre>
-              <textarea value={query} onChange={(event) => setQuery(event.target.value)} spellCheck={false} />
-            </div>
-            <aside className="sql-preflight-panel">
-              <div>
-                <span>RUN PREFLIGHT</span>
-                <strong>실행 전 확인</strong>
-                <em>ready</em>
-              </div>
-              {[
-                ["선택 데이터셋", `${scopeDatasets.filter((item) => item.checked).length} checked / ${relatedDatasets.length} queryable`],
-                ["Join key", dataset.schema[0]?.[0] ? `${dataset.schema[0][0]} available` : "schema pending"],
-                ["Scan", dataset.size === "Pending" ? "queued / limit 5GB" : `${dataset.size} / limit 5GB`],
-                ["Locked source", "MongoDB 제외"],
-              ].map(([label, value]) => (
-                <p key={label}><Check size={14} /><span>{label}</span><strong>{value}</strong></p>
-              ))}
-            </aside>
-          </div>
-          <div className="sql-editor-footer">
-            <span>SQL 실행 범위: {scopeDatasets.filter((item) => item.checked).length} checked datasets · {dataset.layer.toLowerCase()} / {dataset.name}</span>
-            <button className="secondary-button" type="button" onClick={formatQuery}>Format SQL</button>
-          </div>
-        </section>
-
-        <section className="sql-estimation-bar">
-          <strong>Estimation</strong>
-          <span>예상 14초 · 1.8GB scan · DuckDB adapter</span>
-          <div><span style={{ width: "32%" }} /></div>
-          <em>32%</em>
-        </section>
-
-        <section className="sql-result-card">
-          <div className="sql-result-header">
-            <div>
-              <span>RESULT PREVIEW</span>
-              <h2>100 rows returned</h2>
-            </div>
-            <div className="sql-result-status">
-              <span>{queryPending ? "running" : executed ? "success" : "ready"}</span>
-              <span>3.2s</span>
-            </div>
-            <div className="sql-result-actions">
-              <button type="button" onClick={() => onAction("analysis.result.saved_to_lake", "/api/query/results/lake", dataset.id)}>Lake로 저장</button>
-              <button type="button" onClick={() => onAction("analysis.result.opened_in_sheets", "/api/query/results/sheets", dataset.id)}>Sheets</button>
-              <button type="button" onClick={() => onAction("analysis.result.downloaded", "/api/query/results/download", dataset.id)}>CSV</button>
-              <button type="button" onClick={createDashboard}>대시보드 생성</button>
-            </div>
-          </div>
-          <div className="sql-result-scroll">
-            <table className="schema-table">
-              <thead><tr>{resultColumns.map((column, index) => <th key={`${column}-${index}`}>{column}</th>)}</tr></thead>
-              <tbody>{resultRows.map((row, rowIndex) => <tr key={`result-${rowIndex}`}>{row.slice(0, resultColumns.length).map((cell, cellIndex) => <td key={`${rowIndex}-${cellIndex}`}>{cell}</td>)}</tr>)}</tbody>
-            </table>
-          </div>
-        </section>
+        <SqlResultsPanel
+          activeChartSource={activeChartSource}
+          baseDatasetSelected={Boolean(baseDataset)}
+          chartConfig={chartConfig}
+          dialogOpen={resultDialogOpen}
+          onDialogOpenChange={setResultDialogOpen}
+          onDownloadCsv={downloadCsv}
+          onOpenJobWizard={() => setMaterializeDialogOpen(true)}
+          onResultViewChange={setResultView}
+          resultDraft={resultDraft}
+          resultView={resultView}
+        />
       </main>
-
-      <aside className="sql-history-panel">
-        <section>
-          <h2>최근 실행</h2>
-          {savedQueries.map(([name, source, status, lastRun], index) => (
-            <button key={`${name}-${index}`} type="button" onClick={() => {
-              setQuery(`SELECT *\nFROM ${source}\nLIMIT 100;`);
-              onAction("analysis.history.selected", "/api/query/history", source);
-            }}>
-              <strong>{name}</strong>
-              <span>{source}</span>
-              <small>{status} · {lastRun}</small>
-            </button>
-          ))}
-        </section>
-        <section>
-          <h2>저장된 쿼리</h2>
-          <button type="button" onClick={() => {
-            setQuery("SELECT *\nFROM customer_orders_gold\nORDER BY order_count DESC\nLIMIT 100;");
-            onAction("analysis.saved_query_opened", "/api/query/saved/customer-orders-top100", "customer_orders_gold");
-          }}><FileText size={14} /> 고객 주문 Top 100</button>
-          <button type="button" onClick={() => {
-            setQuery(`SELECT sentiment, COUNT(*) AS review_count\nFROM ${dataset.name}\nGROUP BY sentiment;`);
-            onAction("analysis.saved_query_opened", "/api/query/saved/review-sentiment", dataset.id);
-          }}><FileText size={14} /> 리뷰 감성 분포</button>
-        </section>
-      </aside>
+      {resultDraft && baseDataset && materializeDialogOpen && (
+        <SqlJobWizardDialog
+          baseDataset={baseDataset}
+          defaultMetadata={{
+            description: buildDefaultDerivedDatasetDescription(baseDataset),
+            name: buildDefaultDerivedDatasetName(baseDataset),
+          }}
+          onClose={() => setMaterializeDialogOpen(false)}
+          onCreate={createDerivedDatasetJob}
+          open={materializeDialogOpen}
+          pending={createPending}
+          resultDraft={resultDraft}
+        />
+      )}
     </div>
   );
 }

@@ -54,6 +54,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22.23.1"
+
+      - name: Verify issue and PR lifecycle contracts
+        run: |
+          node tests/notion-issue-sync-hotfix-smoke.js
+          node tests/notion-issue-sync-pr-lifecycle-smoke.js
+
       - name: Sync GitHub Project issues and Notion board
         uses: actions/github-script@v9
         env:

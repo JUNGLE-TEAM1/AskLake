@@ -1,0 +1,153 @@
+x-airflow-common:
+  &airflow-common
+  image: ${AIRFLOW_IMAGE_NAME:-apache/airflow:3.3.0}
+  environment:
+    &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-postgres/airflow
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:-}
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-apiserver:8080/execution/
+    AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_API_AUTH_JWT_SECRET:-asklake_airflow_jwt_secret}
+    AIRFLOW__API_AUTH__JWT_ISSUER: ${AIRFLOW_API_AUTH_JWT_ISSUER:-asklake}
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
+    AIRFLOW_INTERNAL_BASE_URL: ${AIRFLOW_INTERNAL_BASE_URL:-http://host.docker.internal:8080}
+    AIRFLOW_INTERNAL_TOKEN: ${AIRFLOW_INTERNAL_TOKEN:-asklake-local-airflow-token}
+    AIRFLOW_INTERNAL_TIMEOUT_SECONDS: ${AIRFLOW_INTERNAL_TIMEOUT_SECONDS:-1800}
+    AIRFLOW_CONFIG: /opt/airflow/config/airflow.cfg
+    ASKLAKE_EXECUTION_API_BASE_URL: ${ASKLAKE_EXECUTION_API_BASE_URL:-http://host.docker.internal:8080}
+    ASKLAKE_EXECUTION_API_TOKEN: ${AIRFLOW_EXECUTION_API_TOKEN:-asklake-local-airflow-execution}
+    ASKLAKE_EXECUTION_API_TIMEOUT_SECONDS: ${ASKLAKE_EXECUTION_API_TIMEOUT_SECONDS:-930}
+    _PIP_ADDITIONAL_REQUIREMENTS: ""
+  volumes:
+    - ${AIRFLOW_PROJ_DIR:-./airflow}/dags:/opt/airflow/dags
+    - ${AIRFLOW_PROJ_DIR:-./airflow}/logs:/opt/airflow/logs
+    - ${AIRFLOW_PROJ_DIR:-./airflow}/config:/opt/airflow/config
+    - ${AIRFLOW_PROJ_DIR:-./airflow}/plugins:/opt/airflow/plugins
+  user: "${AIRFLOW_UID:-50000}:0"
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  depends_on:
+    airflow-postgres:
+      condition: service_healthy
+
+services:
+  airflow-postgres:
+    image: postgres:16
+    container_name: asklake-airflow-postgres
+    environment:
+      POSTGRES_DB: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_USER: airflow
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 10s
+      retries: 5
+      start_period: 5s
+    volumes:
+      - asklake_airflow_postgres_data:/var/lib/postgresql/data
+
+  airflow-init:
+    <<: *airflow-common
+    container_name: asklake-airflow-init
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        mkdir -p /opt/airflow/{logs,dags,plugins,config}
+        chown -R "${AIRFLOW_UID:-50000}:0" /opt/airflow/{logs,dags,plugins,config}
+        /entrypoint airflow version
+    environment:
+      <<: *airflow-common-env
+      _AIRFLOW_DB_MIGRATE: "true"
+      _AIRFLOW_WWW_USER_CREATE: "true"
+      _AIRFLOW_WWW_USER_USERNAME: ${AIRFLOW_USERNAME:-airflow}
+      _AIRFLOW_WWW_USER_PASSWORD: ${AIRFLOW_PASSWORD:-airflow}
+    user: "0:0"
+
+  airflow-apiserver:
+    <<: *airflow-common
+    container_name: asklake-airflow-apiserver
+    command: api-server
+    ports:
+      - "8081:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/monitor/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 8
+      start_period: 30s
+    depends_on:
+      airflow-postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: asklake-airflow-scheduler
+    command: scheduler
+    healthcheck:
+      test: ["CMD-SHELL", "airflow jobs check --job-type SchedulerJob"]
+      interval: 30s
+      timeout: 10s
+      retries: 8
+      start_period: 30s
+    depends_on:
+      airflow-postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-dag-processor:
+    <<: *airflow-common
+    container_name: asklake-airflow-dag-processor
+    command: dag-processor
+    healthcheck:
+      test: ["CMD-SHELL", "airflow jobs check --job-type DagProcessorJob"]
+      interval: 30s
+      timeout: 10s
+      retries: 8
+      start_period: 30s
+    depends_on:
+      airflow-postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+
+  minio:
+    image: minio/minio:RELEASE.2025-07-23T15-54-02Z
+    container_name: m3-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_PASSWORD: wishuponastar
+      MINIO_ROOT_USER: m3admin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - asklake_minio_data:/data
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: asklake-postgres
+    environment:
+      POSTGRES_DB: asklake
+      POSTGRES_PASSWORD: asklake_dev
+      POSTGRES_USER: asklake
+    ports:
+      - "54328:5432"
+    volumes:
+      - asklake_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U asklake -d asklake"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  asklake_airflow_postgres_data:
+  asklake_minio_data:
+  asklake_postgres_data:

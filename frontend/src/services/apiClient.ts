@@ -1,11 +1,12 @@
 import { ApiError } from "../types";
 import type { ApiErrorResponse } from "../types";
 
-const defaultApiBaseUrl = "http://localhost:8080";
+const defaultApiBaseUrl = import.meta.env.DEV ? "" : "http://localhost:8080";
+const useMockApi = String(import.meta.env.VITE_USE_MOCK_API ?? "false").toLowerCase() === "true";
 
 export const apiConfig = {
   baseUrl: import.meta.env.VITE_API_BASE_URL || defaultApiBaseUrl,
-  useMock: import.meta.env.VITE_USE_MOCK_API !== "false",
+  useMock: useMockApi,
 };
 
 type RequestOptions = {
@@ -17,6 +18,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   const { body, method = body ? "POST" : "GET" } = options;
   const response = await fetch(`${apiConfig.baseUrl}${path}`, {
     body: body === undefined ? undefined : JSON.stringify(body),
+    credentials: "include",
     headers: {
       Accept: "application/json",
       ...(body === undefined ? {} : { "Content-Type": "application/json" }),
@@ -31,10 +33,21 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
         message: response.statusText || "API request failed",
       },
     };
-    const payload = await response.json().catch(() => fallback) as ApiErrorResponse;
+    const payload = await response.json().catch(() => fallback) as Partial<ApiErrorResponse>;
+    const validationDetail = Array.isArray(payload.detail)
+      ? payload.detail
+        .map((item) => {
+          if (!item || typeof item !== "object") return String(item);
+          const record = item as { loc?: unknown[]; msg?: string };
+          const location = Array.isArray(record.loc) ? record.loc.join(".") : "";
+          return location ? `${location}: ${record.msg ?? "Invalid value"}` : record.msg ?? "Invalid value";
+        })
+        .join(" / ")
+      : typeof payload.detail === "string" ? payload.detail : "";
+    const detailMessage = typeof payload.error?.details?.message === "string" ? payload.error.details.message : "";
     throw new ApiError({
       code: payload.error?.code ?? fallback.error.code,
-      message: payload.error?.message ?? fallback.error.message,
+      message: detailMessage || payload.error?.message || validationDetail || fallback.error.message,
       status: response.status,
     });
   }
@@ -50,4 +63,3 @@ export const apiClient = {
   post: <T>(path: string, body: unknown) => request<T>(path, { body, method: "POST" }),
   put: <T>(path: string, body: unknown) => request<T>(path, { body, method: "PUT" }),
 };
-

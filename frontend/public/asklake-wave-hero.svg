@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 300" role="img" aria-label="AskLake three wave mark">
+  <defs>
+    <linearGradient id="waveTop" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#315fdc" />
+      <stop offset="1" stop-color="#31b5ef" />
+    </linearGradient>
+    <linearGradient id="waveMiddle" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#2f62d8" />
+      <stop offset="1" stop-color="#3d8ff0" />
+    </linearGradient>
+    <linearGradient id="waveBottom" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#153f91" />
+      <stop offset="1" stop-color="#1f55b2" />
+    </linearGradient>
+  </defs>
+  <path d="M44 63C90 27 132 29 176 61C220 93 262 91 310 49" fill="none" stroke="url(#waveTop)" stroke-linecap="round" stroke-width="38" />
+  <path d="M40 149C88 113 136 116 181 148C226 180 269 177 316 137" fill="none" stroke="url(#waveMiddle)" stroke-linecap="round" stroke-width="38" />
+  <path d="M58 236C102 202 144 203 184 233C224 263 262 258 303 223" fill="none" stroke="url(#waveBottom)" stroke-linecap="round" stroke-width="38" />
+</svg>

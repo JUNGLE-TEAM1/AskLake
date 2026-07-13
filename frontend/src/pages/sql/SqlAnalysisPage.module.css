@@ -1,0 +1,310 @@
+.page {
+  --sql-side-panel-width: clamp(320px, 22vw, 400px);
+  --sql-workspace-height: min(860px, calc(100dvh - 24px));
+  position: relative;
+  display: grid;
+  width: 100%;
+  min-height: 100%;
+  grid-template-columns: var(--sql-side-panel-width) minmax(0, 1fr);
+  grid-template-rows: max-content auto;
+  align-items: stretch;
+  gap: 12px;
+  font-family: var(--jobs-font-family);
+}
+
+.page.collapsed {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.pageHeader {
+  grid-column: 1 / -1;
+  min-width: 0;
+  min-height: var(--sql-masthead-height, 76px);
+}
+
+.pageHeader > div {
+  width: 100%;
+}
+
+.datasetPanel {
+  position: sticky;
+  z-index: 20;
+  top: 12px;
+  display: grid;
+  grid-column: 1;
+  grid-row: 2;
+  grid-template-rows: minmax(0, 1fr);
+  align-self: start;
+  height: var(--sql-workspace-height);
+  min-height: min(620px, var(--sql-workspace-height));
+  max-height: var(--sql-workspace-height);
+  min-width: 0;
+  overflow: hidden;
+  padding: 20px;
+}
+
+.datasetScroll [data-slot="scroll-area-scrollbar"][data-orientation="vertical"] {
+  background: #e2e8f0;
+  opacity: 1;
+}
+
+.datasetScroll [data-slot="scroll-area-thumb"] {
+  background: #94a3b8;
+  opacity: 1;
+}
+
+.chartConfigurator {
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.workspace {
+  grid-column: 2;
+  grid-row: 2;
+  height: var(--sql-workspace-height);
+  min-height: min(620px, var(--sql-workspace-height));
+  max-height: var(--sql-workspace-height);
+  grid-template-rows: max-content minmax(0, 1fr);
+}
+
+.collapsed .workspace {
+  position: relative;
+  grid-column: 1;
+  min-width: 0;
+  padding-left: 56px;
+}
+
+.contextRailButton {
+  position: absolute;
+  z-index: 3;
+  top: 0;
+  left: 0;
+}
+
+.queryPanel {
+  align-self: start;
+}
+
+.editorSurface {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  min-height: 276px;
+  overflow: hidden;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #0f172a;
+}
+
+.editorSurface pre {
+  min-height: 276px;
+  overflow: hidden;
+  border-right: 1px solid rgb(148 163 184 / 22%);
+  margin: 0;
+  background: #111827;
+  color: #94a3b8;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 15px;
+  line-height: 24px;
+  padding: 16px 12px;
+  text-align: right;
+}
+
+.editorSurface textarea {
+  width: 100%;
+  min-width: 0;
+  min-height: 276px;
+  max-height: 560px;
+  resize: vertical;
+  border: 0;
+  outline: 0;
+  background: #0f172a;
+  color: #e2e8f0;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 15px;
+  line-height: 24px;
+  padding: 16px;
+}
+
+.editorInputWrap {
+  position: relative;
+  min-width: 0;
+}
+
+.autocompletePopover {
+  position: absolute;
+  z-index: 5;
+  right: 14px;
+  bottom: 14px;
+  display: grid;
+  width: min(420px, calc(100% - 28px));
+}
+
+.autocompletePopover strong {
+  min-width: 0;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.editorFooter {
+  display: flex;
+  min-height: 28px;
+  align-items: center;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.editorStatusLine {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.resultPanel {
+  min-height: 0;
+  grid-template-rows: max-content minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.resultToolbar {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.resultToolbar > :first-child,
+.resultToolbar > :last-child {
+  flex: 0 0 auto;
+}
+
+.resultToolbar > :last-child {
+  margin-left: auto;
+}
+
+.resultScroll,
+.resultEmpty,
+.resultViewEmpty {
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+}
+
+.resultScroll :global(.schema-table) {
+  min-width: 0;
+}
+
+@media (max-width: 1240px) {
+  .page {
+    grid-template-columns: minmax(320px, 0.95fr) minmax(0, 1.05fr);
+  }
+
+  .page.collapsed {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .collapsed .workspace {
+    padding-left: 44px;
+  }
+}
+
+@media (max-width: 860px) {
+  .page,
+  .page.collapsed {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .collapsed .workspace {
+    padding-left: 0;
+  }
+
+  .datasetPanel {
+    position: relative;
+    height: min(720px, 80dvh);
+    min-height: min(560px, 80dvh);
+    max-height: 80dvh;
+  }
+
+  .workspace {
+    grid-column: 1;
+    grid-row: auto;
+    height: auto;
+    min-height: 0;
+    max-height: none;
+    grid-template-rows: none;
+  }
+
+  .resultPanel {
+    grid-template-rows: auto;
+    overflow: visible;
+  }
+
+  .resultToolbar {
+    align-items: flex-start;
+  }
+
+  .resultToolbar > :first-child,
+  .resultToolbar > :last-child {
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .resultToolbar > :last-child {
+    margin-left: 0;
+  }
+
+  .resultScroll {
+    height: min(460px, 48vh);
+    min-height: 300px;
+  }
+
+  .contextRailButton {
+    position: static;
+    margin-bottom: 10px;
+  }
+}
+
+@media (max-width: 1180px) {
+  .page,
+  .page.collapsed {
+    grid-template-columns: 1fr;
+  }
+
+  .datasetPanel {
+    position: static;
+    grid-column: 1;
+    grid-row: auto;
+    height: min(680px, calc(100vh - 24px));
+    min-height: min(560px, calc(100vh - 24px));
+    max-height: none;
+    order: 1;
+  }
+
+  .workspace,
+  .collapsed .workspace {
+    grid-column: 1;
+    grid-row: auto;
+    order: 2;
+  }
+}
+
+@media (max-width: 780px) {
+  .datasetPanel {
+    position: static;
+    height: auto;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .pageHeader {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

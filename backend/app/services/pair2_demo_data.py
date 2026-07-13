@@ -1,0 +1,332 @@
+from copy import deepcopy
+from typing import Any
+
+PAIR2_ORDERS_DATASET_ID = "ds_orders_clean"
+PAIR2_LEGACY_ORDERS_DATASET_ID = "ds_customer_orders_gold"
+
+
+def build_direct_lineage_graph(
+    *,
+    dataset_id: str,
+    dataset_name: str,
+    engine: str = "ICEBERG",
+    layer: str,
+    source_engine: str,
+    source_id: str,
+    source_name: str,
+    schema: list[list[str]],
+) -> dict[str, Any]:
+    source_columns = [
+        {"id": f"{source_id}-{column_name.replace('_', '-')}", "name": column_name, "type": column_type}
+        for column_name, column_type in schema
+    ]
+    dataset_columns = [
+        {"id": f"{dataset_id}-{column_name.replace('_', '-')}", "name": column_name, "type": column_type}
+        for column_name, column_type in schema
+    ]
+
+    return {
+        "datasetId": dataset_id,
+        "datasets": [
+            {
+                "columns": source_columns,
+                "engine": source_engine,
+                "id": source_id,
+                "layer": "SOURCE",
+                "name": source_name,
+            },
+            {
+                "columns": dataset_columns,
+                "engine": engine,
+                "id": dataset_id,
+                "layer": layer,
+                "name": dataset_name,
+            },
+        ],
+        "edges": [
+            {
+                "fromColumnId": source_column["id"],
+                "fromDatasetId": source_id,
+                "toColumnId": dataset_column["id"],
+                "toDatasetId": dataset_id,
+            }
+            for source_column, dataset_column in zip(source_columns, dataset_columns, strict=True)
+        ],
+    }
+
+
+def build_dataset_payload(
+    *,
+    dataset_id: str,
+    description: str,
+    downstream: list[str],
+    freshness: str,
+    layer: str,
+    last_updated: str,
+    name: str,
+    next_refresh: str,
+    owner: str,
+    quality: str,
+    rag: bool,
+    rows: str,
+    sample_rows: list[list[str]],
+    schema: list[list[str]],
+    size: str,
+    source: str,
+    status: str,
+    tags: list[str],
+    upstream: list[str],
+    source_engine: str,
+    source_id: str,
+    source_name: str,
+) -> dict[str, Any]:
+    return {
+        "description": description,
+        "downstream": downstream,
+        "freshness": freshness,
+        "id": dataset_id,
+        "layer": layer,
+        "lastUpdated": last_updated,
+        "lineageGraph": build_direct_lineage_graph(
+            dataset_id=dataset_id,
+            dataset_name=name,
+            layer=layer,
+            schema=schema,
+            source_engine=source_engine,
+            source_id=source_id,
+            source_name=source_name,
+        ),
+        "name": name,
+        "nextRefresh": next_refresh,
+        "owner": owner,
+        "quality": quality,
+        "rag": rag,
+        "rows": rows,
+        "sampleRows": sample_rows,
+        "schema": schema,
+        "size": size,
+        "source": source,
+        "status": status,
+        "tags": tags,
+        "upstream": upstream,
+    }
+
+
+PAIR2_COMMERCE_DATASETS: list[dict[str, Any]] = [
+    build_dataset_payload(
+        dataset_id=PAIR2_ORDERS_DATASET_ID,
+        description="전체 채널 통합 고객 주문 정제 데이터. 고객, 상품, 결제 분석의 기준 주문 테이블입니다.",
+        downstream=["SQL 분석", "매출 대시보드", "고객 세그먼트 분석"],
+        freshness="latest",
+        layer="GOLD",
+        last_updated="2026-07-03T00:03:00.000Z",
+        name="orders_clean",
+        next_refresh="2026-07-04 00:00",
+        owner="Data Platform Team",
+        quality="98% (Excellent)",
+        rag=True,
+        rows="12.4M rows",
+        sample_rows=[
+            ["ORD-1001", "CUS-204", "2026-07-02", "128000", "paid", "KR", "web"],
+            ["ORD-1002", "CUS-118", "2026-07-02", "56000", "shipped", "KR", "mobile"],
+            ["ORD-1003", "CUS-204", "2026-07-03", "74000", "paid", "KR", "mobile"],
+            ["ORD-1004", "CUS-331", "2026-07-03", "219000", "paid", "JP", "web"],
+            ["ORD-1005", "CUS-118", "2026-07-04", "33000", "refunded", "KR", "web"],
+            ["ORD-1006", "CUS-508", "2026-07-04", "184000", "paid", "SG", "mobile"],
+            ["ORD-1007", "CUS-331", "2026-07-05", "91000", "shipped", "JP", "store"],
+            ["ORD-1008", "CUS-772", "2026-07-05", "45000", "paid", "AU", "web"],
+        ],
+        schema=[
+            ["order_id", "string"],
+            ["customer_id", "string"],
+            ["order_date", "date"],
+            ["total_amount", "decimal"],
+            ["status", "string"],
+            ["region", "string"],
+            ["channel", "string"],
+        ],
+        size="18.2GB",
+        source="daily_order_ingestion",
+        status="available",
+        tags=["#customer", "#sales", "#고객 주문", "#order"],
+        upstream=["PostgreSQL commerce.orders", "daily_order_ingestion"],
+        source_engine="POSTGRESQL",
+        source_id="source-commerce-orders",
+        source_name="commerce.orders",
+    ),
+    build_dataset_payload(
+        dataset_id="ds_customers_clean",
+        description="고객 프로필과 등급, 지역, 가입일을 정제한 고객 마스터 데이터입니다.",
+        downstream=["SQL 분석", "고객 세그먼트 분석", "CRM 대시보드"],
+        freshness="latest",
+        layer="GOLD",
+        last_updated="2026-07-03T00:08:00.000Z",
+        name="customers_clean",
+        next_refresh="2026-07-04 00:10",
+        owner="Data Platform Team",
+        quality="97% (Excellent)",
+        rag=True,
+        rows="2.1M rows",
+        sample_rows=[
+            ["CUS-204", "김민준", "VIP", "KR", "2024-03-12", "true"],
+            ["CUS-118", "이지아", "Standard", "KR", "2025-01-08", "false"],
+            ["CUS-331", "Haruto Sato", "VIP", "JP", "2023-11-21", "true"],
+            ["CUS-508", "Nur Aisyah", "Growth", "SG", "2025-06-02", "false"],
+            ["CUS-772", "Olivia Brown", "Standard", "AU", "2024-09-17", "false"],
+        ],
+        schema=[
+            ["customer_id", "string"],
+            ["customer_name", "string"],
+            ["segment", "string"],
+            ["region", "string"],
+            ["signup_date", "date"],
+            ["is_vip", "boolean"],
+        ],
+        size="4.8GB",
+        source="customer_profile_sync",
+        status="available",
+        tags=["#customer", "#profile", "#segment", "#RAG"],
+        upstream=["PostgreSQL commerce.customers", "customer_profile_sync"],
+        source_engine="POSTGRESQL",
+        source_id="source-commerce-customers",
+        source_name="commerce.customers",
+    ),
+    build_dataset_payload(
+        dataset_id="ds_order_items_clean",
+        description="주문별 상품 라인아이템, 수량, 단가, 할인액을 정제한 주문 상세 데이터입니다.",
+        downstream=["SQL 분석", "상품 매출 분석", "장바구니 분석"],
+        freshness="latest",
+        layer="SILVER",
+        last_updated="2026-07-03T00:06:00.000Z",
+        name="order_items_clean",
+        next_refresh="2026-07-04 00:05",
+        owner="Data Platform Team",
+        quality="95% (Good)",
+        rag=False,
+        rows="38.7M rows",
+        sample_rows=[
+            ["ORD-1001", "SKU-8842", "1", "98000", "0", "fulfilled"],
+            ["ORD-1001", "SKU-1120", "2", "15000", "0", "fulfilled"],
+            ["ORD-1002", "SKU-200", "1", "56000", "0", "fulfilled"],
+            ["ORD-1003", "SKU-1120", "3", "15000", "1000", "fulfilled"],
+            ["ORD-1003", "SKU-7741", "1", "30000", "0", "fulfilled"],
+            ["ORD-1004", "SKU-8842", "2", "98000", "5000", "fulfilled"],
+            ["ORD-1006", "SKU-5501", "1", "184000", "0", "fulfilled"],
+        ],
+        schema=[
+            ["order_id", "string"],
+            ["product_id", "string"],
+            ["quantity", "integer"],
+            ["unit_price", "decimal"],
+            ["discount_amount", "decimal"],
+            ["item_status", "string"],
+        ],
+        size="34.4GB",
+        source="order_item_ingestion",
+        status="available",
+        tags=["#order", "#product", "#sales", "#line-item"],
+        upstream=["PostgreSQL commerce.order_items", "order_item_ingestion"],
+        source_engine="POSTGRESQL",
+        source_id="source-commerce-order-items",
+        source_name="commerce.order_items",
+    ),
+    build_dataset_payload(
+        dataset_id="ds_products_clean",
+        description="상품명, 카테고리, 브랜드, 기준 가격을 정제한 상품 마스터 데이터입니다.",
+        downstream=["SQL 분석", "상품 헬스 스코어", "카테고리 매출 분석"],
+        freshness="latest",
+        layer="GOLD",
+        last_updated="2026-07-03T01:00:00.000Z",
+        name="products_clean",
+        next_refresh="2026-07-04 01:00",
+        owner="Commerce Analytics",
+        quality="96% (Excellent)",
+        rag=True,
+        rows="860K rows",
+        sample_rows=[
+            ["SKU-8842", "Smart Air Fryer", "appliance", "NamuHome", "98000"],
+            ["SKU-1120", "Vitamin Serum", "beauty", "GlowLab", "15000"],
+            ["SKU-200", "Coffee Capsule Pack", "grocery", "DailyBrew", "56000"],
+            ["SKU-7741", "Wireless Mouse", "electronics", "WorkMate", "30000"],
+            ["SKU-5501", "Robot Vacuum", "appliance", "NamuHome", "184000"],
+        ],
+        schema=[
+            ["product_id", "string"],
+            ["product_name", "string"],
+            ["category", "string"],
+            ["brand", "string"],
+            ["list_price", "decimal"],
+        ],
+        size="920MB",
+        source="product_master_sync",
+        status="available",
+        tags=["#product", "#category", "#commerce", "#RAG"],
+        upstream=["PostgreSQL commerce.products", "product_master_sync"],
+        source_engine="POSTGRESQL",
+        source_id="source-commerce-products",
+        source_name="commerce.products",
+    ),
+    build_dataset_payload(
+        dataset_id="ds_payments_clean",
+        description="주문별 결제 수단, 결제 금액, 결제 상태, 결제 시간을 정제한 데이터입니다.",
+        downstream=["SQL 분석", "결제 성공률 대시보드", "매출 정산"],
+        freshness="latest",
+        layer="SILVER",
+        last_updated="2026-07-03T00:12:00.000Z",
+        name="payments_clean",
+        next_refresh="2026-07-04 00:15",
+        owner="Finance Data",
+        quality="94% (Good)",
+        rag=False,
+        rows="12.1M rows",
+        sample_rows=[
+            ["PAY-9001", "ORD-1001", "card", "128000", "captured", "2026-07-02 09:14:22"],
+            ["PAY-9002", "ORD-1002", "wallet", "56000", "captured", "2026-07-02 10:22:18"],
+            ["PAY-9003", "ORD-1003", "card", "74000", "captured", "2026-07-03 11:02:45"],
+            ["PAY-9004", "ORD-1004", "bank_transfer", "219000", "captured", "2026-07-03 15:48:10"],
+            ["PAY-9005", "ORD-1005", "card", "33000", "refunded", "2026-07-04 08:31:09"],
+            ["PAY-9006", "ORD-1006", "wallet", "184000", "captured", "2026-07-04 12:10:33"],
+        ],
+        schema=[
+            ["payment_id", "string"],
+            ["order_id", "string"],
+            ["payment_method", "string"],
+            ["paid_amount", "decimal"],
+            ["payment_status", "string"],
+            ["paid_at", "timestamp"],
+        ],
+        size="7.6GB",
+        source="payment_event_ingestion",
+        status="available",
+        tags=["#payment", "#finance", "#sales"],
+        upstream=["PostgreSQL commerce.payments", "payment_event_ingestion"],
+        source_engine="POSTGRESQL",
+        source_id="source-commerce-payments",
+        source_name="commerce.payments",
+    ),
+]
+
+
+def build_legacy_orders_dataset_payload() -> dict[str, Any]:
+    payload = deepcopy(PAIR2_COMMERCE_DATASETS[0])
+    schema = payload["schema"]
+    payload.update(
+        {
+            "description": "기존 demo 호환을 위해 남겨둔 고객 주문 골드 데이터셋입니다. 신규 SQL 분석은 orders_clean을 우선 사용합니다.",
+            "id": PAIR2_LEGACY_ORDERS_DATASET_ID,
+            "name": "customer_orders_gold_legacy",
+            "source": "legacy_daily_order_ingestion",
+            "tags": ["#customer", "#sales", "#legacy"],
+            "upstream": ["PostgreSQL commerce.orders", "legacy_daily_order_ingestion"],
+        }
+    )
+    payload["lineageGraph"] = build_direct_lineage_graph(
+        dataset_id=PAIR2_LEGACY_ORDERS_DATASET_ID,
+        dataset_name="customer_orders_gold_legacy",
+        layer=payload["layer"],
+        schema=schema,
+        source_engine="POSTGRESQL",
+        source_id="source-commerce-orders-legacy",
+        source_name="commerce.orders",
+    )
+    return payload

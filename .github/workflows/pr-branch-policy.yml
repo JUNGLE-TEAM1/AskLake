@@ -36,6 +36,7 @@ jobs:
             const head = pr.head.ref;
             const allowedPairBranches = new Set(["pair1", "pair2", "pair3"]);
             const workBranchPattern = /^(feature|bugfix|hotfix|chore|refactor|docs|test)\/.+/;
+            const issueSkillBranchPattern = /^(feat|fix|hotfix|docs|chore|refactor|test)-#\d+$/;
             const allowDirectHotfix = String(process.env.ALLOW_DIRECT_HOTFIX || "").toLowerCase() === "true";
 
             core.info(`base=${base}`);
@@ -50,20 +51,20 @@ jobs:
             }
 
             if (base === "dev") {
-              if (allowedPairBranches.has(head) || (allowDirectHotfix && head.startsWith("hotfix/"))) {
+              if (allowedPairBranches.has(head)) {
                 return;
               }
-              core.setFailed("Pull requests into dev must come from pair1, pair2, or pair3.");
-              return;
-            }
-
-            if (!allowedPairBranches.has(base)) {
+              if (!(workBranchPattern.test(head) || issueSkillBranchPattern.test(head) || (allowDirectHotfix && head.startsWith("hotfix/")))) {
+                core.setFailed("Pull requests into dev must come from pair1/2/3 or an issue-linked work branch.");
+                return;
+              }
+            } else if (allowedPairBranches.has(base)) {
+              if (!(workBranchPattern.test(head) || issueSkillBranchPattern.test(head))) {
+                core.setFailed("Pull requests into pair branches must come from a supported work branch or <type>-#<issue-number> branch.");
+                return;
+              }
+            } else {
               core.setFailed(`Unsupported PR base branch: ${base}`);
-              return;
-            }
-
-            if (!workBranchPattern.test(head)) {
-              core.setFailed("Pull requests into pair branches must come from feature/*, bugfix/*, hotfix/*, chore/*, refactor/*, docs/*, or test/*.");
               return;
             }
 

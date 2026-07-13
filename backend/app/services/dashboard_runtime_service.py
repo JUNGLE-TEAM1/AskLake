@@ -1,0 +1,592 @@
+from datetime import UTC, datetime
+from typing import Any
+
+from fastapi import status
+
+from app.core.auth_context import ActorContext, require_permission
+from app.core.errors import ApiError
+from app.core.permission_metadata import permission_grants_from_roles
+from app.models.dashboard_runtime import DashboardPage as DashboardPageModel
+from app.models.dashboard_runtime import DashboardRevision as DashboardRevisionModel
+from app.models.dashboard_runtime import DashboardWidget as DashboardWidgetModel
+from app.repositories.audit_repository import safe_record_audit_event
+from app.repositories.dashboard_card_repository import get_dashboard_card
+from app.repositories.dashboard_runtime_repository import DashboardRuntimeMetaRecord, DashboardRuntimeRepository
+from app.repositories.catalog_repository import CatalogRepository
+from app.schemas.common import ErrorCode
+from app.schemas.dashboard import (
+    AreaChartWidgetConfig,
+    BarChartWidgetConfig,
+    CreateDraftPageRequest,
+    CreateDraftWidgetRequest,
+    DashboardCard,
+    DashboardMeta,
+    DashboardPageResponse,
+    DashboardRevision,
+    DashboardRuntimeMode,
+    DashboardRuntimePage,
+    DashboardRuntimeResponse,
+    DashboardStatus,
+    DashboardRuntimeWidget,
+    DashboardRuntimeWidgetType,
+    DashboardWidgetAggregation,
+    DashboardWidgetColorConfig,
+    DashboardWidgetConfigBase,
+    DashboardWidgetFormat,
+    DashboardWidgetLayout,
+    DashboardWidgetLineCurve,
+    DashboardWidgetOrientation,
+    DashboardWidgetMutationResponse,
+    DeleteDraftPageResponse,
+    DeleteDraftWidgetResponse,
+    DonutChartWidgetConfig,
+    HeatmapChartWidgetConfig,
+    LineChartWidgetConfig,
+    MetricWidgetConfig,
+    OkResponse,
+    PieChartWidgetConfig,
+    PublishDashboardResponse,
+    RadialBarChartWidgetConfig,
+    SaveDraftLayoutsRequest,
+    TableWidgetConfig,
+    TreemapChartWidgetConfig,
+    UpdateDraftPageRequest,
+    UpdateDraftWidgetRequest,
+)
+from app.services.governance_enforcement import require_governed_access
+from app.services.resource_permission_service import dashboard_with_persisted_permission_grants, permissions_for_actor_with_governance
+from app.services.demo_catalog import dataset_rows_to_widget_data, get_demo_dataset
+
+
+class DashboardRuntimeService:
+    _legacy_color_map = {
+        "blue": "#2563eb",
+        "green": "#10b981",
+        "orange": "#f97316",
+        "pink": "#db2777",
+        "purple": "#8b5cf6",
+        "red": "#ef4444",
+        "yellow": "#f59e0b",
+    }
+
+    def __init__(self, repository: DashboardRuntimeRepository, catalog_repository: CatalogRepository) -> None:
+        self.repository = repository
+        self.catalog_repository = catalog_repository
+
+    def get_published_runtime(self, dashboard_id: str, actor: ActorContext | None = None) -> DashboardRuntimeResponse:
+        actor_context = actor or ActorContext()
+        dashboard_meta = self.repository.get_dashboard_meta(dashboard_id)
+        if dashboard_meta is None:
+            self._raise_dashboard_not_found(dashboard_id)
+        dashboard_card = self._require_dashboard_permission(dashboard_id, actor_context, "view")
+
+        revision = self.repository.get_published_revision(dashboard_id)
+        return self._build_runtime_response(dashboard_meta, DashboardRuntimeMode.PUBLISHED, revision, actor_context, dashboard_card)
+
+    def ensure_draft_runtime(self, dashboard_id: str, actor: ActorContext | None = None) -> DashboardRuntimeResponse:
+        actor_context = actor or ActorContext()
+        dashboard_meta = self.repository.get_dashboard_meta(dashboard_id)
+        if dashboard_meta is None:
+            self._raise_dashboard_not_found(dashboard_id)
+        dashboard_card = self._require_dashboard_permission(dashboard_id, actor_context, "manage")
+
+        revision = self._ensure_draft_revision(dashboard_id)
+        self.repository.db.commit()
+
+        return self._build_runtime_response(dashboard_meta, DashboardRuntimeMode.DRAFT, revision, actor_context, dashboard_card)
+
+    def create_draft_page(self, dashboard_id: str, request: CreateDraftPageRequest, actor: ActorContext | None = None) -> DashboardPageResponse:
+        self._require_dashboard_permission(dashboard_id, actor or ActorContext(), "manage")
+        revision = self._ensure_draft_revision(dashboard_id)
+        page = self.repository.create_page(
+            revision.id,
+            request.title,
+            self.repository.get_next_page_order(revision.id),
+        )
+        self.repository.db.commit()
+        return self._page_response(page)
+
+    def update_draft_page(self, dashboard_id: str, page_id: str, request: UpdateDraftPageRequest, actor: ActorContext | None = None) -> DashboardPageResponse:
+        self._require_dashboard_permission(dashboard_id, actor or ActorContext(), "manage")
+        revision = self._get_draft_revision_or_raise(dashboard_id)
+        page = self._get_draft_page_or_raise(revision, page_id)
+        page = self.repository.update_page_title(page, request.title)
+        self.repository.db.commit()
+        return self._page_response(page)
+
+    def delete_draft_page(self, dashboard_id: str, page_id: str, actor: ActorContext | None = None) -> DeleteDraftPageResponse:
+        self._require_dashboard_permission(dashboard_id, actor or ActorContext(), "manage")
+        revision = self._get_draft_revision_or_raise(dashboard_id)
+        page = self._get_draft_page_or_raise(revision, page_id)
+        self.repository.delete_page(page)
+        self.repository.db.commit()
+        return DeleteDraftPageResponse(ok=True)
+
+    def create_draft_widget(
+        self,
+        dashboard_id: str,
+        page_id: str,
+        request: CreateDraftWidgetRequest,
+        actor: ActorContext | None = None,
+    ) -> DashboardWidgetMutationResponse:
+        self._require_dashboard_permission(dashboard_id, actor or ActorContext(), "manage")
+        revision = self._get_draft_revision_or_raise(dashboard_id)
+        page = self._get_draft_page_or_raise(revision, page_id)
+        widget_type = self._widget_type_enum(request.type)
+        widget = self.repository.create_widget(
+            page.id,
+            widget_type=widget_type.value,
+            title=request.title,
+            dataset_id=request.dataset_id,
+            query_id=None,
+            layout=self._layout_to_json(request.layout or self._default_layout()),
+            config=self._config_to_json(widget_type, request.config),
+            data=self._resolve_widget_data(request.data, request.dataset_id),
+        )
+        self.repository.db.commit()
+        return DashboardWidgetMutationResponse(id=widget.id)
+
+    def update_draft_widget(
+        self,
+        dashboard_id: str,
+        widget_id: str,
+        request: UpdateDraftWidgetRequest,
+        actor: ActorContext | None = None,
+    ) -> DashboardWidgetMutationResponse:
+        self._require_dashboard_permission(dashboard_id, actor or ActorContext(), "manage")
+        widget = self._get_draft_widget_or_raise(dashboard_id, widget_id)
+        current_type = self._widget_type_enum(widget.type)
+        next_type = self._widget_type_enum(request.type or current_type)
+        type_changed = request.type is not None and next_type != current_type
+        next_config = None
+        if request.config is not None or type_changed:
+            next_config = self._config_to_json(next_type, request.config)
+        next_data = None
+        update_data = False
+        if "data" in request.model_fields_set:
+            next_data = self._resolve_widget_data(request.data, request.dataset_id)
+            update_data = True
+        elif "dataset_id" in request.model_fields_set:
+            next_data = self._resolve_widget_data(None, request.dataset_id)
+            update_data = True
+        widget = self.repository.update_widget(
+            widget,
+            widget_type=next_type.value if type_changed else None,
+            title=request.title,
+            update_title="title" in request.model_fields_set,
+            dataset_id=request.dataset_id,
+            update_dataset_id="dataset_id" in request.model_fields_set,
+            config=next_config,
+            data=next_data,
+            update_data=update_data,
+        )
+        self.repository.db.commit()
+        return DashboardWidgetMutationResponse(id=widget.id)
+
+    def delete_draft_widget(self, dashboard_id: str, widget_id: str, actor: ActorContext | None = None) -> DeleteDraftWidgetResponse:
+        self._require_dashboard_permission(dashboard_id, actor or ActorContext(), "manage")
+        widget = self._get_draft_widget_or_raise(dashboard_id, widget_id)
+        self.repository.delete_widget(widget)
+        self.repository.db.commit()
+        return DeleteDraftWidgetResponse(ok=True, deleted_widget_id=widget_id)
+
+    def save_draft_layouts(self, dashboard_id: str, request: SaveDraftLayoutsRequest, actor: ActorContext | None = None) -> OkResponse:
+        self._require_dashboard_permission(dashboard_id, actor or ActorContext(), "manage")
+        revision = self._get_draft_revision_or_raise(dashboard_id)
+        page = self._get_draft_page_or_raise(revision, request.page_id)
+        for layout in request.layouts:
+            widget = self._get_draft_widget_or_raise(dashboard_id, layout.widget_id)
+            if widget.page_id != page.id:
+                self._raise_widget_not_found(layout.widget_id)
+            self.repository.update_widget_layout(widget, self._layout_to_json(layout))
+        self.repository.db.commit()
+        return OkResponse(ok=True)
+
+    def publish_dashboard(self, dashboard_id: str, actor: ActorContext | None = None) -> PublishDashboardResponse:
+        self._require_dashboard_permission(dashboard_id, actor or ActorContext(), "manage")
+        draft_revision = self._get_draft_revision_or_raise(dashboard_id)
+        published_revision = self.repository.copy_revision(draft_revision, DashboardRuntimeMode.PUBLISHED)
+        published_revision_id = published_revision.id
+        published_at = published_revision.published_at or datetime.now(UTC)
+        self.repository.update_dashboard_published_metadata(dashboard_id, published_revision_id, published_at)
+        self.repository.db.commit()
+        return PublishDashboardResponse(
+            dashboard_id=dashboard_id,
+            published_revision_id=published_revision_id,
+            published_at=self._datetime_to_iso(published_at) or published_at.isoformat(),
+        )
+
+    def _build_runtime_response(
+        self,
+        dashboard_meta: DashboardRuntimeMetaRecord,
+        mode: DashboardRuntimeMode,
+        revision: DashboardRevisionModel | None,
+        actor: ActorContext,
+        dashboard_card: DashboardCard,
+    ) -> DashboardRuntimeResponse:
+        has_published_revision = (
+            dashboard_meta.has_published_revision
+            or (mode == DashboardRuntimeMode.PUBLISHED and revision is not None)
+            or self.repository.get_published_revision(dashboard_meta.id) is not None
+        )
+        if revision is None:
+            return DashboardRuntimeResponse(
+                dashboard=self._dashboard_meta_to_schema(dashboard_meta, has_published_revision, actor, dashboard_card),
+                mode=mode,
+                revision=None,
+                pages=[],
+                widgets_by_page_id={},
+                filters=[],
+            )
+
+        pages = self.repository.list_pages(revision.id)
+        widgets_by_page_id = self.repository.list_widgets_by_page_ids([page.id for page in pages])
+
+        return DashboardRuntimeResponse(
+            dashboard=self._dashboard_meta_to_schema(dashboard_meta, has_published_revision, actor, dashboard_card),
+            mode=mode,
+            revision=self._revision_to_schema(revision),
+            pages=[self._page_to_schema(page) for page in pages],
+            widgets_by_page_id={
+                page_id: [self._widget_to_schema(widget) for widget in widgets]
+                for page_id, widgets in widgets_by_page_id.items()
+            },
+            filters=[],
+        )
+
+    @staticmethod
+    def _raise_dashboard_not_found(dashboard_id: str) -> None:
+        raise ApiError(
+            ErrorCode.NOT_FOUND,
+            "Dashboard not found.",
+            status.HTTP_404_NOT_FOUND,
+            {"dashboardId": dashboard_id},
+        )
+
+    def _require_dashboard(self, dashboard_id: str) -> DashboardRuntimeMetaRecord:
+        dashboard_meta = self.repository.get_dashboard_meta(dashboard_id)
+        if dashboard_meta is None:
+            self._raise_dashboard_not_found(dashboard_id)
+        return dashboard_meta
+
+    def _require_dashboard_permission(self, dashboard_id: str, actor: ActorContext, action: str) -> DashboardCard:
+        dashboard = get_dashboard_card(self.repository.db, dashboard_id)
+        if dashboard is None:
+            self._raise_dashboard_not_found(dashboard_id)
+        grants = dashboard.permission_grants or permission_grants_from_roles(dashboard.owner, default_actions=["view", "manage", "share"])
+        dashboard = dashboard_with_persisted_permission_grants(
+            self.repository.db,
+            dashboard.model_copy(update={"permission_grants": grants}),
+        )
+        require_governed_access(
+            self.repository.db,
+            actor,
+            action=action,
+            api_path=f"/api/dashboards/{dashboard_id}",
+            http_method="GET" if action == "view" else "POST",
+            metadata={"owner": dashboard.owner},
+            resource_id=dashboard.id,
+            resource_name=dashboard.name,
+            resource_type="dashboard",
+        )
+        try:
+            require_permission(
+                actor,
+                action,
+                owner=dashboard.owner,
+                grants=dashboard.permission_grants,
+                resource_label="dashboard",
+            )
+        except ApiError as exc:
+            safe_record_audit_event(
+                self.repository.db,
+                action="dashboard.access.forbidden",
+                actor=actor,
+                api_path=f"/api/dashboards/{dashboard_id}",
+                http_method="GET" if action == "view" else "POST",
+                metadata={"owner": dashboard.owner, "requiredAction": action},
+                result="forbidden",
+                status_code=exc.status_code,
+                target_id=dashboard.id,
+                target_name=dashboard.name,
+                target_type="dashboard",
+            )
+            raise
+        return dashboard
+
+    def _ensure_draft_revision(self, dashboard_id: str) -> DashboardRevisionModel:
+        revision = self.repository.get_draft_revision(dashboard_id)
+        if revision is None:
+            published_revision = self.repository.get_published_revision(dashboard_id)
+            revision = (
+                self.repository.copy_revision(published_revision, DashboardRuntimeMode.DRAFT)
+                if published_revision is not None
+                else self.repository.create_revision(dashboard_id, DashboardRuntimeMode.DRAFT)
+            )
+        if not self.repository.list_pages(revision.id):
+            self.repository.create_page(revision.id, "Untitled page", 0)
+        self.repository.db.flush()
+        return revision
+
+    def _get_draft_revision_or_raise(self, dashboard_id: str) -> DashboardRevisionModel:
+        self._require_dashboard(dashboard_id)
+        revision = self.repository.get_draft_revision(dashboard_id)
+        if revision is None:
+            raise ApiError(
+                ErrorCode.NO_DRAFT_REVISION,
+                "Draft revision is not prepared.",
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                {"dashboardId": dashboard_id},
+            )
+        return revision
+
+    def _get_draft_page_or_raise(self, revision: DashboardRevisionModel, page_id: str) -> DashboardPageModel:
+        page = self.repository.get_page(page_id)
+        if page is None or page.revision_id != revision.id:
+            raise ApiError(
+                ErrorCode.NOT_FOUND,
+                "Draft page not found.",
+                status.HTTP_404_NOT_FOUND,
+                {"pageId": page_id},
+            )
+        return page
+
+    def _get_draft_widget_or_raise(self, dashboard_id: str, widget_id: str) -> DashboardWidgetModel:
+        revision = self._get_draft_revision_or_raise(dashboard_id)
+        widget = self.repository.get_widget(widget_id)
+        if widget is None:
+            self._raise_widget_not_found(widget_id)
+
+        page = self.repository.get_page(widget.page_id)
+        if page is None or page.revision_id != revision.id:
+            self._raise_widget_not_found(widget_id)
+        return widget
+
+    @staticmethod
+    def _raise_widget_not_found(widget_id: str) -> None:
+        raise ApiError(
+            ErrorCode.NOT_FOUND,
+            "Draft widget not found.",
+            status.HTTP_404_NOT_FOUND,
+            {"widgetId": widget_id},
+        )
+
+    def _dashboard_meta_to_schema(
+        self,
+        record: DashboardRuntimeMetaRecord,
+        has_published_revision: bool,
+        actor: ActorContext,
+        dashboard_card: DashboardCard,
+    ) -> DashboardMeta:
+        status_value = DashboardStatus.PUBLISHED if has_published_revision else record.status
+        grants = dashboard_card.permission_grants or permission_grants_from_roles(dashboard_card.owner, default_actions=["view", "manage", "share"])
+        dashboard_card = dashboard_with_persisted_permission_grants(
+            self.repository.db,
+            dashboard_card.model_copy(update={"permission_grants": grants}),
+        )
+        return DashboardMeta(
+            id=record.id,
+            title=record.title,
+            status=status_value,
+            permission_grants=dashboard_card.permission_grants,
+            permissions=permissions_for_actor_with_governance(
+                self.repository.db,
+                actor,
+                owner=dashboard_card.owner,
+                grants=[
+                    grant.model_dump(by_alias=True) if hasattr(grant, "model_dump") else grant
+                    for grant in dashboard_card.permission_grants
+                ],
+                resource_id=dashboard_card.id,
+                resource_type="dashboard",
+            ),
+            has_published_revision=has_published_revision,
+            updated_at=DashboardRuntimeService._datetime_to_iso(record.updated_at),
+        )
+
+    @staticmethod
+    def _revision_to_schema(revision: DashboardRevisionModel) -> DashboardRevision:
+        return DashboardRevision(
+            id=revision.id,
+            kind=DashboardRuntimeMode(revision.kind),
+            version=revision.version,
+            published_at=DashboardRuntimeService._datetime_to_iso(revision.published_at),
+        )
+
+    @staticmethod
+    def _page_to_schema(page: DashboardPageModel) -> DashboardRuntimePage:
+        return DashboardRuntimePage(
+            id=page.id,
+            title=page.title,
+            order_index=page.order_index,
+        )
+
+    @staticmethod
+    def _page_response(page: DashboardPageModel) -> DashboardPageResponse:
+        return DashboardPageResponse(
+            id=page.id,
+            title=page.title,
+            order_index=page.order_index,
+        )
+
+    @staticmethod
+    def _widget_to_schema(widget: DashboardWidgetModel) -> DashboardRuntimeWidget:
+        widget_type = DashboardRuntimeWidgetType(widget.type)
+        return DashboardRuntimeWidget(
+            id=widget.id,
+            page_id=widget.page_id,
+            type=widget_type,
+            title=widget.title,
+            layout=DashboardWidgetLayout(**widget.layout),
+            config=DashboardRuntimeService._normalize_widget_config(widget_type, widget.config),
+            data=widget.data,
+            dataset_id=widget.dataset_id,
+            query_id=widget.query_id,
+        )
+
+    @staticmethod
+    def _layout_to_json(layout: DashboardWidgetLayout) -> dict[str, int]:
+        return {
+            key: value
+            for key, value in {
+                "x": layout.x,
+                "y": layout.y,
+                "w": layout.w,
+                "h": layout.h,
+                "minW": layout.min_w,
+                "minH": layout.min_h,
+            }.items()
+            if value is not None
+        }
+
+    @staticmethod
+    def _config_to_json(
+        widget_type: DashboardRuntimeWidgetType,
+        config: DashboardWidgetConfigBase | None,
+    ) -> dict[str, object]:
+        resolved_config = config or DashboardRuntimeService._default_config(widget_type)
+        return resolved_config.model_dump(by_alias=True, exclude_none=True, mode="json")
+
+    @staticmethod
+    def _default_layout() -> DashboardWidgetLayout:
+        return DashboardWidgetLayout(x=0, y=0, w=4, h=3, min_w=2, min_h=2)
+
+    @staticmethod
+    def _widget_type_enum(value: DashboardRuntimeWidgetType | str) -> DashboardRuntimeWidgetType:
+        return value if isinstance(value, DashboardRuntimeWidgetType) else DashboardRuntimeWidgetType(value)
+
+    @staticmethod
+    def _normalize_widget_config(
+        widget_type: DashboardRuntimeWidgetType,
+        config: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        if config is None:
+            return DashboardRuntimeService._config_to_json(widget_type, None)
+
+        normalized = dict(config)
+        if widget_type in {DashboardRuntimeWidgetType.METRIC, DashboardRuntimeWidgetType.TABLE}:
+            return normalized
+
+        color = normalized.get("color")
+        if isinstance(color, str):
+            normalized["color"] = {
+                "colors": [
+                    DashboardRuntimeService._legacy_color_map.get(
+                        color,
+                        color if color.startswith("#") else "#2563eb",
+                    ),
+                ],
+            }
+        elif color is None:
+            normalized["color"] = {"colors": ["#2563eb"]}
+
+        return normalized
+
+    def _resolve_widget_data(
+        self,
+        explicit_data: list[dict[str, Any]] | None,
+        dataset_id: str | None,
+    ) -> list[dict[str, Any]]:
+        if explicit_data is not None:
+            return explicit_data
+        dataset_payload = self.catalog_repository.get_dataset_payload(dataset_id) if dataset_id else None
+        return dataset_rows_to_widget_data(dataset_payload or get_demo_dataset(dataset_id))
+
+    @staticmethod
+    def _default_config(widget_type: DashboardRuntimeWidgetType) -> DashboardWidgetConfigBase:
+        color = DashboardWidgetColorConfig(colors=["#2563eb"])
+        if widget_type == DashboardRuntimeWidgetType.METRIC:
+            return MetricWidgetConfig(
+                aggregation=DashboardWidgetAggregation.COUNT,
+                format=DashboardWidgetFormat.NUMBER,
+                value_key="value",
+            )
+        if widget_type == DashboardRuntimeWidgetType.TABLE:
+            return TableWidgetConfig(columns=[])
+        if widget_type == DashboardRuntimeWidgetType.LINE_CHART:
+            return LineChartWidgetConfig(
+                aggregation=DashboardWidgetAggregation.SUM,
+                color=color,
+                curve=DashboardWidgetLineCurve.SMOOTH,
+                x_key="category",
+                y_key="value",
+            )
+        if widget_type == DashboardRuntimeWidgetType.AREA_CHART:
+            return AreaChartWidgetConfig(
+                aggregation=DashboardWidgetAggregation.SUM,
+                color=color,
+                stacked=False,
+                x_key="category",
+                y_key="value",
+            )
+        if widget_type == DashboardRuntimeWidgetType.DONUT_CHART:
+            return DonutChartWidgetConfig(
+                aggregation=DashboardWidgetAggregation.SUM,
+                color=color,
+                label_key="category",
+                value_key="value",
+            )
+        if widget_type == DashboardRuntimeWidgetType.PIE_CHART:
+            return PieChartWidgetConfig(
+                aggregation=DashboardWidgetAggregation.SUM,
+                color=color,
+                label_key="category",
+                value_key="value",
+            )
+        if widget_type == DashboardRuntimeWidgetType.RADIAL_BAR_CHART:
+            return RadialBarChartWidgetConfig(
+                aggregation=DashboardWidgetAggregation.AVG,
+                color=color,
+                format=DashboardWidgetFormat.PERCENT,
+                max=100,
+                min=0,
+                value_key="value",
+            )
+        if widget_type == DashboardRuntimeWidgetType.HEATMAP_CHART:
+            return HeatmapChartWidgetConfig(
+                aggregation=DashboardWidgetAggregation.SUM,
+                color=color,
+                value_key="value",
+                x_key="category",
+                y_key="series",
+            )
+        if widget_type == DashboardRuntimeWidgetType.TREEMAP_CHART:
+            return TreemapChartWidgetConfig(
+                aggregation=DashboardWidgetAggregation.SUM,
+                color=color,
+                label_key="category",
+                value_key="value",
+            )
+        return BarChartWidgetConfig(
+            aggregation=DashboardWidgetAggregation.SUM,
+            color=color,
+            orientation=DashboardWidgetOrientation.VERTICAL,
+            x_key="category",
+            y_key="value",
+        )
+
+    @staticmethod
+    def _datetime_to_iso(value: datetime | None) -> str | None:
+        if value is None:
+            return None
+        return value.isoformat()
