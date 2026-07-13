@@ -989,6 +989,8 @@ const checks = [
     name: "Database source connection discovery stays separate from target preview",
     file: "src/pages/etl/EtlPages.tsx",
     patterns: [
+      /Collections: "탐색 가능한 컬렉션"/,
+      /Tables: "탐색 가능한 테이블"/,
       /const requiresAssetSelectionForPreview = \["File \/ S3", "MongoDB", "PostgreSQL"\]\.includes\(activeSourceType\);/,
       /if \(!\["File \/ S3", "MongoDB", "PostgreSQL"\]\.includes\(activeSourceType\)\)/,
       /const result = await listSourceAssets\(activeSourceType, editableFields, ""\);/,
