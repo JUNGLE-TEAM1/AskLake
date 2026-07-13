@@ -13,6 +13,8 @@ from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
 
+from snapshot_rule_runtime import SnapshotRuleExecutionError, apply_snapshot_rules
+from spark_snapshot_rules import apply_spark_snapshot_rules, supports_spark_snapshot_rules
 from spark_source_identity import (
     source_change_detection_mode,
     verify_incremental_source_inventory,
@@ -60,7 +62,12 @@ def main():
     run_id = os.environ.get("ASKLAKE_SPARK_RUN_ID", "unknown")
     source_collection = {}
     spark = None
+    staging_path = None
     output_write_started = False
+    input_rows = 0
+    quality = None
+    transform = None
+    canonical_snapshot = False
     try:
         source_path = required_env("ASKLAKE_SPARK_SOURCE_PATH")
         source_format = required_env("ASKLAKE_SPARK_SOURCE_FORMAT").lower()
@@ -76,6 +83,10 @@ def main():
         record_parsing = manifest.get("recordParsing") or {}
         transform_steps = manifest.get("transformSteps") or load_json_env("ASKLAKE_SPARK_TRANSFORM_STEPS", [])
         quality_rules = manifest.get("qualityRules") or load_json_env("ASKLAKE_SPARK_QUALITY_RULES", [])
+        canonical_rules = manifest.get("rules") if "rules" in manifest else None
+        canonical_snapshot = manifest.get("ruleContractVersion") == "1.0" and canonical_rules is not None
+        canonical_runtime_supported = canonical_snapshot and supports_spark_snapshot_rules(canonical_rules)
+        final_schema_columns = merge_rule_output_schema(schema_columns, manifest.get("ruleOutputSchema") or [])
         spark = make_spark(source_collection)
         verify_spark_source_inventory(
             spark,
@@ -136,28 +147,58 @@ def main():
             write_report(report_file, result)
             print(f"ASKLAKE_SPARK_JOB_RESULT={json.dumps(result, ensure_ascii=False, sort_keys=True)}")
             return 1
-        transformed_df = apply_transform_steps(spark, contracted_df, transform_steps)
-        output_frame = select_final_schema_columns(transformed_df, schema_columns)
+        quarantine_df = None
+        review_analysis_checks = []
+        transform = None
+        if canonical_runtime_supported:
+            execution = apply_spark_snapshot_rules(spark, contracted_df, canonical_rules)
+            transformed_df = execution["frame"]
+            transform = execution["transform"]
+            quality = snapshot_quality_report(execution["quality"])
+            quarantine_df = execution["quarantine"]
+        elif canonical_snapshot:
+            transformed_df = apply_transform_steps(spark, contracted_df, transform_steps)
+            canonical_quality_rules = [
+                rule for rule in canonical_rules
+                if rule and rule.get("kind") == "quality" and rule.get("enabled") is not False
+            ]
+            quality_execution = apply_snapshot_rules(transformed_df, canonical_quality_rules)
+            transformed_df = quality_execution["frame"]
+            quality = snapshot_quality_report(quality_execution["quality"])
+            quarantine_df = quality_execution["quarantine"]
+        else:
+            transformed_df = apply_transform_steps(spark, contracted_df, transform_steps)
+        output_frame = select_final_schema_columns(transformed_df, final_schema_columns)
         output_df = output_frame.withColumn("_asklake_run_id", F.lit(run_id)).withColumn(
             "_asklake_ingested_at",
             F.current_timestamp(),
         )
         resolved_partition_columns = resolve_partition_columns(output_df, partition_columns)
+        staging_path = spark_staging_path(output_path, run_id)
+        delete_spark_path(spark, staging_path)
+        if quarantine_df is not None:
+            quarantine_rows = quarantine_df.count()
+            if quarantine_rows:
+                quarantine_path = f"{output_path.rstrip('/')}_quarantine"
+                quarantine_df.write.mode("overwrite").parquet(quarantine_path)
+                quality["quarantine"] = {"count": quarantine_rows, "path": quarantine_path}
+                quality["quarantineLocation"] = quarantine_path
         writer = output_df.write.mode("overwrite")
         if resolved_partition_columns:
             writer = writer.partitionBy(*resolved_partition_columns)
         output_write_started = True
-        writer.parquet(output_path)
-        written_df = spark.read.parquet(output_path)
+        writer.parquet(staging_path)
+        written_df = spark.read.parquet(staging_path)
         output_rows = written_df.count()
-        quality = evaluate_quality_rules(written_df, quality_rules, total_rows=output_rows)
-        classifier_checks = evaluate_custom_csv_classifier_checks(written_df, transform_steps, total_rows=output_rows)
-        if classifier_checks:
-            quality["classifierChecks"] = classifier_checks
-        review_analysis_checks = evaluate_review_row_analysis_checks(written_df, transform_steps, total_rows=output_rows)
-        if review_analysis_checks:
-            quality["reviewRowAnalysisChecks"] = review_analysis_checks
-            merge_text_structuring_quality(quality, written_df, review_analysis_checks, output_path, total_rows=output_rows)
+        if not canonical_snapshot:
+            quality = evaluate_quality_rules(written_df, quality_rules, total_rows=output_rows)
+            classifier_checks = evaluate_custom_csv_classifier_checks(written_df, transform_steps, total_rows=output_rows)
+            if classifier_checks:
+                quality["classifierChecks"] = classifier_checks
+            review_analysis_checks = evaluate_review_row_analysis_checks(written_df, transform_steps, total_rows=output_rows)
+            if review_analysis_checks:
+                quality["reviewRowAnalysisChecks"] = review_analysis_checks
+                merge_text_structuring_quality(quality, written_df, review_analysis_checks, staging_path, total_rows=output_rows)
         text_structuring = text_structuring_manifest(transform_steps, review_analysis_checks)
         if text_structuring.get("definition", {}).get("columns"):
             quality["textStructuringExecution"] = text_structuring.get("execution", {})
@@ -169,7 +210,7 @@ def main():
             phase="after_read",
         )
         if quality["status"] == "fail":
-            cleanup_errors = cleanup_failed_output_paths(spark, output_path)
+            cleanup_errors = cleanup_failed_output_paths(spark, staging_path)
             ended_at = now_iso()
             result = {
                 "durationMs": int(time.time() * 1000) - started_ms,
@@ -200,10 +241,14 @@ def main():
                 "startedAt": started_at,
                 "status": "failed",
                 "textStructuring": text_structuring,
+                "transform": transform,
             }
             write_report(report_file, result)
             print(f"ASKLAKE_SPARK_JOB_RESULT={json.dumps(result, ensure_ascii=False, sort_keys=True)}")
             return 1
+        publish_spark_path(spark, staging_path, output_path)
+        written_df = spark.read.parquet(output_path)
+        output_rows = written_df.count()
         ended_at = now_iso()
         result = {
             "durationMs": int(time.time() * 1000) - started_ms,
@@ -228,15 +273,15 @@ def main():
             "startedAt": started_at,
             "status": "success",
             "textStructuring": text_structuring,
+            "transform": transform,
         }
         write_report(report_file, result)
         print(f"ASKLAKE_SPARK_JOB_RESULT={json.dumps(result, ensure_ascii=False, sort_keys=True)}")
         return 0
     except Exception as exc:
         ended_at = now_iso()
-        error_message = str(exc)
         cleanup_errors = (
-            cleanup_failed_output_paths(spark, output_path)
+            cleanup_failed_output_paths(spark, staging_path or output_path)
             if spark is not None and output_write_started
             else []
         )
@@ -244,15 +289,17 @@ def main():
             "durationMs": int(time.time() * 1000) - started_ms,
             "endedAt": ended_at,
             "error": str(exc),
-            "failedStage": (
+            "failedStage": getattr(
+                exc,
+                "failed_stage",
                 "Record Parsing"
                 if "RECORD_FIELD_COUNT_MISMATCH" in str(exc) or "RECORD_PARSING_" in str(exc)
                 else "Source Inventory"
                 if "SOURCE_OBJECT_" in str(exc)
-                else "Spark ETL"
+                else "Spark ETL",
             ),
             "format": source_format,
-            "inputRows": 0,
+            "inputRows": input_rows,
             "outputPath": output_path,
             "outputRows": 0,
             "runId": run_id,
@@ -261,6 +308,12 @@ def main():
             "startedAt": started_at,
             "status": "failed",
         }
+        error_quality = getattr(exc, "quality", None) or quality
+        if error_quality is not None:
+            result["quality"] = snapshot_quality_report(error_quality) if canonical_snapshot else error_quality
+        error_transform = getattr(exc, "transform", None) or transform
+        if error_transform is not None:
+            result["transform"] = error_transform
         if output_write_started:
             result["outputCleanup"] = {
                 "errors": cleanup_errors,
@@ -273,6 +326,77 @@ def main():
     finally:
         if spark is not None:
             spark.stop()
+
+
+def spark_staging_path(output_path, run_id):
+    safe_run_id = re.sub(r"[^0-9A-Za-z_-]+", "_", str(run_id or "run")).strip("_") or "run"
+    return f"{str(output_path).rstrip('/')}.__staging__{safe_run_id}"
+
+
+def delete_spark_path(spark, path_value):
+    if not hasattr(getattr(spark, "sparkContext", None), "_jvm"):
+        return
+    path = spark.sparkContext._jvm.org.apache.hadoop.fs.Path(path_value)
+    filesystem = path.getFileSystem(spark.sparkContext._jsc.hadoopConfiguration())
+    if filesystem.exists(path) and not filesystem.delete(path, True):
+        raise RuntimeError(f"Could not delete Spark path: {path_value}")
+
+
+def publish_spark_path(spark, staging_path, output_path):
+    if not hasattr(getattr(spark, "sparkContext", None), "_jvm"):
+        return
+    jvm = spark.sparkContext._jvm
+    hadoop = spark.sparkContext._jsc.hadoopConfiguration()
+    staging = jvm.org.apache.hadoop.fs.Path(staging_path)
+    target = jvm.org.apache.hadoop.fs.Path(output_path)
+    filesystem = staging.getFileSystem(hadoop)
+    if not filesystem.exists(staging):
+        raise RuntimeError(f"Spark staging output is missing: {staging_path}")
+    if filesystem.exists(target) and not filesystem.delete(target, True):
+        raise RuntimeError(f"Could not replace Spark target path: {output_path}")
+    if not filesystem.rename(staging, target):
+        raise RuntimeError(f"Could not publish Spark staging output: {staging_path} -> {output_path}")
+
+
+def merge_rule_output_schema(schema_columns, rule_output_schema):
+    merged = [dict(column) for column in (schema_columns or []) if isinstance(column, dict)]
+    index_by_name = {}
+    for index, column in enumerate(merged):
+        name = normalize_column_name(column.get("targetName") or column.get("sourceName") or "")
+        if name:
+            index_by_name[name] = index
+    for item in rule_output_schema or []:
+        if not isinstance(item, (list, tuple)) or len(item) < 2:
+            continue
+        name = str(item[0] or "").strip()
+        logical_type = str(item[1] or "String")
+        normalized = normalize_column_name(name)
+        if not normalized:
+            continue
+        if normalized in index_by_name:
+            merged[index_by_name[normalized]]["type"] = logical_type
+            continue
+        index_by_name[normalized] = len(merged)
+        merged.append({
+            "included": True,
+            "nullable": True,
+            "sourceName": name,
+            "targetName": name,
+            "type": logical_type,
+        })
+    return merged
+
+
+def snapshot_quality_report(quality):
+    report = dict(quality or {})
+    invalid_rows = int(report.get("invalidRowCount") or 0)
+    pass_rate = float(report.get("passRate") if report.get("passRate") is not None else 100.0)
+    report.setdefault("failedRules", [])
+    report["invalidRows"] = invalid_rows
+    report["sampleRows"] = int(report.get("evaluatedRowCount") or 0)
+    report["score"] = pass_rate
+    report["status"] = "fail" if report.get("blockingFailures", 0) else report.get("status", "pass")
+    return report
 
 
 def cleanup_failed_output_paths(spark, output_path):

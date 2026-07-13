@@ -265,7 +265,7 @@ class SparkSourceIdentityTests(unittest.TestCase):
         self.assertEqual(report["failedStage"], "Source Inventory")
         self.assertIn("phase=after_read", report["error"])
         self.assertEqual(report["outputCleanup"], {"errors": [], "status": "success"})
-        cleanup.assert_called_once_with(spark, "s3a://m3-output/run-1")
+        cleanup.assert_called_once_with(spark, "s3a://m3-output/run-1.__staging__run-1")
         spark.stop.assert_called_once_with()
 
     def test_identity_status_checks_use_bounded_concurrency_and_keep_path_order(self) -> None:
