@@ -87,61 +87,6 @@
   align-self: start;
 }
 
-.editorSurface {
-  display: grid;
-  grid-template-columns: 42px minmax(0, 1fr);
-  height: clamp(276px, 36vh, 480px);
-  min-height: 276px;
-  overflow: hidden;
-  border: 1px solid #cbd5e1;
-  border-radius: 8px;
-  background: #0f172a;
-}
-
-.editorSurface pre {
-  box-sizing: border-box;
-  height: 100%;
-  min-height: 0;
-  overflow: hidden;
-  border-right: 1px solid rgb(148 163 184 / 22%);
-  margin: 0;
-  background: #111827;
-  color: #94a3b8;
-  font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 15px;
-  line-height: 24px;
-  padding: 16px 12px;
-  text-align: right;
-}
-
-.editorSurface textarea {
-  display: block;
-  box-sizing: border-box;
-  height: 100%;
-  width: 100%;
-  min-width: 0;
-  min-height: 0;
-  max-height: none;
-  resize: none;
-  overflow: auto;
-  border: 0;
-  outline: 0;
-  background: #0f172a;
-  color: #e2e8f0;
-  font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 15px;
-  line-height: 24px;
-  padding: 16px;
-}
-
-.editorInputWrap {
-  position: relative;
-  height: 100%;
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
-}
-
 .autocompletePopover {
   position: absolute;
   z-index: 5;
