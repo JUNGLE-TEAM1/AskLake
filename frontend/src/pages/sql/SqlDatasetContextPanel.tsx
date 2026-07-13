@@ -1,5 +1,6 @@
 import type { RefObject } from "react";
 import {
+  SQL_PAGE_PANEL_ICON_CLASS_NAME,
   SqlPageIcon as BarChart3,
   SqlPageIcon as PanelLeftClose,
   SqlPageIcon as Search,
@@ -89,6 +90,7 @@ export function SqlDatasetContextPanel({
               )}
               className="min-h-0 p-0"
               icon={<Table2 size={16} />}
+              iconClassName={SQL_PAGE_PANEL_ICON_CLASS_NAME}
               title="SQL 도구"
             />
             <TabsList className="grid w-full grid-cols-2" aria-label="SQL 도구 선택">

@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import {
+  SQL_PAGE_PANEL_ICON_CLASS_NAME,
   SqlPageIcon as Activity,
   SqlPageIcon as BarChart3,
   SqlPageIcon as Database,
@@ -240,7 +241,13 @@ export function SqlResultsPanel({
           </>
         ) : (
           <>
-            <PanelHeader bordered={false} className="min-h-0 p-0" icon={<Table2 size={16} />} title="결과 대기 중" />
+            <PanelHeader
+              bordered={false}
+              className="min-h-0 p-0"
+              icon={<Table2 size={16} />}
+              iconClassName={SQL_PAGE_PANEL_ICON_CLASS_NAME}
+              title="결과 대기 중"
+            />
             <Empty className={styles.resultEmpty} size="sm" variant="bordered">
               <EmptyHeader>
                 <EmptyTitle>아직 결과가 없습니다.</EmptyTitle>

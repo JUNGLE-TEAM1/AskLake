@@ -1,5 +1,6 @@
 import type { KeyboardEventHandler, RefObject } from "react";
 import {
+  SQL_PAGE_PANEL_ICON_CLASS_NAME,
   SqlPageIcon as PlayCircle,
   SqlPageIcon as RotateCcw,
   SqlPageIcon as Table2,
@@ -94,6 +95,7 @@ export function SqlQueryEditorPanel({
         bordered={false}
         className="min-h-0 p-0"
         icon={<Table2 size={16} />}
+        iconClassName={SQL_PAGE_PANEL_ICON_CLASS_NAME}
         title="선택 데이터셋 기준 SQL"
       />
 
