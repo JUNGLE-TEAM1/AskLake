@@ -79,7 +79,7 @@ class QueryAiContractTests(unittest.TestCase):
                 [catalog_dataset()],
             )
 
-        self.assertEqual(raised.exception.status_code, status.HTTP_422_UNPROCESSABLE_CONTENT)
+        self.assertEqual(raised.exception.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY)
         self.assertEqual(raised.exception.details, {"tables": ["secret_reviews"]})
 
     def test_generated_sql_is_revalidated_as_read_only(self) -> None:
