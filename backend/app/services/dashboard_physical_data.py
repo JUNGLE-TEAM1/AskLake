@@ -14,6 +14,7 @@ import duckdb
 from fastapi import status
 
 from app.core.errors import ApiError
+from app.services.object_storage import object_storage_runtime
 
 
 DASHBOARD_CHART_ROW_LIMIT = 500
@@ -597,29 +598,16 @@ def build_dashboard_s3_client() -> Any:
     except ImportError as error:
         raise RuntimeError("Python S3 client dependency is not installed") from error
 
-    endpoint = os.environ.get("S3_ENDPOINT") or os.environ.get("MINIO_ENDPOINT")
-    access_key = os.environ.get("AWS_ACCESS_KEY_ID") or os.environ.get("MINIO_ACCESS_KEY")
-    secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY") or os.environ.get("MINIO_SECRET_KEY")
-    session_token = os.environ.get("AWS_SESSION_TOKEN")
-    region = os.environ.get("AWS_REGION") or os.environ.get("MINIO_REGION") or "us-east-1"
-    force_path_style = str(os.environ.get("S3_FORCE_PATH_STYLE") or "true").casefold() != "false"
+    runtime = object_storage_runtime()
     kwargs: dict[str, Any] = {
         "config": Config(
             connect_timeout=5,
             read_timeout=15,
             retries={"max_attempts": 2, "mode": "standard"},
-            s3={"addressing_style": "path" if force_path_style else "auto"},
+            s3={"addressing_style": "path" if runtime.force_path_style else "auto"},
         ),
-        "region_name": region,
+        **runtime.boto3_kwargs(),
     }
-    if endpoint:
-        kwargs["endpoint_url"] = endpoint
-    if access_key:
-        kwargs["aws_access_key_id"] = access_key
-    if secret_key:
-        kwargs["aws_secret_access_key"] = secret_key
-    if session_token:
-        kwargs["aws_session_token"] = session_token
     return boto3.client("s3", **kwargs)
 
 
@@ -692,27 +680,33 @@ def configure_duckdb_s3(connection: duckdb.DuckDBPyConnection) -> None:
             "DuckDB httpfs is not installed in the backend image"
         ) from error
 
-    endpoint = str(os.environ.get("S3_ENDPOINT") or os.environ.get("MINIO_ENDPOINT") or "").strip()
-    access_key = str(os.environ.get("AWS_ACCESS_KEY_ID") or os.environ.get("MINIO_ACCESS_KEY") or "").strip()
-    secret_key = str(os.environ.get("AWS_SECRET_ACCESS_KEY") or os.environ.get("MINIO_SECRET_KEY") or "").strip()
-    session_token = str(os.environ.get("AWS_SESSION_TOKEN") or "").strip()
-    region = str(os.environ.get("AWS_REGION") or os.environ.get("MINIO_REGION") or "us-east-1").strip()
+    runtime = object_storage_runtime()
+    if runtime.provider == "aws":
+        try:
+            connection.execute("LOAD aws")
+            connection.execute(
+                "CREATE OR REPLACE SECRET asklake_s3_runtime "
+                "(TYPE s3, PROVIDER credential_chain, REFRESH auto, "
+                f"REGION {quote_duckdb_string_literal(runtime.region)})"
+            )
+        except duckdb.Error as error:
+            raise RuntimeError(
+                "DuckDB AWS credential-chain support is not installed or IAM credentials are unavailable"
+            ) from error
+        return
 
-    set_duckdb_option(connection, "s3_region", region)
-    if access_key:
-        set_duckdb_option(connection, "s3_access_key_id", access_key)
-    if secret_key:
-        set_duckdb_option(connection, "s3_secret_access_key", secret_key)
-    if session_token:
-        set_duckdb_option(connection, "s3_session_token", session_token)
-    if endpoint:
-        parsed = urlparse(endpoint if "://" in endpoint else f"https://{endpoint}")
+    set_duckdb_option(connection, "s3_region", runtime.region)
+    if runtime.access_key:
+        set_duckdb_option(connection, "s3_access_key_id", runtime.access_key)
+    if runtime.secret_key:
+        set_duckdb_option(connection, "s3_secret_access_key", runtime.secret_key)
+    if runtime.endpoint:
+        parsed = urlparse(runtime.endpoint if "://" in runtime.endpoint else f"https://{runtime.endpoint}")
         endpoint_host = parsed.netloc or parsed.path
         set_duckdb_option(connection, "s3_endpoint", endpoint_host.rstrip("/"))
         connection.execute(f"SET s3_use_ssl = {'true' if parsed.scheme.lower() == 'https' else 'false'}")
 
-    force_path_style = str(os.environ.get("S3_FORCE_PATH_STYLE") or "true").strip().lower() != "false"
-    set_duckdb_option(connection, "s3_url_style", "path" if force_path_style else "vhost")
+    set_duckdb_option(connection, "s3_url_style", "path" if runtime.force_path_style else "vhost")
 
 
 def set_duckdb_option(connection: duckdb.DuckDBPyConnection, name: str, value: str) -> None:

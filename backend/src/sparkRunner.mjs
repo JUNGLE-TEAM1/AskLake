@@ -3,6 +3,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync }
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { defaultRawBucket, isMinioProvider, objectStorageDockerEnv, toDockerEnvArgs } from "./objectStorageConfig.mjs";
 import { fieldValue, normalizeColumnName } from "./profile.mjs";
 
 const backendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -59,17 +60,18 @@ function runSparkPipelineWithSource(job, command, runId, source, executionMode, 
   const reviewAnalysisRuntime = process.env.ASKLAKE_REVIEW_ANALYSIS_RUNTIME || "scalable";
   const sourceAccessKey = fieldValue(job.sourceConfig ?? [], "Access Key") || minioAccessKey();
   const sourceSecretKey = fieldValue(job.sourceConfig ?? [], "Secret Key") || minioSecretKey();
-  if (executionMode === "rest") {
+  if (executionMode === "rest" && isMinioProvider(job.sourceConfig ?? [])) {
     assertInheritedMinioCredentials(sourceAccessKey, sourceSecretKey);
   }
   writeSparkJobManifest(manifestPath, job);
+  const storageEnvironment = Object.fromEntries(
+    objectStorageDockerEnv(job.sourceConfig ?? []).filter(([name]) => (
+      executionMode === "docker"
+      || !["MINIO_ACCESS_KEY", "MINIO_SECRET_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"].includes(name)
+    )),
+  );
   const sparkEnvironment = {
-    MINIO_ENDPOINT: process.env.MINIO_ENDPOINT_IN_DOCKER || "http://m3-minio:9000",
-    MINIO_REGION: process.env.MINIO_REGION || "us-east-1",
-    ...(executionMode === "docker" ? {
-      MINIO_ACCESS_KEY: sourceAccessKey,
-      MINIO_SECRET_KEY: sourceSecretKey,
-    } : {}),
+    ...storageEnvironment,
     ASKLAKE_SPARK_SOURCE_PATH: source.path,
     ASKLAKE_SPARK_SOURCE_FORMAT: source.format,
     ASKLAKE_SPARK_OUTPUT_PATH: output.sparkPath,
@@ -116,14 +118,7 @@ function runSparkPipelineWithSource(job, command, runId, source, executionMode, 
     `${reviewTextModelHostDir}:${reviewTextModelContainerDir}:ro`,
     "-v",
     `${outputVolumeName}:${outputContainerDir}`,
-    "-e",
-    `MINIO_ENDPOINT=${process.env.MINIO_ENDPOINT_IN_DOCKER || "http://m3-minio:9000"}`,
-    "-e",
-    `MINIO_ACCESS_KEY=${fieldValue(job.sourceConfig ?? [], "Access Key") || minioAccessKey()}`,
-    "-e",
-    `MINIO_SECRET_KEY=${fieldValue(job.sourceConfig ?? [], "Secret Key") || minioSecretKey()}`,
-    "-e",
-    `MINIO_REGION=${process.env.MINIO_REGION || "us-east-1"}`,
+    ...toDockerEnvArgs(objectStorageDockerEnv(job.sourceConfig ?? [])),
     "-e",
     `ASKLAKE_SPARK_SOURCE_PATH=${source.path}`,
     "-e",
@@ -556,7 +551,7 @@ function sparkSourceFromJob(job, runId) {
   const sourceType = job.sourceType || "";
   const sourceConfig = Array.isArray(job.sourceConfig) ? job.sourceConfig : [];
   if (sourceType === "File / S3") {
-    const bucket = normalizeBucketName(fieldValue(sourceConfig, "Bucket / Stage Name") || process.env.MINIO_BUCKET || "m3-raw");
+    const bucket = normalizeBucketName(fieldValue(sourceConfig, "Bucket / Stage Name") || defaultRawBucket());
     const prefix = normalizeBucketRelativePath(
       normalizeSourcePath(fieldValue(sourceConfig, "Path / Prefix")),
       bucket,
@@ -744,7 +739,7 @@ function sparkOutputPath(job, runId) {
   if ((process.env.ASKLAKE_SPARK_OUTPUT_MODE || "local").toLowerCase() === "s3a") {
     // storagePath is the configured destination root. targetPath is the latest
     // observed Run output and must not become the next Run's parent directory.
-    const configuredTarget = String(job.storagePath || "").trim();
+    const configuredTarget = normalizeSparkOutputTargetPath(job.storagePath);
     const targetBase = /^s3a?:\/\//i.test(configuredTarget)
       ? toS3APath(configuredTarget).replace(/\/+$/, "")
       : `s3a://${process.env.ASKLAKE_SPARK_OUTPUT_BUCKET || "asklake-output"}/${prefix}${layer}/${dataset}`;
@@ -759,6 +754,18 @@ function sparkOutputPath(job, runId) {
     displayPath: path.join(localOutputDir, relativePath),
     sparkPath: `file://${outputContainerDir}/${relativePath.replace(/\\/g, "/")}`,
   };
+}
+
+export function normalizeSparkOutputTargetPath(value) {
+  const configuredTarget = String(value || "").trim();
+  if (!/^s3a?:\/\//i.test(configuredTarget)) return configuredTarget;
+  const normalizedTarget = toS3APath(configuredTarget).replace(/\/+$/, "");
+  const configuredBucket = normalizeBucketName(process.env.ASKLAKE_SPARK_OUTPUT_BUCKET || "asklake-output");
+  if (!configuredBucket || configuredBucket.toLowerCase() === "asklake-output") return normalizedTarget;
+  return normalizedTarget.replace(
+    /^s3a:\/\/asklake-output(?=\/|$)/i,
+    `s3a://${configuredBucket}`,
+  );
 }
 
 function sparkRowLimitFromJob(job) {
@@ -1032,14 +1039,6 @@ function positiveInteger(value, fallback) {
 function boundedInteger(value, fallback, minimum, maximum) {
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed >= minimum && parsed <= maximum ? parsed : fallback;
-}
-
-function minioAccessKey() {
-  return process.env.MINIO_ACCESS_KEY || process.env.MINIO_ROOT_USER || "m3admin";
-}
-
-function minioSecretKey() {
-  return process.env.MINIO_SECRET_KEY || process.env.MINIO_ROOT_PASSWORD || "wishuponastar";
 }
 
 function shellQuote(value) {

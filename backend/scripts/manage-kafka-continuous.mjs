@@ -11,7 +11,12 @@ import {
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CreateBucketCommand, HeadBucketCommand, S3Client } from "@aws-sdk/client-s3";
-
+import {
+  isMinioProvider,
+  objectStorageDockerEnv,
+  resolveObjectStorageConfig,
+  s3ClientOptions,
+} from "../src/objectStorageConfig.mjs";
 import {
   createSparkRestSubmission,
   sparkExecutionMode,
@@ -293,6 +298,12 @@ function continuousRestRuntime() {
 
 function continuousEnvironment(request, workerAttemptId, runtimeReportDir, includeCredentials = true) {
   const jobId = required(request.jobId, "jobId");
+  const storageEnvironment = Object.fromEntries(
+    objectStorageDockerEnv().filter(([name]) => (
+      includeCredentials
+      || !["MINIO_ACCESS_KEY", "MINIO_SECRET_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"].includes(name)
+    )),
+  );
   return {
     ASKLAKE_CONTINUOUS_JOB_ID: jobId,
     ASKLAKE_CONTINUOUS_WORKER_ATTEMPT_ID: workerAttemptId,
@@ -312,12 +323,7 @@ function continuousEnvironment(request, workerAttemptId, runtimeReportDir, inclu
     ASKLAKE_CONTINUOUS_FAIL_AFTER_DATA_WRITE_ONCE: process.env.ASKLAKE_CONTINUOUS_FAIL_AFTER_DATA_WRITE_ONCE || "false",
     ASKLAKE_CONTINUOUS_REPORT_FILE: path.posix.join(runtimeReportDir, reportFileName(jobId)),
     ASKLAKE_CONTINUOUS_COMMAND_FILE: path.posix.join(runtimeReportDir, commandFileName(jobId)),
-    MINIO_ENDPOINT: process.env.MINIO_ENDPOINT_IN_DOCKER || process.env.MINIO_ENDPOINT || "http://minio:9000",
-    MINIO_REGION: process.env.MINIO_REGION || "us-east-1",
-    ...(includeCredentials ? {
-      MINIO_ACCESS_KEY: process.env.MINIO_ACCESS_KEY || "",
-      MINIO_SECRET_KEY: process.env.MINIO_SECRET_KEY || "",
-    } : {}),
+    ...storageEnvironment,
     HOME: "/tmp",
   };
 }
@@ -437,10 +443,6 @@ async function startWorkerDocker(request, containerName) {
     "-e", `ASKLAKE_CONTINUOUS_FAIL_AFTER_DATA_WRITE_ONCE=${process.env.ASKLAKE_CONTINUOUS_FAIL_AFTER_DATA_WRITE_ONCE || "false"}`,
     "-e", `ASKLAKE_CONTINUOUS_REPORT_FILE=${reportContainerDir}/${reportFileName(jobId)}`,
     "-e", `ASKLAKE_CONTINUOUS_COMMAND_FILE=${reportContainerDir}/${commandFileName(jobId)}`,
-    "-e", `MINIO_ENDPOINT=${process.env.MINIO_ENDPOINT_IN_DOCKER || "http://minio:9000"}`,
-    "-e", `MINIO_ACCESS_KEY=${process.env.MINIO_ACCESS_KEY || ""}`,
-    "-e", `MINIO_SECRET_KEY=${process.env.MINIO_SECRET_KEY || ""}`,
-    "-e", `MINIO_REGION=${process.env.MINIO_REGION || "us-east-1"}`,
     "-e", "HOME=/tmp",
     image,
     "/opt/spark/bin/spark-submit", "--master", masterUrl,
@@ -459,6 +461,18 @@ async function startWorkerDocker(request, containerName) {
     started: true,
     workerAttemptId,
   };
+}
+
+async function ensureOutputBucket(outputPath) {
+  const bucket = /^s3a?:\/\/([^/]+)/i.exec(outputPath)?.[1];
+  if (!bucket) return;
+  const client = new S3Client(s3ClientOptions(resolveObjectStorageConfig([], { docker: true })));
+  try {
+    await client.send(new HeadBucketCommand({ Bucket: bucket }));
+  } catch (error) {
+    if (!isMinioProvider()) throw error;
+    await client.send(new CreateBucketCommand({ Bucket: bucket }));
+  }
 }
 
 function stopWorkerDocker(jobId, action, containerName) {
@@ -525,25 +539,6 @@ function workerLogsDocker(jobId, containerName, tail) {
     lines,
     truncated: combined.length >= 1024 * 1024,
   };
-}
-
-async function ensureOutputBucket(outputPath) {
-  const bucket = /^s3a?:\/\/([^/]+)/i.exec(outputPath)?.[1];
-  if (!bucket) return;
-  const client = new S3Client({
-    credentials: {
-      accessKeyId: process.env.MINIO_ACCESS_KEY || "",
-      secretAccessKey: process.env.MINIO_SECRET_KEY || "",
-    },
-    endpoint: process.env.MINIO_ENDPOINT_IN_DOCKER || process.env.MINIO_ENDPOINT || "http://minio:9000",
-    forcePathStyle: true,
-    region: process.env.MINIO_REGION || "us-east-1",
-  });
-  try {
-    await client.send(new HeadBucketCommand({ Bucket: bucket }));
-  } catch {
-    await client.send(new CreateBucketCommand({ Bucket: bucket }));
-  }
 }
 
 function redactLogLine(value) {
