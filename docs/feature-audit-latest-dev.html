@@ -39,6 +39,11 @@
     .grid { display:grid; grid-template-columns:repeat(2,1fr); gap:16px; }
     .card-title { display:flex; justify-content:space-between; gap:12px; align-items:start; }
     .evidence { color:var(--muted); font-size:13px; margin-top:10px; }
+    .checklist td:first-child { width:58px; text-align:center; font-size:20px; font-weight:900; }
+    .mark-o { color:var(--ok); }
+    .mark-x { color:var(--bad); }
+    .checklist td:nth-child(2) { width:170px; font-weight:700; }
+    .checklist td:nth-child(3) { min-width:330px; }
     .bar { height:10px; background:#eef2f6; border-radius:99px; overflow:hidden; margin-top:10px; }
     .bar i { display:block; height:100%; background:var(--ok); border-radius:99px; }
     footer { color:var(--muted); font-size:13px; margin-top:28px; }
@@ -83,6 +88,60 @@
         <tr><td>Rule/record parsing</td><td><span class="status ok">해결됨</span></td><td>canonical rule conformance, target metadata, schema transform, record parsing 계약을 확인했다.</td><td>관련 contract scripts 통과</td></tr>
       </tbody>
     </table>
+
+    <h2>최근 3일 세부 수정 체크리스트</h2>
+    <div class="panel">
+      <p><strong>표기:</strong> <span class="mark-o">O</span> 해결 및 검증됨 · <span class="mark-x">X</span> 미해결, 범위 제외 또는 실행 차단</p>
+      <table class="checklist">
+        <thead><tr><th>O/X</th><th>분류</th><th>세부 항목</th><th>판정 근거</th></tr></thead>
+        <tbody>
+          <tr><td class="mark-o">O</td><td>증분 경계</td><td>이전 성공 실행의 watermark와 현재 실행 시작 시각으로 <code>[lower, upper)</code> 구간을 고정</td><td>incremental folder tests 통과</td></tr>
+          <tr><td class="mark-o">O</td><td>증분 inventory</td><td>파일 key, ETag, versionId, 수정시각, 크기를 manifest에 고정</td><td>source identity tests 통과</td></tr>
+          <tr><td class="mark-o">O</td><td>증분 누락 방지</td><td>폴더 전체 wildcard 대신 고정된 exact object 목록으로 Spark 입력</td><td>source object contract 확인</td></tr>
+          <tr><td class="mark-o">O</td><td>대량 목록</td><td>HEAD 요청 병렬도 상한과 inventory 범위 상한 적용</td><td>bounded identity worker 코드 및 테스트</td></tr>
+          <tr><td class="mark-o">O</td><td>소스 변경 감지</td><td>read 전/후 source identity가 바뀌면 성공 materialization을 만들지 않음</td><td>38개 ETL/Spark focused tests</td></tr>
+          <tr><td class="mark-o">O</td><td>TXT 다중 파일</td><td>incremental TXT record parsing에 여러 exact path를 전달</td><td>record parsing 및 Spark 테스트</td></tr>
+          <tr><td class="mark-o">O</td><td>CSV 인용부호</td><td>AWS Spark CSV의 quoted comma와 quote escape 보존</td><td>quoted CSV fix 및 Spark 검증</td></tr>
+          <tr><td class="mark-o">O</td><td>Spark canonical rule</td><td>canonical transform, quality, quarantine, output schema를 Spark worker에서 실행</td><td>snapshot rule conformance 통과</td></tr>
+          <tr><td class="mark-o">O</td><td>Spark staging</td><td>final path에 직접 쓰지 않고 staging write 후 검증 성공 시 publish</td><td>실제 Docker Spark pipeline 통과</td></tr>
+          <tr><td class="mark-o">O</td><td>Spark 실패 정리</td><td>quality/source identity 실패 시 final 및 quarantine output을 정리</td><td><code>verify-snapshot-spark-pipeline: ok</code></td></tr>
+          <tr><td class="mark-o">O</td><td>Spark publish 복구</td><td>기존 target을 backup으로 옮기고 publish 실패 시 rollback</td><td>publish_spark_paths 코드 검토 및 실행</td></tr>
+          <tr><td class="mark-o">O</td><td>REST runner 인자</td><td><code>executionMode</code>, timeout, state file, options 전달 누락 수정</td><td>backend verify 통과</td></tr>
+          <tr><td class="mark-o">O</td><td>REST submission lock</td><td>동일 run의 Spark driver 중복 생성 방지 및 stale lock 복구</td><td>Spark REST contract tests</td></tr>
+          <tr><td class="mark-o">O</td><td>dataset lock</td><td>Spark 실행 중 장기 dataset lock을 잡지 않고 Catalog merge 직전에 재획득</td><td>catalog materialization tests 통과</td></tr>
+          <tr><td class="mark-o">O</td><td>append lock</td><td>일반 ETL materialization append와 삭제가 같은 dataset lock 경계를 사용</td><td>33개 materialization tests 통과</td></tr>
+          <tr><td class="mark-o">O</td><td>mode alias</td><td><code>materializationMode</code> 계열 alias 정규화 및 legacy Kafka fallback 통일</td><td>materialization contract 통과</td></tr>
+          <tr><td class="mark-o">O</td><td>active history</td><td>최신 성공 snapshot과 이후 성공 delta만 rows/size에 합산</td><td>projection 및 SQL storage tests</td></tr>
+          <tr><td class="mark-o">O</td><td>Catalog rows</td><td>sampleRows가 아닌 실제 Parquet의 offset/limit 페이지를 조회</td><td>Catalog rows 4개 테스트 통과</td></tr>
+          <tr><td class="mark-o">O</td><td>Catalog helper</td><td>최신 성공 materialization을 dataset shell에 투영하는 누락 helper 복구</td><td>이번 점검에서 수정 후 4개 테스트 통과</td></tr>
+          <tr><td class="mark-o">O</td><td>SQL full result</td><td>preview 행이 아닌 전체 SQL 결과를 Derived Dataset으로 물리화</td><td>SQL/catalog focused tests</td></tr>
+          <tr><td class="mark-o">O</td><td>SQL fail closed</td><td>물리 데이터가 없을 때 sampleRows로 조용히 대체하지 않음</td><td>SQL storage tests 통과</td></tr>
+          <tr><td class="mark-o">O</td><td>인증 쿠키</td><td>운영 session cookie 속성과 startup auth 경계를 강화</td><td>auth/production tests 41개 중 관련 항목 통과</td></tr>
+          <tr><td class="mark-o">O</td><td>ETL API 인증</td><td>Job 생성이 raw header를 신뢰하지 않고 actor/session과 manage 권한을 사용</td><td>ETL endpoint auth tests</td></tr>
+          <tr><td class="mark-o">O</td><td>누락 API 복구</td><td>source defaults, permission options, asset list, schema inference 라우트 복구</td><td>backend verify 및 OpenAPI smoke</td></tr>
+          <tr><td class="mark-o">O</td><td>Assistant actor</td><td>Dashboard Assistant 요청에 actor 전달 및 dashboard access 검사</td><td>dashboard assistant access tests</td></tr>
+          <tr><td class="mark-o">O</td><td>대시보드 물리 권한</td><td>dataset query 권한과 governance를 통과한 뒤에만 물리 widget data 조회</td><td>dashboard physical widget tests</td></tr>
+          <tr><td class="mark-o">O</td><td>소스 트리 엔진</td><td>재귀 독자 구현 대신 공용 react-arborist ExplorerTree 사용</td><td>UI regression 103개 통과</td></tr>
+          <tr><td class="mark-o">O</td><td>폴더 선택</td><td>폴더 navigation과 수집 범위 선택을 분리하고 lazy child loading 수행</td><td>SourceAssetTree/EtlPages 검사 통과</td></tr>
+          <tr><td class="mark-o">O</td><td>탐색 UI 세부</td><td>트리 간격, 스크롤, 글꼴, 메타데이터, 컬럼 수 라벨을 통일</td><td>공용 UI regression 통과</td></tr>
+          <tr><td class="mark-o">O</td><td>S3 실패 상태</td><td>listing 실패 시 fixture folder를 성공 데이터처럼 계속 표시하지 않음</td><td>source explorer 코드 및 UI contract</td></tr>
+          <tr><td class="mark-o">O</td><td>AWS object mode</td><td>AWS S3와 MinIO object storage 설정을 분리하고 target metadata를 보존</td><td>object-storage-mode/target-metadata 통과</td></tr>
+          <tr><td class="mark-o">O</td><td>record parsing</td><td>delimiter, field count, invalid row 처리 계약을 검증</td><td>record parsing contract 통과</td></tr>
+          <tr><td class="mark-o">O</td><td>배포 preflight</td><td>환경 변수, MinIO credential, Bash 3.2 실행 계약을 검사</td><td>deployment scripts 및 backend verify</td></tr>
+          <tr><td class="mark-o">O</td><td>dashboard stale data</td><td>삭제된 dataset의 오래된 widget data가 정상값처럼 반환되지 않도록 처리</td><td>dashboard physical data tests</td></tr>
+          <tr><td class="mark-o">O</td><td>rule fallback 표시</td><td>model/fallback 실행 metadata를 구분해 기록하는 경로 유지</td><td>Spark manifest 및 rule compiler contract</td></tr>
+          <tr><td class="mark-o">O</td><td>frontend compile</td><td>TypeScript와 Vite production build 수행</td><td><code>npm run build</code> 통과</td></tr>
+          <tr><td class="mark-o">O</td><td>backend health</td><td>실제 backend server를 띄워 health 및 기본 verify 수행</td><td><code>npm run verify:ok</code></td></tr>
+          <tr><td class="mark-x">X</td><td>Kafka reservation</td><td>Kafka failure finalization 및 external ingest 경합 3건</td><td>다른 담당 범위이며 full suite에서 실패</td></tr>
+          <tr><td class="mark-x">X</td><td>source JSON E2E</td><td>FastAPI source smoke에서 JSON metadata 기대값이 반환되지 않음</td><td><code>File / S3 JSON returned no expected metadata</code></td></tr>
+          <tr><td class="mark-x">X</td><td>MinIO source E2E</td><td>전체 source suite가 실제 MinIO XML endpoint 준비 부족으로 중단</td><td><code>XML parse error</code></td></tr>
+          <tr><td class="mark-x">X</td><td>mockData import</td><td><code>useAskLakeData.ts</code>가 frontend mockData를 fallback 데이터로 import</td><td>코드 검색에서 확인</td></tr>
+          <tr><td class="mark-x">X</td><td>Assistant mock fallback</td><td>OpenAI/provider 실패 시 dashboard assistant mock response 경로가 남아 있음</td><td><code>dashboard_assistant_service.py</code> 검색</td></tr>
+          <tr><td class="mark-x">X</td><td>local endpoint defaults</td><td>일부 source/API/MinIO/Mongo 기본값에 localhost 또는 127.0.0.1 잔존</td><td>배포 환경 변수 덮어쓰기 별도 확인 필요</td></tr>
+          <tr><td class="mark-x">X</td><td>source 전체 계약</td><td>MinIO fixture를 포함한 모든 source 유형의 완전한 E2E 녹색 증거 없음</td><td>fixture/환경 의존 검증 차단</td></tr>
+        </tbody>
+      </table>
+    </div>
 
     <h2>미해결·범위 제외</h2>
     <div class="grid">
