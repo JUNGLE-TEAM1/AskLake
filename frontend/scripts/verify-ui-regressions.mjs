@@ -991,6 +991,8 @@ const checks = [
     patterns: [
       /Collections: "탐색 가능한 컬렉션"/,
       /Tables: "탐색 가능한 테이블"/,
+      /PostgreSQL:[\s\S]*testItems: \[\["Endpoint", "Not tested"\], \["Database", "Pending"\], \["Target discovery", "After connection"\]\]/,
+      /MongoDB:[\s\S]*testItems: \[\["Endpoint", "Not tested"\], \["Database", "Pending"\], \["Target discovery", "After connection"\]\]/,
       /const requiresAssetSelectionForPreview = \["File \/ S3", "MongoDB", "PostgreSQL"\]\.includes\(activeSourceType\);/,
       /if \(!\["File \/ S3", "MongoDB", "PostgreSQL"\]\.includes\(activeSourceType\)\)/,
       /const result = await listSourceAssets\(activeSourceType, editableFields, ""\);/,

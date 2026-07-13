@@ -353,6 +353,7 @@ const sourceFieldLabels: Record<string, string> = {
   "SQL Run ID": "SQL Run ID",
   "Storage Provider": "스토리지 제공자",
   "Stream Type": "스트림 유형",
+  "Target discovery": "대상 탐색",
   Table: "테이블",
   Tables: "탐색 가능한 테이블",
   "Token / Secret": "토큰 / 시크릿",
@@ -401,6 +402,7 @@ const sourceColumnLabels: Record<string, string> = {
 };
 
 const sourceValueLabels: Record<string, string> = {
+  "After connection": "연결 후 확인",
   detected: "감지됨",
   failed: "실패",
   listed: "목록 확인",
@@ -1254,7 +1256,7 @@ export function SourceConnectionPage({
         ["Password / Auth Token", "asklake"],
         ["DATASET OR TABLE SELECTOR", ""],
       ],
-      testItems: [["Endpoint", "Not tested"], ["Backend connector", "Required"], ["Tables", "Pending"]],
+      testItems: [["Endpoint", "Not tested"], ["Database", "Pending"], ["Target discovery", "After connection"]],
       logs: ["PostgreSQL 소스 식별은 백엔드 커넥터 러너에서 검증합니다.", "브라우저는 원시 데이터베이스 소켓을 열지 않습니다."],
       assetsTitle: "PostgreSQL 테이블 탐색",
       assets: [],
@@ -1275,7 +1277,7 @@ export function SourceConnectionPage({
         ["Password / Auth Token", ""],
         ["DATASET OR TABLE SELECTOR", ""],
       ],
-      testItems: [["Endpoint", "Not tested"], ["Database", "Pending"], ["Collection", "Pending"]],
+      testItems: [["Endpoint", "Not tested"], ["Database", "Pending"], ["Target discovery", "After connection"]],
       logs: ["MongoDB 소스 식별이 아직 검증되지 않았습니다.", "연결 테스트를 실행하면 제한 문서 샘플을 가져옵니다."],
       assetsTitle: "MongoDB 컬렉션 탐색",
       assets: [],
