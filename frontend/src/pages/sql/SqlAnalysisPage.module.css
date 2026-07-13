@@ -93,7 +93,7 @@
   height: clamp(276px, 36vh, 480px);
   min-height: 276px;
   overflow: hidden;
-  border: 1px solid #cbd5e1;
+  border: 1px solid #60a5fa;
   border-radius: 8px;
   background: #ffffff;
 }
