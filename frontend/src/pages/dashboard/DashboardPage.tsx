@@ -204,6 +204,10 @@ export function DashboardPage({
     loadPublishedRuntime,
     pages: runtimePages,
     publishedRuntime,
+    publishedRefreshError,
+    publishedRefreshedAt,
+    publishedRefreshStatus,
+    refreshPublishedWidgetData,
     runtimeError,
     runtimeLoading,
     selectedPageId: selectedRuntimePageId,
@@ -681,14 +685,34 @@ export function DashboardPage({
 
   const refreshRuntimeDashboard = async () => {
     setIsRefreshingRuntime(true);
-    const runtime = runtimeSelection.mode === "published"
-      ? await loadPublishedRuntime(runtimeSelection.dashboardId)
-      : await loadDraftRuntime(runtimeSelection.dashboardId);
-    setIsRefreshingRuntime(false);
-    setRuntimeNotice(runtime
-      ? { message: "대시보드를 새로고침했습니다.", tone: "info" }
-      : { message: "대시보드를 새로고침하지 못했습니다.", tone: "error" });
-    onAction("dashboard.runtime.refreshed", `/api/dashboards/${runtimeSelection.dashboardId}`, runtimeSelection.dashboardId);
+    try {
+      if (runtimeSelection.mode === "published") {
+        const refreshed = await refreshPublishedWidgetData(
+          runtimeSelection.dashboardId,
+          publishedRuntime?.revision?.id,
+        );
+        setRuntimeNotice(refreshed
+          ? { message: "대시보드를 새로고침했습니다.", tone: "info" }
+          : null);
+        onAction(
+          "dashboard.runtime.refreshed",
+          `/api/dashboards/${runtimeSelection.dashboardId}/published/data`,
+          runtimeSelection.dashboardId,
+        );
+      } else {
+        const refreshed = await loadDraftRuntime(runtimeSelection.dashboardId);
+        setRuntimeNotice(refreshed
+          ? { message: "대시보드를 새로고침했습니다.", tone: "info" }
+          : { message: "대시보드를 새로고침하지 못했습니다.", tone: "error" });
+        onAction(
+          "dashboard.runtime.refreshed",
+          `/api/dashboards/${runtimeSelection.dashboardId}/draft/ensure`,
+          runtimeSelection.dashboardId,
+        );
+      }
+    } finally {
+      setIsRefreshingRuntime(false);
+    }
   };
 
   const shareRuntimeDashboard = () => {
@@ -919,11 +943,14 @@ export function DashboardPage({
       isCreatingToolbarWidget,
       isPublishing: isPublishingRuntime,
       isRenamingTitle: isRenamingRuntimeTitle,
-      isRefreshing: isRefreshingRuntime,
+      isRefreshing: isRefreshingRuntime || publishedRefreshStatus === "refreshing",
       mode: runtimeSelection.mode,
       notice: runtimeNotice,
       pages: runtimePages,
       publishedRuntime,
+      publishedRefreshError,
+      publishedRefreshedAt,
+      publishedRefreshStatus,
       renamingPageId: renamingRuntimePageId,
       runtimeError,
       runtimeLoading,

@@ -313,6 +313,7 @@ type ScheduledJobRunResponse = {
 | `PATCH` | `/api/dashboards/{dashboardId}` | dashboard title 등 card metadata 수정 |
 | `DELETE` | `/api/dashboards/{dashboardId}` | dashboard 삭제. admin/owner fallback 또는 `delete` grant 필요 |
 | `GET` | `/api/dashboards/{dashboardId}/published` | published revision 기반 runtime 조회 |
+| `GET` | `/api/dashboards/{dashboardId}/published/data` | published widget의 연결 dataset 최신 sample data 일괄 조회 |
 | `POST` | `/api/dashboards/{dashboardId}/draft/ensure` | draft revision 조회 또는 생성 |
 | `POST` | `/api/dashboards/{dashboardId}/draft/pages` | draft page 추가 |
 | `PATCH` | `/api/dashboards/{dashboardId}/draft/pages/{pageId}` | draft page 이름 수정 |
@@ -343,7 +344,7 @@ Dashboard FastAPI 구현은 두 lane으로 나눈다.
 | Lane | 목적 | Endpoint 범위 | Backend 파일 기준 |
 | --- | --- | --- | --- |
 | Card/List | 랜딩 페이지 목록, 생성, 제목 수정, 삭제 | `GET /api/dashboards`, `POST /api/dashboards/query`, `POST /api/dashboards`, `PATCH /api/dashboards/{dashboardId}`, `DELETE /api/dashboards/{dashboardId}` | `backend/app/schemas/dashboard.py`, `api/dashboard_card.py`, `services/dashboard_card_service.py`, `repositories/dashboard_card_repository.py` |
-| Runtime | 내부 조회/편집, page, widget, layout, publish | `GET /api/dashboards/{dashboardId}/published`, `POST /api/dashboards/{dashboardId}/draft/ensure`, draft page/widget/layout/publish APIs | `backend/app/schemas/dashboard.py`, `api/dashboard_runtime.py`, `services/dashboard_runtime_service.py`, `repositories/dashboard_runtime_repository.py` |
+| Runtime | 내부 조회/편집, page, widget, layout, publish, published live data | `GET /api/dashboards/{dashboardId}/published`, `GET /api/dashboards/{dashboardId}/published/data`, `POST /api/dashboards/{dashboardId}/draft/ensure`, draft page/widget/layout/publish APIs | `backend/app/schemas/dashboard.py`, `api/dashboard_runtime.py`, `services/dashboard_runtime_service.py`, `repositories/dashboard_runtime_repository.py` |
 
 Card/List lane은 `DashboardCard`와 `DashboardListResponse`를 기준으로 한다.
 Runtime lane은 `DashboardRuntimeResponse`와 `DashboardRuntimeWidget`을 기준으로 한다.
@@ -550,6 +551,25 @@ type DashboardRuntimeResponse = {
 `POST /api/dashboards`는 랜딩 페이지의 새 대시보드 생성 버튼에서 사용한다. 생성 즉시 `status: "draft"` dashboard card를 DB에 저장하고, 프론트는 응답받은 `dashboard.id`로 `/dashboards/{dashboardId}` 조회 화면에 진입한다. 편집용 draft revision/page/widget은 `위젯 편집` 이후 `POST /api/dashboards/{dashboardId}/draft/ensure`에서 준비한다.
 
 `GET /api/dashboards/{dashboardId}/published`는 published revision이 없으면 `revision: null`, `pages: []`, `widgetsByPageId: {}`를 반환한다. `POST /api/dashboards/{dashboardId}/draft/ensure`는 idempotent이며 draft가 없으면 published snapshot 또는 새 revision과 기본 page를 만든다.
+
+`GET /api/dashboards/{dashboardId}/published/data`는 published revision의 layout/config/data snapshot을 수정하지 않고, `datasetId`가 있는 widget만 최신 Catalog sample rows로 hydrate해 한 번에 반환한다. 같은 dataset을 참조하는 widget은 권한 확인과 row 변환을 한 번만 수행한다. 이 갱신 경로는 대용량 storage 재조회보다 Continuous publication이 갱신한 bounded Catalog sample을 우선하며, 응답에 `Cache-Control: private, no-store`를 설정한다. Dashboard `view`와 각 Dataset `query` 권한이 모두 필요하며, published revision 또는 dataset이 없으면 `404`, 권한 또는 governance 정책에 막히면 `403`을 반환한다.
+
+```ts
+type DashboardPublishedDataResponse = {
+  dashboardId: string;
+  revisionId: string;
+  refreshedAt: string;
+  widgets: Array<{
+    widgetId: string;
+    datasetId: string;
+    data: Array<Record<string, unknown>>;
+    datasetUpdatedAt?: string | null;
+    sourceRunId?: string | null;
+  }>;
+};
+```
+
+Published 화면은 첫 runtime hydrate 뒤 즉시 이 endpoint를 호출하고, 성공 요청이 끝난 시점부터 10초 뒤 다음 요청을 예약한다. hidden tab에서는 예약을 취소하고 visible 복귀 시 즉시 다시 조회한다. 동일 dashboard/revision 요청은 중복 실행하지 않으며, 응답 data가 같으면 widget state identity를 유지한다. Background 오류는 기존 차트를 비우지 않고 마지막 성공 data와 오류 상태를 유지한다. `401`/`403`/`404`처럼 자동 회복이 어려운 응답은 자동 polling을 멈추고 수동 새로고침으로만 재시도하며, `408`/`429`/`5xx`와 network 오류는 다음 주기에 재시도한다. data 응답 revision이 현재 화면과 다르면 published runtime 전체를 다시 hydrate한다. Draft 화면에서는 이 polling을 실행하지 않는다.
 
 Widget 생성 API는 `datasetId`가 있고 명시적 `data`가 없을 때 catalog dataset의 rows 또는 sample rows를 column name 기반 object row로 변환해 widget `data` snapshot에 저장한다. Runtime widget renderer는 `widget.data`와 type별 `config`를 기준으로 `metric`, `table`, ApexCharts 차트 8종 표시값을 계산한다.
 

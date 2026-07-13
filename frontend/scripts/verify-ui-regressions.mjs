@@ -846,6 +846,60 @@ const checks = [
     ],
   },
   {
+    name: "Published dashboards refresh live widget data without overlapping requests",
+    file: "src/pages/dashboard/runtime/useDashboardRuntimeResources.ts",
+    patterns: [
+      /PUBLISHED_WIDGET_REFRESH_INTERVAL_MS = 10_000/,
+      /refreshRequestRef = useRef/,
+      /publishedRuntimeScopeRef = useRef/,
+      /publishedRuntimeCommitRequestRef = useRef/,
+      /publishedRefreshRetryableRef = useRef/,
+      /publishedScheduleNextRefreshRef = useRef/,
+      /window\.setTimeout\(\(\) => void poll\(\), PUBLISHED_WIDGET_REFRESH_INTERVAL_MS\)/,
+      /document\.visibilityState === "hidden"/,
+      /document\.addEventListener\("visibilitychange", handleVisibilityChange\)/,
+      /document\.removeEventListener\("visibilitychange", handleVisibilityChange\)/,
+      /JSON\.stringify\(widget\.data\) === JSON\.stringify\(refresh\.data\)/,
+      /response\.revisionId !== revisionId/,
+      /loadPublishedRuntime\(nextDashboardId, \{ silent: true \}\)/,
+      /publishedRuntimeCommitRequestRef\.current !== requestId/,
+      /publishedRuntime\?\.dashboard\.id === dashboardId/,
+      /publishedScheduleNextRefreshRef\.current\?\.\(\)/,
+      /error\.status === 408/,
+      /error\.status === 429/,
+    ],
+    forbiddenPatterns: [
+      /setInterval\(/,
+    ],
+  },
+  {
+    name: "Published dashboard refresh uses the dedicated live data endpoint",
+    file: "src/services/dashboardRuntimeApi.ts",
+    patterns: [
+      /export function getPublishedDashboardData/,
+      /\/published\/data/,
+      /error instanceof ApiError && error\.status === 404/,
+    ],
+  },
+  {
+    name: "Published dashboard refresh status stays compact and preserves stale chart data on error",
+    file: "src/pages/dashboard/runtime/DashboardTopBar.tsx",
+    patterns: [
+      /자동 갱신 · 10초/,
+      /탭 숨김 · 일시정지/,
+      /publishedRefreshStatus === "error" \? "destructive"/,
+      /aria-label=\{`\$\{refreshStatusLabels\[publishedRefreshStatus\]\}/,
+    ],
+  },
+  {
+    name: "Published dashboard background refresh errors remain non-blocking",
+    file: "src/pages/dashboard/runtime/DashboardRuntimeShell.tsx",
+    patterns: [
+      /mode === "published" && publishedRefreshError/,
+      /마지막으로 불러온 데이터를 표시합니다/,
+    ],
+  },
+  {
     name: "Frontend defaults to live API mode",
     file: "src/services/apiClient.ts",
     patterns: [

@@ -4011,6 +4011,10 @@ def materialize_continuous_publication(
     existing_runs = (existing.payload or {}).get("materializationRuns") if existing and existing.payload else []
     if any(str(item.get("runId") or "") == run_id for item in existing_runs if isinstance(item, dict)):
         return True
+    publication_sample_rows = publication.get("sampleRows")
+    if not isinstance(publication_sample_rows, list):
+        previous_sample_rows = (existing.payload or {}).get("sampleRows") if existing and existing.payload else None
+        publication_sample_rows = previous_sample_rows if isinstance(previous_sample_rows, list) else []
     target = parse_kafka_target_path(job.storage_path or job.target_path, job.target, job.target_layer)
     output_path = f"s3a://{target['bucket']}/{target['prefix'].strip('/')}/_batches"
     result = {
@@ -4027,6 +4031,7 @@ def materialize_continuous_publication(
         "transform": publication.get("transform") if isinstance(publication.get("transform"), dict) else {},
         "quality": publication.get("quality") if isinstance(publication.get("quality"), dict) else {},
         "runId": run_id,
+        "sampleRows": publication_sample_rows,
         "sourceRanges": publication.get("sourceRanges") if isinstance(publication.get("sourceRanges"), list) else [],
         "sourceKind": "kafka",
         "status": "success",

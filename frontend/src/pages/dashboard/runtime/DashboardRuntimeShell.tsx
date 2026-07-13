@@ -15,6 +15,7 @@ import {
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { DashboardPageTabs } from "./DashboardPageTabs";
 import { DashboardTopBar } from "./DashboardTopBar";
+import type { DashboardPublishedRefreshStatus } from "./useDashboardRuntimeResources";
 
 type DashboardPageTab = {
   id: string;
@@ -51,6 +52,9 @@ export function DashboardRuntimeShell({
   onShare,
   onToggleDatasetSidebar,
   pages,
+  publishedRefreshError,
+  publishedRefreshedAt,
+  publishedRefreshStatus = "idle",
   renamingPageId,
   selectedPageId,
   shareLink,
@@ -80,6 +84,9 @@ export function DashboardRuntimeShell({
   onShare?: () => void;
   onToggleDatasetSidebar?: () => void;
   pages: DashboardPageTab[];
+  publishedRefreshError?: string | null;
+  publishedRefreshedAt?: string | null;
+  publishedRefreshStatus?: DashboardPublishedRefreshStatus;
   renamingPageId?: string | null;
   selectedPageId: string | null;
   shareLink?: string | null;
@@ -142,6 +149,8 @@ export function DashboardRuntimeShell({
         onRefresh={onRefresh}
         onRenameTitle={onRenameTitle}
         onShare={onShare}
+        publishedRefreshedAt={publishedRefreshedAt}
+        publishedRefreshStatus={publishedRefreshStatus}
       />
       {notice && (
         <Alert
@@ -152,6 +161,17 @@ export function DashboardRuntimeShell({
           <AlertDescription>{notice.message}</AlertDescription>
         </Alert>
       )}
+      {mode === "published" && publishedRefreshError ? (
+        <Alert
+          className="asklake-dashboard-runtime-notice error"
+          role="status"
+          variant="destructive"
+        >
+          <AlertDescription>
+            자동 갱신에 실패했습니다. 마지막으로 불러온 데이터를 표시합니다. {publishedRefreshError}
+          </AlertDescription>
+        </Alert>
+      ) : null}
       <Sheet
         open={Boolean(shareLink)}
         onOpenChange={(isOpen) => {

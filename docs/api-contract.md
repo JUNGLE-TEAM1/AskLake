@@ -159,6 +159,7 @@ Resource/action 기준:
 | `PATCH /api/etl/jobs/{jobId}` | `manage` | source identity와 successful target identity 보호 |
 | `GET /api/dashboards`, `POST /api/dashboards/query` | `view` | actor가 볼 수 있는 dashboard만 목록에 포함 |
 | `GET /api/dashboards/{dashboardId}/published` | `view` | published revision이 없어도 권한 통과 후 빈 runtime 응답 가능 |
+| `GET /api/dashboards/{dashboardId}/published/data` | Dashboard `view` + Dataset `query` | published widget이 연결한 dataset의 최신 bounded sample data 조회 |
 | `PATCH /api/dashboards/{dashboardId}` | `manage` | dashboard card title 수정 |
 | `POST /api/dashboards/{dashboardId}/draft/ensure` | `manage` | draft revision 생성/복사 가능 여부 검사 |
 | `POST/PATCH/DELETE /api/dashboards/{dashboardId}/draft/**` | `manage` | page/widget/layout draft 변경 전체 |
@@ -2016,7 +2017,7 @@ Dashboard FastAPI 전환은 `dashboard card`와 `dashboard runtime`을 분리해
 | Lane | 담당 범위 | 주요 schema | 주요 endpoint |
 | --- | --- | --- | --- |
 | Dashboard card/list | 랜딩 페이지 목록, 검색/필터/정렬, 생성, 제목 수정, 삭제 | `DashboardCard`, `DashboardListQuery`, `DashboardListResponse`, `CreateDashboardRequest`, `UpdateDashboardRequest` | `GET /api/dashboards`, `POST /api/dashboards/query`, `POST /api/dashboards`, `PATCH /api/dashboards/{dashboardId}`, `DELETE /api/dashboards/{dashboardId}` |
-| Dashboard runtime | 내부 조회/편집 화면, draft/published revision, page, widget, layout, publish | `DashboardRuntimeResponse`, `DashboardRuntimeWidget`, `CreateDraftWidgetRequest`, `SaveDraftLayoutsRequest`, `PublishDashboardResponse` | `GET /api/dashboards/{dashboardId}/published`, `POST /api/dashboards/{dashboardId}/draft/ensure`, page/widget/layout/publish APIs |
+| Dashboard runtime | 내부 조회/편집 화면, draft/published revision, page, widget, layout, publish, published live data | `DashboardRuntimeResponse`, `DashboardPublishedDataResponse`, `DashboardRuntimeWidget`, `CreateDraftWidgetRequest`, `SaveDraftLayoutsRequest`, `PublishDashboardResponse` | `GET /api/dashboards/{dashboardId}/published`, `GET /api/dashboards/{dashboardId}/published/data`, `POST /api/dashboards/{dashboardId}/draft/ensure`, page/widget/layout/publish APIs |
 
 Card/list lane은 `dashboards`와 `dashboard_tags` 중심으로 작업한다.
 Runtime lane은 `dashboard_revisions`, `dashboard_pages`, `dashboard_widgets` 중심으로 작업한다.
@@ -2443,6 +2444,31 @@ Response `200 OK`:
 
 - dashboard가 없으면 `404 NOT_FOUND`.
 - dashboard `view` 권한이 없으면 `403 FORBIDDEN`.
+
+#### 8.5.1.1 Published live data 조회
+
+`GET /api/dashboards/{dashboardId}/published/data`
+
+이 endpoint는 published revision의 layout/config/data snapshot을 수정하지 않습니다. `datasetId`가 있는 widget만 대상으로 같은 dataset을 한 번만 조회하며, 대용량 storage 재조회보다 Continuous publication이 갱신한 bounded Catalog sample을 우선합니다. 응답은 브라우저·중간 cache에 오래된 실시간 sample이 남지 않도록 `Cache-Control: private, no-store`를 사용합니다. Dashboard `view`와 각 Dataset `query` 권한을 모두 확인하며, dataset 또는 published revision이 없으면 `404`, 권한/governance 정책에 막히면 `403`으로 실패하고 빈 data로 성공 처리하지 않습니다.
+
+```json
+{
+  "dashboardId": "dash_live",
+  "revisionId": "dashrev_published_1",
+  "refreshedAt": "2026-07-13T12:00:00Z",
+  "widgets": [
+    {
+      "widgetId": "dashwidget_1",
+      "datasetId": "ds_live_reviews",
+      "data": [{ "event_id": "evt-2", "rating": 5 }],
+      "datasetUpdatedAt": "2026-07-13T11:59:58Z",
+      "sourceRunId": "continuous:job:batch:2"
+    }
+  ]
+}
+```
+
+Kafka Continuous worker는 non-empty micro-batch의 최신 정상 행을 최대 20개까지 publication manifest의 `sampleRows`로 함께 남깁니다. Catalog materialization은 schema column 순서로 이 sample을 갱신하고, sample이 없는 구버전 report/retry에서는 이전 Catalog sample을 유지합니다. Dashboard live data는 이 bounded sample을 사용하며 전체 Parquet 결과나 row count를 대체하지 않습니다.
 
 #### 8.5.2 Draft 조회/생성
 

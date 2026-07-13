@@ -433,6 +433,7 @@ def main() -> None:
             "publishedBatches": [{
                 "batchId": 0,
                 "storedCount": 2,
+                "sampleRows": [{"event_id": "evt-2"}, {"event_id": "evt-1"}],
                 "sourceRanges": [{"topic": "reviews.continuous", "partition": 0, "startOffset": 0, "endOffset": 2}],
             }],
         })
@@ -446,6 +447,15 @@ def main() -> None:
         assert captured_dataset[dataset_id].payload["materializationRuns"][0]["sourceKind"] == "kafka"
         assert captured_dataset[dataset_id].payload["materializationRuns"][0]["rowCount"] == 2
         assert captured_dataset[dataset_id].payload["storageLocation"].endswith("/_batches")
+        assert captured_dataset[dataset_id].payload["sampleRows"] == [["evt-2"], ["evt-1"]]
+        etl_service.materialize_continuous_publication(None, job, runtime, {
+            "batchId": 1,
+            "storedCount": 1,
+            "sourceRanges": [{"topic": "reviews.continuous", "partition": 0, "startOffset": 2, "endOffset": 3}],
+        })
+        assert captured_dataset[dataset_id].payload["sampleRows"] == [["evt-2"], ["evt-1"]], (
+            "A legacy publication without sampleRows must preserve the previous Catalog sample."
+        )
 
         with tempfile.TemporaryDirectory() as report_dir:
             previous_report_dir = os.environ.get("ASKLAKE_SPARK_REPORT_DIR")
@@ -520,6 +530,7 @@ def main() -> None:
                     "quality": {"invalidRowCount": 1},
                     "transform": {"warnCount": 0},
                     "publishedAt": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+                    "sampleRows": [{"event_id": "evt-8"}],
                     "sourceRanges": [{"topic": "reviews.continuous", "partition": 0, "startOffset": 6, "endOffset": 8}],
                 }],
             }), encoding="utf-8")
@@ -545,6 +556,7 @@ def main() -> None:
             assert serialized_run["sourceRanges"][0]["endOffset"] == 8
             assert runtime.metrics["ruleFingerprint"] == "rule-v2"
             assert runtime.metrics["ruleMetrics"]["qualityWarnCount"] == 2
+            assert captured_dataset[dataset_id].payload["sampleRows"] == [["evt-8"]]
             assert dataset_save_count["value"] == before_recovery_saves + 1
             etl_service.refresh_kafka_continuous_runtime(None, job)
             assert dataset_save_count["value"] == before_recovery_saves + 1, "Catalog recovery must be idempotent."

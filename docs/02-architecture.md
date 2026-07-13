@@ -18,6 +18,7 @@
 - Airflow의 terminal `success`만으로 데이터 처리를 성공 처리하지 않는다. 같은 `runId`의 실제 Spark output metadata와 Catalog materialization이 모두 저장되어야 Run이 `success`가 된다.
 - 실행 흐름/DAG는 별도 top-level 화면이 아니라 Run History에서 선택한 `runId`의 단계 흐름으로 표시한다.
 - Dashboard card/list와 draft/published runtime API는 FastAPI에 등록되어 있다. 프론트는 이전 backend 호환을 위해 404 local fallback을 유지한다.
+- Published Dashboard의 저장 snapshot은 layout/config/fallback data를 보존한다. 최신 값은 `GET /api/dashboards/{dashboardId}/published/data`가 published widget의 `datasetId`를 dedupe해 Catalog 최신 sample rows를 읽고, Dashboard `view`와 Dataset `query` 권한을 모두 통과한 경우에만 반환한다. 프론트는 published 화면에서만 10초 self-scheduling polling을 수행하며 hidden tab에서는 멈추고, 실패하면 마지막 성공 차트를 유지한다.
 
 ### Text Structuring Model Artifact Ownership
 
@@ -128,6 +129,8 @@ Phase 3부터 일반 Spark Snapshot과 Kafka Snapshot은 실행 직전에 저장
 Phase 5부터 Kafka Continuous도 같은 공통 Spark Rule runtime을 bounded micro-batch에 적용한다. Worker 시작 시 `_asklake_contract` checkpoint metadata에 configured schema, canonical Rule, output schema와 source/target identity의 결합 fingerprint를 기록하며 불일치 checkpoint 재사용을 거절한다. Worker report와 Catalog materialization은 Rule fingerprint와 누적 Fail/Quarantine/Warn 근거를 보존한다. 초기화된 checkpoint의 처리 계약은 in-place로 바꾸지 않고 Job copy와 새 checkpoint를 사용한다. 격리 replay 역시 현재 schema policy와 canonical Rule을 다시 적용한다.
 
 Phase 1부터 source profile은 JSON/JSONL의 native scalar type을 화면용 문자열 preview와 분리해 보존한다. `Float`는 legacy 입력 호환값으로만 받고 새 draft는 `Double`을 사용한다. Dotted `sourceName`은 lineage와 실행 projection의 논리 경로이며, underscore로 정규화한 `targetName`과 동일시하지 않는다. Continuous worker는 이 경로로 nested `StructType`을 구성하고 root 및 nested object의 unknown field를 각각 검사한다.
+
+각 non-empty Continuous publication manifest는 최신 정상 행을 최대 20개까지 `sampleRows` object snapshot으로 함께 남긴다. Backend는 이를 Catalog column 순서의 `sampleRows`로 반영하고, 이전 worker/report처럼 sample이 없으면 기존 Catalog sample을 보존한다. 이 sample은 Dashboard의 bounded refresh용이며 Parquet materialization이나 전체 데이터 조회를 대체하지 않는다.
 
 Continuous 실행 이력은 Snapshot `ETLRun`과 분리한다. 한 번의 `startContinuous` 또는 `resumeContinuous`부터 stop/pause/failure까지를 durable stream session 한 행으로 저장하고, worker가 보고한 micro-batch manifest는 해당 session의 하위 batch 이력으로 멱등 저장한다. 재시작은 checkpoint와 누적 runtime counter를 이어가되 새 session을 만들며, session counter는 시작 당시 runtime baseline과 현재 누적값의 차이로 계산한다. 실행 이력 화면은 active session 동안 3초 polling을 수행하고 hidden tab에서는 요청을 유예하며, terminal 전환 뒤 자동 polling을 멈춘다. 세션 누적 적재량과 Catalog의 현재 데이터셋 행 수는 서로 다른 값으로 표시한다.
 

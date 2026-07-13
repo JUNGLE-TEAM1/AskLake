@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 from sqlalchemy.orm import Session
 
 from app.core.auth_context import ActorContext, get_actor_context
@@ -9,6 +9,7 @@ from app.schemas.dashboard import (
     CreateDraftPageRequest,
     CreateDraftWidgetRequest,
     DashboardPageResponse,
+    DashboardPublishedDataResponse,
     DashboardRuntimeResponse,
     DashboardWidgetMutationResponse,
     DeleteDraftPageResponse,
@@ -33,6 +34,19 @@ def get_published_dashboard_runtime(
     repository = DashboardRuntimeRepository(db)
     service = DashboardRuntimeService(repository, CatalogRepository(db))
     return service.get_published_runtime(dashboard_id, actor)
+
+
+@router.get("/{dashboard_id}/published/data", response_model=DashboardPublishedDataResponse)
+def get_published_dashboard_data(
+    dashboard_id: str,
+    response: Response,
+    actor: ActorContext = Depends(get_actor_context),
+    db: Session = Depends(get_db),
+) -> DashboardPublishedDataResponse:
+    response.headers["Cache-Control"] = "private, no-store"
+    repository = DashboardRuntimeRepository(db)
+    service = DashboardRuntimeService(repository, CatalogRepository(db))
+    return service.get_published_data(dashboard_id, actor)
 
 
 @router.post("/{dashboard_id}/draft/ensure", response_model=DashboardRuntimeResponse)

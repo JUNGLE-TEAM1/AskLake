@@ -143,10 +143,12 @@ type JobCommand =
 - Runtime summary exposes `lag`, `maxPartitionLag`, `laggingPartitionCount`, `lastBatchDurationMs`, `lastBatchInputRows`, `throughputRowsPerSecond`, cumulative `replayedCount`, Rule fingerprints, `ruleMetrics`, and `lastRuleResult`.
 - Kafka latest-offset lookup failure does not stop a healthy stream. The report marks lag availability and preserves the previous processed offset.
 - Worker logs are read through `GET /api/etl/jobs/{jobId}/continuous/logs`. The response is bounded, strips ANSI control sequences, masks common credential/token forms, and requires Job `view` permission.
+- Every non-empty published batch manifest may include up to 20 latest valid projected rows in `sampleRows`. The backend maps this bounded object snapshot into Catalog schema order for Dashboard preview/refresh. Reports without `sampleRows` preserve the previous Catalog sample for backward compatibility.
 - A stream start/resume creates one durable session row. Pause, stop, or failure closes that row; a later restart creates a new session while reusing the same checkpoint.
 - Session counters are deltas from the cumulative runtime baseline captured at session start. Worker `publishedBatches` become idempotent child records keyed by session and Spark batch ID, while the main execution history remains one row per session.
 - Session and micro-batch rows persist a seven-stage Streaming DAG: Source, Schema, Transform, Quality, Target, Manifest/Checkpoint, and Catalog. A successful manifest keeps Catalog pending until the control plane cursor acknowledges that batch. A pre-manifest Rule failure persists `lastBatchEvidence` with the failed stage and blocks downstream stages without advancing the checkpoint. Empty Transform/Quality rule sets are recorded as successful pass-through stages.
 - The execution-history UI polls session and selected batch APIs every three seconds only while a session is active. It prevents overlapping/stale responses, backs off on errors without clearing the last good state, defers polling for hidden tabs, and stops after terminal state or unmount. Manual refresh calls the same live APIs.
+- Published Dashboard data uses a separate 10-second self-scheduling poll against `GET /api/dashboards/{dashboardId}/published/data`. It pauses for hidden tabs, deduplicates an in-flight dashboard/revision request, and preserves the last successful chart when refresh fails. This is bounded sample refresh, not sub-second event serving.
 
 ## 10. Schema Evolution Contract
 

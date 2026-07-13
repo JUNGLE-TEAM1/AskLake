@@ -338,6 +338,21 @@ class DashboardRuntimeResponse(CamelModel):
     filters: list[DashboardFilter] = Field(default_factory=list)
 
 
+class DashboardPublishedWidgetData(CamelModel):
+    widget_id: str
+    dataset_id: str
+    data: list[dict[str, Any]] = Field(default_factory=list)
+    dataset_updated_at: str | None = None
+    source_run_id: str | None = None
+
+
+class DashboardPublishedDataResponse(CamelModel):
+    dashboard_id: str
+    revision_id: str
+    refreshed_at: str
+    widgets: list[DashboardPublishedWidgetData] = Field(default_factory=list)
+
+
 class CreateDraftPageRequest(CamelModel):
     title: str
 

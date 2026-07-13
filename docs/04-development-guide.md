@@ -202,6 +202,22 @@ cd backend
 .venv/bin/python -m app.seed.seed_dashboard_demo
 ```
 
+Published Dashboard는 runtime snapshot을 처음 hydrate한 뒤 `GET /api/dashboards/{dashboardId}/published/data`를 즉시 호출하고, 성공 요청 종료 시점부터 10초 뒤 다음 요청을 예약한다. Draft 화면에서는 실행하지 않으며, 브라우저 탭이 hidden이면 예약을 취소하고 visible 복귀 시 즉시 재개한다. Background 오류는 마지막 성공 chart를 유지한다.
+
+Dashboard live-data 계약과 Kafka sample 전파를 외부 인프라 없이 확인하려면 아래 검증을 실행한다.
+
+```powershell
+cd backend
+npm run verify:dashboard-published-data
+python scripts/verify-kafka-continuous-contract.py
+
+cd ..\frontend
+npm run verify:ui-regressions
+npm run build
+```
+
+수동 smoke에서는 Published 화면의 상태 배지가 `자동 갱신 · 10초`로 전환되는지, hidden tab에서 요청이 멈추고 복귀 즉시 한 번 재개되는지, backend 오류 중에도 기존 차트가 유지되는지 확인한다.
+
 OpenAI API key는 프론트가 아니라 backend env에만 둔다. 로컬에서는 `backend/.env` 또는 실행 환경에 아래 값을 둔다.
 `OPENAI_API_KEY`가 없거나 `OPENAI_ASSISTANT_ENABLED=false`이면 backend는 응답에 `mock fallback`을 명시한 fallback 응답을 반환한다.
 Assistant guard는 OpenAI가 없는 컬럼/부적절한 값축을 반환해도 catalog schema와 sample rows 기준으로 보정한다. 차원 컬럼만 제시된 요청은 `count` 집계 차트로, 매출/금액 지표가 포함된 요청은 `revenue`/`total_amount` 같은 실제 수치 컬럼으로 보정한다. OpenAI 응답이 비어 있으면 요청 문장과 available dataset 기준의 기본 막대 차트 action을 생성한다.

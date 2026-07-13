@@ -51,6 +51,7 @@ AskLake는 사용자가 데이터셋의 출처, 품질, 권한, 실행 결과, �
 - Issue #567은 일반 Snapshot, Kafka Snapshot, Kafka Continuous의 스키마 타입과 Transform/Quality 실행 계약을 통합한다. 작업은 [Transform/Quality 공통 실행 통합 계획](transform-quality-unification-plan.md)의 Phase별 검증 게이트를 따르며, 전체 검증 전까지 Draft PR로 유지한다.
 - SQL preview 결과 기반 처리 Job 생성: SQL 화면의 다단계 모달에서 기본 정보, 스케줄, 거버넌스, 저장 설정을 완료한 뒤 기존 Job 생성 API를 호출한다.
 - Dashboard 목록/빌더/런타임은 FastAPI API를 우선 사용하고, 이전 backend 호환을 위해 404 local/mock fallback을 유지
+- Published Dashboard는 연결 dataset의 최신 Catalog sample data를 기본 10초 주기로 갱신한다. hidden tab에서는 polling을 멈추고, 갱신 실패 시 마지막 성공 차트를 유지하며 Draft 편집 화면에는 자동 갱신을 적용하지 않는다.
 - 감사 로그와 toast feedback
 
 ## 5) Backend 확장 범위

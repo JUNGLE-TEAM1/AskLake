@@ -1,7 +1,17 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Check, Eye, Pencil, RefreshCw, Save, Share2, X } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import type { DashboardPublishedRefreshStatus } from "./useDashboardRuntimeResources";
+
+const refreshStatusLabels: Record<DashboardPublishedRefreshStatus, string> = {
+  error: "자동 갱신 실패",
+  idle: "자동 갱신 준비",
+  live: "자동 갱신 · 10초",
+  paused: "탭 숨김 · 일시정지",
+  refreshing: "데이터 갱신 중",
+};
 
 export function DashboardTopBar({
   hasPublishedRevision,
@@ -15,6 +25,8 @@ export function DashboardTopBar({
   onRefresh,
   onRenameTitle,
   onShare,
+  publishedRefreshedAt,
+  publishedRefreshStatus = "idle",
   title,
 }: {
   hasPublishedRevision?: boolean;
@@ -28,11 +40,16 @@ export function DashboardTopBar({
   onRefresh?: () => void;
   onRenameTitle?: (title: string) => Promise<void> | void;
   onShare?: () => void;
+  publishedRefreshedAt?: string | null;
+  publishedRefreshStatus?: DashboardPublishedRefreshStatus;
   title: string;
 }) {
   const [draftTitle, setDraftTitle] = useState(title);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const canRename = mode === "draft" && Boolean(onRenameTitle);
+  const lastRefreshedLabel = publishedRefreshedAt
+    ? new Date(publishedRefreshedAt).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+    : null;
 
   useEffect(() => {
     if (!isEditingTitle) setDraftTitle(title);
@@ -96,6 +113,17 @@ export function DashboardTopBar({
         )}
       </div>
       <div className="asklake-dashboard-actions">
+        {mode === "published" ? (
+          <Badge
+            aria-label={`${refreshStatusLabels[publishedRefreshStatus]}${lastRefreshedLabel ? `, 마지막 갱신 ${lastRefreshedLabel}` : ""}`}
+            shape="compact"
+            size="sm"
+            title={lastRefreshedLabel ? `마지막 갱신 ${lastRefreshedLabel}` : undefined}
+            variant={publishedRefreshStatus === "error" ? "destructive" : publishedRefreshStatus === "paused" ? "muted" : "success"}
+          >
+            {refreshStatusLabels[publishedRefreshStatus]}
+          </Badge>
+        ) : null}
         {mode === "published" ? (
           <Button className="asklake-dashboard-action primary" type="button" onClick={onOpenDraft} size="sm" variant="primary">
             <Pencil size={16} />

@@ -4,6 +4,7 @@ import type {
   DashboardRuntimeResponse,
   DashboardRuntimeWidget,
   DashboardRuntimeWidgetType,
+  DashboardWidgetDataRefreshResponse,
   DashboardWidgetLayout,
 } from "../types";
 import { apiClient, apiConfig } from "./apiClient";
@@ -31,10 +32,34 @@ async function withRuntimeFallback<T>(request: () => Promise<T>, fallback: () =>
 }
 
 export function getPublishedDashboard(dashboardId: string) {
-  return withRuntimeFallback(
-    () => apiClient.get<DashboardRuntimeResponse>(`/api/dashboards/${encodeURIComponent(dashboardId)}/published`),
-    () => getStoreEntry(dashboardId).published,
-  );
+  if (apiConfig.useMock) return Promise.resolve(getStoreEntry(dashboardId).published);
+  return apiClient.get<DashboardRuntimeResponse>(`/api/dashboards/${encodeURIComponent(dashboardId)}/published`)
+    .catch((error: unknown) => {
+      if (error instanceof ApiError && error.status === 404) return getStoreEntry(dashboardId).published;
+      throw error;
+    });
+}
+
+export function getPublishedDashboardData(dashboardId: string) {
+  if (!apiConfig.useMock) {
+    return apiClient.get<DashboardWidgetDataRefreshResponse>(
+      `/api/dashboards/${encodeURIComponent(dashboardId)}/published/data`,
+    );
+  }
+
+  const published = getStoreEntry(dashboardId).published;
+  return Promise.resolve({
+    dashboardId,
+    refreshedAt: new Date().toISOString(),
+    revisionId: published.revision?.id ?? `rev_published_${dashboardId}`,
+    widgets: Object.values(published.widgetsByPageId).flatMap((widgets) => widgets
+      .filter((widget): widget is DashboardRuntimeWidget & { datasetId: string } => Boolean(widget.datasetId))
+      .map((widget) => ({
+        data: widget.data,
+        datasetId: widget.datasetId,
+        widgetId: widget.id,
+      }))),
+  } satisfies DashboardWidgetDataRefreshResponse);
 }
 
 export function ensureDraftDashboard(dashboardId: string) {
