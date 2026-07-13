@@ -1766,6 +1766,16 @@ export function SourceConnectionPage({
       : isInternalDataLake
         ? !selectedCatalogDatasetId || !hasValidatedSchema
         : connectionStatus !== "success" || !hasValidatedSchema;
+  const canOpenSourceBrowser = isInternalDataLake
+    ? hasSelectedSource && sourceStage !== "choose"
+    : sourceStage === "browse" || (connectionStatus === "success" && hasDetectedAssets);
+
+  const handleSourceStageChange = (value: string) => {
+    const nextStage = value as "choose" | "connect" | "browse";
+    if (nextStage === "browse" && !canOpenSourceBrowser) return;
+    if (nextStage === "connect" && (!hasSelectedSource || sourceStage === "choose")) return;
+    setSourceStage(nextStage);
+  };
 
   const sourceChoiceConnectors = ["PostgreSQL", "MongoDB", "File / S3", "REST API", "Stream / Kafka", "Data Lake"];
 
@@ -1784,15 +1794,17 @@ export function SourceConnectionPage({
         <div className="source-workbench-body">
           <Tabs
             value={sourceStage}
-            onValueChange={(value) => setSourceStage(value as "choose" | "connect" | "browse")}
+            onValueChange={handleSourceStageChange}
           >
-            <TabsList aria-label="소스 연결 단계" className="source-stage-tabs">
+            <TabsList
+              aria-label="소스 연결 단계"
+              className="source-stage-tabs"
+              style={{ gridTemplateColumns: isInternalDataLake ? "repeat(2, minmax(0, 1fr))" : undefined }}
+            >
               <TabsTrigger value="choose">1. 소스 선택</TabsTrigger>
               {!isInternalDataLake && <TabsTrigger disabled={!hasSelectedSource || sourceStage === "choose"} value="connect">2. 연결 설정</TabsTrigger>}
               <TabsTrigger
-                disabled={isInternalDataLake
-                  ? !hasSelectedSource
-                  : sourceStage !== "browse" && (sourceStage === "choose" || connectionStatus !== "success" || !hasDetectedAssets)}
+                disabled={!canOpenSourceBrowser}
                 value="browse"
               >
                 {isInternalDataLake ? "2. 데이터셋 탐색" : "3. 데이터 탐색"}
