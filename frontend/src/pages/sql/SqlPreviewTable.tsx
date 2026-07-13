@@ -58,6 +58,7 @@ export function SqlPreviewTable({
   remoteNextCursor,
   remotePageIndex,
   remotePageNumber,
+  remotePageSize,
   remotePending = false,
   remoteRowEnd,
   remoteRowStart,
@@ -70,6 +71,7 @@ export function SqlPreviewTable({
   remoteNextCursor?: string | null;
   remotePageIndex?: number;
   remotePageNumber?: number;
+  remotePageSize?: number;
   remotePending?: boolean;
   remoteRowEnd?: number;
   remoteRowStart?: number;
@@ -106,6 +108,10 @@ export function SqlPreviewTable({
   );
   const remote = remotePageIndex !== undefined;
   const currentRemotePage = remotePageNumber ?? (remotePageIndex ?? 0) + 1;
+  const resolvedRemoteTotalRows = remoteTotalRows ?? resultDraft.rowCount;
+  const resolvedRemotePageSize = remotePageSize ?? SQL_RESULT_PAGE_SIZE;
+  const resolvedRemoteTotalPages = remoteTotalPages
+    ?? (resolvedRemoteTotalRows > 0 ? Math.ceil(resolvedRemoteTotalRows / resolvedRemotePageSize) : 1);
   const shownRows = `${remoteRowStart?.toLocaleString() ?? 0}-${remoteRowEnd?.toLocaleString() ?? data.length.toLocaleString()}행`;
 
   return (
@@ -134,8 +140,8 @@ export function SqlPreviewTable({
           onNext={() => onRemoteNext?.()}
           onPrevious={() => onRemotePrevious?.()}
           previousDisabled={remotePending || !onRemotePrevious}
-          rangeLabel={`${shownRows} · 전체 ${(remoteTotalRows ?? resultDraft.rowCount).toLocaleString()}행`}
-          totalPages={remoteTotalPages ?? currentRemotePage}
+          rangeLabel={`${shownRows} · 전체 ${resolvedRemoteTotalRows.toLocaleString()}행`}
+          totalPages={resolvedRemoteTotalPages}
         />
       ) : null}
     </div>

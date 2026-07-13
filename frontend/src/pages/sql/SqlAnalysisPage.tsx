@@ -944,8 +944,7 @@ export function SqlAnalysisPage({
     if (
       !trinoRun
       || availablePageCount < 1
-      || storageStatus === "expired"
-      || storageStatus === "unavailable"
+      || storageStatus !== "available"
       || trinoResultPagePending
       || trinoResultPage
       || trinoResultPageIndex !== 0
@@ -1210,6 +1209,7 @@ export function SqlAnalysisPage({
 
   const activeTrinoPage = trinoResultPage;
   const trinoResultStatusLabel = getTrinoResultStatusLabel(trinoRun);
+  const trinoResultReady = trinoRun?.result?.storageStatus === "available";
 
   const trinoDisplayResult = useMemo<SqlResultDraft | null>(() => {
     if (!trinoRun || !activeTrinoPage || !baseDataset) return null;
@@ -1227,7 +1227,7 @@ export function SqlAnalysisPage({
       runId: trinoRun.runId,
     };
   }, [activeTrinoPage, baseDataset, trinoRun]);
-  const visibleResult = resultDraft ?? trinoDisplayResult;
+  const visibleResult = resultDraft ?? (trinoResultReady ? trinoDisplayResult : null);
   const trinoJobResultDraft = useMemo<SqlResultDraft | null>(() => {
     if (!trinoRun || trinoRun.status !== "succeeded" || !baseDataset) return null;
     const columns = trinoRun.result?.columns ?? activeTrinoPage?.columns ?? [];
@@ -2000,7 +2000,7 @@ export function SqlAnalysisPage({
                   ? "실행 실패"
                   : visibleResult
                     ? `${visibleResult.rowCount.toLocaleString()}행 ${trinoRun?.result?.storageStatus === "collecting" ? "수집됨" : "조회됨"}`
-                    : trinoRun ? "실행 상태 확인 중" : "결과 대기 중"}
+                    : trinoRun && isTrinoResultCollectionActive(trinoRun) ? "전체 결과 수집 중" : trinoRun ? "실행 상태 확인 중" : "결과 대기 중"}
             />
             <TrinoExecutionTimeline
               firstPageError={trinoResultError}
@@ -2078,6 +2078,7 @@ export function SqlAnalysisPage({
                       resultDraft={visibleResult}
                       remotePageIndex={trinoRun ? trinoResultPageIndex : undefined}
                       remotePageNumber={activeTrinoPage?.pageNumber}
+                      remotePageSize={activeTrinoPage?.pageSize}
                       remoteNextCursor={activeTrinoPage?.nextCursor}
                       remotePending={trinoResultPagePending}
                       remoteRowEnd={activeTrinoPage?.rowEnd}
@@ -2121,6 +2122,7 @@ export function SqlAnalysisPage({
                       resultDraft={visibleResult}
                       remotePageIndex={trinoRun ? trinoResultPageIndex : undefined}
                       remotePageNumber={activeTrinoPage?.pageNumber}
+                      remotePageSize={activeTrinoPage?.pageSize}
                       remoteNextCursor={activeTrinoPage?.nextCursor}
                       remotePending={trinoResultPagePending}
                       remoteRowEnd={activeTrinoPage?.rowEnd}
