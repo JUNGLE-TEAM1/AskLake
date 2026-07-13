@@ -84,7 +84,7 @@ Job A Phase 4의 체크리스트만 진행해줘.
 | 로컬 Spark S3A 읽기 | `[x]` | Spark 4.0.1에서 MinIO 입력 3행 읽기 확인 |
 | 실제 AWS S3 객체 왕복 | `[ ]` | 아직 put/list/get/delete 미검증 |
 | 실제 AWS S3 Spark 읽기 | `[ ]` | 아직 미검증 |
-| 배포 브랜치 안정화 | `[-]` | 최신 `origin/dev` 19커밋 통합·충돌 해결·병합 후 검증 통과, merge commit과 push 대기 |
+| 배포 브랜치 안정화 | `[x]` | 최신 `origin/dev` 19커밋 통합·충돌 해결·병합 후 검증 통과, 원격 task branch push 완료 |
 | EC2·IAM Role | `[ ]` | 존재 여부와 설정 미확인 |
 | AWS 배포 | `[ ]` | 미실행 |
 | 작은 파일 E2E | `[ ]` | 미실행 |
@@ -137,7 +137,7 @@ EC2가 실제로 pull할 수 있는 하나의 원격 브랜치를 만든다. 로
 - [x] Backend·Frontend build와 배포 dependency 검증을 실행한다.
 - [x] 관련 문서와 실제 env key가 일치하는지 확인한다.
 - [x] secret·token·실제 credential이 diff에 없는지 확인한다.
-- [ ] 의도한 파일만 commit하고 원격 task branch에 push한다.
+- [x] 의도한 파일만 commit하고 원격 task branch에 push한다.
 
 ### 완료 기준
 
@@ -494,6 +494,7 @@ Phase 완료 시 아래 표에 한 줄을 추가한다.
 | 2026-07-13 | S3 bucket bootstrap | local AWS profile | 4 bucket names | create·security verify 성공 | region, Public Access Block, AES256, ownership 확인 | 실제 object·Spark AWS smoke 필요 |
 | 2026-07-13 | Phase 0 baseline | `codex/aws-s3-storage-mode` pre-integration | tracked 41개, untracked 8개 | provider 계약, Python 13 tests, Compose config 통과 | secret pattern 미검출, diff check 통과 | 최신 `origin/dev` 19 commits, 겹치는 파일 24개 통합 필요 |
 | 2026-07-13 | Phase 0 dev integration | merge commit 전 | `origin/dev` 19 commits와 S3 provider 변경 | Trino revert 보존, Node provider 검증, Python 11+25 tests, UI 101 checks, frontend/Docker build, deploy dependency 검증 통과 | Production Compose는 AWS S3 readiness 뒤 backend 시작, 최신 dev 대비 diff check 통과 | merge commit·task branch push 필요; npm audit 1 moderate·1 high는 별도 dependency backlog |
+| 2026-07-13 | Phase 0 remote checkpoint | `codex/aws-s3-storage-mode` / `25ba2b1b` | 검증된 merge tree | GitHub 원격 branch push 성공 | 원격 branch가 최신 `origin/dev`와 S3 provider merge commit을 포함 | 다음 단계는 실제 AWS S3 객체·Spark 직접 검증 |
 
 E2E Run은 아래 형식으로 추가 기록한다.
 
