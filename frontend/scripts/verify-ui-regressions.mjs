@@ -439,6 +439,20 @@ const checks = [
     ],
   },
   {
+    name: "Jobs landing run modal follows centrally polled state by stable run identity",
+    file: "src/pages/ingest/JobsPages.tsx",
+    patterns: [
+      /type LatestRunModalSelection = \{[\s\S]*jobId: string;[\s\S]*runId: string;/,
+      /const latestRunModal = useMemo\(\(\) => \{[\s\S]*jobs\.find\(\(candidate\) => candidate\.id === latestRunModalSelection\.jobId\)/,
+      /job\.runHistory\?\.find\(\(candidate\) => candidate\.runId === latestRunModalSelection\.runId\)/,
+      /setLatestRunModalSelection\(\{[\s\S]*jobId: job\.id,[\s\S]*runId: latestRun\.runId,/,
+      /onClose=\{\(\) => setLatestRunModalSelection\(null\)\}/,
+    ],
+    forbiddenPatterns: [
+      /setLatestRunModal\(\{ job, run: latestRun \}\)/,
+    ],
+  },
+  {
     name: "SQL collapsed workspace stays in the visible grid column",
     file: "src/pages/sql/SqlAnalysisPage.module.css",
     patterns: [
