@@ -11,7 +11,26 @@ from pathlib import Path
 from typing import Any
 
 from pyspark.sql import DataFrame, SparkSession
-from pyspark.sql.functions import array, array_except, array_union, col, concat, current_timestamp, explode, from_json, get_json_object, lit, map_keys, min as spark_min, max as spark_max, size, transform, when
+from pyspark.sql.functions import (
+    array,
+    array_except,
+    array_union,
+    col,
+    concat,
+    count as spark_count,
+    current_timestamp,
+    explode,
+    from_json,
+    get_json_object,
+    lit,
+    map_keys,
+    max as spark_max,
+    min as spark_min,
+    percentile_approx,
+    size,
+    transform,
+    when,
+)
 from pyspark.sql.types import BooleanType, DoubleType, LongType, MapType, StringType, StructField, StructType, TimestampType
 
 from kafka_schema_paths import build_nested_schema_tree, expected_object_keys, json_path, split_source_path
@@ -109,6 +128,7 @@ METRICS: dict[str, Any] = {
     "lastBatchDurationMs": None,
     "lastBatchInputRows": 0,
     "throughputRowsPerSecond": None,
+    "endToEndLatency": None,
     "replayedCount": 0,
     **INITIAL_METRICS,
 }
@@ -1019,6 +1039,82 @@ def batch_source_ranges(batch: DataFrame) -> list[dict[str, Any]]:
     ], key=lambda item: (item["topic"], item["partition"]))
 
 
+def batch_input_metrics(batch: DataFrame) -> tuple[int, dict[str, Any]]:
+    measured_at_ms = int(time.time() * 1000)
+    raw_latency_ms = lit(float(measured_at_ms)) - (col("kafka_timestamp").cast("double") * lit(1000.0))
+    latency_ms = when(
+        col("kafka_timestamp").isNotNull(),
+        when(raw_latency_ms < 0, lit(0.0)).otherwise(raw_latency_ms),
+    )
+    row = (batch.select(latency_ms.alias("latency_ms"))
+        .agg(
+            spark_count(lit(1)).alias("total_count"),
+            spark_count("latency_ms").alias("latency_sample_count"),
+            percentile_approx("latency_ms", [0.5, 0.95, 0.99], 10_000).alias("latency_percentiles"),
+        )
+        .first())
+    total = int(row["total_count"] or 0)
+    sample_count = int(row["latency_sample_count"] or 0)
+    percentiles = list(row["latency_percentiles"] or [])
+    return total, {
+        "method": "kafka-record-timestamp-to-target-commit",
+        "sampleCount": sample_count,
+        "timestampMissingCount": max(total - sample_count, 0),
+        "sourceAgeP50Ms": round(float(percentiles[0]), 3) if len(percentiles) > 0 else None,
+        "sourceAgeP95Ms": round(float(percentiles[1]), 3) if len(percentiles) > 1 else None,
+        "sourceAgeP99Ms": round(float(percentiles[2]), 3) if len(percentiles) > 2 else None,
+    }
+
+
+def committed_latency_metrics(baseline: dict[str, Any], duration_ms: int, measured_at: str) -> dict[str, Any]:
+    def completed_percentile(name: str) -> float | None:
+        value = baseline.get(name)
+        return round(float(value) + duration_ms, 3) if value is not None else None
+
+    return {
+        "method": baseline.get("method"),
+        "sampleCount": int(baseline.get("sampleCount") or 0),
+        "timestampMissingCount": int(baseline.get("timestampMissingCount") or 0),
+        "p50Ms": completed_percentile("sourceAgeP50Ms"),
+        "p95Ms": completed_percentile("sourceAgeP95Ms"),
+        "p99Ms": completed_percentile("sourceAgeP99Ms"),
+        "measuredAt": measured_at,
+    }
+
+
+def merge_latency_summary(previous: Any, current: dict[str, Any], batch_id: int) -> dict[str, Any]:
+    existing = previous if isinstance(previous, dict) else {}
+    raw_last_included_batch_id = existing.get("lastIncludedBatchId")
+    last_included_batch_id = (
+        int(raw_last_included_batch_id)
+        if raw_last_included_batch_id is not None
+        else -1
+    )
+    if batch_id <= last_included_batch_id:
+        return existing
+
+    def worst_percentile(name: str) -> float | None:
+        values = [value for value in (existing.get(name), current.get(name)) if value is not None]
+        return max(float(value) for value in values) if values else None
+
+    return {
+        "aggregation": "worst-successful-batch-percentile",
+        "method": current.get("method"),
+        "batchCount": int(existing.get("batchCount") or 0) + 1,
+        "sampleCount": int(existing.get("sampleCount") or 0) + int(current.get("sampleCount") or 0),
+        "timestampMissingCount": (
+            int(existing.get("timestampMissingCount") or 0)
+            + int(current.get("timestampMissingCount") or 0)
+        ),
+        "p50Ms": worst_percentile("p50Ms"),
+        "p95Ms": worst_percentile("p95Ms"),
+        "p99Ms": worst_percentile("p99Ms"),
+        "measuredAt": current.get("measuredAt"),
+        "lastIncludedBatchId": batch_id,
+        "latest": current,
+    }
+
+
 def normalized_source_ranges(value: Any) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         return []
@@ -1067,6 +1163,13 @@ def main() -> None:
     for key, value in recovered_rule_metrics(PUBLISHED_BATCHES).items():
         RULE_METRICS[key] = max(RULE_METRICS[key], value)
     if PUBLISHED_BATCHES:
+        for published_batch in PUBLISHED_BATCHES:
+            if isinstance(published_batch.get("endToEndLatency"), dict):
+                METRICS["endToEndLatency"] = merge_latency_summary(
+                    METRICS.get("endToEndLatency"),
+                    published_batch["endToEndLatency"],
+                    int(published_batch.get("batchId") or 0),
+                )
         latest = PUBLISHED_BATCHES[-1]
         LAST_BATCH_ID = int(latest.get("batchId") or 0)
         LAST_FLUSH_AT = str(latest.get("publishedAt") or "") or None
@@ -1133,7 +1236,7 @@ def main() -> None:
     def write_persisted_batch(batch: DataFrame, batch_id: int, persisted_frames: list[DataFrame]) -> None:
         global LAST_BATCH_STORED_COUNT, LAST_BATCH_QUARANTINED_COUNT, LAST_BATCH_WRITTEN, PUBLISHED_BATCHES, LAST_BATCH_EVIDENCE, CURRENT_BATCH_CONTEXT
         batch_started_at = time.monotonic()
-        total = batch.count()
+        total, latency_baseline = batch_input_metrics(batch)
         test_batch_delay("batch_started")
         if total == 0:
             # Keep the last non-empty batch publication visible to the control
@@ -1166,6 +1269,12 @@ def main() -> None:
             LAST_BATCH_STORED_COUNT = int(published.get("storedCount") or 0)
             LAST_BATCH_QUARANTINED_COUNT = int(published.get("quarantinedCount") or 0)
             LAST_BATCH_WRITTEN = True
+            if isinstance(published.get("endToEndLatency"), dict):
+                METRICS["endToEndLatency"] = merge_latency_summary(
+                    METRICS.get("endToEndLatency"),
+                    published["endToEndLatency"],
+                    batch_id,
+                )
             PUBLISHED_BATCHES = sorted(
                 [
                     item for item in PUBLISHED_BATCHES
@@ -1385,6 +1494,7 @@ def main() -> None:
         published_at = now()
         stage_durations["manifestDurationMs"] = 0
         batch_duration_ms = max(0, round((time.monotonic() - batch_started_at) * 1000))
+        end_to_end_latency = committed_latency_metrics(latency_baseline, batch_duration_ms, published_at)
         batch_dag_steps = build_batch_dag_steps(
             status="success",
             consumed_count=total,
@@ -1423,6 +1533,7 @@ def main() -> None:
             "transform": rule_execution["transform"],
             "quality": rule_execution["quality"],
             "durationMs": batch_duration_ms,
+            "endToEndLatency": end_to_end_latency,
             "dataPath": data_path,
             "quarantinePath": quarantine_batch_path,
             "schemaEvidencePath": evidence_batch_path,
@@ -1430,6 +1541,11 @@ def main() -> None:
             "dagSteps": batch_dag_steps,
         }
         write_batch_manifest(spark, output_path, batch_id, published_manifest)
+        METRICS["endToEndLatency"] = merge_latency_summary(
+            METRICS.get("endToEndLatency"),
+            end_to_end_latency,
+            batch_id,
+        )
         PUBLISHED_BATCHES = sorted(
             [
                 item for item in PUBLISHED_BATCHES

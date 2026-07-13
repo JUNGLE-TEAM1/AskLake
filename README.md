@@ -54,6 +54,7 @@ npm run spark:validate
 ```
 
 For the MinIO 100GB and 1GB-per-type Spark validation flow, see [docs/minio-100gb-spark-harness.md](docs/minio-100gb-spark-harness.md).
+For Kafka/Spark load, fault, latency, and EMR billed-cost evidence, see [docs/kafka-spark-phase7-validation.md](docs/kafka-spark-phase7-validation.md).
 For source connector setup and per-source input values, see [docs/source-connector-test-guide.md](docs/source-connector-test-guide.md).
 
 ## Docs

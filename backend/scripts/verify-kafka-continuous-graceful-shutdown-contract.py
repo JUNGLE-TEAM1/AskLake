@@ -23,6 +23,16 @@ def main() -> None:
     assert source.index("write_batch_manifest(") < source.index('report("running", batch_id=batch_id)', source.index("def write_persisted_batch"))
     assert 'test_batch_delay("batch_started")' in source
     assert 'test_batch_delay("after_data_write")' in source
+    assert "def batch_input_metrics" in source
+    assert 'percentile_approx("latency_ms", [0.5, 0.95, 0.99], 10_000)' in source
+    assert '"method": "kafka-record-timestamp-to-target-commit"' in source
+    assert "def merge_latency_summary" in source
+    assert '"aggregation": "worst-successful-batch-percentile"' in source
+    assert 'raw_last_included_batch_id = existing.get("lastIncludedBatchId")' in source
+    assert '"endToEndLatency": end_to_end_latency' in source
+    latency_commit = source.index("end_to_end_latency = committed_latency_metrics")
+    assert source.index('test_batch_delay("after_data_write")') < latency_commit
+    assert latency_commit < source.index("write_batch_manifest(", latency_commit)
 
     manager = MANAGER.read_text(encoding="utf-8")
     assert 'String(process.env.APP_ENV || "").trim().toLowerCase() === "production"' in manager

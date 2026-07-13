@@ -5724,7 +5724,7 @@ def continuous_session_dag_steps(
     return steps
 
 
-def refresh_kafka_continuous_runtime(db: Session, job: ETLJobModel) -> None:
+def refresh_kafka_continuous_runtime(db: Session | None, job: ETLJobModel) -> None:
     if job.execution_mode != "continuous":
         return
     runtime = etl_repository.lock_kafka_continuous_runtime(db, job.id) if db is not None else etl_repository.get_kafka_continuous_runtime(db, job.id)
@@ -5732,17 +5732,19 @@ def refresh_kafka_continuous_runtime(db: Session, job: ETLJobModel) -> None:
         return
     report_path = continuous_runtime_report_path(job.id)
     worker_status = continuous_worker_status(job, runtime)
-    admission_reservation = emr_admission_repository.latest_for_job(
-        db,
-        job.id,
-        workload="continuous",
-    )
-    admission_reservation = sync_emr_reservation(
-        db,
-        admission_reservation,
-        worker_status,
-        commit=False,
-    )
+    admission_reservation = None
+    if db is not None:
+        admission_reservation = emr_admission_repository.latest_for_job(
+            db,
+            job.id,
+            workload="continuous",
+        )
+        admission_reservation = sync_emr_reservation(
+            db,
+            admission_reservation,
+            worker_status,
+            commit=False,
+        )
     runtime.metrics = {
         **(runtime.metrics or {}),
         **continuous_worker_runtime_metrics(worker_status),
@@ -5818,6 +5820,7 @@ def refresh_kafka_continuous_runtime(db: Session, job: ETLJobModel) -> None:
     rule_metrics = payload.get("ruleMetrics") if isinstance(payload.get("ruleMetrics"), dict) else None
     last_rule_result = payload.get("lastRuleResult") if isinstance(payload.get("lastRuleResult"), dict) else None
     last_batch_evidence = payload.get("lastBatchEvidence") if isinstance(payload.get("lastBatchEvidence"), dict) else None
+    end_to_end_latency = payload.get("endToEndLatency") if isinstance(payload.get("endToEndLatency"), dict) else None
     previous_metrics = {
         **previous_metrics,
         **({"ruleContractVersion": optional_string(payload.get("ruleContractVersion"))} if payload.get("ruleContractVersion") else {}),
@@ -5826,6 +5829,7 @@ def refresh_kafka_continuous_runtime(db: Session, job: ETLJobModel) -> None:
         **({"ruleMetrics": rule_metrics} if rule_metrics is not None else {}),
         **({"lastRuleResult": last_rule_result} if last_rule_result is not None else {}),
         **({"lastBatchEvidence": last_batch_evidence} if last_batch_evidence is not None else {}),
+        **({"endToEndLatency": end_to_end_latency} if end_to_end_latency is not None else {}),
     }
     if emr_cancel_in_progress:
         runtime_status = "pausing" if requested_terminal_status == "paused" else "stopping"

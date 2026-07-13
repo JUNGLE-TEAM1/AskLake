@@ -71,6 +71,19 @@ export type KafkaContinuousRuntime = {
   lastBatchDurationMs?: number | null;
   lastBatchInputRows: number;
   throughputRowsPerSecond?: number | null;
+  endToEndLatency?: {
+    aggregation?: "worst-successful-batch-percentile" | null;
+    method?: string | null;
+    batchCount?: number;
+    sampleCount: number;
+    timestampMissingCount?: number;
+    p50Ms?: number | null;
+    p95Ms?: number | null;
+    p99Ms?: number | null;
+    measuredAt?: string | null;
+    lastIncludedBatchId?: number;
+    latest?: Record<string, unknown> | null;
+  } | null;
   schemaVersion: number;
   schemaFingerprint?: string | null;
   schemaStatus: string;

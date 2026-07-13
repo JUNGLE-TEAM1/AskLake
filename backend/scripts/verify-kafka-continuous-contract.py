@@ -216,6 +216,17 @@ def main() -> None:
         "lastBatchDurationMs": 2000,
         "lastBatchInputRows": 20,
         "throughputRowsPerSecond": 10.0,
+        "endToEndLatency": {
+            "aggregation": "worst-successful-batch-percentile",
+            "batchCount": 2,
+            "method": "kafka-record-timestamp-to-target-commit",
+            "sampleCount": 20,
+            "timestampMissingCount": 0,
+            "p50Ms": 750.0,
+            "p95Ms": 1400.0,
+            "p99Ms": 1800.0,
+            "measuredAt": "2026-07-14T00:00:02Z",
+        },
         "replayedCount": 1,
         "ruleContractVersion": "1.0",
         "ruleFingerprint": "rule-v1",
@@ -244,6 +255,7 @@ def main() -> None:
     assert runtime_schema.schema_status == "drift_detected"
     assert runtime_schema.rule_fingerprint == "rule-v1"
     assert runtime_schema.rule_metrics["qualityQuarantinedCount"] == 2
+    assert runtime_schema.end_to_end_latency["p95Ms"] == 1400.0
     assert runtime_schema.runtime_provider == "emr-serverless"
     assert runtime_schema.runtime_job_id == "jr-stream-contract"
     assert runtime_schema.runtime_attempt == 2
@@ -550,6 +562,17 @@ def main() -> None:
                     "storedCount": 5,
                     "quarantinedCount": 0,
                     "failedCount": 0,
+                    "endToEndLatency": {
+                        "aggregation": "worst-successful-batch-percentile",
+                        "batchCount": 1,
+                        "method": "kafka-record-timestamp-to-target-commit",
+                        "sampleCount": 5,
+                        "timestampMissingCount": 0,
+                        "p50Ms": 600.0,
+                        "p95Ms": 1200.0,
+                        "p99Ms": 1500.0,
+                        "measuredAt": "2026-07-14T00:00:02Z",
+                    },
                 },
                 "runtime": "emr-serverless",
                 "runtimeLogReference": {"provider": "s3", "uri": "s3://asklake-logs/attempts/3/"},
@@ -562,6 +585,8 @@ def main() -> None:
             assert runtime.metrics["runtimeJobId"] == "jr-stream-live"
             assert runtime.metrics["runtimeAttempt"] == 3
             assert runtime.metrics["runtimeLogReference"]["provider"] == "s3"
+            assert runtime.metrics["endToEndLatency"]["p95Ms"] == 1200.0
+            assert runtime.metrics["endToEndLatency"]["aggregation"] == "worst-successful-batch-percentile"
 
             runtime.status = "pausing"
             etl_service.continuous_worker_status = lambda _job, _runtime: {

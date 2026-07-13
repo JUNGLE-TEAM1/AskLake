@@ -1332,6 +1332,7 @@ const checks = [
       /document\.visibilityState === "hidden"/,
       /schedule\(result\.ok \? 3000/,
       /title="스트림 세션 이력"/,
+      /label="E2E P95 \(최악 Batch\)"/,
       /title="세션 Batch 상세"/,
       /label="세션 누적 적재"/,
       /label="현재 데이터셋"/,

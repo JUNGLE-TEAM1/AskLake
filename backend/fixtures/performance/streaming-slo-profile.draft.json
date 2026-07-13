@@ -1,0 +1,108 @@
+{
+  "schemaVersion": "asklake.streaming-slo-profile.v1",
+  "profileId": "phase7-staging-draft",
+  "approvalStatus": "draft",
+  "approvedBy": null,
+  "approvedAt": null,
+  "environment": "staging",
+  "region": "ap-northeast-2",
+  "currency": "USD",
+  "minimumSuccessfulRuns": 3,
+  "requiredEvidence": {
+    "latencyPercentiles": true,
+    "billedResourceUtilization": true,
+    "cloudWatchMetrics": true,
+    "outputFileMetrics": true,
+    "actualCost": false
+  },
+  "scenarioThresholds": {
+    "small-steady": {
+      "minAverageThroughputRowsPerSecond": null,
+      "maxP95EndToEndLatencyMs": null,
+      "maxFinalLag": 0,
+      "maxCostUsd": null,
+      "maxSmallFileRatio": null
+    },
+    "ramp": {
+      "minAverageThroughputRowsPerSecond": null,
+      "maxP95EndToEndLatencyMs": null,
+      "maxFinalLag": 0,
+      "maxCostUsd": null
+    },
+    "burst": {
+      "minAverageThroughputRowsPerSecond": null,
+      "maxP95EndToEndLatencyMs": null,
+      "maxBacklogRecoverySeconds": null,
+      "maxFinalLag": 0,
+      "maxCostUsd": null
+    },
+    "backlog": {
+      "minAverageThroughputRowsPerSecond": null,
+      "maxP95EndToEndLatencyMs": null,
+      "maxBacklogRecoverySeconds": null,
+      "maxFinalLag": 0,
+      "maxCostUsd": null
+    },
+    "capacity-cap": {
+      "minAverageThroughputRowsPerSecond": null,
+      "maxP95EndToEndLatencyMs": null,
+      "maxFinalLag": 0,
+      "maxCostUsd": null
+    },
+    "scale-down": {
+      "maxP95EndToEndLatencyMs": null,
+      "maxCostUsd": null
+    },
+    "multi-continuous": {
+      "minAverageThroughputRowsPerSecond": null,
+      "maxP95EndToEndLatencyMs": null,
+      "maxFinalLag": 0,
+      "maxCostUsd": null
+    },
+    "continuous-with-batch": {
+      "minAverageThroughputRowsPerSecond": null,
+      "maxP95EndToEndLatencyMs": null,
+      "maxFinalLag": 0,
+      "maxCostUsd": null
+    },
+    "kafka-disconnect": {
+      "maxFaultRecoverySeconds": null,
+      "maxFinalLag": 0,
+      "maxCostUsd": null
+    },
+    "s3-write-failure": {
+      "maxFaultRecoverySeconds": null,
+      "maxCostUsd": null
+    },
+    "schema-quarantine-surge": {
+      "minAverageThroughputRowsPerSecond": null,
+      "maxP95EndToEndLatencyMs": null,
+      "minQuarantineRatio": null,
+      "maxQuarantineRatio": null,
+      "maxCostUsd": null
+    },
+    "emr-job-failure": {
+      "maxFaultRecoverySeconds": null,
+      "maxCostUsd": null
+    },
+    "backend-restart": {
+      "maxFaultRecoverySeconds": null,
+      "maxFinalLag": 0,
+      "maxCostUsd": null
+    },
+    "checkpoint-permission": {
+      "maxCostUsd": null
+    },
+    "invalid-authentication": {
+      "maxCostUsd": null
+    },
+    "poison-records": {
+      "minAverageThroughputRowsPerSecond": null,
+      "maxP95EndToEndLatencyMs": null,
+      "minQuarantineRatio": null,
+      "maxQuarantineRatio": null,
+      "maxFinalLag": 0,
+      "maxCostUsd": null
+    }
+  }
+}

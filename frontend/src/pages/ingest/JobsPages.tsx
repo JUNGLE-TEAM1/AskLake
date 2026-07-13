@@ -2471,6 +2471,7 @@ function ContinuousRuntimeCard({ job }: { job: JobRowData }) {
         <Field label="실패" value={runtime?.failedCount?.toLocaleString() ?? "0"} />
         <Field label="Kafka Lag" value={runtime?.lagAvailable ? `${runtime.lag?.toLocaleString() ?? 0}건 · 최대 ${runtime.maxPartitionLag?.toLocaleString() ?? 0}` : "측정 대기"} />
         <Field label="처리량" value={runtime?.throughputRowsPerSecond != null ? `${runtime.throughputRowsPerSecond.toLocaleString()} rows/s` : "-"} />
+        <Field label="E2E P95 (최악 Batch)" value={runtime?.endToEndLatency?.p95Ms != null ? `${runtime.endToEndLatency.p95Ms.toLocaleString()}ms · ${runtime.endToEndLatency.batchCount?.toLocaleString() ?? "-"} batches / ${runtime.endToEndLatency.sampleCount.toLocaleString()} samples` : "측정 대기"} />
         <Field label="최근 Batch" value={runtime?.lastBatchDurationMs != null ? `${runtime.lastBatchInputRows.toLocaleString()}건 · ${runtime.lastBatchDurationMs.toLocaleString()}ms` : "-"} />
         <Field label="Schema" value={`v${runtime?.schemaVersion ?? 1} · ${runtime?.schemaStatus ?? "stable"}`} />
         <Field label="Rule 계약" value={`v${runtime?.ruleContractVersion ?? "1.0"} · ${runtime?.ruleFingerprint?.slice(0, 10) ?? "대기"}`} />

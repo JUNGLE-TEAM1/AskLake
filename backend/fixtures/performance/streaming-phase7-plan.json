@@ -1,0 +1,112 @@
+{
+  "schemaVersion": "asklake.streaming-test-plan.v1",
+  "planId": "phase7-load-fault-cost",
+  "namespacePrefix": "asklake.staging.phase7",
+  "safety": {
+    "requiresExplicitOptIn": true,
+    "dedicatedEnvironment": true,
+    "allowDestructiveCleanup": false,
+    "defaultRuntime": "local-docker",
+    "awsRuntimeRequiresSeparateApproval": true
+  },
+  "loadScenarios": [
+    {
+      "id": "small-steady",
+      "executor": "local-soak",
+      "purpose": "낮은 지속 입력에서 불필요한 과도 확장이 없는지 확인한다.",
+      "recordedMetrics": ["throughput", "latency", "lag", "executor", "cost", "output-files"]
+    },
+    {
+      "id": "ramp",
+      "executor": "aws-staging",
+      "purpose": "입력을 단계적으로 높일 때 executor가 승인된 상한 안에서 증가하는지 확인한다.",
+      "recordedMetrics": ["throughput", "latency", "lag", "executor", "cloudwatch", "cost"]
+    },
+    {
+      "id": "burst",
+      "executor": "local-soak",
+      "purpose": "순간 burst 뒤 peak lag와 정상 회복을 확인한다.",
+      "recordedMetrics": ["throughput", "latency", "lag", "backlog-recovery", "cost"]
+    },
+    {
+      "id": "backlog",
+      "executor": "local-soak",
+      "purpose": "worker 시작 전 backlog를 누락 없이 해소하는 시간과 비용을 확인한다.",
+      "recordedMetrics": ["throughput", "latency", "lag", "backlog-recovery", "integrity", "cost"]
+    },
+    {
+      "id": "capacity-cap",
+      "executor": "aws-staging",
+      "purpose": "Application 자원 상한에서 비용 폭주나 무한 대기가 발생하지 않는지 확인한다.",
+      "recordedMetrics": ["throughput", "latency", "lag", "executor", "admission", "cost"]
+    },
+    {
+      "id": "scale-down",
+      "executor": "aws-staging",
+      "purpose": "입력 감소 후 worker 자원이 축소되고 유휴 비용이 지속되지 않는지 확인한다.",
+      "recordedMetrics": ["executor", "cloudwatch", "latency", "cost"]
+    },
+    {
+      "id": "multi-continuous",
+      "executor": "aws-staging",
+      "purpose": "여러 Continuous가 공정하게 자원을 사용하거나 FIFO queue에 들어가는지 확인한다.",
+      "recordedMetrics": ["admission", "queue", "throughput", "latency", "lag", "cost"]
+    },
+    {
+      "id": "continuous-with-batch",
+      "executor": "aws-staging",
+      "purpose": "Continuous와 Batch의 Application·quota 격리가 실제 부하에서도 유지되는지 확인한다.",
+      "recordedMetrics": ["admission", "throughput", "latency", "lag", "executor", "cost"]
+    }
+  ],
+  "faultScenarios": [
+    {
+      "id": "kafka-disconnect",
+      "executor": "local-soak",
+      "purpose": "Kafka 일시 단절 후 checkpoint에서 재개하는지 확인한다.",
+      "recordedMetrics": ["fault-recovery", "integrity", "lag"]
+    },
+    {
+      "id": "s3-write-failure",
+      "executor": "local-soak",
+      "purpose": "object storage 쓰기 실패가 성공 manifest로 오인되지 않는지 확인한다.",
+      "recordedMetrics": ["fault-recovery", "integrity", "failure-stage"]
+    },
+    {
+      "id": "schema-quarantine-surge",
+      "executor": "local-soak",
+      "purpose": "schema drift와 quarantine 급증을 설명 가능한 카운터로 보존하는지 확인한다.",
+      "recordedMetrics": ["quarantine", "latency", "throughput", "integrity"]
+    },
+    {
+      "id": "emr-job-failure",
+      "executor": "aws-staging",
+      "purpose": "원격 Job 실패와 retry/재시작 증적이 보존되는지 확인한다.",
+      "recordedMetrics": ["fault-recovery", "retry", "cloudwatch", "cost"]
+    },
+    {
+      "id": "backend-restart",
+      "executor": "local-soak",
+      "purpose": "backend 재시작 후 실행 중 Runtime과 같은 Job Run을 다시 찾는지 확인한다.",
+      "recordedMetrics": ["fault-recovery", "integrity", "runtime-identity"]
+    },
+    {
+      "id": "checkpoint-permission",
+      "executor": "aws-staging",
+      "purpose": "checkpoint 접근 권한 오류를 명확히 실패시키고 새 checkpoint로 우회하지 않는지 확인한다.",
+      "recordedMetrics": ["failure-stage", "runtime-identity", "cost"]
+    },
+    {
+      "id": "invalid-authentication",
+      "executor": "aws-staging",
+      "purpose": "잘못된 MSK 인증을 분류하고 credential을 evidence에 남기지 않는지 확인한다.",
+      "recordedMetrics": ["failure-code", "redaction", "cost"]
+    },
+    {
+      "id": "poison-records",
+      "executor": "local-soak",
+      "purpose": "처리 불가능한 레코드 연속 유입을 quarantine으로 설명하고 정상 레코드 진행을 유지하는지 확인한다.",
+      "recordedMetrics": ["quarantine", "throughput", "latency", "integrity"]
+    }
+  ]
+}

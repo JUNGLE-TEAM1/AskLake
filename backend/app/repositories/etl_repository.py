@@ -803,6 +803,7 @@ def continuous_runtime_to_schema(runtime: KafkaContinuousRuntimeModel | None) ->
         last_batch_duration_ms=metrics.get("lastBatchDurationMs"),
         last_batch_input_rows=int(metrics.get("lastBatchInputRows") or 0),
         throughput_rows_per_second=metrics.get("throughputRowsPerSecond"),
+        end_to_end_latency=metrics.get("endToEndLatency"),
         schema_version=int(schema_state.get("schemaVersion") or 1),
         schema_fingerprint=schema_state.get("schemaFingerprint"),
         schema_status=str(schema_state.get("schemaStatus") or "stable"),

@@ -1,0 +1,95 @@
+{
+  "schemaVersion": "asklake.streaming-performance-evidence.v1",
+  "runId": "example-backlog-001",
+  "exampleOnly": true,
+  "scenarioId": "backlog",
+  "runtime": "emr-serverless",
+  "startedAt": "2026-07-14T00:00:00.000Z",
+  "completedAt": "2026-07-14T00:02:00.000Z",
+  "environment": {
+    "name": "staging",
+    "region": "ap-northeast-2",
+    "sourceRevision": "example-only"
+  },
+  "workload": {
+    "messageCount": 100000,
+    "messageBytesAverage": 1024,
+    "inputPattern": "retained-backlog"
+  },
+  "tuning": {
+    "topicPartitions": 24,
+    "triggerIntervalSeconds": 5,
+    "maxOffsetsPerTrigger": 500000,
+    "maxExecutors": 20,
+    "applicationMaxVcpu": 40,
+    "applicationMaxMemoryGb": 160
+  },
+  "counts": {
+    "produced": 100000,
+    "consumed": 100000,
+    "stored": 99000,
+    "quarantined": 1000,
+    "replayed": 0,
+    "failed": 0,
+    "missing": 0,
+    "unexplainedDuplicates": 0
+  },
+  "throughputSamplesRowsPerSecond": [750, 880, 920, 910],
+  "averageThroughputRowsPerSecond": 833.333,
+  "lagSamples": [100000, 75000, 40000, 10000, 0],
+  "executorSamples": [2, 4, 8, 12, 4],
+  "latency": {
+    "aggregation": "worst-successful-batch-percentile",
+    "batchCount": 24,
+    "sampleCount": 100000,
+    "timestampMissingCount": 0,
+    "p50Ms": 450,
+    "p95Ms": 900,
+    "p99Ms": 1400,
+    "method": "kafka-record-timestamp-to-target-commit"
+  },
+  "recovery": {
+    "backlogRecoverySeconds": 118,
+    "faultRecoverySeconds": null
+  },
+  "resources": {
+    "executorMin": 2,
+    "executorMax": 12,
+    "executorAverage": 6,
+    "peakCpuVcpu": 24,
+    "peakMemoryGb": 92,
+    "cloudWatchMetricPeriodSeconds": 60
+  },
+  "emrJobRun": {
+    "applicationId": "00exampleapplication",
+    "jobRunId": "00examplejobrun",
+    "attempt": 1,
+    "totalExecutionDurationSeconds": 120,
+    "billedResourceUtilization": {
+      "vCPUHour": 0.8,
+      "memoryGBHour": 3.2,
+      "storageGBHour": 1.0
+    }
+  },
+  "output": {
+    "bytes": 85000000,
+    "fileCount": 24,
+    "smallFileCount": 2,
+    "smallFileThresholdBytes": 16777216
+  },
+  "cost": {
+    "actualCostUsd": null,
+    "additionalCostUsd": 0.01,
+    "priceSnapshot": {
+      "exampleOnly": true,
+      "region": "ap-northeast-2",
+      "architecture": "x86_64",
+      "currency": "USD",
+      "effectiveAt": "2026-07-14T00:00:00.000Z",
+      "sourceUrl": "https://aws.amazon.com/emr/pricing/",
+      "vCPUHourUsd": 0.06,
+      "memoryGBHourUsd": 0.007,
+      "storageGBHourUsd": 0.0002
+    }
+  }
+}

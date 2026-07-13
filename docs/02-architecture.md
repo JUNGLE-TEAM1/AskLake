@@ -158,6 +158,20 @@ EMR Batch는 `FastAPI -> Airflow -> Node bridge -> EMR Serverless -> S3 Parquet/
 - 비용은 configured vCPU/memory/disk 시간당 단가에 요청 상한을 곱한 비교용 최대 시간당 추정치다. 실제 사용량/청구액은 Phase 7 부하·비용 검증에서 CloudWatch와 Cost Explorer 근거로 별도 측정한다.
 - `GET /api/admin/runtime-capacity`와 관리 콘솔 실행 용량 탭이 정책, 현재 예약량, 최근 판단을 제공한다. Batch는 `taskStates.sparkResult.emrAdmission`, Continuous는 `continuousRuntime.admission`으로 같은 예약을 사용자 실행 상세에 투영한다.
 
+### Phase 7 성능 evidence 경계
+
+부하·장애·비용 검증은 제품 상태 DB를 성능 결과 저장소로 재사용하지 않는다. `streaming-phase7-plan.json`이 부하 8종과 장애 8종 및 전용 환경 안전 조건을, `streaming-slo-profile.draft.json`이 승인 전 SLO를, 실행별 `asklake.streaming-performance-evidence.v1`이 입력·정합성·처리량·지연·lag·복구·자원·output file·비용 근거를 소유한다. report engine은 반복 실행의 workload/tuning fingerprint가 같을 때만 한 시나리오로 묶고 JSON/Markdown을 만든다.
+
+- 입력 누락과 설명되지 않은 중복은 항상 `failed`다.
+- SLO가 draft이거나 최소 반복 수, latency, CloudWatch, EMR billed resource 또는 output file 근거가 없으면 `insufficient-evidence`다.
+- profile과 evidence의 environment/region이 다르면 `failed`다. 장애 scenario는 실제 주입과 기대 결과가 필수이고 terminal fault는 정규화 failure code도 필요하다.
+- `GetJobRun.billedResourceUtilization`의 vCPU/memory/storage 세 필드에 evidence와 같은 region/architecture 단가 snapshot을 곱한 값은 비교용 비용이며 S3/MSK/CloudWatch/data transfer와 Cost Explorer 실제 비용을 별도로 기록할 수 있다.
+- CloudWatch는 period 값만으로 충분하지 않고 executor 표본과 peak CPU/memory가 함께 있어야 한다.
+- local runner는 Redpanda/Docker Spark/MinIO의 정합성·복구 회귀에 사용한다. EMR autoscaling, MSK 처리량과 AWS 비용은 전용 staging에서만 승인할 수 있다.
+- Continuous worker의 `endToEndLatency`는 Kafka record timestamp age percentile과 target commit까지의 batch duration으로 각 micro-batch P50/P95/P99를 계산한다. payload의 임의 event time이 아니다. batch manifest는 해당 batch 값을 보존하고 runtime은 checkpoint에서 복구 가능한 `worst-successful-batch-percentile` summary를 유지한다. runtime P95는 성공 batch별 P95의 최댓값인 보수적 지표이며 전체 record를 다시 합친 global percentile로 표현하지 않는다.
+
+실제 부하 실행은 제품 API가 자동으로 AWS 인프라를 생성하거나 장애를 주입하는 흐름이 아니다. repo runner는 명시적 opt-in과 전용 local 환경을 요구하며, AWS-only scenario는 placeholder template만 만든다. 운영자는 승인된 staging에서 export한 증적으로 report를 생성한 뒤에만 Phase 8 Runtime 전환을 검토한다. 상세 절차는 [Kafka·Spark Phase 7 부하·장애·비용 검증](kafka-spark-phase7-validation.md)을 따른다.
+
 ### Kafka Runtime과 Amazon MSK 연결 경계
 
 Kafka 연결 설정의 source of truth는 `backend/src/kafkaRuntime.mjs`다. 기본 `redpanda` Runtime은 기존 `ASKLAKE_KAFKA_BROKER`와 무인증 plaintext 연결을 유지한다. `ASKLAKE_KAFKA_RUNTIME=msk`는 `ASKLAKE_MSK_ENABLED=true`, IAM bootstrap broker, AWS region을 모두 요구하고 MSK Serverless의 IAM SASL/OAUTHBEARER + TLS만 허용한다. Node client는 AWS 공식 signer와 default credential chain을 사용하며 access key, secret, session token을 별도 Kafka 설정이나 로그에 저장하지 않는다.

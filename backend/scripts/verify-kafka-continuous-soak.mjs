@@ -12,6 +12,7 @@ const requestedCount = optionalPositiveInt(process.env.ASKLAKE_CONTINUOUS_SOAK_C
 const syntheticCount = requestedCount || 1000;
 const rate = positiveInt(process.env.ASKLAKE_CONTINUOUS_SOAK_RATE, 500);
 const batchSize = positiveInt(process.env.ASKLAKE_CONTINUOUS_SOAK_BATCH_SIZE, 100);
+const partitionCount = positiveInt(process.env.ASKLAKE_CONTINUOUS_SOAK_PARTITIONS, 1);
 const malformedPercent = Math.min(Math.max(Number(process.env.ASKLAKE_CONTINUOUS_SOAK_MALFORMED_PERCENT || 1), 0), 100);
 const schemaChangeAt = positiveInt(process.env.ASKLAKE_CONTINUOUS_SOAK_SCHEMA_CHANGE_AT, Math.floor((requestedCount || 1000) / 2));
 const injectSchemaChange = process.env.ASKLAKE_CONTINUOUS_SOAK_SCHEMA_CHANGE !== "false";
@@ -20,42 +21,62 @@ if (!["none", "worker", "backend", "kafka", "minio"].includes(faultMode)) throw 
 const faultAfter = positiveInt(process.env.ASKLAKE_CONTINUOUS_SOAK_FAULT_AFTER || process.env.ASKLAKE_CONTINUOUS_SOAK_KILL_AFTER, Math.floor((requestedCount || 1000) / 2));
 const faultDurationMs = positiveInt(process.env.ASKLAKE_CONTINUOUS_SOAK_FAULT_DURATION_MS, 5000);
 const verifyCompaction = process.env.ASKLAKE_CONTINUOUS_SOAK_COMPACT === "true";
+const triggerIntervalSeconds = positiveInt(process.env.ASKLAKE_CONTINUOUS_SOAK_TRIGGER_SECONDS, 2);
+const maxOffsetsPerTrigger = positiveInt(process.env.ASKLAKE_CONTINUOUS_SOAK_MAX_OFFSETS_PER_TRIGGER, Math.max(batchSize, 100));
+const startWorkerAfterProduce = process.env.ASKLAKE_CONTINUOUS_SOAK_START_WORKER_AFTER_PRODUCE === "true";
+const resourceSampling = process.env.ASKLAKE_CONTINUOUS_SOAK_RESOURCE_SAMPLING !== "false";
+const resourceSampleIntervalMs = positiveInt(process.env.ASKLAKE_CONTINUOUS_SOAK_RESOURCE_SAMPLE_INTERVAL_MS, 5000);
 const baseUrl = process.env.ASKLAKE_CONTINUOUS_E2E_BASE_URL || "http://127.0.0.1:8080";
 const composeFile = process.env.ASKLAKE_CONTINUOUS_COMPOSE_FILE || "../deploy/docker-compose.prod.yml";
 const envFile = process.env.ASKLAKE_CONTINUOUS_ENV_FILE || "../deploy/.env";
 const suffix = Date.now().toString(36);
-const topic = `asklake.continuous.soak.${suffix}`;
+const topicPrefix = String(process.env.ASKLAKE_CONTINUOUS_SOAK_TOPIC_PREFIX || "asklake.continuous.soak").trim().toLowerCase();
+if (!/^[a-z0-9][a-z0-9._-]{0,160}$/.test(topicPrefix)) throw new Error("ASKLAKE_CONTINUOUS_SOAK_TOPIC_PREFIX must be a safe Kafka topic prefix.");
+const topic = `${topicPrefix}.${suffix}`;
 const target = `continuous_soak_${suffix}`;
 let jobId = "";
 let producedCount = 0;
+let producedBytes = 0;
 let peakLag = 0;
 let peakThroughput = 0;
 let recoveryMs = null;
 let faultInjected = false;
 let streamStopped = false;
+let workerStarted = false;
+let workerStartedAt = null;
+let inputCompletedAt = null;
+let allRecordsConsumedAt = null;
 let pausedService = "";
 const startedAt = Date.now();
+const startedAtIso = new Date(startedAt).toISOString();
+let lastResourceSampleAt = 0;
+let resourceSampleCount = 0;
+const resourceSamplingErrors = [];
+const resourcePeaks = {};
 
 try {
-  rpk(["topic", "create", topic]);
+  rpk(["topic", "create", topic, "--partitions", String(partitionCount)]);
   const created = await post("/api/etl/jobs", jobPayload());
   jobId = created.job.id;
-  await post(`/api/etl/jobs/${encodeURIComponent(jobId)}/commands`, { command: "startContinuous" });
-  await waitFor(async () => (await getJob()).continuousRuntime?.status === "running", "worker startup");
+  if (!startWorkerAfterProduce) await startWorker();
   if (inputPath) await produceInputFile();
   else await produceSynthetic();
+  inputCompletedAt = new Date().toISOString();
   if (producedCount === 0) throw new Error("The soak input did not contain any records.");
+  if (startWorkerAfterProduce) await startWorker();
   await waitFor(async () => {
     const job = await getJob();
     observe(job.continuousRuntime);
     return (job.continuousRuntime?.consumedCount || 0) >= producedCount ? job : null;
   }, "all produced records", 900000);
+  allRecordsConsumedAt = new Date().toISOString();
   const finalJob = await waitFor(async () => {
     const job = await getJob();
     observe(job.continuousRuntime);
     return (job.continuousRuntime?.lastBatchInputRows || 0) > 0 ? job : null;
   }, "non-empty batch metrics", 30000);
   const runtime = finalJob.continuousRuntime;
+  sampleResourceUsage(true);
   const reconciled = runtime.storedCount + runtime.quarantinedCount - (runtime.replayedCount || 0);
   const dataset = await waitFor(async () => {
     const list = await datasets();
@@ -70,8 +91,13 @@ try {
     compaction = await post(`/api/etl/jobs/${encodeURIComponent(jobId)}/continuous/compactions`, { targetFileSizeMb: 256 });
   }
   const report = {
+    schemaVersion: "asklake.kafka-continuous-soak.v2",
+    startedAt: startedAtIso,
+    completedAt: new Date().toISOString(),
     inputPath: inputPath || null,
     producedCount,
+    producedBytes,
+    averageMessageBytes: producedCount ? Math.round(producedBytes / producedCount) : 0,
     consumedCount: runtime.consumedCount,
     storedCount: runtime.storedCount,
     quarantinedCount: runtime.quarantinedCount,
@@ -79,13 +105,48 @@ try {
     missingCount: Math.max(producedCount - reconciled, 0),
     duplicateCount: Math.max(reconciled - producedCount, 0),
     peakLag,
+    finalLag: Number(runtime.lag || 0),
+    maxPartitionLag: Number(runtime.maxPartitionLag || 0),
+    laggingPartitionCount: Number(runtime.laggingPartitionCount || 0),
     peakThroughputRowsPerSecond: peakThroughput,
+    finalThroughputRowsPerSecond: Number(runtime.throughputRowsPerSecond || 0),
+    lastBatchDurationMs: Number(runtime.lastBatchDurationMs || 0),
+    lastBatchInputRows: Number(runtime.lastBatchInputRows || 0),
+    endToEndLatency: runtime.endToEndLatency || null,
     recoveryMs,
+    backlogRecoveryMs: startWorkerAfterProduce && workerStartedAt && allRecordsConsumedAt
+      ? Math.max(Date.parse(allRecordsConsumedAt) - Date.parse(workerStartedAt), 0)
+      : null,
+    workerStartedAt,
+    inputCompletedAt,
+    allRecordsConsumedAt,
     faultMode,
+    faultInjected,
     elapsedMs: Date.now() - startedAt,
     catalogMaterializationCount: dataset.materializationRuns?.length || 0,
     workerLogLineCount: logs.lines?.length || 0,
     compaction: compaction?.result || null,
+    tuning: {
+      requestedCount: requestedCount || syntheticCount,
+      rate,
+      producerBatchSize: batchSize,
+      partitionCount,
+      triggerIntervalSeconds,
+      maxOffsetsPerTrigger,
+      malformedPercent,
+      schemaChange: injectSchemaChange,
+      schemaChangeAt,
+      faultAfter,
+      faultDurationMs,
+      startWorkerAfterProduce,
+    },
+    resourceUsage: {
+      enabled: resourceSampling,
+      samples: resourceSampleCount,
+      sampleIntervalMs: resourceSampleIntervalMs,
+      containers: resourcePeaks,
+      errors: resourceSamplingErrors,
+    },
     topic,
     target,
   };
@@ -98,6 +159,14 @@ try {
     try { compose(["unpause", pausedService]); } catch { /* Best-effort fault cleanup. */ }
   }
   if (jobId && !streamStopped) await post(`/api/etl/jobs/${encodeURIComponent(jobId)}/commands`, { command: "stopContinuous" }).catch(() => undefined);
+}
+
+async function startWorker() {
+  await post(`/api/etl/jobs/${encodeURIComponent(jobId)}/commands`, { command: "startContinuous" });
+  await waitFor(async () => (await getJob()).continuousRuntime?.status === "running", "worker startup");
+  workerStarted = true;
+  workerStartedAt = new Date().toISOString();
+  sampleResourceUsage(true);
 }
 
 function jobPayload() {
@@ -121,8 +190,8 @@ function jobPayload() {
     executionMode: "continuous",
     continuousConfig: {
       initialOffsetPolicy: "earliest",
-      triggerIntervalSeconds: 2,
-      maxOffsetsPerTrigger: Math.max(batchSize, 100),
+      triggerIntervalSeconds,
+      maxOffsetsPerTrigger,
       schemaEvolutionPolicy: {
         additiveNullable: "allow",
         missingRequired: "quarantine",
@@ -188,15 +257,18 @@ function normalizeInputRecord(line, index) {
 }
 
 async function produceBatch(records) {
-  rpk(["topic", "produce", topic], `${records.join("\n")}\n`);
+  const payload = `${records.join("\n")}\n`;
+  rpk(["topic", "produce", topic], payload);
   producedCount += records.length;
+  producedBytes += Buffer.byteLength(payload);
   await maybeInjectFault();
   await sleep(Math.ceil((records.length / rate) * 1000));
   observe((await getJob()).continuousRuntime);
+  sampleResourceUsage();
 }
 
 async function maybeInjectFault() {
-  if (faultMode === "none" || faultInjected || producedCount < faultAfter) return;
+  if (!workerStarted || faultMode === "none" || faultInjected || producedCount < faultAfter) return;
   faultInjected = true;
   const failureStarted = Date.now();
   if (faultMode === "worker") {
@@ -232,6 +304,80 @@ function shouldInjectMalformed(index) {
 function observe(runtime) {
   peakLag = Math.max(peakLag, Number(runtime?.lag || 0));
   peakThroughput = Math.max(peakThroughput, Number(runtime?.throughputRowsPerSecond || 0));
+}
+
+function sampleResourceUsage(force = false) {
+  if (!resourceSampling) return;
+  const now = Date.now();
+  if (!force && now - lastResourceSampleAt < resourceSampleIntervalMs) return;
+  lastResourceSampleAt = now;
+  const result = spawnSync("docker", ["stats", "--no-stream", "--format", "{{json .}}"], {
+    encoding: "utf8",
+    maxBuffer: 8 * 1024 * 1024,
+  });
+  if (result.status !== 0) {
+    resourceSamplingErrors.push(String(result.stderr || "docker stats failed").trim().slice(0, 500));
+    return;
+  }
+  resourceSampleCount += 1;
+  for (const line of String(result.stdout || "").split(/\r?\n/).filter(Boolean)) {
+    let sample;
+    try {
+      sample = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const name = String(sample.Name || sample.Container || "unknown");
+    if (!isRelevantContainer(name)) continue;
+    const cpuPercent = parsePercent(sample.CPUPerc);
+    const memoryBytes = parseBytes(String(sample.MemUsage || "").split("/")[0]);
+    const current = resourcePeaks[name] || {
+      peakCpuPercent: 0,
+      peakMemoryBytes: 0,
+      latestMemoryUsage: null,
+      latestNetworkIo: null,
+      latestBlockIo: null,
+      latestPids: null,
+      samples: 0,
+    };
+    current.peakCpuPercent = Math.max(current.peakCpuPercent, cpuPercent);
+    current.peakMemoryBytes = Math.max(current.peakMemoryBytes, memoryBytes);
+    current.latestMemoryUsage = sample.MemUsage || null;
+    current.latestNetworkIo = sample.NetIO || null;
+    current.latestBlockIo = sample.BlockIO || null;
+    current.latestPids = Number.parseInt(sample.PIDs || "", 10) || null;
+    current.samples += 1;
+    resourcePeaks[name] = current;
+  }
+}
+
+function isRelevantContainer(name) {
+  const normalized = name.toLowerCase();
+  return ["spark", "redpanda", "minio", "backend", "kafka-stream"].some((token) => normalized.includes(token));
+}
+
+function parsePercent(value) {
+  const parsed = Number.parseFloat(String(value || "").replace("%", ""));
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+}
+
+function parseBytes(value) {
+  const match = String(value || "").trim().match(/^([0-9.]+)\s*([kmgt]?i?b)?$/i);
+  if (!match) return 0;
+  const amount = Number(match[1]);
+  const unit = String(match[2] || "b").toLowerCase();
+  const factors = {
+    b: 1,
+    kb: 1000,
+    mb: 1000 ** 2,
+    gb: 1000 ** 3,
+    tb: 1000 ** 4,
+    kib: 1024,
+    mib: 1024 ** 2,
+    gib: 1024 ** 3,
+    tib: 1024 ** 4,
+  };
+  return Math.round(amount * (factors[unit] || 1));
 }
 
 function rpk(args, input = "") { run("docker", ["compose", "--env-file", envFile, "-f", composeFile, "exec", "-T", "redpanda", "rpk", ...args], input); }

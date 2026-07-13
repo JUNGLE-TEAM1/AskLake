@@ -295,6 +295,7 @@ class KafkaContinuousRuntime(CamelModel):
     last_batch_duration_ms: int | None = None
     last_batch_input_rows: int = 0
     throughput_rows_per_second: float | None = None
+    end_to_end_latency: dict[str, Any] | None = None
     schema_version: int = 1
     schema_fingerprint: str | None = None
     schema_status: str = "stable"

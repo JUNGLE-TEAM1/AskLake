@@ -177,6 +177,40 @@ npm run build
 
 첫 명령은 resource estimator/application preflight와 file DB의 동시 요청을 실행해 정확히 한 요청만 active slot을 받고 다음 요청은 queued가 되는지, queue overflow·actor quota·단일 Job 자원 초과·terminal release·admin projection을 검증한다. 실제 PostgreSQL/EMR staging에서는 동시에 두 Run을 제출해 `GET /api/admin/runtime-capacity`의 active/queued 수와 AWS Job Run 상태가 일치하는지 추가 확인한다. 이 검증은 처리량/실제 청구액 측정이 아니며 Phase 7 부하·비용 시험과 분리한다.
 
+### Phase 7 부하·장애·비용 검증
+
+Docker/AWS side effect가 없는 계약 검증은 다음 두 명령으로 실행한다.
+
+```bash
+cd backend
+npm run verify:streaming-load-plan
+npm run verify:streaming-performance-contract
+```
+
+`verify:streaming-load-plan`은 부하 8종·장애 8종, local/AWS 실행 위치, 명시적 opt-in과 전용 환경 규칙을 확인한다. `verify:streaming-performance-contract`는 정합성 hard gate, 장애 주입/기대 결과, environment/region, 실제 CloudWatch executor/CPU/memory 표본, P50/P95/P99·lag·복구·output file·비용 threshold, draft/approved SLO, 최소 반복 수, configuration fingerprint, 민감정보 차단과 JSON/Markdown을 확인한다.
+
+실제 local 실행은 고유 topic/Job을 만들고 Compose service에 fault를 주입할 수 있으므로 두 환경 변수가 모두 필요하다.
+
+```bash
+cd backend
+ASKLAKE_RUN_STREAMING_LOAD_FAULT=true \
+ASKLAKE_STREAMING_TEST_DEDICATED_ENVIRONMENT=true \
+npm run streaming:load-fault -- --scenario backlog
+```
+
+AWS-only scenario는 repo script가 resource를 만들거나 장애를 주입하지 않는다. `npm run streaming:load-fault -- --prepare-aws ramp --run-id <id>`로 evidence template을 만들고, 승인된 staging 실행의 AskLake runtime/session/batch, `GetJobRun.billedResourceUtilization`, 1분 CloudWatch Job Worker Metrics와 S3 file 목록으로 placeholder를 교체한다. 같은 workload/tuning으로 최소 3회 실행한 뒤 아래 명령으로 판정한다.
+
+```bash
+npm run streaming:performance-report -- \
+  --profile fixtures/performance/streaming-slo-profile.draft.json \
+  --evidence tmp/streaming-performance/<run-1>.evidence.json \
+  --evidence tmp/streaming-performance/<run-2>.evidence.json \
+  --evidence tmp/streaming-performance/<run-3>.evidence.json \
+  --run-id <review-id>
+```
+
+`failed`는 exit 1, `insufficient-evidence`는 exit 2다. SLO threshold `null`, draft approval, 반복 부족, 장애 주입/결과 누락 또는 필수 latency/CloudWatch/billed resource/output file 누락을 통과로 처리하지 않는다. `streaming-evidence.example.json`은 parser 테스트용이며 실제 성능·단가가 아니다. 전체 시나리오, evidence shape와 AWS 절차는 [Kafka·Spark Phase 7 부하·장애·비용 검증](kafka-spark-phase7-validation.md)을 따른다.
+
 ```bash
 export AIRFLOW_EXECUTION_API_TOKEN=asklake-local-airflow-execution
 docker compose up airflow-init

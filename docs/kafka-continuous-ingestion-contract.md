@@ -158,7 +158,7 @@ type JobCommand =
 ## 9. Runtime Observability Contract
 
 - Every worker report includes `partitionProgress`, keyed by Kafka partition, with `processedOffset`, `latestOffset`, and non-negative `lag`.
-- Runtime summary exposes `lag`, `maxPartitionLag`, `laggingPartitionCount`, `lastBatchDurationMs`, `lastBatchInputRows`, `throughputRowsPerSecond`, cumulative `replayedCount`, Rule fingerprints, `ruleMetrics`, and `lastRuleResult`.
+- Runtime summary exposes `lag`, `maxPartitionLag`, `laggingPartitionCount`, `lastBatchDurationMs`, `lastBatchInputRows`, `throughputRowsPerSecond`, optional `endToEndLatency`, cumulative `replayedCount`, Rule fingerprints, `ruleMetrics`, and `lastRuleResult`. Each batch manifest records that batch's Kafka record timestamp→target commit approximate P50/P95/P99. The checkpoint-recoverable runtime summary uses `aggregation=worst-successful-batch-percentile`: it exposes the maximum of each successful batch percentile plus cumulative batch/sample/missing-timestamp counts and the latest batch value. This is a conservative worst-batch indicator, not a mathematically merged global record percentile.
 - Kafka latest-offset lookup failure does not stop a healthy stream. The report marks lag availability and preserves the previous processed offset.
 - Worker logs are read through `GET /api/etl/jobs/{jobId}/continuous/logs`. The response is bounded, strips ANSI control sequences, masks common credential/token forms, and requires Job `view` permission.
 - A stream start/resume creates one durable session row. Pause, stop, or failure closes that row; a later restart creates a new session while reusing the same checkpoint.
