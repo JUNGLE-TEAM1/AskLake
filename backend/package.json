@@ -35,6 +35,8 @@
     "verify:dashboard-assistant-guard": "node scripts/verify-dashboard-assistant-guard.mjs",
     "verify:sources": "node scripts/verify-all-sources.mjs",
     "verify:spark-run": "node scripts/verify-spark-job-run.mjs",
+    "verify:prefix-spark-e2e": "node scripts/verify-prefix-spark-e2e.mjs",
+    "synthetic-commerce:upload": "node scripts/upload-synthetic-commerce.mjs",
     "minio:seed-click-log": "node scripts/seed-minio-click-log.mjs",
     "minio:seed-verify": "node scripts/seed-minio-verify-sample.mjs",
     "minio:prepare-samples": "node scripts/prepare-minio-samples.mjs",

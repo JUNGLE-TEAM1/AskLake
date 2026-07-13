@@ -12,6 +12,7 @@ type SourceAssetTreeProps = {
   loadingPath?: string;
   selectedPath: string;
   onOpenFolder?: (folderPath: string) => void | Promise<void>;
+  onSelectFolder?: (folderPath: string) => void | Promise<void>;
   onSelect: (assetPath: string) => void | Promise<void>;
 };
 
@@ -41,6 +42,7 @@ export function SourceAssetTree({
   loadingPath = "",
   selectedPath,
   onOpenFolder,
+  onSelectFolder,
   onSelect,
 }: SourceAssetTreeProps) {
   const { nodeIds, nodes } = useMemo(() => buildSourceAssetTree(assets), [assets]);
@@ -83,7 +85,7 @@ export function SourceAssetTree({
 
   const renderNode = (node: SourceAssetTreeNode, depth = 0): React.ReactNode => {
     const canSelectFile = !node.isFolder && typeof node.assetIndex === "number";
-    const isSelected = canSelectFile && node.path === selectedPath;
+    const isSelected = node.path === selectedPath;
     const isExpanded = expandedItems.includes(node.id);
     const folderMeta = node.path === loadingPath
       ? LABELS.loading
@@ -93,37 +95,51 @@ export function SourceAssetTree({
 
     return (
       <div className="source-asset-tree-item" key={node.id}>
-        <TreeRow
-          aria-expanded={node.isFolder ? isExpanded : undefined}
-          className={isSelected ? "source-asset-tree-label active" : "source-asset-tree-label"}
-          expanded={node.isFolder ? isExpanded : undefined}
-          leaf={!node.isFolder}
-          level={depth}
-          selected={isSelected}
-          title={node.path}
-          onClick={(event) => {
-            event.stopPropagation();
-            if (node.isFolder) {
-              toggleFolder(node);
-              return;
-            }
-            if (canSelectFile) {
-              void onSelect(node.path);
-            }
-          }}
-        >
-          <span
-            className={node.isFolder ? "source-asset-disclosure folder" : "source-asset-disclosure"}
-            aria-hidden="true"
+        <div className={node.isFolder && onSelectFolder ? "source-asset-tree-row has-dataset-action" : "source-asset-tree-row"}>
+          <TreeRow
+            aria-expanded={node.isFolder ? isExpanded : undefined}
+            className={isSelected ? "source-asset-tree-label active" : "source-asset-tree-label"}
+            expanded={node.isFolder ? isExpanded : undefined}
+            leaf={!node.isFolder}
+            level={depth}
+            selected={isSelected}
+            title={node.path}
+            onClick={(event) => {
+              event.stopPropagation();
+              if (node.isFolder) {
+                toggleFolder(node);
+                return;
+              }
+              if (canSelectFile) {
+                void onSelect(node.path);
+              }
+            }}
           >
-            {node.isFolder ? (isExpanded ? "v" : ">") : ""}
-          </span>
-          <span className={node.isFolder ? "source-asset-kind folder" : "source-asset-kind file"}>
-            {node.isFolder ? LABELS.folder : LABELS.file}
-          </span>
-          <strong>{node.name}</strong>
-          <em>{node.isFolder ? folderMeta : node.meta}</em>
-        </TreeRow>
+            <span
+              className={node.isFolder ? "source-asset-disclosure folder" : "source-asset-disclosure"}
+              aria-hidden="true"
+            >
+              {node.isFolder ? (isExpanded ? "v" : ">") : ""}
+            </span>
+            <span className={node.isFolder ? "source-asset-kind folder" : "source-asset-kind file"}>
+              {node.isFolder ? LABELS.folder : LABELS.file}
+            </span>
+            <strong>{node.name}</strong>
+            <em>{node.isFolder ? folderMeta : node.meta}</em>
+          </TreeRow>
+          {node.isFolder && onSelectFolder ? (
+            <button
+              aria-label={`${node.path} 이 폴더를 데이터셋으로 선택`}
+              aria-pressed={isSelected}
+              className={isSelected ? "source-asset-dataset-action active" : "source-asset-dataset-action"}
+              title={`${node.path} 전체를 하나의 데이터셋으로 선택`}
+              type="button"
+              onClick={() => void onSelectFolder(node.path)}
+            >
+              이 폴더를 데이터셋으로 선택
+            </button>
+          ) : null}
+        </div>
         {node.isFolder && isExpanded ? (
           <TreeGroup className="source-asset-tree-group" level={depth + 1}>
             {node.children.map((child) => renderNode(child, depth + 1))}

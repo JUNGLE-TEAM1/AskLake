@@ -22,6 +22,7 @@ REVIEW_ROW_ANALYSIS_SUPPORTED_METHODS = {
     "one_of_values",
     "instruction",
 }
+NESTED_COLUMN_REFERENCE_PREFIX = "__ASKLAKE_NESTED_REF__:"
 REVIEW_ROW_ANALYSIS_METHOD_ALIASES = {
     "copy_or_extract_field": "copy",
     "custom_instruction": "instruction",
@@ -57,7 +58,10 @@ def main():
     output_path = os.environ.get("ASKLAKE_SPARK_OUTPUT_PATH", "-")
     run_id = os.environ.get("ASKLAKE_SPARK_RUN_ID", "unknown")
     spark = None
+    input_bytes = 0
+    input_file_count = 0
     input_rows = 0
+    output_file_count = 0
     quality = None
     transform = None
     canonical_snapshot = False
@@ -80,8 +84,32 @@ def main():
         canonical_snapshot = manifest.get("ruleContractVersion") == "1.0" and canonical_rules is not None
         canonical_runtime_supported = canonical_snapshot and supports_spark_snapshot_rules(canonical_rules)
         final_schema_columns = merge_rule_output_schema(schema_columns, manifest.get("ruleOutputSchema") or [])
+        source_selection = manifest.get("sourceSelection") if isinstance(manifest.get("sourceSelection"), dict) else {}
+        selection_kind = str(source_selection.get("kind") or "file").strip().lower()
+        dataset_format = str(source_selection.get("format") or source_format).strip().lower()
         spark = make_spark()
-        source_df = read_source(spark, source_format, source_path, schema_columns, record_parsing)
+        resolved_source = resolve_source_files(
+            spark,
+            source_path,
+            dataset_format,
+            selection_kind=selection_kind,
+        )
+        source_df = read_source(
+            spark,
+            source_format,
+            source_path,
+            schema_columns,
+            record_parsing,
+            dataset_format=dataset_format,
+            source_files=resolved_source["paths"],
+        )
+        if selection_kind == "prefix":
+            input_files = resolved_source["paths"]
+            input_bytes = int(resolved_source["bytes"])
+        else:
+            input_files = sorted(source_df.inputFiles()) or resolved_source["paths"]
+            input_bytes = source_file_bytes(spark, input_files)
+        input_file_count = len(input_files)
         input_rows = source_df.count() if row_limit <= 0 else source_df.limit(row_limit).count()
         working_df = source_df if row_limit <= 0 else source_df.limit(row_limit)
         normalized_df = normalize_columns(working_df)
@@ -113,7 +141,10 @@ def main():
                 "error": quality["summary"],
                 "failedStage": "Text Structuring Model Selection",
                 "format": source_format,
+                "inputBytes": input_bytes,
+                "inputFileCount": input_file_count,
                 "inputRows": input_rows,
+                "outputFileCount": 0,
                 "outputPath": output_path,
                 "outputRows": 0,
                 "quality": quality,
@@ -161,11 +192,16 @@ def main():
                 quality["quarantineLocation"] = quarantine_path
         resolved_partition_columns = resolve_partition_columns(output_df, partition_columns)
         delete_spark_path(spark, staging_path)
-        writer = output_df.write.mode("overwrite")
+        write_df = output_df
+        if selection_kind == "prefix" and input_file_count > 1:
+            max_partitions = max(2, int(os.environ.get("ASKLAKE_SPARK_PREFIX_OUTPUT_PARTITIONS_MAX", "32") or "32"))
+            write_df = output_df.repartition(min(input_file_count, max_partitions))
+        writer = write_df.write.mode("overwrite")
         if resolved_partition_columns:
             writer = writer.partitionBy(*resolved_partition_columns)
         writer.parquet(staging_path)
         staged_df = spark.read.parquet(staging_path)
+        output_file_count = len(staged_df.inputFiles())
         output_rows = staged_df.count()
         review_analysis_checks = []
         if not canonical_snapshot:
@@ -181,7 +217,11 @@ def main():
         text_structuring = text_structuring_manifest(transform_steps, review_analysis_checks)
         if text_structuring.get("definition", {}).get("columns"):
             quality["textStructuringExecution"] = text_structuring.get("execution", {})
-        sample_rows = collect_sample_rows(staged_df, 10)
+        sample_frame = staged_df.select(*[
+            F.col(quote_identifier(field.name))
+            for field in output_df.schema.fields
+        ])
+        sample_rows = collect_sample_rows(sample_frame, 10)
         if quality["status"] == "fail":
             delete_spark_path(spark, staging_path)
             ended_at = now_iso()
@@ -191,7 +231,10 @@ def main():
                 "error": quality["summary"],
                 "failedStage": "Quality",
                 "format": source_format,
+                "inputBytes": input_bytes,
+                "inputFileCount": input_file_count,
                 "inputRows": input_rows,
+                "outputFileCount": output_file_count,
                 "outputPath": output_path,
                 "outputRows": output_rows,
                 "quality": quality,
@@ -216,13 +259,17 @@ def main():
             return 1
         publish_spark_path(spark, staging_path, output_path)
         written_df = spark.read.parquet(output_path)
+        output_file_count = len(written_df.inputFiles())
         output_rows = written_df.count()
         ended_at = now_iso()
         result = {
             "durationMs": int(time.time() * 1000) - started_ms,
             "endedAt": ended_at,
             "format": source_format,
+            "inputBytes": input_bytes,
+            "inputFileCount": input_file_count,
             "inputRows": input_rows,
+            "outputFileCount": output_file_count,
             "outputPath": output_path,
             "outputRows": output_rows,
             "quality": quality,
@@ -253,14 +300,21 @@ def main():
                 pass
         ended_at = now_iso()
         error_message = str(exc)
+        failed_stage = getattr(exc, "failed_stage", None) or (
+            "Record Parsing"
+            if "RECORD_FIELD_COUNT_MISMATCH" in error_message or "RECORD_PARSING_" in error_message
+            else "Spark ETL"
+        )
         result = {
             "durationMs": int(time.time() * 1000) - started_ms,
             "endedAt": ended_at,
             "error": error_message,
-            "failedStage": "Record Parsing" if "RECORD_FIELD_COUNT_MISMATCH" in error_message or "RECORD_PARSING_" in error_message else "Spark ETL",
             "format": source_format,
-            "failedStage": getattr(exc, "failed_stage", "Spark"),
+            "failedStage": failed_stage,
+            "inputBytes": input_bytes,
+            "inputFileCount": input_file_count,
             "inputRows": input_rows,
+            "outputFileCount": output_file_count,
             "outputPath": output_path,
             "outputRows": 0,
             "runId": run_id,
@@ -312,21 +366,99 @@ def make_spark():
     return spark
 
 
-def read_source(spark, source_format, source_path, schema_columns, record_parsing=None):
+def read_source(
+    spark,
+    source_format,
+    source_path,
+    schema_columns,
+    record_parsing=None,
+    source_files=None,
+    dataset_format=None,
+):
+    paths = list(source_files or [])
+    read_path = paths if paths else source_path
     if source_format == "csv":
         infer_schema = "false" if schema_columns else "true"
-        return spark.read.option("header", "true").option("inferSchema", infer_schema).csv(source_path)
+        reader = spark.read.option("header", "true").option("inferSchema", infer_schema)
+        if str(dataset_format or "").strip().lower() == "tsv":
+            reader = reader.option("sep", "\t")
+        return reader.csv(read_path)
     if source_format == "jsonl":
-        return spark.read.option("multiLine", "false").json(source_path)
+        return spark.read.option("multiLine", "false").json(read_path)
     if source_format == "json":
-        return spark.read.option("multiLine", "true").json(source_path)
+        return spark.read.option("multiLine", "true").json(read_path)
     if source_format == "parquet":
-        return spark.read.parquet(source_path)
+        return spark.read.parquet(*paths) if paths else spark.read.parquet(source_path)
     if source_format in {"txt", "text"}:
         if isinstance(record_parsing, dict) and record_parsing.get("enabled"):
-            return read_whitespace_records(spark, source_path, record_parsing)
-        return spark.read.text(source_path)
+            text_path = ",".join(paths) if paths else source_path
+            return read_whitespace_records(spark, text_path, record_parsing)
+        return spark.read.text(read_path)
     raise ValueError(f"Unsupported Spark source format: {source_format}")
+
+
+def resolve_source_files(spark, source_path, source_format, selection_kind="file"):
+    if selection_kind != "prefix":
+        frame_paths = [source_path]
+        return {
+            "bytes": source_file_bytes(spark, frame_paths),
+            "paths": frame_paths,
+        }
+
+    root = spark._jvm.org.apache.hadoop.fs.Path(source_path)
+    filesystem = root.getFileSystem(spark.sparkContext._jsc.hadoopConfiguration())
+    pending = [root]
+    files = []
+    byte_count = 0
+    max_files = max(1, int(os.environ.get("ASKLAKE_SPARK_PREFIX_MAX_FILES", "100000") or "100000"))
+
+    while pending:
+        current = pending.pop()
+        for status in filesystem.listStatus(current):
+            if status.isDirectory():
+                pending.append(status.getPath())
+                continue
+            path = status.getPath().toString()
+            if not is_dataset_source_file(path, source_format):
+                continue
+            files.append(path)
+            byte_count += int(status.getLen())
+            if len(files) > max_files:
+                raise ValueError(f"SOURCE_PREFIX_FILE_LIMIT_EXCEEDED limit={max_files}")
+
+    files.sort()
+    if not files:
+        raise ValueError(f"SOURCE_PREFIX_EMPTY no {source_format} data files under {source_path}")
+    return {"bytes": byte_count, "paths": files}
+
+
+def is_dataset_source_file(path, source_format):
+    name = str(path or "").rstrip("/").rsplit("/", 1)[-1]
+    lowered = name.lower()
+    if not name or lowered in {"_success", "manifest.json"} or name.startswith(("_", ".")):
+        return False
+    extensions = {
+        "csv": (".csv", ".tsv"),
+        "json": (".json",),
+        "jsonl": (".jsonl", ".ndjson"),
+        "parquet": (".parquet",),
+        "text": (".txt", ".log", ".text"),
+        "txt": (".txt", ".log", ".text"),
+        "tsv": (".tsv",),
+    }
+    return lowered.endswith(extensions.get(str(source_format or "").lower(), ()))
+
+
+def source_file_bytes(spark, paths):
+    total = 0
+    configuration = spark.sparkContext._jsc.hadoopConfiguration()
+    for value in paths:
+        try:
+            path = spark._jvm.org.apache.hadoop.fs.Path(value)
+            total += int(path.getFileSystem(configuration).getFileStatus(path).getLen())
+        except Exception:
+            continue
+    return total
 
 
 def read_whitespace_records(spark, source_path, record_parsing):
@@ -2367,12 +2499,28 @@ def try_cast_double(frame, name):
 
 
 def resolve_column_name(frame, name):
-    if name in frame.columns:
-        return name
-    normalized = normalize_column_name(name)
+    raw_name = str(name or "").strip()
+    if raw_name in frame.columns:
+        return raw_name
+    normalized = normalize_column_name(raw_name)
     if normalized in frame.columns:
         return normalized
+    parts = [part for part in raw_name.split(".") if part]
+    if len(parts) > 1 and nested_field_exists(frame.schema, parts):
+        return f"{NESTED_COLUMN_REFERENCE_PREFIX}{'.'.join(parts)}"
     return ""
+
+
+def nested_field_exists(schema, parts):
+    current = schema
+    for part in parts:
+        if not isinstance(current, T.StructType):
+            return False
+        field = next((candidate for candidate in current.fields if candidate.name == part), None)
+        if field is None:
+            return False
+        current = field.dataType
+    return True
 
 
 def collect_sample_rows(frame, limit=10):
@@ -2388,7 +2536,11 @@ def collect_sample_rows(frame, limit=10):
 
 
 def quote_identifier(name):
-    return f"`{str(name).replace('`', '``')}`"
+    raw_name = str(name)
+    if raw_name.startswith(NESTED_COLUMN_REFERENCE_PREFIX):
+        parts = raw_name[len(NESTED_COLUMN_REFERENCE_PREFIX):].split(".")
+        return ".".join(f"`{part.replace('`', '``')}`" for part in parts)
+    return f"`{raw_name.replace('`', '``')}`"
 
 
 def normalize_columns(frame):

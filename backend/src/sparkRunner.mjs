@@ -188,6 +188,7 @@ function writeSparkJobManifest(manifestPath, job) {
     rules: job.rules ?? [],
     recordParsing: job.recordParsing ?? null,
     schemaColumns: job.schemaColumns ?? [],
+    sourceSelection: sourceSelectionFromJob(job),
     textStructuring: {
       columns: textStructuringColumns,
       specVersion: textStructuringColumns.length > 0 ? 1 : undefined,
@@ -195,6 +196,31 @@ function writeSparkJobManifest(manifestPath, job) {
     transformSteps: job.transformSteps ?? [],
   };
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+}
+
+function sourceSelectionFromJob(job) {
+  const sourceConfig = Array.isArray(job?.sourceConfig) ? job.sourceConfig : [];
+  const kind = String(fieldValue(sourceConfig, "__Selection Kind") || "file").trim().toLowerCase();
+  if (kind !== "prefix") return { kind: "file" };
+  return {
+    expectedFileCount: positiveInteger(fieldValue(sourceConfig, "__Source Unit Count")),
+    expectedTotalBytes: nonNegativeInteger(fieldValue(sourceConfig, "__Source Total Bytes")),
+    format: String(fieldValue(sourceConfig, "__Dataset Format") || fieldValue(sourceConfig, "File Type") || "").trim().toLowerCase(),
+    kind: "prefix",
+    prefix: normalizePrefix(fieldValue(sourceConfig, "Path / Prefix")),
+    representativeObject: fieldValue(sourceConfig, "__Sample Object") || "",
+    schemaFingerprint: fieldValue(sourceConfig, "__Schema Fingerprint") || "",
+  };
+}
+
+function positiveInteger(value) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function nonNegativeInteger(value) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined;
 }
 
 function textStructuringDefinitionColumns(transformSteps) {
@@ -276,19 +302,23 @@ function sparkSourceFromJob(job, runId) {
   const sourceConfig = Array.isArray(job.sourceConfig) ? job.sourceConfig : [];
   if (sourceType === "File / S3") {
     const bucket = normalizeBucketName(fieldValue(sourceConfig, "Bucket / Stage Name") || process.env.MINIO_BUCKET || "m3-raw");
-    const prefix = normalizeBucketRelativePath(
+    const selectionKind = String(fieldValue(sourceConfig, "__Selection Kind") || "file").trim().toLowerCase();
+    let prefix = normalizeBucketRelativePath(
       normalizeSourcePath(fieldValue(sourceConfig, "Path / Prefix")),
       bucket,
     );
+    if (selectionKind === "prefix") prefix = normalizePrefix(prefix);
     if (/^s3a?:\/\//i.test(prefix)) {
       return {
         format: inferFormat(sourceConfig, prefix, "csv"),
         path: toS3APath(prefix),
+        selectionKind,
       };
     }
     return {
       format: inferFormat(sourceConfig, prefix, "csv"),
       path: prefix ? `s3a://${bucket}/${prefix}` : `s3a://${bucket}/`,
+      selectionKind,
     };
   }
   if (sourceType === "Data Lake") {
@@ -493,8 +523,10 @@ function sparkRowLimitFromJob(job) {
 
 function inferFormat(sourceConfig, prefix, fallback) {
   const sampleObject = fieldValue(sourceConfig, "__Sample Object");
-  const fileType = String(fieldValue(sourceConfig, "File Type") || "").toLowerCase();
-  const probe = `${sampleObject} ${prefix} ${fileType}`.toLowerCase();
+  const configuredFormat = canonicalSparkSourceFormat(fieldValue(sourceConfig, "__Dataset Format"))
+    || canonicalSparkSourceFormat(fieldValue(sourceConfig, "File Type"));
+  if (configuredFormat) return configuredFormat;
+  const probe = `${sampleObject} ${prefix}`.toLowerCase();
   if (probe.includes(".jsonl") || probe.includes("jsonl") || probe.includes("ndjson")) return "jsonl";
   if (probe.includes(".json") || probe.includes("json")) return "json";
   if (probe.includes(".parquet") || probe.includes("parquet")) return "parquet";
@@ -502,6 +534,18 @@ function inferFormat(sourceConfig, prefix, fallback) {
   if (probe.includes(".tsv") || probe.includes("tsv")) return "csv";
   if (probe.includes(".csv") || probe.includes("csv")) return "csv";
   return fallback;
+}
+
+function canonicalSparkSourceFormat(value) {
+  const normalized = String(value || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "");
+  if (!normalized || ["auto", "autodetect", "automatic"].includes(normalized)) return "";
+  if (normalized.includes("jsonl") || normalized.includes("ndjson") || normalized.includes("jsonlines")) return "jsonl";
+  if (normalized === "json" || normalized.endsWith("json")) return "json";
+  if (normalized.includes("parquet")) return "parquet";
+  if (normalized.includes("tsv") || normalized.includes("tabseparated")) return "csv";
+  if (normalized.includes("csv") || normalized.includes("commaseparated")) return "csv";
+  if (normalized.includes("txt") || normalized.includes("text") || normalized.includes("log")) return "txt";
+  return "";
 }
 
 function toS3APath(value) {
