@@ -488,6 +488,18 @@ const checks = [
     ],
   },
   {
+    name: "Catalog metadata uses live detail values and schema samples",
+    file: "src/pages/catalog/CatalogPage.tsx",
+    patterns: [
+      /getCatalogDataset\(datasetId\)/,
+      /formatCatalogDateTime\(previewDataset\.lastUpdated\)/,
+      /className="catalog-result-description"/,
+      /const firstSampleRow = dataset\.sampleRows\[0\] \?\? \[\];/,
+      /accessorKey: "sample"/,
+      /header: "샘플"/,
+    ],
+  },
+  {
     name: "Catalog schema modal includes a paged actual-data viewer",
     file: "src/pages/catalog/CatalogPage.tsx",
     patterns: [

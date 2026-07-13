@@ -155,3 +155,11 @@
 - Dataset materialization run Card에는 `textStructuringExecution`을 기반으로 대상 컬럼, 실제 모델 또는 rule fallback을 `모델 기반 변환` provenance로 표시한다.
 - text structuring 검증에서 quarantine이 발생하면 같은 Card에 격리 행 수를 표시하고 전체 path는 title로 확인할 수 있다.
 - 모델별 accuracy, macro F1, validation rows의 상세 진단은 Catalog 목록이 아니라 Job Run의 선택 단계 상세가 담당한다.
+
+## Live Metadata And Schema Sample - Issue #649
+
+- 검색 결과 행은 Catalog API의 `description`을 데이터셋 이름·상태 옆 회색 보조 문구로 표시한다. ETL Target의 기본 정보에서 입력한 설명은 `targetDescription`으로 저장된 뒤 같은 Catalog 필드로 조회된다.
+- 우측 미리보기는 데이터셋 선택 시 `GET /api/catalog/datasets/{datasetId}`를 다시 조회해 목록 snapshot이 아닌 권한 적용된 최신 상세 payload로 기본 정보와 schema를 갱신한다. mock mode에서는 기존 fixture를 유지한다.
+- wire 계약의 `lastUpdated` ISO 값은 변경하지 않고 화면에서 `Asia/Seoul` 기준의 초 없는 한국어 날짜·시간으로 포맷한다. 상대 시간처럼 날짜로 파싱할 수 없는 기존 문구는 그대로 유지한다.
+- 전체 스키마 표의 임의 `NULL 허용` 값은 제거한다. `샘플` 열은 backend Catalog payload의 첫 `sampleRows` 행을 schema 컬럼 순서로 매핑하며 값이 없으면 `-`를 표시한다.
+- API request/response shape는 변경하지 않는다. `description`, `lastUpdated`, `schema`, `sampleRows`의 기존 Catalog 계약을 사용한다.
