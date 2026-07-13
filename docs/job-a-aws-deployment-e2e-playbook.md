@@ -82,8 +82,8 @@ Job A Phase 4의 체크리스트만 진행해줘.
 | provider mode 계약 테스트 | `[x]` | Node 검증과 Python 단위 테스트 통과 |
 | 로컬 MinIO 객체 왕복 | `[x]` | put/list/get/stat/delete 확인 |
 | 로컬 Spark S3A 읽기 | `[x]` | Spark 4.0.1에서 MinIO 입력 3행 읽기 확인 |
-| 실제 AWS S3 객체 왕복 | `[ ]` | 아직 put/list/get/delete 미검증 |
-| 실제 AWS S3 Spark 읽기 | `[ ]` | 아직 미검증 |
+| 실제 AWS S3 객체 왕복 | `[x]` | Raw 121 bytes put/list/get/checksum/delete, Output readiness put/head/delete 성공 |
+| 실제 AWS S3 Spark 읽기 | `[x]` | Spark 4.0.1 + S3A가 Raw CSV 4컬럼·5행을 정확히 읽음 |
 | 배포 브랜치 안정화 | `[x]` | 최신 `origin/dev` 19커밋 통합·충돌 해결·병합 후 검증 통과, 원격 task branch push 완료 |
 | EC2·IAM Role | `[ ]` | 존재 여부와 설정 미확인 |
 | AWS 배포 | `[ ]` | 미실행 |
@@ -161,16 +161,16 @@ EC2 문제를 섞기 전에 현재 AWS 계정과 실제 버킷이 데이터 파�
 
 ### 체크리스트
 
-- [ ] 네 버킷의 region·Public Access Block·encryption·ownership을 다시 읽는다. 현재 runtime 접근 검증은 Raw·Output만 대상으로 한다.
-- [ ] Raw 버킷에 작은 deterministic fixture를 업로드한다.
-- [ ] 같은 key가 목록에 나타나는지 확인한다.
-- [ ] 같은 객체를 다시 읽고 원본 checksum과 비교한다.
-- [ ] Output 버킷에서 임시 put/head/delete를 확인한다.
-- [ ] `verify-aws-s3-readiness.py`가 통과하는지 확인한다.
-- [ ] Spark 4.0.1이 `s3a://<raw-bucket>/<smoke-key>`를 읽는지 확인한다.
-- [ ] Spark가 읽은 schema와 행 수를 기록한다.
-- [ ] 임시 smoke 객체를 삭제하고 삭제 여부를 확인한다.
-- [ ] 장기 access key나 session token을 파일에 저장하지 않았는지 확인한다.
+- [x] 네 버킷의 region·Public Access Block·encryption·ownership을 다시 읽는다. 현재 runtime 접근 검증은 Raw·Output만 대상으로 한다.
+- [x] Raw 버킷에 작은 deterministic fixture를 업로드한다.
+- [x] 같은 key가 목록에 나타나는지 확인한다.
+- [x] 같은 객체를 다시 읽고 원본 checksum과 비교한다.
+- [x] Output 버킷에서 임시 put/head/delete를 확인한다.
+- [x] `verify-aws-s3-readiness.py`가 통과하는지 확인한다.
+- [x] Spark 4.0.1이 `s3a://<raw-bucket>/<smoke-key>`를 읽는지 확인한다.
+- [x] Spark가 읽은 schema와 행 수를 기록한다.
+- [x] 임시 smoke 객체를 삭제하고 삭제 여부를 확인한다.
+- [x] 장기 access key나 session token을 파일에 저장하지 않았는지 확인한다.
 
 ### 기준 환경
 
@@ -181,6 +181,13 @@ ASKLAKE_OBJECT_STORAGE_PROVIDER=aws
 S3_ENDPOINT=(빈 값)
 S3_FORCE_PATH_STYLE=false
 ```
+
+### 2026-07-13 실행 메모
+
+- `asklake` profile은 IAM 사용자 credential을 사용하므로 장기 key를 Spark container에 전달하지 않았다.
+- Spark smoke는 `sts:GetSessionToken`으로 받은 1시간 세션을 자식 shell과 container 환경에만 전달했다. 실제 값은 파일·명령 인자·문서·로그에 남기지 않았다.
+- Spark package cache는 `/private/tmp/asklake-phase1-spark-ivy`를 사용하고 container 기본 `spark` 사용자를 유지했다.
+- 최초 두 시도는 각각 기본 Ivy 경로와 임의 UID 사용자 이름 문제로 S3 접근 전에 종료됐다. 설정을 고친 최종 시도에서 같은 fixture를 성공적으로 읽었다.
 
 ### 완료 기준
 
@@ -495,6 +502,8 @@ Phase 완료 시 아래 표에 한 줄을 추가한다.
 | 2026-07-13 | Phase 0 baseline | `codex/aws-s3-storage-mode` pre-integration | tracked 41개, untracked 8개 | provider 계약, Python 13 tests, Compose config 통과 | secret pattern 미검출, diff check 통과 | 최신 `origin/dev` 19 commits, 겹치는 파일 24개 통합 필요 |
 | 2026-07-13 | Phase 0 dev integration | merge commit 전 | `origin/dev` 19 commits와 S3 provider 변경 | Trino revert 보존, Node provider 검증, Python 11+25 tests, UI 101 checks, frontend/Docker build, deploy dependency 검증 통과 | Production Compose는 AWS S3 readiness 뒤 backend 시작, 최신 dev 대비 diff check 통과 | merge commit·task branch push 필요; npm audit 1 moderate·1 high는 별도 dependency backlog |
 | 2026-07-13 | Phase 0 remote checkpoint | `codex/aws-s3-storage-mode` / `25ba2b1b` | 검증된 merge tree | GitHub 원격 branch push 성공 | 원격 branch가 최신 `origin/dev`와 S3 provider merge commit을 포함 | 다음 단계는 실제 AWS S3 객체·Spark 직접 검증 |
+| 2026-07-13 | Phase 1 S3 round-trip | `codex/aws-s3-storage-mode` / `02b479a3` | `__asklake_phase1/02b479a3/phase1-smoke.csv`, 121 bytes, data 5 rows | Raw put/list/get/checksum/delete와 Output readiness 성공 | SHA-256 `83bbb2037ede1f7ed313d19f21abc6bc1b31d6691bb5004253632cac5c055ddd`; Raw·Output test prefix 최종 empty | 없음 |
+| 2026-07-13 | Phase 1 Spark S3A | Spark 4.0.1 / hadoop-aws 3.4.1 | 실제 Raw `s3a://` CSV, STS 1-hour session | schema 4컬럼과 5행을 정확히 읽음 | `event_id:int`, `user_id:string`, `event_type:string`, `amount:int`; row 5개 | EC2 IAM Role은 Phase 2에서 별도 검증 |
 
 E2E Run은 아래 형식으로 추가 기록한다.
 
