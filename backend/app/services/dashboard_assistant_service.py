@@ -132,13 +132,11 @@ class DashboardAssistantService:
         context: AssistantDashboardContext,
         warning: str,
     ) -> DashboardAssistantResponse:
-        response = (
-            _build_visualization_mock_fallback(request, context)
-            if request.mode == DashboardAssistantMode.VISUALIZATION_REQUEST
-            else _build_dashboard_question_mock_fallback(request, context)
+        return DashboardAssistantResponse(
+            message="AI Assistant를 사용할 수 없어 요청을 실행하지 않았습니다.",
+            actions=[],
+            warnings=[*context.warnings, warning],
         )
-        response.warnings = [*context.warnings, warning, *response.warnings]
-        return response
 
     @staticmethod
     def _with_context_warnings(
