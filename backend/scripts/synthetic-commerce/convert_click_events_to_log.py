@@ -251,7 +251,7 @@ def positive_integer(value: str) -> int:
 def discover_input_files(input_path: Path) -> list[Path]:
     resolved = input_path.expanduser().resolve()
     if resolved.is_file():
-        if resolved.suffix.lower() not in SUPPORTED_INPUT_SUFFIXES:
+        if not is_supported_input_name(resolved.name):
             raise ConversionError(f"Input file must be JSONL or NDJSON: {resolved}")
         return [resolved]
     if not resolved.is_dir():
@@ -260,7 +260,7 @@ def discover_input_files(input_path: Path) -> list[Path]:
         (
             path.resolve()
             for path in resolved.rglob("*")
-            if path.is_file() and path.suffix.lower() in SUPPORTED_INPUT_SUFFIXES
+            if path.is_file() and is_supported_input_name(path.name)
         ),
         key=lambda path: path.relative_to(resolved).as_posix(),
     )
@@ -373,6 +373,10 @@ def convert_click_events_s3(
         raise ConversionError(f"S3 output object must use the .log extension: {output.uri}")
     if output == manifest:
         raise ConversionError("S3 output and manifest objects must be different.")
+    if manifest.key.lower().endswith(SUPPORTED_INPUT_SUFFIXES):
+        raise ConversionError(
+            f"S3 manifest object must not use a JSONL or NDJSON extension: {manifest.uri}"
+        )
     if multipart_part_size < MIN_MULTIPART_PART_SIZE:
         raise ConversionError(
             f"S3 multipart part size must be at least {MIN_MULTIPART_PART_SIZE} bytes."
@@ -608,7 +612,7 @@ def discover_s3_input_objects(client: Any, source: S3Location) -> list[S3ObjectR
             key = str(item.get("Key") or "")
             if source.key.lower().endswith(SUPPORTED_INPUT_SUFFIXES) and key != source.key:
                 continue
-            if not key.lower().endswith(SUPPORTED_INPUT_SUFFIXES):
+            if not is_supported_input_name(key.rsplit("/", 1)[-1]):
                 continue
             objects.append(
                 S3ObjectRef(
@@ -634,6 +638,14 @@ def normalize_s3_input_location(source: S3Location) -> S3Location:
     if source.key.lower().endswith(SUPPORTED_INPUT_SUFFIXES):
         return source
     return S3Location(source.bucket, f"{source.key.rstrip('/')}/")
+
+
+def is_supported_input_name(name: str) -> bool:
+    return (
+        bool(name)
+        and not name.startswith((".", "_"))
+        and name.lower().endswith(SUPPORTED_INPUT_SUFFIXES)
+    )
 
 
 def parse_s3_uri(value: str, *, require_key: bool) -> S3Location:

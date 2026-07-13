@@ -175,6 +175,8 @@ class ClickLogConverterTests(unittest.TestCase):
             input_dir.mkdir()
             write_jsonl(input_dir / "part-00001.jsonl", [click_event(2)])
             write_jsonl(input_dir / "part-00000.jsonl", [click_event(1)])
+            (input_dir / "_temporary.jsonl").write_text("not-json\n", encoding="utf-8")
+            (input_dir / ".partial.ndjson").write_text("not-json\n", encoding="utf-8")
             output = root / "click-events.log"
 
             result = converter.convert_click_events(input_dir, output, progress_every=10)
@@ -254,6 +256,8 @@ class ClickLogConverterTests(unittest.TestCase):
                 ("raw", "clicks/part-00001.jsonl"): second,
                 ("raw", "clicks/manifest.json"): b"{}",
                 ("raw", "clicks/part-00000.jsonl"): first,
+                ("raw", "clicks/_temporary.jsonl"): b"not-json\n",
+                ("raw", "clicks/.partial.ndjson"): b"not-json\n",
                 ("raw", "clickstream/part-ignored.jsonl"): encode_jsonl([click_event(9)]),
             },
             page_size=1,
@@ -300,6 +304,21 @@ class ClickLogConverterTests(unittest.TestCase):
             )
 
         self.assertEqual(client.objects[("processed", "click-events.log")], b"existing")
+        self.assertEqual(client.uploads, {})
+
+    def test_s3_manifest_cannot_be_selected_as_jsonl_on_the_next_run(self) -> None:
+        client = FakeS3Client(
+            {("raw", "clicks/part-00000.jsonl"): encode_jsonl([click_event(1)])}
+        )
+
+        with self.assertRaisesRegex(converter.ConversionError, "manifest object"):
+            converter.convert_click_events_s3(
+                client,
+                "s3://raw/clicks/",
+                "s3://processed/click-events.log",
+                manifest_uri="s3://raw/clicks/conversion-manifest.jsonl",
+            )
+
         self.assertEqual(client.uploads, {})
 
     def test_s3_upload_failure_aborts_multipart_and_preserves_existing_output(self) -> None:

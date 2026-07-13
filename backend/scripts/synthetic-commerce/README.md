@@ -116,7 +116,7 @@ npm run synthetic-commerce:click-log
 npm run verify:synthetic-click-log
 ```
 
-다른 로컬 파일이나 디렉터리는 명시적인 경로로 변환합니다. 디렉터리의 `.jsonl`/`.ndjson` object는 상대 경로 순서대로 병합됩니다.
+다른 로컬 파일이나 디렉터리는 명시적인 경로로 변환합니다. 디렉터리의 `.jsonl`/`.ndjson` object는 상대 경로 순서대로 병합하며 basename이 `.` 또는 `_`로 시작하는 임시·metadata 파일은 제외합니다.
 
 ```bash
 python3 scripts/synthetic-commerce/convert_click_events_to_log.py \
@@ -132,7 +132,7 @@ ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run synthetic-commerce:click-log -- 
   --output-s3-uri s3://raw-bucket/commerce/click-events.log
 ```
 
-S3 mode는 `backend/requirements.txt`의 boto3가 설치된 backend Python 환경에서 실행해야 합니다. 기본 manifest는 `s3://raw-bucket/commerce/click-events.log.manifest.json`에 저장됩니다. 입력 object별 행 수·byte·ETag·SHA-256, 전체 출력 행 수·byte·SHA-256과 Record Parsing 컬럼 초안이 포함됩니다. S3 목록의 ETag를 `GetObject If-Match`에 전달하므로 변환 중 입력 object가 바뀌면 실행을 실패시킵니다.
+S3 mode는 `backend/requirements.txt`의 boto3가 설치된 backend Python 환경에서 실행해야 합니다. 기본 manifest는 `s3://raw-bucket/commerce/click-events.log.manifest.json`에 저장됩니다. 입력 object별 행 수·byte·ETag·SHA-256, 전체 출력 행 수·byte·SHA-256과 Record Parsing 컬럼 초안이 포함됩니다. S3에서도 basename이 `.` 또는 `_`로 시작하는 object는 제외하고 목록의 ETag를 `GetObject If-Match`에 전달하므로 변환 중 입력 object가 바뀌면 실행을 실패시킵니다. Custom manifest는 다음 입력에 섞이지 않도록 `.jsonl`/`.ndjson` 확장자를 사용할 수 없습니다.
 
 로컬 MinIO처럼 path-style endpoint가 필요한 경우에만 endpoint 옵션을 추가합니다.
 
