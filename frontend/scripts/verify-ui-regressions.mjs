@@ -224,10 +224,23 @@ const checks = [
       /aria-label="실행 과정"/,
       /buildTrinoExecutionTimelineModel/,
       /className=\{styles\.root\}/,
+      /function IndeterminateProgress/,
+      /role="progressbar"/,
+      /행 읽음/,
+      /<span>읽은 행 <strong>/,
     ],
     forbiddenPatterns: [
       /sql-query-evaluation/,
       /sql-run-timeline/,
+    ],
+  },
+  {
+    name: "SQL page feature icons share the requested table glyph",
+    file: "src/pages/sql/SqlPageIcon.tsx",
+    patterns: [
+      /import \{ Table2, type LucideProps \} from "lucide-react";/,
+      /export function SqlPageIcon\(props: LucideProps\)/,
+      /<Table2 \{\.\.\.props\} \/>/,
     ],
   },
   {

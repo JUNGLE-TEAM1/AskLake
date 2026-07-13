@@ -291,12 +291,58 @@
   font-weight: 750;
 }
 
+.indeterminateProgress {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+}
+
+.indeterminateProgressHeader {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.indeterminateProgressHeader strong {
+  color: #1d4ed8;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.indeterminateProgressTrack {
+  position: relative;
+  display: block;
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #dbeafe;
+}
+
+.indeterminateProgressTrack > span {
+  position: absolute;
+  inset-block: 0;
+  width: 38%;
+  border-radius: inherit;
+  background: #2563eb;
+  animation: indeterminate-progress 1.15s ease-in-out infinite;
+}
+
 .spinner {
   animation: spin 0.9s linear infinite;
 }
 
 @keyframes spin {
   to { transform: rotate(360deg); }
+}
+
+@keyframes indeterminate-progress {
+  from { transform: translateX(-110%); }
+  to { transform: translateX(300%); }
 }
 
 @media (max-width: 760px) {
@@ -336,7 +382,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .spinner {
+  .spinner,
+  .indeterminateProgressTrack > span {
     animation: none;
   }
 }

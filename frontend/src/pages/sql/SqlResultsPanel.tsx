@@ -1,5 +1,13 @@
 import type { ReactNode } from "react";
-import { Activity, BarChart3, Database, Download, Maximize2, RotateCcw, Table2 } from "lucide-react";
+import {
+  SqlPageIcon as Activity,
+  SqlPageIcon as BarChart3,
+  SqlPageIcon as Database,
+  SqlPageIcon as Download,
+  SqlPageIcon as Maximize2,
+  SqlPageIcon as RotateCcw,
+  SqlPageIcon as Table2,
+} from "./SqlPageIcon";
 
 import { ActionGroup } from "@/components/ui/action-group";
 import { Button } from "@/components/ui/button";

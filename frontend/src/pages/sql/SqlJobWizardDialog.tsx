@@ -1,5 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Calendar, Check, ChevronLeft, ChevronRight, Database, HardDrive, ShieldCheck } from "lucide-react";
+import {
+  SqlPageIcon as Calendar,
+  SqlPageIcon as Check,
+  SqlPageIcon as ChevronLeft,
+  SqlPageIcon as ChevronRight,
+  SqlPageIcon as Database,
+  SqlPageIcon as HardDrive,
+  SqlPageIcon as ShieldCheck,
+} from "./SqlPageIcon";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";

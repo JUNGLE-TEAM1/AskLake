@@ -1,5 +1,10 @@
 import type { RefObject } from "react";
-import { BarChart3, PanelLeftClose, Search, Table2 } from "lucide-react";
+import {
+  SqlPageIcon as BarChart3,
+  SqlPageIcon as PanelLeftClose,
+  SqlPageIcon as Search,
+  SqlPageIcon as Table2,
+} from "./SqlPageIcon";
 
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";

@@ -1,5 +1,9 @@
 import type { KeyboardEventHandler, RefObject } from "react";
-import { PlayCircle, RotateCcw, Table2 } from "lucide-react";
+import {
+  SqlPageIcon as PlayCircle,
+  SqlPageIcon as RotateCcw,
+  SqlPageIcon as Table2,
+} from "./SqlPageIcon";
 
 import { ActionGroup } from "@/components/ui/action-group";
 import { Badge } from "@/components/ui/badge";

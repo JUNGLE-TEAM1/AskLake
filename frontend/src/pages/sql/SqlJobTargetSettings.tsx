@@ -1,5 +1,11 @@
 import { useState } from "react";
-import { BookOpen, HardDrive, Plus, SlidersHorizontal, X } from "lucide-react";
+import {
+  SqlPageIcon as BookOpen,
+  SqlPageIcon as HardDrive,
+  SqlPageIcon as Plus,
+  SqlPageIcon as SlidersHorizontal,
+  SqlPageIcon as X,
+} from "./SqlPageIcon";
 
 import { DatabaseField } from "@/components/target/DatabaseField";
 import { S3PathField } from "@/components/s3/S3PathField";

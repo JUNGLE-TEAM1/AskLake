@@ -1,14 +1,14 @@
 import type { ReactNode } from "react";
 import {
-  Activity,
-  AlertCircle,
-  CheckCircle2,
-  Clock3,
-  CircleGauge,
-  Loader2,
-  RotateCcw,
-  Square,
-} from "lucide-react";
+  SqlPageIcon as Activity,
+  SqlPageIcon as AlertCircle,
+  SqlPageIcon as CheckCircle2,
+  SqlPageIcon as Clock3,
+  SqlPageIcon as CircleGauge,
+  SqlPageIcon as Loader2,
+  SqlPageIcon as RotateCcw,
+  SqlPageIcon as Square,
+} from "./SqlPageIcon";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -56,6 +56,25 @@ function formatBytes(bytes: number | null | undefined) {
 
 function formatMetric(value: number | null | undefined) {
   return value == null ? "-" : new Intl.NumberFormat("ko-KR").format(value);
+}
+
+function IndeterminateProgress({ detail, label }: { detail: string; label: string }) {
+  return (
+    <div
+      aria-label={label}
+      aria-valuetext={detail}
+      className={styles.indeterminateProgress}
+      role="progressbar"
+    >
+      <span className={styles.indeterminateProgressHeader}>
+        <span>{label}</span>
+        <strong>{detail}</strong>
+      </span>
+      <span aria-hidden="true" className={styles.indeterminateProgressTrack}>
+        <span />
+      </span>
+    </div>
+  );
 }
 
 function estimateSourceLabel(estimate: TrinoQueryEstimate) {
@@ -204,6 +223,7 @@ function ExecutionTimeline({
   const completedQuerySummary = [
     run.stats?.queuedMs != null ? `대기 ${formatDuration(run.stats.queuedMs)}` : null,
     run.stats?.elapsedMs != null ? formatDuration(run.stats.elapsedMs) : null,
+    run.stats?.processedRows != null ? `${run.stats.processedRows.toLocaleString()}행 읽음` : null,
     run.stats?.processedBytes != null ? formatBytes(run.stats.processedBytes) : null,
     run.stats?.peakMemoryBytes != null ? `피크 ${formatBytes(run.stats.peakMemoryBytes)}` : null,
   ].filter((value): value is string => Boolean(value)).join(" · ") || "완료";
@@ -249,19 +269,21 @@ function ExecutionTimeline({
         >
           {timeline.queryProgressVisible ? (
             <Progress aria-label="쿼리 실행 진행률" value={timeline.runProgressPercentage ?? 0}>
-              <ProgressLabel>Trino 작업</ProgressLabel>
+              <ProgressLabel>Trino 작업 · {run.stats?.processedRows == null ? "처리 행 확인 중" : `${run.stats.processedRows.toLocaleString()}행 읽음`}</ProgressLabel>
               <ProgressValue />
             </Progress>
-          ) : null}
-          {!timeline.queryProgressVisible && (timeline.queryElapsedMs ?? 0) >= 2_000 && timeline.runProgressPercentage == null ? (
-            <span className={styles.stageState}>Trino 진행률 정보를 확인하고 있습니다.</span>
-          ) : null}
+          ) : (
+            <IndeterminateProgress
+              detail={run.stats?.processedRows == null ? "처리 행 확인 중" : `${run.stats.processedRows.toLocaleString()}행 읽음`}
+              label="Trino 작업"
+            />
+          )}
           <div className={styles.stageMetrics}>
             <span>상태 <strong>{timeline.queryPhaseLabel}</strong></span>
             <span>대기 <strong>{run.stats?.queuedMs != null ? formatDuration(run.stats.queuedMs) : "-"}</strong></span>
             <span><Clock3 size={14} /> 실행 <strong>{timeline.queryElapsedMs != null ? formatDuration(timeline.queryElapsedMs) : "-"}</strong></span>
             <span>처리량 <strong>{formatBytes(run.stats?.processedBytes)}</strong></span>
-            <span>처리 행 <strong>{formatMetric(run.stats?.processedRows)}</strong></span>
+            <span>읽은 행 <strong>{formatMetric(run.stats?.processedRows)}</strong></span>
             {timeline.completedWork ? <span>작업 <strong>{timeline.completedWork.completed.toLocaleString()} / {timeline.completedWork.total.toLocaleString()}</strong></span> : null}
           </div>
         </Stage>
@@ -287,10 +309,15 @@ function ExecutionTimeline({
           >
             {timeline.collectionProgressVisible ? (
               <Progress aria-label="전체 결과 수집 진행률" value={timeline.collectionProgressPercentage ?? 0}>
-                <ProgressLabel>{timeline.collectionFinalizing ? "수집 데이터 확인 완료" : "수집 진행률"}</ProgressLabel>
+                <ProgressLabel>{timeline.collectionFinalizing ? "수집 데이터 확인 완료" : `수집 진행률 · ${formatMetric(timeline.collectedRows)}행`}</ProgressLabel>
                 <ProgressValue />
               </Progress>
-            ) : null}
+            ) : (
+              <IndeterminateProgress
+                detail={timeline.collectedRows == null ? "수집 행 확인 중" : `${timeline.collectedRows.toLocaleString()}행 수집`}
+                label="결과 수집"
+              />
+            )}
             {timeline.collectionFinalizing ? <span className={styles.stageState}>결과 저장을 마무리하고 있습니다.</span> : null}
             <div className={styles.stageMetrics}>
               <span><Clock3 size={14} /> 수집 경과 <strong>{timeline.collectionElapsedMs != null ? formatDuration(timeline.collectionElapsedMs) : "-"}</strong></span>

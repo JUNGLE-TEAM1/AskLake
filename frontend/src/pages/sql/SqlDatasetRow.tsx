@@ -1,4 +1,11 @@
-import { Calendar, Database, Hash, Server, Table2, Type } from "lucide-react";
+import {
+  SqlPageIcon as Calendar,
+  SqlPageIcon as Database,
+  SqlPageIcon as Hash,
+  SqlPageIcon as Server,
+  SqlPageIcon as Table2,
+  SqlPageIcon as Type,
+} from "./SqlPageIcon";
 import { useCallback, useMemo, useRef, useState, type FocusEvent, type MouseEvent } from "react";
 import type { NodeApi } from "react-arborist";
 import { ExplorerTree, type ExplorerTreeNode } from "@/components/ui/explorer-tree";
