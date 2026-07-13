@@ -5,7 +5,6 @@ import {
   BarChart3,
   CheckCircle2,
   Clock3,
-  Database,
   Download,
   History,
   Loader2,
@@ -31,10 +30,8 @@ import {
 } from "@/components/ui/dialog";
 import { DialogShell } from "@/components/ui/dialog-shell";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
-import { Field, FieldGroup, FieldLabel, FieldTitle } from "@/components/ui/field";
+import { FieldLabel, FieldTitle } from "@/components/ui/field";
 import { FilterToolbarInput, FilterToolbarSearch } from "@/components/ui/filter-toolbar";
-import { Input } from "@/components/ui/input";
-import { NativeSelect } from "@/components/ui/native-select";
 import { PageHeader } from "@/components/ui/page-header";
 import { PaginationBar } from "@/components/ui/pagination-bar";
 import { Panel, PanelHeader } from "@/components/ui/panel";
@@ -46,13 +43,13 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { cn } from "@/lib/utils";
 import { apiConfig } from "../../services/apiClient";
 import { executeQueryPreview } from "../../services/mockApi";
-import { cancelTrinoQueryRun, estimateSqlQueryRun, getTrinoMaterialization, getTrinoQueryRun, getTrinoQueryRunResultPage, isTrinoQueryRun, listTrinoQueryRuns, materializeTrinoQueryRun, submitSqlQueryRun, validateSqlQueryRun } from "../../services/pipelineApi";
+import { cancelTrinoQueryRun, estimateSqlQueryRun, getTrinoQueryRun, getTrinoQueryRunResultPage, isTrinoQueryRun, listTrinoQueryRuns, submitSqlQueryRun, validateSqlQueryRun } from "../../services/pipelineApi";
 import {
   generateQueryAiSuggestion,
   type QueryAiSuggestion,
 } from "../../services/queryAiService";
 import { ApiError } from "../../types";
-import type { AuditResult, CatalogDataset, CreateDerivedDatasetRequest, CreateTrinoSqlJobRequest, CurrentUserResponse, DerivedDatasetLayer, SqlResultDraft, TrinoMaterializationRun, TrinoQueryEstimate, TrinoQueryRun, TrinoQueryRunHistoryItem, TrinoQueryRunResultPage } from "../../types";
+import type { AuditResult, CatalogDataset, CreateDerivedDatasetRequest, CreateTrinoSqlJobRequest, CurrentUserResponse, SqlResultDraft, TrinoQueryEstimate, TrinoQueryRun, TrinoQueryRunHistoryItem, TrinoQueryRunResultPage } from "../../types";
 import { canQueryDatasetAs, datasetQueryBlockedMessage } from "../../utils/permissions";
 import { SqlAiWriterDialog } from "./SqlAiWriterDialog";
 import { SqlChartConfigurator } from "./SqlChartConfigurator";
@@ -363,15 +360,6 @@ function getTrinoHistoryStatusLabel(run: TrinoQueryRunHistoryItem) {
   return run.status === "queued" ? "실행 대기 중" : "실행 중";
 }
 
-function getTrinoMaterializationStatusLabel(run: TrinoMaterializationRun) {
-  if (run.status === "failed") return "Iceberg Dataset 생성 실패";
-  if (run.status === "cancelled") return "Iceberg Dataset 생성 취소됨";
-  if (run.queryEngineStatus === "registration_failed") return "테이블 생성 후 SQL 등록 검증 실패";
-  if (run.queryEngineStatus === "available") return "Dataset 생성 완료 · SQL 사용 가능";
-  if (run.status === "succeeded") return "Trino 테이블 등록 확인 중";
-  return run.status === "queued" ? "Dataset 생성 대기 중" : "Dataset 생성 중";
-}
-
 function toTrinoHistoryItem(run: TrinoQueryRun): TrinoQueryRunHistoryItem {
   return {
     baseDatasetId: run.baseDatasetId,
@@ -453,7 +441,6 @@ export function SqlAnalysisPage({
   dataset,
   datasets,
   onAction,
-  onCatalogRefresh,
   onNotify,
   onCreateDatasetJob,
   onCreateTrinoSqlJob,
@@ -465,7 +452,6 @@ export function SqlAnalysisPage({
   dataset: CatalogDataset | null;
   datasets: CatalogDataset[];
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
-  onCatalogRefresh: () => Promise<void> | void;
   onNotify: (message: string, tone?: "success" | "info") => void;
   onCreateDatasetJob: (request: CreateDerivedDatasetRequest) => Promise<boolean>;
   onCreateTrinoSqlJob: (request: CreateTrinoSqlJobRequest) => Promise<boolean>;
@@ -506,9 +492,6 @@ export function SqlAnalysisPage({
   const [trinoResultError, setTrinoResultError] = useState<string | null>(null);
   const [trinoResultRetryCursor, setTrinoResultRetryCursor] = useState<string | null | undefined>(undefined);
   const [trinoResultRetryTargetIndex, setTrinoResultRetryTargetIndex] = useState(0);
-  const [trinoMaterialization, setTrinoMaterialization] = useState<TrinoMaterializationRun | null>(null);
-  const [trinoMaterializationError, setTrinoMaterializationError] = useState<string | null>(null);
-  const [trinoMaterializationPending, setTrinoMaterializationPending] = useState(false);
   const [queryEstimate, setQueryEstimate] = useState<TrinoQueryEstimate | null>(null);
   const [queryEstimateError, setQueryEstimateError] = useState<string | null>(null);
   const [queryEstimateKey, setQueryEstimateKey] = useState<string | null>(null);
@@ -524,14 +507,9 @@ export function SqlAnalysisPage({
   const [queryAiPending, setQueryAiPending] = useState(false);
   const [queryAiError, setQueryAiError] = useState<string | null>(null);
   const [queryAiDialogOpen, setQueryAiDialogOpen] = useState(false);
-  const [derivedDatasetName, setDerivedDatasetName] = useState(dataset ? buildDefaultDerivedDatasetName(dataset) : "");
-  const [derivedDatasetDescription, setDerivedDatasetDescription] = useState(dataset ? buildDefaultDerivedDatasetDescription(dataset) : "");
-  const [derivedDatasetTags, setDerivedDatasetTags] = useState(dataset ? buildDefaultDerivedDatasetTags(dataset) : "");
-  const [derivedDatasetLayer, setDerivedDatasetLayer] = useState<DerivedDatasetLayer>("GOLD");
   const [chartConfig, setChartConfig] = useState<SqlChartConfig | null>(null);
   const [resultView, setResultView] = useState<"chart" | "table">("table");
   const [resultDialogOpen, setResultDialogOpen] = useState(false);
-  const [materializeDialogOpen, setMaterializeDialogOpen] = useState(false);
   const [jobDialogOpen, setJobDialogOpen] = useState(false);
   const [historyDialogOpen, setHistoryDialogOpen] = useState(false);
   const [autocompleteIndex, setAutocompleteIndex] = useState(0);
@@ -545,8 +523,6 @@ export function SqlAnalysisPage({
   const queryClientRequestRef = useRef<{ id: string; key: string } | null>(null);
   const skipNextBaseDatasetResetRef = useRef(false);
   const trinoResultLoadKeyRef = useRef("");
-  const catalogRefreshedMaterializationRef = useRef<string | null>(null);
-  const derivedDatasetTagList = useMemo(() => parseDerivedDatasetTags(derivedDatasetTags), [derivedDatasetTags]);
   const referenceDatasetIdSet = useMemo(() => new Set(referenceDatasetIds), [referenceDatasetIds]);
   const queryValidationKey = useMemo(
     () => JSON.stringify({
@@ -685,7 +661,6 @@ export function SqlAnalysisPage({
       setCursorIndex(0);
       setResultDraft(null);
       setPreflightResult(null);
-      setMaterializeDialogOpen(false);
       setJobDialogOpen(false);
       setQueryAiPrompt("");
       setQueryAiSuggestion(null);
@@ -705,7 +680,6 @@ export function SqlAnalysisPage({
     setCursorIndex(defaultQuery.length);
     setResultDraft(null);
     setPreflightResult(null);
-    setMaterializeDialogOpen(false);
     setJobDialogOpen(false);
     setQueryAiPrompt("");
     setQueryAiSuggestion(null);
@@ -728,7 +702,6 @@ export function SqlAnalysisPage({
     setCursorIndex(cachedResult.query.length);
     setReferenceDatasetIds(cachedReferences);
     setResultDraft(cachedResult);
-    setMaterializeDialogOpen(false);
     setJobDialogOpen(false);
     setQueryAiSuggestion(null);
     setQueryAiError(null);
@@ -737,19 +710,6 @@ export function SqlAnalysisPage({
     setResultView("table");
     setResultDialogOpen(false);
   }, [baseDataset, cachedResult, canRestoreCachedResult]);
-
-  useEffect(() => {
-    if (!baseDataset) {
-      setDerivedDatasetName("");
-      setDerivedDatasetDescription("");
-      setDerivedDatasetTags("");
-      return;
-    }
-    setDerivedDatasetName(buildDefaultDerivedDatasetName(baseDataset));
-    setDerivedDatasetDescription(buildDefaultDerivedDatasetDescription(baseDataset));
-    setDerivedDatasetTags(buildDefaultDerivedDatasetTags(baseDataset));
-    setDerivedDatasetLayer("GOLD");
-  }, [baseDataset?.id]);
 
   const queryContextPath = (mode: "preflight" | "preview" | "run" = "preview") => {
     const params = new URLSearchParams({ baseDatasetId: baseDataset?.id ?? "" });
@@ -981,36 +941,6 @@ export function SqlAnalysisPage({
       });
   }, [trinoResultCursors, trinoResultPage, trinoResultPageIndex, trinoResultPagePending, trinoRun]);
 
-  useEffect(() => {
-    if (
-      !trinoMaterialization
-      || (
-        !["queued", "running"].includes(trinoMaterialization.status)
-        && trinoMaterialization.queryEngineStatus !== "pending"
-      )
-    ) return;
-    const timeoutId = window.setTimeout(() => {
-      void getTrinoMaterialization(trinoMaterialization.materializationId)
-        .then((nextMaterialization) => {
-          setTrinoMaterialization(nextMaterialization);
-          setTrinoMaterializationError(null);
-        })
-        .catch((error) => {
-          setTrinoMaterializationError(error instanceof Error ? error.message : "Iceberg Dataset 상태를 확인하지 못했습니다.");
-        });
-    }, 1000);
-    return () => window.clearTimeout(timeoutId);
-  }, [trinoMaterialization]);
-
-  useEffect(() => {
-    if (
-      trinoMaterialization?.queryEngineStatus !== "available"
-      || catalogRefreshedMaterializationRef.current === trinoMaterialization.materializationId
-    ) return;
-    catalogRefreshedMaterializationRef.current = trinoMaterialization.materializationId;
-    void onCatalogRefresh();
-  }, [onCatalogRefresh, trinoMaterialization]);
-
   const resetResultState = () => {
     setResultDraft(null);
     setTrinoRun(null);
@@ -1024,9 +954,6 @@ export function SqlAnalysisPage({
     setTrinoResultPagePending(false);
     setTrinoResultError(null);
     setTrinoResultRetryCursor(undefined);
-    setTrinoMaterialization(null);
-    setTrinoMaterializationError(null);
-    setTrinoMaterializationPending(false);
     setQueryEstimate(null);
     setQueryEstimateError(null);
     setQueryEstimateKey(null);
@@ -1042,7 +969,6 @@ export function SqlAnalysisPage({
     setChartConfig(null);
     setResultView("table");
     setResultDialogOpen(false);
-    setMaterializeDialogOpen(false);
     setJobDialogOpen(false);
     trinoResultLoadKeyRef.current = "";
     onResultChange(null);
@@ -1150,9 +1076,6 @@ export function SqlAnalysisPage({
           setTrinoResultPagePending(false);
           setTrinoResultError(null);
           setTrinoResultRetryCursor(undefined);
-          setTrinoMaterialization(null);
-          setTrinoMaterializationError(null);
-          setTrinoMaterializationPending(false);
           trinoResultLoadKeyRef.current = "";
           setTrinoRunHistory((items) => [toTrinoHistoryItem(response), ...items.filter((item) => item.runId !== response.runId)].slice(0, 8));
           onResultChange(null);
@@ -1376,9 +1299,6 @@ export function SqlAnalysisPage({
       setTrinoResultPagePending(false);
       setTrinoResultError(null);
       setTrinoResultRetryCursor(undefined);
-      setTrinoMaterialization(null);
-      setTrinoMaterializationError(null);
-      setTrinoMaterializationPending(false);
       setQueryEstimate(null);
       setQueryEstimateError(null);
       setQueryEstimateKey(null);
@@ -1612,7 +1532,7 @@ export function SqlAnalysisPage({
           name: configuration.dataset.name.trim(),
           rag: false,
           refreshPolicy: "manual",
-          tags: derivedDatasetTagList,
+          tags: baseDataset ? parseDerivedDatasetTags(buildDefaultDerivedDatasetTags(baseDataset)) : [],
         },
         governance: {
           accessScope: configuration.governance.accessScope,
@@ -1673,40 +1593,6 @@ export function SqlAnalysisPage({
     const created = await onCreateDatasetJob(request);
     if (created) setJobDialogOpen(false);
     return created;
-  };
-
-  const materializeTrinoRun = async () => {
-    if (!baseDataset || !trinoRun) return;
-    const request: CreateDerivedDatasetRequest = {
-      dataset: { description: derivedDatasetDescription.trim() || buildDefaultDerivedDatasetDescription(baseDataset), layer: derivedDatasetLayer, name: derivedDatasetName.trim(), rag: false, refreshPolicy: "manual", tags: derivedDatasetTagList },
-      query: trinoRun.query,
-      referenceDatasetIds: trinoRun.referenceDatasetIds,
-      sourceDatasetId: baseDataset.id,
-      sourceRunId: trinoRun.runId,
-    };
-    setTrinoMaterializationError(null);
-    setTrinoMaterializationPending(true);
-    try {
-      setTrinoMaterialization(await materializeTrinoQueryRun(trinoRun.runId, request));
-      setMaterializeDialogOpen(false);
-      onNotify("Iceberg Dataset 생성 요청을 접수했습니다.", "success");
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Iceberg Dataset 생성 요청에 실패했습니다.";
-      setTrinoMaterializationError(message);
-      onNotify(message, "info");
-    } finally {
-      setTrinoMaterializationPending(false);
-    }
-  };
-
-  const retryTrinoMaterializationStatus = async () => {
-    if (!trinoMaterialization) return;
-    setTrinoMaterializationError(null);
-    try {
-      setTrinoMaterialization(await getTrinoMaterialization(trinoMaterialization.materializationId));
-    } catch (error) {
-      setTrinoMaterializationError(error instanceof Error ? error.message : "Iceberg Dataset 상태를 다시 확인하지 못했습니다.");
-    }
   };
 
   const applyChartConfig = (nextConfig: SqlChartConfig) => {
@@ -2039,7 +1925,6 @@ export function SqlAnalysisPage({
                     {trinoRun?.status === "succeeded" && (
                       <>
                         <Button type="button" onClick={() => downloadTrinoCsv(trinoRun.runId)} size="sm" variant="primary"><Download data-icon="inline-start" /> CSV 다운로드</Button>
-                        <Button type="button" onClick={() => setMaterializeDialogOpen(true)} size="sm" variant="outline"><Database data-icon="inline-start" /> Dataset으로 저장</Button>
                         <Button type="button" onClick={() => setJobDialogOpen(true)} size="sm" variant="outline"><Workflow data-icon="inline-start" /> 반복 Job 만들기</Button>
                       </>
                     )}
@@ -2050,17 +1935,6 @@ export function SqlAnalysisPage({
                   <div className="sql-result-toolbar error" role="alert">
                     <span>{trinoResultError}</span>
                     <Button type="button" onClick={() => void retryTrinoResultPage()} size="sm" variant="outline"><RotateCcw data-icon="inline-start" /> 다시 시도</Button>
-                  </div>
-                )}
-                {trinoMaterialization && (
-                  <div
-                    className={trinoMaterializationError || trinoMaterialization.queryEngineStatus === "registration_failed" ? "sql-result-toolbar error" : "sql-result-toolbar"}
-                    role={trinoMaterializationError || trinoMaterialization.queryEngineStatus === "registration_failed" ? "alert" : undefined}
-                  >
-                    <span>{trinoMaterializationError ?? `${trinoMaterialization.datasetName}: ${getTrinoMaterializationStatusLabel(trinoMaterialization)}`}</span>
-                    {(trinoMaterializationError || trinoMaterialization.queryEngineStatus === "registration_failed") && (
-                      <Button type="button" onClick={() => void retryTrinoMaterializationStatus()} size="sm" variant="outline"><RotateCcw data-icon="inline-start" /> 등록 다시 확인</Button>
-                    )}
                   </div>
                 )}
               </>
@@ -2137,50 +2011,6 @@ export function SqlAnalysisPage({
             </ScrollArea>
           </DialogContent>
         </Dialog>
-      )}
-      {trinoRun && materializeDialogOpen && (
-        <DialogShell
-          footer={(
-            <>
-              <Button type="button" onClick={() => setMaterializeDialogOpen(false)} size="sm" variant="ghost">취소</Button>
-              <Button
-                disabled={trinoMaterializationPending || !hasQueryPermission || derivedDatasetName.trim().length === 0 || derivedDatasetTagList.length === 0}
-                onClick={() => void materializeTrinoRun()}
-                size="sm"
-                type="button"
-                variant="primary"
-              >
-                <Database data-icon="inline-start" /> {trinoMaterializationPending ? "생성 요청 중" : "Iceberg Dataset 생성"}
-              </Button>
-            </>
-          )}
-          onClose={() => setMaterializeDialogOpen(false)}
-          open
-          size="lg"
-          title="Iceberg Dataset 생성"
-        >
-          <FieldGroup className="grid-cols-2 max-[720px]:grid-cols-1">
-            <Field>
-              <FieldLabel htmlFor="trino-materialize-name">데이터셋 이름</FieldLabel>
-              <Input id="trino-materialize-name" value={derivedDatasetName} onChange={(event) => setDerivedDatasetName(event.target.value)} />
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="trino-materialize-layer">레이어</FieldLabel>
-              <NativeSelect id="trino-materialize-layer" value={derivedDatasetLayer} onChange={(event) => setDerivedDatasetLayer(event.target.value as DerivedDatasetLayer)}>
-                <option value="SILVER">SILVER</option>
-                <option value="GOLD">GOLD</option>
-              </NativeSelect>
-            </Field>
-            <Field className="col-span-2 max-[720px]:col-span-1">
-              <FieldLabel htmlFor="trino-materialize-description">설명</FieldLabel>
-              <Textarea id="trino-materialize-description" rows={3} value={derivedDatasetDescription} onChange={(event) => setDerivedDatasetDescription(event.target.value)} />
-            </Field>
-            <Field className="col-span-2 max-[720px]:col-span-1">
-              <FieldLabel htmlFor="trino-materialize-tags">태그</FieldLabel>
-              <Input id="trino-materialize-tags" placeholder="#sql-derived #analysis" value={derivedDatasetTags} onChange={(event) => setDerivedDatasetTags(event.target.value)} />
-            </Field>
-          </FieldGroup>
-        </DialogShell>
       )}
       {estimateDialogOpen && queryEstimate && (
         <DialogShell

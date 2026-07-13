@@ -1,9 +1,22 @@
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 
 const root = resolve(import.meta.dirname, "..");
 
-const read = (path) => readFileSync(resolve(root, path), "utf8");
+const readCssWithLocalImports = (filePath, visited = new Set()) => {
+  if (visited.has(filePath)) return "";
+  visited.add(filePath);
+
+  return readFileSync(filePath, "utf8").replace(
+    /@import\s+["'](\.\/[^"']+)["'];/g,
+    (_, importPath) => readCssWithLocalImports(resolve(dirname(filePath), importPath), visited),
+  );
+};
+
+const read = (path) => {
+  const filePath = resolve(root, path);
+  return path.endsWith(".css") ? readCssWithLocalImports(filePath) : readFileSync(filePath, "utf8");
+};
 
 const checks = [
   {
@@ -227,15 +240,13 @@ const checks = [
     ],
   },
   {
-    name: "SQL Trino result and materialization failures expose retries",
+    name: "SQL Trino result failures expose retries",
     file: "src/pages/sql/SqlAnalysisPage.tsx",
     patterns: [
       /setTrinoResultRetryCursor\(cursor\);/,
       /setTrinoResultRetryTargetIndex\(trinoResultPageIndex\);/,
       /const retryTrinoResultPage = async \(\) => \{/,
-      /const retryTrinoMaterializationStatus = async \(\) => \{/,
       /결과를 불러오지 못했습니다\./,
-      /등록 다시 확인/,
     ],
   },
   {
@@ -281,7 +292,7 @@ const checks = [
       /수집 행/,
       /전체 행/,
       /결과 저장을 마무리하고 있습니다\./,
-      /\|\| storageStatus === "expired"\s*[\s\S]*\|\| storageStatus === "unavailable"/,
+      /storageFailed \? "결과 저장 실패" : terminalSummary/,
       /\|\| trinoResultPage\s*[\s\S]*\|\| trinoResultPageIndex !== 0/,
       /const retryLoadKey = \["retry", trinoRun\.runId, retryTargetIndex, retryCursor \?\? "first"\]\.join\(":"\);/,
       /const \[trinoSubmissionPending, setTrinoSubmissionPending\] = useState\(false\);/,
@@ -354,12 +365,11 @@ const checks = [
     ],
   },
   {
-    name: "Trino SQL uses canonical validation and separates one-time Dataset from repeat Job",
+    name: "Trino SQL uses canonical validation and supports repeat Jobs",
     file: "src/pages/sql/SqlAnalysisPage.tsx",
     patterns: [
       /validateSqlQueryRun\(baseDataset, query, \[\.\.\.referenceDatasetIds\]\.sort\(\)\)/,
       /trinoValidationKey === queryValidationKey/,
-      /> Dataset으로 저장</,
       /> 반복 Job 만들기</,
       /onCreateTrinoSqlJob\(request\)/,
       /writeMode: "full_refresh"/,
@@ -463,7 +473,7 @@ const checks = [
     file: "src/components/etl/SchemaTransformEditor.jsx",
     patterns: [
       /import \{ Checkbox \} from "@\/components\/ui\/checkbox";/,
-      /aria-label="전체 타겟 컬럼 선택"/,
+      /aria-label="전체 타겟 필드 선택"/,
       /aria-label=\{`\$\{col\.name\} 선택`\}/,
       /targetSchema\.filter\(\(c\) => !selectedAfter\.has\(targetColumnKey\(c\)\)\)/,
     ],
@@ -616,11 +626,9 @@ const checks = [
     file: "src/pages/dashboard/runtime/WidgetConfigPanel.tsx",
     patterns: [
       /import \{ Field, FieldError, FieldGroup, FieldLabel \} from "@\/components\/ui\/field";/,
-      /import \{ Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue \} from "@\/components\/ui\/select";/,
       /import \{ ToggleGroup, ToggleGroupItem \} from "@\/components\/ui\/toggle-group";/,
       /import \{ Tooltip, TooltipContent, TooltipProvider, TooltipTrigger \} from "@\/components\/ui\/tooltip";/,
       /<FieldGroup className="contents">/,
-      /<Select[\s\S]*<SelectGroup>[\s\S]*<SelectItem/s,
       /<ToggleGroup[\s\S]*type="single"[\s\S]*value=\{type\}/s,
       /if \(!nextType\) return;/,
       /<TooltipTrigger asChild>[\s\S]*<ToggleGroupItem/s,
@@ -659,7 +667,7 @@ const checks = [
   },
   {
     name: "Dashboard edit toolbar separates active tools from action buttons",
-    file: "src/pages/dashboard/runtime/DashboardRuntimeView.tsx",
+    file: "src/pages/dashboard/runtime/DashboardEditToolbar.tsx",
     patterns: [
       /import \{ ButtonGroup \} from "@\/components\/ui\/button-group";/,
       /import \{ ToggleGroup, ToggleGroupItem \} from "@\/components\/ui\/toggle-group";/,
@@ -847,7 +855,7 @@ const checks = [
   },
   {
     name: "Dashboard empty edit stage fills the initial workspace",
-    file: "src/styles/dashboard-runtime.css",
+    file: "src/styles/dashboard-runtime-canvas.css",
     patterns: [
       /\.asklake-dashboard-canvas-scroll-area\s*\{[^}]*min-height:\s*0;/s,
       /\.asklake-dashboard-canvas-scroll-viewport\s*>\s*div\s*\{[^}]*min-height:\s*100%;/s,
@@ -898,8 +906,8 @@ const checks = [
     name: "Continuous Kafka creation skips the scheduler and keeps stream controls explicit",
     file: "src/App.tsx",
     patterns: [
-      /\["source", "schema", "permission", "target", "review"\]/,
-      /steps\.filter\(\(step\) => step !== "스케줄"\)/,
+      /\["source", \.\.\.\(requiresRecordParsing \? \["recordParsing" as const\] : \[\]\), "schema", "permission", "target", "review"\]/,
+      /labels\.filter\(\(step\) => step !== "스케줄"\)/,
       /continuousKafkaDraft \? "permission" : lastScheduleFlow/,
     ],
   },

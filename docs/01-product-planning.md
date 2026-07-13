@@ -50,7 +50,7 @@ AskLake는 사용자가 데이터셋의 출처, 품질, 권한, 실행 결과, �
 - 수집/처리 Transform 화면은 필드 매핑과 quick transform function 중심으로 유지하며, AI 기반 필드 transform 버튼은 현재 MVP 범위에서 노출하지 않는다.
 - Issue #567은 일반 Snapshot, Kafka Snapshot, Kafka Continuous의 스키마 타입과 Transform/Quality 실행 계약을 통합한다. 작업은 [Transform/Quality 공통 실행 통합 계획](transform-quality-unification-plan.md)의 Phase별 검증 게이트를 따르며, 전체 검증 전까지 Draft PR로 유지한다.
 - SQL preview 결과 기반 처리 Job 생성: SQL 화면의 다단계 모달에서 기본 정보, 스케줄, 거버넌스, 저장 설정을 완료한 뒤 기존 Job 생성 API를 호출한다.
-- 완료된 Trino Query Run은 Iceberg CTAS materialization으로 1회성 Dataset을 생성하고 physical table 확인 후 Catalog와 SQL 분석 대상에 자동 등록한다.
+- 완료된 Trino Query Run의 결과 화면은 CSV 다운로드와 반복 SQL Job 생성만 제공한다. 1회성 Iceberg CTAS materialization API는 별도 운영 경로로 유지하며 이 화면에서 노출하지 않는다.
 - 완료된 Trino Query Run은 별도로 반복 SQL Job을 만들 수 있다. Job은 결과 page를 저장하지 않고 SQL recipe, 실행 actor, 스케줄, target metadata를 저장하며, 수동/예약 Run마다 전체 SQL을 다시 실행해 같은 논리 Dataset을 새 Iceberg table 버전으로 갱신한다.
 - Dashboard 목록/빌더/런타임은 FastAPI API를 우선 사용하고, 이전 backend 호환을 위해 404 local/mock fallback을 유지
 - 감사 로그와 toast feedback
@@ -116,7 +116,7 @@ Phase 0에서는 용어와 경계를 먼저 고정한다. `createdBy`, `owner`, 
 5. AI 제안은 자동 실행되지 않고 editor에 반영한 뒤 기존 read-only/preflight 검증을 통과해야 실행할 수 있다.
 6. Trino 실행 전 예상 처리량과 예상 시간을 확인하고, 실행 후에는 `쿼리 실행`, `첫 결과 준비`, `전체 결과 수집` 구간별 경과와 실제로 계산 가능한 진행률·처리량을 확인하거나 취소할 수 있다.
 7. 완료된 결과는 retention-backed 원격 페이지와 전체 보기 모달에서 탐색하고, 실행 버튼 옆 `실행 이력` 모달에서 다시 열 수 있다.
-8. `Dataset으로 저장`은 현재 성공 Run의 SQL을 1회 CTAS로 실행하고 실제 table 확인까지 성공한 뒤 Catalog에 자동 등록한다. 사용자가 physical catalog/schema/table을 따로 입력하지 않는다.
+8. 성공 Run 결과는 CSV로 다운로드할 수 있다. 1회성 Iceberg CTAS materialization은 결과 화면에서 제공하지 않으며, 별도 운영 경로로만 호출한다.
 9. `반복 Job 만들기`는 SQL recipe와 스케줄을 저장한다. 이후 각 Run은 실행 시점 권한을 다시 확인하고 전체 SQL을 CTAS로 실행한 뒤 검증된 새 table로 같은 Dataset mapping을 교체한다.
 10. 반복 Job의 새 Run이 실패하거나 취소되면 마지막 정상 Dataset mapping과 성공 materialization history를 유지한다.
 11. bounded compatibility 결과는 차트로 전환하거나 처리 Job 위저드에서 기본 정보, 스케줄, 거버넌스, 저장 설정을 완료해 기존 Job 생성 API로 연결할 수 있다.
