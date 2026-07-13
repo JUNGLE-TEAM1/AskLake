@@ -317,21 +317,13 @@ async function executeQuery({ datasetId, query }) {
   }
   const dataset = await getDataset(datasetId);
   if (!dataset) return { error: { status: 404, code: "NOT_FOUND", message: "Dataset not found" } };
-
-  const columns = dataset.schema.slice(0, 6).map(([name]) => name);
-  const rows = dataset.sampleRows.map((row) => row.slice(0, Math.max(columns.length, 1)));
-  const resultDraft = {
-    columns,
-    datasetId: dataset.id,
-    datasetName: dataset.name,
-    executedAt: new Date().toISOString(),
-    query,
-    rowCount: rows.length,
-    rows,
-    runId: `sql_${Date.now()}`,
+  return {
+    error: {
+      status: 503,
+      code: "SQL_RUNTIME_UNAVAILABLE",
+      message: "The legacy SQL runtime cannot execute physical dataset queries.",
+    },
   };
-  await saveSqlRun(resultDraft);
-  return resultDraft;
 }
 
 async function route(request, response) {
@@ -614,7 +606,10 @@ async function route(request, response) {
 }
 
 async function start() {
-  await seedDatabase();
+  const appEnvironment = String(process.env.APP_ENV || "local").trim().toLowerCase();
+  if (["local", "development", "dev", "test", "testing"].includes(appEnvironment)) {
+    await seedDatabase();
+  }
   await ensureSchema();
 
   const server = http.createServer((request, response) => {

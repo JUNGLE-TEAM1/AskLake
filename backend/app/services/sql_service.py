@@ -442,7 +442,14 @@ def register_duckdb_dataset(
         remote_budget=remote_budget,
     )
     if not registered:
-        register_duckdb_sample_rows(connection, dataset, table_name)
+        raise sql_storage_error(
+            "Dataset physical storage is unavailable; SQL Preview will not use sample rows",
+            {
+                "datasetId": dataset_identifier(dataset, fallback=table_name),
+                "storageLocation": object_field(dataset, "storage_location", "storageLocation"),
+                "storageFormat": object_field(dataset, "storage_format", "storageFormat"),
+            },
+        )
 
     if dataset.id != dataset.name:
         connection.execute(
@@ -1009,45 +1016,6 @@ def sql_storage_error(message: str, details: dict[str, Any] | None = None) -> Ap
         message,
         status.HTTP_502_BAD_GATEWAY,
         details,
-    )
-
-
-def register_duckdb_sample_rows(
-    connection: duckdb.DuckDBPyConnection,
-    dataset: CatalogDatasetResponse,
-    table_name: str,
-) -> None:
-    columns = dataset_columns(dataset)
-    if not columns:
-        max_width = max((len(row) for row in dataset.sample_rows), default=0)
-        columns = [(f"column_{index + 1}", "string") for index in range(max_width)]
-
-    column_defs = ", ".join(
-        f"{quote_duckdb_identifier(column_name)} {duckdb_column_type(column_type)}"
-        for column_name, column_type in columns
-    )
-    if not column_defs:
-        column_defs = "empty_row VARCHAR"
-        columns = [("empty_row", "string")]
-
-    connection.execute(
-        f"CREATE TEMP TABLE {quote_duckdb_identifier(table_name)} ({column_defs})"
-    )
-
-    if not dataset.sample_rows:
-        return
-
-    placeholders = ", ".join("?" for _ in columns)
-    rows = [
-        [
-            coerce_duckdb_cell(row[index] if index < len(row) else None, column_type)
-            for index, (_, column_type) in enumerate(columns)
-        ]
-        for row in dataset.sample_rows
-    ]
-    connection.executemany(
-        f"INSERT INTO {quote_duckdb_identifier(table_name)} VALUES ({placeholders})",
-        rows,
     )
 
 

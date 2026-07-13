@@ -192,7 +192,7 @@ class SqlServiceObjectStorageTest(TestCase):
 
         self.assertEqual(result["rows"], [["2"]])
 
-    def test_sample_rows_preview_still_works(self) -> None:
+    def test_missing_physical_storage_does_not_use_sample_rows(self) -> None:
         dataset = SimpleNamespace(
             id="ds_sample_table",
             name="sample_table",
@@ -202,13 +202,14 @@ class SqlServiceObjectStorageTest(TestCase):
             storage_location="",
         )
 
-        result = sql_service.execute_duckdb_preview(
-            'SELECT COUNT(*) AS row_count FROM "sample_table"',
-            context_datasets=[dataset],
-            preview_limit=100,
-        )
+        with self.assertRaises(ApiError) as raised:
+            sql_service.execute_duckdb_preview(
+                'SELECT COUNT(*) AS row_count FROM "sample_table"',
+                context_datasets=[dataset],
+                preview_limit=100,
+            )
 
-        self.assertEqual(result["rows"], [["2"]])
+        self.assertEqual(raised.exception.code, "SQL_STORAGE_ERROR")
 
     def test_remote_dataset_without_parquet_fails_instead_of_falling_back(self) -> None:
         client = FakeS3Client({})
