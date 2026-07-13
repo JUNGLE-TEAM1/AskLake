@@ -37,9 +37,9 @@ shadcn primitive로 대체 가능한 raw UI와 wrapper 판단은 `docs/frontend-
 
 ## 현재 스냅샷
 
-기준일: 2026-07-10
+기준일: 2026-07-12
 
-기준 브랜치: A03 `feat-#352`, B04 `feat-#350`, #357 `refactor-#357`, #361 `refactor-#361`, #364 `refactor-#364`, #367 `refactor-#367`, #369 `refactor-#369`, #375 `refactor-#375`, #378 `feat-#378`, #385 `feat-#385`, #387 `refactor-#387`, #389 `feat-#389`, #391 `refactor-#391`, #393 `refactor-#393`, #395 `refactor-#395`, #401 `refactor-#401`, #418 `refactor-#418`, #419 `refactor-#419`, #421 `refactor-#421`, #440 `docs-#440` 확인 기준
+기준 브랜치: 최신 `dev` `57bbb50`, Issue #580 `refactor-#580` 확인 기준
 
 주의: 이 문서는 현재 CSS 상태와 진행 중 A/B 작업으로 생길 cleanup 후보를 함께 추적한다. CSS 관련 PR마다 실제 route QA, `rg` 확인 결과, 유지/제외 판단을 반영해 갱신한다.
 
@@ -55,8 +55,77 @@ shadcn primitive로 대체 가능한 raw UI와 wrapper 판단은 `docs/frontend-
 | `frontend/src/styles/sql.css` | 401 | B | `부분 정리됨` | #468에서 shadcn Table/ScrollArea/Slider와 Shadcnblocks/Kibo Tree까지 적용해 2,547줄에서 401줄로 축소. responsive workspace, dark SQL editor, tree hover positioning, autocomplete 위치, result/embedded Dashboard 크기 같은 도메인 layout CSS만 유지한다. |
 | `frontend/src/styles/schema-transform-adapter.css` | 119 | A | `보류` | `SchemaTransformWorkbench` adapter 전용. 외부 editor DOM 구조에 의존하므로 schema transform QA 전 삭제 금지. |
 | `frontend/src/styles/schema-transform-source.css` | 1 | A | `보류` | Tailwind import 역할을 유지한다. Tailwind entry 통합 전 삭제 금지. |
-| `frontend/src/styles/dashboard.css` | 1,298 | B | `부분 정리됨` | Dashboard list가 `DataTable`, `Panel`, `PanelHeader`, `Button`, `Input`, `FilterToolbar` 기준으로 일부 전환됨. #361에서 list shell legacy naming은 `dashboard-panel-*`로 rename. #367에서 list toolbar/table panel shell selector를 `Panel`/`PanelHeader`로 이동. #369에서 list toolbar body/search/actions/divider selector를 `FilterToolbar`로 이동. #378에서 list pagination은 `PaginationBar`, delete confirm dialog는 `DialogShell`로 이동. #385에서 dashboard header/workspace action row, row tag/status, list status meta는 공통 컴포넌트로 전환. #422에서 list owner/tag/sort menu를 `DropdownMenu` item/radio/checkbox 기준으로 전환하고 option density CSS만 유지. builder preview와 table density selector는 계속 유지. |
-| `frontend/src/styles/dashboard-runtime.css` | 2,176 | B | `부분 정리됨` | Runtime topbar, widget frame, table widget, config panel, dataset tree가 B04에서 일부 전환됨. table widget은 `DataTable` 기준으로 전환됐고 #364에서 Dashboard dataset tree의 legacy MUI TreeItem selector 제거. #385에서 edit toolbar wrapper는 `ActionGroup`으로 전환. #401에서 dataset sidebar loading/error/empty/body shell은 `TreePanel`로 전환. #419에서 WidgetConfigPanel textarea/checkbox, Assistant prompt, inline visualization/text widget control, page tab edit control을 shadcn primitive로 교체하고 tab/title edit compact 회귀를 보정. #421에서 MUI Tooltip selector를 제거하고 Radix/shadcn Tooltip content selector만 유지. grid/runtime 상태, widget frame, config panel, color picker selector는 삭제 금지. |
+| `frontend/src/styles/dashboard.css` + 6개 모듈 | manifest 6 / 선언 1,060 | B | `부분 정리됨` | #580에서 기존 import 위치를 유지하는 manifest로 전환하고 base, overview, workspace/list, builder, detail, dialog 책임으로 분리했다. className과 cascade 순서는 유지하고 사용처가 없는 legacy dialog/empty selector만 제거했다. |
+| `frontend/src/styles/dashboard-runtime.css` + 7개 모듈 | manifest 7 / 선언 1,762 | B | `부분 정리됨` | #580에서 shell, dataset, canvas, widgets, config, assistant, responsive 책임으로 분리했다. ApexCharts, React Grid Layout/Resizable, react-colorful이 runtime에 생성하는 selector는 유지하고 사용처가 없는 app selector와 완전 중복 선언만 제거했다. |
+
+## #580 Dashboard UI 무변경 모듈화 기록
+
+Issue #580은 최신 `dev`의 DOM 순서, className, Dashboard API 계약과 상태 수명을 유지하면서 React 책임과 stylesheet ownership을 분리한다. `frontend/src/styles.css`의 `dashboard.css` / `dashboard-runtime.css` import 위치는 바꾸지 않았으며 두 파일은 하위 모듈을 기존 cascade 순서대로 읽는 manifest 역할을 한다.
+
+### React 모듈화
+
+| 새 모듈 | 기존 위치 / 이동한 책임 | UI 계약 |
+| --- | --- | --- |
+| `legacy/dashboardLegacyModel.ts` | `DashboardPage.tsx`의 metric, chart fixture, widget option/config, SQL result 기반 파생값 | 순수 계산만 이동. 렌더링과 className 없음. |
+| `legacy/DashboardLegacyChart.tsx` | category/orders/channels chart JSX | chart DOM과 inline height 계산을 그대로 유지. |
+| `legacy/DashboardLegacyBuilderView.tsx` | legacy builder view JSX | 부모가 상태와 audit action을 소유하고 view는 기존 DOM/className만 렌더링. |
+| `legacy/DashboardLegacyDetailView.tsx` | legacy detail/published preview JSX | filter, modal, sidebar, chart/table DOM 순서를 유지. |
+| `runtime/useDashboardRuntimeResources.ts` | published/draft load 상태, `?page=` 선택, retry와 page 보정 effect | `DashboardPage`에서 항상 호출해 list/runtime 전환 시 기존 상태 수명을 유지. silent draft reload 실패 시 기존 runtime 유지. |
+| `runtime/useDashboardLayoutHistory.ts` | layout snapshot, 최대 5개 undo/redo 기록, commit/undo/redo | 기존 reset key와 `i/x/y/w/h` equality 기준을 유지. |
+| `runtime/DashboardEditToolbar.tsx` | `DashboardRuntimeView.tsx`의 편집 toolbar JSX | ToggleGroup, ButtonGroup, tooltip, aria-label과 className을 그대로 유지. |
+
+### CSS 모듈 ownership과 import 순서
+
+| manifest | import 순서 | 책임 | 줄 수 |
+| --- | ---: | --- | ---: |
+| `dashboard.css` | 1 | `dashboard-base.css`: page/header/create 공통 | 98 |
+|  | 2 | `dashboard-overview.css`: metric/chart/table/side panel | 363 |
+|  | 3 | `dashboard-workspace.css`: workspace/list toolbar/table/pagination | 142 |
+|  | 4 | `dashboard-builder.css`: builder/preview/draft widget | 303 |
+|  | 5 | `dashboard-detail.css`: detail/category chart/meta | 94 |
+|  | 6 | `dashboard-dialogs.css`: 현재 DialogShell 내부 chart surface | 60 |
+| `dashboard-runtime.css` | 1 | `dashboard-runtime-shell.css`: topbar/subnav/page tabs/share | 439 |
+|  | 2 | `dashboard-runtime-dataset.css`: workspace grid/dataset sidebar/hover | 154 |
+|  | 3 | `dashboard-runtime-canvas.css`: canvas/edit toolbar/empty/RGL | 233 |
+|  | 4 | `dashboard-runtime-widgets.css`: widget frame/table/ApexCharts | 369 |
+|  | 5 | `dashboard-runtime-config.css`: widget config/color picker | 342 |
+|  | 6 | `dashboard-runtime-assistant.css`: inspector/assistant | 142 |
+|  | 7 | `dashboard-runtime-responsive.css`: runtime media query | 83 |
+
+### 삭제한 CSS
+
+아래 항목은 CSS 원본을 제외한 `frontend/src` 전체를 정확한 class token 경계로 검색해 사용처가 0건임을 확인한 뒤 제거했다.
+
+| 파일 책임 | 삭제 selector / 선언 | 근거 |
+| --- | --- | --- |
+| legacy dialog | `.dashboard-delete-modal*` | delete confirm이 `DialogShell`을 사용하며 해당 className이 없음. |
+| legacy chart dialog | `.dashboard-chart-modal`, `.dashboard-chart-modal section` | 현재는 `dashboard-chart-modal-panel/header/body`만 `DialogShell`에 전달. |
+| legacy empty canvas | `.dashboard-empty-canvas`와 `strong` 규칙 | 실제 runtime은 `.asklake-dashboard-empty-canvas`, legacy className은 없음. |
+| runtime focus 목록 | `.asklake-dataset-option`, `.asklake-widget-secondary-button`, `.asklake-assistant-context` 항목 | Kibo Tree/shadcn Button 전환 뒤 app className 없음. |
+| edit toolbar | `.asklake-toolbar-assistant*` | 현재 toolbar는 `.asklake-toolbar-nessi-icon`과 mode state class만 사용. |
+| runtime empty action | `.asklake-dashboard-empty-action` | empty action이 shadcn `Button`을 사용. |
+| runtime table legacy control | `.asklake-table-header-button*`, `.asklake-table-column-resizer*` | 현재 table widget renderer에 해당 className 없음. |
+| widget config legacy feedback | `.asklake-widget-config-error`, `.asklake-widget-secondary-button*` | 현재 `FieldError`와 shadcn Button composition을 사용. |
+| legacy spinner | `.spin`, `@keyframes asklake-spin` | app은 Tailwind `animate-spin`을 사용하며 bare `spin` className 없음. |
+| 완전 중복 | inspector config heading/dataset field 중복, mobile edit stage `padding-bottom: 0` | 앞선 동일 specificity 선언 또는 기본 선언과 값이 완전히 같음. |
+
+삭제하지 않은 runtime 생성 selector:
+
+- ApexCharts `.apexcharts-*`
+- React Grid Layout / Resizable `.react-grid-*`, `.react-resizable-*`
+- react-colorful `.react-colorful*`
+
+이 selector는 TSX 문자열 검색에 나타나지 않아도 현재 dependency가 실제 DOM에 생성하므로 유지한다.
+
+검증:
+
+- `cd frontend && npm run verify:ui-regressions`: 52 checks 통과
+- `cd frontend && npm run build`: 통과, 기존 Vite large chunk warning 유지
+- mock API를 사용해 최신 `origin/dev`(`http://127.0.0.1:5176`)와 `refactor-#580`(`http://127.0.0.1:5175`)을 같은 브라우저 viewport에서 대조했다.
+  - `/dashboards`: 텍스트, className 순서, DOM node 수 357개와 주요 panel rect가 동일했다.
+  - `/dashboards/dash_sales_demo`: 텍스트, className 순서, DOM node 수 38개와 runtime root rect가 동일했다.
+  - `/dashboards/dash_sales_demo/edit`: 텍스트, className 순서와 DOM node 수 382개가 동일했다. workspace/canvas 측정값 차이는 브라우저 subpixel 반올림 범위인 0.3px 미만이었다.
+  - 양쪽에서 `AskLake 보조 패널` 편집 모드를 직접 열어 checked 상태와 전체 접근성 DOM snapshot이 동일함을 확인했고, `refactor-#580` 콘솔 warning/error는 없었다.
 
 ## A 작업으로 정리될 CSS
 
@@ -227,7 +296,7 @@ shadcn replacement PR에서는 `docs/frontend-shadcn-replacement-inventory.md`�
 | 범위 | 관련 selector | 이번 판단 |
 | --- | --- | --- |
 | PaginationBar | `.sql-context-pagination`, `.dashboard-pagination`, `.runs-pagination` | 공통 component로 markup을 옮겼지만 화면별 density/compact CSS는 유지. route QA 후 공통 variant로 흡수 가능. |
-| DialogShell | `.sql-materialize-dialog`, `.job-log-modal-header`, `.dashboard-delete-modal*` | dialog shell은 공통화. content/header/body density selector는 일부 유지. #440에서 사용처가 없던 `.job-log-modal`, `.job-log-modal section`, `.job-log-modal pre`를 삭제했고 `.job-log-modal-header`는 #442 RunLogModal 전환 전까지 유지. |
+| DialogShell | `.sql-materialize-dialog`, `.job-log-modal-header`, `.dashboard-chart-modal-panel/header/body` | dialog shell은 공통화. Dashboard의 사용처 없는 `.dashboard-delete-modal*`, `.dashboard-chart-modal` wrapper/section은 #580에서 삭제했고 실제 `DialogShell`에 전달되는 chart panel/header/body density만 유지한다. #440에서 사용처가 없던 `.job-log-modal`, `.job-log-modal section`, `.job-log-modal pre`를 삭제했고 `.job-log-modal-header`는 #442 RunLogModal 전환 전까지 유지. |
 | PickerDialog | `.s3-picker-dialog`, `.s3-picker-header`, `.s3-picker-toolbar`, `.s3-picker-footer`, `.database-picker-*` | backdrop/header/footer shell은 공통화. S3 tree의 MUI 의존은 #421에서 제거했고, search/body density CSS는 picker 상태가 있어 유지. `.s3-picker-backdrop`은 사용처가 제거되어 삭제 후보. |
 | CommandBar | `.creation-top-actions`, `.summary-actions`, `.schema-bottom-bar`, `.hegun-rule-bottom-bar` | wrapper를 공통 component로 전환. ETL absolute/sticky 위치와 button density CSS는 유지. |
 
@@ -266,6 +335,7 @@ npm run build
 
 | 날짜 | 변경 |
 | --- | --- |
+| 2026-07-12 | #580에서 Dashboard React의 legacy builder/detail/chart/model, runtime resource load, layout history, edit toolbar 책임을 모듈로 분리했다. `dashboard.css`와 `dashboard-runtime.css`는 import manifest로 전환하고 13개 책임별 CSS 모듈로 분리했으며, 정확한 token 검색에서 사용처가 없는 legacy dialog/empty/table/config/spinner selector와 완전 중복 선언을 제거했다. |
 | 2026-07-10 | #440에서 Jobs 검색을 `FilterToolbarInput`, 필터를 `DropdownMenu`, table stacked cell을 공통 composition으로 전환. Jobs table 전용 header/cell/column/action selector와 사용되지 않는 legacy job log modal wrapper/pre selector를 삭제하고 줄 수를 갱신. |
 | 2026-07-09 | Issue #347에서 초기 인벤토리 생성. A 작업 CSS와 B 작업 CSS를 한 문서에서 함께 추적하도록 정리. |
 | 2026-07-09 | A02에서 Jobs 목록 PageHeader/primitive/DataTable 적용 상태를 반영. `jobs-table-empty`, `jobs-table-preview-footer`는 CSS-only 삭제 후보로 표시. |

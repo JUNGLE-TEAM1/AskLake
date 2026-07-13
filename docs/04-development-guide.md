@@ -36,6 +36,9 @@ npm run build
 
 현재 package script는 TypeScript build와 Vite build를 함께 실행한다.
 `npm run test:trino-timeline`은 `쿼리 실행 -> 첫 결과 준비 -> 전체 결과 수집` 세 단계의 노출 순서, terminal/만료 상태, 2초 progress 지연, 실제 분자/분모 없는 bar 생략, 수집 100% 이후 manifest 마무리, legacy timing fallback을 production 순수 상태 모델에 직접 넣어 검증한다. `npm run verify:ui-regressions`는 이 상태 테스트를 먼저 실행한 뒤 첫 page 최초 1회 자동 조회/재시도 측정, SQL 분석의 Nessie Popover/Bubble/Collapsible 흐름, Dashboard `WidgetConfigPanel` 재사용, 오른쪽 차트/데이터 전환, SQL 내부 Job wizard, Preview `limit` 전달, Catalog -> SQL wide button, Dashboard 목록의 `Alert`/`Skeleton`/`Empty`, edit의 radial range `Slider`와 Kibo dataset Tree, ApexCharts CSS 텍스트 누수 방지처럼 최근 UI 회귀가 있었던 핵심 UI 계약을 정적으로 확인한다.
+`npm run verify:ui-regressions`는 SQL 분석의 Nessie Popover/Bubble/Collapsible 흐름, Trino 실행 단계와 논리 페이지네이션, server-side CSV export, Dashboard Assistant Bubble의 AskLake 화이트 팔레트 variant와 reduced-motion 대응 spring entry, Dashboard `WidgetConfigPanel` 재사용, 오른쪽 차트/데이터 전환, SQL 내부 Job wizard, Preview `limit` 전달, Catalog -> SQL wide button, Dashboard 목록의 `Alert`/`Skeleton`/`Empty`, edit의 radial range `Slider`와 Kibo dataset Tree, ApexCharts CSS 텍스트 누수 방지처럼 최근 UI 회귀가 있었던 핵심 UI 계약을 정적으로 확인한다.
+ETL Schedule 화면은 shadcn `Card`, `ToggleGroup`, `Field`, `Select`, `Switch`, `Separator`를 조합한다. 예전 `schedule-config-*` 전용 CSS와 중복 안내·상태 카드는 제거했으며, regression check는 실행 방식에 따른 조건부 필드와 저장 계약 문구가 다시 갈라지지 않는지 확인한다.
+Dashboard CSS는 `dashboard.css`와 `dashboard-runtime.css` manifest가 책임별 하위 파일을 import한다. regression script는 로컬 CSS import를 같은 순서로 확장해 검사하므로 selector를 다른 모듈로 옮길 때 manifest 순서와 해당 check를 함께 유지한다.
 
 Trino Query Run 이력 repository filter는 `cd backend && ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-query-history`로 확인한다. 이 검증은 임시 실행 레코드를 만들고 현재 사용자 ID/name 필터가 다른 사용자의 run을 반환하지 않는지 확인한 뒤 정리한다.
 
@@ -131,11 +134,31 @@ AIRFLOW_PASSWORD=airflow
 AIRFLOW_EXECUTION_API_TOKEN=asklake-local-airflow-execution
 AIRFLOW_INTERNAL_TOKEN=asklake-local-airflow-token
 ASKLAKE_SPARK_OUTPUT_MODE=s3a
+ASKLAKE_DOCKER_NETWORK=asklake-dev_default
 MINIO_ENDPOINT=http://127.0.0.1:9000
 MINIO_ENDPOINT_IN_DOCKER=http://m3-minio:9000
 MINIO_ACCESS_KEY=m3admin
 MINIO_SECRET_KEY=wishuponastar
 MINIO_BUCKET=asklake-output
+```
+
+`ASKLAKE_DOCKER_NETWORK`는 현재 Compose project의 실제 network 이름과 같아야 한다. 예를 들어 `docker compose -p asklake-dev`로 올렸다면 `asklake-dev_default`를 사용한다. FastAPI가 시작하는 Node/Spark subprocess에도 이 값이 전달되어야 하므로 `.env.local`만 Pydantic 설정으로 읽는 대신, 아래처럼 프로세스 환경으로 export한 상태에서 FastAPI를 실행한다.
+
+```bash
+cd backend
+set -a
+source .env.local
+set +a
+./.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8080
+```
+
+헤더 없는 공백 구분 TXT의 조건부 레코드 구조화는 fixture와 계약 검증 후 실제 Airflow/Spark E2E로 확인한다. E2E는 실행 중인 FastAPI `:8080`, Airflow `:8081`, MinIO, Spark runtime을 사용하고 성공 시 생성한 임시 Job, Catalog row, Parquet output을 정리한다.
+
+```bash
+cd backend
+npm run minio:seed-click-log
+npm run verify:record-parsing
+npm run verify:record-parsing:e2e
 ```
 
 Local Compose의 Airflow task에는 backend URL과 `AIRFLOW_EXECUTION_API_TOKEN` 기반 bearer token이 주입된다. `AIRFLOW_INTERNAL_TOKEN`은 기존 단일 호출 endpoint 호환용으로 함께 유지한다. 그 다음 `수집/처리` 화면에서 Job 실행 버튼을 누르면 `spark_process_write`가 실제 Spark runner를 호출하고, `publish_run_result`가 물리 Parquet를 검증해 Catalog를 확정한다. Run History와 DAG modal은 `GET /api/etl/jobs/{jobId}` polling으로 DAG Run/Task Instance 상태를 반영한다.
@@ -418,7 +441,7 @@ uvicorn app.main:app --reload --port 8080
 
 로컬 환경 변수는 `backend/.env.example`을 기준으로 둔다. 실제 OpenAI 키는 git에 올리지 않는 `backend/.env.local`의 `OPENAI_API_KEY`에 둔다. Query AI live mode는 backend가 이 값을 읽어 `POST /api/query/ai-suggestions`에서만 사용하며, frontend env에는 OpenAI 키를 두지 않는다.
 
-SQL UI를 변경할 때는 desktop에서 좌측 SQL 도구와 우측 editor/result workspace의 하단이 SQL 실행 전후 모두 일치하는지 확인한다. Catalog 미리보기의 `SQL 분석에서 열기`가 선택 Dataset을 유지한 채 `/sql`로 이동하는지 확인하고, editor 상단 Nessie Popover에서 자연어 요청 → 입력 폼 접힘 → Bubble 생성 상태 → 초안 적용이 동작하되 자동 실행되지 않는지 확인한다. SQL 실행 후에는 Dashboard와 같은 위젯 설정의 데이터 소스·유형·필드·집계·색상 변경과 오른쪽 `차트 보기`/`데이터 미리보기` 전환, 상단 CSV/Job/전체 보기 액션, 처리 Job 모달의 기본 정보 → 스케줄 → 거버넌스 → 저장 및 검토 흐름이 `/etl/review` 이동 없이 동작하는지 확인한다.
+SQL UI를 변경할 때는 desktop에서 좌측 SQL 도구와 우측 editor/result workspace의 하단이 SQL 실행 전후 모두 일치하는지 확인한다. Catalog 미리보기의 `SQL 분석에서 열기`가 선택 Dataset을 유지한 채 `/sql`로 이동하는지 확인하고, editor 상단 Nessie Popover에서 자연어 요청 → 입력 폼 접힘 → Bubble 생성 상태 → 초안 적용이 동작하되 자동 실행되지 않는지 확인한다. SQL 실행 후에는 Dashboard와 같은 위젯 설정의 데이터 소스·유형·필드·집계·색상 변경과 오른쪽 `차트 보기`/`데이터 미리보기` 전환, 상단 CSV/Job/전체 보기 액션, 처리 Job 모달의 기본 정보 → 스케줄 → 거버넌스 → 저장 및 검토 흐름이 `/etl/review` 이동 없이 동작하는지 확인한다. 마지막 단계에서는 DB 찾아보기, 포맷·압축 선택, S3 경로 찾아보기/복사, 태그 추가·삭제, 결과 컬럼 다중 파티션 선택을 확인하고 생성된 Job metadata에 같은 값이 남는지 검증한다.
 FastAPI 폴더 구조와 설계 결정은 `docs/backend-fastapi-transition-plan.md`를 기준으로 한다.
 
 ## 4) Prod-Like Docker Compose
@@ -524,7 +547,7 @@ Pair 이름은 작업 경계를 나타내며, 실제 구성원 이름은 sprint 
 
 - 오늘 데모 흐름에서 끊기는 화면은 어디인가?
 - Pair 간 넘겨야 하는 `jobId`, `runId`, `datasetId`, `sqlResult.runId`, `dashboardId`, `sourceRunId`가 같은가?
-- SQL Result를 처리 Job으로 저장할 때 Review draft에 `sourceRunId`, `query`, `referenceDatasetIds`, target dataset metadata가 유지되는가?
+- SQL Result를 처리 Job으로 저장할 때 Review draft에 `sourceRunId`, `query`, `referenceDatasetIds`, target DB/포맷/압축/경로/태그/다중 파티션 metadata가 유지되는가?
 - Dataset을 바꾸면 schema, lineage, SQL query, SQL result가 같이 바뀌는가?
 - Dashboard Widget은 SQL Result의 `columns`/`rows`를 실제로 쓰는가?
 - 실패했을 때 입력값과 이전 상태가 유지되는가?
@@ -622,6 +645,28 @@ ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:etl-lineage
 - dashboard persistence regression tests
 - dashboard publish/share/refresh runtime smoke tests
 
+### Synthetic commerce dataset 검증
+
+SQL 및 ETL 분석용 소규모 커머스 데이터는 `backend/scripts/synthetic-commerce/`의 결정적 generator로 만든다. Amazon Electronics metadata JSONL은 저장소에 포함하지 않으며 실행자가 로컬 경로로 전달한다. 검증된 고정 seed 결과는 `backend/fixtures/synthetic-commerce/`에 제공하고, 다른 seed의 임시 생성 결과는 ignored `backend/tmp/` 아래에 둔다.
+
+```bash
+python3 backend/scripts/synthetic-commerce/generate.py \
+  --source /path/to/meta_Electronics.jsonl \
+  --output-dir backend/tmp/synthetic-commerce-output \
+  --products 10000 \
+  --users 3000 \
+  --seed 20260711 \
+  --start-date 2026-06-01 \
+  --days 30
+
+python3 backend/scripts/synthetic-commerce/analyze.py \
+  --data-dir backend/tmp/synthetic-commerce-output
+
+python3 backend/scripts/synthetic-commerce/test_generate.py
+```
+
+생성 규칙, 컬럼 계약, 인사이트 품질 기준과 산출물 커밋 정책은 `backend/scripts/synthetic-commerce/README.md`를 따른다.
+
 ## 11) Manual Smoke Checklist
 
 - `/` 랜딩이 표시되고 시작 CTA가 `/login`으로 이동한다.
@@ -652,3 +697,16 @@ ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:etl-lineage
 `AGENTS.local.md` may be used for local-only Codex workflow preferences, such as routing natural-language issue, PR, and review requests to installed personal skills.
 
 This file is ignored by git and must not contain shared team policy, secrets, tokens, private keys, or real credentials.
+### ETL Permission create-flow 검증
+
+```powershell
+cd backend
+python scripts/verify-permission-create-flow-contract.py
+npm run verify:permission-job-dashboard
+
+cd ..\frontend
+npm run verify:ui-regressions
+npm run build
+```
+
+Windows에서 FastAPI 의존성이 저장소 가상환경에만 설치돼 있으면 `python` 대신 `.\.venv\Scripts\python.exe`를 사용한다. `verify:permission-job-dashboard`는 PostgreSQL metadata DB가 응답 가능한 환경을 요구한다.

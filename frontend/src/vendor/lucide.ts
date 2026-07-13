@@ -57,6 +57,7 @@ export { default as Folder } from "lucide-react/dist/esm/icons/folder.mjs";
 export { default as FolderOpen } from "lucide-react/dist/esm/icons/folder-open.mjs";
 export { default as FolderSearch } from "lucide-react/dist/esm/icons/folder-search.mjs";
 export { default as Grid3X3 } from "lucide-react/dist/esm/icons/grid-3x3.mjs";
+export { default as GripVertical } from "lucide-react/dist/esm/icons/grip-vertical.mjs";
 export { default as HardDrive } from "lucide-react/dist/esm/icons/hard-drive.mjs";
 export { default as Hash } from "lucide-react/dist/esm/icons/hash.mjs";
 export { default as History } from "lucide-react/dist/esm/icons/history.mjs";

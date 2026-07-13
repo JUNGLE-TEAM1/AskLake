@@ -13,12 +13,12 @@ FastAPI 전환의 공통 구조와 의사결정은 `docs/backend-fastapi-transit
 | 새 수집/처리 생성 | Source -> Schema -> Rule -> Schedule -> Permission -> Target -> Review -> Create가 `POST /api/etl/jobs`로 연결되고 `etl_jobs`에 저장. 응답의 `catalogTarget`은 pending identity이며 아직 Catalog row를 만들지 않음 | 중간 단계별 서버 저장 API는 후속 범위 |
 | Target 저장경로 선택 | `GET /api/s3/buckets`, `GET /api/s3/prefixes`로 S3 bucket/prefix를 서버에서 lazy 조회하고 `target.storagePath` string에 반영. EC2 prod compose는 MinIO를 S3-compatible endpoint로 제공하고 서버 `deploy/.env`의 `S3_ALLOWED_BUCKETS` allowlist를 사용 | 운영 IAM/credential rotation, external S3 전환 |
 | Target DB 선택 | `GET /api/target/databases`로 허용 DB 목록을 조회하고 `target.databaseName` string에 반영. 테이블명 입력은 노출하지 않고 datasetName을 create payload 호환값으로 사용 | 운영 catalog DB 목록/권한 API |
-| Source/Schema | mock mode에서는 `SourceConnectorAnalysis` fallback으로 schema/sampleRows 반영, live mode에서는 `POST /api/etl/sources/test`로 실제 connector 확인. MongoDB connector는 Node MongoDB driver로 컬렉션과 제한 문서 샘플을 조회하며, 사용자가 선택한 File / S3 Parquet 객체는 Spark reader로 물리 스키마를 읽음 | Kafka message payload sampling, 다중 Parquet 파일의 통합 스키마 추론 |
+| Source/Schema | mock mode에서는 `SourceConnectorAnalysis` fallback으로 schema/sampleRows 반영, live mode에서는 `POST /api/etl/sources/test`로 실제 connector 확인. MongoDB connector는 Node MongoDB driver로 컬렉션과 제한 문서 샘플을 조회하며, 사용자가 선택한 File / S3 Parquet 객체는 Spark reader로 물리 스키마를 읽음. `npm run minio:seed-click-log`는 조건부 1.5단계 개발용 헤더 없는 공백 구분 click event TXT 100줄을 `m3-raw`에 준비함. `.txt`/`.log` raw sample은 조건부 `Record Parsing` 단계에서 `POST /api/etl/record-parsing/preview`로 검증하고 확정 규칙을 Job과 Spark batch runtime에 전달함 | Kafka Snapshot/Continuous 원시 TXT 구조화, 임의 정규식, 오류 행 quarantine·재처리, 다중 Parquet 파일의 통합 스키마 추론 |
 | Rule | 현재 schema/sampleRows 기반 preview, create payload에 transform/quality detail 포함 | 별도 backend rule preview API |
 | Job command | Kafka Snapshot Job은 `POST /api/etl/jobs/{jobId}/commands`의 run/retry로 fixed range ingest를 실행하고, non-Kafka Job은 Airflow DAG Run을 접수. Continuous Kafka Job은 Docker로 long-running Spark Structured Streaming submit container를 시작하거나 signal을 보내며, S3A checkpoint, `_SUCCESS` + offset manifest 게시, Catalog 복구, partition lag/throughput/schema drift report, bounded worker log, policy-aware quarantine replay, lease 기반 maintenance, non-destructive compaction을 제공 | pause/cancel의 실제 Airflow/Spark interrupt, production soak, async Airflow maintenance scheduling, compaction retention switch |
 | Run/DAG | local Airflow DAG가 token-authenticated FastAPI internal API를 통해 실제 PySpark를 실행하고 MinIO/S3 Parquet를 생성. `publish_run_result`가 Catalog endpoint를 호출하고 `GET /api/etl/jobs/{jobId}`가 DAG/task/Spark/Catalog evidence를 동기화. Continuous는 start-to-terminal session과 하위 micro-batch 이력을 별도 table/API로 영속화하고 active 실행 이력 화면을 자동 갱신 | Spark log object storage 분리, session history 장기 retention/pagination |
 | Catalog | `GET /api/catalog/datasets` hydrate, `GET /api/catalog/datasets/{datasetId}/lineage`, SQL derived/Kafka 결과를 Postgres JSONB payload로 반영. 일반 Airflow/Spark batch의 멱등 reconciliation endpoint, transaction, final-task 연결, frontend terminal-success 1회 refresh, live E2E 구현 | 상세/lineage/search API 고도화 |
-| SQL 분석 | Trino Query Run, canonical `/api/query/validate`, 1회성 Iceberg CTAS, 반복 full-refresh SQL Job API가 연결되어 있다. UI는 실행 이력을 별도 모달에서 열고 성공 Run 뒤 `Dataset으로 저장`과 `반복 Job 만들기`를 분리한다. Query Run과 두 CTAS 경로의 continuation은 durable collector가 처리한다. 반복 Job은 매 Run 고유 table을 만들고 `DESCRIBE` 뒤 안정적인 Dataset mapping을 교체하며, 실패/취소/collector 재시작에는 마지막 정상 mapping을 보존한다. Production bootstrap/least-privilege ACL/result-storage readiness와 실제 한글 Dataset E2E가 포함됐다. | Spark/Kafka writer의 native Iceberg 전환, old SQL Job table retention/cleanup policy, target host TLS certificate/secret provisioning, org quota/actual plan-cost integration |
+| SQL 분석 | DuckDB compatibility Preview와 Trino Query Run을 분리 지원한다. Trino는 canonical `/api/query/validate`, durable collector, 논리 100행 결과 page, server-side CSV streaming, 1회성 Iceberg CTAS와 반복 full-refresh SQL Job API를 제공한다. 원격 Parquet Preview는 query-scoped cache/byte limit과 명시적 storage 오류를 사용한다. | Spark/Kafka writer의 native Iceberg 전환, old SQL Job table retention/cleanup policy, target host TLS certificate/secret provisioning, org quota/actual plan-cost integration |
 | Dashboard | FastAPI dashboard card/list와 draft/published runtime API 연결. 프론트는 404 local fallback 유지. Dashboard 목록/runtime/title/draft/delete 권한 enforcement 연결 | 공유 링크/API, export API, cross-pair E2E QA |
 | Permission/Governance | Create flow의 `owner`, `permissionSummary`, `permissionRoles`는 metadata로 저장/표시. Job/Dataset/Dashboard 응답은 optional `createdBy`/`createdByProfile`, `permissionGrants`, `permissions` metadata를 받을 수 있음. Backend는 `asklake_session` 쿠키 또는 `X-AskLake-User`/`X-AskLake-Role`, `X-AskLake-Groups`를 `ActorContext`로 읽고 공통 `can()` 판정을 제공함. 독립 `permission_grants` table을 만들고 기존 payload grant와 병합해 Admin permission 조회에 반영함. Admin 권한은 resource 접근 그룹이 아니라 `role=admin`으로 부여하고, demo admin groups는 빈 배열로 동기화함. Admin permission grant 생성/수정/삭제 API와 관리 콘솔 권한 편집 UI가 연결됨. `principal_controls`와 `resource_locks`로 user/group 차단 및 Dataset/Job/Dashboard 잠금 API를 제공함. 관리 콘솔 UI는 user 차단을 사용자 탭, group 차단을 그룹 탭, resource lock을 권한 탭에 배치하고 차단/잠금 사유는 관리자 내부 표시와 감사 로그용으로만 사용함. Profile/Admin API와 로컬 login/signup/session/logout API가 연결됨. Dashboard 삭제/runtime 편집, Catalog dataset 조회/lineage/materialization-run 삭제, SQL Query Run 제출/결과 조회/취소, Query AI 생성, Job command는 공통 판정기를 사용함. Frontend는 `permissions`로 관련 버튼을 비활성화하고 403을 권한 메시지로 표시함 | dataset 생성/삭제 전체로 permission check 확대 |
 | Auth / Admin | httpOnly `asklake_session` cookie 기반 local login/signup/session/logout, 현재 사용자 profile, admin 사용자·그룹·permission grant·governance control API 연결. Frontend는 session actor 확인 이후 보호 route와 hydrate를 시작하고, admin actor에게만 관리 콘솔을 노출 | 운영 IdP/SSO, production session hardening, Alembic migration |
@@ -44,7 +44,7 @@ Frontend baseline은 `VITE_USE_MOCK_API`가 미설정이면 live mode로 동작�
 - Quality: `qualityRules`, `qualityScore`, `qualityStatus`, `qualityInvalidRows`
 - Schedule/Permission/Target: `scheduleLabel`, `scheduleSummary`, `startDate`, optional `endDate`, `nextRunUtc`, `overlapPolicy`, `timezone`, `watermarkPolicy`, `retryPolicy`, `retryPolicySummary`, `runLimitSummary`, `owner`, `permissionSummary`, `targetDataset`, optional `targetDatabase`, `targetDescription`, `targetTags`, `targetLayer`, `targetFormat`, `storageType`, `storagePath`, `partition`, `partitionColumns`, `indexColumns`, `compression`
 
-Schedule UI 문구는 `수동/자동/1회 실행` 대신 `스케줄링 건너뛰기`, `반복 실행`을 사용한다. `스케줄링 건너뛰기`는 저장만 하고 나중에 목록에서 직접 실행하는 상태이며, 즉시 실행은 스케줄 생성 옵션이 아니라 기존 Job command API의 `run` action으로 분리한다. 반복 실행 화면은 반복 주기, 실행 시각, IANA `timezone`, 실패 재시도만 노출한다. `startDate`, 빈 값이면 종료일 없음으로 처리하는 `endDate`, 기본 `skip_if_running` 겹침 처리, watermark 수집 기준, 2배 지수 백오프 재시도 정책은 생성 payload와 Job hydrate 응답에 보존하되 UI에서는 기본값으로 처리한다. 현재 배치 Run 취소는 `cancelRun`으로 분리한다. 반복 예약 일시중지는 스케줄 설정을 보존하는 `stopSchedule`, 복원은 `resumeSchedule`을 사용한다. 실행 중인 실시간 Job의 `stopSchedule`은 UI에서 `수집 중지`로 표시하고 현재 Run을 `canceled`로 종료한다. 실시간 Job의 `수집 시작`은 `run` 또는 실패 후 `retry`로 실제 새 Run을 시작한다.
+Schedule UI는 `직접 실행`, `반복 실행`을 사용하며 `직접 실행`을 payload의 `스케줄링 건너뛰기`로 저장한다. 즉시 실행은 스케줄 생성 옵션이 아니라 기존 Job command API의 `run` action으로 분리한다. 반복 실행을 선택한 때만 반복 주기, 실행 시각, IANA `timezone`, 겹침 처리를 노출하고, 재시도 설정은 사용 여부에 따라 상세 필드를 표시한다. `startDate`, 빈 값이면 종료일 없음으로 처리하는 `endDate`, watermark 수집 기준, 2배 지수 백오프 재시도 정책은 생성 payload와 Job hydrate 응답에 보존한다. 기본 겹침 처리는 `skip_if_running`이다. 현재 배치 Run 취소는 `cancelRun`으로 분리한다. 반복 예약 일시중지는 스케줄 설정을 보존하는 `stopSchedule`, 복원은 `resumeSchedule`을 사용한다. 실행 중인 실시간 Job의 `stopSchedule`은 UI에서 `수집 중지`로 표시하고 현재 Run을 `canceled`로 종료한다. 실시간 Job의 `수집 시작`은 `run` 또는 실패 후 `retry`로 실제 새 Run을 시작한다.
 
 Target metadata는 Review에서 보이는 값과 create payload, Spark run 성공 후 Catalog dataset metadata가 같은 값을 사용해야 한다. `partition`은 기존 호환 문자열로 유지하고, 실제 선택 컬럼 목록은 `partitionColumns`에 보존한다.
 
@@ -211,6 +211,8 @@ python3 scripts/verify-etl-job-hydrate-contract.py
 python3 scripts/verify-etl-job-update-contract.py
 npm run verify:sources
 npm run verify:spark-run
+npm run verify:record-parsing
+npm run verify:record-parsing:e2e
 ```
 
 FastAPI Pair2 smoke:
@@ -228,6 +230,8 @@ FastAPI Pair2 smoke:
 - `npm run verify:etl-lineage`는 text source 하나가 `text`, `sentiment`, `severity`로 파생되는 경우 source node가 `text`만 갖고 one-to-many transform edge를 만들며 `_asklake_*` metadata에 가짜 source edge를 만들지 않는지 확인한다. 또한 Parquet source를 `SOURCE · PARQUET`, Spark Job을 `PROCESS · SPARK`, 현재 Spark physical output을 요청 포맷과 무관하게 실제 `PARQUET` engine으로 표시하는지 검증한다.
 - `python3 scripts/verify-etl-job-hydrate-contract.py`는 저장된 Kafka source/schema/rule/permission/target metadata가 `JobRowData` hydrate 응답에서 손실되지 않는지 확인한다.
 - `python3 scripts/verify-etl-job-update-contract.py`는 update request가 source field를 거부하고 source config를 보존한 채 editable metadata만 반영하는지, 성공 Run 뒤 target identity 변경이 `422`로 막히는지, 실행 중 update가 `409`로 막히는지 확인한다.
+- `npm run verify:record-parsing`은 공백 구분 규칙의 10필드 추론, 타입 추론, 사용자 컬럼명 반영, 필드 개수가 다른 행의 line/count 오류 계약을 FastAPI service 수준에서 확인한다.
+- `npm run verify:record-parsing:e2e`는 `s3://m3-raw/asklake-fixtures/txt/click-events-whitespace-100.log`를 실제 Source API로 읽고 Preview 100/100, Job 계약 저장, Airflow/Spark input/output 100행, MinIO Parquet, Catalog의 10개 사용자 컬럼을 확인한다. 실행 중인 FastAPI/Airflow와 올바른 `ASKLAKE_DOCKER_NETWORK`가 필요하다.
 
 Frontend:
 
@@ -311,6 +315,8 @@ Catalog의 SQL 사용 가능 여부는 `queryEngineStatus`와 검증된 `queryEn
 Query Run collector는 canonical `nextUri`를 단독 소비하면서 blocking fetch 구간에만 backend-only QueryInfo sampler를 병행한다. sampler는 progress/driver/output과 elapsed/queued/CPU time, processed input bytes/rows, peak memory가 바뀔 때 fenced run payload를 갱신하고 실패 시 statement stats로 fallback한다. QueryInfo와 statement page는 같은 단조 증가 병합 규칙을 사용하므로 누적 지표와 terminal state는 stale sample로 감소하지 않는다. 장기 fetch 중에는 telemetry 변경과 무관하게 lease를 주기 갱신해 takeover 중복을 막는다. `outputPositions`가 확정되면 MinIO 누적 결과 행과 비교해 결과 수집 퍼센트를 계산하며, 총 행을 모르면 별도 count query와 퍼센트 생성을 모두 생략한다. Query 완료, 수집 시작, 첫 durable page, 전체 manifest 완료 UTC 시각과 경과값은 fenced payload에 최초 한 번만 기록하므로 retry/restart/takeover 뒤에도 유지된다.
 
 SQL 실행 백엔드는 반드시 read-only guard를 둬야 합니다. frontend preflight는 사용성 보조이며, backend가 같은 기준을 Trino 제출 전에 재검증합니다. Query Run은 선택된 Catalog Dataset의 physical mapping을 Trino catalog/schema/table로 해석하고, `baseDatasetId`와 `referenceDatasetIds`에 포함되지 않은 physical table 참조는 실행 전에 차단합니다. 결과 행은 전체를 frontend에 적재하지 않고 submit 시 고정한 server cursor page로 조회하며 frontend는 현재 page만 유지합니다. Query AI가 생성한 SQL도 같은 backend read-only guard와 선택 dataset scope 검증을 통과해야 합니다. SQL 결과로 만든 derived dataset은 `lineageGraph`에 source dataset lineage와 derived node/column edge를 포함해야 합니다. payload lineage가 없는 기존 row만 `upstream` fallback을 사용합니다. lifecycle, retention, materialization 기준은 `docs/trino-query-run-contract.md`를 따릅니다.
+
+MinIO/S3-backed Parquet Preview는 Catalog의 `s3://`/`s3a://` storage location을 backend credential로 읽는다. 대상 object 목록과 총 크기를 먼저 확인하고 `ASKLAKE_SQL_PREVIEW_MAX_REMOTE_BYTES`(기본 512 MiB) 이내일 때만 query-scoped 임시 cache로 내려받아 DuckDB가 스캔한다. cache는 Preview connection 종료와 함께 삭제되고 원격 object는 변경하지 않는다. credential 만료, endpoint 장애, object 부재는 빈 schema fallback으로 숨기지 않고 `SQL_STORAGE_ERROR`로 노출한다. 이 경로는 bounded Preview용이며 대용량 full scan은 향후 Trino/full-run 경계로 남긴다.
 
 Pair2 FastAPI 5단계 완료 기준:
 
@@ -466,3 +472,13 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 - SQL engine read-only guard 고도화
 - Dashboard 권한/공유/export API
 - Audit log server persistence
+## ETL Permission create-flow readiness
+
+- [x] `GET /api/etl/permission-options` 그룹·사용자 경량 조회
+- [x] admin actor guard와 `403 FORBIDDEN`
+- [x] create/update `permissionGrants` validation
+- [x] `permission_ui` grant 저장 및 교체
+- [x] admin source grant 보존
+- [x] 생성·수정 응답과 접근 판정에 persisted grant 병합
+- [x] `backend/scripts/verify-permission-create-flow-contract.py` 생성·교체 계약 검증
+- [ ] Docker/PostgreSQL 기반 `verify:permission-job-dashboard` 전체 스모크는 metadata DB가 응답 가능한 환경에서 실행

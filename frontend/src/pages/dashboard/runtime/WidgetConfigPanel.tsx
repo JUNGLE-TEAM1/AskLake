@@ -7,7 +7,6 @@ import {
   useRef,
   useState,
   type ChangeEvent,
-  type ComponentProps,
   type FormEvent,
   type ReactNode,
 } from "react";
@@ -29,9 +28,8 @@ import { HexColorInput, HexColorPicker } from "react-colorful";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
-import { FormFieldGroup, NativeSelectField } from "@/components/ui/form-field-group";
+import { FormFieldGroup, type NativeSelectFieldProps } from "@/components/ui/form-field-group";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SettingsPanel } from "@/components/ui/settings-panel";
 import { Slider } from "@/components/ui/slider";
 import { Textarea } from "@/components/ui/textarea";
@@ -114,14 +112,13 @@ const orientationOptions: Array<{ label: string; value: DashboardWidgetOrientati
   { label: "가로", value: "horizontal" },
 ];
 const multiColorFallbackCount = 6;
-
 function WidgetSelectField({
   children,
   onChange,
   selectClassName,
   value,
   ...props
-}: Omit<ComponentProps<typeof NativeSelectField>, "children" | "onChange" | "value"> & {
+}: Omit<NativeSelectFieldProps, "children" | "onChange" | "value"> & {
   children: ReactNode;
   onChange?: (event: ChangeEvent<HTMLSelectElement>) => void;
   value: string;
@@ -131,7 +128,6 @@ function WidgetSelectField({
     const label = typeof child.props.children === "string" ? child.props.children : String(child.props.value ?? "");
     return [{ label, value: child.props.value ?? label }];
   });
-
   return (
     <DashboardFieldCombobox
       className={cn("asklake-widget-select", selectClassName)}
@@ -524,7 +520,6 @@ export function WidgetConfigPanel({
   const [formError, setFormError] = useState<string | null>(null);
   const [title, setTitle] = useState("");
   const [type, setType] = useState<DashboardRuntimeWidgetType>("bar_chart");
-  const datasetFieldId = useId();
   const descriptionFieldId = useId();
   const titleFieldId = useId();
   const previousEditingWidgetIdRef = useRef<string | null>(null);
@@ -794,36 +789,26 @@ export function WidgetConfigPanel({
         <div className="asklake-widget-config-heading">
           <div>
             <span>{isEditMode ? "선택된 위젯" : "데이터셋"}</span>
-            <strong>{isEditMode ? editingWidget?.title || "제목 없는 위젯" : selectedDataset?.name}</strong>
+            <strong className="min-w-0 max-w-full break-words">
+              {isEditMode ? editingWidget?.title || "제목 없는 위젯" : selectedDataset?.name}
+            </strong>
           </div>
         </div>
       )}
     >
-      <form className="asklake-widget-config-form" onSubmit={(event) => void handleSubmit(event)}>
-        <FieldGroup className="contents">
-          {shouldShowDatasetSelect ? (
-            <Field className="asklake-widget-dataset-field">
-              <FieldLabel htmlFor={datasetFieldId}>데이터셋</FieldLabel>
-              <Select
+        <form className="asklake-widget-config-form" onSubmit={(event) => void handleSubmit(event)}>
+          <FieldGroup className="contents">
+            {shouldShowDatasetSelect ? (
+              <DashboardFieldCombobox
                 disabled={!datasets.length || !onSelectDataset}
+                fieldClassName="asklake-widget-dataset-field"
+                label="데이터셋"
+                options={datasets.map((dataset) => ({ label: dataset.name, value: dataset.id }))}
+                placeholder="데이터셋 선택"
                 value={selectedDatasetId ?? ""}
                 onValueChange={(value) => onSelectDataset?.(value)}
-              >
-                <SelectTrigger id={datasetFieldId} size="sm">
-                  <SelectValue placeholder="데이터셋 선택" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectGroup>
-                    {datasets.map((dataset) => (
-                      <SelectItem key={dataset.id} value={dataset.id}>
-                        {dataset.name}
-                      </SelectItem>
-                    ))}
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-            </Field>
-          ) : null}
+              />
+            ) : null}
           <Field>
             <FieldLabel htmlFor={titleFieldId}>위젯 제목</FieldLabel>
             <Input
@@ -1164,8 +1149,8 @@ export function WidgetConfigPanel({
             {isEditMode ? (isUpdating ? "저장 중" : "변경사항 저장") : (isCreating ? "생성 중" : createButtonLabel)}
           </Button>
         </div>
-        </FieldGroup>
-      </form>
+          </FieldGroup>
+        </form>
     </SettingsPanel>
   );
 }

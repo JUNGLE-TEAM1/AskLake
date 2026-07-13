@@ -6,11 +6,13 @@ from pathlib import Path
 import re
 import secrets
 import subprocess
+from types import SimpleNamespace
 from typing import Any
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import status
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -28,10 +30,13 @@ from app.models import (
     KafkaContinuousSessionModel,
     KafkaSnapshotModel,
 )
+from app.models.base import Base
+from app.models.identity import AuthUserModel
 from app.repositories.audit_repository import safe_record_audit_event
 from app.repositories import etl_repository
 from app.repositories.catalog_repository import CatalogRepository
 from app.repositories.sql_repository import SqlRepository
+from app.repositories.permission_repository import replace_permission_ui_grants
 from app.schemas.common import ErrorCode
 from app.schemas.etl import (
     AirflowCatalogReconciliationResponse,
@@ -52,10 +57,18 @@ from app.schemas.etl import (
     JobRowData,
     JobRunOutcome,
     JobScheduleKind,
+    PermissionOptionGroup,
+    PermissionOptionsResponse,
+    PermissionOptionUser,
     KafkaContinuousBatch,
     KafkaContinuousSession,
     ReviewEntry,
     ReviewPipelineRequest,
+    RecordParsingColumnDraft,
+    RecordParsingDraft,
+    RecordParsingInvalidRow,
+    RecordParsingPreviewRequest,
+    RecordParsingPreviewResponse,
     ReviewSchemaRow,
     ReviewSnapshot,
     ReviewValidationRow,
@@ -66,6 +79,7 @@ from app.schemas.etl import (
     ScheduledJobRunItem,
     ScheduledJobRunRequest,
     ScheduledJobRunResponse,
+    SchemaColumnDraft,
     SchemaDraft,
     SourceAssetsRequest,
     SourceAssetsResponse,
@@ -79,6 +93,7 @@ from app.services.governance_enforcement import require_governed_access
 from app.services.trino_materialization_service import materialized_dataset_id
 from app.services.trino_query_run_service import TrinoQueryRunService
 from app.services.trino_sql_job_service import TrinoSqlJobService
+from app.services.identity_service import DEMO_GROUPS, DEMO_USERS
 from app.services.resource_permission_service import job_with_persisted_permission_grants, permission_grants_for_resource, permissions_for_actor_with_governance
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
@@ -87,10 +102,58 @@ JOB_STATUSES = ("scheduled", "failed", "running", "paused", "canceled", "stopped
 ACTIVE_RUN_STATUSES = {"queued", "running"}
 TERMINAL_RUN_STATUSES = {"success", "failed", "canceled"}
 SPARK_OUTPUT_FORMAT = "parquet"
+PERMISSION_GROUP_ACTIONS = {
+    "analytics": ["view", "query"],
+    "data-platform": ["view", "run", "manage"],
+    "ops": ["view", "run"],
+}
 
 
-def create_pipeline(db: Session, request: CreatePipelineRequest, actor_name: str = "demo-user") -> CreatePipelineResponse:
+def get_permission_options(db: Session, actor: ActorContext) -> PermissionOptionsResponse:
+    if actor.role != "admin":
+        raise ApiError(ErrorCode.FORBIDDEN, "Admin role is required", status.HTTP_403_FORBIDDEN)
+    Base.metadata.create_all(bind=db.get_bind(), tables=[AuthUserModel.__table__])
+    stored_users = list(db.scalars(select(AuthUserModel).order_by(AuthUserModel.display_name.asc())).all())
+    users = stored_users or [
+        SimpleNamespace(
+            id=value["id"],
+            display_name=value["display_name"],
+            email=value["email"],
+            role=value["role"],
+        )
+        for value in DEMO_USERS.values()
+    ]
+    return PermissionOptionsResponse(
+        groups=[
+            PermissionOptionGroup(
+                id=group.id,
+                name=group.name,
+                description=group.description,
+                actions=PERMISSION_GROUP_ACTIONS.get(group.id, ["view", "run"]),
+            )
+            for group in DEMO_GROUPS.values()
+        ],
+        users=[
+            PermissionOptionUser(
+                id=user.id,
+                name=user.display_name,
+                email=user.email,
+                initials="".join(part[0] for part in user.display_name.split()[:2]).upper() or user.display_name[:2].upper(),
+                role=user.role,
+            )
+            for user in users
+        ],
+    )
+
+
+def create_pipeline(
+    db: Session,
+    request: CreatePipelineRequest,
+    actor: ActorContext | str = "demo-user",
+) -> CreatePipelineResponse:
     validate_create_request(request)
+    actor_context = actor if isinstance(actor, ActorContext) else ActorContext(name=actor)
+    actor_name = actor_context.name
     created_by = identity_name(request.created_by or actor_name or request.owner)
     created_by_profile = request.created_by_profile or identity_profile(created_by)
     dataset_id = f"ds_{normalize_column_name(request.target_dataset)}"
@@ -110,6 +173,7 @@ def create_pipeline(db: Session, request: CreatePipelineRequest, actor_name: str
             )
         update_existing_append_job(existing_job, request, dataset_id, created_by, created_by_profile)
         saved_job = etl_repository.save_job(db, existing_job)
+        saved_job = persist_requested_permission_grants(db, saved_job, request.permission_grants, created_by, actor_context)
         return CreatePipelineResponse(
             catalog_target={
                 "id": dataset_id,
@@ -149,6 +213,7 @@ def create_pipeline(db: Session, request: CreatePipelineRequest, actor_name: str
         source_type=request.source_type,
         execution_mode=request.execution_mode,
         continuous_config=continuous_config_from_request(request, job_id),
+        record_parsing=request.record_parsing.model_dump(mode="json", by_alias=True) if request.record_parsing else None,
         schema_columns=[column.model_dump(mode="json", by_alias=True) for column in request.schema_columns],
         schema_fingerprint=request.schema_fingerprint,
         schema_sample_rows=request.schema_sample_rows,
@@ -188,6 +253,7 @@ def create_pipeline(db: Session, request: CreatePipelineRequest, actor_name: str
     if request.execution_mode == "continuous":
         etl_repository.save_kafka_continuous_runtime(db, continuous_runtime_from_job(job))
         saved_job = etl_repository.get_job_schema(db, job_id) or saved_job
+    saved_job = persist_requested_permission_grants(db, saved_job, request.permission_grants, created_by, actor_context)
     return CreatePipelineResponse(
         catalog_target={
             "id": dataset_id,
@@ -619,7 +685,34 @@ def update_pipeline(
 
     apply_update_request(job, request, target_changed)
     saved_job = etl_repository.save_job(db, job)
+    saved_job = persist_requested_permission_grants(
+        db,
+        saved_job,
+        request.permission_grants,
+        actor_context.name,
+        actor_context,
+    )
     return with_job_permissions(db, saved_job, actor_context)
+
+
+def persist_requested_permission_grants(
+    db: Session,
+    job: JobRowData,
+    grants: list[Any] | None,
+    created_by: str,
+    actor: ActorContext,
+) -> JobRowData:
+    if grants is None:
+        return job
+    replace_permission_ui_grants(
+        db,
+        resource_type="etl_job",
+        resource_id=job.id,
+        grants=grants,
+        created_by=created_by,
+    )
+    refreshed_job = etl_repository.get_job_schema(db, job.id) or job
+    return with_job_permissions(db, refreshed_job, actor)
 
 
 def list_datasets(db: Session) -> list[CatalogDataset]:
@@ -1010,6 +1103,143 @@ def infer_schema(request: SourceConnectorRequest) -> SchemaDraft:
     return analysis.draft_patch.schema_
 
 
+def preview_record_parsing(request: RecordParsingPreviewRequest) -> RecordParsingPreviewResponse:
+    raw_rows = [
+        (line_number, line.strip())
+        for line_number, line in enumerate(request.raw_lines, start=1)
+        if line.strip()
+    ]
+    if request.record_parsing.delimiter_kind != "whitespace":
+        raise ApiError(
+            ErrorCode.VALIDATION_ERROR,
+            "Only whitespace record parsing is supported.",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
+    if not raw_rows:
+        empty_parsing = request.record_parsing.model_copy(update={"expected_field_count": 0, "columns": []})
+        return RecordParsingPreviewResponse(
+            can_apply=False,
+            columns=[],
+            sample_rows=[],
+            record_parsing=empty_parsing,
+            total_rows=0,
+            valid_rows=0,
+            invalid_rows=[],
+        )
+
+    tokenized_rows = [(line_number, re.split(r"\s+", line), line) for line_number, line in raw_rows]
+    header_tokens: list[str] = []
+    if request.record_parsing.header and tokenized_rows:
+        _, header_tokens, _ = tokenized_rows.pop(0)
+
+    configured_columns = sorted(request.record_parsing.columns, key=lambda column: column.position)
+    expected_field_count = request.record_parsing.expected_field_count
+    if expected_field_count == 0 and configured_columns:
+        expected_field_count = len(configured_columns)
+    if expected_field_count == 0:
+        expected_field_count = dominant_field_count([tokens for _, tokens, _ in tokenized_rows])
+
+    column_names = record_parsing_column_names(header_tokens, configured_columns, expected_field_count)
+    valid_token_rows = [tokens for _, tokens, _ in tokenized_rows if len(tokens) == expected_field_count]
+    invalid_records = [
+        RecordParsingInvalidRow(
+            line_number=line_number,
+            expected_field_count=expected_field_count,
+            actual_field_count=len(tokens),
+            raw_preview=raw_line[:200],
+        )
+        for line_number, tokens, raw_line in tokenized_rows
+        if len(tokens) != expected_field_count
+    ]
+    inferred_types = [
+        infer_record_parsing_type([row[index] for row in valid_token_rows if index < len(row)])
+        for index in range(expected_field_count)
+    ]
+    record_columns = [
+        RecordParsingColumnDraft(
+            position=index,
+            name=column_names[index],
+            inferred_type=(configured_columns[index].inferred_type if index < len(configured_columns) else inferred_types[index]),
+        )
+        for index in range(expected_field_count)
+    ]
+    schema_columns = [
+        SchemaColumnDraft(
+            confidence=90,
+            nullable=False,
+            source_name=column.name,
+            target_name=column.name,
+            type=column.inferred_type,
+        )
+        for column in record_columns
+    ]
+    unique_names = len(set(column_names)) == len(column_names) and all(column_names)
+    normalized = request.record_parsing.model_copy(update={
+        "enabled": True,
+        "expected_field_count": expected_field_count,
+        "columns": record_columns,
+    })
+    return RecordParsingPreviewResponse(
+        can_apply=bool(expected_field_count and tokenized_rows and not invalid_records and unique_names),
+        columns=schema_columns,
+        sample_rows=valid_token_rows[:100],
+        record_parsing=normalized,
+        total_rows=len(tokenized_rows),
+        valid_rows=len(valid_token_rows),
+        invalid_rows=invalid_records[:20],
+    )
+
+
+def dominant_field_count(rows: list[list[str]]) -> int:
+    counts: dict[int, int] = {}
+    for row in rows:
+        counts[len(row)] = counts.get(len(row), 0) + 1
+    if not counts:
+        return 0
+    highest = max(counts.values())
+    winners = [field_count for field_count, count in counts.items() if count == highest]
+    return winners[0] if len(winners) == 1 else 0
+
+
+def record_parsing_column_names(
+    header_tokens: list[str],
+    configured_columns: list[RecordParsingColumnDraft],
+    expected_field_count: int,
+) -> list[str]:
+    names: list[str] = []
+    for index in range(expected_field_count):
+        raw_name = (
+            configured_columns[index].name
+            if index < len(configured_columns)
+            else header_tokens[index] if index < len(header_tokens) else f"field_{index + 1}"
+        )
+        names.append(normalize_column_name(raw_name) or f"field_{index + 1}")
+    return names
+
+
+def infer_record_parsing_type(values: list[str]) -> str:
+    non_empty = [value.strip() for value in values if value.strip()]
+    if not non_empty:
+        return "String"
+    if all(re.fullmatch(r"-?\d+", value) for value in non_empty):
+        return "Integer"
+    if all(re.fullmatch(r"-?\d+(?:\.\d+)?", value) for value in non_empty):
+        return "Float"
+    if all(value.lower() in {"true", "false"} for value in non_empty):
+        return "Boolean"
+    if all(record_parsing_timestamp(value) for value in non_empty):
+        return "Timestamp"
+    return "String"
+
+
+def record_parsing_timestamp(value: str) -> bool:
+    try:
+        datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return "T" in value or ":" in value
+    except ValueError:
+        return False
+
+
 def review_pipeline(request: ReviewPipelineRequest) -> ReviewSnapshot:
     source_ready = request.source_connection_status == "success"
     if source_ready and request.source_type != "SQL Result":
@@ -1025,6 +1255,11 @@ def review_pipeline(request: ReviewPipelineRequest) -> ReviewSnapshot:
         (column.target_name, column.type) for column in included_columns
     ]
     schema_ready = bool(included_columns)
+    record_parsing_ready = not (request.record_parsing and request.record_parsing.enabled) or (
+        request.record_parsing.expected_field_count > 0
+        and len(request.record_parsing.columns) == request.record_parsing.expected_field_count
+        and len({normalize_column_name(column.name) for column in request.record_parsing.columns}) == len(request.record_parsing.columns)
+    )
     processing_ready = bool(request.rule_summary.strip())
     continuous_rules_supported = request.execution_mode != "continuous" or (
         not any(step.enabled for step in request.transform_steps)
@@ -1033,7 +1268,7 @@ def review_pipeline(request: ReviewPipelineRequest) -> ReviewSnapshot:
     schedule_ready = bool(request.schedule_label.strip())
     retry_ready = bool(request.retry_policy_summary.strip())
     permission_ready = bool(request.permission_summary.strip() and request.target_dataset.strip() and request.owner.strip())
-    can_create = source_ready and schema_ready and continuous_rules_supported and bool(request.source_type.strip()) and bool(request.source_label.strip()) and bool(request.target_dataset.strip()) and bool(request.owner.strip())
+    can_create = source_ready and schema_ready and record_parsing_ready and continuous_rules_supported and bool(request.source_type.strip()) and bool(request.source_label.strip()) and bool(request.target_dataset.strip()) and bool(request.owner.strip())
 
     source_type = "PostgreSQL" if request.source_type == "Database" else request.source_type
     source_display = " · ".join(value for value in [source_type, request.source_label] if value.strip())
@@ -1071,6 +1306,7 @@ def review_pipeline(request: ReviewPipelineRequest) -> ReviewSnapshot:
         ],
         validation=[
             review_validation("소스 연결", source_ready, "완료", "확인 필요"),
+            *([review_validation("레코드 구조화", record_parsing_ready, "확정됨", "구조화 규칙 확인 필요")] if request.record_parsing and request.record_parsing.enabled else []),
             review_validation("스키마", schema_ready, "확정됨", "추론 필요"),
             review_validation("처리 테스트", processing_ready, "통과", "확인 필요"),
             *([review_validation("Continuous 규칙", continuous_rules_supported, "지원 범위 확인", "Continuous에서는 transform/quality rule을 제거하세요")] if request.execution_mode == "continuous" else []),
@@ -1845,6 +2081,7 @@ def job_payload_for_spark(job: ETLJobModel) -> dict[str, Any]:
         "qualityScore": job.quality_score,
         "qualityStatus": job.quality_status,
         "rag": job.rag,
+        "recordParsing": job.record_parsing or None,
         "schedule": job.schedule,
         "schemaColumns": job.schema_columns or [],
         "schemaSampleRows": job.schema_sample_rows or [],
@@ -2469,6 +2706,7 @@ def update_existing_append_job(
     job.source_type = request.source_type
     job.execution_mode = request.execution_mode
     job.continuous_config = continuous_config_from_request(request, job.id)
+    job.record_parsing = request.record_parsing.model_dump(mode="json", by_alias=True) if request.record_parsing else None
     job.schema_columns = [column.model_dump(mode="json", by_alias=True) for column in request.schema_columns]
     job.schema_fingerprint = request.schema_fingerprint
     job.schema_sample_rows = request.schema_sample_rows
@@ -3814,6 +4052,7 @@ def nonnegative_int(value: Any, fallback: int) -> int:
 
 
 def validate_create_request(request: CreatePipelineRequest) -> None:
+    validate_requested_permission_grants(request.permission_grants)
     missing = []
     if not request.job_name:
         missing.append("jobName")
@@ -3834,6 +4073,16 @@ def validate_create_request(request: CreatePipelineRequest) -> None:
             missing.append("continuousTargetFormat=parquet")
         if any(step.enabled for step in request.transform_steps) or any(rule.enabled for rule in request.quality_rules):
             missing.append("continuousTransformAndQualityRules=unsupported")
+    if request.record_parsing and request.record_parsing.enabled:
+        parsing_names = [normalize_column_name(column.name) for column in request.record_parsing.columns]
+        if request.source_type != "File / S3":
+            missing.append("recordParsingSource=File / S3")
+        if request.record_parsing.expected_field_count <= 0:
+            missing.append("recordParsing.expectedFieldCount")
+        if len(request.record_parsing.columns) != request.record_parsing.expected_field_count:
+            missing.append("recordParsing.columns")
+        if any(not name for name in parsing_names) or len(set(parsing_names)) != len(parsing_names):
+            missing.append("recordParsing.columns[uniqueName]")
     if not request.schema_columns:
         missing.append("schemaColumns")
     elif not any(column.included and column.target_name.strip() for column in request.schema_columns):
@@ -3847,6 +4096,7 @@ def validate_create_request(request: CreatePipelineRequest) -> None:
 
 
 def validate_update_request(request: UpdatePipelineRequest) -> None:
+    validate_requested_permission_grants(request.permission_grants)
     missing = []
     if not request.job_name:
         missing.append("jobName")
@@ -3866,6 +4116,25 @@ def validate_update_request(request: UpdatePipelineRequest) -> None:
             f"Missing required fields: {', '.join(missing)}",
             status.HTTP_400_BAD_REQUEST,
         )
+
+
+def validate_requested_permission_grants(grants: list[Any] | None) -> None:
+    for grant in grants or []:
+        principal_type = str(getattr(grant, "principal_type", "") or "").strip()
+        principal_id = str(getattr(grant, "principal_id", "") or "").strip()
+        actions = list(getattr(grant, "actions", []) or [])
+        if principal_type != "public" and not principal_id:
+            raise ApiError(
+                ErrorCode.VALIDATION_ERROR,
+                "permissionGrants principalId is required",
+                status.HTTP_400_BAD_REQUEST,
+            )
+        if not actions:
+            raise ApiError(
+                ErrorCode.VALIDATION_ERROR,
+                "permissionGrants actions must include at least one action",
+                status.HTTP_400_BAD_REQUEST,
+            )
 
 
 def target_identity_changed(job: ETLJobModel, request: UpdatePipelineRequest) -> bool:

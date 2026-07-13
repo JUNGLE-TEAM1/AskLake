@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { motion, useReducedMotion } from "motion/react";
 import { Bubble, BubbleContent, BubbleGroup } from "@/components/ui/bubble";
+import { cn } from "@/lib/utils";
 import type { DashboardRuntimeWidget } from "../../../types";
 import {
   type DashboardAssistantCreateWidgetAction,
@@ -66,6 +68,7 @@ export function DashboardAssistantPanel({
   const messagesEndRef = useRef<HTMLSpanElement | null>(null);
   const promptInputRef = useRef<VisualizationPromptInputHandle | null>(null);
   const isConfigured = isDashboardAssistantConfigured();
+  const shouldReduceMotion = useReducedMotion();
   const targetWidgets = useMemo(() => {
     return selectedWidget ? [selectedWidget] : widgets;
   }, [selectedWidget, widgets]);
@@ -172,13 +175,32 @@ export function DashboardAssistantPanel({
         {hasMessages && (
           <BubbleGroup aria-live="polite" className="asklake-assistant-messages">
             {messages.map((message) => (
-              <Bubble
-                align={message.role === "user" ? "end" : "start"}
+              <motion.div
+                animate={{ opacity: 1, scale: 1, x: 0, y: 0 }}
+                className={cn(
+                  "flex w-full",
+                  message.role === "user" ? "justify-end" : "justify-start",
+                )}
+                initial={shouldReduceMotion
+                  ? false
+                  : {
+                    opacity: 0,
+                    scale: 0.97,
+                    x: message.role === "user" ? 28 : -28,
+                    y: 6,
+                  }}
                 key={message.id}
-                variant={message.role === "user" ? "default" : "secondary"}
+                transition={shouldReduceMotion
+                  ? { duration: 0 }
+                  : { damping: 28, mass: 0.8, stiffness: 260, type: "spring" }}
               >
-              <BubbleContent className="whitespace-pre-wrap">{message.text}</BubbleContent>
-              </Bubble>
+                <Bubble
+                  align={message.role === "user" ? "end" : "start"}
+                  variant={message.role === "user" ? "default" : "secondary"}
+                >
+                  <BubbleContent className="whitespace-pre-wrap">{message.text}</BubbleContent>
+                </Bubble>
+              </motion.div>
             ))}
             <span ref={messagesEndRef} aria-hidden="true" />
           </BubbleGroup>

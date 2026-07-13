@@ -3,7 +3,7 @@ import { ApiError } from "../types";
 import { catalogDatasets, etlJobs } from "../data/mockData";
 import { apiConfig } from "../services/apiClient";
 import { deleteDatasetMaterializationRun } from "../services/catalogApi";
-import { applyDraftPipelinePatch } from "../services/draftPipelineContract";
+import { applyDraftPipelinePatch, hydrateDraftPipelineFromJob } from "../services/draftPipelineContract";
 import {
   createPipelineDraft as createMockPipelineDraft,
   getDatasets,
@@ -57,6 +57,9 @@ type CommandPendingByJobId = Partial<Record<string, ServerJobCommand>>;
 const catalogDatasetStorageKey = "asklake.catalogDatasets";
 const legacyDerivedDatasetStorageKey = "asklake.derivedDatasets";
 const maxStoredCatalogDatasets = 30;
+const snapshotPollIntervalMs = 1000;
+const snapshotPollMaxAttempts = 900;
+const snapshotPollMaxConsecutiveErrors = 5;
 
 function normalizeInitialDraftPipeline(draft: DraftPipeline): DraftPipeline {
   return {
@@ -73,6 +76,14 @@ function normalizeInitialDraftPipeline(draft: DraftPipeline): DraftPipeline {
       score: undefined,
       status: "idle",
       summary: "데이터 품질 규칙을 설정하세요.",
+    },
+    recordParsing: {
+      columns: [],
+      delimiterKind: "whitespace",
+      delimiterPattern: "\\s+",
+      enabled: false,
+      expectedFieldCount: 0,
+      header: false,
     },
     schedule: {
       ...draft.schedule,
@@ -127,7 +138,7 @@ function normalizeInitialDraftPipeline(draft: DraftPipeline): DraftPipeline {
   };
 }
 
-const initialDraftPipeline: DraftPipeline = normalizeInitialDraftPipeline({
+const baseInitialDraftPipeline: DraftPipeline = normalizeInitialDraftPipeline({
   id: "pair_a_customer_review_gold",
   permission: {
     owner: "data-team-01",
@@ -140,6 +151,14 @@ const initialDraftPipeline: DraftPipeline = normalizeInitialDraftPipeline({
     score: 94.2,
     status: "pass",
     summary: "품질 규칙 5개 · 유효하지 않은 행 격리",
+  },
+  recordParsing: {
+    columns: [],
+    delimiterKind: "whitespace",
+    delimiterPattern: "\\s+",
+    enabled: false,
+    expectedFieldCount: 0,
+    header: false,
   },
   schedule: {
     endDate: "",
@@ -193,6 +212,80 @@ const initialDraftPipeline: DraftPipeline = normalizeInitialDraftPipeline({
     summary: "변환 규칙과 품질 검사를 설정하세요.",
   },
 });
+
+const initialDraftPipeline: DraftPipeline = apiConfig.useMock
+  ? {
+      ...baseInitialDraftPipeline,
+      quality: {
+        invalidRows: [],
+        rules: [
+          {
+            enabled: true,
+            failureAction: "Fail Run",
+            id: "mock-quality-order-id-not-null",
+            kind: "notNull",
+            severity: "Error",
+            targetColumn: "order_id",
+            validationType: "Not Null",
+          },
+          {
+            enabled: true,
+            failureAction: "Warn",
+            id: "mock-quality-amount-range",
+            kind: "range",
+            params: "0,1000000",
+            severity: "Warning",
+            targetColumn: "amount",
+            validationType: "Range Check",
+          },
+        ],
+        score: undefined,
+        status: "idle",
+        summary: "확인용 품질 규칙 2개",
+      },
+      schema: {
+        columns: [
+          { confidence: 99, included: true, nullable: false, sourceName: "order_id", targetName: "order_id", targetOrder: 0, type: "string" },
+          { confidence: 98, included: true, nullable: false, sourceName: "order_date", targetName: "order_date", targetOrder: 1, type: "timestamp" },
+          { confidence: 96, included: true, nullable: true, sourceName: "amount", targetName: "amount", targetOrder: 2, type: "double" },
+          { confidence: 97, included: true, nullable: true, sourceName: "status", targetName: "status", targetOrder: 3, type: "string" },
+        ],
+        sampleRows: [
+          ["ORD-1001", "2026-07-12T09:00:00Z", "42000", "paid"],
+          ["ORD-1002", "2026-07-12T09:05:00Z", "18500", "pending"],
+          ["", "2026-07-12T09:10:00Z", "-1200", "canceled"],
+          ["ORD-1004", "2026-07-12T09:15:00Z", "71000", "paid"],
+          ["ORD-1005", "2026-07-12T09:20:00Z", "24500", "refunded"],
+        ],
+        schemaFingerprint: "order_id:string:required|order_date:timestamp:required|amount:double:nullable|status:string:nullable",
+        summary: "확인용 주문 샘플 4개 컬럼",
+      },
+      source: {
+        connectionMessage: "확인용 mock 소스가 준비되었습니다.",
+        connectionStatus: "success",
+        sourceConfig: [["File Type", "CSV"], ["Path / Prefix", "mock/orders-preview.csv"]],
+        sourceLabel: "orders-preview.csv",
+        sourceType: "File / S3",
+      },
+      transform: {
+        outputColumns: [["order_id", "String"], ["order_date", "Timestamp"], ["amount", "Double"], ["status", "String"]],
+        steps: [
+          {
+            enabled: true,
+            id: "mock-transform-amount",
+            input: "amount",
+            kind: "cast",
+            label: "금액 숫자 변환",
+            onError: "Warn",
+            operation: "SQL Expression",
+            output: "amount",
+            params: "CAST(amount AS DOUBLE)",
+          },
+        ],
+        summary: "확인용 변환 규칙 1개",
+      },
+    }
+  : baseInitialDraftPipeline;
 
 const emptySelectedDataset: CatalogDataset = {
   description: "생성된 데이터셋이 없습니다. 수집/처리에서 파이프라인을 먼저 생성하고 실행하세요.",
@@ -337,6 +430,9 @@ function buildSqlDatasetJobDraft(
 ): DraftPipeline {
   const targetDataset = normalizeDraftDatasetName(request.dataset.name, `${sourceDataset.name}_analysis`);
   const targetLayer = request.dataset.layer;
+  const targetFormat = request.job?.fileFormat ?? "parquet";
+  const partitionColumns = request.job?.partitionColumns
+    ?? (request.job?.partitionColumn ? [request.job.partitionColumn] : []);
   const permissionOwner = request.job?.owner || sourceDataset.owner || initialDraftPipeline.permission.owner;
   const outputColumns: Array<[string, string]> = sqlResult.columns.map((column) => [column, inferSqlResultColumnType(sourceDataset, column)]);
   const schemaColumns: SchemaColumnDraft[] = outputColumns.map(([name, type], index) => ({
@@ -412,17 +508,18 @@ function buildSqlDatasetJobDraft(
     target: {
       ...initialDraftPipeline.target,
       compression: request.job?.compression ?? "Snappy",
+      databaseName: request.job?.databaseName?.trim() || "asklake",
       datasetName: targetDataset,
       description: request.dataset.description,
-      format: "Parquet",
+      format: targetFormat,
       layer: targetLayer,
-      partition: request.job?.partitionColumn || "",
-      partitionColumns: request.job?.partitionColumn ? [request.job.partitionColumn] : [],
+      partition: partitionColumns.join("/"),
+      partitionColumns,
       rag: false,
       storagePath: request.job?.storagePath || `s3a://asklake-output/${targetDataset}/${targetLayer.toLowerCase()}/`,
       storageType: "S3",
       tableName: targetDataset,
-      tags: [],
+      tags: request.job?.tags ?? request.dataset.tags,
     },
     transform: {
       outputColumns,
@@ -708,6 +805,10 @@ function isContinuousRuntimeTransition(job: JobRowData) {
     && ["starting", "pausing", "stopping"].includes(job.continuousRuntime?.status ?? "");
 }
 
+function isTerminalRunStatus(status: JobRunSummary["status"]) {
+  return status === "success" || status === "failed" || status === "canceled";
+}
+
 export function useAskLakeData({
   currentUser,
   enabled = true,
@@ -739,6 +840,7 @@ export function useAskLakeData({
   const createPendingRef = useRef(false);
   const commandPendingRef = useRef<Set<string>>(new Set());
   const continuousPollingRef = useRef<Set<string>>(new Set());
+  const snapshotPollingRef = useRef<Set<string>>(new Set());
   const jobsFilterRequestRef = useRef(0);
 
   const jobExecutionEvidence = useMemo(
@@ -1015,6 +1117,78 @@ export function useAskLakeData({
     }
   };
 
+  const pollSnapshotJobUntilTerminal = async (initialJob: JobRowData, runId: string) => {
+    if (apiConfig.useMock || initialJob.executionMode === "continuous" || snapshotPollingRef.current.has(runId)) return;
+
+    snapshotPollingRef.current.add(runId);
+    let currentJob = initialJob;
+    let consecutiveErrors = 0;
+    try {
+      for (let attempt = 0; attempt < snapshotPollMaxAttempts; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, snapshotPollIntervalMs));
+
+        let nextJob: JobRowData;
+        try {
+          nextJob = normalizeJobRow(await getLiveJob(initialJob.id));
+          consecutiveErrors = 0;
+        } catch (error) {
+          consecutiveErrors += 1;
+          if (consecutiveErrors >= snapshotPollMaxConsecutiveErrors) throw error;
+          continue;
+        }
+
+        updateJobState(initialJob.id, () => nextJob);
+        setJobListFacets((facets) => moveJobFacetCounts(facets, currentJob, nextJob));
+        currentJob = nextJob;
+
+        const hydratedRunState = buildRunStateFromJobs([nextJob]);
+        const nextRuns = hydratedRunState.runsByJobId[nextJob.id];
+        if (nextRuns) {
+          setRunsByJobId((state) => ({
+            ...state,
+            [nextJob.id]: nextRuns,
+          }));
+        }
+        setDagStepsByRunId((state) => ({
+          ...state,
+          ...hydratedRunState.dagStepsByRunId,
+        }));
+
+        const nextRun = nextJob.runHistory?.find((candidate) => candidate.runId === runId);
+        if (!nextRun || !isTerminalRunStatus(nextRun.status)) continue;
+
+        if (nextRun.status === "success") {
+          try {
+            const nextDatasets = (await getDatasets()).map(normalizeDatasetRow);
+            setDatasets(nextDatasets);
+            setSelectedDataset((selected) => nextDatasets.find((dataset) => dataset.id === selected.id) ?? selected);
+          } catch {
+            showToast("작업은 완료됐지만 Catalog 목록을 자동 갱신하지 못했습니다.", "info");
+          }
+        }
+        return;
+      }
+
+      showToast("작업이 제한 시간 안에 끝나지 않아 자동 상태 갱신을 중단했습니다.", "info");
+    } catch {
+      showToast("작업 상태 자동 갱신에 실패했습니다. 잠시 후 다시 확인해 주세요.", "info");
+    } finally {
+      snapshotPollingRef.current.delete(runId);
+    }
+  };
+
+  useEffect(() => {
+    if (!enabled || apiConfig.useMock) return;
+
+    jobs.forEach((job) => {
+      if (job.executionMode === "continuous") return;
+      const activeRun = (runsByJobId[job.id] ?? job.runHistory ?? []).find(
+        (run) => !run.runId.startsWith("client:") && (run.status === "queued" || run.status === "running"),
+      );
+      if (activeRun) void pollSnapshotJobUntilTerminal(job, activeRun.runId);
+    });
+  }, [enabled, jobs, runsByJobId]);
+
   const selectRunForJob = (jobId: string, runId: string) => {
     setSelectedRunIdByJobId((state) => {
       const runExists = (runsByJobId[jobId] ?? []).some((run) => run.runId === runId);
@@ -1029,7 +1203,17 @@ export function useAskLakeData({
   const handleJobCommand = async (job: JobRowData, command: JobCommand): Promise<JobRowData | undefined> => {
     if (command === "edit") {
       writeAuditLog("etl.job.edit_opened", `/api/etl/jobs/${job.id}`, job.id);
-      setSelectedJob(job);
+      let editableJob = job;
+      if (!apiConfig.useMock) {
+        try {
+          editableJob = normalizeJobRow(await getLiveJob(job.id));
+          updateJobState(job.id, () => editableJob);
+        } catch {
+          // The list payload is still a valid fallback when the detail refresh fails.
+        }
+      }
+      setSelectedJob(editableJob);
+      setDraftPipeline(hydrateDraftPipelineFromJob(editableJob, initialDraftPipeline));
       onFlowChange("source");
       return undefined;
     }
@@ -1130,6 +1314,9 @@ export function useAskLakeData({
         saveStoredCatalogDataset(normalizedDataset);
         setDatasets((items) => [normalizedDataset, ...items.filter((item) => item.id !== normalizedDataset.id)]);
         setSelectedDataset(normalizedDataset);
+      }
+      if (run && normalizedUpdatedJob && isOptimisticRunCommand(command)) {
+        void pollSnapshotJobUntilTerminal(normalizedUpdatedJob, run.runId);
       }
       showToast(commandSuccessMessage(command, job));
       return normalizedUpdatedJob;

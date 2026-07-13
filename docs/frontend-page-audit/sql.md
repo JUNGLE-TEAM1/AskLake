@@ -23,9 +23,9 @@
 ## Weakly Componentized Areas
 
 - SQL editor는 `Textarea`, line-number `<pre>`, dark surface를 직접 조합한다. autocomplete는 editor focus/selection과 absolute position 계산이 묶인 custom popover다.
-- SQL editor와 autocomplete 위치에는 도메인 layout CSS가 남아 있다. dataset tree의 line/row/expand surface는 registry Tree가, dataset/schema/autocomplete/result의 실제 scroll 동작은 `ScrollArea`가 소유한다.
+- SQL editor와 autocomplete 위치에는 CSS Module 기반 도메인 layout이 남아 있다. dataset tree의 line/row/expand surface는 registry Tree가, dataset/schema/autocomplete/result의 실제 scroll 동작은 `ScrollArea`가 소유한다.
 - global App Shell sidebar가 좁은 viewport의 첫 화면을 점유해 SQL mobile workspace 가독성이 낮다.
-- `SqlAnalysisPage.tsx` 하나가 query state, AI, autocomplete, materialize dialog, embedded dashboard를 모두 관리한다.
+- `SqlAnalysisPage.tsx`는 route-level dataset/query/result 연결 상태를 유지한다. 검색·pagination, Query AI, panel rendering, Job wizard의 입력·단계·검증은 별도 hook/component/model로 분리됐으며, 추가 분리는 독립적인 상태 소유권이 생길 때만 진행한다.
 
 ## shadcn/ReUI Replacement Candidates
 
@@ -51,11 +51,10 @@
 ## Related CSS
 
 - `/sql` 본문과 처리 Job/Dashboard Dialog는 `--jobs-font-family`를 상속해 `/jobs`의 SUIT typography 기준을 사용한다. SQL editor와 line-number gutter의 monospace는 코드 가독성을 위해 유지한다.
-- 현재 사용 중: `frontend/src/styles/sql.css`의 `.sql-page`, `.sql-page-header`, `.sql-dataset-panel`, `.sql-schema-panel`.
+- route layout과 editor/result workspace는 `SqlAnalysisPage.module.css`, dataset row·Nessie·preview table의 세부 style은 각각 co-located CSS Module이 소유한다.
 - SQL preflight와 결과 실행 상태는 Jobs 기준 `StatusBadge`를 사용한다. SQL editor의 직접 작성 JOIN 문법은 유지하지만 선택 테이블의 자동 JOIN action은 제공하지 않는다.
-- Trino 실행 상태는 `쿼리 실행`, `첫 결과 준비`, `전체 결과 수집` 세 컨테이너를 사용한다. 접수·대기는 첫 컨테이너의 상태로 표현하고 미래 단계는 숨기며, 완료 단계는 같은 규격으로 압축하고 현재 단계만 실제 처리 지표를 펼친다. 2초 이상 지속된 쿼리 단계는 Trino progress/driver/split, 전체 수집 단계는 실제 수집 행/전체 행이 있을 때만 bar와 퍼센트를 표시하고 첫 결과 단계에는 퍼센트를 표시하지 않는다. 행 수집이 100%여도 manifest가 `collecting`이면 `결과 저장 마무리 중`으로 유지한다. 실행 후에도 editor는 최소 276px, 실제 결과가 있는 패널은 desktop에서 640px 높이를 유지한다. 빈 결과 패널은 360px로 제한하고, workspace는 고정 높이에 결과를 압축하지 않고 필요하면 페이지 방향으로 늘어나며 결과 표만 640px 패널 내부에서 독립 스크롤한다. 860px 이하에서는 패널 높이를 콘텐츠에 맞추고 결과 표 viewport만 `48vh` 범위로 제한해 단계 카드나 버튼이 겹치지 않게 한다. 첫 page 자동 조회는 조회 가능한 결과가 없을 때 최초 한 번만 수행하며 실패 상태와 재시도 action을 노출하고, 재시도 성공 시 표시 시간을 다시 측정한다. `unavailable`/`expired` 이력은 page를 자동 재요청하지 않는다. 결과 manifest가 아직 없으면 완료로 오인하지 않으며 `unavailable`/`expired`를 저장 실패/보관 만료로 구분한다. 완료 또는 만료 이력은 `Trino 실행 · 첫 결과 · 전체 준비` 시간을 요약한다. estimate 초과는 `예상 초과`, progress 100% 이후 출력 확정 전은 `마무리 중`으로 표시한다. 실행 평가는 `Iceberg 메타데이터 기준` 참조 컬럼 스캔량과 현재 SQL에서 새로 계산한 `예상 실행 시간`을 기본 노출하며, Iceberg metadata를 얻지 못한 fallback에서만 `보수적 추정`을 사용한다.
-- 현재 사용 중: `.sql-tree-hover-*`, `.sql-editor-surface`, `.sql-autocomplete-popover`, `.sql-editor-footer*`, `.sql-result-scroll`, `.sql-preview-table*`, `.sql-dashboard-builder-dialog`.
-- #468 Tree/viewport 정리까지 `sql.css`를 2,547줄에서 401줄로 줄였다. shadcn이 소유하는 panel/header/form/list/separator/table/scroll/tree surface CSS는 제거했다.
+- Trino 실행 상태는 `쿼리 실행`, `첫 결과 준비`, `전체 결과 수집` 세 단계를 사용한다. 실제 Trino progress/driver/split 또는 전체 수집 행/전체 행이 있을 때만 퍼센트를 표시하며, 실행 시간이나 남은 시간은 신뢰 가능한 예측이 없으므로 표시하지 않는다. 결과 page는 논리 100행 단위로 조회하고 전체 page 수는 수집 완료 후에만 표시한다.
+- SQL route의 기본 layout은 CSS Module을 우선 사용한다. Trino timeline과 result storage UI의 기존 `.sql-*` selector는 호환 stylesheet로 유지하며, 새 SQL UI를 global selector에 추가하지 않는다.
 
 ## Pre-#468 QA Notes
 
@@ -156,3 +155,51 @@
 - SQL autocomplete의 surface/action/status/scroll은 shadcn으로 바꿨지만 editor focus/selection과 absolute position 계산은 유지했다.
 - dataset hover card의 fixed 위치, dark editor, ScrollArea의 높이/배치, embedded Dashboard 크기는 도메인 layout이라 유지했다. Tree 연결선/row/expand surface는 registry component가 소유한다.
 - global sidebar의 mobile 동작은 `layout.css`/`responsive.css` 소유이며 SQL route CSS에서 우회하지 않는다.
+
+## #582 Structure And Style Modularization
+
+2026-07-12 리팩토링은 SQL 동작과 API 계약을 바꾸지 않고 route composition, domain logic, Job wizard, style ownership을 분리했다.
+
+- `SqlAnalysisPage.tsx`의 panel markup을 `SqlDatasetContextPanel`, `SqlQueryEditorPanel`, `SqlResultsPanel`로 나누고 검색·pagination과 Query AI 상태를 전용 hook으로 이동했다.
+- `SqlJobWizardDialog.tsx`에서 단계 UI, field control, 초기값·검증·request formatting을 각각 `SqlJobWizardSteps.tsx`, `SqlJobWizardFields.tsx`, `sqlJobWizardModel.ts`로 분리했다.
+- 기존 `sqlLogic.ts`는 import 호환 façade만 남기고 AST, preflight, autocomplete, JOIN, identifier, CSV formatting, derived dataset helper를 독립 모듈로 분리했다.
+- 전역 `styles/sql.css`와 `responsive.css`의 SQL selector를 제거하고 route/component 전용 CSS Module로 이동했다. 공용 shadcn surface는 계속 primitive가 소유한다.
+- `verify:ui-regressions`는 삭제된 전역 CSS 파일이 아니라 새 component·hook·model·CSS Module 경계를 검사한다.
+- API path, query payload, derived dataset Job payload, audit event 이름은 변경하지 않았다.
+
+### #582 Verification
+
+- `npm run build`와 `npm run verify:ui-regressions` 58개 항목을 통과했다.
+- 1280×900에서 `/sql` 진입, `commerce_orders_daily` 선택, 기본 SQL 생성, Preview 실행과 결과 table 표시를 확인했다. framework overlay와 browser console warning/error는 없었다.
+- 처리 Job 모달을 열어 기본 정보에서 스케줄 단계로 이동하고 `매일 실행` 선택 시 시간·시간대 control이 렌더링되는 것을 확인했다.
+- 860×800과 390×844에서 SQL workspace가 단일 열로 전환되고 page horizontal overflow가 없음을 확인했다.
+- 좁은 viewport에서 global App Shell sidebar가 SQL 본문보다 먼저 표시되고 긴 dataset 이름과 pagination label이 협소한 문제는 기존 범위로 남는다. SQL CSS Module에서 우회하지 않는다.
+
+## #591 SQL Job Target Settings Alignment
+
+2026-07-12 작업은 SQL 결과 처리 Job의 마지막 단계를 실제 ETL Target 설정과 같은 정보 구조로 맞췄다.
+
+- 기존 압축·단일 파티션·경로 입력을 `SqlJobTargetSettings.tsx`로 분리하고 DB 선택, 파일 포맷, 압축, S3 경로 찾아보기/복사, 태그 추가·삭제, 다중 파티션 선택을 구성했다.
+- `DatabaseField`와 `S3PathField`를 재사용해 ETL Target과 SQL Job wizard의 picker 동작을 동일하게 유지했다.
+- SQL 결과 컬럼 타입은 원본 dataset schema를 우선 사용하고, alias/집계 컬럼은 preview 값에서 `integer`, `decimal`, `boolean`, `date`, `timestamp`, `string`을 추론해 파티션 후보에 표시한다.
+- `CreateDerivedDatasetRequest.job`과 `DraftPipeline.target`에 database, format, tags, `partitionColumns`를 연결했다. 기존 `partitionColumn`은 첫 번째 선택값으로 유지해 하위 호환한다.
+- 신규 CSS selector는 추가하지 않았고 기존 shadcn Card, Field, Select, Checkbox, Button 및 공용 Target component를 조합했다.
+
+### #591 Verification
+
+- `npm run verify:ui-regressions` 64개 항목과 `npm run build`를 통과했다.
+- mock browser에서 `/sql` 진입, `commerce_orders_daily` 선택, Preview 실행, 처리 Job wizard 마지막 단계 진입을 확인했다.
+- `commerce` 태그 추가와 `order_date`, `channel` 다중 파티션 선택 후 Job을 생성했고, Job 상세에서 `parquet`, `Snappy`, `order_date/channel`이 유지되는 것을 확인했다.
+- 브라우저 console warning/error가 없음을 확인했다.
+
+## #594 Searchable Chart Select Alignment
+
+- SQL 차트 설정은 Dashboard `WidgetConfigPanel`의 기본 searchable combobox를 그대로 사용한다.
+- 데이터셋, X축, Y축, 집계 방식, 그룹 컬럼, 방향 등 단일 선택 필드에 검색 입력과 아래 화살표를 제공한다.
+- 선택된 옵션은 체크 아이콘 대신 원형 점으로 표시한다.
+- 좁은 SQL 도구 패널에서는 combobox와 색상 영역이 ScrollArea viewport 안쪽 폭을 넘지 않도록 `w-full`, `min-w-0`, `max-w-full` 경계를 유지한다.
+
+### #594 Verification
+
+- `npm run verify:ui-regressions` 64개 항목과 `npm run build`를 통과했다.
+- mock browser에서 Preview 실행 후 SQL 차트 설정을 열어 X축 검색, `channel` 선택, 원형 선택 표시와 패널 horizontal overflow가 없음을 확인했다.

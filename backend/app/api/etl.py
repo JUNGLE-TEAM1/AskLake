@@ -17,12 +17,15 @@ from app.schemas.etl import (
     JobCommandRequest,
     JobCommandResponse,
     JobListResponse,
+    PermissionOptionsResponse,
     JobRowData,
     JobRunOutcome,
     JobScheduleKind,
     JobStatus,
     ReviewPipelineRequest,
     ReviewSnapshot,
+    RecordParsingPreviewRequest,
+    RecordParsingPreviewResponse,
     KafkaReviewIngestRequest,
     KafkaReviewIngestResponse,
     KafkaReplayProducerRequest,
@@ -57,6 +60,11 @@ def list_source_assets(request: SourceAssetsRequest) -> SourceAssetsResponse:
 @router.post("/schema-inference", response_model=SchemaDraft)
 def infer_schema(request: SourceConnectorRequest) -> SchemaDraft:
     return etl_service.infer_schema(request)
+
+
+@router.post("/record-parsing/preview", response_model=RecordParsingPreviewResponse)
+def preview_record_parsing(request: RecordParsingPreviewRequest) -> RecordParsingPreviewResponse:
+    return etl_service.preview_record_parsing(request)
 
 
 @router.post("/review", response_model=ReviewSnapshot)
@@ -123,7 +131,7 @@ def create_job(
     db: Session = Depends(get_db),
     actor: ActorContext = Depends(get_actor_context),
 ) -> CreatePipelineResponse:
-    return etl_service.create_pipeline(db, request, actor.name)
+    return etl_service.create_pipeline(db, request, actor)
 
 
 @router.post("/sql-jobs", response_model=CreatePipelineResponse, status_code=status.HTTP_201_CREATED)
@@ -133,6 +141,14 @@ def create_trino_sql_job(
     actor: ActorContext = Depends(get_actor_context),
 ) -> CreatePipelineResponse:
     return etl_service.create_trino_sql_job(db, request, actor)
+
+
+@router.get("/permission-options", response_model=PermissionOptionsResponse)
+def get_permission_options(
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(get_actor_context),
+) -> PermissionOptionsResponse:
+    return etl_service.get_permission_options(db, actor)
 
 
 @router.get("/jobs", response_model=JobListResponse)

@@ -152,14 +152,18 @@ export type CreateDerivedDatasetRequest = {
   job?: {
     accessScope: "organization" | "private" | "project";
     compression: "Gzip" | "None" | "Snappy";
+    databaseName?: string;
+    fileFormat?: "csv" | "json" | "parquet";
     owner: string;
     overlapPolicy: ScheduleOverlapPolicy;
     partitionColumn?: string;
+    partitionColumns?: string[];
     permissionSummary: string;
     scheduleLabel: string;
     scheduleMode: "manual" | "repeat";
     scheduleSummary: string;
     storagePath: string;
+    tags?: string[];
     timezone?: string;
   };
   previewLimit?: number;

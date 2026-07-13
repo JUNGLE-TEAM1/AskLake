@@ -8,6 +8,7 @@
 | 단계 | 우선순위 | API | 목적 |
 | --- | --- | --- | --- |
 | 1 | P0 | `POST /api/etl/jobs` | 새 수집/처리 생성 완료 |
+| 1b | P0 | `POST /api/etl/record-parsing/preview` | 이름 없는 TXT 레코드의 구조화 Preview와 필드 개수 검증 |
 | 1a | P0 | `PATCH /api/etl/jobs/{jobId}` | 생성 Job의 허용 설정 update (Issue #460) |
 | 2 | P0 | `POST /api/etl/jobs/{jobId}/commands` | 즉시 실행, 재실행, 일시정지, 현재 Run 취소, 스케줄 중지 |
 | 3 | P0 | `POST /api/query/runs` | 읽기 전용 SQL 실행 |
@@ -436,7 +437,7 @@ type JobRowData = {
 
 `GET /api/etl/jobs/{jobId}`는 위 설정값을 편집 복원용으로 반환한다. `sourceConfig`에는 Kafka broker, topic, consumer group, batch/timeout, offset policy, authentication 같은 source identity가 포함될 수 있으므로 UI는 값을 보이되 Issue #460 수정 모드에서는 변경하지 않는다. 기존 Job에는 새 선택형 metadata가 없을 수 있으므로 해당 값은 optional로 유지한다.
 
-`schedule`/`scheduleSummary`의 화면 문구는 `수동/자동/1회 실행`이 아니라 `스케줄링 건너뛰기`와 `반복 실행` 두 기준으로 표현한다. 스케줄링을 건너뛰면 즉시 실행 command `run`으로 1회 Run을 만들며, `1회 실행`은 schedule 값으로 저장하지 않는다. 반복 실행 UI는 반복 주기, 실행 시각, IANA timezone, 실패 재시도만 노출한다. ISO date `startDate`, optional `endDate`, 겹침 처리, watermark 수집 기준은 `schedulePolicy`에 함께 보존하지만 UI에서는 기본값으로 처리한다. 빈 `endDate`는 종료일 없음으로 해석하고, `endDate`가 `startDate`보다 이르면 frontend draft에서 빈 값으로 정규화한다. 기본 겹침 처리는 `skip_if_running`이며, 이전 Run이 길어져 다음 예약 시각과 겹쳐도 다음 schedule 계산을 밀지 않고 해당 예약 Run을 건너뛰는 정책이다. `retryPolicySummary`는 재시도 횟수/2배 지수 백오프/최종 실패 처리만 담는 optional field이며, `runLimitSummary`는 hidden default `timeoutMinutes` 기반 실행 제한 표시용 optional field다. 둘 중 하나가 없으면 frontend가 fallback 문구를 사용한다.
+`schedule`/`scheduleSummary`의 저장 기준은 `스케줄링 건너뛰기`와 `반복 실행` 두 가지다. UI의 `직접 실행` 선택은 `스케줄링 건너뛰기`로 정규화되며, 즉시 실행 command `run`으로 필요할 때 1회 Run을 만든다. 반복 실행 UI는 반복 주기, 실행 시각, IANA timezone, 겹침 처리와 실패 재시도를 노출한다. ISO date `startDate`, optional `endDate`, watermark 수집 기준은 `schedulePolicy`에 함께 보존하지만 UI에서는 기본값으로 처리한다. 빈 `endDate`는 종료일 없음으로 해석하고, `endDate`가 `startDate`보다 이르면 frontend draft에서 빈 값으로 정규화한다. 기본 겹침 처리는 `skip_if_running`이며, 이전 Run이 길어져 다음 예약 시각과 겹쳐도 다음 schedule 계산을 밀지 않고 해당 예약 Run을 건너뛰는 정책이다. `retryPolicySummary`는 재시도 횟수/2배 지수 백오프/최종 실패 처리만 담는 optional field이며, `runLimitSummary`는 hidden default `timeoutMinutes` 기반 실행 제한 표시용 optional field다. 둘 중 하나가 없으면 frontend가 fallback 문구를 사용한다.
 
 ### JobRunSummary and JobDagStep
 
@@ -766,6 +767,66 @@ Response는 기존 `CreatePipelineResponse`를 재사용하며 `job.jobKind="tri
 - `schedule.mode=daily|weekly` Job은 `POST /api/etl/schedules/run-due`를 `kafkaOnly=false`로 호출해야 하며, source 권한은 `sqlRecipe.runAs` actor로 재검사한다.
 
 ## 7. P0 API
+
+### 7.0 Record Parsing Preview
+
+조건부 1.5단계는 이름 있는 필드가 없는 MinIO/S3 TXT 입력에만 적용한다. Source 단계에서 선택한 `.txt`/`.log`의 제한 샘플이 `line_number`, `value` 형태이면 frontend는 `requiresRecordParsing=true`로 판단하고 `/etl/record-parsing`으로 이동한다. PostgreSQL, MongoDB JSON, Kafka JSON, JSON/JSONL, Parquet, 이름 있는 CSV는 이 단계를 건너뛴다.
+
+`POST /api/etl/record-parsing/preview`
+
+```ts
+type RecordParsingColumnDraft = {
+  position: number;
+  name: string;
+  inferredType: "String" | "Integer" | "Float" | "Boolean" | "Timestamp";
+};
+
+type RecordParsingDraft = {
+  enabled: boolean;
+  delimiterKind: "whitespace";
+  delimiterPattern: "\\s+";
+  header: boolean;
+  expectedFieldCount: number;
+  columns: RecordParsingColumnDraft[];
+};
+
+type RecordParsingPreviewRequest = {
+  rawLines: string[];
+  recordParsing: RecordParsingDraft;
+};
+```
+
+Response `200 OK`:
+
+```ts
+type RecordParsingInvalidRow = {
+  lineNumber: number;
+  expectedFieldCount: number;
+  actualFieldCount: number;
+  rawPreview: string;
+};
+
+type RecordParsingPreviewResponse = {
+  canApply: boolean;
+  columns: SchemaColumnDraft[];
+  sampleRows: string[][];
+  recordParsing: RecordParsingDraft;
+  totalRows: number;
+  validRows: number;
+  invalidRows: RecordParsingInvalidRow[];
+};
+```
+
+규칙:
+
+- 빈 줄과 앞뒤 공백은 무시하고, 연속 공백과 tab은 하나의 구분자로 처리한다.
+- `header=true`이면 첫 번째 비어 있지 않은 행을 컬럼명으로 사용하고 데이터 행에서 제외한다.
+- `expectedFieldCount=0`이면 데이터 행에서 가장 많이 나타난 필드 개수를 사용한다. 최빈값이 동률이면 `canApply=false`다.
+- 컬럼명은 비어 있거나 중복될 수 없고 컬럼 수는 `expectedFieldCount`와 같아야 한다.
+- Preview의 invalid row는 line number, expected/actual count, 200자 이하 raw preview만 반환한다.
+- 부족한 값을 null로 채우거나 초과 값을 자르거나 오류 행을 조용히 버리지 않는다.
+- `CreatePipelineRequest.recordParsing`은 확정된 규칙을 저장한다. Spark batch runtime은 전체 TXT 입력에 같은 규칙을 다시 적용하고 불일치가 하나라도 있으면 `RECORD_FIELD_COUNT_MISMATCH`로 target write 전에 Run을 실패시킨다.
+- 이번 범위는 MinIO/S3 TXT batch만 지원한다. Kafka Snapshot/Continuous 원시 TXT와 임의 정규식은 지원하지 않는다.
 
 ### 7.1 Target S3 Path Picker
 
@@ -1510,8 +1571,10 @@ Validation:
 - `baseDatasetId`와 `referenceDatasetIds`는 접근 권한 검증과 SQL table context 검증에 사용합니다.
 - frontend preflight는 PostgreSQL parser로 `SELECT` 단일 문장, CTE, `FROM`/`JOIN` table context를 검사합니다. backend는 같은 기준을 서버에서 다시 검증해야 합니다.
 - 선택 테이블 UI 변경은 SQL text를 자동 재작성하지 않습니다. SQL이 `baseDatasetId`/`referenceDatasetIds`에 포함되지 않은 table을 참조하면 preview 전 검증에서 실패해야 합니다.
-- bounded compatibility backend는 DuckDB in-memory connection에 선택된 Catalog dataset과 `referenceDatasetIds` dataset을 table/view로 등록합니다.
-- Catalog payload에 로컬 `storageLocation`과 `storageFormat`(`jsonl`, `parquet`)이 있으면 DuckDB가 해당 물리 파일을 우선 읽고, 파일이 없거나 읽을 수 없으면 `schema`/`sampleRows` 기반 임시 table로 fallback합니다.
+- live backend는 DuckDB in-memory connection을 query runtime으로 사용합니다. 선택된 Catalog dataset과 `referenceDatasetIds` dataset을 DuckDB table/view로 등록한 뒤 projection, filter, order, limit, selected-context JOIN을 실행합니다.
+- Catalog payload에 로컬 `storageLocation`과 `storageFormat`(`jsonl`, `parquet`)이 있으면 DuckDB가 해당 물리 파일을 우선 읽고, 로컬 파일이 없거나 읽을 수 없으면 `schema`/`sampleRows` 기반 임시 table로 fallback합니다.
+- `storageLocation`이 `s3://` 또는 `s3a://`인 Parquet dataset은 backend가 `S3_ENDPOINT`/`MINIO_ENDPOINT`, server-side credential, path-style 설정으로 object 목록을 검사한 뒤 query-scoped 임시 디렉터리에 내려받고 DuckDB `read_parquet` view로 등록합니다. 임시 파일은 Preview 응답 또는 실패 직후 삭제하며 원격 object는 읽기만 합니다.
+- 한 Preview의 원격 Parquet 합계가 `ASKLAKE_SQL_PREVIEW_MAX_REMOTE_BYTES`(기본 512 MiB)를 넘으면 다운로드 전에 `422 VALIDATION_ERROR`로 차단합니다. 원격 인증·연결 실패 또는 Parquet object 부재는 `502 SQL_STORAGE_ERROR`로 반환하며 빈 `sampleRows` table로 조용히 fallback하지 않습니다.
 - 한국어, 공백, 특수문자가 포함된 dataset/column 표시명은 금지하지 않습니다. frontend가 기본 쿼리, 자동완성, 컬럼 삽입, JOIN 초안을 만들 때 SQL text에는 double-quoted identifier(`"월별 매출 데이터"`, `"주문 ID"`)를 사용해야 합니다. 사용자가 따옴표 없이 한글/공백 table reference를 직접 입력한 경우 frontend preflight는 실행 전에 감지하고 quoted identifier 자동 보정을 제안합니다.
 - DuckDB compatibility run과 Trino full run 모두 같은 quoted identifier 정책을 따릅니다. 실행 context 검증은 quoted 표시명만이 아니라 `baseDatasetId`와 `referenceDatasetIds`로 선택된 dataset 범위를 기준으로 재검증합니다.
 - 읽기 전용 SQL만 허용합니다.
@@ -1839,19 +1902,23 @@ Request 예시:
     "name": "sales_daily_summary_analysis",
     "rag": false,
     "refreshPolicy": "manual",
-    "tags": []
+    "tags": ["commerce", "daily"]
   },
   "job": {
     "accessScope": "organization",
     "compression": "Snappy",
+    "databaseName": "asklake",
+    "fileFormat": "parquet",
     "owner": "data-team-01",
     "overlapPolicy": "skip_if_running",
     "partitionColumn": "order_date",
+    "partitionColumns": ["order_date", "channel"],
     "permissionSummary": "Data Engineer Group · 조직 내부 · 승인 검토",
     "scheduleLabel": "매일 09:00",
     "scheduleMode": "repeat",
     "scheduleSummary": "반복 실행 · 매일 09:00 · Asia/Seoul · 실행 중이면 다음 예약 건너뜀",
     "storagePath": "s3a://asklake-output/sales_daily_summary_analysis/gold/",
+    "tags": ["commerce", "daily"],
     "timezone": "Asia/Seoul"
   },
   "previewLimit": 100,
@@ -1871,10 +1938,10 @@ type CreateDerivedDatasetResponse = CatalogDataset;
 
 프론트 기대 동작:
 
-- SQL 화면의 기본 materialize UX는 생성 대상 이름/설명과 `sourceRunId`, `query`, `referenceDatasetIds`를 보존하고, 같은 모달에서 스케줄·거버넌스·압축·파티션·저장 경로를 설정한다. SQL 간편 생성에서는 레이어 선택, 태그, RAG 설정을 노출하지 않고 내부 기본값 `GOLD`, `[]`, `false`를 사용한다.
+- SQL 화면의 기본 materialize UX는 생성 대상 이름/설명과 `sourceRunId`, `query`, `referenceDatasetIds`를 보존하고, 같은 모달에서 스케줄·거버넌스·DB·파일 포맷·압축·다중 파티션·태그·저장 경로를 설정한다. SQL 간편 생성에서는 레이어 선택과 RAG 설정을 노출하지 않고 내부 기본값 `GOLD`, `false`를 사용한다. `partitionColumn`은 첫 선택값을 담는 하위 호환 필드이고 `partitionColumns`가 전체 선택 순서의 source of truth다.
 - 마지막 `처리 Job 생성`을 누르면 기존 `POST /api/etl/jobs` 경로로 처리 Job이 생성되고, 실행 성공 후 Catalog dataset 등록 흐름을 따른다.
 - 생성된 dataset을 Catalog 목록 맨 앞에 추가합니다. SQL 작성 화면이 리셋되지 않도록 현재 선택 dataset은 유지할 수 있습니다.
-- 저장 화면에서 입력한 `name`, `description`, 스케줄, owner, permission summary, 압축, 파티션, 저장 경로를 생성 Job metadata에 반영합니다.
+- 저장 화면에서 입력한 `name`, `description`, 스케줄, owner, permission summary, DB, 파일 포맷, 압축, 다중 파티션, 태그, 저장 경로를 생성 Job metadata에 반영합니다.
 - mock mode에서는 생성된 derived dataset을 pipeline 생성 dataset과 같은 `window.localStorage["asklake.catalogDatasets"]`에 저장하고, 앱 로드시 mock catalog dataset 앞에 병합합니다. 기존 `asklake.derivedDatasets`는 읽기 호환만 유지합니다.
 - live API mode에서는 localStorage fallback을 사용하지 않고 `POST /api/catalog/derived-datasets` 응답과 이후 `GET /api/catalog/datasets` hydrate를 신뢰합니다.
 - `sampleRows`, `schema`, `upstream`에는 materialized SQL 실행 결과와 `sourceRunId` 연결 정보가 포함되어야 합니다.
@@ -3277,3 +3344,26 @@ type AuditEntry = {
 - dataset row count/size 표기: 문자열로 내려줄지 숫자와 단위를 분리할지.
 - audit log 저장 실패 시 사용자에게 노출할지 여부.
 - dashboard widget 저장 모델을 `dashboards`, `dashboard_widgets`로 분리할지 여부.
+## ETL Permission create-flow contract
+
+ETL Permission 화면은 더 이상 하드코딩 사용자 목록을 source of truth로 사용하지 않는다.
+
+1. 화면 진입 시 `GET /api/etl/permission-options`로 그룹과 사용자 후보를 조회한다.
+2. 선택한 그룹은 응답의 `actions`를 유지한 `group` grant로 변환한다.
+3. 선택한 사용자는 기본 `view`, `run` action을 가진 `user` grant로 변환한다.
+4. 공개 범위를 `외부 공유`로 명시한 경우에만 `public` principal의 `view` grant를 추가한다.
+5. 생성 또는 수정 request의 `permissionGrants`를 `permission_grants` table에 `source=permission_ui`로 저장한다.
+6. 동일 resource 수정은 `permission_ui` source만 교체하고 `admin`, `admin_seed` 등 다른 source는 보존한다.
+
+```ts
+type PermissionGrant = {
+  actions: Array<"view" | "query" | "run" | "manage" | "delete" | "share">;
+  principalId: string;
+  principalType: "user" | "group" | "role" | "public";
+  source?: string;
+};
+```
+
+빈 `principalId` 또는 action이 없는 grant는 `400 VALIDATION_ERROR`다. `public` principal은 `principalId`를 `public`으로 정규화한다. backend는 client가 보낸 `id`와 `source`를 신뢰하지 않고 새 ID와 `permission_ui` source를 부여한다.
+
+권한 옵션 조회는 admin actor만 허용한다. live frontend는 API 오류 시 grant 화면 안에 재시도 경로를 표시하고 다음 단계 이동을 막는다. `VITE_USE_MOCK_API=true`에서는 동일 response shape의 fixture를 사용하되 최종 Job request shape는 live와 동일하다.

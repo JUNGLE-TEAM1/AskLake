@@ -67,12 +67,22 @@
   gap: 8px;
 }
 
+.creation-top-actions.is-split {
+  width: 100%;
+}
+
+.creation-top-actions.is-split > :last-child {
+  margin-left: auto;
+}
+
 .creation-top-actions .primary-button,
 .creation-top-actions .secondary-button {
   width: auto;
   min-width: 96px;
   height: 40px;
   padding: 0 18px;
+  font-size: 16px;
+  font-weight: 600;
 }
 
 .creation-flow-grid .summary-panel,
@@ -1460,21 +1470,6 @@ select.control-input {
   color: #565d6d;
   font-size: 13px;
   line-height: 1.55;
-}
-
-.schedule-config-section {
-  display: grid;
-  gap: 16px;
-}
-
-.schedule-config-section h3 {
-  color: #171a1f;
-  font-size: 15px;
-  margin: 0;
-}
-
-.schedule-config-section + .retry-policy {
-  margin-top: 28px;
 }
 
 .retry-policy {

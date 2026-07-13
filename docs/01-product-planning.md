@@ -37,6 +37,7 @@ AskLake는 사용자가 데이터셋의 출처, 품질, 권한, 실행 결과, �
 - Dataset context를 선택하는 AI 활용 대화 UI
 - 사용자·그룹·권한·감사 로그 관리 콘솔
 - Source 연결 테스트와 Schema 추론
+- 이름 있는 필드가 없는 MinIO/S3 TXT 소스의 조건부 레코드 구조화: 한 줄을 하나의 레코드로 보고 연속 공백(`\\s+`)으로 분리한 뒤 컬럼명·타입 초안을 Schema 단계에 전달
 - 새 수집/처리 Job 생성
 - 작업 명령 UI: 실행, 재실행, 일시정지, 취소
 - Run History와 Run별 DAG 표시
@@ -95,12 +96,14 @@ Phase 0에서는 용어와 경계를 먼저 고정한다. `createdBy`, `owner`, 
 
 ### Flow A. 수집/처리 생성
 
-1. 사용자는 source, schema, rule, schedule, permission, target을 설정한다.
-2. 시스템은 draft를 검증하고 `POST /api/etl/jobs` request로 만든다.
-3. 성공 시 Job이 목록에 추가되고 Catalog target은 pending 상태로 안내된다.
-4. 사용자가 Job을 실행한다.
-5. 실행이 성공하면 Run, DAG, Catalog dataset이 같은 run 결과 기준으로 갱신된다.
-6. 실패하면 toast와 audit log에 실패 기록을 남기고 optimistic 상태를 되돌린다.
+1. 사용자는 source를 연결하고 제한 샘플을 확인한다.
+2. 소스에 이름 있는 필드가 있으면 바로 Schema 단계로 이동한다. MinIO/S3 TXT처럼 필드명이 없는 원시 레코드이면 조건부 `레코드 구조화` 단계에서 연속 공백(`\\s+`) 분리, 헤더 여부, 컬럼명과 타입 초안을 확정한다.
+3. 사용자는 schema, rule, schedule, permission, target을 설정한다.
+4. 시스템은 레코드 구조화 설정을 포함한 draft를 검증하고 `POST /api/etl/jobs` request로 만든다.
+5. 성공 시 Job이 목록에 추가되고 Catalog target은 pending 상태로 안내된다.
+6. 사용자가 Job을 실행하면 Spark는 Preview와 같은 구조화 규칙을 전체 TXT 입력에 다시 적용한다.
+7. 모든 비어 있지 않은 행의 필드 개수가 확정된 컬럼 수와 같을 때만 target을 쓰고 Catalog dataset을 생성 또는 갱신한다. 불일치가 있으면 Run을 실패시키고 Catalog materialization을 만들지 않는다.
+8. 실패하면 toast와 audit log에 실패 기록을 남기고 optimistic 상태를 되돌린다.
 
 ### Flow B. 카탈로그에서 SQL 분석
 
@@ -148,6 +151,7 @@ Phase 0에서는 용어와 경계를 먼저 고정한다. `createdBy`, `owner`, 
 ## 9) 보류 범위
 
 - 모든 source type의 production 연결
+- Kafka Snapshot/Continuous 원시 TXT 구조화, 임의 정규식 작성, 복수 구분자, 멀티라인 로그, 오류 행 자동 보정·quarantine·재처리
 - 대용량 처리 성능 검증
 - Kafka Continuous Ingestion V1 운영 확장: 지속 실행 Spark worker, checkpoint 재개, Catalog 등록, partition lag, bounded log, quarantine replay, staged compaction은 Issue #500에서 구현했다. autoscaling, alerting/SLA, 장기 로그 object storage, compaction 결과의 atomic reader 전환/retention, 다중 worker 운영은 후속 범위
 - Spark, Trino, Kafka, Airflow 전체 운영 완성

@@ -16,14 +16,16 @@
 - `DashboardCanvas`: `react-grid-layout`을 사용해 widget drag/resize와 collision validation을 처리한다.
 - `DatasetSidebar`: Kibo/shadcn-compatible Tree, shadcn `ScrollArea`, `Alert`, `Empty`, `Skeleton`, `Tooltip`과 `TreeHoverCard`를 조합한다.
 - `WidgetConfigPanel`: `SettingsPanel`, `FieldGroup`, `Field`, `Select`, `Input`, `Textarea`, `ToggleGroup`, `Tooltip`, `Checkbox`, `Button`을 조합한다.
-- `DashboardAssistantPanel`: shadcn `Bubble`, `BubbleGroup`, `BubbleContent`, `Textarea`, `Button`으로 dashboard AI interaction을 제공한다.
-- `ActionGroup`: undo/redo, assistant, cursor, widget 생성 toolbar의 layout을 담당한다.
+- `DashboardAssistantPanel`: shadcn `Bubble`, `BubbleGroup`, `BubbleContent`, `Textarea`, `Button`으로 dashboard AI interaction을 제공한다. `Bubble` variant는 AskLake의 blue/slate 화이트 팔레트로 사용자 primary/end와 Assistant secondary/start 역할을 구분하며, 새 메시지는 역할 방향에서 짧은 spring entry motion으로 진입한다.
+- `DashboardEditToolbar`: shadcn `ToggleGroup`, `ButtonGroup`, `Button`, `Tooltip`로 assistant/cursor mode와 widget 생성, undo/redo action을 분리한다.
 - `WidgetFrame`, `WidgetRenderer`: widget selection, delete, preview, chart/table/metric 렌더링을 담당한다.
 - shadcn `Sheet`: share panel에 사용한다.
 
 ## Weakly Componentized Areas
 
-- edit toolbar 안의 assistant/cursor/widget type action 일부가 raw `<button>`이며 공통 Button variant와 focus-visible 규칙을 사용하지 않는다.
+- [RESOLVED #580] edit toolbar를 `DashboardEditToolbar.tsx`로 추출하고 mode는 `ToggleGroup`, 생성/기록 action은 `ButtonGroup`/`Button`으로 유지한다.
+- [RESOLVED #585] project에 정의되지 않은 shadcn semantic color token에 의존하던 `Bubble` variant를 AskLake의 기존 blue/slate 팔레트로 맞춰 실제 메시지 배경과 전경색이 렌더링되도록 정리한다.
+- [RESOLVED #585] Dashboard Assistant message entry는 `motion/react` spring으로만 움직이고 `useReducedMotion` 요청에서는 즉시 표시한다.
 - dataset sidebar toggle은 raw button이며 subnav/tab CSS에 직접 결합되어 있다.
 - page tab wrapper, rename/delete controls, selected state가 custom CSS로 구현되어 있다.
 - widget inspector의 color slot, palette, custom color popover는 `react-colorful`과 전용 absolute layer/CSS로 구성된다.
@@ -55,11 +57,12 @@
 
 ## Related CSS
 
-- 현재 사용 중: `frontend/src/styles/dashboard-runtime.css`의 `.asklake-dashboard-workspace`, `.has-dataset-sidebar`, `.dataset-sidebar-open`, `.has-inspector`.
-- 현재 사용 중: `.asklake-dashboard-dataset-sidebar`, `.asklake-dataset-tree-*`, `.asklake-dashboard-inspector`, `.asklake-dashboard-edit-stage`, `.asklake-dashboard-edit-toolbar`.
-- 현재 사용 중: `.asklake-dashboard-rgl*`, `.asklake-widget-frame*`, `.asklake-widget-config-*`, `.asklake-widget-type-*`, `.asklake-widget-color-*`.
-- 현재 사용 중: `.asklake-assistant-*`, `.asklake-dashboard-tab-*`, `.asklake-dashboard-title-edit-*`, `.asklake-dashboard-share-sheet*`.
-- 주의: runtime CSS가 약 46KB이며 view/edit/widget/assistant 상태를 공유한다. component 단위 stylesheet ownership을 먼저 정한 뒤 cleanup한다.
+- 현재 사용 중: `dashboard-runtime-dataset.css`의 `.asklake-dashboard-workspace`, `.has-dataset-sidebar`, `.dataset-sidebar-open`, `.has-inspector`, dataset sidebar/hover selector.
+- 현재 사용 중: `dashboard-runtime-canvas.css`의 `.asklake-dashboard-edit-stage`, `.asklake-dashboard-edit-toolbar`, `.asklake-dashboard-rgl*`.
+- 현재 사용 중: `dashboard-runtime-widgets.css`의 `.asklake-widget-frame*`, `dashboard-runtime-config.css`의 `.asklake-widget-config-*`, `.asklake-widget-type-*`, `.asklake-widget-color-*`.
+- 현재 사용 중: `dashboard-runtime-assistant.css`의 `.asklake-assistant-*`, `dashboard-runtime-shell.css`의 tab/title/share selector.
+- 대화 버블의 역할별 색상, border, focus ring과 reactions surface는 공용 `components/ui/bubble.tsx` variant가 소유하며 Dashboard 전용 CSS에서 중복 지정하지 않는다.
+- 주의: `dashboard-runtime.css` manifest의 import 순서가 view/edit/widget/assistant cascade를 보존한다. selector 이동 시 ownership과 순서를 함께 갱신한다.
 
 ## QA Notes
 
@@ -124,6 +127,7 @@
 - radial bar chart의 동적 min/max 범위 `Slider`에 `min < max` validation과 thumb 간격 제한을 적용한다.
 - 편집 toolbar는 활성 도구를 shadcn `ToggleGroup` 단일 선택으로, 위젯 추가·기록 동작을 `ButtonGroup`으로 분리하고 `Tooltip`을 제공한다.
 - 위젯 설정의 데이터셋·컬럼·집계·정렬·형식 선택은 공통 searchable Combobox로 제공해 긴 컬럼명을 검색·키보드 선택할 수 있게 한다.
+- #594에서는 공통 combobox의 선택 표시를 체크에서 원형 점으로 바꾸고, 데이터셋 선택까지 같은 검색 가능한 UI로 통일했다. trigger는 inspector ScrollArea 폭 안에서 줄어들어 가로로 튀어나오지 않는다.
 - 초기 빈 편집 화면에서도 canvas wrap과 edit stage의 흰색 배경이 viewport 하단까지 이어지고, 빈 canvas가 최소 높이를 유지하도록 한다.
 - 중앙 canvas의 native scrollbar를 shadcn `ScrollArea`의 vertical/horizontal track과 thumb로 교체한다.
 - 위젯 설정의 데이터셋·제목·설명을 `FieldGroup`과 `Select`/`Input`/`Textarea`로 통일하고, 차트 타입 아이콘은 `ToggleGroup type="single"` 및 `Tooltip`로 교체한다.

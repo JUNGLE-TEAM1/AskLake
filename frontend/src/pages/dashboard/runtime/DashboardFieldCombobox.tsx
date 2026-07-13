@@ -1,4 +1,4 @@
-import { Check, ChevronDown, Search } from "lucide-react";
+import { ChevronDown, Search } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { FormFieldGroup } from "@/components/ui/form-field-group";
@@ -47,12 +47,15 @@ export function DashboardFieldCombobox({
   };
 
   return (
-    <FormFieldGroup className={fieldClassName} label={label}>
+    <FormFieldGroup className={cn("min-w-0 w-full", fieldClassName)} label={label}>
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
           <Button
             aria-expanded={open}
-            className={cn("asklake-widget-combobox justify-between text-left", className)}
+            className={cn(
+              "asklake-widget-combobox w-full min-w-0 max-w-full justify-between overflow-hidden text-left",
+              className,
+            )}
             disabled={disabled}
             role="combobox"
             type="button"
@@ -92,7 +95,14 @@ export function DashboardFieldCombobox({
                   variant={option.value === value ? "secondary" : "ghost"}
                   onClick={() => selectOption(option.value)}
                 >
-                  <Check className={option.value === value ? "opacity-100" : "opacity-0"} data-icon="inline-start" />
+                  <span
+                    aria-hidden="true"
+                    className={cn(
+                      "size-2 shrink-0 rounded-full bg-current",
+                      option.value === value ? "opacity-100" : "opacity-0",
+                    )}
+                    data-icon="inline-start"
+                  />
                   <span className="truncate">{option.label}</span>
                 </Button>
               )) : <p className="px-2 py-3 text-sm text-muted-foreground">검색 결과가 없습니다.</p>}

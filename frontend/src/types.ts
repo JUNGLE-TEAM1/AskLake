@@ -34,6 +34,8 @@ export type {
   KafkaContinuousSession,
   KafkaContinuousSessionStatus,
   PermissionDraft,
+  RecordParsingDraft,
+  RecordParsingPreviewResponse,
   QualityDraft,
   QualityRuleDraft,
   RealtimeOperationalHealth,
@@ -60,5 +62,5 @@ export type {
 } from "./types/etl";
 export type { FlowId, NavId, NavItem, ScheduleFlowId } from "./types/navigation";
 export type { CurrentUserResponse, IdentityGroup, IdentityProfile, PermissionSummary } from "./types/identity";
-export type { PermissionAction, PermissionGrant, PermissionPrincipalType, ResourcePermissions } from "./types/permissions";
+export type { PermissionAction, PermissionGrant, PermissionOptionGroup, PermissionOptionsResponse, PermissionOptionUser, PermissionPrincipalType, ResourcePermissions } from "./types/permissions";
 export type { CreateDerivedDatasetRequest, CreateTrinoSqlJobRequest, DerivedDatasetLayer, SqlResultDraft, TrinoMaterializationRun, TrinoQueryEstimate, TrinoQueryRun, TrinoQueryRunHistoryItem, TrinoQueryRunListResponse, TrinoQueryRunResultPage, TrinoQueryRunStatus, TrinoQueryValidation } from "./types/sql";
