@@ -343,14 +343,6 @@ def fail_current_batch(error: Exception) -> None:
     LAST_BATCH_EVIDENCE = build_batch_evidence(**context)
 
 
-def latest_sample_rows(frame: DataFrame, columns: list[str], limit: int = 20) -> list[dict[str, Any]]:
-    rows = frame.limit(limit).collect()
-    return [
-        json.loads(json.dumps({column: row[column] for column in columns}, default=str))
-        for row in rows
-    ]
-
-
 def apply_catalog_ack() -> None:
     global PUBLISHED_BATCHES
     ack_path = REPORT_FILE.with_suffix(".catalog-ack.json")
@@ -1194,20 +1186,7 @@ def main() -> None:
         data_path = f"{output_path.rstrip('/')}/_batches/batch_id={batch_id}" if stored_count else None
         quarantine_batch_path = f"{quarantine_path.rstrip('/')}/_batches/batch_id={batch_id}" if quarantined_count else None
         evidence_batch_path = None
-        sample_rows: list[dict[str, Any]] = []
         if stored_count:
-            sample_columns = [
-                name for name in target_frame.columns
-                if name not in {"kafka_timestamp", "kafka_partition", "kafka_offset", "ingested_at"}
-            ]
-            sample_rows = latest_sample_rows(
-                target_frame.orderBy(
-                    col("kafka_timestamp").desc(),
-                    col("kafka_partition").desc(),
-                    col("kafka_offset").desc(),
-                ).select(*[quoted_column(name) for name in sample_columns]),
-                sample_columns,
-            )
             write_batch_once(
                 spark,
                 target_frame,
@@ -1309,7 +1288,6 @@ def main() -> None:
             "consumedCount": total,
             "storedCount": stored_count,
             "quarantinedCount": quarantined_count,
-            "sampleRows": sample_rows,
             "schemaAcceptedCount": schema_valid_count,
             "schemaQuarantinedCount": schema_invalid_count,
             "ruleQuarantinedCount": rule_quarantine_count,

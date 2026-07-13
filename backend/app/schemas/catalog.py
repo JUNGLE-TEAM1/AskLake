@@ -68,7 +68,6 @@ class DatasetMaterializationRun(CamelModel):
 class CatalogDatasetResponse(CamelModel):
     created_by: str | None = None
     created_by_profile: dict[str, Any] | None = None
-    dashboard_sync_interval_minutes: int | None = None
     permission_grants: list[PermissionGrant] = Field(default_factory=list)
     permissions: ResourcePermissions = Field(default_factory=ResourcePermissions)
     description: str
@@ -89,8 +88,6 @@ class CatalogDatasetResponse(CamelModel):
     schema_: list[tuple[str, str]] = Field(alias="schema")
     size: str
     source: str
-    source_execution_mode: Literal["snapshot", "continuous"] | None = None
-    source_kind: MaterializationSourceKind | None = None
     source_run_id: str | None = None
     status: DatasetStatus
     storage_format: str | None = None

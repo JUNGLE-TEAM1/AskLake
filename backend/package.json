@@ -20,7 +20,6 @@
     "verify:auth-password": "node scripts/verify-auth-password-compat.mjs",
     "verify:permission-dataset": "node scripts/verify-permission-dataset-access.mjs",
     "verify:permission-job-dashboard": "node scripts/verify-permission-job-dashboard.mjs",
-    "verify:dashboard-published-data": "python scripts/verify-dashboard-published-data-contract.py",
     "verify:permission-create-flow": "python3 scripts/verify-permission-create-flow-contract.py",
     "verify:fastapi-pair2": "node scripts/verify-fastapi-pair2.mjs",
     "verify:fastapi-sources": "node scripts/verify-fastapi-sources.mjs",
