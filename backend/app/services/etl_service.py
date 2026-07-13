@@ -1770,9 +1770,7 @@ def execute_airflow_run(
 
     dataset_id = job.dataset_id or make_dataset_id(job.target)
     job.dataset_id = dataset_id
-    # Every materialization append must serialize against run deletion and
-    # other appenders using the same dataset row lock.
-    existing_dataset = etl_repository.get_dataset_by_id_for_update(db, dataset_id)
+    existing_dataset = etl_repository.get_dataset_by_id(db, dataset_id)
     if airflow_run_has_materialization(run, existing_dataset):
         return airflow_execution_response_from_persisted(job, run, existing_dataset)
 
@@ -1796,6 +1794,9 @@ def execute_airflow_run(
     apply_spark_result_to_airflow_run(run, spark_run)
     dataset_model = None
     if result.get("status") == "success":
+        # Do not hold the dataset lock while Spark is running. Re-read and
+        # lock immediately before merging the new materialization history.
+        existing_dataset = etl_repository.get_dataset_by_id_for_update(db, dataset_id)
         dataset_model = dataset_from_spark_result(job, result, existing_dataset)
         job.target_path = result.get("outputPath") or job.target_path
         job.last_state = "Spark 적재 및 카탈로그 등록 완료 · Airflow 종료 확인 중"
