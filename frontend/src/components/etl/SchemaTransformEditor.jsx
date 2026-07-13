@@ -1153,10 +1153,6 @@ export default function SchemaTransformEditor({
                     <span className="inline-flex items-center gap-2"><span className="size-2 rounded-full bg-blue-500" />Spark SQL</span>
                     <span>소스 데이터 참조: <code className="font-mono font-bold text-blue-950">FROM input</code></span>
                   </div>
-                  <div className={`schema-sql-validation flex items-center justify-center gap-2 border-b border-blue-100 px-3 text-center text-sm font-semibold ${sqlValidation.tone === "error" ? "bg-red-50 text-red-600" : sqlValidation.tone === "success" ? "bg-emerald-50 text-emerald-700" : "bg-blue-50/60 text-slate-600"}`}>
-                    {sqlValidation.tone === "error" ? <AlertCircle className="size-4" /> : sqlValidation.tone === "success" ? <CheckCircle2 className="size-4" /> : <Sparkles className="size-4" />}
-                    <span>{sqlValidation.message}</span>
-                  </div>
                   <Textarea
                     id="schema-sql-transform-editor"
                     value={customSql}
@@ -1168,6 +1164,10 @@ export default function SchemaTransformEditor({
                     placeholder="SELECT text, sentiment FROM input"
                     className="min-h-[210px] flex-1 resize-none rounded-none border-0 bg-white px-4 py-4 font-mono text-sm font-semibold leading-6 text-slate-950 caret-blue-600 shadow-none outline-none placeholder:text-slate-400 focus-visible:ring-0"
                   />
+                  <div className={`schema-sql-validation flex items-center justify-start gap-2 border-t border-blue-100 px-4 py-2.5 text-left text-sm font-semibold ${sqlValidation.tone === "error" ? "bg-red-50 text-red-600" : sqlValidation.tone === "success" ? "bg-emerald-50 text-emerald-700" : "bg-blue-50/60 text-slate-600"}`}>
+                    {sqlValidation.tone === "error" ? <AlertCircle className="size-4 shrink-0" /> : sqlValidation.tone === "success" ? <CheckCircle2 className="size-4 shrink-0" /> : <Sparkles className="size-4 shrink-0" />}
+                    <span>{sqlValidation.message}</span>
+                  </div>
                 </div>
               </div>
             </section>
