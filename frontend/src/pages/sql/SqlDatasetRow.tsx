@@ -30,7 +30,6 @@ type SqlDatasetNode = ExplorerTreeNode & {
   columnName?: string;
   columnType?: string;
   dataset?: CatalogDataset;
-  firstColumn?: boolean;
   kind: "column" | "dataset" | "group";
   selected?: boolean;
 };
@@ -55,7 +54,6 @@ export function SqlDatasetTree({
             columnName: name,
             columnType: type,
             dataset,
-            firstColumn: index === 0,
             id: `${getDatasetNodeId(dataset.id)}:column:${name}:${index}`,
             kind: "column" as const,
             label: name,
@@ -109,7 +107,6 @@ export function SqlDatasetTree({
           return <Table2 className="text-indigo-600" />;
         }}
         getRowClassName={(node) => cn(
-          node.data.firstColumn && "pt-2",
           node.data.selected && "border-blue-200 bg-blue-50 text-blue-700",
         )}
         getRowProps={(node) => ({
@@ -133,12 +130,7 @@ export function SqlDatasetTree({
         indent={12}
         minHeight={320}
         openByDefault={false}
-        rowHeight={(node) => {
-          if (node.data.kind === "dataset") return 48;
-          if (node.data.firstColumn) return 44;
-          if (node.data.kind === "group") return 40;
-          return 36;
-        }}
+        rowHeight={40}
         toggleOnRowPress={false}
         onNodePress={(node) => {
           if (node.data.kind === "dataset" && node.data.dataset) onSelect(node.data.dataset);
