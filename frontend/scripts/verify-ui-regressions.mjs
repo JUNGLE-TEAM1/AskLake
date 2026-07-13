@@ -22,34 +22,15 @@ const read = (path) => {
 
 const checks = [
   {
-    name: "ETL schedule keeps controls while omitting redundant helper copy",
-    file: "src/pages/etl/EtlPages.tsx",
-    patterns: [
-      /<h2>실행 방식 설정<\/h2>/,
-      /<RunTypeCard active=\{selectedOption === "skip"\}/,
-      /<RunTypeCard active=\{selectedOption === "repeat"\}/,
-      /<h2>직접 실행 정책<\/h2>/,
-      /<RetryPolicy value=\{retryPolicy\} onChange=\{onRetryPolicyChange\} \/>/,
-    ],
-    forbiddenPatterns: [
-      /description="파이프라인의 실행 시간, 반복 여부, 실행 정책을 설정합니다\."/,
-      /<p>저장만 할지, 정해진 주기로 자동 실행할지 선택합니다\.<\/p>/,
-      /<p>자동 예약 없이 저장하고 필요할 때 Job 목록에서 직접 실행합니다\.<\/p>/,
-      /<span className="schedule-config-state">\{selectedOption === "repeat" \? "자동 실행" : "직접 실행"\}<\/span>/,
-      /<span className="schedule-config-state muted">스케줄 없음<\/span>/,
-      /<InfoBox title="다음 실행 없음"/,
-    ],
-  },
-  {
     name: "ETL permission composes the governance, policy, and searchable grant workflow with shadcn controls",
     file: "src/pages/etl/EtlPages.tsx",
     patterns: [
       /title="권한 설정"/,
       /<EtlStepHeader[\s\S]*className="etl-step-standalone-header"[\s\S]*icon=\{<ShieldCheck \/>\}[\s\S]*title="권한 설정"/,
       /data-testid="permission-workflow"/,
-      /<CardTitle>Governance Check<\/CardTitle>/,
-      /<CardTitle>Access Policy<\/CardTitle>/,
-      /<CardTitle>Role Grants<\/CardTitle>/,
+      /<CardTitle>거버넌스 확인<\/CardTitle>/,
+      /<CardTitle>접근 정책<\/CardTitle>/,
+      /<CardTitle>역할 및 사용자 권한<\/CardTitle>/,
       /<SelectGroup>/,
       /<TabsTrigger value="roles">역할<\/TabsTrigger>/,
       /<TabsTrigger value="users">사용자<\/TabsTrigger>/,
@@ -61,6 +42,13 @@ const checks = [
       /principalType: "group" as const/,
       /principalType: "user" as const/,
       /data-testid="permission-options-loading"/,
+    ],
+    forbiddenPatterns: [
+      /<CardTitle>Governance Check<\/CardTitle>/,
+      /<CardTitle>Access Policy<\/CardTitle>/,
+      /<CardTitle>Role Grants<\/CardTitle>/,
+      /\$\{selectedRoleCount\}개 선택/,
+      /\$\{selectedUserCount\}명 선택/,
     ],
     forbiddenPatterns: [
       /생성할 데이터셋에 접근할 수 있는 역할과 사용자를 선택하세요\./,
@@ -874,6 +862,34 @@ const checks = [
     ],
     forbiddenPatterns: [
       /현재 대시보드 링크를 복사했습니다/,
+    ],
+  },
+  {
+    name: "ETL schedule uses one conditional shadcn settings surface",
+    file: "src/pages/etl/EtlPages.tsx",
+    patterns: [
+      /<Card className="overflow-hidden" size="none">/,
+      /<div aria-label="실행 방식" className="grid gap-4 md:grid-cols-2" role="group">/,
+      /<ScheduleModeCard[\s\S]*selected=\{selectedOption === "skip"\}[\s\S]*title="직접 실행"/,
+      /<ScheduleModeCard[\s\S]*selected=\{selectedOption === "repeat"\}[\s\S]*title="반복 실행"/,
+      /aria-pressed=\{selected\}/,
+      /selectedOption === "repeat" && <RepeatSettings/,
+      /<FieldSet>/,
+      /<Switch[\s\S]*id="schedule-retry-enabled"/,
+      /<Separator \/>/,
+      /onOverlapPolicyChange=/,
+      /normalizeScheduleTimezone\(draftSchedule\.timezone\)/,
+    ],
+    forbiddenPatterns: [
+      /파이프라인의 실행 시간, 반복 여부, 실행 정책을 설정합니다\./,
+      /저장만 할지, 정해진 주기로 자동 실행할지 선택합니다\./,
+      /자동 예약 없이 저장하고 필요할 때 Job 목록에서 직접 실행합니다\./,
+      /<h2>직접 실행 정책<\/h2>/,
+      />스케줄 없음</,
+      /다음 실행 없음/,
+      /schedule-config-/,
+      /description="필요할 때 Job 목록에서 실행합니다\."/,
+      /description="정해진 주기마다 자동으로 데이터를 처리합니다\."/,
     ],
   },
   {
