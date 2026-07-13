@@ -10,7 +10,7 @@
 - 로컬 실행자는 AWS CLI와 SSH 접근 권한을 가지고 있어야 한다.
 - 서버 repo는 기본적으로 `/opt/asklake`에 clone되어 있다고 가정한다.
 - 서버 `deploy/.env`에는 Postgres/Mongo/OpenAI 값과 S3 bucket 이름만 보존한다. 장기 AWS access key/secret과 MinIO credential은 넣지 않는다.
-- EC2에는 Raw list/read와 Output list/read/write/delete 권한을 가진 instance profile IAM Role을 연결한다. Container credential 전달을 위해 IMDSv2 token required, response hop limit 2를 사용한다.
+- EC2에는 Raw list/read와 Output list/read/write/delete 권한을 가진 instance profile IAM Role을 연결한다. `TRINO_ENABLED=true`이면 Warehouse와 Query Result bucket의 list/read/write/delete 최소 권한도 같은 role에 추가한다. Container credential 전달을 위해 IMDSv2 token required, response hop limit 2를 사용한다.
 
 ## 1. 로컬 환경 파일 준비
 
@@ -111,14 +111,34 @@ AWS_REGION=ap-northeast-2
 ASKLAKE_RAW_BUCKET=replace-with-asklake-raw-bucket
 ASKLAKE_SPARK_OUTPUT_MODE=s3a
 ASKLAKE_SPARK_OUTPUT_BUCKET=replace-with-asklake-output-bucket
+COMPOSE_PROFILES=
+TRINO_ENABLED=false
+TRINO_BASE_URL=https://trino:8443
+TRINO_CATALOG=iceberg
+TRINO_SCHEMA=asklake
+TRINO_USER=asklake-api
+TRINO_ICEBERG_WAREHOUSE_BUCKET=replace-with-asklake-warehouse-bucket
+TRINO_ICEBERG_WAREHOUSE_PREFIX=warehouse
+TRINO_RESULT_STORAGE_BUCKET=replace-with-asklake-query-results-bucket
+TRINO_RESULT_STORAGE_PREFIX=query-results
+TRINO_RESULT_STORAGE_AUTO_CREATE_BUCKET=false
+TRINO_RESULT_RETENTION_SECONDS=86400
+TRINO_RESULT_CURSOR_SECRET=replace-with-a-long-random-production-secret
+TRINO_QUERY_CONFIRMATION_SECRET=replace-with-a-long-random-production-secret
 S3_ENDPOINT=
 S3_FORCE_PATH_STYLE=false
-S3_ALLOWED_BUCKETS=replace-with-asklake-raw-bucket,replace-with-asklake-output-bucket
+S3_ALLOWED_BUCKETS=replace-with-asklake-raw-bucket,replace-with-asklake-output-bucket,replace-with-asklake-warehouse-bucket,replace-with-asklake-query-results-bucket
 ASKLAKE_S3_READINESS_READ_BUCKETS=replace-with-asklake-raw-bucket
 ASKLAKE_S3_READINESS_WRITE_BUCKETS=replace-with-asklake-output-bucket
 ```
 
-`aws-s3-readiness` one-shot service가 Raw bucket list와 Output bucket put/head/delete를 검증한다. Production frontend build는 Compose가 `ASKLAKE_SPARK_OUTPUT_BUCKET` 값을 `VITE_SPARK_OUTPUT_BUCKET`으로 전달해 Target 경로와 Spark 출력 경로를 일치시킨다. 이 검증이 실패하면 backend 시작도 실패해야 하며, bucket 자동 생성이나 static AWS key 추가로 우회하지 않는다. Warehouse와 Query Result bucket은 현재 runtime에서 사용하지 않는다.
+`TRINO_ENABLED=false`에서는 `COMPOSE_PROFILES`를 비워 둔다. 이때 coordinator/bootstrap/collector/cleanup service는 Compose graph에서 빠지며 Trino bucket, password, HMAC secret, CA/keystore/password file 없이 기존 DuckDB 호환 배포가 기동한다. `aws-s3-readiness`는 Raw bucket list와 Output bucket put/head/delete만 검증한다.
+
+Trino를 켤 때는 `TRINO_ENABLED=true`와 `COMPOSE_PROFILES=trino`를 함께 설정하고 Warehouse와 Query Result bucket도 `ASKLAKE_S3_READINESS_WRITE_BUCKETS`에 포함한다. 배포 preflight는 두 bucket, fixed ACL identity(`asklake-api`, `asklake-materializer`), `iceberg.asklake`, 서로 다른 production secret, 읽을 수 있는 TLS/htpasswd file을 모두 검증한다. Warehouse와 Query Result bucket은 배포 전에 같은 리전에 생성하고 EC2 instance profile에 필요한 list/read/write/delete 최소 권한을 부여한다. backend, Trino, collector/cleanup worker는 endpoint나 장기 AWS access key/secret 없이 default credential chain을 사용한다. Query Result bucket은 lifecycle policy로 애플리케이션 retention보다 늦게 만료되도록 설정하고 공개 access를 차단한다.
+
+Production Trino는 public port를 열지 않고 backend/PostgreSQL과 통신하는 internal network에서 HTTPS/password authentication을 사용한다. 별도 outbound network는 EC2 instance profile의 IMDS credential과 AWS S3에 나갈 때만 사용한다. Query identity는 read-only, materializer identity는 `asklake` schema CTAS/`DESCRIBE`/drop 최소 권한으로 분리한다. JDBC role/password, TLS CA/keystore, password hash file과 shared secret은 서버 secret mount에만 두고 Git에 저장하지 않는다. 로컬 root Compose에서만 MinIO와 local credential을 사용한다.
+
+Production frontend build는 Compose가 `ASKLAKE_SPARK_OUTPUT_BUCKET` 값을 `VITE_SPARK_OUTPUT_BUCKET`으로 전달해 Target 경로와 Spark 출력 경로를 일치시킨다. readiness 실패를 bucket 자동 생성이나 static AWS key 추가로 우회하지 않는다.
 
 ## 4. 재배포
 
@@ -142,10 +162,19 @@ EC2 running 보장
   -> git pull --ff-only origin <branch>
   -> docker compose up -d --build
   -> frontend/API health check
+  -> TRINO_ENABLED=true이면 query identity, materializer CTAS, Warehouse/Query Result S3 readiness
+  -> TRINO_ENABLED=false이면 stale Trino profile container 제거 후 readiness 생략
   -> docker compose ps
 ```
 
 `git pull --ff-only`가 실패하면 서버 작업 tree가 배포 branch와 다르다는 뜻이므로 자동으로 덮어쓰지 않고 실패시킨다.
+
+Trino를 활성화한 서버에서는 배포 script와 동일한 readiness를 수동으로 다시 확인할 수 있다.
+
+```bash
+docker compose --env-file deploy/.env -f deploy/docker-compose.prod.yml \
+  exec -T backend python scripts/verify-trino-production-readiness.py
+```
 
 ## 5. Compose만 재시작
 

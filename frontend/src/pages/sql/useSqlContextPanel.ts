@@ -55,7 +55,10 @@ export function useSqlContextPanel({
   const totalPages = Math.max(1, Math.ceil(filteredDatasets.length / pageSize));
   const currentPage = Math.min(Math.max(page, 1), totalPages);
   const pageStartIndex = (currentPage - 1) * pageSize;
-  const pageDatasets = filteredDatasets.slice(pageStartIndex, pageStartIndex + pageSize);
+  const pageDatasets = useMemo(
+    () => filteredDatasets.slice(pageStartIndex, pageStartIndex + pageSize),
+    [filteredDatasets, pageSize, pageStartIndex],
+  );
   const rangeLabel = `${pageStartIndex + 1}-${pageStartIndex + pageDatasets.length} / ${filteredDatasets.length}`;
 
   useEffect(() => {

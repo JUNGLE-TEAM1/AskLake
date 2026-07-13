@@ -40,6 +40,7 @@ export interface SqlJobWizardDialogProps {
   open: boolean;
   pending?: boolean;
   resultDraft: SqlResultDraft;
+  runtime?: "compatibility" | "trino";
 }
 
 const wizardSteps: Array<{
@@ -61,6 +62,7 @@ export function SqlJobWizardDialog({
   open,
   pending = false,
   resultDraft,
+  runtime = "compatibility",
 }: SqlJobWizardDialogProps) {
   const [configuration, setConfiguration] = useState(() => buildInitialSqlJobConfiguration(baseDataset, resultDraft, defaultMetadata));
   const [stepIndex, setStepIndex] = useState(0);
@@ -244,7 +246,7 @@ export function SqlJobWizardDialog({
         ) : null}
 
         {activeStep.id === "schedule" ? (
-          <SqlJobScheduleStep disabled={isBusy} onChange={updateSchedule} schedule={configuration.schedule} />
+          <SqlJobScheduleStep disabled={isBusy} onChange={updateSchedule} runtime={runtime} schedule={configuration.schedule} />
         ) : null}
 
         {activeStep.id === "governance" ? (
@@ -264,6 +266,7 @@ export function SqlJobWizardDialog({
             onStoragePathTouched={() => setStoragePathTouched(true)}
             onTargetChange={updateTarget}
             resultDraft={resultDraft}
+            runtime={runtime}
             showErrors={showErrors}
           />
         ) : null}

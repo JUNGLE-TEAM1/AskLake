@@ -47,6 +47,10 @@ export function SqlDatasetTree({
   const [hoverInfo, setHoverInfo] = useState<HoverInfo | null>(null);
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
+  const onToggleRef = useRef(onToggle);
+  onToggleRef.current = onToggle;
+  const datasetsRef = useRef(datasets);
+  datasetsRef.current = datasets;
   const getNodeIcon = useCallback((node: NodeApi<SqlDatasetNode>) => {
     if (node.data.kind === "dataset") return <Table2 className="text-blue-600" />;
     if (node.data.kind === "column") {
@@ -67,7 +71,10 @@ export function SqlDatasetTree({
     onMouseEnter: (event: MouseEvent<HTMLButtonElement>) => showSqlNodeHover(node.data, event.currentTarget, setHoverInfo),
     onMouseLeave: () => setHoverInfo(null),
     onClick: node.data.kind === "dataset" && node.data.dataset
-      ? () => onSelectRef.current(node.data.dataset as CatalogDataset)
+      ? (event: MouseEvent<HTMLButtonElement>) => {
+          event.preventDefault();
+          onSelectRef.current(node.data.dataset as CatalogDataset);
+        }
       : undefined,
     title: node.data.label,
   }), []);
@@ -108,6 +115,18 @@ export function SqlDatasetTree({
     label: "system",
     selectable: false,
   }], [datasets, selectedDatasetIds]);
+  const initialOpenState = useMemo(() => ({
+    [SYSTEM_NODE_ID]: true,
+    [DATASETS_NODE_ID]: true,
+    [TABLES_NODE_ID]: true,
+    ...(expandedDatasetId ? { [getDatasetNodeId(expandedDatasetId)]: true } : {}),
+  }), [expandedDatasetId]);
+  const handleNodeToggle = useCallback((nodeId: string) => {
+    if (!nodeId.startsWith(DATASET_NODE_PREFIX)) return;
+    const datasetId = nodeId.slice(DATASET_NODE_PREFIX.length);
+    const dataset = datasetsRef.current.find((entry) => entry.id === datasetId);
+    if (dataset) onToggleRef.current(dataset);
+  }, []);
 
   if (datasets.length === 0) return null;
 
@@ -123,23 +142,13 @@ export function SqlDatasetTree({
         disableSelect
         getIcon={getNodeIcon}
         getRowProps={getNodeRowProps}
-        initialOpenState={{
-          [SYSTEM_NODE_ID]: true,
-          [DATASETS_NODE_ID]: true,
-          [TABLES_NODE_ID]: true,
-          ...(expandedDatasetId ? { [getDatasetNodeId(expandedDatasetId)]: true } : {}),
-        }}
+        initialOpenState={initialOpenState}
         indent={12}
         minHeight={320}
         openByDefault={false}
         rowHeight={40}
         toggleOnRowPress={false}
-        onToggle={(nodeId) => {
-          if (!nodeId.startsWith(DATASET_NODE_PREFIX)) return;
-          const datasetId = nodeId.slice(DATASET_NODE_PREFIX.length);
-          const dataset = datasets.find((entry) => entry.id === datasetId);
-          if (dataset) onToggle(dataset);
-        }}
+        onToggle={handleNodeToggle}
       />
       {hoverInfo && <SqlDatasetHoverCard info={hoverInfo} />}
     </>
