@@ -5,6 +5,7 @@ import {
   openSync,
   readFileSync,
   renameSync,
+  statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -31,6 +32,7 @@ const forbiddenCredentialNames = new Set([
   "SPARK_MINIO_ACCESS_KEY",
   "SPARK_MINIO_SECRET_KEY",
 ]);
+const staleStateLockMs = 5 * 60 * 1000;
 
 export async function createSparkRestDriver(restUrlValue, submissionValue, timeoutMs = 15_000) {
   const restUrl = validateRestUrl(restUrlValue);
@@ -386,15 +388,53 @@ async function acquireStateLock(stateFileValue, timeoutMs) {
   while (Date.now() < deadline) {
     try {
       const descriptor = openSync(lockFile, "wx");
+      try {
+        writeFileSync(lockFile, `${JSON.stringify({ createdAt: Date.now(), pid: process.pid })}\n`, "utf8");
+      } catch (error) {
+        closeSync(descriptor);
+        unlinkSync(lockFile);
+        throw error;
+      }
       return () => {
         try { closeSync(descriptor); } finally { if (existsSync(lockFile)) unlinkSync(lockFile); }
       };
     } catch (error) {
       if (error?.code !== "EEXIST") throw error;
+      if (isStaleStateLock(lockFile)) {
+        try { unlinkSync(lockFile); } catch (unlinkError) {
+          if (unlinkError?.code !== "ENOENT") throw unlinkError;
+        }
+        continue;
+      }
       await delay(50);
     }
   }
   throw new Error(`Spark REST state lock timed out: ${lockFile}`);
+}
+
+function isStaleStateLock(lockFile) {
+  let metadata;
+  try {
+    metadata = JSON.parse(readFileSync(lockFile, "utf8"));
+  } catch {
+    metadata = null;
+  }
+  const createdAt = Number(metadata?.createdAt || 0);
+  const pid = Number(metadata?.pid || 0);
+  if (createdAt > 0 && Date.now() - createdAt < staleStateLockMs) return false;
+  if (pid > 0) {
+    try {
+      process.kill(pid, 0);
+      return false;
+    } catch (error) {
+      return error?.code === "ESRCH";
+    }
+  }
+  try {
+    return Date.now() - statSync(lockFile).mtimeMs >= staleStateLockMs;
+  } catch {
+    return false;
+  }
 }
 
 function validateStateFile(value) {
