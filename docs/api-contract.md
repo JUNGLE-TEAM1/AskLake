@@ -1364,6 +1364,8 @@ type AirflowSparkExecutionRequest = {
 
 이 endpoint는 브라우저용 API가 아니다. FastAPI는 path `runId`, body `jobId`, 저장된 `etl_runs.airflow_dag_run_id`가 모두 일치하는지 확인한 뒤 PySpark를 실행한다. 성공한 manifest가 이미 `taskStates.sparkResult`에 있으면 같은 Airflow task retry는 물리 출력을 다시 만들지 않고 기존 manifest를 반환한다.
 
+PostgreSQL Snapshot source는 Source/Schema Preview와 실행 입력을 분리한다. `schemaSampleRows`, `__Schema Sample Scope`, `__Sample Row Limit`, `ASKLAKE_SPARK_RUN_ROW_LIMIT`은 PostgreSQL `run`/`retry`의 행 상한이 아니다. 실행 시 저장된 connector identity와 credential로 선택한 base table을 `REPEATABLE READ READ ONLY` transaction과 cursor batch로 끝까지 JSONL export한 뒤 Spark에 전달한다. batch 크기는 `ASKLAKE_POSTGRES_EXECUTION_BATCH_ROWS`로 조절하되 전체 행 수는 자르지 않는다. 테이블이 비어 있거나 export가 중단되면 Run을 실패시키고 Catalog materialization을 만들지 않는다.
+
 Spark manifest에는 `status`, `runId`, `startedAt`, `endedAt`, `durationMs`, `inputRows`, `outputRows`, `outputPath`, `schema`, `quality`, `failedStage`, `error`가 포함될 수 있다. Phase 2는 이 manifest와 물리 Parquet까지 저장하지만 Catalog materialization/lineage 갱신은 수행하지 않는다.
 
 S3A 출력은 Job의 변경 불가능한 설정값 `storagePath`를 destination root로 사용하고 그 아래에 `runId`를 붙인다. `targetPath`는 최신 Run에서 관측한 실제 `outputPath`이므로 다음 재실행의 destination root로 재사용하지 않는다.
