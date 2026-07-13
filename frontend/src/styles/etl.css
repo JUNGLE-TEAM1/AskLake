@@ -1922,8 +1922,9 @@
 
 .hegun-status-copy {
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr);
-  gap: 2px 10px;
+  grid-template-columns: 42px minmax(0, 1fr);
+  column-gap: 14px;
+  row-gap: 2px;
   align-items: center;
   min-width: 0;
 }
