@@ -36,13 +36,13 @@ export function runSparkPipeline(job, command, runId, options = {}) {
 
   const source = sparkSourceFromJob(job, runId);
   try {
-    return runSparkPipelineWithSource(job, command, runId, source);
+    return runSparkPipelineWithSource(job, command, runId, source, executionMode, options);
   } finally {
     cleanupSparkSource(source);
   }
 }
 
-function runSparkPipelineWithSource(job, command, runId, source) {
+function runSparkPipelineWithSource(job, command, runId, source, executionMode, options = {}) {
   const output = sparkOutputPath(job, runId);
   const reportPath = path.join(reportDir, `${runId}.json`);
   const dockerReportPath = `${reportContainerDir}/${runId}.json`;
