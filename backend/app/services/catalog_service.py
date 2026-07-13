@@ -12,6 +12,7 @@ from app.repositories.audit_repository import safe_record_audit_event
 from app.repositories.sql_repository import SqlRepository
 from app.schemas.catalog import (
     CatalogDatasetListResponse,
+    CatalogDatasetRowsResponse,
     CatalogDatasetResponse,
     CreateDerivedDatasetRequest,
     DeleteMaterializationRunResponse,
@@ -27,6 +28,7 @@ from app.services.lake_storage_service import (
     LocalLakeStorageService,
     MaterializedDatasetResult,
 )
+from app.services.dataset_rows_service import read_dataset_rows
 from app.services.governance_enforcement import require_governed_access
 from app.services.sql_service import full_query_run_response_from_payload
 from app.services.materialization_projection import aggregate_materialization_runs
@@ -35,6 +37,45 @@ from app.services.resource_permission_service import (
     datasets_with_persisted_permission_grants,
     permissions_for_actor_with_governance,
 )
+
+
+def dataset_for_latest_successful_materialization(
+    dataset: CatalogDatasetResponse,
+) -> CatalogDatasetResponse:
+    """Project the catalog dataset onto its newest readable materialization.
+
+    A failed or queued run must never replace the last published storage
+    location used by catalog previews.  Keep the original dataset unchanged
+    when no successful materialization is available so callers can return the
+    existing storage error with the correct dataset identity.
+    """
+
+    successful_runs = [
+        run
+        for run in dataset.materialization_runs
+        if run.status == "success" and run.storage_location
+    ]
+    if not successful_runs:
+        return dataset
+
+    def created_at(run: object) -> datetime:
+        value = str(getattr(run, "created_at", ""))
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return datetime.min.replace(tzinfo=timezone.utc)
+
+    selected = max(successful_runs, key=created_at)
+    updates: dict[str, object] = {
+        "source_run_id": selected.run_id,
+        "storage_location": selected.storage_location,
+        "storage_size_bytes": selected.storage_size_bytes,
+        "last_updated": selected.created_at,
+        "status": "available",
+    }
+    if selected.row_count >= 0:
+        updates["rows"] = f"{selected.row_count:,}"
+    return dataset.model_copy(update=updates)
 
 
 class CatalogService:
@@ -107,6 +148,17 @@ class CatalogService:
             )
             raise
         return with_dataset_permissions(dataset, actor_context, self.repository.db)
+
+    def get_dataset_rows(
+        self,
+        dataset_id: str,
+        actor: ActorContext | None = None,
+        *,
+        limit: int,
+        offset: int,
+    ) -> CatalogDatasetRowsResponse:
+        dataset = dataset_for_latest_successful_materialization(self.get_dataset(dataset_id, actor))
+        return read_dataset_rows(dataset, limit=limit, offset=offset)
 
     def get_dataset_lineage(self, dataset_id: str, actor: ActorContext | None = None) -> LineageGraphResponse:
         dataset = self.get_dataset(dataset_id, actor)

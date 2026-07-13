@@ -289,7 +289,7 @@ export async function getDashboards(query: DashboardQuery = {}): Promise<Dashboa
 
 export async function saveDashboardCard(card: SavedDashboardCard): Promise<SavedDashboardCard> {
   if (!apiConfig.useMock) {
-    const result = await apiClient.put<DashboardResponse>(`/api/dashboards/${encodeURIComponent(card.id)}`, card);
+    const result = await apiClient.patch<DashboardResponse>(`/api/dashboards/${encodeURIComponent(card.id)}`, card);
     return result.dashboard;
   }
 
