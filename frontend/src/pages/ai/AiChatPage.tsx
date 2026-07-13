@@ -1,26 +1,36 @@
 import { Bot, Check, ChevronDown, CircleUser, Database, Plus, Send, Sparkles, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { CatalogDataset } from "../../types";
+import type { AuditResult, CatalogDataset } from "../../types";
+import { generateQueryAiSuggestion, getQueryAiErrorMessage, QUERY_AI_REQUEST_TIMEOUT_MS } from "../../services/queryAiService";
 
 const suggestedQuestions = [
-  "이번 주 리뷰에서 반복되는 불만을 요약해줘",
-  "평점이 낮은 상품군을 찾아줘",
-  "최근 실행된 데이터셋의 품질을 비교해줘",
+  "이번 주 리뷰 불만을 요약하는 SQL을 만들어줘",
+  "평점이 낮은 상품군을 찾는 SQL을 만들어줘",
+  "최근 데이터셋 품질을 비교하는 SQL을 만들어줘",
 ];
 
-type UserMessage = {
+type ChatMessage = {
+  kind: "assistant" | "user";
   id: string;
   content: string;
   contextNames: string[];
+  notices?: string[];
+  sql?: string;
 };
 
 type Conversation = {
   id: string;
   title: string;
-  messages: UserMessage[];
+  messages: ChatMessage[];
   draftPrompt: string;
   selectedDatasetIds: string[];
-  runtimeUnavailable: boolean;
+  pending: boolean;
+};
+
+type ActiveQueryAiRequest = {
+  controller: AbortController;
+  conversationId: string;
+  requestId: number;
 };
 
 function createConversation(): Conversation {
@@ -30,7 +40,7 @@ function createConversation(): Conversation {
     messages: [],
     draftPrompt: "",
     selectedDatasetIds: [],
-    runtimeUnavailable: false,
+    pending: false,
   };
 }
 
@@ -44,7 +54,7 @@ export function AiChatPage({
   onAction,
 }: {
   datasets: CatalogDataset[];
-  onAction: (action: string, apiPath: string, targetId: string) => void;
+  onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
 }) {
   const initialConversationRef = useRef<Conversation>(createConversation());
   const [conversations, setConversations] = useState<Conversation[]>(() => [initialConversationRef.current]);
@@ -53,17 +63,29 @@ export function AiChatPage({
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const contextPickerRef = useRef<HTMLDivElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const mountedRef = useRef(false);
+  const queryAiRequestRef = useRef<ActiveQueryAiRequest | null>(null);
+  const queryAiRequestIdRef = useRef(0);
   const availableDatasets = useMemo(
     () => datasets.filter((dataset) => dataset.status === "available" && dataset.permissions?.canQuery !== false),
     [datasets],
   );
   const activeConversation = conversations.find((conversation) => conversation.id === activeConversationId) ?? conversations[0];
   const selectedDatasets = availableDatasets.filter((dataset) => activeConversation.selectedDatasetIds.includes(dataset.id));
-  const runtimeUnavailable = activeConversation.runtimeUnavailable;
+  const isPending = activeConversation.pending;
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      queryAiRequestRef.current?.controller.abort();
+      queryAiRequestRef.current = null;
+    };
+  }, []);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [activeConversation.id, activeConversation.messages.length, runtimeUnavailable]);
+  }, [activeConversation.id, activeConversation.messages.length, isPending]);
 
   useEffect(() => {
     if (!contextOpen) return undefined;
@@ -117,13 +139,13 @@ export function AiChatPage({
   };
 
   const chooseSuggestedQuestion = (question: string) => {
-    if (runtimeUnavailable) return;
+    if (isPending) return;
     updateActiveConversation((conversation) => ({ ...conversation, draftPrompt: question }));
     window.setTimeout(() => composerRef.current?.focus(), 0);
   };
 
   const toggleDataset = (datasetId: string) => {
-    if (runtimeUnavailable) return;
+    if (isPending) return;
     updateActiveConversation((conversation) => ({
       ...conversation,
       selectedDatasetIds: conversation.selectedDatasetIds.includes(datasetId)
@@ -133,23 +155,84 @@ export function AiChatPage({
     onAction("ai.context.dataset_toggled", "/api/ai/context", datasetId);
   };
 
-  const submitPrompt = () => {
+  const submitPrompt = async () => {
     const question = activeConversation.draftPrompt.trim();
-    if (!question || runtimeUnavailable || selectedDatasets.length === 0) return;
+    if (!question || isPending || selectedDatasets.length === 0) return;
 
-    updateActiveConversation((conversation) => ({
-      ...conversation,
-      title: conversation.messages.length === 0 ? titleFromQuestion(question) : conversation.title,
-      messages: [...conversation.messages, {
-        id: `user-${Date.now()}`,
-        content: question,
-        contextNames: selectedDatasets.map((dataset) => dataset.name),
-      }],
-      draftPrompt: "",
-      runtimeUnavailable: true,
-    }));
+    const conversationId = activeConversation.id;
+    const contextNames = selectedDatasets.map((dataset) => dataset.name);
+    const controller = new AbortController();
+    const requestId = queryAiRequestIdRef.current + 1;
+    queryAiRequestIdRef.current = requestId;
+    const previousRequest = queryAiRequestRef.current;
+    queryAiRequestRef.current = { controller, conversationId, requestId };
+    previousRequest?.controller.abort();
+    const appendAssistantMessage = (message: Omit<ChatMessage, "id" | "kind">) => {
+      setConversations((current) => current.map((conversation) => (
+        conversation.id === conversationId
+          ? {
+            ...conversation,
+            messages: [...conversation.messages, { ...message, id: `assistant-${Date.now()}`, kind: "assistant" }],
+          }
+          : conversation
+      )));
+    };
+
+    setConversations((current) => current.map((conversation) => (
+      conversation.id === conversationId
+        ? {
+          ...conversation,
+          title: conversation.messages.length === 0 ? titleFromQuestion(question) : conversation.title,
+          messages: [...conversation.messages, {
+            id: `user-${Date.now()}`,
+            kind: "user",
+            content: question,
+            contextNames,
+          }],
+          draftPrompt: "",
+          pending: true,
+        }
+        : conversation
+    )));
     setContextOpen(false);
-    onAction("ai.chat.prompt_drafted", "/api/ai/conversations", activeConversation.selectedDatasetIds.join(","));
+    try {
+      const suggestion = await generateQueryAiSuggestion({
+        baseDataset: selectedDatasets[0],
+        mode: "draft_sql",
+        preflightMessages: [],
+        prompt: question,
+        query: "",
+        selectedDatasets,
+      }, {
+        signal: controller.signal,
+        timeoutMs: QUERY_AI_REQUEST_TIMEOUT_MS,
+      });
+      if (!mountedRef.current || queryAiRequestRef.current?.requestId !== requestId) return;
+      appendAssistantMessage({
+        content: suggestion.body,
+        contextNames,
+        notices: suggestion.notices,
+        sql: suggestion.sql,
+      });
+      onAction("ai.chat.suggestion_created", "/api/query/ai-suggestions", selectedDatasets[0].id);
+    } catch (error) {
+      if (!mountedRef.current || queryAiRequestRef.current?.requestId !== requestId) return;
+      appendAssistantMessage({
+        content: getQueryAiErrorMessage(error),
+        contextNames,
+      });
+      onAction("ai.chat.suggestion_failed", "/api/query/ai-suggestions", selectedDatasets[0].id, "failed");
+    } finally {
+      const activeRequest = queryAiRequestRef.current;
+      const isCurrentRequest = activeRequest?.requestId === requestId;
+      const hasReplacementForConversation = !isCurrentRequest && activeRequest?.conversationId === conversationId;
+      if (isCurrentRequest) queryAiRequestRef.current = null;
+      if (mountedRef.current && !hasReplacementForConversation) {
+        setConversations((current) => current.map((conversation) => (
+          conversation.id === conversationId ? { ...conversation, pending: false } : conversation
+        )));
+      }
+    }
   };
 
   return (
@@ -163,11 +246,11 @@ export function AiChatPage({
           <select aria-label="AI 대화 선택" className="secondary-button ai-conversation-select" value={activeConversation.id} onChange={(event) => selectConversation(event.target.value)}>
             {conversations.map((conversation) => <option key={conversation.id} value={conversation.id}>{conversation.title}</option>)}
           </select>
-          <button aria-label="현재 대화 삭제" className="secondary-button ai-delete-conversation" title="현재 대화 삭제" type="button" onClick={deleteActiveConversation}>
+            <button aria-label="현재 대화 삭제" className="secondary-button ai-delete-conversation" disabled={isPending} title="현재 대화 삭제" type="button" onClick={deleteActiveConversation}>
             <Trash2 size={15} />
           </button>
           <div className="ai-context-picker" ref={contextPickerRef}>
-            <button aria-expanded={contextOpen} className="secondary-button ai-context-trigger" disabled={runtimeUnavailable} type="button" onClick={() => setContextOpen((open) => !open)}>
+            <button aria-expanded={contextOpen} className="secondary-button ai-context-trigger" disabled={isPending} type="button" onClick={() => setContextOpen((open) => !open)}>
               <Database size={15} />
               <span>{selectedDatasets.length > 0 ? `데이터셋 ${selectedDatasets.length}` : "데이터셋 선택"}</span>
               <ChevronDown size={14} />
@@ -194,7 +277,7 @@ export function AiChatPage({
               </div>
             ) : null}
           </div>
-          <button className="secondary-button ai-new-conversation" type="button" onClick={startNewConversation}>
+          <button className="secondary-button ai-new-conversation" disabled={isPending} type="button" onClick={startNewConversation}>
             <Plus size={15} />
             새 대화
           </button>
@@ -207,21 +290,27 @@ export function AiChatPage({
             <div className="ai-chat-empty">
               <span className="ai-chat-empty-mark"><Bot size={26} /></span>
               <div>
-                <h2>데이터에 대해 질문하세요</h2>
-                <p>답변에 사용할 Lake 데이터셋을 선택한 뒤 질문을 시작할 수 있습니다.</p>
+                <h2>읽기 전용 SQL 초안을 만드세요</h2>
+                <p>분석할 AskLake 데이터셋을 선택하면 질문을 바탕으로 SQL 초안을 만듭니다.</p>
               </div>
             </div>
           ) : null}
           {activeConversation.messages.map((message) => (
-            <article className="ai-chat-message user" key={message.id}>
-              <div><p>{message.content}</p><span className="ai-message-context">{message.contextNames.join(" · ")}</span></div>
-              <span className="ai-chat-message-avatar"><CircleUser size={16} /></span>
+            <article className={`ai-chat-message ${message.kind}`} key={message.id}>
+              {message.kind === "assistant" && <span className="ai-chat-message-avatar"><Bot size={16} /></span>}
+              <div>
+                <p>{message.content}</p>
+                {message.sql ? <pre className="ai-chat-sql"><code>{message.sql}</code></pre> : null}
+                {message.notices?.length ? <ul className="ai-chat-notices">{message.notices.map((notice) => <li key={notice}>{notice}</li>)}</ul> : null}
+                <span className="ai-message-context">{message.contextNames.join(" · ")}</span>
+              </div>
+              {message.kind === "user" && <span className="ai-chat-message-avatar"><CircleUser size={16} /></span>}
             </article>
           ))}
-          {runtimeUnavailable ? (
+          {isPending ? (
             <div className="ai-runtime-pending" role="status">
               <Bot size={16} />
-              <span>AI runtime 연결 대기</span>
+              <span>선택한 데이터셋 기준 SQL 초안을 생성하는 중</span>
             </div>
           ) : null}
           <div ref={messagesEndRef} />
@@ -235,16 +324,16 @@ export function AiChatPage({
           </div>
         ) : null}
         <div className="ai-chat-recommendations" aria-label="추천 질문">
-          {suggestedQuestions.map((question) => <button disabled={runtimeUnavailable} key={question} type="button" onClick={() => chooseSuggestedQuestion(question)}>{question}</button>)}
+          {suggestedQuestions.map((question) => <button disabled={isPending} key={question} type="button" onClick={() => chooseSuggestedQuestion(question)}>{question}</button>)}
         </div>
         <div className="ai-chat-composer" aria-label="AI 질문 입력">
-          <textarea aria-label="AI 질문" disabled={runtimeUnavailable} placeholder="Lake 데이터에 대해 질문하세요" ref={composerRef} rows={2} value={activeConversation.draftPrompt} onChange={(event) => updateActiveConversation((conversation) => ({ ...conversation, draftPrompt: event.target.value }))} onKeyDown={(event) => {
+          <textarea aria-label="AI 질문" disabled={isPending} placeholder="선택한 데이터셋으로 만들 SQL 분석을 설명하세요" ref={composerRef} rows={2} value={activeConversation.draftPrompt} onChange={(event) => updateActiveConversation((conversation) => ({ ...conversation, draftPrompt: event.target.value }))} onKeyDown={(event) => {
             if (event.key === "Enter" && !event.shiftKey) {
               event.preventDefault();
-              submitPrompt();
+              void submitPrompt();
             }
           }} />
-          <button aria-label="AI 질문 전송" disabled={!activeConversation.draftPrompt.trim() || runtimeUnavailable || selectedDatasets.length === 0} title={selectedDatasets.length === 0 ? "질문에 사용할 데이터셋을 선택하세요." : undefined} type="button" onClick={submitPrompt}><Send size={18} /></button>
+          <button aria-label="AI 질문 전송" disabled={!activeConversation.draftPrompt.trim() || isPending || selectedDatasets.length === 0} title={selectedDatasets.length === 0 ? "질문에 사용할 데이터셋을 선택하세요." : undefined} type="button" onClick={() => void submitPrompt()}><Send size={18} /></button>
         </div>
       </footer>
     </section>

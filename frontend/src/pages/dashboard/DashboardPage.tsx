@@ -11,10 +11,8 @@ import type { ExpandedChart } from "./DashboardParts";
 import { DashboardLegacyBuilderView } from "./legacy/DashboardLegacyBuilderView";
 import { DashboardLegacyDetailView } from "./legacy/DashboardLegacyDetailView";
 import { createDashboardLegacyModel } from "./legacy/dashboardLegacyModel";
-import { defaultDashboardCards } from "./dashboardListData";
 import {
   formatDashboardTimestamp,
-  hydrateSavedDashboardCards,
   normalizeSavedDashboardCard,
 } from "./dashboardListUtils";
 import { useDashboardLandingList } from "./useDashboardLandingList";
@@ -77,7 +75,6 @@ const defaultDraftWidgetLayout: Record<DashboardRuntimeWidgetType, DashboardWidg
 
 export function DashboardPage({
   dataset,
-  datasets: catalogDatasets = [],
   entry,
   sqlResult,
   onAction,
@@ -123,17 +120,8 @@ export function DashboardPage({
   const [selectedWidgetId, setSelectedWidgetId] = useState<string | null>(null);
   const [widgetScrollTargetId, setWidgetScrollTargetId] = useState<string | null>(null);
   const [selectedDashboard, setSelectedDashboard] = useState<SavedDashboardCard | null>(null);
-  const [savedDashboards, setSavedDashboards] = useState<SavedDashboardCard[]>(() => {
-    const stored = window.localStorage.getItem("asklake.dashboardCards");
-    if (!stored) return defaultDashboardCards;
-    try {
-      const cards = JSON.parse(stored) as SavedDashboardCard[];
-      return hydrateSavedDashboardCards(cards);
-    } catch {
-      return defaultDashboardCards;
-    }
-  });
-  const dashboardList = useDashboardLandingList(savedDashboards, onAction, entry.version + dashboardListRefreshKey);
+  const [savedDashboards, setSavedDashboards] = useState<SavedDashboardCard[]>([]);
+  const dashboardList = useDashboardLandingList(onAction, entry.version + dashboardListRefreshKey);
   const activeSqlResult = entry.source === "sql" && (sqlResult?.datasetId === dataset.id || sqlResult?.baseDatasetId === dataset.id) ? sqlResult : null;
   const sqlDashboardDataset = useMemo(
     () => activeSqlResult ? sqlResultToDashboardOption(activeSqlResult) : null,
@@ -154,19 +142,11 @@ export function DashboardPage({
   const activeDashboardId = selectedDashboard?.id ?? dashboardId;
   const activeDashboardTitle = selectedDashboard?.name ?? dashboardTitle;
   const activeDashboardWidgets = selectedDashboard?.widgets?.length ? selectedDashboard.widgets : snapshotWidgets;
-  const dashboardDatasetFallbacks = useMemo(() => {
-    const seen = new Set<string>();
-    return [dataset, ...catalogDatasets].filter((catalogDataset) => {
-      if (seen.has(catalogDataset.id)) return false;
-      seen.add(catalogDataset.id);
-      return true;
-    });
-  }, [catalogDatasets, dataset]);
   const {
     datasets: dashboardDatasets,
     error: dashboardDatasetsError,
     isLoading: dashboardDatasetsLoading,
-  } = useDashboardDatasets(dashboardDatasetFallbacks);
+  } = useDashboardDatasets();
   const availableDashboardDatasets = useMemo(
     () => sqlDashboardDataset
       ? [sqlDashboardDataset, ...dashboardDatasets.filter((item) => item.id !== sqlDashboardDataset.id)]
@@ -313,10 +293,6 @@ export function DashboardPage({
   }, [selectedRuntimePageId]);
 
   useEffect(() => {
-    window.localStorage.setItem("asklake.dashboardCards", JSON.stringify(savedDashboards));
-  }, [savedDashboards]);
-
-  useEffect(() => {
     if (!runtimeNotice) return undefined;
     const timeoutId = window.setTimeout(() => setRuntimeNotice(null), 3200);
     return () => window.clearTimeout(timeoutId);
@@ -415,7 +391,7 @@ export function DashboardPage({
   };
 
   const openDashboardFromList = (dashboard: SavedDashboardCard) => {
-    openRuntimeDashboard(dashboard.id, "published");
+    openRuntimeDashboard(dashboard.id, dashboard.status === "published" ? "published" : "draft");
   };
 
   const upsertDashboard = async (status: SavedDashboardCard["status"]) => {
