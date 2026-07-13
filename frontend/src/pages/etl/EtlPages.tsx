@@ -110,7 +110,7 @@ type RepeatScheduleDraft = {
   minute: string;
   time: string;
 };
-type ScheduleOptionId = "skip" | "repeat" | "once";
+type ScheduleOptionId = "skip" | "repeat";
 
 const FALLBACK_KAFKA_BROKER = import.meta.env.DEV ? "127.0.0.1:19092" : "";
 
@@ -138,7 +138,6 @@ export function SchedulePage({
   const [repeatTime, setRepeatTime] = useState(initialRepeat.time);
   const [repeatMinute, setRepeatMinute] = useState(initialRepeat.minute);
   const [customCron, setCustomCron] = useState(initialRepeat.cron);
-  const [onceDateTime, setOnceDateTime] = useState(parseOnceScheduleLabel(draftScheduleLabel));
   const [scheduleError, setScheduleError] = useState("");
   const title = "스케줄링 설정";
   const repeatDraft = { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime };
@@ -147,7 +146,6 @@ export function SchedulePage({
   const scheduleStartDate = normalizeDateValue(draftSchedule.startDate, SCHEDULE_START_DATE);
   const scheduleEndDate = normalizeOptionalDateValue(draftSchedule.endDate);
   const invalidRepeatCron = selectedOption === "repeat" && repeatFrequency === "custom" && !isValidCronExpression(customCron);
-  const invalidOnceDateTime = selectedOption === "once" && !isValidDateTimeLocal(onceDateTime);
   const updateRetryPolicy = (retryPolicy: RetryPolicyDraft) => {
     onDraftChange({ schedule: { retryPolicy } });
   };
@@ -157,22 +155,16 @@ export function SchedulePage({
     setRepeatTime(normalizedRepeat.time);
     setRepeatMinute(normalizedRepeat.minute);
     setCustomCron(normalizedRepeat.cron);
-    const normalizedOnceDateTime = normalizeDateTimeLocal(onceDateTime);
-    setOnceDateTime(normalizedOnceDateTime);
-    onDraftChange(buildSchedulePatch(selectedOption, normalizedRepeat, scheduleTimezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }, normalizedOnceDateTime));
+    onDraftChange(buildSchedulePatch(selectedOption, normalizedRepeat, scheduleTimezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }));
   };
   const selectOption = (nextOption: ScheduleOptionId) => {
     setScheduleError("");
-    onDraftChange(buildSchedulePatch(nextOption, repeatDraft, scheduleTimezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }, onceDateTime));
+    onDraftChange(buildSchedulePatch(nextOption, repeatDraft, scheduleTimezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }));
     onModeChange(scheduleFlowFromOption(nextOption));
   };
   const goNext = () => {
     if (invalidRepeatCron) {
       setScheduleError("Cron 표현식을 5개 필드 형식으로 입력해 주세요. 예: 0 10 * * 1-5");
-      return;
-    }
-    if (invalidOnceDateTime) {
-      setScheduleError("1회 실행 시간을 올바르게 입력해 주세요.");
       return;
     }
     setScheduleError("");
@@ -182,7 +174,7 @@ export function SchedulePage({
 
   return (
     <CreationFlowLayout
-      actions={<CreationTopActions nextDisabled={invalidRepeatCron || invalidOnceDateTime} split onPrev={onPrev} onNext={goNext} />}
+      actions={<CreationTopActions nextDisabled={invalidRepeatCron} split onPrev={onPrev} onNext={goNext} />}
     >
         <EtlStepHeader
           className="etl-step-standalone-header"
@@ -200,12 +192,6 @@ export function SchedulePage({
                 selected={selectedOption === "skip"}
                 title="직접 실행"
                 onClick={() => selectOption("skip")}
-              />
-              <ScheduleModeCard
-                icon={<Clock3 size={24} />}
-                selected={selectedOption === "once"}
-                title="1회 실행"
-                onClick={() => selectOption("once")}
               />
               <ScheduleModeCard
                 icon={<Repeat2 size={24} />}
@@ -240,15 +226,7 @@ export function SchedulePage({
           }} onTimeChange={(time) => {
             setRepeatTime(time);
             onDraftChange(buildSchedulePatch("repeat", { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time }, scheduleTimezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }));
-            }} onOverlapPolicyChange={(overlapPolicy) => onDraftChange({ overlapPolicy, schedule: { overlapPolicy } })} onTimezoneChange={(timezone) => onDraftChange(buildSchedulePatch("repeat", repeatDraft, timezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }, onceDateTime))} />}
-            {selectedOption === "once" && <OnceSettings dateTime={onceDateTime} timezone={scheduleTimezone} onDateTimeChange={(dateTime) => {
-              setOnceDateTime(dateTime);
-              onDraftChange(buildSchedulePatch("once", repeatDraft, scheduleTimezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }, dateTime));
-            }} onDateTimeCommit={() => {
-              const normalizedDateTime = normalizeDateTimeLocal(onceDateTime);
-              setOnceDateTime(normalizedDateTime);
-              onDraftChange(buildSchedulePatch("once", repeatDraft, scheduleTimezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }, normalizedDateTime));
-            }} onTimezoneChange={(timezone) => onDraftChange(buildSchedulePatch("once", repeatDraft, timezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }, onceDateTime))} />}
+            }} onOverlapPolicyChange={(overlapPolicy) => onDraftChange({ overlapPolicy, schedule: { overlapPolicy } })} onTimezoneChange={(timezone) => onDraftChange(buildSchedulePatch("repeat", repeatDraft, timezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }))} />}
             <ScheduleRetrySettings retryPolicy={draftRetryPolicy} onRetryPolicyChange={updateRetryPolicy} />
           </CardContent>
         </Card>
@@ -541,7 +519,6 @@ const DEFAULT_REPEAT_DAY = "목";
 const DEFAULT_REPEAT_TIME = "10:30";
 const DEFAULT_REPEAT_MINUTE = "00";
 const DEFAULT_CUSTOM_CRON = "0 10 * * 1-5";
-const DEFAULT_ONCE_DATE_TIME = "2026-07-14T10:00";
 const SCHEDULE_START_DATE = "2026-07-07";
 const SCHEDULE_TIMEZONE = "Asia/Seoul";
 const DEFAULT_OVERLAP_POLICY: ScheduleOverlapPolicy = "skip_if_running";
@@ -573,10 +550,9 @@ const repeatFrequencyLabels: Record<RepeatFrequency, string> = {
 };
 const repeatFrequencyOptions = Object.entries(repeatFrequencyLabels).map(([value, label]) => ({ label, value: value as RepeatFrequency }));
 
-function formatScheduleLabel(option: ScheduleOptionId, repeat: RepeatScheduleDraft, onceDateTime = DEFAULT_ONCE_DATE_TIME) {
+function formatScheduleLabel(option: ScheduleOptionId, repeat: RepeatScheduleDraft) {
   const normalizedRepeat = normalizeRepeatScheduleDraft(repeat);
   if (option === "skip") return "스케줄링 건너뛰기";
-  if (option === "once") return `${formatDateTimeLocalLabel(onceDateTime)} 1회 실행`;
   if (normalizedRepeat.frequency === "hourly") return `매시간 ${normalizedRepeat.minute}분`;
   if (normalizedRepeat.frequency === "daily") return `매일 ${normalizedRepeat.time}`;
   if (normalizedRepeat.frequency === "custom") return `커스텀: ${normalizedRepeat.cron}`;
@@ -585,35 +561,27 @@ function formatScheduleLabel(option: ScheduleOptionId, repeat: RepeatScheduleDra
 
 function getScheduleFlowFromLabel(label: string): ScheduleFlowId {
   if (label.includes("건너뛰기") || label.includes("스케줄 없음") || label.includes("수동")) return "manual";
-  if (label.includes("1회")) return "once";
-  if (label.includes("예약")) return "once";
+  if (label.includes("1회") || label.includes("예약")) return "manual";
   return "repeat";
 }
 
 function getScheduleOptionFromLabel(label: string, fallbackFlow: ScheduleFlowId): ScheduleOptionId {
-  if (fallbackFlow === "once") return "once";
   if (label.includes("건너뛰기") || label.includes("스케줄 없음") || label.includes("수동")) return "skip";
-  if (label.includes("1회") || label.includes("예약")) return "once";
+  if (label.includes("1회") || label.includes("예약")) return "skip";
   if (label) return "repeat";
   return fallbackFlow === "manual" ? "skip" : "repeat";
 }
 
 function scheduleFlowFromOption(option: ScheduleOptionId): ScheduleFlowId {
   if (option === "skip") return "manual";
-  if (option === "once") return "once";
   return "repeat";
 }
 
-function buildSchedulePatch(option: ScheduleOptionId, repeat: RepeatScheduleDraft, timezone: string = SCHEDULE_TIMEZONE, currentSchedule?: ScheduleDraft, dates?: { endDate?: string; startDate?: string }, onceDateTime = DEFAULT_ONCE_DATE_TIME): DraftPipelinePatch {
+function buildSchedulePatch(option: ScheduleOptionId, repeat: RepeatScheduleDraft, timezone: string = SCHEDULE_TIMEZONE, currentSchedule?: ScheduleDraft, dates?: { endDate?: string; startDate?: string }): DraftPipelinePatch {
   const normalizedRepeat = normalizeRepeatScheduleDraft(repeat);
-  const normalizedOnceDateTime = normalizeDateTimeLocal(onceDateTime);
-  const label = formatScheduleLabel(option, normalizedRepeat, normalizedOnceDateTime);
-  const nextRun = option === "skip"
-    ? "-"
-    : option === "once"
-      ? formatDateTimeLocalLabel(normalizedOnceDateTime)
-    : "저장 시점 기준 계산";
-  const startDate = option === "repeat" ? normalizeDateValue(dates?.startDate ?? currentSchedule?.startDate, SCHEDULE_START_DATE) : option === "once" ? normalizedOnceDateTime.slice(0, 10) : "";
+  const label = formatScheduleLabel(option, normalizedRepeat);
+  const nextRun = option === "skip" ? "-" : "저장 시점 기준 계산";
+  const startDate = option === "repeat" ? normalizeDateValue(dates?.startDate ?? currentSchedule?.startDate, SCHEDULE_START_DATE) : "";
   const normalizedEndDate = option === "repeat" ? normalizeOptionalDateValue(dates?.endDate ?? currentSchedule?.endDate) : "";
   const endDate = normalizedEndDate && normalizedEndDate >= startDate ? normalizedEndDate : "";
   const scheduleTimezone = option === "skip" ? "" : timezone;
@@ -650,7 +618,6 @@ function buildSchedulePatch(option: ScheduleOptionId, repeat: RepeatScheduleDraf
 
 function formatScheduleSummary(option: ScheduleOptionId, label: string, timezone: string) {
   if (option === "skip") return "스케줄링 건너뛰기 · 나중에 목록에서 직접 실행";
-  if (option === "once") return `1회 실행 · ${label} · ${timezone}`;
   return `반복 실행 · ${label} · ${timezone} · 저장 후 다음 예약부터 시작`;
 }
 
@@ -690,24 +657,6 @@ function normalizeDateValue(value: string | undefined, fallback: string) {
 
 function normalizeOptionalDateValue(value: string | undefined) {
   return value && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : "";
-}
-
-function normalizeDateTimeLocal(value: string) {
-  const normalized = String(value ?? "").replace(" ", "T");
-  return isValidDateTimeLocal(normalized) ? normalized : DEFAULT_ONCE_DATE_TIME;
-}
-
-function isValidDateTimeLocal(value: string) {
-  return /^\d{4}-\d{2}-\d{2}T([01]\d|2[0-3]):[0-5]\d$/.test(value);
-}
-
-function formatDateTimeLocalLabel(value: string) {
-  return normalizeDateTimeLocal(value).replace("T", " ").replaceAll("-", ".");
-}
-
-function parseOnceScheduleLabel(label: string) {
-  if (!label.includes("1회")) return DEFAULT_ONCE_DATE_TIME;
-  return normalizeDateTimeLocal(label.replace(/\s*1회 실행\s*$/, "").trim());
 }
 
 function sanitizeCronInput(value: string) {
@@ -5482,58 +5431,6 @@ function ScheduleTimeField({ onTimeChange, onTimeCommit, time }: { onTimeChange:
       <FieldLabel htmlFor="schedule-time">실행 시간</FieldLabel>
       <Input id="schedule-time" max="23:59" min="00:00" step="60" type="time" value={normalizeTimeValue(time)} onBlur={onTimeCommit} onChange={(event) => onTimeChange(event.target.value)} onInput={(event) => onTimeChange(event.currentTarget.value)} />
     </FormField>
-  );
-}
-
-function OnceSettings({
-  dateTime,
-  onDateTimeChange,
-  onDateTimeCommit,
-  onTimezoneChange,
-  timezone,
-}: {
-  dateTime: string;
-  onDateTimeChange: (dateTime: string) => void;
-  onDateTimeCommit: () => void;
-  onTimezoneChange: (timezone: string) => void;
-  timezone: string;
-}) {
-  const normalizedTimezone = normalizeScheduleTimezone(timezone);
-  return (
-    <FieldSet>
-      <FieldLegend>1회 실행</FieldLegend>
-      <FieldGroup className="grid gap-4 md:grid-cols-2">
-        <FormField>
-          <FieldLabel htmlFor="schedule-once-date-time">실행 예정 시각</FieldLabel>
-          <Input
-            id="schedule-once-date-time"
-            min={new Date().toISOString().slice(0, 16)}
-            type="datetime-local"
-            value={normalizeDateTimeLocal(dateTime)}
-            onBlur={onDateTimeCommit}
-            onChange={(event) => onDateTimeChange(event.target.value)}
-          />
-        </FormField>
-        <FormField>
-          <FieldLabel htmlFor="schedule-once-timezone">시간대</FieldLabel>
-          <Select value={normalizedTimezone} onValueChange={onTimezoneChange}>
-            <SelectTrigger id="schedule-once-timezone">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {timezoneOptions.map((option) => (
-                <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </FormField>
-      </FieldGroup>
-      <Alert>
-        <Clock3 />
-        <AlertTitle>한 번만 실행합니다.</AlertTitle>
-        <AlertDescription>{formatDateTimeLocalLabel(dateTime)} ({normalizedTimezone})에 실행되고 이후 자동 반복하지 않습니다.</AlertDescription>
-      </Alert>
-    </FieldSet>
   );
 }
 

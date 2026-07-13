@@ -28,7 +28,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./comp
 import type { AuditEntry, CatalogDataset, CurrentUserResponse, DashboardEntry, DraftPipeline, FlowId, JobRowData, NavId, NavItem, ScheduleFlowId } from "./types";
 import type { DashboardRuntimeMode } from "./types";
 
-const scheduleFlows: ScheduleFlowId[] = ["repeat", "manual", "once"];
+const scheduleFlows: ScheduleFlowId[] = ["repeat", "manual"];
 
 function isScheduleFlow(flow: FlowId): flow is ScheduleFlowId {
   return scheduleFlows.includes(flow as ScheduleFlowId);
@@ -153,7 +153,6 @@ function getFlowPath(flow: FlowId, context: FlowPathContext = {}) {
   if (flow === "recordParsing") return "/etl/record-parsing";
   if (flow === "schema") return "/etl/schema";
   if (flow === "rules") return "/etl/rules";
-  if (flow === "once") return "/etl/schedule/once";
   if (isScheduleFlow(flow)) return "/etl/schedule";
   if (flow === "permission") return "/etl/permission";
   if (flow === "target") return "/etl/target";
