@@ -197,12 +197,6 @@
   overflow: hidden;
 }
 
-.resultHeaderStack {
-  display: grid;
-  min-width: 0;
-  gap: 16px;
-}
-
 .resultToolbar {
   display: flex;
   min-width: 0;

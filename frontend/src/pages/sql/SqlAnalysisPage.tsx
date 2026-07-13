@@ -411,17 +411,6 @@ function formatMetricNumber(value: number | null | undefined) {
   return value == null ? "-" : new Intl.NumberFormat("ko-KR").format(value);
 }
 
-function SqlChartEmptyState() {
-  return (
-    <Empty className="sql-result-view-empty" size="sm" variant="bordered">
-      <EmptyHeader>
-        <EmptyTitle>아직 생성된 차트가 없습니다.</EmptyTitle>
-        <EmptyDescription>왼쪽 차트 생성하기에서 위젯을 설정하고 차트를 생성해 주세요.</EmptyDescription>
-      </EmptyHeader>
-    </Empty>
-  );
-}
-
 export function SqlAnalysisPage({
   cachedResult,
   createPending,
@@ -1111,15 +1100,11 @@ export function SqlAnalysisPage({
       datasetId: baseDataset.id,
       datasetName: baseDataset.name,
       executedAt: trinoRun.completedAt ?? trinoRun.startedAt ?? trinoRun.submittedAt,
-      hasNext: Boolean(activeTrinoPage.nextCursor),
       mode: "run",
-      pageLimit: activeTrinoPage.pageSize,
-      pageOffset: Math.max(0, activeTrinoPage.rowStart - 1),
       query: trinoRun.query,
       rangeEnd: activeTrinoPage.rowEnd,
       rangeStart: activeTrinoPage.rowStart,
       referenceDatasetIds: trinoRun.referenceDatasetIds,
-      returnedRows: activeTrinoPage.rows.length,
       rowCount: trinoRun.result?.rowCount ?? activeTrinoPage.pageSize,
       rows: activeTrinoPage.rows.map((row) => row.map((cell) => cell == null ? "" : String(cell))),
       runId: trinoRun.runId,
@@ -1150,15 +1135,11 @@ export function SqlAnalysisPage({
       datasetId: baseDataset.id,
       datasetName: baseDataset.name,
       executedAt: trinoRun.completedAt ?? trinoRun.startedAt ?? trinoRun.submittedAt,
-      hasNext: Boolean(activeTrinoPage?.nextCursor),
       mode: "run",
-      pageLimit: activeTrinoPage?.pageSize,
-      pageOffset: activeTrinoPage ? Math.max(0, activeTrinoPage.rowStart - 1) : 0,
       query: trinoRun.query,
       rangeEnd: activeTrinoPage?.rowEnd,
       rangeStart: activeTrinoPage?.rowStart,
       referenceDatasetIds: trinoRun.referenceDatasetIds,
-      returnedRows: activeTrinoPage?.rows.length ?? 0,
       rowCount: trinoRun.result?.rowCount ?? 0,
       rows: (activeTrinoPage?.rows ?? []).map((row) => row.map((cell) => cell == null ? "" : String(cell))),
       runId: trinoRun.runId,
@@ -1853,39 +1834,8 @@ export function SqlAnalysisPage({
           )}
         </Panel>
 
-        <SqlResultsPanel
-          activeChartSource={activeChartSource}
-          baseDatasetSelected={Boolean(baseDataset)}
-          chartConfig={chartConfig}
-          dialogOpen={resultDialogOpen}
-          emptyStateContent={showTrinoEmptyState ? (
-            <div className="sql-result-body">
-              <Empty className="sql-result-empty" size="sm" variant="bordered">
-                <EmptyHeader>
-                  <EmptyTitle>{trinoResultError ? "결과를 불러오지 못했습니다." : getTrinoResultEmptyTitle(trinoRun)}</EmptyTitle>
-                  <EmptyDescription>{trinoResultError ?? trinoRun?.error?.message ?? getTrinoResultEmptyMessage(trinoRun, Boolean(baseDataset))}</EmptyDescription>
-                </EmptyHeader>
-                {trinoResultError ? <Button type="button" onClick={() => void retryTrinoResultPage()} size="sm" variant="outline"><RotateCcw data-icon="inline-start" /> 다시 시도</Button> : null}
-              </Empty>
-            </div>
-          ) : undefined}
-          onDialogOpenChange={setResultDialogOpen}
-          onDownloadCsv={trinoRun ? () => downloadTrinoCsv(trinoRun.runId) : downloadCsv}
-          onOpenJobWizard={() => setJobDialogOpen(true)}
-          onResultViewChange={(view) => setResultView(view)}
-          remotePagination={trinoRun && activeTrinoPage ? {
-            currentPage: activeTrinoPage.pageNumber ?? trinoResultPageIndex + 1,
-            label: "SQL 실행 결과 원격",
-            nextDisabled: trinoResultPagePending || !activeTrinoPage.nextCursor,
-            onNext: () => void loadNextTrinoResultPage(),
-            onPrevious: () => void loadPreviousTrinoResultPage(),
-            previousDisabled: trinoResultPagePending || trinoResultPageIndex < 1,
-            rangeLabel: `${activeTrinoPage.rowStart.toLocaleString()}-${activeTrinoPage.rowEnd.toLocaleString()}행 · ${activeTrinoPage.totalRows == null ? "전체 행 확인 중" : `전체 ${activeTrinoPage.totalRows.toLocaleString()}행`}`,
-            totalPages: activeTrinoPage.totalPages ?? null,
-          } : undefined}
-          resultDraft={visibleResult}
-          resultView={resultView}
-          progressContent={showTrinoExecutionProgress ? (
+        {showTrinoExecutionProgress && (
+          <Panel className="grid gap-3 p-5">
             <div className="sql-result-summary">
               <TrinoExecutionTimeline
                 cancelDisabled={queryPending}
@@ -1903,7 +1853,35 @@ export function SqlAnalysisPage({
                 </div>
               )}
             </div>
-          ) : undefined}
+          </Panel>
+        )}
+
+        <SqlResultsPanel
+          activeChartSource={activeChartSource}
+          baseDatasetSelected={Boolean(baseDataset)}
+          chartConfig={chartConfig}
+          dialogOpen={resultDialogOpen}
+          emptyState={showTrinoEmptyState ? {
+            action: trinoResultError ? <Button type="button" onClick={() => void retryTrinoResultPage()} size="sm" variant="outline"><RotateCcw data-icon="inline-start" /> 다시 시도</Button> : undefined,
+            description: trinoResultError ?? trinoRun?.error?.message ?? getTrinoResultEmptyMessage(trinoRun, Boolean(baseDataset)),
+            title: trinoResultError ? "결과를 불러오지 못했습니다." : getTrinoResultEmptyTitle(trinoRun),
+          } : undefined}
+          onDialogOpenChange={setResultDialogOpen}
+          onDownloadCsv={trinoRun ? () => downloadTrinoCsv(trinoRun.runId) : downloadCsv}
+          onOpenJobWizard={() => setJobDialogOpen(true)}
+          onResultViewChange={(view) => setResultView(view)}
+          remotePagination={trinoRun && activeTrinoPage ? {
+            currentPage: activeTrinoPage.pageNumber ?? trinoResultPageIndex + 1,
+            label: "SQL 실행 결과 원격",
+            nextDisabled: trinoResultPagePending || !activeTrinoPage.nextCursor,
+            onNext: () => void loadNextTrinoResultPage(),
+            onPrevious: () => void loadPreviousTrinoResultPage(),
+            previousDisabled: trinoResultPagePending || trinoResultPageIndex < 1,
+            rangeLabel: `${activeTrinoPage.rowStart.toLocaleString()}-${activeTrinoPage.rowEnd.toLocaleString()}행 · ${activeTrinoPage.totalRows == null ? "전체 행 확인 중" : `전체 ${activeTrinoPage.totalRows.toLocaleString()}행`}`,
+            totalPages: activeTrinoPage.totalPages ?? null,
+          } : undefined}
+          resultDraft={visibleResult}
+          resultView={resultView}
         />
       </main>
       {estimateDialogOpen && queryEstimate && (

@@ -105,7 +105,6 @@ export function SqlPreviewTable({
         icon: <Table2 size={18} />,
         title: "SQL preview 결과가 비어 있습니다.",
       }}
-      enableSorting={!remotePagination}
       pagination={remotePagination ? false : { label: "SQL preview", pageSize: SQL_RESULT_PAGE_SIZE }}
       remotePagination={remotePagination}
       resetPaginationKey={`${resultDraft.runId}:${remotePagination?.currentPage ?? "local"}`}
