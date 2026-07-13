@@ -741,7 +741,25 @@ type SqlResultDraft = {
 
 ## 7. P0 API
 
-### 7.0 Record Parsing Preview
+### 7.0 Source 연결 검증과 대상 선택
+
+Source 연결 검증과 schema preview는 서로 다른 요청이다.
+
+- `POST /api/etl/sources/assets`는 S3·PostgreSQL·MongoDB 연결 정보를 검증하고 탐색 가능한 파일·테이블·컬렉션 목록만 반환한다.
+- 이 응답은 schema draft를 확정하지 않으며 특정 대상을 자동 선택하지 않는다.
+- 사용자가 탐색 화면에서 대상을 선택하면 frontend는 선택값을 `DATASET OR TABLE SELECTOR` 또는 `__Selected Object`에 넣어 `POST /api/etl/sources/test`를 호출한다.
+- PostgreSQL과 MongoDB의 `/sources/test`는 선택값이 없으면 `400`을 반환한다. 첫 테이블이나 첫 컬렉션으로 자동 대체하지 않는다.
+
+```ts
+type SourceAssetsResponse = {
+  assets: Array<[name: string, namespaceOrType: string, status: string]>;
+  count: number;
+  limit: number;
+  prefix: string;
+};
+```
+
+### 7.0.1 Record Parsing Preview
 
 조건부 1.5단계는 이름 있는 필드가 없는 MinIO/S3 TXT 입력에만 적용한다. Source 단계에서 선택한 `.txt`/`.log`의 제한 샘플이 `line_number`, `value` 형태이면 frontend는 `requiresRecordParsing=true`로 판단하고 `/etl/record-parsing`으로 이동한다. PostgreSQL, MongoDB JSON, Kafka JSON, JSON/JSONL, Parquet, 이름 있는 CSV는 이 단계를 건너뛴다.
 
@@ -3245,7 +3263,7 @@ type AuditEntry = {
 2. 백엔드 서버를 실행합니다.
 3. `frontend/.env`에 `VITE_API_BASE_URL`과 `VITE_USE_MOCK_API=false`를 설정합니다.
 4. 프론트 dev 서버를 재시작합니다.
-5. `POST /api/etl/sources/test` Source/Schema live 연결 흐름을 확인합니다.
+5. `POST /api/etl/sources/assets`로 연결 검증과 대상 탐색을 확인한 뒤, 선택값을 포함한 `POST /api/etl/sources/test`로 Source/Schema live preview 흐름을 확인합니다.
 6. `POST /api/etl/jobs` 생성 플로우를 확인합니다.
 7. `POST /api/etl/jobs/{jobId}/commands` 버튼 흐름과 Spark 실행 흐름 갱신을 확인합니다.
 8. `POST /api/query/runs` SQL 실행 흐름을 확인합니다.
