@@ -295,6 +295,7 @@ FastAPI 현재 구현 범위:
 - `GET /api/admin/groups`
 - `GET /api/admin/permissions`
 - `GET /api/admin/audit-logs`
+- `POST /api/etl/sources/assets`: Source 연결을 검증하고 탐색 가능한 파일·테이블·컬렉션 목록을 반환한다. schema draft는 만들지 않는다.
 - `POST /api/etl/sources/test`
 - `POST /api/etl/record-parsing/preview`: 이름 없는 TXT 샘플에 연속 공백 구조화 규칙을 적용하고 필드 개수·타입 초안을 검증
 - `POST /api/etl/review`: Review 화면의 표시값과 생성 가능 상태를 서버 기준으로 정규화
