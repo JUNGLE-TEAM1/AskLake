@@ -1,5 +1,14 @@
 import type { ReactNode } from "react";
-import { Activity, BarChart3, Database, Download, Maximize2, RotateCcw, Table2 } from "lucide-react";
+import {
+  SQL_PAGE_PANEL_ICON_CLASS_NAME,
+  SqlPageIcon as Activity,
+  SqlPageIcon as BarChart3,
+  SqlPageIcon as Database,
+  SqlPageIcon as Download,
+  SqlPageIcon as Maximize2,
+  SqlPageIcon as RotateCcw,
+  SqlPageIcon as Table2,
+} from "./SqlPageIcon";
 
 import { ActionGroup } from "@/components/ui/action-group";
 import { Button } from "@/components/ui/button";
@@ -234,6 +243,7 @@ export function SqlResultsPanel({
           <>
             <PanelHeader
               icon={<Table2 size={16} />}
+              iconClassName={SQL_PAGE_PANEL_ICON_CLASS_NAME}
               iconVariant="outline"
               size="section"
               title="결과 대기 중"

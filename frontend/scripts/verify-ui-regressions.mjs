@@ -224,10 +224,45 @@ const checks = [
       /aria-label="실행 과정"/,
       /buildTrinoExecutionTimelineModel/,
       /className=\{styles\.root\}/,
+      /function IndeterminateProgress/,
+      /role="progressbar"/,
+      /행 읽음/,
+      /<span>읽은 행 <strong>/,
     ],
     forbiddenPatterns: [
       /sql-query-evaluation/,
       /sql-run-timeline/,
+    ],
+  },
+  {
+    name: "SQL page feature icons share the requested table glyph",
+    file: "src/pages/sql/SqlPageIcon.tsx",
+    patterns: [
+      /import \{ Table2, type LucideProps \} from "lucide-react";/,
+      /SQL_PAGE_PANEL_ICON_CLASS_NAME = "rounded-xl border border-slate-200 bg-white text-blue-700 shadow-sm"/,
+      /export function SqlPageIcon\(props: LucideProps\)/,
+      /<Table2 \{\.\.\.props\} \/>/,
+    ],
+  },
+  {
+    name: "SQL panel headers use the reference white framed icon treatment",
+    file: "src/pages/sql/SqlDatasetContextPanel.tsx",
+    patterns: [
+      /iconClassName=\{SQL_PAGE_PANEL_ICON_CLASS_NAME\}/,
+    ],
+  },
+  {
+    name: "SQL editor header uses the reference white framed icon treatment",
+    file: "src/pages/sql/SqlQueryEditorPanel.tsx",
+    patterns: [
+      /iconClassName=\{SQL_PAGE_PANEL_ICON_CLASS_NAME\}/,
+    ],
+  },
+  {
+    name: "SQL result header uses the reference white framed icon treatment",
+    file: "src/pages/sql/SqlResultsPanel.tsx",
+    patterns: [
+      /iconClassName=\{SQL_PAGE_PANEL_ICON_CLASS_NAME\}/,
     ],
   },
   {

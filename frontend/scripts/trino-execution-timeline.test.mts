@@ -4,7 +4,6 @@ import test from "node:test";
 import type { TrinoQueryRun } from "../src/types/sql.ts";
 import {
   buildTrinoExecutionTimelineModel,
-  PROGRESS_VISIBILITY_DELAY_MS,
   shouldShowTrinoSubmissionTimeline,
 } from "../src/pages/sql/trinoExecutionTimeline.ts";
 
@@ -41,18 +40,16 @@ test("queued Trino work remains in the query execution stage", () => {
   assert.equal(model.collectionStageVisible, false);
 });
 
-test("progress appears only after two seconds of real Trino progress", () => {
+test("real Trino progress appears immediately", () => {
   const run = makeRun({
     startedAt: "2026-07-12T00:00:01Z",
     stats: { progressPercentage: 24.1, queryState: "RUNNING" },
   });
-  const before = buildTrinoExecutionTimelineModel(run, null, Date.parse("2026-07-12T00:00:02.999Z"));
-  const after = buildTrinoExecutionTimelineModel(run, null, Date.parse("2026-07-12T00:00:03Z"));
+  const model = buildTrinoExecutionTimelineModel(run, null, Date.parse("2026-07-12T00:00:01.001Z"));
 
-  assert.equal(before.queryProgressVisible, false);
-  assert.equal(before.queryElapsedMs, PROGRESS_VISIBILITY_DELAY_MS - 1);
-  assert.equal(after.queryProgressVisible, true);
-  assert.equal(after.runProgressPercentage, 24.1);
+  assert.equal(model.queryProgressVisible, true);
+  assert.equal(model.queryElapsedMs, 1);
+  assert.equal(model.runProgressPercentage, 24.1);
 });
 
 test("first page reveals result preparation and collection stages", () => {
@@ -155,7 +152,7 @@ test("completed query duration keeps Trino elapsed time instead of browser wall 
   assert.equal(model.queryElapsedMs, 2_100);
 });
 
-test("collection percent waits two seconds and requires collected and expected rows", () => {
+test("collection percent appears immediately and requires collected and expected rows", () => {
   const commonResult = {
     availablePageCount: 1,
     collectedRowCount: 250,
@@ -165,16 +162,14 @@ test("collection percent waits two seconds and requires collected and expected r
     firstPageAvailableAt: "2026-07-12T00:00:02Z",
     storageStatus: "collecting" as const,
   };
-  const before = buildTrinoExecutionTimelineModel(makeRun({ result: commonResult, status: "succeeded" }), null, Date.parse("2026-07-12T00:00:03.999Z"));
-  const after = buildTrinoExecutionTimelineModel(makeRun({ result: commonResult, status: "succeeded" }), null, Date.parse("2026-07-12T00:00:04Z"));
+  const visible = buildTrinoExecutionTimelineModel(makeRun({ result: commonResult, status: "succeeded" }), null, Date.parse("2026-07-12T00:00:02.001Z"));
   const unknown = buildTrinoExecutionTimelineModel(makeRun({
     result: { ...commonResult, expectedRowCount: undefined },
     stats: { outputRows: undefined },
     status: "succeeded",
   }), null, Date.parse("2026-07-12T00:00:10Z"));
 
-  assert.equal(before.collectionProgressVisible, false);
-  assert.equal(after.collectionProgressVisible, true);
+  assert.equal(visible.collectionProgressVisible, true);
   assert.equal(unknown.collectionProgressPercentage, null);
   assert.equal(unknown.collectionProgressVisible, false);
 });

@@ -1,5 +1,10 @@
 import type { KeyboardEventHandler, RefObject } from "react";
-import { Braces, PlayCircle, RotateCcw } from "lucide-react";
+import {
+  SQL_PAGE_PANEL_ICON_CLASS_NAME,
+  SqlPageIcon as PlayCircle,
+  SqlPageIcon as RotateCcw,
+  SqlPageIcon as Table2,
+} from "./SqlPageIcon";
 
 import { ActionGroup } from "@/components/ui/action-group";
 import { Badge } from "@/components/ui/badge";
@@ -87,7 +92,8 @@ export function SqlQueryEditorPanel({
             </Button>
           </ActionGroup>
         )}
-        icon={<Braces size={16} />}
+        icon={<Table2 size={16} />}
+        iconClassName={SQL_PAGE_PANEL_ICON_CLASS_NAME}
         iconVariant="outline"
         size="section"
         title="선택 데이터셋 기준 SQL"

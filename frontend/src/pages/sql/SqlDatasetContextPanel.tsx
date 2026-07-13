@@ -1,5 +1,11 @@
 import type { RefObject } from "react";
-import { BarChart3, Database, PanelLeftClose, Search, Table2 } from "lucide-react";
+import {
+  SQL_PAGE_PANEL_ICON_CLASS_NAME,
+  SqlPageIcon as BarChart3,
+  SqlPageIcon as PanelLeftClose,
+  SqlPageIcon as Search,
+  SqlPageIcon as Table2,
+} from "./SqlPageIcon";
 
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
@@ -82,7 +88,8 @@ export function SqlDatasetContextPanel({
                   <PanelLeftClose data-icon="inline-start" />
                 </Button>
               )}
-              icon={<Database size={16} />}
+              icon={<Table2 size={16} />}
+              iconClassName={SQL_PAGE_PANEL_ICON_CLASS_NAME}
               iconVariant="outline"
               size="section"
               title="SQL 도구"
