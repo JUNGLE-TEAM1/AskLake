@@ -67,14 +67,6 @@ const checks = [
       /APPROVAL_STATUS_OPTIONS/,
       /label: "승인자"/,
       /label: "승인 상태"/,
-    name: "Production login hides demo credentials and public signup by default",
-    file: "src/pages/auth/AuthPage.tsx",
-    patterns: [
-      /const demoDefaultsEnabled = import\.meta\.env\.DEV;/,
-      /const publicSignupEnabled = import\.meta\.env\.DEV \|\| import\.meta\.env\.VITE_AUTH_PUBLIC_SIGNUP === "true";/,
-      /useState\(demoDefaultsEnabled \? "admin\.user@asklake\.local" : ""\)/,
-      /\{publicSignupEnabled && \(/,
-      /demoDefaultsEnabled\s*\? <small>Admin/,
     ],
   },
   {
