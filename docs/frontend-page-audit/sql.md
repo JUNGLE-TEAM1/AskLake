@@ -53,8 +53,8 @@
 - `/sql` 본문과 처리 Job/Dashboard Dialog는 `--jobs-font-family`를 상속해 `/jobs`의 SUIT typography 기준을 사용한다. SQL editor와 line-number gutter의 monospace는 코드 가독성을 위해 유지한다.
 - route layout과 editor/result workspace는 `SqlAnalysisPage.module.css`, dataset row·Nessie·preview table의 세부 style은 각각 co-located CSS Module이 소유한다.
 - SQL preflight와 결과 실행 상태는 Jobs 기준 `StatusBadge`를 사용한다. SQL editor의 직접 작성 JOIN 문법은 유지하지만 선택 테이블의 자동 JOIN action은 제공하지 않는다.
-- global `frontend/src/styles/sql.css`는 제거했다. App Shell의 `.page-body.sql-body` gutter 외에는 SQL 전용 selector를 global stylesheet에 두지 않는다.
-- shadcn이 소유하는 panel/header/form/list/separator/table/scroll/tree surface는 CSS Module에서도 다시 정의하지 않는다.
+- Trino 실행 상태는 `쿼리 실행`, `첫 결과 준비`, `전체 결과 수집` 세 단계를 사용한다. 실제 Trino progress/driver/split 또는 전체 수집 행/전체 행이 있을 때만 퍼센트를 표시하며, 실행 시간이나 남은 시간은 신뢰 가능한 예측이 없으므로 표시하지 않는다. 결과 page는 논리 100행 단위로 조회하고 전체 page 수는 수집 완료 후에만 표시한다.
+- SQL route의 기본 layout은 CSS Module을 우선 사용한다. Trino timeline과 result storage UI의 기존 `.sql-*` selector는 호환 stylesheet로 유지하며, 새 SQL UI를 global selector에 추가하지 않는다.
 
 ## Pre-#468 QA Notes
 

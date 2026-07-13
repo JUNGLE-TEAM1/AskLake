@@ -28,6 +28,43 @@ class Settings(BaseSettings):
     continuous_runtime_sync_interval_seconds: float = Field(default=5.0, ge=1.0, le=60.0)
     airflow_execution_api_token: str | None = None
     airflow_internal_token: str | None = None
+    trino_enabled: bool = False
+    trino_base_url: str = "http://localhost:8088"
+    trino_catalog: str = "iceberg"
+    trino_schema: str = "asklake"
+    trino_user: str = "asklake-api"
+    trino_auth_username: str | None = None
+    trino_auth_password: str | None = None
+    trino_materializer_username: str | None = None
+    trino_materializer_password: str | None = None
+    trino_tls_ca_file: str | None = None
+    trino_query_timeout_seconds: float = Field(default=300.0, ge=1.0, le=3600.0)
+    trino_max_response_bytes: int = Field(default=2_000_000, ge=65_536, le=50_000_000)
+    trino_max_result_bytes: int = Field(default=50_000_000, ge=1_000_000, le=1_000_000_000)
+    trino_max_result_pages: int = Field(default=1_000, ge=1, le=100_000)
+    trino_result_retention_seconds: int = Field(default=86_400, ge=60, le=604_800)
+    trino_max_concurrent_runs_per_user: int = Field(default=2, ge=1, le=100)
+    trino_result_storage_bucket: str = "asklake-query-results"
+    trino_result_storage_prefix: str = "query-results"
+    trino_result_storage_auto_create_bucket: bool = False
+    trino_result_storage_access_key: str | None = None
+    trino_result_storage_secret_key: str | None = None
+    trino_result_cursor_secret: str = "asklake-local-query-result-cursor-secret"
+    trino_query_confirmation_secret: str = "asklake-local-query-confirmation-secret"
+    trino_query_confirmation_ttl_seconds: int = Field(default=300, ge=30, le=3600)
+    trino_query_warning_bytes: int = Field(default=1_073_741_824, ge=0)
+    trino_query_max_estimated_bytes: int = Field(default=0, ge=0)
+    trino_query_estimated_throughput_bytes_per_second: int = Field(default=268_435_456, ge=1)
+    trino_collector_lease_seconds: int = Field(default=60, ge=10, le=3600)
+    trino_collector_pages_per_lease: int = Field(default=100, ge=1, le=10_000)
+    trino_collector_poll_seconds: float = Field(default=1.0, ge=0.2, le=60.0)
+    trino_progress_poll_seconds: float = Field(default=0.5, ge=0.1, le=10.0)
+    trino_progress_timeout_seconds: float = Field(default=1.0, ge=0.1, le=10.0)
+    trino_cleanup_poll_seconds: float = Field(default=3600.0, ge=60.0, le=86_400.0)
+    minio_endpoint: str | None = None
+    minio_access_key: str | None = None
+    minio_secret_key: str | None = None
+    minio_region: str = "us-east-1"
     backend_cors_origins: list[str] = Field(default_factory=lambda: [
         "http://localhost:5173",
         "http://127.0.0.1:5173",

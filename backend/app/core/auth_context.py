@@ -27,7 +27,12 @@ class ActorContext:
 
     @property
     def principal_ids(self) -> set[tuple[str, str]]:
-        principals = {("user", self.name), ("role", self.role)}
+        principals = {
+            ("user", value)
+            for value in (self.id, self.email, self.name)
+            if value
+        }
+        principals.add(("role", self.role))
         principals.update(("group", group) for group in self.groups)
         return {(kind, value) for kind, value in principals if value}
 

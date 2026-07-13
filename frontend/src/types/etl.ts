@@ -189,6 +189,8 @@ export type JobRowData = {
   sourceConfig?: Array<[string, string]>;
   sourceLabel?: string;
   sourceType?: string;
+  jobKind?: "pipeline" | "trino_sql_materialization";
+  sqlRecipe?: Record<string, unknown> | null;
   executionMode?: KafkaExecutionMode;
   continuousConfig?: KafkaContinuousConfigDraft & { checkpointPath?: string };
   continuousRuntime?: KafkaContinuousRuntime | null;

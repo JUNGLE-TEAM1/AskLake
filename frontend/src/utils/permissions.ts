@@ -11,6 +11,7 @@ export function isAdminUser(user: CurrentUserResponse | null | undefined) {
 }
 
 export function canQueryDatasetAs(dataset: CatalogDataset | null | undefined, user: CurrentUserResponse | null | undefined) {
+  if (dataset?.permissions?.enforced) return dataset.permissions.canQuery === true;
   return isAdminUser(user) || canQueryDataset(dataset);
 }
 
@@ -35,6 +36,13 @@ export function canRunJobCommand(job: JobRowData, command: JobCommand) {
 
 export function permissionDeniedMessage(resourceLabel: string, actionLabel: string) {
   return `${resourceLabel} ${actionLabel} 권한이 없습니다.`;
+}
+
+export function datasetQueryBlockedMessage(dataset: CatalogDataset | null | undefined, resourceLabel = "데이터셋") {
+  if (dataset?.queryEngineRequired && dataset.queryEngineStatus === "pending") return `${resourceLabel}을 SQL 엔진에 등록하고 있습니다.`;
+  if (dataset?.queryEngineRequired && dataset.queryEngineStatus === "registration_failed") return `${resourceLabel}의 SQL 엔진 등록 검증에 실패했습니다.`;
+  if (dataset?.queryEngineRequired && dataset.queryEngineStatus === "unavailable") return `${resourceLabel}은 아직 SQL 엔진에서 사용할 수 없습니다.`;
+  return permissionDeniedMessage(resourceLabel, "SQL 실행");
 }
 
 function permissionValue(resource: PermissionResource | null | undefined, key: keyof ResourcePermissions, fallback: boolean) {

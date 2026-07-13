@@ -110,4 +110,3 @@ export const SheetDescription = React.forwardRef<
   />
 ));
 SheetDescription.displayName = DialogPrimitive.Description.displayName;
-
