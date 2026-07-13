@@ -43,6 +43,13 @@ class CatalogRepository:
         model = self.get_dataset_model_for_update(dataset_id)
         return dataset_model_to_payload(model) if model else None
 
+    def get_dataset_payload_by_name(self, dataset_name: str) -> dict[str, Any] | None:
+        ensure_catalog_schema(self.db)
+        model = self.db.scalar(
+            select(CatalogDatasetModel).where(CatalogDatasetModel.name == dataset_name)
+        )
+        return dataset_model_to_payload(model) if model else None
+
     def get_lineage_payload(self, dataset_id: str) -> dict[str, Any] | None:
         payload = self.get_dataset_payload(dataset_id)
         lineage_graph = payload.get("lineageGraph") if payload else None
