@@ -1770,7 +1770,9 @@ def execute_airflow_run(
 
     dataset_id = job.dataset_id or make_dataset_id(job.target)
     job.dataset_id = dataset_id
-    existing_dataset = etl_repository.get_dataset_by_id(db, dataset_id)
+    # Every materialization append must serialize against run deletion and
+    # other appenders using the same dataset row lock.
+    existing_dataset = etl_repository.get_dataset_by_id_for_update(db, dataset_id)
     if airflow_run_has_materialization(run, existing_dataset):
         return airflow_execution_response_from_persisted(job, run, existing_dataset)
 
@@ -4001,7 +4003,7 @@ def materialize_continuous_publication(
     if nonnegative_int(publication.get("storedCount"), 0) == 0:
         return True
     run_id = f"continuous:{job.id}:batch:{batch_id}"
-    existing = etl_repository.get_dataset_by_id(db, job.dataset_id or make_dataset_id(job.target))
+    existing = etl_repository.get_dataset_by_id_for_update(db, job.dataset_id or make_dataset_id(job.target))
     existing_runs = (existing.payload or {}).get("materializationRuns") if existing and existing.payload else []
     if any(str(item.get("runId") or "") == run_id for item in existing_runs if isinstance(item, dict)):
         return True
@@ -4056,7 +4058,7 @@ def materialize_continuous_replay(
     replayed_count = nonnegative_int(replay_result.get("storedCount"), 0)
     if replayed_count == 0:
         return
-    existing = etl_repository.get_dataset_by_id(db, job.dataset_id or make_dataset_id(job.target))
+    existing = etl_repository.get_dataset_by_id_for_update(db, job.dataset_id or make_dataset_id(job.target))
     target = parse_kafka_target_path(job.storage_path or job.target_path, job.target, job.target_layer)
     target_root = f"s3a://{target['bucket']}/{target['prefix'].strip('/')}/_batches"
     metrics = runtime.metrics or {}
