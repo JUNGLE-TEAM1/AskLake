@@ -45,6 +45,7 @@ class ETLJobModel(TimestampMixin, Base):
     index_columns: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     compression: Mapped[str | None] = mapped_column(String(64), nullable=True)
     storage_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    iceberg_target: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     target_description: Mapped[str | None] = mapped_column(Text, nullable=True)
     target_database: Mapped[str | None] = mapped_column(String(255), nullable=True)
     target_tags: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)

@@ -111,6 +111,7 @@ from app.services.trino_materialization_service import materialized_dataset_id
 from app.services.trino_query_run_service import TrinoQueryRunService
 from app.services.trino_sql_job_service import TrinoSqlJobService
 from app.services.identity_service import DEMO_GROUPS, DEMO_USERS
+from app.services.iceberg_writer_service import build_iceberg_writer_target, writer_mode_for_source
 from app.services.object_storage import object_storage_runtime
 from app.services.materialization_projection import aggregate_materialization_runs
 from app.services.rule_compiler import CompiledRuleSet, compile_rule_set
@@ -263,6 +264,12 @@ def create_pipeline(
         index_columns=normalize_string_list(request.index_columns),
         compression=request.compression,
         storage_path=request.storage_path,
+        iceberg_target=build_iceberg_writer_target(
+            request.target_dataset,
+            dataset_id,
+            write_mode=writer_mode_for_source(request.source_type),
+            partition_columns=normalize_string_list(request.partition_columns),
+        ).model_dump(mode="json", by_alias=True),
         target_description=normalize_optional_text(request.target_description),
         target_database=normalize_optional_text(request.target_database),
         target_tags=normalize_target_tags(request.target_tags),
@@ -2696,6 +2703,7 @@ def job_payload_for_spark(
         "targetPath": job.target_path,
         "targetTags": job.target_tags or [],
         "storagePath": job.storage_path,
+        "icebergTarget": job.iceberg_target,
         "storageType": job.storage_type,
         "partition": job.partition,
         "partitionColumns": job.partition_columns or [],
@@ -4078,6 +4086,12 @@ def update_existing_append_job(
     job.index_columns = normalize_string_list(request.index_columns)
     job.compression = request.compression
     job.storage_path = request.storage_path
+    job.iceberg_target = build_iceberg_writer_target(
+        request.target_dataset,
+        dataset_id,
+        write_mode=writer_mode_for_source(request.source_type),
+        partition_columns=normalize_string_list(request.partition_columns),
+    ).model_dump(mode="json", by_alias=True)
     job.target_description = normalize_optional_text(request.target_description)
     job.target_database = normalize_optional_text(request.target_database)
     job.target_tags = normalize_target_tags(request.target_tags)
@@ -6129,6 +6143,12 @@ def apply_update_request(job: ETLJobModel, request: UpdatePipelineRequest, targe
     }
     if target_changed:
         job.dataset_id = make_dataset_id(request.target_dataset)
+    job.iceberg_target = build_iceberg_writer_target(
+        request.target_dataset,
+        job.dataset_id or make_dataset_id(request.target_dataset),
+        write_mode=writer_mode_for_source(job.source_type),
+        partition_columns=normalize_string_list(request.partition_columns),
+    ).model_dump(mode="json", by_alias=True)
 
 
 def schedule_next_run_label(schedule_label: str | None, fallback: str | None = None) -> str:

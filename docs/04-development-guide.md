@@ -121,7 +121,18 @@ ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-query-foundation
 
 브라우저 polling 없이 collector를 한 번만 실행할 때는 `npm run trino:collect-results`, 만료 결과를 one-shot 정리할 때는 `npm run trino:cleanup-results`를 사용한다. Production에서는 worker가 같은 작업을 계속 실행하며 DB lease/generation으로 재시작과 takeover를 복구한다. 실제 Iceberg 반복 갱신은 local stack에서 `ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-sql-job-e2e`로 확인한다.
 
-Spark 일반 배치와 Kafka Snapshot/Continuous writer는 현재 Iceberg table을 만들지 않는다. 이 writer를 Iceberg로 전환할 때의 구현 순서와 검증 경계는 [Iceberg Writer Migration Plan](iceberg-writer-migration-plan.md)을 따른다. 전환 전에는 기존 Parquet/JSONL direct output 검증을 유지하고, Iceberg `queryEngineTable`을 임의로 추가하지 않는다.
+Spark 일반 배치와 Kafka Snapshot/Continuous writer는 현재 Iceberg table을 만들지 않는다. Phase 1 공통 foundation은 backend-owned `icebergTarget`, append/atomic replace commit, snapshot/warehouse location 수집과 `DESCRIBE` 검증까지만 제공한다. 이 writer를 실제 연결하는 순서와 검증 경계는 [Iceberg Writer Migration Plan](iceberg-writer-migration-plan.md)을 따른다. 전환 전에는 기존 Parquet/JSONL direct output 검증을 유지하고, Iceberg `queryEngineTable`을 임의로 추가하지 않는다.
+
+```bash
+cd backend
+npm run verify:iceberg-writer-foundation
+
+# Postgres + MinIO + Trino가 떠 있을 때 실제 고유 fixture append/replace commit
+ASKLAKE_VERIFY_ICEBERG_LIVE=true \
+TRINO_ENABLED=true \
+TRINO_BASE_URL=http://localhost:8088 \
+npm run verify:iceberg-writer-foundation
+```
 
 `frontend/.env` 또는 로컬 env에는 API base URL만 둔다.
 

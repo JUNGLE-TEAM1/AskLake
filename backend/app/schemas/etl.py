@@ -4,6 +4,7 @@ from typing import Any, Literal
 from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.common import CamelModel, to_camel
+from app.schemas.iceberg import IcebergWriterTarget
 from app.schemas.permissions import PermissionAction, PermissionGrant, ResourcePermissions
 
 TargetLayer = Literal["RAW", "BRONZE", "SILVER", "GOLD"]
@@ -404,6 +405,7 @@ class JobRowData(CamelModel):
     index_columns: list[str] | None = None
     compression: str | None = None
     storage_path: str | None = None
+    iceberg_target: IcebergWriterTarget | None = None
     target_description: str | None = None
     target_database: str | None = None
     target_tags: list[str] | None = None

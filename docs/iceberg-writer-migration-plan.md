@@ -48,12 +48,20 @@ iceberg://{catalog}/{namespace}/{table}
 
 ## 4. 전환 단계
 
-### Phase 1. 공통 Iceberg writer foundation
+### Phase 1. 공통 Iceberg writer foundation (완료)
 
 - Iceberg target reference, table naming, namespace, write mode, physical verification contract를 backend schema와 API에 추가한다.
 - 기존 S3 path target은 읽기 호환으로 유지한다.
 - catalog table 생성/존재 확인, append/replace commit, snapshot ID 수집을 writer 공통 adapter로 만든다.
 - 성공 기준: 고유 fixture가 Iceberg table로 commit되고 Trino `DESCRIBE`와 AskLake mapping이 같은 table을 가리킨다.
+
+구현 결과:
+
+- 새 ETL Job은 backend가 생성한 optional `icebergTarget`을 저장하며 기존 `storagePath`와 기존 Job null row를 읽기 호환한다.
+- 공통 adapter는 최초 append CTAS, 후속 `INSERT INTO`, 원자적 `CREATE OR REPLACE TABLE AS`, `$snapshots` snapshot ID/manifest 기반 warehouse location 수집, `DESCRIBE` 검증을 제공한다. Spark 같은 외부 native writer는 commit SQL 없이 같은 `verify_commit`과 expected snapshot ID 검증을 재사용할 수 있다.
+- commit evidence의 `queryEngineTable`은 검증한 target과 같은 catalog/namespace/table을 사용한다.
+- `npm run verify:iceberg-writer-foundation`은 단위 계약을 검증하고, `ASKLAKE_VERIFY_ICEBERG_LIVE=true`일 때 고유 로컬 Trino/MinIO fixture를 실제 commit한 뒤 정리한다.
+- 이 단계는 Spark/Kafka direct writer를 호출 경로에서 교체하지 않는다. 따라서 해당 Dataset은 Phase 2~4 전까지 계속 `queryEngineStatus=unavailable`이다.
 
 ### Phase 2. 일반 Spark 배치 전환
 

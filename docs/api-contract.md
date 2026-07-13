@@ -389,6 +389,15 @@ API와 frontend internal state의 상태값은 영어 canonical value를 사용�
 ```ts
 type JobStatus = "scheduled" | "failed" | "running" | "paused" | "canceled" | "stopped";
 
+type IcebergWriterTarget = {
+  catalog: string;
+  namespace: string;
+  table: string;
+  tableUri: `iceberg://${string}/${string}/${string}`;
+  writeMode: "append" | "replace";
+  partitionColumns: string[];
+};
+
 type JobRowData = {
   id: string;
   name: string;
@@ -436,6 +445,7 @@ type JobRowData = {
   targetLayer?: "RAW" | "BRONZE" | "SILVER" | "GOLD";
   storageType?: "S3" | "Local" | "HDFS";
   storagePath?: string;
+  icebergTarget?: IcebergWriterTarget;
   partitionColumns?: string[];
   indexColumns?: string[];
   transformOutputColumns?: Array<[string, string]>;
@@ -456,6 +466,8 @@ type JobRowData = {
   };
 };
 ```
+
+`icebergTarget`은 backend-owned writer destination 선언이다. create/update request에서 사용자가 보내는 값이 아니며 backend가 Dataset ID와 Trino catalog/schema 설정으로 생성한다. Kafka source는 `append`, 그 외 일반 ETL source는 `replace`를 사용한다. `tableUri`는 논리 식별자이고 `storagePath`는 전환 전 writer와 기존 Job의 읽기 호환 필드다. 이 값이 존재해도 Iceberg commit과 Trino 물리 검증 전에는 `queryEngineStatus=unavailable`이다.
 
 `GET /api/etl/jobs/{jobId}`는 위 설정값을 편집 복원용으로 반환한다. `sourceConfig`에는 Kafka broker, topic, consumer group, batch/timeout, offset policy, authentication 같은 source identity가 포함될 수 있으므로 UI는 값을 보이되 Issue #460 수정 모드에서는 변경하지 않는다. 기존 Job에는 새 선택형 metadata가 없을 수 있으므로 해당 값은 optional로 유지한다.
 
@@ -1423,6 +1435,7 @@ Validation:
 - `jobName`, `sourceType`, `sourceLabel`, `targetDataset`, `targetLayer`, `owner`는 필수입니다.
 - `targetLayer`는 `RAW`, `BRONZE`, `SILVER`, `GOLD` 중 하나여야 합니다.
 - `storageType`, `partition`, `compression`, `storagePath`는 Target 화면의 draft 값이며, 없으면 frontend는 기존 기본값을 채웁니다.
+- `icebergTarget`은 create payload에 포함하지 않습니다. Backend가 새 Job에 생성해 create/list/detail response와 Spark runtime payload에 같은 값으로 반환합니다.
 - Target metadata는 flat create contract를 유지하기 위해 `targetDescription`, `targetTags`, `partitionColumns`, `indexColumns`로 전달합니다. 기존 `partition`은 하위 호환용 표시/저장 문자열이며 `partitionColumns.join("/")` 값과 같아야 합니다.
 - Target 화면은 모든 Source에서 `targetLayer`를 RAW/BRONZE/SILVER/GOLD 중 명시적으로 선택하게 하며 기존 draft/default layer를 초기값으로 사용합니다. 자동 생성 storage path는 선택 layer를 반영합니다.
 - `rag`는 호환 필드로 유지하지만, 현재 Target 화면에서는 설정을 노출하지 않고 frontend는 기본값 `false`를 전송합니다.
@@ -1738,7 +1751,9 @@ Materialization 제출과 조회는 source run submitter ID 또는 admin 여부�
 
 전환 전 내부 writer가 저장한 payload 중 `queryEngineTable`은 있지만 `queryEngineStatus`가 없는 row는 migration read compatibility로 `available`을 추론한다. 새 writer와 API는 이 fallback에 의존하지 않고 상태를 명시해야 하며, 사용자 입력만으로 mapping을 생성하는 endpoint는 제공하지 않는다.
 
-현재 Spark ETL Parquet 및 Kafka direct JSONL/Continuous Parquet 결과는 Iceberg metadata를 생성하지 않는다. 이 경로는 `queryEngineStatus=unavailable`이며 SQL downstream을 표시하지 않는다. ETL runtime이 `queryEngineVerified=true`와 완전한 `queryEngineTable`을 반환한 경우에만 `available`로 저장한다. Catalog row 생성만으로 물리 table 등록 성공을 추정해서는 안 된다. writer 전환 계약과 단계는 [Iceberg Writer Migration Plan](iceberg-writer-migration-plan.md)을 따른다.
+현재 Spark ETL Parquet 및 Kafka direct JSONL/Continuous Parquet 결과는 Iceberg metadata를 생성하지 않는다. 새 Job의 `icebergTarget`은 후속 writer가 사용할 destination 계약일 뿐 물리 mapping 증거가 아니다. 이 경로는 `queryEngineStatus=unavailable`이며 SQL downstream을 표시하지 않는다. ETL runtime이 Iceberg snapshot ID, 실제 warehouse location, `queryEngineVerified=true`, 완전한 `queryEngineTable`을 반환한 경우에만 `available`로 저장한다. Catalog row 생성만으로 물리 table 등록 성공을 추정해서는 안 된다. writer 전환 계약과 단계는 [Iceberg Writer Migration Plan](iceberg-writer-migration-plan.md)을 따른다.
+
+공통 Iceberg commit evidence는 `jobId`, `runId`, `target`, `queryEngineTable`, `snapshotId`(64-bit 안전성을 위해 string), `committedAt`, `warehouseLocation`, `queryEngineVerified: true`, optional schema/rule fingerprint와 source boundary를 포함한다. `replace`는 Iceberg의 원자적 `CREATE OR REPLACE TABLE AS`, `append`는 최초 CTAS 이후 `INSERT INTO`를 사용한다. 서비스는 commit 뒤 `$snapshots`와 `DESCRIBE`가 모두 성공한 경우에만 evidence를 반환한다. Spark 같은 native writer가 외부에서 commit한 경우에도 `verifyCommit` 경계를 재사용하며 writer가 보고한 expected snapshot ID와 실제 최신 snapshot이 다르면 mapping을 확정하지 않는다.
 
 ```ts
 type TrinoMaterializationRunResponse = {
