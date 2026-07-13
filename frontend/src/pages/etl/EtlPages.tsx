@@ -5844,8 +5844,6 @@ export function PermissionPage({
   const filteredUsers = (permissionOptions?.users ?? []).filter((user) => (
     `${user.name} ${user.email} ${user.role}`.toLocaleLowerCase().includes(normalizedGrantSearch)
   ));
-  const selectedRoleCount = Object.values(roleChecks).filter(Boolean).length;
-  const selectedUserCount = Object.values(userChecks).filter(Boolean).length;
   const sensitiveColumnCount = draft.schema.columns.filter((column) => (
     /(email|phone|address|review_text|customer|user_name|이메일|전화|주소|주민)/i.test(`${column.sourceName} ${column.targetName}`)
   )).length;
@@ -5868,7 +5866,7 @@ export function PermissionPage({
         <Card className="min-w-0 overflow-hidden" size="none">
           <CardHeader className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3 border-b border-slate-200 px-5 py-4">
             <span className="etl-review-icon permission"><ShieldCheck size={17} /></span>
-            <CardTitle>Governance Check</CardTitle>
+            <CardTitle>거버넌스 확인</CardTitle>
           </CardHeader>
           <CardContent className="grid min-w-0 gap-3 p-5 sm:grid-cols-2">
             {governanceChecks.map((item) => (
@@ -5897,7 +5895,7 @@ export function PermissionPage({
         <Card className="min-w-0 overflow-hidden" size="none">
           <CardHeader className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3 border-b border-slate-200 px-5 py-4">
             <span className="etl-review-icon"><SlidersHorizontal size={17} /></span>
-            <CardTitle>Access Policy</CardTitle>
+            <CardTitle>접근 정책</CardTitle>
           </CardHeader>
           <CardContent className="p-5">
             <FieldGroup className="grid min-w-0 gap-4 md:grid-cols-2">
@@ -5958,12 +5956,9 @@ export function PermissionPage({
         </Card>
 
         <Card className="min-w-0 overflow-hidden" size="none">
-          <CardHeader className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 border-b border-slate-200 px-5 py-4">
+          <CardHeader className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3 border-b border-slate-200 px-5 py-4">
             <span className="etl-review-icon schema"><CircleUser size={17} /></span>
-            <CardTitle>Role Grants</CardTitle>
-            <Badge shape="compact" size="sm" variant="secondary">
-              {grantTab === "roles" ? `${selectedRoleCount}개 선택` : `${selectedUserCount}명 선택`}
-            </Badge>
+            <CardTitle>역할 및 사용자 권한</CardTitle>
           </CardHeader>
           <CardContent className="grid min-w-0 gap-4 p-5">
             {permissionOptionsLoading ? (
