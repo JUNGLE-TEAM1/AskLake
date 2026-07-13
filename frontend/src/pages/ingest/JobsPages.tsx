@@ -2520,6 +2520,7 @@ type JobRunsPageProps = {
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
   onBack: () => void;
   onCommand: (job: JobRowData, command: JobCommand) => void;
+  onRefresh?: () => void;
 };
 
 const activeContinuousSessionStatuses = new Set<KafkaContinuousSessionStatus>(["starting", "running", "stopping"]);
@@ -3046,6 +3047,7 @@ function SnapshotJobRunsPage({
   onAction,
   onBack,
   onCommand,
+  onRefresh,
 }: JobRunsPageProps) {
   const [activeRun, setActiveRun] = useState<JobRunSummary | null>(null);
   const [activeLogRun, setActiveLogRun] = useState<JobRunSummary | null>(null);
@@ -3180,7 +3182,10 @@ function SnapshotJobRunsPage({
           <Panel>
             <PanelHeader
               actions={(
-                <Button size="sm" type="button" variant="outline" onClick={() => onAction("etl.runs.refreshed", `/api/etl/jobs/${job.id}/runs`, job.id)}>
+                <Button size="sm" type="button" variant="outline" onClick={() => {
+                  onAction("etl.runs.refreshed", `/api/etl/jobs/${job.id}/runs`, job.id);
+                  onRefresh?.();
+                }}>
                   <RefreshCw aria-hidden="true" />
                   새로고침
                 </Button>

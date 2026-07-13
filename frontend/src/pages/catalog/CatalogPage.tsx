@@ -321,6 +321,7 @@ export function CatalogPage({
   loading = false,
   onAction,
   onOpenSql,
+  onRefresh,
   selectedDataset,
 }: {
   datasets: CatalogDataset[];
@@ -328,6 +329,7 @@ export function CatalogPage({
   loading?: boolean;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
   onOpenSql: (dataset: CatalogDataset) => void;
+  onRefresh?: () => void;
   selectedDataset: CatalogDataset;
 }) {
   const [previewDataset, setPreviewDataset] = useState<CatalogDataset>(selectedDataset);
@@ -856,12 +858,14 @@ export function CatalogDetailPage({
   onBack,
   onLineage,
   onOpenSql,
+  onRefresh,
 }: {
   dataset: CatalogDataset;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
   onBack: () => void;
   onLineage: () => void;
   onOpenSql: () => void;
+  onRefresh?: () => void;
 }) {
   const [activeTab, setActiveTab] = useState<"overview" | "schema" | "sample" | "lineage">("overview");
 
@@ -893,7 +897,10 @@ export function CatalogDetailPage({
           <div className="job-detail-actions">
             <Button className="job-action-button primary" type="button" onClick={onOpenSql} size="sm" variant="primary"><ExternalLink size={14} /> SQL 분석에서 열기</Button>
             <Button className="job-action-button" type="button" onClick={openLineage} size="sm" variant="outline">리니지 보기</Button>
-            <Button className="job-action-button" type="button" onClick={() => onAction("catalog.dataset.refreshed", `/api/catalog/datasets/${dataset.id}`, dataset.id)} size="sm" variant="outline">새로고침</Button>
+            <Button className="job-action-button" type="button" onClick={() => {
+              onAction("catalog.dataset.refreshed", `/api/catalog/datasets/${dataset.id}`, dataset.id);
+              onRefresh?.();
+            }} size="sm" variant="outline">새로고침</Button>
           </div>
         </div>
         <TabsList aria-label="데이터셋 상세 탭" className="catalog-detail-tabs">
