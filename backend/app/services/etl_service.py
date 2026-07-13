@@ -8,6 +8,7 @@ import secrets
 import subprocess
 from types import SimpleNamespace
 from typing import Any
+import unicodedata
 from urllib.parse import urlparse
 
 from fastapi import status
@@ -162,8 +163,8 @@ def create_pipeline(
     actor_name = actor_context.name
     created_by = identity_name(request.created_by or actor_name or request.owner)
     created_by_profile = request.created_by_profile or identity_profile(created_by)
-    dataset_id = f"ds_{normalize_column_name(request.target_dataset)}"
-    existing_job = etl_repository.get_job_by_dataset_id(db, dataset_id) or etl_repository.get_job_by_target(db, request.target_dataset)
+    existing_job = etl_repository.get_job_by_target(db, request.target_dataset)
+    dataset_id = str(existing_job.dataset_id) if existing_job is not None and existing_job.dataset_id else make_dataset_id(request.target_dataset)
     if existing_job is not None:
         if existing_job.execution_mode != request.execution_mode:
             raise ApiError(
@@ -1282,7 +1283,7 @@ def kafka_ingest_request_from_job(job: ETLJobModel, run_id: str) -> dict[str, An
         "allowEmpty": True,
         "broker": field_value(fields, "Broker / Endpoint") or field_value(fields, "Broker") or os.environ.get("ASKLAKE_KAFKA_BROKER") or "127.0.0.1:19092",
         "consumerGroupId": consumer_group_id,
-        "datasetId": job.dataset_id or f"ds_{normalize_column_name(job.target)}",
+        "datasetId": job.dataset_id or make_dataset_id(job.target),
         "datasetName": job.target or "reviews_raw",
         "landingBucket": target["bucket"],
         "landingEndpoint": (
@@ -1334,7 +1335,7 @@ def kafka_offset_policy(value: str) -> str:
 
 
 def parse_kafka_target_path(storage_path: str | None, target_dataset: str, target_layer: str | None) -> dict[str, str]:
-    default_prefix = f"{normalize_column_name(target_dataset or 'reviews_raw')}/{str(target_layer or 'BRONZE').lower()}"
+    default_prefix = f"{dataset_storage_key(target_dataset or 'reviews_raw')}/{str(target_layer or 'BRONZE').lower()}"
     if storage_path:
         match = re.match(r"^s3a?://([^/]+)(?:/(.*))?$", storage_path.strip())
         if match:
@@ -1766,7 +1767,7 @@ def execute_airflow_run(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
         )
 
-    dataset_id = job.dataset_id or f"ds_{normalize_column_name(job.target)}"
+    dataset_id = job.dataset_id or make_dataset_id(job.target)
     job.dataset_id = dataset_id
     existing_dataset = etl_repository.get_dataset_by_id(db, dataset_id)
     if airflow_run_has_materialization(run, existing_dataset):
@@ -2061,7 +2062,7 @@ def apply_airflow_submit_job_state(job: ETLJobModel, command: str, run: ETLRunMo
 
 def sync_airflow_runs_for_job(db: Session, job: ETLJobModel) -> None:
     runs = etl_repository.list_run_models_for_job(db, job.id)
-    dataset_id = job.dataset_id or f"ds_{normalize_column_name(job.target)}"
+    dataset_id = job.dataset_id or make_dataset_id(job.target)
     dataset = etl_repository.get_dataset_by_id(db, dataset_id)
     repaired_success = repair_incomplete_airflow_successes(runs, dataset)
     active_runs = [
@@ -2428,7 +2429,7 @@ def dataset_from_spark_result(job: ETLJobModel, result: dict[str, Any], existing
         [str(field.get("name") or "-"), str(field.get("type") or "string")]
         for field in schema
     ] if isinstance(schema, list) and schema else schema_from_job(job)
-    dataset_id = str(job.dataset_id or f"ds_{normalize_column_name(job.target)}")
+    dataset_id = str(job.dataset_id or make_dataset_id(job.target))
     previous_payload = existing_dataset.payload if existing_dataset and existing_dataset.payload else None
     dataset_payload = dataset_payload_from_spark_result(job, result, dataset_id, schema_json, now, previous_payload)
     storage_size_bytes = int(dataset_payload.get("storageSizeBytes") or 0)
@@ -2904,7 +2905,7 @@ def dag_steps_from_kafka_result(job: ETLJobModel, command: str, run: dict[str, A
     topic = str(result.get("topic") or field_value(job.source_config or [], "TOPIC / QUEUE NAME") or "-")
     broker = str(result.get("broker") or field_value(job.source_config or [], "Broker / Endpoint") or "-")
     storage_location = str(result.get("storageLocation") or run.get("outputPath") or "-")
-    dataset_id = str(result.get("datasetId") or job.dataset_id or f"ds_{normalize_column_name(job.target)}")
+    dataset_id = str(result.get("datasetId") or job.dataset_id or make_dataset_id(job.target))
     consumer_group_id = str(result.get("consumerGroupId") or field_value(job.source_config or [], "CONSUMER GROUP ID") or "-")
     snapshot = result.get("snapshot") or {}
     transform = result.get("transform") or {}
@@ -4007,7 +4008,7 @@ def materialize_continuous_publication(
     if nonnegative_int(publication.get("storedCount"), 0) == 0:
         return True
     run_id = f"continuous:{job.id}:batch:{batch_id}"
-    existing = etl_repository.get_dataset_by_id(db, job.dataset_id or f"ds_{normalize_column_name(job.target)}")
+    existing = etl_repository.get_dataset_by_id(db, job.dataset_id or make_dataset_id(job.target))
     existing_runs = (existing.payload or {}).get("materializationRuns") if existing and existing.payload else []
     if any(str(item.get("runId") or "") == run_id for item in existing_runs if isinstance(item, dict)):
         return True
@@ -4062,7 +4063,7 @@ def materialize_continuous_replay(
     replayed_count = nonnegative_int(replay_result.get("storedCount"), 0)
     if replayed_count == 0:
         return
-    existing = etl_repository.get_dataset_by_id(db, job.dataset_id or f"ds_{normalize_column_name(job.target)}")
+    existing = etl_repository.get_dataset_by_id(db, job.dataset_id or make_dataset_id(job.target))
     target = parse_kafka_target_path(job.storage_path or job.target_path, job.target, job.target_layer)
     target_root = f"s3a://{target['bucket']}/{target['prefix'].strip('/')}/_batches"
     metrics = runtime.metrics or {}
@@ -4427,7 +4428,7 @@ def apply_update_request(job: ETLJobModel, request: UpdatePipelineRequest, targe
         "schemaColumns": f"{len(dataset_schema_from_request(request)):,}개",
     }
     if target_changed:
-        job.dataset_id = f"ds_{normalize_column_name(request.target_dataset)}"
+        job.dataset_id = make_dataset_id(request.target_dataset)
 
 
 def schedule_next_run_label(schedule_label: str | None, fallback: str | None = None) -> str:
@@ -4792,7 +4793,7 @@ def continuous_config_from_request(request: CreatePipelineRequest, job_id: str) 
     if request.execution_mode != "continuous":
         return None
     config = request.continuous_config
-    base_path = (request.storage_path or f"s3a://asklake-output/{normalize_column_name(request.target_dataset)}/").rstrip("/")
+    base_path = (request.storage_path or f"s3a://asklake-output/{dataset_storage_key(request.target_dataset)}/").rstrip("/")
     return {
         "initialOffsetPolicy": config.initial_offset_policy if config else "earliest",
         "triggerIntervalSeconds": config.trigger_interval_seconds if config else 30,
@@ -4813,7 +4814,7 @@ def continuous_runtime_from_job(job: ETLJobModel) -> KafkaContinuousRuntimeModel
     topic = kafka_field_value(fields, "TOPIC / QUEUE NAME", "Topic") or "reviews.raw"
     consumer_group_id = kafka_field_value(fields, "Consumer Group ID", "CONSUMER GROUP ID") or f"asklake-stream-{job.id.lower()}"
     config = job.continuous_config or {}
-    checkpoint_path = str(config.get("checkpointPath") or f"s3a://asklake-output/{normalize_column_name(job.target)}/_checkpoints/{job.id}")
+    checkpoint_path = str(config.get("checkpointPath") or f"s3a://asklake-output/{dataset_storage_key(job.target)}/_checkpoints/{job.id}")
     return KafkaContinuousRuntimeModel(
         job_id=job.id,
         broker=broker,
@@ -4837,6 +4838,19 @@ def source_unit_label(source_type: str) -> str:
 
 def make_job_id(value: str) -> str:
     return f"JOB-{stable_id('job', f'{value}:{iso_now()}')[-8:].upper()}"
+
+
+def make_dataset_id(value: str) -> str:
+    display_name = unicodedata.normalize("NFC", value.strip())
+    slug = normalize_column_name(display_name)
+    if display_name == slug and re.fullmatch(r"[a-z0-9_]+", display_name):
+        return f"ds_{slug}"
+    digest = hashlib.sha1(display_name.encode("utf-8")).hexdigest()[:12]
+    return f"ds_{slug}_{digest}"
+
+
+def dataset_storage_key(value: str) -> str:
+    return make_dataset_id(value).removeprefix("ds_")
 
 
 def stable_id(prefix: str, value: str) -> str:

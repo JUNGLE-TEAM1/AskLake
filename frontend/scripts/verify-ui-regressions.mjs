@@ -250,6 +250,20 @@ const checks = [
     ],
   },
   {
+    name: "ETL Job collection upserts and reconciles rows by stable job id",
+    file: "src/hooks/useAskLakeData.ts",
+    patterns: [
+      /function upsertJobById\(/,
+      /jobs\.filter\(\(job\) => job\.id !== nextJob\.id\)/,
+      /function replaceJobById\(/,
+      /setJobs\(\(items\) => upsertJobById\(items, normalizedJob\)\)/,
+      /setJobs\(\(items\) => replaceJobById\(items, jobId, updater\)\)/,
+    ],
+    forbiddenPatterns: [
+      /items\.filter\(\(item\) => item\.name !== normalizedJob\.name\)/,
+    ],
+  },
+  {
     name: "SQL Job governance keeps access scope and permission summary aligned",
     file: "src/pages/sql/sqlJobWizardModel.ts",
     patterns: [

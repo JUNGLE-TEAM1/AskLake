@@ -1314,7 +1314,8 @@ Validation:
 - backend는 `partition` 문자열을 ETL job metadata에 보존하고 Spark 실행 시 컬럼 목록으로 복원해 Parquet writer의 `partitionBy`에 전달합니다. 선택 컬럼이 Spark output schema에 없으면 실행을 실패 처리합니다.
 - Spark run 성공 후 생성되는 `CatalogDataset`에는 `description`, `tags`, `partition`, `partitionColumns`, `indexColumns`가 create request의 Target metadata와 일치하게 저장되어야 합니다. 값이 없으면 backend는 기존 기본 description/tag fallback을 사용할 수 있습니다.
 - backend API가 없는 Target 설정 config 저장은 frontend local fallback으로 `window.localStorage["asklake.targetConfigDraft"]`에 `{ metadata, tags, partitionColumns, indexColumns, schemaRules, previewRows, lineage, lastTestRun }` 형태를 저장합니다. 이 config는 create request contract를 대체하지 않고 화면 재확인/debug 용도입니다.
-- 같은 `targetDataset`이 이미 존재하면 기본 정책은 `409 CONFLICT`가 아니라 기존 Job/dataset 연결을 재사용해 append 대상으로 갱신하는 것입니다. 같은 dataset 이름의 결과가 새 Catalog row를 만들지 않도록 합니다.
+- 표시명이 정확히 같은 `targetDataset`이 이미 존재하면 기본 정책은 `409 CONFLICT`가 아니라 기존 Job/dataset 연결을 재사용해 append 대상으로 갱신하는 것입니다. append 대상 판정에 ASCII slug를 사용하지 않습니다.
+- 새 `datasetId`는 `targetDataset`이 이미 안전한 소문자 ASCII 식별자이면 하위 호환 형식 `ds_<name>`을 사용합니다. 한글·공백·특수문자·대소문자 변환처럼 slug 생성 중 원문 정보가 손실되면 `ds_<slug>_<12자리 안정 해시>`를 사용합니다. backend가 기본 storage prefix/checkpoint path를 만들 때는 같은 값에서 `ds_` prefix만 뺀 key를 사용합니다. 따라서 표시명이 다른 두 target은 같은 slug가 나오더라도 같은 Job/dataset 또는 자동 저장 경로로 합쳐지지 않습니다. 기존 Job은 정확한 `targetDataset`이 일치하면 저장된 `datasetId`를 그대로 재사용합니다.
 
 ### 7.5 파이프라인 수정
 
