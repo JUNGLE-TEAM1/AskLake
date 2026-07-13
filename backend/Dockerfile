@@ -9,6 +9,7 @@ FROM python:3.13-slim AS backend-runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+ENV APP_ENV=production
 
 WORKDIR /app
 

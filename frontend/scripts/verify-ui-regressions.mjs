@@ -43,7 +43,7 @@ const checks = [
       /principalType: "user" as const/,
       /data-testid="permission-options-loading"/,
     ],
-    forbiddenPatterns: [
+    additionalForbiddenPatterns: [
       /<CardTitle>Governance Check<\/CardTitle>/,
       /<CardTitle>Access Policy<\/CardTitle>/,
       /<CardTitle>Role Grants<\/CardTitle>/,
@@ -67,6 +67,34 @@ const checks = [
       /APPROVAL_STATUS_OPTIONS/,
       /label: "승인자"/,
       /label: "승인 상태"/,
+    ],
+  },
+  {
+    name: "Production login hides demo credentials and public signup by default",
+    file: "src/pages/auth/AuthPage.tsx",
+    patterns: [
+      /const demoDefaultsEnabled = import\.meta\.env\.DEV;/,
+      /const publicSignupEnabled = import\.meta\.env\.DEV \|\| import\.meta\.env\.VITE_AUTH_PUBLIC_SIGNUP === "true";/,
+      /useState\(demoDefaultsEnabled \? "admin\.user@asklake\.local" : ""\)/,
+      /\{publicSignupEnabled && \(/,
+      /demoDefaultsEnabled\s*\? <small>Admin/,
+    ],
+  },
+  {
+    name: "Authentication failures stay server-side instead of creating browser-local users",
+    file: "src/services/authApi.ts",
+    patterns: [
+      /return apiClient\.get<AuthSessionResponse>\("\/api\/auth\/session"\);/,
+      /return apiClient\.post<AuthUserResponse>\("\/api\/auth\/login", payload\);/,
+      /return apiClient\.post<AuthUserResponse>\("\/api\/auth\/signup", payload\);/,
+    ],
+    forbiddenPatterns: [
+      /asklake\.tempAuth/,
+      /asklake\.mockAuthUser/,
+      /shouldUseTempAuth/,
+      /localStorage/,
+      /sessionStorage/,
+      /apiConfig\.useMock/,
     ],
   },
   {
@@ -1426,7 +1454,7 @@ for (const check of checks) {
       failures.push(`${check.name}: missing pattern #${index + 1} in ${check.file}`);
     }
   });
-  check.forbiddenPatterns?.forEach((pattern, index) => {
+  [...(check.forbiddenPatterns ?? []), ...(check.additionalForbiddenPatterns ?? [])].forEach((pattern, index) => {
     if (pattern.test(contents)) {
       failures.push(`${check.name}: forbidden pattern #${index + 1} found in ${check.file}`);
     }
