@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronRight, FileText, Folder, FolderOpen, Loader2 } from "lucide-react";
-import { Tree, type NodeRendererProps } from "react-arborist";
+import { useCallback, useMemo, useRef } from "react";
+import { FileText, Folder, FolderOpen, Loader2 } from "lucide-react";
+import type { NodeApi } from "react-arborist";
+import { ExplorerTree } from "@/components/ui/explorer-tree";
 import { TreePanel } from "@/components/ui/tree-panel";
-import { cn } from "@/lib/utils";
 
 export type SourceAsset = [path: string, meta: string, status: string];
 
@@ -21,6 +21,7 @@ type SourceAssetTreeNode = {
   children: SourceAssetTreeNode[];
   id: string;
   isFolder: boolean;
+  label: string;
   meta: string;
   name: string;
   path: string;
@@ -43,27 +44,11 @@ export function SourceAssetTree({
 }: SourceAssetTreeProps) {
   const { nodeById, nodes } = useMemo(() => buildSourceAssetTree(assets), [assets]);
   const requestedFolderPaths = useRef(new Set<string>());
-  const viewportRef = useRef<HTMLDivElement>(null);
-  const [treeHeight, setTreeHeight] = useState(320);
   const loadedFolderPathSet = useMemo(
     () => new Set(loadedFolderPaths ?? []),
     [loadedFolderPaths],
   );
   const selectedNodeId = selectedPath ? `file:${selectedPath}` : undefined;
-
-  useEffect(() => {
-    const viewport = viewportRef.current;
-    if (!viewport) return;
-
-    const updateHeight = () => {
-      setTreeHeight(Math.max(260, Math.floor(viewport.getBoundingClientRect().height)));
-    };
-
-    updateHeight();
-    const observer = new ResizeObserver(updateHeight);
-    observer.observe(viewport);
-    return () => observer.disconnect();
-  }, []);
 
   const requestFolderChildren = useCallback((node: SourceAssetTreeNode) => {
     if (!onOpenFolder) return;
@@ -77,52 +62,16 @@ export function SourceAssetTree({
     });
   }, [loadedFolderPathSet, loadingPath, onOpenFolder]);
 
-  const SourceTreeNode = useCallback(({ node, style }: NodeRendererProps<SourceAssetTreeNode>) => {
-    const asset = node.data;
-    const isLoading = asset.isFolder && asset.path === loadingPath;
-    const folderMeta = isLoading
-      ? LABELS.loading
-      : asset.children.length > 0
-        ? `${asset.children.length}개`
-        : LABELS.open;
+  const getIcon = useCallback((node: NodeApi<SourceAssetTreeNode>) => {
+    if (!node.data.isFolder) return <FileText className="text-indigo-500" />;
+    return node.isOpen ? <FolderOpen className="text-blue-600" /> : <Folder className="text-blue-600" />;
+  }, []);
 
-    return (
-      <div className="source-arborist-row-wrap" style={style}>
-        <button
-          aria-expanded={asset.isFolder ? node.isOpen : undefined}
-          className={cn(
-            "source-arborist-row",
-            asset.isFolder && "is-folder",
-            node.isOpen && "is-open",
-            node.isSelected && "is-selected",
-          )}
-          title={asset.path}
-          type="button"
-          onClick={() => {
-            if (asset.isFolder) {
-              node.toggle();
-              return;
-            }
-            void onSelect(asset.path);
-          }}
-        >
-          <span className="source-arborist-expander" aria-hidden="true">
-            {asset.isFolder ? <ChevronRight size={15} strokeWidth={2.2} /> : null}
-          </span>
-          {asset.isFolder ? (
-            node.isOpen ? <FolderOpen className="source-arborist-icon folder" size={16} /> : <Folder className="source-arborist-icon folder" size={16} />
-          ) : (
-            <FileText className="source-arborist-icon file" size={16} />
-          )}
-          <strong className="source-arborist-name">{asset.name}</strong>
-          <span className="source-arborist-meta">
-            {isLoading ? <Loader2 className="source-arborist-loading" size={13} /> : null}
-            {asset.isFolder ? folderMeta : asset.meta}
-          </span>
-        </button>
-      </div>
-    );
-  }, [loadingPath, onSelect]);
+  const getTrailing = useCallback((node: NodeApi<SourceAssetTreeNode>) => (
+    node.data.path === loadingPath
+      ? <Loader2 className="size-3.5 animate-spin text-blue-600" />
+      : null
+  ), [loadingPath]);
 
   if (nodes.length === 0) {
     return (
@@ -136,35 +85,26 @@ export function SourceAssetTree({
 
   return (
     <TreePanel className="source-asset-tree-panel">
-      <div ref={viewportRef} className="source-asset-tree-viewport">
-        <Tree<SourceAssetTreeNode>
-          aria-label="소스 에셋 트리"
-          className="source-arborist-tree"
-          data={nodes}
-          disableDrag
-          disableDrop
-          disableEdit
-          disableMultiSelection
-          disableSelect={(asset) => asset.isFolder}
-          height={treeHeight}
-          indent={18}
-          openByDefault={false}
-          overscanCount={8}
-          rowHeight={40}
-          selection={selectedNodeId}
-          width="100%"
-          onSelect={(selectedNodes) => {
-            const asset = selectedNodes.find((selectedNode) => !selectedNode.data.isFolder)?.data;
-            if (asset) void onSelect(asset.path);
-          }}
-          onToggle={(nodeId) => {
-            const asset = nodeById.get(nodeId);
-            if (asset?.isFolder) requestFolderChildren(asset);
-          }}
-        >
-          {SourceTreeNode}
-        </Tree>
-      </div>
+      <ExplorerTree<SourceAssetTreeNode>
+        ariaLabel="소스 에셋 트리"
+        className="h-full"
+        data={nodes}
+        disableMultiSelection
+        disableSelect={(asset) => asset.isFolder}
+        getIcon={getIcon}
+        getRowProps={(node) => ({ title: node.data.path })}
+        getTrailing={getTrailing}
+        minHeight={260}
+        openByDefault={false}
+        selection={selectedNodeId}
+        onNodePress={(node) => {
+          if (!node.data.isFolder) void onSelect(node.data.path);
+        }}
+        onToggle={(nodeId) => {
+          const asset = nodeById.get(nodeId);
+          if (asset?.isFolder) requestFolderChildren(asset);
+        }}
+      />
     </TreePanel>
   );
 }
@@ -174,6 +114,7 @@ function buildSourceAssetTree(assets: SourceAsset[]) {
     children: [],
     id: "root",
     isFolder: true,
+    label: "root",
     meta: "folder",
     name: "root",
     path: "",
@@ -195,6 +136,7 @@ function buildSourceAssetTree(assets: SourceAsset[]) {
       children: [],
       id,
       isFolder,
+      label: name,
       meta: isFolder ? "folder" : "file",
       name,
       path,
@@ -232,6 +174,9 @@ function buildSourceAssetTree(assets: SourceAsset[]) {
       if (left.isFolder !== right.isFolder) return left.isFolder ? -1 : 1;
       return left.name.localeCompare(right.name);
     });
+    if (node.isFolder && node.id !== "root") {
+      node.meta = node.children.length > 0 ? `${node.children.length}개` : LABELS.open;
+    }
     node.children.forEach((child) => {
       nodeById.set(child.id, child);
       sortTree(child);
