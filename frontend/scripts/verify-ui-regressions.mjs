@@ -43,7 +43,7 @@ const checks = [
       /principalType: "user" as const/,
       /data-testid="permission-options-loading"/,
     ],
-    forbiddenPatterns: [
+    additionalForbiddenPatterns: [
       /<CardTitle>Governance Check<\/CardTitle>/,
       /<CardTitle>Access Policy<\/CardTitle>/,
       /<CardTitle>Role Grants<\/CardTitle>/,
@@ -1220,7 +1220,7 @@ for (const check of checks) {
       failures.push(`${check.name}: missing pattern #${index + 1} in ${check.file}`);
     }
   });
-  check.forbiddenPatterns?.forEach((pattern, index) => {
+  [...(check.forbiddenPatterns ?? []), ...(check.additionalForbiddenPatterns ?? [])].forEach((pattern, index) => {
     if (pattern.test(contents)) {
       failures.push(`${check.name}: forbidden pattern #${index + 1} found in ${check.file}`);
     }
