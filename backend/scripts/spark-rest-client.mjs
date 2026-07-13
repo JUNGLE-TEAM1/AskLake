@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import {
   existsSync,
+  closeSync,
+  openSync,
   readFileSync,
   renameSync,
   unlinkSync,
@@ -147,26 +149,36 @@ export async function runSparkRestRequest({
   }
 
   if (!state) {
-    const created = await createSparkRestDriver(restUrl, submission, Math.min(timeoutMs, 15_000));
-    const now = new Date().toISOString();
-    state = {
-      createdAt: now,
-      driverState: "SUBMITTED",
-      restUrl,
-      runner: "rest",
-      submissionId: created.submissionId,
-      updatedAt: now,
-      version: 1,
-    };
+    const releaseStateLock = await acquireStateLock(stateFile, Math.min(timeoutMs, 15_000));
     try {
-      writeSparkRestState(stateFile, state);
-    } catch (error) {
-      try {
-        await killSparkRestDriver(restUrl, created.submissionId);
-      } catch {
-        // Preserve the state persistence error; cleanup is best effort here.
+      // Another runner may have created and persisted the submission while we
+      // were waiting for the lock, so the state must be re-read after locking.
+      state = readSparkRestState(stateFile, false);
+      if (!state) {
+        const created = await createSparkRestDriver(restUrl, submission, Math.min(timeoutMs, 15_000));
+        const now = new Date().toISOString();
+        state = {
+          createdAt: now,
+          driverState: "SUBMITTED",
+          restUrl,
+          runner: "rest",
+          submissionId: created.submissionId,
+          updatedAt: now,
+          version: 1,
+        };
+        try {
+          writeSparkRestState(stateFile, state);
+        } catch (error) {
+          try {
+            await killSparkRestDriver(restUrl, created.submissionId);
+          } catch {
+            // Preserve the state persistence error; cleanup is best effort here.
+          }
+          throw error;
+        }
       }
-      throw error;
+    } finally {
+      releaseStateLock();
     }
   }
 
@@ -365,6 +377,24 @@ function writeSparkRestState(stateFileValue, state) {
   } finally {
     if (existsSync(temporary)) unlinkSync(temporary);
   }
+}
+
+async function acquireStateLock(stateFileValue, timeoutMs) {
+  const stateFile = validateStateFile(stateFileValue);
+  const lockFile = `${stateFile}.lock`;
+  const deadline = Date.now() + boundedInteger(timeoutMs, 15_000, 250, 60_000);
+  while (Date.now() < deadline) {
+    try {
+      const descriptor = openSync(lockFile, "wx");
+      return () => {
+        try { closeSync(descriptor); } finally { if (existsSync(lockFile)) unlinkSync(lockFile); }
+      };
+    } catch (error) {
+      if (error?.code !== "EEXIST") throw error;
+      await delay(50);
+    }
+  }
+  throw new Error(`Spark REST state lock timed out: ${lockFile}`);
 }
 
 function validateStateFile(value) {
