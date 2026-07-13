@@ -726,13 +726,24 @@ const checks = [
     ],
   },
   {
-    name: "Target layer is an explicit setting for every ETL source",
+    name: "Target settings keep normalized payload defaults while simplifying the visible form",
     file: "src/pages/etl/EtlPages.tsx",
     patterns: [
-      /const \[targetLayer, setTargetLayer\] = useState<TargetLayer>\(initialTargetLayer\);/,
-      /label="데이터 레이어"/,
-      /targetLayerOptions\.map\(\(layer\) => <SelectItem/,
+      /const targetLayer = initialTargetLayer;/,
+      /const targetFormat = initialTargetFormat;/,
+      /className="field wide target-storage-field" label="저장 경로"/,
+      /className="field wide target-tags-field" label="태그"/,
+      /<h2>파티션 설정<\/h2>/,
+      /className="target-partition-header"/,
+      /<span>컬럼명<\/span>/,
+      /<span>데이터 타입<\/span>/,
       /targetLayer,/,
+    ],
+    forbiddenPatterns: [
+      /label="DB 선택"/,
+      /label="데이터 레이어"/,
+      /aria-label="파일 포맷 선택"/,
+      /label="오너"/,
     ],
   },
   {
@@ -1304,14 +1315,14 @@ const checks = [
     ],
   },
   {
-    name: "Kafka target controls expose only runtime-supported layer and format combinations",
+    name: "Kafka target defaults keep runtime-supported layer and format combinations",
     file: "src/pages/etl/EtlPages.tsx",
     patterns: [
       /const KAFKA_SNAPSHOT_TARGET_LAYER_OPTIONS: TargetLayer\[\] = \["RAW", "BRONZE", "SILVER"\]/,
       /const KAFKA_SNAPSHOT_TARGET_FORMAT_OPTIONS: TargetFileFormat\[\] = \["jsonl"\]/,
       /const KAFKA_CONTINUOUS_TARGET_FORMAT_OPTIONS: TargetFileFormat\[\] = \["parquet"\]/,
-      /targetLayerOptions\.map/,
-      /targetFormatOptions\.map/,
+      /if \(!targetLayerOptions\.includes\(targetLayer\)\)/,
+      /if \(!targetFormatOptions\.includes\(targetFormat\)\)/,
     ],
   },
   {
