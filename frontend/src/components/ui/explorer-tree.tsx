@@ -187,7 +187,7 @@ function ExplorerTreeRow<T extends ExplorerTreeNode>({
     <div className="box-border px-1 py-0.5" style={style}>
       <div
         className={cn(
-          "group relative flex h-full w-full min-w-0 items-center rounded-md border border-transparent pr-2 text-sm font-semibold text-slate-700 transition-colors",
+          "group relative flex h-full w-full min-w-0 items-center rounded-md border border-transparent pr-2 text-[15px] font-semibold text-slate-700 transition-colors",
           "hover:bg-slate-50 focus-within:border-blue-300 focus-within:ring-2 focus-within:ring-blue-500/30",
           node.isSelected && "border-blue-200 bg-blue-50 text-slate-950",
           node.data.disabled && "cursor-not-allowed opacity-50",
