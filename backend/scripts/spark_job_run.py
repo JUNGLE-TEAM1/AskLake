@@ -691,15 +691,29 @@ def kafka_snapshot_boundary_id(source_boundary):
     return str(source_boundary.get("snapshotId") or "").strip()
 
 
-def iceberg_source_boundary_exists(spark, target, source_boundary):
+def iceberg_source_boundary_marker(source_boundary):
     snapshot_id = kafka_snapshot_boundary_id(source_boundary)
-    if not snapshot_id:
+    if snapshot_id:
+        return "_asklake_kafka_snapshot_id", snapshot_id
+    if not isinstance(source_boundary, dict):
+        return "", ""
+    if str(source_boundary.get("kind") or "").strip() not in {
+        "kafka_continuous_batch",
+        "kafka_continuous_replay",
+    }:
+        return "", ""
+    return "_asklake_run_id", str(source_boundary.get("runId") or "").strip()
+
+
+def iceberg_source_boundary_exists(spark, target, source_boundary):
+    marker_column, marker_value = iceberg_source_boundary_marker(source_boundary)
+    if not marker_column or not marker_value:
         return False
     table = spark.table(spark_iceberg_table_identifier(target))
-    if "_asklake_kafka_snapshot_id" not in table.columns:
+    if marker_column not in table.columns:
         return False
     return table.where(
-        F.col("_asklake_kafka_snapshot_id") == F.lit(snapshot_id)
+        F.col(marker_column) == F.lit(marker_value)
     ).limit(1).count() > 0
 
 

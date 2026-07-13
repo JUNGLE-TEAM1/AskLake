@@ -20,8 +20,9 @@ This document records the Pair A person-1 backend validation path for Source, Sc
 - `backend/scripts/verify-spark-iceberg-batch.py`: native Spark Iceberg replace/re-run/rollback live verifier
 - `backend/scripts/verify-kafka-snapshot-iceberg.py`: Kafka fixed snapshot -> Spark Iceberg append -> Trino/Catalog -> offset commit/retry live verifier
 - `backend/scripts/verify-spark-csv-quoting.mjs`: RFC 4180 comma/quote CSV -> Spark -> Parquet regression verifier
-- `backend/scripts/verify-kafka-continuous-soak.mjs`: generated or JSONL/GZIP Kafka replay -> continuous worker -> reconciliation/fault/compaction verifier
-- `backend/scripts/kafka_continuous_maintenance.py`: quarantine inspect/replay and staged Parquet compaction
+- `backend/scripts/verify-kafka-continuous-soak.mjs`: generated or JSONL/GZIP Kafka replay -> continuous Iceberg worker -> reconciliation/fault verifier
+- `backend/scripts/verify-kafka-continuous-iceberg.py`: isolated Redpanda/Spark/Trino/MinIO append, pre-manifest fault, checkpoint restart verifier
+- `backend/scripts/kafka_continuous_maintenance.py`: quarantine inspect and Iceberg replay; legacy Parquet compaction is disabled
 - `backend/scripts/setup-source-fixtures.mjs`: PostgreSQL, MongoDB, and Redpanda fixtures
 - `backend/scripts/verify-all-sources.mjs`: source connector verifier
 
@@ -239,13 +240,19 @@ ASKLAKE_CONTINUOUS_SOAK_INPUT="$HOME/Downloads/Electronics.jsonl.gz" \
 ASKLAKE_CONTINUOUS_SOAK_RATE=1000 \
 ASKLAKE_CONTINUOUS_SOAK_BATCH_SIZE=500 \
 ASKLAKE_CONTINUOUS_SOAK_FAULT=worker \
-ASKLAKE_CONTINUOUS_SOAK_COMPACT=true \
 npm run verify:kafka-continuous-soak
 ```
 
-`ASKLAKE_CONTINUOUS_SOAK_FAULT`는 `worker`, `backend`, `kafka`, `minio` 중 하나를 선택한다. Kafka/MinIO fault는 해당 Compose service를 잠시 pause한 뒤 반드시 unpause하고, worker가 실패 상태로 전이되면 checkpoint resume을 수행한다. Compaction 검증을 켜면 harness가 먼저 worker를 정상 중지해 checkpoint를 보존하고 단일 local Spark executor를 maintenance에 넘긴다. 결과에는 input/output row, file, byte, average file size와 reconciliation/lag/throughput/recovery/Catalog 지표가 포함된다. Compaction output은 `_compactions/run_id=*`에만 stage되며 원본 batch를 삭제하지 않는다.
+`ASKLAKE_CONTINUOUS_SOAK_FAULT`는 `worker`, `backend`, `kafka`, `minio` 중 하나를 선택한다. Kafka/MinIO fault는 해당 Compose service를 잠시 pause한 뒤 반드시 unpause하고, worker가 실패 상태로 전이되면 checkpoint resume을 수행한다. 결과에는 input/output row와 reconciliation/lag/throughput/recovery/Catalog 지표가 포함된다. `ASKLAKE_CONTINUOUS_SOAK_COMPACT=true`는 Iceberg-native maintenance가 추가될 때까지 명시적으로 실패한다.
 
-`npm run verify:kafka-continuous-contract`는 같은 worker attempt의 실패 카운터 멱등성, 종료 worker의 manifest 기반 Catalog 복구, maintenance lease 정리를 검증한다. E2E는 기본 replay가 현재 schema policy를 다시 적용하는지, `approveUnknownFields` 관리자 예외만 unknown-field 행을 복구하는지, replay 이후 완료된 `batch_id` 경로를 표준 Spark `basePath` reader와 compaction이 함께 읽는지 확인한다. Stream batch manifest는 `_SUCCESS`가 있는 data/quarantine 경로와 topic/partition별 `[startOffset, endOffset)`을 포함해야 한다.
+`npm run verify:kafka-continuous-contract`는 같은 worker attempt의 실패 카운터 멱등성, 종료 worker의 manifest 기반 Catalog 복구, Iceberg replay 경계와 maintenance lease 정리를 검증한다. E2E는 기본 replay가 현재 schema policy를 다시 적용하는지, `approveUnknownFields` 관리자 예외만 unknown-field 행을 복구하는지, replay snapshot이 Trino 검증 후 Catalog에 반영되는지 확인한다. Stream manifest는 deterministic source boundary, Iceberg snapshot/table URI와 topic/partition별 `[startOffset, endOffset)`을 포함해야 한다.
+
+```bash
+cd backend
+ASKLAKE_VERIFY_ICEBERG_LIVE=true npm run verify:kafka-continuous-iceberg
+```
+
+이 격리 검증은 정상 append 4행, manifest 전 fault로 commit된 3행의 중복 없는 재사용, checkpoint 재시작 후 신규 2행을 처리해 Trino count `4 -> 7 -> 9`를 확인하고 생성한 table/container/metadata를 정리한다.
 
 게시 경계 fault 검증은 backend에 `ASKLAKE_CONTINUOUS_FAIL_AFTER_DATA_WRITE_ONCE=true`, E2E runner에 `ASKLAKE_CONTINUOUS_E2E_PUBLICATION_FAULT=true`를 설정한다. 첫 worker는 data `_SUCCESS` 뒤 manifest 전에 한 번 실패하고, harness가 resume한 뒤 같은 batch/offset을 중복 저장하지 않고 manifest와 Catalog를 복구해야 한다. 이 변수는 테스트 전용이며 운영에서는 반드시 `false`로 둔다.
 

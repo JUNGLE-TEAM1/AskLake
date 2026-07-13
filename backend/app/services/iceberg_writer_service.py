@@ -98,7 +98,11 @@ class IcebergWriterService:
         source_boundary: dict[str, Any] | None = None,
     ) -> IcebergCommitEvidence:
         self.describe_table(target)
-        snapshot_id, committed_at, warehouse_location = self.latest_snapshot(target)
+        snapshot_id, committed_at, warehouse_location = (
+            self.snapshot(target, str(expected_snapshot_id))
+            if expected_snapshot_id is not None
+            else self.latest_snapshot(target)
+        )
         if expected_snapshot_id is not None and snapshot_id != str(expected_snapshot_id):
             raise IcebergWriterError("ICEBERG_SNAPSHOT_ID_MISMATCH")
         return IcebergCommitEvidence(
@@ -146,6 +150,23 @@ class IcebergWriterService:
             "SELECT CAST(snapshot_id AS VARCHAR), CAST(committed_at AS VARCHAR), manifest_list "
             f"FROM {snapshots_table} ORDER BY committed_at DESC, snapshot_id DESC LIMIT 1"
         )
+        return self._snapshot_evidence(rows)
+
+    def snapshot(self, target: IcebergWriterTarget, snapshot_id: str) -> tuple[str, str, str]:
+        snapshots_table = qualified_identifier(
+            target.catalog,
+            target.namespace,
+            f"{target.table}$snapshots",
+        )
+        rows = self._execute(
+            "SELECT CAST(snapshot_id AS VARCHAR), CAST(committed_at AS VARCHAR), manifest_list "
+            f"FROM {snapshots_table} "
+            f"WHERE CAST(snapshot_id AS VARCHAR) = {sql_literal(snapshot_id)} LIMIT 1"
+        )
+        return self._snapshot_evidence(rows)
+
+    @staticmethod
+    def _snapshot_evidence(rows: list[list[Any]]) -> tuple[str, str, str]:
         if not rows or len(rows[0]) < 3:
             raise IcebergWriterError("ICEBERG_SNAPSHOT_EVIDENCE_MISSING")
         snapshot_id = str(rows[0][0] or "").strip()

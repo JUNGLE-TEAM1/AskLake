@@ -515,7 +515,7 @@ function safeJsonParse(value) {
   }
 }
 
-function sparkPackages(job, source, output) {
+export function sparkPackages(job, source, output) {
   const packages = [];
   if (
     process.env.ASKLAKE_SPARK_HADOOP_AWS_PACKAGE !== "none"
@@ -534,7 +534,7 @@ function sparkPackages(job, source, output) {
   return [...new Set(packages.filter((item) => item && item !== "none"))];
 }
 
-function sparkIcebergEnvironment(job) {
+export function sparkIcebergEnvironment(job) {
   if (!job?.icebergTarget) return {};
   const database = String(process.env.TRINO_ICEBERG_JDBC_DATABASE || process.env.POSTGRES_DB || "asklake");
   const warehouseBucket = String(process.env.TRINO_ICEBERG_WAREHOUSE_BUCKET || "").trim();

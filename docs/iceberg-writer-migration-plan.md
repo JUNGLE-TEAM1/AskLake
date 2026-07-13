@@ -20,10 +20,10 @@
 | --- | --- | --- | --- | --- |
 | 일반 Spark 배치 | Iceberg table의 S3/MinIO Parquet | Iceberg JDBC catalog + AskLake Catalog materialization | `available` | Phase 2 완료 |
 | Kafka Snapshot | Iceberg table의 S3/MinIO Parquet | Iceberg JDBC catalog + AskLake Catalog materialization | `available` | Phase 3 완료 |
-| Kafka Continuous | S3 Parquet micro-batch | AskLake Catalog materialization/checkpoint | `unavailable` | foreachBatch Iceberg append commit |
+| Kafka Continuous | Iceberg table의 S3/MinIO Parquet | Iceberg JDBC catalog + AskLake Catalog materialization/checkpoint | `available` | Phase 4 완료 |
 | Trino SQL materialization | Iceberg CTAS | AskLake Catalog + `queryEngineTable` | `available` | 기준 구현으로 유지 |
 
-현재 Kafka Continuous writer는 아직 Iceberg metadata를 만들지 않으므로, 단순히 `storagePath`가 S3인 Dataset을 Iceberg table로 추정하면 안 된다. 일반 Spark 배치와 Kafka Snapshot도 persisted `icebergTarget`, 실제 snapshot commit, Trino 물리 검증이 모두 확인된 경우에만 Iceberg Dataset으로 취급한다.
+모든 Job writer는 persisted `icebergTarget`, 실제 snapshot commit, Trino 물리 검증이 모두 확인된 경우에만 Iceberg Dataset으로 취급한다. Job identity가 없는 legacy/debug direct ingest는 계속 S3 object 호환 경로이며 Iceberg table로 추정하지 않는다.
 
 ## 3. 목표 저장 계약
 
@@ -94,12 +94,21 @@ iceberg://{catalog}/{namespace}/{table}
 - 첫 Iceberg materialization은 기존 JSONL history와 섞이지 않도록 `snapshot` rebaseline으로 기록하고, 후속 새 Kafka snapshot은 `delta`로 기록한다. 빈 offset range는 새 Iceberg data file/Catalog run 없이 성공하며 offset 경계만 확정한다.
 - `ASKLAKE_VERIFY_ICEBERG_LIVE=true npm run verify:kafka-snapshot-iceberg`는 commit 뒤 offset 직전 강제 실패, 같은 snapshot retry, 중복 없는 Trino row count, 단일 Catalog materialization, 후속 empty run을 격리 Redpanda/Spark/Trino/MinIO 환경에서 검증한다.
 
-### Phase 4. Kafka Continuous 전환
+### Phase 4. Kafka Continuous 전환 (완료)
 
 - `foreachBatch`의 Parquet direct append를 Iceberg append commit으로 교체한다.
 - checkpoint, micro-batch ID, offset range, Iceberg snapshot ID의 정합성을 저장한다.
 - schema/rule/physical target 변경은 기존 Continuous checkpoint immutability와 같은 경계로 유지한다.
 - 성공 기준: worker 중지/재시작과 failure retry 후에도 중복 없이 이어받고 Trino가 최신 committed snapshot만 읽는다.
+
+구현 결과:
+
+- 각 non-empty `foreachBatch`는 Job, Spark batch ID, checkpoint, consumer group, topic, partition별 `[startOffset, endOffset)`을 결합한 deterministic `sourceBoundary`와 `runId`를 만든다. target row에는 `_asklake_run_id`와 `_asklake_ingested_at`을 추가하고 backend-owned append Iceberg table에 commit한다.
+- Iceberg snapshot commit 뒤 manifest/checkpoint 단계가 실패하면 재시도는 같은 `_asklake_run_id`를 table에서 확인해 기존 snapshot을 `reuse`하고 중복 append하지 않는다. checkpoint contract에는 Iceberg target과 schema/rule fingerprint를 포함하므로 기존 direct-Parquet checkpoint는 새 Job copy와 새 checkpoint 없이 재사용할 수 없다.
+- worker manifest, session batch API와 Catalog materialization은 `sourceBoundary`, source range, Iceberg snapshot ID/table URI를 보존한다. Backend는 해당 snapshot을 Trino로 검증한 뒤에만 Catalog cursor를 전진시키며, 과거 publication snapshot도 `$snapshots`에서 정확히 검증한다.
+- quarantine 보조 증적은 target-adjacent Parquet로 유지하되 replay 성공 행은 같은 Iceberg table에 deterministic maintenance run ID로 append한다. Replay Catalog 반영이 일시 실패하면 maintenance result를 `catalogApplied=false`로 남기고 maintenance 조회에서 같은 commit을 재검증한다.
+- 기존 `_batches` Parquet를 재작성하던 compaction은 Iceberg table에 적용하지 않는다. API는 `422 KAFKA_CONTINUOUS_ICEBERG_COMPACTION_UNAVAILABLE`을 반환하며 Iceberg rewrite/retention은 Phase 5 운영 Job 범위다.
+- `ASKLAKE_VERIFY_ICEBERG_LIVE=true npm run verify:kafka-continuous-iceberg`는 격리 Redpanda/Spark/Trino/MinIO에서 정상 append, manifest 직전 장애, 같은 boundary 재사용, checkpoint 재시작을 거쳐 Trino row count `4 -> 7 -> 9`와 중복 없는 Catalog history를 검증한다.
 
 ### Phase 5. 운영 전환
 
@@ -112,7 +121,7 @@ iceberg://{catalog}/{namespace}/{table}
 - Kafka Snapshot의 frontend create payload와 기존 `targetFormat=jsonl` 저장값은 읽기 호환으로 유지한다. 이 필드는 Phase 3 Job의 최종 물리 포맷 근거가 아니며, 검증된 Catalog `storageFormat=iceberg`와 `queryEngineTable`이 최종 저장 계약이다.
 - 기존 JSONL/Parquet S3 output을 Iceberg table로 표시하거나 `queryEngineStatus=available`로 승격하지 않는다.
 - Iceberg metadata를 생성하지 않는 writer의 Dataset은 Trino query target으로 노출하지 않는다.
-- Kafka Snapshot offset/Iceberg commit 순서는 Phase 3 계약을 따른다. Continuous checkpoint와 Iceberg snapshot commit의 정합성 기준은 Phase 4 전환 전에 별도로 확정한다.
+- Kafka Snapshot offset/Iceberg commit 순서는 Phase 3 계약을 따른다. Continuous checkpoint와 Iceberg snapshot commit의 정합성은 deterministic source boundary, manifest, Trino-verified snapshot과 Catalog cursor의 순서로 확정한다.
 
 ## 6. Phase 0 검수 기준
 

@@ -122,12 +122,16 @@ def ensure_schema(db: Session) -> None:
             "status": "VARCHAR(32)",
             "last_error": "TEXT",
             "dag_steps": "JSON",
+            "source_boundary": "JSON",
+            "iceberg_snapshot_id": "VARCHAR(255)",
+            "iceberg_table_uri": "VARCHAR(1024)",
         }
         for column_name, column_type in batch_column_defs.items():
             if column_name not in batch_columns:
                 connection.execute(text(f"ALTER TABLE kafka_continuous_batches ADD COLUMN {column_name} {column_type}"))
         connection.execute(text("UPDATE kafka_continuous_batches SET status = 'success' WHERE status IS NULL"))
         connection.execute(text("UPDATE kafka_continuous_batches SET dag_steps = '[]' WHERE dag_steps IS NULL"))
+        connection.execute(text("UPDATE kafka_continuous_batches SET source_boundary = '{}' WHERE source_boundary IS NULL"))
 
         job_defaults = {
             "dag_steps": "[]",
@@ -791,7 +795,10 @@ def continuous_batch_to_schema(batch: KafkaContinuousBatchModel) -> KafkaContinu
         quarantined_count=int(batch.quarantined_count or 0),
         duration_ms=batch.duration_ms,
         source_ranges=batch.source_ranges or [],
+        source_boundary=batch.source_boundary or {},
         data_path=batch.data_path,
+        iceberg_snapshot_id=batch.iceberg_snapshot_id,
+        iceberg_table_uri=batch.iceberg_table_uri,
         quarantine_path=batch.quarantine_path,
         manifest_path=batch.manifest_path,
         last_error=batch.last_error,

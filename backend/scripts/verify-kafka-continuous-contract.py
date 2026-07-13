@@ -13,8 +13,9 @@ from app.core.errors import ApiError
 from app.models.etl import ETLJobModel, KafkaContinuousMaintenanceRunModel
 from app.repositories import etl_repository
 from app.schemas.catalog import DatasetMaterializationRun
-from app.schemas.etl import CanonicalRuleDraft, ContinuousReplayRequest, CreatePipelineRequest, SchemaColumnDraft, UpdatePipelineRequest
+from app.schemas.etl import CanonicalRuleDraft, ContinuousCompactionRequest, ContinuousReplayRequest, CreatePipelineRequest, SchemaColumnDraft, UpdatePipelineRequest
 from app.services import etl_service
+from app.services.iceberg_writer_service import build_iceberg_writer_target
 from scripts.kafka_schema_paths import build_nested_schema_tree, expected_object_keys, json_path, split_source_path
 
 
@@ -54,6 +55,12 @@ def continuous_job() -> ETLJobModel:
     compiled = etl_service.compile_pipeline_rules(request)
     etl_service.require_compiled_rules(compiled)
     etl_service.apply_compiled_rules(request, compiled)
+    dataset_id = "ds_reviews_continuous_contract"
+    iceberg_target = build_iceberg_writer_target(
+        request.target_dataset,
+        dataset_id,
+        write_mode="append",
+    )
     return ETLJobModel(
         id="JOB-CONTINUOUS-CONTRACT",
         name=request.job_name,
@@ -68,7 +75,10 @@ def continuous_job() -> ETLJobModel:
         source_type=request.source_type,
         execution_mode="continuous",
         continuous_config=etl_service.continuous_config_from_request(request, "JOB-CONTINUOUS-CONTRACT"),
+        dataset_id=dataset_id,
+        iceberg_target=iceberg_target.model_dump(mode="json", by_alias=True),
         schema_columns=[column.model_dump(mode="json", by_alias=True) for column in request.schema_columns],
+        schema_fingerprint="schema-continuous-contract-v1",
         schema_sample_rows=[],
         target_format=request.target_format,
         target_layer=request.target_layer,
@@ -136,6 +146,26 @@ def main() -> None:
     }
 
     job = continuous_job()
+    original_job_get = etl_repository.get_job
+    original_governed_access = etl_service.require_governed_access
+    try:
+        etl_repository.get_job = lambda _db, _job_id: job
+        etl_service.require_governed_access = lambda *_args, **_kwargs: None
+        try:
+            etl_service.compact_kafka_continuous_target(
+                None,
+                job.id,
+                ContinuousCompactionRequest(target_file_size_mb=128),
+                ActorContext(role="admin"),
+            )
+        except ApiError as exc:
+            assert exc.status_code == 422
+            assert exc.code == "KAFKA_CONTINUOUS_ICEBERG_COMPACTION_UNAVAILABLE"
+        else:
+            raise AssertionError("Legacy Parquet compaction must be rejected for an Iceberg target.")
+    finally:
+        etl_repository.get_job = original_job_get
+        etl_service.require_governed_access = original_governed_access
     runtime = etl_service.continuous_runtime_from_job(job)
     assert runtime.topic == "reviews.continuous"
     assert runtime.consumer_group_id == "asklake-continuous-contract"
@@ -412,6 +442,69 @@ def main() -> None:
         captured_dataset = {}
         dataset_save_count = {"value": 0}
         etl_repository.get_dataset_by_id = lambda _db, dataset_id: captured_dataset.get(dataset_id)
+        etl_repository.get_dataset_by_id_for_update = lambda _db, dataset_id: captured_dataset.get(dataset_id)
+
+        compiled_job_rules = etl_service.compile_job_rules(job)
+        canonical_job_rules = [rule.model_dump(mode="json", by_alias=True) for rule in compiled_job_rules.result.rules]
+        persisted_rule_fingerprint = etl_service.canonical_rule_fingerprint(
+            compiled_job_rules.result.contract_version,
+            canonical_job_rules,
+        )
+
+        def iceberg_publication(batch_id, stored_count, source_ranges):
+            run_id = f"continuous:{job.id}:batch:{batch_id}:contract"
+            source_boundary = {
+                "batchId": batch_id,
+                "boundaryId": f"boundary-{batch_id}",
+                "checkpointPath": runtime.checkpoint_path,
+                "consumerGroupId": runtime.consumer_group_id,
+                "jobId": job.id,
+                "kind": "kafka_continuous_batch",
+                "runId": run_id,
+                "sourceRanges": source_ranges,
+                "topic": runtime.topic,
+            }
+            commit = {
+                "committedAt": "2026-07-14T00:00:00Z",
+                "createdTable": batch_id == 0,
+                "jobId": job.id,
+                "operation": "append",
+                "ruleFingerprint": persisted_rule_fingerprint,
+                "runId": run_id,
+                "schemaFingerprint": job.schema_fingerprint,
+                "snapshotId": str(1000 + batch_id),
+                "sourceBoundary": source_boundary,
+                "target": job.iceberg_target,
+                "warehouseLocation": "s3://asklake-warehouse/warehouse/asklake/reviews_continuous",
+            }
+            return {
+                "batchId": batch_id,
+                "icebergCommit": commit,
+                "publishedAt": "2026-07-14T00:00:00Z",
+                "ruleContractVersion": compiled_job_rules.result.contract_version,
+                "ruleFingerprint": persisted_rule_fingerprint,
+                "runId": run_id,
+                "schemaFingerprint": job.schema_fingerprint,
+                "sourceBoundary": source_boundary,
+                "sourceRanges": source_ranges,
+                "storedCount": stored_count,
+            }
+
+        etl_service.verify_spark_iceberg_result = lambda _job, _run_id, result: {
+            **result,
+            "dataFileCount": 1,
+            "materializationOutputPath": "s3://asklake-warehouse/warehouse/asklake/reviews_continuous",
+            "queryEngineTable": {
+                "catalog": job.iceberg_target["catalog"],
+                "schema": job.iceberg_target["namespace"],
+                "table": job.iceberg_target["table"],
+                "format": "iceberg",
+                "partitionColumns": [],
+            },
+            "queryEngineVerified": True,
+            "storageSizeBytes": 1024,
+            "warehouseLocation": "s3://asklake-warehouse/warehouse/asklake/reviews_continuous",
+        }
 
         def capture_dataset(_db, dataset):
             captured_dataset[dataset.id] = dataset
@@ -430,11 +523,9 @@ def main() -> None:
             return runtime
         etl_repository.lock_kafka_continuous_runtime = count_runtime_relock
         etl_service.materialize_continuous_batch(fake_db, job, runtime, {
-            "publishedBatches": [{
-                "batchId": 0,
-                "storedCount": 2,
-                "sourceRanges": [{"topic": "reviews.continuous", "partition": 0, "startOffset": 0, "endOffset": 2}],
-            }],
+            "publishedBatches": [iceberg_publication(0, 2, [
+                {"topic": "reviews.continuous", "partition": 0, "startOffset": 0, "endOffset": 2},
+            ])],
         })
         assert runtime_relock_count["value"] == 1, "Catalog commit boundaries must reacquire the runtime lock."
         assert runtime.metrics["concurrentMarker"] == "latest", "Reacquired runtime metrics must win over a stale local copy."
@@ -442,11 +533,63 @@ def main() -> None:
         runtime.metrics.pop("concurrentMarker", None)
         runtime.metrics.pop("catalogBatchCursor", None)
         etl_repository.lock_kafka_continuous_runtime = lambda _db, _job_id: runtime
-        dataset_id = f"ds_{etl_service.normalize_column_name(job.target)}"
+        dataset_id = job.dataset_id
         assert captured_dataset[dataset_id].payload["materializationRuns"][0]["sourceKind"] == "kafka"
-        assert captured_dataset[dataset_id].payload["materializationRuns"][0]["materializationMode"] == "delta"
+        assert captured_dataset[dataset_id].payload["materializationRuns"][0]["materializationMode"] == "snapshot"
         assert captured_dataset[dataset_id].payload["materializationRuns"][0]["rowCount"] == 2
-        assert captured_dataset[dataset_id].payload["storageLocation"].endswith("/_batches")
+        assert captured_dataset[dataset_id].payload["storageLocation"].startswith("s3://asklake-warehouse/")
+
+        replay_run_id = "continuous-maint-replay-contract"
+        replay_ranges = [
+            {"topic": runtime.topic, "partition": 0, "startOffset": 4, "endOffset": 5},
+        ]
+        replay_boundary = {
+            "boundaryId": "replay-boundary-contract",
+            "jobId": job.id,
+            "kind": "kafka_continuous_replay",
+            "runId": replay_run_id,
+            "sourceRanges": replay_ranges,
+        }
+        replay_result = {
+            "endedAt": "2026-07-14T00:05:00Z",
+            "icebergCommit": {
+                "committedAt": "2026-07-14T00:05:00Z",
+                "createdTable": False,
+                "jobId": job.id,
+                "operation": "append",
+                "ruleFingerprint": persisted_rule_fingerprint,
+                "runId": replay_run_id,
+                "schemaFingerprint": job.schema_fingerprint,
+                "snapshotId": "2001",
+                "sourceBoundary": replay_boundary,
+                "target": job.iceberg_target,
+                "warehouseLocation": "s3://asklake-warehouse/warehouse/asklake/reviews_continuous",
+            },
+            "outputPath": job.iceberg_target["tableUri"],
+            "ruleContractVersion": compiled_job_rules.result.contract_version,
+            "ruleFingerprint": persisted_rule_fingerprint,
+            "runId": replay_run_id,
+            "sourceBoundary": replay_boundary,
+            "sourceRanges": replay_ranges,
+            "storedCount": 1,
+        }
+        before_replay_saves = dataset_save_count["value"]
+        assert etl_service.materialize_continuous_replay(fake_db, job, runtime, replay_result) is True
+        replay_materialization = captured_dataset[dataset_id].payload["materializationRuns"][0]
+        assert replay_materialization["runId"] == replay_run_id
+        assert replay_materialization["materializationMode"] == "delta"
+        assert replay_materialization["sourceBoundary"]["kind"] == "kafka_continuous_replay"
+        assert dataset_save_count["value"] == before_replay_saves + 1
+
+        invalid_replay = {
+            **replay_result,
+            "runId": "continuous-maint-invalid-replay",
+            "sourceBoundary": {**replay_boundary, "jobId": "WRONG-JOB"},
+        }
+        assert etl_service.materialize_continuous_replay(fake_db, job, runtime, invalid_replay) is False
+        assert dataset_save_count["value"] == before_replay_saves + 1
+        assert runtime.last_error.startswith("Replay Catalog materialization pending retry:")
+        runtime.last_error = None
 
         with tempfile.TemporaryDirectory() as report_dir:
             previous_report_dir = os.environ.get("ASKLAKE_SPARK_REPORT_DIR")
@@ -503,25 +646,20 @@ def main() -> None:
                 "quarantinedCount": 1,
                 "failedCount": 1,
                 "ruleContractVersion": "1.0",
-                "ruleFingerprint": "rule-v2",
+                "ruleFingerprint": persisted_rule_fingerprint,
                 "runtimeFingerprint": "runtime-v2",
                 "ruleMetrics": {"qualityQuarantinedCount": 1, "qualityWarnCount": 2},
                 "lastRuleResult": {"status": "success", "quality": {"invalidRowCount": 3}},
                 "publishedBatches": [{
-                    "batchId": 8,
+                    **iceberg_publication(8, 1, [{"topic": "reviews.continuous", "partition": 0, "startOffset": 6, "endOffset": 8}]),
                     "consumedCount": 2,
-                    "storedCount": 1,
                     "quarantinedCount": 1,
-                    "dataPath": "s3a://asklake-output/reviews_continuous/bronze/_batches/batch_id=8",
+                    "dataPath": job.iceberg_target["tableUri"],
                     "manifestPath": "s3a://asklake-output/reviews_continuous/bronze/_batch-manifests/batch_id=8",
-                    "ruleContractVersion": "1.0",
-                    "ruleFingerprint": "rule-v2",
                     "runtimeFingerprint": "runtime-v2",
-                    "schemaFingerprint": "schema-v1",
                     "quality": {"invalidRowCount": 1},
                     "transform": {"warnCount": 0},
                     "publishedAt": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
-                    "sourceRanges": [{"topic": "reviews.continuous", "partition": 0, "startOffset": 6, "endOffset": 8}],
                 }],
             }), encoding="utf-8")
             runtime.status = "running"
@@ -536,16 +674,18 @@ def main() -> None:
             assert session_sync_count["value"] == 1, "A runtime report must stage session batches exactly once per refresh."
             etl_service.sync_kafka_continuous_session = original_session_sync
             recovered_run = captured_dataset[dataset_id].payload["materializationRuns"][0]
-            assert recovered_run["runId"] == f"continuous:{job.id}:batch:8"
+            assert recovered_run["runId"] == iceberg_publication(8, 1, [
+                {"topic": "reviews.continuous", "partition": 0, "startOffset": 6, "endOffset": 8},
+            ])["runId"]
             assert recovered_run["materializationMode"] == "delta"
             assert recovered_run["sourceRanges"][0]["endOffset"] == 8
-            assert recovered_run["ruleFingerprint"] == "rule-v2"
+            assert recovered_run["ruleFingerprint"] == persisted_rule_fingerprint
             assert recovered_run["quality"]["invalidRowCount"] == 1
             serialized_run = DatasetMaterializationRun.model_validate(recovered_run).model_dump(mode="json", by_alias=True)
-            assert serialized_run["ruleFingerprint"] == "rule-v2"
+            assert serialized_run["ruleFingerprint"] == persisted_rule_fingerprint
             assert serialized_run["runtimeFingerprint"] == "runtime-v2"
             assert serialized_run["sourceRanges"][0]["endOffset"] == 8
-            assert runtime.metrics["ruleFingerprint"] == "rule-v2"
+            assert runtime.metrics["ruleFingerprint"] == persisted_rule_fingerprint
             assert runtime.metrics["ruleMetrics"]["qualityWarnCount"] == 2
             assert dataset_save_count["value"] == before_recovery_saves + 1
             etl_service.refresh_kafka_continuous_runtime(None, job)

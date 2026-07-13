@@ -1,6 +1,7 @@
 """Finite Spark maintenance tasks for Kafka continuous targets."""
 
 import json
+import hashlib
 import math
 import os
 import re
@@ -8,12 +9,21 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from pyspark.sql import SparkSession
+from pyspark.sql import functions as F
 from pyspark.sql.functions import array, array_except, array_union, col, concat, concat_ws, from_json, get_json_object, lit, map_keys, size, transform, when
 from pyspark.sql.types import BooleanType, DoubleType, LongType, MapType, StringType, StructField, StructType, TimestampType
+from pyspark.sql.window import Window
 
 from kafka_schema_paths import build_nested_schema_tree, expected_object_keys, json_path, split_source_path
 from object_storage_runtime import configure_spark_hadoop
 from snapshot_rule_runtime import apply_snapshot_rules, supports_snapshot_rules
+from spark_job_run import (
+    commit_iceberg_table,
+    iceberg_table_exists,
+    make_spark,
+    parse_iceberg_target,
+    spark_iceberg_table_identifier,
+)
 
 
 RULE_CONTRACT_VERSION = os.environ.get("ASKLAKE_MAINTENANCE_RULE_CONTRACT_VERSION", "1.0")
@@ -192,12 +202,17 @@ def read_quarantine(spark: SparkSession, output_path: str):
     return spark.read.option("basePath", path).option("mergeSchema", "true").parquet(*paths)
 
 
-def inspect_quarantine(spark: SparkSession, output_path: str):
+def read_iceberg_target(spark: SparkSession, iceberg_target: dict):
+    if not iceberg_table_exists(spark, iceberg_target):
+        return None
+    return spark.table(spark_iceberg_table_identifier(iceberg_target))
+
+
+def inspect_quarantine(spark: SparkSession, output_path: str, iceberg_target: dict):
     frame = read_quarantine(spark, output_path)
     if frame is None:
         return {"records": [], "total": 0}
-    target_path = f"{output_path.rstrip('/')}/_batches"
-    target = read_completed_batches(spark, target_path)
+    target = read_iceberg_target(spark, iceberg_target)
     if target is not None:
         target_offsets = (target
             .select(col("kafka_partition").alias("partition"), col("kafka_offset").alias("offset"))
@@ -227,7 +242,48 @@ def inspect_quarantine(spark: SparkSession, output_path: str):
     return {"records": records, "total": total}
 
 
-def replay_quarantine(spark: SparkSession, output_path: str, run_id: str):
+def replay_source_ranges(frame) -> list[dict]:
+    distinct_offsets = frame.select("topic", "partition", "offset").distinct()
+    grouped = (
+        distinct_offsets
+        .withColumn(
+            "range_group",
+            col("offset") - F.row_number().over(
+                Window.partitionBy("topic", "partition").orderBy("offset")
+            ),
+        )
+        .groupBy("topic", "partition", "range_group")
+        .agg(
+            F.min("offset").alias("start_offset"),
+            F.max("offset").alias("end_offset"),
+        )
+        .orderBy("topic", "partition", "start_offset")
+    )
+    return [
+        {
+            "topic": str(row["topic"] or ""),
+            "partition": int(row["partition"] or 0),
+            "startOffset": int(row["start_offset"] or 0),
+            "endOffset": int(row["end_offset"] or 0) + 1,
+        }
+        for row in grouped.collect()
+    ]
+
+
+def replay_source_boundary(run_id: str, source_ranges: list[dict]) -> dict:
+    boundary = {
+        "kind": "kafka_continuous_replay",
+        "jobId": os.environ["ASKLAKE_MAINTENANCE_JOB_ID"],
+        "runId": run_id,
+        "sourceRanges": source_ranges,
+    }
+    boundary["boundaryId"] = hashlib.sha256(
+        json.dumps(boundary, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return boundary
+
+
+def replay_quarantine(spark: SparkSession, output_path: str, run_id: str, iceberg_target: dict):
     if not supports_snapshot_rules(RULES):
         raise RuntimeError("Continuous replay received a stateful or unsupported canonical Rule.")
     frame = read_quarantine(spark, output_path)
@@ -282,14 +338,14 @@ def replay_quarantine(spark: SparkSession, output_path: str, run_id: str):
         invalid_condition = invalid_condition | unknown_condition
     valid = parsed.where(~invalid_condition)
     schema_valid_count = valid.count()
-    target_root = f"{output_path.rstrip('/')}/_batches"
-    existing_target = read_completed_batches(spark, target_root)
+    existing_target = read_iceberg_target(spark, iceberg_target)
     if existing_target is not None:
         existing = (existing_target
             .select(col("kafka_partition").alias("partition"), col("kafka_offset").alias("offset")).distinct())
         valid = valid.join(existing, ["partition", "offset"], "left_anti")
     eligible_count = valid.count()
     skipped_count = schema_valid_count - eligible_count
+    source_ranges = replay_source_ranges(valid) if eligible_count else []
     projected = valid.select(
         *[nested_payload_column(source).alias(target) for source, target in aliases],
         "topic", "partition", "offset", "kafka_timestamp", "raw_payload", "quarantined_at",
@@ -298,15 +354,35 @@ def replay_quarantine(spark: SparkSession, output_path: str, run_id: str):
     target_frame = select_target(rule_execution["frame"])
     stored_count = target_frame.count()
     failed_count = input_count - skipped_count - stored_count
-    replay_path = f"{target_root}/batch_id=replay_{run_id}"
+    source_boundary = replay_source_boundary(run_id, source_ranges)
+    iceberg_commit = None
     if stored_count:
-        target_frame.write.mode("errorifexists").parquet(replay_path)
+        target_frame = (
+            target_frame
+            .withColumn("_asklake_run_id", lit(run_id))
+            .withColumn("_asklake_ingested_at", F.current_timestamp())
+        )
+        iceberg_commit = commit_iceberg_table(
+            spark,
+            target_frame,
+            iceberg_target,
+            job_id=os.environ["ASKLAKE_MAINTENANCE_JOB_ID"],
+            run_id=run_id,
+            partition_columns=iceberg_target.get("partitionColumns") or [],
+            schema_fingerprint=os.environ.get("ASKLAKE_MAINTENANCE_SCHEMA_FINGERPRINT", ""),
+            rule_fingerprint=RULE_FINGERPRINT,
+            source_boundary=source_boundary,
+        )
+        iceberg_commit.pop("_previousSnapshot", None)
     return {
         "inputCount": input_count,
         "storedCount": stored_count,
         "skippedCount": skipped_count,
         "failedCount": failed_count,
-        "outputPath": replay_path if stored_count else None,
+        "outputPath": iceberg_target["tableUri"] if stored_count else None,
+        "icebergCommit": iceberg_commit,
+        "sourceBoundary": source_boundary,
+        "sourceRanges": source_ranges,
         "appliedSchemaPolicy": policy,
         "ruleContractVersion": RULE_CONTRACT_VERSION,
         "ruleFingerprint": RULE_FINGERPRINT,
@@ -318,6 +394,11 @@ def replay_quarantine(spark: SparkSession, output_path: str, run_id: str):
 
 
 def compact(spark: SparkSession, output_path: str, run_id: str):
+    if os.environ.get("ASKLAKE_MAINTENANCE_ICEBERG_TARGET"):
+        raise RuntimeError(
+            "KAFKA_CONTINUOUS_ICEBERG_COMPACTION_UNAVAILABLE: "
+            "legacy Parquet compaction cannot mutate an Iceberg table"
+        )
     source_path = f"{output_path.rstrip('/')}/_batches"
     frame = read_completed_batches(spark, source_path)
     if frame is None:
@@ -363,12 +444,17 @@ def main():
     kind = os.environ["ASKLAKE_MAINTENANCE_KIND"]
     run_id = os.environ["ASKLAKE_MAINTENANCE_RUN_ID"]
     output_path = os.environ["ASKLAKE_MAINTENANCE_OUTPUT_PATH"]
-    spark = SparkSession.builder.appName(f"asklake-{kind}-{run_id}").getOrCreate()
+    iceberg_target = parse_iceberg_target(
+        json.loads(os.environ["ASKLAKE_MAINTENANCE_ICEBERG_TARGET"])
+    )
+    if iceberg_target.get("writeMode") != "append":
+        raise ValueError("Continuous maintenance requires an append Iceberg target.")
+    spark = make_spark({}, iceberg_target)
     configure_s3a(spark)
     if kind == "inspect_quarantine":
-        result = inspect_quarantine(spark, output_path)
+        result = inspect_quarantine(spark, output_path, iceberg_target)
     elif kind == "quarantine_replay":
-        result = replay_quarantine(spark, output_path, run_id)
+        result = replay_quarantine(spark, output_path, run_id, iceberg_target)
     elif kind == "compaction":
         result = compact(spark, output_path, run_id)
     else:

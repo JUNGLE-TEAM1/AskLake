@@ -79,7 +79,9 @@ def configure_environment(root):
         "ASKLAKE_MAINTENANCE_RULE_FINGERPRINT": rule_fingerprint,
         "ASKLAKE_MAINTENANCE_RULE_OUTPUT_SCHEMA": json.dumps(OUTPUT_SCHEMA),
         "ASKLAKE_MAINTENANCE_RULES": json.dumps(RULES),
+        "ASKLAKE_MAINTENANCE_JOB_ID": "continuous-rule-runtime",
         "ASKLAKE_MAINTENANCE_SCHEMA_COLUMNS": json.dumps(schema_columns),
+        "ASKLAKE_MAINTENANCE_SCHEMA_FINGERPRINT": "schema-rule-runtime-v1",
         "ASKLAKE_MAINTENANCE_SCHEMA_POLICY": json.dumps({"unknownField": "preserve"}),
         "ASKLAKE_MAINTENANCE_OFFSETS": "[]",
         "ASKLAKE_MAINTENANCE_APPROVE_UNKNOWN_FIELDS": "false",
@@ -198,7 +200,16 @@ def main():
             worker.rule_quarantine_rows(result["quarantine"]).write.mode("overwrite").parquet(
                 f"{maintenance_output}/_quarantine/_batches/batch_id=0"
             )
-            replay = maintenance.replay_quarantine(spark, maintenance_output, "verify")
+            iceberg_target = {
+                "catalog": "iceberg",
+                "namespace": "asklake",
+                "partitionColumns": [],
+                "table": "continuous_rule_runtime",
+                "tableUri": "iceberg://iceberg/asklake/continuous_rule_runtime",
+                "writeMode": "append",
+            }
+            maintenance.read_iceberg_target = lambda _spark, _target: None
+            replay = maintenance.replay_quarantine(spark, maintenance_output, "verify", iceberg_target)
             assert replay["storedCount"] == 0
             assert replay["failedCount"] == 1
             assert replay["ruleRejectedCount"] == 1
@@ -209,15 +220,15 @@ def main():
 
             checkpoint = f"file://{root}/checkpoint"
             output = f"file://{root}/output"
-            worker.ensure_checkpoint_contract(spark, checkpoint, output)
+            worker.ensure_checkpoint_contract(spark, checkpoint, output, iceberg_target)
             assert worker.RUNTIME_FINGERPRINT
-            worker.ensure_checkpoint_contract(spark, checkpoint, output)
+            worker.ensure_checkpoint_contract(spark, checkpoint, output, iceberg_target)
             original_rule_fingerprint = worker.RULE_FINGERPRINT
             original_expected = worker.EXPECTED_RULE_FINGERPRINT
             worker.RULE_FINGERPRINT = "changed-rule-fingerprint"
             worker.EXPECTED_RULE_FINGERPRINT = ""
             try:
-                worker.ensure_checkpoint_contract(spark, checkpoint, output)
+                worker.ensure_checkpoint_contract(spark, checkpoint, output, iceberg_target)
             except RuntimeError as error:
                 assert "checkpoint contract fingerprint mismatch" in str(error)
             else:

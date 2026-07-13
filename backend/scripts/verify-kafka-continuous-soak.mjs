@@ -20,6 +20,9 @@ if (!["none", "worker", "backend", "kafka", "minio"].includes(faultMode)) throw 
 const faultAfter = positiveInt(process.env.ASKLAKE_CONTINUOUS_SOAK_FAULT_AFTER || process.env.ASKLAKE_CONTINUOUS_SOAK_KILL_AFTER, Math.floor((requestedCount || 1000) / 2));
 const faultDurationMs = positiveInt(process.env.ASKLAKE_CONTINUOUS_SOAK_FAULT_DURATION_MS, 5000);
 const verifyCompaction = process.env.ASKLAKE_CONTINUOUS_SOAK_COMPACT === "true";
+if (verifyCompaction) {
+  throw new Error("ASKLAKE_CONTINUOUS_SOAK_COMPACT is unavailable for Iceberg targets until the Phase 5 Iceberg maintenance job is implemented.");
+}
 const baseUrl = process.env.ASKLAKE_CONTINUOUS_E2E_BASE_URL || "http://127.0.0.1:8080";
 const composeFile = process.env.ASKLAKE_CONTINUOUS_COMPOSE_FILE || "../deploy/docker-compose.prod.yml";
 const envFile = process.env.ASKLAKE_CONTINUOUS_ENV_FILE || "../deploy/.env";
@@ -62,13 +65,6 @@ try {
     return list.find((item) => item.name === target) || null;
   }, "Catalog materialization", 120000);
   const logs = await request(`/api/etl/jobs/${encodeURIComponent(jobId)}/continuous/logs?tail=100`);
-  let compaction = null;
-  if (verifyCompaction) {
-    await post(`/api/etl/jobs/${encodeURIComponent(jobId)}/commands`, { command: "stopContinuous" });
-    await waitFor(async () => (await getJob()).continuousRuntime?.status === "stopped", "worker stop before compaction");
-    streamStopped = true;
-    compaction = await post(`/api/etl/jobs/${encodeURIComponent(jobId)}/continuous/compactions`, { targetFileSizeMb: 256 });
-  }
   const report = {
     inputPath: inputPath || null,
     producedCount,
@@ -85,7 +81,7 @@ try {
     elapsedMs: Date.now() - startedAt,
     catalogMaterializationCount: dataset.materializationRuns?.length || 0,
     workerLogLineCount: logs.lines?.length || 0,
-    compaction: compaction?.result || null,
+    compaction: null,
     topic,
     target,
   };
