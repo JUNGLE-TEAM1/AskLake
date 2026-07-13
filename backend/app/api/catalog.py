@@ -15,10 +15,8 @@ from app.schemas.catalog import (
     DeleteMaterializationRunResponse,
     LineageGraphResponse,
 )
-from app.schemas.trino import TrinoMaterializationRunResponse
 from app.services.catalog_service import CatalogService
 from app.services.lake_storage_service import LocalLakeStorageService
-from app.services.trino_materialization_service import TrinoMaterializationService
 
 router = APIRouter(prefix="/catalog", tags=["catalog"])
 
@@ -29,10 +27,6 @@ def get_catalog_service(db: Annotated[Session, Depends(get_db)]) -> CatalogServi
         repository=CatalogRepository(db),
         sql_repository=SqlRepository(db),
     )
-
-
-def get_trino_materialization_service(db: Annotated[Session, Depends(get_db)]) -> TrinoMaterializationService:
-    return TrinoMaterializationService(SqlRepository(db), CatalogRepository(db))
 
 
 @router.get("/datasets", response_model=CatalogDatasetListResponse)
@@ -85,22 +79,3 @@ def create_derived_dataset(
     actor: Annotated[ActorContext, Depends(get_actor_context)],
 ) -> CatalogDatasetResponse:
     return service.create_derived_dataset(request, actor)
-
-
-@router.post("/trino-runs/{run_id}/materializations", response_model=TrinoMaterializationRunResponse, status_code=status.HTTP_202_ACCEPTED)
-def create_trino_materialization(
-    run_id: str,
-    request: CreateDerivedDatasetRequest,
-    service: Annotated[TrinoMaterializationService, Depends(get_trino_materialization_service)],
-    actor: Annotated[ActorContext, Depends(get_actor_context)],
-) -> TrinoMaterializationRunResponse:
-    return service.submit(run_id, request, actor)
-
-
-@router.get("/trino-materializations/{materialization_id}", response_model=TrinoMaterializationRunResponse)
-def get_trino_materialization(
-    materialization_id: str,
-    service: Annotated[TrinoMaterializationService, Depends(get_trino_materialization_service)],
-    actor: Annotated[ActorContext, Depends(get_actor_context)],
-) -> TrinoMaterializationRunResponse:
-    return service.refresh(materialization_id, actor)

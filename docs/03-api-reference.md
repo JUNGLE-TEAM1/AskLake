@@ -13,7 +13,6 @@
 - `frontend/src/services/pipelineApi.ts`가 create/run/query 호출 진입점이다.
 - live backend mode에서 ETL job, catalog dataset, SQL run snapshot은 Postgres JSONB metadata tables에 저장된다.
 - ETL/Catalog 초기 hydrate 결과가 Postgres에 비어 있으면 UI도 빈 목록으로 시작한다.
-- Issue #488은 local/prod Compose의 Trino 482 + Iceberg JDBC catalog baseline, canonical Query Run, cursor result storage, Iceberg CTAS Dataset 자동 등록을 제공한다. `/api/query/runs`는 `TRINO_ENABLED`에 따라 Trino runtime과 DuckDB compatibility runtime을 전환한다.
 
 ## 2) 환경 변수
 
@@ -29,39 +28,7 @@ ASKLAKE_DASHBOARD_MAX_REMOTE_BYTES=536870912
 ASKLAKE_DASHBOARD_MAX_REMOTE_OBJECTS=256
 ASKLAKE_DASHBOARD_QUERY_TIMEOUT_SECONDS=15
 TARGET_DATABASES=asklake,asklake_gold,analytics,marketing
-TRINO_ENABLED=false
-TRINO_BASE_URL=http://localhost:8088
-TRINO_CATALOG=iceberg
-TRINO_SCHEMA=asklake
-TRINO_USER=asklake-api
-TRINO_QUERY_TIMEOUT_SECONDS=300
-TRINO_MAX_RESPONSE_BYTES=2000000
-TRINO_MAX_RESULT_BYTES=50000000
-TRINO_MAX_RESULT_PAGES=1000
-TRINO_RESULT_RETENTION_SECONDS=86400
-TRINO_MAX_CONCURRENT_RUNS_PER_USER=2
-TRINO_RESULT_STORAGE_BUCKET=asklake-query-results
-TRINO_RESULT_STORAGE_PREFIX=query-results
-TRINO_RESULT_STORAGE_AUTO_CREATE_BUCKET=false
-TRINO_RESULT_STORAGE_ACCESS_KEY=<dedicated server-only value>
-TRINO_RESULT_STORAGE_SECRET_KEY=<dedicated server-only value>
-TRINO_RESULT_CURSOR_SECRET=<server-only random secret>
-TRINO_QUERY_CONFIRMATION_SECRET=<server-only random secret>
-TRINO_QUERY_CONFIRMATION_TTL_SECONDS=300
-TRINO_QUERY_WARNING_BYTES=1073741824
-TRINO_QUERY_MAX_ESTIMATED_BYTES=0
-TRINO_QUERY_ESTIMATED_THROUGHPUT_BYTES_PER_SECOND=268435456
-TRINO_COLLECTOR_LEASE_SECONDS=60
-TRINO_COLLECTOR_PAGES_PER_LEASE=100
-TRINO_COLLECTOR_POLL_SECONDS=1
-TRINO_CLEANUP_POLL_SECONDS=3600
-MINIO_ENDPOINT=http://localhost:9000
-MINIO_ACCESS_KEY=<server-only value>
-MINIO_SECRET_KEY=<server-only value>
-MINIO_REGION=us-east-1
 ```
-
-`TRINO_MAX_RESULT_BYTES`, `TRINO_MAX_RESULT_PAGES`는 legacy PostgreSQL page read의 호환 설정으로만 남겨 둔다. Trino Query Run 일반 결과는 private MinIO gzip page object에 저장하고 PostgreSQL에는 manifest/page metadata만 저장한다. Production은 MinIO root가 아닌 `TRINO_RESULT_STORAGE_ACCESS_KEY` 전용 계정을 사용하고 `TRINO_RESULT_STORAGE_AUTO_CREATE_BUCKET=false`로 둔다. `trino-result-cleanup` worker는 `TRINO_CLEANUP_POLL_SECONDS`마다 terminal run 전체를 batch 순회한다. 상세 lifecycle은 `docs/trino-query-result-storage-contract.md`를 따른다.
 
 - 개발 서버에서 `VITE_API_BASE_URL`을 생략하면 프론트는 같은 출처의 `/api`를 호출하고, Vite proxy가 FastAPI `http://127.0.0.1:8080`으로 전달한다.
 - `VITE_USE_MOCK_API=false` 또는 미설정: live backend mode. Source connector, create/run/query/catalog/dashboard API를 실제 backend로 보낸다.
@@ -74,11 +41,6 @@ MINIO_REGION=us-east-1
 - Target DB 선택은 `GET /api/target/databases` 서버 API를 통해 허용 DB 목록을 조회한다. `TARGET_DATABASES`가 없으면 local demo 기본값을 사용한다.
 - Query AI live mode는 backend env의 `OPENAI_API_KEY`와 `OPENAI_QUERY_AI_MODEL`을 사용한다. 브라우저 env에는 OpenAI 키를 두지 않는다.
 - Query AI 요청은 선택된 dataset id와 dataset metadata 전체를 함께 전달해 backend가 선택 context 안에서 JOIN SQL 초안을 생성할 수 있게 한다. live 응답이 선택 reference JOIN을 포함하지 않으면 frontend가 동일 metadata로 JOIN 초안 fallback을 적용한다.
-- `TRINO_ENABLED=false`에서는 `/api/query/runs`가 DuckDB compatibility response를 유지한다. `true`이면 같은 endpoint가 Trino full Query Run을 `202 Accepted`로 접수하고, `GET /api/query/runs`(현재 사용자 실행 이력), `GET /api/query/runs/{runId}`, `GET /api/query/runs/{runId}/results`, `GET /api/query/runs/{runId}/exports/csv`, `POST /api/query/runs/{runId}/cancel` lifecycle를 사용한다. `POST /api/query/estimates`는 Iceberg `$files.readable_metrics`에서 쿼리 참조 컬럼의 물리 스캔량을 계산한다. 실행 시간은 결과 행 수·전송·저장 비용까지 신뢰성 있게 예측할 수 있을 때까지 UI에 노출하지 않는다. Query Run은 token 없는 estimate snapshot, Trino progress/split stats, Query 완료·수집 시작·첫 page·전체 준비 milestone 시각/경과를 보존한다. milestone 시각은 UTC 최초 관측값이며 collector 인계에서 덮어쓰지 않는다. Catalog는 `queryEngineStatus`로 등록 상태를 응답하며, 실제 `DESCRIBE` 검증을 통과한 `available` Dataset에만 `queryEngineTable`을 포함한다.
-- Trino 전환 시에는 backend만 coordinator continuation URL을 보관한다. result는 cursor page로만 반환하며, run 조회/결과 조회는 submitter 또는 admin, 취소는 submitter/admin/base Dataset `manage` 권한자로 제한한다.
-- Query submit의 `clientRequestId`는 actor 범위 idempotency key다. 같은 key와 동일 request fingerprint는 기존 run을 반환하고, 같은 key를 다른 SQL/context에 재사용하면 `409 CONFLICT`다. actor별 실행 slot reservation은 PostgreSQL advisory lock 안에서 원자적으로 처리하며 한도를 넘으면 `429`다.
-- 현재 Trino result page는 private MinIO object로 저장하고 PostgreSQL에는 metadata만 남긴다. 기존 PostgreSQL page row는 migration compatibility read 경로로만 유지한다. `GET /api/query/runs/{runId}`와 materialization GET은 collector가 저장한 상태만 읽고, Trino continuation fetch는 `trino-result-collector` worker만 수행한다. Query Run collector는 blocking `nextUri` 대기 중 QueryInfo를 읽기 전용으로 샘플링해 진행률을 보강하지만 result page를 소비하지 않으며, 실패 시 기존 statement stats로 fallback한다. signed cursor는 storage page 내부 row offset까지 감추고 submit 시 고정한 API page size를 유지한다. 상세 계약은 `docs/trino-query-result-storage-contract.md`를 따른다.
-- 현재 actor의 user ID가 있으면 run submitter/owner 판정과 user grant는 ID를 우선한다. 동일 display name은 다른 ID의 run 소유권을 얻지 못하며, ID 없는 legacy run/grant만 이름 호환을 유지한다.
 
 ## 3) 공통 규칙
 
@@ -110,7 +72,6 @@ Canonical status values:
 | Run | `status` | `queued`, `running`, `success`, `failed`, `canceled` |
 | Dataset | `status` | `available`, `approval_required` |
 | Dataset | `freshness` | `latest`, `stale`, `approval` |
-| Dataset | `queryEngineStatus` | `pending`, `available`, `registration_failed`, `unavailable` |
 | Dashboard | `status` | `draft`, `published` |
 
 ## 4) P0 API
@@ -134,7 +95,6 @@ Canonical status values:
 | `POST` | `/api/etl/rules/preview` | Session | 최대 100개 샘플에 canonical Snapshot Rule을 실제 runtime으로 적용 | `docs/api-contract.md` |
 | `POST` | `/api/etl/record-parsing/preview` | TBD | 이름 없는 TXT 제한 샘플을 연속 공백으로 구조화하고 필드 개수·컬럼 타입 초안 반환 | `docs/api-contract.md` |
 | `POST` | `/api/etl/jobs` | TBD | 새 수집/처리 job 생성 | `docs/api-contract.md` |
-| `POST` | `/api/etl/sql-jobs` | source Query Run submitter/admin | 성공한 Trino Query Run에서 반복 full-refresh SQL Job 생성 | `docs/trino-query-run-contract.md` |
 | `PATCH` | `/api/etl/jobs/{jobId}` | `manage` | 생성된 Job의 허용 설정 업데이트. source identity는 요청에 포함할 수 없음 | `docs/etl-job-edit-contract.md` |
 | `POST` | `/api/etl/jobs/{jobId}/commands` | TBD | 실행, 재실행, 일시정지, 현재 Run 취소, 스케줄 중지 | `docs/api-contract.md` |
 | `GET` | `/api/etl/kafka/replay-producer` | `manage` | 배포 환경 Kafka replay producer 상태/최근 로그 조회 | `docs/api-contract.md` |
@@ -145,18 +105,10 @@ Canonical status values:
 | `POST` | `/api/etl/internal/airflow/jobs/{jobId}/runs/{runId}/execute` | Airflow internal token | 기존 단일 호출 Spark/Catalog 실행 경로의 호환 endpoint. 신규 DAG는 분리된 execute/catalog endpoint를 사용 | `docs/api-contract.md` |
 | `POST` | `/api/etl/schedules/run-due` | TBD | due 상태의 반복 Job을 검사하고 실행 | 이 문서 |
 | `POST` | `/api/etl/kafka/reviews/ingest` | TBD | Kafka snapshot range를 direct target에 저장하고 Catalog 등록 | 이 문서 |
-| `POST` | `/api/query/runs` | `query` | idempotent reservation 뒤 Trino read-only SQL 실행 접수 | `docs/trino-query-run-contract.md` |
-| `GET` | `/api/query/runs` | session | 현재 사용자가 제출한 Trino SQL 실행 이력 조회 | `docs/trino-query-run-contract.md` |
-| `GET` | `/api/query/runs/{runId}` | `query` | Trino SQL run 상태와 실행 통계 조회 | `docs/trino-query-run-contract.md` |
-| `GET` | `/api/query/runs/{runId}/results` | `query` | Trino SQL 결과 cursor 페이지 조회 | `docs/trino-query-run-contract.md` |
-| `GET` | `/api/query/runs/{runId}/exports/csv` | `query` | 완료된 Trino SQL 결과를 재실행 없이 CSV stream으로 다운로드 | `docs/trino-query-result-storage-contract.md` |
-| `POST` | `/api/query/runs/{runId}/cancel` | `query` | queued/running Trino SQL run 취소 | `docs/trino-query-run-contract.md` |
-| `POST` | `/api/query/estimates` | `query` | 실행 전 Iceberg 참조 컬럼 스캔량·위험도 추정 | `docs/trino-query-run-contract.md` |
-| `POST` | `/api/query/validate` | `query` | 실행 없이 canonical Trino 문법, Dataset context, 현재 권한 검증 | `docs/trino-query-run-contract.md` |
+| `POST` | `/api/query/runs` | TBD | read-only SQL 실행 | `docs/api-contract.md` |
+| `GET` | `/api/query/runs/{runId}` | TBD | 저장된 SQL 실행 결과 snapshot 조회 | `docs/api-contract.md` |
 | `POST` | `/api/query/ai-suggestions` | TBD | 선택 테이블 context 기반 Query AI SQL 초안 생성 | `docs/api-contract.md` |
 | `POST` | `/api/catalog/derived-datasets` | TBD | SQL 결과 기반 Lake Dataset 생성 | `docs/api-contract.md` |
-| `POST` | `/api/catalog/trino-runs/{runId}/materializations` | source run submitter/admin | 완료된 Trino run을 Iceberg CTAS Dataset으로 생성하고 자동 등록 시작 | `docs/trino-query-run-contract.md` |
-| `GET` | `/api/catalog/trino-materializations/{materializationId}` | submitter/admin + current `query` access | persisted CTAS/등록 상태 조회, terminal 등록 검증만 안전하게 재시도 | `docs/trino-query-run-contract.md` |
 
 `GET /api/etl/sources/defaults`는 `{ "kafkaBroker": "..." }`를 반환한다. 새 Kafka Source 화면은 build-time 상수가 아니라 이 값을 사용하므로 `ASKLAKE_KAFKA_BROKER`를 바꾼 backend와 같은 endpoint를 기본 표시한다.
 
@@ -165,8 +117,6 @@ Kafka `POST /api/etl/sources/test`와 Snapshot ingest consumer는 uncompressed �
 `POST /api/etl/jobs/{jobId}/commands`의 일반 배치 `run`/`retry`는 Airflow 접수 직후 `queued` 또는 `running` 상태를 응답한다. Airflow의 `spark_process_write` task가 bearer token으로 FastAPI internal execution API를 호출해 실제 PySpark 처리를 수행하고, 최종 Run/DAG/Spark manifest는 `GET /api/etl/jobs/{jobId}` polling으로 반영한다.
 
 PostgreSQL Snapshot Job의 `run`/`retry`는 생성 시 저장된 `schemaSampleRows`, `__Schema Sample Scope`, `__Sample Row Limit`을 실행 행 제한으로 사용하지 않는다. 내부 실행 API는 선택한 `DATASET OR TABLE SELECTOR` 기본 테이블을 repeatable-read cursor로 끝까지 export하고 Spark manifest의 `inputRows`/`outputRows`에 실제 전체 행 수를 기록한다. 연결 실패, 테이블 부재, 빈 테이블, export 실패는 Spark/Catalog 성공으로 처리하지 않는다.
-
-`jobKind=trino_sql_materialization` Job의 `run`/`retry`/`cancelRun`은 Airflow/Spark가 아니라 Trino materializer와 durable collector를 사용한다. 매 Run은 고유 Iceberg table에 full-refresh CTAS를 수행하고 `DESCRIBE` 성공 후 안정적인 Catalog Dataset mapping을 교체한다. 실패/취소는 이전 정상 mapping을 변경하지 않는다.
 
 내부 실행 API는 `AIRFLOW_EXECUTION_API_TOKEN`이 없으면 `503 AIRFLOW_EXECUTION_NOT_CONFIGURED`, token이 다르면 `401 AIRFLOW_EXECUTION_UNAUTHORIZED`, 저장된 Job/Run/Airflow DAG Run identity가 일치하지 않으면 `409 AIRFLOW_RUN_MISMATCH`를 반환한다. 성공/실패 Spark manifest는 `JobRunSummary.taskStates.sparkResult`에 보존되며, Phase 2에서는 Catalog Dataset을 생성하거나 materialization history를 갱신하지 않는다.
 
@@ -316,7 +266,7 @@ Request:
 type ScheduledJobRunRequest = {
   force?: boolean; // true면 due 여부와 무관하게 실행
   jobId?: string; // 특정 job만 검사
-  kafkaOnly?: boolean; // default true; SQL Job scheduler 검증은 false로 호출
+  kafkaOnly?: boolean; // default true
 };
 ```
 
@@ -339,8 +289,6 @@ type ScheduledJobRunResponse = {
 
 `reason`이 `due`인 실행이 성공하면 backend가 `schedulePolicy.nextRunUtc`와 `job.nextRun`을 다음 예약 시각으로 advance한다. 현재 지원하는 반복 label은 `매시간 NN분`, `매일 HH:mm`, `매주 ... HH:mm` 범위다. `force: true`는 수동 검증/운영 보정 용도이며 due 시각 advance를 강제하지 않는다.
 
-Trino SQL Job의 scheduled tick은 `kafkaOnly: false`로 호출한다. scheduler의 admin actor는 Job command 권한 확인에만 사용하고, SQL source 접근은 Job 생성 시 저장한 `sqlRecipe.runAs` actor로 다시 검사한다.
-
 ## 5) P1 API
 
 | Method | Endpoint | Auth | 설명 | 상세 문서 |
@@ -354,7 +302,7 @@ Trino SQL Job의 scheduled tick은 `kafkaOnly: false`로 호출한다. scheduler
 | `GET` | `/api/s3/buckets` | TBD | Target 저장경로 선택용 허용 bucket 목록 | `docs/api-contract.md` |
 | `GET` | `/api/s3/prefixes` | TBD | Target 저장경로 선택용 S3 prefix lazy 조회 | `docs/api-contract.md` |
 | `GET` | `/api/target/databases` | TBD | Target 기본정보 DB 선택용 허용 DB 목록 | `docs/api-contract.md` |
-| `POST` | `/api/catalog/derived-datasets` | `manage` | 완료된 SQL run 결과의 materialized dataset 생성 | `docs/api-contract.md` |
+| `POST` | `/api/catalog/derived-datasets` | TBD | SQL preview 결과 기반 dataset 생성 | `docs/api-contract.md` |
 
 현재 P1 API의 `Auth` 값은 local session actor 또는 임시 actor header fallback을 기준으로 확장 중이다. Create flow의 Permission 입력값과 `owner` 표시는 governance/identity metadata이며, 실제 접근 제어는 `ActorContext`와 resource별 `permissionGrants`를 기준으로 판정한다. Catalog/SQL/Job/Dashboard runtime의 공통 권한 계약은 `docs/api-contract.md`의 Permission/Governance 용어를 따른다.
 
@@ -422,7 +370,7 @@ Runtime lane은 `DashboardRuntimeResponse`와 `DashboardRuntimeWidget`을 기준
 | 카탈로그 | Postgres JSONB-backed live backend hydrate | `GET /api/catalog/datasets` |
 | 카탈로그 상세 | selected dataset state | `GET /api/catalog/datasets/{datasetId}` |
 | Lineage | `LineageGraph` mock/fallback | `GET /api/catalog/datasets/{datasetId}/lineage` |
-| SQL 분석 | Trino Query Run 제출, 내 실행 이력 재열기, 상태 polling, cursor 결과 페이지 조회 | `POST /api/query/runs`, `GET /api/query/runs`, `GET /api/query/runs/{runId}/results` |
+| SQL 분석 | `executeQueryPreview` mock/live, `executeQueryDraft` 호환 wrapper | `POST /api/query/runs` preview mode |
 | Query AI 생성 | mock mode는 선택 metadata 기반 로컬 JOIN 초안 fallback, live mode는 선택 metadata를 포함해 FastAPI/OpenAI 호출 후 선택 JOIN 누락 시 로컬 fallback | `POST /api/query/ai-suggestions` |
 | SQL 결과 Dataset 생성 | UI는 SQL 내부 다단계 모달에서 스케줄·거버넌스·저장 설정을 완료하고 `createSqlDatasetJob`으로 명시적 draft를 제출; backend direct materialize API는 `createDerivedDatasetFromSql` 호환 유지 | `POST /api/etl/jobs`, `POST /api/catalog/derived-datasets` |
 | 대시보드 | FastAPI dashboard adapter, 404 local/mock fallback | `GET /api/dashboards`, `POST /api/dashboards/query`, draft/published runtime APIs |
@@ -702,16 +650,16 @@ type DagStepsByRunId = Record<string, JobDagStep[]>;
 ### Pair B -> Pair C
 
 ```ts
-type QueryRunResponse = QueryRun;
+type QueryRunResponse = SqlResultDraft;
 ```
 
 필수 확인:
 
-- `GET /api/query/runs/{runId}/results`의 cursor page가 Table Widget의 현재 표시 데이터를 제공한다.
+- `columns`와 `rows`가 Table Widget의 데이터가 된다.
 - `runId`는 Dashboard `sourceRunId`가 된다.
 - `datasetId`는 Dashboard `datasetId`와 같아야 한다.
-- `runId`는 Trino Query Run을 식별한다. 결과 행은 `GET /api/query/runs/{runId}/results`의 cursor page로만 조회한다.
-- Dashboard route가 `dash_<baseDatasetId>_<runId>` 형태로 직접 열리면 프론트는 run retention과 materialized Dataset 연결 상태를 확인한다. publish 또는 반복 사용은 materialized Dataset을 source로 사용한다.
+- `mode: "preview"`와 `previewLimit`이 있으면 전체 materialize가 아니라 SQL Preview 결과로 취급한다.
+- Dashboard route가 `dash_<baseDatasetId>_<runId>` 형태로 직접 열리면 프론트는 `GET /api/query/runs/{runId}`로 SQL result snapshot을 복구한다.
 
 ### Pair B -> Pair C: Lineage Context
 

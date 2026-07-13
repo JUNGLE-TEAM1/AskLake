@@ -25,8 +25,6 @@ class ETLJobModel(TimestampMixin, Base):
     source_config: Mapped[list[list[str]]] = mapped_column(JSON, nullable=False, default=list)
     source_label: Mapped[str] = mapped_column(String(255), nullable=False)
     source_type: Mapped[str] = mapped_column(String(120), nullable=False)
-    job_kind: Mapped[str] = mapped_column(String(64), nullable=False, default="pipeline")
-    sql_recipe: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     execution_mode: Mapped[str] = mapped_column(String(32), nullable=False, default="snapshot")
     continuous_config: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     record_parsing: Mapped[dict | None] = mapped_column(JSON, nullable=True)

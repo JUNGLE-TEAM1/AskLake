@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from threading import Lock
 from typing import Any
 
 from sqlalchemy import text
@@ -12,26 +11,11 @@ from app.core.permission_metadata import permission_grants_from_roles, resource_
 from app.schemas.dashboard import DashboardCard
 
 
-_schema_ready = False
-_schema_lock = Lock()
-
-
 def _execute_schema_statement(db: Session, statement: str) -> None:
     db.execute(text(statement))
 
 
 def ensure_dashboard_card_schema(db: Session) -> None:
-    global _schema_ready
-    if _schema_ready:
-        return
-    with _schema_lock:
-        if _schema_ready:
-            return
-        _ensure_dashboard_card_schema(db)
-        _schema_ready = True
-
-
-def _ensure_dashboard_card_schema(db: Session) -> None:
     statements = [
         """
         CREATE TABLE IF NOT EXISTS dashboards (
