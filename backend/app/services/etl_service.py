@@ -91,6 +91,7 @@ from app.schemas.etl import (
 from app.services.airflow_client import AirflowDagRun, AirflowTaskInstance, build_airflow_client
 from app.services.governance_enforcement import require_governed_access
 from app.services.identity_service import DEMO_GROUPS, DEMO_USERS
+from app.services.object_storage import object_storage_runtime
 from app.services.materialization_projection import aggregate_materialization_runs
 from app.services.rule_compiler import CompiledRuleSet, compile_rule_set
 from app.services.resource_permission_service import job_with_persisted_permission_grants, permission_grants_for_resource, permissions_for_actor_with_governance
@@ -1298,9 +1299,8 @@ def kafka_ingest_request_from_job(job: ETLJobModel, run_id: str) -> dict[str, An
         "landingEndpoint": (
             field_value(fields, "Landing Endpoint URL")
             or field_value(fields, "Target Endpoint URL")
-            or os.environ.get("MINIO_ENDPOINT_IN_DOCKER")
-            or os.environ.get("MINIO_ENDPOINT")
-            or "http://127.0.0.1:19000"
+            or object_storage_runtime().endpoint
+            or ""
         ),
         "landingPrefix": target["prefix"],
         "maxMessages": max_messages,
@@ -1345,18 +1345,19 @@ def kafka_offset_policy(value: str) -> str:
 
 def parse_kafka_target_path(storage_path: str | None, target_dataset: str, target_layer: str | None) -> dict[str, str]:
     default_prefix = f"{dataset_storage_key(target_dataset or 'reviews_raw')}/{str(target_layer or 'BRONZE').lower()}"
+    default_bucket = os.environ.get("ASKLAKE_SPARK_OUTPUT_BUCKET") or "asklake-output"
     if storage_path:
         match = re.match(r"^s3a?://([^/]+)(?:/(.*))?$", storage_path.strip())
         if match:
             prefix = (match.group(2) or default_prefix).strip("/") or default_prefix
             if prefix == "kafka-landing" or prefix.startswith("kafka-landing/"):
-                return {"bucket": "asklake-output", "prefix": default_prefix, "storageMode": "s3"}
+                return {"bucket": default_bucket, "prefix": default_prefix, "storageMode": "s3"}
             return {
                 "bucket": match.group(1),
                 "prefix": prefix,
                 "storageMode": "s3",
             }
-    return {"bucket": "asklake-output", "prefix": default_prefix, "storageMode": "s3"}
+    return {"bucket": default_bucket, "prefix": default_prefix, "storageMode": "s3"}
 
 
 def is_kafka_job(job: ETLJobModel) -> bool:
@@ -1612,7 +1613,7 @@ def validate_catalog_output_identity(job: ETLJobModel, run_id: str, output_path:
             "Successful Spark result does not include an output path.",
             {"jobId": job.id, "runId": run_id},
         )
-    configured_root = str(job.storage_path or "").strip()
+    configured_root = normalize_spark_output_storage_path(job.storage_path)
     if not configured_root:
         return
     expected = canonical_storage_path(f"{configured_root.rstrip('/')}/{run_id}")
@@ -1622,6 +1623,20 @@ def validate_catalog_output_identity(job: ETLJobModel, run_id: str, output_path:
             "Spark output path does not match the persisted Job destination.",
             {"expected": expected, "outputPath": actual, "runId": run_id},
         )
+
+
+def normalize_spark_output_storage_path(value: str | None) -> str:
+    configured_root = str(value or "").strip()
+    if not re.match(r"^s3a?://", configured_root, re.IGNORECASE):
+        return configured_root
+    configured_bucket = str(os.environ.get("ASKLAKE_SPARK_OUTPUT_BUCKET") or "asklake-output").strip()
+    if not configured_bucket or configured_bucket.lower() == "asklake-output":
+        return configured_root
+    parsed = urlparse(re.sub(r"^s3a://", "s3://", configured_root, flags=re.IGNORECASE))
+    if parsed.netloc.lower() != "asklake-output":
+        return configured_root
+    suffix = f"/{parsed.path.lstrip('/')}" if parsed.path else ""
+    return f"s3a://{configured_bucket}{suffix}"
 
 
 def canonical_storage_path(value: str) -> str:
@@ -1711,21 +1726,11 @@ def build_catalog_s3_client() -> Any:
             "Python S3 client dependency is not installed.",
         ) from exc
 
-    endpoint = os.environ.get("S3_ENDPOINT") or os.environ.get("MINIO_ENDPOINT")
-    access_key = os.environ.get("AWS_ACCESS_KEY_ID") or os.environ.get("MINIO_ACCESS_KEY")
-    secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY") or os.environ.get("MINIO_SECRET_KEY")
-    region = os.environ.get("AWS_REGION") or os.environ.get("MINIO_REGION") or "us-east-1"
-    force_path_style = str(os.environ.get("S3_FORCE_PATH_STYLE") or "true").lower() != "false"
-    kwargs: dict[str, Any] = {
-        "config": Config(s3={"addressing_style": "path" if force_path_style else "auto"}),
-        "region_name": region,
-    }
-    if endpoint:
-        kwargs["endpoint_url"] = endpoint
-    if access_key:
-        kwargs["aws_access_key_id"] = access_key
-    if secret_key:
-        kwargs["aws_secret_access_key"] = secret_key
+    runtime = object_storage_runtime()
+    kwargs = runtime.boto3_kwargs()
+    kwargs["config"] = Config(
+        s3={"addressing_style": "path" if runtime.force_path_style else "auto"},
+    )
     return boto3.client("s3", **kwargs)
 
 

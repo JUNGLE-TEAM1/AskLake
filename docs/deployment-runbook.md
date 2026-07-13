@@ -9,7 +9,8 @@
 - 실제 AWS 계정 값, EC2 id, IP, domain, SSH key, secret은 repo에 커밋하지 않는다.
 - 로컬 실행자는 AWS CLI와 SSH 접근 권한을 가지고 있어야 한다.
 - 서버 repo는 기본적으로 `/opt/asklake`에 clone되어 있다고 가정한다.
-- 서버 `deploy/.env`에는 Postgres/Mongo/OpenAI 값과 함께 MinIO access key/secret을 보존한다.
+- 서버 `deploy/.env`에는 Postgres/Mongo/OpenAI 값과 S3 bucket 이름만 보존한다. 장기 AWS access key/secret과 MinIO credential은 넣지 않는다.
+- EC2에는 Raw list/read와 Output list/read/write/delete 권한을 가진 instance profile IAM Role을 연결한다. Container credential 전달을 위해 IMDSv2 token required, response hop limit 2를 사용한다.
 
 ## 1. 로컬 환경 파일 준비
 
@@ -102,21 +103,22 @@ EC2 start
   -> docker compose ps
 ```
 
-Prod compose에는 MinIO가 포함된다. 최초 bootstrap 또는 MinIO 설정 추가 배포 전에는 서버 `/opt/asklake/deploy/.env`에 아래 값을 채운다.
+Prod compose는 MinIO를 포함하지 않고 실제 AWS S3를 사용한다. 시작 전에 같은 리전의 Raw/Output bucket을 만들고 서버 `/opt/asklake/deploy/.env`에 아래 값을 채운다.
 
 ```bash
-MINIO_ENDPOINT=http://minio:9000
-MINIO_ENDPOINT_IN_DOCKER=http://minio:9000
-MINIO_ROOT_USER=replace-with-minio-root-user
-MINIO_ROOT_PASSWORD=replace-with-strong-minio-root-password
-MINIO_ACCESS_KEY=replace-with-minio-application-access-key
-MINIO_SECRET_KEY=replace-with-strong-minio-application-secret-key
-MINIO_BUCKET=m3-raw
-MINIO_REGION=us-east-1
-S3_ENDPOINT=http://minio:9000
-S3_FORCE_PATH_STYLE=true
-S3_ALLOWED_BUCKETS=m3-raw,asklake-output
+ASKLAKE_OBJECT_STORAGE_PROVIDER=aws
+AWS_REGION=ap-northeast-2
+ASKLAKE_RAW_BUCKET=replace-with-asklake-raw-bucket
+ASKLAKE_SPARK_OUTPUT_MODE=s3a
+ASKLAKE_SPARK_OUTPUT_BUCKET=replace-with-asklake-output-bucket
+S3_ENDPOINT=
+S3_FORCE_PATH_STYLE=false
+S3_ALLOWED_BUCKETS=replace-with-asklake-raw-bucket,replace-with-asklake-output-bucket
+ASKLAKE_S3_READINESS_READ_BUCKETS=replace-with-asklake-raw-bucket
+ASKLAKE_S3_READINESS_WRITE_BUCKETS=replace-with-asklake-output-bucket
 ```
+
+`aws-s3-readiness` one-shot service가 Raw bucket list와 Output bucket put/head/delete를 검증한다. Production frontend build는 Compose가 `ASKLAKE_SPARK_OUTPUT_BUCKET` 값을 `VITE_SPARK_OUTPUT_BUCKET`으로 전달해 Target 경로와 Spark 출력 경로를 일치시킨다. 이 검증이 실패하면 backend 시작도 실패해야 하며, bucket 자동 생성이나 static AWS key 추가로 우회하지 않는다. Warehouse와 Query Result bucket은 현재 runtime에서 사용하지 않는다.
 
 ## 4. 재배포
 
@@ -204,11 +206,13 @@ scripts/seed-demo-data.sh
 - MongoDB document fixture: `customer_reviews`, `app_events`
 - MongoDB catalog metadata: `ds_customer_reviews_source`, `ds_app_events_source`
 
-MinIO object sample은 backend script로 따로 준비한다.
+AWS S3 Raw object sample은 권한 있는 운영자 환경에서 별도로 업로드한다.
 
 ```bash
-docker compose --env-file deploy/.env -f deploy/docker-compose.prod.yml exec backend npm run minio:seed-verify
+aws s3 cp <local-fixture-path> s3://<raw-bucket>/<prefix>/
 ```
+
+로컬 fixture 검증은 계속 root `docker-compose.yml`의 MinIO와 `npm run minio:seed-verify`를 사용한다.
 
 발표 중 생성된 SQL preview, SQL derived dataset, SQL Result 처리 Job만 정리하려면 먼저 dry-run으로 삭제 범위를 확인한다.
 

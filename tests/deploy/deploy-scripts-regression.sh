@@ -52,6 +52,7 @@ write_valid_env() {
   {
     printf '%s\n' \
       'APP_ENV=production' \
+      'ASKLAKE_OBJECT_STORAGE_PROVIDER=minio' \
       'APP_DOMAIN=deploy.asklake.test' \
       'VITE_API_BASE_URL=https://deploy.asklake.test' \
       'BACKEND_CORS_ORIGINS=https://deploy.asklake.test' \
@@ -75,6 +76,28 @@ write_valid_env() {
       "ASKLAKE_HOST_DATA_DIR=$SPARK_DATA_DIR" \
       "ASKLAKE_REPLAY_HOST_INPUT_DIR=$REPLAY_INPUT_DIR"
   } > "$target"
+}
+
+write_valid_aws_env() {
+  local target="$1"
+  write_valid_env "$target"
+  awk -F= '
+    $1 ~ /^MINIO_(ROOT_USER|ROOT_PASSWORD|ACCESS_KEY|SECRET_KEY)$/ { next }
+    $1 == "ASKLAKE_OBJECT_STORAGE_PROVIDER" { print "ASKLAKE_OBJECT_STORAGE_PROVIDER=aws"; next }
+    { print }
+  ' "$target" > "$target.next"
+  mv "$target.next" "$target"
+  {
+    printf '%s\n' \
+      'AWS_REGION=ap-northeast-2' \
+      'ASKLAKE_RAW_BUCKET=asklake-test-raw' \
+      'ASKLAKE_SPARK_OUTPUT_BUCKET=asklake-test-output' \
+      'S3_ENDPOINT=' \
+      'S3_FORCE_PATH_STYLE=false' \
+      'S3_ALLOWED_BUCKETS=asklake-test-raw,asklake-test-output' \
+      'ASKLAKE_S3_READINESS_READ_BUCKETS=asklake-test-raw' \
+      'ASKLAKE_S3_READINESS_WRITE_BUCKETS=asklake-test-output'
+  } >> "$target"
 }
 
 replace_env_value() {
@@ -142,6 +165,7 @@ mkdir -p \
 write_valid_env "$ENV_FILE"
 expect_preflight_pass 'valid production environment passes'
 
+write_valid_aws_env "$ENV_FILE"
 if output="$(run_preflight "$ROOT_DIR/deploy/docker-compose.prod.yml" 2>&1)"; then
   if [[ "$output" == *"$SECRET_SENTINEL"* ]]; then
     record_fail 'actual production Compose passes preflight (secret appeared in output)'
@@ -200,7 +224,7 @@ expect_preflight_failure 'missing replay host directory is rejected' 'ASKLAKE_RE
 write_valid_env "$ENV_FILE"
 expect_preflight_failure \
   'Compose wiring that reuses application credentials as root is rejected' \
-  'Compose must wire MINIO_ROOT_*' \
+  'Compose object-storage wiring does not match the selected minio provider contract' \
   "$UNSAFE_COMPOSE"
 
 # Source without executing main so the real health_check function can be exercised

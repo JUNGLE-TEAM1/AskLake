@@ -105,17 +105,37 @@ required_keys=(
   APP_DOMAIN
   APP_ENV
   ASKLAKE_HOST_DATA_DIR
+  ASKLAKE_OBJECT_STORAGE_PROVIDER
   ASKLAKE_REPLAY_HOST_INPUT_DIR
-  MINIO_ACCESS_KEY
-  MINIO_ROOT_PASSWORD
-  MINIO_ROOT_USER
-  MINIO_SECRET_KEY
   MONGO_INITDB_ROOT_PASSWORD
   MONGO_INITDB_ROOT_USERNAME
   POSTGRES_DB
   POSTGRES_PASSWORD
   POSTGRES_USER
 )
+
+storage_provider="$(env_value_for ASKLAKE_OBJECT_STORAGE_PROVIDER)"
+storage_provider="$(printf '%s' "$storage_provider" | tr '[:upper:]' '[:lower:]')"
+case "$storage_provider" in
+  aws|s3)
+    storage_provider="aws"
+    required_keys+=(
+      ASKLAKE_RAW_BUCKET
+      ASKLAKE_S3_READINESS_READ_BUCKETS
+      ASKLAKE_S3_READINESS_WRITE_BUCKETS
+      ASKLAKE_SPARK_OUTPUT_BUCKET
+      AWS_REGION
+      S3_ALLOWED_BUCKETS
+    )
+    ;;
+  minio)
+    required_keys+=(MINIO_ACCESS_KEY MINIO_ROOT_PASSWORD MINIO_ROOT_USER MINIO_SECRET_KEY)
+    ;;
+  *)
+    printf 'error: ASKLAKE_OBJECT_STORAGE_PROVIDER must be aws or minio in %s\n' "$ENV_FILE" >&2
+    exit 1
+    ;;
+esac
 
 for key in "${required_keys[@]}"; do
   key_count="$(env_count_for "$key")"
@@ -167,9 +187,19 @@ minio_root_user="$(env_value_for MINIO_ROOT_USER)"
 minio_root_password="$(env_value_for MINIO_ROOT_PASSWORD)"
 minio_access_key="$(env_value_for MINIO_ACCESS_KEY)"
 minio_secret_key="$(env_value_for MINIO_SECRET_KEY)"
-if [[ "$minio_access_key" == "$minio_root_user" || "$minio_secret_key" == "$minio_root_password" ]]; then
-  printf 'error: MinIO application credentials must be distinct from MinIO root credentials\n' >&2
-  exit 1
+if [[ "$storage_provider" == "minio" \
+  && ( "$minio_access_key" == "$minio_root_user" || "$minio_secret_key" == "$minio_root_password" ) ]]; then
+    printf 'error: MinIO application credentials must be distinct from MinIO root credentials\n' >&2
+    exit 1
+fi
+
+if [[ "$storage_provider" == "aws" ]]; then
+  for forbidden_key in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN MINIO_ACCESS_KEY MINIO_SECRET_KEY MINIO_ROOT_USER MINIO_ROOT_PASSWORD; do
+    if ! is_blank "$(env_value_for "$forbidden_key")"; then
+      printf 'error: %s must not be stored in an AWS production deployment env; use the EC2 instance role\n' "$forbidden_key" >&2
+      exit 1
+    fi
+  done
 fi
 
 app_env="$(env_value_for APP_ENV)"
@@ -218,6 +248,10 @@ export ASKLAKE_PREFLIGHT_MINIO_ROOT_USER="$minio_root_user"
 export ASKLAKE_PREFLIGHT_MINIO_ROOT_PASSWORD="$minio_root_password"
 export ASKLAKE_PREFLIGHT_MINIO_ACCESS_KEY="$minio_access_key"
 export ASKLAKE_PREFLIGHT_MINIO_SECRET_KEY="$minio_secret_key"
+export ASKLAKE_PREFLIGHT_OBJECT_STORAGE_PROVIDER="$storage_provider"
+export ASKLAKE_PREFLIGHT_AWS_REGION="$(env_value_for AWS_REGION)"
+export ASKLAKE_PREFLIGHT_RAW_BUCKET="$(env_value_for ASKLAKE_RAW_BUCKET)"
+export ASKLAKE_PREFLIGHT_OUTPUT_BUCKET="$(env_value_for ASKLAKE_SPARK_OUTPUT_BUCKET)"
 
 compose_wiring_status=0
 docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" config --format json \
@@ -229,28 +263,48 @@ import sys
 try:
     services = json.load(sys.stdin)["services"]
     backend = services["backend"]["environment"]
-    minio = services["minio"]["environment"]
-    minio_init = services["minio-init"]["environment"]
     spark_worker_service = services.get("spark-worker")
     spark_worker = spark_worker_service.get("environment", {}) if spark_worker_service else None
-    expected = {
-        "root_user": os.environ["ASKLAKE_PREFLIGHT_MINIO_ROOT_USER"],
-        "root_password": os.environ["ASKLAKE_PREFLIGHT_MINIO_ROOT_PASSWORD"],
-        "access_key": os.environ["ASKLAKE_PREFLIGHT_MINIO_ACCESS_KEY"],
-        "secret_key": os.environ["ASKLAKE_PREFLIGHT_MINIO_SECRET_KEY"],
-    }
-    valid = all((
-        minio.get("MINIO_ROOT_USER") == expected["root_user"],
-        minio.get("MINIO_ROOT_PASSWORD") == expected["root_password"],
-        backend.get("MINIO_ACCESS_KEY") == expected["access_key"],
-        backend.get("MINIO_SECRET_KEY") == expected["secret_key"],
-        minio_init.get("MINIO_ROOT_USER") == expected["root_user"],
-        minio_init.get("MINIO_ROOT_PASSWORD") == expected["root_password"],
-        minio_init.get("MINIO_ACCESS_KEY") == expected["access_key"],
-        minio_init.get("MINIO_SECRET_KEY") == expected["secret_key"],
-        spark_worker is None or spark_worker.get("MINIO_ACCESS_KEY") == expected["access_key"],
-        spark_worker is None or spark_worker.get("MINIO_SECRET_KEY") == expected["secret_key"],
-    ))
+    provider = os.environ["ASKLAKE_PREFLIGHT_OBJECT_STORAGE_PROVIDER"]
+    if provider == "aws":
+        readiness = services["aws-s3-readiness"]["environment"]
+        forbidden = {
+            "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
+            "MINIO_ACCESS_KEY", "MINIO_SECRET_KEY", "MINIO_ROOT_USER", "MINIO_ROOT_PASSWORD",
+        }
+        valid = all((
+            "minio" not in services,
+            "minio-init" not in services,
+            backend.get("ASKLAKE_OBJECT_STORAGE_PROVIDER") == "aws",
+            backend.get("ASKLAKE_RAW_BUCKET") == os.environ["ASKLAKE_PREFLIGHT_RAW_BUCKET"],
+            backend.get("ASKLAKE_SPARK_OUTPUT_BUCKET") == os.environ["ASKLAKE_PREFLIGHT_OUTPUT_BUCKET"],
+            backend.get("AWS_REGION") == os.environ["ASKLAKE_PREFLIGHT_AWS_REGION"],
+            readiness.get("ASKLAKE_OBJECT_STORAGE_PROVIDER") == "aws",
+            readiness.get("AWS_REGION") == os.environ["ASKLAKE_PREFLIGHT_AWS_REGION"],
+            not any(name in backend for name in forbidden),
+            spark_worker is None or not any(name in spark_worker for name in forbidden),
+        ))
+    else:
+        minio = services["minio"]["environment"]
+        minio_init = services["minio-init"]["environment"]
+        expected = {
+            "root_user": os.environ["ASKLAKE_PREFLIGHT_MINIO_ROOT_USER"],
+            "root_password": os.environ["ASKLAKE_PREFLIGHT_MINIO_ROOT_PASSWORD"],
+            "access_key": os.environ["ASKLAKE_PREFLIGHT_MINIO_ACCESS_KEY"],
+            "secret_key": os.environ["ASKLAKE_PREFLIGHT_MINIO_SECRET_KEY"],
+        }
+        valid = all((
+            minio.get("MINIO_ROOT_USER") == expected["root_user"],
+            minio.get("MINIO_ROOT_PASSWORD") == expected["root_password"],
+            backend.get("MINIO_ACCESS_KEY") == expected["access_key"],
+            backend.get("MINIO_SECRET_KEY") == expected["secret_key"],
+            minio_init.get("MINIO_ROOT_USER") == expected["root_user"],
+            minio_init.get("MINIO_ROOT_PASSWORD") == expected["root_password"],
+            minio_init.get("MINIO_ACCESS_KEY") == expected["access_key"],
+            minio_init.get("MINIO_SECRET_KEY") == expected["secret_key"],
+            spark_worker is None or spark_worker.get("MINIO_ACCESS_KEY") == expected["access_key"],
+            spark_worker is None or spark_worker.get("MINIO_SECRET_KEY") == expected["secret_key"],
+        ))
 except (AttributeError, KeyError, TypeError, ValueError, json.JSONDecodeError):
     valid = False
 
@@ -261,10 +315,13 @@ unset ASKLAKE_PREFLIGHT_MINIO_ROOT_USER
 unset ASKLAKE_PREFLIGHT_MINIO_ROOT_PASSWORD
 unset ASKLAKE_PREFLIGHT_MINIO_ACCESS_KEY
 unset ASKLAKE_PREFLIGHT_MINIO_SECRET_KEY
+unset ASKLAKE_PREFLIGHT_OBJECT_STORAGE_PROVIDER
+unset ASKLAKE_PREFLIGHT_AWS_REGION
+unset ASKLAKE_PREFLIGHT_RAW_BUCKET
+unset ASKLAKE_PREFLIGHT_OUTPUT_BUCKET
 
 if (( compose_wiring_status != 0 )); then
-  printf '%s\n' \
-    'error: Compose must wire MINIO_ROOT_* to minio/minio-init and the distinct MINIO_ACCESS_KEY/MINIO_SECRET_KEY application pair to backend/minio-init/spark-worker' >&2
+  printf 'error: Compose object-storage wiring does not match the selected %s provider contract\n' "$storage_provider" >&2
   exit 1
 fi
 

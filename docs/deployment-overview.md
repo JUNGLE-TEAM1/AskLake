@@ -3,6 +3,8 @@
 이 문서는 AskLake를 AWS에 배포할 때 팀원이 빠르게 공유해야 할 결정을 정리한다.
 목표는 한 번 수동으로 올리는 것이 아니라, 고정된 AWS 인프라 위에서 `dev` 브랜치 변경을 반복 배포할 수 있게 만드는 것이다.
 
+Job A 담당자는 큰 방향을 이해한 뒤 `docs/job-a-aws-deployment-e2e-playbook.md`의 Phase 체크리스트와 증거 기록을 따라 진행한다.
+
 ## 목표
 
 AskLake 배포의 목표는 다음 흐름을 안정적으로 만드는 것이다.
@@ -30,8 +32,15 @@ AWS EC2
   - backend
   - postgres
   - mongo
-  - minio
+  - airflow
+  - redpanda
+
+AWS S3
+  - raw
+  - spark output
 ```
+
+Iceberg Warehouse와 Query Result bucket은 이미 만들어 두어도 되지만 현재 `dev` runtime은 사용하지 않는다. Trino/query engine 복원은 별도 이슈와 검증을 거쳐야 한다.
 
 외부 요청은 Caddy가 받는다.
 
@@ -73,8 +82,8 @@ mongo
 
 PostgreSQL fixture는 메인 데모 시나리오에 사용한다.
 MongoDB fixture는 다른 source type도 처리할 수 있다는 보조 시나리오에 사용한다.
-MinIO는 EC2 prod compose의 S3-compatible data lake로 둔다.
-File / S3, Data Lake source, Target S3 picker, Spark S3A demo는 서버 `deploy/.env`의 MinIO credential과 bucket allowlist를 사용한다.
+로컬 개발은 root Compose의 MinIO를 사용한다. EC2 production은 MinIO를 띄우지 않고 AWS S3를 사용한다.
+File / S3, Data Lake source, Target S3 picker, Spark S3A, DuckDB는 EC2 instance profile IAM Role/default credential chain을 사용하며 browser와 서버 `.env`에는 AWS access key/secret을 두지 않는다.
 
 기본 fixture는 다음처럼 고정한다.
 
@@ -84,7 +93,7 @@ File / S3, Data Lake source, Target S3 picker, Spark S3A demo는 서버 `deploy/
 | PostgreSQL `asklake_sources` | `orders_clean` | Catalog -> SQL Preview -> Job 생성 메인 demo |
 | PostgreSQL `asklake_sources` | `customers`, `user_activity` | 추후 join/event demo 후보 |
 | MongoDB `asklake_sources` | `customer_reviews`, `app_events` | document source와 nested schema 보조 demo |
-| MinIO `m3-raw` | `nyc_taxi/csv/2019-Nov.csv` 등 seeded object | File / S3와 Data Lake Spark S3A demo |
+| AWS S3 raw bucket | 합성 commerce 파일과 seeded object | File / S3와 Data Lake Spark S3A demo |
 
 현재 FastAPI SQL Preview는 물리 DB를 직접 조회하지 않고 Catalog payload의 `sampleRows`를 사용한다.
 따라서 `orders_clean`의 catalog `schema`/`sampleRows`와 PostgreSQL fixture row는 같은 seed 기준으로 맞춘다.
@@ -107,13 +116,16 @@ File / S3, Data Lake source, Target S3 picker, Spark S3A demo는 서버 `deploy/
 | 작업 | 설명 |
 | --- | --- |
 | EC2 생성 | Docker Compose를 실행할 서버를 만든다. |
+| EC2 IAM Role 연결 | Raw list/read와 Output list/read/write/delete 최소 권한을 instance profile로 연결한다. |
+| S3 bucket 생성 | Raw와 Spark Output bucket을 같은 리전에 private으로 만든다. Warehouse/Query Result bucket은 현재 runtime에 연결하지 않는다. |
+| IMDSv2 설정 | token required, container credential용 response hop limit 2를 설정한다. |
 | Elastic IP 연결 | 서버 public IP를 고정한다. |
 | 보안 그룹 설정 | 22, 80, 443 포트를 연다. |
 | DNS 연결 | 도메인 A record를 Elastic IP로 연결한다. |
 | Docker 설치 | EC2에 Docker와 Docker Compose를 설치한다. |
 | 배포 디렉터리 생성 | 예: `/opt/asklake` |
 | 서버 `.env` 작성 | 실제 secret과 connection string은 서버에만 둔다. |
-| 최초 compose up | Caddy, frontend, backend, DB, MinIO 컨테이너를 띄운다. |
+| 최초 compose up | S3 readiness 통과 후 Caddy, frontend, backend, DB, Airflow, Kafka 컨테이너를 띄운다. |
 
 도메인과 서버는 매번 새로 만들지 않는다.
 한 번 고정한 뒤, 이후 배포는 코드만 갱신한다.
@@ -249,7 +261,8 @@ docker compose logs backend
 - GitHub Actions 전에는 `scripts/deploy.sh`로 start/stop/deploy/status를 반복한다.
 - demo data는 seeded fixture로 고정한다.
 - PostgreSQL과 MongoDB를 fixture source로 둔다.
-- MinIO는 기본 EC2 compose에 포함하고 S3-compatible data lake demo source로 사용한다.
+- 로컬은 MinIO, EC2 production은 AWS S3로 환경 분리한다.
+- production storage runtime은 EC2 IAM Role/default credential chain을 사용하고 static AWS key를 저장하지 않는다.
 - secret은 repo에 넣지 않는다.
 
 ## 아직 하지 않는 일
@@ -281,9 +294,10 @@ Compose/runtime services declared in `deploy/docker-compose.prod.yml`:
 - `backend`, built from `backend/Dockerfile`
 - `postgres:16-alpine`
 - `mongo:7`
-- `minio/minio:RELEASE.2025-07-23T15-54-02Z`
 - `apache/airflow:3.3.0`
 - Airflow metadata `postgres:16-alpine`
+- `redpandadata/redpanda:v24.3.1`
+- one-shot `aws-s3-readiness`, built from `backend/Dockerfile`
 - `spark-master`, `spark-worker`, and `spark-dir-init`, built from the `spark-runtime` target
 
 Airflow orchestration dependencies:
@@ -310,7 +324,7 @@ Frontend deploy image dependencies:
 
 - Node 22 build image and Nginx runtime from `frontend/Dockerfile`.
 - Frontend packages from `frontend/package.json`.
-- Required build args are listed in `deploy/.env.example`: `VITE_API_BASE_URL`, `VITE_USE_MOCK_API`, and `VITE_DASHBOARD_ASSISTANT_API_PATH`.
+- Required build args are listed in `deploy/.env.example`: `VITE_API_BASE_URL`, `VITE_USE_MOCK_API`, `VITE_DASHBOARD_ASSISTANT_API_PATH`, `VITE_OBJECT_STORAGE_PROVIDER`, and `VITE_S3_REGION`.
 
 Local deploy dependency verification:
 
@@ -318,4 +332,4 @@ Local deploy dependency verification:
 scripts/verify-deploy-dependencies.sh
 ```
 
-This renders the production and local Airflow Compose configs, builds backend/frontend/Spark runtime images, checks backend Python and Node imports, verifies Docker CLI is absent from backend, verifies UID 185 and embedded Spark scripts, checks Spark/Airflow image availability, and imports the Airflow DAG inside the Airflow image.
+This renders the production and local Airflow Compose configs, builds backend/frontend/Spark runtime images, checks backend Python and Node imports, verifies Docker CLI is absent from backend, verifies UID 185 and embedded Spark scripts, checks Spark/Airflow image availability, and imports the Airflow DAG inside the Airflow image. 실제 AWS bucket/IAM 검증은 EC2에서 one-shot `aws-s3-readiness`가 수행한다.

@@ -6,6 +6,12 @@ import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadKafkaJs } from "./kafka-codecs.mjs";
+import {
+  isMinioProvider,
+  objectStorageDockerEnv,
+  resolveObjectStorageConfig,
+  s3ClientOptions,
+} from "./objectStorageConfig.mjs";
 import { canonicalSchemaType, fieldValue, formatBytes, inferSchemaColumns, parseSourceSample, schemaFingerprint, sourceId, upsertFields } from "./profile.mjs";
 import {
   createSparkRestSubmission,
@@ -48,16 +54,14 @@ export async function listSourceAssets(sourceType, fields, requestedPrefix) {
   if (!objectStorageSourceTypes.has(sourceType) && !dataLakeSourceTypes.has(sourceType)) {
     throw apiError("UNSUPPORTED_SOURCE_ASSETS", `${sourceType} source asset listing is not supported.`, 400);
   }
-  const endpoint = requiredSourceField(fields, "Endpoint URL", "MinIO/S3 endpoint URL is required.");
-  const region = fieldValue(fields, "Region") || "us-east-1";
+  const storage = resolveObjectStorageConfig(fields);
+  const { accessKeyId, endpoint, forcePathStyle, region, secretAccessKey } = storage;
   const parsedLakePath = dataLakeSourceTypes.has(sourceType) ? parseS3Path(fieldValue(fields, "Path")) : null;
   const bucket = fieldValue(fields, "Bucket / Stage Name") || parsedLakePath?.bucket;
   if (!bucket) throw apiError("SOURCE_FIELD_REQUIRED", "MinIO/S3 bucket name is required.", 400);
   const prefix = sourceAssetPrefix(sourceType, fields, requestedPrefix);
   const limit = sourceAssetListLimit();
-  const accessKeyId = requiredSourceField(fields, "Access Key", "MinIO/S3 access key is required.");
-  const secretAccessKey = requiredSourceField(fields, "Secret Key", "MinIO/S3 secret key is required.");
-  const forcePathStyle = parseBoolean(fieldValue(fields, "Use Path Style"), true);
+  requireMinioCredentials(storage);
   const cacheKey = sourceAssetCacheKey({ accessKeyId, bucket, endpoint, forcePathStyle, prefix, region, sourceType });
   const cached = getCachedSourceAssets(cacheKey);
   if (cached) return cached;
@@ -69,7 +73,9 @@ export async function listSourceAssets(sourceType, fields, requestedPrefix) {
   try {
     items = await listDirectObjects(client, bucket, prefix, limit);
   } catch (error) {
-    items = listDirectObjectsViaMinioContainer({ accessKeyId, bucket, endpoint, limit, prefix, secretAccessKey });
+    items = isMinioProvider(fields)
+      ? listDirectObjectsViaMinioContainer({ accessKeyId, bucket, endpoint, limit, prefix, secretAccessKey })
+      : null;
     if (!items) {
       setCachedSourceAssetFailure(cacheKey, error);
       throw error;
@@ -93,18 +99,12 @@ export async function listSourceAssets(sourceType, fields, requestedPrefix) {
 }
 
 export async function testObjectStorageSource(fields, sourceType = "File / S3") {
-  const endpoint = requiredSourceField(fields, "Endpoint URL", "MinIO/S3 endpoint URL is required.");
-  const region = fieldValue(fields, "Region") || "us-east-1";
+  const storage = resolveObjectStorageConfig(fields);
+  const { accessKeyId, endpoint, forcePathStyle, region, secretAccessKey } = storage;
   const bucket = requiredSourceField(fields, "Bucket / Stage Name", "MinIO/S3 bucket name is required.");
   const prefix = normalizePrefix(fieldValue(fields, "Path / Prefix"));
-  const accessKeyId = requiredSourceField(fields, "Access Key", "MinIO/S3 access key is required.");
-  const secretAccessKey = requiredSourceField(fields, "Secret Key", "MinIO/S3 secret key is required.");
-  const forcePathStyle = parseBoolean(fieldValue(fields, "Use Path Style"), true);
   const selectedObject = selectedObjectKey(fields);
-
-  if (!accessKeyId || !secretAccessKey) {
-    throw apiError("SOURCE_CREDENTIALS_REQUIRED", "MinIO/S3 액세스 키와 시크릿 키가 필요합니다.", 400);
-  }
+  requireMinioCredentials(storage);
 
   // A selected Parquet object needs the Spark reader; treating it as a text
   // object silently falls back to object metadata instead of its real schema.
@@ -126,7 +126,9 @@ export async function testObjectStorageSource(fields, sourceType = "File / S3") 
       ? await listSelectedObject(client, bucket, selectedObject)
       : await listDirectObjects(client, bucket, prefix, sourceAssetListLimit());
     if (!prefix && objects.length === 0) {
-      objects = listDirectObjectsViaMinioContainer({ accessKeyId, bucket, endpoint, limit: sourceAssetListLimit(), prefix, secretAccessKey }) ?? objects;
+      objects = isMinioProvider(fields)
+        ? listDirectObjectsViaMinioContainer({ accessKeyId, bucket, endpoint, limit: sourceAssetListLimit(), prefix, secretAccessKey }) ?? objects
+        : objects;
     }
     const sampleObject = selectedObject ? objects.find((item) => item.Key === selectedObject) : immediateSampleObject(objects, prefix);
     return buildObjectStorageAnalysis({
@@ -144,7 +146,9 @@ export async function testObjectStorageSource(fields, sourceType = "File / S3") 
       sourceType,
     });
   } catch (error) {
-    const fallback = readObjectStorageViaMinioContainer({ accessKeyId, bucket, endpoint, fields, prefix, samplePolicy, secretAccessKey, selectedObject, sourceType });
+    const fallback = isMinioProvider(fields)
+      ? readObjectStorageViaMinioContainer({ accessKeyId, bucket, endpoint, fields, prefix, samplePolicy, secretAccessKey, selectedObject, sourceType })
+      : null;
     if (fallback) return fallback;
     throw error;
   }
@@ -276,18 +280,13 @@ export async function testDataLakeSourceStable(fields, sourceType = "Data Lake")
     parsed = { bucket: fieldValue(fields, "Bucket / Stage Name"), prefix: normalizePrefix(fieldValue(fields, "Path / Prefix")) };
   }
   if (!parsed) {
-    throw apiError("UNSUPPORTED_LAKE_PATH", "Data Lake path must be an s3:// or s3a:// MinIO path.", 400);
+    throw apiError("UNSUPPORTED_LAKE_PATH", "Data Lake path must be an s3:// or s3a:// object-storage path.", 400);
   }
   const lakePath = parseS3Path(rawLakePath) ? rawLakePath : `s3://${parsed.bucket}/${selectedObject || parsed.prefix}`;
 
-  const endpoint = requiredSourceField(fields, "Endpoint URL", "Data Lake endpoint URL is required.");
-  const region = fieldValue(fields, "Region") || "us-east-1";
-  const accessKeyId = requiredSourceField(fields, "Access Key", "Data Lake access key is required.");
-  const secretAccessKey = requiredSourceField(fields, "Secret Key", "Data Lake secret key is required.");
-  const forcePathStyle = parseBoolean(fieldValue(fields, "Use Path Style"), true);
-  if (!accessKeyId || !secretAccessKey) {
-    throw apiError("SOURCE_CREDENTIALS_REQUIRED", "Data Lake MinIO access key and secret key are required.", 400);
-  }
+  const storage = resolveObjectStorageConfig(fields);
+  const { accessKeyId, endpoint, forcePathStyle, region, secretAccessKey } = storage;
+  requireMinioCredentials(storage);
 
   let client;
   let objects;
@@ -297,9 +296,11 @@ export async function testDataLakeSourceStable(fields, sourceType = "Data Lake")
       ? await listSelectedObject(client, parsed.bucket, selectedObject)
       : await listDirectObjects(client, parsed.bucket, parsed.prefix);
   } catch (error) {
-    objects = selectedObject
-      ? listSelectedObjectViaMinioContainer({ accessKeyId, bucket: parsed.bucket, endpoint, key: selectedObject, secretAccessKey })
-      : listDirectObjectsViaMinioContainer({ accessKeyId, bucket: parsed.bucket, endpoint, prefix: parsed.prefix, secretAccessKey });
+    objects = isMinioProvider(fields)
+      ? selectedObject
+        ? listSelectedObjectViaMinioContainer({ accessKeyId, bucket: parsed.bucket, endpoint, key: selectedObject, secretAccessKey })
+        : listDirectObjectsViaMinioContainer({ accessKeyId, bucket: parsed.bucket, endpoint, prefix: parsed.prefix, secretAccessKey })
+      : null;
     if (!objects) throw error;
   }
 
@@ -318,6 +319,7 @@ export async function testDataLakeSourceStable(fields, sourceType = "Data Lake")
       inspected = inspectParquetLakeWithSpark({
         accessKeyId,
         endpoint,
+        fields,
         path: inspectPath,
         rowLimit: samplePolicy.rowLimit,
         secretAccessKey,
@@ -353,6 +355,7 @@ export async function testDataLakeSourceStable(fields, sourceType = "Data Lake")
   const id = sourceId("source", `${lakePath}:${objects.length}`);
   const runId = sourceId("run", `${id}:${Date.now()}`);
   const sourceConfig = upsertFields(redactSecretConfigValues(fields), [
+    ["Storage Provider", storage.provider === "aws" ? "Amazon S3" : "MinIO"],
     ["Path", lakePath],
     ["Bucket / Stage Name", parsed.bucket],
     ["Path / Prefix", parsed.prefix],
@@ -849,6 +852,7 @@ async function buildObjectStorageAnalysis({ bucket, client, endpoint, fields, fo
     ? `MinIO/S3 ${parsedSample.format} 샘플에서 ${schemaColumns.length}개 필드 추론 · 프로파일 확인`
     : `MinIO/S3 연결 성공 · 스키마 추론 대기 (오브젝트 ${objects.length}개)`;
   const sourceConfig = upsertFields(redactSecretConfigValues(fields), [
+    ["Storage Provider", isMinioProvider(fields) ? "MinIO" : "Amazon S3"],
     ["Endpoint URL", endpoint],
     ["Region", region],
     ["Bucket / Stage Name", bucket],
@@ -986,13 +990,10 @@ function readObjectStorageViaMinioContainer({ accessKeyId, bucket, endpoint, fie
   };
 }
 
-function s3Client({ accessKeyId, endpoint, forcePathStyle, region, secretAccessKey }) {
+function s3Client(config) {
   return new S3Client({
-    credentials: { accessKeyId, secretAccessKey },
-    endpoint,
-    forcePathStyle,
+    ...s3ClientOptions(config),
     maxAttempts: 1,
-    region,
     requestHandler: new NodeHttpHandler({
       connectionTimeout: sourceConnectTimeoutMs("ASKLAKE_S3_CONNECT_TIMEOUT_MS", 800),
       requestTimeout: sourceConnectTimeoutMs("ASKLAKE_S3_REQUEST_TIMEOUT_MS", 2500),
@@ -1343,16 +1344,19 @@ function endpointForMinioContainer(endpoint) {
   return value;
 }
 
-function inspectParquetLakeWithSpark({ accessKeyId, endpoint, path: sourcePath, rowLimit, secretAccessKey }) {
+function inspectParquetLakeWithSpark({ fields = [], path: sourcePath, rowLimit }) {
   const executionMode = sparkExecutionMode();
   mkdirSync(ivyDir, { recursive: true });
-  const sparkMinioEndpoint = process.env.MINIO_ENDPOINT_IN_DOCKER || endpointForDockerNetwork(endpoint);
-  const inheritedAccessKey = process.env.MINIO_ACCESS_KEY || "m3admin";
-  const inheritedSecretKey = process.env.MINIO_SECRET_KEY || "wishuponastar";
+  const storageFields = upsertFields(fields, [
+    ["Endpoint URL", isMinioProvider(fields) ? endpointForDockerNetwork(fieldValue(fields, "Endpoint URL")) : fieldValue(fields, "Endpoint URL")],
+  ]);
+  const requestedStorage = resolveObjectStorageConfig(storageFields, { docker: true });
+  const inheritedStorage = resolveObjectStorageConfig([], { docker: true });
   if (
     executionMode === "rest"
-    && ((accessKeyId && accessKeyId !== inheritedAccessKey)
-      || (secretAccessKey && secretAccessKey !== inheritedSecretKey))
+    && requestedStorage.provider === "minio"
+    && ((requestedStorage.accessKeyId && requestedStorage.accessKeyId !== inheritedStorage.accessKeyId)
+      || (requestedStorage.secretAccessKey && requestedStorage.secretAccessKey !== inheritedStorage.secretAccessKey))
   ) {
     throw apiError(
       "DATALAKE_SPARK_CREDENTIAL_CONFIGURATION_INVALID",
@@ -1360,13 +1364,14 @@ function inspectParquetLakeWithSpark({ accessKeyId, endpoint, path: sourcePath, 
       422,
     );
   }
+  const storageEnvironment = Object.fromEntries(
+    objectStorageDockerEnv(storageFields).filter(([name]) => (
+      executionMode === "docker"
+      || !["MINIO_ACCESS_KEY", "MINIO_SECRET_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"].includes(name)
+    )),
+  );
   const inspectEnvironment = {
-    MINIO_ENDPOINT: sparkMinioEndpoint,
-    MINIO_REGION: process.env.MINIO_REGION || "us-east-1",
-    ...(executionMode === "docker" ? {
-      MINIO_ACCESS_KEY: accessKeyId || inheritedAccessKey,
-      MINIO_SECRET_KEY: secretAccessKey || inheritedSecretKey,
-    } : {}),
+    ...storageEnvironment,
     ASKLAKE_SOURCE_PATH: toS3APath(sourcePath),
     ASKLAKE_SOURCE_FORMAT: "parquet",
     ASKLAKE_SOURCE_ROW_LIMIT: Math.max(1, Math.min(Number(rowLimit) || 10, 50000)),
@@ -1470,6 +1475,16 @@ function inspectParquetLakeWithSpark({ accessKeyId, endpoint, path: sourcePath, 
     sampleRows,
     schemaColumns,
   };
+}
+
+function requireMinioCredentials(config) {
+  if (config.provider !== "minio") return;
+  if (!config.endpoint) {
+    throw apiError("SOURCE_FIELD_REQUIRED", "MinIO endpoint URL is required.", 400);
+  }
+  if (!config.accessKeyId || !config.secretAccessKey) {
+    throw apiError("SOURCE_CREDENTIALS_REQUIRED", "MinIO access key and secret key are required.", 400);
+  }
 }
 
 export function createSparkSourceInspectRestSubmission({ environmentVariables }, environment = process.env) {

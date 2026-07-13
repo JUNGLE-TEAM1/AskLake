@@ -73,6 +73,9 @@ services:
         VITE_AUTH_PUBLIC_SIGNUP: ${VITE_AUTH_PUBLIC_SIGNUP:-false}
         VITE_USE_MOCK_API: ${VITE_USE_MOCK_API:-false}
         VITE_DASHBOARD_ASSISTANT_API_PATH: ${VITE_DASHBOARD_ASSISTANT_API_PATH:-/api/dashboards/assistant}
+        VITE_OBJECT_STORAGE_PROVIDER: ${ASKLAKE_OBJECT_STORAGE_PROVIDER:-aws}
+        VITE_S3_REGION: ${AWS_REGION:-ap-northeast-2}
+        VITE_SPARK_OUTPUT_BUCKET: ${ASKLAKE_SPARK_OUTPUT_BUCKET:?ASKLAKE_SPARK_OUTPUT_BUCKET is required}
     restart: unless-stopped
     expose:
       - "80"
@@ -90,9 +93,7 @@ services:
     depends_on:
       airflow-apiserver:
         condition: service_healthy
-      minio:
-        condition: service_healthy
-      minio-init:
+      aws-s3-readiness:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
@@ -167,7 +168,7 @@ services:
       ASKLAKE_SPARK_HADOOP_AWS_PACKAGE: ${ASKLAKE_SPARK_HADOOP_AWS_PACKAGE:-org.apache.hadoop:hadoop-aws:3.4.1}
       ASKLAKE_SPARK_KAFKA_PACKAGE: ${ASKLAKE_SPARK_KAFKA_PACKAGE:-org.apache.spark:spark-sql-kafka-0-10_2.13:4.0.1}
       ASKLAKE_SPARK_OUTPUT_MODE: ${ASKLAKE_SPARK_OUTPUT_MODE:-s3a}
-      ASKLAKE_SPARK_OUTPUT_BUCKET: ${ASKLAKE_SPARK_OUTPUT_BUCKET:-asklake-output}
+      ASKLAKE_SPARK_OUTPUT_BUCKET: ${ASKLAKE_SPARK_OUTPUT_BUCKET:?ASKLAKE_SPARK_OUTPUT_BUCKET is required}
       ASKLAKE_SPARK_OUTPUT_PREFIX: ${ASKLAKE_SPARK_OUTPUT_PREFIX:-asklake-output}
       ASKLAKE_SPARK_REPORT_DIR: /var/lib/asklake/spark-runs
       ASKLAKE_SPARK_REPORT_CONTAINER_DIR: /var/lib/asklake/spark-runs
@@ -185,19 +186,12 @@ services:
       ASKLAKE_LOCAL_LLM_MAX_INPUT_CHARS: ${ASKLAKE_LOCAL_LLM_MAX_INPUT_CHARS:-9000}
       ASKLAKE_REVIEW_TEXT_MODEL_HOST_DIR: /var/lib/asklake/review-text-models
       ASKLAKE_REVIEW_TEXT_MODEL_CONTAINER_DIR: /var/lib/asklake/review-text-models
-      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-http://minio:9000}
-      MINIO_ENDPOINT_IN_DOCKER: ${MINIO_ENDPOINT_IN_DOCKER:-http://minio:9000}
-      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY is required}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
-      MINIO_BUCKET: ${MINIO_BUCKET:-m3-raw}
-      MINIO_REGION: ${MINIO_REGION:-us-east-1}
-      S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
-      S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-true}
-      S3_ALLOWED_BUCKETS: ${S3_ALLOWED_BUCKETS:-m3-raw,asklake-output}
-      S3_ALLOWED_ENDPOINTS: ${S3_ALLOWED_ENDPOINTS:-http://minio:9000}
-      AWS_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY is required}
-      AWS_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
-      AWS_REGION: ${MINIO_REGION:-us-east-1}
+      ASKLAKE_OBJECT_STORAGE_PROVIDER: ${ASKLAKE_OBJECT_STORAGE_PROVIDER:-aws}
+      ASKLAKE_RAW_BUCKET: ${ASKLAKE_RAW_BUCKET:?ASKLAKE_RAW_BUCKET is required}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-false}
+      S3_ALLOWED_BUCKETS: ${S3_ALLOWED_BUCKETS:?S3_ALLOWED_BUCKETS is required}
+      AWS_REGION: ${AWS_REGION:-ap-northeast-2}
     expose:
       - "8080"
     volumes:
@@ -214,6 +208,18 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
+
+  aws-s3-readiness:
+    build:
+      context: ../backend
+      target: backend-runtime
+    restart: "no"
+    command: ["python", "scripts/verify-aws-s3-readiness.py"]
+    environment:
+      ASKLAKE_OBJECT_STORAGE_PROVIDER: ${ASKLAKE_OBJECT_STORAGE_PROVIDER:-aws}
+      ASKLAKE_S3_READINESS_READ_BUCKETS: ${ASKLAKE_S3_READINESS_READ_BUCKETS:?ASKLAKE_S3_READINESS_READ_BUCKETS is required}
+      ASKLAKE_S3_READINESS_WRITE_BUCKETS: ${ASKLAKE_S3_READINESS_WRITE_BUCKETS:?ASKLAKE_S3_READINESS_WRITE_BUCKETS is required}
+      AWS_REGION: ${AWS_REGION:-ap-northeast-2}
 
   spark-dir-init:
     <<: *spark-runtime
@@ -287,10 +293,10 @@ services:
     user: "185:185"
     environment:
       HOME: /tmp
-      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-http://minio:9000}
-      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY is required}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
-      MINIO_REGION: ${MINIO_REGION:-us-east-1}
+      ASKLAKE_OBJECT_STORAGE_PROVIDER: ${ASKLAKE_OBJECT_STORAGE_PROVIDER:-aws}
+      AWS_REGION: ${AWS_REGION:-ap-northeast-2}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-false}
       PYSPARK_DRIVER_PYTHON: /usr/bin/python3
       PYSPARK_PYTHON: /usr/bin/python3
       SPARK_WORKER_OPTS: >-
@@ -443,48 +449,6 @@ services:
       timeout: 5s
       retries: 12
 
-  minio:
-    image: minio/minio:RELEASE.2025-07-23T15-54-02Z
-    restart: unless-stopped
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
-    expose:
-      - "9000"
-      - "9001"
-    volumes:
-      - minio_data:/data
-    healthcheck:
-      test: ["CMD-SHELL", "mc ready local >/dev/null 2>&1"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-
-  minio-init:
-    image: minio/minio:RELEASE.2025-07-23T15-54-02Z
-    restart: "no"
-    depends_on:
-      minio:
-        condition: service_healthy
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
-      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY is required}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
-      MINIO_SOURCE_BUCKET: ${MINIO_BUCKET:-m3-raw}
-      MINIO_OUTPUT_BUCKET: ${ASKLAKE_SPARK_OUTPUT_BUCKET:-asklake-output}
-    entrypoint: /bin/sh
-    command:
-      - -c
-      - |
-        set -eu
-        mc alias set asklake http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
-        mc mb --ignore-existing "asklake/$$MINIO_SOURCE_BUCKET"
-        mc mb --ignore-existing "asklake/$$MINIO_OUTPUT_BUCKET"
-        mc admin user add asklake "$$MINIO_ACCESS_KEY" "$$MINIO_SECRET_KEY"
-        mc admin policy attach asklake readwrite --user "$$MINIO_ACCESS_KEY"
-
   redpanda:
     image: redpandadata/redpanda:v24.3.1
     restart: unless-stopped
@@ -521,6 +485,5 @@ volumes:
   postgres_data:
   airflow_postgres_data:
   mongo_data:
-  minio_data:
   redpanda_data:
   lake_data:

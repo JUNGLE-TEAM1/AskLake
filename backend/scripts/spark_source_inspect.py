@@ -3,6 +3,7 @@ import os
 import sys
 
 from pyspark.sql import SparkSession
+from object_storage_runtime import configure_spark_builder
 
 
 def main():
@@ -38,22 +39,9 @@ def main():
 
 
 def make_spark():
-    endpoint = os.environ.get("MINIO_ENDPOINT", "http://m3-minio:9000")
-    access_key = os.environ.get("MINIO_ACCESS_KEY", "")
-    secret_key = os.environ.get("MINIO_SECRET_KEY", "")
-    region = os.environ.get("MINIO_REGION", "us-east-1")
-    ssl_enabled = "true" if endpoint.lower().startswith("https://") else "false"
-    spark = (
+    spark = configure_spark_builder(
         SparkSession.builder.appName("asklake-source-inspect")
-        .config("spark.hadoop.fs.s3a.endpoint", endpoint)
-        .config("spark.hadoop.fs.s3a.access.key", access_key)
-        .config("spark.hadoop.fs.s3a.secret.key", secret_key)
-        .config("spark.hadoop.fs.s3a.endpoint.region", region)
-        .config("spark.hadoop.fs.s3a.path.style.access", "true")
-        .config("spark.hadoop.fs.s3a.connection.ssl.enabled", ssl_enabled)
-        .config("spark.hadoop.fs.s3a.aws.credentials.provider", "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider")
-        .getOrCreate()
-    )
+    ).getOrCreate()
     spark.sparkContext.setLogLevel("WARN")
     return spark
 
@@ -62,7 +50,13 @@ def read_source(spark, source_format, source_path):
     if source_format == "parquet":
         return spark.read.parquet(source_path)
     if source_format == "csv":
-        return spark.read.option("header", "true").option("inferSchema", "true").csv(source_path)
+        return (
+            spark.read.option("header", "true")
+            .option("inferSchema", "true")
+            .option("quote", '"')
+            .option("escape", '"')
+            .csv(source_path)
+        )
     if source_format == "jsonl":
         return spark.read.option("multiLine", "false").json(source_path)
     if source_format == "json":

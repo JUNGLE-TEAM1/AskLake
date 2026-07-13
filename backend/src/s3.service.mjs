@@ -1,4 +1,5 @@
 import { ListObjectsV2Command, S3Client } from "@aws-sdk/client-s3";
+import { resolveObjectStorageConfig, s3ClientOptions } from "./objectStorageConfig.mjs";
 
 const DEFAULT_BUCKETS = ["asklake-output"];
 const MAX_PREFIX_LENGTH = 1024;
@@ -41,12 +42,7 @@ function assertSafePrefix(prefix) {
 }
 
 function s3Client() {
-  const endpoint = process.env.S3_ENDPOINT || process.env.AWS_ENDPOINT_URL_S3;
-  return new S3Client({
-    endpoint,
-    forcePathStyle: endpoint ? String(process.env.S3_FORCE_PATH_STYLE ?? "true").toLowerCase() !== "false" : undefined,
-    region: process.env.S3_REGION || process.env.AWS_REGION || "us-east-1",
-  });
+  return new S3Client(s3ClientOptions(resolveObjectStorageConfig()));
 }
 
 function folderNameFromPrefix(prefix) {

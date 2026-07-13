@@ -30,6 +30,14 @@ class Settings(BaseSettings):
     continuous_runtime_sync_interval_seconds: float = Field(default=5.0, ge=1.0, le=60.0)
     airflow_execution_api_token: str | None = None
     airflow_internal_token: str | None = None
+    asklake_object_storage_provider: str = "minio"
+    s3_endpoint: str | None = None
+    s3_force_path_style: bool = False
+    aws_region: str = "ap-northeast-2"
+    minio_endpoint: str | None = None
+    minio_access_key: str | None = None
+    minio_secret_key: str | None = None
+    minio_region: str = "us-east-1"
     bootstrap_admin_email: str | None = None
     bootstrap_admin_password: str | None = None
     bootstrap_admin_display_name: str = "AskLake Administrator"
@@ -65,6 +73,16 @@ class Settings(BaseSettings):
         if isinstance(value, list):
             return [str(origin).strip().rstrip("/") for origin in value if str(origin).strip()]
         return []
+
+    @field_validator("asklake_object_storage_provider", mode="before")
+    @classmethod
+    def normalize_object_storage_provider(cls, value: object) -> str:
+        normalized = str(value or "minio").strip().lower()
+        if normalized in {"aws", "amazon s3", "s3"}:
+            return "aws"
+        if normalized in {"minio", "minio/s3"}:
+            return "minio"
+        raise ValueError("ASKLAKE_OBJECT_STORAGE_PROVIDER must be minio or aws")
 
     @model_validator(mode="after")
     def validate_bootstrap_admin(self) -> "Settings":

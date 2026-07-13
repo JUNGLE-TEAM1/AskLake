@@ -15,6 +15,7 @@ from pyspark.sql.functions import array, array_except, array_union, col, concat,
 from pyspark.sql.types import BooleanType, DoubleType, LongType, MapType, StringType, StructField, StructType, TimestampType
 
 from kafka_schema_paths import build_nested_schema_tree, expected_object_keys, json_path, split_source_path
+from object_storage_runtime import configure_spark_hadoop
 from snapshot_rule_runtime import SnapshotRuleExecutionError, apply_snapshot_rules, supports_snapshot_rules
 
 
@@ -552,15 +553,8 @@ def refresh_query_metrics(query: Any) -> None:
 
 
 def configure_s3a(spark: SparkSession) -> None:
-    endpoint = os.environ.get("MINIO_ENDPOINT", "")
-    if not endpoint:
-        return
     hadoop = spark.sparkContext._jsc.hadoopConfiguration()
-    hadoop.set("fs.s3a.endpoint", endpoint)
-    hadoop.set("fs.s3a.access.key", os.environ.get("MINIO_ACCESS_KEY", ""))
-    hadoop.set("fs.s3a.secret.key", os.environ.get("MINIO_SECRET_KEY", ""))
-    hadoop.set("fs.s3a.path.style.access", "true")
-    hadoop.set("fs.s3a.connection.ssl.enabled", "false")
+    configure_spark_hadoop(hadoop)
 
 
 def path_exists(spark: SparkSession, output_path: str) -> bool:

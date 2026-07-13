@@ -50,7 +50,10 @@ Dashboard adapter는 FastAPI 응답을 우선하고, 이전 backend 호환을 �
 VITE_API_BASE_URL=http://localhost:8080
 VITE_USE_MOCK_API=false
 VITE_DASHBOARD_ASSISTANT_API_PATH=/api/dashboards/assistant
+VITE_OBJECT_STORAGE_PROVIDER=minio
+VITE_S3_REGION=us-east-1
 DATABASE_URL=postgres://asklake:asklake_dev@127.0.0.1:54328/asklake
+ASKLAKE_OBJECT_STORAGE_PROVIDER=minio
 S3_ALLOWED_BUCKETS=asklake-output
 S3_ENDPOINT=http://localhost:9000
 S3_FORCE_PATH_STYLE=true
@@ -64,6 +67,9 @@ TARGET_DATABASES=asklake,asklake_gold,analytics,marketing
 - `VITE_USE_MOCK_API`: `false` 또는 미설정이면 live backend를 호출합니다. frontend mock mode는 `true`를 명시합니다.
 - `VITE_DASHBOARD_ASSISTANT_API_PATH`: 미설정 시 `/api/dashboards/assistant`를 호출합니다. 다른 Assistant API 경로 또는 origin이 필요할 때만 지정합니다.
 - `DATABASE_URL`: backend metadata DB입니다. 미설정 시 `docker-compose.yml`의 local Postgres 기본값을 사용합니다.
+- 로컬 object storage는 `ASKLAKE_OBJECT_STORAGE_PROVIDER=minio`, MinIO endpoint/static local credential, path-style URL을 사용합니다.
+- EC2 production은 `ASKLAKE_OBJECT_STORAGE_PROVIDER=aws`, `AWS_REGION`, `S3_FORCE_PATH_STYLE=false`를 사용합니다. custom endpoint와 장기 AWS access key/secret은 설정하지 않고 EC2 instance profile IAM Role/default credential chain으로 인증합니다.
+- AWS Source request는 provider, region, bucket/prefix만 받으며 frontend는 endpoint/access key/secret 입력을 노출하거나 API payload에 포함하지 않습니다.
 - mock mode에서는 Source/Schema 연결 테스트도 `sourceConnectorService.ts`의 mock `SourceConnectorAnalysis`를 사용합니다.
 - live mode에서는 Source/Schema/Create/Run 흐름이 실제 백엔드를 호출합니다.
 - 새 Kafka Source의 broker 기본값은 `GET /api/etl/sources/defaults`가 반환하는 backend runtime 값이며 frontend build에 복제하지 않습니다.
