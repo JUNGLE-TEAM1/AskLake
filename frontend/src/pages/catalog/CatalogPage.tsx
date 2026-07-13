@@ -71,8 +71,8 @@ import { IconButton } from "@/components/ui/icon-button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { getCatalogDatasetRows } from "../../services/catalogApi";
 import { getDatasetLineageGraph } from "../../services/mockApi";
-import type { AuditResult, CatalogDataset, CatalogDatasetRowsResponse, DatasetMaterializationRun, LineageGraph, LineageGraphDataset, LineageLayer } from "../../types";
-import { canDeleteDatasetMaterializationRun, canQueryDatasetAs, permissionDeniedMessage } from "../../utils/permissions";
+import type { AuditResult, CatalogDataset, CatalogDatasetRowsResponse, CurrentUserResponse, DatasetMaterializationRun, LineageGraph, LineageGraphDataset, LineageLayer } from "../../types";
+import { canDeleteDatasetMaterializationRun, canQueryDatasetAs, datasetQueryBlockedMessage, permissionDeniedMessage } from "../../utils/permissions";
 import { datasetStatusMeta } from "../../utils/statusMeta";
 import { cn } from "@/lib/utils";
 
@@ -304,6 +304,7 @@ function compareCatalogDatasetsBySort(
 }
 
 export function CatalogPage({
+  currentUser,
   datasets,
   error = null,
   loading = false,
@@ -311,6 +312,7 @@ export function CatalogPage({
   onOpenSql,
   selectedDataset,
 }: {
+  currentUser?: CurrentUserResponse | null;
   datasets: CatalogDataset[];
   error?: string | null;
   loading?: boolean;
@@ -330,7 +332,7 @@ export function CatalogPage({
   const [sortMode, setSortMode] = useState<CatalogSortMode>("default");
   const tags = useMemo(() => getCatalogTagsByFrequency(datasets), [datasets]);
   const searchQuery = useMemo(() => parseCatalogSearchQuery(debouncedSearchText, tags), [debouncedSearchText, tags]);
-  const canQueryCurrentDataset = (dataset: CatalogDataset | null | undefined) => canQueryDatasetAs(dataset, undefined);
+  const canQueryCurrentDataset = (dataset: CatalogDataset | null | undefined) => canQueryDatasetAs(dataset, currentUser);
   const filteredDatasets = useMemo(() => datasets
     .map((dataset, index) => ({ dataset, index }))
     .filter(({ dataset }) => {
@@ -797,12 +799,14 @@ function CatalogModal({
 }
 
 export function CatalogDetailPage({
+  currentUser,
   dataset,
   onAction,
   onBack,
   onLineage,
   onOpenSql,
 }: {
+  currentUser?: CurrentUserResponse | null;
   dataset: CatalogDataset;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
   onBack: () => void;
@@ -810,6 +814,7 @@ export function CatalogDetailPage({
   onOpenSql: () => void;
 }) {
   const [activeTab, setActiveTab] = useState<"overview" | "schema" | "sample" | "lineage">("overview");
+  const canQueryCurrentDataset = canQueryDatasetAs(dataset, currentUser);
 
   const openLineage = () => {
     setActiveTab("lineage");
@@ -837,7 +842,7 @@ export function CatalogDetailPage({
             </div>
           </div>
           <div className="job-detail-actions">
-            <Button className="job-action-button primary" type="button" onClick={onOpenSql} size="sm" variant="primary"><ExternalLink size={14} /> SQL 분석에서 열기</Button>
+            <Button className="job-action-button primary" disabled={!canQueryCurrentDataset} title={canQueryCurrentDataset ? "SQL 분석에서 엽니다." : datasetQueryBlockedMessage(dataset)} type="button" onClick={onOpenSql} size="sm" variant="primary"><ExternalLink size={14} /> SQL 분석에서 열기</Button>
             <Button className="job-action-button" type="button" onClick={openLineage} size="sm" variant="outline">리니지 보기</Button>
             <Button className="job-action-button" type="button" onClick={() => onAction("catalog.dataset.refreshed", `/api/catalog/datasets/${dataset.id}`, dataset.id)} size="sm" variant="outline">새로고침</Button>
           </div>
@@ -937,7 +942,7 @@ function CatalogMaterializationRuns({
               role="button"
               size="none"
               tabIndex={isSelectable ? 0 : -1}
-              title={isSelectable ? "SQL 분석 대상으로 선택" : !canQueryDatasetForCurrentUser(dataset) ? permissionDeniedMessage("데이터셋", "SQL 실행") : "성공한 데이터 버전만 SQL 분석 대상으로 선택할 수 있습니다."}
+              title={isSelectable ? "SQL 분석 대상으로 선택" : !canQueryDatasetForCurrentUser(dataset) ? datasetQueryBlockedMessage(dataset) : "성공한 데이터 버전만 SQL 분석 대상으로 선택할 수 있습니다."}
               onClick={(event) => onSelectRun(event, dataset, run)}
               onKeyDown={(event) => {
                 if (event.key === "Enter" || event.key === " ") {
