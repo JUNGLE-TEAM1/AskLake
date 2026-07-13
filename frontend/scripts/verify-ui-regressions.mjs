@@ -986,6 +986,17 @@ const checks = [
     ],
   },
   {
+    name: "Database source connection discovery stays separate from target preview",
+    file: "src/pages/etl/EtlPages.tsx",
+    patterns: [
+      /const requiresAssetSelectionForPreview = \["File \/ S3", "MongoDB", "PostgreSQL"\]\.includes\(activeSourceType\);/,
+      /if \(!\["File \/ S3", "MongoDB", "PostgreSQL"\]\.includes\(activeSourceType\)\)/,
+      /const result = await listSourceAssets\(activeSourceType, editableFields, ""\);/,
+      /\(requiresAssetSelectionForPreview && !selectedAssetPath\)/,
+      /schema: \{ columns: \[\], sampleRows: \[\], summary: "" \}/,
+    ],
+  },
+  {
     name: "Schema required state stays separate from explicit quality and null-guard rules",
     file: "src/components/etl/SchemaTransformEditor.jsx",
     patterns: [

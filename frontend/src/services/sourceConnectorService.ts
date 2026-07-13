@@ -104,7 +104,19 @@ function resolveMockConnectorAnalysis(sourceType: string, fields: SourceFieldRow
 }
 
 function mockSourceAssets(sourceType: string, prefix: string): Array<[string, string, string]> {
-  const basePath = prefix.trim() || (sourceType === "PostgreSQL" ? "public" : "sample");
+  if (sourceType === "PostgreSQL") {
+    return [
+      ["customer_reviews", prefix.trim() || "public", "detected"],
+      ["product_metadata", prefix.trim() || "public", "detected"],
+    ];
+  }
+  if (sourceType === "MongoDB") {
+    return [
+      ["app_events", prefix.trim() || "asklake_sources", "detected"],
+      ["customer_profiles", prefix.trim() || "asklake_sources", "detected"],
+    ];
+  }
+  const basePath = prefix.trim() || "sample";
   return [
     [`${basePath}/customer_reviews.parquet`, "Parquet", "준비됨"],
     [`${basePath}/customer_reviews.csv`, "CSV", "준비됨"],
