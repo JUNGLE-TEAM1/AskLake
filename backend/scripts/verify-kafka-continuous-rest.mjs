@@ -115,7 +115,7 @@ try {
     ASKLAKE_SPARK_REPORT_DIR: reportDir,
     ASKLAKE_SPARK_REST_POLL_INTERVAL_MS: "250",
     ASKLAKE_SPARK_REST_URL: `http://127.0.0.1:${address.port}`,
-    ASKLAKE_SPARK_RUNNER: "rest",
+    ASKLAKE_SPARK_RUNTIME: "spark-rest",
     ASKLAKE_SPARK_SCRIPT_DIR: "/opt/asklake/scripts",
     ASKLAKE_SPARK_SOURCE_INSPECT_SCRIPT: "/opt/asklake/scripts/spark_source_inspect_rest.py",
     MINIO_ACCESS_KEY: minioAccessSentinel,
@@ -270,7 +270,7 @@ try {
   assert.equal(cleanup.submissionId, orphanSubmissionId);
   assert.equal(killRequests.at(-1), orphanSubmissionId);
 
-  const invalidProductionEnvironment = { ...environment, ASKLAKE_SPARK_RUNNER: "docker" };
+  const invalidProductionEnvironment = { ...environment, ASKLAKE_SPARK_RUNTIME: "docker" };
   await assert.rejects(
     runManager(
       continuousScript,
@@ -278,7 +278,7 @@ try {
       invalidProductionEnvironment,
       "ASKLAKE_KAFKA_CONTINUOUS_RESULT",
     ),
-    /Production Spark execution requires ASKLAKE_SPARK_RUNNER=rest/,
+    /Production Spark execution requires ASKLAKE_SPARK_RUNTIME=spark-rest/,
   );
   await assert.rejects(
     runManager(
@@ -287,7 +287,7 @@ try {
       invalidProductionEnvironment,
       "ASKLAKE_KAFKA_MAINTENANCE_RESULT",
     ),
-    /Production Spark execution requires ASKLAKE_SPARK_RUNNER=rest/,
+    /Production Spark execution requires ASKLAKE_SPARK_RUNTIME=spark-rest/,
   );
 
   assert.equal(existsSync(dockerCallMarker), false, "Production continuous and maintenance paths must make zero Docker calls.");

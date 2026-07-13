@@ -14,9 +14,14 @@ import { objectStorageDockerEnv, toDockerEnvArgs } from "../src/objectStorageCon
 
 import {
   createSparkRestSubmission,
-  sparkExecutionMode,
   sparkRestRuntimeConfig,
 } from "../src/sparkRunner.mjs";
+import {
+  createSparkRuntime,
+  hasExplicitSparkRuntime,
+  SPARK_RUNTIME_IDS,
+  SPARK_RUNTIME_OPERATIONS,
+} from "../src/sparkRuntime.mjs";
 import {
   createSparkRestDriver,
   getSparkRestDriverStatus,
@@ -51,22 +56,40 @@ try {
 
 async function manageMaintenance(input) {
   const action = required(input.action, "action");
-  const mode = maintenanceExecutionMode();
+  const runtime = maintenanceRuntime();
   mkdirSync(reportDir, { recursive: true });
   mkdirSync(ivyDir, { recursive: true });
-  if (action === "cleanup") {
-    return mode === "rest" ? cleanupMaintenanceRest(input) : cleanupMaintenanceDocker(input);
-  }
-  if (action !== "run") throw new Error(`Unsupported continuous maintenance action: ${action}`);
-  return mode === "rest" ? runMaintenanceRest(input) : runMaintenanceDockerWithSpark(input);
+  return runtime.execute(SPARK_RUNTIME_OPERATIONS.MAINTENANCE, { action, input });
 }
 
-function maintenanceExecutionMode() {
-  const mode = sparkExecutionMode(process.env);
-  if (mode === "docker" && !String(process.env.ASKLAKE_SPARK_RUNNER || "").trim()) {
-    throw new Error("Development Docker maintenance execution requires ASKLAKE_SPARK_RUNNER=docker.");
+function maintenanceRuntime() {
+  const runtime = createSparkRuntime(process.env, {
+    [SPARK_RUNTIME_IDS.DOCKER]: {
+      [SPARK_RUNTIME_OPERATIONS.MAINTENANCE]: manageMaintenanceDocker,
+    },
+    [SPARK_RUNTIME_IDS.SPARK_REST]: {
+      [SPARK_RUNTIME_OPERATIONS.MAINTENANCE]: manageMaintenanceRest,
+    },
+  });
+  if (runtime.id === SPARK_RUNTIME_IDS.DOCKER && !hasExplicitSparkRuntime(process.env)) {
+    throw new Error(
+      "Development Docker maintenance execution requires ASKLAKE_SPARK_RUNTIME=docker "
+      + "(or legacy ASKLAKE_SPARK_RUNNER=docker).",
+    );
   }
-  return mode;
+  return runtime;
+}
+
+function manageMaintenanceRest({ action, input }) {
+  if (action === "cleanup") return cleanupMaintenanceRest(input);
+  if (action === "run") return runMaintenanceRest(input);
+  throw new Error(`Unsupported continuous maintenance action: ${action}`);
+}
+
+function manageMaintenanceDocker({ action, input }) {
+  if (action === "cleanup") return cleanupMaintenanceDocker(input);
+  if (action === "run") return runMaintenanceDockerWithSpark(input);
+  throw new Error(`Unsupported continuous maintenance action: ${action}`);
 }
 
 async function runMaintenanceRest(input) {

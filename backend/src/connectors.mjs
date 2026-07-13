@@ -16,9 +16,13 @@ import { canonicalSchemaType, fieldValue, formatBytes, inferSchemaColumns, parse
 import {
   createSparkRestSubmission,
   runSparkRestSubmission,
-  sparkExecutionMode,
   sparkRestRuntimeConfig,
 } from "./sparkRunner.mjs";
+import {
+  createSparkRuntime,
+  SPARK_RUNTIME_IDS,
+  SPARK_RUNTIME_OPERATIONS,
+} from "./sparkRuntime.mjs";
 
 const textFileExtensions = [".csv", ".json", ".jsonl", ".log", ".txt", ".tsv"];
 const backendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -1403,7 +1407,15 @@ function endpointForMinioContainer(endpoint) {
 }
 
 function inspectParquetLakeWithSpark({ fields = [], path: sourcePath, rowLimit }) {
-  const executionMode = sparkExecutionMode();
+  const runtime = createSparkRuntime(process.env, {
+    [SPARK_RUNTIME_IDS.DOCKER]: {
+      [SPARK_RUNTIME_OPERATIONS.SOURCE_INSPECT]: inspectParquetLakeWithSparkDocker,
+    },
+    [SPARK_RUNTIME_IDS.SPARK_REST]: {
+      [SPARK_RUNTIME_OPERATIONS.SOURCE_INSPECT]: inspectParquetLakeWithSparkRest,
+    },
+  });
+  const executionMode = runtime.legacyRunner;
   mkdirSync(ivyDir, { recursive: true });
   const storageFields = upsertFields(fields, [
     ["Endpoint URL", isMinioProvider(fields) ? endpointForDockerNetwork(fieldValue(fields, "Endpoint URL")) : fieldValue(fields, "Endpoint URL")],
@@ -1435,85 +1447,7 @@ function inspectParquetLakeWithSpark({ fields = [], path: sourcePath, rowLimit }
     ASKLAKE_SOURCE_ROW_LIMIT: Math.max(1, Math.min(Number(rowLimit) || 10, 50000)),
     HOME: "/tmp",
   };
-  let inspected;
-  if (executionMode === "rest") {
-    mkdirSync(sparkReportDir, { recursive: true });
-    const reportName = `source-inspect-${randomUUID()}.json`;
-    const reportPath = path.join(sparkReportDir, reportName);
-    const statePath = path.join(sparkReportDir, reportName.replace(/\.json$/, ".spark-rest-state.json"));
-    const reportRuntimePath = path.posix.join(
-      String(sparkReportRuntimeDir).replace(/\\/g, "/"),
-      reportName,
-    );
-    rmSync(reportPath, { force: true });
-    const result = runSparkRestSubmission(
-      createSparkSourceInspectRestSubmission({
-        environmentVariables: {
-          ...inspectEnvironment,
-          ASKLAKE_SOURCE_INSPECT_REPORT_FILE: reportRuntimePath,
-        },
-      }),
-      sourceInspectTimeoutMs(),
-      process.env,
-      { stateFile: statePath },
-    );
-    const output = `${result.stdout || ""}\n${result.stderr || ""}\n${result.error?.message || ""}`;
-    try {
-      if (result.status !== 0) {
-        throw apiError(
-          "DATALAKE_SCHEMA_INFERENCE_FAILED",
-          `데이터 레이크 Parquet 스키마 추론에 실패했습니다: ${tail(output)}`,
-          502,
-        );
-      }
-      inspected = JSON.parse(readFileSync(reportPath, "utf8"));
-    } catch (error) {
-      if (error?.code === "DATALAKE_SCHEMA_INFERENCE_FAILED") throw error;
-      throw apiError(
-        "DATALAKE_SCHEMA_INFERENCE_FAILED",
-        `데이터 레이크 Parquet 검사 결과를 읽지 못했습니다: ${error?.message || error}`,
-        502,
-      );
-    } finally {
-      rmSync(reportPath, { force: true });
-    }
-  } else {
-    const dockerArgs = [
-      "run",
-      "--rm",
-      "--network",
-      process.env.ASKLAKE_DOCKER_NETWORK || "asklake_default",
-      "-v",
-      `${scriptsDir}:/work/scripts:ro`,
-      "-v",
-      `${ivyDir}:/tmp/.ivy2`,
-      ...Object.entries(inspectEnvironment).flatMap(([name, value]) => ["-e", `${name}=${value}`]),
-      process.env.ASKLAKE_SPARK_IMAGE || "apache/spark:4.0.1",
-      "/opt/spark/bin/spark-submit",
-      "--master",
-      process.env.ASKLAKE_SOURCE_INSPECT_SPARK_MASTER || "local[1]",
-      "--conf",
-      "spark.jars.ivy=/tmp/.ivy2",
-      "--packages",
-      process.env.ASKLAKE_SPARK_HADOOP_AWS_PACKAGE || "org.apache.hadoop:hadoop-aws:3.4.1",
-      "/work/scripts/spark_source_inspect.py",
-    ];
-    const result = spawnSync("docker", dockerArgs, {
-      encoding: "utf8",
-      maxBuffer: 128 * 1024 * 1024,
-      timeout: sourceInspectTimeoutMs(),
-    });
-    const output = `${result.stdout || ""}\n${result.stderr || ""}`;
-    const marker = output.split(/\r?\n/).findLast((line) => line.startsWith("ASKLAKE_SOURCE_INSPECT="));
-    if (result.status !== 0 || !marker) {
-      throw apiError(
-        "DATALAKE_SCHEMA_INFERENCE_FAILED",
-        `데이터 레이크 Parquet 스키마 추론에 실패했습니다: ${tail(output)}`,
-        502,
-      );
-    }
-    inspected = JSON.parse(marker.slice("ASKLAKE_SOURCE_INSPECT=".length));
-  }
+  const inspected = runtime.execute(SPARK_RUNTIME_OPERATIONS.SOURCE_INSPECT, { inspectEnvironment });
   const columns = Array.isArray(inspected.columns) ? inspected.columns : [];
   const sampleRows = Array.isArray(inspected.rows) ? inspected.rows : [];
   const schemaColumns = columns.map((column, index) => ({
@@ -1533,6 +1467,87 @@ function inspectParquetLakeWithSpark({ fields = [], path: sourcePath, rowLimit }
     sampleRows,
     schemaColumns,
   };
+}
+
+function inspectParquetLakeWithSparkRest({ inspectEnvironment }) {
+  mkdirSync(sparkReportDir, { recursive: true });
+  const reportName = `source-inspect-${randomUUID()}.json`;
+  const reportPath = path.join(sparkReportDir, reportName);
+  const statePath = path.join(sparkReportDir, reportName.replace(/\.json$/, ".spark-rest-state.json"));
+  const reportRuntimePath = path.posix.join(
+    String(sparkReportRuntimeDir).replace(/\\/g, "/"),
+    reportName,
+  );
+  rmSync(reportPath, { force: true });
+  const result = runSparkRestSubmission(
+    createSparkSourceInspectRestSubmission({
+      environmentVariables: {
+        ...inspectEnvironment,
+        ASKLAKE_SOURCE_INSPECT_REPORT_FILE: reportRuntimePath,
+      },
+    }),
+    sourceInspectTimeoutMs(),
+    process.env,
+    { stateFile: statePath },
+  );
+  const output = `${result.stdout || ""}\n${result.stderr || ""}\n${result.error?.message || ""}`;
+  try {
+    if (result.status !== 0) {
+      throw apiError(
+        "DATALAKE_SCHEMA_INFERENCE_FAILED",
+        `데이터 레이크 Parquet 스키마 추론에 실패했습니다: ${tail(output)}`,
+        502,
+      );
+    }
+    return JSON.parse(readFileSync(reportPath, "utf8"));
+  } catch (error) {
+    if (error?.code === "DATALAKE_SCHEMA_INFERENCE_FAILED") throw error;
+    throw apiError(
+      "DATALAKE_SCHEMA_INFERENCE_FAILED",
+      `데이터 레이크 Parquet 검사 결과를 읽지 못했습니다: ${error?.message || error}`,
+      502,
+    );
+  } finally {
+    rmSync(reportPath, { force: true });
+  }
+}
+
+function inspectParquetLakeWithSparkDocker({ inspectEnvironment }) {
+  const dockerArgs = [
+    "run",
+    "--rm",
+    "--network",
+    process.env.ASKLAKE_DOCKER_NETWORK || "asklake_default",
+    "-v",
+    `${scriptsDir}:/work/scripts:ro`,
+    "-v",
+    `${ivyDir}:/tmp/.ivy2`,
+    ...Object.entries(inspectEnvironment).flatMap(([name, value]) => ["-e", `${name}=${value}`]),
+    process.env.ASKLAKE_SPARK_IMAGE || "apache/spark:4.0.1",
+    "/opt/spark/bin/spark-submit",
+    "--master",
+    process.env.ASKLAKE_SOURCE_INSPECT_SPARK_MASTER || "local[1]",
+    "--conf",
+    "spark.jars.ivy=/tmp/.ivy2",
+    "--packages",
+    process.env.ASKLAKE_SPARK_HADOOP_AWS_PACKAGE || "org.apache.hadoop:hadoop-aws:3.4.1",
+    "/work/scripts/spark_source_inspect.py",
+  ];
+  const result = spawnSync("docker", dockerArgs, {
+    encoding: "utf8",
+    maxBuffer: 128 * 1024 * 1024,
+    timeout: sourceInspectTimeoutMs(),
+  });
+  const output = `${result.stdout || ""}\n${result.stderr || ""}`;
+  const marker = output.split(/\r?\n/).findLast((line) => line.startsWith("ASKLAKE_SOURCE_INSPECT="));
+  if (result.status !== 0 || !marker) {
+    throw apiError(
+      "DATALAKE_SCHEMA_INFERENCE_FAILED",
+      `데이터 레이크 Parquet 스키마 추론에 실패했습니다: ${tail(output)}`,
+      502,
+    );
+  }
+  return JSON.parse(marker.slice("ASKLAKE_SOURCE_INSPECT=".length));
 }
 
 function requireMinioCredentials(config) {

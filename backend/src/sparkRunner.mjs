@@ -11,6 +11,12 @@ import {
   toDockerEnvArgs,
 } from "./objectStorageConfig.mjs";
 import { fieldValue, normalizeColumnName } from "./profile.mjs";
+import {
+  createSparkRuntime,
+  resolveSparkRuntime,
+  SPARK_RUNTIME_IDS,
+  SPARK_RUNTIME_OPERATIONS,
+} from "./sparkRuntime.mjs";
 
 const backendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const scriptsDir = path.join(backendDir, "scripts");
@@ -32,9 +38,9 @@ const outputContainerDir = process.env.ASKLAKE_SPARK_OUTPUT_CONTAINER_DIR || "/w
 export const SPARK_REST_BRIDGE_GRACE_MS = 30_000;
 
 export function runSparkPipeline(job, command, runId, options = {}) {
-  const executionMode = sparkExecutionMode();
-  if (executionMode === "docker") ensureSparkServer();
-  const allowWorldWritable = executionMode === "docker";
+  const runtime = sparkBatchRuntime();
+  if (runtime.id === SPARK_RUNTIME_IDS.DOCKER) ensureSparkServer();
+  const allowWorldWritable = runtime.id === SPARK_RUNTIME_IDS.DOCKER;
   ensureWritableDir(ivyDir, allowWorldWritable);
   ensureWritableDir(reportDir, allowWorldWritable);
   ensureWritableDir(localOutputDir, allowWorldWritable);
@@ -43,13 +49,46 @@ export function runSparkPipeline(job, command, runId, options = {}) {
 
   const source = sparkSourceFromJob(job, runId);
   try {
-    return runSparkPipelineWithSource(job, command, runId, source, executionMode, options);
+    return runSparkPipelineWithSource(job, command, runId, source, runtime, options);
   } finally {
     cleanupSparkSource(source);
   }
 }
 
-function runSparkPipelineWithSource(job, command, runId, source, executionMode, options = {}) {
+function sparkBatchRuntime(environment = process.env) {
+  return createSparkRuntime(environment, {
+    [SPARK_RUNTIME_IDS.DOCKER]: {
+      [SPARK_RUNTIME_OPERATIONS.BATCH]: runSparkBatchDocker,
+    },
+    [SPARK_RUNTIME_IDS.SPARK_REST]: {
+      [SPARK_RUNTIME_OPERATIONS.BATCH]: (payload) => runSparkBatchRest(payload, environment),
+    },
+  });
+}
+
+function runSparkBatchDocker({ dockerArgs }) {
+  return runSparkSubmitContainer(dockerArgs);
+}
+
+function runSparkBatchRest({ options, packages, runId, sparkEnvironment, sparkExecutorProperties }, environment) {
+  return runSparkRestSubmission(
+    createSparkRestSubmission({
+      appName: sparkEnvironment.ASKLAKE_SPARK_APP_NAME,
+      environmentVariables: sparkEnvironment,
+      packages,
+      scriptPath: sparkRestRuntimeConfig(environment).jobScript,
+      sparkProperties: sparkExecutorProperties,
+    }, environment),
+    positiveInteger(options.sparkRestTimeoutMs, sparkRunTimeoutMs(environment)),
+    environment,
+    {
+      stateFile: sparkRestStateFileForRun(runId, options.sparkRestStateFile),
+    },
+  );
+}
+
+function runSparkPipelineWithSource(job, command, runId, source, runtime, options = {}) {
+  const executionMode = runtime.legacyRunner;
   const output = sparkOutputPath(job, runId);
   const reportPath = path.join(reportDir, `${runId}.json`);
   const dockerReportPath = `${reportContainerDir}/${runId}.json`;
@@ -186,26 +225,19 @@ function runSparkPipelineWithSource(job, command, runId, source, executionMode, 
     "/work/scripts/spark_job_run.py",
   ];
 
-  let result = executionMode === "rest"
-    ? runSparkRestSubmission(
-      createSparkRestSubmission({
-        appName: sparkEnvironment.ASKLAKE_SPARK_APP_NAME,
-        environmentVariables: sparkEnvironment,
-        packages,
-        scriptPath: sparkRestRuntimeConfig().jobScript,
-        sparkProperties: sparkExecutorProperties,
-      }),
-      positiveInteger(options.sparkRestTimeoutMs, sparkRunTimeoutMs()),
-      process.env,
-      {
-        stateFile: sparkRestStateFileForRun(runId, options.sparkRestStateFile),
-      },
-    )
-    : runSparkSubmitContainer(dockerArgs);
+  const runtimePayload = {
+    dockerArgs,
+    options,
+    packages,
+    runId,
+    sparkEnvironment,
+    sparkExecutorProperties,
+  };
+  let result = runtime.execute(SPARK_RUNTIME_OPERATIONS.BATCH, runtimePayload);
   let report = readSparkReport(reportPath, result.stdout);
   if (executionMode === "docker" && report.status !== "success" && shouldRetryDockerWait(result)) {
     rmSync(reportPath, { force: true });
-    result = runSparkSubmitContainer(dockerArgs);
+    result = runtime.execute(SPARK_RUNTIME_OPERATIONS.BATCH, runtimePayload);
     report = readSparkReport(reportPath, result.stdout);
   }
   if (executionMode === "docker" && report.status === "success") {
@@ -234,19 +266,7 @@ function runSparkPipelineWithSource(job, command, runId, source, executionMode, 
 }
 
 export function sparkExecutionMode(environment = process.env) {
-  const configured = String(environment.ASKLAKE_SPARK_RUNNER || "").trim().toLowerCase();
-  const production = [environment.APP_ENV, environment.NODE_ENV]
-    .some((value) => ["prod", "production"].includes(String(value || "").trim().toLowerCase()));
-  if (production && configured !== "rest") {
-    throw sparkConfigurationError(
-      "Production Spark execution requires ASKLAKE_SPARK_RUNNER=rest; Docker-based submission is not allowed.",
-    );
-  }
-  const mode = configured || "docker";
-  if (!new Set(["docker", "rest"]).has(mode)) {
-    throw sparkConfigurationError(`Unsupported ASKLAKE_SPARK_RUNNER mode: ${mode}`);
-  }
-  return mode;
+  return resolveSparkRuntime(environment).legacyRunner;
 }
 
 export function sparkRestRuntimeConfig(environment = process.env) {

@@ -13,6 +13,7 @@ import {
   sparkRestRuntimeConfig,
   sparkRunTimeoutMs,
 } from "../src/sparkRunner.mjs";
+import { resolveSparkRuntime, SPARK_RUNTIME_IDS } from "../src/sparkRuntime.mjs";
 import { validateSubmission } from "./spark-rest-client.mjs";
 
 const backendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -52,7 +53,8 @@ assert.equal(backendEnvironment.APP_ENV, "production");
 assert.equal(backend.build?.target, "backend-runtime", "Backend must use the Docker-free runtime target.");
 assert.equal(master.build?.target, "spark-runtime", "Spark master must use the embedded-script Spark target.");
 assert.equal(worker.build?.target, "spark-runtime", "Spark worker must use the embedded-script Spark target.");
-assert.equal(backendEnvironment.ASKLAKE_SPARK_RUNNER, "rest");
+assert.equal(backendEnvironment.ASKLAKE_SPARK_RUNTIME, "spark-rest");
+assert.equal(backendEnvironment.ASKLAKE_SPARK_RUNNER, undefined);
 assert.equal(backendEnvironment.ASKLAKE_MINIO_DOCKER_FALLBACK, "false");
 assert.equal(backendEnvironment.ASKLAKE_SPARK_REST_URL, "http://spark-master:6066");
 assert.equal(backendEnvironment.ASKLAKE_SPARK_MASTER_URL, "spark://spark-master:7077");
@@ -115,12 +117,16 @@ assert((master.expose || []).includes("6066"), "Spark REST port must be internal
 assert.equal(master.ports, undefined, "Spark master ports must not be published on the host.");
 
 const runtime = sparkRestRuntimeConfig(backendEnvironment);
+const runtimeSelection = resolveSparkRuntime(backendEnvironment);
 assert.equal(sparkExecutionMode(backendEnvironment), "rest");
+assert.equal(runtimeSelection.id, SPARK_RUNTIME_IDS.SPARK_REST);
+assert.equal(runtimeSelection.remote, true);
+assert.equal(runtimeSelection.requiresDockerSocket, false);
 assert.equal(runtime.ivyRuntimeDir, "/var/lib/asklake/spark-ivy");
 assert.equal(runtime.jobScript, backendEnvironment.ASKLAKE_SPARK_JOB_SCRIPT);
 assert.equal(runtime.sourceInspectScript, backendEnvironment.ASKLAKE_SPARK_SOURCE_INSPECT_SCRIPT);
 assert.throws(
-  () => sparkExecutionMode({ APP_ENV: "production", ASKLAKE_SPARK_RUNNER: "docker" }),
+  () => sparkExecutionMode({ APP_ENV: "production", ASKLAKE_SPARK_RUNTIME: "docker" }),
   (error) => error?.code === "SPARK_RUNNER_CONFIGURATION_INVALID",
   "Production must fail closed when Docker execution is selected.",
 );

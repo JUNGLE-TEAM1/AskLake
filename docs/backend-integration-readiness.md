@@ -130,7 +130,7 @@ Backend connector 응답은 secret field를 redacted value로 내려준다. 프�
 - `AIRFLOW_EXECUTION_API_TOKEN`: Airflow task가 FastAPI internal Spark endpoint를 호출할 때 사용하는 shared bearer token. Airflow/FastAPI 양쪽 값이 같아야 한다.
 - `AIRFLOW_INTERNAL_BASE_URL`, `AIRFLOW_INTERNAL_TOKEN`, `AIRFLOW_INTERNAL_TIMEOUT_SECONDS`: 기존 단일 호출 internal endpoint 호환 설정. 신규 DAG는 execution bearer endpoint를 우선 사용한다.
 
-일반 배치 `run`/`retry`는 `executionMode=spark`로 DAG를 시작한다. `spark_process_write`가 FastAPI internal endpoint를 호출하면 FastAPI가 persisted Job/Run/Airflow identity를 확인하고 PySpark runner를 실행한다. Airflow에는 Docker socket과 MinIO credential을 직접 제공하지 않는다. Production backend도 Docker socket/CLI 없이 Spark Standalone REST create/status/kill API를 사용하며, `APP_ENV=production`에서 Docker runner 설정은 configuration error로 차단한다. `executionMode=smoke`는 backend 없이 DAG 성공/강제 실패만 검증할 때 사용한다.
+일반 배치 `run`/`retry`는 `executionMode=spark`로 DAG를 시작한다. `spark_process_write`가 FastAPI internal endpoint를 호출하면 FastAPI가 persisted Job/Run/Airflow identity를 확인하고 PySpark runner를 실행한다. Airflow에는 Docker socket과 MinIO credential을 직접 제공하지 않는다. Spark 실행 provider는 공통 Runtime 계약의 `batch`, `sourceInspect`, `continuous`, `maintenance` operation으로 분리되며 로컬 `docker`와 production `spark-rest`가 같은 선택기를 사용한다. Production backend도 Docker socket/CLI 없이 Spark Standalone REST create/status/kill API를 사용하며, `APP_ENV=production`에서 Docker Runtime 설정은 configuration error로 차단한다. `executionMode=smoke`는 backend 없이 DAG 성공/강제 실패만 검증할 때 사용한다.
 `publish_run_result`는 성공 Spark manifest와 실제 Parquet를 검증한 뒤 Catalog dataset/materialization을 transaction으로 저장한다. Airflow terminal state만 성공이고 같은 `runId`의 Catalog evidence 또는 기존 persisted Spark result가 없으면 backend가 Run을 실패로 보정한다.
 
 Spark runner 입력:
@@ -146,6 +146,7 @@ Spark runner 입력:
 - `ASKLAKE_SPARK_TRANSFORM_STEPS`: create payload의 transform steps
 - `ASKLAKE_SPARK_QUALITY_RULES`: create payload의 quality rules
 - `ASKLAKE_SPARK_PARTITION_COLUMNS`: Target에서 선택한 다중 파티션 컬럼을 `/` 구분 문자열로 전달하며 Spark writer가 순서대로 `partitionBy`에 적용
+- `ASKLAKE_SPARK_RUNTIME`: canonical 실행 provider. 로컬은 `docker`, production은 `spark-rest`; 기존 `ASKLAKE_SPARK_RUNNER=docker|rest`는 호환 alias
 
 Spark runner 결과:
 
@@ -251,6 +252,7 @@ FastAPI Pair2 smoke:
 - `npm run verify:etl-lineage`는 text source 하나가 `text`, `sentiment`, `severity`로 파생되는 경우 source node가 `text`만 갖고 one-to-many transform edge를 만들며 `_asklake_*` metadata에 가짜 source edge를 만들지 않는지 확인한다. 또한 Parquet source를 `SOURCE · PARQUET`, Spark Job을 `PROCESS · SPARK`, 현재 Spark physical output을 요청 포맷과 무관하게 실제 `PARQUET` engine으로 표시하는지 검증한다.
 - `npm run verify:rule-compiler`는 공통 JSON fixture로 Python FastAPI와 local Node backend의 version/policy/parameter 판정을 비교하고, canonical Rule 생성·수정·조회 영속성 및 legacy fallback까지 확인한다. 프론트는 `cd frontend && npm run verify:rule-compiler`로 같은 fixture와 falsy/null parameter 왕복을 검증한다.
 - `npm run verify:kafka-continuous-contract`는 Continuous config/runtime, Rule payload/fingerprint, Catalog 근거와 checkpoint 불변 정책을 프로젝트 가상환경에서 검증한다. `npm run verify:kafka-continuous-rules`는 Docker Spark 4에서 Transform/Quality, Rule quarantine, replay 재검증, final projection과 checkpoint fingerprint mismatch를 실행한다.
+- `npm run verify:spark-runtime-contract`는 canonical/legacy Runtime 선택, production Docker 차단, capability, 배치·source inspection·Continuous·maintenance dispatcher 연결을 확인한다. `npm run verify:spark-rest-client`, `npm run verify:kafka-continuous-rest`, `npm run verify:production-spark-contract`는 REST lifecycle, zero-Docker backend, Compose 경계를 이어서 검증한다.
 - `PYTHONPATH=. .venv/bin/python scripts/verify-etl-job-hydrate-contract.py`는 저장된 Kafka source/schema/rule/permission/target metadata가 `JobRowData` hydrate 응답에서 손실되지 않는지, explicit canonical empty가 legacy Rule을 되살리지 않는지 확인한다.
 - `PYTHONPATH=. .venv/bin/python scripts/verify-etl-job-update-contract.py`는 실제 DB session에서 canonical Rule 저장을 확인하고 source config 보존, 성공 Run 뒤 target identity 변경 `422`, 실행 중 update `409`를 검증한다.
 - `npm run verify:record-parsing`은 공백 구분 규칙의 10필드 추론, 타입 추론, 사용자 컬럼명 반영, 필드 개수가 다른 행의 line/count 오류 계약을 FastAPI service 수준에서 확인한다.

@@ -133,6 +133,8 @@ Backend `DATABASE_URL`은 미설정 시 `postgres://asklake:asklake_dev@127.0.0.
 
 Airflow run polling과 실제 Spark batch를 확인하려면 AskLake backend와 별도로 local Airflow API server를 띄운다. Airflow는 `http://127.0.0.1:8081`에서 열리며 기본 계정은 local 전용 `airflow` / `airflow`다. `AIRFLOW_EXECUTION_API_TOKEN`은 Airflow task와 FastAPI에 같은 값을 설정하고 저장소나 로그에 운영 token을 남기지 않는다.
 
+Spark Runtime의 canonical 설정은 `ASKLAKE_SPARK_RUNTIME`이다. 로컬 batch/source inspection은 미설정 시에도 `docker`가 기본이지만 Kafka Continuous와 maintenance는 `ASKLAKE_SPARK_RUNTIME=docker`를 명시한다. Production은 `spark-rest`만 허용한다. 기존 `ASKLAKE_SPARK_RUNNER=docker|rest`는 호환되지만 새 환경 파일에는 사용하지 않는다.
+
 ```bash
 export AIRFLOW_EXECUTION_API_TOKEN=asklake-local-airflow-execution
 docker compose up airflow-init
@@ -150,6 +152,7 @@ AIRFLOW_USERNAME=airflow
 AIRFLOW_PASSWORD=airflow
 AIRFLOW_EXECUTION_API_TOKEN=asklake-local-airflow-execution
 AIRFLOW_INTERNAL_TOKEN=asklake-local-airflow-token
+ASKLAKE_SPARK_RUNTIME=docker
 ASKLAKE_SPARK_OUTPUT_MODE=s3a
 ASKLAKE_DOCKER_NETWORK=asklake-dev_default
 MINIO_ENDPOINT=http://127.0.0.1:9000
@@ -216,6 +219,16 @@ CSV의 quoted comma, doubled quote, 값의 시작·끝 큰따옴표, 큰따옴�
 ```bash
 cd backend
 npm run verify:spark-csv-quoting
+```
+
+Runtime 계약이나 production Spark 실행 경계를 변경했으면 아래 순서로 검증한다. 마지막 명령은 Docker Compose config와 Python bridge도 확인하므로 `backend/.venv` 의존성이 설치되어 있어야 한다.
+
+```bash
+cd backend
+npm run verify:spark-runtime-contract
+npm run verify:spark-rest-client
+npm run verify:kafka-continuous-rest
+npm run verify:production-spark-contract
 ```
 
 현재 `asklake_etl_job`은 `receive_asklake_run -> validate_spark_request -> spark_process_write -> publish_run_result`로 실행된다. 실제 source read/transform/quality/Parquet write는 PySpark가 담당한다. 실제 Spark mode의 `publish_run_result`는 저장된 성공 manifest를 `POST /api/internal/airflow/spark-runs/{runId}/catalog`로 멱등 반영하고, 그 commit 뒤에만 DAG Run을 성공시킨다. 독립 Airflow runtime 확인용 `executionMode=smoke`는 실제 Job/Run/Parquet가 없으므로 Catalog 호출을 건너뛴다.

@@ -108,6 +108,15 @@ Node demo API는 기존 동작 비교용 reference로 남긴다.
 
 Airflow task는 Docker socket이나 MinIO credential을 직접 받지 않는다. `spark_process_write` task가 `AIRFLOW_EXECUTION_API_TOKEN`으로 FastAPI 내부 API를 호출하면 FastAPI가 저장된 Job/Run identity를 재검증한다. 로컬 개발은 기존 Docker launcher를 사용할 수 있지만 production Compose는 backend에 Docker socket/CLI를 제공하지 않고 내부 `spark-master:6066` Standalone REST API로 cluster-mode driver를 제출하고 상태를 확인한다. 데이터 읽기·변환·품질 검사·Parquet 쓰기는 Spark worker의 PySpark가 수행하며 report/output/sample/Ivy 경로는 UID 185 bind mount로 공유한다.
 
+### Spark Runtime boundary
+
+Spark 실행 환경 선택의 source of truth는 `backend/src/sparkRuntime.mjs`다. Runtime은 `docker`와 `spark-rest`라는 canonical ID, `batch`·`sourceInspect`·`continuous`·`maintenance` capability, remote 여부, backend Docker socket 필요 여부를 함께 정의한다. 배치 실행, Parquet source inspection, Kafka Continuous lifecycle, replay/compaction maintenance는 각자 실행 구현을 보유하되 최상위 선택과 operation dispatch는 같은 Runtime 계약을 사용한다.
+
+- 로컬 batch/source inspection은 설정이 없으면 기존처럼 `docker`가 기본이다. Kafka Continuous와 maintenance는 실수로 장기 container를 만드는 것을 막기 위해 `ASKLAKE_SPARK_RUNTIME=docker`를 명시해야 한다.
+- production Compose는 `ASKLAKE_SPARK_RUNTIME=spark-rest`를 사용한다. `APP_ENV=production`에서 local Docker Runtime은 작업 제출 전에 configuration error로 차단한다.
+- `ASKLAKE_SPARK_RUNNER=docker|rest`는 기존 환경을 위한 호환 alias다. canonical 값과 legacy 값이 의미상 다르면 fail-fast하며 다른 Runtime으로 fallback하지 않는다.
+- EMR Serverless는 이번 Phase의 구현이 아니다. 후속 Phase에서 새 canonical ID와 네 operation adapter를 등록하되 현재 `docker`/`spark-rest` 코드를 다시 분기 확장하지 않는다.
+
 CSV source와 source inspect는 `quote="`와 `escape="`를 명시해 RFC 4180의 quoted comma와 doubled quote를 같은 field로 해석한다. 예를 들어 `"안녕, 나는 ""해건"""`은 `안녕, 나는 "해건"`이라는 리뷰 하나로 유지된다.
 
 Spark manifest의 input/output row count, output path, schema, quality, failure stage는 `etl_runs.task_states.sparkResult`와 Run summary에 보존한다. Phase 2는 물리 Parquet와 Spark/Airflow 결과 전파까지 책임지며 Catalog materialization/lineage와 최종 성공 gate는 Phase 3 경계다.
@@ -155,7 +164,7 @@ Phase 1부터 source profile은 JSON/JSONL의 native scalar type을 화면용 �
 
 Continuous 실행 이력은 Snapshot `ETLRun`과 분리한다. 한 번의 `startContinuous` 또는 `resumeContinuous`부터 stop/pause/failure까지를 durable stream session 한 행으로 저장하고, worker가 보고한 micro-batch manifest는 해당 session의 하위 batch 이력으로 멱등 저장한다. 재시작은 checkpoint와 누적 runtime counter를 이어가되 새 session을 만들며, session counter는 시작 당시 runtime baseline과 현재 누적값의 차이로 계산한다. 실행 이력 화면은 active session 동안 3초 polling을 수행하고 hidden tab에서는 요청을 유예하며, terminal 전환 뒤 자동 polling을 멈춘다. 세션 누적 적재량과 Catalog의 현재 데이터셋 행 수는 서로 다른 값으로 표시한다.
 
-운영 보강 경로는 streaming hot path와 유한 maintenance task를 분리한다. Backend control-plane은 worker liveness, partition lag, bounded log 조회, schema drift metadata를 동기화한다. Quarantine replay와 compaction은 run ID를 가진 유한 Spark batch로 실행하며 동일 `batch_id` partition layout과 완료 경로만 읽는다. 기본 replay는 현재 schema evolution policy를 다시 적용하고, unknown field 승인은 `manage` 권한과 감사 로그가 필요한 명시적 예외다. Maintenance run은 lease 만료 시 실패 처리되고 고아 Docker container를 정리한다. 향후 Airflow 예약은 이 maintenance task만 감싸며 Continuous worker 자체를 장기 Airflow DAG task로 실행하지 않는다.
+운영 보강 경로는 streaming hot path와 유한 maintenance task를 분리한다. Backend control-plane은 worker liveness, partition lag, bounded log 조회, schema drift metadata를 동기화한다. Quarantine replay와 compaction은 run ID를 가진 유한 Spark batch로 실행하며 동일 `batch_id` partition layout과 완료 경로만 읽는다. 기본 replay는 현재 schema evolution policy를 다시 적용하고, unknown field 승인은 `manage` 권한과 감사 로그가 필요한 명시적 예외다. Maintenance run은 lease 만료 시 실패 처리되고 선택된 Runtime의 고아 Docker container 또는 Spark REST driver를 정리한다. 향후 Airflow 예약은 이 maintenance task만 감싸며 Continuous worker 자체를 장기 Airflow DAG task로 실행하지 않는다.
 
 ### ETL Job 수정 계약
 

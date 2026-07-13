@@ -1879,6 +1879,14 @@ def run_spark_job(db: Session, job: ETLJobModel, command: str, run_id: str) -> d
                 source_window_rebaseline=source_window_rebaseline,
             ),
             "runId": run_id,
+            **(
+                {
+                    "sparkRestStateFile": str(state_file),
+                    "sparkRestTimeoutMs": poll_timeout_ms,
+                }
+                if rest_mode
+                else {}
+            ),
         },
         error_marker="ASKLAKE_SPARK_RUN_ERROR",
         timeout_seconds=spark_python_bridge_timeout_seconds(poll_timeout_ms) if rest_mode else 900,
@@ -4660,6 +4668,9 @@ def recover_spark_rest_submission(state_file: Path) -> dict[str, Any]:
 
 
 def spark_rest_mode_enabled() -> bool:
+    canonical_runtime = str(os.environ.get("ASKLAKE_SPARK_RUNTIME") or "").strip().lower()
+    if canonical_runtime:
+        return canonical_runtime == "spark-rest"
     return str(os.environ.get("ASKLAKE_SPARK_RUNNER") or "").strip().lower() == "rest"
 
 

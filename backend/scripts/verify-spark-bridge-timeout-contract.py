@@ -13,12 +13,14 @@ from app.services import etl_service
 
 
 original_environment = dict(os.environ)
+original_incremental_source_object_inventory = etl_service.incremental_source_object_inventory
 original_job_payload = etl_service.job_payload_for_spark
 original_run_node_bridge = etl_service.run_node_bridge
+original_source_incremental_window = etl_service.source_incremental_window
 original_subprocess_run = etl_service.subprocess.run
 
 try:
-    os.environ["ASKLAKE_SPARK_RUNNER"] = "rest"
+    os.environ["ASKLAKE_SPARK_RUNTIME"] = "spark-rest"
     os.environ["ASKLAKE_SPARK_RUN_TIMEOUT_SECONDS"] = "0"
     assert etl_service.spark_rest_poll_timeout_ms() == 7_200_000
     os.environ["ASKLAKE_SPARK_RUN_TIMEOUT_SECONDS"] = "1"
@@ -35,9 +37,11 @@ try:
         })
         return {"status": "success"}
 
-    etl_service.job_payload_for_spark = lambda _job: {"id": "timeout-contract"}
+    etl_service.incremental_source_object_inventory = lambda *_args, **_kwargs: None
+    etl_service.job_payload_for_spark = lambda *_args, **_kwargs: {"id": "timeout-contract"}
     etl_service.run_node_bridge = capture_bridge
-    etl_service.run_spark_job(object(), "run", "run-timeout-contract")
+    etl_service.source_incremental_window = lambda *_args, **_kwargs: (None, None)
+    etl_service.run_spark_job(object(), object(), "run", "run-timeout-contract")
 
     assert captured["payload"]["sparkRestTimeoutMs"] == 1000
     assert captured["options"]["timeout_seconds"] == 61
@@ -72,6 +76,8 @@ try:
 finally:
     os.environ.clear()
     os.environ.update(original_environment)
+    etl_service.incremental_source_object_inventory = original_incremental_source_object_inventory
     etl_service.job_payload_for_spark = original_job_payload
     etl_service.run_node_bridge = original_run_node_bridge
+    etl_service.source_incremental_window = original_source_incremental_window
     etl_service.subprocess.run = original_subprocess_run

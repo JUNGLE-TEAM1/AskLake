@@ -19,9 +19,14 @@ import {
 } from "../src/objectStorageConfig.mjs";
 import {
   createSparkRestSubmission,
-  sparkExecutionMode,
   sparkRestRuntimeConfig,
 } from "../src/sparkRunner.mjs";
+import {
+  createSparkRuntime,
+  hasExplicitSparkRuntime,
+  SPARK_RUNTIME_IDS,
+  SPARK_RUNTIME_OPERATIONS,
+} from "../src/sparkRuntime.mjs";
 import {
   createSparkRestDriver,
   getSparkRestDriverStatus,
@@ -57,32 +62,51 @@ async function manage(request) {
   const jobId = required(request.jobId, "jobId");
   const action = required(request.action, "action");
   const containerName = workerName(jobId);
-  const mode = continuousExecutionMode();
+  const runtime = continuousRuntime();
   mkdirSync(reportDir, { recursive: true });
   mkdirSync(ivyDir, { recursive: true });
+  return runtime.execute(SPARK_RUNTIME_OPERATIONS.CONTINUOUS, {
+    action,
+    containerName,
+    jobId,
+    request,
+  });
+}
 
-  if (mode === "rest") {
-    if (action === "start") return startWorkerRest(request, containerName);
-    if (action === "pause" || action === "stop") return stopWorkerRest(jobId, action, containerName);
-    if (action === "terminate") return terminateWorkerRest(jobId, containerName);
-    if (action === "status") return workerStatusRest(jobId, containerName);
-    if (action === "logs") return workerLogsRest(jobId, containerName, positiveInt(request.tail, 200));
-  } else {
-    if (action === "start") return startWorkerDocker(request, containerName);
-    if (action === "pause" || action === "stop") return stopWorkerDocker(jobId, action, containerName);
-    if (action === "terminate") return terminateWorkerDocker(jobId, containerName);
-    if (action === "status") return workerStatusDocker(jobId, containerName);
-    if (action === "logs") return workerLogsDocker(jobId, containerName, positiveInt(request.tail, 200));
+function continuousRuntime() {
+  const runtime = createSparkRuntime(process.env, {
+    [SPARK_RUNTIME_IDS.DOCKER]: {
+      [SPARK_RUNTIME_OPERATIONS.CONTINUOUS]: manageContinuousDocker,
+    },
+    [SPARK_RUNTIME_IDS.SPARK_REST]: {
+      [SPARK_RUNTIME_OPERATIONS.CONTINUOUS]: manageContinuousRest,
+    },
+  });
+  if (runtime.id === SPARK_RUNTIME_IDS.DOCKER && !hasExplicitSparkRuntime(process.env)) {
+    throw new Error(
+      "Development Docker continuous execution requires ASKLAKE_SPARK_RUNTIME=docker "
+      + "(or legacy ASKLAKE_SPARK_RUNNER=docker).",
+    );
   }
+  return runtime;
+}
+
+async function manageContinuousRest({ action, containerName, jobId, request }) {
+  if (action === "start") return startWorkerRest(request, containerName);
+  if (action === "pause" || action === "stop") return stopWorkerRest(jobId, action, containerName);
+  if (action === "terminate") return terminateWorkerRest(jobId, containerName);
+  if (action === "status") return workerStatusRest(jobId, containerName);
+  if (action === "logs") return workerLogsRest(jobId, containerName, positiveInt(request.tail, 200));
   throw new Error(`Unsupported continuous worker action: ${action}`);
 }
 
-function continuousExecutionMode() {
-  const mode = sparkExecutionMode(process.env);
-  if (mode === "docker" && !String(process.env.ASKLAKE_SPARK_RUNNER || "").trim()) {
-    throw new Error("Development Docker continuous execution requires ASKLAKE_SPARK_RUNNER=docker.");
-  }
-  return mode;
+async function manageContinuousDocker({ action, containerName, jobId, request }) {
+  if (action === "start") return startWorkerDocker(request, containerName);
+  if (action === "pause" || action === "stop") return stopWorkerDocker(jobId, action, containerName);
+  if (action === "terminate") return terminateWorkerDocker(jobId, containerName);
+  if (action === "status") return workerStatusDocker(jobId, containerName);
+  if (action === "logs") return workerLogsDocker(jobId, containerName, positiveInt(request.tail, 200));
+  throw new Error(`Unsupported continuous worker action: ${action}`);
 }
 
 async function startWorkerRest(request, containerName) {
