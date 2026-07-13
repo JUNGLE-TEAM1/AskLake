@@ -63,6 +63,11 @@ class MaterializationContractTests(unittest.TestCase):
             "spark_materialization_mode": "snapshot",
             "sourceKind": "kafka",
         }), "snapshot")
+        self.assertEqual(spark_materialization_mode(SimpleNamespace(), {
+            "materializationMode": " ",
+            "spark_materialization_mode": "delta",
+            "sourceKind": "etl",
+        }), "delta")
 
     def test_bounded_window_requires_version_and_upper_bound(self) -> None:
         self.assertTrue(has_bounded_source_window({
