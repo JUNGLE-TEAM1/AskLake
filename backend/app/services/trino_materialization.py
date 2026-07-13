@@ -44,4 +44,4 @@ def is_safe_table_name(value: str) -> bool:
 
 
 def quote_identifier(value: str) -> str:
-    return f'"{value.replace("\"", "\"\"")}"'
+    return '"' + value.replace('"', '""') + '"'
