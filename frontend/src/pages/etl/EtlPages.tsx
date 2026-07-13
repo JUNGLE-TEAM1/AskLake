@@ -1852,7 +1852,6 @@ export function SourceConnectionPage({
     >
         <EtlStepHeader
           className="etl-step-standalone-header"
-          description="데이터 소스를 선택하고 연결 정보와 탐색 대상을 설정합니다."
           icon={<Cable />}
           title="소스 연결"
         />
@@ -2511,7 +2510,7 @@ function sourceExplorerConfig(sourceType: string, assets: Array<[string, string,
         ...scopes.map((scope) => ({ label: scope, value: scope.toLowerCase() })),
       ],
       pathPlaceholder: "",
-      previewTitle: sourceType === "PostgreSQL" ? "테이블 프로파일" : "문서 제한 샘플",
+      previewTitle: sourceType === "PostgreSQL" ? "테이블 프로파일" : "선택한 컬렉션 미리보기",
       queryPlaceholder: sourceType === "PostgreSQL" ? "테이블명 검색" : "컬렉션명 검색",
       supportsPathSearch: false,
     };
