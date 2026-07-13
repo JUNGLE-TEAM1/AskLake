@@ -477,6 +477,12 @@
   padding: 0;
 }
 
+.catalog-dataset-viewer {
+  display: grid;
+  gap: 24px;
+  min-width: 0;
+}
+
 .catalog-modal-body .catalog-lineage-card {
   min-height: 680px;
 }
@@ -542,7 +548,35 @@
 
 .catalog-sample-scroll {
   width: 100%;
+  max-height: min(480px, 55vh);
   min-width: 0;
+}
+
+.catalog-sample-actions,
+.catalog-sample-pagination {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.catalog-sample-pagination {
+  justify-content: center;
+}
+
+.catalog-sample-pagination .catalog-pagination {
+  margin: 0;
+}
+
+.catalog-sample-version {
+  display: block;
+  max-width: min(48vw, 520px);
+  margin-top: 4px;
+  overflow: hidden;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .catalog-sample-slider {
@@ -557,6 +591,26 @@
 .catalog-sample-table th,
 .catalog-sample-table td {
   min-width: 140px;
+}
+
+.catalog-sample-table th {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  background: #f8fafc;
+}
+
+@media (max-width: 720px) {
+  .catalog-sample-header,
+  .catalog-sample-actions,
+  .catalog-sample-pagination {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .catalog-sample-pagination .catalog-pagination {
+    width: 100%;
+  }
 }
 
 .catalog-lineage-flow {
