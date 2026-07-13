@@ -22,12 +22,22 @@ from app.repositories.catalog_repository import CatalogRepository
 from app.repositories.sql_repository import SqlRepository
 from app.schemas.catalog import CatalogDatasetResponse
 from app.schemas.common import ErrorCode
-from app.schemas.sql import QueryRunRequest, QueryRunResponse
+from app.schemas.sql import (
+    DEFAULT_QUERY_PAGE_LIMIT,
+    MAX_QUERY_PAGE_LIMIT,
+    QueryRunRequest,
+    QueryRunResponse,
+)
 from app.services.governance_enforcement import require_governed_access
+from app.services.lake_storage_service import default_storage_root
 from app.services.resource_permission_service import dataset_with_persisted_permission_grants
 
-DEFAULT_PREVIEW_LIMIT = 100
+DEFAULT_PREVIEW_LIMIT = DEFAULT_QUERY_PAGE_LIMIT
 DEFAULT_REMOTE_PREVIEW_MAX_BYTES = 512 * 1024 * 1024
+STORED_RESULT_ROWS_KEY = "resultRows"
+RESULT_STORAGE_FORMAT_KEY = "resultStorageFormat"
+RESULT_STORAGE_LOCATION_KEY = "resultStorageLocation"
+SQL_RESULT_STORAGE_FORMAT = "parquet"
 REMOTE_STORAGE_SCHEMES = {"s3", "s3a"}
 SUPPORTED_SQL_STORAGE_FORMATS = {"csv", "json", "jsonl", "parquet"}
 SQL_MATERIALIZATION_RUNS_ATTR = "_sql_materialization_runs"
@@ -133,50 +143,34 @@ class SqlService:
         ]
         context_datasets = [base_dataset, *reference_datasets]
         for dataset in context_datasets:
-            require_governed_access(
-                self.repository.db,
+            self.require_dataset_query_access(
+                dataset,
                 actor_context,
-                action="query",
                 api_path="/api/query/runs",
+                db=self.repository.db,
                 http_method="POST",
-                metadata={"owner": dataset.owner, "query": query[:500]},
-                resource_id=dataset.id,
-                resource_name=dataset.name,
-                resource_type="dataset",
+                query=query,
             )
-            try:
-                require_permission(
-                    actor_context,
-                    "query",
-                    owner=dataset.owner,
-                    grants=dataset.permission_grants,
-                    resource_label="dataset",
-                )
-            except ApiError as exc:
-                safe_record_audit_event(
-                    self.repository.db,
-                    action="dataset.query.forbidden",
-                    actor=actor_context,
-                    api_path="/api/query/runs",
-                    http_method="POST",
-                    metadata={"owner": dataset.owner, "query": query[:500]},
-                    result="forbidden",
-                    status_code=exc.status_code,
-                    target_id=dataset.id,
-                    target_name=dataset.name,
-                    target_type="dataset",
-                )
-                raise
         referenced_datasets = resolve_referenced_datasets(
             mask_sql_comments_and_literals(statement),
             context_datasets,
         )
         result_dataset = resolve_result_dataset(base_dataset, referenced_datasets)
-        preview_limit = request.limit or DEFAULT_PREVIEW_LIMIT
-        query_result = execute_duckdb_preview(
+        page_limit = request.limit or DEFAULT_PREVIEW_LIMIT
+        run_id = f"sql_{uuid4().hex[:12]}"
+        result_path = query_result_storage_path(run_id)
+        query_result = execute_duckdb_query_to_artifact(
             statement,
             context_datasets=context_datasets,
-            preview_limit=preview_limit,
+            page_limit=page_limit,
+            result_path=result_path,
+        )
+
+        first_page_rows = query_result["rows"]
+        page_metadata = query_page_metadata(
+            total_rows=query_result["row_count"],
+            returned_rows=len(first_page_rows),
+            offset=0,
         )
 
         response = QueryRunResponse(
@@ -186,24 +180,35 @@ class SqlService:
             dataset_name=result_dataset.name,
             executed_at=current_utc_timestamp(),
             mode=request.mode,
-            preview_limit=preview_limit,
+            page_limit=page_limit,
+            page_offset=0,
+            preview_limit=page_limit,
             query=query,
             reference_dataset_ids=reference_dataset_ids,
             row_count=query_result["row_count"],
-            rows=query_result["rows"],
-            run_id=f"sql_{uuid4().hex[:12]}",
+            rows=first_page_rows,
+            run_id=run_id,
             validation_key=request.validation_key,
+            **page_metadata,
         )
 
-        self.repository.save_run_payload(
-            response.model_dump(by_alias=True, exclude_none=True, mode="json")
-        )
+        stored_payload = response.model_dump(by_alias=True, exclude_none=True, mode="json")
+        stored_payload[RESULT_STORAGE_FORMAT_KEY] = SQL_RESULT_STORAGE_FORMAT
+        stored_payload[RESULT_STORAGE_LOCATION_KEY] = str(result_path)
+        try:
+            self.repository.save_run_payload(stored_payload)
+        except Exception:
+            result_path.unlink(missing_ok=True)
+            raise
         return response
 
     def get_query_run(
         self,
         run_id: str,
-        actor: ActorContext,
+        actor: ActorContext | None = None,
+        *,
+        limit: int = DEFAULT_QUERY_PAGE_LIMIT,
+        offset: int = 0,
     ) -> QueryRunResponse:
         payload = self.repository.get_run_payload(run_id)
         if payload is None:
@@ -213,25 +218,51 @@ class SqlService:
                 status.HTTP_404_NOT_FOUND,
                 {"runId": run_id},
             )
-        response = QueryRunResponse.model_validate(payload)
+        actor_context = actor or ActorContext()
+        query = str(payload.get("query") or "")
         dataset_ids = unique_dataset_ids([
-            response.dataset_id,
-            response.base_dataset_id or "",
-            *response.reference_dataset_ids,
+            str(payload.get("datasetId") or ""),
+            str(payload.get("baseDatasetId") or ""),
+            *[str(value) for value in payload.get("referenceDatasetIds") or []],
         ])
         for dataset_id in dataset_ids:
             dataset = self.get_catalog_dataset(dataset_id)
-            require_governed_access(
-                self.catalog_repository.db,
-                actor,
-                action="query",
+            self.require_dataset_query_access(
+                dataset,
+                actor_context,
                 api_path=f"/api/query/runs/{run_id}",
+                audit_forbidden=False,
+                db=self.catalog_repository.db,
                 http_method="GET",
-                metadata={"owner": dataset.owner},
-                resource_id=dataset.id,
-                resource_name=dataset.name,
-                resource_type="dataset",
+                query=query,
             )
+
+        return query_run_response_from_payload(payload, limit=limit, offset=offset)
+
+    def require_dataset_query_access(
+        self,
+        dataset: CatalogDatasetResponse,
+        actor: ActorContext,
+        *,
+        api_path: str,
+        db: Any,
+        http_method: str,
+        query: str,
+        audit_forbidden: bool = True,
+    ) -> None:
+        metadata = {"owner": dataset.owner, "query": query[:500]}
+        require_governed_access(
+            db,
+            actor,
+            action="query",
+            api_path=api_path,
+            http_method=http_method,
+            metadata=metadata,
+            resource_id=dataset.id,
+            resource_name=dataset.name,
+            resource_type="dataset",
+        )
+        try:
             require_permission(
                 actor,
                 "query",
@@ -239,7 +270,22 @@ class SqlService:
                 grants=dataset.permission_grants,
                 resource_label="dataset",
             )
-        return response
+        except ApiError as exc:
+            if audit_forbidden:
+                safe_record_audit_event(
+                    db,
+                    action="dataset.query.forbidden",
+                    actor=actor,
+                    api_path=api_path,
+                    http_method=http_method,
+                    metadata=metadata,
+                    result="forbidden",
+                    status_code=exc.status_code,
+                    target_id=dataset.id,
+                    target_name=dataset.name,
+                    target_type="dataset",
+                )
+            raise
 
     def get_catalog_dataset(
         self,
@@ -261,6 +307,138 @@ class SqlService:
         )
         attach_sql_materialization_runs(dataset, payload)
         return dataset
+
+
+def query_page_metadata(
+    *,
+    total_rows: int,
+    returned_rows: int,
+    offset: int,
+) -> dict[str, int | bool]:
+    range_start = offset + 1 if returned_rows else 0
+    range_end = offset + returned_rows if returned_rows else 0
+    return {
+        "has_next": range_end < total_rows,
+        "range_end": range_end,
+        "range_start": range_start,
+        "returned_rows": returned_rows,
+    }
+
+
+def query_run_response_from_payload(
+    payload: dict[str, Any],
+    *,
+    limit: int,
+    offset: int,
+) -> QueryRunResponse:
+    page_limit = min(max(int(limit), 1), MAX_QUERY_PAGE_LIMIT)
+    page_offset = max(int(offset), 0)
+    page_rows, total_rows = stored_query_run_page(
+        payload,
+        limit=page_limit,
+        offset=page_offset,
+    )
+    page_metadata = query_page_metadata(
+        total_rows=total_rows,
+        returned_rows=len(page_rows),
+        offset=page_offset,
+    )
+
+    response_payload = query_run_public_payload(payload)
+    response_payload.update({
+        "pageLimit": page_limit,
+        "pageOffset": page_offset,
+        "rowCount": total_rows,
+        "rows": page_rows,
+        **{
+            "hasNext": page_metadata["has_next"],
+            "rangeEnd": page_metadata["range_end"],
+            "rangeStart": page_metadata["range_start"],
+            "returnedRows": page_metadata["returned_rows"],
+        },
+    })
+    return QueryRunResponse.model_validate(response_payload)
+
+
+def full_query_run_response_from_payload(payload: dict[str, Any]) -> QueryRunResponse:
+    """Restore the complete persisted SQL snapshot for internal materialization."""
+    result_path = stored_query_result_path(payload)
+    stored_rows = stored_query_run_rows(payload)
+    total_rows = (
+        stored_query_run_row_count(payload, result_path=result_path)
+        if result_path is not None
+        else len(stored_rows)
+    )
+    response_payload = query_run_public_payload(payload)
+    response_payload.update({
+        "hasNext": False,
+        "pageLimit": total_rows or DEFAULT_QUERY_PAGE_LIMIT,
+        "pageOffset": 0,
+        "rangeEnd": total_rows,
+        "rangeStart": 1 if total_rows else 0,
+        "returnedRows": total_rows,
+        "rowCount": total_rows,
+        "rows": stored_rows,
+    })
+    return QueryRunResponse.model_validate(response_payload)
+
+
+def stored_query_run_rows(payload: dict[str, Any]) -> list[list[str]]:
+    result_path = stored_query_result_path(payload)
+    if result_path is not None:
+        return read_query_result_artifact(result_path)
+
+    stored_rows_value = payload.get(STORED_RESULT_ROWS_KEY)
+    if not isinstance(stored_rows_value, list):
+        # Runs created before pagination only persisted their original preview page.
+        stored_rows_value = payload.get("rows") or []
+    return [
+        [str(cell) for cell in row]
+        for row in stored_rows_value
+        if isinstance(row, list)
+    ]
+
+
+def stored_query_run_page(
+    payload: dict[str, Any],
+    *,
+    limit: int,
+    offset: int,
+) -> tuple[list[list[str]], int]:
+    result_path = stored_query_result_path(payload)
+    if result_path is not None:
+        return (
+            read_query_result_artifact(result_path, limit=limit, offset=offset),
+            stored_query_run_row_count(payload, result_path=result_path),
+        )
+
+    stored_rows = stored_query_run_rows(payload)
+    return stored_rows[offset:offset + limit], len(stored_rows)
+
+
+def stored_query_run_row_count(
+    payload: dict[str, Any],
+    *,
+    fallback: int | None = None,
+    result_path: Path | None = None,
+) -> int:
+    raw_row_count = payload.get("rowCount")
+    if isinstance(raw_row_count, int) and raw_row_count >= 0:
+        return raw_row_count
+    if result_path is not None:
+        return count_query_result_artifact_rows(result_path)
+    return max(fallback or 0, 0)
+
+
+def query_run_public_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    response_payload = dict(payload)
+    response_payload.pop(STORED_RESULT_ROWS_KEY, None)
+    response_payload.pop(RESULT_STORAGE_FORMAT_KEY, None)
+    response_payload.pop(RESULT_STORAGE_LOCATION_KEY, None)
+    # Old capped-run metadata is accepted on read but is no longer part of the API.
+    response_payload.pop("resultLimit", None)
+    response_payload.pop("resultTruncated", None)
+    return response_payload
 
 
 def validate_read_only_query(query: str) -> str:
@@ -382,6 +560,135 @@ def resolve_result_dataset(
     return base_dataset
 
 
+def query_result_storage_path(run_id: str) -> Path:
+    return default_storage_root() / "sql-runs" / f"{safe_cache_directory_name(run_id)}.parquet"
+
+
+def execute_duckdb_query_to_artifact(
+    statement: str,
+    *,
+    context_datasets: list[CatalogDatasetResponse],
+    page_limit: int,
+    result_path: Path,
+) -> dict[str, Any]:
+    """Execute the full read-only query once and persist its complete snapshot."""
+    connection = duckdb.connect(database=":memory:")
+    result_path.parent.mkdir(parents=True, exist_ok=True)
+    result_path.unlink(missing_ok=True)
+    try:
+        with TemporaryDirectory(prefix="asklake-sql-preview-") as remote_cache_dir:
+            remote_budget = RemotePreviewBudget(remote_preview_max_bytes())
+            for dataset in unique_datasets_by_id(context_datasets):
+                register_duckdb_dataset(
+                    connection,
+                    dataset,
+                    remote_cache_root=Path(remote_cache_dir),
+                    remote_budget=remote_budget,
+                )
+
+            connection.execute(
+                f"COPY ({statement}) TO {quote_duckdb_string_literal(str(result_path))} "
+                "(FORMAT PARQUET)"
+            )
+            row_count = count_query_result_artifact_rows(result_path, connection=connection)
+            page_cursor = connection.execute(
+                f"SELECT * FROM read_parquet({quote_duckdb_string_literal(str(result_path))}) "
+                "LIMIT ? OFFSET 0",
+                [page_limit],
+            )
+            raw_rows = page_cursor.fetchall()
+            columns = [str(description[0]) for description in (page_cursor.description or [])]
+            return {
+                "columns": columns,
+                "row_count": row_count,
+                "rows": [
+                    [format_sql_cell(cell) for cell in row]
+                    for row in raw_rows
+                ],
+            }
+    except ApiError:
+        result_path.unlink(missing_ok=True)
+        raise
+    except (duckdb.Error, OSError) as error:
+        result_path.unlink(missing_ok=True)
+        raise ApiError(
+            ErrorCode.SQL_SYNTAX_ERROR,
+            "DuckDB SQL execution failed",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            {"message": str(error)},
+        ) from error
+    finally:
+        connection.close()
+
+
+def stored_query_result_path(payload: dict[str, Any]) -> Path | None:
+    raw_location = payload.get(RESULT_STORAGE_LOCATION_KEY)
+    if not raw_location:
+        return None
+    storage_format = str(payload.get(RESULT_STORAGE_FORMAT_KEY) or "").lower()
+    if storage_format != SQL_RESULT_STORAGE_FORMAT:
+        raise sql_storage_error(
+            "Stored SQL result format is not supported",
+            {"storageFormat": storage_format},
+        )
+    result_path = Path(str(raw_location))
+    if not result_path.is_file():
+        raise sql_storage_error(
+            "Stored SQL result snapshot is unavailable",
+            {"storageLocation": str(result_path)},
+        )
+    return result_path
+
+
+def read_query_result_artifact(
+    result_path: Path,
+    *,
+    limit: int | None = None,
+    offset: int = 0,
+) -> list[list[str]]:
+    connection = duckdb.connect(database=":memory:")
+    try:
+        query = f"SELECT * FROM read_parquet({quote_duckdb_string_literal(str(result_path))})"
+        parameters: list[int] = []
+        if limit is not None:
+            query += " LIMIT ? OFFSET ?"
+            parameters = [limit, offset]
+        cursor = connection.execute(query, parameters)
+        return [
+            [format_sql_cell(cell) for cell in row]
+            for row in cursor.fetchall()
+        ]
+    except (duckdb.Error, OSError) as error:
+        raise sql_storage_error(
+            "Stored SQL result snapshot could not be read",
+            {"storageLocation": str(result_path), "reason": str(error)[:500]},
+        ) from error
+    finally:
+        connection.close()
+
+
+def count_query_result_artifact_rows(
+    result_path: Path,
+    *,
+    connection: duckdb.DuckDBPyConnection | None = None,
+) -> int:
+    owned_connection = connection is None
+    active_connection = connection or duckdb.connect(database=":memory:")
+    try:
+        row = active_connection.execute(
+            f"SELECT COUNT(*) FROM read_parquet({quote_duckdb_string_literal(str(result_path))})"
+        ).fetchone()
+        return int(row[0] if row else 0)
+    except (duckdb.Error, OSError) as error:
+        raise sql_storage_error(
+            "Stored SQL result snapshot could not be counted",
+            {"storageLocation": str(result_path), "reason": str(error)[:500]},
+        ) from error
+    finally:
+        if owned_connection:
+            active_connection.close()
+
+
 def execute_duckdb_preview(
     statement: str,
     *,
@@ -402,10 +709,12 @@ def execute_duckdb_preview(
 
             cursor = connection.execute(
                 f"SELECT * FROM ({statement}) AS asklake_query_result LIMIT ?",
-                [preview_limit],
+                [preview_limit + 1],
             )
             raw_rows = cursor.fetchall()
             columns = [str(description[0]) for description in (cursor.description or [])]
+            result_truncated = len(raw_rows) > preview_limit
+            raw_rows = raw_rows[:preview_limit]
             rows = [
                 [format_sql_cell(cell) for cell in row]
                 for row in raw_rows
@@ -413,6 +722,7 @@ def execute_duckdb_preview(
             return {
                 "columns": columns,
                 "row_count": len(rows),
+                "result_truncated": result_truncated,
                 "rows": rows,
             }
     except duckdb.Error as error:

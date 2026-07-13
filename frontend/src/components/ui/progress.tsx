@@ -12,14 +12,13 @@ const ProgressContext = React.createContext<ProgressContextValue>({ max: 100, va
 
 export interface ProgressProps extends Omit<React.HTMLAttributes<HTMLDivElement>, "value"> {
   indicatorClassName?: string;
-  indeterminate?: boolean;
   max?: number;
   trackClassName?: string;
   value?: number;
 }
 
 const Progress = React.forwardRef<HTMLDivElement, ProgressProps>(
-  ({ "aria-label": ariaLabel, children, className, indicatorClassName, indeterminate = false, max = 100, trackClassName, value = 0, ...props }, ref) => {
+  ({ "aria-label": ariaLabel, children, className, indicatorClassName, max = 100, trackClassName, value = 0, ...props }, ref) => {
     const safeMax = Number.isFinite(max) && max > 0 ? max : 100;
     const safeValue = Math.min(Math.max(Number.isFinite(value) ? value : 0, 0), safeMax);
     const percentage = Math.round((safeValue / safeMax) * 100);
@@ -38,12 +37,12 @@ const Progress = React.forwardRef<HTMLDivElement, ProgressProps>(
             className={cn("relative col-span-full h-2 w-full overflow-hidden rounded-full bg-slate-200", trackClassName)}
             data-slot="progress-track"
             max={safeMax}
-            value={indeterminate ? null : safeValue}
+            value={safeValue}
           >
             <ProgressPrimitive.Indicator
               className={cn("h-full rounded-full bg-blue-600 transition-transform duration-300 ease-out", indicatorClassName)}
               data-slot="progress-indicator"
-              style={indeterminate ? undefined : { transform: `translateX(-${100 - percentage}%)` }}
+              style={{ transform: `translateX(-${100 - percentage}%)` }}
             />
           </ProgressPrimitive.Root>
         </div>
@@ -65,18 +64,10 @@ const ProgressLabel = React.forwardRef<HTMLSpanElement, React.HTMLAttributes<HTM
 );
 ProgressLabel.displayName = "ProgressLabel";
 
-interface ProgressValueProps extends React.HTMLAttributes<HTMLSpanElement> {
-  maximumFractionDigits?: number;
-}
-
-const ProgressValue = React.forwardRef<HTMLSpanElement, ProgressValueProps>(
-  ({ className, maximumFractionDigits = 0, ...props }, ref) => {
+const ProgressValue = React.forwardRef<HTMLSpanElement, React.HTMLAttributes<HTMLSpanElement>>(
+  ({ className, ...props }, ref) => {
     const { max, value } = React.useContext(ProgressContext);
-    const percentage = (value / max) * 100;
-    const formattedPercentage = new Intl.NumberFormat("ko-KR", {
-      maximumFractionDigits,
-      minimumFractionDigits: 0,
-    }).format(percentage);
+    const percentage = Math.round((value / max) * 100);
 
     return (
       <span
@@ -85,7 +76,7 @@ const ProgressValue = React.forwardRef<HTMLSpanElement, ProgressValueProps>(
         ref={ref}
         {...props}
       >
-        {formattedPercentage}%
+        {percentage}%
       </span>
     );
   },
