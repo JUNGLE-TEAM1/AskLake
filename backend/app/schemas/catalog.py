@@ -13,6 +13,7 @@ LineageLayer = Literal["SOURCE", "PROCESS", "RAW", "BRONZE", "SILVER", "GOLD", "
 QueryRefreshPolicy = Literal["manual"]
 MaterializationRunStatus = Literal["queued", "running", "success", "failed", "canceled"]
 MaterializationSourceKind = Literal["etl", "sql", "kafka"]
+MaterializationMode = Literal["snapshot", "delta"]
 
 
 class LineageGraphColumn(CamelModel):
@@ -45,6 +46,7 @@ class LineageGraphResponse(CamelModel):
 class DatasetMaterializationRun(CamelModel):
     created_at: str
     job_id: str
+    materialization_mode: MaterializationMode | None = None
     publication_manifest: str | None = None
     quality: dict[str, Any] | None = None
     row_count: int = 0

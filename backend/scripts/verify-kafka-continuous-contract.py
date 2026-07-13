@@ -469,6 +469,7 @@ def main() -> None:
         assert captured_dataset[dataset_id].payload["sourceKind"] == "kafka"
         assert captured_dataset[dataset_id].payload["sourceExecutionMode"] == "continuous"
         assert captured_dataset[dataset_id].payload["dashboardSyncIntervalMinutes"] == 5
+        assert captured_dataset[dataset_id].payload["materializationRuns"][0]["materializationMode"] == "delta"
         assert captured_dataset[dataset_id].payload["materializationRuns"][0]["rowCount"] == 2
         assert captured_dataset[dataset_id].payload["storageLocation"].endswith("/_batches")
         assert captured_dataset[dataset_id].payload["sampleRows"] == [["evt-2"], ["evt-1"]]
@@ -571,6 +572,7 @@ def main() -> None:
             etl_service.sync_kafka_continuous_session = original_session_sync
             recovered_run = captured_dataset[dataset_id].payload["materializationRuns"][0]
             assert recovered_run["runId"] == f"continuous:{job.id}:batch:8"
+            assert recovered_run["materializationMode"] == "delta"
             assert recovered_run["sourceRanges"][0]["endOffset"] == 8
             assert recovered_run["ruleFingerprint"] == "rule-v2"
             assert recovered_run["quality"]["invalidRowCount"] == 1

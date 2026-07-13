@@ -91,6 +91,7 @@ from app.schemas.etl import (
 from app.services.airflow_client import AirflowDagRun, AirflowTaskInstance, build_airflow_client
 from app.services.governance_enforcement import require_governed_access
 from app.services.identity_service import DEMO_GROUPS, DEMO_USERS
+from app.services.materialization_projection import aggregate_materialization_runs
 from app.services.rule_compiler import CompiledRuleSet, compile_rule_set
 from app.services.resource_permission_service import job_with_persisted_permission_grants, permission_grants_for_resource, permissions_for_actor_with_governance
 
@@ -2486,11 +2487,13 @@ def dataset_payload_from_spark_result(
     partition = "/".join(partition_columns) if partition_columns else normalize_optional_text(job.partition)
     source_execution_mode = str(job.execution_mode or "snapshot")
     source_kind = str(result.get("sourceKind") or ("sql" if job.source_type == "SQL Result" else "etl"))
+    materialization_mode = result.get("materializationMode") or ("delta" if source_kind == "kafka" else "snapshot")
     materialization_runs = append_materialization_run(
         previous_payload.get("materializationRuns") if previous_payload else [],
         {
             "createdAt": last_updated,
             "jobId": job.id,
+            "materializationMode": materialization_mode,
             "rowCount": parse_count_value(result.get("materializationRows", result.get("outputRows"))),
             "runId": str(result.get("runId") or ""),
             "sourceKind": source_kind,
@@ -2635,17 +2638,6 @@ def identity_profile(name: str) -> dict[str, str]:
     return {
         "avatarInitials": initials[:2],
         "displayName": display_name,
-    }
-
-
-def aggregate_materialization_runs(runs: list[dict[str, Any]]) -> dict[str, Any]:
-    active_runs = [run for run in runs if run.get("status") == "success"]
-    latest_run = active_runs[0] if active_runs else None
-    return {
-        "latestRunId": latest_run.get("runId") if latest_run else None,
-        "lastUpdated": latest_run.get("createdAt") if latest_run else None,
-        "rowCount": sum(parse_count_value(run.get("rowCount")) for run in active_runs),
-        "storageSizeBytes": sum(parse_count_value(run.get("storageSizeBytes")) for run in active_runs),
     }
 
 
