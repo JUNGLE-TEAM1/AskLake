@@ -7,6 +7,8 @@
 현재 Pair A 브랜치의 기준 경계는 다음과 같다.
 
 - Source, Schema, Create, Run은 `VITE_API_BASE_URL`을 통해 live backend를 호출한다.
+- 생성 wizard는 Source 결과의 `requiresRecordParsing`에 따라 `Source -> Record Parsing -> Schema` 또는 `Source -> Schema`로 분기한다. 이번 vertical slice에서 `requiresRecordParsing`은 선택한 MinIO/S3 `.txt`/`.log`가 이름 없는 `line_number + value` 샘플로 반환될 때만 활성화한다.
+- Record Parsing Preview와 Spark batch runtime은 Job에 저장된 동일 `recordParsing` 계약을 사용한다. Preview는 제한 샘플을, Spark는 전체 입력을 검증하며 어느 쪽도 부족한 필드를 null로 채우거나 초과 필드를 버리지 않는다.
 - 초기 ETL job과 Catalog dataset은 backend hydrate 결과를 따른다. 둘 다 비어 있을 수 있다.
 - 파이프라인 생성은 Job과 pending `catalogTarget`을 만들고, Catalog dataset은 실행 성공 후 생성 또는 갱신한다.
 - 같은 Job 또는 같은 `targetDataset`으로 다시 생성/실행한 결과는 기본적으로 기존 Catalog dataset에 append한다. Catalog 검색 목록은 dataset row를 하나만 유지하고, 실행/SQL materialize 결과는 dataset payload의 `materializationRuns` history로 관리한다.
@@ -147,7 +149,7 @@ Kafka Job의 source identity(`sourceType`, `sourceLabel`, `sourceConfig`)는 bro
 - layout: `frontend/src/components/layout/`
 - ingest/job 화면: `frontend/src/pages/ingest/`
 - ETL creation flow: `frontend/src/pages/etl/`
-- ETL Schedule step은 `스케줄링 건너뛰기`와 `반복 실행` 두 선택지만 노출한다. 스케줄링을 건너뛰면 저장 후 사용자가 Job 목록/상세에서 `즉시 실행`으로 1회 Run을 만든다. 따라서 `수동/자동/1회 실행` 표현은 스케줄 옵션으로 노출하지 않는다. 반복 실행은 IANA timezone, 겹침 처리(`skip_if_running` 기본값), watermark 수집 기준, 지수 백오프 재시도 정책을 생성 계약에 포함하지만, 실제 production-grade scheduler 엔진은 MVP 후속 범위다.
+- ETL Schedule step은 한 개의 shadcn `Card` 안에서 `직접 실행`과 `반복 실행`을 `ToggleGroup`으로 선택한다. `직접 실행`은 저장 계약의 `스케줄링 건너뛰기`에 대응하며, 저장 후 사용자가 Job 목록/상세에서 `즉시 실행`으로 1회 Run을 만든다. 반복 실행을 선택한 때만 주기, 시각, IANA timezone, 겹침 처리(`skip_if_running` 기본값)를 노출하고, 재시도 정책은 `Switch` 상태에 따라 상세 필드를 조건부 표시한다. watermark 수집 기준과 지수 백오프 정책은 생성 계약에 계속 포함하지만, 실제 production-grade scheduler 엔진은 MVP 후속 범위다.
 - catalog 화면과 lineage graph modal: `frontend/src/pages/catalog/`
 - SQL 화면: `frontend/src/pages/sql/`
 - dashboard 화면: `frontend/src/pages/dashboard/`
@@ -209,6 +211,7 @@ FastAPI가 현재 소유하는 책임:
 
 - ETL job 생성과 상태 전이
 - Source test와 schema inference bridge
+- 원시 TXT record parsing preview와 Job별 parsing contract 저장
 - Job hydrate와 Run hydrate
 - Catalog dataset hydrate
 - Catalog lineage fallback
@@ -293,6 +296,7 @@ FastAPI 현재 구현 범위:
 - `GET /api/admin/permissions`
 - `GET /api/admin/audit-logs`
 - `POST /api/etl/sources/test`
+- `POST /api/etl/record-parsing/preview`: 이름 없는 TXT 샘플에 연속 공백 구조화 규칙을 적용하고 필드 개수·타입 초안을 검증
 - `POST /api/etl/review`: Review 화면의 표시값과 생성 가능 상태를 서버 기준으로 정규화
 - `POST /api/etl/schema-inference`
 - `POST /api/etl/rules/preview`: canonical Rule compile 후 bounded Snapshot runtime Preview
@@ -350,3 +354,10 @@ Demo/reference endpoint는 live ETL/Catalog API를 가리지 않도록 `/api/dem
 - SQL 화면의 왼쪽 `차트 생성하기` 탭은 `SqlResultDraft` 또는 선택한 Catalog dataset sample을 로컬 `DashboardDatasetOption`으로 변환하고 Dashboard `WidgetConfigPanel`과 `WidgetRenderer`를 재사용한다.
 - 적용한 차트 설정은 SQL 화면 메모리에만 유지하며, SQL 결과 toolbar에는 대시보드 생성 action을 제공하지 않는다.
 - 대시보드 생성과 저장은 별도 대시보드 메뉴의 runtime/builder 계약을 사용한다. 기존 `DashboardEntry.source = "sql"` 호환 타입은 즉시 제거하지 않지만 SQL 화면에서는 해당 entry를 만들지 않는다.
+## ETL Permission 데이터 소유권
+
+- 사용자·그룹 후보의 source of truth는 backend `GET /api/etl/permission-options`다.
+- 생성 화면의 선택 상태는 `DraftPipeline.permission.grants`에 유지하며 `toCreatePipelineRequest`와 `toUpdatePipelineRequest`가 이를 `permissionGrants`로 전달한다.
+- backend `permission_grants` table이 생성 이후 접근 판정의 source of truth다.
+- `permission_ui` source는 생성 화면이 관리하고, 관리 콘솔의 `admin` source와 분리한다. 따라서 Job 수정이 관리자가 추가한 예외 grant를 덮어쓰지 않는다.
+- 화면의 공개 범위는 metadata에만 머물지 않는다. `외부 공유`를 명시하면 `public:view` grant로 변환된다.

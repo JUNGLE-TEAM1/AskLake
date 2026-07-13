@@ -35,6 +35,7 @@ npm run build
 
 현재 package script는 TypeScript build와 Vite build를 함께 실행한다.
 `npm run verify:ui-regressions`는 SQL 분석의 Nessie Popover/Bubble/Collapsible 흐름, Dashboard Assistant Bubble의 AskLake 화이트 팔레트 variant와 reduced-motion 대응 spring entry, Dashboard `WidgetConfigPanel` 재사용, 오른쪽 차트/데이터 전환, SQL 내부 Job wizard, Preview `limit` 전달, Catalog -> SQL wide button, Dashboard 목록의 `Alert`/`Skeleton`/`Empty`, edit의 radial range `Slider`와 Kibo dataset Tree, ApexCharts CSS 텍스트 누수 방지처럼 최근 UI 회귀가 있었던 핵심 UI 계약을 정적으로 확인한다.
+ETL Schedule 화면은 shadcn `Card`, `ToggleGroup`, `Field`, `Select`, `Switch`, `Separator`를 조합한다. 예전 `schedule-config-*` 전용 CSS와 중복 안내·상태 카드는 제거했으며, regression check는 실행 방식에 따른 조건부 필드와 저장 계약 문구가 다시 갈라지지 않는지 확인한다.
 Dashboard CSS는 `dashboard.css`와 `dashboard-runtime.css` manifest가 책임별 하위 파일을 import한다. regression script는 로컬 CSS import를 같은 순서로 확장해 검사하므로 selector를 다른 모듈로 옮길 때 manifest 순서와 해당 check를 함께 유지한다.
 
 Source schema의 JSON native type, legacy `Float` 호환, CSV fallback을 확인하고 Continuous dotted source path 계약을 검증할 때는 프로젝트 Python 가상환경을 사용한다.
@@ -105,11 +106,31 @@ AIRFLOW_PASSWORD=airflow
 AIRFLOW_EXECUTION_API_TOKEN=asklake-local-airflow-execution
 AIRFLOW_INTERNAL_TOKEN=asklake-local-airflow-token
 ASKLAKE_SPARK_OUTPUT_MODE=s3a
+ASKLAKE_DOCKER_NETWORK=asklake-dev_default
 MINIO_ENDPOINT=http://127.0.0.1:9000
 MINIO_ENDPOINT_IN_DOCKER=http://m3-minio:9000
 MINIO_ACCESS_KEY=m3admin
 MINIO_SECRET_KEY=wishuponastar
 MINIO_BUCKET=asklake-output
+```
+
+`ASKLAKE_DOCKER_NETWORK`는 현재 Compose project의 실제 network 이름과 같아야 한다. 예를 들어 `docker compose -p asklake-dev`로 올렸다면 `asklake-dev_default`를 사용한다. FastAPI가 시작하는 Node/Spark subprocess에도 이 값이 전달되어야 하므로 `.env.local`만 Pydantic 설정으로 읽는 대신, 아래처럼 프로세스 환경으로 export한 상태에서 FastAPI를 실행한다.
+
+```bash
+cd backend
+set -a
+source .env.local
+set +a
+./.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8080
+```
+
+헤더 없는 공백 구분 TXT의 조건부 레코드 구조화는 fixture와 계약 검증 후 실제 Airflow/Spark E2E로 확인한다. E2E는 실행 중인 FastAPI `:8080`, Airflow `:8081`, MinIO, Spark runtime을 사용하고 성공 시 생성한 임시 Job, Catalog row, Parquet output을 정리한다.
+
+```bash
+cd backend
+npm run minio:seed-click-log
+npm run verify:record-parsing
+npm run verify:record-parsing:e2e
 ```
 
 Local Compose의 Airflow task에는 backend URL과 `AIRFLOW_EXECUTION_API_TOKEN` 기반 bearer token이 주입된다. `AIRFLOW_INTERNAL_TOKEN`은 기존 단일 호출 endpoint 호환용으로 함께 유지한다. 그 다음 `수집/처리` 화면에서 Job 실행 버튼을 누르면 `spark_process_write`가 실제 Spark runner를 호출하고, `publish_run_result`가 물리 Parquet를 검증해 Catalog를 확정한다. Run History와 DAG modal은 `GET /api/etl/jobs/{jobId}` polling으로 DAG Run/Task Instance 상태를 반영한다.
@@ -632,3 +653,16 @@ python3 backend/scripts/synthetic-commerce/test_generate.py
 `AGENTS.local.md` may be used for local-only Codex workflow preferences, such as routing natural-language issue, PR, and review requests to installed personal skills.
 
 This file is ignored by git and must not contain shared team policy, secrets, tokens, private keys, or real credentials.
+### ETL Permission create-flow 검증
+
+```powershell
+cd backend
+python scripts/verify-permission-create-flow-contract.py
+npm run verify:permission-job-dashboard
+
+cd ..\frontend
+npm run verify:ui-regressions
+npm run build
+```
+
+Windows에서 FastAPI 의존성이 저장소 가상환경에만 설치돼 있으면 `python` 대신 `.\.venv\Scripts\python.exe`를 사용한다. `verify:permission-job-dashboard`는 PostgreSQL metadata DB가 응답 가능한 환경을 요구한다.

@@ -88,6 +88,7 @@ Canonical status values:
 | `POST` | `/api/etl/sources/test` | TBD | Source 연결 테스트와 schema draft patch 반환 | `docs/api-contract.md` |
 | `POST` | `/api/etl/schema-inference` | TBD | Source 테스트 결과 기반 schema 반환 | `docs/api-contract.md` |
 | `POST` | `/api/etl/rules/preview` | Session | 최대 100개 샘플에 canonical Snapshot Rule을 실제 runtime으로 적용 | `docs/api-contract.md` |
+| `POST` | `/api/etl/record-parsing/preview` | TBD | 이름 없는 TXT 제한 샘플을 연속 공백으로 구조화하고 필드 개수·컬럼 타입 초안 반환 | `docs/api-contract.md` |
 | `POST` | `/api/etl/jobs` | TBD | 새 수집/처리 job 생성 | `docs/api-contract.md` |
 | `PATCH` | `/api/etl/jobs/{jobId}` | `manage` | 생성된 Job의 허용 설정 업데이트. source identity는 요청에 포함할 수 없음 | `docs/etl-job-edit-contract.md` |
 | `POST` | `/api/etl/jobs/{jobId}/commands` | TBD | 실행, 재실행, 일시정지, 현재 Run 취소, 스케줄 중지 | `docs/api-contract.md` |
@@ -358,6 +359,7 @@ Runtime lane은 `DashboardRuntimeResponse`와 `DashboardRuntimeWidget`을 기준
 | Target 저장경로 | S3 bucket/prefix picker가 `target.storagePath` string을 갱신 | `GET /api/s3/buckets`, `GET /api/s3/prefixes`, `POST /api/etl/jobs` |
 | Target DB 선택 | DB picker가 `target.databaseName` string을 갱신하고 hidden tableName은 datasetName을 사용 | `GET /api/target/databases`, `POST /api/etl/jobs` |
 | Source/Schema 연결 | `testSourceConnector` mock/live adapter | `POST /api/etl/sources/test` |
+| 조건부 레코드 구조화 | Source에서 선택한 `.txt`/`.log` raw preview와 `DraftPipeline.recordParsing` | `POST /api/etl/record-parsing/preview` |
 | 카탈로그 | Postgres JSONB-backed live backend hydrate | `GET /api/catalog/datasets` |
 | 카탈로그 상세 | selected dataset state | `GET /api/catalog/datasets/{datasetId}` |
 | Lineage | `LineageGraph` mock/fallback | `GET /api/catalog/datasets/{datasetId}/lineage` |
@@ -369,7 +371,7 @@ Runtime lane은 `DashboardRuntimeResponse`와 `DashboardRuntimeWidget`을 기준
 
 SQL 화면은 한국어/공백 dataset·column 표시명을 금지하지 않는다. 자동완성, 기본 쿼리, 컬럼 삽입, JOIN 초안 생성은 SQL 실행명으로 `"월별 매출 데이터"`처럼 double-quoted identifier를 사용한다. 사용자가 따옴표 없이 한글/공백 table reference를 직접 입력하면 frontend preflight가 실행 전에 감지하고 quoted identifier 자동 보정을 제안한다. backend table context 검증은 표시명 문자열만 믿지 않고 `baseDatasetId`와 `referenceDatasetIds`로 선택된 dataset 범위를 계속 source of truth로 사용한다.
 
-Schedule UI는 `수동/자동/1회 실행` 대신 `스케줄링 건너뛰기`와 `반복 실행` 두 선택지만 사용한다. 스케줄링을 건너뛰면 사용자가 `POST /api/etl/jobs/{jobId}/commands`의 `run` command action으로 필요할 때 1회 Run을 만든다. 반복 실행 화면은 데모 흐름을 위해 반복 주기, 실행 시각, IANA `timezone`, 실패 재시도만 노출한다. `startDate`, `endDate`, `nextRunUtc`, `overlapPolicy`, `watermarkPolicy`는 create request에 보존하되 UI에서는 기본값을 사용한다. 기본 `overlapPolicy`는 `skip_if_running`이며, 재시도는 다음 예약 시각 계산을 밀지 않고 현재 Run 안에서 2배 지수 백오프 정책으로 처리한다.
+Schedule UI는 `직접 실행`과 `반복 실행` 두 선택지만 사용하며, `직접 실행`은 payload의 `스케줄링 건너뛰기` label로 정규화한다. 스케줄링을 건너뛰면 사용자가 `POST /api/etl/jobs/{jobId}/commands`의 `run` command action으로 필요할 때 1회 Run을 만든다. 반복 실행을 선택한 때만 반복 주기, 실행 시각, IANA `timezone`, `overlapPolicy`를 노출하며 재시도 상세값은 재시도 사용 시에만 표시한다. `startDate`, `endDate`, `nextRunUtc`, `watermarkPolicy`는 create request에 보존하되 UI에서는 기본값을 사용한다. 기본 `overlapPolicy`는 `skip_if_running`이며, 재시도는 다음 예약 시각 계산을 밀지 않고 현재 Run 안에서 2배 지수 백오프 정책으로 처리한다.
 
 SQL 분석 UI는 Preview 행 수를 10~100 범위에서 10행 단위로 선택하고, 선택값을 기존 `executeQueryPreview(..., { limit })` 옵션으로 전달한다. API request/response shape는 바뀌지 않으며 응답 `previewLimit`은 실제 실행된 제한값을 유지한다.
 
@@ -792,6 +794,30 @@ type DashboardAssistantResponse = {
 ## 9) 변경 규칙
 
 - Endpoint, request, response, status code, error code가 바뀌면 이 문서와 `docs/api-contract.md`를 함께 업데이트한다.
+
+## 10) ETL Permission 옵션 및 grant 저장
+
+`GET /api/etl/permission-options`는 ETL 생성 화면에서 선택할 수 있는 조직 그룹과 사용자를 반환한다. 직접 사용자·그룹 권한을 설정하는 기능이므로 현재 actor의 `role`이 `admin`이어야 하며, 그렇지 않으면 `403 FORBIDDEN`을 반환한다. 이 응답은 권한 요약이나 전체 resource 목록을 계산하지 않는 경량 디렉터리 조회다.
+
+```ts
+type PermissionOptionsResponse = {
+  groups: Array<{
+    id: string;
+    name: string;
+    description?: string;
+    actions: Array<"view" | "query" | "run" | "manage" | "delete" | "share">;
+  }>;
+  users: Array<{
+    id: string;
+    name: string;
+    email: string;
+    initials: string;
+    role: string;
+  }>;
+};
+```
+
+`POST /api/etl/jobs`와 `PATCH /api/etl/jobs/{jobId}`는 기존 `permissionGrants?: PermissionGrant[]` 계약을 실제 저장 경로로 사용한다. 전달된 grant는 해당 Job의 `permission_ui` source 행으로 저장되며, 수정 시 기존 `permission_ui` 행만 교체한다. 관리 콘솔에서 생성한 `admin` source grant는 유지한다. 생성·수정 응답의 `permissionGrants`와 actor별 `permissions`에는 저장 결과가 즉시 반영된다.
 - Mock/live 전환 순서가 바뀌면 `docs/backend-integration-readiness.md`를 업데이트한다.
 - Frontend 타입이 바뀌면 관련 `frontend/src/types/`와 문서를 함께 업데이트한다.
 ## Text Structuring Runtime Contract

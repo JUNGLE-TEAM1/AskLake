@@ -16,6 +16,7 @@ from app.schemas.etl import (
     JobCommandRequest,
     JobCommandResponse,
     JobListResponse,
+    PermissionOptionsResponse,
     JobRowData,
     JobRunOutcome,
     JobScheduleKind,
@@ -24,6 +25,8 @@ from app.schemas.etl import (
     ReviewSnapshot,
     RulePreviewRequest,
     RulePreviewResponse,
+    RecordParsingPreviewRequest,
+    RecordParsingPreviewResponse,
     KafkaReviewIngestRequest,
     KafkaReviewIngestResponse,
     KafkaReplayProducerRequest,
@@ -69,6 +72,11 @@ def infer_schema(request: SourceConnectorRequest) -> SchemaDraft:
 @router.post("/rules/preview", response_model=RulePreviewResponse)
 def preview_rules(request: RulePreviewRequest) -> RulePreviewResponse:
     return etl_service.preview_rules(request)
+
+
+@router.post("/record-parsing/preview", response_model=RecordParsingPreviewResponse)
+def preview_record_parsing(request: RecordParsingPreviewRequest) -> RecordParsingPreviewResponse:
+    return etl_service.preview_record_parsing(request)
 
 
 @router.post("/review", response_model=ReviewSnapshot)
@@ -133,9 +141,17 @@ def execute_airflow_run(
 def create_job(
     request: CreatePipelineRequest,
     db: Session = Depends(get_db),
-    actor_name: str = Header(default="demo-user", alias="X-AskLake-User"),
+    actor: ActorContext = Depends(get_actor_context),
 ) -> CreatePipelineResponse:
-    return etl_service.create_pipeline(db, request, actor_name)
+    return etl_service.create_pipeline(db, request, actor)
+
+
+@router.get("/permission-options", response_model=PermissionOptionsResponse)
+def get_permission_options(
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(get_actor_context),
+) -> PermissionOptionsResponse:
+    return etl_service.get_permission_options(db, actor)
 
 
 @router.get("/jobs", response_model=JobListResponse)

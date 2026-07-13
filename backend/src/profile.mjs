@@ -8,7 +8,7 @@ export function parseSourceSample(name, text, options = {}) {
     return parseJsonSample(trimmed, lowerName.endsWith(".jsonl") ? "jsonl" : "json", maxRows);
   }
 
-  if (lowerName.endsWith(".txt")) {
+  if (lowerName.endsWith(".txt") || lowerName.endsWith(".log")) {
     return parseTextSample(trimmed, maxRows);
   }
 

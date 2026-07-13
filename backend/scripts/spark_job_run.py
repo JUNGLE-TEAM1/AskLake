@@ -73,6 +73,7 @@ def main():
             manifest.get("partitionColumns") or os.environ.get("ASKLAKE_SPARK_PARTITION_COLUMNS")
         )
         schema_columns = manifest.get("schemaColumns") or load_json_env("ASKLAKE_SPARK_SCHEMA_COLUMNS", [])
+        record_parsing = manifest.get("recordParsing") or {}
         transform_steps = manifest.get("transformSteps") or load_json_env("ASKLAKE_SPARK_TRANSFORM_STEPS", [])
         quality_rules = manifest.get("qualityRules") or load_json_env("ASKLAKE_SPARK_QUALITY_RULES", [])
         canonical_rules = manifest.get("rules") if "rules" in manifest else None
@@ -80,7 +81,7 @@ def main():
         canonical_runtime_supported = canonical_snapshot and supports_spark_snapshot_rules(canonical_rules)
         final_schema_columns = merge_rule_output_schema(schema_columns, manifest.get("ruleOutputSchema") or [])
         spark = make_spark()
-        source_df = read_source(spark, source_format, source_path, schema_columns)
+        source_df = read_source(spark, source_format, source_path, schema_columns, record_parsing)
         input_rows = source_df.count() if row_limit <= 0 else source_df.limit(row_limit).count()
         working_df = source_df if row_limit <= 0 else source_df.limit(row_limit)
         normalized_df = normalize_columns(working_df)
@@ -251,10 +252,12 @@ def main():
             except Exception:
                 pass
         ended_at = now_iso()
+        error_message = str(exc)
         result = {
             "durationMs": int(time.time() * 1000) - started_ms,
             "endedAt": ended_at,
-            "error": str(exc),
+            "error": error_message,
+            "failedStage": "Record Parsing" if "RECORD_FIELD_COUNT_MISMATCH" in error_message or "RECORD_PARSING_" in error_message else "Spark ETL",
             "format": source_format,
             "failedStage": getattr(exc, "failed_stage", "Spark"),
             "inputRows": input_rows,
@@ -309,7 +312,7 @@ def make_spark():
     return spark
 
 
-def read_source(spark, source_format, source_path, schema_columns):
+def read_source(spark, source_format, source_path, schema_columns, record_parsing=None):
     if source_format == "csv":
         infer_schema = "false" if schema_columns else "true"
         return spark.read.option("header", "true").option("inferSchema", infer_schema).csv(source_path)
@@ -320,8 +323,57 @@ def read_source(spark, source_format, source_path, schema_columns):
     if source_format == "parquet":
         return spark.read.parquet(source_path)
     if source_format in {"txt", "text"}:
+        if isinstance(record_parsing, dict) and record_parsing.get("enabled"):
+            return read_whitespace_records(spark, source_path, record_parsing)
         return spark.read.text(source_path)
     raise ValueError(f"Unsupported Spark source format: {source_format}")
+
+
+def read_whitespace_records(spark, source_path, record_parsing):
+    if str(record_parsing.get("delimiterKind") or "whitespace") != "whitespace":
+        raise ValueError("RECORD_PARSING_UNSUPPORTED_DELIMITER only whitespace is supported")
+    expected_field_count = int(record_parsing.get("expectedFieldCount") or 0)
+    columns = sorted(record_parsing.get("columns") or [], key=lambda column: int(column.get("position") or 0))
+    if expected_field_count <= 0 or len(columns) != expected_field_count:
+        raise ValueError(
+            f"RECORD_PARSING_INVALID_CONTRACT expectedFieldCount={expected_field_count} columns={len(columns)}"
+        )
+    column_names = [normalize_column_name(column.get("name") or f"field_{index + 1}") for index, column in enumerate(columns)]
+    if any(not name for name in column_names) or len(set(column_names)) != len(column_names):
+        raise ValueError("RECORD_PARSING_INVALID_COLUMNS column names must be non-empty and unique")
+
+    indexed_lines = spark.sparkContext.textFile(source_path).zipWithIndex().map(
+        lambda item: (int(item[1]) + 1, str(item[0]))
+    )
+    raw = spark.createDataFrame(indexed_lines, schema="line_number long, raw_record string")
+    non_empty = raw.where(F.length(F.trim(F.col("raw_record"))) > 0)
+    if bool(record_parsing.get("header")):
+        header_row = non_empty.orderBy("line_number").limit(1).collect()
+        if not header_row:
+            raise ValueError("RECORD_PARSING_EMPTY_INPUT no non-empty records were found")
+        non_empty = non_empty.where(F.col("line_number") != F.lit(int(header_row[0]["line_number"])))
+
+    parsed = non_empty.withColumn("record_fields", F.split(F.trim(F.col("raw_record")), r"\s+"))
+    invalid = parsed.where(F.size(F.col("record_fields")) != expected_field_count)
+    invalid_count = invalid.count()
+    if invalid_count:
+        samples = [
+            {
+                "lineNumber": int(row["line_number"]),
+                "actualFieldCount": len(row["record_fields"] or []),
+                "rawPreview": str(row["raw_record"] or "")[:200],
+            }
+            for row in invalid.orderBy("line_number").limit(20).collect()
+        ]
+        raise ValueError(
+            "RECORD_FIELD_COUNT_MISMATCH "
+            f"expectedFieldCount={expected_field_count} invalidRows={invalid_count} samples={json.dumps(samples, ensure_ascii=False)}"
+        )
+
+    return parsed.select(*[
+        F.col("record_fields").getItem(index).alias(column_name)
+        for index, column_name in enumerate(column_names)
+    ])
 
 
 def parse_partition_columns(value):
