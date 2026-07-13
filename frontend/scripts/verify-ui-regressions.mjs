@@ -528,11 +528,16 @@ const checks = [
     ],
   },
   {
-    name: "SQL base dataset re-click preserves the active editor context",
+    name: "SQL selected datasets toggle on re-click and promote the next base dataset",
     file: "src/pages/sql/SqlAnalysisPage.tsx",
     patterns: [
-      /const addSelectedDataset = \(targetDataset: CatalogDataset\) => \{\s*if \(targetDataset\.id === baseDataset\?\.id\) return;/,
-      /if \(selectedDatasetIdSet\.has\(targetDataset\.id\)\) \{\s*removeSelectedDataset\(targetDataset\);/,
+      /const addSelectedDataset = \(targetDataset: CatalogDataset\) => \{\s*if \(selectedDatasetIdSet\.has\(targetDataset\.id\)\) \{\s*removeSelectedDataset\(targetDataset\);/,
+      /const nextBaseDatasetId = targetDataset\.id === baseDataset\?\.id \? nextSelectedIds\[0\] \?\? null : baseDataset\?\.id \?\? null;/,
+      /if \(targetDataset\.id === baseDataset\?\.id\) setBaseDatasetId\(nextBaseDatasetId\);/,
+      /if \(nextSelectedIds\.length === 0\) \{\s*setQuery\(""\);\s*setCursorIndex\(0\);\s*setPreflightResult\(null\);/,
+    ],
+    forbiddenPatterns: [
+      /if \(targetDataset\.id === baseDataset\?\.id\) return;/,
     ],
   },
   {
