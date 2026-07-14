@@ -1,6 +1,6 @@
 .page {
   --sql-side-panel-width: clamp(320px, 22vw, 400px);
-  --sql-workspace-height: min(860px, calc(100dvh - 24px));
+  --sql-workspace-height: clamp(800px, calc(100dvh - 156px), 860px);
   position: relative;
   display: grid;
   width: 100%;
@@ -184,12 +184,51 @@
   overflow: hidden;
 }
 
+.resultPanelActive {
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.resultPanelCompact {
+  align-self: start;
+  height: auto;
+  overflow: visible;
+}
+
+.resultPanelCompact .resultWorkspace {
+  height: auto;
+  min-height: 0;
+  grid-template-rows: max-content max-content;
+  overflow: visible;
+}
+
+.resultWorkspace {
+  display: grid;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  grid-template-rows: max-content minmax(0, 1fr);
+  gap: 16px;
+  overflow: hidden;
+  padding: 20px;
+}
+
 .resultBody {
   display: grid;
   min-width: 0;
   min-height: 0;
   grid-template-rows: minmax(0, 1fr) repeat(2, max-content);
   overflow: hidden;
+}
+
+.resultBodyCompact {
+  align-content: start;
+  grid-template-rows: max-content repeat(2, max-content);
+  overflow: visible;
+}
+
+.resultBodyCompact .resultScroll {
+  height: auto;
+  max-height: 100%;
 }
 
 .resultToolbar {
@@ -207,6 +246,13 @@
 
 .resultToolbar > :last-child:not(:first-child) {
   margin-left: auto;
+}
+
+.resultActions button {
+  gap: 6px;
+  padding-right: 8px;
+  padding-left: 8px;
+  font-size: 14px;
 }
 
 .resultRange {
@@ -413,6 +459,8 @@
   .collapsed .workspace {
     grid-column: 1;
     grid-row: auto;
+    height: auto;
+    max-height: none;
     order: 2;
   }
 }
