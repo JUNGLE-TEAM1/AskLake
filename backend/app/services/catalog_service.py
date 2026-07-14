@@ -898,3 +898,17 @@ def record_forbidden_dataset_event(
         target_name=dataset.name,
         target_type="dataset",
     )
+def dataset_for_latest_successful_materialization(
+    dataset: CatalogDatasetResponse,
+) -> CatalogDatasetResponse:
+    """Project the newest successful materialization onto the dataset row reader."""
+
+    for materialization in dataset.materialization_runs:
+        if materialization.status != "success" or not materialization.storage_location:
+            continue
+        return dataset.model_copy(update={
+            "source_run_id": materialization.run_id,
+            "storage_location": materialization.storage_location,
+            "storage_size_bytes": materialization.storage_size_bytes,
+        })
+    return dataset

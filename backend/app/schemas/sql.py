@@ -47,11 +47,11 @@ SqlResultDraft = QueryRunResponse
 
 
 class QueryAiSuggestionRequest(CamelModel):
-    base_dataset_id: str | None = None
-    current_query: str | None = None
+    base_dataset_id: str | None = Field(default=None, max_length=255)
+    current_query: str | None = Field(default=None, max_length=20_000)
     mode: QueryAiMode = "draft_sql"
-    prompt: str = Field(min_length=1)
-    selected_dataset_ids: list[str] = Field(default_factory=list)
+    prompt: str = Field(min_length=1, max_length=8_000)
+    selected_dataset_ids: list[str] = Field(default_factory=list, max_length=100)
 
 
 class QueryAiSuggestionResponse(CamelModel):

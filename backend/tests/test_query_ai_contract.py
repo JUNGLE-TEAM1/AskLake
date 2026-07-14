@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import patch
 
 from fastapi import status
+from pydantic import ValidationError
 
 from app.core.auth_context import ActorContext
 from app.core.errors import ApiError
@@ -37,6 +38,15 @@ def catalog_dataset(dataset_id: str = "reviews") -> CatalogDatasetResponse:
 
 
 class QueryAiContractTests(unittest.TestCase):
+    def test_public_query_ai_request_matches_gateway_input_limits(self) -> None:
+        with self.assertRaises(ValidationError):
+            QueryAiSuggestionRequest(prompt="x" * 8_001, selected_dataset_ids=["reviews"])
+        with self.assertRaises(ValidationError):
+            QueryAiSuggestionRequest(
+                prompt="count",
+                selected_dataset_ids=[f"dataset-{index}" for index in range(101)],
+            )
+
     def test_missing_provider_configuration_is_reported_as_unavailable(self) -> None:
         client = OpenAiResponsesClient(api_key=None, model="gpt-test")
 
@@ -105,6 +115,37 @@ class QueryAiContractTests(unittest.TestCase):
                 service.create_suggestion(request, ActorContext(name="analyst", role="admin"))
 
         self.assertEqual(raised.exception.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_gateway_mode_keeps_the_public_response_and_signed_dataset_scope(self) -> None:
+        repository = type("Repository", (), {"db": object()})()
+        service = QueryAiService(repository)
+        dataset = catalog_dataset()
+        request = QueryAiSuggestionRequest(
+            base_dataset_id=dataset.id,
+            prompt="Show review counts",
+            selected_dataset_ids=[dataset.id],
+        )
+
+        with (
+            patch.object(service, "get_catalog_dataset", return_value=dataset),
+            patch("app.services.query_ai_service.require_governed_access"),
+            patch("app.services.query_ai_service.require_permission"),
+            patch("app.services.query_ai_service.settings.ai_query_provider", "gateway"),
+            patch("app.services.query_ai_service.AiGatewayClient.generate_query_sql") as generate,
+        ):
+            generate.return_value = {
+                "title": "Counts",
+                "body": "Gateway draft",
+                "sql": "SELECT review_id FROM review_gold LIMIT 10",
+                "notices": [],
+                "model": "gateway-test-model",
+            }
+            response = service.create_suggestion(request, ActorContext(name="analyst", role="admin"))
+
+        self.assertEqual(response.model, "gateway-test-model")
+        self.assertEqual(response.sql, "SELECT review_id FROM review_gold LIMIT 10")
+        self.assertEqual(generate.call_args.kwargs["selected_dataset_ids"], [dataset.id])
+        self.assertTrue(generate.call_args.kwargs["context_token"])
 
 
 if __name__ == "__main__":

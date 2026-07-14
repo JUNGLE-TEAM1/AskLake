@@ -123,6 +123,16 @@ services:
       OPENAI_ASSISTANT_MAX_SAMPLE_ROWS: ${OPENAI_ASSISTANT_MAX_SAMPLE_ROWS:-5}
       OPENAI_ASSISTANT_TIMEOUT_SECONDS: ${OPENAI_ASSISTANT_TIMEOUT_SECONDS:-20}
       OPENAI_QUERY_AI_MODEL: ${OPENAI_QUERY_AI_MODEL:-gpt-4.1-mini}
+      AI_QUERY_PROVIDER: ${AI_QUERY_PROVIDER:-gateway}
+      AI_GATEWAY_BASE_URL: ${AI_GATEWAY_BASE_URL:-http://ai-server:8090}
+      AI_GATEWAY_GENERATE_PATH: ${AI_GATEWAY_GENERATE_PATH:-/v1/generate}
+      AI_GATEWAY_SERVICE_TOKEN: ${AI_GATEWAY_SERVICE_TOKEN:?AI_GATEWAY_SERVICE_TOKEN is required}
+      AI_GATEWAY_TIMEOUT_SECONDS: ${AI_GATEWAY_TIMEOUT_SECONDS:-30}
+      AI_MCP_PATH: ${AI_MCP_PATH:-/internal/mcp}
+      AI_MCP_SERVICE_TOKEN: ${AI_MCP_SERVICE_TOKEN:?AI_MCP_SERVICE_TOKEN is required}
+      AI_CONTEXT_SIGNING_SECRET: ${AI_CONTEXT_SIGNING_SECRET:?AI_CONTEXT_SIGNING_SECRET is required}
+      AI_CONTEXT_TTL_SECONDS: ${AI_CONTEXT_TTL_SECONDS:-300}
+      AI_CONTEXT_MAX_SAMPLE_ROWS: ${AI_CONTEXT_MAX_SAMPLE_ROWS:-20}
       AIRFLOW_API_BASE_URL: ${AIRFLOW_API_BASE_URL:-http://airflow-apiserver:8080}
       AIRFLOW_DAG_ID: ${AIRFLOW_DAG_ID:-asklake_etl_job}
       AIRFLOW_UI_BASE_URL: ${AIRFLOW_UI_BASE_URL:-}
@@ -241,6 +251,34 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
+
+  ai-server:
+    build:
+      context: ../ai-server
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      INTERNAL_AUTH_TOKEN: ${AI_GATEWAY_SERVICE_TOKEN:?AI_GATEWAY_SERVICE_TOKEN is required}
+      PROVIDER: ${AI_PROVIDER:-openai_compatible}
+      PROVIDER_BASE_URL: ${AI_PROVIDER_BASE_URL:-https://api.openai.com/v1}
+      PROVIDER_API_KEY: ${AI_PROVIDER_API_KEY:?AI_PROVIDER_API_KEY is required}
+      PROVIDER_MODEL: ${AI_PROVIDER_MODEL:-gpt-4.1-mini}
+      MCP_ENABLED: ${AI_MCP_ENABLED:-true}
+      MCP_SERVER_URL: ${AI_MCP_SERVER_URL:-http://backend:8080/internal/mcp}
+      MCP_SERVICE_TOKEN: ${AI_MCP_SERVICE_TOKEN:?AI_MCP_SERVICE_TOKEN is required}
+      MCP_TIMEOUT_SECONDS: ${AI_MCP_TIMEOUT_SECONDS:-10}
+      REQUEST_TIMEOUT_SECONDS: ${AI_REQUEST_TIMEOUT_SECONDS:-30}
+    expose:
+      - "8090"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/health', timeout=5).read()\""]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   aws-s3-readiness:
     build:

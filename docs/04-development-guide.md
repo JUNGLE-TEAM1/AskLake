@@ -1,5 +1,7 @@
 # 04. Development Guide
 
+AI Gateway 로컬 실행과 backend/MCP 검증 명령은 [ai-gateway-mcp-rollout.md](./ai-gateway-mcp-rollout.md)를 참고한다.
+
 이 문서는 AskLake 개발, 실행, 검증, 브랜치 작업 기준을 정리한다.
 
 ## 1) 로컬 실행
@@ -471,7 +473,7 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8080
 ```
 
-로컬 환경 변수는 `backend/.env.example`을 기준으로 둔다. 실제 OpenAI 키는 git에 올리지 않는 `backend/.env.local`의 `OPENAI_API_KEY`에 둔다. Query AI live mode는 backend가 이 값을 읽어 `POST /api/query/ai-suggestions`에서만 사용하며, frontend env에는 OpenAI 키를 두지 않는다.
+로컬 환경 변수는 `backend/.env.example`을 기준으로 둔다. Query AI gateway mode는 `AI_PROVIDER_API_KEY`를 `ai-server` 환경에만 두고, backend는 service token과 signed context secret만 사용한다. `AI_QUERY_PROVIDER=direct` 롤백 모드의 `OPENAI_API_KEY`와 Dashboard Assistant 설정은 별도 호환 경로다.
 
 SQL UI를 변경할 때는 desktop에서 좌측 SQL 도구와 우측 editor/result workspace의 하단이 SQL 실행 전후 모두 일치하는지 확인한다. Trino를 켜도 editor wrapper/textarea 높이, toolbar, 단일 scroll은 바뀌지 않아야 한다. 실행 평가와 timeline을 editor 아래 sibling card로 추가하지 않고 결과 panel의 세 번째 `실행 정보` view에 넣으며, `차트 보기`/`데이터 미리보기`/`실행 정보`가 같은 bounded 높이에서 전환·scroll되는지 확인한다. 실행 정보는 `쿼리 실행`, `첫 결과 준비`, `전체 결과 수집`의 실제 가능한 지표만 표시하고 다른 분모를 하나의 진행률로 합치지 않는다. Trino 결과는 현재 cursor page와 전체 보기, server CSV, 반복 Job 생성을 확인하고 1회성 Dataset materialization action은 toolbar에 노출하지 않는다. Trino page 차트는 현재 표시 범위를 명시하고 persistent Dashboard source로 저장하지 않는다. Catalog 미리보기 이동과 Nessie 초안 적용은 기존처럼 동작하되 자동 실행되지 않아야 한다.
 FastAPI 폴더 구조와 설계 결정은 `docs/backend-fastapi-transition-plan.md`를 기준으로 한다.

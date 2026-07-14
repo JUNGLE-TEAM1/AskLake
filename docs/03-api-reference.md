@@ -1,5 +1,7 @@
 # 03. API Reference
 
+Query AI 내부 Gateway/MCP 계약은 [ai-gateway-mcp-rollout.md](./ai-gateway-mcp-rollout.md)에 정리되어 있다. Frontend 공개 계약은 기존 `/api/query/ai-suggestions`를 유지한다.
+
 이 문서는 AskLake API/interface 계약의 상위 진입점이다.
 상세 request/response shape는 기존 문서인 `docs/api-contract.md`를 기준으로 한다.
 백엔드 연결 범위와 남은 작업은 `docs/backend-integration-readiness.md`를 기준으로 한다.
@@ -74,7 +76,7 @@ TRINO_CLEANUP_POLL_SECONDS=3600
 - Target 저장경로 선택은 frontend가 S3를 직접 호출하지 않고 `GET /api/s3/buckets`, `GET /api/s3/prefixes` 서버 API를 통해 bucket/prefix만 조회한다. `S3_ALLOWED_BUCKETS` allowlist가 없으면 local demo 기본값으로 `asklake-output`을 사용한다.
 - Dashboard 원격 widget scan은 `S3_ALLOWED_BUCKETS`와 runtime 응답 전체에서 공유하는 `ASKLAKE_DASHBOARD_MAX_REMOTE_BYTES`/`ASKLAKE_DASHBOARD_MAX_REMOTE_OBJECTS` 예산을 적용한다. DuckDB 기본 경계는 query당 15초, memory/temp 각 256 MiB, 2 threads이며 `ASKLAKE_DASHBOARD_QUERY_TIMEOUT_SECONDS`, `ASKLAKE_DASHBOARD_DUCKDB_MEMORY_BYTES`, `ASKLAKE_DASHBOARD_DUCKDB_TEMP_BYTES`, `ASKLAKE_DASHBOARD_DUCKDB_THREADS`로 더 낮거나 제한된 운영값을 지정할 수 있다.
 - Target DB 선택은 `GET /api/target/databases` 서버 API를 통해 허용 DB 목록을 조회한다. `TARGET_DATABASES`가 없으면 local demo 기본값을 사용한다.
-- Query AI live mode는 backend env의 `OPENAI_API_KEY`와 `OPENAI_QUERY_AI_MODEL`을 사용한다. 브라우저 env에는 OpenAI 키를 두지 않는다.
+- Query AI live mode는 backend가 private `ai-server` Gateway를 호출한다. provider key는 `AI_PROVIDER_API_KEY`로 AI Gateway 컨테이너에만 주입하며, 브라우저 env에는 provider key를 두지 않는다. `AI_QUERY_PROVIDER=direct`는 롤백 호환 모드다.
 - Query AI 요청은 선택된 dataset id와 dataset metadata 전체를 함께 전달해 backend가 선택 context 안에서 JOIN SQL 초안을 생성할 수 있게 한다. live 응답이 선택 reference JOIN을 포함하지 않으면 frontend가 동일 metadata로 JOIN 초안 fallback을 적용한다.
 - `TRINO_ENABLED=false`에서는 `/api/query/runs`가 DuckDB compatibility response를 유지한다. `true`이면 같은 endpoint가 Trino full Query Run을 `202 Accepted`로 접수하고 실행 이력, 상태, cursor 결과, CSV export, cancel lifecycle을 사용한다. `POST /api/query/estimates`는 Iceberg metadata 또는 plan/Catalog fallback으로 스캔량을 추정하고 `POST /api/query/validate`가 canonical Trino 문법·Dataset context·권한을 판정한다.
 - Trino 전환 시 backend만 coordinator continuation URL을 보관한다. `trino-result-collector`만 continuation을 소비하고 상태/결과 API는 persisted state만 읽는다. QueryInfo 샘플링은 진행 통계를 보강하되 result page를 소비하지 않는다.

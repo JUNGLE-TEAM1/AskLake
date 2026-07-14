@@ -134,6 +134,10 @@ required_keys=(
   AIRFLOW_INTERNAL_TOKEN
   AIRFLOW_METADATA_DB_PASSWORD
   AIRFLOW_PASSWORD
+  AI_CONTEXT_SIGNING_SECRET
+  AI_GATEWAY_SERVICE_TOKEN
+  AI_MCP_SERVICE_TOKEN
+  AI_PROVIDER_API_KEY
   APP_DOMAIN
   APP_ENV
   ASKLAKE_HOST_DATA_DIR
@@ -209,6 +213,14 @@ for key in "${required_keys[@]}"; do
   value="$(env_value_for "$key")"
   if is_blank "$value" || [[ "$value" == *replace-with-* || "$value" == *example.invalid* ]]; then
     printf 'error: %s must be set to a non-placeholder value in %s\n' "$key" "$ENV_FILE" >&2
+    exit 1
+  fi
+done
+
+for ai_secret_key in AI_CONTEXT_SIGNING_SECRET AI_GATEWAY_SERVICE_TOKEN AI_MCP_SERVICE_TOKEN; do
+  ai_secret_value="$(env_value_for "$ai_secret_key")"
+  if (( ${#ai_secret_value} < 32 )); then
+    printf 'error: %s must contain at least 32 characters\n' "$ai_secret_key" >&2
     exit 1
   fi
 done
