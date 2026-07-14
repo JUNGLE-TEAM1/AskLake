@@ -844,13 +844,12 @@ const checks = [
       /operation: `Cast \$\{outputType\}`/,
       /operation: "Default Value"/,
       /operation: "Null Guard"/,
+      /onError: "Fail Run",[\s\S]*operation: "Null Guard"/,
       /if \(column\.notNull && column\.nullGuardExplicit\)/,
       /canonicalParameters: parameters/,
       /ensureRequiredFieldTransformSteps\(targetSchema, transformSteps\)/,
       /return \[\.\.\.requiredSteps, \.\.\.nonFieldSteps\];/,
       /if \(mode !== "sql" \|\| !sql\.trim\(\) \|\| continuous \|\| isKafka\) return;/,
-      /previewSnapshotRules\(\{/,
-      /recordsFromSampleRows\(columns, sampleRows\.slice\(0, 20\)\)/,
     ],
   },
   {
@@ -1416,8 +1415,8 @@ const checks = [
     patterns: [
       /고급 설정/,
       /label="시작 위치"/,
-      /label="Trigger 간격"/,
-      /label="Micro-batch 최대 메시지"/,
+      /label="수집 실행 간격"/,
+      /label="한 번에 처리할 최대 메시지"/,
       /getSourceConnectorDefaults\(\)/,
       /\["Broker \/ Endpoint", defaultKafkaBroker\]/,
     ],
@@ -1437,9 +1436,51 @@ const checks = [
     patterns: [
       /qualityRuleCount: enabledQualityRules\.length/,
       /requiredColumnCount/,
+      /failurePolicyCount: new Set\(failureActions\)\.size/,
+      /failureTargetCount: failureTargets\.size/,
     ],
     forbiddenPatterns: [
       /enabledQualityRules\.length \+ requiredColumnCount/,
+    ],
+  },
+  {
+    name: "Source preview keeps sticky headers opaque above scrolling rows",
+    file: "src/pages/etl/SourcePreviewDataTable.tsx",
+    patterns: [
+      /headerClassName: "bg-blue-50 text-slate-600"/,
+    ],
+    forbiddenPatterns: [
+      /bg-blue-50\/70/,
+    ],
+  },
+  {
+    name: "New source inference starts with an empty target selection",
+    file: "src/services/sourceConnectorService.ts",
+    patterns: [
+      /withUnselectedTargetSchema/,
+      /included: false/,
+      /targetOrder: undefined/,
+    ],
+  },
+  {
+    name: "Schema field names may stay empty while editing and are blocked on confirmation",
+    file: "src/pages/etl/SchemaTransformWorkbench.tsx",
+    patterns: [
+      /const outputName = column\.targetName \?\? column\.sourceName/,
+      /if \(!output\) return \[\]/,
+    ],
+    forbiddenPatterns: [
+      /const outputName = column\.targetName \|\| column\.sourceName/,
+    ],
+  },
+  {
+    name: "ETL review requests use stable payload keys with visible retry handling",
+    file: "src/pages/etl/EtlPages.tsx",
+    patterns: [
+      /getReviewSnapshotRequestKey\(buildReviewSnapshotRequest\(draft\)\)/,
+      /\[reviewRequest, reviewRetryCount\]/,
+      /검토 정보를 불러오지 못했습니다/,
+      /setReviewRetryCount\(\(count\) => count \+ 1\)/,
     ],
   },
   {
@@ -1492,7 +1533,7 @@ const checks = [
     ],
   },
   {
-    name: "Continuous schema editing exposes only streaming-safe canonical transforms and Preview",
+    name: "Continuous schema editing exposes only streaming-safe canonical transforms without a duplicate engine preview",
     file: "src/pages/etl/SchemaTransformWorkbench.tsx",
     patterns: [
       /ensureRequiredFieldTransformSteps\(targetSchema, transformSteps\)/,
@@ -1500,10 +1541,11 @@ const checks = [
       /allowSqlTransform=\{!continuous && !isKafka\}/,
       /portableTransforms=\{continuous \|\| isKafka\}/,
       /transformsDisabled=\{false\}/,
-      /streaming-safe canonical Rule/,
-      /disabled=\{previewPending \|\| sampleRows\.length === 0\}/,
     ],
     forbiddenPatterns: [
+      /실행 엔진 Preview/,
+      /Preview 실행/,
+      /previewSnapshotRules/,
       /실시간 규칙은 다음 compiler 페이즈 전까지 pass-through/,
       /실시간 규칙 Preview는 streaming compiler/,
     ],
@@ -1515,13 +1557,40 @@ const checks = [
       /const qualityRulePayload = \(targetColumn\)/,
       /const applyPortableFieldRules = \(\) =>/,
       /portable \? applyPortableFieldRules : applyFieldRules/,
-      /<TabsTrigger value="quality">품질 검사<\/TabsTrigger>/,
-      /<TabsTrigger value="failure">실패 처리<\/TabsTrigger>/,
+      /value="quality"\s*>품질 및 실패 처리<\/TabsTrigger>/,
+      /<FieldTitle>변환 실패 시<\/FieldTitle>/,
+      /<FieldLabel htmlFor=\{`quality-failure-\$\{rule\.kind\}`\}>실패 시 처리<\/FieldLabel>/,
+      /const visibleRuleDrafts = required[\s\S]*rule\.kind !== 'notNull'/,
+      /failureAction: normalizeQualityFailureAction\(rule\.kind, rule\.failureAction\)/,
+      /allowSetNull=\{rule\.kind !== 'notNull'\}/,
+      /문제 값을 NULL로 변경/,
+      /function FailureActionSelect/,
       /Kafka Snapshot과 실시간 실행에서 동일하게 지원되는 변환만 표시합니다/,
+      /const resetTransformSettings = \(\) =>/,
+      /변환 설정 초기화/,
+      /field-rule-mode-tabs/,
+      /field-rule-mode-tab/,
     ],
     forbiddenPatterns: [
       /if \(portable\) \{/,
       /<SelectItem value="float">/,
+      /value="failure"/,
+      /function FailureRuleRow/,
+      /출력 스키마에서 필수 컬럼/,
+      /setRequired/,
+      /quality-severity-/,
+      />심각도</,
+      />NULL 대체</,
+    ],
+  },
+  {
+    name: "Field rule modal tabs use the applied-rule summary selection treatment",
+    file: "src/styles/etl.css",
+    patterns: [
+      /\.field-rule-mode-tabs \[role="tab"\]\[data-state="active"\]/,
+      /background: #eff6ff/,
+      /box-shadow: inset 0 -3px 0 #2563eb/,
+      /\.field-rule-mode-tabs \[role="tab"\]\[data-state="active"\]:focus-visible/,
     ],
   },
   {
