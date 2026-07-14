@@ -57,11 +57,20 @@ export function WidgetFrame({
   const columnSpan = clampSpan(widget.layout?.w, 4);
   const rowSpan = clampSpan(widget.layout?.h, 4);
   const isAiWorking = assistantContext?.workingWidgetId === widget.id;
+  const liveRevision = widget.liveRefresh === true && typeof widget.appliedRevision === "number"
+    ? widget.appliedRevision
+    : null;
 
   return (
     <article
       aria-busy={isAiWorking || undefined}
-      className={cx("asklake-widget-frame", editable && "editable", selected && "selected", isAiWorking && "ai-working")}
+      className={cx(
+        "asklake-widget-frame",
+        editable && "editable",
+        selected && "selected",
+        isAiWorking && "ai-working",
+        liveRevision !== null && "live",
+      )}
       style={{
         gridColumn: editable ? undefined : `span ${columnSpan}`,
         minHeight: editable ? undefined : `${Math.max(160, rowSpan * 56)}px`,
@@ -74,27 +83,39 @@ export function WidgetFrame({
       }}
     >
       <header>
-        <div>
+        <div className="asklake-widget-heading">
           <span>{widgetTypeLabel(widget)}</span>
           <h2>{widget.title || "제목 없는 위젯"}</h2>
         </div>
-        {editable && selected && (
-          <Button
-            aria-label={`${widget.title || "제목 없는 위젯"} 삭제`}
-            className="asklake-widget-delete-button widget-control"
-            disabled={deleteDisabled}
-            title="위젯 삭제"
-            type="button"
-            size="icon"
-            variant="destructive"
-            onClick={(event) => {
-              event.stopPropagation();
-              onDelete?.(widget.id);
-            }}
-          >
-            <Trash2 size={16} />
-          </Button>
-        )}
+        <div className="asklake-widget-header-actions">
+          {liveRevision !== null && (
+            <span
+              aria-live="polite"
+              className="asklake-widget-live-status"
+              title={`데이터셋 revision ${liveRevision.toLocaleString("ko-KR")}까지 반영됨`}
+            >
+              <span aria-hidden="true" className="asklake-widget-live-dot" />
+              실시간 · R{liveRevision.toLocaleString("ko-KR")}
+            </span>
+          )}
+          {editable && selected && (
+            <Button
+              aria-label={`${widget.title || "제목 없는 위젯"} 삭제`}
+              className="asklake-widget-delete-button widget-control"
+              disabled={deleteDisabled}
+              title="위젯 삭제"
+              type="button"
+              size="icon"
+              variant="destructive"
+              onClick={(event) => {
+                event.stopPropagation();
+                onDelete?.(widget.id);
+              }}
+            >
+              <Trash2 size={16} />
+            </Button>
+          )}
+        </div>
       </header>
       <div className="asklake-widget-frame-body">
         <WidgetRenderer
@@ -112,6 +133,13 @@ export function WidgetFrame({
           </span>
           <strong>AI 시각화 작업중</strong>
         </div>
+      )}
+      {liveRevision !== null && (
+        <span
+          aria-hidden="true"
+          className="asklake-widget-live-pulse"
+          key={`live-revision-${liveRevision}`}
+        />
       )}
     </article>
   );

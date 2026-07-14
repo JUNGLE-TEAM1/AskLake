@@ -339,7 +339,7 @@ Kafka event는 S3 Parquet의 행이 된다. 대시보드는 그 행을 서버에
 
 새 행이 테이블에 보이는 조건은 **선택 컬럼·정렬·limit 결과 안에 그 행이 들어오는 경우**다.
 
-새로 실시간 배지나 toast를 만들지 않았다. 계산이 성공하면 현재 위젯의 결과만 자연스럽게 교체한다.
+published Continuous 위젯 header에는 현재 적용된 `appliedRevision`을 `실시간 · R{revision}` 배지로 표시한다. 새 revision이 병합되면 위젯 테두리가 짧게 pulse하고 bar chart는 숫자 data label과 600ms dynamic animation으로 값 변화를 보여준다. 이 표시는 polling 성공을 눈으로 확인하기 위한 UI 근거이며 별도 SSE/WebSocket 연결 상태를 뜻하지 않는다.
 
 ### 수집 상태 확인 화면
 
