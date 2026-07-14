@@ -198,6 +198,8 @@ def create_pipeline(
     apply_compiled_rules(request, compiled_rules)
     validate_create_request(request)
     actor_context = actor if isinstance(actor, ActorContext) else ActorContext(name=actor)
+    if is_internal_data_lake_source(request.source_type):
+        resolve_internal_data_lake_source(db, request.source_config, actor=actor_context)
     actor_name = actor_context.name
     created_by = identity_name(request.created_by or actor_name or request.owner)
     created_by_profile = request.created_by_profile or identity_profile(created_by)
@@ -1359,6 +1361,78 @@ def test_source_connector(request: SourceConnectorRequest) -> SourceConnectorAna
     return SourceConnectorAnalysis.model_validate(result)
 
 
+def is_internal_data_lake_source(source_type: str | None) -> bool:
+    return str(source_type or "").strip().casefold() == "data lake"
+
+
+def resolve_internal_data_lake_source(
+    db: Session,
+    source_config: Any,
+    *,
+    actor: ActorContext | None = None,
+) -> dict[str, Any]:
+    dataset_id = field_value(source_config or [], "Source Dataset ID").strip()
+    if not dataset_id:
+        raise ApiError(
+            ErrorCode.VALIDATION_ERROR,
+            "Data Lake source requires Source Dataset ID.",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
+    payload = CatalogRepository(db).get_dataset_payload(dataset_id)
+    if payload is None:
+        raise ApiError(ErrorCode.NOT_FOUND, f"Dataset not found: {dataset_id}", status.HTTP_404_NOT_FOUND)
+    if str(payload.get("status") or "").strip().casefold() != "available":
+        raise ApiError(
+            ErrorCode.INVALID_JOB_STATE,
+            "Data Lake source dataset is not available.",
+            status.HTTP_409_CONFLICT,
+            {"datasetId": dataset_id, "datasetStatus": payload.get("status")},
+        )
+
+    query_engine_table = payload.get("queryEngineTable")
+    query_engine_status = str(payload.get("queryEngineStatus") or "").strip().casefold()
+    if (
+        not isinstance(query_engine_table, dict)
+        or str(query_engine_table.get("format") or "").strip().casefold() != "iceberg"
+        or query_engine_status != "available"
+        or not str(query_engine_table.get("schema") or "").strip()
+        or not str(query_engine_table.get("table") or "").strip()
+    ):
+        raise ApiError(
+            ErrorCode.INVALID_JOB_STATE,
+            "Data Lake source dataset requires an available Iceberg table.",
+            status.HTTP_409_CONFLICT,
+            {"datasetId": dataset_id, "queryEngineStatus": query_engine_status or "unavailable"},
+        )
+
+    if actor is not None:
+        fallback_grants = payload.get("permissionGrants") if isinstance(payload.get("permissionGrants"), list) else []
+        grants = permission_grants_for_resource(db, "dataset", dataset_id, fallback_grants)
+        grant_payloads = [grant.model_dump(mode="json", by_alias=True) for grant in grants]
+        permissions = permissions_for_actor_with_governance(
+            db,
+            actor,
+            owner=str(payload.get("owner") or "") or None,
+            grants=grant_payloads,
+            resource_id=dataset_id,
+            resource_type="dataset",
+        )
+        if not permissions.can_view:
+            raise ApiError(
+                ErrorCode.FORBIDDEN,
+                f"Actor {actor.name} is not allowed to view this dataset",
+                status.HTTP_403_FORBIDDEN,
+                {"datasetId": dataset_id},
+            )
+
+    return {
+        "catalog": str(query_engine_table.get("catalog") or "iceberg"),
+        "format": "iceberg",
+        "namespace": str(query_engine_table["schema"]),
+        "table": str(query_engine_table["table"]),
+    }
+
+
 def list_source_assets(request: SourceAssetsRequest) -> SourceAssetsResponse:
     result = run_node_bridge(
         "list-source-assets.mjs",
@@ -1558,9 +1632,22 @@ def record_parsing_timestamp(value: str) -> bool:
         return False
 
 
-def review_pipeline(request: ReviewPipelineRequest) -> ReviewSnapshot:
+def review_pipeline(
+    request: ReviewPipelineRequest,
+    *,
+    db: Session | None = None,
+    actor: ActorContext | None = None,
+) -> ReviewSnapshot:
     source_ready = request.source_connection_status == "success"
-    if source_ready and request.source_type != "SQL Result":
+    if source_ready and is_internal_data_lake_source(request.source_type):
+        try:
+            if db is None or actor is None:
+                source_ready = False
+            else:
+                resolve_internal_data_lake_source(db, request.source_config, actor=actor)
+        except Exception:
+            source_ready = False
+    elif source_ready and request.source_type != "SQL Result":
         try:
             source_ready = test_source_connector(
                 SourceConnectorRequest(source_type=request.source_type, source_config=request.source_config)
@@ -2125,6 +2212,11 @@ def run_spark_job(db: Session, job: ETLJobModel, command: str, run_id: str) -> d
         if source_object_inventory is not None
         else None
     )
+    source_iceberg_table = (
+        resolve_internal_data_lake_source(db, job.source_config)
+        if is_internal_data_lake_source(job.source_type)
+        else None
+    )
     result = run_node_bridge(
         "run-spark-job-once.mjs",
         "ASKLAKE_SPARK_RUN_RESULT",
@@ -2137,6 +2229,7 @@ def run_spark_job(db: Session, job: ETLJobModel, command: str, run_id: str) -> d
                 source_object_keys,
                 source_object_inventory,
                 source_window_rebaseline=source_window_rebaseline,
+                source_iceberg_table=source_iceberg_table,
             ),
             "runId": run_id,
         },
@@ -3069,6 +3162,7 @@ def job_payload_for_spark(
     source_object_inventory: list[dict[str, Any]] | None = None,
     *,
     source_window_rebaseline: bool = False,
+    source_iceberg_table: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     compiled_rules = compile_job_rules(job)
     require_compiled_rules(compiled_rules)
@@ -3110,6 +3204,7 @@ def job_payload_for_spark(
         "sourceWindowContractVersion": SOURCE_WINDOW_CONTRACT_VERSION if source_uses_incremental_folder_window(job) else None,
         "sourceWindowRebaseline": source_window_rebaseline,
         "sourceLabel": job.source_label,
+        "sourceIcebergTable": source_iceberg_table,
         "sourceType": job.source_type,
         "stats": job.stats or {},
         "target": job.target,

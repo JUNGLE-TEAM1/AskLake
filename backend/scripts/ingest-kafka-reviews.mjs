@@ -10,6 +10,7 @@ import { formatBytes, inferSchemaColumns, normalizeColumnName, parseSourceSample
 import {
   buildKafkaTargetSchema,
   getKafkaRecordValue,
+  parseKafkaSnapshotRecord,
   projectKafkaTargetRecord,
   standardKafkaReviewSchema,
 } from "../src/kafkaTargetProjection.mjs";
@@ -72,7 +73,6 @@ let dataPath = "";
 let metadataPath = "";
 let activeSnapshot = null;
 const startedAt = new Date().toISOString();
-const requiredFields = ["event_id", "offset", "review", "created_at"];
 
 try {
   const result = await ingestReviews();
@@ -483,12 +483,12 @@ async function consumeKafkaSnapshot(consumer, snapshot) {
           }
           if (messageOffset >= range.start) {
             const value = message.value?.toString("utf8") ?? "";
-            const parsed = parseReviewMessage(value, {
+            const parsed = parseKafkaSnapshotRecord(value, {
               key: message.key?.toString("utf8") ?? "",
               offset: message.offset,
               partition: batch.partition,
               topic: batch.topic,
-            });
+            }, configuredSchemaColumns);
             if (parsed.valid) records.push(parsed.record);
             else invalidRecords.push(parsed.error);
           }
@@ -694,41 +694,6 @@ function reviewLineageGraph(schema) {
       toDatasetId: datasetNode.id,
     })),
   };
-}
-
-function parseReviewMessage(value, context) {
-  try {
-    const record = JSON.parse(value);
-    for (const field of requiredFields) {
-      if (record[field] === undefined || record[field] === null || record[field] === "") {
-        return { error: { ...context, field, rawPayload: value, reason: "missing_required_field" }, valid: false };
-      }
-    }
-    if (record.schema_version !== undefined && record.schema_version !== "1.0") {
-      return { error: { ...context, rawPayload: value, reason: "unsupported_schema_version", schemaVersion: record.schema_version }, valid: false };
-    }
-    if (record.raw !== undefined && (typeof record.raw !== "object" || Array.isArray(record.raw))) {
-      return { error: { ...context, rawPayload: value, reason: "invalid_raw_payload" }, valid: false };
-    }
-    const numericOffset = Number(record.offset);
-    if (!Number.isFinite(numericOffset)) {
-      return { error: { ...context, offset: record.offset, rawPayload: value, reason: "invalid_offset" }, valid: false };
-    }
-    return {
-      record: {
-        schema_version: record.schema_version || "1.0",
-        event_id: String(record.event_id),
-        source: record.source || "review-dataset",
-        offset: numericOffset,
-        review: String(record.review),
-        created_at: String(record.created_at),
-        raw: record.raw || { ...record },
-      },
-      valid: true,
-    };
-  } catch (error) {
-    return { error: { ...context, message: error?.message || String(error), rawPayload: value, reason: "invalid_json" }, valid: false };
-  }
 }
 
 function pipelineError(failedStage, message) {

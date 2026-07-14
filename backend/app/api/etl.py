@@ -106,9 +106,10 @@ def get_permission_options(
 def review_pipeline(
     request: ReviewPipelineRequest,
     actor: ActorContext = Depends(get_actor_context),
+    db: Session = Depends(get_db),
 ) -> ReviewSnapshot:
     require_permission(actor, "manage", resource_label="source connector")
-    return etl_service.review_pipeline(request)
+    return etl_service.review_pipeline(request, db=db, actor=actor)
 
 
 @router.post("/kafka/reviews/ingest", response_model=KafkaReviewIngestResponse)

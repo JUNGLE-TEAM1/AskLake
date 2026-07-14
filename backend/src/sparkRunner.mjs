@@ -605,7 +605,7 @@ function ensureSparkServer() {
   }
 }
 
-function sparkSourceFromJob(job, runId) {
+export function sparkSourceFromJob(job, runId) {
   const sourceType = job.sourceType || "";
   const sourceConfig = Array.isArray(job.sourceConfig) ? job.sourceConfig : [];
   if (sourceType === "File / S3") {
@@ -626,6 +626,12 @@ function sparkSourceFromJob(job, runId) {
     };
   }
   if (sourceType === "Data Lake") {
+    if (job.sourceIcebergTable) {
+      return {
+        format: "iceberg",
+        path: sparkIcebergSourceIdentifier(job.sourceIcebergTable),
+      };
+    }
     return {
       format: "parquet",
       path: toS3APath(fieldValue(sourceConfig, "Path") || "s3://m3-raw/nyc_taxi/yellow_parquet/"),
@@ -655,6 +661,21 @@ function sparkSourceFromJob(job, runId) {
   }
 
   throw sparkError(`Spark execution requires File / S3, Data Lake, or a connector sample with schema rows. Unsupported sourceType=${sourceType}`);
+}
+
+function sparkIcebergSourceIdentifier(source) {
+  const catalog = String(
+    process.env.ASKLAKE_SPARK_ICEBERG_CATALOG_NAME
+      || process.env.TRINO_ICEBERG_CATALOG_NAME
+      || "asklake",
+  ).trim();
+  const namespace = String(source?.namespace || source?.schema || "").trim();
+  const table = String(source?.table || "").trim();
+  const identifiers = [catalog, namespace, table];
+  if (identifiers.some((value) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(value))) {
+    throw sparkError("Data Lake Iceberg source contains an invalid catalog identifier.");
+  }
+  return identifiers.join(".");
 }
 
 function isConnectorSampleSource(sourceType) {

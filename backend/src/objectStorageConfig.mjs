@@ -15,6 +15,15 @@ function parseBoolean(value, fallback) {
   return fallback;
 }
 
+function isLoopbackEndpoint(value) {
+  try {
+    const hostname = new URL(value).hostname.toLowerCase();
+    return ["127.0.0.1", "localhost", "::1", "[::1]"].includes(hostname);
+  } catch {
+    return false;
+  }
+}
+
 export function objectStorageProvider(fields = []) {
   const configured = fieldValue(fields, "Storage Provider")
     || process.env.ASKLAKE_OBJECT_STORAGE_PROVIDER
@@ -29,7 +38,11 @@ export function resolveObjectStorageConfig(fields = [], { docker = false } = {})
   const provider = objectStorageProvider(fields);
   const isMinio = provider === MINIO_PROVIDER;
   const endpointFromFields = fieldValue(fields, "Endpoint URL") || fieldValue(fields, "Endpoint");
-  const endpoint = endpointFromFields
+  const dockerLoopbackEndpoint = docker && isMinio && isLoopbackEndpoint(endpointFromFields)
+    ? process.env.MINIO_ENDPOINT_IN_DOCKER
+    : "";
+  const endpoint = dockerLoopbackEndpoint
+    || endpointFromFields
     || (isMinio
       ? (docker ? process.env.MINIO_ENDPOINT_IN_DOCKER : process.env.MINIO_ENDPOINT)
       : (process.env.S3_ENDPOINT || process.env.AWS_ENDPOINT_URL_S3))

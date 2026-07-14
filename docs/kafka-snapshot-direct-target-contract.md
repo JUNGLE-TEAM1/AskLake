@@ -8,13 +8,13 @@ Phase 0 defined the target contract. Phase 1 implemented partition offset snapsh
 
 ## 2. Objective
 
-Kafka Job runs must process a deterministic, bounded Kafka range and write the normalized review result directly to the selected target dataset. The default path must not create an intermediate RAW landing dataset or `kafka-landing/...` object.
+Kafka Job runs must process a deterministic, bounded Kafka range and write the configured JSON result directly to the selected target dataset. The default path must not create an intermediate RAW landing dataset or `kafka-landing/...` object. A Job with persisted `schemaColumns` accepts JSON objects according to that schema; only the Job-less compatibility endpoint retains the normalized review-event contract.
 
 ```text
 Kafka topic
   -> capture partition offset snapshot
   -> consume the fixed range
-  -> normalize review event shape and apply configured rules
+  -> parse the configured JSON object and apply configured rules
   -> append selected RAW/Bronze/Silver Iceberg target once
   -> verify with Trino and register Catalog run
   -> commit Kafka offsets
@@ -58,7 +58,7 @@ The selected target dataset is the only Lake data output for the default path.
 
 The target physical table identity is derived from the Dataset ID and backend Iceberg catalog/namespace, rather than the removed `kafka-landing/<topic>/<runId>` convention. The Catalog materialization run must expose the warehouse location, target layer, `sourceKind: "kafka"`, `queryEngineTable`, Iceberg snapshot ID, and Kafka snapshot metadata.
 
-Supported transform operations follow the existing pipeline rule semantics: copy/rename, trim/lowercase, numeric and timestamp casts, JSONPath extraction, default/null guard, and phone masking. Quality rule `params` stores Regex `pattern`, Accepted Values `values`, and Range `min`/`max`/`inclusive`; compiler validation rejects missing or invalid values before execution. Unsupported expression-style transforms are rejected before Job creation. `Fail Run` stops before target write and offset commit. `Warn` retains the row, `Set Null` clears the invalid target field, `Drop Row` excludes it, and `Quarantine` writes the rejected row to `snapshots/{snapshotId}/quarantine.jsonl` beside the snapshot metadata. Successful records are projected to the configured included target columns and compiled Rule output schema before Iceberg/Catalog publication, so rename source fields and excluded fields are not retained. Malformed Kafka payloads are also quarantined with their raw payload and Kafka context; their offset is committed only after this object is stored.
+Supported transform operations follow the existing pipeline rule semantics: copy/rename, trim/lowercase, numeric and timestamp casts, JSONPath extraction, default/null guard, and phone masking. Quality rule `params` stores Regex `pattern`, Accepted Values `values`, and Range `min`/`max`/`inclusive`; compiler validation rejects missing or invalid values before execution. Unsupported expression-style transforms are rejected before Job creation. `Fail Run` stops before target write and offset commit. `Warn` retains the row, `Set Null` clears the invalid target field, `Drop Row` excludes it, and `Quarantine` writes the rejected row to `snapshots/{snapshotId}/quarantine.jsonl` beside the snapshot metadata. Successful records are projected to the configured included target columns and compiled Rule output schema before Iceberg/Catalog publication, so rename source fields and excluded fields are not retained. Job-scoped execution does not impose review-only fields on a different configured schema. Malformed Kafka payloads are also quarantined with their raw payload and Kafka context; their offset is committed only after this object is stored.
 
 ## 5. Completion and Failure Semantics
 
