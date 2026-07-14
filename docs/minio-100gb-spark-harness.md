@@ -281,6 +281,70 @@ ASKLAKE_VERIFY_ICEBERG_LIVE=true npm run verify:kafka-continuous-iceberg
 
 게시 경계 fault 검증은 backend에 `ASKLAKE_CONTINUOUS_FAIL_AFTER_DATA_WRITE_ONCE=true`, E2E runner에 `ASKLAKE_CONTINUOUS_E2E_PUBLICATION_FAULT=true`를 설정한다. 첫 worker는 data `_SUCCESS` 뒤 manifest 전에 한 번 실패하고, harness가 resume한 뒤 같은 batch/offset을 중복 저장하지 않고 manifest와 Catalog를 복구해야 한다. 이 변수는 테스트 전용이며 운영에서는 반드시 `false`로 둔다.
 
+### 8.1 Kafka Continuous 대시보드 revision/result 검증
+
+대시보드 리비전은 Spark가 Iceberg data file을 쓴 시점이 아니라 backend가 immutable `manifestPath`의 `_SUCCESS`, 유효한 `[startOffset, endOffset)` 범위, 일치하는 source boundary와 exact Iceberg snapshot/table을 확인하고 Trino 검증과 Catalog materialization을 끝낸 뒤에만 증가해야 한다.
+
+```text
+Kafka offset range
+↓
+batch_id=<id> Parquet + _SUCCESS + manifest
+↓
+Catalog materializationRuns
+↓
+dataset_revision_commits(manifest, commit_kind, source fingerprint 포함)
+↓
+dataset_kafka_partition_cursors(topic/partition next_offset)
+↓
+dataset_freshness.latest_revision
+```
+
+실제 PostgreSQL schema와 transaction 결과는 다음 opt-in verifier로 확인한다.
+
+```powershell
+# repository root
+docker compose up -d postgres
+
+cd backend
+$env:ASKLAKE_VERIFY_DASHBOARD_POSTGRES = "true"
+$env:DATABASE_URL = "postgresql+psycopg://asklake:asklake_dev@localhost:54328/asklake"
+npm run verify:dashboard-live-postgres
+```
+
+스크립트는 실제 PostgreSQL에 임시 Catalog dataset을 만들고 다음을 확인한 뒤 해당 fixture를 삭제한다.
+
+- `dataset_freshness`, `dataset_revision_commits`, `dataset_kafka_partition_cursors`, `dashboard_widget_results` table/index/constraint
+- 같은 `run_id`를 두 번 저장해도 revision이 한 번만 증가하고, 다른 metadata로 재사용하면 거절
+- 같은 stream offset fingerprint를 다른 `run_id`로 보내도 한 번만 반영하고 부분 겹침은 거절
+- 원본 stream watermark와 자체 완료 manifest를 가진 quarantine replay의 offset namespace 분리
+- revision과 S3·manifest 위치, row count, topic/partition/[startOffset, endOffset) `source_ranges`와 fingerprint 연결
+- widget `result_payload`, `calculation_state`, `applied_revision`, `calculation_mode` 저장·재조회
+
+기존 Continuous 계약과 frontend polling 선택 로직은 별도로 검증한다.
+
+`npm run verify:kafka-continuous-contract`는 `manifestPath`가 없거나 batch identity·기존 run 근거가 다른 non-empty publication이 Catalog와 revision을 올리지 않는지, PostgreSQL partition cursor가 worker 시작에 전달되는지, 축약되거나 이미 ack된 종료 report window를 S3 committed manifest 목록으로 끝까지 복구하는지, 마지막 manifest가 불완전하면 ACK를 멈추는지, replay Catalog 실패 결과와 runtime 카운터가 다음 reconciliation에서 함께 복구되는지도 확인한다. 로컬 replay result가 없을 때 S3 `_SUCCESS` manifest를 `runId`로 복구하는지, 404 외의 접근·파싱·identity 오류를 실패로 유지하는지, 미반영 replay가 남은 start/resume을 `409`로 막는지도 포함한다. Unit test는 전체 중복 offset 무게시, partial overlap suffix, Spark raw batch ID와 분리된 durable publication 순번, exact snapshot Run 행 수, replay manifest 실패 rollback을 확인한다. 실제 E2E에서는 manifest `_SUCCESS`, exact Iceberg commit/Trino 검증과 replay 최대 1,000행 batch 경계를 함께 본다. 위젯은 최초에 Catalog `icebergSnapshotId`로 고정한 전체 기준값을 만들고, 이후 전체 누적 `count`/`sum`/`avg`만 `_asklake_run_id`로 revision 한 개씩 증분 합산한다. backfill/legacy/non-delta, `min`/`max` 등은 전체 재계산하며 최근 N분·슬라이딩 시간창은 이번 범위에서 검증하거나 지원하지 않는다.
+
+```powershell
+cd backend
+npm run verify:kafka-continuous-contract
+
+cd ..\frontend
+npm run test:dashboard-live-refresh
+```
+
+실제 Kafka/MinIO/Spark/Catalog 경로는 기존 opt-in `npm run verify:kafka-continuous-e2e`를 사용한다. 이 검증은 published metric 생성, 최초 결과 저장, 새 revision 뒤 widget result 증가까지 포함한다. production compose에서는 관리자 session을 만들 수 있도록 `ASKLAKE_CONTINUOUS_E2E_EMAIL/PASSWORD` 또는 `ASKLAKE_CONTINUOUS_E2E_SESSION_COOKIE`를 전달한다. 대시보드 viewer는 `/dashboards/{dashboardId}` published route에서만 Continuous dataset을 polling하고, 평소에는 서버 권장주기 `clamp(triggerIntervalSeconds * 500, 5000, 60000)`을 따른다. 여러 revision을 따라잡을 때는 응답이 실제 전진한 경우에만 250ms 뒤 다음 revision을 요청한다.
+
+운영 로그에서는 다음 event를 확인한다.
+
+```text
+dashboard_dataset_revision_committed
+dashboard_dataset_revision_backfilled
+dashboard_widget_result_calculated
+dashboard_widget_result_failed
+```
+
+실제 화면 지연은 `다음 Spark trigger까지 남은 시간 + Spark/S3 + backend reconciliation 0~5초 + polling 0~nextCheckAfterMs(+ dataset ID 기반 0~10% jitter) + widget 계산`이다. 2~5초 반영을 항상 보장하지 않는다.
+
 ## 9. Frontend
 
 ```powershell

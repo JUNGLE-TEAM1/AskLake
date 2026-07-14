@@ -1,4 +1,7 @@
 import json
+import hashlib
+import logging
+import time
 from datetime import UTC, datetime
 from typing import Any
 
@@ -14,6 +17,11 @@ from app.models.dashboard_runtime import DashboardWidget as DashboardWidgetModel
 from app.repositories.audit_repository import safe_record_audit_event
 from app.repositories.dashboard_card_repository import get_dashboard_card
 from app.repositories.dashboard_runtime_repository import DashboardRuntimeMetaRecord, DashboardRuntimeRepository
+from app.repositories.dashboard_live_repository import (
+    BACKFILL_COMMIT_KIND,
+    LEGACY_COMMIT_KIND,
+    DashboardLiveRepository,
+)
 from app.repositories.catalog_repository import CatalogRepository
 from app.schemas.common import ErrorCode
 from app.schemas.catalog import CatalogDatasetResponse
@@ -66,12 +74,17 @@ from app.services.resource_permission_service import (
 from app.services.dashboard_physical_data import (
     DashboardDatasetQuerySession,
     DashboardRemoteScanBudget,
+    dashboard_result_from_aggregate_state,
+    dashboard_source_config,
+    dashboard_widget_supports_incremental_merge,
+    merge_dashboard_aggregate_states,
 )
 
 
 MAX_EXPLICIT_WIDGET_ROWS = 500
 DASHBOARD_DATA_FORBIDDEN = "DASHBOARD_DATA_FORBIDDEN"
 DASHBOARD_DATA_UNAVAILABLE = "DASHBOARD_DATA_UNAVAILABLE"
+logger = logging.getLogger(__name__)
 
 
 class DashboardRuntimeService:
@@ -85,9 +98,16 @@ class DashboardRuntimeService:
         "yellow": "#f59e0b",
     }
 
-    def __init__(self, repository: DashboardRuntimeRepository, catalog_repository: CatalogRepository) -> None:
+    def __init__(
+        self,
+        repository: DashboardRuntimeRepository,
+        catalog_repository: CatalogRepository,
+        live_repository: DashboardLiveRepository | None = None,
+    ) -> None:
         self.repository = repository
         self.catalog_repository = catalog_repository
+        self.live_repository = live_repository
+        self._continuous_job_cache: dict[str, object | None] = {}
 
     def get_published_runtime(self, dashboard_id: str, actor: ActorContext | None = None) -> DashboardRuntimeResponse:
         actor_context = actor or ActorContext()
@@ -98,6 +118,56 @@ class DashboardRuntimeService:
 
         revision = self.repository.get_published_revision(dashboard_id)
         return self._build_runtime_response(dashboard_meta, DashboardRuntimeMode.PUBLISHED, revision, actor_context, dashboard_card)
+
+    def query_published_widgets(
+        self,
+        dashboard_id: str,
+        widget_ids: list[str],
+        actor: ActorContext | None = None,
+    ) -> list[DashboardRuntimeWidget]:
+        actor_context = actor or ActorContext()
+        dashboard_meta = self._require_dashboard(dashboard_id)
+        self._require_dashboard_permission(dashboard_id, actor_context, "view")
+        revision = self.repository.get_published_revision(dashboard_id)
+        if revision is None:
+            return []
+        pages = self.repository.list_pages(revision.id)
+        widgets_by_page = self.repository.list_widgets_by_page_ids([page.id for page in pages])
+        available = {
+            widget.id: widget
+            for widgets in widgets_by_page.values()
+            for widget in widgets
+        }
+        requested_ids = list(dict.fromkeys(widget_ids))
+        missing = [widget_id for widget_id in requested_ids if widget_id not in available]
+        if missing:
+            raise ApiError(
+                ErrorCode.NOT_FOUND,
+                "Published dashboard widget not found.",
+                status.HTTP_404_NOT_FOUND,
+                {"dashboardId": dashboard_meta.id, "widgetIds": missing},
+            )
+
+        sessions: dict[str, DashboardDatasetQuerySession] = {}
+        remote_budget = DashboardRemoteScanBudget.from_environment()
+        try:
+            return [
+                self._widget_to_schema(
+                    available[widget_id],
+                    sessions,
+                    {},
+                    {},
+                    {},
+                    actor=actor_context,
+                    remote_budget=remote_budget,
+                    api_path=f"/api/dashboards/{dashboard_id}/widgets/query",
+                    http_method="POST",
+                )
+                for widget_id in requested_ids
+            ]
+        finally:
+            for session in sessions.values():
+                session.close()
 
     def require_assistant_access(self, dashboard_id: str, actor: ActorContext) -> None:
         self._require_dashboard_permission(dashboard_id, actor, "view")
@@ -489,6 +559,20 @@ class DashboardRuntimeService:
         api_path: str,
         http_method: str,
     ) -> DashboardRuntimeWidget:
+        if (
+            widget.dataset_id
+            and self.live_repository is not None
+            and self._continuous_job(widget.dataset_id) is not None
+        ):
+            return self._live_widget_to_schema(
+                widget,
+                session_errors,
+                catalog_payloads,
+                actor=actor,
+                remote_budget=remote_budget,
+                api_path=api_path,
+                http_method=http_method,
+            )
         widget_type = DashboardRuntimeWidgetType(widget.type)
         config = self._normalize_widget_config(widget_type, widget.config)
         data = list(widget.data or [])[:MAX_EXPLICIT_WIDGET_ROWS]
@@ -590,6 +674,371 @@ class DashboardRuntimeService:
             query_id=widget.query_id,
         )
 
+    def _continuous_job(self, dataset_id: str) -> object | None:
+        if dataset_id not in self._continuous_job_cache:
+            self._continuous_job_cache[dataset_id] = (
+                self.live_repository.continuous_job_by_dataset(dataset_id)
+                if self.live_repository is not None
+                else None
+            )
+        return self._continuous_job_cache[dataset_id]
+
+    def _live_widget_to_schema(
+        self,
+        widget: DashboardWidgetModel,
+        session_errors: dict[str, tuple[str, str]],
+        catalog_payloads: dict[str, dict[str, Any] | None],
+        *,
+        actor: ActorContext,
+        remote_budget: DashboardRemoteScanBudget,
+        api_path: str,
+        http_method: str,
+    ) -> DashboardRuntimeWidget:
+        widget_type = DashboardRuntimeWidgetType(widget.type)
+        config = self._normalize_widget_config(widget_type, widget.config)
+        dataset_id = str(widget.dataset_id)
+        # ETL publishes Catalog metadata and freshness in one transaction while
+        # locking Catalog first. Use the same lock order so a widget can never
+        # pair an old S3 run list with a newer applied revision.
+        payload = self.catalog_repository.get_dataset_payload_for_update(dataset_id)
+        catalog_payloads[dataset_id] = payload
+        if payload is None:
+            return self._live_widget_response(
+                widget,
+                config={
+                    **config,
+                    "error": DASHBOARD_DATA_UNAVAILABLE,
+                    "errorMessage": "The Catalog dataset linked to this widget is no longer available.",
+                },
+                data=[],
+            )
+
+        freshness = self.live_repository.get_freshness(dataset_id, for_update=True)
+        latest_revision = int(freshness.latest_revision or 0) if freshness is not None else 0
+
+        if dataset_id not in session_errors:
+            try:
+                dataset = dataset_with_persisted_permission_grants(
+                    self.catalog_repository.db,
+                    CatalogDatasetResponse.model_validate(payload),
+                )
+                require_dashboard_dataset_query_access(
+                    self.catalog_repository.db,
+                    actor,
+                    dataset,
+                    api_path=api_path,
+                    http_method=http_method,
+                )
+            except ApiError as exc:
+                session_errors[dataset_id] = (
+                    DASHBOARD_DATA_FORBIDDEN,
+                    "You do not have permission to query this widget's dataset.",
+                ) if exc.status_code in {status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN} else (
+                    DASHBOARD_DATA_UNAVAILABLE,
+                    "Dashboard widget data could not be read from physical storage.",
+                )
+            except ValidationError:
+                session_errors[dataset_id] = (
+                    DASHBOARD_DATA_UNAVAILABLE,
+                    "Dashboard widget data could not be read from physical storage.",
+                )
+        if dataset_id in session_errors:
+            error_code, error_message = session_errors[dataset_id]
+            return self._live_widget_response(
+                widget,
+                config={**config, "error": error_code, "errorMessage": error_message},
+                data=[],
+            )
+
+        calculation_version = self._widget_calculation_version(
+            widget_type,
+            dataset_id,
+            config,
+            schema_identity=payload.get("schemaFingerprint") or payload.get("schema"),
+        )
+        saved = self.live_repository.get_widget_result(
+            widget.id,
+            calculation_version,
+            for_update=True,
+        )
+        saved_payload = dict(saved.result_payload or {}) if saved is not None else None
+        saved_state = dict(saved.calculation_state or {}) if saved is not None else None
+        saved_revision = int(saved.applied_revision or 0) if saved is not None else None
+        saved_calculated_at = saved.calculated_at if saved is not None else None
+        source_config = dashboard_source_config(config)
+        if saved is not None and int(saved.applied_revision or 0) >= latest_revision:
+            self.live_repository.db.commit()
+            return self._live_widget_response(
+                widget,
+                config=dict(saved_payload.get("config") or config),
+                data=list(saved_payload.get("data") or []),
+                applied_revision=int(saved.applied_revision or 0),
+                calculation_version=calculation_version,
+                calculated_at=saved_calculated_at,
+            )
+
+        computed_result: dict[str, Any] | None = None
+        computed_state: dict[str, Any] = {}
+        calculation_mode = "full"
+        applied_revision = latest_revision
+        calculation_started_at = time.perf_counter()
+        try:
+            if (
+                latest_revision > (int(saved.applied_revision or 0) if saved is not None else 0)
+                and saved is not None
+                and bool(saved_state)
+                and dashboard_widget_supports_incremental_merge(widget_type.value, source_config)
+            ):
+                incremental = self._incremental_widget_result(
+                    payload,
+                    widget_type,
+                    config,
+                    saved_state,
+                    dataset_id=dataset_id,
+                    after_revision=int(saved.applied_revision or 0) if saved is not None else 0,
+                    remote_budget=remote_budget,
+                )
+                if incremental is not None:
+                    computed_result, computed_state, applied_revision, calculation_mode = incremental
+            if computed_result is None:
+                computed_result, computed_state = self._full_widget_result(
+                    payload,
+                    widget_type,
+                    config,
+                    remote_budget=remote_budget,
+                )
+                calculation_mode = "full"
+
+            persisted = self.live_repository.save_widget_result(
+                widget_id=widget.id,
+                calculation_version=calculation_version,
+                dataset_id=dataset_id,
+                applied_revision=applied_revision,
+                result_payload=computed_result,
+                calculation_state=computed_state,
+                calculation_mode=calculation_mode,
+            )
+            calculated_at = persisted.calculated_at
+            self.live_repository.db.commit()
+            logger.info(
+                "dashboard_widget_result_calculated widget_id=%s dataset_id=%s applied_revision=%s mode=%s duration_ms=%s",
+                widget.id,
+                dataset_id,
+                applied_revision,
+                calculation_mode,
+                round((time.perf_counter() - calculation_started_at) * 1000),
+            )
+            return self._live_widget_response(
+                widget,
+                config=dict(computed_result.get("config") or config),
+                data=list(computed_result.get("data") or []),
+                applied_revision=applied_revision,
+                calculation_version=calculation_version,
+                calculated_at=calculated_at,
+            )
+        except Exception as exc:
+            self.live_repository.db.rollback()
+            winner = self.live_repository.get_widget_result(widget.id, calculation_version)
+            if winner is not None and int(winner.applied_revision or 0) > int(saved_revision or -1):
+                winner_payload = dict(winner.result_payload or {})
+                return self._live_widget_response(
+                    widget,
+                    config=dict(winner_payload.get("config") or config),
+                    data=list(winner_payload.get("data") or []),
+                    applied_revision=int(winner.applied_revision or 0),
+                    calculation_version=calculation_version,
+                    calculated_at=winner.calculated_at,
+                )
+            logger.warning(
+                "dashboard_widget_result_failed widget_id=%s dataset_id=%s target_revision=%s error=%s",
+                widget.id,
+                dataset_id,
+                latest_revision,
+                str(exc)[:500],
+            )
+            if saved_payload is not None:
+                return self._live_widget_response(
+                    widget,
+                    config=dict(saved_payload.get("config") or config),
+                    data=list(saved_payload.get("data") or []),
+                    applied_revision=saved_revision,
+                    calculation_version=calculation_version,
+                    calculated_at=saved_calculated_at,
+                )
+            previous = self.live_repository.latest_widget_result(widget.id, dataset_id)
+            if previous is not None:
+                previous_payload = dict(previous.result_payload or {})
+                return self._live_widget_response(
+                    widget,
+                    config=dict(previous_payload.get("config") or config),
+                    data=list(previous_payload.get("data") or []),
+                    applied_revision=int(previous.applied_revision or 0),
+                    calculation_version=str(previous.calculation_version),
+                    calculated_at=previous.calculated_at,
+                )
+            if computed_result is not None:
+                return self._live_widget_response(
+                    widget,
+                    config=dict(computed_result.get("config") or config),
+                    data=list(computed_result.get("data") or []),
+                    calculation_version=calculation_version,
+                )
+            return self._live_widget_response(
+                widget,
+                config={
+                    **config,
+                    "error": DASHBOARD_DATA_UNAVAILABLE,
+                    "errorMessage": "Dashboard widget data could not be read from physical storage.",
+                },
+                data=[],
+                calculation_version=calculation_version,
+            )
+
+    def _full_widget_result(
+        self,
+        payload: dict[str, Any],
+        widget_type: DashboardRuntimeWidgetType,
+        config: dict[str, Any],
+        *,
+        remote_budget: DashboardRemoteScanBudget,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        session = DashboardDatasetQuerySession(payload, remote_budget=remote_budget)
+        try:
+            state = session.read_aggregate_state(widget_type.value, config)
+            if state is not None:
+                return dashboard_result_from_aggregate_state(state), state
+            return session.read_widget(widget_type.value, config), {}
+        finally:
+            session.close()
+
+    def _incremental_widget_result(
+        self,
+        payload: dict[str, Any],
+        widget_type: DashboardRuntimeWidgetType,
+        config: dict[str, Any],
+        current_state: dict[str, Any] | None,
+        *,
+        dataset_id: str,
+        after_revision: int,
+        remote_budget: DashboardRemoteScanBudget,
+    ) -> tuple[dict[str, Any], dict[str, Any], int, str] | None:
+        if not dashboard_widget_supports_incremental_merge(
+            widget_type.value,
+            dashboard_source_config(config),
+        ):
+            return None
+        commits = self.live_repository.list_commits(
+            dataset_id,
+            after_revision=after_revision,
+            through_revision=after_revision + 1,
+        )
+        expected_revisions = [after_revision + 1]
+        if (
+            [int(commit.revision) for commit in commits] != expected_revisions
+            or widget_type == DashboardRuntimeWidgetType.TABLE
+        ):
+            return None
+        commit = commits[0]
+        materialization_mode = str(commit.materialization_mode or "").strip().lower()
+        commit_kind = str(
+            getattr(commit, "commit_kind", LEGACY_COMMIT_KIND) or LEGACY_COMMIT_KIND
+        ).strip().lower()
+        if (
+            materialization_mode != "delta"
+            or commit_kind in {BACKFILL_COMMIT_KIND, LEGACY_COMMIT_KIND}
+            or not current_state
+        ):
+            return None
+        delta_payload = dict(payload)
+        delta_payload["materializationRuns"] = [
+            {
+                "materializationMode": commit.materialization_mode,
+                "rowCount": commit.row_count,
+                "runId": commit.run_id,
+                "sourceKind": "kafka",
+                "status": "success",
+                "storageFormat": commit.storage_format,
+                "storageLocation": commit.storage_location,
+            }
+            for commit in reversed(commits)
+        ]
+        iceberg_run_id = (
+            str(commit.run_id)
+            if str(commit.storage_format or "").strip().lower() == "iceberg"
+            else None
+        )
+        session = DashboardDatasetQuerySession(
+            delta_payload,
+            remote_budget=remote_budget,
+            iceberg_run_id=iceberg_run_id,
+        )
+        try:
+            if iceberg_run_id is not None and not session.revision_delta_available:
+                return None
+            delta_state = session.read_aggregate_state(widget_type.value, config)
+        finally:
+            session.close()
+        if delta_state is None:
+            return None
+        merged_state = merge_dashboard_aggregate_states(current_state, delta_state)
+        if merged_state is None:
+            return None
+        return (
+            dashboard_result_from_aggregate_state(merged_state),
+            merged_state,
+            int(commit.revision),
+            "incremental",
+        )
+
+    @staticmethod
+    def _widget_calculation_version(
+        widget_type: DashboardRuntimeWidgetType,
+        dataset_id: str,
+        config: dict[str, Any],
+        *,
+        schema_identity: Any = None,
+    ) -> str:
+        canonical = json.dumps(
+            {
+                "contractVersion": 2,
+                "datasetId": dataset_id,
+                "schemaIdentity": schema_identity,
+                "sourceConfig": dashboard_source_config(config),
+                "widgetType": widget_type.value,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    def _live_widget_response(
+        self,
+        widget: DashboardWidgetModel,
+        *,
+        config: dict[str, Any],
+        data: list[dict[str, Any]],
+        applied_revision: int | None = None,
+        calculation_version: str | None = None,
+        calculated_at: datetime | None = None,
+    ) -> DashboardRuntimeWidget:
+        return DashboardRuntimeWidget(
+            id=widget.id,
+            page_id=widget.page_id,
+            type=DashboardRuntimeWidgetType(widget.type),
+            title=widget.title,
+            layout=DashboardWidgetLayout(**widget.layout),
+            config=config,
+            data=data,
+            dataset_id=widget.dataset_id,
+            query_id=widget.query_id,
+            applied_revision=applied_revision,
+            calculation_version=calculation_version,
+            calculated_at=self._datetime_to_iso(calculated_at),
+            live_refresh=True,
+        )
+
     @staticmethod
     def _layout_to_json(layout: DashboardWidgetLayout) -> dict[str, int]:
         return {
@@ -618,7 +1067,13 @@ class DashboardRuntimeService:
             return payload
 
         persisted_config = dict(source_config)
-        for key in ("body", "color", "description", "placeholderKind", "prompt"):
+        for key in (
+            "body",
+            "color",
+            "description",
+            "placeholderKind",
+            "prompt",
+        ):
             if key in payload:
                 persisted_config[key] = payload[key]
         return persisted_config

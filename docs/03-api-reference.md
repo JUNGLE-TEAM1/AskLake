@@ -383,6 +383,9 @@ type ScheduledJobRunResponse = {
 | `DELETE` | `/api/dashboards/{dashboardId}/draft/widgets/{widgetId}` | draft widget 삭제 |
 | `PATCH` | `/api/dashboards/{dashboardId}/draft/layouts` | draft widget layout batch 저장 |
 | `POST` | `/api/dashboards/{dashboardId}/publish` | dashboard 게시 |
+| `GET` | `/api/datasets/{datasetId}/freshness` | Continuous dataset의 최신 revision과 권장 재확인 시간 조회 |
+| `POST` | `/api/datasets/freshness/query` | 대시보드가 사용하는 dataset freshness를 최대 100개까지 묶음 조회 |
+| `POST` | `/api/dashboards/{dashboardId}/widgets/query` | published dashboard에서 revision이 바뀐 widget만 재계산·조회 |
 | `GET` | `/api/users/me` | 현재 actor 프로필, role, group, 권한 요약 조회 |
 | `GET` | `/api/admin/users` | 관리자 사용자 목록 조회. admin role 필요 |
 | `GET` | `/api/admin/groups` | 관리자 그룹 목록 조회. admin role 필요 |
@@ -581,6 +584,10 @@ type DashboardRuntimeWidget = {
   data: Array<Record<string, unknown>>;
   queryId?: string | null;
   datasetId?: string | null;
+  appliedRevision?: number | null;
+  calculationVersion?: string | null;
+  calculatedAt?: string | null;
+  liveRefresh?: boolean;
 };
 
 type DashboardRuntimeResponse = {
@@ -612,9 +619,77 @@ type DashboardRuntimeResponse = {
 
 `GET /api/dashboards/{dashboardId}/published`는 published revision이 없으면 `revision: null`, `pages: []`, `widgetsByPageId: {}`를 반환한다. `POST /api/dashboards/{dashboardId}/draft/ensure`는 idempotent이며 draft가 없으면 published snapshot 또는 새 revision과 기본 page를 만든다.
 
-Catalog `datasetId`를 연결한 Widget은 browser가 보낸 `data`와 Catalog `sampleRows`를 저장 데이터로 사용하지 않는다. Runtime 조회 시 backend는 actor의 dataset `query` permission과 governance를 storage 접근 전에 검사한 뒤 성공한 물리 materialization의 CSV/JSON/JSONL/Parquet segment를 DuckDB에 등록한다. `materializationMode`가 명시되면 그 값을 우선하고, 미지정 Kafka run은 `delta`, 그 외 run은 `snapshot`으로 판정한다. 원격 S3는 allowlist와 누적 byte/object 예산을 통과해야 하고 DuckDB query는 resource/timeout 경계 안에서 실행한다. chart/metric은 최대 500개 그룹으로 집계하며 table은 최대 500행 preview만 반환한다. 응답 `config.sourceConfig`는 편집 원본을, `dataMode`는 `server_aggregated` 또는 `server_preview`를 나타낸다. 권한이 없으면 `DASHBOARD_DATA_FORBIDDEN`, 삭제된 Catalog dataset 또는 물리 데이터를 읽을 수 없으면 `DASHBOARD_DATA_UNAVAILABLE` error config와 빈 data를 해당 widget에 반환한다. `queryId`가 있는 bounded SQL snapshot은 Catalog payload가 없어도 최대 500행을 유지한다.
+Catalog `datasetId`를 연결한 Widget은 browser가 보낸 `data`와 Catalog `sampleRows`를 저장 데이터로 사용하지 않는다. Runtime 조회 시 backend는 actor의 dataset `query` permission과 governance를 storage 접근 전에 검사한다. Iceberg Dataset은 Catalog의 `icebergSnapshotId`에 `FOR VERSION AS OF`를 적용한 Trino query로 읽고, 전환 전 CSV/JSON/JSONL/Parquet segment만 DuckDB에 등록한다. `materializationMode`가 명시되면 그 값을 우선하고, 미지정 Kafka run은 `delta`, 그 외 run은 `snapshot`으로 판정한다. 원격 file segment는 allowlist와 누적 byte/object 예산을 통과해야 하고 모든 query는 resource/timeout 경계 안에서 실행한다. chart/metric은 최대 500개 그룹으로 집계하며 table은 최대 500행 preview만 반환한다. 응답 `config.sourceConfig`는 편집 원본을, `dataMode`는 `server_aggregated` 또는 `server_preview`를 나타낸다. 권한이 없으면 `DASHBOARD_DATA_FORBIDDEN`, 삭제된 Catalog dataset 또는 물리 데이터를 읽을 수 없으면 `DASHBOARD_DATA_UNAVAILABLE` error config와 빈 data를 해당 widget에 반환한다. `queryId`가 있는 bounded SQL snapshot은 Catalog payload가 없어도 최대 500행을 유지한다.
 
 `DELETE /api/dashboards/{dashboardId}`는 dashboard card/list row와 runtime revision/page/widget snapshot을 함께 삭제한다.
+
+### Kafka Continuous Dashboard Refresh Contract
+
+이 계약은 새 UI나 새 Kafka Consumer를 만들지 않는다. Worker 시작/재개 시 PostgreSQL `dataset_kafka_partition_cursors`를 전달하고 Spark는 저장 전에 `offset < nextOffset` 행을 제거한다. 전부 중복이면 게시하지 않고, 일부 중복이면 새 suffix만 처리한다. 기존 Spark Structured Streaming이 필터된 micro-batch를 backend-owned Iceberg table에 append하고 immutable manifest를 완료한 뒤, backend가 manifest `_SUCCESS`, exact Iceberg snapshot/table과 `sourceBoundary`, Kafka topic/partition/[startOffset, endOffset) `sourceRanges`, batch identity와 해당 snapshot의 Run 행 수=`storedCount`를 확인하고 Trino 검증까지 끝낸다. 그 다음 Catalog와 같은 PostgreSQL transaction으로 `dataset_revision_commits`와 `dataset_freshness`를 갱신한다. commit은 종류, offset fingerprint, Iceberg table·manifest 위치를 보존한다. watermark로 같은 stream offset은 한 번만 반영하고 과거·겹침 범위를 거절한다. 0행 batch도 committed manifest를 확인한 뒤 offset watermark만 전진시킨다. 종료 worker report가 비었거나 이미 ack한 window만 남았으면 S3에서 ack 이후 완료 manifest를 나열해 이어서 복구하고, 마지막 batch `_SUCCESS`가 없으면 ack를 전진시키지 않는다. quarantine replay는 한 번에 최대 1,000행을 처리해 자체 완료 manifest를 만들고 별도 commit 종류로 관리한다. 새 replay snapshot 뒤 manifest 게시가 실패하면 새 commit만 rollback한다. 남은 행은 다음 replay에서 이어서 처리한다.
+
+```ts
+type DatasetFreshness = {
+  datasetId: string;
+  isContinuous: boolean;
+  latestRevision: number;
+  updatedAt: string | null;
+  nextCheckAfterMs: number;
+};
+```
+
+`GET /api/datasets/{datasetId}/freshness`는 한 dataset을 조회한다. Dataset `query` 권한이 필요하며 없는 dataset은 `404`, 권한이 없으면 `403`을 반환한다.
+
+```http
+POST /api/datasets/freshness/query
+Content-Type: application/json
+
+{
+  "datasetIds": ["clickstream_events", "commerce_orders"]
+}
+```
+
+```json
+{
+  "datasets": [
+    {
+      "datasetId": "clickstream_events",
+      "isContinuous": true,
+      "latestRevision": 105,
+      "updatedAt": "2026-07-14T12:00:05+00:00",
+      "nextCheckAfterMs": 5000
+    }
+  ]
+}
+```
+
+`datasetIds`는 1~100개다. Frontend는 같은 dataset을 쓰는 여러 widget을 dataset ID 하나로 묶어 freshness를 한 번만 확인한다.
+
+묶음 조회는 dataset별로 권한과 metadata를 검사한다. 한 항목이 `403`, `404`, `503` 조건이면 그 항목은 응답에서 제외하고 나머지 정상 dataset은 계속 반환한다. 단건 GET은 기존 오류 상태를 그대로 반환한다.
+
+Backend의 권장 polling 주기는 다음과 같다.
+
+```text
+nextCheckAfterMs = clamp(triggerIntervalSeconds × 500, 5,000, 60,000)
+```
+
+10초 trigger는 5초, 30초 trigger는 15초, 5분 trigger는 60초다. Frontend는 같은 시각에 요청이 몰리지 않도록 dataset ID로 정한 0~10% deterministic jitter를 더한다. 실제 지연은 `다음 Spark trigger까지 남은 시간 + Spark/S3 + backend reconciliation 0~5초 + polling 0~nextCheckAfterMs(+ jitter) + widget 계산`이므로 2~5초를 항상 보장하지 않는다.
+
+```http
+POST /api/dashboards/{dashboardId}/widgets/query
+Content-Type: application/json
+
+{
+  "widgetIds": ["dashwidget_click_count"]
+}
+```
+
+`widgetIds`는 1~100개다. Dashboard `view`와 각 Dataset `query` 권한을 재검사하고, 현재 published revision에 없는 widget ID가 포함되면 `404`를 반환한다. 응답은 `widgets: DashboardRuntimeWidget[]`이며 Continuous widget은 `liveRefresh=true`, `appliedRevision`, `calculationVersion`, `calculatedAt`을 포함한다.
+
+`calculationVersion`은 `contractVersion + datasetId + widgetType + sourceConfig + schemaIdentity`를 canonical JSON으로 만든 SHA-256이다. `schemaIdentity`는 Catalog `schemaFingerprint`를 우선하고 없으면 schema 전체를 사용한다.
+
+전체 누적 기준 `count`/`sum`/`avg`는 새 widget에서 Catalog `icebergSnapshotId`에 고정한 전체 데이터로 기준값을 한 번 만든다. 이후 revision은 한 개씩 `_asklake_run_id = commit.run_id`인 행만 Trino 집계해 기존 계산 상태에 병합하고 성공한 revision까지만 저장한다. backfill/legacy/non-delta revision, `min`/`max`, table, revision gap, 내부 run ID가 없는 과거 table, 고카디널리티는 같은 Catalog snapshot 전체 재계산으로 fallback한다. Iceberg full scan은 query timeout 경계를 적용하므로 매우 큰 최초 baseline은 별도 aggregate snapshot/bootstrap이 필요하다. 전환 전 file-backed full scan에는 기본 256 objects, 512 MiB, 15초 한계가 있다. 최근 N분·슬라이딩 시간창은 지원하지 않는다. 결과는 집계 최대 500 group이다. table의 backend 상한은 500행이며 현재 UI 설정은 기본 10행, 최대 100행이다.
+
+Frontend는 published `/dashboards/{dashboardId}`에서만 polling한다. partial 응답이 이전 `appliedRevision`보다 전진했지만 아직 최신보다 뒤면 250ms 뒤 다음 revision을 이어서 요청한다. 응답 revision이 그대로면 빠른 catch-up을 중지한다. hidden tab에서는 polling을 중지하고 요청을 취소하며, route unmount 시 timer를 정리한다. 갱신 실패는 이전 widget result를 유지하고 화면을 loading 상태로 바꾸지 않는다. 계산 버전 변경 직후 새 계산이 실패해도 같은 widget·같은 dataset의 직전 성공 result만 반환한다.
 
 ### Pair A -> Pair B
 

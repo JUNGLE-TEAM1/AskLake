@@ -8,6 +8,7 @@ from app.api.catalog import router as catalog_router
 from app.api.dashboard_assistant import router as dashboard_assistant_router
 from app.api.dashboard_card import router as dashboard_card_router
 from app.api.dashboard_runtime import router as dashboard_runtime_router
+from app.api.dashboard_live import router as dashboard_live_router
 from app.api.demo_hydration import router as demo_hydration_router
 from app.api.etl import router as etl_router
 from app.api.harness import router as harness_router
@@ -29,6 +30,7 @@ api_router.include_router(sql_router)
 api_router.include_router(sql_test_router)
 api_router.include_router(dashboard_card_router)
 api_router.include_router(dashboard_runtime_router)
+api_router.include_router(dashboard_live_router)
 api_router.include_router(dashboard_assistant_router)
 api_router.include_router(integration_router)
 if settings.app_env.strip().lower() in {"local", "development", "dev", "test", "testing"}:

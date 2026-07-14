@@ -321,6 +321,7 @@ function continuousEnvironment(request, workerAttemptId, runtimeReportDir, inclu
     ASKLAKE_CONTINUOUS_INITIAL_COUNTS: JSON.stringify(request.initialCounts || {}),
     ASKLAKE_CONTINUOUS_INITIAL_METRICS: JSON.stringify(request.initialMetrics || {}),
     ASKLAKE_CONTINUOUS_INITIAL_SCHEMA_STATE: JSON.stringify(request.initialSchemaState || {}),
+    ASKLAKE_CONTINUOUS_STREAM_PARTITION_CURSORS: JSON.stringify(request.streamPartitionCursors || []),
     ASKLAKE_CONTINUOUS_ICEBERG_TARGET: JSON.stringify(icebergTarget),
     ASKLAKE_CONTINUOUS_EXPECTED_SCHEMA_FINGERPRINT: String(request.schemaFingerprint || ""),
     ASKLAKE_CONTINUOUS_RULE_CONTRACT_VERSION: request.ruleContractVersion || "1.0",

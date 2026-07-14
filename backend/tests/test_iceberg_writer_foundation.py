@@ -24,6 +24,7 @@ class FakeTrinoClient:
         self.available_snapshot_ids = {1000}
         self.queries: list[str] = []
         self.fail_describe = False
+        self.run_row_count = 0
 
     def submit(self, query: str) -> TrinoClientPage:
         self.queries.append(query)
@@ -47,6 +48,8 @@ class FakeTrinoClient:
             if self.fail_describe:
                 return failed_page("TABLE_NOT_FOUND")
             return finished_page(rows=[["event_id", "varchar", "", ""]])
+        if query.startswith("SELECT COUNT(*) FROM ") and "FOR VERSION AS OF" in query:
+            return finished_page(rows=[[self.run_row_count]])
         if "$refs" in query:
             return finished_page(rows=[[str(self.current_snapshot_id)]])
         if "$snapshots" in query:
@@ -225,6 +228,68 @@ class IcebergWriterFoundationTest(unittest.TestCase):
             and "snapshot_id = 1000" in query
             for query in self.client.queries
         ))
+
+    def test_snapshot_run_row_count_uses_exact_snapshot_and_escaped_run_id(self) -> None:
+        target = build_iceberg_writer_target(
+            "reviews",
+            "ds_reviews",
+            write_mode="append",
+            runtime_settings=self.settings,
+        )
+        self.client.run_row_count = 3
+
+        verified_count = self.service.verify_snapshot_run_row_count(
+            target,
+            snapshot_id="1000",
+            run_id="continuous:JOB-1:batch:7:worker's-run",
+            expected_row_count=3,
+        )
+
+        self.assertEqual(verified_count, 3)
+        self.assertIn(
+            'FOR VERSION AS OF 1000 WHERE "_asklake_run_id" = '
+            "'continuous:JOB-1:batch:7:worker''s-run'",
+            self.client.queries[-1],
+        )
+
+    def test_snapshot_run_row_count_rejects_missing_or_extra_rows(self) -> None:
+        target = build_iceberg_writer_target(
+            "reviews",
+            "ds_reviews",
+            write_mode="append",
+            runtime_settings=self.settings,
+        )
+        for actual_count in (0, 4):
+            with self.subTest(actual_count=actual_count):
+                self.client.run_row_count = actual_count
+                with self.assertRaises(IcebergWriterError) as context:
+                    self.service.verify_snapshot_run_row_count(
+                        target,
+                        snapshot_id="1000",
+                        run_id="continuous:JOB-1:batch:7:worker-run",
+                        expected_row_count=3,
+                    )
+                self.assertEqual(context.exception.code, "ICEBERG_RUN_ROW_COUNT_MISMATCH")
+
+    def test_snapshot_run_row_count_rejects_non_numeric_snapshot_before_query(self) -> None:
+        target = build_iceberg_writer_target(
+            "reviews",
+            "ds_reviews",
+            write_mode="append",
+            runtime_settings=self.settings,
+        )
+        query_count = len(self.client.queries)
+
+        with self.assertRaises(IcebergWriterError) as context:
+            self.service.verify_snapshot_run_row_count(
+                target,
+                snapshot_id="1000; DROP TABLE reviews",
+                run_id="continuous:JOB-1:batch:7:worker-run",
+                expected_row_count=3,
+            )
+
+        self.assertEqual(context.exception.code, "ICEBERG_SNAPSHOT_ID_INVALID")
+        self.assertEqual(len(self.client.queries), query_count)
 
     def test_current_snapshot_follows_main_ref_after_rollback(self) -> None:
         target = build_iceberg_writer_target(
