@@ -627,12 +627,15 @@ def run_due_scheduled_jobs(
             ))
             continue
 
+        command_kwargs: dict[str, ActorContext] = {}
+        if getattr(job, "job_kind", None) == "trino_sql_materialization":
+            command_kwargs["execution_actor"] = trino_sql_job_run_as_actor(db, job)
         response = command_job(
             db,
             job.id,
             "run",
             actor_context,
-            execution_actor=trino_sql_job_run_as_actor(db, job) if job.job_kind == "trino_sql_materialization" else None,
+            **command_kwargs,
         )
         if reason == "due":
             advance_scheduled_job_after_tick(db, job.id)

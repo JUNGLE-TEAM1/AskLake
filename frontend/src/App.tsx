@@ -533,37 +533,6 @@ export function App() {
     return <AuthPage onAction={writeAuditLog} onAuthenticated={handleAuthenticated} />;
   }
 
-  if (activeFlow === "rules") {
-    return (
-      <RuleBuilderShell
-        auditOpen={auditOpen}
-        auditLogs={auditLogs}
-        auditCount={auditLogs.length}
-        onAccount={openProfilePage}
-        onAuditToggle={() => setAuditOpen((open) => !open)}
-        onDocs={() => {
-          writeAuditLog("etl.builder.docs_opened", "/docs/etl-builder", "rule-application", "success", { targetType: "ui" });
-          showToast("ETL Builder 도움말을 확인할 수 있도록 기록했습니다.", "info");
-        }}
-        onLogout={handleLogout}
-        onBrandClick={navigateIngestLanding}
-        onNavigate={(flow, label) => {
-          writeAuditLog("ui.builder_menu.clicked", `/app/${flow}`, label);
-          if (flow === "jobRuns") {
-            openJobRunsWithRoute(selectedJob);
-            return;
-          }
-          moveToFlow(flow);
-        }}
-        onRefresh={() => void refreshWorkspaceData()}
-      >
-        {toast && <div className={`app-toast ${toast.tone}`}>{toast.message}</div>}
-        {apiPending && <div className="app-api-pending">API 요청 처리 중...</div>}
-        <RuleApplicationPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("schema")} onNext={() => moveToFlow(continuousKafkaDraft ? "permission" : lastScheduleFlow)} onSave={() => saveDraft("rules")} onAction={writeAuditLog} onNotify={showToast} />
-      </RuleBuilderShell>
-    );
-  }
-
   return (
     <div className="app-shell" data-last-action={auditSignal}>
       <Sidebar
@@ -607,7 +576,7 @@ export function App() {
             <>
           {activeFlow === "jobs" && <JobsLandingPage jobListFacets={jobListFacets} jobsLoading={jobsLoading} jobs={jobs} onCommand={handleJobCommand} onCreate={() => moveToFlow("source")} onDetail={openJobDetailWithRoute} onFilter={filterJobs} onAction={writeAuditLog} />}
           {activeFlow === "jobDetail" && <JobDetailPage job={selectedJob} onCommand={handleJobCommand} onBack={() => moveToFlow("jobs")} onRuns={() => openJobRunsWithRoute(selectedJob)} />}
-          {activeFlow === "jobRuns" && <JobRunsPage catalogDatasetId={selectedJobCatalogDataset?.id} catalogRowCount={selectedJobCatalogDataset?.rows} evidence={jobExecutionEvidence[selectedJob.id]} job={selectedJob} onCommand={handleJobCommand} onBack={() => moveToFlow("jobDetail")} onAction={writeAuditLog} onRefresh={() => void refreshWorkspaceData()} />}
+          {activeFlow === "jobRuns" && <JobRunsPage catalogDatasetId={selectedJobCatalogDataset?.id} catalogRowCount={selectedJobCatalogDataset?.rows} evidence={jobExecutionEvidence[selectedJob.id]} job={selectedJob} onCommand={handleJobCommand} onBack={() => moveToFlow("jobDetail")} onAction={writeAuditLog} />}
           {activeFlow === "source" && <SourceConnectionPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("jobs")} onNext={() => moveToFlow(requiresRecordParsing ? "recordParsing" : "schema")} onSave={() => saveDraft("source")} onAction={writeAuditLog} onNotify={showToast} />}
           {activeFlow === "recordParsing" && <RecordParsingPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("source")} onNext={() => moveToFlow("schema")} onAction={writeAuditLog} onNotify={showToast} />}
           {activeFlow === "schema" && <SchemaInferencePage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow(requiresRecordParsing ? "recordParsing" : "source")} onNext={() => moveToFlow(continuousKafkaDraft ? "permission" : lastScheduleFlow)} onSave={() => saveDraft("schema")} onAction={writeAuditLog} onNotify={showToast} />}
@@ -616,8 +585,8 @@ export function App() {
           {activeFlow === "target" && <TargetPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("permission")} onNext={() => moveToFlow("review")} onSave={() => saveDraft("target")} />}
           {activeFlow === "permission" && <PermissionPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow(continuousKafkaDraft ? "schema" : lastScheduleFlow)} onNext={() => moveToFlow("target")} onSave={() => saveDraft("permission")} />}
           {activeFlow === "review" && <ReviewPage createPending={apiPending} draft={draftPipeline} onEdit={moveToFlow} onSave={() => saveDraft("review")} onCreate={createPipeline} />}
-          {activeFlow === "catalog" && <CatalogPage datasets={datasets} error={dataError} loading={dataLoading} selectedDataset={selectedDataset} onAction={writeAuditLog} onOpenSql={openDatasetInSqlWithSelection} onRefresh={() => void refreshWorkspaceData()} />}
-          {activeFlow === "catalogDetail" && <CatalogDetailPage dataset={selectedDataset} onAction={writeAuditLog} onBack={() => moveToFlow("catalog")} onLineage={() => writeAuditLog("catalog.lineage.opened", `/api/catalog/datasets/${selectedDataset.id}/lineage`, selectedDataset.id)} onOpenSql={() => openDatasetInSqlWithSelection(selectedDataset)} onRefresh={() => void refreshWorkspaceData()} />}
+          {activeFlow === "catalog" && <CatalogPage datasets={datasets} error={dataError} loading={dataLoading} selectedDataset={selectedDataset} onAction={writeAuditLog} onOpenSql={openDatasetInSqlWithSelection} />}
+          {activeFlow === "catalogDetail" && <CatalogDetailPage dataset={selectedDataset} onAction={writeAuditLog} onBack={() => moveToFlow("catalog")} onLineage={() => writeAuditLog("catalog.lineage.opened", `/api/catalog/datasets/${selectedDataset.id}/lineage`, selectedDataset.id)} onOpenSql={() => openDatasetInSqlWithSelection(selectedDataset)} />}
           {activeFlow === "sql" && <SqlAnalysisPage cachedResult={sqlResultDraft} createPending={apiPending} dataset={sqlInitialDataset} datasets={datasets} onAction={writeAuditLog} onCreateDatasetJob={createSqlDatasetJob} onCreateTrinoSqlJob={createTrinoSqlJob} onResultChange={setSqlResultDraft} />}
           {activeFlow === "dashboard" && <DashboardPage dataset={selectedDataset} datasets={datasets} entry={dashboardEntry} sqlResult={sqlResultDraft} onAction={writeAuditLog} onRuntimeNavigate={navigateDashboardRuntime} />}
           {activeFlow === "ai" && <AiChatPage datasets={datasets} onAction={writeAuditLog} />}
