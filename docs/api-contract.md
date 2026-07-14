@@ -98,6 +98,8 @@ X-Request-Id: req_20260703_000001
 
 현재 로컬 인증은 `/api/auth/login` 또는 `/api/auth/signup`이 발급하는 httpOnly `asklake_session` 쿠키를 사용합니다. 외부 IdP/OAuth/SSO, refresh token, 비밀번호 재설정, 이메일 인증은 아직 범위 밖이며, 기존 smoke와 수동 검증을 위해 `X-AskLake-*` actor header fallback은 유지합니다. 이 fallback은 로컬 smoke/manual 검증용이며, 운영에서는 session/IdP 또는 trusted gateway 검증 없이 client-provided header만으로 role/user/group을 신뢰하면 안 됩니다.
 
+Production startup은 알려진 legacy demo 계정을 기본적으로 `disabled`로 바꾸고 해당 세션을 폐기합니다. 데모 운영에서 `AUTH_LEGACY_DEMO_USERS_ENABLED=true`를 명시하면 기존 demo 계정의 저장된 상태와 세션을 재시작 후에도 보존하며, 누락된 demo 계정은 초기 `active` 상태로 생성합니다. 이 모드도 `BOOTSTRAP_ADMIN_*` 설정, Secure session cookie, client header fallback 차단을 유지합니다. `VITE_AUTH_LEGACY_DEMO_USERS_ENABLED=true`는 같은 배포의 로그인 UI에 demo 기본값을 표시하는 build-time 짝이며 두 플래그는 `scripts/verify-deploy-env.sh`에서 동일해야 합니다. Opt-in은 이미 저장된 `disabled`를 자동으로 되돌리지 않습니다.
+
 Frontend는 `/api/auth/session` actor 확인 이후 보호 route와 backend hydrate를 시작합니다. Session/identity/admin 계약은 `/api/auth/signup`, `/api/auth/login`, `/api/auth/session`, `/api/auth/logout`, `/api/users/me`, `/api/admin/users`, `/api/admin/groups`, `/api/admin/permissions`, `/api/admin/governance-controls`, `/api/admin/audit-logs`를 사용하며, `/api/admin/*`는 현재 ActorContext가 admin이 아니면 `403 FORBIDDEN`을 반환합니다.
 
 ### Permission/Governance Phase 0 용어
@@ -2875,6 +2877,8 @@ Assistant guard는 OpenAI 응답을 그대로 신뢰하지 않고 catalog schema
 ### 9.1 인증 세션
 
 `POST /api/auth/login`
+
+아래 demo request는 local mode 또는 위 legacy demo opt-in이 활성화된 배포에서만 사용할 수 있습니다. 기본 production에서는 `BOOTSTRAP_ADMIN_EMAIL`로 생성된 관리자 계정을 사용합니다.
 
 Request:
 

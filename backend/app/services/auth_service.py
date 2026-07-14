@@ -194,12 +194,16 @@ class AuthService:
     def _ensure_tables(self) -> None:
         Base.metadata.create_all(bind=self.db.get_bind(), tables=[AuthUserModel.__table__, AuthSessionModel.__table__])
 
-    def _ensure_demo_users(self) -> None:
+    def _ensure_demo_users(self, *, preserve_existing_status: bool = False) -> None:
         changed = False
         for item in DEMO_AUTH_USERS:
             existing = self.db.get(AuthUserModel, item["id"])
             if existing is not None:
-                changed = sync_demo_user(existing, item) or changed
+                changed = sync_demo_user(
+                    existing,
+                    item,
+                    preserve_existing_status=preserve_existing_status,
+                ) or changed
                 continue
             salt = secrets.token_hex(16)
             self.db.add(
@@ -278,6 +282,9 @@ def initialize_auth(db: Session) -> None:
         service._ensure_tables()
         if settings.allows_header_auth_fallback:
             service._ensure_demo_users()
+        elif getattr(settings, "auth_legacy_demo_users_enabled", False):
+            service._ensure_demo_users(preserve_existing_status=True)
+            service._ensure_bootstrap_admin()
         else:
             service._disable_legacy_demo_users()
             service._ensure_bootstrap_admin()
@@ -310,16 +317,22 @@ def user_actor_namespace(user: AuthUserModel) -> SimpleNamespace:
     )
 
 
-def sync_demo_user(user: AuthUserModel, item: dict[str, Any]) -> bool:
+def sync_demo_user(
+    user: AuthUserModel,
+    item: dict[str, Any],
+    *,
+    preserve_existing_status: bool = False,
+) -> bool:
     changed = False
     updates = {
         "email": str(item["email"]),
         "display_name": str(item["display_name"]),
         "role": str(item["role"]),
         "groups": list(item["groups"]),
-        "status": "active",
         "title": str(item["title"]),
     }
+    if not preserve_existing_status:
+        updates["status"] = "active"
     for field, value in updates.items():
         if getattr(user, field) != value:
             setattr(user, field, value)

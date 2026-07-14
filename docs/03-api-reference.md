@@ -18,11 +18,13 @@
 
 ```bash
 VITE_API_BASE_URL=http://localhost:8080
+VITE_AUTH_LEGACY_DEMO_USERS_ENABLED=false
 VITE_USE_MOCK_API=false
 VITE_DASHBOARD_ASSISTANT_API_PATH=/api/dashboards/assistant
 VITE_OBJECT_STORAGE_PROVIDER=minio
 VITE_S3_REGION=us-east-1
 DATABASE_URL=postgres://asklake:asklake_dev@127.0.0.1:54328/asklake
+AUTH_LEGACY_DEMO_USERS_ENABLED=false
 ASKLAKE_OBJECT_STORAGE_PROVIDER=minio
 S3_ALLOWED_BUCKETS=asklake-output
 S3_ENDPOINT=http://localhost:9000
@@ -36,6 +38,7 @@ TARGET_DATABASES=asklake,asklake_gold,analytics,marketing
 - 개발 서버에서 `VITE_API_BASE_URL`을 생략하면 프론트는 같은 출처의 `/api`를 호출하고, Vite proxy가 FastAPI `http://127.0.0.1:8080`으로 전달한다.
 - `VITE_USE_MOCK_API=false` 또는 미설정: live backend mode. Source connector, create/run/query/catalog/dashboard API를 실제 backend로 보낸다.
 - `VITE_USE_MOCK_API=true`: frontend demo/mock mode. Source connector도 mock sample을 반환한다.
+- Production demo 계정을 유지하는 배포만 `AUTH_LEGACY_DEMO_USERS_ENABLED=true`와 `VITE_AUTH_LEGACY_DEMO_USERS_ENABLED=true`를 함께 설정한다. backend flag는 재시작 시 기존 demo 계정 상태/세션을 보존하고 frontend flag는 로그인 기본값과 안내를 노출한다. 두 값은 preflight에서 일치해야 하며 기본값은 모두 `false`다.
 - `VITE_DASHBOARD_ASSISTANT_API_PATH`: 미설정 시 `/api/dashboards/assistant`를 사용한다. 다른 Assistant API origin 또는 경로가 필요할 때만 지정한다.
 - `DATABASE_URL`: backend metadata DB. 미설정 시 `docker-compose.yml`의 local Postgres 기본값을 사용한다.
 - Object storage local mode는 `ASKLAKE_OBJECT_STORAGE_PROVIDER=minio`, MinIO endpoint/static local credential, `S3_FORCE_PATH_STYLE=true`를 사용한다.
@@ -57,7 +60,7 @@ TARGET_DATABASES=asklake,asklake_gold,analytics,marketing
 - Time format: ISO 8601 string
 - Status values: API and frontend internal state use English canonical values. UI labels are translated in the frontend.
 - Error envelope: `docs/api-contract.md`의 Error Envelope를 따른다.
-- Authentication: local Phase 0는 httpOnly `asklake_session` cookie와 `/api/auth/session` actor 확인을 사용한다. 세션이 없을 때만 기존 `X-AskLake-*` actor header fallback을 사용하며, 운영 IdP/SSO는 후속 범위다.
+- Authentication: local Phase 0는 httpOnly `asklake_session` cookie와 `/api/auth/session` actor 확인을 사용한다. 세션이 없을 때만 기존 `X-AskLake-*` actor header fallback을 사용한다. Production은 bootstrap admin을 요구하고 legacy demo 계정을 기본 차단하며, 명시적 demo opt-in도 header fallback이나 public signup을 열지 않는다. 운영 IdP/SSO는 후속 범위다.
 - Schema type은 `String`, `Integer`, `Long`, `Double`, `Boolean`, `Timestamp`, `Date`, `JSON`을 canonical 값으로 사용한다. 기존 payload의 `Float`는 읽기 호환하되 새 source draft와 Transform UI는 `Double`로 저장한다.
 - JSON/JSONL source는 native token을 기준으로 type을 추론한다. 숫자처럼 보이는 JSON string은 `String`, integer number는 `Long`, real number는 `Double`이며 timestamp string은 명시적 변환 전까지 `String`이다.
 - `schemaColumns[].sourceName`은 `raw.reviewerID` 같은 원본 dotted path를 보존하고, `targetName`만 물리 컬럼 규칙에 맞게 별도로 정규화한다.
@@ -318,7 +321,7 @@ type ScheduledJobRunResponse = {
 
 | Method | Endpoint | 설명 |
 | --- | --- | --- |
-| `POST` | `/api/auth/login` | 로컬 demo 계정 로그인, `asklake_session` 쿠키 발급 |
+| `POST` | `/api/auth/login` | 로컬 또는 명시적으로 opt-in한 배포의 demo 계정 로그인, `asklake_session` 쿠키 발급 |
 | `POST` | `/api/auth/signup` | 로컬 viewer 계정 생성 후 `asklake_session` 쿠키 발급 |
 | `GET` | `/api/auth/session` | 현재 세션 사용자 조회. 세션 없으면 unauthenticated |
 | `POST` | `/api/auth/logout` | 서버 session 삭제 및 쿠키 제거 |

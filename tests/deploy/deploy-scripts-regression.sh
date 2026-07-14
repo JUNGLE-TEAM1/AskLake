@@ -52,9 +52,11 @@ write_valid_env() {
   {
     printf '%s\n' \
       'APP_ENV=production' \
+      'AUTH_LEGACY_DEMO_USERS_ENABLED=false' \
       'ASKLAKE_OBJECT_STORAGE_PROVIDER=minio' \
       'APP_DOMAIN=deploy.asklake.test' \
       'VITE_API_BASE_URL=https://deploy.asklake.test' \
+      'VITE_AUTH_LEGACY_DEMO_USERS_ENABLED=false' \
       'BACKEND_CORS_ORIGINS=https://deploy.asklake.test' \
       'AIRFLOW_API_AUTH_JWT_SECRET=AirflowJwtSecret_123' \
       'AIRFLOW_EXECUTION_API_TOKEN=AirflowExecutionToken_123' \
@@ -179,6 +181,12 @@ fi
 write_valid_env "$ENV_FILE"
 replace_env_value "$ENV_FILE" AIRFLOW_FERNET_KEY ''
 expect_preflight_failure 'blank Fernet key is rejected' 'AIRFLOW_FERNET_KEY must be set'
+
+write_valid_env "$ENV_FILE"
+replace_env_value "$ENV_FILE" AUTH_LEGACY_DEMO_USERS_ENABLED 'true'
+expect_preflight_failure \
+  'frontend and backend legacy demo flags must match' \
+  'AUTH_LEGACY_DEMO_USERS_ENABLED and VITE_AUTH_LEGACY_DEMO_USERS_ENABLED must match'
 
 write_valid_env "$ENV_FILE"
 replace_env_value "$ENV_FILE" AIRFLOW_FERNET_KEY 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA*='

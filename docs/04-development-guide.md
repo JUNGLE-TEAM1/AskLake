@@ -465,6 +465,15 @@ PYTHONPATH=. .venv/bin/python -m unittest tests.test_object_storage_mode tests.t
 
 로컬 root Compose는 MinIO를 사용한다. Production Compose는 실제 AWS S3만 사용하며, `ASKLAKE_OBJECT_STORAGE_PROVIDER=aws`, `AWS_REGION`, Raw/Output bucket allowlist를 설정하고 EC2 IAM Role/default credential chain으로 인증한다. Production frontend image에는 Compose가 `ASKLAKE_SPARK_OUTPUT_BUCKET`을 `VITE_SPARK_OUTPUT_BUCKET`으로 주입하므로 Target UI와 Spark writer가 같은 bucket을 사용한다. Production `.env`에는 장기 AWS access key/secret 또는 MinIO credential을 넣지 않는다.
 
+Production은 알려진 legacy demo 계정을 기본 비활성화한다. 재시작 가능한 데모 서버에서 해당 계정을 유지하려면 server `deploy/.env`의 backend/frontend 플래그를 반드시 함께 켠다. 한쪽만 켜면 preflight가 실패한다. 이 설정은 기존 DB status를 보존하므로 이전 startup이 이미 `disabled`로 만든 계정은 opt-in 배포 전후에 한 번만 `active`로 복구하고, 이후 재시작에서는 추가 DB 수정이 없어야 한다.
+
+```bash
+AUTH_LEGACY_DEMO_USERS_ENABLED=true
+VITE_AUTH_LEGACY_DEMO_USERS_ENABLED=true
+```
+
+Production bootstrap admin, Secure cookie, public signup 기본 차단, client actor header fallback 차단은 그대로 유지된다. 알려진 demo 비밀번호가 노출되는 구성이므로 공개 서비스나 장기 운영 환경에서는 두 값을 `false`로 둔다.
+
 실제 서버에서는 Compose 실행 전에 host directory와 env를 준비하고 preflight를 통과시킨다. `ASKLAKE_HOST_DATA_DIR` 아래 `spark-ivy`, `spark-output`, `spark-runs`, `samples`, `review-text-models`와 `ASKLAKE_REPLAY_HOST_INPUT_DIR`가 먼저 존재해야 한다. `spark-dir-init`가 공유 경로를 Spark image의 UID/GID `185:185`로 정규화한다.
 
 ```bash
