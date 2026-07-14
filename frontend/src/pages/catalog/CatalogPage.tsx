@@ -742,22 +742,24 @@ export function CatalogPage({
                       >
                         <div className="catalog-result-summary">
                           <div className="catalog-result-title">
-                            <div className="catalog-result-heading">
-                              <Tooltip>
-                                <TooltipTrigger asChild><strong className="truncate" title={undefined}>{dataset.name}</strong></TooltipTrigger>
-                                <TooltipContent>{dataset.name}</TooltipContent>
-                              </Tooltip>
-                              <DatasetStatusBadge dataset={dataset} shape="compact" />
-                              {isPinned && (
-                                <Badge className="catalog-result-pin-badge" aria-label="상단 고정된 데이터셋" shape="compact" size="sm">
-                                  <Pin />
-                                  고정됨
-                                </Badge>
-                              )}
+                            <div className="catalog-result-mainline">
+                              <div className="catalog-result-heading">
+                                <Tooltip>
+                                  <TooltipTrigger asChild><strong className="truncate" title={undefined}>{dataset.name}</strong></TooltipTrigger>
+                                  <TooltipContent>{dataset.name}</TooltipContent>
+                                </Tooltip>
+                                <DatasetStatusBadge dataset={dataset} shape="compact" />
+                                {isPinned && (
+                                  <Badge className="catalog-result-pin-badge" aria-label="상단 고정된 데이터셋" shape="compact" size="sm">
+                                    <Pin />
+                                    고정됨
+                                  </Badge>
+                                )}
+                              </div>
+                              {dataset.description.trim() ? (
+                                <p className="catalog-result-description">{dataset.description}</p>
+                              ) : null}
                             </div>
-                            {dataset.description.trim() ? (
-                              <p className="catalog-result-description">{dataset.description}</p>
-                            ) : null}
                             {dataset.tags.length > 0 ? (
                               <span className="catalog-result-tags" title={dataset.tags.join(" · ")}>{dataset.tags.join(" · ")}</span>
                             ) : null}

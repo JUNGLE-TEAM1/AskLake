@@ -145,9 +145,17 @@
 
 .catalog-result-title {
   display: grid;
-  gap: 6px;
+  gap: 8px;
   min-width: 0;
   max-width: 100%;
+}
+
+.catalog-result-mainline {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.9fr) minmax(0, 1.4fr);
+  align-items: center;
+  gap: 20px;
+  min-width: 0;
 }
 
 .catalog-result-heading {
@@ -161,7 +169,7 @@
 .catalog-result-title strong {
   min-width: 0;
   color: #0f172a;
-  font-size: 15px;
+  font-size: 17px;
   font-weight: 850;
   line-height: 1.35;
   overflow-wrap: anywhere;
@@ -632,6 +640,11 @@
 }
 
 @media (max-width: 720px) {
+  .catalog-result-mainline {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+  }
+
   .catalog-sample-header,
   .catalog-sample-actions,
   .catalog-sample-pagination {
