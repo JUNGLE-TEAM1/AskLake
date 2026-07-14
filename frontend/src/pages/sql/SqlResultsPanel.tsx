@@ -49,7 +49,7 @@ type SqlResultsPanelProps = {
   dialogResultDraft: SqlResultDraft | null;
   dialogOpen: boolean;
   downloadDisabled?: boolean;
-  executionEnabled?: boolean;
+  executionWorkspaceEnabled?: boolean;
   executionInfo?: ReactNode;
   jobCreationDisabled?: boolean;
   pageError: string | null;
@@ -160,7 +160,7 @@ export function SqlResultsPanel({
   dialogResultDraft,
   dialogOpen,
   downloadDisabled = false,
-  executionEnabled = false,
+  executionWorkspaceEnabled = false,
   executionInfo,
   jobCreationDisabled = false,
   pageError,
@@ -178,7 +178,7 @@ export function SqlResultsPanel({
   const previewRange = resultDraft ? getResultRange(resultDraft) : null;
   const dialogDraft = dialogResultDraft ?? resultDraft;
   const dialogRange = dialogDraft ? getResultRange(dialogDraft) : null;
-  const showResultWorkspace = Boolean(resultDraft || executionEnabled);
+  const showResultWorkspace = Boolean(resultDraft || executionWorkspaceEnabled);
   const isTableView = resultView === "table";
   const isCompactTableResult = Boolean(isTableView && resultDraft && resultDraft.rows.length <= 8);
   const resultScrollbars = resultView === "execution" || (isCompactTableResult && resultDraft && resultDraft.columns.length <= 4)
@@ -206,11 +206,9 @@ export function SqlResultsPanel({
                 <ToggleGroupItem aria-label="데이터 미리보기" disabled={!resultDraft} size="sm" value="table">
                   <Table2 /> 데이터 미리보기
                 </ToggleGroupItem>
-                {executionEnabled ? (
-                  <ToggleGroupItem aria-label="실행 정보" size="sm" value="execution">
-                    <Activity /> 실행 정보
-                  </ToggleGroupItem>
-                ) : null}
+                <ToggleGroupItem aria-label="실행 정보" size="sm" value="execution">
+                  <Activity /> 실행 정보
+                </ToggleGroupItem>
               </ToggleGroup>
               {previewRange && resultView === "table" ? (
                 <strong className={styles.resultRange}>

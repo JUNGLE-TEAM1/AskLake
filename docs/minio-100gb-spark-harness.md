@@ -223,6 +223,8 @@ The validator checks:
 
 Snapshot schema contract를 변경한 뒤에는 `npm run verify:spark-schema-contract`를 실행한다. 이 검증은 필수 컬럼 1개와 10개에서 동일한 수의 내부 Spark job으로 null/cast 결과를 확인해, 필수 컬럼 수에 비례해 source scan action이 증가하는 회귀를 차단한다. JSON/JSONL reader는 승인된 schema와 dotted source path를 사용하므로 DataFrame 생성 시 inference action을 실행하지 않아야 한다.
 
+Snapshot Rule runtime은 transform-only Job에서 빈 Quality 단계를 별도 Spark action으로 평가하지 않는다. Job runner가 schema count/null 집계에서 얻은 `inputRows`를 transform runtime에 전달하고, 각 transform은 이전 output row count를 재사용해 invalid row만 별도 계산한다. 마지막 transform의 output row count는 `quality.evaluatedRowCount`에도 재사용한다. `npm run verify:snapshot-rule-conformance`는 transform-only cast의 `DataFrame.count()` 호출이 invalid row 확인 한 번으로 제한되는지 확인한다. `npm run verify:snapshot-spark-pipeline`의 action-budget case는 단일 cast Snapshot을 실제 JSONL에서 Parquet까지 실행하고 Spark `FileScanRDD` 로그의 해당 원본 경로가 schema summary, invalid-row summary, output write의 정확히 3회만 읽히는지 검증한다.
+
 Set `ASKLAKE_SPARK_FULL_COUNT=true` only when a full count is needed; default validation uses bounded reads for speed.
 
 ## 7. Create/Run Spark Pipeline Verification

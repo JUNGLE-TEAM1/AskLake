@@ -1,6 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from fnmatch import fnmatch
+import calendar
 import hashlib
 import json
 import os
@@ -143,6 +144,16 @@ MAX_SOURCE_IDENTITY_WORKERS = 64
 DEFAULT_SPARK_EXECUTION_LEASE_SECONDS = 1200
 AIRFLOW_MISSING_RUN_FAILURE_LIMIT = 3
 SPARK_REST_BRIDGE_GRACE_SECONDS = 30
+DEFAULT_SCHEDULE_TIMEZONE = "Asia/Seoul"
+SCHEDULE_WEEKDAY_VALUES = {
+    "월": 0,
+    "화": 1,
+    "수": 2,
+    "목": 3,
+    "금": 4,
+    "토": 5,
+    "일": 6,
+}
 
 
 def source_connector_defaults() -> SourceConnectorDefaults:
@@ -297,7 +308,7 @@ def create_pipeline(
         quality_status=request.quality_status,
         last_run="생성 후 미실행",
         last_state=f"{metrics['schema_columns']}개 컬럼 추론 완료",
-        next_run=schedule_next_run_label(request.schedule_label, request.schedule_summary),
+        next_run=schedule_next_run_label(request.schedule_label, schedule_policy.get("nextRunUtc")),
         progress=None,
         stats=stats,
         dag_steps=dag_steps,
@@ -585,9 +596,7 @@ def list_jobs(
 
 
 def normalize_list_job(job: JobRowData) -> JobRowData:
-    if job.status not in {"failed", "canceled", "paused"}:
-        return job
-    return job.model_copy(update={"status": "scheduled"})
+    return job
 
 
 def latest_run_outcome(job: JobRowData) -> JobRunOutcome | None:
@@ -625,6 +634,7 @@ def run_due_scheduled_jobs(
     actor_context = actor or ActorContext(name="scheduler", role="admin")
 
     for job in jobs:
+        ensure_scheduled_job_next_run(db, job)
         should_run, reason = should_run_scheduled_job(job, request)
         if not should_run:
             items.append(ScheduledJobRunItem(
@@ -636,12 +646,15 @@ def run_due_scheduled_jobs(
             ))
             continue
 
+        command_kwargs: dict[str, ActorContext] = {}
+        if getattr(job, "job_kind", None) == "trino_sql_materialization":
+            command_kwargs["execution_actor"] = trino_sql_job_run_as_actor(db, job)
         response = command_job(
             db,
             job.id,
             "run",
             actor_context,
-            execution_actor=trino_sql_job_run_as_actor(db, job) if job.job_kind == "trino_sql_materialization" else None,
+            **command_kwargs,
         )
         if reason == "due":
             advance_scheduled_job_after_tick(db, job.id)
@@ -4615,7 +4628,8 @@ def update_existing_append_job(
     job.source = f"{request.source_type} / {request.source_label}"
     job.target = request.target_dataset
     job.schedule = request.schedule_label
-    job.schedule_policy = schedule_policy_from_request(request)
+    schedule_policy = schedule_policy_from_request(request)
+    job.schedule_policy = schedule_policy
     job.schedule_summary = request.schedule_summary
     job.retry_policy = request.retry_policy.model_dump(mode="json", by_alias=True) if request.retry_policy else None
     job.retry_policy_summary = request.retry_policy_summary
@@ -4662,7 +4676,7 @@ def update_existing_append_job(
     job.quality_status = request.quality_status
     job.last_run = "append draft updated"
     job.last_state = f"{metrics['schema_columns']}개 컬럼 · 기존 데이터셋 append 대기"
-    job.next_run = schedule_next_run_label(request.schedule_label, request.schedule_summary)
+    job.next_run = schedule_next_run_label(request.schedule_label, schedule_policy.get("nextRunUtc"))
     job.progress = None
     job.stats = initial_job_stats(metrics)
     job.dag_steps = initial_dag_steps(request, metrics)
@@ -7030,7 +7044,8 @@ def apply_update_request(job: ETLJobModel, request: UpdatePipelineRequest, targe
     job.owner = request.owner
     job.target = request.target_dataset
     job.schedule = request.schedule_label
-    job.schedule_policy = schedule_policy_from_request(request)
+    schedule_policy = schedule_policy_from_request(request)
+    job.schedule_policy = schedule_policy
     job.schedule_summary = request.schedule_summary
     job.retry_policy = request.retry_policy.model_dump(mode="json", by_alias=True) if request.retry_policy else None
     job.retry_policy_summary = request.retry_policy_summary
@@ -7064,7 +7079,7 @@ def apply_update_request(job: ETLJobModel, request: UpdatePipelineRequest, targe
     job.quality_score = request.quality_score
     job.quality_status = request.quality_status
     job.last_state = "설정 수정됨"
-    job.next_run = schedule_next_run_label(request.schedule_label, request.next_run_utc or job.next_run)
+    job.next_run = schedule_next_run_label(request.schedule_label, schedule_policy.get("nextRunUtc") or request.next_run_utc or job.next_run)
     job.stats = {
         **(job.stats or {}),
         "currentStage": "설정 수정됨",
@@ -7230,13 +7245,185 @@ def job_schedule_kind(schedule_label: str | None) -> JobScheduleKind:
     return "other"
 
 
+def schedule_timezone(timezone_name: str | None) -> ZoneInfo:
+    try:
+        return ZoneInfo(str(timezone_name or DEFAULT_SCHEDULE_TIMEZONE))
+    except (KeyError, ValueError, ZoneInfoNotFoundError):
+        return ZoneInfo(DEFAULT_SCHEDULE_TIMEZONE)
+
+
+def parse_cron_field(expression: str, minimum: int, maximum: int) -> tuple[set[int], bool] | None:
+    values: set[int] = set()
+    is_wildcard = all(part.strip().split("/", 1)[0] == "*" for part in expression.split(","))
+    for part in expression.split(","):
+        token = part.strip()
+        if not token:
+            return None
+        base, separator, step_text = token.partition("/")
+        try:
+            step = int(step_text) if separator else 1
+        except ValueError:
+            return None
+        if step < 1:
+            return None
+        if base == "*":
+            start, end = minimum, maximum
+        elif "-" in base:
+            start_text, end_text = base.split("-", 1)
+            try:
+                start, end = int(start_text), int(end_text)
+            except ValueError:
+                return None
+        else:
+            try:
+                start = end = int(base)
+            except ValueError:
+                return None
+        if start < minimum or end > maximum or start > end:
+            return None
+        values.update(range(start, end + 1, step))
+    return values, is_wildcard
+
+
+def cron_matches(local_time: datetime, fields: list[str]) -> bool:
+    ranges = [
+        parse_cron_field(fields[0], 0, 59),
+        parse_cron_field(fields[1], 0, 23),
+        parse_cron_field(fields[2], 1, 31),
+        parse_cron_field(fields[3], 1, 12),
+        parse_cron_field(fields[4], 0, 7),
+    ]
+    if any(value is None for value in ranges):
+        return False
+    minute, hour, day_of_month, month, day_of_week = ranges
+    assert minute is not None and hour is not None and day_of_month is not None and month is not None and day_of_week is not None
+    weekday_value = (local_time.weekday() + 1) % 7
+    weekday_values = day_of_week[0]
+    month_matches = local_time.month in month[0]
+    day_matches = local_time.day in day_of_month[0]
+    weekday_matches = weekday_value in weekday_values or (weekday_value == 0 and 7 in weekday_values)
+    day_matches = (
+        day_matches and weekday_matches
+        if not day_of_month[1] and not day_of_week[1]
+        else day_matches if day_of_week[1]
+        else weekday_matches if day_of_month[1]
+        else day_matches or weekday_matches
+    )
+    return local_time.minute in minute[0] and local_time.hour in hour[0] and month_matches and day_matches
+
+
+def next_custom_cron_local(expression: str, start: datetime) -> datetime | None:
+    fields = expression.split()
+    if len(fields) != 5:
+        return None
+    candidate = start.replace(second=0, microsecond=0)
+    if candidate <= start:
+        candidate += timedelta(minutes=1)
+    for _ in range(366 * 24 * 60 * 2):
+        if cron_matches(candidate, fields):
+            return candidate
+        candidate += timedelta(minutes=1)
+    return None
+
+
+def next_scheduled_run_utc_for_schedule(
+    schedule: str | None,
+    timezone_name: str | None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    now: datetime | None = None,
+) -> str:
+    label = str(schedule or "").strip()
+    if not has_scheduled_label(label):
+        return ""
+    timezone = schedule_timezone(timezone_name)
+    now_utc = now.astimezone(UTC) if now is not None else datetime.now(UTC)
+    local_now = now_utc.astimezone(timezone)
+    earliest = local_now.replace(second=0, microsecond=0) + timedelta(minutes=1)
+    try:
+        start_boundary = datetime.strptime(str(start_date), "%Y-%m-%d").date() if start_date else None
+        end_boundary = datetime.strptime(str(end_date), "%Y-%m-%d").date() if end_date else None
+    except ValueError:
+        start_boundary = end_boundary = None
+    if start_boundary and earliest.date() < start_boundary:
+        earliest = datetime.combine(start_boundary, datetime.min.time(), timezone=timezone)
+
+    candidate: datetime | None = None
+    hourly_match = re.match(r"^매시간\s+(\d{1,2})분$", label)
+    daily_match = re.match(r"^매일\s+(\d{1,2}):(\d{2})$", label)
+    weekly_match = re.match(r"^매주\s+([월화수목금토일])요일\s+(\d{1,2}):(\d{2})$", label)
+    monthly_match = re.match(r"^매월\s+(\d{1,2})일\s+(\d{1,2}):(\d{2})$", label)
+    custom_match = re.match(r"^커스텀:\s*(.+)$", label)
+
+    if hourly_match:
+        minute = min(59, int(hourly_match.group(1)))
+        candidate = earliest.replace(minute=minute, second=0, microsecond=0)
+        while candidate < earliest:
+            candidate += timedelta(hours=1)
+    elif daily_match:
+        hour = min(23, int(daily_match.group(1)))
+        minute = min(59, int(daily_match.group(2)))
+        candidate = earliest.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if candidate < earliest:
+            candidate += timedelta(days=1)
+    elif weekly_match:
+        weekday = SCHEDULE_WEEKDAY_VALUES[weekly_match.group(1)]
+        hour = min(23, int(weekly_match.group(2)))
+        minute = min(59, int(weekly_match.group(3)))
+        days_ahead = (weekday - earliest.weekday()) % 7
+        candidate = (earliest + timedelta(days=days_ahead)).replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if candidate < earliest:
+            candidate += timedelta(days=7)
+    elif monthly_match:
+        day = min(31, int(monthly_match.group(1)))
+        hour = min(23, int(monthly_match.group(2)))
+        minute = min(59, int(monthly_match.group(3)))
+        year, month = earliest.year, earliest.month
+        for _ in range(24):
+            if day <= calendar.monthrange(year, month)[1]:
+                candidate = earliest.replace(year=year, month=month, day=day, hour=hour, minute=minute, second=0, microsecond=0)
+                if candidate >= earliest:
+                    break
+            month += 1
+            if month > 12:
+                year, month = year + 1, 1
+    elif custom_match:
+        candidate = next_custom_cron_local(custom_match.group(1).strip(), earliest)
+
+    if candidate is None or (end_boundary and candidate.date() > end_boundary):
+        return ""
+    return candidate.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
 def schedule_policy_from_request(request: CreatePipelineRequest | UpdatePipelineRequest) -> dict[str, Any]:
     watermark_policy = request.watermark_policy
     if hasattr(watermark_policy, "model_dump"):
         watermark_policy = watermark_policy.model_dump(mode="json", by_alias=True)
+    next_run_utc = str(request.next_run_utc or "").strip()
+    if has_scheduled_label(request.schedule_label):
+        try:
+            requested_next_run = datetime.fromisoformat(next_run_utc.replace("Z", "+00:00")) if next_run_utc else None
+            if requested_next_run is not None and requested_next_run.tzinfo is None:
+                requested_next_run = requested_next_run.replace(tzinfo=UTC)
+            if requested_next_run is None or requested_next_run <= datetime.now(UTC):
+                next_run_utc = next_scheduled_run_utc_for_schedule(
+                    request.schedule_label,
+                    request.timezone,
+                    request.start_date,
+                    request.end_date,
+                )
+        except (TypeError, ValueError):
+            next_run_utc = next_scheduled_run_utc_for_schedule(
+                request.schedule_label,
+                request.timezone,
+                request.start_date,
+                request.end_date,
+            )
+    else:
+        next_run_utc = ""
     return {
         "endDate": request.end_date,
-        "nextRunUtc": request.next_run_utc,
+        "nextRunUtc": next_run_utc,
         "overlapPolicy": request.overlap_policy or ("skip_if_running" if has_scheduled_label(request.schedule_label) else None),
         "startDate": request.start_date,
         "timezone": request.timezone,
@@ -7283,6 +7470,11 @@ def advance_scheduled_job_after_tick(db: Session, job_id: str) -> None:
 
     next_run_utc = next_scheduled_run_utc(job)
     if not next_run_utc:
+        job.schedule_policy = {**job.schedule_policy, "nextRunUtc": ""}
+        job.next_run = "-"
+        job.status = "stopped"
+        job.last_state = "스케줄 종료"
+        etl_repository.save_job(db, job)
         return
 
     job.schedule_policy = {
@@ -7295,39 +7487,33 @@ def advance_scheduled_job_after_tick(db: Session, job_id: str) -> None:
 
 def next_scheduled_run_utc(job: ETLJobModel) -> str:
     schedule = str(job.schedule or "")
-    current = ""
-    if isinstance(job.schedule_policy, dict):
-        current = str(job.schedule_policy.get("nextRunUtc") or "")
-    try:
-        base = datetime.fromisoformat(current.replace("Z", "+00:00")) if current else datetime.now(UTC)
-    except ValueError:
-        base = datetime.now(UTC)
+    policy = job.schedule_policy if isinstance(job.schedule_policy, dict) else {}
+    return next_scheduled_run_utc_for_schedule(
+        schedule,
+        policy.get("timezone"),
+        policy.get("startDate"),
+        policy.get("endDate"),
+    )
 
-    now = datetime.now(UTC)
-    if schedule.startswith("매시간"):
-        minute_match = re.search(r"매시간\s+(\d{1,2})분", schedule)
-        minute = max(0, min(59, int(minute_match.group(1)) if minute_match else base.minute))
-        candidate = base.replace(minute=minute, second=0, microsecond=0)
-        while candidate <= now:
-            candidate += timedelta(hours=1)
-        return candidate.isoformat().replace("+00:00", "Z")
 
-    if schedule.startswith("매일"):
-        time_match = re.search(r"매일\s+(\d{1,2}):(\d{2})", schedule)
-        hour = max(0, min(23, int(time_match.group(1)) if time_match else base.hour))
-        minute = max(0, min(59, int(time_match.group(2)) if time_match else base.minute))
-        candidate = base.replace(hour=hour, minute=minute, second=0, microsecond=0)
-        while candidate <= now:
-            candidate += timedelta(days=1)
-        return candidate.isoformat().replace("+00:00", "Z")
-
-    if schedule.startswith("매주"):
-        candidate = base.replace(second=0, microsecond=0)
-        while candidate <= now:
-            candidate += timedelta(days=7)
-        return candidate.isoformat().replace("+00:00", "Z")
-
-    return ""
+def ensure_scheduled_job_next_run(db: Session, job: ETLJobModel) -> None:
+    if not has_scheduled_execution(job):
+        return
+    policy = dict(job.schedule_policy) if isinstance(job.schedule_policy, dict) else {}
+    current_next_run = str(policy.get("nextRunUtc") or "").strip()
+    if current_next_run:
+        return
+    next_run_utc = next_scheduled_run_utc(job)
+    if not next_run_utc:
+        job.schedule_policy = {**policy, "nextRunUtc": ""}
+        job.next_run = "-"
+        job.status = "stopped"
+        job.last_state = "스케줄 종료"
+        etl_repository.save_job(db, job)
+        return
+    job.schedule_policy = {**policy, "nextRunUtc": next_run_utc}
+    job.next_run = next_run_utc
+    etl_repository.save_job(db, job)
 
 
 def apply_job_command(job: ETLJobModel, command: str) -> None:

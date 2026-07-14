@@ -83,6 +83,7 @@ def kafka_fixture_job(job_id: str) -> ETLJobModel:
     job.target = "reviews_bronze"
     job.target_format = "jsonl"
     job.target_layer = "BRONZE"
+    job.target_format = "jsonl"
     return job
 
 

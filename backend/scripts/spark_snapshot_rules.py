@@ -28,27 +28,33 @@ def supports_spark_snapshot_rules(rules):
     return True
 
 
-def apply_spark_snapshot_rules(spark, frame, rules):
+def apply_spark_snapshot_rules(spark, frame, rules, input_row_count=None):
     enabled = [rule for rule in (rules or []) if rule and rule.get("enabled") is not False]
     transforms = [rule for rule in enabled if rule.get("kind") == "transform"]
     quality_rules = [rule for rule in enabled if rule.get("kind") == "quality"]
     transform = _empty_transform(len(transforms))
     quarantine = None
     current = frame
+    current_row_count = int(input_row_count) if input_row_count is not None else None
     segment = []
     transform_started_at = time.monotonic()
 
     def flush_segment():
-        nonlocal current, quarantine
+        nonlocal current, current_row_count, quarantine
         if not segment:
             return
         try:
-            execution = apply_snapshot_rules(current, list(segment))
+            execution = apply_snapshot_rules(
+                current,
+                list(segment),
+                input_row_count=current_row_count,
+            )
         except SnapshotRuleExecutionError as exc:
             _merge_transform(transform, exc.transform or {})
             exc.transform = transform
             raise
         current = execution["frame"]
+        current_row_count = int(execution["quality"].get("evaluatedRowCount") or 0)
         _merge_transform(transform, execution["transform"])
         quarantine = _merge_quarantine(quarantine, execution["quarantine"])
         segment.clear()
@@ -58,19 +64,41 @@ def apply_spark_snapshot_rules(spark, frame, rules):
             segment.append(rule)
             continue
         flush_segment()
-        current, sql_quarantine = _apply_sql_rule(spark, current, rule, transform)
+        current, sql_quarantine, current_row_count = _apply_sql_rule(
+            spark,
+            current,
+            rule,
+            transform,
+            input_row_count=current_row_count,
+        )
         quarantine = _merge_quarantine(quarantine, sql_quarantine)
     flush_segment()
 
     transform_duration_ms = _elapsed_ms(transform_started_at)
-    try:
-        quality_execution = apply_snapshot_rules(current, quality_rules)
-    except SnapshotRuleExecutionError as exc:
-        exc.transform = transform
-        timings = dict(exc.timings or {})
-        timings["transformDurationMs"] = transform_duration_ms
-        exc.timings = timings
-        raise
+    if quality_rules:
+        try:
+            quality_execution = apply_snapshot_rules(
+                current,
+                quality_rules,
+                input_row_count=current_row_count,
+            )
+        except SnapshotRuleExecutionError as exc:
+            exc.transform = transform
+            timings = dict(exc.timings or {})
+            timings["transformDurationMs"] = transform_duration_ms
+            exc.timings = timings
+            raise
+    else:
+        if current_row_count is None:
+            current_row_count = current.count()
+        quality = _empty_quality()
+        quality["evaluatedRowCount"] = current_row_count
+        quality_execution = {
+            "frame": current,
+            "quality": quality,
+            "quarantine": None,
+            "timings": {"qualityDurationMs": 0},
+        }
     quarantine = _merge_quarantine(quarantine, quality_execution["quarantine"])
     return {
         "frame": quality_execution["frame"],
@@ -84,11 +112,11 @@ def apply_spark_snapshot_rules(spark, frame, rules):
     }
 
 
-def _apply_sql_rule(spark, frame, rule, transform):
+def _apply_sql_rule(spark, frame, rule, transform, input_row_count=None):
     expression = str((rule.get("parameters") or {}).get("expression") or "").strip()
     output = _normalize_name(_first(rule.get("outputColumns")) or _first(rule.get("inputColumns")))
     input_name = _resolve_column_name(frame, _first(rule.get("inputColumns")))
-    row_count = frame.count()
+    row_count = int(input_row_count) if input_row_count is not None else frame.count()
     try:
         if expression.lower().startswith("select"):
             view_name = f"asklake_rule_input_{re.sub(r'[^0-9A-Za-z_]+', '_', str(rule.get('id') or 'sql'))}"
@@ -100,9 +128,9 @@ def _apply_sql_rule(spark, frame, rule, transform):
                 spark.catalog.dropTempView(view_name)
         else:
             result = frame.withColumn(output, F.expr(expression))
-        result.count()
+        result_count = result.count()
         transform["appliedStepCount"] += row_count
-        return result, None
+        return result, None, result_count
     except Exception as exc:
         transform["errorCount"] += row_count
         action = _failure_action(rule)
@@ -117,16 +145,16 @@ def _apply_sql_rule(spark, frame, rule, transform):
             ) from exc
         if action == "quarantine":
             transform["quarantinedCount"] += row_count
-            return frame.limit(0), _quarantine_all(frame, rule, reason)
+            return frame.limit(0), _quarantine_all(frame, rule, reason), 0
         if action == "drop_row":
             transform["droppedCount"] += row_count
-            return frame.limit(0), None
+            return frame.limit(0), None, 0
         if action == "set_null":
             transform["setNullCount"] += row_count
-            return frame.withColumn(output, F.lit(None).cast(_spark_type(rule.get("outputType")))), None
+            return frame.withColumn(output, F.lit(None).cast(_spark_type(rule.get("outputType")))), None, row_count
         transform["warnCount"] += row_count
         fallback = F.col(_quote(input_name)) if input_name else F.lit(None)
-        return frame.withColumn(output, fallback), None
+        return frame.withColumn(output, fallback), None, row_count
 
 
 def _quarantine_all(frame, rule, reason):

@@ -246,7 +246,27 @@ services:
       - default
       - trino_internal
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/health', timeout=5).read()\""]
+      test:
+        - CMD
+        - python
+        - -c
+        - |
+          import json
+          import urllib.request
+
+          with urllib.request.urlopen("http://127.0.0.1:8080/api/health", timeout=5) as response:
+              payload = json.load(response)
+              http_status = response.status
+
+          ready = (
+              http_status == 200
+              and isinstance(payload, dict)
+              and payload.get("ok") is True
+              and payload.get("statusCode") == 200
+              and isinstance(payload.get("database"), dict)
+              and payload["database"].get("ok") is True
+          )
+          raise SystemExit(0 if ready else 1)
       interval: 30s
       timeout: 5s
       retries: 5

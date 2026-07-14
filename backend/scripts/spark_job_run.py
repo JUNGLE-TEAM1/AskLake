@@ -112,10 +112,13 @@ def main():
             source_collection,
             transform_steps,
         )
-        input_rows = source_df.count() if row_limit <= 0 else source_df.limit(row_limit).count()
         working_df = source_df if row_limit <= 0 else source_df.limit(row_limit)
         normalized_df = normalize_columns(working_df, schema_columns, transform_steps)
-        contracted_df = apply_schema_contract(normalized_df, schema_columns, transform_steps)
+        contracted_df, input_rows = apply_schema_contract_with_count(
+            normalized_df,
+            schema_columns,
+            transform_steps,
+        )
         review_analysis_preflight = plan_review_row_analysis_checks(transform_steps)
         blocking_text_model_checks = [
             check
@@ -161,7 +164,12 @@ def main():
         review_analysis_checks = []
         transform = None
         if canonical_runtime_supported:
-            execution = apply_spark_snapshot_rules(spark, contracted_df, canonical_rules)
+            execution = apply_spark_snapshot_rules(
+                spark,
+                contracted_df,
+                canonical_rules,
+                input_row_count=input_rows,
+            )
             transformed_df = execution["frame"]
             transform = execution["transform"]
             quality = snapshot_quality_report(execution["quality"])
@@ -1094,8 +1102,24 @@ def resolve_partition_columns(frame, partition_columns):
 
 
 def apply_schema_contract(frame, schema_columns, transform_steps=None):
+    contracted, required_targets = project_schema_contract(frame, schema_columns, transform_steps)
+    null_required = required_null_targets(contracted, required_targets)
+    if null_required:
+        raise ValueError(f"Approved schema required columns produced null values after casting: {', '.join(null_required)}")
+    return contracted
+
+
+def apply_schema_contract_with_count(frame, schema_columns, transform_steps=None):
+    contracted, required_targets = project_schema_contract(frame, schema_columns, transform_steps)
+    input_rows, null_required = schema_contract_summary(contracted, required_targets)
+    if null_required:
+        raise ValueError(f"Approved schema required columns produced null values after casting: {', '.join(null_required)}")
+    return contracted, input_rows
+
+
+def project_schema_contract(frame, schema_columns, transform_steps=None):
     if not schema_columns:
-        return frame
+        return frame, []
 
     included_columns = [column for column in schema_columns if schema_column_included(column)]
     if not included_columns:
@@ -1135,29 +1159,36 @@ def apply_schema_contract(frame, schema_columns, transform_steps=None):
         raise ValueError(f"Approved schema required columns missing from Spark input: {', '.join(missing_required)}")
     if not expressions:
         raise ValueError("Approved schema has no output expressions.")
-    contracted = frame.select(*expressions)
-    null_required = required_null_targets(contracted, required_targets)
-    if null_required:
-        raise ValueError(f"Approved schema required columns produced null values after casting: {', '.join(null_required)}")
-    return contracted
+    return frame.select(*expressions), required_targets
 
 
 def required_null_targets(frame, required_targets):
     if not required_targets:
         return []
 
+    return schema_contract_summary(frame, required_targets)[1]
+
+
+def schema_contract_summary(frame, required_targets):
+    row_count_alias = "__asklake_schema_input_rows"
+
     aliases = [f"__asklake_required_null_{index}" for index in range(len(required_targets))]
-    null_summary = frame.agg(*[
-        F.max(
-            F.when(F.col(quote_identifier(target)).isNull(), F.lit(1)).otherwise(F.lit(0))
-        ).alias(alias)
-        for target, alias in zip(required_targets, aliases)
-    ]).first()
-    return [
+    summary = frame.agg(
+        F.count(F.lit(1)).alias(row_count_alias),
+        *[
+            F.max(
+                F.when(F.col(quote_identifier(target)).isNull(), F.lit(1)).otherwise(F.lit(0))
+            ).alias(alias)
+            for target, alias in zip(required_targets, aliases)
+        ],
+    ).first()
+    input_rows = int((summary[row_count_alias] if summary is not None else 0) or 0)
+    null_required = [
         target
         for target, alias in zip(required_targets, aliases)
-        if int((null_summary[alias] if null_summary is not None else 0) or 0) > 0
+        if int((summary[alias] if summary is not None else 0) or 0) > 0
     ]
+    return input_rows, null_required
 
 
 def transform_output_column_names(steps):
