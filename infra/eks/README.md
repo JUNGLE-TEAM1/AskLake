@@ -21,11 +21,13 @@
 - MSK, RDS와 S3는 각각 `disabled`, `existing`, `create` 모드를 사용하며 기본값은 모두 `disabled`다. `create`를 선택해도 Phase 2 inventory와 비용·network·destroy 승인이 끝나기 전에는 apply하지 않는다.
 - generated workload IAM policy는 IRSA 또는 Pod Identity 선택 전까지 role에 연결하지 않는다.
 - `workload_identity_mode` 기본값은 `disabled`다. IRSA와 Pod Identity를 모두 지원하지만 실제 cluster의 OIDC provider 또는 Pod Identity Agent 소유권을 확인한 뒤 하나를 명시적으로 선택한다.
+- 신규 EKS에서 IRSA를 선택하면 cluster 준비와 OIDC provider 확인을 먼저 끝내고 다음 승인된 plan에서 identity를 활성화한다. 생성 예정 ARN/issuer는 IAM resource의 `for_each` key로 사용하지 않는다.
 
 ## 로컬 검증
 
 ```bash
 bash scripts/verify-eks-foundation.sh
+bash scripts/verify-eks-rds-bootstrap.sh
 ```
 
 AWS 환경 inventory는 실제 식별자를 출력하지 않는 별도 read-only 스크립트로 확인한다.
@@ -81,6 +83,20 @@ helm template asklake-foundation \
 ```
 
 실제 runtime manifest는 chart가 만든 service account 이름을 참조해야 한다. 임의 이름을 별도로 만들지 않는다. FastAPI는 `asklake-backend` token과 namespace Role로만 SparkApplication을 제어하고 Spark driver도 `asklake-spark` namespace Role만 사용한다. 세부 인수 항목은 [Phase 1 인수 계약](../../docs/eks-msk-mvp-phase-1-handoff.md)을 따른다.
+
+IRSA와 Pod Identity render 계약은 실제 ARN이 없는 fixture로 각각 확인할 수 있다. IRSA는 Backend/Trino/MSK smoke/Spark 네 ServiceAccount annotation을 만들고 Pod Identity는 annotation 없이 association output을 사용한다.
+
+```bash
+helm template asklake-foundation \
+  infra/eks/helm/asklake-foundation \
+  -f infra/eks/values/dev.example.yaml \
+  -f infra/eks/values/identity/irsa.example.yaml
+
+helm template asklake-foundation \
+  infra/eks/helm/asklake-foundation \
+  -f infra/eks/values/dev.example.yaml \
+  -f infra/eks/values/identity/pod-identity.example.yaml
+```
 
 현재 foundation contract `1.2`는 frontend, backend, Airflow, Trino, MSK IAM smoke와 Spark service account를 제공한다. Replay Producer compatibility input은 `create=false`로 유지하며 ECR repository, service account 또는 workload를 만들지 않는다. `trino_handoff`는 실제 secret 값 없이 image digest, IRSA role ARN, in-cluster Service URL, RDS/S3 network와 Secret reference를 전달한다. AWS inventory가 확정되기 전 nullable 값은 resource 생성 gate로 남고 manifest render·fake client test만 완료할 수 있다.
 

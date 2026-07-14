@@ -17,9 +17,15 @@ Frontend와 Airflow에는 현재 계약상 AWS IAM role을 만들지 않는다. 
 
 IRSA를 선택하면 배포 환경이 제공한 IAM OIDC provider ARN과 EKS issuer로 namespace·ServiceAccount가 정확히 일치하는 trust policy를 만든다. Terraform output의 annotation을 Helm ServiceAccount value에 전달한다.
 
+신규 EKS와 IRSA는 한 번에 임의 적용하지 않는다. 먼저 identity가 `disabled`인 상태로 cluster를 준비하고, 해당 cluster의 issuer와 IAM OIDC provider lifecycle owner를 확인하거나 platform 범위에서 provider를 만든 다음, 두 번째 승인된 plan에서 IRSA를 활성화한다. Terraform resource의 `for_each` key는 이 issuer나 생성 예정 MSK ARN에 의존하지 않고 `backend`, `trino`, `mskSmoke`, `spark`로 정적으로 고정된다.
+
 Pod Identity를 선택하면 annotation 대신 `aws_eks_pod_identity_association`을 만든다. 단, platform owner가 EKS Pod Identity Agent 설치와 소유권을 확인해 `pod_identity_agent_ready=true`를 제공해야 한다. 이 application state가 shared add-on을 임의로 설치하거나 삭제하지 않는다.
 
 두 방식 모두 MSK와 S3 contract가 `disabled`가 아닐 때만 활성화된다. 실제 ARN과 bucket 경계가 없는 broad policy로 우회하지 않는다.
+
+workload policy는 AWS provider mock에 의해 대체되지 않는 순수 Terraform module에서 만든다. Spark는 전용 MSK topic/group과 Raw/Output/Warehouse/checkpoint/quarantine만 읽고 쓰며, Backend는 Output/Warehouse/Query Result/evidence만 사용한다. `s3:*`, `kafka-cluster:*`와 `Resource: "*"`는 허용하지 않는다.
+
+Helm handoff는 identity mode를 runtime boundary에 기록한다. IRSA fixture는 네 AWS workload ServiceAccount에만 role annotation을 렌더링하고, Pod Identity fixture는 IRSA annotation을 전혀 렌더링하지 않는다. 실제 Terraform output을 environment별 Helm values로 전달하는 deploy workflow는 후속 단계다.
 
 ## 아직 학습하고 선택해야 하는 사항
 
@@ -48,8 +54,11 @@ Ingress, domain/certificate, public/internal ALB, VPC endpoint/NAT와 workload s
 
 ```bash
 export PGHOST='<approved-rds-endpoint>'
+export ASKLAKE_RDS_BOOTSTRAP_EXPECTED_HOST='<approved-rds-endpoint>'
 export PGPORT='5432'
 export PGDATABASE='postgres'
+export PGSSLMODE='verify-full'
+export PGSSLROOTCERT='<downloaded-rds-ca-bundle-path>'
 export PGUSER='<bootstrap-admin-user>'
 export PGPASSWORD='<bootstrap-admin-password>'
 export ASKLAKE_APP_DB_PASSWORD='<secret>'
@@ -62,12 +71,15 @@ bash scripts/bootstrap-eks-rds-databases.sh
 
 이 script는 application schema migration이나 기존 EC2 데이터 이전을 수행하지 않는다. FastAPI migration, Airflow DB migration과 Iceberg JDBC catalog 검증은 각 workload 배포 순서에 맞춘 후속 작업이다. dual-write는 사용하지 않으며 기존 EC2 PostgreSQL과 backup은 rollback 기간이 끝나기 전 삭제하지 않는다.
 
+script는 `PGHOST`가 별도로 확인한 `ASKLAKE_RDS_BOOTSTRAP_EXPECTED_HOST`와 정확히 일치해야 실행된다. 운영 기본 TLS는 `verify-full`이고 실제 CA bundle 파일이 필요하다. `PGSSLMODE=disable`은 격리된 Docker 검증에서 `ASKLAKE_RDS_BOOTSTRAP_ALLOW_INSECURE_LOCAL=true`를 함께 지정한 경우에만 허용한다.
+
 ## 검증과 실제 완료 기준
 
 정적 검증은 다음 명령으로 수행한다.
 
 ```bash
 bash scripts/verify-eks-foundation.sh
+bash scripts/verify-eks-rds-bootstrap.sh
 
 docker run --rm --entrypoint sh \
   -v "$PWD/infra/eks/terraform:/workspace" \
@@ -76,4 +88,4 @@ docker run --rm --entrypoint sh \
   -c 'export TF_DATA_DIR=/tmp/tfdata; terraform fmt -check -recursive && terraform init -backend=false -input=false >/dev/null && terraform validate && terraform test'
 ```
 
-mock test는 identity 기본 비활성화, IRSA role/annotation 4개, Pod Identity Agent 미확인 차단과 기존 data-plane 안전장치를 확인한다. 실제 Phase 4 완료는 선택된 identity 방식으로 EKS Pod의 AWS caller identity와 MSK/S3 최소 권한 smoke가 성공하고, 승인된 RDS에서 bootstrap과 세 workload별 DB 연결이 확인돼야 선언할 수 있다.
+mock test는 identity 기본 비활성화, create-mode의 정적 IAM resource key, 실제 policy/trust 내용, IRSA role/annotation 4개, Pod Identity Agent 미확인 차단과 기존 data-plane 안전장치를 확인한다. RDS Docker 검증은 bootstrap을 두 번 실행하고 role의 관리 권한 부재와 세 database의 상호 CONNECT 격리를 확인한다. 실제 Phase 4 완료는 선택된 identity 방식으로 EKS Pod의 AWS caller identity와 MSK/S3 최소 권한 smoke가 성공하고, 승인된 RDS에서 bootstrap과 세 workload별 DB 연결이 확인돼야 선언할 수 있다.

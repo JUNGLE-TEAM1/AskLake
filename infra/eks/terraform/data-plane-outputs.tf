@@ -38,11 +38,5 @@ output "storage_contract" {
 output "workload_iam_policy_documents" {
   description = "Least-privilege policy documents to attach after IRSA or Pod Identity is selected."
   sensitive   = true
-  value = {
-    external_fixture_producer = try(data.aws_iam_policy_document.external_fixture_producer[0].json, null)
-    msk_smoke                 = try(data.aws_iam_policy_document.msk_smoke[0].json, null)
-    spark                     = try(data.aws_iam_policy_document.spark[0].json, null)
-    backend                   = try(data.aws_iam_policy_document.backend[0].json, null)
-    trino                     = try(data.aws_iam_policy_document.trino[0].json, null)
-  }
+  value       = local.workload_iam_policy_documents
 }

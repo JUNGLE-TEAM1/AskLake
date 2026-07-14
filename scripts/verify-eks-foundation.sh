@@ -4,10 +4,14 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CHART_DIR="$ROOT_DIR/infra/eks/helm/asklake-foundation"
 VALUES_FILE="$ROOT_DIR/infra/eks/values/dev.example.yaml"
+IRSA_VALUES_FILE="$ROOT_DIR/infra/eks/values/identity/irsa.example.yaml"
+POD_IDENTITY_VALUES_FILE="$ROOT_DIR/infra/eks/values/identity/pod-identity.example.yaml"
 TERRAFORM_DIR="$ROOT_DIR/infra/eks/terraform"
 RENDERED_FILE="$(mktemp)"
+IRSA_RENDERED_FILE="$(mktemp)"
+POD_IDENTITY_RENDERED_FILE="$(mktemp)"
 TERRAFORM_DATA_DIR="$(mktemp -d)"
-trap 'rm -f "$RENDERED_FILE"; rm -rf "$TERRAFORM_DATA_DIR"' EXIT
+trap 'rm -f "$RENDERED_FILE" "$IRSA_RENDERED_FILE" "$POD_IDENTITY_RENDERED_FILE"; rm -rf "$TERRAFORM_DATA_DIR"' EXIT
 
 required_files=(
   "$ROOT_DIR/infra/eks/README.md"
@@ -15,14 +19,20 @@ required_files=(
   "$TERRAFORM_DIR/outputs.tf"
   "$TERRAFORM_DIR/workload-identity.tf"
   "$TERRAFORM_DIR/workload-identity-outputs.tf"
+  "$TERRAFORM_DIR/modules/workload-iam-policies/main.tf"
+  "$TERRAFORM_DIR/modules/workload-iam-policies/variables.tf"
+  "$TERRAFORM_DIR/modules/workload-iam-policies/outputs.tf"
   "$TERRAFORM_DIR/dev.tfvars.example"
   "$ROOT_DIR/infra/eks/bootstrap/rds/bootstrap-databases.sql"
   "$ROOT_DIR/scripts/bootstrap-eks-rds-databases.sh"
+  "$ROOT_DIR/scripts/verify-eks-rds-bootstrap.sh"
   "$CHART_DIR/Chart.yaml"
   "$CHART_DIR/values.schema.json"
   "$CHART_DIR/templates/backend-rbac.yaml"
   "$CHART_DIR/templates/spark-driver-rbac.yaml"
   "$VALUES_FILE"
+  "$IRSA_VALUES_FILE"
+  "$POD_IDENTITY_VALUES_FILE"
   "$ROOT_DIR/docs/eks-msk-mvp-phase-1-handoff.md"
 )
 
@@ -35,6 +45,8 @@ done
 
 helm lint "$CHART_DIR" -f "$VALUES_FILE"
 helm template asklake-foundation "$CHART_DIR" -f "$VALUES_FILE" >"$RENDERED_FILE"
+helm template asklake-foundation "$CHART_DIR" -f "$VALUES_FILE" -f "$IRSA_VALUES_FILE" >"$IRSA_RENDERED_FILE"
+helm template asklake-foundation "$CHART_DIR" -f "$VALUES_FILE" -f "$POD_IDENTITY_VALUES_FILE" >"$POD_IDENTITY_RENDERED_FILE"
 
 if helm template asklake-foundation "$CHART_DIR" -f "$VALUES_FILE" \
   --set global.kafkaRuntime=redpanda >/dev/null 2>&1; then
@@ -51,6 +63,12 @@ fi
 if helm template asklake-foundation "$CHART_DIR" -f "$VALUES_FILE" \
   --set serviceAccounts.replayProducer.create=true >/dev/null 2>&1; then
   echo "Helm schema allowed the excluded Replay Producer workload" >&2
+  exit 1
+fi
+
+if helm template asklake-foundation "$CHART_DIR" -f "$VALUES_FILE" \
+  --set global.workloadIdentityMode=unknown >/dev/null 2>&1; then
+  echo "Helm schema accepted an unknown workload identity mode" >&2
   exit 1
 fi
 
@@ -118,6 +136,21 @@ grep -q 'kafkaRuntime: "msk-serverless"' "$RENDERED_FILE"
 grep -q 'kafkaAuth: "iam"' "$RENDERED_FILE"
 grep -q 'trinoRuntime: "eks"' "$RENDERED_FILE"
 grep -q 'continuousOwner: "ec2-mvp"' "$RENDERED_FILE"
+grep -q 'workloadIdentityMode: "disabled"' "$RENDERED_FILE"
+
+irsa_annotation_count="$(grep -c 'eks.amazonaws.com/role-arn:' "$IRSA_RENDERED_FILE")"
+if [[ "$irsa_annotation_count" -ne 4 ]]; then
+  echo "IRSA render must contain exactly four workload role annotations" >&2
+  exit 1
+fi
+
+if grep -q 'eks.amazonaws.com/role-arn:' "$POD_IDENTITY_RENDERED_FILE"; then
+  echo "Pod Identity render must not contain IRSA annotations" >&2
+  exit 1
+fi
+
+grep -q 'workloadIdentityMode: "irsa"' "$IRSA_RENDERED_FILE"
+grep -q 'workloadIdentityMode: "pod_identity"' "$POD_IDENTITY_RENDERED_FILE"
 
 if grep -q 'asklake-replay-producer' "$RENDERED_FILE"; then
   echo "EKS foundation must not create a Replay Producer service account" >&2
@@ -131,9 +164,13 @@ fi
 
 if grep -Eiq '(AKIA[0-9A-Z]{16}|aws_secret_access_key|BEGIN (RSA|OPENSSH|EC) PRIVATE KEY)' \
   "$TERRAFORM_DIR"/*.tf \
+  "$TERRAFORM_DIR"/modules/workload-iam-policies/*.tf \
   "$TERRAFORM_DIR/dev.tfvars.example" \
   "$ROOT_DIR/infra/eks/bootstrap/rds/bootstrap-databases.sql" \
   "$ROOT_DIR/scripts/bootstrap-eks-rds-databases.sh" \
+  "$ROOT_DIR/scripts/verify-eks-rds-bootstrap.sh" \
+  "$IRSA_VALUES_FILE" \
+  "$POD_IDENTITY_VALUES_FILE" \
   "$VALUES_FILE"; then
   echo "credential-like value found in EKS foundation examples" >&2
   exit 1
@@ -152,6 +189,7 @@ for database in asklake_app airflow_metadata iceberg_catalog; do
 done
 
 bash -n "$ROOT_DIR/scripts/bootstrap-eks-rds-databases.sh"
+bash -n "$ROOT_DIR/scripts/verify-eks-rds-bootstrap.sh"
 
 TERRAFORM_BIN="${ASKLAKE_TERRAFORM_BIN:-}"
 if [[ -z "$TERRAFORM_BIN" ]] && command -v terraform >/dev/null 2>&1; then

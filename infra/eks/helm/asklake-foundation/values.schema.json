@@ -7,14 +7,15 @@
     "global": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["environment", "clusterName", "kafkaRuntime", "kafkaAuth", "trinoRuntime", "continuousOwner"],
+      "required": ["environment", "clusterName", "kafkaRuntime", "kafkaAuth", "trinoRuntime", "continuousOwner", "workloadIdentityMode"],
       "properties": {
         "environment": { "type": "string", "enum": ["dev", "staging"] },
         "clusterName": { "type": "string" },
         "kafkaRuntime": { "type": "string", "const": "msk-serverless" },
         "kafkaAuth": { "type": "string", "const": "iam" },
         "trinoRuntime": { "type": "string", "const": "eks" },
-        "continuousOwner": { "type": "string", "const": "ec2-mvp" }
+        "continuousOwner": { "type": "string", "const": "ec2-mvp" },
+        "workloadIdentityMode": { "type": "string", "enum": ["disabled", "irsa", "pod_identity"] }
       }
     },
     "namespace": {

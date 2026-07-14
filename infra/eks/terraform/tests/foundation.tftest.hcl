@@ -286,41 +286,6 @@ run "reject_incomplete_kms_contract" {
 run "irsa_workload_identity_contract" {
   command = plan
 
-  override_data {
-    target = data.aws_iam_policy_document.backend
-    values = {
-      json = "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"s3:GetObject\",\"Resource\":\"arn:aws:s3:::mock/*\"}]}"
-    }
-  }
-
-  override_data {
-    target = data.aws_iam_policy_document.trino
-    values = {
-      json = "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"s3:GetObject\",\"Resource\":\"arn:aws:s3:::mock/*\"}]}"
-    }
-  }
-
-  override_data {
-    target = data.aws_iam_policy_document.msk_smoke
-    values = {
-      json = "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"kafka-cluster:Connect\",\"Resource\":\"arn:aws:kafka:ap-northeast-2:111122223333:cluster/mock/id\"}]}"
-    }
-  }
-
-  override_data {
-    target = data.aws_iam_policy_document.spark
-    values = {
-      json = "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"kafka-cluster:ReadData\",\"Resource\":\"arn:aws:kafka:ap-northeast-2:111122223333:topic/mock/id/topic\"}]}"
-    }
-  }
-
-  override_data {
-    target = data.aws_iam_policy_document.workload_assume_role
-    values = {
-      json = "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Principal\":{\"Federated\":\"arn:aws:iam::111122223333:oidc-provider/mock\"}}]}"
-    }
-  }
-
   variables {
     environment             = "dev"
     owner                   = "pair-a"
@@ -358,6 +323,134 @@ run "irsa_workload_identity_contract" {
   assert {
     condition     = length(aws_eks_pod_identity_association.workload) == 0
     error_message = "IRSA mode must not create Pod Identity associations."
+  }
+
+  assert {
+    condition = contains(
+      one([for statement in module.workload_iam_policies.contracts.spark.Statement : statement if statement.Sid == "ReadSparkObjects"]).Resource,
+      local.storage_object_arns.checkpoint,
+      ) && contains(
+      one([for statement in module.workload_iam_policies.contracts.spark.Statement : statement if statement.Sid == "ReadSparkObjects"]).Resource,
+      local.storage_object_arns.quarantine,
+    )
+    error_message = "Spark must be able to read its exact checkpoint and quarantine prefixes."
+  }
+
+  assert {
+    condition = contains(
+      one([for statement in module.workload_iam_policies.contracts.backend.Statement : statement if statement.Sid == "ReadBackendObjects"]).Resource,
+      local.storage_object_arns.evidence,
+    )
+    error_message = "Backend must be able to read its exact evidence prefix."
+  }
+
+  assert {
+    condition = (
+      one([for statement in module.workload_iam_policies.contracts.spark.Statement : statement if statement.Sid == "ConsumeFixtureTopic"]).Resource == [local.msk_topic_arn] &&
+      one([for statement in module.workload_iam_policies.contracts.spark.Statement : statement if statement.Sid == "UseFixtureConsumerGroup"]).Resource == [local.msk_group_arn] &&
+      one([for statement in module.workload_iam_policies.contracts.msk_smoke.Statement : statement if statement.Sid == "DescribeFixtureTopic"]).Resource == [local.msk_topic_arn]
+    )
+    error_message = "Spark and MSK smoke policies must stay on the isolated test topic and consumer group."
+  }
+
+  assert {
+    condition = alltrue(flatten([
+      for contract in values(module.workload_iam_policies.contracts) : contract == null ? [] : [
+        for statement in contract.Statement :
+        alltrue([for action in statement.Action : action != "s3:*" && action != "kafka-cluster:*"]) &&
+        alltrue([for resource in statement.Resource : resource != "*"])
+      ]
+    ]))
+    error_message = "Rendered workload policies must not contain broad actions or Resource star."
+  }
+
+  assert {
+    condition = (
+      jsondecode(aws_iam_role.workload["spark"].assume_role_policy).Statement[0].Principal.Federated[0] == var.irsa_oidc_provider_arn &&
+      jsondecode(aws_iam_role.workload["spark"].assume_role_policy).Statement[0].Action == ["sts:AssumeRoleWithWebIdentity"] &&
+      jsondecode(aws_iam_role.workload["spark"].assume_role_policy).Statement[0].Condition.StringEquals["${local.cluster_oidc_host}:aud"] == "sts.amazonaws.com" &&
+      jsondecode(aws_iam_role.workload["spark"].assume_role_policy).Statement[0].Condition.StringEquals["${local.cluster_oidc_host}:sub"] == "system:serviceaccount:${var.namespace}:${var.service_account_names["spark"]}"
+    )
+    error_message = "IRSA trust must bind the exact provider, audience, namespace, and Spark service account."
+  }
+}
+
+run "create_mode_irsa_has_static_identity_keys" {
+  command = plan
+
+  variables {
+    environment              = "dev"
+    owner                    = "pair-a"
+    resource_lifecycle       = "mvp-owned"
+    cluster_mode             = "create"
+    control_plane_subnet_ids = ["subnet-private-a", "subnet-private-b"]
+    create_ecr_repositories  = false
+
+    msk_mode               = "create"
+    msk_subnet_ids         = ["subnet-private-a", "subnet-private-b"]
+    msk_security_group_ids = ["sg-msk-client"]
+
+    storage_mode = "create"
+    storage_bucket_names = {
+      raw           = "asklake-dev-111122223333-raw"
+      output        = "asklake-dev-111122223333-output"
+      warehouse     = "asklake-dev-111122223333-warehouse"
+      query_results = "asklake-dev-111122223333-query-results"
+    }
+
+    workload_identity_mode = "irsa"
+    irsa_oidc_provider_arn = "arn:aws:iam::111122223333:oidc-provider/oidc.example.invalid/created"
+  }
+
+  assert {
+    condition     = toset(keys(aws_iam_role.workload)) == toset(["backend", "trino", "mskSmoke", "spark"])
+    error_message = "Create mode IRSA identity resource keys must be fully known during plan."
+  }
+}
+
+run "create_mode_pod_identity_has_static_keys" {
+  command = plan
+
+  variables {
+    environment              = "dev"
+    owner                    = "pair-a"
+    resource_lifecycle       = "mvp-owned"
+    cluster_mode             = "create"
+    control_plane_subnet_ids = ["subnet-private-a", "subnet-private-b"]
+    create_ecr_repositories  = false
+
+    msk_mode               = "create"
+    msk_subnet_ids         = ["subnet-private-a", "subnet-private-b"]
+    msk_security_group_ids = ["sg-msk-client"]
+
+    storage_mode = "create"
+    storage_bucket_names = {
+      raw           = "asklake-dev-111122223333-raw"
+      output        = "asklake-dev-111122223333-output"
+      warehouse     = "asklake-dev-111122223333-warehouse"
+      query_results = "asklake-dev-111122223333-query-results"
+    }
+
+    workload_identity_mode   = "pod_identity"
+    pod_identity_agent_ready = true
+  }
+
+  assert {
+    condition     = toset(keys(aws_eks_pod_identity_association.workload)) == toset(["backend", "trino", "mskSmoke", "spark"])
+    error_message = "Create mode Pod Identity association keys must be fully known during plan."
+  }
+
+  assert {
+    condition = (
+      jsondecode(aws_iam_role.workload["spark"].assume_role_policy).Statement[0].Principal.Service[0] == "pods.eks.amazonaws.com" &&
+      toset(jsondecode(aws_iam_role.workload["spark"].assume_role_policy).Statement[0].Action) == toset(["sts:AssumeRole", "sts:TagSession"])
+    )
+    error_message = "Pod Identity trust must contain only the EKS Pod Identity principal and session actions."
+  }
+
+  assert {
+    condition     = output.trino_handoff.irsa_role_arn == null
+    error_message = "Pod Identity mode must not expose a Trino IRSA role ARN."
   }
 }
 

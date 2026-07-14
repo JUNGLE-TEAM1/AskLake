@@ -4,12 +4,17 @@ locals {
   use_pod_identity          = var.workload_identity_mode == "pod_identity"
   cluster_oidc_issuer       = local.create_cluster ? try(aws_eks_cluster.this[0].identity[0].oidc[0].issuer, null) : try(data.aws_eks_cluster.existing[0].identity[0].oidc[0].issuer, null)
   cluster_oidc_host         = replace(coalesce(local.cluster_oidc_issuer, ""), "https://", "")
-  identity_prerequisites_ready = (
-    local.use_irsa ? try(trimspace(var.irsa_oidc_provider_arn), "") != "" && local.cluster_oidc_host != "" :
+  identity_configuration_ready = (
+    local.use_irsa ? try(trimspace(var.irsa_oidc_provider_arn), "") != "" :
     local.use_pod_identity ? var.pod_identity_agent_ready :
     false
   )
-  identity_resources_ready = local.identity_prerequisites_ready && var.resource_lifecycle == "mvp-owned"
+  identity_resources_ready = (
+    local.identity_configuration_ready &&
+    var.resource_lifecycle == "mvp-owned" &&
+    local.reference_msk &&
+    local.use_storage
+  )
   identity_role_suffixes = {
     backend  = "backend"
     trino    = "trino"
@@ -17,16 +22,49 @@ locals {
     spark    = "spark"
   }
 
-  identity_policy_documents = local.workload_identity_enabled ? {
-    backend  = try(data.aws_iam_policy_document.backend[0].json, null)
-    trino    = try(data.aws_iam_policy_document.trino[0].json, null)
-    mskSmoke = try(data.aws_iam_policy_document.msk_smoke[0].json, null)
-    spark    = try(data.aws_iam_policy_document.spark[0].json, null)
+  active_identity_policy_documents = local.identity_resources_ready ? {
+    backend  = local.workload_iam_policy_documents.backend
+    trino    = local.workload_iam_policy_documents.trino
+    mskSmoke = local.workload_iam_policy_documents.msk_smoke
+    spark    = local.workload_iam_policy_documents.spark
   } : {}
 
-  active_identity_policy_documents = local.identity_resources_ready ? {
-    for workload, document in local.identity_policy_documents :
-    workload => document if document != null
+  workload_assume_role_policies = local.identity_resources_ready ? {
+    for workload in keys(local.active_identity_policy_documents) :
+    workload => local.use_irsa ? jsonencode({
+      Version = "2012-10-17"
+      Statement = [
+        {
+          Sid    = "AssumeRoleWithWebIdentity"
+          Effect = "Allow"
+          Action = ["sts:AssumeRoleWithWebIdentity"]
+          Principal = {
+            Federated = [var.irsa_oidc_provider_arn]
+          }
+          Condition = {
+            StringEquals = {
+              "${local.cluster_oidc_host}:aud" = "sts.amazonaws.com"
+              "${local.cluster_oidc_host}:sub" = "system:serviceaccount:${var.namespace}:${var.service_account_names[workload]}"
+            }
+          }
+        }
+      ]
+      }) : jsonencode({
+      Version = "2012-10-17"
+      Statement = [
+        {
+          Sid    = "AssumeRoleWithPodIdentity"
+          Effect = "Allow"
+          Action = [
+            "sts:AssumeRole",
+            "sts:TagSession",
+          ]
+          Principal = {
+            Service = ["pods.eks.amazonaws.com"]
+          }
+        },
+      ]
+    })
   } : {}
 }
 
@@ -48,11 +86,8 @@ check "workload_identity_data_plane" {
 
 check "irsa_provider_contract" {
   assert {
-    condition = !local.use_irsa || (
-      try(trimspace(var.irsa_oidc_provider_arn), "") != "" &&
-      local.cluster_oidc_host != ""
-    )
-    error_message = "IRSA requires the reviewed EKS IAM OIDC provider ARN and cluster issuer."
+    condition     = !local.use_irsa || try(trimspace(var.irsa_oidc_provider_arn), "") != ""
+    error_message = "IRSA requires the reviewed EKS IAM OIDC provider ARN. A new cluster supplies its issuer after the cluster stage."
   }
 }
 
@@ -75,58 +110,11 @@ check "workload_identity_policy_completeness" {
   }
 }
 
-data "aws_iam_policy_document" "workload_assume_role" {
-  for_each = local.active_identity_policy_documents
-
-  dynamic "statement" {
-    for_each = local.use_irsa ? [1] : []
-
-    content {
-      sid     = "AssumeRoleWithWebIdentity"
-      actions = ["sts:AssumeRoleWithWebIdentity"]
-
-      principals {
-        type        = "Federated"
-        identifiers = [var.irsa_oidc_provider_arn]
-      }
-
-      condition {
-        test     = "StringEquals"
-        variable = "${local.cluster_oidc_host}:aud"
-        values   = ["sts.amazonaws.com"]
-      }
-
-      condition {
-        test     = "StringEquals"
-        variable = "${local.cluster_oidc_host}:sub"
-        values   = ["system:serviceaccount:${var.namespace}:${var.service_account_names[each.key]}"]
-      }
-    }
-  }
-
-  dynamic "statement" {
-    for_each = local.use_pod_identity ? [1] : []
-
-    content {
-      sid = "AssumeRoleWithPodIdentity"
-      actions = [
-        "sts:AssumeRole",
-        "sts:TagSession",
-      ]
-
-      principals {
-        type        = "Service"
-        identifiers = ["pods.eks.amazonaws.com"]
-      }
-    }
-  }
-}
-
 resource "aws_iam_role" "workload" {
   for_each = local.active_identity_policy_documents
 
   name               = "${var.name_prefix}-${var.environment}-${local.identity_role_suffixes[each.key]}"
-  assume_role_policy = data.aws_iam_policy_document.workload_assume_role[each.key].json
+  assume_role_policy = local.workload_assume_role_policies[each.key]
 }
 
 resource "aws_iam_policy" "workload" {

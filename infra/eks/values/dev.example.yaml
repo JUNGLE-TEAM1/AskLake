@@ -5,6 +5,7 @@ global:
   kafkaAuth: iam
   trinoRuntime: eks
   continuousOwner: ec2-mvp
+  workloadIdentityMode: disabled
 
 namespace:
   create: true
