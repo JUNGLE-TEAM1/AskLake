@@ -1046,21 +1046,11 @@ function BarChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetProps<"
     },
     colors,
     dataLabels: {
-      enabled: true,
-      formatter: (value: number) => value === 0 ? "" : formatAxisNumber(value),
-      offsetY: -5,
-      style: {
-        colors: ["#334155"],
-        fontSize: "11px",
-        fontWeight: 800,
-      },
+      enabled: false,
     },
     plotOptions: {
       bar: {
         borderRadius: 5,
-        dataLabels: {
-          position: "top",
-        },
         horizontal: widget.config.orientation === "horizontal",
         columnWidth: "48%",
       },

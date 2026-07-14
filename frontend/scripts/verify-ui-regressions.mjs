@@ -1202,6 +1202,13 @@ const checks = [
     ],
   },
   {
+    name: "Dashboard bar charts keep values in axes and tooltips without drawing labels above bars",
+    file: "src/pages/dashboard/runtime/WidgetRenderer.tsx",
+    patterns: [
+      /function BarChartWidget[\s\S]*?dataLabels:\s*\{\s*enabled:\s*false,?\s*\}/,
+    ],
+  },
+  {
     name: "Visualization request patches can use the active dataset",
     file: "src/pages/dashboard/runtime/DashboardRuntimeView.tsx",
     patterns: [
