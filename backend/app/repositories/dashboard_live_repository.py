@@ -126,8 +126,8 @@ def ensure_dashboard_live_schema(db: Session) -> None:
         # volumes forward-compatible when a column is added later.
         for statement in (
             "ALTER TABLE dataset_freshness ADD COLUMN IF NOT EXISTS next_check_after_ms integer NOT NULL DEFAULT 1000",
-            "ALTER TABLE dataset_freshness ALTER COLUMN next_check_after_ms SET DEFAULT 1000",
             "ALTER TABLE dataset_freshness DROP CONSTRAINT IF EXISTS dataset_freshness_next_check_after_ms_check",
+            "ALTER TABLE dataset_freshness ALTER COLUMN next_check_after_ms SET DEFAULT 1000",
             "ALTER TABLE dataset_freshness ADD CONSTRAINT dataset_freshness_next_check_after_ms_check CHECK (next_check_after_ms BETWEEN 1000 AND 60000)",
             "ALTER TABLE dashboard_widget_results ADD COLUMN IF NOT EXISTS calculation_state jsonb NOT NULL DEFAULT '{}'::jsonb",
             "ALTER TABLE dashboard_widget_results ADD COLUMN IF NOT EXISTS calculation_mode varchar(32) NOT NULL DEFAULT 'full'",

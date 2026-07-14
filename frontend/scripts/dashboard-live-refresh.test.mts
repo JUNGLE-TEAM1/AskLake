@@ -52,9 +52,9 @@ test("server polling hints use a safe fallback and 1-60 second bounds", () => {
   assert.equal(dashboardLiveRefreshInterval(500), 1_000);
   assert.equal(dashboardLiveRefreshInterval(2_500.4), 2_500);
   assert.equal(dashboardLiveRefreshInterval(90_000), 60_000);
-  const jittered = dashboardLiveRefreshInterval(5_000, "clickstream_events");
-  assert.ok(jittered >= 5_000 && jittered <= 5_500);
-  assert.equal(jittered, dashboardLiveRefreshInterval(5_000, "clickstream_events"));
+  const jittered = dashboardLiveRefreshInterval(1_000, "clickstream_events");
+  assert.ok(jittered >= 1_000 && jittered <= 1_100);
+  assert.equal(jittered, dashboardLiveRefreshInterval(1_000, "clickstream_events"));
 });
 
 test("published runtime groups each live dataset once", () => {
