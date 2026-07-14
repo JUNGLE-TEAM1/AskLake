@@ -553,6 +553,12 @@ Phase 1 foundation과 Pair B 인수 계약을 변경하면 아래 검증을 실�
 bash scripts/verify-eks-foundation.sh
 ```
 
+Phase 2 AWS inventory는 resource name, ARN, endpoint, public IP와 account ID를 출력하지 않는 아래 스크립트로 확인한다. `AccessDenied`는 빈 inventory로 해석하지 않으며 [Phase 2 AWS Inventory](eks-phase-2-inventory.md)의 read-only 권한과 생성 gate를 따른다.
+
+```bash
+bash scripts/inspect-eks-aws-inventory.sh
+```
+
 ```bash
 docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml config
 ```

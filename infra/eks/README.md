@@ -25,6 +25,14 @@
 bash scripts/verify-eks-foundation.sh
 ```
 
+AWS 환경 inventory는 실제 식별자를 출력하지 않는 별도 read-only 스크립트로 확인한다.
+
+```bash
+bash scripts/inspect-eks-aws-inventory.sh
+```
+
+필요한 최소 metadata read 권한은 `iam/phase2-inventory-policy.json`, 판정과 resource 생성 gate는 [Phase 2 AWS Inventory](../../docs/eks-phase-2-inventory.md)에 기록한다.
+
 Terraform CLI가 설치돼 있으면 script가 `fmt -check`, `init -backend=false`, `validate`와 mock AWS provider 기반 `terraform test`까지 수행한다. 설치되지 않은 환경에서는 Helm과 계약 검증만 수행하고 Terraform 검증은 명시적으로 `SKIP`이라고 출력한다.
 
 Docker로 같은 Terraform 검증을 실행할 수도 있다.
