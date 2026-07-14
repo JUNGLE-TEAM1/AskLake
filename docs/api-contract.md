@@ -3198,7 +3198,7 @@ Response `200 OK`:
 
 Frontend는 published `/dashboards/{dashboardId}`에서 Continuous dataset만 polling합니다. 같은 dataset의 freshness는 한 번만 조회하고 `latestRevision > appliedRevision`인 widget만 재요청합니다. 응답 revision이 실제로 전진했지만 아직 최신보다 뒤면 250ms 뒤 다음 revision을 이어서 요청하고, 전진하지 않았으면 빠른 재시도를 멈추고 backend 권장 주기로 돌아갑니다. 일반 주기에는 dataset ID 기반 0~10% deterministic jitter를 더하며, hidden tab에서는 중지하고 route unmount 시 timer/request를 정리하며, 실패 시 기존 widget을 그대로 보여줍니다.
 
-실제 event-to-screen 지연은 `다음 Spark trigger까지 남은 시간 + Spark/S3 + backend reconciliation 0~5초 + polling 0~nextCheckAfterMs(+ jitter) + widget 계산`입니다. 2~5초를 항상 보장하지 않습니다.
+실제 event-to-screen 지연은 `다음 Spark trigger까지 남은 시간 + Spark/S3 + backend reconciliation 0~1초 + polling 0~nextCheckAfterMs(+ jitter) + widget 계산`입니다. 2~5초를 항상 보장하지 않습니다.
 
 상세 운영·검증·제한은 `docs/kafka-postgresql-dashboard-sync.md`를 따릅니다.
 
