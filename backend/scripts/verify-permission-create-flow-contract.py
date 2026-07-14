@@ -114,6 +114,21 @@ def main() -> None:
 
             review_request = ReviewPipelineRequest.model_validate(pipeline_payload())
             review = etl_service.review_pipeline(review_request)
+            basic_information = {entry.label: entry.value for entry in review.basic_information}
+            assert "작업 ID" not in basic_information
+            assert "작업명" not in basic_information
+            assert basic_information["처리 방식"] == "배치 처리"
+            assert basic_information["출력 데이터셋 이름"] == review_request.target_dataset
+            destination_labels = {entry.label for entry in review.destination}
+            assert "테이블 이름" not in destination_labels
+            assert "계층" not in destination_labels
+            continuous_review = etl_service.review_pipeline(
+                review_request.model_copy(update={"execution_mode": "continuous"})
+            )
+            assert any(
+                entry.label == "처리 방식" and entry.value == "실시간 스트리밍"
+                for entry in continuous_review.basic_information
+            )
             assert review.permission[0].label == "담당자"
             assert review.permission[0].value == "data-platform · 모든 작업 가능"
             assert review.permission[1].label == "로그인한 모든 사용자"
