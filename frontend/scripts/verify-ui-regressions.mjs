@@ -1587,6 +1587,28 @@ const checks = [
       /input: sourceDataset\.name/,
     ],
   },
+  {
+    name: "Semantic catalog keeps the focused model editor and Dataset-level RAG workflow",
+    file: "src/pages/semantic/SemanticLayerPage.tsx",
+    patterns: [
+      /type SemanticTab = "datasets" \| "metrics" \| "dimensions" \| "rag" \| "questions" \| "access";/,
+      /\{ id: "dimensions", label: "분석 기준 · 용어"/,
+      /\{ id: "rag", label: "RAG 검색"/,
+      /> 저장<\/Button>/,
+      /> 검증<\/Button>/,
+      /> 게시<\/Button>/,
+      /<RagTab/,
+      /VectorDB 적재 문서 미리보기/,
+      /const accessActions: SemanticPermissionAction\[\] = \["view", "query", "manage", "publish"\];/,
+    ],
+    forbiddenPatterns: [
+      /label: "모델 요약"/,
+      /label: "업무 용어"/,
+      /<SummaryTab/,
+      /<VocabularyTab/,
+      /Metric · Dimension/,
+    ],
+  },
 ];
 
 const failures = [];

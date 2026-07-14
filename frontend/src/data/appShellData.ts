@@ -35,7 +35,7 @@ export const wizardFlows: FlowId[] = ["source", "recordParsing", "schema", "repe
 export const summaryByFlow: Record<FlowId, Array<[string, string]>> = {
   semantic: [
     ["담당 영역", "Semantic Layer"],
-    ["핵심 기능", "Metric / Dimension / 관계 관리"],
+    ["핵심 기능", "지표 / 분석 기준 / 관계 관리"],
     ["상태", "Mock 관리 화면"],
     ["입력", "Catalog Dataset"],
     ["권한", "Publish된 정의만 챗봇 기준으로 사용"],

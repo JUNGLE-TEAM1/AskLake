@@ -42,8 +42,8 @@ export type RagClassification =
   | "unknown";
 
 export type RagColumnRole = "document_text" | "document_title" | "filter" | "identifier" | "exclude";
-export type RagReviewState = "not_configured" | "candidate" | "needs_review" | "approved" | "excluded";
-export type RagIndexStatus = "not_indexed" | "indexing" | "ready" | "failed";
+export type RagReviewState = "not_configured" | "classifying" | "candidate" | "needs_review" | "approved" | "excluded" | "failed";
+export type RagIndexStatus = "not_indexed" | "queued" | "indexing" | "ready" | "failed" | "canceled";
 
 export type RagColumnRecommendation = {
   column: string;
@@ -90,6 +90,7 @@ export type RagDatasetProfile = {
 
 export type SemanticLayerModel = {
   id: string;
+  version: number;
   name: string;
   description: string;
   purpose: string;
@@ -202,7 +203,7 @@ export const semanticRagProfiles: RagDatasetProfile[] = [
     excludedColumns: ["gross_sales", "order_count"],
     recommendations: [
       { column: "sales_date", role: "filter", reason: "기간 조건에 사용하는 날짜 필드", confidence: 0.99 },
-      { column: "gross_sales", role: "exclude", reason: "Semantic Metric이 SQL로 계산하는 숫자 필드", confidence: 0.99 },
+      { column: "gross_sales", role: "exclude", reason: "지표 계산식으로 만들어지는 숫자 필드", confidence: 0.99 },
     ],
     sampleRows: [],
     vectorDocuments: [],
@@ -212,13 +213,14 @@ export const semanticRagProfiles: RagDatasetProfile[] = [
 export const semanticLayerMocks: SemanticLayerModel[] = [
   {
     id: "semantic-commerce-sales",
+    version: 12,
     name: "Commerce Sales",
     description: "주문과 일별 매출을 하나의 분석 언어로 묶은 업무 모델입니다.",
     purpose: "주문과 일별 매출 Mart를 연결해 매출을 일관된 기준으로 조회합니다.",
     questionExamples: ["총매출은 얼마인가?", "지역별 매출은 어떻게 되는가?", "월별 주문 수는 얼마인가?"],
     owner: "Analytics Team",
     updatedAt: "오늘 09:42",
-    status: "published",
+    status: "draft",
     linkedDatasetIds: ["ds_customer_orders_gold", "ds_sales_daily_summary"],
     metrics: [
       { id: "gross-sales", name: "gross_sales", label: "총매출", definition: "결제 완료 주문의 상품 금액 합계", expression: "SUM(orders_clean.total_amount)", format: "통화", status: "ready" },
@@ -239,17 +241,18 @@ export const semanticLayerMocks: SemanticLayerModel[] = [
   },
   {
     id: "semantic-customer-health",
+    version: 5,
     name: "Customer Health",
     description: "고객 리뷰와 주문 활동을 연결해 고객 상태를 설명하는 업무 모델입니다.",
     purpose: "리뷰 점수와 감성 신호를 주문 활동과 함께 분석합니다.",
     questionExamples: ["부정 리뷰가 많은 상품은?", "리뷰 점수가 낮은 고객군은?"],
     owner: "Customer Analytics",
     updatedAt: "어제 16:10",
-    status: "draft",
+    status: "published",
     linkedDatasetIds: ["ds_customer_orders_gold", "ds_customer_review_gold"],
     metrics: [
       { id: "review-score", name: "review_score", label: "리뷰 점수", definition: "고객 리뷰의 평균 평점", expression: "AVG(customer_review_gold.rating)", format: "0.0점", status: "ready" },
-      { id: "negative-review-rate", name: "negative_review_rate", label: "부정 리뷰율", definition: "전체 리뷰 중 부정 감성 리뷰의 비율", expression: "AVG(sentiment = 'negative')", format: "%", status: "draft" },
+      { id: "negative-review-rate", name: "negative_review_rate", label: "부정 리뷰율", definition: "전체 리뷰 중 부정 감성 리뷰의 비율", expression: "AVG(sentiment = 'negative')", format: "%", status: "ready" },
     ],
     dimensions: [
       { id: "customer-id", name: "customer_id", label: "고객 ID", source: "orders_clean.customer_id", synonyms: ["회원", "고객 번호"] },
@@ -263,6 +266,7 @@ export const semanticLayerMocks: SemanticLayerModel[] = [
   },
   {
     id: "semantic-product-risk",
+    version: 8,
     name: "Product Risk",
     description: "상품 재고, 리뷰, 운영 신호를 조합해 상품 위험도를 관리합니다.",
     purpose: "재고 신호와 리뷰 신호를 연결해 상품 운영 위험을 확인합니다.",
@@ -309,6 +313,7 @@ export function cloneSemanticRagProfiles() {
     excludedColumns: [...profile.excludedColumns],
     recommendations: profile.recommendations.map((recommendation) => ({ ...recommendation })),
     sampleRows: profile.sampleRows.map((row) => ({ ...row })),
+    vectorDocuments: profile.vectorDocuments.map((document) => ({ ...document, metadata: { ...document.metadata } })),
   }));
 }
 
