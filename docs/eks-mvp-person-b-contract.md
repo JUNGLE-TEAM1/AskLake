@@ -50,11 +50,14 @@ MSK는 B가 Serverless + IAM으로 확정한다. A는 이 계약에 맞는 실�
 | --- | --- | --- | --- | --- | --- |
 | Frontend | `asklake-frontend`, `frontend/Dockerfile` final | image 기본 Nginx command | `80`, HTTP `GET /` | request `100m/128Mi`, limit `500m/256Mi` | `asklake-frontend` (`automountServiceAccountToken: false`) |
 | FastAPI | `asklake-fastapi`, `backend/Dockerfile:backend-runtime` | `uvicorn app.main:app --host 0.0.0.0 --port 8080` | `8080`, HTTP `GET /api/health` | request `500m/1Gi`, limit `1 CPU/2Gi` | `asklake-fastapi` |
+| Airflow runtime | `asklake-airflow`, `apache/airflow:3.3.0` ECR mirror | component별 `api-server`, `scheduler`, `dag-processor` | API Server `8080` HTTP `GET /api/v2/monitor/health`; Scheduler/DAG Processor는 `airflow jobs check` | API/Scheduler request `500m/1Gi`, limit `1 CPU/2Gi`; DAG Processor request `250m/512Mi`, limit `1 CPU/1Gi` | `asklake-airflow` (`automountServiceAccountToken: false`) |
 | Spark runtime | `asklake-spark`, `backend/Dockerfile:spark-runtime` | `local:///opt/asklake/scripts/spark_job_run.py`, runtime args는 Run contract에서 주입 | Service 없음, SparkApplication/driver 상태 확인 | driver `1 CPU/2Gi`, executor 1개 `2 CPU/4Gi` | `asklake-spark` |
 
 resource 값은 Phase 1 최초 배포용 tuning 기본값이다. Node 크기와 실제 측정 결과에 따라 변경할 수 있으며, resource 필드의 구조나 책임 경계를 바꾸는 중요한 설계 결정은 아니다.
 
 Frontend는 가능하면 같은 origin의 `/api`를 사용한다. ALB hostname 변경만으로 Frontend image를 다시 빌드하지 않도록 public API hostname을 image에 고정하지 않는다.
+
+Airflow는 세 component가 같은 digest의 이미지를 사용하고 command만 분리한다. `airflow/dags/asklake_etl_job.py`는 read-only ConfigMap 또는 같은 digest에 포함된 DAG artifact로 공급하며, 세 Pod가 동일한 DAG revision을 사용해야 한다. Airflow task는 Kubernetes API나 SparkApplication을 직접 제어하지 않고 token-authenticated FastAPI internal API만 호출한다.
 
 ### 3.2 이미지 식별 규칙
 
@@ -81,7 +84,7 @@ rollback: 직전 검증 성공 digest
 ### 3.3 A의 회신 필요 항목
 
 - AWS account와 region
-- 세 image의 실제 ECR repository URL
+- 네 image의 실제 ECR repository URL
 - EKS Node architecture가 AMD64라는 확인
 - image push 권한을 가진 AWS principal
 
@@ -259,11 +262,17 @@ MVP에서는 **단일 RDS PostgreSQL instance**를 사용하고, 그 안의 data
 | --- | --- | --- | --- |
 | Frontend | Deployment/Service | `asklake` | `asklake-frontend` |
 | FastAPI | Deployment/Service | `asklake` | `asklake-fastapi` |
+| Airflow API Server | Deployment/Service | `asklake` | `asklake-airflow` |
+| Airflow Scheduler | Deployment | `asklake` | `asklake-airflow` |
+| Airflow DAG Processor | Deployment | `asklake` | `asklake-airflow` |
+| Airflow DB migration | 일회성 Job | `asklake` | `asklake-airflow` |
 | MSK IAM smoke | 수동 적용하는 일회성 Job/Pod | `asklake` | `asklake-msk-smoke` |
 | Spark batch | SparkApplication과 driver/executor Pod | `asklake` | `asklake-spark` |
 | Replay Producer | EKS에 배포하지 않음 | 해당 없음 | 해당 없음 |
 
 모든 application RBAC는 `asklake` namespace의 Role/RoleBinding으로 제한한다. Spark Operator 설치·운영용 ClusterRole은 A의 platform 범위이며 application ServiceAccount에 재사용하지 않는다.
+
+Airflow는 FastAPI internal API와 RDS metadata database만 사용하므로 Kubernetes API RBAC를 부여하지 않고 ServiceAccount token 자동 mount를 끈다. DAG 배포용 ConfigMap은 배포 시점에 manifest가 참조하며 Airflow Pod가 Kubernetes API로 직접 조회하지 않는다.
 
 ### 6.2 FastAPI RBAC 추천안
 
@@ -308,8 +317,13 @@ FastAPI에는 다음 권한을 주지 않는다.
 | `ASKLAKE_SPARK_OUTPUT_PREFIX` | ConfigMap | 필수 | FastAPI, Spark | Deployment rollout / 새 SparkApplication |
 | `DATABASE_URL` | Secret | 필수 | FastAPI | Deployment rollout |
 | `AIRFLOW_API_BASE_URL` | ConfigMap | 필수 | FastAPI | Deployment rollout |
+| `AIRFLOW_DAG_ID=asklake_etl_job` | ConfigMap | 필수 | FastAPI | Deployment rollout |
+| `AIRFLOW__DATABASE__SQL_ALCHEMY_CONN` | Secret | 필수 | Airflow | API Server/Scheduler/DAG Processor/DB migration rollout |
+| `AIRFLOW_INTERNAL_BASE_URL=http://fastapi:8080` | ConfigMap | 필수 | Airflow | API Server/Scheduler/DAG Processor rollout |
 | `AIRFLOW_EXECUTION_API_TOKEN` | Secret | 필수 | FastAPI, Airflow | 두 workload rollout |
 | `AIRFLOW_INTERNAL_TOKEN` | Secret | 필수 | FastAPI, Airflow | 두 workload rollout |
+| `AIRFLOW__CORE__FERNET_KEY` | Secret | 필수 | Airflow | 전체 Airflow workload rollout |
+| `AIRFLOW__API_AUTH__JWT_SECRET` | Secret | 필수 | Airflow | API Server/Scheduler/DAG Processor rollout |
 | `TRINO_ENABLED` | ConfigMap | 필수 | FastAPI | Deployment rollout |
 | `TRINO_BASE_URL` | ConfigMap | `TRINO_ENABLED=true`일 때 필수 | FastAPI | Deployment rollout |
 | `TRINO_AUTH_USERNAME`, `TRINO_AUTH_PASSWORD` | Secret | 인증 사용 시 필수 | FastAPI | Deployment rollout |
@@ -318,7 +332,7 @@ FastAPI에는 다음 권한을 주지 않는다.
 | `ASKLAKE_SPARK_ICEBERG_JDBC_USER`, `ASKLAKE_SPARK_ICEBERG_JDBC_PASSWORD` | Secret | 필수 | Spark | 새 SparkApplication |
 | `ASKLAKE_CONTINUOUS_CONTROL_PLANE=external_ec2` | ConfigMap | 필수 | EKS FastAPI | Deployment rollout. fail-closed guard 구현 필요 |
 
-장기 AWS access key/secret은 Kubernetes Secret에도 저장하지 않는다. FastAPI와 Spark는 EKS workload identity를 사용하고 외부 fixture producer는 A가 지정한 외부 AWS principal을 사용한다.
+장기 AWS access key/secret은 Kubernetes Secret에도 저장하지 않는다. FastAPI와 Spark는 EKS workload identity를 사용하고 외부 fixture producer는 A가 지정한 외부 AWS principal을 사용한다. Airflow에는 S3/MSK credential과 Kubernetes API 권한을 전달하지 않는다.
 
 ## 8. Network 계약
 
@@ -326,7 +340,9 @@ FastAPI에는 다음 권한을 주지 않는다.
 | --- | --- | --- | --- | --- |
 | ALB/Ingress | Frontend Service | ingress | TCP `80` | 웹 화면 |
 | ALB/Ingress | FastAPI Service | ingress | TCP `8080` | `/api`와 `/api/health` |
+| FastAPI | Airflow API Server Service | egress → ingress | TCP `8080` | DAG Run 제출과 상태 조회 |
 | Airflow | FastAPI Service | egress → ingress | TCP `8080` | internal execution API |
+| Airflow API Server, Scheduler, DAG Processor, DB migration | RDS Airflow metadata DB | egress | PostgreSQL `5432` | metadata migration과 orchestration 상태 |
 | FastAPI | Kubernetes API | egress | HTTPS `443` | SparkApplication 제출·조회·취소 |
 | FastAPI | RDS | egress | PostgreSQL `5432` | Job/Run/Catalog 상태 |
 | FastAPI | Trino | egress | A가 확정한 HTTPS port | 물리 검증과 query |
@@ -342,7 +358,7 @@ FastAPI에는 다음 권한을 주지 않는다.
 - RDS와 MSK는 public ingress를 열지 않는다.
 - Security Group source는 workload가 사용하는 Node/Pod security group 또는 승인된 외부 producer network로 제한한다.
 - MSK IAM private broker port는 `9098`로 고정하고 Trino port만 A의 배치 결정 전까지 숫자를 임의로 고정하지 않는다.
-- NetworkPolicy를 사용하는 경우 Frontend, FastAPI, Spark별 egress를 위 표에 맞춰 allowlist한다.
+- NetworkPolicy를 사용하는 경우 Frontend, FastAPI, Airflow, Spark별 ingress/egress를 위 표에 맞춰 allowlist한다.
 
 ## 9. SparkApplication 계약
 
@@ -495,6 +511,7 @@ EKS는 Continuous 상태를 표시하기 위해 읽기 API를 사용할 수 있�
 
 - MSK Serverless + IAM, private IAM bootstrap port `9098`
 - image component, build target, command, port, probe 형식
+- Airflow API Server/Scheduler/DAG Processor의 공통 image digest, component별 command/probe/resource와 Kubernetes API 비접근 원칙
 - ServiceAccount 이름과 namespace-scoped RBAC
 - IAM 요청표의 `principal/action/resource/reason` 형식과 wildcard 금지
 - ConfigMap/Secret key 분류와 rollout 규칙
@@ -557,6 +574,7 @@ manifest와 adapter 구현은 다음 검증을 통과해야 한다.
 ## 15. A 승인·회신 체크리스트
 
 - [ ] ECR repository URL과 AWS region이 확정됐다.
+- [ ] Airflow ECR mirror URL과 API Server/Scheduler/DAG Processor 공통 image digest가 확정됐다.
 - [ ] Node architecture가 AMD64임을 확인했다.
 - [ ] B가 MSK Serverless + IAM과 private IAM port `9098`을 확정했다.
 - [ ] A가 실제 MSK Serverless cluster, private IAM bootstrap endpoint와 network/IAM resource를 제공하는 책임 경계를 확인했다.
@@ -567,6 +585,8 @@ manifest와 adapter 구현은 다음 검증을 통과해야 한다.
 - [ ] Git SHA tag와 ECR digest 기록 방식을 승인했다.
 - [ ] FastAPI 중복 방지와 `runId` 복구 완료 기준을 승인했다.
 - [ ] FastAPI와 Spark의 namespace-scoped RBAC를 승인했다.
+- [ ] Airflow ServiceAccount에 Kubernetes API RBAC와 AWS data-plane credential을 부여하지 않는 경계를 승인했다.
+- [ ] Airflow component별 probe/resource와 FastAPI/RDS network 경로를 승인했다.
 - [ ] workload별 IAM action과 resource ARN에 wildcard가 없음을 확인했다.
 - [ ] ConfigMap/Secret key와 network destination 표를 승인했다.
 - [ ] 외부 fixture producer 방식이며 EKS Replay Job이 없음을 확인했다.
@@ -578,9 +598,10 @@ manifest와 adapter 구현은 다음 검증을 통과해야 한다.
 ```text
 B 계약 초안입니다.
 
-1. 이미지는 asklake-frontend, asklake-fastapi, asklake-spark 3종이며
+1. 이미지는 asklake-frontend, asklake-fastapi, asklake-airflow, asklake-spark 4종이며
    linux/amd64로 빌드합니다. Frontend는 80, FastAPI는 8080과
-   /api/health를 사용하고 Spark는 SparkApplication으로 실행합니다.
+   /api/health를 사용합니다. Airflow는 API Server/Scheduler/DAG Processor가
+   같은 digest를 사용하고 Spark는 SparkApplication으로 실행합니다.
    Git SHA tag는 표시용이고 실제 배포와 rollback은 ECR digest를 사용합니다.
 
 2. 외부 fixture producer는 격리된 asklake.eks-mvp.fixture.v1 topic에

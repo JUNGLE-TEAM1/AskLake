@@ -127,7 +127,7 @@ AskLake를 올리기 전에 EKS 자체가 Pod와 Node를 정상적으로 만들 
 
 | 담당자 A | 담당자 B |
 | --- | --- |
-| EKS Auto Mode Cluster와 NodePool | Frontend/FastAPI/Spark AMD64 image |
+| EKS Auto Mode Cluster와 NodePool | Frontend/FastAPI/Airflow/Spark AMD64 image |
 | Metrics Server와 ECR 저장소 | Kubernetes Deployment/Service/Job 기본 YAML |
 | 테스트 Pod와 Node scale-out/in | ConfigMap/Secret reference 기본 구조 |
 | MSK Serverless cluster·VPC·IAM 리소스 구축 준비 | MSK Serverless+IAM 방식과 client/env/Secret 계약 확정 |
