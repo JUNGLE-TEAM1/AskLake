@@ -16,6 +16,7 @@ from app.repositories.dashboard_live_repository import ensure_dashboard_live_sch
 from app.schemas.etl import ScheduledJobRunRequest
 from app.services.auth_service import initialize_auth
 from app.services.etl_service import run_due_scheduled_jobs, sync_active_kafka_continuous_runtimes
+from app.services.rag_service import RagService
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,7 @@ async def continuous_runtime_sync_loop() -> None:
 def run_scheduled_job_tick() -> None:
     with SessionLocal() as db:
         run_due_scheduled_jobs(db, ScheduledJobRunRequest(kafka_only=False))
+        RagService(db).reconcile_source_changes()
 
 
 async def scheduled_job_tick_loop() -> None:

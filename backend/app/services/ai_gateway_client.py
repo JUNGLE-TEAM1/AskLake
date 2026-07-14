@@ -129,6 +129,39 @@ class AiGatewayClient:
             ) from exc
         return result.model_dump(by_alias=True, mode="json")
 
+    def classify_dataset(self, request_id: str, dataset_context: dict[str, object]) -> dict[str, object]:
+        """Ask the private gateway to classify every Catalog Dataset's columns."""
+        if not self.settings.ai_gateway_base_url or not self.settings.ai_gateway_service_token:
+            raise ApiError(ErrorCode.SERVICE_UNAVAILABLE, "AI gateway is not configured", status.HTTP_503_SERVICE_UNAVAILABLE)
+        endpoint = urljoin(f"{self.settings.ai_gateway_base_url.rstrip('/')}/", self.settings.ai_gateway_classification_path.lstrip("/"))
+        payload = {"mode": "classify_dataset", "request_id": request_id, "prompt": "Classify Catalog columns for RAG document construction.", "context": dataset_context, "selected_dataset_ids": []}
+        try:
+            response = httpx.post(endpoint, json=payload, headers={"Authorization": f"Bearer {self.settings.ai_gateway_service_token}", "Content-Type": "application/json", "X-Request-ID": request_id}, timeout=self.settings.ai_gateway_timeout_seconds)
+            response.raise_for_status()
+            body = response.json()
+            output = body.get("output") if isinstance(body, dict) else None
+            if not isinstance(output, dict):
+                raise ValueError("classification output missing")
+            return output
+        except httpx.TimeoutException as exc:
+            raise ApiError(ErrorCode.BACKEND_TIMEOUT, "AI gateway request timed out", status.HTTP_504_GATEWAY_TIMEOUT) from exc
+        except (httpx.HTTPError, ValueError, TypeError) as exc:
+            raise ApiError(ErrorCode.INTERNAL_ERROR, "AI gateway classification failed", status.HTTP_502_BAD_GATEWAY) from exc
+
+    def create_embeddings(self, inputs: list[str]) -> list[list[float]]:
+        if not self.settings.ai_gateway_base_url or not self.settings.ai_gateway_service_token:
+            raise ApiError(ErrorCode.SERVICE_UNAVAILABLE, "AI gateway is not configured", status.HTTP_503_SERVICE_UNAVAILABLE)
+        endpoint = urljoin(f"{self.settings.ai_gateway_base_url.rstrip('/')}/", self.settings.ai_gateway_embeddings_path.lstrip("/"))
+        try:
+            response = httpx.post(endpoint, json={"model": self.settings.rag_embedding_model, "input": inputs}, headers={"Authorization": f"Bearer {self.settings.ai_gateway_service_token}", "Content-Type": "application/json"}, timeout=self.settings.ai_gateway_timeout_seconds)
+            response.raise_for_status()
+            data = response.json().get("data")
+            if not isinstance(data, list) or any(not isinstance(item, list) for item in data):
+                raise ValueError("embedding data missing")
+            return data
+        except (httpx.HTTPError, ValueError, TypeError) as exc:
+            raise ApiError(ErrorCode.INTERNAL_ERROR, "AI gateway embeddings failed", status.HTTP_502_BAD_GATEWAY) from exc
+
     def health_check(self) -> bool:
         if not self.settings.ai_gateway_base_url or not self.settings.ai_gateway_service_token:
             return False

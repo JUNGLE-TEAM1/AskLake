@@ -1,10 +1,13 @@
 import asyncio
 import hashlib
+import hashlib
 import json
 import logging
 import time
 from contextlib import asynccontextmanager
 from typing import Any
+
+import httpx
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
@@ -21,7 +24,7 @@ from .llm_client import (
     create_llm_client,
 )
 from .mcp_client import McpContextClient, McpContextError
-from .schemas import GenerateRequest, GenerateResponse, compact_json_size
+from .schemas import EmbeddingRequest, EmbeddingResponse, GenerateRequest, GenerateResponse, compact_json_size
 
 
 logger = logging.getLogger(__name__)
@@ -186,9 +189,10 @@ def create_app(settings: Settings | None = None, llm_client: LLMClient | None = 
         request_started = time.perf_counter()
         mcp_duration_ms = 0.0
         context_token = request_context.headers.get("X-AskLake-AI-Context", "")
-        if app_settings.mcp_enabled and not context_token:
+        requires_catalog_context = app_settings.mcp_enabled and request.mode == "query_sql"
+        if requires_catalog_context and not context_token:
             raise HTTPException(status_code=401, detail="AI context is required")
-        if app_settings.mcp_enabled:
+        if requires_catalog_context:
             if not request.request_id:
                 raise HTTPException(status_code=422, detail="request_id is required with MCP context")
             if not await app.state.context_replay_guard.consume(
@@ -239,6 +243,40 @@ def create_app(settings: Settings | None = None, llm_client: LLMClient | None = 
             provider=app.state.llm_client.provider_name,
             model=app.state.llm_client.model_name,
         )
+
+    @app.post("/v1/embeddings", response_model=EmbeddingResponse, dependencies=[Depends(require_internal_bearer)])
+    async def embeddings(request: EmbeddingRequest) -> EmbeddingResponse:
+        if len(request.input) > app_settings.embedding_batch_size:
+            raise HTTPException(status_code=422, detail="Embedding batch exceeds the configured limit")
+        if app_settings.provider == "mock":
+            vectors = []
+            for value in request.input:
+                digest = hashlib.sha256(value.encode("utf-8")).digest()
+                vectors.append([((digest[index % len(digest)] / 255.0) * 2) - 1 for index in range(app_settings.embedding_dimensions)])
+            return EmbeddingResponse(model=request.model, dimensions=app_settings.embedding_dimensions, data=vectors)
+        api_key = app_settings.provider_api_key
+        if api_key is None or not api_key.get_secret_value():
+            raise HTTPException(status_code=503, detail="AI provider is not configured")
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(app_settings.request_timeout_seconds), follow_redirects=False) as client:
+                provider_response = await client.post(
+                    f"{app_settings.provider_base_url}/embeddings",
+                    headers={"Authorization": f"Bearer {api_key.get_secret_value()}", "Content-Type": "application/json"},
+                    json={"model": request.model, "input": request.input},
+                )
+        except httpx.TimeoutException as exc:
+            raise HTTPException(status_code=504, detail="AI provider request timed out") from exc
+        except httpx.HTTPError as exc:
+            raise HTTPException(status_code=502, detail="AI provider request failed") from exc
+        if provider_response.status_code >= 400:
+            raise HTTPException(status_code=502, detail="AI provider request failed")
+        try:
+            payload = provider_response.json()
+            data = [item["embedding"] for item in payload["data"]]
+            dimensions = len(data[0]) if data else app_settings.embedding_dimensions
+            return EmbeddingResponse(model=str(payload.get("model") or request.model), dimensions=dimensions, data=data)
+        except (KeyError, TypeError, ValueError, IndexError) as exc:
+            raise HTTPException(status_code=502, detail="AI provider returned invalid embeddings") from exc
 
     return app
 

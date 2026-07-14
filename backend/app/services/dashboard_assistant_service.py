@@ -28,6 +28,10 @@ from app.services.dashboard_assistant_guard import (
     coerce_assistant_response,
     guard_assistant_response,
 )
+from app.services.rag_search_service import RagSearchService
+from app.services.rag_service import RagService
+from app.services.semantic_model_service import SemanticModelService
+from app.models.semantic_rag import RagDatasetProfileModel
 
 OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
 LOW_SIGNAL_PROMPTS = {"ㅋ", "ㅋㅋ", "ㅋㅋㅋ", "ㅎㅎ", "ㅎㅎㅎ", "ㅇㅋ", "ㅇㅇ", "ㄴㄴ", "lol", "haha", "hehe", "ok", "okay"}
@@ -56,6 +60,7 @@ class DashboardAssistantService:
             actor=actor,
             max_sample_rows=self.settings.openai_assistant_max_sample_rows,
         )
+        rag_context = self._build_rag_context(request, actor)
 
         if _is_low_signal_prompt(request.prompt):
             return _build_low_signal_prompt_response()
@@ -66,13 +71,13 @@ class DashboardAssistantService:
             return self._mock_fallback_response(request, context, "mock fallback: OPENAI_API_KEY가 설정되지 않았습니다.")
 
         try:
-            raw_payload = self._request_openai(request, context)
+            raw_payload = self._request_openai(request, context, rag_context) if rag_context else self._request_openai(request, context)
             coerced_response = coerce_assistant_response(raw_payload)
             guarded_response = guard_assistant_response(coerced_response, context)
             guarded_response = _prefer_prompt_bound_visualization_action(request, context, guarded_response)
             guarded_response = _with_visualization_fallback_action(request, context, guarded_response)
             guarded_response = _normalize_visualization_success_message(request, guarded_response)
-            return self._with_context_warnings(guarded_response, context)
+            return self._attach_rag(self._with_context_warnings(guarded_response, context), rag_context)
         except (HTTPError, URLError, TimeoutError, ValueError, OSError) as exc:
             return self._mock_fallback_response(
                 request,
@@ -84,6 +89,7 @@ class DashboardAssistantService:
         self,
         assistant_request: DashboardAssistantRequest,
         context: AssistantDashboardContext,
+        rag_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         payload = {
             "model": self.settings.openai_assistant_model,
@@ -95,6 +101,7 @@ class DashboardAssistantService:
                     "selectedWidgetId": assistant_request.selected_widget_id,
                     "widgetId": assistant_request.widget_id,
                     "context": context.to_prompt_payload(),
+                    "ragContext": rag_context or {},
                 },
                 ensure_ascii=False,
             ),
@@ -143,6 +150,40 @@ class DashboardAssistantService:
             actions=[],
             warnings=[*context.warnings, warning],
         )
+
+    def _build_rag_context(self, request: DashboardAssistantRequest, actor: ActorContext) -> dict[str, Any] | None:
+        if not request.semantic_model_id and not request.current_dataset_id:
+            return None
+        db = getattr(self.runtime_repository, "db", None)
+        if db is None:
+            return {"sources": [], "retrieval": {"mode": "hybrid", "status": "unavailable"}}
+        rag_service = RagService(db)
+        dataset_ids = [request.current_dataset_id] if request.current_dataset_id else []
+        if request.semantic_model_id:
+            model = SemanticModelService(db).get(request.semantic_model_id, actor)
+            if model.status != "published":
+                return {"sources": [], "retrieval": {"mode": "hybrid", "status": "semantic_model_not_published", "semanticModelId": request.semantic_model_id}}
+            dataset_ids = list(dict.fromkeys([*dataset_ids, *(item.dataset_id for item in model.datasets)]))
+        aliases: list[str] = []
+        for dataset_id in dataset_ids:
+            try:
+                rag_service._dataset(dataset_id, actor, "query")
+            except Exception:
+                continue
+            profile = rag_service.profile(dataset_id, actor)
+            if profile.review_state == "approved" and profile.index_status == "ready" and profile.target_alias:
+                aliases.append(profile.target_alias)
+        try:
+            return RagSearchService(self.settings).search(query=request.prompt, aliases=aliases, actor=actor)
+        except Exception as exc:
+            return {"sources": [], "retrieval": {"mode": "hybrid", "status": "unavailable", "reason": exc.__class__.__name__}}
+
+    @staticmethod
+    def _attach_rag(response: DashboardAssistantResponse, rag_context: dict[str, Any] | None) -> DashboardAssistantResponse:
+        if rag_context:
+            response.sources = list(rag_context.get("sources") or [])
+            response.retrieval = rag_context.get("retrieval") or {}
+        return response
 
     @staticmethod
     def _with_context_warnings(

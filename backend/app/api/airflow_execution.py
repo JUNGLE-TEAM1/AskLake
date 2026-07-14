@@ -12,6 +12,7 @@ from app.schemas.etl import (
     AirflowSparkExecutionRequest,
 )
 from app.services import etl_service
+from app.services.rag_service import RagService
 
 router = APIRouter(prefix="/internal/airflow", tags=["internal-airflow"])
 
@@ -62,3 +63,13 @@ def reconcile_spark_run_catalog(
         job_id=request.job_id,
         run_id=run_id,
     )
+
+
+@router.post("/rag-jobs/{job_id}/result", response_model=dict)
+def complete_rag_job(
+    job_id: str,
+    result: dict,
+    _: None = Depends(require_airflow_execution_token),
+    db: Session = Depends(get_db),
+) -> dict:
+    return RagService(db).complete_job(job_id, result).model_dump(by_alias=True, mode="json")

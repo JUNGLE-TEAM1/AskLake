@@ -14,9 +14,9 @@ from app.schemas.permissions import PermissionGrant
 
 PermissionResourceKey = tuple[str, str]
 DELETED_SEED_SOURCE = "admin_seed_deleted"
-ALLOWED_ACTIONS = {"view", "query", "run", "manage", "delete", "share"}
+ALLOWED_ACTIONS = {"view", "query", "run", "manage", "delete", "share", "publish"}
 ALLOWED_PRINCIPAL_TYPES = {"user", "group", "role", "public"}
-ALLOWED_RESOURCE_TYPES = {"dataset", "etl_job", "dashboard"}
+ALLOWED_RESOURCE_TYPES = {"dataset", "etl_job", "dashboard", "semantic_model"}
 
 
 def ensure_permission_grant_table(db: Session) -> None:

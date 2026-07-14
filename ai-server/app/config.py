@@ -44,6 +44,8 @@ class Settings(BaseSettings):
         le=8 * 1024 * 1024,
     )
     max_output_tokens: int = Field(default=800, ge=64, le=4_096)
+    embedding_dimensions: int = Field(default=1536, ge=1, le=8192)
+    embedding_batch_size: int = Field(default=64, ge=1, le=256)
 
     model_config = SettingsConfigDict(
         case_sensitive=False,

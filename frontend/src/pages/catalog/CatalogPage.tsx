@@ -324,7 +324,6 @@ export function CatalogPage({
   datasets,
   error = null,
   loading = false,
-  onAskAssistant,
   onAction,
   onOpenSql,
   onRefresh,
@@ -335,7 +334,6 @@ export function CatalogPage({
   datasets: CatalogDataset[];
   error?: string | null;
   loading?: boolean;
-  onAskAssistant: (prompt: string) => void;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
   onOpenSql: (dataset: CatalogDataset) => void;
   onRefresh?: () => void;
@@ -656,7 +654,7 @@ export function CatalogPage({
             icon={<Search size={18} />}
             title="검색/카탈로그"
           />
-          <SemanticLayerPage datasets={datasets} onAction={onAction} onAskAssistant={onAskAssistant} />
+          <SemanticLayerPage datasets={datasets} onAction={onAction} />
         </div>
       </TooltipProvider>
     );

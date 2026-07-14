@@ -449,6 +449,9 @@ class DashboardAssistantRequest(CamelModel):
     selected_widget_id: str | None = None
     widget_id: str | None = None
     widgets: list[DashboardAssistantWidgetContext] = Field(default_factory=list)
+    semantic_model_id: str | None = None
+    current_dataset_id: str | None = None
+    surface: Literal["dashboard", "catalog", "semantic"] = "dashboard"
 
 
 class DashboardAssistantWidgetPatch(CamelModel):
@@ -495,3 +498,5 @@ class DashboardAssistantResponse(CamelModel):
     # Backward-compatible fields used by the current visualization request widget.
     config_patch: dict[str, Any] | None = None
     widget_patch: DashboardAssistantWidgetPatch | None = None
+    sources: list[dict[str, Any]] = Field(default_factory=list)
+    retrieval: dict[str, Any] | None = None

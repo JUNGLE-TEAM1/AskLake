@@ -4,7 +4,7 @@ from pydantic import Field
 
 from app.schemas.common import CamelModel
 
-PermissionAction = Literal["view", "query", "run", "manage", "delete", "share"]
+PermissionAction = Literal["view", "query", "run", "manage", "delete", "share", "publish"]
 PermissionPrincipalType = Literal["user", "group", "role", "public"]
 
 
@@ -23,5 +23,6 @@ class ResourcePermissions(CamelModel):
     can_manage: bool = False
     can_delete: bool = False
     can_share: bool = False
+    can_publish: bool = False
     computed_for: str = "demo-user"
     enforced: bool = False

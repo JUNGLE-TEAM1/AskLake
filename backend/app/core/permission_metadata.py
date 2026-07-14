@@ -58,6 +58,7 @@ def resource_permissions(
         "canManage": can_manage,
         "canDelete": can_delete,
         "canShare": can_share,
+        "canPublish": False,
         "computedFor": actor or "demo-user",
         "enforced": False,
     }
@@ -66,7 +67,7 @@ def resource_permissions(
 def normalize_actions(value: Any) -> list[str]:
     raw_actions = value if isinstance(value, list) else []
     actions = [ACTION_LABELS.get(str(action), str(action)) for action in raw_actions]
-    return sorted({action for action in actions if action in {"view", "query", "run", "manage", "delete", "share"}})
+    return sorted({action for action in actions if action in {"view", "query", "run", "manage", "delete", "share", "publish"}})
 
 
 def dedupe_grants(grants: list[dict[str, Any]]) -> list[dict[str, Any]]:

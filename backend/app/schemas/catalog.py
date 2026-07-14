@@ -103,6 +103,7 @@ class CatalogDatasetResponse(CamelModel):
     schema_: list[tuple[str, str]] = Field(alias="schema")
     size: str
     source: str
+    source_manifest: dict[str, Any] | None = None
     source_run_id: str | None = None
     status: DatasetStatus
     storage_format: str | None = None

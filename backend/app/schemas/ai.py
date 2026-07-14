@@ -5,7 +5,7 @@ from pydantic import ConfigDict, Field
 from app.schemas.common import CamelModel
 
 
-PermissionName = Literal["view", "query", "run", "manage", "delete", "share"]
+PermissionName = Literal["view", "query", "run", "manage", "delete", "share", "publish"]
 
 
 class AiContextActor(CamelModel):

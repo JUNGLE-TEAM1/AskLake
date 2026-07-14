@@ -17,6 +17,8 @@ from app.api.integration import router as integration_router
 from app.api.sql import router as sql_router
 from app.api.sql_test import router as sql_test_router
 from app.api.users import router as users_router
+from app.api.rag import router as rag_router
+from app.api.semantic_models import router as semantic_models_router
 
 api_router = APIRouter()
 api_router.include_router(health_router, tags=["health"])
@@ -33,6 +35,8 @@ api_router.include_router(dashboard_runtime_router)
 api_router.include_router(dashboard_live_router)
 api_router.include_router(dashboard_assistant_router)
 api_router.include_router(integration_router)
+api_router.include_router(semantic_models_router)
+api_router.include_router(rag_router)
 if settings.app_env.strip().lower() in {"local", "development", "dev", "test", "testing"}:
     api_router.include_router(harness_router)
     api_router.include_router(demo_hydration_router, prefix="/demo")

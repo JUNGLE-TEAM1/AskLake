@@ -122,6 +122,7 @@ def permissions_for_actor_with_governance(
             "can_manage": False,
             "can_delete": False,
             "can_share": False,
+            "can_publish": False,
         })
     if resource_lock_for_action(db, action="query", resource_id=resource_id, resource_type=resource_type) is None:
         return permissions
@@ -131,4 +132,5 @@ def permissions_for_actor_with_governance(
         "can_manage": False,
         "can_delete": False,
         "can_share": False,
+        "can_publish": False,
     })

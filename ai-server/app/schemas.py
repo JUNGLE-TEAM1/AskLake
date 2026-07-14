@@ -4,7 +4,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
-GenerationMode = Literal["query_sql"]
+GenerationMode = Literal["query_sql", "classify_dataset", "segment_document"]
 
 
 class QuerySqlOutput(BaseModel):
@@ -22,6 +22,66 @@ class QuerySqlOutput(BaseModel):
         if any(len(warning) > 500 for warning in value):
             raise ValueError("Each warning must be at most 500 characters")
         return value
+
+
+class DatasetClassificationOutput(BaseModel):
+    """Strict, bounded role recommendation for Catalog columns."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    classification: str = Field(min_length=1, max_length=100)
+    confidence: float = Field(ge=0, le=1)
+    roles: list[dict[str, Any]] = Field(max_length=256)
+
+    @field_validator("roles")
+    @classmethod
+    def validate_roles(cls, value: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        allowed = {"body", "title", "metadata", "identifier", "excluded"}
+        normalized: list[dict[str, Any]] = []
+        for role in value:
+            if not isinstance(role, dict):
+                raise ValueError("classification roles must be objects")
+            column_name = str(role.get("columnName") or "").strip()
+            role_name = str(role.get("role") or "").strip()
+            if not column_name or role_name not in allowed:
+                raise ValueError("classification roles require columnName and a supported role")
+            normalized.append({
+                "columnName": column_name,
+                "role": role_name,
+                "confidence": max(0, min(1, float(role.get("confidence") or 0))),
+                "reason": str(role.get("reason") or "")[:500],
+            })
+        return normalized
+
+
+class DocumentSegment(BaseModel):
+    """Inclusive sentence range returned by the chunking refinement mode."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    start_sentence: int = Field(ge=0, alias="startSentence")
+    end_sentence: int = Field(ge=0, alias="endSentence")
+
+    @field_validator("end_sentence")
+    @classmethod
+    def end_must_not_precede_start(cls, value: int, info: Any) -> int:
+        start = info.data.get("start_sentence")
+        if start is not None and value < start:
+            raise ValueError("segment end_sentence must be greater than or equal to start_sentence")
+        return value
+
+
+class DocumentSegmentationOutput(BaseModel):
+    """Strict boundary-only output for semantic chunk refinement."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    segments: list[DocumentSegment] = Field(min_length=1, max_length=256)
+    confidence: float = Field(default=0.0, ge=0, le=1)
+    strategy: Literal["llm_refined"] = "llm_refined"
+
+
+GenerationOutput = QuerySqlOutput | DatasetClassificationOutput | DocumentSegmentationOutput
 
 
 class GenerateRequest(BaseModel):
@@ -49,9 +109,22 @@ class GenerateResponse(BaseModel):
 
     request_id: str
     mode: GenerationMode = "query_sql"
-    output: QuerySqlOutput
+    output: GenerationOutput
     provider: str
     model: str
+
+
+class EmbeddingRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    model: str = Field(default="text-embedding-3-small", min_length=1, max_length=200)
+    input: list[str] = Field(min_length=1, max_length=256)
+
+
+class EmbeddingResponse(BaseModel):
+    model: str
+    dimensions: int = Field(ge=1)
+    data: list[list[float]]
 
 
 def compact_json_size(value: Any) -> int:

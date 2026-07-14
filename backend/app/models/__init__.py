@@ -11,6 +11,20 @@ from app.models.dashboard_runtime import DashboardPage, DashboardRevision, Dashb
 from app.models.etl import ETLJobModel, ETLRunModel, KafkaContinuousBatchModel, KafkaContinuousMaintenanceRunModel, KafkaContinuousRuntimeModel, KafkaContinuousSessionModel, KafkaSnapshotModel
 from app.models.identity import AuditEventModel, PermissionGrantModel, PrincipalControlModel, ResourceLockModel
 from app.models.sql import SqlRunModel, SqlRunResultPageModel
+from app.models.semantic_rag import (
+    RagClassificationRunModel,
+    RagColumnRecommendationModel,
+    RagDatasetProfileModel,
+    RagIndexJobModel,
+    RagIndexManifestModel,
+    SemanticDimensionModel,
+    SemanticMetricModel,
+    SemanticModelDatasetModel,
+    SemanticModelModel,
+    SemanticModelVersionModel,
+    SemanticRelationshipModel,
+    SemanticVocabularyModel,
+)
 
 __all__ = [
     "CatalogDatasetModel",
@@ -34,4 +48,16 @@ __all__ = [
     "ResourceLockModel",
     "SqlRunModel",
     "SqlRunResultPageModel",
+    "SemanticModelModel",
+    "SemanticModelVersionModel",
+    "SemanticModelDatasetModel",
+    "SemanticMetricModel",
+    "SemanticDimensionModel",
+    "SemanticRelationshipModel",
+    "SemanticVocabularyModel",
+    "RagDatasetProfileModel",
+    "RagClassificationRunModel",
+    "RagColumnRecommendationModel",
+    "RagIndexJobModel",
+    "RagIndexManifestModel",
 ]

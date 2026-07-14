@@ -1170,6 +1170,8 @@ def required_null_targets(frame, required_targets):
 
 
 def schema_contract_summary(frame, required_targets):
+    if not required_targets:
+        return int(frame.count() or 0), []
     row_count_alias = "__asklake_schema_input_rows"
 
     aliases = [f"__asklake_required_null_{index}" for index in range(len(required_targets))]

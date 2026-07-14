@@ -163,13 +163,15 @@ def permissions_for_actor(
     can_manage = can(actor, "manage", owner=owner, grants=grant_payload_list)
     can_delete = can(actor, "delete", owner=owner, grants=grant_payload_list)
     can_share = can(actor, "share", owner=owner, grants=grant_payload_list)
+    can_publish = can(actor, "publish", owner=owner, grants=grant_payload_list)
     return ResourcePermissions(
-        can_view=can_view or can_query or can_run or can_manage or can_delete or can_share,
+        can_view=can_view or can_query or can_run or can_manage or can_delete or can_share or can_publish,
         can_query=can_query,
         can_run=can_run,
         can_manage=can_manage,
         can_delete=can_delete,
         can_share=can_share,
+        can_publish=can_publish,
         computed_for=actor.name,
         enforced=enforced,
     )

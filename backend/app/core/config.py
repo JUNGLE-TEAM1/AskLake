@@ -26,17 +26,39 @@ class Settings(BaseSettings):
     ai_gateway_generate_path: str = "/v1/generate"
     ai_gateway_service_token: str | None = None
     ai_gateway_timeout_seconds: float = Field(default=30.0, ge=1.0, le=120.0)
+    ai_gateway_classification_path: str = "/v1/generate"
+    ai_gateway_embeddings_path: str = "/v1/embeddings"
     ai_mcp_path: str = "/internal/mcp"
     ai_mcp_service_token: str | None = None
     ai_context_signing_secret: str = "asklake-local-ai-context-signing-secret"
     ai_context_ttl_seconds: int = Field(default=300, ge=30, le=3600)
     ai_context_max_sample_rows: int = Field(default=20, ge=0, le=20)
+    semantic_model_default_version: int = Field(default=1, ge=1)
+    rag_classification_sample_rows: int = Field(default=20, ge=1, le=100)
+    rag_document_preview_limit: int = Field(default=20, ge=1, le=100)
+    rag_embedding_model: str = "text-embedding-3-small"
+    rag_embedding_dimensions: int = Field(default=1536, ge=1, le=8192)
+    rag_embedding_batch_size: int = Field(default=64, ge=1, le=256)
+    rag_chunk_target_tokens: int = Field(default=800, ge=100, le=2_000)
+    rag_chunk_overlap_tokens: int = Field(default=400, ge=0, le=1_000)
+    rag_chunk_max_tokens: int = Field(default=1_200, ge=100, le=4_000)
+    rag_staging_base_path: str = "s3a://asklake-warehouse/rag-staging"
+    rag_parent_iceberg_namespace: str = "rag"
+    rag_index_prefix: str = "asklake-rag"
+    opensearch_base_url: str | None = None
+    opensearch_username: str | None = None
+    opensearch_password: str | None = None
+    opensearch_timeout_seconds: float = Field(default=30.0, ge=1.0, le=120.0)
+    opensearch_verify_tls: bool = True
     airflow_api_base_url: str | None = None
     airflow_dag_id: str = "asklake_etl_job"
+    rag_airflow_dag_id: str = "asklake_rag_index"
     airflow_api_token: str | None = None
     airflow_username: str | None = None
     airflow_password: str | None = None
     airflow_request_timeout_seconds: float = 10.0
+    rag_worker_base_url: str | None = None
+    rag_worker_token: str | None = None
     airflow_ui_base_url: str | None = None
     continuous_runtime_sync_interval_seconds: float = Field(default=1.0, ge=1.0, le=60.0)
     scheduled_job_tick_interval_seconds: float = Field(default=30.0, ge=5.0, le=300.0)
