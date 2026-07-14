@@ -31,6 +31,8 @@ VITE_API_BASE_URL=http://localhost:8080
 VITE_USE_MOCK_API=true # frontend-only mock QA only
 ```
 
+`VITE_API_BASE_URL`을 지정하지 않은 production build는 동일 browser origin을 사용한다. EKS에서는 ALB가 `/`와 `/api`를 각각 Frontend와 FastAPI로 routing하므로 public hostname을 Frontend image에 고정하지 않는다.
+
 `VITE_API_BASE_URL` is optional in local dev. `VITE_DASHBOARD_ASSISTANT_API_PATH` also defaults to `/api/dashboards/assistant`, so no frontend env is required when using the local backend. Restart the dev server after changing environment variables.
 
 ## Main Files

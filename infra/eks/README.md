@@ -10,6 +10,7 @@
 - `helm/asklake-foundation/`: namespace, workload별 service account, backend/Spark namespace RBAC, non-secret runtime boundary ConfigMap
 - `values/dev.example.yaml`: B가 manifest render와 fake client test에 사용할 예시 값
 - `delivery/dev.handoff.example.json`: Terraform 출력과 B workload manifest 사이의 배포 전 handoff 형식
+- `delivery/image-receipt.example.json`: 한 Git revision에서 만든 다섯 immutable ECR image의 전달 형식
 
 ## 안전 경계
 
@@ -30,6 +31,7 @@
 bash scripts/verify-eks-foundation.sh
 bash scripts/verify-eks-rds-bootstrap.sh
 bash scripts/verify-eks-delivery-handoff.sh
+bash scripts/verify-eks-image-delivery.sh
 ```
 
 AWS 환경 inventory는 실제 식별자를 출력하지 않는 별도 read-only 스크립트로 확인한다.
@@ -107,6 +109,8 @@ Phase 3 data-plane Terraform은 MSK Serverless + IAM, private PostgreSQL RDS, �
 Phase 4는 IRSA/Pod Identity를 선택형으로 연결하고 RDS의 세 논리 database/user를 만드는 멱등 bootstrap을 제공한다. identity와 bootstrap은 기본적으로 실행되지 않으며 실제 선택·secret 전달·migration 경계는 [Phase 4 Workload Identity와 RDS Bootstrap](../../docs/eks-phase-4-identity-rds-bootstrap.md)을 따른다.
 
 Phase 5는 실제 workload를 생성하지 않고 A의 infrastructure output과 B의 manifest 사이에 `delivery/dev.handoff.example.json` 계약을 둔다. planning 검증은 AWS 값 없이 통과하지만 실제 배포용 `--ready` 검증은 immutable ECR digest, data-plane reference와 중요한 platform 선택이 모두 채워지기 전까지 실패한다. 실제 값이 들어간 handoff는 Git에 커밋하지 않는다. 상세 기준은 [Phase 5 배포 Handoff](../../docs/eks-phase-5-delivery-handoff.md)를 따른다.
+
+Phase 6는 수동 GitHub workflow로 Frontend, Backend, Airflow mirror, Spark runtime, Trino mirror를 `linux/amd64`로 ECR에 전달하고 digest receipt를 만든다. Workflow는 ECR repository를 생성하지 않으며 보호된 environment의 OIDC role 없이는 실행되지 않는다. 실제 push 전 설정과 비용 경계는 [Phase 6 ECR Image Delivery](../../docs/eks-phase-6-image-delivery.md)를 따른다.
 
 ## 설계 참고 자료
 
