@@ -1280,6 +1280,19 @@ def validate_manifest_retry(
             raise RuntimeError("Existing batch manifest references an Iceberg source boundary that is not committed.")
 
 
+def apply_continuous_spark_settings(spark: SparkSession) -> None:
+    try:
+        shuffle_partitions = int(
+            os.environ.get("ASKLAKE_CONTINUOUS_SPARK_SHUFFLE_PARTITIONS", "4")
+        )
+    except (TypeError, ValueError):
+        shuffle_partitions = 4
+    spark.conf.set(
+        "spark.sql.shuffle.partitions",
+        str(max(1, shuffle_partitions)),
+    )
+
+
 def main() -> None:
     global CATALOG_ACK_BATCH_ID, LATEST_DURABLE_BATCH_ID, PUBLISHED_BACKLOG_COUNT, QUERY, LAST_BATCH_ID, LAST_FLUSH_AT, LAST_BATCH_STORED_COUNT, LAST_BATCH_QUARANTINED_COUNT, LAST_BATCH_WRITTEN, PUBLISHED_BATCHES, LAST_BATCH_EVIDENCE, CURRENT_BATCH_CONTEXT, RECOVERY_ROOT, RECOVERY_SPARK
     signal.signal(signal.SIGTERM, on_signal)
@@ -1296,6 +1309,7 @@ def main() -> None:
 
     os.environ.setdefault("ASKLAKE_SPARK_APP_NAME", f"asklake-kafka-continuous-{JOB_ID}")
     spark = make_spark({}, iceberg_target)
+    apply_continuous_spark_settings(spark)
     continuous_log_level = str(
         os.environ.get("ASKLAKE_CONTINUOUS_SPARK_LOG_LEVEL", "WARN")
     ).strip().upper()
@@ -1376,6 +1390,11 @@ def main() -> None:
         global LAST_BATCH_STORED_COUNT, LAST_BATCH_QUARANTINED_COUNT, LAST_BATCH_WRITTEN, PUBLISHED_BATCHES, LAST_BATCH_EVIDENCE, CURRENT_BATCH_CONTEXT
         if STOP_REQUESTED:
             return
+        # Structured Streaming restores SQL settings from OffsetSeqMetadata in
+        # an existing checkpoint before foreachBatch. Reassert the Continuous
+        # job's small shuffle width so a checkpoint created with the generic
+        # batch default (for example 32) cannot undo the low-latency setting.
+        apply_continuous_spark_settings(batch.sparkSession)
         batch_started_at = time.monotonic()
         batch = retain_uncommitted_offsets(batch)
         batch.persist()

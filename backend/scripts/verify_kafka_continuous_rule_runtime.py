@@ -75,6 +75,7 @@ def configure_environment(root):
         "ASKLAKE_CONTINUOUS_RULE_OUTPUT_SCHEMA": json.dumps(OUTPUT_SCHEMA),
         "ASKLAKE_CONTINUOUS_RULES": json.dumps(RULES),
         "ASKLAKE_CONTINUOUS_SCHEMA_COLUMNS": json.dumps(schema_columns),
+        "ASKLAKE_CONTINUOUS_SPARK_SHUFFLE_PARTITIONS": "3",
         "ASKLAKE_MAINTENANCE_RULE_CONTRACT_VERSION": "1.0",
         "ASKLAKE_MAINTENANCE_RULE_FINGERPRINT": rule_fingerprint,
         "ASKLAKE_MAINTENANCE_RULE_OUTPUT_SCHEMA": json.dumps(OUTPUT_SCHEMA),
@@ -105,6 +106,10 @@ def main():
         )
         spark.sparkContext.setLogLevel("ERROR")
         try:
+            spark.conf.set("spark.sql.shuffle.partitions", "32")
+            worker.apply_continuous_spark_settings(spark)
+            assert spark.conf.get("spark.sql.shuffle.partitions") == "3"
+
             manifest_recovery_root = f"file://{root}/manifest-recovery"
             for batch_id in range(3):
                 worker.write_batch_manifest(
