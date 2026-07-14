@@ -15,6 +15,7 @@ on:
       - "infra/contracts/aws-staging-smoke.v1.json"
       - "infra/terraform/**"
       - "docs/aws-staging-iac-smoke-plan.md"
+      - "docs/aws-staging-operations-handoff.md"
       - "docs/02-architecture.md"
       - "docs/04-development-guide.md"
       - "docs/system-guardrails.md"
@@ -59,4 +60,5 @@ jobs:
           npm run verify:aws-staging-workflows
           npm run verify:aws-staging-smoke
           npm run verify:aws-staging-lifecycle
+          npm run verify:aws-staging-handoff
           npm run verify:aws-staging-terraform

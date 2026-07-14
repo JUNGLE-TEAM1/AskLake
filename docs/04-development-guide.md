@@ -191,6 +191,7 @@ npm run verify:aws-staging-runtime
 npm run verify:aws-staging-workflows
 npm run verify:aws-staging-smoke
 npm run verify:aws-staging-lifecycle
+npm run verify:aws-staging-handoff
 ```
 
 첫 명령은 `infra/contracts/aws-staging-smoke.v1.json`을 읽어 region/naming/tag, state lock/versioning/encryption, no-NAT/no-public-ingress, 장기 key 금지, EMR application cap, smoke 정합성 기준과 수동 apply/자동 destroy 경계를 확인한다.
@@ -204,6 +205,8 @@ npm run verify:aws-staging-lifecycle
 다섯 번째 명령은 Phase 4 evidence schema와 private SSM smoke workflow를 검증한다. 100만 건 exact count, lag/quarantine 0, 두 번의 서로 다른 원격 attempt, checkpoint resume, Batch row, S3 evidence, price/resource snapshot 중 하나라도 빠진 fixture가 거부되는지 확인하며 실제 AWS API는 호출하지 않는다.
 
 여섯 번째 명령은 Phase 5 lifecycle을 검증한다. Terraform state tag와 key가 불일치하거나 만료된 경우를 redacted TTL sweep evidence로 분류하고, TTL sweep이 자동 delete를 수행하지 않으며 smoke cleanup은 evidence export 뒤에만 destroy plan/apply를 실행하도록 확인한다.
+
+일곱 번째 명령은 Phase 6 handoff를 검증한다. smoke evidence, cleanup receipt, TTL sweep이 같은 stack/source revision인지 확인하고, handoff가 Phase 7 pilot 승인을 대신하지 않으며 broker·credential 계열 값을 거부하는지 확인한다.
 
 실제 apply 뒤에는 Terraform sensitive output을 log나 중간 파일에 남기지 않고 아래처럼 pipe한다. 생성 위치는 Git ignore 대상이며 일반 `deploy/.env`에 수작업 복사하지 않는다.
 

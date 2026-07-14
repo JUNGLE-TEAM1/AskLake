@@ -40,7 +40,7 @@ flowchart LR
 | 3. GitHub Actions | OIDC plan/apply/artifact/destroy workflow | 장기 AWS key 없이 수동 plan, apply/artifact/destroy 개별 승인, checksum bundle 전달과 독립 destroy 가능 | 완료(코드·로컬 검증) |
 | 4. 실제 smoke | S3 readiness, MSK probe, Batch, Continuous pause/resume | 입력·소비·sink count 일치, final lag 0, checkpoint resume, report 확보 | 실행 코드 완료, 실제 AWS 증적 대기 |
 | 5. 비용·TTL guard | budget alert, 만료 sweep, failure cleanup | 정상/실패 모두 증거 export 후 제거되고 만료 stack을 탐지 | 코드·로컬 검증 완료, 실제 AWS evidence 대기 |
-| 6. 운영 인계 | runbook, 장애/비용 기록, 오피스아워 질문 | 다른 팀원이 같은 절차를 재현하고 안전하게 종료 가능 | 예정 |
+| 6. 운영 인계 | runbook, 장애/비용 기록, 오피스아워 질문 | 다른 팀원이 같은 절차를 재현하고 안전하게 종료 가능 | 코드·문서 완료, 실제 AWS handoff bundle 대기 |
 
 ## 3. Phase 0에서 고정한 계약
 
@@ -240,7 +240,25 @@ cd backend
 npm run verify:aws-staging-lifecycle
 ```
 
-## 9. 실제 plan/apply 이전 외부 준비값
+## 9. Phase 6 운영 인계
+
+[AWS Staging 운영 인계](aws-staging-operations-handoff.md)는 실제 run에서 보존할 GitHub/S3/EMR/CloudWatch/비용/cleanup/TTL 근거, Phase 7로 넘어가지 못하는 조건, 계정별 AWS 오피스아워 질문을 고정한다.
+
+실제 smoke evidence, cleanup receipt, TTL sweep evidence가 생기면 다음 명령으로 redacted handoff JSON/Markdown을 만든다.
+
+```bash
+cd backend
+npm run aws-staging:render-handoff -- \
+  --smoke-evidence /secure-run/smoke-evidence.json \
+  --cleanup-receipt /secure-run/cleanup-receipt.json \
+  --ttl-sweep-evidence /secure-run/ttl-sweep.json \
+  --output-json /secure-run/handoff.json \
+  --output-markdown /secure-run/handoff.md
+```
+
+이 명령은 Phase 7 pilot을 승인하지 않는다. smoke/cleanup/TTL evidence의 일치 여부만 확인하고, Phase 7 반복 부하·CloudWatch·실제 비용·SLO 승인 근거가 없으면 handoff에 blocker로 남긴다.
+
+## 10. 실제 plan/apply 이전 외부 준비값
 
 다음 값은 코드에 실제 값을 저장하지 않는다.
 
@@ -256,7 +274,7 @@ GitHub OIDC provider와 Terraform 실행 role은 계정 단위 platform bootstra
 
 Repository에는 `AWS_ACCOUNT_ID`, `AWS_GITHUB_OIDC_ROLE_ARN`, `AWS_TERRAFORM_STATE_BUCKET`, `AWS_TERRAFORM_STATE_KMS_KEY_ARN` variable과 `AWS_BUDGET_NOTIFICATION_EMAIL` secret이 필요하다. private SSM runner를 켜기 위해 승인된 `AWS_STAGING_SMOKE_RUNNER_AMI_ID` variable을 추가한다. apply/artifact/smoke/destroy Environment에는 required reviewer를 설정하고 OIDC role trust policy는 이 repository와 해당 Environment/branch claim으로 제한한다. smoke 제어면 role에는 SSM Send/GetCommand, runtime/evidence S3 Get/Put, KMS decrypt/encrypt, Pricing 조회 권한이 추가로 필요하다.
 
-## 10. Phase 0·1·2·3·4·5 검증
+## 11. Phase 0·1·2·3·4·5·6 검증
 
 ```bash
 cd backend
@@ -266,6 +284,7 @@ npm run verify:aws-staging-runtime
 npm run verify:aws-staging-workflows
 npm run verify:aws-staging-smoke
 npm run verify:aws-staging-lifecycle
+npm run verify:aws-staging-handoff
 ```
 
 verifier는 정상 계약뿐 아니라 다음 변조가 실패하는지도 자체 확인한다.
@@ -285,7 +304,7 @@ Phase 0 완료는 AWS resource가 준비됐다는 뜻이 아니다. Phase 1 Terr
 
 Phase 4·5 실행 코드는 AWS 통합 성공을 뜻하지 않는다. 실제 account/role/backend/quota 값을 GitHub 설정에 등록하고 workflow가 기본 브랜치에서 dispatch 가능한 상태가 된 뒤 real plan/apply/artifact/smoke를 순서대로 실행해야 한다. 생성된 success/failure evidence와 cleanup receipt, TTL sweep evidence가 확보돼야만 Phase 4·5 acceptance를 완료 처리한다.
 
-## 11. 공식 기준
+## 12. 공식 기준
 
 - [Terraform S3 backend](https://developer.hashicorp.com/terraform/language/backend/s3)
 - [EMR Serverless VPC access](https://docs.aws.amazon.com/emr/latest/EMR-Serverless-UserGuide/vpc-access.html)

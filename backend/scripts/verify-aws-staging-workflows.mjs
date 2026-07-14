@@ -383,6 +383,7 @@ assert.match(contractChecks, /^  pull_request:/m);
 assert.match(contractChecks, /verify:aws-staging-workflows/);
 assert.match(contractChecks, /verify:aws-staging-smoke/);
 assert.match(contractChecks, /verify:aws-staging-lifecycle/);
+assert.match(contractChecks, /verify:aws-staging-handoff/);
 assert.match(contractChecks, /verify:aws-staging-terraform/);
 assert.doesNotMatch(contractChecks, /id-token: write|configure-aws-credentials|AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY/);
 

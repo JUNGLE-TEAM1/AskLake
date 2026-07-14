@@ -26,6 +26,7 @@ npm run verify:aws-staging-runtime
 npm run verify:aws-staging-workflows
 npm run verify:aws-staging-smoke
 npm run verify:aws-staging-lifecycle
+npm run verify:aws-staging-handoff
 ```
 
 ## 실제 plan 준비
