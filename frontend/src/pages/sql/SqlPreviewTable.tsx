@@ -27,6 +27,10 @@ function getColumnKind(rows: string[][], index: number): SqlPreviewCellKind {
   return "text";
 }
 
+function isIdentifierColumn(column: string) {
+  return /(?:^|[_\s-])id$/i.test(column.trim());
+}
+
 function toComparableValue(value: string, kind: SqlPreviewCellKind) {
   if (kind === "number") {
     const numberValue = Number(value.replace(/,/g, ""));
@@ -57,8 +61,9 @@ export function SqlPreviewTable({ isLoading = false, resultDraft }: { isLoading?
   const columns = useMemo<ColumnDef<SqlPreviewRow>[]>(
     () => resultDraft.columns.map((column, index) => {
       const columnKind = getColumnKind(resultDraft.rows, index);
+      const identifierColumn = isIdentifierColumn(column);
       const meta: DataTableColumnMeta = {
-        align: columnKind === "number" ? "right" : "left",
+        align: columnKind === "number" && !identifierColumn ? "right" : "left",
         cellClassName: columnKind === "number" || columnKind === "date" ? "tabular-nums" : undefined,
       };
 
