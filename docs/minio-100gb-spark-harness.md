@@ -281,6 +281,64 @@ ASKLAKE_VERIFY_ICEBERG_LIVE=true npm run verify:kafka-continuous-iceberg
 
 게시 경계 fault 검증은 backend에 `ASKLAKE_CONTINUOUS_FAIL_AFTER_DATA_WRITE_ONCE=true`, E2E runner에 `ASKLAKE_CONTINUOUS_E2E_PUBLICATION_FAULT=true`를 설정한다. 첫 worker는 data `_SUCCESS` 뒤 manifest 전에 한 번 실패하고, harness가 resume한 뒤 같은 batch/offset을 중복 저장하지 않고 manifest와 Catalog를 복구해야 한다. 이 변수는 테스트 전용이며 운영에서는 반드시 `false`로 둔다.
 
+### 8.1 Kafka Continuous 대시보드 revision/result 검증
+
+대시보드 리비전은 Spark가 data object를 쓴 시점이 아니라 backend가 완료 manifest와 Catalog materialization을 확인한 뒤에만 증가해야 한다.
+
+```text
+Kafka offset range
+↓
+batch_id=<id> Parquet + _SUCCESS + manifest
+↓
+Catalog materializationRuns
+↓
+dataset_revision_commits(source_ranges 포함)
+↓
+dataset_freshness.latest_revision
+```
+
+실제 PostgreSQL schema와 transaction 결과는 다음 opt-in verifier로 확인한다.
+
+```powershell
+# repository root
+docker compose up -d postgres
+
+cd backend
+$env:ASKLAKE_VERIFY_DASHBOARD_POSTGRES = "true"
+$env:DATABASE_URL = "postgresql+psycopg://asklake:asklake_dev@localhost:54328/asklake"
+npm run verify:dashboard-live-postgres
+```
+
+스크립트는 실제 PostgreSQL에 임시 Catalog dataset을 만들고 다음을 확인한 뒤 해당 fixture를 삭제한다.
+
+- `dataset_freshness`, `dataset_revision_commits`, `dashboard_widget_results` table/index/constraint
+- 같은 `run_id`를 두 번 저장해도 revision이 한 번만 증가
+- revision과 S3 위치, row count, topic/partition/[startOffset, endOffset) `source_ranges` 연결
+- widget `result_payload`, `calculation_state`, `applied_revision`, `calculation_mode` 저장·재조회
+
+기존 Continuous 계약과 frontend polling 선택 로직은 별도로 검증한다.
+
+```powershell
+cd backend
+npm run verify:kafka-continuous-contract
+
+cd ..\frontend
+npm run test:dashboard-live-refresh
+```
+
+실제 Kafka/MinIO/Spark/Catalog 경로는 기존 opt-in `npm run verify:kafka-continuous-e2e`를 사용한다. 이 검증은 published metric 생성, 최초 결과 저장, 새 revision 뒤 widget result 증가까지 포함한다. production compose에서는 관리자 session을 만들 수 있도록 `ASKLAKE_CONTINUOUS_E2E_EMAIL/PASSWORD` 또는 `ASKLAKE_CONTINUOUS_E2E_SESSION_COOKIE`를 전달한다. 대시보드 viewer는 `/dashboards/{dashboardId}` published route에서만 Continuous dataset을 polling하고, 서버 권장주기 `clamp(triggerIntervalSeconds * 500, 5000, 60000)`을 따른다.
+
+운영 로그에서는 다음 event를 확인한다.
+
+```text
+dashboard_dataset_revision_committed
+dashboard_dataset_revision_backfilled
+dashboard_widget_result_calculated
+dashboard_widget_result_failed
+```
+
+실제 화면 지연은 `다음 Spark trigger까지 남은 시간 + Spark/S3 + backend reconciliation 0~5초 + polling 0~nextCheckAfterMs(+ dataset ID 기반 0~10% jitter) + widget 계산`이다. 2~5초 반영을 항상 보장하지 않는다.
+
 ## 9. Frontend
 
 ```powershell

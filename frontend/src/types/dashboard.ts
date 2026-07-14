@@ -230,10 +230,14 @@ export type DashboardWidgetLayout = {
 };
 
 type DashboardRuntimeWidgetBase = {
+  appliedRevision?: number | null;
+  calculatedAt?: string | null;
+  calculationVersion?: string | null;
   data: Array<Record<string, unknown>>;
   datasetId?: string | null;
   id: string;
   layout: DashboardWidgetLayout;
+  liveRefresh?: boolean;
   pageId: string;
   queryId?: string | null;
   title: string | null;

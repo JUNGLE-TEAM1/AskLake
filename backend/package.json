@@ -77,6 +77,7 @@
     "verify:kafka-replay-producer": "PYTHONPATH=. .venv/bin/python scripts/verify-kafka-replay-producer.py",
     "verify:kafka-continuous-e2e": "node scripts/verify-kafka-continuous-e2e.mjs",
     "verify:kafka-continuous-iceberg": "PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-.venv/bin/python} scripts/verify-kafka-continuous-iceberg.py",
+    "verify:dashboard-live-postgres": "node scripts/run-python-verification.mjs scripts/verify-dashboard-live-postgres.py",
     "verify:kafka-continuous-soak": "node scripts/verify-kafka-continuous-soak.mjs",
     "sources:rest-fixture": "node scripts/source-rest-fixture-server.mjs",
     "sources:fixtures": "node scripts/setup-source-fixtures.mjs",

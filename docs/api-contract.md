@@ -177,6 +177,9 @@ Resource/action 기준:
 | `PATCH /api/etl/jobs/{jobId}` | `manage` | source identity와 successful target identity 보호 |
 | `GET /api/dashboards`, `POST /api/dashboards/query` | `view` | actor가 볼 수 있는 dashboard만 목록에 포함 |
 | `GET /api/dashboards/{dashboardId}/published` | `view` | published revision이 없어도 권한 통과 후 빈 runtime 응답 가능 |
+| `GET /api/datasets/{datasetId}/freshness` | Dataset `query` | 새 S3/Catalog revision 확인 전 dataset 권한 재검사 |
+| `POST /api/datasets/freshness/query` | Dataset `query` | 요청한 dataset 전체에 대해 같은 기준 적용 |
+| `POST /api/dashboards/{dashboardId}/widgets/query` | Dashboard `view` + Dataset `query` | published widget만 조회하고 물리 storage 접근 전 재검사 |
 | `PATCH /api/dashboards/{dashboardId}` | `manage` | dashboard card title 수정 |
 | `POST /api/dashboards/{dashboardId}/draft/ensure` | `manage` | draft revision 생성/복사 가능 여부 검사 |
 | `POST/PATCH/DELETE /api/dashboards/{dashboardId}/draft/**` | `manage` | page/widget/layout draft 변경 전체 |
@@ -2395,6 +2398,9 @@ Runtime lane은 `dashboard_revisions`, `dashboard_pages`, `dashboard_widgets` �
 | `dashboard_revisions` | runtime | draft/published snapshot 단위 | `id`, `dashboard_id`, `kind`, `version`, `published_at`, `created_at`, `updated_at` |
 | `dashboard_pages` | runtime | revision 안의 page | `id`, `revision_id`, `title`, `order_index`, `created_at`, `updated_at` |
 | `dashboard_widgets` | runtime | page 안의 widget snapshot | `id`, `page_id`, `type`, `title`, `dataset_id`, `query_id`, `layout`, `config`, `data`, `created_at`, `updated_at` |
+| `dataset_freshness` | live runtime | dataset별 최신 공개 revision과 권장 polling 시간 | `dataset_id`, `latest_revision`, `latest_run_id`, `next_check_after_ms`, `updated_at` |
+| `dataset_revision_commits` | live runtime | revision과 S3 batch/Kafka offset 근거 연결 | `dataset_id`, `revision`, `run_id`, `storage_location`, `storage_format`, `materialization_mode`, `row_count`, `source_ranges`, `committed_at` |
+| `dashboard_widget_results` | live runtime | widget 계산 버전별 최신 결과와 merge state | `widget_id`, `calculation_version`, `dataset_id`, `applied_revision`, `result_payload`, `calculation_state`, `calculation_mode`, `calculated_at` |
 
 `layout`, `config`, `data`, dashboard card의 보조 payload는 PostgreSQL JSONB 후보로 둔다.
 API response field는 `camelCase`, DB column은 `snake_case`를 사용한다.
@@ -2761,6 +2767,10 @@ type DashboardRuntimeWidget = {
     data: Array<Record<string, unknown>>;
     queryId?: string | null;
     datasetId?: string | null;
+    appliedRevision?: number | null;
+    calculationVersion?: string | null;
+    calculatedAt?: string | null;
+    liveRefresh?: boolean;
   };
 }[DashboardRuntimeWidgetType];
 
@@ -3038,7 +3048,155 @@ Response `200 OK`:
 - draft revision이 없으면 `422 NO_DRAFT_REVISION`.
 - dashboard `manage` 권한이 없으면 `403 FORBIDDEN`.
 
-### 8.5.11 Dashboard Assistant UI Hook
+### 8.5.11 Kafka Continuous widget freshness·result 조회
+
+이 계약은 기존 Kafka Continuous → Spark micro-batch → S3/MinIO Parquet → Catalog 경로 뒤에 대시보드 revision/result만 연결합니다. 원본 event를 PostgreSQL에 복사하거나 새 Consumer를 만들지 않습니다.
+
+#### Revision commit 규칙
+
+Backend는 완료된 S3 batch manifest와 Catalog materialization을 모두 확인한 뒤 한 PostgreSQL transaction으로 다음을 저장합니다.
+
+1. `dataset_revision_commits`에 `(dataset_id, revision)` commit 추가
+2. 같은 commit에 `run_id`, S3 위치, 행 수, Kafka `source_ranges` 저장
+3. `dataset_freshness.latest_revision`, `latest_run_id`, `updated_at` 갱신
+
+`run_id`는 unique이므로 같은 micro-batch/replay를 재 reconcile해도 revision을 두 번 올리지 않습니다. 저장된 행이 0개인 batch는 revision을 만들지 않습니다.
+
+이미 Catalog에 존재하던 legacy run을 처음 revision으로 backfill할 때는 `materialization_mode=snapshot`으로 기록합니다. revision 0의 전체 계산이 그 run을 이미 포함했더라도 다음 계산은 full rebaseline을 수행하므로 중복 합산하지 않습니다.
+
+`source_ranges` JSONB 예:
+
+```json
+[
+  {
+    "topic": "reviews.raw",
+    "partition": 0,
+    "startOffset": 120,
+    "endOffset": 145
+  }
+]
+```
+
+#### GET /api/datasets/{datasetId}/freshness
+
+Response `200 OK`:
+
+```json
+{
+  "datasetId": "clickstream_events",
+  "isContinuous": true,
+  "latestRevision": 105,
+  "updatedAt": "2026-07-14T12:00:05+00:00",
+  "nextCheckAfterMs": 5000
+}
+```
+
+- Dataset이 없으면 `404 NOT_FOUND`입니다.
+- Dataset `query` 권한이 없거나 governance가 차단하면 `403 FORBIDDEN`입니다.
+- Continuous Job이 아니면 `isContinuous=false`입니다.
+
+#### POST /api/datasets/freshness/query
+
+Request:
+
+```json
+{
+  "datasetIds": ["clickstream_events", "commerce_orders"]
+}
+```
+
+`datasetIds`는 `1..100`개이며 서버는 입력 순서를 유지하면서 중복 ID를 한 번만 처리합니다.
+
+Response `200 OK`:
+
+```json
+{
+  "datasets": [
+    {
+      "datasetId": "clickstream_events",
+      "isContinuous": true,
+      "latestRevision": 105,
+      "updatedAt": "2026-07-14T12:00:05+00:00",
+      "nextCheckAfterMs": 5000
+    }
+  ]
+}
+```
+
+`nextCheckAfterMs`는 `clamp(triggerIntervalSeconds × 500, 5,000, 60,000)`입니다. 10초 trigger는 5초, 30초 trigger는 15초, 5분 trigger는 60초를 반환합니다. Frontend는 동시에 몰리는 요청을 줄이기 위해 dataset ID로 정한 0~10% deterministic jitter를 더합니다.
+
+묶음 조회는 각 dataset의 권한과 metadata를 독립적으로 검사합니다. 한 dataset이 `403`, `404`, `503` 조건이면 해당 항목만 응답에서 제외하고 나머지 정상 dataset을 반환합니다. 단건 GET의 오류 계약은 바뀌지 않습니다.
+
+#### POST /api/dashboards/{dashboardId}/widgets/query
+
+Request:
+
+```json
+{
+  "widgetIds": ["dashwidget_click_count"]
+}
+```
+
+`widgetIds`는 `1..100`개이며 현재 published revision에 속한 widget만 요청할 수 있습니다. 없는 widget ID가 포함되면 `404 NOT_FOUND`입니다. Dashboard `view`와 연결된 Dataset `query` 권한을 물리 storage 접근 전에 다시 검사합니다.
+
+Response `200 OK`:
+
+```json
+{
+  "widgets": [
+    {
+      "id": "dashwidget_click_count",
+      "pageId": "dashpage_main",
+      "type": "metric",
+      "title": "실시간 클릭 수",
+      "datasetId": "clickstream_events",
+      "liveRefresh": true,
+      "appliedRevision": 105,
+      "calculationVersion": "64-character-sha256",
+      "calculatedAt": "2026-07-14T12:00:07+00:00",
+      "layout": { "x": 0, "y": 0, "w": 3, "h": 2 },
+      "config": {
+        "aggregation": "sum",
+        "valueKey": "__asklake_widget_value",
+        "dataMode": "server_aggregated",
+        "sourceConfig": { "aggregation": "count", "valueKey": "event_id" }
+      },
+      "data": [{ "__asklake_widget_value": 12540 }]
+    }
+  ]
+}
+```
+
+#### 계산 버전과 재계산
+
+`calculationVersion`은 다음 canonical JSON의 SHA-256입니다.
+
+```json
+{
+  "contractVersion": 1,
+  "datasetId": "clickstream_events",
+  "widgetType": "metric",
+  "sourceConfig": { "aggregation": "count", "valueKey": "event_id" },
+  "schemaIdentity": "catalog-schema-fingerprint-or-full-schema"
+}
+```
+
+- 같은 calculation version의 `appliedRevision >= latestRevision`이면 PostgreSQL의 저장 결과를 반환하고 S3를 다시 읽지 않습니다.
+- count/sum/avg/min/max는 중간 revision이 빠짐없이 모두 delta이고 aggregate group이 10,000개 이하일 때 변경 commit의 S3 segment만 읽어 `calculation_state`에 합칩니다.
+- table, snapshot, revision gap, calculation version 변경, 10,000개 초과 group은 active materialization 전체를 재계산합니다.
+- 결과와 `applied_revision`은 한 transaction으로 저장합니다.
+- 계산 시작 시 Catalog row를 먼저, freshness row를 다음으로 잠급니다. ETL commit과 같은 순서이므로 Catalog S3 run 목록과 revision이 서로 다른 시점으로 섞이지 않습니다.
+- 계산이 실패하면 이전 `result_payload`/`applied_revision`을 유지합니다. 새 calculation version 계산이 실패한 경우에도 같은 widget·같은 dataset의 직전 성공 버전만 표시 fallback으로 사용합니다. 다른 dataset의 과거 결과는 반환하지 않습니다.
+- 집계 응답은 최대 500 group입니다. table의 backend 안전 상한은 500행이며 현재 frontend 위젯 설정은 기본 10행, 최대 100행입니다.
+- 새 calculation version 결과 저장이 성공하면 같은 widget의 이전 calculation version 결과는 삭제하고 현재 버전 한 건만 유지합니다.
+
+Frontend는 published `/dashboards/{dashboardId}`에서 Continuous dataset만 polling합니다. 같은 dataset의 freshness는 한 번만 조회하고 `latestRevision > appliedRevision`인 widget만 재요청합니다. backend 권장 주기에 dataset ID 기반 0~10% deterministic jitter를 더하며, hidden tab에서는 중지하고 route unmount 시 timer/request를 정리하며, 실패 시 기존 widget을 그대로 보여줍니다.
+
+실제 event-to-screen 지연은 `다음 Spark trigger까지 남은 시간 + Spark/S3 + backend reconciliation 0~5초 + polling 0~nextCheckAfterMs(+ jitter) + widget 계산`입니다. 2~5초를 항상 보장하지 않습니다.
+
+상세 운영·검증·제한은 `docs/kafka-postgresql-dashboard-sync.md`를 따릅니다.
+
+### 8.5.12 Dashboard Assistant UI Hook
 
 대시보드 draft editor의 AskLake 보조 패널과 `placeholderKind: "visualization_request"` 위젯은 `POST /api/dashboards/assistant` FastAPI endpoint를 통해 OpenAI 기반 응답을 요청한다.
 이 endpoint는 `get_actor_context`로 인증된 actor만 허용한다. 요청에 `dashboardId`가 있으면 Assistant context 또는 OpenAI 호출 전에 해당 dashboard의 `view` 권한을 검사하며, 운영 환경의 익명 요청은 `401 UNAUTHORIZED`, dashboard 접근 권한이 없는 요청은 `403 FORBIDDEN`이다.

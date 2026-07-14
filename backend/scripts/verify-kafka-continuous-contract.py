@@ -270,7 +270,10 @@ def main() -> None:
     original_worker = etl_service.run_kafka_continuous_worker
     original_status = etl_service.continuous_worker_status
     original_dataset_get = etl_repository.get_dataset_by_id
-    original_dataset_save = etl_repository.save_dataset
+    original_dataset_get_for_update = etl_repository.get_dataset_by_id_for_update
+    original_live_repository = etl_service.DashboardLiveRepository
+    original_catalog_revision_save = etl_service.save_catalog_dataset_and_revision
+    original_catalog_revision_backfill = etl_service.backfill_catalog_revision
     original_maintenance_list = etl_repository.list_kafka_continuous_maintenance_run_models
     original_maintenance_save = etl_repository.save_kafka_continuous_maintenance_run
     original_maintenance_cleanup = etl_service.cleanup_kafka_continuous_maintenance
@@ -470,9 +473,11 @@ def main() -> None:
 
         captured_dataset = {}
         dataset_save_count = {"value": 0}
+        revision_commits = {}
+        latest_revision_by_dataset = {}
+        revision_backfill_count = {"value": 0}
         etl_repository.get_dataset_by_id = lambda _db, dataset_id: captured_dataset.get(dataset_id)
         etl_repository.get_dataset_by_id_for_update = lambda _db, dataset_id: captured_dataset.get(dataset_id)
-
         compiled_job_rules = etl_service.compile_job_rules(job)
         canonical_job_rules = [rule.model_dump(mode="json", by_alias=True) for rule in compiled_job_rules.result.rules]
         persisted_rule_fingerprint = etl_service.canonical_rule_fingerprint(
@@ -534,12 +539,41 @@ def main() -> None:
             "storageSizeBytes": 1024,
             "warehouseLocation": "s3://asklake-warehouse/warehouse/asklake/reviews_continuous",
         }
+        def capture_revision(dataset_id, run_id, **metadata):
+            existing_commit = revision_commits.get(run_id)
+            if existing_commit is not None:
+                return existing_commit
+            revision = latest_revision_by_dataset.get(dataset_id, 0) + 1
+            latest_revision_by_dataset[dataset_id] = revision
+            commit = {
+                "datasetId": dataset_id,
+                "revision": revision,
+                "runId": run_id,
+                **metadata,
+            }
+            revision_commits[run_id] = commit
+            return commit
 
-        def capture_dataset(_db, dataset):
+        def capture_dataset(_db, dataset, *, run_id, **metadata):
             captured_dataset[dataset.id] = dataset
             dataset_save_count["value"] += 1
-            return dataset
-        etl_repository.save_dataset = capture_dataset
+            return capture_revision(dataset.id, run_id, **metadata)
+
+        def capture_revision_backfill(_db, *, dataset_id, run_id, **metadata):
+            if run_id not in revision_commits:
+                revision_backfill_count["value"] += 1
+            return capture_revision(dataset_id, run_id, **metadata)
+
+        class FakeDashboardLiveRepository:
+            def __init__(self, _db, *, ensure_schema=True):
+                self.ensure_schema = ensure_schema
+
+            def commit_by_run_id(self, run_id):
+                return revision_commits.get(run_id)
+
+        etl_service.DashboardLiveRepository = FakeDashboardLiveRepository
+        etl_service.save_catalog_dataset_and_revision = capture_dataset
+        etl_service.backfill_catalog_revision = capture_revision_backfill
         runtime_relock_count = {"value": 0}
         runtime.metrics = {**(runtime.metrics or {}), "concurrentMarker": "stale"}
         def count_runtime_relock(_db, _job_id):
@@ -567,6 +601,53 @@ def main() -> None:
         assert captured_dataset[dataset_id].payload["materializationRuns"][0]["materializationMode"] == "snapshot"
         assert captured_dataset[dataset_id].payload["materializationRuns"][0]["rowCount"] == 2
         assert captured_dataset[dataset_id].payload["storageLocation"].startswith("s3://asklake-warehouse/")
+
+        first_publication = iceberg_publication(0, 2, [
+            {"topic": "reviews.continuous", "partition": 0, "startOffset": 0, "endOffset": 2},
+        ])
+        first_run_id = first_publication["runId"]
+        assert revision_commits[first_run_id]["revision"] == 1
+        assert latest_revision_by_dataset[dataset_id] == 1
+
+        assert etl_service.materialize_continuous_publication(fake_db, job, runtime, first_publication) is True
+        assert latest_revision_by_dataset[dataset_id] == 1, "The same Iceberg publication must not advance dataset revision twice."
+        assert len(revision_commits) == 1
+        assert revision_backfill_count["value"] == 0
+
+        zero_row_publication = iceberg_publication(1, 0, [
+            {"topic": "reviews.continuous", "partition": 0, "startOffset": 2, "endOffset": 2},
+        ])
+        assert etl_service.materialize_continuous_publication(fake_db, job, runtime, zero_row_publication) is True
+        assert latest_revision_by_dataset[dataset_id] == 1, "A zero-row publication must not change dashboard-visible freshness."
+        assert len(revision_commits) == 1
+
+        legacy_publication = iceberg_publication(7, 3, [
+            {"topic": "reviews.continuous", "partition": 0, "startOffset": 2, "endOffset": 5},
+        ])
+        legacy_run_id = legacy_publication["runId"]
+        legacy_run = {
+            **captured_dataset[dataset_id].payload["materializationRuns"][0],
+            "createdAt": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            "materializationMode": "delta",
+            "rowCount": 3,
+            "runId": legacy_run_id,
+            "sourceBoundary": legacy_publication["sourceBoundary"],
+            "sourceRanges": legacy_publication["sourceRanges"],
+        }
+        captured_dataset[dataset_id].payload["materializationRuns"] = [
+            legacy_run,
+            *captured_dataset[dataset_id].payload["materializationRuns"],
+        ]
+        assert etl_service.materialize_continuous_publication(fake_db, job, runtime, legacy_publication) is True
+        assert revision_commits[legacy_run_id]["revision"] == 2
+        assert revision_commits[legacy_run_id]["materialization_mode"] == "snapshot", (
+            "A legacy Catalog run must force a full dashboard rebaseline instead of being added twice."
+        )
+        assert latest_revision_by_dataset[dataset_id] == 2
+        assert revision_backfill_count["value"] == 1
+        assert etl_service.materialize_continuous_publication(fake_db, job, runtime, legacy_publication) is True
+        assert latest_revision_by_dataset[dataset_id] == 2, "A legacy Catalog run must be backfilled exactly once."
+        assert revision_backfill_count["value"] == 1
 
         replay_run_id = "continuous-maint-replay-contract"
         replay_ranges = [
@@ -609,6 +690,10 @@ def main() -> None:
         assert replay_materialization["materializationMode"] == "delta"
         assert replay_materialization["sourceBoundary"]["kind"] == "kafka_continuous_replay"
         assert dataset_save_count["value"] == before_replay_saves + 1
+        assert revision_commits[replay_run_id]["revision"] == 3
+        assert latest_revision_by_dataset[dataset_id] == 3
+        assert etl_service.materialize_continuous_replay(fake_db, job, runtime, replay_result) is True
+        assert latest_revision_by_dataset[dataset_id] == 3, "The same replay run must not advance dataset revision twice."
 
         invalid_replay = {
             **replay_result,
@@ -754,7 +839,10 @@ def main() -> None:
         etl_service.run_kafka_continuous_worker = original_worker
         etl_service.continuous_worker_status = original_status
         etl_repository.get_dataset_by_id = original_dataset_get
-        etl_repository.save_dataset = original_dataset_save
+        etl_repository.get_dataset_by_id_for_update = original_dataset_get_for_update
+        etl_service.DashboardLiveRepository = original_live_repository
+        etl_service.save_catalog_dataset_and_revision = original_catalog_revision_save
+        etl_service.backfill_catalog_revision = original_catalog_revision_backfill
         etl_repository.list_kafka_continuous_maintenance_run_models = original_maintenance_list
         etl_repository.save_kafka_continuous_maintenance_run = original_maintenance_save
         etl_service.cleanup_kafka_continuous_maintenance = original_maintenance_cleanup

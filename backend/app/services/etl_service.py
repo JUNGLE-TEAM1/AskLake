@@ -49,6 +49,12 @@ from app.models.identity import AuthUserModel
 from app.repositories.audit_repository import add_audit_event, safe_record_audit_event
 from app.repositories import etl_repository
 from app.repositories.catalog_repository import CatalogRepository
+from app.repositories.dashboard_live_repository import (
+    DashboardLiveRepository,
+    backfill_catalog_revision,
+    recommended_dashboard_poll_ms,
+    save_catalog_dataset_and_revision,
+)
 from app.repositories.sql_repository import SqlRepository
 from app.repositories.permission_repository import replace_permission_ui_grants
 from app.schemas.common import ErrorCode
@@ -610,7 +616,6 @@ def latest_run_outcome(job: JobRowData) -> JobRunOutcome | None:
 def sync_active_kafka_continuous_runtimes() -> None:
     """Persist continuous worker progress without depending on UI polling."""
     from app.core.database import SessionLocal
-
     active_statuses = {"starting", "running", "pausing", "stopping"}
     with SessionLocal() as db:
         reconcile_stale_continuous_maintenance_runs(db)
@@ -6576,8 +6581,45 @@ def materialize_continuous_publication(
         runtime.last_error = "Catalog materialization pending retry: Continuous publication run identity is invalid."
         return False
     existing = etl_repository.get_dataset_by_id_for_update(db, job.dataset_id or make_dataset_id(job.target))
-    existing_runs = (existing.payload or {}).get("materializationRuns") if existing and existing.payload else []
-    if any(str(item.get("runId") or "") == run_id for item in existing_runs if isinstance(item, dict)):
+    existing_runs = ((existing.payload or {}).get("materializationRuns") or []) if existing and existing.payload else []
+    existing_run = next(
+        (
+            item
+            for item in existing_runs
+            if isinstance(item, dict) and str(item.get("runId") or "") == run_id
+        ),
+        None,
+    )
+    next_check_after_ms = recommended_dashboard_poll_ms(
+        (job.continuous_config or {}).get("triggerIntervalSeconds")
+    )
+    if existing_run is not None:
+        try:
+            live_repository = DashboardLiveRepository(db, ensure_schema=False)
+            if live_repository.commit_by_run_id(run_id) is None:
+                backfill_catalog_revision(
+                    db,
+                    dataset_id=existing.id,
+                    run_id=run_id,
+                    storage_location=str(existing_run.get("storageLocation") or ""),
+                    storage_format=str(existing_run.get("storageFormat") or job.target_format or "parquet"),
+                    # The run is already present in the Catalog active data and
+                    # may already be part of a revision-0 full widget result.
+                    # Mark the first control-plane backfill as a rebaseline so
+                    # the next refresh performs a full calculation instead of
+                    # adding the same batch twice.
+                    materialization_mode="snapshot",
+                    row_count=nonnegative_int(existing_run.get("rowCount"), 0),
+                    next_check_after_ms=next_check_after_ms,
+                    source_ranges=(
+                        existing_run.get("sourceRanges")
+                        if isinstance(existing_run.get("sourceRanges"), list)
+                        else []
+                    ),
+                )
+        except Exception as exc:
+            runtime.last_error = f"Dashboard revision pending retry: {compact_storage_text(str(exc), limit=500)}"
+            return False
         return True
     try:
         target = IcebergWriterTarget.model_validate(job.iceberg_target)
@@ -6635,12 +6677,28 @@ def materialize_continuous_publication(
             "sourceBoundary": source_boundary,
         }
         dataset = dataset_from_spark_result(job, verified, existing)
-        etl_repository.save_dataset(db, dataset)
+        save_catalog_dataset_and_revision(
+            db,
+            dataset,
+            run_id=run_id,
+            storage_location=str(verified["materializationOutputPath"]),
+            storage_format="iceberg",
+            # An Iceberg table URI always resolves to the current cumulative
+            # snapshot. Treating it as a delta would make the dashboard add the
+            # whole table to its saved aggregate again.
+            materialization_mode="snapshot",
+            row_count=nonnegative_int(publication.get("storedCount"), 0),
+            next_check_after_ms=next_check_after_ms,
+            source_ranges=source_ranges,
+        )
     except Exception as exc:  # Catalog metadata must not roll back a committed streaming checkpoint.
         runtime.last_error = f"Catalog materialization pending retry: {compact_storage_text(str(exc), limit=500)}"
         return False
     else:
-        if str(runtime.last_error or "").startswith("Catalog materialization pending retry:"):
+        if str(runtime.last_error or "").startswith((
+            "Catalog materialization pending retry:",
+            "Dashboard revision pending retry:",
+        )):
             runtime.last_error = None
         job.stats = {
             **(job.stats or {}),
@@ -6738,7 +6796,21 @@ def materialize_continuous_replay(
             "sourceBoundary": source_boundary,
             "sourceRanges": source_ranges,
         }
-        etl_repository.save_dataset(db, dataset_from_spark_result(job, verified, existing))
+        save_catalog_dataset_and_revision(
+            db,
+            dataset_from_spark_result(job, verified, existing),
+            run_id=run_id,
+            storage_location=str(verified["materializationOutputPath"]),
+            storage_format="iceberg",
+            # Replay also appends to the same cumulative Iceberg table, so the
+            # dashboard must rebaseline instead of double-adding the table.
+            materialization_mode="snapshot",
+            row_count=replayed_count,
+            next_check_after_ms=recommended_dashboard_poll_ms(
+                (job.continuous_config or {}).get("triggerIntervalSeconds")
+            ),
+            source_ranges=source_ranges,
+        )
     except Exception as exc:  # Replay data is already durable; Catalog can retry independently.
         runtime.last_error = f"Replay Catalog materialization pending retry: {compact_storage_text(str(exc), limit=500)}"
         return False

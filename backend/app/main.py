@@ -11,8 +11,9 @@ from app.api.router import api_router
 from app.core.config import settings
 from app.core.database import SessionLocal
 from app.core.errors import ApiError, api_error_handler, http_error_handler, unhandled_error_handler, validation_error_handler
-from app.services.auth_service import initialize_auth
+from app.repositories.dashboard_live_repository import ensure_dashboard_live_schema
 from app.schemas.etl import ScheduledJobRunRequest
+from app.services.auth_service import initialize_auth
 from app.services.etl_service import run_due_scheduled_jobs, sync_active_kafka_continuous_runtimes
 
 logger = logging.getLogger(__name__)
@@ -44,6 +45,10 @@ async def scheduled_job_tick_loop() -> None:
 
 def initialize_auth_on_startup() -> None:
     with SessionLocal() as db:
+        # Some operational tests inject an auth-only session sentinel. Real
+        # SQLAlchemy sessions always expose get_bind().
+        if hasattr(db, "get_bind"):
+            ensure_dashboard_live_schema(db)
         initialize_auth(db)
 
 

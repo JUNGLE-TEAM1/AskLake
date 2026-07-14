@@ -383,6 +383,9 @@ type ScheduledJobRunResponse = {
 | `DELETE` | `/api/dashboards/{dashboardId}/draft/widgets/{widgetId}` | draft widget 삭제 |
 | `PATCH` | `/api/dashboards/{dashboardId}/draft/layouts` | draft widget layout batch 저장 |
 | `POST` | `/api/dashboards/{dashboardId}/publish` | dashboard 게시 |
+| `GET` | `/api/datasets/{datasetId}/freshness` | Continuous dataset의 최신 revision과 권장 재확인 시간 조회 |
+| `POST` | `/api/datasets/freshness/query` | 대시보드가 사용하는 dataset freshness를 최대 100개까지 묶음 조회 |
+| `POST` | `/api/dashboards/{dashboardId}/widgets/query` | published dashboard에서 revision이 바뀐 widget만 재계산·조회 |
 | `GET` | `/api/users/me` | 현재 actor 프로필, role, group, 권한 요약 조회 |
 | `GET` | `/api/admin/users` | 관리자 사용자 목록 조회. admin role 필요 |
 | `GET` | `/api/admin/groups` | 관리자 그룹 목록 조회. admin role 필요 |
@@ -581,6 +584,10 @@ type DashboardRuntimeWidget = {
   data: Array<Record<string, unknown>>;
   queryId?: string | null;
   datasetId?: string | null;
+  appliedRevision?: number | null;
+  calculationVersion?: string | null;
+  calculatedAt?: string | null;
+  liveRefresh?: boolean;
 };
 
 type DashboardRuntimeResponse = {
@@ -615,6 +622,74 @@ type DashboardRuntimeResponse = {
 Catalog `datasetId`를 연결한 Widget은 browser가 보낸 `data`와 Catalog `sampleRows`를 저장 데이터로 사용하지 않는다. Runtime 조회 시 backend는 actor의 dataset `query` permission과 governance를 storage 접근 전에 검사한 뒤 성공한 물리 materialization의 CSV/JSON/JSONL/Parquet segment를 DuckDB에 등록한다. `materializationMode`가 명시되면 그 값을 우선하고, 미지정 Kafka run은 `delta`, 그 외 run은 `snapshot`으로 판정한다. 원격 S3는 allowlist와 누적 byte/object 예산을 통과해야 하고 DuckDB query는 resource/timeout 경계 안에서 실행한다. chart/metric은 최대 500개 그룹으로 집계하며 table은 최대 500행 preview만 반환한다. 응답 `config.sourceConfig`는 편집 원본을, `dataMode`는 `server_aggregated` 또는 `server_preview`를 나타낸다. 권한이 없으면 `DASHBOARD_DATA_FORBIDDEN`, 삭제된 Catalog dataset 또는 물리 데이터를 읽을 수 없으면 `DASHBOARD_DATA_UNAVAILABLE` error config와 빈 data를 해당 widget에 반환한다. `queryId`가 있는 bounded SQL snapshot은 Catalog payload가 없어도 최대 500행을 유지한다.
 
 `DELETE /api/dashboards/{dashboardId}`는 dashboard card/list row와 runtime revision/page/widget snapshot을 함께 삭제한다.
+
+### Kafka Continuous Dashboard Refresh Contract
+
+이 계약은 새 UI나 새 Kafka Consumer를 만들지 않는다. 기존 Spark Structured Streaming이 S3/MinIO batch를 완료하고 backend가 Catalog에 반영한 뒤, 동일 PostgreSQL transaction으로 `dataset_revision_commits`와 `dataset_freshness`를 갱신한다. revision commit은 `runId`, S3 위치, Kafka topic/partition/[startOffset, endOffset) `sourceRanges`를 같이 보존한다.
+
+```ts
+type DatasetFreshness = {
+  datasetId: string;
+  isContinuous: boolean;
+  latestRevision: number;
+  updatedAt: string | null;
+  nextCheckAfterMs: number;
+};
+```
+
+`GET /api/datasets/{datasetId}/freshness`는 한 dataset을 조회한다. Dataset `query` 권한이 필요하며 없는 dataset은 `404`, 권한이 없으면 `403`을 반환한다.
+
+```http
+POST /api/datasets/freshness/query
+Content-Type: application/json
+
+{
+  "datasetIds": ["clickstream_events", "commerce_orders"]
+}
+```
+
+```json
+{
+  "datasets": [
+    {
+      "datasetId": "clickstream_events",
+      "isContinuous": true,
+      "latestRevision": 105,
+      "updatedAt": "2026-07-14T12:00:05+00:00",
+      "nextCheckAfterMs": 5000
+    }
+  ]
+}
+```
+
+`datasetIds`는 1~100개다. Frontend는 같은 dataset을 쓰는 여러 widget을 dataset ID 하나로 묶어 freshness를 한 번만 확인한다.
+
+묶음 조회는 dataset별로 권한과 metadata를 검사한다. 한 항목이 `403`, `404`, `503` 조건이면 그 항목은 응답에서 제외하고 나머지 정상 dataset은 계속 반환한다. 단건 GET은 기존 오류 상태를 그대로 반환한다.
+
+Backend의 권장 polling 주기는 다음과 같다.
+
+```text
+nextCheckAfterMs = clamp(triggerIntervalSeconds × 500, 5,000, 60,000)
+```
+
+10초 trigger는 5초, 30초 trigger는 15초, 5분 trigger는 60초다. Frontend는 같은 시각에 요청이 몰리지 않도록 dataset ID로 정한 0~10% deterministic jitter를 더한다. 실제 지연은 `다음 Spark trigger까지 남은 시간 + Spark/S3 + backend reconciliation 0~5초 + polling 0~nextCheckAfterMs(+ jitter) + widget 계산`이므로 2~5초를 항상 보장하지 않는다.
+
+```http
+POST /api/dashboards/{dashboardId}/widgets/query
+Content-Type: application/json
+
+{
+  "widgetIds": ["dashwidget_click_count"]
+}
+```
+
+`widgetIds`는 1~100개다. Dashboard `view`와 각 Dataset `query` 권한을 재검사하고, 현재 published revision에 없는 widget ID가 포함되면 `404`를 반환한다. 응답은 `widgets: DashboardRuntimeWidget[]`이며 Continuous widget은 `liveRefresh=true`, `appliedRevision`, `calculationVersion`, `calculatedAt`을 포함한다.
+
+`calculationVersion`은 `contractVersion + datasetId + widgetType + sourceConfig + schemaIdentity`를 canonical JSON으로 만든 SHA-256이다. `schemaIdentity`는 Catalog `schemaFingerprint`를 우선하고 없으면 schema 전체를 사용한다.
+
+count/sum/avg/min/max는 revision 구간이 빠짐없이 delta로 연결되고 aggregate group이 10,000개 이하일 때 변경 S3 segment만 병합한다. table, snapshot, revision gap, calculation version 변경, 고카디널리티는 active materialization 전체 재계산으로 fallback한다. 결과는 집계 최대 500 group이다. table의 backend 상한은 500행이며 현재 UI 설정은 기본 10행, 최대 100행이다.
+
+Frontend는 published `/dashboards/{dashboardId}`에서만 polling한다. hidden tab에서는 polling을 중지하고 요청을 취소하며, route unmount 시 timer를 정리한다. 갱신 실패는 이전 widget result를 유지하고 화면을 loading 상태로 바꾸지 않는다. 계산 버전 변경 직후 새 계산이 실패해도 같은 widget·같은 dataset의 직전 성공 result만 반환한다.
 
 ### Pair A -> Pair B
 

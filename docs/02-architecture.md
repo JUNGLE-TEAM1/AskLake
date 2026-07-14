@@ -372,6 +372,9 @@ FastAPI 현재 구현 범위:
 - `DELETE /api/dashboards/{dashboardId}/draft/widgets/{widgetId}`
 - `PATCH /api/dashboards/{dashboardId}/draft/layouts`
 - `POST /api/dashboards/{dashboardId}/publish`
+- `GET /api/datasets/{datasetId}/freshness`
+- `POST /api/datasets/freshness/query`
+- `POST /api/dashboards/{dashboardId}/widgets/query`
 
 Demo/reference endpoint는 live ETL/Catalog API를 가리지 않도록 `/api/demo` 아래에 둔다.
 
@@ -409,3 +412,42 @@ Dashboard endpoint와 Catalog 물리 데이터는 FastAPI 응답을 source of tr
 - backend `permission_grants` table이 생성 이후 접근 판정의 source of truth다.
 - `permission_ui` source는 생성 화면이 관리하고, 관리 콘솔의 `admin` source와 분리한다. 따라서 Job 수정이 관리자가 추가한 예외 grant를 덮어쓰지 않는다.
 - 화면의 공개 범위는 metadata에만 머물지 않는다. `외부 공유`를 명시하면 `public:view` grant로 변환된다.
+
+## 13) Kafka Continuous 대시보드 자동 갱신 경계
+
+Kafka 수집 hot path는 바꾸지 않는다. 기존 Spark Structured Streaming이 checkpoint 기준 micro-batch를 Parquet로 저장하고, backend control-plane이 완료 manifest를 Catalog에 반영한 다음에만 대시보드 리비전을 공개한다.
+
+```text
+Kafka Continuous micro-batch
+↓
+S3/MinIO Parquet + _SUCCESS + manifest
+↓
+Catalog materialization
+↓
+dataset_revision_commits + dataset_freshness transaction
+↓
+published Dashboard freshness polling
+↓
+변경된 widget result만 교체
+```
+
+데이터 소유권은 다음과 같다.
+
+- S3/MinIO: 전체 event 행과 완료된 batch의 source of truth
+- `catalog_datasets.payload.materializationRuns`: active snapshot/delta 물리 구성의 source of truth
+- `dataset_freshness`: 데이터셋별 최신 공개 revision
+- `dataset_revision_commits`: revision에 포함된 run/S3 segment와 Kafka topic·partition·offset 범위 연결
+- `dashboard_widget_results`: 위젯의 현재 계산 버전 result, merge state, applied revision의 source of truth. 새 버전 저장 성공 시 같은 위젯의 이전 버전은 삭제
+- Browser: 작은 위젯 결과만 유지하며 S3 전체 행을 합치지 않음
+
+`latestRevision`은 S3·Catalog·revision transaction이 모두 성공한 batch에서만 증가한다. 같은 `runId`를 재시도해도 증가하지 않고 0행 batch는 새 revision을 만들지 않는다.
+
+Dashboard 계산은 Catalog row → freshness row 순서로 잠그며 ETL commit도 같은 순서를 사용한다. 따라서 한 계산에서 Catalog의 active S3 run 목록과 적용 revision이 서로 다른 commit 시점으로 섞이지 않는다. 도입 전 Catalog run의 첫 revision backfill은 snapshot rebaseline으로 기록해 revision 0 전체 계산과 중복 합산하지 않는다.
+
+`calculationVersion`은 `contractVersion + datasetId + widgetType + sourceConfig + schemaIdentity`를 canonical JSON으로 만든 SHA-256이다. schema identity는 `schemaFingerprint`를 우선하고 없으면 schema 전체를 사용한다. 버전이 바뀌면 예전 aggregate state를 이어 쓰지 않는다.
+
+count/sum/avg/min/max 집계는 중간 revision이 빠지지 않고 새 commit이 모두 delta일 때 새 S3 segment만 읽어 합친다. aggregate group이 10,000개를 넘거나 table widget, snapshot, revision gap, 계산 버전 변경이면 active materialization을 전체 재계산한다. chart/metric 응답은 최대 500 group이다. table의 backend 안전 상한은 500행이며 현재 UI는 기본 10행, 최대 100행을 설정한다.
+
+Frontend는 published `/dashboards/:dashboardId`에서 Continuous dataset만 polling한다. 같은 dataset을 쓰는 여러 widget은 freshness를 한 번만 확인하고 `latestRevision > appliedRevision`인 widget만 재조회한다. 주기는 backend가 `clamp(triggerIntervalSeconds × 500, 5,000, 60,000)`으로 계산한 `nextCheckAfterMs`를 사용하고, 동시 요청을 흩뜨리기 위해 dataset ID 기반 0~10% deterministic jitter를 더한다. hidden tab에서는 중지하고, route unmount 시 timer/request를 정리하며, 실패하면 이전 위젯 결과를 유지한다.
+
+상세 사용·운영·검증 절차는 [Kafka PostgreSQL Dashboard Sync](kafka-postgresql-dashboard-sync.md)를 따른다.

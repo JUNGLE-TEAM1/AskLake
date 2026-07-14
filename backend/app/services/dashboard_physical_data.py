@@ -1,4 +1,5 @@
 import math
+import json
 import os
 import re
 from collections.abc import Mapping
@@ -27,6 +28,7 @@ from app.services.trino_client import TrinoClient
 DASHBOARD_CHART_ROW_LIMIT = 500
 DASHBOARD_TABLE_ROW_LIMIT = 500
 DASHBOARD_VALUE_ALIAS = "__asklake_widget_value"
+MAX_DASHBOARD_INCREMENTAL_GROUPS = 10_000
 DEFAULT_DASHBOARD_DUCKDB_MEMORY_BYTES = 256 * 1024 * 1024
 DEFAULT_DASHBOARD_DUCKDB_TEMP_BYTES = 256 * 1024 * 1024
 DEFAULT_DASHBOARD_DUCKDB_THREADS = 2
@@ -215,6 +217,37 @@ class DashboardDatasetQuerySession:
             raise dashboard_storage_error(self.dataset, iceberg_read_reason(error)) from error
         return {"config": runtime_config, "data": rows}
 
+    def read_aggregate_state(self, widget_type: str, config: dict[str, Any]) -> dict[str, Any] | None:
+        """Read mergeable aggregate state; return None when cardinality is unsafe."""
+        if widget_type == "table":
+            return None
+        source_config = dashboard_source_config(config)
+        query, state_template = dashboard_aggregate_state_query(
+            self.table,
+            self.columns,
+            widget_type,
+            source_config,
+        )
+        try:
+            cursor = execute_dashboard_query(
+                self.connection,
+                query,
+                timeout_seconds=self.query_timeout_seconds,
+            )
+            column_names = [str(description[0]) for description in (cursor.description or [])]
+            rows = [
+                {
+                    column_name: dashboard_json_cell(row[index])
+                    for index, column_name in enumerate(column_names)
+                }
+                for row in cursor.fetchall()
+            ]
+        except duckdb.Error as error:
+            raise dashboard_storage_error(self.dataset, str(error)) from error
+        if len(rows) > MAX_DASHBOARD_INCREMENTAL_GROUPS:
+            return None
+        return {**state_template, "rows": rows}
+
 
 def dashboard_source_config(config: dict[str, Any]) -> dict[str, Any]:
     source = config.get("sourceConfig") or config.get("source_config")
@@ -310,6 +343,188 @@ def dashboard_aggregation_query(
         order_sql = ""
     limit_sql = f" LIMIT {DASHBOARD_CHART_ROW_LIMIT}" if dimension_aliases else ""
     return f"SELECT {', '.join(select_parts)} FROM {table}{group_sql}{order_sql}{limit_sql}", runtime_config
+
+
+def dashboard_aggregate_state_query(
+    table: str,
+    columns: set[str],
+    widget_type: str,
+    config: dict[str, Any],
+) -> tuple[str, dict[str, Any]]:
+    aggregation = str(config.get("aggregation") or "sum").lower()
+    if aggregation not in {"sum", "avg", "count", "min", "max"}:
+        raise ValueError(f"Unsupported dashboard aggregation: {aggregation}")
+
+    dimension_specs, value_config_key = dashboard_widget_query_fields(widget_type, config)
+    select_parts: list[str] = []
+    dimension_keys: list[str] = []
+    for column, date_unit in dimension_specs:
+        if not column:
+            continue
+        require_dashboard_column(column, columns)
+        expression = quote_duckdb_identifier(column)
+        if date_unit in {"day", "month", "year"}:
+            expression = f"date_trunc('{date_unit}', TRY_CAST({expression} AS TIMESTAMP))"
+        select_parts.append(f"{expression} AS {quote_duckdb_identifier(column)}")
+        dimension_keys.append(column)
+
+    configured_value_key = config.get(value_config_key) or config.get(camel_to_snake_key(value_config_key))
+    if aggregation != "count":
+        if not isinstance(configured_value_key, str) or not configured_value_key:
+            raise ValueError(f"Dashboard {widget_type} requires {value_config_key}")
+        require_dashboard_column(configured_value_key, columns)
+
+    value_alias = (
+        DASHBOARD_VALUE_ALIAS
+        if aggregation == "count" or configured_value_key in dimension_keys
+        else str(configured_value_key)
+    )
+    if aggregation == "count":
+        select_parts.extend([
+            "COUNT(*) AS __asklake_state_count",
+            "CAST(COUNT(*) AS DOUBLE) AS __asklake_state_sum",
+            "CAST(NULL AS DOUBLE) AS __asklake_state_min",
+            "CAST(NULL AS DOUBLE) AS __asklake_state_max",
+        ])
+    else:
+        numeric_value = f"TRY_CAST({quote_duckdb_identifier(str(configured_value_key))} AS DOUBLE)"
+        select_parts.extend([
+            f"COUNT({numeric_value}) AS __asklake_state_count",
+            f"SUM({numeric_value}) AS __asklake_state_sum",
+            f"MIN({numeric_value}) AS __asklake_state_min",
+            f"MAX({numeric_value}) AS __asklake_state_max",
+        ])
+    group_sql = " GROUP BY ALL" if dimension_keys else ""
+    query = (
+        f"SELECT {', '.join(select_parts)} FROM {table}{group_sql} "
+        f"LIMIT {MAX_DASHBOARD_INCREMENTAL_GROUPS + 1}"
+    )
+    return query, {
+        "version": 1,
+        "widgetType": widget_type,
+        "aggregation": aggregation,
+        "dimensionKeys": dimension_keys,
+        "valueConfigKey": value_config_key,
+        "valueAlias": value_alias,
+        "sourceConfig": config,
+    }
+
+
+def merge_dashboard_aggregate_states(
+    current: dict[str, Any],
+    delta: dict[str, Any],
+) -> dict[str, Any] | None:
+    identity_fields = ("version", "widgetType", "aggregation", "dimensionKeys", "valueConfigKey", "valueAlias")
+    if any(current.get(field) != delta.get(field) for field in identity_fields):
+        return None
+    dimension_keys = [str(value) for value in current.get("dimensionKeys") or []]
+    merged: dict[str, dict[str, Any]] = {}
+
+    def merge_row(row: dict[str, Any]) -> None:
+        identity = json.dumps(
+            [row.get(key) for key in dimension_keys],
+            ensure_ascii=True,
+            separators=(",", ":"),
+            default=str,
+        )
+        existing = merged.get(identity)
+        if existing is None:
+            merged[identity] = dict(row)
+            return
+        existing_count = int(existing.get("__asklake_state_count") or 0)
+        delta_count = int(row.get("__asklake_state_count") or 0)
+        existing["__asklake_state_count"] = existing_count + delta_count
+        existing["__asklake_state_sum"] = (
+            numeric_state(existing.get("__asklake_state_sum")) + numeric_state(row.get("__asklake_state_sum"))
+            if existing_count + delta_count > 0
+            else None
+        )
+        existing["__asklake_state_min"] = state_min(existing.get("__asklake_state_min"), row.get("__asklake_state_min"))
+        existing["__asklake_state_max"] = state_max(existing.get("__asklake_state_max"), row.get("__asklake_state_max"))
+
+    for item in [*(current.get("rows") or []), *(delta.get("rows") or [])]:
+        if isinstance(item, dict):
+            merge_row(item)
+    if len(merged) > MAX_DASHBOARD_INCREMENTAL_GROUPS:
+        return None
+    return {**current, "rows": list(merged.values())}
+
+
+def dashboard_result_from_aggregate_state(state: dict[str, Any]) -> dict[str, Any]:
+    aggregation = str(state.get("aggregation") or "sum")
+    widget_type = str(state.get("widgetType") or "")
+    dimension_keys = [str(value) for value in state.get("dimensionKeys") or []]
+    value_alias = str(state.get("valueAlias") or DASHBOARD_VALUE_ALIAS)
+    value_config_key = str(state.get("valueConfigKey") or "valueKey")
+    source_config = dict(state.get("sourceConfig") or {})
+
+    data: list[dict[str, Any]] = []
+    for state_row in state.get("rows") or []:
+        if not isinstance(state_row, dict):
+            continue
+        row = {key: state_row.get(key) for key in dimension_keys}
+        count = int(state_row.get("__asklake_state_count") or 0)
+        total = numeric_state(state_row.get("__asklake_state_sum"))
+        if aggregation == "count":
+            value: Any = count
+        elif aggregation == "avg":
+            value = total / count if count else None
+        elif aggregation == "min":
+            value = state_row.get("__asklake_state_min")
+        elif aggregation == "max":
+            value = state_row.get("__asklake_state_max")
+        else:
+            value = state_row.get("__asklake_state_sum")
+        row[value_alias] = value
+        data.append(row)
+
+    if dimension_keys:
+        if widget_type in {"line_chart", "area_chart", "heatmap_chart"}:
+            data.sort(key=lambda row: tuple(sortable_dashboard_value(row.get(key)) for key in dimension_keys))
+        else:
+            data.sort(key=lambda row: sortable_dashboard_number(row.get(value_alias)), reverse=True)
+        data = (
+            data[-DASHBOARD_CHART_ROW_LIMIT:]
+            if widget_type in {"line_chart", "area_chart"}
+            else data[:DASHBOARD_CHART_ROW_LIMIT]
+        )
+
+    runtime_config = dict(source_config)
+    if aggregation == "count":
+        runtime_config["aggregation"] = "sum"
+    if value_alias != source_config.get(value_config_key):
+        runtime_config[value_config_key] = value_alias
+    runtime_config["dataMode"] = "server_aggregated"
+    runtime_config["sourceConfig"] = source_config
+    return {"config": runtime_config, "data": data}
+
+
+def numeric_state(value: Any) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return parsed if math.isfinite(parsed) else 0.0
+
+
+def state_min(left: Any, right: Any) -> Any:
+    values = [value for value in (left, right) if value is not None]
+    return min(values) if values else None
+
+
+def state_max(left: Any, right: Any) -> Any:
+    values = [value for value in (left, right) if value is not None]
+    return max(values) if values else None
+
+
+def sortable_dashboard_value(value: Any) -> tuple[int, str]:
+    return (1, "") if value is None else (0, str(value))
+
+
+def sortable_dashboard_number(value: Any) -> float:
+    if value is None:
+        return float("-inf")
+    return numeric_state(value)
 
 
 def dashboard_widget_query_fields(
