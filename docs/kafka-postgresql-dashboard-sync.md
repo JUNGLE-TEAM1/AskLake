@@ -66,6 +66,8 @@ PostgreSQL에 revision commit + latestRevision을 한 transaction으로 저장
 
 Spark가 파일만 만들었거나 Catalog 반영이 실패한 배치는 대시보드에 새 번호로 공개하지 않는다.
 
+Iceberg commit 시간이 Trino의 `YYYY-MM-DD HH:MM:SS.sss UTC` 형식으로 들어와도 UTC 시각으로 파싱해 `materializationRuns`를 최신 commit 순서로 유지한다. Catalog 최상위 `icebergSnapshotId`는 이 최신 run을 가리켜야 하며, 그래야 전체 위젯 재계산도 현재 Iceberg snapshot을 읽는다.
+
 ## 3. 어디에 무엇을 저장하는가
 
 ### S3/MinIO
