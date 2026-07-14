@@ -110,6 +110,9 @@ export function SqlDatasetTree({
           "data-sql-dataset-node": node.data.kind === "dataset" ? "" : undefined,
           "data-sql-dataset-row": node.data.kind === "dataset" ? "" : undefined,
           "data-sql-dataset-selected": node.data.selected ? "" : undefined,
+          onClick: () => {
+            if (node.data.kind === "dataset" && node.data.dataset) onSelect(node.data.dataset);
+          },
           onBlur: () => setHoverInfo(null),
           onFocus: (event) => showSqlNodeHover(node.data, event.currentTarget, setHoverInfo),
           onMouseEnter: (event) => showSqlNodeHover(node.data, event.currentTarget, setHoverInfo),
@@ -127,9 +130,6 @@ export function SqlDatasetTree({
         openByDefault={false}
         rowHeight={40}
         toggleOnRowPress={false}
-        onNodePress={(node) => {
-          if (node.data.kind === "dataset" && node.data.dataset) onSelect(node.data.dataset);
-        }}
         onToggle={(nodeId) => {
           if (!nodeId.startsWith(DATASET_NODE_PREFIX)) return;
           const datasetId = nodeId.slice(DATASET_NODE_PREFIX.length);

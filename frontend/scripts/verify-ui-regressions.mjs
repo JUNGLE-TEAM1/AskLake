@@ -506,7 +506,7 @@ const checks = [
       /data=\{treeData\}/,
       /data-sql-dataset-row/,
       /initialOpenState=\{\{/,
-      /onNodePress=\{\(node\) =>/,
+      /onClick: \(\) => \{\s*if \(node\.data\.kind === "dataset" && node\.data\.dataset\) onSelect\(node\.data\.dataset\);/,
       /selectedDatasetIds: ReadonlySet<string>;/,
       /selected: selectedDatasetIds\.has\(dataset\.id\)/,
       /data-sql-dataset-selected/,
@@ -1403,6 +1403,21 @@ const checks = [
     ],
     forbiddenPatterns: [
       /<Topbar[^\n]*onRefresh=\{\(\) => writeAuditLog\("etl\.job\.status_refreshed"/,
+    ],
+  },
+  {
+    name: "SQL Result Job drafts use the query result as the source contract",
+    file: "src/hooks/useAskLakeData.ts",
+    patterns: [
+      /sourceType: "SQL Result",/,
+      /SQL Run ID/,
+      /query result schema is carried by sourceConfig and outputColumns/,
+      /steps: \[\],/,
+    ],
+    forbiddenPatterns: [
+      /id: "sql-preview-materialize"/,
+      /operation: "SQL_RESULT_MATERIALIZE"/,
+      /input: sourceDataset\.name/,
     ],
   },
 ];
