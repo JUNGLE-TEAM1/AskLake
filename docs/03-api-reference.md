@@ -87,7 +87,7 @@ Canonical status values:
 
 `PATCH /api/etl/jobs/{jobId}`는 `manage` 권한이 필요하다. request는 source field를 허용하지 않으며, 실행 중인 Job은 `409`, 성공 Run이 있는 Job의 target dataset/database/layer/format/storage identity 변경은 `422`로 차단한다. update는 Job metadata만 바꾸고 Kafka consumer group offset 및 durable snapshot은 변경하지 않는다.
 
-Kafka Source Job의 `run`/`retry`는 Airflow/Spark 대신 backend Kafka ingest bridge를 실행한다. bridge는 Job 시작 시 partition별 end offset snapshot을 고정하고, 해당 range만 consume한 뒤 `topic -> direct target object(jsonl) -> Catalog materializationRuns append -> consumer offset commit` 순서로 처리한다. 같은 consumer group을 쓰면 마지막 성공 snapshot의 end offset 이후만 target에 저장되고, lag가 없으면 0건 JSONL target run도 성공으로 남긴다.
+Kafka Source Job의 `run`/`retry`는 Airflow/Spark 대신 FastAPI의 Python Kafka ingest service를 실행한다. `confluent-kafka` consumer는 Job 시작 시 partition별 end offset snapshot을 고정하고 explicit assign으로 해당 range만 consume한 뒤 `topic -> direct target object(jsonl) -> Catalog materializationRuns append -> consumer offset commit` 순서로 처리한다. 같은 consumer group을 쓰면 마지막 성공 snapshot의 end offset 이후만 target에 저장된다. lag가 없으면 0건 run도 성공 이력으로 남지만 새 `data.jsonl`은 만들지 않으며, 부모 Catalog dataset은 마지막 non-empty run의 대표 `storageLocation`과 호환 가능한 sample rows를 유지한다.
 
 ### Kafka review ingest
 
@@ -103,6 +103,7 @@ type KafkaReviewIngestRequest = {
   maxMessages?: number; // default 100, snapshot maximum per partition
   timeoutMs?: number; // default 10000
   offsetPolicy?: "earliest" | "latest";
+  producerAckAt?: string; // experiment runner가 Kafka producer ack 직후 기록하는 ISO-8601 시각
   allowEmpty?: boolean;
   registerCatalog?: boolean;
   datasetId?: string;
@@ -127,6 +128,7 @@ Response:
 
 ```ts
 type KafkaReviewIngestResponse = {
+  engine?: "python-confluent-kafka";
   status: "success";
   runId: string;
   broker: string;
@@ -144,6 +146,16 @@ type KafkaReviewIngestResponse = {
   datasetId?: string;
   datasetName?: string;
   catalogDataset?: CatalogDataset;
+  timing?: {
+    producerAckAt: string | null;
+    snapshotCapturedAt: string;
+    consumeEndedAt: string;
+    transformEndedAt: string;
+    minioWriteEndedAt: string;
+    catalogPublishedAt: string;
+    offsetCommittedAt: string;
+  };
+  timingDetail?: Record<string, unknown>; // local experiment diagnostics; FastAPI bridge/Kafka admin/consumer 세부 계측
   snapshot: {
     snapshotId: string;
     capturedAt: string;
@@ -159,6 +171,10 @@ type KafkaReviewIngestResponse = {
   };
 };
 ```
+
+`timing`은 Kafka direct target의 단계 경계 시각이다. `producerAckAt`은 실험 요청이 제공할 때만 기록되며, 나머지는 bridge가 기록한다. `snapshotCapturedAt -> consumeEndedAt`에는 durable snapshot 전달과 consumer 시작 준비 시간이 포함될 수 있으므로, 결과에서는 순수 consumer 함수 시간이라고 단정하지 않는다.
+
+`timingDetail`은 local 진단용 세부 계측이다. `capture`, `readerPreparation`, `consume`, `commit` 구간의 connect, offset fetch/set, group join, fetch와 message boundary를 기록하며 운영 SLO의 고정 public schema로 사용하지 않는다.
 
 Kafka review message contract:
 

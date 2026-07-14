@@ -181,9 +181,14 @@ npm run kafka:reviews-replay -- --input /path/to/amazon_reviews.jsonl.gz --limit
 
 Kafka Source -> direct target -> Catalog 등록 -> schedule tick 계약까지 한 번에 확인하려면 아래 smoke를 실행한다. 이 스크립트는 고유 `reviews.raw.verify.*` topic에 100건 fixture를 넣고, due 상태의 Kafka ETL Job을 만든 뒤 `/api/etl/schedules/run-due`로 실행해 다음 예약 시각이 advance되는지까지 확인한다. 이 smoke는 durable snapshot range 재사용, 실패 후 capture 이후 메시지 append, malformed payload raw quarantine, custom Regex quality parameter, `Fail Run` offset 미커밋, failed Job Run/DAG, 2개 partition의 독립된 max range/offset commit, target write 뒤 Catalog 실패 후 idempotent retry까지 함께 검증한다.
 
+정확성, 장애 복구, 단계별 지연, 처리량과 micro-batch 가시성의 반복 실험 절차와 실행 기록은 [Kafka Direct Ingest Experiment Plan](./kafka-direct-ingest-experiment-plan.md)을 따른다. 첫 정확성 실험은 고유 topic에 100건을 생성하고 MinIO JSONL, Catalog representative location, consumer group offset과 같은 group의 두 번째 0건 실행까지 자동 검증한다.
+
 ```bash
 cd backend
 ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:kafka-review-scheduled-ingest
+npm run experiment:kafka-correctness
+npm run experiment:kafka-throughput
+npm run experiment:kafka-visibility-latency
 ```
 
 ### FastAPI scaffold

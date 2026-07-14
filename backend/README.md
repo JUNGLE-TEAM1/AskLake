@@ -3,6 +3,8 @@
 이 폴더는 기존 Node 기반 검증 스크립트와 새 FastAPI 전환 scaffold를 함께 둔다.
 Node demo API는 아직 제거하지 않으며, FastAPI 전환 작업은 `app/` 아래에서 진행한다.
 
+Kafka snapshot direct ingest의 runtime은 `app/services/kafka_review_ingest_service.py`가 소유한다. FastAPI는 Python `confluent-kafka` consumer의 explicit partition assign과 synchronous commit을 사용하며, `scripts/ingest-kafka-reviews.mjs`는 이전 동작 비교와 Node 회귀 fixture용으로만 남긴다.
+
 ## FastAPI 실행
 
 FastAPI backend는 Python 3.13 환경에서 검증한다. production Docker image도

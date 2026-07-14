@@ -24,6 +24,10 @@ The offset snapshot is metadata, not a copied message payload.
 
 Current behavior writes JSONL directly to `s3://{targetBucket}/{targetPrefix}/snapshots/{snapshotId}/`. It persists the captured range before consume, reuses a failed range on retry, and commits the configured consumer group only after target storage and Catalog registration succeed.
 
+The FastAPI execution path uses the Python `confluent-kafka` client. It explicitly assigns each captured partition at `startOffset`, stops at the exclusive `endOffset`, and synchronously commits that end offset only after target and Catalog success. The former Node/KafkaJS `admin.setOffsets` implementation remains a comparison fixture and is not the FastAPI runtime.
+
+Successful direct-ingest metadata additionally records a `timing` object for stage-boundary observation: optional `producerAckAt`, then `snapshotCapturedAt`, `consumeEndedAt`, `transformEndedAt`, `minioWriteEndedAt`, `catalogPublishedAt`, and `offsetCommittedAt`. These are ordered wall-clock boundaries, not distributed-tracing spans; in particular, snapshot-to-consume includes bridge handoff and consumer setup.
+
 ## 3. Snapshot Boundary
 
 A snapshot is created at the beginning of each Kafka Job run.
@@ -77,7 +81,7 @@ If target writing or Catalog registration fails, offsets must not be committed. 
 
 For a Job command failure, AskLake persists a failed Run with `KafkaSnapshot`, `failedStage`, and the bridge error summary. Its DAG marks the failing transform or quality stage as failed and downstream target/Catalog stages as blocked. A direct ingest endpoint call still returns an error response, including the bridge snapshot diagnostics, for fixture and debug callers.
 
-Empty snapshots are valid successful runs. They create no target data file and record `rowCount: 0` with the captured partition ranges.
+Empty snapshots are valid successful runs. They create no target data file and record `rowCount: 0` with the captured partition ranges. The zero-row materialization remains in history, but it must not replace the parent Catalog dataset's representative `storageLocation` or compatible sample rows from the last non-empty run.
 
 ## 6. Compatibility and Excluded Scope
 
@@ -94,3 +98,4 @@ Empty snapshots are valid successful runs. They create no target data file and r
 4. Retrying the same snapshot does not duplicate target rows or Catalog materialization history.
 5. Multi-partition topics record and commit each partition range independently.
 6. A forced post-target-write Catalog failure leaves offsets unchanged; retrying the same snapshot overwrites the target object and creates one Catalog materialization entry.
+7. A zero-row snapshot creates no `data.jsonl` object and does not replace the Catalog dataset's last non-empty representative location or compatible samples.

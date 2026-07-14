@@ -6,3 +6,5 @@ pydantic==2.11.7
 pydantic-settings==2.10.1
 python-dotenv==1.1.1
 duckdb>=1.1,<2
+boto3==1.43.41
+confluent-kafka==2.15.0

@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { GetObjectCommand, HeadObjectCommand, S3Client } from "@aws-sdk/client-s3";
 
 const backendDir = fileURLToPath(new URL("..", import.meta.url));
 process.env.KAFKAJS_NO_PARTITIONER_WARNING = process.env.KAFKAJS_NO_PARTITIONER_WARNING || "1";
@@ -118,6 +118,7 @@ async function verifyMinimalReviewContractIngest() {
   assert(result.targetLayer === "BRONZE", "Minimal ingest should retain the target layer.");
   assert(!result.storageLocation.includes("kafka-landing"), "Minimal ingest should not write to the legacy landing path.");
   assert(result.catalogDataset?.storageLocation === result.storageLocation, "Minimal review catalog storage location should match direct target output.");
+  const catalogBeforeEmpty = await get(`/api/catalog/datasets/${encodeURIComponent(`ds_reviews_raw_minimal_${suffix}`)}`);
 
   const emptyResult = await post("/api/etl/kafka/reviews/ingest", {
     broker: env.ASKLAKE_KAFKA_BROKER,
@@ -138,8 +139,16 @@ async function verifyMinimalReviewContractIngest() {
     targetFormat: "jsonl",
   });
   assert(emptyResult.consumedCount === 0, `Committed offsets should prevent duplicate consume: ${emptyResult.consumedCount}`);
+  assert(emptyResult.storedCount === 0, `Empty snapshot should store zero rows: ${emptyResult.storedCount}`);
   assert(emptyResult.snapshot.partitions[0].startOffset === "2", `Next snapshot should start at committed offset 2: ${JSON.stringify(emptyResult.snapshot)}`);
   assert(emptyResult.snapshot.partitions[0].endOffset === "2", `Next snapshot should be empty: ${JSON.stringify(emptyResult.snapshot)}`);
+  await assertS3ObjectMissing(emptyResult.storageLocation);
+  const catalogAfterEmpty = await get(`/api/catalog/datasets/${encodeURIComponent(`ds_reviews_raw_minimal_${suffix}`)}`);
+  assert(emptyResult.catalogDataset?.storageLocation === result.storageLocation, "Empty ingest response should retain the last non-empty Catalog location.");
+  assert(catalogAfterEmpty.storageLocation === result.storageLocation, "Empty snapshot must not replace the Catalog representative storage location.");
+  assert(catalogAfterEmpty.rows === "2", `Empty snapshot must not change aggregate Catalog rows: ${catalogAfterEmpty.rows}`);
+  assert(JSON.stringify(catalogAfterEmpty.sampleRows) === JSON.stringify(catalogBeforeEmpty.sampleRows), "Empty snapshot must preserve compatible Catalog sample rows.");
+  assert(catalogAfterEmpty.materializationRuns?.[0]?.rowCount === 0, "Empty snapshot should remain visible as a zero-row materialization run.");
 
   await appendRawKafkaMessages(minimalTopic, [
     "{invalid json",
@@ -365,6 +374,24 @@ async function readS3Object(location) {
   });
   const response = await client.send(new GetObjectCommand({ Bucket: match[1], Key: match[2] }));
   return response.Body.transformToString();
+}
+
+async function assertS3ObjectMissing(location) {
+  const match = String(location || "").match(/^s3:\/\/([^/]+)\/(.+)$/);
+  assert(match, `Expected an S3 location: ${location}`);
+  const client = new S3Client({
+    credentials: { accessKeyId: env.MINIO_ACCESS_KEY, secretAccessKey: env.MINIO_SECRET_KEY },
+    endpoint: env.MINIO_ENDPOINT,
+    forcePathStyle: true,
+    region: "us-east-1",
+  });
+  try {
+    await client.send(new HeadObjectCommand({ Bucket: match[1], Key: match[2] }));
+  } catch (error) {
+    if (error?.$metadata?.httpStatusCode === 404 || error?.name === "NotFound" || error?.name === "NoSuchKey") return;
+    throw error;
+  }
+  throw new Error(`Empty snapshot must not create a target data object: ${location}`);
 }
 
 async function produceMinimalReviewEvents() {

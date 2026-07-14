@@ -29,6 +29,8 @@ FastAPI 공통 schema 기준은 `backend/app/schemas/common.py`에 두며, 각 P
 Demo hydrate endpoint는 live ETL/Catalog API를 가리지 않도록 `/api/demo/etl/jobs`, `/api/demo/catalog/datasets`에 둔다.
 Amazon review Kafka replay/ingest 병렬 개발은 `backend/fixtures/kafka/amazon-review-fixture.jsonl` 100건 mock fixture와 `npm run kafka:reviews-fixture`로 `reviews.raw` topic에 표준 JSON fixture를 넣어 시작한다. fixture를 다시 만들 때는 `npm run kafka:reviews-fixture:generate -- --count 100`을 사용한다. 실제 Amazon review JSONL/JSONL.gz 파일은 `npm run kafka:reviews-replay -- --input <path> --limit 100 --rate 100`으로 같은 메시지 계약에 맞춰 replay한다. 이 스크립트는 Kafka 입력 계약 검증과 replay를 담당하며, Lake 적재 로직은 별도 ingest 작업 범위다.
 
+Kafka direct ingest의 0건 snapshot은 성공 materialization 이력과 offset range를 남기되 `data.jsonl`을 생성하지 않는다. 기존 non-empty materialization이 있으면 Catalog dataset의 대표 `storageLocation`, aggregate rows와 같은 schema의 sample rows를 유지한다. `npm run verify:kafka-review-scheduled-ingest`는 이 empty-run 회귀와 함께 snapshot, transform/quality, 실패 후 retry, multi-partition, Catalog idempotency를 검증한다.
+
 ## 2. Pair A Live Contract
 
 Pair A 생성 요청은 nested `draftPipeline`을 submit 직전에 flat `CreatePipelineRequest`로 변환한다.

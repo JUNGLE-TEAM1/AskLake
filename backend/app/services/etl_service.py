@@ -39,6 +39,11 @@ from app.schemas.etl import (
 )
 
 from app.services.airflow_client import AirflowDagRun, AirflowTaskInstance, build_airflow_client
+from app.services.kafka_review_ingest_service import (
+    KafkaIngestFailure,
+    capture_kafka_snapshot,
+    ingest_kafka_reviews_python,
+)
 from app.services.resource_permission_service import job_with_persisted_permission_grants, permission_grants_for_resource
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
@@ -436,7 +441,9 @@ def infer_schema(request: SourceConnectorRequest) -> SchemaDraft:
 
 
 def ingest_kafka_reviews(db: Session, request: KafkaReviewIngestRequest) -> KafkaReviewIngestResponse:
-    result = run_kafka_ingest_request(db, request.model_dump(by_alias=True, exclude_none=True), "ingest", None)
+    payload = request.model_dump(by_alias=True, exclude_none=True)
+    payload["fastapiReceivedAt"] = iso_now()
+    result = run_kafka_ingest_request(db, payload, "ingest", None)
     return KafkaReviewIngestResponse.model_validate(result)
 
 
@@ -448,16 +455,15 @@ def run_kafka_ingest_job(db: Session, job: ETLJobModel, command: str, run_id: st
 def run_kafka_ingest_request(db: Session, request: dict[str, Any], command: str, job_id: str | None) -> dict[str, Any]:
     snapshot_record, request_with_snapshot = kafka_request_with_durable_snapshot(db, request, job_id)
     try:
-        result = run_node_bridge(
-            "ingest-kafka-reviews.mjs",
-            "ASKLAKE_KAFKA_REVIEW_INGEST_RESULT",
-            request_with_snapshot,
-            error_marker="ASKLAKE_KAFKA_REVIEW_INGEST_ERROR",
-            timeout_seconds=max(30, int(request["timeoutMs"] / 1000) + 30),
-        )
-    except ApiError as exc:
-        etl_repository.update_kafka_snapshot(db, snapshot_record, "failed", exc.message)
-        raise
+        result = ingest_kafka_reviews_python(db, request_with_snapshot)
+    except KafkaIngestFailure as exc:
+        etl_repository.update_kafka_snapshot(db, snapshot_record, "failed", str(exc))
+        raise ApiError(
+            "KAFKA_REVIEW_INGEST_FAILED",
+            str(exc),
+            status.HTTP_502_BAD_GATEWAY,
+            {"bridge": exc.bridge},
+        ) from exc
     etl_repository.update_kafka_snapshot(db, snapshot_record, "success")
     result["command"] = command
     return result
@@ -470,19 +476,28 @@ def kafka_request_with_durable_snapshot(
 ) -> tuple[KafkaSnapshotModel, dict[str, Any]]:
     topic = str(request.get("topic") or "reviews.raw")
     consumer_group_id = str(request.get("consumerGroupId") or "")
+    capture_control_timing = {
+        "fastapiReceivedAt": request.get("fastapiReceivedAt"),
+        "snapshotLookupStartedAt": iso_now(),
+    }
     existing = etl_repository.get_active_kafka_snapshot(db, topic, consumer_group_id, job_id)
+    capture_control_timing["snapshotLookupEndedAt"] = iso_now()
     if existing is None:
-        capture_request = {**request, "snapshotOnly": True}
-        captured = run_node_bridge(
-            "ingest-kafka-reviews.mjs",
-            "ASKLAKE_KAFKA_REVIEW_INGEST_RESULT",
-            capture_request,
-            error_marker="ASKLAKE_KAFKA_REVIEW_INGEST_ERROR",
-            timeout_seconds=max(30, int(request["timeoutMs"] / 1000) + 30),
-        )
-        snapshot = captured.get("snapshot")
-        if not isinstance(snapshot, dict):
-            raise ApiError("KAFKA_SNAPSHOT_BAD_RESPONSE", "Kafka snapshot capture did not return a snapshot.", status.HTTP_502_BAD_GATEWAY)
+        capture_control_timing["captureBridgeStartedAt"] = iso_now()
+        try:
+            snapshot = capture_kafka_snapshot(request)
+        except KafkaIngestFailure as exc:
+            raise ApiError(
+                "KAFKA_SNAPSHOT_CAPTURE_FAILED",
+                str(exc),
+                status.HTTP_502_BAD_GATEWAY,
+                {"bridge": exc.bridge or {"failedStage": exc.failed_stage, "message": str(exc)}},
+            ) from exc
+        capture_control_timing["captureBridgeEndedAt"] = iso_now()
+        snapshot["captureTiming"] = {
+            **capture_control_timing,
+            **(snapshot.get("captureTiming") if isinstance(snapshot.get("captureTiming"), dict) else {}),
+        }
         existing = KafkaSnapshotModel(
             snapshot_id=str(snapshot["snapshotId"]),
             job_id=job_id,

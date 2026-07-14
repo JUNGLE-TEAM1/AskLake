@@ -377,9 +377,11 @@ class KafkaReviewIngestRequest(CamelModel):
     local_landing_dir: str | None = None
     max_messages: int = Field(default=100, ge=1, le=1_000_000)
     offset_policy: Literal["earliest", "latest"] = "earliest"
+    producer_ack_at: str | None = None
     register_catalog: bool = True
     run_id: str | None = None
     storage_mode: Literal["local", "s3"] = "s3"
+    test_fail_after_catalog_publish: bool = False
     test_fail_after_target_write: bool = False
     timeout_ms: int = Field(default=10000, ge=1000, le=300000)
 
@@ -392,6 +394,7 @@ class KafkaPartitionSnapshot(CamelModel):
 
 
 class KafkaSnapshot(CamelModel):
+    capture_timing: dict[str, Any] | None = None
     captured_at: str
     consumer_group_id: str
     offset_policy: Literal["earliest", "latest"]
@@ -407,6 +410,7 @@ class KafkaReviewIngestResponse(CamelModel):
     dataset_id: str | None = None
     dataset_name: str | None = None
     failed_count: int
+    engine: str | None = None
     metadata_location: str
     run_id: str
     snapshot: KafkaSnapshot
@@ -419,6 +423,8 @@ class KafkaReviewIngestResponse(CamelModel):
     topic: str
     transform: dict[str, Any] | None = None
     quality: dict[str, Any] | None = None
+    timing: dict[str, str | None] | None = None
+    timing_detail: dict[str, Any] | None = None
 
 
 class QueryRunRequest(CamelModel):

@@ -16,6 +16,7 @@ This document records the Pair A person-1 backend validation path for Source, Sc
 - `backend/scripts/verify-spark-job-run.mjs`: create -> run -> Spark -> DAG -> Catalog verifier
 - `backend/scripts/setup-source-fixtures.mjs`: PostgreSQL, MongoDB, and Redpanda fixtures
 - `backend/scripts/verify-all-sources.mjs`: source connector verifier
+- `backend/scripts/verify-kafka-review-scheduled-ingest.mjs`: Kafka snapshot direct target, empty-run Catalog location, offset-safe retry verifier
 
 ## 2. Backend
 
@@ -93,6 +94,14 @@ npm run verify:sources
 ```
 
 `npm run kafka:reviews-fixture`는 Amazon review replay/ingest 병렬 개발용 `reviews.raw` topic을 준비한다. 기존 source connector smoke는 기본 `asklake-source-events` topic을 검증한다. review fixture topic을 connector smoke로 확인하려면 `ASKLAKE_KAFKA_TOPIC=reviews.raw`를 함께 지정한다.
+
+Kafka direct target 전체 smoke는 아래 명령으로 실행한다. zero-row snapshot은 MinIO `data.jsonl`을 만들지 않고, Catalog의 마지막 non-empty object location과 호환 가능한 sample rows를 유지해야 한다.
+
+```powershell
+cd backend
+$env:ASKLAKE_FASTAPI_PYTHON = ".venv/bin/python"
+npm run verify:kafka-review-scheduled-ingest
+```
 
 Verified source types:
 

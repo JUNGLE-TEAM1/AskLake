@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CreateBucketCommand, HeadBucketCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
@@ -33,6 +33,7 @@ const targetRoot = path.resolve(stringOption("localLandingDir", process.env.ASKL
 const s3Endpoint = stringOption("landingEndpoint", process.env.ASKLAKE_REVIEW_LANDING_ENDPOINT || process.env.MINIO_ENDPOINT || "http://127.0.0.1:19000");
 const s3Bucket = stringOption("targetBucket", apiPayload.landingBucket || process.env.ASKLAKE_REVIEW_TARGET_BUCKET || "asklake-output");
 const s3Prefix = normalizePrefix(stringOption("targetPrefix", apiPayload.landingPrefix || process.env.ASKLAKE_REVIEW_TARGET_PREFIX || `${normalizeColumnName(datasetName)}/${targetLayer.toLowerCase()}`));
+const producerAckAt = optionalIsoTimestamp("producerAckAt");
 let s3DataKey = "";
 let s3MetadataKey = "";
 let s3QuarantineKey = "";
@@ -41,6 +42,13 @@ let dataPath = "";
 let metadataPath = "";
 let activeSnapshot = null;
 const startedAt = new Date().toISOString();
+const timingDetail = {
+  capture: suppliedSnapshot?.captureTiming || null,
+  commit: {},
+  consume: {},
+  process: { nodeStartedAt: startedAt },
+  readerPreparation: {},
+};
 const requiredFields = ["event_id", "offset", "review", "created_at"];
 
 try {
@@ -58,6 +66,7 @@ try {
     snapshot: activeSnapshot,
     status: 502,
     startedAt,
+    timingDetail,
     topic,
   })}`);
   process.exitCode = 1;
@@ -72,7 +81,7 @@ async function ingestReviews() {
   if (targetFormat !== "jsonl") {
     throw new Error(`Kafka direct target currently supports jsonl only: ${targetFormat}`);
   }
-  const { Kafka } = await import("kafkajs");
+  const { Kafka } = await measureStep(timingDetail.process, "kafkaModuleImport", () => import("kafkajs"));
   const kafka = new Kafka({
     brokers: [broker],
     clientId: "asklake-review-ingest",
@@ -80,16 +89,31 @@ async function ingestReviews() {
   });
   const snapshot = suppliedSnapshot || await captureKafkaSnapshot(kafka);
   activeSnapshot = snapshot;
-  if (snapshotOnly) return { snapshot, status: "snapshot" };
+  timingDetail.capture = snapshot.captureTiming || timingDetail.capture;
+  if (snapshotOnly) return { snapshot, status: "snapshot", timingDetail };
   configureTargetOutput(snapshot.snapshotId);
   const consumer = kafka.consumer({ groupId: snapshotReaderGroupId(snapshot) });
+  attachConsumerDiagnostics(consumer, timingDetail.consume);
   let consumerStarted = false;
 
-  await prepareSnapshotReader(kafka, snapshot);
-  await consumer.connect();
+  await prepareSnapshotReader(kafka, snapshot, timingDetail.readerPreparation);
+  await measureStep(timingDetail.consume, "consumerConnect", () => consumer.connect());
   try {
     consumerStarted = true;
-    const consumed = await consumeKafkaSnapshot(consumer, snapshot);
+    const consumed = await measureStep(
+      timingDetail.consume,
+      "consumeSnapshot",
+      () => consumeKafkaSnapshot(consumer, snapshot, timingDetail.consume),
+    );
+    const timing = {
+      catalogPublishedAt: null,
+      consumeEndedAt: new Date().toISOString(),
+      minioWriteEndedAt: null,
+      offsetCommittedAt: null,
+      producerAckAt,
+      snapshotCapturedAt: snapshot.capturedAt,
+      transformEndedAt: null,
+    };
 
     if (consumed.records.length === 0 && !allowEmpty) {
       throw new Error(`No valid review messages consumed from ${topic} at ${broker}.`);
@@ -103,8 +127,8 @@ async function ingestReviews() {
     const jsonl = processed.records.map((record) => JSON.stringify(record)).join("\n");
     const dataBody = processed.records.length > 0 ? `${jsonl}\n` : "";
     const localLocation = writeLocalTarget(dataBody);
+    timing.transformEndedAt = new Date().toISOString();
 
-    const endedAt = new Date().toISOString();
     const parsedSample = parseSourceSample("reviews.raw.jsonl", jsonl, { maxRows: Math.min(consumed.records.length, 20) });
     const inferredSchemaColumns = inferSchemaColumns(parsedSample);
     const schemaColumns = targetSchema(processed.records);
@@ -115,7 +139,7 @@ async function ingestReviews() {
       dataPath,
       datasetId: registerCatalog ? datasetId : null,
       datasetName: registerCatalog ? datasetName : null,
-      endedAt,
+      endedAt: timing.transformEndedAt,
       failedCount: consumed.invalidRecords.length + processed.transform.errorCount,
       invalidRecords: consumed.invalidRecords.slice(0, 10),
       maxMessages,
@@ -131,12 +155,14 @@ async function ingestReviews() {
       status: "success",
       storageFormat: "jsonl",
       storageLocation: localLocation,
-      storageSizeBytes: statSync(dataPath).size,
+      storageSizeBytes: Buffer.byteLength(dataBody, "utf8"),
       storedCount: processed.records.length,
       targetBucket: s3Bucket,
       targetFormat,
       targetLayer,
       targetPrefix: s3Prefix.replace(/\/$/, ""),
+      timing,
+      timingDetail,
       timeoutMs,
       topic,
       transform: processed.transform,
@@ -157,6 +183,7 @@ async function ingestReviews() {
         metadata.quality.quarantineLocation = writeLocalQuarantine(quarantined);
       }
     }
+    timing.minioWriteEndedAt = new Date().toISOString();
     if (testFailAfterTargetWrite) {
       throw pipelineError("catalog", "Test-only failure after Kafka target write.");
     }
@@ -164,17 +191,22 @@ async function ingestReviews() {
       const dataset = await registerCatalogDataset(metadata);
       metadata.catalogDataset = {
         id: dataset.id,
+        layer: dataset.layer,
         materializationRuns: dataset.materializationRuns?.length ?? 0,
         name: dataset.name,
         rows: dataset.rows,
         storageLocation: dataset.storageLocation,
       };
     }
+    timing.catalogPublishedAt = new Date().toISOString();
+    metadata.endedAt = timing.catalogPublishedAt;
     writeFileSync(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`, "utf8");
     if (landingMode === "s3") await writeS3Metadata(metadata);
 
-    await commitKafkaSnapshot(kafka, snapshot);
-    metadata.offsetCommit = { committedAt: new Date().toISOString(), status: "success" };
+    await commitKafkaSnapshot(kafka, snapshot, timingDetail.commit);
+    timing.offsetCommittedAt = new Date().toISOString();
+    metadata.endedAt = timing.offsetCommittedAt;
+    metadata.offsetCommit = { committedAt: timing.offsetCommittedAt, status: "success" };
     writeFileSync(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`, "utf8");
     if (landingMode === "s3") await writeS3Metadata(metadata);
     return metadata;
@@ -205,19 +237,27 @@ function isSnapshotPayload(value) {
 }
 
 async function captureKafkaSnapshot(kafka) {
+  const detail = {
+    fastapiReceivedAt: apiPayload.fastapiReceivedAt || null,
+    nodeStartedAt: startedAt,
+  };
+  const totalStartedAt = performance.now();
   const admin = kafka.admin();
-  await admin.connect();
+  await measureStep(detail, "adminConnect", () => admin.connect());
   try {
     const [topicOffsets, groupOffsets] = await Promise.all([
-      admin.fetchTopicOffsets(topic),
-      admin.fetchOffsets({ groupId: consumerGroupId, topics: [topic] }),
+      measureStep(detail, "fetchTopicOffsets", () => admin.fetchTopicOffsets(topic)),
+      measureStep(detail, "fetchGroupOffsets", () => admin.fetchOffsets({ groupId: consumerGroupId, topics: [topic] })),
     ]);
+    const computeStartedAt = performance.now();
     const committedByPartition = new Map((groupOffsets[0]?.partitions || []).map((item) => [item.partition, item.offset]));
     const partitions = topicOffsets
       .map((item) => snapshotPartition(item, committedByPartition.get(item.partition)))
       .sort((left, right) => left.partition - right.partition);
     const snapshotIdentity = JSON.stringify({ consumerGroupId, partitions, topic });
+    detail.snapshotComputeMs = elapsedMs(computeStartedAt);
     return {
+      captureTiming: detail,
       capturedAt: new Date().toISOString(),
       consumerGroupId,
       offsetPolicy,
@@ -226,7 +266,8 @@ async function captureKafkaSnapshot(kafka) {
       topic,
     };
   } finally {
-    await admin.disconnect().catch(() => undefined);
+    await measureStep(detail, "adminDisconnect", () => admin.disconnect()).catch(() => undefined);
+    detail.captureProcessTotalMs = elapsedMs(totalStartedAt);
   }
 }
 
@@ -234,16 +275,16 @@ function snapshotReaderGroupId(snapshot) {
   return `asklake-snapshot-${String(snapshot.snapshotId).replace(/^kafka_snapshot_/, "")}`;
 }
 
-async function prepareSnapshotReader(kafka, snapshot) {
+async function prepareSnapshotReader(kafka, snapshot, detail) {
   const offsets = snapshot.partitions
     .map((partition) => ({ offset: partition.startOffset, partition: partition.partition }));
   if (offsets.length === 0) return;
   const admin = kafka.admin();
-  await admin.connect();
+  await measureStep(detail, "adminConnect", () => admin.connect());
   try {
-    await admin.setOffsets({ groupId: snapshotReaderGroupId(snapshot), topic, partitions: offsets });
+    await measureStep(detail, "adminSetOffsets", () => admin.setOffsets({ groupId: snapshotReaderGroupId(snapshot), topic, partitions: offsets }));
   } finally {
-    await admin.disconnect().catch(() => undefined);
+    await measureStep(detail, "adminDisconnect", () => admin.disconnect()).catch(() => undefined);
   }
 }
 
@@ -271,7 +312,7 @@ function asOffset(value, fallback) {
   }
 }
 
-async function consumeKafkaSnapshot(consumer, snapshot) {
+async function consumeKafkaSnapshot(consumer, snapshot, detail) {
   const ranges = new Map(snapshot.partitions.map((partition) => [partition.partition, {
     end: BigInt(partition.endOffset),
     start: BigInt(partition.startOffset),
@@ -284,7 +325,7 @@ async function consumeKafkaSnapshot(consumer, snapshot) {
 
   if (completed.size === snapshot.partitions.length) return { invalidRecords, records };
 
-  await consumer.subscribe({ fromBeginning: false, topic });
+  await measureStep(detail, "consumerSubscribe", () => consumer.subscribe({ fromBeginning: false, topic }));
 
   await new Promise((resolve, reject) => {
     let settled = false;
@@ -307,11 +348,15 @@ async function consumeKafkaSnapshot(consumer, snapshot) {
       finish(new Error(`Kafka snapshot ${snapshot.snapshotId} timed out before all partition ranges were consumed.`));
     }, timeoutMs);
 
+    detail.consumerRunInvokedAt = new Date().toISOString();
     consumer.run({
       autoCommit: false,
       eachBatchAutoResolve: false,
       partitionsConsumedConcurrently: Math.max(1, snapshot.partitions.length),
       eachBatch: async ({ batch, heartbeat, isRunning, isStale, resolveOffset }) => {
+        detail.batchCount = Number(detail.batchCount || 0) + 1;
+        detail.firstBatchStartedAt ||= new Date().toISOString();
+        detail.lastBatchStartedAt = new Date().toISOString();
         const range = ranges.get(batch.partition);
         if (!range || completed.has(batch.partition) || settled) return;
         for (const message of batch.messages) {
@@ -323,6 +368,9 @@ async function consumeKafkaSnapshot(consumer, snapshot) {
             return;
           }
           if (messageOffset >= range.start) {
+            detail.firstMessageReadAt ||= new Date().toISOString();
+            detail.lastMessageReadAt = new Date().toISOString();
+            detail.messageCount = Number(detail.messageCount || 0) + 1;
             const value = message.value?.toString("utf8") ?? "";
             const parsed = parseReviewMessage(value, {
               key: message.key?.toString("utf8") ?? "",
@@ -350,23 +398,23 @@ async function consumeKafkaSnapshot(consumer, snapshot) {
   return { invalidRecords, records };
 }
 
-async function commitKafkaSnapshot(kafka, snapshot) {
+async function commitKafkaSnapshot(kafka, snapshot, detail) {
   const offsets = snapshot.partitions
     .filter((partition) => BigInt(partition.startOffset) < BigInt(partition.endOffset))
     .map((partition) => ({ offset: partition.endOffset, partition: partition.partition }));
   if (offsets.length === 0) return;
   const admin = kafka.admin();
-  await admin.connect();
+  await measureStep(detail, "adminConnect", () => admin.connect());
   try {
-    await admin.setOffsets({ groupId: consumerGroupId, topic, partitions: offsets });
+    await measureStep(detail, "adminSetOffsets", () => admin.setOffsets({ groupId: consumerGroupId, topic, partitions: offsets }));
   } finally {
-    await admin.disconnect().catch(() => undefined);
+    await measureStep(detail, "adminDisconnect", () => admin.disconnect()).catch(() => undefined);
   }
 }
 
 function writeLocalTarget(dataBody) {
   mkdirSync(targetDir, { recursive: true });
-  writeFileSync(dataPath, dataBody, "utf8");
+  if (dataBody) writeFileSync(dataPath, dataBody, "utf8");
   return dataPath;
 }
 
@@ -381,12 +429,14 @@ async function writeS3Landing(dataBody, metadata) {
     region: process.env.ASKLAKE_REVIEW_LANDING_REGION || process.env.MINIO_REGION || "us-east-1",
   });
   await ensureBucket(client, s3Bucket);
-  await client.send(new PutObjectCommand({
-    Body: Buffer.from(dataBody, "utf8"),
-    Bucket: s3Bucket,
-    ContentType: "application/x-ndjson",
-    Key: s3DataKey,
-  }));
+  if (dataBody) {
+    await client.send(new PutObjectCommand({
+      Body: Buffer.from(dataBody, "utf8"),
+      Bucket: s3Bucket,
+      ContentType: "application/x-ndjson",
+      Key: s3DataKey,
+    }));
+  }
   const dataLocation = `s3://${s3Bucket}/${s3DataKey}`;
   const metadataLocation = `s3://${s3Bucket}/${s3MetadataKey}`;
   await putS3Json(client, s3MetadataKey, { ...metadata, metadataLocation, storageLocation: dataLocation, storageMode: "s3" });
@@ -447,6 +497,9 @@ async function ensureBucket(client, bucket) {
 async function registerCatalogDataset(metadata) {
   const previous = await getDataset(datasetId);
   const schema = metadata.schema;
+  const preservePreviousSamples = metadata.storedCount === 0
+    && Array.isArray(previous?.sampleRows)
+    && JSON.stringify(previous?.schema) === JSON.stringify(schema);
   const run = {
     createdAt: metadata.endedAt,
     jobId: "kafka-review-ingest",
@@ -476,7 +529,7 @@ async function registerCatalogDataset(metadata) {
     quality: metadata.quality?.summary || (metadata.failedCount > 0 ? `적재 완료 · 실패 ${metadata.failedCount}건` : "Kafka snapshot 적재 완료"),
     rag: false,
     rows: String(aggregate.rowCount),
-    sampleRows: metadata.sampleRows,
+    sampleRows: preservePreviousSamples ? previous.sampleRows : metadata.sampleRows,
     schema,
     size: formatBytes(aggregate.storageSizeBytes),
     source: `Kafka ${metadata.topic}`,
@@ -507,10 +560,15 @@ function aggregateRuns(runs) {
   const rowCount = successfulRuns.reduce((sum, run) => sum + Number(run.rowCount || 0), 0);
   const storageSizeBytes = successfulRuns.reduce((sum, run) => sum + Number(run.storageSizeBytes || 0), 0);
   const latest = successfulRuns[0] || runs[0] || {};
+  const latestNonEmpty = successfulRuns.find((run) => (
+    Number(run.rowCount || 0) > 0
+    && typeof run.storageLocation === "string"
+    && run.storageLocation.length > 0
+  ));
   return {
     lastUpdated: latest.createdAt || "",
     latestRunId: latest.runId || "",
-    latestStorageLocation: latest.storageLocation || "",
+    latestStorageLocation: latestNonEmpty?.storageLocation || "",
     rowCount,
     storageSizeBytes,
   };
@@ -912,4 +970,48 @@ function booleanOption(key, fallback) {
 function objectArrayOption(key) {
   const value = apiPayload[key];
   return Array.isArray(value) ? value.filter((item) => item && typeof item === "object") : [];
+}
+
+function optionalIsoTimestamp(key) {
+  const value = apiPayload[key];
+  if (typeof value !== "string" || !value.trim()) return null;
+  const timestamp = new Date(value);
+  if (Number.isNaN(timestamp.getTime())) throw new Error(`${key} must be an ISO-8601 timestamp.`);
+  return timestamp.toISOString();
+}
+
+async function measureStep(target, key, action) {
+  const started = performance.now();
+  target[`${key}StartedAt`] = new Date().toISOString();
+  try {
+    return await action();
+  } finally {
+    target[`${key}EndedAt`] = new Date().toISOString();
+    target[`${key}Ms`] = elapsedMs(started);
+  }
+}
+
+function elapsedMs(started) {
+  return Math.round((performance.now() - started) * 100) / 100;
+}
+
+function attachConsumerDiagnostics(consumer, detail) {
+  const remember = (eventName, key, includePayload = false) => {
+    const eventType = consumer.events[eventName];
+    if (!eventType) return;
+    consumer.on(eventType, (event) => {
+      const observedAt = new Date(event.timestamp || Date.now()).toISOString();
+      detail[`${key}Count`] = Number(detail[`${key}Count`] || 0) + 1;
+      detail[`${key}FirstAt`] ||= observedAt;
+      detail[`${key}LastAt`] = observedAt;
+      if (includePayload) detail[`${key}LastPayload`] = event.payload;
+    });
+  };
+  remember("CONNECT", "connectEvent");
+  remember("GROUP_JOIN", "groupJoin", true);
+  remember("FETCH_START", "fetchStart");
+  remember("FETCH", "fetch", true);
+  remember("START_BATCH_PROCESS", "batchStart", true);
+  remember("END_BATCH_PROCESS", "batchEnd", true);
+  remember("REQUEST", "request", true);
 }
