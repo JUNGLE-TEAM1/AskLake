@@ -227,6 +227,28 @@ const checks = [
     ],
   },
   {
+    name: "SQL compact table results keep the footer inside the panel without a horizontal scrollbar",
+    file: "src/pages/sql/SqlResultsPanel.tsx",
+    patterns: [
+      /const isCompactTableResult = Boolean\(isTableView && resultDraft && resultDraft\.rows\.length <= 8\);/,
+      /const resultScrollbars = resultView === "execution" \|\| \(isCompactTableResult && resultDraft && resultDraft\.columns\.length <= 4\)[\s\S]*\? "vertical"[\s\S]*: "both";/,
+      /styles\.resultPanelCompact/,
+      /overflow=\{isCompactTableResult \? "visible" : "hidden"\}/,
+      /scrollbars=\{resultScrollbars\}/,
+      /styles\.resultBodyCompact/,
+    ],
+  },
+  {
+    name: "SQL compact result CSS lets small previews grow to content height",
+    file: "src/pages/sql/SqlAnalysisPage.module.css",
+    patterns: [
+      /\.resultPanelCompact[\s\S]*align-self:\s*start;[\s\S]*height:\s*auto;[\s\S]*overflow:\s*visible;/,
+      /\.resultPanelCompact \.resultWorkspace[\s\S]*height:\s*auto;[\s\S]*grid-template-rows:\s*max-content max-content;[\s\S]*overflow:\s*visible;/,
+      /\.resultBodyCompact[\s\S]*grid-template-rows:\s*max-content repeat\(2, max-content\);[\s\S]*overflow:\s*visible;/,
+      /\.resultBodyCompact \.resultScroll[\s\S]*height:\s*auto;/,
+    ],
+  },
+  {
     name: "Trino execution information stays in a scoped result view",
     file: "src/pages/sql/SqlExecutionInfo.tsx",
     patterns: [

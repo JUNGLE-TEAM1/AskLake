@@ -179,10 +179,18 @@ export function SqlResultsPanel({
   const dialogDraft = dialogResultDraft ?? resultDraft;
   const dialogRange = dialogDraft ? getResultRange(dialogDraft) : null;
   const showResultWorkspace = Boolean(resultDraft || executionEnabled);
+  const isTableView = resultView === "table";
+  const isCompactTableResult = Boolean(isTableView && resultDraft && resultDraft.rows.length <= 8);
+  const resultScrollbars = resultView === "execution" || (isCompactTableResult && resultDraft && resultDraft.columns.length <= 4)
+    ? "vertical"
+    : "both";
 
   return (
     <>
-      <Panel className={`${styles.resultPanel} ${showResultWorkspace ? styles.resultPanelActive : ""} grid gap-0 p-0`}>
+      <Panel
+        className={`${styles.resultPanel} ${showResultWorkspace ? styles.resultPanelActive : ""} ${isCompactTableResult ? styles.resultPanelCompact : ""} grid gap-0 p-0`}
+        overflow={isCompactTableResult ? "visible" : "hidden"}
+      >
         {showResultWorkspace ? (
           <div className={styles.resultWorkspace}>
             <div className={styles.resultToolbar}>
@@ -223,8 +231,8 @@ export function SqlResultsPanel({
                 </ActionGroup>
               ) : null}
             </div>
-            <div className={styles.resultBody}>
-              <ScrollArea className={styles.resultScroll} scrollbars={resultView === "execution" ? "vertical" : "both"} type="always">
+            <div className={`${styles.resultBody} ${isCompactTableResult ? styles.resultBodyCompact : ""}`}>
+              <ScrollArea className={styles.resultScroll} scrollbars={resultScrollbars} type="always">
                 <SqlResultContent
                   activeChartSource={activeChartSource}
                   chartConfig={chartConfig}

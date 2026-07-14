@@ -188,6 +188,19 @@
   grid-template-rows: minmax(0, 1fr);
 }
 
+.resultPanelCompact {
+  align-self: start;
+  height: auto;
+  overflow: visible;
+}
+
+.resultPanelCompact .resultWorkspace {
+  height: auto;
+  min-height: 0;
+  grid-template-rows: max-content max-content;
+  overflow: visible;
+}
+
 .resultWorkspace {
   display: grid;
   height: 100%;
@@ -205,6 +218,17 @@
   min-height: 0;
   grid-template-rows: minmax(0, 1fr) repeat(2, max-content);
   overflow: hidden;
+}
+
+.resultBodyCompact {
+  align-content: start;
+  grid-template-rows: max-content repeat(2, max-content);
+  overflow: visible;
+}
+
+.resultBodyCompact .resultScroll {
+  height: auto;
+  max-height: 100%;
 }
 
 .resultToolbar {
