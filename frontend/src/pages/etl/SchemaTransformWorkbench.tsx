@@ -1,9 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { AlertCircle, CheckCircle2, Loader2, Play } from "lucide-react";
+import { useEffect, useMemo } from "react";
 import SchemaTransformEditor from "../../components/etl/SchemaTransformEditor.jsx";
-import { Button } from "../../components/ui/button";
-import { compileRuleContract } from "../../services/ruleContract";
-import { previewSnapshotRules, type SnapshotRulePreviewResponse } from "../../services/snapshotRulePreviewApi";
 import "../../styles/schema-transform-source.css";
 import "../../styles/schema-transform-adapter.css";
 import type {
@@ -65,9 +61,6 @@ export function SchemaTransformWorkbench({
   onSelectedIndexChange,
   onTransformStepsChange,
 }: SchemaTransformWorkbenchProps) {
-  const [preview, setPreview] = useState<SnapshotRulePreviewResponse | null>(null);
-  const [previewError, setPreviewError] = useState("");
-  const [previewPending, setPreviewPending] = useState(false);
   const isKafka = sourceType.toLowerCase().includes("kafka");
   const continuous = executionMode === "continuous";
 
@@ -97,12 +90,6 @@ export function SchemaTransformWorkbench({
     schema: sourceSchema,
     sourceType: sourceFormat?.toLowerCase?.() ?? "source",
   }], [sourceFormat, sourceSchema]);
-
-  const previewSignature = JSON.stringify({ columns, executionMode, qualityRules, sampleRows, transformSteps });
-  useEffect(() => {
-    setPreview(null);
-    setPreviewError("");
-  }, [previewSignature]);
 
   useEffect(() => {
     if (effectiveTransformSteps === transformSteps) return;
@@ -138,45 +125,6 @@ export function SchemaTransformWorkbench({
     ]), outputColumnsFromTargetSchema(targetSchema));
   };
 
-  const runPreview = async () => {
-    if (sampleRows.length === 0) {
-      setPreviewError("Preview에 사용할 소스 샘플이 없습니다. 연결 테스트를 먼저 실행하세요.");
-      return;
-    }
-    const steps = effectiveTransformSteps;
-    const outputColumns = outputColumnsFromTargetSchema(targetSchema);
-    const compilation = compileRuleContract({
-      executionMode,
-      qualityRules,
-      schemaColumns: columns,
-      sourceType,
-      transformOutputColumns: outputColumns,
-      transformSteps: steps,
-    });
-    if (compilation.status === "fail") {
-      setPreviewError(compilation.issues.map((issue) => issue.message).join(" / "));
-      return;
-    }
-    setPreviewPending(true);
-    setPreviewError("");
-    try {
-      setPreview(await previewSnapshotRules({
-        executionMode,
-        records: recordsFromSampleRows(columns, sampleRows.slice(0, 20)),
-        rules: compilation.rules,
-        schemaColumns: columns,
-        sourceType,
-      }));
-    } catch (error) {
-      setPreview(null);
-      setPreviewError(error instanceof Error ? error.message : "Snapshot Preview 실행에 실패했습니다.");
-    } finally {
-      setPreviewPending(false);
-    }
-  };
-
-  const previewColumns = targetSchema.slice(0, 8).map((column) => column.name);
-
   return (
     <div className="asklake-schema-transform-adapter">
       <div className="asklake-schema-transform-scroll-frame">
@@ -201,58 +149,19 @@ export function SchemaTransformWorkbench({
           transformsDisabled={false}
         />
       </div>
-
-      <section className="schema-rule-preview" aria-live="polite">
-        <div className="schema-rule-preview-header">
-          <div>
-            <h3>실행 엔진 Preview</h3>
-            <p>{continuous
-              ? "현재 샘플에 실시간 micro-batch와 같은 streaming-safe canonical Rule을 적용합니다."
-              : "현재 샘플과 canonical Rule을 Snapshot 실행 런타임에 그대로 적용합니다."}</p>
-          </div>
-          <Button disabled={previewPending || sampleRows.length === 0} type="button" onClick={runPreview}>
-            {previewPending ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <Play data-icon="inline-start" />}
-            Preview 실행
-          </Button>
-        </div>
-
-        {previewError ? (
-          <div className="schema-rule-preview-status error" role="alert"><AlertCircle size={16} />{previewError}</div>
-        ) : null}
-        {preview ? (
-          <>
-            <div className="schema-rule-preview-status success">
-              <CheckCircle2 size={16} />
-              출력 {preview.records.length.toLocaleString()}건 · 격리 {preview.quarantined.length.toLocaleString()}건 · 변환 오류 {Number(preview.transform.errorCount ?? 0).toLocaleString()}건
-            </div>
-            <div className="schema-rule-preview-table-wrap">
-              <table className="schema-rule-preview-table">
-                <thead><tr>{previewColumns.map((column) => <th key={column}>{column}</th>)}</tr></thead>
-                <tbody>
-                  {preview.records.slice(0, 5).map((row, rowIndex) => (
-                    <tr key={String(row.event_id ?? rowIndex)}>
-                      {previewColumns.map((column) => <td key={column}>{formatPreviewValue(readPreviewValue(row, column))}</td>)}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </>
-        ) : null}
-      </section>
     </div>
   );
 }
 
 function toSchemaTransformTargetColumn(column: SchemaColumnDraft, transformSteps: TransformStepDraft[]): SchemaTransformColumn {
-  const outputName = column.targetName || column.sourceName;
+  const outputName = column.targetName ?? column.sourceName;
   const relatedSteps = transformSteps.filter((step) => step.output === outputName);
   const defaultStep = relatedSteps.find((step) => normalizeLegacyOperation(step.operation) === "default_value");
   const nullGuardStep = relatedSteps.find((step) => normalizeLegacyOperation(step.operation) === "null_guard");
   const dataSteps = relatedSteps.filter((step) => !FIELD_OPERATIONS.has(normalizeLegacyOperation(step.operation)));
   const primaryStep = dataSteps[0];
   const transformChain = dataSteps.map((step) => ({
-    display: step.label,
+    display: normalizeLegacyOperation(step.operation) === "sql_expression" ? step.params : step.label,
     expression: normalizeLegacyOperation(step.operation) === "sql_expression" ? step.params : "",
     onError: step.onError,
     operation: step.operation,
@@ -313,6 +222,7 @@ function projectSchemaTransformSchema(
 export function buildTransformSteps(targetSchema: SchemaTransformColumn[]): TransformStepDraft[] {
   return targetSchema.flatMap((column, columnIndex) => {
     const output = column.name.trim();
+    if (!output) return [];
     const source = (column.originalName || column.name).trim();
     const sourceType = fromSchemaTransformType(column.originalType || column.type);
     const outputType = fromSchemaTransformType(column.type);
@@ -380,6 +290,7 @@ export function buildTransformSteps(targetSchema: SchemaTransformColumn[]): Tran
         id: `schema-${slug}-null-guard`,
         input: currentInput,
         kind: "derive",
+        onError: "Fail Run",
         operation: "Null Guard",
         output,
         outputType,
@@ -515,23 +426,6 @@ function transformKind(operation: string): TransformStepDraft["kind"] {
 
 function outputColumnsFromTargetSchema(targetSchema: SchemaTransformColumn[]): Array<[string, string]> {
   return targetSchema.map((column) => [column.name, canonicalType(fromSchemaTransformType(column.type))]);
-}
-
-function recordsFromSampleRows(columns: SchemaColumnDraft[], rows: string[][]) {
-  return rows.map((row) => Object.fromEntries(columns.map((column, index) => [column.sourceName, row[index] ?? null])));
-}
-
-function readPreviewValue(record: Record<string, unknown>, field: string): unknown {
-  if (Object.hasOwn(record, field)) return record[field];
-  return field.split(".").filter(Boolean).reduce<unknown>((value, part) => (
-    value && typeof value === "object" ? (value as Record<string, unknown>)[part] : undefined
-  ), record);
-}
-
-function formatPreviewValue(value: unknown) {
-  if (value === null || value === undefined) return "NULL";
-  if (typeof value === "object") return JSON.stringify(value);
-  return String(value);
 }
 
 function ruleSlug(value: string) {

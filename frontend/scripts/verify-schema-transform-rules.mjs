@@ -1,6 +1,79 @@
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
+import {
+  applyQuickTransformExpression,
+  detectQuickTransformFunctions,
+  toggleQuickTransformExpression,
+} from "../src/components/etl/quickTransformExpression.js";
+
+const upperExpression = applyQuickTransformExpression({
+  expression: "amount",
+  name: "UPPER",
+  outputType: "double",
+  sourceExpression: "amount",
+});
+assert.equal(upperExpression, "UPPER(CAST(amount AS STRING))");
+assert.deepEqual(
+  detectQuickTransformFunctions(upperExpression),
+  ["UPPER"],
+  "The CAST used internally by UPPER must not appear as a user-selected quick transform.",
+);
+const combinedExpression = applyQuickTransformExpression({
+  expression: upperExpression,
+  name: "CAST",
+  outputType: "double",
+  sourceExpression: "amount",
+});
+assert.equal(
+  combinedExpression,
+  "CAST(UPPER(CAST(amount AS STRING)) AS DOUBLE)",
+  "Quick transforms must wrap the current expression instead of concatenating SQL fragments.",
+);
+assert.deepEqual(detectQuickTransformFunctions(combinedExpression), ["UPPER", "CAST"]);
+assert.equal(
+  toggleQuickTransformExpression({
+    expression: combinedExpression,
+    name: "UPPER",
+    outputType: "double",
+    sourceExpression: "amount",
+  }),
+  "CAST(amount AS DOUBLE)",
+  "Clicking a selected nested transform must remove only that transform.",
+);
+assert.equal(
+  toggleQuickTransformExpression({
+    expression: upperExpression,
+    name: "UPPER",
+    outputType: "double",
+    sourceExpression: "amount",
+  }),
+  "amount",
+  "Clicking the only selected transform must restore the source expression.",
+);
+const roundedExpression = applyQuickTransformExpression({
+  expression: "amount",
+  name: "ROUND",
+  outputType: "double",
+  sourceExpression: "amount",
+});
+assert.deepEqual(detectQuickTransformFunctions(roundedExpression), ["ROUND"]);
+const substringExpression = toggleQuickTransformExpression({
+  expression: "amount",
+  name: "SUBSTR",
+  outputType: "double",
+  sourceExpression: "amount",
+});
+assert.equal(
+  toggleQuickTransformExpression({
+    expression: substringExpression,
+    name: "SUBSTR",
+    outputType: "double",
+    sourceExpression: "amount",
+  }),
+  "amount",
+  "A quick transform must not be duplicated when its selected button is clicked again.",
+);
 
 const bundle = await build({
   bundle: true,
@@ -89,6 +162,11 @@ assert.equal(fieldRules[1].input, "rating_value");
 assert.deepEqual(fieldRules[1].canonicalParameters, { targetType: "Double" });
 assert.deepEqual(fieldRules[2].canonicalParameters, { value: "0" });
 assert.deepEqual(fieldRules[3].canonicalParameters, {});
+assert.equal(
+  fieldRules[3].onError,
+  "Fail Run",
+  "An explicit required field must stop execution after default-value handling still leaves it empty.",
+);
 
 const portable = buildTransformSteps([{
   name: "review_clean",
@@ -130,5 +208,36 @@ const explicitQuality = summarizeSchemaRuleState([{
 assert.equal(explicitQuality.requiredColumnCount, 1);
 assert.equal(explicitQuality.qualityRuleCount, 1);
 assert.deepEqual(explicitQuality.failureActions, ["Quarantine"]);
+assert.equal(explicitQuality.failurePolicyCount, 1);
+assert.equal(explicitQuality.failureTargetCount, 1);
+assert.deepEqual(explicitQuality.failurePolicyApplications, [{
+  action: "Quarantine",
+  category: "quality",
+  label: "Not Null",
+  target: "review",
+}]);
+
+const sharedFailurePolicy = summarizeSchemaRuleState([], [{
+  enabled: true,
+  failureAction: "Warn",
+  id: "review-not-null",
+  kind: "notNull",
+  params: "",
+  severity: "Error",
+  targetColumn: "review",
+  validationType: "Not Null",
+}, {
+  enabled: true,
+  failureAction: "Warn",
+  id: "rating-range",
+  kind: "range",
+  params: "1,5",
+  severity: "Error",
+  targetColumn: "rating",
+  validationType: "Range Check",
+}], []);
+assert.equal(sharedFailurePolicy.failureApplicationCount, 2);
+assert.equal(sharedFailurePolicy.failurePolicyCount, 1, "The same action must count as one policy type.");
+assert.equal(sharedFailurePolicy.failureTargetCount, 2, "Applied targets must be reported separately.");
 
 console.log("verify-schema-transform-rules: ok");

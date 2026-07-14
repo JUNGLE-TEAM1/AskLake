@@ -999,12 +999,12 @@ export default function SchemaTransformEditor({
                             }
                             className="w-3.5 h-3.5 text-blue-600 rounded focus:ring-blue-500"
                           />
-                          <span className="text-gray-600">NOT NULL</span>
+                          <span className="text-gray-600">필수값</span>
                         </label>
 
                         {/* Default Value */}
                         <label className="flex items-center gap-1.5">
-                          <span className="text-gray-500">Default:</span>
+                          <span className="text-gray-500">누락 시 기본값</span>
                           <input
                             type="text"
                             value={col.defaultValue || ""}
@@ -1016,7 +1016,7 @@ export default function SchemaTransformEditor({
                                 e.target.value,
                               )
                             }
-                            placeholder="NULL"
+                            placeholder="설정 안 함"
                             className="w-20 px-1.5 py-0.5 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
                           />
                         </label>

@@ -78,7 +78,13 @@ import { S3PathField } from "../../components/s3/S3PathField";
 import { runTransformQualitySamplePreview } from "../../data/transformQualityPreview";
 import { normalizeRetryPolicy, retryFailureActionLabels, scheduleOverlapPolicyLabels, toCreatePipelineRequest } from "../../services/draftPipelineContract";
 import { getDatasets } from "../../services/mockApi";
-import { getReviewSnapshot, type ReviewSnapshot } from "../../services/reviewApi";
+import {
+  buildReviewSnapshotRequest,
+  getReviewSnapshot,
+  getReviewSnapshotRequestKey,
+  type ReviewSnapshot,
+  type ReviewSnapshotRequest,
+} from "../../services/reviewApi";
 import { fetchPermissionOptions } from "../../services/permissionApi";
 import { getSourceConnectorDefaults, listSourceAssets, previewRecordParsing, testSourceConnector, type SourceConnectorAnalysis } from "../../services/sourceConnectorService";
 import type { AuditResult, CatalogDataset, DraftPipeline, DraftPipelinePatch, FlowId, PermissionAction, PermissionOptionsResponse, RecordParsingDraft, RecordParsingPreviewResponse, ScheduleFlowId, SchemaColumnDraft, SourceDraft, TargetLayer } from "../../types";
@@ -2167,19 +2173,19 @@ export function SourceConnectionPage({
                       <button aria-pressed={kafkaExecutionMode === "snapshot"} className={`kafka-execution-mode-card ${kafkaExecutionMode === "snapshot" ? "selected" : ""}`} disabled={sourceLocked} type="button" onClick={() => onDraftChange({ source: { executionMode: "snapshot" } })}>
                         <span className="kafka-execution-mode-icon"><Clock3 size={19} /></span>
                         <span className="kafka-execution-mode-copy">
-                          <strong>Snapshot</strong>
-                          <span>수동 또는 스케줄 실행</span>
+                          <strong>일괄 수집</strong>
+                          <span>필요할 때 직접 실행하거나 일정에 맞춰 수집</span>
                         </span>
-                        <span className="kafka-execution-mode-tag">Batch</span>
+                        <span className="kafka-execution-mode-tag">배치</span>
                         {kafkaExecutionMode === "snapshot" && <span className="kafka-execution-mode-check"><Check size={14} /></span>}
                       </button>
                       <button aria-pressed={kafkaExecutionMode === "continuous"} className={`kafka-execution-mode-card ${kafkaExecutionMode === "continuous" ? "selected" : ""}`} disabled={sourceLocked} type="button" onClick={() => updateContinuousConfig({})}>
                         <span className="kafka-execution-mode-icon"><Repeat2 size={19} /></span>
                         <span className="kafka-execution-mode-copy">
-                          <strong>Continuous</strong>
-                          <span>실시간 데이터 적재</span>
+                          <strong>실시간 수집</strong>
+                          <span>새 메시지를 지속적으로 수집</span>
                         </span>
-                        <span className="kafka-execution-mode-tag">Streaming</span>
+                        <span className="kafka-execution-mode-tag">스트리밍</span>
                         {kafkaExecutionMode === "continuous" && <span className="kafka-execution-mode-check"><Check size={14} /></span>}
                       </button>
                     </div>
@@ -2191,19 +2197,19 @@ export function SourceConnectionPage({
                         </button>
                         {continuousAdvancedOpen && (
                           <div className="kafka-continuous-settings-grid">
-                            <FormFieldGroup className="field" hint="새 checkpoint를 만들 때만 적용" label="시작 위치">
+                            <FormFieldGroup className="field" hint="새 체크포인트를 만들 때만 적용" label="시작 위치">
                               <NativeSelect disabled={sourceLocked} value={continuousConfig.initialOffsetPolicy} onChange={(event) => updateContinuousConfig({ initialOffsetPolicy: event.target.value as "earliest" | "latest" })}>
                                 <option value="earliest">처음부터 읽기</option>
                                 <option value="latest">새 이벤트부터 읽기</option>
                               </NativeSelect>
                             </FormFieldGroup>
-                            <FormFieldGroup className="field" hint="1~3600초" label="Trigger 간격">
+                            <FormFieldGroup className="field" hint="1~3600초" label="수집 실행 간격">
                               <Input disabled={sourceLocked} max={3600} min={1} type="number" value={continuousConfig.triggerIntervalSeconds} onChange={(event) => {
                                 const value = Number(event.target.value);
                                 if (Number.isInteger(value) && value >= 1 && value <= 3600) updateContinuousConfig({ triggerIntervalSeconds: value });
                               }} />
                             </FormFieldGroup>
-                            <FormFieldGroup className="field" hint="1~1,000,000건" label="Micro-batch 최대 메시지">
+                            <FormFieldGroup className="field" hint="1~1,000,000건" label="한 번에 처리할 최대 메시지">
                               <Input disabled={sourceLocked} max={1_000_000} min={1} type="number" value={continuousConfig.maxOffsetsPerTrigger} onChange={(event) => {
                                 const value = Number(event.target.value);
                                 if (Number.isInteger(value) && value >= 1 && value <= 1_000_000) updateContinuousConfig({ maxOffsetsPerTrigger: value });
@@ -2483,7 +2489,7 @@ export function RecordParsingPage({
       const name = normalizeTargetColumnName(column.name) || `field_${column.position + 1}`;
       return {
         confidence: 90,
-        included: true,
+        included: false,
         nullable: false,
         sourceName: name,
         targetName: name,
@@ -3314,6 +3320,12 @@ export function SchemaInferencePage({
     if (includedSchemaColumns.length === 0) {
       onAction("etl.schema.confirm_blocked", "/api/etl/schema-inference/confirm", draft.source.sourceLabel || "source", "failed");
       onNotify("출력에 포함된 컬럼이 없습니다. 최소 1개 컬럼을 포함해야 실행할 수 있습니다.");
+      return false;
+    }
+    const emptyNameColumn = includedSchemaColumns.find((column) => !column.targetName.trim());
+    if (emptyNameColumn) {
+      onAction("etl.schema.confirm_blocked", "/api/etl/schema-inference/confirm", emptyNameColumn.sourceName, "failed");
+      onNotify(`${emptyNameColumn.sourceName} 필드의 출력 이름을 입력해야 합니다.`);
       return false;
     }
     schemaAction("etl.schema.confirmed", "/api/etl/schema-inference/confirm", approvedSummary);
@@ -6456,19 +6468,25 @@ export function ReviewPage({
   const [reviewSnapshot, setReviewSnapshot] = useState<ReviewSnapshot | null>(null);
   const [reviewLoading, setReviewLoading] = useState(true);
   const [reviewError, setReviewError] = useState("");
+  const [reviewRetryCount, setReviewRetryCount] = useState(0);
+  const reviewRequestKey = getReviewSnapshotRequestKey(buildReviewSnapshotRequest(draft));
+  const reviewRequest = useMemo(
+    () => JSON.parse(reviewRequestKey) as ReviewSnapshotRequest,
+    [reviewRequestKey],
+  );
 
   useEffect(() => {
     let cancelled = false;
     setReviewLoading(true);
     setReviewError("");
-    void getReviewSnapshot(draft)
+    setReviewSnapshot(null);
+    void getReviewSnapshot(reviewRequest)
       .then((snapshot) => {
         if (!cancelled) setReviewSnapshot(snapshot);
       })
-      .catch((error) => {
+      .catch((error: unknown) => {
         if (!cancelled) {
-          setReviewSnapshot(null);
-          setReviewError(error instanceof Error ? error.message : "검토 결과를 불러오지 못했습니다.");
+          setReviewError(error instanceof Error ? error.message : "검토 정보를 불러오지 못했습니다.");
         }
       })
       .finally(() => {
@@ -6477,7 +6495,7 @@ export function ReviewPage({
     return () => {
       cancelled = true;
     };
-  }, [draft]);
+  }, [reviewRequest, reviewRetryCount]);
 
   const basicInformationRows = reviewSnapshot?.basicInformation ?? [];
   const destinationRows = reviewSnapshot?.destination ?? [];
@@ -6486,7 +6504,15 @@ export function ReviewPage({
   const validationRows = reviewSnapshot?.validation ?? [];
   const canCreate = reviewSnapshot?.canCreate === true;
   const createDisabled = createPending || reviewLoading || !canCreate;
-  const createLabel = createPending ? "생성 중..." : reviewLoading ? "서버 확인 중..." : canCreate ? "파이프라인 생성" : "검증 필요";
+  const createLabel = createPending
+    ? "생성 중..."
+    : reviewLoading
+      ? "서버 확인 중..."
+      : reviewError
+        ? "검토 오류"
+        : canCreate
+          ? "파이프라인 생성"
+          : "검증 필요";
 
   return (
     <CreationFlowLayout
@@ -6498,7 +6524,17 @@ export function ReviewPage({
           icon={<FileText />}
           title="검토 및 생성"
         />
-        {reviewError && <Alert className="mb-4" variant="destructive"><Info /><AlertTitle>검토 결과를 불러오지 못했습니다.</AlertTitle><AlertDescription>{reviewError} 수정 후 다시 시도해 주세요.</AlertDescription></Alert>}
+        {reviewError ? (
+          <Alert className="mx-0" variant="destructive">
+            <AlertTitle>검토 정보를 불러오지 못했습니다.</AlertTitle>
+            <AlertDescription className="flex flex-wrap items-center justify-between gap-3">
+              <span>{reviewError}</span>
+              <Button size="sm" type="button" variant="outline" onClick={() => setReviewRetryCount((count) => count + 1)}>
+                <RefreshCw aria-hidden="true" data-icon="inline-start" /> 다시 시도
+              </Button>
+            </AlertDescription>
+          </Alert>
+        ) : null}
         <div className="etl-review-stack">
           <section className="etl-review-card">
             <div className="etl-review-card-header">

@@ -47,7 +47,6 @@
     "verify:rule-compiler": "PYTHONPATH=. .venv/bin/python scripts/verify-rule-compiler-contract.py && node scripts/verify-rule-compiler-contract.mjs && PYTHONPATH=. .venv/bin/python scripts/verify-rule-persistence-contract.py",
     "verify:rule-persistence": "PYTHONPATH=. .venv/bin/python scripts/verify-rule-persistence-contract.py",
     "verify:snapshot-rule-conformance": "node scripts/verify-snapshot-rule-conformance.mjs",
-    "verify:rule-preview": "node scripts/verify-rule-preview-contract.mjs",
     "verify:spark-schema-contract": "node scripts/verify-spark-schema-contract.mjs",
     "verify:snapshot-spark-pipeline": "node scripts/verify-snapshot-spark-pipeline.mjs",
     "verify:spark-csv-quoting": "node scripts/verify-spark-csv-quoting.mjs",

@@ -96,8 +96,6 @@ from app.schemas.etl import (
     ReviewSchemaRow,
     ReviewSnapshot,
     ReviewValidationRow,
-    RulePreviewRequest,
-    RulePreviewResponse,
     KafkaReviewIngestRequest,
     KafkaReviewIngestResponse,
     QueryRunRequest,
@@ -1598,46 +1596,6 @@ def infer_schema(request: SourceConnectorRequest) -> SchemaDraft:
     if analysis.draft_patch.schema_ is None:
         return SchemaDraft(columns=[], sample_rows=[], summary="스키마 없음")
     return analysis.draft_patch.schema_
-
-
-def preview_rules(request: RulePreviewRequest) -> RulePreviewResponse:
-    compiled = compile_rule_set(
-        contract_version=request.rule_contract_version,
-        rules=request.rules,
-        transform_steps=[],
-        quality_rules=[],
-        schema_columns=request.schema_columns,
-        transform_output_columns=[],
-        execution_mode=request.execution_mode,
-        source_type=request.source_type,
-    )
-    require_compiled_rules(compiled)
-    compiled_rule_payload = [rule.model_dump(mode="json", by_alias=True) for rule in compiled.result.rules]
-    spark_preview = (
-        request.execution_mode == "snapshot"
-        and "kafka" not in request.source_type.lower()
-        and any(rule.get("operation") == "sql_expression" and rule.get("enabled") is not False for rule in compiled_rule_payload)
-    )
-    result = run_node_bridge(
-        "preview-spark-rules.mjs" if spark_preview else "preview-snapshot-rules.mjs",
-        "ASKLAKE_RULE_PREVIEW_RESULT",
-        {
-            "records": request.records,
-            "outputSchema": [list(column) for column in compiled.result.output_schema],
-            "rules": compiled_rule_payload,
-            "schemaColumns": [column.model_dump(mode="json", by_alias=True) for column in request.schema_columns],
-            "transformSteps": [step.model_dump(mode="json", by_alias=True) for step in compiled.transform_steps],
-        },
-        error_marker="ASKLAKE_RULE_PREVIEW_ERROR",
-        timeout_seconds=90 if spark_preview else 20,
-    )
-    return RulePreviewResponse(
-        compilation=compiled.result,
-        quality=result.get("quality") or {},
-        quarantined=result.get("quarantined") or [],
-        records=result.get("records") or [],
-        transform=result.get("transform") or {},
-    )
 
 
 def preview_record_parsing(request: RecordParsingPreviewRequest) -> RecordParsingPreviewResponse:

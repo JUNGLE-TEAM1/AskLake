@@ -149,23 +149,6 @@ class RuleCompilationResult(CamelModel):
     status: Literal["pass", "fail"] = "pass"
 
 
-class RulePreviewRequest(CamelModel):
-    execution_mode: KafkaExecutionMode = "snapshot"
-    records: list[dict[str, Any]] = Field(default_factory=list, max_length=100)
-    rule_contract_version: str = "1.0"
-    rules: list[CanonicalRuleDraft] = Field(default_factory=list)
-    schema_columns: list[SchemaColumnDraft] = Field(default_factory=list)
-    source_type: str = ""
-
-
-class RulePreviewResponse(CamelModel):
-    compilation: RuleCompilationResult
-    quality: dict[str, Any] = Field(default_factory=dict)
-    quarantined: list[dict[str, Any]] = Field(default_factory=list)
-    records: list[dict[str, Any]] = Field(default_factory=list)
-    transform: dict[str, Any] = Field(default_factory=dict)
-
-
 class RetryPolicyDraft(CamelModel):
     backoff_multiplier: float = 2
     backoff_strategy: str = "exponential"

@@ -601,7 +601,7 @@ Canonical schema type은 `String`, `Integer`, `Long`, `Double`, `Boolean`, `Time
 
 `SchemaColumnDraft.sourceName`은 `raw.reviewerID` 같은 원본 source path이고 `targetName`은 `raw_reviewerID` 같은 물리 output alias다. Transform step의 `input`과 lineage는 source path를 사용하며 target write는 alias를 사용한다. Kafka Continuous는 dotted path로 nested Spark schema를 구성하고 root/nested object별 unknown field를 검사하므로 `raw` object 자체를 unknown field로 오인하지 않는다. scalar/object가 같은 path를 동시에 점유하는 모호한 schema는 worker 시작 전에 거절한다.
 
-`nullable: false`는 output schema 제약이며 그 자체로 Quality Rule 수에 포함되지 않습니다. 실제 NULL 검사는 canonical `quality:not_null`, 값 누락 시 transform 오류 정책을 적용하는 Null Guard는 명시적인 `transform:null_guard`로 각각 저장합니다. 사용자가 NOT NULL을 해제하면 편집기에 남은 explicit Null Guard marker도 함께 제거합니다.
+`nullable: false`는 output schema 제약이며 그 자체로 Quality Rule 수에 포함되지 않습니다. 사용자가 지정하는 `누락 시 기본값`은 `transform:default_value`, `필수값`은 그 다음 순서의 `transform:null_guard`로 저장합니다. 명시적 Null Guard의 `onError`는 `fail_batch`(`Fail Run`)이며 기본값 적용 뒤에도 값이 비어 있을 때 실행을 중단합니다. 필수 필드에는 중복 `quality:not_null`을 새로 만들지 않습니다. 선택형 `quality:not_null`은 필수가 아닌 필드에서 누락을 별도 품질 사건으로 다룰 때만 사용하며, 이미 NULL인 값에 `set_null`을 적용하는 조합은 UI에서 제공하지 않습니다. 사용자가 필수값을 해제하면 편집기에 남은 explicit Null Guard marker도 함께 제거합니다. `severity`는 V1 payload 호환을 위해 보존하지만 현재 runtime action 분기에는 사용하지 않습니다.
 
 Rule compiler는 Regex의 비어 있지 않은 유효 pattern, Accepted Values의 1개 이상 값, Range의 유효한 min/max와 `min <= max`, boolean inclusive를 검증합니다. V1 mask policy는 `phone`(`keep first 3 digits` legacy alias), timestamp format은 `ISO-8601`(`UTC` legacy alias)만 허용합니다. Frontend, FastAPI, Node compiler는 같은 fixture와 `RULE_PARAMETER_REQUIRED`/`RULE_PARAMETER_INVALID` issue code를 사용하고 JSON root의 dotted input path를 동일하게 판정합니다.
 
@@ -1106,34 +1106,6 @@ Rules:
 - 서버는 `TARGET_DATABASES` 또는 `ASKLAKE_TARGET_DATABASES`에 지정된 이름만 반환할 수 있습니다.
 - 환경변수가 없으면 local demo 기본값으로 `asklake`, `asklake_gold`, `analytics`, `marketing`을 반환합니다.
 
-### 7.1.2 Snapshot Rule Preview
-
-`POST /api/etl/rules/preview`
-
-```ts
-type RulePreviewRequest = {
-  executionMode: "snapshot" | "continuous";
-  records: Array<Record<string, unknown>>; // 최대 100개
-  ruleContractVersion: "1.0";
-  rules: CanonicalRuleDraft[];
-  schemaColumns: Array<SchemaColumnDraft & { sourceType?: string }>;
-  sourceType: string;
-};
-
-type RulePreviewResponse = {
-  compilation: RuleCompilationResult;
-  records: Array<Record<string, unknown>>;
-  quarantined: Array<Record<string, unknown>>;
-  transform: Record<string, unknown>;
-  quality: Record<string, unknown>;
-};
-```
-
-- backend는 request를 canonical compiler로 먼저 검증하고 실제 Snapshot Rule runtime에 적용합니다.
-- `schemaColumns[].sourceType`은 원본 필드 타입, 같은 컬럼의 `type`은 target 타입입니다. 값이 없던 기존 payload는 `type`을 원본 타입으로도 사용합니다. 요청 최상위 `sourceType`은 Kafka 등 connector 종류를 뜻합니다.
-- 허용 operation은 Snapshot 공통 목록입니다. Continuous 요청도 같은 bounded runtime으로 streaming-safe Rule 의미를 확인할 수 있으며 임의 SQL과 stateful/engine-specific operation은 거절합니다.
-- 이 endpoint는 bounded UI Preview 전용이며 Job, offset, checkpoint, target object, Catalog를 변경하지 않습니다.
-
 ### 7.2 Review snapshot
 
 `POST /api/etl/review`
@@ -1329,7 +1301,7 @@ type CreatePipelineRequest = {
 };
 ```
 
-`permissionSummary`, `permissionRoles`, `permissionGrants`, `owner`, `createdBy`, `createdByProfile`은 현재 생성 결과를 설명하고 표시하기 위한 governance/identity metadata입니다. 이 값만으로 dataset 조회, SQL 실행, job command 권한을 허용하거나 거부하지 않습니다. Backend는 `asklake_session` 쿠키 actor를 우선 사용하고, 세션이 없을 때만 `X-AskLake-User` header 또는 demo actor를 `createdBy` fallback으로 사용할 수 있습니다.
+`permissionSummary`, `permissionRoles`, `owner`, `createdBy`, `createdByProfile`은 생성 결과를 설명하고 표시하기 위한 governance/identity metadata입니다. 반면 `permissionGrants`는 실제 resource access control 입력이며 Job 생성·수정 시 `permission_grants` table의 `permission_ui` source로 저장되어 Job 조회·실행·관리·삭제 권한 판정에 사용됩니다. Backend는 `asklake_session` 쿠키 actor를 우선 사용하고, 세션이 없을 때만 `X-AskLake-User` header 또는 demo actor를 `createdBy` fallback으로 사용할 수 있습니다.
 
 Rule contract rules:
 
@@ -3811,12 +3783,12 @@ type AuditEntry = {
 - dashboard widget 저장 모델을 `dashboards`, `dashboard_widgets`로 분리할지 여부.
 ## ETL Permission create-flow contract
 
-ETL Permission 화면은 더 이상 하드코딩 사용자 목록을 source of truth로 사용하지 않는다.
+ETL Permission 화면은 더 이상 하드코딩 사용자 목록을 source of truth로 사용하지 않는다. 다만 그룹 후보는 현재 backend의 `DEMO_GROUPS` 고정 정의이며, 사용자 후보만 `auth_users` table을 우선 사용한다.
 
 1. 화면 진입 시 `GET /api/etl/permission-options`로 그룹과 사용자 후보를 조회한다.
 2. 선택한 그룹은 응답의 `actions`를 유지한 `group` grant로 변환한다.
 3. 선택한 사용자는 기본 `view`, `run` action을 가진 `user` grant로 변환한다.
-4. 공개 범위를 `외부 공유`로 명시한 경우에만 `public` principal의 `view` grant를 추가한다.
+4. 공개 범위를 `외부 공유`로 지정하면 `public` principal의 `view` grant를 추가한다. 이 값은 익명 공개 링크가 아니라 현재 인증 경계 안의 모든 actor에 매칭되는 grant다.
 5. 생성 또는 수정 request의 `permissionGrants`를 `permission_grants` table에 `source=permission_ui`로 저장한다.
 6. 동일 resource 수정은 `permission_ui` source만 교체하고 `admin`, `admin_seed` 등 다른 source는 보존한다.
 
@@ -3830,5 +3802,7 @@ type PermissionGrant = {
 ```
 
 빈 `principalId` 또는 action이 없는 grant는 `400 VALIDATION_ERROR`다. `public` principal은 `principalId`를 `public`으로 정규화한다. backend는 client가 보낸 `id`와 `source`를 신뢰하지 않고 새 ID와 `permission_ui` source를 부여한다.
+
+현재 frontend의 `permissionTemplate`은 독립 정책 템플릿이 아니라 group name을 저장하며, 템플릿 선택은 해당 그룹을 선택 상태로 만든다. 대상별 action 직접 편집은 구현하지 않았고, group은 options API action을, user는 `view`, `run`을 사용한다. `owner`는 자유 문자열 입력이며 현재 이름 일치 owner fallback에도 사용된다. options API는 민감 데이터 분류나 governance 안전 판정을 제공하지 않으며, 화면의 민감 데이터 상태는 frontend 컬럼명 정규식 추정값이다.
 
 권한 옵션 조회는 admin actor만 허용한다. live frontend는 API 오류 시 grant 화면 안에 재시도 경로를 표시하고 다음 단계 이동을 막는다. `VITE_USE_MOCK_API=true`에서는 동일 response shape의 fixture를 사용하되 최종 Job request shape는 live와 동일하다.

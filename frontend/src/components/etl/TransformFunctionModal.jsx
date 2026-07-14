@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { Sparkles } from 'lucide-react';
+import { RotateCcw, Sparkles } from 'lucide-react';
 import InlineAIInput from '../ai/InlineAIInput';
 import { ActionGroup } from '../ui/action-group';
 import { Button } from '../ui/button';
@@ -16,6 +16,10 @@ import {
 } from '../ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs';
 import { Textarea } from '../ui/textarea';
+import {
+    detectQuickTransformFunctions,
+    toggleQuickTransformExpression,
+} from './quickTransformExpression';
 
 const PORTABLE_OPERATIONS = [
     { label: '추가 변환 없음', operation: '', value: 'none' },
@@ -53,9 +57,9 @@ function portableNormalizedParams(operation, value) {
 const QUALITY_RULE_DEFINITIONS = [
     {
         defaultParams: '',
-        description: 'NULL 또는 빈 값을 품질 오류로 감지합니다.',
+        description: '값이 비어 있으면 선택한 방식으로 처리합니다.',
         kind: 'notNull',
-        label: 'NULL 값 검사',
+        label: '누락값 검사',
         validationType: 'Not Null',
     },
     {
@@ -92,7 +96,6 @@ export default function TransformFunctionModal({ column, qualityRules = [], onAp
     const [newName, setNewName] = useState(column.name);
     const [newType, setNewType] = useState(column.type);
     const [transformExpr, setTransformExpr] = useState(column.transform || column.originalName || column.name);
-    const [selectedFunction, setSelectedFunction] = useState('');
     const [showAI, setShowAI] = useState(false);
     const [portableOperation, setPortableOperation] = useState(() => portableOperationValue(column.transformOperation));
     const [portableParams, setPortableParams] = useState(() => {
@@ -100,51 +103,48 @@ export default function TransformFunctionModal({ column, qualityRules = [], onAp
         return portableNormalizedParams(operation, column.transformParams);
     });
     const [portableOnError, setPortableOnError] = useState(column.onError || 'Warn');
-    const [required, setRequired] = useState(Boolean(column.notNull));
+    const required = Boolean(column.notNull);
     const [transformOnError, setTransformOnError] = useState(column.onError || 'Warn');
     const [ruleDrafts, setRuleDrafts] = useState(() => buildInitialRuleDrafts(column, qualityRules));
 
     const functions = [
-        { name: 'UPPER', desc: 'Convert to uppercase', template: `UPPER(CAST(${column.originalName} AS STRING))` },
-        { name: 'LOWER', desc: 'Convert to lowercase', template: `LOWER(CAST(${column.originalName} AS STRING))` },
-        { name: 'TRIM', desc: 'Remove whitespace', template: `TRIM(CAST(${column.originalName} AS STRING))` },
-        { name: 'REPLACE', desc: 'Replace characters', template: `REPLACE(CAST(${column.originalName} AS STRING), '', '')` },
-        { name: 'SUBSTR', desc: 'Extract substring', template: `SUBSTR(CAST(${column.originalName} AS STRING), 1, 10)` },
-        { name: 'CONCAT', desc: 'Concatenate strings', template: `CONCAT(CAST(${column.originalName} AS STRING), '-', CAST(${column.originalName} AS STRING))` },
-        { name: 'CAST', desc: 'Convert type', template: `CAST(${column.originalName} AS STRING)` },
-        { name: 'COALESCE', desc: 'Handle nulls', template: `COALESCE(${column.originalName}, 'default')` },
-        { name: 'ROUND', desc: 'Round number', template: `ROUND(CAST(${column.originalName} AS DOUBLE), 2)` },
-        { name: 'ABS', desc: 'Absolute value', template: `ABS(CAST(${column.originalName} AS DOUBLE))` },
+        { name: 'UPPER', desc: 'Convert to uppercase' },
+        { name: 'LOWER', desc: 'Convert to lowercase' },
+        { name: 'TRIM', desc: 'Remove whitespace' },
+        { name: 'REPLACE', desc: 'Replace characters' },
+        { name: 'SUBSTR', desc: 'Extract substring' },
+        { name: 'CONCAT', desc: 'Concatenate strings' },
+        { name: 'CAST', desc: 'Convert type' },
+        { name: 'COALESCE', desc: 'Handle nulls' },
+        { name: 'ROUND', desc: 'Round number' },
+        { name: 'ABS', desc: 'Absolute value' },
     ];
-
-    const enabledRuleDrafts = ruleDrafts.filter((rule) => rule.enabled);
+    const selectedFunctions = detectQuickTransformFunctions(transformExpr);
+    const visibleRuleDrafts = required
+        ? ruleDrafts.filter((rule) => rule.kind !== 'notNull')
+        : ruleDrafts;
 
     const applyFunction = (func) => {
-        const isOriginalField = transformExpr === column.originalName || transformExpr === column.name;
+        const nextExpression = toggleQuickTransformExpression({
+            expression: transformExpr,
+            name: func.name,
+            outputType: newType,
+            sourceExpression: column.originalName || column.name,
+        });
+        setTransformExpr(nextExpression);
+        if (editorRef.current) setTimeout(() => editorRef.current.focus(), 0);
+    };
 
-        if (isOriginalField) {
-            setTransformExpr(func.template);
-            setSelectedFunction(func.name);
-            if (editorRef.current) setTimeout(() => editorRef.current.focus(), 0);
-            return;
-        }
-
-        if (editorRef.current) {
-            const textarea = editorRef.current;
-            const start = textarea.selectionStart;
-            const end = textarea.selectionEnd;
-            const text = textarea.value;
-            const newText = text.substring(0, start) + func.template + text.substring(end, text.length);
-            setTransformExpr(newText);
-            setTimeout(() => {
-                textarea.focus();
-                const nextCursor = start + func.template.length;
-                textarea.setSelectionRange(nextCursor, nextCursor);
-            }, 0);
-        } else {
-            setTransformExpr((current) => current + func.template);
-        }
-        setSelectedFunction(func.name);
+    const resetTransformSettings = () => {
+        const sourceExpression = column.originalName || column.name;
+        setNewName(sourceExpression);
+        setNewType(column.originalType || column.type);
+        setTransformExpr(sourceExpression);
+        setPortableOperation('none');
+        setPortableParams('');
+        setPortableOnError('Warn');
+        setTransformOnError('Warn');
+        setShowAI(false);
     };
 
     const updateRuleDraft = (kind, patch) => {
@@ -154,10 +154,10 @@ export default function TransformFunctionModal({ column, qualityRules = [], onAp
     };
 
     const qualityRulePayload = (targetColumn) => ruleDrafts
-        .filter((rule) => rule.enabled)
+        .filter((rule) => rule.enabled && !(required && rule.kind === 'notNull'))
         .map((rule) => ({
             enabled: true,
-            failureAction: rule.failureAction,
+            failureAction: normalizeQualityFailureAction(rule.kind, rule.failureAction),
             id: rule.id || `schema-quality-${rule.kind}-${slugify(targetColumn)}`,
             kind: rule.kind,
             params: rule.params.trim() || undefined,
@@ -227,13 +227,30 @@ export default function TransformFunctionModal({ column, qualityRules = [], onAp
             title="필드 규칙 설정"
         >
             <Tabs className="p-5" defaultValue="transform">
-                <TabsList className="grid w-full grid-cols-3">
-                    <TabsTrigger value="transform">변환</TabsTrigger>
-                    <TabsTrigger value="quality">품질 검사</TabsTrigger>
-                    <TabsTrigger value="failure">실패 처리</TabsTrigger>
+                <TabsList className="field-rule-mode-tabs grid w-full grid-cols-2 gap-0 overflow-hidden rounded-md border border-blue-200 bg-white p-0 text-slate-600 divide-x divide-blue-100">
+                    <TabsTrigger
+                        className="field-rule-mode-tab relative min-h-14 rounded-none border-0 bg-white text-slate-600 shadow-none hover:bg-blue-50/50 hover:text-blue-700 focus-visible:ring-0 focus-visible:ring-offset-0 data-[state=active]:bg-blue-50 data-[state=active]:text-blue-700 data-[state=active]:shadow-none"
+                        value="transform"
+                    >변환</TabsTrigger>
+                    <TabsTrigger
+                        className="field-rule-mode-tab relative min-h-14 rounded-none border-0 bg-white text-slate-600 shadow-none hover:bg-blue-50/50 hover:text-blue-700 focus-visible:ring-0 focus-visible:ring-offset-0 data-[state=active]:bg-blue-50 data-[state=active]:text-blue-700 data-[state=active]:shadow-none"
+                        value="quality"
+                    >품질 및 실패 처리</TabsTrigger>
                 </TabsList>
 
                 <TabsContent className="space-y-5" value="transform">
+                    <div className="flex justify-end">
+                        <Button
+                            className="border-blue-200 text-blue-700 hover:border-blue-300 hover:bg-blue-50 hover:text-blue-800"
+                            onClick={resetTransformSettings}
+                            size="sm"
+                            type="button"
+                            variant="outline"
+                        >
+                            <RotateCcw className="size-4" />
+                            변환 설정 초기화
+                        </Button>
+                    </div>
                     <div className="grid gap-4 sm:grid-cols-2">
                         <Field>
                             <FieldLabel htmlFor="field-rule-output-name">출력 컬럼명</FieldLabel>
@@ -323,12 +340,16 @@ export default function TransformFunctionModal({ column, qualityRules = [], onAp
                                 <div className="flex flex-wrap gap-2">
                                     {functions.map((func) => (
                                         <Button
+                                            aria-pressed={selectedFunctions.includes(func.name)}
+                                            className={selectedFunctions.includes(func.name)
+                                                ? 'border-blue-400 bg-blue-100/70 text-blue-700 shadow-none hover:border-blue-500 hover:bg-blue-100 hover:text-blue-800'
+                                                : 'border-blue-200 bg-white text-slate-700 hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700'}
                                             key={func.name}
                                             onClick={() => applyFunction(func)}
                                             size="sm"
                                             title={func.desc}
                                             type="button"
-                                            variant={selectedFunction === func.name ? 'default' : 'outline'}
+                                            variant="outline"
                                         >
                                             {func.name}
                                         </Button>
@@ -369,20 +390,21 @@ export default function TransformFunctionModal({ column, qualityRules = [], onAp
                             </Field>
                         </>
                     )}
+
+                    <div className="grid items-center gap-3 rounded-lg border border-blue-200 bg-blue-50/40 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_220px]">
+                        <FieldTitle>변환 실패 시</FieldTitle>
+                        <FailureActionSelect
+                            action={portable ? portableOnError : transformOnError}
+                            label="필드 변환"
+                            onActionChange={portable ? setPortableOnError : setTransformOnError}
+                        />
+                    </div>
                 </TabsContent>
 
                 <TabsContent className="space-y-4" value="quality">
-                    <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 transition-colors hover:border-blue-200 hover:bg-blue-50/40">
-                        <Checkbox checked={required} onCheckedChange={(checked) => setRequired(checked === true)} />
-                        <span className="grid gap-1">
-                            <FieldTitle>출력 스키마에서 필수 컬럼</FieldTitle>
-                            <FieldDescription>출력 컬럼의 nullable 속성을 false로 저장합니다.</FieldDescription>
-                        </span>
-                    </label>
-
                     <div className="grid gap-3">
-                        {ruleDrafts.map((rule) => (
-                            <div key={rule.kind} className="grid gap-3 rounded-lg border border-slate-200 px-4 py-3">
+                        {visibleRuleDrafts.map((rule) => (
+                            <div key={rule.kind} className="grid gap-3 rounded-lg border border-slate-200 bg-white px-4 py-3">
                                 <div className="flex items-start gap-3">
                                     <Checkbox
                                         checked={rule.enabled}
@@ -401,75 +423,45 @@ export default function TransformFunctionModal({ column, qualityRules = [], onAp
                                         value={rule.params}
                                     />
                                 ) : null}
+                                {rule.enabled ? (
+                                    <div className="grid gap-3 border-t border-blue-100 pt-3 sm:grid-cols-[minmax(0,1fr)_220px] sm:items-center">
+                                        <FieldTitle>문제가 발견되면</FieldTitle>
+                                        <Field>
+                                            <FieldLabel htmlFor={`quality-failure-${rule.kind}`}>실패 시 처리</FieldLabel>
+                                            <FailureActionSelect
+                                                action={rule.failureAction}
+                                                allowSetNull={rule.kind !== 'notNull'}
+                                                id={`quality-failure-${rule.kind}`}
+                                                label={rule.label}
+                                                onActionChange={(failureAction) => updateRuleDraft(rule.kind, { failureAction })}
+                                            />
+                                        </Field>
+                                    </div>
+                                ) : null}
                             </div>
                         ))}
                     </div>
-                </TabsContent>
-
-                <TabsContent className="space-y-4" value="failure">
-                    <FailureRuleRow
-                        action={portable ? portableOnError : transformOnError}
-                        label="필드 변환 실패"
-                        onActionChange={portable ? setPortableOnError : setTransformOnError}
-                        onSeverityChange={() => undefined}
-                        severity="Error"
-                        showSeverity={false}
-                    />
-                    {enabledRuleDrafts.map((rule) => (
-                        <FailureRuleRow
-                            key={rule.kind}
-                            action={rule.failureAction}
-                            label={rule.label}
-                            onActionChange={(failureAction) => updateRuleDraft(rule.kind, { failureAction })}
-                            onSeverityChange={(severity) => updateRuleDraft(rule.kind, { severity })}
-                            severity={rule.severity}
-                        />
-                    ))}
-                    {enabledRuleDrafts.length === 0 ? (
-                        <p className="rounded-lg border border-dashed border-slate-300 px-4 py-5 text-center text-sm font-medium text-slate-500">
-                            품질 검사 탭에서 규칙을 선택하면 규칙별 실패 처리를 설정할 수 있습니다.
-                        </p>
-                    ) : null}
                 </TabsContent>
             </Tabs>
         </DialogShell>
     );
 }
 
-function FailureRuleRow({ action, label, onActionChange, onSeverityChange, severity, showSeverity = true }) {
+function FailureActionSelect({ action, allowSetNull = true, id, label, onActionChange }) {
+    const normalizedAction = allowSetNull ? action : normalizeQualityFailureAction('notNull', action);
     return (
-        <div className="grid items-center gap-3 rounded-lg border border-slate-200 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_130px_170px]">
-            <FieldTitle>{label}</FieldTitle>
-            {showSeverity ? (
-                <Select
-                    onValueChange={onSeverityChange}
-                    value={severity}
-                >
-                    <SelectTrigger aria-label={`${label} 심각도`} size="sm">
-                        <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                        <SelectItem value="Error">오류</SelectItem>
-                        <SelectItem value="Warning">경고</SelectItem>
-                    </SelectContent>
-                </Select>
-            ) : <span />}
-            <Select
-                onValueChange={onActionChange}
-                value={action}
-            >
-                <SelectTrigger aria-label={`${label} 실패 처리`} size="sm">
-                    <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                    <SelectItem value="Warn">기록 후 계속</SelectItem>
-                    <SelectItem value="Fail Run">실행 실패</SelectItem>
-                    <SelectItem value="Drop Row">행 제외</SelectItem>
-                    <SelectItem value="Quarantine">격리</SelectItem>
-                    <SelectItem value="Set Null">NULL 대체</SelectItem>
-                </SelectContent>
-            </Select>
-        </div>
+        <Select onValueChange={onActionChange} value={normalizedAction}>
+            <SelectTrigger aria-label={`${label} 실패 처리`} id={id} size="sm">
+                <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+                <SelectItem value="Warn">기록 후 계속</SelectItem>
+                <SelectItem value="Fail Run">실행 실패</SelectItem>
+                <SelectItem value="Drop Row">행 제외</SelectItem>
+                <SelectItem value="Quarantine">격리</SelectItem>
+                {allowSetNull ? <SelectItem value="Set Null">문제 값을 NULL로 변경</SelectItem> : null}
+            </SelectContent>
+        </Select>
     );
 }
 
@@ -482,12 +474,19 @@ function buildInitialRuleDrafts(column, qualityRules) {
         return {
             ...definition,
             enabled: Boolean(existing?.enabled),
-            failureAction: existing?.failureAction || 'Warn',
+            failureAction: normalizeQualityFailureAction(
+                definition.kind,
+                existing?.failureAction || 'Warn',
+            ),
             id: existing?.id || '',
             params: existing?.params || definition.defaultParams,
             severity: existing?.severity || (definition.kind === 'notNull' ? 'Error' : 'Warning'),
         };
     });
+}
+
+function normalizeQualityFailureAction(kind, action) {
+    return kind === 'notNull' && action === 'Set Null' ? 'Warn' : action;
 }
 
 function slugify(value) {

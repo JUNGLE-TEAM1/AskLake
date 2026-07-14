@@ -137,7 +137,6 @@ Canonical status values:
 | `POST` | `/api/etl/sources/assets` | TBD | Source 연결 검증 후 탐색 가능한 파일·폴더·테이블·컬렉션 목록 반환. 폴더 열기는 탐색이며 데이터셋 선택과 분리 | `docs/api-contract.md` |
 | `POST` | `/api/etl/sources/test` | TBD | 사용자가 명시적으로 선택한 단일 Source 대상 또는 같은 형식 파일의 prefix 데이터셋에 대한 제한 샘플과 schema draft patch 반환. Prefix는 `datasetSummary` 포함 | `docs/api-contract.md` |
 | `POST` | `/api/etl/schema-inference` | TBD | Source 테스트 결과 기반 schema 반환 | `docs/api-contract.md` |
-| `POST` | `/api/etl/rules/preview` | Session | 최대 100개 샘플에 canonical Snapshot Rule을 실제 runtime으로 적용 | `docs/api-contract.md` |
 | `POST` | `/api/etl/record-parsing/preview` | TBD | 이름 없는 TXT 제한 샘플을 연속 공백으로 구조화하고 필드 개수·컬럼 타입 초안 반환 | `docs/api-contract.md` |
 | `POST` | `/api/etl/jobs` | TBD | 새 수집/처리 job 생성 | `docs/api-contract.md` |
 | `POST` | `/api/etl/sql-jobs` | source Query Run submitter/admin | 성공한 Trino Query Run에서 반복 full-refresh SQL Job 생성 | `docs/trino-query-run-contract.md` |
@@ -709,7 +708,7 @@ type CreateJobResponse = {
 
 Create/update/review request의 Rule source of truth는 `ruleContractVersion: "1.0"`과 `rules[]`다. Backend는 저장 전에 canonical Rule을 검증하고 `ruleCompilation.status`, 정확한 `issues[]`, 결정된 `outputSchema`를 반환하며 create/append/update에서 version과 Rule JSON을 그대로 영속화한다. `1.0 + []`는 source schema 그대로의 명시적 pass-through이고 legacy 필드를 되살리지 않는다. canonical 컬럼이 없는 기존 Job만 `transformSteps`, `transformOutputColumns`, `qualityRules`에서 Rule을 재구성하며, 이 호환 표현의 `canonicalParameters`는 `0`, `false`, 빈 문자열, `null`을 손실 없이 보존한다. `fail_batch`와 `quarantine`은 `failureDisposition: "keep"`만 허용하고, `warn`은 `keep`, `drop_row`, `set_null`을 사용할 수 있다. 버전 누락/불일치, 잘못된 kind·오류 정책·severity, 지원하지 않는 parameter는 각각 구조화된 `RULE_*` issue로 거절한다. Continuous는 Snapshot conformance를 통과한 stateless 공통 operation을 허용하고 임의 SQL/stateful operation만 `RULE_EXECUTION_MODE_UNSUPPORTED`로 거절한다.
 
-Schema Transform UI는 원본 `SchemaColumnDraft.sourceType`과 target `type`을 별도로 보존한다. 컬럼명, 타입, 기본값, NOT NULL 변경은 각각 `rename`, `cast`, `default_value`, `null_guard` Rule로 순서대로 직렬화한다. `POST /api/etl/rules/preview`는 canonical Rule을 다시 compile한 뒤 portable Rule은 bounded 공통 runtime, 일반 Snapshot SQL expression은 bounded Spark runtime에 적용하므로 브라우저 전용 변환 해석을 사용하지 않는다. Preview는 최대 100개 sample만 처리하며 target, Catalog, source progress를 변경하지 않는다. Continuous도 streaming-safe Visual Transform과 Preview를 사용하며 임의 SQL은 노출하거나 실행하지 않는다. Regex pattern, Accepted Values, Range bounds, mask policy, timestamp format은 compiler가 실행 전에 검증하며 V1 mask는 phone, timestamp는 ISO-8601(`UTC` legacy alias 포함)만 지원한다.
+Schema Transform UI는 원본 `SchemaColumnDraft.sourceType`과 target `type`을 별도로 보존한다. 컬럼명, 타입, 누락 시 기본값, 필수값 변경은 각각 `rename`, `cast`, `default_value`, `null_guard` Rule로 순서대로 직렬화한다. 명시적 필수값의 `null_guard`는 기본값 적용 뒤에도 값이 비어 있으면 `Fail Run`으로 실행을 중단한다. 필수 필드에는 중복 `quality:not_null`을 새로 만들지 않고, 누락값 검사에는 이미 NULL인 값을 다시 NULL로 만드는 `set_null` 처리를 노출하지 않는다. `severity`는 V1 계약 호환 metadata로 저장되지만 현재 runtime action을 결정하지 않으므로 UI에서 편집하지 않는다. 처리 단계의 결과 미리보기와 중복되는 별도 Rule Preview API는 제공하지 않는다. canonical Rule은 review/create와 실제 실행 경로에서 다시 compile되며, Continuous는 streaming-safe Visual Transform만 허용하고 임의 SQL은 노출하거나 실행하지 않는다. Regex pattern, Accepted Values, Range bounds, mask policy, timestamp format은 compiler가 실행 전에 검증하며 V1 mask는 phone, timestamp는 ISO-8601(`UTC` legacy alias 포함)만 지원한다.
 
 필수 확인:
 
@@ -966,6 +965,25 @@ type PermissionOptionsResponse = {
 ```
 
 `POST /api/etl/jobs`와 `PATCH /api/etl/jobs/{jobId}`는 기존 `permissionGrants?: PermissionGrant[]` 계약을 실제 저장 경로로 사용한다. 전달된 grant는 해당 Job의 `permission_ui` source 행으로 저장되며, 수정 시 기존 `permission_ui` 행만 교체한다. 관리 콘솔에서 생성한 `admin` source grant는 유지한다. 생성·수정 응답의 `permissionGrants`와 actor별 `permissions`에는 저장 결과가 즉시 반영된다.
+
+ETL Job에 직접 대응하는 action은 아래와 같다.
+
+| Action | ETL 화면 표시 | 적용 API 예시 |
+| --- | --- | --- |
+| `view` | 조회 | Job 목록·상세 조회 |
+| `run` | 실행 | 실행, 재실행, 연속 수집 시작·재개 |
+| `manage` | 운영/수정 | Job 수정, 일시정지, 취소, 중지, 스케줄 재개 |
+| `delete` | 삭제 | Job 삭제 |
+
+공통 계약의 `query`, `share`도 validation 가능한 action이다. 현재 frontend는 그룹 선택 시 options API의 `groups[].actions`를 그대로 사용하고, 사용자 선택 시 `view`, `run`을 고정 적용한다. 대상별 action 편집 UI는 아직 없다.
+
+현재 응답의 사용자 후보는 `auth_users` table을 우선하고, 비어 있으면 demo user를 사용한다. 그룹 후보는 아직 `DEMO_GROUPS` 고정 정의이며 조직 디렉터리 연동 결과가 아니다. 따라서 `groups[].actions`는 현재 backend가 제공하는 기본 action bundle이고, 프론트는 이를 실제 조직 역할 체계로 과장해 표시하지 않는다.
+
+`principalType="public"`, `principalId="public"`, `actions=["view"]`는 인증 경계 안의 모든 actor에게 Job 조회를 허용한다. 현재 frontend의 공개 범위 `외부 공유`가 이 grant를 만든다. 이는 익명 공개 링크나 별도 share token을 생성하지 않는다.
+
+`owner`, `permissionSummary`, `permissionRoles`는 표시·호환 metadata다. 실제 권한은 저장된 `permissionGrants`로 판정한다. 다만 현재 owner는 자유 문자열 입력이고 backend 이름 일치 fallback에도 사용된다.
+
+`GET /api/etl/permission-options`는 권한 디렉터리 조회만 수행한다. 민감 데이터 감지나 공개 범위 안전 판정을 반환하지 않는다. 현재 화면의 민감 데이터 상태는 컬럼명 정규식 기반 frontend 추정값이다.
 - Mock/live 전환 순서가 바뀌면 `docs/backend-integration-readiness.md`를 업데이트한다.
 - Frontend 타입이 바뀌면 관련 `frontend/src/types/`와 문서를 함께 업데이트한다.
 ## Text Structuring Runtime Contract

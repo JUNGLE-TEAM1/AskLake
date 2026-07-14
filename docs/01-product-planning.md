@@ -86,9 +86,11 @@ FastAPI live backend에서 현재 우선 구현하는 범위:
 
 ### Permission/Governance Phase 0 기준
 
-현재 Create flow의 Permission 단계는 실제 접근 제어가 아니라 governance metadata 입력 단계다. `owner`, `permissionSummary`, `permissionRoles`는 누가 만들었는지, 어느 조직/역할에 공유할 의도인지 보여주는 설명 값이며, Catalog/SQL/Job API에서 접근 허용 여부를 판정하는 권한 모델로 사용하지 않는다.
+현재 Create flow의 Permission 단계는 실제 ETL Job 접근 권한을 설정한다. 화면에서 선택한 사용자·그룹은 `permissionGrants`로 변환되고, Job 생성·수정 시 `permission_grants` table의 `source=permission_ui` 행으로 저장된다. 이후 Job 조회, 실행, 수정, 삭제 API는 현재 actor와 저장된 grant를 기준으로 접근을 판정한다.
 
-Phase 0에서는 용어와 경계를 먼저 고정한다. `createdBy`, `owner`, profile/avatar 같은 값은 표시용 identity metadata로 분리하고, 실제 접근 제어는 `ActorContext`, resource별 `permissionGrants`, backend permission check로 다룬다. 현재 기준 권한 판정은 allow-only 모델이며, `admin`은 전체 허용되고, owner fallback과 user/group/role/public grant 중 하나가 맞으면 허용된다. 지원 action은 `view`, `query`, `run`, `manage`, `delete`, `share`이고 여러 grant는 합산한다. 관리자 권한 편집 기능은 독립 `permission_grants` table row를 생성/수정/삭제하며, payload에서 유래한 owner/permissionRoles grant는 읽기 전용 metadata grant로 유지한다.
+`createdBy`, `owner`, profile/avatar, `permissionSummary`, `permissionRoles`는 표시와 호환을 위한 identity/governance metadata이며 실제 권한의 source of truth가 아니다. 실제 접근 제어는 `ActorContext`, resource별 `permissionGrants`, backend permission check로 다룬다. 현재 기준 권한 판정은 allow-only 모델이며, `admin`은 전체 허용되고, legacy owner fallback과 user/group/role/public grant 중 하나가 맞으면 허용된다. 공통 action은 `view`, `query`, `run`, `manage`, `delete`, `share`이고 여러 grant는 합산한다. 현재 생성 화면은 선택한 그룹에 backend가 내려준 action 묶음을 그대로 적용하고, 선택한 사용자에는 `view`, `run`을 고정 적용한다. 대상별 action 직접 편집은 아직 구현하지 않았다. 관리 콘솔의 `admin` source grant는 생성 화면의 `permission_ui` 수정으로 덮어쓰지 않는다.
+
+현재 제한은 그룹 후보가 고정된 demo group 정의를 사용하고, 권한 옵션 조회가 admin actor에게만 열리며, deny/조건부 정책이 없다는 점이다. `permissionTemplate`은 별도 정책 템플릿이 아니라 선택 그룹 이름을 재사용하고, `owner`는 자유 문자열 입력이며 이름 일치 fallback에도 사용된다. 컬럼명 정규식 기반 민감 데이터 감지는 frontend 추정값일 뿐 backend governance 결과가 아니다.
 
 ## 6) 핵심 사용자 흐름
 
@@ -105,6 +107,8 @@ Phase 0에서는 용어와 경계를 먼저 고정한다. `createdBy`, `owner`, 
 2. Prefix 데이터셋은 임의로 흩어진 파일 선택이 아니라 한 prefix 아래 같은 형식과 호환 스키마를 가진 파일 집합이다. `_SUCCESS`, `manifest.json`, 숨김 파일과 선택 형식이 아닌 객체는 입력에서 제외하며, Preview는 결정적인 대표 파일과 전체 데이터 파일 수·용량을 표시한다.
 3. 소스에 이름 있는 필드가 있으면 바로 Schema 단계로 이동한다. MinIO/S3 TXT처럼 필드명이 없는 원시 레코드이면 조건부 `레코드 구조화` 단계에서 연속 공백(`\\s+`) 분리, 헤더 여부, 컬럼명과 타입 초안을 확정한다.
 4. 사용자는 schema, rule, schedule, permission, target을 설정한다.
+   - Schema의 `필수값`과 `누락 시 기본값`은 한 흐름으로 동작한다. 누락된 값은 기본값으로 먼저 채우고, 그 뒤에도 비어 있는 필수값은 실행을 실패시킨다.
+   - 필수 필드에는 중복되는 `누락값 검사`를 별도로 노출하지 않는다. 선택 품질 검사의 실패 처리는 기록 후 계속, 실행 실패, 행 제외, 격리, 문제 값을 NULL로 변경 중 실제 실행 action만 설정한다.
 5. 시스템은 레코드 구조화 설정을 포함한 draft를 검증하고 `POST /api/etl/jobs` request로 만든다. Prefix Job에는 개별 object 배열이 아니라 canonical bucket/prefix와 검증 metadata를 저장한다.
 6. 성공 시 Job이 목록에 추가되고 Catalog target은 pending 상태로 안내된다.
 7. 사용자가 PostgreSQL Snapshot Job을 실행하거나 재실행하면 스키마 Preview 행 수와 무관하게 선택한 기본 테이블 전체를 일관된 DB snapshot으로 읽는다.

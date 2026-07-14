@@ -1,4 +1,4 @@
-import type { DraftPipeline, RuleCompilationResult } from "../types";
+import type { CreatePipelineRequest, DraftPipeline, RuleCompilationResult } from "../types";
 import { apiClient, apiConfig } from "./apiClient";
 import { toCreatePipelineRequest } from "./draftPipelineContract";
 import { compileRuleContract } from "./ruleContract";
@@ -31,24 +31,46 @@ export type ReviewSnapshot = {
   validation: ReviewValidationRow[];
 };
 
-export async function getReviewSnapshot(draft: DraftPipeline): Promise<ReviewSnapshot> {
-  const request = {
+export type ReviewSnapshotRequest = CreatePipelineRequest & {
+  sourceConnectionStatus: DraftPipeline["source"]["connectionStatus"];
+};
+
+const inFlightReviewRequests = new Map<string, Promise<ReviewSnapshot>>();
+
+export function buildReviewSnapshotRequest(draft: DraftPipeline): ReviewSnapshotRequest {
+  return {
     ...toCreatePipelineRequest(draft),
     sourceConnectionStatus: draft.source.connectionStatus,
   };
-
-  if (!apiConfig.useMock) {
-    return apiClient.post<ReviewSnapshot>("/api/etl/review", request);
-  }
-
-  return new Promise((resolve) => {
-    window.setTimeout(() => resolve(buildMockReviewSnapshot(draft)), 120);
-  });
 }
 
-function buildMockReviewSnapshot(draft: DraftPipeline): ReviewSnapshot {
-  const request = toCreatePipelineRequest(draft);
-  const includedColumns = draft.schema.columns.filter((column) => column.included !== false && Boolean(column.targetName.trim()));
+export function getReviewSnapshotRequestKey(request: ReviewSnapshotRequest) {
+  return JSON.stringify(request);
+}
+
+export function getReviewSnapshot(request: ReviewSnapshotRequest): Promise<ReviewSnapshot> {
+  const requestKey = getReviewSnapshotRequestKey(request);
+  const inFlightRequest = inFlightReviewRequests.get(requestKey);
+  if (inFlightRequest) return inFlightRequest;
+
+  const requestPromise = !apiConfig.useMock
+    ? apiClient.post<ReviewSnapshot>("/api/etl/review", request)
+    : new Promise<ReviewSnapshot>((resolve) => {
+      window.setTimeout(() => resolve(buildMockReviewSnapshot(request)), 120);
+    });
+
+  let trackedRequest: Promise<ReviewSnapshot>;
+  trackedRequest = requestPromise.finally(() => {
+    if (inFlightReviewRequests.get(requestKey) === trackedRequest) {
+      inFlightReviewRequests.delete(requestKey);
+    }
+  });
+  inFlightReviewRequests.set(requestKey, trackedRequest);
+  return trackedRequest;
+}
+
+function buildMockReviewSnapshot(request: ReviewSnapshotRequest): ReviewSnapshot {
+  const includedColumns = request.schemaColumns.filter((column) => column.included !== false && Boolean(column.targetName.trim()));
   const ruleCompilation = compileRuleContract({
     contractVersion: request.ruleContractVersion,
     executionMode: request.executionMode,
@@ -60,7 +82,7 @@ function buildMockReviewSnapshot(draft: DraftPipeline): ReviewSnapshot {
     transformSteps: request.transformSteps,
   });
   const outputColumns = ruleCompilation.outputSchema;
-  const sourceReady = draft.source.connectionStatus === "success";
+  const sourceReady = request.sourceConnectionStatus === "success";
   const schemaReady = includedColumns.length > 0;
   const processingReady = ruleCompilation.status === "pass";
   const scheduleReady = Boolean(request.scheduleLabel.trim());
@@ -72,7 +94,7 @@ function buildMockReviewSnapshot(draft: DraftPipeline): ReviewSnapshot {
       ["작업 ID", request.id],
       ["작업명", request.jobName],
       ["소스", [sourceTypeLabel(request.sourceType), request.sourceLabel].filter(Boolean).join(" · ")],
-      ["실행 방식", request.executionMode === "continuous" ? "실시간 스트림" : "Snapshot batch"],
+      ["실행 방식", request.executionMode === "continuous" ? "실시간 수집" : "일괄 수집"],
       ["대상 데이터셋", request.targetDataset],
       ["설명", request.targetDescription],
     ]),
@@ -80,7 +102,7 @@ function buildMockReviewSnapshot(draft: DraftPipeline): ReviewSnapshot {
     destination: toReviewEntries([
       ["저장 경로", request.storagePath ?? ""],
       ["데이터베이스", request.targetDatabase ?? "asklake"],
-      ["테이블 이름", draft.target.tableName ?? request.targetDataset],
+      ["테이블 이름", request.targetDataset],
       ["형식", request.targetFormat],
       ["계층", request.targetLayer],
       ["파티션", request.partition || "없음"],
