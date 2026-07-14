@@ -75,6 +75,9 @@ class CreatedResource:
 class SmokeResources:
     suffix: str
     source_key: str
+    probe_key: str
+    source_fixture_written: bool = False
+    probe_fixture_written: bool = False
     topics: list[str] = field(default_factory=list)
     jobs: list[CreatedResource] = field(default_factory=list)
 
@@ -87,28 +90,66 @@ def main() -> None:
     require(str(os.environ.get("ASKLAKE_SPARK_RUNNER") or "").casefold() == "rest", "Production Job E2E requires ASKLAKE_SPARK_RUNNER=rest")
 
     suffix = uuid.uuid4().hex[:12]
-    resources = SmokeResources(suffix=suffix, source_key=f"asklake-production-smoke/{suffix}/generic.jsonl")
+    resources = SmokeResources(
+        suffix=suffix,
+        source_key=f"asklake-production-smoke/{suffix}/generic.jsonl",
+        probe_key=f"asklake-production-smoke/{suffix}/_permission-probe",
+    )
     actor = ActorContext(name="AskLake Production Job Smoke", role="admin")
     started_at = time.monotonic()
     results: dict[str, Any] = {}
+    primary_error: Exception | None = None
     try:
-        put_generic_fixture(resources.source_key, suffix)
+        probe_raw_fixture_lifecycle(resources)
+        put_generic_fixture(resources, suffix)
         results["genericBatch"] = run_generic_batch(resources, actor)
         results["kafkaSnapshot"] = run_kafka_snapshot(resources, actor)
         results["kafkaContinuous"] = run_kafka_continuous(resources, actor)
+    except Exception as error:
+        primary_error = error
+        raise
     finally:
-        cleanup(resources, actor)
+        try:
+            cleanup(resources, actor)
+        except Exception as cleanup_error:
+            if primary_error is None:
+                raise
+            print(f"Production Job E2E cleanup also failed: {cleanup_error}", file=sys.stderr)
     print(json.dumps({"ok": True, "results": results, "seconds": round(time.monotonic() - started_at, 2)}, sort_keys=True))
 
 
-def put_generic_fixture(key: str, suffix: str) -> None:
+def put_generic_fixture(resources: SmokeResources, suffix: str) -> None:
     from app.services.etl_service import build_catalog_s3_client
 
     body = "\n".join([
         json.dumps({"event_id": f"batch-{suffix}-1", "created_at": "2026-07-14T00:00:00Z", "review": "production batch one"}),
         json.dumps({"event_id": f"batch-{suffix}-2", "created_at": "2026-07-14T00:01:00Z", "review": "production batch two"}),
     ]) + "\n"
-    build_catalog_s3_client().put_object(Bucket=raw_bucket(), Key=key, Body=body.encode("utf-8"), ContentType="application/x-ndjson")
+    build_catalog_s3_client().put_object(
+        Bucket=raw_bucket(),
+        Key=resources.source_key,
+        Body=body.encode("utf-8"),
+        ContentType="application/x-ndjson",
+    )
+    resources.source_fixture_written = True
+
+
+def probe_raw_fixture_lifecycle(resources: SmokeResources) -> None:
+    """Fail before creating Jobs when the scoped raw smoke prefix is not writable."""
+    from app.services.etl_service import build_catalog_s3_client
+
+    client = build_catalog_s3_client()
+    try:
+        client.put_object(Bucket=raw_bucket(), Key=resources.probe_key, Body=b"", ContentType="application/octet-stream")
+        resources.probe_fixture_written = True
+        client.delete_object(Bucket=raw_bucket(), Key=resources.probe_key)
+        resources.probe_fixture_written = False
+    except Exception as error:
+        raise RuntimeError(
+            "Production Job E2E raw smoke prefix PutObject/DeleteObject probe failed; "
+            "grant s3:PutObject and s3:DeleteObject only for asklake-production-smoke/*: "
+            f"{error}"
+        ) from error
 
 
 def run_generic_batch(resources: SmokeResources, actor: ActorContext) -> dict[str, Any]:
@@ -254,15 +295,20 @@ def wait_for_continuous(job_id: str, *, expected_rows: int) -> dict[str, Any]:
     raise RuntimeError(f"Timed out waiting for Continuous Job {job_id}")
 
 
-def wait_for_continuous_status(job_id: str, expected: str) -> None:
+def wait_for_continuous_status(job_id: str, expected: str | set[str]) -> None:
+    expected_statuses = {expected} if isinstance(expected, str) else expected
     deadline = time.monotonic() + timeout_seconds()
     while time.monotonic() < deadline:
         with SessionLocal() as db:
             job = get_job(db, job_id, ActorContext(name="AskLake Production Job Smoke", role="admin"))
-        if job.continuous_runtime and job.continuous_runtime.status == expected:
+        if job.continuous_runtime and job.continuous_runtime.status in expected_statuses:
             return
         time.sleep(2)
-    raise RuntimeError(f"Timed out waiting for Continuous Job {job_id} to become {expected}")
+    raise RuntimeError(f"Timed out waiting for Continuous Job {job_id} to become one of {sorted(expected_statuses)}")
+
+
+def continuous_stop_required(status: str | None) -> bool:
+    return status in {"starting", "running", "pausing", "stopping"}
 
 
 def schema_columns() -> list[dict[str, Any]]:
@@ -301,9 +347,9 @@ def cleanup(resources: SmokeResources, actor: ActorContext) -> None:
             if resource.continuous:
                 with SessionLocal() as db:
                     job = get_job(db, resource.job_id, actor)
-                    if job.continuous_runtime and job.continuous_runtime.status not in {"stopped", "failed"}:
+                    if job.continuous_runtime and continuous_stop_required(job.continuous_runtime.status):
                         command_job(db, resource.job_id, "stopContinuous", actor)
-                wait_for_continuous_status(resource.job_id, "stopped")
+                wait_for_continuous_status(resource.job_id, {"stopped", "failed"})
             target = IcebergWriterTarget.model_validate(resource.target)
             writer = IcebergWriterService()
             warehouse_location = ""
@@ -324,7 +370,11 @@ def cleanup(resources: SmokeResources, actor: ActorContext) -> None:
             errors.append(f"job {resource.job_id}: {error}")
     try:
         from app.services.etl_service import build_catalog_s3_client
-        build_catalog_s3_client().delete_object(Bucket=raw_bucket(), Key=resources.source_key)
+        client = build_catalog_s3_client()
+        if resources.source_fixture_written:
+            client.delete_object(Bucket=raw_bucket(), Key=resources.source_key)
+        if resources.probe_fixture_written:
+            client.delete_object(Bucket=raw_bucket(), Key=resources.probe_key)
     except Exception as error:
         errors.append(f"source fixture: {error}")
     for topic in resources.topics:

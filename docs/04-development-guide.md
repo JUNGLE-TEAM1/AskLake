@@ -568,7 +568,7 @@ EC2 HTTPS 배포에서는 `deploy/.env`의 `APP_DOMAIN`에 scheme 없는 domain�
 ### EC2 배포 운영
 
 AWS EC2 demo 서버는 `scripts/deploy.sh`로 켜고, 재배포하고, 끈다.
-실제 EC2 id, host, SSH key path는 `deploy/ec2.env`처럼 git에 올리지 않는 개인 환경 파일에서 관리한다.
+실제 EC2 id, host, SSH key path 또는 SSM transport 설정은 `deploy/ec2.env`처럼 git에 올리지 않는 개인 환경 파일에서 관리한다. 기본은 `ASKLAKE_DEPLOY_TRANSPORT=ssh`이며 SSH key를 쓰지 않는 운영자는 `ssm`으로 바꾼다. SSM mode는 instance profile의 `AmazonSSMManagedInstanceCore`와 실행자의 `ssm:SendCommand`, `ssm:GetCommandInvocation`, `ssm:DescribeInstanceInformation`을 요구한다.
 
 ```bash
 cp deploy/ec2.env.example deploy/ec2.env
@@ -579,6 +579,13 @@ scripts/deploy.sh start
 scripts/deploy.sh deploy
 scripts/deploy.sh health
 scripts/deploy.sh stop
+```
+
+```bash
+ASKLAKE_DEPLOY_TRANSPORT=ssm \
+ASKLAKE_EC2_INSTANCE_ID=i-xxxxxxxxxxxxxxxxx \
+ASKLAKE_DEPLOY_PATH=/opt/asklake-release \
+scripts/deploy.sh deploy
 ```
 
 세부 운영 절차는 `docs/deployment-runbook.md`를 기준으로 한다.

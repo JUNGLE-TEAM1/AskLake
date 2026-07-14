@@ -7,7 +7,7 @@
 
 - EC2, Elastic IP, Security Group, Docker, Docker Compose, 서버 `deploy/.env`는 최초 bootstrap에서 이미 준비되어 있어야 한다.
 - 실제 AWS 계정 값, EC2 id, IP, domain, SSH key, secret은 repo에 커밋하지 않는다.
-- 로컬 실행자는 AWS CLI와 SSH 접근 권한을 가지고 있어야 한다.
+- 로컬 실행자는 AWS CLI와 SSH 또는 AWS Systems Manager(SSM) 접근 권한을 가지고 있어야 한다. 기본 transport는 SSH다.
 - 서버 repo는 기본적으로 `/opt/asklake`에 clone되어 있다고 가정한다. release checkout처럼 다른 경로를 쓰면 로컬 deploy env에 `ASKLAKE_DEPLOY_PATH`로 실제 경로를 명시한다.
 - 서버 `deploy/.env`에는 Postgres/Mongo/OpenAI 값과 S3 bucket 이름만 보존한다. 장기 AWS access key/secret과 MinIO credential은 넣지 않는다.
 - EC2에는 Raw list/read와 Output list/read/write/delete 권한을 가진 instance profile IAM Role을 연결한다. `TRINO_ENABLED=true`이면 Warehouse와 Query Result bucket의 list/read/write/delete 최소 권한도 같은 role에 추가한다. Container credential 전달을 위해 IMDSv2 token required, response hop limit 2를 사용한다.
@@ -28,6 +28,7 @@ export ASKLAKE_EC2_INSTANCE_ID=i-xxxxxxxxxxxxxxxxx
 export ASKLAKE_EC2_HOST=asklake.example.com
 export ASKLAKE_APP_URL=https://asklake.example.com
 export ASKLAKE_SSH_KEY="$HOME/.ssh/asklake-ec2.pem"
+export ASKLAKE_DEPLOY_TRANSPORT=ssh
 export ASKLAKE_DEPLOY_BRANCH=dev
 ```
 
@@ -44,6 +45,22 @@ export ASKLAKE_APP_URL=https://203-0-113-10.sslip.io
 ```bash
 source deploy/ec2.env
 ```
+
+### SSH 없이 SSM으로 배포
+
+SSH key를 배포자에게 배포하지 않는 환경에서는 같은 명령을 SSM Run Command로 실행할 수 있다. EC2 instance profile에는 `AmazonSSMManagedInstanceCore`가 필요하고, 실행자 IAM에는 최소 `ssm:SendCommand`, `ssm:GetCommandInvocation`, `ssm:DescribeInstanceInformation` 및 해당 EC2의 상태 조회/시작/중지 권한이 필요하다.
+
+```bash
+export ASKLAKE_DEPLOY_TRANSPORT=ssm
+export ASKLAKE_EC2_INSTANCE_ID=i-xxxxxxxxxxxxxxxxx
+export ASKLAKE_DEPLOY_PATH=/opt/asklake-release
+
+scripts/deploy.sh status
+scripts/deploy.sh deploy
+ASKLAKE_RUN_PRODUCTION_JOB_E2E=true scripts/deploy.sh job-smoke
+```
+
+SSM transport도 SSH와 동일한 서버 명령 순서와 Compose preflight를 사용한다. `scripts/deploy.sh ssh`만 SSH 전용 명령이므로 SSM mode에서는 사용할 수 없다.
 
 ## 2. 상태 확인
 
@@ -73,7 +90,7 @@ scripts/deploy.sh smoke
 ASKLAKE_RUN_PRODUCTION_JOB_E2E=true scripts/deploy.sh job-smoke
 ```
 
-이 명령은 일반 Spark batch, Kafka Snapshot, Kafka Continuous Job을 각각 고유 suffix로 생성하고 Iceberg commit, Catalog `available`, Trino row count를 확인한다. Snapshot은 같은 consumer group의 후속 0건 run도 확인한다. `asklake-production-smoke/` S3 source fixture, `asklake.production.smoke.*` Kafka topic, 생성 Job/Dataset/Iceberg table만 종료 시 정리한다. EC2 Role은 Raw bucket 전체 쓰기·삭제 권한 대신 `asklake-production-smoke/*` prefix에만 `s3:PutObject`와 `s3:DeleteObject`를 허용해야 한다. 기본 `deploy`, `restart`, `smoke`에는 절대 포함되지 않는다.
+이 명령은 일반 Spark batch, Kafka Snapshot, Kafka Continuous Job을 각각 고유 suffix로 생성하고 Iceberg commit, Catalog `available`, Trino row count를 확인한다. 시작 시 Job을 만들기 전에 `asklake-production-smoke/<suffix>/_permission-probe`를 Put/Delete해 scoped Raw 권한을 즉시 검증한다. Snapshot은 같은 consumer group의 후속 0건 run도 확인한다. `asklake-production-smoke/` S3 source fixture, `asklake.production.smoke.*` Kafka topic, 생성 Job/Dataset/Iceberg table만 종료 시 정리한다. EC2 Role은 Raw bucket 전체 쓰기·삭제 권한 대신 `asklake-production-smoke/*` prefix에만 `s3:PutObject`와 `s3:DeleteObject`를 허용해야 한다. 기본 `deploy`, `restart`, `smoke`에는 절대 포함되지 않는다.
 
 Backend run/retry actions require these Airflow variables in the server `deploy/.env` when DAG submission is expected:
 

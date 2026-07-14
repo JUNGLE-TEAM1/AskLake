@@ -75,7 +75,7 @@
 | API contract mismatch | `docs/03-api-reference.md`, `docs/api-contract.md`, frontend types/API adapter를 함께 맞춘다. |
 | PR branch policy failed | base/head 조합, 지원 브랜치 패턴, linked issue의 `Target Branch`를 확인한다. `main <- dev`; `dev <- pair1|pair2|pair3|지원 work branch|<type>-#issue`가 허용된다. |
 | Merged PR did not close its issue | PR footer가 `Closes/Fixes/Resolves #N`인지, base branch에 최신 Notion Issue Sync가 있는지, lifecycle smoke가 통과했는지 확인한다. 정기 복구는 기본 브랜치 `main`의 workflow를 사용하므로 자동화 변경은 `dev -> main`까지 반영한다. |
-| EC2 deploy script failed | `source deploy/ec2.env`, AWS auth, SSH key, instance state, server `deploy/.env`, Compose logs를 순서대로 확인한다. |
+| EC2 deploy script failed | `source deploy/ec2.env`, AWS auth, `ASKLAKE_DEPLOY_TRANSPORT`에 맞는 SSH key 또는 SSM 권한/managed-instance 상태, instance state, server `deploy/.env`, Compose logs를 순서대로 확인한다. |
 
 ## 4) Lifecycle Guardrails
 
@@ -109,7 +109,7 @@ Scenario audit은 새 hard rule을 추가하는 절차가 아니다.
 | Trino contract verification | matching backend/frontend paths | Query Run, registration, result storage, collector fencing, actor reservation, timeline state | `verify:trino-query-foundation`, `verify:query-engine-registration`, `verify:trino-result-storage`, `verify:trino-collector-resilience`, `verify:trino-submission-guard`, `test:trino-timeline` pass |
 | Trino production readiness | deploy-time when `TRINO_ENABLED=true` | TLS/auth, read-only query identity, materializer CTAS/describe/drop, AWS S3 Warehouse/Query Result bucket round trip through EC2 instance profile | `verify:trino-production-readiness` passes after Compose health |
 | Production runtime smoke | explicit post-deploy only | backend-to-Spark REST reachability, backend-to-Redpanda metadata access, Trino/Iceberg materialization and result storage | `scripts/deploy.sh smoke` performs preflight/bootstrap and bounded runtime retries with `TRINO_ENABLED=true`; it must not create user Job/Catalog/Kafka fixtures |
-| Production Job E2E smoke | explicit fixture-only | generic batch, Kafka Snapshot, Kafka Continuous Iceberg/Catalog/Trino path | `ASKLAKE_RUN_PRODUCTION_JOB_E2E=true scripts/deploy.sh job-smoke` only; unique smoke resources are cleaned up and the command is never part of deploy/restart |
+| Production Job E2E smoke | explicit fixture-only | generic batch, Kafka Snapshot, Kafka Continuous Iceberg/Catalog/Trino path | `ASKLAKE_RUN_PRODUCTION_JOB_E2E=true scripts/deploy.sh job-smoke` only; Raw smoke prefix Put/Delete is probed before Job creation, failed Continuous workers are terminal for cleanup, unique smoke resources are cleaned up, and the command is never part of deploy/restart |
 | AWS S3 startup readiness | every production Compose startup | Raw bucket list, Output bucket put/head/delete with EC2 instance role | `aws-s3-readiness` completes before backend starts; bucket auto-create and static AWS keys are forbidden |
 | AWS S3 output identity | frontend build and every Spark run/Catalog publish | Target UI bucket, Spark writer bucket, Catalog storage location | production frontend receives `ASKLAKE_SPARK_OUTPUT_BUCKET`; only legacy `asklake-output` roots are normalized and explicit custom buckets remain unchanged |
 | PR event checks | no | future GitHub Actions | changed code satisfies required checks |

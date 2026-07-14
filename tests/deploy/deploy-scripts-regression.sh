@@ -339,6 +339,57 @@ expect_preflight_failure \
 # with deterministic curl fixtures.
 source "$DEPLOY_SCRIPT"
 
+mock_ssm_transport() (
+  DEPLOY_TRANSPORT=ssm
+  ssm_run() { printf 'ssm:%s\n' "$1"; }
+  ssh_run() { printf 'ssh:%s\n' "$1"; }
+  remote_run 'printf smoke'
+)
+
+if output="$(mock_ssm_transport 2>&1)" && [[ "$output" == 'ssm:printf smoke' ]]; then
+  record_pass 'SSM transport routes remote commands without SSH'
+else
+  record_fail 'SSM transport routes remote commands without SSH'
+fi
+
+mock_ssm_run() (
+  EC2_INSTANCE_ID=i-ssmtest
+  AWS_REGION=ap-northeast-2
+  SSM_TIMEOUT_SECONDS=60
+  SSM_POLL_INTERVAL_SECONDS=1
+  aws() {
+    case "$1 $2 $*" in
+      'ssm send-command '*) printf 'command-123\n' ;;
+      *"--query Status "*) printf 'Success\n' ;;
+      *"--query StandardOutputContent "*) printf 'remote command completed\n' ;;
+      *"--query StandardErrorContent "*) printf 'None\n' ;;
+      *) return 1 ;;
+    esac
+  }
+  ssm_run 'printf smoke'
+)
+
+if output="$(mock_ssm_run 2>&1)" \
+  && [[ "$output" == *'Waiting for SSM command command-123...'* ]] \
+  && [[ "$output" == *'remote command completed'* ]]; then
+  record_pass 'SSM runner waits for and returns remote command output'
+else
+  record_fail 'SSM runner waits for and returns remote command output'
+fi
+
+mock_invalid_transport() (
+  DEPLOY_TRANSPORT=invalid
+  validate_deploy_transport
+)
+
+if output="$(mock_invalid_transport 2>&1)"; then
+  record_fail 'deploy transport rejects unsupported values (unexpected success)'
+elif [[ "$output" == *'ASKLAKE_DEPLOY_TRANSPORT must be ssh or ssm'* ]]; then
+  record_pass 'deploy transport rejects unsupported values'
+else
+  record_fail 'deploy transport rejects unsupported values'
+fi
+
 mock_trino_deploy_control() (
   local enabled="$1"
 

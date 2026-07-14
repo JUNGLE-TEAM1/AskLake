@@ -17,6 +17,10 @@ HEALTH_PATH="${ASKLAKE_HEALTH_PATH:-/api/health}"
 HEALTH_RETRIES="${ASKLAKE_HEALTH_RETRIES:-18}"
 HEALTH_RETRY_DELAY="${ASKLAKE_HEALTH_RETRY_DELAY:-5}"
 RUN_POST_DEPLOY_SMOKE="${ASKLAKE_RUN_POST_DEPLOY_SMOKE:-false}"
+DEPLOY_TRANSPORT="${ASKLAKE_DEPLOY_TRANSPORT:-ssh}"
+SSM_DOCUMENT_NAME="${ASKLAKE_SSM_DOCUMENT_NAME:-AWS-RunShellScript}"
+SSM_TIMEOUT_SECONDS="${ASKLAKE_SSM_TIMEOUT_SECONDS:-1800}"
+SSM_POLL_INTERVAL_SECONDS="${ASKLAKE_SSM_POLL_INTERVAL_SECONDS:-3}"
 SSH_OPTS=(-o StrictHostKeyChecking=accept-new -o ServerAliveInterval=15 -i "$SSH_KEY")
 
 usage() {
@@ -25,7 +29,7 @@ Usage: $SCRIPT_NAME <command>
 
 Commands:
   status     Show EC2 state, public address, and remote compose status when reachable.
-  start      Start the EC2 instance, wait for SSH, then ensure Docker Compose is up.
+  start      Start the EC2 instance, wait for the selected remote transport, then ensure Docker Compose is up.
   stop       Stop Docker Compose when reachable, then stop the EC2 instance.
   deploy     Start if needed, pull the deploy branch, rebuild Compose, and health check.
   restart    Recreate the Compose stack on the running EC2 instance.
@@ -42,7 +46,11 @@ Optional:
   AWS_REGION               Default: ap-northeast-2
   ASKLAKE_EC2_HOST         Overrides host lookup, useful for Elastic IP or sslip.io.
   ASKLAKE_EC2_USER         Default: ec2-user
-  ASKLAKE_SSH_KEY          Default: \$HOME/.ssh/asklake-ec2.pem
+  ASKLAKE_DEPLOY_TRANSPORT Default: ssh. Allowed values: ssh, ssm
+  ASKLAKE_SSH_KEY          Default: \$HOME/.ssh/asklake-ec2.pem (ssh transport only)
+  ASKLAKE_SSM_DOCUMENT_NAME Default: AWS-RunShellScript (ssm transport only)
+  ASKLAKE_SSM_TIMEOUT_SECONDS Default: 1800 (ssm transport only)
+  ASKLAKE_SSM_POLL_INTERVAL_SECONDS Default: 3 (ssm transport only)
   ASKLAKE_DEPLOY_PATH      Default: /opt/asklake
   ASKLAKE_DEPLOY_BRANCH    Default: dev
   ASKLAKE_APP_URL          Default: https://<resolved-host>, or http://<ipv4-host>
@@ -64,6 +72,19 @@ need_command() {
 
 require_instance_id() {
   [[ -n "$EC2_INSTANCE_ID" ]] || die "ASKLAKE_EC2_INSTANCE_ID is required"
+}
+
+validate_deploy_transport() {
+  case "$DEPLOY_TRANSPORT" in
+    ssh|ssm) ;;
+    *) die "ASKLAKE_DEPLOY_TRANSPORT must be ssh or ssm" ;;
+  esac
+}
+
+require_positive_integer() {
+  local value="$1"
+  local name="$2"
+  [[ "$value" =~ ^[1-9][0-9]*$ ]] || die "$name must be a positive integer"
 }
 
 instance_field() {
@@ -112,17 +133,76 @@ ssh_run() {
   ssh "${SSH_OPTS[@]}" "$EC2_USER@$host" "$@"
 }
 
+ssm_run() {
+  local command="$1"
+  local encoded
+  local wrapped
+  local command_id
+  local status
+  local stdout
+  local stderr
+  local response_code
+
+  encoded="$(printf '%s' "$command" | base64 | tr -d '\n')"
+  wrapped="printf '%s' '$encoded' | base64 -d | bash"
+  command_id="$(aws ssm send-command \
+    --region "$AWS_REGION" \
+    --instance-ids "$EC2_INSTANCE_ID" \
+    --document-name "$SSM_DOCUMENT_NAME" \
+    --timeout-seconds "$SSM_TIMEOUT_SECONDS" \
+    --comment "AskLake ${SCRIPT_NAME}" \
+    --parameters "commands=$wrapped" \
+    --query 'Command.CommandId' \
+    --output text)" || die "SSM Run Command submission failed"
+
+  printf 'Waiting for SSM command %s...\n' "$command_id"
+  while true; do
+    status="$(aws ssm get-command-invocation \
+      --region "$AWS_REGION" \
+      --command-id "$command_id" \
+      --instance-id "$EC2_INSTANCE_ID" \
+      --query 'Status' \
+      --output text 2>/dev/null || true)"
+    case "$status" in
+      Success)
+        stdout="$(aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$command_id" --instance-id "$EC2_INSTANCE_ID" --query 'StandardOutputContent' --output text)"
+        stderr="$(aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$command_id" --instance-id "$EC2_INSTANCE_ID" --query 'StandardErrorContent' --output text)"
+        [[ "$stdout" == "None" ]] || printf '%s\n' "$stdout"
+        [[ "$stderr" == "None" ]] || printf '%s\n' "$stderr" >&2
+        return
+        ;;
+      Failed|Cancelled|TimedOut|Cancelling)
+        stdout="$(aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$command_id" --instance-id "$EC2_INSTANCE_ID" --query 'StandardOutputContent' --output text || true)"
+        stderr="$(aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$command_id" --instance-id "$EC2_INSTANCE_ID" --query 'StandardErrorContent' --output text || true)"
+        response_code="$(aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$command_id" --instance-id "$EC2_INSTANCE_ID" --query 'ResponseCode' --output text || true)"
+        [[ "$stdout" == "None" ]] || printf '%s\n' "$stdout"
+        [[ "$stderr" == "None" ]] || printf '%s\n' "$stderr" >&2
+        die "SSM Run Command $command_id finished as $status (response code: ${response_code:-unknown})"
+        ;;
+      *) sleep "$SSM_POLL_INTERVAL_SECONDS" ;;
+    esac
+  done
+}
+
+remote_run() {
+  case "$DEPLOY_TRANSPORT" in
+    ssh) ssh_run "$@" ;;
+    ssm) ssm_run "$@" ;;
+    *) die "ASKLAKE_DEPLOY_TRANSPORT must be ssh or ssm" ;;
+  esac
+}
+
 compose_cmd() {
   printf 'docker compose --env-file %q -f %q' "$COMPOSE_ENV_FILE" "$COMPOSE_FILE"
 }
 
 remote_compose() {
   local command="$1"
-  ssh_run "cd '$DEPLOY_PATH' && $(compose_cmd) $command"
+  remote_run "cd '$DEPLOY_PATH' && $(compose_cmd) $command"
 }
 
 remote_deploy_preflight() {
-  ssh_run "cd '$DEPLOY_PATH' && bash scripts/verify-deploy-env.sh '$COMPOSE_ENV_FILE' '$COMPOSE_FILE'"
+  remote_run "cd '$DEPLOY_PATH' && bash scripts/verify-deploy-env.sh '$COMPOSE_ENV_FILE' '$COMPOSE_FILE'"
 }
 
 remote_trino_enabled() {
@@ -154,6 +234,27 @@ wait_for_ssh() {
   die "SSH did not become ready"
 }
 
+wait_for_ssm() {
+  printf 'Waiting for SSM managed instance %s...\n' "$EC2_INSTANCE_ID"
+  for _ in $(seq 1 60); do
+    if [[ "$(aws ssm describe-instance-information --region "$AWS_REGION" --filters "Key=InstanceIds,Values=$EC2_INSTANCE_ID" --query 'InstanceInformationList[0].PingStatus' --output text 2>/dev/null || true)" == "Online" ]]; then
+      printf 'SSM is ready.\n'
+      return
+    fi
+    sleep 5
+  done
+
+  die "SSM did not become ready; confirm the instance has AmazonSSMManagedInstanceCore and outbound SSM access"
+}
+
+wait_for_transport() {
+  case "$DEPLOY_TRANSPORT" in
+    ssh) wait_for_ssh ;;
+    ssm) wait_for_ssm ;;
+    *) die "ASKLAKE_DEPLOY_TRANSPORT must be ssh or ssm" ;;
+  esac
+}
+
 ensure_started() {
   local state
   state="$(instance_state)"
@@ -176,7 +277,7 @@ ensure_started() {
       ;;
   esac
 
-  wait_for_ssh
+  wait_for_transport
 }
 
 health_payload_ready() {
@@ -242,10 +343,10 @@ show_status() {
     return
   fi
 
-  if ssh_run 'true' >/dev/null 2>&1; then
+  if remote_run 'true' >/dev/null 2>&1; then
     remote_compose 'ps'
   else
-    printf 'Remote Compose status skipped: SSH is not reachable.\n'
+    printf 'Remote Compose status skipped: %s transport is not reachable.\n' "$DEPLOY_TRANSPORT"
   fi
 }
 
@@ -321,10 +422,10 @@ stop_stack() {
   state="$(instance_state)"
 
   if [[ "$state" == "running" ]]; then
-    if ssh_run 'true' >/dev/null 2>&1; then
+    if remote_run 'true' >/dev/null 2>&1; then
       remote_compose 'stop'
     else
-      printf 'SSH is not reachable; skipping Compose stop.\n'
+      printf '%s transport is not reachable; skipping Compose stop.\n' "$DEPLOY_TRANSPORT"
     fi
   else
     printf 'EC2 instance is %s; skipping Compose stop.\n' "$state"
@@ -341,7 +442,7 @@ stop_stack() {
 
 deploy_stack() {
   ensure_started
-  ssh_run "cd '$DEPLOY_PATH' && git fetch origin '$DEPLOY_BRANCH' && git checkout '$DEPLOY_BRANCH' && git pull --ff-only origin '$DEPLOY_BRANCH'"
+  remote_run "cd '$DEPLOY_PATH' && git fetch origin '$DEPLOY_BRANCH' && git checkout '$DEPLOY_BRANCH' && git pull --ff-only origin '$DEPLOY_BRANCH'"
   remote_deploy_preflight
   bootstrap_trino_dependencies
   remote_compose 'up -d --build'
@@ -374,6 +475,7 @@ tail_logs() {
 }
 
 open_ssh() {
+  [[ "$DEPLOY_TRANSPORT" == "ssh" ]] || die "ssh command requires ASKLAKE_DEPLOY_TRANSPORT=ssh"
   local host
   host="$(resolve_host)"
   ssh "${SSH_OPTS[@]}" "$EC2_USER@$host"
@@ -396,7 +498,14 @@ main() {
   need_command aws
   need_command curl
   need_command python3
-  need_command ssh
+  validate_deploy_transport
+  if [[ "$DEPLOY_TRANSPORT" == "ssh" ]]; then
+    need_command ssh
+  else
+    need_command base64
+    require_positive_integer "$SSM_TIMEOUT_SECONDS" ASKLAKE_SSM_TIMEOUT_SECONDS
+    require_positive_integer "$SSM_POLL_INTERVAL_SECONDS" ASKLAKE_SSM_POLL_INTERVAL_SECONDS
+  fi
   require_instance_id
 
   case "$command" in
