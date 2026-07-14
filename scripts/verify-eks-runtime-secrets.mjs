@@ -5,6 +5,7 @@ import { resolve } from 'node:path';
 
 const args = process.argv.slice(2);
 const readyMode = args.includes('--ready');
+const fullServiceReadyMode = args.includes('--full-service-ready');
 const contractArg = args.find((arg) => !arg.startsWith('--'));
 const contractPath = resolve(
   process.cwd(),
@@ -55,6 +56,9 @@ const expectedSecrets = {
       'AI_GATEWAY_SERVICE_TOKEN',
       'AI_MCP_SERVICE_TOKEN',
       'AI_CONTEXT_SIGNING_SECRET',
+      'OPENAI_API_KEY',
+      'AIRFLOW_API_TOKEN',
+      'AIRFLOW_PASSWORD',
       'AIRFLOW_EXECUTION_API_TOKEN',
       'AIRFLOW_INTERNAL_TOKEN',
       'TRINO_AUTH_USERNAME',
@@ -142,6 +146,11 @@ const expectedForbiddenKeys = new Set([
   'MINIO_ACCESS_KEY',
   'MINIO_SECRET_KEY',
 ]);
+const expectedRuntimeDecisions = {
+  airflowApiAuth: new Set(['api_token', 'username_password']),
+  aiRuntime: new Set(['gateway', 'direct']),
+  aiProviderWorkload: new Set(['contract-approved']),
+};
 
 exactKeys(contract, new Set([
   'contractVersion',
@@ -149,8 +158,10 @@ exactKeys(contract, new Set([
   'delivery',
   'secrets',
   'sharedBindings',
+  'envBindings',
   'fileMounts',
   'forbiddenKeys',
+  'runtimeDecisions',
 ]), 'contract');
 if (contract.contractVersion !== '1.0') fail('contractVersion must be 1.0');
 if (contract.namespace !== 'asklake-dev') fail('namespace must be asklake-dev');
@@ -164,6 +175,35 @@ exactKeys(contract.delivery, new Set([
 ]), 'delivery');
 const allowedModes = new Set(['disabled', 'external_secrets', 'workflow_sync']);
 if (!allowedModes.has(contract.delivery?.mode)) fail('delivery mode is not approved');
+
+const normalizedOwner = (value) => typeof value === 'string' ? value.trim() : '';
+const validSourcePrefix = /^[a-zA-Z0-9/_+=.@-]+$/;
+const mode = contract.delivery?.mode;
+const controllerOwner = normalizedOwner(contract.delivery?.controllerOwner);
+const rotationOwner = normalizedOwner(contract.delivery?.rotationOwner);
+const sourcePrefix = normalizedOwner(contract.delivery?.sourcePrefix);
+let readyForSync = false;
+if (mode === 'disabled') {
+  if (contract.delivery?.controllerReady !== false ||
+      contract.delivery?.controllerOwner !== null ||
+      contract.delivery?.rotationOwner !== null ||
+      contract.delivery?.sourcePrefix !== null) {
+    fail('disabled delivery must not carry partial runtime selections');
+  }
+} else if (allowedModes.has(mode)) {
+  if (!rotationOwner) fail('enabled delivery requires a non-blank rotationOwner');
+  if (!sourcePrefix) fail('enabled delivery requires a non-blank sourcePrefix');
+  if (sourcePrefix && !validSourcePrefix.test(sourcePrefix)) fail('sourcePrefix contains unapproved characters');
+  if (mode === 'external_secrets') {
+    if (contract.delivery?.controllerReady !== true) fail('external_secrets requires a ready controller');
+    if (!controllerOwner) fail('external_secrets requires a non-blank controllerOwner');
+  }
+  if (mode === 'workflow_sync' &&
+      (contract.delivery?.controllerReady !== false || contract.delivery?.controllerOwner !== null)) {
+    fail('workflow_sync must not claim an external Secret controller');
+  }
+  readyForSync = errors.length === 0;
+}
 
 exactKeys(contract.secrets, new Set(Object.keys(expectedSecrets)), 'secrets');
 const knownBindings = new Set();
@@ -206,6 +246,44 @@ for (const mount of contract.fileMounts ?? []) {
   if (mount.readOnly !== true) fail(`${mount.binding} must be read-only`);
 }
 exactStringSet([...actualMountBindings], new Set(Object.keys(expectedMounts)), 'file mount bindings');
+
+if (!Array.isArray(contract.envBindings)) fail('envBindings must be an array');
+const envBoundSecretKeys = new Set();
+const consumerEnvPairs = new Set();
+for (const envBinding of contract.envBindings ?? []) {
+  exactKeys(envBinding, new Set(['binding', 'consumers', 'env']), 'env binding');
+  if (!knownBindings.has(envBinding.binding)) fail(`env binding references unknown key ${envBinding.binding}`);
+  if (!Array.isArray(envBinding.consumers) || envBinding.consumers.length === 0) {
+    fail(`${envBinding.binding} env binding requires consumers`);
+    continue;
+  }
+  if (typeof envBinding.env !== 'string' || !/^[A-Z][A-Z0-9_]*$/.test(envBinding.env)) {
+    fail(`${envBinding.binding} has an invalid environment variable name`);
+  }
+  const [workload] = String(envBinding.binding).split(':', 1);
+  const allowedConsumers = new Set(contract.secrets?.[workload]?.consumers ?? []);
+  const uniqueConsumers = new Set(envBinding.consumers);
+  if (uniqueConsumers.size !== envBinding.consumers.length) fail(`${envBinding.binding} has duplicate consumers`);
+  for (const consumer of uniqueConsumers) {
+    if (!allowedConsumers.has(consumer)) fail(`${envBinding.binding} references unapproved consumer ${consumer}`);
+    const pair = `${consumer}:${envBinding.env}`;
+    if (consumerEnvPairs.has(pair)) fail(`duplicate environment injection ${pair}`);
+    consumerEnvPairs.add(pair);
+  }
+  envBoundSecretKeys.add(envBinding.binding);
+}
+for (const binding of knownBindings) {
+  if (!actualMountBindings.has(binding) && !envBoundSecretKeys.has(binding)) {
+    fail(`Secret key has no env or file injection: ${binding}`);
+  }
+}
+const airflowExecutionBinding = (contract.envBindings ?? []).find(
+  (item) => item.binding === 'airflow:AIRFLOW_EXECUTION_API_TOKEN',
+);
+if (airflowExecutionBinding?.env !== 'ASKLAKE_EXECUTION_API_TOKEN') {
+  fail('Airflow execution token must inject as ASKLAKE_EXECUTION_API_TOKEN');
+}
+
 exactStringSet(contract.forbiddenKeys, expectedForbiddenKeys, 'forbiddenKeys');
 for (const secret of Object.values(contract.secrets ?? {})) {
   for (const key of secret.keys ?? []) {
@@ -227,6 +305,29 @@ const visit = (value, path = 'contract') => {
 };
 visit(contract);
 
+exactKeys(contract.runtimeDecisions, new Set(Object.keys(expectedRuntimeDecisions)), 'runtimeDecisions');
+for (const [name, allowed] of Object.entries(expectedRuntimeDecisions)) {
+  const decision = contract.runtimeDecisions?.[name];
+  exactKeys(decision, new Set(['status', 'selected', 'allowed']), `runtimeDecisions.${name}`);
+  exactStringSet(decision?.allowed, allowed, `${name} allowed choices`);
+  if (!['learning-required', 'selected'].includes(decision?.status)) fail(`${name} has an invalid status`);
+  if (decision?.status === 'selected') {
+    if (!allowed.has(decision.selected)) fail(`${name} has an unapproved selection`);
+  } else if (decision?.selected !== null) {
+    fail(`${name} must have selected=null until selected`);
+  }
+}
+
+const airflowDecision = contract.runtimeDecisions?.airflowApiAuth;
+const aiDecision = contract.runtimeDecisions?.aiRuntime;
+const aiProviderDecision = contract.runtimeDecisions?.aiProviderWorkload;
+const airflowContractReady = airflowDecision?.status === 'selected';
+const aiContractReady = aiDecision?.status === 'selected' && (
+  aiDecision.selected === 'direct' ||
+  (aiDecision.selected === 'gateway' && aiProviderDecision?.status === 'selected')
+);
+const fullServiceSecretContractReady = readyForSync && airflowContractReady && aiContractReady;
+
 const serialized = JSON.stringify(contract);
 for (const pattern of [
   /AKIA[0-9A-Z]{16}/,
@@ -236,28 +337,9 @@ for (const pattern of [
   if (pattern.test(serialized)) fail(`credential-like content matched ${pattern}`);
 }
 
-if (readyMode) {
-  if (!['external_secrets', 'workflow_sync'].includes(contract.delivery?.mode)) {
-    fail('delivery mode must be selected in --ready mode');
-  }
-  if (!contract.delivery?.rotationOwner) fail('rotationOwner is required in --ready mode');
-  if (!contract.delivery?.sourcePrefix) fail('sourcePrefix is required in --ready mode');
-  if (contract.delivery?.mode === 'external_secrets') {
-    if (contract.delivery.controllerReady !== true) fail('external_secrets requires a ready controller');
-    if (!contract.delivery.controllerOwner) fail('external_secrets requires controllerOwner');
-  }
-  if (contract.delivery?.mode === 'workflow_sync') {
-    if (contract.delivery.controllerReady !== false || contract.delivery.controllerOwner !== null) {
-      fail('workflow_sync must not claim an external Secret controller');
-    }
-  }
-} else if (contract.delivery?.mode === 'disabled') {
-  if (contract.delivery.controllerReady !== false ||
-      contract.delivery.controllerOwner !== null ||
-      contract.delivery.rotationOwner !== null ||
-      contract.delivery.sourcePrefix !== null) {
-    fail('disabled delivery must not carry partial runtime selections');
-  }
+if ((readyMode || fullServiceReadyMode) && !readyForSync) fail('runtime Secret contract is not ready for sync');
+if (fullServiceReadyMode && !fullServiceSecretContractReady) {
+  fail('runtime Secret contract is not ready for the full service');
 }
 
 if (errors.length > 0) {
@@ -266,4 +348,5 @@ if (errors.length > 0) {
   process.exit(1);
 }
 
-console.log(`EKS runtime Secret verification passed (${readyMode ? 'ready' : 'planning'} mode).`);
+const verificationMode = fullServiceReadyMode ? 'full-service-ready' : readyMode ? 'ready' : 'planning';
+console.log(`EKS runtime Secret verification passed (${verificationMode} mode).`);

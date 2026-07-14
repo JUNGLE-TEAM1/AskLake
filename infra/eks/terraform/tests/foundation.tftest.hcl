@@ -653,6 +653,11 @@ run "runtime_secret_defaults_fail_closed" {
     condition     = !output.phase8_runtime_secret_handoff.values_in_state
     error_message = "Terraform must never claim to persist runtime Secret values."
   }
+
+  assert {
+    condition     = !output.phase8_runtime_secret_handoff.full_service_secret_contract_ready
+    error_message = "unresolved Airflow and AI decisions must keep the full-service Secret contract closed."
+  }
 }
 
 run "external_secret_delivery_handoff" {
@@ -684,6 +689,14 @@ run "external_secret_delivery_handoff" {
       contains(output.phase8_runtime_secret_handoff.secrets.backend.keys, "TRINO_QUERY_CONFIRMATION_SECRET"),
     ])
     error_message = "backend Secret contract must include the current cursor and confirmation signing keys."
+  }
+
+  assert {
+    condition = one([
+      for binding in output.phase8_runtime_secret_handoff.env_bindings : binding.env
+      if binding.binding == "airflow:AIRFLOW_EXECUTION_API_TOKEN"
+    ]) == "ASKLAKE_EXECUTION_API_TOKEN"
+    error_message = "Terraform handoff must expose the Airflow execution token environment mapping."
   }
 }
 
@@ -729,4 +742,52 @@ run "reject_partial_secret_delivery" {
   }
 
   expect_failures = [check.runtime_secret_delivery_contract]
+}
+
+run "direct_ai_full_service_secret_contract" {
+  command = plan
+
+  variables {
+    environment             = "dev"
+    owner                   = "pair-a"
+    resource_lifecycle      = "external"
+    cluster_mode            = "existing"
+    existing_cluster_name   = "shared-dev"
+    create_ecr_repositories = false
+
+    secret_delivery_mode  = "workflow_sync"
+    secret_rotation_owner = "service-team"
+    secret_source_prefix  = "/asklake/dev/runtime"
+    airflow_api_auth_mode = "api_token"
+    ai_runtime_mode       = "direct"
+  }
+
+  assert {
+    condition     = output.phase8_runtime_secret_handoff.full_service_secret_contract_ready
+    error_message = "selected Airflow auth and direct AI contracts must open the full-service Secret contract gate."
+  }
+}
+
+run "gateway_ai_requires_provider_contract" {
+  command = plan
+
+  variables {
+    environment             = "dev"
+    owner                   = "pair-a"
+    resource_lifecycle      = "external"
+    cluster_mode            = "existing"
+    existing_cluster_name   = "shared-dev"
+    create_ecr_repositories = false
+
+    secret_delivery_mode  = "workflow_sync"
+    secret_rotation_owner = "service-team"
+    secret_source_prefix  = "/asklake/dev/runtime"
+    airflow_api_auth_mode = "username_password"
+    ai_runtime_mode       = "gateway"
+  }
+
+  assert {
+    condition     = !output.phase8_runtime_secret_handoff.full_service_secret_contract_ready
+    error_message = "gateway AI must stay closed until its provider workload contract is separately approved."
+  }
 }

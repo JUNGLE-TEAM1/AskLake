@@ -601,10 +601,12 @@ bash scripts/verify-eks-runtime-secrets.sh
 
 실제 환경의 선택 완료 여부는 `node scripts/verify-eks-runtime-secrets.mjs --ready <path>`로 확인한다. 이 gate 통과는 값 전달 방식의 계약이 완전하다는 의미일 뿐 cluster에 Secret이 생성됐거나 workload가 기동했다는 증거가 아니다. 배포에서는 value를 출력하지 않고 Secret 이름/key 존재, workload `secretKeyRef`/file mount, rotation rollout과 rollback을 별도로 검증한다. 상세 경계는 [Phase 8 런타임 Secret 전달 계약](eks-phase-8-runtime-secrets.md)을 따른다.
 
+Phase 5와 Phase 8을 함께 검사할 때는 `verify-eks-deploy-readiness.mjs`를 사용한다. planning에서는 Phase 5가 미선택이면 Phase 8이 `disabled`인지 확인하고, `--ready`에서는 두 delivery 값의 일치와 full-service Secret contract까지 요구한다. Airflow 실행 token은 Secret key와 실제 DAG env 이름이 다르므로 `AIRFLOW_EXECUTION_API_TOKEN -> ASKLAKE_EXECUTION_API_TOKEN` binding을 유지한다.
+
 ```bash
 docker run --rm --entrypoint sh \
-  -v "$PWD/infra/eks/terraform:/workspace" \
-  -w /workspace \
+  -v "$PWD/infra/eks:/workspace" \
+  -w /workspace/terraform \
   hashicorp/terraform:1.15.8 \
   -c 'export TF_DATA_DIR=/tmp/tfdata; terraform fmt -check -recursive && terraform init -backend=false -input=false >/dev/null && terraform validate && terraform test'
 ```

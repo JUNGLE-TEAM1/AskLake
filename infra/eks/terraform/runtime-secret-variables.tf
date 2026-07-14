@@ -43,3 +43,31 @@ variable "secret_source_prefix" {
     error_message = "secret_source_prefix must be null or a path-like non-secret reference."
   }
 }
+
+variable "airflow_api_auth_mode" {
+  description = "Keep Airflow API authentication undecided or record the reviewed token/basic-auth contract."
+  type        = string
+  default     = "undecided"
+
+  validation {
+    condition     = contains(["undecided", "api_token", "username_password"], var.airflow_api_auth_mode)
+    error_message = "airflow_api_auth_mode must be undecided, api_token, or username_password."
+  }
+}
+
+variable "ai_runtime_mode" {
+  description = "Keep the AI runtime undecided or record the reviewed gateway/direct contract."
+  type        = string
+  default     = "undecided"
+
+  validation {
+    condition     = contains(["undecided", "gateway", "direct"], var.ai_runtime_mode)
+    error_message = "ai_runtime_mode must be undecided, gateway, or direct."
+  }
+}
+
+variable "ai_provider_workload_contract_ready" {
+  description = "True only after a separate AI provider workload image, identity, network and provider-key contract is approved."
+  type        = bool
+  default     = false
+}

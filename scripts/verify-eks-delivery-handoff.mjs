@@ -201,6 +201,11 @@ for (const [name, decision] of Object.entries(contract.decisions ?? {})) {
     fail(`${name} must not carry a selected value before the decision is selected`);
   }
 }
+const secretDeliveryDecision = contract.decisions?.secretDelivery;
+if (secretDeliveryDecision?.status === 'selected' &&
+    !['external_secrets', 'workflow_sync'].includes(secretDeliveryDecision.selected)) {
+  fail('secretDelivery must select external_secrets or workflow_sync');
+}
 
 const serialized = JSON.stringify(contract);
 const credentialPatterns = [

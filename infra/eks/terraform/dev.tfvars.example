@@ -122,3 +122,10 @@ secret_controller_ready  = false
 secret_controller_owner  = null
 secret_rotation_owner    = null
 secret_source_prefix     = null
+
+# These remain separate learning/selection gates. Do not infer them from the
+# Secret delivery choice. Gateway mode also needs a separately approved AI
+# provider workload contract before the full-service Secret gate can open.
+airflow_api_auth_mode               = "undecided"
+ai_runtime_mode                     = "undecided"
+ai_provider_workload_contract_ready = false

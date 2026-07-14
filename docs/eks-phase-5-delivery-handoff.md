@@ -58,3 +58,5 @@ A는 Terraform의 실제 출력과 승인된 platform 결정을 handoff에 채�
 현재 완료 기준은 planning 검증 통과다. 실제 Phase 5 운영 완료는 `--ready` 검증, Kubernetes server-side dry-run, EKS workload rollout, health probe, IAM/network positive·negative smoke가 모두 성공해야 선언할 수 있다.
 
 Secret reference의 구체적인 workload별 이름/key/공유 binding은 [Phase 8 런타임 Secret 전달 계약](eks-phase-8-runtime-secrets.md)이 정의한다. Phase 5의 `secretDelivery` 선택은 Phase 8의 controller/source/rotation 책임과 일치해야 하며, 어느 문서에도 실제 Secret value를 넣지 않는다.
+
+`secretDelivery.selected`는 `external_secrets` 또는 `workflow_sync`만 허용한다. planning 상태에서는 Phase 8 mode가 `disabled`여야 하고, 선택 후에는 두 계약의 값이 정확히 같아야 한다. 실제 배포 직전에는 `verify-eks-deploy-readiness.mjs --ready`로 Phase 5 AWS/image/decision gate와 Phase 8 full-service Secret contract gate를 함께 검사한다.

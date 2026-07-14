@@ -52,18 +52,18 @@ Docker로 같은 Terraform 검증을 실행할 수도 있다.
 
 ```bash
 docker run --rm \
-  -v "$PWD/infra/eks/terraform:/workspace" \
-  -w /workspace \
+  -v "$PWD/infra/eks:/workspace" \
+  -w /workspace/terraform \
   hashicorp/terraform:1.15.8 fmt -check -recursive
 
 docker run --rm \
-  -v "$PWD/infra/eks/terraform:/workspace" \
-  -w /workspace \
+  -v "$PWD/infra/eks:/workspace" \
+  -w /workspace/terraform \
   hashicorp/terraform:1.15.8 init -backend=false
 
 docker run --rm \
-  -v "$PWD/infra/eks/terraform:/workspace" \
-  -w /workspace \
+  -v "$PWD/infra/eks:/workspace" \
+  -w /workspace/terraform \
   hashicorp/terraform:1.15.8 validate
 ```
 
@@ -118,7 +118,7 @@ Phase 6는 수동 GitHub workflow로 Frontend, Backend, Airflow mirror, Spark ru
 
 Phase 7은 Terraform의 resource-free network handoff와 fail-closed ALB Ingress chart를 추가한다. controller owner, exposure, target type, DNS와 ACM을 모두 선택하기 전에는 Ingress가 렌더링되지 않고 NAT/VPC endpoint 및 Pod network enforcement도 `undecided`로 남는다. 실제 선택과 smoke 기준은 [Phase 7 Network와 ALB Ingress 계약](../../docs/eks-phase-7-network-ingress.md)을 따른다.
 
-Phase 8은 FastAPI, Airflow, Spark, Trino의 runtime Secret 이름·key·공유 binding·파일 mount를 값 없이 고정한다. Terraform은 Kubernetes Secret이나 외부 store의 secret version을 만들지 않으며 delivery는 `disabled`가 기본이다. `external_secrets`와 `workflow_sync` 중 하나는 controller/source/rotation 책임을 학습하고 확정한 뒤에만 선택한다. 상세 gate는 [Phase 8 런타임 Secret 전달 계약](../../docs/eks-phase-8-runtime-secrets.md)을 따른다.
+Phase 8은 한 JSON을 기준으로 FastAPI, Airflow, Spark, Trino의 runtime Secret 이름·key·공유 binding·env injection·파일 mount를 값 없이 고정하고 Terraform이 같은 계약을 output한다. delivery는 `disabled`가 기본이며 Phase 5 선택과 결합 검증한다. `ready_for_sync`와 Airflow/AI 선택까지 포함한 full-service Secret contract readiness는 구분한다. 상세 gate는 [Phase 8 런타임 Secret 전달 계약](../../docs/eks-phase-8-runtime-secrets.md)을 따른다.
 
 ## 설계 참고 자료
 
