@@ -76,7 +76,7 @@ TRINO_CLEANUP_POLL_SECONDS=3600
 - EC2 production mode는 `ASKLAKE_OBJECT_STORAGE_PROVIDER=aws`, `AWS_REGION`, `S3_FORCE_PATH_STYLE=false`를 사용한다. `S3_ENDPOINT`와 장기 AWS access key/secret은 비워 두고 EC2 instance profile IAM Role/default credential chain을 사용한다.
 - AWS Source request에는 provider, region, bucket/prefix만 전송한다. frontend는 endpoint/access key/secret 입력을 숨기며 AWS credential을 browser bundle이나 API payload에 넣지 않는다.
 - Dashboard adapter는 FastAPI 응답을 우선하고, 이전 backend 호환을 위해 404 local/mock fallback을 유지한다.
-- Target 저장경로 선택은 frontend가 S3를 직접 호출하지 않고 `GET /api/s3/buckets`, `GET /api/s3/prefixes` 서버 API를 통해 bucket/prefix만 조회한다. `S3_ALLOWED_BUCKETS` allowlist가 없으면 local demo 기본값으로 `asklake-output`을 사용한다.
+- Target 저장경로 선택은 frontend가 S3를 직접 호출하지 않고 `GET /api/s3/buckets`, `GET /api/s3/prefixes` 서버 API를 통해 bucket/prefix만 조회한다. 목록은 `ASKLAKE_SPARK_OUTPUT_BUCKET`을 첫 번째로 반환하고 나머지 `S3_ALLOWED_BUCKETS`를 뒤에 합친다. local MinIO demo만 설정이 없을 때 `asklake-output`을 사용하며, AWS mode의 설정 누락은 `503 SERVICE_UNAVAILABLE`이다.
 - Dashboard 원격 widget scan은 `S3_ALLOWED_BUCKETS`와 runtime 응답 전체에서 공유하는 `ASKLAKE_DASHBOARD_MAX_REMOTE_BYTES`/`ASKLAKE_DASHBOARD_MAX_REMOTE_OBJECTS` 예산을 적용한다. DuckDB 기본 경계는 query당 15초, memory/temp 각 256 MiB, 2 threads이며 `ASKLAKE_DASHBOARD_QUERY_TIMEOUT_SECONDS`, `ASKLAKE_DASHBOARD_DUCKDB_MEMORY_BYTES`, `ASKLAKE_DASHBOARD_DUCKDB_TEMP_BYTES`, `ASKLAKE_DASHBOARD_DUCKDB_THREADS`로 더 낮거나 제한된 운영값을 지정할 수 있다.
 - Target DB 선택은 `GET /api/target/databases` 서버 API를 통해 허용 DB 목록을 조회한다. `TARGET_DATABASES`가 없으면 local demo 기본값을 사용한다.
 - Query AI live mode는 backend가 private `ai-server` Gateway를 호출한다. provider key는 `AI_PROVIDER_API_KEY`로 AI Gateway 컨테이너에만 주입하며, 브라우저 env에는 provider key를 두지 않는다. `AI_QUERY_PROVIDER=direct`는 롤백 호환 모드다.

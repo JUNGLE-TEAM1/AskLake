@@ -26,10 +26,19 @@ const checks = [
     file: "src/pages/etl/EtlPages.tsx",
     patterns: [
       /VITE_SPARK_OUTPUT_BUCKET \?\? "asklake-output"/,
-      /return `s3a:\/\/\$\{SPARK_OUTPUT_BUCKET\}\/\$\{targetDataset\}\/\$\{targetLayer\.toLowerCase\(\)\}\//,
+      /buildTargetStoragePathForBucket\(SPARK_OUTPUT_BUCKET, targetDataset, targetLayer\)/,
+      /listS3Buckets\(\)[\s\S]*setRuntimeOutputBucket\(outputBucket\)/,
     ],
     forbiddenPatterns: [
       /return `s3a:\/\/asklake-output\/\$\{targetDataset\}/,
+    ],
+  },
+  {
+    name: "S3 target picker reconciles a stale frontend bucket with the backend output bucket",
+    file: "src/components/s3/S3PathField.tsx",
+    patterns: [
+      /nextBuckets\.includes\(currentBucket\) \? currentBucket : nextBuckets\[0\] \|\| ""/,
+      /관리자에게 출력 버킷 설정을 확인해 달라고 요청하세요/,
     ],
   },
   {

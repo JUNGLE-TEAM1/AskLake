@@ -78,6 +78,7 @@ import { S3PathField } from "../../components/s3/S3PathField";
 import { runTransformQualitySamplePreview } from "../../data/transformQualityPreview";
 import { normalizeRetryPolicy, retryFailureActionLabels, scheduleOverlapPolicyLabels, toCreatePipelineRequest } from "../../services/draftPipelineContract";
 import { getDatasets } from "../../services/mockApi";
+import { listS3Buckets } from "../../services/s3PathApi";
 import {
   buildReviewSnapshotRequest,
   getReviewSnapshot,
@@ -847,8 +848,17 @@ function normalizeTargetLayer(value: string | undefined): TargetLayer {
   return getKnownOption(value?.toUpperCase(), TARGET_LAYER_OPTIONS, DEFAULT_TARGET_LAYER);
 }
 
+function buildTargetStoragePathForBucket(bucket: string, targetDataset: string, targetLayer: TargetLayer) {
+  return `s3a://${bucket}/${targetDataset}/${targetLayer.toLowerCase()}/`;
+}
+
 function buildTargetStoragePath(targetDataset: string, targetLayer: TargetLayer) {
-  return `s3a://${SPARK_OUTPUT_BUCKET}/${targetDataset}/${targetLayer.toLowerCase()}/`;
+  return buildTargetStoragePathForBucket(SPARK_OUTPUT_BUCKET, targetDataset, targetLayer);
+}
+
+function isManagedTargetStoragePath(value: string, targetDataset: string, targetLayer: TargetLayer) {
+  return value === buildTargetStoragePath(targetDataset, targetLayer)
+    || value === buildTargetStoragePathForBucket("asklake-output", targetDataset, targetLayer);
 }
 
 function normalizeKafkaDatasetName(topic: string) {
@@ -5755,9 +5765,10 @@ export function TargetPage({
   const [targetDataset, setTargetDataset] = useState(initialTarget.targetDataset);
   const databaseName = draftTarget?.databaseName ?? "asklake";
   const targetLayer = initialTargetLayer;
+  const [runtimeOutputBucket, setRuntimeOutputBucket] = useState(SPARK_OUTPUT_BUCKET);
   const [targetStoragePath, setTargetStoragePath] = useState(initialStoragePath);
   const [storagePathCustomized, setStoragePathCustomized] = useState(
-    initialStoragePath !== buildTargetStoragePath(initialTarget.targetDataset, initialTargetLayer),
+    !isManagedTargetStoragePath(initialStoragePath, initialTarget.targetDataset, initialTargetLayer),
   );
   const [targetDescription, setTargetDescription] = useState(initialTarget.description);
   const targetFormat = initialTargetFormat;
@@ -5770,6 +5781,28 @@ export function TargetPage({
   const [schemaRules, setSchemaRules] = useState<TargetSchemaRule[]>(inferredTarget.schemaRules);
   const lastTestRun = draftTarget?.lastTestRun ?? { status: "idle", logs: [] };
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
+
+  useEffect(() => {
+    let active = true;
+    void listS3Buckets()
+      .then(({ buckets }) => {
+        const outputBucket = buckets[0]?.trim();
+        if (active && outputBucket) setRuntimeOutputBucket(outputBucket);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (storagePathCustomized) return;
+    setTargetStoragePath(buildTargetStoragePathForBucket(
+      runtimeOutputBucket,
+      targetDataset.trim() || "target_dataset",
+      targetLayer,
+    ));
+  }, [runtimeOutputBucket, storagePathCustomized, targetDataset, targetLayer]);
 
   const shouldUseSampleTargetSchema = useMemo(
     () => !schemaRules.some((rule) => rule.partitionable && !rule.raw),
@@ -5885,7 +5918,11 @@ export function TargetPage({
   const changeTargetDataset = (nextDataset: string) => {
     setTargetDataset(nextDataset);
     if (!storagePathCustomized) {
-      setTargetStoragePath(buildTargetStoragePath(nextDataset.trim() || "target_dataset", targetLayer));
+      setTargetStoragePath(buildTargetStoragePathForBucket(
+        runtimeOutputBucket,
+        nextDataset.trim() || "target_dataset",
+        targetLayer,
+      ));
     }
   };
 

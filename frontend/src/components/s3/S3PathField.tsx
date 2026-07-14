@@ -126,9 +126,9 @@ function S3PathPicker({
       const result = await listS3Buckets();
       const nextBuckets = result.buckets.length > 0 ? result.buckets : parsed.bucket ? [parsed.bucket] : [];
       setBuckets(nextBuckets);
-      setBucket((currentBucket) => currentBucket || nextBuckets[0] || "");
-    } catch (error) {
-      setBucketError(error instanceof Error ? error.message : "버킷 목록을 불러오지 못했습니다.");
+      setBucket((currentBucket) => nextBuckets.includes(currentBucket) ? currentBucket : nextBuckets[0] || "");
+    } catch {
+      setBucketError("저장 버킷 설정을 불러오지 못했습니다. 관리자에게 출력 버킷 설정을 확인해 달라고 요청하세요.");
     } finally {
       setBucketsLoading(false);
     }
@@ -164,12 +164,12 @@ function S3PathPicker({
           },
         };
       });
-    } catch (error) {
+    } catch {
       setListingCache((cache) => ({
         ...cache,
         [key]: {
           ...cache[key],
-          error: error instanceof Error ? error.message : "주소를 불러오지 못했습니다.",
+          error: "선택한 버킷의 경로를 불러오지 못했습니다. 버킷 설정과 접근 권한을 확인해 주세요.",
           loading: false,
         },
       }));
