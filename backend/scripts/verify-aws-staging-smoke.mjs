@@ -5,8 +5,11 @@ import { fileURLToPath } from "node:url";
 
 import {
   AWS_STAGING_SMOKE_EVIDENCE_SCHEMA,
+  AWS_STAGING_SMOKE_FAILURE_SCHEMA,
   createAwsStagingSmokePlan,
+  createAwsStagingSmokeFailureEvidence,
   evaluateAwsStagingSmokeEvidence,
+  evaluateAwsStagingSmokeFailureEvidence,
   smokeEvidenceSha256,
 } from "../src/awsStagingSmoke.mjs";
 
@@ -36,6 +39,24 @@ assert.equal(evaluated.summary.status, "passed");
 assert.equal(evaluated.summary.continuousRows, 1_000_000);
 assert.match(smokeEvidenceSha256(evidence), /^[a-f0-9]{64}$/);
 assert.equal(smokeEvidenceSha256(evidence), smokeEvidenceSha256(JSON.parse(JSON.stringify(evidence))));
+
+const failureEvidence = createAwsStagingSmokeFailureEvidence({
+  cleanupRequired: true,
+  failureCode: "AWS_STAGING_SMOKE_FAILED",
+  runtimeRootUri,
+  smokeBundleSha256: bundleSha256,
+  sourceRevision: revision,
+  stackId: "phase4",
+  startedAt: "2026-07-14T00:00:00Z",
+}, contract, new Date("2026-07-14T00:01:00Z"));
+assert.equal(failureEvidence.schemaVersion, AWS_STAGING_SMOKE_FAILURE_SCHEMA);
+assert.equal(evaluateAwsStagingSmokeFailureEvidence(failureEvidence, contract).status, "failed");
+const unsafeFailure = structuredClone(failureEvidence);
+unsafeFailure.failureCode = "failure-with-details";
+assert.throws(() => evaluateAwsStagingSmokeFailureEvidence(unsafeFailure, contract), invalid);
+const expandedFailure = structuredClone(failureEvidence);
+expandedFailure.detail = "must-not-be-exported";
+assert.throws(() => evaluateAwsStagingSmokeFailureEvidence(expandedFailure, contract), invalid);
 
 for (const mutate of [
   (value) => { value.checks[contract.smoke.requiredChecks[0]].status = "failed"; },

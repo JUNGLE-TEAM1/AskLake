@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   createAwsStagingSmokePlan,
+  evaluateAwsStagingSmokeFailureEvidence,
   evaluateAwsStagingSmokeEvidence,
   smokeEvidenceSha256,
 } from "../src/awsStagingSmoke.mjs";
@@ -24,12 +25,19 @@ try {
       stackId: options.stackId,
     }, contract);
     console.log(JSON.stringify(plan));
-  } else {
+  } else if (options.evidenceFile) {
     const evidence = JSON.parse(readFileSync(options.evidenceFile, "utf8"));
     const evaluated = evaluateAwsStagingSmokeEvidence(evidence, contract);
     console.log(`ASKLAKE_AWS_STAGING_SMOKE_EVALUATED=${JSON.stringify({
       ...evaluated.summary,
       evidenceSha256: smokeEvidenceSha256(evidence),
+    })}`);
+  } else {
+    const evidence = JSON.parse(readFileSync(options.failureEvidenceFile, "utf8"));
+    const evaluated = evaluateAwsStagingSmokeFailureEvidence(evidence, contract);
+    console.log(`ASKLAKE_AWS_STAGING_SMOKE_FAILURE_EVALUATED=${JSON.stringify({
+      evidenceSha256: smokeEvidenceSha256(evidence),
+      status: evaluated.status,
     })}`);
   }
 } catch (error) {
@@ -47,6 +55,7 @@ function parseArguments(argv) {
     }
     const mapping = {
       "--evidence-file": "evidenceFile",
+      "--failure-evidence-file": "failureEvidenceFile",
       "--runtime-root-uri": "runtimeRootUri",
       "--source-revision": "sourceRevision",
       "--smoke-bundle-sha256": "smokeBundleSha256",
@@ -57,11 +66,12 @@ function parseArguments(argv) {
     index += 1;
   }
   if (result.plan) {
-    if (!result.runtimeRootUri || !result.sourceRevision || !result.smokeBundleSha256 || !result.stackId || result.evidenceFile) {
+    if (!result.runtimeRootUri || !result.sourceRevision || !result.smokeBundleSha256 || !result.stackId || result.evidenceFile || result.failureEvidenceFile) {
       throw new Error("Smoke plan arguments are incomplete.");
     }
-  } else if (!result.evidenceFile || result.runtimeRootUri || result.sourceRevision || result.smokeBundleSha256 || result.stackId) {
-    throw new Error("--evidence-file is required for evaluation.");
+  } else if ((Boolean(result.evidenceFile) === Boolean(result.failureEvidenceFile))
+    || result.runtimeRootUri || result.sourceRevision || result.smokeBundleSha256 || result.stackId) {
+    throw new Error("Exactly one smoke evidence file is required for evaluation.");
   }
   return result;
 }

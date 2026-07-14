@@ -174,9 +174,10 @@ Issue #727의 AWS staging은 제품 Runtime이나 일반 배포 환경이 아니
 - GitHub 제어면은 manual-only `plan/apply`, `artifacts`, `smoke`, `destroy` workflow로 분리한다. 모든 AWS job은 OIDC 단기 credential과 예상 account 검증을 사용하고, mutation은 서로 다른 보호 Environment와 정확한 `<operation>:<stackId>` 확인을 요구한다. plan/destroy 검토 job은 민감한 JSON 대신 의미적 SHA-256 fingerprint만 전달하고 승인 뒤 re-plan fingerprint가 다르면 변경 전에 중단한다. binary plan/private env/backend input은 GitHub artifact에 올리지 않으며 같은 stack 작업은 concurrency group으로 직렬화한다.
 - artifact 제어면은 고정된 Maven dependency를 materialize해 JAR별/전체 SHA-256 manifest를 만들고 `dependencies/<bundleSha256>/`에 올린다. conditional write와 S3 checksum/size/metadata 재조회로 기존 key의 다른 content를 거부하고 manifest를 마지막에 검증한 뒤에만 Continuous를 활성화한다. 활성화된 private env는 staging S3의 실행별 runtime prefix로만 전달하며 일반 EC2/production deploy는 이를 자동 소비하지 않는다.
 - Phase 4 smoke 제어면은 checksum 검증된 Linux runner bundle을 private SSM EC2에 전달하고 S3 readiness, MSK IAM roundtrip, EMR Batch, 100만 건 Continuous pause/resume를 순차 실행한다. `asklake.aws-staging-smoke-evidence.v1`은 Batch row, produced/consumed/sink, lag/quarantine, 두 worker attempt/Job Run, checkpoint/output/report와 실행 시점 price/resource snapshot을 하나의 redacted 근거로 묶으며 하나라도 빠지면 실패한다.
+- Phase 5는 smoke SSM 실행 시작 후 success/failure evidence export를 확인한 뒤 같은 승인 job에서 stack teardown을 수행한다. 별도 TTL sweep은 state bucket의 엄격한 staging tag/`ExpiresAt`만 읽어 만료·비정상 stack을 발견하면 evidence와 실패 신호를 남기며, 자동 삭제 대신 기존 보호 destroy 승인으로 연결한다.
 - EMR execution role trust는 AWS 공식 runtime-role 계약대로 `emr-serverless.amazonaws.com`과 `SourceAccount`에 묶고 전용 S3/KMS/MSK topic/group/CloudWatch만 허용한다. runner는 생성된 두 application ARN의 제어와 exact execution role PassRole만 허용하며 public IP와 SSH key를 갖지 않는다. MSK broker는 private Runtime env로 공급하므로 runner에는 `GetBootstrapBrokers`/`DescribeClusterV2` control-plane 권한을 주지 않는다.
 
-전체 Phase와 고정 값은 [AWS Staging IaC와 실제 Smoke 자동화 계획](aws-staging-iac-smoke-plan.md)을 따른다. Phase 0 계약, Phase 1 Terraform/mock plan, Phase 2 Runtime 변환, Phase 3 수동 workflow와 Phase 4 smoke 실행기/로컬 verifier까지 완료됐으며 실제 AWS resource와 smoke evidence는 아직 생성하지 않았다.
+전체 Phase와 고정 값은 [AWS Staging IaC와 실제 Smoke 자동화 계획](aws-staging-iac-smoke-plan.md)을 따른다. Phase 0 계약, Phase 1 Terraform/mock plan, Phase 2 Runtime 변환, Phase 3 수동 workflow, Phase 4 smoke 실행기와 Phase 5 cleanup/TTL 판정기까지 완료됐으며 실제 AWS resource와 evidence는 아직 생성하지 않았다.
 
 ### Phase 7 성능 evidence 경계
 

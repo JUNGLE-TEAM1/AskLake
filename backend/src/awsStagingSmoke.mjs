@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 export const AWS_STAGING_SMOKE_EVIDENCE_SCHEMA = "asklake.aws-staging-smoke-evidence.v1";
+export const AWS_STAGING_SMOKE_FAILURE_SCHEMA = "asklake.aws-staging-smoke-failure.v1";
 
 const SAFE_ID = /^[a-z0-9][a-z0-9-]{2,63}$/;
 const SHA = /^[a-f0-9]{40,64}$/;
@@ -171,6 +172,45 @@ export function evaluateAwsStagingSmokeEvidence(value, contract) {
     status: "passed",
   });
   return Object.freeze({ evidence: Object.freeze(structuredClone(evidence)), summary });
+}
+
+export function createAwsStagingSmokeFailureEvidence(input, contract, now = new Date()) {
+  const source = requiredObject(input, "failure evidence");
+  if (!(now instanceof Date) || !Number.isFinite(now.getTime())) fail("Failure evidence time is invalid.");
+  const failedAt = timestamp(source.failedAt || now.toISOString(), "failedAt");
+  const startedAt = timestamp(source.startedAt, "startedAt");
+  if (failedAt < startedAt) fail("Failure evidence timestamps are out of order.");
+  const evidence = {
+    cleanupRequired: source.cleanupRequired === true,
+    contractId: contract.contractId,
+    environment: contract.environment,
+    failedAt: new Date(failedAt).toISOString().replace(".000Z", "Z"),
+    failureCode: requiredPattern(source.failureCode, /^[A-Z0-9_]{3,80}$/, "failureCode"),
+    region: contract.region,
+    runtimeRootUri: requiredPattern(source.runtimeRootUri, S3_URI, "runtimeRootUri"),
+    schemaVersion: AWS_STAGING_SMOKE_FAILURE_SCHEMA,
+    smokeBundleSha256: requiredPattern(source.smokeBundleSha256, /^[a-f0-9]{64}$/, "smokeBundleSha256"),
+    sourceRevision: requiredPattern(source.sourceRevision, SHA, "sourceRevision"),
+    stackId: requiredPattern(source.stackId, new RegExp(contract?.naming?.stackIdPattern || SAFE_ID), "stackId"),
+    startedAt: new Date(startedAt).toISOString().replace(".000Z", "Z"),
+    status: "failed",
+  };
+  if (!evidence.cleanupRequired) fail("Failed smoke evidence must require cleanup.");
+  assertNoSecrets(evidence);
+  return Object.freeze(evidence);
+}
+
+export function evaluateAwsStagingSmokeFailureEvidence(value, contract) {
+  const evidence = requiredObject(value, "failure evidence");
+  assertNoSecrets(evidence);
+  const normalized = createAwsStagingSmokeFailureEvidence(evidence, contract, new Date(evidence.failedAt));
+  if (Object.keys(evidence).some((key) => !Object.hasOwn(normalized, key))) {
+    fail("Failure evidence contains an unsupported field.");
+  }
+  for (const [key, item] of Object.entries(normalized)) {
+    if (evidence[key] !== item) fail("Failure evidence does not match the Phase contract.");
+  }
+  return Object.freeze({ evidence: Object.freeze(structuredClone(normalized)), status: "failed" });
 }
 
 export function smokeEvidenceSha256(value) {

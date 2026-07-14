@@ -182,6 +182,12 @@
     "automaticRuntimePromotionAllowed": false,
     "destroyAfterSmoke": true,
     "destroyOnFailureAfterEvidenceExport": true,
+    "ttlSweep": {
+      "maximumStateFilesPerRun": 100,
+      "expiredStackGraceMinutes": 15,
+      "automaticDestroyAllowed": false,
+      "evidenceRequired": true
+    },
     "workflowArtifactRetentionDays": 7,
     "sharedResourceDestructionAllowed": false
   },

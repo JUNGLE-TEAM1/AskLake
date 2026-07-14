@@ -17,6 +17,7 @@ import {
 
 import {
   AWS_STAGING_SMOKE_EVIDENCE_SCHEMA,
+  createAwsStagingSmokeFailureEvidence,
   createAwsStagingSmokePlan,
   evaluateAwsStagingSmokeEvidence,
   smokeEvidenceSha256,
@@ -151,6 +152,17 @@ export async function runAwsStagingSmoke(environment = process.env, dependencies
     if (continuousJobId && continuousRequest) {
       continuousAction({ ...continuousRequest, action: "terminate" }, environment, true);
     }
+    const failureEvidence = createAwsStagingSmokeFailureEvidence({
+      cleanupRequired: true,
+      failedAt: new Date().toISOString(),
+      failureCode: safeFailureCode(error),
+      runtimeRootUri: plan.runtimeRootUri,
+      smokeBundleSha256: plan.smokeBundleSha256,
+      sourceRevision: plan.sourceRevision,
+      stackId: plan.stackId,
+      startedAt,
+    }, contract);
+    await putJsonWithChecksum(s3, evidenceUri, `${JSON.stringify(failureEvidence, null, 2)}\n`).catch(() => undefined);
     throw error;
   } finally {
     rmSync(temporary, { force: true, recursive: true });
@@ -553,6 +565,11 @@ function csv(value) {
 function sha256Base64(value) { return createHash("sha256").update(value).digest("base64"); }
 function sha256Hex(value) { return createHash("sha256").update(value).digest("hex"); }
 function delay(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
+
+function safeFailureCode(error) {
+  const value = String(error?.code || "AWS_STAGING_SMOKE_FAILED").toUpperCase();
+  return /^[A-Z0-9_]{3,80}$/.test(value) ? value : "AWS_STAGING_SMOKE_FAILED";
+}
 
 function isMain() {
   return Boolean(process.argv[1]) && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url));

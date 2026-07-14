@@ -39,7 +39,7 @@ flowchart LR
 | 2. Runtime 연결 | Terraform output을 AskLake env/manifest로 변환 | broker/role/application/S3 값이 수작업 복사 없이 주입되고 민감값은 출력되지 않음 | 완료 |
 | 3. GitHub Actions | OIDC plan/apply/artifact/destroy workflow | 장기 AWS key 없이 수동 plan, apply/artifact/destroy 개별 승인, checksum bundle 전달과 독립 destroy 가능 | 완료(코드·로컬 검증) |
 | 4. 실제 smoke | S3 readiness, MSK probe, Batch, Continuous pause/resume | 입력·소비·sink count 일치, final lag 0, checkpoint resume, report 확보 | 실행 코드 완료, 실제 AWS 증적 대기 |
-| 5. 비용·TTL guard | budget alert, 만료 sweep, failure cleanup | 정상/실패 모두 증거 export 후 제거되고 만료 stack을 탐지 | 예정 |
+| 5. 비용·TTL guard | budget alert, 만료 sweep, failure cleanup | 정상/실패 모두 증거 export 후 제거되고 만료 stack을 탐지 | 코드·로컬 검증 완료, 실제 AWS evidence 대기 |
 | 6. 운영 인계 | runbook, 장애/비용 기록, 오피스아워 질문 | 다른 팀원이 같은 절차를 재현하고 안전하게 종료 가능 | 예정 |
 
 ## 3. Phase 0에서 고정한 계약
@@ -120,7 +120,7 @@ Batch와 Continuous를 동시에 돌리면 두 application이 최대 32 vCPU를 
 - 한 번의 smoke 예산 기준은 30 USD이며 50%, 80%, 100% 알림을 둔다.
 - 기본 TTL은 8시간, 절대 상한은 24시간이다.
 - AWS Budgets는 지연된 비용 관측/알림이므로 실시간 kill switch로 사용하지 않는다.
-- 실제 안전장치는 workflow의 `finally` cleanup, 독립 destroy workflow, `ExpiresAt` 기반 만료 sweep이다.
+- 실제 안전장치는 smoke 승인 뒤 evidence export를 확인한 뒤 수행하는 Terraform teardown, 독립 destroy workflow, `ExpiresAt` 기반 만료 sweep이다.
 - 정상 smoke와 실패 smoke 모두 증거를 먼저 export한 뒤 staging stack을 제거한다.
 - 일반 애플리케이션 배포는 이 Terraform apply를 호출할 수 없다. 유료 resource 생성은 전용 staging workflow와 수동 승인에서만 가능하다.
 - smoke 실행 시점의 서울 리전 단가 snapshot과 EMR billed resource를 artifact에 저장한다. 계약 파일에 변동 가격을 상수로 고정하지 않는다.
@@ -225,7 +225,22 @@ npm run verify:aws-staging-smoke
 
 이 명령의 성공은 실제 smoke 성공이 아니다. 실제 evidence가 만들어지고 같은 evaluator를 통과하기 전까지 Issue의 Phase 4 acceptance는 미완료다.
 
-## 8. 실제 plan/apply 이전 외부 준비값
+## 8. Phase 5 비용·TTL guard
+
+Phase 5는 smoke가 실제 SSM 실행을 시작한 경우에만 다음 순서를 강제한다.
+
+1. 성공 evidence 또는 민감 오류 원문이 없는 failure evidence를 staging S3에서 회수한다.
+2. evidence evaluator가 success/failure schema를 판정한 뒤 Terraform destroy plan/apply를 같은 smoke 승인 job에서 실행한다.
+3. cleanup receipt와 smoke evidence를 GitHub artifact로 보존한다. evidence export 또는 teardown이 실패하면 workflow는 실패로 남아 수동 `AWS Staging Destroy` 재시도를 요구한다.
+
+`AWS Staging TTL Sweep`은 매시와 수동 dispatch에서 Terraform state bucket의 `asklake/staging/<stackId>/terraform.tfstate`만 읽는다. `Project`, `Environment`, `ManagedBy`, `Issue`, `StackId`, `ExpiresAt` tag가 일치하는지 확인하고 15분 grace 뒤 만료된 stack 또는 해석 불가능한 state가 있으면 redacted evidence를 올린 뒤 workflow를 실패 처리한다. 이 sweep은 자원을 자동 삭제하지 않으며 기존 `AWS Staging Destroy`의 `destroy:<stackId>` 승인으로만 제거한다.
+
+```bash
+cd backend
+npm run verify:aws-staging-lifecycle
+```
+
+## 9. 실제 plan/apply 이전 외부 준비값
 
 다음 값은 코드에 실제 값을 저장하지 않는다.
 
@@ -241,7 +256,7 @@ GitHub OIDC provider와 Terraform 실행 role은 계정 단위 platform bootstra
 
 Repository에는 `AWS_ACCOUNT_ID`, `AWS_GITHUB_OIDC_ROLE_ARN`, `AWS_TERRAFORM_STATE_BUCKET`, `AWS_TERRAFORM_STATE_KMS_KEY_ARN` variable과 `AWS_BUDGET_NOTIFICATION_EMAIL` secret이 필요하다. private SSM runner를 켜기 위해 승인된 `AWS_STAGING_SMOKE_RUNNER_AMI_ID` variable을 추가한다. apply/artifact/smoke/destroy Environment에는 required reviewer를 설정하고 OIDC role trust policy는 이 repository와 해당 Environment/branch claim으로 제한한다. smoke 제어면 role에는 SSM Send/GetCommand, runtime/evidence S3 Get/Put, KMS decrypt/encrypt, Pricing 조회 권한이 추가로 필요하다.
 
-## 9. Phase 0·1·2·3·4 검증
+## 10. Phase 0·1·2·3·4·5 검증
 
 ```bash
 cd backend
@@ -250,6 +265,7 @@ npm run verify:aws-staging-terraform
 npm run verify:aws-staging-runtime
 npm run verify:aws-staging-workflows
 npm run verify:aws-staging-smoke
+npm run verify:aws-staging-lifecycle
 ```
 
 verifier는 정상 계약뿐 아니라 다음 변조가 실패하는지도 자체 확인한다.
@@ -267,9 +283,9 @@ Phase 0 완료는 AWS resource가 준비됐다는 뜻이 아니다. Phase 1 Terr
 
 두 번째 명령은 정적 정책 검증 뒤 `terraform fmt -check`, bootstrap/staging `init -backend=false`, `validate`, mock provider plan assertion을 실행한다. 실제 credential, backend bucket, AWS API 없이 resource schema와 module 연결을 검증한다.
 
-Phase 4 실행 코드 완료는 AWS 통합 성공을 뜻하지 않는다. 실제 account/role/backend/quota 값을 GitHub 설정에 등록하고 workflow가 기본 브랜치에서 dispatch 가능한 상태가 된 뒤 real plan/apply/artifact/smoke를 순서대로 실행해야 한다. 생성된 evidence가 evaluator를 통과해야만 Phase 4를 완료 처리하며 실패 정리와 TTL sweep은 Phase 5 증거로 남는다.
+Phase 4·5 실행 코드는 AWS 통합 성공을 뜻하지 않는다. 실제 account/role/backend/quota 값을 GitHub 설정에 등록하고 workflow가 기본 브랜치에서 dispatch 가능한 상태가 된 뒤 real plan/apply/artifact/smoke를 순서대로 실행해야 한다. 생성된 success/failure evidence와 cleanup receipt, TTL sweep evidence가 확보돼야만 Phase 4·5 acceptance를 완료 처리한다.
 
-## 10. 공식 기준
+## 11. 공식 기준
 
 - [Terraform S3 backend](https://developer.hashicorp.com/terraform/language/backend/s3)
 - [EMR Serverless VPC access](https://docs.aws.amazon.com/emr/latest/EMR-Serverless-UserGuide/vpc-access.html)

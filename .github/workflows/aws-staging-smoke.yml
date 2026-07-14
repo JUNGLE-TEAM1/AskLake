@@ -195,26 +195,77 @@ jobs:
             --query 'Command.CommandId' \
             --output text)"
           test -n "$command_id"
+          printf 'SMOKE_EXECUTION_STARTED=true\n' >> "$GITHUB_ENV"
           deadline=$((SECONDS + 7200))
           while [ "$SECONDS" -lt "$deadline" ]; do
             status="$(aws ssm get-command-invocation --command-id "$command_id" --instance-id "$SMOKE_RUNNER_INSTANCE_ID" --query Status --output text 2>/dev/null || true)"
             case "$status" in
               Success) break ;;
-              Failed|Cancelled|TimedOut|Undeliverable|Terminated) exit 1 ;;
+              Failed|Cancelled|TimedOut|Undeliverable|Terminated) break ;;
             esac
             sleep 10
           done
-          test "$status" = "Success"
-          aws s3 cp "$evidence_uri" "$RUNNER_TEMP/smoke-evidence.json" --only-show-errors
+          printf 'SMOKE_COMMAND_STATUS=%s\n' "$status" >> "$GITHUB_ENV"
+          if aws s3 cp "$evidence_uri" "$RUNNER_TEMP/smoke-evidence.json" --only-show-errors; then
+            printf 'SMOKE_EVIDENCE_AVAILABLE=true\n' >> "$GITHUB_ENV"
+          else
+            printf 'SMOKE_EVIDENCE_AVAILABLE=false\n' >> "$GITHUB_ENV"
+          fi
+          if [ "$status" = "Success" ]; then
+            test -f "$RUNNER_TEMP/smoke-evidence.json"
+          fi
 
       - name: Evaluate and upload redacted smoke evidence
+        if: always() && env.SMOKE_EVIDENCE_AVAILABLE == 'true'
         run: |
           set -euo pipefail
-          node backend/scripts/evaluate-aws-staging-smoke.mjs \
-            --evidence-file "$RUNNER_TEMP/smoke-evidence.json" \
-            > "$RUNNER_TEMP/smoke-evaluation.txt"
+          if [ "$SMOKE_COMMAND_STATUS" = "Success" ]; then
+            node backend/scripts/evaluate-aws-staging-smoke.mjs \
+              --evidence-file "$RUNNER_TEMP/smoke-evidence.json" \
+              > "$RUNNER_TEMP/smoke-evaluation.txt"
+          else
+            node backend/scripts/evaluate-aws-staging-smoke.mjs \
+              --failure-evidence-file "$RUNNER_TEMP/smoke-evidence.json" \
+              > "$RUNNER_TEMP/smoke-evaluation.txt"
+          fi
+
+      - name: Verify smoke evidence export before cleanup
+        if: always() && env.SMOKE_EXECUTION_STARTED == 'true'
+        run: |
+          test "$SMOKE_EVIDENCE_AVAILABLE" = "true"
+          test -f "$RUNNER_TEMP/smoke-evidence.json"
+          test -f "$RUNNER_TEMP/smoke-evaluation.txt"
+
+      - name: Destroy smoke stack after evidence export
+        if: always() && env.SMOKE_EXECUTION_STARTED == 'true'
+        env:
+          STACK_ID: ${{ inputs.stack_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/smoke-cleanup"
+          terraform -chdir=infra/terraform/environments/staging init \
+            -reconfigure \
+            -backend-config="$RUNNER_TEMP/backend.hcl"
+          terraform -chdir=infra/terraform/environments/staging plan \
+            -destroy \
+            -input=false \
+            -lock-timeout=5m \
+            -var-file="$RUNNER_TEMP/staging.tfvars.json" \
+            -out="$RUNNER_TEMP/smoke-cleanup.tfplan"
+          plan_fingerprint="$(terraform -chdir=infra/terraform/environments/staging show -json "$RUNNER_TEMP/smoke-cleanup.tfplan" \
+            | node backend/scripts/fingerprint-terraform-plan.mjs)"
+          test "${#plan_fingerprint}" -eq 64
+          terraform -chdir=infra/terraform/environments/staging apply \
+            -input=false \
+            -lock-timeout=5m \
+            -auto-approve \
+            "$RUNNER_TEMP/smoke-cleanup.tfplan"
+          export PLAN_FINGERPRINT="$plan_fingerprint"
+          node -e 'const fs=require("fs"); fs.writeFileSync(process.argv[1], JSON.stringify({schemaVersion:"asklake.aws-staging-smoke-cleanup.v1", commit:process.env.GITHUB_SHA, stackId:process.env.STACK_ID, planFingerprint:process.env.PLAN_FINGERPRINT, smokeCommandStatus:process.env.SMOKE_COMMAND_STATUS || "unknown", status:"destroy-request-completed"}, null, 2)+"\n")' \
+            "$RUNNER_TEMP/smoke-cleanup/receipt.json"
 
       - name: Upload Phase 4 evidence
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: aws-staging-smoke-${{ inputs.stack_id }}-${{ github.run_id }}
@@ -222,9 +273,15 @@ jobs:
             ${{ runner.temp }}/smoke-evidence.json
             ${{ runner.temp }}/smoke-evaluation.txt
             ${{ runner.temp }}/smoke-plan.json
+            ${{ runner.temp }}/smoke-cleanup/receipt.json
           if-no-files-found: error
           retention-days: 7
           include-hidden-files: false
+
+      - name: Mark failed smoke after cleanup
+        if: always() && env.SMOKE_EXECUTION_STARTED == 'true'
+        run: |
+          test "$SMOKE_COMMAND_STATUS" = "Success"
 
       - name: Remove private smoke inputs
         if: always()
@@ -232,3 +289,4 @@ jobs:
           rm -f "$RUNNER_TEMP/backend.hcl" "$RUNNER_TEMP/staging.tfvars.json" "$RUNNER_TEMP/terraform-output.json"
           rm -f "$RUNNER_TEMP/smoke-target.txt"
           rm -f "$RUNNER_TEMP/ssm-parameters.json" "$RUNNER_TEMP/emr-price-snapshot.json"
+          rm -rf "$RUNNER_TEMP/smoke-cleanup"

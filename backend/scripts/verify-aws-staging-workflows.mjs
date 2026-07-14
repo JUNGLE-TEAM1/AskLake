@@ -273,8 +273,9 @@ const workflows = Object.freeze({
   destroy: readRepositoryFile(".github/workflows/aws-staging-destroy.yml"),
   planApply: readRepositoryFile(".github/workflows/aws-staging-plan-apply.yml"),
   smoke: readRepositoryFile(".github/workflows/aws-staging-smoke.yml"),
+  ttlSweep: readRepositoryFile(".github/workflows/aws-staging-ttl-sweep.yml"),
 });
-for (const [name, workflow] of Object.entries(workflows)) {
+for (const [name, workflow] of Object.entries(Object.fromEntries(Object.entries(workflows).filter(([name]) => name !== "ttlSweep")))) {
   assert.match(workflow, /^on:\n  workflow_dispatch:/m, `${name} must be manual-only`);
   assert.doesNotMatch(workflow, /^  (push|pull_request|schedule|workflow_run):/m, `${name} has an automatic trigger`);
   assert.match(workflow, /^permissions:\n  contents: read$/m);
@@ -343,7 +344,18 @@ assert.match(workflows.smoke, /aws pricing get-products/);
 assert.match(workflows.smoke, /run-aws-staging-smoke\.mjs/);
 assert.match(workflows.smoke, /evaluate-aws-staging-smoke\.mjs/);
 assert.match(workflows.smoke, /asklake-smoke-bundle\.tgz/);
+assert.match(workflows.smoke, /Destroy smoke stack after evidence export/);
+assert.match(workflows.smoke, /SMOKE_EXECUTION_STARTED=true/);
+assert.match(workflows.smoke, /SMOKE_EVIDENCE_AVAILABLE/);
+assert.match(workflows.smoke, /-destroy/);
+assert.match(workflows.smoke, /smoke-cleanup\/receipt\.json/);
 assert.doesNotMatch(workflows.smoke, /AWS_BUDGET_NOTIFICATION_EMAIL|AWS_EMR_SERVERLESS_CONCURRENT_VCPU/);
+
+assert.match(workflows.ttlSweep, /^on:\n  workflow_dispatch:\n  schedule:/m);
+assert.match(workflows.ttlSweep, /environment: asklake-aws-staging-ttl-sweep/);
+assert.match(workflows.ttlSweep, /sweep-aws-staging-ttl\.mjs/);
+assert.match(workflows.ttlSweep, /Require manual destroy for expired or invalid stacks/);
+assert.doesNotMatch(workflows.ttlSweep, /DeleteObjectCommand|terraform\s+destroy|terraform\s+apply|aws\s+.*delete/i);
 
 const pom = readRepositoryFile("infra/artifacts/emr-continuous-dependencies.pom.xml");
 assert.match(pom, /<artifactId>spark-sql-kafka-0-10_2\.12<\/artifactId>\s*<version>3\.5\.5<\/version>/);
@@ -356,23 +368,25 @@ const dedicatedWorkflowFiles = new Set([
   "aws-staging-destroy.yml",
   "aws-staging-plan-apply.yml",
   "aws-staging-smoke.yml",
+  "aws-staging-ttl-sweep.yml",
 ]);
 const generalWorkflowFiles = readdirSync(workflowDirectory)
-  .filter((name) => /\.ya?ml$/.test(name) && !dedicatedWorkflowFiles.has(name));
+  .filter((name) => /\.ya?ml$/.test(name) && !dedicatedWorkflowFiles.has(name) && name !== "aws-staging-contract-checks.yml");
 assert.ok(generalWorkflowFiles.length >= 3, "general workflow discovery unexpectedly found too few files");
 for (const name of generalWorkflowFiles) {
   const source = readFileSync(path.join(workflowDirectory, name), "utf8");
-  assert.doesNotMatch(source, /terraform(?:\s+-chdir=[^\s]+)?\s+(?:apply|destroy)|aws-staging-(?:plan-apply|artifacts|destroy)/);
+  assert.doesNotMatch(source, /terraform(?:\s+-chdir=[^\s]+)?\s+(?:apply|destroy)|aws-staging-(?:plan-apply|artifacts|destroy|smoke|ttl-sweep)/);
 }
 
 const contractChecks = readRepositoryFile(".github/workflows/aws-staging-contract-checks.yml");
 assert.match(contractChecks, /^  pull_request:/m);
 assert.match(contractChecks, /verify:aws-staging-workflows/);
 assert.match(contractChecks, /verify:aws-staging-smoke/);
+assert.match(contractChecks, /verify:aws-staging-lifecycle/);
 assert.match(contractChecks, /verify:aws-staging-terraform/);
 assert.doesNotMatch(contractChecks, /id-token: write|configure-aws-credentials|AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY/);
 
-console.log("AWS staging Phase 3/4 workflow contract verification passed.");
+console.log("AWS staging Phase 3/4/5 workflow contract verification passed.");
 
 function readRepositoryFile(relative) {
   return readFileSync(path.join(repositoryRoot, relative), "utf8");

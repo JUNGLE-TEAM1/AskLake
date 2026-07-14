@@ -223,6 +223,11 @@ function validateContract(contract) {
   assert.equal(lifecycle.automaticRuntimePromotionAllowed, false, "automatic Runtime promotion is forbidden");
   assert.equal(lifecycle.destroyAfterSmoke, true, "staging stack must be destroyed after smoke");
   assert.equal(lifecycle.destroyOnFailureAfterEvidenceExport, true, "failed smoke must clean up after evidence export");
+  const ttlSweep = requireObject(lifecycle.ttlSweep, "lifecycle.ttlSweep");
+  assert.equal(ttlSweep.maximumStateFilesPerRun, 100, "TTL sweep state bound drifted");
+  assert.equal(ttlSweep.expiredStackGraceMinutes, 15, "TTL sweep grace drifted");
+  assert.equal(ttlSweep.automaticDestroyAllowed, false, "TTL sweep must require manual destroy");
+  assert.equal(ttlSweep.evidenceRequired, true, "TTL sweep evidence must remain required");
   assert.equal(lifecycle.workflowArtifactRetentionDays, 7, "workflow evidence retention drifted");
   assert.equal(lifecycle.sharedResourceDestructionAllowed, false, "shared resource destruction is forbidden");
 
