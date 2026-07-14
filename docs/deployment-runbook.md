@@ -3,6 +3,8 @@
 이 문서는 개발 중 EC2 배포 서버를 켜고, 재배포하고, 끄는 반복 절차를 정리한다.
 정식 GitHub Actions 자동 배포 전에도 같은 절차를 로컬에서 실행할 수 있게 하는 것이 목표다.
 
+이 EC2 demo 배포는 Issue #727의 일회성 EMR Serverless/MSK Serverless staging과 별개다. 일반 `scripts/deploy.sh` 또는 애플리케이션 재배포는 AWS staging Terraform을 실행하지 않는다. staging IaC/smoke의 Phase, 비용·TTL과 수동 승인 경계는 [AWS Staging IaC와 실제 Smoke 자동화 계획](aws-staging-iac-smoke-plan.md)을 따른다.
+
 ## 전제
 
 - EC2, Elastic IP, Security Group, Docker, Docker Compose, 서버 `deploy/.env`는 최초 bootstrap에서 이미 준비되어 있어야 한다.

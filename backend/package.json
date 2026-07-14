@@ -57,6 +57,7 @@
     "verify:emr-admission": "node scripts/verify-emr-admission-contract.mjs && PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-.venv/bin/python} scripts/verify-emr-admission-contract.py",
     "verify:streaming-performance-contract": "node scripts/verify-streaming-performance-contract.mjs --config-only",
     "verify:streaming-load-plan": "node scripts/run-streaming-load-fault.mjs --config-only",
+    "verify:aws-staging-contract": "node scripts/verify-aws-staging-contract.mjs",
     "streaming:load-fault": "node scripts/run-streaming-load-fault.mjs",
     "streaming:performance-report": "node scripts/verify-streaming-performance-contract.mjs",
     "verify:runtime-cutover-contract": "node scripts/verify-runtime-cutover-contract.mjs --config-only",

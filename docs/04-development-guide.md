@@ -179,6 +179,17 @@ npm run build
 
 첫 명령은 resource estimator/application preflight와 file DB의 동시 요청을 실행해 정확히 한 요청만 active slot을 받고 다음 요청은 queued가 되는지, queue overflow·actor quota·단일 Job 자원 초과·terminal release·admin projection을 검증한다. 실제 PostgreSQL/EMR staging에서는 동시에 두 Run을 제출해 `GET /api/admin/runtime-capacity`의 active/queued 수와 AWS Job Run 상태가 일치하는지 추가 확인한다. 이 검증은 처리량/실제 청구액 측정이 아니며 Phase 7 부하·비용 시험과 분리한다.
 
+### AWS staging Phase 0 계약 검증
+
+Issue #727의 Phase 0은 AWS resource를 만들지 않는다. 서울 리전, 전용 private VPC, Terraform state, OIDC/IAM, 30 USD smoke 예산, 8시간 TTL, 최소 16 EMR Serverless concurrent vCPU, 100만 건/평균 1 KiB 기능 smoke를 versioned contract로 고정한다.
+
+```bash
+cd backend
+npm run verify:aws-staging-contract
+```
+
+명령은 `infra/contracts/aws-staging-smoke.v1.json`을 읽어 region/naming/tag, state lock/versioning/encryption, no-NAT/no-public-ingress, 장기 key 금지, EMR application cap, smoke 정합성 기준과 수동 apply/자동 destroy 경계를 확인한다. 이 검증 성공은 실제 AWS 연결 성공이 아니라 Phase 1 Terraform이 따라야 할 입력 계약이 유효하다는 뜻이다. 전체 단계와 변경 승인 기준은 [AWS Staging IaC와 실제 Smoke 자동화 계획](aws-staging-iac-smoke-plan.md)을 따른다.
+
 ### Phase 7 부하·장애·비용 검증
 
 Docker/AWS side effect가 없는 계약 검증은 다음 두 명령으로 실행한다.

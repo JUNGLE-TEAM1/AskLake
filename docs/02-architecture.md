@@ -159,6 +159,19 @@ EMR Batch는 `FastAPI -> Airflow -> Node bridge -> EMR Serverless -> S3 Parquet/
 - 비용은 configured vCPU/memory/disk 시간당 단가에 요청 상한을 곱한 비교용 최대 시간당 추정치다. 실제 사용량/청구액은 Phase 7 부하·비용 검증에서 CloudWatch와 Cost Explorer 근거로 별도 측정한다.
 - `GET /api/admin/runtime-capacity`와 관리 콘솔 실행 용량 탭이 정책, 현재 예약량, 최근 판단을 제공한다. Batch는 `taskStates.sparkResult.emrAdmission`, Continuous는 `continuousRuntime.admission`으로 같은 예약을 사용자 실행 상세에 투영한다.
 
+### AWS staging IaC와 smoke 계약 경계
+
+Issue #727의 AWS staging은 제품 Runtime이나 일반 배포 환경이 아니라 `EMR Serverless + MSK Serverless` 후보 경로를 실제 AWS에서 검증하고 제거하는 일회성 validation environment다. versioned source of truth는 `infra/contracts/aws-staging-smoke.v1.json`이며 서울 리전, 전용 private VPC, S3 Terraform state, GitHub OIDC/IAM, 비용·TTL, EMR 용량, smoke 입력과 정합성 기준을 소유한다.
+
+- 일반 애플리케이션 배포와 로컬 Compose는 staging Terraform apply를 호출하지 않는다. 유료 resource 생성은 수동 승인된 전용 workflow에서만 허용한다.
+- Terraform state bootstrap, staging resource stack과 실행별 data/topic/checkpoint namespace를 분리한다. 실제 account/role/bucket/notification 값은 외부 입력이며 저장소에 커밋하지 않는다.
+- private staging은 NAT/Maven egress를 두지 않고 S3 endpoint와 immutable JAR bundle을 사용한다. smoke runner는 private subnet의 일회성 EC2를 SSM으로 실행하며 public/SSH ingress를 열지 않는다.
+- Batch와 Continuous application은 각각 16 vCPU 상한이지만 Phase 0에서는 계정 quota를 공유해 순차 실행한다. apply 전 실제 계정 quota가 최소 요구치보다 작은지 확인한다.
+- 100만 건 smoke는 연결·정합성·pause/resume을 확인하는 기능 시험이다. latency와 비용을 기록하되 처리량/SLO 달성을 주장하지 않으며 Phase 7 반복 성능 evidence를 대체하지 않는다.
+- 정상/실패 모두 증거 export 후 destroy하고 `ExpiresAt` 만료 sweep을 둔다. AWS Budget 알림은 지연될 수 있으므로 실시간 종료 장치로 취급하지 않는다.
+
+전체 Phase와 고정 값은 [AWS Staging IaC와 실제 Smoke 자동화 계획](aws-staging-iac-smoke-plan.md)을 따른다. Phase 0은 계약과 정적 verifier까지만 완료됐으며 실제 AWS resource는 아직 생성하지 않는다.
+
 ### Phase 7 성능 evidence 경계
 
 부하·장애·비용 검증은 제품 상태 DB를 성능 결과 저장소로 재사용하지 않는다. `streaming-phase7-plan.json`이 부하 8종과 장애 8종 및 전용 환경 안전 조건을, `streaming-slo-profile.draft.json`이 승인 전 SLO를, 실행별 `asklake.streaming-performance-evidence.v1`이 입력·정합성·처리량·지연·lag·복구·자원·output file·비용 근거를 소유한다. report engine은 반복 실행의 workload/tuning fingerprint가 같을 때만 한 시나리오로 묶고 JSON/Markdown을 만든다.

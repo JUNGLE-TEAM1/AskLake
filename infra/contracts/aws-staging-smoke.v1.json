@@ -1,0 +1,203 @@
+{
+  "schemaVersion": "asklake.aws-staging-contract.v1",
+  "contractId": "issue-727-phase0",
+  "environment": "staging",
+  "region": "ap-northeast-2",
+  "naming": {
+    "stackIdPattern": "^[a-z0-9][a-z0-9-]{2,20}$",
+    "resourcePrefixTemplate": "asklake-staging-${stackId}",
+    "bucketPrefixTemplate": "asklake-staging-${stackId}-${accountId}-${region}",
+    "topicNamespaceTemplate": "asklake.staging.${stackId}",
+    "requiredTags": {
+      "Project": "AskLake",
+      "Environment": "staging",
+      "ManagedBy": "terraform",
+      "Issue": "727",
+      "StackId": "${stackId}",
+      "ExpiresAt": "${expiresAt}"
+    }
+  },
+  "terraformState": {
+    "backend": "s3",
+    "configurationMode": "partial",
+    "bootstrapMode": "separate-stack",
+    "keyTemplate": "asklake/staging/${stackId}/terraform.tfstate",
+    "useLockfile": true,
+    "dynamoDbLocking": false,
+    "bucketVersioningRequired": true,
+    "encryptionRequired": true,
+    "embeddedCredentialsAllowed": false,
+    "requiredInputs": [
+      "stateBucketName",
+      "stateKmsKeyArn"
+    ]
+  },
+  "network": {
+    "vpcMode": "dedicated",
+    "vpcCidr": "10.77.0.0/16",
+    "availabilityZoneCount": 3,
+    "privateSubnetCidrs": [
+      "10.77.0.0/20",
+      "10.77.16.0/20",
+      "10.77.32.0/20"
+    ],
+    "publicSubnetCidrs": [],
+    "natGatewayEnabled": false,
+    "s3GatewayEndpointRequired": true,
+    "requiredInterfaceEndpoints": [
+      "ssm",
+      "ssmmessages",
+      "ec2messages",
+      "logs"
+    ],
+    "publicIngressAllowed": false,
+    "smokeRunner": {
+      "mode": "ephemeral-ec2-ssm",
+      "placement": "private-subnet",
+      "sshIngressAllowed": false,
+      "artifactDelivery": "s3"
+    }
+  },
+  "authentication": {
+    "ciCredentialMode": "github-oidc",
+    "longLivedAwsKeysAllowed": false,
+    "mskAuthentication": "iam",
+    "tlsRequired": true,
+    "secretOutputsAllowed": false,
+    "oidcProviderOwnership": "platform-once"
+  },
+  "costControl": {
+    "currency": "USD",
+    "smokeBudgetUsd": 30,
+    "budgetAlertThresholdPercent": [
+      50,
+      80,
+      100
+    ],
+    "budgetIsRealtimeKillSwitch": false,
+    "stackTtlHours": 8,
+    "maximumStackTtlHours": 24,
+    "priceSnapshotRequiredAtRun": true,
+    "requiredCostTags": [
+      "Project",
+      "Environment",
+      "StackId",
+      "ExpiresAt"
+    ]
+  },
+  "runtime": {
+    "sparkProvider": "emr-serverless",
+    "kafkaProvider": "msk-serverless",
+    "emrReleaseLabel": "emr-7.9.0",
+    "dependencyMode": "jars",
+    "mavenEgressAllowed": false,
+    "minimumRequiredAccountConcurrentVcpu": 16,
+    "applicationsMayRunConcurrently": false,
+    "batchApplication": {
+      "maximumCapacity": {
+        "vcpu": 16,
+        "memoryGb": 64,
+        "diskGb": 320
+      },
+      "maximumConcurrentRuns": 1,
+      "maximumQueuedRuns": 2,
+      "autoStopIdleMinutes": 10,
+      "driver": {
+        "cores": 1,
+        "memoryGb": 4,
+        "diskGb": 20
+      },
+      "executor": {
+        "cores": 2,
+        "memoryGb": 4,
+        "diskGb": 20,
+        "minimumExecutors": 0,
+        "initialExecutors": 2,
+        "maximumExecutors": 7
+      }
+    },
+    "continuousApplication": {
+      "maximumCapacity": {
+        "vcpu": 16,
+        "memoryGb": 64,
+        "diskGb": 320
+      },
+      "maximumConcurrentRuns": 1,
+      "maximumQueuedRuns": 1,
+      "autoStopIdleMinutes": 10,
+      "driver": {
+        "cores": 1,
+        "memoryGb": 4,
+        "diskGb": 20
+      },
+      "executor": {
+        "cores": 2,
+        "memoryGb": 4,
+        "diskGb": 20,
+        "minimumExecutors": 0,
+        "initialExecutors": 2,
+        "maximumExecutors": 7
+      }
+    }
+  },
+  "smoke": {
+    "purpose": "functional-connectivity",
+    "performanceClaimAllowed": false,
+    "recordCount": 1000000,
+    "averageMessageBytes": 1024,
+    "p95MessageBytes": 4096,
+    "estimatedIngressBytes": 1024000000,
+    "producerRatePerSecond": 5000,
+    "topicPartitions": 3,
+    "topicRetentionMs": 86400000,
+    "microBatchTriggerSeconds": 2,
+    "maxOffsetsPerTrigger": 10000,
+    "batchFixtureBytes": 104857600,
+    "requiredChecks": [
+      "terraform-static-contract",
+      "s3-readiness",
+      "msk-iam-roundtrip",
+      "emr-batch-submit-poll-result",
+      "emr-continuous-start-ingest-pause-resume",
+      "checkpoint-continuity",
+      "output-integrity",
+      "cost-and-resource-evidence"
+    ],
+    "successCriteria": {
+      "exactProducedConsumedSinkCounts": true,
+      "maximumFinalLag": 0,
+      "maximumQuarantineRecords": 0,
+      "checkpointResumeRequired": true,
+      "singleRemoteJobIdentityRequired": true,
+      "s3ReportAndCheckpointRequired": true,
+      "latencyThresholdRequired": false
+    }
+  },
+  "lifecycle": {
+    "applyRequiresManualApproval": true,
+    "normalApplicationDeployMayApplyInfrastructure": false,
+    "automaticRuntimePromotionAllowed": false,
+    "destroyAfterSmoke": true,
+    "destroyOnFailureAfterEvidenceExport": true,
+    "workflowArtifactRetentionDays": 7,
+    "sharedResourceDestructionAllowed": false
+  },
+  "requiredExternalInputs": [
+    "awsAccountId",
+    "availableEmrServerlessConcurrentVcpu",
+    "stateBucketName",
+    "stateKmsKeyArn",
+    "githubOidcRoleArn",
+    "budgetNotificationEndpoint",
+    "stackId",
+    "expiresAt"
+  ],
+  "references": [
+    "https://developer.hashicorp.com/terraform/language/backend/s3",
+    "https://docs.aws.amazon.com/emr/latest/EMR-Serverless-UserGuide/vpc-access.html",
+    "https://docs.aws.amazon.com/emr/latest/EMR-Serverless-UserGuide/endpoints-quotas.html",
+    "https://docs.aws.amazon.com/msk/latest/developerguide/limits.html",
+    "https://docs.aws.amazon.com/cost-management/latest/userguide/budgets-managing-costs.html",
+    "https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_providers_oidc.html"
+  ]
+}
