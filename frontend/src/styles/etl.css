@@ -6648,6 +6648,11 @@
   color: #ea580c;
 }
 
+.etl-review-icon.readiness {
+  background: #eff6ff;
+  color: #2563eb;
+}
+
 .etl-review-edit {
   white-space: nowrap;
 }
@@ -6817,8 +6822,8 @@
 .etl-review-validation {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-  padding: 0 20px 16px;
+  gap: 12px;
+  padding: 20px;
 }
 
 .etl-review-validation div {

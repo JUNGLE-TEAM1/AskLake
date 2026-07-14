@@ -13,7 +13,8 @@ const mockPermissionOptions: PermissionOptionsResponse = {
   ],
 };
 
-export async function fetchPermissionOptions(): Promise<PermissionOptionsResponse> {
+export async function fetchPermissionOptions(jobId?: string): Promise<PermissionOptionsResponse> {
   if (apiConfig.useMock) return mockPermissionOptions;
-  return apiClient.get<PermissionOptionsResponse>("/api/etl/permission-options");
+  const query = jobId ? `?jobId=${encodeURIComponent(jobId)}` : "";
+  return apiClient.get<PermissionOptionsResponse>(`/api/etl/permission-options${query}`);
 }

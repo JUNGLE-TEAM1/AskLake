@@ -89,10 +89,11 @@ def preview_record_parsing(request: RecordParsingPreviewRequest) -> RecordParsin
 
 @router.get("/permission-options", response_model=PermissionOptionsResponse)
 def get_permission_options(
+    job_id: str | None = Query(default=None, alias="jobId"),
     db: Session = Depends(get_db),
     actor: ActorContext = Depends(get_actor_context),
 ) -> PermissionOptionsResponse:
-    return etl_service.get_permission_options(db, actor)
+    return etl_service.get_permission_options(db, actor, job_id)
 
 
 @router.post("/review", response_model=ReviewSnapshot)
