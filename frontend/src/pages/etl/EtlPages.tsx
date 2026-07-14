@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
 import {
   flexRender,
@@ -34,6 +34,7 @@ import {
   Settings,
   ShieldCheck,
   SlidersHorizontal,
+  Sparkles,
   Table2,
   TerminalSquare,
   Trash2,
@@ -87,10 +88,11 @@ import {
   type ReviewSnapshotRequest,
 } from "../../services/reviewApi";
 import { fetchPermissionOptions } from "../../services/permissionApi";
-import { getSourceConnectorDefaults, listSourceAssets, previewRecordParsing, testSourceConnector, type SourceConnectorAnalysis } from "../../services/sourceConnectorService";
+import { getSourceConnectorDefaults, listSourceAssets, previewRecordParsing, testSourceConnector, type SourceConnectorAnalysis, type SourceConnectorDefaults } from "../../services/sourceConnectorService";
 import { sanitizeSourceConnectorFields } from "../../utils/sourceConnectorFields";
 import type { AuditResult, CatalogDataset, DraftPipeline, DraftPipelinePatch, FlowId, PermissionAction, PermissionGrant, PermissionOptionsResponse, RecordParsingDraft, RecordParsingPreviewResponse, ScheduleFlowId, SchemaColumnDraft, SourceDraft, TargetLayer } from "../../types";
 import type { QualityRuleDraft, RetryPolicyDraft, ScheduleDraft, ScheduleOverlapPolicy, TransformStepDraft, WatermarkPolicyDraft, WatermarkWindowMode } from "../../types/etl";
+import { applyClickEventRecordSchemaPreset, CLICK_EVENT_RECORD_SCHEMA_PRESET, isClickEventLogSource } from "./recordParsingPreset";
 import type { QualityRuleOption, TransformQualityInvalidRow, TransformQualityPreviewSample, TransformQualitySampleRow, TransformQualityStepPreview, TransformQualityValidationResult } from "../../data/transformQualityPreview";
 import { SourceAssetTree } from "./SourceAssetTree";
 import { SourceExplorerWorkbench } from "./SourceExplorerWorkbench";
@@ -120,6 +122,13 @@ type RepeatScheduleDraft = {
 type ScheduleOptionId = "skip" | "repeat";
 
 const FALLBACK_KAFKA_BROKER = import.meta.env.DEV ? "127.0.0.1:19092" : "";
+const FALLBACK_KAFKA_TOPIC = "asklake-source-events";
+const FALLBACK_SOURCE_DEFAULTS: SourceConnectorDefaults = {
+  kafkaBroker: FALLBACK_KAFKA_BROKER,
+  kafkaTopic: FALLBACK_KAFKA_TOPIC,
+  s3Bucket: "",
+  s3Prefix: "",
+};
 
 export function SchedulePage({
   draftSchedule,
@@ -280,6 +289,42 @@ function mergeFieldRows(baseFields: Array<[string, string]>, savedFields: Array<
   const baseLabels = new Set(baseFields.map(([label]) => label));
   const extraSavedFields = savedFields.filter(([label]) => !baseLabels.has(label));
   return [...mergedFields, ...extraSavedFields];
+}
+
+function normalizeSourceConnectorDefaults(defaults: Partial<SourceConnectorDefaults>): SourceConnectorDefaults {
+  return {
+    kafkaBroker: String(defaults.kafkaBroker ?? "").trim() || FALLBACK_KAFKA_BROKER,
+    kafkaTopic: String(defaults.kafkaTopic ?? "").trim() || FALLBACK_KAFKA_TOPIC,
+    s3Bucket: String(defaults.s3Bucket ?? "").trim(),
+    s3Prefix: String(defaults.s3Prefix ?? "").trim(),
+  };
+}
+
+function mergeRuntimeSourceDefaults(
+  sourceType: string,
+  fields: Array<[string, string]>,
+  defaults: SourceConnectorDefaults,
+): Array<[string, string]> {
+  const replacements = sourceType === "File / S3"
+    ? new Map<string, { next: string; replaceable: Set<string> }>([
+      ["Bucket / Stage Name", { next: defaults.s3Bucket, replaceable: new Set([""]) }],
+      ["Path / Prefix", { next: defaults.s3Prefix, replaceable: new Set([""]) }],
+    ])
+    : new Map<string, { next: string; replaceable: Set<string> }>([
+      ["Broker / Endpoint", { next: defaults.kafkaBroker, replaceable: new Set(["", FALLBACK_KAFKA_BROKER]) }],
+      ["TOPIC / QUEUE NAME", { next: defaults.kafkaTopic, replaceable: new Set(["", FALLBACK_KAFKA_TOPIC]) }],
+    ]);
+
+  return fields.map(([label, value]) => {
+    const replacement = replacements.get(label);
+    if (!replacement?.next || !replacement.replaceable.has(value.trim())) return [label, value] as [string, string];
+    return [label, replacement.next] as [string, string];
+  });
+}
+
+function sourceFieldRowsEqual(left: Array<[string, string]>, right: Array<[string, string]>): boolean {
+  return left.length === right.length
+    && left.every(([label, value], index) => label === right[index]?.[0] && value === right[index]?.[1]);
 }
 
 function mergeConnectorSourceConfig(currentFields: Array<[string, string]>, responseFields: Array<[string, string]>): Array<[string, string]> {
@@ -1316,7 +1361,10 @@ export function SourceConnectionPage({
     draft.source.sourceType === "Data Lake" ? sourceConfigValue(draft.source.sourceConfig, "Source Dataset ID") : "",
   );
   const [continuousAdvancedOpen, setContinuousAdvancedOpen] = useState(false);
-  const [defaultKafkaBroker, setDefaultKafkaBroker] = useState(FALLBACK_KAFKA_BROKER);
+  const [sourceDefaults, setSourceDefaults] = useState<SourceConnectorDefaults>(FALLBACK_SOURCE_DEFAULTS);
+  const [sourceDefaultsLoaded, setSourceDefaultsLoaded] = useState(false);
+  const pristineSourceDraftRef = useRef(!draft.source.sourceType && draft.source.sourceConfig.length === 0);
+  const appliedSourceDefaultsRef = useRef(new Set<string>());
   const sourceLocked = connectionStatus === "testing";
 
   useEffect(() => {
@@ -1348,7 +1396,9 @@ export function SourceConnectionPage({
     let active = true;
     getSourceConnectorDefaults()
       .then((defaults) => {
-        if (active && defaults.kafkaBroker.trim()) setDefaultKafkaBroker(defaults.kafkaBroker.trim());
+        if (!active) return;
+        setSourceDefaults(normalizeSourceConnectorDefaults(defaults));
+        setSourceDefaultsLoaded(true);
       })
       .catch(() => undefined);
     return () => {
@@ -1453,8 +1503,8 @@ export function SourceConnectionPage({
         ["Storage Provider", OBJECT_STORAGE_PROVIDER_LABEL],
         ["Endpoint URL", ""],
         ["Region", OBJECT_STORAGE_REGION],
-        ["Bucket / Stage Name", ""],
-        ["Path / Prefix", ""],
+        ["Bucket / Stage Name", sourceDefaults.s3Bucket],
+        ["Path / Prefix", sourceDefaults.s3Prefix],
         ["Access Key", ""],
         ["Secret Key", ""],
         ["Use Path Style", String(!OBJECT_STORAGE_IS_AWS)],
@@ -1517,8 +1567,8 @@ export function SourceConnectionPage({
       description: "실시간 데이터 스트림 엔드포인트를 설정합니다.",
       fields: [
         ["Stream Type", "Apache Kafka"],
-        ["Broker / Endpoint", defaultKafkaBroker],
-        ["TOPIC / QUEUE NAME", "asklake-source-events"],
+        ["Broker / Endpoint", sourceDefaults.kafkaBroker],
+        ["TOPIC / QUEUE NAME", sourceDefaults.kafkaTopic],
         ["CONSUMER GROUP ID", "asklake-etl-consumer-01"],
         ["Offset Policy", "Earliest (Start from beginning)"],
         ["Message Format", "JSON (Auto-infer Schema)"],
@@ -1669,6 +1719,31 @@ export function SourceConnectionPage({
       },
     });
   };
+
+  useEffect(() => {
+    if (
+      !sourceDefaultsLoaded
+      || !pristineSourceDraftRef.current
+      || appliedSourceDefaultsRef.current.has(activeSourceType)
+      || connectionStatus !== "idle"
+      || !["File / S3", "Stream / Kafka"].includes(activeSourceType)
+    ) return;
+
+    const nextFields = mergeRuntimeSourceDefaults(activeSourceType, editableFields, sourceDefaults);
+    appliedSourceDefaultsRef.current.add(activeSourceType);
+    if (sourceFieldRowsEqual(nextFields, editableFields)) return;
+
+    setSourceFields((fields) => ({ ...fields, [activeSourceType]: nextFields }));
+    applySourceDraft(activeSourceType, nextFields, connectionStatus, connectionMessage);
+  }, [
+    activeSourceType,
+    connectionStatus,
+    sourceDefaults.kafkaBroker,
+    sourceDefaults.kafkaTopic,
+    sourceDefaults.s3Bucket,
+    sourceDefaults.s3Prefix,
+    sourceDefaultsLoaded,
+  ]);
 
   const selectSource = (value: string) => {
     const nextFields = value === activeSourceType ? editableFields : sourceFields[value] ?? sourceConfigs[value].fields;
@@ -2547,6 +2622,7 @@ export function RecordParsingPage({
   const [parsing, setParsing] = useState<RecordParsingDraft>(draft.recordParsing);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const hasClickEventPreset = isClickEventLogSource(draft.source.sourceLabel, draft.source.sourceConfig);
 
   const loadPreview = async (nextParsing: RecordParsingDraft) => {
     setLoading(true);
@@ -2600,6 +2676,28 @@ export function RecordParsingPage({
       } : column),
       recordParsing: nextParsing,
     } : current);
+  };
+
+  const applyRecommendedSchema = () => {
+    const nextParsing = applyClickEventRecordSchemaPreset(parsing);
+    if (!nextParsing) {
+      onNotify("10개 필드가 감지된 클릭 이벤트 로그에서만 추천 스키마를 적용할 수 있습니다.");
+      return;
+    }
+
+    setParsing(nextParsing);
+    setPreview((current) => current ? {
+      ...current,
+      columns: current.columns.map((column, index) => ({
+        ...column,
+        sourceName: nextParsing.columns[index].name,
+        targetName: nextParsing.columns[index].name,
+        type: nextParsing.columns[index].inferredType,
+      })),
+      recordParsing: nextParsing,
+    } : current);
+    onAction("etl.record_parsing.recommended_schema_applied", "/api/etl/record-parsing/preview", draft.source.sourceLabel || "click-events.log");
+    onNotify("추천 스키마 10개 필드를 적용했습니다.");
   };
 
   const normalizedNames = parsing.columns.map((column) => normalizeTargetColumnName(column.name));
@@ -2680,10 +2778,25 @@ export function RecordParsingPage({
         <section className="panel record-parsing-panel">
           <div className="record-parsing-panel-header">
             <h2><SlidersHorizontal aria-hidden="true" />컬럼 설정</h2>
-            <span className={cn("record-parsing-status", preview?.invalidRows.length && "is-warning")}>
-              {!loading && preview && !preview.invalidRows.length ? <Check aria-hidden="true" /> : null}
-              {loading ? "검증 중" : preview ? `${preview.validRows}/${preview.totalRows} 정상` : "검증 대기"}
-            </span>
+            <div className="record-parsing-panel-actions">
+              {hasClickEventPreset ? (
+                <Button
+                  className="record-parsing-preset-button"
+                  disabled={loading || parsing.expectedFieldCount !== CLICK_EVENT_RECORD_SCHEMA_PRESET.length}
+                  size="sm"
+                  type="button"
+                  variant="outline"
+                  onClick={applyRecommendedSchema}
+                >
+                  <Sparkles aria-hidden="true" />
+                  추천 스키마 적용
+                </Button>
+              ) : null}
+              <span className={cn("record-parsing-status", preview?.invalidRows.length && "is-warning")}>
+                {!loading && preview && !preview.invalidRows.length ? <Check aria-hidden="true" /> : null}
+                {loading ? "검증 중" : preview ? `${preview.validRows}/${preview.totalRows} 정상` : "검증 대기"}
+              </span>
+            </div>
           </div>
           <div className="record-parsing-panel-body record-parsing-settings-body">
             <div className="record-parsing-controls">

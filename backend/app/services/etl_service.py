@@ -180,6 +180,17 @@ SCHEDULE_WEEKDAY_VALUES = {
 def source_connector_defaults() -> SourceConnectorDefaults:
     return SourceConnectorDefaults(
         kafka_broker=os.environ.get("ASKLAKE_KAFKA_BROKER") or "127.0.0.1:19092",
+        kafka_topic=(
+            os.environ.get("ASKLAKE_SOURCE_DEFAULT_KAFKA_TOPIC")
+            or os.environ.get("ASKLAKE_KAFKA_TOPIC")
+            or "asklake-source-events"
+        ),
+        s3_bucket=(
+            os.environ.get("ASKLAKE_SOURCE_DEFAULT_S3_BUCKET")
+            or os.environ.get("ASKLAKE_RAW_BUCKET")
+            or ""
+        ),
+        s3_prefix=os.environ.get("ASKLAKE_SOURCE_DEFAULT_S3_PREFIX") or "",
     )
 
 

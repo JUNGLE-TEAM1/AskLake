@@ -1468,7 +1468,8 @@ const checks = [
       /label="수집 실행 간격"/,
       /label="한 번에 처리할 최대 메시지"/,
       /getSourceConnectorDefaults\(\)/,
-      /\["Broker \/ Endpoint", defaultKafkaBroker\]/,
+      /\["Broker \/ Endpoint", sourceDefaults\.kafkaBroker\]/,
+      /\["TOPIC \/ QUEUE NAME", sourceDefaults\.kafkaTopic\]/,
     ],
   },
   {

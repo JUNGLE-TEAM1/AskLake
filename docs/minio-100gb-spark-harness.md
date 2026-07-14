@@ -122,6 +122,8 @@ npm run synthetic-commerce:click-log
 npm run verify:synthetic-click-log
 ```
 
+이 변환기의 `click-events.log` 필드 순서는 `event_time`, `event_id`, `user_id`, `session_id`, `event_type`, `product_id`, `page_url`, `device_type`, `referrer`, `position`이다. Frontend 추천 스키마는 basename과 10필드 검증이 모두 맞을 때만 이 순서와 타입 초안을 채우며 backend Preview 검증을 생략하지 않는다. 위의 별도 `click-events-whitespace-100.log` fixture는 필드 의미가 다르므로 추천 대상이 아니다.
+
 운영 AWS S3 또는 local MinIO prefix는 내려받기 없이 S3-to-S3로 변환한다. AWS S3에서는 endpoint 옵션을 생략하고 instance profile 또는 workload IAM credential chain을 사용한다.
 
 ```bash
