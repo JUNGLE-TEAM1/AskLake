@@ -169,8 +169,10 @@ Issue #727의 AWS staging은 제품 Runtime이나 일반 배포 환경이 아니
 - Batch와 Continuous application은 각각 16 vCPU 상한이지만 Phase 0에서는 계정 quota를 공유해 순차 실행한다. apply 전 실제 계정 quota가 최소 요구치보다 작은지 확인한다.
 - 100만 건 smoke는 연결·정합성·pause/resume을 확인하는 기능 시험이다. latency와 비용을 기록하되 처리량/SLO 달성을 주장하지 않으며 Phase 7 반복 성능 evidence를 대체하지 않는다.
 - 정상/실패 모두 증거 export 후 destroy하고 `ExpiresAt` 만료 sweep을 둔다. AWS Budget 알림은 지연될 수 있으므로 실시간 종료 장치로 취급하지 않는다.
+- Terraform은 platform state bootstrap과 실행별 staging root를 분리한다. staging root는 network, storage, MSK, EMR, IAM, observability, cost-control, optional private SSM runner module을 조립하고 AWS provider lock과 credential 없는 mock plan으로 schema/연결을 검증한다.
+- EMR execution role trust는 AWS 공식 runtime-role 계약대로 `emr-serverless.amazonaws.com`과 `SourceAccount`에 묶고 전용 S3/KMS/MSK topic/group/CloudWatch만 허용한다. runner는 생성된 두 application ARN의 제어와 exact execution role PassRole만 허용하며 public IP와 SSH key를 갖지 않는다.
 
-전체 Phase와 고정 값은 [AWS Staging IaC와 실제 Smoke 자동화 계획](aws-staging-iac-smoke-plan.md)을 따른다. Phase 0은 계약과 정적 verifier까지만 완료됐으며 실제 AWS resource는 아직 생성하지 않는다.
+전체 Phase와 고정 값은 [AWS Staging IaC와 실제 Smoke 자동화 계획](aws-staging-iac-smoke-plan.md)을 따른다. Phase 0 계약과 Phase 1 Terraform/credential 없는 mock plan까지 완료됐으며 실제 AWS resource는 아직 생성하지 않는다.
 
 ### Phase 7 성능 evidence 경계
 

@@ -239,6 +239,7 @@ npm run verify:kafka-continuous-rules
 npm run verify:streaming-load-plan
 npm run verify:streaming-performance-contract
 npm run verify:aws-staging-contract
+npm run verify:aws-staging-terraform
 npm run verify:runtime-cutover-contract
 PYTHONPATH=. .venv/bin/python scripts/verify-etl-job-hydrate-contract.py
 PYTHONPATH=. .venv/bin/python scripts/verify-etl-job-update-contract.py
@@ -270,6 +271,7 @@ FastAPI Pair2 smoke:
 - `npm run verify:emr-admission`은 Node resource/application preflight와 Python durable reservation을 함께 검증한다. file DB 동시 요청에서 active/queued 판정, queue overflow, actor quota, resource rejection, 비용 추정, terminal release, admin projection을 고정한다. 실제 PostgreSQL 다중 process와 AWS queue/비용 실측은 staging/Phase 7 범위다.
 - `npm run verify:streaming-load-plan`과 `npm run verify:streaming-performance-contract`는 Docker/AWS side effect 없이 Phase 7의 8개 부하·8개 장애 시나리오, 전용 환경/opt-in, 정합성·P50/P95/P99·lag·복구·output file·완전한 billed resource 비용, environment/region, 실제 CloudWatch 자원 표본, 장애 주입/결과/failure code, SLO 승인/반복/fingerprint와 evidence redaction을 고정한다. 실제 local fault는 `streaming:load-fault`, AWS는 template/export 후 `streaming:performance-report`로만 opt in한다.
 - `npm run verify:aws-staging-contract`는 AWS side effect 없이 Issue #727 Phase 0의 서울 리전, dedicated private VPC, S3 state lock/versioning/encryption, GitHub OIDC/IAM, budget/TTL, 16 vCPU application cap과 100만 건 기능 smoke 정합성 기준을 고정한다. Terraform resource, workflow, 실제 AWS smoke는 후속 Phase이며 이 명령의 성공으로 준비 완료를 주장하지 않는다.
+- `npm run verify:aws-staging-terraform`은 Phase 1의 별도 state bootstrap과 network/S3/IAM/MSK Serverless/EMR Serverless/CloudWatch/Budget/private SSM runner module을 정적 정책, `fmt`, `validate`, credential 없는 mock plan으로 검증한다. 실제 AWS plan/apply, output env 연결과 smoke는 수행하지 않는다.
 - `npm run verify:runtime-cutover-contract`는 Docker/AWS side effect 없이 Phase 8 단계, baseline Runtime, consumer group/output/checkpoint 격리, 반복별 정합성·schema/value/quarantine checksum, 관측 임계치, 승인·롤백, 민감정보 차단과 production Python gate를 검증한다. 실제 전환은 `runtime:cutover-report`가 만든 `promotion-ready` JSON을 배포 preflight에 제공한 경우에만 opt in한다.
 - `npm run verify:msk-connection-contract`는 local Redpanda 기본값, MSK feature flag/IAM/TLS fail-fast, environment topic namespace, partition/retention policy, AWS signer client options, producer → bounded consumer roundtrip와 안전한 오류 정규화를 fake Kafka client로 검증한다. 실제 AWS roundtrip은 MSK bootstrap broker에 접근 가능한 staging VPC에서 `npm run kafka:msk-probe -- --topic asklake.staging.probe`로 opt in한다. `--create-topic`은 없는 probe topic만 생성하며 기존 topic 삭제·재생성이나 partition 증가는 수행하지 않는다.
 - `npm run verify:storage-layout-contract`는 MinIO/AWS provider-neutral root, Node/Python 결과 일치, 명시 경로의 canonical percent encoding과 malformed 입력 거부, legacy bucket 호환, artifact 경로, Job별 checkpoint, retention 설정, production local path 차단, 안전한 object-storage 오류를 확인한다. `npm run verify:target-metadata`는 persisted `datasetId`와 자동·명시 Catalog output identity를 함께 확인한다.

@@ -1,0 +1,6 @@
+bucket       = "replace-with-platform-state-bucket"
+key          = "asklake/staging/replace-with-stack-id/terraform.tfstate"
+region       = "ap-northeast-2"
+encrypt      = true
+kms_key_id   = "replace-with-state-kms-key-arn"
+use_lockfile = true

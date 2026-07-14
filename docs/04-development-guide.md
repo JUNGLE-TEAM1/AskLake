@@ -179,16 +179,21 @@ npm run build
 
 첫 명령은 resource estimator/application preflight와 file DB의 동시 요청을 실행해 정확히 한 요청만 active slot을 받고 다음 요청은 queued가 되는지, queue overflow·actor quota·단일 Job 자원 초과·terminal release·admin projection을 검증한다. 실제 PostgreSQL/EMR staging에서는 동시에 두 Run을 제출해 `GET /api/admin/runtime-capacity`의 active/queued 수와 AWS Job Run 상태가 일치하는지 추가 확인한다. 이 검증은 처리량/실제 청구액 측정이 아니며 Phase 7 부하·비용 시험과 분리한다.
 
-### AWS staging Phase 0 계약 검증
+### AWS staging Phase 0 계약·Phase 1 Terraform 검증
 
 Issue #727의 Phase 0은 AWS resource를 만들지 않는다. 서울 리전, 전용 private VPC, Terraform state, OIDC/IAM, 30 USD smoke 예산, 8시간 TTL, 최소 16 EMR Serverless concurrent vCPU, 100만 건/평균 1 KiB 기능 smoke를 versioned contract로 고정한다.
 
 ```bash
 cd backend
 npm run verify:aws-staging-contract
+npm run verify:aws-staging-terraform
 ```
 
-명령은 `infra/contracts/aws-staging-smoke.v1.json`을 읽어 region/naming/tag, state lock/versioning/encryption, no-NAT/no-public-ingress, 장기 key 금지, EMR application cap, smoke 정합성 기준과 수동 apply/자동 destroy 경계를 확인한다. 이 검증 성공은 실제 AWS 연결 성공이 아니라 Phase 1 Terraform이 따라야 할 입력 계약이 유효하다는 뜻이다. 전체 단계와 변경 승인 기준은 [AWS Staging IaC와 실제 Smoke 자동화 계획](aws-staging-iac-smoke-plan.md)을 따른다.
+첫 명령은 `infra/contracts/aws-staging-smoke.v1.json`을 읽어 region/naming/tag, state lock/versioning/encryption, no-NAT/no-public-ingress, 장기 key 금지, EMR application cap, smoke 정합성 기준과 수동 apply/자동 destroy 경계를 확인한다.
+
+두 번째 명령은 `infra/terraform`의 정적 보안/비용 guard 뒤 Terraform CLI로 `fmt -check`, state bootstrap과 staging의 `init -backend=false`/`validate`, mock provider plan을 실행한다. Terraform `1.7+`가 필요하며 실제 AWS credential이나 backend는 사용하지 않는다. Phase 1은 network/S3/IAM/MSK/EMR/CloudWatch/Budget와 optional private SSM runner까지 코드화하지만 실제 `apply`는 하지 않는다.
+
+실제 provider plan은 platform이 만든 S3/KMS state backend와 GitHub OIDC role, account quota, 알림 email, 실행별 `stackId`/`ExpiresAt`을 외부 입력으로 준비한 뒤 수행한다. `backend.hcl.example`과 `staging.tfvars.example`의 placeholder를 실제 값으로 바꿔 커밋하지 않는다. 전체 단계와 변경 승인 기준은 [AWS Staging IaC와 실제 Smoke 자동화 계획](aws-staging-iac-smoke-plan.md)을 따른다.
 
 ### Phase 7 부하·장애·비용 검증
 

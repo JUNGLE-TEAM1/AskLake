@@ -4,9 +4,10 @@
   "environment": "staging",
   "region": "ap-northeast-2",
   "naming": {
-    "stackIdPattern": "^[a-z0-9][a-z0-9-]{2,20}$",
+    "stackIdPattern": "^[a-z0-9][a-z0-9-]{2,15}$",
     "resourcePrefixTemplate": "asklake-staging-${stackId}",
-    "bucketPrefixTemplate": "asklake-staging-${stackId}-${accountId}-${region}",
+    "bucketPrefixTemplate": "asklake-stg-${accountId}-${regionAlias}-${stackId}",
+    "bucketRegionAlias": "apne2",
     "topicNamespaceTemplate": "asklake.staging.${stackId}",
     "requiredTags": {
       "Project": "AskLake",
@@ -48,7 +49,8 @@
       "ssm",
       "ssmmessages",
       "ec2messages",
-      "logs"
+      "logs",
+      "emr-serverless"
     ],
     "publicIngressAllowed": false,
     "smokeRunner": {

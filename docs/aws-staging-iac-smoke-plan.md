@@ -2,7 +2,7 @@
 
 이 문서는 Issue #727의 구현 기준이다. 목표는 현재 코드에 있는 `EMR Serverless + MSK Serverless` 경로를 일회성 AWS staging에서 안전하게 생성하고, 실제 연결·처리·복구를 검증한 뒤 자동으로 제거할 수 있게 만드는 것이다.
 
-현재 완료된 범위는 **Phase 0 계약 고정**이다. 아직 Terraform resource, AWS 계정 resource, GitHub Actions apply/destroy workflow, 실제 smoke 실행은 만들지 않았다. 일반 애플리케이션 배포와 로컬 Docker 환경도 바꾸지 않는다.
+현재 완료된 범위는 **Phase 0 계약 고정과 Phase 1 Terraform 기반**이다. Terraform resource와 credential 없는 mock plan은 구현했지만 AWS 계정에는 아직 apply하지 않았다. GitHub Actions apply/destroy workflow와 실제 smoke도 아직 실행하지 않았으며 일반 애플리케이션 배포와 로컬 Docker 환경은 바꾸지 않는다.
 
 ## 1. 한눈에 보는 전환 구조
 
@@ -35,7 +35,7 @@ flowchart LR
 | Phase | 결과물 | 완료 조건 | 현재 상태 |
 | --- | --- | --- | --- |
 | 0. 계약 고정 | versioned contract, 정적 verifier, 문서 | 리전·네트워크·state·비용·quota·smoke 크기가 코드 리뷰 가능한 값으로 고정 | 완료 |
-| 1. Terraform 기반 | bootstrap/state, network, S3, IAM, MSK, EMR module | `fmt`, `validate`, `plan`이 통과하고 secret output이 없음 | 예정 |
+| 1. Terraform 기반 | bootstrap/state, network, S3, IAM, MSK, EMR module | `fmt`, `validate`, credential 없는 mock plan이 통과하고 secret output이 없음 | 완료 |
 | 2. Runtime 연결 | Terraform output을 AskLake env/manifest로 변환 | broker/role/application/S3 값이 수작업 복사 없이 주입되고 민감값은 출력되지 않음 | 예정 |
 | 3. GitHub Actions | OIDC plan/apply/destroy workflow | 장기 AWS key 없이 plan 자동, apply 수동 승인, destroy 독립 실행 가능 | 예정 |
 | 4. 실제 smoke | S3 readiness, MSK probe, Batch, Continuous pause/resume | 입력·소비·sink count 일치, final lag 0, checkpoint resume, report 확보 | 예정 |
@@ -49,7 +49,8 @@ machine-readable source of truth는 [`infra/contracts/aws-staging-smoke.v1.json`
 ### 3.1 환경과 이름
 
 - 환경은 `staging`, 리전은 `ap-northeast-2`로 제한한다.
-- 모든 resource는 `stackId`로 격리하고 기본 prefix는 `asklake-staging-${stackId}`다.
+- 모든 resource는 3~16자의 `stackId`로 격리하고 기본 prefix는 `asklake-staging-${stackId}`다.
+- S3의 63자 이름 제한을 넘지 않도록 bucket prefix는 `asklake-stg-${accountId}-apne2-${stackId}`를 사용한다.
 - Kafka topic namespace는 `asklake.staging.${stackId}`다. 기존 staging/production topic을 재사용하지 않는다.
 - 필수 tag는 `Project`, `Environment`, `ManagedBy`, `Issue`, `StackId`, `ExpiresAt`이다.
 - 실제 account ID, role ARN, 알림 주소, 만료 시각은 repo에 넣지 않고 apply 입력으로 받는다.
@@ -68,7 +69,7 @@ machine-readable source of truth는 [`infra/contracts/aws-staging-smoke.v1.json`
 - 3개 AZ의 private subnet은 `10.77.0.0/20`, `10.77.16.0/20`, `10.77.32.0/20`이다.
 - public subnet, public ingress, SSH ingress를 만들지 않는다.
 - NAT Gateway와 runtime Maven egress를 사용하지 않는다.
-- S3 gateway endpoint와 SSM/SSM Messages/EC2 Messages/CloudWatch Logs interface endpoint를 사용한다.
+- S3 gateway endpoint와 SSM/SSM Messages/EC2 Messages/CloudWatch Logs/EMR Serverless interface endpoint를 사용한다.
 - smoke runner는 private subnet의 일회성 EC2이며 SSH 대신 SSM으로 실행한다. 실행 bundle과 결과는 S3로 전달한다.
 - EMR Continuous dependency는 runtime package download가 아니라 checksum을 고정한 S3 JAR bundle을 사용한다.
 
@@ -123,7 +124,30 @@ Batch와 Continuous를 동시에 돌리면 두 application이 최대 32 vCPU를 
 - 일반 애플리케이션 배포는 이 Terraform apply를 호출할 수 없다. 유료 resource 생성은 전용 staging workflow와 수동 승인에서만 가능하다.
 - smoke 실행 시점의 서울 리전 단가 snapshot과 EMR billed resource를 artifact에 저장한다. 계약 파일에 변동 가격을 상수로 고정하지 않는다.
 
-## 4. Phase 1 이전 외부 준비값
+## 4. Phase 1 Terraform 구성
+
+Terraform root는 `infra/terraform` 아래에 있으며 AWS provider `6.54.0`을 lock file로 고정한다.
+
+| 경로 | 소유 resource |
+| --- | --- |
+| `bootstrap/` | staging stack과 분리된 state S3, KMS, versioning, public access block, native S3 lockfile |
+| `modules/network` | 전용 VPC, 3개 private subnet, route table, security group, S3 gateway/5개 interface endpoint |
+| `modules/storage` | 실행별 artifact/output/checkpoint/report bucket과 data KMS key |
+| `modules/msk` | IAM authentication을 사용하는 MSK Serverless cluster |
+| `modules/emr` | `emr-7.9.0`, X86_64, application별 16 vCPU 상한의 Batch/Continuous application |
+| `modules/iam` | application에 묶인 EMR execution role과 private smoke runner role/profile |
+| `modules/observability` | Batch/Continuous/smoke CloudWatch log group과 7일 retention |
+| `modules/cost-control` | `StackId`로 격리된 30 USD AWS Budget와 50/80/100% 알림 |
+| `modules/smoke-runner` | 승인된 AMI가 입력될 때만 생성되는 no-public-IP EC2/SSM runner |
+| `environments/staging` | Phase 0 계약값을 조립하는 실제 staging root module |
+
+Network에는 Internet Gateway, NAT Gateway, public subnet, `0.0.0.0/0`, SSH key가 없다. EMR와 runner는 security-group reference로 MSK IAM port `9098`에만 접근하고 AWS API/S3는 private endpoint를 사용한다.
+
+MSK bootstrap broker는 credential은 아니지만 운영 endpoint이므로 Terraform 일반 output에서 `sensitive`로 redaction한다. application ID, execution role ARN, bucket 이름처럼 Phase 2가 소비할 비민감 output은 `infrastructure_contract`에 모은다. 실제 env 파일 생성은 Phase 2 범위다.
+
+state bootstrap에는 `prevent_destroy`를 적용한다. 실행별 staging bucket은 고유 `StackId`로만 만들어지고 evidence export 뒤 제거할 수 있도록 `force_destroy`를 사용한다. 따라서 staging destroy가 platform state bucket이나 다른 stack bucket을 제거할 수 없다.
+
+## 5. 실제 plan/apply 이전 외부 준비값
 
 다음 값은 코드에 실제 값을 저장하지 않는다.
 
@@ -132,15 +156,17 @@ Batch와 Continuous를 동시에 돌리면 두 application이 최대 32 vCPU를 
 - Terraform state bucket 이름과 KMS key ARN
 - GitHub OIDC role ARN
 - AWS Budget 알림 대상
+- AWS Billing에서 활성화된 `StackId` user-defined cost allocation tag
 - 실행별 `stackId`와 ISO-8601 `ExpiresAt`
 
-GitHub OIDC provider는 계정 단위 platform bootstrap으로 한 번 준비하고, AskLake staging role과 resource policy는 Phase 1 Terraform이 소유한다. 이 선행 조건이 없으면 로컬 AWS key를 임시로 추가하지 말고 apply를 중단한다.
+GitHub OIDC provider와 Terraform 실행 role은 계정 단위 platform bootstrap으로 한 번 준비한다. AskLake Terraform은 EMR execution/smoke runner role과 staging resource policy를 소유한다. 이 선행 조건이 없으면 로컬 AWS key를 임시로 추가하지 말고 plan/apply를 중단한다.
 
-## 5. Phase 0 검증
+## 6. Phase 0·1 검증
 
 ```bash
 cd backend
 npm run verify:aws-staging-contract
+npm run verify:aws-staging-terraform
 ```
 
 verifier는 정상 계약뿐 아니라 다음 변조가 실패하는지도 자체 확인한다.
@@ -156,7 +182,11 @@ verifier는 정상 계약뿐 아니라 다음 변조가 실패하는지도 자�
 
 Phase 0 완료는 AWS resource가 준비됐다는 뜻이 아니다. Phase 1 Terraform과 Phase 3 workflow가 완료된 후 `plan`, 수동 `apply`, 실제 smoke, `destroy`를 순서대로 검증해야 한다.
 
-## 6. 공식 기준
+두 번째 명령은 정적 정책 검증 뒤 `terraform fmt -check`, bootstrap/staging `init -backend=false`, `validate`, mock provider plan assertion을 실행한다. 실제 credential, backend bucket, AWS API 없이 resource schema와 module 연결을 검증한다.
+
+Phase 1 완료도 AWS resource가 준비됐다는 뜻은 아니다. 실제 account/role/backend/quota 값을 안전한 외부 파일 또는 승인 workflow input으로 전달한 뒤 real provider `plan`을 검토해야 한다. 수동 `apply`, 실제 smoke와 `destroy`는 Phase 3~5 범위다.
+
+## 7. 공식 기준
 
 - [Terraform S3 backend](https://developer.hashicorp.com/terraform/language/backend/s3)
 - [EMR Serverless VPC access](https://docs.aws.amazon.com/emr/latest/EMR-Serverless-UserGuide/vpc-access.html)

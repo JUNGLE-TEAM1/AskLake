@@ -88,10 +88,16 @@ function validateContract(contract) {
   assert.equal(contract.region, "ap-northeast-2", "staging region drifted");
 
   const naming = requireObject(contract.naming, "naming");
-  assert.equal(naming.stackIdPattern, "^[a-z0-9][a-z0-9-]{2,20}$", "stack id policy drifted");
+  assert.equal(naming.stackIdPattern, "^[a-z0-9][a-z0-9-]{2,15}$", "stack id policy drifted");
   assert.ok(naming.resourcePrefixTemplate.includes("${stackId}"), "resource names must isolate stackId");
   assert.ok(naming.bucketPrefixTemplate.includes("${accountId}"), "bucket names must isolate accountId");
-  assert.ok(naming.bucketPrefixTemplate.includes("${region}"), "bucket names must isolate region");
+  assert.ok(naming.bucketPrefixTemplate.includes("${regionAlias}"), "bucket names must isolate region alias");
+  assert.equal(naming.bucketRegionAlias, "apne2", "bucket region alias drifted");
+  const longestBucketName = naming.bucketPrefixTemplate
+    .replace("${accountId}", "123456789012")
+    .replace("${regionAlias}", naming.bucketRegionAlias)
+    .replace("${stackId}", "a".repeat(16)) + "-checkpoint";
+  assert.ok(longestBucketName.length <= 63, "bucket naming contract exceeds the S3 limit");
   assert.equal(naming.topicNamespaceTemplate, "asklake.staging.${stackId}", "topic namespace drifted");
   assert.deepEqual(naming.requiredTags, REQUIRED_TAGS, "required AWS tags drifted");
 
@@ -121,7 +127,7 @@ function validateContract(contract) {
   assert.equal(network.s3GatewayEndpointRequired, true, "private S3 access is required");
   assertStringSet(
     network.requiredInterfaceEndpoints,
-    ["ssm", "ssmmessages", "ec2messages", "logs"],
+    ["ssm", "ssmmessages", "ec2messages", "logs", "emr-serverless"],
     "private interface endpoints",
   );
   assert.equal(network.publicIngressAllowed, false, "public ingress is forbidden");

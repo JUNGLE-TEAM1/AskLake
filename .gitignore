@@ -20,3 +20,13 @@ deploy/.env
 deploy/ec2.env
 airflow/logs/
 airflow/config/airflow.cfg
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
