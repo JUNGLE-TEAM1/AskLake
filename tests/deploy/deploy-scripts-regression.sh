@@ -76,6 +76,9 @@ write_valid_env() {
       'POSTGRES_DB=asklake_metadata' \
       'POSTGRES_PASSWORD=PostgresPassword_123' \
       'POSTGRES_USER=asklake' \
+      'ASKLAKE_CONTINUOUS_PUBLICATION_WINDOW=100' \
+      'ASKLAKE_CONTINUOUS_MAINTENANCE_LEASE_SECONDS=900' \
+      'ASKLAKE_CONTINUOUS_MAINTENANCE_RUNNER_STALE_SECONDS=30' \
       "ASKLAKE_HOST_DATA_DIR=$SPARK_DATA_DIR" \
       "ASKLAKE_REPLAY_HOST_INPUT_DIR=$REPLAY_INPUT_DIR"
   } > "$target"
@@ -256,6 +259,20 @@ replace_env_value "$ENV_FILE" ASKLAKE_S3_READINESS_WRITE_BUCKETS 'asklake-test-o
 expect_preflight_failure \
   'Trino buckets must be covered by S3 readiness' \
   'ASKLAKE_S3_READINESS_WRITE_BUCKETS must include asklake-test-query-results' \
+  "$ROOT_DIR/deploy/docker-compose.prod.yml"
+
+write_valid_trino_aws_env "$ENV_FILE"
+replace_env_value "$ENV_FILE" ASKLAKE_CONTINUOUS_PUBLICATION_WINDOW '0'
+expect_preflight_failure \
+  'Continuous publication window must be bounded' \
+  'ASKLAKE_CONTINUOUS_PUBLICATION_WINDOW must be an integer between 1 and 1000' \
+  "$ROOT_DIR/deploy/docker-compose.prod.yml"
+
+write_valid_trino_aws_env "$ENV_FILE"
+replace_env_value "$ENV_FILE" ASKLAKE_CONTINUOUS_MAINTENANCE_RUNNER_STALE_SECONDS '3601'
+expect_preflight_failure \
+  'Continuous runner stale timeout must be bounded' \
+  'ASKLAKE_CONTINUOUS_MAINTENANCE_RUNNER_STALE_SECONDS must be an integer between 10 and 3600' \
   "$ROOT_DIR/deploy/docker-compose.prod.yml"
 
 write_valid_env "$ENV_FILE"

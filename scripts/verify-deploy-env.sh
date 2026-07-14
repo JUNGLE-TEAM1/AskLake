@@ -95,6 +95,22 @@ is_blank() {
   [[ "$1" =~ ^[[:space:]]*$ ]]
 }
 
+validate_optional_bounded_integer() {
+  local key="$1"
+  local minimum="$2"
+  local maximum="$3"
+  local value
+  value="$(env_value_for "$key")"
+
+  if is_blank "$value"; then
+    return
+  fi
+  if [[ ! "$value" =~ ^[1-9][0-9]*$ ]] || (( value < minimum || value > maximum )); then
+    printf 'error: %s must be an integer between %s and %s when set\n' "$key" "$minimum" "$maximum" >&2
+    exit 1
+  fi
+}
+
 trino_enabled_value="$(printf '%s' "$(env_value_for TRINO_ENABLED)" | tr '[:upper:]' '[:lower:]')"
 case "$trino_enabled_value" in
   true|1|yes)
@@ -270,6 +286,10 @@ if [[ "$trino_enabled" == "true" ]]; then
   done
 fi
 
+validate_optional_bounded_integer ASKLAKE_CONTINUOUS_PUBLICATION_WINDOW 1 1000
+validate_optional_bounded_integer ASKLAKE_CONTINUOUS_MAINTENANCE_LEASE_SECONDS 120 86400
+validate_optional_bounded_integer ASKLAKE_CONTINUOUS_MAINTENANCE_RUNNER_STALE_SECONDS 10 3600
+
 airflow_fernet_key="$(env_value_for AIRFLOW_FERNET_KEY)"
 if ! printf '%s' "$airflow_fernet_key" | python3 -c '
 import base64
@@ -408,6 +428,8 @@ export ASKLAKE_PREFLIGHT_OUTPUT_BUCKET="$(env_value_for ASKLAKE_SPARK_OUTPUT_BUC
 export ASKLAKE_PREFLIGHT_TRINO_RESULT_BUCKET="$(env_value_for TRINO_RESULT_STORAGE_BUCKET)"
 export ASKLAKE_PREFLIGHT_TRINO_WAREHOUSE_BUCKET="$(env_value_for TRINO_ICEBERG_WAREHOUSE_BUCKET)"
 export ASKLAKE_PREFLIGHT_TRINO_ENABLED="$trino_enabled"
+export ASKLAKE_PREFLIGHT_CONTINUOUS_PUBLICATION_WINDOW="$(env_value_for ASKLAKE_CONTINUOUS_PUBLICATION_WINDOW)"
+export ASKLAKE_PREFLIGHT_CONTINUOUS_MAINTENANCE_RUNNER_STALE_SECONDS="$(env_value_for ASKLAKE_CONTINUOUS_MAINTENANCE_RUNNER_STALE_SECONDS)"
 
 compose_wiring_status=0
 docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" config --format json \
@@ -425,6 +447,8 @@ try:
     spark_worker = spark_worker_service.get("environment", {}) if spark_worker_service else None
     provider = os.environ["ASKLAKE_PREFLIGHT_OBJECT_STORAGE_PROVIDER"]
     trino_enabled = os.environ["ASKLAKE_PREFLIGHT_TRINO_ENABLED"] == "true"
+    publication_window = os.environ["ASKLAKE_PREFLIGHT_CONTINUOUS_PUBLICATION_WINDOW"] or "100"
+    runner_stale_seconds = os.environ["ASKLAKE_PREFLIGHT_CONTINUOUS_MAINTENANCE_RUNNER_STALE_SECONDS"] or "30"
     profiled_trino_services = {
         "trino", "trino-postgres-bootstrap", "trino-result-collector", "trino-result-cleanup"
     }
@@ -472,6 +496,17 @@ try:
                 backend.get("TRINO_ENABLED") == "true",
                 backend.get("TRINO_RESULT_STORAGE_BUCKET") == os.environ["ASKLAKE_PREFLIGHT_TRINO_RESULT_BUCKET"],
                 backend.get("TRINO_TLS_CA_FILE") == "/run/secrets/trino-ca.pem",
+                backend.get("TRINO_ICEBERG_CATALOG_NAME") == trino.get("TRINO_ICEBERG_CATALOG_NAME"),
+                backend.get("TRINO_ICEBERG_JDBC_USER") == trino.get("TRINO_ICEBERG_JDBC_USER"),
+                backend.get("TRINO_ICEBERG_JDBC_PASSWORD") == trino.get("TRINO_ICEBERG_JDBC_PASSWORD"),
+                backend.get("TRINO_ICEBERG_WAREHOUSE_BUCKET") == trino.get("TRINO_ICEBERG_WAREHOUSE_BUCKET"),
+                backend.get("TRINO_ICEBERG_WAREHOUSE_PREFIX") == trino.get("TRINO_ICEBERG_WAREHOUSE_PREFIX"),
+                backend.get("ASKLAKE_SPARK_ICEBERG_CATALOG_NAME") == trino.get("TRINO_ICEBERG_CATALOG_NAME"),
+                backend.get("ASKLAKE_SPARK_ICEBERG_JDBC_URL", "").startswith("jdbc:postgresql://postgres:5432/"),
+                bool(backend.get("ASKLAKE_SPARK_ICEBERG_PACKAGE", "").strip()),
+                bool(backend.get("ASKLAKE_SPARK_POSTGRES_PACKAGE", "").strip()),
+                backend.get("ASKLAKE_CONTINUOUS_PUBLICATION_WINDOW") == publication_window,
+                backend.get("ASKLAKE_CONTINUOUS_MAINTENANCE_RUNNER_STALE_SECONDS") == runner_stale_seconds,
                 required_trino_buckets.issubset(readiness_write_buckets),
                 trino.get("TRINO_ICEBERG_WAREHOUSE_BUCKET") == os.environ["ASKLAKE_PREFLIGHT_TRINO_WAREHOUSE_BUCKET"],
                 trino.get("TRINO_S3_REGION") == os.environ["ASKLAKE_PREFLIGHT_AWS_REGION"],
@@ -521,6 +556,8 @@ unset ASKLAKE_PREFLIGHT_OUTPUT_BUCKET
 unset ASKLAKE_PREFLIGHT_TRINO_RESULT_BUCKET
 unset ASKLAKE_PREFLIGHT_TRINO_WAREHOUSE_BUCKET
 unset ASKLAKE_PREFLIGHT_TRINO_ENABLED
+unset ASKLAKE_PREFLIGHT_CONTINUOUS_PUBLICATION_WINDOW
+unset ASKLAKE_PREFLIGHT_CONTINUOUS_MAINTENANCE_RUNNER_STALE_SECONDS
 
 if (( compose_wiring_status != 0 )); then
   printf 'error: Compose object-storage wiring does not match the selected %s provider contract\n' "$storage_provider" >&2

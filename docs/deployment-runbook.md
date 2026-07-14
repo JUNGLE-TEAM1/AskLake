@@ -8,7 +8,7 @@
 - EC2, Elastic IP, Security Group, Docker, Docker Compose, 서버 `deploy/.env`는 최초 bootstrap에서 이미 준비되어 있어야 한다.
 - 실제 AWS 계정 값, EC2 id, IP, domain, SSH key, secret은 repo에 커밋하지 않는다.
 - 로컬 실행자는 AWS CLI와 SSH 접근 권한을 가지고 있어야 한다.
-- 서버 repo는 기본적으로 `/opt/asklake`에 clone되어 있다고 가정한다.
+- 서버 repo는 기본적으로 `/opt/asklake`에 clone되어 있다고 가정한다. release checkout처럼 다른 경로를 쓰면 로컬 deploy env에 `ASKLAKE_DEPLOY_PATH`로 실제 경로를 명시한다.
 - 서버 `deploy/.env`에는 Postgres/Mongo/OpenAI 값과 S3 bucket 이름만 보존한다. 장기 AWS access key/secret과 MinIO credential은 넣지 않는다.
 - EC2에는 Raw list/read와 Output list/read/write/delete 권한을 가진 instance profile IAM Role을 연결한다. `TRINO_ENABLED=true`이면 Warehouse와 Query Result bucket의 list/read/write/delete 최소 권한도 같은 role에 추가한다. Container credential 전달을 위해 IMDSv2 token required, response hop limit 2를 사용한다.
 
@@ -134,7 +134,21 @@ ASKLAKE_S3_READINESS_WRITE_BUCKETS=replace-with-asklake-output-bucket
 
 `TRINO_ENABLED=false`에서는 `COMPOSE_PROFILES`를 비워 둔다. 이때 coordinator/bootstrap/collector/cleanup service는 Compose graph에서 빠지며 Trino bucket, password, HMAC secret, CA/keystore/password file 없이 기존 DuckDB 호환 배포가 기동한다. `aws-s3-readiness`는 Raw bucket list와 Output bucket put/head/delete만 검증한다.
 
+이 compatibility mode는 기존 DuckDB 조회를 위한 기동 경로다. 최신 일반 Spark, Kafka Snapshot, Kafka Continuous Job은 Iceberg commit 뒤 Trino 물리 검증을 요구하므로 새 Iceberg target을 실행하려면 아래 Trino profile을 활성화해야 한다.
+
 Trino를 켤 때는 `TRINO_ENABLED=true`와 `COMPOSE_PROFILES=trino`를 함께 설정하고 Warehouse와 Query Result bucket도 `ASKLAKE_S3_READINESS_WRITE_BUCKETS`에 포함한다. 배포 preflight는 두 bucket, fixed ACL identity(`asklake-api`, `asklake-materializer`), `iceberg.asklake`, 서로 다른 production secret, 읽을 수 있는 TLS/htpasswd file을 모두 검증한다. Warehouse와 Query Result bucket은 배포 전에 같은 리전에 생성하고 EC2 instance profile에 필요한 list/read/write/delete 최소 권한을 부여한다. backend, Trino, collector/cleanup worker는 endpoint나 장기 AWS access key/secret 없이 default credential chain을 사용한다. Query Result bucket은 lifecycle policy로 애플리케이션 retention보다 늦게 만료되도록 설정하고 공개 access를 차단한다.
+
+Spark Iceberg 실행에는 아래 값이 backend에서 Spark REST driver까지 전달된다. package coordinate는 Spark 4.0/Scala 2.13 호환값을 유지하고, Continuous는 publication report와 stale runner 정리 범위를 명시적으로 제한한다.
+
+```bash
+ASKLAKE_SPARK_ICEBERG_PACKAGE=org.apache.iceberg:iceberg-spark-runtime-4.0_2.13:1.11.0
+ASKLAKE_SPARK_POSTGRES_PACKAGE=org.postgresql:postgresql:42.7.7
+ASKLAKE_CONTINUOUS_PUBLICATION_WINDOW=100
+ASKLAKE_CONTINUOUS_MAINTENANCE_LEASE_SECONDS=900
+ASKLAKE_CONTINUOUS_MAINTENANCE_RUNNER_STALE_SECONDS=30
+```
+
+`ASKLAKE_CONTINUOUS_PUBLICATION_WINDOW`은 1~1000, lease는 120~86400초, stale timeout은 10~3600초 범위만 허용한다. Trino 활성 preflight는 backend와 coordinator가 같은 JDBC catalog/warehouse 설정을 받고 Spark Iceberg package와 Continuous 값을 실제 backend environment에 전달하는지도 확인한다.
 
 Production Trino는 public port를 열지 않고 backend/PostgreSQL과 통신하는 internal network에서 HTTPS/password authentication을 사용한다. 별도 outbound network는 EC2 instance profile의 IMDS credential과 AWS S3에 나갈 때만 사용한다. Query identity는 read-only, materializer identity는 `asklake` schema CTAS/`DESCRIBE`/drop 최소 권한으로 분리한다. JDBC role/password, TLS CA/keystore, password hash file과 shared secret은 서버 secret mount에만 두고 Git에 저장하지 않는다. 로컬 root Compose에서만 MinIO와 local credential을 사용한다.
 

@@ -51,7 +51,12 @@ docker build --target spark-runtime -t "$SPARK_RUNTIME_IMAGE" backend
 
 echo "Checking Spark runtime UID and embedded scripts..."
 docker run --rm "$SPARK_RUNTIME_IMAGE" sh -c \
-  'test "$(id -u)" = 185 && test -r /opt/asklake/scripts/spark_job_run.py && test -r /opt/asklake/scripts/spark_source_inspect_rest.py'
+  'test "$(id -u)" = 185 \
+    && test -r /opt/asklake/scripts/spark_job_run.py \
+    && test -r /opt/asklake/scripts/spark_source_inspect_rest.py \
+    && test -r /opt/asklake/scripts/kafka_continuous_stream.py \
+    && test -r /opt/asklake/scripts/kafka_continuous_maintenance.py \
+    && python3 -c "from pathlib import Path; paths = [Path(\"/opt/asklake/scripts/spark_job_run.py\"), Path(\"/opt/asklake/scripts/spark_source_inspect_rest.py\"), Path(\"/opt/asklake/scripts/kafka_continuous_stream.py\"), Path(\"/opt/asklake/scripts/kafka_continuous_maintenance.py\")]; [compile(path.read_text(), str(path), \"exec\") for path in paths]"'
 
 echo "Checking Spark runtime image availability..."
 if ! docker image inspect "$SPARK_IMAGE" >/dev/null 2>&1; then
