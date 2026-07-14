@@ -389,6 +389,11 @@ def run_due_scheduled_jobs(
         response = command_job(db, job.id, "run", actor_context)
         if reason == "due":
             advance_scheduled_job_after_tick(db, job.id)
+            refreshed_job = etl_repository.get_job_schema(db, job.id)
+            if refreshed_job is not None:
+                response = response.model_copy(update={
+                    "job": with_job_permissions(db, refreshed_job, actor_context),
+                })
         items.append(ScheduledJobRunItem(
             job_id=job.id,
             job_name=job.name,
