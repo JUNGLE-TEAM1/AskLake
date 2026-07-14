@@ -47,6 +47,39 @@ try {
   });
   assert.ok(objectStorageDockerEnv().some(([name, value]) => name === "MINIO_ENDPOINT" && value === "http://m3-minio:9000"));
 
+  const loopbackEndpoints = [
+    "http://127.0.0.1:9000",
+    "http://127.12.34.56:9000",
+    "http://localhost:9000",
+    "http://[::1]:9000",
+  ];
+  for (const endpoint of loopbackEndpoints) {
+    const fields = [
+      ["Storage Provider", "MinIO"],
+      ["Endpoint URL", endpoint],
+      ["Access Key", "source-access"],
+      ["Secret Key", "source-secret"],
+    ];
+    assert.equal(resolveObjectStorageConfig(fields).endpoint, endpoint);
+    const dockerConfig = resolveObjectStorageConfig(fields, { docker: true });
+    assert.equal(dockerConfig.endpoint, "http://m3-minio:9000");
+    assert.equal(dockerConfig.accessKeyId, "source-access");
+    assert.equal(dockerConfig.secretAccessKey, "source-secret");
+    assert.equal(
+      Object.fromEntries(objectStorageDockerEnv(fields)).MINIO_ENDPOINT,
+      "http://m3-minio:9000",
+    );
+  }
+
+  const externalMinioFields = [
+    ["Storage Provider", "MinIO"],
+    ["Endpoint", "https://minio.internal.example:9443"],
+  ];
+  assert.equal(
+    resolveObjectStorageConfig(externalMinioFields, { docker: true }).endpoint,
+    "https://minio.internal.example:9443",
+  );
+
   for (const name of managedNames) delete process.env[name];
   process.env.ASKLAKE_OBJECT_STORAGE_PROVIDER = "aws";
   process.env.AWS_REGION = "ap-northeast-2";

@@ -94,6 +94,7 @@ Node demo API는 기존 동작 비교용 reference로 남긴다.
 ### Object storage provider boundary
 
 - 로컬 root Compose는 `ASKLAKE_OBJECT_STORAGE_PROVIDER=minio`를 기본값으로 사용하고 MinIO endpoint, 로컬 전용 access key/secret, path-style URL을 사용한다.
+- 저장된 MinIO Source endpoint가 host loopback(`localhost`, `127.0.0.0/8`, `::1`)이면 host backend는 그 값을 유지하고 Docker Spark data plane만 `MINIO_ENDPOINT_IN_DOCKER`(기본 `http://m3-minio:9000`)로 변환한다. 외부 MinIO endpoint는 실행 경계에서도 그대로 보존한다.
 - EC2 production Compose는 `ASKLAKE_OBJECT_STORAGE_PROVIDER=aws`를 사용하며 MinIO service나 장기 AWS access key/secret을 포함하지 않는다. Backend, Spark S3A, DuckDB, Trino warehouse/result storage는 EC2 instance profile IAM Role의 default credential chain을 공유한다.
 - 현재 production 경로는 사전 생성한 Raw bucket을 읽고 Output bucket에 쓴다. `aws-s3-readiness`가 Raw list와 Output put/head/delete를 통과해야 backend가 시작된다.
 - frontend는 provider build variable에 따라 local에서는 MinIO 연결 필드를, AWS에서는 region과 bucket/prefix만 표시한다. Target 기본 bucket은 production build에서 `ASKLAKE_SPARK_OUTPUT_BUCKET`을 `VITE_SPARK_OUTPUT_BUCKET`으로 주입해 backend writer와 같은 Output bucket을 가리킨다. AWS credential은 browser/API payload에 넣지 않는다.
