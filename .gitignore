@@ -25,3 +25,4 @@ airflow/config/airflow.cfg
 *.tfstate.*
 terraform.tfvars
 crash.log
+infra/eks/delivery/*.handoff.json

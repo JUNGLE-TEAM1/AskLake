@@ -569,6 +569,14 @@ RDS bootstrap의 오대상/TLS preflight, 2회 실행 멱등성, role 관리 권
 bash scripts/verify-eks-rds-bootstrap.sh
 ```
 
+Phase 5에서 Pair A는 `infra/eks/delivery/dev.handoff.example.json`을 기준으로 infrastructure output을 Pair B workload에 전달한다. example은 실제 AWS 식별자와 secret을 포함하지 않는 planning 파일이며, 실제 값이 채워진 `*.handoff.json`은 Git ignore 대상이다. 선택이 필요한 항목을 임의로 정하지 않은 상태에서도 아래 검증은 통과하고 deploy-ready gate가 닫혀 있음을 확인한다.
+
+```bash
+bash scripts/verify-eks-delivery-handoff.sh
+```
+
+승인된 실제 환경 handoff는 Git 밖에서 `node scripts/verify-eks-delivery-handoff.mjs --ready <path>`로 검사한다. `--ready`는 다섯 ECR digest, 실제 MSK/RDS/S3 reference, identity mode와 ingress/secret/network 관련 선택이 모두 채워져야 통과한다. 상세 입력과 A/B 인수 기준은 [Phase 5 배포 Handoff](eks-phase-5-delivery-handoff.md)를 따른다.
+
 ```bash
 docker run --rm --entrypoint sh \
   -v "$PWD/infra/eks/terraform:/workspace" \
