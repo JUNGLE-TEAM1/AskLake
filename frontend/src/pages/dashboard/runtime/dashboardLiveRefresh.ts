@@ -1,9 +1,9 @@
 import type { DashboardDatasetFreshness } from "../../../services/dashboardRuntimeApi";
 import type { DashboardRuntimeResponse, DashboardRuntimeWidget } from "../../../types";
 
-export const DASHBOARD_LIVE_REFRESH_DEFAULT_MS = 5_000;
+export const DASHBOARD_LIVE_REFRESH_DEFAULT_MS = 1_000;
 export const DASHBOARD_LIVE_REFRESH_MAX_MS = 60_000;
-export const DASHBOARD_LIVE_REFRESH_MIN_MS = 5_000;
+export const DASHBOARD_LIVE_REFRESH_MIN_MS = 1_000;
 export const DASHBOARD_LIVE_CATCH_UP_MS = 250;
 
 export function dashboardLiveRefreshInterval(

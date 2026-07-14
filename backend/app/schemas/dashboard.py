@@ -353,7 +353,7 @@ class DatasetFreshnessResponse(CamelModel):
     is_continuous: bool
     latest_revision: int = Field(ge=0)
     updated_at: str | None = None
-    next_check_after_ms: int = Field(ge=5_000, le=60_000)
+    next_check_after_ms: int = Field(ge=1_000, le=60_000)
 
 
 class DatasetFreshnessQueryResponse(CamelModel):

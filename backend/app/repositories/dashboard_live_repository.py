@@ -20,8 +20,8 @@ from app.models.etl import ETLJobModel
 from app.models.catalog import CatalogDatasetModel
 
 
-DEFAULT_DASHBOARD_POLL_MS = 5_000
-MIN_DASHBOARD_POLL_MS = 5_000
+DEFAULT_DASHBOARD_POLL_MS = 1_000
+MIN_DASHBOARD_POLL_MS = 1_000
 MAX_DASHBOARD_POLL_MS = 60_000
 logger = logging.getLogger(__name__)
 STREAM_COMMIT_KIND = "stream"
@@ -125,7 +125,10 @@ def ensure_dashboard_live_schema(db: Session) -> None:
         # create_all handles fresh databases. These ALTERs keep existing local
         # volumes forward-compatible when a column is added later.
         for statement in (
-            "ALTER TABLE dataset_freshness ADD COLUMN IF NOT EXISTS next_check_after_ms integer NOT NULL DEFAULT 5000",
+            "ALTER TABLE dataset_freshness ADD COLUMN IF NOT EXISTS next_check_after_ms integer NOT NULL DEFAULT 1000",
+            "ALTER TABLE dataset_freshness ALTER COLUMN next_check_after_ms SET DEFAULT 1000",
+            "ALTER TABLE dataset_freshness DROP CONSTRAINT IF EXISTS dataset_freshness_next_check_after_ms_check",
+            "ALTER TABLE dataset_freshness ADD CONSTRAINT dataset_freshness_next_check_after_ms_check CHECK (next_check_after_ms BETWEEN 1000 AND 60000)",
             "ALTER TABLE dashboard_widget_results ADD COLUMN IF NOT EXISTS calculation_state jsonb NOT NULL DEFAULT '{}'::jsonb",
             "ALTER TABLE dashboard_widget_results ADD COLUMN IF NOT EXISTS calculation_mode varchar(32) NOT NULL DEFAULT 'full'",
             "ALTER TABLE dataset_revision_commits ADD COLUMN IF NOT EXISTS source_ranges jsonb NOT NULL DEFAULT '[]'::jsonb",

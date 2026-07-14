@@ -238,7 +238,7 @@ GET /api/datasets/{datasetId}/freshness
   "isContinuous": true,
   "latestRevision": 105,
   "updatedAt": "2026-07-14T12:00:05+00:00",
-  "nextCheckAfterMs": 5000
+  "nextCheckAfterMs": 1000
 }
 ```
 
@@ -263,7 +263,7 @@ Content-Type: application/json
       "isContinuous": true,
       "latestRevision": 105,
       "updatedAt": "2026-07-14T12:00:05+00:00",
-      "nextCheckAfterMs": 5000
+      "nextCheckAfterMs": 1000
     }
   ]
 }
@@ -356,16 +356,17 @@ Backend가 Spark trigger 설정을 보고 데이터셋별 권장 주기를 내�
 
 ```text
 nextCheckAfterMs
-= clamp(triggerIntervalSeconds × 500, 5,000, 60,000)
+= clamp(triggerIntervalSeconds × 500, 1,000, 60,000)
 ```
 
 | Spark trigger | 대시보드 freshness 확인 주기 |
 | --- | --- |
+| 1~2초 | 1초 |
 | 10초 | 5초 |
 | 30초 | 15초 |
 | 5분 | 60초 |
 
-화면은 서버가 내려준 `nextCheckAfterMs`를 사용한다. 서버의 현재 정책은 최소 5초, 최대 60초다.
+화면은 서버가 내려준 `nextCheckAfterMs`를 사용한다. 서버의 현재 정책은 최소 1초, 최대 60초다.
 
 여러 사용자의 요청이 같은 순간에 몰리지 않도록 화면은 데이터셋 ID로 정한 0~10%의 작은 지연을 더한다. 같은 데이터셋에는 항상 같은 지연이 붙으며, 서버가 정한 기본 주기를 바꾸는 정책은 아니다.
 

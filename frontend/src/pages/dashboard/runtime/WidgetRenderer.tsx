@@ -415,7 +415,7 @@ function buildBaseChartOptions(color: string): ApexOptions {
     chart: {
       animations: {
         enabled: true,
-        speed: 450,
+        speed: 180,
       },
       fontFamily: "inherit",
       foreColor: "#64748b",
@@ -530,7 +530,7 @@ function buildCircularChartOptions(color: string): ApexOptions {
     chart: {
       animations: {
         enabled: true,
-        speed: 450,
+        speed: 180,
       },
       fontFamily: "inherit",
       foreColor: "#64748b",

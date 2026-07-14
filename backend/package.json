@@ -63,6 +63,8 @@
     "verify:data-lake-iceberg-source": "PYTHONPATH=. .venv/bin/python -m unittest tests.test_etl_data_lake_source tests.test_etl_endpoint_auth && node scripts/verify-data-lake-iceberg-source.mjs",
     "verify:synthetic-click-log": "${ASKLAKE_FASTAPI_PYTHON:-python3} scripts/synthetic-commerce/test_convert_click_events_to_log.py",
     "synthetic-commerce:click-log": "${ASKLAKE_FASTAPI_PYTHON:-python3} scripts/synthetic-commerce/convert_click_events_to_log.py",
+    "verify:kafka-click-log": "${ASKLAKE_FASTAPI_PYTHON:-python3} scripts/synthetic-commerce/test_convert_click_log_to_kafka_jsonl.py",
+    "kafka:click-log:convert": "${ASKLAKE_FASTAPI_PYTHON:-python3} scripts/synthetic-commerce/convert_click_log_to_kafka_jsonl.py",
     "minio:seed-click-log": "node scripts/seed-minio-click-log.mjs",
     "minio:seed-verify": "node scripts/seed-minio-verify-sample.mjs",
     "minio:prepare-samples": "node scripts/prepare-minio-samples.mjs",

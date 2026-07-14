@@ -17,7 +17,7 @@ class DatasetFreshnessModel(Base):
     dataset_id: Mapped[str] = mapped_column(String(120), primary_key=True)
     latest_revision: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     latest_run_id: Mapped[str | None] = mapped_column(String(160), nullable=True)
-    next_check_after_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=5_000)
+    next_check_after_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=1_000)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
