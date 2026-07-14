@@ -408,6 +408,8 @@ Dashboard endpoint와 Catalog 물리 데이터는 FastAPI 응답을 source of tr
 - FastAPI 실행은 `backend/README.md`와 `docs/04-development-guide.md`를 따른다.
 - Node demo API는 FastAPI 구현과 비교하는 reference로 유지한다.
 - CI가 생기면 최소 required check 후보는 frontend build, backend import/compile, conflict marker scan이다.
+- Issue #735의 EKS + MSK MVP는 아직 현재 runtime이 아니라 후보 배포 경로다. 배포 broker는 MSK Serverless + IAM을 사용하고, frontend/FastAPI/Airflow/Replay Job/Spark batch를 EKS로 옮기는 동안 기존 EC2 Kafka Continuous control plane과 worker는 유지한다. Kafka/Redpanda broker를 EKS 안에 운영하지 않으며 로컬 Redpanda는 fixture/replay 경로로 남긴다.
+- EKS 전환의 환경 inventory, 미결정 경계, Pair A/B handoff와 resource 생성 gate는 [EKS + MSK MVP Phase 0 환경·인수 계약](eks-msk-mvp-phase-0-contract.md)을 따른다. EKS FastAPI가 EC2 Continuous runtime을 동시에 제어하지 못하게 하는 routing/feature boundary가 구현되기 전에는 production 전환으로 간주하지 않는다.
 
 ## 12) SQL 결과 시각화 경계
 

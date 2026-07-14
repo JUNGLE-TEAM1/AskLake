@@ -545,6 +545,8 @@ FastAPI 폴더 구조와 설계 결정은 `docs/backend-fastapi-transition-plan.
 AWS 배포 전에는 로컬에서 prod-like compose 구성이 유효한지 먼저 확인한다.
 실제 secret은 `deploy/.env`에만 두고, repo에는 `deploy/.env.example`만 커밋한다.
 
+Issue #735의 EKS + MSK MVP를 시작할 때는 resource를 생성하기 전에 [EKS + MSK MVP Phase 0 환경·인수 계약](eks-msk-mvp-phase-0-contract.md)을 완료한다. EKS/ECR/MSK/RDS inventory가 `AccessDenied`인 상태에서는 빈 환경으로 판단하지 않는다. 기존 EKS 재사용 여부, VPC/subnet 경로, RDS/Trino 위치, shared resource lifecycle과 Pair B의 workload별 IAM/network 요구가 채워지기 전에는 과금 resource를 생성하지 않는다. 현재 EC2 Compose와 local Docker/Redpanda/Spark REST 검증은 EKS 후보 경로가 추가되어도 유지한다.
+
 ```bash
 docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml config
 ```
