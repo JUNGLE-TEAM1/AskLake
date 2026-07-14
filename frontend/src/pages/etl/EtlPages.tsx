@@ -1695,10 +1695,28 @@ export function SourceConnectionPage({
 
   const selectSourceAsset = async (assetPath: string) => {
     const asset = displayAssets.find(([path]) => path === assetPath);
-    if (!asset) return;
-    const [, assetMeta] = asset;
+    if (!asset && !assetPath.endsWith("/")) return;
+    const assetMeta = asset?.[1] ?? "folder";
     if (assetMeta === "folder" || assetPath.endsWith("/")) {
-      await loadSourceAssetChildren(assetPath);
+      const folderPath = normalizeFolderPrefix(assetPath);
+      const folderPatches: Array<[string, string]> = editableFields
+        .filter(([fieldLabel]) => ["Path / Prefix", "Path", "DATASET OR TABLE SELECTOR"].includes(fieldLabel))
+        .map(([fieldLabel]) => [fieldLabel, folderPath]);
+      folderPatches.push(
+        ["__Selected Folder", folderPath],
+        ["__Selected Object", folderPath],
+      );
+      if (activeSourceType === "File / S3") {
+        folderPatches.push(["Collection Scope", "folder"], ["Collection Mode", "incremental"]);
+        updateCollectionConfig(folderPatches);
+      } else {
+        const nextFields = upsertSourceFields(editableFields, folderPatches);
+        setSourceFields((fields) => ({ ...fields, [activeSourceType]: nextFields }));
+        applySourceDraft(activeSourceType, nextFields, connectionStatus, `폴더 ${folderPath}가 선택됨`);
+      }
+      setSelectedAssetPath(folderPath);
+      onAction("etl.source.folder_selected", "/api/etl/sources/assets", folderPath);
+      await loadSourceAssetChildren(folderPath);
       return;
     }
     const currentAssets = displayAssets;
@@ -1707,6 +1725,10 @@ export function SourceConnectionPage({
         ? [fieldLabel, assetPath] as [string, string]
         : [fieldLabel, fieldValue] as [string, string]
     )), [
+      ...(activeSourceType === "File / S3"
+        ? [["Collection Scope", "file"], ["Collection Mode", "full"]] as Array<[string, string]>
+        : []),
+      ["__Selected Folder", ""],
       ["__Selected Object", assetPath],
       ["__Sample Object", assetPath],
     ]);

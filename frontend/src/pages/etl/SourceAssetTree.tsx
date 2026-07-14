@@ -85,13 +85,13 @@ export function SourceAssetTree({
   const getTrailing = useCallback((node: NodeApi<SourceAssetTreeNode>) => (
     <>
       {node.data.isFolder ? (
-        folderSelectionControl(node.data)
+        folderSelectionControl(node.data, onSelect)
       ) : null}
       {node.data.path === loadingPath
         ? <Loader2 className="size-3.5 animate-spin text-blue-600" />
         : null}
     </>
-  ), [loadingPath]);
+  ), [loadingPath, onSelect]);
 
   if (nodes.length === 0) {
     return (
@@ -128,13 +128,17 @@ export function SourceAssetTree({
   );
 }
 
-function folderSelectionControl(node: SourceAssetTreeNode) {
+function folderSelectionControl(node: SourceAssetTreeNode, onSelect: (assetPath: string) => void | Promise<void>) {
   return (
-    <span
+    <button
+      type="button"
       aria-label={`폴더 ${node.name} 선택`}
       className="source-asset-folder-select"
-      role="img"
-      title="이 폴더를 수집 범위로 선택"
+      title="이 폴더를 증분 수집 범위로 선택"
+      onClick={(event) => {
+        event.stopPropagation();
+        void onSelect(node.path);
+      }}
     />
   );
 }
