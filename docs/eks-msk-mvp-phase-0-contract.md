@@ -24,7 +24,7 @@ AWS CLI의 기본 region은 `ap-northeast-2`이고 `asklake-deployer` identity�
 
 배포 환경의 Kafka broker는 `Amazon MSK Serverless + IAM`을 사용한다. Kafka 또는 Redpanda broker를 EKS 안에 운영하지 않는다. 로컬 Redpanda는 fixture와 replay 개발 환경으로 유지한다.
 
-MVP에서 EKS로 옮길 workload 후보는 frontend, FastAPI backend, Airflow, 유한 Replay Producer Job, Spark Operator가 제출하는 batch `SparkApplication`이다. Spark driver와 executor는 EKS Pod로 실행한다.
+MVP에서 EKS로 옮길 workload 후보는 frontend, FastAPI backend, Airflow와 Spark Operator가 제출하는 batch `SparkApplication`이다. Spark driver와 executor는 EKS Pod로 실행한다. 테스트 입력 fixture producer는 EKS 밖에서 실행하고 격리된 MSK test topic에만 produce한다.
 
 현재 EC2에서 실행 중인 Kafka Continuous control plane과 장기 Spark Structured Streaming worker는 이 MVP에서 유지한다. EKS FastAPI가 같은 Continuous runtime의 start, sync, pause, stop을 실행하지 못하도록 이후 phase에서 feature flag 또는 명시적 routing boundary를 구현해야 한다. EC2 Continuous의 EKS 이전과 EC2 종료는 별도 후속 단계다.
 
@@ -38,7 +38,7 @@ Issue #735의 목표와 범위도 이 계약에 맞춰 갱신했다. 이후 구�
 
 FastAPI는 현재 process startup에서 Continuous runtime sync와 scheduled job tick을 실행한다. replica를 두 개 이상 배포하면 background 작업이 중복 실행될 수 있으므로 EKS HPA를 켜기 전에 singleton Deployment, 분리 worker/CronJob, 또는 DB leader lock 중 하나를 학습하고 선택해야 한다.
 
-Replay Producer는 현재 FastAPI가 Node subprocess를 시작하고 process memory에 상태와 log를 보관한다. EKS에서는 유한 Kubernetes Job으로 제출하고 FastAPI 재시작 뒤에도 조회 가능한 durable record를 사용해야 한다. durable record의 source of truth와 보존 기간은 Pair B가 설계안을 만들고 팀이 승인해야 한다.
+Replay Producer는 현재 FastAPI가 Node subprocess를 시작하고 process memory에 상태와 log를 보관한다. EKS MVP에서는 이 producer를 Kubernetes workload로 이전하지 않는다. EKS 밖 fixture producer의 AWS principal, 격리된 test topic 권한과 batch receipt를 통해 입력 건수와 AskLake `runId`를 연결하고, EKS FastAPI에는 Replay Job용 Kubernetes RBAC를 부여하지 않는다.
 
 Spark batch도 현재 Standalone REST 계약을 사용한다. EKS에서는 Spark Operator의 `SparkApplication` 생성, 상태 조회, log reference, cancel/retry를 기존 `runId`와 연결하는 Kubernetes provider가 필요하다. API response shape를 바꾸게 되면 `docs/03-api-reference.md`와 `docs/api-contract.md`를 함께 갱신한다.
 
@@ -91,10 +91,10 @@ Pair A는 B가 요구하는 IAM action과 network destination을 받기 전에 E
 
 Pair B는 Kubernetes resource를 실제로 만들기 전에 다음 요구사항을 명시한다.
 
-- FastAPI, Airflow, Replay Job, Spark driver/executor가 각각 사용하는 image, port, health/readiness probe와 resource profile.
+- FastAPI, Airflow와 Spark driver/executor가 각각 사용하는 image, port, health/readiness probe와 resource profile.
+- EKS 밖 fixture producer의 메시지 형식, batch receipt와 test topic 권한 경계.
 - workload별 필요한 environment key와 Secret key 이름. 실제 secret 값은 넘기지 않는다.
 - workload별 MSK, S3, RDS, Trino 접근 목적과 최소 IAM action.
-- Replay Kubernetes Job의 manifest schema, 종료 상태, retry, timeout, durable record 필드와 log reference.
 - SparkApplication의 driver/executor 설정, service account, package/config dependency, runId label/annotation, 상태·cancel·retry mapping.
 - FastAPI background singleton 후보와 선택 근거.
 - EKS FastAPI에서 차단할 Continuous command/sync 목록과 EC2 Continuous endpoint/DB ownership.

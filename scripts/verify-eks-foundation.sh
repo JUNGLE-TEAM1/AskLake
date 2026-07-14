@@ -37,8 +37,8 @@ if helm template asklake-foundation "$CHART_DIR" -f "$VALUES_FILE" \
 fi
 
 service_account_count="$(grep -c '^kind: ServiceAccount$' "$RENDERED_FILE")"
-if [[ "$service_account_count" -ne 5 ]]; then
-  echo "expected 5 workload service accounts, rendered $service_account_count" >&2
+if [[ "$service_account_count" -ne 4 ]]; then
+  echo "expected 4 workload service accounts, rendered $service_account_count" >&2
   exit 1
 fi
 
@@ -46,7 +46,6 @@ for service_account in \
   asklake-frontend \
   asklake-backend \
   asklake-airflow \
-  asklake-replay-producer \
   asklake-spark; do
   if ! grep -q "name: $service_account" "$RENDERED_FILE"; then
     echo "rendered foundation is missing service account: $service_account" >&2

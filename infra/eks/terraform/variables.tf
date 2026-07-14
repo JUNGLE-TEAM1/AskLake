@@ -152,7 +152,6 @@ variable "ecr_repository_names" {
     "frontend",
     "backend",
     "airflow",
-    "replay-producer",
     "spark-runtime",
   ]
 }
@@ -194,7 +193,6 @@ variable "service_account_names" {
     frontend       = "asklake-frontend"
     backend        = "asklake-backend"
     airflow        = "asklake-airflow"
-    replayProducer = "asklake-replay-producer"
     spark          = "asklake-spark"
   }
 }

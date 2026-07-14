@@ -29,11 +29,6 @@ serviceAccounts:
     name: asklake-airflow
     annotations: {}
     automountServiceAccountToken: false
-  replayProducer:
-    create: true
-    name: asklake-replay-producer
-    annotations: {}
-    automountServiceAccountToken: false
   spark:
     create: true
     name: asklake-spark

@@ -8,14 +8,13 @@
 
 Terraform은 `cluster_name`, `cluster_vpc_id`, `cluster_security_group_id`, `cluster_subnet_ids`, `managed_node_group_name`, `namespace`, `service_account_names`, `ecr_repository_urls`, `phase1_handoff`를 안정적인 output 이름으로 제공한다. 실제 output 값은 배포 environment에서 전달하며 문서나 PR 본문에 복사하지 않는다.
 
-ECR repository는 frontend, backend, Airflow, Replay Producer와 Spark runtime을 분리한다. repository는 immutable tag와 push scan을 사용하며 배포 workflow는 최종적으로 repository URL과 image digest를 함께 전달해야 한다.
+ECR repository는 frontend, backend, Airflow와 Spark runtime을 분리한다. EKS 밖 fixture producer는 이 foundation의 workload image와 service account 대상에 포함하지 않는다. repository는 immutable tag와 push scan을 사용하며 배포 workflow는 최종적으로 repository URL과 image digest를 함께 전달해야 한다.
 
 `infra/eks/helm/asklake-foundation`은 다음 service account 이름을 제공한다.
 
 - frontend: `asklake-frontend`
 - FastAPI backend: `asklake-backend`
 - Airflow: `asklake-airflow`
-- Replay Producer Job: `asklake-replay-producer`
 - Spark driver/executor: `asklake-spark`
 
 이 이름은 기본값이며 Terraform output과 Helm value를 통해 같은 값으로 전달한다. B는 workload manifest에서 별도 service account를 임의로 만들지 않는다.
@@ -32,7 +31,7 @@ ECR repository는 frontend, backend, Airflow, Replay Producer와 Spark runtime�
 - Kubernetes namespace와 service account: Terraform output/Helm value가 source of truth
 - secret value: Git에 저장하지 않고 Kubernetes Secret 또는 외부 secret reference로만 전달
 
-B는 실제 AWS resource가 없어도 Helm render 결과와 fake Kubernetes client로 Replay Job, SparkApplication, FastAPI provider contract를 개발할 수 있다.
+B는 실제 AWS resource가 없어도 Helm render 결과와 fake Kubernetes client로 SparkApplication과 FastAPI provider contract를 개발할 수 있다.
 
 ```bash
 bash scripts/verify-eks-foundation.sh
@@ -50,7 +49,7 @@ B는 workload 구현 PR에 다음 내용을 machine-readable value와 문서로 
 - 필요한 environment key와 Secret key 이름. 실제 값은 포함하지 않는다.
 - service account별 필요한 AWS service, action, resource ARN pattern과 사용 목적.
 - MSK topic/consumer group action, S3 bucket/prefix action, RDS/Trino network destination.
-- Replay Job의 deadline, retry/backoff, termination status, durable record와 log reference.
+- EKS 밖 fixture producer의 메시지 형식, batch receipt, test topic 권한과 AskLake `runId` 연결 방식.
 - SparkApplication의 driver/executor service account, resource request/limit, dependency, `runId` label/annotation, 상태·cancel·retry mapping.
 - EKS FastAPI에서 비활성화할 EC2 Continuous command와 background sync 목록.
 - FastAPI background singleton 후보와 재시작/다중 replica test 결과.

@@ -29,12 +29,11 @@
     "serviceAccounts": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["frontend", "backend", "airflow", "replayProducer", "spark"],
+      "required": ["frontend", "backend", "airflow", "spark"],
       "properties": {
         "frontend": { "$ref": "#/$defs/serviceAccount" },
         "backend": { "$ref": "#/$defs/serviceAccount" },
         "airflow": { "$ref": "#/$defs/serviceAccount" },
-        "replayProducer": { "$ref": "#/$defs/serviceAccount" },
         "spark": { "$ref": "#/$defs/serviceAccount" }
       }
     }
