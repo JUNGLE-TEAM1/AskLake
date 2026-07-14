@@ -1030,34 +1030,6 @@ Rules:
 - 서버는 `TARGET_DATABASES` 또는 `ASKLAKE_TARGET_DATABASES`에 지정된 이름만 반환할 수 있습니다.
 - 환경변수가 없으면 local demo 기본값으로 `asklake`, `asklake_gold`, `analytics`, `marketing`을 반환합니다.
 
-### 7.1.2 Snapshot Rule Preview
-
-`POST /api/etl/rules/preview`
-
-```ts
-type RulePreviewRequest = {
-  executionMode: "snapshot" | "continuous";
-  records: Array<Record<string, unknown>>; // 최대 100개
-  ruleContractVersion: "1.0";
-  rules: CanonicalRuleDraft[];
-  schemaColumns: Array<SchemaColumnDraft & { sourceType?: string }>;
-  sourceType: string;
-};
-
-type RulePreviewResponse = {
-  compilation: RuleCompilationResult;
-  records: Array<Record<string, unknown>>;
-  quarantined: Array<Record<string, unknown>>;
-  transform: Record<string, unknown>;
-  quality: Record<string, unknown>;
-};
-```
-
-- backend는 request를 canonical compiler로 먼저 검증하고 실제 Snapshot Rule runtime에 적용합니다.
-- `schemaColumns[].sourceType`은 원본 필드 타입, 같은 컬럼의 `type`은 target 타입입니다. 값이 없던 기존 payload는 `type`을 원본 타입으로도 사용합니다. 요청 최상위 `sourceType`은 Kafka 등 connector 종류를 뜻합니다.
-- 허용 operation은 Snapshot 공통 목록입니다. Continuous 요청도 같은 bounded runtime으로 streaming-safe Rule 의미를 확인할 수 있으며 임의 SQL과 stateful/engine-specific operation은 거절합니다.
-- 이 endpoint는 bounded UI Preview 전용이며 Job, offset, checkpoint, target object, Catalog를 변경하지 않습니다.
-
 ### 7.2 Review snapshot
 
 `POST /api/etl/review`

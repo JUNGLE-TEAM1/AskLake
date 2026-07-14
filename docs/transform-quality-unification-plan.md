@@ -135,11 +135,11 @@ npm run verify:snapshot-spark-pipeline
 npm run verify:kafka-review-scheduled-ingest
 ```
 
-### Phase 4. UI와 Preview 정합화 (완료)
+### Phase 4. UI와 실행 계약 정합화 (완료)
 
 - Transform 편집기는 `String`, `Integer`, `Long`, `Double`, `Boolean`, `Timestamp`, `Date`, `JSON` 타입과 Snapshot portable operation을 사용한다. Kafka/Continuous에서 임의 SQL 탭은 노출하지 않는다.
 - 원본 `sourceType`과 target `type`을 분리해 보존하고 rename, cast, default, null guard를 순서가 있는 명시적 Rule로 모두 직렬화한다. Visual 편집 결과가 자동 생성 SQL 한 건으로 덮이지 않는다.
-- `POST /api/etl/rules/preview`는 최대 100개 샘플을 compiler로 검증한 뒤 실제 Node Snapshot runtime에 적용한다. 같은 conformance fixture를 실제 Spark 4 runtime과 비교해 Preview 의미를 고정한다.
+- 처리 단계의 결과 미리보기와 중복되는 Schema Transform 전용 실행 Preview는 제거한다. canonical Rule은 review/create와 실제 실행 경로에서 compiler와 runtime 검증을 거친다.
 - 모든 Source의 Target 화면에서 RAW, BRONZE, SILVER, GOLD를 같은 Select로 고르며 layer 변경 시 자동 생성 storage path도 함께 갱신한다. Layer와 Rule 유무는 독립적이다.
 
 Phase 4 검증:
@@ -147,7 +147,6 @@ Phase 4 검증:
 ```bash
 cd backend
 npm run verify:rule-compiler
-npm run verify:rule-preview
 npm run verify:snapshot-rule-conformance
 npm run verify:target-metadata
 
@@ -165,7 +164,7 @@ npm run build
 - canonical Rule, configured schema, target/source identity를 합친 fingerprint를 checkpoint의 `_asklake_contract` metadata에 고정한다. worker report, publication signature, batch manifest와 Catalog materialization에도 rule/schema/runtime fingerprint를 남긴다.
 - 초기화된 checkpoint의 스키마·Rule·물리 target 변경은 Job 복사와 새 checkpoint를 요구한다. 실행 중 변경은 `409 CONTINUOUS_IMMUTABLE_CONFIG_ACTIVE`, 초기화 후 변경은 `409 CONTINUOUS_CHECKPOINT_CONTRACT_IMMUTABLE`로 거절한다.
 - 격리 replay도 현재 schema policy와 canonical Rule을 다시 적용하므로 Rule 격리 행이 maintenance 경로를 통해 우회 적재되지 않는다.
-- Schema Transform UI는 Continuous에서도 streaming-safe Visual Transform과 bounded Preview를 제공하고 임의 SQL은 노출하지 않는다.
+- Schema Transform UI는 Continuous에서도 streaming-safe Visual Transform을 제공하고 임의 SQL은 노출하지 않는다.
 
 Phase 5 검증:
 
@@ -219,7 +218,7 @@ Phase 7 결과:
 Phase 7 검증:
 
 - 일반 Snapshot의 portable/SQL 혼합 규칙은 Spark coordinator가 canonical quality를 publication 전에 실행하고 run staging 성공 결과만 최종 경로로 publish한다.
-- 일반 Snapshot SQL Preview는 bounded Spark runtime으로 분기하며 portable Preview와 동일 API 응답 계약을 유지한다.
+- 일반 Snapshot의 SQL expression은 실제 Spark 실행 경로에서 compiler와 runtime 검증을 거친다.
 - Kafka Snapshot Job은 configured/compiled target schema로 exact projection하고 mode별 target layer/format을 UI와 backend에서 함께 검증한다.
 - 공통 compiler fixture는 nested JSON input과 Regex/Accepted Values/Range/Mask 파라미터 오류를 Frontend/Python/Node에서 동일하게 검증한다.
 
@@ -229,7 +228,6 @@ npm run verify
 npm run verify:rule-compiler
 npm run verify:snapshot-rule-conformance
 npm run verify:snapshot-spark-pipeline
-npm run verify:rule-preview
 npm run verify:target-metadata
 npm run verify:kafka-target-projection
 npm run verify:target-mode-contract

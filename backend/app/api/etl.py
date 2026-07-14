@@ -18,8 +18,6 @@ from app.schemas.etl import (
     PermissionOptionsResponse,
     RecordParsingPreviewRequest,
     RecordParsingPreviewResponse,
-    RulePreviewRequest,
-    RulePreviewResponse,
     JobCommandRequest,
     JobCommandResponse,
     JobListResponse,
@@ -81,11 +79,6 @@ def infer_schema(
 @router.get("/sources/defaults", response_model=SourceConnectorDefaults)
 def get_source_connector_defaults() -> SourceConnectorDefaults:
     return etl_service.source_connector_defaults()
-
-
-@router.post("/rules/preview", response_model=RulePreviewResponse)
-def preview_rules(request: RulePreviewRequest) -> RulePreviewResponse:
-    return etl_service.preview_rules(request)
 
 
 @router.post("/record-parsing/preview", response_model=RecordParsingPreviewResponse)
