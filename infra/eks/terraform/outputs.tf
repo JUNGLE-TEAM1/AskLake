@@ -59,7 +59,7 @@ output "trino_handoff" {
   description = "Non-secret EKS Trino deployment contract. Null AWS values remain explicit resource-creation gates."
   value = {
     service_account_name = var.service_account_names["trino"]
-    irsa_role_arn        = var.trino_irsa_role_arn
+    irsa_role_arn        = local.use_irsa ? try(aws_iam_role.workload["trino"].arn, null) : var.trino_irsa_role_arn
     image = {
       repository_url = try(aws_ecr_repository.workload["trino"].repository_url, null)
       digest         = var.trino_image_digest

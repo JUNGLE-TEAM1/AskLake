@@ -13,7 +13,11 @@ required_files=(
   "$ROOT_DIR/infra/eks/README.md"
   "$TERRAFORM_DIR/main.tf"
   "$TERRAFORM_DIR/outputs.tf"
+  "$TERRAFORM_DIR/workload-identity.tf"
+  "$TERRAFORM_DIR/workload-identity-outputs.tf"
   "$TERRAFORM_DIR/dev.tfvars.example"
+  "$ROOT_DIR/infra/eks/bootstrap/rds/bootstrap-databases.sql"
+  "$ROOT_DIR/scripts/bootstrap-eks-rds-databases.sh"
   "$CHART_DIR/Chart.yaml"
   "$CHART_DIR/values.schema.json"
   "$CHART_DIR/templates/backend-rbac.yaml"
@@ -126,10 +130,28 @@ if grep -q '^kind: StatefulSet$' "$RENDERED_FILE"; then
 fi
 
 if grep -Eiq '(AKIA[0-9A-Z]{16}|aws_secret_access_key|BEGIN (RSA|OPENSSH|EC) PRIVATE KEY)' \
-  "$TERRAFORM_DIR"/*.tf "$TERRAFORM_DIR/dev.tfvars.example" "$VALUES_FILE"; then
+  "$TERRAFORM_DIR"/*.tf \
+  "$TERRAFORM_DIR/dev.tfvars.example" \
+  "$ROOT_DIR/infra/eks/bootstrap/rds/bootstrap-databases.sql" \
+  "$ROOT_DIR/scripts/bootstrap-eks-rds-databases.sh" \
+  "$VALUES_FILE"; then
   echo "credential-like value found in EKS foundation examples" >&2
   exit 1
 fi
+
+grep -q 'workload_identity_mode = "disabled"' "$TERRAFORM_DIR/dev.tfvars.example"
+grep -q 'pod_identity_agent_ready = false' "$TERRAFORM_DIR/dev.tfvars.example"
+grep -q 'ASKLAKE_RDS_BOOTSTRAP_CONFIRM=create-three-isolated-databases' \
+  "$ROOT_DIR/scripts/bootstrap-eks-rds-databases.sh"
+
+for database in asklake_app airflow_metadata iceberg_catalog; do
+  if ! grep -q "CREATE DATABASE $database" "$ROOT_DIR/infra/eks/bootstrap/rds/bootstrap-databases.sql"; then
+    echo "RDS bootstrap is missing logical database: $database" >&2
+    exit 1
+  fi
+done
+
+bash -n "$ROOT_DIR/scripts/bootstrap-eks-rds-databases.sh"
 
 TERRAFORM_BIN="${ASKLAKE_TERRAFORM_BIN:-}"
 if [[ -z "$TERRAFORM_BIN" ]] && command -v terraform >/dev/null 2>&1; then

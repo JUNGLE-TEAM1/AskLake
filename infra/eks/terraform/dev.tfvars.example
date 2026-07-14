@@ -83,3 +83,15 @@ storage_bucket_names = {
 }
 storage_sse_algorithm = "AES256"
 storage_kms_key_arn   = null
+
+# Phase 4 workload identity is another explicit selection gate. Leave disabled
+# until the team studies IRSA vs EKS Pod Identity in the actual cluster.
+workload_identity_mode = "disabled"
+
+# IRSA reuses an already reviewed IAM OIDC provider. This application state
+# does not create or assume ownership of a shared provider.
+irsa_oidc_provider_arn = null
+
+# Pod Identity can be selected only after the platform owner confirms that the
+# EKS Pod Identity Agent is installed and managed.
+pod_identity_agent_ready = false

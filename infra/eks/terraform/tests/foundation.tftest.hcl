@@ -40,6 +40,12 @@ mock_provider "aws" {
       port    = 5432
     }
   }
+
+  mock_resource "aws_iam_role" {
+    defaults = {
+      arn = "arn:aws:iam::111122223333:role/mock-workload"
+    }
+  }
 }
 
 run "existing_cluster_handoff" {
@@ -275,6 +281,144 @@ run "reject_incomplete_kms_contract" {
   }
 
   expect_failures = [check.storage_encryption_contract]
+}
+
+run "irsa_workload_identity_contract" {
+  command = plan
+
+  override_data {
+    target = data.aws_iam_policy_document.backend
+    values = {
+      json = "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"s3:GetObject\",\"Resource\":\"arn:aws:s3:::mock/*\"}]}"
+    }
+  }
+
+  override_data {
+    target = data.aws_iam_policy_document.trino
+    values = {
+      json = "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"s3:GetObject\",\"Resource\":\"arn:aws:s3:::mock/*\"}]}"
+    }
+  }
+
+  override_data {
+    target = data.aws_iam_policy_document.msk_smoke
+    values = {
+      json = "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"kafka-cluster:Connect\",\"Resource\":\"arn:aws:kafka:ap-northeast-2:111122223333:cluster/mock/id\"}]}"
+    }
+  }
+
+  override_data {
+    target = data.aws_iam_policy_document.spark
+    values = {
+      json = "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"kafka-cluster:ReadData\",\"Resource\":\"arn:aws:kafka:ap-northeast-2:111122223333:topic/mock/id/topic\"}]}"
+    }
+  }
+
+  override_data {
+    target = data.aws_iam_policy_document.workload_assume_role
+    values = {
+      json = "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Principal\":{\"Federated\":\"arn:aws:iam::111122223333:oidc-provider/mock\"}}]}"
+    }
+  }
+
+  variables {
+    environment             = "dev"
+    owner                   = "pair-a"
+    resource_lifecycle      = "mvp-owned"
+    cluster_mode            = "existing"
+    existing_cluster_name   = "shared-dev"
+    create_ecr_repositories = false
+
+    msk_mode                                = "existing"
+    existing_msk_cluster_arn                = "arn:aws:kafka:ap-northeast-2:111122223333:cluster/shared-dev/mock-uuid"
+    existing_msk_bootstrap_brokers_sasl_iam = "mock-broker.example.invalid:9098"
+
+    storage_mode = "existing"
+    storage_bucket_names = {
+      raw           = "asklake-dev-111122223333-raw"
+      output        = "asklake-dev-111122223333-output"
+      warehouse     = "asklake-dev-111122223333-warehouse"
+      query_results = "asklake-dev-111122223333-query-results"
+    }
+
+    workload_identity_mode = "irsa"
+    irsa_oidc_provider_arn = "arn:aws:iam::111122223333:oidc-provider/oidc.example.invalid/existing"
+  }
+
+  assert {
+    condition     = length(aws_iam_role.workload) == 4
+    error_message = "IRSA must create isolated backend, Trino, MSK smoke, and Spark roles."
+  }
+
+  assert {
+    condition     = length(output.workload_identity_contract.service_account_annotations) == 4
+    error_message = "IRSA must hand off one role annotation per AWS-enabled service account."
+  }
+
+  assert {
+    condition     = length(aws_eks_pod_identity_association.workload) == 0
+    error_message = "IRSA mode must not create Pod Identity associations."
+  }
+}
+
+run "reject_unready_pod_identity" {
+  command = plan
+
+  variables {
+    environment             = "dev"
+    owner                   = "pair-a"
+    resource_lifecycle      = "mvp-owned"
+    cluster_mode            = "existing"
+    existing_cluster_name   = "shared-dev"
+    create_ecr_repositories = false
+
+    msk_mode                                = "existing"
+    existing_msk_cluster_arn                = "arn:aws:kafka:ap-northeast-2:111122223333:cluster/shared-dev/mock-uuid"
+    existing_msk_bootstrap_brokers_sasl_iam = "mock-broker.example.invalid:9098"
+
+    storage_mode = "existing"
+    storage_bucket_names = {
+      raw           = "asklake-dev-111122223333-raw"
+      output        = "asklake-dev-111122223333-output"
+      warehouse     = "asklake-dev-111122223333-warehouse"
+      query_results = "asklake-dev-111122223333-query-results"
+    }
+
+    workload_identity_mode   = "pod_identity"
+    pod_identity_agent_ready = false
+  }
+
+  expect_failures = [check.pod_identity_agent_contract]
+}
+
+run "reject_shared_workload_identity_creation" {
+  command = plan
+
+  variables {
+    environment             = "dev"
+    owner                   = "pair-a"
+    resource_lifecycle      = "shared"
+    cluster_mode            = "existing"
+    existing_cluster_name   = "shared-dev"
+    create_ecr_repositories = false
+
+    msk_mode                                = "existing"
+    existing_msk_cluster_arn                = "arn:aws:kafka:ap-northeast-2:111122223333:cluster/shared-dev/mock-uuid"
+    existing_msk_bootstrap_brokers_sasl_iam = "mock-broker.example.invalid:9098"
+
+    storage_mode = "existing"
+    storage_bucket_names = {
+      raw           = "asklake-dev-111122223333-raw"
+      output        = "asklake-dev-111122223333-output"
+      warehouse     = "asklake-dev-111122223333-warehouse"
+      query_results = "asklake-dev-111122223333-query-results"
+    }
+
+    workload_identity_mode = "irsa"
+    irsa_oidc_provider_arn = "arn:aws:iam::111122223333:oidc-provider/oidc.example.invalid/existing"
+  }
+
+  expect_failures = [check.workload_identity_creation_gate]
 }
 
 run "reject_shared_resource_creation" {

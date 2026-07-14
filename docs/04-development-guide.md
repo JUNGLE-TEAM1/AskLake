@@ -561,6 +561,8 @@ bash scripts/inspect-eks-aws-inventory.sh
 
 Phase 3의 MSK/RDS/S3 Terraform은 기본적으로 모두 `disabled`이며 mock provider test만으로 정적 계약을 검증한다. `existing`과 `create` 입력, MSK topic bootstrap, RDS 논리 database bootstrap, IAM identity 연결과 실제 apply 조건은 [Phase 3 Data Plane 계약](eks-phase-3-data-plane.md)을 따른다. 실제 식별자는 `terraform.tfvars` 또는 승인된 secret/config delivery에만 두고 문서나 PR 본문에 복사하지 않는다.
 
+Phase 4의 workload identity도 기본 `disabled`다. IRSA는 기존 IAM OIDC provider ARN이, Pod Identity는 platform owner가 확인한 Agent가 필요하다. 선택 전에는 role이나 association을 만들지 않는다. RDS의 세 database/user bootstrap은 실제 endpoint·backup·rollback 승인과 명시적 confirmation이 있어야 실행하며 application migration을 대신하지 않는다. 상세 절차는 [Phase 4 Workload Identity와 RDS Bootstrap](eks-phase-4-identity-rds-bootstrap.md)을 따른다.
+
 ```bash
 docker run --rm --entrypoint sh \
   -v "$PWD/infra/eks/terraform:/workspace" \
