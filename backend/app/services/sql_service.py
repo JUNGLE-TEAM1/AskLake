@@ -988,6 +988,11 @@ def active_dataset_materialization_runs(
         run = normalize_materialization_run(raw_run)
         if str(run.get("status") or "").strip().casefold() != "success":
             continue
+        # A zero-row Kafka delta is a valid no-op execution.  Its empty object
+        # must not become an SQL scan segment, otherwise the remote planner
+        # rejects the dataset before reaching the preceding snapshot segment.
+        if materialization_mode(run) == "delta" and is_empty_delta_materialization(run):
+            continue
         active_runs.append(run)
         if materialization_mode(run) == "snapshot":
             break
@@ -1022,9 +1027,19 @@ def normalize_materialization_run(run: Any) -> dict[str, Any]:
         "runId": object_field(run, "runId", "run_id"),
         "sourceKind": object_field(run, "sourceKind", "source_kind"),
         "status": object_field(run, "status"),
+        "rowCount": object_field(run, "rowCount", "row_count"),
         "storageFormat": object_field(run, "storageFormat", "storage_format"),
         "storageLocation": object_field(run, "storageLocation", "storage_location"),
+        "storageSizeBytes": object_field(run, "storageSizeBytes", "storage_size_bytes"),
     }
+
+
+def is_empty_delta_materialization(run: Mapping[str, Any]) -> bool:
+    """Return whether a delta is explicitly recorded as an empty no-op."""
+
+    row_count = run.get("rowCount")
+    storage_size = run.get("storageSizeBytes")
+    return row_count == 0 and storage_size == 0
 
 
 def materialization_mode(run: Mapping[str, Any]) -> str:

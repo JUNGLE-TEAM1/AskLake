@@ -174,6 +174,60 @@ class SqlServiceObjectStorageTest(TestCase):
         self.assertEqual(result["rows"], [["4"]])
         self.assertEqual(client.downloaded_keys, [snapshot_key, delta_key])
 
+    def test_empty_delta_is_skipped_when_reading_previous_snapshot(self) -> None:
+        snapshot_key = "remote_table/silver/snapshot/part-00000.parquet"
+        empty_delta_key = "remote_table/silver/delta/data.parquet"
+        client = FakeS3Client(
+            {
+                snapshot_key: self.parquet_path,
+                empty_delta_key: self.parquet_path,
+            },
+            reported_sizes={empty_delta_key: 0},
+        )
+        dataset = SimpleNamespace(
+            id="ds_remote_table",
+            materialization_runs=[
+                {
+                    "materializationMode": "delta",
+                    "runId": "empty-delta",
+                    "sourceKind": "kafka",
+                    "status": "success",
+                    "rowCount": 0,
+                    "storageSizeBytes": 0,
+                    "storageFormat": "parquet",
+                    "storageLocation": "s3a://asklake-output/remote_table/silver/delta",
+                },
+                {
+                    "materializationMode": "snapshot",
+                    "runId": "snapshot",
+                    "sourceKind": "kafka",
+                    "status": "success",
+                    "rowCount": 2,
+                    "storageSizeBytes": self.parquet_path.stat().st_size,
+                    "storageFormat": "parquet",
+                    "storageLocation": "s3a://asklake-output/remote_table/silver/snapshot",
+                },
+            ],
+            name="remote_table",
+            sample_rows=[],
+            schema_=[],
+            storage_format="parquet",
+            storage_location="s3a://asklake-output/remote_table/silver/delta",
+        )
+
+        with (
+            patch.object(sql_service, "build_sql_preview_s3_client", return_value=client),
+            patch.dict(os.environ, {"MINIO_BUCKET": "asklake-output"}, clear=False),
+        ):
+            result = sql_service.execute_duckdb_preview(
+                'SELECT COUNT(*) AS row_count FROM "remote_table"',
+                context_datasets=[dataset],
+                preview_limit=100,
+            )
+
+        self.assertEqual(result["rows"], [["2"]])
+        self.assertEqual(client.downloaded_keys, [snapshot_key])
+
     def test_local_parquet_preview_still_works(self) -> None:
         dataset = SimpleNamespace(
             id="ds_local_table",
