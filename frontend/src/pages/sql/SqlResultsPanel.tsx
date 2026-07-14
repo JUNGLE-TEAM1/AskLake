@@ -182,9 +182,9 @@ export function SqlResultsPanel({
 
   return (
     <>
-      <Panel className={`${styles.resultPanel} grid gap-0 p-0`}>
+      <Panel className={`${styles.resultPanel} ${showResultWorkspace ? styles.resultPanelActive : ""} grid gap-0 p-0`}>
         {showResultWorkspace ? (
-          <div className="grid min-h-0 grid-rows-[max-content_minmax(0,1fr)] gap-4 p-5">
+          <div className={styles.resultWorkspace}>
             <div className={styles.resultToolbar}>
               <ToggleGroup
                 aria-label="SQL 결과 보기"

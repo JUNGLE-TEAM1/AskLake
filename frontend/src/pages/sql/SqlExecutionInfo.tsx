@@ -98,10 +98,12 @@ function Stage({
   status,
   summary,
   title,
+  showBody,
 }: {
   actions?: ReactNode;
   badge?: string;
   children?: ReactNode;
+  showBody?: boolean;
   status: TrinoExecutionStageStatus | "expired";
   summary?: string;
   title: string;
@@ -127,7 +129,7 @@ function Stage({
           {actions}
         </span>
       </div>
-      {status === "active" && children ? <div className={styles.stageBody}>{children}</div> : null}
+      {(status === "active" || showBody) && children ? <div className={styles.stageBody}>{children}</div> : null}
     </div>
   );
 }
@@ -212,7 +214,9 @@ function ExecutionTimeline({
             status={submissionError ? "failed" : "active"}
             summary={submissionError ?? "요청 접수 중"}
             title="쿼리 실행"
-          />
+          >
+            {!submissionError ? <IndeterminateProgress detail="Trino 요청 접수 중" label="Trino 작업" /> : null}
+          </Stage>
         </div>
       </section>
     );
@@ -247,6 +251,12 @@ function ExecutionTimeline({
     timeline.firstResultElapsedMs != null ? `첫 결과 ${formatDuration(timeline.firstResultElapsedMs)}` : null,
     timeline.totalReadyMs != null ? `전체 준비 ${formatDuration(timeline.totalReadyMs)}` : null,
   ].filter((value): value is string => Boolean(value)).join(" · ");
+  const queryProgressValue = timeline.queryStageStatus === "completed"
+    ? 100
+    : timeline.runProgressPercentage;
+  const queryProgressLabel = run.stats?.processedRows == null
+    ? "처리 행 확인 중"
+    : `${run.stats.processedRows.toLocaleString()}행 읽음`;
 
   return (
     <section aria-label="실행 과정" aria-live="polite" className={styles.timeline}>
@@ -265,16 +275,17 @@ function ExecutionTimeline({
           summary={timeline.queryStageStatus === "completed"
             ? completedQuerySummary
             : timeline.terminalStageStatus ? terminalSummary : timeline.queryPhaseLabel}
+          showBody={timeline.queryStageStatus === "completed" && !timeline.terminalStageStatus}
           title="쿼리 실행"
         >
-          {timeline.queryProgressVisible ? (
-            <Progress aria-label="쿼리 실행 진행률" value={timeline.runProgressPercentage ?? 0}>
-              <ProgressLabel>Trino 작업 · {run.stats?.processedRows == null ? "처리 행 확인 중" : `${run.stats.processedRows.toLocaleString()}행 읽음`}</ProgressLabel>
+          {timeline.queryProgressVisible || queryProgressValue != null ? (
+            <Progress aria-label="쿼리 실행 진행률" value={queryProgressValue ?? 0}>
+              <ProgressLabel>Trino 작업 · {queryProgressLabel}</ProgressLabel>
               <ProgressValue />
             </Progress>
           ) : (
             <IndeterminateProgress
-              detail={run.stats?.processedRows == null ? "처리 행 확인 중" : `${run.stats.processedRows.toLocaleString()}행 읽음`}
+              detail={queryProgressLabel}
               label="Trino 작업"
             />
           )}
