@@ -14,7 +14,14 @@ import duckdb
 from fastapi import status
 
 from app.core.errors import ApiError
+from app.services.iceberg_dataset_reader import (
+    execute_trino_rows,
+    iceberg_dataset_table,
+    iceberg_dataset_user_columns,
+    iceberg_read_reason,
+)
 from app.services.object_storage import object_storage_runtime
+from app.services.trino_client import TrinoClient
 
 
 DASHBOARD_CHART_ROW_LIMIT = 500
@@ -94,6 +101,7 @@ class DashboardDatasetQuerySession:
         *,
         remote_budget: DashboardRemoteScanBudget | None = None,
         query_timeout_seconds: float | None = None,
+        trino_client: TrinoClient | None = None,
     ) -> None:
         self.dataset = dataset
         self.query_timeout_seconds = (
@@ -101,9 +109,32 @@ class DashboardDatasetQuerySession:
             if query_timeout_seconds is not None
             else dashboard_query_timeout_seconds()
         )
-        self.connection = duckdb.connect(database=":memory:")
-        self.table = quote_duckdb_identifier(_DASHBOARD_TABLE_NAME)
+        self.connection: duckdb.DuckDBPyConnection | None = None
+        self.trino_client: TrinoClient | None = None
         try:
+            iceberg_table = iceberg_dataset_table(dataset)
+            if iceberg_table is not None:
+                self.table = iceberg_table
+                self.trino_client = trino_client or TrinoClient()
+                description = execute_trino_rows(
+                    self.trino_client,
+                    f"DESCRIBE {self.table}",
+                    timeout_seconds=self.query_timeout_seconds,
+                )
+                physical_columns = {
+                    str(row[0])
+                    for row in description.rows
+                    if row and str(row[0]).strip()
+                }
+                self.columns = set(iceberg_dataset_user_columns(dataset)).intersection(
+                    physical_columns
+                )
+                if not self.columns:
+                    raise ValueError("Iceberg dataset does not expose Catalog user columns")
+                return
+
+            self.connection = duckdb.connect(database=":memory:")
+            self.table = quote_duckdb_identifier(_DASHBOARD_TABLE_NAME)
             configure_dashboard_duckdb_resources(self.connection)
             storage_segments = dataset_storage_segments(dataset)
             if not storage_segments:
@@ -125,14 +156,17 @@ class DashboardDatasetQuerySession:
                 ).fetchall()
             }
         except ApiError:
-            self.connection.close()
+            if self.connection is not None:
+                self.connection.close()
             raise
         except (OSError, RuntimeError, ValueError, duckdb.Error) as error:
-            self.connection.close()
-            raise dashboard_storage_error(dataset, str(error)) from error
+            if self.connection is not None:
+                self.connection.close()
+            raise dashboard_storage_error(dataset, iceberg_read_reason(error)) from error
 
     def close(self) -> None:
-        self.connection.close()
+        if self.connection is not None:
+            self.connection.close()
 
     def read_widget(self, widget_type: str, config: dict[str, Any]) -> dict[str, Any]:
         source_config = dashboard_source_config(config)
@@ -152,21 +186,33 @@ class DashboardDatasetQuerySession:
         runtime_config["dataMode"] = data_mode
         runtime_config["sourceConfig"] = source_config
         try:
-            cursor = execute_dashboard_query(
-                self.connection,
-                query,
-                timeout_seconds=self.query_timeout_seconds,
-            )
-            column_names = [str(description[0]) for description in (cursor.description or [])]
+            if self.trino_client is not None:
+                result = execute_trino_rows(
+                    self.trino_client,
+                    query,
+                    timeout_seconds=self.query_timeout_seconds,
+                )
+                column_names = result.columns
+                raw_rows = result.rows
+            else:
+                if self.connection is None:
+                    raise ValueError("Dashboard dataset query session is closed")
+                cursor = execute_dashboard_query(
+                    self.connection,
+                    query,
+                    timeout_seconds=self.query_timeout_seconds,
+                )
+                column_names = [str(description[0]) for description in (cursor.description or [])]
+                raw_rows = cursor.fetchall()
             rows = [
                 {
                     column_name: dashboard_json_cell(row[index])
                     for index, column_name in enumerate(column_names)
                 }
-                for row in cursor.fetchall()
+                for row in raw_rows
             ]
-        except duckdb.Error as error:
-            raise dashboard_storage_error(self.dataset, str(error)) from error
+        except (ApiError, RuntimeError, ValueError, duckdb.Error) as error:
+            raise dashboard_storage_error(self.dataset, iceberg_read_reason(error)) from error
         return {"config": runtime_config, "data": rows}
 
 
@@ -218,6 +264,7 @@ def dashboard_aggregation_query(
 
     dimension_specs, value_config_key = dashboard_widget_query_fields(widget_type, config)
     select_parts: list[str] = []
+    group_expressions: list[str] = []
     dimension_aliases: list[str] = []
     for column, date_unit in dimension_specs:
         if not column:
@@ -228,6 +275,7 @@ def dashboard_aggregation_query(
             expression = f"date_trunc('{date_unit}', TRY_CAST({expression} AS TIMESTAMP))"
         select_parts.append(f"{expression} AS {quote_duckdb_identifier(column)}")
         dimension_aliases.append(column)
+        group_expressions.append(expression)
 
     configured_value_key = config.get(value_config_key) or config.get(camel_to_snake_key(value_config_key))
     if aggregation != "count":
@@ -251,7 +299,7 @@ def dashboard_aggregation_query(
     if value_alias != configured_value_key:
         runtime_config[value_config_key] = value_alias
 
-    group_sql = " GROUP BY ALL" if dimension_aliases else ""
+    group_sql = f" GROUP BY {', '.join(group_expressions)}" if group_expressions else ""
     if widget_type in {"line_chart", "area_chart", "heatmap_chart"} and dimension_aliases:
         order_sql = " ORDER BY " + ", ".join(
             f"{quote_duckdb_identifier(alias)} ASC NULLS LAST" for alias in dimension_aliases

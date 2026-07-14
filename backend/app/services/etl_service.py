@@ -56,6 +56,7 @@ from app.schemas.etl import (
     AirflowCatalogReconciliationResponse,
     CatalogDataset,
     ContinuousCompactionRequest,
+    ContinuousIcebergMaintenanceRequest,
     ContinuousMaintenanceRun,
     ContinuousQuarantineResponse,
     ContinuousReplayRequest,
@@ -104,6 +105,7 @@ from app.schemas.etl import (
     SourceConnectorRequest,
     UpdatePipelineRequest,
 )
+from app.schemas.iceberg import IcebergWriterTarget
 
 from app.services.airflow_client import AirflowDagRun, AirflowTaskInstance, build_airflow_client
 from app.services.auth_service import load_active_actor_by_user_id
@@ -112,8 +114,17 @@ from app.services.trino_materialization_service import materialized_dataset_id
 from app.services.trino_query_run_service import TrinoQueryRunService
 from app.services.trino_sql_job_service import TrinoSqlJobService
 from app.services.identity_service import DEMO_GROUPS, DEMO_USERS
+from app.services.iceberg_writer_service import (
+    IcebergWriterError,
+    IcebergWriterService,
+    build_iceberg_writer_target,
+    writer_mode_for_source,
+)
 from app.services.object_storage import object_storage_runtime
-from app.services.materialization_projection import aggregate_materialization_runs
+from app.services.materialization_projection import (
+    aggregate_materialization_runs,
+    upsert_materialization_run,
+)
 from app.services.rule_compiler import CompiledRuleSet, compile_rule_set
 from app.services.resource_permission_service import job_with_persisted_permission_grants, permission_grants_for_resource, permissions_for_actor_with_governance
 
@@ -198,6 +209,8 @@ def create_pipeline(
     apply_compiled_rules(request, compiled_rules)
     validate_create_request(request)
     actor_context = actor if isinstance(actor, ActorContext) else ActorContext(name=actor)
+    if is_internal_data_lake_source(request.source_type):
+        resolve_internal_data_lake_source(db, request.source_config, actor=actor_context)
     actor_name = actor_context.name
     created_by = identity_name(request.created_by or actor_name or request.owner)
     created_by_profile = request.created_by_profile or identity_profile(created_by)
@@ -274,6 +287,12 @@ def create_pipeline(
         index_columns=normalize_string_list(request.index_columns),
         compression=request.compression,
         storage_path=request.storage_path,
+        iceberg_target=build_iceberg_writer_target(
+            request.target_dataset,
+            dataset_id,
+            write_mode=writer_mode_for_pipeline(request.source_type, request.source_config),
+            partition_columns=normalize_string_list(request.partition_columns),
+        ).model_dump(mode="json", by_alias=True),
         target_description=normalize_optional_text(request.target_description),
         target_database=normalize_optional_text(request.target_database),
         target_tags=normalize_target_tags(request.target_tags),
@@ -1233,6 +1252,9 @@ def command_kafka_continuous_job(
     active_statuses = {"starting", "running", "pausing", "stopping"}
 
     if command in {"startContinuous", "resumeContinuous"}:
+        if callable(getattr(db, "get_bind", None)):
+            reconcile_stale_continuous_maintenance_runs(db, job.id, commit=False)
+            require_no_active_continuous_maintenance(db, job.id)
         if runtime.status in active_statuses:
             raise ApiError(ErrorCode.CONFLICT, f"Continuous Job is already active: {job.id}", status.HTTP_409_CONFLICT)
         conflict = etl_repository.find_conflicting_kafka_continuous_runtime(
@@ -1350,6 +1372,78 @@ def test_source_connector(request: SourceConnectorRequest) -> SourceConnectorAna
         timeout_seconds=120,
     )
     return SourceConnectorAnalysis.model_validate(result)
+
+
+def is_internal_data_lake_source(source_type: str | None) -> bool:
+    return str(source_type or "").strip().casefold() == "data lake"
+
+
+def resolve_internal_data_lake_source(
+    db: Session,
+    source_config: Any,
+    *,
+    actor: ActorContext | None = None,
+) -> dict[str, Any]:
+    dataset_id = field_value(source_config or [], "Source Dataset ID").strip()
+    if not dataset_id:
+        raise ApiError(
+            ErrorCode.VALIDATION_ERROR,
+            "Data Lake source requires Source Dataset ID.",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
+    payload = CatalogRepository(db).get_dataset_payload(dataset_id)
+    if payload is None:
+        raise ApiError(ErrorCode.NOT_FOUND, f"Dataset not found: {dataset_id}", status.HTTP_404_NOT_FOUND)
+    if str(payload.get("status") or "").strip().casefold() != "available":
+        raise ApiError(
+            ErrorCode.INVALID_JOB_STATE,
+            "Data Lake source dataset is not available.",
+            status.HTTP_409_CONFLICT,
+            {"datasetId": dataset_id, "datasetStatus": payload.get("status")},
+        )
+
+    query_engine_table = payload.get("queryEngineTable")
+    query_engine_status = str(payload.get("queryEngineStatus") or "").strip().casefold()
+    if (
+        not isinstance(query_engine_table, dict)
+        or str(query_engine_table.get("format") or "").strip().casefold() != "iceberg"
+        or query_engine_status != "available"
+        or not str(query_engine_table.get("schema") or "").strip()
+        or not str(query_engine_table.get("table") or "").strip()
+    ):
+        raise ApiError(
+            ErrorCode.INVALID_JOB_STATE,
+            "Data Lake source dataset requires an available Iceberg table.",
+            status.HTTP_409_CONFLICT,
+            {"datasetId": dataset_id, "queryEngineStatus": query_engine_status or "unavailable"},
+        )
+
+    if actor is not None:
+        fallback_grants = payload.get("permissionGrants") if isinstance(payload.get("permissionGrants"), list) else []
+        grants = permission_grants_for_resource(db, "dataset", dataset_id, fallback_grants)
+        grant_payloads = [grant.model_dump(mode="json", by_alias=True) for grant in grants]
+        permissions = permissions_for_actor_with_governance(
+            db,
+            actor,
+            owner=str(payload.get("owner") or "") or None,
+            grants=grant_payloads,
+            resource_id=dataset_id,
+            resource_type="dataset",
+        )
+        if not permissions.can_view:
+            raise ApiError(
+                ErrorCode.FORBIDDEN,
+                f"Actor {actor.name} is not allowed to view this dataset",
+                status.HTTP_403_FORBIDDEN,
+                {"datasetId": dataset_id},
+            )
+
+    return {
+        "catalog": str(query_engine_table.get("catalog") or "iceberg"),
+        "format": "iceberg",
+        "namespace": str(query_engine_table["schema"]),
+        "table": str(query_engine_table["table"]),
+    }
 
 
 def list_source_assets(request: SourceAssetsRequest) -> SourceAssetsResponse:
@@ -1551,9 +1645,22 @@ def record_parsing_timestamp(value: str) -> bool:
         return False
 
 
-def review_pipeline(request: ReviewPipelineRequest) -> ReviewSnapshot:
+def review_pipeline(
+    request: ReviewPipelineRequest,
+    *,
+    db: Session | None = None,
+    actor: ActorContext | None = None,
+) -> ReviewSnapshot:
     source_ready = request.source_connection_status == "success"
-    if source_ready and request.source_type != "SQL Result":
+    if source_ready and is_internal_data_lake_source(request.source_type):
+        try:
+            if db is None or actor is None:
+                source_ready = False
+            else:
+                resolve_internal_data_lake_source(db, request.source_config, actor=actor)
+        except Exception:
+            source_ready = False
+    elif source_ready and request.source_type != "SQL Result":
         try:
             source_ready = test_source_connector(
                 SourceConnectorRequest(source_type=request.source_type, source_config=request.source_config)
@@ -1663,20 +1770,114 @@ def run_kafka_ingest_job(db: Session, job: ETLJobModel, command: str, run_id: st
 
 def run_kafka_ingest_request(db: Session, request: dict[str, Any], command: str, job_id: str | None) -> dict[str, Any]:
     snapshot_record, request_with_snapshot = kafka_request_with_durable_snapshot(db, request, job_id)
+    result: dict[str, Any] | None = None
+    ingest_timeout_seconds = max(
+        30,
+        int(request["timeoutMs"] / 1000) + 30,
+        900 if request_with_snapshot.get("icebergTarget") else 0,
+    )
     try:
         result = run_node_bridge(
             "ingest-kafka-reviews.mjs",
             "ASKLAKE_KAFKA_REVIEW_INGEST_RESULT",
             request_with_snapshot,
             error_marker="ASKLAKE_KAFKA_REVIEW_INGEST_ERROR",
-            timeout_seconds=max(30, int(request["timeoutMs"] / 1000) + 30),
+            timeout_seconds=ingest_timeout_seconds,
         )
+        if job_id:
+            job = etl_repository.get_job(db, job_id)
+            if job is None:
+                raise ApiError(ErrorCode.NOT_FOUND, f"Job not found during Kafka ingest: {job_id}", status.HTTP_404_NOT_FOUND)
+            if parse_count_value(result.get("storedCount")) > 0:
+                result = publish_kafka_snapshot_iceberg_result(db, job, result)
+            if (
+                os.environ.get("ASKLAKE_ENABLE_KAFKA_TEST_HOOKS") == "true"
+                and os.environ.get("ASKLAKE_KAFKA_SNAPSHOT_FAIL_BEFORE_OFFSET_COMMIT") == "true"
+            ):
+                raise ApiError(
+                    "KAFKA_OFFSET_COMMIT_TEST_FAILURE",
+                    "Test-only failure before Kafka Snapshot offset commit.",
+                    status.HTTP_502_BAD_GATEWAY,
+                )
+            offset_result = run_node_bridge(
+                "ingest-kafka-reviews.mjs",
+                "ASKLAKE_KAFKA_REVIEW_INGEST_RESULT",
+                {
+                    "broker": request_with_snapshot.get("broker"),
+                    "commitOnly": True,
+                    "consumerGroupId": request_with_snapshot.get("consumerGroupId"),
+                    "landingEndpoint": request_with_snapshot.get("landingEndpoint"),
+                    "metadata": result,
+                    "runId": result.get("runId"),
+                    "snapshot": result.get("snapshot"),
+                    "storageMode": request_with_snapshot.get("storageMode"),
+                    "targetBucket": request_with_snapshot.get("targetBucket"),
+                    "targetFormat": request_with_snapshot.get("targetFormat"),
+                    "targetLayer": request_with_snapshot.get("targetLayer"),
+                    "targetPrefix": request_with_snapshot.get("targetPrefix"),
+                    "topic": request_with_snapshot.get("topic"),
+                },
+                error_marker="ASKLAKE_KAFKA_REVIEW_INGEST_ERROR",
+                timeout_seconds=max(30, int(request["timeoutMs"] / 1000) + 30),
+            )
+            result["offsetCommit"] = offset_result.get("offsetCommit")
+            result["metadataUpdate"] = offset_result.get("metadataUpdate")
     except ApiError as exc:
         etl_repository.update_kafka_snapshot(db, snapshot_record, "failed", exc.message)
+        if result is not None:
+            exc.details = {
+                **(exc.details or {}),
+                "bridge": kafka_post_ingest_failure_details(result, exc.message),
+            }
         raise
+    except Exception as exc:
+        message = compact_storage_text(exc, limit=1000)
+        etl_repository.update_kafka_snapshot(
+            db,
+            snapshot_record,
+            "failed",
+            message,
+        )
+        raise ApiError(
+            ErrorCode.INTERNAL_ERROR,
+            "Kafka Snapshot finalization failed unexpectedly",
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            {
+                **(
+                    {"bridge": kafka_post_ingest_failure_details(result, message)}
+                    if result is not None
+                    else {}
+                ),
+                "reason": message,
+            },
+        ) from exc
     etl_repository.update_kafka_snapshot(db, snapshot_record, "success")
     result["command"] = command
     return result
+
+
+def kafka_post_ingest_failure_details(result: dict[str, Any], message: str) -> dict[str, Any]:
+    return {
+        "catalogDataset": result.get("catalogDataset"),
+        "consumedCount": parse_count_value(result.get("consumedCount")),
+        "endedAt": result.get("endedAt") or iso_now(),
+        "failedCount": parse_count_value(result.get("failedCount")),
+        "failedStage": "offset commit" if result.get("queryEngineVerified") is True else "catalog",
+        "icebergCommit": result.get("icebergCommit"),
+        "message": message,
+        "offsetCommit": result.get("offsetCommit") or {"status": "pending"},
+        "quality": result.get("quality"),
+        "queryEngineTable": result.get("queryEngineTable"),
+        "queryEngineVerified": result.get("queryEngineVerified") is True,
+        "runId": result.get("runId"),
+        "snapshot": result.get("snapshot"),
+        "startedAt": result.get("startedAt") or iso_now(),
+        "storageFormat": result.get("storageFormat"),
+        "storageLocation": result.get("storageLocation") or result.get("warehouseLocation"),
+        "storedCount": parse_count_value(result.get("storedCount")),
+        "topic": result.get("topic"),
+        "transform": result.get("transform"),
+    }
 
 
 def kafka_request_with_durable_snapshot(
@@ -1730,16 +1931,23 @@ def kafka_request_with_durable_snapshot(
 def kafka_failure_result(request: dict[str, Any], run_id: str, error: ApiError, bridge_error: dict[str, Any]) -> dict[str, Any]:
     return {
         "broker": bridge_error.get("broker") or request.get("broker"),
+        "catalogDataset": bridge_error.get("catalogDataset"),
         "consumedCount": int(bridge_error.get("consumedCount") or 0),
         "endedAt": bridge_error.get("endedAt") or iso_now(),
         "error": bridge_error.get("message") or error.message,
         "failedCount": int(bridge_error.get("failedCount") or 0),
         "failedStage": bridge_error.get("failedStage") or "Kafka ingest",
+        "icebergCommit": bridge_error.get("icebergCommit"),
+        "offsetCommit": bridge_error.get("offsetCommit"),
+        "queryEngineTable": bridge_error.get("queryEngineTable"),
+        "queryEngineVerified": bridge_error.get("queryEngineVerified") is True,
         "runId": bridge_error.get("runId") or run_id,
         "snapshot": bridge_error.get("snapshot"),
         "startedAt": bridge_error.get("startedAt") or iso_now(),
         "status": "failed",
-        "storedCount": 0,
+        "storageFormat": bridge_error.get("storageFormat"),
+        "storageLocation": bridge_error.get("storageLocation"),
+        "storedCount": int(bridge_error.get("storedCount") or 0),
         "targetLayer": request.get("targetLayer") or "BRONZE",
         "topic": bridge_error.get("topic") or request.get("topic"),
         "transform": bridge_error.get("transform"),
@@ -1782,12 +1990,28 @@ def kafka_ingest_request_from_job(job: ETLJobModel, run_id: str) -> dict[str, An
         or f"asklake-{normalize_column_name(job.id)}"
     )
     offset_policy = kafka_offset_policy(field_value(fields, "Offset Policy") or field_value(fields, "offsetPolicy"))
+    if not job.iceberg_target:
+        dataset_id = str(job.dataset_id or make_dataset_id(job.target))
+        job.dataset_id = dataset_id
+        job.iceberg_target = build_iceberg_writer_target(
+            job.target,
+            dataset_id,
+            write_mode="append",
+            partition_columns=normalize_string_list(job.partition_columns),
+        ).model_dump(mode="json", by_alias=True)
+    canonical_rules = [
+        rule.model_dump(mode="json", by_alias=True)
+        for rule in compiled_rules.result.rules
+    ]
     return {
         "allowEmpty": True,
         "broker": field_value(fields, "Broker / Endpoint") or field_value(fields, "Broker") or os.environ.get("ASKLAKE_KAFKA_BROKER") or "127.0.0.1:19092",
         "consumerGroupId": consumer_group_id,
+        "deferOffsetCommit": True,
         "datasetId": job.dataset_id or make_dataset_id(job.target),
         "datasetName": job.target or "reviews_raw",
+        "icebergTarget": job.iceberg_target,
+        "jobId": job.id,
         "landingBucket": target["bucket"],
         "landingEndpoint": (
             field_value(fields, "Landing Endpoint URL")
@@ -1798,18 +2022,23 @@ def kafka_ingest_request_from_job(job: ETLJobModel, run_id: str) -> dict[str, An
         "landingPrefix": target["prefix"],
         "maxMessages": max_messages,
         "offsetPolicy": offset_policy,
-        "registerCatalog": True,
+        "registerCatalog": False,
         "schemaColumns": [
             SchemaColumnDraft.model_validate(column).model_dump(mode="json", by_alias=True)
             for column in (job.schema_columns or [])
         ],
         "outputSchema": [list(column) for column in compiled_rules.result.output_schema],
         "ruleContractVersion": compiled_rules.result.contract_version,
+        "ruleFingerprint": canonical_rule_fingerprint(
+            compiled_rules.result.contract_version,
+            canonical_rules,
+        ),
         "rules": [
-            rule.model_dump(mode="json", by_alias=True)
-            for rule in compiled_rules.result.rules
+            rule
+            for rule in canonical_rules
         ],
         "runId": run_id,
+        "schemaFingerprint": job.schema_fingerprint,
         "storageMode": target["storageMode"],
         "targetBucket": target["bucket"],
         "targetDescription": job.target_description or None,
@@ -1827,6 +2056,110 @@ def kafka_ingest_request_from_job(job: ETLJobModel, run_id: str) -> dict[str, An
             for rule in compiled_rules.quality_rules
         ],
     }
+
+
+def publish_kafka_snapshot_iceberg_result(
+    db: Session,
+    job: ETLJobModel,
+    result: dict[str, Any],
+) -> dict[str, Any]:
+    run_id = str(result.get("runId") or "").strip()
+    snapshot = result.get("snapshot")
+    if not run_id or not isinstance(snapshot, dict):
+        raise catalog_reconciliation_error(
+            "Kafka Snapshot Iceberg result identity is incomplete.",
+            {"jobId": job.id, "runId": run_id},
+        )
+    expected_boundary = kafka_snapshot_source_boundary(snapshot)
+    commit = result.get("icebergCommit")
+    committed_boundary = commit.get("sourceBoundary") if isinstance(commit, dict) else None
+    if committed_boundary != expected_boundary:
+        raise catalog_reconciliation_error(
+            "Kafka Snapshot Iceberg source boundary does not match the persisted snapshot.",
+            {"jobId": job.id, "runId": run_id, "snapshotId": snapshot.get("snapshotId")},
+        )
+    verified = verify_spark_iceberg_result(job, run_id, result)
+    dataset_id = str(job.dataset_id or make_dataset_id(job.target))
+    existing = etl_repository.get_dataset_by_id_for_update(db, dataset_id)
+    previous_payload = existing.payload if existing and isinstance(existing.payload, dict) else {}
+    previous_run = kafka_materialization_for_snapshot(
+        previous_payload.get("materializationRuns"),
+        str(snapshot.get("snapshotId") or ""),
+    )
+    existing_mapping = previous_payload.get("queryEngineTable")
+    target = IcebergWriterTarget.model_validate(job.iceberg_target)
+    same_mapping = isinstance(existing_mapping, dict) and all(
+        str(existing_mapping.get(key) or "") == expected
+        for key, expected in (
+            ("catalog", target.catalog),
+            ("schema", target.namespace),
+            ("table", target.table),
+            ("format", "iceberg"),
+        )
+    )
+    materialization_mode = (
+        str(previous_run.get("materializationMode") or "delta")
+        if previous_run
+        else "delta" if same_mapping else "snapshot"
+    )
+    verified = {
+        **verified,
+        "kafkaSnapshot": snapshot,
+        "materializationMode": materialization_mode,
+        "materializationRows": parse_count_value(result.get("storedCount")),
+        "sourceBoundary": expected_boundary,
+        "sourceKind": "kafka",
+        "sourceRanges": expected_boundary["partitions"],
+        "storageLocation": verified.get("warehouseLocation"),
+        "storedCount": parse_count_value(result.get("storedCount")),
+    }
+    dataset = dataset_from_spark_result(job, verified, existing)
+    saved_dataset = etl_repository.save_dataset(db, dataset)
+    return {
+        **verified,
+        "catalogDataset": {
+            "id": saved_dataset.id,
+            "layer": saved_dataset.layer,
+            "materializationRuns": len(saved_dataset.materialization_runs),
+            "name": saved_dataset.name,
+            "rows": saved_dataset.rows,
+            "storageLocation": saved_dataset.storage_location,
+        },
+    }
+
+
+def kafka_snapshot_source_boundary(snapshot: dict[str, Any]) -> dict[str, Any]:
+    partitions = snapshot.get("partitions") if isinstance(snapshot.get("partitions"), list) else []
+    return {
+        "capturedAt": str(snapshot.get("capturedAt") or ""),
+        "consumerGroupId": str(snapshot.get("consumerGroupId") or ""),
+        "kind": "kafka_snapshot",
+        "partitions": [
+            {
+                "endOffset": str(partition.get("endOffset") or ""),
+                "partition": int(partition.get("partition") or 0),
+                "startOffset": str(partition.get("startOffset") or ""),
+            }
+            for partition in partitions
+            if isinstance(partition, dict)
+        ],
+        "snapshotId": str(snapshot.get("snapshotId") or ""),
+        "topic": str(snapshot.get("topic") or ""),
+    }
+
+
+def kafka_materialization_for_snapshot(previous_runs: Any, snapshot_id: str) -> dict[str, Any] | None:
+    if not snapshot_id or not isinstance(previous_runs, list):
+        return None
+    return next(
+        (
+            run
+            for run in previous_runs
+            if isinstance(run, dict)
+            and str((run.get("kafkaSnapshot") or {}).get("snapshotId") or "") == snapshot_id
+        ),
+        None,
+    )
 
 
 def kafka_offset_policy(value: str) -> str:
@@ -1861,7 +2194,21 @@ def is_kafka_job(job: ETLJobModel) -> bool:
     return bool(field_value(fields, "Broker / Endpoint") and (field_value(fields, "TOPIC / QUEUE NAME") or field_value(fields, "Topic")))
 
 
+def writer_mode_for_pipeline(source_type: str, source_config: Any) -> str:
+    default_mode = writer_mode_for_source(source_type)
+    if default_mode == "append":
+        return default_mode
+    fields = s3_source_config_fields(source_config or [])
+    incremental_folder = (
+        str(source_type or "").strip().casefold().startswith(("file / s3", "data lake"))
+        and fields.get("collection scope", "").casefold() == "folder"
+        and fields.get("collection mode", "incremental").casefold() == "incremental"
+    )
+    return "append" if incremental_folder else "replace"
+
+
 def run_spark_job(db: Session, job: ETLJobModel, command: str, run_id: str) -> dict[str, Any]:
+    ensure_batch_iceberg_target(db, job)
     rest_mode = spark_rest_mode_enabled()
     poll_timeout_ms = spark_rest_poll_timeout_ms()
     state_file = spark_rest_submission_state_file(run_id)
@@ -1878,6 +2225,11 @@ def run_spark_job(db: Session, job: ETLJobModel, command: str, run_id: str) -> d
         if source_object_inventory is not None
         else None
     )
+    source_iceberg_table = (
+        resolve_internal_data_lake_source(db, job.source_config)
+        if is_internal_data_lake_source(job.source_type)
+        else None
+    )
     result = run_node_bridge(
         "run-spark-job-once.mjs",
         "ASKLAKE_SPARK_RUN_RESULT",
@@ -1890,6 +2242,7 @@ def run_spark_job(db: Session, job: ETLJobModel, command: str, run_id: str) -> d
                 source_object_keys,
                 source_object_inventory,
                 source_window_rebaseline=source_window_rebaseline,
+                source_iceberg_table=source_iceberg_table,
             ),
             "runId": run_id,
         },
@@ -1905,6 +2258,26 @@ def run_spark_job(db: Session, job: ETLJobModel, command: str, run_id: str) -> d
             "objectInventory": source_object_inventory,
         }
     return result
+
+
+def ensure_batch_iceberg_target(db: Session, job: ETLJobModel) -> None:
+    if is_kafka_job(job):
+        return
+    expected_write_mode = writer_mode_for_pipeline(job.source_type, job.source_config)
+    if job.iceberg_target:
+        existing_target = IcebergWriterTarget.model_validate(job.iceberg_target)
+        if existing_target.write_mode == expected_write_mode:
+            return
+    dataset_id = str(job.dataset_id or make_dataset_id(job.target))
+    job.dataset_id = dataset_id
+    job.iceberg_target = build_iceberg_writer_target(
+        job.target,
+        dataset_id,
+        write_mode=expected_write_mode,
+        partition_columns=normalize_string_list(job.partition_columns),
+    ).model_dump(mode="json", by_alias=True)
+    db.add(job)
+    db.commit()
 
 
 def execute_airflow_spark_run(
@@ -2115,13 +2488,16 @@ def reconcile_airflow_catalog(
 
     output_path = str(spark_result.get("outputPath") or "").strip()
     try:
-        validate_catalog_output_identity(job, run_id, output_path)
-        physical = inspect_spark_output(output_path)
-        enriched_result = {
-            **spark_result,
-            "parquetObjectCount": physical["parquetObjectCount"],
-            "storageSizeBytes": physical["storageSizeBytes"],
-        }
+        if job.iceberg_target and not is_kafka_job(job):
+            enriched_result = verify_spark_iceberg_result(job, run_id, spark_result)
+        else:
+            validate_catalog_output_identity(job, run_id, output_path)
+            physical = inspect_spark_output(output_path)
+            enriched_result = {
+                **spark_result,
+                "parquetObjectCount": physical["parquetObjectCount"],
+                "storageSizeBytes": physical["storageSizeBytes"],
+            }
         return commit_airflow_catalog_reconciliation(
             db,
             job_id=job_id,
@@ -2177,13 +2553,16 @@ def commit_airflow_catalog_reconciliation(
 
     reconciled_at = iso_now()
     dataset_model = dataset_from_spark_result(job, result, existing_dataset)
+    iceberg_commit = result.get("icebergCommit") if isinstance(result.get("icebergCommit"), dict) else {}
     catalog_result = {
+        "dataFileCount": parse_count_value(result.get("dataFileCount")),
         "datasetId": dataset_id,
+        "icebergSnapshotId": optional_string(iceberg_commit.get("snapshotId")),
         "parquetObjectCount": parse_count_value(result.get("parquetObjectCount")),
         "reconciledAt": reconciled_at,
         "runId": run_id,
         "status": "success",
-        "storageLocation": result.get("outputPath"),
+        "storageLocation": result.get("materializationOutputPath") or result.get("outputPath"),
         "storageSizeBytes": parse_count_value(result.get("storageSizeBytes")),
     }
     run.task_states = {
@@ -2257,6 +2636,135 @@ def validate_catalog_output_identity(job: ETLJobModel, run_id: str, output_path:
             "Spark output path does not match the persisted Job destination.",
             {"expected": expected, "outputPath": actual, "runId": run_id},
         )
+
+
+def verify_spark_iceberg_result(
+    job: ETLJobModel,
+    run_id: str,
+    result: dict[str, Any],
+    *,
+    writer_service: IcebergWriterService | None = None,
+) -> dict[str, Any]:
+    try:
+        target = IcebergWriterTarget.model_validate(job.iceberg_target)
+    except Exception as exc:
+        raise catalog_reconciliation_error(
+            "Persisted Job does not have a valid Iceberg target.",
+            {"jobId": job.id, "runId": run_id},
+        ) from exc
+    commit = result.get("icebergCommit")
+    if not isinstance(commit, dict):
+        raise catalog_reconciliation_error(
+            "Successful Spark result does not include Iceberg commit evidence.",
+            {"jobId": job.id, "runId": run_id, "target": target.table_uri},
+        )
+    if str(commit.get("jobId") or "") != job.id or str(commit.get("runId") or "") != run_id:
+        raise catalog_reconciliation_error(
+            "Spark Iceberg commit identity does not match the persisted Run.",
+            {
+                "commitJobId": commit.get("jobId"),
+                "commitRunId": commit.get("runId"),
+                "jobId": job.id,
+                "runId": run_id,
+            },
+        )
+    try:
+        committed_target = IcebergWriterTarget.model_validate(commit.get("target"))
+    except Exception as exc:
+        raise catalog_reconciliation_error(
+            "Spark Iceberg commit target is invalid.",
+            {"jobId": job.id, "runId": run_id},
+        ) from exc
+    if committed_target != target or str(result.get("outputPath") or "") != target.table_uri:
+        raise catalog_reconciliation_error(
+            "Spark Iceberg commit target does not match the persisted Job target.",
+            {
+                "commitTarget": committed_target.table_uri,
+                "expectedTarget": target.table_uri,
+                "outputPath": result.get("outputPath"),
+            },
+        )
+    snapshot_id = str(commit.get("snapshotId") or "").strip()
+    if not snapshot_id:
+        raise catalog_reconciliation_error(
+            "Spark Iceberg commit does not include snapshotId.",
+            {"jobId": job.id, "runId": run_id},
+        )
+    expected_schema_fingerprint = str(job.schema_fingerprint or "").strip()
+    committed_schema_fingerprint = str(commit.get("schemaFingerprint") or "").strip()
+    if expected_schema_fingerprint and committed_schema_fingerprint != expected_schema_fingerprint:
+        raise catalog_reconciliation_error(
+            "Spark Iceberg schema fingerprint does not match the persisted Job.",
+            {"jobId": job.id, "runId": run_id},
+        )
+    compiled_rules = compile_job_rules(job)
+    require_compiled_rules(compiled_rules)
+    canonical_rules = [
+        rule.model_dump(mode="json", by_alias=True)
+        for rule in compiled_rules.result.rules
+    ]
+    expected_rule_fingerprint = canonical_rule_fingerprint(
+        compiled_rules.result.contract_version,
+        canonical_rules,
+    )
+    if str(commit.get("ruleFingerprint") or "") != expected_rule_fingerprint:
+        raise catalog_reconciliation_error(
+            "Spark Iceberg rule fingerprint does not match the persisted Job.",
+            {"jobId": job.id, "runId": run_id},
+        )
+    service = writer_service or IcebergWriterService()
+    try:
+        evidence = service.verify_commit(
+            target,
+            created_table=commit.get("createdTable") is True,
+            job_id=job.id,
+            run_id=run_id,
+            expected_snapshot_id=snapshot_id,
+            schema_fingerprint=committed_schema_fingerprint or None,
+            rule_fingerprint=expected_rule_fingerprint,
+            source_boundary=commit.get("sourceBoundary") if isinstance(commit.get("sourceBoundary"), dict) else {},
+        )
+        data_file_count, storage_size_bytes = service.table_storage_metrics(
+            target,
+            snapshot_id=snapshot_id,
+        )
+    except IcebergWriterError as exc:
+        raise catalog_reconciliation_error(
+            "Iceberg commit could not be verified through Trino.",
+            {
+                "jobId": job.id,
+                "reason": exc.code,
+                "runId": run_id,
+                "snapshotId": snapshot_id,
+                "target": target.table_uri,
+            },
+        ) from exc
+    if parse_count_value(result.get("outputRows")) > 0 and (
+        data_file_count <= 0 or storage_size_bytes <= 0
+    ):
+        raise catalog_reconciliation_error(
+            "Iceberg commit does not expose physical data-file evidence.",
+            {
+                "dataFileCount": data_file_count,
+                "jobId": job.id,
+                "runId": run_id,
+                "snapshotId": snapshot_id,
+                "storageSizeBytes": storage_size_bytes,
+            },
+        )
+    verified = evidence.model_dump(mode="json", by_alias=True)
+    return {
+        **result,
+        "dataFileCount": data_file_count,
+        "icebergCommit": verified,
+        "materializationOutputPath": evidence.warehouse_location,
+        "queryEngineTable": evidence.query_engine_table.model_dump(mode="json", by_alias=True),
+        "queryEngineVerified": True,
+        "ruleFingerprint": evidence.rule_fingerprint,
+        "schemaFingerprint": evidence.schema_fingerprint,
+        "storageSizeBytes": storage_size_bytes,
+        "warehouseLocation": evidence.warehouse_location,
+    }
 
 
 def normalize_spark_output_storage_path(value: str | None) -> str:
@@ -2387,6 +2895,7 @@ def spark_result_manifest(result: dict[str, Any], run_id: str) -> dict[str, Any]
             "failedStage",
             "format",
             "inputRows",
+            "icebergCommit",
             "outputPath",
             "outputRows",
             "quality",
@@ -2396,6 +2905,7 @@ def spark_result_manifest(result: dict[str, Any], run_id: str) -> dict[str, Any]
             "sparkExitCode",
             "startedAt",
             "status",
+            "warehouseLocation",
         )
         if result.get(key) is not None
     }
@@ -2665,9 +3175,14 @@ def job_payload_for_spark(
     source_object_inventory: list[dict[str, Any]] | None = None,
     *,
     source_window_rebaseline: bool = False,
+    source_iceberg_table: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     compiled_rules = compile_job_rules(job)
     require_compiled_rules(compiled_rules)
+    canonical_rules = [
+        rule.model_dump(mode="json", by_alias=True)
+        for rule in compiled_rules.result.rules
+    ]
     return {
         "id": job.id,
         "name": job.name,
@@ -2683,13 +3198,15 @@ def job_payload_for_spark(
         "rag": job.rag,
         "ruleContractVersion": compiled_rules.result.contract_version,
         "ruleOutputSchema": compiled_rules.result.output_schema,
-        "rules": [
-            rule.model_dump(mode="json", by_alias=True)
-            for rule in compiled_rules.result.rules
-        ],
+        "rules": canonical_rules,
+        "ruleFingerprint": canonical_rule_fingerprint(
+            compiled_rules.result.contract_version,
+            canonical_rules,
+        ),
         "recordParsing": job.record_parsing or None,
         "schedule": job.schedule,
         "schemaColumns": job.schema_columns or [],
+        "schemaFingerprint": job.schema_fingerprint,
         "schemaSampleRows": job.schema_sample_rows or [],
         "source": job.source,
         "sourceConfig": job.source_config or [],
@@ -2700,6 +3217,7 @@ def job_payload_for_spark(
         "sourceWindowContractVersion": SOURCE_WINDOW_CONTRACT_VERSION if source_uses_incremental_folder_window(job) else None,
         "sourceWindowRebaseline": source_window_rebaseline,
         "sourceLabel": job.source_label,
+        "sourceIcebergTable": source_iceberg_table,
         "sourceType": job.source_type,
         "stats": job.stats or {},
         "target": job.target,
@@ -2709,6 +3227,7 @@ def job_payload_for_spark(
         "targetPath": job.target_path,
         "targetTags": job.target_tags or [],
         "storagePath": job.storage_path,
+        "icebergTarget": job.iceberg_target,
         "storageType": job.storage_type,
         "partition": job.partition,
         "partitionColumns": job.partition_columns or [],
@@ -3270,9 +3789,14 @@ def run_from_kafka_result(job: ETLJobModel, result: dict[str, Any]) -> ETLRunMod
         failed_stage="-" if success else str(result.get("failedStage") or "Kafka ingest"),
         error_summary="-" if success else str(result.get("error") or "Kafka ingest failed."),
         task_states={
+            "catalogDataset": result.get("catalogDataset"),
+            "icebergCommit": result.get("icebergCommit"),
             "kafkaSnapshot": result.get("snapshot"),
+            "metadataUpdate": result.get("metadataUpdate"),
+            "offsetCommit": result.get("offsetCommit"),
             "transform": result.get("transform"),
             "quality": result.get("quality"),
+            "queryEngineTable": result.get("queryEngineTable"),
         } if result.get("snapshot") else None,
     )
 
@@ -3922,11 +4446,7 @@ def spark_output_sample_rows(result: dict[str, Any], schema_json: list[list[str]
 
 def dataset_from_spark_result(job: ETLJobModel, result: dict[str, Any], existing_dataset: CatalogDatasetModel | None = None) -> CatalogDatasetModel:
     now = str(result.get("endedAt") or iso_now())
-    schema = result.get("schema")
-    schema_json = [
-        [str(field.get("name") or "-"), str(field.get("type") or "string")]
-        for field in schema
-    ] if isinstance(schema, list) and schema else schema_from_job(job)
+    schema_json = spark_result_schema(result.get("schema")) or schema_from_job(job)
     dataset_id = str(job.dataset_id or make_dataset_id(job.target))
     previous_payload = existing_dataset.payload if existing_dataset and existing_dataset.payload else None
     dataset_payload = dataset_payload_from_spark_result(job, result, dataset_id, schema_json, now, previous_payload)
@@ -3959,6 +4479,24 @@ def dataset_from_spark_result(job: ETLJobModel, result: dict[str, Any], existing
     )
 
 
+def spark_result_schema(value: Any) -> list[list[str]]:
+    if not isinstance(value, list):
+        return []
+    normalized: list[list[str]] = []
+    for field in value:
+        if isinstance(field, dict):
+            name = str(field.get("name") or "").strip()
+            type_value = str(field.get("type") or "string").strip() or "string"
+        elif isinstance(field, (list, tuple)) and field:
+            name = str(field[0] or "").strip()
+            type_value = str(field[1] if len(field) > 1 else "string").strip() or "string"
+        else:
+            continue
+        if name and not name.startswith("_asklake_"):
+            normalized.append([name, type_value])
+    return normalized
+
+
 def dataset_payload_from_spark_result(
     job: ETLJobModel,
     result: dict[str, Any],
@@ -3975,12 +4513,19 @@ def dataset_payload_from_spark_result(
     partition_columns = normalize_string_list(job.partition_columns)
     index_columns = normalize_string_list(job.index_columns)
     partition = "/".join(partition_columns) if partition_columns else normalize_optional_text(job.partition)
-    source_kind = result.get("sourceKind") or ("sql" if job.source_type == "SQL Result" else "etl")
-    materialization_mode = result.get("materializationMode") or ("delta" if source_kind == "kafka" else "snapshot")
+    iceberg_commit = result.get("icebergCommit") if isinstance(result.get("icebergCommit"), dict) else {}
+    query_engine_table = result.get("queryEngineTable")
+    query_engine_available = (
+        result.get("queryEngineVerified") is True
+        and isinstance(query_engine_table, dict)
+        and all(str(query_engine_table.get(key) or "").strip() for key in ("catalog", "schema", "table", "format"))
+    )
+    run_storage_format = "iceberg" if query_engine_available else SPARK_OUTPUT_FORMAT
     materialization_runs = append_materialization_run(
         previous_payload.get("materializationRuns") if previous_payload else [],
         {
             "createdAt": last_updated,
+            **({"icebergCommittedAt": str(iceberg_commit.get("committedAt") or "")} if iceberg_commit.get("committedAt") else {}),
             "jobId": job.id,
             "materializationMode": spark_materialization_mode(job, result),
             "rowCount": parse_count_value(result.get("materializationRows", result.get("outputRows"))),
@@ -3988,27 +4533,40 @@ def dataset_payload_from_spark_result(
             "sourceKind": result.get("sourceKind") or ("sql" if job.source_type == "SQL Result" else "etl"),
             "sourceLabel": job.name or job.source or job.source_label or job.id,
             "status": "success" if result.get("status") == "success" else "failed",
+            "storageFormat": run_storage_format,
             "storageLocation": str(result.get("materializationOutputPath") or output_path),
             "storageSizeBytes": storage_size_bytes,
             **spark_source_window_metadata(result),
+            **({"sourceBoundary": result["sourceBoundary"]} if isinstance(result.get("sourceBoundary"), dict) and result["sourceBoundary"] else {}),
             **({"sourceRanges": result["sourceRanges"]} if isinstance(result.get("sourceRanges"), list) and result["sourceRanges"] else {}),
+            **({"kafkaSnapshot": result["kafkaSnapshot"]} if isinstance(result.get("kafkaSnapshot"), dict) else {}),
             **({"publicationManifest": str(result["publicationManifest"])} if result.get("publicationManifest") else {}),
             **({"ruleContractVersion": str(result["ruleContractVersion"])} if result.get("ruleContractVersion") else {}),
             **({"ruleFingerprint": str(result["ruleFingerprint"])} if result.get("ruleFingerprint") else {}),
             **({"runtimeFingerprint": str(result["runtimeFingerprint"])} if result.get("runtimeFingerprint") else {}),
             **({"schemaFingerprint": str(result["schemaFingerprint"])} if result.get("schemaFingerprint") else {}),
+            **({"icebergSnapshotId": str(result["icebergCommit"].get("snapshotId") or "")} if isinstance(result.get("icebergCommit"), dict) else {}),
+            **({"queryEngineTable": result["queryEngineTable"]} if isinstance(result.get("queryEngineTable"), dict) else {}),
             **({"transform": result["transform"]} if isinstance(result.get("transform"), dict) else {}),
             **({"quality": result["quality"]} if isinstance(result.get("quality"), dict) else {}),
         },
     )
     aggregate = aggregate_materialization_runs(materialization_runs)
-    query_engine_table = result.get("queryEngineTable")
-    query_engine_available = (
-        result.get("queryEngineVerified") is True
-        and isinstance(query_engine_table, dict)
-        and all(str(query_engine_table.get(key) or "").strip() for key in ("catalog", "schema", "table", "format"))
-    )
+    storage_format = "iceberg" if query_engine_available else SPARK_OUTPUT_FORMAT
+    storage_location = str(result.get("warehouseLocation") or output_path)
+    current_storage_size_bytes = storage_size_bytes if query_engine_available else aggregate["storageSizeBytes"]
     downstream = (["SQL 분석"] if query_engine_available else []) + (["RAG 인덱싱"] if job.rag else [])
+    result_run_id = str(result.get("runId") or "")
+    if previous_payload and aggregate["latestRunId"] != result_run_id:
+        return {
+            **previous_payload,
+            "lastUpdated": aggregate["lastUpdated"] or previous_payload.get("lastUpdated") or last_updated,
+            "materializationRuns": materialization_runs,
+            "rows": format_rows(aggregate["rowCount"]),
+            "size": previous_payload.get("size", display_size),
+            "sourceRunId": aggregate["latestRunId"],
+            "storageSizeBytes": previous_payload.get("storageSizeBytes", current_storage_size_bytes),
+        }
     return {
         "description": target_dataset_description(job),
         "downstream": downstream,
@@ -4030,19 +4588,24 @@ def dataset_payload_from_spark_result(
         "rows": format_rows(aggregate["rowCount"]),
         "sampleRows": sample_rows,
         "schema": schema_json,
-        "size": format_storage_size(aggregate["storageSizeBytes"]) if aggregate["storageSizeBytes"] > 0 else display_size,
+        "size": format_storage_size(current_storage_size_bytes) if current_storage_size_bytes > 0 else display_size,
         "source": job.name,
         "sourceRunId": aggregate["latestRunId"] or result.get("runId"),
         "status": "available",
-        "storageFormat": SPARK_OUTPUT_FORMAT,
-        "storageLocation": output_path,
-        "storageSizeBytes": aggregate["storageSizeBytes"],
+        "storageFormat": storage_format,
+        "storageLocation": storage_location,
+        "storageSizeBytes": current_storage_size_bytes,
         "queryEngineStatus": "available" if query_engine_available else "unavailable",
         "partition": partition,
         "partitionColumns": partition_columns,
         "indexColumns": index_columns,
         "tags": target_dataset_tags(job),
         "upstream": [job.source_label, job.name],
+        **(
+            {"icebergSnapshotId": str(iceberg_commit.get("snapshotId") or "")}
+            if query_engine_available
+            else {}
+        ),
         **({"queryEngineTable": query_engine_table} if query_engine_available else {}),
     }
 
@@ -4092,6 +4655,12 @@ def update_existing_append_job(
     job.index_columns = normalize_string_list(request.index_columns)
     job.compression = request.compression
     job.storage_path = request.storage_path
+    job.iceberg_target = build_iceberg_writer_target(
+        request.target_dataset,
+        dataset_id,
+        write_mode=writer_mode_for_pipeline(request.source_type, request.source_config),
+        partition_columns=normalize_string_list(request.partition_columns),
+    ).model_dump(mode="json", by_alias=True)
     job.target_description = normalize_optional_text(request.target_description)
     job.target_database = normalize_optional_text(request.target_database)
     job.target_tags = normalize_target_tags(request.target_tags)
@@ -4115,11 +4684,7 @@ def update_existing_append_job(
 
 
 def append_materialization_run(previous_runs: Any, next_run: dict[str, Any]) -> list[dict[str, Any]]:
-    runs = [run for run in previous_runs if isinstance(run, dict)] if isinstance(previous_runs, list) else []
-    run_id = str(next_run.get("runId") or "")
-    if not run_id:
-        return runs
-    return [next_run, *[run for run in runs if str(run.get("runId") or "") != run_id]]
+    return upsert_materialization_run(previous_runs, next_run)
 
 
 def spark_materialization_mode(job: ETLJobModel, result: dict[str, Any]) -> str:
@@ -4498,17 +5063,46 @@ def dag_steps_from_kafka_result(job: ETLJobModel, command: str, run: dict[str, A
     consume_failed = failed and failed_stage in {"kafka ingest", "consume", "source"}
     transform_failed = failed and failed_stage == "transform"
     quality_failed = failed and failed_stage == "quality"
+    target_failed = failed and any(value in failed_stage for value in ("iceberg", "spark", "storage", "target", "write"))
+    catalog_failed = failed and failed_stage == "catalog"
+    offset_failed = failed and "offset" in failed_stage
     topic = str(result.get("topic") or field_value(job.source_config or [], "TOPIC / QUEUE NAME") or "-")
     broker = str(result.get("broker") or field_value(job.source_config or [], "Broker / Endpoint") or "-")
     storage_location = str(result.get("storageLocation") or run.get("outputPath") or "-")
     dataset_id = str(result.get("datasetId") or job.dataset_id or make_dataset_id(job.target))
     consumer_group_id = str(result.get("consumerGroupId") or field_value(job.source_config or [], "CONSUMER GROUP ID") or "-")
-    snapshot = result.get("snapshot") or {}
-    transform = result.get("transform") or {}
-    quality = result.get("quality") or {}
+    snapshot = result.get("snapshot") if isinstance(result.get("snapshot"), dict) else {}
+    transform = result.get("transform") if isinstance(result.get("transform"), dict) else {}
+    quality = result.get("quality") if isinstance(result.get("quality"), dict) else {}
+    iceberg_commit = result.get("icebergCommit") if isinstance(result.get("icebergCommit"), dict) else {}
+    catalog_dataset = result.get("catalogDataset") if isinstance(result.get("catalogDataset"), dict) else {}
+    offset_commit = result.get("offsetCommit") if isinstance(result.get("offsetCommit"), dict) else {}
+    stored_count = parse_count_value(result.get("storedCount"))
+    no_new_rows = stored_count == 0 and not any((consume_failed, transform_failed, quality_failed, target_failed))
+    target_committed = bool(str(iceberg_commit.get("snapshotId") or "").strip())
+    catalog_committed = bool(catalog_dataset.get("id"))
+    target_status = (
+        "success" if target_committed or no_new_rows
+        else "failed" if target_failed
+        else "blocked" if failed
+        else "success"
+    )
+    catalog_status = (
+        "success" if catalog_committed or no_new_rows
+        else "failed" if catalog_failed
+        else "blocked" if target_status != "success" or failed
+        else "success"
+    )
+    offset_status = (
+        "success" if offset_commit.get("status") == "success"
+        else "failed" if offset_failed
+        else "blocked" if failed
+        else "success"
+    )
     snapshot_ranges = ", ".join(
         f"p{item.get('partition')}:{item.get('startOffset')}~{item.get('endOffset')}"
         for item in snapshot.get("partitions", [])
+        if isinstance(item, dict)
     ) or "-"
     return [
         dag_step("source", "1. Kafka 소스 연결", topic, "failed" if consume_failed else "success", [
@@ -4522,27 +5116,48 @@ def dag_steps_from_kafka_result(job: ETLJobModel, command: str, run: dict[str, A
             ["Consumed", format_rows(result.get("consumedCount"))],
             ["Failed", format_rows(result.get("failedCount"))],
         ], [f"Kafka consume 실패: {run.get('errorSummary')}" if consume_failed else "Kafka 메시지를 batch 단위로 읽었습니다."]),
-        dag_step("transform", "3. 변환 규칙 적용", f"{transform.get('appliedStepCount', 0)}개 규칙", "failed" if transform_failed else "blocked" if failed else "success", [
+        dag_step("transform", "3. 변환 규칙 적용", f"{transform.get('appliedStepCount', 0)}개 규칙", "failed" if transform_failed else "blocked" if consume_failed else "success", [
             ["Configured", str(transform.get("configuredStepCount", 0))],
             ["Applied", str(transform.get("appliedStepCount", 0))],
             ["Transform errors", str(transform.get("errorCount", 0))],
-        ], [f"변환 규칙 적용 실패: {run.get('errorSummary')}" if transform_failed else "이전 단계 실패로 변환이 수행되지 않았습니다." if failed else "Kafka snapshot 레코드에 변환 규칙을 적용했습니다."]),
-        dag_step("quality", "4. 품질 검증", str(quality.get("summary") or "규칙 없음"), "failed" if quality_failed else "blocked" if failed else "success", [
+        ], [f"변환 규칙 적용 실패: {run.get('errorSummary')}" if transform_failed else "Kafka consume 실패로 변환이 수행되지 않았습니다." if consume_failed else "Kafka snapshot 레코드에 변환 규칙을 적용했습니다."]),
+        dag_step("quality", "4. 품질 검증", str(quality.get("summary") or "규칙 없음"), "failed" if quality_failed else "blocked" if consume_failed or transform_failed else "success", [
             ["Configured", str(quality.get("configuredRuleCount", 0))],
             ["Invalid", str(quality.get("invalidRowCount", 0))],
             ["Quarantined", str(quality.get("quarantinedCount", 0))],
             ["Dropped", str(quality.get("droppedCount", 0))],
-        ], [f"품질 검증 실패: {run.get('errorSummary')}" if quality_failed else "이전 단계 실패로 품질 검증이 수행되지 않았습니다." if failed else str(quality.get("summary") or "품질 규칙 없음")]),
-        dag_step("target", "5. Direct target 저장", storage_location, "blocked" if failed else "success", [
-            ["Storage", str(result.get("storageMode") or "s3")],
-            ["Format", str(result.get("storageFormat") or "jsonl")],
+        ], [f"품질 검증 실패: {run.get('errorSummary')}" if quality_failed else "이전 단계 실패로 품질 검증이 수행되지 않았습니다." if consume_failed or transform_failed else str(quality.get("summary") or "품질 규칙 없음")]),
+        dag_step("target", "5. Iceberg target 커밋", storage_location, target_status, [
+            ["Table", str((iceberg_commit.get("target") or {}).get("tableUri") or result.get("outputPath") or "-")],
+            ["Format", "Iceberg (Parquet)"],
             ["Layer", str(result.get("targetLayer") or job.target_layer)],
+            ["Snapshot", str(iceberg_commit.get("snapshotId") or ("변경 없음" if no_new_rows else "-"))],
             ["Stored", format_rows(result.get("storedCount"))],
-        ], ["이전 단계 실패로 target 저장이 수행되지 않았습니다." if failed else f"Kafka snapshot 결과를 target에 저장했습니다: {storage_location}"]),
-        dag_step("catalog", "6. 카탈로그 갱신", dataset_id, "blocked" if failed else "success", [
+        ], [
+            f"Iceberg target 커밋 실패: {run.get('errorSummary')}" if target_failed
+            else "새 offset 범위가 없어 Iceberg snapshot을 변경하지 않았습니다." if no_new_rows
+            else "이전 단계 실패로 Iceberg target 커밋이 수행되지 않았습니다." if target_status == "blocked"
+            else f"Kafka snapshot 결과를 Iceberg table에 커밋했습니다: {storage_location}"
+        ]),
+        dag_step("catalog", "6. Trino 검증 및 카탈로그 갱신", dataset_id, catalog_status, [
             ["Dataset", dataset_id],
             ["Run ID", run.get("runId", "-")],
-        ], ["이전 단계 실패로 카탈로그 갱신이 중단되었습니다." if failed else "Catalog materialization run이 Kafka sourceKind로 갱신되었습니다."]),
+            ["Trino", "verified" if result.get("queryEngineVerified") is True else "변경 없음" if no_new_rows else "pending"],
+        ], [
+            f"Trino/Catalog 검증 실패: {run.get('errorSummary')}" if catalog_failed
+            else "새 Iceberg snapshot이 없어 기존 카탈로그 매핑을 유지했습니다." if no_new_rows
+            else "이전 단계 실패로 Trino/Catalog 검증이 중단되었습니다." if catalog_status == "blocked"
+            else "Iceberg snapshot을 Trino로 검증하고 Catalog materialization을 갱신했습니다."
+        ]),
+        dag_step("offset", "7. Kafka offset 확정", str(snapshot.get("snapshotId") or "-"), offset_status, [
+            ["Consumer group", consumer_group_id],
+            ["Offset ranges", snapshot_ranges],
+            ["Commit status", str(offset_commit.get("status") or "pending")],
+        ], [
+            f"Kafka offset 확정 실패: {run.get('errorSummary')}" if offset_failed
+            else "이전 단계 실패로 Kafka offset을 확정하지 않았습니다." if offset_status == "blocked"
+            else "Iceberg와 Catalog 검증 완료 후 Kafka consumer offset을 확정했습니다."
+        ]),
     ]
 
 
@@ -4751,6 +5366,12 @@ def run_kafka_continuous_worker(
         rule.model_dump(mode="json", by_alias=True)
         for rule in compiled_rules.result.rules
     ]
+    if not isinstance(job.iceberg_target, dict):
+        raise ApiError(
+            ErrorCode.INVALID_JOB_STATE,
+            "Continuous Job does not have an Iceberg target; copy the Job to create a new Continuous checkpoint.",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
     rule_fingerprint = canonical_rule_fingerprint(compiled_rules.result.contract_version, canonical_rules)
     target = parse_kafka_target_path(job.storage_path or job.target_path, job.target, job.target_layer)
     output_path = f"s3a://{target['bucket']}/{target['prefix'].strip('/')}"
@@ -4774,6 +5395,7 @@ def run_kafka_continuous_worker(
                 **(runtime.metrics or {}),
             },
             "initialSchemaState": runtime.schema_state or {},
+            "icebergTarget": job.iceberg_target,
             "jobId": job.id,
             "maxOffsetsPerTrigger": config.get("maxOffsetsPerTrigger", 10000),
             "outputPath": output_path,
@@ -4782,6 +5404,7 @@ def run_kafka_continuous_worker(
             "ruleOutputSchema": compiled_rules.result.output_schema,
             "rules": canonical_rules,
             "schemaColumns": job.schema_columns or [],
+            "schemaFingerprint": job.schema_fingerprint or "",
             "schemaEvolutionPolicy": config.get("schemaEvolutionPolicy") or {},
             "topic": runtime.topic,
             "triggerIntervalSeconds": config.get("triggerIntervalSeconds", 30),
@@ -4857,9 +5480,13 @@ def get_kafka_continuous_quarantine(
     limit: int,
 ) -> ContinuousQuarantineResponse:
     job = require_continuous_job_access(db, job_id, actor, "view", "GET", "continuous/quarantine")
-    require_continuous_maintenance_idle(db, job)
-    reconcile_stale_continuous_maintenance_runs(db, job.id)
-    etl_repository.lock_kafka_continuous_runtime(db, job.id)
+    locked_job = etl_repository.get_job_for_update(db, job.id)
+    if locked_job is None:
+        raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job.id}", status.HTTP_404_NOT_FOUND)
+    job = locked_job
+    reconcile_stale_continuous_maintenance_runs(db, job.id, commit=False)
+    runtime = etl_repository.lock_kafka_continuous_runtime(db, job.id)
+    require_continuous_maintenance_idle(db, job, runtime=runtime)
     require_no_active_continuous_maintenance(db, job.id)
     result = run_kafka_continuous_maintenance(job, "inspect_quarantine", stable_id("inspect", iso_now()), {"limit": limit})
     return ContinuousQuarantineResponse(job_id=job.id, records=result.get("records") or [], total=int(result.get("total") or 0))
@@ -4870,8 +5497,9 @@ def list_kafka_continuous_maintenance_runs(
     job_id: str,
     actor: ActorContext,
 ) -> list[ContinuousMaintenanceRun]:
-    require_continuous_job_access(db, job_id, actor, "view", "GET", "continuous/maintenance-runs")
+    job = require_continuous_job_access(db, job_id, actor, "view", "GET", "continuous/maintenance-runs")
     reconcile_stale_continuous_maintenance_runs(db, job_id)
+    reconcile_continuous_replay_catalog(db, job)
     return etl_repository.list_kafka_continuous_maintenance_runs(db, job_id)
 
 
@@ -4898,7 +5526,29 @@ def compact_kafka_continuous_target(
     request: ContinuousCompactionRequest,
     actor: ActorContext,
 ) -> ContinuousMaintenanceRun:
-    return execute_kafka_continuous_maintenance(db, job_id, "compaction", request.model_dump(mode="json", by_alias=True), actor)
+    return execute_kafka_continuous_maintenance(
+        db,
+        job_id,
+        "compaction",
+        request.model_dump(mode="json", by_alias=True),
+        actor,
+    )
+
+
+def maintain_kafka_continuous_iceberg_target(
+    db: Session,
+    job_id: str,
+    request: ContinuousIcebergMaintenanceRequest,
+    actor: ActorContext,
+) -> ContinuousMaintenanceRun:
+    return execute_kafka_continuous_maintenance(
+        db,
+        job_id,
+        "iceberg_maintenance",
+        request.model_dump(mode="json", by_alias=True),
+        actor,
+        access_action="manage" if request.expire_snapshots or request.remove_orphan_files else "run",
+    )
 
 
 def execute_kafka_continuous_maintenance(
@@ -4910,9 +5560,13 @@ def execute_kafka_continuous_maintenance(
     access_action: str = "run",
 ) -> ContinuousMaintenanceRun:
     job = require_continuous_job_access(db, job_id, actor, access_action, "POST", f"continuous/{kind}")
-    require_continuous_maintenance_idle(db, job)
-    reconcile_stale_continuous_maintenance_runs(db, job.id)
-    etl_repository.lock_kafka_continuous_runtime(db, job.id)
+    locked_job = etl_repository.get_job_for_update(db, job.id)
+    if locked_job is None:
+        raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job.id}", status.HTTP_404_NOT_FOUND)
+    job = locked_job
+    reconcile_stale_continuous_maintenance_runs(db, job.id, commit=False)
+    runtime = etl_repository.lock_kafka_continuous_runtime(db, job.id)
+    require_continuous_maintenance_idle(db, job, runtime=runtime)
     require_no_active_continuous_maintenance(db, job.id)
     run_id = stable_id("continuous-maint", f"{job.id}:{kind}:{iso_now()}")
     started_at = iso_now()
@@ -4934,6 +5588,8 @@ def execute_kafka_continuous_maintenance(
     etl_repository.save_kafka_continuous_maintenance_run(db, run)
     try:
         result = run_kafka_continuous_maintenance(job, kind, run_id, persisted_config)
+        if kind in {"compaction", "iceberg_maintenance"}:
+            result = verify_continuous_iceberg_maintenance(job, run_id, result)
     except Exception as exc:
         cleanup_result: dict[str, Any] = {}
         try:
@@ -4957,7 +5613,6 @@ def execute_kafka_continuous_maintenance(
     result.pop("stdout", None)
     result.pop("stderr", None)
     run.status = "success"
-    run.result = result
     run.ended_at = optional_string(result.get("endedAt")) or iso_now()
     if kind == "quarantine_replay":
         runtime = etl_repository.get_kafka_continuous_runtime(db, job.id)
@@ -4969,11 +5624,84 @@ def execute_kafka_continuous_maintenance(
                 "replayedCount": nonnegative_int((runtime.metrics or {}).get("replayedCount"), 0) + replayed_count,
             }
             if replayed_count:
-                materialize_continuous_replay(db, job, runtime, result)
+                result["catalogApplied"] = materialize_continuous_replay(db, job, runtime, result)
             etl_repository.save_kafka_continuous_command(db, job, runtime)
         if bool(config.get("approveUnknownFields")):
             record_continuous_replay_override_audit(db, job, actor, run_id, "success")
+    run.result = result
     return etl_repository.save_kafka_continuous_maintenance_run(db, run)
+
+
+def verify_continuous_iceberg_maintenance(
+    job: ETLJobModel,
+    run_id: str,
+    result: dict[str, Any],
+    *,
+    writer_service: IcebergWriterService | None = None,
+) -> dict[str, Any]:
+    try:
+        target = IcebergWriterTarget.model_validate(job.iceberg_target)
+        if str(result.get("tableUri") or "") != target.table_uri:
+            raise IcebergWriterError("ICEBERG_MAINTENANCE_TARGET_MISMATCH")
+        snapshot_id = str(result.get("snapshotIdAfter") or "").strip()
+        if not snapshot_id:
+            raise IcebergWriterError("ICEBERG_MAINTENANCE_SNAPSHOT_MISSING")
+        service = writer_service or IcebergWriterService()
+        evidence = service.verify_commit(
+            target,
+            created_table=False,
+            job_id=job.id,
+            run_id=run_id,
+            expected_snapshot_id=snapshot_id,
+        )
+        data_file_count, storage_size_bytes = service.table_storage_metrics(
+            target,
+            snapshot_id=snapshot_id,
+        )
+    except (IcebergWriterError, ValueError) as exc:
+        code = exc.code if isinstance(exc, IcebergWriterError) else "ICEBERG_MAINTENANCE_VERIFICATION_FAILED"
+        raise ApiError(
+            code,
+            "Iceberg maintenance could not be verified through Trino.",
+            status.HTTP_502_BAD_GATEWAY,
+            {"jobId": job.id, "maintenanceRunId": run_id},
+        ) from exc
+    return {
+        **result,
+        "dataFileCount": data_file_count,
+        "icebergSnapshotId": evidence.snapshot_id,
+        "queryEngineTable": evidence.query_engine_table.model_dump(mode="json", by_alias=True),
+        "queryEngineVerified": True,
+        "storageSizeBytes": storage_size_bytes,
+        "warehouseLocation": evidence.warehouse_location,
+    }
+
+
+def reconcile_continuous_replay_catalog(db: Session, job: ETLJobModel) -> None:
+    runtime = etl_repository.get_kafka_continuous_runtime(db, job.id)
+    if runtime is None:
+        return
+    maintenance_runs = etl_repository.list_kafka_continuous_maintenance_run_models(
+        db,
+        job.id,
+        active_only=False,
+    )
+    for run in reversed(maintenance_runs):
+        result = run.result if isinstance(run.result, dict) else {}
+        if (
+            run.kind != "quarantine_replay"
+            or run.status != "success"
+            or result.get("catalogApplied") is True
+            or nonnegative_int(result.get("storedCount"), 0) == 0
+        ):
+            continue
+        result = {
+            **result,
+            "catalogApplied": materialize_continuous_replay(db, job, runtime, result),
+        }
+        run.result = result
+        etl_repository.save_kafka_continuous_maintenance_run(db, run)
+        etl_repository.save_kafka_continuous_command(db, job, runtime)
 
 
 def record_continuous_replay_override_audit(
@@ -5004,6 +5732,12 @@ def run_kafka_continuous_maintenance(
     run_id: str,
     config: dict[str, Any],
 ) -> dict[str, Any]:
+    if not isinstance(job.iceberg_target, dict):
+        raise ApiError(
+            ErrorCode.INVALID_JOB_STATE,
+            "Continuous Job does not have an Iceberg target; copy the Job to create a new Continuous checkpoint.",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
     compiled_rules = compile_job_rules(job)
     require_compiled_rules(compiled_rules)
     canonical_rules = [
@@ -5020,6 +5754,8 @@ def run_kafka_continuous_maintenance(
         "ASKLAKE_KAFKA_MAINTENANCE_RESULT",
         {
             "action": "run",
+            "icebergTarget": job.iceberg_target,
+            "jobId": job.id,
             "kind": kind,
             "runId": run_id,
             "outputPath": output_path,
@@ -5028,6 +5764,7 @@ def run_kafka_continuous_maintenance(
             "ruleOutputSchema": compiled_rules.result.output_schema,
             "rules": canonical_rules,
             "schemaColumns": job.schema_columns or [],
+            "schemaFingerprint": job.schema_fingerprint,
             "schemaEvolutionPolicy": (job.continuous_config or {}).get("schemaEvolutionPolicy") or {},
             **config,
         },
@@ -5059,6 +5796,63 @@ def continuous_maintenance_lease_seconds() -> int:
     return max(120, min(configured, 86_400))
 
 
+def continuous_maintenance_runner_stale_seconds() -> int:
+    return bounded_environment_integer(
+        "ASKLAKE_CONTINUOUS_MAINTENANCE_RUNNER_STALE_SECONDS",
+        default=30,
+        minimum=10,
+        maximum=3600,
+    )
+
+
+def continuous_maintenance_runner_observation(run_id: str) -> dict[str, Any] | None:
+    state_file = continuous_maintenance_state_file(run_id)
+    try:
+        state = json.loads(state_file.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, ValueError, TypeError):
+        return None
+    if (
+        not isinstance(state, dict)
+        or state.get("runner") != "rest"
+        or str(state.get("runId") or "") != str(run_id)
+        or not str(state.get("submissionId") or "").strip()
+    ):
+        return None
+    updated_at = parse_maintenance_datetime(state.get("updatedAt"))
+    driver_state = str(state.get("driverState") or "UNKNOWN").strip().upper() or "UNKNOWN"
+    terminal = driver_state in {"ERROR", "FAILED", "FINISHED", "KILLED"}
+    return {
+        "driverState": driver_state,
+        "submissionId": str(state.get("submissionId") or "").strip(),
+        "terminal": terminal,
+        "updatedAt": updated_at,
+    }
+
+
+def parse_maintenance_datetime(value: Any) -> datetime | None:
+    normalized = optional_string(value)
+    if not normalized:
+        return None
+    try:
+        parsed = datetime.fromisoformat(normalized.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+
+def persist_reconciled_maintenance_run(
+    db: Session,
+    run: KafkaContinuousMaintenanceRunModel,
+    *,
+    commit: bool,
+) -> None:
+    if commit:
+        etl_repository.save_kafka_continuous_maintenance_run(db, run)
+        return
+    db.add(run)
+    db.flush()
+
+
 def reconcile_stale_continuous_maintenance_runs(
     db: Session,
     job_id: str | None = None,
@@ -5068,16 +5862,57 @@ def reconcile_stale_continuous_maintenance_runs(
     current = datetime.now(UTC)
     for run in etl_repository.list_kafka_continuous_maintenance_run_models(db, job_id, active_only=True):
         lease_value = optional_string((run.config or {}).get("leaseExpiresAt"))
-        try:
-            lease_expires_at = datetime.fromisoformat(lease_value.replace("Z", "+00:00")) if lease_value else None
-        except ValueError:
-            lease_expires_at = None
+        lease_expires_at = parse_maintenance_datetime(lease_value)
         if lease_expires_at is None and run.started_at:
-            try:
-                lease_expires_at = datetime.fromisoformat(run.started_at.replace("Z", "+00:00")) + timedelta(seconds=continuous_maintenance_lease_seconds())
-            except ValueError:
-                lease_expires_at = current
+            started_at = parse_maintenance_datetime(run.started_at)
+            lease_expires_at = (
+                started_at + timedelta(seconds=continuous_maintenance_lease_seconds())
+                if started_at is not None
+                else current
+            )
         if lease_expires_at is None or current <= lease_expires_at:
+            continue
+        runner = continuous_maintenance_runner_observation(run.run_id)
+        runner_updated_at = runner.get("updatedAt") if runner else None
+        runner_fresh = bool(
+            isinstance(runner_updated_at, datetime)
+            and current - runner_updated_at <= timedelta(seconds=continuous_maintenance_runner_stale_seconds())
+        )
+        if runner and runner_fresh:
+            if runner.get("terminal"):
+                terminal_grace_until = runner_updated_at + timedelta(
+                    seconds=continuous_maintenance_runner_stale_seconds()
+                )
+                if current <= terminal_grace_until:
+                    run.config = {
+                        **(run.config or {}),
+                        "heartbeatAt": runner_updated_at.isoformat().replace("+00:00", "Z"),
+                        "leaseExpiresAt": terminal_grace_until.isoformat().replace("+00:00", "Z"),
+                        "runnerState": runner.get("driverState"),
+                    }
+                    persist_reconciled_maintenance_run(db, run, commit=commit)
+                    continue
+            else:
+                renewed_until = current + timedelta(seconds=continuous_maintenance_lease_seconds())
+                run.config = {
+                    **(run.config or {}),
+                    "heartbeatAt": runner_updated_at.isoformat().replace("+00:00", "Z"),
+                    "leaseExpiresAt": renewed_until.isoformat().replace("+00:00", "Z"),
+                    "runnerState": runner.get("driverState"),
+                }
+                persist_reconciled_maintenance_run(db, run, commit=commit)
+                continue
+        if runner and runner.get("terminal"):
+            run.status = "failed"
+            run.ended_at = iso_now()
+            run.last_error = "Continuous maintenance runner ended before control-plane finalization."
+            run.result = {
+                "cleanupSkipped": True,
+                "leaseExpired": True,
+                "runnerState": runner.get("driverState"),
+                "submissionId": runner.get("submissionId"),
+            }
+            persist_reconciled_maintenance_run(db, run, commit=commit)
             continue
         cleanup_result: dict[str, Any] = {}
         try:
@@ -5088,11 +5923,7 @@ def reconcile_stale_continuous_maintenance_runs(
         run.ended_at = iso_now()
         run.last_error = "Continuous maintenance lease expired before completion."
         run.result = {"leaseExpired": True, **cleanup_result}
-        if commit:
-            etl_repository.save_kafka_continuous_maintenance_run(db, run)
-        else:
-            db.add(run)
-            db.flush()
+        persist_reconciled_maintenance_run(db, run, commit=commit)
 
 
 def require_no_active_continuous_maintenance(db: Session, job_id: str) -> None:
@@ -5133,8 +5964,13 @@ def require_continuous_job_access(
     return job
 
 
-def require_continuous_maintenance_idle(db: Session, job: ETLJobModel) -> None:
-    runtime = etl_repository.get_kafka_continuous_runtime(db, job.id)
+def require_continuous_maintenance_idle(
+    db: Session,
+    job: ETLJobModel,
+    *,
+    runtime: KafkaContinuousRuntimeModel | None = None,
+) -> None:
+    runtime = runtime or etl_repository.get_kafka_continuous_runtime(db, job.id)
     if runtime is not None and runtime.status not in {"paused", "stopped"}:
         raise ApiError(
             ErrorCode.CONFLICT,
@@ -5299,6 +6135,8 @@ def sync_kafka_continuous_batches(
             status = "success"
         catalog_applied = status == "success" and catalog_cursor is not None and batch_id <= catalog_cursor
         dag_steps = continuous_batch_dag_steps(publication, status=status, catalog_applied=catalog_applied)
+        iceberg_commit = publication.get("icebergCommit") if isinstance(publication.get("icebergCommit"), dict) else {}
+        iceberg_target = iceberg_commit.get("target") if isinstance(iceberg_commit.get("target"), dict) else {}
         batch = KafkaContinuousBatchModel(
             id=f"{session.session_id}:{batch_id}",
             job_id=session.job_id,
@@ -5311,7 +6149,10 @@ def sync_kafka_continuous_batches(
             quarantined_count=nonnegative_int(publication.get("quarantinedCount"), 0),
             duration_ms=latest_duration_ms if batch_id == latest_batch_id and latest_duration_ms is not None else optional_int(publication.get("durationMs")),
             source_ranges=publication.get("sourceRanges") if isinstance(publication.get("sourceRanges"), list) else [],
+            source_boundary=publication.get("sourceBoundary") if isinstance(publication.get("sourceBoundary"), dict) else {},
             data_path=optional_string(publication.get("dataPath")),
+            iceberg_snapshot_id=optional_string(iceberg_commit.get("snapshotId")),
+            iceberg_table_uri=optional_string(iceberg_target.get("tableUri")),
             quarantine_path=optional_string(publication.get("quarantinePath")),
             manifest_path=optional_string(publication.get("manifestPath")),
             last_error=optional_string(publication.get("lastError")),
@@ -5333,6 +6174,8 @@ def continuous_batch_dag_steps(
         consumed_count = nonnegative_int(publication.get("consumedCount"), 0)
         stored_count = nonnegative_int(publication.get("storedCount"), 0)
         quarantined_count = nonnegative_int(publication.get("quarantinedCount"), 0)
+        iceberg_commit = publication.get("icebergCommit") if isinstance(publication.get("icebergCommit"), dict) else {}
+        iceberg_target = iceberg_commit.get("target") if isinstance(iceberg_commit.get("target"), dict) else {}
         failed_stage = optional_string(publication.get("failedStage"))
         order = ["source", "schema", "transform", "quality", "target", "manifest-checkpoint", "catalog"]
         failed_index = order.index(failed_stage) if failed_stage in order else -1
@@ -5354,7 +6197,7 @@ def continuous_batch_dag_steps(
             {"id": "schema", "title": "2. Schema", "status": fallback_status("schema"), "meta": "스키마 검증 완료", "details": []},
             {"id": "transform", "title": "3. Transform", "status": fallback_status("transform"), "meta": "규칙 실행 결과", "details": []},
             {"id": "quality", "title": "4. Quality", "status": fallback_status("quality"), "meta": "품질 검사 결과", "details": []},
-            {"id": "target", "title": "5. Target", "status": fallback_status("target"), "meta": f"Parquet {stored_count:,}건 적재", "details": [["출력 행", f"{stored_count:,}"], ["격리 행", f"{quarantined_count:,}"]]},
+            {"id": "target", "title": "5. Target", "status": fallback_status("target"), "meta": f"Iceberg {stored_count:,}건 커밋", "details": [["출력 행", f"{stored_count:,}"], ["격리 행", f"{quarantined_count:,}"], ["Table", str(iceberg_target.get("tableUri") or "-")], ["Snapshot", str(iceberg_commit.get("snapshotId") or "-")]]},
             {"id": "manifest-checkpoint", "title": "6. Manifest / Checkpoint", "status": fallback_status("manifest-checkpoint"), "meta": "publication과 offset 근거 저장", "details": [["Manifest", optional_string(publication.get("manifestPath")) or "-"]]},
             {"id": "catalog", "title": "7. Catalog", "status": fallback_status("catalog"), "meta": "Catalog 반영 완료" if catalog_applied else "Catalog 반영 대기", "details": []},
         ]
@@ -5526,6 +6369,12 @@ def refresh_kafka_continuous_runtime(db: Session, job: ETLJobModel) -> None:
         runtime.metrics = previous_metrics
         if runtime.lag is None and previous_metrics.get("lagAvailable"):
             runtime.lag = optional_int(previous_metrics.get("lag"))
+    runtime.metrics = {
+        **runtime.metrics,
+        "publicationBacklogCount": nonnegative_int(payload.get("publicationBacklogCount"), 0),
+        "publicationWindowLimit": nonnegative_int(payload.get("publicationWindowLimit"), 0),
+        "catalogAckBatchId": optional_int(payload.get("catalogAckBatchId")),
+    }
     previous_schema_state = runtime.schema_state or {}
     runtime.schema_state = {
         "schemaVersion": nonnegative_int(payload.get("schemaVersion"), nonnegative_int(previous_schema_state.get("schemaVersion"), 1)),
@@ -5721,33 +6570,71 @@ def materialize_continuous_publication(
     batch_id = str(publication["batchId"])
     if nonnegative_int(publication.get("storedCount"), 0) == 0:
         return True
-    run_id = f"continuous:{job.id}:batch:{batch_id}"
+    run_id = optional_string(publication.get("runId")) or ""
+    expected_prefix = f"continuous:{job.id}:batch:{batch_id}:"
+    if not run_id.startswith(expected_prefix):
+        runtime.last_error = "Catalog materialization pending retry: Continuous publication run identity is invalid."
+        return False
     existing = etl_repository.get_dataset_by_id_for_update(db, job.dataset_id or make_dataset_id(job.target))
     existing_runs = (existing.payload or {}).get("materializationRuns") if existing and existing.payload else []
     if any(str(item.get("runId") or "") == run_id for item in existing_runs if isinstance(item, dict)):
         return True
-    target = parse_kafka_target_path(job.storage_path or job.target_path, job.target, job.target_layer)
-    output_path = f"s3a://{target['bucket']}/{target['prefix'].strip('/')}/_batches"
-    result = {
-        "endedAt": optional_string(publication.get("publishedAt")) or runtime.last_flush_at or runtime.heartbeat_at or iso_now(),
-        "outputPath": output_path,
-        "outputRows": runtime.stored_count,
-        "materializationRows": nonnegative_int(publication.get("storedCount"), 0),
-        "materializationOutputPath": optional_string(publication.get("dataPath")) or f"{output_path}/batch_id={batch_id}",
-        "publicationManifest": optional_string(publication.get("manifestPath")),
-        "ruleContractVersion": optional_string(publication.get("ruleContractVersion")),
-        "ruleFingerprint": optional_string(publication.get("ruleFingerprint")),
-        "runtimeFingerprint": optional_string(publication.get("runtimeFingerprint")),
-        "schemaFingerprint": optional_string(publication.get("schemaFingerprint")),
-        "transform": publication.get("transform") if isinstance(publication.get("transform"), dict) else {},
-        "quality": publication.get("quality") if isinstance(publication.get("quality"), dict) else {},
-        "runId": run_id,
-        "sourceRanges": publication.get("sourceRanges") if isinstance(publication.get("sourceRanges"), list) else [],
-        "sourceKind": "kafka",
-        "status": "success",
-    }
     try:
-        dataset = dataset_from_spark_result(job, result, existing)
+        target = IcebergWriterTarget.model_validate(job.iceberg_target)
+        commit = publication.get("icebergCommit") if isinstance(publication.get("icebergCommit"), dict) else None
+        source_boundary = publication.get("sourceBoundary") if isinstance(publication.get("sourceBoundary"), dict) else None
+        committed_boundary = commit.get("sourceBoundary") if isinstance(commit, dict) and isinstance(commit.get("sourceBoundary"), dict) else None
+        source_ranges = normalize_continuous_source_ranges(publication.get("sourceRanges"))
+        if not commit or not source_boundary or committed_boundary != source_boundary:
+            raise ValueError("Continuous publication does not include matching Iceberg source-boundary evidence.")
+        if any((
+            source_boundary.get("kind") != "kafka_continuous_batch",
+            str(source_boundary.get("jobId") or "") != job.id,
+            optional_int(source_boundary.get("batchId")) != int(batch_id),
+            str(source_boundary.get("runId") or "") != run_id,
+            str(source_boundary.get("checkpointPath") or "").rstrip("/") != str(runtime.checkpoint_path or "").rstrip("/"),
+            str(source_boundary.get("consumerGroupId") or "") != runtime.consumer_group_id,
+            str(source_boundary.get("topic") or "") != runtime.topic,
+            normalize_continuous_source_ranges(source_boundary.get("sourceRanges")) != source_ranges,
+            not str(source_boundary.get("boundaryId") or "").strip(),
+        )):
+            raise ValueError("Continuous publication source boundary does not match the persisted runtime.")
+        result = {
+            "endedAt": optional_string(publication.get("publishedAt")) or runtime.last_flush_at or runtime.heartbeat_at or iso_now(),
+            "icebergCommit": commit,
+            "materializationRows": nonnegative_int(publication.get("storedCount"), 0),
+            "outputPath": target.table_uri,
+            "outputRows": runtime.stored_count,
+            "publicationManifest": optional_string(publication.get("manifestPath")),
+            "quality": publication.get("quality") if isinstance(publication.get("quality"), dict) else {},
+            "ruleContractVersion": optional_string(publication.get("ruleContractVersion")),
+            "ruleFingerprint": optional_string(publication.get("ruleFingerprint")),
+            "runId": run_id,
+            "runtimeFingerprint": optional_string(publication.get("runtimeFingerprint")),
+            "schemaFingerprint": optional_string(publication.get("schemaFingerprint")),
+            "sourceBoundary": source_boundary,
+            "sourceKind": "kafka",
+            "sourceRanges": source_ranges,
+            "status": "success",
+            "transform": publication.get("transform") if isinstance(publication.get("transform"), dict) else {},
+        }
+        verified = verify_spark_iceberg_result(job, run_id, result)
+        existing_mapping = (existing.payload or {}).get("queryEngineTable") if existing and existing.payload else None
+        same_mapping = isinstance(existing_mapping, dict) and all(
+            str(existing_mapping.get(key) or "") == expected
+            for key, expected in (
+                ("catalog", target.catalog),
+                ("schema", target.namespace),
+                ("table", target.table),
+                ("format", "iceberg"),
+            )
+        )
+        verified = {
+            **verified,
+            "materializationMode": "delta" if same_mapping else "snapshot",
+            "sourceBoundary": source_boundary,
+        }
+        dataset = dataset_from_spark_result(job, verified, existing)
         etl_repository.save_dataset(db, dataset)
     except Exception as exc:  # Catalog metadata must not roll back a committed streaming checkpoint.
         runtime.last_error = f"Catalog materialization pending retry: {compact_storage_text(str(exc), limit=500)}"
@@ -5759,8 +6646,9 @@ def materialize_continuous_publication(
             **(job.stats or {}),
             "inputRows": format_rows(runtime.consumed_count),
             "lastSuccess": runtime.last_flush_at or runtime.heartbeat_at or "-",
-            "outputPath": output_path,
+            "outputPath": target.table_uri,
             "outputRows": format_rows(runtime.stored_count),
+            "icebergSnapshotId": str(verified.get("icebergCommit", {}).get("snapshotId") or ""),
             "sampleScope": f"{runtime.topic} continuous micro-batch",
             "sourceUnits": "Kafka topic",
             "successRate": "100%" if runtime.failed_count == 0 else "확인 필요",
@@ -5768,40 +6656,95 @@ def materialize_continuous_publication(
         return True
 
 
+def normalize_continuous_source_ranges(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return sorted(
+        [
+            {
+                "endOffset": int(item.get("endOffset") or 0),
+                "partition": int(item.get("partition") or 0),
+                "startOffset": int(item.get("startOffset") or 0),
+                "topic": str(item.get("topic") or ""),
+            }
+            for item in value
+            if isinstance(item, dict)
+        ],
+        key=lambda item: (item["topic"], item["partition"]),
+    )
+
+
 def materialize_continuous_replay(
     db: Session,
     job: ETLJobModel,
     runtime: KafkaContinuousRuntimeModel,
     replay_result: dict[str, Any],
-) -> None:
+) -> bool:
     replayed_count = nonnegative_int(replay_result.get("storedCount"), 0)
     if replayed_count == 0:
-        return
+        return True
     existing = etl_repository.get_dataset_by_id_for_update(db, job.dataset_id or make_dataset_id(job.target))
-    target = parse_kafka_target_path(job.storage_path or job.target_path, job.target, job.target_layer)
-    target_root = f"s3a://{target['bucket']}/{target['prefix'].strip('/')}/_batches"
     metrics = runtime.metrics or {}
     schema_state = runtime.schema_state or {}
-    result = {
-        "endedAt": optional_string(replay_result.get("endedAt")) or iso_now(),
-        "outputPath": target_root,
-        "outputRows": runtime.stored_count,
-        "materializationRows": replayed_count,
-        "materializationOutputPath": replay_result.get("outputPath") or target_root,
-        "quality": replay_result.get("quality") if isinstance(replay_result.get("quality"), dict) else {},
-        "ruleContractVersion": optional_string(replay_result.get("ruleContractVersion")) or optional_string(metrics.get("ruleContractVersion")),
-        "ruleFingerprint": optional_string(replay_result.get("ruleFingerprint")) or optional_string(metrics.get("ruleFingerprint")),
-        "runId": replay_result.get("runId"),
-        "runtimeFingerprint": optional_string(metrics.get("runtimeFingerprint")),
-        "schemaFingerprint": optional_string(schema_state.get("schemaFingerprint")),
-        "sourceKind": "kafka",
-        "status": "success",
-        "transform": replay_result.get("transform") if isinstance(replay_result.get("transform"), dict) else {},
-    }
     try:
-        etl_repository.save_dataset(db, dataset_from_spark_result(job, result, existing))
+        target = IcebergWriterTarget.model_validate(job.iceberg_target)
+        run_id = optional_string(replay_result.get("runId")) or ""
+        commit = replay_result.get("icebergCommit") if isinstance(replay_result.get("icebergCommit"), dict) else None
+        source_boundary = replay_result.get("sourceBoundary") if isinstance(replay_result.get("sourceBoundary"), dict) else None
+        committed_boundary = commit.get("sourceBoundary") if isinstance(commit, dict) and isinstance(commit.get("sourceBoundary"), dict) else None
+        source_ranges = normalize_continuous_source_ranges(replay_result.get("sourceRanges"))
+        if not commit or not source_boundary or committed_boundary != source_boundary:
+            raise ValueError("Continuous replay does not include matching Iceberg source-boundary evidence.")
+        if any((
+            source_boundary.get("kind") != "kafka_continuous_replay",
+            str(source_boundary.get("jobId") or "") != job.id,
+            str(source_boundary.get("runId") or "") != run_id,
+            normalize_continuous_source_ranges(source_boundary.get("sourceRanges")) != source_ranges,
+            not str(source_boundary.get("boundaryId") or "").strip(),
+        )):
+            raise ValueError("Continuous replay source boundary does not match the persisted Job.")
+        result = {
+            "endedAt": optional_string(replay_result.get("endedAt")) or iso_now(),
+            "icebergCommit": commit,
+            "materializationRows": replayed_count,
+            "outputPath": target.table_uri,
+            "outputRows": runtime.stored_count,
+            "quality": replay_result.get("quality") if isinstance(replay_result.get("quality"), dict) else {},
+            "ruleContractVersion": optional_string(replay_result.get("ruleContractVersion")) or optional_string(metrics.get("ruleContractVersion")),
+            "ruleFingerprint": optional_string(replay_result.get("ruleFingerprint")) or optional_string(metrics.get("ruleFingerprint")),
+            "runId": run_id,
+            "runtimeFingerprint": optional_string(metrics.get("runtimeFingerprint")),
+            "schemaFingerprint": optional_string(schema_state.get("schemaFingerprint")) or optional_string(job.schema_fingerprint),
+            "sourceBoundary": source_boundary,
+            "sourceKind": "kafka",
+            "sourceRanges": source_ranges,
+            "status": "success",
+            "transform": replay_result.get("transform") if isinstance(replay_result.get("transform"), dict) else {},
+        }
+        verified = verify_spark_iceberg_result(job, run_id, result)
+        existing_mapping = (existing.payload or {}).get("queryEngineTable") if existing and existing.payload else None
+        same_mapping = isinstance(existing_mapping, dict) and all(
+            str(existing_mapping.get(key) or "") == expected
+            for key, expected in (
+                ("catalog", target.catalog),
+                ("schema", target.namespace),
+                ("table", target.table),
+                ("format", "iceberg"),
+            )
+        )
+        verified = {
+            **verified,
+            "materializationMode": "delta" if same_mapping else "snapshot",
+            "sourceBoundary": source_boundary,
+            "sourceRanges": source_ranges,
+        }
+        etl_repository.save_dataset(db, dataset_from_spark_result(job, verified, existing))
     except Exception as exc:  # Replay data is already durable; Catalog can retry independently.
         runtime.last_error = f"Replay Catalog materialization pending retry: {compact_storage_text(str(exc), limit=500)}"
+        return False
+    if str(runtime.last_error or "").startswith("Replay Catalog materialization pending retry:"):
+        runtime.last_error = None
+    return True
 
 
 def continuous_runtime_report_path(job_id: str) -> Path:
@@ -6144,6 +7087,12 @@ def apply_update_request(job: ETLJobModel, request: UpdatePipelineRequest, targe
     }
     if target_changed:
         job.dataset_id = make_dataset_id(request.target_dataset)
+    job.iceberg_target = build_iceberg_writer_target(
+        request.target_dataset,
+        job.dataset_id or make_dataset_id(request.target_dataset),
+        write_mode=writer_mode_for_pipeline(job.source_type, job.source_config),
+        partition_columns=normalize_string_list(request.partition_columns),
+    ).model_dump(mode="json", by_alias=True)
 
 
 def schedule_next_run_label(schedule_label: str | None, fallback: str | None = None) -> str:

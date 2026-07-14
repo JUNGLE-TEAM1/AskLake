@@ -27,7 +27,11 @@ try {
     await waitFor(async () => (await getJob()).continuousRuntime?.status === "failed", "injected pre-manifest failure");
     await post(`/api/etl/jobs/${encodeURIComponent(jobId)}/commands`, { command: "resumeContinuous" });
   }
-  await waitFor(async () => (await datasets()).some((dataset) => dataset.id === `ds_${target}`), "Catalog materialization");
+  await waitFor(async () => (await datasets()).some((dataset) => (
+    dataset.id === `ds_${target}`
+    && dataset.queryEngineStatus === "available"
+    && dataset.queryEngineTable?.format === "iceberg"
+  )), "Iceberg Catalog materialization");
   await waitFor(async () => (await getJob()).continuousRuntime?.storedCount >= 2, "retained backlog consumption");
 
   produce(2, 2);
@@ -44,6 +48,8 @@ try {
   const batches = await get(`/api/etl/jobs/${encodeURIComponent(jobId)}/continuous/sessions/${encodeURIComponent(activeSession.sessionId)}/batches?limit=100`);
   assert(batches.length > 0, "Continuous session history must persist published micro-batches.");
   assert(batches.every((batch) => batch.status === "success" && batch.dagSteps?.length === 7), "Every published micro-batch must expose a successful seven-stage DAG.");
+  assert(batches.every((batch) => batch.icebergSnapshotId && batch.icebergTableUri), "Every stored micro-batch must expose Iceberg commit identity.");
+  assert(batches.every((batch) => batch.sourceBoundary?.kind === "kafka_continuous_batch"), "Every stored micro-batch must expose its checkpoint source boundary.");
   assert(batches.every((batch) => batch.dagSteps.find((step) => step.id === "catalog")?.status === "success"), "Catalog stages must be acknowledged after materialization.");
   await post(`/api/etl/jobs/${encodeURIComponent(jobId)}/commands`, { command: "pauseContinuous" });
   await waitFor(async () => (await getJob()).continuousRuntime?.status === "paused", "pause");
@@ -84,6 +90,7 @@ try {
   assert(policyReplay.result.ruleRejectedCount === 1, "Rule quarantine replay must not bypass the failing Rule.");
   const replay = await post(`/api/etl/jobs/${encodeURIComponent(jobId)}/continuous/quarantine/replays`, { approveUnknownFields: true });
   assert(replay.result.storedCount === 1 && replay.result.failedCount === 2, "Managed unknown-field approval must recover only the schema-policy quarantine row.");
+  assert(replay.result.catalogApplied === true && replay.result.icebergCommit?.snapshotId, "Replay must verify its Iceberg append before Catalog publication.");
   assert(replay.result.policyOverride === "approve_unknown_fields", "Replay override must be explicit in the maintenance result.");
   const afterReplay = await getJob();
   assert(afterReplay.continuousRuntime.storedCount === 4, "Replay must increment durable target rows.");
@@ -97,8 +104,18 @@ try {
   const dataset = (await datasets()).find((item) => item.id === `ds_${target}`);
   assert(dataset?.materializationRuns?.some((run) => run.runId === replay.runId), "Replay must append a Catalog materialization run.");
   assert(dataset?.materializationRuns?.some((run) => run.ruleFingerprint?.length === 64), "Catalog materialization must retain Rule execution identity.");
-  const compaction = await post(`/api/etl/jobs/${encodeURIComponent(jobId)}/continuous/compactions`, { targetFileSizeMb: 128 });
-  assert(compaction.result.inputRows === 4, "The standard non-recursive Spark reader must read stream and replay batch_id partitions together.");
+  const compaction = await post(
+    `/api/etl/jobs/${encodeURIComponent(jobId)}/continuous/compactions`,
+    { targetFileSizeMb: 128 },
+  );
+  assert(compaction.status === "success", "Iceberg data-file rewrite must complete successfully.");
+  assert(compaction.result?.queryEngineVerified === true, "Trino must verify the maintained Iceberg snapshot.");
+  assert(compaction.result?.icebergSnapshotId, "Maintenance must expose the verified Iceberg snapshot ID.");
+  const catalogTableUri = dataset?.queryEngineTable
+    ? `iceberg://${dataset.queryEngineTable.catalog}/${dataset.queryEngineTable.schema}/${dataset.queryEngineTable.table}`
+    : "";
+  assert(compaction.result?.tableUri === catalogTableUri, "Maintenance must target the Catalog Iceberg table.");
+  assert(compaction.result?.operations?.some((item) => item.operation === "rewrite_data_files"), "Compaction must use Iceberg rewrite_data_files.");
   console.log("verify-kafka-continuous-e2e: ok");
 } finally {
   if (jobId) await post(`/api/etl/jobs/${encodeURIComponent(jobId)}/commands`, { command: "stopContinuous" }).catch(() => undefined);

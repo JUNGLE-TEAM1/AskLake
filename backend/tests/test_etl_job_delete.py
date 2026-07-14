@@ -81,6 +81,7 @@ def kafka_fixture_job(job_id: str) -> ETLJobModel:
         ["CONSUMER GROUP ID", f"asklake-{job_id.lower()}"],
     ]
     job.target = "reviews_bronze"
+    job.target_format = "jsonl"
     job.target_layer = "BRONZE"
     job.target_format = "jsonl"
     return job
@@ -808,6 +809,7 @@ class EtlJobDeleteRunConcurrencyTests(unittest.TestCase):
 
         with (
             patch("app.repositories.etl_repository.ensure_schema", return_value=None),
+            patch("app.services.etl_service.etl_repository.get_dataset_schema_by_id", return_value=None),
             patch("app.services.etl_service.run_kafka_ingest_request", side_effect=blocking_ingest),
         ):
             run_thread = threading.Thread(target=start_run, name="kafka-run-owner")
@@ -903,6 +905,7 @@ class EtlJobDeleteRunConcurrencyTests(unittest.TestCase):
 
         with (
             patch("app.repositories.etl_repository.ensure_schema", return_value=None),
+            patch("app.services.etl_service.etl_repository.get_dataset_schema_by_id", return_value=None),
             patch(
                 "app.services.etl_service.run_kafka_ingest_request",
                 side_effect=RuntimeError("bridge disconnected"),
@@ -931,6 +934,7 @@ class EtlJobDeleteRunConcurrencyTests(unittest.TestCase):
 
         with (
             patch("app.repositories.etl_repository.ensure_schema", return_value=None),
+            patch("app.services.etl_service.etl_repository.get_dataset_schema_by_id", return_value=None),
             patch("app.services.etl_service.run_kafka_ingest_request", return_value=mismatched_result),
         ):
             with self.session_factory() as db:

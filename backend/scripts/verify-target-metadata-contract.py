@@ -12,6 +12,7 @@ from app.services.etl_service import (
     normalize_target_tags,
     validate_catalog_output_identity,
 )
+from app.services.iceberg_writer_service import build_iceberg_writer_target
 
 
 def main() -> None:
@@ -89,6 +90,12 @@ def main() -> None:
         index_columns=normalize_string_list(request.index_columns),
         compression=request.compression,
         storage_path=request.storage_path,
+        iceberg_target=build_iceberg_writer_target(
+            request.target_dataset,
+            "ds_target_metadata_contract",
+            write_mode="replace",
+            partition_columns=normalize_string_list(request.partition_columns),
+        ).model_dump(mode="json", by_alias=True),
         target_description=normalize_optional_text(request.target_description),
         target_tags=normalize_target_tags(request.target_tags),
         target_format=request.target_format,
@@ -118,6 +125,9 @@ def main() -> None:
     assert spark_payload["partitionColumns"] == ["event_date"]
     assert spark_payload["indexColumns"] == ["amount"]
     assert spark_payload["compression"] == "Snappy"
+    assert spark_payload["icebergTarget"]["writeMode"] == "replace"
+    assert spark_payload["icebergTarget"]["partitionColumns"] == ["event_date"]
+    assert spark_payload["icebergTarget"]["tableUri"].startswith("iceberg://iceberg/asklake/")
 
     dataset = dataset_from_spark_result(
         job,

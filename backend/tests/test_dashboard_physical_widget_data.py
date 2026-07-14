@@ -13,6 +13,7 @@ from app.core.auth_context import ActorContext
 from app.core.errors import ApiError
 from app.schemas.common import ErrorCode
 from app.schemas.dashboard import DashboardRuntimeWidgetType, DonutChartWidgetConfig
+from app.schemas.trino import TrinoClientPage
 from app.services import dashboard_physical_data
 from app.services.dashboard_physical_data import (
     DASHBOARD_VALUE_ALIAS,
@@ -120,6 +121,47 @@ class FakeDashboardS3Client:
         }
 
 
+class FakeDashboardTrinoClient:
+    def __init__(self) -> None:
+        self.queries: list[str] = []
+
+    def submit(self, query: str, **_kwargs) -> TrinoClientPage:
+        self.queries.append(query)
+        if query.startswith("DESCRIBE"):
+            return TrinoClientPage(
+                columns=["Column", "Type"],
+                rows=[
+                    ["category", "varchar"],
+                    ["amount", "bigint"],
+                    ["_asklake_run_id", "varchar"],
+                ],
+                queryId="describe",
+            )
+        return TrinoClientPage(
+            columns=["category", "amount"],
+            rows=[["phones", 15.0]],
+            queryId="widget",
+        )
+
+    def fetch(self, _next_uri: str, **_kwargs) -> TrinoClientPage:
+        raise AssertionError("fixture query should fit in one Trino page")
+
+
+class EndlessDashboardTrinoClient:
+    def __init__(self) -> None:
+        self.cancelled: list[str] = []
+
+    def submit(self, _query: str, **_kwargs) -> TrinoClientPage:
+        return TrinoClientPage(nextUri="http://trino:8080/v1/statement/query/1", queryId="query-1")
+
+    def fetch(self, next_uri: str, **_kwargs) -> TrinoClientPage:
+        time.sleep(0.02)
+        return TrinoClientPage(nextUri=next_uri, queryId="query-1")
+
+    def cancel(self, next_uri: str, **_kwargs) -> None:
+        self.cancelled.append(next_uri)
+
+
 class InterruptibleDuckDbConnection:
     def __init__(self) -> None:
         self.interrupted = False
@@ -148,6 +190,41 @@ class FakeCatalogRepository:
 
 
 class DashboardPhysicalWidgetDataTests(unittest.TestCase):
+    def test_iceberg_widget_uses_trino_instead_of_scanning_warehouse_files(self) -> None:
+        dataset = catalog_dataset_payload(
+            storage_format="iceberg",
+            storage_location="s3://warehouse/asklake/catalog-dataset",
+        )
+        dataset.update({
+            "queryEngineStatus": "available",
+            "queryEngineTable": {
+                "catalog": "iceberg",
+                "schema": "asklake",
+                "table": "catalog_dataset",
+                "format": "iceberg",
+            },
+        })
+        client = FakeDashboardTrinoClient()
+        session = DashboardDatasetQuerySession(
+            dataset,
+            trino_client=client,  # type: ignore[arg-type]
+        )
+        try:
+            result = session.read_widget("bar_chart", {
+                "aggregation": "sum",
+                "xKey": "category",
+                "yKey": "amount",
+            })
+        finally:
+            session.close()
+
+        self.assertEqual(result["data"], [{"category": "phones", "amount": 15.0}])
+        self.assertEqual(len(client.queries), 2)
+        self.assertIn('FROM "iceberg"."asklake"."catalog_dataset"', client.queries[1])
+        self.assertIn('GROUP BY "category"', client.queries[1])
+        self.assertNotIn("GROUP BY ALL", client.queries[1])
+        self.assertNotIn("_asklake_run_id", client.queries[1])
+
     def test_chart_aggregation_reads_all_materializations_instead_of_sample_rows(self) -> None:
         with TemporaryDirectory() as directory:
             root = Path(directory)
@@ -691,6 +768,21 @@ class DashboardPhysicalWidgetDataTests(unittest.TestCase):
 
         self.assertTrue(connection.interrupted)
         self.assertLess(time.monotonic() - started_at, 0.5)
+
+    def test_trino_query_timeout_cancels_the_last_continuation(self) -> None:
+        client = EndlessDashboardTrinoClient()
+
+        with self.assertRaisesRegex(RuntimeError, "execution deadline"):
+            dashboard_physical_data.execute_trino_rows(
+                client,  # type: ignore[arg-type]
+                "SELECT 1",
+                timeout_seconds=0.001,
+            )
+
+        self.assertEqual(
+            client.cancelled,
+            ["http://trino:8080/v1/statement/query/1"],
+        )
 
     def test_httpfs_is_prepared_by_the_image_without_runtime_install(self) -> None:
         backend_root = Path(__file__).resolve().parents[1]
