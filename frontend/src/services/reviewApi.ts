@@ -78,20 +78,16 @@ function buildMockReviewSnapshot(draft: DraftPipeline): ReviewSnapshot {
 
   return {
     basicInformation: toReviewEntries([
-      ["작업 ID", request.id],
-      ["작업명", request.jobName],
       ["소스", [sourceTypeLabel(request.sourceType), request.sourceLabel].filter(Boolean).join(" · ")],
-      ["실행 방식", request.executionMode === "continuous" ? "실시간 스트림" : "Snapshot batch"],
-      ["대상 데이터셋", request.targetDataset],
+      ["처리 방식", request.executionMode === "continuous" ? "실시간 스트리밍" : "배치 처리"],
+      ["출력 데이터셋 이름", request.targetDataset],
       ["설명", request.targetDescription],
     ]),
     canCreate: sourceReady && schemaReady && processingReady && targetReady && permissionReady && Boolean(request.sourceType.trim()) && Boolean(request.sourceLabel.trim()),
     destination: toReviewEntries([
       ["저장 경로", request.storagePath ?? ""],
       ["데이터베이스", request.targetDatabase ?? "asklake"],
-      ["테이블 이름", draft.target.tableName ?? request.targetDataset],
       ["형식", request.targetFormat],
-      ["계층", request.targetLayer],
       ["파티션", request.partition || "없음"],
     ]),
     permission: permissionReviewEntries(request.owner, request.permissionGrants),
@@ -117,7 +113,7 @@ function buildMockReviewSnapshot(draft: DraftPipeline): ReviewSnapshot {
         ruleCompilation.issues[0]?.message ?? "규칙을 확인하세요",
       ),
       validationRow("접근 권한", permissionReady, "설정됨", permissionIssue ?? "권한 확인 필요"),
-      validationRow("저장 위치", targetReady, "설정됨", "대상 데이터셋 확인 필요"),
+      validationRow("저장 위치", targetReady, "설정됨", "출력 데이터셋 이름 확인 필요"),
     ],
   };
 }

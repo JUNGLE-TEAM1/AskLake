@@ -1641,20 +1641,16 @@ def review_pipeline(request: ReviewPipelineRequest) -> ReviewSnapshot:
 
     return ReviewSnapshot(
         basic_information=[
-            review_entry("작업 ID", request.id),
-            review_entry("작업명", request.job_name),
             review_entry("소스", source_display),
-            review_entry("실행 방식", "실시간 스트림" if request.execution_mode == "continuous" else "Snapshot batch"),
-            review_entry("대상 데이터셋", request.target_dataset),
+            review_entry("처리 방식", "실시간 스트리밍" if request.execution_mode == "continuous" else "배치 처리"),
+            review_entry("출력 데이터셋 이름", request.target_dataset),
             review_entry("설명", request.target_description),
         ],
         can_create=can_create,
         destination=[
             review_entry("저장 경로", request.storage_path),
             review_entry("데이터베이스", request.target_database or "asklake"),
-            review_entry("테이블 이름", request.target_dataset),
             review_entry("형식", request.target_format),
-            review_entry("계층", request.target_layer),
             review_entry("파티션", request.partition or "없음"),
         ],
         permission=permission_review_entries(request),
@@ -1674,7 +1670,7 @@ def review_pipeline(request: ReviewPipelineRequest) -> ReviewSnapshot:
             review_validation("출력 스키마", schema_ready, "확정됨", "필드 선택 필요"),
             review_validation("처리 규칙", rules_ready, rule_ready_value, rule_warning_value),
             review_validation("접근 권한", permission_ready, "설정됨", permission_issue or "권한 확인 필요"),
-            review_validation("저장 위치", target_ready, "설정됨", target_issue or "대상 데이터셋 확인 필요"),
+            review_validation("저장 위치", target_ready, "설정됨", target_issue or "출력 데이터셋 이름 확인 필요"),
         ],
     )
 

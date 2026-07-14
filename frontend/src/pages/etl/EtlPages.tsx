@@ -5642,7 +5642,7 @@ export function TargetPage({
   const sampleTargetSchema = useMemo(() => inferTargetSchema([], [], undefined), []);
   const [targetDataset, setTargetDataset] = useState(initialTarget.targetDataset);
   const databaseName = draftTarget?.databaseName ?? "asklake";
-  const [targetLayer, setTargetLayer] = useState(initialTargetLayer);
+  const targetLayer = initialTargetLayer;
   const [targetStoragePath, setTargetStoragePath] = useState(initialStoragePath);
   const [storagePathCustomized, setStoragePathCustomized] = useState(
     initialStoragePath !== buildTargetStoragePath(initialTarget.targetDataset, initialTargetLayer),
@@ -5777,13 +5777,6 @@ export function TargetPage({
     }
   };
 
-  const changeTargetLayer = (nextLayer: TargetLayer) => {
-    setTargetLayer(nextLayer);
-    if (!storagePathCustomized) {
-      setTargetStoragePath(buildTargetStoragePath(targetDataset.trim() || "target_dataset", nextLayer));
-    }
-  };
-
   const saveTargetConfig = () => {
     const config = buildConfig();
     const errors = validateTargetConfig(config, activeJsonParseFailed);
@@ -5852,7 +5845,7 @@ export function TargetPage({
             </div>
           </div>
           <div className="target-config-form-grid basic">
-            <FormFieldGroup className="field" label="대상 데이터셋">
+            <FormFieldGroup className="field" label="출력 데이터셋 이름">
               <Input className="input control-input" value={targetDataset} onChange={(event) => changeTargetDataset(event.target.value)} />
             </FormFieldGroup>
             <FormFieldGroup className="field" label="설명">
@@ -5892,16 +5885,6 @@ export function TargetPage({
             </div>
           </div>
           <div className="target-config-form-grid destination">
-            <FormFieldGroup className="field target-layer-field" label="데이터 계층">
-              <Select value={targetLayer} onValueChange={(value) => changeTargetLayer(value as TargetLayer)}>
-                <SelectTrigger className="input control-input" aria-label="데이터 계층">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {targetLayerOptions.map((layer) => <SelectItem key={layer} value={layer}>{layer}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </FormFieldGroup>
             <FormFieldGroup className="field target-format-field" label="파일 형식">
               <Select value={targetFormat} onValueChange={(value) => setTargetFormat(normalizeTargetFileFormat(value))}>
                 <SelectTrigger className="input control-input" aria-label="파일 형식">
@@ -6482,7 +6465,9 @@ export function ReviewPage({
   }, [draft]);
 
   const basicInformationRows = reviewSnapshot?.basicInformation ?? [];
-  const destinationRows = reviewSnapshot?.destination ?? [];
+  const destinationRows = (reviewSnapshot?.destination ?? []).filter(
+    ({ label }) => label !== "테이블 이름" && label !== "계층",
+  );
   const permissionRows = reviewSnapshot?.permission ?? [];
   const schemaRows = reviewSnapshot?.schema ?? [];
   const validationRows = reviewSnapshot?.validation ?? [];
