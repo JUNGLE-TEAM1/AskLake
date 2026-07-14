@@ -559,6 +559,16 @@ Phase 2 AWS inventory는 resource name, ARN, endpoint, public IP와 account ID�
 bash scripts/inspect-eks-aws-inventory.sh
 ```
 
+Phase 3의 MSK/RDS/S3 Terraform은 기본적으로 모두 `disabled`이며 mock provider test만으로 정적 계약을 검증한다. `existing`과 `create` 입력, MSK topic bootstrap, RDS 논리 database bootstrap, IAM identity 연결과 실제 apply 조건은 [Phase 3 Data Plane 계약](eks-phase-3-data-plane.md)을 따른다. 실제 식별자는 `terraform.tfvars` 또는 승인된 secret/config delivery에만 두고 문서나 PR 본문에 복사하지 않는다.
+
+```bash
+docker run --rm --entrypoint sh \
+  -v "$PWD/infra/eks/terraform:/workspace" \
+  -w /workspace \
+  hashicorp/terraform:1.15.8 \
+  -c 'export TF_DATA_DIR=/tmp/tfdata; terraform fmt -check -recursive && terraform init -backend=false -input=false >/dev/null && terraform validate && terraform test'
+```
+
 ```bash
 docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml config
 ```

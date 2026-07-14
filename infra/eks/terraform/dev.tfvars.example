@@ -48,3 +48,38 @@ trino_rds_endpoint_reference        = "TRINO_ICEBERG_JDBC_URL"
 trino_rds_security_group_reference  = null
 trino_warehouse_bucket_reference    = "TRINO_ICEBERG_WAREHOUSE_BUCKET"
 trino_warehouse_prefix_reference    = "TRINO_ICEBERG_WAREHOUSE_PREFIX"
+
+# Phase 3 data plane is opt-in. Keep every mode disabled until Phase 2
+# inventory, ownership, private network, cost and destroy gates are approved.
+msk_mode     = "disabled"
+rds_mode     = "disabled"
+storage_mode = "disabled"
+
+# For msk_mode = "create", provide at least two reviewed private subnet IDs
+# and an explicit client security group. Topic creation is an operational
+# bootstrap step; Terraform only fixes the isolated topic/group contract.
+msk_subnet_ids          = []
+msk_security_group_ids  = []
+msk_test_topic          = "asklake.eks-mvp.fixture.v1"
+msk_test_consumer_group = "asklake-eks-mvp-spark-v1"
+
+# For rds_mode = "create", select the instance class and optional engine
+# version only after workload/cost review. Terraform creates asklake_app;
+# airflow_metadata and iceberg_catalog are created by a later DB bootstrap.
+rds_subnet_ids         = []
+rds_security_group_ids = []
+rds_instance_class     = null
+rds_engine_version     = null
+rds_multi_az           = false
+
+# For storage_mode = "existing" or "create", replace every empty value with
+# deployment-owned names. AES256 is the no-extra-key baseline. Switching to
+# aws:kms requires a reviewed key ARN and workload KMS permissions.
+storage_bucket_names = {
+  raw           = ""
+  output        = ""
+  warehouse     = ""
+  query_results = ""
+}
+storage_sse_algorithm = "AES256"
+storage_kms_key_arn   = null

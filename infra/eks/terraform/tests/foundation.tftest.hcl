@@ -26,6 +26,20 @@ mock_provider "aws" {
       }]
     }
   }
+
+  mock_resource "aws_msk_serverless_cluster" {
+    defaults = {
+      arn                        = "arn:aws:kafka:ap-northeast-2:111122223333:cluster/asklake-dev-serverless/mock-uuid"
+      bootstrap_brokers_sasl_iam = "mock-broker.example.invalid:9098"
+    }
+  }
+
+  mock_resource "aws_db_instance" {
+    defaults = {
+      address = "mock-rds.example.invalid"
+      port    = 5432
+    }
+  }
 }
 
 run "existing_cluster_handoff" {
@@ -150,6 +164,117 @@ run "workload_repository_contract" {
     condition     = !contains(keys(output.ecr_repository_urls), "replay-producer")
     error_message = "The external fixture producer must not receive an EKS workload repository."
   }
+}
+
+run "mvp_data_plane_contract" {
+  command = apply
+
+  variables {
+    environment             = "dev"
+    owner                   = "pair-a"
+    resource_lifecycle      = "mvp-owned"
+    cluster_mode            = "existing"
+    existing_cluster_name   = "shared-dev"
+    create_ecr_repositories = false
+
+    msk_mode               = "create"
+    msk_subnet_ids         = ["subnet-private-a", "subnet-private-b"]
+    msk_security_group_ids = ["sg-msk-client"]
+
+    rds_mode               = "create"
+    rds_subnet_ids         = ["subnet-private-a", "subnet-private-b"]
+    rds_security_group_ids = ["sg-rds-client"]
+    rds_instance_class     = "db.t4g.small"
+
+    storage_mode = "create"
+    storage_bucket_names = {
+      raw           = "asklake-dev-111122223333-raw"
+      output        = "asklake-dev-111122223333-output"
+      warehouse     = "asklake-dev-111122223333-warehouse"
+      query_results = "asklake-dev-111122223333-query-results"
+    }
+  }
+
+  assert {
+    condition     = aws_msk_serverless_cluster.mvp[0].client_authentication[0].sasl[0].iam[0].enabled
+    error_message = "MSK Serverless must enforce IAM authentication."
+  }
+
+  assert {
+    condition     = aws_db_instance.metadata[0].publicly_accessible == false
+    error_message = "RDS must not be publicly accessible."
+  }
+
+  assert {
+    condition     = aws_db_instance.metadata[0].deletion_protection
+    error_message = "MVP-owned RDS must keep deletion protection enabled."
+  }
+
+  assert {
+    condition     = length(aws_s3_bucket.data) == 4
+    error_message = "The data plane must create isolated raw, output, warehouse, and query result buckets."
+  }
+
+  assert {
+    condition     = output.rds_contract.logical_databases.iceberg_catalog == "iceberg_catalog"
+    error_message = "RDS handoff must expose the Iceberg JDBC Catalog database."
+  }
+
+  assert {
+    condition = alltrue([
+      for policy in values(output.workload_iam_policy_documents) :
+      policy == null || !strcontains(policy, "kafka-cluster:*") && !strcontains(policy, "s3:*")
+    ])
+    error_message = "Generated workload policies must not contain broad Kafka or S3 wildcard actions."
+  }
+}
+
+run "reject_shared_data_plane_creation" {
+  command = plan
+
+  variables {
+    environment             = "dev"
+    owner                   = "pair-a"
+    resource_lifecycle      = "shared"
+    cluster_mode            = "existing"
+    existing_cluster_name   = "shared-dev"
+    create_ecr_repositories = false
+
+    storage_mode = "create"
+    storage_bucket_names = {
+      raw           = "asklake-dev-111122223333-raw"
+      output        = "asklake-dev-111122223333-output"
+      warehouse     = "asklake-dev-111122223333-warehouse"
+      query_results = "asklake-dev-111122223333-query-results"
+    }
+  }
+
+  expect_failures = [check.data_plane_creation_gate]
+}
+
+run "reject_incomplete_kms_contract" {
+  command = plan
+
+  variables {
+    environment             = "dev"
+    owner                   = "pair-a"
+    resource_lifecycle      = "mvp-owned"
+    cluster_mode            = "existing"
+    existing_cluster_name   = "shared-dev"
+    create_ecr_repositories = false
+
+    storage_mode = "create"
+    storage_bucket_names = {
+      raw           = "asklake-dev-111122223333-raw"
+      output        = "asklake-dev-111122223333-output"
+      warehouse     = "asklake-dev-111122223333-warehouse"
+      query_results = "asklake-dev-111122223333-query-results"
+    }
+    storage_sse_algorithm = "aws:kms"
+    storage_kms_key_arn   = null
+  }
+
+  expect_failures = [check.storage_encryption_contract]
 }
 
 run "reject_shared_resource_creation" {
