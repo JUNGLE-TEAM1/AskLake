@@ -980,6 +980,17 @@ class DashboardRuntimeService:
             session.close()
         if delta_state is None:
             return None
+        if int(commit.row_count or 0) > 0 and not any(
+            isinstance(row, dict) for row in (delta_state.get("rows") or [])
+        ):
+            logger.warning(
+                "dashboard_widget_revision_delta_empty dataset_id=%s revision=%s run_id=%s row_count=%s; falling back to full calculation",
+                dataset_id,
+                commit.revision,
+                commit.run_id,
+                commit.row_count,
+            )
+            return None
         merged_state = merge_dashboard_aggregate_states(current_state, delta_state)
         if merged_state is None:
             return None
