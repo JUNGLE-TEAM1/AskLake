@@ -721,8 +721,9 @@
 
 .source-preview-data-table thead th {
   position: sticky;
-  z-index: 1;
+  z-index: 2;
   top: 0;
+  background: #eff6ff;
 }
 
 .source-preview-cell {

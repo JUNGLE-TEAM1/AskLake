@@ -40,11 +40,11 @@ export async function testSourceConnector(sourceType: string, fields: SourceFiel
   if (normalizedSourceType === "SQL Result") {
     return buildSqlResultConnectorAnalysis(fields);
   }
-  return withRecordParsingSourceMetadata(normalizeConnectorAnalysis(
+  return withUnselectedTargetSchema(withRecordParsingSourceMetadata(normalizeConnectorAnalysis(
     await postSourceConnector(normalizedSourceType, fields),
     normalizedSourceType,
     fields,
-  ), fields);
+  ), fields));
 }
 
 export async function previewRecordParsing(rawLines: string[], recordParsing: RecordParsingDraft): Promise<RecordParsingPreviewResponse> {
@@ -286,6 +286,25 @@ function withRecordParsingSourceMetadata(analysis: SourceConnectorAnalysis, fiel
   };
 }
 
+function withUnselectedTargetSchema(analysis: SourceConnectorAnalysis): SourceConnectorAnalysis {
+  const schema = analysis.draftPatch.schema;
+  if (!schema?.columns) return analysis;
+  return {
+    ...analysis,
+    draftPatch: {
+      ...analysis.draftPatch,
+      schema: {
+        ...schema,
+        columns: schema.columns.map((column) => ({
+          ...column,
+          included: false,
+          targetOrder: undefined,
+        })),
+      },
+    },
+  };
+}
+
 function buildMockRecordParsingPreview(rawLines: string[], recordParsing: RecordParsingDraft): RecordParsingPreviewResponse {
   const indexed = rawLines.map((line, index) => ({ line, lineNumber: index + 1 })).filter(({ line }) => line.trim());
   const rows = indexed.map(({ line, lineNumber }) => ({ line, lineNumber, values: line.trim().split(/\s+/) }));
@@ -326,6 +345,7 @@ function inferSchemaColumnsFromPreview(columns: string[], rows: string[][]): Sch
     const values = rows.map((row) => row[columnIndex] ?? "");
     return {
       confidence: 85,
+      included: false,
       nullable: values.some((value) => isEmptyValue(value)),
       sourceName: column,
       targetName: normalizeColumnName(column),

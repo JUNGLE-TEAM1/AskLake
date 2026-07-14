@@ -154,7 +154,7 @@ export function SchemaTransformWorkbench({
 }
 
 function toSchemaTransformTargetColumn(column: SchemaColumnDraft, transformSteps: TransformStepDraft[]): SchemaTransformColumn {
-  const outputName = column.targetName || column.sourceName;
+  const outputName = column.targetName ?? column.sourceName;
   const relatedSteps = transformSteps.filter((step) => step.output === outputName);
   const defaultStep = relatedSteps.find((step) => normalizeLegacyOperation(step.operation) === "default_value");
   const nullGuardStep = relatedSteps.find((step) => normalizeLegacyOperation(step.operation) === "null_guard");
@@ -222,6 +222,7 @@ function projectSchemaTransformSchema(
 export function buildTransformSteps(targetSchema: SchemaTransformColumn[]): TransformStepDraft[] {
   return targetSchema.flatMap((column, columnIndex) => {
     const output = column.name.trim();
+    if (!output) return [];
     const source = (column.originalName || column.name).trim();
     const sourceType = fromSchemaTransformType(column.originalType || column.type);
     const outputType = fromSchemaTransformType(column.type);

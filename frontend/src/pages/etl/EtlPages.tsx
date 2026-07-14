@@ -2317,7 +2317,7 @@ export function RecordParsingPage({
       const name = normalizeTargetColumnName(column.name) || `field_${column.position + 1}`;
       return {
         confidence: 90,
-        included: true,
+        included: false,
         nullable: false,
         sourceName: name,
         targetName: name,
@@ -3119,6 +3119,12 @@ export function SchemaInferencePage({
     if (includedSchemaColumns.length === 0) {
       onAction("etl.schema.confirm_blocked", "/api/etl/schema-inference/confirm", draft.source.sourceLabel || "source", "failed");
       onNotify("출력에 포함된 컬럼이 없습니다. 최소 1개 컬럼을 포함해야 실행할 수 있습니다.");
+      return false;
+    }
+    const emptyNameColumn = includedSchemaColumns.find((column) => !column.targetName.trim());
+    if (emptyNameColumn) {
+      onAction("etl.schema.confirm_blocked", "/api/etl/schema-inference/confirm", emptyNameColumn.sourceName, "failed");
+      onNotify(`${emptyNameColumn.sourceName} 필드의 출력 이름을 입력해야 합니다.`);
       return false;
     }
     schemaAction("etl.schema.confirmed", "/api/etl/schema-inference/confirm", approvedSummary);
