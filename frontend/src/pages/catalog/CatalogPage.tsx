@@ -79,6 +79,9 @@ import { canDeleteDatasetMaterializationRun, canQueryDatasetAs, permissionDenied
 import { datasetStatusMeta } from "../../utils/statusMeta";
 import { cn } from "@/lib/utils";
 import { getCatalogFieldDescription } from "./catalogFieldDescriptions";
+import { SemanticLayerPage } from "../semantic/SemanticLayerPage";
+
+export type CatalogView = "catalog" | "semantic";
 
 type LineageColumn = {
   baseId: string;
@@ -321,16 +324,22 @@ export function CatalogPage({
   datasets,
   error = null,
   loading = false,
+  onAskAssistant,
   onAction,
   onOpenSql,
   selectedDataset,
+  onViewChange,
+  view = "catalog",
 }: {
   datasets: CatalogDataset[];
   error?: string | null;
   loading?: boolean;
+  onAskAssistant: (prompt: string) => void;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
   onOpenSql: (dataset: CatalogDataset) => void;
   selectedDataset: CatalogDataset;
+  onViewChange: (view: CatalogView) => void;
+  view?: CatalogView;
 }) {
   const [previewDataset, setPreviewDataset] = useState<CatalogDataset>(selectedDataset);
   const [activeModal, setActiveModal] = useState<"lineage" | "schema" | null>(null);
@@ -607,11 +616,57 @@ export function CatalogPage({
     </>
   );
 
+  const viewSwitcher = (
+    <div aria-label="카탈로그 보기 모드" className="catalog-view-switcher" role="tablist">
+      <Button
+        aria-selected={view === "catalog"}
+        className="catalog-view-button"
+        role="tab"
+        size="sm"
+        type="button"
+        variant={view === "catalog" ? "primary" : "outline"}
+        onClick={() => onViewChange("catalog")}
+      >
+        데이터 카탈로그
+      </Button>
+      <Button
+        aria-selected={view === "semantic"}
+        className="catalog-view-button"
+        role="tab"
+        size="sm"
+        type="button"
+        variant={view === "semantic" ? "primary" : "outline"}
+        onClick={() => onViewChange("semantic")}
+      >
+        업무 모델 보기
+      </Button>
+    </div>
+  );
+
+  if (view === "semantic") {
+    return (
+      <TooltipProvider delayDuration={300}>
+        <div className="catalog-page catalog-semantic-page">
+          <PageHeader
+            actions={viewSwitcher}
+            className="catalog-page-header"
+            description="데이터 자산을 찾고, 같은 Catalog 안에서 업무 모델로 해석합니다."
+            icon={<Search size={18} />}
+            title="검색/카탈로그"
+          />
+          <SemanticLayerPage datasets={datasets} onAction={onAction} onAskAssistant={onAskAssistant} />
+        </div>
+      </TooltipProvider>
+    );
+  }
+
   return (
     <TooltipProvider delayDuration={300}>
     <div className="catalog-page">
       <PageHeader
+        actions={viewSwitcher}
         className="catalog-page-header"
+        description="Dataset을 검색하고 스키마, 상태, 리니지를 확인합니다."
         icon={<Search size={18} />}
         title="검색/카탈로그"
       />

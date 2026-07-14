@@ -10,6 +10,8 @@
 @import "./styles/dashboard-runtime.css";
 @import "./styles/etl.css";
 @import "./styles/ai.css";
+@import "./styles/semantic-layer.css";
+@import "./styles/assistant.css";
 @import "./styles/responsive.css";
 @import "./styles/landing.css";
 @import "./styles/access-control.css";

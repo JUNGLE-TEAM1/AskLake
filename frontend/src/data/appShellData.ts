@@ -1,4 +1,4 @@
-import { BarChart3, BookOpen, Bot, Database, Settings, TerminalSquare } from "lucide-react";
+import { BarChart3, BookOpen, Database, Settings, TerminalSquare } from "lucide-react";
 import type { FlowId, NavItem } from "../types";
 
 export const steps = ["소스", "처리", "스케줄", "권한", "타겟", "검토"];
@@ -26,7 +26,6 @@ export const navItems = [
   { id: "catalog", label: "검색/카탈로그", icon: BookOpen, flow: "catalog" },
   { id: "sql", label: "SQL 분석", icon: TerminalSquare, flow: "sql" },
   { id: "dashboard", label: "대시보드", icon: BarChart3, flow: "dashboard" },
-  { id: "ai", label: "AI 활용", icon: Bot, flow: "ai" },
   { id: "admin", label: "관리", icon: Settings, flow: "admin" },
 ] satisfies NavItem[];
 
@@ -35,6 +34,13 @@ export const jobManagerFlows: FlowId[] = ["jobs", "jobDetail", "jobRuns"];
 export const wizardFlows: FlowId[] = ["source", "recordParsing", "schema", "repeat", "manual", "permission", "target", "review"];
 
 export const summaryByFlow: Record<FlowId, Array<[string, string]>> = {
+  semantic: [
+    ["담당 영역", "Semantic Layer"],
+    ["핵심 기능", "Metric / Dimension / 관계 관리"],
+    ["상태", "Mock 관리 화면"],
+    ["입력", "Catalog Dataset"],
+    ["권한", "Publish된 정의만 챗봇 기준으로 사용"],
+  ],
   jobs: [
     ["전체 작업", "0"],
     ["실행 중", "0"],

@@ -2,14 +2,15 @@ import { useEffect, useMemo, useState } from "react";
 import { CircleHelp } from "lucide-react";
 import { useLocation, useNavigate } from "react-router";
 import { steps, wizardFlows } from "./data/appShellData";
+import { mockAuthUser } from "./data/mockAuthUser";
 import { Sidebar } from "./components/layout/Sidebar";
 import { Topbar } from "./components/layout/Topbar";
 import { Stepper } from "./components/layout/Stepper";
-import { CatalogDetailPage, CatalogPage } from "./pages/catalog/CatalogPage";
+import { CatalogDetailPage, CatalogPage, type CatalogView } from "./pages/catalog/CatalogPage";
 import { SqlAnalysisPage } from "./pages/sql/SqlAnalysisPage";
 import { DashboardPage } from "./pages/dashboard/DashboardPage";
 import { AdminConsolePage } from "./pages/admin/AdminConsolePage";
-import { AiChatPage } from "./pages/ai/AiChatPage";
+import { GlobalAssistantWidget, type AssistantPageContext } from "./components/ai/GlobalAssistantWidget";
 import { AuthPage } from "./pages/auth/AuthPage";
 import { ProfilePage } from "./pages/profile/ProfilePage";
 import { JobDetailPage, JobRunsPage, JobsLandingPage } from "./pages/ingest/JobsPages";
@@ -40,6 +41,7 @@ type DashboardRouteState =
   | { view: "list" };
 
 type AppRouteState = {
+  catalogView?: CatalogView;
   dashboardRoute: DashboardRouteState | null;
   datasetId?: string;
   flow: FlowId;
@@ -48,12 +50,14 @@ type AppRouteState = {
 
 type FlowPathContext = {
   dashboardEntry?: DashboardEntry;
+  catalogView?: CatalogView;
   lastScheduleFlow?: ScheduleFlowId;
   selectedDataset?: CatalogDataset;
   selectedJob?: JobRowData;
 };
 
 const defaultScheduleFlow: ScheduleFlowId = "repeat";
+const frontendMockMode = import.meta.env.DEV && String(import.meta.env.VITE_USE_MOCK_API ?? "false").toLowerCase() === "true";
 
 function parseDashboardRoute(pathname: string): DashboardRouteState | null {
   const segments = pathname.split("/").filter(Boolean);
@@ -93,7 +97,11 @@ function encodePathSegment(segment: string) {
   return encodeURIComponent(segment);
 }
 
-function parseAppRoute(pathname: string, currentScheduleFlow: ScheduleFlowId = defaultScheduleFlow): AppRouteState {
+function parseCatalogView(search: string): CatalogView {
+  return new URLSearchParams(search).get("view") === "semantic" ? "semantic" : "catalog";
+}
+
+function parseAppRoute(pathname: string, currentScheduleFlow: ScheduleFlowId = defaultScheduleFlow, search = ""): AppRouteState {
   const dashboardRoute = parseDashboardRoute(pathname);
   if (dashboardRoute) return { dashboardRoute, flow: "dashboard" };
 
@@ -121,10 +129,10 @@ function parseAppRoute(pathname: string, currentScheduleFlow: ScheduleFlowId = d
   if (area === "catalog") {
     const datasetId = decodePathSegment(id);
     if (datasetId) return { dashboardRoute: null, datasetId, flow: "catalogDetail" };
-    return { dashboardRoute: null, flow: "catalog" };
+    return { catalogView: parseCatalogView(search), dashboardRoute: null, flow: "catalog" };
   }
   if (area === "sql") return { dashboardRoute: null, flow: "sql" };
-  if (area === "ai") return { dashboardRoute: null, flow: "ai" };
+  if (area === "ai" || area === "semantic-layer") return { catalogView: "semantic", dashboardRoute: null, flow: "catalog" };
   if (area === "admin") return { dashboardRoute: null, flow: "admin" };
   if (area === "profile") return { dashboardRoute: null, flow: "profile" };
   if (area === "login") return { dashboardRoute: null, flow: "login" };
@@ -144,7 +152,7 @@ function getFlowPath(flow: FlowId, context: FlowPathContext = {}) {
   if (flow === "permission") return "/etl/permission";
   if (flow === "target") return "/etl/target";
   if (flow === "review") return "/etl/review";
-  if (flow === "catalog") return "/catalog";
+  if (flow === "catalog") return context.catalogView === "semantic" ? "/catalog?view=semantic" : "/catalog";
   if (flow === "catalogDetail" && context.selectedDataset && context.selectedDataset.id !== emptyDatasetId) return `/catalog/${encodePathSegment(context.selectedDataset.id)}`;
   if (flow === "sql") return "/sql";
   if (flow === "dashboard") {
@@ -152,7 +160,7 @@ function getFlowPath(flow: FlowId, context: FlowPathContext = {}) {
     if (entry?.view === "runtime" && entry.dashboardId && entry.runtimeMode) return getDashboardPath(entry.dashboardId, entry.runtimeMode);
     return "/dashboards";
   }
-  if (flow === "ai") return "/ai";
+  if (flow === "semantic") return "/semantic-layer";
   if (flow === "admin") return "/admin";
   if (flow === "profile") return "/profile";
   if (flow === "login") return "/login";
@@ -211,7 +219,7 @@ function hasSelectedJob(jobId: string, jobs: Array<{ id: string }>) {
 export function App() {
   const location = useLocation();
   const navigate = useNavigate();
-  const initialRoute = parseAppRoute(window.location.pathname, defaultScheduleFlow);
+  const initialRoute = parseAppRoute(window.location.pathname, defaultScheduleFlow, window.location.search);
   const [activeFlow, setActiveFlow] = useState<FlowId>(initialRoute.flow);
   const [currentUser, setCurrentUser] = useState<CurrentUserResponse | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
@@ -221,6 +229,7 @@ export function App() {
     initialRoute.dashboardRoute ? dashboardEntryFromRoute(initialRoute.dashboardRoute, 0) : { source: "sidebar", view: "list", version: 0 }
   ));
   const [sqlInitialDatasetId, setSqlInitialDatasetId] = useState<string | null>(null);
+  const [assistantRequest, setAssistantRequest] = useState<{ key: number; prompt: string }>();
   const { auditSignal, showToast, toast, writeAuditLog } = useAuditLogs();
   const changeFlowFromData = (flow: FlowId) => {
     const nextFlow = flow === "rules" ? lastScheduleFlow : flow;
@@ -267,7 +276,7 @@ export function App() {
     if (activeFlow === "catalog" || activeFlow === "catalogDetail") return "catalog";
     if (activeFlow === "sql") return "sql";
     if (activeFlow === "dashboard") return "dashboard";
-    if (activeFlow === "ai") return "ai";
+    if (activeFlow === "semantic") return "semantic";
     if (activeFlow === "admin") return canAccessAdmin ? "admin" : null;
     if (activeFlow === "profile" || activeFlow === "login") return null;
     return "ingest";
@@ -291,7 +300,7 @@ export function App() {
   );
   const continuousKafkaDraft = isContinuousKafkaDraft(draftPipeline);
   const requiresRecordParsing = Boolean(draftPipeline.source.requiresRecordParsing);
-  const isIndependentFlow = activeFlow === "ai" || activeFlow === "admin" || activeFlow === "profile";
+  const isIndependentFlow = activeFlow === "semantic" || activeFlow === "admin" || activeFlow === "profile";
   const shouldRenderAppContent = isIndependentFlow || (!shouldBlockForInitialData && !shouldBlockForInitialError && canRenderActiveFlow);
   const wizardStepFlows = useMemo<FlowId[]>(
     () => continuousKafkaDraft
@@ -308,15 +317,32 @@ export function App() {
   );
   const wizardActiveIndex = Math.max(0, wizardStepFlows.indexOf(activeFlow));
   const routeState = useMemo(
-    () => parseAppRoute(location.pathname, lastScheduleFlow),
-    [lastScheduleFlow, location.pathname],
+    () => parseAppRoute(location.pathname, lastScheduleFlow, location.search),
+    [lastScheduleFlow, location.pathname, location.search],
   );
+
+  const changeCatalogView = (view: CatalogView) => {
+    const nextPath = view === "semantic" ? "/catalog?view=semantic" : "/catalog";
+    writeAuditLog("catalog.view_changed", nextPath, view);
+    setActiveFlow("catalog");
+    if (`${location.pathname}${location.search}` !== nextPath) navigate(nextPath);
+  };
+
+  useEffect(() => {
+    if (location.pathname !== "/semantic-layer") return;
+    navigate("/catalog?view=semantic", { replace: true });
+  }, [location.pathname, navigate]);
 
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0 });
   }, [activeFlow, selectedJob?.id]);
 
   useEffect(() => {
+    if (frontendMockMode) {
+      setCurrentUser(mockAuthUser);
+      setAuthChecked(true);
+      return undefined;
+    }
     let active = true;
     fetchAuthSession()
       .then((session) => {
@@ -501,6 +527,34 @@ export function App() {
     moveToFlow("dashboard", { dashboardEntry: nextDashboardEntry });
   };
 
+  const askAssistant = (prompt: string) => {
+    setAssistantRequest({ key: Date.now(), prompt });
+  };
+
+  const assistantContext = useMemo<AssistantPageContext>(() => {
+    const isSemanticCatalogView = activeFlow === "catalog" && routeState.catalogView === "semantic";
+    const datasetName = activeFlow === "catalogDetail" || activeFlow === "sql" || activeFlow === "dashboard"
+      ? (sqlInitialDataset?.name ?? selectedDataset.name)
+      : undefined;
+    const labels: Partial<Record<FlowId, string>> = {
+      jobs: "작업 목록",
+      catalog: "Catalog 검색",
+      catalogDetail: "Catalog Detail",
+      sql: "SQL Analysis",
+      dashboard: "Dashboard",
+      semantic: "Semantic Layer",
+      schema: "Schema Inference",
+      permission: "Permission",
+      target: "Target 설정",
+    };
+    return {
+      flow: isSemanticCatalogView ? "semantic" : activeFlow,
+      label: isSemanticCatalogView ? "업무 모델 보기" : labels[activeFlow] ?? "AskLake 작업 화면",
+      datasetName,
+      semanticName: isSemanticCatalogView || activeFlow === "semantic" ? "선택한 Semantic Dataset" : undefined,
+    };
+  }, [activeFlow, routeState.catalogView, selectedDataset.name, sqlInitialDataset?.name]);
+
   const openJobDetailWithRoute = (job: JobRowData) => {
     setSelectedJob(job);
     writeAuditLog("etl.job.detail_opened", `/api/etl/jobs/${job.id}`, job.id);
@@ -573,17 +627,17 @@ export function App() {
           {activeFlow === "target" && <TargetPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("permission")} onNext={() => moveToFlow("review")} onSave={() => saveDraft("target")} />}
           {activeFlow === "permission" && <PermissionPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow(continuousKafkaDraft ? "schema" : lastScheduleFlow)} onNext={() => moveToFlow("target")} onSave={() => saveDraft("permission")} />}
           {activeFlow === "review" && <ReviewPage createPending={apiPending} draft={draftPipeline} onEdit={moveToFlow} onSave={() => saveDraft("review")} onCreate={createPipeline} />}
-          {activeFlow === "catalog" && <CatalogPage datasets={datasets} error={dataError} loading={dataLoading} selectedDataset={selectedDataset} onAction={writeAuditLog} onOpenSql={openDatasetInSqlWithSelection} />}
+          {activeFlow === "catalog" && <CatalogPage datasets={datasets} error={dataError} loading={dataLoading} onAskAssistant={askAssistant} onViewChange={changeCatalogView} selectedDataset={selectedDataset} view={routeState.catalogView ?? "catalog"} onAction={writeAuditLog} onOpenSql={openDatasetInSqlWithSelection} />}
           {activeFlow === "catalogDetail" && <CatalogDetailPage dataset={selectedDataset} onAction={writeAuditLog} onBack={() => moveToFlow("catalog")} onLineage={() => writeAuditLog("catalog.lineage.opened", `/api/catalog/datasets/${selectedDataset.id}/lineage`, selectedDataset.id)} onOpenSql={() => openDatasetInSqlWithSelection(selectedDataset)} />}
           {activeFlow === "sql" && <SqlAnalysisPage cachedResult={sqlResultDraft} createPending={apiPending} dataset={sqlInitialDataset} datasets={datasets} onAction={writeAuditLog} onCreateDatasetJob={createSqlDatasetJob} onCreateTrinoSqlJob={createTrinoSqlJob} onResultChange={setSqlResultDraft} />}
           {activeFlow === "dashboard" && <DashboardPage dataset={selectedDataset} datasets={datasets} entry={dashboardEntry} sqlResult={sqlResultDraft} onAction={writeAuditLog} onRuntimeNavigate={navigateDashboardRuntime} />}
-          {activeFlow === "ai" && <AiChatPage datasets={datasets} onAction={writeAuditLog} />}
           {activeFlow === "profile" && <ProfilePage onAction={writeAuditLog} />}
           {activeFlow === "admin" && canAccessAdmin && <AdminConsolePage onAction={writeAuditLog} onNotify={showToast} />}
             </>
           )}
         </section>
       </main>
+      <GlobalAssistantWidget context={assistantContext} datasets={datasets} request={assistantRequest} onAction={writeAuditLog} />
     </div>
   );
 }
