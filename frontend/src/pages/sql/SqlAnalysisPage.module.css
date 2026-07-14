@@ -1,6 +1,6 @@
 .page {
   --sql-side-panel-width: clamp(320px, 22vw, 400px);
-  --sql-workspace-height: clamp(560px, calc(100dvh - 156px), 860px);
+  --sql-workspace-height: clamp(800px, calc(100dvh - 156px), 860px);
   position: relative;
   display: grid;
   width: 100%;
@@ -248,6 +248,13 @@
   margin-left: auto;
 }
 
+.resultActions button {
+  gap: 6px;
+  padding-right: 8px;
+  padding-left: 8px;
+  font-size: 14px;
+}
+
 .resultRange {
   color: #64748b;
   font-size: 12px;
@@ -452,6 +459,8 @@
   .collapsed .workspace {
     grid-column: 1;
     grid-row: auto;
+    height: auto;
+    max-height: none;
     order: 2;
   }
 }

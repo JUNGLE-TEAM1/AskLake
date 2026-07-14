@@ -218,7 +218,7 @@ export function SqlResultsPanel({
                 </strong>
               ) : null}
               {resultDraft && resultView !== "execution" ? (
-                <ActionGroup density="compact" wrap="wrap">
+                <ActionGroup className={styles.resultActions} density="compact" wrap="wrap">
                   <Button disabled={downloadDisabled} type="button" onClick={onDownloadCsv} size="sm" variant="outline">
                     <Download data-icon="inline-start" /> CSV 다운로드
                   </Button>

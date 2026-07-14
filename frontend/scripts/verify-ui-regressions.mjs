@@ -236,6 +236,7 @@ const checks = [
       /overflow=\{isCompactTableResult \? "visible" : "hidden"\}/,
       /scrollbars=\{resultScrollbars\}/,
       /styles\.resultBodyCompact/,
+      /className=\{styles\.resultActions\}/,
     ],
   },
   {
@@ -246,6 +247,7 @@ const checks = [
       /\.resultPanelCompact \.resultWorkspace[\s\S]*height:\s*auto;[\s\S]*grid-template-rows:\s*max-content max-content;[\s\S]*overflow:\s*visible;/,
       /\.resultBodyCompact[\s\S]*grid-template-rows:\s*max-content repeat\(2, max-content\);[\s\S]*overflow:\s*visible;/,
       /\.resultBodyCompact \.resultScroll[\s\S]*height:\s*auto;/,
+      /\.resultActions button[\s\S]*gap:\s*6px;[\s\S]*padding-right:\s*8px;[\s\S]*padding-left:\s*8px;[\s\S]*font-size:\s*14px;/,
     ],
   },
   {
@@ -523,7 +525,7 @@ const checks = [
     name: "SQL workspace height matches the dataset panel in all result states",
     file: "src/pages/sql/SqlAnalysisPage.module.css",
     patterns: [
-      /--sql-workspace-height:\s*clamp\(560px, calc\(100dvh - 156px\), 860px\);/,
+      /--sql-workspace-height:\s*clamp\(800px, calc\(100dvh - 156px\), 860px\);/,
       /\.datasetPanel[\s\S]*height:\s*var\(--sql-workspace-height\);/,
       /\.workspace[\s\S]*height:\s*var\(--sql-workspace-height\);/,
       /\.resultPanel[\s\S]*grid-template-rows:\s*max-content minmax\(0, 1fr\);/,
@@ -534,6 +536,7 @@ const checks = [
       /\.resultToolbar[\s\S]*flex-wrap:\s*wrap;/,
       /@media \(max-width: 860px\)[\s\S]*\.datasetPanel[\s\S]*height:\s*min\(720px, 80dvh\);/,
       /@media \(max-width: 860px\)[\s\S]*\.workspace[\s\S]*grid-column:\s*1;/,
+      /@media \(max-width: 1180px\)[\s\S]*\.workspace,[\s\S]*\.collapsed \.workspace[\s\S]*height:\s*auto;[\s\S]*max-height:\s*none;/,
       /\.resultScroll,[\s\S]*height:\s*100%;/,
     ],
   },
