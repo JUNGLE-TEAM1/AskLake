@@ -34,7 +34,11 @@ def main():
             json.dumps(record, ensure_ascii=False)
             for record in records[:100]
         ]))
-        normalized = normalize_columns(source)
+        normalized = normalize_columns(
+            source,
+            payload.get("schemaColumns") or [],
+            payload.get("transformSteps") or [],
+        )
         contracted = apply_schema_contract(
             normalized,
             payload.get("schemaColumns") or [],

@@ -187,6 +187,8 @@ The validator checks:
 - Parquet physical read
 - Transform type fixture: trim, int, long, double, bool, timestamp, JSON path extraction
 
+Snapshot schema contract를 변경한 뒤에는 `npm run verify:spark-schema-contract`를 실행한다. 이 검증은 필수 컬럼 1개와 10개에서 동일한 수의 내부 Spark job으로 null/cast 결과를 확인해, 필수 컬럼 수에 비례해 source scan action이 증가하는 회귀를 차단한다. JSON/JSONL reader는 승인된 schema와 dotted source path를 사용하므로 DataFrame 생성 시 inference action을 실행하지 않아야 한다.
+
 Set `ASKLAKE_SPARK_FULL_COUNT=true` only when a full count is needed; default validation uses bounded reads for speed.
 
 ## 7. Create/Run Spark Pipeline Verification
