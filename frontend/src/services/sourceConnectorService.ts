@@ -1,13 +1,12 @@
 import { apiClient, apiConfig } from "./apiClient";
 import type { DraftPipelinePatch, RecordParsingDraft, RecordParsingPreviewResponse, SchemaColumnDraft, SourceDraft } from "../types";
+import { sanitizeSourceConnectorFields, type SourceFieldRows } from "../utils/sourceConnectorFields";
 
 const directBackendBaseUrl = String(
   import.meta.env.VITE_BACKEND_DIRECT_URL
     || import.meta.env.VITE_API_BASE_URL
     || "http://127.0.0.1:8080",
 ).replace(/\/$/, "");
-
-type SourceFieldRows = Array<[string, string]>;
 
 export type SourceDatasetSummary = {
   selectionKind: "prefix";
@@ -54,11 +53,12 @@ export async function testSourceConnector(sourceType: string, fields: SourceFiel
   if (normalizedSourceType === "SQL Result") {
     return buildSqlResultConnectorAnalysis(fields);
   }
+  const requestFields = sanitizeSourceConnectorFields(normalizedSourceType, fields);
   return withUnselectedTargetSchema(withRecordParsingSourceMetadata(normalizeConnectorAnalysis(
-    await postSourceConnector(normalizedSourceType, fields),
+    await postSourceConnector(normalizedSourceType, requestFields),
     normalizedSourceType,
-    fields,
-  ), fields));
+    requestFields,
+  ), requestFields));
 }
 
 export async function previewRecordParsing(rawLines: string[], recordParsing: RecordParsingDraft): Promise<RecordParsingPreviewResponse> {
@@ -72,7 +72,8 @@ export async function getSourceConnectorDefaults(): Promise<SourceConnectorDefau
 }
 
 export async function listSourceAssets(sourceType: string, fields: SourceFieldRows, prefix = ""): Promise<SourceAssetsResponse> {
-  return postSourceAssets(normalizeSourceType(sourceType), fields, prefix);
+  const normalizedSourceType = normalizeSourceType(sourceType);
+  return postSourceAssets(normalizedSourceType, sanitizeSourceConnectorFields(normalizedSourceType, fields), prefix);
 }
 
 async function postSourceConnector(sourceType: string, fields: SourceFieldRows): Promise<BackendSourceConnectorResponse> {
