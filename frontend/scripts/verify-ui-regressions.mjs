@@ -1518,6 +1518,13 @@ const checks = [
     ],
   },
   {
+    name: "ETL review readiness grid keeps balanced vertical spacing",
+    file: "src/styles/etl.css",
+    patterns: [
+      /\.etl-review-validation\s*\{[\s\S]*?padding:\s*16px 20px;/,
+    ],
+  },
+  {
     name: "Continuous schema editing exposes only streaming-safe canonical transforms and Preview",
     file: "src/pages/etl/SchemaTransformWorkbench.tsx",
     patterns: [

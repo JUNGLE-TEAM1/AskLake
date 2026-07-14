@@ -6760,7 +6760,7 @@
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
-  padding: 0 20px 16px;
+  padding: 16px 20px;
 }
 
 .etl-review-validation div {
