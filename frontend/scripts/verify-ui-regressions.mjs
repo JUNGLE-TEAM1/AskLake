@@ -766,6 +766,28 @@ const checks = [
     ],
   },
   {
+    name: "Stopped continuous Job detail exposes governed deletion",
+    file: "src/pages/ingest/JobsPages.tsx",
+    patterns: [
+      /if \(isContinuousKafkaJob\(job\)\)/,
+      /return \[\s*\{ className: "job-action-button primary", kind: "startContinuous", label: "스트림 시작" \},\s*\{ className: "job-action-button", kind: "edit", label: "수정" \},\s*\{ className: "job-action-button danger", kind: "delete", label: "삭제" \},\s*\];/,
+      /const disabled = jobActionDisabled\(job, action\.kind\);/,
+      /title=\{disabled \? permissionDeniedMessage\("작업", action\.label\) : undefined\}/,
+    ],
+  },
+  {
+    name: "ETL target and review typography converge on the shared hierarchy",
+    file: "src/styles/etl.css",
+    patterns: [
+      /\.etl-review-card-header h2 \{[\s\S]*?font-size: 18px;/,
+      /\.etl-review-kv dd \{[\s\S]*?font-size: 15px;/,
+      /\.target-config-card \.etl-review-card-header h2 \{[\s\S]*?font-size: 18px;/,
+      /\.target-config-card \.field > span \{[\s\S]*?font-size: 15px;/,
+      /\.target-config-card \.input \{[\s\S]*?font-size: 16px;/,
+      /\.target-partition-name \{[\s\S]*?font-size: 15px;/,
+    ],
+  },
+  {
     name: "Jobs landing run modal follows centrally polled state by stable run identity",
     file: "src/pages/ingest/JobsPages.tsx",
     patterns: [
