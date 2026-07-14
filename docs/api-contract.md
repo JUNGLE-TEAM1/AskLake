@@ -1224,7 +1224,7 @@ type CreatePipelineRequest = {
 };
 ```
 
-`permissionSummary`, `permissionRoles`, `permissionGrants`, `owner`, `createdBy`, `createdByProfile`은 현재 생성 결과를 설명하고 표시하기 위한 governance/identity metadata입니다. 이 값만으로 dataset 조회, SQL 실행, job command 권한을 허용하거나 거부하지 않습니다. Backend는 `asklake_session` 쿠키 actor를 우선 사용하고, 세션이 없을 때만 `X-AskLake-User` header 또는 demo actor를 `createdBy` fallback으로 사용할 수 있습니다.
+`permissionSummary`, `permissionRoles`, `owner`, `createdBy`, `createdByProfile`은 생성 결과를 설명하고 표시하기 위한 governance/identity metadata입니다. 반면 `permissionGrants`는 실제 resource access control 입력이며 Job 생성·수정 시 `permission_grants` table의 `permission_ui` source로 저장되어 Job 조회·실행·관리·삭제 권한 판정에 사용됩니다. Backend는 `asklake_session` 쿠키 actor를 우선 사용하고, 세션이 없을 때만 `X-AskLake-User` header 또는 demo actor를 `createdBy` fallback으로 사용할 수 있습니다.
 
 Rule contract rules:
 
@@ -3546,12 +3546,12 @@ type AuditEntry = {
 - dashboard widget 저장 모델을 `dashboards`, `dashboard_widgets`로 분리할지 여부.
 ## ETL Permission create-flow contract
 
-ETL Permission 화면은 더 이상 하드코딩 사용자 목록을 source of truth로 사용하지 않는다.
+ETL Permission 화면은 더 이상 하드코딩 사용자 목록을 source of truth로 사용하지 않는다. 다만 그룹 후보는 현재 backend의 `DEMO_GROUPS` 고정 정의이며, 사용자 후보만 `auth_users` table을 우선 사용한다.
 
 1. 화면 진입 시 `GET /api/etl/permission-options`로 그룹과 사용자 후보를 조회한다.
 2. 선택한 그룹은 응답의 `actions`를 유지한 `group` grant로 변환한다.
 3. 선택한 사용자는 기본 `view`, `run` action을 가진 `user` grant로 변환한다.
-4. 공개 범위를 `외부 공유`로 명시한 경우에만 `public` principal의 `view` grant를 추가한다.
+4. 공개 범위를 `외부 공유`로 지정하면 `public` principal의 `view` grant를 추가한다. 이 값은 익명 공개 링크가 아니라 현재 인증 경계 안의 모든 actor에 매칭되는 grant다.
 5. 생성 또는 수정 request의 `permissionGrants`를 `permission_grants` table에 `source=permission_ui`로 저장한다.
 6. 동일 resource 수정은 `permission_ui` source만 교체하고 `admin`, `admin_seed` 등 다른 source는 보존한다.
 
@@ -3565,5 +3565,7 @@ type PermissionGrant = {
 ```
 
 빈 `principalId` 또는 action이 없는 grant는 `400 VALIDATION_ERROR`다. `public` principal은 `principalId`를 `public`으로 정규화한다. backend는 client가 보낸 `id`와 `source`를 신뢰하지 않고 새 ID와 `permission_ui` source를 부여한다.
+
+현재 frontend의 `permissionTemplate`은 독립 정책 템플릿이 아니라 group name을 저장하며, 템플릿 선택은 해당 그룹을 선택 상태로 만든다. 대상별 action 직접 편집은 구현하지 않았고, group은 options API action을, user는 `view`, `run`을 사용한다. `owner`는 자유 문자열 입력이며 현재 이름 일치 owner fallback에도 사용된다. options API는 민감 데이터 분류나 governance 안전 판정을 제공하지 않으며, 화면의 민감 데이터 상태는 frontend 컬럼명 정규식 추정값이다.
 
 권한 옵션 조회는 admin actor만 허용한다. live frontend는 API 오류 시 grant 화면 안에 재시도 경로를 표시하고 다음 단계 이동을 막는다. `VITE_USE_MOCK_API=true`에서는 동일 response shape의 fixture를 사용하되 최종 Job request shape는 live와 동일하다.

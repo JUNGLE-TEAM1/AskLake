@@ -511,3 +511,7 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 - [x] 생성·수정 응답과 접근 판정에 persisted grant 병합
 - [x] `backend/scripts/verify-permission-create-flow-contract.py` 생성·교체 계약 검증
 - [ ] Docker/PostgreSQL 기반 `verify:permission-job-dashboard` 전체 스모크는 metadata DB가 응답 가능한 환경에서 실행
+- [ ] 그룹 후보를 `DEMO_GROUPS` 고정 정의가 아닌 운영 조직/그룹 디렉터리와 연동
+- [ ] owner 이름 일치 fallback을 안정적인 principal id 기반 정책으로 교체
+- [ ] deny/조건부 정책과 공개 범위 정책 고도화
+- [ ] 민감 데이터 판정이 필요하면 frontend 컬럼명 정규식이 아닌 별도 backend 분류 결과 계약 추가

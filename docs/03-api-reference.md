@@ -878,6 +878,25 @@ type PermissionOptionsResponse = {
 ```
 
 `POST /api/etl/jobs`와 `PATCH /api/etl/jobs/{jobId}`는 기존 `permissionGrants?: PermissionGrant[]` 계약을 실제 저장 경로로 사용한다. 전달된 grant는 해당 Job의 `permission_ui` source 행으로 저장되며, 수정 시 기존 `permission_ui` 행만 교체한다. 관리 콘솔에서 생성한 `admin` source grant는 유지한다. 생성·수정 응답의 `permissionGrants`와 actor별 `permissions`에는 저장 결과가 즉시 반영된다.
+
+ETL Job에 직접 대응하는 action은 아래와 같다.
+
+| Action | ETL 화면 표시 | 적용 API 예시 |
+| --- | --- | --- |
+| `view` | 조회 | Job 목록·상세 조회 |
+| `run` | 실행 | 실행, 재실행, 연속 수집 시작·재개 |
+| `manage` | 운영/수정 | Job 수정, 일시정지, 취소, 중지, 스케줄 재개 |
+| `delete` | 삭제 | Job 삭제 |
+
+공통 계약의 `query`, `share`도 validation 가능한 action이다. 현재 frontend는 그룹 선택 시 options API의 `groups[].actions`를 그대로 사용하고, 사용자 선택 시 `view`, `run`을 고정 적용한다. 대상별 action 편집 UI는 아직 없다.
+
+현재 응답의 사용자 후보는 `auth_users` table을 우선하고, 비어 있으면 demo user를 사용한다. 그룹 후보는 아직 `DEMO_GROUPS` 고정 정의이며 조직 디렉터리 연동 결과가 아니다. 따라서 `groups[].actions`는 현재 backend가 제공하는 기본 action bundle이고, 프론트는 이를 실제 조직 역할 체계로 과장해 표시하지 않는다.
+
+`principalType="public"`, `principalId="public"`, `actions=["view"]`는 인증 경계 안의 모든 actor에게 Job 조회를 허용한다. 현재 frontend의 공개 범위 `외부 공유`가 이 grant를 만든다. 이는 익명 공개 링크나 별도 share token을 생성하지 않는다.
+
+`owner`, `permissionSummary`, `permissionRoles`는 표시·호환 metadata다. 실제 권한은 저장된 `permissionGrants`로 판정한다. 다만 현재 owner는 자유 문자열 입력이고 backend 이름 일치 fallback에도 사용된다.
+
+`GET /api/etl/permission-options`는 권한 디렉터리 조회만 수행한다. 민감 데이터 감지나 공개 범위 안전 판정을 반환하지 않는다. 현재 화면의 민감 데이터 상태는 컬럼명 정규식 기반 frontend 추정값이다.
 - Mock/live 전환 순서가 바뀌면 `docs/backend-integration-readiness.md`를 업데이트한다.
 - Frontend 타입이 바뀌면 관련 `frontend/src/types/`와 문서를 함께 업데이트한다.
 ## Text Structuring Runtime Contract

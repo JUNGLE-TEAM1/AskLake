@@ -403,4 +403,10 @@ Dashboard endpoint와 Catalog 물리 데이터는 FastAPI 응답을 source of tr
 - 생성 화면의 선택 상태는 `DraftPipeline.permission.grants`에 유지하며 `toCreatePipelineRequest`와 `toUpdatePipelineRequest`가 이를 `permissionGrants`로 전달한다.
 - backend `permission_grants` table이 생성 이후 접근 판정의 source of truth다.
 - `permission_ui` source는 생성 화면이 관리하고, 관리 콘솔의 `admin` source와 분리한다. 따라서 Job 수정이 관리자가 추가한 예외 grant를 덮어쓰지 않는다.
-- 화면의 공개 범위는 metadata에만 머물지 않는다. `외부 공유`를 명시하면 `public:view` grant로 변환된다.
+- 공통 permission schema는 `view`, `query`, `run`, `manage`, `delete`, `share`를 허용한다. 현재 생성 화면은 그룹 선택 시 options API의 `groups[].actions`를 그대로 사용하고 사용자 선택 시 `view`, `run`을 고정 적용하며, 대상별 action 직접 편집은 지원하지 않는다.
+- frontend의 `roles` 상태와 `역할` 탭은 실제로 backend `group` principal 목록을 다룬다. actor role과 조직 group의 의미가 섞여 있는 현재 표시 구조다.
+- `permissionTemplate`은 독립된 정책 템플릿이 아니라 선택 그룹 이름을 저장하고, 해당 그룹을 선택 상태로 만드는 호환 필드다.
+- 공개 범위 `외부 공유`는 `public:view` grant로 변환한다. permission engine의 `public`은 현재 보호 route의 인증 경계 안에서 모든 actor에 매칭되며 익명 공개 링크를 만들지는 않는다.
+- 사용자 후보는 `auth_users`를 우선 사용하지만 그룹 후보는 현재 `DEMO_GROUPS` 고정 정의다. 실서비스 조직/그룹 디렉터리 연동은 후속 범위다.
+- `owner`는 현재 자유 문자열로 입력하고 backend 이름 일치 owner fallback에도 사용한다. 안정적인 principal id 기반 담당자 선택으로 바꾸기 전까지 identity metadata와 권한 우회 경계가 완전히 분리되지 않은 상태다.
+- Permission 화면의 민감 데이터 상태는 컬럼명 정규식으로 계산한 frontend 추정값이며 backend governance 결과가 아니다.
