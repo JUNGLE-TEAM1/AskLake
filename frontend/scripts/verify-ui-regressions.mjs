@@ -217,6 +217,52 @@ const checks = [
     ],
   },
   {
+    name: "SQL preview table uses readable centered widths for narrow result sets",
+    file: "src/pages/sql/SqlPreviewTable.module.css",
+    patterns: [
+      /\.wrap[\s\S]*max-width:\s*100%;[\s\S]*margin-right:\s*auto;[\s\S]*margin-left:\s*auto;/,
+      /\.wrap\[data-column-count="1"\][\s\S]*width:\s*min\(100%, 480px\);/,
+      /\.wrap\[data-column-count="2"\][\s\S]*width:\s*min\(100%, 720px\);/,
+      /\.wrap\[data-column-count="3"\][\s\S]*width:\s*min\(100%, 900px\);/,
+    ],
+    forbiddenPatterns: [
+      /\.wrap\[data-column-count="[123]"\] \.table/,
+    ],
+  },
+  {
+    name: "SQL preview keeps identifier columns left aligned while numeric measures stay right aligned",
+    file: "src/pages/sql/SqlPreviewTable.tsx",
+    patterns: [
+      /function isIdentifierColumn\(column: string\)/,
+      /\(\?:\^\|\[_\\s-\]\)id\$\/i/,
+      /align: columnKind === "number" && !identifierColumn \? "right" : "left"/,
+    ],
+  },
+  {
+    name: "SQL compact table results keep the footer inside the panel without a horizontal scrollbar",
+    file: "src/pages/sql/SqlResultsPanel.tsx",
+    patterns: [
+      /const isCompactTableResult = Boolean\(isTableView && resultDraft && resultDraft\.rows\.length <= 8\);/,
+      /const resultScrollbars = resultView === "execution" \|\| \(isCompactTableResult && resultDraft && resultDraft\.columns\.length <= 4\)[\s\S]*\? "vertical"[\s\S]*: "both";/,
+      /styles\.resultPanelCompact/,
+      /overflow=\{isCompactTableResult \? "visible" : "hidden"\}/,
+      /scrollbars=\{resultScrollbars\}/,
+      /styles\.resultBodyCompact/,
+      /className=\{styles\.resultActions\}/,
+    ],
+  },
+  {
+    name: "SQL compact result CSS lets small previews grow to content height",
+    file: "src/pages/sql/SqlAnalysisPage.module.css",
+    patterns: [
+      /\.resultPanelCompact[\s\S]*align-self:\s*start;[\s\S]*height:\s*auto;[\s\S]*overflow:\s*visible;/,
+      /\.resultPanelCompact \.resultWorkspace[\s\S]*height:\s*auto;[\s\S]*grid-template-rows:\s*max-content max-content;[\s\S]*overflow:\s*visible;/,
+      /\.resultBodyCompact[\s\S]*grid-template-rows:\s*max-content repeat\(2, max-content\);[\s\S]*overflow:\s*visible;/,
+      /\.resultBodyCompact \.resultScroll[\s\S]*height:\s*auto;/,
+      /\.resultActions button[\s\S]*gap:\s*6px;[\s\S]*padding-right:\s*8px;[\s\S]*padding-left:\s*8px;[\s\S]*font-size:\s*14px;/,
+    ],
+  },
+  {
     name: "Trino execution information stays in a scoped result view",
     file: "src/pages/sql/SqlExecutionInfo.tsx",
     patterns: [
@@ -491,14 +537,18 @@ const checks = [
     name: "SQL workspace height matches the dataset panel in all result states",
     file: "src/pages/sql/SqlAnalysisPage.module.css",
     patterns: [
-      /--sql-workspace-height:\s*min\(860px, calc\(100dvh - 24px\)\);/,
+      /--sql-workspace-height:\s*clamp\(800px, calc\(100dvh - 156px\), 860px\);/,
       /\.datasetPanel[\s\S]*height:\s*var\(--sql-workspace-height\);/,
       /\.workspace[\s\S]*height:\s*var\(--sql-workspace-height\);/,
       /\.resultPanel[\s\S]*grid-template-rows:\s*max-content minmax\(0, 1fr\);/,
+      /\.resultPanelActive[\s\S]*grid-template-rows:\s*minmax\(0, 1fr\);/,
+      /\.resultWorkspace[\s\S]*height:\s*100%;/,
+      /\.resultWorkspace[\s\S]*overflow:\s*hidden;/,
       /\.resultToolbar[\s\S]*display:\s*flex;/,
       /\.resultToolbar[\s\S]*flex-wrap:\s*wrap;/,
       /@media \(max-width: 860px\)[\s\S]*\.datasetPanel[\s\S]*height:\s*min\(720px, 80dvh\);/,
       /@media \(max-width: 860px\)[\s\S]*\.workspace[\s\S]*grid-column:\s*1;/,
+      /@media \(max-width: 1180px\)[\s\S]*\.workspace,[\s\S]*\.collapsed \.workspace[\s\S]*height:\s*auto;[\s\S]*max-height:\s*none;/,
       /\.resultScroll,[\s\S]*height:\s*100%;/,
     ],
   },

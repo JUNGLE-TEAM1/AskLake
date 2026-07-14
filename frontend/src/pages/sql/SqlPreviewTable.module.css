@@ -1,14 +1,23 @@
-.wrap > div:first-child {
+.wrap {
   max-width: 100%;
+  margin-right: auto;
+  margin-left: auto;
 }
 
 .table {
   min-width: 0;
+  width: 100%;
   table-layout: fixed;
 }
 
-.wrap[data-column-count="1"] .table,
-.wrap[data-column-count="2"] .table,
-.wrap[data-column-count="3"] .table {
-  width: min(100%, 860px);
+.wrap[data-column-count="1"] {
+  width: min(100%, 480px);
+}
+
+.wrap[data-column-count="2"] {
+  width: min(100%, 720px);
+}
+
+.wrap[data-column-count="3"] {
+  width: min(100%, 900px);
 }
