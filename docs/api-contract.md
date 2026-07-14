@@ -3124,7 +3124,7 @@ Response `200 OK`:
 }
 ```
 
-`nextCheckAfterMs`는 `clamp(triggerIntervalSeconds × 500, 5,000, 60,000)`입니다. 10초 trigger는 5초, 30초 trigger는 15초, 5분 trigger는 60초를 반환합니다. Frontend는 동시에 몰리는 요청을 줄이기 위해 dataset ID로 정한 0~10% deterministic jitter를 더합니다.
+`nextCheckAfterMs`는 `clamp(triggerIntervalSeconds × 500, 1,000, 60,000)`입니다. 1~2초 trigger는 1초, 10초 trigger는 5초, 30초 trigger는 15초, 5분 trigger는 60초를 반환합니다. Frontend는 동시에 몰리는 요청을 줄이기 위해 dataset ID로 정한 0~10% deterministic jitter를 더합니다.
 
 묶음 조회는 각 dataset의 권한과 metadata를 독립적으로 검사합니다. 한 dataset이 `403`, `404`, `503` 조건이면 해당 항목만 응답에서 제외하고 나머지 정상 dataset을 반환합니다. 단건 GET의 오류 계약은 바뀌지 않습니다.
 
