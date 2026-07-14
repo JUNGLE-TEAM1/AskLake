@@ -1,0 +1,136 @@
+{
+  "experiment_id": "20260714-synthetic-commerce-v2-10gb-ec2",
+  "status": "passed",
+  "scope": "generate, stream-validate, upload, and remotely verify the v2 10GB synthetic commerce dataset",
+  "remaining_scope": "run products, users, and click events as separate deployed Spark Jobs and record Parquet/Catalog evidence",
+  "environment": {
+    "region": "ap-northeast-2",
+    "instance_id": "i-0573d3ffce42e2eb6",
+    "instance_type": "t3.xlarge",
+    "availability_zone": "ap-northeast-2a",
+    "execution_model": "one generator process on one EC2 instance"
+  },
+  "temporary_storage": {
+    "volume_id": "vol-0595075ad2ecbc9da",
+    "type": "gp3",
+    "size_gib": 30,
+    "encrypted": true,
+    "filesystem": "xfs",
+    "mount_point": "/mnt/asklake-benchmark",
+    "peak_observed_usage_percent": 49,
+    "unmounted": true,
+    "detached": true,
+    "deleted": true,
+    "delete_verification": "DescribeVolumes returned InvalidVolume.NotFound; the instance block-device mapping contains only its original root volume"
+  },
+  "source": {
+    "s3_uri": "s3://asklake-dev-raw-215819604878-apne2/product_original data(amazon review 2023)/meta_Electronics.jsonl",
+    "bytes": 5246144134,
+    "rows": 1610012
+  },
+  "configuration": {
+    "generator_version": 2,
+    "seed": 20260711,
+    "start_date": "2026-06-01",
+    "days": 30,
+    "target_bytes": 10000000000,
+    "checkpoint_users": 5000,
+    "resumed_after_checkpoint": true,
+    "product_mode": "preextracted-v2"
+  },
+  "product_inputs": {
+    "catalog": {
+      "rows": 1610012,
+      "bytes": 538036703,
+      "sha256": "3afcf022735c2e0eac66e1400c294267a04bc7f9f8d713c79fcc9edf71e1d28d"
+    },
+    "click_pool": {
+      "rows": 402126,
+      "bytes": 138940632,
+      "sha256": "8074688cc5c67559dbfe3524831170aa24cc0a47e975ac7ab29280f0986bb3d3",
+      "behavior_rows": 346598,
+      "note": "internal generator input; excluded from the 10GB tier and final S3 prefix"
+    }
+  },
+  "preflight_gate": {
+    "target_bytes": 540000000,
+    "status": "pass",
+    "products": 1610012,
+    "users": 237,
+    "sessions": 1549,
+    "events": 6173,
+    "reference_and_funnel_validation": "pass"
+  },
+  "generation": {
+    "started_at": "2026-07-14T01:10:22+09:00",
+    "completed_at": "2026-07-14T01:38:14+09:00",
+    "duration_ms": 1325708,
+    "status": "complete",
+    "counts": {
+      "products": 1610012,
+      "users": 1151708,
+      "sessions": 7419499,
+      "events": 29544766,
+      "event_types": {
+        "product_impression": 20671587,
+        "product_click": 7181599,
+        "add_to_cart": 1253340,
+        "purchase_click": 438240
+      }
+    },
+    "files": {
+      "products.jsonl": {
+        "rows": 1610012,
+        "bytes": 538036703,
+        "percent_of_tier": 5.38036703,
+        "sha256": "3afcf022735c2e0eac66e1400c294267a04bc7f9f8d713c79fcc9edf71e1d28d"
+      },
+      "users_10gb.jsonl": {
+        "rows": 1151708,
+        "bytes": 226947464,
+        "percent_of_tier": 2.26947464,
+        "sha256": "9dc7cdc4681cb407bf0a74ea9ca971eb21a7648957f1a9aeaa6edc0dec6d652e"
+      },
+      "click_events_10gb.jsonl": {
+        "rows": 29544766,
+        "bytes": 9235015833,
+        "percent_of_tier": 92.35015833,
+        "sha256": "965f36ed64a9e74292498d9984c3735098f49cf5b258b68b303e2e0adbaec13d"
+      }
+    },
+    "actual_total_bytes": 10000000000,
+    "overshoot_bytes": 0
+  },
+  "validation": {
+    "status": "pass",
+    "duration_seconds": 371,
+    "checks": [
+      "JSONL parsing and row counts",
+      "exact file bytes and SHA-256",
+      "event-to-user reference integrity",
+      "event-to-product reference integrity",
+      "unique user, session, and event identifiers",
+      "event timestamps after user signup",
+      "click, add-to-cart, and purchase-click funnel ordering"
+    ]
+  },
+  "upload": {
+    "s3_prefix": "s3://asklake-dev-raw-215819604878-apne2/synthetic-commerce/v2/10gb/seed-20260711/",
+    "objects": 6,
+    "data_bytes": 10000000000,
+    "evidence_objects": [
+      "manifest.json",
+      "validation-result.json",
+      "product-profile.json"
+    ],
+    "remote_sha256_verification": "pass",
+    "remote_verification_command_id": "7e7b98b7-0486-4d91-968c-eda028237941",
+    "temporary_upload_policy_removed": true,
+    "temporary_staging_prefix_empty": true
+  },
+  "known_limits": [
+    "This proves data generation, validation, upload, and cleanup; it does not prove the deployed Spark Jobs can process all three 10GB-tier files.",
+    "CloudWatch Agent host metrics cover CPU, memory, root disk, and network; they do not include the temporary nvme1n1 disk I/O series.",
+    "The generation duration includes a checkpointed resume after optimizing repeated weighted product selection."
+  ]
+}

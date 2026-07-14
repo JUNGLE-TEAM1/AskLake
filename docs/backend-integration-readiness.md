@@ -259,6 +259,7 @@ FastAPI Pair2 smoke:
 - `PYTHONPATH=. .venv/bin/python scripts/verify-etl-job-update-contract.py`는 실제 DB session에서 canonical Rule 저장을 확인하고 source config 보존, 성공 Run 뒤 target identity 변경 `422`, 실행 중 update `409`를 검증한다.
 - `npm run verify:record-parsing`은 공백 구분 규칙의 10필드 추론, 타입 추론, 사용자 컬럼명 반영, 필드 개수가 다른 행의 line/count 오류 계약을 FastAPI service 수준에서 확인한다.
 - `npm run verify:record-parsing:e2e`는 `s3://m3-raw/asklake-fixtures/txt/click-events-whitespace-100.log`를 실제 Source API로 읽고 Preview 100/100, Job 계약 저장, Airflow/Spark input/output 100행, MinIO Parquet, Catalog의 10개 사용자 컬럼을 확인한다. 실행 중인 FastAPI/Airflow와 올바른 `ASKLAKE_DOCKER_NETWORK`가 필요하다.
+- Synthetic commerce 10GB harness의 generator/checkpoint/streaming validator와 Linux host/Docker sampler는 회귀 검증을 통과했다. v1은 실제 Electronics 원본으로 1,000,010,710-byte tier 생성, 3,112,448개 이벤트 streaming 검증, raw S3 업로드와 원격 byte 대조를 통과했고, click event Job은 Parquet/Catalog까지 완료했다. v2는 전체 고유 상품 1,610,012행을 포함해 Products 538,036,703 bytes, Users 226,947,464 bytes, Clicks 9,235,015,833 bytes의 정확한 10,000,000,000-byte tier를 EC2에서 생성했다. 전체 참조·퍼널 streaming 검증과 S3 재다운로드 SHA-256 대조를 통과했고 임시 EBS·IAM policy·staging을 정리했다. v2 Products/Users/Clicks의 배포 Spark Job, Parquet, Catalog 검증은 아직 남아 있으므로 이 상태를 production 10GB readiness로 해석하지 않는다. 상세 evidence와 남은 단계는 `docs/synthetic-commerce-10gb-e2e-plan.md`를 따른다.
 
 Frontend:
 

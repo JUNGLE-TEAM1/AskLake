@@ -1,0 +1,86 @@
+{
+  "experiment_id": "20260713-synthetic-commerce-1gb-local",
+  "status": "passed",
+  "scope": "local generation and streaming validation only",
+  "source": {
+    "name": "meta_Electronics.jsonl",
+    "bytes": 5246144134,
+    "rows": 1610012
+  },
+  "generator": {
+    "branch": "feature/synthetic-commerce-10gb-harness",
+    "seed": 20260711,
+    "products_requested": 10000,
+    "target_bytes": 1000000000,
+    "duration_ms": 106021,
+    "wall_seconds": 110.28,
+    "user_cpu_seconds": 95.98,
+    "system_cpu_seconds": 8.12,
+    "wrapper_note": "Generator manifest completed; macOS /usr/bin/time -l returned 1 after a sandbox-denied sysctl read."
+  },
+  "product_selection": {
+    "source_rows_scanned": 1610012,
+    "unsupported_or_missing_category_rows": 269403,
+    "missing_identity_rows": 73,
+    "invalid_price_rows": 891394,
+    "insufficient_rating_evidence_rows": 103107,
+    "eligible_rows": 346035,
+    "selected_rows": 10000
+  },
+  "output": {
+    "actual_total_bytes": 1000010710,
+    "overshoot_bytes": 10710,
+    "products": 10000,
+    "users": 121443,
+    "sessions": 782115,
+    "events": 3112448,
+    "files": {
+      "products.jsonl": {
+        "bytes": 3128520,
+        "sha256": "5bb480708e1b3118337019d95762678a52b0f719cdeaf7b0202ee4197794fc07"
+      },
+      "users_1gb.jsonl": {
+        "bytes": 23930824,
+        "sha256": "e3b6245cc35f9c635a0becf1716b0dfcdfedd91dc6110fd1ce64eb221504d8c8"
+      },
+      "click_events_1gb.jsonl": {
+        "bytes": 972951366,
+        "sha256": "9301b01f81cbce8ce89ab6d63be9a421ce3058bd857420e6582f9d83f5038794"
+      }
+    }
+  },
+  "validation": {
+    "status": "pass",
+    "elapsed_seconds": 13.1,
+    "checks": [
+      "jsonl",
+      "row_counts",
+      "byte_counts",
+      "sha256",
+      "user_and_product_references",
+      "session_order",
+      "funnel_prerequisites"
+    ]
+  },
+  "s3_upload": {
+    "status": "pass",
+    "bucket": "asklake-dev-raw-215819604878-apne2",
+    "prefix": "synthetic-commerce/1gb/seed-20260711/",
+    "object_count": 5,
+    "data_bytes": 1000010710,
+    "objects": {
+      "products.jsonl": 3128520,
+      "users_1gb.jsonl": 23930824,
+      "click_events_1gb.jsonl": 972951366,
+      "manifest.json": 2790,
+      "validation-result.json": 1453
+    }
+  },
+  "not_verified": [
+    "Source/Schema UI",
+    "Airflow/Spark Job",
+    "Parquet output",
+    "Catalog materialization",
+    "EC2 host and Docker resource samples"
+  ]
+}

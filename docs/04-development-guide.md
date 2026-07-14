@@ -764,6 +764,34 @@ ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run synthetic-commerce:click-log -- 
 ```
 
 S3 mode는 `backend/requirements.txt`가 설치된 backend Python 환경에서 실행한다. S3 입력은 basename이 `.`/`_`로 시작하는 object를 제외하고 `.jsonl`/`.ndjson` object key 순서로 읽으며 ETag `If-Match`로 변환 중 원본 변경을 거부한다. 출력 `.log`는 기본 64 MiB part의 multipart upload를 사용한다. 새 manifest를 먼저 저장하고 `.log`를 마지막에 commit하며 실패 시 upload abort와 manifest 복원/삭제를 수행한다. 기존 output/manifest는 `--overwrite` 없이는 교체하지 않는다. 필요한 IAM과 MinIO endpoint 옵션, manifest 계약은 `backend/scripts/synthetic-commerce/README.md`를 따른다.
+단일 파일 Source로 1GB/5GB/10GB 부하 검증을 수행할 때는 `docs/synthetic-commerce-10gb-e2e-plan.md`의 단계와 게이트를 따른다. 대용량 모드는 기존 CSV fixture 생성기와 분리되어 있고, 사용자 단위 checkpoint로 재개하며 전체 검증은 streaming으로 수행한다.
+
+v2는 먼저 `parent_asin`이 있는 전체 고유 상품을 공개 카탈로그로 추출한다. 결측 필드는 JSON `null`로 보존하고 카테고리를 allowlist로 제한하지 않는다. 가격·평점 조건을 만족하는 클릭 대상은 별도 내부 풀로 만들며, 이 풀은 tier byte 합계와 S3 Source 업로드에서 제외한다.
+
+```bash
+python3 backend/scripts/synthetic-commerce/extract_products_full.py \
+  --source /path/to/meta_Electronics.jsonl \
+  --output-dir backend/tmp/synthetic-commerce-v2-products
+
+python3 backend/scripts/synthetic-commerce/generate_large.py \
+  --product-catalog backend/tmp/synthetic-commerce-v2-products/products.jsonl \
+  --click-product-pool backend/tmp/synthetic-commerce-v2-products/click_product_pool.jsonl \
+  --output-dir backend/tmp/synthetic-commerce-v2-products \
+  --tier 10gb=10gb
+
+python3 backend/scripts/synthetic-commerce/validate_large.py \
+  --data-dir backend/tmp/synthetic-commerce-v2-products
+
+python3 backend/scripts/synthetic-commerce/test_extract_products_full.py
+python3 backend/scripts/synthetic-commerce/test_generate_large.py
+python3 backend/scripts/synthetic-commerce/test_monitor_resources.py
+```
+
+`generate_large.py --source --products` 경로는 10,000개 표본을 쓰는 v1 smoke 호환 경로다. 최종 v2 tier는 반드시 `--product-catalog`과 `--click-product-pool`을 함께 사용한다. 카테고리별 누적 popularity weight는 입력 적재 시 한 번만 계산하며, 같은 seed의 선택 결과를 바꾸지 않고 대규모 클릭 생성의 반복 누적합 비용을 제거한다.
+
+2026-07-14 검증된 전체 상품 결과는 `docs/experiments/synthetic-commerce-v2-products-20260714.json`, EC2 10GB 생성·streaming 검증·S3 원격 SHA 검증·임시 EBS 정리 결과는 `docs/experiments/synthetic-commerce-v2-10gb-ec2-20260714.json`에 기록한다. 최종 데이터 prefix는 `s3://asklake-dev-raw-215819604878-apne2/synthetic-commerce/v2/10gb/seed-20260711/`이다. 대용량 EC2 생성에서는 root disk 대신 별도 임시 EBS를 마운트하고, 원격 byte·SHA 검증이 끝난 뒤에만 unmount·detach·delete한다.
+
+EC2 Job 실행 중에는 `monitor_resources.py`를 별도 프로세스로 먼저 시작한다. Linux host 지표는 `__host__`, Spark container 지표는 container name으로 같은 `resource-samples.csv`에 기록한다. 실제 1GB/5GB/10GB Spark Run은 같은 EC2에서 병렬 실행하지 않는다.
 
 PostgreSQL Source Preview가 `현재 행` 10건이어도 Snapshot Job 실행은 선택 테이블 전체를 처리해야 한다. source fixture를 올린 뒤 아래 검증으로 `products` 10,000행과 50,000행을 넘는 `click_events` 76,640행이 잘리지 않는지 확인한다.
 

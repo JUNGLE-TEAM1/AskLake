@@ -1,0 +1,68 @@
+{
+  "experiment_id": "20260714-synthetic-commerce-v2-products-local",
+  "status": "passed",
+  "scope": "full product catalog extraction and click-eligible pool separation",
+  "source": {
+    "name": "meta_Electronics.jsonl",
+    "bytes": 5246144134,
+    "rows": 1610012
+  },
+  "rules": {
+    "public_products": "retain every unique non-empty parent_asin across all categories; preserve missing values as JSON null",
+    "duplicate_resolution": "keep the most complete normalized row for an exact product_id duplicate",
+    "click_pool": "title and category present; price 1..10000; average_rating 1..5; rating_count >= 5"
+  },
+  "products": {
+    "rows": 1610012,
+    "bytes": 538036703,
+    "sha256": "3afcf022735c2e0eac66e1400c294267a04bc7f9f8d713c79fcc9edf71e1d28d",
+    "null_counts": {
+      "main_category": 106334,
+      "category": 0,
+      "leaf_category": 0,
+      "title": 94,
+      "store": 9522,
+      "price": 1083573,
+      "average_rating": 0,
+      "rating_count": 0
+    }
+  },
+  "click_product_pool": {
+    "scope": "internal generator input; excluded from tier byte totals and S3 Source uploads",
+    "rows": 402126,
+    "bytes": 138940632,
+    "eligible_percent": 24.9766,
+    "sha256": "8074688cc5c67559dbfe3524831170aa24cc0a47e975ac7ab29280f0986bb3d3"
+  },
+  "projected_1gb": {
+    "target_bytes": 1000000000,
+    "products": {
+      "bytes": 538036703,
+      "percent": 53.8036703,
+      "rows": 1610012
+    },
+    "users": {
+      "projected_bytes": 11089738,
+      "percent": 1.1089738,
+      "projected_rows": 56278
+    },
+    "click_events": {
+      "projected_bytes": 450873559,
+      "percent": 45.0873559,
+      "projected_rows": 1442342
+    },
+    "projection_basis": "products use measured bytes; remaining bytes preserve the measured v1 users:click_events byte ratio",
+    "note": "actual output may exceed the target slightly to keep complete JSONL rows and complete per-user event bundles"
+  },
+  "duration_seconds": 1035.892,
+  "validation": {
+    "status": "pass",
+    "checks": [
+      "extractor unit tests",
+      "JSONL row counts",
+      "independent SHA-256",
+      "deterministic force rerun fixture",
+      "Python syntax compilation"
+    ]
+  }
+}

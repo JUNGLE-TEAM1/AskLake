@@ -16,6 +16,8 @@ import heapq
 import json
 import math
 import random
+import sqlite3
+import tempfile
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -94,6 +96,33 @@ class UserProfile:
     category_weights: dict[str, float]
 
 
+class DiskBackedIdTracker:
+    """Track exact source IDs without retaining the source cardinality in RAM."""
+
+    def __enter__(self) -> "DiskBackedIdTracker":
+        self._directory = tempfile.TemporaryDirectory(prefix="asklake-product-ids-")
+        database = Path(self._directory.name) / "seen.sqlite"
+        self._connection = sqlite3.connect(database)
+        self._connection.execute("PRAGMA journal_mode=OFF")
+        self._connection.execute("PRAGMA synchronous=OFF")
+        self._connection.execute("PRAGMA temp_store=FILE")
+        self._connection.execute(
+            "CREATE TABLE seen (product_id TEXT PRIMARY KEY) WITHOUT ROWID"
+        )
+        return self
+
+    def seen_before(self, product_id: str) -> bool:
+        before = self._connection.total_changes
+        self._connection.execute(
+            "INSERT OR IGNORE INTO seen(product_id) VALUES (?)", (product_id,)
+        )
+        return self._connection.total_changes == before
+
+    def __exit__(self, *_args: object) -> None:
+        self._connection.close()
+        self._directory.cleanup()
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", required=True, type=Path)
@@ -159,7 +188,7 @@ def select_products(source: Path, count: int, seed: int) -> tuple[list[Product],
     selected_ids: dict[str, set[str]] = {category: set() for category in TARGET_CATEGORIES}
     scan = Counter()
 
-    with source.open("r", encoding="utf-8") as handle:
+    with DiskBackedIdTracker() as seen_eligible_ids, source.open("r", encoding="utf-8") as handle:
         for line in handle:
             scan["source_rows"] += 1
             try:
@@ -171,6 +200,7 @@ def select_products(source: Path, count: int, seed: int) -> tuple[list[Product],
             categories = raw.get("categories") or []
             category = categories[1] if len(categories) > 1 else None
             if category not in quotas:
+                scan["unsupported_or_missing_category"] += 1
                 continue
 
             product_id = str(raw.get("parent_asin") or "").strip()
@@ -191,6 +221,9 @@ def select_products(source: Path, count: int, seed: int) -> tuple[list[Product],
                 continue
             if rating is None or not 1.0 <= rating <= 5.0 or rating_count < 5:
                 scan["insufficient_rating_evidence"] += 1
+                continue
+            if seen_eligible_ids.seen_before(product_id):
+                scan["duplicate_product_id"] += 1
                 continue
 
             scan[f"eligible::{category}"] += 1
@@ -240,6 +273,13 @@ def select_products(source: Path, count: int, seed: int) -> tuple[list[Product],
     stats = {
         "source_rows_scanned": scan["source_rows"],
         "invalid_json_rows": scan["invalid_json"],
+        "unsupported_or_missing_category_rows": scan["unsupported_or_missing_category"],
+        "missing_identity_rows": scan["missing_identity"],
+        "invalid_price_rows": scan["invalid_price"],
+        "insufficient_rating_evidence_rows": scan["insufficient_rating_evidence"],
+        "duplicate_product_id_rows": scan["duplicate_product_id"],
+        "eligible_rows": sum(scan[f"eligible::{category}"] for category in TARGET_CATEGORIES),
+        "selected_rows": len(products),
         "selected_by_category": dict(Counter(item.category for item in products)),
         "eligible_by_category": {
             category: scan[f"eligible::{category}"] for category in TARGET_CATEGORIES

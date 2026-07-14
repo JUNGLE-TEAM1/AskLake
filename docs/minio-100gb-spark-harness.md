@@ -65,6 +65,8 @@ Production Spark master의 REST 6066, master 7077, UI 8080/8081은 Compose netwo
 aws s3 cp /path/to/sample.csv s3://<raw-bucket>/asklake-fixtures/sample.csv
 ```
 
+Amazon Electronics 기반 단일 JSONL 1GB/5GB/10GB 생성과 EC2 계측은 로컬 MinIO 100GB fixture와 다른 수동 AWS 검증 경로다. 생성·검증·모니터링 명령과 조건부 5GB 게이트는 `docs/synthetic-commerce-10gb-e2e-plan.md`를 따른다. 각 products/users/click 파일은 스키마가 다르므로 별도 Source와 Job으로 실행하며, prefix 여러 파일을 하나의 Source로 선택하는 기능을 전제하지 않는다. v1 1GB tier의 생성·streaming 검증·AWS raw S3 업로드와 click event Spark E2E는 통과했다. v2는 전체 상품 1,610,012행을 포함한 정확한 10,000,000,000-byte tier의 EC2 생성, streaming validation, raw S3 업로드, 원격 SHA-256 검증과 임시 EBS 정리까지 통과했다. v2 데이터 3종의 Spark Job·Parquet·Catalog 검증은 아직 남아 있다.
+
 Initial endpoints:
 
 ```text

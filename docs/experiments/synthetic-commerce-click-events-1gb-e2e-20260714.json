@@ -1,0 +1,88 @@
+{
+  "experimentId": "20260714-click-events-1gb-run_fdf80c02d6fc",
+  "status": "success",
+  "jobId": "JOB-93D95E68",
+  "runId": "run_fdf80c02d6fc",
+  "dataset": "click_events_1GB by HG",
+  "source": {
+    "uri": "s3://asklake-dev-raw-215819604878-apne2/synthetic-commerce/1gb/seed-20260711/click_events_1gb.jsonl",
+    "bytes": 972951366,
+    "rows": 3112448,
+    "partitions": 8
+  },
+  "result": {
+    "outputRows": 3112448,
+    "qualityScore": 100,
+    "sparkDurationSeconds": 120.226,
+    "endToEndSeconds": 129.971,
+    "rowThroughputPerSecond": 25888.31
+  },
+  "runtime": {
+    "instanceId": "i-0573d3ffce42e2eb6",
+    "instanceType": "t3.xlarge",
+    "vcpus": 4,
+    "memoryGiB": 16,
+    "executorCores": 2,
+    "executorMemoryGiB": 4,
+    "sparkCoresMax": 2,
+    "shufflePartitions": 32
+  },
+  "cloudWatch": {
+    "namespace": "AskLake/Benchmark",
+    "periodSeconds": 1,
+    "samplesPerMetricDuringSpark": 120,
+    "seriesComplete": true,
+    "cpu": {
+      "baselineAveragePct": 5.7409,
+      "averagePct": 91.3766,
+      "p95Pct": 100,
+      "maximumPct": 100,
+      "secondsAtOrAbove80Pct": 101,
+      "secondsAtOrAbove90Pct": 85
+    },
+    "memory": {
+      "averagePct": 32.8823,
+      "p95Pct": 35.6906,
+      "maximumPct": 36.4506,
+      "maximumUsedGiB": 5.8321,
+      "minimumFreeGiB": 10.1679
+    },
+    "disk": {
+      "readTotalMiB": 0.0078,
+      "writeTotalMiB": 12.082,
+      "readPeakMiBPerSecond": 0.0078,
+      "writePeakMiBPerSecond": 2.1094
+    },
+    "network": {
+      "receiveTotalGiB": 14.6012,
+      "sendTotalMiB": 106.2226,
+      "receivePeakMiBPerSecond": 312.5623,
+      "sendPeakMiBPerSecond": 32.4466,
+      "inputAmplificationRatio": 16.1138
+    }
+  },
+  "sparkLogEvidence": {
+    "driverId": "driver-20260713153158-0003",
+    "sourcePartitionReadCount": 120,
+    "fullSourceScanEquivalent": 15,
+    "relevantCode": [
+      "backend/scripts/spark_job_run.py:105",
+      "backend/scripts/spark_job_run.py:706",
+      "backend/scripts/spark_job_run.py:190",
+      "backend/scripts/spark_job_run.py:192",
+      "backend/scripts/spark_job_run.py:251"
+    ]
+  },
+  "conclusion": {
+    "primaryConstraint": "CPU saturation and repeated S3 source scans",
+    "memoryConstraint": false,
+    "localDiskConstraint": false,
+    "sameShape10GbLinearEstimateMinutes": 20.5947,
+    "nextStep": "Reduce avoidable source scans, then run a 5GB checkpoint before the final 10GB E2E run."
+  },
+  "limitations": [
+    "CloudWatch metrics are EC2 host-level and include non-Spark processes.",
+    "The 10GB estimate is linear and applies only to the same click-event schema and current runtime settings.",
+    "The 1GB smoke tier still uses the explicit 10000-product generation limit."
+  ]
+}
