@@ -1,6 +1,6 @@
 # EKS MVP 담당자 B 계약 확정안
 
-> 상태: Phase 1 인수용 계약. 표준 기본값과 B의 확정 사항을 반영했으며, `보류`로 표시한 동시성·Continuous 상태 계약은 후속 합의 전까지 구현 기준으로 사용하지 않는다.
+> 상태: Phase 1 인수용 계약. 표준 기본값과 B의 확정 사항을 반영했으며, `보류`로 표시한 EC2 Continuous 상태 계약은 후속 합의 전까지 구현 기준으로 사용하지 않는다.
 
 ## 1. 목적
 
@@ -25,7 +25,7 @@
 | MSK 유형과 인증 방식 | A 확정 입력 / B 반영 | A Phase 0/1에서 확정된 MSK Serverless + IAM을 B 계약에 반영한다. A는 실제 cluster와 network/IAM resource를 구축한다. |
 | RDS 용도 분리 | B 계약, A 구축 | 단일 RDS PostgreSQL instance에 database와 user를 3개 용도별로 분리한다. |
 | Trino 배치 위치와 실제 port | A | A가 결정한다. B는 `TRINO_BASE_URL`과 Secret reference 형식만 제공한다. |
-| FastAPI background singleton 구현 방식 | A/B 공동 | 보류. 동시성·장애 복구 검토 후 별도 확정한다. |
+| FastAPI background singleton 구현 방식 | A/B 공동 | **확정.** `runId`별 RDS lease + generation fencing으로 owner를 선점·갱신·복구한다. |
 | EC2 Continuous 상태 DB와 읽기 endpoint | A/B 공동 | 보류. EKS의 변경 command 차단 원칙만 현재 확정한다. |
 
 MSK Serverless + IAM은 A Phase 0/1 인수 계약의 확정 입력이며 B가 재선택하지 않는다. A는 실제 cluster ARN, private IAM bootstrap endpoint와 network/IAM resource를 제공한다. Trino 위치는 A의 인프라 결과를 B workload에 주입하기 위한 interface 계약으로만 다룬다.
@@ -445,11 +445,9 @@ Spark 성공만으로 AskLake Run을 `success`로 확정하지 않는다. Iceber
 - lease를 잃은 replica는 외부 상태 변경과 Run terminal 확정을 중단한다.
 - 같은 `runId`의 Iceberg/Catalog 결과는 한 번만 materialize된다.
 
-### 10.2 중요한 결정: singleton 방식
+### 10.2 확정된 singleton 방식
 
-이 항목은 단순 표준 형식이 아니라 동시성·복구 방식에 영향을 주므로 A/B 승인이 필요하다.
-
-추천안은 기존 PostgreSQL 운영 패턴을 재사용한 **RDS lease + generation fencing**이다.
+동시성·복구 방식은 A/B 공동 승인으로 확정했다. 기존 PostgreSQL 운영 패턴을 재사용한 **RDS lease + generation fencing**을 사용한다.
 
 ```text
 RDS Run row claim
@@ -531,9 +529,9 @@ EKS는 Continuous 상태를 표시하기 위해 읽기 API를 사용할 수 있�
 
 위 항목은 A Phase 0/1에서 확정된 MSK Serverless + IAM 계약에 따라 A가 실제 AWS resource를 구축한 뒤 ConfigMap, NetworkPolicy와 client option에 채우기 위한 입력 목록이다.
 
-### A/B가 함께 승인해야 하는 중요 항목
+### A/B 공동 결정·확인 항목
 
-- FastAPI singleton을 RDS lease + generation fencing으로 구현할지 — **보류**
+- FastAPI singleton은 RDS lease + generation fencing으로 구현 — **확정**
 - EC2 Continuous 상태 DB와 읽기 endpoint를 어디에 유지할지 — **보류**
 - 최초 resource 값이 NodePool과 비용 한도에 맞는지
 
@@ -560,7 +558,7 @@ manifest와 adapter 구현은 다음 검증을 통과해야 한다.
 - 현재 FastAPI의 Spark REST 실행 경로를 EKS SparkApplication provider로 연결해야 한다.
 - `ASKLAKE_KAFKA_AUTH_MODE`를 Spark Kafka option으로 변환하는 EKS adapter가 필요하다.
 - `ASKLAKE_CONTINUOUS_CONTROL_PLANE=external_ec2`를 검사하는 fail-closed API guard가 필요하다.
-- Spark submission/reconciliation의 RDS lease + generation fencing은 A/B 승인 후 구현해야 한다.
+- 확정된 RDS lease + generation fencing을 Spark submission/reconciliation에 구현해야 한다.
 - 실제 AWS IAM policy의 ARN과 Network port는 A의 리소스 결정 뒤 채워야 한다.
 
 각 구현 PR은 이 문서의 표준 계약과 fake client/negative permission 검증을 함께 제출해야 한다.
@@ -592,7 +590,8 @@ manifest와 adapter 구현은 다음 검증을 통과해야 한다.
 - [ ] workload별 IAM action과 resource ARN에 wildcard가 없음을 확인했다.
 - [ ] ConfigMap/Secret key와 network destination 표를 승인했다.
 - [ ] 외부 fixture producer 방식이며 EKS Replay Job이 없음을 확인했다.
-- [ ] singleton 구현 방식과 EC2 Continuous state 위치가 현재 보류임을 확인했다.
+- [x] FastAPI singleton은 `runId`별 RDS lease + generation fencing으로 확정했다.
+- [ ] EC2 Continuous state 위치와 EKS 읽기 endpoint는 현재 보류임을 확인했다.
 - [ ] Trino 배치 위치와 실제 port는 A가 결정하고 B는 endpoint 형식만 반영한다는 책임 경계를 확인했다.
 
 ## 16. 전달용 요약
@@ -616,7 +615,7 @@ B 계약 초안입니다.
    MSK Serverless + IAM은 A Phase 0/1의 확정 입력으로 받고 B가 재선택하지 않습니다.
    A는 실제 cluster와 network/IAM resource를 구축합니다. Trino 배치 위치는 A가 결정하고 B가 endpoint 형식에 반영합니다.
 
-4. FastAPI singleton 구현 방식과 EC2 Continuous 상태 DB/읽기 endpoint는
-   이번 계약에서 보류합니다. EKS가 Continuous 변경 command를 차단하는
-   범위만 현재 확정합니다.
+4. FastAPI singleton은 `runId`별 RDS lease + generation fencing으로 확정합니다.
+   EC2 Continuous 상태 DB/읽기 endpoint는 이번 계약에서 보류하며, EKS는
+   Continuous 변경 command를 차단합니다.
 ```

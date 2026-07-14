@@ -408,6 +408,7 @@ Dashboard endpoint와 Catalog 물리 데이터는 FastAPI 응답을 source of tr
 - FastAPI 실행은 `backend/README.md`와 `docs/04-development-guide.md`를 따른다.
 - Node demo API는 FastAPI 구현과 비교하는 reference로 유지한다.
 - CI가 생기면 최소 required check 후보는 frontend build, backend import/compile, conflict marker scan이다.
+- EKS MVP에서 FastAPI replica의 background Job/Run submission과 reconciliation은 RDS Run record의 `runId`별 lease와 generation fencing으로 한 owner만 수행한다. 기존 Kafka Continuous worker의 lifecycle·checkpoint·offset은 EC2가 계속 소유하며 EKS는 변경 command를 차단한다.
 
 ## 12) SQL 결과 시각화 경계
 
