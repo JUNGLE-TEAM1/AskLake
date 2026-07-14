@@ -223,3 +223,92 @@ variable "service_account_names" {
     error_message = "service_account_names must define DNS-compatible frontend, backend, airflow, trino, mskSmoke, and spark names."
   }
 }
+
+variable "trino_image_digest" {
+  description = "Immutable Trino image digest supplied by the image delivery workflow. Null until a mirror image is pushed."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = var.trino_image_digest == null || can(regex("^sha256:[0-9a-f]{64}$", var.trino_image_digest))
+    error_message = "trino_image_digest must be null or an immutable sha256 digest."
+  }
+}
+
+variable "trino_irsa_role_arn" {
+  description = "IRSA role ARN for asklake-trino. Null until the workload identity and S3 boundary are approved."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = var.trino_irsa_role_arn == null || can(regex("^arn:aws:iam::[0-9]{12}:role/.+$", var.trino_irsa_role_arn))
+    error_message = "trino_irsa_role_arn must be null or an IAM role ARN."
+  }
+}
+
+variable "trino_service_name" {
+  description = "Stable in-cluster Service name for the EKS Trino coordinator."
+  type        = string
+  default     = "asklake-trino"
+
+  validation {
+    condition     = can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", var.trino_service_name))
+    error_message = "trino_service_name must be a DNS-compatible Kubernetes Service name."
+  }
+}
+
+variable "trino_service_port" {
+  description = "HTTPS port exposed by the in-cluster Trino coordinator Service."
+  type        = number
+  default     = 8443
+
+  validation {
+    condition     = var.trino_service_port == 8443
+    error_message = "the EKS MVP Trino contract requires HTTPS port 8443."
+  }
+}
+
+variable "trino_tls_auth_secret_name" {
+  description = "Kubernetes Secret reference for Trino TLS, password auth and internal shared secret values."
+  type        = string
+  default     = "asklake-trino-tls-auth"
+}
+
+variable "trino_jdbc_secret_name" {
+  description = "Kubernetes Secret reference for the RDS Iceberg JDBC catalog credentials."
+  type        = string
+  default     = "asklake-trino-iceberg-jdbc"
+}
+
+variable "trino_iceberg_catalog_database" {
+  description = "Logical RDS PostgreSQL database used by the Iceberg JDBC catalog."
+  type        = string
+  default     = "iceberg_catalog"
+}
+
+variable "trino_rds_endpoint_reference" {
+  description = "Non-secret deployment reference that resolves to the RDS Iceberg JDBC endpoint."
+  type        = string
+  default     = "TRINO_ICEBERG_JDBC_URL"
+}
+
+variable "trino_rds_security_group_reference" {
+  description = "Security-group reference allowing Trino to reach the RDS Iceberg catalog. Null until AWS inventory is approved."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
+variable "trino_warehouse_bucket_reference" {
+  description = "Non-secret deployment reference that resolves to the S3 Iceberg warehouse bucket."
+  type        = string
+  default     = "TRINO_ICEBERG_WAREHOUSE_BUCKET"
+}
+
+variable "trino_warehouse_prefix_reference" {
+  description = "Non-secret deployment reference that resolves to the S3 Iceberg warehouse prefix."
+  type        = string
+  default     = "TRINO_ICEBERG_WAREHOUSE_PREFIX"
+}

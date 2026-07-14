@@ -34,3 +34,17 @@ create_ecr_repositories = true
 ecr_untagged_retention_days = null
 
 namespace = "asklake-dev"
+
+# Trino contract references are safe to keep in tfvars, but actual ARN/digest
+# values remain null until image delivery and workload identity are approved.
+trino_image_digest                  = null
+trino_irsa_role_arn                 = null
+trino_service_name                  = "asklake-trino"
+trino_service_port                  = 8443
+trino_tls_auth_secret_name          = "asklake-trino-tls-auth"
+trino_jdbc_secret_name              = "asklake-trino-iceberg-jdbc"
+trino_iceberg_catalog_database      = "iceberg_catalog"
+trino_rds_endpoint_reference        = "TRINO_ICEBERG_JDBC_URL"
+trino_rds_security_group_reference  = null
+trino_warehouse_bucket_reference    = "TRINO_ICEBERG_WAREHOUSE_BUCKET"
+trino_warehouse_prefix_reference    = "TRINO_ICEBERG_WAREHOUSE_PREFIX"

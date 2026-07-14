@@ -30,14 +30,15 @@
     "serviceAccounts": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["frontend", "backend", "airflow", "trino", "mskSmoke", "spark"],
+      "required": ["frontend", "backend", "airflow", "trino", "mskSmoke", "spark", "replayProducer"],
       "properties": {
         "frontend": { "$ref": "#/$defs/serviceAccount" },
         "backend": { "$ref": "#/$defs/serviceAccount" },
         "airflow": { "$ref": "#/$defs/serviceAccount" },
         "trino": { "$ref": "#/$defs/serviceAccount" },
         "mskSmoke": { "$ref": "#/$defs/serviceAccount" },
-        "spark": { "$ref": "#/$defs/serviceAccount" }
+        "spark": { "$ref": "#/$defs/serviceAccount" },
+        "replayProducer": { "$ref": "#/$defs/disabledServiceAccount" }
       }
     }
   },
@@ -51,6 +52,17 @@
         "name": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" },
         "annotations": { "type": "object", "additionalProperties": { "type": "string" } },
         "automountServiceAccountToken": { "type": "boolean" }
+      }
+    },
+    "disabledServiceAccount": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["create", "name", "annotations", "automountServiceAccountToken"],
+      "properties": {
+        "create": { "type": "boolean", "const": false },
+        "name": { "type": "string", "const": "asklake-replay-producer" },
+        "annotations": { "type": "object", "maxProperties": 0 },
+        "automountServiceAccountToken": { "type": "boolean", "const": false }
       }
     }
   }

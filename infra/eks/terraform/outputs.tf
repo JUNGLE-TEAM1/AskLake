@@ -55,10 +55,48 @@ output "ecr_repository_urls" {
   }
 }
 
+output "trino_handoff" {
+  description = "Non-secret EKS Trino deployment contract. Null AWS values remain explicit resource-creation gates."
+  value = {
+    service_account_name = var.service_account_names["trino"]
+    irsa_role_arn        = var.trino_irsa_role_arn
+    image = {
+      repository_url = try(aws_ecr_repository.workload["trino"].repository_url, null)
+      digest         = var.trino_image_digest
+    }
+    service = {
+      name           = var.trino_service_name
+      namespace      = var.namespace
+      scheme         = "https"
+      port           = var.trino_service_port
+      in_cluster_url = "https://${var.trino_service_name}.${var.namespace}.svc:${var.trino_service_port}"
+    }
+    iceberg_catalog = {
+      database               = var.trino_iceberg_catalog_database
+      rds_endpoint_reference = var.trino_rds_endpoint_reference
+      jdbc_secret_name       = var.trino_jdbc_secret_name
+      warehouse_bucket_ref   = var.trino_warehouse_bucket_reference
+      warehouse_prefix_ref   = var.trino_warehouse_prefix_reference
+    }
+    tls_auth_secret_name = var.trino_tls_auth_secret_name
+    network = {
+      rds = {
+        protocol                 = "tcp"
+        port                     = 5432
+        security_group_reference = var.trino_rds_security_group_reference
+      }
+      s3_sts = {
+        protocol = "https"
+        port     = 443
+      }
+    }
+  }
+}
+
 output "phase1_handoff" {
   description = "Non-secret fields Pair B can consume without reading Terraform internals."
   value = {
-    contract_version = "1.1"
+    contract_version = "1.2"
     aws_region       = var.aws_region
     environment      = var.environment
     cluster_name     = local.cluster_name
@@ -68,6 +106,7 @@ output "phase1_handoff" {
     kafka_runtime    = "msk-serverless"
     kafka_auth       = "iam"
     trino_runtime    = "eks"
+    trino_output     = "trino_handoff"
     continuous_owner = "ec2-mvp"
     network_outputs = {
       vpc                    = "cluster_vpc_id"

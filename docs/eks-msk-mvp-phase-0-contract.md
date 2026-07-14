@@ -58,7 +58,7 @@ Spark batch도 현재 Standalone REST 계약을 사용한다. EKS에서는 Spark
 
 ### RDS 위치와 database/user mapping
 
-RDS inventory 조회 권한이 없어 기존 metadata DB가 RDS인지 EC2 Compose PostgreSQL인지 AWS 계정에서 검증하지 못했다. EKS FastAPI와 Airflow가 사용할 DB endpoint, database, user, migration owner, backup owner를 확인하기 전에는 DB를 새로 만들거나 데이터를 이전하지 않는다.
+RDS inventory 조회 권한이 없어 기존 metadata DB가 RDS인지 EC2 Compose PostgreSQL인지 AWS 계정에서 검증하지 못했다. EKS FastAPI와 Airflow가 사용할 DB endpoint, database, user, migration owner, backup owner를 확인하기 전에는 DB를 새로 만들거나 데이터를 이전하지 않는다. 이 값들이 확정되기 전 Pair B의 작업 범위는 manifest render와 fake Kubernetes client test까지이며, 실제 FastAPI EKS 배포, RDS 연결 또는 migration smoke를 완료로 주장하지 않는다.
 
 ### shared resource와 MVP 전용 resource
 
@@ -66,7 +66,7 @@ VPC, subnet, EKS, MSK, RDS, S3 bucket, Route 53 zone 중 어떤 것이 다른 �
 
 ### namespace, repository, service account 이름
 
-이 이름들은 Pair A가 정할 수 있지만 기존 platform naming/tagging 규칙을 확인한 뒤 확정한다. 확정 전 manifest에서는 하드코딩하지 않고 입력 변수로 둔다. 최소한 environment, application, component, owner, lifecycle을 이름 또는 tag/label로 식별할 수 있어야 한다.
+shared contract 기본값은 namespace `asklake-dev`, FastAPI ServiceAccount `asklake-backend`, ECR component `frontend`, `backend`, `airflow`, `spark-runtime`으로 유지한다. EKS Trino 확정 뒤 `trino` image mirror와 `asklake-trino` ServiceAccount를 추가하되 기존 input 이름을 바꾸지 않는다. Replay Producer는 호환 value에 `create=false`로 남기고 EKS ServiceAccount/ECR/workload를 생성하지 않는다. 실제 AWS resource 이름과 annotation은 입력 변수로 두며 environment, application, component, owner, lifecycle을 이름 또는 tag/label로 식별할 수 있어야 한다.
 
 ## 5. Pair A가 Pair B에게 넘길 계약
 
@@ -75,10 +75,10 @@ Pair A는 AWS inventory와 결정 사항이 채워진 뒤 다음 값을 하나�
 - AWS environment 이름과 region. account ID 자체는 repository에 기록하지 않는다.
 - EKS cluster 이름, Kubernetes version, namespace, access 방법.
 - workload별 service account 이름과 IRSA 또는 EKS Pod Identity 연결 방식.
-- ECR repository 이름과 image digest 전달 규칙. mutable tag만으로 배포하지 않는다.
+- ECR repository 이름과 image digest 전달 규칙. Trino mirror URL과 digest를 포함하며 mutable tag만으로 배포하지 않는다.
 - MSK Serverless bootstrap 연결 방식, IAM authentication, TLS, topic/consumer group naming 경계. 실제 endpoint는 배포 환경에서 전달한다.
 - VPC, private/public subnet 역할, security group 연결, ALB ingress, 필요한 VPC endpoint 또는 NAT 경로.
-- RDS와 Trino의 위치, endpoint reference, database/user mapping과 migration owner.
+- RDS와 EKS Trino의 endpoint reference, `asklake-trino` workload identity, RDS `iceberg_catalog` database/user mapping과 migration owner, S3 warehouse network, TLS/auth/JDBC Secret reference.
 - S3 Raw, Output, Warehouse, Query Result, checkpoint/quarantine prefix와 workload별 허용 범위.
 - ConfigMap/Secret reference 이름, deploy/rollback/destroy 명령, shared resource 보호 규칙.
 - Phase 1에서 사용할 정적 검증 명령과 AWS smoke evidence 저장 위치.
@@ -119,7 +119,7 @@ Pair A는 이 목록이 오기 전에 cluster와 delivery skeleton을 준비할 
 - VPC/subnet/NAT/VPC endpoint 설계와 비용·보안 선택.
 - RDS 실제 resource와 Trino Service/RDS/S3 연결 owner 확인.
 - shared/MVP-owned/external lifecycle 분류.
-- Pair B의 workload별 service account, IAM, network, manifest 요구사항 수령.
+- Pair B의 workload별 service account, IAM, network, manifest 요구사항 수령. 현재 PR #759 계약의 namespace RBAC와 Trino handoff interface는 Foundation에 반영하되 실제 AWS ARN, endpoint와 Secret value는 inventory gate 뒤에 채운다.
 
 위 항목을 채우기 전에는 EKS cluster, MSK Serverless, RDS, NAT Gateway 같은 과금 resource를 생성하지 않는다.
 

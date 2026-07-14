@@ -38,6 +38,8 @@ run "existing_cluster_handoff" {
     cluster_mode            = "existing"
     existing_cluster_name   = "shared-dev"
     create_ecr_repositories = false
+    trino_image_digest      = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    trino_irsa_role_arn     = "arn:aws:iam::123456789012:role/asklake-dev-trino"
   }
 
   assert {
@@ -58,6 +60,31 @@ run "existing_cluster_handoff" {
   assert {
     condition     = output.phase1_handoff.trino_runtime == "eks"
     error_message = "Trino must remain an EKS workload for the MVP."
+  }
+
+  assert {
+    condition     = output.trino_handoff.service.in_cluster_url == "https://asklake-trino.asklake-dev.svc:8443"
+    error_message = "Trino handoff must expose the stable in-cluster HTTPS Service endpoint."
+  }
+
+  assert {
+    condition     = output.trino_handoff.image.digest == "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    error_message = "Trino handoff must preserve the immutable image digest."
+  }
+
+  assert {
+    condition     = output.trino_handoff.irsa_role_arn == "arn:aws:iam::123456789012:role/asklake-dev-trino"
+    error_message = "Trino handoff must preserve the approved workload identity role."
+  }
+
+  assert {
+    condition     = output.trino_handoff.iceberg_catalog.database == "iceberg_catalog"
+    error_message = "Trino must use the dedicated Iceberg catalog database."
+  }
+
+  assert {
+    condition     = output.trino_handoff.iceberg_catalog.jdbc_secret_name == "asklake-trino-iceberg-jdbc"
+    error_message = "Trino handoff must expose the JDBC Secret reference without secret values."
   }
 }
 

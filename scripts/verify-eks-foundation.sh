@@ -16,6 +16,8 @@ required_files=(
   "$TERRAFORM_DIR/dev.tfvars.example"
   "$CHART_DIR/Chart.yaml"
   "$CHART_DIR/values.schema.json"
+  "$CHART_DIR/templates/backend-rbac.yaml"
+  "$CHART_DIR/templates/spark-driver-rbac.yaml"
   "$VALUES_FILE"
   "$ROOT_DIR/docs/eks-msk-mvp-phase-1-handoff.md"
 )
@@ -42,6 +44,12 @@ if helm template asklake-foundation "$CHART_DIR" -f "$VALUES_FILE" \
   exit 1
 fi
 
+if helm template asklake-foundation "$CHART_DIR" -f "$VALUES_FILE" \
+  --set serviceAccounts.replayProducer.create=true >/dev/null 2>&1; then
+  echo "Helm schema allowed the excluded Replay Producer workload" >&2
+  exit 1
+fi
+
 service_account_count="$(grep -c '^kind: ServiceAccount$' "$RENDERED_FILE")"
 if [[ "$service_account_count" -ne 6 ]]; then
   echo "expected 6 workload service accounts, rendered $service_account_count" >&2
@@ -60,6 +68,47 @@ for service_account in \
     exit 1
   fi
 done
+
+backend_service_account="$({
+  awk '
+    /^kind: ServiceAccount$/ { block = $0 ORS; capture = 1; next }
+    capture { block = block $0 ORS }
+    capture && /^---$/ {
+      if (block ~ /name: asklake-backend/) {
+        printf "%s", block
+        exit
+      }
+      capture = 0
+      block = ""
+    }
+    END {
+      if (capture && block ~ /name: asklake-backend/) printf "%s", block
+    }
+  ' "$RENDERED_FILE"
+} || true)"
+
+if ! grep -q '^automountServiceAccountToken: true$' <<<"$backend_service_account"; then
+  echo "asklake-backend must mount its ServiceAccount token for SparkApplication API calls" >&2
+  exit 1
+fi
+
+role_count="$(grep -c '^kind: Role$' "$RENDERED_FILE")"
+role_binding_count="$(grep -c '^kind: RoleBinding$' "$RENDERED_FILE")"
+if [[ "$role_count" -ne 2 || "$role_binding_count" -ne 2 ]]; then
+  echo "expected backend and Spark namespace Role/RoleBinding pairs" >&2
+  exit 1
+fi
+
+grep -q 'name: asklake-backend-sparkapplications' "$RENDERED_FILE"
+grep -q 'resources: \["sparkapplications"\]' "$RENDERED_FILE"
+grep -q 'verbs: \["create", "get", "list", "watch", "delete"\]' "$RENDERED_FILE"
+grep -q 'resources: \["pods/log"\]' "$RENDERED_FILE"
+grep -q 'name: asklake-spark-driver' "$RENDERED_FILE"
+
+if grep -Eq '^kind: ClusterRole(Binding)?$|resources:.*("secrets"|"nodes"|"namespaces")|verbs:.*("patch"|"update"|"\*")' "$RENDERED_FILE"; then
+  echo "rendered Foundation contains out-of-contract Kubernetes permissions" >&2
+  exit 1
+fi
 
 grep -q 'kafkaRuntime: "msk-serverless"' "$RENDERED_FILE"
 grep -q 'kafkaAuth: "iam"' "$RENDERED_FILE"

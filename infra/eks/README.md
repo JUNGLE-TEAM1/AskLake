@@ -6,8 +6,8 @@
 
 ## 디렉터리
 
-- `terraform/`: 기존/new EKS cluster, optional managed node group, ECR repository와 handoff output
-- `helm/asklake-foundation/`: namespace, workload별 service account, non-secret runtime boundary ConfigMap
+- `terraform/`: 기존/new EKS cluster, optional managed node group, ECR repository와 Trino/handoff output
+- `helm/asklake-foundation/`: namespace, workload별 service account, backend/Spark namespace RBAC, non-secret runtime boundary ConfigMap
 - `values/dev.example.yaml`: B가 manifest render와 fake client test에 사용할 예시 값
 
 ## 안전 경계
@@ -77,9 +77,9 @@ helm template asklake-foundation \
   -f infra/eks/values/dev.example.yaml
 ```
 
-실제 runtime manifest는 chart가 만든 service account 이름을 참조해야 한다. 임의 이름을 별도로 만들지 않는다. 세부 인수 항목은 [Phase 1 인수 계약](../../docs/eks-msk-mvp-phase-1-handoff.md)을 따른다.
+실제 runtime manifest는 chart가 만든 service account 이름을 참조해야 한다. 임의 이름을 별도로 만들지 않는다. FastAPI는 `asklake-backend` token과 namespace Role로만 SparkApplication을 제어하고 Spark driver도 `asklake-spark` namespace Role만 사용한다. 세부 인수 항목은 [Phase 1 인수 계약](../../docs/eks-msk-mvp-phase-1-handoff.md)을 따른다.
 
-현재 foundation contract `1.1`은 frontend, backend, Airflow, Trino, MSK IAM smoke와 Spark service account를 제공한다. Replay Producer는 EKS 밖에서 실행하므로 ECR repository와 service account를 만들지 않는다.
+현재 foundation contract `1.2`는 frontend, backend, Airflow, Trino, MSK IAM smoke와 Spark service account를 제공한다. Replay Producer compatibility input은 `create=false`로 유지하며 ECR repository, service account 또는 workload를 만들지 않는다. `trino_handoff`는 실제 secret 값 없이 image digest, IRSA role ARN, in-cluster Service URL, RDS/S3 network와 Secret reference를 전달한다. AWS inventory가 확정되기 전 nullable 값은 resource 생성 gate로 남고 manifest render·fake client test만 완료할 수 있다.
 
 ## 설계 참고 자료
 

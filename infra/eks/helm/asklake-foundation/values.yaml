@@ -21,7 +21,7 @@ serviceAccounts:
     create: true
     name: asklake-backend
     annotations: {}
-    automountServiceAccountToken: false
+    automountServiceAccountToken: true
   airflow:
     create: true
     name: asklake-airflow
@@ -40,5 +40,10 @@ serviceAccounts:
   spark:
     create: true
     name: asklake-spark
+    annotations: {}
+    automountServiceAccountToken: false
+  replayProducer:
+    create: false
+    name: asklake-replay-producer
     annotations: {}
     automountServiceAccountToken: false

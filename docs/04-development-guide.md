@@ -547,7 +547,7 @@ AWS 배포 전에는 로컬에서 prod-like compose 구성이 유효한지 먼�
 
 Issue #735의 EKS + MSK MVP를 시작할 때는 resource를 생성하기 전에 [EKS + MSK MVP Phase 0 환경·인수 계약](eks-msk-mvp-phase-0-contract.md)을 완료한다. EKS/ECR/MSK/RDS inventory가 `AccessDenied`인 상태에서는 빈 환경으로 판단하지 않는다. 기존 EKS 재사용 여부, VPC/subnet 경로, RDS/Trino 위치, shared resource lifecycle과 Pair B의 workload별 IAM/network 요구가 채워지기 전에는 과금 resource를 생성하지 않는다. 현재 EC2 Compose와 local Docker/Redpanda/Spark REST 검증은 EKS 후보 경로가 추가되어도 유지한다.
 
-Phase 1 foundation과 Pair B 인수 계약을 변경하면 아래 검증을 실행한다. AWS credential이나 실제 cluster 없이 Helm lint/render와 secret pattern을 검사하며, Terraform CLI가 있으면 format/init/validate도 함께 실행한다. CLI가 없는 환경은 [EKS foundation README](../infra/eks/README.md)의 Docker 검증을 추가로 실행한다.
+Phase 1 foundation과 Pair B 인수 계약을 변경하면 아래 검증을 실행한다. AWS credential이나 실제 cluster 없이 Helm schema/lint/render, `asklake-backend` token mount, backend/Spark namespace Role/RoleBinding, Replay Producer `create=false`, Trino handoff와 secret pattern을 검사하며, Terraform CLI가 있으면 format/init/validate/mock-provider test도 함께 실행한다. CLI가 없는 환경은 [EKS foundation README](../infra/eks/README.md)의 Docker 검증을 추가로 실행한다.
 
 ```bash
 bash scripts/verify-eks-foundation.sh
