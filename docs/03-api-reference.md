@@ -357,7 +357,7 @@ type ScheduledJobRunResponse = {
 | `GET` | `/api/target/databases` | TBD | Target 기본정보 DB 선택용 허용 DB 목록 | `docs/api-contract.md` |
 | `POST` | `/api/catalog/derived-datasets` | TBD | DuckDB compatibility 결과 기반 dataset 생성 | `docs/api-contract.md` |
 
-현재 P1 API의 `Auth` 값은 local session actor 또는 임시 actor header fallback을 기준으로 확장 중이다. Create flow의 Permission 입력값과 `owner` 표시는 governance/identity metadata이며, 실제 접근 제어는 `ActorContext`와 resource별 `permissionGrants`를 기준으로 판정한다. Catalog/SQL/Job/Dashboard runtime의 공통 권한 계약은 `docs/api-contract.md`의 Permission/Governance 용어를 따른다.
+현재 P1 API의 `Auth` 값은 local session actor 또는 임시 actor header fallback을 기준으로 확장 중이다. Create flow의 `owner` 표시는 identity metadata이면서 backend owner fallback의 기준이고, `permissionGrants`는 실제 Job 접근 제어 입력이다. `permissionSummary`와 `permissionRoles`는 호환용 요약 값이다. Catalog/SQL/Job/Dashboard runtime의 공통 권한 계약은 `docs/api-contract.md`의 Permission/Governance 용어를 따른다.
 
 ## 6) P2 / 확장 API
 
@@ -858,7 +858,7 @@ type DashboardAssistantResponse = {
 
 ## 10) ETL Permission 옵션 및 grant 저장
 
-`GET /api/etl/permission-options`는 ETL 생성 화면에서 선택할 수 있는 조직 그룹과 사용자를 반환한다. 직접 사용자·그룹 권한을 설정하는 기능이므로 현재 actor의 `role`이 `admin`이어야 하며, 그렇지 않으면 `403 FORBIDDEN`을 반환한다. 이 응답은 권한 요약이나 전체 resource 목록을 계산하지 않는 경량 디렉터리 조회다.
+`GET /api/etl/permission-options`는 ETL 생성 화면에서 선택할 수 있는 조직 그룹과 사용자를 반환한다. `jobId` query가 없으면 새 작업 생성에 필요한 경량 디렉터리 조회이므로 인증된 사용자가 호출할 수 있다. `jobId`가 있으면 기존 Job의 권한 편집으로 간주하며 admin, 해당 Job의 생성자, 담당자(owner), 또는 `manage` grant를 가진 actor만 호출할 수 있다. 그 외 actor는 `403 FORBIDDEN`, 존재하지 않는 Job은 `404 NOT_FOUND`를 반환한다. 응답은 권한 요약이나 전체 resource 목록을 계산하지 않는다.
 
 ```ts
 type PermissionOptionsResponse = {
@@ -878,7 +878,7 @@ type PermissionOptionsResponse = {
 };
 ```
 
-`POST /api/etl/jobs`와 `PATCH /api/etl/jobs/{jobId}`는 기존 `permissionGrants?: PermissionGrant[]` 계약을 실제 저장 경로로 사용한다. 전달된 grant는 해당 Job의 `permission_ui` source 행으로 저장되며, 수정 시 기존 `permission_ui` 행만 교체한다. 관리 콘솔에서 생성한 `admin` source grant는 유지한다. 생성·수정 응답의 `permissionGrants`와 actor별 `permissions`에는 저장 결과가 즉시 반영된다.
+`POST /api/etl/jobs`와 `PATCH /api/etl/jobs/{jobId}`는 `permissionGrants?: PermissionGrant[]` 계약을 실제 저장 경로로 사용한다. 전달된 grant는 해당 Job의 `permission_ui` source 행으로 저장되며, 수정 시 기존 `permission_ui` 행만 교체한다. 관리 콘솔에서 생성한 `admin` source grant는 유지한다. `query`, `run`, `manage`, `delete`, `share` action은 기본 조회가 가능하도록 `view`와 함께 정규화한다. `모든 사용자에게 조회 허용`은 `principalType=public`, `principalId=public`, `actions=[view]`로 저장된다. 담당자(owner)의 전체 권한은 별도 grant 없이 backend fallback으로 계산한다. 생성·수정 응답의 `permissionGrants`와 actor별 `permissions`에는 저장 결과가 즉시 반영되고, Review 응답의 `permission`에는 담당자 자동 권한과 실제 저장 예정 grant를 나열한다.
 - Mock/live 전환 순서가 바뀌면 `docs/backend-integration-readiness.md`를 업데이트한다.
 - Frontend 타입이 바뀌면 관련 `frontend/src/types/`와 문서를 함께 업데이트한다.
 ## Text Structuring Runtime Contract

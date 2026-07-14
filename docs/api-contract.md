@@ -109,11 +109,11 @@ Phase 0 기준에서 identity metadata와 access control은 별도 개념입니�
 | --- | --- | --- |
 | `createdBy` | Job/Dataset/Dashboard에 optional 표시 metadata로 제공 | resource를 생성한 사용자 표시와 감사 로그 문맥에 사용 |
 | `createdByProfile` | `displayName`, `avatarInitials` 중심의 optional 표시 metadata | profile/avatar 표시용으로 확장 가능 |
-| `owner` | Job/Dataset/Dashboard 화면에 표시되는 소유자 문자열 | 표시/책임자 metadata로 유지하고 권한 판정의 단일 근거로 쓰지 않음 |
+| `owner` | Job/Dataset/Dashboard 화면에 표시되는 담당자 문자열 | ETL Job에서는 표시 값이면서 전체 권한을 주는 backend fallback 기준이며 별도 grant로 저장하지 않음 |
 | profile/avatar | `createdByProfile`의 optional 표시 값 | `createdBy`/`owner` 옆 표시용 identity metadata로 추가 |
 | `permissionSummary` | Create Permission 단계의 요약 문구 | governance metadata로 유지 |
-| `permissionRoles` | Create Permission 단계의 역할별 설정 값 | 후속 `permissionGrants` 계약으로 승격 전까지 enforce하지 않음 |
-| `permissionGrants` | Job/Dataset/Dashboard에 optional response/request metadata로 제공 | user/group/role/public별 resource action 허용 목록 |
+| `permissionRoles` | 이전 Create Permission 단계의 역할별 호환 값 | ETL Job 최초 접근 시 `legacy_permission_roles` source의 table grant로 한 번만 이관 |
+| `permissionGrants` | Job/Dataset/Dashboard의 실제 resource action 허용 목록 | ETL 생성·수정 request를 `permission_grants` table에 저장하고 backend가 enforce |
 | `permissions` | Job/Dataset/Dashboard에 optional response metadata로 제공 | backend가 현재 actor 기준 `canView`, `canQuery`, `canManage` 등을 계산해 내려주는 값 |
 
 Catalog 목록/상세, SQL Query Run, Query AI, ETL job command API, Dashboard card/runtime API는 `permissionSummary`나 `permissionRoles`만으로 접근 권한을 판정하지 않습니다. 이 값들은 표시용 governance metadata이고, 실제 허용 여부는 `ActorContext`와 resource별 `permissionGrants`로 계산합니다. Dashboard 삭제 API의 `X-AskLake-User`, `X-AskLake-Role` header는 초기 dashboard 전용 입력에서 시작했지만, 이후 공통 actor header로 해석됩니다.
@@ -140,7 +140,7 @@ Backend는 세션 쿠키가 있으면 session user를 우선 actor로 사용하�
 
 Governance control은 위 allow-only 판정 앞에서 적용됩니다. `principal_controls`에서 actor의 user id/email/display name 또는 소속 group이 `blocked`이면 grant가 있어도 `403 FORBIDDEN`입니다. `resource_locks`에서 resource가 잠겨 있으면 `view`는 유지하고 `query`, `run`, `manage`, `delete`, `share` action은 `403 FORBIDDEN`입니다. 목록 API는 blocked actor에게 해당 resource를 숨깁니다. Resource lock은 목록 노출을 막지 않고, 응답 `permissions`에서 `canQuery`, `canRun`, `canManage`, `canDelete`, `canShare`를 `false`로 내려 UI preflight와 backend enforcement가 같은 상태를 보게 합니다.
 
-관리자 권한 편집 기능은 이 우선순위를 바꾸지 않고 독립 `permission_grants` table row를 생성/수정/삭제하는 API로 확장합니다. 운영 기본값은 group grant 중심이며, user grant는 예외 권한에 사용합니다. Admin 권한은 resource 접근 그룹이 아니라 `role=admin`으로 부여하고, 로컬 demo admin 계정의 groups는 빈 배열로 유지합니다. Group grant/block은 일반 사용자 권한 운영 단위입니다. `role`/`public` grant는 계약상 지원하지만 운영 위험이 크므로 정책 확인 후 사용합니다. 현재 backend는 resource payload 안의 legacy `permissionGrants`와 독립 `permission_grants` table row를 병합해 같은 `grants` 응답과 permission check 입력으로 사용합니다.
+관리자 권한 편집 기능은 이 우선순위를 바꾸지 않고 독립 `permission_grants` table row를 생성/수정/삭제합니다. 운영 기본값은 group grant 중심이며, user grant는 예외 권한에 사용합니다. Admin 권한은 resource 접근 그룹이 아니라 `role=admin`으로 부여하고, 로컬 demo admin 계정의 groups는 빈 배열로 유지합니다. Group grant/block은 일반 사용자 권한 운영 단위입니다. `role`/`public` grant도 계약상 지원합니다. ETL Job은 table row를 권한 source of truth로 사용하며, 이전 `permissionRoles`는 `legacy_permission_roles` source로 한 번만 이관합니다. 다른 resource의 기존 payload grant 병합은 해당 resource 계약의 호환 범위로 유지합니다.
 
 Resource/action 기준:
 
@@ -199,7 +199,7 @@ Profile/Admin Console Phase 0 기준:
 - `GET /api/users/me`는 현재 actor의 표시 프로필, role, group, 권한 요약을 반환합니다.
 - `/api/admin/*` endpoint는 현재 ActorContext의 role이 `admin`인 actor만 호출할 수 있습니다. 권한이 없으면 `403 FORBIDDEN`을 반환합니다.
 - 관리 콘솔은 사용자/그룹/감사 로그 조회, 사용자/그룹 차단, resource lock, permission grant 생성/수정/삭제를 지원합니다. 사용자/그룹 자체 생성, 멤버십 편집, deny policy, 조건부 정책은 후속 계약으로 분리합니다.
-- 관리자 편집 API는 group grant를 기본 흐름으로, user grant를 예외 흐름으로 제공합니다. Admin 계정은 resource 접근 그룹에 속하지 않고 `role=admin`으로 관리 권한을 받습니다. role/public grant는 계약상 허용하지만 운영 위험이 크므로 관리 콘솔의 기본 추가 옵션으로 노출하지 않고 정책 확인 후 사용합니다. payload에서 유래한 owner/permissionRoles grant는 원본 resource metadata로 남기며, 관리 콘솔에서는 읽기 전용으로 표시합니다.
+- 관리자 편집 API는 group grant를 기본 흐름으로, user grant를 예외 흐름으로 제공합니다. Admin 계정은 resource 접근 그룹에 속하지 않고 `role=admin`으로 관리 권한을 받습니다. role/public grant는 계약상 허용하지만 운영 위험이 크므로 관리 콘솔의 기본 추가 옵션으로 노출하지 않고 정책 확인 후 사용합니다. ETL Job의 owner 권한은 backend fallback으로 계산해 table grant로 저장하지 않으며, 이전 `permissionRoles`는 `legacy_permission_roles` source의 읽기 전용 table grant로 이관합니다.
 - 관리 콘솔의 권한 표시는 resource별 `permissionGrants`와 현재 actor 기준 `permissions`를 설명하는 운영 화면이며, 프론트 표시만으로 보안 판정을 대체하지 않습니다.
 - Auth table은 현재 repo의 기존 로컬 persistence 패턴에 맞춰 service에서 `create_all`로 보강합니다. 운영 배포의 schema source of truth는 후속 Alembic migration으로 분리해야 합니다.
 
@@ -1252,7 +1252,7 @@ type CreatePipelineRequest = {
 };
 ```
 
-`permissionSummary`, `permissionRoles`, `permissionGrants`, `owner`, `createdBy`, `createdByProfile`은 현재 생성 결과를 설명하고 표시하기 위한 governance/identity metadata입니다. 이 값만으로 dataset 조회, SQL 실행, job command 권한을 허용하거나 거부하지 않습니다. Backend는 `asklake_session` 쿠키 actor를 우선 사용하고, 세션이 없을 때만 `X-AskLake-User` header 또는 demo actor를 `createdBy` fallback으로 사용할 수 있습니다.
+`permissionSummary`와 `permissionRoles`는 호환용 governance 요약이고, `createdBy`와 `createdByProfile`은 identity metadata입니다. `permissionGrants`는 실제 Job 접근 권한이며 backend가 조회·실행·관리·삭제·공유를 판정할 때 사용합니다. `owner`는 표시용 담당자이면서 전체 권한을 주는 backend fallback 기준입니다. Backend는 `asklake_session` 쿠키 actor를 우선 사용하고, 세션이 없을 때만 `X-AskLake-User` header 또는 demo actor를 `createdBy` fallback으로 사용할 수 있습니다.
 
 Rule contract rules:
 
@@ -1442,7 +1442,7 @@ Validation:
 
 - `updatePipelineDraft(jobId, draftPipeline)`
 
-Request는 `CreatePipelineRequest`에서 `id`, `sourceConfig`, `sourceLabel`, `sourceType`, `createdBy`, `createdByProfile`, `permissionGrants`를 제외한 `UpdatePipelineRequest`다. source field가 body에 포함되면 `422` validation error로 거부한다.
+Request는 `CreatePipelineRequest`에서 `id`, `sourceConfig`, `sourceLabel`, `sourceType`, `createdBy`, `createdByProfile`을 제외한 `UpdatePipelineRequest`다. `permissionGrants`는 수정 가능하며 기존 `permission_ui` source grant를 교체한다. source field가 body에 포함되면 `422` validation error로 거부한다.
 
 Response `200 OK`:
 
@@ -3576,12 +3576,15 @@ type AuditEntry = {
 
 ETL Permission 화면은 더 이상 하드코딩 사용자 목록을 source of truth로 사용하지 않는다.
 
-1. 화면 진입 시 `GET /api/etl/permission-options`로 그룹과 사용자 후보를 조회한다.
-2. 선택한 그룹은 응답의 `actions`를 유지한 `group` grant로 변환한다.
-3. 선택한 사용자는 기본 `view`, `run` action을 가진 `user` grant로 변환한다.
-4. 공개 범위를 `외부 공유`로 명시한 경우에만 `public` principal의 `view` grant를 추가한다.
-5. 생성 또는 수정 request의 `permissionGrants`를 `permission_grants` table에 `source=permission_ui`로 저장한다.
-6. 동일 resource 수정은 `permission_ui` source만 교체하고 `admin`, `admin_seed` 등 다른 source는 보존한다.
+1. 화면 진입 시 `GET /api/etl/permission-options`로 그룹과 사용자 후보를 조회한다. 새 작업은 `jobId` 없이 호출하고, 기존 작업 수정은 `jobId`를 query로 전달한다.
+2. 그룹 또는 사용자를 권한 대상으로 추가한다. 대상 추가만으로는 identity가 결정되고, 실제 action은 프리셋 또는 직접 설정으로 지정한다.
+3. `조회 전용`, `실행 가능`, `운영 가능` 프리셋은 선택된 모든 대상에 공통 action 집합을 적용한다. `직접 설정`은 대상별 action을 편집한다.
+4. `query`, `run`, `manage`, `delete`, `share` 중 하나를 부여하면 기본 조회가 가능하도록 `view`도 포함해 정규화한다.
+5. `모든 사용자에게 조회 허용`을 켜면 `public` principal의 `view` grant를 추가한다. 이는 비로그인 공개가 아니라 로그인한 모든 actor의 조회 허용을 뜻한다.
+6. 담당자(owner)는 backend fallback으로 전체 권한을 자동 보유한다. owner grant는 저장하지 않고 최종 확인 화면에서 읽기 전용으로 표시한다.
+7. 생성 또는 수정 request의 `permissionGrants`를 `permission_grants` table에 `source=permission_ui`로 저장한다.
+8. 동일 resource 수정은 `permission_ui` source만 교체하고 `admin`, `admin_seed` 등 다른 source는 보존한다.
+9. 이전 Job의 `permissionRoles`는 최초 접근 시 `legacy_permission_roles` source의 table grant로 한 번만 이관한다.
 
 ```ts
 type PermissionGrant = {
@@ -3594,4 +3597,4 @@ type PermissionGrant = {
 
 빈 `principalId` 또는 action이 없는 grant는 `400 VALIDATION_ERROR`다. `public` principal은 `principalId`를 `public`으로 정규화한다. backend는 client가 보낸 `id`와 `source`를 신뢰하지 않고 새 ID와 `permission_ui` source를 부여한다.
 
-권한 옵션 조회는 admin actor만 허용한다. live frontend는 API 오류 시 grant 화면 안에 재시도 경로를 표시하고 다음 단계 이동을 막는다. `VITE_USE_MOCK_API=true`에서는 동일 response shape의 fixture를 사용하되 최종 Job request shape는 live와 동일하다.
+새 작업의 권한 옵션 조회는 인증된 actor에게 허용한다. 기존 작업은 admin, 생성자, 담당자(owner), 또는 `manage` grant를 가진 actor만 조회할 수 있고, 그 외 actor는 `403 FORBIDDEN`을 받는다. live frontend는 API 오류 시 권한 화면 안에 재시도 경로를 표시하고 다음 단계 이동을 막는다. `VITE_USE_MOCK_API=true`에서는 동일 response shape의 fixture를 사용하되 최종 Job request shape는 live와 동일하다. Review 응답의 `permission`은 담당자 자동 권한을 첫 항목으로 표시하고, 이어서 실제 저장 예정 grant를 대상별로 나열한다.

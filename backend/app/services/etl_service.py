@@ -205,8 +205,6 @@ def get_permission_options(
                 grants=permission_grants_for_etl_job(db, job),
                 resource_label="job permissions",
             )
-    else:
-        require_permission(actor, "manage", resource_label="job collection")
     Base.metadata.create_all(bind=db.get_bind(), tables=[AuthUserModel.__table__])
     stored_users = list(db.scalars(select(AuthUserModel).order_by(AuthUserModel.display_name.asc())).all())
     users = stored_users or [

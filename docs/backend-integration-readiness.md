@@ -20,7 +20,7 @@ FastAPI 전환의 공통 구조와 의사결정은 `docs/backend-fastapi-transit
 | Catalog | `GET /api/catalog/datasets` hydrate, `GET /api/catalog/datasets/{datasetId}/lineage`, `GET /api/catalog/datasets/{datasetId}/rows` 기반 최신 성공 materialization row pagination, SQL derived/Kafka 결과를 Postgres JSONB payload로 반영. 일반 Airflow/Spark batch의 멱등 reconciliation endpoint, transaction, final-task 연결, frontend terminal-success 1회 refresh, live E2E 구현 | 서버 검색/정렬 API 고도화 |
 | SQL 분석 | DuckDB compatibility snapshot과 Trino Query Run을 분리 지원. Trino mode는 canonical `/api/query/validate`, idempotent submit, durable collector, signed-cursor 결과 page, server-side CSV, Iceberg CTAS 등록과 반복 full-refresh SQL Job을 제공한다. 실행 평가와 timeline은 기존 SQL editor를 변경하지 않고 결과 panel의 `실행 정보` view에 표시한다. | Spark/Kafka writer의 native Iceberg 전환, old SQL Job table retention/cleanup policy, org quota 고도화 |
 | Dashboard | FastAPI dashboard card/list와 draft/published runtime API 연결. 프론트는 404 local fallback 유지. Dashboard 목록/runtime/title/draft/delete 권한 enforcement 연결 | 공유 링크/API, export API, cross-pair E2E QA |
-| Permission/Governance | Create flow의 `owner`, `permissionSummary`, `permissionRoles`는 metadata로 저장/표시. Job/Dataset/Dashboard 응답은 optional identity/grant/permission metadata를 제공. Backend는 session 또는 local header fallback을 `ActorContext`로 읽고 공통 `can()`을 적용한다. Dashboard/Catalog/Job뿐 아니라 Trino Query Run submit/history/result/CSV/cancel/materialization도 현재 Dataset 권한, principal block, resource lock과 submitter identity를 재검사한다. Frontend 비활성화는 UX 보조이고 backend 403이 최종 경계다. | dataset 생성/삭제 전체로 permission check 확대 |
+| Permission/Governance | ETL Permission 화면이 그룹·사용자별 `permissionGrants`를 저장하고 Job 접근 판정에 사용. owner는 자동 전체 권한 fallback, `permissionSummary`/`permissionRoles`는 호환용 요약. Job/Dataset/Dashboard 응답은 optional identity/grant/permission metadata를 제공. Backend는 session 또는 local header fallback을 `ActorContext`로 읽고 공통 `can()`을 적용한다. Dashboard/Catalog/Job뿐 아니라 Trino Query Run submit/history/result/CSV/cancel/materialization도 현재 Dataset 권한, principal block, resource lock과 submitter identity를 재검사한다. Frontend 비활성화는 UX 보조이고 backend 403이 최종 경계다. | dataset 생성/삭제 전체로 permission check 확대 |
 | Auth / Admin | httpOnly `asklake_session` cookie 기반 local login/signup/session/logout, 현재 사용자 profile, admin 사용자·그룹·permission grant·governance control API 연결. Frontend는 session actor 확인 이후 보호 route와 hydrate를 시작하고, admin actor에게만 관리 콘솔을 노출 | 운영 IdP/SSO, production session hardening, Alembic migration |
 | Audit | `audit_events` table 기반 admin 조회/필터 UI + auth login/logout/login 실패 + permission grant 변경 + principal/resource control 변경 + Dataset/Job/Dashboard 403 접근 시도 기록 + frontend local 최근 호출 로그 | audit export/retention 정책 |
 
@@ -427,7 +427,7 @@ Catalog dataset materialization 보완 기준:
 | 대시보드 | 권한 기반 공유, 내보내기 API, 장기 운영용 권한/감사 로그 |
 | 공통 | 운영 IdP/SSO 연동, session hardening, 외부 감사 저장소 연동 |
 
-Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity metadata 작업이고 실제 권한 판정은 `ActorContext`와 resource별 grant 작업이다. 현재 로컬 auth/session은 계정 actor를 결정하기 위한 demo-grade 구현이며, 외부 IdP/SSO, refresh token, 비밀번호 재설정, 이메일 인증, 권한 정책 고도화 UI, auth/permission table Alembic migration은 후속 범위다. `owner` 문자열만으로 권한을 판단하면 이름 변경, 그룹 소유, 대리 생성, 외부 공유 같은 edge case가 생기므로 backend는 payload grant와 `permission_grants` table row를 병합해 판정하고, admin API와 관리 콘솔로 table grant를 편집한다.
+Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity metadata 작업이고 실제 권한 판정은 `ActorContext`와 resource별 grant 작업이다. 현재 로컬 auth/session은 계정 actor를 결정하기 위한 demo-grade 구현이며, 외부 IdP/SSO, refresh token, 비밀번호 재설정, 이메일 인증, deny/조건부 정책, auth/permission table Alembic migration은 후속 범위다. ETL Job은 `permission_grants` table을 source of truth로 사용하고 owner에게 자동 전체 권한 fallback을 제공한다. 이름 변경, 그룹 소유, 대리 생성 등 owner 문자열 fallback의 장기 edge case는 운영 identity 연동 시 보완해야 한다.
 
 ## 11. 백엔드 팀에 넘길 최소 구현 범위
 
@@ -504,10 +504,16 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 ## ETL Permission create-flow readiness
 
 - [x] `GET /api/etl/permission-options` 그룹·사용자 경량 조회
-- [x] admin actor guard와 `403 FORBIDDEN`
+- [x] 새 작업의 인증 actor 조회와 기존 작업의 생성자·담당자·`manage`·admin guard
+- [x] 그룹/사용자 대상 추가, 프리셋, 대상별 action 직접 편집 UI
+- [x] 담당자 자동 전체 권한과 `public:view` 최종 확인 표시
 - [x] create/update `permissionGrants` validation
+- [x] 강한 action의 `view` 포함 정규화
 - [x] `permission_ui` grant 저장 및 교체
 - [x] admin source grant 보존
+- [x] 이전 `permissionRoles`의 `legacy_permission_roles` 일회성 이관
 - [x] 생성·수정 응답과 접근 판정에 persisted grant 병합
 - [x] `backend/scripts/verify-permission-create-flow-contract.py` 생성·교체 계약 검증
+- [ ] 그룹·사용자 디렉터리는 현재 demo group과 auth user fallback을 사용하며 운영 IdP/group membership 연동이 필요
+- [ ] 명시적 deny, 조건부 권한, 그룹 멤버십 편집은 미지원
 - [ ] Docker/PostgreSQL 기반 `verify:permission-job-dashboard` 전체 스모크는 metadata DB가 응답 가능한 환경에서 실행
