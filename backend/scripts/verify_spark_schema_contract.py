@@ -3,7 +3,7 @@ import sys
 from pyspark.sql import SparkSession
 from pyspark.sql import types as T
 
-from spark_job_run import apply_schema_contract, normalize_columns, read_source
+from spark_job_run import apply_schema_contract, apply_schema_contract_with_count, normalize_columns, read_source
 
 
 def main():
@@ -18,6 +18,7 @@ def main():
     spark.sparkContext.setLogLevel("ERROR")
     try:
         verify_required_column_job_count_does_not_scale(spark)
+        verify_input_count_and_required_validation_share_action(spark)
         verify_json_contract_avoids_inference_and_flattens_nested_fields(spark, fixture_path)
         verify_all_null_required_columns_are_reported(spark)
         verify_cast_failures_are_reported_as_required_nulls(spark)
@@ -75,6 +76,44 @@ def verify_required_column_job_count_does_not_scale(spark):
         "required column validation jobs must not grow with the column count: "
         f"one column={one_column_jobs}, ten columns={ten_column_jobs}"
     )
+
+
+def verify_input_count_and_required_validation_share_action(spark):
+    column_names = [f"column_{index}" for index in range(10)]
+    schema = T.StructType([T.StructField(name, T.StringType(), True) for name in column_names])
+    frame = spark.createDataFrame(
+        [tuple(f"value-{row}-{index}" for index in range(10)) for row in range(3)],
+        schema=schema,
+    )
+    contract = [schema_column(name, nullable=False) for name in column_names]
+    dataframe_type = type(frame)
+    original_count = dataframe_type.count
+    original_first = dataframe_type.first
+    count_calls = 0
+    first_calls = 0
+
+    def tracked_count(current):
+        nonlocal count_calls
+        count_calls += 1
+        return original_count(current)
+
+    def tracked_first(current):
+        nonlocal first_calls
+        first_calls += 1
+        return original_first(current)
+
+    dataframe_type.count = tracked_count
+    dataframe_type.first = tracked_first
+    try:
+        contracted, input_rows = apply_schema_contract_with_count(frame, contract)
+    finally:
+        dataframe_type.count = original_count
+        dataframe_type.first = original_first
+
+    assert contracted.columns == column_names, contracted.columns
+    assert input_rows == 3, input_rows
+    assert count_calls == 0, f"schema contract must not run a separate count action: {count_calls}"
+    assert first_calls == 1, f"schema count/null summary must use one aggregate action: {first_calls}"
 
 
 def required_validation_job_count(spark, column_count):

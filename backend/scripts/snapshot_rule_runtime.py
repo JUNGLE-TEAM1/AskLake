@@ -44,7 +44,7 @@ def supports_snapshot_rules(rules):
     return True
 
 
-def apply_snapshot_rules(frame, rules):
+def apply_snapshot_rules(frame, rules, input_row_count=None):
     canonical_rules = [rule for rule in (rules or []) if isinstance(rule, dict)]
     transforms = [rule for rule in canonical_rules if rule.get("kind") == "transform" and rule.get("enabled") is not False]
     quality_rules = [rule for rule in canonical_rules if rule.get("kind") == "quality" and rule.get("enabled") is not False]
@@ -71,18 +71,24 @@ def apply_snapshot_rules(frame, rules):
     }
     transform_started_at = time.monotonic()
     current = frame.withColumn(ROW_ID, F.monotonically_increasing_id())
+    current_row_count = int(input_row_count) if input_row_count is not None else None
     quarantine = None
 
     for rule in transforms:
         output_name = _normalize_name(_first(rule.get("outputColumns")) or _first(rule.get("inputColumns")))
         if not output_name:
             continue
-        row_count = current.count()
+        row_count = current_row_count if current_row_count is not None else current.count()
         expression, invalid, reason, source = _transform_expression(current, rule)
         invalid_count = current.filter(invalid).count()
         transform["appliedStepCount"] += row_count - invalid_count
         transform["errorCount"] += invalid_count
         action = _failure_action(rule)
+        current_row_count = (
+            row_count - invalid_count
+            if invalid_count and action in {"quarantine", "drop_row"}
+            else row_count
+        )
 
         if invalid_count and action == "fail_batch":
             raise SnapshotRuleExecutionError(
@@ -117,7 +123,7 @@ def apply_snapshot_rules(frame, rules):
 
     transform_duration_ms = _elapsed_ms(transform_started_at)
     quality_started_at = time.monotonic()
-    quality_input_count = current.count()
+    quality_input_count = current_row_count if current_row_count is not None else current.count()
     quality["evaluatedRowCount"] = quality_input_count
     flag_names = []
     failure_reasons = []
