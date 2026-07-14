@@ -217,13 +217,25 @@ const checks = [
     ],
   },
   {
-    name: "SQL preview table uses the full result panel width for narrow result sets",
+    name: "SQL preview table uses readable centered widths for narrow result sets",
     file: "src/pages/sql/SqlPreviewTable.module.css",
     patterns: [
-      /\.wrap\[data-column-count="1"\] \.table,[\s\S]*\.wrap\[data-column-count="3"\] \.table \{[\s\S]*width:\s*100%;/,
+      /\.wrap[\s\S]*max-width:\s*100%;[\s\S]*margin-right:\s*auto;[\s\S]*margin-left:\s*auto;/,
+      /\.wrap\[data-column-count="1"\][\s\S]*width:\s*min\(100%, 480px\);/,
+      /\.wrap\[data-column-count="2"\][\s\S]*width:\s*min\(100%, 720px\);/,
+      /\.wrap\[data-column-count="3"\][\s\S]*width:\s*min\(100%, 900px\);/,
     ],
     forbiddenPatterns: [
-      /width:\s*min\(100%,\s*860px\);/,
+      /\.wrap\[data-column-count="[123]"\] \.table/,
+    ],
+  },
+  {
+    name: "SQL preview keeps identifier columns left aligned while numeric measures stay right aligned",
+    file: "src/pages/sql/SqlPreviewTable.tsx",
+    patterns: [
+      /function isIdentifierColumn\(column: string\)/,
+      /\(\?:\^\|\[_\\s-\]\)id\$\/i/,
+      /align: columnKind === "number" && !identifierColumn \? "right" : "left"/,
     ],
   },
   {
