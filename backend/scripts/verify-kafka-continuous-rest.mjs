@@ -102,6 +102,8 @@ try {
     ...process.env,
     APP_ENV: "production",
     ASKLAKE_CONTINUOUS_MAINTENANCE_TIMEOUT_MS: "5000",
+    ASKLAKE_CONTINUOUS_SPARK_LOG_LEVEL: "ERROR",
+    ASKLAKE_CONTINUOUS_SPARK_SHUFFLE_PARTITIONS: "3",
     ASKLAKE_DOCKER_CALL_MARKER: dockerCallMarker,
     ASKLAKE_SPARK_CONTINUOUS_MAINTENANCE_SCRIPT: "/opt/asklake/scripts/kafka_continuous_maintenance.py",
     ASKLAKE_SPARK_CONTINUOUS_SCRIPT: "/opt/asklake/scripts/kafka_continuous_stream.py",
@@ -173,6 +175,15 @@ try {
   assert.equal(started.containerId, "continuous-1");
   assert.equal(started.started, true);
   assert(started.workerAttemptId);
+  const firstContinuousSubmission = createRequests.find(
+    (item) => String(item.appArgs?.[0]).endsWith("/kafka_continuous_stream.py"),
+  );
+  assert(firstContinuousSubmission);
+  assert.equal(firstContinuousSubmission.sparkProperties["spark.sql.shuffle.partitions"], "3");
+  assert.equal(
+    firstContinuousSubmission.environmentVariables.ASKLAKE_CONTINUOUS_SPARK_LOG_LEVEL,
+    "ERROR",
+  );
 
   const duplicateStart = await runManager(continuousScript, workerRequest, environment, "ASKLAKE_KAFKA_CONTINUOUS_RESULT");
   assert.equal(duplicateStart.containerId, started.containerId);

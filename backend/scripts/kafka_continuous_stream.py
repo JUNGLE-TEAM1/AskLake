@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from pyspark.sql import DataFrame, SparkSession
-from pyspark.sql.functions import array, array_except, array_union, col, concat, current_timestamp, explode, from_json, get_json_object, lit, map_keys, min as spark_min, max as spark_max, size, transform, when
+from pyspark.sql.functions import array, array_except, array_union, col, concat, current_timestamp, explode, from_json, get_json_object, input_file_name, lit, map_keys, min as spark_min, max as spark_max, size, transform, when
 from pyspark.sql.types import BooleanType, DoubleType, LongType, MapType, StringType, StructField, StructType, TimestampType
 
 from kafka_schema_paths import build_nested_schema_tree, expected_object_keys, json_path, split_source_path
@@ -428,20 +428,55 @@ def apply_catalog_ack() -> None:
     acknowledged_batch = catalog_ack_batch_id()
     if acknowledged_batch <= CATALOG_ACK_BATCH_ID:
         return
+    previous_acknowledged_batch = CATALOG_ACK_BATCH_ID
     CATALOG_ACK_BATCH_ID = acknowledged_batch
     PUBLISHED_BATCHES = [
         item for item in PUBLISHED_BATCHES
         if int(item.get("batchId") or 0) > acknowledged_batch
     ]
-    if RECOVERY_SPARK is not None and RECOVERY_ROOT:
-        recovered = recover_published_state(
-            RECOVERY_SPARK,
-            RECOVERY_ROOT,
-            acknowledged_batch=acknowledged_batch,
-            batch_limit=PUBLISHED_BATCH_LIMIT,
+    acknowledged_count = max(
+        0,
+        min(acknowledged_batch, LATEST_DURABLE_BATCH_ID)
+        - previous_acknowledged_batch,
+    )
+    PUBLISHED_BACKLOG_COUNT = max(0, PUBLISHED_BACKLOG_COUNT - acknowledged_count)
+
+    # The report already holds the first bounded window of durable publications.
+    # Advancing the Catalog ACK must not rescan every historical manifest: that
+    # turns each micro-batch into O(total batch history) Spark jobs. Only refill
+    # the slots that fell out of the in-memory window.
+    if (
+        RECOVERY_SPARK is not None
+        and RECOVERY_ROOT
+        and len(PUBLISHED_BATCHES) < PUBLISHED_BATCH_LIMIT
+        and PUBLISHED_BACKLOG_COUNT > len(PUBLISHED_BATCHES)
+    ):
+        loaded_batch_ids = [int(item.get("batchId") or 0) for item in PUBLISHED_BATCHES]
+        next_batch_id = max(
+            acknowledged_batch + 1,
+            (max(loaded_batch_ids) + 1) if loaded_batch_ids else acknowledged_batch + 1,
         )
-        PUBLISHED_BATCHES = recovered["batches"]
-        PUBLISHED_BACKLOG_COUNT = recovered["backlogCount"]
+        last_batch_id = min(
+            LATEST_DURABLE_BATCH_ID,
+            next_batch_id + (PUBLISHED_BATCH_LIMIT - len(PUBLISHED_BATCHES)) - 1,
+        )
+        manifest_paths: list[tuple[int, str]] = []
+        for batch_id in range(next_batch_id, last_batch_id + 1):
+            path = manifest_path(RECOVERY_ROOT, batch_id)
+            if not output_committed(RECOVERY_SPARK, path):
+                break
+            manifest_paths.append((batch_id, path))
+        PUBLISHED_BATCHES.extend(
+            load_committed_manifests(
+                RECOVERY_SPARK,
+                RECOVERY_ROOT,
+                manifest_paths,
+            )
+        )
+        PUBLISHED_BATCHES = sorted(
+            PUBLISHED_BATCHES,
+            key=lambda item: int(item.get("batchId") or 0),
+        )[:PUBLISHED_BATCH_LIMIT]
 
 
 def remember_published_batch(publication: dict[str, Any]) -> None:
@@ -943,10 +978,60 @@ def load_committed_manifest(
     path: str,
     batch_id: int,
 ) -> dict[str, Any]:
-    row = spark.read.json(path).first()
-    if row is None:
-        raise RuntimeError(f"Committed batch manifest has no record: {path}")
-    manifest = row.asDict(recursive=True)
+    return load_committed_manifests(spark, root, [(batch_id, path)])[0]
+
+
+def load_committed_manifests(
+    spark: SparkSession,
+    root: str,
+    manifest_paths: list[tuple[int, str]],
+) -> list[dict[str, Any]]:
+    if not manifest_paths:
+        return []
+    expected_paths = {batch_id: path for batch_id, path in manifest_paths}
+    rows = (
+        spark.read.json([path for _batch_id, path in manifest_paths])
+        .withColumn("__asklake_manifest_source", input_file_name())
+        .collect()
+    )
+    loaded: dict[int, dict[str, Any]] = {}
+    for row in rows:
+        manifest = row.asDict(recursive=True)
+        source_path = str(manifest.pop("__asklake_manifest_source", "") or "")
+        source_match = re.search(r"/batch_id=(\d+)(?:/|$)", source_path)
+        source_batch_id = int(source_match.group(1)) if source_match else None
+        raw_batch_id = manifest.get("batchId")
+        try:
+            manifest_batch_id = int(raw_batch_id) if raw_batch_id is not None else source_batch_id
+        except (TypeError, ValueError):
+            manifest_batch_id = None
+        if manifest_batch_id is None or manifest_batch_id not in expected_paths:
+            raise RuntimeError(f"Committed batch manifest has an invalid batch identity: {source_path}")
+        if source_batch_id is not None and source_batch_id != manifest_batch_id:
+            raise RuntimeError(f"Committed batch manifest path does not match its batch identity: {source_path}")
+        if manifest_batch_id in loaded:
+            raise RuntimeError(f"Committed batch manifest has multiple records: {expected_paths[manifest_batch_id]}")
+        manifest.pop("batch_id", None)
+        loaded[manifest_batch_id] = normalize_committed_manifest(
+            spark,
+            root,
+            expected_paths[manifest_batch_id],
+            manifest_batch_id,
+            manifest,
+        )
+    missing = [batch_id for batch_id, _path in manifest_paths if batch_id not in loaded]
+    if missing:
+        raise RuntimeError(f"Committed batch manifest has no record: {expected_paths[missing[0]]}")
+    return [loaded[batch_id] for batch_id, _path in manifest_paths]
+
+
+def normalize_committed_manifest(
+    spark: SparkSession,
+    root: str,
+    path: str,
+    batch_id: int,
+    manifest: dict[str, Any],
+) -> dict[str, Any]:
     manifest.setdefault("batchId", batch_id)
     manifest.setdefault("publicationId", f"stream:{JOB_ID}:batch:{batch_id}")
     manifest.setdefault("publicationType", "stream")
@@ -1028,8 +1113,13 @@ def recover_published_state(
         if not match:
             continue
         manifest_paths.append((int(match.group(1)), path))
-    for batch_id, path in sorted(manifest_paths, key=lambda item: item[0]):
-        batch = load_committed_manifest(spark, root, path, batch_id)
+    loaded_manifests = load_committed_manifests(
+        spark,
+        root,
+        sorted(manifest_paths, key=lambda item: item[0]),
+    )
+    for batch in loaded_manifests:
+        batch_id = int(batch.get("batchId") or 0)
         for key in counts:
             counts[key] += int(batch.get(key) or 0)
         for key, value in recovered_rule_metrics([batch]).items():
@@ -1206,6 +1296,14 @@ def main() -> None:
 
     os.environ.setdefault("ASKLAKE_SPARK_APP_NAME", f"asklake-kafka-continuous-{JOB_ID}")
     spark = make_spark({}, iceberg_target)
+    continuous_log_level = str(
+        os.environ.get("ASKLAKE_CONTINUOUS_SPARK_LOG_LEVEL", "WARN")
+    ).strip().upper()
+    if continuous_log_level not in {
+        "ALL", "DEBUG", "ERROR", "FATAL", "INFO", "OFF", "TRACE", "WARN",
+    }:
+        continuous_log_level = "WARN"
+    spark.sparkContext.setLogLevel(continuous_log_level)
     RECOVERY_SPARK = spark
     RECOVERY_ROOT = output_path
     configure_s3a(spark)

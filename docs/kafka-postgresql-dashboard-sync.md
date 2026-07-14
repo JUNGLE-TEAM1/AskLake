@@ -392,6 +392,8 @@ nextCheckAfterMs
 
 그래서 이 기능은 초당 event serving이 아니라 **micro-batch 기반 자동 갱신**이다.
 
+작은 Continuous batch의 Spark shuffle은 일반 batch와 분리된 `ASKLAKE_CONTINUOUS_SPARK_SHUFFLE_PARTITIONS`를 사용하며 기본값은 4다. 운영 로그 기본값은 `ASKLAKE_CONTINUOUS_SPARK_LOG_LEVEL=WARN`이다. 이 설정은 1초 trigger를 보장하는 SLA가 아니라, 작은 batch에서 불필요한 32-way shuffle과 INFO 로그 I/O를 줄이는 지연 최적화다.
+
 ## 10. 화면을 안정적으로 유지하는 방법
 
 - 브라우저 탭이 숨겨지면 timer를 멈추고 실행 중 요청을 취소한다.
@@ -463,6 +465,7 @@ Kafka topic, partition, `[startOffset, endOffset)`은 S3 batch manifest와 Catal
 - batch는 `_SUCCESS`, publication signature, immutable manifest가 맞아야 재사용한다.
 - Catalog run과 PostgreSQL revision commit은 `run_id` 기준으로 멱등이다.
 - DB/Catalog 저장이 실패하면 Catalog cursor를 진행시키지 않고 같은 run을 다시 reconcile한다.
+- Catalog ACK가 전진할 때 worker는 전체 과거 manifest를 다시 스캔하지 않는다. 현재 publication window에서 승인된 항목만 제거하고, window 밖 backlog가 있을 때 필요한 다음 구간만 bulk read한다.
 - 잘못된 schema와 Quality 실패 행은 target 인접 quarantine에 Kafka 위치·Rule 근거와 함께 저장한다.
 - 무한 재시도로 hot path를 멈추지 않고 기존 worker/control-plane 실패 상태와 replay 경로를 사용한다.
 - 종료 시 checkpoint를 보존하는 기존 graceful stop/resume 계약을 유지한다.
