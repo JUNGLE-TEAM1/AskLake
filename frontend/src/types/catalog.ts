@@ -30,6 +30,11 @@ export type LineageGraph = {
   edges: LineageGraphEdge[];
 };
 
+export type CatalogDatasetUserPreference = {
+  pinned: boolean;
+  pinnedAt: string | null;
+};
+
 export type CatalogDataset = {
   description: string;
   downstream: string[];
@@ -49,6 +54,7 @@ export type CatalogDataset = {
   indexColumns?: string[];
   permissionGrants?: PermissionGrant[];
   permissions?: ResourcePermissions;
+  userPreference?: CatalogDatasetUserPreference;
   quality: string;
   queryEngineStatus?: "pending" | "available" | "registration_failed" | "unavailable";
   queryEngineRequired?: boolean;

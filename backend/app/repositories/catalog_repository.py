@@ -1,10 +1,12 @@
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import inspect, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.permission_metadata import permission_grants_from_roles, resource_permissions
-from app.models.catalog import CatalogDatasetModel
+from app.models.catalog import CatalogDatasetModel, CatalogDatasetPreferenceModel
 
 _schema_ready_bind_ids: set[int] = set()
 
@@ -55,6 +57,86 @@ class CatalogRepository:
         lineage_graph = payload.get("lineageGraph") if payload else None
         return lineage_graph if isinstance(lineage_graph, dict) else None
 
+    def list_dataset_preferences(
+        self,
+        actor_key: str,
+        dataset_ids: list[str],
+    ) -> dict[str, CatalogDatasetPreferenceModel]:
+        if not dataset_ids:
+            return {}
+        ensure_catalog_schema(self.db)
+        result = self.db.execute(
+            select(CatalogDatasetPreferenceModel).where(
+                CatalogDatasetPreferenceModel.actor_key == actor_key,
+                CatalogDatasetPreferenceModel.dataset_id.in_(dataset_ids),
+                CatalogDatasetPreferenceModel.pinned.is_(True),
+            )
+        )
+        return {
+            preference.dataset_id: preference
+            for preference in result.scalars().all()
+        }
+
+    def get_dataset_preference(
+        self,
+        actor_key: str,
+        dataset_id: str,
+    ) -> CatalogDatasetPreferenceModel | None:
+        ensure_catalog_schema(self.db)
+        return self.db.get(CatalogDatasetPreferenceModel, (actor_key, dataset_id))
+
+    def pin_dataset(
+        self,
+        actor_key: str,
+        dataset_id: str,
+    ) -> CatalogDatasetPreferenceModel:
+        ensure_catalog_schema(self.db)
+        pinned_at = datetime.now(timezone.utc)
+        preference = self.db.get(CatalogDatasetPreferenceModel, (actor_key, dataset_id))
+        inserted = preference is None
+        if inserted:
+            preference = CatalogDatasetPreferenceModel(
+                actor_key=actor_key,
+                dataset_id=dataset_id,
+                pinned=True,
+                pinned_at=pinned_at,
+            )
+            self.db.add(preference)
+        elif not preference.pinned:
+            preference.pinned = True
+            preference.pinned_at = pinned_at
+
+        try:
+            self.db.flush()
+            self.db.commit()
+            return preference
+        except IntegrityError:
+            self.db.rollback()
+            if not inserted:
+                raise
+            # Concurrent first-time PUTs can both observe an absent row. The
+            # composite primary key chooses one winner; the other request is
+            # still an idempotent success when that committed row is present.
+            concurrent = self.db.get(
+                CatalogDatasetPreferenceModel,
+                (actor_key, dataset_id),
+            )
+            if concurrent is None:
+                raise
+            if not concurrent.pinned:
+                concurrent.pinned = True
+                concurrent.pinned_at = pinned_at
+                self.db.commit()
+            return concurrent
+
+    def unpin_dataset(self, actor_key: str, dataset_id: str) -> None:
+        ensure_catalog_schema(self.db)
+        preference = self.db.get(CatalogDatasetPreferenceModel, (actor_key, dataset_id))
+        if preference is not None:
+            self.db.delete(preference)
+        self.db.flush()
+        self.db.commit()
+
     def save_dataset_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
         ensure_catalog_schema(self.db)
         dataset_id = str(payload["id"])
@@ -79,8 +161,12 @@ def ensure_catalog_schema(db: Session) -> None:
 
     with bind.begin() as connection:
         inspector = inspect(connection)
-        if "catalog_datasets" not in inspector.get_table_names():
+        table_names = set(inspector.get_table_names())
+        if "catalog_datasets" not in table_names:
             CatalogDatasetModel.__table__.create(bind=connection)
+
+        if "catalog_dataset_preferences" not in table_names:
+            CatalogDatasetPreferenceModel.__table__.create(bind=connection)
 
         existing_columns = {column["name"] for column in inspector.get_columns("catalog_datasets")}
         column_defs = {

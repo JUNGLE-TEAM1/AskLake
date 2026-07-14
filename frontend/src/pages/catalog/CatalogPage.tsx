@@ -71,10 +71,16 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { IconButton } from "@/components/ui/icon-button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { getCatalogDataset, getCatalogDatasetRows } from "../../services/catalogApi";
+import {
+  getCatalogDataset,
+  getCatalogDatasetRows,
+  pinCatalogDataset,
+  unpinCatalogDataset,
+} from "../../services/catalogApi";
 import { apiConfig } from "../../services/apiClient";
 import { getDatasetLineageGraph } from "../../services/mockApi";
 import type { AuditResult, CatalogDataset, CatalogDatasetRowsResponse, DatasetMaterializationRun, LineageGraph, LineageGraphDataset, LineageLayer } from "../../types";
+import type { CatalogDatasetUserPreference } from "../../types/catalog";
 import { canDeleteDatasetMaterializationRun, canQueryDatasetAs, permissionDeniedMessage } from "../../utils/permissions";
 import { datasetStatusMeta } from "../../utils/statusMeta";
 import { cn } from "@/lib/utils";
@@ -339,13 +345,28 @@ export function CatalogPage({
   const [filterState, setFilterState] = useState<CatalogFilterState>({ approvalRequired: false, available: false, rag: false });
   const [currentPage, setCurrentPage] = useState(1);
   const [mobilePreviewOpen, setMobilePreviewOpen] = useState(false);
-  const [pinnedDatasetIds, setPinnedDatasetIds] = useState<string[]>([]);
+  const [preferenceOverrides, setPreferenceOverrides] = useState<Record<string, CatalogDatasetUserPreference>>({});
+  const [pinPendingDatasetId, setPinPendingDatasetId] = useState<string | null>(null);
+  const [pinError, setPinError] = useState<string | null>(null);
   const [previewDetailError, setPreviewDetailError] = useState<string | null>(null);
   const [previewDetailLoading, setPreviewDetailLoading] = useState(false);
   const [selectedSqlDatasetId, setSelectedSqlDatasetId] = useState<string | null>(null);
   const [searchText, setSearchText] = useState("");
   const [debouncedSearchText, setDebouncedSearchText] = useState("");
   const [sortMode, setSortMode] = useState<CatalogSortMode>("default");
+  const pinnedDatasetIds = useMemo(() => datasets
+    .map((dataset, index) => ({
+      dataset,
+      index,
+      preference: preferenceOverrides[dataset.id] ?? dataset.userPreference,
+    }))
+    .filter(({ preference }) => preference?.pinned)
+    .sort((left, right) => {
+      const leftPinnedAt = Date.parse(left.preference?.pinnedAt ?? "") || 0;
+      const rightPinnedAt = Date.parse(right.preference?.pinnedAt ?? "") || 0;
+      return rightPinnedAt - leftPinnedAt || left.index - right.index;
+    })
+    .map(({ dataset }) => dataset.id), [datasets, preferenceOverrides]);
   const tags = useMemo(() => getCatalogTagsByFrequency(datasets), [datasets]);
   const searchQuery = useMemo(() => parseCatalogSearchQuery(debouncedSearchText, tags), [debouncedSearchText, tags]);
   const canQueryCurrentDataset = (dataset: CatalogDataset | null | undefined) => canQueryDatasetAs(dataset, undefined);
@@ -380,7 +401,7 @@ export function CatalogPage({
     [currentPageStartIndex, filteredDatasets],
   );
   const currentPageEndIndex = currentPageStartIndex + paginatedDatasets.length;
-  const isPreviewPinned = pinnedDatasetIds.includes(previewDataset.id);
+  const isPreviewPinned = (preferenceOverrides[previewDataset.id] ?? previewDataset.userPreference)?.pinned ?? false;
 
   useEffect(() => {
     const debounceTimerId = window.setTimeout(() => {
@@ -481,13 +502,54 @@ export function CatalogPage({
     onAction("catalog.page_changed", `/api/catalog/datasets?page=${normalizedPage}&pageSize=${catalogPageSize}`, String(normalizedPage));
   };
 
-  const togglePinnedDataset = () => {
+  const togglePinnedDataset = async () => {
+    if (pinPendingDatasetId) return;
+    const datasetId = previewDataset.id;
     const nextPinned = !isPreviewPinned;
-    setPinnedDatasetIds((ids) => nextPinned ? [previewDataset.id, ...ids.filter((id) => id !== previewDataset.id)] : ids.filter((id) => id !== previewDataset.id));
-    onAction(nextPinned ? "catalog.dataset.pinned" : "catalog.dataset.unpinned", `/api/catalog/datasets/${previewDataset.id}/pin`, previewDataset.id);
+    const apiPath = `/api/catalog/datasets/${datasetId}/pin`;
+    setPinError(null);
+
+    if (apiConfig.useMock) {
+      const userPreference: CatalogDatasetUserPreference = {
+        pinned: nextPinned,
+        pinnedAt: nextPinned ? new Date().toISOString() : null,
+      };
+      setPreferenceOverrides((currentPreferences) => ({
+        ...currentPreferences,
+        [datasetId]: userPreference,
+      }));
+      setPreviewDataset((currentDataset) => currentDataset.id === datasetId
+        ? { ...currentDataset, userPreference }
+        : currentDataset);
+      onAction(nextPinned ? "catalog.dataset.pinned" : "catalog.dataset.unpinned", apiPath, datasetId);
+      return;
+    }
+
+    setPinPendingDatasetId(datasetId);
+    try {
+      const response = nextPinned
+        ? await pinCatalogDataset(datasetId)
+        : await unpinCatalogDataset(datasetId);
+      setPreferenceOverrides((currentPreferences) => ({
+        ...currentPreferences,
+        [response.datasetId]: response.userPreference,
+      }));
+      setPreviewDataset((currentDataset) => currentDataset.id === response.datasetId
+        ? { ...currentDataset, userPreference: response.userPreference }
+        : currentDataset);
+      onAction(nextPinned ? "catalog.dataset.pinned" : "catalog.dataset.unpinned", apiPath, datasetId);
+    } catch (pinRequestError) {
+      setPinError(pinRequestError instanceof Error
+        ? pinRequestError.message
+        : "데이터셋 고정 상태를 저장하지 못했습니다. 다시 시도해 주세요.");
+      onAction(nextPinned ? "catalog.dataset.pin_failed" : "catalog.dataset.unpin_failed", apiPath, datasetId, "failed");
+    } finally {
+      setPinPendingDatasetId(null);
+    }
   };
 
   const selectPreviewDataset = (dataset: CatalogDataset) => {
+    setPinError(null);
     setPreviewDataset(dataset);
     setSelectedSqlDatasetId(dataset.id);
     onAction("catalog.dataset.preview_selected", `/api/catalog/datasets/${dataset.id}`, dataset.id);
@@ -517,6 +579,7 @@ export function CatalogPage({
               <Button
                 aria-label={isPreviewPinned ? "데이터셋 고정 해제" : "데이터셋 상단 고정"}
                 aria-pressed={isPreviewPinned}
+                disabled={pinPendingDatasetId !== null}
                 shape="compact"
                 type="button"
                 size="iconSm"
@@ -548,6 +611,13 @@ export function CatalogPage({
               <AlertCircle />
               <AlertTitle>기본 정보를 불러오지 못했습니다.</AlertTitle>
               <AlertDescription>{previewDetailError}</AlertDescription>
+            </Alert>
+          ) : null}
+          {pinError ? (
+            <Alert className="catalog-preview-detail-error" variant="destructive">
+              <AlertCircle />
+              <AlertTitle>고정 상태를 저장하지 못했습니다.</AlertTitle>
+              <AlertDescription>{pinError}</AlertDescription>
             </Alert>
           ) : null}
           <Accordion className="catalog-preview-accordion" type="multiple">

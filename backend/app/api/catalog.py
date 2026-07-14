@@ -9,6 +9,7 @@ from app.repositories.catalog_repository import CatalogRepository
 from app.repositories.sql_repository import SqlRepository
 from app.schemas.catalog import (
     CatalogDatasetListResponse,
+    CatalogDatasetPreferenceResponse,
     CatalogDatasetRowsResponse,
     CatalogDatasetResponse,
     CreateDerivedDatasetRequest,
@@ -51,6 +52,30 @@ def get_dataset(
     actor: Annotated[ActorContext, Depends(get_actor_context)],
 ) -> CatalogDatasetResponse:
     return service.get_dataset(dataset_id, actor)
+
+
+@router.put(
+    "/datasets/{dataset_id}/pin",
+    response_model=CatalogDatasetPreferenceResponse,
+)
+def pin_dataset(
+    dataset_id: str,
+    service: Annotated[CatalogService, Depends(get_catalog_service)],
+    actor: Annotated[ActorContext, Depends(get_actor_context)],
+) -> CatalogDatasetPreferenceResponse:
+    return service.pin_dataset(dataset_id, actor)
+
+
+@router.delete(
+    "/datasets/{dataset_id}/pin",
+    response_model=CatalogDatasetPreferenceResponse,
+)
+def unpin_dataset(
+    dataset_id: str,
+    service: Annotated[CatalogService, Depends(get_catalog_service)],
+    actor: Annotated[ActorContext, Depends(get_actor_context)],
+) -> CatalogDatasetPreferenceResponse:
+    return service.unpin_dataset(dataset_id, actor)
 
 
 @router.get("/datasets/{dataset_id}/rows", response_model=CatalogDatasetRowsResponse)

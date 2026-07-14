@@ -1,6 +1,6 @@
 """SQLAlchemy model modules."""
 
-from app.models.catalog import CatalogDatasetModel
+from app.models.catalog import CatalogDatasetModel, CatalogDatasetPreferenceModel
 from app.models.dashboard_live import (
     DashboardWidgetResultModel,
     DatasetFreshnessModel,
@@ -14,6 +14,7 @@ from app.models.sql import SqlRunModel, SqlRunResultPageModel
 
 __all__ = [
     "CatalogDatasetModel",
+    "CatalogDatasetPreferenceModel",
     "DatasetFreshnessModel",
     "DatasetKafkaPartitionCursorModel",
     "DatasetRevisionCommitModel",

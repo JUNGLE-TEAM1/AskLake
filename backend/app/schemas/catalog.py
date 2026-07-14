@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import Field, model_validator
@@ -80,11 +81,19 @@ class DatasetMaterializationRun(CamelModel):
     transform: dict[str, Any] | None = None
 
 
+class CatalogDatasetUserPreference(CamelModel):
+    pinned: bool = False
+    pinned_at: datetime | None = None
+
+
 class CatalogDatasetResponse(CamelModel):
     created_by: str | None = None
     created_by_profile: dict[str, Any] | None = None
     permission_grants: list[PermissionGrant] = Field(default_factory=list)
     permissions: ResourcePermissions = Field(default_factory=ResourcePermissions)
+    user_preference: CatalogDatasetUserPreference = Field(
+        default_factory=CatalogDatasetUserPreference,
+    )
     description: str
     downstream: list[str] = Field(default_factory=list)
     freshness: DatasetFreshness
@@ -151,6 +160,11 @@ class CatalogDatasetRowsResponse(CamelModel):
     returned_rows: int
     row_count: int
     rows: list[list[str]]
+
+
+class CatalogDatasetPreferenceResponse(CamelModel):
+    dataset_id: str
+    user_preference: CatalogDatasetUserPreference
 
 
 class DeleteMaterializationRunResponse(CamelModel):

@@ -1,6 +1,7 @@
+from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Boolean, JSON, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, JSON, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -31,3 +32,22 @@ class CatalogDatasetModel(TimestampMixin, Base):
     upstream: Mapped[list[str] | None] = mapped_column(JSON, default=list)
     downstream: Mapped[list[str] | None] = mapped_column(JSON, default=list)
     lineage_graph: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+
+
+class CatalogDatasetPreferenceModel(TimestampMixin, Base):
+    __tablename__ = "catalog_dataset_preferences"
+    __table_args__ = (
+        Index(
+            "ix_catalog_dataset_preferences_actor_pinned_at",
+            "actor_key",
+            "pinned_at",
+        ),
+    )
+
+    actor_key: Mapped[str] = mapped_column(String(512), primary_key=True)
+    dataset_id: Mapped[str] = mapped_column(
+        ForeignKey("catalog_datasets.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    pinned: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    pinned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

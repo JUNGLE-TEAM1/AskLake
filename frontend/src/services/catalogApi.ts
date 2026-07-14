@@ -1,9 +1,15 @@
 import type { CatalogDataset, CatalogDatasetRowsResponse, CatalogModelArtifact } from "../types";
+import type { CatalogDatasetUserPreference } from "../types/catalog";
 import { apiClient } from "./apiClient";
 
 type DeleteMaterializationRunResponse = {
   dataset: CatalogDataset;
   deletedRunId: string;
+};
+
+export type CatalogDatasetPreferenceResponse = {
+  datasetId: string;
+  userPreference: CatalogDatasetUserPreference;
 };
 
 export async function deleteDatasetMaterializationRun(datasetId: string, runId: string): Promise<DeleteMaterializationRunResponse> {
@@ -28,4 +34,17 @@ export async function getCatalogDatasetRows(datasetId: string, options: { limit?
 
 export async function getCatalogModelArtifacts(): Promise<CatalogModelArtifact[]> {
   return apiClient.get<CatalogModelArtifact[]>("/api/catalog/models");
+}
+
+export async function pinCatalogDataset(datasetId: string): Promise<CatalogDatasetPreferenceResponse> {
+  return apiClient.put<CatalogDatasetPreferenceResponse>(
+    `/api/catalog/datasets/${encodeURIComponent(datasetId)}/pin`,
+    undefined,
+  );
+}
+
+export async function unpinCatalogDataset(datasetId: string): Promise<CatalogDatasetPreferenceResponse> {
+  return apiClient.delete<CatalogDatasetPreferenceResponse>(
+    `/api/catalog/datasets/${encodeURIComponent(datasetId)}/pin`,
+  );
 }

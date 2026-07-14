@@ -8,13 +8,16 @@ from app.core.config import settings
 from app.core.errors import ApiError
 from app.core.materialization import active_materialization_runs, materialization_mode
 from app.core.permission_metadata import permission_grants_from_roles, resource_permissions
+from app.models.catalog import CatalogDatasetPreferenceModel
 from app.repositories.catalog_repository import CatalogRepository, dataset_model_to_payload
 from app.repositories.audit_repository import safe_record_audit_event
 from app.repositories.sql_repository import SqlRepository
 from app.schemas.catalog import (
     CatalogDatasetListResponse,
+    CatalogDatasetPreferenceResponse,
     CatalogDatasetRowsResponse,
     CatalogDatasetResponse,
+    CatalogDatasetUserPreference,
     CreateDerivedDatasetRequest,
     DeleteMaterializationRunResponse,
     LineageGraphColumn,
@@ -82,6 +85,32 @@ def dataset_for_latest_successful_materialization(
     return dataset.model_copy(update=updates)
 
 
+def catalog_preference_actor_key(actor: ActorContext) -> str:
+    """Return the stable owner key for actor-scoped catalog preferences.
+
+    Authenticated sessions always use the immutable user id.  The namespaced
+    email/name fallbacks keep local header-auth smoke tests working without
+    allowing a display name to collide with a real user id.
+    """
+
+    if actor.id:
+        return f"user:{actor.id}"
+    if actor.email:
+        return f"email:{actor.email.strip().casefold()}"
+    return f"local-name:{(actor.name.strip() or 'demo-user').casefold()}"
+
+
+def catalog_user_preference(
+    preference: CatalogDatasetPreferenceModel | None,
+) -> CatalogDatasetUserPreference:
+    if preference is None or not preference.pinned:
+        return CatalogDatasetUserPreference()
+    return CatalogDatasetUserPreference(
+        pinned=True,
+        pinned_at=preference.pinned_at,
+    )
+
+
 class CatalogService:
     def __init__(
         self,
@@ -107,12 +136,93 @@ class CatalogService:
             for dataset in datasets
         ]
         datasets = [dataset for dataset in datasets if dataset.permissions.can_view]
+        preferences = self.repository.list_dataset_preferences(
+            catalog_preference_actor_key(actor_context),
+            [dataset.id for dataset in datasets],
+        )
+        datasets = [
+            dataset.model_copy(update={
+                "user_preference": catalog_user_preference(preferences.get(dataset.id)),
+            })
+            for dataset in datasets
+        ]
         return CatalogDatasetListResponse(
             datasets=datasets,
             page=CursorPageMeta(cursor=None, has_next=False),
         )
 
     def get_dataset(self, dataset_id: str, actor: ActorContext | None = None) -> CatalogDatasetResponse:
+        actor_context = actor or ActorContext()
+        dataset = self._get_dataset_for_view(
+            dataset_id,
+            actor_context,
+            api_path=f"/api/catalog/datasets/{dataset_id}",
+            http_method="GET",
+            forbidden_action="dataset.view.forbidden",
+        )
+        preference = self.repository.get_dataset_preference(
+            catalog_preference_actor_key(actor_context),
+            dataset_id,
+        )
+        return dataset.model_copy(update={
+            "user_preference": catalog_user_preference(preference),
+        })
+
+    def pin_dataset(
+        self,
+        dataset_id: str,
+        actor: ActorContext | None = None,
+    ) -> CatalogDatasetPreferenceResponse:
+        actor_context = actor or ActorContext()
+        api_path = f"/api/catalog/datasets/{dataset_id}/pin"
+        self._get_dataset_for_view(
+            dataset_id,
+            actor_context,
+            api_path=api_path,
+            http_method="PUT",
+            forbidden_action="dataset.pin.forbidden",
+        )
+        preference = self.repository.pin_dataset(
+            catalog_preference_actor_key(actor_context),
+            dataset_id,
+        )
+        return CatalogDatasetPreferenceResponse(
+            dataset_id=dataset_id,
+            user_preference=catalog_user_preference(preference),
+        )
+
+    def unpin_dataset(
+        self,
+        dataset_id: str,
+        actor: ActorContext | None = None,
+    ) -> CatalogDatasetPreferenceResponse:
+        actor_context = actor or ActorContext()
+        api_path = f"/api/catalog/datasets/{dataset_id}/pin"
+        self._get_dataset_for_view(
+            dataset_id,
+            actor_context,
+            api_path=api_path,
+            http_method="DELETE",
+            forbidden_action="dataset.unpin.forbidden",
+        )
+        self.repository.unpin_dataset(
+            catalog_preference_actor_key(actor_context),
+            dataset_id,
+        )
+        return CatalogDatasetPreferenceResponse(
+            dataset_id=dataset_id,
+            user_preference=CatalogDatasetUserPreference(),
+        )
+
+    def _get_dataset_for_view(
+        self,
+        dataset_id: str,
+        actor_context: ActorContext,
+        *,
+        api_path: str,
+        http_method: str,
+        forbidden_action: str,
+    ) -> CatalogDatasetResponse:
         payload = self.repository.get_dataset_payload(dataset_id)
         if payload is None:
             raise ApiError(ErrorCode.NOT_FOUND, "Dataset not found", status.HTTP_404_NOT_FOUND)
@@ -120,13 +230,12 @@ class CatalogService:
             self.repository.db,
             CatalogDatasetResponse.model_validate(payload),
         )
-        actor_context = actor or ActorContext()
         require_governed_access(
             self.repository.db,
             actor_context,
             action="view",
-            api_path=f"/api/catalog/datasets/{dataset_id}",
-            http_method="GET",
+            api_path=api_path,
+            http_method=http_method,
             metadata={"owner": dataset.owner},
             resource_id=dataset.id,
             resource_name=dataset.name,
@@ -144,10 +253,10 @@ class CatalogService:
             record_forbidden_dataset_event(
                 self.repository.db,
                 actor_context,
-                action="dataset.view.forbidden",
+                action=forbidden_action,
                 dataset=dataset,
-                api_path=f"/api/catalog/datasets/{dataset_id}",
-                http_method="GET",
+                api_path=api_path,
+                http_method=http_method,
                 status_code=exc.status_code,
             )
             raise
