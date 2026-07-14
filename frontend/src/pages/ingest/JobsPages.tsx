@@ -1418,7 +1418,10 @@ function truncateText(value: string, maxLength: number) {
 }
 
 function StatusPill({ job }: { job: JobRowData }) {
-  const showExecutionProgress = job.status === "running" && job.progress !== undefined;
+  const showExecutionProgress = job.status === "running"
+    && !isContinuousKafkaJob(job)
+    && !isRealtimeJob(job)
+    && job.progress !== undefined;
 
   return (
     <div className={cn(

@@ -2018,19 +2018,19 @@ export function SourceConnectionPage({
                       <button aria-pressed={kafkaExecutionMode === "snapshot"} className={`kafka-execution-mode-card ${kafkaExecutionMode === "snapshot" ? "selected" : ""}`} disabled={sourceLocked} type="button" onClick={() => onDraftChange({ source: { executionMode: "snapshot" } })}>
                         <span className="kafka-execution-mode-icon"><Clock3 size={19} /></span>
                         <span className="kafka-execution-mode-copy">
-                          <strong>Snapshot</strong>
-                          <span>수동 또는 스케줄 실행</span>
+                          <strong>일괄 수집</strong>
+                          <span>필요할 때 직접 실행하거나 일정에 맞춰 수집</span>
                         </span>
-                        <span className="kafka-execution-mode-tag">Batch</span>
+                        <span className="kafka-execution-mode-tag">배치</span>
                         {kafkaExecutionMode === "snapshot" && <span className="kafka-execution-mode-check"><Check size={14} /></span>}
                       </button>
                       <button aria-pressed={kafkaExecutionMode === "continuous"} className={`kafka-execution-mode-card ${kafkaExecutionMode === "continuous" ? "selected" : ""}`} disabled={sourceLocked} type="button" onClick={() => updateContinuousConfig({})}>
                         <span className="kafka-execution-mode-icon"><Repeat2 size={19} /></span>
                         <span className="kafka-execution-mode-copy">
-                          <strong>Continuous</strong>
-                          <span>실시간 데이터 적재</span>
+                          <strong>실시간 수집</strong>
+                          <span>새 메시지를 지속적으로 수집</span>
                         </span>
-                        <span className="kafka-execution-mode-tag">Streaming</span>
+                        <span className="kafka-execution-mode-tag">스트리밍</span>
                         {kafkaExecutionMode === "continuous" && <span className="kafka-execution-mode-check"><Check size={14} /></span>}
                       </button>
                     </div>
@@ -2042,19 +2042,19 @@ export function SourceConnectionPage({
                         </button>
                         {continuousAdvancedOpen && (
                           <div className="kafka-continuous-settings-grid">
-                            <FormFieldGroup className="field" hint="새 checkpoint를 만들 때만 적용" label="시작 위치">
+                            <FormFieldGroup className="field" hint="새 체크포인트를 만들 때만 적용" label="시작 위치">
                               <NativeSelect disabled={sourceLocked} value={continuousConfig.initialOffsetPolicy} onChange={(event) => updateContinuousConfig({ initialOffsetPolicy: event.target.value as "earliest" | "latest" })}>
                                 <option value="earliest">처음부터 읽기</option>
                                 <option value="latest">새 이벤트부터 읽기</option>
                               </NativeSelect>
                             </FormFieldGroup>
-                            <FormFieldGroup className="field" hint="1~3600초" label="Trigger 간격">
+                            <FormFieldGroup className="field" hint="1~3600초" label="수집 실행 간격">
                               <Input disabled={sourceLocked} max={3600} min={1} type="number" value={continuousConfig.triggerIntervalSeconds} onChange={(event) => {
                                 const value = Number(event.target.value);
                                 if (Number.isInteger(value) && value >= 1 && value <= 3600) updateContinuousConfig({ triggerIntervalSeconds: value });
                               }} />
                             </FormFieldGroup>
-                            <FormFieldGroup className="field" hint="1~1,000,000건" label="Micro-batch 최대 메시지">
+                            <FormFieldGroup className="field" hint="1~1,000,000건" label="한 번에 처리할 최대 메시지">
                               <Input disabled={sourceLocked} max={1_000_000} min={1} type="number" value={continuousConfig.maxOffsetsPerTrigger} onChange={(event) => {
                                 const value = Number(event.target.value);
                                 if (Number.isInteger(value) && value >= 1 && value <= 1_000_000) updateContinuousConfig({ maxOffsetsPerTrigger: value });

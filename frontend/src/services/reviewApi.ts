@@ -94,7 +94,7 @@ function buildMockReviewSnapshot(request: ReviewSnapshotRequest): ReviewSnapshot
       ["작업 ID", request.id],
       ["작업명", request.jobName],
       ["소스", [sourceTypeLabel(request.sourceType), request.sourceLabel].filter(Boolean).join(" · ")],
-      ["실행 방식", request.executionMode === "continuous" ? "실시간 스트림" : "Snapshot batch"],
+      ["실행 방식", request.executionMode === "continuous" ? "실시간 수집" : "일괄 수집"],
       ["대상 데이터셋", request.targetDataset],
       ["설명", request.targetDescription],
     ]),

@@ -468,8 +468,8 @@ export async function runJobCommand(job: JobRowData, command: Exclude<JobCommand
           heartbeatAt: new Date().toISOString(),
           status,
         },
-        lastState: status === "running" ? "Continuous Spark streaming" : status === "paused" ? "Continuous worker 일시정지됨" : "Continuous worker 중지됨 · checkpoint 보존",
-        progress: status === "running" ? { label: "Continuous micro-batch 실행 중", value: 66 } : undefined,
+        lastState: status === "running" ? "Spark 실시간 수집 실행 중" : status === "paused" ? "실시간 수집 일시정지됨" : "실시간 수집 중지됨 · 체크포인트 보존",
+        progress: status === "running" ? { label: "실시간 메시지 처리 중", value: 66 } : undefined,
         status: status === "running" ? "running" : status,
       },
     });
