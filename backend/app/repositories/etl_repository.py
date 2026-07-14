@@ -1,3 +1,5 @@
+from typing import Any
+
 from sqlalchemy import inspect, select, text
 from sqlalchemy.orm import Session
 
@@ -57,6 +59,7 @@ def ensure_schema(db: Session) -> None:
             "partition": "VARCHAR(255)",
             "partition_columns": "JSON",
             "index_columns": "JSON",
+            "job_kind": "VARCHAR(64)",
             "permission_roles": "JSON",
             "permission_summary": "TEXT",
             "progress": "JSON",
@@ -83,6 +86,7 @@ def ensure_schema(db: Session) -> None:
             "source_config": "JSON",
             "source_label": "VARCHAR(255)",
             "source_type": "VARCHAR(120)",
+            "sql_recipe": "JSON",
             "stats": "JSON",
             "status": "VARCHAR(64)",
             "storage_path": "VARCHAR(512)",
@@ -127,6 +131,7 @@ def ensure_schema(db: Session) -> None:
         job_defaults = {
             "dag_steps": "[]",
             "execution_mode": "snapshot",
+            "job_kind": "pipeline",
             "last_run": "-",
             "last_state": "대기",
             "name": "Untitled ETL Job",
@@ -161,6 +166,7 @@ def ensure_schema(db: Session) -> None:
                 "schema_columns",
                 "schema_sample_rows",
                 "source_config",
+                "sql_recipe",
                 "stats",
                 "transform_output_columns",
                 "transform_steps",
@@ -213,6 +219,26 @@ def list_job_models(db: Session) -> list[ETLJobModel]:
 def get_job(db: Session, job_id: str) -> ETLJobModel | None:
     ensure_schema(db)
     return db.get(ETLJobModel, job_id)
+
+
+def get_job_for_update(db: Session, job_id: str) -> ETLJobModel | None:
+    ensure_schema(db)
+    statement = (
+        select(ETLJobModel)
+        .where(ETLJobModel.id == job_id)
+        .with_for_update()
+    )
+    if db.get_bind().dialect.name == "sqlite":
+        # SQLite ignores SELECT FOR UPDATE. A no-op write takes its database-level
+        # writer lock before any external side effect while preserving row values.
+        result = db.execute(
+            text("UPDATE etl_jobs SET id = id WHERE id = :job_id"),
+            {"job_id": job_id},
+        )
+        if result.rowcount == 0:
+            return None
+        return db.get(ETLJobModel, job_id, populate_existing=True)
+    return db.scalar(statement)
 
 
 def get_job_schema(db: Session, job_id: str) -> JobRowData | None:
@@ -599,6 +625,19 @@ def refresh_run_for_update(db: Session, run: ETLRunModel) -> None:
     db.refresh(run, with_for_update=True)
 
 
+def public_sql_recipe(value: object) -> dict[str, Any] | None:
+    """Return the public SQL recipe without a persisted identity snapshot."""
+    if not isinstance(value, dict):
+        return None
+    recipe = dict(value)
+    legacy_run_as = recipe.pop("runAs", None)
+    if not recipe.get("runAsUserId") and isinstance(legacy_run_as, dict):
+        legacy_user_id = str(legacy_run_as.get("id") or "").strip()
+        if legacy_user_id:
+            recipe["runAsUserId"] = legacy_user_id
+    return recipe
+
+
 def job_to_schema(db: Session, job: ETLJobModel) -> JobRowData:
     runtime = get_kafka_continuous_runtime(db, job.id) if db is not None and job.execution_mode == "continuous" else None
     persisted_rules = job.rules if job.rule_contract_version is not None and job.rules is not None else None
@@ -632,6 +671,8 @@ def job_to_schema(db: Session, job: ETLJobModel) -> JobRowData:
         source_config=job.source_config,
         source_label=job.source_label,
         source_type=job.source_type,
+        job_kind=job.job_kind or "pipeline",
+        sql_recipe=public_sql_recipe(job.sql_recipe),
         execution_mode=job.execution_mode or "snapshot",
         continuous_config=job.continuous_config,
         continuous_runtime=continuous_runtime_to_schema(runtime),

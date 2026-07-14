@@ -35,19 +35,6 @@ export function inferSqlResultColumnType(
   return "string";
 }
 
-function catalogRowsToRecords(
-  dataset: CatalogDataset,
-  columns: DashboardDatasetColumn[],
-) {
-  return dataset.sampleRows.map((row) => Object.fromEntries(
-    columns.map((column, index) => {
-      const value = row[index] ?? null;
-      const numberValue = column.type === "number" ? finiteNumber(value) : null;
-      return [column.name, numberValue ?? value];
-    }),
-  ));
-}
-
 export function catalogDatasetToDashboardOption(dataset: CatalogDataset): DashboardDatasetOption {
   const columns = dataset.schema.map(([name, type]) => ({
     name,
@@ -59,21 +46,27 @@ export function catalogDatasetToDashboardOption(dataset: CatalogDataset): Dashbo
     id: dataset.id,
     layer: dataset.layer,
     name: dataset.name,
-    rows: catalogRowsToRecords(dataset, columns),
     status: dataset.status,
     updatedAt: dataset.lastUpdated,
   };
 }
 
 export function sqlResultToDashboardOption(sqlResult: SqlResultDraft): DashboardDatasetOption {
-  const columns = sqlResult.columns.map((name, columnIndex) => ({
+  // SQL result state can briefly contain a query-run snapshot while a Trino
+  // result page is still being collected. Keep this adapter a safe rendering
+  // boundary so a stale/incomplete snapshot cannot take down the whole page.
+  const resultColumns = Array.isArray(sqlResult.columns) ? sqlResult.columns : [];
+  const resultRows = Array.isArray(sqlResult.rows)
+    ? sqlResult.rows.filter((row): row is string[] => Array.isArray(row))
+    : [];
+  const columns = resultColumns.map((name, columnIndex) => ({
     name,
     type: inferSqlResultColumnType(
       name,
-      sqlResult.rows.map((row) => row[columnIndex] ?? ""),
+      resultRows.map((row) => row[columnIndex] ?? ""),
     ),
   }));
-  const rows = sqlResult.rows.map((row) => Object.fromEntries(columns.map((column, index) => {
+  const rows = resultRows.map((row) => Object.fromEntries(columns.map((column, index) => {
     const value = row[index] ?? "";
     const numberValue = column.type === "number" ? finiteNumber(value) : null;
     return [column.name, numberValue ?? value];
@@ -91,17 +84,7 @@ export function sqlResultToDashboardOption(sqlResult: SqlResultDraft): Dashboard
 }
 
 export function isUsableDashboardDataset(dataset: CatalogDataset) {
-  return dataset.status === "available" && dataset.schema.length > 0;
-}
-
-export function mergeDashboardDatasets(
-  primary: DashboardDatasetOption[],
-  fallback: DashboardDatasetOption[],
-) {
-  const seen = new Set<string>();
-  return [...primary, ...fallback].filter((dataset) => {
-    if (seen.has(dataset.id)) return false;
-    seen.add(dataset.id);
-    return true;
-  });
+  return dataset.status === "available"
+    && dataset.schema.length > 0
+    && dataset.permissions?.canQuery !== false;
 }

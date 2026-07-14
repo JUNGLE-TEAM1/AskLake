@@ -41,8 +41,9 @@ def verify_json_contract_avoids_inference_and_flattens_nested_fields(spark, fixt
         "jsonl",
         fixture_path,
         schema_columns,
-        {},
-        transform_steps,
+        record_parsing={},
+        source_collection={},
+        transform_steps=transform_steps,
     )
     job_ids = spark.sparkContext.statusTracker().getJobIdsForGroup(job_group)
     spark.sparkContext.setLocalProperty("spark.jobGroup.id", None)

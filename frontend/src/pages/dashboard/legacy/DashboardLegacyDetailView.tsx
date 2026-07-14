@@ -142,16 +142,13 @@ export function DashboardLegacyDetailView({
       </section>
 
       <section className="dashboard-metric-grid">
-        {model.metricCards.map(([label, value, delta, note]) => (
-          <article className="dashboard-metric-card" key={label}>
-            <span>{label}</span>
-            <strong>{value}</strong>
-            <div>
-              <em className={delta.startsWith("-") ? "down" : ""}>{delta}</em>
-              <small>{note}</small>
-            </div>
+        {activeSqlResult ? (
+          <article className="dashboard-metric-card">
+            <span>SQL 결과 행 수</span>
+            <strong>{activeSqlResult.rowCount.toLocaleString()}</strong>
+            <div><small>실행된 쿼리의 실제 결과</small></div>
           </article>
-        ))}
+        ) : <div className="dashboard-empty-state">실행된 SQL 결과가 없습니다.</div>}
       </section>
 
       <div className="dashboard-layout">

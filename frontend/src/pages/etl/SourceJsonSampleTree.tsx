@@ -1,5 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
-import { TreeGroup, TreeRow, TreeView } from "@/components/ui/tree-view";
+import { useCallback, useMemo } from "react";
+import { Braces, Brackets, CircleDot, Rows3 } from "lucide-react";
+import type { NodeApi } from "react-arborist";
+import { ExplorerTree, type ExplorerTreeNode } from "@/components/ui/explorer-tree";
 
 type SourceJsonSampleTreeProps = {
   columns: string[];
@@ -9,12 +11,10 @@ type SourceJsonSampleTreeProps = {
 
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
-type JsonTreeNode = {
+type JsonTreeNode = ExplorerTreeNode & {
   children?: JsonTreeNode[];
-  id: string;
   kind?: "array" | "object" | "row";
   muted?: boolean;
-  name: string;
   value: string;
 };
 
@@ -35,29 +35,32 @@ export function SourceJsonSampleTree({ columns, rows }: SourceJsonSampleTreeProp
     () => rows.slice(0, MAX_RECORDS).map((row, index) => buildRecord(columns, row, index)),
     [columns, rows],
   );
-  const [expandedItems, setExpandedItems] = useState<string[]>([]);
-  const expandedItemSet = useMemo(() => new Set(expandedItems), [expandedItems]);
-
-  useEffect(() => {
-    setExpandedItems([]);
-  }, [records]);
-
-  const toggleItem = (itemId: string) => {
-    setExpandedItems((current) => (
-      current.includes(itemId)
-        ? current.filter((entry) => entry !== itemId)
-        : [...current, itemId]
-    ));
-  };
+  const getIcon = useCallback((node: NodeApi<JsonTreeNode>) => {
+    if (node.data.kind === "row") return <Rows3 className="text-blue-600" />;
+    if (node.data.kind === "array") return <Brackets className="text-indigo-500" />;
+    if (node.data.kind === "object") return <Braces className="text-blue-500" />;
+    return <CircleDot className="text-slate-400" />;
+  }, []);
 
   if (records.length === 0) {
     return <p className="source-empty-note">{TEXT.empty}</p>;
   }
 
   return (
-    <TreeView className="source-json-sample-tree" label="JSON 샘플 트리">
-      {records.map((record) => renderJsonNode(record, expandedItemSet, toggleItem))}
-    </TreeView>
+    <ExplorerTree<JsonTreeNode>
+      ariaLabel="JSON 샘플 트리"
+      className="source-json-sample-tree"
+      data={records}
+      defaultHeight={280}
+      disableMultiSelection
+      disableSelect
+      getIcon={getIcon}
+      getRowClassName={(node) => node.data.muted ? "text-slate-400" : undefined}
+      getRowProps={(node) => ({ title: `${node.data.label}: ${node.data.value}` })}
+      minHeight={180}
+      openByDefault={false}
+      rowHeight={36}
+    />
   );
 }
 
@@ -145,8 +148,9 @@ function buildJsonTreeItem(value: JsonValue, itemId: string, label: string, dept
   if (depth > MAX_DEPTH) {
     return {
       id: itemId,
+      label,
+      meta: "...",
       muted: true,
-      name: label,
       value: "...",
     };
   }
@@ -157,8 +161,9 @@ function buildJsonTreeItem(value: JsonValue, itemId: string, label: string, dept
     if (value.length > preview.length) {
       children.push({
         id: `${itemId}-more`,
+        label: TEXT.more,
+        meta: `+${value.length - preview.length}${TEXT.items}`,
         muted: true,
-        name: TEXT.more,
         value: `+${value.length - preview.length}${TEXT.items}`,
       });
     }
@@ -166,7 +171,8 @@ function buildJsonTreeItem(value: JsonValue, itemId: string, label: string, dept
       children,
       id: itemId,
       kind: "array",
-      name: label,
+      label,
+      meta: `Array[${value.length}]`,
       value: `Array[${value.length}]`,
     };
   }
@@ -180,8 +186,9 @@ function buildJsonTreeItem(value: JsonValue, itemId: string, label: string, dept
     if (totalCount > entries.length) {
       children.push({
         id: `${itemId}-more`,
+        label: TEXT.more,
+        meta: `+${totalCount - entries.length}${TEXT.items}`,
         muted: true,
-        name: TEXT.more,
         value: `+${totalCount - entries.length}${TEXT.items}`,
       });
     }
@@ -189,69 +196,19 @@ function buildJsonTreeItem(value: JsonValue, itemId: string, label: string, dept
       children,
       id: itemId,
       kind: rootKind ?? "object",
-      name: label,
+      label,
+      meta: `${totalCount}${TEXT.fields}`,
       value: `${totalCount}${TEXT.fields}`,
     };
   }
 
+  const formattedValue = formatPrimitive(value);
   return {
     id: itemId,
-    name: label,
-    value: formatPrimitive(value),
+    label,
+    meta: formattedValue,
+    value: formattedValue,
   };
-}
-
-function renderJsonNode(
-  node: JsonTreeNode,
-  expandedItems: Set<string>,
-  toggleItem: (itemId: string) => void,
-  depth = 0,
-) {
-  const isBranch = Boolean(node.children?.length);
-  const isExpanded = expandedItems.has(node.id);
-
-  return (
-    <div className="source-json-tree-item" key={node.id}>
-      <TreeRow
-        className="source-json-tree-row"
-        expanded={isBranch ? isExpanded : undefined}
-        leaf={!isBranch}
-        level={depth}
-        onClick={() => {
-          if (isBranch) toggleItem(node.id);
-        }}
-      >
-        <span className="source-json-disclosure" aria-hidden="true">
-          {isBranch ? (isExpanded ? "v" : ">") : ""}
-        </span>
-        <JsonTreeLabel kind={node.kind} muted={node.muted} name={node.name} value={node.value} />
-      </TreeRow>
-      {isBranch && isExpanded ? (
-        <TreeGroup className="source-json-tree-group" level={depth + 1}>
-          {node.children?.map((child) => renderJsonNode(child, expandedItems, toggleItem, depth + 1))}
-        </TreeGroup>
-      ) : null}
-    </div>
-  );
-}
-
-function JsonTreeLabel({
-  kind,
-  muted,
-  name,
-  value,
-}: {
-  kind?: "array" | "object" | "row";
-  muted?: boolean;
-  name: string;
-  value: string;
-}) {
-  return (
-    <span className={muted ? "source-json-node-label muted" : "source-json-node-label"} title={`${name}: ${value}`}>
-      <span className="source-json-node-name">{name}</span>
-      <span className={`source-json-node-value ${kind ?? ""}`}>{value}</span>
-    </span>
-  );
 }
 
 function formatPrimitive(value: JsonValue) {

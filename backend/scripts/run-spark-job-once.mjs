@@ -7,7 +7,10 @@ const command = payload.command ?? "run";
 const runId = payload.runId;
 
 try {
-  const result = runSparkPipeline(job, command, runId);
+  const result = runSparkPipeline(job, command, runId, {
+    sparkRestStateFile: payload.sparkRestStateFile,
+    sparkRestTimeoutMs: payload.sparkRestTimeoutMs,
+  });
   console.log(`ASKLAKE_SPARK_RUN_RESULT=${JSON.stringify(result)}`);
 } catch (error) {
   console.log(`ASKLAKE_SPARK_RUN_RESULT=${JSON.stringify({

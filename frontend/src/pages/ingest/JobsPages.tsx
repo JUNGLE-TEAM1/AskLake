@@ -51,6 +51,7 @@ import {
   Zap,
 } from "lucide-react";
 import { Field, PageTitle } from "../../components/common";
+import { getSourceBrandMeta, SourceBrandIcon } from "../../components/source/SourceBrand";
 import { getCatalogDataset } from "../../services/catalogApi";
 import { getCellphonesReviewAnalysis, runCellphonesReviewAnalysis, type ReviewAnalysisSummary } from "../../services/reviewAnalysisApi";
 import { compactContinuousTarget, getContinuousMaintenanceRuns, getContinuousQuarantine, getContinuousSessionBatches, getContinuousSessions, getContinuousWorkerLogs, replayContinuousQuarantine } from "../../services/pipelineApi";
@@ -62,6 +63,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { getIdentityInitials, UserIdentity } from "@/components/ui/user-identity";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DataTable, type DataTableColumnMeta } from "@/components/ui/data-table";
 import {
@@ -182,6 +184,13 @@ type JobMetric = {
   statuses?: JobStatus[];
   tone: JobMetricTone;
   value: string;
+};
+
+type LatestRunModalSelection = {
+  fallbackJob: JobRowData;
+  fallbackRun: JobRunSummary;
+  jobId: string;
+  runId: string;
 };
 
 function getJobMetrics(facets: JobListFacets): JobMetric[] {
@@ -383,7 +392,7 @@ export function JobsLandingPage({
   const [searchQuery, setSearchQuery] = useState("");
   const [jobQuery, setJobQuery] = useState<JobListQuery>({});
   const [excludedJobIds, setExcludedJobIds] = useState<Set<string>>(() => new Set());
-  const [latestRunModal, setLatestRunModal] = useState<{ job: JobRowData; run: JobRunSummary } | null>(null);
+  const [latestRunModalSelection, setLatestRunModalSelection] = useState<LatestRunModalSelection | null>(null);
   const metrics = getJobMetrics(jobListFacets);
   const failureFilterActive = jobQuery.lastRunOutcome === "failed";
   const failedRunCount = jobListFacets.latestRunOutcomeCounts.failed;
@@ -391,6 +400,14 @@ export function JobsLandingPage({
     () => filterJobsBySearch(jobs, searchQuery).filter((job) => !excludedJobIds.has(job.id)),
     [excludedJobIds, jobs, searchQuery],
   );
+  const latestRunModal = useMemo(() => {
+    if (!latestRunModalSelection) return null;
+    const job = jobs.find((candidate) => candidate.id === latestRunModalSelection.jobId)
+      ?? latestRunModalSelection.fallbackJob;
+    const run = job.runHistory?.find((candidate) => candidate.runId === latestRunModalSelection.runId)
+      ?? latestRunModalSelection.fallbackRun;
+    return { job, run };
+  }, [jobs, latestRunModalSelection]);
   const hasSearchQuery = searchQuery.trim().length > 0;
 
   const updateJobQuery = (nextQuery: JobListQuery) => {
@@ -415,7 +432,12 @@ export function JobsLandingPage({
     const latestRun = job.runHistory?.[0];
     if (!latestRun) return;
     onAction("etl.run.detail_opened", `/api/etl/jobs/${job.id}/runs/${latestRun.runId}`, latestRun.runId);
-    setLatestRunModal({ job, run: latestRun });
+    setLatestRunModalSelection({
+      fallbackJob: job,
+      fallbackRun: latestRun,
+      jobId: job.id,
+      runId: latestRun.runId,
+    });
   };
 
   const toggleFailureFilter = () => {
@@ -439,10 +461,9 @@ export function JobsLandingPage({
             새 수집/처리 생성
           </Button>
         )}
-        descriptionClassName="text-xl leading-8"
-        description="데이터 소스를 연결하고 ETL 작업의 상태, 실행, 로그를 관리합니다."
         icon={<Database size={30} />}
         iconClassName="mt-0 size-16 rounded-xl"
+        leadingAlign="center"
         size="lg"
         title="수집/처리"
         titleClassName="text-4xl"
@@ -450,9 +471,9 @@ export function JobsLandingPage({
       <div className="content-main jobs-panel-stack">
         <Panel className="jobs-metrics-card">
           <PanelHeader
-            className="min-h-[68px] [&_h2]:text-xl"
-            icon={<BarChart3 size={16} />}
-            iconClassName="size-11 [&_svg]:size-[22px]"
+            icon={<Activity size={16} />}
+            iconClassName="size-11 border border-blue-100 bg-white text-blue-700 shadow-sm [&_svg]:size-[22px]"
+            size="section"
             title="작업 현황"
           />
           <div className="jobs-panel-metrics grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -504,7 +525,7 @@ export function JobsLandingPage({
         <RunDagModal
           job={latestRunModal.job}
           onAction={onAction}
-          onClose={() => setLatestRunModal(null)}
+          onClose={() => setLatestRunModalSelection(null)}
           run={latestRunModal.run}
         />
       )}
@@ -853,7 +874,7 @@ function JobsTableSection({
       accessorFn: (row) => row.job.target,
       cell: ({ row }) => {
         const { job } = row.original;
-        const { path: sourcePath, type: sourceType } = getJobListSourceDisplay(job);
+        const { brandKind, path: sourcePath, type: sourceType } = getJobListSourceDisplay(job);
 
         return (
           <DataTableStackedCell className="gap-1.5">
@@ -861,7 +882,7 @@ function JobsTableSection({
             <Tooltip>
               <TooltipTrigger asChild>
                 <div className="flex min-w-0 cursor-help items-center gap-1.5 text-sm text-slate-500">
-                  <Database aria-hidden="true" className="size-3.5 shrink-0 text-slate-400" />
+                  <SourceBrandIcon className="shrink-0" kind={brandKind} size={17} />
                   <span className="shrink-0 font-semibold">{sourceType}</span>
                 </div>
               </TooltipTrigger>
@@ -991,9 +1012,9 @@ function JobsTableSection({
     <TooltipProvider delayDuration={250}>
       <Panel aria-label={ariaLabel}>
         <PanelHeader
-          className="min-h-[68px] [&_h2]:text-xl"
-          icon={<Table2 size={16} />}
-          iconClassName="size-11 [&_svg]:size-[22px]"
+          icon={<ListChecks size={16} />}
+          iconClassName="size-11 border border-blue-100 bg-white text-blue-700 shadow-sm [&_svg]:size-[22px]"
+          size="section"
           title={title}
         />
         {toolbar}
@@ -1450,7 +1471,7 @@ function OwnerIdentity({
           <Avatar size="lg">
             {job.ownerAvatarUrl && <AvatarImage alt={`${job.owner} 프로필`} src={job.ownerAvatarUrl} />}
             <AvatarFallback className="bg-slate-100 font-semibold text-slate-700 ring-1 ring-slate-200">
-              {getOwnerInitials(job.owner)}
+              {getIdentityInitials(job.owner)}
             </AvatarFallback>
           </Avatar>
           <div className="grid min-w-0 gap-0.5 text-left">
@@ -1471,29 +1492,12 @@ function OwnerIdentity({
   }
 
   return (
-    <div className="flex min-w-0 items-center gap-2.5 text-left">
-      <Avatar size="lg">
-        {job.ownerAvatarUrl && <AvatarImage alt={`${job.owner} 프로필`} src={job.ownerAvatarUrl} />}
-        <AvatarFallback className="bg-slate-100 font-semibold text-slate-700 ring-1 ring-slate-200">
-          {getOwnerInitials(job.owner)}
-        </AvatarFallback>
-      </Avatar>
-      <div className="grid min-w-0 gap-1">
-        <span className="truncate text-lg font-semibold text-slate-800" title={job.owner}>{job.owner}</span>
-        {timestamp && (
-          <span className="truncate text-base font-medium text-slate-500" title={`${timestampLabel} ${timestamp}`}>
-            {timestampLabel} {formatCompactDateTime(timestamp)}
-          </span>
-        )}
-      </div>
-    </div>
+    <UserIdentity
+      avatarUrl={job.ownerAvatarUrl}
+      name={job.owner}
+      secondary={timestamp ? `${timestampLabel} ${formatCompactDateTime(timestamp)}` : undefined}
+    />
   );
-}
-
-function getOwnerInitials(owner: string) {
-  const words = owner.trim().split(/[\s_-]+/).filter(Boolean);
-  if (words.length >= 2) return words.slice(0, 2).map((word) => word[0]).join("").toUpperCase();
-  return (words[0] ?? "?").slice(0, 2).toUpperCase();
 }
 
 function fallbackJobStats(job: JobRowData): JobStats {
@@ -1585,22 +1589,12 @@ const hiddenJobDetailFieldLabels = new Set([
   "Token / Secret",
 ]);
 
-const jobSourceTypeLabelMap: Record<string, string> = {
-  "Data Lake": "데이터 레이크",
-  "File / S3": "파일 / 오브젝트 스토리지",
-  "Stream / Kafka": "스트림 / Kafka",
-};
-
 function getJobDetailFieldLabel(label: string) {
   return jobDetailFieldLabelMap[label] ?? label;
 }
 
 function isVisibleJobDetailField(label: string) {
   return !label.startsWith("__") && !hiddenJobDetailFieldLabels.has(label);
-}
-
-function getJobSourceTypeLabel(value: string) {
-  return jobSourceTypeLabelMap[value] ?? value;
 }
 
 type JobEndpointItem = {
@@ -1722,9 +1716,12 @@ function getJobListSourceDisplay(job: JobRowData) {
 
   const path = job.sourceLabel?.trim() || inferredPath || job.source;
 
+  const brand = getSourceBrandMeta(rawType);
+
   return {
+    brandKind: brand.kind,
     path,
-    type: getJobSourceTypeLabel(rawType),
+    type: brand.label,
   };
 }
 
@@ -2079,11 +2076,12 @@ export function JobDetailPage({
   onRuns: () => void;
 }) {
   const rawSourceType = job.sourceType ?? job.source.split(" / ")[0] ?? job.source;
-  const sourceType = getJobSourceTypeLabel(rawSourceType);
+  const sourceType = getSourceBrandMeta(rawSourceType).label;
   const sourcePath = job.sourceLabel ?? (job.source.split(" / ").slice(1).join(" / ") || job.source);
-  const stats = job.stats ?? fallbackJobStats(job);
+  const stats = { ...fallbackJobStats(job), ...(job.stats ?? {}) };
   const realtime = isRealtimeJob(job);
-  const totalRunsLabel = stats.totalRuns === "-" || stats.totalRuns.endsWith("회") ? stats.totalRuns : `${stats.totalRuns}회`;
+  const totalRuns = String(stats.totalRuns ?? "-");
+  const totalRunsLabel = totalRuns === "-" || totalRuns.endsWith("회") ? totalRuns : `${totalRuns}회`;
   const realtimeMetrics = job.operationalMetrics?.metricType === "realtime" ? job.operationalMetrics : undefined;
   const realtimeHealth = realtimeHealthMeta[realtimeMetrics?.healthStatus ?? "unknown"];
   const physicalOutputPath = job.targetPath ?? stats.outputPath ?? `lake/${job.target}`;

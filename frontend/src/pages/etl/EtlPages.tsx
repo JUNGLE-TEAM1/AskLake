@@ -10,7 +10,6 @@ import {
   BarChart3,
   BookOpen,
   Bot,
-  Braces,
   Cable,
   Calendar,
   Check,
@@ -76,7 +75,6 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { ValidationList } from "@/components/ui/validation-list";
 import { cn } from "@/lib/utils";
 import { S3PathField } from "../../components/s3/S3PathField";
-import { DatabaseField } from "../../components/target/DatabaseField";
 import { runTransformQualitySamplePreview } from "../../data/transformQualityPreview";
 import { normalizeRetryPolicy, retryFailureActionLabels, scheduleOverlapPolicyLabels, toCreatePipelineRequest } from "../../services/draftPipelineContract";
 import { getDatasets } from "../../services/mockApi";
@@ -93,11 +91,15 @@ import { SchemaTransformWorkbench } from "./SchemaTransformWorkbench";
 import { SchemaRuleSummary } from "./SchemaRuleSummary";
 import { SchemaResultPreview } from "./SchemaResultPreview";
 import { EtlStepHeader } from "../../components/etl/EtlStepHeader";
-import amazonS3IconUrl from "../../assets/amazons3.svg";
-import apacheKafkaIconUrl from "../../assets/apachekafka.svg";
-import askLakeLogoUrl from "../../assets/asklake-logo.png";
-import mongoDbIconUrl from "../../assets/mongodb.svg";
-import postgreSqlIconUrl from "../../assets/postgresql.svg";
+import { getSourceBrandMeta, SourceBrandIcon } from "../../components/source/SourceBrand";
+
+const OBJECT_STORAGE_IS_AWS = String(import.meta.env.VITE_OBJECT_STORAGE_PROVIDER ?? "minio").trim().toLowerCase() === "aws";
+const OBJECT_STORAGE_PROVIDER_LABEL = OBJECT_STORAGE_IS_AWS ? "Amazon S3" : "MinIO";
+const OBJECT_STORAGE_REGION = String(import.meta.env.VITE_S3_REGION ?? (OBJECT_STORAGE_IS_AWS ? "ap-northeast-2" : "us-east-1"));
+const SPARK_OUTPUT_BUCKET = String(import.meta.env.VITE_SPARK_OUTPUT_BUCKET ?? "asklake-output")
+  .trim()
+  .replace(/^s3a?:\/\//i, "")
+  .replace(/\/+.*$/, "") || "asklake-output";
 
 type RepeatFrequency = "hourly" | "daily" | "weekly" | "custom";
 type RepeatScheduleDraft = {
@@ -315,10 +317,12 @@ const sourceFieldLabels: Record<string, string> = {
   "CONSUMER GROUP ID": "컨슈머 그룹 ID",
   "CATALOG / NAMESPACE": "카탈로그 / 네임스페이스",
   Collection: "컬렉션",
+  Collections: "탐색 가능한 컬렉션",
   "Connection URI": "연결 URI",
   "DATASET OR TABLE SELECTOR": "데이터셋 또는 테이블 선택자",
   "DATABASE / SCHEMA": "데이터베이스 / 스키마",
   "Database Name": "데이터베이스 이름",
+  Database: "데이터베이스",
   Delimiter: "구분자",
   Encoding: "인코딩",
   Endpoint: "엔드포인트",
@@ -351,8 +355,9 @@ const sourceFieldLabels: Record<string, string> = {
   "SQL Run ID": "SQL Run ID",
   "Storage Provider": "스토리지 제공자",
   "Stream Type": "스트림 유형",
+  "Target discovery": "대상 탐색",
   Table: "테이블",
-  Tables: "테이블",
+  Tables: "탐색 가능한 테이블",
   "Token / Secret": "토큰 / 시크릿",
   Topic: "토픽",
   "Topic Access": "토픽 접근",
@@ -399,6 +404,7 @@ const sourceColumnLabels: Record<string, string> = {
 };
 
 const sourceValueLabels: Record<string, string> = {
+  "After connection": "연결 후 확인",
   detected: "감지됨",
   failed: "실패",
   listed: "목록 확인",
@@ -811,7 +817,7 @@ function normalizeTargetLayer(value: string | undefined): TargetLayer {
 }
 
 function buildTargetStoragePath(targetDataset: string, targetLayer: TargetLayer) {
-  return `s3a://asklake-output/${targetDataset}/${targetLayer.toLowerCase()}/`;
+  return `s3a://${SPARK_OUTPUT_BUCKET}/${targetDataset}/${targetLayer.toLowerCase()}/`;
 }
 
 function normalizeKafkaDatasetName(topic: string) {
@@ -1195,13 +1201,13 @@ export function SourceConnectionPage({
     };
   }, []);
   const connectorMeta: Record<string, { description: string; icon: React.ReactNode; label: string; status: string }> = {
-    "File / S3": { description: "S3 버킷의 CSV, JSON, Parquet 파일을 가져옵니다.", icon: <SourceBrandIcon kind="s3" />, label: "Amazon S3", status: "실제 연결" },
-    PostgreSQL: { description: "PostgreSQL 테이블에서 데이터를 가져옵니다.", icon: <SourceBrandIcon kind="postgres" />, label: "PostgreSQL", status: "실제 연결" },
-    MongoDB: { description: "MongoDB 컬렉션에서 문서를 가져옵니다.", icon: <SourceBrandIcon kind="mongo" />, label: "MongoDB", status: "실제 연결" },
-    "REST API": { description: "API를 호출해 응답 데이터를 가져옵니다.", icon: <SourceBrandIcon kind="rest" />, label: "REST API", status: "실제 연결" },
-    "Data Lake": { description: "AskLake에 저장된 데이터셋을 다시 사용합니다.", icon: <SourceBrandIcon kind="lake" />, label: "AskLake 데이터 레이크", status: "목록 조회" },
-    "SQL Result": { description: "검증된 SQL 분석 결과를 다시 사용합니다.", icon: <TerminalSquare size={20} />, label: "SQL Result", status: "검증 완료" },
-    "Stream / Kafka": { description: "Kafka에서 들어오는 데이터를 실시간 또는 구간별로 가져옵니다.", icon: <SourceBrandIcon kind="kafka" />, label: "Apache Kafka", status: "메타데이터" },
+    "File / S3": { description: "S3 버킷의 CSV, JSON, Parquet 파일을 가져옵니다.", icon: <SourceBrandIcon kind="s3" />, label: getSourceBrandMeta("File / S3").label, status: "실제 연결" },
+    PostgreSQL: { description: "PostgreSQL 테이블에서 데이터를 가져옵니다.", icon: <SourceBrandIcon kind="postgres" />, label: getSourceBrandMeta("PostgreSQL").label, status: "실제 연결" },
+    MongoDB: { description: "MongoDB 컬렉션에서 문서를 가져옵니다.", icon: <SourceBrandIcon kind="mongo" />, label: getSourceBrandMeta("MongoDB").label, status: "실제 연결" },
+    "REST API": { description: "API를 호출해 응답 데이터를 가져옵니다.", icon: <SourceBrandIcon kind="rest" />, label: getSourceBrandMeta("REST API").label, status: "실제 연결" },
+    "Data Lake": { description: "AskLake에 저장된 데이터셋을 다시 사용합니다.", icon: <SourceBrandIcon kind="lake" />, label: getSourceBrandMeta("Data Lake").label, status: "목록 조회" },
+    "SQL Result": { description: "검증된 SQL 분석 결과를 다시 사용합니다.", icon: <SourceBrandIcon kind="sql" />, label: getSourceBrandMeta("SQL Result").label, status: "검증 완료" },
+    "Stream / Kafka": { description: "Kafka에서 들어오는 데이터를 실시간 또는 구간별로 가져옵니다.", icon: <SourceBrandIcon kind="kafka" />, label: getSourceBrandMeta("Stream / Kafka").label, status: "메타데이터" },
   };
   const sourceConfigs: Record<string, {
     title: string;
@@ -1252,12 +1258,12 @@ export function SourceConnectionPage({
         ["Password / Auth Token", "asklake"],
         ["DATASET OR TABLE SELECTOR", ""],
       ],
-      testItems: [["Endpoint", "Not tested"], ["Backend connector", "Required"], ["Tables", "Pending"]],
+      testItems: [["Endpoint", "Not tested"], ["Database", "Pending"], ["Target discovery", "After connection"]],
       logs: ["PostgreSQL 소스 식별은 백엔드 커넥터 러너에서 검증합니다.", "브라우저는 원시 데이터베이스 소켓을 열지 않습니다."],
       assetsTitle: "PostgreSQL 테이블 탐색",
       assets: [],
-      previewTitle: "원천 데이터 미리보기",
-      previewNote: "미리보기 데이터 없음 · 백엔드 연결 테스트를 실행하면 샘플 행을 가져옵니다.",
+      previewTitle: "데이터 미리보기",
+      previewNote: "테이블을 선택하면 일부 행을 가져와 표시합니다.",
       previewColumns: ["Table", "Rows", "Status"],
       previewRows: [],
       info: "",
@@ -1273,39 +1279,41 @@ export function SourceConnectionPage({
         ["Password / Auth Token", ""],
         ["DATASET OR TABLE SELECTOR", ""],
       ],
-      testItems: [["Endpoint", "Not tested"], ["Database", "Pending"], ["Collection", "Pending"]],
+      testItems: [["Endpoint", "Not tested"], ["Database", "Pending"], ["Target discovery", "After connection"]],
       logs: ["MongoDB 소스 식별이 아직 검증되지 않았습니다.", "연결 테스트를 실행하면 제한 문서 샘플을 가져옵니다."],
       assetsTitle: "MongoDB 컬렉션 탐색",
       assets: [],
-      previewTitle: "문서 샘플 미리보기",
-      previewNote: "미리보기 데이터 없음 · MongoDB 연결 테스트를 실행하세요.",
+      previewTitle: "데이터 미리보기",
+      previewNote: "컬렉션을 선택하면 일부 문서를 표 형태로 표시합니다.",
       previewColumns: ["Collection", "Documents", "Status"],
       previewRows: [],
       info: "",
     },
     "File / S3": {
       title: "Amazon S3 연결 설정",
-      description: "MinIO 오브젝트 스토리지에서 버킷과 제한 샘플을 실제 조회합니다.",
+      description: OBJECT_STORAGE_IS_AWS
+        ? "배포 서버의 IAM Role로 AWS S3 버킷과 제한 샘플을 조회합니다."
+        : "MinIO 오브젝트 스토리지에서 버킷과 제한 샘플을 실제 조회합니다.",
       fields: [
-        ["Storage Provider", "MinIO"],
+        ["Storage Provider", OBJECT_STORAGE_PROVIDER_LABEL],
         ["Endpoint URL", ""],
-        ["Region", ""],
+        ["Region", OBJECT_STORAGE_REGION],
         ["Bucket / Stage Name", ""],
         ["Path / Prefix", ""],
         ["Access Key", ""],
         ["Secret Key", ""],
-        ["Use Path Style", "true"],
+        ["Use Path Style", String(!OBJECT_STORAGE_IS_AWS)],
         ["File Type", "auto"],
         ["Delimiter", ","],
         ["Encoding", "UTF-8"],
         ["Header", "Treat first row as header"],
       ],
       testItems: [["Endpoint", "Not tested"], ["Bucket", "Not listed"], ["샘플 프로파일", "Pending"]],
-      logs: ["MinIO 소스 식별이 아직 검증되지 않았습니다.", "연결 테스트를 실행하면 제한 샘플을 가져옵니다."],
+      logs: [`${OBJECT_STORAGE_PROVIDER_LABEL} 소스 식별이 아직 검증되지 않았습니다.`, "연결 테스트를 실행하면 제한 샘플을 가져옵니다."],
       assetsTitle: "Amazon S3 파일 탐색",
       assets: [],
-      previewTitle: "제한 샘플 미리보기",
-      previewNote: "미리보기 데이터 없음 · MinIO 연결 테스트를 실행하세요.",
+      previewTitle: "데이터 미리보기",
+      previewNote: "파일을 선택하면 일부 데이터를 가져와 표시합니다.",
       previewColumns: ["Object Key", "Size", "Last Modified"],
       previewRows: [],
     },
@@ -1320,7 +1328,7 @@ export function SourceConnectionPage({
       logs: ["AskLake 로그인 세션과 Catalog 권한을 기준으로 데이터셋 목록을 조회합니다."],
       assetsTitle: "AskLake 데이터셋 탐색",
       assets: [],
-      previewTitle: "데이터셋 미리보기",
+      previewTitle: "데이터 미리보기",
       previewNote: "왼쪽 목록에서 사용할 데이터셋을 선택하세요.",
       previewColumns: [],
       previewRows: [],
@@ -1344,8 +1352,8 @@ export function SourceConnectionPage({
       logs: ["REST 소스 식별이 아직 검증되지 않았습니다.", "연결 테스트를 실행하면 백엔드가 HTTP 응답 샘플을 가져옵니다."],
       assetsTitle: "REST API 응답 탐색",
       assets: [],
-      previewTitle: "API 응답 미리보기",
-      previewNote: "미리보기 데이터 없음 · 연결 테스트를 실행하세요.",
+      previewTitle: "데이터 미리보기",
+      previewNote: "연결을 확인하면 응답의 일부 데이터를 표시합니다.",
       previewColumns: ["User ID", "Email", "Date", "Status", "Amount"],
       previewRows: [],
     },
@@ -1365,8 +1373,8 @@ export function SourceConnectionPage({
       logs: ["Kafka 소스 윈도우 식별은 백엔드 커넥터 러너에서 검증합니다.", "브라우저는 Kafka 프로토콜 핸드셰이크를 수행할 수 없습니다."],
       assetsTitle: "Kafka 토픽 메시지 탐색",
       assets: [],
-      previewTitle: "샘플 메시지 미리보기",
-      previewNote: "미리보기 데이터 없음 · 백엔드 연결 테스트를 실행하세요.",
+      previewTitle: "데이터 미리보기",
+      previewNote: "연결을 확인하면 일부 메시지를 가져와 표시합니다.",
       previewColumns: ["Payload (Raw JSON)", "Part.", "Offset", "Timestamp"],
       previewRows: [],
     },
@@ -1423,7 +1431,7 @@ export function SourceConnectionPage({
   const connectionStatusCopy: Record<SourceDraft["connectionStatus"], { badge: string; title: string }> = {
     failed: { badge: "확인 실패", title: "연결 실패" },
     idle: { badge: "테스트 필요", title: "연결 검증 필요" },
-    success: { badge: "미리보기 가능", title: "연결 검증 완료" },
+    success: { badge: "탐색 가능", title: "연결 검증 완료" },
     testing: { badge: "테스트 중", title: "연결 테스트 실행 중" },
   };
   const visibleEditableFields = editableFields.filter(([label]) => isVisibleSourceField(activeSourceType, label));
@@ -1434,9 +1442,9 @@ export function SourceConnectionPage({
   const filteredDisplayAssets = displayAssets.filter((asset) => sourceAssetMatchesExplorer(asset, assetSearchQuery, assetFilter, explorerConfig.filterMode));
   const hasDetectedAssets = displayAssets.length > 0;
   const selectedAsset = selectedAssetPath ? displayAssets.find(([path]) => path === selectedAssetPath) ?? null : null;
-  const requiresAssetSelectionForPreview = activeSourceType === "File / S3";
+  const requiresAssetSelectionForPreview = ["File / S3", "MongoDB", "PostgreSQL"].includes(activeSourceType);
   const selectedAssetHasSample = Boolean(
-    (!requiresAssetSelectionForPreview || selectedAsset) && sourceRuntime?.draftPatch.schema?.columns?.length,
+    (!requiresAssetSelectionForPreview || selectedAsset) && sourceRuntime?.previewColumns?.length,
   );
   const displayPreviewColumns = selectedAssetHasSample ? sourceRuntime?.previewColumns ?? [] : [];
   const displayPreviewRows = selectedAssetHasSample ? sourceRuntime?.previewRows ?? [] : [];
@@ -1448,12 +1456,20 @@ export function SourceConnectionPage({
   const publicDisplayPreviewNote = publicSourceLog(displayPreviewNote);
   const runtimeSourceConfig = sourceRuntime?.draftPatch.source?.sourceConfig;
   const verifiedSourceFields = connectionStatus === "success" && runtimeSourceConfig ? runtimeSourceConfig : editableFields;
-  const displayPreviewFormat = activeSourceType === "File / S3" ? sourceFormatFromConfig(verifiedSourceFields, activeSourceType) : sourceTypeLabel(activeSourceType);
+  const previewShowsFileList = activeSourceType === "File / S3"
+    && displayPreviewColumns.includes("Object Key");
+  const previewShowsTopicInfo = activeSourceType === "Stream / Kafka"
+    && displayPreviewColumns.includes("Leader");
+  const sourcePreviewTitle = previewShowsFileList
+    ? "파일 목록"
+    : previewShowsTopicInfo
+      ? "토픽 정보"
+      : "데이터 미리보기";
   const sourceSummaryRows: Array<[string, string]> = [
     ["선택 커넥터", hasSelectedSource ? sourceTypeLabel(activeSourceType) : "미선택"],
     ["연결 상태", isSqlResultSource ? (hasSqlResultPreview && connectionStatus === "success" ? "SQL Preview 검증됨" : "SQL Preview 필요") : connectionStatus === "success" ? publicConnectionMessage : connectionStatus === "testing" ? "테스트 중" : connectionStatus === "failed" ? "실패" : "테스트 필요"],
     ["감지 파일", isSqlResultSource ? `${sourceConfigValue(editableFields, "Preview Row Count") || "0"} rows` : `${displayAssets.length}개`],
-    ["인증 방식", isSqlResultSource ? "SQL Preview 검증" : isInternalDataLake ? "AskLake 로그인 권한" : activeSourceType === "File / S3" ? "MinIO 액세스 키" : "백엔드 커넥터"],
+    ["인증 방식", isSqlResultSource ? "SQL Preview 검증" : isInternalDataLake ? "AskLake 로그인 권한" : activeSourceType === "File / S3" ? (OBJECT_STORAGE_IS_AWS ? "EC2 IAM Role" : "MinIO 액세스 키") : "백엔드 커넥터"],
     ["다음 단계", isSqlResultSource ? "Review 확인" : (sourceRuntime?.draftPatch.source?.requiresRecordParsing ? "레코드 구조화" : "스키마 추론")],
   ];
 
@@ -1514,7 +1530,10 @@ export function SourceConnectionPage({
     setConnectionStatus(nextStatus);
     setConnectionMessage(nextMessage);
     applySourceDraft(value, nextFields, nextStatus, nextMessage);
-    onDraftChange({ recordParsing: { columns: [], delimiterKind: "whitespace", delimiterPattern: "\\s+", enabled: false, expectedFieldCount: 0, header: false } });
+    onDraftChange({
+      recordParsing: { columns: [], delimiterKind: "whitespace", delimiterPattern: "\\s+", enabled: false, expectedFieldCount: 0, header: false },
+      schema: { columns: [], sampleRows: [], summary: "" },
+    });
     onAction("etl.source.connector_selected", "/api/etl/sources/connectors", value);
   };
 
@@ -1577,7 +1596,63 @@ export function SourceConnectionPage({
     setConnectionStatus(nextStatus);
     setConnectionMessage(nextMessage);
     applySourceDraft(activeSourceType, nextFields, nextStatus, nextMessage);
-    onDraftChange({ recordParsing: { columns: [], delimiterKind: "whitespace", delimiterPattern: "\\s+", enabled: false, expectedFieldCount: 0, header: false } });
+    onDraftChange({
+      recordParsing: { columns: [], delimiterKind: "whitespace", delimiterPattern: "\\s+", enabled: false, expectedFieldCount: 0, header: false },
+      schema: { columns: [], sampleRows: [], summary: "" },
+    });
+  };
+
+  const updateCollectionConfig = (patches: Array<[string, string]>) => {
+    const nextFields = upsertSourceFields(editableFields, [...patches, ["__Sample Object", ""]]);
+    const nextMessage = "파일 수집 범위가 변경되었습니다. 대표 파일을 다시 샘플링하세요.";
+    setSourceFields((fields) => ({ ...fields, [activeSourceType]: nextFields }));
+    setSourceRuntime((runtime) => runtime ? {
+      ...runtime,
+      draftPatch: {},
+      logs: [nextMessage],
+      message: nextMessage,
+      previewColumns: [],
+      previewNote: "수집 범위를 다시 검증한 뒤 미리보기를 확인할 수 있습니다.",
+      previewRows: [],
+      status: "idle",
+    } : null);
+    setConnectionStatus("idle");
+    setConnectionMessage(nextMessage);
+    setSourceStage("connect");
+    applySourceDraft(activeSourceType, nextFields, "idle", nextMessage);
+    onDraftChange({
+      quality: {
+        invalidRows: [],
+        rules: [],
+        score: undefined,
+        status: "idle",
+        summary: "스키마 재추론 후 품질 규칙 설정 필요",
+      },
+      recordParsing: {
+        columns: [],
+        delimiterKind: "whitespace",
+        delimiterPattern: "\\s+",
+        enabled: false,
+        expectedFieldCount: 0,
+        header: false,
+      },
+      schema: {
+        columns: [],
+        sampleRows: [],
+        schemaFingerprint: undefined,
+        summary: "수집 범위 변경 · 스키마 재추론 필요",
+      },
+      source: {
+        detectedFormat: undefined,
+        rawPreviewLines: [],
+        requiresRecordParsing: false,
+      },
+      transform: {
+        outputColumns: [],
+        steps: [],
+        summary: "스키마 재추론 후 변환 설정 필요",
+      },
+    });
   };
 
   const loadSourceAssetChildren = async (folderPath: string) => {
@@ -1634,7 +1709,14 @@ export function SourceConnectionPage({
       ["__Selected Object", assetPath],
       ["__Sample Object", assetPath],
     ]);
-    const nextMessage = `${assetMeta === "folder" ? "폴더" : "파일"} ${assetPath} 선택됨`;
+    const selectedTargetKind = activeSourceType === "PostgreSQL"
+      ? "테이블"
+      : activeSourceType === "MongoDB"
+        ? "컬렉션"
+        : assetMeta === "folder"
+          ? "폴더"
+          : "파일";
+    const nextMessage = `${selectedTargetKind} ${assetPath} 선택됨`;
     setSelectedAssetPath(assetPath);
     setSourceFields((fields) => ({ ...fields, [activeSourceType]: nextFields }));
     setConnectionMessage(nextMessage);
@@ -1699,7 +1781,7 @@ export function SourceConnectionPage({
     setSelectedAssetPath("");
     applySourceDraft(activeSourceType, editableFields, "testing", testingMessage);
     try {
-      if (activeSourceType !== "File / S3") {
+      if (!["File / S3", "MongoDB", "PostgreSQL"].includes(activeSourceType)) {
         const result = mergeConnectorAnalysisSourceConfig(
           publicConnectorAnalysis(await testSourceConnector(activeSourceType, editableFields)),
           editableFields,
@@ -1717,7 +1799,29 @@ export function SourceConnectionPage({
         return;
       }
       const result = await listSourceAssets(activeSourceType, editableFields, "");
-      const successMessage = `${sourceTypeLabel(activeSourceType)} 연결 성공: 하위 항목 ${result.assets.length}개`;
+      const discoveredTargetLabel = activeSourceType === "PostgreSQL"
+        ? "테이블"
+        : activeSourceType === "MongoDB"
+          ? "컬렉션"
+          : "하위 항목";
+      const successMessage = `${sourceTypeLabel(activeSourceType)} 연결 성공: ${discoveredTargetLabel} ${result.assets.length}개 탐색 가능`;
+      const connectionTestItems: Array<[string, string]> = activeSourceType === "PostgreSQL"
+        ? [
+            ["Endpoint", `${sourceConfigValue(editableFields, "Endpoint / Host")}:${sourceConfigValue(editableFields, "Port")}`],
+            ["Database", sourceConfigValue(editableFields, "Database Name")],
+            ["Tables", String(result.assets.length)],
+          ]
+        : activeSourceType === "MongoDB"
+          ? [
+              ["Endpoint", `${sourceConfigValue(editableFields, "Endpoint / Host")}:${sourceConfigValue(editableFields, "Port")}`],
+              ["Database", sourceConfigValue(editableFields, "Database Name")],
+              ["Collections", String(result.assets.length)],
+            ]
+          : [
+              ["Connector", activeSourceType],
+              ["Result", "Verified"],
+              ["Objects", String(result.assets.length)],
+            ];
       const connectorResult: SourceConnectorAnalysis = {
         actionPath: "/api/etl/sources/assets",
         assets: result.assets,
@@ -1733,16 +1837,19 @@ export function SourceConnectionPage({
         logs: [successMessage],
         message: successMessage,
         previewColumns: [],
-        previewNote: "파일을 선택하면 제한 샘플과 스키마 추론 결과가 표시됩니다.",
+        previewNote: `${discoveredTargetLabel}을 선택하면 제한 샘플과 스키마 추론 결과가 표시됩니다.`,
         previewRows: [],
         status: "success",
-        testItems: [["Connector", activeSourceType], ["Result", "Verified"], ["Objects", `${result.assets.length}`]],
+        testItems: connectionTestItems,
       };
       setSourceRuntime(connectorResult);
       setSelectedAssetPath("");
       setConnectionStatus("success");
       setConnectionMessage(successMessage);
-      onDraftChange(connectorResult.draftPatch);
+      onDraftChange({
+        ...connectorResult.draftPatch,
+        schema: { columns: [], sampleRows: [], summary: "" },
+      });
       onAction("etl.source.connection_tested", connectorResult.actionPath, activeSourceType);
       onNotify(successMessage);
     } catch (error) {
@@ -1787,7 +1894,19 @@ export function SourceConnectionPage({
       ? connectionStatus !== "success"
       : isInternalDataLake
         ? !selectedCatalogDatasetId || !hasValidatedSchema
-        : connectionStatus !== "success" || !hasValidatedSchema;
+        : connectionStatus !== "success"
+          || (requiresAssetSelectionForPreview && !selectedAssetPath)
+          || !hasValidatedSchema;
+  const canOpenSourceBrowser = isInternalDataLake
+    ? hasSelectedSource && sourceStage !== "choose"
+    : sourceStage === "browse" || (connectionStatus === "success" && hasDetectedAssets);
+
+  const handleSourceStageChange = (value: string) => {
+    const nextStage = value as "choose" | "connect" | "browse";
+    if (nextStage === "browse" && !canOpenSourceBrowser) return;
+    if (nextStage === "connect" && (!hasSelectedSource || sourceStage === "choose")) return;
+    setSourceStage(nextStage);
+  };
 
   const sourceChoiceConnectors = ["PostgreSQL", "MongoDB", "File / S3", "REST API", "Stream / Kafka", "Data Lake"];
 
@@ -1798,7 +1917,6 @@ export function SourceConnectionPage({
     >
         <EtlStepHeader
           className="etl-step-standalone-header"
-          description="데이터 소스를 선택하고 연결 정보와 탐색 대상을 설정합니다."
           icon={<Cable />}
           title="소스 연결"
         />
@@ -1806,15 +1924,17 @@ export function SourceConnectionPage({
         <div className="source-workbench-body">
           <Tabs
             value={sourceStage}
-            onValueChange={(value) => setSourceStage(value as "choose" | "connect" | "browse")}
+            onValueChange={handleSourceStageChange}
           >
-            <TabsList aria-label="소스 연결 단계" className="source-stage-tabs">
+            <TabsList
+              aria-label="소스 연결 단계"
+              className="source-stage-tabs"
+              style={{ gridTemplateColumns: isInternalDataLake ? "repeat(2, minmax(0, 1fr))" : undefined }}
+            >
               <TabsTrigger value="choose">1. 소스 선택</TabsTrigger>
               {!isInternalDataLake && <TabsTrigger disabled={!hasSelectedSource || sourceStage === "choose"} value="connect">2. 연결 설정</TabsTrigger>}
               <TabsTrigger
-                disabled={isInternalDataLake
-                  ? !hasSelectedSource
-                  : sourceStage !== "browse" && (sourceStage === "choose" || connectionStatus !== "success" || !hasDetectedAssets)}
+                disabled={!canOpenSourceBrowser}
                 value="browse"
               >
                 {isInternalDataLake ? "2. 데이터셋 탐색" : "3. 데이터 탐색"}
@@ -1981,7 +2101,6 @@ export function SourceConnectionPage({
                         onSelect={selectCatalogDataset}
                       />
                     )}
-                    explorerMeta={<Badge variant="outline" className="border-blue-200 bg-white text-blue-700">{filteredCatalogDatasets.length}개</Badge>}
                     explorerTitle="접근 가능한 데이터셋"
                     filterOptions={explorerConfig.filterOptions}
                     filterValue={assetFilter}
@@ -1997,11 +2116,10 @@ export function SourceConnectionPage({
                     )}
                     previewMeta={selectedCatalogDataset ? (
                       <div className="source-explorer-preview-meta">
-                        <Badge variant="outline" className="border-blue-200 bg-white text-blue-700">{selectedCatalogDataset.layer}</Badge>
                         <span>{selectedCatalogDataset.sampleRows.length}행 · {selectedCatalogDataset.schema.length}필드</span>
                       </div>
                     ) : undefined}
-                    previewTitle={selectedCatalogDataset?.name ?? "데이터셋 미리보기"}
+                    previewTitle="데이터 미리보기"
                     queryPlaceholder="데이터셋 이름, 설명, 소유자 검색"
                     queryValue={assetSearchQuery}
                     showPathSearch={false}
@@ -2010,7 +2128,11 @@ export function SourceConnectionPage({
                   <SourceExplorerWorkbench
                     explorer={hasDetectedAssets ? (
                       <SourceAssetTree
-                        assets={filteredDisplayAssets}
+                        assets={filteredDisplayAssets.map(([path, meta, status]) => (
+                          activeSourceType === "PostgreSQL" || activeSourceType === "MongoDB"
+                            ? [path, "", status]
+                            : [path, meta, status]
+                        ))}
                         loadingPath={loadingAssetPath}
                         selectedPath={selectedAssetPath}
                         onOpenFolder={explorerConfig.supportsPathSearch ? loadSourceAssetChildren : undefined}
@@ -2019,7 +2141,6 @@ export function SourceConnectionPage({
                     ) : (
                       <p className="source-empty-note">연결 테스트 후 탐색 가능한 항목이 표시됩니다.</p>
                     )}
-                    explorerMeta={<Badge variant="outline" className="border-blue-200 bg-white text-blue-700">{filteredDisplayAssets.length}개</Badge>}
                     explorerTitle={current.assetsTitle}
                     filterOptions={explorerConfig.filterOptions}
                     filterValue={assetFilter}
@@ -2037,11 +2158,10 @@ export function SourceConnectionPage({
                     )}
                     previewMeta={(
                       <div className="source-explorer-preview-meta">
-                        <Badge variant="outline" className="border-blue-200 bg-white text-blue-700">{displayPreviewFormat}</Badge>
                         <span>{displayPreviewRows.length}행 · {displayPreviewColumns.length}필드</span>
                       </div>
                     )}
-                    previewTitle={selectedAsset?.[0] || explorerConfig.previewTitle}
+                    previewTitle={sourcePreviewTitle}
                     queryPlaceholder={explorerConfig.queryPlaceholder}
                     queryValue={assetSearchQuery}
                     showPathSearch={explorerConfig.supportsPathSearch}
@@ -2314,27 +2434,6 @@ export function RecordParsingPage({
   );
 }
 
-function sourceFormatFromConfig(fields: Array<[string, string]>, _sourceType?: string) {
-  const fieldMap = new Map(fields.map(([label, value]) => [label, value]));
-  const declaredFormat = (fieldMap.get("File Type") || "").trim().toLowerCase();
-  const selectedPath = [
-    fieldMap.get("Path / Prefix"),
-    fieldMap.get("Path"),
-    fieldMap.get("DATASET OR TABLE SELECTOR"),
-  ].find((value) => value && value.trim().length > 0)?.trim().toLowerCase() || "";
-  const rawFormat = declaredFormat && declaredFormat !== "auto"
-    ? declaredFormat
-    : selectedPath.replace(/^.*\./, "");
-  if (rawFormat.includes("jsonl")) return "JSONL";
-  if (rawFormat.includes("json")) return "JSON";
-  if (rawFormat.includes("csv")) return "CSV";
-  if (rawFormat.includes("tsv")) return "TSV";
-  if (rawFormat.includes("txt")) return "TXT";
-  if (rawFormat.includes("log")) return "TXT";
-  if (rawFormat.includes("parquet")) return "PARQUET";
-  return "AUTO";
-}
-
 function mergeSourceAssets(currentAssets: Array<[string, string, string]>, nextAssets: Array<[string, string, string]>) {
   const merged = new Map<string, [string, string, string]>();
   [...currentAssets, ...nextAssets].forEach(([path, meta, status]) => {
@@ -2371,6 +2470,7 @@ function sourceStatusIcon(status: SourceDraft["connectionStatus"]) {
 function isVisibleSourceField(sourceType: string, label: string) {
   if (isInternalSourceField(label)) return false;
   if (sourceType === "File / S3") {
+    if (OBJECT_STORAGE_IS_AWS && ["Endpoint URL", "Access Key", "Secret Key"].includes(label)) return false;
     return !["Storage Provider", "Region", "Use Path Style", "Header", "Path / Prefix", "File Type", "Delimiter", "Encoding"].includes(label);
   }
   if (sourceType === "PostgreSQL") {
@@ -2394,7 +2494,7 @@ function isVisibleSourceField(sourceType: string, label: string) {
 function requiredSourceConnectionFields(sourceType: string) {
   const fields: Record<string, string[]> = {
     "Data Lake": [],
-    "File / S3": ["Endpoint URL", "Bucket / Stage Name", "Access Key", "Secret Key"],
+    "File / S3": OBJECT_STORAGE_IS_AWS ? ["Bucket / Stage Name"] : ["Endpoint URL", "Bucket / Stage Name", "Access Key", "Secret Key"],
     MongoDB: ["Endpoint / Host", "Port", "Database Name"],
     PostgreSQL: ["Endpoint / Host", "Port", "Database Name", "Username", "Password / Auth Token"],
     "REST API": ["Method", "Endpoint URL"],
@@ -2440,7 +2540,7 @@ function sourceExplorerConfig(sourceType: string, assets: Array<[string, string,
         { label: "JSON / JSONL", value: "json" },
       ],
       pathPlaceholder: "버킷 내부 경로 또는 프리픽스",
-      previewTitle: "파일 제한 샘플",
+      previewTitle: "데이터 미리보기",
       queryPlaceholder: "현재 불러온 파일 또는 폴더 검색",
       supportsPathSearch: true,
     };
@@ -2448,14 +2548,17 @@ function sourceExplorerConfig(sourceType: string, assets: Array<[string, string,
 
   if (sourceType === "PostgreSQL" || sourceType === "MongoDB") {
     const scopes = Array.from(new Set(assets.map(([, meta]) => meta.trim()).filter(Boolean)));
+    const scopeLabel = sourceType === "PostgreSQL" ? "스키마" : "데이터베이스";
     return {
       filterMode: "meta",
-      filterOptions: [
-        { label: sourceType === "PostgreSQL" ? "모든 스키마" : "모든 데이터베이스", value: "all" },
-        ...scopes.map((scope) => ({ label: scope, value: scope.toLowerCase() })),
-      ],
+      filterOptions: scopes.length > 1
+        ? [
+            { label: `${scopeLabel} 전체`, value: "all" },
+            ...scopes.map((scope) => ({ label: `${scopeLabel}: ${scope}`, value: scope.toLowerCase() })),
+          ]
+        : [{ label: `${scopeLabel}: ${scopes[0] ?? "-"}`, value: "all" }],
       pathPlaceholder: "",
-      previewTitle: sourceType === "PostgreSQL" ? "테이블 프로파일" : "문서 제한 샘플",
+      previewTitle: "데이터 미리보기",
       queryPlaceholder: sourceType === "PostgreSQL" ? "테이블명 검색" : "컬렉션명 검색",
       supportsPathSearch: false,
     };
@@ -2466,7 +2569,7 @@ function sourceExplorerConfig(sourceType: string, assets: Array<[string, string,
       filterMode: "none",
       filterOptions: [{ label: "모든 응답 필드", value: "all" }],
       pathPlaceholder: "",
-      previewTitle: "REST 응답 제한 샘플",
+      previewTitle: "데이터 미리보기",
       queryPlaceholder: "응답 필드 또는 경로 검색",
       supportsPathSearch: false,
     };
@@ -2477,7 +2580,7 @@ function sourceExplorerConfig(sourceType: string, assets: Array<[string, string,
       filterMode: "none",
       filterOptions: [{ label: "모든 파티션", value: "all" }],
       pathPlaceholder: "",
-      previewTitle: "Kafka 메시지 제한 샘플",
+      previewTitle: "데이터 미리보기",
       queryPlaceholder: "파티션 또는 메시지 필드 검색",
       supportsPathSearch: false,
     };
@@ -2487,7 +2590,7 @@ function sourceExplorerConfig(sourceType: string, assets: Array<[string, string,
     filterMode: "none",
     filterOptions: [{ label: "전체", value: "all" }],
     pathPlaceholder: "",
-    previewTitle: "제한 샘플",
+    previewTitle: "데이터 미리보기",
     queryPlaceholder: "탐색 항목 검색",
     supportsPathSearch: false,
   };
@@ -2514,36 +2617,6 @@ function sourceAssetMatchesExplorer(
 
 function isSecretSourceField(label: string) {
   return ["Access Key", "Password / Auth Token", "Secret Key", "Token / Secret"].includes(label);
-}
-
-function SourceBrandIcon({ kind }: { kind: "s3" | "postgres" | "mongo" | "rest" | "lake" | "kafka" }) {
-  if (kind === "rest") {
-    return (
-      <div className="source-brand-icon source-brand-rest" aria-hidden="true">
-        <Braces size={38} strokeWidth={2.2} />
-      </div>
-    );
-  }
-  if (kind === "lake") {
-    return (
-      <div className="source-brand-icon source-brand-asklake" aria-hidden="true">
-        <img alt="" src={askLakeLogoUrl} />
-      </div>
-    );
-  }
-  const brand = {
-    s3: { color: "#569a31", url: amazonS3IconUrl },
-    postgres: { color: "#4169e1", url: postgreSqlIconUrl },
-    mongo: { color: "#47a248", url: mongoDbIconUrl },
-    kafka: { color: "#231f20", url: apacheKafkaIconUrl },
-  }[kind];
-  return (
-    <div
-      className={`source-brand-icon source-brand-${kind}`}
-      aria-hidden="true"
-      style={{ backgroundColor: brand.color, maskImage: `url(${brand.url})`, WebkitMaskImage: `url(${brand.url})` }}
-    />
-  );
 }
 
 function sourceCheckIcon(label: string) {
@@ -5456,15 +5529,15 @@ export function TargetPage({
   );
   const sampleTargetSchema = useMemo(() => inferTargetSchema([], [], undefined), []);
   const [targetDataset, setTargetDataset] = useState(initialTarget.targetDataset);
-  const [databaseName, setDatabaseName] = useState(draftTarget?.databaseName ?? "asklake");
-  const [targetLayer, setTargetLayer] = useState<TargetLayer>(initialTargetLayer);
+  const databaseName = draftTarget?.databaseName ?? "asklake";
+  const targetLayer = initialTargetLayer;
   const [targetStoragePath, setTargetStoragePath] = useState(initialStoragePath);
   const [storagePathCustomized, setStoragePathCustomized] = useState(
     initialStoragePath !== buildTargetStoragePath(initialTarget.targetDataset, initialTargetLayer),
   );
   const [targetDescription, setTargetDescription] = useState(initialTarget.description);
-  const [targetFormat, setTargetFormat] = useState<TargetFileFormat>(initialTargetFormat);
-  const [targetOwner, setTargetOwner] = useState(draftTarget?.owner ?? initialTarget.owner);
+  const targetFormat = initialTargetFormat;
+  const targetOwner = draftTarget?.owner ?? initialTarget.owner;
   const [targetManager, setTargetManager] = useState(draftTarget?.manager ?? initialTarget.owner);
   const [targetTags, setTargetTags] = useState<string[]>(initialTarget.tags);
   const [customTag, setCustomTag] = useState("");
@@ -5592,13 +5665,6 @@ export function TargetPage({
     }
   };
 
-  const changeTargetLayer = (nextLayer: TargetLayer) => {
-    setTargetLayer(nextLayer);
-    if (!storagePathCustomized) {
-      setTargetStoragePath(buildTargetStoragePath(targetDataset.trim() || "target_dataset", nextLayer));
-    }
-  };
-
   const saveTargetConfig = () => {
     const config = buildConfig();
     const errors = validateTargetConfig(config, activeJsonParseFailed);
@@ -5645,7 +5711,7 @@ export function TargetPage({
   };
 
   return (
-    <CreationFlowLayout actions={<CreationTopActions nextDisabled={targetNextDisabled} prevLabel="이전" nextLabel="다음" split onPrev={onPrev} onNext={handleNext} />}>
+    <CreationFlowLayout className="target-page-layout" actions={<CreationTopActions nextDisabled={targetNextDisabled} prevLabel="이전" nextLabel="다음" split onPrev={onPrev} onNext={handleNext} />}>
       <EtlStepHeader
         className="etl-step-standalone-header"
         icon={<HardDrive />}
@@ -5668,14 +5734,31 @@ export function TargetPage({
             <FormFieldGroup className="field wide" label="데이터셋명">
               <Input className="input control-input" value={targetDataset} onChange={(event) => changeTargetDataset(event.target.value)} />
             </FormFieldGroup>
-            <FormFieldGroup className="field" label="오너">
-              <Input className="input control-input" value={targetOwner} onChange={(event) => setTargetOwner(event.target.value)} />
-            </FormFieldGroup>
-            <FormFieldGroup className="field" label="담당자">
+            <FormFieldGroup className="field target-manager-field" label="담당자">
               <Input className="input control-input" value={targetManager} onChange={(event) => setTargetManager(event.target.value)} />
             </FormFieldGroup>
             <FormFieldGroup className="field wide" label="설명">
               <Input className="input control-input" value={targetDescription} onChange={(event) => setTargetDescription(event.target.value)} />
+            </FormFieldGroup>
+            <FormFieldGroup className="field wide target-tags-field" label="태그">
+              {targetTags.length > 0 ? (
+                <TagList className="target-chip-grid" density="compact" role="group" aria-label="타겟 태그">
+                  {targetTags.map((tag) => (
+                    <Button aria-pressed={targetTags.includes(tag)} key={tag} size="sm" type="button" variant="secondary" onClick={() => toggleTag(tag)}>
+                      {tag}
+                    </Button>
+                  ))}
+                </TagList>
+              ) : null}
+              <div className="target-inline-controls">
+                <Input className="input control-input" placeholder="태그 입력" value={customTag} onChange={(event) => setCustomTag(event.target.value)} onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    addCustomTag();
+                  }
+                }} />
+                <Button type="button" variant="outline" onClick={addCustomTag}><Plus data-icon="inline-start" />추가</Button>
+              </div>
             </FormFieldGroup>
           </div>
         </section>
@@ -5687,33 +5770,8 @@ export function TargetPage({
               <h2>저장 위치 설정</h2>
             </div>
           </div>
-          <div className="target-config-form-grid destination">
-            <FormFieldGroup className="field target-db-field" label="DB 선택">
-              <DatabaseField useShadcnStyles value={databaseName} onChange={setDatabaseName} />
-            </FormFieldGroup>
-            <FormFieldGroup className="field" label="데이터 레이어">
-              <Select value={targetLayer} onValueChange={(layer) => changeTargetLayer(layer as TargetLayer)}>
-                <SelectTrigger aria-label="데이터 레이어 선택" size="sm">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {targetLayerOptions.map((layer) => <SelectItem key={layer} value={layer}>{layer}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </FormFieldGroup>
-            <FormFieldGroup className="field target-format-field" label="포맷">
-              <Select value={targetFormat} onValueChange={(format) => setTargetFormat(format as TargetFileFormat)}>
-                <SelectTrigger aria-label="파일 포맷 선택" className="target-format-select" size="sm">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {targetFormatOptions.map((format) => (
-                    <SelectItem key={format} value={format}>{format.toUpperCase()}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </FormFieldGroup>
-            <FormFieldGroup className="field wide target-storage-field" label="저장경로">
+          <div className="target-config-form-grid destination storage-only">
+            <FormFieldGroup className="field wide target-storage-field" label="저장 경로">
               <S3PathField useShadcnStyles value={targetStoragePath} onChange={(path) => {
                 setTargetStoragePath(path);
                 setStoragePathCustomized(true);
@@ -5725,43 +5783,18 @@ export function TargetPage({
           <div className="etl-review-card-header">
             <span className="etl-review-icon permission"><SlidersHorizontal size={17} /></span>
             <div>
-              <h2>파티션 및 태그</h2>
+              <h2>파티션 설정</h2>
             </div>
           </div>
-          <div className="target-config-split">
-            <div className="target-config-subsection">
-              <div className="target-config-subheader">
-                <BookOpen size={16} />
-                <h3>태그</h3>
+          <div className="target-partition-settings">
+            <div className="target-partition-table">
+              <div className="target-partition-header" aria-hidden="true">
+                <span>선택</span>
+                <span>컬럼명</span>
+                <span>데이터 타입</span>
               </div>
-              {targetTags.length > 0 ? (
-                <TagList className="target-chip-grid" density="compact" role="group" aria-label="타겟 태그">
-                  {targetTags.map((tag) => (
-                    <Button aria-pressed={targetTags.includes(tag)} key={tag} size="sm" type="button" variant="secondary" onClick={() => toggleTag(tag)}>
-                      {tag}
-                    </Button>
-                  ))}
-                </TagList>
-              ) : null}
-              <div className="target-inline-controls">
-                <Input className="input control-input" placeholder="직접 태그 추가" value={customTag} onChange={(event) => setCustomTag(event.target.value)} onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    addCustomTag();
-                  }
-                }} />
-                <Button type="button" variant="outline" onClick={addCustomTag}><Plus data-icon="inline-start" />추가</Button>
-              </div>
-            </div>
-            <div className="target-config-subsection">
-              <div className="target-config-subheader">
-                <SlidersHorizontal size={16} />
-                <h3>파티션</h3>
-              </div>
-              <div className="target-partition-settings">
-                <div className="target-partition-grid" role="group" aria-label="파티션 컬럼 다중 선택">
-                  {partitionCandidates.map(renderPartitionOption)}
-                </div>
+              <div className="target-partition-grid" role="group" aria-label="파티션 컬럼 다중 선택">
+                {partitionCandidates.map(renderPartitionOption)}
               </div>
             </div>
           </div>

@@ -27,7 +27,7 @@
 | Guardrail | Enforced By | Current Status | Failure Behavior | Owner | Notes |
 | --- | --- | --- | --- | --- | --- |
 | Frontend UI checks before merge | GitHub Actions workflow running `cd frontend && npm run verify:ui-regressions && npm run build` | `enabled` | block merge when required check is enabled and the workflow fails | maintainer | PR에서 SQL/Catalog/Dashboard UI regression contract와 Vite build를 함께 확인 |
-| Prod compose config check | CI workflow candidate running `docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml config` | `planned` | block deploy workflow when compose config is invalid | maintainer | Phase 3에서 prod-like compose 파일 추가 |
+| Prod compose config check | `docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml config --quiet` and `backend/scripts/verify-production-spark-contract.mjs` | `manual` | block operator deploy when Compose, Spark REST, UID 185 mounts, or Docker-socket contract is invalid | maintainer | CI required check 전환 전까지 PR과 배포 직전에 수동 실행 |
 | Backend deploy image build | CI/deploy workflow candidate running `docker build -t asklake-backend-deploy-check:local backend` | `planned` | catch Python/package incompatibility before EC2 compose rebuild | maintainer | FastAPI backend uses `python:3.13-slim` and `backend/requirements.txt` |
 | Secret scanning / push protection | GitHub repository setting | `unknown` | block or warn on secret push | repo admin | repository admin 확인 필요 |
 | Protected integration branches | GitHub repository ruleset on `main`, `dev`, and `pair` | `enabled` | block direct push or force push; require changes through PR | repo admin | ruleset: `Push 금지` |
@@ -68,7 +68,7 @@
 
 | Failure | How to fix |
 | --- | --- |
-| `npm run verify:ui-regressions` failed | SQL 분석의 Nessie Popover/Bubble/Collapsible·Dashboard WidgetConfigPanel 재사용·차트/데이터 전환·Job wizard, Catalog wide button, Dashboard 목록, ApexCharts 위젯의 최근 회귀 방지 스타일/렌더 계약을 확인하고 관련 파일을 수정한다. |
+| `npm run verify:ui-regressions` failed | SQL 분석의 editor 불변 높이·Nessie Popover/Bubble/Collapsible·Dashboard WidgetConfigPanel 재사용·차트/데이터/실행 정보 전환·Trino timeline/cursor pagination/server CSV·Job wizard, Catalog wide button, Dashboard 목록, ApexCharts 위젯의 최근 회귀 방지 계약을 확인하고 관련 파일을 수정한다. |
 | `npm run build` failed | TypeScript error와 Vite build output을 확인하고 관련 파일을 수정한다. |
 | Live API mode failed | `VITE_API_BASE_URL`, backend server 상태, `docs/api-contract.md` response shape를 확인한다. |
 | Prod compose config failed | `deploy/.env.example`의 필수 env key, `deploy/docker-compose.prod.yml`, Dockerfile path를 확인한다. |
@@ -103,9 +103,13 @@ Scenario audit은 새 hard rule을 추가하는 절차가 아니다.
 | Test Layer | Runs By Default | Scope | Expected Result |
 | --- | --- | --- | --- |
 | Frontend UI checks | yes on matching PR paths | `frontend` | UI regression contracts and TypeScript/Vite build pass |
-| Prod compose config | no, local/manual until CI exists | `deploy/docker-compose.prod.yml` | Docker Compose config renders with `deploy/.env.example` |
+| Prod compose config | no, local/manual until CI exists | `deploy/docker-compose.prod.yml` | `TRINO_ENABLED=false` excludes every Trino-profile service without Trino secrets/files/buckets; `true` plus `COMPOSE_PROFILES=trino` renders the coordinator/bootstrap/workers with internal + outbound networks |
 | Backend deploy image build | no, local/manual until CI exists | `backend/Dockerfile`, `backend/requirements.txt` | backend Docker image builds with production Python base image |
-| Deploy dependency verification | manual | deploy Compose, local Airflow Compose, backend image, frontend image, Spark image, Airflow image, Airflow DAG import | `scripts/verify-deploy-dependencies.sh` passes before deploy |
+| Deploy dependency verification | manual | deploy Compose/env, health JSON readiness, Spark REST create/status contract, backend/frontend/Spark/Trino images, Airflow DAG import | `tests/deploy/deploy-scripts-regression.sh`, `backend/scripts/verify-production-spark-contract.mjs`, and `scripts/verify-deploy-dependencies.sh` pass before deploy |
+| Trino contract verification | matching backend/frontend paths | Query Run, registration, result storage, collector fencing, actor reservation, timeline state | `verify:trino-query-foundation`, `verify:query-engine-registration`, `verify:trino-result-storage`, `verify:trino-collector-resilience`, `verify:trino-submission-guard`, `test:trino-timeline` pass |
+| Trino production readiness | deploy-time when `TRINO_ENABLED=true` | TLS/auth, read-only query identity, materializer CTAS/describe/drop, AWS S3 Warehouse/Query Result bucket round trip through EC2 instance profile | `verify:trino-production-readiness` passes after Compose health |
+| AWS S3 startup readiness | every production Compose startup | Raw bucket list, Output bucket put/head/delete with EC2 instance role | `aws-s3-readiness` completes before backend starts; bucket auto-create and static AWS keys are forbidden |
+| AWS S3 output identity | frontend build and every Spark run/Catalog publish | Target UI bucket, Spark writer bucket, Catalog storage location | production frontend receives `ASKLAKE_SPARK_OUTPUT_BUCKET`; only legacy `asklake-output` roots are normalized and explicit custom buckets remain unchanged |
 | PR event checks | no | future GitHub Actions | changed code satisfies required checks |
 | Read-only lifecycle audit | manual | docs, PR, branch status | drift is reported without changing remote state |
 | Admin setting audit | manual | branch protection, secrets, rulesets | actual settings match inventory or gap is recorded |

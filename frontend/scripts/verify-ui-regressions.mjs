@@ -22,6 +22,17 @@ const read = (path) => {
 
 const checks = [
   {
+    name: "ETL target storage path uses the deployed Spark output bucket",
+    file: "src/pages/etl/EtlPages.tsx",
+    patterns: [
+      /VITE_SPARK_OUTPUT_BUCKET \?\? "asklake-output"/,
+      /return `s3a:\/\/\$\{SPARK_OUTPUT_BUCKET\}\/\$\{targetDataset\}\/\$\{targetLayer\.toLowerCase\(\)\}\//,
+    ],
+    forbiddenPatterns: [
+      /return `s3a:\/\/asklake-output\/\$\{targetDataset\}/,
+    ],
+  },
+  {
     name: "ETL permission composes the governance, policy, and searchable grant workflow with shadcn controls",
     file: "src/pages/etl/EtlPages.tsx",
     patterns: [
@@ -43,7 +54,7 @@ const checks = [
       /principalType: "user" as const/,
       /data-testid="permission-options-loading"/,
     ],
-    forbiddenPatterns: [
+    additionalForbiddenPatterns: [
       /<CardTitle>Governance Check<\/CardTitle>/,
       /<CardTitle>Access Policy<\/CardTitle>/,
       /<CardTitle>Role Grants<\/CardTitle>/,
@@ -67,6 +78,34 @@ const checks = [
       /APPROVAL_STATUS_OPTIONS/,
       /label: "승인자"/,
       /label: "승인 상태"/,
+    ],
+  },
+  {
+    name: "Production login hides demo credentials and public signup by default",
+    file: "src/pages/auth/AuthPage.tsx",
+    patterns: [
+      /const demoDefaultsEnabled = import\.meta\.env\.DEV;/,
+      /const publicSignupEnabled = import\.meta\.env\.DEV \|\| import\.meta\.env\.VITE_AUTH_PUBLIC_SIGNUP === "true";/,
+      /useState\(demoDefaultsEnabled \? "admin\.user@asklake\.local" : ""\)/,
+      /\{publicSignupEnabled && \(/,
+      /demoDefaultsEnabled\s*\? <small>Admin/,
+    ],
+  },
+  {
+    name: "Authentication failures stay server-side instead of creating browser-local users",
+    file: "src/services/authApi.ts",
+    patterns: [
+      /return apiClient\.get<AuthSessionResponse>\("\/api\/auth\/session"\);/,
+      /return apiClient\.post<AuthUserResponse>\("\/api\/auth\/login", payload\);/,
+      /return apiClient\.post<AuthUserResponse>\("\/api\/auth\/signup", payload\);/,
+    ],
+    forbiddenPatterns: [
+      /asklake\.tempAuth/,
+      /asklake\.mockAuthUser/,
+      /shouldUseTempAuth/,
+      /localStorage/,
+      /sessionStorage/,
+      /apiConfig\.useMock/,
     ],
   },
   {
@@ -109,6 +148,8 @@ const checks = [
       /<SqlDatasetContextPanel/,
       /<SqlQueryEditorPanel/,
       /<SqlResultsPanel/,
+      /executionEnabled=\{showExecutionView\}/,
+      /resultDraft=\{visibleResult\}/,
       /<SqlJobWizardDialog/,
       /onCreate=\{createDerivedDatasetJob\}/,
       /onCreateDatasetJob: \(request: CreateDerivedDatasetRequest\) => Promise<boolean>;/,
@@ -128,6 +169,9 @@ const checks = [
       /dashboardDialog/,
       /RAG 사용 가능/,
       /sql-materialize-tags/,
+      /sql-query-evaluation/,
+      /sql-run-timeline/,
+      /<TrinoExecutionTimeline/,
       /title=\{resultDraft \? `\$\{resultDraft\.rowCount\}행 조회됨`/,
       />완료</,
       /실행 ID \{resultDraft\.runId\}/,
@@ -163,11 +207,108 @@ const checks = [
       /function SqlResultContent/,
       /aria-label="차트 보기"[\s\S]*차트 보기/,
       /aria-label="데이터 미리보기"[\s\S]*데이터 미리보기/,
+      /aria-label="실행 정보"[\s\S]*실행 정보/,
+      /resultView !== "execution"/,
       /<SqlChartEmptyState \/>/,
       /<DialogTitle>SQL 결과 전체 보기<\/DialogTitle>/,
       /<SqlResultChart chartConfig=\{chartConfig\} source=\{activeChartSource\} \/>/,
       /className=\{styles\.resultToolbar\}/,
       /className=\{styles\.resultScroll\}/,
+    ],
+  },
+  {
+    name: "SQL preview table uses readable centered widths for narrow result sets",
+    file: "src/pages/sql/SqlPreviewTable.module.css",
+    patterns: [
+      /\.wrap[\s\S]*max-width:\s*100%;[\s\S]*margin-right:\s*auto;[\s\S]*margin-left:\s*auto;/,
+      /\.wrap\[data-column-count="1"\][\s\S]*width:\s*min\(100%, 480px\);/,
+      /\.wrap\[data-column-count="2"\][\s\S]*width:\s*min\(100%, 720px\);/,
+      /\.wrap\[data-column-count="3"\][\s\S]*width:\s*min\(100%, 900px\);/,
+    ],
+    forbiddenPatterns: [
+      /\.wrap\[data-column-count="[123]"\] \.table/,
+    ],
+  },
+  {
+    name: "SQL preview keeps identifier columns left aligned while numeric measures stay right aligned",
+    file: "src/pages/sql/SqlPreviewTable.tsx",
+    patterns: [
+      /function isIdentifierColumn\(column: string\)/,
+      /\(\?:\^\|\[_\\s-\]\)id\$\/i/,
+      /align: columnKind === "number" && !identifierColumn \? "right" : "left"/,
+    ],
+  },
+  {
+    name: "SQL compact table results keep the footer inside the panel without a horizontal scrollbar",
+    file: "src/pages/sql/SqlResultsPanel.tsx",
+    patterns: [
+      /const isCompactTableResult = Boolean\(isTableView && resultDraft && resultDraft\.rows\.length <= 8\);/,
+      /const resultScrollbars = resultView === "execution" \|\| \(isCompactTableResult && resultDraft && resultDraft\.columns\.length <= 4\)[\s\S]*\? "vertical"[\s\S]*: "both";/,
+      /styles\.resultPanelCompact/,
+      /overflow=\{isCompactTableResult \? "visible" : "hidden"\}/,
+      /scrollbars=\{resultScrollbars\}/,
+      /styles\.resultBodyCompact/,
+      /className=\{styles\.resultActions\}/,
+    ],
+  },
+  {
+    name: "SQL compact result CSS lets small previews grow to content height",
+    file: "src/pages/sql/SqlAnalysisPage.module.css",
+    patterns: [
+      /\.resultPanelCompact[\s\S]*align-self:\s*start;[\s\S]*height:\s*auto;[\s\S]*overflow:\s*visible;/,
+      /\.resultPanelCompact \.resultWorkspace[\s\S]*height:\s*auto;[\s\S]*grid-template-rows:\s*max-content max-content;[\s\S]*overflow:\s*visible;/,
+      /\.resultBodyCompact[\s\S]*grid-template-rows:\s*max-content repeat\(2, max-content\);[\s\S]*overflow:\s*visible;/,
+      /\.resultBodyCompact \.resultScroll[\s\S]*height:\s*auto;/,
+      /\.resultActions button[\s\S]*gap:\s*6px;[\s\S]*padding-right:\s*8px;[\s\S]*padding-left:\s*8px;[\s\S]*font-size:\s*14px;/,
+    ],
+  },
+  {
+    name: "Trino execution information stays in a scoped result view",
+    file: "src/pages/sql/SqlExecutionInfo.tsx",
+    patterns: [
+      /aria-label="실행 평가"/,
+      /aria-label="실행 과정"/,
+      /buildTrinoExecutionTimelineModel/,
+      /className=\{styles\.root\}/,
+      /function IndeterminateProgress/,
+      /role="progressbar"/,
+      /행 읽음/,
+      /<span>읽은 행 <strong>/,
+    ],
+    forbiddenPatterns: [
+      /sql-query-evaluation/,
+      /sql-run-timeline/,
+    ],
+  },
+  {
+    name: "SQL page feature icons share the requested table glyph",
+    file: "src/pages/sql/SqlPageIcon.tsx",
+    patterns: [
+      /import \{ Table2, type LucideProps \} from "lucide-react";/,
+      /SQL_PAGE_PANEL_ICON_CLASS_NAME = "rounded-xl border border-slate-200 bg-white text-blue-700 shadow-sm"/,
+      /export function SqlPageIcon\(props: LucideProps\)/,
+      /<Table2 \{\.\.\.props\} \/>/,
+    ],
+  },
+  {
+    name: "SQL panel headers use the reference white framed icon treatment",
+    file: "src/pages/sql/SqlDatasetContextPanel.tsx",
+    patterns: [
+      /iconClassName=\{SQL_PAGE_PANEL_ICON_CLASS_NAME\}/,
+    ],
+  },
+  {
+    name: "SQL editor header uses the reference white framed icon treatment",
+    file: "src/pages/sql/SqlQueryEditorPanel.tsx",
+    patterns: [
+      /iconClassName=\{SQL_PAGE_PANEL_ICON_CLASS_NAME\}/,
+    ],
+  },
+  {
+    name: "SQL result header uses the reference white framed icon treatment",
+    file: "src/pages/sql/SqlResultsPanel.tsx",
+    patterns: [
+      /iconClassName=\{SQL_PAGE_PANEL_ICON_CLASS_NAME\}/,
     ],
   },
   {
@@ -225,11 +366,44 @@ const checks = [
     ],
   },
   {
-    name: "Mock Nessie SQL generation follows common chart dimensions and metrics",
+    name: "AI workspace submits through the governed SQL suggestion contract",
+    file: "src/pages/ai/AiChatPage.tsx",
+    patterns: [
+      /import \{ generateQueryAiSuggestion, getQueryAiErrorMessage, QUERY_AI_REQUEST_TIMEOUT_MS \} from "\.\.\/\.\.\/services\/queryAiService";/,
+      /queryAiRequestRef\.current\?\.controller\.abort\(\);/,
+      /previousRequest\?\.controller\.abort\(\);/,
+      /const suggestion = await generateQueryAiSuggestion\(/,
+      /signal: controller\.signal,/,
+      /timeoutMs: QUERY_AI_REQUEST_TIMEOUT_MS,/,
+      /finally \{[\s\S]*conversation\.id === conversationId \? \{ \.\.\.conversation, pending: false \}/,
+      /content: getQueryAiErrorMessage\(error\)/,
+      /onAction\("ai\.chat\.suggestion_created", "\/api\/query\/ai-suggestions"/,
+      /onAction\("ai\.chat\.suggestion_failed", "\/api\/query\/ai-suggestions"/,
+      /message\.sql \? <pre className="ai-chat-sql">/,
+    ],
+    forbiddenPatterns: [/runtimeUnavailable/, /prompt_drafted/],
+  },
+  {
+    name: "AI suggestions preserve only the backend-validated response",
     file: "src/services/queryAiService.ts",
     patterns: [
-      /\[\/채널\|channel\/, \/channel\/\]/,
-      /\[\/주문\|order\/, \/\^\(orders\?\|order_count\)\$\/\]/,
+      /return apiClient\.post<QueryAiSuggestion>\("\/api\/query\/ai-suggestions"/,
+      /export const QUERY_AI_REQUEST_TIMEOUT_MS = 25_000;/,
+      /signal: options\.signal,/,
+      /timeoutMs: options\.timeoutMs \?\? QUERY_AI_REQUEST_TIMEOUT_MS,/,
+      /error instanceof ApiRequestTimeoutError/,
+      /hasErrorName\(error, "AbortError"\)/,
+    ],
+    forbiddenPatterns: [/useMock/, /draftSql\(/, /ensureSelectedJoinSuggestion/, /frontend JOIN 초안 fallback/],
+  },
+  {
+    name: "API client keeps existing calls compatible while supporting cancellation and timeouts",
+    file: "src/services/apiClient.ts",
+    patterns: [
+      /export type ApiRequestOptions = \{[\s\S]*signal\?: AbortSignal;[\s\S]*timeoutMs\?: number;/,
+      /signal: timeoutController\?\.signal \?\? signal,/,
+      /if \(didTimeout\) throw new ApiRequestTimeoutError\(timeoutMs as number\);/,
+      /post: <T>\(path: string, body: unknown, options: ApiRequestOptions = \{\}\)/,
     ],
   },
   {
@@ -247,6 +421,20 @@ const checks = [
     forbiddenPatterns: [
       /prepareSqlDatasetJobDraft/,
       /onFlowChange\("review"\)/,
+    ],
+  },
+  {
+    name: "ETL Job collection upserts and reconciles rows by stable job id",
+    file: "src/hooks/useAskLakeData.ts",
+    patterns: [
+      /function upsertJobById\(/,
+      /jobs\.filter\(\(job\) => job\.id !== nextJob\.id\)/,
+      /function replaceJobById\(/,
+      /setJobs\(\(items\) => upsertJobById\(items, normalizedJob\)\)/,
+      /setJobs\(\(items\) => replaceJobById\(items, jobId, updater\)\)/,
+    ],
+    forbiddenPatterns: [
+      /items\.filter\(\(item\) => item\.name !== normalizedJob\.name\)/,
     ],
   },
   {
@@ -349,14 +537,18 @@ const checks = [
     name: "SQL workspace height matches the dataset panel in all result states",
     file: "src/pages/sql/SqlAnalysisPage.module.css",
     patterns: [
-      /--sql-workspace-height:\s*min\(860px, calc\(100dvh - 24px\)\);/,
+      /--sql-workspace-height:\s*clamp\(800px, calc\(100dvh - 156px\), 860px\);/,
       /\.datasetPanel[\s\S]*height:\s*var\(--sql-workspace-height\);/,
       /\.workspace[\s\S]*height:\s*var\(--sql-workspace-height\);/,
       /\.resultPanel[\s\S]*grid-template-rows:\s*max-content minmax\(0, 1fr\);/,
+      /\.resultPanelActive[\s\S]*grid-template-rows:\s*minmax\(0, 1fr\);/,
+      /\.resultWorkspace[\s\S]*height:\s*100%;/,
+      /\.resultWorkspace[\s\S]*overflow:\s*hidden;/,
       /\.resultToolbar[\s\S]*display:\s*flex;/,
       /\.resultToolbar[\s\S]*flex-wrap:\s*wrap;/,
       /@media \(max-width: 860px\)[\s\S]*\.datasetPanel[\s\S]*height:\s*min\(720px, 80dvh\);/,
       /@media \(max-width: 860px\)[\s\S]*\.workspace[\s\S]*grid-column:\s*1;/,
+      /@media \(max-width: 1180px\)[\s\S]*\.workspace,[\s\S]*\.collapsed \.workspace[\s\S]*height:\s*auto;[\s\S]*max-height:\s*none;/,
       /\.resultScroll,[\s\S]*height:\s*100%;/,
     ],
   },
@@ -380,6 +572,29 @@ const checks = [
     ],
   },
   {
+    name: "Catalog metadata uses live detail values and schema samples",
+    file: "src/pages/catalog/CatalogPage.tsx",
+    patterns: [
+      /getCatalogDataset\(datasetId\)/,
+      /formatCatalogDateTime\(previewDataset\.lastUpdated\)/,
+      /className="catalog-result-description"/,
+      /const firstSampleRow = dataset\.sampleRows\[0\] \?\? \[\];/,
+      /accessorKey: "sample"/,
+      /header: "샘플"/,
+    ],
+  },
+  {
+    name: "Catalog schema modal excludes the duplicate sample-data viewer",
+    file: "src/pages/catalog/CatalogPage.tsx",
+    patterns: [
+      /<CatalogDatasetViewer dataset=\{previewDataset\} \/>/,
+      /function CatalogDatasetViewer\([\s\S]*<CatalogSchema dataset=\{dataset\} \/>[\s\S]*<\/div>/,
+    ],
+    forbiddenPatterns: [
+      /function CatalogDatasetViewer\([\s\S]*?<CatalogSample dataset=\{dataset\} \/>[\s\S]*?function CatalogSchemaTable/,
+    ],
+  },
+  {
     name: "SQL analysis uses visible shadcn slider styling",
     file: "src/components/ui/slider.tsx",
     patterns: [
@@ -389,20 +604,75 @@ const checks = [
     ],
   },
   {
-    name: "SQL dataset browser uses the Shadcnblocks line tree",
+    name: "SQL dataset browser uses the shared virtualized explorer tree",
     file: "src/pages/sql/SqlDatasetRow.tsx",
     patterns: [
-      /from "@\/components\/kibo-ui\/tree";/,
-      /<TreeProvider[\s\S]*expandedIds=\{expandedIds\}[\s\S]*showLines/,
-      /<TreeNodeTrigger[\s\S]*data-sql-dataset-row=""/,
-      /onClick=\{\(\) => onSelect\(dataset\)\}[\s\S]*toggleOnClick=\{false\}/,
-      /<TreeExpander hasChildren \/>/,
-      /<TreeNodeContent className="pb-2" hasChildren>/,
-      /import \{ StatusBadge \} from "@\/components\/ui\/status-badge";/,
+      /import \{ ExplorerTree, type ExplorerTreeNode \} from "@\/components\/ui\/explorer-tree";/,
+      /<ExplorerTree<SqlDatasetNode>/,
+      /data=\{treeData\}/,
+      /data-sql-dataset-row/,
+      /const initialOpenState = useMemo\(\(\) => \(\{/,
+      /const onSelectRef = useRef\(onSelect\);/,
+      /onSelectRef\.current = onSelect;/,
+      /const onToggleRef = useRef\(onToggle\);/,
+      /const datasetsRef = useRef\(datasets\);/,
+      /const getNodeIcon = useCallback\(\(node: NodeApi<SqlDatasetNode>\) =>/,
+      /const getNodeRowProps = useCallback\(\(node: NodeApi<SqlDatasetNode>\) =>/,
+      /const handleNodeToggle = useCallback\(\(nodeId: string\) =>/,
+      /onClick: node\.data\.kind === "dataset"[\s\S]*?event\.preventDefault\(\);[\s\S]*?onSelectRef\.current\(node\.data\.dataset as CatalogDataset\)/,
+      /title: node\.data\.label,\s*\}\), \[\]\);/,
+      /getIcon=\{getNodeIcon\}/,
+      /getRowProps=\{getNodeRowProps\}/,
+      /initialOpenState=\{initialOpenState\}/,
       /selectedDatasetIds: ReadonlySet<string>;/,
-      /data-sql-dataset-selected=\{selected \? "" : undefined\}/,
-      /onClick=\{\(\) => onSelect\(dataset\)\}/,
-      /<StatusBadge className="ml-auto shrink-0" size="sm" tone="success">선택됨<\/StatusBadge>/,
+      /selected: selectedDatasetIds\.has\(dataset\.id\)/,
+      /data-sql-dataset-selected/,
+      /onToggle=\{handleNodeToggle\}/,
+      /toggleOnRowPress=\{false\}/,
+    ],
+    forbiddenPatterns: [
+      /components\/kibo-ui\/tree/,
+      /components\/ui\/tree-view/,
+      /StatusBadge/,
+      /getTrailing=/,
+    ],
+  },
+  {
+    name: "SQL dataset page keeps a stable array across unrelated parent renders",
+    file: "src/pages/sql/useSqlContextPanel.ts",
+    patterns: [
+      /const pageDatasets = useMemo\(/,
+      /\(\) => filteredDatasets\.slice\(pageStartIndex, pageStartIndex \+ pageSize\)/,
+      /\[filteredDatasets, pageSize, pageStartIndex\]/,
+    ],
+  },
+  {
+    name: "SQL selected datasets toggle on re-click and promote the next base dataset",
+    file: "src/pages/sql/SqlAnalysisPage.tsx",
+    patterns: [
+      /const addSelectedDataset = \(targetDataset: CatalogDataset\) => \{\s*if \(selectedDatasetIdSet\.has\(targetDataset\.id\)\) \{\s*removeSelectedDataset\(targetDataset\);/,
+      /const nextBaseDatasetId = targetDataset\.id === baseDataset\?\.id \? nextSelectedIds\[0\] \?\? null : baseDataset\?\.id \?\? null;/,
+      /if \(targetDataset\.id === baseDataset\?\.id\) setBaseDatasetId\(nextBaseDatasetId\);/,
+      /if \(nextSelectedIds\.length === 0\) \{\s*setQuery\(""\);\s*setCursorIndex\(0\);\s*setPreflightResult\(null\);/,
+    ],
+    forbiddenPatterns: [
+      /if \(targetDataset\.id === baseDataset\?\.id\) return;/,
+    ],
+  },
+  {
+    name: "Shared explorer tree composes react-arborist behavior with AskLake row UI",
+    file: "src/components/ui/explorer-tree.tsx",
+    patterns: [
+      /from "react-arborist";/,
+      /new ResizeObserver\(updateHeight\)/,
+      /<Tree<T>/,
+      /disableDrag=\{treeProps\.disableDrag \?\? true\}/,
+      /disableDrop=\{treeProps\.disableDrop \?\? true\}/,
+      /disableEdit=\{treeProps\.disableEdit \?\? true\}/,
+      /aria-expanded=\{node\.isInternal \? node\.isOpen : undefined\}/,
+      /aria-selected=\{isSelected \|\| undefined\}/,
+      /if \(toggleOnRowPress && node\.isInternal\) node\.toggle\(\);/,
+      /node\.handleClick\(event\);/,
     ],
   },
   {
@@ -422,6 +692,73 @@ const checks = [
       /return !label\.startsWith\("__"\) && !hiddenJobDetailFieldLabels\.has\(label\);/,
       /detail=\{realtime \? job\.scheduleSummary \?\? formatJobSchedule\(job\.schedule\) : formatJobSchedule\(job\.schedule\)\}/,
       /\{ label: "주기", value: formatJobSchedule\(job\.schedule\) \}/,
+    ],
+  },
+  {
+    name: "ETL source can select a folder and persist its collection policy",
+    file: "src/pages/etl/EtlPages.tsx",
+    patterns: [
+      /const updateCollectionConfig = \(patches:/,
+      /const loadSourceAssetChildren = async \(folderPath: string\) =>/,
+      /const folderPrefix = normalizeFolderPrefix\(folderPath\)/,
+      /listSourceAssets\(activeSourceType, editableFields, folderPrefix\)/,
+      /if \(assetMeta === "folder" \|\| assetPath\.endsWith\("\/"\)\)/,
+      /onAction\("etl\.source\.asset_selected"/,
+    ],
+  },
+  {
+    name: "Collection policy changes invalidate stale sample and schema state",
+    file: "src/pages/etl/EtlPages.tsx",
+    patterns: [
+      /const updateCollectionConfig = \(patches:/,
+      /\[\.\.\.patches, \["__Sample Object", ""\]\]/,
+      /draftPatch: \{\}/,
+      /setConnectionStatus\("idle"\)/,
+      /setSourceStage\("connect"\)/,
+      /requiresRecordParsing: false/,
+      /schemaFingerprint: undefined/,
+      /summary: "수집 범위 변경 · 스키마 재추론 필요"/,
+    ],
+  },
+  {
+    name: "Source tree separates folder navigation from folder collection selection",
+    file: "src/pages/etl/SourceAssetTree.tsx",
+    patterns: [
+      /if \(node\.isFolder\) \{\s*toggleFolder\(node\);\s*return;/s,
+      /aria-label=\{`폴더 \$\{node\.name\} 선택`\}/,
+      /void onSelect\(node\.path\)/,
+    ],
+  },
+  {
+    name: "Job detail tolerates partial stats so delete remains reachable",
+    file: "src/pages/ingest/JobsPages.tsx",
+    patterns: [
+      /const stats = \{ \.\.\.fallbackJobStats\(job\), \.\.\.\(job\.stats \?\? \{\}\) \};/,
+      /const totalRuns = String\(stats\.totalRuns \?\? "-"\);/,
+    ],
+  },
+  {
+    name: "Live Job deletion updates persisted rows and list facets together",
+    file: "src/hooks/useAskLakeData.ts",
+    patterns: [
+      /deletePipelineJob as deleteLivePipelineJob/,
+      /if \(!apiConfig\.useMock\) await deleteLivePipelineJob\(job\.id\);/,
+      /setJobListFacets\(\(facets\) => removeJobFacetCounts\(facets, job\)\);/,
+      /writeAuditLog\("etl\.job\.delete_failed"/,
+    ],
+  },
+  {
+    name: "Jobs landing run modal follows centrally polled state by stable run identity",
+    file: "src/pages/ingest/JobsPages.tsx",
+    patterns: [
+      /type LatestRunModalSelection = \{[\s\S]*jobId: string;[\s\S]*runId: string;/,
+      /const latestRunModal = useMemo\(\(\) => \{[\s\S]*jobs\.find\(\(candidate\) => candidate\.id === latestRunModalSelection\.jobId\)/,
+      /job\.runHistory\?\.find\(\(candidate\) => candidate\.runId === latestRunModalSelection\.runId\)/,
+      /setLatestRunModalSelection\(\{[\s\S]*jobId: job\.id,[\s\S]*runId: latestRun\.runId,/,
+      /onClose=\{\(\) => setLatestRunModalSelection\(null\)\}/,
+    ],
+    forbiddenPatterns: [
+      /setLatestRunModal\(\{ job, run: latestRun \}\)/,
     ],
   },
   {
@@ -508,13 +845,24 @@ const checks = [
     ],
   },
   {
-    name: "Target layer is an explicit setting for every ETL source",
+    name: "Target settings keep normalized payload defaults while simplifying the visible form",
     file: "src/pages/etl/EtlPages.tsx",
     patterns: [
-      /const \[targetLayer, setTargetLayer\] = useState<TargetLayer>\(initialTargetLayer\);/,
-      /label="데이터 레이어"/,
-      /targetLayerOptions\.map\(\(layer\) => <SelectItem/,
+      /const targetLayer = initialTargetLayer;/,
+      /const targetFormat = initialTargetFormat;/,
+      /className="field wide target-storage-field" label="저장 경로"/,
+      /className="field wide target-tags-field" label="태그"/,
+      /<h2>파티션 설정<\/h2>/,
+      /className="target-partition-header"/,
+      /<span>컬럼명<\/span>/,
+      /<span>데이터 타입<\/span>/,
       /targetLayer,/,
+    ],
+    forbiddenPatterns: [
+      /label="DB 선택"/,
+      /label="데이터 레이어"/,
+      /aria-label="파일 포맷 선택"/,
+      /label="오너"/,
     ],
   },
   {
@@ -574,6 +922,57 @@ const checks = [
       /<Alert variant="destructive">/,
       /<DashboardListSkeleton \/>/,
       /hasActiveFilters=\{Boolean\(searchQuery\.trim\(\) \|\| ownerFilter !== "all" \|\| selectedTags\.length\)\}/,
+    ],
+  },
+  {
+    name: "Dashboard API adapters do not hide backend failures with local state",
+    file: "src/services/dashboardRuntimeApi.ts",
+    patterns: [
+      /return apiClient\.get<DashboardRuntimeResponse>/,
+      /return apiClient\.post<DashboardRuntimeResponse>/,
+      /return apiClient\.patch<\{ ok: true \}>/,
+    ],
+    forbiddenPatterns: [
+      /apiConfig/,
+      /runtimeStore/,
+      /withRuntimeFallback/,
+      /defaultWidgetData/,
+    ],
+  },
+  {
+    name: "Dashboard list uses backend state without mock responses",
+    file: "src/services/dashboardApi.ts",
+    patterns: [
+      /apiClient\.post<DashboardListResponse \| DashboardPageResponse>/,
+      /apiClient\.post<CreateDashboardResponse>/,
+      /apiClient\.delete<DeleteDashboardResponse>/,
+    ],
+    forbiddenPatterns: [
+      /apiConfig/,
+      /createLocalDashboard/,
+      /getMockDashboardListResponse/,
+      /shouldUseLocalDashboardFallback/,
+    ],
+  },
+  {
+    name: "Dashboard Catalog options keep schema metadata without sample rows",
+    file: "src/pages/dashboard/runtime/dashboardDatasetAdapters.ts",
+    patterns: [
+      /catalogDatasetToDashboardOption/,
+      /dataset\.permissions\?\.canQuery !== false/,
+    ],
+    forbiddenPatterns: [
+      /dataset\.sampleRows/,
+      /catalogRowsToRecords/,
+    ],
+  },
+  {
+    name: "Dashboard widget editing restores server source config",
+    file: "src/pages/dashboard/runtime/WidgetConfigPanel.tsx",
+    patterns: [
+      /const sourceConfig = runtimeConfig\.sourceConfig;/,
+      /dataMode === "server_aggregated" \|\| dataMode === "server_preview"/,
+      /sourceConfig: nextConfig/,
     ],
   },
   {
@@ -696,22 +1095,55 @@ const checks = [
     ],
   },
   {
-    name: "Dashboard dataset sidebar uses shadcn-compatible tree states",
+    name: "Dashboard dataset sidebar uses the shared virtualized explorer tree",
     file: "src/pages/dashboard/runtime/DatasetSidebar.tsx",
     patterns: [
-      /from "@\/components\/kibo-ui\/tree";/,
+      /import \{ ExplorerTree, type ExplorerTreeNode \} from "@\/components\/ui\/explorer-tree";/,
       /import \{ Alert, AlertDescription, AlertTitle \} from "@\/components\/ui\/alert";/,
       /import \{ Empty, EmptyDescription, EmptyHeader, EmptyTitle \} from "@\/components\/ui\/empty";/,
-      /import \{ ScrollArea \} from "@\/components\/ui\/scroll-area";/,
       /import \{ Skeleton \} from "@\/components\/ui\/skeleton";/,
-      /<TreeProvider[\s\S]*showLines/,
-      /<TreeView aria-label="Dashboard dataset tree"/,
-      /data-dashboard-dataset-node=\{item\.kind\}/,
+      /<ExplorerTree<DatasetTreeNode>/,
+      /ariaLabel="Dashboard dataset tree"/,
+      /data-dashboard-dataset-node/,
+      /onNodePress=\{\(node: NodeApi<DatasetTreeNode>\) =>/,
     ],
     forbiddenPatterns: [
-      /react-arborist/,
+      /components\/kibo-ui\/tree/,
+      /components\/ui\/tree-view/,
       /<TreePanel/,
     ],
+  },
+  {
+    name: "ETL source asset browser uses the shared explorer tree",
+    file: "src/pages/etl/SourceAssetTree.tsx",
+    patterns: [
+      /import \{ ExplorerTree \} from "@\/components\/ui\/explorer-tree";/,
+      /<ExplorerTree<SourceAssetTreeNode>/,
+      /ariaLabel="소스 에셋 트리"/,
+      /onToggle=\{\(nodeId\) =>/,
+    ],
+    forbiddenPatterns: [/components\/ui\/tree-view/, /<Tree<SourceAssetTreeNode>/],
+  },
+  {
+    name: "S3 and JSON explorers use the shared explorer tree",
+    file: "src/components/s3/S3PathField.tsx",
+    patterns: [
+      /import \{ ExplorerTree, type ExplorerTreeNode \} from "@\/components\/ui\/explorer-tree";/,
+      /<ExplorerTree<S3TreeNode>/,
+      /ariaLabel="S3 prefix tree"/,
+      /onToggle=\{\(nodeId\) =>/,
+    ],
+    forbiddenPatterns: [/components\/ui\/tree-view/],
+  },
+  {
+    name: "JSON sample hierarchy uses the shared explorer tree",
+    file: "src/pages/etl/SourceJsonSampleTree.tsx",
+    patterns: [
+      /import \{ ExplorerTree, type ExplorerTreeNode \} from "@\/components\/ui\/explorer-tree";/,
+      /<ExplorerTree<JsonTreeNode>/,
+      /ariaLabel="JSON 샘플 트리"/,
+    ],
+    forbiddenPatterns: [/components\/ui\/tree-view/],
   },
   {
     name: "Dashboard list reuses Jobs shadcn table composition",
@@ -863,18 +1295,14 @@ const checks = [
     ],
   },
   {
-    name: "Dashboard list fixtures and status labels stay localized",
+    name: "Dashboard list fixtures stay empty",
     file: "src/pages/dashboard/dashboardListData.ts",
     patterns: [
-      /name: "매출 분석 데모/,
-      /tags: "영업 · 매출 · 데모"/,
-      /name: "마케팅 캠페인 수익률 추적"/,
-      /name: "데이터 품질 운영 현황"/,
-      /owner: "관리자"/,
+      /defaultDashboardCards: SavedDashboardCard\[\] = \[\]/,
     ],
     forbiddenPatterns: [
-      /name: "Sales Analytics Demo/,
-      /tags: "Marketing · ROI"/,
+      /dash_sales_demo/,
+      /매출 분석 데모/,
     ],
   },
   {
@@ -1006,14 +1434,14 @@ const checks = [
     ],
   },
   {
-    name: "Kafka target controls expose only runtime-supported layer and format combinations",
+    name: "Kafka target defaults keep runtime-supported layer and format combinations",
     file: "src/pages/etl/EtlPages.tsx",
     patterns: [
       /const KAFKA_SNAPSHOT_TARGET_LAYER_OPTIONS: TargetLayer\[\] = \["RAW", "BRONZE", "SILVER"\]/,
       /const KAFKA_SNAPSHOT_TARGET_FORMAT_OPTIONS: TargetFileFormat\[\] = \["jsonl"\]/,
       /const KAFKA_CONTINUOUS_TARGET_FORMAT_OPTIONS: TargetFileFormat\[\] = \["parquet"\]/,
-      /targetLayerOptions\.map/,
-      /targetFormatOptions\.map/,
+      /if \(!targetLayerOptions\.includes\(targetLayer\)\)/,
+      /if \(!targetFormatOptions\.includes\(targetFormat\)\)/,
     ],
   },
   {
@@ -1087,6 +1515,54 @@ const checks = [
       /<SelectItem value="float">/,
     ],
   },
+  {
+    name: "Manual workspace refresh replaces Jobs and Catalog data from live APIs",
+    file: "src/hooks/useAskLakeData.ts",
+    patterns: [
+      /const dataHydrationRequestRef = useRef\(0\);/,
+      /const refreshData = async \(\) =>/,
+      /const \[jobsResult, datasetsResult\] = await Promise\.all\(\[\s*getJobs\(\),\s*getDatasets\(\),?\s*\]\);/,
+      /const applyHydratedJobs[\s\S]*setJobs\(normalizedJobs\);[\s\S]*setJobListFacets\(result\.facets\);/,
+      /const applyHydratedDatasets[\s\S]*setDatasets\(normalizedDatasets\);[\s\S]*normalizedDatasets\.find\(\(dataset\) => dataset\.id === current\.id\)/,
+      /filterJobs,\s*refreshData,\s*createSqlDatasetJob,/,
+    ],
+  },
+  {
+    name: "Catalog materialization totals stop at the newest snapshot",
+    file: "src/hooks/useAskLakeData.ts",
+    patterns: [
+      /activeDatasetMaterializationRuns\(materializationRuns\)/,
+      /if \(run\.materializationMode !== "delta"\) break;/,
+    ],
+  },
+  {
+    name: "Authenticated routes share the compact global app shell",
+    file: "src/App.tsx",
+    patterns: [
+      /<Sidebar[\s\S]*currentUser=\{currentUser\}/,
+      /<Topbar \/>/,
+      /activeFlow === "rules" && <RuleApplicationPage/,
+    ],
+    forbiddenPatterns: [
+      /<Footer \/>/,
+      /onRefresh=\{/,
+      /<Topbar[^>]*onLogout=/,
+    ],
+  },
+  {
+    name: "Global top bar exposes only appearance and language placeholders",
+    file: "src/components/layout/Topbar.tsx",
+    patterns: [
+      /import \{ Languages, Moon \} from "lucide-react";/,
+      /label="다크 모드"/,
+      /label="한국어·영어 전환"/,
+    ],
+    forbiddenPatterns: [
+      /RefreshCw/,
+      /LogOut/,
+      /CircleUser/,
+    ],
+  },
 ];
 
 const failures = [];
@@ -1098,7 +1574,7 @@ for (const check of checks) {
       failures.push(`${check.name}: missing pattern #${index + 1} in ${check.file}`);
     }
   });
-  check.forbiddenPatterns?.forEach((pattern, index) => {
+  [...(check.forbiddenPatterns ?? []), ...(check.additionalForbiddenPatterns ?? [])].forEach((pattern, index) => {
     if (pattern.test(contents)) {
       failures.push(`${check.name}: forbidden pattern #${index + 1} found in ${check.file}`);
     }

@@ -6,9 +6,11 @@ COMPOSE_FILE="${ASKLAKE_COMPOSE_FILE:-deploy/docker-compose.prod.yml}"
 COMPOSE_ENV_FILE="${ASKLAKE_COMPOSE_ENV_FILE:-deploy/.env.example}"
 LOCAL_COMPOSE_FILE="${ASKLAKE_LOCAL_COMPOSE_FILE:-docker-compose.yml}"
 BACKEND_IMAGE="${ASKLAKE_VERIFY_BACKEND_IMAGE:-asklake-backend-deploy-check:local}"
+SPARK_RUNTIME_IMAGE="${ASKLAKE_VERIFY_SPARK_RUNTIME_IMAGE:-asklake-spark-deploy-check:local}"
 FRONTEND_IMAGE="${ASKLAKE_VERIFY_FRONTEND_IMAGE:-asklake-frontend-deploy-check:local}"
 SPARK_IMAGE="${ASKLAKE_SPARK_IMAGE:-apache/spark:4.0.1}"
 AIRFLOW_IMAGE="${AIRFLOW_IMAGE_NAME:-apache/airflow:3.3.0}"
+TRINO_IMAGE="${TRINO_IMAGE:-trinodb/trino:482}"
 
 cd "$ROOT_DIR"
 
@@ -38,8 +40,18 @@ echo "Checking backend Node connector imports..."
 docker run --rm "$BACKEND_IMAGE" node --input-type=module -e \
   "await import('@aws-sdk/client-s3'); await import('kafkajs'); await import('mongodb'); await import('parquetjs-lite'); await import('pg');"
 
-echo "Checking backend Docker CLI for Spark runner..."
-docker run --rm "$BACKEND_IMAGE" docker --version >/dev/null
+echo "Checking backend image excludes Docker CLI..."
+if docker run --rm "$BACKEND_IMAGE" sh -c 'command -v docker' >/dev/null 2>&1; then
+  echo "error: production backend image must not contain Docker CLI" >&2
+  exit 1
+fi
+
+echo "Building Spark runtime image..."
+docker build --target spark-runtime -t "$SPARK_RUNTIME_IMAGE" backend
+
+echo "Checking Spark runtime UID and embedded scripts..."
+docker run --rm "$SPARK_RUNTIME_IMAGE" sh -c \
+  'test "$(id -u)" = 185 && test -r /opt/asklake/scripts/spark_job_run.py && test -r /opt/asklake/scripts/spark_source_inspect_rest.py'
 
 echo "Checking Spark runtime image availability..."
 if ! docker image inspect "$SPARK_IMAGE" >/dev/null 2>&1; then
@@ -49,6 +61,16 @@ fi
 echo "Checking Airflow runtime image availability..."
 if ! docker image inspect "$AIRFLOW_IMAGE" >/dev/null 2>&1; then
   docker pull "$AIRFLOW_IMAGE"
+fi
+
+if [[ "${ASKLAKE_VERIFY_TRINO:-false}" == "true" ]] \
+  || docker compose --env-file "$COMPOSE_ENV_FILE" -f "$COMPOSE_FILE" config --services | grep -qx trino; then
+  echo "Checking Trino runtime image availability..."
+  if ! docker image inspect "$TRINO_IMAGE" >/dev/null 2>&1; then
+    docker pull "$TRINO_IMAGE"
+  fi
+else
+  echo "Skipping Trino runtime image check because the trino profile is disabled."
 fi
 
 echo "Checking Airflow DAG import dependencies..."
@@ -66,6 +88,8 @@ docker build \
   --build-arg VITE_API_BASE_URL="${VITE_API_BASE_URL:-http://localhost:8080}" \
   --build-arg VITE_USE_MOCK_API="${VITE_USE_MOCK_API:-false}" \
   --build-arg VITE_DASHBOARD_ASSISTANT_API_PATH="${VITE_DASHBOARD_ASSISTANT_API_PATH:-/api/dashboards/assistant}" \
+  --build-arg VITE_OBJECT_STORAGE_PROVIDER="${VITE_OBJECT_STORAGE_PROVIDER:-aws}" \
+  --build-arg VITE_S3_REGION="${VITE_S3_REGION:-ap-northeast-2}" \
   -t "$FRONTEND_IMAGE" frontend
 
 echo "Deploy dependency verification passed."

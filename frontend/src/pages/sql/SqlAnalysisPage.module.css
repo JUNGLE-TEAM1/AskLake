@@ -1,6 +1,6 @@
 .page {
   --sql-side-panel-width: clamp(320px, 22vw, 400px);
-  --sql-workspace-height: min(860px, calc(100dvh - 24px));
+  --sql-workspace-height: clamp(800px, calc(100dvh - 156px), 860px);
   position: relative;
   display: grid;
   width: 100%;
@@ -8,7 +8,7 @@
   grid-template-columns: var(--sql-side-panel-width) minmax(0, 1fr);
   grid-template-rows: max-content auto;
   align-items: stretch;
-  gap: 12px;
+  gap: 20px;
   font-family: var(--jobs-font-family);
 }
 
@@ -19,7 +19,7 @@
 .pageHeader {
   grid-column: 1 / -1;
   min-width: 0;
-  min-height: var(--sql-masthead-height, 76px);
+  min-height: 64px;
 }
 
 .pageHeader > div {
@@ -40,7 +40,7 @@
   max-height: var(--sql-workspace-height);
   min-width: 0;
   overflow: hidden;
-  padding: 20px;
+  padding: 0;
 }
 
 .datasetScroll [data-slot="scroll-area-scrollbar"][data-orientation="vertical"] {
@@ -90,46 +90,59 @@
 .editorSurface {
   display: grid;
   grid-template-columns: 42px minmax(0, 1fr);
+  height: clamp(276px, 36vh, 480px);
   min-height: 276px;
   overflow: hidden;
-  border: 1px solid #cbd5e1;
+  border: 1px solid #60a5fa;
   border-radius: 8px;
-  background: #0f172a;
+  background: #ffffff;
 }
 
 .editorSurface pre {
-  min-height: 276px;
+  box-sizing: border-box;
+  height: 100%;
+  min-height: 0;
   overflow: hidden;
-  border-right: 1px solid rgb(148 163 184 / 22%);
+  border-right: 1px solid #e2e8f0;
   margin: 0;
-  background: #111827;
+  background: #f8fafc;
   color: #94a3b8;
   font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 15px;
+  font-size: 14px;
+  font-weight: 600;
   line-height: 24px;
   padding: 16px 12px;
   text-align: right;
 }
 
 .editorSurface textarea {
+  display: block;
+  box-sizing: border-box;
+  height: 100%;
   width: 100%;
   min-width: 0;
-  min-height: 276px;
-  max-height: 560px;
-  resize: vertical;
+  min-height: 0;
+  max-height: none;
+  resize: none;
+  overflow: auto;
   border: 0;
   outline: 0;
-  background: #0f172a;
-  color: #e2e8f0;
+  background: #ffffff;
+  color: #0f172a;
+  caret-color: #2563eb;
   font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 15px;
+  font-size: 14px;
+  font-weight: 600;
   line-height: 24px;
   padding: 16px;
 }
 
 .editorInputWrap {
   position: relative;
+  height: 100%;
   min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .autocompletePopover {
@@ -171,6 +184,53 @@
   overflow: hidden;
 }
 
+.resultPanelActive {
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.resultPanelCompact {
+  align-self: start;
+  height: auto;
+  overflow: visible;
+}
+
+.resultPanelCompact .resultWorkspace {
+  height: auto;
+  min-height: 0;
+  grid-template-rows: max-content max-content;
+  overflow: visible;
+}
+
+.resultWorkspace {
+  display: grid;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  grid-template-rows: max-content minmax(0, 1fr);
+  gap: 16px;
+  overflow: hidden;
+  padding: 20px;
+}
+
+.resultBody {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  grid-template-rows: minmax(0, 1fr) repeat(2, max-content);
+  overflow: hidden;
+}
+
+.resultBodyCompact {
+  align-content: start;
+  grid-template-rows: max-content repeat(2, max-content);
+  overflow: visible;
+}
+
+.resultBodyCompact .resultScroll {
+  height: auto;
+  max-height: 100%;
+}
+
 .resultToolbar {
   display: flex;
   min-width: 0;
@@ -184,8 +244,101 @@
   flex: 0 0 auto;
 }
 
-.resultToolbar > :last-child {
+.resultToolbar > :last-child:not(:first-child) {
   margin-left: auto;
+}
+
+.resultActions button {
+  gap: 6px;
+  padding-right: 8px;
+  padding-left: 8px;
+  font-size: 14px;
+}
+
+.resultRange {
+  color: #64748b;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.resultDialogBody {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  grid-template-rows: max-content minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.resultDialogControls {
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.resultPagination {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  color: #64748b;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.resultPaginationActions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.resultRemotePagination {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid #e2e8f0;
+  padding: 10px 2px 0;
+  color: #64748b;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.resultRemotePagination > strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.resultRemotePagination .resultPaginationActions > span {
+  min-width: 52px;
+  color: #475569;
+  font-weight: 800;
+  text-align: center;
+}
+
+.resultPageError {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 2px;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  background: #fef2f2;
+  color: #b91c1c;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 10px 12px;
+}
+
+.resultPageError > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .resultScroll,
@@ -256,8 +409,23 @@
     flex-wrap: wrap;
   }
 
-  .resultToolbar > :last-child {
+  .resultToolbar > :last-child:not(:first-child) {
     margin-left: 0;
+  }
+
+  .resultPagination {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .resultRemotePagination {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .resultPageError {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .resultScroll {
@@ -291,6 +459,8 @@
   .collapsed .workspace {
     grid-column: 1;
     grid-row: auto;
+    height: auto;
+    max-height: none;
     order: 2;
   }
 }

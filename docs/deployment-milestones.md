@@ -461,12 +461,11 @@ backend/src/sparkRunner.mjs
 
 Spark runner 주의:
 
-- 현재 ETL Job command 경로는 backend에서 Node bridge를 거쳐 Docker 기반 Spark 컨테이너를 실행한다.
-- backend image에는 Node dependencies와 Docker CLI를 포함한다.
-- compose는 `/var/run/docker.sock`을 backend에 mount한다.
-- EC2에서는 repo 기준 경로가 `ASKLAKE_SPARK_HOST_SCRIPTS_DIR`와 일치해야 한다.
-- 기본 문서 기준은 `/opt/asklake/backend/scripts`이며, repo clone 위치가 다르면 서버 `deploy/.env`에서 바꾼다.
-- Spark job E2E는 Phase 8 QA에서 별도로 검증한다.
+- 이 마일스톤의 Docker launcher 기록은 local 개발 호환 경로에만 해당한다.
+- 현재 production Compose는 application scripts를 Spark runtime image에 포함하고 Standalone REST create/status API를 사용한다.
+- backend image에는 Docker CLI나 `/var/run/docker.sock` mount가 없다.
+- 공유 report/output/sample/Ivy 경로는 `spark-dir-init`가 UID/GID `185:185`로 준비한다.
+- Spark job E2E는 Phase 8 QA와 production-like REST smoke에서 별도로 검증한다.
 
 검증 명령:
 

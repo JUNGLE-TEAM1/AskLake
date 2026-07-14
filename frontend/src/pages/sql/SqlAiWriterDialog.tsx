@@ -1,5 +1,8 @@
 import { useEffect, useRef, type KeyboardEvent, type RefObject } from "react";
-import { Check, Sparkles } from "lucide-react";
+import {
+  SqlPageIcon as Check,
+  SqlPageIcon as Sparkles,
+} from "./SqlPageIcon";
 
 import { Badge } from "@/components/ui/badge";
 import { Bubble, BubbleContent, BubbleGroup } from "@/components/ui/bubble";

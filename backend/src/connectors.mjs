@@ -1,16 +1,31 @@
 import { spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { GetObjectCommand, ListObjectsV2Command, S3Client } from "@aws-sdk/client-s3";
 import { NodeHttpHandler } from "@smithy/node-http-handler";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadKafkaJs } from "./kafka-codecs.mjs";
+import {
+  isMinioProvider,
+  objectStorageDockerEnv,
+  resolveObjectStorageConfig,
+  s3ClientOptions,
+} from "./objectStorageConfig.mjs";
 import { canonicalSchemaType, fieldValue, formatBytes, inferSchemaColumns, parseSourceSample, schemaFingerprint, sourceId, upsertFields } from "./profile.mjs";
+import {
+  createSparkRestSubmission,
+  runSparkRestSubmission,
+  sparkExecutionMode,
+  sparkRestRuntimeConfig,
+} from "./sparkRunner.mjs";
 
 const textFileExtensions = [".csv", ".json", ".jsonl", ".log", ".txt", ".tsv"];
 const backendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const scriptsDir = path.join(backendDir, "scripts");
-const ivyDir = path.join(backendDir, "tmp", "spark-ivy");
+const ivyDir = path.resolve(process.env.ASKLAKE_SPARK_IVY_DIR || path.join(backendDir, "tmp", "spark-ivy"));
+const sparkReportDir = path.resolve(process.env.ASKLAKE_SPARK_REPORT_DIR || path.join(backendDir, "tmp", "spark-runs"));
+const sparkReportRuntimeDir = process.env.ASKLAKE_SPARK_REPORT_CONTAINER_DIR || "/work/reports";
 
 const objectStorageSourceTypes = new Set(["File / S3", "File / S3 CSV", "File / S3 JSON", "File / S3 JSONL", "File / S3 TSV", "File / S3 TXT"]);
 const dataLakeSourceTypes = new Set(["Data Lake", "Data Lake Parquet"]);
@@ -30,19 +45,23 @@ export async function testSourceConnector(sourceType, fields) {
 }
 
 export async function listSourceAssets(sourceType, fields, requestedPrefix) {
+  if (sourceType === "Database" || sourceType === "PostgreSQL") {
+    return listPostgresSourceAssets(fields);
+  }
+  if (sourceType === "MongoDB") {
+    return listMongoSourceAssets(fields);
+  }
   if (!objectStorageSourceTypes.has(sourceType) && !dataLakeSourceTypes.has(sourceType)) {
     throw apiError("UNSUPPORTED_SOURCE_ASSETS", `${sourceType} source asset listing is not supported.`, 400);
   }
-  const endpoint = requiredSourceField(fields, "Endpoint URL", "MinIO/S3 endpoint URL is required.");
-  const region = fieldValue(fields, "Region") || "us-east-1";
+  const storage = resolveObjectStorageConfig(fields);
+  const { accessKeyId, endpoint, forcePathStyle, region, secretAccessKey } = storage;
   const parsedLakePath = dataLakeSourceTypes.has(sourceType) ? parseS3Path(fieldValue(fields, "Path")) : null;
   const bucket = fieldValue(fields, "Bucket / Stage Name") || parsedLakePath?.bucket;
   if (!bucket) throw apiError("SOURCE_FIELD_REQUIRED", "MinIO/S3 bucket name is required.", 400);
   const prefix = sourceAssetPrefix(sourceType, fields, requestedPrefix);
   const limit = sourceAssetListLimit();
-  const accessKeyId = requiredSourceField(fields, "Access Key", "MinIO/S3 access key is required.");
-  const secretAccessKey = requiredSourceField(fields, "Secret Key", "MinIO/S3 secret key is required.");
-  const forcePathStyle = parseBoolean(fieldValue(fields, "Use Path Style"), true);
+  requireMinioCredentials(storage);
   const cacheKey = sourceAssetCacheKey({ accessKeyId, bucket, endpoint, forcePathStyle, prefix, region, sourceType });
   const cached = getCachedSourceAssets(cacheKey);
   if (cached) return cached;
@@ -54,7 +73,9 @@ export async function listSourceAssets(sourceType, fields, requestedPrefix) {
   try {
     items = await listDirectObjects(client, bucket, prefix, limit);
   } catch (error) {
-    items = listDirectObjectsViaMinioContainer({ accessKeyId, bucket, endpoint, limit, prefix, secretAccessKey });
+    items = isMinioProvider(fields)
+      ? listDirectObjectsViaMinioContainer({ accessKeyId, bucket, endpoint, limit, prefix, secretAccessKey })
+      : null;
     if (!items) {
       setCachedSourceAssetFailure(cacheKey, error);
       throw error;
@@ -77,19 +98,17 @@ export async function listSourceAssets(sourceType, fields, requestedPrefix) {
   return response;
 }
 
-export async function testObjectStorageSource(fields, sourceType = "File / S3") {
-  const endpoint = requiredSourceField(fields, "Endpoint URL", "MinIO/S3 endpoint URL is required.");
-  const region = fieldValue(fields, "Region") || "us-east-1";
+export async function testObjectStorageSource(fields, sourceType = "File / S3", clientOverride = null) {
+  const storage = resolveObjectStorageConfig(fields);
+  const { accessKeyId, endpoint, forcePathStyle, region, secretAccessKey } = storage;
   const bucket = requiredSourceField(fields, "Bucket / Stage Name", "MinIO/S3 bucket name is required.");
   const prefix = normalizePrefix(fieldValue(fields, "Path / Prefix"));
-  const accessKeyId = requiredSourceField(fields, "Access Key", "MinIO/S3 access key is required.");
-  const secretAccessKey = requiredSourceField(fields, "Secret Key", "MinIO/S3 secret key is required.");
-  const forcePathStyle = parseBoolean(fieldValue(fields, "Use Path Style"), true);
   const selectedObject = selectedObjectKey(fields);
+  const collectionScope = String(fieldValue(fields, "Collection Scope") || "file").trim().toLowerCase();
+  const collectionPattern = fieldValue(fields, "File Pattern") || "*";
+  const collectionRecursive = parseBoolean(fieldValue(fields, "Recursive"), false);
 
-  if (!accessKeyId || !secretAccessKey) {
-    throw apiError("SOURCE_CREDENTIALS_REQUIRED", "MinIO/S3 액세스 키와 시크릿 키가 필요합니다.", 400);
-  }
+  requireMinioCredentials(storage);
 
   // A selected Parquet object needs the Spark reader; treating it as a text
   // object silently falls back to object metadata instead of its real schema.
@@ -105,15 +124,24 @@ export async function testObjectStorageSource(fields, sourceType = "File / S3") 
   }
 
   const samplePolicy = samplePolicyForFields(fields, "object");
-  const client = s3Client({ accessKeyId, endpoint, forcePathStyle, region, secretAccessKey });
+  const client = clientOverride ?? s3Client({ accessKeyId, endpoint, forcePathStyle, region, secretAccessKey });
   try {
     let objects = selectedObject
       ? await listSelectedObject(client, bucket, selectedObject)
       : await listDirectObjects(client, bucket, prefix, sourceAssetListLimit());
     if (!prefix && objects.length === 0) {
-      objects = listDirectObjectsViaMinioContainer({ accessKeyId, bucket, endpoint, limit: sourceAssetListLimit(), prefix, secretAccessKey }) ?? objects;
+      objects = isMinioProvider(fields)
+        ? listDirectObjectsViaMinioContainer({ accessKeyId, bucket, endpoint, limit: sourceAssetListLimit(), prefix, secretAccessKey }) ?? objects
+        : objects;
     }
-    const sampleObject = selectedObject ? objects.find((item) => item.Key === selectedObject) : immediateSampleObject(objects, prefix);
+    let sampleObject = selectedObject
+      ? objects.find((item) => item.Key === selectedObject)
+      : collectionScope === "folder"
+        ? immediateCollectionSampleObject(objects, prefix, collectionPattern)
+        : immediateSampleObject(objects, prefix);
+    if (!sampleObject && !selectedObject && collectionScope === "folder" && collectionRecursive) {
+      sampleObject = await findRecursiveCollectionSampleObject(client, bucket, prefix, collectionPattern);
+    }
     return buildObjectStorageAnalysis({
       bucket,
       client,
@@ -129,7 +157,9 @@ export async function testObjectStorageSource(fields, sourceType = "File / S3") 
       sourceType,
     });
   } catch (error) {
-    const fallback = readObjectStorageViaMinioContainer({ accessKeyId, bucket, endpoint, fields, prefix, samplePolicy, secretAccessKey, selectedObject, sourceType });
+    const fallback = isMinioProvider(fields)
+      ? readObjectStorageViaMinioContainer({ accessKeyId, bucket, endpoint, fields, prefix, samplePolicy, secretAccessKey, selectedObject, sourceType })
+      : null;
     if (fallback) return fallback;
     throw error;
   }
@@ -180,6 +210,7 @@ export async function testDataLakeSource(fields, sourceType = "Data Lake") {
         secretAccessKey,
       });
     } catch (error) {
+      if (error?.code === "SPARK_RUNNER_CONFIGURATION_INVALID") throw error;
       inspectError = error?.message || "Data Lake Parquet schema inference failed.";
       try {
         inspected = await inspectParquetObjectWithJs({
@@ -260,18 +291,13 @@ export async function testDataLakeSourceStable(fields, sourceType = "Data Lake")
     parsed = { bucket: fieldValue(fields, "Bucket / Stage Name"), prefix: normalizePrefix(fieldValue(fields, "Path / Prefix")) };
   }
   if (!parsed) {
-    throw apiError("UNSUPPORTED_LAKE_PATH", "Data Lake path must be an s3:// or s3a:// MinIO path.", 400);
+    throw apiError("UNSUPPORTED_LAKE_PATH", "Data Lake path must be an s3:// or s3a:// object-storage path.", 400);
   }
   const lakePath = parseS3Path(rawLakePath) ? rawLakePath : `s3://${parsed.bucket}/${selectedObject || parsed.prefix}`;
 
-  const endpoint = requiredSourceField(fields, "Endpoint URL", "Data Lake endpoint URL is required.");
-  const region = fieldValue(fields, "Region") || "us-east-1";
-  const accessKeyId = requiredSourceField(fields, "Access Key", "Data Lake access key is required.");
-  const secretAccessKey = requiredSourceField(fields, "Secret Key", "Data Lake secret key is required.");
-  const forcePathStyle = parseBoolean(fieldValue(fields, "Use Path Style"), true);
-  if (!accessKeyId || !secretAccessKey) {
-    throw apiError("SOURCE_CREDENTIALS_REQUIRED", "Data Lake MinIO access key and secret key are required.", 400);
-  }
+  const storage = resolveObjectStorageConfig(fields);
+  const { accessKeyId, endpoint, forcePathStyle, region, secretAccessKey } = storage;
+  requireMinioCredentials(storage);
 
   let client;
   let objects;
@@ -281,9 +307,11 @@ export async function testDataLakeSourceStable(fields, sourceType = "Data Lake")
       ? await listSelectedObject(client, parsed.bucket, selectedObject)
       : await listDirectObjects(client, parsed.bucket, parsed.prefix);
   } catch (error) {
-    objects = selectedObject
-      ? listSelectedObjectViaMinioContainer({ accessKeyId, bucket: parsed.bucket, endpoint, key: selectedObject, secretAccessKey })
-      : listDirectObjectsViaMinioContainer({ accessKeyId, bucket: parsed.bucket, endpoint, prefix: parsed.prefix, secretAccessKey });
+    objects = isMinioProvider(fields)
+      ? selectedObject
+        ? listSelectedObjectViaMinioContainer({ accessKeyId, bucket: parsed.bucket, endpoint, key: selectedObject, secretAccessKey })
+        : listDirectObjectsViaMinioContainer({ accessKeyId, bucket: parsed.bucket, endpoint, prefix: parsed.prefix, secretAccessKey })
+      : null;
     if (!objects) throw error;
   }
 
@@ -302,11 +330,13 @@ export async function testDataLakeSourceStable(fields, sourceType = "Data Lake")
       inspected = inspectParquetLakeWithSpark({
         accessKeyId,
         endpoint,
+        fields,
         path: inspectPath,
         rowLimit: samplePolicy.rowLimit,
         secretAccessKey,
       });
     } catch (error) {
+      if (error?.code === "SPARK_RUNNER_CONFIGURATION_INVALID") throw error;
       inspectError = error?.message || "Data Lake Parquet schema inference failed.";
       try {
         inspected = await inspectParquetObjectWithJs({
@@ -336,6 +366,7 @@ export async function testDataLakeSourceStable(fields, sourceType = "Data Lake")
   const id = sourceId("source", `${lakePath}:${objects.length}`);
   const runId = sourceId("run", `${id}:${Date.now()}`);
   const sourceConfig = upsertFields(redactSecretConfigValues(fields), [
+    ["Storage Provider", storage.provider === "aws" ? "Amazon S3" : "MinIO"],
     ["Path", lakePath],
     ["Bucket / Stage Name", parsed.bucket],
     ["Path / Prefix", parsed.prefix],
@@ -460,6 +491,75 @@ export async function testRestSource(fields) {
   };
 }
 
+async function listPostgresSourceAssets(fields) {
+  const { Client } = await import("pg");
+  const host = requiredSourceField(fields, "Endpoint / Host", "PostgreSQL host is required.");
+  const port = Number(requiredSourceField(fields, "Port", "PostgreSQL port is required."));
+  const database = requiredSourceField(fields, "Database Name", "PostgreSQL database name is required.");
+  const schema = fieldValue(fields, "Schema") || "public";
+  const user = requiredSourceField(fields, "Username", "PostgreSQL username is required.");
+  const password = requiredSourceField(fields, "Password / Auth Token", "PostgreSQL password is required.");
+  const limit = 20;
+  const client = new Client({
+    connectionTimeoutMillis: sourceConnectTimeoutMs("ASKLAKE_POSTGRES_CONNECT_TIMEOUT_MS", 3000),
+    database,
+    host,
+    password,
+    port,
+    query_timeout: sourceConnectTimeoutMs("ASKLAKE_POSTGRES_QUERY_TIMEOUT_MS", 5000),
+    statement_timeout: sourceConnectTimeoutMs("ASKLAKE_POSTGRES_QUERY_TIMEOUT_MS", 5000),
+    user,
+  });
+
+  await client.connect();
+  try {
+    const result = await client.query(
+      "select table_name from information_schema.tables where table_schema = $1 and table_type = 'BASE TABLE' order by table_name limit $2",
+      [schema, limit],
+    );
+    const assets = result.rows.map((row) => [String(row.table_name), schema, "detected"]);
+    return { assets, count: assets.length, limit, prefix: schema };
+  } finally {
+    await client.end().catch(() => undefined);
+  }
+}
+
+async function listMongoSourceAssets(fields) {
+  const { MongoClient } = await import("mongodb");
+  const endpoint = process.env.ASKLAKE_MONGO_HOST || fieldValue(fields, "Endpoint / Host") || "127.0.0.1";
+  const port = Number(process.env.ASKLAKE_MONGO_PORT || fieldValue(fields, "Port") || 27018);
+  const database = fieldValue(fields, "Database Name") || process.env.ASKLAKE_MONGO_DATABASE || "asklake_sources";
+  const username = process.env.ASKLAKE_MONGO_USER || fieldValue(fields, "Username") || "";
+  const password = process.env.ASKLAKE_MONGO_PASSWORD || fieldValue(fields, "Password / Auth Token") || "";
+  const authPart = username ? `${encodeURIComponent(username)}:${encodeURIComponent(password)}@` : "";
+  const uri = process.env.ASKLAKE_MONGO_HOST
+    ? `mongodb://${authPart}${endpoint}:${port}/${database}${username ? "?authSource=admin" : ""}`
+    : fieldValue(fields, "Connection URI") || `mongodb://${authPart}${endpoint}:${port}/${database}${username ? "?authSource=admin" : ""}`;
+  const client = new MongoClient(uri, {
+    connectTimeoutMS: sourceConnectTimeoutMs("ASKLAKE_MONGO_CONNECT_TIMEOUT_MS", 3000),
+    serverSelectionTimeoutMS: sourceConnectTimeoutMs("ASKLAKE_MONGO_SERVER_SELECTION_TIMEOUT_MS", 3000),
+    socketTimeoutMS: sourceConnectTimeoutMs("ASKLAKE_MONGO_SOCKET_TIMEOUT_MS", 5000),
+  });
+
+  try {
+    await client.connect();
+    const collections = (await client.db(database).listCollections({}, { nameOnly: true }).toArray())
+      .map((collectionInfo) => String(collectionInfo.name ?? ""))
+      .filter(Boolean)
+      .sort();
+    return {
+      assets: collections.map((collection) => [collection, database, "detected"]),
+      count: collections.length,
+      limit: collections.length,
+      prefix: database,
+    };
+  } catch (error) {
+    throw apiError("MONGO_SOURCE_FAILED", `MongoDB 연결 실패: ${tailText(error?.message || error)}`, 502);
+  } finally {
+    await client.close().catch(() => undefined);
+  }
+}
+
 export async function testPostgresSource(fields) {
   const { Client } = await import("pg");
   const host = requiredSourceField(fields, "Endpoint / Host", "PostgreSQL host is required.");
@@ -468,7 +568,11 @@ export async function testPostgresSource(fields) {
   const schema = fieldValue(fields, "Schema") || "public";
   const user = requiredSourceField(fields, "Username", "PostgreSQL username is required.");
   const password = requiredSourceField(fields, "Password / Auth Token", "PostgreSQL password is required.");
-  const tableSelector = fieldValue(fields, "DATASET OR TABLE SELECTOR");
+  const tableSelector = requiredSourceField(
+    fields,
+    "DATASET OR TABLE SELECTOR",
+    "PostgreSQL table selection is required before schema preview.",
+  );
   const samplePolicy = samplePolicyForFields(fields, "rows");
 
   const client = new Client({
@@ -487,9 +591,8 @@ export async function testPostgresSource(fields) {
       "select table_name from information_schema.tables where table_schema = $1 and table_type = 'BASE TABLE' order by table_name limit 20",
       [schema],
     );
-    const table = tableSelector || tableResult.rows[0]?.table_name;
-    if (!table) throw apiError("POSTGRES_NO_TABLES", `${schema} 스키마에서 기본 테이블을 찾지 못했습니다.`, 404);
-    if (!tableResult.rows.some((row) => row.table_name === table) && tableSelector) {
+    const table = tableSelector;
+    if (!tableResult.rows.some((row) => row.table_name === table)) {
       throw apiError("POSTGRES_TABLE_NOT_FOUND", `${schema}.${table} 테이블을 찾지 못했습니다.`, 404);
     }
 
@@ -558,6 +661,13 @@ export async function testMongoSource(fields) {
   const username = process.env.ASKLAKE_MONGO_USER || fieldValue(fields, "Username") || "";
   const password = process.env.ASKLAKE_MONGO_PASSWORD || fieldValue(fields, "Password / Auth Token") || "";
   const collectionSelector = fieldValue(fields, "DATASET OR TABLE SELECTOR") || fieldValue(fields, "Collection");
+  if (!collectionSelector) {
+    throw apiError(
+      "MONGO_COLLECTION_REQUIRED",
+      "MongoDB collection selection is required before schema preview.",
+      400,
+    );
+  }
   const samplePolicy = samplePolicyForFields(fields, "documents");
   const authPart = username ? `${encodeURIComponent(username)}:${encodeURIComponent(password)}@` : "";
   const uri = process.env.ASKLAKE_MONGO_HOST
@@ -753,6 +863,7 @@ async function buildObjectStorageAnalysis({ bucket, client, endpoint, fields, fo
     ? `MinIO/S3 ${parsedSample.format} 샘플에서 ${schemaColumns.length}개 필드 추론 · 프로파일 확인`
     : `MinIO/S3 연결 성공 · 스키마 추론 대기 (오브젝트 ${objects.length}개)`;
   const sourceConfig = upsertFields(redactSecretConfigValues(fields), [
+    ["Storage Provider", isMinioProvider(fields) ? "MinIO" : "Amazon S3"],
     ["Endpoint URL", endpoint],
     ["Region", region],
     ["Bucket / Stage Name", bucket],
@@ -890,13 +1001,10 @@ function readObjectStorageViaMinioContainer({ accessKeyId, bucket, endpoint, fie
   };
 }
 
-function s3Client({ accessKeyId, endpoint, forcePathStyle, region, secretAccessKey }) {
+function s3Client(config) {
   return new S3Client({
-    credentials: { accessKeyId, secretAccessKey },
-    endpoint,
-    forcePathStyle,
+    ...s3ClientOptions(config),
     maxAttempts: 1,
-    region,
     requestHandler: new NodeHttpHandler({
       connectionTimeout: sourceConnectTimeoutMs("ASKLAKE_S3_CONNECT_TIMEOUT_MS", 800),
       requestTimeout: sourceConnectTimeoutMs("ASKLAKE_S3_REQUEST_TIMEOUT_MS", 2500),
@@ -1069,6 +1177,50 @@ function immediateSampleObject(objects, prefix) {
       : key;
     return relative.length > 0 && !relative.includes("/");
   });
+}
+
+function immediateCollectionSampleObject(objects, prefix, pattern) {
+  return immediateSampleObject(objects.filter((item) => collectionPatternMatches(item.Key, pattern)), prefix);
+}
+
+async function findRecursiveCollectionSampleObject(client, bucket, prefix, pattern) {
+  const normalizedPrefix = normalizePrefix(prefix);
+  const normalizedPrefixWithSlash = normalizedPrefix ? `${normalizedPrefix}/` : "";
+  const limit = sourceAssetListLimit();
+  let continuationToken;
+  let scanned = 0;
+  do {
+    const remaining = Math.max(1, limit - scanned);
+    const result = await client.send(new ListObjectsV2Command({
+      Bucket: bucket,
+      ContinuationToken: continuationToken,
+      MaxKeys: Math.min(200, remaining),
+      Prefix: normalizedPrefixWithSlash || normalizedPrefix,
+    }));
+    const contents = result.Contents ?? [];
+    scanned += contents.length;
+    const sample = contents.find((item) => (
+      item.Key
+      && item.Key !== normalizedPrefixWithSlash
+      && hasTextExtension(item.Key)
+      && collectionPatternMatches(item.Key, pattern)
+    ));
+    if (sample) return { ...sample, __folder: false };
+    continuationToken = result.IsTruncated && scanned < limit ? result.NextContinuationToken : undefined;
+  } while (continuationToken);
+  return undefined;
+}
+
+function collectionPatternMatches(key, pattern) {
+  const normalizedPattern = String(pattern || "*").trim() || "*";
+  const fileName = String(key || "").split("/").pop() || "";
+  let source = "^";
+  for (const character of normalizedPattern) {
+    if (character === "*") source += ".*";
+    else if (character === "?") source += ".";
+    else source += character.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
+  }
+  return new RegExp(`${source}$`, "i").test(fileName);
 }
 
 function browsableObjectStorageItems(objects, prefix) {
@@ -1247,59 +1399,118 @@ function endpointForMinioContainer(endpoint) {
   return value;
 }
 
-function inspectParquetLakeWithSpark({ accessKeyId, endpoint, path: sourcePath, rowLimit, secretAccessKey }) {
+function inspectParquetLakeWithSpark({ fields = [], path: sourcePath, rowLimit }) {
+  const executionMode = sparkExecutionMode();
   mkdirSync(ivyDir, { recursive: true });
-  const sparkMinioEndpoint = process.env.MINIO_ENDPOINT_IN_DOCKER || endpointForDockerNetwork(endpoint);
-  const dockerArgs = [
-    "run",
-    "--rm",
-    "--network",
-    process.env.ASKLAKE_DOCKER_NETWORK || "asklake_default",
-    "-v",
-    `${scriptsDir}:/work/scripts:ro`,
-    "-v",
-    `${ivyDir}:/tmp/.ivy2`,
-    "-e",
-    `MINIO_ENDPOINT=${sparkMinioEndpoint}`,
-    "-e",
-    `MINIO_ACCESS_KEY=${accessKeyId || process.env.MINIO_ACCESS_KEY || "m3admin"}`,
-    "-e",
-    `MINIO_SECRET_KEY=${secretAccessKey || process.env.MINIO_SECRET_KEY || "wishuponastar"}`,
-    "-e",
-    `MINIO_REGION=${process.env.MINIO_REGION || "us-east-1"}`,
-    "-e",
-    `ASKLAKE_SOURCE_PATH=${toS3APath(sourcePath)}`,
-    "-e",
-    `ASKLAKE_SOURCE_FORMAT=parquet`,
-    "-e",
-    `ASKLAKE_SOURCE_ROW_LIMIT=${Math.max(1, Math.min(Number(rowLimit) || 10, 50000))}`,
-    "-e",
-    "HOME=/tmp",
-    process.env.ASKLAKE_SPARK_IMAGE || "apache/spark:4.0.1",
-    "/opt/spark/bin/spark-submit",
-    "--master",
-    process.env.ASKLAKE_SOURCE_INSPECT_SPARK_MASTER || "local[1]",
-    "--conf",
-    "spark.jars.ivy=/tmp/.ivy2",
-    "--packages",
-    process.env.ASKLAKE_SPARK_HADOOP_AWS_PACKAGE || "org.apache.hadoop:hadoop-aws:3.4.1",
-    "/work/scripts/spark_source_inspect.py",
-  ];
-  const result = spawnSync("docker", dockerArgs, {
-    encoding: "utf8",
-    maxBuffer: 128 * 1024 * 1024,
-    timeout: Number(process.env.ASKLAKE_SOURCE_INSPECT_TIMEOUT_MS || 90000),
-  });
-  const output = `${result.stdout || ""}\n${result.stderr || ""}`;
-  const marker = output.split(/\r?\n/).findLast((line) => line.startsWith("ASKLAKE_SOURCE_INSPECT="));
-  if (result.status !== 0 || !marker) {
+  const storageFields = upsertFields(fields, [
+    ["Endpoint URL", isMinioProvider(fields) ? endpointForDockerNetwork(fieldValue(fields, "Endpoint URL")) : fieldValue(fields, "Endpoint URL")],
+  ]);
+  const requestedStorage = resolveObjectStorageConfig(storageFields, { docker: true });
+  const inheritedStorage = resolveObjectStorageConfig([], { docker: true });
+  if (
+    executionMode === "rest"
+    && requestedStorage.provider === "minio"
+    && ((requestedStorage.accessKeyId && requestedStorage.accessKeyId !== inheritedStorage.accessKeyId)
+      || (requestedStorage.secretAccessKey && requestedStorage.secretAccessKey !== inheritedStorage.secretAccessKey))
+  ) {
     throw apiError(
-      "DATALAKE_SCHEMA_INFERENCE_FAILED",
-      `데이터 레이크 Parquet 스키마 추론에 실패했습니다: ${tail(output)}`,
-      502,
+      "DATALAKE_SPARK_CREDENTIAL_CONFIGURATION_INVALID",
+      "Spark REST source inspection only supports MinIO application credentials inherited by the worker.",
+      422,
     );
   }
-  const inspected = JSON.parse(marker.slice("ASKLAKE_SOURCE_INSPECT=".length));
+  const storageEnvironment = Object.fromEntries(
+    objectStorageDockerEnv(storageFields).filter(([name]) => (
+      executionMode === "docker"
+      || !["MINIO_ACCESS_KEY", "MINIO_SECRET_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"].includes(name)
+    )),
+  );
+  const inspectEnvironment = {
+    ...storageEnvironment,
+    ASKLAKE_SOURCE_PATH: toS3APath(sourcePath),
+    ASKLAKE_SOURCE_FORMAT: "parquet",
+    ASKLAKE_SOURCE_ROW_LIMIT: Math.max(1, Math.min(Number(rowLimit) || 10, 50000)),
+    HOME: "/tmp",
+  };
+  let inspected;
+  if (executionMode === "rest") {
+    mkdirSync(sparkReportDir, { recursive: true });
+    const reportName = `source-inspect-${randomUUID()}.json`;
+    const reportPath = path.join(sparkReportDir, reportName);
+    const statePath = path.join(sparkReportDir, reportName.replace(/\.json$/, ".spark-rest-state.json"));
+    const reportRuntimePath = path.posix.join(
+      String(sparkReportRuntimeDir).replace(/\\/g, "/"),
+      reportName,
+    );
+    rmSync(reportPath, { force: true });
+    const result = runSparkRestSubmission(
+      createSparkSourceInspectRestSubmission({
+        environmentVariables: {
+          ...inspectEnvironment,
+          ASKLAKE_SOURCE_INSPECT_REPORT_FILE: reportRuntimePath,
+        },
+      }),
+      sourceInspectTimeoutMs(),
+      process.env,
+      { stateFile: statePath },
+    );
+    const output = `${result.stdout || ""}\n${result.stderr || ""}\n${result.error?.message || ""}`;
+    try {
+      if (result.status !== 0) {
+        throw apiError(
+          "DATALAKE_SCHEMA_INFERENCE_FAILED",
+          `데이터 레이크 Parquet 스키마 추론에 실패했습니다: ${tail(output)}`,
+          502,
+        );
+      }
+      inspected = JSON.parse(readFileSync(reportPath, "utf8"));
+    } catch (error) {
+      if (error?.code === "DATALAKE_SCHEMA_INFERENCE_FAILED") throw error;
+      throw apiError(
+        "DATALAKE_SCHEMA_INFERENCE_FAILED",
+        `데이터 레이크 Parquet 검사 결과를 읽지 못했습니다: ${error?.message || error}`,
+        502,
+      );
+    } finally {
+      rmSync(reportPath, { force: true });
+    }
+  } else {
+    const dockerArgs = [
+      "run",
+      "--rm",
+      "--network",
+      process.env.ASKLAKE_DOCKER_NETWORK || "asklake_default",
+      "-v",
+      `${scriptsDir}:/work/scripts:ro`,
+      "-v",
+      `${ivyDir}:/tmp/.ivy2`,
+      ...Object.entries(inspectEnvironment).flatMap(([name, value]) => ["-e", `${name}=${value}`]),
+      process.env.ASKLAKE_SPARK_IMAGE || "apache/spark:4.0.1",
+      "/opt/spark/bin/spark-submit",
+      "--master",
+      process.env.ASKLAKE_SOURCE_INSPECT_SPARK_MASTER || "local[1]",
+      "--conf",
+      "spark.jars.ivy=/tmp/.ivy2",
+      "--packages",
+      process.env.ASKLAKE_SPARK_HADOOP_AWS_PACKAGE || "org.apache.hadoop:hadoop-aws:3.4.1",
+      "/work/scripts/spark_source_inspect.py",
+    ];
+    const result = spawnSync("docker", dockerArgs, {
+      encoding: "utf8",
+      maxBuffer: 128 * 1024 * 1024,
+      timeout: sourceInspectTimeoutMs(),
+    });
+    const output = `${result.stdout || ""}\n${result.stderr || ""}`;
+    const marker = output.split(/\r?\n/).findLast((line) => line.startsWith("ASKLAKE_SOURCE_INSPECT="));
+    if (result.status !== 0 || !marker) {
+      throw apiError(
+        "DATALAKE_SCHEMA_INFERENCE_FAILED",
+        `데이터 레이크 Parquet 스키마 추론에 실패했습니다: ${tail(output)}`,
+        502,
+      );
+    }
+    inspected = JSON.parse(marker.slice("ASKLAKE_SOURCE_INSPECT=".length));
+  }
   const columns = Array.isArray(inspected.columns) ? inspected.columns : [];
   const sampleRows = Array.isArray(inspected.rows) ? inspected.rows : [];
   const schemaColumns = columns.map((column, index) => ({
@@ -1319,6 +1530,33 @@ function inspectParquetLakeWithSpark({ accessKeyId, endpoint, path: sourcePath, 
     sampleRows,
     schemaColumns,
   };
+}
+
+function requireMinioCredentials(config) {
+  if (config.provider !== "minio") return;
+  if (!config.endpoint) {
+    throw apiError("SOURCE_FIELD_REQUIRED", "MinIO endpoint URL is required.", 400);
+  }
+  if (!config.accessKeyId || !config.secretAccessKey) {
+    throw apiError("SOURCE_CREDENTIALS_REQUIRED", "MinIO access key and secret key are required.", 400);
+  }
+}
+
+export function createSparkSourceInspectRestSubmission({ environmentVariables }, environment = process.env) {
+  const runtime = sparkRestRuntimeConfig(environment);
+  const hadoopPackage = environment.ASKLAKE_SPARK_HADOOP_AWS_PACKAGE
+    || "org.apache.hadoop:hadoop-aws:3.4.1";
+  return createSparkRestSubmission({
+    appName: "asklake-source-inspect",
+    environmentVariables,
+    packages: hadoopPackage === "none" ? [] : [hadoopPackage],
+    scriptPath: runtime.sourceInspectScript,
+  }, environment);
+}
+
+function sourceInspectTimeoutMs() {
+  const configured = Number(process.env.ASKLAKE_SOURCE_INSPECT_TIMEOUT_MS || 90_000);
+  return Number.isSafeInteger(configured) && configured > 0 ? configured : 90_000;
 }
 
 function endpointForDockerNetwork(endpoint) {
@@ -1613,7 +1851,7 @@ async function runMongoDriverSample({ collectionSelector, database, rowLimit, ur
       .map((collectionInfo) => String(collectionInfo.name ?? ""))
       .filter(Boolean)
       .sort();
-    const collection = collectionSelector || collections[0] || "";
+    const collection = collectionSelector || "";
     const docs = collection ? await dbh.collection(collection).find({}).limit(limit).toArray() : [];
     return { collection, collections, docs };
   } catch (error) {

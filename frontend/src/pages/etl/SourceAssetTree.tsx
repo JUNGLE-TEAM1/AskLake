@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import type React from "react";
+import { useCallback, useMemo, useRef } from "react";
+import { FileText, Folder, FolderOpen, Loader2 } from "lucide-react";
+import type { NodeApi } from "react-arborist";
+import { ExplorerTree } from "@/components/ui/explorer-tree";
 import { TreePanel } from "@/components/ui/tree-panel";
-import { TreeGroup, TreeRow, TreeView } from "@/components/ui/tree-view";
 
 export type SourceAsset = [path: string, meta: string, status: string];
 
@@ -17,10 +18,10 @@ type SourceAssetTreeProps = {
 
 type SourceAssetTreeNode = {
   assetIndex?: number;
-  childMap: Map<string, SourceAssetTreeNode>;
   children: SourceAssetTreeNode[];
   id: string;
   isFolder: boolean;
+  label: string;
   meta: string;
   name: string;
   path: string;
@@ -28,11 +29,9 @@ type SourceAssetTreeNode = {
 };
 
 const LABELS = {
-  empty: "\uD45C\uC2DC\uD560 \uC18C\uC2A4 \uD56D\uBAA9\uC774 \uC5C6\uC2B5\uB2C8\uB2E4.",
-  file: "\uD30C\uC77C",
-  folder: "\uD3F4\uB354",
-  loading: "\uBD88\uB7EC\uC624\uB294 \uC911",
-  open: "\uC5F4\uAE30",
+  empty: "표시할 소스 항목이 없습니다.",
+  loading: "불러오는 중",
+  open: "열기",
 };
 
 export function SourceAssetTree({
@@ -43,21 +42,17 @@ export function SourceAssetTree({
   onOpenFolder,
   onSelect,
 }: SourceAssetTreeProps) {
-  const { nodeIds, nodes } = useMemo(() => buildSourceAssetTree(assets), [assets]);
-  const nodeIdsKey = nodeIds.join("\0");
-  const [expandedItems, setExpandedItems] = useState<string[]>([]);
+  const { nodeById, nodes } = useMemo(() => buildSourceAssetTree(assets), [assets]);
   const requestedFolderPaths = useRef(new Set<string>());
   const loadedFolderPathSet = useMemo(
     () => new Set(loadedFolderPaths ?? []),
     [loadedFolderPaths],
   );
+  const selectedNodeId = selectedPath
+    ? (nodeById.has(`file:${selectedPath}`) ? `file:${selectedPath}` : `folder:${selectedPath}`)
+    : undefined;
 
-  useEffect(() => {
-    const availableNodeIds = new Set(nodeIds);
-    setExpandedItems((current) => current.filter((itemId) => availableNodeIds.has(itemId)));
-  }, [nodeIdsKey]);
-
-  const requestFolderChildren = (node: SourceAssetTreeNode) => {
+  const requestFolderChildren = useCallback((node: SourceAssetTreeNode) => {
     if (!onOpenFolder) return;
     if (node.path === loadingPath) return;
     if (loadedFolderPathSet.has(node.path)) return;
@@ -67,71 +62,36 @@ export function SourceAssetTree({
     void Promise.resolve(onOpenFolder(node.path)).catch(() => {
       requestedFolderPaths.current.delete(node.path);
     });
-  };
+  }, [loadedFolderPathSet, loadingPath, onOpenFolder]);
 
-  const toggleFolder = (node: SourceAssetTreeNode) => {
-    const isOpen = expandedItems.includes(node.id);
-    if (!isOpen) {
-      requestFolderChildren(node);
+  const toggleFolder = useCallback((node: SourceAssetTreeNode) => {
+    requestFolderChildren(node);
+    void onSelect(node.path);
+  }, [onSelect, requestFolderChildren]);
+
+  const selectSourceNode = useCallback((node: SourceAssetTreeNode) => {
+    if (node.isFolder) {
+      toggleFolder(node);
+      return;
     }
-    setExpandedItems((current) => (
-      current.includes(node.id)
-        ? current.filter((itemId) => itemId !== node.id)
-        : [...current, node.id]
-    ));
-  };
+    void onSelect(node.path);
+  }, [onSelect, toggleFolder]);
 
-  const renderNode = (node: SourceAssetTreeNode, depth = 0): React.ReactNode => {
-    const canSelectFile = !node.isFolder && typeof node.assetIndex === "number";
-    const isSelected = canSelectFile && node.path === selectedPath;
-    const isExpanded = expandedItems.includes(node.id);
-    const folderMeta = node.path === loadingPath
-      ? LABELS.loading
-      : node.children.length > 0
-        ? `${node.children.length}\uAC1C`
-        : LABELS.open;
+  const getIcon = useCallback((node: NodeApi<SourceAssetTreeNode>) => {
+    if (!node.data.isFolder) return <FileText className="text-indigo-500" />;
+    return node.isOpen ? <FolderOpen className="text-blue-600" /> : <Folder className="text-blue-600" />;
+  }, []);
 
-    return (
-      <div className="source-asset-tree-item" key={node.id}>
-        <TreeRow
-          aria-expanded={node.isFolder ? isExpanded : undefined}
-          className={isSelected ? "source-asset-tree-label active" : "source-asset-tree-label"}
-          expanded={node.isFolder ? isExpanded : undefined}
-          leaf={!node.isFolder}
-          level={depth}
-          selected={isSelected}
-          title={node.path}
-          onClick={(event) => {
-            event.stopPropagation();
-            if (node.isFolder) {
-              toggleFolder(node);
-              return;
-            }
-            if (canSelectFile) {
-              void onSelect(node.path);
-            }
-          }}
-        >
-          <span
-            className={node.isFolder ? "source-asset-disclosure folder" : "source-asset-disclosure"}
-            aria-hidden="true"
-          >
-            {node.isFolder ? (isExpanded ? "v" : ">") : ""}
-          </span>
-          <span className={node.isFolder ? "source-asset-kind folder" : "source-asset-kind file"}>
-            {node.isFolder ? LABELS.folder : LABELS.file}
-          </span>
-          <strong>{node.name}</strong>
-          <em>{node.isFolder ? folderMeta : node.meta}</em>
-        </TreeRow>
-        {node.isFolder && isExpanded ? (
-          <TreeGroup className="source-asset-tree-group" level={depth + 1}>
-            {node.children.map((child) => renderNode(child, depth + 1))}
-          </TreeGroup>
-        ) : null}
-      </div>
-    );
-  };
+  const getTrailing = useCallback((node: NodeApi<SourceAssetTreeNode>) => (
+    <>
+      {node.data.isFolder ? (
+        folderSelectionControl(node.data)
+      ) : null}
+      {node.data.path === loadingPath
+        ? <Loader2 className="size-3.5 animate-spin text-blue-600" />
+        : null}
+    </>
+  ), [loadingPath]);
 
   if (nodes.length === 0) {
     return (
@@ -145,47 +105,75 @@ export function SourceAssetTree({
 
   return (
     <TreePanel className="source-asset-tree-panel">
-      <TreeView
-        className="source-asset-tree"
-        label="소스 에셋 트리"
-      >
-        {nodes.map((node) => renderNode(node))}
-      </TreeView>
+      <ExplorerTree<SourceAssetTreeNode>
+        ariaLabel="소스 에셋 트리"
+        className="h-full min-w-0"
+        data={nodes}
+        disableMultiSelection
+        getIcon={getIcon}
+        getRowProps={(node) => ({ title: node.data.path })}
+        getTrailing={getTrailing}
+        minHeight={260}
+        openByDefault={false}
+        selection={selectedNodeId}
+        onNodePress={(node) => {
+          selectSourceNode(node.data);
+        }}
+        onToggle={(nodeId) => {
+          const asset = nodeById.get(nodeId);
+          if (asset?.isFolder) requestFolderChildren(asset);
+        }}
+      />
     </TreePanel>
+  );
+}
+
+function folderSelectionControl(node: SourceAssetTreeNode) {
+  return (
+    <span
+      aria-label={`폴더 ${node.name} 선택`}
+      className="source-asset-folder-select"
+      role="img"
+      title="이 폴더를 수집 범위로 선택"
+    />
   );
 }
 
 function buildSourceAssetTree(assets: SourceAsset[]) {
   const root: SourceAssetTreeNode = {
-    childMap: new Map(),
     children: [],
     id: "root",
     isFolder: true,
+    label: "root",
     meta: "folder",
     name: "root",
     path: "",
     status: "",
   };
+  const childMaps = new Map<string, Map<string, SourceAssetTreeNode>>([[root.id, new Map()]]);
 
   const ensureChild = (parent: SourceAssetTreeNode, name: string, path: string, isFolder: boolean) => {
     const id = `${isFolder ? "folder" : "file"}:${path || name}`;
-    const existing = parent.childMap.get(id);
+    const childMap = childMaps.get(parent.id) ?? new Map<string, SourceAssetTreeNode>();
+    childMaps.set(parent.id, childMap);
+    const existing = childMap.get(id);
     if (existing) {
       if (isFolder) existing.isFolder = true;
       return existing;
     }
 
     const node: SourceAssetTreeNode = {
-      childMap: new Map(),
       children: [],
       id,
       isFolder,
+      label: name,
       meta: isFolder ? "folder" : "file",
       name,
       path,
       status: "",
     };
-    parent.childMap.set(id, node);
+    childMap.set(id, node);
+    childMaps.set(id, new Map());
     parent.children.push(node);
     return node;
   };
@@ -199,7 +187,7 @@ function buildSourceAssetTree(assets: SourceAsset[]) {
     let current = root;
     segments.forEach((segment, segmentIndex) => {
       const isLast = segmentIndex === segments.length - 1;
-      const segmentPath = segments.slice(0, segmentIndex + 1).join("/") + (!isLast || isFolderAsset ? "/" : "");
+      const segmentPath = `${segments.slice(0, segmentIndex + 1).join("/")}${!isLast || isFolderAsset ? "/" : ""}`;
       current = ensureChild(current, segment, segmentPath, !isLast || isFolderAsset);
       if (isLast) {
         current.assetIndex = assetIndex;
@@ -210,23 +198,21 @@ function buildSourceAssetTree(assets: SourceAsset[]) {
     });
   });
 
+  const nodeById = new Map<string, SourceAssetTreeNode>();
   const sortTree = (node: SourceAssetTreeNode) => {
     node.children.sort((left, right) => {
       if (left.isFolder !== right.isFolder) return left.isFolder ? -1 : 1;
       return left.name.localeCompare(right.name);
     });
-    node.children.forEach(sortTree);
+    if (node.isFolder && node.id !== "root") {
+      node.meta = node.children.length > 0 ? `${node.children.length}개` : LABELS.open;
+    }
+    node.children.forEach((child) => {
+      nodeById.set(child.id, child);
+      sortTree(child);
+    });
   };
   sortTree(root);
 
-  const nodeIds: string[] = [];
-  const collectNodeIds = (node: SourceAssetTreeNode) => {
-    if (node.id !== "root") {
-      nodeIds.push(node.id);
-    }
-    node.children.forEach(collectNodeIds);
-  };
-  collectNodeIds(root);
-
-  return { nodeIds, nodes: root.children };
+  return { nodeById, nodes: root.children };
 }

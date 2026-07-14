@@ -3,7 +3,7 @@ from typing import Iterable
 from uuid import uuid4
 
 from fastapi import status
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.errors import ApiError
@@ -13,6 +13,7 @@ from app.schemas.common import ErrorCode
 from app.schemas.permissions import PermissionGrant
 
 PermissionResourceKey = tuple[str, str]
+DELETED_SEED_SOURCE = "admin_seed_deleted"
 ALLOWED_ACTIONS = {"view", "query", "run", "manage", "delete", "share"}
 ALLOWED_PRINCIPAL_TYPES = {"user", "group", "role", "public"}
 ALLOWED_RESOURCE_TYPES = {"dataset", "etl_job", "dashboard"}
@@ -37,13 +38,14 @@ def list_permission_grants_by_resource(
             select(PermissionGrantModel)
             .where(PermissionGrantModel.resource_type == resource_type)
             .where(PermissionGrantModel.resource_id == resource_id)
+            .where(PermissionGrantModel.source != DELETED_SEED_SOURCE)
             .order_by(PermissionGrantModel.created_at.asc(), PermissionGrantModel.id.asc())
         )
         grouped[(resource_type, resource_id)].extend(row_to_permission_grant(row) for row in rows)
     return dict(grouped)
 
 
-def seed_permission_grants_if_empty(
+def ensure_demo_permission_grants(
     db: Session,
     *,
     dataset_ids: list[str],
@@ -51,13 +53,9 @@ def seed_permission_grants_if_empty(
     dashboard_ids: list[str],
 ) -> int:
     ensure_permission_grant_table(db)
-    existing_count = db.scalar(select(func.count()).select_from(PermissionGrantModel)) or 0
-    if existing_count > 0:
-        return 0
-
-    rows: list[PermissionGrantModel] = []
+    desired_rows: list[PermissionGrantModel] = []
     if dataset_ids:
-        rows.append(build_grant_row(
+        desired_rows.append(build_grant_row(
             resource_type="dataset",
             resource_id=dataset_ids[0],
             principal_type="group",
@@ -65,7 +63,7 @@ def seed_permission_grants_if_empty(
             actions=["view", "query"],
         ))
     if job_ids:
-        rows.append(build_grant_row(
+        desired_rows.append(build_grant_row(
             resource_type="etl_job",
             resource_id=job_ids[0],
             principal_type="group",
@@ -73,7 +71,7 @@ def seed_permission_grants_if_empty(
             actions=["view", "run"],
         ))
     if dashboard_ids:
-        rows.append(build_grant_row(
+        desired_rows.append(build_grant_row(
             resource_type="dashboard",
             resource_id=dashboard_ids[0],
             principal_type="group",
@@ -81,9 +79,29 @@ def seed_permission_grants_if_empty(
             actions=["view"],
         ))
 
-    if not rows:
+    if not desired_rows:
         return 0
 
+    existing_keys = {
+        (
+            row.resource_type,
+            row.resource_id,
+            row.principal_type,
+            row.principal_id,
+        )
+        for row in db.scalars(
+            select(PermissionGrantModel).where(
+                PermissionGrantModel.source.in_(["admin_seed", DELETED_SEED_SOURCE])
+            )
+        )
+    }
+    rows = [
+        row
+        for row in desired_rows
+        if (row.resource_type, row.resource_id, row.principal_type, row.principal_id) not in existing_keys
+    ]
+    if not rows:
+        return 0
     db.add_all(rows)
     db.commit()
     return len(rows)
@@ -197,7 +215,10 @@ def update_permission_grant(
 def delete_permission_grant(db: Session, grant_id: str) -> PermissionGrantModel:
     ensure_permission_grant_table(db)
     row = get_permission_grant_or_404(db, grant_id)
-    db.delete(row)
+    if row.source == "admin_seed":
+        row.source = DELETED_SEED_SOURCE
+    else:
+        db.delete(row)
     db.commit()
     return row
 

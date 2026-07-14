@@ -1316,6 +1316,89 @@
   font-weight: 850;
 }
 
+.collection-policy-editor {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  border-block: 1px solid #dbe3ef;
+  background: #fff;
+  padding: 14px 2px;
+}
+
+.collection-policy-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.collection-policy-header > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.collection-policy-header svg {
+  color: #2563eb;
+}
+
+.collection-policy-header strong {
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.collection-policy-header span {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.collection-policy-grid {
+  display: grid;
+  grid-template-columns: minmax(260px, 1.6fr) minmax(150px, .8fr) repeat(2, minmax(132px, .6fr));
+  align-items: end;
+  gap: 8px;
+  min-width: 0;
+}
+
+.collection-recursive-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 40px;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.collection-policy-note {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: #64748b;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+@media (max-width: 1100px) {
+  .collection-policy-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .collection-policy-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .collection-policy-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .source-preview-scroll {
   max-height: min(420px, calc(100vh - 520px));
 }
@@ -1922,8 +2005,9 @@
 
 .hegun-status-copy {
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr);
-  gap: 2px 10px;
+  grid-template-columns: 42px minmax(0, 1fr);
+  column-gap: 14px;
+  row-gap: 2px;
   align-items: center;
   min-width: 0;
 }
@@ -2218,6 +2302,40 @@
 
 .source-asset-tree-item {
   min-width: 0;
+}
+
+.source-asset-tree-row-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 30px;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+}
+
+.source-asset-tree-row-shell.file {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.source-asset-folder-select {
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: #94a3b8;
+  cursor: pointer;
+}
+
+.source-asset-folder-select:hover,
+.source-asset-folder-select:focus-visible,
+.source-asset-folder-select.active {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #2563eb;
+  outline: 0;
 }
 
 .source-asset-tree-group {
@@ -6711,18 +6829,54 @@
 }
 
 .target-config-stack {
-  gap: 18px;
+  gap: 24px;
 }
 
 .target-config-card .field {
   margin: 0;
 }
 
+.target-page-layout .creation-top-actions .primary-button,
+.target-page-layout .creation-top-actions .secondary-button {
+  min-height: 48px;
+  font-size: 18px;
+}
+
+.target-config-card .etl-review-card-header {
+  padding: 22px 24px;
+}
+
+.target-config-card .etl-review-card-header h2 {
+  font-size: 22px;
+}
+
+.target-config-card .etl-review-icon {
+  width: 36px;
+  height: 36px;
+}
+
+.target-config-card .etl-review-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.target-config-card .field > span {
+  color: #334155;
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.target-config-card .input {
+  min-height: 52px;
+  padding: 0 16px;
+  font-size: 20px;
+}
+
 .target-config-form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px 20px;
-  padding: 18px 20px 20px;
+  gap: 20px 24px;
+  padding: 24px;
 }
 
 .target-config-form-grid .field.wide {
@@ -6735,15 +6889,24 @@
   max-width: none;
 }
 
+.target-config-form-grid.storage-only {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.target-tags-field {
+  display: grid;
+  gap: 12px;
+}
+
 .target-config-schema {
   margin-top: 18px;
 }
 
 .target-config-split {
   display: grid;
-  grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
-  gap: 20px;
-  padding: 18px 20px 20px;
+  grid-template-columns: minmax(0, 1.18fr) minmax(0, 0.82fr);
+  gap: 28px;
+  padding: 24px;
 }
 
 .target-config-subsection {
@@ -6756,15 +6919,15 @@
 .target-config-subheader {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  min-height: 28px;
+  gap: 10px;
+  min-height: 36px;
   color: #2563eb;
 }
 
 .target-config-subheader h3 {
   margin: 0;
   color: #111827;
-  font-size: 14px;
+  font-size: 21px;
   font-weight: 850;
 }
 
@@ -6802,13 +6965,19 @@
 .target-chip-grid {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  min-height: 40px;
+  gap: 10px;
+  min-height: 52px;
   align-items: center;
   border: 1px solid #dee1e6;
   border-radius: 8px;
   background: #fff;
-  padding: 8px;
+  padding: 10px;
+}
+
+.target-config-card .target-chip-grid button {
+  min-height: 42px;
+  padding: 0 14px;
+  font-size: 18px;
 }
 
 .target-chip-grid.partition {
@@ -6820,7 +6989,13 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px;
-  margin-top: 12px;
+}
+
+.target-config-card .target-inline-controls button,
+.target-config-card .s3-path-field button {
+  min-height: 52px;
+  padding: 0 18px;
+  font-size: 18px;
 }
 
 .target-metadata-grid .target-db-field,
@@ -6846,14 +7021,14 @@
 
 .target-validation-summary {
   display: grid;
-  gap: 6px;
+  gap: 8px;
   border: 1px solid #fecaca;
   border-radius: 8px;
   background: #fef2f2;
   color: #991b1b;
-  font-size: 12px;
+  font-size: 17px;
   font-weight: 800;
-  padding: 12px 14px;
+  padding: 16px 18px;
 }
 
 .s3-path-field {
@@ -6875,6 +7050,11 @@
   padding: 0 10px;
 }
 
+.target-config-card .s3-path-display {
+  min-height: 52px;
+  padding: 0 16px;
+}
+
 .s3-path-empty {
   color: #565d6d;
   font-size: 12px;
@@ -6891,6 +7071,11 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.target-config-card .s3-path-empty,
+.target-config-card .s3-path-text {
+  font-size: 18px;
 }
 
 .s3-path-action {
@@ -7269,32 +7454,65 @@
 
 .target-partition-settings {
   display: grid;
-  gap: 8px;
   min-width: 0;
+  padding: 24px;
+}
+
+.target-partition-table {
+  overflow: hidden;
+  border: 1px solid #d7deea;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.target-partition-header,
+.target-partition-option {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr) minmax(160px, 0.45fr);
+  align-items: center;
+}
+
+.target-partition-header {
+  min-height: 54px;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 18px;
+  font-weight: 850;
+}
+
+.target-partition-header span,
+.target-partition-option > span {
+  padding: 0 20px;
+}
+
+.target-partition-header span:first-child {
+  text-align: center;
 }
 
 .target-partition-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
 }
 
 .target-partition-option {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: 8px;
-  align-items: center;
-  min-height: 40px;
-  border: 1px solid #dee1e6;
-  border-radius: 8px;
+  min-height: 64px;
+  border-top: 1px solid #e2e8f0;
   background: #fff;
   cursor: pointer;
-  padding: 0 10px;
+  transition: background-color 160ms ease;
+}
+
+.target-partition-option > button {
+  justify-self: center;
+  width: 24px;
+  height: 24px;
 }
 
 .target-partition-option.active {
-  border-color: #3865e6;
   background: #eff6ff;
+}
+
+.target-partition-option:not(.disabled):hover {
+  background: #f8fbff;
 }
 
 .target-partition-option.disabled {
@@ -7306,7 +7524,7 @@
 .target-partition-name {
   min-width: 0;
   color: #171a1f;
-  font-size: 12px;
+  font-size: 18px;
   font-weight: 850;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -7320,7 +7538,7 @@
 .target-partition-type {
   color: #64748b;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-  font-size: 10px;
+  font-size: 18px;
   font-weight: 850;
 }
 
@@ -7520,11 +7738,30 @@
 }
 
 @media (max-width: 820px) {
+  .target-config-form-grid,
+  .target-config-split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .target-config-form-grid .field.wide {
+    grid-column: auto;
+  }
+
   .target-partition-grid,
   .target-test-row,
   .target-lineage,
   .target-inline-controls {
     grid-template-columns: 1fr;
+  }
+
+  .target-partition-header,
+  .target-partition-option {
+    grid-template-columns: 68px minmax(0, 1fr) minmax(120px, 0.55fr);
+  }
+
+  .target-partition-header span,
+  .target-partition-option > span {
+    padding: 0 12px;
   }
 
   .database-field,
