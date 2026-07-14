@@ -391,6 +391,22 @@ cd backend
 npm run kafka:reviews-replay -- --input /path/to/amazon_reviews.jsonl.gz --limit 100 --rate 100
 ```
 
+배포 환경의 클릭 로그를 Kafka Continuous 입력으로 재사용할 때는 raw S3 object를 서버의 허용된 replay 디렉터리로 내려받고, 10필드 로그를 표준 replay JSONL로 변환한 뒤 기존 producer를 사용한다. 클릭 필드는 `raw.event_time`, `raw.event_id`, `raw.user_id`, `raw.session_id`, `raw.event_type`, `raw.product_id`, `raw.page_url`, `raw.device_type`, `raw.referrer`, `raw.position`에 보존된다.
+
+```bash
+aws s3 cp s3://<raw-bucket>/commerce/click-events.log /var/lib/asklake/replay-input/click-events.log
+cd backend
+npm run kafka:click-log:convert -- \
+  --input /var/lib/asklake/replay-input/click-events.log \
+  --output /var/lib/asklake/replay-input/click-events.kafka.jsonl
+npm run kafka:reviews-replay -- \
+  --broker redpanda:9092 \
+  --topic click-events.raw \
+  --input /var/lib/asklake/replay-input/click-events.kafka.jsonl \
+  --rate 1000 \
+  --batch-size 1000
+```
+
 주요 옵션:
 
 ```txt

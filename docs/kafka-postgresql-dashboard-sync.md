@@ -238,7 +238,7 @@ GET /api/datasets/{datasetId}/freshness
   "isContinuous": true,
   "latestRevision": 105,
   "updatedAt": "2026-07-14T12:00:05+00:00",
-  "nextCheckAfterMs": 5000
+  "nextCheckAfterMs": 1000
 }
 ```
 
@@ -263,7 +263,7 @@ Content-Type: application/json
       "isContinuous": true,
       "latestRevision": 105,
       "updatedAt": "2026-07-14T12:00:05+00:00",
-      "nextCheckAfterMs": 5000
+      "nextCheckAfterMs": 1000
     }
   ]
 }
