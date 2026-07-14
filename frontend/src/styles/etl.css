@@ -6759,8 +6759,8 @@
 .etl-review-validation {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-  padding: 16px 20px;
+  gap: 12px;
+  padding: 20px;
 }
 
 .etl-review-validation div {

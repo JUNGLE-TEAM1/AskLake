@@ -29,6 +29,7 @@ def pipeline_payload() -> dict:
             {
                 "actions": ["view", "run"],
                 "principalId": "demo-user",
+                "principalName": "Demo User",
                 "principalType": "user",
                 "source": "permission_ui",
             },
@@ -114,17 +115,17 @@ def main() -> None:
             review_request = ReviewPipelineRequest.model_validate(pipeline_payload())
             review = etl_service.review_pipeline(review_request)
             assert review.permission[0].label == "담당자"
-            assert review.permission[0].value == "data-platform · 전체 권한 자동 부여"
-            assert review.permission[1].label == "전체 사용자 조회"
-            assert review.permission[1].value == "허용"
+            assert review.permission[0].value == "data-platform · 모든 작업 가능"
+            assert review.permission[1].label == "로그인한 모든 사용자"
+            assert review.permission[1].value == "조회 가능"
             assert any(
-                entry.label == "사용자 · demo-user" and "실행" in entry.value
+                entry.label == "Demo User (사용자)" and "실행" in entry.value
                 for entry in review.permission
             )
-            assert not any(entry.label.startswith("모든 사용자") for entry in review.permission)
-            assert any(row.label == "권한 설정" and row.status == "ready" for row in review.validation)
+            assert any(row.label == "접근 권한" and row.status == "ready" for row in review.validation)
             assert any(row.label == "저장 위치" and row.status == "ready" for row in review.validation)
             assert not any(row.label == "권한/타겟" for row in review.validation)
+            assert not any(row.label in {"스케줄", "스트림 제어", "실패 재시도"} for row in review.validation)
 
             invalid_permission_payload = pipeline_payload()
             invalid_permission_payload["permissionSummary"] = ""
@@ -134,7 +135,7 @@ def main() -> None:
             )
             assert invalid_permission_review.can_create is False
             assert any(
-                row.label == "권한 설정"
+                row.label == "접근 권한"
                 and row.status == "warning"
                 and row.value == "담당자 확인 필요"
                 for row in invalid_permission_review.validation

@@ -1610,8 +1610,6 @@ def review_pipeline(request: ReviewPipelineRequest) -> ReviewSnapshot:
         and len(request.record_parsing.columns) == request.record_parsing.expected_field_count
         and len({normalize_column_name(column.name) for column in request.record_parsing.columns}) == len(request.record_parsing.columns)
     )
-    schedule_ready = bool(request.schedule_label.strip())
-    retry_ready = bool(request.retry_policy_summary.strip())
     target_issue = target_contract_issue(
         source_type=request.source_type,
         execution_mode=request.execution_mode,
@@ -1671,14 +1669,12 @@ def review_pipeline(request: ReviewPipelineRequest) -> ReviewSnapshot:
             for name, type_ in output_columns
         ],
         validation=[
-            review_validation("소스 연결", source_ready, "완료", "확인 필요"),
+            review_validation("소스 데이터", source_ready, "연결됨", "연결 확인 필요"),
             *([review_validation("레코드 구조화", record_parsing_ready, "확정됨", "구조화 규칙 확인 필요")] if request.record_parsing and request.record_parsing.enabled else []),
-            review_validation("스키마", schema_ready, "확정됨", "추론 필요"),
+            review_validation("출력 스키마", schema_ready, "확정됨", "필드 선택 필요"),
             review_validation("처리 규칙", rules_ready, rule_ready_value, rule_warning_value),
-            review_validation("스트림 제어" if request.execution_mode == "continuous" else "스케줄", schedule_ready, "시작/중지로 제어" if request.execution_mode == "continuous" else "유효함", "확인 필요"),
-            review_validation("실패 재시도", retry_ready, "유효함", "확인 필요"),
-            review_validation("권한 설정", permission_ready, "유효함", permission_issue or "확인 필요"),
-            review_validation("저장 위치", target_ready, "유효함", target_issue or "대상 데이터셋 확인 필요"),
+            review_validation("접근 권한", permission_ready, "설정됨", permission_issue or "권한 확인 필요"),
+            review_validation("저장 위치", target_ready, "설정됨", target_issue or "대상 데이터셋 확인 필요"),
         ],
     )
 
@@ -1694,8 +1690,8 @@ def permission_review_entries(request: ReviewPipelineRequest) -> list[ReviewEntr
         for grant in grants
     )
     entries = [
-        review_entry("담당자", f"{request.owner} · 전체 권한 자동 부여"),
-        review_entry("전체 사용자 조회", "허용" if public_view else "허용 안 함"),
+        review_entry("담당자", f"{request.owner} · 모든 작업 가능"),
+        review_entry("로그인한 모든 사용자", "조회 가능" if public_view else "조회 불가"),
     ]
     principal_labels = {
         "group": "그룹",
@@ -1709,12 +1705,12 @@ def permission_review_entries(request: ReviewPipelineRequest) -> list[ReviewEntr
         if principal_type == "public":
             continue
         label = principal_labels.get(principal_type, principal_type)
-        principal = grant.principal_id
+        principal = grant.principal_name or grant.principal_id
         actions = " · ".join(
             PERMISSION_REVIEW_ACTION_LABELS.get(str(action), str(action))
             for action in grant.actions
         ) or "권한 없음"
-        entries.append(review_entry(f"{label} · {principal}", actions))
+        entries.append(review_entry(f"{principal} ({label})", actions))
 
     return entries
 

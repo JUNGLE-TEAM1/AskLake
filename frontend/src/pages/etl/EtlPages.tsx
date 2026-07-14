@@ -1127,17 +1127,26 @@ function buildPermissionDraftPatch({
   const normalizedOwner = getDisplayText(owner, DEFAULT_OWNER);
   const selectedGrants = grants
     .filter((grant) => grant.principalType !== "public")
-    .map((grant) => ({
-      actions: normalizePermissionActions(grant.actions),
-      principalId: grant.principalId,
-      principalType: grant.principalType,
-      source: "permission_ui",
-    }));
+    .map((grant) => {
+      const principalName = grant.principalType === "group"
+        ? options.groups.find((group) => group.id === grant.principalId)?.name
+        : grant.principalType === "user"
+          ? options.users.find((user) => user.id === grant.principalId)?.name
+          : grant.principalName;
+      return {
+        actions: normalizePermissionActions(grant.actions),
+        principalId: grant.principalId,
+        principalName: principalName ?? grant.principalId,
+        principalType: grant.principalType,
+        source: "permission_ui",
+      };
+    });
   const permissionGrants: PermissionGrant[] = [
     ...selectedGrants,
     ...(publicView ? [{
       actions: ["view"] as PermissionAction[],
       principalId: "public",
+      principalName: "로그인한 모든 사용자",
       principalType: "public" as const,
       source: "permission_ui",
     }] : []),
@@ -5633,13 +5642,13 @@ export function TargetPage({
   const sampleTargetSchema = useMemo(() => inferTargetSchema([], [], undefined), []);
   const [targetDataset, setTargetDataset] = useState(initialTarget.targetDataset);
   const databaseName = draftTarget?.databaseName ?? "asklake";
-  const targetLayer = initialTargetLayer;
+  const [targetLayer, setTargetLayer] = useState(initialTargetLayer);
   const [targetStoragePath, setTargetStoragePath] = useState(initialStoragePath);
   const [storagePathCustomized, setStoragePathCustomized] = useState(
     initialStoragePath !== buildTargetStoragePath(initialTarget.targetDataset, initialTargetLayer),
   );
   const [targetDescription, setTargetDescription] = useState(initialTarget.description);
-  const targetFormat = initialTargetFormat;
+  const [targetFormat, setTargetFormat] = useState(initialTargetFormat);
   const targetOwner = draftTarget?.owner ?? initialTarget.owner;
   const [targetManager, setTargetManager] = useState(draftTarget?.manager ?? initialTarget.owner);
   const [targetTags, setTargetTags] = useState<string[]>(initialTarget.tags);
@@ -5768,6 +5777,13 @@ export function TargetPage({
     }
   };
 
+  const changeTargetLayer = (nextLayer: TargetLayer) => {
+    setTargetLayer(nextLayer);
+    if (!storagePathCustomized) {
+      setTargetStoragePath(buildTargetStoragePath(targetDataset.trim() || "target_dataset", nextLayer));
+    }
+  };
+
   const saveTargetConfig = () => {
     const config = buildConfig();
     const errors = validateTargetConfig(config, activeJsonParseFailed);
@@ -5790,7 +5806,9 @@ export function TargetPage({
     if (!saveTargetConfig()) return;
     onNext();
   };
-  const targetNextDisabled = validateTargetConfig(buildConfig(), activeJsonParseFailed).length > 0;
+  const targetNextDisabled = validateTargetConfig(buildConfig(), activeJsonParseFailed).length > 0
+    || !targetLayerOptions.includes(targetLayer)
+    || !targetFormatOptions.includes(targetFormat);
 
   const renderPartitionOption = (rule: TargetSchemaRule) => {
     const selected = filteredPartitionColumns.includes(rule.name);
@@ -5834,14 +5852,14 @@ export function TargetPage({
             </div>
           </div>
           <div className="target-config-form-grid basic">
-            <FormFieldGroup className="field wide" label="데이터셋명">
+            <FormFieldGroup className="field" label="대상 데이터셋">
               <Input className="input control-input" value={targetDataset} onChange={(event) => changeTargetDataset(event.target.value)} />
+            </FormFieldGroup>
+            <FormFieldGroup className="field" label="설명">
+              <Input className="input control-input" value={targetDescription} onChange={(event) => setTargetDescription(event.target.value)} />
             </FormFieldGroup>
             <FormFieldGroup className="field target-manager-field" label="담당자">
               <Input className="input control-input" value={targetManager} onChange={(event) => setTargetManager(event.target.value)} />
-            </FormFieldGroup>
-            <FormFieldGroup className="field wide" label="설명">
-              <Input className="input control-input" value={targetDescription} onChange={(event) => setTargetDescription(event.target.value)} />
             </FormFieldGroup>
             <FormFieldGroup className="field wide target-tags-field" label="태그">
               {targetTags.length > 0 ? (
@@ -5873,7 +5891,27 @@ export function TargetPage({
               <h2>저장 위치 설정</h2>
             </div>
           </div>
-          <div className="target-config-form-grid destination storage-only">
+          <div className="target-config-form-grid destination">
+            <FormFieldGroup className="field target-layer-field" label="데이터 계층">
+              <Select value={targetLayer} onValueChange={(value) => changeTargetLayer(value as TargetLayer)}>
+                <SelectTrigger className="input control-input" aria-label="데이터 계층">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {targetLayerOptions.map((layer) => <SelectItem key={layer} value={layer}>{layer}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </FormFieldGroup>
+            <FormFieldGroup className="field target-format-field" label="파일 형식">
+              <Select value={targetFormat} onValueChange={(value) => setTargetFormat(normalizeTargetFileFormat(value))}>
+                <SelectTrigger className="input control-input" aria-label="파일 형식">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {targetFormatOptions.map((format) => <SelectItem key={format} value={format}>{format.toUpperCase()}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </FormFieldGroup>
             <FormFieldGroup className="field wide target-storage-field" label="저장 경로">
               <S3PathField useShadcnStyles value={targetStoragePath} onChange={(path) => {
                 setTargetStoragePath(path);
@@ -6465,6 +6503,23 @@ export function ReviewPage({
         <div className="etl-review-stack">
           <section className="etl-review-card">
             <div className="etl-review-card-header">
+              <span className="etl-review-icon readiness"><Check size={17} /></span>
+              <div>
+                <h2>생성 준비 상태</h2>
+              </div>
+            </div>
+            <ValidationList
+              className="etl-review-validation"
+              items={validationRows.map(({ label, status, value }) => ({
+                label,
+                status,
+                value,
+              }))}
+            />
+          </section>
+
+          <section className="etl-review-card">
+            <div className="etl-review-card-header">
               <span className="etl-review-icon"><FileText size={17} /></span>
               <div>
                 <h2>기본 정보</h2>
@@ -6474,7 +6529,6 @@ export function ReviewPage({
             <KeyValueList
               className="etl-review-kv"
               items={basicInformationRows.map(({ label, value }) => ({
-                className: label === "설명" ? "wide" : undefined,
                 label,
                 value,
               }))}
@@ -6521,25 +6575,7 @@ export function ReviewPage({
             <KeyValueList
               className="etl-review-kv permission"
               items={permissionRows.map(({ label, value }) => ({
-                className: label === "요약" ? "wide" : undefined,
                 label,
-                value,
-              }))}
-            />
-          </section>
-
-          <section className="etl-review-card">
-            <div className="etl-review-card-header">
-              <span className="etl-review-icon readiness"><Check size={17} /></span>
-              <div>
-                <h2>생성 준비 상태</h2>
-              </div>
-            </div>
-            <ValidationList
-              className="etl-review-validation"
-              items={validationRows.map(({ label, status, value }) => ({
-                label,
-                status,
                 value,
               }))}
             />
