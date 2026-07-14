@@ -1,4 +1,4 @@
-import type { DraftPipeline, RuleCompilationResult } from "../types";
+import type { DraftPipeline, PermissionGrant, RuleCompilationResult } from "../types";
 import { apiClient, apiConfig } from "./apiClient";
 import { toCreatePipelineRequest } from "./draftPipelineContract";
 import { compileRuleContract } from "./ruleContract";
@@ -30,6 +30,15 @@ export type ReviewSnapshot = {
   schema: ReviewSchemaRow[];
   validation: ReviewValidationRow[];
 };
+
+const PERMISSION_REVIEW_ACTION_LABELS = {
+  delete: "삭제",
+  manage: "관리",
+  query: "쿼리 실행",
+  run: "실행",
+  share: "공유",
+  view: "조회",
+} as const;
 
 export async function getReviewSnapshot(draft: DraftPipeline): Promise<ReviewSnapshot> {
   const request = {
@@ -85,10 +94,7 @@ function buildMockReviewSnapshot(draft: DraftPipeline): ReviewSnapshot {
       ["계층", request.targetLayer],
       ["파티션", request.partition || "없음"],
     ]),
-    permission: toReviewEntries([
-      ["담당자", request.owner],
-      ["요약", request.permissionSummary],
-    ]),
+    permission: permissionReviewEntries(request.owner, request.permissionGrants),
     ruleCompilation,
     schema: outputColumns.map(([name, type]) => {
       const sourceColumn = includedColumns.find((column) => column.targetName === name || column.sourceName === name);
@@ -119,6 +125,25 @@ function buildMockReviewSnapshot(draft: DraftPipeline): ReviewSnapshot {
 
 function validationRow(label: string, ready: boolean, readyValue: string, warningValue: string): ReviewValidationRow {
   return { label, status: ready ? "ready" : "warning", value: ready ? readyValue : warningValue };
+}
+
+function permissionReviewEntries(owner: string, grants: PermissionGrant[] | undefined): ReviewEntry[] {
+  const principalLabels = {
+    group: "그룹",
+    public: "모든 사용자",
+    role: "역할",
+    user: "사용자",
+  } as const;
+  return toReviewEntries([
+    ["담당자 자동 권한", `${owner} · 조회 · 쿼리 실행 · 실행 · 관리 · 공유 · 삭제`],
+    ...(grants ?? []).map((grant): [string, string] => {
+      const principal = grant.principalType === "public" ? "로그인한 사용자 전체" : grant.principalId;
+      return [
+        `${principalLabels[grant.principalType]} · ${principal}`,
+        grant.actions.map((action) => PERMISSION_REVIEW_ACTION_LABELS[action]).join(" · ") || "권한 없음",
+      ];
+    }),
+  ]);
 }
 
 function toReviewEntries(rows: Array<[string, string | undefined]>): ReviewEntry[] {

@@ -123,6 +123,14 @@ JOB_STATUSES = ("scheduled", "failed", "running", "paused", "canceled", "stopped
 ACTIVE_RUN_STATUSES = {"queued", "running"}
 TERMINAL_RUN_STATUSES = {"success", "failed", "canceled"}
 SPARK_OUTPUT_FORMAT = "parquet"
+PERMISSION_REVIEW_ACTION_LABELS = {
+    "view": "조회",
+    "query": "쿼리 실행",
+    "run": "실행",
+    "manage": "관리",
+    "share": "공유",
+    "delete": "삭제",
+}
 PERMISSION_GROUP_ACTIONS = {
     "analytics": ["view", "query"],
     "data-platform": ["view", "run", "manage"],
@@ -1647,10 +1655,7 @@ def review_pipeline(request: ReviewPipelineRequest) -> ReviewSnapshot:
             review_entry("계층", request.target_layer),
             review_entry("파티션", request.partition or "없음"),
         ],
-        permission=[
-            review_entry("담당자", request.owner),
-            review_entry("요약", request.permission_summary),
-        ],
+        permission=permission_review_entries(request),
         rule_compilation=compiled_rules.result,
         schema=[
             ReviewSchemaRow(
@@ -1675,6 +1680,31 @@ def review_pipeline(request: ReviewPipelineRequest) -> ReviewSnapshot:
 
 def review_entry(label: str, value: str | None) -> ReviewEntry:
     return ReviewEntry(label=label, value=(value or "").strip() or "미설정")
+
+
+def permission_review_entries(request: ReviewPipelineRequest) -> list[ReviewEntry]:
+    entries = [review_entry(
+        "담당자 자동 권한",
+        f"{request.owner} · 조회 · 쿼리 실행 · 실행 · 관리 · 공유 · 삭제",
+    )]
+    principal_labels = {
+        "group": "그룹",
+        "user": "사용자",
+        "role": "역할",
+        "public": "모든 사용자",
+    }
+
+    for grant in request.permission_grants or []:
+        principal_type = str(grant.principal_type)
+        label = principal_labels.get(principal_type, principal_type)
+        principal = "로그인한 사용자 전체" if principal_type == "public" else grant.principal_id
+        actions = " · ".join(
+            PERMISSION_REVIEW_ACTION_LABELS.get(str(action), str(action))
+            for action in grant.actions
+        ) or "권한 없음"
+        entries.append(review_entry(f"{label} · {principal}", actions))
+
+    return entries
 
 
 def review_validation(label: str, ready: bool, ready_value: str, warning_value: str) -> ReviewValidationRow:

@@ -81,7 +81,7 @@ import { getDatasets } from "../../services/mockApi";
 import { getReviewSnapshot, type ReviewSnapshot } from "../../services/reviewApi";
 import { fetchPermissionOptions } from "../../services/permissionApi";
 import { getSourceConnectorDefaults, listSourceAssets, previewRecordParsing, testSourceConnector, type SourceConnectorAnalysis } from "../../services/sourceConnectorService";
-import type { AuditResult, CatalogDataset, DraftPipeline, DraftPipelinePatch, FlowId, PermissionAction, PermissionOptionsResponse, RecordParsingDraft, RecordParsingPreviewResponse, ScheduleFlowId, SchemaColumnDraft, SourceDraft, TargetLayer } from "../../types";
+import type { AuditResult, CatalogDataset, DraftPipeline, DraftPipelinePatch, FlowId, PermissionAction, PermissionGrant, PermissionOptionsResponse, RecordParsingDraft, RecordParsingPreviewResponse, ScheduleFlowId, SchemaColumnDraft, SourceDraft, TargetLayer } from "../../types";
 import type { QualityRuleDraft, RetryPolicyDraft, ScheduleDraft, ScheduleOverlapPolicy, TransformStepDraft, WatermarkPolicyDraft, WatermarkWindowMode } from "../../types/etl";
 import type { QualityRuleOption, TransformQualityInvalidRow, TransformQualityPreviewSample, TransformQualitySampleRow, TransformQualityStepPreview, TransformQualityValidationResult } from "../../data/transformQualityPreview";
 import { SourceAssetTree } from "./SourceAssetTree";
@@ -690,7 +690,21 @@ const PERMISSION_ACTION_LABELS: Record<PermissionAction, string> = {
   view: "조회",
 };
 
-type PermissionGrantTab = "roles" | "users";
+type PermissionGrantTab = "groups" | "users";
+type PermissionPresetId = "view" | "run" | "manage" | "custom";
+
+const PERMISSION_ACTION_ORDER: PermissionAction[] = ["view", "query", "run", "manage", "share", "delete"];
+const PERMISSION_PRESETS: Array<{
+  actions: PermissionAction[];
+  description: string;
+  id: PermissionPresetId;
+  label: string;
+}> = [
+  { actions: ["view"], description: "데이터와 작업 정보를 확인합니다.", id: "view", label: "조회 전용" },
+  { actions: ["view", "run"], description: "조회하고 작업을 실행할 수 있습니다.", id: "run", label: "실행 가능" },
+  { actions: ["view", "run", "manage"], description: "조회, 실행, 설정 변경을 허용합니다.", id: "manage", label: "운영 가능" },
+  { actions: [], description: "대상마다 허용 작업을 직접 선택합니다.", id: "custom", label: "직접 설정" },
+];
 
 type PermissionDraftSlice = {
   grants?: DraftPipeline["permission"]["grants"];
@@ -1064,6 +1078,95 @@ function getPermissionDraftValues(draft: DraftPipeline) {
     permissionSummary: buildPermissionSummary(permissionTemplate, visibility),
     permissionTemplate,
     visibility,
+  };
+}
+
+function normalizePermissionActions(actions: PermissionAction[] | undefined) {
+  const selected = new Set(actions ?? []);
+  selected.add("view");
+  return PERMISSION_ACTION_ORDER.filter((action) => selected.has(action));
+}
+
+function permissionGrantKey(grant: Pick<PermissionGrant, "principalId" | "principalType">) {
+  return `${grant.principalType}:${grant.principalId}`;
+}
+
+function permissionActionsMatch(left: PermissionAction[], right: PermissionAction[]) {
+  const normalizedLeft = normalizePermissionActions(left);
+  const normalizedRight = normalizePermissionActions(right);
+  return normalizedLeft.length === normalizedRight.length
+    && normalizedLeft.every((action, index) => action === normalizedRight[index]);
+}
+
+function inferPermissionPreset(grants: PermissionGrant[]): PermissionPresetId {
+  if (grants.length === 0) return "custom";
+  const preset = PERMISSION_PRESETS.find((candidate) => (
+    candidate.id !== "custom"
+    && grants.every((grant) => permissionActionsMatch(grant.actions, candidate.actions))
+  ));
+  return preset?.id ?? "custom";
+}
+
+function permissionPresetActions(presetId: PermissionPresetId) {
+  return PERMISSION_PRESETS.find((preset) => preset.id === presetId)?.actions ?? [];
+}
+
+function buildPermissionDraftPatch({
+  grants,
+  options,
+  owner,
+  preset,
+  publicView,
+}: {
+  grants: PermissionGrant[];
+  options: PermissionOptionsResponse;
+  owner: string;
+  preset: PermissionPresetId;
+  publicView: boolean;
+}): DraftPipelinePatch {
+  const normalizedOwner = getDisplayText(owner, DEFAULT_OWNER);
+  const selectedGrants = grants
+    .filter((grant) => grant.principalType !== "public")
+    .map((grant) => ({
+      actions: normalizePermissionActions(grant.actions),
+      principalId: grant.principalId,
+      principalType: grant.principalType,
+      source: "permission_ui",
+    }));
+  const permissionGrants: PermissionGrant[] = [
+    ...selectedGrants,
+    ...(publicView ? [{
+      actions: ["view"] as PermissionAction[],
+      principalId: "public",
+      principalType: "public" as const,
+      source: "permission_ui",
+    }] : []),
+  ];
+  const selectedGrantKeys = new Set(selectedGrants.map(permissionGrantKey));
+  const permissionRoles = options.groups.map((group) => ({
+    access: normalizePermissionActions(
+      selectedGrants.find((grant) => permissionGrantKey(grant) === `group:${group.id}`)?.actions ?? group.actions,
+    ).map((action) => PERMISSION_ACTION_LABELS[action]),
+    checked: selectedGrantKeys.has(`group:${group.id}`),
+    name: group.name,
+  }));
+  const presetLabel = PERMISSION_PRESETS.find((candidate) => candidate.id === preset)?.label ?? "직접 설정";
+  const visibility = publicView ? "외부 공유" : "조직 내부";
+  const permissionSummary = `담당자 + ${selectedGrants.length}개 대상 · ${publicView ? "모든 사용자 조회 허용" : "지정 대상만 조회"}`;
+
+  return {
+    owner: normalizedOwner,
+    permissionGrants,
+    permissionRoles,
+    permission: {
+      grants: permissionGrants,
+      owner: normalizedOwner,
+      roles: permissionRoles,
+      summary: permissionSummary,
+      template: presetLabel,
+      visibility,
+    },
+    permissionSummary,
   };
 }
 
@@ -5816,50 +5919,66 @@ export function PermissionPage({
   onSave: () => void;
 }) {
   const initialPermission = getPermissionDraftValues(draft);
-  const [permissionTemplate, setPermissionTemplate] = useState(initialPermission.permissionTemplate);
-  const [visibility, setVisibility] = useState(initialPermission.visibility);
+  const initialSelectedGrants = (draft.permission.grants ?? [])
+    .filter((grant) => grant.principalType !== "public")
+    .map((grant) => ({ ...grant, actions: normalizePermissionActions(grant.actions) }));
+  const [permissionPreset, setPermissionPreset] = useState<PermissionPresetId>(() => inferPermissionPreset(initialSelectedGrants));
+  const [selectedGrants, setSelectedGrants] = useState<PermissionGrant[]>(initialSelectedGrants);
+  const [publicView, setPublicView] = useState(() => (
+    draft.permission.grants?.some((grant) => grant.principalType === "public" && grant.actions.includes("view"))
+    ?? initialPermission.visibility === "외부 공유"
+  ));
   const [dataOwner, setDataOwner] = useState(initialPermission.owner);
-  const [grantTab, setGrantTab] = useState<PermissionGrantTab>("roles");
+  const [grantTab, setGrantTab] = useState<PermissionGrantTab>("groups");
   const [grantSearch, setGrantSearch] = useState("");
   const [permissionOptions, setPermissionOptions] = useState<PermissionOptionsResponse | null>(null);
   const [permissionOptionsError, setPermissionOptionsError] = useState("");
   const [permissionOptionsLoading, setPermissionOptionsLoading] = useState(true);
   const [permissionOptionsRequest, setPermissionOptionsRequest] = useState(0);
-  const [roleChecks, setRoleChecks] = useState<Record<string, boolean>>({});
-  const [userChecks, setUserChecks] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     let active = true;
     setPermissionOptionsLoading(true);
     setPermissionOptionsError("");
 
-    void fetchPermissionOptions()
+    void fetchPermissionOptions(draft.id || undefined)
       .then((options) => {
         if (!active) return;
-        const savedGroupGrants = new Set(
-          (draft.permission.grants ?? [])
-            .filter((grant) => grant.principalType === "group")
-            .map((grant) => grant.principalId),
-        );
-        const savedUserGrants = new Set(
-          (draft.permission.grants ?? [])
-            .filter((grant) => grant.principalType === "user")
-            .map((grant) => grant.principalId),
-        );
-        const savedRoles = new Map((draft.permission.roles ?? []).map((role) => [role.name, role.checked]));
         const hasSavedGrants = draft.permission.grants !== undefined;
-        const nextRoleChecks = Object.fromEntries(options.groups.map((group, index) => [
-          group.id,
-          hasSavedGrants ? savedGroupGrants.has(group.id) : savedRoles.get(group.name) ?? index === 0,
-        ]));
-        const nextUserChecks = Object.fromEntries(options.users.map((user) => [user.id, savedUserGrants.has(user.id)]));
-        const selectedTemplate = options.groups.find((group) => group.name === initialPermission.permissionTemplate)
-          ?? options.groups.find((group) => nextRoleChecks[group.id])
-          ?? options.groups[0];
+        const savedRoles = new Map((draft.permission.roles ?? []).map((role) => [role.name, role.checked]));
+        const nextGrants = hasSavedGrants
+          ? (draft.permission.grants ?? [])
+              .filter((grant) => grant.principalType !== "public")
+              .map((grant) => ({ ...grant, actions: normalizePermissionActions(grant.actions) }))
+          : options.groups
+              .filter((group, index) => savedRoles.get(group.name) ?? index === 0)
+              .map((group) => ({
+                actions: normalizePermissionActions(group.actions),
+                principalId: group.id,
+                principalType: "group" as const,
+                source: "permission_ui",
+              }));
+        const nextPublicView = hasSavedGrants
+          ? Boolean(draft.permission.grants?.some((grant) => grant.principalType === "public" && grant.actions.includes("view")))
+          : initialPermission.visibility === "외부 공유";
+        const firstAvailableOwner = options.users[0]?.name;
+        const nextOwner = !draft.id && initialPermission.owner === DEFAULT_OWNER && firstAvailableOwner
+          ? firstAvailableOwner
+          : initialPermission.owner;
+        const nextPreset = inferPermissionPreset(nextGrants);
+
         setPermissionOptions(options);
-        setPermissionTemplate(selectedTemplate?.name ?? initialPermission.permissionTemplate);
-        setRoleChecks(nextRoleChecks);
-        setUserChecks(nextUserChecks);
+        setSelectedGrants(nextGrants);
+        setPublicView(nextPublicView);
+        setDataOwner(nextOwner);
+        setPermissionPreset(nextPreset);
+        onDraftChange(buildPermissionDraftPatch({
+          grants: nextGrants,
+          options,
+          owner: nextOwner,
+          preset: nextPreset,
+          publicView: nextPublicView,
+        }));
       })
       .catch((error) => {
         if (!active) return;
@@ -5872,100 +5991,111 @@ export function PermissionPage({
     return () => {
       active = false;
     };
-  }, [permissionOptionsRequest]);
+  }, [draft.id, permissionOptionsRequest]);
 
-  const applyPermissionDraft = (patch: Partial<{
-    owner: string;
-    permissionTemplate: string;
-    visibility: string;
-  }> = {}, nextRoleChecks = roleChecks, nextUserChecks = userChecks) => {
+  const applyPermissionState = ({
+    grants = selectedGrants,
+    owner = dataOwner,
+    preset = permissionPreset,
+    publicAccess = publicView,
+  }: {
+    grants?: PermissionGrant[];
+    owner?: string;
+    preset?: PermissionPresetId;
+    publicAccess?: boolean;
+  } = {}) => {
     if (!permissionOptions) return;
-    const requestedTemplate = patch.permissionTemplate ?? permissionTemplate;
-    const nextPermissionTemplate = permissionOptions.groups.some((group) => group.name === requestedTemplate)
-      ? requestedTemplate
-      : permissionOptions.groups[0]?.name ?? DEFAULT_PERMISSION_TEMPLATE;
-    const nextVisibility = getKnownOption(patch.visibility ?? visibility, VISIBILITY_OPTIONS, DEFAULT_VISIBILITY);
-    const nextOwner = getDisplayText(patch.owner ?? dataOwner, DEFAULT_OWNER);
-    const permissionRoles = permissionOptions.groups.map((group) => ({
-      access: group.actions.map((action) => PERMISSION_ACTION_LABELS[action]),
-      checked: Boolean(nextRoleChecks[group.id]),
-      name: group.name,
+    const normalizedGrants = grants.map((grant) => ({ ...grant, actions: normalizePermissionActions(grant.actions) }));
+    setSelectedGrants(normalizedGrants);
+    setDataOwner(owner);
+    setPermissionPreset(preset);
+    setPublicView(publicAccess);
+    onDraftChange(buildPermissionDraftPatch({
+      grants: normalizedGrants,
+      options: permissionOptions,
+      owner,
+      preset,
+      publicView: publicAccess,
     }));
-    const permissionGrants = [
-      ...permissionOptions.groups
-        .filter((group) => nextRoleChecks[group.id])
-        .map((group) => ({
-          actions: group.actions,
-          principalId: group.id,
-          principalType: "group" as const,
-          source: "permission_ui",
-        })),
-      ...permissionOptions.users
-        .filter((user) => nextUserChecks[user.id])
-        .map((user) => ({
-          actions: ["view", "run"] as PermissionAction[],
-          principalId: user.id,
-          principalType: "user" as const,
-          source: "permission_ui",
-        })),
-      ...(nextVisibility === "외부 공유" ? [{
-        actions: ["view"] as PermissionAction[],
-        principalId: "public",
-        principalType: "public" as const,
-        source: "permission_ui",
-      }] : []),
-    ];
-    const permissionSummary = buildPermissionSummary(nextPermissionTemplate, nextVisibility);
-
-    onDraftChange({
-      owner: nextOwner,
-      permissionGrants,
-      permissionRoles,
-      permission: {
-        grants: permissionGrants,
-        owner: nextOwner,
-        roles: permissionRoles,
-        summary: permissionSummary,
-        template: nextPermissionTemplate,
-        visibility: nextVisibility,
-      },
-      permissionSummary,
-    });
   };
   const goNext = () => {
     if (!permissionOptions) return;
-    applyPermissionDraft();
+    applyPermissionState();
     onNext();
   };
-  const updateRoleCheck = (roleId: string, checked: boolean) => {
-    const nextRoleChecks = { ...roleChecks, [roleId]: checked };
-    setRoleChecks(nextRoleChecks);
-    applyPermissionDraft({}, nextRoleChecks);
+  const applyPreset = (preset: PermissionPresetId) => {
+    if (preset === "custom") {
+      applyPermissionState({ preset });
+      return;
+    }
+    const actions = permissionPresetActions(preset);
+    applyPermissionState({
+      grants: selectedGrants.map((grant) => ({ ...grant, actions })),
+      preset,
+    });
   };
-  const updateUserCheck = (userId: string, checked: boolean) => {
-    const nextUserChecks = { ...userChecks, [userId]: checked };
-    setUserChecks(nextUserChecks);
-    applyPermissionDraft({}, roleChecks, nextUserChecks);
+  const togglePermissionTarget = ({
+    actions,
+    principalId,
+    principalType,
+  }: {
+    actions: PermissionAction[];
+    principalId: string;
+    principalType: "group" | "user";
+  }) => {
+    const targetKey = `${principalType}:${principalId}`;
+    const selected = selectedGrants.some((grant) => permissionGrantKey(grant) === targetKey);
+    const nextGrants = selected
+      ? selectedGrants.filter((grant) => permissionGrantKey(grant) !== targetKey)
+      : [...selectedGrants, {
+          actions: permissionPreset === "custom" ? normalizePermissionActions(actions) : permissionPresetActions(permissionPreset),
+          principalId,
+          principalType,
+          source: "permission_ui",
+        }];
+    const nextPreset = permissionPreset === "custom" || nextGrants.length === 0
+      ? permissionPreset
+      : inferPermissionPreset(nextGrants);
+    applyPermissionState({ grants: nextGrants, preset: nextPreset });
   };
+  const togglePermissionAction = (targetKey: string, action: PermissionAction, checked: boolean) => {
+    if (action === "view") return;
+    const nextGrants = selectedGrants.map((grant) => {
+      if (permissionGrantKey(grant) !== targetKey) return grant;
+      const nextActions = checked
+        ? [...grant.actions, action]
+        : grant.actions.filter((candidate) => candidate !== action);
+      return { ...grant, actions: normalizePermissionActions(nextActions) };
+    });
+    applyPermissionState({ grants: nextGrants, preset: inferPermissionPreset(nextGrants) });
+  };
+  const selectedGrantKeys = new Set(selectedGrants.map(permissionGrantKey));
   const normalizedGrantSearch = grantSearch.trim().toLocaleLowerCase();
-  const filteredRoles = (permissionOptions?.groups ?? []).filter((role) => (
-    `${role.name} ${role.description ?? ""}`.toLocaleLowerCase().includes(normalizedGrantSearch)
+  const filteredGroups = (permissionOptions?.groups ?? []).filter((group) => (
+    `${group.name} ${group.description ?? ""}`.toLocaleLowerCase().includes(normalizedGrantSearch)
   ));
   const filteredUsers = (permissionOptions?.users ?? []).filter((user) => (
     `${user.name} ${user.email} ${user.role}`.toLocaleLowerCase().includes(normalizedGrantSearch)
   ));
-  const sensitiveColumnCount = draft.schema.columns.filter((column) => (
-    /(email|phone|address|review_text|customer|user_name|이메일|전화|주소|주민)/i.test(`${column.sourceName} ${column.targetName}`)
-  )).length;
-  const governanceChecks = [
-    { icon: <Database size={18} />, label: "공유 범위", status: visibility === "외부 공유" ? "검토 필요" : "안전", value: visibility },
-    { icon: <FileText size={18} />, label: "민감 데이터", status: sensitiveColumnCount > 0 ? "검토 필요" : "안전", value: sensitiveColumnCount > 0 ? `${sensitiveColumnCount}개 필드 감지` : "감지 없음" },
-  ];
+  const ownerOptions = permissionOptions?.users ?? [];
+  const ownerIsKnown = ownerOptions.some((user) => user.name === dataOwner);
+  const targetDisplay = (grant: PermissionGrant) => {
+    const group = permissionOptions?.groups.find((candidate) => grant.principalType === "group" && candidate.id === grant.principalId);
+    const user = permissionOptions?.users.find((candidate) => grant.principalType === "user" && candidate.id === grant.principalId);
+    if (group) return { description: group.description ?? "그룹", initials: group.name.slice(0, 2).toUpperCase(), label: group.name, type: "그룹" };
+    if (user) return { description: `${user.email} · ${user.role}`, initials: user.initials, label: user.name, type: "사용자" };
+    return {
+      description: "기존 저장 권한",
+      initials: grant.principalId.slice(0, 2).toUpperCase(),
+      label: grant.principalId,
+      type: grant.principalType === "role" ? "역할" : grant.principalType === "group" ? "그룹" : "사용자",
+    };
+  };
 
   return (
     <CreationFlowLayout
       variant="permission"
-      actions={<CreationTopActions split onPrev={onPrev} onNext={goNext} />}
+      actions={<CreationTopActions nextLabel="다음" split onPrev={onPrev} onNext={goNext} />}
     >
       <EtlStepHeader
         className="etl-step-standalone-header"
@@ -5973,232 +6103,296 @@ export function PermissionPage({
         title="권한 설정"
       />
       <div className="grid min-w-0 gap-4 pb-6" data-testid="permission-workflow">
-        <Card className="min-w-0 overflow-hidden" size="none">
-          <CardHeader className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3 border-b border-slate-200 px-5 py-4">
-            <span className="etl-review-icon permission"><ShieldCheck size={17} /></span>
-            <CardTitle>거버넌스 확인</CardTitle>
-          </CardHeader>
-          <CardContent className="grid min-w-0 gap-3 p-5 sm:grid-cols-2">
-            {governanceChecks.map((item) => (
-              <Card className="min-w-0" key={item.label} size="sm" variant="muted">
-                <div className="flex min-w-0 items-start justify-between gap-3">
-                  <div className="flex min-w-0 items-start gap-2">
-                    {item.icon}
-                    <div className="grid min-w-0 gap-1">
-                      <span className="text-sm font-semibold text-slate-500">{item.label}</span>
-                      <strong className="truncate text-sm text-slate-950" title={item.value}>{item.value}</strong>
-                    </div>
-                  </div>
-                  <Badge
-                    shape="compact"
-                    size="sm"
-                    variant={item.status === "안전" ? "success" : "warning"}
-                  >
-                    {item.status}
-                  </Badge>
-                </div>
-              </Card>
-            ))}
-          </CardContent>
-        </Card>
+        {permissionOptionsLoading ? (
+          <Card className="min-w-0 p-5" data-testid="permission-options-loading">
+            <div className="grid gap-3">
+              <Skeleton className="h-10 w-full" />
+              <Skeleton className="h-24 w-full" />
+              <Skeleton className="h-24 w-full" />
+            </div>
+          </Card>
+        ) : permissionOptionsError ? (
+          <Alert variant="destructive">
+            <Info />
+            <AlertTitle>권한 대상 API를 불러오지 못했습니다.</AlertTitle>
+            <AlertDescription className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <span>{permissionOptionsError}</span>
+              <Button size="sm" type="button" variant="outline" onClick={() => setPermissionOptionsRequest((value) => value + 1)}>
+                <RefreshCw data-icon="inline-start" />
+                다시 시도
+              </Button>
+            </AlertDescription>
+          </Alert>
+        ) : permissionOptions ? (
+          <>
+            <Card className="min-w-0 overflow-hidden" size="none">
+              <CardHeader className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3 border-b border-slate-200 px-5 py-4">
+                <span className="etl-review-icon"><SlidersHorizontal size={17} /></span>
+                <CardTitle>빠른 권한 설정</CardTitle>
+              </CardHeader>
+              <CardContent className="grid gap-3 p-5 sm:grid-cols-2 xl:grid-cols-4">
+                {PERMISSION_PRESETS.map((preset) => {
+                  const selected = permissionPreset === preset.id;
+                  return (
+                    <Button
+                      aria-pressed={selected}
+                      className={cn(
+                        "h-auto min-h-20 justify-start whitespace-normal px-4 py-3 text-left",
+                        selected && "border-blue-400 bg-blue-50/80 text-blue-700 hover:bg-blue-100/80",
+                      )}
+                      key={preset.id}
+                      type="button"
+                      variant="outline"
+                      onClick={() => applyPreset(preset.id)}
+                    >
+                      <span className="grid gap-1">
+                        <strong>{preset.label}</strong>
+                        <span className="text-xs font-normal text-slate-500">{preset.description}</span>
+                      </span>
+                    </Button>
+                  );
+                })}
+              </CardContent>
+            </Card>
 
-        <Card className="min-w-0 overflow-hidden" size="none">
-          <CardHeader className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3 border-b border-slate-200 px-5 py-4">
-            <span className="etl-review-icon"><SlidersHorizontal size={17} /></span>
-            <CardTitle>접근 정책</CardTitle>
-          </CardHeader>
-          <CardContent className="p-5">
-            <FieldGroup className="grid min-w-0 gap-4 md:grid-cols-2">
-              <ShadcnField>
-                <FieldLabel htmlFor="permission-template">권한 템플릿</FieldLabel>
-                <Select
-                  disabled={!permissionOptions}
-                  value={permissionTemplate}
+            <Card className="min-w-0 overflow-hidden" size="none">
+              <CardHeader className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 border-b border-slate-200 px-5 py-4">
+                <span className="etl-review-icon schema"><CircleUser size={17} /></span>
+                <CardTitle>권한 대상</CardTitle>
+                <span className="text-sm font-semibold text-slate-500">{selectedGrants.length}개 선택</span>
+              </CardHeader>
+              <CardContent className="p-5">
+                <Tabs
+                  className="grid min-w-0 gap-4"
+                  value={grantTab}
                   onValueChange={(value) => {
-                    const group = permissionOptions?.groups.find((candidate) => candidate.name === value);
-                    if (!group) return;
-                    const nextRoleChecks = { ...roleChecks, [group.id]: true };
-                    setPermissionTemplate(group.name);
-                    setRoleChecks(nextRoleChecks);
-                    applyPermissionDraft({ permissionTemplate: group.name }, nextRoleChecks);
+                    setGrantTab(value as PermissionGrantTab);
+                    setGrantSearch("");
                   }}
                 >
-                  <SelectTrigger aria-label="권한 템플릿" id="permission-template" size="sm">
-                    <SelectValue placeholder={permissionOptionsLoading ? "불러오는 중" : "템플릿 선택"} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectGroup>
-                      {(permissionOptions?.groups ?? []).map((group) => <SelectItem key={group.id} value={group.name}>{group.name}</SelectItem>)}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-              </ShadcnField>
-              <ShadcnField>
-                <FieldLabel htmlFor="permission-visibility">공개 범위</FieldLabel>
-              <Select
-                value={visibility}
-                onValueChange={(value) => {
-                  const nextVisibility = getKnownOption(value, VISIBILITY_OPTIONS, DEFAULT_VISIBILITY);
-                  setVisibility(nextVisibility);
-                  applyPermissionDraft({ visibility: nextVisibility });
-                }}
-              >
-                <SelectTrigger aria-label="공개 범위" id="permission-visibility" size="sm">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectGroup>
-                    {VISIBILITY_OPTIONS.map((option) => <SelectItem key={option} value={option}>{option}</SelectItem>)}
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-              </ShadcnField>
-              <ShadcnField>
-                <FieldLabel htmlFor="permission-owner">데이터 오너</FieldLabel>
-              <Input id="permission-owner" value={dataOwner} onChange={(event) => {
-                const nextOwner = event.target.value;
-                setDataOwner(nextOwner);
-                applyPermissionDraft({ owner: nextOwner });
-              }} />
-              </ShadcnField>
-            </FieldGroup>
-          </CardContent>
-        </Card>
-
-        <Card className="min-w-0 overflow-hidden" size="none">
-          <CardHeader className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3 border-b border-slate-200 px-5 py-4">
-            <span className="etl-review-icon schema"><CircleUser size={17} /></span>
-            <CardTitle>역할 및 사용자 권한</CardTitle>
-          </CardHeader>
-          <CardContent className="grid min-w-0 gap-4 p-5">
-            {permissionOptionsLoading ? (
-              <div className="grid gap-3" data-testid="permission-options-loading">
-                <Skeleton className="h-9 w-full" />
-                <Skeleton className="h-20 w-full" />
-                <Skeleton className="h-20 w-full" />
-              </div>
-            ) : permissionOptionsError ? (
-              <Alert variant="destructive">
-                <Info />
-                <AlertTitle>권한 대상 API를 불러오지 못했습니다.</AlertTitle>
-                <AlertDescription className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <span>{permissionOptionsError}</span>
-                  <Button size="sm" type="button" variant="outline" onClick={() => setPermissionOptionsRequest((value) => value + 1)}>
-                    <RefreshCw data-icon="inline-start" />
-                    다시 시도
-                  </Button>
-                </AlertDescription>
-              </Alert>
-            ) : (
-            <Tabs
-              className="grid min-w-0 gap-4"
-              value={grantTab}
-              onValueChange={(value) => {
-                setGrantTab(value as PermissionGrantTab);
-                setGrantSearch("");
-              }}
-            >
-              <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <TabsList aria-label="권한 대상 유형">
-                  <TabsTrigger value="roles">역할</TabsTrigger>
-                  <TabsTrigger value="users">사용자</TabsTrigger>
-                </TabsList>
-                <InputGroup className="sm:max-w-80">
-                  <InputGroupAddon><Search aria-hidden="true" /></InputGroupAddon>
-                  <InputGroupInput
-                    aria-label={grantTab === "roles" ? "역할 검색" : "사용자 검색"}
-                    placeholder={grantTab === "roles" ? "역할 검색" : "사용자 검색"}
-                    value={grantSearch}
-                    onChange={(event) => setGrantSearch(event.target.value)}
-                  />
-                </InputGroup>
-              </div>
-              <Separator />
-
-              <TabsContent className="mt-0" value="roles">
-                {filteredRoles.length > 0 ? (
-                  <FieldSet className="gap-3">
-                    <FieldLegend className="sr-only">역할 선택</FieldLegend>
-                    {filteredRoles.map((role) => {
-                      const selected = Boolean(roleChecks[role.id]);
-                      const recommended = role.name === permissionTemplate;
-                      const checkboxId = `permission-role-${role.id}`;
-                      return (
-                        <Card aria-selected={selected} key={role.id} size="sm" variant={selected ? "muted" : "default"}>
-                          <div className="grid min-w-0 gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
-                            <div className="flex min-w-0 items-start gap-3">
-                              <Checkbox
-                                checked={selected}
-                                id={checkboxId}
-                                onCheckedChange={(checked) => updateRoleCheck(role.id, checked === true)}
-                              />
-                              <label className="grid min-w-0 cursor-pointer gap-1" htmlFor={checkboxId}>
-                                <span className="flex min-w-0 flex-wrap items-center gap-2">
-                                  <strong className="truncate text-sm">{role.name}</strong>
-                                  {recommended ? <Badge shape="compact" size="sm" variant="default">추천</Badge> : null}
-                                </span>
-                                <span className="text-sm text-slate-500">{role.description}</span>
-                              </label>
-                            </div>
-                            <div className="flex flex-wrap gap-2 md:justify-end" aria-label={`${role.name} 권한`}>
-                              {role.actions.map((action) => (
-                                <Badge
-                                  key={action}
-                                  shape="compact"
-                                  size="sm"
-                                  variant={selected ? "default" : "outline"}
-                                >
-                                  {PERMISSION_ACTION_LABELS[action]}
-                                </Badge>
-                              ))}
-                            </div>
-                          </div>
-                        </Card>
-                      );
-                    })}
-                  </FieldSet>
-                ) : (
-                  <PermissionGrantEmpty query={grantSearch} />
-                )}
-              </TabsContent>
-
-              <TabsContent className="mt-0" value="users">
-                {filteredUsers.length > 0 ? (
-                  <div className="grid gap-3">
-                    {filteredUsers.map((user) => {
-                      const selected = Boolean(userChecks[user.id]);
-                      return (
-                        <Card aria-selected={selected} key={user.id} size="sm" variant={selected ? "muted" : "default"}>
-                          <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                            <div className="flex min-w-0 items-center gap-3">
-                              <Avatar><AvatarFallback>{user.initials}</AvatarFallback></Avatar>
-                              <div className="grid min-w-0 gap-1">
-                                <strong className="truncate text-sm">{user.name}</strong>
-                                <span className="truncate text-sm text-slate-500">{user.email} · {user.role}</span>
-                              </div>
-                            </div>
-                            <Button
-                              aria-pressed={selected}
-                              size="sm"
-                              type="button"
-                              variant={selected ? "outline" : "subtle"}
-                              onClick={() => updateUserCheck(user.id, !selected)}
-                            >
-                              {selected ? "제거" : "추가"}
-                            </Button>
-                          </div>
-                        </Card>
-                      );
-                    })}
+                  <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <TabsList aria-label="권한 대상 유형">
+                      <TabsTrigger value="groups">그룹</TabsTrigger>
+                      <TabsTrigger value="users">사용자</TabsTrigger>
+                    </TabsList>
+                    <InputGroup className="sm:max-w-80">
+                      <InputGroupAddon><Search aria-hidden="true" /></InputGroupAddon>
+                      <InputGroupInput
+                        aria-label={grantTab === "groups" ? "그룹 검색" : "사용자 검색"}
+                        placeholder={grantTab === "groups" ? "그룹 검색" : "사용자 검색"}
+                        value={grantSearch}
+                        onChange={(event) => setGrantSearch(event.target.value)}
+                      />
+                    </InputGroup>
                   </div>
-                ) : (
-                  <PermissionGrantEmpty query={grantSearch} />
+                  <Separator />
+
+                  <TabsContent className="mt-0" value="groups">
+                    {filteredGroups.length > 0 ? (
+                      <div className="grid gap-2">
+                        {filteredGroups.map((group) => {
+                          const selected = selectedGrantKeys.has(`group:${group.id}`);
+                          return (
+                            <div
+                              aria-selected={selected}
+                              className={cn(
+                                "flex min-w-0 flex-col gap-3 rounded-md border border-slate-200 p-4 sm:flex-row sm:items-center sm:justify-between",
+                                selected && "border-blue-400 bg-blue-50/70",
+                              )}
+                              key={group.id}
+                            >
+                              <div className="flex min-w-0 items-center gap-3">
+                                <Avatar><AvatarFallback>{group.name.slice(0, 2).toUpperCase()}</AvatarFallback></Avatar>
+                                <div className="grid min-w-0 gap-1">
+                                  <strong className="truncate text-sm">{group.name}</strong>
+                                  <span className="truncate text-sm text-slate-500">{group.description}</span>
+                                </div>
+                              </div>
+                              <Button
+                                aria-pressed={selected}
+                                size="sm"
+                                type="button"
+                                variant={selected ? "outline" : "subtle"}
+                                onClick={() => togglePermissionTarget({ actions: group.actions, principalId: group.id, principalType: "group" })}
+                              >
+                                {selected ? "제거" : "추가"}
+                              </Button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : <PermissionGrantEmpty query={grantSearch} />}
+                  </TabsContent>
+
+                  <TabsContent className="mt-0" value="users">
+                    {filteredUsers.length > 0 ? (
+                      <div className="grid gap-2">
+                        {filteredUsers.map((user) => {
+                          const selected = selectedGrantKeys.has(`user:${user.id}`);
+                          return (
+                            <div
+                              aria-selected={selected}
+                              className={cn(
+                                "flex min-w-0 flex-col gap-3 rounded-md border border-slate-200 p-4 sm:flex-row sm:items-center sm:justify-between",
+                                selected && "border-blue-400 bg-blue-50/70",
+                              )}
+                              key={user.id}
+                            >
+                              <div className="flex min-w-0 items-center gap-3">
+                                <Avatar><AvatarFallback>{user.initials}</AvatarFallback></Avatar>
+                                <div className="grid min-w-0 gap-1">
+                                  <strong className="truncate text-sm">{user.name}</strong>
+                                  <span className="truncate text-sm text-slate-500">{user.email} · {user.role}</span>
+                                </div>
+                              </div>
+                              <Button
+                                aria-pressed={selected}
+                                size="sm"
+                                type="button"
+                                variant={selected ? "outline" : "subtle"}
+                                onClick={() => togglePermissionTarget({ actions: ["view"], principalId: user.id, principalType: "user" })}
+                              >
+                                {selected ? "제거" : "추가"}
+                              </Button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : <PermissionGrantEmpty query={grantSearch} />}
+                  </TabsContent>
+                </Tabs>
+              </CardContent>
+            </Card>
+
+            <Card className="min-w-0 overflow-hidden" size="none">
+              <CardHeader className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3 border-b border-slate-200 px-5 py-4">
+                <span className="etl-review-icon permission"><ShieldCheck size={17} /></span>
+                <CardTitle>허용 작업</CardTitle>
+              </CardHeader>
+              <CardContent className="grid gap-3 p-5">
+                {selectedGrants.length > 0 ? selectedGrants.map((grant) => {
+                  const target = targetDisplay(grant);
+                  const targetKey = permissionGrantKey(grant);
+                  return (
+                    <div className="grid min-w-0 gap-4 rounded-md border border-slate-200 p-4 lg:grid-cols-[minmax(13rem,0.8fr)_minmax(0,2fr)] lg:items-center" key={targetKey}>
+                      <div className="flex min-w-0 items-center gap-3">
+                        <Avatar><AvatarFallback>{target.initials}</AvatarFallback></Avatar>
+                        <div className="grid min-w-0 gap-1">
+                          <strong className="truncate text-sm">{target.label}</strong>
+                          <span className="truncate text-sm text-slate-500">{target.type} · {target.description}</span>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6" role="group" aria-label={`${target.label} 허용 작업`}>
+                        {PERMISSION_ACTION_ORDER.map((action) => {
+                          const checkboxId = `permission-${targetKey}-${action}`;
+                          return (
+                            <label
+                              className={cn(
+                                "flex min-h-10 cursor-pointer items-center gap-2 rounded-md border border-slate-200 px-3 py-2 text-sm font-semibold",
+                                grant.actions.includes(action) && "border-blue-300 bg-blue-50/70 text-blue-700",
+                                action === "view" && "cursor-default",
+                              )}
+                              htmlFor={checkboxId}
+                              key={action}
+                            >
+                              <Checkbox
+                                checked={grant.actions.includes(action)}
+                                disabled={action === "view"}
+                                id={checkboxId}
+                                onCheckedChange={(checked) => togglePermissionAction(targetKey, action, checked === true)}
+                              />
+                              <span>{PERMISSION_ACTION_LABELS[action]}</span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                }) : (
+                  <Empty className="py-8" size="sm" variant="plain">
+                    <EmptyIcon><CircleUser aria-hidden="true" /></EmptyIcon>
+                    <EmptyHeader>
+                      <EmptyTitle>권한 대상을 먼저 추가하세요.</EmptyTitle>
+                      <EmptyDescription>그룹이나 사용자를 추가하면 허용 작업을 직접 설정할 수 있습니다.</EmptyDescription>
+                    </EmptyHeader>
+                  </Empty>
                 )}
-              </TabsContent>
-            </Tabs>
-            )}
-          </CardContent>
-        </Card>
+              </CardContent>
+            </Card>
+
+            <Card className="min-w-0 overflow-hidden" size="none">
+              <CardHeader className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3 border-b border-slate-200 px-5 py-4">
+                <span className="etl-review-icon schema"><CircleUser size={17} /></span>
+                <CardTitle>담당자와 전체 조회</CardTitle>
+              </CardHeader>
+              <CardContent className="grid gap-5 p-5 md:grid-cols-2">
+                <ShadcnField>
+                  <FieldLabel htmlFor="permission-owner">작업 담당자</FieldLabel>
+                  <Select value={dataOwner} onValueChange={(owner) => applyPermissionState({ owner })}>
+                    <SelectTrigger aria-label="작업 담당자" id="permission-owner" size="sm">
+                      <SelectValue placeholder="담당자 선택" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectGroup>
+                        {!ownerIsKnown && dataOwner ? <SelectItem value={dataOwner}>{dataOwner} · 기존 담당자</SelectItem> : null}
+                        {ownerOptions.map((user) => <SelectItem key={user.id} value={user.name}>{user.name} · {user.email}</SelectItem>)}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                  <span className="text-sm text-slate-500">담당자는 모든 권한을 자동으로 가집니다.</span>
+                </ShadcnField>
+                <div className="flex min-w-0 items-center justify-between gap-4 rounded-md border border-slate-200 p-4">
+                  <div className="grid min-w-0 gap-1">
+                    <label className="text-sm font-semibold text-slate-950" htmlFor="permission-public-view">모든 사용자에게 조회 허용</label>
+                    <span className="text-sm text-slate-500">로그인한 모든 사용자에게 조회 권한을 추가합니다.</span>
+                  </div>
+                  <Switch
+                    checked={publicView}
+                    id="permission-public-view"
+                    onCheckedChange={(publicAccess) => applyPermissionState({ publicAccess })}
+                  />
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="min-w-0 overflow-hidden" size="none">
+              <CardHeader className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3 border-b border-slate-200 px-5 py-4">
+                <span className="etl-review-icon permission"><Check size={17} /></span>
+                <CardTitle>저장될 권한</CardTitle>
+              </CardHeader>
+              <CardContent className="grid gap-2 p-5">
+                <div className="flex min-w-0 flex-col gap-2 rounded-md border border-blue-300 bg-blue-50/70 p-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="grid min-w-0 gap-1">
+                    <strong className="truncate text-sm">{dataOwner}</strong>
+                    <span className="text-sm text-slate-500">담당자 · 변경하거나 제거할 수 없는 자동 권한</span>
+                  </div>
+                  <span className="text-sm font-semibold text-blue-700">전체 권한 (자동)</span>
+                </div>
+                {selectedGrants.map((grant) => {
+                  const target = targetDisplay(grant);
+                  return (
+                    <div className="flex min-w-0 flex-col gap-2 rounded-md border border-slate-200 p-4 sm:flex-row sm:items-center sm:justify-between" key={`summary-${permissionGrantKey(grant)}`}>
+                      <div className="grid min-w-0 gap-1">
+                        <strong className="truncate text-sm">{target.label}</strong>
+                        <span className="text-sm text-slate-500">{target.type}</span>
+                      </div>
+                      <span className="text-sm font-semibold text-slate-700">{grant.actions.map((action) => PERMISSION_ACTION_LABELS[action]).join(" · ")}</span>
+                    </div>
+                  );
+                })}
+                {publicView ? (
+                  <div className="flex min-w-0 flex-col gap-2 rounded-md border border-slate-200 p-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="grid min-w-0 gap-1">
+                      <strong className="text-sm">모든 사용자</strong>
+                      <span className="text-sm text-slate-500">로그인한 사용자 전체</span>
+                    </div>
+                    <span className="text-sm font-semibold text-slate-700">조회</span>
+                  </div>
+                ) : null}
+              </CardContent>
+            </Card>
+          </>
+        ) : null}
       </div>
     </CreationFlowLayout>
   );
