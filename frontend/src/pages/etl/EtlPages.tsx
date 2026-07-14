@@ -10,7 +10,6 @@ import {
   BarChart3,
   BookOpen,
   Bot,
-  Braces,
   Cable,
   Calendar,
   Check,
@@ -76,7 +75,6 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { ValidationList } from "@/components/ui/validation-list";
 import { cn } from "@/lib/utils";
 import { S3PathField } from "../../components/s3/S3PathField";
-import { DatabaseField } from "../../components/target/DatabaseField";
 import { runTransformQualitySamplePreview } from "../../data/transformQualityPreview";
 import { normalizeRetryPolicy, retryFailureActionLabels, scheduleOverlapPolicyLabels, toCreatePipelineRequest } from "../../services/draftPipelineContract";
 import { getDatasets } from "../../services/mockApi";
@@ -93,11 +91,15 @@ import { SchemaTransformWorkbench } from "./SchemaTransformWorkbench";
 import { SchemaRuleSummary } from "./SchemaRuleSummary";
 import { SchemaResultPreview } from "./SchemaResultPreview";
 import { EtlStepHeader } from "../../components/etl/EtlStepHeader";
-import amazonS3IconUrl from "../../assets/amazons3.svg";
-import apacheKafkaIconUrl from "../../assets/apachekafka.svg";
-import askLakeLogoUrl from "../../assets/asklake-logo.png";
-import mongoDbIconUrl from "../../assets/mongodb.svg";
-import postgreSqlIconUrl from "../../assets/postgresql.svg";
+import { getSourceBrandMeta, SourceBrandIcon } from "../../components/source/SourceBrand";
+
+const OBJECT_STORAGE_IS_AWS = String(import.meta.env.VITE_OBJECT_STORAGE_PROVIDER ?? "minio").trim().toLowerCase() === "aws";
+const OBJECT_STORAGE_PROVIDER_LABEL = OBJECT_STORAGE_IS_AWS ? "Amazon S3" : "MinIO";
+const OBJECT_STORAGE_REGION = String(import.meta.env.VITE_S3_REGION ?? (OBJECT_STORAGE_IS_AWS ? "ap-northeast-2" : "us-east-1"));
+const SPARK_OUTPUT_BUCKET = String(import.meta.env.VITE_SPARK_OUTPUT_BUCKET ?? "asklake-output")
+  .trim()
+  .replace(/^s3a?:\/\//i, "")
+  .replace(/\/+.*$/, "") || "asklake-output";
 
 type RepeatFrequency = "hourly" | "daily" | "weekly" | "custom";
 type RepeatScheduleDraft = {
@@ -135,12 +137,14 @@ export function SchedulePage({
   const [repeatTime, setRepeatTime] = useState(initialRepeat.time);
   const [repeatMinute, setRepeatMinute] = useState(initialRepeat.minute);
   const [customCron, setCustomCron] = useState(initialRepeat.cron);
+  const [scheduleError, setScheduleError] = useState("");
   const title = "스케줄링 설정";
   const repeatDraft = { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime };
   const selectedOption = getScheduleOptionFromLabel(draftScheduleLabel, mode);
   const scheduleTimezone = normalizeScheduleTimezone(draftSchedule.timezone);
   const scheduleStartDate = normalizeDateValue(draftSchedule.startDate, SCHEDULE_START_DATE);
   const scheduleEndDate = normalizeOptionalDateValue(draftSchedule.endDate);
+  const invalidRepeatCron = selectedOption === "repeat" && repeatFrequency === "custom" && !isValidCronExpression(customCron);
   const updateRetryPolicy = (retryPolicy: RetryPolicyDraft) => {
     onDraftChange({ schedule: { retryPolicy } });
   };
@@ -153,17 +157,23 @@ export function SchedulePage({
     onDraftChange(buildSchedulePatch(selectedOption, normalizedRepeat, scheduleTimezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }));
   };
   const selectOption = (nextOption: ScheduleOptionId) => {
+    setScheduleError("");
     onDraftChange(buildSchedulePatch(nextOption, repeatDraft, scheduleTimezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }));
     onModeChange(scheduleFlowFromOption(nextOption));
   };
   const goNext = () => {
+    if (invalidRepeatCron) {
+      setScheduleError("Cron 표현식을 5개 필드 형식으로 입력해 주세요. 예: 0 10 * * 1-5");
+      return;
+    }
+    setScheduleError("");
     applyScheduleDraft();
     onNext();
   };
 
   return (
     <CreationFlowLayout
-      actions={<CreationTopActions split onPrev={onPrev} onNext={goNext} />}
+      actions={<CreationTopActions nextDisabled={invalidRepeatCron} split onPrev={onPrev} onNext={goNext} />}
     >
         <EtlStepHeader
           className="etl-step-standalone-header"
@@ -190,6 +200,7 @@ export function SchedulePage({
               />
             </div>
             <Separator />
+            {scheduleError && <Alert variant="destructive"><Info /><AlertTitle>스케줄을 확인해 주세요.</AlertTitle><AlertDescription>{scheduleError}</AlertDescription></Alert>}
             {selectedOption === "repeat" && <RepeatSettings customCron={customCron} frequency={repeatFrequency} minute={repeatMinute} overlapPolicy={draftSchedule.overlapPolicy ?? DEFAULT_OVERLAP_POLICY} selectedDay={repeatDay} time={repeatTime} timezone={scheduleTimezone} onCronChange={(cron) => {
             const sanitizedCron = sanitizeCronInput(cron);
             setCustomCron(sanitizedCron);
@@ -214,7 +225,7 @@ export function SchedulePage({
           }} onTimeChange={(time) => {
             setRepeatTime(time);
             onDraftChange(buildSchedulePatch("repeat", { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time }, scheduleTimezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }));
-          }} onOverlapPolicyChange={(overlapPolicy) => onDraftChange({ overlapPolicy, schedule: { overlapPolicy } })} onTimezoneChange={(timezone) => onDraftChange(buildSchedulePatch("repeat", repeatDraft, timezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }))} />}
+            }} onOverlapPolicyChange={(overlapPolicy) => onDraftChange({ overlapPolicy, schedule: { overlapPolicy } })} onTimezoneChange={(timezone) => onDraftChange(buildSchedulePatch("repeat", repeatDraft, timezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }))} />}
             <ScheduleRetrySettings retryPolicy={draftRetryPolicy} onRetryPolicyChange={updateRetryPolicy} />
           </CardContent>
         </Card>
@@ -567,13 +578,13 @@ function formatScheduleLabel(option: ScheduleOptionId, repeat: RepeatScheduleDra
 
 function getScheduleFlowFromLabel(label: string): ScheduleFlowId {
   if (label.includes("건너뛰기") || label.includes("스케줄 없음") || label.includes("수동")) return "manual";
-  if (label.includes("예약") || label.includes("1회")) return "manual";
+  if (label.includes("1회") || label.includes("예약")) return "manual";
   return "repeat";
 }
 
 function getScheduleOptionFromLabel(label: string, fallbackFlow: ScheduleFlowId): ScheduleOptionId {
   if (label.includes("건너뛰기") || label.includes("스케줄 없음") || label.includes("수동")) return "skip";
-  if (label.includes("예약") || label.includes("1회")) return "skip";
+  if (label.includes("1회") || label.includes("예약")) return "skip";
   if (label) return "repeat";
   return fallbackFlow === "manual" ? "skip" : "repeat";
 }
@@ -586,16 +597,14 @@ function scheduleFlowFromOption(option: ScheduleOptionId): ScheduleFlowId {
 function buildSchedulePatch(option: ScheduleOptionId, repeat: RepeatScheduleDraft, timezone: string = SCHEDULE_TIMEZONE, currentSchedule?: ScheduleDraft, dates?: { endDate?: string; startDate?: string }): DraftPipelinePatch {
   const normalizedRepeat = normalizeRepeatScheduleDraft(repeat);
   const label = formatScheduleLabel(option, normalizedRepeat);
-  const nextRun = option === "skip"
-    ? "-"
-    : "저장 시점 기준 계산";
+  const nextRun = option === "skip" ? "-" : "저장 시점 기준 계산";
   const startDate = option === "repeat" ? normalizeDateValue(dates?.startDate ?? currentSchedule?.startDate, SCHEDULE_START_DATE) : "";
   const normalizedEndDate = option === "repeat" ? normalizeOptionalDateValue(dates?.endDate ?? currentSchedule?.endDate) : "";
   const endDate = normalizedEndDate && normalizedEndDate >= startDate ? normalizedEndDate : "";
   const scheduleTimezone = option === "skip" ? "" : timezone;
   const summary = formatScheduleSummary(option, label, scheduleTimezone);
   const nextRunUtc = option === "skip" ? "" : "";
-  const restoreRepeatDefaults = option === "repeat" && (currentSchedule?.mode === "manual" || currentSchedule?.label.includes("건너뛰기"));
+  const restoreRepeatDefaults = option !== "skip" && (currentSchedule?.mode === "manual" || currentSchedule?.label.includes("건너뛰기"));
   const overlapPolicy = option === "skip" ? undefined : restoreRepeatDefaults ? DEFAULT_OVERLAP_POLICY : currentSchedule?.overlapPolicy ?? DEFAULT_OVERLAP_POLICY;
   const watermarkPolicy = option === "skip"
     ? { ...DEFAULT_WATERMARK_POLICY, enabled: false, mode: "full_refresh" as WatermarkWindowMode }
@@ -833,7 +842,7 @@ function normalizeTargetLayer(value: string | undefined): TargetLayer {
 }
 
 function buildTargetStoragePath(targetDataset: string, targetLayer: TargetLayer) {
-  return `s3a://asklake-output/${targetDataset}/${targetLayer.toLowerCase()}/`;
+  return `s3a://${SPARK_OUTPUT_BUCKET}/${targetDataset}/${targetLayer.toLowerCase()}/`;
 }
 
 function normalizeKafkaDatasetName(topic: string) {
@@ -1217,13 +1226,13 @@ export function SourceConnectionPage({
     };
   }, []);
   const connectorMeta: Record<string, { description: string; icon: React.ReactNode; label: string; status: string }> = {
-    "File / S3": { description: "S3 버킷의 CSV, JSON, Parquet 파일을 가져옵니다.", icon: <SourceBrandIcon kind="s3" />, label: "Amazon S3", status: "실제 연결" },
-    PostgreSQL: { description: "PostgreSQL 테이블에서 데이터를 가져옵니다.", icon: <SourceBrandIcon kind="postgres" />, label: "PostgreSQL", status: "실제 연결" },
-    MongoDB: { description: "MongoDB 컬렉션에서 문서를 가져옵니다.", icon: <SourceBrandIcon kind="mongo" />, label: "MongoDB", status: "실제 연결" },
-    "REST API": { description: "API를 호출해 응답 데이터를 가져옵니다.", icon: <SourceBrandIcon kind="rest" />, label: "REST API", status: "실제 연결" },
-    "Data Lake": { description: "AskLake에 저장된 데이터셋을 다시 사용합니다.", icon: <SourceBrandIcon kind="lake" />, label: "AskLake 데이터 레이크", status: "목록 조회" },
-    "SQL Result": { description: "검증된 SQL 분석 결과를 다시 사용합니다.", icon: <TerminalSquare size={20} />, label: "SQL Result", status: "검증 완료" },
-    "Stream / Kafka": { description: "Kafka에서 들어오는 데이터를 실시간 또는 구간별로 가져옵니다.", icon: <SourceBrandIcon kind="kafka" />, label: "Apache Kafka", status: "메타데이터" },
+    "File / S3": { description: "S3 버킷의 CSV, JSON, Parquet 파일을 가져옵니다.", icon: <SourceBrandIcon kind="s3" />, label: getSourceBrandMeta("File / S3").label, status: "실제 연결" },
+    PostgreSQL: { description: "PostgreSQL 테이블에서 데이터를 가져옵니다.", icon: <SourceBrandIcon kind="postgres" />, label: getSourceBrandMeta("PostgreSQL").label, status: "실제 연결" },
+    MongoDB: { description: "MongoDB 컬렉션에서 문서를 가져옵니다.", icon: <SourceBrandIcon kind="mongo" />, label: getSourceBrandMeta("MongoDB").label, status: "실제 연결" },
+    "REST API": { description: "API를 호출해 응답 데이터를 가져옵니다.", icon: <SourceBrandIcon kind="rest" />, label: getSourceBrandMeta("REST API").label, status: "실제 연결" },
+    "Data Lake": { description: "AskLake에 저장된 데이터셋을 다시 사용합니다.", icon: <SourceBrandIcon kind="lake" />, label: getSourceBrandMeta("Data Lake").label, status: "목록 조회" },
+    "SQL Result": { description: "검증된 SQL 분석 결과를 다시 사용합니다.", icon: <SourceBrandIcon kind="sql" />, label: getSourceBrandMeta("SQL Result").label, status: "검증 완료" },
+    "Stream / Kafka": { description: "Kafka에서 들어오는 데이터를 실시간 또는 구간별로 가져옵니다.", icon: <SourceBrandIcon kind="kafka" />, label: getSourceBrandMeta("Stream / Kafka").label, status: "메타데이터" },
   };
   const sourceConfigs: Record<string, {
     title: string;
@@ -1278,8 +1287,8 @@ export function SourceConnectionPage({
       logs: ["PostgreSQL 소스 식별은 백엔드 커넥터 러너에서 검증합니다.", "브라우저는 원시 데이터베이스 소켓을 열지 않습니다."],
       assetsTitle: "PostgreSQL 테이블 탐색",
       assets: [],
-      previewTitle: "원천 데이터 미리보기",
-      previewNote: "미리보기 데이터 없음 · 백엔드 연결 테스트를 실행하면 샘플 행을 가져옵니다.",
+      previewTitle: "데이터 미리보기",
+      previewNote: "테이블을 선택하면 일부 행을 가져와 표시합니다.",
       previewColumns: ["Table", "Rows", "Status"],
       previewRows: [],
       info: "",
@@ -1299,35 +1308,37 @@ export function SourceConnectionPage({
       logs: ["MongoDB 소스 식별이 아직 검증되지 않았습니다.", "연결 테스트를 실행하면 제한 문서 샘플을 가져옵니다."],
       assetsTitle: "MongoDB 컬렉션 탐색",
       assets: [],
-      previewTitle: "문서 샘플 미리보기",
-      previewNote: "미리보기 데이터 없음 · MongoDB 연결 테스트를 실행하세요.",
+      previewTitle: "데이터 미리보기",
+      previewNote: "컬렉션을 선택하면 일부 문서를 표 형태로 표시합니다.",
       previewColumns: ["Collection", "Documents", "Status"],
       previewRows: [],
       info: "",
     },
     "File / S3": {
       title: "Amazon S3 연결 설정",
-      description: "MinIO 오브젝트 스토리지에서 버킷과 제한 샘플을 실제 조회합니다.",
+      description: OBJECT_STORAGE_IS_AWS
+        ? "배포 서버의 IAM Role로 AWS S3 버킷과 제한 샘플을 조회합니다."
+        : "MinIO 오브젝트 스토리지에서 버킷과 제한 샘플을 실제 조회합니다.",
       fields: [
-        ["Storage Provider", "MinIO"],
+        ["Storage Provider", OBJECT_STORAGE_PROVIDER_LABEL],
         ["Endpoint URL", ""],
-        ["Region", ""],
+        ["Region", OBJECT_STORAGE_REGION],
         ["Bucket / Stage Name", ""],
         ["Path / Prefix", ""],
         ["Access Key", ""],
         ["Secret Key", ""],
-        ["Use Path Style", "true"],
+        ["Use Path Style", String(!OBJECT_STORAGE_IS_AWS)],
         ["File Type", "auto"],
         ["Delimiter", ","],
         ["Encoding", "UTF-8"],
         ["Header", "Treat first row as header"],
       ],
       testItems: [["Endpoint", "Not tested"], ["Bucket", "Not listed"], ["샘플 프로파일", "Pending"]],
-      logs: ["MinIO 소스 식별이 아직 검증되지 않았습니다.", "연결 테스트를 실행하면 제한 샘플을 가져옵니다."],
+      logs: [`${OBJECT_STORAGE_PROVIDER_LABEL} 소스 식별이 아직 검증되지 않았습니다.`, "연결 테스트를 실행하면 제한 샘플을 가져옵니다."],
       assetsTitle: "Amazon S3 파일 탐색",
       assets: [],
-      previewTitle: "제한 샘플 미리보기",
-      previewNote: "미리보기 데이터 없음 · MinIO 연결 테스트를 실행하세요.",
+      previewTitle: "데이터 미리보기",
+      previewNote: "파일을 선택하면 일부 데이터를 가져와 표시합니다.",
       previewColumns: ["Object Key", "Size", "Last Modified"],
       previewRows: [],
     },
@@ -1342,7 +1353,7 @@ export function SourceConnectionPage({
       logs: ["AskLake 로그인 세션과 Catalog 권한을 기준으로 데이터셋 목록을 조회합니다."],
       assetsTitle: "AskLake 데이터셋 탐색",
       assets: [],
-      previewTitle: "데이터셋 미리보기",
+      previewTitle: "데이터 미리보기",
       previewNote: "왼쪽 목록에서 사용할 데이터셋을 선택하세요.",
       previewColumns: [],
       previewRows: [],
@@ -1366,8 +1377,8 @@ export function SourceConnectionPage({
       logs: ["REST 소스 식별이 아직 검증되지 않았습니다.", "연결 테스트를 실행하면 백엔드가 HTTP 응답 샘플을 가져옵니다."],
       assetsTitle: "REST API 응답 탐색",
       assets: [],
-      previewTitle: "API 응답 미리보기",
-      previewNote: "미리보기 데이터 없음 · 연결 테스트를 실행하세요.",
+      previewTitle: "데이터 미리보기",
+      previewNote: "연결을 확인하면 응답의 일부 데이터를 표시합니다.",
       previewColumns: ["User ID", "Email", "Date", "Status", "Amount"],
       previewRows: [],
     },
@@ -1387,8 +1398,8 @@ export function SourceConnectionPage({
       logs: ["Kafka 소스 윈도우 식별은 백엔드 커넥터 러너에서 검증합니다.", "브라우저는 Kafka 프로토콜 핸드셰이크를 수행할 수 없습니다."],
       assetsTitle: "Kafka 토픽 메시지 탐색",
       assets: [],
-      previewTitle: "샘플 메시지 미리보기",
-      previewNote: "미리보기 데이터 없음 · 백엔드 연결 테스트를 실행하세요.",
+      previewTitle: "데이터 미리보기",
+      previewNote: "연결을 확인하면 일부 메시지를 가져와 표시합니다.",
       previewColumns: ["Payload (Raw JSON)", "Part.", "Offset", "Timestamp"],
       previewRows: [],
     },
@@ -1461,7 +1472,7 @@ export function SourceConnectionPage({
     || selectedDatasetSummary?.selectionKind === "prefix";
   const requiresAssetSelectionForPreview = ["File / S3", "MongoDB", "PostgreSQL"].includes(activeSourceType);
   const selectedAssetHasSample = Boolean(
-    (!requiresAssetSelectionForPreview || selectedAssetPath) && sourceRuntime?.draftPatch.schema?.columns?.length,
+    (!requiresAssetSelectionForPreview || selectedAssetPath) && sourceRuntime?.previewColumns?.length,
   );
   const displayPreviewColumns = selectedAssetHasSample ? sourceRuntime?.previewColumns ?? [] : [];
   const displayPreviewRows = selectedAssetHasSample ? sourceRuntime?.previewRows ?? [] : [];
@@ -1477,12 +1488,21 @@ export function SourceConnectionPage({
   const runtimeSourceConfig = sourceRuntime?.draftPatch.source?.sourceConfig;
   const verifiedSourceFields = connectionStatus === "success" && runtimeSourceConfig ? runtimeSourceConfig : editableFields;
   const displayPreviewFormat = selectedDatasetSummary?.format
-    || (activeSourceType === "File / S3" ? sourceFormatFromConfig(verifiedSourceFields, activeSourceType) : sourceTypeLabel(activeSourceType));
+    || (activeSourceType === "File / S3" ? sourceFormatFromConfig(verifiedSourceFields) : sourceTypeLabel(activeSourceType));
+  const previewShowsFileList = activeSourceType === "File / S3"
+    && displayPreviewColumns.includes("Object Key");
+  const previewShowsTopicInfo = activeSourceType === "Stream / Kafka"
+    && displayPreviewColumns.includes("Leader");
+  const sourcePreviewTitle = previewShowsFileList
+    ? "파일 목록"
+    : previewShowsTopicInfo
+      ? "토픽 정보"
+      : "데이터 미리보기";
   const sourceSummaryRows: Array<[string, string]> = [
     ["선택 커넥터", hasSelectedSource ? sourceTypeLabel(activeSourceType) : "미선택"],
     ["연결 상태", isSqlResultSource ? (hasSqlResultPreview && connectionStatus === "success" ? "SQL Preview 검증됨" : "SQL Preview 필요") : connectionStatus === "success" ? publicConnectionMessage : connectionStatus === "testing" ? "테스트 중" : connectionStatus === "failed" ? "실패" : "테스트 필요"],
     ["감지 파일", isSqlResultSource ? `${sourceConfigValue(editableFields, "Preview Row Count") || "0"} rows` : `${displayAssets.length}개`],
-    ["인증 방식", isSqlResultSource ? "SQL Preview 검증" : isInternalDataLake ? "AskLake 로그인 권한" : activeSourceType === "File / S3" ? "MinIO 액세스 키" : "백엔드 커넥터"],
+    ["인증 방식", isSqlResultSource ? "SQL Preview 검증" : isInternalDataLake ? "AskLake 로그인 권한" : activeSourceType === "File / S3" ? (OBJECT_STORAGE_IS_AWS ? "EC2 IAM Role" : "MinIO 액세스 키") : "백엔드 커넥터"],
     ["다음 단계", isSqlResultSource ? "Review 확인" : (sourceRuntime?.draftPatch.source?.requiresRecordParsing ? "레코드 구조화" : "스키마 추론")],
   ];
 
@@ -1612,6 +1632,59 @@ export function SourceConnectionPage({
     onDraftChange({
       recordParsing: { columns: [], delimiterKind: "whitespace", delimiterPattern: "\\s+", enabled: false, expectedFieldCount: 0, header: false },
       schema: { columns: [], sampleRows: [], summary: "" },
+    });
+  };
+
+  const updateCollectionConfig = (patches: Array<[string, string]>) => {
+    const nextFields = upsertSourceFields(editableFields, [...patches, ["__Sample Object", ""]]);
+    const nextMessage = "파일 수집 범위가 변경되었습니다. 대표 파일을 다시 샘플링하세요.";
+    setSourceFields((fields) => ({ ...fields, [activeSourceType]: nextFields }));
+    setSourceRuntime((runtime) => runtime ? {
+      ...runtime,
+      draftPatch: {},
+      logs: [nextMessage],
+      message: nextMessage,
+      previewColumns: [],
+      previewNote: "수집 범위를 다시 검증한 뒤 미리보기를 확인할 수 있습니다.",
+      previewRows: [],
+      status: "idle",
+    } : null);
+    setConnectionStatus("idle");
+    setConnectionMessage(nextMessage);
+    setSourceStage("connect");
+    applySourceDraft(activeSourceType, nextFields, "idle", nextMessage);
+    onDraftChange({
+      quality: {
+        invalidRows: [],
+        rules: [],
+        score: undefined,
+        status: "idle",
+        summary: "스키마 재추론 후 품질 규칙 설정 필요",
+      },
+      recordParsing: {
+        columns: [],
+        delimiterKind: "whitespace",
+        delimiterPattern: "\\s+",
+        enabled: false,
+        expectedFieldCount: 0,
+        header: false,
+      },
+      schema: {
+        columns: [],
+        sampleRows: [],
+        schemaFingerprint: undefined,
+        summary: "수집 범위 변경 · 스키마 재추론 필요",
+      },
+      source: {
+        detectedFormat: undefined,
+        rawPreviewLines: [],
+        requiresRecordParsing: false,
+      },
+      transform: {
+        outputColumns: [],
+        steps: [],
+        summary: "스키마 재추론 후 변환 설정 필요",
+      },
     });
   };
 
@@ -1979,6 +2052,16 @@ export function SourceConnectionPage({
         : connectionStatus !== "success"
           || (requiresAssetSelectionForPreview && !selectedAssetPath)
           || !hasValidatedSchema;
+  const canOpenSourceBrowser = isInternalDataLake
+    ? hasSelectedSource && sourceStage !== "choose"
+    : sourceStage === "browse" || (connectionStatus === "success" && hasDetectedAssets);
+
+  const handleSourceStageChange = (value: string) => {
+    const nextStage = value as "choose" | "connect" | "browse";
+    if (nextStage === "browse" && !canOpenSourceBrowser) return;
+    if (nextStage === "connect" && (!hasSelectedSource || sourceStage === "choose")) return;
+    setSourceStage(nextStage);
+  };
 
   const sourceChoiceConnectors = ["PostgreSQL", "MongoDB", "File / S3", "REST API", "Stream / Kafka", "Data Lake"];
 
@@ -1989,7 +2072,6 @@ export function SourceConnectionPage({
     >
         <EtlStepHeader
           className="etl-step-standalone-header"
-          description="데이터 소스를 선택하고 연결 정보와 탐색 대상을 설정합니다."
           icon={<Cable />}
           title="소스 연결"
         />
@@ -1997,15 +2079,17 @@ export function SourceConnectionPage({
         <div className="source-workbench-body">
           <Tabs
             value={sourceStage}
-            onValueChange={(value) => setSourceStage(value as "choose" | "connect" | "browse")}
+            onValueChange={handleSourceStageChange}
           >
-            <TabsList aria-label="소스 연결 단계" className="source-stage-tabs">
+            <TabsList
+              aria-label="소스 연결 단계"
+              className="source-stage-tabs"
+              style={{ gridTemplateColumns: isInternalDataLake ? "repeat(2, minmax(0, 1fr))" : undefined }}
+            >
               <TabsTrigger value="choose">1. 소스 선택</TabsTrigger>
               {!isInternalDataLake && <TabsTrigger disabled={!hasSelectedSource || sourceStage === "choose"} value="connect">2. 연결 설정</TabsTrigger>}
               <TabsTrigger
-                disabled={isInternalDataLake
-                  ? !hasSelectedSource
-                  : sourceStage !== "browse" && (sourceStage === "choose" || connectionStatus !== "success" || !hasDetectedAssets)}
+                disabled={!canOpenSourceBrowser}
                 value="browse"
               >
                 {isInternalDataLake ? "2. 데이터셋 탐색" : "3. 데이터 탐색"}
@@ -2172,7 +2256,6 @@ export function SourceConnectionPage({
                         onSelect={selectCatalogDataset}
                       />
                     )}
-                    explorerMeta={<Badge variant="outline" className="border-blue-200 bg-white text-blue-700">{filteredCatalogDatasets.length}개</Badge>}
                     explorerTitle="접근 가능한 데이터셋"
                     filterOptions={explorerConfig.filterOptions}
                     filterValue={assetFilter}
@@ -2188,11 +2271,10 @@ export function SourceConnectionPage({
                     )}
                     previewMeta={selectedCatalogDataset ? (
                       <div className="source-explorer-preview-meta">
-                        <Badge variant="outline" className="border-blue-200 bg-white text-blue-700">{selectedCatalogDataset.layer}</Badge>
                         <span>{selectedCatalogDataset.sampleRows.length}행 · {selectedCatalogDataset.schema.length}필드</span>
                       </div>
                     ) : undefined}
-                    previewTitle={selectedCatalogDataset?.name ?? "데이터셋 미리보기"}
+                    previewTitle="데이터 미리보기"
                     queryPlaceholder="데이터셋 이름, 설명, 소유자 검색"
                     queryValue={assetSearchQuery}
                     showPathSearch={false}
@@ -2201,7 +2283,11 @@ export function SourceConnectionPage({
                   <SourceExplorerWorkbench
                     explorer={hasDetectedAssets ? (
                       <SourceAssetTree
-                        assets={filteredDisplayAssets}
+                        assets={filteredDisplayAssets.map(([path, meta, status]) => (
+                          activeSourceType === "PostgreSQL" || activeSourceType === "MongoDB"
+                            ? [path, "", status]
+                            : [path, meta, status]
+                        ))}
                         loadingPath={loadingAssetPath}
                         selectedPath={selectedAssetPath}
                         onOpenFolder={explorerConfig.supportsPathSearch ? loadSourceAssetChildren : undefined}
@@ -2211,7 +2297,6 @@ export function SourceConnectionPage({
                     ) : (
                       <p className="source-empty-note">연결 테스트 후 탐색 가능한 항목이 표시됩니다.</p>
                     )}
-                    explorerMeta={<Badge variant="outline" className="border-blue-200 bg-white text-blue-700">{filteredDisplayAssets.length}개</Badge>}
                     explorerTitle={current.assetsTitle}
                     filterOptions={explorerConfig.filterOptions}
                     filterValue={assetFilter}
@@ -2242,7 +2327,7 @@ export function SourceConnectionPage({
                     )}
                     previewTitle={selectedDatasetSummary
                       ? `대표 파일 · ${selectedDatasetSummary.representativeObject}`
-                      : selectedAsset?.[0] || explorerConfig.previewTitle}
+                      : selectedAsset?.[0] || sourcePreviewTitle}
                     queryPlaceholder={explorerConfig.queryPlaceholder}
                     queryValue={assetSearchQuery}
                     showPathSearch={explorerConfig.supportsPathSearch}
@@ -2515,7 +2600,7 @@ export function RecordParsingPage({
   );
 }
 
-function sourceFormatFromConfig(fields: Array<[string, string]>, _sourceType?: string) {
+function sourceFormatFromConfig(fields: Array<[string, string]>) {
   const fieldMap = new Map(fields.map(([label, value]) => [label, value]));
   const declaredFormat = (fieldMap.get("File Type") || "").trim().toLowerCase();
   const selectedPath = [
@@ -2530,8 +2615,7 @@ function sourceFormatFromConfig(fields: Array<[string, string]>, _sourceType?: s
   if (rawFormat.includes("json")) return "JSON";
   if (rawFormat.includes("csv")) return "CSV";
   if (rawFormat.includes("tsv")) return "TSV";
-  if (rawFormat.includes("txt")) return "TXT";
-  if (rawFormat.includes("log")) return "TXT";
+  if (rawFormat.includes("txt") || rawFormat.includes("log")) return "TXT";
   if (rawFormat.includes("parquet")) return "PARQUET";
   return "AUTO";
 }
@@ -2581,6 +2665,7 @@ function sourceStatusIcon(status: SourceDraft["connectionStatus"]) {
 function isVisibleSourceField(sourceType: string, label: string) {
   if (isInternalSourceField(label)) return false;
   if (sourceType === "File / S3") {
+    if (OBJECT_STORAGE_IS_AWS && ["Endpoint URL", "Access Key", "Secret Key"].includes(label)) return false;
     return !["Storage Provider", "Region", "Use Path Style", "Header", "Path / Prefix", "File Type", "Delimiter", "Encoding"].includes(label);
   }
   if (sourceType === "PostgreSQL") {
@@ -2604,7 +2689,7 @@ function isVisibleSourceField(sourceType: string, label: string) {
 function requiredSourceConnectionFields(sourceType: string) {
   const fields: Record<string, string[]> = {
     "Data Lake": [],
-    "File / S3": ["Endpoint URL", "Bucket / Stage Name", "Access Key", "Secret Key"],
+    "File / S3": OBJECT_STORAGE_IS_AWS ? ["Bucket / Stage Name"] : ["Endpoint URL", "Bucket / Stage Name", "Access Key", "Secret Key"],
     MongoDB: ["Endpoint / Host", "Port", "Database Name"],
     PostgreSQL: ["Endpoint / Host", "Port", "Database Name", "Username", "Password / Auth Token"],
     "REST API": ["Method", "Endpoint URL"],
@@ -2650,7 +2735,7 @@ function sourceExplorerConfig(sourceType: string, assets: Array<[string, string,
         { label: "JSON / JSONL", value: "json" },
       ],
       pathPlaceholder: "버킷 내부 경로 또는 프리픽스",
-      previewTitle: "파일 제한 샘플",
+      previewTitle: "데이터 미리보기",
       queryPlaceholder: "현재 불러온 파일 또는 폴더 검색",
       supportsPathSearch: true,
     };
@@ -2658,14 +2743,17 @@ function sourceExplorerConfig(sourceType: string, assets: Array<[string, string,
 
   if (sourceType === "PostgreSQL" || sourceType === "MongoDB") {
     const scopes = Array.from(new Set(assets.map(([, meta]) => meta.trim()).filter(Boolean)));
+    const scopeLabel = sourceType === "PostgreSQL" ? "스키마" : "데이터베이스";
     return {
       filterMode: "meta",
-      filterOptions: [
-        { label: sourceType === "PostgreSQL" ? "모든 스키마" : "모든 데이터베이스", value: "all" },
-        ...scopes.map((scope) => ({ label: scope, value: scope.toLowerCase() })),
-      ],
+      filterOptions: scopes.length > 1
+        ? [
+            { label: `${scopeLabel} 전체`, value: "all" },
+            ...scopes.map((scope) => ({ label: `${scopeLabel}: ${scope}`, value: scope.toLowerCase() })),
+          ]
+        : [{ label: `${scopeLabel}: ${scopes[0] ?? "-"}`, value: "all" }],
       pathPlaceholder: "",
-      previewTitle: sourceType === "PostgreSQL" ? "테이블 프로파일" : "문서 제한 샘플",
+      previewTitle: "데이터 미리보기",
       queryPlaceholder: sourceType === "PostgreSQL" ? "테이블명 검색" : "컬렉션명 검색",
       supportsPathSearch: false,
     };
@@ -2676,7 +2764,7 @@ function sourceExplorerConfig(sourceType: string, assets: Array<[string, string,
       filterMode: "none",
       filterOptions: [{ label: "모든 응답 필드", value: "all" }],
       pathPlaceholder: "",
-      previewTitle: "REST 응답 제한 샘플",
+      previewTitle: "데이터 미리보기",
       queryPlaceholder: "응답 필드 또는 경로 검색",
       supportsPathSearch: false,
     };
@@ -2687,7 +2775,7 @@ function sourceExplorerConfig(sourceType: string, assets: Array<[string, string,
       filterMode: "none",
       filterOptions: [{ label: "모든 파티션", value: "all" }],
       pathPlaceholder: "",
-      previewTitle: "Kafka 메시지 제한 샘플",
+      previewTitle: "데이터 미리보기",
       queryPlaceholder: "파티션 또는 메시지 필드 검색",
       supportsPathSearch: false,
     };
@@ -2697,7 +2785,7 @@ function sourceExplorerConfig(sourceType: string, assets: Array<[string, string,
     filterMode: "none",
     filterOptions: [{ label: "전체", value: "all" }],
     pathPlaceholder: "",
-    previewTitle: "제한 샘플",
+    previewTitle: "데이터 미리보기",
     queryPlaceholder: "탐색 항목 검색",
     supportsPathSearch: false,
   };
@@ -2724,36 +2812,6 @@ function sourceAssetMatchesExplorer(
 
 function isSecretSourceField(label: string) {
   return ["Access Key", "Password / Auth Token", "Secret Key", "Token / Secret"].includes(label);
-}
-
-function SourceBrandIcon({ kind }: { kind: "s3" | "postgres" | "mongo" | "rest" | "lake" | "kafka" }) {
-  if (kind === "rest") {
-    return (
-      <div className="source-brand-icon source-brand-rest" aria-hidden="true">
-        <Braces size={38} strokeWidth={2.2} />
-      </div>
-    );
-  }
-  if (kind === "lake") {
-    return (
-      <div className="source-brand-icon source-brand-asklake" aria-hidden="true">
-        <img alt="" src={askLakeLogoUrl} />
-      </div>
-    );
-  }
-  const brand = {
-    s3: { color: "#569a31", url: amazonS3IconUrl },
-    postgres: { color: "#4169e1", url: postgreSqlIconUrl },
-    mongo: { color: "#47a248", url: mongoDbIconUrl },
-    kafka: { color: "#231f20", url: apacheKafkaIconUrl },
-  }[kind];
-  return (
-    <div
-      className={`source-brand-icon source-brand-${kind}`}
-      aria-hidden="true"
-      style={{ backgroundColor: brand.color, maskImage: `url(${brand.url})`, WebkitMaskImage: `url(${brand.url})` }}
-    />
-  );
 }
 
 function sourceCheckIcon(label: string) {
@@ -5242,6 +5300,19 @@ function truncatePreviewValue(value: string) {
   return `${value.slice(0, 117)}...`;
 }
 
+function downloadCsv(filename: string, headers: string[], rows: Array<Array<string | number>>) {
+  const escapeCell = (value: string | number) => `"${String(value ?? "").replaceAll('"', '""')}"`;
+  const csv = [headers, ...rows].map((row) => row.map(escapeCell).join(",")).join("\r\n");
+  const url = URL.createObjectURL(new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8" }));
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
 function QualityPreviewAnalysis({
   invalidRows,
   onAction,
@@ -5347,7 +5418,10 @@ function QualityFailedRowsPanel({
         </table>
       </div>
       <ActionGroup className="hegun-rule-form-actions" density="compact">
-        <Button className="secondary-button" type="button" variant="outline" onClick={() => onAction("etl.rules.quality_failed_rows_exported", "/api/etl/rules/quality/failed-rows/export")}>행 내보내기</Button>
+        <Button className="secondary-button" type="button" variant="outline" onClick={() => {
+          downloadCsv("asklake-quality-failed-rows.csv", ["행", "컬럼", "샘플 값", "사유", "처리"], previewRows.map((row) => [row.row, row.column, row.sampleValue, qualityFailureReasonLabel(row.reason), failureActionLabel(row.action)]));
+          onAction("etl.rules.quality_failed_rows_exported", "/api/etl/rules/quality/failed-rows/export");
+        }}>행 내보내기</Button>
         <Button className="primary-button" type="button" onClick={() => onAction("etl.rules.quality_failed_rows_reviewed", "/api/etl/rules/quality/failed-rows/review")}>검토 완료</Button>
       </ActionGroup>
     </section>
@@ -5395,7 +5469,10 @@ function InvalidRowsPanel({
         </table>
       </div>
       <ActionGroup className="hegun-rule-form-actions" density="compact">
-        <Button className="secondary-button" type="button" variant="outline" onClick={() => onAction("etl.rules.invalid_rows_exported", "/api/etl/rules/invalid-rows/export")}>행 내보내기</Button>
+        <Button className="secondary-button" type="button" variant="outline" onClick={() => {
+          downloadCsv("asklake-invalid-rows.csv", ["행", "컬럼", "사유", "처리", "샘플 값"], invalidRows.map((row) => [row.row, row.column, qualityFailureReasonLabel(row.reason), failureActionLabel(row.action), row.sampleValue]));
+          onAction("etl.rules.invalid_rows_exported", "/api/etl/rules/invalid-rows/export");
+        }}>행 내보내기</Button>
         <Button className="primary-button" type="button" onClick={() => onAction("etl.rules.invalid_rows_reviewed", "/api/etl/rules/invalid-rows/review")}>검토 완료</Button>
       </ActionGroup>
     </section>
@@ -5439,9 +5516,7 @@ function RepeatSettings({
 }) {
   const cronIsValid = isValidCronExpression(customCron);
   const normalizedTimezone = normalizeScheduleTimezone(timezone);
-  const visibleRepeatFrequencyOptions = frequency === "custom"
-    ? repeatFrequencyOptions
-    : repeatFrequencyOptions.filter((option) => option.value !== "custom");
+  const visibleRepeatFrequencyOptions = repeatFrequencyOptions;
 
   return (
     <FieldSet>
@@ -5666,15 +5741,15 @@ export function TargetPage({
   );
   const sampleTargetSchema = useMemo(() => inferTargetSchema([], [], undefined), []);
   const [targetDataset, setTargetDataset] = useState(initialTarget.targetDataset);
-  const [databaseName, setDatabaseName] = useState(draftTarget?.databaseName ?? "asklake");
-  const [targetLayer, setTargetLayer] = useState<TargetLayer>(initialTargetLayer);
+  const databaseName = draftTarget?.databaseName ?? "asklake";
+  const targetLayer = initialTargetLayer;
   const [targetStoragePath, setTargetStoragePath] = useState(initialStoragePath);
   const [storagePathCustomized, setStoragePathCustomized] = useState(
     initialStoragePath !== buildTargetStoragePath(initialTarget.targetDataset, initialTargetLayer),
   );
   const [targetDescription, setTargetDescription] = useState(initialTarget.description);
-  const [targetFormat, setTargetFormat] = useState<TargetFileFormat>(initialTargetFormat);
-  const [targetOwner, setTargetOwner] = useState(draftTarget?.owner ?? initialTarget.owner);
+  const targetFormat = initialTargetFormat;
+  const targetOwner = draftTarget?.owner ?? initialTarget.owner;
   const [targetManager, setTargetManager] = useState(draftTarget?.manager ?? initialTarget.owner);
   const [targetTags, setTargetTags] = useState<string[]>(initialTarget.tags);
   const [customTag, setCustomTag] = useState("");
@@ -5802,13 +5877,6 @@ export function TargetPage({
     }
   };
 
-  const changeTargetLayer = (nextLayer: TargetLayer) => {
-    setTargetLayer(nextLayer);
-    if (!storagePathCustomized) {
-      setTargetStoragePath(buildTargetStoragePath(targetDataset.trim() || "target_dataset", nextLayer));
-    }
-  };
-
   const saveTargetConfig = () => {
     const config = buildConfig();
     const errors = validateTargetConfig(config, activeJsonParseFailed);
@@ -5855,7 +5923,7 @@ export function TargetPage({
   };
 
   return (
-    <CreationFlowLayout actions={<CreationTopActions nextDisabled={targetNextDisabled} prevLabel="이전" nextLabel="다음" split onPrev={onPrev} onNext={handleNext} />}>
+    <CreationFlowLayout className="target-page-layout" actions={<CreationTopActions nextDisabled={targetNextDisabled} prevLabel="이전" nextLabel="다음" split onPrev={onPrev} onNext={handleNext} />}>
       <EtlStepHeader
         className="etl-step-standalone-header"
         icon={<HardDrive />}
@@ -5878,14 +5946,31 @@ export function TargetPage({
             <FormFieldGroup className="field wide" label="데이터셋명">
               <Input className="input control-input" value={targetDataset} onChange={(event) => changeTargetDataset(event.target.value)} />
             </FormFieldGroup>
-            <FormFieldGroup className="field" label="오너">
-              <Input className="input control-input" value={targetOwner} onChange={(event) => setTargetOwner(event.target.value)} />
-            </FormFieldGroup>
-            <FormFieldGroup className="field" label="담당자">
+            <FormFieldGroup className="field target-manager-field" label="담당자">
               <Input className="input control-input" value={targetManager} onChange={(event) => setTargetManager(event.target.value)} />
             </FormFieldGroup>
             <FormFieldGroup className="field wide" label="설명">
               <Input className="input control-input" value={targetDescription} onChange={(event) => setTargetDescription(event.target.value)} />
+            </FormFieldGroup>
+            <FormFieldGroup className="field wide target-tags-field" label="태그">
+              {targetTags.length > 0 ? (
+                <TagList className="target-chip-grid" density="compact" role="group" aria-label="타겟 태그">
+                  {targetTags.map((tag) => (
+                    <Button aria-pressed={targetTags.includes(tag)} key={tag} size="sm" type="button" variant="secondary" onClick={() => toggleTag(tag)}>
+                      {tag}
+                    </Button>
+                  ))}
+                </TagList>
+              ) : null}
+              <div className="target-inline-controls">
+                <Input className="input control-input" placeholder="태그 입력" value={customTag} onChange={(event) => setCustomTag(event.target.value)} onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    addCustomTag();
+                  }
+                }} />
+                <Button type="button" variant="outline" onClick={addCustomTag}><Plus data-icon="inline-start" />추가</Button>
+              </div>
             </FormFieldGroup>
           </div>
         </section>
@@ -5897,33 +5982,8 @@ export function TargetPage({
               <h2>저장 위치 설정</h2>
             </div>
           </div>
-          <div className="target-config-form-grid destination">
-            <FormFieldGroup className="field target-db-field" label="DB 선택">
-              <DatabaseField useShadcnStyles value={databaseName} onChange={setDatabaseName} />
-            </FormFieldGroup>
-            <FormFieldGroup className="field" label="데이터 레이어">
-              <Select value={targetLayer} onValueChange={(layer) => changeTargetLayer(layer as TargetLayer)}>
-                <SelectTrigger aria-label="데이터 레이어 선택" size="sm">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {targetLayerOptions.map((layer) => <SelectItem key={layer} value={layer}>{layer}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </FormFieldGroup>
-            <FormFieldGroup className="field target-format-field" label="포맷">
-              <Select value={targetFormat} onValueChange={(format) => setTargetFormat(format as TargetFileFormat)}>
-                <SelectTrigger aria-label="파일 포맷 선택" className="target-format-select" size="sm">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {targetFormatOptions.map((format) => (
-                    <SelectItem key={format} value={format}>{format.toUpperCase()}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </FormFieldGroup>
-            <FormFieldGroup className="field wide target-storage-field" label="저장경로">
+          <div className="target-config-form-grid destination storage-only">
+            <FormFieldGroup className="field wide target-storage-field" label="저장 경로">
               <S3PathField useShadcnStyles value={targetStoragePath} onChange={(path) => {
                 setTargetStoragePath(path);
                 setStoragePathCustomized(true);
@@ -5935,43 +5995,18 @@ export function TargetPage({
           <div className="etl-review-card-header">
             <span className="etl-review-icon permission"><SlidersHorizontal size={17} /></span>
             <div>
-              <h2>파티션 및 태그</h2>
+              <h2>파티션 설정</h2>
             </div>
           </div>
-          <div className="target-config-split">
-            <div className="target-config-subsection">
-              <div className="target-config-subheader">
-                <BookOpen size={16} />
-                <h3>태그</h3>
+          <div className="target-partition-settings">
+            <div className="target-partition-table">
+              <div className="target-partition-header" aria-hidden="true">
+                <span>선택</span>
+                <span>컬럼명</span>
+                <span>데이터 타입</span>
               </div>
-              {targetTags.length > 0 ? (
-                <TagList className="target-chip-grid" density="compact" role="group" aria-label="타겟 태그">
-                  {targetTags.map((tag) => (
-                    <Button aria-pressed={targetTags.includes(tag)} key={tag} size="sm" type="button" variant="secondary" onClick={() => toggleTag(tag)}>
-                      {tag}
-                    </Button>
-                  ))}
-                </TagList>
-              ) : null}
-              <div className="target-inline-controls">
-                <Input className="input control-input" placeholder="직접 태그 추가" value={customTag} onChange={(event) => setCustomTag(event.target.value)} onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    addCustomTag();
-                  }
-                }} />
-                <Button type="button" variant="outline" onClick={addCustomTag}><Plus data-icon="inline-start" />추가</Button>
-              </div>
-            </div>
-            <div className="target-config-subsection">
-              <div className="target-config-subheader">
-                <SlidersHorizontal size={16} />
-                <h3>파티션</h3>
-              </div>
-              <div className="target-partition-settings">
-                <div className="target-partition-grid" role="group" aria-label="파티션 컬럼 다중 선택">
-                  {partitionCandidates.map(renderPartitionOption)}
-                </div>
+              <div className="target-partition-grid" role="group" aria-label="파티션 컬럼 다중 선택">
+                {partitionCandidates.map(renderPartitionOption)}
               </div>
             </div>
           </div>
@@ -6002,6 +6037,7 @@ export function PermissionPage({
   const [permissionOptionsError, setPermissionOptionsError] = useState("");
   const [permissionOptionsLoading, setPermissionOptionsLoading] = useState(true);
   const [permissionOptionsRequest, setPermissionOptionsRequest] = useState(0);
+  const [permissionActionError, setPermissionActionError] = useState("");
   const [roleChecks, setRoleChecks] = useState<Record<string, boolean>>({});
   const [userChecks, setUserChecks] = useState<Record<string, boolean>>({});
 
@@ -6034,13 +6070,16 @@ export function PermissionPage({
           ?? options.groups.find((group) => nextRoleChecks[group.id])
           ?? options.groups[0];
         setPermissionOptions(options);
+        setPermissionActionError("");
         setPermissionTemplate(selectedTemplate?.name ?? initialPermission.permissionTemplate);
         setRoleChecks(nextRoleChecks);
         setUserChecks(nextUserChecks);
       })
       .catch((error) => {
         if (!active) return;
-        setPermissionOptionsError(error instanceof Error ? error.message : "권한 대상 목록을 불러오지 못했습니다.");
+        const message = error instanceof Error ? error.message : "권한 대상 목록을 불러오지 못했습니다.";
+        setPermissionOptionsError(message);
+        setPermissionActionError(message);
       })
       .finally(() => {
         if (active) setPermissionOptionsLoading(false);
@@ -6110,7 +6149,15 @@ export function PermissionPage({
     });
   };
   const goNext = () => {
-    if (!permissionOptions) return;
+    if (permissionOptionsLoading) {
+      setPermissionActionError("권한 대상 목록을 불러오는 중입니다. 잠시 후 다시 시도해 주세요.");
+      return;
+    }
+    if (permissionOptionsError || !permissionOptions || permissionOptions.groups.length === 0) {
+      setPermissionActionError(permissionOptionsError || "사용 가능한 권한 그룹이 없어 다음 단계로 이동할 수 없습니다.");
+      return;
+    }
+    setPermissionActionError("");
     applyPermissionDraft();
     onNext();
   };
@@ -6149,6 +6196,7 @@ export function PermissionPage({
         icon={<ShieldCheck />}
         title="권한 설정"
       />
+      {permissionActionError && <Alert className="mb-4" variant="destructive"><Info /><AlertTitle>권한 확인이 필요합니다.</AlertTitle><AlertDescription>{permissionActionError}</AlertDescription></Alert>}
       <div className="grid min-w-0 gap-4 pb-6" data-testid="permission-workflow">
         <Card className="min-w-0 overflow-hidden" size="none">
           <CardHeader className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3 border-b border-slate-200 px-5 py-4">
@@ -6407,16 +6455,21 @@ export function ReviewPage({
 }) {
   const [reviewSnapshot, setReviewSnapshot] = useState<ReviewSnapshot | null>(null);
   const [reviewLoading, setReviewLoading] = useState(true);
+  const [reviewError, setReviewError] = useState("");
 
   useEffect(() => {
     let cancelled = false;
     setReviewLoading(true);
+    setReviewError("");
     void getReviewSnapshot(draft)
       .then((snapshot) => {
         if (!cancelled) setReviewSnapshot(snapshot);
       })
-      .catch(() => {
-        if (!cancelled) setReviewSnapshot(null);
+      .catch((error) => {
+        if (!cancelled) {
+          setReviewSnapshot(null);
+          setReviewError(error instanceof Error ? error.message : "검토 결과를 불러오지 못했습니다.");
+        }
       })
       .finally(() => {
         if (!cancelled) setReviewLoading(false);
@@ -6445,6 +6498,7 @@ export function ReviewPage({
           icon={<FileText />}
           title="검토 및 생성"
         />
+        {reviewError && <Alert className="mb-4" variant="destructive"><Info /><AlertTitle>검토 결과를 불러오지 못했습니다.</AlertTitle><AlertDescription>{reviewError} 수정 후 다시 시도해 주세요.</AlertDescription></Alert>}
         <div className="etl-review-stack">
           <section className="etl-review-card">
             <div className="etl-review-card-header">

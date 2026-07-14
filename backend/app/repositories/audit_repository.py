@@ -10,14 +10,14 @@ from app.models.identity import AuditEventModel
 from app.schemas.identity import AdminAuditLogEntry
 
 ALLOWED_AUDIT_RESULTS = {"success", "failed", "forbidden"}
-ALLOWED_AUDIT_TARGET_TYPES = {"etl_job", "dataset", "dashboard", "ai_module", "admin_module", "ui", "auth", "user", "group"}
+ALLOWED_AUDIT_TARGET_TYPES = {"etl_job", "dataset", "dashboard", "query_run", "ai_module", "admin_module", "ui", "auth", "user", "group"}
 
 
 def ensure_audit_event_table(db: Session) -> None:
     Base.metadata.create_all(bind=db.get_bind(), tables=[AuditEventModel.__table__])
 
 
-def record_audit_event(
+def add_audit_event(
     db: Session,
     *,
     action: str,
@@ -51,6 +51,11 @@ def record_audit_event(
         metadata_=metadata or {},
     )
     db.add(row)
+    return row
+
+
+def record_audit_event(db: Session, **kwargs: Any) -> AuditEventModel:
+    row = add_audit_event(db, **kwargs)
     db.commit()
     db.refresh(row)
     return row

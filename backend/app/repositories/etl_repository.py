@@ -59,6 +59,8 @@ def ensure_schema(db: Session) -> None:
             "partition": "VARCHAR(255)",
             "partition_columns": "JSON",
             "index_columns": "JSON",
+            "iceberg_target": "JSON",
+            "job_kind": "VARCHAR(64)",
             "permission_roles": "JSON",
             "permission_summary": "TEXT",
             "progress": "JSON",
@@ -85,6 +87,7 @@ def ensure_schema(db: Session) -> None:
             "source_config": "JSON",
             "source_label": "VARCHAR(255)",
             "source_type": "VARCHAR(120)",
+            "sql_recipe": "JSON",
             "stats": "JSON",
             "status": "VARCHAR(64)",
             "storage_path": "VARCHAR(512)",
@@ -119,16 +122,21 @@ def ensure_schema(db: Session) -> None:
             "status": "VARCHAR(32)",
             "last_error": "TEXT",
             "dag_steps": "JSON",
+            "source_boundary": "JSON",
+            "iceberg_snapshot_id": "VARCHAR(255)",
+            "iceberg_table_uri": "VARCHAR(1024)",
         }
         for column_name, column_type in batch_column_defs.items():
             if column_name not in batch_columns:
                 connection.execute(text(f"ALTER TABLE kafka_continuous_batches ADD COLUMN {column_name} {column_type}"))
         connection.execute(text("UPDATE kafka_continuous_batches SET status = 'success' WHERE status IS NULL"))
         connection.execute(text("UPDATE kafka_continuous_batches SET dag_steps = '[]' WHERE dag_steps IS NULL"))
+        connection.execute(text("UPDATE kafka_continuous_batches SET source_boundary = '{}' WHERE source_boundary IS NULL"))
 
         job_defaults = {
             "dag_steps": "[]",
             "execution_mode": "snapshot",
+            "job_kind": "pipeline",
             "last_run": "-",
             "last_state": "대기",
             "name": "Untitled ETL Job",
@@ -163,6 +171,7 @@ def ensure_schema(db: Session) -> None:
                 "schema_columns",
                 "schema_sample_rows",
                 "source_config",
+                "sql_recipe",
                 "stats",
                 "transform_output_columns",
                 "transform_steps",
@@ -215,6 +224,26 @@ def list_job_models(db: Session) -> list[ETLJobModel]:
 def get_job(db: Session, job_id: str) -> ETLJobModel | None:
     ensure_schema(db)
     return db.get(ETLJobModel, job_id)
+
+
+def get_job_for_update(db: Session, job_id: str) -> ETLJobModel | None:
+    ensure_schema(db)
+    statement = (
+        select(ETLJobModel)
+        .where(ETLJobModel.id == job_id)
+        .with_for_update()
+    )
+    if db.get_bind().dialect.name == "sqlite":
+        # SQLite ignores SELECT FOR UPDATE. A no-op write takes its database-level
+        # writer lock before any external side effect while preserving row values.
+        result = db.execute(
+            text("UPDATE etl_jobs SET id = id WHERE id = :job_id"),
+            {"job_id": job_id},
+        )
+        if result.rowcount == 0:
+            return None
+        return db.get(ETLJobModel, job_id, populate_existing=True)
+    return db.scalar(statement)
 
 
 def get_job_schema(db: Session, job_id: str) -> JobRowData | None:
@@ -567,6 +596,23 @@ def list_kafka_continuous_maintenance_run_models(
     return list(db.scalars(statement.order_by(KafkaContinuousMaintenanceRunModel.created_at.desc())).all())
 
 
+def list_failed_kafka_continuous_replay_models(
+    db: Session,
+    job_id: str,
+) -> list[KafkaContinuousMaintenanceRunModel]:
+    ensure_schema(db)
+    statement = (
+        select(KafkaContinuousMaintenanceRunModel)
+        .where(
+            KafkaContinuousMaintenanceRunModel.job_id == job_id,
+            KafkaContinuousMaintenanceRunModel.kind == "quarantine_replay",
+            KafkaContinuousMaintenanceRunModel.status == "failed",
+        )
+        .order_by(KafkaContinuousMaintenanceRunModel.created_at.asc())
+    )
+    return list(db.scalars(statement).all())
+
+
 def list_kafka_continuous_maintenance_runs(db: Session, job_id: str) -> list[ContinuousMaintenanceRun]:
     return [continuous_maintenance_run_to_schema(run) for run in list_kafka_continuous_maintenance_run_models(db, job_id)]
 
@@ -599,6 +645,19 @@ def get_run_model(db: Session, run_id: str) -> ETLRunModel | None:
 def refresh_run_for_update(db: Session, run: ETLRunModel) -> None:
     ensure_schema(db)
     db.refresh(run, with_for_update=True)
+
+
+def public_sql_recipe(value: object) -> dict[str, Any] | None:
+    """Return the public SQL recipe without a persisted identity snapshot."""
+    if not isinstance(value, dict):
+        return None
+    recipe = dict(value)
+    legacy_run_as = recipe.pop("runAs", None)
+    if not recipe.get("runAsUserId") and isinstance(legacy_run_as, dict):
+        legacy_user_id = str(legacy_run_as.get("id") or "").strip()
+        if legacy_user_id:
+            recipe["runAsUserId"] = legacy_user_id
+    return recipe
 
 
 def job_to_schema(db: Session, job: ETLJobModel) -> JobRowData:
@@ -634,6 +693,8 @@ def job_to_schema(db: Session, job: ETLJobModel) -> JobRowData:
         source_config=job.source_config,
         source_label=job.source_label,
         source_type=job.source_type,
+        job_kind=job.job_kind or "pipeline",
+        sql_recipe=public_sql_recipe(job.sql_recipe),
         execution_mode=job.execution_mode or "snapshot",
         continuous_config=job.continuous_config,
         continuous_runtime=continuous_runtime_to_schema(runtime),
@@ -657,6 +718,7 @@ def job_to_schema(db: Session, job: ETLJobModel) -> JobRowData:
         index_columns=job.index_columns,
         compression=job.compression,
         storage_path=job.storage_path,
+        iceberg_target=job.iceberg_target,
         target_description=job.target_description,
         target_database=job.target_database,
         target_tags=job.target_tags,
@@ -750,7 +812,10 @@ def continuous_batch_to_schema(batch: KafkaContinuousBatchModel) -> KafkaContinu
         quarantined_count=int(batch.quarantined_count or 0),
         duration_ms=batch.duration_ms,
         source_ranges=batch.source_ranges or [],
+        source_boundary=batch.source_boundary or {},
         data_path=batch.data_path,
+        iceberg_snapshot_id=batch.iceberg_snapshot_id,
+        iceberg_table_uri=batch.iceberg_table_uri,
         quarantine_path=batch.quarantine_path,
         manifest_path=batch.manifest_path,
         last_error=batch.last_error,

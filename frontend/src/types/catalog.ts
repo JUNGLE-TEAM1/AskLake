@@ -50,6 +50,15 @@ export type CatalogDataset = {
   permissionGrants?: PermissionGrant[];
   permissions?: ResourcePermissions;
   quality: string;
+  queryEngineStatus?: "pending" | "available" | "registration_failed" | "unavailable";
+  queryEngineRequired?: boolean;
+  queryEngineTable?: {
+    catalog: string;
+    schema: string;
+    table: string;
+    format: "iceberg" | "parquet";
+    partitionColumns: string[];
+  };
   rag: boolean;
   rows: string;
   sampleRows: string[][];
@@ -75,6 +84,7 @@ export type CatalogDataset = {
 export type DatasetMaterializationRun = {
   createdAt: string;
   jobId: string;
+  materializationMode?: "snapshot" | "delta";
   publicationManifest?: string;
   quality?: Record<string, unknown> | null;
   quarantine?: {

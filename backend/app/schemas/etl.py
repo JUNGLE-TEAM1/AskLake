@@ -4,6 +4,7 @@ from typing import Any, Literal
 from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.common import CamelModel, to_camel
+from app.schemas.iceberg import IcebergWriterTarget
 from app.schemas.permissions import PermissionAction, PermissionGrant, ResourcePermissions
 
 TargetLayer = Literal["RAW", "BRONZE", "SILVER", "GOLD"]
@@ -12,6 +13,7 @@ JobScheduleKind = Literal["daily", "weekly", "monthly", "realtime", "none", "oth
 JobRunStatus = Literal["queued", "running", "success", "failed", "canceled"]
 JobRunOutcome = Literal["success", "failed", "canceled"]
 JobDagStepStatus = Literal["pending", "running", "success", "failed", "blocked"]
+JobKind = Literal["pipeline", "trino_sql_materialization"]
 KafkaExecutionMode = Literal["snapshot", "continuous"]
 RuleContractVersion = Literal["1.0"]
 CanonicalRuleKind = Literal["transform", "quality"]
@@ -264,7 +266,10 @@ class KafkaContinuousBatch(CamelModel):
     quarantined_count: int = 0
     duration_ms: int | None = None
     source_ranges: list[dict[str, Any]] = Field(default_factory=list)
+    source_boundary: dict[str, Any] = Field(default_factory=dict)
     data_path: str | None = None
+    iceberg_snapshot_id: str | None = None
+    iceberg_table_uri: str | None = None
     quarantine_path: str | None = None
     manifest_path: str | None = None
     last_error: str | None = None
@@ -314,10 +319,26 @@ class ContinuousCompactionRequest(CamelModel):
     target_file_size_mb: int = Field(default=256, ge=128, le=512)
 
 
+class ContinuousIcebergMaintenanceRequest(CamelModel):
+    rewrite_data_files: bool = True
+    target_file_size_mb: int = Field(default=256, ge=128, le=512)
+    expire_snapshots: bool = False
+    snapshot_retention_hours: int = Field(default=168, ge=24, le=8760)
+    retain_last_snapshots: int = Field(default=10, ge=1, le=1000)
+    remove_orphan_files: bool = False
+    orphan_retention_hours: int = Field(default=168, ge=72, le=8760)
+
+    @model_validator(mode="after")
+    def require_operation(self):
+        if not (self.rewrite_data_files or self.expire_snapshots or self.remove_orphan_files):
+            raise ValueError("at least one Iceberg maintenance operation must be enabled")
+        return self
+
+
 class ContinuousMaintenanceRun(CamelModel):
     run_id: str
     job_id: str
-    kind: Literal["quarantine_replay", "compaction"]
+    kind: Literal["quarantine_replay", "compaction", "iceberg_maintenance"]
     status: Literal["queued", "running", "success", "failed"]
     requested_by: str
     config: dict[str, Any] = Field(default_factory=dict)
@@ -381,6 +402,8 @@ class JobRowData(CamelModel):
     source_config: SourceFieldRows | None = None
     source_label: str | None = None
     source_type: str | None = None
+    job_kind: JobKind = "pipeline"
+    sql_recipe: dict[str, Any] | None = None
     execution_mode: KafkaExecutionMode = "snapshot"
     continuous_config: dict[str, Any] | None = None
     continuous_runtime: KafkaContinuousRuntime | None = None
@@ -404,6 +427,7 @@ class JobRowData(CamelModel):
     index_columns: list[str] | None = None
     compression: str | None = None
     storage_path: str | None = None
+    iceberg_target: IcebergWriterTarget | None = None
     target_description: str | None = None
     target_database: str | None = None
     target_tags: list[str] | None = None
@@ -456,6 +480,8 @@ class PermissionOptionUser(CamelModel):
 class PermissionOptionsResponse(CamelModel):
     groups: list[PermissionOptionGroup] = Field(default_factory=list)
     users: list[PermissionOptionUser] = Field(default_factory=list)
+class DeleteJobResponse(CamelModel):
+    deleted_job_id: str
 
 
 class CatalogDataset(CamelModel):
@@ -510,6 +536,37 @@ class CreateDerivedDatasetRequest(CamelModel):
     source_dataset_id: str
     source_run_id: str
     validation_key: str | None = None
+
+
+class TrinoSqlJobSchedule(CamelModel):
+    mode: Literal["manual", "daily", "weekly"] = "manual"
+    overlap_policy: Literal["skip_if_running"] = "skip_if_running"
+    time: str = "09:00"
+    timezone: str = "Asia/Seoul"
+    weekday: Literal["월", "화", "수", "목", "금", "토", "일"] = "월"
+
+
+class TrinoSqlJobGovernance(CamelModel):
+    access_scope: Literal["organization", "private", "project"] = "organization"
+    owner: str
+    permission_summary: str
+
+
+class TrinoSqlJobTarget(CamelModel):
+    partition_column: str | None = None
+    write_mode: Literal["full_refresh"] = "full_refresh"
+
+
+class CreateTrinoSqlJobRequest(CamelModel):
+    base_dataset_id: str
+    dataset: DerivedDatasetSpec
+    governance: TrinoSqlJobGovernance
+    job_name: str | None = None
+    query: str
+    reference_dataset_ids: list[str] = Field(default_factory=list)
+    schedule: TrinoSqlJobSchedule = Field(default_factory=TrinoSqlJobSchedule)
+    source_run_id: str
+    target: TrinoSqlJobTarget = Field(default_factory=TrinoSqlJobTarget)
 
 
 class CreatePipelineRequest(CamelModel):

@@ -3,10 +3,18 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync }
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  defaultRawBucket,
+  isMinioProvider,
+  objectStorageDockerEnv,
+  resolveObjectStorageConfig,
+  toDockerEnvArgs,
+} from "./objectStorageConfig.mjs";
 import { fieldValue, normalizeColumnName } from "./profile.mjs";
 
 const backendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const scriptsDir = path.join(backendDir, "scripts");
+const sparkRestClientScript = path.join(scriptsDir, "spark-rest-client.mjs");
 const sparkHostScriptsDir = path.resolve(process.env.ASKLAKE_SPARK_HOST_SCRIPTS_DIR || scriptsDir);
 const ivyDir = path.resolve(process.env.ASKLAKE_SPARK_IVY_DIR || path.join(backendDir, "tmp", "spark-ivy"));
 const reportDir = path.resolve(process.env.ASKLAKE_SPARK_REPORT_DIR || path.join(backendDir, "tmp", "spark-runs"));
@@ -21,30 +29,34 @@ const reviewTextModelHostDir = path.resolve(
 const reviewTextModelContainerDir = process.env.ASKLAKE_REVIEW_TEXT_MODEL_CONTAINER_DIR || "/work/review-text-models";
 const outputVolumeName = process.env.ASKLAKE_SPARK_OUTPUT_VOLUME || "asklake-spark-output";
 const outputContainerDir = process.env.ASKLAKE_SPARK_OUTPUT_CONTAINER_DIR || "/work/output";
+export const SPARK_REST_BRIDGE_GRACE_MS = 30_000;
 
-export function runSparkPipeline(job, command, runId) {
-  ensureSparkServer();
-  ensureWritableDir(ivyDir);
-  ensureWritableDir(reportDir);
-  ensureWritableDir(localOutputDir);
-  ensureWritableDir(sampleHostDir);
-  ensureWritableDir(reviewTextModelHostDir);
+export function runSparkPipeline(job, command, runId, options = {}) {
+  const executionMode = sparkExecutionMode();
+  if (executionMode === "docker") ensureSparkServer();
+  const allowWorldWritable = executionMode === "docker";
+  ensureWritableDir(ivyDir, allowWorldWritable);
+  ensureWritableDir(reportDir, allowWorldWritable);
+  ensureWritableDir(localOutputDir, allowWorldWritable);
+  ensureWritableDir(sampleHostDir, allowWorldWritable);
+  ensureWritableDir(reviewTextModelHostDir, allowWorldWritable);
 
   const source = sparkSourceFromJob(job, runId);
   try {
-    return runSparkPipelineWithSource(job, command, runId, source);
+    return runSparkPipelineWithSource(job, command, runId, source, executionMode, options);
   } finally {
     cleanupSparkSource(source);
   }
 }
 
-function runSparkPipelineWithSource(job, command, runId, source) {
+function runSparkPipelineWithSource(job, command, runId, source, executionMode, options = {}) {
   const output = sparkOutputPath(job, runId);
   const reportPath = path.join(reportDir, `${runId}.json`);
   const dockerReportPath = `${reportContainerDir}/${runId}.json`;
   const manifestPath = path.join(reportDir, `${runId}.manifest.json`);
   const dockerManifestPath = `${reportContainerDir}/${runId}.manifest.json`;
-  const packageArgs = sparkPackageArgs(source, output);
+  const packages = sparkPackages(job, source, output);
+  const packageArgs = sparkPackageArgs(packages);
   const localLlmEndpoint = process.env.ASKLAKE_LOCAL_LLM_ENDPOINT_IN_DOCKER
     || process.env.ASKLAKE_LOCAL_LLM_ENDPOINT
     || "http://host.docker.internal:1234/v1/chat/completions";
@@ -52,7 +64,45 @@ function runSparkPipelineWithSource(job, command, runId, source) {
   const localLlmTimeoutSeconds = process.env.ASKLAKE_LOCAL_LLM_TIMEOUT_SECONDS
     || String(Math.ceil(Number(process.env.ASKLAKE_LOCAL_LLM_TIMEOUT_MS || 120000) / 1000));
   const reviewAnalysisRuntime = process.env.ASKLAKE_REVIEW_ANALYSIS_RUNTIME || "scalable";
+  const icebergEnvironment = sparkIcebergEnvironment(job);
+  assertSparkRestStorageCredentials(job.sourceConfig ?? [], executionMode);
   writeSparkJobManifest(manifestPath, job);
+  const storageEnvironment = Object.fromEntries(
+    objectStorageDockerEnv(job.sourceConfig ?? []).filter(([name]) => (
+      executionMode === "docker"
+      || !["MINIO_ACCESS_KEY", "MINIO_SECRET_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"].includes(name)
+    )),
+  );
+  const sparkEnvironment = {
+    ...storageEnvironment,
+    ASKLAKE_SPARK_SOURCE_PATH: source.path,
+    ASKLAKE_SPARK_SOURCE_FORMAT: source.format,
+    ASKLAKE_SPARK_OUTPUT_PATH: output.sparkPath,
+    ASKLAKE_SPARK_RUN_ROW_LIMIT: sparkRowLimitFromJob(job),
+    ASKLAKE_SPARK_RUN_ID: runId,
+    ASKLAKE_SPARK_JOB_MANIFEST_FILE: dockerManifestPath,
+    ASKLAKE_SPARK_TEXT_STRUCTURING_DEFINITION_FILE: dockerManifestPath,
+    ASKLAKE_SPARK_REPORT_FILE: dockerReportPath,
+    ASKLAKE_SPARK_APP_NAME: `asklake-${command}-${job.id}`,
+    ASKLAKE_LOCAL_LLM_ENDPOINT: localLlmEndpoint,
+    ASKLAKE_LOCAL_LLM_MODEL: localLlmModel,
+    ASKLAKE_LOCAL_LLM_TIMEOUT_SECONDS: localLlmTimeoutSeconds,
+    ASKLAKE_LOCAL_LLM_MAX_INPUT_CHARS: process.env.ASKLAKE_LOCAL_LLM_MAX_INPUT_CHARS || "9000",
+    ASKLAKE_REVIEW_ANALYSIS_RUNTIME: reviewAnalysisRuntime,
+    ASKLAKE_REVIEW_TEXT_MODEL_ROOT: reviewTextModelContainerDir,
+    ...icebergEnvironment,
+    HOME: "/tmp",
+  };
+  const sparkExecutorProperties = Object.fromEntries(
+    [
+      "ASKLAKE_LOCAL_LLM_ENDPOINT",
+      "ASKLAKE_LOCAL_LLM_MODEL",
+      "ASKLAKE_LOCAL_LLM_TIMEOUT_SECONDS",
+      "ASKLAKE_LOCAL_LLM_MAX_INPUT_CHARS",
+      "ASKLAKE_REVIEW_ANALYSIS_RUNTIME",
+      "ASKLAKE_REVIEW_TEXT_MODEL_ROOT",
+    ].map((name) => [`spark.executorEnv.${name}`, sparkEnvironment[name]]),
+  );
   const dockerArgs = [
     "run",
     "--rm",
@@ -72,14 +122,7 @@ function runSparkPipelineWithSource(job, command, runId, source) {
     `${reviewTextModelHostDir}:${reviewTextModelContainerDir}:ro`,
     "-v",
     `${outputVolumeName}:${outputContainerDir}`,
-    "-e",
-    `MINIO_ENDPOINT=${process.env.MINIO_ENDPOINT_IN_DOCKER || "http://m3-minio:9000"}`,
-    "-e",
-    `MINIO_ACCESS_KEY=${fieldValue(job.sourceConfig ?? [], "Access Key") || minioAccessKey()}`,
-    "-e",
-    `MINIO_SECRET_KEY=${fieldValue(job.sourceConfig ?? [], "Secret Key") || minioSecretKey()}`,
-    "-e",
-    `MINIO_REGION=${process.env.MINIO_REGION || "us-east-1"}`,
+    ...toDockerEnvArgs(objectStorageDockerEnv(job.sourceConfig ?? [])),
     "-e",
     `ASKLAKE_SPARK_SOURCE_PATH=${source.path}`,
     "-e",
@@ -110,6 +153,7 @@ function runSparkPipelineWithSource(job, command, runId, source) {
     `ASKLAKE_REVIEW_ANALYSIS_RUNTIME=${reviewAnalysisRuntime}`,
     "-e",
     `ASKLAKE_REVIEW_TEXT_MODEL_ROOT=${reviewTextModelContainerDir}`,
+    ...Object.entries(icebergEnvironment).flatMap(([name, value]) => ["-e", `${name}=${value}`]),
     "-e",
     "HOME=/tmp",
     process.env.ASKLAKE_SPARK_IMAGE || "apache/spark:4.0.1",
@@ -145,15 +189,30 @@ function runSparkPipelineWithSource(job, command, runId, source) {
     "/work/scripts/spark_job_run.py",
   ];
 
-  let result = runSparkSubmitContainer(dockerArgs);
+  let result = executionMode === "rest"
+    ? runSparkRestSubmission(
+      createSparkRestSubmission({
+        appName: sparkEnvironment.ASKLAKE_SPARK_APP_NAME,
+        environmentVariables: sparkEnvironment,
+        packages,
+        scriptPath: sparkRestRuntimeConfig().jobScript,
+        sparkProperties: sparkExecutorProperties,
+      }),
+      positiveInteger(options.sparkRestTimeoutMs, sparkRunTimeoutMs()),
+      process.env,
+      {
+        stateFile: sparkRestStateFileForRun(runId, options.sparkRestStateFile),
+      },
+    )
+    : runSparkSubmitContainer(dockerArgs);
   let report = readSparkReport(reportPath, result.stdout);
-  if (report.status !== "success" && shouldRetryDockerWait(result)) {
+  if (executionMode === "docker" && report.status !== "success" && shouldRetryDockerWait(result)) {
     rmSync(reportPath, { force: true });
     result = runSparkSubmitContainer(dockerArgs);
     report = readSparkReport(reportPath, result.stdout);
   }
-  if (report.status === "success") {
-    copySparkOutputToHost(output);
+  if (executionMode === "docker" && report.status === "success") {
+    if (!report.icebergCommit) copySparkOutputToHost(output);
     copySparkReportArtifactsToHost(report);
   }
   report = normalizeSparkReport(report, output);
@@ -177,17 +236,151 @@ function runSparkPipelineWithSource(job, command, runId, source) {
   };
 }
 
+export function sparkExecutionMode(environment = process.env) {
+  const configured = String(environment.ASKLAKE_SPARK_RUNNER || "").trim().toLowerCase();
+  const production = [environment.APP_ENV, environment.NODE_ENV]
+    .some((value) => ["prod", "production"].includes(String(value || "").trim().toLowerCase()));
+  if (production && configured !== "rest") {
+    throw sparkConfigurationError(
+      "Production Spark execution requires ASKLAKE_SPARK_RUNNER=rest; Docker-based submission is not allowed.",
+    );
+  }
+  const mode = configured || "docker";
+  if (!new Set(["docker", "rest"]).has(mode)) {
+    throw sparkConfigurationError(`Unsupported ASKLAKE_SPARK_RUNNER mode: ${mode}`);
+  }
+  return mode;
+}
+
+export function sparkRestRuntimeConfig(environment = process.env) {
+  const restUrl = configuredSparkRestUrl(environment.ASKLAKE_SPARK_REST_URL || "http://spark-master:6066");
+  const scriptDir = configuredSparkRuntimePath(
+    environment.ASKLAKE_SPARK_SCRIPT_DIR || "/opt/asklake/scripts",
+    "ASKLAKE_SPARK_SCRIPT_DIR",
+  );
+  const jobScript = configuredSparkScript(
+    environment.ASKLAKE_SPARK_JOB_SCRIPT || `${scriptDir}/spark_job_run.py`,
+    scriptDir,
+    "ASKLAKE_SPARK_JOB_SCRIPT",
+  );
+  const sourceInspectScript = configuredSparkScript(
+    environment.ASKLAKE_SPARK_SOURCE_INSPECT_SCRIPT || `${scriptDir}/spark_source_inspect_rest.py`,
+    scriptDir,
+    "ASKLAKE_SPARK_SOURCE_INSPECT_SCRIPT",
+  );
+  const ivyRuntimeDir = configuredSparkRuntimePath(
+    environment.ASKLAKE_SPARK_IVY_RUNTIME_DIR
+      || environment.ASKLAKE_SPARK_IVY_DIR
+      || "/var/lib/asklake/spark-ivy",
+    "ASKLAKE_SPARK_IVY_RUNTIME_DIR",
+  );
+  return { ivyRuntimeDir, jobScript, restUrl, scriptDir, sourceInspectScript };
+}
+
+export function createSparkRestSubmission({
+  appName,
+  environmentVariables = {},
+  packages = [],
+  scriptPath,
+  sparkProperties = {},
+}, environment = process.env) {
+  const runtime = sparkRestRuntimeConfig(environment);
+  const applicationScript = configuredSparkScript(
+    scriptPath || runtime.jobScript,
+    runtime.scriptDir,
+    "Spark application script",
+  );
+  const packageList = [...new Set(packages.map((item) => String(item || "").trim()).filter(Boolean))];
+  const properties = {
+    ...stringValues(sparkProperties),
+    "spark.app.name": String(appName || "asklake-spark-job"),
+    "spark.cores.max": String(environment.ASKLAKE_SPARK_CORES_MAX || "2"),
+    "spark.driver.cores": String(environment.ASKLAKE_SPARK_DRIVER_CORES || "1"),
+    "spark.driver.memory": String(environment.ASKLAKE_SPARK_DRIVER_MEMORY || "1g"),
+    "spark.executor.cores": String(environment.ASKLAKE_SPARK_EXECUTOR_CORES || "2"),
+    "spark.executor.memory": String(environment.ASKLAKE_SPARK_EXECUTOR_MEMORY || "4g"),
+    "spark.jars.ivy": runtime.ivyRuntimeDir,
+    "spark.master": String(environment.ASKLAKE_SPARK_MASTER_URL || "spark://spark-master:7077"),
+    "spark.sql.shuffle.partitions": String(environment.ASKLAKE_SPARK_SQL_SHUFFLE_PARTITIONS || "32"),
+    "spark.submit.deployMode": "cluster",
+  };
+  if (packageList.length > 0) properties["spark.jars.packages"] = packageList.join(",");
+  return {
+    action: "CreateSubmissionRequest",
+    appArgs: [applicationScript],
+    appResource: "",
+    clientSparkVersion: String(environment.ASKLAKE_SPARK_VERSION || "4.0.1"),
+    environmentVariables: {
+      ...stringValues(environmentVariables),
+      HOME: String(environmentVariables.HOME || "/tmp"),
+      PYSPARK_DRIVER_PYTHON: String(environment.PYSPARK_DRIVER_PYTHON || "/usr/bin/python3"),
+      PYSPARK_PYTHON: String(environment.PYSPARK_PYTHON || "/usr/bin/python3"),
+    },
+    mainClass: "org.apache.spark.deploy.SparkSubmit",
+    sparkProperties: properties,
+  };
+}
+
+export function runSparkRestSubmission(submission, timeoutMs, environment = process.env, options = {}) {
+  const runtime = sparkRestRuntimeConfig(environment);
+  const effectiveTimeoutMs = positiveInteger(timeoutMs, 90_000);
+  const stateFile = requiredSparkRestStateFile(options.stateFile);
+  const result = spawnSync(process.execPath, [sparkRestClientScript], {
+    cwd: backendDir,
+    encoding: "utf8",
+    input: JSON.stringify({
+      pollIntervalMs: positiveInteger(environment.ASKLAKE_SPARK_REST_POLL_INTERVAL_MS, 1_000),
+      restUrl: runtime.restUrl,
+      stateFile,
+      submission,
+      timeoutMs: effectiveTimeoutMs,
+    }),
+    maxBuffer: 4 * 1024 * 1024,
+    timeout: sparkRestBridgeTimeoutMs(effectiveTimeoutMs),
+  });
+  if (!result.error && !result.signal) return result;
+
+  const recovery = spawnSync(process.execPath, [sparkRestClientScript], {
+    cwd: backendDir,
+    encoding: "utf8",
+    input: JSON.stringify({ operation: "kill-state", restUrl: runtime.restUrl, stateFile }),
+    maxBuffer: 1024 * 1024,
+    timeout: 10_000,
+  });
+  const recoveryDetail = recovery.status === 0
+    ? String(recovery.stdout || "").trim()
+    : `Spark REST timeout recovery failed: ${recovery.stderr || recovery.error?.message || "unknown error"}`;
+  return {
+    ...result,
+    stderr: [result.stderr, recoveryDetail].filter(Boolean).join("\n"),
+  };
+}
+
 function writeSparkJobManifest(manifestPath, job) {
   const textStructuringColumns = textStructuringDefinitionColumns(job.transformSteps ?? []);
   const manifest = {
     createdAt: new Date().toISOString(),
-    partitionColumns: job.partition || "",
+    icebergTarget: job.icebergTarget ?? null,
+    jobId: job.id,
+    partitionColumns: job.partitionColumns ?? job.partition ?? "",
     qualityRules: job.qualityRules ?? [],
     ruleContractVersion: job.ruleContractVersion ?? "1.0",
     ruleOutputSchema: job.ruleOutputSchema ?? job.transformOutputColumns ?? [],
     rules: job.rules ?? [],
     recordParsing: job.recordParsing ?? null,
+    ruleFingerprint: job.ruleFingerprint ?? null,
     schemaColumns: job.schemaColumns ?? [],
+    schemaFingerprint: job.schemaFingerprint ?? null,
+    sourceBoundary: job.sourceBoundary ?? null,
+    sourceCollection: sourceCollectionFromConfig(
+      job.sourceConfig ?? [],
+      job.sourceIncrementalSince,
+      job.sourceIncrementalBefore,
+      job.sourceWindowContractVersion,
+      job.sourceWindowRebaseline,
+      job.sourceObjectKeys,
+      job.sourceObjectInventory,
+    ),
     sourceSelection: sourceSelectionFromJob(job),
     textStructuring: {
       columns: textStructuringColumns,
@@ -213,14 +406,128 @@ function sourceSelectionFromJob(job) {
   };
 }
 
-function positiveInteger(value) {
-  const parsed = Number(value);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
-}
-
 function nonNegativeInteger(value) {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+export function sourceCollectionFromConfig(
+  sourceConfig,
+  incrementalSince = undefined,
+  incrementalBefore = undefined,
+  windowContractVersion = undefined,
+  sourceWindowRebaseline = false,
+  sourceObjectKeys = undefined,
+  sourceObjectInventory = undefined,
+) {
+  const selectionKind = String(fieldValue(sourceConfig, "__Selection Kind") || "file").trim().toLowerCase();
+  const configuredScope = String(fieldValue(sourceConfig, "Collection Scope") || "file").trim().toLowerCase();
+  const scope = selectionKind === "prefix" || configuredScope === "folder"
+    ? "folder"
+    : "file";
+  const collectionMode = String(fieldValue(sourceConfig, "Collection Mode") || "incremental").trim().toLowerCase();
+  const mode = selectionKind === "prefix"
+    ? "full"
+    : scope === "folder" && collectionMode !== "full" ? "incremental" : "full";
+  const requestedWindowVersion = Number(windowContractVersion);
+  const boundedWindowVersion = mode === "incremental" && [1, 2].includes(requestedWindowVersion)
+    ? requestedWindowVersion
+    : null;
+  const objectInventory = boundedWindowVersion === 2
+    ? normalizeSourceObjectInventory(sourceObjectInventory)
+    : null;
+  const objectKeys = boundedWindowVersion === 2 && Array.isArray(objectInventory)
+    ? objectInventory.map((item) => item.key)
+    : mode === "incremental" && Array.isArray(sourceObjectKeys)
+    ? [...new Set(sourceObjectKeys.map((key) => String(key || "").trim()).filter(Boolean))].sort()
+    : null;
+  return {
+    ...(selectionKind === "prefix" ? {
+      expectedFileCount: positiveInteger(fieldValue(sourceConfig, "__Source Unit Count")),
+      expectedTotalBytes: nonNegativeInteger(fieldValue(sourceConfig, "__Source Total Bytes")),
+    } : {}),
+    filePattern: scope === "folder"
+      ? fieldValue(sourceConfig, "File Pattern") || prefixDatasetFilePattern(sourceConfig)
+      : null,
+    incrementalBefore: mode === "incremental" && incrementalBefore ? String(incrementalBefore) : null,
+    incrementalSince: mode === "incremental" && incrementalSince ? String(incrementalSince) : null,
+    mode,
+    ...(boundedWindowVersion === 2 ? { objectInventory } : {}),
+    objectKeys,
+    rebaseline: boundedWindowVersion !== null && sourceWindowRebaseline === true,
+    recursive: scope === "folder" && (selectionKind === "prefix" || parseConfigBoolean(fieldValue(sourceConfig, "Recursive"))),
+    ...(selectionKind === "prefix" ? { selectionKind } : {}),
+    scope,
+    windowContractVersion: boundedWindowVersion,
+  };
+}
+
+function normalizeSourceObjectInventory(value) {
+  if (!Array.isArray(value)) return null;
+  const inventoryByKey = new Map();
+  let invalid = false;
+  value.forEach((item) => {
+    if (!item || typeof item !== "object") {
+      invalid = true;
+      return;
+    }
+    const key = String(item.key ?? item.Key ?? "").trim();
+    const eTag = normalizeEtag(item.eTag ?? item.ETag ?? item.etag);
+    const lastModified = String(item.lastModified ?? item.LastModified ?? "").trim();
+    const rawSize = item.size ?? item.Size;
+    const size = Number(rawSize);
+    const hasValidRawSize = typeof rawSize !== "boolean"
+      && rawSize !== null
+      && rawSize !== undefined
+      && String(rawSize).trim() !== "";
+    if (!key || !eTag || !lastModified || !hasValidRawSize || !Number.isSafeInteger(size) || size < 0) {
+      invalid = true;
+      return;
+    }
+    const rawVersionId = String(item.versionId ?? item.VersionId ?? "").trim();
+    const normalized = {
+      key,
+      eTag,
+      versionId: rawVersionId && rawVersionId.toLowerCase() !== "null" ? rawVersionId : null,
+      lastModified,
+      size,
+    };
+    if (inventoryByKey.has(key) && JSON.stringify(inventoryByKey.get(key)) !== JSON.stringify(normalized)) {
+      invalid = true;
+      return;
+    }
+    inventoryByKey.set(key, normalized);
+  });
+  return invalid ? null : [...inventoryByKey.values()].sort((left, right) => left.key.localeCompare(right.key));
+}
+
+function normalizeEtag(value) {
+  let normalized = String(value ?? "").trim();
+  if (normalized.startsWith("W/")) normalized = normalized.slice(2).trim();
+  if (normalized.length >= 2 && normalized.startsWith('"') && normalized.endsWith('"')) {
+    normalized = normalized.slice(1, -1);
+  }
+  return normalized;
+}
+
+function parseConfigBoolean(value) {
+  return ["true", "1", "yes", "on"].includes(String(value || "").trim().toLowerCase());
+}
+
+function prefixDatasetFilePattern(sourceConfig) {
+  if (String(fieldValue(sourceConfig, "__Selection Kind") || "file").trim().toLowerCase() !== "prefix") {
+    return null;
+  }
+  const format = canonicalSparkSourceFormat(
+    fieldValue(sourceConfig, "__Dataset Format") || fieldValue(sourceConfig, "File Type"),
+  );
+  return {
+    csv: "*.{csv,tsv}",
+    json: "*.json",
+    jsonl: "*.{jsonl,ndjson}",
+    parquet: "*.parquet",
+    txt: "*.{txt,log,text}",
+  }[format] || null;
 }
 
 function textStructuringDefinitionColumns(transformSteps) {
@@ -256,13 +563,62 @@ function safeJsonParse(value) {
   }
 }
 
-function sparkPackageArgs(source, output) {
-  if (process.env.ASKLAKE_SPARK_HADOOP_AWS_PACKAGE === "none") return [];
-  if (!usesS3A(source.path) && !usesS3A(output.sparkPath)) return [];
-  return [
-    "--packages",
-    process.env.ASKLAKE_SPARK_HADOOP_AWS_PACKAGE || "org.apache.hadoop:hadoop-aws:3.4.1",
-  ];
+export function sparkPackages(job, source, output) {
+  const packages = [];
+  if (
+    process.env.ASKLAKE_SPARK_HADOOP_AWS_PACKAGE !== "none"
+    && (usesS3A(source.path) || usesS3A(output.sparkPath) || job?.icebergTarget)
+  ) {
+    packages.push(process.env.ASKLAKE_SPARK_HADOOP_AWS_PACKAGE || "org.apache.hadoop:hadoop-aws:3.4.1");
+  }
+  if (job?.icebergTarget) {
+    packages.push(
+      process.env.ASKLAKE_SPARK_ICEBERG_PACKAGE
+        || "org.apache.iceberg:iceberg-spark-runtime-4.0_2.13:1.11.0",
+      process.env.ASKLAKE_SPARK_POSTGRES_PACKAGE
+        || "org.postgresql:postgresql:42.7.7",
+    );
+  }
+  return [...new Set(packages.filter((item) => item && item !== "none"))];
+}
+
+export function sparkIcebergEnvironment(job) {
+  if (!job?.icebergTarget) return {};
+  const database = String(process.env.TRINO_ICEBERG_JDBC_DATABASE || process.env.POSTGRES_DB || "asklake");
+  const warehouseBucket = String(process.env.TRINO_ICEBERG_WAREHOUSE_BUCKET || "").trim();
+  const warehousePrefix = normalizePrefix(process.env.TRINO_ICEBERG_WAREHOUSE_PREFIX || "warehouse");
+  const warehouse = String(
+    process.env.ASKLAKE_SPARK_ICEBERG_WAREHOUSE
+      || (warehouseBucket ? `s3a://${warehouseBucket}/${warehousePrefix}` : ""),
+  ).replace(/\/+$/, "");
+  const jdbcUrl = String(
+    process.env.ASKLAKE_SPARK_ICEBERG_JDBC_URL
+      || `jdbc:postgresql://postgres:5432/${database}`,
+  ).trim();
+  const jdbcUser = String(process.env.TRINO_ICEBERG_JDBC_USER || "").trim();
+  const jdbcPassword = String(process.env.TRINO_ICEBERG_JDBC_PASSWORD || "");
+  if (!jdbcUrl || !jdbcUser || !jdbcPassword || !warehouse) {
+    throw sparkConfigurationError(
+      "Iceberg Spark execution requires TRINO_ICEBERG_JDBC_USER, "
+      + "TRINO_ICEBERG_JDBC_PASSWORD, and TRINO_ICEBERG_WAREHOUSE_BUCKET "
+      + "or ASKLAKE_SPARK_ICEBERG_WAREHOUSE.",
+    );
+  }
+  return {
+    ASKLAKE_SPARK_ICEBERG_CATALOG_NAME: String(
+      process.env.ASKLAKE_SPARK_ICEBERG_CATALOG_NAME
+        || process.env.TRINO_ICEBERG_CATALOG_NAME
+        || "asklake",
+    ),
+    ASKLAKE_SPARK_ICEBERG_JDBC_PASSWORD: jdbcPassword,
+    ASKLAKE_SPARK_ICEBERG_JDBC_URL: jdbcUrl,
+    ASKLAKE_SPARK_ICEBERG_JDBC_USER: jdbcUser,
+    ASKLAKE_SPARK_ICEBERG_WAREHOUSE: warehouse,
+  };
+}
+
+function sparkPackageArgs(packages) {
+  return packages.length > 0 ? ["--packages", packages.join(",")] : [];
 }
 
 function usesS3A(value) {
@@ -297,11 +653,11 @@ function ensureSparkServer() {
   }
 }
 
-function sparkSourceFromJob(job, runId) {
+export function sparkSourceFromJob(job, runId) {
   const sourceType = job.sourceType || "";
   const sourceConfig = Array.isArray(job.sourceConfig) ? job.sourceConfig : [];
   if (sourceType === "File / S3") {
-    const bucket = normalizeBucketName(fieldValue(sourceConfig, "Bucket / Stage Name") || process.env.MINIO_BUCKET || "m3-raw");
+    const bucket = normalizeBucketName(fieldValue(sourceConfig, "Bucket / Stage Name") || defaultRawBucket());
     const selectionKind = String(fieldValue(sourceConfig, "__Selection Kind") || "file").trim().toLowerCase();
     let prefix = normalizeBucketRelativePath(
       normalizeSourcePath(fieldValue(sourceConfig, "Path / Prefix")),
@@ -322,6 +678,12 @@ function sparkSourceFromJob(job, runId) {
     };
   }
   if (sourceType === "Data Lake") {
+    if (job.sourceIcebergTable) {
+      return {
+        format: "iceberg",
+        path: sparkIcebergSourceIdentifier(job.sourceIcebergTable),
+      };
+    }
     return {
       format: "parquet",
       path: toS3APath(fieldValue(sourceConfig, "Path") || "s3://m3-raw/nyc_taxi/yellow_parquet/"),
@@ -346,10 +708,26 @@ function sparkSourceFromJob(job, runId) {
     return {
       format: "jsonl",
       path: `file://${reportContainerDir}/${path.basename(samplePath)}`,
+      ...(job.cleanupSource ? { temporaryPath: samplePath } : {}),
     };
   }
 
   throw sparkError(`Spark execution requires File / S3, Data Lake, or a connector sample with schema rows. Unsupported sourceType=${sourceType}`);
+}
+
+function sparkIcebergSourceIdentifier(source) {
+  const catalog = String(
+    process.env.ASKLAKE_SPARK_ICEBERG_CATALOG_NAME
+      || process.env.TRINO_ICEBERG_CATALOG_NAME
+      || "asklake",
+  ).trim();
+  const namespace = String(source?.namespace || source?.schema || "").trim();
+  const table = String(source?.table || "").trim();
+  const identifiers = [catalog, namespace, table];
+  if (identifiers.some((value) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(value))) {
+    throw sparkError("Data Lake Iceberg source contains an invalid catalog identifier.");
+  }
+  return identifiers.join(".");
 }
 
 function isConnectorSampleSource(sourceType) {
@@ -493,7 +871,7 @@ function sparkOutputPath(job, runId) {
   if ((process.env.ASKLAKE_SPARK_OUTPUT_MODE || "local").toLowerCase() === "s3a") {
     // storagePath is the configured destination root. targetPath is the latest
     // observed Run output and must not become the next Run's parent directory.
-    const configuredTarget = String(job.storagePath || "").trim();
+    const configuredTarget = normalizeSparkOutputTargetPath(job.storagePath);
     const targetBase = /^s3a?:\/\//i.test(configuredTarget)
       ? toS3APath(configuredTarget).replace(/\/+$/, "")
       : `s3a://${process.env.ASKLAKE_SPARK_OUTPUT_BUCKET || "asklake-output"}/${prefix}${layer}/${dataset}`;
@@ -508,6 +886,18 @@ function sparkOutputPath(job, runId) {
     displayPath: path.join(localOutputDir, relativePath),
     sparkPath: `file://${outputContainerDir}/${relativePath.replace(/\\/g, "/")}`,
   };
+}
+
+export function normalizeSparkOutputTargetPath(value) {
+  const configuredTarget = String(value || "").trim();
+  if (!/^s3a?:\/\//i.test(configuredTarget)) return configuredTarget;
+  const normalizedTarget = toS3APath(configuredTarget).replace(/\/+$/, "");
+  const configuredBucket = normalizeBucketName(process.env.ASKLAKE_SPARK_OUTPUT_BUCKET || "asklake-output");
+  if (!configuredBucket || configuredBucket.toLowerCase() === "asklake-output") return normalizedTarget;
+  return normalizedTarget.replace(
+    /^s3a:\/\/asklake-output(?=\/|$)/i,
+    `s3a://${configuredBucket}`,
+  );
 }
 
 function sparkRowLimitFromJob(job) {
@@ -689,17 +1079,117 @@ function assertWithinLocalOutput(hostPath) {
   }
 }
 
-function ensureWritableDir(dir) {
+function ensureWritableDir(dir, allowWorldWritable = true) {
   mkdirSync(dir, { recursive: true });
-  chmodSync(dir, 0o777);
+  if (allowWorldWritable) chmodSync(dir, 0o777);
 }
 
-function minioAccessKey() {
-  return process.env.MINIO_ACCESS_KEY || process.env.MINIO_ROOT_USER || "m3admin";
+export function sparkRunTimeoutMs(environment = process.env) {
+  const timeoutSeconds = boundedInteger(
+    environment.ASKLAKE_SPARK_RUN_TIMEOUT_SECONDS,
+    7200,
+    1,
+    24 * 60 * 60,
+  );
+  return timeoutSeconds * 1000;
 }
 
-function minioSecretKey() {
-  return process.env.MINIO_SECRET_KEY || process.env.MINIO_ROOT_PASSWORD || "wishuponastar";
+export function sparkRestBridgeTimeoutMs(pollTimeoutMs) {
+  return boundedInteger(pollTimeoutMs, 90_000, 1_000, 24 * 60 * 60 * 1000)
+    + SPARK_REST_BRIDGE_GRACE_MS;
+}
+
+function sparkRestStateFileForRun(runId, configured) {
+  const candidate = configured
+    || path.join(reportDir, `${safeArtifactSegment(runId)}.spark-rest-state.json`);
+  const resolved = requiredSparkRestStateFile(candidate);
+  const relative = path.relative(reportDir, resolved);
+  if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw sparkConfigurationError("Spark REST state file must be below ASKLAKE_SPARK_REPORT_DIR.");
+  }
+  return resolved;
+}
+
+function requiredSparkRestStateFile(value) {
+  const raw = String(value || "");
+  if (!raw || raw.includes("\0") || !path.isAbsolute(raw)) {
+    throw sparkConfigurationError("Spark REST state file must be an absolute path.");
+  }
+  return path.resolve(raw);
+}
+
+function safeArtifactSegment(value) {
+  return String(value || "run")
+    .toLowerCase()
+    .replace(/[^a-z0-9_.-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    || "run";
+}
+
+export function assertSparkRestStorageCredentials(sourceConfig = [], executionMode = "rest") {
+  if (executionMode !== "rest" || !isMinioProvider(sourceConfig)) return;
+
+  const sourceStorage = resolveObjectStorageConfig(sourceConfig, { docker: true });
+  const inheritedStorage = resolveObjectStorageConfig([], { docker: true });
+  if (
+    sourceStorage.accessKeyId !== inheritedStorage.accessKeyId
+    || sourceStorage.secretAccessKey !== inheritedStorage.secretAccessKey
+  ) {
+    throw sparkConfigurationError(
+      "Spark REST execution only supports the MinIO application credentials inherited by the worker.",
+    );
+  }
+}
+
+function configuredSparkRestUrl(value) {
+  let parsed;
+  try {
+    parsed = new URL(String(value || ""));
+  } catch {
+    throw sparkConfigurationError("ASKLAKE_SPARK_REST_URL must be an absolute HTTP(S) URL.");
+  }
+  if (!new Set(["http:", "https:"]).has(parsed.protocol) || parsed.username || parsed.password) {
+    throw sparkConfigurationError("ASKLAKE_SPARK_REST_URL must use HTTP(S) without embedded credentials.");
+  }
+  if (parsed.pathname !== "/" || parsed.search || parsed.hash) {
+    throw sparkConfigurationError("ASKLAKE_SPARK_REST_URL must contain only the Spark REST origin.");
+  }
+  return parsed.toString().replace(/\/$/, "");
+}
+
+function configuredSparkRuntimePath(value, name) {
+  const normalized = path.posix.normalize(String(value || "").replace(/\\/g, "/"));
+  if (!path.posix.isAbsolute(normalized) || normalized === "/") {
+    throw sparkConfigurationError(`${name} must be an absolute Spark runtime path.`);
+  }
+  return normalized.replace(/\/$/, "");
+}
+
+function configuredSparkScript(value, scriptDir, name) {
+  const scriptPath = configuredSparkRuntimePath(value, name);
+  const relative = path.posix.relative(scriptDir, scriptPath);
+  if (!relative || relative.startsWith("../") || path.posix.isAbsolute(relative)) {
+    throw sparkConfigurationError(`${name} must be a file below ASKLAKE_SPARK_SCRIPT_DIR.`);
+  }
+  return scriptPath;
+}
+
+function stringValues(value) {
+  return Object.fromEntries(
+    Object.entries(value || {})
+      .filter(([, item]) => item !== undefined && item !== null)
+      .map(([key, item]) => [key, String(item)]),
+  );
+}
+
+function positiveInteger(value, fallback) {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function boundedInteger(value, fallback, minimum, maximum) {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= minimum && parsed <= maximum ? parsed : fallback;
 }
 
 function shellQuote(value) {
@@ -715,5 +1205,11 @@ function sparkError(message) {
   const error = new Error(message);
   error.code = "SPARK_RUN_FAILED";
   error.status = 500;
+  return error;
+}
+
+function sparkConfigurationError(message) {
+  const error = sparkError(message);
+  error.code = "SPARK_RUNNER_CONFIGURATION_INVALID";
   return error;
 }

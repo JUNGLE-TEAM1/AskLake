@@ -3,6 +3,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { Table2 } from "lucide-react";
 
 import { DataTable } from "@/components/ui/data-table";
+import { EmptyState } from "@/components/ui/empty-state";
 
 type SourcePreviewRow = {
   id: string;
@@ -35,11 +36,16 @@ export function SourcePreviewDataTable({ columnLabels, rows }: SourcePreviewData
       cellClassName="text-sm font-medium"
       columns={columns}
       data={data}
-      emptyState={{
-        description: "왼쪽 탐색 영역에서 대상을 선택하세요.",
-        icon: <Table2 />,
-        title: "표시할 제한 샘플이 없습니다.",
-      }}
+      emptyState={(
+        <EmptyState
+          className="source-preview-empty-state"
+          description="왼쪽에서 탐색 대상을 선택하면 일부 데이터를 확인할 수 있습니다."
+          icon={<Table2 />}
+          size="sm"
+          title="표시할 미리보기 데이터가 없습니다."
+          variant="plain"
+        />
+      )}
       enableSorting={false}
       getRowId={(row) => row.id}
       pagination={false}

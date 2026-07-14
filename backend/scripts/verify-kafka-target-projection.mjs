@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 
-import { buildKafkaTargetSchema, projectKafkaTargetRecord } from "../src/kafkaTargetProjection.mjs";
+import {
+  buildKafkaTargetSchema,
+  parseKafkaSnapshotRecord,
+  projectKafkaTargetRecord,
+  usesLegacyReviewContract,
+} from "../src/kafkaTargetProjection.mjs";
 import { applySnapshotRules } from "../src/snapshotRuleRuntime.mjs";
 
 const rules = [{
@@ -38,6 +43,31 @@ assert.deepEqual(targetSchema.map((column) => column.targetName), ["event_id", "
 assert.deepEqual(projected, { event_id: "review-1", review_clean: "Hello Lake" });
 assert.equal(Object.hasOwn(projected, "review"), false);
 assert.equal(Object.hasOwn(projected, "raw"), false);
+
+const genericSchemaColumns = [
+  { included: true, nullable: false, sourceName: "event_id", targetName: "event_id", type: "String" },
+  { included: true, nullable: false, sourceName: "payload.device", targetName: "payload_device", type: "String" },
+];
+assert.equal(usesLegacyReviewContract(genericSchemaColumns), false);
+const genericParsed = parseKafkaSnapshotRecord(JSON.stringify({
+  event_id: "event-1",
+  payload: { device: "ios" },
+}), { offset: "9", partition: 0, topic: "events.raw" }, genericSchemaColumns);
+assert.equal(genericParsed.valid, true);
+assert.deepEqual(
+  projectKafkaTargetRecord(genericParsed.record, buildKafkaTargetSchema({ schemaColumns: genericSchemaColumns })),
+  { event_id: "event-1", payload_device: "ios" },
+);
+
+assert.equal(usesLegacyReviewContract([]), true);
+const invalidLegacyReview = parseKafkaSnapshotRecord(
+  JSON.stringify({ event_id: "review-2" }),
+  { offset: "10", partition: 0, topic: "reviews.raw" },
+  [],
+);
+assert.equal(invalidLegacyReview.valid, false);
+assert.equal(invalidLegacyReview.error.reason, "missing_required_field");
+assert.equal(invalidLegacyReview.error.field, "offset");
 
 const authoritativeOutputSchema = buildKafkaTargetSchema({
   outputSchema,

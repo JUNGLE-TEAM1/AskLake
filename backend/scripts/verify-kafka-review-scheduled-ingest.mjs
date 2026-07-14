@@ -76,6 +76,7 @@ async function verifyScheduledKafkaIngest() {
   assert(item.response?.run?.taskStates?.kafkaSnapshot?.partitions?.[0]?.endOffset === String(fixtureMessageCount), "Job run should retain Kafka snapshot metadata.");
   assert(item.response?.dataset?.storageFormat === "jsonl", "Catalog dataset should expose jsonl storage format.");
   assert(item.response?.dataset?.materializationRuns?.[0]?.sourceKind === "kafka", "Catalog materialization run should retain sourceKind kafka.");
+  assert(item.response?.dataset?.materializationRuns?.[0]?.materializationMode === "delta", "Kafka materialization should remain append-only delta.");
   assert(item.response?.dataset?.layer === "BRONZE", "Catalog dataset should retain the selected target layer.");
   assert(!item.response?.dataset?.storageLocation?.includes("kafka-landing"), "Kafka job should not write to the legacy landing path.");
   assert(item.response?.dataset?.storageLocation === item.response?.run?.outputPath, "Catalog storageLocation should match run outputPath.");

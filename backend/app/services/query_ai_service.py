@@ -3,6 +3,7 @@ import re
 import urllib.error
 import urllib.request
 from typing import Any
+from uuid import uuid4
 
 from fastapi import status
 
@@ -14,6 +15,8 @@ from app.schemas.catalog import CatalogDatasetResponse
 from app.schemas.common import ErrorCode
 from app.schemas.sql import QueryAiSuggestionRequest, QueryAiSuggestionResponse
 from app.services.governance_enforcement import require_governed_access
+from app.services.ai_gateway_client import AiGatewayClient
+from app.mcp.context import issue_ai_context_token
 from app.services.resource_permission_service import dataset_with_persisted_permission_grants
 from app.services.sql_service import (
     build_dataset_context_map,
@@ -91,21 +94,38 @@ class QueryAiService:
                 resource_label="dataset",
             )
         base_dataset = self.pick_base_dataset(datasets, request.base_dataset_id)
-        client = OpenAiResponsesClient(
-            api_key=settings.openai_api_key,
-            model=settings.openai_query_ai_model,
-        )
-        raw_suggestion = client.create_json_response(
-            system_prompt=build_system_prompt(),
-            user_payload=build_user_payload(
-                base_dataset=base_dataset,
-                current_query=request.current_query or "",
-                datasets=datasets,
+        if settings.ai_query_provider == "gateway":
+            request_id = str(uuid4())
+            context_token = issue_ai_context_token(
+                request_id=request_id,
+                actor=actor_context,
+                allowed_dataset_ids=context_dataset_ids,
+                dataset_permissions={dataset.id: ["query"] for dataset in datasets},
+            )
+            raw_suggestion = AiGatewayClient().generate_query_sql(
+                request_id=request_id,
                 prompt=prompt,
-            ),
-        )
+                current_query=request.current_query or "",
+                base_dataset_id=base_dataset.id,
+                selected_dataset_ids=context_dataset_ids,
+                context_token=context_token,
+            )
+        else:
+            client = OpenAiResponsesClient(
+                api_key=settings.openai_api_key,
+                model=settings.openai_query_ai_model,
+            )
+            raw_suggestion = client.create_json_response(
+                system_prompt=build_system_prompt(),
+                user_payload=build_user_payload(
+                    base_dataset=base_dataset,
+                    current_query=request.current_query or "",
+                    datasets=datasets,
+                    prompt=prompt,
+                ),
+            )
 
-        suggestion = parse_ai_suggestion(raw_suggestion)
+        suggestion = raw_suggestion if isinstance(raw_suggestion, dict) else parse_ai_suggestion(raw_suggestion)
         sql = ensure_preview_limit(suggestion.get("sql", ""))
         statement = validate_read_only_query(sql)
         validate_selected_dataset_scope(statement, datasets)
@@ -113,7 +133,7 @@ class QueryAiService:
         return QueryAiSuggestionResponse(
             body=suggestion.get("body")
             or "Read-only SQL draft generated from the selected dataset context.",
-            model=settings.openai_query_ai_model,
+            model=(str(raw_suggestion.get("model")) if isinstance(raw_suggestion, dict) and raw_suggestion.get("model") else settings.openai_query_ai_model),
             notices=normalize_notices(suggestion.get("notices")),
             sql=sql,
             title=suggestion.get("title") or "SQL draft",
@@ -183,6 +203,7 @@ class OpenAiResponsesClient:
                     "type": "json_schema",
                     "name": "query_ai_suggestion",
                     "description": "A safe read-only SQL suggestion for the selected AskLake datasets.",
+                    "strict": True,
                     "schema": query_ai_response_schema(),
                 },
             },

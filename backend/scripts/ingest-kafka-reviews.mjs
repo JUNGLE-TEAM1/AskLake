@@ -5,15 +5,18 @@ import { fileURLToPath } from "node:url";
 import { CreateBucketCommand, HeadBucketCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { closeMetadataStore, getDataset, saveDataset } from "../src/metadataStore.mjs";
 import { loadKafkaJs } from "../src/kafka-codecs.mjs";
+import { defaultOutputBucket, isMinioProvider, resolveObjectStorageConfig, s3ClientOptions } from "../src/objectStorageConfig.mjs";
 import { formatBytes, inferSchemaColumns, normalizeColumnName, parseSourceSample, schemaFingerprint } from "../src/profile.mjs";
 import {
   buildKafkaTargetSchema,
   getKafkaRecordValue,
+  parseKafkaSnapshotRecord,
   projectKafkaTargetRecord,
   standardKafkaReviewSchema,
 } from "../src/kafkaTargetProjection.mjs";
 import { canonicalRulesFromLegacy } from "../src/ruleCompiler.mjs";
 import { applySnapshotRules, supportsSnapshotRules } from "../src/snapshotRuleRuntime.mjs";
+import { runSparkPipeline } from "../src/sparkRunner.mjs";
 
 const backendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const apiPayload = readJsonPayload();
@@ -50,10 +53,17 @@ const testFailAfterTargetWrite = process.env.ASKLAKE_ENABLE_KAFKA_TEST_HOOKS ===
   && booleanOption("testFailAfterTargetWrite", false);
 const suppliedSnapshot = isSnapshotPayload(apiPayload.snapshot) ? apiPayload.snapshot : null;
 const snapshotOnly = booleanOption("snapshotOnly", false);
+const commitOnly = booleanOption("commitOnly", false);
+const deferOffsetCommit = booleanOption("deferOffsetCommit", false);
+const icebergTarget = objectOption("icebergTarget");
+const jobId = stringOption("jobId", "kafka-review-ingest");
+const expectedSchemaFingerprint = stringOption("schemaFingerprint", "");
+const expectedRuleFingerprint = stringOption("ruleFingerprint", "");
 const landingMode = stringOption("storageMode", process.env.ASKLAKE_REVIEW_LANDING_MODE || "local").toLowerCase();
 const targetRoot = path.resolve(stringOption("localLandingDir", process.env.ASKLAKE_REVIEW_TARGET_LOCAL_DIR || path.join(backendDir, "tmp", "kafka-target")));
-const s3Endpoint = stringOption("landingEndpoint", process.env.ASKLAKE_REVIEW_LANDING_ENDPOINT || process.env.MINIO_ENDPOINT || "http://127.0.0.1:19000");
-const s3Bucket = stringOption("targetBucket", apiPayload.landingBucket || process.env.ASKLAKE_REVIEW_TARGET_BUCKET || "asklake-output");
+const defaultStorage = resolveObjectStorageConfig();
+const s3Endpoint = stringOption("landingEndpoint", process.env.ASKLAKE_REVIEW_LANDING_ENDPOINT || defaultStorage.endpoint);
+const s3Bucket = stringOption("targetBucket", apiPayload.landingBucket || process.env.ASKLAKE_REVIEW_TARGET_BUCKET || defaultOutputBucket());
 const s3Prefix = normalizePrefix(stringOption("targetPrefix", apiPayload.landingPrefix || process.env.ASKLAKE_REVIEW_TARGET_PREFIX || `${normalizeColumnName(datasetName)}/${targetLayer.toLowerCase()}`));
 let s3DataKey = "";
 let s3MetadataKey = "";
@@ -63,7 +73,6 @@ let dataPath = "";
 let metadataPath = "";
 let activeSnapshot = null;
 const startedAt = new Date().toISOString();
-const requiredFields = ["event_id", "offset", "review", "created_at"];
 
 try {
   const result = await ingestReviews();
@@ -90,10 +99,11 @@ try {
 }
 
 async function ingestReviews() {
+  if (commitOnly) return commitSnapshotOffsetsOnly();
   if (!["RAW", "BRONZE", "SILVER"].includes(targetLayer)) {
     throw new Error(`Kafka direct target layer must be RAW, BRONZE, or SILVER: ${targetLayer}`);
   }
-  if (targetFormat !== "jsonl") {
+  if (!icebergTarget && targetFormat !== "jsonl") {
     throw new Error(`Kafka direct target currently supports jsonl only: ${targetFormat}`);
   }
   if (!supportsSnapshotRules(canonicalRules)) {
@@ -136,7 +146,11 @@ async function ingestReviews() {
     const projectedRecords = processed.records.map((record) => projectKafkaTargetRecord(record, schemaColumns));
     const jsonl = projectedRecords.map((record) => JSON.stringify(record)).join("\n");
     const dataBody = projectedRecords.length > 0 ? `${jsonl}\n` : "";
-    const localLocation = writeLocalTarget(dataBody);
+    mkdirSync(targetDir, { recursive: true });
+    const sparkResult = icebergTarget && projectedRecords.length > 0
+      ? writeIcebergTarget(projectedRecords, schemaColumns, snapshot)
+      : null;
+    const localLocation = icebergTarget?.tableUri || writeLocalTarget(dataBody);
 
     const endedAt = new Date().toISOString();
     const parsedSample = parseSourceSample("reviews.raw.jsonl", jsonl, { maxRows: Math.min(consumed.records.length, 20) });
@@ -145,7 +159,7 @@ async function ingestReviews() {
       broker,
       consumedCount: consumed.records.length,
       consumerGroupId,
-      dataPath,
+      dataPath: icebergTarget ? null : dataPath,
       datasetId: registerCatalog ? datasetId : null,
       datasetName: registerCatalog ? datasetName : null,
       endedAt,
@@ -159,13 +173,13 @@ async function ingestReviews() {
       snapshot,
       inferredSchema: inferredSchemaColumns.map((column) => [column.targetName, column.type]),
       sampleRows: projectedRecords.slice(0, 10).map((record) => reviewSampleRow(record, schemaColumns)),
-      schema: schemaColumns.map((column) => [column.targetName, column.type]),
-      schemaFingerprint: schemaFingerprint(schemaColumns),
+      schema: sparkResult?.schema ?? schemaColumns.map((column) => [column.targetName, column.type]),
+      schemaFingerprint: expectedSchemaFingerprint || schemaFingerprint(schemaColumns),
       startedAt,
       status: "success",
-      storageFormat: "jsonl",
+      storageFormat: icebergTarget ? "iceberg" : "jsonl",
       storageLocation: localLocation,
-      storageSizeBytes: statSync(dataPath).size,
+      storageSizeBytes: icebergTarget ? 0 : statSync(dataPath).size,
       storedCount: projectedRecords.length,
       targetBucket: s3Bucket,
       targetFormat,
@@ -175,12 +189,26 @@ async function ingestReviews() {
       topic,
       transform: processed.transform,
       quality: processed.quality,
+      ...(expectedRuleFingerprint ? { ruleFingerprint: expectedRuleFingerprint } : {}),
+      ...(sparkResult ? {
+        icebergCommit: sparkResult.icebergCommit,
+        outputPath: sparkResult.outputPath,
+        outputRows: sparkResult.outputRows,
+        sourceBoundary: sparkResult.sourceBoundary,
+        warehouseLocation: sparkResult.warehouseLocation,
+      } : {}),
     };
     if (landingMode === "s3") {
-      const s3Location = await writeS3Landing(dataBody, metadata);
-      metadata.storageLocation = s3Location.dataLocation;
-      metadata.metadataLocation = s3Location.metadataLocation;
-      metadata.storageMode = "s3";
+      if (icebergTarget) {
+        metadata.metadataLocation = `s3://${s3Bucket}/${s3MetadataKey}`;
+        metadata.storageMode = "s3";
+        await writeS3Metadata(metadata);
+      } else {
+        const s3Location = await writeS3Landing(dataBody, metadata);
+        metadata.storageLocation = s3Location.dataLocation;
+        metadata.metadataLocation = s3Location.metadataLocation;
+        metadata.storageMode = "s3";
+      }
       if (quarantined.length > 0) {
         metadata.quality.quarantineLocation = await writeS3Quarantine(quarantined);
       }
@@ -208,8 +236,12 @@ async function ingestReviews() {
     writeFileSync(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`, "utf8");
     if (landingMode === "s3") await writeS3Metadata(metadata);
 
-    await commitKafkaSnapshot(kafka, snapshot);
-    metadata.offsetCommit = { committedAt: new Date().toISOString(), status: "success" };
+    if (deferOffsetCommit) {
+      metadata.offsetCommit = { status: "pending" };
+    } else {
+      await commitKafkaSnapshot(kafka, snapshot);
+      metadata.offsetCommit = { committedAt: new Date().toISOString(), status: "success" };
+    }
     writeFileSync(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`, "utf8");
     if (landingMode === "s3") await writeS3Metadata(metadata);
     return metadata;
@@ -217,6 +249,98 @@ async function ingestReviews() {
     if (consumerStarted) await consumer.stop().catch(() => undefined);
     await consumer.disconnect().catch(() => undefined);
   }
+}
+
+async function commitSnapshotOffsetsOnly() {
+  if (!suppliedSnapshot) {
+    throw pipelineError("offset commit", "Kafka offset commit requires a persisted snapshot.");
+  }
+  activeSnapshot = suppliedSnapshot;
+  const { Kafka } = await loadKafkaJs();
+  const kafka = new Kafka({
+    brokers: [broker],
+    clientId: "asklake-review-ingest-offset-commit",
+    retry: { retries: 2 },
+  });
+  await commitKafkaSnapshot(kafka, suppliedSnapshot);
+  const offsetCommit = { committedAt: new Date().toISOString(), status: "success" };
+  let metadataUpdate = null;
+  const metadata = objectOption("metadata");
+  if (metadata) {
+    configureTargetOutput(suppliedSnapshot.snapshotId);
+    const finalMetadata = { ...metadata, offsetCommit };
+    try {
+      mkdirSync(targetDir, { recursive: true });
+      writeFileSync(metadataPath, `${JSON.stringify(finalMetadata, null, 2)}\n`, "utf8");
+      if (landingMode === "s3") await writeS3Metadata(finalMetadata);
+      metadataUpdate = { status: "success" };
+    } catch (error) {
+      metadataUpdate = {
+        message: String(error?.message || error).slice(0, 500),
+        status: "warning",
+      };
+    }
+  }
+  return {
+    metadataUpdate,
+    offsetCommit,
+    runId,
+    snapshot: suppliedSnapshot,
+    status: "success",
+  };
+}
+
+function writeIcebergTarget(records, schemaColumns, snapshot) {
+  const sourceBoundary = kafkaSnapshotSourceBoundary(snapshot);
+  const result = runSparkPipeline({
+    cleanupSource: true,
+    id: jobId,
+    icebergTarget,
+    partitionColumns: Array.isArray(icebergTarget.partitionColumns) ? icebergTarget.partitionColumns : [],
+    qualityRules: [],
+    ruleContractVersion: "1.0",
+    ruleFingerprint: expectedRuleFingerprint || null,
+    ruleOutputSchema: schemaColumns.map((column) => [column.targetName, column.type]),
+    rules: [],
+    schemaColumns: schemaColumns.map((column) => ({
+      ...column,
+      included: true,
+      sourceName: column.targetName,
+      targetName: column.targetName,
+    })),
+    schemaFingerprint: expectedSchemaFingerprint || schemaFingerprint(schemaColumns),
+    schemaSampleRows: records,
+    sourceBoundary,
+    sourceConfig: [],
+    sourceType: "Kafka Snapshot Staging",
+    storagePath: `s3a://${s3Bucket}/${s3Prefix.replace(/\/$/, "")}`,
+    target: datasetName,
+    targetLayer,
+    transformOutputColumns: schemaColumns.map((column) => [column.targetName, column.type]),
+    transformSteps: [],
+  }, "run", runId);
+  if (!result || result.status !== "success" || !result.icebergCommit) {
+    throw pipelineError(
+      result?.failedStage || "Iceberg commit",
+      result?.error || "Kafka Snapshot Spark Iceberg commit failed.",
+    );
+  }
+  return result;
+}
+
+function kafkaSnapshotSourceBoundary(snapshot) {
+  return {
+    capturedAt: snapshot.capturedAt,
+    consumerGroupId: snapshot.consumerGroupId,
+    kind: "kafka_snapshot",
+    partitions: snapshot.partitions.map((partition) => ({
+      endOffset: String(partition.endOffset),
+      partition: Number(partition.partition),
+      startOffset: String(partition.startOffset),
+    })),
+    snapshotId: snapshot.snapshotId,
+    topic: snapshot.topic,
+  };
 }
 
 function configureTargetOutput(snapshotId) {
@@ -359,12 +483,12 @@ async function consumeKafkaSnapshot(consumer, snapshot) {
           }
           if (messageOffset >= range.start) {
             const value = message.value?.toString("utf8") ?? "";
-            const parsed = parseReviewMessage(value, {
+            const parsed = parseKafkaSnapshotRecord(value, {
               key: message.key?.toString("utf8") ?? "",
               offset: message.offset,
               partition: batch.partition,
               topic: batch.topic,
-            });
+            }, configuredSchemaColumns);
             if (parsed.valid) records.push(parsed.record);
             else invalidRecords.push(parsed.error);
           }
@@ -406,15 +530,7 @@ function writeLocalTarget(dataBody) {
 }
 
 async function writeS3Landing(dataBody, metadata) {
-  const client = new S3Client({
-    credentials: {
-      accessKeyId: process.env.ASKLAKE_REVIEW_LANDING_ACCESS_KEY || process.env.MINIO_ACCESS_KEY || "m3admin",
-      secretAccessKey: process.env.ASKLAKE_REVIEW_LANDING_SECRET_KEY || process.env.MINIO_SECRET_KEY || "wishuponastar",
-    },
-    endpoint: s3Endpoint,
-    forcePathStyle: String(process.env.ASKLAKE_REVIEW_LANDING_FORCE_PATH_STYLE || "true").toLowerCase() !== "false",
-    region: process.env.ASKLAKE_REVIEW_LANDING_REGION || process.env.MINIO_REGION || "us-east-1",
-  });
+  const client = s3LandingClient();
   await ensureBucket(client, s3Bucket);
   await client.send(new PutObjectCommand({
     Body: Buffer.from(dataBody, "utf8"),
@@ -460,21 +576,21 @@ async function putS3Json(client, key, value) {
 }
 
 function s3LandingClient() {
-  return new S3Client({
-    credentials: {
-      accessKeyId: process.env.ASKLAKE_REVIEW_LANDING_ACCESS_KEY || process.env.MINIO_ACCESS_KEY || "m3admin",
-      secretAccessKey: process.env.ASKLAKE_REVIEW_LANDING_SECRET_KEY || process.env.MINIO_SECRET_KEY || "wishuponastar",
-    },
-    endpoint: s3Endpoint,
-    forcePathStyle: String(process.env.ASKLAKE_REVIEW_LANDING_FORCE_PATH_STYLE || "true").toLowerCase() !== "false",
-    region: process.env.ASKLAKE_REVIEW_LANDING_REGION || process.env.MINIO_REGION || "us-east-1",
-  });
+  const fields = [
+    ["Endpoint URL", s3Endpoint],
+    ["Region", process.env.ASKLAKE_REVIEW_LANDING_REGION || defaultStorage.region],
+    ["Access Key", process.env.ASKLAKE_REVIEW_LANDING_ACCESS_KEY || ""],
+    ["Secret Key", process.env.ASKLAKE_REVIEW_LANDING_SECRET_KEY || ""],
+    ["Use Path Style", process.env.ASKLAKE_REVIEW_LANDING_FORCE_PATH_STYLE || String(defaultStorage.forcePathStyle)],
+  ];
+  return new S3Client(s3ClientOptions(resolveObjectStorageConfig(fields)));
 }
 
 async function ensureBucket(client, bucket) {
   try {
     await client.send(new HeadBucketCommand({ Bucket: bucket }));
-  } catch {
+  } catch (error) {
+    if (!isMinioProvider()) throw error;
     await client.send(new CreateBucketCommand({ Bucket: bucket }));
   }
 }
@@ -486,6 +602,7 @@ async function registerCatalogDataset(metadata) {
     createdAt: metadata.endedAt,
     jobId: "kafka-review-ingest",
     kafkaSnapshot: metadata.snapshot,
+    materializationMode: "delta",
     rowCount: metadata.storedCount,
     runId: metadata.runId,
     sourceKind: "kafka",
@@ -509,6 +626,7 @@ async function registerCatalogDataset(metadata) {
     nextRefresh: "-",
     owner: process.env.ASKLAKE_REVIEW_DATASET_OWNER || "AskLake",
     quality: metadata.quality?.summary || (metadata.failedCount > 0 ? `적재 완료 · 실패 ${metadata.failedCount}건` : "Kafka snapshot 적재 완료"),
+    queryEngineStatus: "unavailable",
     rag: false,
     rows: String(aggregate.rowCount),
     sampleRows: metadata.sampleRows,
@@ -578,41 +696,6 @@ function reviewLineageGraph(schema) {
   };
 }
 
-function parseReviewMessage(value, context) {
-  try {
-    const record = JSON.parse(value);
-    for (const field of requiredFields) {
-      if (record[field] === undefined || record[field] === null || record[field] === "") {
-        return { error: { ...context, field, rawPayload: value, reason: "missing_required_field" }, valid: false };
-      }
-    }
-    if (record.schema_version !== undefined && record.schema_version !== "1.0") {
-      return { error: { ...context, rawPayload: value, reason: "unsupported_schema_version", schemaVersion: record.schema_version }, valid: false };
-    }
-    if (record.raw !== undefined && (typeof record.raw !== "object" || Array.isArray(record.raw))) {
-      return { error: { ...context, rawPayload: value, reason: "invalid_raw_payload" }, valid: false };
-    }
-    const numericOffset = Number(record.offset);
-    if (!Number.isFinite(numericOffset)) {
-      return { error: { ...context, offset: record.offset, rawPayload: value, reason: "invalid_offset" }, valid: false };
-    }
-    return {
-      record: {
-        schema_version: record.schema_version || "1.0",
-        event_id: String(record.event_id),
-        source: record.source || "review-dataset",
-        offset: numericOffset,
-        review: String(record.review),
-        created_at: String(record.created_at),
-        raw: record.raw || { ...record },
-      },
-      valid: true,
-    };
-  } catch (error) {
-    return { error: { ...context, message: error?.message || String(error), rawPayload: value, reason: "invalid_json" }, valid: false };
-  }
-}
-
 function pipelineError(failedStage, message) {
   const error = new Error(message);
   error.failedStage = failedStage;
@@ -676,6 +759,11 @@ function booleanOption(key, fallback) {
 function objectArrayOption(key) {
   const value = apiPayload[key];
   return Array.isArray(value) ? value.filter((item) => item && typeof item === "object") : [];
+}
+
+function objectOption(key) {
+  const value = apiPayload[key];
+  return value && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
 
 function tupleArrayOption(key) {

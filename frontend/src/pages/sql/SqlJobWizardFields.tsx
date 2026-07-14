@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Clock3 } from "lucide-react";
+import { SqlPageIcon as Clock3 } from "./SqlPageIcon";
 
 import { Button } from "@/components/ui/button";
 import {

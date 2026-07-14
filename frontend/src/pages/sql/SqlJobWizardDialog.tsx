@@ -1,5 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Calendar, Check, ChevronLeft, ChevronRight, Database, HardDrive, ShieldCheck } from "lucide-react";
+import {
+  SqlPageIcon as Calendar,
+  SqlPageIcon as Check,
+  SqlPageIcon as ChevronLeft,
+  SqlPageIcon as ChevronRight,
+  SqlPageIcon as Database,
+  SqlPageIcon as HardDrive,
+  SqlPageIcon as ShieldCheck,
+} from "./SqlPageIcon";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -40,6 +48,7 @@ export interface SqlJobWizardDialogProps {
   open: boolean;
   pending?: boolean;
   resultDraft: SqlResultDraft;
+  runtime?: "compatibility" | "trino";
 }
 
 const wizardSteps: Array<{
@@ -61,6 +70,7 @@ export function SqlJobWizardDialog({
   open,
   pending = false,
   resultDraft,
+  runtime = "compatibility",
 }: SqlJobWizardDialogProps) {
   const [configuration, setConfiguration] = useState(() => buildInitialSqlJobConfiguration(baseDataset, resultDraft, defaultMetadata));
   const [stepIndex, setStepIndex] = useState(0);
@@ -244,7 +254,7 @@ export function SqlJobWizardDialog({
         ) : null}
 
         {activeStep.id === "schedule" ? (
-          <SqlJobScheduleStep disabled={isBusy} onChange={updateSchedule} schedule={configuration.schedule} />
+          <SqlJobScheduleStep disabled={isBusy} onChange={updateSchedule} runtime={runtime} schedule={configuration.schedule} />
         ) : null}
 
         {activeStep.id === "governance" ? (
@@ -264,6 +274,7 @@ export function SqlJobWizardDialog({
             onStoragePathTouched={() => setStoragePathTouched(true)}
             onTargetChange={updateTarget}
             resultDraft={resultDraft}
+            runtime={runtime}
             showErrors={showErrors}
           />
         ) : null}

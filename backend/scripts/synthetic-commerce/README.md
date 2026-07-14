@@ -152,12 +152,55 @@ npm run verify:prefix-spark-e2e
 - 성별과 지역에는 직접 행동 배율을 적용하지 않아 null control로 사용합니다.
 - meta, users, click_events는 스키마가 서로 다르므로 각 prefix를 별도 데이터셋과 별도 Job으로 처리합니다.
 
+## 클릭 JSONL을 비정형 LOG로 변환
+
+AskLake의 조건부 1.5단계 `레코드 구조화`를 검증할 때 클릭 JSONL을 헤더 없는 공백 구분 `.log`로 변환합니다. 출력 필드 순서는 `event_time`, `event_id`, `user_id`, `session_id`, `event_type`, `product_id`, `page_url`, `device_type`, `referrer`, `position`이며 모든 행은 정확히 10필드입니다. 필드 값 안의 Unicode whitespace는 UTF-8 percent byte로 기록합니다.
+
+저장소의 고정 fixture를 로컬에서 변환하고 회귀 테스트를 실행합니다.
+
+```bash
+cd backend
+npm run synthetic-commerce:click-log
+npm run verify:synthetic-click-log
+```
+
+다른 로컬 파일이나 디렉터리는 명시적인 경로로 변환합니다. 디렉터리의 `.jsonl`/`.ndjson` object는 상대 경로 순서대로 병합하며 basename이 `.` 또는 `_`로 시작하는 임시·metadata 파일은 제외합니다.
+
+```bash
+python3 scripts/synthetic-commerce/convert_click_events_to_log.py \
+  --input /data/click_events/ \
+  --output tmp/synthetic-commerce/custom/click-events.log
+```
+
+배포 환경에서는 AWS 기본 credential chain을 사용해 S3 prefix를 직접 읽고 결과를 multipart upload합니다. access key나 secret을 CLI 인자, manifest 또는 로그에 전달하지 않습니다.
+
+```bash
+ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run synthetic-commerce:click-log -- \
+  --input-s3-uri s3://raw-bucket/commerce/click_events/ \
+  --output-s3-uri s3://raw-bucket/commerce/click-events.log
+```
+
+S3 mode는 `backend/requirements.txt`의 boto3가 설치된 backend Python 환경에서 실행해야 합니다. 기본 manifest는 `s3://raw-bucket/commerce/click-events.log.manifest.json`에 저장됩니다. 입력 object별 행 수·byte·ETag·SHA-256, 전체 출력 행 수·byte·SHA-256과 Record Parsing 컬럼 초안이 포함됩니다. S3에서도 basename이 `.` 또는 `_`로 시작하는 object는 제외하고 목록의 ETag를 `GetObject If-Match`에 전달하므로 변환 중 입력 object가 바뀌면 실행을 실패시킵니다. Custom manifest는 다음 입력에 섞이지 않도록 `.jsonl`/`.ndjson` 확장자를 사용할 수 없습니다.
+
+로컬 MinIO처럼 path-style endpoint가 필요한 경우에만 endpoint 옵션을 추가합니다.
+
+```bash
+ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run synthetic-commerce:click-log -- \
+  --input-s3-uri s3://m3-raw/commerce/click_events/ \
+  --output-s3-uri s3://m3-raw/commerce/click-events.log \
+  --s3-endpoint-url http://127.0.0.1:9000 \
+  --s3-force-path-style
+```
+
+운영 IAM에는 source prefix의 `s3:ListBucket`, `s3:GetObject`와 target prefix의 `s3:PutObject`, `s3:AbortMultipartUpload`, `s3:DeleteObject`가 필요합니다. 기본 multipart part 크기는 64 MiB이고 `--multipart-part-size-mib`로 조정할 수 있습니다. 기존 output 또는 manifest가 있으면 기본적으로 중단하며 명시적인 `--overwrite`에서만 교체합니다. 변환기는 최대 16 MiB의 기존 manifest를 메모리에 백업하고 새 manifest를 먼저 저장한 뒤 multipart `.log`를 마지막에 commit합니다. 변환, manifest 저장 또는 multipart 완료가 실패하면 upload를 abort하고 이전 manifest를 복원하거나 새 manifest를 삭제하므로 기존 정상 결과를 유지합니다.
+
 ## 테스트
 
 대용량 원천 없이 표준 라이브러리만으로 실행됩니다.
 
 ```bash
 python3 backend/scripts/synthetic-commerce/test_generate.py
+python3 backend/scripts/synthetic-commerce/test_convert_click_events_to_log.py
 ```
 
 테스트는 다음을 검증합니다.
@@ -168,6 +211,9 @@ python3 backend/scripts/synthetic-commerce/test_generate.py
 - 상품·사용자 외래키와 이벤트 시간 범위
 - 세션 내 시간 순서와 퍼널 선행조건
 - 고정 사용자 수 호환 모드
+- 사용자 생성의 숨은 특성 비노출
+- 클릭 로그 변환의 로컬 원자적 교체와 10필드/escaping 계약
+- S3 pagination·key 순서·ETag read, multipart 완료와 실패 abort
 
 ## 산출물 정책
 

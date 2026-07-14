@@ -133,6 +133,61 @@ th.schema-result-column {
   white-space: normal;
 }
 
+.schema-sql-editor-surface {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  flex: 1 1 auto;
+  min-height: 210px;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.schema-sql-line-numbers {
+  box-sizing: border-box;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  border-right: 1px solid #e2e8f0;
+  margin: 0;
+  background: #f8fafc;
+  color: #94a3b8;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 24px;
+  padding: 16px 12px;
+  text-align: right;
+  user-select: none;
+}
+
+.schema-sql-editor-surface .schema-sql-editor-input {
+  box-sizing: border-box;
+  height: 100%;
+  width: 100%;
+  min-width: 0;
+  min-height: 210px;
+  max-height: none;
+  resize: none;
+  overflow: auto;
+  border: 0;
+  border-radius: 0;
+  outline: 0;
+  background: #ffffff;
+  color: #0f172a;
+  caret-color: #2563eb;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 24px;
+  padding: 16px;
+  box-shadow: none;
+}
+
+.schema-sql-editor-surface .schema-sql-editor-input:focus-visible {
+  box-shadow: none;
+  outline: none;
+}
+
 .schema-sql-preview-empty {
   display: grid;
   min-height: 150px;
