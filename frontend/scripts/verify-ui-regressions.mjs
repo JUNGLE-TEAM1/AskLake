@@ -26,10 +26,19 @@ const checks = [
     file: "src/pages/etl/EtlPages.tsx",
     patterns: [
       /VITE_SPARK_OUTPUT_BUCKET \?\? "asklake-output"/,
-      /return `s3a:\/\/\$\{SPARK_OUTPUT_BUCKET\}\/\$\{targetDataset\}\/\$\{targetLayer\.toLowerCase\(\)\}\//,
+      /buildTargetStoragePathForBucket\(SPARK_OUTPUT_BUCKET, targetDataset, targetLayer\)/,
+      /listS3Buckets\(\)[\s\S]*setRuntimeOutputBucket\(outputBucket\)/,
     ],
     forbiddenPatterns: [
       /return `s3a:\/\/asklake-output\/\$\{targetDataset\}/,
+    ],
+  },
+  {
+    name: "S3 target picker reconciles a stale frontend bucket with the backend output bucket",
+    file: "src/components/s3/S3PathField.tsx",
+    patterns: [
+      /nextBuckets\.includes\(currentBucket\) \? currentBucket : nextBuckets\[0\] \|\| ""/,
+      /관리자에게 출력 버킷 설정을 확인해 달라고 요청하세요/,
     ],
   },
   {
@@ -89,10 +98,10 @@ const checks = [
     ],
   },
   {
-    name: "Production login hides demo credentials and public signup by default",
+    name: "Production login hides demo credentials by default and supports an explicit demo opt-in",
     file: "src/pages/auth/AuthPage.tsx",
     patterns: [
-      /const demoDefaultsEnabled = import\.meta\.env\.DEV;/,
+      /const demoDefaultsEnabled = import\.meta\.env\.DEV \|\| import\.meta\.env\.VITE_AUTH_LEGACY_DEMO_USERS_ENABLED === "true";/,
       /const publicSignupEnabled = import\.meta\.env\.DEV \|\| import\.meta\.env\.VITE_AUTH_PUBLIC_SIGNUP === "true";/,
       /useState\(demoDefaultsEnabled \? "admin\.user@asklake\.local" : ""\)/,
       /\{publicSignupEnabled && \(/,
@@ -765,6 +774,28 @@ const checks = [
     ],
   },
   {
+    name: "Stopped continuous Job detail exposes governed deletion",
+    file: "src/pages/ingest/JobsPages.tsx",
+    patterns: [
+      /if \(isContinuousKafkaJob\(job\)\)/,
+      /return \[\s*\{ className: "job-action-button primary", kind: "startContinuous", label: "스트림 시작" \},\s*\{ className: "job-action-button", kind: "edit", label: "수정" \},\s*\{ className: "job-action-button danger", kind: "delete", label: "삭제" \},\s*\];/,
+      /const disabled = jobActionDisabled\(job, action\.kind\);/,
+      /title=\{disabled \? permissionDeniedMessage\("작업", action\.label\) : undefined\}/,
+    ],
+  },
+  {
+    name: "ETL target and review typography converge on the shared hierarchy",
+    file: "src/styles/etl.css",
+    patterns: [
+      /\.etl-review-card-header h2 \{[\s\S]*?font-size: 18px;/,
+      /\.etl-review-kv dd \{[\s\S]*?font-size: 15px;/,
+      /\.target-config-card \.etl-review-card-header h2 \{[\s\S]*?font-size: 18px;/,
+      /\.target-config-card \.field > span \{[\s\S]*?font-size: 15px;/,
+      /\.target-config-card \.input \{[\s\S]*?font-size: 16px;/,
+      /\.target-partition-name \{[\s\S]*?font-size: 15px;/,
+    ],
+  },
+  {
     name: "Jobs landing run modal follows centrally polled state by stable run identity",
     file: "src/pages/ingest/JobsPages.tsx",
     patterns: [
@@ -852,13 +883,12 @@ const checks = [
       /operation: `Cast \$\{outputType\}`/,
       /operation: "Default Value"/,
       /operation: "Null Guard"/,
+      /onError: "Fail Run",[\s\S]*operation: "Null Guard"/,
       /if \(column\.notNull && column\.nullGuardExplicit\)/,
       /canonicalParameters: parameters/,
       /ensureRequiredFieldTransformSteps\(targetSchema, transformSteps\)/,
       /return \[\.\.\.requiredSteps, \.\.\.nonFieldSteps\];/,
       /if \(mode !== "sql" \|\| !sql\.trim\(\) \|\| continuous \|\| isKafka\) return;/,
-      /previewSnapshotRules\(\{/,
-      /recordsFromSampleRows\(columns, sampleRows\.slice\(0, 20\)\)/,
     ],
   },
   {
@@ -1215,6 +1245,13 @@ const checks = [
     ],
   },
   {
+    name: "Dashboard bar charts keep values in axes and tooltips without drawing labels above bars",
+    file: "src/pages/dashboard/runtime/WidgetRenderer.tsx",
+    patterns: [
+      /function BarChartWidget[\s\S]*?dataLabels:\s*\{\s*enabled:\s*false,?\s*\}/,
+    ],
+  },
+  {
     name: "Visualization request patches can use the active dataset",
     file: "src/pages/dashboard/runtime/DashboardRuntimeView.tsx",
     patterns: [
@@ -1428,8 +1465,8 @@ const checks = [
     patterns: [
       /고급 설정/,
       /label="시작 위치"/,
-      /label="Trigger 간격"/,
-      /label="Micro-batch 최대 메시지"/,
+      /label="수집 실행 간격"/,
+      /label="한 번에 처리할 최대 메시지"/,
       /getSourceConnectorDefaults\(\)/,
       /\["Broker \/ Endpoint", defaultKafkaBroker\]/,
     ],
@@ -1449,9 +1486,51 @@ const checks = [
     patterns: [
       /qualityRuleCount: enabledQualityRules\.length/,
       /requiredColumnCount/,
+      /failurePolicyCount: new Set\(failureActions\)\.size/,
+      /failureTargetCount: failureTargets\.size/,
     ],
     forbiddenPatterns: [
       /enabledQualityRules\.length \+ requiredColumnCount/,
+    ],
+  },
+  {
+    name: "Source preview keeps sticky headers opaque above scrolling rows",
+    file: "src/pages/etl/SourcePreviewDataTable.tsx",
+    patterns: [
+      /headerClassName: "bg-blue-50 text-slate-600"/,
+    ],
+    forbiddenPatterns: [
+      /bg-blue-50\/70/,
+    ],
+  },
+  {
+    name: "New source inference starts with an empty target selection",
+    file: "src/services/sourceConnectorService.ts",
+    patterns: [
+      /withUnselectedTargetSchema/,
+      /included: false/,
+      /targetOrder: undefined/,
+    ],
+  },
+  {
+    name: "Schema field names may stay empty while editing and are blocked on confirmation",
+    file: "src/pages/etl/SchemaTransformWorkbench.tsx",
+    patterns: [
+      /const outputName = column\.targetName \?\? column\.sourceName/,
+      /if \(!output\) return \[\]/,
+    ],
+    forbiddenPatterns: [
+      /const outputName = column\.targetName \|\| column\.sourceName/,
+    ],
+  },
+  {
+    name: "ETL review requests use stable payload keys with visible retry handling",
+    file: "src/pages/etl/EtlPages.tsx",
+    patterns: [
+      /getReviewSnapshotRequestKey\(buildReviewSnapshotRequest\(draft\)\)/,
+      /\[reviewRequest, reviewRetryCount\]/,
+      /검토 정보를 불러오지 못했습니다/,
+      /setReviewRetryCount\(\(count\) => count \+ 1\)/,
     ],
   },
   {
@@ -1472,6 +1551,14 @@ const checks = [
       /const continuousKafka = draft\.source\.executionMode === "continuous"/,
       /scheduleLabel: continuousKafka \? "스케줄링 건너뛰기" : draft\.schedule\.label/,
       /scheduleSummary: continuousKafka \? "실시간 스트림은 작업 생성 후 시작\/중지로 제어"/,
+    ],
+  },
+  {
+    name: "ETL updates omit create-only Kafka lifecycle settings",
+    file: "src/services/draftPipelineContract.ts",
+    patterns: [
+      /continuousConfig: _continuousConfig/,
+      /executionMode: _executionMode/,
     ],
   },
   {
@@ -1545,7 +1632,7 @@ const checks = [
     ],
   },
   {
-    name: "Continuous schema editing exposes only streaming-safe canonical transforms and Preview",
+    name: "Continuous schema editing exposes only streaming-safe canonical transforms without a duplicate engine preview",
     file: "src/pages/etl/SchemaTransformWorkbench.tsx",
     patterns: [
       /ensureRequiredFieldTransformSteps\(targetSchema, transformSteps\)/,
@@ -1553,10 +1640,11 @@ const checks = [
       /allowSqlTransform=\{!continuous && !isKafka\}/,
       /portableTransforms=\{continuous \|\| isKafka\}/,
       /transformsDisabled=\{false\}/,
-      /streaming-safe canonical Rule/,
-      /disabled=\{previewPending \|\| sampleRows\.length === 0\}/,
     ],
     forbiddenPatterns: [
+      /실행 엔진 Preview/,
+      /Preview 실행/,
+      /previewSnapshotRules/,
       /실시간 규칙은 다음 compiler 페이즈 전까지 pass-through/,
       /실시간 규칙 Preview는 streaming compiler/,
     ],
@@ -1568,13 +1656,40 @@ const checks = [
       /const qualityRulePayload = \(targetColumn\)/,
       /const applyPortableFieldRules = \(\) =>/,
       /portable \? applyPortableFieldRules : applyFieldRules/,
-      /<TabsTrigger value="quality">품질 검사<\/TabsTrigger>/,
-      /<TabsTrigger value="failure">실패 처리<\/TabsTrigger>/,
+      /value="quality"\s*>품질 및 실패 처리<\/TabsTrigger>/,
+      /<FieldTitle>변환 실패 시<\/FieldTitle>/,
+      /<FieldLabel htmlFor=\{`quality-failure-\$\{rule\.kind\}`\}>실패 시 처리<\/FieldLabel>/,
+      /const visibleRuleDrafts = required[\s\S]*rule\.kind !== 'notNull'/,
+      /failureAction: normalizeQualityFailureAction\(rule\.kind, rule\.failureAction\)/,
+      /allowSetNull=\{rule\.kind !== 'notNull'\}/,
+      /문제 값을 NULL로 변경/,
+      /function FailureActionSelect/,
       /Kafka Snapshot과 실시간 실행에서 동일하게 지원되는 변환만 표시합니다/,
+      /const resetTransformSettings = \(\) =>/,
+      /변환 설정 초기화/,
+      /field-rule-mode-tabs/,
+      /field-rule-mode-tab/,
     ],
     forbiddenPatterns: [
       /if \(portable\) \{/,
       /<SelectItem value="float">/,
+      /value="failure"/,
+      /function FailureRuleRow/,
+      /출력 스키마에서 필수 컬럼/,
+      /setRequired/,
+      /quality-severity-/,
+      />심각도</,
+      />NULL 대체</,
+    ],
+  },
+  {
+    name: "Field rule modal tabs use the applied-rule summary selection treatment",
+    file: "src/styles/etl.css",
+    patterns: [
+      /\.field-rule-mode-tabs \[role="tab"\]\[data-state="active"\]/,
+      /background: #eff6ff/,
+      /box-shadow: inset 0 -3px 0 #2563eb/,
+      /\.field-rule-mode-tabs \[role="tab"\]\[data-state="active"\]:focus-visible/,
     ],
   },
   {
@@ -1612,6 +1727,30 @@ const checks = [
     ],
   },
   {
+    name: "ETL wizard blocks incomplete forward navigation while keeping validated Next callbacks",
+    file: "src/App.tsx",
+    patterns: [
+      /const \[completedWizardFlows, setCompletedWizardFlows\] = useState<Set<FlowId>>/,
+      /canNavigateToWizardStep\(\{/,
+      /if \(!nextFlow \|\| nextFlow === activeFlow \|\| wizardStepDisabled\[stepIndex\]\) return;/,
+      /<Stepper[\s\S]*isStepDisabled=\{/,
+      /onNext=\{\(\) => completeWizardFlowAndMove\("source"/,
+      /onNext=\{\(\) => completeWizardFlowAndMove\("schema"/,
+      /onNext=\{\(\) => completeWizardFlowAndMove\("permission", "target"\)\}/,
+      /onNext=\{\(\) => completeWizardFlowAndMove\("target", "review"\)\}/,
+    ],
+  },
+  {
+    name: "Locked ETL wizard steps use native disabled button semantics",
+    file: "src/components/layout/Stepper.tsx",
+    patterns: [
+      /isStepDisabled\?: \(stepIndex: number\) => boolean;/,
+      /const disabled = isStepDisabled\?\.\(index\) \?\? false;/,
+      /disabled=\{disabled\}/,
+      /aria-label=\{disabled \? `\$\{step\} 단계 잠김`/,
+    ],
+  },
+  {
     name: "Global top bar exposes only appearance and language placeholders",
     file: "src/components/layout/Topbar.tsx",
     patterns: [
@@ -1623,6 +1762,21 @@ const checks = [
       /RefreshCw/,
       /LogOut/,
       /CircleUser/,
+    ],
+  },
+  {
+    name: "SQL Result Job drafts use the query result as the source contract",
+    file: "src/hooks/useAskLakeData.ts",
+    patterns: [
+      /sourceType: "SQL Result",/,
+      /SQL Run ID/,
+      /query result schema is carried by sourceConfig and outputColumns/,
+      /steps: \[\],/,
+    ],
+    forbiddenPatterns: [
+      /id: "sql-preview-materialize"/,
+      /operation: "SQL_RESULT_MATERIALIZE"/,
+      /input: sourceDataset\.name/,
     ],
   },
 ];

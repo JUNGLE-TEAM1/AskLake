@@ -64,13 +64,6 @@ export async function generateQueryAiSuggestion(
     mode: request.mode,
     prompt: request.prompt,
     selectedDatasetIds: request.selectedDatasets.map((dataset) => dataset.id),
-    selectedDatasets: request.selectedDatasets.map((dataset) => ({
-      description: dataset.description,
-      id: dataset.id,
-      layer: dataset.layer,
-      name: dataset.name,
-      schema: dataset.schema,
-    })),
   }, {
     signal: options.signal,
     timeoutMs: options.timeoutMs ?? QUERY_AI_REQUEST_TIMEOUT_MS,

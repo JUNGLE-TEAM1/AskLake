@@ -1,5 +1,7 @@
 # System Guardrails
 
+AI service guardrails, secret isolation, private Compose networking, and deployment health checks are defined in [ai-gateway-mcp-rollout.md](./ai-gateway-mcp-rollout.md).
+
 이 문서는 하네스가 직접 강제하지 않고 GitHub, CI, repository settings, platform, 또는 repo-local automation이 강제하거나 감지해야 하는 안전장치를 추적한다.
 
 하네스는 작업 상태, 판단 근거, 검증 결과, 복구 경로를 공유하는 협업 프로토콜이다.
@@ -35,6 +37,7 @@
 | PR merge / Issue lifecycle sync | `.github/workflows/notion-issue-sync.yml` and lifecycle smoke checks | `enabled` | fail before remote mutation when lifecycle contracts break; recover missed merge events on the next scheduled/manual dispatch | maintainer | explicit `Closes/Fixes/Resolves #N` merge closes Issue and sets Project/Notion `Done`; reopen after merge is preserved |
 | Default PR and issue templates | GitHub `.github` templates | `enabled` | prompt contributors to document scope, verification, impact, and acceptance criteria | maintainer | advisory template, not a hard gate |
 | Deployment env files ignored | `.gitignore`, review checklist | `enabled` | prevent committing server `.env` and local EC2 env values | maintainer | `deploy/.env` and `deploy/ec2.env` are ignored; only examples are committed. MinIO access key/secret and `AIRFLOW_EXECUTION_API_TOKEN` stay in server `.env` or secret storage. The Airflow and backend token values must match. Kafka replay input은 `ASKLAKE_REPLAY_HOST_INPUT_DIR`의 읽기 전용 mount만 사용하며 arbitrary host path API 입력은 금지한다. |
+| Production legacy demo auth | backend startup + `scripts/verify-deploy-env.sh` | `enabled` | legacy demo users are disabled by default; an explicit demo deployment must set matching backend/frontend opt-in flags | maintainer | `AUTH_LEGACY_DEMO_USERS_ENABLED`와 `VITE_AUTH_LEGACY_DEMO_USERS_ENABLED`가 모두 `true`일 때만 재시작 시 기존 status/session을 보존한다. Bootstrap admin과 production header-auth 차단은 유지한다. |
 | API contract drift check | repo-local script or review checklist | `planned` | warn or block when API docs and code drift | maintainer | backend 구현 후 후보 |
 
 ## 3) Team Guide
@@ -109,7 +112,8 @@ Scenario audit은 새 hard rule을 추가하는 절차가 아니다.
 | Trino contract verification | matching backend/frontend paths | Query Run, registration, result storage, collector fencing, actor reservation, timeline state | `verify:trino-query-foundation`, `verify:query-engine-registration`, `verify:trino-result-storage`, `verify:trino-collector-resilience`, `verify:trino-submission-guard`, `test:trino-timeline` pass |
 | Trino production readiness | deploy-time when `TRINO_ENABLED=true` | TLS/auth, read-only query identity, materializer CTAS/describe/drop, AWS S3 Warehouse/Query Result bucket round trip through EC2 instance profile | `verify:trino-production-readiness` passes after Compose health |
 | AWS S3 startup readiness | every production Compose startup | Raw bucket list, Output bucket put/head/delete with EC2 instance role | `aws-s3-readiness` completes before backend starts; bucket auto-create and static AWS keys are forbidden |
-| AWS S3 output identity | frontend build and every Spark run/Catalog publish | Target UI bucket, Spark writer bucket, Catalog storage location | production frontend receives `ASKLAKE_SPARK_OUTPUT_BUCKET`; only legacy `asklake-output` roots are normalized and explicit custom buckets remain unchanged |
+| AWS S3 output identity | frontend build, Target browser API, and every Spark run/Catalog publish | Target UI bucket, `GET /api/s3/buckets` first item, Spark writer bucket, Catalog storage location | production frontend and backend receive the same `ASKLAKE_SPARK_OUTPUT_BUCKET`; AWS mode forbids a silent local `asklake-output` fallback; only legacy `asklake-output` roots are normalized and explicit custom buckets remain unchanged |
+| Production legacy demo restart | focused auth tests + deploy preflight | backend startup account/session state and frontend login hint | default production disables/revokes legacy demo identities; matching opt-in flags preserve existing status/session without reactivating an explicitly disabled account |
 | PR event checks | no | future GitHub Actions | changed code satisfies required checks |
 | Read-only lifecycle audit | manual | docs, PR, branch status | drift is reported without changing remote state |
 | Admin setting audit | manual | branch protection, secrets, rulesets | actual settings match inventory or gap is recorded |

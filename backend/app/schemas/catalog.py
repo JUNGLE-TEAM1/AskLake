@@ -45,34 +45,39 @@ class LineageGraphResponse(CamelModel):
     edges: list[LineageGraphEdge]
 
 
-class DatasetMaterializationRun(CamelModel):
-    created_at: str
-    job_id: str
-    materialization_mode: MaterializationMode | None = None
-    publication_manifest: str | None = None
-    quality: dict[str, Any] | None = None
-    materialization_mode: Literal["snapshot", "delta"] = "snapshot"
-    row_count: int = 0
-    rule_contract_version: str | None = None
-    rule_fingerprint: str | None = None
-    run_id: str
-    runtime_fingerprint: str | None = None
-    schema_fingerprint: str | None = None
-    source_kind: MaterializationSourceKind = "etl"
-    source_label: str
-    source_ranges: list[dict[str, Any]] = Field(default_factory=list)
-    status: MaterializationRunStatus
-    storage_location: str | None = None
-    storage_size_bytes: int = 0
-    transform: dict[str, Any] | None = None
-
-
 class QueryEngineTableRef(CamelModel):
     catalog: str
     schema_: str = Field(alias="schema")
     table: str
     format: QueryEngineTableFormat
     partition_columns: list[str] = Field(default_factory=list)
+
+
+class DatasetMaterializationRun(CamelModel):
+    created_at: str
+    iceberg_committed_at: str | None = None
+    iceberg_snapshot_id: str | None = None
+    job_id: str
+    kafka_snapshot: dict[str, Any] | None = None
+    materialization_mode: MaterializationMode = "snapshot"
+    publication_manifest: str | None = None
+    quality: dict[str, Any] | None = None
+    query_engine_table: QueryEngineTableRef | None = None
+    row_count: int = 0
+    rule_contract_version: str | None = None
+    rule_fingerprint: str | None = None
+    run_id: str
+    runtime_fingerprint: str | None = None
+    schema_fingerprint: str | None = None
+    source_boundary: dict[str, Any] | None = None
+    source_kind: MaterializationSourceKind = "etl"
+    source_label: str
+    source_ranges: list[dict[str, Any]] = Field(default_factory=list)
+    status: MaterializationRunStatus
+    storage_format: str | None = None
+    storage_location: str | None = None
+    storage_size_bytes: int = 0
+    transform: dict[str, Any] | None = None
 
 
 class CatalogDatasetResponse(CamelModel):

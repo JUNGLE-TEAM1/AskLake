@@ -300,6 +300,10 @@ class DashboardRuntimeWidget(CamelModel):
     data: list[dict[str, Any]] = Field(default_factory=list)
     dataset_id: str | None = None
     query_id: str | None = None
+    applied_revision: int | None = None
+    calculation_version: str | None = None
+    calculated_at: str | None = None
+    live_refresh: bool = False
 
 
 class DashboardMeta(CamelModel):
@@ -338,6 +342,30 @@ class DashboardRuntimeResponse(CamelModel):
     pages: list[DashboardRuntimePage]
     widgets_by_page_id: dict[str, list[DashboardRuntimeWidget]]
     filters: list[DashboardFilter] = Field(default_factory=list)
+
+
+class DatasetFreshnessQueryRequest(CamelModel):
+    dataset_ids: list[str] = Field(min_length=1, max_length=100)
+
+
+class DatasetFreshnessResponse(CamelModel):
+    dataset_id: str
+    is_continuous: bool
+    latest_revision: int = Field(ge=0)
+    updated_at: str | None = None
+    next_check_after_ms: int = Field(ge=1_000, le=60_000)
+
+
+class DatasetFreshnessQueryResponse(CamelModel):
+    datasets: list[DatasetFreshnessResponse]
+
+
+class DashboardWidgetQueryRequest(CamelModel):
+    widget_ids: list[str] = Field(min_length=1, max_length=100)
+
+
+class DashboardWidgetQueryResponse(CamelModel):
+    widgets: list[DashboardRuntimeWidget]
 
 
 class CreateDraftPageRequest(CamelModel):

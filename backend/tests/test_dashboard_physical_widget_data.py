@@ -13,6 +13,7 @@ from app.core.auth_context import ActorContext
 from app.core.errors import ApiError
 from app.schemas.common import ErrorCode
 from app.schemas.dashboard import DashboardRuntimeWidgetType, DonutChartWidgetConfig
+from app.schemas.trino import TrinoClientPage
 from app.services import dashboard_physical_data
 from app.services.dashboard_physical_data import (
     DASHBOARD_VALUE_ALIAS,
@@ -23,6 +24,7 @@ from app.services.dashboard_physical_data import (
     dataset_storage_segments,
     execute_dashboard_query,
     preflight_dashboard_s3_segments,
+    dashboard_widget_supports_incremental_merge,
 )
 from app.services.dashboard_runtime_service import (
     DASHBOARD_DATA_FORBIDDEN,
@@ -120,6 +122,62 @@ class FakeDashboardS3Client:
         }
 
 
+class FakeDashboardTrinoClient:
+    def __init__(self, *, include_run_id: bool = True) -> None:
+        self.queries: list[str] = []
+        self.include_run_id = include_run_id
+
+    def submit(self, query: str, **_kwargs) -> TrinoClientPage:
+        self.queries.append(query)
+        if query.startswith("DESCRIBE"):
+            rows = [
+                ["category", "varchar"],
+                ["amount", "bigint"],
+            ]
+            if self.include_run_id:
+                rows.append(["_asklake_run_id", "varchar"])
+            return TrinoClientPage(
+                columns=["Column", "Type"],
+                rows=rows,
+                queryId="describe",
+            )
+        if "__asklake_state_count" in query:
+            return TrinoClientPage(
+                columns=[
+                    "category",
+                    "__asklake_state_count",
+                    "__asklake_state_sum",
+                    "__asklake_state_min",
+                    "__asklake_state_max",
+                ],
+                rows=[["phones", 2, 15.0, 5.0, 10.0]],
+                queryId="aggregate-state",
+            )
+        return TrinoClientPage(
+            columns=["category", "amount"],
+            rows=[["phones", 15.0]],
+            queryId="widget",
+        )
+
+    def fetch(self, _next_uri: str, **_kwargs) -> TrinoClientPage:
+        raise AssertionError("fixture query should fit in one Trino page")
+
+
+class EndlessDashboardTrinoClient:
+    def __init__(self) -> None:
+        self.cancelled: list[str] = []
+
+    def submit(self, _query: str, **_kwargs) -> TrinoClientPage:
+        return TrinoClientPage(nextUri="http://trino:8080/v1/statement/query/1", queryId="query-1")
+
+    def fetch(self, next_uri: str, **_kwargs) -> TrinoClientPage:
+        time.sleep(0.02)
+        return TrinoClientPage(nextUri=next_uri, queryId="query-1")
+
+    def cancel(self, next_uri: str, **_kwargs) -> None:
+        self.cancelled.append(next_uri)
+
+
 class InterruptibleDuckDbConnection:
     def __init__(self) -> None:
         self.interrupted = False
@@ -148,6 +206,159 @@ class FakeCatalogRepository:
 
 
 class DashboardPhysicalWidgetDataTests(unittest.TestCase):
+    @staticmethod
+    def iceberg_dataset() -> dict[str, object]:
+        dataset = catalog_dataset_payload(
+            storage_format="iceberg",
+            storage_location="s3://warehouse/asklake/catalog-dataset",
+        )
+        dataset.update({
+            "queryEngineStatus": "available",
+            "queryEngineTable": {
+                "catalog": "iceberg",
+                "schema": "asklake",
+                "table": "catalog_dataset",
+                "format": "iceberg",
+            },
+        })
+        return dataset
+
+    def test_iceberg_widget_uses_trino_instead_of_scanning_warehouse_files(self) -> None:
+        dataset = self.iceberg_dataset()
+        client = FakeDashboardTrinoClient()
+        session = DashboardDatasetQuerySession(
+            dataset,
+            trino_client=client,  # type: ignore[arg-type]
+        )
+        try:
+            result = session.read_widget("bar_chart", {
+                "aggregation": "sum",
+                "xKey": "category",
+                "yKey": "amount",
+            })
+        finally:
+            session.close()
+
+        self.assertEqual(result["data"], [{"category": "phones", "amount": 15.0}])
+        self.assertEqual(len(client.queries), 2)
+        self.assertIn('FROM "iceberg"."asklake"."catalog_dataset"', client.queries[1])
+        self.assertIn('GROUP BY "category"', client.queries[1])
+        self.assertNotIn("GROUP BY ALL", client.queries[1])
+        self.assertNotIn("_asklake_run_id", client.queries[1])
+
+    def test_iceberg_aggregate_state_uses_trino_with_explicit_group_by(self) -> None:
+        client = FakeDashboardTrinoClient()
+        session = DashboardDatasetQuerySession(
+            self.iceberg_dataset(),
+            trino_client=client,  # type: ignore[arg-type]
+        )
+        try:
+            state = session.read_aggregate_state("bar_chart", {
+                "aggregation": "sum",
+                "xKey": "category",
+                "yKey": "amount",
+            })
+        finally:
+            session.close()
+
+        self.assertIsNotNone(state)
+        self.assertEqual(state["rows"][0]["__asklake_state_sum"], 15.0)
+        self.assertEqual(len(client.queries), 2)
+        self.assertIn('FROM "iceberg"."asklake"."catalog_dataset"', client.queries[1])
+        self.assertIn('GROUP BY "category"', client.queries[1])
+        self.assertNotIn("GROUP BY ALL", client.queries[1])
+        self.assertNotIn("FOR VERSION AS OF", client.queries[1])
+        self.assertNotIn("_asklake_run_id", client.queries[1])
+
+    def test_iceberg_full_aggregate_is_pinned_to_the_catalog_snapshot(self) -> None:
+        dataset = self.iceberg_dataset()
+        dataset["icebergSnapshotId"] = "000123"
+        client = FakeDashboardTrinoClient()
+        session = DashboardDatasetQuerySession(
+            dataset,
+            trino_client=client,  # type: ignore[arg-type]
+        )
+        try:
+            state = session.read_aggregate_state("bar_chart", {
+                "aggregation": "sum",
+                "xKey": "category",
+                "yKey": "amount",
+            })
+        finally:
+            session.close()
+
+        self.assertIsNotNone(state)
+        self.assertEqual(
+            client.queries[0],
+            'DESCRIBE "iceberg"."asklake"."catalog_dataset"',
+        )
+        self.assertIn(
+            'FROM "iceberg"."asklake"."catalog_dataset" FOR VERSION AS OF 123',
+            client.queries[1],
+        )
+
+    def test_iceberg_rejects_invalid_catalog_snapshot_instead_of_reading_current(self) -> None:
+        dataset = self.iceberg_dataset()
+        dataset["icebergSnapshotId"] = "123 OR 1=1"
+        client = FakeDashboardTrinoClient()
+
+        with self.assertRaises(ApiError):
+            DashboardDatasetQuerySession(
+                dataset,
+                trino_client=client,  # type: ignore[arg-type]
+            )
+
+        self.assertEqual(client.queries, [])
+
+    def test_iceberg_revision_delta_filters_only_the_published_run_id(self) -> None:
+        dataset = self.iceberg_dataset()
+        dataset["icebergSnapshotId"] = "456"
+        client = FakeDashboardTrinoClient()
+        session = DashboardDatasetQuerySession(
+            dataset,
+            trino_client=client,  # type: ignore[arg-type]
+            iceberg_run_id="continuous:job:batch:x'y",
+        )
+        try:
+            state = session.read_aggregate_state("bar_chart", {
+                "aggregation": "sum",
+                "xKey": "category",
+                "yKey": "amount",
+            })
+        finally:
+            session.close()
+
+        self.assertIsNotNone(state)
+        self.assertTrue(session.revision_delta_available)
+        self.assertIn(
+            'FROM "iceberg"."asklake"."catalog_dataset" FOR VERSION AS OF 456',
+            client.queries[1],
+        )
+        self.assertIn(
+            'WHERE "_asklake_run_id" = \'continuous:job:batch:x\'\'y\'',
+            client.queries[1],
+        )
+
+    def test_iceberg_revision_delta_falls_back_when_run_id_column_is_missing(self) -> None:
+        client = FakeDashboardTrinoClient(include_run_id=False)
+        session = DashboardDatasetQuerySession(
+            self.iceberg_dataset(),
+            trino_client=client,  # type: ignore[arg-type]
+            iceberg_run_id="continuous:job:batch:2",
+        )
+        try:
+            state = session.read_aggregate_state("bar_chart", {
+                "aggregation": "sum",
+                "xKey": "category",
+                "yKey": "amount",
+            })
+        finally:
+            session.close()
+
+        self.assertFalse(session.revision_delta_available)
+        self.assertIsNone(state)
+        self.assertEqual(len(client.queries), 1)
+
     def test_chart_aggregation_reads_all_materializations_instead_of_sample_rows(self) -> None:
         with TemporaryDirectory() as directory:
             root = Path(directory)
@@ -229,6 +440,30 @@ class DashboardPhysicalWidgetDataTests(unittest.TestCase):
                 {"category": "accessories", DASHBOARD_VALUE_ALIAS: 2},
             ],
         )
+
+    def test_only_additive_aggregations_are_incrementally_merged(self) -> None:
+        self.assertFalse(dashboard_widget_supports_incremental_merge(
+            "metric",
+            {"aggregation": "min", "valueKey": "amount"},
+        ))
+        self.assertFalse(dashboard_widget_supports_incremental_merge(
+            "metric",
+            {"aggregation": "max", "valueKey": "amount"},
+        ))
+        self.assertFalse(dashboard_widget_supports_incremental_merge(
+            "table",
+            {"columns": ["amount"]},
+        ))
+        for aggregation in ("count", "sum", "avg"):
+            with self.subTest(aggregation=aggregation):
+                self.assertTrue(dashboard_widget_supports_incremental_merge(
+                    "metric",
+                    {"aggregation": aggregation, "valueKey": "amount"},
+                ))
+        self.assertFalse(dashboard_widget_supports_incremental_merge(
+            "metric",
+            {"aggregation": "distinct", "valueKey": "order_id"},
+        ))
 
     def test_table_preview_is_sorted_and_capped_before_browser_response(self) -> None:
         with TemporaryDirectory() as directory:
@@ -691,6 +926,21 @@ class DashboardPhysicalWidgetDataTests(unittest.TestCase):
 
         self.assertTrue(connection.interrupted)
         self.assertLess(time.monotonic() - started_at, 0.5)
+
+    def test_trino_query_timeout_cancels_the_last_continuation(self) -> None:
+        client = EndlessDashboardTrinoClient()
+
+        with self.assertRaisesRegex(RuntimeError, "execution deadline"):
+            dashboard_physical_data.execute_trino_rows(
+                client,  # type: ignore[arg-type]
+                "SELECT 1",
+                timeout_seconds=0.001,
+            )
+
+        self.assertEqual(
+            client.cancelled,
+            ["http://trino:8080/v1/statement/query/1"],
+        )
 
     def test_httpfs_is_prepared_by_the_image_without_runtime_install(self) -> None:
         backend_root = Path(__file__).resolve().parents[1]

@@ -616,7 +616,15 @@ export type CreatePipelineRequest = {
 
 export type UpdatePipelineRequest = Omit<
   CreatePipelineRequest,
-  "id" | "sourceConfig" | "sourceLabel" | "sourceType" | "recordParsing" | "createdBy" | "createdByProfile"
+  | "id"
+  | "sourceConfig"
+  | "sourceLabel"
+  | "sourceType"
+  | "executionMode"
+  | "continuousConfig"
+  | "recordParsing"
+  | "createdBy"
+  | "createdByProfile"
 >;
 
 export type DraftPipelineSlicePatch = {
@@ -642,7 +650,10 @@ export type JobRunSummary = {
   endedAt: string;
   errorSummary: string;
   failedStage: string;
+  inputBytes?: number;
+  inputFileCount?: number;
   inputRows: string;
+  outputFileCount?: number;
   outputRows: string;
   outputPath?: string;
   runId: string;

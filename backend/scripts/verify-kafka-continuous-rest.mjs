@@ -102,14 +102,18 @@ try {
     ...process.env,
     APP_ENV: "production",
     ASKLAKE_CONTINUOUS_MAINTENANCE_TIMEOUT_MS: "5000",
+    ASKLAKE_CONTINUOUS_SPARK_LOG_LEVEL: "ERROR",
+    ASKLAKE_CONTINUOUS_SPARK_SHUFFLE_PARTITIONS: "3",
     ASKLAKE_DOCKER_CALL_MARKER: dockerCallMarker,
     ASKLAKE_SPARK_CONTINUOUS_MAINTENANCE_SCRIPT: "/opt/asklake/scripts/kafka_continuous_maintenance.py",
     ASKLAKE_SPARK_CONTINUOUS_SCRIPT: "/opt/asklake/scripts/kafka_continuous_stream.py",
     ASKLAKE_SPARK_HADOOP_AWS_PACKAGE: "none",
+    ASKLAKE_SPARK_ICEBERG_PACKAGE: "none",
     ASKLAKE_SPARK_IVY_DIR: ivyDir,
     ASKLAKE_SPARK_IVY_RUNTIME_DIR: "/var/lib/asklake/spark-ivy",
     ASKLAKE_SPARK_JOB_SCRIPT: "/opt/asklake/scripts/spark_job_run.py",
     ASKLAKE_SPARK_KAFKA_PACKAGE: "none",
+    ASKLAKE_SPARK_POSTGRES_PACKAGE: "none",
     ASKLAKE_SPARK_MASTER_URL: "spark://spark-master:7077",
     ASKLAKE_SPARK_REPORT_CONTAINER_DIR: "/var/lib/asklake/spark-runs",
     ASKLAKE_SPARK_REPORT_DIR: reportDir,
@@ -120,6 +124,9 @@ try {
     ASKLAKE_SPARK_SOURCE_INSPECT_SCRIPT: "/opt/asklake/scripts/spark_source_inspect_rest.py",
     MINIO_ACCESS_KEY: minioAccessSentinel,
     MINIO_SECRET_KEY: minioSecretSentinel,
+    TRINO_ICEBERG_JDBC_PASSWORD: "rest-contract-password",
+    TRINO_ICEBERG_JDBC_USER: "rest-contract-user",
+    TRINO_ICEBERG_WAREHOUSE_BUCKET: "asklake-warehouse",
     PATH: `${fakeBinDir}${path.delimiter}${process.env.PATH || ""}`,
   };
 
@@ -133,10 +140,23 @@ try {
     initialMetrics: {},
     initialOffsetPolicy: "earliest",
     initialSchemaState: {},
+    icebergTarget: {
+      catalog: "iceberg",
+      namespace: "asklake",
+      partitionColumns: [],
+      table: "reviews_rest_contract",
+      tableUri: "iceberg://iceberg/asklake/reviews_rest_contract",
+      writeMode: "append",
+    },
     jobId,
     maxOffsetsPerTrigger: 100,
     outputPath: "/tmp/continuous-output",
+    ruleContractVersion: "1.0",
+    ruleFingerprint: "rule-rest-contract-v1",
+    ruleOutputSchema: [["value", "string"]],
+    rules: [],
     schemaColumns: [{ included: true, nullable: true, sourceName: "value", targetName: "value", type: "string" }],
+    schemaFingerprint: "schema-rest-contract-v1",
     schemaEvolutionPolicy: {},
     topic: "reviews.rest.contract",
     triggerIntervalSeconds: 5,
@@ -155,6 +175,19 @@ try {
   assert.equal(started.containerId, "continuous-1");
   assert.equal(started.started, true);
   assert(started.workerAttemptId);
+  const firstContinuousSubmission = createRequests.find(
+    (item) => String(item.appArgs?.[0]).endsWith("/kafka_continuous_stream.py"),
+  );
+  assert(firstContinuousSubmission);
+  assert.equal(firstContinuousSubmission.sparkProperties["spark.sql.shuffle.partitions"], "3");
+  assert.equal(
+    firstContinuousSubmission.environmentVariables.ASKLAKE_CONTINUOUS_SPARK_SHUFFLE_PARTITIONS,
+    "3",
+  );
+  assert.equal(
+    firstContinuousSubmission.environmentVariables.ASKLAKE_CONTINUOUS_SPARK_LOG_LEVEL,
+    "ERROR",
+  );
 
   const duplicateStart = await runManager(continuousScript, workerRequest, environment, "ASKLAKE_KAFKA_CONTINUOUS_RESULT");
   assert.equal(duplicateStart.containerId, started.containerId);
@@ -219,13 +252,11 @@ try {
 
   const maintenanceRunId = "maintenance-artifact-contract";
   const maintenance = await runManager(maintenanceScript, {
+    ...workerRequest,
     action: "run",
     kind: "inspect_quarantine",
     limit: 25,
-    outputPath: "/tmp/continuous-output",
     runId: maintenanceRunId,
-    schemaColumns: [],
-    schemaEvolutionPolicy: {},
   }, environment, "ASKLAKE_KAFKA_MAINTENANCE_RESULT");
   assert.deepEqual(maintenance.records, [{ offset: 7, partition: 0, topic: "reviews.rest.contract" }]);
   assert.equal(maintenance.runId, maintenanceRunId);
@@ -237,6 +268,19 @@ try {
   ));
   assert.equal(maintenanceState.driverState, "FINISHED");
   assert.equal(maintenanceState.submissionId, "maintenance-1");
+  const maintenanceSubmission = createRequests.find(
+    (item) => String(item.appArgs?.[0]).endsWith("/kafka_continuous_maintenance.py"),
+  );
+  assert(maintenanceSubmission);
+  assert.equal(
+    JSON.parse(maintenanceSubmission.environmentVariables.ASKLAKE_MAINTENANCE_ICEBERG_TARGET).tableUri,
+    workerRequest.icebergTarget.tableUri,
+  );
+  assert.equal(maintenanceSubmission.environmentVariables.ASKLAKE_MAINTENANCE_JOB_ID, jobId);
+  assert.equal(
+    maintenanceSubmission.environmentVariables.ASKLAKE_MAINTENANCE_SCHEMA_FINGERPRINT,
+    workerRequest.schemaFingerprint,
+  );
 
   const orphanRunId = "maintenance-orphan";
   const orphanSubmissionId = "maintenance-orphan-submission";

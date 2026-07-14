@@ -75,11 +75,14 @@ def configure_environment(root):
         "ASKLAKE_CONTINUOUS_RULE_OUTPUT_SCHEMA": json.dumps(OUTPUT_SCHEMA),
         "ASKLAKE_CONTINUOUS_RULES": json.dumps(RULES),
         "ASKLAKE_CONTINUOUS_SCHEMA_COLUMNS": json.dumps(schema_columns),
+        "ASKLAKE_CONTINUOUS_SPARK_SHUFFLE_PARTITIONS": "3",
         "ASKLAKE_MAINTENANCE_RULE_CONTRACT_VERSION": "1.0",
         "ASKLAKE_MAINTENANCE_RULE_FINGERPRINT": rule_fingerprint,
         "ASKLAKE_MAINTENANCE_RULE_OUTPUT_SCHEMA": json.dumps(OUTPUT_SCHEMA),
         "ASKLAKE_MAINTENANCE_RULES": json.dumps(RULES),
+        "ASKLAKE_MAINTENANCE_JOB_ID": "continuous-rule-runtime",
         "ASKLAKE_MAINTENANCE_SCHEMA_COLUMNS": json.dumps(schema_columns),
+        "ASKLAKE_MAINTENANCE_SCHEMA_FINGERPRINT": "schema-rule-runtime-v1",
         "ASKLAKE_MAINTENANCE_SCHEMA_POLICY": json.dumps({"unknownField": "preserve"}),
         "ASKLAKE_MAINTENANCE_OFFSETS": "[]",
         "ASKLAKE_MAINTENANCE_APPROVE_UNKNOWN_FIELDS": "false",
@@ -103,6 +106,77 @@ def main():
         )
         spark.sparkContext.setLogLevel("ERROR")
         try:
+            spark.conf.set("spark.sql.shuffle.partitions", "32")
+            worker.apply_continuous_spark_settings(spark)
+            assert spark.conf.get("spark.sql.shuffle.partitions") == "3"
+
+            manifest_recovery_root = f"file://{root}/manifest-recovery"
+            for batch_id in range(3):
+                worker.write_batch_manifest(
+                    spark,
+                    manifest_recovery_root,
+                    batch_id,
+                    {
+                        "batchId": batch_id,
+                        "consumedCount": batch_id + 1,
+                        "storedCount": 0,
+                        "quarantinedCount": 0,
+                        "sourceRanges": [{
+                            "topic": "reviews.verify",
+                            "partition": 0,
+                            "startOffset": batch_id,
+                            "endOffset": batch_id + 1,
+                        }],
+                    },
+                )
+            recovered = worker.recover_published_state(
+                spark,
+                manifest_recovery_root,
+                acknowledged_batch=0,
+                batch_limit=1,
+            )
+            assert recovered["backlogCount"] == 2
+            assert [item["batchId"] for item in recovered["batches"]] == [1]
+            assert recovered["counts"] == {
+                "consumedCount": 6,
+                "storedCount": 0,
+                "quarantinedCount": 0,
+            }
+            assert recovered["latest"]["batchId"] == 2
+            assert recovered["partitionCursors"] == [{
+                "topic": "reviews.verify",
+                "partition": 0,
+                "nextOffset": 3,
+            }]
+
+            maintenance_plan = maintenance.iceberg_maintenance_plan(
+                {
+                    "catalog": "iceberg",
+                    "namespace": "asklake",
+                    "table": "continuous_rule_runtime",
+                },
+                {
+                    "rewriteDataFiles": True,
+                    "targetFileSizeMb": 128,
+                    "expireSnapshots": True,
+                    "snapshotRetentionHours": 48,
+                    "retainLastSnapshots": 5,
+                    "removeOrphanFiles": True,
+                    "orphanRetentionHours": 72,
+                },
+                now=datetime(2026, 7, 14, 12, 0, tzinfo=timezone.utc),
+            )
+            assert [item["operation"] for item in maintenance_plan] == [
+                "rewrite_data_files", "expire_snapshots", "remove_orphan_files",
+            ]
+            maintenance_sql = "\n".join(item["sql"] for item in maintenance_plan)
+            assert "`asklake`.system.rewrite_data_files" in maintenance_sql
+            assert "table => 'asklake.asklake.continuous_rule_runtime'" in maintenance_sql
+            assert "'target-file-size-bytes', '134217728'" in maintenance_sql
+            assert "TIMESTAMP '2026-07-12 12:00:00'" in maintenance_sql
+            assert "retain_last => 5" in maintenance_sql
+            assert "TIMESTAMP '2026-07-11 12:00:00'" in maintenance_sql
+
             worker.METRICS["ruleMetrics"] = {"qualityWarnCount": 999}
             worker.METRICS["lastRuleResult"] = {"status": "stale"}
             worker.report("starting")
@@ -112,6 +186,57 @@ def main():
             assert report["lastBatchEvidence"] == {}
             worker.METRICS.pop("ruleMetrics", None)
             worker.METRICS.pop("lastRuleResult", None)
+
+            original_publication_limit = worker.PUBLISHED_BATCH_LIMIT
+            worker.PUBLISHED_BATCH_LIMIT = 25
+            worker.PUBLISHED_BATCHES = []
+            worker.PUBLISHED_BACKLOG_COUNT = 0
+            worker.CATALOG_ACK_BATCH_ID = -1
+            worker.LATEST_DURABLE_BATCH_ID = -1
+            for batch_id in range(1_000):
+                worker.remember_published_batch({
+                    "batchId": batch_id,
+                    "manifestPath": f"s3://manifests/batch_id={batch_id}",
+                    "storedCount": 1,
+                })
+            assert len(worker.PUBLISHED_BATCHES) == 25
+            assert [item["batchId"] for item in worker.PUBLISHED_BATCHES] == list(range(25))
+            assert worker.PUBLISHED_BACKLOG_COUNT == 1_000
+            worker.report("running")
+            bounded_report = json.loads((Path(root) / "report.json").read_text(encoding="utf-8"))
+            assert len(bounded_report["publishedBatches"]) == 25
+            assert bounded_report["publicationBacklogCount"] == 1_000
+            assert bounded_report["publicationWindowLimit"] == 25
+            original_recovery_spark = worker.RECOVERY_SPARK
+            original_recovery_root = worker.RECOVERY_ROOT
+            original_load_committed_manifests = worker.load_committed_manifests
+            original_output_committed = worker.output_committed
+            worker.RECOVERY_SPARK = object()
+            worker.RECOVERY_ROOT = "s3a://asklake-output/reviews/_batches"
+            worker.output_committed = lambda *_args, **_kwargs: True
+            worker.load_committed_manifests = lambda _spark, _root, manifest_paths: [
+                    {
+                        "batchId": batch_id,
+                        "manifestPath": f"s3://manifests/batch_id={batch_id}",
+                        "storedCount": 1,
+                    }
+                    for batch_id, _path in manifest_paths
+                ]
+            ack_path = Path(root) / "report.catalog-ack.json"
+            ack_path.write_text(json.dumps({"batchId": 24}), encoding="utf-8")
+            worker.apply_catalog_ack()
+            assert [item["batchId"] for item in worker.PUBLISHED_BATCHES] == list(range(25, 50))
+            assert worker.PUBLISHED_BACKLOG_COUNT == 975
+            worker.RECOVERY_SPARK = original_recovery_spark
+            worker.RECOVERY_ROOT = original_recovery_root
+            worker.load_committed_manifests = original_load_committed_manifests
+            worker.output_committed = original_output_committed
+            ack_path.unlink()
+            worker.PUBLISHED_BATCH_LIMIT = original_publication_limit
+            worker.PUBLISHED_BATCHES = []
+            worker.PUBLISHED_BACKLOG_COUNT = 0
+            worker.CATALOG_ACK_BATCH_ID = -1
+            worker.LATEST_DURABLE_BATCH_ID = -1
 
             configured_rules = worker.RULES
             worker.RULES = []
@@ -198,7 +323,16 @@ def main():
             worker.rule_quarantine_rows(result["quarantine"]).write.mode("overwrite").parquet(
                 f"{maintenance_output}/_quarantine/_batches/batch_id=0"
             )
-            replay = maintenance.replay_quarantine(spark, maintenance_output, "verify")
+            iceberg_target = {
+                "catalog": "iceberg",
+                "namespace": "asklake",
+                "partitionColumns": [],
+                "table": "continuous_rule_runtime",
+                "tableUri": "iceberg://iceberg/asklake/continuous_rule_runtime",
+                "writeMode": "append",
+            }
+            maintenance.read_iceberg_target = lambda _spark, _target: None
+            replay = maintenance.replay_quarantine(spark, maintenance_output, "verify", iceberg_target)
             assert replay["storedCount"] == 0
             assert replay["failedCount"] == 1
             assert replay["ruleRejectedCount"] == 1
@@ -209,15 +343,15 @@ def main():
 
             checkpoint = f"file://{root}/checkpoint"
             output = f"file://{root}/output"
-            worker.ensure_checkpoint_contract(spark, checkpoint, output)
+            worker.ensure_checkpoint_contract(spark, checkpoint, output, iceberg_target)
             assert worker.RUNTIME_FINGERPRINT
-            worker.ensure_checkpoint_contract(spark, checkpoint, output)
+            worker.ensure_checkpoint_contract(spark, checkpoint, output, iceberg_target)
             original_rule_fingerprint = worker.RULE_FINGERPRINT
             original_expected = worker.EXPECTED_RULE_FINGERPRINT
             worker.RULE_FINGERPRINT = "changed-rule-fingerprint"
             worker.EXPECTED_RULE_FINGERPRINT = ""
             try:
-                worker.ensure_checkpoint_contract(spark, checkpoint, output)
+                worker.ensure_checkpoint_contract(spark, checkpoint, output, iceberg_target)
             except RuntimeError as error:
                 assert "checkpoint contract fingerprint mismatch" in str(error)
             else:

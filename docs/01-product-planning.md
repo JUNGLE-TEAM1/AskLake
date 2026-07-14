@@ -37,6 +37,7 @@ AskLake는 사용자가 데이터셋의 출처, 품질, 권한, 실행 결과, �
 - Dataset context를 선택하는 AI 활용 대화 UI
 - 사용자·그룹·권한·감사 로그 관리 콘솔
 - Source 연결 테스트와 Schema 추론
+- MinIO/S3에서 같은 형식의 파일 조각이 모인 하나의 prefix를 데이터셋으로 선택하고, 대표 파일 Preview와 전체 파일 수·용량·스키마 호환성을 확인한 뒤 전체 prefix를 실행 입력으로 사용
 - 이름 있는 필드가 없는 MinIO/S3 TXT 소스의 조건부 레코드 구조화: 한 줄을 하나의 레코드로 보고 연속 공백(`\\s+`)으로 분리한 뒤 컬럼명·타입 초안을 Schema 단계에 전달
 - 새 수집/처리 Job 생성
 - 작업 명령 UI: 실행, 재실행, 일시정지, 취소
@@ -54,6 +55,7 @@ AskLake는 사용자가 데이터셋의 출처, 품질, 권한, 실행 결과, �
 - 완료된 Trino Query Run의 결과 화면은 CSV 다운로드와 반복 SQL Job 생성만 제공한다. 1회성 Iceberg CTAS materialization API는 별도 운영 경로로 유지하며 이 화면에서 노출하지 않는다.
 - 반복 Trino SQL Job은 결과 page를 복사하지 않고 SQL recipe, 실행 actor, 스케줄, target metadata를 저장한다. 수동/예약 Run마다 전체 SQL을 다시 실행해 같은 논리 Dataset을 검증된 새 Iceberg table version으로 갱신한다.
 - Dashboard 목록/빌더/런타임은 FastAPI API를 우선 사용하고, 이전 backend 호환을 위해 404 local/mock fallback을 유지
+- Kafka Continuous 데이터셋을 연결한 published Dashboard는 PostgreSQL의 데이터셋 리비전을 데이터셋별 권장 주기로 확인하고, 새 리비전이 있을 때만 서버가 계산한 위젯 결과를 자동 교체한다. 원본 event는 기존대로 S3/MinIO에 두며 SSE/WebSocket, Redis cache, SQL 결과 자동 재실행은 이 범위에 포함하지 않는다.
 - 감사 로그와 toast feedback
 
 ## 5) Backend 확장 범위
@@ -70,6 +72,7 @@ FastAPI live backend에서 현재 우선 구현하는 범위:
 | SQL run | read-only SQL의 Trino 실제 실행, 상태 추적, private result page storage 기반 cursor 결과 조회 | Medium | `docs/trino-query-run-contract.md`, `docs/trino-query-result-storage-contract.md` |
 | Query AI 생성 | 선택 테이블 context와 자연어 요청으로 read-only SQL 초안을 생성 | Medium | `docs/api-contract.md` |
 | SQL derived dataset | 완료된 SQL run을 1회성 Iceberg Dataset 또는 반복 full-refresh Trino SQL Job으로 연결 | Medium | `docs/api-contract.md` |
+| Kafka Dashboard 자동 갱신 | S3+Catalog 성공 리비전, PostgreSQL 위젯 결과, published 화면 adaptive polling을 연결 | High | `docs/kafka-postgresql-dashboard-sync.md` |
 | Local session auth | 로그인, 회원가입, session 확인, 로그아웃과 현재 사용자 조회 | High | `docs/api-contract.md` |
 | Phase 0 admin | 사용자·그룹·permission grant·governance control·감사 로그 조회/관리 | Medium | `docs/api-contract.md` |
 
@@ -89,6 +92,8 @@ Create flow의 Permission 단계는 실제 Job 접근 권한을 설정한다. �
 
 `createdBy`, `owner`, profile/avatar 같은 값은 표시·감사 문맥의 identity metadata로 분리한다. 담당자(owner)는 Job에 대한 전체 권한을 자동으로 가지며 별도 grant로 저장하거나 화면에서 편집하지 않는다. 실제 접근 제어는 `ActorContext`, resource별 `permissionGrants`, backend permission check로 다룬다. 현재 기준은 allow-only 모델이며 `admin`, owner fallback, user/group/role/public grant 순으로 허용 여부를 계산한다. 지원 action은 `view`, `query`, `run`, `manage`, `delete`, `share`이고, `query`, `run`, `manage`, `delete`, `share`를 부여하면 기본 조회가 가능하도록 `view`도 함께 정규화한다. 이전 `permissionRoles` 데이터는 최초 접근 시 `legacy_permission_roles` source의 table grant로 한 번만 이관한다.
 
+Job 생성·수정 시 화면이 관리하는 grant는 `permission_grants` table의 `source=permission_ui` 행으로 저장한다. 관리 콘솔의 `admin`, `admin_seed` source grant는 생성 화면 수정으로 덮어쓰지 않는다. 현재 제한은 그룹 후보가 고정 demo group 정의를 사용하고 deny·조건부 정책이 없다는 점이다.
+
 ## 6) 핵심 사용자 흐름
 
 ### Flow 0. 랜딩과 session login
@@ -100,16 +105,20 @@ Create flow의 Permission 단계는 실제 Job 접근 권한을 설정한다. �
 
 ### Flow A. 수집/처리 생성
 
-1. 사용자는 source 연결을 검증한 뒤 탐색 목록에서 파일, 테이블 또는 컬렉션을 명시적으로 선택하고 해당 대상의 제한 샘플을 확인한다. 연결 검증만으로 임의 대상을 자동 선택하지 않는다.
-2. 소스에 이름 있는 필드가 있으면 바로 Schema 단계로 이동한다. MinIO/S3 TXT처럼 필드명이 없는 원시 레코드이면 조건부 `레코드 구조화` 단계에서 연속 공백(`\\s+`) 분리, 헤더 여부, 컬럼명과 타입 초안을 확정한다.
-3. 사용자는 schema, rule, schedule, permission, target을 설정한다.
-4. 시스템은 레코드 구조화 설정을 포함한 draft를 검증하고 `POST /api/etl/jobs` request로 만든다.
-5. 성공 시 Job이 목록에 추가되고 Catalog target은 pending 상태로 안내된다.
-6. 사용자가 PostgreSQL Snapshot Job을 실행하거나 재실행하면 스키마 Preview 행 수와 무관하게 선택한 기본 테이블 전체를 일관된 DB snapshot으로 읽는다.
-7. 일반 Snapshot Job의 성공 결과는 새 물리 경로에 전체 데이터로 저장하고, Catalog의 현재 Dataset은 최신 성공 snapshot만 가리킨다. 이전 성공 snapshot은 실행 이력으로 보존하지만 현재 행 수와 기본 SQL 조회에는 합산하지 않는다.
-8. 사용자가 TXT Job을 실행하면 Spark는 Preview와 같은 구조화 규칙을 전체 TXT 입력에 다시 적용한다.
-9. 모든 비어 있지 않은 행의 필드 개수가 확정된 컬럼 수와 같을 때만 target을 쓰고 Catalog dataset을 생성 또는 갱신한다. 불일치가 있으면 Run을 실패시키고 Catalog materialization을 만들지 않는다.
-10. 실패하면 toast와 audit log에 실패 기록을 남기고 optimistic 상태를 되돌린다.
+1. 사용자는 source 연결을 검증한 뒤 탐색 목록에서 단일 파일, 같은 형식의 파일 조각이 모인 prefix, 테이블 또는 컬렉션을 명시적으로 선택하고 해당 대상의 제한 샘플을 확인한다. 폴더 펼치기는 탐색 동작이고 prefix 데이터셋 선택은 별도 action이다. 연결 검증만으로 임의 대상을 자동 선택하지 않는다.
+2. Prefix 데이터셋은 임의로 흩어진 파일 선택이 아니라 한 prefix 아래 같은 형식과 호환 스키마를 가진 파일 집합이다. `_SUCCESS`, `manifest.json`, 숨김 파일과 선택 형식이 아닌 객체는 입력에서 제외하며, Preview는 결정적인 대표 파일과 전체 데이터 파일 수·용량을 표시한다.
+3. 소스에 이름 있는 필드가 있으면 바로 Schema 단계로 이동한다. MinIO/S3 TXT처럼 필드명이 없는 원시 레코드이면 조건부 `레코드 구조화` 단계에서 연속 공백(`\\s+`) 분리, 헤더 여부, 컬럼명과 타입 초안을 확정한다.
+4. 사용자는 schema, rule, schedule, permission, target을 설정한다.
+   - Schema의 `필수값`과 `누락 시 기본값`은 한 흐름으로 동작한다. 누락된 값은 기본값으로 먼저 채우고, 그 뒤에도 비어 있는 필수값은 실행을 실패시킨다.
+   - 필수 필드에는 중복되는 `누락값 검사`를 별도로 노출하지 않는다. 선택 품질 검사의 실패 처리는 기록 후 계속, 실행 실패, 행 제외, 격리, 문제 값을 NULL로 변경 중 실제 실행 action만 설정한다.
+5. 시스템은 레코드 구조화 설정을 포함한 draft를 검증하고 `POST /api/etl/jobs` request로 만든다. Prefix Job에는 개별 object 배열이 아니라 canonical bucket/prefix와 검증 metadata를 저장한다.
+6. 성공 시 Job이 목록에 추가되고 Catalog target은 pending 상태로 안내된다.
+7. 사용자가 PostgreSQL Snapshot Job을 실행하거나 재실행하면 스키마 Preview 행 수와 무관하게 선택한 기본 테이블 전체를 일관된 DB snapshot으로 읽는다.
+8. 일반 Snapshot Job의 성공 결과는 새 물리 경로에 전체 데이터로 저장하고, Catalog의 현재 Dataset은 최신 성공 snapshot만 가리킨다. 이전 성공 snapshot은 실행 이력으로 보존하지만 현재 행 수와 기본 SQL 조회에는 합산하지 않는다.
+9. 사용자가 Prefix Job을 실행하면 Spark는 같은 제외 규칙으로 prefix의 모든 데이터 파일을 읽고 실제 입력 파일 수·전체 입력 바이트·전체 입력 행 수를 Run manifest에 기록한다.
+10. 사용자가 TXT Job을 실행하면 Spark는 Preview와 같은 구조화 규칙을 전체 TXT 입력에 다시 적용한다.
+11. 모든 비어 있지 않은 행의 필드 개수가 확정된 컬럼 수와 같을 때만 target을 쓰고 Catalog dataset을 생성 또는 갱신한다. 불일치가 있으면 Run을 실패시키고 Catalog materialization을 만들지 않는다.
+12. 실패하면 toast와 audit log에 실패 기록을 남기고 optimistic 상태를 되돌린다.
 
 ### Flow B. 카탈로그에서 SQL 분석
 

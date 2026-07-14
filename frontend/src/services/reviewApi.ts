@@ -1,4 +1,4 @@
-import type { DraftPipeline, PermissionGrant, RuleCompilationResult } from "../types";
+import type { CreatePipelineRequest, DraftPipeline, PermissionGrant, RuleCompilationResult } from "../types";
 import { apiClient, apiConfig } from "./apiClient";
 import { toCreatePipelineRequest } from "./draftPipelineContract";
 import { compileRuleContract } from "./ruleContract";
@@ -40,24 +40,46 @@ const PERMISSION_REVIEW_ACTION_LABELS = {
   view: "조회",
 } as const;
 
-export async function getReviewSnapshot(draft: DraftPipeline): Promise<ReviewSnapshot> {
-  const request = {
+export type ReviewSnapshotRequest = CreatePipelineRequest & {
+  sourceConnectionStatus: DraftPipeline["source"]["connectionStatus"];
+};
+
+const inFlightReviewRequests = new Map<string, Promise<ReviewSnapshot>>();
+
+export function buildReviewSnapshotRequest(draft: DraftPipeline): ReviewSnapshotRequest {
+  return {
     ...toCreatePipelineRequest(draft),
     sourceConnectionStatus: draft.source.connectionStatus,
   };
-
-  if (!apiConfig.useMock) {
-    return apiClient.post<ReviewSnapshot>("/api/etl/review", request);
-  }
-
-  return new Promise((resolve) => {
-    window.setTimeout(() => resolve(buildMockReviewSnapshot(draft)), 120);
-  });
 }
 
-function buildMockReviewSnapshot(draft: DraftPipeline): ReviewSnapshot {
-  const request = toCreatePipelineRequest(draft);
-  const includedColumns = draft.schema.columns.filter((column) => column.included !== false && Boolean(column.targetName.trim()));
+export function getReviewSnapshotRequestKey(request: ReviewSnapshotRequest) {
+  return JSON.stringify(request);
+}
+
+export function getReviewSnapshot(request: ReviewSnapshotRequest): Promise<ReviewSnapshot> {
+  const requestKey = getReviewSnapshotRequestKey(request);
+  const inFlightRequest = inFlightReviewRequests.get(requestKey);
+  if (inFlightRequest) return inFlightRequest;
+
+  const requestPromise = !apiConfig.useMock
+    ? apiClient.post<ReviewSnapshot>("/api/etl/review", request)
+    : new Promise<ReviewSnapshot>((resolve) => {
+      window.setTimeout(() => resolve(buildMockReviewSnapshot(request)), 120);
+    });
+
+  let trackedRequest: Promise<ReviewSnapshot>;
+  trackedRequest = requestPromise.finally(() => {
+    if (inFlightReviewRequests.get(requestKey) === trackedRequest) {
+      inFlightReviewRequests.delete(requestKey);
+    }
+  });
+  inFlightReviewRequests.set(requestKey, trackedRequest);
+  return trackedRequest;
+}
+
+function buildMockReviewSnapshot(request: ReviewSnapshotRequest): ReviewSnapshot {
+  const includedColumns = request.schemaColumns.filter((column) => column.included !== false && Boolean(column.targetName.trim()));
   const ruleCompilation = compileRuleContract({
     contractVersion: request.ruleContractVersion,
     executionMode: request.executionMode,
@@ -69,7 +91,7 @@ function buildMockReviewSnapshot(draft: DraftPipeline): ReviewSnapshot {
     transformSteps: request.transformSteps,
   });
   const outputColumns = ruleCompilation.outputSchema;
-  const sourceReady = draft.source.connectionStatus === "success";
+  const sourceReady = request.sourceConnectionStatus === "success";
   const schemaReady = includedColumns.length > 0;
   const processingReady = ruleCompilation.status === "pass";
   const targetReady = Boolean(request.targetDataset.trim() && String(request.targetLayer).trim() && request.targetFormat.trim());

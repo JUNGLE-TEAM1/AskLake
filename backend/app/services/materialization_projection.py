@@ -1,4 +1,5 @@
 from collections.abc import Mapping
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 
@@ -46,6 +47,60 @@ def aggregate_materialization_runs(runs: list[dict[str, Any]]) -> dict[str, Any]
         "rowCount": sum(parse_count_value(run.get("rowCount")) for run in active_runs),
         "storageSizeBytes": sum(parse_count_value(run.get("storageSizeBytes")) for run in active_runs),
     }
+
+
+def upsert_materialization_run(
+    previous_runs: Any,
+    next_run: dict[str, Any],
+) -> list[dict[str, Any]]:
+    runs = [dict(run) for run in previous_runs if isinstance(run, dict)] if isinstance(previous_runs, list) else []
+    run_id = str(next_run.get("runId") or "")
+    if not run_id:
+        return sorted(runs, key=materialization_run_sort_key, reverse=True)
+
+    kafka_snapshot_id = nested_identity(next_run, "kafkaSnapshot", "snapshotId")
+    iceberg_snapshot_id = str(next_run.get("icebergSnapshotId") or "")
+    deduplicated = [
+        run
+        for run in runs
+        if str(run.get("runId") or "") != run_id
+        and (not kafka_snapshot_id or nested_identity(run, "kafkaSnapshot", "snapshotId") != kafka_snapshot_id)
+        and (not iceberg_snapshot_id or str(run.get("icebergSnapshotId") or "") != iceberg_snapshot_id)
+    ]
+    return sorted(
+        [dict(next_run), *deduplicated],
+        key=materialization_run_sort_key,
+        reverse=True,
+    )
+
+
+def materialization_run_sort_key(run: Mapping[str, Any]) -> tuple[datetime, str, str]:
+    timestamp = parse_materialization_timestamp(
+        run.get("icebergCommittedAt")
+        or run.get("iceberg_committed_at")
+        or run.get("createdAt")
+        or run.get("created_at")
+    )
+    snapshot_id = str(run.get("icebergSnapshotId") or run.get("iceberg_snapshot_id") or "")
+    return timestamp, snapshot_id, str(run.get("runId") or run.get("run_id") or "")
+
+
+def parse_materialization_timestamp(value: Any) -> datetime:
+    text = str(value or "").strip()
+    if not text:
+        return datetime.min.replace(tzinfo=UTC)
+    if text.upper().endswith(" UTC"):
+        text = f"{text[:-4]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return datetime.min.replace(tzinfo=UTC)
+    return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
+
+
+def nested_identity(run: Mapping[str, Any], object_key: str, value_key: str) -> str:
+    nested = run.get(object_key)
+    return str(nested.get(value_key) or "") if isinstance(nested, Mapping) else ""
 
 
 def parse_count_value(value: Any) -> int:

@@ -6,6 +6,7 @@ import {
   resolveObjectStorageConfig,
   s3ClientOptions,
 } from "../src/objectStorageConfig.mjs";
+import { listS3Buckets } from "../src/s3.service.mjs";
 import { normalizeSparkOutputTargetPath } from "../src/sparkRunner.mjs";
 
 const managedNames = [
@@ -23,6 +24,9 @@ const managedNames = [
   "MINIO_REGION",
   "MINIO_SECRET_KEY",
   "S3_ENDPOINT",
+  "S3_ALLOWED_BUCKETS",
+  "AWS_S3_ALLOWED_BUCKETS",
+  "ASKLAKE_S3_ALLOWED_BUCKETS",
   "S3_FORCE_PATH_STYLE",
   "S3_REGION",
 ];
@@ -46,6 +50,19 @@ try {
     secretAccessKey: "local-secret",
   });
   assert.ok(objectStorageDockerEnv().some(([name, value]) => name === "MINIO_ENDPOINT" && value === "http://m3-minio:9000"));
+  const loopbackFields = [
+    ["Storage Provider", "MinIO"],
+    ["Endpoint URL", "http://127.0.0.1:9000"],
+  ];
+  assert.equal(resolveObjectStorageConfig(loopbackFields).endpoint, "http://127.0.0.1:9000");
+  assert.equal(resolveObjectStorageConfig(loopbackFields, { docker: true }).endpoint, "http://m3-minio:9000");
+  assert.equal(
+    resolveObjectStorageConfig([
+      ["Storage Provider", "MinIO"],
+      ["Endpoint URL", "http://minio.internal:9000"],
+    ], { docker: true }).endpoint,
+    "http://minio.internal:9000",
+  );
 
   for (const name of managedNames) delete process.env[name];
   process.env.ASKLAKE_OBJECT_STORAGE_PROVIDER = "aws";
@@ -61,6 +78,10 @@ try {
   assert.equal("endpoint" in awsOptions, false);
   assert.equal(awsDockerEnv.some(([name]) => name.startsWith("MINIO_")), false);
   assert.equal(awsDockerEnv.some(([name]) => name === "AWS_ACCESS_KEY_ID" || name === "AWS_SECRET_ACCESS_KEY"), false);
+  assert.throws(
+    () => listS3Buckets(),
+    (error) => error?.code === "SERVICE_UNAVAILABLE" && error?.status === 503,
+  );
 
   const selectedObject = "e2e/smoke/products.csv";
   const csvSample = "product_id,name\np-100,Desk Lamp\np-101,Monitor Stand\n";
@@ -107,6 +128,11 @@ try {
   );
 
   process.env.ASKLAKE_SPARK_OUTPUT_BUCKET = "asklake-dev-output-123-apne2";
+  process.env.S3_ALLOWED_BUCKETS = "asklake-dev-raw-123-apne2,asklake-dev-output-123-apne2";
+  assert.deepEqual(listS3Buckets().buckets, [
+    "asklake-dev-output-123-apne2",
+    "asklake-dev-raw-123-apne2",
+  ]);
   assert.equal(
     normalizeSparkOutputTargetPath("s3a://asklake-output/products/gold/"),
     "s3a://asklake-dev-output-123-apne2/products/gold",

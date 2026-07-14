@@ -46,6 +46,20 @@
   animation: asklake-ai-widget-shimmer 1.25s ease-in-out infinite;
 }
 
+.asklake-widget-frame.live {
+  border-color: rgba(37, 99, 235, 0.34);
+}
+
+.asklake-widget-live-pulse {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  border: 2px solid rgba(37, 99, 235, 0.56);
+  border-radius: inherit;
+  animation: asklake-live-widget-pulse 900ms ease-out both;
+}
+
 .asklake-ai-working-overlay {
   position: absolute;
   inset: 0;
@@ -94,6 +108,18 @@
   }
 }
 
+@keyframes asklake-live-widget-pulse {
+  0% {
+    box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.36), 0 0 0 0 rgba(37, 99, 235, 0.24);
+    opacity: 0.95;
+  }
+
+  100% {
+    box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0), 0 0 0 8px rgba(37, 99, 235, 0);
+    opacity: 0;
+  }
+}
+
 .asklake-widget-frame header {
   display: flex;
   min-height: 58px;
@@ -104,7 +130,7 @@
   padding: 12px 14px;
 }
 
-.asklake-widget-frame header div {
+.asklake-widget-frame header .asklake-widget-heading {
   display: grid;
   min-width: 0;
   gap: 3px;
@@ -123,6 +149,49 @@
   color: #0f172a;
   font-size: 15px;
   line-height: 1.25;
+}
+
+.asklake-widget-frame .asklake-widget-header-actions {
+  display: flex;
+  min-width: 0;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.asklake-widget-frame header .asklake-widget-live-status {
+  display: inline-flex;
+  min-height: 26px;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+  padding: 4px 9px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 11px;
+  font-weight: 850;
+  letter-spacing: 0;
+  line-height: 1;
+  text-transform: none;
+  white-space: nowrap;
+}
+
+.asklake-widget-frame header .asklake-widget-live-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .asklake-widget-live-pulse {
+    animation: none;
+    opacity: 0;
+  }
 }
 
 .asklake-widget-delete-button {

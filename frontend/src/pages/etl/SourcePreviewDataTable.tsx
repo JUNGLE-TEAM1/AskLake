@@ -26,7 +26,7 @@ export function SourcePreviewDataTable({ columnLabels, rows }: SourcePreviewData
       cell: (info) => <span className="source-preview-cell" title={String(info.getValue() ?? "-")}>{String(info.getValue() ?? "-")}</span>,
       header: label,
       id: `source-preview-column-${index}`,
-      meta: { headerClassName: "bg-blue-50/70 text-slate-600", widthClassName: "min-w-36" },
+      meta: { headerClassName: "bg-blue-50 text-slate-600", widthClassName: "min-w-36" },
     })),
     [columnLabels],
   );

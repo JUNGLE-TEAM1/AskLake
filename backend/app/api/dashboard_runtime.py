@@ -5,6 +5,7 @@ from app.core.auth_context import ActorContext, get_actor_context
 from app.core.database import get_db
 from app.repositories.catalog_repository import CatalogRepository
 from app.repositories.dashboard_runtime_repository import DashboardRuntimeRepository
+from app.repositories.dashboard_live_repository import DashboardLiveRepository
 from app.schemas.dashboard import (
     CreateDraftPageRequest,
     CreateDraftWidgetRequest,
@@ -31,7 +32,7 @@ def get_published_dashboard_runtime(
     db: Session = Depends(get_db),
 ) -> DashboardRuntimeResponse:
     repository = DashboardRuntimeRepository(db)
-    service = DashboardRuntimeService(repository, CatalogRepository(db))
+    service = DashboardRuntimeService(repository, CatalogRepository(db), DashboardLiveRepository(db, ensure_schema=False))
     return service.get_published_runtime(dashboard_id, actor)
 
 

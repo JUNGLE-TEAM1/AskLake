@@ -1,5 +1,6 @@
 import { apiClient, apiConfig } from "./apiClient";
 import type { DraftPipelinePatch, RecordParsingDraft, RecordParsingPreviewResponse, SchemaColumnDraft, SourceDraft } from "../types";
+import { sanitizeSourceConnectorFields, type SourceFieldRows } from "../utils/sourceConnectorFields";
 
 const directBackendBaseUrl = String(
   import.meta.env.VITE_BACKEND_DIRECT_URL
@@ -7,11 +8,23 @@ const directBackendBaseUrl = String(
     || "http://127.0.0.1:8080",
 ).replace(/\/$/, "");
 
-type SourceFieldRows = Array<[string, string]>;
+export type SourceDatasetSummary = {
+  selectionKind: "prefix";
+  bucket: string;
+  prefix: string;
+  format: string;
+  fileCount: number;
+  totalBytes: number;
+  representativeObject: string;
+  schemaFingerprint?: string;
+  schemaCompatible: boolean;
+  excludedFileCount: number;
+};
 
 export type SourceConnectorAnalysis = {
   actionPath: string;
   assets: Array<[string, string, string]>;
+  datasetSummary?: SourceDatasetSummary;
   draftPatch: DraftPipelinePatch;
   logs: string[];
   message: string;
@@ -40,11 +53,12 @@ export async function testSourceConnector(sourceType: string, fields: SourceFiel
   if (normalizedSourceType === "SQL Result") {
     return buildSqlResultConnectorAnalysis(fields);
   }
-  return withRecordParsingSourceMetadata(normalizeConnectorAnalysis(
-    await postSourceConnector(normalizedSourceType, fields),
+  const requestFields = sanitizeSourceConnectorFields(normalizedSourceType, fields);
+  return withUnselectedTargetSchema(withRecordParsingSourceMetadata(normalizeConnectorAnalysis(
+    await postSourceConnector(normalizedSourceType, requestFields),
     normalizedSourceType,
-    fields,
-  ), fields);
+    requestFields,
+  ), requestFields));
 }
 
 export async function previewRecordParsing(rawLines: string[], recordParsing: RecordParsingDraft): Promise<RecordParsingPreviewResponse> {
@@ -58,7 +72,8 @@ export async function getSourceConnectorDefaults(): Promise<SourceConnectorDefau
 }
 
 export async function listSourceAssets(sourceType: string, fields: SourceFieldRows, prefix = ""): Promise<SourceAssetsResponse> {
-  return postSourceAssets(normalizeSourceType(sourceType), fields, prefix);
+  const normalizedSourceType = normalizeSourceType(sourceType);
+  return postSourceAssets(normalizedSourceType, sanitizeSourceConnectorFields(normalizedSourceType, fields), prefix);
 }
 
 async function postSourceConnector(sourceType: string, fields: SourceFieldRows): Promise<BackendSourceConnectorResponse> {
@@ -87,9 +102,28 @@ function resolveMockConnectorAnalysis(sourceType: string, fields: SourceFieldRow
     ["r-1002", "p-101", "4", "상품 상태가 좋아요", "2026-07-10T09:05:00Z"],
   ];
 
+  const selectedPrefix = fieldValue(fields, "__Selection Kind").toLowerCase() === "prefix"
+    ? normalizePrefix(fieldValue(fields, "Path / Prefix"))
+    : "";
+  const datasetSummary: SourceDatasetSummary | undefined = selectedPrefix
+    ? {
+        bucket: fieldValue(fields, "Bucket / Stage Name") || "mock-bucket",
+        excludedFileCount: 0,
+        fileCount: 2,
+        format: fieldValue(fields, "File Type") === "auto" ? "JSONL" : fieldValue(fields, "File Type").toUpperCase(),
+        prefix: selectedPrefix,
+        representativeObject: `${selectedPrefix}part-00000.jsonl`,
+        schemaCompatible: true,
+        schemaFingerprint: "review_id:string|product_id:string|rating:integer|review_text:string|updated_at:timestamp",
+        selectionKind: "prefix",
+        totalBytes: 128 * 1024 * 1024,
+      }
+    : undefined;
+
   return {
     actionPath: "/api/etl/sources/test",
     assets: mockSourceAssets(sourceType, ""),
+    datasetSummary,
     draftPatch: {
       source: {
         connectionMessage: "mock 소스 연결 확인이 완료되었습니다.",
@@ -122,10 +156,10 @@ function mockSourceAssets(sourceType: string, prefix: string): Array<[string, st
       ["customer_profiles", prefix.trim() || "asklake_sources", "detected"],
     ];
   }
-  const basePath = prefix.trim() || "sample";
+  const basePath = normalizePrefix(prefix) || "sample/";
   return [
-    [`${basePath}/customer_reviews.parquet`, "Parquet", "준비됨"],
-    [`${basePath}/customer_reviews.csv`, "CSV", "준비됨"],
+    [`${basePath}customer_reviews.parquet`, "Parquet", "준비됨"],
+    [`${basePath}customer_reviews.csv`, "CSV", "준비됨"],
   ];
 }
 
@@ -249,8 +283,11 @@ function isObjectStorageSource(sourceType: string) {
 }
 
 function hasSelectedObject(fields: SourceFieldRows) {
+  const selectionKind = fieldValue(fields, "__Selection Kind").toLowerCase();
+  const selectedPrefix = fieldValue(fields, "Path / Prefix");
   return Boolean(
-    fieldValue(fields, "__Selected Object")
+    (selectionKind === "prefix" && selectedPrefix)
+      || fieldValue(fields, "__Selected Object")
       || fieldValue(fields, "__Sample Object")
       || looksLikeDataFile(fieldValue(fields, "Path / Prefix"))
       || looksLikeDataFile(fieldValue(fields, "Path"))
@@ -263,7 +300,8 @@ function looksLikeDataFile(value: string) {
 }
 
 function withRecordParsingSourceMetadata(analysis: SourceConnectorAnalysis, fields: SourceFieldRows): SourceConnectorAnalysis {
-  const sampleObject = fieldValue(analysis.draftPatch.source?.sourceConfig ?? fields, "__Sample Object")
+  const sampleObject = analysis.datasetSummary?.representativeObject
+    || fieldValue(analysis.draftPatch.source?.sourceConfig ?? fields, "__Sample Object")
     || fieldValue(analysis.draftPatch.source?.sourceConfig ?? fields, "__Selected Object")
     || fieldValue(fields, "Path / Prefix");
   const detectedFormat = /\.(txt|log)$/i.test(sampleObject) ? "TXT" : undefined;
@@ -281,6 +319,25 @@ function withRecordParsingSourceMetadata(analysis: SourceConnectorAnalysis, fiel
           ? analysis.previewRows.map((row) => row[rawValueIndex] ?? "").filter((line) => line.trim())
           : [],
         requiresRecordParsing,
+      },
+    },
+  };
+}
+
+function withUnselectedTargetSchema(analysis: SourceConnectorAnalysis): SourceConnectorAnalysis {
+  const schema = analysis.draftPatch.schema;
+  if (!schema?.columns) return analysis;
+  return {
+    ...analysis,
+    draftPatch: {
+      ...analysis.draftPatch,
+      schema: {
+        ...schema,
+        columns: schema.columns.map((column) => ({
+          ...column,
+          included: false,
+          targetOrder: undefined,
+        })),
       },
     },
   };
@@ -326,6 +383,7 @@ function inferSchemaColumnsFromPreview(columns: string[], rows: string[][]): Sch
     const values = rows.map((row) => row[columnIndex] ?? "");
     return {
       confidence: 85,
+      included: false,
       nullable: values.some((value) => isEmptyValue(value)),
       sourceName: column,
       targetName: normalizeColumnName(column),
@@ -393,4 +451,9 @@ function buildSqlResultConnectorAnalysis(fields: SourceFieldRows): SourceConnect
 
 function fieldValue(fields: SourceFieldRows, label: string) {
   return fields.find(([fieldLabel]) => fieldLabel === label)?.[1]?.trim() ?? "";
+}
+
+function normalizePrefix(value: string) {
+  const normalized = value.trim().replace(/^\/+/, "").replace(/\/+$/, "");
+  return normalized ? `${normalized}/` : "";
 }

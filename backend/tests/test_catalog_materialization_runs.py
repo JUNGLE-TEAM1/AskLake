@@ -337,6 +337,66 @@ class CatalogMaterializationLockingTests(unittest.TestCase):
         self.assertEqual(response.deleted_run_id, "snapshot-old")
         self.assertEqual(response.dataset.rows, "12 rows")
 
+    def test_iceberg_materialization_delete_is_rejected_without_metadata_mutation(self) -> None:
+        runs = [
+            materialization_run(
+                "iceberg-run",
+                created_at="2026-07-14T02:00:00Z",
+                mode="snapshot",
+                row_count=10,
+            ),
+        ]
+        payload = catalog_payload("dataset-iceberg", runs)
+        payload.update({
+            "queryEngineStatus": "available",
+            "queryEngineTable": {
+                "catalog": "iceberg",
+                "schema": "asklake",
+                "table": "dataset_iceberg",
+                "format": "iceberg",
+            },
+            "storageFormat": "iceberg",
+            "storageLocation": "s3://warehouse/asklake/dataset_iceberg",
+        })
+
+        class IcebergRepository:
+            db = object()
+
+            def __init__(self) -> None:
+                self.saved = False
+
+            def get_dataset_payload_for_update(self, _dataset_id: str) -> dict[str, object]:
+                return deepcopy(payload)
+
+            def save_dataset_payload(self, _payload: dict[str, object]) -> dict[str, object]:
+                self.saved = True
+                raise AssertionError("Iceberg metadata must not be deleted")
+
+        repository = IcebergRepository()
+        service = CatalogService(None, repository, None)  # type: ignore[arg-type]
+        actor = ActorContext(name="catalog-owner", role="viewer")
+
+        with (
+            patch(
+                "app.services.catalog_service.dataset_with_persisted_permission_grants",
+                side_effect=lambda _db, dataset: dataset,
+            ),
+            patch("app.services.catalog_service.require_governed_access"),
+        ):
+            with self.assertRaises(ApiError) as raised:
+                service.delete_materialization_run(
+                    "dataset-iceberg",
+                    "iceberg-run",
+                    actor,
+                )
+
+        self.assertEqual(raised.exception.status_code, 422)
+        self.assertEqual(
+            raised.exception.code,
+            "ICEBERG_MATERIALIZATION_DELETE_UNAVAILABLE",
+        )
+        self.assertFalse(repository.saved)
+
     def test_locked_legacy_kafka_delta_still_blocks_active_snapshot_delete(self) -> None:
         kafka_delta = materialization_run(
             "kafka-concurrent",

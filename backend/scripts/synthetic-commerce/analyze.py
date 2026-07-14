@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import sqlite3
 from collections import Counter, defaultdict
@@ -182,61 +183,111 @@ def markdown_table(columns: Sequence[str], rows: Sequence[Sequence[Any]]) -> str
     return "\n".join([header, separator, *body])
 
 
-def load_products(connection: sqlite3.Connection, path: Path) -> int:
-    rows = []
-    with path.open("r", encoding="utf-8", newline="") as handle:
-        for row in csv.DictReader(handle):
-            rows.append(
-                (
+def jsonl_rows(paths: Iterable[Path]) -> Iterable[dict[str, Any]]:
+    for path in paths:
+        with path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                if line.strip():
+                    yield json.loads(line)
+
+
+def insert_batches(
+    connection: sqlite3.Connection,
+    statement: str,
+    rows: Iterable[tuple[Any, ...]],
+    batch_size: int = 10_000,
+) -> int:
+    batch: list[tuple[Any, ...]] = []
+    count = 0
+    for row in rows:
+        batch.append(row)
+        if len(batch) >= batch_size:
+            connection.executemany(statement, batch)
+            count += len(batch)
+            batch = []
+    if batch:
+        connection.executemany(statement, batch)
+        count += len(batch)
+    return count
+
+
+def load_products_csv(connection: sqlite3.Connection, path: Path) -> int:
+    def rows() -> Iterable[tuple[Any, ...]]:
+        with path.open("r", encoding="utf-8", newline="") as handle:
+            for row in csv.DictReader(handle):
+                yield (
                     row["product_id"], row["category"], row["leaf_category"], row["title"],
                     row["store"], float(row["price"]), float(row["average_rating"]),
                     int(row["rating_count"]),
                 )
-            )
-    connection.executemany("INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?, ?)", rows)
-    return len(rows)
+
+    return insert_batches(connection, "INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?, ?)", rows())
 
 
-def load_users(connection: sqlite3.Connection, path: Path) -> int:
-    rows = []
-    with path.open("r", encoding="utf-8", newline="") as handle:
-        for row in csv.DictReader(handle):
-            rows.append(
-                (
+def load_users_csv(connection: sqlite3.Connection, path: Path) -> int:
+    def rows() -> Iterable[tuple[Any, ...]]:
+        with path.open("r", encoding="utf-8", newline="") as handle:
+            for row in csv.DictReader(handle):
+                yield (
                     row["user_id"], int(row["age"]), row["gender"], row["region"],
                     row["signup_at"], row["acquisition_channel"], row["membership_tier"],
                     row["primary_device"],
                 )
-            )
-    connection.executemany("INSERT INTO users VALUES (?, ?, ?, ?, ?, ?, ?, ?)", rows)
-    return len(rows)
+
+    return insert_batches(connection, "INSERT INTO users VALUES (?, ?, ?, ?, ?, ?, ?, ?)", rows())
 
 
-def event_batches(path: Path, batch_size: int = 10_000) -> Iterable[list[tuple[Any, ...]]]:
+def load_products_jsonl(connection: sqlite3.Connection, paths: Iterable[Path]) -> int:
+    rows = (
+        (
+            row["product_id"], row["category"], row["leaf_category"], row["title"],
+            row["store"], float(row["price"]), float(row["average_rating"]),
+            int(row["rating_count"]),
+        )
+        for row in jsonl_rows(paths)
+    )
+    return insert_batches(connection, "INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?, ?)", rows)
+
+
+def load_users_jsonl(connection: sqlite3.Connection, paths: Iterable[Path]) -> int:
+    rows = (
+        (
+            row["user_id"], int(row["age"]), row["gender"], row["region"],
+            row["signup_at"], row["acquisition_channel"], row["membership_tier"],
+            row["primary_device"],
+        )
+        for row in jsonl_rows(paths)
+    )
+    return insert_batches(connection, "INSERT INTO users VALUES (?, ?, ?, ?, ?, ?, ?, ?)", rows)
+
+
+def event_batches(paths: Iterable[Path], batch_size: int = 10_000) -> Iterable[list[tuple[Any, ...]]]:
     batch: list[tuple[Any, ...]] = []
-    with path.open("r", encoding="utf-8") as handle:
-        for line in handle:
-            row = json.loads(line)
-            batch.append(
-                (
-                    row["event_id"], row["user_id"], row["session_id"], row["event_time"],
-                    row["event_type"], row["product_id"], row["page_url"], row["device_type"],
-                    row["referrer"], row.get("properties", {}).get("position"),
-                )
+    for row in jsonl_rows(paths):
+        batch.append(
+            (
+                row["event_id"], row["user_id"], row["session_id"], row["event_time"],
+                row["event_type"], row["product_id"], row["page_url"], row["device_type"],
+                row["referrer"], row.get("properties", {}).get("position"),
             )
-            if len(batch) >= batch_size:
-                yield batch
-                batch = []
+        )
+        if len(batch) >= batch_size:
+            yield batch
+            batch = []
     if batch:
         yield batch
 
 
-def load_events(connection: sqlite3.Connection, path: Path) -> int:
+def load_events(connection: sqlite3.Connection, paths: Iterable[Path]) -> int:
     count = 0
-    for batch in event_batches(path):
+    for batch in event_batches(paths):
         connection.executemany("INSERT INTO click_events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", batch)
         count += len(batch)
     return count
+
+
+def part_files(data_dir: Path, dataset: str) -> list[Path]:
+    return sorted((data_dir / dataset).glob("part-*.jsonl"))
 
 
 def build_database(data_dir: Path) -> tuple[sqlite3.Connection, dict[str, int]]:
@@ -246,11 +297,19 @@ def build_database(data_dir: Path) -> tuple[sqlite3.Connection, dict[str, int]]:
     connection = sqlite3.connect(database_path)
     connection.execute("PRAGMA foreign_keys = ON")
     connection.executescript(SCHEMA_SQL)
-    counts = {
-        "products": load_products(connection, data_dir / "products.csv"),
-        "users": load_users(connection, data_dir / "users.csv"),
-        "events": load_events(connection, data_dir / "click_events.jsonl"),
-    }
+    if (data_dir / "meta").is_dir():
+        counts = {
+            "products": load_products_jsonl(connection, part_files(data_dir, "meta")),
+            "users": load_users_jsonl(connection, part_files(data_dir, "users")),
+            "events": load_events(connection, part_files(data_dir, "click_events")),
+        }
+    else:
+        # Legacy fixture compatibility for the original three-file layout.
+        counts = {
+            "products": load_products_csv(connection, data_dir / "products.csv"),
+            "users": load_users_csv(connection, data_dir / "users.csv"),
+            "events": load_events(connection, [data_dir / "click_events.jsonl"]),
+        }
     connection.executescript(
         """
         CREATE INDEX idx_events_user ON click_events(user_id);
@@ -279,7 +338,10 @@ def ratio(numerator: float, denominator: float) -> float:
     return numerator / denominator if denominator else 0.0
 
 
-def validate_integrity(connection: sqlite3.Connection) -> list[dict[str, Any]]:
+def validate_integrity(
+    connection: sqlite3.Connection,
+    window: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
     checks = [
         {
             "name": "orphan user references",
@@ -341,8 +403,64 @@ def validate_integrity(connection: sqlite3.Connection) -> list[dict[str, Any]]:
             "expected": 0,
         },
     ]
+    if window:
+        checks.append(
+            {
+                "name": "events outside generation window",
+                "value": scalar(
+                    connection,
+                    """
+                    SELECT COUNT(*) FROM click_events
+                    WHERE event_time < ? OR event_time >= ?
+                    """,
+                    (window["start"], window["end_exclusive"]),
+                ),
+                "expected": 0,
+            }
+        )
     for check in checks:
         check["passed"] = check["value"] == check["expected"]
+    return checks
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def validate_manifest_files(data_dir: Path, manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    """Validate v2 file size, row count, and checksum evidence."""
+    if manifest.get("generator_version") != 2:
+        return []
+    checks: list[dict[str, Any]] = []
+    for dataset in manifest.get("datasets", {}).values():
+        for expected in dataset.get("files", []):
+            path = data_dir / expected["path"]
+            exists = path.is_file()
+            actual_bytes = path.stat().st_size if exists else None
+            actual_rows = 0
+            actual_sha256 = None
+            if exists:
+                with path.open("rb") as handle:
+                    actual_rows = sum(1 for _ in handle)
+                actual_sha256 = file_sha256(path)
+            passed = (
+                exists
+                and actual_bytes == expected["bytes"]
+                and actual_rows == expected["rows"]
+                and actual_sha256 == expected["sha256"]
+            )
+            checks.append(
+                {
+                    "name": f"manifest evidence: {expected['path']}",
+                    "value": "match" if passed else "mismatch",
+                    "expected": "match",
+                    "passed": passed,
+                }
+            )
     return checks
 
 
@@ -483,14 +601,32 @@ def write_report(
 def main() -> None:
     args = parse_args()
     data_dir = args.data_dir.resolve()
-    required = ("products.csv", "users.csv", "click_events.jsonl", "manifest.json")
-    missing = [name for name in required if not (data_dir / name).is_file()]
+    manifest_path = data_dir / "manifest.json"
+    if (data_dir / "meta").is_dir():
+        required = ("meta", "users", "click_events", "manifest.json")
+        missing = [
+            name
+            for name in required
+            if not ((data_dir / name).is_dir() if name != "manifest.json" else manifest_path.is_file())
+        ]
+        for dataset in ("meta", "users", "click_events"):
+            if (data_dir / dataset).is_dir() and not part_files(data_dir, dataset):
+                missing.append(f"{dataset}/part-*.jsonl")
+    else:
+        required = ("products.csv", "users.csv", "click_events.jsonl", "manifest.json")
+        missing = [name for name in required if not (data_dir / name).is_file()]
     if missing:
         raise SystemExit(f"missing generated files: {', '.join(missing)}")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 
     connection, counts = build_database(data_dir)
     try:
-        integrity = validate_integrity(connection)
+        # V1 fixtures predate the strict end-exclusive clamp and contain two
+        # events just past the window, so strict time-window validation starts at v2.
+        strict_window = manifest.get("window") if manifest.get("generator_version") == 2 else None
+        integrity = validate_integrity(connection, strict_window)
+        manifest_checks = validate_manifest_files(data_dir, manifest)
+        integrity.extend(manifest_checks)
         patterns = evaluate_patterns(connection)
         write_report(data_dir, connection, counts, integrity, patterns)
     finally:
@@ -499,6 +635,7 @@ def main() -> None:
     result = {
         "counts": counts,
         "integrity": integrity,
+        "manifest_files_checked": len(manifest_checks),
         "patterns": patterns,
         "all_integrity_passed": all(item["passed"] for item in integrity),
         "all_planted_patterns_passed": all(item["passed"] for item in patterns),

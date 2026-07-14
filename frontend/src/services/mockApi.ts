@@ -73,7 +73,25 @@ let mockJobs = etlJobs.map((job) => ({ ...job }));
 
 function normalizeJob(job: JobRowData): JobRowData {
   const status = normalizeJobStatus(job.status);
-  return { ...job, status: status === "failed" || status === "canceled" || status === "paused" ? "scheduled" : status };
+  return { ...job, status };
+}
+
+export async function updatePipelineDraft(jobId: string, draft: DraftPipeline): Promise<JobRowData> {
+  const existing = mockJobs.find((job) => job.id === jobId);
+  if (!existing) throw new Error(`Job not found: ${jobId}`);
+  const updated = normalizeJob({
+    ...existing,
+    name: `${draft.target.datasetName.trim() || existing.target}_pipeline`,
+    owner: draft.permission.owner,
+    schedule: draft.schedule.label,
+    scheduleSummary: draft.schedule.summary,
+    target: draft.target.datasetName,
+    targetFormat: draft.target.format,
+    targetLayer: draft.target.layer,
+    updatedAt: new Date().toISOString(),
+  });
+  mockJobs = mockJobs.map((job) => job.id === jobId ? updated : job);
+  return resolveMock(updated);
 }
 
 function normalizeDataset(dataset: CatalogDataset): CatalogDataset {
@@ -289,7 +307,7 @@ export async function getDashboards(query: DashboardQuery = {}): Promise<Dashboa
 
 export async function saveDashboardCard(card: SavedDashboardCard): Promise<SavedDashboardCard> {
   if (!apiConfig.useMock) {
-    const result = await apiClient.put<DashboardResponse>(`/api/dashboards/${encodeURIComponent(card.id)}`, card);
+    const result = await apiClient.patch<DashboardResponse>(`/api/dashboards/${encodeURIComponent(card.id)}`, card);
     return result.dashboard;
   }
 
@@ -468,8 +486,8 @@ export async function runJobCommand(job: JobRowData, command: Exclude<JobCommand
           heartbeatAt: new Date().toISOString(),
           status,
         },
-        lastState: status === "running" ? "Continuous Spark streaming" : status === "paused" ? "Continuous worker 일시정지됨" : "Continuous worker 중지됨 · checkpoint 보존",
-        progress: status === "running" ? { label: "Continuous micro-batch 실행 중", value: 66 } : undefined,
+        lastState: status === "running" ? "Spark 실시간 수집 실행 중" : status === "paused" ? "실시간 수집 일시정지됨" : "실시간 수집 중지됨 · 체크포인트 보존",
+        progress: status === "running" ? { label: "실시간 메시지 처리 중", value: 66 } : undefined,
         status: status === "running" ? "running" : status,
       },
     });

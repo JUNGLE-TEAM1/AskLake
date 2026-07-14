@@ -9,6 +9,7 @@ from app.schemas.etl import (
     CreateTrinoSqlJobRequest,
     DeleteJobResponse,
     ContinuousCompactionRequest,
+    ContinuousIcebergMaintenanceRequest,
     ContinuousMaintenanceRun,
     ContinuousQuarantineResponse,
     ContinuousReplayRequest,
@@ -18,8 +19,6 @@ from app.schemas.etl import (
     PermissionOptionsResponse,
     RecordParsingPreviewRequest,
     RecordParsingPreviewResponse,
-    RulePreviewRequest,
-    RulePreviewResponse,
     JobCommandRequest,
     JobCommandResponse,
     JobListResponse,
@@ -83,11 +82,6 @@ def get_source_connector_defaults() -> SourceConnectorDefaults:
     return etl_service.source_connector_defaults()
 
 
-@router.post("/rules/preview", response_model=RulePreviewResponse)
-def preview_rules(request: RulePreviewRequest) -> RulePreviewResponse:
-    return etl_service.preview_rules(request)
-
-
 @router.post("/record-parsing/preview", response_model=RecordParsingPreviewResponse)
 def preview_record_parsing(request: RecordParsingPreviewRequest) -> RecordParsingPreviewResponse:
     return etl_service.preview_record_parsing(request)
@@ -106,9 +100,10 @@ def get_permission_options(
 def review_pipeline(
     request: ReviewPipelineRequest,
     actor: ActorContext = Depends(get_actor_context),
+    db: Session = Depends(get_db),
 ) -> ReviewSnapshot:
     require_permission(actor, "manage", resource_label="source connector")
-    return etl_service.review_pipeline(request)
+    return etl_service.review_pipeline(request, db=db, actor=actor)
 
 
 @router.post("/kafka/reviews/ingest", response_model=KafkaReviewIngestResponse)
@@ -321,6 +316,16 @@ def compact_continuous_target(
     actor: ActorContext = Depends(get_actor_context),
 ) -> ContinuousMaintenanceRun:
     return etl_service.compact_kafka_continuous_target(db, job_id, request, actor)
+
+
+@router.post("/jobs/{job_id}/continuous/iceberg-maintenance", response_model=ContinuousMaintenanceRun)
+def maintain_continuous_iceberg_target(
+    job_id: str,
+    request: ContinuousIcebergMaintenanceRequest,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(get_actor_context),
+) -> ContinuousMaintenanceRun:
+    return etl_service.maintain_kafka_continuous_iceberg_target(db, job_id, request, actor)
 
 
 @router.post("/schedules/run-due", response_model=ScheduledJobRunResponse)

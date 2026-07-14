@@ -48,6 +48,7 @@ type RuntimeChartWidgetProps<Type extends DashboardRuntimeWidget["type"]> = {
 };
 
 const fallbackChartColors = ["#2563eb", "#16a34a", "#f59e0b", "#dc2626", "#7c3aed", "#0891b2"];
+const DASHBOARD_CHART_ANIMATION_MS = 600;
 const aggregationLabels: Record<DashboardWidgetAggregation, string> = {
   avg: "평균",
   count: "개수",
@@ -414,8 +415,12 @@ function buildBaseChartOptions(color: string): ApexOptions {
   return {
     chart: {
       animations: {
+        dynamicAnimation: {
+          enabled: true,
+          speed: DASHBOARD_CHART_ANIMATION_MS,
+        },
         enabled: true,
-        speed: 450,
+        speed: DASHBOARD_CHART_ANIMATION_MS,
       },
       fontFamily: "inherit",
       foreColor: "#64748b",
@@ -529,8 +534,12 @@ function buildCircularChartOptions(color: string): ApexOptions {
   return {
     chart: {
       animations: {
+        dynamicAnimation: {
+          enabled: true,
+          speed: DASHBOARD_CHART_ANIMATION_MS,
+        },
         enabled: true,
-        speed: 450,
+        speed: DASHBOARD_CHART_ANIMATION_MS,
       },
       fontFamily: "inherit",
       foreColor: "#64748b",
@@ -1036,6 +1045,9 @@ function BarChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetProps<"
       type: "bar",
     },
     colors,
+    dataLabels: {
+      enabled: false,
+    },
     plotOptions: {
       bar: {
         borderRadius: 5,

@@ -78,9 +78,17 @@ import { S3PathField } from "../../components/s3/S3PathField";
 import { runTransformQualitySamplePreview } from "../../data/transformQualityPreview";
 import { normalizeRetryPolicy, retryFailureActionLabels, scheduleOverlapPolicyLabels, toCreatePipelineRequest } from "../../services/draftPipelineContract";
 import { getDatasets } from "../../services/mockApi";
-import { getReviewSnapshot, type ReviewSnapshot } from "../../services/reviewApi";
+import { listS3Buckets } from "../../services/s3PathApi";
+import {
+  buildReviewSnapshotRequest,
+  getReviewSnapshot,
+  getReviewSnapshotRequestKey,
+  type ReviewSnapshot,
+  type ReviewSnapshotRequest,
+} from "../../services/reviewApi";
 import { fetchPermissionOptions } from "../../services/permissionApi";
 import { getSourceConnectorDefaults, listSourceAssets, previewRecordParsing, testSourceConnector, type SourceConnectorAnalysis } from "../../services/sourceConnectorService";
+import { sanitizeSourceConnectorFields } from "../../utils/sourceConnectorFields";
 import type { AuditResult, CatalogDataset, DraftPipeline, DraftPipelinePatch, FlowId, PermissionAction, PermissionGrant, PermissionOptionsResponse, RecordParsingDraft, RecordParsingPreviewResponse, ScheduleFlowId, SchemaColumnDraft, SourceDraft, TargetLayer } from "../../types";
 import type { QualityRuleDraft, RetryPolicyDraft, ScheduleDraft, ScheduleOverlapPolicy, TransformStepDraft, WatermarkPolicyDraft, WatermarkWindowMode } from "../../types/etl";
 import type { QualityRuleOption, TransformQualityInvalidRow, TransformQualityPreviewSample, TransformQualitySampleRow, TransformQualityStepPreview, TransformQualityValidationResult } from "../../data/transformQualityPreview";
@@ -137,12 +145,14 @@ export function SchedulePage({
   const [repeatTime, setRepeatTime] = useState(initialRepeat.time);
   const [repeatMinute, setRepeatMinute] = useState(initialRepeat.minute);
   const [customCron, setCustomCron] = useState(initialRepeat.cron);
+  const [scheduleError, setScheduleError] = useState("");
   const title = "스케줄링 설정";
   const repeatDraft = { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime };
   const selectedOption = getScheduleOptionFromLabel(draftScheduleLabel, mode);
   const scheduleTimezone = normalizeScheduleTimezone(draftSchedule.timezone);
   const scheduleStartDate = normalizeDateValue(draftSchedule.startDate, SCHEDULE_START_DATE);
   const scheduleEndDate = normalizeOptionalDateValue(draftSchedule.endDate);
+  const invalidRepeatCron = selectedOption === "repeat" && repeatFrequency === "custom" && !isValidCronExpression(customCron);
   const updateRetryPolicy = (retryPolicy: RetryPolicyDraft) => {
     onDraftChange({ schedule: { retryPolicy } });
   };
@@ -155,17 +165,23 @@ export function SchedulePage({
     onDraftChange(buildSchedulePatch(selectedOption, normalizedRepeat, scheduleTimezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }));
   };
   const selectOption = (nextOption: ScheduleOptionId) => {
+    setScheduleError("");
     onDraftChange(buildSchedulePatch(nextOption, repeatDraft, scheduleTimezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }));
     onModeChange(scheduleFlowFromOption(nextOption));
   };
   const goNext = () => {
+    if (invalidRepeatCron) {
+      setScheduleError("Cron 표현식을 5개 필드 형식으로 입력해 주세요. 예: 0 10 * * 1-5");
+      return;
+    }
+    setScheduleError("");
     applyScheduleDraft();
     onNext();
   };
 
   return (
     <CreationFlowLayout
-      actions={<CreationTopActions split onPrev={onPrev} onNext={goNext} />}
+      actions={<CreationTopActions nextDisabled={invalidRepeatCron} split onPrev={onPrev} onNext={goNext} />}
     >
         <EtlStepHeader
           className="etl-step-standalone-header"
@@ -192,6 +208,7 @@ export function SchedulePage({
               />
             </div>
             <Separator />
+            {scheduleError && <Alert variant="destructive"><Info /><AlertTitle>스케줄을 확인해 주세요.</AlertTitle><AlertDescription>{scheduleError}</AlertDescription></Alert>}
             {selectedOption === "repeat" && <RepeatSettings customCron={customCron} frequency={repeatFrequency} minute={repeatMinute} overlapPolicy={draftSchedule.overlapPolicy ?? DEFAULT_OVERLAP_POLICY} selectedDay={repeatDay} time={repeatTime} timezone={scheduleTimezone} onCronChange={(cron) => {
             const sanitizedCron = sanitizeCronInput(cron);
             setCustomCron(sanitizedCron);
@@ -216,7 +233,7 @@ export function SchedulePage({
           }} onTimeChange={(time) => {
             setRepeatTime(time);
             onDraftChange(buildSchedulePatch("repeat", { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time }, scheduleTimezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }));
-          }} onOverlapPolicyChange={(overlapPolicy) => onDraftChange({ overlapPolicy, schedule: { overlapPolicy } })} onTimezoneChange={(timezone) => onDraftChange(buildSchedulePatch("repeat", repeatDraft, timezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }))} />}
+            }} onOverlapPolicyChange={(overlapPolicy) => onDraftChange({ overlapPolicy, schedule: { overlapPolicy } })} onTimezoneChange={(timezone) => onDraftChange(buildSchedulePatch("repeat", repeatDraft, timezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }))} />}
             <ScheduleRetrySettings retryPolicy={draftRetryPolicy} onRetryPolicyChange={updateRetryPolicy} />
           </CardContent>
         </Card>
@@ -283,13 +300,32 @@ function mergeConnectorSourceConfig(currentFields: Array<[string, string]>, resp
 function mergeConnectorAnalysisSourceConfig(result: SourceConnectorAnalysis, currentFields: Array<[string, string]>): SourceConnectorAnalysis {
   const responseConfig = result.draftPatch.source?.sourceConfig;
   if (!responseConfig) return result;
+  const sourceType = result.draftPatch.source?.sourceType ?? "";
   return {
     ...result,
     draftPatch: {
       ...result.draftPatch,
       source: {
         ...result.draftPatch.source,
-        sourceConfig: mergeConnectorSourceConfig(currentFields, responseConfig),
+        sourceConfig: sanitizeSourceConnectorFields(sourceType, mergeConnectorSourceConfig(currentFields, responseConfig)),
+      },
+    },
+  };
+}
+
+function patchConnectorAnalysisSourceConfig(
+  result: SourceConnectorAnalysis,
+  fallbackFields: Array<[string, string]>,
+  patches: Array<[string, string]>,
+): SourceConnectorAnalysis {
+  if (!result.draftPatch.source) return result;
+  return {
+    ...result,
+    draftPatch: {
+      ...result.draftPatch,
+      source: {
+        ...result.draftPatch.source,
+        sourceConfig: upsertSourceFields(result.draftPatch.source.sourceConfig ?? fallbackFields, patches),
       },
     },
   };
@@ -551,13 +587,13 @@ function formatScheduleLabel(option: ScheduleOptionId, repeat: RepeatScheduleDra
 
 function getScheduleFlowFromLabel(label: string): ScheduleFlowId {
   if (label.includes("건너뛰기") || label.includes("스케줄 없음") || label.includes("수동")) return "manual";
-  if (label.includes("예약") || label.includes("1회")) return "manual";
+  if (label.includes("1회") || label.includes("예약")) return "manual";
   return "repeat";
 }
 
 function getScheduleOptionFromLabel(label: string, fallbackFlow: ScheduleFlowId): ScheduleOptionId {
   if (label.includes("건너뛰기") || label.includes("스케줄 없음") || label.includes("수동")) return "skip";
-  if (label.includes("예약") || label.includes("1회")) return "skip";
+  if (label.includes("1회") || label.includes("예약")) return "skip";
   if (label) return "repeat";
   return fallbackFlow === "manual" ? "skip" : "repeat";
 }
@@ -570,16 +606,14 @@ function scheduleFlowFromOption(option: ScheduleOptionId): ScheduleFlowId {
 function buildSchedulePatch(option: ScheduleOptionId, repeat: RepeatScheduleDraft, timezone: string = SCHEDULE_TIMEZONE, currentSchedule?: ScheduleDraft, dates?: { endDate?: string; startDate?: string }): DraftPipelinePatch {
   const normalizedRepeat = normalizeRepeatScheduleDraft(repeat);
   const label = formatScheduleLabel(option, normalizedRepeat);
-  const nextRun = option === "skip"
-    ? "-"
-    : "저장 시점 기준 계산";
+  const nextRun = option === "skip" ? "-" : "저장 시점 기준 계산";
   const startDate = option === "repeat" ? normalizeDateValue(dates?.startDate ?? currentSchedule?.startDate, SCHEDULE_START_DATE) : "";
   const normalizedEndDate = option === "repeat" ? normalizeOptionalDateValue(dates?.endDate ?? currentSchedule?.endDate) : "";
   const endDate = normalizedEndDate && normalizedEndDate >= startDate ? normalizedEndDate : "";
   const scheduleTimezone = option === "skip" ? "" : timezone;
   const summary = formatScheduleSummary(option, label, scheduleTimezone);
   const nextRunUtc = option === "skip" ? "" : "";
-  const restoreRepeatDefaults = option === "repeat" && (currentSchedule?.mode === "manual" || currentSchedule?.label.includes("건너뛰기"));
+  const restoreRepeatDefaults = option !== "skip" && (currentSchedule?.mode === "manual" || currentSchedule?.label.includes("건너뛰기"));
   const overlapPolicy = option === "skip" ? undefined : restoreRepeatDefaults ? DEFAULT_OVERLAP_POLICY : currentSchedule?.overlapPolicy ?? DEFAULT_OVERLAP_POLICY;
   const watermarkPolicy = option === "skip"
     ? { ...DEFAULT_WATERMARK_POLICY, enabled: false, mode: "full_refresh" as WatermarkWindowMode }
@@ -830,8 +864,17 @@ function normalizeTargetLayer(value: string | undefined): TargetLayer {
   return getKnownOption(value?.toUpperCase(), TARGET_LAYER_OPTIONS, DEFAULT_TARGET_LAYER);
 }
 
+function buildTargetStoragePathForBucket(bucket: string, targetDataset: string, targetLayer: TargetLayer) {
+  return `s3a://${bucket}/${targetDataset}/${targetLayer.toLowerCase()}/`;
+}
+
 function buildTargetStoragePath(targetDataset: string, targetLayer: TargetLayer) {
-  return `s3a://${SPARK_OUTPUT_BUCKET}/${targetDataset}/${targetLayer.toLowerCase()}/`;
+  return buildTargetStoragePathForBucket(SPARK_OUTPUT_BUCKET, targetDataset, targetLayer);
+}
+
+function isManagedTargetStoragePath(value: string, targetDataset: string, targetLayer: TargetLayer) {
+  return value === buildTargetStoragePath(targetDataset, targetLayer)
+    || value === buildTargetStoragePathForBucket("asklake-output", targetDataset, targetLayer);
 }
 
 function normalizeKafkaDatasetName(topic: string) {
@@ -1554,20 +1597,28 @@ export function SourceConnectionPage({
   const filteredDisplayAssets = displayAssets.filter((asset) => sourceAssetMatchesExplorer(asset, assetSearchQuery, assetFilter, explorerConfig.filterMode));
   const hasDetectedAssets = displayAssets.length > 0;
   const selectedAsset = selectedAssetPath ? displayAssets.find(([path]) => path === selectedAssetPath) ?? null : null;
+  const selectedDatasetSummary = sourceRuntime?.datasetSummary;
+  const isPrefixSelection = sourceConfigValue(editableFields, "__Selection Kind").toLowerCase() === "prefix"
+    || selectedDatasetSummary?.selectionKind === "prefix";
   const requiresAssetSelectionForPreview = ["File / S3", "MongoDB", "PostgreSQL"].includes(activeSourceType);
   const selectedAssetHasSample = Boolean(
-    (!requiresAssetSelectionForPreview || selectedAsset) && sourceRuntime?.previewColumns?.length,
+    (!requiresAssetSelectionForPreview || selectedAssetPath) && sourceRuntime?.previewColumns?.length,
   );
   const displayPreviewColumns = selectedAssetHasSample ? sourceRuntime?.previewColumns ?? [] : [];
   const displayPreviewRows = selectedAssetHasSample ? sourceRuntime?.previewRows ?? [] : [];
   const hasSamplePreview = displayPreviewColumns.length > 0 && displayPreviewRows.length > 0;
-  const hasSchemaPatch = Boolean(sourceRuntime?.draftPatch.schema?.columns?.length && sourceRuntime?.draftPatch.schema?.sampleRows?.length);
-  const hasValidatedSchema = hasSchemaPatch || draft.schema.columns.length > 0;
+  const runtimeSchemaColumnCount = sourceRuntime?.draftPatch.schema?.columns?.length ?? 0;
+  const hasSchemaPatch = Boolean(runtimeSchemaColumnCount && sourceRuntime?.draftPatch.schema?.sampleRows?.length);
+  const hasValidatedSchema = isPrefixSelection
+    ? Boolean(selectedDatasetSummary?.schemaCompatible && selectedDatasetSummary.fileCount > 0 && runtimeSchemaColumnCount > 0)
+    : hasSchemaPatch || draft.schema.columns.length > 0;
   const displayPreviewNote = sourceRuntime?.previewNote ?? current.previewNote;
   const publicConnectionMessage = publicSourceLog(connectionMessage);
   const publicDisplayPreviewNote = publicSourceLog(displayPreviewNote);
   const runtimeSourceConfig = sourceRuntime?.draftPatch.source?.sourceConfig;
   const verifiedSourceFields = connectionStatus === "success" && runtimeSourceConfig ? runtimeSourceConfig : editableFields;
+  const displayPreviewFormat = selectedDatasetSummary?.format
+    || (activeSourceType === "File / S3" ? sourceFormatFromConfig(verifiedSourceFields) : sourceTypeLabel(activeSourceType));
   const previewShowsFileList = activeSourceType === "File / S3"
     && displayPreviewColumns.includes("Object Key");
   const previewShowsTopicInfo = activeSourceType === "Stream / Kafka"
@@ -1603,13 +1654,14 @@ export function SourceConnectionPage({
       });
       return;
     }
-    const label = sourceLabelFromFields(nextType, nextFields);
+    const persistedFields = sanitizeSourceConnectorFields(nextType, nextFields);
+    const label = sourceLabelFromFields(nextType, persistedFields);
     const executionMode = nextType === "Stream / Kafka" ? draft.source.executionMode ?? "snapshot" : "snapshot";
     onDraftChange({
       source: {
         connectionMessage: nextMessage,
         connectionStatus: nextStatus,
-        sourceConfig: nextFields,
+        sourceConfig: persistedFields,
         sourceLabel: label,
         sourceType: nextType,
         executionMode,
@@ -1818,6 +1870,7 @@ export function SourceConnectionPage({
         ? [fieldLabel, assetPath] as [string, string]
         : [fieldLabel, fieldValue] as [string, string]
     )), [
+      ["__Selection Kind", "file"],
       ["__Selected Object", assetPath],
       ["__Sample Object", assetPath],
     ]);
@@ -1837,9 +1890,17 @@ export function SourceConnectionPage({
     onDraftChange({ recordParsing: { columns: [], delimiterKind: "whitespace", delimiterPattern: "\\s+", enabled: false, expectedFieldCount: 0, header: false } });
     onAction("etl.source.asset_selected", "/api/etl/sources/assets", assetPath);
     try {
-      const result = mergeConnectorAnalysisSourceConfig(
-        publicConnectorAnalysis(await testSourceConnector(activeSourceType, nextFields)),
+      const result = patchConnectorAnalysisSourceConfig(
+        mergeConnectorAnalysisSourceConfig(
+          publicConnectorAnalysis(await testSourceConnector(activeSourceType, nextFields)),
+          nextFields,
+        ),
         nextFields,
+        [
+          ["__Selection Kind", "file"],
+          ["__Selected Object", assetPath],
+          ["__Sample Object", assetPath],
+        ],
       );
       const successMessage = `${assetPath} 기준 샘플을 가져왔습니다.`;
       if (result.draftPatch.source?.sourceConfig) {
@@ -1857,6 +1918,115 @@ export function SourceConnectionPage({
       setConnectionMessage(message);
       applySourceDraft(activeSourceType, nextFields, "failed", message);
       onAction("etl.source.asset_sample_failed", "/api/etl/sources/test", assetPath, "failed");
+      onNotify(message);
+    }
+  };
+
+  const selectSourceFolder = async (folderPath: string) => {
+    if (activeSourceType !== "File / S3") return;
+    const folderPrefix = normalizeFolderPrefix(folderPath);
+    if (!folderPrefix) {
+      onNotify("버킷 루트가 아닌 데이터셋 폴더를 선택하세요.");
+      return;
+    }
+
+    const currentAssets = displayAssets;
+    const nextFields = upsertSourceFields(editableFields.map(([fieldLabel, fieldValue]) => (
+      fieldLabel === "Path / Prefix"
+        ? [fieldLabel, folderPrefix] as [string, string]
+        : [fieldLabel, fieldValue] as [string, string]
+    )), [
+      ["__Selection Kind", "prefix"],
+      ["__Selected Object", ""],
+      ["__Sample Object", ""],
+    ]);
+    const testingMessage = `${folderPrefix} 폴더를 데이터셋으로 검사하고 있습니다.`;
+    setSelectedAssetPath(folderPrefix);
+    setSourceFields((fields) => ({ ...fields, [activeSourceType]: nextFields }));
+    setConnectionMessage(testingMessage);
+    setConnectionStatus("testing");
+    setSourceRuntime((runtime) => runtime ? {
+      ...runtime,
+      datasetSummary: undefined,
+      draftPatch: { ...runtime.draftPatch, schema: undefined },
+      previewColumns: [],
+      previewRows: [],
+    } : runtime);
+    applySourceDraft(activeSourceType, nextFields, "testing", testingMessage);
+    onDraftChange({
+      recordParsing: { columns: [], delimiterKind: "whitespace", delimiterPattern: "\\s+", enabled: false, expectedFieldCount: 0, header: false },
+      schema: { columns: [], sampleRows: [], summary: "" },
+    });
+    onAction("etl.source.prefix_selected", "/api/etl/sources/test", folderPrefix);
+
+    try {
+      const result = patchConnectorAnalysisSourceConfig(
+        mergeConnectorAnalysisSourceConfig(
+          publicConnectorAnalysis(await testSourceConnector(activeSourceType, nextFields)),
+          nextFields,
+        ),
+        nextFields,
+        [
+          ["Path / Prefix", folderPrefix],
+          ["__Selection Kind", "prefix"],
+          ["__Selected Object", ""],
+          ["__Sample Object", ""],
+        ],
+      );
+      const summary = result.datasetSummary;
+      const hasSchema = Boolean(result.draftPatch.schema?.columns?.length);
+      const prefixIsValid = Boolean(
+        result.status === "success"
+          && summary?.selectionKind === "prefix"
+          && summary.schemaCompatible
+          && summary.fileCount > 0
+          && hasSchema,
+      );
+      const nextStatus: SourceDraft["connectionStatus"] = prefixIsValid ? "success" : "failed";
+      const nextMessage = !summary
+        ? `${folderPrefix} Prefix 검사 결과를 확인하지 못했습니다.`
+        : summary.fileCount === 0
+          ? `${folderPrefix} 아래에서 처리할 데이터 파일을 찾지 못했습니다.`
+            : !summary.schemaCompatible
+            ? `${folderPrefix} 아래 ${summary.fileCount.toLocaleString()}개 파일의 스키마가 호환되지 않습니다.`
+            : !hasSchema
+              ? `${folderPrefix} 대표 파일의 스키마를 확인하지 못했습니다.`
+              : result.status !== "success"
+                ? result.message || `${folderPrefix} 데이터셋 검증에 실패했습니다.`
+              : `${folderPrefix} 데이터셋 검증 완료: ${summary.fileCount.toLocaleString()}개 파일`;
+      const normalizedResult: SourceConnectorAnalysis = {
+        ...result,
+        draftPatch: {
+          ...result.draftPatch,
+          source: result.draftPatch.source ? {
+            ...result.draftPatch.source,
+            connectionMessage: nextMessage,
+            connectionStatus: nextStatus,
+          } : result.draftPatch.source,
+        },
+        message: nextMessage,
+        status: nextStatus,
+      };
+      if (normalizedResult.draftPatch.source?.sourceConfig) {
+        setSourceFields((fields) => ({ ...fields, [activeSourceType]: normalizedResult.draftPatch.source?.sourceConfig ?? nextFields }));
+      }
+      setSourceRuntime({ ...normalizedResult, assets: mergeSourceAssets(currentAssets, normalizedResult.assets ?? []) });
+      setConnectionStatus(nextStatus);
+      setConnectionMessage(nextMessage);
+      onDraftChange(normalizedResult.draftPatch);
+      onAction(
+        prefixIsValid ? "etl.source.prefix_sampled" : "etl.source.prefix_validation_failed",
+        normalizedResult.actionPath,
+        folderPrefix,
+        prefixIsValid ? undefined : "failed",
+      );
+      onNotify(nextMessage);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "선택한 Prefix의 샘플을 가져오지 못했습니다.";
+      setConnectionStatus("failed");
+      setConnectionMessage(message);
+      applySourceDraft(activeSourceType, nextFields, "failed", message);
+      onAction("etl.source.prefix_sample_failed", "/api/etl/sources/test", folderPrefix, "failed");
       onNotify(message);
     }
   };
@@ -1934,6 +2104,7 @@ export function SourceConnectionPage({
               ["Result", "Verified"],
               ["Objects", String(result.assets.length)],
             ];
+      const persistedFields = sanitizeSourceConnectorFields(activeSourceType, editableFields);
       const connectorResult: SourceConnectorAnalysis = {
         actionPath: "/api/etl/sources/assets",
         assets: result.assets,
@@ -1941,8 +2112,8 @@ export function SourceConnectionPage({
           source: {
             connectionMessage: successMessage,
             connectionStatus: "success",
-            sourceConfig: editableFields,
-            sourceLabel: sourceLabelFromFields(activeSourceType, editableFields),
+            sourceConfig: persistedFields,
+            sourceLabel: sourceLabelFromFields(activeSourceType, persistedFields),
             sourceType: activeSourceType,
           },
         },
@@ -1990,6 +2161,10 @@ export function SourceConnectionPage({
     }
     if (sourceStage === "connect") {
       setSourceStage("browse");
+      return;
+    }
+    if (isPrefixSelection && selectedDatasetSummary?.schemaCompatible === false) {
+      onNotify("Prefix 아래 데이터 파일의 스키마가 서로 호환되지 않아 다음 단계로 이동할 수 없습니다.");
       return;
     }
     if (!hasValidatedSchema) {
@@ -2124,19 +2299,19 @@ export function SourceConnectionPage({
                       <button aria-pressed={kafkaExecutionMode === "snapshot"} className={`kafka-execution-mode-card ${kafkaExecutionMode === "snapshot" ? "selected" : ""}`} disabled={sourceLocked} type="button" onClick={() => onDraftChange({ source: { executionMode: "snapshot" } })}>
                         <span className="kafka-execution-mode-icon"><Clock3 size={19} /></span>
                         <span className="kafka-execution-mode-copy">
-                          <strong>Snapshot</strong>
-                          <span>수동 또는 스케줄 실행</span>
+                          <strong>일괄 수집</strong>
+                          <span>필요할 때 직접 실행하거나 일정에 맞춰 수집</span>
                         </span>
-                        <span className="kafka-execution-mode-tag">Batch</span>
+                        <span className="kafka-execution-mode-tag">배치</span>
                         {kafkaExecutionMode === "snapshot" && <span className="kafka-execution-mode-check"><Check size={14} /></span>}
                       </button>
                       <button aria-pressed={kafkaExecutionMode === "continuous"} className={`kafka-execution-mode-card ${kafkaExecutionMode === "continuous" ? "selected" : ""}`} disabled={sourceLocked} type="button" onClick={() => updateContinuousConfig({})}>
                         <span className="kafka-execution-mode-icon"><Repeat2 size={19} /></span>
                         <span className="kafka-execution-mode-copy">
-                          <strong>Continuous</strong>
-                          <span>실시간 데이터 적재</span>
+                          <strong>실시간 수집</strong>
+                          <span>새 메시지를 지속적으로 수집</span>
                         </span>
-                        <span className="kafka-execution-mode-tag">Streaming</span>
+                        <span className="kafka-execution-mode-tag">스트리밍</span>
                         {kafkaExecutionMode === "continuous" && <span className="kafka-execution-mode-check"><Check size={14} /></span>}
                       </button>
                     </div>
@@ -2148,19 +2323,19 @@ export function SourceConnectionPage({
                         </button>
                         {continuousAdvancedOpen && (
                           <div className="kafka-continuous-settings-grid">
-                            <FormFieldGroup className="field" hint="새 checkpoint를 만들 때만 적용" label="시작 위치">
+                            <FormFieldGroup className="field" hint="새 체크포인트를 만들 때만 적용" label="시작 위치">
                               <NativeSelect disabled={sourceLocked} value={continuousConfig.initialOffsetPolicy} onChange={(event) => updateContinuousConfig({ initialOffsetPolicy: event.target.value as "earliest" | "latest" })}>
                                 <option value="earliest">처음부터 읽기</option>
                                 <option value="latest">새 이벤트부터 읽기</option>
                               </NativeSelect>
                             </FormFieldGroup>
-                            <FormFieldGroup className="field" hint="1~3600초" label="Trigger 간격">
+                            <FormFieldGroup className="field" hint="1~3600초" label="수집 실행 간격">
                               <Input disabled={sourceLocked} max={3600} min={1} type="number" value={continuousConfig.triggerIntervalSeconds} onChange={(event) => {
                                 const value = Number(event.target.value);
                                 if (Number.isInteger(value) && value >= 1 && value <= 3600) updateContinuousConfig({ triggerIntervalSeconds: value });
                               }} />
                             </FormFieldGroup>
-                            <FormFieldGroup className="field" hint="1~1,000,000건" label="Micro-batch 최대 메시지">
+                            <FormFieldGroup className="field" hint="1~1,000,000건" label="한 번에 처리할 최대 메시지">
                               <Input disabled={sourceLocked} max={1_000_000} min={1} type="number" value={continuousConfig.maxOffsetsPerTrigger} onChange={(event) => {
                                 const value = Number(event.target.value);
                                 if (Number.isInteger(value) && value >= 1 && value <= 1_000_000) updateContinuousConfig({ maxOffsetsPerTrigger: value });
@@ -2248,6 +2423,7 @@ export function SourceConnectionPage({
                         loadingPath={loadingAssetPath}
                         selectedPath={selectedAssetPath}
                         onOpenFolder={explorerConfig.supportsPathSearch ? loadSourceAssetChildren : undefined}
+                        onSelectFolder={activeSourceType === "File / S3" ? selectSourceFolder : undefined}
                         onSelect={selectSourceAsset}
                       />
                     ) : (
@@ -2270,10 +2446,20 @@ export function SourceConnectionPage({
                     )}
                     previewMeta={(
                       <div className="source-explorer-preview-meta">
-                        <span>{displayPreviewRows.length}행 · {displayPreviewColumns.length}필드</span>
+                        <Badge variant="outline" className="border-blue-200 bg-white text-blue-700">{displayPreviewFormat}</Badge>
+                        {selectedDatasetSummary ? (
+                          <span>
+                            전체 {selectedDatasetSummary.fileCount.toLocaleString()}개 · {formatSourceBytes(selectedDatasetSummary.totalBytes)} · 스키마 {selectedDatasetSummary.schemaCompatible ? "호환" : "불일치"}
+                            {selectedDatasetSummary.excludedFileCount > 0 ? ` · 제외 ${selectedDatasetSummary.excludedFileCount.toLocaleString()}개` : ""}
+                          </span>
+                        ) : (
+                          <span>{displayPreviewRows.length}행 · {displayPreviewColumns.length}필드</span>
+                        )}
                       </div>
                     )}
-                    previewTitle={sourcePreviewTitle}
+                    previewTitle={selectedDatasetSummary
+                      ? `대표 파일 · ${selectedDatasetSummary.representativeObject}`
+                      : selectedAsset?.[0] || sourcePreviewTitle}
                     queryPlaceholder={explorerConfig.queryPlaceholder}
                     queryValue={assetSearchQuery}
                     showPathSearch={explorerConfig.supportsPathSearch}
@@ -2429,7 +2615,7 @@ export function RecordParsingPage({
       const name = normalizeTargetColumnName(column.name) || `field_${column.position + 1}`;
       return {
         confidence: 90,
-        included: true,
+        included: false,
         nullable: false,
         sourceName: name,
         targetName: name,
@@ -2462,88 +2648,128 @@ export function RecordParsingPage({
     <CreationFlowLayout
       actions={<CreationTopActions nextDisabled={!canApply || loading} useShadcnStyles onPrev={onPrev} onNext={applyAndContinue} />}
     >
-      <section className="record-parsing-source-strip panel" aria-label="선택한 원시 소스">
-        <span><em>소스</em><strong>{draft.source.sourceLabel || "-"}</strong></span>
-        <span><em>감지 포맷</em><strong>{draft.source.detectedFormat || "TXT"}</strong></span>
-        <span><em>샘플</em><strong>{rawLines.length}행</strong></span>
-        <span><em>필드 상태</em><strong>이름 없음</strong></span>
+      <header className="record-parsing-page-header">
+        <span className="record-parsing-page-icon" aria-hidden="true"><SlidersHorizontal /></span>
+        <h2>레코드 구조화</h2>
+      </header>
+
+      <section className="record-parsing-source-strip" aria-label="선택한 원시 소스">
+        <span className="record-parsing-source-icon" aria-hidden="true"><FileText /></span>
+        <span className="record-parsing-source-name">
+          <em>원시 소스</em>
+          <strong title={draft.source.sourceLabel || "-"}>{draft.source.sourceLabel || "-"}</strong>
+        </span>
+        <span className="record-parsing-source-meta" aria-label="소스 요약">
+          <strong>{draft.source.detectedFormat || "TXT"}</strong>
+          <strong>{rawLines.length}행</strong>
+          <strong>필드 없음</strong>
+        </span>
       </section>
 
       <div className="record-parsing-workspace">
         <section className="panel record-parsing-panel">
           <div className="record-parsing-panel-header">
-            <h2>원본 샘플</h2>
-            <span className="source-select-pill active">UTF-8 · 줄바꿈</span>
+            <h2><FileText aria-hidden="true" />원본 샘플</h2>
+            <span className="record-parsing-count">{rawLines.length}행</span>
           </div>
-          <textarea className="input record-parsing-raw" readOnly aria-label="원본 TXT 샘플" value={rawLines.join("\n")} />
+          <div className="record-parsing-panel-body">
+            <textarea className="input record-parsing-raw" readOnly aria-label="원본 TXT 샘플" value={rawLines.join("\n")} />
+          </div>
         </section>
 
         <section className="panel record-parsing-panel">
           <div className="record-parsing-panel-header">
-            <h2>분리 규칙과 컬럼 초안</h2>
-            <span className={preview?.invalidRows.length ? "source-select-pill warning" : "source-select-pill active"}>
-              {loading ? "검증 중" : preview ? `${preview.validRows}/${preview.totalRows}행 정상` : "검증 대기"}
+            <h2><SlidersHorizontal aria-hidden="true" />컬럼 설정</h2>
+            <span className={cn("record-parsing-status", preview?.invalidRows.length && "is-warning")}>
+              {!loading && preview && !preview.invalidRows.length ? <Check aria-hidden="true" /> : null}
+              {loading ? "검증 중" : preview ? `${preview.validRows}/${preview.totalRows} 정상` : "검증 대기"}
             </span>
           </div>
-          <div className="record-parsing-controls">
-            <FormFieldGroup className="field" label="필드 구분자">
-              <NativeSelect disabled value="whitespace"><option value="whitespace">연속 공백 (\\s+)</option></NativeSelect>
-            </FormFieldGroup>
-            <FormFieldGroup className="field" label="헤더 처리">
-              <NativeSelect value={parsing.header ? "first" : "none"} onChange={(event) => updateHeader(event.target.value === "first")}>
-                <option value="none">헤더 없음</option>
-                <option value="first">첫 줄을 헤더로 사용</option>
-              </NativeSelect>
-            </FormFieldGroup>
+          <div className="record-parsing-panel-body record-parsing-settings-body">
+            <div className="record-parsing-controls">
+              <FormFieldGroup className="field" label="필드 구분자">
+                <NativeSelect disabled value="whitespace"><option value="whitespace">연속 공백 (\\s+)</option></NativeSelect>
+              </FormFieldGroup>
+              <FormFieldGroup className="field" label="헤더 처리">
+                <NativeSelect value={parsing.header ? "first" : "none"} onChange={(event) => updateHeader(event.target.value === "first")}>
+                  <option value="none">헤더 없음</option>
+                  <option value="first">첫 줄을 헤더로 사용</option>
+                </NativeSelect>
+              </FormFieldGroup>
+            </div>
+            {error && <p className="record-parsing-error">{error}</p>}
+            <ScrollArea type="always" scrollbars="horizontal" className="record-parsing-table-scroll">
+              <table className="schema-table record-parsing-table">
+                <thead><tr><th>순서</th><th>샘플 값</th><th>출력 컬럼명</th><th>추론 타입</th></tr></thead>
+                <tbody>
+                  {parsing.columns.map((column) => (
+                    <tr key={column.position}>
+                      <td>{column.position + 1}</td>
+                      <td><code>{preview?.sampleRows[0]?.[column.position] || "-"}</code></td>
+                      <td><Input aria-label={`${column.position + 1}번째 출력 컬럼명`} value={column.name} onChange={(event) => updateColumn(column.position, { name: event.target.value })} /></td>
+                      <td>
+                        <NativeSelect value={column.inferredType} onChange={(event) => updateColumn(column.position, { inferredType: event.target.value as RecordParsingDraft["columns"][number]["inferredType"] })}>
+                          {schemaTypeOptions.filter((type) => type !== "JSON").map((type) => <option key={type} value={type}>{type}</option>)}
+                        </NativeSelect>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </ScrollArea>
+            {!columnNamesValid && <p className="record-parsing-error">컬럼명은 비어 있거나 중복될 수 없습니다.</p>}
           </div>
-          {error && <p className="record-parsing-error">{error}</p>}
-          <ScrollArea type="always" scrollbars="horizontal" className="record-parsing-table-scroll">
-            <table className="schema-table record-parsing-table">
-              <thead><tr><th>순서</th><th>샘플 값</th><th>출력 컬럼명</th><th>추론 타입</th></tr></thead>
-              <tbody>
-                {parsing.columns.map((column) => (
-                  <tr key={column.position}>
-                    <td>{column.position + 1}</td>
-                    <td><code>{preview?.sampleRows[0]?.[column.position] || "-"}</code></td>
-                    <td><Input aria-label={`${column.position + 1}번째 출력 컬럼명`} value={column.name} onChange={(event) => updateColumn(column.position, { name: event.target.value })} /></td>
-                    <td>
-                      <NativeSelect value={column.inferredType} onChange={(event) => updateColumn(column.position, { inferredType: event.target.value as RecordParsingDraft["columns"][number]["inferredType"] })}>
-                        {schemaTypeOptions.filter((type) => type !== "JSON").map((type) => <option key={type} value={type}>{type}</option>)}
-                      </NativeSelect>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </ScrollArea>
-          {!columnNamesValid && <p className="record-parsing-error">컬럼명은 비어 있거나 중복될 수 없습니다.</p>}
         </section>
       </div>
 
       {preview?.invalidRows.length ? (
         <section className="panel record-parsing-panel">
-          <div className="record-parsing-panel-header"><h2>필드 개수 불일치</h2></div>
-          <table className="schema-table record-parsing-invalid-table">
-            <thead><tr><th>원본 행</th><th>예상</th><th>실제</th><th>원문</th></tr></thead>
-            <tbody>{preview.invalidRows.map((row) => <tr key={row.lineNumber}><td>{row.lineNumber}</td><td>{row.expectedFieldCount}</td><td>{row.actualFieldCount}</td><td><code>{row.rawPreview}</code></td></tr>)}</tbody>
-          </table>
+          <div className="record-parsing-panel-header record-parsing-panel-header-warning"><h2><Info aria-hidden="true" />필드 개수 불일치</h2></div>
+          <div className="record-parsing-panel-body">
+            <table className="schema-table record-parsing-invalid-table">
+              <thead><tr><th>원본 행</th><th>예상</th><th>실제</th><th>원문</th></tr></thead>
+              <tbody>{preview.invalidRows.map((row) => <tr key={row.lineNumber}><td>{row.lineNumber}</td><td>{row.expectedFieldCount}</td><td>{row.actualFieldCount}</td><td><code>{row.rawPreview}</code></td></tr>)}</tbody>
+            </table>
+          </div>
         </section>
       ) : preview && (
         <section className="panel record-parsing-panel">
           <div className="record-parsing-panel-header">
-            <h2>구조화 결과 미리보기</h2>
-            <span className="source-select-pill active">{preview.totalRows}행 · {parsing.expectedFieldCount}컬럼</span>
+            <h2><Table2 aria-hidden="true" />결과 미리보기</h2>
+            <span className="record-parsing-count">{preview.totalRows}행 · {parsing.expectedFieldCount}컬럼</span>
           </div>
-          <ScrollArea type="always" scrollbars="horizontal" className="record-parsing-table-scroll">
-            <table className="schema-table record-parsing-preview-table">
-              <thead><tr>{parsing.columns.map((column) => <th key={column.position}>{column.name}</th>)}</tr></thead>
-              <tbody>{preview.sampleRows.slice(0, 5).map((row, rowIndex) => <tr key={rowIndex}>{row.map((cell, cellIndex) => <td key={cellIndex}>{cell}</td>)}</tr>)}</tbody>
-            </table>
-          </ScrollArea>
+          <div className="record-parsing-panel-body record-parsing-preview-body">
+            <ScrollArea type="always" scrollbars="horizontal" className="record-parsing-table-scroll">
+              <table className="schema-table record-parsing-preview-table">
+                <thead><tr>{parsing.columns.map((column) => <th key={column.position}>{column.name}</th>)}</tr></thead>
+                <tbody>{preview.sampleRows.slice(0, 5).map((row, rowIndex) => <tr key={rowIndex}>{row.map((cell, cellIndex) => <td key={cellIndex}>{cell}</td>)}</tr>)}</tbody>
+              </table>
+            </ScrollArea>
+          </div>
         </section>
       )}
     </CreationFlowLayout>
   );
+}
+
+function sourceFormatFromConfig(fields: Array<[string, string]>) {
+  const fieldMap = new Map(fields.map(([label, value]) => [label, value]));
+  const declaredFormat = (fieldMap.get("File Type") || "").trim().toLowerCase();
+  const selectedPath = [
+    fieldMap.get("Path / Prefix"),
+    fieldMap.get("Path"),
+    fieldMap.get("DATASET OR TABLE SELECTOR"),
+  ].find((value) => value && value.trim().length > 0)?.trim().toLowerCase() || "";
+  const rawFormat = declaredFormat && declaredFormat !== "auto"
+    ? declaredFormat
+    : selectedPath.replace(/^.*\./, "");
+  if (rawFormat.includes("jsonl")) return "JSONL";
+  if (rawFormat.includes("json")) return "JSON";
+  if (rawFormat.includes("csv")) return "CSV";
+  if (rawFormat.includes("tsv")) return "TSV";
+  if (rawFormat.includes("txt") || rawFormat.includes("log")) return "TXT";
+  if (rawFormat.includes("parquet")) return "PARQUET";
+  return "AUTO";
 }
 
 function mergeSourceAssets(currentAssets: Array<[string, string, string]>, nextAssets: Array<[string, string, string]>) {
@@ -2557,6 +2783,15 @@ function mergeSourceAssets(currentAssets: Array<[string, string, string]>, nextA
 function normalizeFolderPrefix(path: string) {
   const cleanPath = path.replace(/^\/+/, "").replace(/\/+$/, "");
   return cleanPath ? `${cleanPath}/` : "";
+}
+
+function formatSourceBytes(totalBytes: number) {
+  if (!Number.isFinite(totalBytes) || totalBytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const unitIndex = Math.min(Math.floor(Math.log(totalBytes) / Math.log(1024)), units.length - 1);
+  const value = totalBytes / (1024 ** unitIndex);
+  const digits = value >= 100 || unitIndex === 0 ? 0 : value >= 10 ? 1 : 2;
+  return `${value.toFixed(digits)} ${units[unitIndex]}`;
 }
 
 function upsertSourceFields(fields: Array<[string, string]>, patches: Array<[string, string]>) {
@@ -2582,7 +2817,6 @@ function sourceStatusIcon(status: SourceDraft["connectionStatus"]) {
 function isVisibleSourceField(sourceType: string, label: string) {
   if (isInternalSourceField(label)) return false;
   if (sourceType === "File / S3") {
-    if (OBJECT_STORAGE_IS_AWS && ["Endpoint URL", "Access Key", "Secret Key"].includes(label)) return false;
     return !["Storage Provider", "Region", "Use Path Style", "Header", "Path / Prefix", "File Type", "Delimiter", "Encoding"].includes(label);
   }
   if (sourceType === "PostgreSQL") {
@@ -3231,6 +3465,12 @@ export function SchemaInferencePage({
     if (includedSchemaColumns.length === 0) {
       onAction("etl.schema.confirm_blocked", "/api/etl/schema-inference/confirm", draft.source.sourceLabel || "source", "failed");
       onNotify("출력에 포함된 컬럼이 없습니다. 최소 1개 컬럼을 포함해야 실행할 수 있습니다.");
+      return false;
+    }
+    const emptyNameColumn = includedSchemaColumns.find((column) => !column.targetName.trim());
+    if (emptyNameColumn) {
+      onAction("etl.schema.confirm_blocked", "/api/etl/schema-inference/confirm", emptyNameColumn.sourceName, "failed");
+      onNotify(`${emptyNameColumn.sourceName} 필드의 출력 이름을 입력해야 합니다.`);
       return false;
     }
     schemaAction("etl.schema.confirmed", "/api/etl/schema-inference/confirm", approvedSummary);
@@ -5217,6 +5457,19 @@ function truncatePreviewValue(value: string) {
   return `${value.slice(0, 117)}...`;
 }
 
+function downloadCsv(filename: string, headers: string[], rows: Array<Array<string | number>>) {
+  const escapeCell = (value: string | number) => `"${String(value ?? "").replaceAll('"', '""')}"`;
+  const csv = [headers, ...rows].map((row) => row.map(escapeCell).join(",")).join("\r\n");
+  const url = URL.createObjectURL(new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8" }));
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
 function QualityPreviewAnalysis({
   invalidRows,
   onAction,
@@ -5322,7 +5575,10 @@ function QualityFailedRowsPanel({
         </table>
       </div>
       <ActionGroup className="hegun-rule-form-actions" density="compact">
-        <Button className="secondary-button" type="button" variant="outline" onClick={() => onAction("etl.rules.quality_failed_rows_exported", "/api/etl/rules/quality/failed-rows/export")}>행 내보내기</Button>
+        <Button className="secondary-button" type="button" variant="outline" onClick={() => {
+          downloadCsv("asklake-quality-failed-rows.csv", ["행", "컬럼", "샘플 값", "사유", "처리"], previewRows.map((row) => [row.row, row.column, row.sampleValue, qualityFailureReasonLabel(row.reason), failureActionLabel(row.action)]));
+          onAction("etl.rules.quality_failed_rows_exported", "/api/etl/rules/quality/failed-rows/export");
+        }}>행 내보내기</Button>
         <Button className="primary-button" type="button" onClick={() => onAction("etl.rules.quality_failed_rows_reviewed", "/api/etl/rules/quality/failed-rows/review")}>검토 완료</Button>
       </ActionGroup>
     </section>
@@ -5370,7 +5626,10 @@ function InvalidRowsPanel({
         </table>
       </div>
       <ActionGroup className="hegun-rule-form-actions" density="compact">
-        <Button className="secondary-button" type="button" variant="outline" onClick={() => onAction("etl.rules.invalid_rows_exported", "/api/etl/rules/invalid-rows/export")}>행 내보내기</Button>
+        <Button className="secondary-button" type="button" variant="outline" onClick={() => {
+          downloadCsv("asklake-invalid-rows.csv", ["행", "컬럼", "사유", "처리", "샘플 값"], invalidRows.map((row) => [row.row, row.column, qualityFailureReasonLabel(row.reason), failureActionLabel(row.action), row.sampleValue]));
+          onAction("etl.rules.invalid_rows_exported", "/api/etl/rules/invalid-rows/export");
+        }}>행 내보내기</Button>
         <Button className="primary-button" type="button" onClick={() => onAction("etl.rules.invalid_rows_reviewed", "/api/etl/rules/invalid-rows/review")}>검토 완료</Button>
       </ActionGroup>
     </section>
@@ -5414,9 +5673,7 @@ function RepeatSettings({
 }) {
   const cronIsValid = isValidCronExpression(customCron);
   const normalizedTimezone = normalizeScheduleTimezone(timezone);
-  const visibleRepeatFrequencyOptions = frequency === "custom"
-    ? repeatFrequencyOptions
-    : repeatFrequencyOptions.filter((option) => option.value !== "custom");
+  const visibleRepeatFrequencyOptions = repeatFrequencyOptions;
 
   return (
     <FieldSet>
@@ -5643,9 +5900,10 @@ export function TargetPage({
   const [targetDataset, setTargetDataset] = useState(initialTarget.targetDataset);
   const databaseName = draftTarget?.databaseName ?? "asklake";
   const targetLayer = initialTargetLayer;
+  const [runtimeOutputBucket, setRuntimeOutputBucket] = useState(SPARK_OUTPUT_BUCKET);
   const [targetStoragePath, setTargetStoragePath] = useState(initialStoragePath);
   const [storagePathCustomized, setStoragePathCustomized] = useState(
-    initialStoragePath !== buildTargetStoragePath(initialTarget.targetDataset, initialTargetLayer),
+    !isManagedTargetStoragePath(initialStoragePath, initialTarget.targetDataset, initialTargetLayer),
   );
   const [targetDescription, setTargetDescription] = useState(initialTarget.description);
   const [targetFormat, setTargetFormat] = useState(initialTargetFormat);
@@ -5658,6 +5916,28 @@ export function TargetPage({
   const [schemaRules, setSchemaRules] = useState<TargetSchemaRule[]>(inferredTarget.schemaRules);
   const lastTestRun = draftTarget?.lastTestRun ?? { status: "idle", logs: [] };
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
+
+  useEffect(() => {
+    let active = true;
+    void listS3Buckets()
+      .then(({ buckets }) => {
+        const outputBucket = buckets[0]?.trim();
+        if (active && outputBucket) setRuntimeOutputBucket(outputBucket);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (storagePathCustomized) return;
+    setTargetStoragePath(buildTargetStoragePathForBucket(
+      runtimeOutputBucket,
+      targetDataset.trim() || "target_dataset",
+      targetLayer,
+    ));
+  }, [runtimeOutputBucket, storagePathCustomized, targetDataset, targetLayer]);
 
   const shouldUseSampleTargetSchema = useMemo(
     () => !schemaRules.some((rule) => rule.partitionable && !rule.raw),
@@ -5773,7 +6053,11 @@ export function TargetPage({
   const changeTargetDataset = (nextDataset: string) => {
     setTargetDataset(nextDataset);
     if (!storagePathCustomized) {
-      setTargetStoragePath(buildTargetStoragePath(nextDataset.trim() || "target_dataset", targetLayer));
+      setTargetStoragePath(buildTargetStoragePathForBucket(
+        runtimeOutputBucket,
+        nextDataset.trim() || "target_dataset",
+        targetLayer,
+      ));
     }
   };
 
@@ -5956,6 +6240,7 @@ export function PermissionPage({
   const [permissionOptionsError, setPermissionOptionsError] = useState("");
   const [permissionOptionsLoading, setPermissionOptionsLoading] = useState(true);
   const [permissionOptionsRequest, setPermissionOptionsRequest] = useState(0);
+  const [permissionActionError, setPermissionActionError] = useState("");
 
   useEffect(() => {
     let active = true;
@@ -5989,6 +6274,7 @@ export function PermissionPage({
         const nextPreset = inferPermissionPreset(nextGrants);
 
         setPermissionOptions(options);
+        setPermissionActionError("");
         setSelectedGrants(nextGrants);
         setPublicView(nextPublicView);
         setDataOwner(nextOwner);
@@ -6003,7 +6289,9 @@ export function PermissionPage({
       })
       .catch((error) => {
         if (!active) return;
-        setPermissionOptionsError(error instanceof Error ? error.message : "권한 대상 목록을 불러오지 못했습니다.");
+        const message = error instanceof Error ? error.message : "권한 대상 목록을 불러오지 못했습니다.";
+        setPermissionOptionsError(message);
+        setPermissionActionError(message);
       })
       .finally(() => {
         if (active) setPermissionOptionsLoading(false);
@@ -6040,7 +6328,15 @@ export function PermissionPage({
     }));
   };
   const goNext = () => {
-    if (!permissionOptions) return;
+    if (permissionOptionsLoading) {
+      setPermissionActionError("권한 대상 목록을 불러오는 중입니다. 잠시 후 다시 시도해 주세요.");
+      return;
+    }
+    if (permissionOptionsError || !permissionOptions || (permissionOptions.groups.length === 0 && permissionOptions.users.length === 0)) {
+      setPermissionActionError(permissionOptionsError || "사용 가능한 권한 대상이 없어 다음 단계로 이동할 수 없습니다.");
+      return;
+    }
+    setPermissionActionError("");
     applyPermissionState();
     onNext();
   };
@@ -6123,6 +6419,7 @@ export function PermissionPage({
         icon={<ShieldCheck />}
         title="권한 설정"
       />
+      {permissionActionError && <Alert className="mb-4" variant="destructive"><Info /><AlertTitle>권한 확인이 필요합니다.</AlertTitle><AlertDescription>{permissionActionError}</AlertDescription></Alert>}
       <div className="grid min-w-0 gap-4 pb-6" data-testid="permission-workflow">
         {permissionOptionsLoading ? (
           <Card className="min-w-0 p-5" data-testid="permission-options-loading">
@@ -6445,16 +6742,27 @@ export function ReviewPage({
 }) {
   const [reviewSnapshot, setReviewSnapshot] = useState<ReviewSnapshot | null>(null);
   const [reviewLoading, setReviewLoading] = useState(true);
+  const [reviewError, setReviewError] = useState("");
+  const [reviewRetryCount, setReviewRetryCount] = useState(0);
+  const reviewRequestKey = getReviewSnapshotRequestKey(buildReviewSnapshotRequest(draft));
+  const reviewRequest = useMemo(
+    () => JSON.parse(reviewRequestKey) as ReviewSnapshotRequest,
+    [reviewRequestKey],
+  );
 
   useEffect(() => {
     let cancelled = false;
     setReviewLoading(true);
-    void getReviewSnapshot(draft)
+    setReviewError("");
+    setReviewSnapshot(null);
+    void getReviewSnapshot(reviewRequest)
       .then((snapshot) => {
         if (!cancelled) setReviewSnapshot(snapshot);
       })
-      .catch(() => {
-        if (!cancelled) setReviewSnapshot(null);
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setReviewError(error instanceof Error ? error.message : "검토 정보를 불러오지 못했습니다.");
+        }
       })
       .finally(() => {
         if (!cancelled) setReviewLoading(false);
@@ -6462,7 +6770,7 @@ export function ReviewPage({
     return () => {
       cancelled = true;
     };
-  }, [draft]);
+  }, [reviewRequest, reviewRetryCount]);
 
   const basicInformationRows = reviewSnapshot?.basicInformation ?? [];
   const destinationRows = (reviewSnapshot?.destination ?? []).filter(
@@ -6473,7 +6781,15 @@ export function ReviewPage({
   const validationRows = reviewSnapshot?.validation ?? [];
   const canCreate = reviewSnapshot?.canCreate === true;
   const createDisabled = createPending || reviewLoading || !canCreate;
-  const createLabel = createPending ? "생성 중..." : reviewLoading ? "서버 확인 중..." : canCreate ? "파이프라인 생성" : "검증 필요";
+  const createLabel = createPending
+    ? "생성 중..."
+    : reviewLoading
+      ? "서버 확인 중..."
+      : reviewError
+        ? "검토 오류"
+        : canCreate
+          ? "파이프라인 생성"
+          : "검증 필요";
 
   return (
     <CreationFlowLayout
@@ -6485,6 +6801,17 @@ export function ReviewPage({
           icon={<FileText />}
           title="검토 및 생성"
         />
+        {reviewError ? (
+          <Alert className="mx-0" variant="destructive">
+            <AlertTitle>검토 정보를 불러오지 못했습니다.</AlertTitle>
+            <AlertDescription className="flex flex-wrap items-center justify-between gap-3">
+              <span>{reviewError}</span>
+              <Button size="sm" type="button" variant="outline" onClick={() => setReviewRetryCount((count) => count + 1)}>
+                <RefreshCw aria-hidden="true" data-icon="inline-start" /> 다시 시도
+              </Button>
+            </AlertDescription>
+          </Alert>
+        ) : null}
         <div className="etl-review-stack">
           <section className="etl-review-card">
             <div className="etl-review-card-header">

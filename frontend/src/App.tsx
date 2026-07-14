@@ -17,12 +17,14 @@ import { PermissionPage, RecordParsingPage, ReviewPage, RuleApplicationPage, Sch
 import { useAuditLogs } from "./hooks/useAuditLogs";
 import { useAskLakeData } from "./hooks/useAskLakeData";
 import { fetchAuthSession, logout as logoutSession } from "./services/authApi";
+import { canNavigateToWizardStep } from "./utils/wizardNavigation";
 import { Alert, AlertDescription, AlertTitle } from "./components/ui/alert";
 import { Skeleton } from "./components/ui/skeleton";
 import type { CatalogDataset, CurrentUserResponse, DashboardEntry, DraftPipeline, FlowId, JobRowData, NavId, NavItem, ScheduleFlowId } from "./types";
 import type { DashboardRuntimeMode } from "./types";
 
 const scheduleFlows: ScheduleFlowId[] = ["repeat", "manual"];
+const editableWizardFlows: FlowId[] = ["source", "recordParsing", "schema", "repeat", "manual", "permission", "target"];
 
 function isScheduleFlow(flow: FlowId): flow is ScheduleFlowId {
   return scheduleFlows.includes(flow as ScheduleFlowId);
@@ -44,6 +46,7 @@ type AppRouteState = {
   datasetId?: string;
   flow: FlowId;
   jobId?: string;
+  unknownPath?: string;
 };
 
 type FlowPathContext = {
@@ -59,8 +62,10 @@ function parseDashboardRoute(pathname: string): DashboardRouteState | null {
   const segments = pathname.split("/").filter(Boolean);
   if (segments[0] !== "dashboards") return null;
   if (segments.length === 1) return { view: "list" };
-  if (segments.length === 2) return { dashboardId: decodeURIComponent(segments[1]), runtimeMode: "published", view: "runtime" };
-  if (segments.length === 3 && segments[2] === "edit") return { dashboardId: decodeURIComponent(segments[1]), runtimeMode: "draft", view: "runtime" };
+  const dashboardId = decodePathSegment(segments[1]);
+  if (!dashboardId) return null;
+  if (segments.length === 2) return { dashboardId, runtimeMode: "published", view: "runtime" };
+  if (segments.length === 3 && segments[2] === "edit") return { dashboardId, runtimeMode: "draft", view: "runtime" };
   return null;
 }
 
@@ -101,22 +106,26 @@ function parseAppRoute(pathname: string, currentScheduleFlow: ScheduleFlowId = d
   const [area, id, action] = segments;
 
   if (!area) return { dashboardRoute: null, flow: "jobs" };
+  if (area === "dashboards") return { dashboardRoute: null, flow: "jobs", unknownPath: pathname };
   if (area === "jobs") {
     const jobId = decodePathSegment(id);
     if (jobId && action === "runs") return { dashboardRoute: null, flow: "jobRuns", jobId };
     if (jobId) return { dashboardRoute: null, flow: "jobDetail", jobId };
-    return { dashboardRoute: null, flow: "jobs" };
+    return { dashboardRoute: null, flow: "jobs", unknownPath: pathname };
   }
   if (area === "etl") {
     if (id === "source") return { dashboardRoute: null, flow: "source" };
     if (id === "record-parsing") return { dashboardRoute: null, flow: "recordParsing" };
     if (id === "schema") return { dashboardRoute: null, flow: "schema" };
     if (id === "rules") return { dashboardRoute: null, flow: "rules" };
-    if (id === "schedule") return { dashboardRoute: null, flow: currentScheduleFlow };
+    if (id === "schedule" && segments.length === 3 && scheduleFlows.includes(action as ScheduleFlowId)) {
+      return { dashboardRoute: null, flow: action as ScheduleFlowId };
+    }
+    if (id === "schedule" && segments.length === 2) return { dashboardRoute: null, flow: currentScheduleFlow };
     if (id === "permission") return { dashboardRoute: null, flow: "permission" };
     if (id === "target") return { dashboardRoute: null, flow: "target" };
     if (id === "review") return { dashboardRoute: null, flow: "review" };
-    return { dashboardRoute: null, flow: "jobs" };
+    return { dashboardRoute: null, flow: "jobs", unknownPath: pathname };
   }
   if (area === "catalog") {
     const datasetId = decodePathSegment(id);
@@ -129,7 +138,7 @@ function parseAppRoute(pathname: string, currentScheduleFlow: ScheduleFlowId = d
   if (area === "profile") return { dashboardRoute: null, flow: "profile" };
   if (area === "login") return { dashboardRoute: null, flow: "login" };
 
-  return { dashboardRoute: null, flow: "jobs" };
+  return { dashboardRoute: null, flow: "jobs", unknownPath: pathname };
 }
 
 function getFlowPath(flow: FlowId, context: FlowPathContext = {}) {
@@ -213,6 +222,7 @@ export function App() {
   const navigate = useNavigate();
   const initialRoute = parseAppRoute(window.location.pathname, defaultScheduleFlow);
   const [activeFlow, setActiveFlow] = useState<FlowId>(initialRoute.flow);
+  const [completedWizardFlows, setCompletedWizardFlows] = useState<Set<FlowId>>(() => new Set());
   const [currentUser, setCurrentUser] = useState<CurrentUserResponse | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
   const [logoutPending, setLogoutPending] = useState(false);
@@ -227,6 +237,9 @@ export function App() {
     const nextScheduleFlow = isScheduleFlow(nextFlow) ? nextFlow : lastScheduleFlow;
     if (isScheduleFlow(nextFlow)) {
       setLastScheduleFlow(nextFlow);
+    }
+    if (nextFlow === "source") {
+      setCompletedWizardFlows(new Set(editableWizardFlows));
     }
     setActiveFlow(nextFlow);
 
@@ -307,6 +320,15 @@ export function App() {
     [continuousKafkaDraft, requiresRecordParsing],
   );
   const wizardActiveIndex = Math.max(0, wizardStepFlows.indexOf(activeFlow));
+  const wizardStepDisabled = useMemo(
+    () => wizardStepFlows.map((_, targetIndex) => !canNavigateToWizardStep({
+      activeIndex: wizardActiveIndex,
+      completedFlows: completedWizardFlows,
+      stepFlows: wizardStepFlows,
+      targetIndex,
+    })),
+    [completedWizardFlows, wizardActiveIndex, wizardStepFlows],
+  );
   const routeState = useMemo(
     () => parseAppRoute(location.pathname, lastScheduleFlow),
     [lastScheduleFlow, location.pathname],
@@ -353,6 +375,11 @@ export function App() {
   }, [activeFlow, authChecked, canAccessAdmin, currentUser, navigate, showToast]);
 
   useEffect(() => {
+    if (routeState.unknownPath) {
+      if (location.pathname !== "/jobs") navigate("/jobs", { replace: true });
+      setActiveFlow("jobs");
+      return;
+    }
     if (routeState.dashboardRoute) {
       setDashboardEntry((entry) => dashboardEntryFromRoute(routeState.dashboardRoute!, entry.version + 1));
     }
@@ -421,8 +448,22 @@ export function App() {
 
   const navigateWizardStep = (stepIndex: number) => {
     const nextFlow = wizardStepFlows[stepIndex];
-    if (!nextFlow || nextFlow === activeFlow) return;
+    if (!nextFlow || nextFlow === activeFlow || wizardStepDisabled[stepIndex]) return;
     moveToFlow(nextFlow);
+  };
+
+  const completeWizardFlowAndMove = (completedFlow: FlowId, nextFlow: FlowId) => {
+    setCompletedWizardFlows((current) => {
+      const next = new Set(current);
+      next.add(completedFlow);
+      return next;
+    });
+    moveToFlow(nextFlow);
+  };
+
+  const startNewPipeline = () => {
+    setCompletedWizardFlows(new Set());
+    moveToFlow("source");
   };
 
   const saveDraft = (flow: FlowId) => {
@@ -537,7 +578,7 @@ export function App() {
         <Topbar />
         {toast && <div className={`app-toast ${toast.tone}`}>{toast.message}</div>}
         {(apiPending || (dataLoading && (hasShellRows || isIngestShellFlow))) && <div className="app-api-pending">{pendingMessage}</div>}
-        {wizardFlows.includes(activeFlow) && <Stepper activeIndex={wizardActiveIndex} steps={wizardStepLabels} onStepSelect={navigateWizardStep} />}
+        {wizardFlows.includes(activeFlow) && <Stepper activeIndex={wizardActiveIndex} isStepDisabled={(stepIndex) => wizardStepDisabled[stepIndex] ?? true} steps={wizardStepLabels} onStepSelect={navigateWizardStep} />}
         <section className={activeFlow === "jobs" ? "page-body jobs-body" : activeFlow === "schema" ? "page-body schema-body" : activeFlow === "sql" ? "page-body sql-body" : "page-body"}>
           {!isIndependentFlow && shouldBlockForInitialData && (
             <div aria-label="데이터를 불러오는 중" className="module-placeholder-page" role="status">
@@ -562,16 +603,16 @@ export function App() {
           )}
           {shouldRenderAppContent && (
             <>
-          {activeFlow === "jobs" && <JobsLandingPage jobListFacets={jobListFacets} jobsLoading={jobsLoading} jobs={jobs} onCommand={handleJobCommand} onCreate={() => moveToFlow("source")} onDetail={openJobDetailWithRoute} onFilter={filterJobs} onAction={writeAuditLog} />}
+          {activeFlow === "jobs" && <JobsLandingPage jobListFacets={jobListFacets} jobsLoading={jobsLoading} jobs={jobs} onCommand={handleJobCommand} onCreate={startNewPipeline} onDetail={openJobDetailWithRoute} onFilter={filterJobs} onAction={writeAuditLog} />}
           {activeFlow === "jobDetail" && <JobDetailPage job={selectedJob} onCommand={handleJobCommand} onBack={() => moveToFlow("jobs")} onRuns={() => openJobRunsWithRoute(selectedJob)} />}
           {activeFlow === "jobRuns" && <JobRunsPage catalogDatasetId={selectedJobCatalogDataset?.id} catalogRowCount={selectedJobCatalogDataset?.rows} evidence={jobExecutionEvidence[selectedJob.id]} job={selectedJob} onCommand={handleJobCommand} onBack={() => moveToFlow("jobDetail")} onAction={writeAuditLog} />}
-          {activeFlow === "source" && <SourceConnectionPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("jobs")} onNext={() => moveToFlow(requiresRecordParsing ? "recordParsing" : "schema")} onSave={() => saveDraft("source")} onAction={writeAuditLog} onNotify={showToast} />}
-          {activeFlow === "recordParsing" && <RecordParsingPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("source")} onNext={() => moveToFlow("schema")} onAction={writeAuditLog} onNotify={showToast} />}
-          {activeFlow === "schema" && <SchemaInferencePage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow(requiresRecordParsing ? "recordParsing" : "source")} onNext={() => moveToFlow(continuousKafkaDraft ? "permission" : lastScheduleFlow)} onSave={() => saveDraft("schema")} onAction={writeAuditLog} onNotify={showToast} />}
-          {activeFlow === "rules" && <RuleApplicationPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("schema")} onNext={() => moveToFlow(continuousKafkaDraft ? "permission" : lastScheduleFlow)} onSave={() => saveDraft("rules")} onAction={writeAuditLog} onNotify={showToast} />}
-          {isScheduleFlow(activeFlow) && <SchedulePage draftSchedule={draftPipeline.schedule} mode={activeFlow} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("schema")} onModeChange={moveToFlow} onNext={() => moveToFlow("permission")} onSave={() => saveDraft(activeFlow)} />}
-          {activeFlow === "target" && <TargetPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("permission")} onNext={() => moveToFlow("review")} onSave={() => saveDraft("target")} />}
-          {activeFlow === "permission" && <PermissionPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow(continuousKafkaDraft ? "schema" : lastScheduleFlow)} onNext={() => moveToFlow("target")} onSave={() => saveDraft("permission")} />}
+          {activeFlow === "source" && <SourceConnectionPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("jobs")} onNext={() => completeWizardFlowAndMove("source", requiresRecordParsing ? "recordParsing" : "schema")} onSave={() => saveDraft("source")} onAction={writeAuditLog} onNotify={showToast} />}
+          {activeFlow === "recordParsing" && <RecordParsingPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("source")} onNext={() => completeWizardFlowAndMove("recordParsing", "schema")} onAction={writeAuditLog} onNotify={showToast} />}
+          {activeFlow === "schema" && <SchemaInferencePage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow(requiresRecordParsing ? "recordParsing" : "source")} onNext={() => completeWizardFlowAndMove("schema", continuousKafkaDraft ? "permission" : lastScheduleFlow)} onSave={() => saveDraft("schema")} onAction={writeAuditLog} onNotify={showToast} />}
+          {activeFlow === "rules" && <RuleApplicationPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("schema")} onNext={() => completeWizardFlowAndMove("schema", continuousKafkaDraft ? "permission" : lastScheduleFlow)} onSave={() => saveDraft("rules")} onAction={writeAuditLog} onNotify={showToast} />}
+          {isScheduleFlow(activeFlow) && <SchedulePage draftSchedule={draftPipeline.schedule} mode={activeFlow} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("schema")} onModeChange={moveToFlow} onNext={() => completeWizardFlowAndMove(lastScheduleFlow, "permission")} onSave={() => saveDraft(activeFlow)} />}
+          {activeFlow === "target" && <TargetPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("permission")} onNext={() => completeWizardFlowAndMove("target", "review")} onSave={() => saveDraft("target")} />}
+          {activeFlow === "permission" && <PermissionPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow(continuousKafkaDraft ? "schema" : lastScheduleFlow)} onNext={() => completeWizardFlowAndMove("permission", "target")} onSave={() => saveDraft("permission")} />}
           {activeFlow === "review" && <ReviewPage createPending={apiPending} draft={draftPipeline} onEdit={moveToFlow} onSave={() => saveDraft("review")} onCreate={createPipeline} />}
           {activeFlow === "catalog" && <CatalogPage datasets={datasets} error={dataError} loading={dataLoading} selectedDataset={selectedDataset} onAction={writeAuditLog} onOpenSql={openDatasetInSqlWithSelection} />}
           {activeFlow === "catalogDetail" && <CatalogDetailPage dataset={selectedDataset} onAction={writeAuditLog} onBack={() => moveToFlow("catalog")} onLineage={() => writeAuditLog("catalog.lineage.opened", `/api/catalog/datasets/${selectedDataset.id}/lineage`, selectedDataset.id)} onOpenSql={() => openDatasetInSqlWithSelection(selectedDataset)} />}

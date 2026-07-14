@@ -8,8 +8,10 @@ LOCAL_COMPOSE_FILE="${ASKLAKE_LOCAL_COMPOSE_FILE:-docker-compose.yml}"
 BACKEND_IMAGE="${ASKLAKE_VERIFY_BACKEND_IMAGE:-asklake-backend-deploy-check:local}"
 SPARK_RUNTIME_IMAGE="${ASKLAKE_VERIFY_SPARK_RUNTIME_IMAGE:-asklake-spark-deploy-check:local}"
 FRONTEND_IMAGE="${ASKLAKE_VERIFY_FRONTEND_IMAGE:-asklake-frontend-deploy-check:local}"
+AI_SERVER_IMAGE="${ASKLAKE_VERIFY_AI_SERVER_IMAGE:-asklake-ai-server-deploy-check:local}"
 SPARK_IMAGE="${ASKLAKE_SPARK_IMAGE:-apache/spark:4.0.1}"
 AIRFLOW_IMAGE="${AIRFLOW_IMAGE_NAME:-apache/airflow:3.3.0}"
+FRONTEND_API_BASE_URL="${VITE_API_BASE_URL:-https://${APP_DOMAIN:-asklake.example.com}}"
 TRINO_IMAGE="${TRINO_IMAGE:-trinodb/trino:482}"
 
 cd "$ROOT_DIR"
@@ -37,8 +39,7 @@ docker run --rm "$BACKEND_IMAGE" python -c \
   "import duckdb, fastapi, psycopg, pydantic_settings, sqlalchemy, uvicorn"
 
 echo "Checking backend Node connector imports..."
-docker run --rm "$BACKEND_IMAGE" node --input-type=module -e \
-  "await import('@aws-sdk/client-s3'); await import('kafkajs'); await import('mongodb'); await import('parquetjs-lite'); await import('pg');"
+docker run --rm "$BACKEND_IMAGE" npm run verify:node-dependencies
 
 echo "Checking backend image excludes Docker CLI..."
 if docker run --rm "$BACKEND_IMAGE" sh -c 'command -v docker' >/dev/null 2>&1; then
@@ -84,12 +85,29 @@ MSYS_NO_PATHCONV=1 docker run --rm \
   python -c "import importlib.util; spec = importlib.util.spec_from_file_location('asklake_etl_job', '/opt/airflow/dags/asklake_etl_job.py'); module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)"
 
 echo "Building frontend deploy image..."
+if [[ "$FRONTEND_API_BASE_URL" =~ ^https?://(localhost|127\.0\.0\.1)(:|/|$) ]]; then
+  echo "error: production frontend build API origin must not target localhost; set VITE_API_BASE_URL to https://APP_DOMAIN" >&2
+  exit 1
+fi
 docker build \
-  --build-arg VITE_API_BASE_URL="${VITE_API_BASE_URL:-http://localhost:8080}" \
+  --build-arg VITE_API_BASE_URL="$FRONTEND_API_BASE_URL" \
   --build-arg VITE_USE_MOCK_API="${VITE_USE_MOCK_API:-false}" \
   --build-arg VITE_DASHBOARD_ASSISTANT_API_PATH="${VITE_DASHBOARD_ASSISTANT_API_PATH:-/api/dashboards/assistant}" \
   --build-arg VITE_OBJECT_STORAGE_PROVIDER="${VITE_OBJECT_STORAGE_PROVIDER:-aws}" \
   --build-arg VITE_S3_REGION="${VITE_S3_REGION:-ap-northeast-2}" \
   -t "$FRONTEND_IMAGE" frontend
+
+echo "Building AI gateway deploy image..."
+docker build -t "$AI_SERVER_IMAGE" ai-server
+
+echo "Checking AI gateway runtime imports and no public port contract..."
+docker run --rm "$AI_SERVER_IMAGE" python -c "import fastapi, httpx, mcp, pydantic_settings, uvicorn"
+if docker compose --env-file "$COMPOSE_ENV_FILE" -f "$COMPOSE_FILE" config --format json \
+  | python3 -c 'import json, sys; services=json.load(sys.stdin)["services"]; ai=services["ai-server"]; raise SystemExit(1 if ai.get("ports") else 0)'; then
+  :
+else
+  echo "error: ai-server must not publish a host port" >&2
+  exit 1
+fi
 
 echo "Deploy dependency verification passed."
