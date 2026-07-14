@@ -10,5 +10,5 @@
 .wrap[data-column-count="1"] .table,
 .wrap[data-column-count="2"] .table,
 .wrap[data-column-count="3"] .table {
-  width: min(100%, 860px);
+  width: 100%;
 }

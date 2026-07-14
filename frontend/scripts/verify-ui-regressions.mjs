@@ -217,6 +217,16 @@ const checks = [
     ],
   },
   {
+    name: "SQL preview table uses the full result panel width for narrow result sets",
+    file: "src/pages/sql/SqlPreviewTable.module.css",
+    patterns: [
+      /\.wrap\[data-column-count="1"\] \.table,[\s\S]*\.wrap\[data-column-count="3"\] \.table \{[\s\S]*width:\s*100%;/,
+    ],
+    forbiddenPatterns: [
+      /width:\s*min\(100%,\s*860px\);/,
+    ],
+  },
+  {
     name: "Trino execution information stays in a scoped result view",
     file: "src/pages/sql/SqlExecutionInfo.tsx",
     patterns: [
