@@ -2,6 +2,8 @@
 
 아래 로드맵은 매일 Merge가 끝났을 때 전체 프로젝트에서 무엇이 완료되고, 무엇이 아직 안 됐으며, 다음 단계가 무엇에 의존하는지를 기준으로 합니다.
 
+> 문서 권한: 이 문서는 **EKS MVP 스프린트의 일정, 담당 범위, 의존 관계와 단계별 완료 기준에 대한 실행 SSOT**다. 제품 범위, 아키텍처와 API 계약의 최종 기준은 `AGENTS.md`에 정의된 기존 공식 문서 우선순위를 따른다. 이 로드맵의 실행 결정이 제품·아키텍처·API 계약을 변경하면 해당 공식 문서도 같은 변경에서 함께 갱신한다.
+
 > 범위 경계: Kafka broker는 EKS에 설치하지 않고 Amazon MSK를 사용한다. 이번 MVP에는 EKS 밖의 fixture producer가 별도 test topic에 넣은 데이터를 EKS Spark가 bounded consume하는 smoke를 포함한다. 기존 Kafka Continuous의 제어권과 worker 운영 책임은 EC2 환경에 유지하며, EKS가 같은 Continuous runtime을 동시에 제어하지 않는다. Continuous의 EKS 전환은 후속 Phase로 남긴다.
 
 > 완료 선언: 이 6일 계획은 **EKS + MSK 연동 MVP 시연 및 기술 검증**이다. 운영 전환 완료나 기존 EC2 종료를 의미하지 않는다.
