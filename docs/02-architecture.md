@@ -409,6 +409,7 @@ Dashboard endpoint와 Catalog 물리 데이터는 FastAPI 응답을 source of tr
 - Node demo API는 FastAPI 구현과 비교하는 reference로 유지한다.
 - CI가 생기면 최소 required check 후보는 frontend build, backend import/compile, conflict marker scan이다.
 - EKS MVP에서 FastAPI replica의 background Job/Run submission과 reconciliation은 RDS Run record의 `runId`별 lease와 generation fencing으로 한 owner만 수행한다. 기존 Kafka Continuous worker의 lifecycle·checkpoint·offset은 EC2가 계속 소유하며 EKS는 변경 command를 차단한다.
+- EKS MVP의 Trino는 기존 EC2/공용 endpoint를 재사용하지 않는 신규 단일 coordinator다. FastAPI는 A가 제공한 in-cluster HTTPS Service(`8443`)만 사용하고, coordinator는 RDS `iceberg_catalog`와 S3 warehouse를 연결한다. worker 확장과 고가용성은 후속 단계이며 TLS/auth·JDBC credential은 Secret mount로만 공급한다.
 
 ## 12) SQL 결과 시각화 경계
 

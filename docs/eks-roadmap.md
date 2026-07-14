@@ -33,7 +33,7 @@
 | Kafka broker | Compose의 Redpanda를 직접 운영 | AWS 배포 broker는 Amazon MSK 사용. EKS에는 broker·PVC·operator를 설치하지 않음 | EKS workload에서 MSK bootstrap endpoint 인증 성공 |
 | Kafka 연동 smoke | Local Redpanda fixture input 중심 | EKS 밖 fixture producer가 전용 test topic에 입력하고 EKS Spark가 전용 group으로 bounded smoke 실행 | FastAPI 재시작·확장 후에도 AskLake `runId`로 적재 상태·로그·결과 추적 |
 | Kafka Continuous | 기존 EC2 FastAPI control plane과 worker가 lifecycle·checkpoint 처리 | 제어권과 상태 관리 책임 전체를 EC2에 유지하고 EKS 이전은 후속 Phase로 분리 | EKS와 EC2가 같은 Continuous runtime을 동시에 변경하지 않음 |
-| Trino 검증 | 선택 profile 또는 기존 endpoint | Phase 0에서 EKS 배치 또는 기존/공용 endpoint를 선택하고 Iceberg table/snapshot/data file을 검증 | Trino physical verification 결과 |
+| Trino 검증 | 선택 profile 또는 기존 endpoint | EKS에 신규 단일 coordinator를 배포하고, RDS `iceberg_catalog`와 S3 warehouse를 연결해 Iceberg table/snapshot/data file을 검증. 기존 EC2/공용 endpoint는 사용하지 않음 | Trino Service readiness와 physical verification 결과 |
 | 배포 변경 | EC2 접속 후 Compose 재배포 | Git SHA tag는 표시용, ECR image digest는 실제 배포·rollback 기준으로 사용 | 배포 digest와 rollback digest 기록 |
 | 관찰 | Docker 로그와 EC2 상태를 직접 확인 | `kubectl`, HPA, Node 상태와 CloudWatch 로그로 확인 | Pod·HPA·Node·로그 화면 |
 | 롤백 | 기존 Compose 재실행 | EKS 실패 시 기존 EC2 Compose를 롤백 경로로 유지 | EKS 중단 후 EC2 서비스 복구 |
@@ -44,12 +44,12 @@
 
 - EKS Cluster와 NodePool
 - ECR 이미지, 표시용 Git SHA tag, 배포·rollback 기준 ECR image digest
-- Frontend/FastAPI/Airflow/Spark Operator와 batch Spark용 Kubernetes workload, Service, ConfigMap, Secret reference
+- Frontend/FastAPI/Airflow/Spark Operator와 batch Spark, Trino 단일 coordinator용 Kubernetes workload, Service, ConfigMap, Secret reference
 - ALB/Ingress를 통한 외부 URL
 - Amazon MSK Serverless와 IAM 인증, EKS→MSK network/IAM 검증, 격리된 test topic/group, EKS 밖 fixture producer 실행 경로
 - AskLake·Airflow metadata·Iceberg JDBC Catalog의 RDS mapping과 migration/rollback 기록
 - S3 연결과 필요한 경우에만 Airflow 공유 파일용 EFS 연결
-- EKS 또는 기존/공용 Trino endpoint와 물리 검증 evidence
+- EKS Trino 단일 coordinator와 RDS Iceberg JDBC Catalog·S3 warehouse 연결, 물리 검증 evidence
 - FastAPI HPA와 Spark Job driver/executor 자원 요청
 - FastAPI 확장 시 background 작업이 중복되지 않는 검증 결과
 - FastAPI 재시작·확장 이후에도 AskLake Job 상태·로그·결과가 같은 `runId`로 이어지는 검증 결과
@@ -67,7 +67,7 @@
 | 기능 | 화 7/14 | 수 7/15 | 목 7/16 | 금 7/17 | 토 7/18 | 일 7/19 |
 | --- | --- | --- | --- | --- | --- | --- |
 | EKS 클러스터/ECR | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| MSK Serverless+IAM·Trino 위치 결정 | ✅ 결정 | ✅ | ✅ | ✅ | ✅ | ✅ |
+| MSK Serverless+IAM·EKS Trino 계약 확정 | ✅ 결정 | ✅ | ✅ | ✅ | ✅ | ✅ |
 | EKS → MSK network/IAM | ⬜ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | 서비스별 Pod 분리 | 🟡 | 🟡 | ✅ | ✅ | ✅ | ✅ |
 | 외부 URL 접속 | ⬜ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -135,7 +135,7 @@ AskLake를 올리기 전에 EKS 자체가 Pod와 Node를 정상적으로 만들 
 | Metrics Server와 ECR 저장소 | Kubernetes Deployment/Service/Job 기본 YAML |
 | 테스트 Pod와 Node scale-out/in | ConfigMap/Secret reference 기본 구조 |
 | MSK Serverless cluster·VPC·IAM 리소스 구축 준비 | 확정 입력인 MSK Serverless+IAM의 client/env/Secret 계약 반영 |
-| Trino 배치 위치 결정 | 3개 PostgreSQL 용도와 RDS 이전 순서 정의 |
+| Trino용 ServiceAccount/IRSA·RDS/S3 network·Secret reference·Service endpoint 제공 | Trino 단일 coordinator workload 계약(image, HTTPS `8443`, probe, ConfigMap/Secret, FastAPI 연결)과 3개 PostgreSQL 용도·RDS 이전 순서 정의 |
 | Continuous 제어권을 EC2에 유지하는 범위 확정 | FastAPI 확장·AskLake Run 재시작 안전성 완료 기준 정의 |
 
 ### Merge 후 완료 상태
@@ -146,7 +146,7 @@ AskLake를 올리기 전에 EKS 자체가 Pod와 Node를 정상적으로 만들 
 | ECR image push | ✅ |
 | Kubernetes YAML 기본 구조 | ✅ |
 | MSK cluster 유형·인증 방식 | ✅ A 인수 계약의 Serverless+IAM 확정값 반영 |
-| Trino 배치 위치 | ✅ 결정 완료 |
+| Trino EKS 단일 coordinator 계약 | ✅ EKS 신규 배포, HTTPS `8443`, RDS `iceberg_catalog`, S3 warehouse |
 | RDS migration/rollback 범위 | ✅ 문서화 |
 | image digest 기준 | ✅ 문서화 |
 | Continuous 제어권 소유 환경 | ✅ EC2로 확정 |
@@ -182,7 +182,7 @@ kubectl top nodes
 - EC2/ECR/IAM/MSK 권한
 - AMD64 image
 - 기존 MSK가 있다면 cluster ARN/bootstrap endpoint와 network 정보
-- Trino 기존/공용 endpoint 유무
+- Trino EKS image mirror/digest, `asklake-trino` ServiceAccount/IRSA, RDS·S3 network와 Secret reference
 
 ### 다음 단계와의 연결
 
@@ -195,7 +195,7 @@ kubectl top nodes
 - Kubernetes 기본 YAML
 - 확정된 MSK Serverless+IAM과 test topic/group naming, EKS 밖 fixture producer 실행 경로
 - RDS database/user mapping과 rollback 기준
-- Trino endpoint 또는 EKS 배치 결정
+- A가 제공하는 Trino EKS Service endpoint와 Secret reference, B의 coordinator workload 계약
 - EKS와 EC2의 Continuous 제어권 경계
 - FastAPI 확장과 AskLake Run 재시작 시 지킬 완료 원칙
 
@@ -205,7 +205,7 @@ EKS에서 테스트 Pod가 실행되고 Node 증가가 한 번 보이며, 아래
 
 - MSK Serverless+IAM client·권한·network 계약
 - 외부 fixture producer와 Spark의 test topic 권한·입력 경계
-- Trino 배치 위치
+- Trino EKS 신규 배포 계약(단일 coordinator, HTTPS `8443`, RDS Iceberg Catalog, S3 warehouse)
 - AskLake/Airflow/Iceberg JDBC의 RDS mapping
 - Git SHA tag와 ECR image digest 사용 기준
 - Continuous 제어권과 상태 관리 책임이 EC2에만 있다는 범위

@@ -24,21 +24,22 @@
 | --- | --- | --- |
 | MSK 유형과 인증 방식 | A 확정 입력 / B 반영 | A Phase 0/1에서 확정된 MSK Serverless + IAM을 B 계약에 반영한다. A는 실제 cluster와 network/IAM resource를 구축한다. |
 | RDS 용도 분리 | B 계약, A 구축 | 단일 RDS PostgreSQL instance에 database와 user를 3개 용도별로 분리한다. |
-| Trino 배치 위치와 실제 port | A | A가 결정한다. B는 `TRINO_BASE_URL`과 Secret reference 형식만 제공한다. |
+| Trino 배치·연결 계약 | A/B | **확정.** EKS에 신규 단일 coordinator를 배포한다. HTTPS `8443` Kubernetes Service를 FastAPI가 사용하고, coordinator는 RDS `iceberg_catalog`와 S3 warehouse를 사용한다. 기존 EC2/공용 endpoint는 사용하지 않는다. |
 | FastAPI background singleton 구현 방식 | A/B 공동 | **확정.** `runId`별 RDS lease + generation fencing으로 owner를 선점·갱신·복구한다. |
 | EC2 Continuous 상태 DB와 읽기 endpoint | A/B 공동 | 보류. EKS의 변경 command 차단 원칙만 현재 확정한다. |
 
-MSK Serverless + IAM은 A Phase 0/1 인수 계약의 확정 입력이며 B가 재선택하지 않는다. A는 실제 cluster ARN, private IAM bootstrap endpoint와 network/IAM resource를 제공한다. Trino 위치는 A의 인프라 결과를 B workload에 주입하기 위한 interface 계약으로만 다룬다.
+MSK Serverless + IAM은 A Phase 0/1 인수 계약의 확정 입력이며 B가 재선택하지 않는다. A는 실제 cluster ARN, private IAM bootstrap endpoint와 network/IAM resource를 제공한다. Trino의 배치 형태와 port는 확정됐고, A가 실제 Service endpoint·IAM·network·Secret reference를 제공하면 B가 workload에 주입한다.
 
 ## 2. 책임 경계
 
 | 담당자 B가 정하는 것 | 담당자 A가 정하는 것 |
 | --- | --- |
-| 이미지 이름, build target, platform, port, health path | AWS account, region, 실제 ECR repository URL |
+| 이미지 이름, build target, platform, port, health path와 Trino coordinator ConfigMap/Secret key 계약 | AWS account, region, 실제 ECR repository URL·image mirror/digest·Service endpoint |
 | MSK Serverless + IAM, Kafka 메시지 형식, topic/group 이름 규칙, producer/consumer 권한 경계 | 실제 MSK cluster, bootstrap endpoint, VPC와 Security Group, workload IAM policy 구축 |
 | PostgreSQL 논리 database/user 분리와 환경 변수 mapping | RDS instance/cluster 개수, 크기, subnet, backup 정책 |
 | Git SHA tag와 ECR digest 사용 규칙 | 실제 image push, 배포용 digest 기록 |
 | FastAPI 중복 실행 방지와 Run 복구 완료 기준 | EKS workload identity와 AWS IAM policy 구현 |
+| Trino Deployment/Service의 application manifest 구조와 FastAPI 연결 형식 | `asklake-trino` ServiceAccount/IRSA, RDS·S3 network, 실제 Secret 값과 reference 생성 |
 
 ## 3. 이미지 계약
 
@@ -48,10 +49,11 @@ MSK Serverless + IAM은 A Phase 0/1 인수 계약의 확정 입력이며 B가 �
 
 | 역할 | 권장 repository / target | Command와 args | Port / probe | 초기 resource 기본값 | ServiceAccount |
 | --- | --- | --- | --- | --- | --- |
-| Frontend | `asklake-frontend`, `frontend/Dockerfile` final | image 기본 Nginx command | `80`, HTTP `GET /` | request `100m/128Mi`, limit `500m/256Mi` | `asklake-frontend` (`automountServiceAccountToken: false`) |
-| FastAPI | `asklake-fastapi`, `backend/Dockerfile:backend-runtime` | `uvicorn app.main:app --host 0.0.0.0 --port 8080` | `8080`, HTTP `GET /api/health` | request `500m/1Gi`, limit `1 CPU/2Gi` | `asklake-fastapi` |
-| Airflow runtime | `asklake-airflow`, `apache/airflow:3.3.0` ECR mirror | component별 `api-server`, `scheduler`, `dag-processor` | API Server `8080` HTTP `GET /api/v2/monitor/health`; Scheduler/DAG Processor는 `airflow jobs check` | API/Scheduler request `500m/1Gi`, limit `1 CPU/2Gi`; DAG Processor request `250m/512Mi`, limit `1 CPU/1Gi` | `asklake-airflow` (`automountServiceAccountToken: false`) |
-| Spark runtime | `asklake-spark`, `backend/Dockerfile:spark-runtime` | `local:///opt/asklake/scripts/spark_job_run.py`, runtime args는 Run contract에서 주입 | Service 없음, SparkApplication/driver 상태 확인 | driver `1 CPU/2Gi`, executor 1개 `2 CPU/4Gi` | `asklake-spark` |
+| Frontend | Foundation component `frontend`, `frontend/Dockerfile` final | image 기본 Nginx command | `80`, HTTP `GET /` | request `100m/128Mi`, limit `500m/256Mi` | `asklake-frontend` (`automountServiceAccountToken: false`) |
+| FastAPI | Foundation component `backend`, `backend/Dockerfile:backend-runtime` | `uvicorn app.main:app --host 0.0.0.0 --port 8080` | `8080`, HTTP `GET /api/health` | request `500m/1Gi`, limit `1 CPU/2Gi` | `asklake-backend` (`automountServiceAccountToken: true`) |
+| Airflow runtime | Foundation component `airflow`, `apache/airflow:3.3.0` ECR mirror | component별 `api-server`, `scheduler`, `dag-processor` | API Server `8080` HTTP `GET /api/v2/monitor/health`; Scheduler/DAG Processor는 `airflow jobs check` | API/Scheduler request `500m/1Gi`, limit `1 CPU/2Gi`; DAG Processor request `250m/512Mi`, limit `1 CPU/1Gi` | `asklake-airflow` (`automountServiceAccountToken: false`) |
+| Spark runtime | Foundation component `spark-runtime`, `backend/Dockerfile:spark-runtime` | `local:///opt/asklake/scripts/spark_job_run.py`, runtime args는 Run contract에서 주입 | Service 없음, SparkApplication/driver 상태 확인 | driver `1 CPU/2Gi`, executor 1개 `2 CPU/4Gi` | `asklake-spark` |
+| Trino coordinator | A가 제공하는 ECR mirror의 `trinodb/trino:482` immutable digest | Trino coordinator, worker 없음 | HTTPS `8443`, `GET /v1/info` | 최초 값은 NodePool/비용 확인 후 A/B 승인 | `asklake-trino` (A가 IRSA 연결, Kubernetes API RBAC 없음) |
 
 resource 값은 Phase 1 최초 배포용 tuning 기본값이다. Node 크기와 실제 측정 결과에 따라 변경할 수 있으며, resource 필드의 구조나 책임 경계를 바꾸는 중요한 설계 결정은 아니다.
 
@@ -77,16 +79,24 @@ rollback: 직전 검증 성공 digest
 예시:
 
 ```text
-123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/asklake-fastapi:git-a1b2c3d
-123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/asklake-fastapi@sha256:<digest>
+<A Terraform output>/backend:git-a1b2c3d
+<A Terraform output>/backend@sha256:<digest>
 ```
 
 ### 3.3 A의 회신 필요 항목
 
 - AWS account와 region
-- 네 image의 실제 ECR repository URL
+- 다섯 workload image의 실제 ECR repository URL 또는 Trino mirror URL/digest
 - EKS Node architecture가 AMD64라는 확인
 - image push 권한을 가진 AWS principal
+
+### 3.4 Trino EKS coordinator 계약
+
+- MVP에는 replica `1`의 coordinator Deployment와 내부 Kubernetes Service만 둔다. worker 확장과 고가용성은 후속 단계다.
+- Service는 HTTPS `8443`을 노출하고 readiness/liveness는 `/v1/info`를 사용한다. 기존 EC2/공용 Trino URL은 fallback으로도 사용하지 않는다.
+- coordinator ConfigMap은 `iceberg` catalog, RDS JDBC URL/database, S3 region·warehouse bucket/prefix를 참조한다. JDBC 사용자·비밀번호, TLS keystore/password, password-auth database, internal shared secret은 Secret mount로만 공급한다.
+- FastAPI ConfigMap의 `TRINO_BASE_URL`은 A가 출력한 in-cluster HTTPS Service URL이고, FastAPI는 Trino CA/TLS 설정과 query identity를 Secret mount로 받는다. 브라우저에는 Trino URL·인증정보를 전달하지 않는다.
+- `asklake-trino`에는 S3/STS workload identity만 연결한다. Kubernetes API RBAC와 장기 AWS access key/secret은 부여하지 않는다.
 
 ## 4. MSK fixture 입력 계약
 
@@ -129,8 +139,8 @@ MSK 유형과 인증 방식은 A Phase 0/1에서 **MSK Serverless + IAM**으로 
 | `asklake-spark` | S3 | `s3:ListBucket` | 지정 bucket ARN, test input/output/warehouse prefix condition | 대상 object 탐색 |
 | `asklake-spark` | S3 | `s3:GetObject` | 지정 input/output/warehouse object ARN | source와 commit 검증 읽기 |
 | `asklake-spark` | S3 | `s3:PutObject`, `s3:DeleteObject`, `s3:AbortMultipartUpload` | 지정 output/warehouse prefix object ARN | 결과·Iceberg commit과 실패 정리 |
-| `asklake-fastapi` | S3 | `s3:ListBucket`, `s3:GetObject` | 지정 output/warehouse/query-result prefix | 결과·evidence 검증 |
-| `asklake-fastapi` | S3 | `s3:PutObject`, `s3:DeleteObject`, `s3:AbortMultipartUpload` | 지정 query-result/evidence prefix object ARN | query result/evidence 저장과 실패 정리 |
+| `asklake-backend` | S3 | `s3:ListBucket`, `s3:GetObject` | 지정 output/warehouse/query-result prefix | 결과·evidence 검증 |
+| `asklake-backend` | S3 | `s3:PutObject`, `s3:DeleteObject`, `s3:AbortMultipartUpload` | 지정 query-result/evidence prefix object ARN | query result/evidence 저장과 실패 정리 |
 
 다음 권한은 허용하지 않는다.
 
@@ -262,17 +272,18 @@ MVP에서는 **단일 RDS PostgreSQL instance**를 사용하고, 그 안의 data
 
 | Workload | Kubernetes 형태 | Namespace | ServiceAccount |
 | --- | --- | --- | --- |
-| Frontend | Deployment/Service | `asklake` | `asklake-frontend` |
-| FastAPI | Deployment/Service | `asklake` | `asklake-fastapi` |
-| Airflow API Server | Deployment/Service | `asklake` | `asklake-airflow` |
-| Airflow Scheduler | Deployment | `asklake` | `asklake-airflow` |
-| Airflow DAG Processor | Deployment | `asklake` | `asklake-airflow` |
-| Airflow DB migration | 일회성 Job | `asklake` | `asklake-airflow` |
-| MSK IAM smoke | 수동 적용하는 일회성 Job/Pod | `asklake` | `asklake-msk-smoke` |
-| Spark batch | SparkApplication과 driver/executor Pod | `asklake` | `asklake-spark` |
+| Frontend | Deployment/Service | `asklake-dev` | `asklake-frontend` |
+| FastAPI | Deployment/Service | `asklake-dev` | `asklake-backend` |
+| Airflow API Server | Deployment/Service | `asklake-dev` | `asklake-airflow` |
+| Airflow Scheduler | Deployment | `asklake-dev` | `asklake-airflow` |
+| Airflow DAG Processor | Deployment | `asklake-dev` | `asklake-airflow` |
+| Airflow DB migration | 일회성 Job | `asklake-dev` | `asklake-airflow` |
+| MSK IAM smoke | 수동 적용하는 일회성 Job/Pod | `asklake-dev` | `asklake-msk-smoke` |
+| Spark batch | SparkApplication과 driver/executor Pod | `asklake-dev` | `asklake-spark` |
+| Trino coordinator | Deployment/Service, replica `1` | `asklake-dev` | `asklake-trino` |
 | Replay Producer | EKS에 배포하지 않음 | 해당 없음 | 해당 없음 |
 
-모든 application RBAC는 `asklake` namespace의 Role/RoleBinding으로 제한한다. Spark Operator 설치·운영용 ClusterRole은 A의 platform 범위이며 application ServiceAccount에 재사용하지 않는다.
+모든 application RBAC는 `asklake-dev` namespace의 Role/RoleBinding으로 제한한다. Spark Operator 설치·운영용 ClusterRole은 A의 platform 범위이며 application ServiceAccount에 재사용하지 않는다. `asklake-backend`는 SparkApplication API 호출을 위해 ServiceAccount token 자동 mount가 필요하고, Foundation values도 `automountServiceAccountToken: true`로 맞춘다.
 
 Airflow는 FastAPI internal API와 RDS metadata database만 사용하므로 Kubernetes API RBAC를 부여하지 않고 ServiceAccount token 자동 mount를 끈다. DAG 배포용 ConfigMap은 배포 시점에 manifest가 참조하며 Airflow Pod가 Kubernetes API로 직접 조회하지 않는다.
 
@@ -280,10 +291,10 @@ Airflow는 FastAPI internal API와 RDS metadata database만 사용하므로 Kube
 
 | API group | Resource | Verb | 범위 | 이유 |
 | --- | --- | --- | --- | --- |
-| `sparkoperator.k8s.io` | `sparkapplications` | `create`, `get`, `list`, `watch`, `delete` | `asklake` namespace | Spark batch 제출, 상태 추적, 취소 |
-| core | `pods` | `get`, `list`, `watch` | `asklake` namespace | driver/executor 상태와 종료 사유 확인 |
-| core | `pods/log` | `get` | `asklake` namespace | Run log 조회 |
-| core | `events` | `get`, `list`, `watch` | `asklake` namespace | scheduling/image pull/runtime 실패 진단 |
+| `sparkoperator.k8s.io` | `sparkapplications` | `create`, `get`, `list`, `watch`, `delete` | `asklake-dev` namespace | Spark batch 제출, 상태 추적, 취소 |
+| core | `pods` | `get`, `list`, `watch` | `asklake-dev` namespace | driver/executor 상태와 종료 사유 확인 |
+| core | `pods/log` | `get` | `asklake-dev` namespace | Run log 조회 |
+| core | `events` | `get`, `list`, `watch` | `asklake-dev` namespace | scheduling/image pull/runtime 실패 진단 |
 
 FastAPI에는 다음 권한을 주지 않는다.
 
@@ -299,9 +310,9 @@ FastAPI에는 다음 권한을 주지 않는다.
 
 | API group | Resource | Verb | 범위 | 이유 |
 | --- | --- | --- | --- | --- |
-| core | `pods` | `create`, `get`, `list`, `watch`, `delete` | `asklake` namespace | executor lifecycle 관리 |
-| core | `services` | `create`, `get`, `delete` | `asklake` namespace | driver/executor 통신 |
-| core | `configmaps` | `create`, `get`, `delete` | `asklake` namespace | Spark runtime configuration |
+| core | `pods` | `create`, `get`, `list`, `watch`, `delete` | `asklake-dev` namespace | executor lifecycle 관리 |
+| core | `services` | `create`, `get`, `delete` | `asklake-dev` namespace | driver/executor 통신 |
+| core | `configmaps` | `create`, `get`, `delete` | `asklake-dev` namespace | Spark runtime configuration |
 
 ## 7. 환경변수·Secret 계약
 
@@ -327,8 +338,12 @@ FastAPI에는 다음 권한을 주지 않는다.
 | `AIRFLOW__CORE__FERNET_KEY` | Secret | 필수 | Airflow | 전체 Airflow workload rollout |
 | `AIRFLOW__API_AUTH__JWT_SECRET` | Secret | 필수 | Airflow | API Server/Scheduler/DAG Processor rollout |
 | `TRINO_ENABLED` | ConfigMap | 필수 | FastAPI | Deployment rollout |
-| `TRINO_BASE_URL` | ConfigMap | `TRINO_ENABLED=true`일 때 필수 | FastAPI | Deployment rollout |
-| `TRINO_AUTH_USERNAME`, `TRINO_AUTH_PASSWORD` | Secret | 인증 사용 시 필수 | FastAPI | Deployment rollout |
+| `TRINO_BASE_URL=https://<A Trino Service endpoint>:8443` | ConfigMap | 필수 | FastAPI | Deployment rollout |
+| `TRINO_CATALOG=iceberg`, `TRINO_SCHEMA`, `TRINO_USER` | ConfigMap | 필수 | FastAPI | Deployment rollout |
+| `TRINO_AUTH_USERNAME`, `TRINO_AUTH_PASSWORD`, `TRINO_MATERIALIZER_USERNAME`, `TRINO_MATERIALIZER_PASSWORD`, `TRINO_TLS_CA_FILE` | Secret mount | 필수 | FastAPI | Deployment rollout |
+| `TRINO_ICEBERG_JDBC_URL`, `TRINO_ICEBERG_JDBC_USER`, `TRINO_ICEBERG_JDBC_PASSWORD` | ConfigMap + Secret | 필수 | Trino coordinator | Deployment rollout |
+| `TRINO_ICEBERG_CATALOG_NAME`, `TRINO_ICEBERG_WAREHOUSE_BUCKET`, `TRINO_ICEBERG_WAREHOUSE_PREFIX`, `TRINO_S3_REGION` | ConfigMap | 필수 | Trino coordinator | Deployment rollout |
+| TLS keystore/password, password-auth database, internal shared secret | Secret mount | 필수 | Trino coordinator | Deployment rollout |
 | `TRINO_ICEBERG_WAREHOUSE_BUCKET` | ConfigMap | 필수 | FastAPI, Spark | Deployment rollout / 새 SparkApplication |
 | `ASKLAKE_SPARK_ICEBERG_JDBC_URL` | Secret | 필수 | Spark | 새 SparkApplication |
 | `ASKLAKE_SPARK_ICEBERG_JDBC_USER`, `ASKLAKE_SPARK_ICEBERG_JDBC_PASSWORD` | Secret | 필수 | Spark | 새 SparkApplication |
@@ -347,7 +362,9 @@ FastAPI에는 다음 권한을 주지 않는다.
 | Airflow API Server, Scheduler, DAG Processor, DB migration | RDS Airflow metadata DB | egress | PostgreSQL `5432` | metadata migration과 orchestration 상태 |
 | FastAPI | Kubernetes API | egress | HTTPS `443` | SparkApplication 제출·조회·취소 |
 | FastAPI | RDS | egress | PostgreSQL `5432` | Job/Run/Catalog 상태 |
-| FastAPI | Trino | egress | A가 확정한 HTTPS port | 물리 검증과 query |
+| FastAPI | Trino coordinator Service | egress | HTTPS `8443` | 물리 검증과 query |
+| Trino coordinator | RDS Iceberg JDBC Catalog | egress | PostgreSQL `5432` | Iceberg namespace/table metadata |
+| Trino coordinator | S3와 STS | egress | HTTPS `443` | warehouse read/write와 workload identity |
 | FastAPI, Spark | S3와 STS | egress | HTTPS `443` | object I/O와 workload identity |
 | EKS Node | ECR API/DKR와 S3 | egress | HTTPS `443` | image pull. Node/platform 책임 |
 | MSK IAM smoke Pod | MSK broker | egress | TLS/IAM `9098` | bootstrap 연결과 topic metadata 조회 |
@@ -359,7 +376,7 @@ FastAPI에는 다음 권한을 주지 않는다.
 
 - RDS와 MSK는 public ingress를 열지 않는다.
 - Security Group source는 workload가 사용하는 Node/Pod security group 또는 승인된 외부 producer network로 제한한다.
-- MSK IAM private broker port는 `9098`로 고정하고 Trino port만 A의 배치 결정 전까지 숫자를 임의로 고정하지 않는다.
+- MSK IAM private broker port는 `9098`, EKS Trino Service port는 HTTPS `8443`으로 고정한다.
 - NetworkPolicy를 사용하는 경우 Frontend, FastAPI, Airflow, Spark별 ingress/egress를 위 표에 맞춰 allowlist한다.
 
 ## 9. SparkApplication 계약
@@ -370,9 +387,9 @@ FastAPI에는 다음 권한을 주지 않는다.
 | --- | --- |
 | `type` | `Python` |
 | `mode` | `cluster` |
-| image | `asklake-spark@sha256:<digest>` |
+| image | `<A ECR output for spark-runtime>@sha256:<digest>` |
 | main file | `local:///opt/asklake/scripts/spark_job_run.py` |
-| namespace | `asklake` |
+| namespace | `asklake-dev` |
 | service account | `asklake-spark` |
 | restart policy | operator 자동 재시작 없음. API retry가 새 실행을 제출 |
 | driver | `1 CPU`, `2Gi` |
@@ -525,7 +542,7 @@ EKS는 Continuous 상태를 표시하기 위해 읽기 API를 사용할 수 있�
 - 실제 ECR/MSK/S3/RDS/Trino resource ARN과 endpoint
 - MSK Serverless cluster, VPC/Security Group과 workload IAM policy의 실제 구축값
 - 단일 RDS PostgreSQL instance의 크기, storage, backup/retention 정책
-- Trino 배치 위치와 port
+- Trino ECR mirror/digest, in-cluster Service endpoint, `asklake-trino` IRSA, RDS·S3 network와 Secret reference
 
 위 항목은 A Phase 0/1에서 확정된 MSK Serverless + IAM 계약에 따라 A가 실제 AWS resource를 구축한 뒤 ConfigMap, NetworkPolicy와 client option에 채우기 위한 입력 목록이다.
 
@@ -540,14 +557,16 @@ EKS는 Continuous 상태를 표시하기 위해 읽기 API를 사용할 수 있�
 manifest와 adapter 구현은 다음 검증을 통과해야 한다.
 
 - manifest schema/dry-run: Kubernetes server-side dry-run에서 Deployment, Role, RoleBinding, SparkApplication이 유효하다.
-- RBAC positive: `asklake-fastapi`가 `asklake` namespace의 SparkApplication을 create/get/list/watch/delete할 수 있다.
-- RBAC negative: `asklake-fastapi`가 Secret, Node, 다른 namespace, `batch/jobs`를 조회·변경할 수 없다.
+- RBAC positive: `asklake-backend`가 `asklake-dev` namespace의 SparkApplication을 create/get/list/watch/delete할 수 있다.
+- RBAC negative: `asklake-backend`가 Secret, Node, 다른 namespace, `batch/jobs`를 조회·변경할 수 없다.
 - IAM positive: 외부 producer는 test topic produce, Spark는 test topic consume과 지정 S3 prefix write가 가능하다.
 - IAM negative: 두 principal 모두 기존 Continuous topic/group과 허용 prefix 밖 S3 object에 접근할 수 없다.
 - fake Kubernetes client: create 응답이 timeout이어도 deterministic name 재조회로 같은 `runId`의 CR을 중복 생성하지 않는다.
 - fake Kubernetes client: watch 연결이 끊기면 RDS 상태를 유지하고 get/list 재조회로 복구한다.
 - fake Kubernetes client: Pod log/Event 접근이 `403`이면 권한 오류를 기록하고 Run 성공으로 처리하지 않는다.
 - restart test: owner FastAPI Pod 종료 후 다른 replica가 같은 `runId`와 SparkApplication UID로 상태를 이어받는다.
+- Trino readiness: coordinator Pod가 HTTPS `/v1/info`에 Ready가 되고 FastAPI가 A가 제공한 in-cluster Service URL로 TLS 연결한다.
+- physical verification: Spark Iceberg commit 뒤 Trino가 같은 RDS catalog와 S3 warehouse의 table/snapshot/data file을 조회하고 Catalog materialization까지 성공한다.
 - Continuous guard test: EKS FastAPI의 모든 Continuous 변경 command가 `CONTINUOUS_CONTROL_OWNED_BY_EC2`로 거절된다.
 
 ## 13. 현재 구현과의 차이
@@ -559,7 +578,8 @@ manifest와 adapter 구현은 다음 검증을 통과해야 한다.
 - `ASKLAKE_KAFKA_AUTH_MODE`를 Spark Kafka option으로 변환하는 EKS adapter가 필요하다.
 - `ASKLAKE_CONTINUOUS_CONTROL_PLANE=external_ec2`를 검사하는 fail-closed API guard가 필요하다.
 - 확정된 RDS lease + generation fencing을 Spark submission/reconciliation에 구현해야 한다.
-- 실제 AWS IAM policy의 ARN과 Network port는 A의 리소스 결정 뒤 채워야 한다.
+- Trino Deployment/Service, catalog ConfigMap, TLS/auth Secret mount와 FastAPI TLS 연결을 구현·검증해야 한다.
+- 실제 AWS IAM policy ARN, Service endpoint와 Secret reference는 A의 foundation output 뒤 채워야 한다.
 
 각 구현 PR은 이 문서의 표준 계약과 fake client/negative permission 검증을 함께 제출해야 한다.
 
@@ -590,19 +610,23 @@ manifest와 adapter 구현은 다음 검증을 통과해야 한다.
 - [ ] workload별 IAM action과 resource ARN에 wildcard가 없음을 확인했다.
 - [ ] ConfigMap/Secret key와 network destination 표를 승인했다.
 - [ ] 외부 fixture producer 방식이며 EKS Replay Job이 없음을 확인했다.
+- [ ] Foundation의 `replayProducer` ServiceAccount는 `create: false`이며 신규 EKS Replay workload/image push가 없음을 확인했다. 기존 ECR repository 삭제는 별도 lifecycle 결정으로 남긴다.
 - [x] FastAPI singleton은 `runId`별 RDS lease + generation fencing으로 확정했다.
 - [ ] EC2 Continuous state 위치와 EKS 읽기 endpoint는 현재 보류임을 확인했다.
-- [ ] Trino 배치 위치와 실제 port는 A가 결정하고 B는 endpoint 형식만 반영한다는 책임 경계를 확인했다.
+- [x] Trino는 EKS 신규 단일 coordinator, HTTPS `8443`, RDS `iceberg_catalog`, S3 warehouse로 확정했고 기존 EC2/공용 endpoint를 사용하지 않는다.
+- [ ] A가 Trino ECR mirror/digest, `asklake-trino` IRSA, Service endpoint, RDS·S3 network, TLS/auth·JDBC Secret reference를 제공한다.
 
 ## 16. 전달용 요약
 
 ```text
 B 계약 초안입니다.
 
-1. 이미지는 asklake-frontend, asklake-fastapi, asklake-airflow, asklake-spark 4종이며
+1. 이미지는 Foundation component `frontend`, `backend`, `airflow`, `spark-runtime`과
+   Trino coordinator mirror까지 5종이며, 실제 URL은 A Terraform output을 사용합니다.
    linux/amd64로 빌드합니다. Frontend는 80, FastAPI는 8080과
    /api/health를 사용합니다. Airflow는 API Server/Scheduler/DAG Processor가
-   같은 digest를 사용하고 Spark는 SparkApplication으로 실행합니다.
+   같은 digest를 사용하고 Spark는 SparkApplication으로 실행합니다. FastAPI는
+   `asklake-backend`, namespace는 `asklake-dev`를 사용합니다.
    Git SHA tag는 표시용이고 실제 배포와 rollback은 ECR digest를 사용합니다.
 
 2. 외부 fixture producer는 격리된 asklake.eks-mvp.fixture.v1 topic에
@@ -613,7 +637,10 @@ B 계약 초안입니다.
 3. RDS는 MVP 기준 단일 PostgreSQL instance 안에서 asklake_app,
    airflow_metadata, iceberg_catalog database와 전용 user를 분리합니다.
    MSK Serverless + IAM은 A Phase 0/1의 확정 입력으로 받고 B가 재선택하지 않습니다.
-   A는 실제 cluster와 network/IAM resource를 구축합니다. Trino 배치 위치는 A가 결정하고 B가 endpoint 형식에 반영합니다.
+   A는 실제 cluster와 network/IAM resource를 구축합니다. Trino는 EKS 단일
+   coordinator로 확정하며 HTTPS 8443 Service, RDS `iceberg_catalog`, S3 warehouse를
+   사용합니다. A는 endpoint·IRSA·network·Secret reference를 제공하고 B는 workload와
+   FastAPI 연결 계약을 반영합니다.
 
 4. FastAPI singleton은 `runId`별 RDS lease + generation fencing으로 확정합니다.
    EC2 Continuous 상태 DB/읽기 endpoint는 이번 계약에서 보류하며, EKS는
