@@ -41,7 +41,6 @@ import type {
   SelectedRunIdByJobId,
   SchemaColumnDraft,
   SqlResultDraft,
-  TransformStepDraft,
 } from "../types";
 
 type WriteAuditLog = (action: string, apiPath: string, targetId: string, result?: AuditResult, options?: { targetType?: AuditTargetType }) => void;
@@ -445,18 +444,6 @@ function buildSqlDatasetJobDraft(
     targetName: name,
     type,
   }));
-  const transformStep: TransformStepDraft = {
-    enabled: true,
-    id: "sql-preview-materialize",
-    input: sourceDataset.name,
-    kind: "derive",
-    label: "SQL Preview 결과 저장",
-    onError: "Fail Run",
-    operation: "SQL_RESULT_MATERIALIZE",
-    output: targetDataset,
-    params: request.query,
-  };
-
   return {
     ...initialDraftPipeline,
     id: `sql_${normalizeDraftId(targetDataset)}_${normalizeDraftId(sqlResult.runId).slice(-8)}`,
@@ -524,7 +511,11 @@ function buildSqlDatasetJobDraft(
     },
     transform: {
       outputColumns,
-      steps: [transformStep],
+      // SQL Result is already the materialized source for this Job. The
+      // query result schema is carried by sourceConfig and outputColumns;
+      // representing it as a single-column transform makes the backend rule
+      // compiler reject the dataset name as an input column.
+      steps: [],
       summary: `SQL Preview ${sqlResult.runId} 결과를 ${targetDataset} 데이터셋으로 저장`,
     },
   };

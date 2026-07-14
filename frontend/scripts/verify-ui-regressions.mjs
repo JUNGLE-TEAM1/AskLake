@@ -1572,6 +1572,21 @@ const checks = [
       /CircleUser/,
     ],
   },
+  {
+    name: "SQL Result Job drafts use the query result as the source contract",
+    file: "src/hooks/useAskLakeData.ts",
+    patterns: [
+      /sourceType: "SQL Result",/,
+      /SQL Run ID/,
+      /query result schema is carried by sourceConfig and outputColumns/,
+      /steps: \[\],/,
+    ],
+    forbiddenPatterns: [
+      /id: "sql-preview-materialize"/,
+      /operation: "SQL_RESULT_MATERIALIZE"/,
+      /input: sourceDataset\.name/,
+    ],
+  },
 ];
 
 const failures = [];
