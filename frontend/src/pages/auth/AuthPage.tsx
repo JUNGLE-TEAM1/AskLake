@@ -13,7 +13,7 @@ type AuthPageProps = {
 };
 
 export function AuthPage({ onAction, onAuthenticated }: AuthPageProps) {
-  const demoDefaultsEnabled = import.meta.env.DEV;
+  const demoDefaultsEnabled = import.meta.env.DEV || import.meta.env.VITE_AUTH_LEGACY_DEMO_USERS_ENABLED === "true";
   const publicSignupEnabled = import.meta.env.DEV || import.meta.env.VITE_AUTH_PUBLIC_SIGNUP === "true";
   const [mode, setMode] = useState<AuthMode>("login");
   const [displayName, setDisplayName] = useState("");

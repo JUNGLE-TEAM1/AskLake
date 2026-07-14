@@ -75,6 +75,7 @@ class Settings(BaseSettings):
     bootstrap_admin_email: str | None = None
     bootstrap_admin_password: str | None = None
     bootstrap_admin_display_name: str = "AskLake Administrator"
+    auth_legacy_demo_users_enabled: bool = False
     auth_public_signup_enabled: bool = False
     backend_cors_origins: list[str] = Field(default_factory=lambda: [
         "http://localhost:5173",

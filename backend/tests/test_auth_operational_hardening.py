@@ -81,6 +81,52 @@ class OperationalAuthHardeningTests(unittest.TestCase):
             initialize_auth(self.db)
         commit.assert_not_called()
 
+    def test_production_demo_opt_in_preserves_active_accounts_and_sessions_across_restart(self) -> None:
+        local = SimpleNamespace(allows_header_auth_fallback=True)
+        with patch.object(auth_service, "settings", local):
+            initialize_auth(self.db)
+            admin = self.db.get(AuthUserModel, "admin-user")
+            assert admin is not None
+            session = AuthService(self.db).create_session(admin)
+
+        production_demo = SimpleNamespace(
+            allows_header_auth_fallback=False,
+            auth_legacy_demo_users_enabled=True,
+            bootstrap_admin_email="owner@example.com",
+            bootstrap_admin_password="strong-bootstrap-password",
+            bootstrap_admin_display_name="Production Owner",
+        )
+        with patch.object(auth_service, "settings", production_demo):
+            initialize_auth(self.db)
+            initialize_auth(self.db)
+
+        self.assertEqual(self.db.get(AuthUserModel, "admin-user").status, "active")
+        self.assertEqual(self.db.get(AuthUserModel, "demo-user").status, "active")
+        self.assertIsNotNone(self.db.get(AuthSessionModel, str(session["token"])))
+
+    def test_production_demo_opt_in_preserves_an_explicitly_disabled_account(self) -> None:
+        local = SimpleNamespace(allows_header_auth_fallback=True)
+        with patch.object(auth_service, "settings", local):
+            initialize_auth(self.db)
+
+        admin = self.db.get(AuthUserModel, "admin-user")
+        assert admin is not None
+        admin.status = "disabled"
+        self.db.commit()
+
+        production_demo = SimpleNamespace(
+            allows_header_auth_fallback=False,
+            auth_legacy_demo_users_enabled=True,
+            bootstrap_admin_email="owner@example.com",
+            bootstrap_admin_password="strong-bootstrap-password",
+            bootstrap_admin_display_name="Production Owner",
+        )
+        with patch.object(auth_service, "settings", production_demo):
+            initialize_auth(self.db)
+
+        self.assertEqual(self.db.get(AuthUserModel, "admin-user").status, "disabled")
+        self.assertEqual(self.db.get(AuthUserModel, "demo-user").status, "active")
+
     def test_request_time_service_construction_skips_initialization_work(self) -> None:
         for allows_header_auth_fallback in (True, False):
             with self.subTest(allows_header_auth_fallback=allows_header_auth_fallback):
@@ -232,6 +278,24 @@ class OperationalAuthHardeningTests(unittest.TestCase):
 
 
 class ProductionConfigurationHardeningTests(unittest.TestCase):
+    def test_production_legacy_demo_users_require_an_explicit_opt_in(self) -> None:
+        default_settings = Settings(
+            app_env="production",
+            bootstrap_admin_email="owner@example.com",
+            bootstrap_admin_password="strong-bootstrap-password",
+            backend_cors_origins=[],
+        )
+        opted_in_settings = Settings(
+            app_env="production",
+            auth_legacy_demo_users_enabled=True,
+            bootstrap_admin_email="owner@example.com",
+            bootstrap_admin_password="strong-bootstrap-password",
+            backend_cors_origins=[],
+        )
+
+        self.assertFalse(default_settings.auth_legacy_demo_users_enabled)
+        self.assertTrue(opted_in_settings.auth_legacy_demo_users_enabled)
+
     def test_production_rejects_wildcard_or_insecure_cors_origins(self) -> None:
         for origins in (["*"], ["http://app.example.com"]):
             with self.subTest(origins=origins):
