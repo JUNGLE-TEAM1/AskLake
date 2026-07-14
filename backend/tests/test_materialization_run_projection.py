@@ -2,7 +2,7 @@ import unittest
 
 from app.schemas.catalog import DatasetMaterializationRun
 from app.services.catalog_service import recalculate_dataset_payload_from_runs
-from app.services.materialization_projection import aggregate_materialization_runs
+from app.services.materialization_projection import aggregate_materialization_runs, upsert_materialization_run
 
 
 class MaterializationRunProjectionTests(unittest.TestCase):
@@ -58,6 +58,24 @@ class MaterializationRunProjectionTests(unittest.TestCase):
 
         self.assertEqual(run.materialization_mode, "snapshot")
         self.assertEqual(run.model_dump(by_alias=True)["materializationMode"], "snapshot")
+
+    def test_late_historical_iceberg_run_does_not_replace_current_head(self) -> None:
+        current = {
+            **successful_run("run-current", "delta", 10, 100),
+            "createdAt": "2026-07-13T10:00:00Z",
+            "icebergCommittedAt": "2026-07-13T09:59:00Z",
+            "icebergSnapshotId": "200",
+        }
+        historical = {
+            **successful_run("run-historical", "delta", 8, 80),
+            "createdAt": "2026-07-13T10:05:00Z",
+            "icebergCommittedAt": "2026-07-13T09:55:00Z",
+            "icebergSnapshotId": "100",
+        }
+
+        runs = upsert_materialization_run([current], historical)
+
+        self.assertEqual([run["runId"] for run in runs], ["run-current", "run-historical"])
 
     def test_deleting_current_snapshot_falls_back_to_previous_snapshot(self) -> None:
         previous = successful_run("run-old", "snapshot", 8, 80)

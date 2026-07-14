@@ -61,6 +61,53 @@ export function projectKafkaTargetRecord(record, schemaColumns) {
   return projected;
 }
 
+export function parseKafkaSnapshotRecord(value, context = {}, schemaColumns = []) {
+  try {
+    const record = JSON.parse(value);
+    if (!record || typeof record !== "object" || Array.isArray(record)) {
+      return invalidRecord(context, value, "invalid_json_object");
+    }
+    if (!usesLegacyReviewContract(schemaColumns)) return { record, valid: true };
+
+    for (const field of ["event_id", "offset", "review", "created_at"]) {
+      if (record[field] === undefined || record[field] === null || record[field] === "") {
+        return invalidRecord(context, value, "missing_required_field", { field });
+      }
+    }
+    if (record.schema_version !== undefined && record.schema_version !== "1.0") {
+      return invalidRecord(context, value, "unsupported_schema_version", { schemaVersion: record.schema_version });
+    }
+    if (record.raw !== undefined && (typeof record.raw !== "object" || Array.isArray(record.raw))) {
+      return invalidRecord(context, value, "invalid_raw_payload");
+    }
+    const numericOffset = Number(record.offset);
+    if (!Number.isFinite(numericOffset)) {
+      return invalidRecord(context, value, "invalid_offset", { offset: record.offset });
+    }
+    return {
+      record: {
+        schema_version: record.schema_version || "1.0",
+        event_id: String(record.event_id),
+        source: record.source || "review-dataset",
+        offset: numericOffset,
+        review: String(record.review),
+        created_at: String(record.created_at),
+        raw: record.raw || { ...record },
+      },
+      valid: true,
+    };
+  } catch (error) {
+    return invalidRecord(context, value, "invalid_json", { message: error?.message || String(error) });
+  }
+}
+
+export function usesLegacyReviewContract(schemaColumns = []) {
+  const configured = list(schemaColumns).filter((column) => column?.included !== false);
+  if (configured.length === 0) return true;
+  const names = new Set(configured.flatMap((column) => [text(column.sourceName), text(column.targetName)]).filter(Boolean));
+  return ["event_id", "offset", "review", "created_at"].every((field) => names.has(field));
+}
+
 export function standardKafkaReviewSchema() {
   return [
     { nullable: false, sourceName: "schema_version", targetName: "schema_version", type: "String" },
@@ -114,6 +161,13 @@ function setRecordValue(record, field, value) {
     target = target[part];
   }
   target[parts.at(-1)] = value;
+}
+
+function invalidRecord(context, rawPayload, reason, details = {}) {
+  return {
+    error: { ...context, ...details, rawPayload, reason },
+    valid: false,
+  };
 }
 
 function text(value) {

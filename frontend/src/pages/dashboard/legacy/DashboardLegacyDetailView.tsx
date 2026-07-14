@@ -26,6 +26,7 @@ export function DashboardLegacyDetailView({
   activeDashboardTitle,
   activeSqlResult,
   dataset,
+  deletedWidgetIds,
   deleteRequested,
   expandedChart,
   isPublished,
@@ -54,6 +55,7 @@ export function DashboardLegacyDetailView({
   activeDashboardTitle: string;
   activeSqlResult: SqlResultDraft | null;
   dataset: CatalogDataset;
+  deletedWidgetIds: ReadonlySet<string>;
   deleteRequested: boolean;
   expandedChart: ExpandedChart | null;
   isPublished: boolean;
@@ -153,7 +155,7 @@ export function DashboardLegacyDetailView({
 
       <div className="dashboard-layout">
         <main className="dashboard-canvas">
-          <section className="dashboard-chart-card dashboard-category-card">
+          {!deletedWidgetIds.has("category-sales") && <section className="dashboard-chart-card dashboard-category-card">
             <div className="dashboard-card-header">
               <div>
                 <span>CHART</span>
@@ -166,7 +168,7 @@ export function DashboardLegacyDetailView({
               </div>
             </div>
             <DashboardLegacyChart kind="category" model={model} />
-          </section>
+          </section>}
 
           <DashboardChartCard
             title="일별 주문/매출 추이"

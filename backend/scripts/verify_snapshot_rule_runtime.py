@@ -6,6 +6,7 @@ from decimal import Decimal
 from pyspark.sql import SparkSession
 
 from snapshot_rule_runtime import SnapshotRuleExecutionError, apply_snapshot_rules
+from spark_snapshot_rules import apply_spark_snapshot_rules
 
 
 def main():
@@ -22,11 +23,48 @@ def main():
     )
     spark.sparkContext.setLogLevel("ERROR")
     try:
+        verify_transform_only_action_budget(spark)
         for case in fixture["cases"]:
             verify_case(spark, case)
     finally:
         spark.stop()
     print("verify-snapshot-rule-runtime-spark: ok")
+
+
+def verify_transform_only_action_budget(spark):
+    frame = spark.createDataFrame([("1",), ("invalid",)], schema="value string")
+    rule = {
+        "contractVersion": "1.0",
+        "enabled": True,
+        "failureDisposition": "keep",
+        "id": "transform-only-cast",
+        "inputColumns": ["value"],
+        "kind": "transform",
+        "onError": "warn",
+        "operation": "cast",
+        "outputColumns": ["value_long"],
+        "outputType": "Long",
+        "parameters": {"targetType": "Long"},
+    }
+    dataframe_type = type(frame)
+    original_count = dataframe_type.count
+    count_calls = 0
+
+    def tracked_count(current):
+        nonlocal count_calls
+        count_calls += 1
+        return original_count(current)
+
+    dataframe_type.count = tracked_count
+    try:
+        result = apply_spark_snapshot_rules(spark, frame, [rule], input_row_count=2)
+    finally:
+        dataframe_type.count = original_count
+
+    assert count_calls == 1, f"transform-only runtime must use one invalid-count action, got {count_calls}"
+    assert result["quality"]["configuredRuleCount"] == 0, result["quality"]
+    assert result["quality"]["evaluatedRowCount"] == 2, result["quality"]
+    assert result["transform"]["errorCount"] == 1, result["transform"]
 
 
 def verify_case(spark, case):

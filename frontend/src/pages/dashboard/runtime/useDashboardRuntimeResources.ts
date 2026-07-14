@@ -7,6 +7,7 @@ import type {
   DashboardRuntimeMode,
   DashboardRuntimeResponse,
 } from "../../../types";
+import { usePublishedDashboardLiveRefresh } from "./usePublishedDashboardLiveRefresh";
 
 export function useDashboardRuntimeResources({
   active,
@@ -102,6 +103,14 @@ export function useDashboardRuntimeResources({
       setSelectedPageId(pages[0]?.id ?? null);
     }
   }, [active, pages, selectedPageId]);
+
+  usePublishedDashboardLiveRefresh({
+    active,
+    dashboardId,
+    mode,
+    publishedRuntime,
+    setPublishedRuntime,
+  });
 
   return {
     draftError,

@@ -13,7 +13,6 @@ export const flowTabs: Array<{ id: FlowId; label: string; stepIndex: number }> =
   { id: "rules", label: "변환 규칙", stepIndex: 1 },
   { id: "repeat", label: "반복 실행", stepIndex: 2 },
   { id: "manual", label: "수동 실행", stepIndex: 2 },
-  { id: "once", label: "1회 실행", stepIndex: 2 },
   { id: "target", label: "타겟 설정", stepIndex: 4 },
   { id: "permission", label: "권한 설정", stepIndex: 3 },
   { id: "review", label: "검토 및 생성", stepIndex: 5 },
@@ -109,12 +108,6 @@ export const summaryByFlow: Record<FlowId, Array<[string, string]>> = {
     ["다음 실행", "없음"],
     ["실패 재시도", "기본 정책"],
     ["상태", "대기"],
-  ],
-  once: [
-    ["실행 방식", "1회 실행"],
-    ["실행 시각", "설정 전"],
-    ["실패 재시도", "기본 정책"],
-    ["상태", "예약 전"],
   ],
   target: [
     ["저장소", "S3 Gold"],

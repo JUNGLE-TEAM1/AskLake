@@ -59,10 +59,7 @@ export function buildJobListResult(storedJobs, query = {}) {
 }
 
 function normalizeListJob(job) {
-  const normalized = withRuleContract(job);
-  return ["failed", "canceled", "paused"].includes(normalized.status)
-    ? { ...normalized, status: "scheduled" }
-    : normalized;
+  return withRuleContract(job);
 }
 
 function latestRunOutcome(job) {

@@ -14,6 +14,8 @@ import { objectStorageDockerEnv, toDockerEnvArgs } from "../src/objectStorageCon
 
 import {
   createSparkRestSubmission,
+  sparkIcebergEnvironment,
+  sparkPackages,
   sparkExecutionMode,
   sparkRestRuntimeConfig,
 } from "../src/sparkRunner.mjs";
@@ -81,7 +83,7 @@ async function runMaintenanceRest(input) {
     const submission = createSparkRestSubmission({
       appName: `asklake-${safeSegment(required(input.kind, "kind"))}-${safeSegment(runId)}`,
       environmentVariables: maintenanceEnvironment(input, runtime.reportRuntimeDir, false),
-      packages: sparkPackageList(),
+      packages: maintenanceSparkPackages(input.outputPath, requiredObject(input.icebergTarget, "icebergTarget")),
       scriptPath: runtime.scriptPath,
     }, process.env);
     const created = await createSparkRestDriver(runtime.restUrl, submission);
@@ -217,16 +219,32 @@ function maintenanceRestRuntime() {
 
 function maintenanceEnvironment(input, runtimeReportDir, includeCredentials = true) {
   const runId = required(input.runId, "runId");
+  const icebergTarget = requiredObject(input.icebergTarget, "icebergTarget");
   return {
+    ASKLAKE_MAINTENANCE_JOB_ID: required(input.jobId, "jobId"),
     ASKLAKE_MAINTENANCE_KIND: required(input.kind, "kind"),
     ASKLAKE_MAINTENANCE_RUN_ID: runId,
     ASKLAKE_MAINTENANCE_OUTPUT_PATH: required(input.outputPath, "outputPath"),
     ASKLAKE_MAINTENANCE_SCHEMA_COLUMNS: JSON.stringify(input.schemaColumns || []),
+    ASKLAKE_MAINTENANCE_SCHEMA_FINGERPRINT: String(input.schemaFingerprint || ""),
     ASKLAKE_MAINTENANCE_SCHEMA_POLICY: JSON.stringify(input.schemaEvolutionPolicy || {}),
+    ASKLAKE_MAINTENANCE_ICEBERG_TARGET: JSON.stringify(icebergTarget),
+    ASKLAKE_MAINTENANCE_RULE_CONTRACT_VERSION: input.ruleContractVersion || "1.0",
+    ASKLAKE_MAINTENANCE_RULE_FINGERPRINT: required(input.ruleFingerprint, "ruleFingerprint"),
+    ASKLAKE_MAINTENANCE_RULE_OUTPUT_SCHEMA: JSON.stringify(input.ruleOutputSchema || []),
+    ASKLAKE_MAINTENANCE_RULES: JSON.stringify(input.rules || []),
     ASKLAKE_MAINTENANCE_APPROVE_UNKNOWN_FIELDS: Boolean(input.approveUnknownFields),
     ASKLAKE_MAINTENANCE_OFFSETS: JSON.stringify(input.offsets || []),
     ASKLAKE_MAINTENANCE_TARGET_MB: input.targetFileSizeMb || 256,
+    ASKLAKE_MAINTENANCE_REWRITE_DATA_FILES: input.rewriteDataFiles !== false,
+    ASKLAKE_MAINTENANCE_EXPIRE_SNAPSHOTS: Boolean(input.expireSnapshots),
+    ASKLAKE_MAINTENANCE_SNAPSHOT_RETENTION_HOURS: input.snapshotRetentionHours || 168,
+    ASKLAKE_MAINTENANCE_RETAIN_LAST_SNAPSHOTS: input.retainLastSnapshots || 10,
+    ASKLAKE_MAINTENANCE_REMOVE_ORPHAN_FILES: Boolean(input.removeOrphanFiles),
+    ASKLAKE_MAINTENANCE_ORPHAN_RETENTION_HOURS: input.orphanRetentionHours || 168,
     ASKLAKE_MAINTENANCE_LIMIT: input.limit || 100,
+    ASKLAKE_MAINTENANCE_REPLAY_MAX_ROWS: process.env.ASKLAKE_MAINTENANCE_REPLAY_MAX_ROWS || 1000,
+    ASKLAKE_MAINTENANCE_TRUSTED_LEGACY_REPLAY_RUN_IDS: JSON.stringify(input.trustedLegacyReplayRunIds || []),
     ASKLAKE_MAINTENANCE_RESULT_FILE: path.posix.join(runtimeReportDir, resultFileName(runId)),
     MINIO_ENDPOINT: process.env.MINIO_ENDPOINT_IN_DOCKER || process.env.MINIO_ENDPOINT || "http://minio:9000",
     MINIO_REGION: process.env.MINIO_REGION || "us-east-1",
@@ -234,6 +252,7 @@ function maintenanceEnvironment(input, runtimeReportDir, includeCredentials = tr
       MINIO_ACCESS_KEY: process.env.MINIO_ACCESS_KEY || "",
       MINIO_SECRET_KEY: process.env.MINIO_SECRET_KEY || "",
     } : {}),
+    ...sparkIcebergEnvironment({ icebergTarget }),
     HOME: "/tmp",
   };
 }
@@ -335,7 +354,8 @@ function cleanupMaintenanceDocker(input) {
 function runMaintenanceDocker(input) {
   const runId = required(input.runId, "runId");
   if (existsSync(resultFile(runId))) unlinkSync(resultFile(runId));
-  const packages = sparkPackageList().join(",");
+  const icebergTarget = requiredObject(input.icebergTarget, "icebergTarget");
+  const packages = maintenanceSparkPackages(input.outputPath, icebergTarget).join(",");
   const packageArgs = packages ? ["--packages", packages] : [];
   const environment = maintenanceEnvironment(input, reportContainerDir);
   const args = [
@@ -361,6 +381,7 @@ function runMaintenanceDocker(input) {
     "-e", `ASKLAKE_MAINTENANCE_OFFSETS=${JSON.stringify(input.offsets || [])}`,
     "-e", `ASKLAKE_MAINTENANCE_TARGET_MB=${input.targetFileSizeMb || 256}`,
     "-e", `ASKLAKE_MAINTENANCE_LIMIT=${input.limit || 100}`,
+    "-e", `ASKLAKE_MAINTENANCE_REPLAY_MAX_ROWS=${process.env.ASKLAKE_MAINTENANCE_REPLAY_MAX_ROWS || 1000}`,
     ...toDockerEnvArgs(objectStorageDockerEnv()),
     "-e", "HOME=/tmp",
     image,
@@ -392,6 +413,17 @@ function sparkPackageList() {
   return [process.env.ASKLAKE_SPARK_HADOOP_AWS_PACKAGE || "org.apache.hadoop:hadoop-aws:3.4.1"]
     .map((value) => String(value || "").trim())
     .filter((value) => value && value !== "none");
+}
+
+function maintenanceSparkPackages(outputPath, icebergTarget) {
+  return [...new Set([
+    ...sparkPackageList(),
+    ...sparkPackages(
+      { icebergTarget },
+      { path: "" },
+      { sparkPath: required(outputPath, "outputPath") },
+    ),
+  ])];
 }
 
 function maintenanceTimeoutMs() {
@@ -437,6 +469,13 @@ function delay(milliseconds) {
 function required(value, name) {
   if (value === undefined || value === null || String(value).trim() === "") throw new Error(`${name} is required`);
   return String(value);
+}
+
+function requiredObject(value, name) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${name} is required`);
+  }
+  return value;
 }
 
 function positiveInt(value, fallback) {

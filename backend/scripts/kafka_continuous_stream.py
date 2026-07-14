@@ -1,4 +1,4 @@
-"""Long-running Kafka to Parquet Structured Streaming worker for AskLake."""
+"""Long-running Kafka to Iceberg Structured Streaming worker for AskLake."""
 
 import hashlib
 import json
@@ -17,6 +17,12 @@ from pyspark.sql.types import BooleanType, DoubleType, LongType, MapType, String
 from kafka_schema_paths import build_nested_schema_tree, expected_object_keys, json_path, split_source_path
 from object_storage_runtime import configure_spark_hadoop
 from snapshot_rule_runtime import SnapshotRuleExecutionError, apply_snapshot_rules, supports_snapshot_rules
+from spark_job_run import (
+    commit_iceberg_table,
+    iceberg_source_boundary_exists,
+    make_spark,
+    parse_iceberg_target,
+)
 
 
 def json_object_env(name: str) -> dict[str, Any]:
@@ -40,6 +46,43 @@ def canonical_hash(value: Any) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def bounded_int_env(name: str, default: int, *, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.environ.get(name, str(default)))
+    except ValueError:
+        value = default
+    return max(minimum, min(value, maximum))
+
+
+def normalize_stream_partition_cursors(value: Any) -> dict[tuple[str, int], int]:
+    cursors: dict[tuple[str, int], int] = {}
+    if not isinstance(value, list):
+        return cursors
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        topic = str(item.get("topic") or "").strip()
+        try:
+            partition = int(item.get("partition"))
+            next_offset = int(item.get("nextOffset"))
+        except (TypeError, ValueError):
+            continue
+        if not topic or partition < 0 or next_offset < 0:
+            continue
+        key = (topic, partition)
+        cursors[key] = max(cursors.get(key, 0), next_offset)
+    return cursors
+
+
+def stream_partition_cursor_payload(
+    cursors: dict[tuple[str, int], int],
+) -> list[dict[str, Any]]:
+    return [
+        {"topic": topic, "partition": partition, "nextOffset": next_offset}
+        for (topic, partition), next_offset in sorted(cursors.items())
+    ]
+
+
 JOB_ID = os.environ["ASKLAKE_CONTINUOUS_JOB_ID"]
 WORKER_ATTEMPT_ID = os.environ.get("ASKLAKE_CONTINUOUS_WORKER_ATTEMPT_ID")
 REPORT_FILE = Path(os.environ["ASKLAKE_CONTINUOUS_REPORT_FILE"])
@@ -49,11 +92,15 @@ QUERY = None
 INITIAL_COUNTS = json.loads(os.environ.get("ASKLAKE_CONTINUOUS_INITIAL_COUNTS", "{}"))
 INITIAL_METRICS = json_object_env("ASKLAKE_CONTINUOUS_INITIAL_METRICS")
 INITIAL_SCHEMA_STATE = json_object_env("ASKLAKE_CONTINUOUS_INITIAL_SCHEMA_STATE")
+STREAM_PARTITION_CURSORS = normalize_stream_partition_cursors(
+    json_array_env("ASKLAKE_CONTINUOUS_STREAM_PARTITION_CURSORS")
+)
 RULE_CONTRACT_VERSION = os.environ.get("ASKLAKE_CONTINUOUS_RULE_CONTRACT_VERSION", "1.0")
 RULES = [rule for rule in json_array_env("ASKLAKE_CONTINUOUS_RULES") if isinstance(rule, dict)]
 RULE_OUTPUT_SCHEMA = [item for item in json_array_env("ASKLAKE_CONTINUOUS_RULE_OUTPUT_SCHEMA") if isinstance(item, (list, tuple)) and len(item) >= 2]
 RULE_FINGERPRINT = canonical_hash({"contractVersion": RULE_CONTRACT_VERSION, "rules": RULES})
 EXPECTED_RULE_FINGERPRINT = os.environ.get("ASKLAKE_CONTINUOUS_RULE_FINGERPRINT", "")
+EXPECTED_SCHEMA_FINGERPRINT = os.environ.get("ASKLAKE_CONTINUOUS_EXPECTED_SCHEMA_FINGERPRINT", "")
 SCHEMA_POLICY = {
     "additiveNullable": "allow",
     "missingRequired": "quarantine",
@@ -74,6 +121,17 @@ LAST_BATCH_QUARANTINED_COUNT = 0
 LAST_BATCH_WRITTEN = False
 PROCESSED_OFFSETS: dict[str, int] = {}
 PUBLISHED_BATCHES: list[dict[str, Any]] = []
+PUBLISHED_BATCH_LIMIT = bounded_int_env(
+    "ASKLAKE_CONTINUOUS_PUBLICATION_WINDOW",
+    100,
+    minimum=1,
+    maximum=1_000,
+)
+PUBLISHED_BACKLOG_COUNT = 0
+CATALOG_ACK_BATCH_ID = -1
+LATEST_DURABLE_BATCH_ID = -1
+RECOVERY_SPARK: SparkSession | None = None
+RECOVERY_ROOT: str | None = None
 METRICS: dict[str, Any] = {
     "lag": None,
     "lagAvailable": False,
@@ -215,6 +273,7 @@ def build_batch_dag_steps(
     data_path: str | None = None,
     manifest_path_value: str | None = None,
     checkpoint_path: str | None = None,
+    iceberg_commit: dict[str, Any] | None = None,
     failed_stage: str | None = None,
     error: str | None = None,
     catalog_status: str = "pending",
@@ -245,6 +304,8 @@ def build_batch_dag_steps(
     transform_note = "설정된 변환 규칙이 없어 입력을 그대로 전달했습니다." if transform_count == 0 else None
     quality_note = "설정된 품질 규칙이 없어 입력을 그대로 전달했습니다." if quality_count == 0 else None
     completed = completed_at or now()
+    iceberg_commit = iceberg_commit or {}
+    iceberg_target = iceberg_commit.get("target") if isinstance(iceberg_commit.get("target"), dict) else {}
     steps = [
         dag_step(
             "source", "1. Source", stage_status("source"), f"Kafka {consumed_count:,}건 소비",
@@ -267,9 +328,14 @@ def build_batch_dag_steps(
             details=[["설정 규칙", f"{quality_count:,}"], ["평가 행", f"{int(quality.get('evaluatedRowCount') or 0):,}"], ["위반 행", f"{int(quality.get('invalidRowCount') or 0):,}"], ["통과율", f"{float(quality.get('passRate') or 0):.1f}%"]],
         ),
         dag_step(
-            "target", "5. Target", stage_status("target"), f"Parquet {stored_count:,}건 적재",
+            "target", "5. Target", stage_status("target"), f"Iceberg {stored_count:,}건 커밋",
             completed_at=completed, duration_ms=durations.get("targetDurationMs"), logs=stage_error("target"),
-            details=[["출력 행", f"{stored_count:,}"], ["전체 격리", f"{quarantined_count:,}"], ["저장 경로", data_path or "-"]],
+            details=[
+                ["출력 행", f"{stored_count:,}"],
+                ["전체 격리", f"{quarantined_count:,}"],
+                ["Table", str(iceberg_target.get("tableUri") or data_path or "-")],
+                ["Snapshot", str(iceberg_commit.get("snapshotId") or ("변경 없음" if stored_count == 0 else "-"))],
+            ],
         ),
         dag_step(
             "manifest-checkpoint", "6. Manifest / Checkpoint", stage_status("manifest-checkpoint"), "publication과 offset 근거 저장",
@@ -297,7 +363,10 @@ def build_batch_evidence(**values: Any) -> dict[str, Any]:
         "quarantinedCount": int(values.get("quarantined_count") or 0),
         "durationMs": int(values.get("duration_ms") or 0),
         "sourceRanges": values.get("source_ranges") or [],
+        "sourceBoundary": values.get("source_boundary") or {},
+        "runId": values.get("run_id"),
         "dataPath": values.get("data_path"),
+        "icebergCommit": values.get("iceberg_commit"),
         "quarantinePath": values.get("quarantine_path"),
         "manifestPath": values.get("manifest_path_value"),
         "lastError": values.get("error"),
@@ -317,6 +386,7 @@ def build_batch_evidence(**values: Any) -> dict[str, Any]:
         data_path=values.get("data_path"),
         manifest_path_value=values.get("manifest_path_value"),
         checkpoint_path=values.get("checkpoint_path"),
+        iceberg_commit=values.get("iceberg_commit"),
         failed_stage=values.get("failed_stage"),
         error=values.get("error"),
         catalog_status=str(values.get("catalog_status") or "pending"),
@@ -344,18 +414,54 @@ def fail_current_batch(error: Exception) -> None:
     LAST_BATCH_EVIDENCE = build_batch_evidence(**context)
 
 
-def apply_catalog_ack() -> None:
-    global PUBLISHED_BATCHES
+def catalog_ack_batch_id() -> int:
     ack_path = REPORT_FILE.with_suffix(".catalog-ack.json")
     try:
         payload = json.loads(ack_path.read_text(encoding="utf-8"))
-        acknowledged_batch = int(payload.get("batchId"))
+        return int(payload.get("batchId"))
     except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return -1
+
+
+def apply_catalog_ack() -> None:
+    global CATALOG_ACK_BATCH_ID, PUBLISHED_BACKLOG_COUNT, PUBLISHED_BATCHES
+    acknowledged_batch = catalog_ack_batch_id()
+    if acknowledged_batch <= CATALOG_ACK_BATCH_ID:
         return
+    CATALOG_ACK_BATCH_ID = acknowledged_batch
     PUBLISHED_BATCHES = [
         item for item in PUBLISHED_BATCHES
         if int(item.get("batchId") or 0) > acknowledged_batch
     ]
+    if RECOVERY_SPARK is not None and RECOVERY_ROOT:
+        recovered = recover_published_state(
+            RECOVERY_SPARK,
+            RECOVERY_ROOT,
+            acknowledged_batch=acknowledged_batch,
+            batch_limit=PUBLISHED_BATCH_LIMIT,
+        )
+        PUBLISHED_BATCHES = recovered["batches"]
+        PUBLISHED_BACKLOG_COUNT = recovered["backlogCount"]
+
+
+def remember_published_batch(publication: dict[str, Any]) -> None:
+    global LATEST_DURABLE_BATCH_ID, PUBLISHED_BACKLOG_COUNT, PUBLISHED_BATCHES
+    batch_id = int(publication.get("batchId") or 0)
+    if batch_id > LATEST_DURABLE_BATCH_ID:
+        LATEST_DURABLE_BATCH_ID = batch_id
+        if batch_id > CATALOG_ACK_BATCH_ID:
+            PUBLISHED_BACKLOG_COUNT += 1
+    existing = [
+        item
+        for item in PUBLISHED_BATCHES
+        if int(item.get("batchId") or 0) != batch_id
+    ]
+    if batch_id > CATALOG_ACK_BATCH_ID:
+        existing.append(publication)
+    PUBLISHED_BATCHES = sorted(
+        existing,
+        key=lambda item: int(item.get("batchId") or 0),
+    )[:PUBLISHED_BATCH_LIMIT]
 
 
 def report(status: str, *, batch_id: int | None = None, error: str | None = None) -> None:
@@ -375,6 +481,9 @@ def report(status: str, *, batch_id: int | None = None, error: str | None = None
         "lastBatchQuarantinedCount": LAST_BATCH_QUARANTINED_COUNT,
         "lastBatchWritten": LAST_BATCH_WRITTEN,
         "publishedBatches": PUBLISHED_BATCHES,
+        "publicationBacklogCount": PUBLISHED_BACKLOG_COUNT,
+        "publicationWindowLimit": PUBLISHED_BATCH_LIMIT,
+        "catalogAckBatchId": CATALOG_ACK_BATCH_ID if CATALOG_ACK_BATCH_ID >= 0 else None,
         **METRICS,
         **SCHEMA_STATE,
         **COUNTERS,
@@ -584,7 +693,7 @@ def checkpoint_contract_path(checkpoint_path: str) -> str:
     return f"{checkpoint_path.rstrip('/')}/_asklake_contract"
 
 
-def continuous_runtime_contract(output_path: str) -> dict[str, Any]:
+def continuous_runtime_contract(output_path: str, iceberg_target: dict[str, Any]) -> dict[str, Any]:
     output_schema = [
         {"name": str(item[0]), "type": str(item[1])}
         for item in RULE_OUTPUT_SCHEMA
@@ -592,23 +701,30 @@ def continuous_runtime_contract(output_path: str) -> dict[str, Any]:
     contract = {
         "consumerGroupId": os.environ["ASKLAKE_CONTINUOUS_CONSUMER_GROUP_ID"],
         "jobId": JOB_ID,
+        "icebergTarget": iceberg_target,
         "outputPath": output_path.rstrip("/"),
         "outputSchema": output_schema,
         "ruleContractVersion": RULE_CONTRACT_VERSION,
         "ruleFingerprint": RULE_FINGERPRINT,
+        "persistedSchemaFingerprint": EXPECTED_SCHEMA_FINGERPRINT or None,
         "schemaFingerprint": SCHEMA_STATE.get("schemaFingerprint"),
         "topic": os.environ["ASKLAKE_CONTINUOUS_TOPIC"],
     }
     return {**contract, "runtimeFingerprint": canonical_hash(contract)}
 
 
-def ensure_checkpoint_contract(spark: SparkSession, checkpoint_path: str, output_path: str) -> None:
+def ensure_checkpoint_contract(
+    spark: SparkSession,
+    checkpoint_path: str,
+    output_path: str,
+    iceberg_target: dict[str, Any],
+) -> None:
     global RUNTIME_FINGERPRINT
     if EXPECTED_RULE_FINGERPRINT and EXPECTED_RULE_FINGERPRINT != RULE_FINGERPRINT:
         raise RuntimeError("Continuous rule fingerprint differs between the control plane and worker payload.")
     if not supports_snapshot_rules(RULES):
         raise RuntimeError("Continuous worker received a stateful or unsupported canonical Rule.")
-    contract = continuous_runtime_contract(output_path)
+    contract = continuous_runtime_contract(output_path, iceberg_target)
     RUNTIME_FINGERPRINT = str(contract["runtimeFingerprint"])
     path = checkpoint_contract_path(checkpoint_path)
     if output_committed(spark, path):
@@ -835,12 +951,22 @@ def load_committed_manifest(
     manifest.setdefault("publicationId", f"stream:{JOB_ID}:batch:{batch_id}")
     manifest.setdefault("publicationType", "stream")
     manifest.setdefault("manifestPath", path)
-    if int(manifest.get("storedCount") or 0) > 0:
+    iceberg_commit = manifest.get("icebergCommit") if isinstance(manifest.get("icebergCommit"), dict) else None
+    if int(manifest.get("storedCount") or 0) > 0 and iceberg_commit:
+        target = iceberg_commit.get("target") if isinstance(iceberg_commit.get("target"), dict) else {}
+        table_uri = str(target.get("tableUri") or "").strip()
+        if not table_uri or not str(iceberg_commit.get("snapshotId") or "").strip():
+            raise RuntimeError(f"Batch manifest has incomplete Iceberg commit evidence: {path}")
+        manifest.setdefault("dataPath", table_uri)
+    elif int(manifest.get("storedCount") or 0) > 0:
         manifest.setdefault("dataPath", f"{root.rstrip('/')}/_batches/batch_id={batch_id}")
     if int(manifest.get("quarantinedCount") or 0) > 0:
         manifest.setdefault("quarantinePath", f"{root.rstrip('/')}/_quarantine/_batches/batch_id={batch_id}")
     manifest.setdefault("sourceRanges", [])
-    for count_name, path_name in (("storedCount", "dataPath"), ("quarantinedCount", "quarantinePath")):
+    path_evidence = (("quarantinedCount", "quarantinePath"),)
+    if iceberg_commit is None:
+        path_evidence = (("storedCount", "dataPath"), *path_evidence)
+    for count_name, path_name in path_evidence:
         if int(manifest.get(count_name) or 0) > 0 and not output_committed(spark, str(manifest.get(path_name) or "")):
             raise RuntimeError(f"Batch manifest references an incomplete {path_name}: {path}")
     return manifest
@@ -872,25 +998,72 @@ def committed_child_paths(spark: SparkSession, root: str) -> list[str]:
     return sorted(paths)
 
 
-def recover_published_state(spark: SparkSession, root: str) -> dict[str, Any]:
+def recover_published_state(
+    spark: SparkSession,
+    root: str,
+    *,
+    acknowledged_batch: int = -1,
+    batch_limit: int = PUBLISHED_BATCH_LIMIT,
+) -> dict[str, Any]:
     manifest_root = f"{root.rstrip('/')}/_batch-manifests"
     paths = committed_child_paths(spark, manifest_root)
     if not paths:
-        return {"counts": {"consumedCount": 0, "storedCount": 0, "quarantinedCount": 0}, "batches": []}
-    batches = []
+        return {
+            "backlogCount": 0,
+            "batches": [],
+            "counts": {"consumedCount": 0, "storedCount": 0, "quarantinedCount": 0},
+            "latest": None,
+            "partitionCursors": [],
+            "ruleMetrics": {},
+        }
+    batches: list[dict[str, Any]] = []
+    counts = {"consumedCount": 0, "storedCount": 0, "quarantinedCount": 0}
+    rule_metrics: dict[str, int] = {}
+    latest: dict[str, Any] | None = None
+    partition_cursors: dict[tuple[str, int], int] = {}
+    backlog_count = 0
+    manifest_paths: list[tuple[int, str]] = []
     for path in paths:
         match = re.search(r"/batch_id=(\d+)$", path.rstrip("/"))
         if not match:
             continue
-        batches.append(load_committed_manifest(spark, root, path, int(match.group(1))))
+        manifest_paths.append((int(match.group(1)), path))
+    for batch_id, path in sorted(manifest_paths, key=lambda item: item[0]):
+        batch = load_committed_manifest(spark, root, path, batch_id)
+        for key in counts:
+            counts[key] += int(batch.get(key) or 0)
+        for key, value in recovered_rule_metrics([batch]).items():
+            rule_metrics[key] = rule_metrics.get(key, 0) + value
+        for source_range in batch.get("sourceRanges") or []:
+            if not isinstance(source_range, dict):
+                continue
+            topic = str(source_range.get("topic") or "").strip()
+            try:
+                partition = int(source_range.get("partition"))
+                next_offset = int(source_range.get("endOffset"))
+            except (TypeError, ValueError):
+                continue
+            if topic and partition >= 0 and next_offset >= 0:
+                key = (topic, partition)
+                partition_cursors[key] = max(
+                    partition_cursors.get(key, 0),
+                    next_offset,
+                )
+        if latest is None or batch_id > int(latest.get("batchId") or -1):
+            latest = batch
+        if batch_id <= acknowledged_batch:
+            continue
+        backlog_count += 1
+        if len(batches) < batch_limit:
+            batches.append(batch)
     batches.sort(key=lambda item: int(item.get("batchId") or 0))
-    counts = {
-        key: sum(int(batch.get(key) or 0) for batch in batches)
-        for key in ("consumedCount", "storedCount", "quarantinedCount")
-    }
     return {
+        "backlogCount": backlog_count,
         "counts": counts,
         "batches": batches,
+        "latest": latest,
+        "partitionCursors": stream_partition_cursor_payload(partition_cursors),
+        "ruleMetrics": rule_metrics,
     }
 
 
@@ -909,6 +1082,47 @@ def batch_source_ranges(batch: DataFrame) -> list[dict[str, Any]]:
     ], key=lambda item: (item["topic"], item["partition"]))
 
 
+def retain_uncommitted_offsets(batch: DataFrame) -> DataFrame:
+    unseen = lit(True)
+    for (topic, partition), next_offset in STREAM_PARTITION_CURSORS.items():
+        already_committed = (
+            (col("topic") == lit(topic))
+            & (col("partition") == lit(partition))
+            & (col("offset") < lit(next_offset))
+        )
+        unseen = unseen & ~already_committed
+    return batch.where(unseen)
+
+
+def advance_worker_stream_partition_cursors(
+    source_ranges: list[dict[str, Any]],
+) -> None:
+    for item in source_ranges:
+        if not isinstance(item, dict):
+            continue
+        topic = str(item.get("topic") or "").strip()
+        try:
+            partition = int(item.get("partition"))
+            next_offset = int(
+                item.get("endOffset")
+                if item.get("endOffset") is not None
+                else item.get("nextOffset")
+            )
+        except (TypeError, ValueError):
+            continue
+        if not topic or partition < 0 or next_offset < 0:
+            continue
+        key = (topic, partition)
+        STREAM_PARTITION_CURSORS[key] = max(
+            STREAM_PARTITION_CURSORS.get(key, 0),
+            next_offset,
+        )
+
+
+def next_publication_batch_id() -> int:
+    return max(CATALOG_ACK_BATCH_ID, LATEST_DURABLE_BATCH_ID) + 1
+
+
 def normalized_source_ranges(value: Any) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         return []
@@ -923,20 +1137,61 @@ def normalized_source_ranges(value: Any) -> list[dict[str, Any]]:
     ], key=lambda item: (item["topic"], item["partition"]))
 
 
-def validate_manifest_retry(manifest: dict[str, Any], source_ranges: list[dict[str, Any]], total: int) -> None:
+def continuous_batch_source_boundary(
+    batch_id: int,
+    source_ranges: list[dict[str, Any]],
+    checkpoint_path: str,
+) -> dict[str, Any]:
+    identity = {
+        "batchId": int(batch_id),
+        "checkpointPath": checkpoint_path.rstrip("/"),
+        "consumerGroupId": os.environ["ASKLAKE_CONTINUOUS_CONSUMER_GROUP_ID"],
+        "jobId": JOB_ID,
+        "kind": "kafka_continuous_batch",
+        "sourceRanges": normalized_source_ranges(source_ranges),
+        "topic": os.environ["ASKLAKE_CONTINUOUS_TOPIC"],
+    }
+    boundary_id = canonical_hash(identity)
+    run_id = f"continuous:{JOB_ID}:batch:{int(batch_id)}:{boundary_id[:16]}"
+    return {**identity, "boundaryId": boundary_id, "runId": run_id}
+
+
+def validate_manifest_retry(
+    manifest: dict[str, Any],
+    source_ranges: list[dict[str, Any]],
+    total: int,
+    *,
+    source_boundary: dict[str, Any] | None = None,
+    spark: SparkSession | None = None,
+    iceberg_target: dict[str, Any] | None = None,
+) -> None:
     persisted_ranges = normalized_source_ranges(manifest.get("sourceRanges"))
     ranges_mismatch = bool(persisted_ranges) and persisted_ranges != source_ranges
     fingerprint_mismatch = any((
         bool(manifest.get("ruleFingerprint")) and manifest.get("ruleFingerprint") != RULE_FINGERPRINT,
         bool(manifest.get("runtimeFingerprint")) and manifest.get("runtimeFingerprint") != RUNTIME_FINGERPRINT,
-        bool(manifest.get("schemaFingerprint")) and manifest.get("schemaFingerprint") != SCHEMA_STATE.get("schemaFingerprint"),
+        bool(manifest.get("schemaFingerprint")) and manifest.get("schemaFingerprint") != (
+            EXPECTED_SCHEMA_FINGERPRINT or SCHEMA_STATE.get("schemaFingerprint")
+        ),
     ))
     if int(manifest.get("consumedCount") or 0) != total or ranges_mismatch or fingerprint_mismatch:
         raise RuntimeError("Existing batch manifest does not match the current Kafka offset range; checkpoint reuse is unsafe.")
+    if source_boundary is not None:
+        commit = manifest.get("icebergCommit") if isinstance(manifest.get("icebergCommit"), dict) else {}
+        if manifest.get("sourceBoundary") != source_boundary or commit.get("sourceBoundary") != source_boundary:
+            raise RuntimeError("Existing batch manifest does not match the current Iceberg source boundary.")
+        if str(manifest.get("runId") or "") != str(source_boundary.get("runId") or ""):
+            raise RuntimeError("Existing batch manifest has a different deterministic Continuous run identity.")
+        if spark is not None and iceberg_target is not None and not iceberg_source_boundary_exists(
+            spark,
+            iceberg_target,
+            source_boundary,
+        ):
+            raise RuntimeError("Existing batch manifest references an Iceberg source boundary that is not committed.")
 
 
 def main() -> None:
-    global QUERY, LAST_BATCH_ID, LAST_FLUSH_AT, LAST_BATCH_STORED_COUNT, LAST_BATCH_QUARANTINED_COUNT, LAST_BATCH_WRITTEN, PUBLISHED_BATCHES, LAST_BATCH_EVIDENCE, CURRENT_BATCH_CONTEXT
+    global CATALOG_ACK_BATCH_ID, LATEST_DURABLE_BATCH_ID, PUBLISHED_BACKLOG_COUNT, QUERY, LAST_BATCH_ID, LAST_FLUSH_AT, LAST_BATCH_STORED_COUNT, LAST_BATCH_QUARANTINED_COUNT, LAST_BATCH_WRITTEN, PUBLISHED_BATCHES, LAST_BATCH_EVIDENCE, CURRENT_BATCH_CONTEXT, RECOVERY_ROOT, RECOVERY_SPARK
     signal.signal(signal.SIGTERM, on_signal)
     signal.signal(signal.SIGINT, on_signal)
     schema, aliases, required_fields = source_schema()
@@ -945,18 +1200,37 @@ def main() -> None:
     checkpoint_path = os.environ["ASKLAKE_CONTINUOUS_CHECKPOINT_PATH"]
     quarantine_path = f"{output_path.rstrip('/')}/_quarantine"
     trigger_seconds = int(os.environ.get("ASKLAKE_CONTINUOUS_TRIGGER_SECONDS", "30"))
+    iceberg_target = parse_iceberg_target(json_object_env("ASKLAKE_CONTINUOUS_ICEBERG_TARGET"))
+    if iceberg_target is None or iceberg_target["writeMode"] != "append":
+        raise RuntimeError("Continuous worker requires an append Iceberg target.")
 
-    spark = SparkSession.builder.appName(f"asklake-kafka-continuous-{JOB_ID}").getOrCreate()
+    os.environ.setdefault("ASKLAKE_SPARK_APP_NAME", f"asklake-kafka-continuous-{JOB_ID}")
+    spark = make_spark({}, iceberg_target)
+    RECOVERY_SPARK = spark
+    RECOVERY_ROOT = output_path
     configure_s3a(spark)
-    ensure_checkpoint_contract(spark, checkpoint_path, output_path)
-    recovered = recover_published_state(spark, output_path)
+    ensure_checkpoint_contract(spark, checkpoint_path, output_path, iceberg_target)
+    CATALOG_ACK_BATCH_ID = catalog_ack_batch_id()
+    recovered = recover_published_state(
+        spark,
+        output_path,
+        acknowledged_batch=CATALOG_ACK_BATCH_ID,
+        batch_limit=PUBLISHED_BATCH_LIMIT,
+    )
     for key, value in recovered["counts"].items():
         COUNTERS[key] = max(COUNTERS[key], value)
     PUBLISHED_BATCHES = recovered["batches"]
-    for key, value in recovered_rule_metrics(PUBLISHED_BATCHES).items():
+    PUBLISHED_BACKLOG_COUNT = recovered["backlogCount"]
+    advance_worker_stream_partition_cursors(recovered.get("partitionCursors") or [])
+    latest_recovered = recovered.get("latest")
+    LATEST_DURABLE_BATCH_ID = max(
+        CATALOG_ACK_BATCH_ID,
+        int(latest_recovered.get("batchId", -1)) if isinstance(latest_recovered, dict) else -1,
+    )
+    for key, value in recovered["ruleMetrics"].items():
         RULE_METRICS[key] = max(RULE_METRICS[key], value)
-    if PUBLISHED_BATCHES:
-        latest = PUBLISHED_BATCHES[-1]
+    if isinstance(latest_recovered, dict):
+        latest = latest_recovered
         LAST_BATCH_ID = int(latest.get("batchId") or 0)
         LAST_FLUSH_AT = str(latest.get("publishedAt") or "") or None
         LAST_BATCH_STORED_COUNT = int(latest.get("storedCount") or 0)
@@ -983,6 +1257,7 @@ def main() -> None:
                 data_path=str(latest.get("dataPath") or "") or None,
                 manifest_path_value=str(latest.get("manifestPath") or "") or None,
                 checkpoint_path=checkpoint_path,
+                iceberg_commit=latest.get("icebergCommit") if isinstance(latest.get("icebergCommit"), dict) else {},
             )
         LAST_BATCH_EVIDENCE = {**latest, "status": "success", "lastError": None, "dagSteps": latest_steps}
     source = (spark.readStream.format("kafka")
@@ -999,11 +1274,12 @@ def main() -> None:
         from_json(col("value").cast("string"), MapType(StringType(), StringType())).alias("raw_map"),
     )
 
-    def write_batch(batch: DataFrame, batch_id: int) -> None:
+    def write_batch(batch: DataFrame, spark_batch_id: int) -> None:
         global LAST_BATCH_STORED_COUNT, LAST_BATCH_QUARANTINED_COUNT, LAST_BATCH_WRITTEN, PUBLISHED_BATCHES, LAST_BATCH_EVIDENCE, CURRENT_BATCH_CONTEXT
         if STOP_REQUESTED:
             return
         batch_started_at = time.monotonic()
+        batch = retain_uncommitted_offsets(batch)
         batch.persist()
         total = batch.count()
         if total == 0:
@@ -1013,7 +1289,14 @@ def main() -> None:
             report("running")
             batch.unpersist()
             return
+        batch_id = next_publication_batch_id()
         source_ranges = batch_source_ranges(batch)
+        source_boundary = continuous_batch_source_boundary(
+            batch_id,
+            source_ranges,
+            checkpoint_path,
+        )
+        run_id = str(source_boundary["runId"])
         stage_durations = {
             "sourceDurationMs": max(0, round((time.monotonic() - batch_started_at) * 1000)),
         }
@@ -1028,23 +1311,27 @@ def main() -> None:
             "schema_accepted_count": 0,
             "schema_quarantined_count": 0,
             "source_ranges": source_ranges,
+            "source_boundary": source_boundary,
+            "run_id": run_id,
             "stored_count": 0,
         }
         for item in source_ranges:
             PROCESSED_OFFSETS[str(item["partition"])] = int(item["endOffset"])
         published = read_batch_manifest(spark, output_path, batch_id)
         if published is not None:
-            validate_manifest_retry(published, source_ranges, total)
+            validate_manifest_retry(
+                published,
+                source_ranges,
+                total,
+                source_boundary=source_boundary,
+                spark=spark,
+                iceberg_target=iceberg_target,
+            )
             LAST_BATCH_STORED_COUNT = int(published.get("storedCount") or 0)
             LAST_BATCH_QUARANTINED_COUNT = int(published.get("quarantinedCount") or 0)
             LAST_BATCH_WRITTEN = True
-            PUBLISHED_BATCHES = sorted(
-                [
-                    item for item in PUBLISHED_BATCHES
-                    if (int(item["batchId"]) if item.get("batchId") is not None else -1) != batch_id
-                ] + [published],
-                key=lambda item: int(item.get("batchId") or 0),
-            )
+            remember_published_batch(published)
+            advance_worker_stream_partition_cursors(source_ranges)
             LAST_RULE_RESULT.update({
                 "quality": published.get("quality") if isinstance(published.get("quality"), dict) else {},
                 "status": "success",
@@ -1065,6 +1352,7 @@ def main() -> None:
                 data_path=str(published.get("dataPath") or "") or None,
                 manifest_path_value=str(published.get("manifestPath") or "") or None,
                 checkpoint_path=checkpoint_path,
+                iceberg_commit=published.get("icebergCommit") if isinstance(published.get("icebergCommit"), dict) else {},
             )
             LAST_BATCH_EVIDENCE = {**published, "status": "success", "lastError": None, "dagSteps": dag_steps}
             CURRENT_BATCH_CONTEXT = {}
@@ -1177,22 +1465,37 @@ def main() -> None:
         rule_quarantine = rule_execution["quarantine"]
         rule_quarantine_count = rule_quarantine.count() if rule_quarantine is not None else 0
         quarantined_count = schema_invalid_count + rule_quarantine_count
-        data_path = f"{output_path.rstrip('/')}/_batches/batch_id={batch_id}" if stored_count else None
+        data_path = iceberg_target["tableUri"] if stored_count else None
+        iceberg_commit = None
         quarantine_batch_path = f"{quarantine_path.rstrip('/')}/_batches/batch_id={batch_id}" if quarantined_count else None
         evidence_batch_path = None
         if stored_count:
-            write_batch_once(
-                spark,
-                target_frame,
-                output_path,
-                batch_id,
-                {
-                    "batchId": batch_id,
-                    "inputCount": stored_count,
-                    "outputKind": "target",
-                    "sourceRanges": source_ranges,
-                },
+            missing_partitions = [
+                name for name in iceberg_target["partitionColumns"]
+                if name not in target_frame.columns
+            ]
+            if missing_partitions:
+                raise RuntimeError(
+                    "Continuous Iceberg partition contract references missing output columns: "
+                    + ", ".join(missing_partitions)
+                )
+            iceberg_frame = (
+                target_frame
+                .withColumn("_asklake_run_id", lit(run_id))
+                .withColumn("_asklake_ingested_at", current_timestamp())
             )
+            iceberg_commit = commit_iceberg_table(
+                spark,
+                iceberg_frame,
+                iceberg_target,
+                job_id=JOB_ID,
+                run_id=run_id,
+                partition_columns=iceberg_target["partitionColumns"],
+                schema_fingerprint=EXPECTED_SCHEMA_FINGERPRINT or SCHEMA_STATE.get("schemaFingerprint"),
+                rule_fingerprint=RULE_FINGERPRINT,
+                source_boundary=source_boundary,
+            )
+            iceberg_commit.pop("_previousSnapshot", None)
         if quarantined_count:
             quarantine_frame = None
             if schema_invalid_count:
@@ -1244,6 +1547,7 @@ def main() -> None:
         CURRENT_BATCH_CONTEXT.update({
             "current_stage": "manifest-checkpoint",
             "data_path": data_path,
+            "iceberg_commit": iceberg_commit,
             "quarantine_path": quarantine_batch_path,
             "quarantined_count": quarantined_count,
             "stored_count": stored_count,
@@ -1271,14 +1575,18 @@ def main() -> None:
             data_path=data_path,
             manifest_path_value=manifest_path(output_path, batch_id),
             checkpoint_path=checkpoint_path,
+            iceberg_commit=iceberg_commit,
         )
         published_manifest = {
             "batchId": batch_id,
+            "sparkBatchId": int(spark_batch_id),
             "publicationId": f"stream:{JOB_ID}:batch:{batch_id}",
             "publicationType": "stream",
+            "runId": run_id,
             "publishedAt": published_at,
             "topic": os.environ["ASKLAKE_CONTINUOUS_TOPIC"],
             "sourceRanges": source_ranges,
+            "sourceBoundary": source_boundary,
             "consumedCount": total,
             "storedCount": stored_count,
             "quarantinedCount": quarantined_count,
@@ -1290,24 +1598,21 @@ def main() -> None:
             "ruleContractVersion": RULE_CONTRACT_VERSION,
             "ruleFingerprint": RULE_FINGERPRINT,
             "runtimeFingerprint": RUNTIME_FINGERPRINT,
-            "schemaFingerprint": SCHEMA_STATE["schemaFingerprint"],
+            "schemaFingerprint": EXPECTED_SCHEMA_FINGERPRINT or SCHEMA_STATE["schemaFingerprint"],
+            "observedSchemaFingerprint": SCHEMA_STATE["schemaFingerprint"],
             "transform": rule_execution["transform"],
             "quality": rule_execution["quality"],
             "durationMs": batch_duration_ms,
             "dataPath": data_path,
+            "icebergCommit": iceberg_commit,
             "quarantinePath": quarantine_batch_path,
             "schemaEvidencePath": evidence_batch_path,
             "manifestPath": manifest_path(output_path, batch_id),
             "dagSteps": batch_dag_steps,
         }
         write_batch_manifest(spark, output_path, batch_id, published_manifest)
-        PUBLISHED_BATCHES = sorted(
-            [
-                item for item in PUBLISHED_BATCHES
-                if (int(item["batchId"]) if item.get("batchId") is not None else -1) != batch_id
-            ] + [published_manifest],
-            key=lambda item: int(item.get("batchId") or 0),
-        )
+        remember_published_batch(published_manifest)
+        advance_worker_stream_partition_cursors(source_ranges)
         LAST_BATCH_STORED_COUNT = stored_count
         LAST_BATCH_QUARANTINED_COUNT = quarantined_count
         LAST_BATCH_WRITTEN = True

@@ -19,6 +19,8 @@ import {
 } from "../src/objectStorageConfig.mjs";
 import {
   createSparkRestSubmission,
+  sparkIcebergEnvironment,
+  sparkPackages,
   sparkExecutionMode,
   sparkRestRuntimeConfig,
 } from "../src/sparkRunner.mjs";
@@ -104,7 +106,7 @@ async function startWorkerRest(request, containerName) {
   const submission = createSparkRestSubmission({
     appName: `asklake-kafka-continuous-${safeSegment(jobId)}`,
     environmentVariables: continuousEnvironment(request, workerAttemptId, runtime.reportRuntimeDir, false),
-    packages: sparkPackageList(true),
+    packages: continuousSparkPackages(request.outputPath, requiredObject(request.icebergTarget, "icebergTarget")),
     scriptPath: runtime.scriptPath,
     sparkProperties: {
       "spark.sql.streaming.stopGracefullyOnShutdown": "true",
@@ -298,6 +300,7 @@ function continuousRestRuntime() {
 
 function continuousEnvironment(request, workerAttemptId, runtimeReportDir, includeCredentials = true) {
   const jobId = required(request.jobId, "jobId");
+  const icebergTarget = requiredObject(request.icebergTarget, "icebergTarget");
   const storageEnvironment = Object.fromEntries(
     objectStorageDockerEnv().filter(([name]) => (
       includeCredentials
@@ -318,11 +321,19 @@ function continuousEnvironment(request, workerAttemptId, runtimeReportDir, inclu
     ASKLAKE_CONTINUOUS_INITIAL_COUNTS: JSON.stringify(request.initialCounts || {}),
     ASKLAKE_CONTINUOUS_INITIAL_METRICS: JSON.stringify(request.initialMetrics || {}),
     ASKLAKE_CONTINUOUS_INITIAL_SCHEMA_STATE: JSON.stringify(request.initialSchemaState || {}),
+    ASKLAKE_CONTINUOUS_STREAM_PARTITION_CURSORS: JSON.stringify(request.streamPartitionCursors || []),
+    ASKLAKE_CONTINUOUS_ICEBERG_TARGET: JSON.stringify(icebergTarget),
+    ASKLAKE_CONTINUOUS_EXPECTED_SCHEMA_FINGERPRINT: String(request.schemaFingerprint || ""),
+    ASKLAKE_CONTINUOUS_RULE_CONTRACT_VERSION: request.ruleContractVersion || "1.0",
+    ASKLAKE_CONTINUOUS_RULE_FINGERPRINT: required(request.ruleFingerprint, "ruleFingerprint"),
+    ASKLAKE_CONTINUOUS_RULE_OUTPUT_SCHEMA: JSON.stringify(request.ruleOutputSchema || []),
+    ASKLAKE_CONTINUOUS_RULES: JSON.stringify(request.rules || []),
     ASKLAKE_CONTINUOUS_SCHEMA_COLUMNS: JSON.stringify(request.schemaColumns || []),
     ASKLAKE_CONTINUOUS_SCHEMA_POLICY: JSON.stringify(request.schemaEvolutionPolicy || {}),
     ASKLAKE_CONTINUOUS_FAIL_AFTER_DATA_WRITE_ONCE: process.env.ASKLAKE_CONTINUOUS_FAIL_AFTER_DATA_WRITE_ONCE || "false",
     ASKLAKE_CONTINUOUS_REPORT_FILE: path.posix.join(runtimeReportDir, reportFileName(jobId)),
     ASKLAKE_CONTINUOUS_COMMAND_FILE: path.posix.join(runtimeReportDir, commandFileName(jobId)),
+    ...sparkIcebergEnvironment({ icebergTarget }),
     ...storageEnvironment,
     HOME: "/tmp",
   };
@@ -408,7 +419,8 @@ async function startWorkerDocker(request, containerName) {
   clearCommand(jobId);
   if (existsSync(reportFile(jobId))) unlinkSync(reportFile(jobId));
   const workerAttemptId = randomUUID();
-  const packages = sparkPackageList(true).join(",");
+  const icebergTarget = requiredObject(request.icebergTarget, "icebergTarget");
+  const packages = continuousSparkPackages(request.outputPath, icebergTarget).join(",");
   const environment = continuousEnvironment(request, workerAttemptId, reportContainerDir);
   const packageArgs = packages ? ["--packages", packages] : [];
   const args = [
@@ -466,7 +478,9 @@ async function startWorkerDocker(request, containerName) {
 async function ensureOutputBucket(outputPath) {
   const bucket = /^s3a?:\/\/([^/]+)/i.exec(outputPath)?.[1];
   if (!bucket) return;
-  const client = new S3Client(s3ClientOptions(resolveObjectStorageConfig([], { docker: true })));
+  // This preflight runs in the Node control-plane process. Spark receives the
+  // Docker endpoint separately through continuousEnvironment().
+  const client = new S3Client(s3ClientOptions(resolveObjectStorageConfig()));
   try {
     await client.send(new HeadBucketCommand({ Bucket: bucket }));
   } catch (error) {
@@ -567,6 +581,17 @@ function sparkPackageList(includeKafka) {
   return packages.map((value) => String(value || "").trim()).filter((value) => value && value !== "none");
 }
 
+function continuousSparkPackages(outputPath, icebergTarget) {
+  return [...new Set([
+    ...sparkPackageList(true),
+    ...sparkPackages(
+      { icebergTarget },
+      { path: "" },
+      { sparkPath: required(outputPath, "outputPath") },
+    ),
+  ])];
+}
+
 function inspectContainer(name) {
   const result = runDocker(["inspect", name], true);
   if (!result) return null;
@@ -633,6 +658,12 @@ function safeSegment(value) {
 function required(value, name) {
   if (value === undefined || value === null || String(value).trim() === "") throw new Error(`${name} is required`);
   return String(value);
+}
+function requiredObject(value, name) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${name} is required`);
+  }
+  return value;
 }
 function positiveInt(value, fallback) {
   const parsed = Number.parseInt(value, 10);

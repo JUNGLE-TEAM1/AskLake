@@ -54,6 +54,7 @@ AskLake는 사용자가 데이터셋의 출처, 품질, 권한, 실행 결과, �
 - 완료된 Trino Query Run의 결과 화면은 CSV 다운로드와 반복 SQL Job 생성만 제공한다. 1회성 Iceberg CTAS materialization API는 별도 운영 경로로 유지하며 이 화면에서 노출하지 않는다.
 - 반복 Trino SQL Job은 결과 page를 복사하지 않고 SQL recipe, 실행 actor, 스케줄, target metadata를 저장한다. 수동/예약 Run마다 전체 SQL을 다시 실행해 같은 논리 Dataset을 검증된 새 Iceberg table version으로 갱신한다.
 - Dashboard 목록/빌더/런타임은 FastAPI API를 우선 사용하고, 이전 backend 호환을 위해 404 local/mock fallback을 유지
+- Kafka Continuous 데이터셋을 연결한 published Dashboard는 PostgreSQL의 데이터셋 리비전을 데이터셋별 권장 주기로 확인하고, 새 리비전이 있을 때만 서버가 계산한 위젯 결과를 자동 교체한다. 원본 event는 기존대로 S3/MinIO에 두며 SSE/WebSocket, Redis cache, SQL 결과 자동 재실행은 이 범위에 포함하지 않는다.
 - 감사 로그와 toast feedback
 
 ## 5) Backend 확장 범위
@@ -70,6 +71,7 @@ FastAPI live backend에서 현재 우선 구현하는 범위:
 | SQL run | read-only SQL의 Trino 실제 실행, 상태 추적, private result page storage 기반 cursor 결과 조회 | Medium | `docs/trino-query-run-contract.md`, `docs/trino-query-result-storage-contract.md` |
 | Query AI 생성 | 선택 테이블 context와 자연어 요청으로 read-only SQL 초안을 생성 | Medium | `docs/api-contract.md` |
 | SQL derived dataset | 완료된 SQL run을 1회성 Iceberg Dataset 또는 반복 full-refresh Trino SQL Job으로 연결 | Medium | `docs/api-contract.md` |
+| Kafka Dashboard 자동 갱신 | S3+Catalog 성공 리비전, PostgreSQL 위젯 결과, published 화면 adaptive polling을 연결 | High | `docs/kafka-postgresql-dashboard-sync.md` |
 | Local session auth | 로그인, 회원가입, session 확인, 로그아웃과 현재 사용자 조회 | High | `docs/api-contract.md` |
 | Phase 0 admin | 사용자·그룹·permission grant·governance control·감사 로그 조회/관리 | Medium | `docs/api-contract.md` |
 

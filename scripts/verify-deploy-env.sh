@@ -148,6 +148,7 @@ required_keys=(
   POSTGRES_DB
   POSTGRES_PASSWORD
   POSTGRES_USER
+  VITE_API_BASE_URL
 )
 
 storage_provider="$(env_value_for ASKLAKE_OBJECT_STORAGE_PROVIDER)"
@@ -338,12 +339,34 @@ app_env="$(env_value_for APP_ENV)"
   exit 1
 }
 
+backend_legacy_demo_users="$(env_value_for AUTH_LEGACY_DEMO_USERS_ENABLED)"
+frontend_legacy_demo_users="$(env_value_for VITE_AUTH_LEGACY_DEMO_USERS_ENABLED)"
+backend_legacy_demo_users="${backend_legacy_demo_users:-false}"
+frontend_legacy_demo_users="${frontend_legacy_demo_users:-false}"
+for value in "$backend_legacy_demo_users" "$frontend_legacy_demo_users"; do
+  if [[ "$value" != "true" && "$value" != "false" ]]; then
+    printf 'error: legacy demo user flags must be lowercase true or false in %s\n' "$ENV_FILE" >&2
+    exit 1
+  fi
+done
+if [[ "$backend_legacy_demo_users" != "$frontend_legacy_demo_users" ]]; then
+  printf 'error: AUTH_LEGACY_DEMO_USERS_ENABLED and VITE_AUTH_LEGACY_DEMO_USERS_ENABLED must match in %s\n' "$ENV_FILE" >&2
+  exit 1
+fi
+
 app_domain="$(env_value_for APP_DOMAIN)"
 if [[ ! "$app_domain" =~ ^[A-Za-z0-9.-]+$ \
   || "$app_domain" == "localhost" \
   || "$app_domain" == "asklake.example.com" \
   || "$app_domain" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   printf 'error: APP_DOMAIN must be the deployed HTTPS DNS name, not a URL, placeholder, localhost, or bare IP\n' >&2
+  exit 1
+fi
+
+vite_api_base_url="$(env_value_for VITE_API_BASE_URL)"
+expected_api_origin="https://${app_domain}"
+if [[ "$vite_api_base_url" != "$expected_api_origin" ]]; then
+  printf 'error: VITE_API_BASE_URL must exactly match %s for the production APP_DOMAIN (without /api or a trailing slash)\n' "$expected_api_origin" >&2
   exit 1
 fi
 
