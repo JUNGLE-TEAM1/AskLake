@@ -286,6 +286,7 @@ export function DatasetSidebar({
         className="min-h-0 p-4"
         description="위젯에 연결할 데이터셋과 필드를 선택하세요."
         icon={<Database />}
+        iconVariant="outline"
         title="데이터"
       />
 

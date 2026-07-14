@@ -63,6 +63,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { getIdentityInitials, UserIdentity } from "@/components/ui/user-identity";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DataTable, type DataTableColumnMeta } from "@/components/ui/data-table";
 import {
@@ -470,9 +471,9 @@ export function JobsLandingPage({
       <div className="content-main jobs-panel-stack">
         <Panel className="jobs-metrics-card">
           <PanelHeader
-            className="min-h-[68px] [&_h2]:text-xl"
             icon={<Activity size={16} />}
             iconClassName="size-11 border border-blue-100 bg-white text-blue-700 shadow-sm [&_svg]:size-[22px]"
+            size="section"
             title="작업 현황"
           />
           <div className="jobs-panel-metrics grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -1011,9 +1012,9 @@ function JobsTableSection({
     <TooltipProvider delayDuration={250}>
       <Panel aria-label={ariaLabel}>
         <PanelHeader
-          className="min-h-[68px] [&_h2]:text-xl"
           icon={<ListChecks size={16} />}
           iconClassName="size-11 border border-blue-100 bg-white text-blue-700 shadow-sm [&_svg]:size-[22px]"
+          size="section"
           title={title}
         />
         {toolbar}
@@ -1470,7 +1471,7 @@ function OwnerIdentity({
           <Avatar size="lg">
             {job.ownerAvatarUrl && <AvatarImage alt={`${job.owner} 프로필`} src={job.ownerAvatarUrl} />}
             <AvatarFallback className="bg-slate-100 font-semibold text-slate-700 ring-1 ring-slate-200">
-              {getOwnerInitials(job.owner)}
+              {getIdentityInitials(job.owner)}
             </AvatarFallback>
           </Avatar>
           <div className="grid min-w-0 gap-0.5 text-left">
@@ -1491,29 +1492,12 @@ function OwnerIdentity({
   }
 
   return (
-    <div className="flex min-w-0 items-center gap-2.5 text-left">
-      <Avatar size="lg">
-        {job.ownerAvatarUrl && <AvatarImage alt={`${job.owner} 프로필`} src={job.ownerAvatarUrl} />}
-        <AvatarFallback className="bg-slate-100 font-semibold text-slate-700 ring-1 ring-slate-200">
-          {getOwnerInitials(job.owner)}
-        </AvatarFallback>
-      </Avatar>
-      <div className="grid min-w-0 gap-1">
-        <span className="truncate text-lg font-semibold text-slate-800" title={job.owner}>{job.owner}</span>
-        {timestamp && (
-          <span className="truncate text-base font-medium text-slate-500" title={`${timestampLabel} ${timestamp}`}>
-            {timestampLabel} {formatCompactDateTime(timestamp)}
-          </span>
-        )}
-      </div>
-    </div>
+    <UserIdentity
+      avatarUrl={job.ownerAvatarUrl}
+      name={job.owner}
+      secondary={timestamp ? `${timestampLabel} ${formatCompactDateTime(timestamp)}` : undefined}
+    />
   );
-}
-
-function getOwnerInitials(owner: string) {
-  const words = owner.trim().split(/[\s_-]+/).filter(Boolean);
-  if (words.length >= 2) return words.slice(0, 2).map((word) => word[0]).join("").toUpperCase();
-  return (words[0] ?? "?").slice(0, 2).toUpperCase();
 }
 
 function fallbackJobStats(job: JobRowData): JobStats {

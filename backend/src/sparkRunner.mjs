@@ -3,7 +3,13 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync }
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { defaultRawBucket, isMinioProvider, objectStorageDockerEnv, toDockerEnvArgs } from "./objectStorageConfig.mjs";
+import {
+  defaultRawBucket,
+  isMinioProvider,
+  objectStorageDockerEnv,
+  resolveObjectStorageConfig,
+  toDockerEnvArgs,
+} from "./objectStorageConfig.mjs";
 import { fieldValue, normalizeColumnName } from "./profile.mjs";
 
 const backendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -58,11 +64,7 @@ function runSparkPipelineWithSource(job, command, runId, source, executionMode, 
   const localLlmTimeoutSeconds = process.env.ASKLAKE_LOCAL_LLM_TIMEOUT_SECONDS
     || String(Math.ceil(Number(process.env.ASKLAKE_LOCAL_LLM_TIMEOUT_MS || 120000) / 1000));
   const reviewAnalysisRuntime = process.env.ASKLAKE_REVIEW_ANALYSIS_RUNTIME || "scalable";
-  const sourceAccessKey = fieldValue(job.sourceConfig ?? [], "Access Key") || minioAccessKey();
-  const sourceSecretKey = fieldValue(job.sourceConfig ?? [], "Secret Key") || minioSecretKey();
-  if (executionMode === "rest" && isMinioProvider(job.sourceConfig ?? [])) {
-    assertInheritedMinioCredentials(sourceAccessKey, sourceSecretKey);
-  }
+  assertSparkRestStorageCredentials(job.sourceConfig ?? [], executionMode);
   writeSparkJobManifest(manifestPath, job);
   const storageEnvironment = Object.fromEntries(
     objectStorageDockerEnv(job.sourceConfig ?? []).filter(([name]) => (
@@ -980,10 +982,15 @@ function safeArtifactSegment(value) {
     || "run";
 }
 
-function assertInheritedMinioCredentials(accessKey, secretKey) {
-  const configuredAccessKey = minioAccessKey();
-  const configuredSecretKey = minioSecretKey();
-  if (accessKey !== configuredAccessKey || secretKey !== configuredSecretKey) {
+export function assertSparkRestStorageCredentials(sourceConfig = [], executionMode = "rest") {
+  if (executionMode !== "rest" || !isMinioProvider(sourceConfig)) return;
+
+  const sourceStorage = resolveObjectStorageConfig(sourceConfig, { docker: true });
+  const inheritedStorage = resolveObjectStorageConfig([], { docker: true });
+  if (
+    sourceStorage.accessKeyId !== inheritedStorage.accessKeyId
+    || sourceStorage.secretAccessKey !== inheritedStorage.secretAccessKey
+  ) {
     throw sparkConfigurationError(
       "Spark REST execution only supports the MinIO application credentials inherited by the worker.",
     );

@@ -9,6 +9,8 @@ import "@xyflow/react/dist/style.css";
 import {
   AlertCircle,
   ArrowUpDown,
+  BookOpen,
+  Database,
   ExternalLink,
   Filter,
   LayoutGrid,
@@ -66,7 +68,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Slider } from "@/components/ui/slider";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { TagList } from "@/components/ui/tag-list";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { IconButton } from "@/components/ui/icon-button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -77,6 +78,7 @@ import type { AuditResult, CatalogDataset, CatalogDatasetRowsResponse, DatasetMa
 import { canDeleteDatasetMaterializationRun, canQueryDatasetAs, permissionDeniedMessage } from "../../utils/permissions";
 import { datasetStatusMeta } from "../../utils/statusMeta";
 import { cn } from "@/lib/utils";
+import { getCatalogFieldDescription } from "./catalogFieldDescriptions";
 
 type LineageColumn = {
   baseId: string;
@@ -529,8 +531,8 @@ export function CatalogPage({
         )}
         bordered={false}
         className="catalog-preview-title"
-        icon={<LayoutGrid size={16} />}
-        iconVariant="success"
+        icon={<Database size={16} />}
+        iconVariant="outline"
         title={(
           <Tooltip>
             <TooltipTrigger asChild><span className="block min-w-0 truncate">{previewDataset.name}</span></TooltipTrigger>
@@ -602,11 +604,6 @@ export function CatalogPage({
           >
             <ExternalLink data-icon="inline-start" /> SQL 분석에서 열기
           </Button>
-          <TagList align="center" className="catalog-preview-tags" density="compact">
-            {previewDataset.tags.map((tag) => (
-              <Badge key={tag} shape="compact" size="sm" variant="secondary">{tag}</Badge>
-            ))}
-          </TagList>
         </div>
       </ScrollArea>
     </>
@@ -650,8 +647,10 @@ export function CatalogPage({
             <div className="catalog-results-header">
               <PanelHeader
                 bordered={false}
-                icon={<LayoutGrid size={16} />}
-                title="검색 결과"
+                icon={<BookOpen size={16} />}
+                iconVariant="outline"
+                size="section"
+                title="카탈로그 목록"
               />
               <FilterToolbar className="py-3" layout="actions">
                 <FilterToolbarSearch icon={<Search size={18} />}>
@@ -745,20 +744,27 @@ export function CatalogPage({
                       >
                         <div className="catalog-result-summary">
                           <div className="catalog-result-title">
-                            <Tooltip>
-                              <TooltipTrigger asChild><strong className="truncate" title={undefined}>{dataset.name}</strong></TooltipTrigger>
-                              <TooltipContent>{dataset.name}</TooltipContent>
-                            </Tooltip>
-                            <DatasetStatusBadge dataset={dataset} shape="compact" />
-                            {dataset.description.trim() ? (
-                              <span aria-hidden="true" className="catalog-result-description" title={dataset.description}>{dataset.description}</span>
+                            <div className="catalog-result-mainline">
+                              <div className="catalog-result-heading">
+                                <Tooltip>
+                                  <TooltipTrigger asChild><strong className="truncate" title={undefined}>{dataset.name}</strong></TooltipTrigger>
+                                  <TooltipContent>{dataset.name}</TooltipContent>
+                                </Tooltip>
+                                <DatasetStatusBadge dataset={dataset} shape="compact" />
+                                {isPinned && (
+                                  <Badge className="catalog-result-pin-badge" aria-label="상단 고정된 데이터셋" shape="compact" size="sm">
+                                    <Pin />
+                                    고정됨
+                                  </Badge>
+                                )}
+                              </div>
+                              {dataset.description.trim() ? (
+                                <p className="catalog-result-description">{dataset.description}</p>
+                              ) : null}
+                            </div>
+                            {dataset.tags.length > 0 ? (
+                              <span className="catalog-result-tags" title={dataset.tags.join(" · ")}>{dataset.tags.join(" · ")}</span>
                             ) : null}
-                            {isPinned && (
-                              <Badge className="catalog-result-pin-badge" aria-label="상단 고정된 데이터셋" shape="compact" size="sm">
-                                <Pin />
-                                고정됨
-                              </Badge>
-                            )}
                           </div>
                         </div>
                       </Button>
@@ -891,7 +897,6 @@ export function CatalogDetailPage({
               <DatasetStatusBadge dataset={dataset} />
               <Badge shape="compact" size="sm" variant="outline">{dataset.owner}</Badge>
               <Badge shape="compact" size="sm" variant="secondary">{dataset.layer} 레이어</Badge>
-              {dataset.tags.map((tag) => <Badge key={tag} shape="compact" size="sm" variant="secondary">{tag}</Badge>)}
             </div>
           </div>
           <div className="job-detail-actions">
@@ -1122,7 +1127,7 @@ function CatalogSchemaTable({ dataset, maxRows, variant = "full" }: { dataset: C
         const sampleValue = firstSampleRow[index];
 
         return {
-          description: `${dataset.name}의 ${name} 필드`,
+          description: getCatalogFieldDescription(dataset, name, type),
           id: `${name}-${index}`,
           name,
           sample: sampleValue === undefined || String(sampleValue).trim() === "" ? "-" : String(sampleValue),
@@ -1450,7 +1455,8 @@ function CatalogLineage({ compact = false, dataset }: { compact?: boolean; datas
               bordered={false}
               className="catalog-lineage-title min-h-0 p-0"
               description="리니지"
-              icon={<LayoutGrid size={18} />}
+              icon={<Share2 size={18} />}
+              iconVariant="outline"
               title={dataset.name}
             />
           )}

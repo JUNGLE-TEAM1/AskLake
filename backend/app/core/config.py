@@ -35,6 +35,39 @@ class Settings(BaseSettings):
     s3_endpoint: str | None = None
     s3_force_path_style: bool = False
     aws_region: str = "ap-northeast-2"
+    trino_enabled: bool = False
+    trino_base_url: str = "http://localhost:8088"
+    trino_catalog: str = "iceberg"
+    trino_schema: str = "asklake"
+    trino_user: str = "asklake-api"
+    trino_auth_username: str | None = None
+    trino_auth_password: str | None = None
+    trino_materializer_username: str | None = None
+    trino_materializer_password: str | None = None
+    trino_tls_ca_file: str | None = None
+    trino_query_timeout_seconds: float = Field(default=300.0, ge=1.0, le=3600.0)
+    trino_max_response_bytes: int = Field(default=2_000_000, ge=65_536, le=50_000_000)
+    trino_max_result_bytes: int = Field(default=50_000_000, ge=1_000_000, le=1_000_000_000)
+    trino_max_result_pages: int = Field(default=1_000, ge=1, le=100_000)
+    trino_result_retention_seconds: int = Field(default=86_400, ge=60, le=604_800)
+    trino_max_concurrent_runs_per_user: int = Field(default=2, ge=1, le=100)
+    trino_result_storage_bucket: str = "asklake-query-results"
+    trino_result_storage_prefix: str = "query-results"
+    trino_result_storage_auto_create_bucket: bool = False
+    trino_result_storage_access_key: str | None = None
+    trino_result_storage_secret_key: str | None = None
+    trino_result_cursor_secret: str = "asklake-local-query-result-cursor-secret"
+    trino_query_confirmation_secret: str = "asklake-local-query-confirmation-secret"
+    trino_query_confirmation_ttl_seconds: int = Field(default=300, ge=30, le=3600)
+    trino_query_warning_bytes: int = Field(default=1_073_741_824, ge=0)
+    trino_query_max_estimated_bytes: int = Field(default=0, ge=0)
+    trino_query_estimated_throughput_bytes_per_second: int = Field(default=268_435_456, ge=1)
+    trino_collector_lease_seconds: int = Field(default=60, ge=10, le=3600)
+    trino_collector_pages_per_lease: int = Field(default=100, ge=1, le=10_000)
+    trino_collector_poll_seconds: float = Field(default=1.0, ge=0.2, le=60.0)
+    trino_progress_poll_seconds: float = Field(default=0.5, ge=0.1, le=10.0)
+    trino_progress_timeout_seconds: float = Field(default=1.0, ge=0.1, le=10.0)
+    trino_cleanup_poll_seconds: float = Field(default=3600.0, ge=60.0, le=86_400.0)
     minio_endpoint: str | None = None
     minio_access_key: str | None = None
     minio_secret_key: str | None = None
@@ -132,6 +165,42 @@ class Settings(BaseSettings):
                     raise ValueError(
                         "BACKEND_CORS_ORIGINS must contain only explicit https origins outside local development"
                     )
+        if not self.allows_header_auth_fallback and self.trino_enabled:
+            parsed_trino_url = urlparse(self.trino_base_url)
+            if parsed_trino_url.scheme != "https" or not parsed_trino_url.netloc:
+                raise ValueError("TRINO_BASE_URL must be an explicit https URL when Trino is enabled")
+
+            required_trino_values = {
+                "TRINO_AUTH_USERNAME": self.trino_auth_username,
+                "TRINO_AUTH_PASSWORD": self.trino_auth_password,
+                "TRINO_MATERIALIZER_USERNAME": self.trino_materializer_username,
+                "TRINO_MATERIALIZER_PASSWORD": self.trino_materializer_password,
+                "TRINO_TLS_CA_FILE": self.trino_tls_ca_file,
+                "TRINO_RESULT_STORAGE_BUCKET": self.trino_result_storage_bucket,
+                "TRINO_RESULT_CURSOR_SECRET": self.trino_result_cursor_secret,
+                "TRINO_QUERY_CONFIRMATION_SECRET": self.trino_query_confirmation_secret,
+            }
+            for key, value in required_trino_values.items():
+                normalized = str(value or "").strip()
+                if not normalized or "replace-with-" in normalized or "asklake-local-" in normalized:
+                    raise ValueError(f"{key} must be a non-placeholder production value when Trino is enabled")
+
+            if self.trino_auth_username == self.trino_materializer_username:
+                raise ValueError("TRINO_AUTH_USERNAME and TRINO_MATERIALIZER_USERNAME must be distinct")
+            if self.trino_auth_password == self.trino_materializer_password:
+                raise ValueError("TRINO_AUTH_PASSWORD and TRINO_MATERIALIZER_PASSWORD must be distinct")
+            for key, secret in {
+                "TRINO_AUTH_PASSWORD": self.trino_auth_password,
+                "TRINO_MATERIALIZER_PASSWORD": self.trino_materializer_password,
+            }.items():
+                if len(str(secret or "")) < 16:
+                    raise ValueError(f"{key} must contain at least 16 characters")
+            for key, secret in {
+                "TRINO_RESULT_CURSOR_SECRET": self.trino_result_cursor_secret,
+                "TRINO_QUERY_CONFIRMATION_SECRET": self.trino_query_confirmation_secret,
+            }.items():
+                if len(str(secret or "")) < 32:
+                    raise ValueError(f"{key} must contain at least 32 characters")
         return self
 
     @property

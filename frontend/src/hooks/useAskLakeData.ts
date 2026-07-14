@@ -13,6 +13,7 @@ import {
 } from "../services/mockApi";
 import {
   createPipelineDraft as createLivePipelineDraft,
+  createTrinoSqlJob as createLiveTrinoSqlJob,
   deletePipelineJob as deleteLivePipelineJob,
   getJob as getLiveJob,
   updatePipelineDraft as updateLivePipelineDraft,
@@ -24,6 +25,7 @@ import type {
   AuditTargetType,
   CatalogDataset,
   CreateDerivedDatasetRequest,
+  CreateTrinoSqlJobRequest,
   DagStepsByRunId,
   DraftPipeline,
   DraftPipelinePatch,
@@ -1120,6 +1122,37 @@ export function useAskLakeData({
     return createPipelineFromDraft(nextDraft, { resetDraft: false });
   };
 
+  const createTrinoSqlJob = async (request: CreateTrinoSqlJobRequest) => {
+    if (createPendingRef.current) {
+      showToast("이미 생성 요청이 처리 중입니다.", "info");
+      return false;
+    }
+    if (apiConfig.useMock) {
+      showToast("Trino SQL Job은 실제 API 모드에서 생성할 수 있습니다.", "info");
+      return false;
+    }
+
+    createPendingRef.current = true;
+    setApiPending(true);
+    try {
+      const result = await createLiveTrinoSqlJob(request);
+      const normalizedJob = normalizeJobRow(result.job);
+      setJobs((items) => [normalizedJob, ...items.filter((item) => item.id !== normalizedJob.id)]);
+      setSelectedJob(normalizedJob);
+      writeAuditLog("analysis.trino_sql_job.created", "/api/etl/sql-jobs", normalizedJob.id);
+      showToast("반복 SQL Job을 생성했습니다.", "success");
+      onFlowChange("jobs");
+      return true;
+    } catch (error) {
+      writeAuditLog("analysis.trino_sql_job.create_failed", "/api/etl/sql-jobs", request.baseDatasetId, "failed");
+      showToast(error instanceof ApiError ? error.message : "반복 SQL Job 생성에 실패했습니다.", "info");
+      return false;
+    } finally {
+      createPendingRef.current = false;
+      setApiPending(false);
+    }
+  };
+
   const deleteMaterializationRun = async (datasetId: string, runId: string) => {
     const previousState = {
       datasets,
@@ -1462,6 +1495,7 @@ export function useAskLakeData({
     filterJobs,
     refreshData,
     createSqlDatasetJob,
+    createTrinoSqlJob,
     deleteMaterializationRun,
     runsByJobId,
     selectedDataset,

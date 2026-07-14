@@ -11,6 +11,7 @@ FRONTEND_IMAGE="${ASKLAKE_VERIFY_FRONTEND_IMAGE:-asklake-frontend-deploy-check:l
 SPARK_IMAGE="${ASKLAKE_SPARK_IMAGE:-apache/spark:4.0.1}"
 AIRFLOW_IMAGE="${AIRFLOW_IMAGE_NAME:-apache/airflow:3.3.0}"
 FRONTEND_API_BASE_URL="${VITE_API_BASE_URL:-https://${APP_DOMAIN:-asklake.example.com}}"
+TRINO_IMAGE="${TRINO_IMAGE:-trinodb/trino:482}"
 
 cd "$ROOT_DIR"
 
@@ -60,6 +61,16 @@ fi
 echo "Checking Airflow runtime image availability..."
 if ! docker image inspect "$AIRFLOW_IMAGE" >/dev/null 2>&1; then
   docker pull "$AIRFLOW_IMAGE"
+fi
+
+if [[ "${ASKLAKE_VERIFY_TRINO:-false}" == "true" ]] \
+  || docker compose --env-file "$COMPOSE_ENV_FILE" -f "$COMPOSE_FILE" config --services | grep -qx trino; then
+  echo "Checking Trino runtime image availability..."
+  if ! docker image inspect "$TRINO_IMAGE" >/dev/null 2>&1; then
+    docker pull "$TRINO_IMAGE"
+  fi
+else
+  echo "Skipping Trino runtime image check because the trino profile is disabled."
 fi
 
 echo "Checking Airflow DAG import dependencies..."

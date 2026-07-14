@@ -40,7 +40,6 @@ export function useAuditLogs() {
 
     setAuditSignal(action);
     setAuditLogs((logs) => [entry, ...logs].slice(0, 50));
-    setToast({ message: `${action} 호출 완료`, tone: result === "success" ? "success" : "info" });
 
     const debugWindow = window as typeof window & { __asklakeAuditLogs?: AuditEntry[]; __asklakeLastAction?: AuditEntry };
     debugWindow.__asklakeAuditLogs = [entry, ...(debugWindow.__asklakeAuditLogs ?? [])].slice(0, 50);

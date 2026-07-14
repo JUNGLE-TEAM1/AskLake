@@ -98,7 +98,7 @@ export async function listSourceAssets(sourceType, fields, requestedPrefix) {
   return response;
 }
 
-export async function testObjectStorageSource(fields, sourceType = "File / S3") {
+export async function testObjectStorageSource(fields, sourceType = "File / S3", clientOverride = null) {
   const storage = resolveObjectStorageConfig(fields);
   const { accessKeyId, endpoint, forcePathStyle, region, secretAccessKey } = storage;
   const bucket = requiredSourceField(fields, "Bucket / Stage Name", "MinIO/S3 bucket name is required.");
@@ -108,9 +108,6 @@ export async function testObjectStorageSource(fields, sourceType = "File / S3") 
   const collectionPattern = fieldValue(fields, "File Pattern") || "*";
   const collectionRecursive = parseBoolean(fieldValue(fields, "Recursive"), false);
 
-  if (!accessKeyId || !secretAccessKey) {
-    throw apiError("SOURCE_CREDENTIALS_REQUIRED", "MinIO/S3 액세스 키와 시크릿 키가 필요합니다.", 400);
-  }
   requireMinioCredentials(storage);
 
   // A selected Parquet object needs the Spark reader; treating it as a text
@@ -127,7 +124,7 @@ export async function testObjectStorageSource(fields, sourceType = "File / S3") 
   }
 
   const samplePolicy = samplePolicyForFields(fields, "object");
-  const client = s3Client({ accessKeyId, endpoint, forcePathStyle, region, secretAccessKey });
+  const client = clientOverride ?? s3Client({ accessKeyId, endpoint, forcePathStyle, region, secretAccessKey });
   try {
     let objects = selectedObject
       ? await listSelectedObject(client, bucket, selectedObject)
