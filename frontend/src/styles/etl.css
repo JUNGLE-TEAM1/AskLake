@@ -6585,6 +6585,11 @@
   color: #ea580c;
 }
 
+.etl-review-icon.readiness {
+  background: #eff6ff;
+  color: #2563eb;
+}
+
 .etl-review-edit {
   white-space: nowrap;
 }

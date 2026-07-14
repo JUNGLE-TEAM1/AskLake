@@ -1490,13 +1490,31 @@ const checks = [
     patterns: [
       /const ruleCompilation = compileRuleContract\(\{/,
       /const processingReady = ruleCompilation\.status === "pass"/,
+      /const permissionIssue = reviewPermissionIssue\(request\.owner, request\.permissionGrants\)/,
       /ruleCompilation,/,
       /"규칙 없음 · 원본 스키마 그대로 통과"/,
       /ruleCompilation\.issues\[0\]\?\.message/,
+      /validationRow\("권한 설정", permissionReady/,
+      /validationRow\("저장 위치", targetReady/,
     ],
     forbiddenPatterns: [
       /Boolean\(request\.ruleSummary\.trim\(\)\)/,
       /Continuous에서는 transform\/quality rule을 제거하세요/,
+      /validationRow\("권한\/타겟"/,
+    ],
+  },
+  {
+    name: "ETL review separates saved permissions from creation readiness",
+    file: "src/pages/etl/EtlPages.tsx",
+    patterns: [
+      /<h2>권한 설정<\/h2>/,
+      /label="권한 설정 수정"/,
+      /<h2>생성 준비 상태<\/h2>/,
+      /className="etl-review-validation"/,
+    ],
+    forbiddenPatterns: [
+      /<h2>권한 및 검증<\/h2>/,
+      /label="권한 및 검증 수정"/,
     ],
   },
   {

@@ -6514,9 +6514,9 @@ export function ReviewPage({
             <div className="etl-review-card-header">
               <span className="etl-review-icon permission"><ShieldCheck size={17} /></span>
               <div>
-                <h2>권한 및 검증</h2>
+                <h2>권한 설정</h2>
               </div>
-              <ReviewEditButton label="권한 및 검증 수정" onClick={() => onEdit("permission")} />
+              <ReviewEditButton label="권한 설정 수정" onClick={() => onEdit("permission")} />
             </div>
             <KeyValueList
               className="etl-review-kv permission"
@@ -6526,6 +6526,15 @@ export function ReviewPage({
                 value,
               }))}
             />
+          </section>
+
+          <section className="etl-review-card">
+            <div className="etl-review-card-header">
+              <span className="etl-review-icon readiness"><Check size={17} /></span>
+              <div>
+                <h2>생성 준비 상태</h2>
+              </div>
+            </div>
             <ValidationList
               className="etl-review-validation"
               items={validationRows.map(({ label, status, value }) => ({

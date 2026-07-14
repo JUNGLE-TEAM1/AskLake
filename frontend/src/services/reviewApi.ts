@@ -74,7 +74,9 @@ function buildMockReviewSnapshot(draft: DraftPipeline): ReviewSnapshot {
   const processingReady = ruleCompilation.status === "pass";
   const scheduleReady = Boolean(request.scheduleLabel.trim());
   const retryReady = Boolean(request.retryPolicySummary.trim());
-  const permissionReady = Boolean(request.permissionSummary.trim() && request.targetDataset.trim() && request.owner.trim());
+  const targetReady = Boolean(request.targetDataset.trim() && String(request.targetLayer).trim() && request.targetFormat.trim());
+  const permissionIssue = reviewPermissionIssue(request.owner, request.permissionGrants);
+  const permissionReady = permissionIssue === null;
 
   return {
     basicInformation: toReviewEntries([
@@ -85,7 +87,7 @@ function buildMockReviewSnapshot(draft: DraftPipeline): ReviewSnapshot {
       ["대상 데이터셋", request.targetDataset],
       ["설명", request.targetDescription],
     ]),
-    canCreate: sourceReady && schemaReady && processingReady && Boolean(request.sourceType.trim()) && Boolean(request.sourceLabel.trim()) && Boolean(request.targetDataset.trim()) && Boolean(request.owner.trim()),
+    canCreate: sourceReady && schemaReady && processingReady && targetReady && permissionReady && Boolean(request.sourceType.trim()) && Boolean(request.sourceLabel.trim()),
     destination: toReviewEntries([
       ["저장 경로", request.storagePath ?? ""],
       ["데이터베이스", request.targetDatabase ?? "asklake"],
@@ -118,7 +120,8 @@ function buildMockReviewSnapshot(draft: DraftPipeline): ReviewSnapshot {
       ),
       validationRow(request.executionMode === "continuous" ? "스트림 제어" : "스케줄", scheduleReady, request.executionMode === "continuous" ? "시작/중지로 제어" : "유효함", "확인 필요"),
       validationRow("실패 재시도", retryReady, "유효함", "확인 필요"),
-      validationRow("권한/타겟", permissionReady, "유효함", "확인 필요"),
+      validationRow("권한 설정", permissionReady, "유효함", permissionIssue ?? "확인 필요"),
+      validationRow("저장 위치", targetReady, "유효함", "대상 데이터셋 확인 필요"),
     ],
   };
 }
@@ -134,16 +137,26 @@ function permissionReviewEntries(owner: string, grants: PermissionGrant[] | unde
     role: "역할",
     user: "사용자",
   } as const;
+  const publicView = (grants ?? []).some((grant) => grant.principalType === "public" && grant.actions.includes("view"));
   return toReviewEntries([
-    ["담당자 자동 권한", `${owner} · 조회 · 쿼리 실행 · 실행 · 관리 · 공유 · 삭제`],
-    ...(grants ?? []).map((grant): [string, string] => {
-      const principal = grant.principalType === "public" ? "로그인한 사용자 전체" : grant.principalId;
+    ["담당자", `${owner} · 전체 권한 자동 부여`],
+    ["전체 사용자 조회", publicView ? "허용" : "허용 안 함"],
+    ...(grants ?? []).filter((grant) => grant.principalType !== "public").map((grant): [string, string] => {
       return [
-        `${principalLabels[grant.principalType]} · ${principal}`,
+        `${principalLabels[grant.principalType]} · ${grant.principalId}`,
         grant.actions.map((action) => PERMISSION_REVIEW_ACTION_LABELS[action]).join(" · ") || "권한 없음",
       ];
     }),
   ]);
+}
+
+function reviewPermissionIssue(owner: string, grants: PermissionGrant[] | undefined): string | null {
+  if (!owner.trim()) return "담당자 확인 필요";
+  for (const grant of grants ?? []) {
+    if (grant.principalType !== "public" && !grant.principalId.trim()) return "권한 대상 확인 필요";
+    if (grant.actions.length === 0) return "허용 작업 확인 필요";
+  }
+  return null;
 }
 
 function toReviewEntries(rows: Array<[string, string | undefined]>): ReviewEntry[] {
