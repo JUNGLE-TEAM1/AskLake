@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from app.core.config import settings
+from app.api.ai_conversations import router as ai_conversations_router
 from app.api.admin import router as admin_router
 from app.api.airflow_execution import router as airflow_execution_router
 from app.api.auth import router as auth_router
@@ -23,6 +24,7 @@ api_router.include_router(health_router, tags=["health"])
 api_router.include_router(auth_router)
 api_router.include_router(users_router)
 api_router.include_router(admin_router)
+api_router.include_router(ai_conversations_router)
 api_router.include_router(airflow_execution_router)
 api_router.include_router(etl_router)
 api_router.include_router(catalog_router)

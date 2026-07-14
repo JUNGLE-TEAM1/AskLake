@@ -318,24 +318,40 @@ Source/Schema/Create/Run 흐름은 항상 live backend 기준으로 검증한다
 
 Job 목록의 query/facet/legacy 상태 정규화는 외부 인프라 없이 `cd backend && npm run verify:job-list`로 먼저 확인한다. Target 표시명과 내부 ID 분리는 `cd backend && npm run verify:dataset-identity`로 확인하며, 서로 다른 한글 이름과 같은 ASCII slug를 만드는 이름이 별도 Job으로 남고 정확히 같은 target만 append 재사용되는지 검증한다. 전체 `npm run verify`는 PostgreSQL, MinIO, REST fixture를 포함한다.
 
-### AI 활용 UI Skeleton
+### AI 활용 대화 영속화
 
-`AI 활용` 메뉴의 대화형 화면은 현재 UI-only 범위다. 실제 OpenAI/RAG runtime을 호출하지 않으며, 질문을 전송하면 사용자 메시지와 `AI runtime 연결 대기` 상태만 표시한다. 답변, 근거, SQL, 결과 미리보기는 가짜 데이터로 만들지 않는다.
+`AI 활용` 메뉴의 live mode는 `frontend/src/services/aiConversationApi.ts`를 통해 actor 소유 대화, 제목, 메시지와 선택 Dataset을 PostgreSQL에 저장한다. 메시지 전송은 `/api/ai/conversations/{conversationId}/messages`가 Dataset 존재·`query` 권한과 conversation version을 검사한 뒤 기존 Query AI를 호출하고 user/assistant 메시지를 함께 commit한다. RAG index와 vector DB는 아직 범위가 아니다. `VITE_USE_MOCK_API=true`에서만 화면 생명주기의 로컬 대화를 사용한다.
 
 수동 확인은 다음 순서로 한다.
 
 1. `AI 활용` 메뉴를 열어 empty state와 composer가 겹치지 않는지 확인한다.
 2. `데이터셋 선택`에서 `available`이며 query 권한이 있는 Catalog Dataset을 선택한다.
 3. 추천 질문을 누르거나 질문을 입력한 뒤 Enter로 전송한다. Shift+Enter는 줄바꿈으로 유지돼야 한다.
-4. 질문 카드에 선택 Dataset 이름이 보이고, 응답 카드는 `AI runtime 미연결`만 보이는지 확인한다.
-5. `새 대화`를 눌러 빈 대화가 목록에 추가되는지 확인한다. 새 대화에는 Dataset context가 복사되지 않아야 한다.
-6. 대화 항목 위에 마우스를 올려 삭제 아이콘이 보이는지 확인하고, 삭제 후 다음 대화로 전환되는지 확인한다. 마지막 대화를 삭제하면 빈 대화 하나가 유지되어야 한다.
-7. 이전 대화를 다시 선택해 질문, Dataset context, runtime 미연결 상태가 복원되는지 확인한다.
+4. Query AI 성공 뒤 user/assistant 메시지, notice와 검토용 SQL이 표시되고 새로고침 후 같은 대화가 복원되는지 확인한다.
+5. `새 대화`를 눌러 서버 대화가 목록에 추가되는지 확인한다. 새 대화에는 Dataset context가 복사되지 않아야 한다.
+6. 현재 대화를 삭제하고 다음 대화로 전환되는지 확인한다. 마지막 대화를 삭제하면 서버에 새 빈 대화가 만들어져야 한다.
+7. 이전 대화를 다시 선택해 메시지와 Dataset context가 복원되는지 확인한다.
 8. Dataset selector가 Escape와 바깥 클릭으로 닫히고, Tab으로 checkbox focus를 확인할 수 있는지 확인한다.
+9. 다른 탭에서 같은 대화를 먼저 수정한 뒤 현재 탭에서 수정해 `409` 안내와 최신 대화 재조회가 동작하는지 확인한다.
+10. 선택한 Dataset을 삭제하거나 권한을 제거한 경우 메시지 전송이 성공으로 표시되지 않고, 컨텍스트 초기화 후 복구할 수 있는지 확인한다.
 
 ```bash
 cd frontend
 npm run verify:ui-regressions
+npm run build
+```
+
+Catalog 고정과 AI 대화 영속화 계약의 빠른 회귀 검증은 외부 인프라 없이 다음처럼 실행한다.
+
+```bash
+cd backend
+PYTHONPATH=. .venv/bin/python -m unittest \
+  tests.test_catalog_dataset_preferences \
+  tests.test_ai_conversation_persistence
+
+cd ../frontend
+node --test scripts/catalog-pin-persistence.test.mjs
+node --test scripts/ai-conversation-persistence.test.mts
 npm run build
 ```
 
@@ -798,6 +814,8 @@ ASKLAKE_POSTGRES_FULL_SOURCE_TABLE=click_events npm run verify:postgres-full-sou
 - 생성 요청 후 job과 dataset이 반영된다.
 - job 명령 버튼이 상태를 바꾼다.
 - catalog 상세에서 SQL 화면으로 이동한다.
+- Catalog Dataset 고정 상태가 새로고침 뒤 현재 사용자에게만 유지된다.
+- AI 대화·선택 Dataset·메시지가 새로고침 뒤 복원되고 다른 사용자 대화가 보이지 않는다.
 - SQL 실행 결과에서 `차트 보기`, `데이터 미리보기`, `실행 정보`를 같은 panel 안에서 전환하고 CSV 다운로드 또는 mode에 맞는 반복/처리 Job 생성을 실행할 수 있다. Trino 실행 전후 SQL editor 높이는 변하지 않는다.
 - audit log와 toast가 동작한다.
 - dashboard draft를 publish하면 viewer로 이동하고, 공유 링크 복사와 새로고침 feedback이 보인다.

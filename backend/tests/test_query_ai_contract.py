@@ -82,6 +82,21 @@ class QueryAiContractTests(unittest.TestCase):
         self.assertEqual(raised.exception.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY)
         self.assertEqual(raised.exception.details, {"tables": ["secret_reviews"]})
 
+    def test_unavailable_dataset_is_a_validation_error_not_a_conversation_conflict(self) -> None:
+        repository = type("Repository", (), {"db": object()})()
+        service = QueryAiService(repository)
+        unavailable = catalog_dataset().model_copy(update={"status": "approval_required"})
+
+        with patch.object(service, "get_catalog_dataset", return_value=unavailable):
+            with self.assertRaises(ApiError) as raised:
+                service.resolve_context_datasets(
+                    [unavailable.id],
+                    ActorContext(name="analyst", role="admin"),
+                )
+
+        self.assertEqual(raised.exception.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY)
+        self.assertEqual(raised.exception.code, "VALIDATION_ERROR")
+
     def test_generated_sql_is_revalidated_as_read_only(self) -> None:
         repository = type("Repository", (), {"db": object()})()
         service = QueryAiService(repository)

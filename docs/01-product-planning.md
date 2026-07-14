@@ -19,6 +19,8 @@ AskLake는 사용자가 데이터셋의 출처, 품질, 권한, 실행 결과, �
 - 생성 flow의 draft가 실제 backend request와 어긋나지 않아야 한다.
 - Job 실행 결과가 Run History, DAG, Catalog dataset으로 같은 `runId` 기준에 맞게 이어져야 한다.
 - Catalog, SQL, Dashboard 화면은 dataset이 실제로 존재할 때만 분석/생성 동작을 허용해야 한다.
+- Catalog에서 사용자가 고정한 Dataset은 새로고침과 재로그인 뒤에도 같은 사용자에게 복원되어야 한다.
+- AI 대화의 제목, 메시지, 선택 Dataset은 브라우저 메모리가 아니라 인증 사용자 소유 서버 리소스로 저장되어야 한다.
 - FastAPI 전환 중인 endpoint와 아직 Node demo/mock에 남은 endpoint를 문서에서 분명히 구분해야 한다.
 
 ## 3) 타겟 사용자
@@ -43,11 +45,12 @@ AskLake는 사용자가 데이터셋의 출처, 품질, 권한, 실행 결과, �
 - Run History와 Run별 DAG 표시
 - 실행 성공 후 Catalog dataset 등록
 - Catalog 목록/상세/lineage와 최신 성공 materialization을 기준으로 한 스키마·실제 sample row 페이지 탐색
+- 인증 사용자별 Catalog Dataset 상단 고정 상태 저장과 복원
 - Dataset 범위의 read-only SQL 실행. `TRINO_ENABLED=true`에서는 preview용 `LIMIT`을 기본 SQL에 강제로 넣지 않고 Trino Query Run으로 전체 SQL을 제출한다. 결과는 private page storage와 signed cursor로 필요한 논리 page만 탐색하며, lifecycle은 [Trino Query Run Contract](trino-query-run-contract.md), 저장·retention은 [Trino Query Result Storage Contract](trino-query-result-storage-contract.md)를 따른다. `TRINO_ENABLED=false`에서는 기존 DuckDB snapshot pagination을 compatibility 경로로 유지한다.
 - SQL 편집기는 약 10행 보기 높이와 하나의 스크롤만 사용한다. 사용자가 전체 삭제한 빈 SQL은 유지하고 기본 쿼리는 초기 dataset 선택, dataset 변경, 명시적 reset에서만 복원한다.
 - SQL 편집기 상단의 Nessie SQL 작성 Popover: 선택 데이터셋 context와 사용자 프롬프트로 SQL 초안을 제안한다. 입력 후에는 폼을 접고 생성 상태와 편집기 적용 action을 Bubble로 표시하며, SQL은 사용자가 적용한 뒤 별도로 실행한다.
 - SQL 좌측 도구의 차트 생성하기: bounded compatibility 결과, 선택 데이터셋, 또는 현재 로드된 Trino 논리 결과 page를 소스로 Dashboard와 같은 위젯 설정에서 유형, 필드, 집계, 색상을 설정한다. 오른쪽 결과 영역은 `차트 보기`, `데이터 미리보기`, `실행 정보`를 같은 결과 panel 안에서 제공한다. `실행 정보`는 실행 평가와 `쿼리 실행 -> 첫 결과 준비 -> 전체 결과 수집` timeline을 담으며 별도 카드로 editor 아래에 삽입하지 않는다. Trino page 차트는 현재 page 범위의 임시 시각화이고 전체 Query Run 또는 저장 가능한 Dashboard source가 아니다.
-- AI 활용 메뉴의 ChatGPT형 대화 UI: Catalog Dataset 컨텍스트를 고르는 대화 화면을 제공하며, 실제 AI 호출과 RAG runtime은 후속 범위로 둔다.
+- AI 활용 메뉴의 ChatGPT형 대화 UI: 대화 제목·메시지·선택 Dataset을 인증 사용자별로 저장하고, 기존 Query AI 생성 경로를 통해 선택 Dataset 범위의 답변을 생성한다. RAG index와 vector DB는 후속 범위로 둔다.
 - 수집/처리 Transform 화면은 필드 매핑과 quick transform function 중심으로 유지하며, AI 기반 필드 transform 버튼은 현재 MVP 범위에서 노출하지 않는다.
 - Issue #567은 일반 Snapshot, Kafka Snapshot, Kafka Continuous의 스키마 타입과 Transform/Quality 실행 계약을 통합한다. 작업은 [Transform/Quality 공통 실행 통합 계획](transform-quality-unification-plan.md)의 Phase별 검증 게이트를 따르며, 전체 검증 전까지 Draft PR로 유지한다.
 - DuckDB compatibility 결과 기반 처리 Job 생성: SQL 화면의 다단계 모달에서 기본 정보, 스케줄, 거버넌스, 저장 설정을 완료한 뒤 기존 Job 생성 API를 호출한다.
@@ -67,6 +70,8 @@ FastAPI live backend에서 현재 우선 구현하는 범위:
 | Job command | 실행/재실행/일시정지/취소 상태 전이 | High | `docs/api-contract.md` |
 | Job hydrate | 목록/상세를 서버 데이터로 조회 | High | `docs/backend-integration-readiness.md` |
 | Catalog hydrate | 데이터셋 목록/상세와 최신 성공 materialization의 실제 row 페이지를 서버 데이터로 조회 | High | `docs/backend-integration-readiness.md` |
+| Catalog 사용자 설정 | Dataset 상단 고정 상태를 인증 사용자별로 저장·조회 | High | `docs/api-contract.md` |
+| AI 대화 | 대화·제목·메시지·선택 Dataset을 사용자 소유 리소스로 생성·조회·수정·삭제 | High | `docs/api-contract.md` |
 | Catalog lineage | 저장된 lineage 또는 fallback graph 반환 | Medium | `docs/api-contract.md` |
 | SQL run | read-only SQL의 Trino 실제 실행, 상태 추적, private result page storage 기반 cursor 결과 조회 | Medium | `docs/trino-query-run-contract.md`, `docs/trino-query-result-storage-contract.md` |
 | Query AI 생성 | 선택 테이블 context와 자연어 요청으로 read-only SQL 초안을 생성 | Medium | `docs/api-contract.md` |
@@ -113,7 +118,7 @@ Phase 0에서는 용어와 경계를 먼저 고정한다. `createdBy`, `owner`, 
 
 ### Flow B. 카탈로그에서 SQL 분석
 
-1. 사용자는 Catalog dataset을 연다.
+1. 사용자는 Catalog dataset을 열거나 자주 쓰는 Dataset을 상단에 고정한다. 고정 상태는 현재 인증 사용자에게만 저장되고 목록을 다시 열 때 복원된다.
 2. 시스템은 schema, lineage와 최신 성공 materialization에서 읽은 실제 sample rows를 보여준다. 스키마 상세 모달에서도 전체 스키마와 sample page를 함께 탐색한다.
 3. 사용자는 SQL 화면으로 이동해 read-only SQL을 실행한다. Trino mode에서는 Query Run을 제출하고 signed cursor로 현재 논리 page만 탐색하며, compatibility mode에서는 저장된 DuckDB snapshot을 `offset`/`limit`로 조회한다.
 4. 사용자는 편집기 상단 `Nessie로 SQL 작성` Popover를 열고 선택 테이블과 schema context를 기반으로 SQL 초안을 받을 수 있다. 제출 후 입력 폼은 접히고 생성 상태와 적용 action이 Bubble로 표시된다.
@@ -132,6 +137,15 @@ Phase 0에서는 용어와 경계를 먼저 고정한다. `createdBy`, `owner`, 
 3. 서버 응답이 성공하면 프론트 상태를 서버 응답 기준으로 갱신한다.
 4. 실패하면 사용자에게 알리고 rollback 또는 retry 경로를 제공한다.
 5. Dashboard API는 FastAPI 응답을 우선하고, 이전 backend 호환을 위해 404 local/mock fallback을 사용한다.
+6. Catalog 고정과 AI 대화는 live mode에서 React state나 하드코딩 값을 source of truth로 사용하지 않고 각 API adapter로 hydrate한다.
+
+### Flow D. Dataset context 기반 AI 대화
+
+1. 사용자는 AI 활용 화면에서 새 대화를 만들고 조회 권한이 있는 Catalog Dataset을 선택한다.
+2. 대화 제목, 선택 Dataset과 메시지는 현재 인증 사용자 소유 리소스로 저장된다.
+3. 메시지 전송 시 backend는 선택 Dataset의 존재 여부와 `query` 권한을 다시 확인한 뒤 기존 Query AI 경계에서 답변을 생성하고 사용자·assistant 메시지를 함께 저장한다.
+4. 사용자가 같은 대화를 다른 탭에서 먼저 수정한 경우 version 충돌을 반환하며, frontend는 최신 대화를 다시 불러와 재시도할 수 있게 한다.
+5. 다른 사용자의 대화 ID는 존재 여부를 노출하지 않도록 조회·수정·삭제에서 `404`로 처리한다.
 
 ## 7) 성공 기준
 
@@ -140,6 +154,7 @@ Phase 0에서는 용어와 경계를 먼저 고정한다. `createdBy`, `owner`, 
 - conflict marker가 남아 있지 않다.
 - 문서에 깨진 문자가 남아 있지 않다.
 - Source/Schema/Create/Run/Catalog/SQL live 경로가 문서와 코드에서 같은 범위를 말한다.
+- 새로고침과 재로그인 뒤에도 현재 사용자의 Catalog 고정 상태와 AI 대화가 복원되고 다른 사용자의 상태와 섞이지 않는다.
 - Dashboard 영역은 FastAPI 연결 범위와 404 local/mock fallback, 아직 남은 운영 범위를 구분한다.
 
 ## 8) 4일 데모 마일스톤

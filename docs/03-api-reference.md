@@ -12,6 +12,7 @@
 - `frontend/src/services/apiClient.ts`가 API 호출 wrapper다.
 - `frontend/src/services/pipelineApi.ts`가 create/run/query 호출 진입점이다.
 - live backend mode에서 ETL job, catalog dataset과 SQL run metadata는 PostgreSQL에 저장된다. Trino 결과 행은 private S3-compatible page object에 두고 PostgreSQL에는 manifest/page metadata만 저장한다.
+- Catalog Dataset 고정 상태와 AI 대화는 인증 actor별 PostgreSQL 리소스로 저장된다.
 - ETL/Catalog 초기 hydrate 결과가 Postgres에 비어 있으면 UI도 빈 목록으로 시작한다.
 - Issue #488은 local Compose의 Trino 482 + Iceberg JDBC catalog baseline, canonical Query Run, signed-cursor result storage와 Iceberg CTAS Dataset 등록을 제공한다. `/api/query/runs`는 `TRINO_ENABLED`에 따라 Trino runtime과 DuckDB compatibility runtime을 전환한다.
 
@@ -350,6 +351,8 @@ type ScheduledJobRunResponse = {
 | `GET` | `/api/etl/jobs/{jobId}` | TBD | job 상세 hydrate | `docs/backend-integration-readiness.md` |
 | `GET` | `/api/catalog/datasets` | TBD | dataset 목록 hydrate | `docs/backend-integration-readiness.md` |
 | `GET` | `/api/catalog/datasets/{datasetId}` | TBD | dataset 상세 hydrate | `docs/backend-integration-readiness.md` |
+| `PUT` | `/api/catalog/datasets/{datasetId}/pin` | `view` | 현재 actor의 Dataset 상단 고정 상태를 멱등 저장 | `docs/api-contract.md` |
+| `DELETE` | `/api/catalog/datasets/{datasetId}/pin` | `view` | 현재 actor의 Dataset 상단 고정 상태 해제 | `docs/api-contract.md` |
 | `GET` | `/api/catalog/datasets/{datasetId}/rows?limit=&offset=` | `query` | 최신 성공 materialization의 실제 행을 bounded page로 조회 | `docs/api-contract.md` |
 | `GET` | `/api/catalog/datasets/{datasetId}/lineage` | TBD | column-level lineage graph hydrate 또는 fallback | `docs/api-contract.md` |
 | `DELETE` | `/api/catalog/datasets/{datasetId}/materialization-runs/{runId}` | TBD | dataset 안의 append/materialize 결과 metadata 삭제 및 부모 rows/size 재계산 | `docs/api-contract.md` |
@@ -357,6 +360,12 @@ type ScheduledJobRunResponse = {
 | `GET` | `/api/s3/prefixes` | TBD | Target 저장경로 선택용 S3 prefix lazy 조회 | `docs/api-contract.md` |
 | `GET` | `/api/target/databases` | TBD | Target 기본정보 DB 선택용 허용 DB 목록 | `docs/api-contract.md` |
 | `POST` | `/api/catalog/derived-datasets` | TBD | DuckDB compatibility 결과 기반 dataset 생성 | `docs/api-contract.md` |
+| `GET` | `/api/ai/conversations` | Session | 현재 actor 소유 AI 대화 목록·메시지·선택 Dataset hydrate | `docs/api-contract.md` |
+| `POST` | `/api/ai/conversations` | Session | AI 대화 생성 | `docs/api-contract.md` |
+| `GET` | `/api/ai/conversations/{conversationId}` | Owner | 현재 actor 소유 대화 단건 조회 | `docs/api-contract.md` |
+| `PATCH` | `/api/ai/conversations/{conversationId}` | Owner | version을 검사해 제목·선택 Dataset 수정 | `docs/api-contract.md` |
+| `DELETE` | `/api/ai/conversations/{conversationId}?version=` | Owner | version을 검사해 대화와 메시지 삭제 | `docs/api-contract.md` |
+| `POST` | `/api/ai/conversations/{conversationId}/messages` | Owner + Dataset `query` | Query AI 응답과 user/assistant 메시지를 저장 | `docs/api-contract.md` |
 
 현재 P1 API의 `Auth` 값은 local session actor 또는 임시 actor header fallback을 기준으로 확장 중이다. Create flow의 Permission 입력값과 `owner` 표시는 governance/identity metadata이며, 실제 접근 제어는 `ActorContext`와 resource별 `permissionGrants`를 기준으로 판정한다. Catalog/SQL/Job/Dashboard runtime의 공통 권한 계약은 `docs/api-contract.md`의 Permission/Governance 용어를 따른다.
 
@@ -424,11 +433,12 @@ Runtime lane은 `DashboardRuntimeResponse`와 `DashboardRuntimeWidget`을 기준
 | Target DB 선택 | DB picker가 `target.databaseName` string을 갱신하고 hidden tableName은 datasetName을 사용 | `GET /api/target/databases`, `POST /api/etl/jobs` |
 | Source/Schema 연결 | `testSourceConnector` mock/live adapter | `POST /api/etl/sources/test` |
 | 조건부 레코드 구조화 | Source에서 선택한 `.txt`/`.log` raw preview와 `DraftPipeline.recordParsing` | `POST /api/etl/record-parsing/preview` |
-| 카탈로그 | Postgres JSONB-backed live backend hydrate | `GET /api/catalog/datasets` |
+| 카탈로그 | Postgres-backed Dataset와 actor별 `userPreference` hydrate | `GET /api/catalog/datasets`, `PUT/DELETE /api/catalog/datasets/{datasetId}/pin` |
 | 카탈로그 상세 | selected dataset state | `GET /api/catalog/datasets/{datasetId}` |
 | Lineage | `LineageGraph` mock/fallback | `GET /api/catalog/datasets/{datasetId}/lineage` |
 | SQL 분석 | Trino Query Run 제출, 상태 polling, signed-cursor 결과 page와 server CSV. 사용자별 실행 이력 조회·재열기 endpoint는 backend 계약으로 유지하며 이번 화면에는 별도 이력 선택 목록을 노출하지 않음 | Query lifecycle endpoints |
 | Query AI 생성 | mock mode는 선택 metadata 기반 로컬 JOIN 초안 fallback, live mode는 선택 metadata를 포함해 FastAPI/OpenAI 호출 후 선택 JOIN 누락 시 로컬 fallback | `POST /api/query/ai-suggestions` |
+| AI 활용 대화 | live adapter로 actor 소유 대화·메시지·선택 Dataset hydrate/CRUD, mock mode만 화면 로컬 fixture | `/api/ai/conversations*` |
 | SQL 결과 Dataset 생성 | UI는 SQL 내부 다단계 모달에서 스케줄·거버넌스·저장 설정을 완료하고 `createSqlDatasetJob`으로 명시적 draft를 제출; backend direct materialize API는 `createDerivedDatasetFromSql` 호환 유지 | `POST /api/etl/jobs`, `POST /api/catalog/derived-datasets` |
 | 대시보드 | FastAPI dashboard adapter, 404 local/mock fallback | `GET /api/dashboards`, `POST /api/dashboards/query`, draft/published runtime APIs |
 | 감사 로그 | 서버 `audit_events` 조회 + local/localStorage 최근 호출 | `GET /api/admin/audit-logs` |

@@ -1,5 +1,6 @@
 """SQLAlchemy model modules."""
 
+from app.models.ai import AiConversationMessageModel, AiConversationModel
 from app.models.catalog import CatalogDatasetModel, CatalogDatasetPreferenceModel
 from app.models.dashboard_live import (
     DashboardWidgetResultModel,
@@ -13,6 +14,8 @@ from app.models.identity import AuditEventModel, PermissionGrantModel, Principal
 from app.models.sql import SqlRunModel, SqlRunResultPageModel
 
 __all__ = [
+    "AiConversationMessageModel",
+    "AiConversationModel",
     "CatalogDatasetModel",
     "CatalogDatasetPreferenceModel",
     "DatasetFreshnessModel",

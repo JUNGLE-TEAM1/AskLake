@@ -524,6 +524,10 @@ type CatalogDataset = {
   };
   permissionGrants?: PermissionGrant[];
   permissions?: ResourcePermissions;
+  userPreference: {
+    pinned: boolean;
+    pinnedAt: string | null;
+  };
   layer: "RAW" | "BRONZE" | "SILVER" | "GOLD";
   status: "available" | "approval_required";
   freshness: "latest" | "stale" | "approval";
@@ -2084,6 +2088,92 @@ Validation:
 - editor에 반영된 SQL은 기존 preflight와 `POST /api/query/runs` 검증을 다시 통과해야 실행됩니다.
 - mock mode에서는 같은 request shape를 유지하면서 프론트 로컬 SQL 초안 fallback을 사용합니다.
 
+### 7.8.1 AI 대화 영속화
+
+AI 활용 화면의 live mode는 다음 actor-owned aggregate API를 사용한다.
+
+```text
+GET    /api/ai/conversations
+POST   /api/ai/conversations
+GET    /api/ai/conversations/{conversationId}
+PATCH  /api/ai/conversations/{conversationId}
+DELETE /api/ai/conversations/{conversationId}?version={version}
+POST   /api/ai/conversations/{conversationId}/messages
+```
+
+```ts
+type AiConversationMessage = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  contextNames: string[];
+  notices: string[];
+  sql?: string;
+  createdAt: string;
+};
+
+type AiConversation = {
+  id: string;
+  title: string;
+  selectedDatasetIds: string[];
+  messages: AiConversationMessage[];
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+};
+```
+
+목록 response `200 OK`:
+
+```ts
+type AiConversationListResponse = { items: AiConversation[] };
+```
+
+현재 MVP 목록은 actor의 대화와 각 전체 메시지를 함께 반환한다. 대화·메시지 pagination과 retention은 후속 운영 범위다.
+
+생성 request와 response:
+
+```ts
+type CreateAiConversationRequest = {
+  title?: string; // 기본값 "새 대화"
+  selectedDatasetIds?: string[];
+};
+// 201 Created: AiConversation
+```
+
+수정 request와 response:
+
+```ts
+type UpdateAiConversationRequest = {
+  version: number;
+  title?: string;
+  selectedDatasetIds?: string[];
+};
+// 200 OK: 증가한 version의 AiConversation
+```
+
+메시지 생성 request와 response:
+
+```ts
+type CreateAiConversationMessageRequest = {
+  version: number;
+  clientRequestId: string;
+  content: string;
+};
+// 200 OK: user/assistant 메시지가 저장되고 version이 증가한 AiConversation
+```
+
+소유권·동시성·실패 계약:
+
+- owner key는 인증 session user ID를 우선하고 로컬 header-auth 호환에서만 안정적인 actor key fallback을 사용한다. 목록은 현재 owner의 대화만 반환한다.
+- 다른 actor가 소유한 ID는 존재 여부를 노출하지 않도록 수정·삭제·메시지 추가에서 `404 NOT_FOUND`다.
+- 생성·선택 Dataset 수정·메시지 생성 시 Dataset 존재와 actor의 `query` 권한을 검사한다. 삭제된 Dataset은 `404 NOT_FOUND`, 권한 없는 Dataset은 `403 FORBIDDEN`이다.
+- PATCH, DELETE와 메시지 POST의 `version`이 현재 version과 다르면 `409 CONFLICT`와 현재 version을 error details로 반환한다. frontend는 목록을 다시 hydrate한 뒤 사용자 입력을 재시도한다.
+- `(conversationId, clientRequestId)`는 유일하다. 같은 성공 요청을 다시 보내면 저장된 대화를 반환하고 user/assistant 메시지를 중복 추가하지 않는다.
+- 메시지 POST는 기존 `QueryAiService`로 선택 Dataset 범위의 제안을 생성한다. provider/권한/검증 실패 시 새 메시지와 version 증가를 commit하지 않고 공통 error envelope를 반환한다.
+- 대화 삭제는 하위 메시지를 함께 삭제한다. `204 No Content` 성공 뒤 frontend는 남은 서버 목록을 기준으로 active 대화를 고른다.
+- `VITE_USE_MOCK_API=false`에서는 API adapter가 source of truth다. `VITE_USE_MOCK_API=true`에서만 화면 생명주기의 fixture 대화를 사용한다.
+
 ### 7.9 DuckDB compatibility SQL 결과 기반 Lake Dataset 생성
 
 이 section은 `TRINO_ENABLED=false` compatibility path와 기존 client를 위한 계약입니다. Trino 결과 screen은 이 API의 1회성 Dataset action을 노출하지 않고 server CSV와 `POST /api/etl/sql-jobs` 반복 Job만 제공합니다. Trino의 1회성 Iceberg CTAS API는 7.7의 별도 운영 경로로 유지합니다.
@@ -2214,6 +2304,10 @@ Response `200 OK`:
       "name": "customer_review_silver",
       "description": "고객 리뷰 정제 데이터셋",
       "owner": "Data Engineer Group",
+      "userPreference": {
+        "pinned": true,
+        "pinnedAt": "2026-07-14T08:00:00.000Z"
+      },
       "layer": "SILVER",
       "status": "available",
       "freshness": "latest",
@@ -2306,6 +2400,34 @@ Runtime/permission:
 - 어느 reader도 response/DOM에 전체 row를 적재하지 않습니다.
 - `rowCount`는 고정한 snapshot의 전체 행 수, `returnedRows`는 현재 page 행 수입니다. `offset == rowCount`이면 빈 `rows`와 `hasNext=false`를 반환합니다. 이 API는 preview용 offset pagination이며 정렬 key를 받지 않으므로 서로 다른 요청 사이의 안정적인 row order는 보장하지 않습니다.
 - 스키마 상세 modal은 스키마와 row page를 함께 표시하고, 새로고침·첫/이전/다음/마지막 page·수평 스크롤·고정 header를 제공합니다. modal을 닫아도 Catalog 검색/필터 상태는 유지합니다.
+
+#### 8.2.2 사용자별 Dataset 고정 상태
+
+```text
+PUT    /api/catalog/datasets/{datasetId}/pin
+DELETE /api/catalog/datasets/{datasetId}/pin
+```
+
+두 endpoint는 현재 actor와 Dataset의 복합 key로 설정을 저장한다. `PUT`은 이미 고정된 Dataset에도 멱등이며 `DELETE`는 설정 row가 없어도 고정 해제 상태를 반환한다.
+
+Response `200 OK`:
+
+```ts
+type CatalogDatasetPreferenceResponse = {
+  datasetId: string;
+  userPreference: {
+    pinned: boolean;
+    pinnedAt: string | null;
+  };
+};
+```
+
+- `GET /api/catalog/datasets`와 `GET /api/catalog/datasets/{datasetId}`는 현재 actor의 `userPreference`를 합성한다. 저장된 설정이 없으면 `{ pinned: false, pinnedAt: null }`다.
+- 한 사용자의 변경은 다른 사용자의 목록·상세 응답에 나타나지 않는다. Dataset payload 자체에는 사용자 고정 상태를 저장하지 않는다.
+- Dataset이 삭제되면 하위 preference row도 삭제되며 이후 pin 요청은 `404 NOT_FOUND`다.
+- Dataset `view` 권한이 없으면 `403 FORBIDDEN`, 운영 환경에서 인증 session이 없으면 `401 UNAUTHORIZED`다.
+- live frontend는 `catalogApi` adapter 응답 성공 뒤에만 고정 정렬을 반영한다. 네트워크 실패 시 이전 서버 상태를 유지하고 성공 toast나 감사 action을 만들지 않는다.
+- `VITE_USE_MOCK_API=true`는 frontend-only QA를 위해 화면 생명주기의 local 고정 상태를 사용할 수 있으나 live 영속화의 근거로 취급하지 않는다.
 
 `GET /api/catalog/datasets/{datasetId}/lineage` Response `200 OK`:
 

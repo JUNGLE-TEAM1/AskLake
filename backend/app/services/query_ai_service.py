@@ -36,6 +36,9 @@ class QueryAiService:
         self,
         request: QueryAiSuggestionRequest,
         actor: ActorContext | None = None,
+        *,
+        api_path: str = "/api/query/ai-suggestions",
+        resolved_datasets: list[CatalogDatasetResponse] | None = None,
     ) -> QueryAiSuggestionResponse:
         actor_context = actor or ActorContext()
         if request.mode != "draft_sql":
@@ -67,28 +70,16 @@ class QueryAiService:
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
             )
 
-        datasets = [
-            self.get_catalog_dataset(dataset_id)
-            for dataset_id in context_dataset_ids
-        ]
-        for dataset in datasets:
-            require_governed_access(
-                self.catalog_repository.db,
-                actor_context,
-                action="query",
-                api_path="/api/query/ai-suggestions",
-                http_method="POST",
-                metadata={"owner": dataset.owner},
-                resource_id=dataset.id,
-                resource_name=dataset.name,
-                resource_type="dataset",
-            )
-            require_permission(
-                actor_context,
-                "query",
-                owner=dataset.owner,
-                grants=dataset.permission_grants,
-                resource_label="dataset",
+        datasets = resolved_datasets or self.resolve_context_datasets(
+            context_dataset_ids,
+            actor_context,
+            api_path=api_path,
+        )
+        if [dataset.id for dataset in datasets] != context_dataset_ids:
+            raise ApiError(
+                ErrorCode.VALIDATION_ERROR,
+                "Resolved dataset context does not match the request",
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
             )
         base_dataset = self.pick_base_dataset(datasets, request.base_dataset_id)
         client = OpenAiResponsesClient(
@@ -118,6 +109,43 @@ class QueryAiService:
             sql=sql,
             title=suggestion.get("title") or "SQL draft",
         )
+
+    def resolve_context_datasets(
+        self,
+        dataset_ids: list[str],
+        actor: ActorContext,
+        *,
+        api_path: str = "/api/query/ai-suggestions",
+        http_method: str = "POST",
+    ) -> list[CatalogDatasetResponse]:
+        datasets = [self.get_catalog_dataset(dataset_id) for dataset_id in dataset_ids]
+        for dataset in datasets:
+            if dataset.status != "available":
+                raise ApiError(
+                    ErrorCode.VALIDATION_ERROR,
+                    "Dataset is not available for AI context",
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    {"datasetId": dataset.id, "status": dataset.status},
+                )
+            require_governed_access(
+                self.catalog_repository.db,
+                actor,
+                action="query",
+                api_path=api_path,
+                http_method=http_method,
+                metadata={"owner": dataset.owner},
+                resource_id=dataset.id,
+                resource_name=dataset.name,
+                resource_type="dataset",
+            )
+            require_permission(
+                actor,
+                "query",
+                owner=dataset.owner,
+                grants=dataset.permission_grants,
+                resource_label="dataset",
+            )
+        return datasets
 
     def get_catalog_dataset(self, dataset_id: str) -> CatalogDatasetResponse:
         payload = self.catalog_repository.get_dataset_payload(dataset_id)
