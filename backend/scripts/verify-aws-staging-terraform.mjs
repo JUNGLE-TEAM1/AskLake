@@ -174,6 +174,7 @@ function validateTerraform(files) {
   assert.match(stagingOutputs, /public_ingress_enabled\s*=\s*false/, "public ingress contract output drifted");
   assert.match(stagingOutputs, /nat_gateway_enabled\s*=\s*false/, "no-NAT contract output drifted");
   assert.match(stagingOutputs, /applications_concurrent\s*=\s*false/, "sequential application contract drifted");
+  assert.match(stagingOutputs, /stack_id\s*=\s*var\.stack_id/, "Phase 2 stack identity output is missing");
 
   const terraformSource = [...files.entries()]
     .filter(([relativePath]) => relativePath.endsWith(".tf"))

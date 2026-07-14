@@ -179,7 +179,7 @@ npm run build
 
 첫 명령은 resource estimator/application preflight와 file DB의 동시 요청을 실행해 정확히 한 요청만 active slot을 받고 다음 요청은 queued가 되는지, queue overflow·actor quota·단일 Job 자원 초과·terminal release·admin projection을 검증한다. 실제 PostgreSQL/EMR staging에서는 동시에 두 Run을 제출해 `GET /api/admin/runtime-capacity`의 active/queued 수와 AWS Job Run 상태가 일치하는지 추가 확인한다. 이 검증은 처리량/실제 청구액 측정이 아니며 Phase 7 부하·비용 시험과 분리한다.
 
-### AWS staging Phase 0 계약·Phase 1 Terraform 검증
+### AWS staging Phase 0 계약·Phase 1 Terraform·Phase 2 Runtime 연결 검증
 
 Issue #727의 Phase 0은 AWS resource를 만들지 않는다. 서울 리전, 전용 private VPC, Terraform state, OIDC/IAM, 30 USD smoke 예산, 8시간 TTL, 최소 16 EMR Serverless concurrent vCPU, 100만 건/평균 1 KiB 기능 smoke를 versioned contract로 고정한다.
 
@@ -187,11 +187,24 @@ Issue #727의 Phase 0은 AWS resource를 만들지 않는다. 서울 리전, 전
 cd backend
 npm run verify:aws-staging-contract
 npm run verify:aws-staging-terraform
+npm run verify:aws-staging-runtime
 ```
 
 첫 명령은 `infra/contracts/aws-staging-smoke.v1.json`을 읽어 region/naming/tag, state lock/versioning/encryption, no-NAT/no-public-ingress, 장기 key 금지, EMR application cap, smoke 정합성 기준과 수동 apply/자동 destroy 경계를 확인한다.
 
 두 번째 명령은 `infra/terraform`의 정적 보안/비용 guard 뒤 Terraform CLI로 `fmt -check`, state bootstrap과 staging의 `init -backend=false`/`validate`, mock provider plan을 실행한다. Terraform `1.7+`가 필요하며 실제 AWS credential이나 backend는 사용하지 않는다. Phase 1은 network/S3/IAM/MSK/EMR/CloudWatch/Budget와 optional private SSM runner까지 코드화하지만 실제 `apply`는 하지 않는다.
+
+세 번째 명령은 mock Terraform JSON을 stack별 private env와 redacted manifest로 바꾸고 기존 Spark/MSK/EMR config parser가 그대로 읽는지 확인한다. capacity/account/bucket/sensitivity 변조, broker 문자열 주입, 재실행 overwrite와 파일 mode `0600`을 함께 검사하며 AWS API를 호출하지 않는다.
+
+실제 apply 뒤에는 Terraform sensitive output을 log나 중간 파일에 남기지 않고 아래처럼 pipe한다. 생성 위치는 Git ignore 대상이며 일반 `deploy/.env`에 수작업 복사하지 않는다.
+
+```bash
+terraform -chdir=infra/terraform/environments/staging output -json \
+  | npm --prefix backend run aws-staging:render-runtime -- \
+      --output-dir deploy/generated/aws-staging
+```
+
+생성 env는 Batch와 MSK를 연결하지만 checksum 고정 Continuous JAR bundle 업로드 전까지 `ASKLAKE_EMR_SERVERLESS_CONTINUOUS_ENABLED=false`다. Phase 3 artifact workflow가 bundle을 검증한 뒤에만 활성화해야 하며, 생성 manifest의 `runtimePromotionAllowed`는 항상 false다.
 
 실제 provider plan은 platform이 만든 S3/KMS state backend와 GitHub OIDC role, account quota, 알림 email, 실행별 `stackId`/`ExpiresAt`을 외부 입력으로 준비한 뒤 수행한다. `backend.hcl.example`과 `staging.tfvars.example`의 placeholder를 실제 값으로 바꿔 커밋하지 않는다. 전체 단계와 변경 승인 기준은 [AWS Staging IaC와 실제 Smoke 자동화 계획](aws-staging-iac-smoke-plan.md)을 따른다.
 

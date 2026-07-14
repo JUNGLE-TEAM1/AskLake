@@ -165,6 +165,7 @@ Issue #727의 AWS staging은 제품 Runtime이나 일반 배포 환경이 아니
 
 - 일반 애플리케이션 배포와 로컬 Compose는 staging Terraform apply를 호출하지 않는다. 유료 resource 생성은 수동 승인된 전용 workflow에서만 허용한다.
 - Terraform state bootstrap, staging resource stack과 실행별 data/topic/checkpoint namespace를 분리한다. 실제 account/role/bucket/notification 값은 외부 입력이며 저장소에 커밋하지 않는다.
+- apply 뒤 Runtime 설정은 `terraform output -json -> render-aws-staging-runtime.mjs -> stack별 private env + redacted manifest` 단방향으로 전달한다. env만 broker 원문을 가지며 mode `0600`/Git ignore로 관리하고, manifest와 console에는 broker 개수/SHA-256만 남긴다. Batch/Continuous application ID, execution role, S3 bucket, admission cap과 topic namespace는 Phase 0 계약과 Terraform output을 다시 검증한 뒤 기존 `ASKLAKE_*` 환경변수로 직렬화한다. checksum 고정 JAR bundle이 아직 없는 Phase 2에서는 Continuous feature flag를 fail-closed로 끈다.
 - private staging은 NAT/Maven egress를 두지 않고 S3 endpoint와 immutable JAR bundle을 사용한다. smoke runner는 private subnet의 일회성 EC2를 SSM으로 실행하며 public/SSH ingress를 열지 않는다.
 - Batch와 Continuous application은 각각 16 vCPU 상한이지만 Phase 0에서는 계정 quota를 공유해 순차 실행한다. apply 전 실제 계정 quota가 최소 요구치보다 작은지 확인한다.
 - 100만 건 smoke는 연결·정합성·pause/resume을 확인하는 기능 시험이다. latency와 비용을 기록하되 처리량/SLO 달성을 주장하지 않으며 Phase 7 반복 성능 evidence를 대체하지 않는다.

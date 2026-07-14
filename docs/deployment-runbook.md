@@ -3,7 +3,9 @@
 이 문서는 개발 중 EC2 배포 서버를 켜고, 재배포하고, 끄는 반복 절차를 정리한다.
 정식 GitHub Actions 자동 배포 전에도 같은 절차를 로컬에서 실행할 수 있게 하는 것이 목표다.
 
-이 EC2 demo 배포는 Issue #727의 일회성 EMR Serverless/MSK Serverless staging과 별개다. Phase 1 Terraform은 `infra/terraform`에 있지만 일반 `scripts/deploy.sh` 또는 애플리케이션 재배포는 이를 실행하지 않는다. staging IaC/smoke의 Phase, 비용·TTL과 수동 승인 경계는 [AWS Staging IaC와 실제 Smoke 자동화 계획](aws-staging-iac-smoke-plan.md)을 따른다.
+이 EC2 demo 배포는 Issue #727의 일회성 EMR Serverless/MSK Serverless staging과 별개다. Phase 1 Terraform과 Phase 2 output 변환기는 `infra/terraform`, `backend/scripts/render-aws-staging-runtime.mjs`에 있지만 일반 `scripts/deploy.sh` 또는 애플리케이션 재배포는 이를 실행하지 않는다. staging IaC/smoke의 Phase, 비용·TTL과 수동 승인 경계는 [AWS Staging IaC와 실제 Smoke 자동화 계획](aws-staging-iac-smoke-plan.md)을 따른다.
+
+승인된 staging apply 뒤에는 `terraform output -json`을 `npm --prefix backend run aws-staging:render-runtime`에 직접 pipe한다. `deploy/generated/aws-staging/<stackId>.env`는 broker 원문이 있는 mode `0600` private fragment이고, 인접 manifest는 broker 개수/SHA-256만 보존한다. 둘 다 Git ignore 대상이며 일반 EC2 `deploy/.env`나 shell log에 복사하지 않는다. Phase 3의 checksum JAR upload 전에는 생성 fragment의 Continuous flag를 활성화하지 않는다.
 
 ## 전제
 

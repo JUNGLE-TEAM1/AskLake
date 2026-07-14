@@ -60,6 +60,8 @@
     "verify:aws-staging-contract": "node scripts/verify-aws-staging-contract.mjs",
     "verify:aws-staging-terraform:static": "node scripts/verify-aws-staging-terraform.mjs",
     "verify:aws-staging-terraform": "npm run verify:aws-staging-terraform:static && ../infra/terraform/scripts/verify.sh",
+    "aws-staging:render-runtime": "node scripts/render-aws-staging-runtime.mjs",
+    "verify:aws-staging-runtime": "node scripts/verify-aws-staging-runtime.mjs",
     "streaming:load-fault": "node scripts/run-streaming-load-fault.mjs",
     "streaming:performance-report": "node scripts/verify-streaming-performance-contract.mjs",
     "verify:runtime-cutover-contract": "node scripts/verify-runtime-cutover-contract.mjs --config-only",

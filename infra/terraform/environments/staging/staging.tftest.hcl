@@ -63,6 +63,11 @@ run "phase1_plan" {
   }
 
   assert {
+    condition     = output.infrastructure_contract.stack_id == "phase1-test"
+    error_message = "The stack identity drifted."
+  }
+
+  assert {
     condition     = output.infrastructure_contract.vpc_cidr == "10.77.0.0/16"
     error_message = "The dedicated VPC CIDR drifted."
   }

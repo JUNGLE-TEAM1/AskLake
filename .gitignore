@@ -18,6 +18,7 @@ __pycache__/
 .playwright-cli/
 deploy/.env
 deploy/ec2.env
+deploy/generated/
 airflow/logs/
 airflow/config/airflow.cfg
 .terraform/

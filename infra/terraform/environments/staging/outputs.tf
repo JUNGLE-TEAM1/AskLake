@@ -1,8 +1,9 @@
 output "infrastructure_contract" {
-  description = "Non-sensitive Phase 1 values used by static and mock-plan verification."
+  description = "Non-sensitive Phase 1 infrastructure values consumed by Phase 2 Runtime rendering."
   value = {
     environment                    = local.environment
     region                         = var.region
+    stack_id                       = var.stack_id
     name_prefix                    = local.name_prefix
     bucket_prefix                  = local.bucket_prefix
     topic_namespace                = local.topic_namespace
