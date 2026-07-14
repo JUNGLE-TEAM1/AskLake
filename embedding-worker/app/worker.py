@@ -35,6 +35,7 @@ class EmbeddingWorker:
             metadata = chunk.get("metadata") if isinstance(chunk.get("metadata"), dict) else {}
             documents.append({
                 "document_id": str(chunk.get("chunk_document_id") or chunk.get("document_id") or ""),
+                "job_id": str(chunk.get("job_id") or ""),
                 "chunk_document_id": str(chunk.get("chunk_document_id") or chunk.get("document_id") or ""),
                 "parent_document_id": str(chunk.get("parent_document_id") or ""),
                 "dataset_id": dataset_id,
@@ -51,10 +52,17 @@ class EmbeddingWorker:
                 "target_index": target_index,
                 "content_hash": str(chunk.get("content_hash") or ""),
                 "chunk_index": int(chunk.get("chunk_index") or 0),
+                "chunk_count": int(chunk.get("chunk_count") or 0),
                 "start_sentence": int(chunk.get("start_sentence") or 0),
                 "end_sentence": int(chunk.get("end_sentence") or 0),
+                "char_start": int(chunk.get("char_start") or 0),
+                "char_end": int(chunk.get("char_end") or 0),
                 "chunking_strategy": str(chunk.get("chunking_strategy") or "unknown"),
                 "chunking_version": str(chunk.get("chunking_version") or ""),
+                "embedding_model": embedding_model or self.embedding_model,
+                "embedding_dimensions": embedding_dimensions,
+                "fallback_applied": bool(chunk.get("fallback_applied")),
+                "fallback_reason": chunk.get("fallback_reason"),
             })
         return self.index_documents(documents, embedding_model=embedding_model, embedding_dimensions=embedding_dimensions)
 
@@ -79,7 +87,7 @@ class EmbeddingWorker:
                     raise RuntimeError("Embedding dimensions changed within one indexing job")
                 dimensions = batch_dimensions
                 if offset == 0:
-                    mapping = {"settings": {"index": {"knn": True}}, "mappings": {"properties": {"document_id": {"type": "keyword"}, "chunk_document_id": {"type": "keyword"}, "parent_document_id": {"type": "keyword"}, "dataset_id": {"type": "keyword"}, "source_row_id": {"type": "keyword"}, "title": {"type": "text"}, "body": {"type": "text"}, "embedding_text": {"type": "text"}, "body_vector": {"type": "knn_vector", "dimension": dimensions}, "filter_terms": {"type": "object", "enabled": True}, "metadata_filter": {"type": "object", "dynamic": True}, "metadata_display": {"type": "object", "enabled": True}, "semantic_bindings": {"type": "object", "enabled": True}, "source_columns": {"type": "keyword"}, "chunk_index": {"type": "integer"}, "start_sentence": {"type": "integer"}, "end_sentence": {"type": "integer"}, "chunking_strategy": {"type": "keyword"}, "chunking_version": {"type": "keyword"}, "content_hash": {"type": "keyword"}}}}
+                    mapping = {"settings": {"index": {"knn": True}}, "mappings": {"properties": {"document_id": {"type": "keyword"}, "chunk_document_id": {"type": "keyword"}, "parent_document_id": {"type": "keyword"}, "dataset_id": {"type": "keyword"}, "source_row_id": {"type": "keyword"}, "title": {"type": "text"}, "body": {"type": "text"}, "embedding_text": {"type": "text"}, "body_vector": {"type": "knn_vector", "dimension": dimensions}, "filter_terms": {"type": "object", "enabled": True}, "metadata_filter": {"type": "object", "dynamic": True}, "metadata_display": {"type": "object", "enabled": True}, "semantic_bindings": {"type": "object", "enabled": True}, "source_columns": {"type": "keyword"}, "chunk_index": {"type": "integer"}, "chunk_count": {"type": "integer"}, "start_sentence": {"type": "integer"}, "end_sentence": {"type": "integer"}, "char_start": {"type": "integer"}, "char_end": {"type": "integer"}, "chunking_strategy": {"type": "keyword"}, "chunking_version": {"type": "keyword"}, "content_hash": {"type": "keyword"}, "embedding_model": {"type": "keyword"}, "embedding_dimensions": {"type": "integer"}, "fallback_applied": {"type": "boolean"}, "fallback_reason": {"type": "keyword"}}}}
                     create_response = client.put(f"{self.opensearch_url}/{batch[0].get('target_index')}", auth=self.opensearch_auth, json=mapping)
                     if create_response.status_code >= 400 and "resource_already_exists_exception" not in create_response.text:
                         create_response.raise_for_status()
@@ -91,5 +99,10 @@ class EmbeddingWorker:
                 index_response.raise_for_status()
                 payload = index_response.json()
                 if payload.get("errors"):
-                    raise RuntimeError("OpenSearch bulk indexing returned item errors")
+                    failed = []
+                    for item in payload.get("items") or []:
+                        operation = next(iter(item.values()), {}) if isinstance(item, dict) else {}
+                        if isinstance(operation, dict) and int(operation.get("status") or 0) >= 300:
+                            failed.append({"id": operation.get("_id"), "status": operation.get("status"), "error": operation.get("error")})
+                    raise RuntimeError(f"OpenSearch bulk indexing returned {len(failed)} item errors: {failed[:5]}")
         return {"indexedCount": len(documents), "targetIndex": documents[0].get("target_index"), "dimensions": dimensions, "embeddingModel": model, "chunkingVersion": next((item.get("chunking_version") for item in documents if item.get("chunking_version")), None)}

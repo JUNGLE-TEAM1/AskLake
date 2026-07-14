@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from datetime import date
 import hashlib
 import json
 import re
@@ -49,8 +50,12 @@ class RagService:
         recommendations = self.db.scalars(select(RagColumnRecommendationModel).where(RagColumnRecommendationModel.dataset_id == dataset_id).order_by(RagColumnRecommendationModel.column_name.asc())).all()
         current_source = dataset.get("sourceManifest") or dataset.get("source_manifest") or {}
         current_source_fingerprint = str(current_source.get("fingerprint") or "") if isinstance(current_source, dict) else ""
-        effective_index_status = "stale" if active_manifest and current_source_fingerprint and active_manifest.source_fingerprint != current_source_fingerprint else row.index_status
-        return RagProfileResponse(dataset_id=dataset_id, review_state=row.review_state, index_status=effective_index_status, embedding_status=row.embedding_status, schema=dataset_schema(dataset), schema_fingerprint=row.schema_fingerprint or schema_fingerprint(dataset), body_columns=row.body_columns or [], title_columns=row.title_columns or [], metadata_columns=row.metadata_columns or [], identifier_columns=row.identifier_columns or [], excluded_columns=row.excluded_columns or [], classifier=row.classifier, classifier_confidence=row.classifier_confidence, target_alias=row.target_alias, active_index=row.active_index, active_source_fingerprint=active_manifest.source_fingerprint if active_manifest else None, active_embedding_model=active_manifest.embedding_model if active_manifest else None, active_embedding_dimensions=active_manifest.dimensions if active_manifest else None, active_chunking_version=active_manifest.chunking_version if active_manifest else None, last_error=row.last_error, semantic_bindings=row.semantic_bindings or {}, recommendations=[{"id": item.id, "columnName": item.column_name, "role": item.role, "confidence": item.confidence, "reason": item.reason, "approved": item.approved} for item in recommendations])
+        current_policy = self._policy_fingerprint(dataset, row) if row.review_state == "approved" else None
+        stale = bool(active_manifest and ((current_source_fingerprint and active_manifest.source_fingerprint != current_source_fingerprint) or (current_policy and active_manifest.policy_fingerprint != current_policy)))
+        serving_status = "stale" if stale else "serving" if active_manifest and (active_manifest.index_name or row.active_index) else "not_serving"
+        effective_index_status = "stale" if stale else row.index_status
+        serving_index = active_manifest.index_name if active_manifest else row.active_index
+        return RagProfileResponse(dataset_id=dataset_id, review_state=row.review_state, index_status=effective_index_status, build_status=row.index_status, serving_status=serving_status, embedding_status=row.embedding_status, schema=dataset_schema(dataset), schema_fingerprint=row.schema_fingerprint or schema_fingerprint(dataset), body_columns=row.body_columns or [], title_columns=row.title_columns or [], metadata_columns=row.metadata_columns or [], identifier_columns=row.identifier_columns or [], excluded_columns=row.excluded_columns or [], classifier=row.classifier, classifier_confidence=row.classifier_confidence, target_alias=row.target_alias, active_index=serving_index, active_source_fingerprint=active_manifest.source_fingerprint if active_manifest else None, active_embedding_model=active_manifest.embedding_model if active_manifest else None, active_embedding_dimensions=active_manifest.dimensions if active_manifest else None, active_chunking_version=active_manifest.chunking_version if active_manifest else None, last_error=row.last_error, semantic_bindings=row.semantic_bindings or {}, recommendations=[{"id": item.id, "columnName": item.column_name, "role": item.role, "confidence": item.confidence, "reason": item.reason, "approved": item.approved} for item in recommendations])
 
     def classify(self, dataset_id: str, actor: ActorContext, semantic_model_id: str | None = None) -> RagClassifyResponse:
         dataset = self._dataset(dataset_id, actor, "manage")
@@ -107,6 +112,41 @@ class RagService:
         documents = build_documents(dataset_id=dataset_id, dataset_name=str(dataset.get("name") or dataset_id), rows=dataset.get("sampleRows") or [], columns=dataset_columns(dataset), body_columns=row.body_columns or [], title_columns=row.title_columns or [], metadata_columns=row.metadata_columns or [], identifier_columns=row.identifier_columns or [], semantic_bindings=row.semantic_bindings or {}, target_index=alias, limit=settings.rag_document_preview_limit)
         return RagDocumentPreviewResponse(dataset_id=dataset_id, target_alias=alias, source_columns=[*(row.body_columns or []), *(row.title_columns or []), *(row.metadata_columns or []), *(row.identifier_columns or [])], documents=documents)
 
+    def validate_search_filters(self, dataset_id: str, actor: ActorContext, filters: dict[str, Any]) -> dict[str, dict[str, Any]]:
+        """Validate the public filter DTO against approved Catalog metadata columns.
+
+        The API deliberately rejects unknown fields and the legacy ``{"gte": ...}``
+        shorthand.  Otherwise a typo would silently broaden retrieval and a caller
+        could query a column that the Dataset owner never approved for RAG metadata.
+        """
+        dataset = self._dataset(dataset_id, actor, "query")
+        profile = self._profile_row(dataset_id)
+        schema_by_name = {str(item.get("name")): str(item.get("dataType") or item.get("data_type") or "unknown").casefold() for item in dataset_schema(dataset) if isinstance(item, dict)}
+        result: dict[str, dict[str, Any]] = {}
+        for field, predicate in (filters or {}).items():
+            if field not in set(profile.metadata_columns or []):
+                raise ApiError("validation_error", f"RAG filter field '{field}' is not an approved metadata column", status.HTTP_400_BAD_REQUEST)
+            if not isinstance(predicate, dict) or set(predicate) != {"operator", "value"}:
+                raise ApiError("validation_error", f"RAG filter '{field}' must use {{operator, value}}", status.HTTP_400_BAD_REQUEST)
+            operator = predicate.get("operator")
+            value = predicate.get("value")
+            if operator not in {"eq", "gte", "gt", "lte", "lt"} or value is None:
+                raise ApiError("validation_error", f"RAG filter '{field}' has an invalid operator or value", status.HTTP_400_BAD_REQUEST)
+            data_type = schema_by_name.get(field, "unknown")
+            numeric = any(token in data_type for token in ("int", "float", "double", "decimal", "number", "numeric"))
+            temporal = any(token in data_type for token in ("date", "time", "timestamp"))
+            if operator != "eq" and not (numeric or temporal):
+                raise ApiError("validation_error", f"Range operators are not supported for text metadata column '{field}'", status.HTTP_400_BAD_REQUEST)
+            if numeric and not isinstance(value, (int, float)) or numeric and isinstance(value, bool):
+                raise ApiError("validation_error", f"RAG filter value for numeric column '{field}' must be numeric", status.HTTP_400_BAD_REQUEST)
+            if temporal:
+                try:
+                    date.fromisoformat(str(value)[:10])
+                except ValueError as exc:
+                    raise ApiError("validation_error", f"RAG filter value for temporal column '{field}' must be ISO date/time", status.HTTP_400_BAD_REQUEST) from exc
+            result[field] = {"operator": operator, "value": value}
+        return result
+
     def index(self, dataset_id: str, actor: ActorContext, *, mode: str = "index", idempotency_key: str | None = None) -> RagIndexResponse:
         dataset = self._dataset(dataset_id, actor, "query")
         require_permission(actor, "publish", owner=dataset.get("owner"), grants=dataset.get("permissionGrants") or [], resource_label="Dataset RAG index")
@@ -158,9 +198,14 @@ class RagService:
             dataset = self.catalog.get_dataset_payload(manifest.dataset_id)
             source = (dataset.get("sourceManifest") or dataset.get("source_manifest")) if isinstance(dataset, dict) else None
             current_fingerprint = str(source.get("fingerprint") or "") if isinstance(source, dict) else ""
-            if not current_fingerprint or current_fingerprint == manifest.source_fingerprint:
+            profile = self.db.get(RagDatasetProfileModel, manifest.dataset_id)
+            current_policy = self._policy_fingerprint(dataset, profile) if profile and isinstance(dataset, dict) else None
+            changed = bool(current_fingerprint and current_fingerprint != manifest.source_fingerprint)
+            changed = changed or bool(current_policy and current_policy != manifest.policy_fingerprint)
+            changed = changed or bool(profile and manifest.embedding_model != settings.rag_embedding_model)
+            if not changed:
                 continue
-            key = f"auto-reindex:{manifest.dataset_id}:{current_fingerprint}"
+            key = f"auto-reindex:{manifest.dataset_id}:{current_fingerprint}:{current_policy or ''}"
             existing = self.db.scalar(
                 select(RagIndexJobModel).where(
                     RagIndexJobModel.dataset_id == manifest.dataset_id,
@@ -194,6 +239,9 @@ class RagService:
             profile.index_status = job.status
             job.parent_count = int(result.get("parentCount") or job.parent_count)
             job.chunk_count = int(result.get("chunkCount") or job.chunk_count)
+            job.failed_count = int(result.get("failedCount") or job.failed_count)
+            job.fallback_count = int(result.get("fallbackCount") or job.fallback_count)
+            job.fallback_reasons = result.get("fallbackReasons") if isinstance(result.get("fallbackReasons"), dict) else (job.fallback_reasons or {})
             job.document_count = int(result.get("documentCount") or job.document_count)
             job.indexed_count = int(result.get("indexedCount") or job.indexed_count)
             job.embedding_dimensions = int(result.get("dimensions") or job.embedding_dimensions or 0) or job.embedding_dimensions
@@ -208,21 +256,33 @@ class RagService:
             profile.embedding_status = "failed"
             job.error = str(result.get("error") or "RAG worker failed")
         else:
+            if result.get("validationPassed") is not True:
+                job.status = "failed"
+                job.stage = "failed"
+                profile.index_status = "failed"
+                profile.embedding_status = "failed"
+                job.error = "Activation requires a successful OpenSearch validation result"
+                job.completed_at = datetime.now(timezone.utc)
+                self.db.commit()
+                return self.job(job_id, ActorContext(name=job.requested_by, role="admin"))
             job.status = "ready"
             job.stage = "ready"
             job.indexed_count = int(result.get("indexedCount") or job.document_count)
             job.parent_count = int(result.get("parentCount") or job.parent_count)
             job.chunk_count = int(result.get("chunkCount") or job.chunk_count)
+            job.failed_count = int(result.get("failedCount") or job.failed_count)
+            job.fallback_count = int(result.get("fallbackCount") or job.fallback_count)
+            job.fallback_reasons = result.get("fallbackReasons") if isinstance(result.get("fallbackReasons"), dict) else (job.fallback_reasons or {})
             job.document_count = int(result.get("documentCount") or job.chunk_count or job.document_count)
             job.embedding_dimensions = int(result.get("dimensions") or job.embedding_dimensions or settings.rag_embedding_dimensions)
             profile.index_status = "ready"
             profile.embedding_status = "ready"
             previous_index = profile.active_index
-            profile.active_index = str(result.get("activeIndex") or job.target_index or "") or None
-            if settings.opensearch_base_url and profile.active_index:
+            next_index = str(result.get("activeIndex") or job.target_index or "") or None
+            if settings.opensearch_base_url and next_index:
                 from app.clients.opensearch_client import OpenSearchClient
                 try:
-                    OpenSearchClient(settings).switch_alias(profile.target_alias or f"{settings.rag_index_prefix}-ds-{job.dataset_id}", profile.active_index, previous_index)
+                    OpenSearchClient(settings).switch_alias(profile.target_alias or f"{settings.rag_index_prefix}-ds-{job.dataset_id}", next_index, previous_index)
                 except Exception as exc:
                     job.status = "failed"
                     job.stage = "failed"
@@ -232,9 +292,11 @@ class RagService:
                     job.completed_at = datetime.now(timezone.utc)
                     self.db.commit()
                     return self.job(job_id, ActorContext(name=job.requested_by, role="admin"))
+            profile.active_index = next_index
             for manifest in self.db.scalars(select(RagIndexManifestModel).where(RagIndexManifestModel.dataset_id == job.dataset_id, RagIndexManifestModel.status == "active")).all():
                 manifest.status = "retired"
-            self.db.add(RagIndexManifestModel(id=f"ragmanifest_{uuid4().hex}", dataset_id=job.dataset_id, index_name=profile.active_index or job.target_index or "", alias_name=profile.target_alias or "", status="active", embedding_model=job.embedding_model or settings.rag_embedding_model, dimensions=job.embedding_dimensions or settings.rag_embedding_dimensions, document_count=job.indexed_count, source_fingerprint=job.source_fingerprint, policy_fingerprint=job.policy_fingerprint, chunking_version=str(result.get("chunkingVersion") or "rag-chunk-v2"), embedding_input_version="title_body_v1", parent_schema_version="rag-parent-v1", activated_at=datetime.now(timezone.utc)))
+            dataset = self.catalog.get_dataset_payload(job.dataset_id) or {}
+            self.db.add(RagIndexManifestModel(id=f"ragmanifest_{uuid4().hex}", dataset_id=job.dataset_id, index_name=profile.active_index or job.target_index or "", alias_name=profile.target_alias or "", status="active", embedding_model=job.embedding_model or settings.rag_embedding_model, dimensions=job.embedding_dimensions or settings.rag_embedding_dimensions, document_count=job.indexed_count, parent_count=job.parent_count, chunk_count=job.chunk_count, failed_count=job.failed_count, fallback_count=job.fallback_count, fallback_reasons=job.fallback_reasons or {}, source_fingerprint=job.source_fingerprint, schema_fingerprint=schema_fingerprint(dataset), policy_fingerprint=job.policy_fingerprint, semantic_bindings_fingerprint=self._semantic_bindings_fingerprint(profile.semantic_bindings), chunking_version=str(result.get("chunkingVersion") or "rag-chunk-v2"), embedding_input_version="title_body_v1", parent_schema_version="rag-parent-v1", activated_at=datetime.now(timezone.utc)))
         job.completed_at = datetime.now(timezone.utc)
         self.db.commit()
         return self.job(job_id, ActorContext(name=job.requested_by, role="admin"))
@@ -244,7 +306,64 @@ class RagService:
         if job is None:
             raise ApiError("not_found", f"RAG job {job_id} was not found", status.HTTP_404_NOT_FOUND)
         self._dataset(job.dataset_id, actor, "view")
-        return RagJobResponse(job_id=job.id, dataset_id=job.dataset_id, status=job.status, requested_mode=job.requested_mode, target_index=job.target_index, document_count=job.document_count, indexed_count=job.indexed_count, parent_count=job.parent_count, chunk_count=job.chunk_count, stage=job.stage, source_fingerprint=job.source_fingerprint, policy_fingerprint=job.policy_fingerprint, embedding_model=job.embedding_model, embedding_dimensions=job.embedding_dimensions, parent_table=job.parent_table, chunk_table=job.chunk_table, checkpoint_path=job.checkpoint_path, error=job.error, airflow_run_id=job.airflow_run_id)
+        return RagJobResponse(job_id=job.id, dataset_id=job.dataset_id, status=job.status, requested_mode=job.requested_mode, target_index=job.target_index, document_count=job.document_count, indexed_count=job.indexed_count, parent_count=job.parent_count, chunk_count=job.chunk_count, failed_count=job.failed_count, fallback_count=job.fallback_count, fallback_reasons=job.fallback_reasons or {}, stage=job.stage, source_fingerprint=job.source_fingerprint, policy_fingerprint=job.policy_fingerprint, embedding_model=job.embedding_model, embedding_dimensions=job.embedding_dimensions, parent_table=job.parent_table, chunk_table=job.chunk_table, checkpoint_path=job.checkpoint_path, error=job.error, airflow_run_id=job.airflow_run_id)
+
+    def validate_job(self, job_id: str) -> dict[str, Any]:
+        """Validate the newly built physical index before an alias can move.
+
+        This is intentionally a backend-side check: Spark only proves that its
+        HTTP dispatch finished.  The serving control plane must verify what
+        OpenSearch actually persisted, including the vector mapping and smoke
+        queries, while the old alias remains untouched.
+        """
+        job = self.db.get(RagIndexJobModel, job_id)
+        if job is None:
+            raise ApiError("not_found", f"RAG job {job_id} was not found", status.HTTP_404_NOT_FOUND)
+        if not settings.opensearch_base_url or not job.target_index:
+            raise ApiError("service_unavailable", "OpenSearch is required to validate a RAG index", status.HTTP_503_SERVICE_UNAVAILABLE)
+        from app.clients.opensearch_client import OpenSearchClient
+        client = OpenSearchClient(settings)
+        expected_chunks = job.indexed_count or job.chunk_count
+        actual_chunks = client.count(job.target_index)
+        if actual_chunks != expected_chunks:
+            raise ApiError("rag_validation_failed", f"OpenSearch chunk count mismatch: expected {expected_chunks}, got {actual_chunks}", status.HTTP_409_CONFLICT)
+        actual_parents = client.distinct_count(job.target_index, "parent_document_id") if actual_chunks else 0
+        if actual_parents != job.parent_count:
+            raise ApiError("rag_validation_failed", f"OpenSearch parent count mismatch: expected {job.parent_count}, got {actual_parents}", status.HTTP_409_CONFLICT)
+        mapping = client.mapping(job.target_index)
+        properties = self._mapping_properties(mapping, job.target_index)
+        required = {"document_id", "parent_document_id", "body", "embedding_text", "body_vector", "metadata_filter", "chunk_index", "chunk_count", "char_start", "char_end", "embedding_model", "embedding_dimensions"}
+        missing = sorted(required - set(properties))
+        if missing:
+            raise ApiError("rag_validation_failed", f"OpenSearch mapping is missing fields: {', '.join(missing)}", status.HTTP_409_CONFLICT)
+        vector_mapping = properties.get("body_vector") or {}
+        if int(vector_mapping.get("dimension") or 0) != int(job.embedding_dimensions or 0):
+            raise ApiError("rag_validation_failed", "OpenSearch vector dimension does not match the job manifest", status.HTTP_409_CONFLICT)
+        sample = client.search_raw(job.target_index, {"size": 1, "_source": ["body_vector", "metadata_filter"], "query": {"match_all": {}}})
+        sample_hits = sample.get("hits", {}).get("hits", []) if isinstance(sample, dict) else []
+        if actual_chunks and not sample_hits:
+            raise ApiError("rag_validation_failed", "OpenSearch BM25 smoke query returned no document", status.HTTP_409_CONFLICT)
+        if sample_hits:
+            sample_source = sample_hits[0].get("_source") or {}
+            vector = sample_source.get("body_vector")
+            if not isinstance(vector, list) or len(vector) != int(job.embedding_dimensions or 0):
+                raise ApiError("rag_validation_failed", "OpenSearch stored vector is missing or has the wrong dimension", status.HTTP_409_CONFLICT)
+            client.search(job.target_index, {"size": 1, "query": {"knn": {"body_vector": {"vector": vector, "k": 1}}}})
+            metadata = sample_source.get("metadata_filter") if isinstance(sample_source.get("metadata_filter"), dict) else {}
+            if metadata:
+                field, typed = next(iter(metadata.items()))
+                if isinstance(typed, dict) and typed:
+                    typed_field = next((candidate for candidate in ("keyword", "number", "date", "boolean") if candidate in typed), next(iter(typed)))
+                    typed_value = typed[typed_field]
+                    client.search(job.target_index, {"size": 1, "query": {"term": {f"metadata_filter.{field}.{typed_field}": typed_value}}})
+        return {"validationPassed": True, "validatedIndex": job.target_index, "documentCount": actual_chunks, "parentCount": actual_parents, "dimensions": job.embedding_dimensions}
+
+    @staticmethod
+    def _mapping_properties(mapping: dict[str, Any], index: str) -> dict[str, Any]:
+        root = mapping.get(index) if isinstance(mapping.get(index), dict) else next((value for value in mapping.values() if isinstance(value, dict)), {})
+        mappings = root.get("mappings") if isinstance(root, dict) else {}
+        properties = mappings.get("properties") if isinstance(mappings, dict) else {}
+        return properties if isinstance(properties, dict) else {}
 
     def _dataset(self, dataset_id: str, actor: ActorContext, action: str) -> dict[str, Any]:
         dataset = self.catalog.get_dataset_payload(dataset_id)
@@ -357,8 +476,13 @@ class RagService:
             "chunkingVersion": "rag-chunk-v2",
             "embeddingModel": settings.rag_embedding_model,
             "embeddingDimensions": settings.rag_embedding_dimensions,
+            "semanticBindings": profile.semantic_bindings or {},
         }
         return hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _semantic_bindings_fingerprint(bindings: dict[str, Any] | None) -> str:
+        return hashlib.sha256(json.dumps(bindings or {}, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
 
     def _trigger_airflow(self, job: RagIndexJobModel, dataset: dict[str, Any], profile: RagDatasetProfileModel) -> None:
         if not settings.airflow_api_base_url or not settings.airflow_api_token:

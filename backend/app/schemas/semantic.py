@@ -10,6 +10,8 @@ SemanticStatus = Literal["draft", "published", "archived"]
 RagReviewState = Literal["not_configured", "classifying", "candidate", "needs_review", "approved", "excluded", "failed"]
 RagIndexStatus = Literal["not_indexed", "stale", "queued", "staging", "chunking", "embedding", "indexing", "validating", "ready", "failed", "canceled"]
 RagEmbeddingStatus = Literal["not_started", "pending", "generating", "ready", "failed"]
+RagServingStatus = Literal["not_serving", "serving", "stale", "unavailable"]
+RagFilterOperator = Literal["eq", "gte", "gt", "lte", "lt"]
 
 
 class SemanticDatasetInput(CamelModel):
@@ -145,6 +147,8 @@ class RagProfileResponse(CamelModel):
     dataset_id: str
     review_state: RagReviewState
     index_status: RagIndexStatus
+    build_status: RagIndexStatus
+    serving_status: RagServingStatus
     embedding_status: RagEmbeddingStatus
     schema: list[SemanticSchemaColumn] = Field(default_factory=list)
     schema_fingerprint: str | None = None
@@ -211,9 +215,14 @@ class RagDocumentPreviewResponse(CamelModel):
     documents: list[RagDocumentPreview]
 
 
+class RagFilterPredicate(CamelModel):
+    operator: RagFilterOperator
+    value: Any
+
+
 class RagSearchRequest(CamelModel):
     query: str = Field(min_length=1, max_length=4_000)
-    filters: dict[str, Any] = Field(default_factory=dict, max_length=100)
+    filters: dict[str, RagFilterPredicate] = Field(default_factory=dict, max_length=100)
 
 
 class RagSearchResponse(CamelModel):
@@ -242,6 +251,9 @@ class RagJobResponse(CamelModel):
     indexed_count: int
     parent_count: int = 0
     chunk_count: int = 0
+    failed_count: int = 0
+    fallback_count: int = 0
+    fallback_reasons: dict[str, int] = Field(default_factory=dict)
     stage: str = "queued"
     source_fingerprint: str | None = None
     policy_fingerprint: str | None = None

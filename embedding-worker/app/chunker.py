@@ -8,6 +8,7 @@ embeddings or talks to OpenSearch.
 from __future__ import annotations
 
 from typing import Any, Callable, Sequence
+import hashlib
 
 from .rag_core import (
     CHUNKING_STRATEGY,
@@ -88,6 +89,7 @@ def chunk_parent_document(
     sentences = split_sentences(body)
     total_tokens = estimate_tokens(full_text)
     strategy = "semantic_embedding"
+    fallback_reason: str | None = None
     if not sentences or total_tokens <= target_tokens:
         segments = [ChunkSegment(0, len(sentences), total_tokens, 0, len(body))]
     else:
@@ -105,9 +107,19 @@ def chunk_parent_document(
             candidate_boundaries = [segment.end_sentence - 1 for segment in candidates[:-1]]
             context_sentences = [{"index": sentence.index, "text": sentence.text} for sentence in sentences]
             try:
-                refined = _valid_refined_segments(refine_boundaries(context_sentences, candidate_boundaries), len(sentences))
-            except Exception:
+                refined_raw = refine_boundaries(context_sentences, candidate_boundaries)
+                refined = _valid_refined_segments(refined_raw, len(sentences))
+                if not refined:
+                    fallback_reason = "invalid_segment_response"
+            except TimeoutError:
                 refined = None
+                fallback_reason = "gateway_timeout"
+            except ValueError as exc:
+                refined = None
+                fallback_reason = "refinement_budget_exceeded" if "budget" in str(exc).casefold() or "24_000" in str(exc) else "gateway_validation_error"
+            except Exception as exc:
+                refined = None
+                fallback_reason = f"gateway_{exc.__class__.__name__.casefold()}"
             if refined:
                 refined_with_overlap = _apply_overlap(refined, sentences, overlap_tokens)
                 if all(segment.token_count <= max_tokens or segment.end_sentence - segment.start_sentence == 1 for segment in refined_with_overlap):
@@ -115,8 +127,10 @@ def chunk_parent_document(
                     strategy = "semantic_embedding_llm"
                 else:
                     strategy = "semantic_embedding_fallback"
+                    fallback_reason = fallback_reason or "refined_chunk_exceeds_max_tokens"
             else:
                 strategy = "semantic_embedding_fallback"
+                fallback_reason = fallback_reason or "invalid_segment_response"
         else:
             strategy = "semantic_embedding"
 
@@ -128,24 +142,37 @@ def chunk_parent_document(
             continue
         effective_embedding_text = build_embedding_text(title, text)
         chunk_id = chunk_document_id(str(parent["parent_document_id"]), index, effective_embedding_text, metadata)
+        chunk_content_hash = hashlib.sha256(effective_embedding_text.encode("utf-8")).hexdigest()
         result.append({
-            "schema_version": "rag-chunk-v1",
+            "schema_version": "rag-chunk-v2",
+            "job_id": parent.get("job_id"),
             "chunk_document_id": chunk_id,
             "parent_document_id": str(parent["parent_document_id"]),
             "dataset_id": str(parent["dataset_id"]),
             "source_fingerprint": str(parent["source_fingerprint"]),
             "source_row_id": str(parent["source_row_id"]),
             "chunk_index": index,
+            "chunk_count": 0,
             "start_sentence": segment.start_sentence,
             "end_sentence": segment.end_sentence - 1,
+            "char_start": segment.char_start,
+            "char_end": segment.char_end,
             "text": text,
             "embedding_text": effective_embedding_text,
+            "title": title,
             "metadata": metadata,
+            "semantic_bindings": parent.get("semantic_bindings") or {},
             "source_columns": list(parent.get("source_columns") or []),
-            "content_hash": str(parent.get("content_hash") or ""),
+            "content_hash": chunk_content_hash,
             "chunking_strategy": strategy,
             "chunking_version": CHUNKING_VERSION,
             "token_count": estimate_tokens(effective_embedding_text),
             "embedding_status": "pending",
+            "embedding_model": parent.get("embedding_model"),
+            "embedding_dimensions": parent.get("embedding_dimensions"),
+            "fallback_applied": strategy == "semantic_embedding_fallback",
+            "fallback_reason": fallback_reason,
         })
+    for chunk in result:
+        chunk["chunk_count"] = len(result)
     return result

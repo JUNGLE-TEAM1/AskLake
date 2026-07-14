@@ -190,11 +190,20 @@ def asklake_rag_index() -> None:
             raise ValueError("OpenSearch dispatch Spark stage did not finish")
         return {"conf": conf, "result": result}
 
+    @task(task_id="validate_opensearch_index")
+    def validate_opensearch(bundle: dict[str, Any]) -> dict[str, Any]:
+        base_url = os.environ.get("ASKLAKE_EXECUTION_API_BASE_URL") or os.environ.get("AIRFLOW_INTERNAL_BASE_URL")
+        token = os.environ.get("ASKLAKE_EXECUTION_API_TOKEN") or os.environ.get("AIRFLOW_INTERNAL_TOKEN")
+        validation = post_json(f"{base_url.rstrip('/')}/api/internal/airflow/rag-jobs/{bundle['conf']['jobId']}/validate", {}, token)
+        if validation.get("validationPassed") is not True:
+            raise ValueError("OpenSearch physical index validation failed")
+        return {"conf": bundle["conf"], "result": bundle["result"], "validation": validation}
+
     @task(task_id="activate_index_alias")
     def activate(bundle: dict[str, Any]) -> dict[str, Any]:
         base_url = os.environ.get("ASKLAKE_EXECUTION_API_BASE_URL") or os.environ.get("AIRFLOW_INTERNAL_BASE_URL")
         token = os.environ.get("ASKLAKE_EXECUTION_API_TOKEN") or os.environ.get("AIRFLOW_INTERNAL_TOKEN")
-        return post_json(f"{base_url.rstrip('/')}/api/internal/airflow/rag-jobs/{bundle['conf']['jobId']}/result", {"status": "success", "indexedCount": bundle["result"].get("indexedCount"), "activeIndex": bundle["conf"]["preparedIndex"]}, token)
+        return post_json(f"{base_url.rstrip('/')}/api/internal/airflow/rag-jobs/{bundle['conf']['jobId']}/result", {"status": "success", "validationPassed": bundle["validation"].get("validationPassed"), "indexedCount": bundle["validation"].get("documentCount"), "parentCount": bundle["validation"].get("parentCount"), "dimensions": bundle["validation"].get("dimensions"), "activeIndex": bundle["conf"]["preparedIndex"]}, token)
 
     received = receive()
     validated = validate(received)
@@ -203,7 +212,8 @@ def asklake_rag_index() -> None:
     prepared = prepare(chunked)
     result = run_worker(prepared)
     bundle = verify(prepared, result)
-    activate(bundle)
+    validated_index = validate_opensearch(bundle)
+    activate(validated_index)
 
 
 asklake_rag_index()

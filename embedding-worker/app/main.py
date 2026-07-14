@@ -42,6 +42,7 @@ class ChunkBatchRequest(BaseModel):
     overlap_tokens: int = Field(default=400, ge=0, le=1_000)
     max_tokens: int = Field(default=1_200, ge=100, le=4_000)
     embedding_model: str | None = Field(default=None, min_length=1, max_length=255)
+    embedding_dimensions: int | None = Field(default=None, ge=1, le=16_384)
 
 
 def worker_from_env() -> EmbeddingWorker:
@@ -70,18 +71,19 @@ def chunk_with_gateway(request: ChunkBatchRequest) -> list[dict[str, Any]]:
             raise RuntimeError("Sentence embedding count does not match sentence count")
         return vectors
 
-    def refine(sentences: list[dict[str, Any]], boundaries: list[int]) -> list[dict[str, int]]:
+    def refine(sentences: list[dict[str, Any]], boundaries: list[int], parent: dict[str, Any]) -> list[dict[str, int]]:
         if len(json.dumps({"sentences": sentences, "candidateBoundaries": boundaries}, ensure_ascii=False, separators=(",", ":"))) > 24_000:
             raise ValueError("Document segmentation context exceeds the bounded AI Gateway refinement budget")
         with httpx.Client(timeout=timeout) as client:
-            response = client.post(f"{gateway_url}/v1/generate", headers=gateway_headers(), json={"mode": "segment_document", "request_id": f"chunk-{os.urandom(8).hex()}", "prompt": "Refine only the proposed sentence boundaries.", "context": {"sentences": sentences, "candidateBoundaries": boundaries}, "selected_dataset_ids": []})
+            response = client.post(f"{gateway_url}/v1/generate", headers=gateway_headers(), json={"mode": "segment_document", "request_id": f"chunk-{os.urandom(8).hex()}", "prompt": "Refine only the proposed sentence boundaries.", "context": {"parentDocumentId": parent.get("parent_document_id"), "title": parent.get("title"), "targetTokens": request.target_tokens, "overlapTokens": request.overlap_tokens, "maxTokens": request.max_tokens, "sentences": sentences, "candidateBoundaries": boundaries}, "selected_dataset_ids": []})
             response.raise_for_status()
             output = response.json().get("output") or {}
             return list(output.get("segments") or [])
 
     chunks = []
     for parent in request.parents:
-        chunks.extend(chunk_parent_document(parent, embed_sentences=embed_sentences, refine_boundaries=refine, target_tokens=request.target_tokens, overlap_tokens=request.overlap_tokens, max_tokens=request.max_tokens))
+        parent = {**parent, "embedding_model": model, "embedding_dimensions": request.embedding_dimensions}
+        chunks.extend(chunk_parent_document(parent, embed_sentences=embed_sentences, refine_boundaries=lambda sentences, boundaries, current_parent=parent: refine(sentences, boundaries, current_parent), target_tokens=request.target_tokens, overlap_tokens=request.overlap_tokens, max_tokens=request.max_tokens))
     return chunks
 
 
@@ -112,6 +114,6 @@ def chunk_batch(request: ChunkBatchRequest, authorization: str | None = Header(d
         raise HTTPException(status_code=401, detail="Invalid worker token")
     try:
         chunks = chunk_with_gateway(request)
-        return {"schemaVersion": "rag-chunk-v1", "chunkCount": len(chunks), "chunks": chunks}
+        return {"schemaVersion": "rag-chunk-v2", "chunkCount": len(chunks), "chunks": chunks}
     except Exception as exc:
         raise HTTPException(status_code=502, detail="RAG chunking failed") from exc

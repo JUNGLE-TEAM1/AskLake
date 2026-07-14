@@ -36,11 +36,11 @@ def test_hybrid_rrf_merges_vector_and_bm25_results() -> None:
 
 
 def test_rag_metadata_filters_are_exact_or_range_and_reject_query_syntax() -> None:
-    clauses = build_metadata_filter_clauses({"rating": {"gte": 4}, "sentiment": "positive"})
+    clauses = build_metadata_filter_clauses({"rating": {"operator": "gte", "value": 4}, "sentiment": {"operator": "eq", "value": "positive"}})
     assert {"range": {"metadata_filter.rating.number": {"gte": 4}}} in clauses
     assert {"term": {"metadata_filter.sentiment.keyword": "positive"}} in clauses
     try:
-        build_metadata_filter_clauses({"rating OR 1=1": "x"})
+        build_metadata_filter_clauses({"rating OR 1=1": {"operator": "eq", "value": "x"}})
     except ValueError as exc:
         assert "Invalid RAG metadata filter field" in str(exc)
     else:
@@ -48,16 +48,17 @@ def test_rag_metadata_filters_are_exact_or_range_and_reject_query_syntax() -> No
 
 
 def test_rag_metadata_filters_support_iso_date_ranges() -> None:
-    clauses = build_metadata_filter_clauses({"created_at": {"gte": "2026-01-01"}})
+    clauses = build_metadata_filter_clauses({"created_at": {"operator": "gte", "value": "2026-01-01"}})
     assert clauses == [{"range": {"metadata_filter.created_at.date": {"gte": "2026-01-01"}}}]
 
 
 def test_rag_search_contract_exposes_query_and_filters() -> None:
     from app.schemas.semantic import RagSearchRequest
 
-    request = RagSearchRequest.model_validate({"query": "배송 지연", "filters": {"rating": {"gte": 3}}})
+    request = RagSearchRequest.model_validate({"query": "배송 지연", "filters": {"rating": {"operator": "gte", "value": 3}}})
     assert request.query == "배송 지연"
-    assert request.filters["rating"]["gte"] == 3
+    assert request.filters["rating"].operator == "gte"
+    assert request.filters["rating"].value == 3
 
 
 def test_publish_permission_is_exposed_separately() -> None:
@@ -86,25 +87,11 @@ def test_invalid_ai_rag_roles_are_discarded_and_old_recommendations_replaced() -
     Base.metadata.create_all(engine, tables=RAG_TABLES)
     with Session(engine) as db:
         service = RagService(db)
-        run = RagClassificationRunModel(
-            id="ragcr_test",
-            dataset_id="reviews",
-            status="running",
-            model="test",
-            input_snapshot={"schema": [{"name": "review_text"}, {"name": "rating"}]},
-        )
+        run = RagClassificationRunModel(id="ragcr_test", dataset_id="reviews", status="running", model="test", input_snapshot={"schema": [{"name": "review_text"}, {"name": "rating"}]})
         profile = RagDatasetProfileModel(dataset_id="reviews")
         db.add_all([run, profile])
         db.flush()
-        service._apply_classification(run, profile, {
-            "classification": "review",
-            "confidence": 0.9,
-            "roles": [
-                {"columnName": "review_text", "role": "body", "confidence": 0.9, "reason": "text"},
-                {"columnName": "not_in_schema", "role": "body", "confidence": 0.9, "reason": "invalid"},
-                {"columnName": "rating", "role": "unsupported", "confidence": 0.9, "reason": "invalid"},
-            ],
-        })
+        service._apply_classification(run, profile, {"classification": "review", "confidence": 0.9, "roles": [{"columnName": "review_text", "role": "body", "confidence": 0.9, "reason": "text"}, {"columnName": "not_in_schema", "role": "body", "confidence": 0.9, "reason": "invalid"}, {"columnName": "rating", "role": "unsupported", "confidence": 0.9, "reason": "invalid"}]})
         db.commit()
         assert profile.body_columns == ["review_text"]
         assert profile.review_state == "candidate"

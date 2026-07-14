@@ -45,9 +45,11 @@ def search_rag_dataset(dataset_id: str, request: RagSearchRequest, db: Session =
     service = RagService(db)
     service._dataset(dataset_id, actor, "query")
     profile = service.profile(dataset_id, actor)
-    if profile.index_status != "ready" or not profile.target_alias:
-        return RagSearchResponse(sources=[], retrieval={"mode": "hybrid", "status": profile.index_status, "aliases": []})
-    result = RagSearchService().search(query=request.query, aliases=[profile.target_alias], actor=actor, filters=request.filters)
+    filters = service.validate_search_filters(dataset_id, actor, request.model_dump(mode="json").get("filters") or {})
+    if profile.serving_status == "not_serving" or not profile.target_alias:
+        return RagSearchResponse(sources=[], retrieval={"mode": "hybrid", "status": "not_serving", "buildStatus": profile.build_status, "servingStatus": profile.serving_status, "aliases": []})
+    result = RagSearchService().search(query=request.query, aliases=[profile.target_alias], actor=actor, filters=filters, embedding_model=profile.active_embedding_model)
+    result["retrieval"].update({"buildStatus": profile.build_status, "servingStatus": profile.serving_status, "servingIndex": profile.active_index})
     return RagSearchResponse.model_validate(result)
 
 

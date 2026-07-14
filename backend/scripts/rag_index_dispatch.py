@@ -46,7 +46,7 @@ def main() -> int:
     chunk_table = str(manifest.get("chunkTable") or "")
     if len(chunk_table.split(".")) != 3:
         raise ValueError("RAG_INDEX_CHUNK_TABLE_REQUIRED")
-    spark = make_spark({}, {"catalog": chunk_table.split(".")[0], "namespace": chunk_table.split(".")[1], "table": chunk_table.split(".")[2], "writeMode": "replace", "tableUri": f"iceberg://{chunk_table}"})
+    spark = make_spark({}, {"catalog": chunk_table.split(".")[0], "namespace": chunk_table.split(".")[1], "table": chunk_table.split(".")[2], "writeMode": "replace", "tableUri": f"iceberg://{chunk_table}"}, disable_speculation=True)
     try:
         chunks = spark.table(".".join(quote_spark_identifier(item) for item in chunk_table.split("."))).persist()
         endpoint = f"{str(manifest.get('workerUrl') or '').rstrip('/')}/v1/index"

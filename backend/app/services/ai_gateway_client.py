@@ -148,12 +148,12 @@ class AiGatewayClient:
         except (httpx.HTTPError, ValueError, TypeError) as exc:
             raise ApiError(ErrorCode.INTERNAL_ERROR, "AI gateway classification failed", status.HTTP_502_BAD_GATEWAY) from exc
 
-    def create_embeddings(self, inputs: list[str]) -> list[list[float]]:
+    def create_embeddings(self, inputs: list[str], *, model: str | None = None) -> list[list[float]]:
         if not self.settings.ai_gateway_base_url or not self.settings.ai_gateway_service_token:
             raise ApiError(ErrorCode.SERVICE_UNAVAILABLE, "AI gateway is not configured", status.HTTP_503_SERVICE_UNAVAILABLE)
         endpoint = urljoin(f"{self.settings.ai_gateway_base_url.rstrip('/')}/", self.settings.ai_gateway_embeddings_path.lstrip("/"))
         try:
-            response = httpx.post(endpoint, json={"model": self.settings.rag_embedding_model, "input": inputs}, headers={"Authorization": f"Bearer {self.settings.ai_gateway_service_token}", "Content-Type": "application/json"}, timeout=self.settings.ai_gateway_timeout_seconds)
+            response = httpx.post(endpoint, json={"model": model or self.settings.rag_embedding_model, "input": inputs}, headers={"Authorization": f"Bearer {self.settings.ai_gateway_service_token}", "Content-Type": "application/json"}, timeout=self.settings.ai_gateway_timeout_seconds)
             response.raise_for_status()
             data = response.json().get("data")
             if not isinstance(data, list) or any(not isinstance(item, list) for item in data):

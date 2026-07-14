@@ -73,3 +73,12 @@ def complete_rag_job(
     db: Session = Depends(get_db),
 ) -> dict:
     return RagService(db).complete_job(job_id, result).model_dump(by_alias=True, mode="json")
+
+
+@router.post("/rag-jobs/{job_id}/validate", response_model=dict)
+def validate_rag_job(
+    job_id: str,
+    _: None = Depends(require_airflow_execution_token),
+    db: Session = Depends(get_db),
+) -> dict:
+    return RagService(db).validate_job(job_id)

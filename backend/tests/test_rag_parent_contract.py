@@ -46,6 +46,25 @@ def test_nested_values_and_arrays_are_retained_without_row_explosion():
     assert "ignored" not in row
 
 
+def test_parent_normalized_row_contains_only_approved_role_columns():
+    document = build_parent_document(
+        dataset_id="reviews",
+        source_fingerprint="fp-1",
+        row={"review": "text", "rating": 5, "email": "private@example.com", "user_id": "u-1"},
+        schema_columns=["review", "rating", "email", "user_id"],
+        included_columns=["review", "rating", "user_id"],
+        body_columns=["review"],
+        title_columns=[],
+        metadata_columns=["rating"],
+        identifier_columns=["user_id"],
+        ordinal=0,
+        job_id="job-1",
+        policy_fingerprint="policy-1",
+    )
+    assert "email" not in document["normalized_row"]
+    assert document["normalized_row"] == {"rating": 5, "review": "text", "user_id": "u-1"}
+
+
 def test_parent_validation_rejects_missing_contract_fields():
     try:
         validate_parent_document({"schema_version": RAG_PARENT_SCHEMA_VERSION})

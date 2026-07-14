@@ -93,13 +93,14 @@ def parent_schema() -> T.StructType:
         T.StructField("embedding_input_version", T.StringType(), False),
         T.StructField("policy_fingerprint", T.StringType(), False),
         T.StructField("job_id", T.StringType(), False),
+        T.StructField("semantic_bindings_json", T.StringType(), False),
         T.StructField("staged_at", T.StringType(), False),
     ])
 
 
 def parent_rows_from_local_rows(rows: list[dict], manifest: dict) -> list[dict]:
     body, title, metadata, identifiers = role_columns(manifest)
-    schema_columns = [normalize_column(item.get("name") or item.get("sourceName") or item.get("targetName")) for item in manifest.get("schema") or [] if isinstance(item, dict)]
+    schema_columns = sorted(set(body + title + metadata + identifiers))
     output = []
     for ordinal, row in enumerate(rows):
         document = build_parent_document(
@@ -111,6 +112,8 @@ def parent_rows_from_local_rows(rows: list[dict], manifest: dict) -> list[dict]:
             title_columns=title,
             metadata_columns=metadata,
             identifier_columns=identifiers,
+            included_columns=schema_columns,
+            semantic_bindings=manifest.get("semanticBindings") or {},
             ordinal=ordinal,
             job_id=str(manifest["jobId"]),
             policy_fingerprint=str(manifest["policyFingerprint"]),
@@ -136,12 +139,13 @@ def main() -> int:
     manifest["checkpointPath"] = paths["checkpoint"]
     schema = manifest.get("schema") or []
     source_columns = [{"sourceName": str(item.get("name"))} for item in schema if isinstance(item, dict) and item.get("name")]
-    spark = make_spark(manifest.get("sourceCollection") or {}, manifest.get("icebergTarget"))
+    spark = make_spark(manifest.get("sourceCollection") or {}, manifest.get("icebergTarget"), disable_speculation=True)
     try:
         source_df = read_source(spark, source_format, source_path, source_columns, source_collection=manifest.get("sourceCollection") or {})
         normalized_df = normalize_columns(source_df, source_columns)
         role_body, role_title, role_metadata, role_identifiers = role_columns(manifest)
-        schema_names = [normalize_column(item.get("name")) for item in schema if isinstance(item, dict) and item.get("name")]
+        schema_names = sorted(set(role_body + role_title + role_metadata + role_identifiers))
+        semantic_bindings = manifest.get("semanticBindings") or {}
         policy_fingerprint = str(manifest.get("policyFingerprint"))
 
         def convert(row, ordinal):
@@ -155,6 +159,8 @@ def main() -> int:
                 title_columns=role_title,
                 metadata_columns=role_metadata,
                 identifier_columns=role_identifiers,
+                included_columns=schema_names,
+                semantic_bindings=semantic_bindings,
                 ordinal=int(ordinal),
                 job_id=job_id,
                 policy_fingerprint=policy_fingerprint,
@@ -162,6 +168,7 @@ def main() -> int:
             validate_parent_document(document)
             document["metadata_json"] = json.dumps(document.pop("metadata"), ensure_ascii=False, sort_keys=True, default=str)
             document["normalized_row_json"] = json.dumps(document.pop("normalized_row"), ensure_ascii=False, sort_keys=True, default=str)
+            document["semantic_bindings_json"] = json.dumps(document.pop("semantic_bindings"), ensure_ascii=False, sort_keys=True, default=str)
             return document
 
         spark.sparkContext.setCheckpointDir(paths["checkpoint"])

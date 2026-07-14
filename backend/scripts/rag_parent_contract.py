@@ -100,12 +100,14 @@ def build_parent_document(
     title_columns: Iterable[str],
     metadata_columns: Iterable[str],
     identifier_columns: Iterable[str],
+    included_columns: Iterable[str] | None = None,
+    semantic_bindings: dict[str, Any] | None = None,
     ordinal: int,
     job_id: str,
     policy_fingerprint: str,
     staged_at: str | None = None,
 ) -> dict[str, Any]:
-    normalized = normalized_row(row, schema_columns)
+    normalized = normalized_row(row, included_columns if included_columns is not None else schema_columns)
     body = join_columns(normalized, body_columns)
     title = join_columns(normalized, title_columns) or None
     metadata = {column: normalized.get(column) for column in metadata_columns if column in normalized and normalized.get(column) is not None}
@@ -128,6 +130,7 @@ def build_parent_document(
         "embedding_input_version": EMBEDDING_INPUT_VERSION,
         "policy_fingerprint": policy_fingerprint,
         "job_id": job_id,
+        "semantic_bindings": semantic_bindings or {},
         "staged_at": staged_at or datetime.now(timezone.utc).isoformat(),
     }
 

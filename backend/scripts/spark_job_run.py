@@ -791,7 +791,7 @@ def cleanup_failed_output_paths(spark, output_path):
     return errors
 
 
-def make_spark(source_collection=None, iceberg_target=None):
+def make_spark(source_collection=None, iceberg_target=None, *, disable_speculation: bool = False):
     change_detection_source = source_change_detection_mode(source_collection)
     builder = configure_spark_builder(
         SparkSession.builder.appName(os.environ.get("ASKLAKE_SPARK_APP_NAME", "asklake-pipeline-run"))
@@ -800,6 +800,8 @@ def make_spark(source_collection=None, iceberg_target=None):
         .config("spark.hadoop.fs.s3a.change.detection.mode", "server")
         .config("spark.hadoop.fs.s3a.change.detection.version.required", "true")
     )
+    if disable_speculation:
+        builder = builder.config("spark.speculation", "false")
     if iceberg_target:
         catalog = spark_iceberg_catalog_name()
         jdbc_url = required_env("ASKLAKE_SPARK_ICEBERG_JDBC_URL")

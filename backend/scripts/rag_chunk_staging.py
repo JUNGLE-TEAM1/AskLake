@@ -41,28 +41,38 @@ def callback(manifest: dict, payload: dict) -> None:
 def chunk_schema() -> T.StructType:
     return T.StructType([
         T.StructField("schema_version", T.StringType(), False),
+        T.StructField("job_id", T.StringType(), True),
         T.StructField("chunk_document_id", T.StringType(), False),
         T.StructField("parent_document_id", T.StringType(), False),
         T.StructField("dataset_id", T.StringType(), False),
         T.StructField("source_fingerprint", T.StringType(), False),
         T.StructField("source_row_id", T.StringType(), False),
         T.StructField("chunk_index", T.IntegerType(), False),
+        T.StructField("chunk_count", T.IntegerType(), False),
         T.StructField("start_sentence", T.IntegerType(), False),
         T.StructField("end_sentence", T.IntegerType(), False),
+        T.StructField("char_start", T.IntegerType(), False),
+        T.StructField("char_end", T.IntegerType(), False),
         T.StructField("text", T.StringType(), False),
         T.StructField("embedding_text", T.StringType(), False),
+        T.StructField("title", T.StringType(), True),
         T.StructField("metadata_json", T.StringType(), False),
+        T.StructField("semantic_bindings_json", T.StringType(), False),
         T.StructField("source_columns", T.ArrayType(T.StringType(), False), False),
         T.StructField("content_hash", T.StringType(), False),
         T.StructField("chunking_strategy", T.StringType(), False),
         T.StructField("chunking_version", T.StringType(), False),
         T.StructField("token_count", T.IntegerType(), False),
         T.StructField("embedding_status", T.StringType(), False),
+        T.StructField("embedding_model", T.StringType(), True),
+        T.StructField("embedding_dimensions", T.IntegerType(), True),
+        T.StructField("fallback_applied", T.BooleanType(), False),
+        T.StructField("fallback_reason", T.StringType(), True),
     ])
 
 
 def post_chunks(endpoint: str, token: str, parents: list[dict], target: dict) -> list[dict]:
-    request = urllib.request.Request(endpoint, data=json.dumps({"parents": parents, "target_tokens": target.get("targetTokens", 800), "overlap_tokens": target.get("overlapTokens", 400), "max_tokens": target.get("maxTokens", 1200), "embedding_model": target.get("embeddingModel")}).encode("utf-8"), method="POST", headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+    request = urllib.request.Request(endpoint, data=json.dumps({"parents": parents, "target_tokens": target.get("targetTokens", 800), "overlap_tokens": target.get("overlapTokens", 400), "max_tokens": target.get("maxTokens", 1200), "embedding_model": target.get("embeddingModel"), "embedding_dimensions": target.get("embeddingDimensions")}).encode("utf-8"), method="POST", headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
     with urllib.request.urlopen(request, timeout=int(os.environ.get("ASKLAKE_RAG_CHUNK_HTTP_TIMEOUT_SECONDS", "300"))) as response:
         payload = json.loads(response.read().decode("utf-8") or "{}")
     chunks = payload.get("chunks") if isinstance(payload, dict) else None
@@ -79,7 +89,11 @@ def serialize_chunks(chunks: list[dict]):
         metadata = chunk.pop("metadata", {})
         if not isinstance(metadata, dict):
             raise RuntimeError("RAG Chunker returned invalid metadata")
+        semantic_bindings = chunk.pop("semantic_bindings", {})
+        if not isinstance(semantic_bindings, dict):
+            raise RuntimeError("RAG Chunker returned invalid semantic bindings")
         chunk["metadata_json"] = json.dumps(metadata, ensure_ascii=False, sort_keys=True, default=str)
+        chunk["semantic_bindings_json"] = json.dumps(semantic_bindings, ensure_ascii=False, sort_keys=True, default=str)
         yield chunk
 
 
@@ -90,12 +104,12 @@ def main() -> int:
     target_table = str(manifest.get("chunkTable") or "")
     if len(source_table.split(".")) != 3 or len(target_table.split(".")) != 3:
         raise ValueError("RAG_CHUNK_TABLE_IDENTIFIERS_REQUIRED")
-    spark = make_spark(manifest.get("sourceCollection") or {}, {"catalog": target_table.split(".")[0], "namespace": target_table.split(".")[1], "table": target_table.split(".")[2], "writeMode": "replace", "tableUri": f"iceberg://{target_table}"})
+    spark = make_spark(manifest.get("sourceCollection") or {}, {"catalog": target_table.split(".")[0], "namespace": target_table.split(".")[1], "table": target_table.split(".")[2], "writeMode": "replace", "tableUri": f"iceberg://{target_table}"}, disable_speculation=True)
     try:
         parents = spark.table(".".join(quote_spark_identifier(item) for item in source_table.split(".")))
         endpoint = f"{str(manifest.get('chunkerUrl') or '').rstrip('/')}/v1/chunk"
         token = str(manifest.get("chunkerToken") or "")
-        target = {"targetTokens": int(manifest.get("chunkTargetTokens") or 800), "overlapTokens": int(manifest.get("chunkOverlapTokens") or 400), "maxTokens": int(manifest.get("chunkMaxTokens") or 1200), "embeddingModel": manifest.get("embeddingModel")}
+        target = {"targetTokens": int(manifest.get("chunkTargetTokens") or 800), "overlapTokens": int(manifest.get("chunkOverlapTokens") or 400), "maxTokens": int(manifest.get("chunkMaxTokens") or 1200), "embeddingModel": manifest.get("embeddingModel"), "embeddingDimensions": manifest.get("embeddingDimensions")}
 
         def partition_chunks(iterator):
             batch = []
@@ -103,6 +117,7 @@ def main() -> int:
                 parent = row.asDict(recursive=True)
                 parent["metadata"] = json.loads(parent.pop("metadata_json") or "{}")
                 parent.pop("normalized_row_json", None)
+                parent["semantic_bindings"] = json.loads(parent.pop("semantic_bindings_json") or "{}")
                 batch.append(parent)
                 if len(batch) >= 64:
                     yield from serialize_chunks(post_chunks(endpoint, token, batch, target))
@@ -113,8 +128,10 @@ def main() -> int:
         chunks = parents.rdd.mapPartitions(partition_chunks)
         chunk_df = spark.createDataFrame(chunks, schema=chunk_schema()).persist()
         count = chunk_df.count()
+        fallback_count = chunk_df.filter("fallback_applied = true").count()
+        fallback_reasons = {str(row["fallback_reason"] or "unknown"): int(row["count"]) for row in chunk_df.filter("fallback_applied = true").groupBy("fallback_reason").count().collect()}
         chunk_df.writeTo(".".join(quote_spark_identifier(item) for item in target_table.split("."))).using("iceberg").tableProperty("format-version", "2").createOrReplace()
-        result = {"status": "chunked", "datasetId": manifest.get("datasetId"), "jobId": manifest.get("jobId"), "parentCount": parents.count(), "chunkCount": count, "chunkTable": target_table, "chunkingVersion": "rag-chunk-v2", "checkpointPath": manifest.get("checkpointPath"), "durationMs": int((time.time() - started) * 1000)}
+        result = {"status": "chunked", "datasetId": manifest.get("datasetId"), "jobId": manifest.get("jobId"), "parentCount": parents.count(), "chunkCount": count, "fallbackCount": fallback_count, "fallbackReasons": fallback_reasons, "chunkTable": target_table, "chunkingVersion": "rag-chunk-v2", "checkpointPath": manifest.get("checkpointPath"), "durationMs": int((time.time() - started) * 1000)}
         chunk_df.unpersist()
         print(f"ASKLAKE_RAG_CHUNK_RESULT={canonical_json(result)}")
         callback(manifest, result)
