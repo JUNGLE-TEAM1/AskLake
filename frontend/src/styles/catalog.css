@@ -152,7 +152,7 @@
 
 .catalog-result-mainline {
   display: grid;
-  grid-template-columns: minmax(260px, 0.9fr) minmax(0, 1.4fr);
+  grid-template-columns: max-content minmax(0, 1fr);
   align-items: center;
   gap: 20px;
   min-width: 0;
@@ -160,10 +160,11 @@
 
 .catalog-result-heading {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 10px;
   min-width: 0;
+  max-width: 100%;
 }
 
 .catalog-result-title strong {
@@ -173,6 +174,7 @@
   font-weight: 850;
   line-height: 1.35;
   overflow-wrap: anywhere;
+  white-space: nowrap;
 }
 
 .catalog-result-description {
