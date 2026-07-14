@@ -593,6 +593,14 @@ bash scripts/verify-eks-network-ingress.sh
 
 `phase7_network_handoff.ready_for_ingress_render`는 ALB manifest를 만들 수 있다는 뜻이고 `decisions_complete`는 private egress와 Pod traffic enforcement 선택까지 끝났다는 뜻이다. 둘 다 실제 network 동작 성공을 의미하지 않는다. 실제 적용 전 server-side dry-run과 controller/CNI owner 확인이 필요하며, 적용 후 `/`, `/api/health`, RDS, MSK, ECR/S3/STS의 positive smoke와 차단 대상 negative smoke를 실행한다. 상세 선택 기준은 [Phase 7 Network와 ALB Ingress 계약](eks-phase-7-network-ingress.md)을 따른다.
 
+Phase 8 runtime Secret 계약을 변경하면 아래 검증을 실행한다. example에는 Secret 이름, key, 공유 binding과 file mount만 있으며 실제 value를 추가하지 않는다. 기본 delivery mode는 `disabled`이고, `external_secrets` 또는 `workflow_sync`는 controller/source/rotation owner와 rollback 운영을 학습·확정한 뒤 Git 밖의 환경 계약에서 선택한다.
+
+```bash
+bash scripts/verify-eks-runtime-secrets.sh
+```
+
+실제 환경의 선택 완료 여부는 `node scripts/verify-eks-runtime-secrets.mjs --ready <path>`로 확인한다. 이 gate 통과는 값 전달 방식의 계약이 완전하다는 의미일 뿐 cluster에 Secret이 생성됐거나 workload가 기동했다는 증거가 아니다. 배포에서는 value를 출력하지 않고 Secret 이름/key 존재, workload `secretKeyRef`/file mount, rotation rollout과 rollback을 별도로 검증한다. 상세 경계는 [Phase 8 런타임 Secret 전달 계약](eks-phase-8-runtime-secrets.md)을 따른다.
+
 ```bash
 docker run --rm --entrypoint sh \
   -v "$PWD/infra/eks/terraform:/workspace" \

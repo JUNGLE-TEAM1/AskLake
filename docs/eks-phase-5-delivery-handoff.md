@@ -56,3 +56,5 @@ node scripts/verify-eks-delivery-handoff.mjs \
 A는 Terraform의 실제 출력과 승인된 platform 결정을 handoff에 채우되 secret value는 넣지 않고 Secret 이름만 전달한다. B는 이 파일의 namespace, ServiceAccount, image digest, endpoint reference와 network flow를 workload manifest에 사용한다. B가 새 권한·통신 경로·환경변수를 요구하면 manifest를 먼저 임의 변경하지 않고 이 handoff와 공식 아키텍처 계약을 함께 갱신한다.
 
 현재 완료 기준은 planning 검증 통과다. 실제 Phase 5 운영 완료는 `--ready` 검증, Kubernetes server-side dry-run, EKS workload rollout, health probe, IAM/network positive·negative smoke가 모두 성공해야 선언할 수 있다.
+
+Secret reference의 구체적인 workload별 이름/key/공유 binding은 [Phase 8 런타임 Secret 전달 계약](eks-phase-8-runtime-secrets.md)이 정의한다. Phase 5의 `secretDelivery` 선택은 Phase 8의 controller/source/rotation 책임과 일치해야 하며, 어느 문서에도 실제 Secret value를 넣지 않는다.

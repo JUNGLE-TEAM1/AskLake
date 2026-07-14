@@ -626,3 +626,107 @@ run "reject_shared_resource_creation" {
 
   expect_failures = [check.mvp_owned_resource_creation]
 }
+
+run "runtime_secret_defaults_fail_closed" {
+  command = plan
+
+  variables {
+    environment             = "dev"
+    owner                   = "pair-a"
+    resource_lifecycle      = "external"
+    cluster_mode            = "existing"
+    existing_cluster_name   = "shared-dev"
+    create_ecr_repositories = false
+  }
+
+  assert {
+    condition     = output.phase8_runtime_secret_handoff.delivery.mode == "disabled"
+    error_message = "runtime Secret delivery must remain disabled by default."
+  }
+
+  assert {
+    condition     = !output.phase8_runtime_secret_handoff.ready_for_sync
+    error_message = "default Secret delivery inputs must not be sync-ready."
+  }
+
+  assert {
+    condition     = !output.phase8_runtime_secret_handoff.values_in_state
+    error_message = "Terraform must never claim to persist runtime Secret values."
+  }
+}
+
+run "external_secret_delivery_handoff" {
+  command = plan
+
+  variables {
+    environment             = "dev"
+    owner                   = "pair-a"
+    resource_lifecycle      = "external"
+    cluster_mode            = "existing"
+    existing_cluster_name   = "shared-dev"
+    create_ecr_repositories = false
+
+    secret_delivery_mode    = "external_secrets"
+    secret_controller_ready = true
+    secret_controller_owner = "platform-team"
+    secret_rotation_owner   = "service-team"
+    secret_source_prefix    = "/asklake/dev/runtime"
+  }
+
+  assert {
+    condition     = output.phase8_runtime_secret_handoff.ready_for_sync
+    error_message = "reviewed external Secret inputs must become sync-ready."
+  }
+
+  assert {
+    condition = alltrue([
+      contains(output.phase8_runtime_secret_handoff.secrets.backend.keys, "TRINO_RESULT_CURSOR_SECRET"),
+      contains(output.phase8_runtime_secret_handoff.secrets.backend.keys, "TRINO_QUERY_CONFIRMATION_SECRET"),
+    ])
+    error_message = "backend Secret contract must include the current cursor and confirmation signing keys."
+  }
+}
+
+run "workflow_secret_delivery_handoff" {
+  command = plan
+
+  variables {
+    environment             = "dev"
+    owner                   = "pair-a"
+    resource_lifecycle      = "external"
+    cluster_mode            = "existing"
+    existing_cluster_name   = "shared-dev"
+    create_ecr_repositories = false
+
+    secret_delivery_mode  = "workflow_sync"
+    secret_rotation_owner = "service-team"
+    secret_source_prefix  = "/asklake/dev/runtime"
+  }
+
+  assert {
+    condition     = output.phase8_runtime_secret_handoff.ready_for_sync
+    error_message = "reviewed workflow sync inputs must become sync-ready without a controller."
+  }
+
+  assert {
+    condition     = output.phase8_runtime_secret_handoff.delivery.controller_owner == null
+    error_message = "workflow sync must not claim an external Secret controller owner."
+  }
+}
+
+run "reject_partial_secret_delivery" {
+  command = plan
+
+  variables {
+    environment             = "dev"
+    owner                   = "pair-a"
+    resource_lifecycle      = "external"
+    cluster_mode            = "existing"
+    existing_cluster_name   = "shared-dev"
+    create_ecr_repositories = false
+
+    secret_delivery_mode = "external_secrets"
+  }
+
+  expect_failures = [check.runtime_secret_delivery_contract]
+}

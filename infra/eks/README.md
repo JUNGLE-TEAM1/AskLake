@@ -12,6 +12,7 @@
 - `values/dev.example.yaml`: B가 manifest render와 fake client test에 사용할 예시 값
 - `delivery/dev.handoff.example.json`: Terraform 출력과 B workload manifest 사이의 배포 전 handoff 형식
 - `delivery/image-receipt.example.json`: 한 Git revision에서 만든 다섯 immutable ECR image의 전달 형식
+- `secrets/runtime-secret-contract.example.json`: 값 없이 workload별 Secret 이름·key·공유 binding을 고정하는 planning 계약
 
 ## 안전 경계
 
@@ -34,6 +35,7 @@ bash scripts/verify-eks-rds-bootstrap.sh
 bash scripts/verify-eks-delivery-handoff.sh
 bash scripts/verify-eks-image-delivery.sh
 bash scripts/verify-eks-network-ingress.sh
+bash scripts/verify-eks-runtime-secrets.sh
 ```
 
 AWS 환경 inventory는 실제 식별자를 출력하지 않는 별도 read-only 스크립트로 확인한다.
@@ -115,6 +117,8 @@ Phase 5는 실제 workload를 생성하지 않고 A의 infrastructure output과 
 Phase 6는 수동 GitHub workflow로 Frontend, Backend, Airflow mirror, Spark runtime, Trino mirror를 `linux/amd64`로 ECR에 전달하고 digest receipt를 만든다. Workflow는 ECR repository를 생성하지 않으며 보호된 environment의 OIDC role 없이는 실행되지 않는다. 실제 push 전 설정과 비용 경계는 [Phase 6 ECR Image Delivery](../../docs/eks-phase-6-image-delivery.md)를 따른다.
 
 Phase 7은 Terraform의 resource-free network handoff와 fail-closed ALB Ingress chart를 추가한다. controller owner, exposure, target type, DNS와 ACM을 모두 선택하기 전에는 Ingress가 렌더링되지 않고 NAT/VPC endpoint 및 Pod network enforcement도 `undecided`로 남는다. 실제 선택과 smoke 기준은 [Phase 7 Network와 ALB Ingress 계약](../../docs/eks-phase-7-network-ingress.md)을 따른다.
+
+Phase 8은 FastAPI, Airflow, Spark, Trino의 runtime Secret 이름·key·공유 binding·파일 mount를 값 없이 고정한다. Terraform은 Kubernetes Secret이나 외부 store의 secret version을 만들지 않으며 delivery는 `disabled`가 기본이다. `external_secrets`와 `workflow_sync` 중 하나는 controller/source/rotation 책임을 학습하고 확정한 뒤에만 선택한다. 상세 gate는 [Phase 8 런타임 Secret 전달 계약](../../docs/eks-phase-8-runtime-secrets.md)을 따른다.
 
 ## 설계 참고 자료
 

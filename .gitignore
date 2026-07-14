@@ -27,3 +27,4 @@ terraform.tfvars
 crash.log
 infra/eks/delivery/*.handoff.json
 infra/eks/delivery/*.image-receipt.json
+infra/eks/secrets/*.runtime-secret-contract.json

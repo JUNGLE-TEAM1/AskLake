@@ -113,3 +113,12 @@ ingress_certificate_arn = null
 # take ownership of shared networking add-ons in this phase.
 private_egress_mode    = "undecided"
 pod_network_enforcement = "undecided"
+
+# Phase 8 fixes Secret names and key names only. It never accepts Secret values.
+# Study controller lifecycle, source ownership, rotation and rollback before
+# selecting external_secrets or workflow_sync for the actual environment.
+secret_delivery_mode     = "disabled"
+secret_controller_ready  = false
+secret_controller_owner  = null
+secret_rotation_owner    = null
+secret_source_prefix     = null
