@@ -72,6 +72,7 @@ from app.services.dashboard_physical_data import (
     DashboardRemoteScanBudget,
     dashboard_result_from_aggregate_state,
     dashboard_source_config,
+    dashboard_widget_supports_incremental_merge,
     merge_dashboard_aggregate_states,
 )
 
@@ -760,6 +761,7 @@ class DashboardRuntimeService:
         saved_state = dict(saved.calculation_state or {}) if saved is not None else None
         saved_revision = int(saved.applied_revision or 0) if saved is not None else None
         saved_calculated_at = saved.calculated_at if saved is not None else None
+        source_config = dashboard_source_config(config)
         if saved is not None and int(saved.applied_revision or 0) >= latest_revision:
             self.live_repository.db.commit()
             return self._live_widget_response(
@@ -776,7 +778,12 @@ class DashboardRuntimeService:
         calculation_mode = "full"
         calculation_started_at = time.perf_counter()
         try:
-            if saved is not None and saved_state and latest_revision > int(saved.applied_revision or 0):
+            if (
+                saved is not None
+                and saved_state
+                and latest_revision > int(saved.applied_revision or 0)
+                and dashboard_widget_supports_incremental_merge(widget_type.value, source_config)
+            ):
                 incremental = self._incremental_widget_result(
                     payload,
                     widget_type,
@@ -913,6 +920,11 @@ class DashboardRuntimeService:
         through_revision: int,
         remote_budget: DashboardRemoteScanBudget,
     ) -> tuple[dict[str, Any], dict[str, Any]] | None:
+        if not dashboard_widget_supports_incremental_merge(
+            widget_type.value,
+            dashboard_source_config(config),
+        ):
+            return None
         commits = self.live_repository.list_commits(
             dataset_id,
             after_revision=after_revision,
@@ -960,7 +972,7 @@ class DashboardRuntimeService:
     ) -> str:
         canonical = json.dumps(
             {
-                "contractVersion": 1,
+                "contractVersion": 2,
                 "datasetId": dataset_id,
                 "schemaIdentity": schema_identity,
                 "sourceConfig": dashboard_source_config(config),
@@ -1027,7 +1039,13 @@ class DashboardRuntimeService:
             return payload
 
         persisted_config = dict(source_config)
-        for key in ("body", "color", "description", "placeholderKind", "prompt"):
+        for key in (
+            "body",
+            "color",
+            "description",
+            "placeholderKind",
+            "prompt",
+        ):
             if key in payload:
                 persisted_config[key] = payload[key]
         return persisted_config

@@ -24,6 +24,7 @@ from app.services.dashboard_physical_data import (
     dataset_storage_segments,
     execute_dashboard_query,
     preflight_dashboard_s3_segments,
+    dashboard_widget_supports_incremental_merge,
 )
 from app.services.dashboard_runtime_service import (
     DASHBOARD_DATA_FORBIDDEN,
@@ -306,6 +307,30 @@ class DashboardPhysicalWidgetDataTests(unittest.TestCase):
                 {"category": "accessories", DASHBOARD_VALUE_ALIAS: 2},
             ],
         )
+
+    def test_only_additive_aggregations_are_incrementally_merged(self) -> None:
+        self.assertFalse(dashboard_widget_supports_incremental_merge(
+            "metric",
+            {"aggregation": "min", "valueKey": "amount"},
+        ))
+        self.assertFalse(dashboard_widget_supports_incremental_merge(
+            "metric",
+            {"aggregation": "max", "valueKey": "amount"},
+        ))
+        self.assertFalse(dashboard_widget_supports_incremental_merge(
+            "table",
+            {"columns": ["amount"]},
+        ))
+        for aggregation in ("count", "sum", "avg"):
+            with self.subTest(aggregation=aggregation):
+                self.assertTrue(dashboard_widget_supports_incremental_merge(
+                    "metric",
+                    {"aggregation": aggregation, "valueKey": "amount"},
+                ))
+        self.assertFalse(dashboard_widget_supports_incremental_merge(
+            "metric",
+            {"aggregation": "distinct", "valueKey": "order_id"},
+        ))
 
     def test_table_preview_is_sorted_and_capped_before_browser_response(self) -> None:
         with TemporaryDirectory() as directory:

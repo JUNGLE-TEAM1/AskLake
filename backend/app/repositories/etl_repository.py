@@ -596,6 +596,23 @@ def list_kafka_continuous_maintenance_run_models(
     return list(db.scalars(statement.order_by(KafkaContinuousMaintenanceRunModel.created_at.desc())).all())
 
 
+def list_failed_kafka_continuous_replay_models(
+    db: Session,
+    job_id: str,
+) -> list[KafkaContinuousMaintenanceRunModel]:
+    ensure_schema(db)
+    statement = (
+        select(KafkaContinuousMaintenanceRunModel)
+        .where(
+            KafkaContinuousMaintenanceRunModel.job_id == job_id,
+            KafkaContinuousMaintenanceRunModel.kind == "quarantine_replay",
+            KafkaContinuousMaintenanceRunModel.status == "failed",
+        )
+        .order_by(KafkaContinuousMaintenanceRunModel.created_at.asc())
+    )
+    return list(db.scalars(statement).all())
+
+
 def list_kafka_continuous_maintenance_runs(db: Session, job_id: str) -> list[ContinuousMaintenanceRun]:
     return [continuous_maintenance_run_to_schema(run) for run in list_kafka_continuous_maintenance_run_models(db, job_id)]
 

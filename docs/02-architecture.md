@@ -436,17 +436,18 @@ published Dashboard freshness polling
 - S3/MinIO: 전체 event 행과 완료된 batch의 source of truth
 - `catalog_datasets.payload.materializationRuns`: active snapshot/delta 물리 구성의 source of truth
 - `dataset_freshness`: 데이터셋별 최신 공개 revision
-- `dataset_revision_commits`: revision에 포함된 run/S3 segment와 Kafka topic·partition·offset 범위 연결
+- `dataset_revision_commits`: revision에 포함된 run/S3 segment, 완료 manifest, commit 종류와 Kafka topic·partition·offset 범위 fingerprint 연결
+- `dataset_kafka_partition_cursors`: stream dataset·topic·partition별 다음 offset watermark. 과거 commit 전체를 다시 훑지 않고 역순·중복 범위를 막음
 - `dashboard_widget_results`: 위젯의 현재 계산 버전 result, merge state, applied revision의 source of truth. 새 버전 저장 성공 시 같은 위젯의 이전 버전은 삭제
 - Browser: 작은 위젯 결과만 유지하며 S3 전체 행을 합치지 않음
 
-`latestRevision`은 S3·Catalog·revision transaction이 모두 성공한 batch에서만 증가한다. 같은 `runId`를 재시도해도 증가하지 않고 0행 batch는 새 revision을 만들지 않는다.
+`latestRevision`은 `dataPath`, 완료된 `manifestPath`, 두 경로의 실제 `_SUCCESS`, 유효한 `[startOffset, endOffset)` 범위가 모두 있는 batch만 Catalog와 같은 transaction으로 반영한 뒤 증가한다. path의 batch/run identity도 서로 일치해야 한다. 같은 `runId`를 다른 근거로 재사용하면 오류로 처리한다. 같은 offset fingerprint를 다른 `runId`로 다시 보내도 같은 commit 종류에서는 한 번만 반영하며, stream offset이 partition watermark보다 과거이거나 일부 겹치면 거절한다. 배포 전 legacy Kafka backfill도 같은 watermark를 한 번만 seed한다. quarantine replay는 자체 완료 manifest와 offset 근거를 만들고 원본 stream과 별도 commit 종류로 구분한다. replay의 S3 저장 뒤 Catalog 반영만 실패하면 runtime refresh를 포함한 다음 reconciliation에서 같은 결과를 다시 반영하고, 성공한 뒤에만 runtime replay 카운터를 더한다. 0행 batch는 새 revision을 만들지 않는다.
 
 Dashboard 계산은 Catalog row → freshness row 순서로 잠그며 ETL commit도 같은 순서를 사용한다. 따라서 한 계산에서 Catalog의 active S3 run 목록과 적용 revision이 서로 다른 commit 시점으로 섞이지 않는다. 도입 전 Catalog run의 첫 revision backfill은 snapshot rebaseline으로 기록해 revision 0 전체 계산과 중복 합산하지 않는다.
 
 `calculationVersion`은 `contractVersion + datasetId + widgetType + sourceConfig + schemaIdentity`를 canonical JSON으로 만든 SHA-256이다. schema identity는 `schemaFingerprint`를 우선하고 없으면 schema 전체를 사용한다. 버전이 바뀌면 예전 aggregate state를 이어 쓰지 않는다.
 
-count/sum/avg/min/max 집계는 중간 revision이 빠지지 않고 새 commit이 모두 delta일 때 새 S3 segment만 읽어 합친다. aggregate group이 10,000개를 넘거나 table widget, snapshot, revision gap, 계산 버전 변경이면 active materialization을 전체 재계산한다. chart/metric 응답은 최대 500 group이다. table의 backend 안전 상한은 500행이며 현재 UI는 기본 10행, 최대 100행을 설정한다.
+전체 누적 기준 `count`/`sum`/`avg` 집계만 중간 revision이 빠지지 않고 새 commit이 모두 delta일 때 새 S3 segment를 읽어 기존 계산 상태에 합친다. `min`/`max`, table widget, snapshot, revision gap, 계산 버전 변경, aggregate group 10,000개 초과는 active materialization을 전체 재계산한다. 최근 N분·슬라이딩 시간창과 만료 행 차감은 이번 범위에서 구현하지 않는다. chart/metric 응답은 최대 500 group이다. table의 backend 안전 상한은 500행이며 현재 UI는 기본 10행, 최대 100행을 설정한다.
 
 Frontend는 published `/dashboards/:dashboardId`에서 Continuous dataset만 polling한다. 같은 dataset을 쓰는 여러 widget은 freshness를 한 번만 확인하고 `latestRevision > appliedRevision`인 widget만 재조회한다. 주기는 backend가 `clamp(triggerIntervalSeconds × 500, 5,000, 60,000)`으로 계산한 `nextCheckAfterMs`를 사용하고, 동시 요청을 흩뜨리기 위해 dataset ID 기반 0~10% deterministic jitter를 더한다. hidden tab에서는 중지하고, route unmount 시 timer/request를 정리하며, 실패하면 이전 위젯 결과를 유지한다.
 

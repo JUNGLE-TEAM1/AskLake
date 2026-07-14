@@ -134,6 +134,36 @@ def select_target(frame):
     )
 
 
+def compact_kafka_source_ranges(frame) -> list[dict[str, int | str]]:
+    rows = (
+        frame.select("topic", "partition", "offset")
+        .distinct()
+        .orderBy("topic", "partition", "offset")
+        .collect()
+    )
+    ranges: list[dict[str, int | str]] = []
+    for row in rows:
+        topic = str(row["topic"])
+        partition = int(row["partition"])
+        offset = int(row["offset"])
+        previous = ranges[-1] if ranges else None
+        if (
+            previous is not None
+            and previous["topic"] == topic
+            and previous["partition"] == partition
+            and int(previous["endOffset"]) == offset
+        ):
+            previous["endOffset"] = offset + 1
+            continue
+        ranges.append({
+            "topic": topic,
+            "partition": partition,
+            "startOffset": offset,
+            "endOffset": offset + 1,
+        })
+    return ranges
+
+
 def configure_s3a(spark: SparkSession):
     hadoop = spark.sparkContext._jsc.hadoopConfiguration()
     configure_spark_hadoop(hadoop)
@@ -159,8 +189,16 @@ def completed_batch_paths(spark: SparkSession, root: str) -> list[str]:
     paths = []
     for status in root_path.getFileSystem(hadoop).listStatus(root_path):
         child = str(status.getPath())
-        if status.isDirectory() and status.getPath().getName().startswith("batch_id=") and output_committed(spark, child):
-            paths.append(child)
+        child_name = status.getPath().getName()
+        if not status.isDirectory() or not child_name.startswith("batch_id=") or not output_committed(spark, child):
+            continue
+        if child_name.startswith("batch_id=replay_"):
+            replay_run_id = child_name.removeprefix("batch_id=replay_")
+            output_root = root.rsplit("/_batches", 1)[0]
+            replay_manifest = f"{output_root}/_replay-manifests/run_id={replay_run_id}"
+            if not output_committed(spark, replay_manifest):
+                continue
+        paths.append(child)
     return sorted(paths)
 
 
@@ -313,8 +351,15 @@ def replay_quarantine(spark: SparkSession, output_path: str, run_id: str, iceber
         existing = (existing_target
             .select(col("kafka_partition").alias("partition"), col("kafka_offset").alias("offset")).distinct())
         valid = valid.join(existing, ["partition", "offset"], "left_anti")
+    eligible_total = valid.count()
+    replay_batch_limit = min(
+        max(int(os.environ.get("ASKLAKE_MAINTENANCE_REPLAY_MAX_ROWS", "1000")), 1),
+        10_000,
+    )
+    valid = valid.orderBy("topic", "partition", "offset").limit(replay_batch_limit)
     eligible_count = valid.count()
-    skipped_count = schema_valid_count - eligible_count
+    deferred_count = max(0, eligible_total - eligible_count)
+    skipped_count = schema_valid_count - eligible_total
     source_ranges = replay_source_ranges(valid) if eligible_count else []
     projected = valid.select(
         *[nested_payload_column(source).alias(target) for source, target in aliases],
@@ -323,9 +368,10 @@ def replay_quarantine(spark: SparkSession, output_path: str, run_id: str, iceber
     rule_execution = apply_snapshot_rules(projected, RULES)
     target_frame = select_target(rule_execution["frame"])
     stored_count = target_frame.count()
-    failed_count = input_count - skipped_count - stored_count
+    failed_count = input_count - skipped_count - deferred_count - stored_count
     source_boundary = replay_source_boundary(run_id, source_ranges)
     iceberg_commit = None
+    replay_manifest_path = f"{output_path.rstrip('/')}/_replay-manifests/run_id={run_id}"
     if stored_count:
         target_frame = (
             target_frame
@@ -344,12 +390,34 @@ def replay_quarantine(spark: SparkSession, output_path: str, run_id: str, iceber
             source_boundary=source_boundary,
         )
         iceberg_commit.pop("_previousSnapshot", None)
+        if not source_ranges:
+            raise RuntimeError("Iceberg replay commit has no Kafka offset evidence.")
+        replay_manifest = {
+            "publicationId": f"replay:{run_id}",
+            "publicationType": "replay",
+            "runId": run_id,
+            "storedCount": stored_count,
+            "dataPath": iceberg_target["tableUri"],
+            "icebergCommit": iceberg_commit,
+            "sourceBoundary": source_boundary,
+            "sourceRanges": source_ranges,
+        }
+        spark.read.json(
+            spark.sparkContext.parallelize([json.dumps(replay_manifest)])
+        ).write.mode("errorifexists").json(replay_manifest_path)
+        if not output_committed(spark, replay_manifest_path):
+            raise RuntimeError(
+                f"Replay manifest did not produce a completion marker: {replay_manifest_path}"
+            )
     return {
         "inputCount": input_count,
         "storedCount": stored_count,
         "skippedCount": skipped_count,
         "failedCount": failed_count,
+        "deferredCount": deferred_count,
+        "replayBatchLimit": replay_batch_limit,
         "outputPath": iceberg_target["tableUri"] if stored_count else None,
+        "manifestPath": replay_manifest_path if stored_count else None,
         "icebergCommit": iceberg_commit,
         "sourceBoundary": source_boundary,
         "sourceRanges": source_ranges,

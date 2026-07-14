@@ -625,7 +625,7 @@ Catalog `datasetId`를 연결한 Widget은 browser가 보낸 `data`와 Catalog `
 
 ### Kafka Continuous Dashboard Refresh Contract
 
-이 계약은 새 UI나 새 Kafka Consumer를 만들지 않는다. 기존 Spark Structured Streaming이 S3/MinIO batch를 완료하고 backend가 Catalog에 반영한 뒤, 동일 PostgreSQL transaction으로 `dataset_revision_commits`와 `dataset_freshness`를 갱신한다. revision commit은 `runId`, S3 위치, Kafka topic/partition/[startOffset, endOffset) `sourceRanges`를 같이 보존한다.
+이 계약은 새 UI나 새 Kafka Consumer를 만들지 않는다. 기존 Spark Structured Streaming이 S3/MinIO batch의 data와 immutable manifest를 완료한 뒤, backend가 두 경로의 실제 `_SUCCESS`, `dataPath`, `manifestPath`, Kafka topic/partition/[startOffset, endOffset) `sourceRanges`와 batch identity를 확인하고 Catalog와 같은 PostgreSQL transaction으로 `dataset_revision_commits`와 `dataset_freshness`를 갱신한다. commit은 종류, offset fingerprint, S3·manifest 위치를 보존한다. `dataset_kafka_partition_cursors`의 watermark로 같은 stream offset은 한 번만 반영하고 과거·겹침 범위를 거절한다. quarantine replay는 한 번에 최대 1,000행을 처리해 자체 완료 manifest를 만들고 별도 commit 종류로 관리한다. 남은 행은 다음 replay에서 이어서 처리한다.
 
 ```ts
 type DatasetFreshness = {
@@ -687,7 +687,7 @@ Content-Type: application/json
 
 `calculationVersion`은 `contractVersion + datasetId + widgetType + sourceConfig + schemaIdentity`를 canonical JSON으로 만든 SHA-256이다. `schemaIdentity`는 Catalog `schemaFingerprint`를 우선하고 없으면 schema 전체를 사용한다.
 
-count/sum/avg/min/max는 revision 구간이 빠짐없이 delta로 연결되고 aggregate group이 10,000개 이하일 때 변경 S3 segment만 병합한다. table, snapshot, revision gap, calculation version 변경, 고카디널리티는 active materialization 전체 재계산으로 fallback한다. 결과는 집계 최대 500 group이다. table의 backend 상한은 500행이며 현재 UI 설정은 기본 10행, 최대 100행이다.
+전체 누적 기준 `count`/`sum`/`avg`만 revision 구간이 빠짐없이 delta로 연결되고 aggregate group이 10,000개 이하일 때 변경 S3 segment를 기존 계산 상태에 병합한다. `min`/`max`, table, snapshot, revision gap, calculation version 변경, 고카디널리티는 active materialization 전체 재계산으로 fallback한다. 최근 N분·슬라이딩 시간창은 지원하지 않는다. 결과는 집계 최대 500 group이다. table의 backend 상한은 500행이며 현재 UI 설정은 기본 10행, 최대 100행이다.
 
 Frontend는 published `/dashboards/{dashboardId}`에서만 polling한다. hidden tab에서는 polling을 중지하고 요청을 취소하며, route unmount 시 timer를 정리한다. 갱신 실패는 이전 widget result를 유지하고 화면을 loading 상태로 바꾸지 않는다. 계산 버전 변경 직후 새 계산이 실패해도 같은 widget·같은 dataset의 직전 성공 result만 반환한다.
 

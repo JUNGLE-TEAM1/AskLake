@@ -7,8 +7,11 @@ from sqlalchemy.orm import Session
 
 from app.models.etl import ETLJobModel
 from app.repositories.dashboard_live_repository import (
+    REPLAY_COMMIT_KIND,
+    STREAM_COMMIT_KIND,
     DashboardLiveRepository,
     backfill_catalog_revision,
+    normalize_kafka_source_ranges,
     recommended_dashboard_poll_ms,
 )
 
@@ -33,6 +36,31 @@ class DashboardLiveRepositoryTests(unittest.TestCase):
             row_count=3,
             next_check_after_ms=5_000,
             committed_at=datetime(2026, 7, 14, 1, 2, 3, tzinfo=UTC),
+        )
+
+    def record_stream(
+        self,
+        run_id: str,
+        source_ranges: list[dict[str, object]],
+        *,
+        storage_location: str | None = None,
+        commit_kind: str = STREAM_COMMIT_KIND,
+    ):
+        return self.repository.record_dataset_commit(
+            dataset_id="dataset-stream",
+            run_id=run_id,
+            storage_location=storage_location or f"s3a://asklake-output/live/_batches/{run_id}",
+            storage_format="parquet",
+            materialization_mode="delta",
+            row_count=3,
+            next_check_after_ms=5_000,
+            source_ranges=source_ranges,
+            commit_kind=commit_kind,
+            manifest_location=(
+                f"s3a://asklake-output/live/_manifests/{run_id}.json"
+                if commit_kind == STREAM_COMMIT_KIND
+                else f"s3a://asklake-output/live/_replay-manifests/{run_id}.json"
+            ),
         )
 
     def test_same_run_is_idempotent_and_new_runs_increment_revision(self) -> None:
@@ -85,6 +113,151 @@ class DashboardLiveRepositoryTests(unittest.TestCase):
             verification_repository = DashboardLiveRepository(verification_db)
             self.assertIsNone(verification_repository.get_freshness("dataset-rollback"))
             self.assertIsNone(verification_repository.commit_by_run_id("run-rollback"))
+
+    def test_legacy_backfill_seeds_stream_partition_watermark(self) -> None:
+        backfill_catalog_revision(
+            self.db,
+            dataset_id="dataset-stream",
+            run_id="continuous:legacy:batch:1",
+            storage_location="s3a://asklake-output/live/_batches/batch_id=1",
+            storage_format="parquet",
+            materialization_mode="snapshot",
+            row_count=30,
+            next_check_after_ms=5_000,
+            source_ranges=[{
+                "topic": "orders",
+                "partition": 0,
+                "startOffset": 0,
+                "endOffset": 30,
+            }],
+        )
+
+        cursor = self.repository.stream_partition_cursor("dataset-stream", "orders", 0)
+        self.assertIsNotNone(cursor)
+        self.assertEqual(cursor.next_offset, 30)
+        with self.assertRaisesRegex(ValueError, "partition watermark"):
+            self.record_stream(
+                "stream-after-checkpoint-reset",
+                [{"topic": "orders", "partition": 0, "startOffset": 0, "endOffset": 30}],
+            )
+
+    def test_stream_offsets_are_canonical_and_deduplicate_different_run_ids(self) -> None:
+        ranges = [
+            {"topic": "orders", "partition": 1, "startOffset": 20, "endOffset": 30},
+            {"topic": "orders", "partition": 0, "startOffset": 10, "endOffset": 20},
+        ]
+        first, first_created = self.record_stream("stream-1", ranges)
+        self.db.commit()
+
+        repeated, repeated_created = self.record_stream("stream-2", list(reversed(ranges)))
+        self.db.commit()
+
+        self.assertTrue(first_created)
+        self.assertFalse(repeated_created)
+        self.assertEqual(repeated.run_id, first.run_id)
+        self.assertEqual(repeated.revision, 1)
+        self.assertEqual(
+            repeated.source_ranges,
+            normalize_kafka_source_ranges(ranges, required=True),
+        )
+        self.assertEqual(len(str(repeated.source_fingerprint)), 64)
+        self.assertEqual(
+            self.repository.get_freshness("dataset-stream").latest_revision,
+            1,
+        )
+
+    def test_same_run_id_with_different_publication_metadata_is_rejected(self) -> None:
+        ranges = [{"topic": "orders", "partition": 0, "startOffset": 0, "endOffset": 30}]
+        self.record_stream("stream-conflict", ranges)
+        self.db.commit()
+
+        with self.assertRaisesRegex(ValueError, "run_id was reused"):
+            self.record_stream(
+                "stream-conflict",
+                [{"topic": "orders", "partition": 0, "startOffset": 30, "endOffset": 60}],
+            )
+
+        self.assertEqual(self.repository.get_freshness("dataset-stream").latest_revision, 1)
+
+    def test_partially_overlapping_stream_offsets_are_rejected(self) -> None:
+        self.record_stream(
+            "stream-overlap-1",
+            [{"topic": "orders", "partition": 0, "startOffset": 0, "endOffset": 30}],
+        )
+        self.db.commit()
+
+        with self.assertRaisesRegex(ValueError, "overlaps the committed partition watermark"):
+            self.record_stream(
+                "stream-overlap-2",
+                [{"topic": "orders", "partition": 0, "startOffset": 20, "endOffset": 40}],
+            )
+
+        self.assertEqual(self.repository.get_freshness("dataset-stream").latest_revision, 1)
+        cursor = self.repository.stream_partition_cursor("dataset-stream", "orders", 0)
+        self.assertIsNotNone(cursor)
+        self.assertEqual(cursor.next_offset, 30)
+
+    def test_ordered_stream_offsets_advance_partition_watermark(self) -> None:
+        first, _ = self.record_stream(
+            "stream-ordered-1",
+            [{"topic": "orders", "partition": 0, "startOffset": 0, "endOffset": 30}],
+        )
+        self.db.commit()
+        second, _ = self.record_stream(
+            "stream-ordered-2",
+            [{"topic": "orders", "partition": 0, "startOffset": 30, "endOffset": 60}],
+        )
+        self.db.commit()
+
+        cursor = self.repository.stream_partition_cursor("dataset-stream", "orders", 0)
+        self.assertEqual(first.revision, 1)
+        self.assertEqual(second.revision, 2)
+        self.assertIsNotNone(cursor)
+        self.assertEqual(cursor.next_offset, 60)
+        self.assertEqual(cursor.updated_revision, 2)
+
+    def test_replay_has_separate_offset_namespace_and_is_itself_idempotent(self) -> None:
+        ranges = [{"topic": "orders", "partition": 0, "startOffset": 0, "endOffset": 30}]
+        stream, _ = self.record_stream("stream-original", ranges)
+        replay, replay_created = self.record_stream(
+            "replay-1",
+            ranges,
+            commit_kind=REPLAY_COMMIT_KIND,
+        )
+        self.db.commit()
+
+        repeated, repeated_created = self.record_stream(
+            "replay-2",
+            ranges,
+            commit_kind=REPLAY_COMMIT_KIND,
+        )
+        self.db.commit()
+
+        self.assertEqual(stream.revision, 1)
+        self.assertTrue(replay_created)
+        self.assertEqual(replay.revision, 2)
+        self.assertFalse(repeated_created)
+        self.assertEqual(repeated.run_id, replay.run_id)
+        self.assertEqual(self.repository.get_freshness("dataset-stream").latest_revision, 2)
+
+    def test_stream_commit_requires_manifest_and_valid_end_exclusive_offsets(self) -> None:
+        with self.assertRaisesRegex(ValueError, "publication manifest"):
+            self.repository.record_dataset_commit(
+                dataset_id="dataset-stream",
+                run_id="stream-no-manifest",
+                storage_location="s3a://asklake-output/live/_batches/stream-no-manifest",
+                storage_format="parquet",
+                materialization_mode="delta",
+                row_count=3,
+                next_check_after_ms=5_000,
+                source_ranges=[{"topic": "orders", "partition": 0, "startOffset": 0, "endOffset": 3}],
+                commit_kind=STREAM_COMMIT_KIND,
+            )
+        with self.assertRaisesRegex(ValueError, "startOffset < endOffset"):
+            self.record_stream(
+                "stream-bad-range",
+                [{"topic": "orders", "partition": 0, "startOffset": 3, "endOffset": 3}],
+            )
 
     def test_recommended_poll_interval_is_bounded_and_has_stable_fallback(self) -> None:
         cases = {

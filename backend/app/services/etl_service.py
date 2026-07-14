@@ -50,8 +50,11 @@ from app.repositories.audit_repository import add_audit_event, safe_record_audit
 from app.repositories import etl_repository
 from app.repositories.catalog_repository import CatalogRepository
 from app.repositories.dashboard_live_repository import (
+    REPLAY_COMMIT_KIND,
+    STREAM_COMMIT_KIND,
     DashboardLiveRepository,
     backfill_catalog_revision,
+    normalize_kafka_source_ranges,
     recommended_dashboard_poll_ms,
     save_catalog_dataset_and_revision,
 )
@@ -5504,7 +5507,7 @@ def list_kafka_continuous_maintenance_runs(
 ) -> list[ContinuousMaintenanceRun]:
     job = require_continuous_job_access(db, job_id, actor, "view", "GET", "continuous/maintenance-runs")
     reconcile_stale_continuous_maintenance_runs(db, job_id)
-    reconcile_continuous_replay_catalog(db, job)
+    reconcile_pending_continuous_replay_catalog(db, job)
     return etl_repository.list_kafka_continuous_maintenance_runs(db, job_id)
 
 
@@ -5565,6 +5568,8 @@ def execute_kafka_continuous_maintenance(
     access_action: str = "run",
 ) -> ContinuousMaintenanceRun:
     job = require_continuous_job_access(db, job_id, actor, access_action, "POST", f"continuous/{kind}")
+    reconcile_stale_continuous_maintenance_runs(db, job.id)
+    reconcile_pending_continuous_replay_catalog(db, job)
     locked_job = etl_repository.get_job_for_update(db, job.id)
     if locked_job is None:
         raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job.id}", status.HTTP_404_NOT_FOUND)
@@ -5620,19 +5625,44 @@ def execute_kafka_continuous_maintenance(
     run.status = "success"
     run.ended_at = optional_string(result.get("endedAt")) or iso_now()
     if kind == "quarantine_replay":
-        runtime = etl_repository.get_kafka_continuous_runtime(db, job.id)
-        if runtime is not None:
-            replayed_count = nonnegative_int(result.get("storedCount"), 0)
-            runtime.stored_count = int(runtime.stored_count or 0) + replayed_count
-            runtime.metrics = {
-                **(runtime.metrics or {}),
-                "replayedCount": nonnegative_int((runtime.metrics or {}).get("replayedCount"), 0) + replayed_count,
-            }
-            if replayed_count:
-                result["catalogApplied"] = materialize_continuous_replay(db, job, runtime, result)
-            etl_repository.save_kafka_continuous_command(db, job, runtime)
+        replayed_count = nonnegative_int(result.get("storedCount"), 0)
+        result["catalogApplied"] = replayed_count == 0
+        result["countersApplied"] = replayed_count == 0
+        if replayed_count:
+            # Persist the worker's durable Iceberg/manifest evidence before
+            # Catalog reconciliation. A control-plane crash can then retry the
+            # exact same replay without executing Spark a second time.
+            run.status = "failed"
+            run.last_error = "Replay Catalog materialization is pending retry."
+            run.result = dict(result)
+            etl_repository.save_kafka_continuous_maintenance_run(db, run)
+
+            locked_job = etl_repository.get_job_for_update(db, job.id)
+            runtime = etl_repository.lock_kafka_continuous_runtime(db, job.id)
+            if locked_job is not None and runtime is not None:
+                job = locked_job
+                catalog_applied = materialize_continuous_replay(db, job, runtime, result)
+                result["catalogApplied"] = catalog_applied
+                if catalog_applied:
+                    # The Catalog helper commits independently, so reacquire
+                    # both fenced rows before applying counters exactly once.
+                    locked_job = etl_repository.get_job_for_update(db, job.id)
+                    runtime = etl_repository.lock_kafka_continuous_runtime(db, job.id)
+                    if locked_job is not None and runtime is not None:
+                        job = locked_job
+                        apply_continuous_replay_runtime_counters(runtime, result)
+                        run.status = "success"
+                        run.last_error = None
+                else:
+                    run.last_error = runtime.last_error or run.last_error
+                run.result = dict(result)
+                db.add(run)
+                etl_repository.save_kafka_continuous_command(db, job, runtime)
+        else:
+            run.status = "success"
+            run.last_error = None
         if bool(config.get("approveUnknownFields")):
-            record_continuous_replay_override_audit(db, job, actor, run_id, "success")
+            record_continuous_replay_override_audit(db, job, actor, run_id, run.status)
     run.result = result
     return etl_repository.save_kafka_continuous_maintenance_run(db, run)
 
@@ -5682,30 +5712,63 @@ def verify_continuous_iceberg_maintenance(
     }
 
 
-def reconcile_continuous_replay_catalog(db: Session, job: ETLJobModel) -> None:
-    runtime = etl_repository.get_kafka_continuous_runtime(db, job.id)
-    if runtime is None:
+def apply_continuous_replay_runtime_counters(
+    runtime: KafkaContinuousRuntimeModel,
+    result: dict[str, Any],
+) -> None:
+    if result.get("countersApplied") is True:
         return
+    replayed_count = nonnegative_int(result.get("storedCount"), 0)
+    runtime.stored_count = int(runtime.stored_count or 0) + replayed_count
+    runtime.metrics = {
+        **(runtime.metrics or {}),
+        "replayedCount": nonnegative_int((runtime.metrics or {}).get("replayedCount"), 0) + replayed_count,
+    }
+    result["countersApplied"] = True
+
+
+def reconcile_pending_continuous_replay_catalog(
+    db: Session,
+    job: ETLJobModel,
+) -> None:
     maintenance_runs = etl_repository.list_kafka_continuous_maintenance_run_models(
         db,
         job.id,
         active_only=False,
     )
     for run in reversed(maintenance_runs):
-        result = run.result if isinstance(run.result, dict) else {}
+        result = dict(run.result or {})
         if (
             run.kind != "quarantine_replay"
-            or run.status != "success"
-            or result.get("catalogApplied") is True
+            or run.status not in {"failed", "success"}
+            or (
+                result.get("catalogApplied") is True
+                and result.get("countersApplied") is True
+            )
             or nonnegative_int(result.get("storedCount"), 0) == 0
         ):
             continue
-        result = {
-            **result,
-            "catalogApplied": materialize_continuous_replay(db, job, runtime, result),
-        }
-        run.result = result
-        etl_repository.save_kafka_continuous_maintenance_run(db, run)
+        locked_job = etl_repository.get_job_for_update(db, job.id)
+        runtime = etl_repository.lock_kafka_continuous_runtime(db, job.id)
+        if locked_job is None or runtime is None:
+            return
+        job = locked_job
+        if result.get("catalogApplied") is not True:
+            if not materialize_continuous_replay(db, job, runtime, result):
+                continue
+            result["catalogApplied"] = True
+        # Catalog reconciliation commits independently. Fence the counter
+        # update again and persist countersApplied with the runtime atomically.
+        locked_job = etl_repository.get_job_for_update(db, job.id)
+        runtime = etl_repository.lock_kafka_continuous_runtime(db, job.id)
+        if locked_job is None or runtime is None:
+            return
+        job = locked_job
+        apply_continuous_replay_runtime_counters(runtime, result)
+        run.status = "success"
+        run.result = dict(result)
+        run.last_error = None
+        db.add(run)
         etl_repository.save_kafka_continuous_command(db, job, runtime)
 
 
@@ -6284,6 +6347,8 @@ def continuous_session_dag_steps(
 def refresh_kafka_continuous_runtime(db: Session, job: ETLJobModel) -> None:
     if job.execution_mode != "continuous":
         return
+    if db is not None:
+        reconcile_pending_continuous_replay_catalog(db, job)
     runtime = etl_repository.lock_kafka_continuous_runtime(db, job.id) if db is not None else etl_repository.get_kafka_continuous_runtime(db, job.id)
     if runtime is None:
         return
@@ -6566,6 +6631,73 @@ def write_continuous_catalog_ack(job_id: str, batch_id: int) -> None:
         pass
 
 
+def verify_continuous_publication_storage(
+    data_path: str | None,
+    manifest_path_value: str,
+    *,
+    require_data_marker: bool = True,
+) -> None:
+    paths = [("manifest", manifest_path_value)]
+    if require_data_marker and data_path:
+        paths.insert(0, ("data", data_path))
+    s3_client: Any | None = None
+    if any(re.match(r"^s3a?://", path, re.IGNORECASE) for _label, path in paths):
+        s3_client = build_catalog_s3_client()
+    for label, path in paths:
+        try:
+            if re.match(r"^s3a?://", path, re.IGNORECASE):
+                parsed = urlparse(re.sub(r"^s3a://", "s3://", path, flags=re.IGNORECASE))
+                bucket = parsed.netloc.strip()
+                key = parsed.path.lstrip("/").rstrip("/")
+                if not bucket or not key or s3_client is None:
+                    raise ValueError(f"Kafka publication {label} path is invalid")
+                s3_client.head_object(Bucket=bucket, Key=f"{key}/_SUCCESS")
+            elif not (Path(path) / "_SUCCESS").is_file():
+                raise ValueError(f"Kafka publication {label} completion marker is missing")
+        except ValueError:
+            raise
+        except Exception as exc:
+            raise ValueError(
+                f"Kafka publication {label} completion marker could not be verified: "
+                f"{compact_storage_text(str(exc), limit=300)}"
+            ) from exc
+
+
+def continuous_stream_publication_evidence(
+    job: ETLJobModel,
+    batch_id: str,
+    publication: dict[str, Any],
+) -> tuple[str, str, list[dict[str, Any]], str]:
+    target = parse_kafka_target_path(job.storage_path or job.target_path, job.target, job.target_layer)
+    target_root = f"s3a://{target['bucket']}/{target['prefix'].strip('/')}"
+    iceberg_target = IcebergWriterTarget.model_validate(job.iceberg_target)
+    expected_data_path = iceberg_target.table_uri
+    expected_manifest_path = f"{target_root}/_batch-manifests/batch_id={batch_id}"
+    data_path = optional_string(publication.get("dataPath"))
+    manifest_path_value = optional_string(publication.get("manifestPath"))
+    source_ranges = normalize_kafka_source_ranges(
+        publication.get("sourceRanges") if isinstance(publication.get("sourceRanges"), list) else None,
+        required=True,
+    )
+    if data_path is None:
+        raise ValueError("Kafka publication is missing its durable data path")
+    if manifest_path_value is None:
+        raise ValueError("Kafka publication is missing its committed manifest path")
+    if canonical_storage_path(data_path) != canonical_storage_path(expected_data_path):
+        raise ValueError("Kafka publication data path does not match its batch identity")
+    if canonical_storage_path(manifest_path_value) != canonical_storage_path(expected_manifest_path):
+        raise ValueError("Kafka publication manifest path does not match its batch identity")
+    # Iceberg data files do not expose a Spark `_SUCCESS` directory at the
+    # table URI. The manifest marker is verified here; the exact snapshot is
+    # verified through Trino by verify_spark_iceberg_result below.
+    verify_continuous_publication_storage(
+        data_path,
+        manifest_path_value,
+        require_data_marker=False,
+    )
+    return data_path, manifest_path_value, source_ranges, target_root
+
+
 def materialize_continuous_publication(
     db: Session,
     job: ETLJobModel,
@@ -6580,53 +6712,24 @@ def materialize_continuous_publication(
     if not run_id.startswith(expected_prefix):
         runtime.last_error = "Catalog materialization pending retry: Continuous publication run identity is invalid."
         return False
+    try:
+        _data_path, manifest_path_value, source_ranges, _target_root = continuous_stream_publication_evidence(
+            job,
+            batch_id,
+            publication,
+        )
+    except ValueError as exc:
+        runtime.last_error = f"Catalog materialization pending retry: {compact_storage_text(str(exc), limit=500)}"
+        return False
     existing = etl_repository.get_dataset_by_id_for_update(db, job.dataset_id or make_dataset_id(job.target))
-    existing_runs = ((existing.payload or {}).get("materializationRuns") or []) if existing and existing.payload else []
-    existing_run = next(
-        (
-            item
-            for item in existing_runs
-            if isinstance(item, dict) and str(item.get("runId") or "") == run_id
-        ),
-        None,
-    )
     next_check_after_ms = recommended_dashboard_poll_ms(
         (job.continuous_config or {}).get("triggerIntervalSeconds")
     )
-    if existing_run is not None:
-        try:
-            live_repository = DashboardLiveRepository(db, ensure_schema=False)
-            if live_repository.commit_by_run_id(run_id) is None:
-                backfill_catalog_revision(
-                    db,
-                    dataset_id=existing.id,
-                    run_id=run_id,
-                    storage_location=str(existing_run.get("storageLocation") or ""),
-                    storage_format=str(existing_run.get("storageFormat") or job.target_format or "parquet"),
-                    # The run is already present in the Catalog active data and
-                    # may already be part of a revision-0 full widget result.
-                    # Mark the first control-plane backfill as a rebaseline so
-                    # the next refresh performs a full calculation instead of
-                    # adding the same batch twice.
-                    materialization_mode="snapshot",
-                    row_count=nonnegative_int(existing_run.get("rowCount"), 0),
-                    next_check_after_ms=next_check_after_ms,
-                    source_ranges=(
-                        existing_run.get("sourceRanges")
-                        if isinstance(existing_run.get("sourceRanges"), list)
-                        else []
-                    ),
-                )
-        except Exception as exc:
-            runtime.last_error = f"Dashboard revision pending retry: {compact_storage_text(str(exc), limit=500)}"
-            return False
-        return True
     try:
         target = IcebergWriterTarget.model_validate(job.iceberg_target)
         commit = publication.get("icebergCommit") if isinstance(publication.get("icebergCommit"), dict) else None
         source_boundary = publication.get("sourceBoundary") if isinstance(publication.get("sourceBoundary"), dict) else None
         committed_boundary = commit.get("sourceBoundary") if isinstance(commit, dict) and isinstance(commit.get("sourceBoundary"), dict) else None
-        source_ranges = normalize_continuous_source_ranges(publication.get("sourceRanges"))
         if not commit or not source_boundary or committed_boundary != source_boundary:
             raise ValueError("Continuous publication does not include matching Iceberg source-boundary evidence.")
         if any((
@@ -6637,7 +6740,7 @@ def materialize_continuous_publication(
             str(source_boundary.get("checkpointPath") or "").rstrip("/") != str(runtime.checkpoint_path or "").rstrip("/"),
             str(source_boundary.get("consumerGroupId") or "") != runtime.consumer_group_id,
             str(source_boundary.get("topic") or "") != runtime.topic,
-            normalize_continuous_source_ranges(source_boundary.get("sourceRanges")) != source_ranges,
+            normalize_kafka_source_ranges(source_boundary.get("sourceRanges"), required=True) != source_ranges,
             not str(source_boundary.get("boundaryId") or "").strip(),
         )):
             raise ValueError("Continuous publication source boundary does not match the persisted runtime.")
@@ -6647,7 +6750,7 @@ def materialize_continuous_publication(
             "materializationRows": nonnegative_int(publication.get("storedCount"), 0),
             "outputPath": target.table_uri,
             "outputRows": runtime.stored_count,
-            "publicationManifest": optional_string(publication.get("manifestPath")),
+            "publicationManifest": manifest_path_value,
             "quality": publication.get("quality") if isinstance(publication.get("quality"), dict) else {},
             "ruleContractVersion": optional_string(publication.get("ruleContractVersion")),
             "ruleFingerprint": optional_string(publication.get("ruleFingerprint")),
@@ -6690,6 +6793,8 @@ def materialize_continuous_publication(
             row_count=nonnegative_int(publication.get("storedCount"), 0),
             next_check_after_ms=next_check_after_ms,
             source_ranges=source_ranges,
+            commit_kind=STREAM_COMMIT_KIND,
+            manifest_location=manifest_path_value,
         )
     except Exception as exc:  # Catalog metadata must not roll back a committed streaming checkpoint.
         runtime.last_error = f"Catalog materialization pending retry: {compact_storage_text(str(exc), limit=500)}"
@@ -6744,20 +6849,47 @@ def materialize_continuous_replay(
     existing = etl_repository.get_dataset_by_id_for_update(db, job.dataset_id or make_dataset_id(job.target))
     metrics = runtime.metrics or {}
     schema_state = runtime.schema_state or {}
+    run_id = optional_string(replay_result.get("runId")) or ""
     try:
+        if not run_id:
+            raise ValueError("Kafka replay is missing its durable run identity")
+        target_path = parse_kafka_target_path(job.storage_path or job.target_path, job.target, job.target_layer)
+        dataset_root = f"s3a://{target_path['bucket']}/{target_path['prefix'].strip('/')}"
         target = IcebergWriterTarget.model_validate(job.iceberg_target)
-        run_id = optional_string(replay_result.get("runId")) or ""
+        source_ranges = normalize_kafka_source_ranges(
+            replay_result.get("sourceRanges") if isinstance(replay_result.get("sourceRanges"), list) else None,
+            required=True,
+        )
+        replay_manifest_path = optional_string(replay_result.get("manifestPath"))
+        replay_output_path = optional_string(replay_result.get("outputPath"))
+        if replay_manifest_path is None:
+            raise ValueError("Kafka replay is missing its committed manifest path")
+        if replay_output_path is None:
+            raise ValueError("Kafka replay is missing its durable data path")
+        expected_manifest_path = f"{dataset_root}/_replay-manifests/run_id={run_id}"
+        if replay_output_path != target.table_uri:
+            raise ValueError("Kafka replay Iceberg table does not match its persisted target")
+        if canonical_storage_path(replay_manifest_path) != canonical_storage_path(expected_manifest_path):
+            raise ValueError("Kafka replay manifest path does not match its run identity")
+        verify_continuous_publication_storage(
+            replay_output_path,
+            replay_manifest_path,
+            require_data_marker=False,
+        )
+    except ValueError as exc:
+        runtime.last_error = f"Replay Catalog materialization pending retry: {compact_storage_text(str(exc), limit=500)}"
+        return False
+    try:
         commit = replay_result.get("icebergCommit") if isinstance(replay_result.get("icebergCommit"), dict) else None
         source_boundary = replay_result.get("sourceBoundary") if isinstance(replay_result.get("sourceBoundary"), dict) else None
         committed_boundary = commit.get("sourceBoundary") if isinstance(commit, dict) and isinstance(commit.get("sourceBoundary"), dict) else None
-        source_ranges = normalize_continuous_source_ranges(replay_result.get("sourceRanges"))
         if not commit or not source_boundary or committed_boundary != source_boundary:
             raise ValueError("Continuous replay does not include matching Iceberg source-boundary evidence.")
         if any((
             source_boundary.get("kind") != "kafka_continuous_replay",
             str(source_boundary.get("jobId") or "") != job.id,
             str(source_boundary.get("runId") or "") != run_id,
-            normalize_continuous_source_ranges(source_boundary.get("sourceRanges")) != source_ranges,
+            normalize_kafka_source_ranges(source_boundary.get("sourceRanges"), required=True) != source_ranges,
             not str(source_boundary.get("boundaryId") or "").strip(),
         )):
             raise ValueError("Continuous replay source boundary does not match the persisted Job.")
@@ -6767,6 +6899,7 @@ def materialize_continuous_replay(
             "materializationRows": replayed_count,
             "outputPath": target.table_uri,
             "outputRows": runtime.stored_count,
+            "publicationManifest": replay_manifest_path,
             "quality": replay_result.get("quality") if isinstance(replay_result.get("quality"), dict) else {},
             "ruleContractVersion": optional_string(replay_result.get("ruleContractVersion")) or optional_string(metrics.get("ruleContractVersion")),
             "ruleFingerprint": optional_string(replay_result.get("ruleFingerprint")) or optional_string(metrics.get("ruleFingerprint")),
@@ -6810,6 +6943,8 @@ def materialize_continuous_replay(
                 (job.continuous_config or {}).get("triggerIntervalSeconds")
             ),
             source_ranges=source_ranges,
+            commit_kind=REPLAY_COMMIT_KIND,
+            manifest_location=replay_manifest_path,
         )
     except Exception as exc:  # Replay data is already durable; Catalog can retry independently.
         runtime.last_error = f"Replay Catalog materialization pending retry: {compact_storage_text(str(exc), limit=500)}"

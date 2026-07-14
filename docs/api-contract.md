@@ -2399,7 +2399,8 @@ Runtime lane은 `dashboard_revisions`, `dashboard_pages`, `dashboard_widgets` �
 | `dashboard_pages` | runtime | revision 안의 page | `id`, `revision_id`, `title`, `order_index`, `created_at`, `updated_at` |
 | `dashboard_widgets` | runtime | page 안의 widget snapshot | `id`, `page_id`, `type`, `title`, `dataset_id`, `query_id`, `layout`, `config`, `data`, `created_at`, `updated_at` |
 | `dataset_freshness` | live runtime | dataset별 최신 공개 revision과 권장 polling 시간 | `dataset_id`, `latest_revision`, `latest_run_id`, `next_check_after_ms`, `updated_at` |
-| `dataset_revision_commits` | live runtime | revision과 S3 batch/Kafka offset 근거 연결 | `dataset_id`, `revision`, `run_id`, `storage_location`, `storage_format`, `materialization_mode`, `row_count`, `source_ranges`, `committed_at` |
+| `dataset_revision_commits` | live runtime | revision과 S3 batch/Kafka offset 근거 연결 | `dataset_id`, `revision`, `run_id`, `storage_location`, `storage_format`, `materialization_mode`, `commit_kind`, `row_count`, `source_ranges`, `source_fingerprint`, `manifest_location`, `committed_at` |
+| `dataset_kafka_partition_cursors` | live runtime | 과거 commit 전체 조회 없이 stream offset 순서·중복 검사 | `dataset_id`, `commit_kind`, `topic`, `partition`, `next_offset`, `updated_revision`, `updated_at` |
 | `dashboard_widget_results` | live runtime | widget 계산 버전별 최신 결과와 merge state | `widget_id`, `calculation_version`, `dataset_id`, `applied_revision`, `result_payload`, `calculation_state`, `calculation_mode`, `calculated_at` |
 
 `layout`, `config`, `data`, dashboard card의 보조 payload는 PostgreSQL JSONB 후보로 둔다.
@@ -3054,13 +3055,13 @@ Response `200 OK`:
 
 #### Revision commit 규칙
 
-Backend는 완료된 S3 batch manifest와 Catalog materialization을 모두 확인한 뒤 한 PostgreSQL transaction으로 다음을 저장합니다.
+Backend는 Spark worker가 data 경로의 `_SUCCESS`를 만든 뒤 게시한 immutable manifest를 기준으로 처리합니다. `dataPath`, `manifestPath`, 두 경로의 실제 `_SUCCESS`, 유효한 Kafka `[startOffset, endOffset)` `sourceRanges`가 모두 있고 batch/run identity가 서로 맞아야 하며, 그 뒤 Catalog와 revision을 한 PostgreSQL transaction으로 저장합니다.
 
 1. `dataset_revision_commits`에 `(dataset_id, revision)` commit 추가
-2. 같은 commit에 `run_id`, S3 위치, 행 수, Kafka `source_ranges` 저장
+2. 같은 commit에 `run_id`, S3·manifest 위치, 행 수, `commit_kind`, canonical Kafka `source_ranges`와 SHA-256 `source_fingerprint` 저장
 3. `dataset_freshness.latest_revision`, `latest_run_id`, `updated_at` 갱신
 
-`run_id`는 unique이므로 같은 micro-batch/replay를 재 reconcile해도 revision을 두 번 올리지 않습니다. 저장된 행이 0개인 batch는 revision을 만들지 않습니다.
+`run_id`는 unique이며 같은 `run_id`가 다른 게시 근거로 재사용되면 오류입니다. 이미 Catalog와 revision에 있는 stream run도 현재 worker report의 경로·manifest·offset을 다시 비교한 뒤 ACK합니다. `(dataset_id, commit_kind, source_fingerprint)`도 unique이므로 같은 stream offset을 다른 `run_id`로 다시 reconcile해도 revision은 한 번만 증가합니다. `dataset_kafka_partition_cursors`의 topic·partition별 `next_offset`보다 과거이거나 일부 겹치는 새 stream 범위는 거절하므로 검사 시간은 전체 commit 개수에 비례하지 않습니다. 기존 `legacy` stream/backfill 범위는 version marker가 없는 첫 시작에서만 cursor로 옮깁니다. quarantine replay는 한 번에 최대 1,000행을 처리해 자체 data/manifest/source range를 만들고 `commit_kind=replay` 별도 namespace에서 멱등 처리합니다. replay S3 저장 뒤 Catalog만 실패하면 일반 runtime refresh가 같은 결과를 재조정하고, Catalog 성공 후에만 stored/replayed 카운터를 더합니다. 저장된 행이 0개인 batch는 revision을 만들지 않습니다.
 
 이미 Catalog에 존재하던 legacy run을 처음 revision으로 backfill할 때는 `materialization_mode=snapshot`으로 기록합니다. revision 0의 전체 계산이 그 run을 이미 포함했더라도 다음 계산은 full rebaseline을 수행하므로 중복 합산하지 않습니다.
 
@@ -3173,7 +3174,7 @@ Response `200 OK`:
 
 ```json
 {
-  "contractVersion": 1,
+  "contractVersion": 2,
   "datasetId": "clickstream_events",
   "widgetType": "metric",
   "sourceConfig": { "aggregation": "count", "valueKey": "event_id" },
@@ -3182,8 +3183,9 @@ Response `200 OK`:
 ```
 
 - 같은 calculation version의 `appliedRevision >= latestRevision`이면 PostgreSQL의 저장 결과를 반환하고 S3를 다시 읽지 않습니다.
-- count/sum/avg/min/max는 중간 revision이 빠짐없이 모두 delta이고 aggregate group이 10,000개 이하일 때 변경 commit의 S3 segment만 읽어 `calculation_state`에 합칩니다.
-- table, snapshot, revision gap, calculation version 변경, 10,000개 초과 group은 active materialization 전체를 재계산합니다.
+- 전체 누적 기준 `count`/`sum`/`avg`만 중간 revision이 빠짐없이 모두 delta이고 aggregate group이 10,000개 이하일 때 변경 commit의 S3 segment를 `calculation_state`에 합칩니다.
+- `min`/`max`, table, snapshot, revision gap, calculation version 변경, 10,000개 초과 group은 active materialization 전체를 재계산합니다.
+- 최근 N분·슬라이딩 시간창과 만료 행 차감은 이 계산 계약에 포함하지 않습니다.
 - 결과와 `applied_revision`은 한 transaction으로 저장합니다.
 - 계산 시작 시 Catalog row를 먼저, freshness row를 다음으로 잠급니다. ETL commit과 같은 순서이므로 Catalog S3 run 목록과 revision이 서로 다른 시점으로 섞이지 않습니다.
 - 계산이 실패하면 이전 `result_payload`/`applied_revision`을 유지합니다. 새 calculation version 계산이 실패한 경우에도 같은 widget·같은 dataset의 직전 성공 버전만 표시 fallback으로 사용합니다. 다른 dataset의 과거 결과는 반환하지 않습니다.

@@ -1,15 +1,19 @@
 from datetime import UTC, datetime
 from dataclasses import dataclass
+import hashlib
+import json
 import logging
 from typing import Any
 
 from sqlalchemy import delete, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.base import Base
 from app.models.dashboard_live import (
     DashboardWidgetResultModel,
     DatasetFreshnessModel,
+    DatasetKafkaPartitionCursorModel,
     DatasetRevisionCommitModel,
 )
 from app.models.etl import ETLJobModel
@@ -20,6 +24,72 @@ DEFAULT_DASHBOARD_POLL_MS = 5_000
 MIN_DASHBOARD_POLL_MS = 5_000
 MAX_DASHBOARD_POLL_MS = 60_000
 logger = logging.getLogger(__name__)
+STREAM_COMMIT_KIND = "stream"
+REPLAY_COMMIT_KIND = "replay"
+BACKFILL_COMMIT_KIND = "backfill"
+LEGACY_COMMIT_KIND = "legacy"
+
+
+def normalize_kafka_source_ranges(
+    source_ranges: list[dict[str, Any]] | None,
+    *,
+    required: bool = False,
+) -> list[dict[str, Any]]:
+    """Validate and canonicalize end-exclusive Kafka offset ranges."""
+    if not source_ranges:
+        if required:
+            raise ValueError("Kafka stream revision requires source ranges")
+        return []
+    if not isinstance(source_ranges, list):
+        raise ValueError("Kafka source ranges must be a list")
+
+    normalized: list[dict[str, Any]] = []
+    for item in source_ranges:
+        if not isinstance(item, dict):
+            raise ValueError("Kafka source range must be an object")
+        topic = str(item.get("topic") or "").strip()
+        try:
+            partition = int(item.get("partition"))
+            start_offset = int(item.get("startOffset"))
+            end_offset = int(item.get("endOffset"))
+        except (TypeError, ValueError) as error:
+            raise ValueError("Kafka source range offsets must be integers") from error
+        if not topic:
+            raise ValueError("Kafka source range requires topic")
+        if len(topic) > 512:
+            raise ValueError("Kafka source range topic is too long")
+        if partition < 0 or start_offset < 0 or end_offset <= start_offset:
+            raise ValueError("Kafka source range must satisfy partition >= 0 and 0 <= startOffset < endOffset")
+        normalized.append({
+            "topic": topic,
+            "partition": partition,
+            "startOffset": start_offset,
+            "endOffset": end_offset,
+        })
+
+    normalized.sort(
+        key=lambda item: (
+            item["topic"],
+            item["partition"],
+            item["startOffset"],
+            item["endOffset"],
+        )
+    )
+    previous_by_partition: dict[tuple[str, int], dict[str, Any]] = {}
+    for item in normalized:
+        key = (str(item["topic"]), int(item["partition"]))
+        previous = previous_by_partition.get(key)
+        if previous is not None and int(item["startOffset"]) < int(previous["endOffset"]):
+            raise ValueError("Kafka source ranges overlap inside one publication")
+        previous_by_partition[key] = item
+    return normalized
+
+
+def kafka_source_fingerprint(source_ranges: list[dict[str, Any]]) -> str | None:
+    if not source_ranges:
+        return None
+    canonical = json.dumps(source_ranges, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -47,6 +117,7 @@ def ensure_dashboard_live_schema(db: Session) -> None:
         tables=[
             DatasetFreshnessModel.__table__,
             DatasetRevisionCommitModel.__table__,
+            DatasetKafkaPartitionCursorModel.__table__,
             DashboardWidgetResultModel.__table__,
         ],
     )
@@ -58,11 +129,17 @@ def ensure_dashboard_live_schema(db: Session) -> None:
             "ALTER TABLE dashboard_widget_results ADD COLUMN IF NOT EXISTS calculation_state jsonb NOT NULL DEFAULT '{}'::jsonb",
             "ALTER TABLE dashboard_widget_results ADD COLUMN IF NOT EXISTS calculation_mode varchar(32) NOT NULL DEFAULT 'full'",
             "ALTER TABLE dataset_revision_commits ADD COLUMN IF NOT EXISTS source_ranges jsonb NOT NULL DEFAULT '[]'::jsonb",
+            "ALTER TABLE dataset_revision_commits ADD COLUMN IF NOT EXISTS commit_kind varchar(32) NOT NULL DEFAULT 'legacy'",
+            "ALTER TABLE dataset_revision_commits ADD COLUMN IF NOT EXISTS source_fingerprint varchar(64)",
+            "ALTER TABLE dataset_revision_commits ADD COLUMN IF NOT EXISTS manifest_location varchar(2048)",
+            "CREATE TABLE IF NOT EXISTS dashboard_live_schema_migrations (version varchar(96) PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT NOW())",
+            "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM dashboard_live_schema_migrations WHERE version = '20260714_kafka_partition_cursor_v1') THEN UPDATE dataset_revision_commits SET commit_kind = CASE WHEN materialization_mode = 'snapshot' THEN 'backfill' WHEN run_id LIKE 'continuous-replay_%' THEN 'replay' WHEN run_id LIKE 'continuous:%:batch:%' THEN 'stream' ELSE commit_kind END WHERE commit_kind = 'legacy'; INSERT INTO dataset_kafka_partition_cursors (dataset_id, commit_kind, topic, partition, next_offset, updated_revision, updated_at) SELECT commits.dataset_id, 'stream', ranges.item ->> 'topic', (ranges.item ->> 'partition')::integer, MAX((ranges.item ->> 'endOffset')::bigint), MAX(commits.revision), NOW() FROM dataset_revision_commits AS commits CROSS JOIN LATERAL jsonb_array_elements(commits.source_ranges) AS ranges(item) WHERE commits.commit_kind IN ('stream', 'backfill') AND jsonb_typeof(commits.source_ranges) = 'array' AND ranges.item ? 'topic' AND ranges.item ? 'partition' AND ranges.item ? 'endOffset' AND (ranges.item ->> 'partition') ~ '^[0-9]+$' AND (ranges.item ->> 'endOffset') ~ '^[0-9]+$' GROUP BY commits.dataset_id, ranges.item ->> 'topic', (ranges.item ->> 'partition')::integer ON CONFLICT (dataset_id, commit_kind, topic, partition) DO UPDATE SET next_offset = GREATEST(dataset_kafka_partition_cursors.next_offset, EXCLUDED.next_offset), updated_revision = GREATEST(dataset_kafka_partition_cursors.updated_revision, EXCLUDED.updated_revision), updated_at = NOW(); INSERT INTO dashboard_live_schema_migrations (version) VALUES ('20260714_kafka_partition_cursor_v1'); END IF; END $$",
             "ALTER TABLE dashboard_widget_results ALTER COLUMN result_payload TYPE jsonb USING result_payload::jsonb",
             "ALTER TABLE dashboard_widget_results ALTER COLUMN calculation_state TYPE jsonb USING calculation_state::jsonb",
             "ALTER TABLE dashboard_widget_results ALTER COLUMN result_payload SET DEFAULT '{}'::jsonb",
             "ALTER TABLE dashboard_widget_results ALTER COLUMN calculation_state SET DEFAULT '{}'::jsonb",
             "CREATE INDEX IF NOT EXISTS dataset_revision_commits_dataset_revision_idx ON dataset_revision_commits (dataset_id, revision)",
+            "CREATE UNIQUE INDEX IF NOT EXISTS dataset_revision_commits_source_fingerprint_uq ON dataset_revision_commits (dataset_id, commit_kind, source_fingerprint) WHERE source_fingerprint IS NOT NULL",
             "CREATE INDEX IF NOT EXISTS dashboard_widget_results_dataset_revision_idx ON dashboard_widget_results (dataset_id, applied_revision)",
         ):
             db.execute(text(statement))
@@ -111,6 +188,120 @@ class DashboardLiveRepository:
             select(DatasetRevisionCommitModel).where(DatasetRevisionCommitModel.run_id == run_id)
         ).first()
 
+    def commit_by_source_fingerprint(
+        self,
+        dataset_id: str,
+        commit_kind: str,
+        source_fingerprint: str,
+    ) -> DatasetRevisionCommitModel | None:
+        return self.db.scalars(
+            select(DatasetRevisionCommitModel).where(
+                DatasetRevisionCommitModel.dataset_id == dataset_id,
+                DatasetRevisionCommitModel.commit_kind == commit_kind,
+                DatasetRevisionCommitModel.source_fingerprint == source_fingerprint,
+            )
+        ).first()
+
+    def stream_partition_cursor(
+        self,
+        dataset_id: str,
+        topic: str,
+        partition: int,
+        *,
+        for_update: bool = False,
+    ) -> DatasetKafkaPartitionCursorModel | None:
+        statement = select(DatasetKafkaPartitionCursorModel).where(
+            DatasetKafkaPartitionCursorModel.dataset_id == dataset_id,
+            DatasetKafkaPartitionCursorModel.commit_kind == STREAM_COMMIT_KIND,
+            DatasetKafkaPartitionCursorModel.topic == topic,
+            DatasetKafkaPartitionCursorModel.partition == partition,
+        )
+        if for_update:
+            statement = statement.with_for_update()
+        return self.db.scalars(statement).first()
+
+    def advance_stream_partition_cursors(
+        self,
+        dataset_id: str,
+        source_ranges: list[dict[str, Any]],
+        revision: int,
+        updated_at: datetime,
+    ) -> None:
+        by_partition: dict[tuple[str, int], tuple[int, int]] = {}
+        for item in source_ranges:
+            key = (str(item["topic"]), int(item["partition"]))
+            start_offset = int(item["startOffset"])
+            end_offset = int(item["endOffset"])
+            current = by_partition.get(key)
+            by_partition[key] = (
+                min(current[0], start_offset) if current else start_offset,
+                max(current[1], end_offset) if current else end_offset,
+            )
+
+        for (topic, partition), (start_offset, end_offset) in by_partition.items():
+            cursor = self.stream_partition_cursor(
+                dataset_id,
+                topic,
+                partition,
+                for_update=True,
+            )
+            if cursor is not None and start_offset < int(cursor.next_offset):
+                raise ValueError(
+                    "Kafka stream source range precedes or overlaps the committed partition watermark"
+                )
+            if cursor is None:
+                cursor = DatasetKafkaPartitionCursorModel(
+                    dataset_id=dataset_id,
+                    commit_kind=STREAM_COMMIT_KIND,
+                    topic=topic,
+                    partition=partition,
+                    next_offset=end_offset,
+                    updated_revision=revision,
+                    updated_at=updated_at,
+                )
+            else:
+                cursor.next_offset = max(int(cursor.next_offset), end_offset)
+                cursor.updated_revision = revision
+                cursor.updated_at = updated_at
+            self.db.add(cursor)
+
+    def seed_stream_partition_cursors(
+        self,
+        dataset_id: str,
+        source_ranges: list[dict[str, Any]],
+        revision: int,
+        updated_at: datetime,
+    ) -> None:
+        by_partition: dict[tuple[str, int], int] = {}
+        for item in source_ranges:
+            key = (str(item["topic"]), int(item["partition"]))
+            by_partition[key] = max(
+                by_partition.get(key, 0),
+                int(item["endOffset"]),
+            )
+        for (topic, partition), end_offset in by_partition.items():
+            cursor = self.stream_partition_cursor(
+                dataset_id,
+                topic,
+                partition,
+                for_update=True,
+            )
+            if cursor is None:
+                cursor = DatasetKafkaPartitionCursorModel(
+                    dataset_id=dataset_id,
+                    commit_kind=STREAM_COMMIT_KIND,
+                    topic=topic,
+                    partition=partition,
+                    next_offset=end_offset,
+                    updated_revision=revision,
+                    updated_at=updated_at,
+                )
+            else:
+                cursor.next_offset = max(int(cursor.next_offset), end_offset)
+                cursor.updated_revision = max(int(cursor.updated_revision), revision)
+                cursor.updated_at = updated_at
+            self.db.add(cursor)
+
     def record_dataset_commit(
         self,
         *,
@@ -123,9 +314,52 @@ class DashboardLiveRepository:
         next_check_after_ms: int,
         committed_at: datetime | None = None,
         source_ranges: list[dict[str, Any]] | None = None,
+        commit_kind: str = LEGACY_COMMIT_KIND,
+        manifest_location: str | None = None,
     ) -> tuple[DatasetRevisionCommitModel, bool]:
+        normalized_commit_kind = str(commit_kind or LEGACY_COMMIT_KIND).strip().lower()
+        if normalized_commit_kind not in {
+            STREAM_COMMIT_KIND,
+            REPLAY_COMMIT_KIND,
+            BACKFILL_COMMIT_KIND,
+            LEGACY_COMMIT_KIND,
+        }:
+            raise ValueError(f"Unsupported dataset commit kind: {normalized_commit_kind}")
+        normalized_ranges = normalize_kafka_source_ranges(
+            source_ranges,
+            required=normalized_commit_kind in {STREAM_COMMIT_KIND, REPLAY_COMMIT_KIND},
+        )
+        source_fingerprint = kafka_source_fingerprint(normalized_ranges)
+        normalized_storage_location = str(storage_location or "").strip()
+        normalized_manifest_location = str(manifest_location or "").strip() or None
+        normalized_row_count = max(0, int(row_count or 0))
+        if normalized_commit_kind in {STREAM_COMMIT_KIND, REPLAY_COMMIT_KIND}:
+            if not normalized_storage_location:
+                raise ValueError("Kafka revision requires a durable storage location")
+            if normalized_manifest_location is None:
+                raise ValueError("Kafka revision requires a publication manifest")
+
         existing_commit = self.commit_by_run_id(run_id)
         if existing_commit is not None:
+            existing_ranges = normalize_kafka_source_ranges(
+                list(existing_commit.source_ranges or []),
+                required=False,
+            )
+            mismatched = any((
+                existing_commit.dataset_id != dataset_id,
+                str(existing_commit.storage_location or "").strip() != normalized_storage_location,
+                str(existing_commit.storage_format or "").strip().lower() != str(storage_format or "parquet").strip().lower(),
+                str(existing_commit.materialization_mode or "").strip().lower() != str(materialization_mode or "delta").strip().lower(),
+                str(existing_commit.commit_kind or LEGACY_COMMIT_KIND).strip().lower() != normalized_commit_kind,
+                int(existing_commit.row_count or 0) != normalized_row_count,
+                existing_ranges != normalized_ranges,
+                (
+                    normalized_manifest_location is not None
+                    and str(existing_commit.manifest_location or "").strip() != normalized_manifest_location
+                ),
+            ))
+            if mismatched:
+                raise ValueError("Dataset revision run_id was reused with different publication metadata")
             return existing_commit, False
 
         freshness = self.get_freshness(dataset_id, for_update=True)
@@ -144,16 +378,35 @@ class DashboardLiveRepository:
             self.db.add(freshness)
             self.db.flush()
 
+        if source_fingerprint:
+            duplicate_source = self.commit_by_source_fingerprint(
+                dataset_id,
+                normalized_commit_kind,
+                source_fingerprint,
+            )
+            if duplicate_source is not None:
+                return duplicate_source, False
+
         revision = int(freshness.latest_revision or 0) + 1
+        if normalized_commit_kind == STREAM_COMMIT_KIND:
+            self.advance_stream_partition_cursors(
+                dataset_id,
+                normalized_ranges,
+                revision,
+                now,
+            )
         commit = DatasetRevisionCommitModel(
             dataset_id=dataset_id,
             revision=revision,
             run_id=run_id,
-            storage_location=storage_location,
+            storage_location=normalized_storage_location,
             storage_format=storage_format or "parquet",
             materialization_mode=materialization_mode or "delta",
-            row_count=max(0, int(row_count or 0)),
-            source_ranges=source_ranges or [],
+            commit_kind=normalized_commit_kind,
+            row_count=normalized_row_count,
+            source_ranges=normalized_ranges,
+            source_fingerprint=source_fingerprint,
+            manifest_location=normalized_manifest_location,
             committed_at=now,
         )
         freshness.latest_revision = revision
@@ -259,26 +512,41 @@ def save_catalog_dataset_and_revision(
     row_count: int,
     next_check_after_ms: int,
     source_ranges: list[dict[str, Any]] | None = None,
+    commit_kind: str = STREAM_COMMIT_KIND,
+    manifest_location: str | None = None,
 ) -> DatasetRevisionCommitModel:
     """Commit Catalog metadata and its visible dashboard revision atomically."""
-    repository = DashboardLiveRepository(db, ensure_schema=False)
-    merged_dataset = db.merge(dataset)
-    commit, _created = repository.record_dataset_commit(
-        dataset_id=dataset.id,
-        run_id=run_id,
-        storage_location=storage_location,
-        storage_format=storage_format,
-        materialization_mode=materialization_mode,
-        row_count=row_count,
-        next_check_after_ms=next_check_after_ms,
-        source_ranges=source_ranges,
-    )
-    try:
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise
-    db.refresh(merged_dataset)
+    commit: DatasetRevisionCommitModel | None = None
+    merged_dataset: CatalogDatasetModel | None = None
+    for attempt in range(2):
+        repository = DashboardLiveRepository(db, ensure_schema=False)
+        try:
+            commit, created = repository.record_dataset_commit(
+                dataset_id=dataset.id,
+                run_id=run_id,
+                storage_location=storage_location,
+                storage_format=storage_format,
+                materialization_mode=materialization_mode,
+                row_count=row_count,
+                next_check_after_ms=next_check_after_ms,
+                source_ranges=source_ranges,
+                commit_kind=commit_kind,
+                manifest_location=manifest_location,
+            )
+            merged_dataset = db.merge(dataset) if created else None
+            db.commit()
+            break
+        except IntegrityError:
+            db.rollback()
+            if attempt == 1:
+                raise
+        except Exception:
+            db.rollback()
+            raise
+    if commit is None:
+        raise RuntimeError("Dataset revision commit did not complete")
+    if merged_dataset is not None:
+        db.refresh(merged_dataset)
     logger.info(
         "dashboard_dataset_revision_committed dataset_id=%s revision=%s run_id=%s row_count=%s",
         dataset.id,
@@ -300,24 +568,45 @@ def backfill_catalog_revision(
     row_count: int,
     next_check_after_ms: int,
     source_ranges: list[dict[str, Any]] | None = None,
+    manifest_location: str | None = None,
 ) -> DatasetRevisionCommitModel:
     """Add revision metadata for a durable legacy Catalog run exactly once."""
-    repository = DashboardLiveRepository(db, ensure_schema=False)
-    commit, _created = repository.record_dataset_commit(
-        dataset_id=dataset_id,
-        run_id=run_id,
-        storage_location=storage_location,
-        storage_format=storage_format,
-        materialization_mode=materialization_mode,
-        row_count=row_count,
-        next_check_after_ms=next_check_after_ms,
-        source_ranges=source_ranges,
-    )
-    try:
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise
+    commit: DatasetRevisionCommitModel | None = None
+    for attempt in range(2):
+        repository = DashboardLiveRepository(db, ensure_schema=False)
+        try:
+            commit, _created = repository.record_dataset_commit(
+                dataset_id=dataset_id,
+                run_id=run_id,
+                storage_location=storage_location,
+                storage_format=storage_format,
+                materialization_mode=materialization_mode,
+                row_count=row_count,
+                next_check_after_ms=next_check_after_ms,
+                source_ranges=source_ranges,
+                commit_kind=BACKFILL_COMMIT_KIND,
+                manifest_location=manifest_location,
+            )
+            normalized_ranges = normalize_kafka_source_ranges(source_ranges, required=False)
+            if normalized_ranges:
+                repository.seed_stream_partition_cursors(
+                    dataset_id,
+                    normalized_ranges,
+                    int(commit.revision),
+                    datetime.now(UTC),
+                )
+                db.flush()
+            db.commit()
+            break
+        except IntegrityError:
+            db.rollback()
+            if attempt == 1:
+                raise
+        except Exception:
+            db.rollback()
+            raise
+    if commit is None:
+        raise RuntimeError("Dataset revision backfill did not complete")
     logger.info(
         "dashboard_dataset_revision_backfilled dataset_id=%s revision=%s run_id=%s",
         dataset_id,

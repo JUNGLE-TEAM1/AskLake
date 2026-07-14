@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import BigInteger, DateTime, Index, Integer, JSON, String, UniqueConstraint, func
+from sqlalchemy import BigInteger, DateTime, Index, Integer, JSON, String, UniqueConstraint, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -31,6 +31,15 @@ class DatasetRevisionCommitModel(Base):
     __table_args__ = (
         UniqueConstraint("run_id", name="dataset_revision_commits_run_id_uq"),
         Index("dataset_revision_commits_dataset_revision_idx", "dataset_id", "revision"),
+        Index(
+            "dataset_revision_commits_source_fingerprint_uq",
+            "dataset_id",
+            "commit_kind",
+            "source_fingerprint",
+            unique=True,
+            postgresql_where=text("source_fingerprint IS NOT NULL"),
+            sqlite_where=text("source_fingerprint IS NOT NULL"),
+        ),
     )
 
     dataset_id: Mapped[str] = mapped_column(String(120), primary_key=True)
@@ -39,11 +48,31 @@ class DatasetRevisionCommitModel(Base):
     storage_location: Mapped[str] = mapped_column(String(2048), nullable=False)
     storage_format: Mapped[str] = mapped_column(String(32), nullable=False, default="parquet")
     materialization_mode: Mapped[str] = mapped_column(String(32), nullable=False, default="delta")
+    commit_kind: Mapped[str] = mapped_column(String(32), nullable=False, default="legacy")
     row_count: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     source_ranges: Mapped[list[dict[str, Any]]] = mapped_column(JSON_DOCUMENT, nullable=False, default=list)
+    source_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    manifest_location: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     committed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
+        nullable=False,
+    )
+
+
+class DatasetKafkaPartitionCursorModel(Base):
+    __tablename__ = "dataset_kafka_partition_cursors"
+
+    dataset_id: Mapped[str] = mapped_column(String(120), primary_key=True)
+    commit_kind: Mapped[str] = mapped_column(String(32), primary_key=True)
+    topic: Mapped[str] = mapped_column(String(512), primary_key=True)
+    partition: Mapped[int] = mapped_column(Integer, primary_key=True)
+    next_offset: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    updated_revision: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
         nullable=False,
     )
 

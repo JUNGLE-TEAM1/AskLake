@@ -410,6 +410,16 @@ def dashboard_aggregate_state_query(
     }
 
 
+def dashboard_widget_supports_incremental_merge(
+    widget_type: str,
+    config: dict[str, Any],
+) -> bool:
+    if widget_type == "table":
+        return False
+    aggregation = str(config.get("aggregation") or "sum").strip().lower()
+    return aggregation in {"count", "sum", "avg"}
+
+
 def merge_dashboard_aggregate_states(
     current: dict[str, Any],
     delta: dict[str, Any],

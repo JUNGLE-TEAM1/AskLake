@@ -283,7 +283,7 @@ ASKLAKE_VERIFY_ICEBERG_LIVE=true npm run verify:kafka-continuous-iceberg
 
 ### 8.1 Kafka Continuous 대시보드 revision/result 검증
 
-대시보드 리비전은 Spark가 data object를 쓴 시점이 아니라 backend가 완료 manifest와 Catalog materialization을 확인한 뒤에만 증가해야 한다.
+대시보드 리비전은 Spark가 data object를 쓴 시점이 아니라 backend가 `dataPath`, 해당 경로의 `_SUCCESS` 뒤 게시된 immutable `manifestPath`, 유효한 `[startOffset, endOffset)` 범위와 Catalog materialization을 확인한 뒤에만 증가해야 한다.
 
 ```text
 Kafka offset range
@@ -292,7 +292,9 @@ batch_id=<id> Parquet + _SUCCESS + manifest
 ↓
 Catalog materializationRuns
 ↓
-dataset_revision_commits(source_ranges 포함)
+dataset_revision_commits(manifest, commit_kind, source fingerprint 포함)
+↓
+dataset_kafka_partition_cursors(topic/partition next_offset)
 ↓
 dataset_freshness.latest_revision
 ```
@@ -311,12 +313,16 @@ npm run verify:dashboard-live-postgres
 
 스크립트는 실제 PostgreSQL에 임시 Catalog dataset을 만들고 다음을 확인한 뒤 해당 fixture를 삭제한다.
 
-- `dataset_freshness`, `dataset_revision_commits`, `dashboard_widget_results` table/index/constraint
-- 같은 `run_id`를 두 번 저장해도 revision이 한 번만 증가
-- revision과 S3 위치, row count, topic/partition/[startOffset, endOffset) `source_ranges` 연결
+- `dataset_freshness`, `dataset_revision_commits`, `dataset_kafka_partition_cursors`, `dashboard_widget_results` table/index/constraint
+- 같은 `run_id`를 두 번 저장해도 revision이 한 번만 증가하고, 다른 metadata로 재사용하면 거절
+- 같은 stream offset fingerprint를 다른 `run_id`로 보내도 한 번만 반영하고 부분 겹침은 거절
+- 원본 stream watermark와 자체 완료 manifest를 가진 quarantine replay의 offset namespace 분리
+- revision과 S3·manifest 위치, row count, topic/partition/[startOffset, endOffset) `source_ranges`와 fingerprint 연결
 - widget `result_payload`, `calculation_state`, `applied_revision`, `calculation_mode` 저장·재조회
 
 기존 Continuous 계약과 frontend polling 선택 로직은 별도로 검증한다.
+
+`npm run verify:kafka-continuous-contract`는 `manifestPath`가 없거나 batch identity·기존 run 근거가 다른 non-empty publication이 Catalog와 revision을 올리지 않는지, replay Catalog 실패 결과와 runtime 카운터가 다음 reconciliation에서 함께 복구되는지도 확인한다. 실제 E2E에서는 data/manifest `_SUCCESS` head 확인과 replay 최대 1,000행 batch 경계를 함께 본다. 위젯 증분 계산은 전체 누적 기준 `count`/`sum`/`avg`만 허용한다. `min`/`max` 등은 전체 재계산하며 최근 N분·슬라이딩 시간창은 이번 범위에서 검증하거나 지원하지 않는다.
 
 ```powershell
 cd backend

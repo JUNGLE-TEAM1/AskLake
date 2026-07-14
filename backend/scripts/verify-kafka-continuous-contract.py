@@ -274,7 +274,9 @@ def main() -> None:
     original_live_repository = etl_service.DashboardLiveRepository
     original_catalog_revision_save = etl_service.save_catalog_dataset_and_revision
     original_catalog_revision_backfill = etl_service.backfill_catalog_revision
+    original_publication_storage_verify = etl_service.verify_continuous_publication_storage
     original_maintenance_list = etl_repository.list_kafka_continuous_maintenance_run_models
+    original_failed_replay_list = etl_repository.list_failed_kafka_continuous_replay_models
     original_maintenance_save = etl_repository.save_kafka_continuous_maintenance_run
     original_maintenance_cleanup = etl_service.cleanup_kafka_continuous_maintenance
     original_session_sync = etl_service.sync_kafka_continuous_session
@@ -284,6 +286,7 @@ def main() -> None:
     original_batch_stage = etl_repository.stage_kafka_continuous_batch
     try:
         etl_repository.get_kafka_continuous_runtime = lambda _db, _job_id: runtime
+        etl_service.verify_continuous_publication_storage = lambda _data_path, _manifest_path: None
         etl_repository.lock_kafka_continuous_runtime = lambda _db, _job_id: runtime
         etl_repository.find_conflicting_kafka_continuous_runtime = lambda _db, **_kwargs: None
         etl_repository.find_conflicting_kafka_snapshot = lambda _db, **_kwargs: None
@@ -513,7 +516,9 @@ def main() -> None:
             }
             return {
                 "batchId": batch_id,
+                "dataPath": job.iceberg_target["tableUri"],
                 "icebergCommit": commit,
+                "manifestPath": f"{job.storage_path.rstrip('/')}/_batch-manifests/batch_id={batch_id}",
                 "publishedAt": "2026-07-14T00:00:00Z",
                 "ruleContractVersion": compiled_job_rules.result.contract_version,
                 "ruleFingerprint": persisted_rule_fingerprint,
@@ -571,6 +576,14 @@ def main() -> None:
             def commit_by_run_id(self, run_id):
                 return revision_commits.get(run_id)
 
+            def record_dataset_commit(self, *, run_id, source_ranges=None, **_metadata):
+                existing_commit = revision_commits.get(run_id)
+                if existing_commit is None:
+                    raise AssertionError("Expected an existing revision commit")
+                if existing_commit.get("source_ranges") != source_ranges:
+                    raise ValueError("Dataset revision run_id was reused with different publication metadata")
+                return existing_commit, False
+
         etl_service.DashboardLiveRepository = FakeDashboardLiveRepository
         etl_service.save_catalog_dataset_and_revision = capture_dataset
         etl_service.backfill_catalog_revision = capture_revision_backfill
@@ -613,6 +626,59 @@ def main() -> None:
         assert latest_revision_by_dataset[dataset_id] == 1, "The same Iceberg publication must not advance dataset revision twice."
         assert len(revision_commits) == 1
         assert revision_backfill_count["value"] == 0
+
+        conflicting_ranges = [
+            {"topic": "reviews.continuous", "partition": 0, "startOffset": 0, "endOffset": 3},
+        ]
+        conflicting_boundary = {
+            **first_publication["sourceBoundary"],
+            "sourceRanges": conflicting_ranges,
+        }
+        conflicting_publication = {
+            **first_publication,
+            "icebergCommit": {
+                **first_publication["icebergCommit"],
+                "sourceBoundary": conflicting_boundary,
+            },
+            "sourceBoundary": conflicting_boundary,
+            "sourceRanges": conflicting_ranges,
+        }
+        assert etl_service.materialize_continuous_publication(
+            fake_db,
+            job,
+            runtime,
+            conflicting_publication,
+        ) is False
+        assert latest_revision_by_dataset[dataset_id] == 1, "Conflicting evidence for an existing run must not be acknowledged."
+        assert len(revision_commits) == 1
+
+        missing_manifest_publication = iceberg_publication(6, 2, [
+            {"topic": "reviews.continuous", "partition": 0, "startOffset": 20, "endOffset": 22},
+        ])
+        missing_manifest_publication.pop("manifestPath")
+        assert etl_service.materialize_continuous_publication(
+            fake_db,
+            job,
+            runtime,
+            missing_manifest_publication,
+        ) is False
+        assert latest_revision_by_dataset[dataset_id] == 1, "An Iceberg commit without its committed publication manifest must not advance revision."
+        assert len(revision_commits) == 1
+
+        wrong_manifest_publication = iceberg_publication(7, 2, [
+            {"topic": "reviews.continuous", "partition": 0, "startOffset": 22, "endOffset": 24},
+        ])
+        wrong_manifest_publication["manifestPath"] = (
+            f"{job.storage_path.rstrip('/')}/_batch-manifests/batch_id=999"
+        )
+        assert etl_service.materialize_continuous_publication(
+            fake_db,
+            job,
+            runtime,
+            wrong_manifest_publication,
+        ) is False
+        assert latest_revision_by_dataset[dataset_id] == 1, "A manifest from another batch must not advance revision."
+        assert len(revision_commits) == 1
 
         zero_row_publication = iceberg_publication(1, 0, [
             {"topic": "reviews.continuous", "partition": 0, "startOffset": 2, "endOffset": 2},
@@ -676,6 +742,7 @@ def main() -> None:
                 "warehouseLocation": "s3://asklake-warehouse/warehouse/asklake/reviews_continuous",
             },
             "outputPath": job.iceberg_target["tableUri"],
+            "manifestPath": f"{job.storage_path.rstrip('/')}/_replay-manifests/run_id={replay_run_id}",
             "ruleContractVersion": compiled_job_rules.result.contract_version,
             "ruleFingerprint": persisted_rule_fingerprint,
             "runId": replay_run_id,
@@ -704,6 +771,68 @@ def main() -> None:
         assert dataset_save_count["value"] == before_replay_saves + 1
         assert runtime.last_error.startswith("Replay Catalog materialization pending retry:")
         runtime.last_error = None
+
+        pending_replay_run_id = "continuous-replay-pending-contract"
+        pending_replay_ranges = [
+            {"topic": runtime.topic, "partition": 0, "startOffset": 5, "endOffset": 6},
+        ]
+        pending_replay_boundary = {
+            "boundaryId": "replay-boundary-pending-contract",
+            "jobId": job.id,
+            "kind": "kafka_continuous_replay",
+            "runId": pending_replay_run_id,
+            "sourceRanges": pending_replay_ranges,
+        }
+        pending_replay_result = {
+            "catalogApplied": False,
+            "endedAt": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            "icebergCommit": {
+                **replay_result["icebergCommit"],
+                "runId": pending_replay_run_id,
+                "snapshotId": "2002",
+                "sourceBoundary": pending_replay_boundary,
+            },
+            "outputPath": job.iceberg_target["tableUri"],
+            "manifestPath": f"{job.storage_path.rstrip('/')}/_replay-manifests/run_id={pending_replay_run_id}",
+            "ruleContractVersion": compiled_job_rules.result.contract_version,
+            "ruleFingerprint": persisted_rule_fingerprint,
+            "runId": pending_replay_run_id,
+            "sourceBoundary": pending_replay_boundary,
+            "sourceRanges": pending_replay_ranges,
+            "storedCount": 1,
+        }
+        failed_replay_run = KafkaContinuousMaintenanceRunModel(
+            run_id=pending_replay_run_id,
+            job_id=job.id,
+            kind="quarantine_replay",
+            status="failed",
+            requested_by="contract-test",
+            config={},
+            result=pending_replay_result,
+            last_error="temporary PostgreSQL failure",
+        )
+        stored_count_before_recovery = int(runtime.stored_count or 0)
+        replayed_count_before_recovery = int((runtime.metrics or {}).get("replayedCount") or 0)
+        saved_replay_runs = []
+        etl_repository.list_failed_kafka_continuous_replay_models = lambda _db, _job_id: [failed_replay_run]
+        etl_repository.save_kafka_continuous_maintenance_run = (
+            lambda _db, run: saved_replay_runs.append(run) or run
+        )
+        etl_service.reconcile_pending_continuous_replay_catalog(fake_db, job)
+        assert revision_commits[pending_replay_run_id]["revision"] == 4
+        assert latest_revision_by_dataset[dataset_id] == 4
+        assert failed_replay_run.status == "success"
+        assert failed_replay_run.result["catalogApplied"] is True
+        assert failed_replay_run.result["countersApplied"] is True
+        assert failed_replay_run.last_error is None
+        assert runtime.stored_count == stored_count_before_recovery + 1
+        assert runtime.metrics["replayedCount"] == replayed_count_before_recovery + 1
+        assert saved_replay_runs == [failed_replay_run]
+        runtime.stored_count = stored_count_before_recovery
+        runtime.metrics = {
+            **(runtime.metrics or {}),
+            "replayedCount": replayed_count_before_recovery,
+        }
 
         with tempfile.TemporaryDirectory() as report_dir:
             previous_report_dir = os.environ.get("ASKLAKE_SPARK_REPORT_DIR")
@@ -843,7 +972,9 @@ def main() -> None:
         etl_service.DashboardLiveRepository = original_live_repository
         etl_service.save_catalog_dataset_and_revision = original_catalog_revision_save
         etl_service.backfill_catalog_revision = original_catalog_revision_backfill
+        etl_service.verify_continuous_publication_storage = original_publication_storage_verify
         etl_repository.list_kafka_continuous_maintenance_run_models = original_maintenance_list
+        etl_repository.list_failed_kafka_continuous_replay_models = original_failed_replay_list
         etl_repository.save_kafka_continuous_maintenance_run = original_maintenance_save
         etl_service.cleanup_kafka_continuous_maintenance = original_maintenance_cleanup
         etl_service.sync_kafka_continuous_session = original_session_sync

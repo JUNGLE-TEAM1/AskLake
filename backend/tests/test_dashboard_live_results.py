@@ -167,9 +167,12 @@ class FakeLiveRepository:
         return SimpleNamespace(calculated_at=datetime(2026, 7, 14, 1, 2, 3, tzinfo=UTC))
 
 
-def render_live_widget(service: DashboardRuntimeService):
+def render_live_widget(
+    service: DashboardRuntimeService,
+    widget: SimpleNamespace | None = None,
+):
     return service._widget_to_schema(
-        runtime_widget(),
+        widget or runtime_widget(),
         {},
         {},
         {},
@@ -420,6 +423,56 @@ class DashboardLiveRuntimeTests(unittest.TestCase):
         self.assertEqual(len(live_repository.save_calls), 1)
         self.assertEqual(live_repository.save_calls[0]["applied_revision"], 2)
         self.assertEqual(live_repository.save_calls[0]["calculation_mode"], "incremental")
+
+    def test_min_and_max_use_full_recalculation_instead_of_delta_merge(self) -> None:
+        for aggregation in ("min", "max"):
+            with self.subTest(aggregation=aggregation):
+                current_state = aggregate_state([{
+                    "category": "A",
+                    "__asklake_state_count": 1,
+                    "__asklake_state_sum": 10.0,
+                    "__asklake_state_min": 10.0,
+                    "__asklake_state_max": 10.0,
+                }], aggregation=aggregation)
+                full_state = aggregate_state([{
+                    "category": "A",
+                    "__asklake_state_count": 2,
+                    "__asklake_state_sum": 15.0,
+                    "__asklake_state_min": 5.0,
+                    "__asklake_state_max": 10.0,
+                }], aggregation=aggregation)
+                live_repository = FakeLiveRepository(
+                    latest_revision=2,
+                    saved_result=self.saved_result(applied_revision=1, state=current_state),
+                    commits=[SimpleNamespace(
+                        materialization_mode="delta",
+                        revision=2,
+                        row_count=1,
+                        run_id="run-2",
+                        storage_format="parquet",
+                        storage_location="s3a://asklake-output/live/_batches/batch_id=2",
+                    )],
+                )
+                service = self.service(live_repository)
+                full_result = dashboard_result_from_aggregate_state(full_state)
+
+                with patch.object(
+                    service,
+                    "_incremental_widget_result",
+                    side_effect=AssertionError("min/max must not use incremental merge"),
+                ), patch.object(
+                    service,
+                    "_full_widget_result",
+                    return_value=(full_result, full_state),
+                ) as full_calculation:
+                    response = render_live_widget(
+                        service,
+                        runtime_widget(widget_config(aggregation)),
+                    )
+
+                full_calculation.assert_called_once()
+                self.assertEqual(response.applied_revision, 2)
+                self.assertEqual(live_repository.save_calls[0]["calculation_mode"], "full")
 
     def test_refresh_failure_keeps_the_last_saved_result_and_revision(self) -> None:
         state = aggregate_state([{

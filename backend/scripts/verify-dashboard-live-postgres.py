@@ -1,13 +1,16 @@
 import os
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from uuid import uuid4
 
-from sqlalchemy import delete, inspect
+from sqlalchemy import delete, func, inspect, select
 
 from app.core.database import SessionLocal
 from app.models.catalog import CatalogDatasetModel
 from app.models.dashboard_live import (
     DashboardWidgetResultModel,
     DatasetFreshnessModel,
+    DatasetKafkaPartitionCursorModel,
     DatasetRevisionCommitModel,
 )
 from app.repositories.catalog_repository import CatalogRepository
@@ -26,6 +29,7 @@ def main() -> None:
 
     suffix = uuid4().hex[:12]
     dataset_id = f"verify_live_{suffix}"
+    concurrent_dataset_id = f"verify_live_concurrent_{suffix}"
     run_id = f"continuous:verify:{suffix}:batch:1"
     widget_id = f"verify_widget_{suffix}"
     with SessionLocal() as db:
@@ -46,6 +50,7 @@ def main() -> None:
                         "status": "success",
                         "storageFormat": "parquet",
                         "storageLocation": "s3a://verify-live/batch_id=1",
+                        "publicationManifest": "s3a://verify-live/_manifests/batch_id=1.json",
                     }],
                 },
             )
@@ -64,6 +69,7 @@ def main() -> None:
                     "startOffset": 10,
                     "topic": "verify.live",
                 }],
+                manifest_location="s3a://verify-live/_manifests/batch_id=1.json",
             )
             repeated = save_catalog_dataset_and_revision(
                 db,
@@ -80,8 +86,48 @@ def main() -> None:
                     "startOffset": 10,
                     "topic": "verify.live",
                 }],
+                manifest_location="s3a://verify-live/_manifests/batch_id=1.json",
+            )
+            repeated_offsets = save_catalog_dataset_and_revision(
+                db,
+                dataset,
+                run_id=f"{run_id}:duplicate-report",
+                storage_location="s3a://verify-live/batch_id=duplicate-report",
+                storage_format="parquet",
+                materialization_mode="delta",
+                row_count=3,
+                next_check_after_ms=5_000,
+                source_ranges=[{
+                    "topic": "verify.live",
+                    "partition": 0,
+                    "startOffset": 10,
+                    "endOffset": 13,
+                }],
+                manifest_location="s3a://verify-live/_manifests/batch_id=duplicate-report.json",
             )
             repository = DashboardLiveRepository(db, ensure_schema=False)
+            try:
+                repository.record_dataset_commit(
+                    dataset_id=dataset_id,
+                    run_id=f"{run_id}:overlap",
+                    storage_location="s3a://verify-live/batch_id=overlap",
+                    storage_format="parquet",
+                    materialization_mode="delta",
+                    row_count=2,
+                    next_check_after_ms=5_000,
+                    source_ranges=[{
+                        "topic": "verify.live",
+                        "partition": 0,
+                        "startOffset": 12,
+                        "endOffset": 14,
+                    }],
+                    commit_kind="stream",
+                    manifest_location="s3a://verify-live/_manifests/batch_id=overlap.json",
+                )
+            except ValueError as error:
+                assert "partition watermark" in str(error)
+            else:
+                raise AssertionError("Partially overlapping stream offsets must be rejected.")
             repository.save_widget_result(
                 widget_id=widget_id,
                 calculation_version="a" * 64,
@@ -98,21 +144,70 @@ def main() -> None:
             expected_tables = {
                 "dashboard_widget_results",
                 "dataset_freshness",
+                "dataset_kafka_partition_cursors",
                 "dataset_revision_commits",
             }
             existing_tables = expected_tables.intersection(inspect(db.get_bind()).get_table_names())
             assert existing_tables == expected_tables
-            assert first.revision == repeated.revision == 1
+            assert first.revision == repeated.revision == repeated_offsets.revision == 1
             assert first.source_ranges[0]["startOffset"] == 10
+            assert first.source_fingerprint and len(first.source_fingerprint) == 64
+            assert first.manifest_location == "s3a://verify-live/_manifests/batch_id=1.json"
             assert freshness is not None and freshness.latest_revision == 1
+            cursor = repository.stream_partition_cursor(dataset_id, "verify.live", 0)
+            assert cursor is not None and cursor.next_offset == 13 and cursor.updated_revision == 1
             assert result is not None and result.applied_revision == 1
+
+            start_together = Barrier(2)
+
+            def publish_same_offsets(index: int) -> int:
+                with SessionLocal() as concurrent_db:
+                    concurrent_dataset = CatalogDatasetModel(
+                        id=concurrent_dataset_id,
+                        name=concurrent_dataset_id,
+                        payload={"id": concurrent_dataset_id, "name": concurrent_dataset_id},
+                    )
+                    start_together.wait(timeout=10)
+                    concurrent_commit = save_catalog_dataset_and_revision(
+                        concurrent_db,
+                        concurrent_dataset,
+                        run_id=f"continuous:verify:{suffix}:concurrent:{index}",
+                        storage_location=f"s3a://verify-live/concurrent/batch_id={index}",
+                        storage_format="parquet",
+                        materialization_mode="delta",
+                        row_count=3,
+                        next_check_after_ms=5_000,
+                        source_ranges=[{
+                            "topic": "verify.concurrent",
+                            "partition": 0,
+                            "startOffset": 100,
+                            "endOffset": 103,
+                        }],
+                        manifest_location=f"s3a://verify-live/concurrent/_manifests/batch_id={index}.json",
+                    )
+                    return int(concurrent_commit.revision)
+
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                concurrent_revisions = list(executor.map(publish_same_offsets, (1, 2)))
+            db.expire_all()
+            concurrent_commit_count = db.scalar(
+                select(func.count()).select_from(DatasetRevisionCommitModel).where(
+                    DatasetRevisionCommitModel.dataset_id == concurrent_dataset_id
+                )
+            )
+            concurrent_freshness = db.get(DatasetFreshnessModel, concurrent_dataset_id)
+            assert concurrent_revisions == [1, 1]
+            assert concurrent_commit_count == 1
+            assert concurrent_freshness is not None and concurrent_freshness.latest_revision == 1
             print("verify-dashboard-live-postgres: ok")
         finally:
             db.rollback()
             db.execute(delete(DashboardWidgetResultModel).where(DashboardWidgetResultModel.widget_id == widget_id))
-            db.execute(delete(DatasetRevisionCommitModel).where(DatasetRevisionCommitModel.dataset_id == dataset_id))
-            db.execute(delete(DatasetFreshnessModel).where(DatasetFreshnessModel.dataset_id == dataset_id))
-            db.execute(delete(CatalogDatasetModel).where(CatalogDatasetModel.id == dataset_id))
+            cleanup_dataset_ids = [dataset_id, concurrent_dataset_id]
+            db.execute(delete(DatasetKafkaPartitionCursorModel).where(DatasetKafkaPartitionCursorModel.dataset_id.in_(cleanup_dataset_ids)))
+            db.execute(delete(DatasetRevisionCommitModel).where(DatasetRevisionCommitModel.dataset_id.in_(cleanup_dataset_ids)))
+            db.execute(delete(DatasetFreshnessModel).where(DatasetFreshnessModel.dataset_id.in_(cleanup_dataset_ids)))
+            db.execute(delete(CatalogDatasetModel).where(CatalogDatasetModel.id.in_(cleanup_dataset_ids)))
             db.commit()
 
 
