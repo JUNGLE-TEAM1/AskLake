@@ -585,6 +585,14 @@ bash scripts/verify-eks-image-delivery.sh
 
 실제 ECR push는 GitHub의 `EKS image delivery` workflow를 수동 실행한다. 먼저 선택한 environment에 region, OIDC image role ARN, Frontend output bucket variable을 등록하고 foundation Terraform이 만든 다섯 repository가 존재하는지 확인한다. 성공 artifact의 receipt는 `node scripts/verify-eks-image-receipt.mjs <path>`로 재검증한 뒤 Phase 5 handoff의 image 값으로 사용한다. 장기 AWS access key를 GitHub Secret이나 repository에 추가하지 않는다. 세부 실행 gate는 [Phase 6 ECR Image Delivery](eks-phase-6-image-delivery.md)를 따른다.
 
+Phase 7 network/ingress를 변경하면 아래 검증을 실행한다. 기본 values는 Ingress를 렌더링하지 않아야 하고, enabled values는 controller owner, exposure, target type, host와 ACM certificate가 모두 있어야 한다. 실제 identifier가 들어간 values는 example 파일에 저장하지 않는다.
+
+```bash
+bash scripts/verify-eks-network-ingress.sh
+```
+
+`phase7_network_handoff.ready_for_ingress_render`는 ALB manifest를 만들 수 있다는 뜻이고 `decisions_complete`는 private egress와 Pod traffic enforcement 선택까지 끝났다는 뜻이다. 둘 다 실제 network 동작 성공을 의미하지 않는다. 실제 적용 전 server-side dry-run과 controller/CNI owner 확인이 필요하며, 적용 후 `/`, `/api/health`, RDS, MSK, ECR/S3/STS의 positive smoke와 차단 대상 negative smoke를 실행한다. 상세 선택 기준은 [Phase 7 Network와 ALB Ingress 계약](eks-phase-7-network-ingress.md)을 따른다.
+
 ```bash
 docker run --rm --entrypoint sh \
   -v "$PWD/infra/eks/terraform:/workspace" \

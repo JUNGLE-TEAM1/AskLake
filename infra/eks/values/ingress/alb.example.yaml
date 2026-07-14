@@ -1,0 +1,22 @@
+enabled: true
+namespace: asklake-dev
+controllerReady: true
+controllerOwner: platform-team
+ingressClassName: alb
+exposure: internet-facing
+targetType: ip
+groupName: asklake-dev
+host: asklake.example.invalid
+certificateArn: arn:aws:acm:ap-northeast-2:000000000000:certificate/00000000-0000-0000-0000-000000000000
+
+services:
+  frontend:
+    name: frontend
+    type: ClusterIP
+    port: 80
+    healthPath: /
+  backend:
+    name: fastapi
+    type: ClusterIP
+    port: 8080
+    healthPath: /api/health

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: asklake-ingress
+description: Fail-closed AWS ALB ingress contract for AskLake EKS
+type: application
+version: 0.1.0
+appVersion: "phase7"

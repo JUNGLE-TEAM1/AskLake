@@ -172,6 +172,104 @@ run "workload_repository_contract" {
   }
 }
 
+run "network_ingress_defaults_fail_closed" {
+  command = plan
+
+  variables {
+    environment             = "dev"
+    owner                   = "pair-a"
+    resource_lifecycle      = "external"
+    cluster_mode            = "existing"
+    existing_cluster_name   = "shared-dev"
+    create_ecr_repositories = false
+  }
+
+  assert {
+    condition     = output.phase7_network_handoff.ingress.mode == "disabled"
+    error_message = "ALB ingress must be disabled by default."
+  }
+
+  assert {
+    condition     = !output.phase7_network_handoff.ready_for_ingress_render
+    error_message = "default network inputs must not be render-ready."
+  }
+
+  assert {
+    condition     = !output.phase7_network_handoff.decisions_complete
+    error_message = "default private network decisions must remain incomplete."
+  }
+}
+
+run "reviewed_network_ingress_handoff" {
+  command = plan
+
+  variables {
+    environment             = "dev"
+    owner                   = "pair-a"
+    resource_lifecycle      = "external"
+    cluster_mode            = "existing"
+    existing_cluster_name   = "shared-dev"
+    create_ecr_repositories = false
+
+    ingress_mode            = "alb"
+    alb_controller_ready    = true
+    alb_controller_owner    = "platform-team"
+    alb_exposure            = "internet-facing"
+    alb_target_type         = "ip"
+    ingress_host            = "asklake.example.invalid"
+    ingress_certificate_arn = "arn:aws:acm:ap-northeast-2:111122223333:certificate/00000000-0000-0000-0000-000000000000"
+    private_egress_mode     = "hybrid"
+    pod_network_enforcement = "both"
+  }
+
+  assert {
+    condition     = output.phase7_network_handoff.ready_for_ingress_render
+    error_message = "reviewed ALB inputs must become render-ready without creating an ALB in Terraform."
+  }
+
+  assert {
+    condition     = output.phase7_network_handoff.decisions_complete
+    error_message = "reviewed ingress and private network choices must complete the network handoff."
+  }
+
+  assert {
+    condition     = output.phase7_network_handoff.ingress.routes.backend.health_path == "/api/health"
+    error_message = "backend ALB target group must keep its real health endpoint."
+  }
+}
+
+run "reject_partial_alb_contract" {
+  command = plan
+
+  variables {
+    environment             = "dev"
+    owner                   = "pair-a"
+    resource_lifecycle      = "external"
+    cluster_mode            = "existing"
+    existing_cluster_name   = "shared-dev"
+    create_ecr_repositories = false
+    ingress_mode            = "alb"
+  }
+
+  expect_failures = [check.alb_ingress_contract]
+}
+
+run "reject_disabled_ingress_runtime_values" {
+  command = plan
+
+  variables {
+    environment             = "dev"
+    owner                   = "pair-a"
+    resource_lifecycle      = "external"
+    cluster_mode            = "existing"
+    existing_cluster_name   = "shared-dev"
+    create_ecr_repositories = false
+    alb_exposure            = "internal"
+  }
+
+  expect_failures = [check.disabled_ingress_has_no_runtime_values]
+}
+
 run "mvp_data_plane_contract" {
   command = apply
 

@@ -1,0 +1,53 @@
+{{- if .Values.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: asklake-backend
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "asklake-ingress.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+  annotations:
+    {{- include "asklake-ingress.annotations" . | nindent 4 }}
+    alb.ingress.kubernetes.io/group.order: "10"
+    alb.ingress.kubernetes.io/healthcheck-path: {{ .Values.services.backend.healthPath | quote }}
+spec:
+  ingressClassName: {{ .Values.ingressClassName }}
+  rules:
+    - host: {{ .Values.host | quote }}
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Values.services.backend.name }}
+                port:
+                  number: {{ .Values.services.backend.port }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: asklake-frontend
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "asklake-ingress.labels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+  annotations:
+    {{- include "asklake-ingress.annotations" . | nindent 4 }}
+    alb.ingress.kubernetes.io/group.order: "20"
+    alb.ingress.kubernetes.io/healthcheck-path: {{ .Values.services.frontend.healthPath | quote }}
+spec:
+  ingressClassName: {{ .Values.ingressClassName }}
+  rules:
+    - host: {{ .Values.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Values.services.frontend.name }}
+                port:
+                  number: {{ .Values.services.frontend.port }}
+{{- end }}

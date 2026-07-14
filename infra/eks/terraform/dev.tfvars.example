@@ -97,3 +97,19 @@ irsa_oidc_provider_arn = null
 # Pod Identity can be selected only after the platform owner confirms that the
 # EKS Pod Identity Agent is installed and managed.
 pod_identity_agent_ready = false
+
+# Phase 7 ingress and private networking remain fail-closed until the actual
+# VPC, controller ownership, DNS/ACM and egress cost review is complete.
+ingress_mode            = "disabled"
+alb_controller_ready    = false
+alb_controller_owner    = null
+alb_exposure            = null
+alb_target_type         = null
+ingress_host            = null
+ingress_certificate_arn = null
+
+# Study NAT Gateway versus VPC endpoints and the cluster CNI enforcement
+# capabilities before replacing these values. Terraform does not install or
+# take ownership of shared networking add-ons in this phase.
+private_egress_mode    = "undecided"
+pod_network_enforcement = "undecided"

@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "enabled",
+    "namespace",
+    "controllerReady",
+    "controllerOwner",
+    "ingressClassName",
+    "exposure",
+    "targetType",
+    "groupName",
+    "host",
+    "certificateArn",
+    "services"
+  ],
+  "properties": {
+    "enabled": { "type": "boolean" },
+    "namespace": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" },
+    "controllerReady": { "type": "boolean" },
+    "controllerOwner": { "type": "string" },
+    "ingressClassName": { "type": "string", "const": "alb" },
+    "exposure": { "type": "string", "enum": ["", "internal", "internet-facing"] },
+    "targetType": { "type": "string", "enum": ["", "ip", "instance"] },
+    "groupName": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" },
+    "host": { "type": "string" },
+    "certificateArn": { "type": "string" },
+    "services": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["frontend", "backend"],
+      "properties": {
+        "frontend": { "$ref": "#/$defs/service" },
+        "backend": { "$ref": "#/$defs/service" }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "enabled": { "const": true } } },
+      "then": {
+        "properties": {
+          "controllerReady": { "const": true },
+          "controllerOwner": { "type": "string", "minLength": 1 },
+          "exposure": { "type": "string", "enum": ["internal", "internet-facing"] },
+          "targetType": { "type": "string", "enum": ["ip", "instance"] },
+          "host": {
+            "type": "string",
+            "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$"
+          },
+          "certificateArn": {
+            "type": "string",
+            "pattern": "^arn:(aws|aws-us-gov|aws-cn):acm:[a-z0-9-]+:[0-9]{12}:certificate/[0-9a-f-]+$"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "controllerReady": { "const": false },
+          "controllerOwner": { "maxLength": 0 },
+          "exposure": { "const": "" },
+          "targetType": { "const": "" },
+          "host": { "maxLength": 0 },
+          "certificateArn": { "maxLength": 0 }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "enabled": { "const": true },
+          "targetType": { "const": "instance" }
+        }
+      },
+      "then": {
+        "properties": {
+          "services": {
+            "properties": {
+              "frontend": { "properties": { "type": { "const": "NodePort" } } },
+              "backend": { "properties": { "type": { "const": "NodePort" } } }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "type", "port", "healthPath"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" },
+        "type": { "type": "string", "enum": ["ClusterIP", "NodePort"] },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "healthPath": { "type": "string", "pattern": "^/" }
+      }
+    }
+  }
+}

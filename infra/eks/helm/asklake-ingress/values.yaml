@@ -1,0 +1,22 @@
+enabled: false
+namespace: asklake-dev
+controllerReady: false
+controllerOwner: ""
+ingressClassName: alb
+exposure: ""
+targetType: ""
+groupName: asklake-dev
+host: ""
+certificateArn: ""
+
+services:
+  frontend:
+    name: frontend
+    type: ClusterIP
+    port: 80
+    healthPath: /
+  backend:
+    name: fastapi
+    type: ClusterIP
+    port: 8080
+    healthPath: /api/health
