@@ -208,12 +208,12 @@ expect_preflight_pass 'valid production environment passes'
 write_valid_aws_env "$ENV_FILE"
 if output="$(run_preflight "$ROOT_DIR/deploy/docker-compose.prod.yml" 2>&1)"; then
   if [[ "$output" == *"$SECRET_SENTINEL"* ]]; then
-    record_fail 'actual production Compose passes preflight (secret appeared in output)'
+    record_fail 'Trino-disabled production Compose does not require Iceberg variables (secret appeared in output)'
   else
-    record_pass 'actual production Compose passes preflight'
+    record_pass 'Trino-disabled production Compose does not require Iceberg variables'
   fi
 else
-  record_fail 'actual production Compose passes preflight (unexpected failure)'
+  record_fail 'Trino-disabled production Compose does not require Iceberg variables (unexpected failure)'
 fi
 
 write_valid_trino_aws_env "$ENV_FILE"
