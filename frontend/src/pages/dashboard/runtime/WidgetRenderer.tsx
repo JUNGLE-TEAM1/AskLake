@@ -48,7 +48,7 @@ type RuntimeChartWidgetProps<Type extends DashboardRuntimeWidget["type"]> = {
 };
 
 const fallbackChartColors = ["#2563eb", "#16a34a", "#f59e0b", "#dc2626", "#7c3aed", "#0891b2"];
-const DASHBOARD_CHART_ANIMATION_MS = 180;
+const DASHBOARD_CHART_ANIMATION_MS = 600;
 const aggregationLabels: Record<DashboardWidgetAggregation, string> = {
   avg: "평균",
   count: "개수",
@@ -1045,9 +1045,22 @@ function BarChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetProps<"
       type: "bar",
     },
     colors,
+    dataLabels: {
+      enabled: true,
+      formatter: (value: number) => value === 0 ? "" : formatAxisNumber(value),
+      offsetY: -5,
+      style: {
+        colors: ["#334155"],
+        fontSize: "11px",
+        fontWeight: 800,
+      },
+    },
     plotOptions: {
       bar: {
         borderRadius: 5,
+        dataLabels: {
+          position: "top",
+        },
         horizontal: widget.config.orientation === "horizontal",
         columnWidth: "48%",
       },

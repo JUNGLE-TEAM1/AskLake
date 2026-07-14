@@ -1,8 +1,11 @@
 import { createReadStream, existsSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline";
 import path from "node:path";
 import { createGunzip } from "node:zlib";
 import { fileURLToPath } from "node:url";
+
+import { decorateReplayRecord } from "./kafka-replay-record.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const defaultFixturePath = path.resolve(scriptDir, "../fixtures/kafka/amazon-review-fixture.jsonl");
@@ -27,6 +30,7 @@ const rate = positiveInteger(options.rate ?? process.env.ASKLAKE_REVIEW_REPLAY_R
 const batchSize = positiveInteger(options.batchSize ?? process.env.ASKLAKE_REVIEW_REPLAY_BATCH_SIZE, "batch-size") || 100;
 const progressEvery = positiveInteger(options.progressEvery ?? process.env.ASKLAKE_REVIEW_REPLAY_PROGRESS_EVERY, "progress-every") || 1000;
 const loop = options.loop ?? process.env.ASKLAKE_REVIEW_REPLAY_LOOP === "true";
+const replayRunId = loop ? randomUUID() : null;
 const maxCycles = positiveInteger(options.maxCycles ?? process.env.ASKLAKE_REVIEW_REPLAY_MAX_CYCLES, "max-cycles");
 const maxMessages = positiveInteger(options.maxMessages ?? process.env.ASKLAKE_REVIEW_REPLAY_MAX_MESSAGES, "max-messages");
 const cycleDelayMs = nonnegativeInteger(options.cycleDelayMs ?? process.env.ASKLAKE_REVIEW_REPLAY_CYCLE_DELAY_MS, "cycle-delay-ms") || 0;
@@ -116,7 +120,7 @@ async function produceRecords(producerClient) {
       let sourceRecords = 0;
       for await (const baseRecord of readStandardReviewRecords()) {
         if (stopRequested || (maxMessages && sentRecords + batch.length >= maxMessages) || (cycleTarget && recordsInCycle >= cycleTarget)) break;
-        const record = decorateReplayRecord(baseRecord, cycle, sentRecords + batch.length + 1);
+        const record = decorateReplayRecord(baseRecord, cycle, sentRecords + batch.length + 1, { loop, replayRunId });
         batch.push({ key: record.event_id, value: JSON.stringify(record) });
         recordsInCycle += 1;
         sourceRecords += 1;
@@ -159,15 +163,6 @@ function logProgress(sentRecords, lastProgressAt, force = false, cycle = 1) {
   if (!force && sentRecords - lastProgressAt < progressEvery) return lastProgressAt;
   console.log(`Review Kafka replay progress: ${sentRecords.toLocaleString()} messages sent (cycle ${cycle})`);
   return sentRecords;
-}
-
-function decorateReplayRecord(record, cycle, streamOffset) {
-  if (!loop) return record;
-  return {
-    ...record,
-    event_id: `${record.event_id}--cycle-${String(cycle).padStart(6, "0")}--offset-${streamOffset}`,
-    offset: streamOffset,
-  };
 }
 
 async function* readStandardReviewRecords() {
