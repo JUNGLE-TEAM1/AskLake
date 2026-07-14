@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 export const AWS_STAGING_RUNTIME_SCHEMA = "asklake.aws-staging-runtime.v1";
+const EMR_JAR_BUNDLE_SCHEMA = "asklake.emr-continuous-jar-bundle.v1";
 
 const BUCKET_KINDS = Object.freeze(["artifact", "checkpoint", "output", "report"]);
 const AWS_REGION_PATTERN = /^[a-z]{2}(?:-gov)?-[a-z]+-\d$/;
@@ -177,6 +178,64 @@ export function renderAwsStagingRuntime(terraformOutput, phaseContract) {
   });
 }
 
+export function activateAwsStagingContinuousRuntime(envText, runtimeManifestValue, jarManifestValue) {
+  const environment = parseEnvironment(envText);
+  const runtimeManifest = structuredClone(requiredObject(runtimeManifestValue, "AWS staging Runtime manifest"));
+  const jarManifest = requiredObject(jarManifestValue, "EMR JAR bundle manifest");
+  if (runtimeManifest.schemaVersion !== AWS_STAGING_RUNTIME_SCHEMA) fail("AWS staging Runtime manifest schema is invalid.");
+  if (runtimeManifest.activation?.runtimePromotionAllowed !== false) fail("AWS staging Runtime promotion boundary is invalid.");
+  if (jarManifest.schemaVersion !== EMR_JAR_BUNDLE_SCHEMA) fail("EMR JAR bundle manifest schema is invalid.");
+  if (jarManifest.artifactRootUri !== environment.ASKLAKE_EMR_SERVERLESS_ARTIFACT_URI) {
+    fail("EMR JAR bundle does not match the staging artifact root.");
+  }
+  if (!/^[a-f0-9]{64}$/.test(String(jarManifest.bundleSha256 || ""))) fail("EMR JAR bundle checksum is invalid.");
+  if (!Array.isArray(jarManifest.jars) || jarManifest.jars.length === 0 || jarManifest.jarCount !== jarManifest.jars.length) {
+    fail("EMR JAR bundle entries are invalid.");
+  }
+  const expectedRoot = `${jarManifest.artifactRootUri}/dependencies/${jarManifest.bundleSha256}`;
+  if (jarManifest.bundleRootUri !== expectedRoot || jarManifest.manifestUri !== `${expectedRoot}/bundle.json`) {
+    fail("EMR JAR bundle immutable prefix is invalid.");
+  }
+  const uris = [];
+  for (const jar of jarManifest.jars) {
+    if (!/^[a-f0-9]{64}$/.test(String(jar?.sha256 || ""))
+      || !Number.isSafeInteger(jar?.sizeBytes) || jar.sizeBytes <= 0
+      || jar.uri !== `${expectedRoot}/${jar.fileName}`
+      || !/^[A-Za-z0-9][A-Za-z0-9._+-]*\.jar$/.test(String(jar.fileName || ""))) {
+      fail("EMR JAR bundle entry is invalid.");
+    }
+    uris.push(jar.uri);
+  }
+  if (!uris.some((uri) => /spark-sql-kafka-0-10_2\.12-3\.5\.5\.jar$/.test(uri))
+    || !uris.some((uri) => /aws-msk-iam-auth-2\.3\.6\.jar$/.test(uri))) {
+    fail("EMR JAR bundle direct dependencies are incomplete.");
+  }
+
+  environment.ASKLAKE_EMR_SERVERLESS_CONTINUOUS_ENABLED = "true";
+  environment.ASKLAKE_EMR_SERVERLESS_CONTINUOUS_JAR_URIS = uris.join(",");
+  const activatedEnvText = serializeEnvironment(environment, true);
+  runtimeManifest.activation = {
+    batchConfigured: true,
+    continuousConfigured: true,
+    pending: [],
+    runtimePromotionAllowed: false,
+  };
+  runtimeManifest.runtime.spark.artifacts = {
+    bundleManifestUri: jarManifest.manifestUri,
+    bundleSha256: jarManifest.bundleSha256,
+    jarCount: jarManifest.jarCount,
+  };
+  runtimeManifest.env = {
+    keyCount: Object.keys(environment).length,
+    sha256: sha256(activatedEnvText),
+  };
+  return Object.freeze({
+    envText: activatedEnvText,
+    environment: Object.freeze({ ...environment }),
+    manifest: Object.freeze(runtimeManifest),
+  });
+}
+
 function validateInfrastructure(value, contract) {
   const infrastructure = requiredObject(value, "Infrastructure contract");
   const capacity = requiredObject(infrastructure.emr_capacity, "EMR capacity contract");
@@ -268,10 +327,12 @@ function terraformOutputValue(outputs, name, expectedSensitive) {
   return wrapper.value;
 }
 
-function serializeEnvironment(environment) {
+function serializeEnvironment(environment, continuousReady = false) {
   const lines = [
     "# Generated from Terraform output. Do not commit or print this file.",
-    "# Continuous remains disabled until Phase 3 uploads and verifies the immutable JAR bundle.",
+    continuousReady
+      ? "# Continuous dependency bundle was checksum-verified before activation."
+      : "# Continuous remains disabled until Phase 3 uploads and verifies the immutable JAR bundle.",
   ];
   for (const name of Object.keys(environment).sort()) {
     const value = String(environment[name]);
@@ -281,6 +342,30 @@ function serializeEnvironment(environment) {
     lines.push(`${name}=${value}`);
   }
   return `${lines.join("\n")}\n`;
+}
+
+function parseEnvironment(text) {
+  const environment = {};
+  for (const line of String(text || "").split(/\r?\n/)) {
+    if (!line || line.startsWith("#")) continue;
+    const separator = line.indexOf("=");
+    if (separator <= 0) fail("AWS staging Runtime env is invalid.");
+    const name = line.slice(0, separator);
+    const value = line.slice(separator + 1);
+    if (!/^[A-Z][A-Z0-9_]*$/.test(name) || Object.hasOwn(environment, name)
+      || /[\r\n\0]/.test(value) || !ENV_VALUE_PATTERN.test(value)) {
+      fail("AWS staging Runtime env is invalid.");
+    }
+    environment[name] = value;
+  }
+  for (const name of [
+    "ASKLAKE_EMR_SERVERLESS_ARTIFACT_URI",
+    "ASKLAKE_EMR_SERVERLESS_CONTINUOUS_ENABLED",
+    "ASKLAKE_MSK_BOOTSTRAP_BROKERS",
+  ]) {
+    if (!Object.hasOwn(environment, name)) fail("AWS staging Runtime env is incomplete.");
+  }
+  return environment;
 }
 
 function requiredObject(value, name) {

@@ -1,0 +1,284 @@
+name: AWS Staging Plan Apply
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: "plan은 변경 없음, apply는 보호 Environment 승인 뒤 실행"
+        required: true
+        type: choice
+        options:
+          - plan
+          - apply
+        default: plan
+      stack_id:
+        description: "격리할 3~16자 staging stack ID"
+        required: true
+        type: string
+      ttl_hours:
+        description: "stack TTL(1~24시간)"
+        required: true
+        type: number
+        default: 8
+      confirmation:
+        description: "apply일 때만 apply:<stack_id>, plan은 비움"
+        required: false
+        type: string
+      enable_smoke_runner:
+        description: "승인된 private SSM runner 생성"
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: asklake-aws-staging-${{ inputs.stack_id }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-northeast-2
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+
+jobs:
+  plan:
+    name: Terraform plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      expires_at: ${{ steps.prepare.outputs.expires_at }}
+      stack_id: ${{ steps.prepare.outputs.stack_id }}
+
+    steps:
+      - name: Checkout exact workflow commit
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22.23.1"
+          package-manager-cache: false
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "1.15.8"
+          terraform_wrapper: false
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci --ignore-scripts
+
+      - name: Verify repository-side AWS staging contracts
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          npm run verify:aws-staging-contract
+          npm run verify:aws-staging-runtime
+          npm run verify:aws-staging-workflows
+
+      - name: Configure short-lived AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_GITHUB_OIDC_ROLE_ARN }}
+          role-session-name: asklake-staging-plan-${{ github.run_id }}
+          aws-region: ap-northeast-2
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          mask-aws-account-id: true
+          unset-current-credentials: true
+
+      - name: Verify AWS account and read actual EMR quota
+        env:
+          EXPECTED_AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          actual_account_id="$(aws sts get-caller-identity --query Account --output text)"
+          test "$actual_account_id" = "$EXPECTED_AWS_ACCOUNT_ID"
+          aws service-quotas list-service-quotas \
+            --service-code emr-serverless \
+            --region "$AWS_REGION" \
+            --output json \
+            > "$RUNNER_TEMP/emr-quotas.json"
+          quota="$(node backend/scripts/prepare-aws-staging-terraform-inputs.mjs --extract-quota < "$RUNNER_TEMP/emr-quotas.json")"
+          printf 'AWS_EMR_SERVERLESS_CONCURRENT_VCPU=%s\n' "$quota" >> "$GITHUB_ENV"
+
+      - name: Prepare private Terraform inputs
+        id: prepare
+        env:
+          AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          AWS_BUDGET_NOTIFICATION_EMAIL: ${{ secrets.AWS_BUDGET_NOTIFICATION_EMAIL }}
+          AWS_GITHUB_OIDC_ROLE_ARN: ${{ vars.AWS_GITHUB_OIDC_ROLE_ARN }}
+          AWS_STAGING_CONFIRMATION: ${{ inputs.confirmation }}
+          AWS_STAGING_ENABLE_SMOKE_RUNNER: ${{ inputs.enable_smoke_runner }}
+          AWS_STAGING_OPERATION: ${{ inputs.operation }}
+          AWS_STAGING_SMOKE_RUNNER_AMI_ID: ${{ vars.AWS_STAGING_SMOKE_RUNNER_AMI_ID }}
+          AWS_STAGING_STACK_ID: ${{ inputs.stack_id }}
+          AWS_STAGING_TTL_HOURS: ${{ inputs.ttl_hours }}
+          AWS_TERRAFORM_STATE_BUCKET: ${{ vars.AWS_TERRAFORM_STATE_BUCKET }}
+          AWS_TERRAFORM_STATE_KMS_KEY_ARN: ${{ vars.AWS_TERRAFORM_STATE_KMS_KEY_ARN }}
+        run: |
+          set -euo pipefail
+          node backend/scripts/prepare-aws-staging-terraform-inputs.mjs \
+            --backend-file "$RUNNER_TEMP/backend.hcl" \
+            --tfvars-file "$RUNNER_TEMP/staging.tfvars.json" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Initialize and create review plan
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/plan-evidence"
+          terraform -chdir=infra/terraform/environments/staging init \
+            -reconfigure \
+            -backend-config="$RUNNER_TEMP/backend.hcl"
+          terraform -chdir=infra/terraform/environments/staging plan \
+            -input=false \
+            -lock-timeout=5m \
+            -var-file="$RUNNER_TEMP/staging.tfvars.json" \
+            -out="$RUNNER_TEMP/staging.tfplan"
+          terraform -chdir=infra/terraform/environments/staging show \
+            -no-color "$RUNNER_TEMP/staging.tfplan" \
+            > "$RUNNER_TEMP/plan-evidence/plan.txt"
+          node -e 'const fs=require("fs"); fs.writeFileSync(process.argv[1], JSON.stringify({schemaVersion:"asklake.aws-staging-plan.v1", commit:process.env.GITHUB_SHA, operation:process.env.OPERATION, stackId:process.env.STACK_ID, expiresAt:process.env.EXPIRES_AT}, null, 2)+"\n")' \
+            "$RUNNER_TEMP/plan-evidence/metadata.json"
+        env:
+          EXPIRES_AT: ${{ steps.prepare.outputs.expires_at }}
+          OPERATION: ${{ inputs.operation }}
+          STACK_ID: ${{ steps.prepare.outputs.stack_id }}
+
+      - name: Upload redacted plan evidence only
+        uses: actions/upload-artifact@v7
+        with:
+          name: aws-staging-plan-${{ steps.prepare.outputs.stack_id }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/plan-evidence/
+          if-no-files-found: error
+          retention-days: 7
+          include-hidden-files: false
+
+      - name: Remove private plan inputs
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/backend.hcl" "$RUNNER_TEMP/staging.tfvars.json" "$RUNNER_TEMP/staging.tfplan" "$RUNNER_TEMP/emr-quotas.json"
+
+  apply:
+    name: Approved Terraform apply
+    if: ${{ inputs.operation == 'apply' }}
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    environment: asklake-aws-staging-apply
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout exact workflow commit
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22.23.1"
+          package-manager-cache: false
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "1.15.8"
+          terraform_wrapper: false
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci --ignore-scripts
+
+      - name: Configure short-lived AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_GITHUB_OIDC_ROLE_ARN }}
+          role-session-name: asklake-staging-apply-${{ github.run_id }}
+          aws-region: ap-northeast-2
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          mask-aws-account-id: true
+          unset-current-credentials: true
+
+      - name: Verify AWS account and read actual EMR quota
+        env:
+          EXPECTED_AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          actual_account_id="$(aws sts get-caller-identity --query Account --output text)"
+          test "$actual_account_id" = "$EXPECTED_AWS_ACCOUNT_ID"
+          aws service-quotas list-service-quotas --service-code emr-serverless --region "$AWS_REGION" --output json \
+            > "$RUNNER_TEMP/emr-quotas.json"
+          quota="$(node backend/scripts/prepare-aws-staging-terraform-inputs.mjs --extract-quota < "$RUNNER_TEMP/emr-quotas.json")"
+          printf 'AWS_EMR_SERVERLESS_CONCURRENT_VCPU=%s\n' "$quota" >> "$GITHUB_ENV"
+
+      - name: Recreate exact approved inputs
+        env:
+          AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          AWS_BUDGET_NOTIFICATION_EMAIL: ${{ secrets.AWS_BUDGET_NOTIFICATION_EMAIL }}
+          AWS_GITHUB_OIDC_ROLE_ARN: ${{ vars.AWS_GITHUB_OIDC_ROLE_ARN }}
+          AWS_STAGING_CONFIRMATION: ${{ inputs.confirmation }}
+          AWS_STAGING_ENABLE_SMOKE_RUNNER: ${{ inputs.enable_smoke_runner }}
+          AWS_STAGING_EXPIRES_AT: ${{ needs.plan.outputs.expires_at }}
+          AWS_STAGING_OPERATION: apply
+          AWS_STAGING_SMOKE_RUNNER_AMI_ID: ${{ vars.AWS_STAGING_SMOKE_RUNNER_AMI_ID }}
+          AWS_STAGING_STACK_ID: ${{ needs.plan.outputs.stack_id }}
+          AWS_TERRAFORM_STATE_BUCKET: ${{ vars.AWS_TERRAFORM_STATE_BUCKET }}
+          AWS_TERRAFORM_STATE_KMS_KEY_ARN: ${{ vars.AWS_TERRAFORM_STATE_KMS_KEY_ARN }}
+        run: |
+          set -euo pipefail
+          node backend/scripts/prepare-aws-staging-terraform-inputs.mjs \
+            --backend-file "$RUNNER_TEMP/backend.hcl" \
+            --tfvars-file "$RUNNER_TEMP/staging.tfvars.json"
+
+      - name: Replan and apply after protected approval
+        run: |
+          set -euo pipefail
+          terraform -chdir=infra/terraform/environments/staging init \
+            -reconfigure \
+            -backend-config="$RUNNER_TEMP/backend.hcl"
+          terraform -chdir=infra/terraform/environments/staging plan \
+            -input=false \
+            -lock-timeout=5m \
+            -var-file="$RUNNER_TEMP/staging.tfvars.json" \
+            -out="$RUNNER_TEMP/approved.tfplan"
+          terraform -chdir=infra/terraform/environments/staging apply \
+            -input=false \
+            -lock-timeout=5m \
+            -auto-approve \
+            "$RUNNER_TEMP/approved.tfplan"
+
+      - name: Render private Runtime configuration
+        run: |
+          set -euo pipefail
+          terraform -chdir=infra/terraform/environments/staging output -json \
+            | node backend/scripts/render-aws-staging-runtime.mjs \
+                --output-dir "$RUNNER_TEMP/runtime"
+          mkdir -p "$RUNNER_TEMP/apply-evidence"
+          cp "$RUNNER_TEMP/runtime/${STACK_ID}.manifest.json" "$RUNNER_TEMP/apply-evidence/runtime-manifest.json"
+        env:
+          STACK_ID: ${{ needs.plan.outputs.stack_id }}
+
+      - name: Upload redacted apply evidence only
+        uses: actions/upload-artifact@v7
+        with:
+          name: aws-staging-apply-${{ needs.plan.outputs.stack_id }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/apply-evidence/
+          if-no-files-found: error
+          retention-days: 7
+          include-hidden-files: false
+
+      - name: Remove private apply inputs and Runtime env
+        if: always()
+        run: |
+          rm -rf "$RUNNER_TEMP/runtime"
+          rm -f "$RUNNER_TEMP/backend.hcl" "$RUNNER_TEMP/staging.tfvars.json" "$RUNNER_TEMP/approved.tfplan" "$RUNNER_TEMP/emr-quotas.json"

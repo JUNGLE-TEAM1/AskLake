@@ -2,7 +2,7 @@
 
 이 문서는 Issue #727의 구현 기준이다. 목표는 현재 코드에 있는 `EMR Serverless + MSK Serverless` 경로를 일회성 AWS staging에서 안전하게 생성하고, 실제 연결·처리·복구를 검증한 뒤 자동으로 제거할 수 있게 만드는 것이다.
 
-현재 완료된 범위는 **Phase 0 계약 고정, Phase 1 Terraform 기반, Phase 2 Runtime 설정 연결**이다. Terraform resource, credential 없는 mock plan과 output 변환기는 구현했지만 AWS 계정에는 아직 apply하지 않았다. GitHub Actions apply/destroy workflow, artifact 업로드와 실제 smoke도 아직 실행하지 않았으며 일반 애플리케이션 배포와 로컬 Docker 환경은 바꾸지 않는다.
+현재 완료된 코드 범위는 **Phase 0 계약 고정, Phase 1 Terraform 기반, Phase 2 Runtime 설정 연결, Phase 3 수동 GitHub Actions**다. Terraform resource, credential 없는 mock plan, output 변환기와 OIDC workflow는 구현했지만 AWS 계정에는 아직 plan/apply하지 않았다. 따라서 유료 resource, JAR bundle, 실제 smoke 결과는 아직 없으며 일반 애플리케이션 배포와 로컬 Docker 환경은 바꾸지 않는다.
 
 ## 1. 한눈에 보는 전환 구조
 
@@ -37,7 +37,7 @@ flowchart LR
 | 0. 계약 고정 | versioned contract, 정적 verifier, 문서 | 리전·네트워크·state·비용·quota·smoke 크기가 코드 리뷰 가능한 값으로 고정 | 완료 |
 | 1. Terraform 기반 | bootstrap/state, network, S3, IAM, MSK, EMR module | `fmt`, `validate`, credential 없는 mock plan이 통과하고 secret output이 없음 | 완료 |
 | 2. Runtime 연결 | Terraform output을 AskLake env/manifest로 변환 | broker/role/application/S3 값이 수작업 복사 없이 주입되고 민감값은 출력되지 않음 | 완료 |
-| 3. GitHub Actions | OIDC plan/apply/destroy workflow | 장기 AWS key 없이 plan 자동, apply 수동 승인, destroy 독립 실행 가능 | 예정 |
+| 3. GitHub Actions | OIDC plan/apply/artifact/destroy workflow | 장기 AWS key 없이 수동 plan, apply/artifact/destroy 개별 승인, checksum bundle 전달과 독립 destroy 가능 | 완료(코드·로컬 검증) |
 | 4. 실제 smoke | S3 readiness, MSK probe, Batch, Continuous pause/resume | 입력·소비·sink count 일치, final lag 0, checkpoint resume, report 확보 | 예정 |
 | 5. 비용·TTL guard | budget alert, 만료 sweep, failure cleanup | 정상/실패 모두 증거 export 후 제거되고 만료 stack을 탐지 | 예정 |
 | 6. 운영 인계 | runbook, 장애/비용 기록, 오피스아워 질문 | 다른 팀원이 같은 절차를 재현하고 안전하게 종료 가능 | 예정 |
@@ -174,7 +174,33 @@ npm run verify:aws-staging-runtime
 
 정상 mapping, Runtime config parse, contract/capacity/account 변조 거부, broker injection 차단, 파일 권한, manifest/stdout/stderr 비노출과 원자적 overwrite를 확인한다.
 
-## 6. 실제 plan/apply 이전 외부 준비값
+## 6. Phase 3 수동 GitHub Actions
+
+Phase 3은 일반 CI나 애플리케이션 배포에 연결하지 않는다. 다음 세 workflow는 모두 `workflow_dispatch` 전용이고 같은 `stackId` 동시 실행을 막는다.
+
+| Workflow | 역할 | 변경 승인 |
+| --- | --- | --- |
+| `aws-staging-plan-apply.yml` | 실제 quota 조회, Terraform plan 증거 생성, 승인 후 같은 만료 시각으로 재-plan/apply, private Runtime env 생성 | `plan`은 변경 없음, `apply`는 `asklake-aws-staging-apply` Environment와 `apply:<stackId>` |
+| `aws-staging-artifacts.yml` | state에서 private Runtime 재생성, Maven 의존성 materialize, SHA-256 JAR bundle·Python entry point 업로드, Continuous 활성 env를 암호화된 staging S3에 전달 | `asklake-aws-staging-artifacts` Environment와 `artifacts:<stackId>` |
+| `aws-staging-destroy.yml` | 별도 destroy plan을 만들고 격리 stack 제거 | `asklake-aws-staging-destroy` Environment와 `destroy:<stackId>` |
+
+- 모든 AWS job은 GitHub OIDC의 단기 credential만 사용하며 `id-token: write`, 예상 account 확인, `allowed-account-ids`, account masking과 기존 credential unset을 적용한다.
+- `apply`는 plan job의 binary plan을 재사용하지 않는다. 보호 Environment 승인 뒤 동일 commit·stack·만료 시각으로 다시 plan하고 바로 apply한다.
+- GitHub artifact에는 사람이 검토할 text plan, redacted manifest, checksum/전달 receipt만 남긴다. backend 설정, tfvars, broker가 든 Runtime `.env`, Terraform binary plan은 job 종료 시 삭제한다.
+- Continuous dependency는 `infra/artifacts/emr-continuous-dependencies.pom.xml`의 정확한 버전에서 만들고 각 JAR와 전체 bundle SHA-256을 계산한다. bundle은 `s3://.../dependencies/<bundleSha256>/`에 업로드되며 필수 Spark Kafka/MSK IAM JAR가 검증된 뒤에만 Continuous flag를 켠다.
+- artifact workflow가 전달한 private Runtime env는 staging artifact bucket의 실행별 `runtime/<runId>-<attempt>/` 경로에만 둔다. 이것은 Phase 4 smoke runner가 소비할 입력이며 production 배포 파일이 아니다.
+- workflow 파일이 존재한다고 AWS 연결 성공을 뜻하지 않는다. GitHub Environment/variable/secret과 AWS OIDC trust/IAM permission을 platform이 준비한 뒤 Phase 4에서 실제 수동 실행한다.
+
+로컬에서 side effect 없이 Phase 3 계약을 확인한다.
+
+```bash
+cd backend
+npm run verify:aws-staging-workflows
+```
+
+이 verifier는 입력/확인 문자열/quota/KMS/TTL 거부, private 파일 권한, JAR checksum·불변 prefix·필수 dependency, Continuous 활성화 순서, manual-only trigger, OIDC/action version, 보호 Environment, redacted artifact와 독립 destroy 경계를 검증한다.
+
+## 7. 실제 plan/apply 이전 외부 준비값
 
 다음 값은 코드에 실제 값을 저장하지 않는다.
 
@@ -188,13 +214,16 @@ npm run verify:aws-staging-runtime
 
 GitHub OIDC provider와 Terraform 실행 role은 계정 단위 platform bootstrap으로 한 번 준비한다. AskLake Terraform은 EMR execution/smoke runner role과 staging resource policy를 소유한다. 이 선행 조건이 없으면 로컬 AWS key를 임시로 추가하지 말고 plan/apply를 중단한다.
 
-## 7. Phase 0·1·2 검증
+Repository에는 `AWS_ACCOUNT_ID`, `AWS_GITHUB_OIDC_ROLE_ARN`, `AWS_TERRAFORM_STATE_BUCKET`, `AWS_TERRAFORM_STATE_KMS_KEY_ARN` variable과 `AWS_BUDGET_NOTIFICATION_EMAIL` secret이 필요하다. private SSM runner를 켤 때만 승인된 `AWS_STAGING_SMOKE_RUNNER_AMI_ID` variable을 추가한다. 세 mutation Environment에는 required reviewer를 설정하고 OIDC role trust policy는 이 repository와 해당 Environment/branch claim으로 제한한다.
+
+## 8. Phase 0·1·2·3 검증
 
 ```bash
 cd backend
 npm run verify:aws-staging-contract
 npm run verify:aws-staging-terraform
 npm run verify:aws-staging-runtime
+npm run verify:aws-staging-workflows
 ```
 
 verifier는 정상 계약뿐 아니라 다음 변조가 실패하는지도 자체 확인한다.
@@ -208,13 +237,13 @@ verifier는 정상 계약뿐 아니라 다음 변조가 실패하는지도 자�
 - checkpoint resume 근거 제거
 - 일반 배포에서 인프라 apply 허용
 
-Phase 0 완료는 AWS resource가 준비됐다는 뜻이 아니다. Phase 1 Terraform과 Phase 3 workflow가 완료된 후 `plan`, 수동 `apply`, 실제 smoke, `destroy`를 순서대로 검증해야 한다.
+Phase 0 완료는 AWS resource가 준비됐다는 뜻이 아니다. Phase 1 Terraform과 Phase 3 workflow가 완료된 뒤에도 `plan`, 수동 `apply`, artifact 전달, 실제 smoke, `destroy`를 순서대로 검증해야 한다.
 
 두 번째 명령은 정적 정책 검증 뒤 `terraform fmt -check`, bootstrap/staging `init -backend=false`, `validate`, mock provider plan assertion을 실행한다. 실제 credential, backend bucket, AWS API 없이 resource schema와 module 연결을 검증한다.
 
-Phase 2 완료도 AWS resource나 artifact가 준비됐다는 뜻은 아니다. 실제 account/role/backend/quota 값을 안전한 외부 파일 또는 승인 workflow input으로 전달한 뒤 real provider `plan`을 검토해야 한다. 수동 `apply`, checksum artifact 업로드, 실제 smoke와 `destroy`는 Phase 3~5 범위다.
+Phase 3 완료는 배포 경로의 코드와 로컬 fail-closed 검증이 끝났다는 뜻이다. 실제 account/role/backend/quota 값을 GitHub 설정에 등록한 뒤 real provider `plan`을 검토해야 한다. 수동 `apply`와 checksum artifact 업로드는 Phase 3 workflow의 실제 실행, S3/MSK/Batch/Continuous 검증은 Phase 4, 실패 정리와 TTL sweep은 Phase 5 증거로 남는다.
 
-## 8. 공식 기준
+## 9. 공식 기준
 
 - [Terraform S3 backend](https://developer.hashicorp.com/terraform/language/backend/s3)
 - [EMR Serverless VPC access](https://docs.aws.amazon.com/emr/latest/EMR-Serverless-UserGuide/vpc-access.html)

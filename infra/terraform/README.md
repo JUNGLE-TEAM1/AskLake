@@ -23,6 +23,7 @@ Terraform mock provider는 실제 API를 호출하거나 resource를 만들지 �
 cd backend
 npm run verify:aws-staging-terraform
 npm run verify:aws-staging-runtime
+npm run verify:aws-staging-workflows
 ```
 
 ## 실제 plan 준비
@@ -46,6 +47,8 @@ terraform -chdir=infra/terraform/environments/staging output -json \
       --output-dir deploy/generated/aws-staging
 ```
 
-Terraform sensitive JSON을 `tee`하거나 console에 출력하지 않는다. 생성 파일은 mode `0600`이며 `deploy/generated/` 전체가 Git ignore 대상이다. manifest에는 broker 원문이 없다. Phase 3의 checksum 고정 JAR upload 전에는 생성 env의 Continuous flag가 false로 유지된다. 실제 apply/destroy 승인과 artifact/workflow는 Phase 3에서 연결한다.
+Terraform sensitive JSON을 `tee`하거나 console에 출력하지 않는다. 생성 파일은 mode `0600`이며 `deploy/generated/` 전체가 Git ignore 대상이다. manifest에는 broker 원문이 없다. Continuous flag는 Phase 3 artifact workflow가 checksum 고정 JAR bundle을 불변 S3 prefix에 업로드하고 manifest를 검증한 뒤에만 true가 된다.
+
+실제 실행은 `.github/workflows/aws-staging-plan-apply.yml`, `aws-staging-artifacts.yml`, `aws-staging-destroy.yml`의 수동 dispatch만 사용한다. apply/artifact/destroy는 별도 보호 Environment와 `apply|artifacts|destroy:<stackId>` 확인을 요구하며 OIDC 단기 credential을 사용한다. workflow 코드를 로컬 검증한 현재 단계에서는 AWS plan/apply를 실행하지 않았고 resource나 비용이 발생하지 않았다.
 
 `StackId` 기반 Budget filter가 비용을 분리하려면 platform 운영자가 AWS Billing의 user-defined cost allocation tag에서 `StackId`를 미리 활성화해야 한다. AWS Budget 알림은 실시간 종료 장치가 아니며 destroy/TTL guard를 대체하지 않는다.

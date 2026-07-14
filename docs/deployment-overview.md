@@ -189,7 +189,7 @@ docs/deployment-runbook.md
 ```
 
 `deploy/*`, backend/frontend Dockerfile은 prod-like compose baseline이고, seed/reset script는 demo fixture를 같은 상태로 맞추는 운영 계층이다.
-GitHub Actions workflow는 후속 phase에서 추가한다.
+일반 EC2 자동 배포 GitHub Actions workflow는 후속 phase에서 추가한다. Issue #727의 manual-only AWS staging plan/apply/artifact/destroy workflow는 별도 검증 환경 제어면이며 이 EC2 배포를 호출하거나 대체하지 않는다.
 `scripts/deploy.sh`와 `deploy/ec2.env.example`은 EC2 start/stop/redeploy를 반복하기 위한 로컬 운영 계층이다.
 
 이 문서들은 실제 secret 값을 포함하지 않는다.

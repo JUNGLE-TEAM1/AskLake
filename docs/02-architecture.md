@@ -165,15 +165,17 @@ Issue #727의 AWS staging은 제품 Runtime이나 일반 배포 환경이 아니
 
 - 일반 애플리케이션 배포와 로컬 Compose는 staging Terraform apply를 호출하지 않는다. 유료 resource 생성은 수동 승인된 전용 workflow에서만 허용한다.
 - Terraform state bootstrap, staging resource stack과 실행별 data/topic/checkpoint namespace를 분리한다. 실제 account/role/bucket/notification 값은 외부 입력이며 저장소에 커밋하지 않는다.
-- apply 뒤 Runtime 설정은 `terraform output -json -> render-aws-staging-runtime.mjs -> stack별 private env + redacted manifest` 단방향으로 전달한다. env만 broker 원문을 가지며 mode `0600`/Git ignore로 관리하고, manifest와 console에는 broker 개수/SHA-256만 남긴다. Batch/Continuous application ID, execution role, S3 bucket, admission cap과 topic namespace는 Phase 0 계약과 Terraform output을 다시 검증한 뒤 기존 `ASKLAKE_*` 환경변수로 직렬화한다. checksum 고정 JAR bundle이 아직 없는 Phase 2에서는 Continuous feature flag를 fail-closed로 끈다.
+- apply 뒤 Runtime 설정은 `terraform output -json -> render-aws-staging-runtime.mjs -> stack별 private env + redacted manifest` 단방향으로 전달한다. env만 broker 원문을 가지며 mode `0600`/Git ignore로 관리하고, manifest와 console에는 broker 개수/SHA-256만 남긴다. Batch/Continuous application ID, execution role, S3 bucket, admission cap과 topic namespace는 Phase 0 계약과 Terraform output을 다시 검증한 뒤 기존 `ASKLAKE_*` 환경변수로 직렬화한다. Continuous feature flag는 Phase 3 artifact workflow가 필수 JAR와 전체 bundle checksum을 검증하고 불변 S3 prefix에 업로드한 뒤에만 활성화한다.
 - private staging은 NAT/Maven egress를 두지 않고 S3 endpoint와 immutable JAR bundle을 사용한다. smoke runner는 private subnet의 일회성 EC2를 SSM으로 실행하며 public/SSH ingress를 열지 않는다.
 - Batch와 Continuous application은 각각 16 vCPU 상한이지만 Phase 0에서는 계정 quota를 공유해 순차 실행한다. apply 전 실제 계정 quota가 최소 요구치보다 작은지 확인한다.
 - 100만 건 smoke는 연결·정합성·pause/resume을 확인하는 기능 시험이다. latency와 비용을 기록하되 처리량/SLO 달성을 주장하지 않으며 Phase 7 반복 성능 evidence를 대체하지 않는다.
 - 정상/실패 모두 증거 export 후 destroy하고 `ExpiresAt` 만료 sweep을 둔다. AWS Budget 알림은 지연될 수 있으므로 실시간 종료 장치로 취급하지 않는다.
 - Terraform은 platform state bootstrap과 실행별 staging root를 분리한다. staging root는 network, storage, MSK, EMR, IAM, observability, cost-control, optional private SSM runner module을 조립하고 AWS provider lock과 credential 없는 mock plan으로 schema/연결을 검증한다.
+- GitHub 제어면은 manual-only `plan/apply`, `artifacts`, `destroy` workflow로 분리한다. 모든 AWS job은 OIDC 단기 credential과 예상 account 검증을 사용하고, mutation은 서로 다른 보호 Environment와 정확한 `<operation>:<stackId>` 확인을 요구한다. binary plan/private env/backend input은 GitHub artifact에 올리지 않으며 같은 stack 작업은 concurrency group으로 직렬화한다.
+- artifact 제어면은 고정된 Maven dependency를 materialize해 JAR별/전체 SHA-256 manifest를 만들고 `dependencies/<bundleSha256>/`에 올린다. 활성화된 private env는 staging S3의 실행별 runtime prefix로만 전달하며 일반 EC2/production deploy는 이를 자동 소비하지 않는다.
 - EMR execution role trust는 AWS 공식 runtime-role 계약대로 `emr-serverless.amazonaws.com`과 `SourceAccount`에 묶고 전용 S3/KMS/MSK topic/group/CloudWatch만 허용한다. runner는 생성된 두 application ARN의 제어와 exact execution role PassRole만 허용하며 public IP와 SSH key를 갖지 않는다.
 
-전체 Phase와 고정 값은 [AWS Staging IaC와 실제 Smoke 자동화 계획](aws-staging-iac-smoke-plan.md)을 따른다. Phase 0 계약과 Phase 1 Terraform/credential 없는 mock plan까지 완료됐으며 실제 AWS resource는 아직 생성하지 않는다.
+전체 Phase와 고정 값은 [AWS Staging IaC와 실제 Smoke 자동화 계획](aws-staging-iac-smoke-plan.md)을 따른다. Phase 0 계약, Phase 1 Terraform/mock plan, Phase 2 Runtime 변환과 Phase 3 수동 workflow/로컬 verifier까지 완료됐으며 실제 AWS resource는 아직 생성하지 않았다.
 
 ### Phase 7 성능 evidence 경계
 

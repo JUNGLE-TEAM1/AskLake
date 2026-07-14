@@ -1,0 +1,131 @@
+name: AWS Staging Destroy
+
+on:
+  workflow_dispatch:
+    inputs:
+      stack_id:
+        description: "제거할 staging stack ID"
+        required: true
+        type: string
+      confirmation:
+        description: "destroy:<stack_id>"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: asklake-aws-staging-${{ inputs.stack_id }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-northeast-2
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+
+jobs:
+  destroy:
+    name: Independently approved Terraform destroy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    environment: asklake-aws-staging-destroy
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout exact workflow commit
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22.23.1"
+          package-manager-cache: false
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "1.15.8"
+          terraform_wrapper: false
+
+      - name: Configure short-lived AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_GITHUB_OIDC_ROLE_ARN }}
+          role-session-name: asklake-staging-destroy-${{ github.run_id }}
+          aws-region: ap-northeast-2
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          mask-aws-account-id: true
+          unset-current-credentials: true
+
+      - name: Verify AWS account
+        env:
+          EXPECTED_AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          actual_account_id="$(aws sts get-caller-identity --query Account --output text)"
+          test "$actual_account_id" = "$EXPECTED_AWS_ACCOUNT_ID"
+
+      - name: Prepare private destroy inputs
+        env:
+          AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          AWS_BUDGET_NOTIFICATION_EMAIL: ${{ secrets.AWS_BUDGET_NOTIFICATION_EMAIL }}
+          AWS_EMR_SERVERLESS_CONCURRENT_VCPU: "16"
+          AWS_GITHUB_OIDC_ROLE_ARN: ${{ vars.AWS_GITHUB_OIDC_ROLE_ARN }}
+          AWS_STAGING_CONFIRMATION: ${{ inputs.confirmation }}
+          AWS_STAGING_ENABLE_SMOKE_RUNNER: "false"
+          AWS_STAGING_OPERATION: destroy
+          AWS_STAGING_STACK_ID: ${{ inputs.stack_id }}
+          AWS_STAGING_TTL_HOURS: "1"
+          AWS_TERRAFORM_STATE_BUCKET: ${{ vars.AWS_TERRAFORM_STATE_BUCKET }}
+          AWS_TERRAFORM_STATE_KMS_KEY_ARN: ${{ vars.AWS_TERRAFORM_STATE_KMS_KEY_ARN }}
+        run: |
+          set -euo pipefail
+          node backend/scripts/prepare-aws-staging-terraform-inputs.mjs \
+            --backend-file "$RUNNER_TEMP/backend.hcl" \
+            --tfvars-file "$RUNNER_TEMP/staging.tfvars.json"
+
+      - name: Review destroy plan and remove the isolated stack
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/destroy-evidence"
+          terraform -chdir=infra/terraform/environments/staging init \
+            -reconfigure \
+            -backend-config="$RUNNER_TEMP/backend.hcl"
+          terraform -chdir=infra/terraform/environments/staging plan \
+            -destroy \
+            -input=false \
+            -lock-timeout=5m \
+            -var-file="$RUNNER_TEMP/staging.tfvars.json" \
+            -out="$RUNNER_TEMP/destroy.tfplan"
+          terraform -chdir=infra/terraform/environments/staging show \
+            -no-color "$RUNNER_TEMP/destroy.tfplan" \
+            > "$RUNNER_TEMP/destroy-evidence/plan.txt"
+          terraform -chdir=infra/terraform/environments/staging apply \
+            -input=false \
+            -lock-timeout=5m \
+            -auto-approve \
+            "$RUNNER_TEMP/destroy.tfplan"
+          node -e 'const fs=require("fs"); fs.writeFileSync(process.argv[1], JSON.stringify({schemaVersion:"asklake.aws-staging-destroy.v1", commit:process.env.GITHUB_SHA, stackId:process.env.STACK_ID, status:"destroy-request-completed"}, null, 2)+"\n")' \
+            "$RUNNER_TEMP/destroy-evidence/receipt.json"
+        env:
+          STACK_ID: ${{ inputs.stack_id }}
+
+      - name: Upload destroy evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: aws-staging-destroy-${{ inputs.stack_id }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/destroy-evidence/
+          if-no-files-found: warn
+          retention-days: 7
+          include-hidden-files: false
+
+      - name: Remove private destroy inputs
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/backend.hcl" "$RUNNER_TEMP/staging.tfvars.json" "$RUNNER_TEMP/destroy.tfplan"
