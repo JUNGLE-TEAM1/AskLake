@@ -102,10 +102,11 @@ def main():
             schema_columns,
             record_parsing,
             source_collection,
+            transform_steps,
         )
         input_rows = source_df.count() if row_limit <= 0 else source_df.limit(row_limit).count()
         working_df = source_df if row_limit <= 0 else source_df.limit(row_limit)
-        normalized_df = normalize_columns(working_df)
+        normalized_df = normalize_columns(working_df, schema_columns, transform_steps)
         contracted_df = apply_schema_contract(normalized_df, schema_columns, transform_steps)
         review_analysis_preflight = plan_review_row_analysis_checks(transform_steps)
         blocking_text_model_checks = [
@@ -497,6 +498,7 @@ def read_source(
     schema_columns,
     record_parsing=None,
     source_collection=None,
+    transform_steps=None,
 ):
     source_collection = source_collection or {}
     exact_paths = incremental_source_paths(source_path, source_collection)
@@ -514,9 +516,13 @@ def read_source(
             .csv(read_path)
         )
     if source_format == "jsonl":
-        return base_reader.option("multiLine", "false").json(read_path)
+        reader = base_reader.option("multiLine", "false")
+        source_schema = json_source_schema(schema_columns, transform_steps)
+        return (reader.schema(source_schema) if source_schema is not None else reader).json(read_path)
     if source_format == "json":
-        return base_reader.option("multiLine", "true").json(read_path)
+        reader = base_reader.option("multiLine", "true")
+        source_schema = json_source_schema(schema_columns, transform_steps)
+        return (reader.schema(source_schema) if source_schema is not None else reader).json(read_path)
     if source_format == "parquet":
         return base_reader.parquet(*read_path) if isinstance(read_path, list) else base_reader.parquet(read_path)
     if source_format in {"txt", "text"}:
@@ -524,6 +530,78 @@ def read_source(
             return read_whitespace_records(spark, read_path, record_parsing)
         return base_reader.text(read_path)
     raise ValueError(f"Unsupported Spark source format: {source_format}")
+
+
+def json_source_schema(schema_columns, transform_steps=None):
+    paths = source_contract_paths(schema_columns, transform_steps)
+    if not paths:
+        return None
+
+    tree = {}
+    for path in paths:
+        parts = [part for part in str(path).split(".") if part]
+        if not parts:
+            continue
+        current = tree
+        for index, part in enumerate(parts):
+            is_leaf = index == len(parts) - 1
+            existing = current.get(part)
+            if is_leaf:
+                if isinstance(existing, dict):
+                    return None
+                current[part] = None
+                continue
+            if existing is None and part in current:
+                return None
+            if not isinstance(existing, dict):
+                existing = {}
+                current[part] = existing
+            current = existing
+    return json_struct_type(tree) if tree else None
+
+
+def json_struct_type(tree):
+    return T.StructType([
+        T.StructField(
+            name,
+            json_struct_type(value) if isinstance(value, dict) else T.StringType(),
+            True,
+        )
+        for name, value in tree.items()
+    ])
+
+
+def source_contract_paths(schema_columns, transform_steps=None):
+    paths = []
+    for column in schema_columns or []:
+        if not isinstance(column, dict):
+            continue
+        name = str(column.get("sourceName") or column.get("targetName") or "").strip()
+        if name and name not in paths:
+            paths.append(name)
+    for name in transform_source_paths(transform_steps or []):
+        if name and name not in paths:
+            paths.append(name)
+    return paths
+
+
+def transform_source_paths(steps):
+    paths = []
+    for step in steps or []:
+        if not step or step.get("enabled") is False:
+            continue
+        raw = str(step.get("input") or "").strip()
+        if (
+            not raw
+            or contains_row_analyze_call(raw)
+            or "," in raw
+            or "=" in raw
+            or raw.startswith("{")
+        ):
+            continue
+        if raw not in paths:
+            paths.append(raw)
+    return paths
 
 
 def read_whitespace_records(spark, source_path, record_parsing):
@@ -692,14 +770,28 @@ def apply_schema_contract(frame, schema_columns, transform_steps=None):
     if not expressions:
         raise ValueError("Approved schema has no output expressions.")
     contracted = frame.select(*expressions)
-    null_required = [
-        target
-        for target in required_targets
-        if contracted.filter(F.col(quote_identifier(target)).isNull()).limit(1).count() > 0
-    ]
+    null_required = required_null_targets(contracted, required_targets)
     if null_required:
         raise ValueError(f"Approved schema required columns produced null values after casting: {', '.join(null_required)}")
     return contracted
+
+
+def required_null_targets(frame, required_targets):
+    if not required_targets:
+        return []
+
+    aliases = [f"__asklake_required_null_{index}" for index in range(len(required_targets))]
+    null_summary = frame.agg(*[
+        F.max(
+            F.when(F.col(quote_identifier(target)).isNull(), F.lit(1)).otherwise(F.lit(0))
+        ).alias(alias)
+        for target, alias in zip(required_targets, aliases)
+    ]).first()
+    return [
+        target
+        for target, alias in zip(required_targets, aliases)
+        if int((null_summary[alias] if null_summary is not None else 0) or 0) > 0
+    ]
 
 
 def transform_output_column_names(steps):
@@ -2577,7 +2669,7 @@ def quote_identifier(name):
     return f"`{str(name).replace('`', '``')}`"
 
 
-def normalize_columns(frame):
+def normalize_columns(frame, schema_columns=None, transform_steps=None):
     used = set()
     expressions = []
     for index, column_name in enumerate(frame.columns):
@@ -2589,7 +2681,33 @@ def normalize_columns(frame):
             suffix += 1
         used.add(candidate)
         expressions.append(F.col(f"`{column_name}`").alias(candidate))
+    for source_path in source_contract_paths(schema_columns, transform_steps):
+        parts = [part for part in str(source_path).split(".") if part]
+        if len(parts) < 2 or not nested_schema_path_exists(frame.schema, parts):
+            continue
+        target = normalize_column_name(source_path)
+        if not target or target in used:
+            continue
+        used.add(target)
+        nested_column = frame[parts[0]]
+        for part in parts[1:]:
+            nested_column = nested_column.getField(part)
+        expressions.append(nested_column.alias(target))
     return frame.select(*expressions)
+
+
+def nested_schema_path_exists(schema, parts):
+    current = schema
+    for index, part in enumerate(parts):
+        if not isinstance(current, T.StructType):
+            return False
+        field = next((item for item in current.fields if item.name == part), None)
+        if field is None:
+            return False
+        if index == len(parts) - 1:
+            return True
+        current = field.dataType
+    return False
 
 
 def normalize_column_name(value):
