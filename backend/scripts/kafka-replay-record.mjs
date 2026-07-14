@@ -1,7 +1,8 @@
-export function decorateReplayRecord(record, cycle, streamOffset, { loop }) {
+export function decorateReplayRecord(record, cycle, streamOffset, { loop, replayRunId }) {
   if (!loop) return record;
+  if (!replayRunId) throw new Error("loop replay requires replayRunId");
 
-  const replayEventId = `${record.event_id}--cycle-${String(cycle).padStart(6, "0")}--offset-${streamOffset}`;
+  const replayEventId = `${record.event_id}--run-${replayRunId}--cycle-${String(cycle).padStart(6, "0")}--offset-${streamOffset}`;
   const raw = record.raw && typeof record.raw === "object" && !Array.isArray(record.raw)
     ? { ...record.raw }
     : record.raw;
