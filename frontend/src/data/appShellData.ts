@@ -109,6 +109,12 @@ export const summaryByFlow: Record<FlowId, Array<[string, string]>> = {
     ["실패 재시도", "기본 정책"],
     ["상태", "대기"],
   ],
+  once: [
+    ["실행 방식", "1회 실행"],
+    ["실행 시각", "설정 전"],
+    ["실패 재시도", "기본 정책"],
+    ["상태", "예약 전"],
+  ],
   target: [
     ["저장소", "S3 Gold"],
     ["포맷", "Parquet"],
