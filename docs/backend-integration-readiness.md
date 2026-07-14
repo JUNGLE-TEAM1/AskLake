@@ -507,6 +507,7 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 - [x] 새 작업의 인증 actor 조회와 기존 작업의 생성자·담당자·`manage`·admin guard
 - [x] 그룹/사용자 대상 추가, 프리셋, 대상별 action 직접 편집 UI
 - [x] 담당자 자동 전체 권한과 `public:view` 최종 확인 표시
+- [x] Review에서 실제 저장 권한과 생성 준비 상태를 분리하고 권한·저장 위치를 각각 검증
 - [x] create/update `permissionGrants` validation
 - [x] 강한 action의 `view` 포함 정규화
 - [x] `permission_ui` grant 저장 및 교체

@@ -1087,6 +1087,8 @@ type ReviewSnapshot = {
 - `targetDatabase`, `targetDescription`은 Review 표시용으로 create/review request에 함께 보냅니다.
 - live mode는 source connector 결과를 재확인하고, mock mode는 동일한 response shape를 fixture로 반환합니다.
 - Review UI는 local draft를 직접 조합하지 않고 이 response를 표시합니다.
+- `permission`은 `담당자`, `전체 사용자 조회`, non-public 대상별 허용 action을 반환합니다. 담당자는 backend fallback으로 전체 권한을 가지며 `public:view`는 `전체 사용자 조회=허용`으로 표시합니다.
+- `validation`은 기존의 결합된 `권한/타겟` 행을 사용하지 않습니다. `권한 설정`은 담당자·대상 식별자·허용 action을, `저장 위치`는 대상 데이터셋·계층·형식과 target 계약을 별도로 검증합니다.
 - `ruleCompilation.status`가 `pass`일 때만 `canCreate`가 true가 될 수 있습니다. `rules`가 비어 있으면 output schema는 포함된 source schema와 같은 pass-through 결과이며 `ruleSummary`가 비어 있어도 실패하지 않습니다.
 
 ### 7.3 작업 목록 조회

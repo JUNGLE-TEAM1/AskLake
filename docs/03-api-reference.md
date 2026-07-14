@@ -849,6 +849,8 @@ type DashboardAssistantResponse = {
 - 요청은 `POST /api/etl/jobs`와 같은 pipeline draft 계약에 `sourceConnectionStatus`를 추가합니다.
 - live mode에서는 source status가 `success`일 때 backend가 source connector를 다시 확인하고, 실패하면 Review의 소스 연결 상태를 `확인 필요`로 반환합니다.
 - 응답은 `basicInformation`, `schema`, `destination`, `permission`, `validation`, `canCreate`를 포함합니다.
+- `permission`은 담당자의 자동 전체 권한, 전체 사용자 조회 허용 여부, 그룹·사용자·역할별 저장 예정 action을 반환합니다. `public:view`는 별도 대상 행으로 중복하지 않고 `전체 사용자 조회` 값으로 요약합니다.
+- `validation`은 `권한 설정`과 `저장 위치`를 별도 행으로 반환합니다. 권한 행은 담당자·대상·허용 action을, 저장 위치 행은 대상 데이터셋·계층·형식과 target 계약을 각각 검증합니다.
 - frontend는 이 응답만 화면에 표시하며, 생성 버튼은 `canCreate`가 `true`일 때만 활성화합니다.
 - mock mode는 같은 응답 shape의 fixture를 반환하며, live API를 호출하지 않습니다.
 
