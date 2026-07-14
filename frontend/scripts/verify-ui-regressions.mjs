@@ -766,6 +766,16 @@ const checks = [
     ],
   },
   {
+    name: "Stopped continuous Job detail exposes governed deletion",
+    file: "src/pages/ingest/JobsPages.tsx",
+    patterns: [
+      /if \(isContinuousKafkaJob\(job\)\)/,
+      /return \[\s*\{ className: "job-action-button primary", kind: "startContinuous", label: "스트림 시작" \},\s*\{ className: "job-action-button", kind: "edit", label: "수정" \},\s*\{ className: "job-action-button danger", kind: "delete", label: "삭제" \},\s*\];/,
+      /const disabled = jobActionDisabled\(job, action\.kind\);/,
+      /title=\{disabled \? permissionDeniedMessage\("작업", action\.label\) : undefined\}/,
+    ],
+  },
+  {
     name: "Jobs landing run modal follows centrally polled state by stable run identity",
     file: "src/pages/ingest/JobsPages.tsx",
     patterns: [
