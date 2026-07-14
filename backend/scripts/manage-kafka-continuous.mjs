@@ -333,6 +333,7 @@ function continuousEnvironment(request, workerAttemptId, runtimeReportDir, inclu
     ASKLAKE_CONTINUOUS_RULES: JSON.stringify(request.rules || []),
     ASKLAKE_CONTINUOUS_SCHEMA_COLUMNS: JSON.stringify(request.schemaColumns || []),
     ASKLAKE_CONTINUOUS_SCHEMA_POLICY: JSON.stringify(request.schemaEvolutionPolicy || {}),
+    ASKLAKE_CONTINUOUS_SPARK_SHUFFLE_PARTITIONS: String(continuousSparkShufflePartitions()),
     ASKLAKE_CONTINUOUS_SPARK_LOG_LEVEL: process.env.ASKLAKE_CONTINUOUS_SPARK_LOG_LEVEL || "WARN",
     ASKLAKE_CONTINUOUS_FAIL_AFTER_DATA_WRITE_ONCE: process.env.ASKLAKE_CONTINUOUS_FAIL_AFTER_DATA_WRITE_ONCE || "false",
     ASKLAKE_CONTINUOUS_REPORT_FILE: path.posix.join(runtimeReportDir, reportFileName(jobId)),

@@ -181,6 +181,10 @@ try {
   assert(firstContinuousSubmission);
   assert.equal(firstContinuousSubmission.sparkProperties["spark.sql.shuffle.partitions"], "3");
   assert.equal(
+    firstContinuousSubmission.environmentVariables.ASKLAKE_CONTINUOUS_SPARK_SHUFFLE_PARTITIONS,
+    "3",
+  );
+  assert.equal(
     firstContinuousSubmission.environmentVariables.ASKLAKE_CONTINUOUS_SPARK_LOG_LEVEL,
     "ERROR",
   );

@@ -466,6 +466,7 @@ Kafka topic, partition, `[startOffset, endOffset)`은 S3 batch manifest와 Catal
 - Catalog run과 PostgreSQL revision commit은 `run_id` 기준으로 멱등이다.
 - DB/Catalog 저장이 실패하면 Catalog cursor를 진행시키지 않고 같은 run을 다시 reconcile한다.
 - Catalog ACK가 전진할 때 worker는 전체 과거 manifest를 다시 스캔하지 않는다. 현재 publication window에서 승인된 항목만 제거하고, window 밖 backlog가 있을 때 필요한 다음 구간만 bulk read한다.
+- S3 manifest 디렉터리에 Spark의 빈 `part-*` task 파일이 함께 있어도 backend는 0-byte part를 건너뛰고 실제 manifest JSON을 읽어 Catalog cursor를 전진시킨다.
 - 잘못된 schema와 Quality 실패 행은 target 인접 quarantine에 Kafka 위치·Rule 근거와 함께 저장한다.
 - 무한 재시도로 hot path를 멈추지 않고 기존 worker/control-plane 실패 상태와 replay 경로를 사용한다.
 - 종료 시 checkpoint를 보존하는 기존 graceful stop/resume 계약을 유지한다.

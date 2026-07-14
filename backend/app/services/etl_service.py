@@ -7341,30 +7341,42 @@ def read_continuous_stream_manifest(
         client.head_object(Bucket=bucket, Key=f"{manifest_key}/_SUCCESS")
         response = client.list_objects_v2(Bucket=bucket, Prefix=f"{manifest_key}/")
         candidate_keys = sorted(
-            str(item.get("Key") or "")
+            (
+                str(item.get("Key") or ""),
+                optional_int(item.get("Size")),
+            )
             for item in response.get("Contents") or []
             if str(item.get("Key") or "").rsplit("/", 1)[-1].startswith("part-")
         )
         if not candidate_keys:
             return None
-        body = client.get_object(Bucket=bucket, Key=candidate_keys[0]).get("Body")
-        raw_content = body.read() if body is not None and hasattr(body, "read") else body
-        text_content = (
-            raw_content.decode("utf-8")
-            if isinstance(raw_content, bytes)
-            else str(raw_content or "")
-        )
-        manifest_line = next((line for line in text_content.splitlines() if line.strip()), "")
-        manifest = json.loads(manifest_line)
-        if not isinstance(manifest, dict) or optional_string(manifest.get("batchId")) != batch_id:
-            return None
-        manifest["manifestPath"] = f"s3a://{bucket}/{manifest_key}"
-        if nonnegative_int(manifest.get("storedCount"), 0) > 0:
-            manifest.setdefault(
-                "dataPath",
-                f"s3a://{bucket}/{target_prefix}/_batches/batch_id={batch_id}",
+        for candidate_key, candidate_size in candidate_keys:
+            # Spark JSON output can contain zero-byte task files before the
+            # single part that owns the manifest row. Reading only the first
+            # lexicographic part strands a durable batch outside Catalog.
+            if candidate_size == 0:
+                continue
+            body = client.get_object(Bucket=bucket, Key=candidate_key).get("Body")
+            raw_content = body.read() if body is not None and hasattr(body, "read") else body
+            text_content = (
+                raw_content.decode("utf-8")
+                if isinstance(raw_content, bytes)
+                else str(raw_content or "")
             )
-        return manifest
+            manifest_line = next((line for line in text_content.splitlines() if line.strip()), "")
+            if not manifest_line:
+                continue
+            manifest = json.loads(manifest_line)
+            if not isinstance(manifest, dict) or optional_string(manifest.get("batchId")) != batch_id:
+                return None
+            manifest["manifestPath"] = f"s3a://{bucket}/{manifest_key}"
+            if nonnegative_int(manifest.get("storedCount"), 0) > 0:
+                manifest.setdefault(
+                    "dataPath",
+                    f"s3a://{bucket}/{target_prefix}/_batches/batch_id={batch_id}",
+                )
+            return manifest
+        return None
     except Exception:
         return None
 
