@@ -1,0 +1,41 @@
+global:
+  environment: dev
+  clusterName: asklake-dev
+  kafkaRuntime: msk-serverless
+  kafkaAuth: iam
+  continuousOwner: ec2-mvp
+
+namespace:
+  create: true
+  name: asklake-dev
+  labels:
+    asklake.io/lifecycle: mvp-owned
+
+# Pair A replaces empty annotations only after Pair B supplies the minimum IAM
+# action list and the team selects IRSA or EKS Pod Identity.
+serviceAccounts:
+  frontend:
+    create: true
+    name: asklake-frontend
+    annotations: {}
+    automountServiceAccountToken: false
+  backend:
+    create: true
+    name: asklake-backend
+    annotations: {}
+    automountServiceAccountToken: false
+  airflow:
+    create: true
+    name: asklake-airflow
+    annotations: {}
+    automountServiceAccountToken: false
+  replayProducer:
+    create: true
+    name: asklake-replay-producer
+    annotations: {}
+    automountServiceAccountToken: false
+  spark:
+    create: true
+    name: asklake-spark
+    annotations: {}
+    automountServiceAccountToken: false

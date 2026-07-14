@@ -1,0 +1,36 @@
+aws_region  = "ap-northeast-2"
+environment = "dev"
+name_prefix = "asklake"
+owner              = "REPLACE_WITH_TEAM_OWNER"
+resource_lifecycle = "mvp-owned"
+
+# Choose only after read-only inventory and ownership review.
+cluster_mode          = "existing"
+existing_cluster_name = "REPLACE_WITH_EXISTING_CLUSTER"
+
+# For cluster_mode = "create", remove existing_cluster_name and provide reviewed
+# subnets in at least two Availability Zones. This example intentionally does
+# not contain real subnet IDs.
+control_plane_subnet_ids = []
+node_subnet_ids          = []
+
+endpoint_private_access = true
+endpoint_public_access  = false
+public_access_cidrs     = []
+
+# Enable only after node subnet, instance type, quota and cost review.
+create_managed_node_group = false
+node_instance_types       = []
+node_capacity_type        = "ON_DEMAND"
+node_min_size             = 1
+node_desired_size         = 1
+node_max_size             = 3
+
+# These repositories are MVP-owned. Set false when an external platform team
+# provides repositories and pass their URLs through the deployment environment.
+create_ecr_repositories = true
+
+# Keep null until the team approves image retention and deletion behavior.
+ecr_untagged_retention_days = null
+
+namespace = "asklake-dev"
