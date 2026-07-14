@@ -92,6 +92,7 @@ export function DashboardPage({
   const [isPublished, setIsPublished] = useState(false);
   const [selectedWidgetType, setSelectedWidgetType] = useState<DashboardWidgetType>("bar");
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [deletedLegacyWidgetIds, setDeletedLegacyWidgetIds] = useState<Set<string>>(() => new Set());
   const [dashboardCreateError, setDashboardCreateError] = useState<string | null>(null);
   const [isCreatingDashboard, setIsCreatingDashboard] = useState(false);
   const [dashboardDeleteTarget, setDashboardDeleteTarget] = useState<SavedDashboardCard | null>(null);
@@ -156,6 +157,7 @@ export function DashboardPage({
 
   useEffect(() => {
     setView(entry.view);
+    setDeletedLegacyWidgetIds(new Set());
     if (entry.view === "runtime" && entry.dashboardId) {
       setRuntimeSelection({
         dashboardId: entry.dashboardId,
@@ -794,7 +796,10 @@ export function DashboardPage({
   };
 
   const confirmDelete = () => {
-    if (deleteTarget) onAction("dashboard.widget.deleted", "/api/dashboards/widgets", deleteTarget);
+    if (deleteTarget) {
+      setDeletedLegacyWidgetIds((widgetIds) => new Set(widgetIds).add(deleteTarget));
+      onAction("dashboard.widget.deleted", "/api/dashboards/widgets", deleteTarget);
+    }
     setDeleteTarget(null);
   };
 
@@ -964,6 +969,7 @@ export function DashboardPage({
       activeDashboardTitle={activeDashboardTitle}
       activeSqlResult={activeSqlResult}
       dataset={dataset}
+      deletedWidgetIds={deletedLegacyWidgetIds}
       deleteRequested={Boolean(deleteTarget)}
       expandedChart={expandedChart}
       isPublished={isPublished}

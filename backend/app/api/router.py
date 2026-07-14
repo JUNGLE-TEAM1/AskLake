@@ -12,6 +12,7 @@ from app.api.demo_hydration import router as demo_hydration_router
 from app.api.etl import router as etl_router
 from app.api.harness import router as harness_router
 from app.api.health import router as health_router
+from app.api.integration import router as integration_router
 from app.api.sql import router as sql_router
 from app.api.sql_test import router as sql_test_router
 from app.api.users import router as users_router
@@ -29,6 +30,7 @@ api_router.include_router(sql_test_router)
 api_router.include_router(dashboard_card_router)
 api_router.include_router(dashboard_runtime_router)
 api_router.include_router(dashboard_assistant_router)
+api_router.include_router(integration_router)
 if settings.app_env.strip().lower() in {"local", "development", "dev", "test", "testing"}:
     api_router.include_router(harness_router)
     api_router.include_router(demo_hydration_router, prefix="/demo")

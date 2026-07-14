@@ -44,6 +44,7 @@ type AppRouteState = {
   datasetId?: string;
   flow: FlowId;
   jobId?: string;
+  unknownPath?: string;
 };
 
 type FlowPathContext = {
@@ -59,8 +60,10 @@ function parseDashboardRoute(pathname: string): DashboardRouteState | null {
   const segments = pathname.split("/").filter(Boolean);
   if (segments[0] !== "dashboards") return null;
   if (segments.length === 1) return { view: "list" };
-  if (segments.length === 2) return { dashboardId: decodeURIComponent(segments[1]), runtimeMode: "published", view: "runtime" };
-  if (segments.length === 3 && segments[2] === "edit") return { dashboardId: decodeURIComponent(segments[1]), runtimeMode: "draft", view: "runtime" };
+  const dashboardId = decodePathSegment(segments[1]);
+  if (!dashboardId) return null;
+  if (segments.length === 2) return { dashboardId, runtimeMode: "published", view: "runtime" };
+  if (segments.length === 3 && segments[2] === "edit") return { dashboardId, runtimeMode: "draft", view: "runtime" };
   return null;
 }
 
@@ -101,22 +104,26 @@ function parseAppRoute(pathname: string, currentScheduleFlow: ScheduleFlowId = d
   const [area, id, action] = segments;
 
   if (!area) return { dashboardRoute: null, flow: "jobs" };
+  if (area === "dashboards") return { dashboardRoute: null, flow: "jobs", unknownPath: pathname };
   if (area === "jobs") {
     const jobId = decodePathSegment(id);
     if (jobId && action === "runs") return { dashboardRoute: null, flow: "jobRuns", jobId };
     if (jobId) return { dashboardRoute: null, flow: "jobDetail", jobId };
-    return { dashboardRoute: null, flow: "jobs" };
+    return { dashboardRoute: null, flow: "jobs", unknownPath: pathname };
   }
   if (area === "etl") {
     if (id === "source") return { dashboardRoute: null, flow: "source" };
     if (id === "record-parsing") return { dashboardRoute: null, flow: "recordParsing" };
     if (id === "schema") return { dashboardRoute: null, flow: "schema" };
     if (id === "rules") return { dashboardRoute: null, flow: "rules" };
-    if (id === "schedule") return { dashboardRoute: null, flow: currentScheduleFlow };
+    if (id === "schedule" && segments.length === 3 && scheduleFlows.includes(action as ScheduleFlowId)) {
+      return { dashboardRoute: null, flow: action as ScheduleFlowId };
+    }
+    if (id === "schedule" && segments.length === 2) return { dashboardRoute: null, flow: currentScheduleFlow };
     if (id === "permission") return { dashboardRoute: null, flow: "permission" };
     if (id === "target") return { dashboardRoute: null, flow: "target" };
     if (id === "review") return { dashboardRoute: null, flow: "review" };
-    return { dashboardRoute: null, flow: "jobs" };
+    return { dashboardRoute: null, flow: "jobs", unknownPath: pathname };
   }
   if (area === "catalog") {
     const datasetId = decodePathSegment(id);
@@ -129,7 +136,7 @@ function parseAppRoute(pathname: string, currentScheduleFlow: ScheduleFlowId = d
   if (area === "profile") return { dashboardRoute: null, flow: "profile" };
   if (area === "login") return { dashboardRoute: null, flow: "login" };
 
-  return { dashboardRoute: null, flow: "jobs" };
+  return { dashboardRoute: null, flow: "jobs", unknownPath: pathname };
 }
 
 function getFlowPath(flow: FlowId, context: FlowPathContext = {}) {
@@ -353,6 +360,11 @@ export function App() {
   }, [activeFlow, authChecked, canAccessAdmin, currentUser, navigate, showToast]);
 
   useEffect(() => {
+    if (routeState.unknownPath) {
+      if (location.pathname !== "/jobs") navigate("/jobs", { replace: true });
+      setActiveFlow("jobs");
+      return;
+    }
     if (routeState.dashboardRoute) {
       setDashboardEntry((entry) => dashboardEntryFromRoute(routeState.dashboardRoute!, entry.version + 1));
     }

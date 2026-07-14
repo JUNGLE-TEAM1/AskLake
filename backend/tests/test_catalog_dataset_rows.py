@@ -1,12 +1,13 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import duckdb
 
 from app.core.errors import ApiError
-from app.schemas.catalog import CatalogDatasetResponse, DatasetMaterializationRun
-from app.services.catalog_service import dataset_for_latest_successful_materialization
+from app.schemas.catalog import CatalogDatasetResponse, CatalogDatasetRowsResponse, DatasetMaterializationRun
+from app.services.catalog_service import CatalogService, dataset_for_latest_successful_materialization
 from app.services.dataset_rows_service import read_dataset_rows
 
 
@@ -72,6 +73,38 @@ class CatalogDatasetRowsTest(unittest.TestCase):
         self.assertEqual(page.returned_rows, 0)
         self.assertEqual(page.rows, [])
         self.assertFalse(page.has_next)
+
+    def test_catalog_service_delegates_dataset_rows_to_bounded_reader(self) -> None:
+        service = CatalogService(
+            lake_storage=None,
+            repository=None,
+            sql_repository=None,
+        )
+        expected = CatalogDatasetRowsResponse(
+            columns=["id", "label"],
+            dataset_id=self.dataset.id,
+            dataset_name=self.dataset.name,
+            has_next=True,
+            limit=25,
+            offset=50,
+            returned_rows=25,
+            row_count=10000,
+            rows=[["50", "row-50"]],
+        )
+
+        with (
+            patch.object(service, "get_dataset", return_value=self.dataset) as get_dataset,
+            patch("app.services.catalog_service.read_dataset_rows", return_value=expected) as read_rows,
+        ):
+            actual = service.get_dataset_rows(
+                self.dataset.id,
+                limit=25,
+                offset=50,
+            )
+
+        self.assertIs(actual, expected)
+        get_dataset.assert_called_once_with(self.dataset.id, None)
+        read_rows.assert_called_once_with(self.dataset, limit=25, offset=50)
 
     def test_declared_but_missing_materialization_is_not_reported_as_actual_data(self) -> None:
         missing_dataset = build_dataset(
