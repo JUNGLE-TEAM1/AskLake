@@ -1628,6 +1628,30 @@ const checks = [
     ],
   },
   {
+    name: "ETL wizard blocks incomplete forward navigation while keeping validated Next callbacks",
+    file: "src/App.tsx",
+    patterns: [
+      /const \[completedWizardFlows, setCompletedWizardFlows\] = useState<Set<FlowId>>/,
+      /canNavigateToWizardStep\(\{/,
+      /if \(!nextFlow \|\| nextFlow === activeFlow \|\| wizardStepDisabled\[stepIndex\]\) return;/,
+      /<Stepper[\s\S]*isStepDisabled=\{/,
+      /onNext=\{\(\) => completeWizardFlowAndMove\("source"/,
+      /onNext=\{\(\) => completeWizardFlowAndMove\("schema"/,
+      /onNext=\{\(\) => completeWizardFlowAndMove\("permission", "target"\)\}/,
+      /onNext=\{\(\) => completeWizardFlowAndMove\("target", "review"\)\}/,
+    ],
+  },
+  {
+    name: "Locked ETL wizard steps use native disabled button semantics",
+    file: "src/components/layout/Stepper.tsx",
+    patterns: [
+      /isStepDisabled\?: \(stepIndex: number\) => boolean;/,
+      /const disabled = isStepDisabled\?\.\(index\) \?\? false;/,
+      /disabled=\{disabled\}/,
+      /aria-label=\{disabled \? `\$\{step\} 단계 잠김`/,
+    ],
+  },
+  {
     name: "Global top bar exposes only appearance and language placeholders",
     file: "src/components/layout/Topbar.tsx",
     patterns: [

@@ -440,6 +440,24 @@ p {
   outline-offset: 3px;
 }
 
+.step-trigger:disabled {
+  cursor: not-allowed;
+}
+
+.step-trigger:disabled .step-dot,
+.step-trigger:disabled .step-label {
+  opacity: 0.58;
+}
+
+.step-trigger:disabled:hover .step-dot {
+  border-color: #dee1e6;
+  color: #9095a1;
+}
+
+.step-trigger:disabled:hover .step-label {
+  color: #565d6d;
+}
+
 .step-dot {
   display: grid;
   width: 40px;
