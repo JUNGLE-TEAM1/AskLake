@@ -73,7 +73,7 @@ TARGET_DATABASES=asklake,asklake_gold,analytics,marketing
 - AWS Source request는 provider, region, bucket/prefix만 받으며 frontend는 endpoint/access key/secret 입력을 노출하거나 API payload에 포함하지 않습니다.
 - mock mode에서는 Source/Schema 연결 테스트도 `sourceConnectorService.ts`의 mock `SourceConnectorAnalysis`를 사용합니다.
 - live mode에서는 Source/Schema/Create/Run 흐름이 실제 백엔드를 호출합니다.
-- 새 Kafka Source의 broker 기본값은 `GET /api/etl/sources/defaults`가 반환하는 backend runtime 값이며 frontend build에 복제하지 않습니다.
+- 새 Kafka/S3 Source의 비밀이 아닌 기본값은 `GET /api/etl/sources/defaults`가 반환하는 backend runtime 값이며 frontend build에 복제하지 않습니다.
 - Target 저장경로 선택은 브라우저가 AWS SDK나 secret을 갖지 않고 `/api/s3/buckets`, `/api/s3/prefixes` 서버 API만 호출합니다. 서버는 `S3_ALLOWED_BUCKETS` allowlist를 검증하고 AWS SDK v3 `ListObjectsV2`로 prefix를 조회합니다.
 - Dashboard 원격 widget scan은 `S3_ALLOWED_BUCKETS`, runtime 응답 전체에서 공유하는 기본 512 MiB/256 object 예산, DuckDB query당 기본 15초와 memory/temp 각 256 MiB/2 threads 경계를 사용합니다. 예산은 `ASKLAKE_DASHBOARD_MAX_REMOTE_BYTES`/`ASKLAKE_DASHBOARD_MAX_REMOTE_OBJECTS`, 실행 경계는 `ASKLAKE_DASHBOARD_QUERY_TIMEOUT_SECONDS`/`ASKLAKE_DASHBOARD_DUCKDB_MEMORY_BYTES`/`ASKLAKE_DASHBOARD_DUCKDB_TEMP_BYTES`/`ASKLAKE_DASHBOARD_DUCKDB_THREADS`로 설정합니다.
 - Target DB 선택은 `/api/target/databases` 서버 API만 호출합니다. 서버는 `TARGET_DATABASES` 또는 `ASKLAKE_TARGET_DATABASES` allowlist를 사용하고, 값이 없으면 local demo 기본 DB 목록을 반환합니다.
@@ -589,10 +589,13 @@ type CatalogDataset = {
 ```ts
 type SourceConnectorDefaults = {
   kafkaBroker: string; // ASKLAKE_KAFKA_BROKER, fallback 127.0.0.1:19092
+  kafkaTopic: string; // ASKLAKE_SOURCE_DEFAULT_KAFKA_TOPIC -> ASKLAKE_KAFKA_TOPIC -> asklake-source-events
+  s3Bucket: string; // ASKLAKE_SOURCE_DEFAULT_S3_BUCKET -> ASKLAKE_RAW_BUCKET -> empty
+  s3Prefix: string; // ASKLAKE_SOURCE_DEFAULT_S3_PREFIX -> empty
 };
 ```
 
-저장된 Job을 수정할 때는 이 응답이 기존 `sourceConfig`를 덮어쓰지 않습니다. 실제 연결과 실행은 request에 저장된 broker를 사용합니다.
+Frontend는 새 빈 draft에서만 이 응답을 한 번 적용합니다. 저장된 Job을 수정하거나 사용자가 값을 입력한 뒤에는 기존 `sourceConfig`를 덮어쓰지 않습니다. 응답은 비밀이 아닌 연결 위치만 제공하며 credential은 포함하지 않습니다. 실제 연결과 실행은 request에 저장된 값을 사용합니다.
 
 ### Schema Type and Source Path Contract
 

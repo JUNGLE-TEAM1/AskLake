@@ -32,6 +32,9 @@ try {
   await waitForRestFixture();
   await assertGet("/api/etl/sources/defaults", {
     kafkaBroker: env.ASKLAKE_KAFKA_BROKER || "127.0.0.1:19092",
+    kafkaTopic: env.ASKLAKE_SOURCE_DEFAULT_KAFKA_TOPIC || env.ASKLAKE_KAFKA_TOPIC || "asklake-source-events",
+    s3Bucket: env.ASKLAKE_SOURCE_DEFAULT_S3_BUCKET || env.ASKLAKE_RAW_BUCKET || "",
+    s3Prefix: env.ASKLAKE_SOURCE_DEFAULT_S3_PREFIX || "",
   });
   await assertGet("/api/etl/jobs", {
     facets: {

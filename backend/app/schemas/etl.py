@@ -923,6 +923,9 @@ class SourceConnectorRequest(CamelModel):
 
 class SourceConnectorDefaults(CamelModel):
     kafka_broker: str
+    kafka_topic: str
+    s3_bucket: str
+    s3_prefix: str
 
 
 class SourceAssetsRequest(CamelModel):

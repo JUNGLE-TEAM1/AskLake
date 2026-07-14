@@ -37,6 +37,9 @@ export type SourceConnectorAnalysis = {
 
 export type SourceConnectorDefaults = {
   kafkaBroker: string;
+  kafkaTopic: string;
+  s3Bucket: string;
+  s3Prefix: string;
 };
 
 type BackendSourceConnectorResponse = SourceConnectorAnalysis;
@@ -67,7 +70,14 @@ export async function previewRecordParsing(rawLines: string[], recordParsing: Re
 }
 
 export async function getSourceConnectorDefaults(): Promise<SourceConnectorDefaults> {
-  if (apiConfig.useMock) return { kafkaBroker: "127.0.0.1:19092" };
+  if (apiConfig.useMock) {
+    return {
+      kafkaBroker: "127.0.0.1:19092",
+      kafkaTopic: "asklake-source-events",
+      s3Bucket: "m3-raw",
+      s3Prefix: "",
+    };
+  }
   return getWithDevFallback<SourceConnectorDefaults>("/api/etl/sources/defaults");
 }
 

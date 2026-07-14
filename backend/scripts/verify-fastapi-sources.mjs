@@ -91,8 +91,20 @@ async function deleteKafkaFixture(topic) {
 async function verifyAllSources() {
   const defaults = await get("/api/etl/sources/defaults");
   const expectedBroker = process.env.ASKLAKE_KAFKA_BROKER || "127.0.0.1:19092";
+  const expectedTopic = process.env.ASKLAKE_SOURCE_DEFAULT_KAFKA_TOPIC || process.env.ASKLAKE_KAFKA_TOPIC || "asklake-source-events";
+  const expectedS3Bucket = process.env.ASKLAKE_SOURCE_DEFAULT_S3_BUCKET || process.env.ASKLAKE_RAW_BUCKET || "";
+  const expectedS3Prefix = process.env.ASKLAKE_SOURCE_DEFAULT_S3_PREFIX || "";
   if (defaults.kafkaBroker !== expectedBroker) {
     throw new Error(`Source defaults broker mismatch: expected ${expectedBroker}, got ${defaults.kafkaBroker}.`);
+  }
+  if (defaults.kafkaTopic !== expectedTopic) {
+    throw new Error(`Source defaults topic mismatch: expected ${expectedTopic}, got ${defaults.kafkaTopic}.`);
+  }
+  if (defaults.s3Bucket !== expectedS3Bucket) {
+    throw new Error(`Source defaults S3 bucket mismatch: expected ${expectedS3Bucket}, got ${defaults.s3Bucket}.`);
+  }
+  if (defaults.s3Prefix !== expectedS3Prefix) {
+    throw new Error(`Source defaults S3 prefix mismatch: expected ${expectedS3Prefix}, got ${defaults.s3Prefix}.`);
   }
   console.log("Source connector defaults: ok");
   await verify("File / S3 CSV", objectStorageConfig("asklake-fixtures/csv/"));
