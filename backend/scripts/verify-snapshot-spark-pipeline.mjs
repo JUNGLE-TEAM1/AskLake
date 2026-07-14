@@ -11,6 +11,14 @@ const tempDir = mkdtempSync(path.join(os.tmpdir(), "asklake-snapshot-pipeline-")
 chmodSync(tempDir, 0o777);
 
 try {
+  const actionBudget = runPipeline("action-budget", actionBudgetManifest());
+  assert(actionBudget.process.status === 0, `Action-budget pipeline exited ${actionBudget.process.status}:\n${actionBudget.process.stdout}\n${actionBudget.process.stderr}`);
+  assert(actionBudget.report.inputRows === 3, `Expected 3 action-budget input rows: ${JSON.stringify(actionBudget.report)}`);
+  assert(actionBudget.report.outputRows === 3, `Expected 3 action-budget output rows: ${JSON.stringify(actionBudget.report)}`);
+  const sourceReadMarker = "FileScanRDD: Reading File path: file:///work/fixtures/rules/snapshot-pipeline-input.jsonl";
+  const sourceReadCount = actionBudget.process.stderr.split(sourceReadMarker).length - 1;
+  assert(sourceReadCount === 3, `Expected exactly 3 raw JSONL reads, got ${sourceReadCount}:\n${actionBudget.process.stderr}`);
+
   const success = runPipeline("success", successManifest());
   assert(success.process.status === 0, `Success pipeline exited ${success.process.status}:\n${success.process.stdout}\n${success.process.stderr}`);
   assert(success.report.status === "success", `Success report failed: ${JSON.stringify(success.report)}`);
@@ -43,6 +51,27 @@ try {
   console.log("verify-snapshot-spark-pipeline: ok");
 } finally {
   rmSync(tempDir, { force: true, recursive: true });
+}
+
+function actionBudgetManifest() {
+  return {
+    partitionColumns: "",
+    qualityRules: [],
+    ruleContractVersion: "1.0",
+    ruleOutputSchema: [...baseOutputSchema(), ["rating_value", "Double"]],
+    rules: [canonicalRule({
+      failureDisposition: "set_null",
+      id: "rating-cast-action-budget",
+      inputColumns: ["rating"],
+      kind: "transform",
+      operation: "cast",
+      outputColumns: ["rating_value"],
+      outputType: "Double",
+      parameters: { targetType: "Double" },
+    })],
+    schemaColumns: baseSchema(),
+    transformSteps: [{ enabled: true, input: "rating", output: "rating_value" }],
+  };
 }
 
 function runPipeline(name, manifest) {
