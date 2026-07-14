@@ -73,7 +73,7 @@ scripts/deploy.sh smoke
 ASKLAKE_RUN_PRODUCTION_JOB_E2E=true scripts/deploy.sh job-smoke
 ```
 
-이 명령은 일반 Spark batch, Kafka Snapshot, Kafka Continuous Job을 각각 고유 suffix로 생성하고 Iceberg commit, Catalog `available`, Trino row count를 확인한다. Snapshot은 같은 consumer group의 후속 0건 run도 확인한다. `asklake-production-smoke/` S3 source fixture, `asklake.production.smoke.*` Kafka topic, 생성 Job/Dataset/Iceberg table만 종료 시 정리한다. 기본 `deploy`, `restart`, `smoke`에는 절대 포함되지 않는다.
+이 명령은 일반 Spark batch, Kafka Snapshot, Kafka Continuous Job을 각각 고유 suffix로 생성하고 Iceberg commit, Catalog `available`, Trino row count를 확인한다. Snapshot은 같은 consumer group의 후속 0건 run도 확인한다. `asklake-production-smoke/` S3 source fixture, `asklake.production.smoke.*` Kafka topic, 생성 Job/Dataset/Iceberg table만 종료 시 정리한다. EC2 Role은 Raw bucket 전체 쓰기·삭제 권한 대신 `asklake-production-smoke/*` prefix에만 `s3:PutObject`와 `s3:DeleteObject`를 허용해야 한다. 기본 `deploy`, `restart`, `smoke`에는 절대 포함되지 않는다.
 
 Backend run/retry actions require these Airflow variables in the server `deploy/.env` when DAG submission is expected:
 

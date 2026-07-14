@@ -146,7 +146,9 @@ def run_kafka_snapshot(resources: SmokeResources, actor: ActorContext) -> dict[s
         "scheduleLabel": "수동",
         "targetDataset": target_dataset,
         "targetLayer": "SILVER",
-        "targetFormat": "Parquet",
+        # Snapshot keeps the JSONL create-payload compatibility value while
+        # the Job runtime still commits its final Dataset as Iceberg/Parquet.
+        "targetFormat": "jsonl",
         "storagePath": f"s3a://{os.environ['ASKLAKE_SPARK_OUTPUT_BUCKET']}/{target_dataset}/silver/",
         "executionMode": "snapshot",
     })
