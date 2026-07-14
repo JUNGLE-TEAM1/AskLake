@@ -164,10 +164,22 @@ jobs:
           set +a
           runtime_root="${ASKLAKE_EMR_SERVERLESS_ARTIFACT_URI}/runtime/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           export RUNTIME_ROOT="$runtime_root"
+          bundle_root="$RUNNER_TEMP/smoke-bundle"
+          mkdir -p "$bundle_root/backend"
+          cp backend/package.json backend/package-lock.json "$bundle_root/backend/"
+          cp -R backend/src backend/scripts backend/node_modules "$bundle_root/backend/"
+          tar -C "$bundle_root" -czf "$RUNNER_TEMP/runtime/asklake-smoke-bundle.tgz" backend
+          bundle_sha256="$(sha256sum "$RUNNER_TEMP/runtime/asklake-smoke-bundle.tgz" | awk '{print $1}')"
+          bundle_size="$(stat -c '%s' "$RUNNER_TEMP/runtime/asklake-smoke-bundle.tgz")"
+          export BUNDLE_SHA256="$bundle_sha256" BUNDLE_SIZE="$bundle_size"
+          node -e 'const fs=require("fs"); fs.writeFileSync(process.argv[1], JSON.stringify({schemaVersion:"asklake.aws-staging-smoke-bundle.v1", sourceRevision:process.env.GITHUB_SHA, sha256:process.env.BUNDLE_SHA256, sizeBytes:Number(process.env.BUNDLE_SIZE)}, null, 2)+"\n")' \
+            "$RUNNER_TEMP/runtime/smoke-bundle.json"
           aws s3 cp "$runtime_env" "$runtime_root/asklake-runtime.env" --only-show-errors --content-type text/plain
           aws s3 cp "$runtime_manifest" "$runtime_root/runtime-manifest.json" --only-show-errors --content-type application/json
           aws s3 cp "$RUNNER_TEMP/runtime/jar-bundle.json" "$runtime_root/jar-bundle.json" --only-show-errors --content-type application/json
-          node -e 'const fs=require("fs"); const jar=JSON.parse(fs.readFileSync(process.argv[1])); fs.writeFileSync(process.argv[2], JSON.stringify({schemaVersion:"asklake.aws-staging-artifact-delivery.v1", commit:process.env.GITHUB_SHA, stackId:process.env.STACK_ID, runtimeRootUri:process.env.RUNTIME_ROOT, bundleSha256:jar.bundleSha256, jarCount:jar.jarCount}, null, 2)+"\n")' \
+          aws s3 cp "$RUNNER_TEMP/runtime/asklake-smoke-bundle.tgz" "$runtime_root/asklake-smoke-bundle.tgz" --only-show-errors --content-type application/gzip
+          aws s3 cp "$RUNNER_TEMP/runtime/smoke-bundle.json" "$runtime_root/smoke-bundle.json" --only-show-errors --content-type application/json
+          node -e 'const fs=require("fs"); const jar=JSON.parse(fs.readFileSync(process.argv[1])); fs.writeFileSync(process.argv[2], JSON.stringify({schemaVersion:"asklake.aws-staging-artifact-delivery.v1", commit:process.env.GITHUB_SHA, stackId:process.env.STACK_ID, runtimeRootUri:process.env.RUNTIME_ROOT, bundleSha256:jar.bundleSha256, jarCount:jar.jarCount, smokeBundleSha256:process.env.BUNDLE_SHA256}, null, 2)+"\n")' \
             "$RUNNER_TEMP/runtime/jar-bundle.json" \
             "$RUNNER_TEMP/runtime/delivery-receipt.json"
 
@@ -178,6 +190,7 @@ jobs:
           path: |
             ${{ runner.temp }}/runtime/${{ inputs.stack_id }}.manifest.json
             ${{ runner.temp }}/runtime/jar-bundle.json
+            ${{ runner.temp }}/runtime/smoke-bundle.json
             ${{ runner.temp }}/runtime/delivery-receipt.json
           if-no-files-found: error
           retention-days: 7
@@ -186,5 +199,5 @@ jobs:
       - name: Remove private Runtime and Terraform inputs
         if: always()
         run: |
-          rm -rf "$RUNNER_TEMP/runtime" "$RUNNER_TEMP/jars"
+          rm -rf "$RUNNER_TEMP/runtime" "$RUNNER_TEMP/jars" "$RUNNER_TEMP/smoke-bundle"
           rm -f "$RUNNER_TEMP/backend.hcl" "$RUNNER_TEMP/staging.tfvars.json"

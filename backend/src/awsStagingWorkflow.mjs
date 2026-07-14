@@ -1,7 +1,7 @@
 const AWS_REGION = "ap-northeast-2";
 const STACK_ID_PATTERN = /^[a-z0-9][a-z0-9-]{2,15}$/;
 const BUCKET_PATTERN = /^(?=.{3,63}$)[a-z0-9][a-z0-9.-]*[a-z0-9]$/;
-const OPERATIONS = new Set(["plan", "apply", "artifacts", "destroy"]);
+const OPERATIONS = new Set(["plan", "apply", "artifacts", "smoke", "destroy"]);
 
 export function prepareAwsStagingTerraformInputs(input, contract, options = {}) {
   const now = options.now instanceof Date ? options.now : new Date();

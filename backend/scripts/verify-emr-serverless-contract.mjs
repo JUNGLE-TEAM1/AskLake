@@ -82,6 +82,10 @@ assert.match(submission.jobDriver.sparkSubmit.sparkSubmitParameters, /spark\.dyn
 assert.match(submission.jobDriver.sparkSubmit.sparkSubmitParameters, /spark\.emr-serverless\.driver\.disk=20g/);
 assert.match(submission.jobDriver.sparkSubmit.sparkSubmitParameters, /spark\.emr-serverless\.executor\.disk=20g/);
 assert.match(submission.jobDriver.sparkSubmit.sparkSubmitParameters, /spark\.emr-serverless\.driverEnv\.ASKLAKE_SPARK_REPORT_FILE=/);
+assert.match(submission.jobDriver.sparkSubmit.sparkSubmitParameters, /--py-files/);
+for (const name of ["object_storage_runtime.py", "snapshot_rule_runtime.py", "spark_snapshot_rules.py", "spark_source_identity.py"]) {
+  assert.match(submission.jobDriver.sparkSubmit.sparkSubmitParameters, new RegExp(name.replace(".", "\\.")));
+}
 assert.match(submission.jobDriver.sparkSubmit.sparkSubmitParameters, /org\.postgresql:postgresql:42\.7\.5/);
 assert.doesNotMatch(submission.jobDriver.sparkSubmit.sparkSubmitParameters, /hadoop-aws/);
 assert.doesNotMatch(JSON.stringify(submission), /AWS_(?:ACCESS_KEY_ID|SECRET_ACCESS_KEY|SESSION_TOKEN)/);
@@ -90,10 +94,14 @@ const artifactS3 = new FakeS3Client({});
 const uploadedArtifact = await uploadEmrServerlessArtifact(environment, { s3Client: artifactS3 });
 assert.equal(uploadedArtifact.entryPointUri, config.entryPointUri);
 assert.equal(uploadedArtifact.checksum.length, 64);
-assert.equal(artifactS3.putCount, 1);
-assert.equal(artifactS3.lastPutInput.Bucket, "asklake-artifacts");
-assert.equal(artifactS3.lastPutInput.Key, "emr-serverless/spark_job_run.py");
-assert.equal(artifactS3.lastPutInput.Metadata["asklake-sha256"], uploadedArtifact.checksum);
+assert.equal(uploadedArtifact.dependencies.length, 4);
+assert.equal(artifactS3.putCount, 5);
+const entryPointPut = artifactS3.putInputs.find((input) => input.Key === "emr-serverless/spark_job_run.py");
+assert.equal(entryPointPut.Bucket, "asklake-artifacts");
+assert.equal(entryPointPut.Metadata["asklake-sha256"], uploadedArtifact.checksum);
+for (const name of ["object_storage_runtime.py", "snapshot_rule_runtime.py", "spark_snapshot_rules.py", "spark_source_identity.py"]) {
+  assert.ok(artifactS3.putInputs.some((input) => input.Key === `emr-serverless/python/${name}`));
+}
 
 assert.equal(normalizeEmrServerlessState("QUEUED"), "queued");
 assert.equal(normalizeEmrServerlessState("RUNNING"), "running");
@@ -348,6 +356,7 @@ class FakeEmrClient {
 class FakeS3Client {
   constructor(report) {
     this.putCount = 0;
+    this.putInputs = [];
     this.report = report;
   }
 
@@ -355,6 +364,7 @@ class FakeS3Client {
     if (command.constructor.name === "PutObjectCommand") {
       this.putCount += 1;
       this.lastPutInput = command.input;
+      this.putInputs.push(command.input);
       return { ETag: "fixture-etag" };
     }
     if (command.constructor.name === "GetObjectCommand") {

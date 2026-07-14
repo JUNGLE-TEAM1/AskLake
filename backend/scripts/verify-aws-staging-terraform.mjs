@@ -155,6 +155,8 @@ function validateTerraform(files) {
   assertContains(iamMain, 'variable = "iam:PassedToService"', "PassRole must bind EMR Serverless");
   assertContains(iamMain, '"kafka-cluster:ReadData"', "MSK read permission is missing");
   assertContains(iamMain, '"kafka-cluster:WriteData"', "smoke producer permission is missing");
+  assertContains(iamMain, '${var.bucket_arns.artifact}/emr-serverless/runs/*', "Batch report artifact write prefix is missing");
+  assertContains(iamMain, '${var.bucket_arns.artifact}/emr-serverless/continuous/jobs/*', "Continuous report artifact write prefix is missing");
   assert.doesNotMatch(iamMain, /kafka:GetBootstrapBrokers|kafka:DescribeClusterV2/, "runner must use rendered brokers without MSK control-plane egress");
   assertContains(iamMain, '"logs:DescribeLogGroups"', "EMR CloudWatch discovery permission is missing");
   assertContains(iamMain, "AmazonSSMManagedInstanceCore", "SSM runner policy is missing");

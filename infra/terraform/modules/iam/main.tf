@@ -13,6 +13,8 @@ locals {
     "${var.bucket_arns.output}/*",
     "${var.bucket_arns.checkpoint}/*",
     "${var.bucket_arns.report}/*",
+    "${var.bucket_arns.artifact}/emr-serverless/runs/*",
+    "${var.bucket_arns.artifact}/emr-serverless/continuous/jobs/*",
   ]
   topic_arn       = "${replace(var.msk_cluster_arn, ":cluster/", ":topic/")}/${var.topic_namespace}*"
   group_arn       = "${replace(var.msk_cluster_arn, ":cluster/", ":group/")}/${var.topic_namespace}*"

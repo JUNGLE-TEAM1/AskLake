@@ -1,0 +1,234 @@
+name: AWS Staging Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      stack_id:
+        description: "apply와 artifact 전달이 끝난 staging stack ID"
+        required: true
+        type: string
+      runtime_root_uri:
+        description: "artifact workflow receipt의 immutable runtimeRootUri"
+        required: true
+        type: string
+      smoke_bundle_sha256:
+        description: "artifact workflow delivery receipt의 smokeBundleSha256"
+        required: true
+        type: string
+      confirmation:
+        description: "smoke:<stack_id>"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: asklake-aws-staging-${{ inputs.stack_id }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-northeast-2
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+
+jobs:
+  smoke:
+    name: Approved private Phase 4 smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    environment: asklake-aws-staging-smoke
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout exact workflow commit
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22.23.1"
+          package-manager-cache: false
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "1.15.8"
+          terraform_wrapper: false
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci --ignore-scripts
+
+      - name: Validate Phase 4 plan and confirmation
+        env:
+          AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          AWS_GITHUB_OIDC_ROLE_ARN: ${{ vars.AWS_GITHUB_OIDC_ROLE_ARN }}
+          AWS_STAGING_CONFIRMATION: ${{ inputs.confirmation }}
+          AWS_STAGING_OPERATION: smoke
+          AWS_STAGING_RUNTIME_ROOT_URI: ${{ inputs.runtime_root_uri }}
+          AWS_STAGING_SMOKE_BUNDLE_SHA256: ${{ inputs.smoke_bundle_sha256 }}
+          AWS_STAGING_STACK_ID: ${{ inputs.stack_id }}
+          AWS_STAGING_TTL_HOURS: "1"
+          AWS_TERRAFORM_STATE_BUCKET: ${{ vars.AWS_TERRAFORM_STATE_BUCKET }}
+          AWS_TERRAFORM_STATE_KMS_KEY_ARN: ${{ vars.AWS_TERRAFORM_STATE_KMS_KEY_ARN }}
+        run: |
+          set -euo pipefail
+          node backend/scripts/prepare-aws-staging-terraform-inputs.mjs \
+            --backend-file "$RUNNER_TEMP/backend.hcl" \
+            --tfvars-file "$RUNNER_TEMP/staging.tfvars.json"
+          node backend/scripts/evaluate-aws-staging-smoke.mjs \
+            --plan \
+            --stack-id "$AWS_STAGING_STACK_ID" \
+            --source-revision "$GITHUB_SHA" \
+            --smoke-bundle-sha256 "$AWS_STAGING_SMOKE_BUNDLE_SHA256" \
+            --runtime-root-uri "$AWS_STAGING_RUNTIME_ROOT_URI" \
+            > "$RUNNER_TEMP/smoke-plan.json"
+
+      - name: Configure short-lived AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_GITHUB_OIDC_ROLE_ARN }}
+          role-session-name: asklake-staging-smoke-${{ github.run_id }}
+          aws-region: ap-northeast-2
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          mask-aws-account-id: true
+          unset-current-credentials: true
+
+      - name: Verify account, state, private runner, and artifact delivery
+        env:
+          EXPECTED_AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          RUNTIME_ROOT_URI: ${{ inputs.runtime_root_uri }}
+          SMOKE_BUNDLE_SHA256: ${{ inputs.smoke_bundle_sha256 }}
+          STACK_ID: ${{ inputs.stack_id }}
+        run: |
+          set -euo pipefail
+          actual_account_id="$(aws sts get-caller-identity --query Account --output text)"
+          test "$actual_account_id" = "$EXPECTED_AWS_ACCOUNT_ID"
+          terraform -chdir=infra/terraform/environments/staging init \
+            -reconfigure \
+            -backend-config="$RUNNER_TEMP/backend.hcl"
+          terraform -chdir=infra/terraform/environments/staging output -json > "$RUNNER_TEMP/terraform-output.json"
+          node -e 'const fs=require("fs"); const o=JSON.parse(fs.readFileSync(process.argv[1])); const i=o.infrastructure_contract?.value; const instance=o.smoke_runner_instance_id?.value; const root=process.env.RUNTIME_ROOT_URI; if (!i || i.stack_id!==process.env.STACK_ID || i.smoke_runner_enabled!==true || !/^i-[0-9a-f]{8,17}$/.test(String(instance||""))) process.exit(1); const expected=`s3://${i.bucket_names.artifact}/emr-serverless/runtime/`; if (!root.startsWith(expected) || root.includes("..")) process.exit(1); fs.writeFileSync(process.argv[2], `${instance}\n${i.bucket_names.artifact}\n`)' \
+            "$RUNNER_TEMP/terraform-output.json" "$RUNNER_TEMP/smoke-target.txt"
+          smoke_runner_instance_id="$(sed -n '1p' "$RUNNER_TEMP/smoke-target.txt")"
+          artifact_bucket="$(sed -n '2p' "$RUNNER_TEMP/smoke-target.txt")"
+          test -n "$smoke_runner_instance_id"
+          test -n "$artifact_bucket"
+          printf 'SMOKE_RUNNER_INSTANCE_ID=%s\nARTIFACT_BUCKET=%s\n' "$smoke_runner_instance_id" "$artifact_bucket" >> "$GITHUB_ENV"
+          runtime_key="${RUNTIME_ROOT_URI#s3://$artifact_bucket/}"
+          aws s3api head-object --bucket "$artifact_bucket" --key "$runtime_key/asklake-runtime.env" > /dev/null
+          aws s3api head-object --bucket "$artifact_bucket" --key "$runtime_key/asklake-smoke-bundle.tgz" > /dev/null
+          aws s3api head-object --bucket "$artifact_bucket" --key "$runtime_key/smoke-bundle.json" > /dev/null
+
+      - name: Capture current Seoul EMR price snapshot
+        env:
+          RUNTIME_ROOT_URI: ${{ inputs.runtime_root_uri }}
+        run: |
+          set -euo pipefail
+          evidence_root="$RUNTIME_ROOT_URI/evidence/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          price_uri="$evidence_root/emr-price-snapshot.json"
+          aws pricing get-products \
+            --service-code AmazonEMR \
+            --region us-east-1 \
+            --filters Type=TERM_MATCH,Field=location,Value='Asia Pacific (Seoul)' \
+            --max-results 100 \
+            --output json \
+            > "$RUNNER_TEMP/emr-price-snapshot.json"
+          test "$(node -e 'const p=require(process.argv[1]); process.stdout.write(String(p.PriceList?.length||0))' "$RUNNER_TEMP/emr-price-snapshot.json")" -gt 0
+          aws s3 cp "$RUNNER_TEMP/emr-price-snapshot.json" "$price_uri" --only-show-errors --content-type application/json
+          printf 'EVIDENCE_ROOT_URI=%s\nPRICE_SNAPSHOT_URI=%s\n' "$evidence_root" "$price_uri" >> "$GITHUB_ENV"
+
+      - name: Run S3, MSK, Batch, and pause-resume smoke through private SSM
+        env:
+          RUNTIME_ROOT_URI: ${{ inputs.runtime_root_uri }}
+          SMOKE_BUNDLE_SHA256: ${{ inputs.smoke_bundle_sha256 }}
+          STACK_ID: ${{ inputs.stack_id }}
+        run: |
+          set -euo pipefail
+          evidence_uri="$EVIDENCE_ROOT_URI/smoke-evidence.json"
+          export EVIDENCE_URI="$evidence_uri"
+          node - <<'NODE'
+          const fs = require("fs");
+          const q = (value) => `'${String(value).replaceAll("'", "'\"'\"'")}'`;
+          const root = process.env.RUNTIME_ROOT_URI;
+          const commands = [
+            "set -eu",
+            "umask 077",
+            "rm -rf /opt/asklake-smoke/work",
+            "install -d -m 0700 /opt/asklake-smoke/work",
+            `aws s3 cp ${q(`${root}/asklake-smoke-bundle.tgz`)} /opt/asklake-smoke/work/bundle.tgz --only-show-errors`,
+            `aws s3 cp ${q(`${root}/smoke-bundle.json`)} /opt/asklake-smoke/work/smoke-bundle.json --only-show-errors`,
+            `aws s3 cp ${q(`${root}/asklake-runtime.env`)} /opt/asklake-smoke/work/runtime.env --only-show-errors`,
+            "expected=$(node -e 'const p=require(\"/opt/asklake-smoke/work/smoke-bundle.json\"); process.stdout.write(p.sha256)')",
+            "source_revision=$(node -e 'const p=require(\"/opt/asklake-smoke/work/smoke-bundle.json\"); process.stdout.write(p.sourceRevision)')",
+            "actual=$(sha256sum /opt/asklake-smoke/work/bundle.tgz | awk '{print $1}')",
+            `test \"$source_revision\" = ${q(process.env.GITHUB_SHA)}`,
+            `test \"$expected\" = ${q(process.env.SMOKE_BUNDLE_SHA256)}`,
+            `test \"$actual\" = ${q(process.env.SMOKE_BUNDLE_SHA256)}`,
+            "tar -C /opt/asklake-smoke/work -xzf /opt/asklake-smoke/work/bundle.tgz",
+            "chmod 0600 /opt/asklake-smoke/work/runtime.env",
+            "set -a",
+            ". /opt/asklake-smoke/work/runtime.env",
+            "set +a",
+            `export APP_ENV=production ASKLAKE_AWS_STAGING_STACK_ID=${q(process.env.STACK_ID)}`,
+            `export ASKLAKE_AWS_STAGING_SOURCE_REVISION=${q(process.env.GITHUB_SHA)}`,
+            `export ASKLAKE_AWS_STAGING_RUNTIME_ROOT_URI=${q(root)}`,
+            `export ASKLAKE_AWS_STAGING_EVIDENCE_URI=${q(process.env.EVIDENCE_URI)}`,
+            `export ASKLAKE_AWS_STAGING_PRICE_SNAPSHOT_URI=${q(process.env.PRICE_SNAPSHOT_URI)}`,
+            `export ASKLAKE_AWS_STAGING_SMOKE_BUNDLE_SHA256=${q(process.env.SMOKE_BUNDLE_SHA256)}`,
+            "cd /opt/asklake-smoke/work/backend",
+            "node scripts/run-aws-staging-smoke.mjs",
+          ];
+          fs.writeFileSync(process.env.RUNNER_TEMP + "/ssm-parameters.json", JSON.stringify({ commands }));
+          NODE
+          command_id="$(aws ssm send-command \
+            --instance-ids "$SMOKE_RUNNER_INSTANCE_ID" \
+            --document-name AWS-RunShellScript \
+            --comment "AskLake Phase 4 ${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --parameters "file://$RUNNER_TEMP/ssm-parameters.json" \
+            --timeout-seconds 7200 \
+            --query 'Command.CommandId' \
+            --output text)"
+          test -n "$command_id"
+          deadline=$((SECONDS + 7200))
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            status="$(aws ssm get-command-invocation --command-id "$command_id" --instance-id "$SMOKE_RUNNER_INSTANCE_ID" --query Status --output text 2>/dev/null || true)"
+            case "$status" in
+              Success) break ;;
+              Failed|Cancelled|TimedOut|Undeliverable|Terminated) exit 1 ;;
+            esac
+            sleep 10
+          done
+          test "$status" = "Success"
+          aws s3 cp "$evidence_uri" "$RUNNER_TEMP/smoke-evidence.json" --only-show-errors
+
+      - name: Evaluate and upload redacted smoke evidence
+        run: |
+          set -euo pipefail
+          node backend/scripts/evaluate-aws-staging-smoke.mjs \
+            --evidence-file "$RUNNER_TEMP/smoke-evidence.json" \
+            > "$RUNNER_TEMP/smoke-evaluation.txt"
+
+      - name: Upload Phase 4 evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: aws-staging-smoke-${{ inputs.stack_id }}-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/smoke-evidence.json
+            ${{ runner.temp }}/smoke-evaluation.txt
+            ${{ runner.temp }}/smoke-plan.json
+          if-no-files-found: error
+          retention-days: 7
+          include-hidden-files: false
+
+      - name: Remove private smoke inputs
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/backend.hcl" "$RUNNER_TEMP/staging.tfvars.json" "$RUNNER_TEMP/terraform-output.json"
+          rm -f "$RUNNER_TEMP/smoke-target.txt"
+          rm -f "$RUNNER_TEMP/ssm-parameters.json" "$RUNNER_TEMP/emr-price-snapshot.json"

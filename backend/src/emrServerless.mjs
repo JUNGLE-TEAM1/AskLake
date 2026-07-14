@@ -102,6 +102,32 @@ export function emrServerlessConfig(environment = process.env) {
     "ASKLAKE_EMR_SERVERLESS_LOG_URI",
     environment,
   )}/`;
+  const entryPointRoot = entryPointUri.slice(0, entryPointUri.lastIndexOf("/"));
+  const explicitPyFiles = String(environment.ASKLAKE_EMR_SERVERLESS_PYFILES_URIS || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  if (explicitPyFiles.length > 0 && explicitPyFiles.length !== 4) {
+    throw emrConfigurationError(
+      "ASKLAKE_EMR_SERVERLESS_PYFILES_URIS must contain exactly four Batch helper .py URIs.",
+    );
+  }
+  const pyFilesUris = (explicitPyFiles.length > 0
+    ? explicitPyFiles
+    : [
+        "object_storage_runtime.py",
+        "snapshot_rule_runtime.py",
+        "spark_snapshot_rules.py",
+        "spark_source_identity.py",
+      ].map((name) => `${entryPointRoot}/python/${name}`))
+    .map((value, index) => canonicalAwsS3Uri(
+      value,
+      `ASKLAKE_EMR_SERVERLESS_PYFILES_URIS[${index}]`,
+      environment,
+    ));
+  if (pyFilesUris.some((value) => !/\.py$/i.test(value))) {
+    throw emrConfigurationError("EMR Batch helper artifacts must identify .py files.");
+  }
   return Object.freeze({
     applicationId,
     artifactRootUri,
@@ -187,6 +213,7 @@ export function emrServerlessConfig(environment = process.env) {
       10_000,
       "ASKLAKE_EMR_SERVERLESS_POLL_INTERVAL_MS",
     ),
+    pyFilesUris: Object.freeze(pyFilesUris),
     region,
   });
 }
@@ -446,6 +473,8 @@ export function createEmrServerlessBatchSubmission({
   const sparkArguments = [
     "--files",
     `${canonicalManifestUri}#asklake-job-manifest.json`,
+    "--py-files",
+    config.pyFilesUris.join(","),
     ...sparkConf("spark.driver.cores", config.driverCores),
     ...sparkConf("spark.emr-serverless.driver.disk", `${config.driverDiskGb}g`),
     ...sparkConf("spark.driver.memory", config.driverMemory),

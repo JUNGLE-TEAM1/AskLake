@@ -103,7 +103,7 @@ assert.throws(
   }), contract, { now }),
   /KMS key does not match/,
 );
-for (const operation of ["artifacts", "destroy"]) {
+for (const operation of ["artifacts", "smoke", "destroy"]) {
   const cleanup = prepareAwsStagingTerraformInputs(validInput({
     availableEmrServerlessConcurrentVcpu: undefined,
     budgetNotificationEmail: undefined,
@@ -272,6 +272,7 @@ const workflows = Object.freeze({
   artifacts: readRepositoryFile(".github/workflows/aws-staging-artifacts.yml"),
   destroy: readRepositoryFile(".github/workflows/aws-staging-destroy.yml"),
   planApply: readRepositoryFile(".github/workflows/aws-staging-plan-apply.yml"),
+  smoke: readRepositoryFile(".github/workflows/aws-staging-smoke.yml"),
 });
 for (const [name, workflow] of Object.entries(workflows)) {
   assert.match(workflow, /^on:\n  workflow_dispatch:/m, `${name} must be manual-only`);
@@ -316,6 +317,7 @@ assert.match(workflows.artifacts, /activate-aws-staging-runtime\.mjs/);
 assert.match(workflows.artifacts, /runtime_root="\$\{ASKLAKE_EMR_SERVERLESS_ARTIFACT_URI\}\/runtime\//);
 const artifactEvidenceBlock = stepBlock(workflows.artifacts, "Upload redacted artifact evidence only");
 assert.match(artifactEvidenceBlock, /jar-bundle\.json/);
+assert.match(artifactEvidenceBlock, /smoke-bundle\.json/);
 assert.match(artifactEvidenceBlock, /delivery-receipt\.json/);
 assert.doesNotMatch(artifactEvidenceBlock, /\.env/);
 
@@ -334,6 +336,15 @@ assert.ok(
 );
 assert.doesNotMatch(workflows.artifacts, /AWS_BUDGET_NOTIFICATION_EMAIL|AWS_EMR_SERVERLESS_CONCURRENT_VCPU/);
 
+assert.match(workflows.smoke, /environment: asklake-aws-staging-smoke/);
+assert.match(workflows.smoke, /AWS_STAGING_OPERATION: smoke/);
+assert.match(workflows.smoke, /aws ssm send-command/);
+assert.match(workflows.smoke, /aws pricing get-products/);
+assert.match(workflows.smoke, /run-aws-staging-smoke\.mjs/);
+assert.match(workflows.smoke, /evaluate-aws-staging-smoke\.mjs/);
+assert.match(workflows.smoke, /asklake-smoke-bundle\.tgz/);
+assert.doesNotMatch(workflows.smoke, /AWS_BUDGET_NOTIFICATION_EMAIL|AWS_EMR_SERVERLESS_CONCURRENT_VCPU/);
+
 const pom = readRepositoryFile("infra/artifacts/emr-continuous-dependencies.pom.xml");
 assert.match(pom, /<artifactId>spark-sql-kafka-0-10_2\.12<\/artifactId>\s*<version>3\.5\.5<\/version>/);
 assert.match(pom, /<artifactId>aws-msk-iam-auth<\/artifactId>\s*<version>2\.3\.6<\/version>/);
@@ -344,6 +355,7 @@ const dedicatedWorkflowFiles = new Set([
   "aws-staging-artifacts.yml",
   "aws-staging-destroy.yml",
   "aws-staging-plan-apply.yml",
+  "aws-staging-smoke.yml",
 ]);
 const generalWorkflowFiles = readdirSync(workflowDirectory)
   .filter((name) => /\.ya?ml$/.test(name) && !dedicatedWorkflowFiles.has(name));
@@ -356,10 +368,11 @@ for (const name of generalWorkflowFiles) {
 const contractChecks = readRepositoryFile(".github/workflows/aws-staging-contract-checks.yml");
 assert.match(contractChecks, /^  pull_request:/m);
 assert.match(contractChecks, /verify:aws-staging-workflows/);
+assert.match(contractChecks, /verify:aws-staging-smoke/);
 assert.match(contractChecks, /verify:aws-staging-terraform/);
 assert.doesNotMatch(contractChecks, /id-token: write|configure-aws-credentials|AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY/);
 
-console.log("AWS staging Phase 3 workflow contract verification passed.");
+console.log("AWS staging Phase 3/4 workflow contract verification passed.");
 
 function readRepositoryFile(relative) {
   return readFileSync(path.join(repositoryRoot, relative), "utf8");

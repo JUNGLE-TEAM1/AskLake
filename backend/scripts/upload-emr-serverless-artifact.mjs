@@ -32,6 +32,17 @@ export async function uploadEmrServerlessArtifact(environment = process.env, dep
       sourceFile: path.join(backendDir, "scripts", name),
       uri: config.pyFilesUris[index],
     })));
+  } else {
+    const helperNames = [
+      "object_storage_runtime.py",
+      "snapshot_rule_runtime.py",
+      "spark_snapshot_rules.py",
+      "spark_source_identity.py",
+    ];
+    artifacts.push(...helperNames.map((name, index) => ({
+      sourceFile: path.join(backendDir, "scripts", name),
+      uri: config.pyFilesUris[index],
+    })));
   }
   for (const item of artifacts) {
     if (!existsSync(item.sourceFile)) {

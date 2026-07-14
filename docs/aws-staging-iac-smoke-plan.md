@@ -2,7 +2,7 @@
 
 이 문서는 Issue #727의 구현 기준이다. 목표는 현재 코드에 있는 `EMR Serverless + MSK Serverless` 경로를 일회성 AWS staging에서 안전하게 생성하고, 실제 연결·처리·복구를 검증한 뒤 자동으로 제거할 수 있게 만드는 것이다.
 
-현재 완료된 코드 범위는 **Phase 0 계약 고정, Phase 1 Terraform 기반, Phase 2 Runtime 설정 연결, Phase 3 수동 GitHub Actions**다. Terraform resource, credential 없는 mock plan, output 변환기와 OIDC workflow는 구현했지만 AWS 계정에는 아직 plan/apply하지 않았다. 따라서 유료 resource, JAR bundle, 실제 smoke 결과는 아직 없으며 일반 애플리케이션 배포와 로컬 Docker 환경은 바꾸지 않는다.
+현재 완료된 코드 범위는 **Phase 0 계약 고정, Phase 1 Terraform 기반, Phase 2 Runtime 설정 연결, Phase 3 수동 GitHub Actions, Phase 4 smoke 실행기·증적 판정기**다. Terraform resource, credential 없는 mock plan, output 변환기, OIDC workflow와 private SSM smoke orchestration은 구현했지만 AWS 계정에는 아직 plan/apply/smoke하지 않았다. 따라서 유료 resource, 실제 JAR bundle과 smoke 결과는 아직 없으며 일반 애플리케이션 배포와 로컬 Docker 환경은 바꾸지 않는다.
 
 ## 1. 한눈에 보는 전환 구조
 
@@ -38,7 +38,7 @@ flowchart LR
 | 1. Terraform 기반 | bootstrap/state, network, S3, IAM, MSK, EMR module | `fmt`, `validate`, credential 없는 mock plan이 통과하고 secret output이 없음 | 완료 |
 | 2. Runtime 연결 | Terraform output을 AskLake env/manifest로 변환 | broker/role/application/S3 값이 수작업 복사 없이 주입되고 민감값은 출력되지 않음 | 완료 |
 | 3. GitHub Actions | OIDC plan/apply/artifact/destroy workflow | 장기 AWS key 없이 수동 plan, apply/artifact/destroy 개별 승인, checksum bundle 전달과 독립 destroy 가능 | 완료(코드·로컬 검증) |
-| 4. 실제 smoke | S3 readiness, MSK probe, Batch, Continuous pause/resume | 입력·소비·sink count 일치, final lag 0, checkpoint resume, report 확보 | 예정 |
+| 4. 실제 smoke | S3 readiness, MSK probe, Batch, Continuous pause/resume | 입력·소비·sink count 일치, final lag 0, checkpoint resume, report 확보 | 실행 코드 완료, 실제 AWS 증적 대기 |
 | 5. 비용·TTL guard | budget alert, 만료 sweep, failure cleanup | 정상/실패 모두 증거 export 후 제거되고 만료 stack을 탐지 | 예정 |
 | 6. 운영 인계 | runbook, 장애/비용 기록, 오피스아워 질문 | 다른 팀원이 같은 절차를 재현하고 안전하게 종료 가능 | 예정 |
 
@@ -190,6 +190,7 @@ Phase 3은 일반 CI나 애플리케이션 배포에 연결하지 않는다. 다
 - GitHub artifact에는 사람이 검토할 text plan, redacted manifest, checksum/전달 receipt만 남긴다. backend 설정, tfvars, broker가 든 Runtime `.env`, Terraform binary plan은 job 종료 시 삭제한다.
 - Continuous dependency는 `infra/artifacts/emr-continuous-dependencies.pom.xml`의 정확한 버전에서 만들고 각 JAR와 전체 bundle SHA-256을 계산한다. `If-None-Match: *`와 S3 SHA-256/size/metadata 조회로 동일 key 덮어쓰기를 차단하고 모든 JAR 검증 뒤 `bundle.json`을 마지막에 기록한다. 필수 Spark Kafka/MSK IAM JAR와 manifest까지 원격 검증된 뒤에만 Continuous flag를 켠다.
 - artifact workflow가 전달한 private Runtime env는 staging artifact bucket의 실행별 `runtime/<runId>-<attempt>/` 경로에만 둔다. 이것은 Phase 4 smoke runner가 소비할 입력이며 production 배포 파일이 아니다.
+- artifact workflow는 같은 immutable runtime prefix에 Linux/x86 runner용 backend source·production dependency bundle과 SHA-256 manifest도 전달한다. private SSM runner는 다운로드 뒤 checksum이 일치할 때만 Phase 4 실행기를 시작한다.
 - workflow 파일이 존재한다고 AWS 연결 성공을 뜻하지 않는다. GitHub Environment/variable/secret과 AWS OIDC trust/IAM permission을 platform이 준비한 뒤 Phase 4에서 실제 수동 실행한다.
 
 로컬에서 side effect 없이 Phase 3 계약을 확인한다.
@@ -201,7 +202,30 @@ npm run verify:aws-staging-workflows
 
 이 verifier는 입력/확인 문자열/quota/KMS/TTL 거부, cleanup의 budget/quota 독립성, private 파일 권한, plan fingerprint 변조, JAR conditional write·원격 checksum·부분 실패·필수 dependency, Continuous 활성화 순서, manual-only trigger, OIDC/action version, 보호 Environment, redacted artifact와 2단계 destroy 경계를 검증한다. 별도 `AWS Staging Contract Checks` PR workflow는 AWS credential과 `id-token: write` 없이 이 verifier와 Terraform mock test를 실행한다.
 
-## 7. 실제 plan/apply 이전 외부 준비값
+## 7. Phase 4 private smoke 실행과 증적
+
+`.github/workflows/aws-staging-smoke.yml`은 `workflow_dispatch` 전용이며 `asklake-aws-staging-smoke` 보호 Environment와 `smoke:<stackId>` 확인을 요구한다. 입력은 artifact workflow receipt의 immutable `runtimeRootUri`이고, Terraform state의 stack/artifact bucket/private runner와 일치하지 않으면 SSM 명령 전에 실패한다.
+
+실행 순서는 다음과 같다.
+
+1. GitHub OIDC로 예상 account와 Terraform state를 확인하고 private SSM runner ID를 읽는다.
+2. GitHub runner에서 실행 시점의 서울 리전 EMR price snapshot을 만들고 staging S3 evidence prefix에 저장한다.
+3. private runner가 checksum 검증된 bundle과 activated Runtime env를 S3 endpoint로 내려받는다.
+4. 네 staging bucket의 read/write/delete readiness와 MSK IAM/TLS roundtrip을 확인한다.
+5. 100 MiB 이상 JSONL fixture를 checksum과 함께 올리고 EMR Batch를 제출해 input/output row와 report를 검증한다. Batch entry point의 네 Python helper는 `--py-files`로 S3에서 공급한다.
+6. 전용 3-partition topic에 총 100만 건을 계약 속도로 두 구간에 생산한다. 첫 구간 처리 뒤 graceful pause, 같은 output/checkpoint로 resume, 두 번째 구간 처리와 final pause를 수행한다.
+7. `asklake.aws-staging-smoke-evidence.v1`을 생성해 produced/consumed/sink 완전 일치, lag/quarantine 0, 서로 다른 두 worker attempt와 EMR Job Run, duplicate submission 0, checkpoint/output/report 존재, Batch row 일치와 price/resource snapshot을 fail-closed로 평가한다.
+
+로컬 검증은 AWS API나 유료 resource 없이 실행한다.
+
+```bash
+cd backend
+npm run verify:aws-staging-smoke
+```
+
+이 명령의 성공은 실제 smoke 성공이 아니다. 실제 evidence가 만들어지고 같은 evaluator를 통과하기 전까지 Issue의 Phase 4 acceptance는 미완료다.
+
+## 8. 실제 plan/apply 이전 외부 준비값
 
 다음 값은 코드에 실제 값을 저장하지 않는다.
 
@@ -215,9 +239,9 @@ npm run verify:aws-staging-workflows
 
 GitHub OIDC provider와 Terraform 실행 role은 계정 단위 platform bootstrap으로 한 번 준비한다. AskLake Terraform은 EMR execution/smoke runner role과 staging resource policy를 소유한다. artifact 단계의 control-plane role에는 생성된 artifact bucket의 `PutObject`/`GetObject`와 data KMS encrypt/decrypt가 있어야 S3 checksum을 재조회할 수 있다. 이 선행 조건이 없으면 로컬 AWS key를 임시로 추가하지 말고 plan/apply를 중단한다.
 
-Repository에는 `AWS_ACCOUNT_ID`, `AWS_GITHUB_OIDC_ROLE_ARN`, `AWS_TERRAFORM_STATE_BUCKET`, `AWS_TERRAFORM_STATE_KMS_KEY_ARN` variable과 `AWS_BUDGET_NOTIFICATION_EMAIL` secret이 필요하다. private SSM runner를 켤 때만 승인된 `AWS_STAGING_SMOKE_RUNNER_AMI_ID` variable을 추가한다. 세 mutation Environment에는 required reviewer를 설정하고 OIDC role trust policy는 이 repository와 해당 Environment/branch claim으로 제한한다.
+Repository에는 `AWS_ACCOUNT_ID`, `AWS_GITHUB_OIDC_ROLE_ARN`, `AWS_TERRAFORM_STATE_BUCKET`, `AWS_TERRAFORM_STATE_KMS_KEY_ARN` variable과 `AWS_BUDGET_NOTIFICATION_EMAIL` secret이 필요하다. private SSM runner를 켜기 위해 승인된 `AWS_STAGING_SMOKE_RUNNER_AMI_ID` variable을 추가한다. apply/artifact/smoke/destroy Environment에는 required reviewer를 설정하고 OIDC role trust policy는 이 repository와 해당 Environment/branch claim으로 제한한다. smoke 제어면 role에는 SSM Send/GetCommand, runtime/evidence S3 Get/Put, KMS decrypt/encrypt, Pricing 조회 권한이 추가로 필요하다.
 
-## 8. Phase 0·1·2·3 검증
+## 9. Phase 0·1·2·3·4 검증
 
 ```bash
 cd backend
@@ -225,6 +249,7 @@ npm run verify:aws-staging-contract
 npm run verify:aws-staging-terraform
 npm run verify:aws-staging-runtime
 npm run verify:aws-staging-workflows
+npm run verify:aws-staging-smoke
 ```
 
 verifier는 정상 계약뿐 아니라 다음 변조가 실패하는지도 자체 확인한다.
@@ -242,9 +267,9 @@ Phase 0 완료는 AWS resource가 준비됐다는 뜻이 아니다. Phase 1 Terr
 
 두 번째 명령은 정적 정책 검증 뒤 `terraform fmt -check`, bootstrap/staging `init -backend=false`, `validate`, mock provider plan assertion을 실행한다. 실제 credential, backend bucket, AWS API 없이 resource schema와 module 연결을 검증한다.
 
-Phase 3 완료는 배포 경로의 코드와 로컬 fail-closed 검증이 끝났다는 뜻이다. 실제 account/role/backend/quota 값을 GitHub 설정에 등록한 뒤 real provider `plan`을 검토해야 한다. 수동 `apply`와 checksum artifact 업로드는 Phase 3 workflow의 실제 실행, S3/MSK/Batch/Continuous 검증은 Phase 4, 실패 정리와 TTL sweep은 Phase 5 증거로 남는다.
+Phase 4 실행 코드 완료는 AWS 통합 성공을 뜻하지 않는다. 실제 account/role/backend/quota 값을 GitHub 설정에 등록하고 workflow가 기본 브랜치에서 dispatch 가능한 상태가 된 뒤 real plan/apply/artifact/smoke를 순서대로 실행해야 한다. 생성된 evidence가 evaluator를 통과해야만 Phase 4를 완료 처리하며 실패 정리와 TTL sweep은 Phase 5 증거로 남는다.
 
-## 9. 공식 기준
+## 10. 공식 기준
 
 - [Terraform S3 backend](https://developer.hashicorp.com/terraform/language/backend/s3)
 - [EMR Serverless VPC access](https://docs.aws.amazon.com/emr/latest/EMR-Serverless-UserGuide/vpc-access.html)

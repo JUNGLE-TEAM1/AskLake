@@ -57,4 +57,5 @@ jobs:
           npm run verify:aws-staging-contract
           npm run verify:aws-staging-runtime
           npm run verify:aws-staging-workflows
+          npm run verify:aws-staging-smoke
           npm run verify:aws-staging-terraform
