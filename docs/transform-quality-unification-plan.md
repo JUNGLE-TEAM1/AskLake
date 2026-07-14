@@ -214,6 +214,7 @@ Phase 7 결과:
 - Continuous production-like E2E는 정상 실행과 post-data-write/pre-manifest fault 주입을 각각 통과했다. worker 강제 종료와 backend 재시작 뒤 같은 checkpoint에서 `consumed=6`, `stored=3`, `quarantined=3` 및 Rule counter를 중복 없이 복원했고 Catalog cursor, replay 멱등성, compaction을 확인했다.
 - Kafka 기본 broker는 `GET /api/etl/sources/defaults`가 backend의 `ASKLAKE_KAFKA_BROKER`를 내려주는 runtime 단일 계약으로 정합화했다. Source sampler는 최소 샘플, bounded idle/settle window를 사용하며 decode/run 오류를 metadata-only 성공으로 숨기지 않는다.
 - Output schema의 필수 여부는 실제 Quality Rule 건수와 분리해 표시하고, NOT NULL 해제 시 stale explicit Null Guard가 남지 않도록 field rule 상태 전이를 보강했다.
+- Field rule UX는 `누락 시 기본값 -> 필수값 검사` 순서를 명시하고 explicit Null Guard를 `Fail Run`으로 고정했다. 필수 필드의 중복 누락값 검사, 실행에 영향을 주지 않는 severity 편집, 누락값 검사의 `Set Null` 조합은 노출하지 않는다.
 
 Phase 7 검증:
 

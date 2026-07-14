@@ -161,7 +161,7 @@ function toSchemaTransformTargetColumn(column: SchemaColumnDraft, transformSteps
   const dataSteps = relatedSteps.filter((step) => !FIELD_OPERATIONS.has(normalizeLegacyOperation(step.operation)));
   const primaryStep = dataSteps[0];
   const transformChain = dataSteps.map((step) => ({
-    display: step.label,
+    display: normalizeLegacyOperation(step.operation) === "sql_expression" ? step.params : step.label,
     expression: normalizeLegacyOperation(step.operation) === "sql_expression" ? step.params : "",
     onError: step.onError,
     operation: step.operation,
@@ -290,6 +290,7 @@ export function buildTransformSteps(targetSchema: SchemaTransformColumn[]): Tran
         id: `schema-${slug}-null-guard`,
         input: currentInput,
         kind: "derive",
+        onError: "Fail Run",
         operation: "Null Guard",
         output,
         outputType,
