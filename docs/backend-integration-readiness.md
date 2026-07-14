@@ -488,7 +488,7 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 ## Review Snapshot 연결
 
 - `/etl/review`는 `POST /api/etl/review` 응답을 source of truth로 사용한다.
-- live mode는 source 연결 성공 상태를 backend connector로 재검증하고, source/schema/target/permission/schedule 값을 하나의 snapshot으로 반환한다.
+- live mode는 source 연결 성공 상태를 backend connector로 재검증하고, 실제 생성 차단 조건인 source/record parsing/schema/rules/permission/target 값을 하나의 snapshot으로 반환한다.
 - mock mode는 같은 `ReviewSnapshot` 계약을 fixture로 반환해 화면과 API 타입이 갈라지지 않게 한다.
 - Review 생성 버튼은 snapshot의 `canCreate`가 true일 때만 활성화한다.
 
@@ -507,7 +507,9 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 - [x] 새 작업의 인증 actor 조회와 기존 작업의 생성자·담당자·`manage`·admin guard
 - [x] 그룹/사용자 대상 추가, 프리셋, 대상별 action 직접 편집 UI
 - [x] 담당자 자동 전체 권한과 `public:view` 최종 확인 표시
-- [x] Review에서 실제 저장 권한과 생성 준비 상태를 분리하고 권한·저장 위치를 각각 검증
+- [x] Review에서 실제 저장 권한과 생성 준비 상태를 분리하고 실제 `canCreate` 조건만 첫 카드에 표시
+- [x] Review 권한 대상은 표시 이름과 대상 유형, 허용 작업을 함께 표시하고 권한 판정은 ID를 유지
+- [x] Target 계층·형식을 숨은 기본값이 아닌 명시적 선택값으로 표시
 - [x] create/update `permissionGrants` validation
 - [x] 강한 action의 `view` 포함 정규화
 - [x] `permission_ui` grant 저장 및 교체

@@ -210,6 +210,7 @@ type PermissionPrincipalType = "user" | "group" | "role" | "public";
 type PermissionGrant = {
   principalType: PermissionPrincipalType;
   principalId: string;
+  principalName?: string; // Review 표시용, 권한 판정에는 사용하지 않음
   actions: PermissionAction[];
   source?: string;
 };
@@ -1087,8 +1088,8 @@ type ReviewSnapshot = {
 - `targetDatabase`, `targetDescription`은 Review 표시용으로 create/review request에 함께 보냅니다.
 - live mode는 source connector 결과를 재확인하고, mock mode는 동일한 response shape를 fixture로 반환합니다.
 - Review UI는 local draft를 직접 조합하지 않고 이 response를 표시합니다.
-- `permission`은 `담당자`, `전체 사용자 조회`, non-public 대상별 허용 action을 반환합니다. 담당자는 backend fallback으로 전체 권한을 가지며 `public:view`는 `전체 사용자 조회=허용`으로 표시합니다.
-- `validation`은 기존의 결합된 `권한/타겟` 행을 사용하지 않습니다. `권한 설정`은 담당자·대상 식별자·허용 action을, `저장 위치`는 대상 데이터셋·계층·형식과 target 계약을 별도로 검증합니다.
+- `permission`은 `담당자`, `로그인한 모든 사용자`, non-public 대상별 허용 action을 반환합니다. 담당자는 backend fallback으로 전체 권한을 가지며 `public:view`는 `로그인한 모든 사용자=조회 가능`으로 표시합니다. optional `principalName`이 있으면 대상 ID 대신 사람이 읽는 이름을 표시합니다.
+- `validation`은 실제 생성 차단 조건인 소스 데이터, 선택형 레코드 구조화, 출력 스키마, 처리 규칙, 접근 권한, 저장 위치만 반환합니다. 스케줄과 실패 재시도는 별도 단계에서 설정하지만 `canCreate`를 막지 않으므로 준비 상태에 포함하지 않습니다.
 - `ruleCompilation.status`가 `pass`일 때만 `canCreate`가 true가 될 수 있습니다. `rules`가 비어 있으면 output schema는 포함된 source schema와 같은 pass-through 결과이며 `ruleSummary`가 비어 있어도 실패하지 않습니다.
 
 ### 7.3 작업 목록 조회
@@ -3592,11 +3593,12 @@ ETL Permission 화면은 더 이상 하드코딩 사용자 목록을 source of t
 type PermissionGrant = {
   actions: Array<"view" | "query" | "run" | "manage" | "delete" | "share">;
   principalId: string;
+  principalName?: string;
   principalType: "user" | "group" | "role" | "public";
   source?: string;
 };
 ```
 
-빈 `principalId` 또는 action이 없는 grant는 `400 VALIDATION_ERROR`다. `public` principal은 `principalId`를 `public`으로 정규화한다. backend는 client가 보낸 `id`와 `source`를 신뢰하지 않고 새 ID와 `permission_ui` source를 부여한다.
+빈 `principalId` 또는 action이 없는 grant는 `400 VALIDATION_ERROR`다. `public` principal은 `principalId`를 `public`으로 정규화한다. `principalName`은 Review 표시용 optional metadata이며 저장 identity와 권한 판정은 `principalType + principalId`만 사용한다. backend는 client가 보낸 `id`와 `source`를 신뢰하지 않고 새 ID와 `permission_ui` source를 부여한다.
 
 새 작업의 권한 옵션 조회는 인증된 actor에게 허용한다. 기존 작업은 admin, 생성자, 담당자(owner), 또는 `manage` grant를 가진 actor만 조회할 수 있고, 그 외 actor는 `403 FORBIDDEN`을 받는다. live frontend는 API 오류 시 권한 화면 안에 재시도 경로를 표시하고 다음 단계 이동을 막는다. `VITE_USE_MOCK_API=true`에서는 동일 response shape의 fixture를 사용하되 최종 Job request shape는 live와 동일하다. Review 응답의 `permission`은 담당자 자동 권한을 첫 항목으로 표시하고, 이어서 실제 저장 예정 grant를 대상별로 나열한다.

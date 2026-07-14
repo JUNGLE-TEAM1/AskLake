@@ -849,8 +849,8 @@ type DashboardAssistantResponse = {
 - 요청은 `POST /api/etl/jobs`와 같은 pipeline draft 계약에 `sourceConnectionStatus`를 추가합니다.
 - live mode에서는 source status가 `success`일 때 backend가 source connector를 다시 확인하고, 실패하면 Review의 소스 연결 상태를 `확인 필요`로 반환합니다.
 - 응답은 `basicInformation`, `schema`, `destination`, `permission`, `validation`, `canCreate`를 포함합니다.
-- `permission`은 담당자의 자동 전체 권한, 전체 사용자 조회 허용 여부, 그룹·사용자·역할별 저장 예정 action을 반환합니다. `public:view`는 별도 대상 행으로 중복하지 않고 `전체 사용자 조회` 값으로 요약합니다.
-- `validation`은 `권한 설정`과 `저장 위치`를 별도 행으로 반환합니다. 권한 행은 담당자·대상·허용 action을, 저장 위치 행은 대상 데이터셋·계층·형식과 target 계약을 각각 검증합니다.
+- `permission`은 담당자의 자동 전체 권한, 로그인한 모든 사용자의 조회 허용 여부, 그룹·사용자·역할별 저장 예정 action을 반환합니다. `public:view`는 별도 대상 행으로 중복하지 않고 `로그인한 모든 사용자=조회 가능`으로 요약합니다. draft grant의 optional `principalName`은 Review 표시용 이름이며 권한 판정은 `principalType + principalId`를 사용합니다.
+- `validation`은 실제 생성 차단 조건인 소스 데이터, 선택형 레코드 구조화, 출력 스키마, 처리 규칙, 접근 권한, 저장 위치를 반환합니다. 스케줄과 실패 재시도는 생성 차단 조건이 아니므로 포함하지 않습니다.
 - frontend는 이 응답만 화면에 표시하며, 생성 버튼은 `canCreate`가 `true`일 때만 활성화합니다.
 - mock mode는 같은 응답 shape의 fixture를 반환하며, live API를 호출하지 않습니다.
 
@@ -880,7 +880,7 @@ type PermissionOptionsResponse = {
 };
 ```
 
-`POST /api/etl/jobs`와 `PATCH /api/etl/jobs/{jobId}`는 `permissionGrants?: PermissionGrant[]` 계약을 실제 저장 경로로 사용한다. 전달된 grant는 해당 Job의 `permission_ui` source 행으로 저장되며, 수정 시 기존 `permission_ui` 행만 교체한다. 관리 콘솔에서 생성한 `admin` source grant는 유지한다. `query`, `run`, `manage`, `delete`, `share` action은 기본 조회가 가능하도록 `view`와 함께 정규화한다. `모든 사용자에게 조회 허용`은 `principalType=public`, `principalId=public`, `actions=[view]`로 저장된다. 담당자(owner)의 전체 권한은 별도 grant 없이 backend fallback으로 계산한다. 생성·수정 응답의 `permissionGrants`와 actor별 `permissions`에는 저장 결과가 즉시 반영되고, Review 응답의 `permission`에는 담당자 자동 권한과 실제 저장 예정 grant를 나열한다.
+`POST /api/etl/jobs`와 `PATCH /api/etl/jobs/{jobId}`는 `permissionGrants?: PermissionGrant[]` 계약을 실제 저장 경로로 사용한다. 전달된 grant는 해당 Job의 `permission_ui` source 행으로 저장되며, 수정 시 기존 `permission_ui` 행만 교체한다. 관리 콘솔에서 생성한 `admin` source grant는 유지한다. `query`, `run`, `manage`, `delete`, `share` action은 기본 조회가 가능하도록 `view`와 함께 정규화한다. `모든 사용자에게 조회 허용`은 `principalType=public`, `principalId=public`, `actions=[view]`로 저장된다. 담당자(owner)의 전체 권한은 별도 grant 없이 backend fallback으로 계산한다. 생성·수정 응답의 `permissionGrants`와 actor별 `permissions`에는 저장 결과가 즉시 반영되고, Review 응답의 `permission`에는 담당자 자동 권한과 실제 저장 예정 grant를 나열한다. `principalName`은 Review 표시를 돕는 optional metadata이며 저장 identity와 권한 판정에는 사용하지 않는다.
 - Mock/live 전환 순서가 바뀌면 `docs/backend-integration-readiness.md`를 업데이트한다.
 - Frontend 타입이 바뀌면 관련 `frontend/src/types/`와 문서를 함께 업데이트한다.
 ## Text Structuring Runtime Contract

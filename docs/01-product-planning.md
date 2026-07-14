@@ -85,7 +85,7 @@ FastAPI live backend에서 현재 우선 구현하는 범위:
 
 Create flow의 Permission 단계는 실제 Job 접근 권한을 설정한다. 사용자는 그룹 또는 사용자를 선택하고 대상별 허용 작업을 지정하며, `모든 사용자에게 조회 허용`을 켜면 로그인한 모든 사용자에게 `view` 권한을 부여한다. 선택 결과는 `permissionGrants`로 저장되고 Job 조회·실행·관리·삭제·공유 판정에 사용된다. `permissionSummary`와 `permissionRoles`는 기존 화면 및 이전 데이터 호환을 위한 요약 값이며 새 권한의 source of truth가 아니다.
 
-최종 Review에서는 `권한 설정`과 `생성 준비 상태`를 분리한다. `권한 설정`은 담당자의 자동 전체 권한, 전체 사용자 조회 허용 여부, 대상별 허용 작업을 보여주고, `생성 준비 상태`는 소스·스키마·처리 규칙·스케줄·재시도·권한·저장 위치의 검증 결과를 보여준다.
+최종 Review의 첫 섹션은 `생성 준비 상태`다. 이 섹션에는 생성 API를 실제로 차단하는 소스 데이터, 선택형 레코드 구조화, 출력 스키마, 처리 규칙, 접근 권한, 저장 위치만 표시한다. 스케줄과 실패 재시도는 각 설정 단계에서 검토하지만 생성 차단 조건이 아니므로 준비 상태 건수에 포함하지 않는다. 별도 `권한 설정` 섹션은 담당자의 자동 전체 권한, 로그인한 모든 사용자의 조회 허용 여부, 그룹·사용자별 허용 작업을 모두 보여준다.
 
 `createdBy`, `owner`, profile/avatar 같은 값은 표시·감사 문맥의 identity metadata로 분리한다. 담당자(owner)는 Job에 대한 전체 권한을 자동으로 가지며 별도 grant로 저장하거나 화면에서 편집하지 않는다. 실제 접근 제어는 `ActorContext`, resource별 `permissionGrants`, backend permission check로 다룬다. 현재 기준은 allow-only 모델이며 `admin`, owner fallback, user/group/role/public grant 순으로 허용 여부를 계산한다. 지원 action은 `view`, `query`, `run`, `manage`, `delete`, `share`이고, `query`, `run`, `manage`, `delete`, `share`를 부여하면 기본 조회가 가능하도록 `view`도 함께 정규화한다. 이전 `permissionRoles` 데이터는 최초 접근 시 `legacy_permission_roles` source의 table grant로 한 번만 이관한다.
 
