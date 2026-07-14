@@ -43,6 +43,14 @@ class S3SourcePolicyTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.status_code, 403)
 
+    def test_allows_aws_default_endpoint_without_an_endpoint_allowlist(self) -> None:
+        with patch.dict(os.environ, {"S3_ALLOWED_BUCKETS": "asklake-raw"}, clear=True):
+            validate_s3_source_config(
+                "File / S3",
+                [("Bucket / Stage Name", "asklake-raw"), ("Path / Prefix", "fixtures/smoke.jsonl")],
+                allow_unconfigured=False,
+            )
+
     def test_rejects_source_path_bucket_mismatch(self) -> None:
         with patch.dict(os.environ, {"S3_ALLOWED_BUCKETS": "m3-raw", "S3_ENDPOINT": "http://minio:9000"}, clear=True):
             with self.assertRaises(ApiError) as raised:

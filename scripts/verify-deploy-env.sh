@@ -289,6 +289,8 @@ fi
 validate_optional_bounded_integer ASKLAKE_CONTINUOUS_PUBLICATION_WINDOW 1 1000
 validate_optional_bounded_integer ASKLAKE_CONTINUOUS_MAINTENANCE_LEASE_SECONDS 120 86400
 validate_optional_bounded_integer ASKLAKE_CONTINUOUS_MAINTENANCE_RUNNER_STALE_SECONDS 10 3600
+validate_optional_bounded_integer ASKLAKE_PRODUCTION_SMOKE_RETRIES 1 60
+validate_optional_bounded_integer ASKLAKE_PRODUCTION_SMOKE_RETRY_DELAY_SECONDS 1 60
 
 airflow_fernet_key="$(env_value_for AIRFLOW_FERNET_KEY)"
 if ! printf '%s' "$airflow_fernet_key" | python3 -c '
@@ -430,6 +432,8 @@ export ASKLAKE_PREFLIGHT_TRINO_WAREHOUSE_BUCKET="$(env_value_for TRINO_ICEBERG_W
 export ASKLAKE_PREFLIGHT_TRINO_ENABLED="$trino_enabled"
 export ASKLAKE_PREFLIGHT_CONTINUOUS_PUBLICATION_WINDOW="$(env_value_for ASKLAKE_CONTINUOUS_PUBLICATION_WINDOW)"
 export ASKLAKE_PREFLIGHT_CONTINUOUS_MAINTENANCE_RUNNER_STALE_SECONDS="$(env_value_for ASKLAKE_CONTINUOUS_MAINTENANCE_RUNNER_STALE_SECONDS)"
+export ASKLAKE_PREFLIGHT_PRODUCTION_SMOKE_RETRIES="$(env_value_for ASKLAKE_PRODUCTION_SMOKE_RETRIES)"
+export ASKLAKE_PREFLIGHT_PRODUCTION_SMOKE_RETRY_DELAY_SECONDS="$(env_value_for ASKLAKE_PRODUCTION_SMOKE_RETRY_DELAY_SECONDS)"
 
 compose_wiring_status=0
 docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" config --format json \
@@ -449,6 +453,8 @@ try:
     trino_enabled = os.environ["ASKLAKE_PREFLIGHT_TRINO_ENABLED"] == "true"
     publication_window = os.environ["ASKLAKE_PREFLIGHT_CONTINUOUS_PUBLICATION_WINDOW"] or "100"
     runner_stale_seconds = os.environ["ASKLAKE_PREFLIGHT_CONTINUOUS_MAINTENANCE_RUNNER_STALE_SECONDS"] or "30"
+    smoke_retries = os.environ["ASKLAKE_PREFLIGHT_PRODUCTION_SMOKE_RETRIES"] or "12"
+    smoke_retry_delay_seconds = os.environ["ASKLAKE_PREFLIGHT_PRODUCTION_SMOKE_RETRY_DELAY_SECONDS"] or "5"
     profiled_trino_services = {
         "trino", "trino-postgres-bootstrap", "trino-result-collector", "trino-result-cleanup"
     }
@@ -479,6 +485,8 @@ try:
             backend.get("ASKLAKE_RAW_BUCKET") == os.environ["ASKLAKE_PREFLIGHT_RAW_BUCKET"],
             backend.get("ASKLAKE_SPARK_OUTPUT_BUCKET") == os.environ["ASKLAKE_PREFLIGHT_OUTPUT_BUCKET"],
             backend.get("AWS_REGION") == os.environ["ASKLAKE_PREFLIGHT_AWS_REGION"],
+            backend.get("ASKLAKE_PRODUCTION_SMOKE_RETRIES") == smoke_retries,
+            backend.get("ASKLAKE_PRODUCTION_SMOKE_RETRY_DELAY_SECONDS") == smoke_retry_delay_seconds,
             readiness.get("ASKLAKE_OBJECT_STORAGE_PROVIDER") == "aws",
             readiness.get("AWS_REGION") == os.environ["ASKLAKE_PREFLIGHT_AWS_REGION"],
             not any(name in backend for name in forbidden),
@@ -558,6 +566,8 @@ unset ASKLAKE_PREFLIGHT_TRINO_WAREHOUSE_BUCKET
 unset ASKLAKE_PREFLIGHT_TRINO_ENABLED
 unset ASKLAKE_PREFLIGHT_CONTINUOUS_PUBLICATION_WINDOW
 unset ASKLAKE_PREFLIGHT_CONTINUOUS_MAINTENANCE_RUNNER_STALE_SECONDS
+unset ASKLAKE_PREFLIGHT_PRODUCTION_SMOKE_RETRIES
+unset ASKLAKE_PREFLIGHT_PRODUCTION_SMOKE_RETRY_DELAY_SECONDS
 
 if (( compose_wiring_status != 0 )); then
   printf 'error: Compose object-storage wiring does not match the selected %s provider contract\n' "$storage_provider" >&2

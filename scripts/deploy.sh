@@ -31,6 +31,7 @@ Commands:
   restart    Recreate the Compose stack on the running EC2 instance.
   health     Check HTTPS/API health and remote Compose status.
   smoke      Run the explicit production Spark REST, Kafka, and Trino runtime smoke.
+  job-smoke  Run opt-in isolated production batch, Kafka Snapshot, and Continuous Job E2E smoke.
   logs       Tail remote Compose logs. Use ASKLAKE_LOG_SERVICE and ASKLAKE_LOG_LINES.
   ssh        Open an SSH shell to the EC2 instance.
 
@@ -48,6 +49,7 @@ Optional:
   ASKLAKE_HEALTH_RETRIES   Default: 18
   ASKLAKE_HEALTH_RETRY_DELAY Default: 5 seconds
   ASKLAKE_RUN_POST_DEPLOY_SMOKE Default: false. When true, start/deploy/restart also run smoke.
+  ASKLAKE_RUN_PRODUCTION_JOB_E2E Required for job-smoke. Must be true; never runs automatically.
 EOF
 }
 
@@ -282,6 +284,21 @@ verify_production_runtime_smoke() {
   remote_compose 'exec -T backend python scripts/verify-production-runtime-smoke.py'
 }
 
+verify_production_job_e2e() {
+  if [[ "${ASKLAKE_RUN_PRODUCTION_JOB_E2E:-false}" != "true" ]]; then
+    die "job-smoke requires ASKLAKE_RUN_PRODUCTION_JOB_E2E=true; it creates and cleans up isolated production fixtures"
+  fi
+  remote_compose 'exec -T -e ASKLAKE_RUN_PRODUCTION_JOB_E2E=true backend python scripts/verify-production-job-e2e.py'
+}
+
+prepare_production_runtime_smoke() {
+  ensure_started
+  remote_deploy_preflight
+  bootstrap_trino_dependencies
+  health_check
+  verify_trino_runtime
+}
+
 run_optional_production_runtime_smoke() {
   if [[ "$RUN_POST_DEPLOY_SMOKE" == "true" ]]; then
     verify_production_runtime_smoke
@@ -389,7 +406,8 @@ main() {
     deploy) deploy_stack ;;
     restart) restart_stack ;;
     health) health_check && remote_compose 'ps' ;;
-    smoke) ensure_started && health_check && verify_production_runtime_smoke ;;
+    smoke) prepare_production_runtime_smoke && verify_production_runtime_smoke ;;
+    job-smoke) prepare_production_runtime_smoke && verify_production_job_e2e ;;
     logs) tail_logs ;;
     ssh) open_ssh ;;
     *)

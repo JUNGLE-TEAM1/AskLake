@@ -67,6 +67,14 @@ scripts/deploy.sh smoke
 
 이 smoke는 backend container에서 Spark REST endpoint, Redpanda Kafka metadata, Trino query/materializer 권한, Iceberg 임시 CTAS와 Query Result S3 round-trip을 확인한다. Trino readiness가 만드는 임시 table/object는 종료 전에 삭제하며, 사용자 Job, Catalog dataset, Kafka topic은 생성하지 않는다. 배포 과정에 함께 넣으려면 명시적으로 `ASKLAKE_RUN_POST_DEPLOY_SMOKE=true`를 설정한다. `TRINO_ENABLED=false` compatibility 배포에서는 이 명령을 실행할 수 없다.
 
+실제 Job 경로까지 확인해야 할 때만 아래 opt-in smoke를 실행한다.
+
+```bash
+ASKLAKE_RUN_PRODUCTION_JOB_E2E=true scripts/deploy.sh job-smoke
+```
+
+이 명령은 일반 Spark batch, Kafka Snapshot, Kafka Continuous Job을 각각 고유 suffix로 생성하고 Iceberg commit, Catalog `available`, Trino row count를 확인한다. Snapshot은 같은 consumer group의 후속 0건 run도 확인한다. `asklake-production-smoke/` S3 source fixture, `asklake.production.smoke.*` Kafka topic, 생성 Job/Dataset/Iceberg table만 종료 시 정리한다. 기본 `deploy`, `restart`, `smoke`에는 절대 포함되지 않는다.
+
 Backend run/retry actions require these Airflow variables in the server `deploy/.env` when DAG submission is expected:
 
 ```bash
@@ -154,9 +162,11 @@ ASKLAKE_SPARK_POSTGRES_PACKAGE=org.postgresql:postgresql:42.7.7
 ASKLAKE_CONTINUOUS_PUBLICATION_WINDOW=100
 ASKLAKE_CONTINUOUS_MAINTENANCE_LEASE_SECONDS=900
 ASKLAKE_CONTINUOUS_MAINTENANCE_RUNNER_STALE_SECONDS=30
+ASKLAKE_PRODUCTION_SMOKE_RETRIES=12
+ASKLAKE_PRODUCTION_SMOKE_RETRY_DELAY_SECONDS=5
 ```
 
-`ASKLAKE_CONTINUOUS_PUBLICATION_WINDOW`은 1~1000, lease는 120~86400초, stale timeout은 10~3600초 범위만 허용한다. Trino 활성 preflight는 backend와 coordinator가 같은 JDBC catalog/warehouse 설정을 받고 Spark Iceberg package와 Continuous 값을 실제 backend environment에 전달하는지도 확인한다.
+`ASKLAKE_CONTINUOUS_PUBLICATION_WINDOW`은 1~1000, lease는 120~86400초, stale timeout은 10~3600초, runtime smoke retry/delay는 각각 1~60 범위만 허용한다. Trino 활성 preflight는 backend와 coordinator가 같은 JDBC catalog/warehouse 설정을 받고 Spark Iceberg package와 Continuous 값을 실제 backend environment에 전달하는지도 확인한다.
 
 Production Trino는 public port를 열지 않고 backend/PostgreSQL과 통신하는 internal network에서 HTTPS/password authentication을 사용한다. 별도 outbound network는 EC2 instance profile의 IMDS credential과 AWS S3에 나갈 때만 사용한다. Query identity는 read-only, materializer identity는 `asklake` schema CTAS/`DESCRIBE`/drop 최소 권한으로 분리한다. JDBC role/password, TLS CA/keystore, password hash file과 shared secret은 서버 secret mount에만 두고 Git에 저장하지 않는다. 로컬 root Compose에서만 MinIO와 local credential을 사용한다.
 

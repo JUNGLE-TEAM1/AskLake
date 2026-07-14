@@ -14,6 +14,7 @@ import importlib.util
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import urlopen
@@ -34,6 +35,37 @@ def verify_trino_readiness() -> None:
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise RuntimeError(message)
+
+
+def bounded_positive_integer(name: str, *, default: int, minimum: int, maximum: int) -> int:
+    raw = str(os.environ.get(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError as error:
+        raise RuntimeError(f"{name} must be an integer between {minimum} and {maximum}") from error
+    if not minimum <= value <= maximum:
+        raise RuntimeError(f"{name} must be an integer between {minimum} and {maximum}")
+    return value
+
+
+def retry_probe(label: str, probe):
+    retries = bounded_positive_integer(
+        "ASKLAKE_PRODUCTION_SMOKE_RETRIES", default=12, minimum=1, maximum=60
+    )
+    delay_seconds = bounded_positive_integer(
+        "ASKLAKE_PRODUCTION_SMOKE_RETRY_DELAY_SECONDS", default=5, minimum=1, maximum=60
+    )
+    last_error: Exception | None = None
+    for attempt in range(1, retries + 1):
+        try:
+            return {**probe(), "attempt": attempt}
+        except Exception as error:
+            last_error = error
+            if attempt < retries:
+                time.sleep(delay_seconds)
+    raise RuntimeError(f"{label} probe failed after {retries} attempts: {last_error}") from last_error
 
 
 def verify_spark_rest() -> dict[str, object]:
@@ -92,8 +124,8 @@ def main() -> None:
     require(settings.trino_enabled, "Production runtime smoke requires TRINO_ENABLED=true")
     require(str(os.environ.get("ASKLAKE_SPARK_RUNNER") or "").casefold() == "rest", "Production runtime smoke requires ASKLAKE_SPARK_RUNNER=rest")
 
-    spark = verify_spark_rest()
-    kafka = verify_kafka_metadata()
+    spark = retry_probe("Spark REST", verify_spark_rest)
+    kafka = retry_probe("Kafka metadata", verify_kafka_metadata)
     verify_trino_readiness()
     print(json.dumps({
         "iceberg": "verified",

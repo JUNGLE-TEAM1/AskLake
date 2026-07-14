@@ -79,6 +79,8 @@ write_valid_env() {
       'ASKLAKE_CONTINUOUS_PUBLICATION_WINDOW=100' \
       'ASKLAKE_CONTINUOUS_MAINTENANCE_LEASE_SECONDS=900' \
       'ASKLAKE_CONTINUOUS_MAINTENANCE_RUNNER_STALE_SECONDS=30' \
+      'ASKLAKE_PRODUCTION_SMOKE_RETRIES=12' \
+      'ASKLAKE_PRODUCTION_SMOKE_RETRY_DELAY_SECONDS=5' \
       "ASKLAKE_HOST_DATA_DIR=$SPARK_DATA_DIR" \
       "ASKLAKE_REPLAY_HOST_INPUT_DIR=$REPLAY_INPUT_DIR"
   } > "$target"
@@ -275,6 +277,13 @@ expect_preflight_failure \
   'ASKLAKE_CONTINUOUS_MAINTENANCE_RUNNER_STALE_SECONDS must be an integer between 10 and 3600' \
   "$ROOT_DIR/deploy/docker-compose.prod.yml"
 
+write_valid_trino_aws_env "$ENV_FILE"
+replace_env_value "$ENV_FILE" ASKLAKE_PRODUCTION_SMOKE_RETRIES '0'
+expect_preflight_failure \
+  'Production smoke retry count must be bounded' \
+  'ASKLAKE_PRODUCTION_SMOKE_RETRIES must be an integer between 1 and 60' \
+  "$ROOT_DIR/deploy/docker-compose.prod.yml"
+
 write_valid_env "$ENV_FILE"
 replace_env_value "$ENV_FILE" AIRFLOW_FERNET_KEY ''
 expect_preflight_failure 'blank Fernet key is rejected' 'AIRFLOW_FERNET_KEY must be set'
@@ -387,6 +396,43 @@ elif [[ "$output" == *'production runtime smoke requires TRINO_ENABLED=true'* ]]
   record_pass 'production runtime smoke rejects the Trino-disabled compatibility deployment'
 else
   record_fail 'production runtime smoke rejects the Trino-disabled compatibility deployment'
+fi
+
+mock_runtime_smoke_prepare() (
+  ensure_started() { printf 'prepare:ensure-started\n'; }
+  remote_deploy_preflight() { printf 'prepare:preflight\n'; }
+  bootstrap_trino_dependencies() { printf 'prepare:bootstrap\n'; }
+  health_check() { printf 'prepare:health\n'; }
+  verify_trino_runtime() { printf 'prepare:trino\n'; }
+  prepare_production_runtime_smoke
+)
+
+if output="$(mock_runtime_smoke_prepare 2>&1)" \
+  && [[ "$output" == $'prepare:ensure-started\nprepare:preflight\nprepare:bootstrap\nprepare:health\nprepare:trino' ]]; then
+  record_pass 'standalone production runtime smoke uses deploy-equivalent preparation'
+else
+  record_fail 'standalone production runtime smoke uses deploy-equivalent preparation'
+fi
+
+mock_job_smoke() (
+  ASKLAKE_RUN_PRODUCTION_JOB_E2E="${1:-false}"
+  remote_compose() { printf 'compose:%s\n' "$1"; }
+  verify_production_job_e2e
+)
+
+if output="$(mock_job_smoke true 2>&1)" \
+  && [[ "$output" == *'compose:exec -T -e ASKLAKE_RUN_PRODUCTION_JOB_E2E=true backend python scripts/verify-production-job-e2e.py'* ]]; then
+  record_pass 'opt-in production Job E2E smoke runs inside the backend container'
+else
+  record_fail 'opt-in production Job E2E smoke runs inside the backend container'
+fi
+
+if output="$(mock_job_smoke false 2>&1)"; then
+  record_fail 'production Job E2E smoke requires explicit opt-in (unexpected success)'
+elif [[ "$output" == *'job-smoke requires ASKLAKE_RUN_PRODUCTION_JOB_E2E=true'* ]]; then
+  record_pass 'production Job E2E smoke requires explicit opt-in'
+else
+  record_fail 'production Job E2E smoke requires explicit opt-in'
 fi
 
 mock_health_check() (

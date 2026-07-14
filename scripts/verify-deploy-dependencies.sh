@@ -37,9 +37,9 @@ echo "Checking backend Python runtime imports..."
 docker run --rm "$BACKEND_IMAGE" python -c \
   "import duckdb, fastapi, psycopg, pydantic_settings, sqlalchemy, uvicorn"
 
-echo "Checking backend production runtime smoke script..."
+echo "Checking backend production smoke scripts..."
 docker run --rm "$BACKEND_IMAGE" python -c \
-  "from pathlib import Path; path = Path('scripts/verify-production-runtime-smoke.py'); compile(path.read_text(), str(path), 'exec')"
+  "from pathlib import Path; paths = [Path('scripts/verify-production-runtime-smoke.py'), Path('scripts/verify-production-job-e2e.py')]; [compile(path.read_text(), str(path), 'exec') for path in paths]"
 
 echo "Checking backend Node connector imports..."
 docker run --rm "$BACKEND_IMAGE" npm run verify:node-dependencies

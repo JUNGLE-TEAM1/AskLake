@@ -82,10 +82,10 @@ def validate_s3_source_config(
 
     endpoint = fields.get("endpoint url") or fields.get("endpoint")
     allowed_endpoints = configured_s3_endpoints()
-    if not allowed_endpoints:
+    if endpoint and not allowed_endpoints:
         raise ApiError(
             "SERVICE_UNAVAILABLE",
-            "S3_ALLOWED_ENDPOINTS or S3_ENDPOINT must be configured outside local development",
+            "S3_ALLOWED_ENDPOINTS or S3_ENDPOINT must be configured when a custom S3 endpoint is supplied",
             status.HTTP_503_SERVICE_UNAVAILABLE,
         )
     if endpoint and normalize_s3_endpoint(endpoint) not in allowed_endpoints:

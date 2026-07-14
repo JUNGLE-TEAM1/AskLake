@@ -444,7 +444,9 @@ Kafka 소스 연결 테스트는 새 샘플 consumer group이 첫 메시지를 �
 
 Continuous worker는 Spark 4.0.1/Scala 2.13 Kafka connector를 사용한다. Production은 `ASKLAKE_SPARK_RUNNER=rest`로 내부 Spark Standalone REST submission을 사용하고 backend에 Docker socket/CLI를 요구하지 않는다. 로컬 개발에서만 `ASKLAKE_SPARK_RUNNER=docker`를 명시해 격리 worker/maintenance container를 실행할 수 있다. 두 경로 모두 같은 Iceberg/JDBC/warehouse package와 runtime environment 계약을 사용한다.
 
-배포된 AWS production Compose의 연결 경계만 빠르게 확인할 때는 repo root에서 `scripts/deploy.sh smoke`를 실행한다. 이 명령은 backend container 안에서 Spark REST probe와 Kafka metadata 조회를 수행하고, Trino readiness의 임시 Iceberg CTAS/Query Result S3 round-trip을 확인한다. Trino profile이 필수이며 사용자 Job, Catalog dataset, Kafka topic은 만들지 않는다. 일반 Spark batch, Kafka Snapshot, Kafka Continuous의 실제 Job fixture E2E는 인프라 적용 뒤 별도 post-deploy smoke로 수행한다.
+배포된 AWS production Compose의 연결 경계만 빠르게 확인할 때는 repo root에서 `scripts/deploy.sh smoke`를 실행한다. 이 명령은 deploy와 같은 preflight/Trino bootstrap 뒤 backend container에서 Spark REST probe와 Kafka metadata 조회를 bounded retry로 수행하고, Trino readiness의 임시 Iceberg CTAS/Query Result S3 round-trip을 확인한다. Trino profile이 필수이며 사용자 Job, Catalog dataset, Kafka topic은 만들지 않는다.
+
+일반 Spark batch, Kafka Snapshot, Kafka Continuous의 실제 Job fixture E2E는 `ASKLAKE_RUN_PRODUCTION_JOB_E2E=true scripts/deploy.sh job-smoke`로만 실행한다. 고유 fixture와 target을 생성해 Iceberg/Catalog/Trino을 대조한 뒤 자신이 만든 S3 object, Kafka topic, Job, Catalog dataset, Iceberg table만 정리한다. 이 명령은 기본 배포 경로에 포함하지 않는다.
 
 Production-like Continuous E2E는 Compose를 먼저 올린 뒤 opt-in으로 실행한다. retained backlog, schema/Rule quarantine, Transform/Quality 카운터, Rule-aware replay, 신규 이벤트, pause/resume, worker kill 후 checkpoint restart, Catalog fingerprint materialization, duplicate-free counter를 검증한다. worker 시작 시 target `s3a://` bucket은 MinIO에 없으면 자동 생성된다. 사용자 요청으로 인한 pause/stop의 SIGTERM 종료는 각각 `paused`/`stopped`로 처리하고, 요청 없이 종료된 worker만 `failed`가 된다.
 
