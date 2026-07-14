@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import type { ColumnDef, SortingFn } from "@tanstack/react-table";
-import { Table2 } from "lucide-react";
+import { SqlPageIcon as Table2 } from "./SqlPageIcon";
 
 import { DataTable, type DataTableColumnMeta } from "@/components/ui/data-table";
 import { cn } from "@/lib/utils";
@@ -25,6 +25,10 @@ function getColumnKind(rows: string[][], index: number): SqlPreviewCellKind {
   if (values.every((value) => getCellKind(value) === "number")) return "number";
   if (values.every((value) => getCellKind(value) === "date")) return "date";
   return "text";
+}
+
+function isIdentifierColumn(column: string) {
+  return /(?:^|[_\s-])id$/i.test(column.trim());
 }
 
 function toComparableValue(value: string, kind: SqlPreviewCellKind) {
@@ -57,8 +61,9 @@ export function SqlPreviewTable({ isLoading = false, resultDraft }: { isLoading?
   const columns = useMemo<ColumnDef<SqlPreviewRow>[]>(
     () => resultDraft.columns.map((column, index) => {
       const columnKind = getColumnKind(resultDraft.rows, index);
+      const identifierColumn = isIdentifierColumn(column);
       const meta: DataTableColumnMeta = {
-        align: columnKind === "number" ? "right" : "left",
+        align: columnKind === "number" && !identifierColumn ? "right" : "left",
         cellClassName: columnKind === "number" || columnKind === "date" ? "tabular-nums" : undefined,
       };
 

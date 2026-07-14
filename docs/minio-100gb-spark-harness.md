@@ -12,6 +12,8 @@ This document records the Pair A person-1 backend validation path for Source, Sc
 - `backend/src/createPipeline.mjs`: create `{ job, catalogTarget }`, run success `dataset` mapper
 - `backend/scripts/prepare-minio-samples.mjs`: local 1GB-style sample preparation
 - `backend/scripts/seed-minio-click-log.mjs`: whitespace-delimited raw click log 100-row fixture
+- `backend/scripts/synthetic-commerce/convert_click_events_to_log.py`: local 또는 S3 click JSONL의 메모리 제한형 10필드 `.log`/manifest 변환
+- `backend/scripts/synthetic-commerce/test_convert_click_events_to_log.py`: local atomic write와 S3 pagination·ETag·multipart abort 계약 검증
 - `backend/scripts/verify-record-parsing-contract.py`: record parsing preview and row-width validation contract verifier
 - `backend/scripts/verify-record-parsing-e2e.mjs`: real MinIO TXT -> FastAPI -> Airflow -> Spark -> Parquet -> Catalog verifier
 - `backend/scripts/start-spark-server.mjs`: Spark standalone master/worker startup
@@ -103,6 +105,25 @@ npm run minio:seed-click-log
 ```
 
 기본 object는 `s3://m3-raw/asklake-fixtures/txt/click-events-whitespace-100.log`다. 한 줄은 하나의 이벤트이고 값은 공백 하나로 구분한다. 필드 순서는 `event_time`, `event_id`, `customer_id`, `session_id`, `event_type`, `page_path`, `element_id`, `device`, `region`, `latency_ms`이며 파일 본문에는 헤더를 넣지 않는다. 스크립트는 업로드 후 object를 다시 읽어 100줄과 행별 10개 필드를 검증한다. 같은 명령을 다시 실행하면 동일 key를 같은 결정적 fixture로 덮어쓴다.
+
+실제 클릭 JSONL을 같은 1.5단계 입력으로 바꿀 때는 변환기를 사용한다. 고정 로컬 fixture는 다음 명령으로 변환·검증한다.
+
+```bash
+cd backend
+npm run synthetic-commerce:click-log
+npm run verify:synthetic-click-log
+```
+
+운영 AWS S3 또는 local MinIO prefix는 내려받기 없이 S3-to-S3로 변환한다. AWS S3에서는 endpoint 옵션을 생략하고 instance profile 또는 workload IAM credential chain을 사용한다.
+
+```bash
+cd backend
+ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run synthetic-commerce:click-log -- \
+  --input-s3-uri s3://raw-bucket/commerce/click_events/ \
+  --output-s3-uri s3://raw-bucket/commerce/click-events.log
+```
+
+MinIO 검증은 `--s3-endpoint-url http://127.0.0.1:9000 --s3-force-path-style`을 추가한다. 입력 object는 key 순서와 ETag `If-Match`로 고정하고 결과는 multipart upload한다. 새 manifest를 먼저 저장하고 `.log`를 마지막에 commit하며 실패 시 upload abort와 manifest 복원/삭제로 기존 결과를 유지한다. 상세 IAM, manifest와 실패 복구 계약은 `backend/scripts/synthetic-commerce/README.md`를 따른다.
 
 Preview 계약과 전체 runtime을 함께 검증할 때는 FastAPI, Airflow, MinIO, Spark가 같은 local Compose network를 사용하도록 한 뒤 아래 명령을 실행한다.
 
@@ -196,6 +217,8 @@ The validator checks:
 - TXT row read
 - Parquet physical read
 - Transform type fixture: trim, int, long, double, bool, timestamp, JSON path extraction
+
+Snapshot schema contract를 변경한 뒤에는 `npm run verify:spark-schema-contract`를 실행한다. 이 검증은 필수 컬럼 1개와 10개에서 동일한 수의 내부 Spark job으로 null/cast 결과를 확인해, 필수 컬럼 수에 비례해 source scan action이 증가하는 회귀를 차단한다. JSON/JSONL reader는 승인된 schema와 dotted source path를 사용하므로 DataFrame 생성 시 inference action을 실행하지 않아야 한다.
 
 Set `ASKLAKE_SPARK_FULL_COUNT=true` only when a full count is needed; default validation uses bounded reads for speed.
 

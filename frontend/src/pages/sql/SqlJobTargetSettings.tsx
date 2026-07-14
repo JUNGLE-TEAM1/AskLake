@@ -1,5 +1,11 @@
 import { useState } from "react";
-import { BookOpen, HardDrive, Plus, SlidersHorizontal, X } from "lucide-react";
+import {
+  SqlPageIcon as BookOpen,
+  SqlPageIcon as HardDrive,
+  SqlPageIcon as Plus,
+  SqlPageIcon as SlidersHorizontal,
+  SqlPageIcon as X,
+} from "./SqlPageIcon";
 
 import { DatabaseField } from "@/components/target/DatabaseField";
 import { S3PathField } from "@/components/s3/S3PathField";
@@ -38,6 +44,7 @@ interface SqlJobTargetSettingsProps {
   onChange: (patch: Partial<SqlJobWizardTarget>) => void;
   onStoragePathTouched: () => void;
   partitionOptions: SqlJobWizardPartitionOption[];
+  runtime: "compatibility" | "trino";
   showErrors: boolean;
   target: SqlJobWizardTarget;
 }
@@ -81,6 +88,7 @@ export function SqlJobTargetSettings({
   onChange,
   onStoragePathTouched,
   partitionOptions,
+  runtime,
   showErrors,
   target,
 }: SqlJobTargetSettingsProps) {
@@ -100,7 +108,9 @@ export function SqlJobTargetSettings({
 
   const togglePartition = (columnName: string, selected: boolean) => {
     onChange({
-      partitionColumns: selected
+      partitionColumns: runtime === "trino"
+        ? selected ? [columnName] : []
+        : selected
         ? [...target.partitionColumns, columnName]
         : target.partitionColumns.filter((column) => column !== columnName),
     });
@@ -108,7 +118,20 @@ export function SqlJobTargetSettings({
 
   return (
     <div className="grid gap-4">
-      <Card size="none">
+      {runtime === "trino" ? (
+        <Card size="none">
+          <CardHeader className="flex flex-row items-center gap-3 border-b border-slate-200 px-4 py-3">
+            <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-blue-50 text-blue-600">
+              <HardDrive className="size-4" aria-hidden="true" />
+            </span>
+            <CardTitle className="text-base">Trino 저장 정책</CardTitle>
+          </CardHeader>
+          <CardContent className="grid gap-2 px-4 pb-4 pt-4 text-sm text-slate-600">
+            <strong className="text-slate-950">AskLake 관리형 Iceberg 테이블 · 전체 새로고침</strong>
+            <span>카탈로그, 저장 경로, 포맷과 압축 방식은 실행 환경에서 안전하게 관리됩니다.</span>
+          </CardContent>
+        </Card>
+      ) : <Card size="none">
         <CardHeader className="flex flex-row items-center gap-3 border-b border-slate-200 px-4 py-3">
           <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-blue-50 text-blue-600">
             <HardDrive className="size-4" aria-hidden="true" />
@@ -159,7 +182,7 @@ export function SqlJobTargetSettings({
             ) : null}
           </Field>
         </CardContent>
-      </Card>
+      </Card>}
 
       <Card size="none">
         <CardHeader className="flex flex-row items-center gap-3 border-b border-slate-200 px-4 py-3">
@@ -210,8 +233,8 @@ export function SqlJobTargetSettings({
           </FieldGroup>
 
           <FieldSet disabled={disabled}>
-            <FieldLegend className="text-sm">파티션</FieldLegend>
-            <div className="grid grid-cols-2 gap-2 max-[980px]:grid-cols-1" role="group" aria-label="파티션 컬럼 다중 선택">
+            <FieldLegend className="text-sm">파티션{runtime === "trino" ? " (최대 1개)" : ""}</FieldLegend>
+            <div className="grid grid-cols-2 gap-2 max-[980px]:grid-cols-1" role="group" aria-label={runtime === "trino" ? "파티션 컬럼 단일 선택" : "파티션 컬럼 다중 선택"}>
               {partitionOptions.map((option) => {
                 const checked = target.partitionColumns.includes(option.name);
                 const checkboxId = `sql-job-partition-${option.name}`;

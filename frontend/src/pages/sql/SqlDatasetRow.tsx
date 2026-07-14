@@ -1,5 +1,12 @@
-import { Calendar, Database, Hash, Server, Table2, Type } from "lucide-react";
-import { useMemo, useState } from "react";
+import {
+  SqlPageIcon as Calendar,
+  SqlPageIcon as Database,
+  SqlPageIcon as Hash,
+  SqlPageIcon as Server,
+  SqlPageIcon as Table2,
+  SqlPageIcon as Type,
+} from "./SqlPageIcon";
+import { useCallback, useMemo, useRef, useState, type FocusEvent, type MouseEvent } from "react";
 import type { NodeApi } from "react-arborist";
 import { ExplorerTree, type ExplorerTreeNode } from "@/components/ui/explorer-tree";
 import { TreeHoverCard } from "@/components/ui/tree-hover-card";
@@ -45,6 +52,39 @@ export function SqlDatasetTree({
   selectedDatasetIds,
 }: SqlDatasetTreeProps) {
   const [hoverInfo, setHoverInfo] = useState<HoverInfo | null>(null);
+  const onSelectRef = useRef(onSelect);
+  onSelectRef.current = onSelect;
+  const onToggleRef = useRef(onToggle);
+  onToggleRef.current = onToggle;
+  const datasetsRef = useRef(datasets);
+  datasetsRef.current = datasets;
+  const getNodeIcon = useCallback((node: NodeApi<SqlDatasetNode>) => {
+    if (node.data.kind === "dataset") return <Table2 className="text-blue-600" />;
+    if (node.data.kind === "column") {
+      const Icon = getColumnIcon(node.data.columnType ?? "");
+      return <Icon className={getColumnIconClassName(node.data.columnType ?? "")} />;
+    }
+    if (node.id === SYSTEM_NODE_ID) return <Server className="text-blue-700" />;
+    if (node.id === DATASETS_NODE_ID) return <Database className="text-cyan-600" />;
+    return <Table2 className="text-indigo-600" />;
+  }, []);
+  const getNodeRowProps = useCallback((node: NodeApi<SqlDatasetNode>) => ({
+    "aria-pressed": node.data.selected || undefined,
+    "data-sql-dataset-node": node.data.kind === "dataset" ? "" : undefined,
+    "data-sql-dataset-row": node.data.kind === "dataset" ? "" : undefined,
+    "data-sql-dataset-selected": node.data.selected ? "" : undefined,
+    onBlur: () => setHoverInfo(null),
+    onFocus: (event: FocusEvent<HTMLButtonElement>) => showSqlNodeHover(node.data, event.currentTarget, setHoverInfo),
+    onMouseEnter: (event: MouseEvent<HTMLButtonElement>) => showSqlNodeHover(node.data, event.currentTarget, setHoverInfo),
+    onMouseLeave: () => setHoverInfo(null),
+    onClick: node.data.kind === "dataset" && node.data.dataset
+      ? (event: MouseEvent<HTMLButtonElement>) => {
+          event.preventDefault();
+          onSelectRef.current(node.data.dataset as CatalogDataset);
+        }
+      : undefined,
+    title: node.data.label,
+  }), []);
   const treeData = useMemo<SqlDatasetNode[]>(() => [{
     children: [{
       children: [{
@@ -82,6 +122,18 @@ export function SqlDatasetTree({
     label: "system",
     selectable: false,
   }], [datasets, selectedDatasetIds]);
+  const initialOpenState = useMemo(() => ({
+    [SYSTEM_NODE_ID]: true,
+    [DATASETS_NODE_ID]: true,
+    [TABLES_NODE_ID]: true,
+    ...(expandedDatasetId ? { [getDatasetNodeId(expandedDatasetId)]: true } : {}),
+  }), [expandedDatasetId]);
+  const handleNodeToggle = useCallback((nodeId: string) => {
+    if (!nodeId.startsWith(DATASET_NODE_PREFIX)) return;
+    const datasetId = nodeId.slice(DATASET_NODE_PREFIX.length);
+    const dataset = datasetsRef.current.find((entry) => entry.id === datasetId);
+    if (dataset) onToggleRef.current(dataset);
+  }, []);
 
   if (datasets.length === 0) return null;
 
@@ -95,47 +147,15 @@ export function SqlDatasetTree({
         defaultHeight={520}
         disableMultiSelection
         disableSelect
-        getIcon={(node) => {
-          if (node.data.kind === "dataset") return <Table2 className="text-blue-600" />;
-          if (node.data.kind === "column") {
-            const Icon = getColumnIcon(node.data.columnType ?? "");
-            return <Icon className={getColumnIconClassName(node.data.columnType ?? "")} />;
-          }
-          if (node.id === SYSTEM_NODE_ID) return <Server className="text-blue-700" />;
-          if (node.id === DATASETS_NODE_ID) return <Database className="text-cyan-600" />;
-          return <Table2 className="text-indigo-600" />;
-        }}
-        getRowProps={(node) => ({
-          "aria-pressed": node.data.selected || undefined,
-          "data-sql-dataset-node": node.data.kind === "dataset" ? "" : undefined,
-          "data-sql-dataset-row": node.data.kind === "dataset" ? "" : undefined,
-          "data-sql-dataset-selected": node.data.selected ? "" : undefined,
-          onClick: () => {
-            if (node.data.kind === "dataset" && node.data.dataset) onSelect(node.data.dataset);
-          },
-          onBlur: () => setHoverInfo(null),
-          onFocus: (event) => showSqlNodeHover(node.data, event.currentTarget, setHoverInfo),
-          onMouseEnter: (event) => showSqlNodeHover(node.data, event.currentTarget, setHoverInfo),
-          onMouseLeave: () => setHoverInfo(null),
-          title: node.data.label,
-        })}
-        initialOpenState={{
-          [SYSTEM_NODE_ID]: true,
-          [DATASETS_NODE_ID]: true,
-          [TABLES_NODE_ID]: true,
-          ...(expandedDatasetId ? { [getDatasetNodeId(expandedDatasetId)]: true } : {}),
-        }}
+        getIcon={getNodeIcon}
+        getRowProps={getNodeRowProps}
+        initialOpenState={initialOpenState}
         indent={12}
         minHeight={320}
         openByDefault={false}
         rowHeight={40}
         toggleOnRowPress={false}
-        onToggle={(nodeId) => {
-          if (!nodeId.startsWith(DATASET_NODE_PREFIX)) return;
-          const datasetId = nodeId.slice(DATASET_NODE_PREFIX.length);
-          const dataset = datasets.find((entry) => entry.id === datasetId);
-          if (dataset) onToggle(dataset);
-        }}
+        onToggle={handleNodeToggle}
       />
       {hoverInfo && <SqlDatasetHoverCard info={hoverInfo} />}
     </>
