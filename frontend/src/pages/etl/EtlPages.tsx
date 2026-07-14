@@ -78,7 +78,13 @@ import { S3PathField } from "../../components/s3/S3PathField";
 import { runTransformQualitySamplePreview } from "../../data/transformQualityPreview";
 import { normalizeRetryPolicy, retryFailureActionLabels, scheduleOverlapPolicyLabels, toCreatePipelineRequest } from "../../services/draftPipelineContract";
 import { getDatasets } from "../../services/mockApi";
-import { getReviewSnapshot, type ReviewSnapshot } from "../../services/reviewApi";
+import {
+  buildReviewSnapshotRequest,
+  getReviewSnapshot,
+  getReviewSnapshotRequestKey,
+  type ReviewSnapshot,
+  type ReviewSnapshotRequest,
+} from "../../services/reviewApi";
 import { fetchPermissionOptions } from "../../services/permissionApi";
 import { getSourceConnectorDefaults, listSourceAssets, previewRecordParsing, testSourceConnector, type SourceConnectorAnalysis } from "../../services/sourceConnectorService";
 import type { AuditResult, CatalogDataset, DraftPipeline, DraftPipelinePatch, FlowId, PermissionAction, PermissionOptionsResponse, RecordParsingDraft, RecordParsingPreviewResponse, ScheduleFlowId, SchemaColumnDraft, SourceDraft, TargetLayer } from "../../types";
@@ -6236,16 +6242,27 @@ export function ReviewPage({
 }) {
   const [reviewSnapshot, setReviewSnapshot] = useState<ReviewSnapshot | null>(null);
   const [reviewLoading, setReviewLoading] = useState(true);
+  const [reviewError, setReviewError] = useState("");
+  const [reviewRetryCount, setReviewRetryCount] = useState(0);
+  const reviewRequestKey = getReviewSnapshotRequestKey(buildReviewSnapshotRequest(draft));
+  const reviewRequest = useMemo(
+    () => JSON.parse(reviewRequestKey) as ReviewSnapshotRequest,
+    [reviewRequestKey],
+  );
 
   useEffect(() => {
     let cancelled = false;
     setReviewLoading(true);
-    void getReviewSnapshot(draft)
+    setReviewError("");
+    setReviewSnapshot(null);
+    void getReviewSnapshot(reviewRequest)
       .then((snapshot) => {
         if (!cancelled) setReviewSnapshot(snapshot);
       })
-      .catch(() => {
-        if (!cancelled) setReviewSnapshot(null);
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setReviewError(error instanceof Error ? error.message : "검토 정보를 불러오지 못했습니다.");
+        }
       })
       .finally(() => {
         if (!cancelled) setReviewLoading(false);
@@ -6253,7 +6270,7 @@ export function ReviewPage({
     return () => {
       cancelled = true;
     };
-  }, [draft]);
+  }, [reviewRequest, reviewRetryCount]);
 
   const basicInformationRows = reviewSnapshot?.basicInformation ?? [];
   const destinationRows = reviewSnapshot?.destination ?? [];
@@ -6262,7 +6279,15 @@ export function ReviewPage({
   const validationRows = reviewSnapshot?.validation ?? [];
   const canCreate = reviewSnapshot?.canCreate === true;
   const createDisabled = createPending || reviewLoading || !canCreate;
-  const createLabel = createPending ? "생성 중..." : reviewLoading ? "서버 확인 중..." : canCreate ? "파이프라인 생성" : "검증 필요";
+  const createLabel = createPending
+    ? "생성 중..."
+    : reviewLoading
+      ? "서버 확인 중..."
+      : reviewError
+        ? "검토 오류"
+        : canCreate
+          ? "파이프라인 생성"
+          : "검증 필요";
 
   return (
     <CreationFlowLayout
@@ -6274,6 +6299,17 @@ export function ReviewPage({
           icon={<FileText />}
           title="검토 및 생성"
         />
+        {reviewError ? (
+          <Alert className="mx-0" variant="destructive">
+            <AlertTitle>검토 정보를 불러오지 못했습니다.</AlertTitle>
+            <AlertDescription className="flex flex-wrap items-center justify-between gap-3">
+              <span>{reviewError}</span>
+              <Button size="sm" type="button" variant="outline" onClick={() => setReviewRetryCount((count) => count + 1)}>
+                <RefreshCw aria-hidden="true" data-icon="inline-start" /> 다시 시도
+              </Button>
+            </AlertDescription>
+          </Alert>
+        ) : null}
         <div className="etl-review-stack">
           <section className="etl-review-card">
             <div className="etl-review-card-header">
