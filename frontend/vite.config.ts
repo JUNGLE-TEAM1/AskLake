@@ -4,6 +4,9 @@ import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath, URL } from "node:url";
 
 export default defineConfig({
+  build: {
+    assetsInlineLimit: 0,
+  },
   clearScreen: false,
   define: {
     "process.env.DRAGGABLE_DEBUG": "false",
