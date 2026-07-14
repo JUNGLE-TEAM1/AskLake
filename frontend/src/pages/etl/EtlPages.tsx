@@ -88,6 +88,7 @@ import {
 } from "../../services/reviewApi";
 import { fetchPermissionOptions } from "../../services/permissionApi";
 import { getSourceConnectorDefaults, listSourceAssets, previewRecordParsing, testSourceConnector, type SourceConnectorAnalysis } from "../../services/sourceConnectorService";
+import { sanitizeSourceConnectorFields } from "../../utils/sourceConnectorFields";
 import type { AuditResult, CatalogDataset, DraftPipeline, DraftPipelinePatch, FlowId, PermissionAction, PermissionOptionsResponse, RecordParsingDraft, RecordParsingPreviewResponse, ScheduleFlowId, SchemaColumnDraft, SourceDraft, TargetLayer } from "../../types";
 import type { QualityRuleDraft, RetryPolicyDraft, ScheduleDraft, ScheduleOverlapPolicy, TransformStepDraft, WatermarkPolicyDraft, WatermarkWindowMode } from "../../types/etl";
 import type { QualityRuleOption, TransformQualityInvalidRow, TransformQualityPreviewSample, TransformQualitySampleRow, TransformQualityStepPreview, TransformQualityValidationResult } from "../../data/transformQualityPreview";
@@ -299,13 +300,14 @@ function mergeConnectorSourceConfig(currentFields: Array<[string, string]>, resp
 function mergeConnectorAnalysisSourceConfig(result: SourceConnectorAnalysis, currentFields: Array<[string, string]>): SourceConnectorAnalysis {
   const responseConfig = result.draftPatch.source?.sourceConfig;
   if (!responseConfig) return result;
+  const sourceType = result.draftPatch.source?.sourceType ?? "";
   return {
     ...result,
     draftPatch: {
       ...result.draftPatch,
       source: {
         ...result.draftPatch.source,
-        sourceConfig: mergeConnectorSourceConfig(currentFields, responseConfig),
+        sourceConfig: sanitizeSourceConnectorFields(sourceType, mergeConnectorSourceConfig(currentFields, responseConfig)),
       },
     },
   };
@@ -1540,13 +1542,14 @@ export function SourceConnectionPage({
       });
       return;
     }
-    const label = sourceLabelFromFields(nextType, nextFields);
+    const persistedFields = sanitizeSourceConnectorFields(nextType, nextFields);
+    const label = sourceLabelFromFields(nextType, persistedFields);
     const executionMode = nextType === "Stream / Kafka" ? draft.source.executionMode ?? "snapshot" : "snapshot";
     onDraftChange({
       source: {
         connectionMessage: nextMessage,
         connectionStatus: nextStatus,
-        sourceConfig: nextFields,
+        sourceConfig: persistedFields,
         sourceLabel: label,
         sourceType: nextType,
         executionMode,
@@ -1989,6 +1992,7 @@ export function SourceConnectionPage({
               ["Result", "Verified"],
               ["Objects", String(result.assets.length)],
             ];
+      const persistedFields = sanitizeSourceConnectorFields(activeSourceType, editableFields);
       const connectorResult: SourceConnectorAnalysis = {
         actionPath: "/api/etl/sources/assets",
         assets: result.assets,
@@ -1996,8 +2000,8 @@ export function SourceConnectionPage({
           source: {
             connectionMessage: successMessage,
             connectionStatus: "success",
-            sourceConfig: editableFields,
-            sourceLabel: sourceLabelFromFields(activeSourceType, editableFields),
+            sourceConfig: persistedFields,
+            sourceLabel: sourceLabelFromFields(activeSourceType, persistedFields),
             sourceType: activeSourceType,
           },
         },
@@ -2701,7 +2705,6 @@ function sourceStatusIcon(status: SourceDraft["connectionStatus"]) {
 function isVisibleSourceField(sourceType: string, label: string) {
   if (isInternalSourceField(label)) return false;
   if (sourceType === "File / S3") {
-    if (OBJECT_STORAGE_IS_AWS && ["Endpoint URL", "Access Key", "Secret Key"].includes(label)) return false;
     return !["Storage Provider", "Region", "Use Path Style", "Header", "Path / Prefix", "File Type", "Delimiter", "Encoding"].includes(label);
   }
   if (sourceType === "PostgreSQL") {

@@ -74,7 +74,7 @@ TRINO_CLEANUP_POLL_SECONDS=3600
 - `DATABASE_URL`: backend metadata DB. 미설정 시 `docker-compose.yml`의 local Postgres 기본값을 사용한다.
 - Object storage local mode는 `ASKLAKE_OBJECT_STORAGE_PROVIDER=minio`, MinIO endpoint/static local credential, `S3_FORCE_PATH_STYLE=true`를 사용한다.
 - EC2 production mode는 `ASKLAKE_OBJECT_STORAGE_PROVIDER=aws`, `AWS_REGION`, `S3_FORCE_PATH_STYLE=false`를 사용한다. `S3_ENDPOINT`와 장기 AWS access key/secret은 비워 두고 EC2 instance profile IAM Role/default credential chain을 사용한다.
-- AWS Source request에는 provider, region, bucket/prefix만 전송한다. frontend는 endpoint/access key/secret 입력을 숨기며 AWS credential을 browser bundle이나 API payload에 넣지 않는다.
+- AWS Source 화면은 발표용 호환 레이아웃을 위해 Endpoint URL, Access Key, Secret Key 입력을 표시하지만 세 값은 선택 입력이며 연결 동작에는 사용하지 않는다. Frontend adapter는 값의 내용과 관계없이 API 요청과 pipeline draft에서 세 필드를 비우고 provider, region, bucket/prefix만 전송한다. 실제 인증은 EC2 instance profile IAM Role/default credential chain을 사용하며 AWS credential을 browser 밖으로 전송하거나 저장하지 않는다.
 - Dashboard adapter는 FastAPI 응답을 우선하고, 이전 backend 호환을 위해 404 local/mock fallback을 유지한다.
 - Target 저장경로 선택은 frontend가 S3를 직접 호출하지 않고 `GET /api/s3/buckets`, `GET /api/s3/prefixes` 서버 API를 통해 bucket/prefix만 조회한다. 목록은 `ASKLAKE_SPARK_OUTPUT_BUCKET`을 첫 번째로 반환하고 나머지 `S3_ALLOWED_BUCKETS`를 뒤에 합친다. local MinIO demo만 설정이 없을 때 `asklake-output`을 사용하며, AWS mode의 설정 누락은 `503 SERVICE_UNAVAILABLE`이다.
 - Dashboard 원격 widget scan은 `S3_ALLOWED_BUCKETS`와 runtime 응답 전체에서 공유하는 `ASKLAKE_DASHBOARD_MAX_REMOTE_BYTES`/`ASKLAKE_DASHBOARD_MAX_REMOTE_OBJECTS` 예산을 적용한다. DuckDB 기본 경계는 query당 15초, memory/temp 각 256 MiB, 2 threads이며 `ASKLAKE_DASHBOARD_QUERY_TIMEOUT_SECONDS`, `ASKLAKE_DASHBOARD_DUCKDB_MEMORY_BYTES`, `ASKLAKE_DASHBOARD_DUCKDB_TEMP_BYTES`, `ASKLAKE_DASHBOARD_DUCKDB_THREADS`로 더 낮거나 제한된 운영값을 지정할 수 있다.
