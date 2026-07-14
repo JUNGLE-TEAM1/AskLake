@@ -1,10 +1,12 @@
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import duckdb
 
+from app.core.auth_context import ActorContext
 from app.core.errors import ApiError
 from app.schemas.catalog import (
     CatalogDatasetResponse,
@@ -103,9 +105,10 @@ class CatalogDatasetRowsTest(unittest.TestCase):
         self.assertFalse(page.has_next)
 
     def test_catalog_service_delegates_dataset_rows_to_bounded_reader(self) -> None:
+        actor = ActorContext()
         service = CatalogService(
             lake_storage=None,
-            repository=None,
+            repository=SimpleNamespace(db=object()),  # type: ignore[arg-type]
             sql_repository=None,
         )
         expected = CatalogDatasetRowsResponse(
@@ -123,15 +126,18 @@ class CatalogDatasetRowsTest(unittest.TestCase):
         with (
             patch.object(service, "get_dataset", return_value=self.dataset) as get_dataset,
             patch("app.services.catalog_service.read_dataset_rows", return_value=expected) as read_rows,
+            patch("app.services.catalog_service.require_governed_access"),
+            patch("app.services.catalog_service.require_permission"),
         ):
             actual = service.get_dataset_rows(
                 self.dataset.id,
+                actor,
                 limit=25,
                 offset=50,
             )
 
         self.assertIs(actual, expected)
-        get_dataset.assert_called_once_with(self.dataset.id, None)
+        get_dataset.assert_called_once_with(self.dataset.id, actor)
         read_rows.assert_called_once_with(self.dataset, limit=25, offset=50)
 
     def test_declared_but_missing_materialization_is_not_reported_as_actual_data(self) -> None:

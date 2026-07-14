@@ -31,7 +31,6 @@ from app.services.lake_storage_service import (
 )
 from app.services.dataset_rows_service import read_dataset_rows
 from app.services.governance_enforcement import require_governed_access
-from app.services.dataset_rows_service import read_dataset_rows
 from app.services.sql_service import full_query_run_response_from_payload
 from app.services.materialization_projection import (
     aggregate_materialization_runs,
@@ -153,17 +152,6 @@ class CatalogService:
             )
             raise
         return with_dataset_permissions(dataset, actor_context, self.repository.db)
-
-    def get_dataset_rows(
-        self,
-        dataset_id: str,
-        actor: ActorContext | None = None,
-        *,
-        limit: int,
-        offset: int,
-    ) -> CatalogDatasetRowsResponse:
-        dataset = dataset_for_latest_successful_materialization(self.get_dataset(dataset_id, actor))
-        return read_dataset_rows(dataset, limit=limit, offset=offset)
 
     def get_dataset_lineage(self, dataset_id: str, actor: ActorContext | None = None) -> LineageGraphResponse:
         dataset = self.get_dataset(dataset_id, actor)
