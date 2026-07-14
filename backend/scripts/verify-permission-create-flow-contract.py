@@ -96,6 +96,7 @@ def main() -> None:
                 for grant in stored
             )
             assert any(grant.principal_id == "demo-user" for grant in created.job.permission_grants)
+            assert not any(grant.source in {"owner", "permissionRoles"} for grant in created.job.permission_grants)
             create_permission_grant(
                 db,
                 resource_type="etl_job",
@@ -134,6 +135,36 @@ def main() -> None:
             assert any(grant.principal_id == "analytics" and grant.source == "permission_ui" for grant in replaced)
             assert any(grant.principal_id == "admin-managed-user" and grant.source == "admin" for grant in replaced)
             assert any(grant.principal_id == "analytics" for grant in updated.permission_grants)
+
+            legacy_payload = pipeline_payload()
+            legacy_payload["id"] = "legacy-permission-migration-contract"
+            legacy_payload["jobName"] = "legacy_permission_migration_contract_pipeline"
+            legacy_payload["owner"] = "legacy-owner"
+            legacy_payload["targetDataset"] = "legacy_permission_migration_contract"
+            legacy_payload.pop("permissionGrants")
+            legacy_request = CreatePipelineRequest.model_validate(legacy_payload)
+            legacy_created = etl_service.create_pipeline(db, legacy_request, actor)
+            legacy_actor = ActorContext(
+                name="Data Platform Member",
+                role="viewer",
+                groups=("data-platform",),
+            )
+            migrated = etl_service.with_job_permissions(db, legacy_created.job, legacy_actor)
+            assert migrated.permissions.can_run is True
+            assert migrated.permissions.can_manage is True
+            assert any(
+                grant.principal_type == "group"
+                and grant.principal_id == "data-platform"
+                and grant.source == "legacy_permission_roles"
+                for grant in migrated.permission_grants
+            )
+            assert not any(grant.source == "owner" for grant in migrated.permission_grants)
+
+            migrated_again = etl_service.with_job_permissions(db, legacy_created.job, legacy_actor)
+            assert len([
+                grant for grant in migrated_again.permission_grants
+                if grant.source == "legacy_permission_roles"
+            ]) == 1
     finally:
         etl_repository.ensure_schema = original_ensure_schema
 

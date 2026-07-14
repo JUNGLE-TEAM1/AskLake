@@ -29,7 +29,7 @@ from app.core.materialization import (
     has_bounded_source_window,
     materialization_source_window,
 )
-from app.core.permission_metadata import permission_grants_from_roles, resource_permissions
+from app.core.permission_metadata import normalize_actions, permission_grants_from_roles, resource_permissions
 from app.core.s3_policy import resolve_s3_source_location, s3_source_config_fields, validate_s3_source_config
 from app.models import (
     CatalogDatasetModel,
@@ -49,7 +49,7 @@ from app.repositories.audit_repository import add_audit_event, safe_record_audit
 from app.repositories import etl_repository
 from app.repositories.catalog_repository import CatalogRepository
 from app.repositories.sql_repository import SqlRepository
-from app.repositories.permission_repository import replace_permission_ui_grants
+from app.repositories.permission_repository import ensure_legacy_permission_grants, replace_permission_ui_grants
 from app.schemas.common import ErrorCode
 from app.schemas.etl import (
     AirflowCatalogReconciliationResponse,
@@ -103,6 +103,7 @@ from app.schemas.etl import (
     SourceConnectorRequest,
     UpdatePipelineRequest,
 )
+from app.schemas.permissions import PermissionGrant
 
 from app.services.airflow_client import AirflowDagRun, AirflowTaskInstance, build_airflow_client
 from app.services.auth_service import load_active_actor_by_user_id
@@ -114,7 +115,7 @@ from app.services.identity_service import DEMO_GROUPS, DEMO_USERS
 from app.services.object_storage import object_storage_runtime
 from app.services.materialization_projection import aggregate_materialization_runs
 from app.services.rule_compiler import CompiledRuleSet, compile_rule_set
-from app.services.resource_permission_service import job_with_persisted_permission_grants, permission_grants_for_resource, permissions_for_actor_with_governance
+from app.services.resource_permission_service import permission_grants_for_resource, permissions_for_actor_with_governance
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 SCRIPTS_DIR = BACKEND_DIR / "scripts"
@@ -127,6 +128,11 @@ PERMISSION_GROUP_ACTIONS = {
     "data-platform": ["view", "run", "manage"],
     "ops": ["view", "run"],
 }
+LEGACY_PERMISSION_GROUP_IDS = {
+    alias.casefold(): group.id
+    for group in DEMO_GROUPS.values()
+    for alias in (group.id, group.name, group.name.removesuffix(" Team"))
+}
 DEFAULT_SOURCE_IDENTITY_WORKERS = 16
 MAX_SOURCE_IDENTITY_WORKERS = 64
 DEFAULT_SPARK_EXECUTION_LEASE_SECONDS = 1200
@@ -138,6 +144,38 @@ def source_connector_defaults() -> SourceConnectorDefaults:
     return SourceConnectorDefaults(
         kafka_broker=os.environ.get("ASKLAKE_KAFKA_BROKER") or "127.0.0.1:19092",
     )
+
+
+def legacy_permission_grants(roles: list[dict[str, Any]] | None) -> list[PermissionGrant]:
+    grants: list[PermissionGrant] = []
+    for role in roles or []:
+        if not isinstance(role, dict) or role.get("checked") is False:
+            continue
+        name = str(role.get("name") or "").strip()
+        if not name:
+            continue
+        group_id = LEGACY_PERMISSION_GROUP_IDS.get(name.casefold())
+        grants.append(PermissionGrant(
+            actions=normalize_actions(role.get("access")) or ["view"],
+            principal_id=group_id or name,
+            principal_type="group" if group_id else "role",
+            source="legacy_permission_roles",
+        ))
+    return grants
+
+
+def permission_grants_for_etl_job(
+    db: Session,
+    job: ETLJobModel | JobRowData,
+) -> list[PermissionGrant]:
+    ensure_legacy_permission_grants(
+        db,
+        resource_type="etl_job",
+        resource_id=job.id,
+        grants=legacy_permission_grants(job.permission_roles),
+        created_by=job.owner,
+    )
+    return permission_grants_for_resource(db, "etl_job", job.id, [])
 
 
 def get_permission_options(db: Session, actor: ActorContext) -> PermissionOptionsResponse:
@@ -693,12 +731,7 @@ def update_pipeline(
         actor_context,
         "manage",
         owner=job.owner,
-        grants=permission_grants_for_resource(
-            db,
-            "etl_job",
-            job.id,
-            permission_grants_from_roles(job.owner, job.permission_roles, default_actions=["view", "run"]),
-        ),
+        grants=permission_grants_for_etl_job(db, job),
         resource_label="job",
     )
     compiled_rules = compile_pipeline_rules(
@@ -794,12 +827,7 @@ def delete_job(db: Session, job_id: str, actor: ActorContext | None = None) -> s
             actor_context,
             "delete",
             owner=job.owner,
-            grants=permission_grants_for_resource(
-                db,
-                "etl_job",
-                job.id,
-                permission_grants_from_roles(job.owner, job.permission_roles, default_actions=["view", "run"]),
-            ),
+            grants=permission_grants_for_etl_job(db, job),
             resource_label="job",
         )
     except ApiError as exc:
@@ -980,12 +1008,7 @@ def command_job(
             actor_context,
             required_action,
             owner=job.owner,
-            grants=permission_grants_for_resource(
-                db,
-                "etl_job",
-                job.id,
-                permission_grants_from_roles(job.owner, job.permission_roles, default_actions=["view", "run"]),
-            ),
+            grants=permission_grants_for_etl_job(db, job),
             resource_label="job",
         )
     except ApiError as exc:
@@ -1308,7 +1331,9 @@ def command_kafka_continuous_job(
 
 
 def with_job_permissions(db: Session, job: JobRowData, actor: ActorContext) -> JobRowData:
-    job_with_grants = job_with_persisted_permission_grants(db, job)
+    job_with_grants = job.model_copy(update={
+        "permission_grants": permission_grants_for_etl_job(db, job),
+    })
     grant_payloads = [
         grant.model_dump(by_alias=True) if hasattr(grant, "model_dump") else grant
         for grant in job_with_grants.permission_grants

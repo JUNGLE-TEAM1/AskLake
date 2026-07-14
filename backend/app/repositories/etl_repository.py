@@ -658,7 +658,7 @@ def job_to_schema(db: Session, job: ETLJobModel) -> JobRowData:
         owner=job.owner or "demo-user",
         created_by=job.created_by or job.owner or "demo-user",
         created_by_profile=job.created_by_profile,
-        permission_grants=permission_grants_from_roles(job.owner, job.permission_roles, default_actions=["view", "run"]),
+        permission_grants=[],
         permissions=resource_permissions(can_run=True),
         status=job.status or "scheduled",
         tag=job.tag or "[생성]",
