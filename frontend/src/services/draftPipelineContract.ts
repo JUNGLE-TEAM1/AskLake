@@ -199,8 +199,10 @@ export function hydrateDraftPipelineFromJob(job: JobRowData, fallback: DraftPipe
 
 export function toUpdatePipelineRequest(draft: DraftPipeline): UpdatePipelineRequest {
   const {
+    continuousConfig: _continuousConfig,
     createdBy: _createdBy,
     createdByProfile: _createdByProfile,
+    executionMode: _executionMode,
     id: _id,
     recordParsing: _recordParsing,
     sourceConfig: _sourceConfig,
