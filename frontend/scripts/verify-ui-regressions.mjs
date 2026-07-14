@@ -81,10 +81,10 @@ const checks = [
     ],
   },
   {
-    name: "Production login hides demo credentials and public signup by default",
+    name: "Production login hides demo credentials by default and supports an explicit demo opt-in",
     file: "src/pages/auth/AuthPage.tsx",
     patterns: [
-      /const demoDefaultsEnabled = import\.meta\.env\.DEV;/,
+      /const demoDefaultsEnabled = import\.meta\.env\.DEV \|\| import\.meta\.env\.VITE_AUTH_LEGACY_DEMO_USERS_ENABLED === "true";/,
       /const publicSignupEnabled = import\.meta\.env\.DEV \|\| import\.meta\.env\.VITE_AUTH_PUBLIC_SIGNUP === "true";/,
       /useState\(demoDefaultsEnabled \? "admin\.user@asklake\.local" : ""\)/,
       /\{publicSignupEnabled && \(/,
@@ -1639,6 +1639,21 @@ const checks = [
       /RefreshCw/,
       /LogOut/,
       /CircleUser/,
+    ],
+  },
+  {
+    name: "SQL Result Job drafts use the query result as the source contract",
+    file: "src/hooks/useAskLakeData.ts",
+    patterns: [
+      /sourceType: "SQL Result",/,
+      /SQL Run ID/,
+      /query result schema is carried by sourceConfig and outputColumns/,
+      /steps: \[\],/,
+    ],
+    forbiddenPatterns: [
+      /id: "sql-preview-materialize"/,
+      /operation: "SQL_RESULT_MATERIALIZE"/,
+      /input: sourceDataset\.name/,
     ],
   },
 ];

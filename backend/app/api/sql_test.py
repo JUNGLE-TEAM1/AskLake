@@ -84,6 +84,10 @@ def test_sql_transform(
     }
 
 
+# The FastAPI handler lives in a *_test.py module but is not itself a pytest test.
+test_sql_transform.__test__ = False
+
+
 def unique_columns(columns: Any) -> list[str]:
     seen: set[str] = set()
     result: list[str] = []

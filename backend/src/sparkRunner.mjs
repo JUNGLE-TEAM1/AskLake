@@ -55,7 +55,7 @@ function runSparkPipelineWithSource(job, command, runId, source, executionMode, 
   const dockerReportPath = `${reportContainerDir}/${runId}.json`;
   const manifestPath = path.join(reportDir, `${runId}.manifest.json`);
   const dockerManifestPath = `${reportContainerDir}/${runId}.manifest.json`;
-  const packages = sparkPackages(source, output);
+  const packages = sparkPackages(job, source, output);
   const packageArgs = sparkPackageArgs(packages);
   const localLlmEndpoint = process.env.ASKLAKE_LOCAL_LLM_ENDPOINT_IN_DOCKER
     || process.env.ASKLAKE_LOCAL_LLM_ENDPOINT
@@ -64,6 +64,7 @@ function runSparkPipelineWithSource(job, command, runId, source, executionMode, 
   const localLlmTimeoutSeconds = process.env.ASKLAKE_LOCAL_LLM_TIMEOUT_SECONDS
     || String(Math.ceil(Number(process.env.ASKLAKE_LOCAL_LLM_TIMEOUT_MS || 120000) / 1000));
   const reviewAnalysisRuntime = process.env.ASKLAKE_REVIEW_ANALYSIS_RUNTIME || "scalable";
+  const icebergEnvironment = sparkIcebergEnvironment(job);
   assertSparkRestStorageCredentials(job.sourceConfig ?? [], executionMode);
   writeSparkJobManifest(manifestPath, job);
   const storageEnvironment = Object.fromEntries(
@@ -89,6 +90,7 @@ function runSparkPipelineWithSource(job, command, runId, source, executionMode, 
     ASKLAKE_LOCAL_LLM_MAX_INPUT_CHARS: process.env.ASKLAKE_LOCAL_LLM_MAX_INPUT_CHARS || "9000",
     ASKLAKE_REVIEW_ANALYSIS_RUNTIME: reviewAnalysisRuntime,
     ASKLAKE_REVIEW_TEXT_MODEL_ROOT: reviewTextModelContainerDir,
+    ...icebergEnvironment,
     HOME: "/tmp",
   };
   const sparkExecutorProperties = Object.fromEntries(
@@ -151,6 +153,7 @@ function runSparkPipelineWithSource(job, command, runId, source, executionMode, 
     `ASKLAKE_REVIEW_ANALYSIS_RUNTIME=${reviewAnalysisRuntime}`,
     "-e",
     `ASKLAKE_REVIEW_TEXT_MODEL_ROOT=${reviewTextModelContainerDir}`,
+    ...Object.entries(icebergEnvironment).flatMap(([name, value]) => ["-e", `${name}=${value}`]),
     "-e",
     "HOME=/tmp",
     process.env.ASKLAKE_SPARK_IMAGE || "apache/spark:4.0.1",
@@ -209,7 +212,7 @@ function runSparkPipelineWithSource(job, command, runId, source, executionMode, 
     report = readSparkReport(reportPath, result.stdout);
   }
   if (executionMode === "docker" && report.status === "success") {
-    copySparkOutputToHost(output);
+    if (!report.icebergCommit) copySparkOutputToHost(output);
     copySparkReportArtifactsToHost(report);
   }
   report = normalizeSparkReport(report, output);
@@ -357,13 +360,18 @@ function writeSparkJobManifest(manifestPath, job) {
   const textStructuringColumns = textStructuringDefinitionColumns(job.transformSteps ?? []);
   const manifest = {
     createdAt: new Date().toISOString(),
-    partitionColumns: job.partition || "",
+    icebergTarget: job.icebergTarget ?? null,
+    jobId: job.id,
+    partitionColumns: job.partitionColumns ?? job.partition ?? "",
     qualityRules: job.qualityRules ?? [],
     ruleContractVersion: job.ruleContractVersion ?? "1.0",
     ruleOutputSchema: job.ruleOutputSchema ?? job.transformOutputColumns ?? [],
     rules: job.rules ?? [],
     recordParsing: job.recordParsing ?? null,
+    ruleFingerprint: job.ruleFingerprint ?? null,
     schemaColumns: job.schemaColumns ?? [],
+    schemaFingerprint: job.schemaFingerprint ?? null,
+    sourceBoundary: job.sourceBoundary ?? null,
     sourceCollection: sourceCollectionFromConfig(
       job.sourceConfig ?? [],
       job.sourceIncrementalSince,
@@ -373,6 +381,7 @@ function writeSparkJobManifest(manifestPath, job) {
       job.sourceObjectKeys,
       job.sourceObjectInventory,
     ),
+    sourceSelection: sourceSelectionFromJob(job),
     textStructuring: {
       columns: textStructuringColumns,
       specVersion: textStructuringColumns.length > 0 ? 1 : undefined,
@@ -380,6 +389,26 @@ function writeSparkJobManifest(manifestPath, job) {
     transformSteps: job.transformSteps ?? [],
   };
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+}
+
+function sourceSelectionFromJob(job) {
+  const sourceConfig = Array.isArray(job?.sourceConfig) ? job.sourceConfig : [];
+  const kind = String(fieldValue(sourceConfig, "__Selection Kind") || "file").trim().toLowerCase();
+  if (kind !== "prefix") return { kind: "file" };
+  return {
+    expectedFileCount: positiveInteger(fieldValue(sourceConfig, "__Source Unit Count")),
+    expectedTotalBytes: nonNegativeInteger(fieldValue(sourceConfig, "__Source Total Bytes")),
+    format: String(fieldValue(sourceConfig, "__Dataset Format") || fieldValue(sourceConfig, "File Type") || "").trim().toLowerCase(),
+    kind: "prefix",
+    prefix: normalizePrefix(fieldValue(sourceConfig, "Path / Prefix")),
+    representativeObject: fieldValue(sourceConfig, "__Sample Object") || "",
+    schemaFingerprint: fieldValue(sourceConfig, "__Schema Fingerprint") || "",
+  };
+}
+
+function nonNegativeInteger(value) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined;
 }
 
 export function sourceCollectionFromConfig(
@@ -391,11 +420,15 @@ export function sourceCollectionFromConfig(
   sourceObjectKeys = undefined,
   sourceObjectInventory = undefined,
 ) {
-  const scope = String(fieldValue(sourceConfig, "Collection Scope") || "file").trim().toLowerCase() === "folder"
+  const selectionKind = String(fieldValue(sourceConfig, "__Selection Kind") || "file").trim().toLowerCase();
+  const configuredScope = String(fieldValue(sourceConfig, "Collection Scope") || "file").trim().toLowerCase();
+  const scope = selectionKind === "prefix" || configuredScope === "folder"
     ? "folder"
     : "file";
   const collectionMode = String(fieldValue(sourceConfig, "Collection Mode") || "incremental").trim().toLowerCase();
-  const mode = scope === "folder" && collectionMode !== "full" ? "incremental" : "full";
+  const mode = selectionKind === "prefix"
+    ? "full"
+    : scope === "folder" && collectionMode !== "full" ? "incremental" : "full";
   const requestedWindowVersion = Number(windowContractVersion);
   const boundedWindowVersion = mode === "incremental" && [1, 2].includes(requestedWindowVersion)
     ? requestedWindowVersion
@@ -409,14 +442,21 @@ export function sourceCollectionFromConfig(
     ? [...new Set(sourceObjectKeys.map((key) => String(key || "").trim()).filter(Boolean))].sort()
     : null;
   return {
-    filePattern: scope === "folder" ? fieldValue(sourceConfig, "File Pattern") || null : null,
+    ...(selectionKind === "prefix" ? {
+      expectedFileCount: positiveInteger(fieldValue(sourceConfig, "__Source Unit Count")),
+      expectedTotalBytes: nonNegativeInteger(fieldValue(sourceConfig, "__Source Total Bytes")),
+    } : {}),
+    filePattern: scope === "folder"
+      ? fieldValue(sourceConfig, "File Pattern") || prefixDatasetFilePattern(sourceConfig)
+      : null,
     incrementalBefore: mode === "incremental" && incrementalBefore ? String(incrementalBefore) : null,
     incrementalSince: mode === "incremental" && incrementalSince ? String(incrementalSince) : null,
     mode,
     ...(boundedWindowVersion === 2 ? { objectInventory } : {}),
     objectKeys,
     rebaseline: boundedWindowVersion !== null && sourceWindowRebaseline === true,
-    recursive: scope === "folder" && parseConfigBoolean(fieldValue(sourceConfig, "Recursive")),
+    recursive: scope === "folder" && (selectionKind === "prefix" || parseConfigBoolean(fieldValue(sourceConfig, "Recursive"))),
+    ...(selectionKind === "prefix" ? { selectionKind } : {}),
     scope,
     windowContractVersion: boundedWindowVersion,
   };
@@ -474,6 +514,22 @@ function parseConfigBoolean(value) {
   return ["true", "1", "yes", "on"].includes(String(value || "").trim().toLowerCase());
 }
 
+function prefixDatasetFilePattern(sourceConfig) {
+  if (String(fieldValue(sourceConfig, "__Selection Kind") || "file").trim().toLowerCase() !== "prefix") {
+    return null;
+  }
+  const format = canonicalSparkSourceFormat(
+    fieldValue(sourceConfig, "__Dataset Format") || fieldValue(sourceConfig, "File Type"),
+  );
+  return {
+    csv: "*.{csv,tsv}",
+    json: "*.json",
+    jsonl: "*.{jsonl,ndjson}",
+    parquet: "*.parquet",
+    txt: "*.{txt,log,text}",
+  }[format] || null;
+}
+
 function textStructuringDefinitionColumns(transformSteps) {
   return (Array.isArray(transformSteps) ? transformSteps : [])
     .map((step) => {
@@ -507,10 +563,58 @@ function safeJsonParse(value) {
   }
 }
 
-function sparkPackages(source, output) {
-  if (process.env.ASKLAKE_SPARK_HADOOP_AWS_PACKAGE === "none") return [];
-  if (!usesS3A(source.path) && !usesS3A(output.sparkPath)) return [];
-  return [process.env.ASKLAKE_SPARK_HADOOP_AWS_PACKAGE || "org.apache.hadoop:hadoop-aws:3.4.1"];
+export function sparkPackages(job, source, output) {
+  const packages = [];
+  if (
+    process.env.ASKLAKE_SPARK_HADOOP_AWS_PACKAGE !== "none"
+    && (usesS3A(source.path) || usesS3A(output.sparkPath) || job?.icebergTarget)
+  ) {
+    packages.push(process.env.ASKLAKE_SPARK_HADOOP_AWS_PACKAGE || "org.apache.hadoop:hadoop-aws:3.4.1");
+  }
+  if (job?.icebergTarget) {
+    packages.push(
+      process.env.ASKLAKE_SPARK_ICEBERG_PACKAGE
+        || "org.apache.iceberg:iceberg-spark-runtime-4.0_2.13:1.11.0",
+      process.env.ASKLAKE_SPARK_POSTGRES_PACKAGE
+        || "org.postgresql:postgresql:42.7.7",
+    );
+  }
+  return [...new Set(packages.filter((item) => item && item !== "none"))];
+}
+
+export function sparkIcebergEnvironment(job) {
+  if (!job?.icebergTarget) return {};
+  const database = String(process.env.TRINO_ICEBERG_JDBC_DATABASE || process.env.POSTGRES_DB || "asklake");
+  const warehouseBucket = String(process.env.TRINO_ICEBERG_WAREHOUSE_BUCKET || "").trim();
+  const warehousePrefix = normalizePrefix(process.env.TRINO_ICEBERG_WAREHOUSE_PREFIX || "warehouse");
+  const warehouse = String(
+    process.env.ASKLAKE_SPARK_ICEBERG_WAREHOUSE
+      || (warehouseBucket ? `s3a://${warehouseBucket}/${warehousePrefix}` : ""),
+  ).replace(/\/+$/, "");
+  const jdbcUrl = String(
+    process.env.ASKLAKE_SPARK_ICEBERG_JDBC_URL
+      || `jdbc:postgresql://postgres:5432/${database}`,
+  ).trim();
+  const jdbcUser = String(process.env.TRINO_ICEBERG_JDBC_USER || "").trim();
+  const jdbcPassword = String(process.env.TRINO_ICEBERG_JDBC_PASSWORD || "");
+  if (!jdbcUrl || !jdbcUser || !jdbcPassword || !warehouse) {
+    throw sparkConfigurationError(
+      "Iceberg Spark execution requires TRINO_ICEBERG_JDBC_USER, "
+      + "TRINO_ICEBERG_JDBC_PASSWORD, and TRINO_ICEBERG_WAREHOUSE_BUCKET "
+      + "or ASKLAKE_SPARK_ICEBERG_WAREHOUSE.",
+    );
+  }
+  return {
+    ASKLAKE_SPARK_ICEBERG_CATALOG_NAME: String(
+      process.env.ASKLAKE_SPARK_ICEBERG_CATALOG_NAME
+        || process.env.TRINO_ICEBERG_CATALOG_NAME
+        || "asklake",
+    ),
+    ASKLAKE_SPARK_ICEBERG_JDBC_PASSWORD: jdbcPassword,
+    ASKLAKE_SPARK_ICEBERG_JDBC_URL: jdbcUrl,
+    ASKLAKE_SPARK_ICEBERG_JDBC_USER: jdbcUser,
+    ASKLAKE_SPARK_ICEBERG_WAREHOUSE: warehouse,
+  };
 }
 
 function sparkPackageArgs(packages) {
@@ -549,27 +653,37 @@ function ensureSparkServer() {
   }
 }
 
-function sparkSourceFromJob(job, runId) {
+export function sparkSourceFromJob(job, runId) {
   const sourceType = job.sourceType || "";
   const sourceConfig = Array.isArray(job.sourceConfig) ? job.sourceConfig : [];
   if (sourceType === "File / S3") {
     const bucket = normalizeBucketName(fieldValue(sourceConfig, "Bucket / Stage Name") || defaultRawBucket());
-    const prefix = normalizeBucketRelativePath(
+    const selectionKind = String(fieldValue(sourceConfig, "__Selection Kind") || "file").trim().toLowerCase();
+    let prefix = normalizeBucketRelativePath(
       normalizeSourcePath(fieldValue(sourceConfig, "Path / Prefix")),
       bucket,
     );
+    if (selectionKind === "prefix") prefix = normalizePrefix(prefix);
     if (/^s3a?:\/\//i.test(prefix)) {
       return {
         format: inferFormat(sourceConfig, prefix, "csv"),
         path: toS3APath(prefix),
+        selectionKind,
       };
     }
     return {
       format: inferFormat(sourceConfig, prefix, "csv"),
       path: prefix ? `s3a://${bucket}/${prefix}` : `s3a://${bucket}/`,
+      selectionKind,
     };
   }
   if (sourceType === "Data Lake") {
+    if (job.sourceIcebergTable) {
+      return {
+        format: "iceberg",
+        path: sparkIcebergSourceIdentifier(job.sourceIcebergTable),
+      };
+    }
     return {
       format: "parquet",
       path: toS3APath(fieldValue(sourceConfig, "Path") || "s3://m3-raw/nyc_taxi/yellow_parquet/"),
@@ -594,10 +708,26 @@ function sparkSourceFromJob(job, runId) {
     return {
       format: "jsonl",
       path: `file://${reportContainerDir}/${path.basename(samplePath)}`,
+      ...(job.cleanupSource ? { temporaryPath: samplePath } : {}),
     };
   }
 
   throw sparkError(`Spark execution requires File / S3, Data Lake, or a connector sample with schema rows. Unsupported sourceType=${sourceType}`);
+}
+
+function sparkIcebergSourceIdentifier(source) {
+  const catalog = String(
+    process.env.ASKLAKE_SPARK_ICEBERG_CATALOG_NAME
+      || process.env.TRINO_ICEBERG_CATALOG_NAME
+      || "asklake",
+  ).trim();
+  const namespace = String(source?.namespace || source?.schema || "").trim();
+  const table = String(source?.table || "").trim();
+  const identifiers = [catalog, namespace, table];
+  if (identifiers.some((value) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(value))) {
+    throw sparkError("Data Lake Iceberg source contains an invalid catalog identifier.");
+  }
+  return identifiers.join(".");
 }
 
 function isConnectorSampleSource(sourceType) {
@@ -783,8 +913,10 @@ function sparkRowLimitFromJob(job) {
 
 function inferFormat(sourceConfig, prefix, fallback) {
   const sampleObject = fieldValue(sourceConfig, "__Sample Object");
-  const fileType = String(fieldValue(sourceConfig, "File Type") || "").toLowerCase();
-  const probe = `${sampleObject} ${prefix} ${fileType}`.toLowerCase();
+  const configuredFormat = canonicalSparkSourceFormat(fieldValue(sourceConfig, "__Dataset Format"))
+    || canonicalSparkSourceFormat(fieldValue(sourceConfig, "File Type"));
+  if (configuredFormat) return configuredFormat;
+  const probe = `${sampleObject} ${prefix}`.toLowerCase();
   if (probe.includes(".jsonl") || probe.includes("jsonl") || probe.includes("ndjson")) return "jsonl";
   if (probe.includes(".json") || probe.includes("json")) return "json";
   if (probe.includes(".parquet") || probe.includes("parquet")) return "parquet";
@@ -792,6 +924,18 @@ function inferFormat(sourceConfig, prefix, fallback) {
   if (probe.includes(".tsv") || probe.includes("tsv")) return "csv";
   if (probe.includes(".csv") || probe.includes("csv")) return "csv";
   return fallback;
+}
+
+function canonicalSparkSourceFormat(value) {
+  const normalized = String(value || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "");
+  if (!normalized || ["auto", "autodetect", "automatic"].includes(normalized)) return "";
+  if (normalized.includes("jsonl") || normalized.includes("ndjson") || normalized.includes("jsonlines")) return "jsonl";
+  if (normalized === "json" || normalized.endsWith("json")) return "json";
+  if (normalized.includes("parquet")) return "parquet";
+  if (normalized.includes("tsv") || normalized.includes("tabseparated")) return "csv";
+  if (normalized.includes("csv") || normalized.includes("commaseparated")) return "csv";
+  if (normalized.includes("txt") || normalized.includes("text") || normalized.includes("log")) return "txt";
+  return "";
 }
 
 function toS3APath(value) {

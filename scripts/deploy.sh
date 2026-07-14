@@ -14,6 +14,7 @@ APP_URL="${ASKLAKE_APP_URL:-}"
 COMPOSE_FILE="${ASKLAKE_COMPOSE_FILE:-deploy/docker-compose.prod.yml}"
 COMPOSE_ENV_FILE="${ASKLAKE_COMPOSE_ENV_FILE:-deploy/.env}"
 HEALTH_PATH="${ASKLAKE_HEALTH_PATH:-/api/health}"
+AI_HEALTH_PATH="${ASKLAKE_AI_HEALTH_PATH:-/api/health/ai}"
 HEALTH_RETRIES="${ASKLAKE_HEALTH_RETRIES:-18}"
 HEALTH_RETRY_DELAY="${ASKLAKE_HEALTH_RETRY_DELAY:-5}"
 SSH_OPTS=(-o StrictHostKeyChecking=accept-new -o ServerAliveInterval=15 -i "$SSH_KEY")
@@ -187,6 +188,7 @@ except (json.JSONDecodeError, TypeError, UnicodeDecodeError):
 ready = (
     isinstance(payload, dict)
     and payload.get("ok") is True
+    and payload.get("statusCode", 200) == 200
     and isinstance(payload.get("database"), dict)
     and payload["database"].get("ok") is True
 )
@@ -208,9 +210,24 @@ health_check() {
       if health_payload="$(curl -fsS --max-time 20 "${url}${HEALTH_PATH}")"; then
         if printf '%s' "$health_payload" | health_payload_ready; then
           printf 'Backend health is deployment-ready.\n'
-          return
+          printf 'Checking AI gateway: %s%s (attempt %s/%s)\n' "$url" "$AI_HEALTH_PATH" "$attempt" "$HEALTH_RETRIES"
+          if ai_health_payload="$(curl -fsS --max-time 20 "${url}${AI_HEALTH_PATH}")"; then
+            if printf '%s' "$ai_health_payload" | python3 -c '
+import json
+import sys
+try:
+    payload = json.load(sys.stdin)
+except (json.JSONDecodeError, TypeError, UnicodeDecodeError):
+    raise SystemExit(1)
+raise SystemExit(0 if isinstance(payload, dict) and payload.get("ok") is True else 1)
+'; then
+              printf 'AI gateway health is deployment-ready.\n'
+              return
+            fi
+          fi
+          printf 'AI gateway health is not ready.\n' >&2
         fi
-        printf 'Backend health is not ready; expected JSON booleans .ok=true and .database.ok=true.\n' >&2
+        printf 'Backend health is not ready; expected JSON booleans .ok=true and .database.ok=true with .statusCode=200.\n' >&2
       fi
     fi
 

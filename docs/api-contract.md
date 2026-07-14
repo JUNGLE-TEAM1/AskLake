@@ -99,6 +99,8 @@ X-Request-Id: req_20260703_000001
 
 현재 로컬 인증은 `/api/auth/login` 또는 `/api/auth/signup`이 발급하는 httpOnly `asklake_session` 쿠키를 사용합니다. 외부 IdP/OAuth/SSO, refresh token, 비밀번호 재설정, 이메일 인증은 아직 범위 밖이며, 기존 smoke와 수동 검증을 위해 `X-AskLake-*` actor header fallback은 유지합니다. 이 fallback은 로컬 smoke/manual 검증용이며, 운영에서는 session/IdP 또는 trusted gateway 검증 없이 client-provided header만으로 role/user/group을 신뢰하면 안 됩니다.
 
+Production startup은 알려진 legacy demo 계정을 기본적으로 `disabled`로 바꾸고 해당 세션을 폐기합니다. 데모 운영에서 `AUTH_LEGACY_DEMO_USERS_ENABLED=true`를 명시하면 기존 demo 계정의 저장된 상태와 세션을 재시작 후에도 보존하며, 누락된 demo 계정은 초기 `active` 상태로 생성합니다. 이 모드도 `BOOTSTRAP_ADMIN_*` 설정, Secure session cookie, client header fallback 차단을 유지합니다. `VITE_AUTH_LEGACY_DEMO_USERS_ENABLED=true`는 같은 배포의 로그인 UI에 demo 기본값을 표시하는 build-time 짝이며 두 플래그는 `scripts/verify-deploy-env.sh`에서 동일해야 합니다. Opt-in은 이미 저장된 `disabled`를 자동으로 되돌리지 않습니다.
+
 Frontend는 `/api/auth/session` actor 확인 이후 보호 route와 backend hydrate를 시작합니다. Session/identity/admin 계약은 `/api/auth/signup`, `/api/auth/login`, `/api/auth/session`, `/api/auth/logout`, `/api/users/me`, `/api/admin/users`, `/api/admin/groups`, `/api/admin/permissions`, `/api/admin/governance-controls`, `/api/admin/audit-logs`를 사용하며, `/api/admin/*`는 현재 ActorContext가 admin이 아니면 `403 FORBIDDEN`을 반환합니다.
 
 ### Permission/Governance Phase 0 용어
@@ -177,6 +179,9 @@ Resource/action 기준:
 | `PATCH /api/etl/jobs/{jobId}` | `manage` | source identity와 successful target identity 보호 |
 | `GET /api/dashboards`, `POST /api/dashboards/query` | `view` | actor가 볼 수 있는 dashboard만 목록에 포함 |
 | `GET /api/dashboards/{dashboardId}/published` | `view` | published revision이 없어도 권한 통과 후 빈 runtime 응답 가능 |
+| `GET /api/datasets/{datasetId}/freshness` | Dataset `query` | 새 S3/Catalog revision 확인 전 dataset 권한 재검사 |
+| `POST /api/datasets/freshness/query` | Dataset `query` | 요청한 dataset 전체에 대해 같은 기준 적용 |
+| `POST /api/dashboards/{dashboardId}/widgets/query` | Dashboard `view` + Dataset `query` | published widget만 조회하고 물리 storage 접근 전 재검사 |
 | `PATCH /api/dashboards/{dashboardId}` | `manage` | dashboard card title 수정 |
 | `POST /api/dashboards/{dashboardId}/draft/ensure` | `manage` | draft revision 생성/복사 가능 여부 검사 |
 | `POST/PATCH/DELETE /api/dashboards/{dashboardId}/draft/**` | `manage` | page/widget/layout draft 변경 전체 |
@@ -389,6 +394,15 @@ API와 frontend internal state의 상태값은 영어 canonical value를 사용�
 ```ts
 type JobStatus = "scheduled" | "failed" | "running" | "paused" | "canceled" | "stopped";
 
+type IcebergWriterTarget = {
+  catalog: string;
+  namespace: string;
+  table: string;
+  tableUri: `iceberg://${string}/${string}/${string}`;
+  writeMode: "append" | "replace";
+  partitionColumns: string[];
+};
+
 type JobRowData = {
   id: string;
   name: string;
@@ -436,6 +450,7 @@ type JobRowData = {
   targetLayer?: "RAW" | "BRONZE" | "SILVER" | "GOLD";
   storageType?: "S3" | "Local" | "HDFS";
   storagePath?: string;
+  icebergTarget?: IcebergWriterTarget;
   partitionColumns?: string[];
   indexColumns?: string[];
   transformOutputColumns?: Array<[string, string]>;
@@ -456,6 +471,8 @@ type JobRowData = {
   };
 };
 ```
+
+`icebergTarget`은 backend-owned writer destination 선언이다. create/update request에서 사용자가 보내는 값이 아니며 backend가 Dataset ID와 Trino catalog/schema 설정으로 생성한다. Kafka source와 증분 S3/Data Lake folder는 `append`, 그 외 일반 ETL source는 `replace`를 사용한다. 증분 folder의 첫 rebaseline run은 target이 append여도 실제 operation을 replace로 실행한다. `tableUri`는 논리 식별자이고 `storagePath`는 기존 Job의 읽기 호환 필드다. 이 값이 존재해도 Iceberg commit과 Trino 물리 검증 전에는 `queryEngineStatus=unavailable`이다.
 
 `GET /api/etl/jobs/{jobId}`는 위 설정값을 편집 복원용으로 반환한다. `sourceConfig`에는 Kafka broker, topic, consumer group, batch/timeout, offset policy, authentication 같은 source identity가 포함될 수 있으므로 UI는 값을 보이되 Issue #460 수정 모드에서는 변경하지 않는다. 기존 Job에는 새 선택형 metadata가 없을 수 있으므로 해당 값은 optional로 유지한다.
 
@@ -542,6 +559,12 @@ type CatalogDataset = {
     sourceLabel: string;
     sourceRanges?: Array<Record<string, unknown>>;
     publicationManifest?: string;
+    sourceBoundary?: Record<string, unknown>;
+    icebergCommittedAt?: string;
+    icebergSnapshotId?: string;
+    kafkaSnapshot?: Record<string, unknown>;
+    queryEngineTable?: QueryEngineTableRef;
+    storageFormat?: string;
     ruleContractVersion?: string;
     ruleFingerprint?: string;
     runtimeFingerprint?: string;
@@ -556,7 +579,7 @@ type CatalogDataset = {
 ```
 
 `size`는 화면 표시용 저장 크기 문자열입니다. 물리 저장 위치와 원시 byte 값은 `storageLocation`, `storageFormat`, `storageSizeBytes`를 사용합니다.
-`materializationRuns`는 같은 Job/같은 dataset 이름으로 누적된 실행 또는 SQL materialize 결과 history입니다. 일반 ETL/SQL full refresh는 `materializationMode: "snapshot"`, Kafka 추가분은 `materializationMode: "delta"`입니다. 부모 dataset의 `rows`, `size`, `storageSizeBytes`, `lastUpdated`, `sourceRunId`는 newest-first 성공 history에서 첫 snapshot까지의 active segment만 기준으로 계산합니다. mode가 없는 legacy Kafka Run은 delta, 그 외 Run은 snapshot으로 읽습니다.
+`materializationRuns`는 같은 Job/같은 dataset 이름으로 누적된 실행 또는 SQL materialize 결과 history입니다. 일반 ETL/SQL full refresh는 `materializationMode: "snapshot"`, Kafka 추가분은 `materializationMode: "delta"`입니다. history는 `icebergCommittedAt`, 없으면 `createdAt` 기준 newest-first로 정렬하고 snapshot ID로 멱등 갱신합니다. 늦게 복구된 과거 snapshot은 history와 합계에만 반영하며 현재 schema, sample, quality, `sourceRunId`, `queryEngineTable`을 과거 값으로 되돌리지 않습니다. 부모 dataset의 `rows`, `size`, `storageSizeBytes`, `lastUpdated`, `sourceRunId`는 newest-first 성공 history에서 첫 snapshot까지의 active segment만 기준으로 계산합니다. mode가 없는 legacy Kafka Run은 delta, 그 외 Run은 snapshot으로 읽습니다.
 
 ### Source Connector Defaults
 
@@ -582,11 +605,11 @@ Canonical schema type은 `String`, `Integer`, `Long`, `Double`, `Boolean`, `Time
 
 Rule compiler는 Regex의 비어 있지 않은 유효 pattern, Accepted Values의 1개 이상 값, Range의 유효한 min/max와 `min <= max`, boolean inclusive를 검증합니다. V1 mask policy는 `phone`(`keep first 3 digits` legacy alias), timestamp format은 `ISO-8601`(`UTC` legacy alias)만 허용합니다. Frontend, FastAPI, Node compiler는 같은 fixture와 `RULE_PARAMETER_REQUIRED`/`RULE_PARAMETER_INVALID` issue code를 사용하고 JSON root의 dotted input path를 동일하게 판정합니다.
 
-### Kafka Snapshot Metadata and Direct Target
+### Kafka Snapshot Metadata and Iceberg Target
 
-Issue #455 Phase 3부터 Kafka run은 다음 snapshot metadata를 response, Run metadata, Catalog materialization run에 보존하고, 중간 RAW landing 없이 direct target object를 저장한다. Current direct bridge applies supported configured transforms and quality actions before writing normalized review JSONL.
+Kafka run은 다음 snapshot metadata를 response, Run metadata, Catalog materialization run에 보존한다. Job command 경로는 중간 RAW landing과 final JSONL data object 없이 저장된 included `schemaColumns`를 범용 JSON object 입력 계약으로 사용하고, supported transform/quality와 exact projection을 적용한 뒤 backend-owned Iceberg append target에 저장한다. Job identity가 없는 direct ingest endpoint만 fixture/debug 호환용 normalized review JSONL과 `event_id`, `offset`, `review`, `created_at` 필수 계약을 유지한다.
 
-Job command bridge는 `schemaColumns`와 compiled `outputSchema`를 ingest runtime에 전달한다. runtime은 Rule 적용 뒤 이 계약으로 exact projection하며 rename 전 source field와 `included: false` field를 물리 JSONL, Catalog schema, sample에 포함하지 않는다. Kafka Snapshot은 `RAW/BRONZE/SILVER + JSONL`, Kafka Continuous는 Parquet 포맷을 사용하며 review/create/update/command가 지원하지 않는 조합을 `TARGET_LAYER_UNSUPPORTED` 또는 `TARGET_FORMAT_UNSUPPORTED`로 선제 거절한다.
+Job command bridge는 `schemaColumns`와 compiled `outputSchema`를 ingest runtime에 전달한다. runtime은 Rule 적용 뒤 이 계약으로 exact projection하며 rename 전 source field와 `included: false` field를 Iceberg target schema, Catalog schema, sample에 포함하지 않는다. Kafka Snapshot create/update의 `RAW/BRONZE/SILVER + JSONL`과 Kafka Continuous의 `Parquet` 조합은 기존 UI/저장 row 호환 계약이고, 실제 Job Dataset은 검증된 `storageFormat=iceberg`와 warehouse Parquet를 사용한다. review/create/update/command는 지원하지 않는 조합을 `TARGET_LAYER_UNSUPPORTED` 또는 `TARGET_FORMAT_UNSUPPORTED`로 선제 거절한다.
 
 ```ts
 type KafkaPartitionSnapshot = {
@@ -606,7 +629,7 @@ type KafkaSnapshot = {
 };
 ```
 
-Direct target write의 성공 run은 `sourceKind: "kafka"`, target layer, target storage location, `KafkaSnapshot`, transform/quality summary를 함께 기록한다. target write 또는 Catalog 등록이 실패하면 Kafka offset을 commit하지 않으며, quality `Fail Run`도 target write 전에 같은 방식으로 중단한다. `Quarantine` 행은 같은 snapshot directory의 별도 object로 분리한다. 같은 `snapshotId` 재시도는 target과 materialization run을 idempotent하게 갱신한다. 상세 전환 계약은 `docs/kafka-snapshot-direct-target-contract.md`를 따른다.
+성공한 Snapshot Job run은 `sourceKind: "kafka"`, target layer, Iceberg warehouse location, `KafkaSnapshot`, `icebergCommit.sourceBoundary`, transform/quality summary와 `queryEngineTable`을 함께 기록한다. Iceberg commit 또는 Trino/Catalog 검증이 실패하면 Kafka offset을 commit하지 않으며, quality `Fail Run`도 Iceberg commit 전에 중단한다. `Quarantine` 행은 같은 snapshot metadata prefix의 별도 JSONL object로 분리한다. 같은 `snapshotId` 재시도는 Iceberg table의 source marker를 조회해 이미 commit된 append를 `reuse`하고 Catalog materialization run도 snapshot ID로 deduplicate한다. offset은 이 모든 검증 뒤에만 `endOffset`으로 확정한다. 상세 전환 계약은 `docs/kafka-snapshot-direct-target-contract.md`를 따른다.
 
 Kafka Job command가 실패하면 `JobRunSummary.status`는 `failed`이며 `taskStates.kafkaSnapshot`으로 captured range를, `failedStage`로 실패 위치를 유지한다. direct ingest endpoint error response의 `error.details.bridge`도 같은 snapshot diagnostic을 포함한다.
 
@@ -614,7 +637,7 @@ Kafka Job command가 실패하면 `JobRunSummary.status`는 `failed`이며 `task
 
 Issue #500 defines `executionMode: "snapshot" | "continuous"` on Kafka Job creation. Existing and migrated Kafka Jobs default to `snapshot`. `continuous` is immutable after creation and adds `continuousConfig` (`initialOffsetPolicy`, `triggerIntervalSeconds`, `maxOffsetsPerTrigger`, `schemaEvolutionPolicy`, `checkpointPath`) plus `continuousRuntime` (`status`, heartbeat, lag, last flush, counters, Rule identity, last error) to `JobRowData`.
 
-`startContinuous`, `pauseContinuous`, `resumeContinuous`, and `stopContinuous` are command extensions of `POST /api/etl/jobs/{jobId}/commands`. They launch or signal a Spark Structured Streaming worker, reject conflicting active Snapshot or Continuous consumer identity with `409`, and use a durable Spark checkpoint as source-progress authority. Each batch publishes `batch_id=<id>` Parquet paths with `_SUCCESS` plus a hidden count/offset signature, then writes an immutable full-batch manifest. A pre-manifest retry may reuse an output only when its signature matches; a committed manifest may be reused only when its batch ID and source ranges match. Job hydrate reconciles all reported publication manifests into Catalog before worker liveness failure handling. An exited/missing/stale worker becomes `failed` only while active, and the same container attempt increments `failedCount` once. An intentional exit after `pauseContinuous` or `stopContinuous` completes as `paused` or `stopped`. See [Kafka Continuous Ingestion Contract](kafka-continuous-ingestion-contract.md).
+`startContinuous`, `pauseContinuous`, `resumeContinuous`, and `stopContinuous` are command extensions of `POST /api/etl/jobs/{jobId}/commands`. They launch or signal a Spark Structured Streaming worker, reject conflicting active Snapshot or Continuous consumer identity with `409`, and use a durable Spark checkpoint as source-progress authority. Start/resume also passes PostgreSQL topic/partition `nextOffset` watermarks; `foreachBatch` filters older offsets before any write so a full duplicate is skipped and a partial overlap publishes only the unseen suffix. Each non-empty filtered batch derives a deterministic Run/source boundary from Job, checkpoint, consumer identity, a durable publication sequence and offset ranges, then appends `_asklake_run_id`-marked rows to the persisted Iceberg target. Spark raw batch ID is diagnostic only. A failure after Iceberg commit and before manifest/checkpoint completion reuses the same committed marker on retry instead of appending duplicates. Job hydrate verifies the exact reported snapshot and exact `_asklake_run_id` row count through Trino before Catalog cursor advancement and does this reconciliation before worker liveness failure handling. A terminal stale report window is recovered by listing completed S3 manifests after the acknowledged cursor; an incomplete last manifest never advances the ACK. An exited/missing/stale worker becomes `failed` only while active, and intentional pause/stop exits complete as `paused`/`stopped`. See [Kafka Continuous Ingestion Contract](kafka-continuous-ingestion-contract.md).
 
 Issue #567 Phase 5 compiles supported stateless `rules[]` into the Continuous worker. Every micro-batch applies canonical Transform/Quality before target publication. `_asklake_contract` checkpoint metadata and every publication signature/manifest bind `schemaFingerprint`, `ruleFingerprint`, and `runtimeFingerprint`; mismatch fails before query start. `Fail Batch` leaves the micro-batch uncommitted, while Rule quarantine stores Kafka position plus `ruleId`, `stage`, `targetColumn`, and fingerprints. Catalog `materializationRuns` retain the same execution identity and Transform/Quality result.
 
@@ -656,6 +679,7 @@ GET  /api/etl/jobs/{jobId}/continuous/quarantine?limit=100
 GET  /api/etl/jobs/{jobId}/continuous/maintenance-runs
 POST /api/etl/jobs/{jobId}/continuous/quarantine/replays
 POST /api/etl/jobs/{jobId}/continuous/compactions
+POST /api/etl/jobs/{jobId}/continuous/iceberg-maintenance
 ```
 
 `startContinuous`와 `resumeContinuous`는 각각 새 `KafkaContinuousSession`을 만들고 시작 시점의 누적 runtime counter를 baseline으로 저장한다. worker report를 읽을 때 session counter는 `현재 누적값 - baseline`으로 계산되므로 checkpoint를 이어받는 재시작에서도 이전 세션 수치가 섞이지 않는다. pause와 stop은 session을 `stopping`에서 `stopped`로, worker/container/heartbeat 실패는 `failed`로 끝내며 `endedAt`, `endReason`, `lastError`를 보존한다. `publishedBatches`는 `(sessionId, batchId)` unique key로 멱등 저장되고 시작 전 `lastBatchId` 이하의 복구 manifest는 새 session batch로 다시 기록하지 않는다.
@@ -693,7 +717,10 @@ type KafkaContinuousBatch = {
   quarantinedCount: number;
   durationMs: number | null;
   sourceRanges: Array<{ topic: string; partition: number; startOffset: number; endOffset: number }>;
+  sourceBoundary: Record<string, unknown>;
   dataPath: string | null;
+  icebergSnapshotId: string | null;
+  icebergTableUri: string | null;
   quarantinePath: string | null;
   manifestPath: string | null;
   lastError: string | null;
@@ -703,7 +730,23 @@ type KafkaContinuousBatch = {
 
 `continuousRuntime` additionally exposes `maxPartitionLag`, `laggingPartitionCount`, `lagAvailable`, `partitionProgress`, `lastBatchDurationMs`, `lastBatchInputRows`, `throughputRowsPerSecond`, `replayedCount`, `schemaVersion`, `schemaFingerprint`, `schemaStatus`, `schemaChanges`, `ruleContractVersion`, `ruleFingerprint`, `runtimeFingerprint`, `ruleMetrics`, and `lastRuleResult`. `ruleMetrics` contains cumulative transform/quality warn, quarantine, drop, set-null, invalid/error, and failed-batch counts. `replayedCount` prevents recovered quarantine rows from being double-counted: `storedCount + quarantinedCount - replayedCount = consumedCount`. Worker logs are limited to 1,000 lines, ANSI-stripped, and redact common key/token/password assignments.
 
-Quarantine replay accepts optional `offsets` values in `partition:offset` form and `approveUnknownFields` (default `false`). It reads only `_SUCCESS` batch paths, reapplies the Job's current schema evolution policy and canonical Rule set, anti-joins target Kafka offsets, and appends recovered rows under the same `batch_id=replay_<runId>` partition layout. `ruleRejectedCount` identifies rows still rejected by current Rules. `approveUnknownFields: true` requires Job `manage` permission, relaxes only unknown-field handling, and records an audit event plus `policyOverride`; it cannot bypass Transform/Quality. Replay never rewinds the Kafka consumer group. Compaction accepts `targetFileSizeMb` from 128 to 512, calculates partitions from completed Parquet bytes, and writes a run-specific staged result without deleting source batches. Quarantine inspection/replay and compaction serialize on the runtime row, require an idle worker, and return `409` while another maintenance run is active. Each persisted run has a lease (`ASKLAKE_CONTINUOUS_MAINTENANCE_LEASE_SECONDS`, default 900); expiry marks it failed and removes its named Docker container.
+Quarantine replay accepts optional `offsets` values in `partition:offset` form and `approveUnknownFields` (default `false`). It reads only completed quarantine sidecars, reapplies the Job's current schema evolution policy and canonical Rule set, anti-joins Kafka offsets already present in the Iceberg target, and appends recovered rows with a deterministic maintenance `_asklake_run_id`. `ruleRejectedCount` identifies rows still rejected by current Rules. `approveUnknownFields: true` requires Job `manage` permission, relaxes only unknown-field handling, and records an audit event plus `policyOverride`; it cannot bypass Transform/Quality. Replay never rewinds the Kafka consumer group. Its result includes `icebergCommit`, `sourceBoundary`, `sourceRanges`, and `catalogApplied`; successful data with pending Catalog verification is retried when maintenance history is read.
+
+`POST /continuous/compactions` accepts `{ targetFileSizeMb?: number }` (default 256, 128~512) and executes Iceberg `rewrite_data_files`; it does not rewrite legacy `_batches` paths or mutate the streaming checkpoint. `POST /continuous/iceberg-maintenance` accepts the following body. At least one operation must be enabled.
+
+```ts
+type ContinuousIcebergMaintenanceRequest = {
+  rewriteDataFiles?: boolean; // default true
+  targetFileSizeMb?: number; // default 256, 128..512
+  expireSnapshots?: boolean; // default false
+  snapshotRetentionHours?: number; // default 168, 24..8760
+  retainLastSnapshots?: number; // default 10, 1..1000
+  removeOrphanFiles?: boolean; // default false
+  orphanRetentionHours?: number; // default 168, 72..8760
+};
+```
+
+Quarantine inspection/replay와 Iceberg maintenance는 worker가 paused/stopped일 때만 실행하며 다른 maintenance run과 직렬화한다. Worker start/resume과 maintenance 시작은 같은 Job row lock -> runtime row lock 순서로 확인하므로 서로 경합해도 한쪽만 외부 Spark 작업을 시작한다. Rewrite-only는 Job `run`, snapshot expiration/orphan cleanup은 Job `manage` 권한을 요구한다. 삭제성 작업은 기본 비활성화되고 retention cutoff를 명시해야 한다. 성공 result는 `tableUri`, `snapshotIdBefore/After`, 전후 file/byte/snapshot count, operation별 Spark 결과, Trino가 재검증한 `icebergSnapshotId`, `queryEngineTable`, `warehouseLocation`, `queryEngineVerified=true`를 포함한다. 물리 maintenance는 논리 데이터 적재가 아니므로 새 Catalog materialization run을 만들지 않는다. Each persisted run has a lease (`ASKLAKE_CONTINUOUS_MAINTENANCE_LEASE_SECONDS`, default 900). Backend는 REST runner의 durable `updatedAt` heartbeat가 `ASKLAKE_CONTINUOUS_MAINTENANCE_RUNNER_STALE_SECONDS`(default 30) 이내이면 만료된 DB lease를 갱신한다. Runner heartbeat가 없거나 stale일 때만 고아 Spark submission/container를 한 번 정리하고 run을 실패 처리하며, 이미 terminal인 runner는 kill하지 않는다.
 
 ### LineageGraph
 
@@ -840,9 +883,11 @@ Response는 기존 `CreatePipelineResponse`를 재사용하며 `job.jobKind="tri
 
 Source 연결 검증과 schema preview는 서로 다른 요청이다.
 
-- `POST /api/etl/sources/assets`는 S3·PostgreSQL·MongoDB 연결 정보를 검증하고 탐색 가능한 파일·테이블·컬렉션 목록만 반환한다.
+- `POST /api/etl/sources/assets`는 S3·PostgreSQL·MongoDB 연결 정보를 검증하고 탐색 가능한 파일·폴더·테이블·컬렉션 목록만 반환한다.
 - 이 응답은 schema draft를 확정하지 않으며 특정 대상을 자동 선택하지 않는다.
-- 사용자가 탐색 화면에서 대상을 선택하면 frontend는 선택값을 `DATASET OR TABLE SELECTOR` 또는 `__Selected Object`에 넣어 `POST /api/etl/sources/test`를 호출한다.
+- 사용자가 탐색 화면에서 단일 대상을 선택하면 frontend는 선택값을 `DATASET OR TABLE SELECTOR` 또는 `__Selected Object`에 넣어 `POST /api/etl/sources/test`를 호출한다.
+- File / S3 폴더 disclosure는 하위 항목을 여는 탐색 action이다. 사용자가 별도 prefix 데이터셋 선택 action을 실행하면 frontend는 `Path / Prefix=<canonical prefix>`, `__Selection Kind=prefix`, 빈 `__Selected Object`를 저장하고 `/sources/test`를 호출한다.
+- Prefix는 임의 파일 배열이 아니라 같은 데이터셋 조각이 모인 경로다. Backend는 그 아래를 재귀 조회해 `_SUCCESS`, `manifest.json`, basename이 `_` 또는 `.`으로 시작하는 객체, directory marker와 선택 형식이 아닌 객체를 제외한다. 남은 모든 파일의 bounded schema fingerprint가 같아야 성공한다.
 - PostgreSQL과 MongoDB의 `/sources/test`는 선택값이 없으면 `400`을 반환한다. 첫 테이블이나 첫 컬렉션으로 자동 대체하지 않는다.
 
 ```ts
@@ -852,7 +897,38 @@ type SourceAssetsResponse = {
   limit: number;
   prefix: string;
 };
+
+type SourceDatasetSummary = {
+  selectionKind: "prefix";
+  bucket: string;
+  prefix: string;
+  format: "CSV" | "TSV" | "JSON" | "JSONL" | "TXT";
+  fileCount: number;
+  totalBytes: number;
+  excludedFileCount: number;
+  representativeObject: string;
+  schemaFingerprint?: string;
+  schemaCompatible: boolean;
+};
+
+type SourceConnectorAnalysis = {
+  actionPath: string;
+  assets: Array<[string, string, string]>;
+  datasetSummary?: SourceDatasetSummary;
+  draftPatch: DraftPipelinePatch;
+  logs: string[];
+  message: string;
+  previewColumns: string[];
+  previewNote: string;
+  previewRows: string[][];
+  status: "idle" | "testing" | "success" | "failed";
+  testItems: Array<[string, string]>;
+};
 ```
+
+성공한 Prefix Preview의 `draftPatch.source.sourceConfig`에는 `Path / Prefix`, `__Selection Kind`, `__Dataset Format`, `__Source Unit Count`, `__Source Total Bytes`, `__Sample Object`, `__Schema Fingerprint`, `__Excluded File Count`를 보존한다. Job create/hydrate는 이 목록을 그대로 저장하지만 개별 object key 배열은 저장하지 않는다. `datasetSummary`는 Preview 표시용 구조화 응답이며 credential을 포함하지 않는다.
+
+현재 Prefix Preview의 호환성 검사는 row-oriented `CSV`, `TSV`, `JSON`, `JSONL`, `TXT` 조각을 대상으로 한다. 단일 Parquet object 선택은 기존 Spark schema inspector를 계속 사용하며, 여러 Parquet part의 footer-level 통합 schema 검증은 후속 범위다.
 
 ### 7.0.1 Record Parsing Preview
 
@@ -1058,6 +1134,7 @@ type ReviewSnapshot = {
 
 - `targetDatabase`, `targetDescription`은 Review 표시용으로 create/review request에 함께 보냅니다.
 - live mode는 source connector 결과를 재확인하고, mock mode는 동일한 response shape를 fixture로 반환합니다.
+- 내부 `Data Lake` source는 `sourceConfig`의 `Source Dataset ID`를 기준으로 Catalog dataset을 다시 검증합니다. dataset은 `available` 상태이며 현재 actor가 조회할 수 있어야 하고, `queryEngineStatus=available`인 Iceberg `queryEngineTable`을 가져야 합니다. 실제 Snapshot Run은 이 table identity를 Spark catalog source로 읽습니다. `Data Lake Parquet`은 이 계약과 별개로 S3/S3A path connector 검증을 유지합니다.
 - Review UI는 local draft를 직접 조합하지 않고 이 response를 표시합니다.
 - `ruleCompilation.status`가 `pass`일 때만 `canCreate`가 true가 될 수 있습니다. `rules`가 비어 있으면 output schema는 포함된 source schema와 같은 pass-through 결과이며 `ruleSummary`가 비어 있어도 실패하지 않습니다.
 
@@ -1395,6 +1472,7 @@ Validation:
 - `jobName`, `sourceType`, `sourceLabel`, `targetDataset`, `targetLayer`, `owner`는 필수입니다.
 - `targetLayer`는 `RAW`, `BRONZE`, `SILVER`, `GOLD` 중 하나여야 합니다.
 - `storageType`, `partition`, `compression`, `storagePath`는 Target 화면의 draft 값이며, 없으면 frontend는 기존 기본값을 채웁니다.
+- `icebergTarget`은 create payload에 포함하지 않습니다. Backend가 새 Job에 생성해 create/list/detail response와 Spark runtime payload에 같은 값으로 반환합니다.
 - Target metadata는 flat create contract를 유지하기 위해 `targetDescription`, `targetTags`, `partitionColumns`, `indexColumns`로 전달합니다. 기존 `partition`은 하위 호환용 표시/저장 문자열이며 `partitionColumns.join("/")` 값과 같아야 합니다.
 - Target 화면은 모든 Source에서 `targetLayer`를 RAW/BRONZE/SILVER/GOLD 중 명시적으로 선택하게 하며 기존 draft/default layer를 초기값으로 사용합니다. 자동 생성 storage path는 선택 layer를 반영합니다.
 - `rag`는 호환 필드로 유지하지만, 현재 Target 화면에서는 설정을 노출하지 않고 frontend는 기본값 `false`를 전송합니다.
@@ -1452,11 +1530,11 @@ type AirflowSparkExecutionRequest = {
 };
 ```
 
-이 endpoint는 브라우저용 API가 아니다. FastAPI는 path `runId`, body `jobId`, 저장된 `etl_runs.airflow_dag_run_id`가 모두 일치하는지 확인한 뒤 PySpark를 실행한다. 성공한 manifest가 이미 `taskStates.sparkResult`에 있으면 같은 Airflow task retry는 물리 출력을 다시 만들지 않고 기존 manifest를 반환한다.
+이 endpoint는 브라우저용 API가 아니다. FastAPI는 path `runId`, body `jobId`, 저장된 `etl_runs.airflow_dag_run_id`가 모두 일치하는지 확인한 뒤 PySpark를 실행한다. 일반 non-Kafka Job은 실행 전에 backend-owned `icebergTarget`을 보정하고 Spark DataFrameWriterV2가 공유 JDBC catalog에 commit한다. 성공한 manifest가 이미 `taskStates.sparkResult`에 있으면 같은 Airflow task retry는 물리 출력을 다시 만들지 않고 기존 manifest를 반환한다.
 
 PostgreSQL Snapshot source는 Source/Schema Preview와 실행 입력을 분리한다. `schemaSampleRows`, `__Schema Sample Scope`, `__Sample Row Limit`, `ASKLAKE_SPARK_RUN_ROW_LIMIT`은 PostgreSQL `run`/`retry`의 행 상한이 아니다. 실행 시 저장된 connector identity와 credential로 선택한 base table을 `REPEATABLE READ READ ONLY` transaction과 cursor batch로 끝까지 JSONL export한 뒤 Spark에 전달한다. batch 크기는 `ASKLAKE_POSTGRES_EXECUTION_BATCH_ROWS`로 조절하되 전체 행 수는 자르지 않는다. 테이블이 비어 있거나 export가 중단되면 Run을 실패시키고 Catalog materialization을 만들지 않는다.
 
-Spark manifest에는 `status`, `runId`, `startedAt`, `endedAt`, `durationMs`, `inputRows`, `outputRows`, `outputPath`, `schema`, `quality`, `failedStage`, `error`가 포함될 수 있다. Phase 2는 이 manifest와 물리 Parquet까지 저장하지만 Catalog materialization/lineage 갱신은 수행하지 않는다.
+Spark manifest에는 `status`, `runId`, `startedAt`, `endedAt`, `durationMs`, `inputFileCount`, `inputBytes`, `inputRows`, `outputFileCount`, `outputRows`, `outputPath`, `schema`, `quality`, `failedStage`, `error`가 포함될 수 있다. Prefix runtime은 Preview와 같은 객체 제외 규칙으로 실제 경로를 열거하고 이 file/byte/row 수치를 실행 증거로 기록한다. Phase 2는 이 manifest와 물리 Parquet까지 저장하지만 Catalog materialization/lineage 갱신은 수행하지 않는다.
 
 S3A 출력은 Job의 변경 불가능한 설정값 `storagePath`를 destination root로 사용하고 그 아래에 `runId`를 붙인다. `targetPath`는 최신 Run에서 관측한 실제 `outputPath`이므로 다음 재실행의 destination root로 재사용하지 않는다.
 
@@ -1487,7 +1565,8 @@ type AirflowCatalogReconciliationResponse = {
 - 저장된 `ETLRunModel.job_id`, `airflow_dag_run_id`
 - 저장된 `taskStates.sparkResult.status=success`
 - Job에 저장된 `datasetId`와 변경 불가능한 target identity
-- Spark `outputPath` 아래의 실제 Parquet object
+- Spark `icebergCommit`의 Job/Run/target/snapshot/schema/rule identity
+- Trino `DESCRIBE`, `$refs`, `$snapshots`와 snapshot summary로 확인한 같은 Iceberg table과 물리 data file
 
 Catalog mapping:
 
@@ -1498,13 +1577,13 @@ Catalog mapping:
 | `materializationRuns[].jobId` | 저장된 Job id |
 | `rowCount` | `sparkResult.outputRows` |
 | `createdAt` | `sparkResult.endedAt` |
-| `storageLocation` | `sparkResult.outputPath` |
+| `storageLocation` | 검증된 Iceberg warehouse location |
 | `storageSizeBytes` | S3A prefix 또는 local output path의 실제 file byte 합계 |
 | `schema` | `sparkResult.schema` |
 | `quality` | `sparkResult.quality` |
 | `lineageGraph` | source -> Spark Job -> target dataset |
 
-S3A output은 정확한 bucket/prefix를 list해 Parquet object가 하나 이상 있는지 확인하고 byte를 합산한다. local output은 directory를 재귀 확인한다. 물리 output을 확인할 수 없으면 size를 `0`으로 성공 저장하지 않고 reconciliation을 실패시킨다. Catalog `sampleRows`는 Spark가 제공한 제한된 transformed output sample을 사용할 수 있으며, 그런 sample이 없으면 빈 배열을 사용한다. schema나 값이 달라질 수 있는 pre-transform source sample을 output sample로 가장해서는 안 된다.
+일반 Spark batch는 logical `outputPath=iceberg://catalog/namespace/table`을 사용한다. backend는 reported snapshot ID를 Trino `$refs`의 `main` current snapshot과 대조하고, 해당 snapshot의 `$snapshots.summary`에 기록된 `total-data-files`와 `total-files-size`를 저장한다. `$files`는 current table의 보조 물리 확인에만 사용하며 rollback 이후 abandoned history의 newest snapshot을 current로 오인하지 않는다. `outputRows>0`인데 data file 또는 byte 증거가 0이면 reconciliation을 실패시킨다. 기존 non-Iceberg 호환 결과만 S3A/local path의 Parquet object를 직접 검사한다. Catalog `sampleRows`는 Spark가 제공한 제한된 transformed output sample을 사용할 수 있으며, 그런 sample이 없으면 빈 배열을 사용한다. schema나 값이 달라질 수 있는 pre-transform source sample을 output sample로 가장해서는 안 된다.
 
 Catalog dataset upsert와 `taskStates.catalogResult` 성공 기록은 같은 PostgreSQL transaction으로 확정한다. `catalogResult`는 최소한 `status`, `runId`, `datasetId`, `reconciledAt`을 포함한다. 같은 `runId`가 다시 들어오면 기존 materialization을 교체해 하나만 유지하고, 다른 Run은 같은 dataset row에 append한다. append read-modify-write 동안 target dataset row를 lock해 동시 실행의 history 손실을 막는다. dataset이 아직 없을 때의 동시 create는 id/name unique constraint로 한 row만 허용하고, 충돌한 호출은 그 row를 다시 읽어 같은 run-keyed update를 적용한다. Airflow state sync가 Task Instance snapshot을 다시 만들 때도 `sparkResult`와 `catalogResult`를 모두 보존해야 한다.
 
@@ -1513,7 +1592,7 @@ Failure contract:
 - 성공 Spark manifest가 없거나 아직 저장되지 않았으면 `409 SPARK_RESULT_NOT_READY`
 - Job/Run/Airflow identity가 다르면 `409 AIRFLOW_RUN_MISMATCH`
 - physical output 검증 또는 Catalog transaction이 실패하면 `500 CATALOG_RECONCILIATION_FAILED`
-- 실패 시 Catalog partial update는 rollback한다. Parquet와 성공 `sparkResult`는 삭제하지 않는다.
+- 실패 시 Catalog partial update는 rollback한다. 검증된 Iceberg snapshot과 성공 `sparkResult`는 삭제하지 않는다. Spark commit 뒤 report 확정 전에 실패한 경우에는 writer가 이전 snapshot으로 rollback한다.
 - rollback 후 같은 Run에 `taskStates.catalogResult={ status: "failed", ... }`와 compact error를 별도 저장해 원인을 관찰할 수 있게 한다.
 - `publish_run_result`는 endpoint 실패를 Airflow task 실패로 전파한다. 따라서 Airflow DAG Run과 AskLake Run은 성공으로 표시되지 않으며 failed stage는 `Catalog reconciliation`이다.
 - `publish_run_result`는 30초 간격으로 최대 2회 재시도하며, 같은 DAG Run의 성공 `sparkResult`를 재사용해 Catalog만 최대 3회 시도하고 Spark output을 다시 만들지 않는다.
@@ -1610,7 +1689,7 @@ Response 예시:
 | `stopSchedule` | `etl.schedule.stop_requested` | 스케줄 설정을 보존한 채 `stopped`, `nextRun: "-"`. 실행 중인 실시간 Job은 현재 Run도 `canceled`로 종료하고 `실시간 수집 중지`로 기록 |
 | `resumeSchedule` | `etl.schedule.resume_requested` | 보존한 스케줄 설정으로 `scheduled`, 다음 예약 재계산. 실시간 Job은 `실시간 수집 재개됨`으로 기록 |
 
-`run`과 `retry`는 Airflow DAG Run을 제출한 뒤 non-terminal `job`/`run`을 즉시 응답한다. Airflow `spark_process_write` task는 `POST /api/internal/airflow/spark-runs/{runId}/execute`를 호출해 실제 input/output row count와 output path를 Run의 `sparkResult`에 저장한다. 다음 `publish_run_result` task가 `POST /api/internal/airflow/spark-runs/{runId}/catalog`를 호출해 물리 Parquet를 검증하고 Catalog dataset/materialization을 transaction으로 확정한다. 프론트는 `GET /api/etl/jobs/{jobId}`를 polling해 최종 `scheduled` 또는 `failed` 상태와 `runHistory`, `dagSteps`를 다시 반영한다.
+`run`과 `retry`는 Airflow DAG Run을 제출한 뒤 non-terminal `job`/`run`을 즉시 응답한다. Airflow `spark_process_write` task는 `POST /api/internal/airflow/spark-runs/{runId}/execute`를 호출해 실제 input/output row count, Iceberg 논리 table URI와 commit evidence를 Run의 `sparkResult`에 저장한다. 다음 `publish_run_result` task가 `POST /api/internal/airflow/spark-runs/{runId}/catalog`를 호출해 Trino table/snapshot/data-file mapping을 검증하고 Catalog dataset/materialization을 transaction으로 확정한다. 프론트는 `GET /api/etl/jobs/{jobId}`를 polling해 최종 `scheduled` 또는 `failed` 상태와 `runHistory`, `dagSteps`를 다시 반영한다.
 
 분리된 내부 endpoint는 bearer token과 backend의 `AIRFLOW_EXECUTION_API_TOKEN`을 우선 사용하며 `AIRFLOW_INTERNAL_TOKEN`을 호환 fallback으로 허용한다. `POST /api/etl/internal/airflow/jobs/{jobId}/runs/{runId}/execute`와 `X-AskLake-Airflow-Token`은 기존 단일 호출 Spark/Catalog 경로 호환용으로 유지한다. 동일 `runId`가 이미 Catalog에 materialize된 경우 기존 결과를 반환하고 Spark를 중복 실행하지 않는다. Airflow DAG가 `success`여도 해당 `runId`의 성공 Catalog evidence 또는 기존 persisted Spark result가 없으면 Run을 `failed`로 보정한다. `dag_run.conf`에는 `jobId`, `runId`, `command`, `executionMode`, 제출 시각만 전달하며 source credential과 전체 Job payload는 전달하지 않는다.
 
@@ -1710,7 +1789,9 @@ Materialization 제출과 조회는 source run submitter ID 또는 admin 여부�
 
 전환 전 내부 writer가 저장한 payload 중 `queryEngineTable`은 있지만 `queryEngineStatus`가 없는 row는 migration read compatibility로 `available`을 추론한다. 새 writer와 API는 이 fallback에 의존하지 않고 상태를 명시해야 하며, 사용자 입력만으로 mapping을 생성하는 endpoint는 제공하지 않는다.
 
-현재 Spark ETL Parquet 및 Kafka direct JSONL 결과는 Iceberg metadata를 생성하지 않는다. 이 경로는 `queryEngineStatus=unavailable`이며 SQL downstream을 표시하지 않는다. ETL runtime이 `queryEngineVerified=true`와 완전한 `queryEngineTable`을 반환한 경우에만 `available`로 저장한다. Catalog row 생성만으로 물리 table 등록 성공을 추정해서는 안 된다.
+일반 non-Kafka Spark ETL, Kafka Snapshot과 Kafka Continuous 결과는 Iceberg metadata와 warehouse Parquet를 생성하고 snapshot ID, 실제 warehouse location, `queryEngineVerified=true`, 완전한 `queryEngineTable`을 Trino로 재검증한 경우에만 `available`로 저장한다. Job identity가 없는 Kafka direct JSONL은 `queryEngineStatus=unavailable`이며 SQL downstream을 표시하지 않는다. Catalog row 생성이나 `icebergTarget` 선언만으로 물리 table 등록 성공을 추정해서는 안 된다. writer 전환 계약과 단계는 [Iceberg Writer Migration Plan](iceberg-writer-migration-plan.md)을 따른다.
+
+공통 Iceberg commit evidence는 `jobId`, `runId`, `target`, `queryEngineTable`, `snapshotId`(64-bit 안전성을 위해 string), `committedAt`, `warehouseLocation`, `queryEngineVerified: true`, optional schema/rule fingerprint와 source boundary를 포함한다. Trino adapter의 `replace`는 원자적 `CREATE OR REPLACE TABLE AS`, `append`는 최초 CTAS 이후 `INSERT INTO`를 사용한다. 일반 Spark batch와 Kafka Snapshot Job은 DataFrameWriterV2 `create`/`append`/`overwrite`로 같은 JDBC catalog에 commit한다. Kafka `sourceBoundary.kind=kafka_snapshot`이면 table 내부 `_asklake_kafka_snapshot_id` marker로 같은 snapshot append 여부를 확인해 retry에서 `operation=reuse`를 반환한다. 서비스는 commit 뒤 `$refs`의 `main`, exact `$snapshots`, snapshot summary와 `DESCRIBE`가 모두 성공한 경우에만 evidence를 확정하며 writer가 보고한 expected snapshot ID와 실제 current snapshot이 다르면 mapping을 저장하지 않는다. 시간상 가장 새로운 historical snapshot은 rollback으로 abandoned될 수 있으므로 current 판정에 사용하지 않는다.
 
 ```ts
 type TrinoMaterializationRunResponse = {
@@ -1923,13 +2004,6 @@ type QueryAiSuggestionRequest = {
   mode?: "draft_sql";
   prompt: string;
   selectedDatasetIds: string[];
-  selectedDatasets?: Array<{
-    id: string;
-    name: string;
-    description: string;
-    layer: string;
-    schema: Array<[name: string, type: string]>;
-  }>;
 };
 ```
 
@@ -1992,8 +2066,8 @@ Response 예시:
 Validation:
 
 - `prompt`와 최소 1개 이상의 `selectedDatasetIds`가 필수입니다.
-- frontend는 사용자가 선택한 모든 dataset metadata를 `selectedDatasets`로 함께 전달합니다.
-- backend는 `OPENAI_API_KEY`를 서버 env에서만 읽고 브라우저에 노출하지 않습니다.
+- frontend는 선택한 dataset id만 전달합니다. backend가 현재 actor의 권한·governance를 확인한 뒤 Catalog에서 최신 metadata와 schema를 다시 읽으므로 client metadata는 신뢰하거나 provider에 전달하지 않습니다.
+- backend는 Query AI provider key를 읽지 않고 private AI Gateway에 service token과 dataset-scoped signed context만 전달합니다. provider key는 `AI_PROVIDER_API_KEY`로 AI Gateway 컨테이너에만 주입하며 브라우저에 노출하지 않습니다.
 - AI 응답 SQL도 backend에서 read-only guard를 다시 통과해야 합니다.
 - AI 응답 SQL은 선택된 dataset context 밖의 table을 참조하면 `422 VALIDATION_ERROR`로 실패해야 합니다.
 - 선택된 dataset 중 하나라도 현재 actor에게 `query` 권한이 없으면 dataset metadata를 AI context로 보내기 전에 `403 FORBIDDEN`을 반환합니다.
@@ -2226,9 +2300,11 @@ Response `200 OK`:
 Runtime/permission:
 
 - Dataset 상세 `view` 권한과 row 조회 `query` 권한을 모두 검사하며, 없으면 `403 FORBIDDEN`을 반환합니다.
-- `materializationRuns`에 저장 위치가 있는 성공 run이 여러 개면 `createdAt`이 가장 최신인 run의 `storageLocation`을 읽습니다. 성공 history가 없으면 dataset 자체의 storage metadata를 사용하며, 물리 저장 위치가 없거나 읽을 수 없으면 실제 row 조회 실패를 반환합니다.
-- Backend는 DuckDB에 dataset을 등록한 뒤 `COUNT(*)`와 `LIMIT`/`OFFSET`을 실행하므로 response/DOM에 전체 row를 적재하지 않습니다.
-- `rowCount`는 선택된 materialization의 전체 행 수, `returnedRows`는 현재 page 행 수입니다. `offset == rowCount`이면 빈 `rows`와 `hasNext=false`를 반환합니다.
+- Iceberg Dataset은 `storageFormat=iceberg`, `queryEngineStatus=available`, 완전한 `queryEngineTable`을 검증한 뒤 `$refs`의 `main` snapshot ID를 한 번 고정합니다. `COUNT(*)`와 bounded `LIMIT`/`OFFSET`은 모두 그 snapshot을 `FOR VERSION AS OF`로 읽으므로 한 응답 안에서 count/page가 서로 다른 commit을 보지 않습니다. warehouse의 Parquet object를 직접 glob하지 않습니다.
+- Iceberg row projection은 Catalog schema의 사용자 컬럼만 명시적으로 선택합니다. `_asklake_*` 같은 내부 idempotency/ingest marker는 물리 table에 남아도 API `columns`와 `rows`에 노출하지 않습니다.
+- 전환 전 CSV/JSON/JSONL/Parquet Dataset은 성공 materialization history와 dataset storage metadata에서 active segment를 계산해 기존 DuckDB compatibility reader를 사용합니다. 물리 위치가 없거나 읽을 수 없으면 실제 row 조회 실패를 반환합니다.
+- 어느 reader도 response/DOM에 전체 row를 적재하지 않습니다.
+- `rowCount`는 고정한 snapshot의 전체 행 수, `returnedRows`는 현재 page 행 수입니다. `offset == rowCount`이면 빈 `rows`와 `hasNext=false`를 반환합니다. 이 API는 preview용 offset pagination이며 정렬 key를 받지 않으므로 서로 다른 요청 사이의 안정적인 row order는 보장하지 않습니다.
 - 스키마 상세 modal은 스키마와 row page를 함께 표시하고, 새로고침·첫/이전/다음/마지막 page·수평 스크롤·고정 header를 제공합니다. modal을 닫아도 Catalog 검색/필터 상태는 유지합니다.
 
 `GET /api/catalog/datasets/{datasetId}/lineage` Response `200 OK`:
@@ -2280,7 +2356,7 @@ Lineage API나 `lineageGraph` fixture가 없으면 mock adapter가 `CatalogDatas
 
 `DELETE /api/catalog/datasets/{datasetId}/materialization-runs/{runId}`
 
-이 API는 dataset 전체를 삭제하지 않고, dataset 안의 특정 snapshot/delta materialization metadata만 제거합니다. 현재 범위에서는 물리 lake 파일 삭제나 compaction을 수행하지 않습니다.
+이 API는 dataset 전체를 삭제하지 않고, dataset 안의 특정 snapshot/delta materialization metadata만 제거합니다. 현재 범위에서는 물리 lake 파일 삭제나 compaction을 수행하지 않습니다. Iceberg-backed Dataset은 metadata history만 삭제하면 실제 table snapshot과 불일치하므로 `422 ICEBERG_MATERIALIZATION_DELETE_UNAVAILABLE`로 거절합니다. 아래 재계산 동작은 legacy file-backed Dataset에만 적용합니다.
 
 Response `200 OK`:
 
@@ -2322,6 +2398,10 @@ Runtime lane은 `dashboard_revisions`, `dashboard_pages`, `dashboard_widgets` �
 | `dashboard_revisions` | runtime | draft/published snapshot 단위 | `id`, `dashboard_id`, `kind`, `version`, `published_at`, `created_at`, `updated_at` |
 | `dashboard_pages` | runtime | revision 안의 page | `id`, `revision_id`, `title`, `order_index`, `created_at`, `updated_at` |
 | `dashboard_widgets` | runtime | page 안의 widget snapshot | `id`, `page_id`, `type`, `title`, `dataset_id`, `query_id`, `layout`, `config`, `data`, `created_at`, `updated_at` |
+| `dataset_freshness` | live runtime | dataset별 최신 공개 revision과 권장 polling 시간 | `dataset_id`, `latest_revision`, `latest_run_id`, `next_check_after_ms`, `updated_at` |
+| `dataset_revision_commits` | live runtime | revision과 S3 batch/Kafka offset 근거 연결 | `dataset_id`, `revision`, `run_id`, `storage_location`, `storage_format`, `materialization_mode`, `commit_kind`, `row_count`, `source_ranges`, `source_fingerprint`, `manifest_location`, `committed_at` |
+| `dataset_kafka_partition_cursors` | live runtime | 과거 commit 전체 조회 없이 stream offset 순서·중복 검사 | `dataset_id`, `commit_kind`, `topic`, `partition`, `next_offset`, `updated_revision`, `updated_at` |
+| `dashboard_widget_results` | live runtime | widget 계산 버전별 최신 결과와 merge state | `widget_id`, `calculation_version`, `dataset_id`, `applied_revision`, `result_payload`, `calculation_state`, `calculation_mode`, `calculated_at` |
 
 `layout`, `config`, `data`, dashboard card의 보조 payload는 PostgreSQL JSONB 후보로 둔다.
 API response field는 `camelCase`, DB column은 `snake_case`를 사용한다.
@@ -2688,6 +2768,10 @@ type DashboardRuntimeWidget = {
     data: Array<Record<string, unknown>>;
     queryId?: string | null;
     datasetId?: string | null;
+    appliedRevision?: number | null;
+    calculationVersion?: string | null;
+    calculatedAt?: string | null;
+    liveRefresh?: boolean;
   };
 }[DashboardRuntimeWidgetType];
 
@@ -2843,7 +2927,7 @@ Request:
 
 `data`는 optional입니다. Catalog에 존재하는 `datasetId`를 보내면 backend는 browser가 보낸 `data`와 Catalog `sampleRows`를 widget snapshot으로 저장하지 않습니다. SQL result처럼 Catalog payload가 없는 bounded query snapshot만 explicit `data`를 최대 500행까지 저장할 수 있습니다.
 
-Catalog widget runtime 조회는 actor의 dataset `query` permission과 governance lock을 storage 접근 전에 검사하고, dataset의 성공한 active snapshot과 이후 delta materialization의 `storageLocation`/`storageFormat`을 물리 source로 사용합니다. 명시적인 `materializationMode`가 우선이며, mode가 없는 Kafka run은 `delta`, 그 외 run은 `snapshot`입니다. CSV/JSON/JSONL/Parquet segment를 DuckDB에서 `UNION ALL BY NAME`으로 읽고, 원격 S3 segment는 allowlist와 runtime 응답 전체의 누적 byte/object 예산을 먼저 통과해야 합니다. DuckDB `httpfs`는 backend image build에서 준비하고 runtime은 `LOAD`만 수행하며, query는 memory/thread/temp/timeout 경계 안에서 실행합니다. metric/chart는 type config 기준 최대 500개 그룹으로 집계하며 table은 정렬 후 최대 500행만 반환합니다. `config.dataMode`는 `server_aggregated` 또는 `server_preview`, `config.sourceConfig`는 편집 가능한 원본 설정입니다. count 집계처럼 renderer용 config가 변환되어도 수정 화면은 `sourceConfig`를 복원해야 합니다.
+Catalog widget runtime 조회는 actor의 dataset `query` permission과 governance lock을 storage 접근 전에 검사합니다. 명시적인 `materializationMode`가 우선이며, mode가 없는 Kafka run은 `delta`, 그 외 run은 `snapshot`입니다. Iceberg widget은 Catalog `icebergSnapshotId`에 `FOR VERSION AS OF`를 적용하고 Catalog 사용자 schema와 Trino `DESCRIBE`의 교집합만 query 대상으로 허용해 `_asklake_*` 내부 marker를 일반 집계/표시에 노출하지 않습니다. revision delta 계산에서만 서버가 검증한 `_asklake_run_id`를 내부 filter로 사용합니다. Trino 요청은 전체 wall-clock timeout을 공유하고 deadline이 지나면 진행 중인 `nextUri`를 취소합니다. 전환 전 CSV/JSON/JSONL/Parquet segment만 DuckDB에서 `UNION ALL BY NAME`으로 읽고, 원격 S3 segment는 allowlist와 runtime 응답 전체의 누적 byte/object 예산을 먼저 통과해야 합니다. DuckDB `httpfs`는 backend image build에서 준비하고 runtime은 `LOAD`만 수행하며, query는 memory/thread/temp/timeout 경계 안에서 실행합니다. metric/chart는 type config 기준 최대 500개 그룹으로 집계하며 table은 정렬 후 최대 500행만 반환합니다. `config.dataMode`는 `server_aggregated` 또는 `server_preview`, `config.sourceConfig`는 편집 가능한 원본 설정입니다. count 집계처럼 renderer용 config가 변환되어도 수정 화면은 `sourceConfig`를 복원해야 합니다.
 
 Response `201 Created`:
 
@@ -2965,7 +3049,158 @@ Response `200 OK`:
 - draft revision이 없으면 `422 NO_DRAFT_REVISION`.
 - dashboard `manage` 권한이 없으면 `403 FORBIDDEN`.
 
-### 8.5.11 Dashboard Assistant UI Hook
+### 8.5.11 Kafka Continuous widget freshness·result 조회
+
+이 계약은 기존 Kafka Continuous → Spark micro-batch → S3/MinIO Iceberg(물리 data file은 Parquet) → Catalog 경로 뒤에 대시보드 revision/result만 연결합니다. 원본 event를 PostgreSQL에 복사하거나 새 Consumer를 만들지 않습니다.
+
+#### Revision commit 규칙
+
+Backend는 Spark worker가 Iceberg commit 뒤 게시한 immutable manifest를 기준으로 처리합니다. `manifestPath`의 실제 `_SUCCESS`, 유효한 Kafka `[startOffset, endOffset)` `sourceRanges`, 일치하는 `sourceBoundary`, exact Iceberg snapshot/table과 batch/run identity가 모두 있어야 합니다. Backend가 그 snapshot을 Trino로 검증한 뒤 Catalog와 revision을 한 PostgreSQL transaction으로 저장합니다.
+
+1. `dataset_revision_commits`에 `(dataset_id, revision)` commit 추가
+2. 같은 commit에 `run_id`, S3·manifest 위치, 행 수, `commit_kind`, canonical Kafka `source_ranges`와 SHA-256 `source_fingerprint` 저장
+3. `dataset_freshness.latest_revision`, `latest_run_id`, `updated_at` 갱신
+
+`run_id`는 unique이며 같은 `run_id`가 다른 게시 근거로 재사용되면 오류입니다. 이미 Catalog와 revision에 있는 stream run도 현재 worker report의 Iceberg commit·manifest·offset을 다시 비교한 뒤 ACK합니다. manifest가 비어 있던 upgrade commit은 검증된 현재 manifest를 한 번만 보강합니다. `(dataset_id, commit_kind, source_fingerprint)`도 unique이므로 같은 stream offset을 다른 `run_id`로 다시 reconcile해도 revision은 한 번만 증가합니다. `dataset_kafka_partition_cursors`의 topic·partition별 `next_offset`보다 과거이거나 일부 겹치는 새 stream 범위는 거절하므로 검사 시간은 전체 commit 개수에 비례하지 않습니다. 기존 `legacy` stream/backfill 범위는 current worker report의 manifest `_SUCCESS`, exact Iceberg commit과 source range를 다시 확인하고 version marker가 없는 첫 시작에서만 cursor로 옮깁니다. 저장된 행이 0개인 batch는 revision을 만들지 않지만 committed manifest를 확인한 뒤 consumed offset watermark는 전진시킵니다. absent Catalog row의 동시 첫 publication은 PostgreSQL dataset advisory transaction lock으로 직렬화하며 잠금 순서는 Catalog 다음 freshness입니다. quarantine replay는 한 번에 최대 1,000행을 처리해 자체 manifest/source range를 만들고 `commit_kind=replay` 별도 namespace에서 멱등 처리합니다. manifest 도입 전 replay는 Catalog에 성공 run으로 등록된 ID만 maintenance migration 입력으로 신뢰합니다. replay worker result file과 DB pending result는 Catalog보다 먼저 복구 경계로 저장합니다. replay Iceberg 저장 뒤 Catalog만 실패하거나 backend가 종료되어도 terminal runtime을 포함한 background refresh가 같은 결과를 재조정하고, Catalog 성공 후에만 stored/replayed 카운터를 한 번 더합니다. 로컬 result file이 없어도 backend는 `run_id`의 S3 replay `_SUCCESS`와 payload를 직접 읽어 publication ID/type, data path, source range/boundary, Iceberg boundary를 모두 확인한 뒤 복구합니다. 명시적인 object 404만 missing으로 처리하고 S3 접근·파싱·identity 오류는 fail-closed 합니다. `startContinuous`/`resumeContinuous`는 pending replay를 먼저 재조정하며 아직 Catalog/카운터 반영이 끝나지 않았으면 `409`를 반환합니다.
+
+이미 Catalog에 존재하던 legacy run을 처음 revision으로 backfill할 때는 `materialization_mode=snapshot`으로 기록합니다. revision 0의 전체 계산이 그 run을 이미 포함했더라도 다음 계산은 full rebaseline을 수행하므로 중복 합산하지 않습니다.
+
+`source_ranges` JSONB 예:
+
+```json
+[
+  {
+    "topic": "reviews.raw",
+    "partition": 0,
+    "startOffset": 120,
+    "endOffset": 145
+  }
+]
+```
+
+#### GET /api/datasets/{datasetId}/freshness
+
+Response `200 OK`:
+
+```json
+{
+  "datasetId": "clickstream_events",
+  "isContinuous": true,
+  "latestRevision": 105,
+  "updatedAt": "2026-07-14T12:00:05+00:00",
+  "nextCheckAfterMs": 5000
+}
+```
+
+- Dataset이 없으면 `404 NOT_FOUND`입니다.
+- Dataset `query` 권한이 없거나 governance가 차단하면 `403 FORBIDDEN`입니다.
+- Continuous Job이 아니면 `isContinuous=false`입니다.
+
+#### POST /api/datasets/freshness/query
+
+Request:
+
+```json
+{
+  "datasetIds": ["clickstream_events", "commerce_orders"]
+}
+```
+
+`datasetIds`는 `1..100`개이며 서버는 입력 순서를 유지하면서 중복 ID를 한 번만 처리합니다.
+
+Response `200 OK`:
+
+```json
+{
+  "datasets": [
+    {
+      "datasetId": "clickstream_events",
+      "isContinuous": true,
+      "latestRevision": 105,
+      "updatedAt": "2026-07-14T12:00:05+00:00",
+      "nextCheckAfterMs": 5000
+    }
+  ]
+}
+```
+
+`nextCheckAfterMs`는 `clamp(triggerIntervalSeconds × 500, 5,000, 60,000)`입니다. 10초 trigger는 5초, 30초 trigger는 15초, 5분 trigger는 60초를 반환합니다. Frontend는 동시에 몰리는 요청을 줄이기 위해 dataset ID로 정한 0~10% deterministic jitter를 더합니다.
+
+묶음 조회는 각 dataset의 권한과 metadata를 독립적으로 검사합니다. 한 dataset이 `403`, `404`, `503` 조건이면 해당 항목만 응답에서 제외하고 나머지 정상 dataset을 반환합니다. 단건 GET의 오류 계약은 바뀌지 않습니다.
+
+#### POST /api/dashboards/{dashboardId}/widgets/query
+
+Request:
+
+```json
+{
+  "widgetIds": ["dashwidget_click_count"]
+}
+```
+
+`widgetIds`는 `1..100`개이며 현재 published revision에 속한 widget만 요청할 수 있습니다. 없는 widget ID가 포함되면 `404 NOT_FOUND`입니다. Dashboard `view`와 연결된 Dataset `query` 권한을 물리 storage 접근 전에 다시 검사합니다.
+
+Response `200 OK`:
+
+```json
+{
+  "widgets": [
+    {
+      "id": "dashwidget_click_count",
+      "pageId": "dashpage_main",
+      "type": "metric",
+      "title": "실시간 클릭 수",
+      "datasetId": "clickstream_events",
+      "liveRefresh": true,
+      "appliedRevision": 105,
+      "calculationVersion": "64-character-sha256",
+      "calculatedAt": "2026-07-14T12:00:07+00:00",
+      "layout": { "x": 0, "y": 0, "w": 3, "h": 2 },
+      "config": {
+        "aggregation": "sum",
+        "valueKey": "__asklake_widget_value",
+        "dataMode": "server_aggregated",
+        "sourceConfig": { "aggregation": "count", "valueKey": "event_id" }
+      },
+      "data": [{ "__asklake_widget_value": 12540 }]
+    }
+  ]
+}
+```
+
+#### 계산 버전과 재계산
+
+`calculationVersion`은 다음 canonical JSON의 SHA-256입니다.
+
+```json
+{
+  "contractVersion": 2,
+  "datasetId": "clickstream_events",
+  "widgetType": "metric",
+  "sourceConfig": { "aggregation": "count", "valueKey": "event_id" },
+  "schemaIdentity": "catalog-schema-fingerprint-or-full-schema"
+}
+```
+
+- 같은 calculation version의 `appliedRevision >= latestRevision`이면 PostgreSQL의 저장 결과를 반환하고 S3를 다시 읽지 않습니다.
+- 저장 결과가 없는 새 widget은 Catalog의 `icebergSnapshotId`에 고정한 전체 데이터로 최초 `calculation_state`를 만듭니다.
+- 이후 전체 누적 기준 `count`/`sum`/`avg`는 revision 한 개씩 `_asklake_run_id = commit.run_id`인 행만 Trino 집계해 `calculation_state`에 합치고, 실제로 처리한 revision까지만 같은 transaction으로 저장합니다. 다음 요청은 그 다음 revision부터 이어갑니다.
+- backfill/legacy/non-delta revision, `min`/`max`, table, revision gap, 내부 run ID가 없는 과거 table, 10,000개 초과 group은 Catalog snapshot 전체를 재계산합니다. snapshot commit의 누적 table을 단일 delta처럼 state에 더하거나 기존 state를 부분 결과로 reset하지 않습니다.
+- Iceberg full 계산은 Trino query timeout 경계를 적용합니다. 매우 큰 최초 baseline은 후속 aggregate snapshot/bootstrap이 필요합니다. 전환 전 file-backed full 계산은 기본 256 objects, 512 MiB, 15초 원격 scan 경계를 적용하며, 미게시 batch를 포함할 수 있는 raw `_batches` wildcard로 우회하지 않습니다.
+- 최근 N분·슬라이딩 시간창과 만료 행 차감은 이 계산 계약에 포함하지 않습니다.
+- 결과와 `applied_revision`은 한 transaction으로 저장합니다.
+- 계산 시작 시 Catalog row를 먼저, freshness row를 다음으로 잠급니다. ETL commit과 같은 순서이고 full query를 Catalog Iceberg snapshot에 고정하므로 물리 데이터와 revision이 서로 다른 시점으로 섞이지 않습니다.
+- 계산이 실패하면 이전 `result_payload`/`applied_revision`을 유지합니다. 새 calculation version 계산이 실패한 경우에도 같은 widget·같은 dataset의 직전 성공 버전만 표시 fallback으로 사용합니다. 다른 dataset의 과거 결과는 반환하지 않습니다.
+- 집계 응답은 최대 500 group입니다. table의 backend 안전 상한은 500행이며 현재 frontend 위젯 설정은 기본 10행, 최대 100행입니다.
+- 새 calculation version 결과 저장이 성공하면 같은 widget의 이전 calculation version 결과는 삭제하고 현재 버전 한 건만 유지합니다.
+
+Frontend는 published `/dashboards/{dashboardId}`에서 Continuous dataset만 polling합니다. 같은 dataset의 freshness는 한 번만 조회하고 `latestRevision > appliedRevision`인 widget만 재요청합니다. 응답 revision이 실제로 전진했지만 아직 최신보다 뒤면 250ms 뒤 다음 revision을 이어서 요청하고, 전진하지 않았으면 빠른 재시도를 멈추고 backend 권장 주기로 돌아갑니다. 일반 주기에는 dataset ID 기반 0~10% deterministic jitter를 더하며, hidden tab에서는 중지하고 route unmount 시 timer/request를 정리하며, 실패 시 기존 widget을 그대로 보여줍니다.
+
+실제 event-to-screen 지연은 `다음 Spark trigger까지 남은 시간 + Spark/S3 + backend reconciliation 0~1초 + polling 0~nextCheckAfterMs(+ jitter) + widget 계산`입니다. 2~5초를 항상 보장하지 않습니다.
+
+상세 운영·검증·제한은 `docs/kafka-postgresql-dashboard-sync.md`를 따릅니다.
+
+### 8.5.12 Dashboard Assistant UI Hook
 
 대시보드 draft editor의 AskLake 보조 패널과 `placeholderKind: "visualization_request"` 위젯은 `POST /api/dashboards/assistant` FastAPI endpoint를 통해 OpenAI 기반 응답을 요청한다.
 이 endpoint는 `get_actor_context`로 인증된 actor만 허용한다. 요청에 `dashboardId`가 있으면 Assistant context 또는 OpenAI 호출 전에 해당 dashboard의 `view` 권한을 검사하며, 운영 환경의 익명 요청은 `401 UNAUTHORIZED`, dashboard 접근 권한이 없는 요청은 `403 FORBIDDEN`이다.
@@ -3064,6 +3299,8 @@ Assistant guard는 OpenAI 응답을 그대로 신뢰하지 않고 catalog schema
 ### 9.1 인증 세션
 
 `POST /api/auth/login`
+
+아래 demo request는 local mode 또는 위 legacy demo opt-in이 활성화된 배포에서만 사용할 수 있습니다. 기본 production에서는 `BOOTSTRAP_ADMIN_EMAIL`로 생성된 관리자 계정을 사용합니다.
 
 Request:
 

@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
-"""Generate a small, deterministic commerce dataset from Amazon metadata.
+"""Generate deterministic, prefix-oriented synthetic commerce datasets.
 
-The generator intentionally separates stable user attributes from hidden behavior
-traits.  Hidden traits influence sessions and funnel transitions but are not
-written to users.csv, so downstream SQL still has to discover the planted
-patterns instead of reading the answer directly.
+The Amazon metadata source is scanned as JSONL and is never loaded in full.
+Selected products are normalized, synthetic users are generated from a seed,
+and every click event references one of those products and users.
 """
 
 from __future__ import annotations
 
 import argparse
-import csv
+import bisect
 import hashlib
 import heapq
 import json
@@ -20,11 +19,14 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any, BinaryIO, Iterable, Iterator, Sequence
 from urllib.parse import quote_plus
 
 
 KST = timezone(timedelta(hours=9))
+MEBIBYTE = 1024 * 1024
+DEFAULT_USERS = 3_000
+SIZING_SAMPLE_USERS = 300
 
 TARGET_CATEGORIES = (
     "Computers & Accessories",
@@ -72,17 +74,24 @@ class Product:
     rating_count: int
     price_percentile: float = 0.5
 
-    def as_csv_row(self) -> dict[str, Any]:
+    def as_json_row(self) -> dict[str, Any]:
         return {
             "product_id": self.product_id,
             "category": self.category,
             "leaf_category": self.leaf_category,
             "title": self.title,
             "store": self.store,
-            "price": f"{self.price:.2f}",
-            "average_rating": f"{self.average_rating:.1f}",
+            "price": round(self.price, 2),
+            "average_rating": round(self.average_rating, 1),
             "rating_count": self.rating_count,
         }
+
+    # Kept for callers that used the original CSV-oriented helper.
+    def as_csv_row(self) -> dict[str, Any]:
+        row = self.as_json_row()
+        row["price"] = f"{self.price:.2f}"
+        row["average_rating"] = f"{self.average_rating:.1f}"
+        return row
 
 
 @dataclass
@@ -98,8 +107,27 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", required=True, type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
+    parser.add_argument("--run-id", required=True)
     parser.add_argument("--products", type=int, default=10_000)
-    parser.add_argument("--users", type=int, default=3_000)
+    parser.add_argument(
+        "--users",
+        type=int,
+        help=(
+            "exact user count for fixed-count generation; defaults to 3000 when "
+            "--target-total-size-mb is omitted"
+        ),
+    )
+    parser.add_argument(
+        "--target-total-size-mb",
+        type=float,
+        help="approximate combined size of meta, users, and click_events (MiB)",
+    )
+    parser.add_argument(
+        "--max-file-size-mb",
+        type=float,
+        default=64.0,
+        help="maximum JSONL part size (MiB); default: 64",
+    )
     parser.add_argument("--seed", type=int, default=20260711)
     parser.add_argument("--start-date", default="2026-06-01")
     parser.add_argument("--days", type=int, default=30)
@@ -146,6 +174,129 @@ def weighted_choice(rng: random.Random, values: Sequence[Any], weights: Sequence
     return rng.choices(values, weights=weights, k=1)[0]
 
 
+def encode_jsonl(row: dict[str, Any]) -> bytes:
+    return (json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
+
+
+class JsonlByteCounter:
+    """Record sink used by deterministic size planning without writing files."""
+
+    def __init__(self) -> None:
+        self.rows = 0
+        self.bytes = 0
+
+    def write(self, row: dict[str, Any]) -> int:
+        size = len(encode_jsonl(row))
+        self.rows += 1
+        self.bytes += size
+        return size
+
+    def close(self) -> None:
+        return None
+
+
+class SingleJsonlWriter:
+    """Compatibility sink for callers that still pass one output file."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.handle: BinaryIO = path.open("wb")
+        self.rows = 0
+        self.bytes = 0
+
+    def write(self, row: dict[str, Any]) -> int:
+        encoded = encode_jsonl(row)
+        self.handle.write(encoded)
+        self.rows += 1
+        self.bytes += len(encoded)
+        return len(encoded)
+
+    def close(self) -> None:
+        if not self.handle.closed:
+            self.handle.close()
+
+
+class JsonlPartWriter:
+    """Write newline-delimited JSON records into deterministic capped parts."""
+
+    def __init__(self, run_dir: Path, dataset: str, max_file_bytes: int) -> None:
+        self.run_dir = run_dir
+        self.dataset = dataset
+        self.dataset_dir = run_dir / dataset
+        self.dataset_dir.mkdir(parents=True, exist_ok=False)
+        self.max_file_bytes = max_file_bytes
+        self.rows = 0
+        self.bytes = 0
+        self.files: list[dict[str, Any]] = []
+        self._handle: BinaryIO | None = None
+        self._path: Path | None = None
+        self._part_rows = 0
+        self._part_bytes = 0
+        self._digest: Any = None
+
+    def _open_part(self) -> None:
+        self._path = self.dataset_dir / f"part-{len(self.files):05d}.jsonl"
+        self._handle = self._path.open("wb")
+        self._part_rows = 0
+        self._part_bytes = 0
+        self._digest = hashlib.sha256()
+
+    def _close_part(self) -> None:
+        if self._handle is None or self._path is None:
+            return
+        self._handle.close()
+        self.files.append(
+            {
+                "path": self._path.relative_to(self.run_dir).as_posix(),
+                "rows": self._part_rows,
+                "bytes": self._part_bytes,
+                "sha256": self._digest.hexdigest(),
+            }
+        )
+        self._handle = None
+        self._path = None
+        self._digest = None
+
+    def write(self, row: dict[str, Any]) -> int:
+        encoded = encode_jsonl(row)
+        if self._handle is not None and self._part_bytes + len(encoded) > self.max_file_bytes:
+            self._close_part()
+        if self._handle is None:
+            self._open_part()
+        assert self._handle is not None and self._digest is not None
+        self._handle.write(encoded)
+        self._digest.update(encoded)
+        self._part_rows += 1
+        self._part_bytes += len(encoded)
+        self.rows += 1
+        self.bytes += len(encoded)
+        return len(encoded)
+
+    def close(self) -> None:
+        self._close_part()
+
+    def manifest_entry(self) -> dict[str, Any]:
+        if self._handle is not None:
+            raise RuntimeError(f"{self.dataset} writer must be closed before building the manifest")
+        return {
+            "format": "jsonl",
+            "prefix": f"{self.dataset}/",
+            "rows": self.rows,
+            "bytes": self.bytes,
+            "mib": round(self.bytes / MEBIBYTE, 6),
+            "file_count": len(self.files),
+            "files": self.files,
+        }
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(MEBIBYTE), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
 def select_products(source: Path, count: int, seed: int) -> tuple[list[Product], dict[str, Any]]:
     if count < len(TARGET_CATEGORIES):
         raise ValueError(f"products must be at least {len(TARGET_CATEGORIES)}")
@@ -159,6 +310,7 @@ def select_products(source: Path, count: int, seed: int) -> tuple[list[Product],
     selected_ids: dict[str, set[str]] = {category: set() for category in TARGET_CATEGORIES}
     scan = Counter()
 
+    # Only the bounded per-category heaps are retained; the source can be many GiB.
     with source.open("r", encoding="utf-8") as handle:
         for line in handle:
             scan["source_rows"] += 1
@@ -277,14 +429,18 @@ def make_category_weights(rng: random.Random, age: int) -> dict[str, float]:
         weights["Computers & Accessories"] *= 1.3
         weights["Camera & Photo"] *= 1.2
 
-    # Personal variation prevents every person in a cohort from behaving alike.
     for category in weights:
         weights[category] *= rng.lognormvariate(0.0, 0.32)
     total = sum(weights.values())
     return {category: value / total for category, value in weights.items()}
 
 
-def generate_users(count: int, seed: int, start: datetime, end: datetime) -> list[UserProfile]:
+def iter_user_profiles(
+    count: int,
+    seed: int,
+    start: datetime,
+    end: datetime,
+) -> Iterator[UserProfile]:
     rng = random.Random(seed + 101)
     bands = ((18, 24), (25, 34), (35, 44), (45, 54), (55, 64), (65, 74))
     band_weights = (15, 30, 25, 17, 9, 4)
@@ -293,7 +449,6 @@ def generate_users(count: int, seed: int, start: datetime, end: datetime) -> lis
     acquisition = ("organic", "paid_search", "social", "referral", "affiliate", "email", "direct")
     acquisition_weights = (25, 20, 16, 12, 8, 7, 12)
 
-    profiles: list[UserProfile] = []
     for index in range(1, count + 1):
         low, high = weighted_choice(rng, bands, band_weights)
         age = rng.randint(low, high)
@@ -334,16 +489,17 @@ def generate_users(count: int, seed: int, start: datetime, end: datetime) -> lis
             "membership_tier": membership,
             "primary_device": primary_device,
         }
-        profiles.append(
-            UserProfile(
-                public=public,
-                activity_tier=activity_tier,
-                price_sensitivity=price_sensitivity,
-                purchase_propensity=purchase_propensity,
-                category_weights=make_category_weights(rng, age),
-            )
+        yield UserProfile(
+            public=public,
+            activity_tier=activity_tier,
+            price_sensitivity=price_sensitivity,
+            purchase_propensity=purchase_propensity,
+            category_weights=make_category_weights(rng, age),
         )
-    return profiles
+
+
+def generate_users(count: int, seed: int, start: datetime, end: datetime) -> list[UserProfile]:
+    return list(iter_user_profiles(count, seed, start, end))
 
 
 def session_hour(rng: random.Random, device: str) -> int:
@@ -379,37 +535,38 @@ def product_popularity_weight(product: Product) -> float:
 def choose_product(
     rng: random.Random,
     products: Sequence[Product],
-    popularity_weights: Sequence[float],
+    cumulative_popularity: Sequence[float],
 ) -> Product:
-    # 70% popularity-driven and 30% uniform gives a realistic head while keeping
-    # enough long-tail coverage for SQL exploration.
+    # Cumulative weights avoid rebuilding a large weighted-choice table for every event.
     if rng.random() < 0.70:
-        return weighted_choice(rng, products, popularity_weights)
+        position = rng.random() * cumulative_popularity[-1]
+        return products[bisect.bisect_left(cumulative_popularity, position)]
     return rng.choice(products)
 
 
-def write_event(handle: Any, event: dict[str, Any]) -> int:
-    encoded = json.dumps(event, ensure_ascii=False, separators=(",", ":"))
-    handle.write(encoded + "\n")
-    return len(encoded.encode("utf-8")) + 1
-
-
 def generate_events(
-    profiles: Sequence[UserProfile],
+    profiles: Iterable[UserProfile],
     products: Sequence[Product],
-    output_path: Path,
+    output: Path | JsonlByteCounter | JsonlPartWriter | SingleJsonlWriter,
     seed: int,
     start: datetime,
     end: datetime,
 ) -> dict[str, Any]:
+    owns_writer = isinstance(output, Path)
+    writer: JsonlByteCounter | JsonlPartWriter | SingleJsonlWriter
+    writer = SingleJsonlWriter(output) if owns_writer else output
     rng = random.Random(seed + 202)
     by_category: dict[str, list[Product]] = defaultdict(list)
     for product in products:
         by_category[product.category].append(product)
-    popularity = {
-        category: [product_popularity_weight(product) for product in items]
-        for category, items in by_category.items()
-    }
+    cumulative_popularity: dict[str, list[float]] = {}
+    for category, items in by_category.items():
+        running = 0.0
+        cumulative = []
+        for item in items:
+            running += product_popularity_weight(item)
+            cumulative.append(running)
+        cumulative_popularity[category] = cumulative
 
     event_counts: Counter[str] = Counter()
     product_exposure: set[str] = set()
@@ -417,14 +574,13 @@ def generate_events(
     event_count = 0
     bytes_written = 0
     session_means = {"casual": 3.0, "regular": 8.0, "power": 20.0}
-    # Effects are deliberately visible but moderate. Applying huge multipliers
-    # would make SQL results look scripted instead of sampled from a population.
     membership_cart_multiplier = {"basic": 0.90, "plus": 1.00, "premium": 1.12, "vip": 1.25}
     membership_purchase_multiplier = {"basic": 0.95, "plus": 1.00, "premium": 1.10, "vip": 1.20}
     channel_cart_multiplier = {"referral": 1.12, "email": 1.06, "paid_search": 0.90}
     channel_purchase_multiplier = {"referral": 1.18, "email": 1.08, "paid_search": 0.90}
+    last_valid_event_time = end - timedelta(microseconds=1)
 
-    with output_path.open("w", encoding="utf-8") as handle:
+    try:
         for profile in profiles:
             user = profile.public
             signup_at = datetime.fromisoformat(user["signup_at"])
@@ -459,9 +615,13 @@ def generate_events(
                 current_time = started_at
                 for position in range(1, impressions + 1):
                     category = weighted_choice(rng, categories, category_weights)
-                    product = choose_product(rng, by_category[category], popularity[category])
+                    product = choose_product(
+                        rng,
+                        by_category[category],
+                        cumulative_popularity[category],
+                    )
                     product_exposure.add(product.product_id)
-                    current_time += timedelta(seconds=rng.randint(4, 40))
+                    current_time = min(current_time + timedelta(seconds=rng.randint(4, 40)), last_valid_event_time)
 
                     def emit(event_type: str, page_url: str) -> None:
                         nonlocal event_count, bytes_written
@@ -479,7 +639,7 @@ def generate_events(
                             "referrer": referrer,
                             "properties": {"position": position},
                         }
-                        bytes_written += write_event(handle, event)
+                        bytes_written += writer.write(event)
 
                     search_url = f"/search?category={quote_plus(category)}"
                     emit("product_impression", search_url)
@@ -491,7 +651,7 @@ def generate_events(
                     if rng.random() >= clamp(click_probability, 0.08, 0.72):
                         continue
 
-                    current_time += timedelta(seconds=rng.randint(1, 18))
+                    current_time = min(current_time + timedelta(seconds=rng.randint(1, 18)), last_valid_event_time)
                     emit("product_click", f"/dp/{product.product_id}")
 
                     price_factor = 1.22 - profile.price_sensitivity * product.price_percentile * 0.72
@@ -501,7 +661,7 @@ def generate_events(
                     if rng.random() >= clamp(cart_probability, 0.025, 0.48):
                         continue
 
-                    current_time += timedelta(seconds=rng.randint(8, 90))
+                    current_time = min(current_time + timedelta(seconds=rng.randint(8, 90)), last_valid_event_time)
                     emit("add_to_cart", f"/dp/{product.product_id}")
 
                     purchase_probability = 0.34 * membership_purchase_multiplier[user["membership_tier"]]
@@ -510,8 +670,11 @@ def generate_events(
                     if rng.random() >= clamp(purchase_probability, 0.04, 0.72):
                         continue
 
-                    current_time += timedelta(seconds=rng.randint(15, 150))
+                    current_time = min(current_time + timedelta(seconds=rng.randint(15, 150)), last_valid_event_time)
                     emit("purchase_click", "/checkout")
+    finally:
+        if owns_writer:
+            writer.close()
 
     return {
         "event_count": event_count,
@@ -523,62 +686,177 @@ def generate_events(
     }
 
 
-def write_csv(path: Path, columns: Iterable[str], rows: Iterable[dict[str, Any]]) -> None:
-    with path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(columns))
-        writer.writeheader()
-        writer.writerows(rows)
+def measure_variable_bytes(
+    user_count: int,
+    products: Sequence[Product],
+    seed: int,
+    start: datetime,
+    end: datetime,
+) -> int:
+    users = JsonlByteCounter()
+    for profile in iter_user_profiles(user_count, seed, start, end):
+        users.write(profile.public)
+    events = JsonlByteCounter()
+    generate_events(iter_user_profiles(user_count, seed, start, end), products, events, seed, start, end)
+    return users.bytes + events.bytes
 
 
-def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
+def resolve_user_count_for_target(
+    target_bytes: int,
+    meta_bytes: int,
+    products: Sequence[Product],
+    seed: int,
+    start: datetime,
+    end: datetime,
+) -> int:
+    remaining = target_bytes - meta_bytes
+    if remaining <= 0:
+        return 1
+
+    sample_bytes = measure_variable_bytes(SIZING_SAMPLE_USERS, products, seed, start, end)
+    if sample_bytes <= 0:
+        raise RuntimeError("sizing sample produced no user or event bytes")
+    estimate = max(1, round(remaining * SIZING_SAMPLE_USERS / sample_bytes))
+
+    measured = measure_variable_bytes(estimate, products, seed, start, end)
+    if measured <= 0:
+        return estimate
+    corrected = max(1, round(estimate * remaining / measured))
+    return corrected
 
 
-def main() -> None:
-    args = parse_args()
-    if not args.source.is_file():
-        raise SystemExit(f"source does not exist: {args.source}")
-    if args.products <= 0 or args.users <= 0 or args.days <= 0:
-        raise SystemExit("products, users, and days must be positive")
+def validate_run_id(run_id: str) -> None:
+    if not run_id or Path(run_id).name != run_id or run_id in {".", ".."}:
+        raise ValueError("run-id must be one non-empty path segment")
 
-    output_dir = args.output_dir.resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
-    start = datetime.fromisoformat(args.start_date).replace(tzinfo=KST)
-    end = start + timedelta(days=args.days)
 
-    products, selection_stats = select_products(args.source, args.products, args.seed)
-    profiles = generate_users(args.users, args.seed, start, end)
+def generate_dataset(
+    *,
+    source: Path,
+    output_dir: Path,
+    run_id: str,
+    product_count: int = 10_000,
+    user_count: int | None = None,
+    target_total_size_mb: float | None = None,
+    max_file_size_mb: float = 64.0,
+    seed: int = 20260711,
+    start_date: str = "2026-06-01",
+    days: int = 30,
+) -> dict[str, Any]:
+    validate_run_id(run_id)
+    if not source.is_file():
+        raise ValueError(f"source does not exist: {source}")
+    if product_count <= 0 or days <= 0:
+        raise ValueError("products and days must be positive")
+    if user_count is not None and user_count <= 0:
+        raise ValueError("users must be positive")
+    if target_total_size_mb is not None and target_total_size_mb <= 0:
+        raise ValueError("target-total-size-mb must be positive")
+    if max_file_size_mb <= 0:
+        raise ValueError("max-file-size-mb must be positive")
+    if user_count is not None and target_total_size_mb is not None:
+        raise ValueError("--users and --target-total-size-mb cannot be combined")
 
-    products_path = output_dir / "products.csv"
-    users_path = output_dir / "users.csv"
-    events_path = output_dir / "click_events.jsonl"
-    write_csv(products_path, PRODUCT_COLUMNS, (item.as_csv_row() for item in products))
-    write_csv(users_path, USER_COLUMNS, (item.public for item in profiles))
-    event_stats = generate_events(profiles, products, events_path, args.seed, start, end)
+    output_root = output_dir.resolve()
+    output_root.mkdir(parents=True, exist_ok=True)
+    run_dir = output_root / run_id
+    if run_dir.exists():
+        raise FileExistsError(f"run directory already exists: {run_dir}")
+    run_dir.mkdir()
 
-    files = {}
-    for path in (products_path, users_path, events_path):
-        files[path.name] = {
-            "bytes": path.stat().st_size,
-            "mib": round(path.stat().st_size / 1024 / 1024, 3),
-            "sha256": sha256_file(path),
-        }
+    start = datetime.fromisoformat(start_date)
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=KST)
+    end = start + timedelta(days=days)
+    max_file_bytes = max(1, round(max_file_size_mb * MEBIBYTE))
+
+    products, selection_stats = select_products(source, product_count, seed)
+    meta_writer = JsonlPartWriter(run_dir, "meta", max_file_bytes)
+    for product in products:
+        meta_writer.write(product.as_json_row())
+    meta_writer.close()
+    meta_entry = meta_writer.manifest_entry()
+
+    requested_users = user_count
+    if target_total_size_mb is not None:
+        resolved_users = resolve_user_count_for_target(
+            round(target_total_size_mb * MEBIBYTE),
+            meta_entry["bytes"],
+            products,
+            seed,
+            start,
+            end,
+        )
+        sizing_mode = "target_total_size"
+    else:
+        resolved_users = user_count if user_count is not None else DEFAULT_USERS
+        sizing_mode = "fixed_users"
+
+    users_writer = JsonlPartWriter(run_dir, "users", max_file_bytes)
+    for profile in iter_user_profiles(resolved_users, seed, start, end):
+        users_writer.write(profile.public)
+    users_writer.close()
+
+    events_writer = JsonlPartWriter(run_dir, "click_events", max_file_bytes)
+    event_stats = generate_events(
+        iter_user_profiles(resolved_users, seed, start, end),
+        products,
+        events_writer,
+        seed,
+        start,
+        end,
+    )
+    events_writer.close()
+
+    datasets = {
+        "meta": meta_entry,
+        "users": users_writer.manifest_entry(),
+        "click_events": events_writer.manifest_entry(),
+    }
+    total_bytes = sum(entry["bytes"] for entry in datasets.values())
+    target_bytes = round(target_total_size_mb * MEBIBYTE) if target_total_size_mb is not None else None
+    size_error_pct = (
+        round(100.0 * (total_bytes - target_bytes) / target_bytes, 3)
+        if target_bytes is not None
+        else None
+    )
+    all_files = [file for dataset in datasets.values() for file in dataset["files"]]
 
     manifest = {
-        "generator_version": 1,
-        "seed": args.seed,
-        "source_file": args.source.name,
+        "generator_version": 2,
+        "run_id": run_id,
+        "seed": seed,
+        "source_file": source.name,
         "window": {"start": start.isoformat(), "end_exclusive": end.isoformat()},
+        "sizing": {
+            "mode": sizing_mode,
+            "requested_products": product_count,
+            "requested_users": requested_users,
+            "target_total_size_mb": target_total_size_mb,
+            "max_file_size_mb": max_file_size_mb,
+            "resolved_products": len(products),
+            "resolved_users": resolved_users,
+            "actual_total_bytes": total_bytes,
+            "actual_total_mib": round(total_bytes / MEBIBYTE, 6),
+            "target_size_error_pct": size_error_pct,
+        },
+        "resolved_counts": {
+            "products": len(products),
+            "users": resolved_users,
+            "click_events": event_stats["event_count"],
+            "sessions": event_stats["session_count"],
+        },
+        # Preserve common v1 consumers while the richer v2 fields are adopted.
         "counts": {
             "products": len(products),
-            "users": len(profiles),
+            "users": resolved_users,
             **{key: value for key, value in event_stats.items() if key != "bytes_written"},
         },
         "product_selection": selection_stats,
+        "datasets": datasets,
+        "files": all_files,
+        "total_bytes": total_bytes,
+        "total_mib": round(total_bytes / MEBIBYTE, 6),
         "public_user_columns": list(USER_COLUMNS),
         "hidden_generation_traits": [
             "activity_tier",
@@ -594,11 +872,32 @@ def main() -> None:
             "mobile sessions concentrate in local evening hours",
             "gender and region have no direct behavior multiplier and act as null controls",
         ],
-        "files": files,
-        "total_mib": round(sum(item["bytes"] for item in files.values()) / 1024 / 1024, 3),
     }
-    manifest_path = output_dir / "manifest.json"
-    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    manifest_path = run_dir / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return manifest
+
+
+def main() -> None:
+    args = parse_args()
+    try:
+        manifest = generate_dataset(
+            source=args.source,
+            output_dir=args.output_dir,
+            run_id=args.run_id,
+            product_count=args.products,
+            user_count=args.users,
+            target_total_size_mb=args.target_total_size_mb,
+            max_file_size_mb=args.max_file_size_mb,
+            seed=args.seed,
+            start_date=args.start_date,
+            days=args.days,
+        )
+    except (ValueError, RuntimeError, FileExistsError) as error:
+        raise SystemExit(str(error)) from error
     print(json.dumps(manifest, ensure_ascii=False, indent=2))
 
 

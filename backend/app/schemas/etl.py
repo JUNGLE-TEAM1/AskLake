@@ -4,6 +4,7 @@ from typing import Any, Literal
 from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.common import CamelModel, to_camel
+from app.schemas.iceberg import IcebergWriterTarget
 from app.schemas.permissions import PermissionAction, PermissionGrant, ResourcePermissions
 
 TargetLayer = Literal["RAW", "BRONZE", "SILVER", "GOLD"]
@@ -248,7 +249,10 @@ class KafkaContinuousBatch(CamelModel):
     quarantined_count: int = 0
     duration_ms: int | None = None
     source_ranges: list[dict[str, Any]] = Field(default_factory=list)
+    source_boundary: dict[str, Any] = Field(default_factory=dict)
     data_path: str | None = None
+    iceberg_snapshot_id: str | None = None
+    iceberg_table_uri: str | None = None
     quarantine_path: str | None = None
     manifest_path: str | None = None
     last_error: str | None = None
@@ -298,10 +302,26 @@ class ContinuousCompactionRequest(CamelModel):
     target_file_size_mb: int = Field(default=256, ge=128, le=512)
 
 
+class ContinuousIcebergMaintenanceRequest(CamelModel):
+    rewrite_data_files: bool = True
+    target_file_size_mb: int = Field(default=256, ge=128, le=512)
+    expire_snapshots: bool = False
+    snapshot_retention_hours: int = Field(default=168, ge=24, le=8760)
+    retain_last_snapshots: int = Field(default=10, ge=1, le=1000)
+    remove_orphan_files: bool = False
+    orphan_retention_hours: int = Field(default=168, ge=72, le=8760)
+
+    @model_validator(mode="after")
+    def require_operation(self):
+        if not (self.rewrite_data_files or self.expire_snapshots or self.remove_orphan_files):
+            raise ValueError("at least one Iceberg maintenance operation must be enabled")
+        return self
+
+
 class ContinuousMaintenanceRun(CamelModel):
     run_id: str
     job_id: str
-    kind: Literal["quarantine_replay", "compaction"]
+    kind: Literal["quarantine_replay", "compaction", "iceberg_maintenance"]
     status: Literal["queued", "running", "success", "failed"]
     requested_by: str
     config: dict[str, Any] = Field(default_factory=dict)
@@ -320,7 +340,10 @@ class JobRunSummary(CamelModel):
     ended_at: str
     error_summary: str
     failed_stage: str
+    input_bytes: int | None = None
+    input_file_count: int | None = None
     input_rows: str
+    output_file_count: int | None = None
     output_rows: str
     output_path: str | None = None
     run_id: str
@@ -387,6 +410,7 @@ class JobRowData(CamelModel):
     index_columns: list[str] | None = None
     compression: str | None = None
     storage_path: str | None = None
+    iceberg_target: IcebergWriterTarget | None = None
     target_description: str | None = None
     target_database: str | None = None
     target_tags: list[str] | None = None
@@ -705,7 +729,10 @@ class AirflowRunExecutionResponse(CamelModel):
     job_id: str
     run_id: str
     dataset_id: str | None = None
+    input_bytes: int = 0
+    input_file_count: int = 0
     input_rows: int = 0
+    output_file_count: int = 0
     output_rows: int = 0
     output_path: str = "-"
     duration_ms: int | None = None
@@ -911,9 +938,23 @@ class SourceAssetsResponse(CamelModel):
     prefix: str
 
 
+class SourceDatasetSummary(CamelModel):
+    selection_kind: Literal["prefix"]
+    bucket: str
+    prefix: str
+    format: str
+    file_count: int = Field(ge=1)
+    total_bytes: int = Field(ge=0)
+    representative_object: str
+    schema_fingerprint: str | None = None
+    schema_compatible: bool
+    excluded_file_count: int = Field(ge=0)
+
+
 class SourceConnectorAnalysis(CamelModel):
     action_path: str
     assets: list[tuple[str, str, str]]
+    dataset_summary: SourceDatasetSummary | None = None
     draft_patch: DraftPipelinePatch
     logs: list[str]
     message: str
