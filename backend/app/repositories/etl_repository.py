@@ -1,4 +1,5 @@
-from typing import Any
+from datetime import datetime, timedelta, timezone
+from typing import Any, NamedTuple
 
 from sqlalchemy import inspect, select, text
 from sqlalchemy.orm import Session
@@ -28,6 +29,19 @@ from app.schemas.etl import (
 from app.services.rule_compiler import compile_rule_set
 
 _schema_ready_bind_ids: set[int] = set()
+
+
+class RunExecutionLease(NamedTuple):
+    generation: int
+    recovered: bool
+
+
+def execution_lease_is_live(expires_at: datetime | None, now: datetime) -> bool:
+    if expires_at is None:
+        return False
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    return expires_at > now
 
 
 def ensure_schema(db: Session) -> None:
@@ -201,10 +215,17 @@ def ensure_schema(db: Session) -> None:
             "last_synced_at": "VARCHAR(64)",
             "sync_error": "VARCHAR(512)",
             "task_states": "JSON",
+            "execution_owner": "VARCHAR(255)",
+            "execution_lease_expires_at": "TIMESTAMP WITH TIME ZONE",
+            "execution_generation": "INTEGER NOT NULL DEFAULT 0",
         }
         for column_name, column_type in run_column_defs.items():
             if column_name not in existing_run_columns:
                 connection.execute(text(f"ALTER TABLE etl_runs ADD COLUMN {column_name} {column_type}"))
+        connection.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_etl_runs_execution_claim "
+            "ON etl_runs (execution_lease_expires_at, execution_owner)"
+        ))
 
     ensure_catalog_schema(db)
     _schema_ready_bind_ids.add(bind_key)
@@ -645,6 +666,108 @@ def get_run_model(db: Session, run_id: str) -> ETLRunModel | None:
 def refresh_run_for_update(db: Session, run: ETLRunModel) -> None:
     ensure_schema(db)
     db.refresh(run, with_for_update=True)
+
+
+def claim_run_execution_lease(
+    db: Session,
+    run_id: str,
+    *,
+    owner: str,
+    lease_seconds: int,
+) -> RunExecutionLease | None:
+    """Atomically claim an expired or unowned ETL Run execution lease."""
+    ensure_schema(db)
+    now = datetime.now(timezone.utc)
+    run = db.scalar(
+        select(ETLRunModel)
+        .where(ETLRunModel.run_id == run_id)
+        .with_for_update()
+    )
+    if run is None:
+        db.rollback()
+        return None
+    if execution_lease_is_live(run.execution_lease_expires_at, now):
+        db.rollback()
+        return None
+
+    recovered = run.execution_lease_expires_at is not None
+    run.execution_generation = int(run.execution_generation or 0) + 1
+    run.execution_owner = owner
+    run.execution_lease_expires_at = now + timedelta(seconds=lease_seconds)
+    db.commit()
+    return RunExecutionLease(generation=run.execution_generation, recovered=recovered)
+
+
+def renew_run_execution_lease(
+    db: Session,
+    run_id: str,
+    *,
+    owner: str,
+    generation: int,
+    lease_seconds: int,
+) -> bool:
+    ensure_schema(db)
+    now = datetime.now(timezone.utc)
+    run = db.scalar(
+        select(ETLRunModel)
+        .where(ETLRunModel.run_id == run_id)
+        .with_for_update()
+    )
+    if (
+        run is None
+        or run.execution_owner != owner
+        or run.execution_generation != generation
+        or run.execution_lease_expires_at is None
+        or not execution_lease_is_live(run.execution_lease_expires_at, now)
+    ):
+        db.rollback()
+        return False
+    run.execution_lease_expires_at = now + timedelta(seconds=lease_seconds)
+    db.commit()
+    return True
+
+
+def get_run_for_execution_fence(
+    db: Session,
+    run_id: str,
+    *,
+    owner: str,
+    generation: int,
+) -> ETLRunModel | None:
+    """Lock a Run only when the caller still owns its live lease generation."""
+    ensure_schema(db)
+    now = datetime.now(timezone.utc)
+    run = db.scalar(
+        select(ETLRunModel)
+        .where(ETLRunModel.run_id == run_id)
+        .with_for_update()
+    )
+    if (
+        run is None
+        or run.execution_owner != owner
+        or run.execution_generation != generation
+        or run.execution_lease_expires_at is None
+        or not execution_lease_is_live(run.execution_lease_expires_at, now)
+    ):
+        db.rollback()
+        return None
+    return run
+
+
+def release_run_execution_lease(
+    db: Session,
+    run_id: str,
+    *,
+    owner: str,
+    generation: int,
+) -> bool:
+    run = get_run_for_execution_fence(db, run_id, owner=owner, generation=generation)
+    if run is None:
+        return False
+    run.execution_owner = None
+    run.execution_lease_expires_at = None
+    db.commit()
+    return True
 
 
 def public_sql_recipe(value: object) -> dict[str, Any] | None:

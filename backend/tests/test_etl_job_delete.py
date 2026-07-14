@@ -4,6 +4,7 @@ from tempfile import TemporaryDirectory
 import threading
 import time
 import unittest
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -765,6 +766,59 @@ class EtlJobDeleteRunConcurrencyTests(unittest.TestCase):
             run = db.get(ETLRunModel, run_id)
             self.assertEqual(run.task_states["sparkExecution"]["status"], "success")
             self.assertEqual(run.task_states["sparkResult"]["status"], "success")
+
+    @patch("app.repositories.etl_repository.ensure_schema", return_value=None)
+    def test_expired_run_lease_increments_generation_and_fences_previous_owner(self, _ensure_schema: Mock) -> None:
+        job_id = "JOB-SQLITE-SPARK-LEASE-TAKEOVER"
+        run_id = "RUN-SQLITE-SPARK-LEASE-TAKEOVER"
+        self.insert_job(job_id)
+        self.insert_airflow_run(job_id, run_id)
+
+        with self.session_factory() as db:
+            first = etl_repository.claim_run_execution_lease(
+                db,
+                run_id,
+                owner="pod-a",
+                lease_seconds=60,
+            )
+        self.assertIsNotNone(first)
+        self.assertEqual(first.generation, 1)
+
+        with self.session_factory() as db:
+            run = db.get(ETLRunModel, run_id)
+            run.execution_lease_expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+            db.commit()
+
+        with self.session_factory() as db:
+            second = etl_repository.claim_run_execution_lease(
+                db,
+                run_id,
+                owner="pod-b",
+                lease_seconds=60,
+            )
+        self.assertIsNotNone(second)
+        self.assertEqual(second.generation, 2)
+
+        with self.session_factory() as db:
+            previous_owner = etl_repository.get_run_for_execution_fence(
+                db,
+                run_id,
+                owner="pod-a",
+                generation=first.generation,
+            )
+            self.assertIsNone(previous_owner)
+
+        with self.session_factory() as db:
+            current_owner = etl_repository.get_run_for_execution_fence(
+                db,
+                run_id,
+                owner="pod-b",
+                generation=second.generation,
+            )
+            self.assertIsNotNone(current_owner)
+            current_owner.execution_owner = None
+            current_owner.execution_lease_expires_at = None
+            db.commit()
 
     def test_delete_observes_kafka_reservation_while_external_ingest_runs(self) -> None:
         job_id = "JOB-SQLITE-KAFKA-RUN-WINS"
