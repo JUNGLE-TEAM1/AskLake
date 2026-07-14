@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -40,6 +42,31 @@ const unsafe = structuredClone(smoke);
 unsafe.debug = { bootstrapBroker: "boot.secret.kafka.amazonaws.com:9098" };
 assert.throws(() => createAwsStagingHandoff({ cleanupReceipt: cleanup, smokeEvidence: unsafe, ttlSweepEvidence: ttl }, contract), invalid);
 
+const handoffDirectory = mkdtempSync(path.join(os.tmpdir(), "asklake-phase6-handoff-"));
+try {
+  const smokeFile = path.join(handoffDirectory, "input", "smoke.json");
+  const cleanupFile = path.join(handoffDirectory, "input", "cleanup.json");
+  const ttlFile = path.join(handoffDirectory, "input", "ttl.json");
+  writeJson(smokeFile, smoke);
+  writeJson(cleanupFile, cleanup);
+  writeJson(ttlFile, ttl);
+  const outputJson = path.join(handoffDirectory, "json", "handoff.json");
+  const outputMarkdown = path.join(handoffDirectory, "markdown", "nested", "handoff.md");
+  const cli = spawnSync(process.execPath, [
+    path.join(root, "backend", "scripts", "render-aws-staging-handoff.mjs"),
+    "--smoke-evidence", smokeFile,
+    "--cleanup-receipt", cleanupFile,
+    "--ttl-sweep-evidence", ttlFile,
+    "--output-json", outputJson,
+    "--output-markdown", outputMarkdown,
+  ], { encoding: "utf8" });
+  assert.equal(cli.status, 0, cli.stderr);
+  assert.equal(existsSync(outputJson), true);
+  assert.equal(existsSync(outputMarkdown), true);
+} finally {
+  rmSync(handoffDirectory, { force: true, recursive: true });
+}
+
 console.log("AWS staging Phase 6 handoff contract verification passed.");
 
 function sampleSmoke() {
@@ -79,3 +106,10 @@ function sampleSmoke() {
 }
 
 function invalid(error) { return error?.code === "AWS_STAGING_HANDOFF_INVALID"; }
+
+function writeJson(file, value) {
+  const directory = path.dirname(file);
+  // The CLI must create only output directories; fixture input directories are test-owned.
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(file, `${JSON.stringify(value)}\n`);
+}

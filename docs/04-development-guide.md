@@ -194,7 +194,7 @@ npm run verify:aws-staging-lifecycle
 npm run verify:aws-staging-handoff
 ```
 
-첫 명령은 `infra/contracts/aws-staging-smoke.v1.json`을 읽어 region/naming/tag, state lock/versioning/encryption, no-NAT/no-public-ingress, 장기 key 금지, EMR application cap, smoke 정합성 기준과 수동 apply/자동 destroy 경계를 확인한다.
+첫 명령은 `infra/contracts/aws-staging-smoke.v1.json`을 읽어 region/naming/tag, state lock/versioning/encryption, no-NAT/no-public-ingress, 장기 key 금지, EMR application cap, smoke 정합성 기준과 수동 apply/보호된 cleanup destroy 경계를 확인한다.
 
 두 번째 명령은 `infra/terraform`의 정적 보안/비용 guard 뒤 Terraform CLI로 `fmt -check`, state bootstrap과 staging의 `init -backend=false`/`validate`, mock provider plan을 실행한다. Terraform `1.7+`가 필요하며 실제 AWS credential이나 backend는 사용하지 않는다. Phase 1은 network/S3/IAM/MSK/EMR/CloudWatch/Budget와 optional private SSM runner까지 코드화하지만 실제 `apply`는 하지 않는다.
 
@@ -204,7 +204,7 @@ npm run verify:aws-staging-handoff
 
 다섯 번째 명령은 Phase 4 evidence schema와 private SSM smoke workflow를 검증한다. 100만 건 exact count, lag/quarantine 0, 두 번의 서로 다른 원격 attempt, checkpoint resume, Batch row, S3 evidence, price/resource snapshot 중 하나라도 빠진 fixture가 거부되는지 확인하며 실제 AWS API는 호출하지 않는다.
 
-여섯 번째 명령은 Phase 5 lifecycle을 검증한다. Terraform state tag와 key가 불일치하거나 만료된 경우를 redacted TTL sweep evidence로 분류하고, TTL sweep이 자동 delete를 수행하지 않으며 smoke cleanup은 evidence export 뒤에만 destroy plan/apply를 실행하도록 확인한다.
+여섯 번째 명령은 Phase 5 lifecycle을 검증한다. Terraform state tag와 key가 불일치하거나 만료된 경우를 redacted TTL sweep evidence로 분류하고, TTL sweep이 자동 delete를 수행하지 않으며 smoke가 확인한 stack만 별도 보호 destroy job에서 재계획·cleanup하도록 확인한다.
 
 일곱 번째 명령은 Phase 6 handoff를 검증한다. smoke evidence, cleanup receipt, TTL sweep이 같은 stack/source revision인지 확인하고, handoff가 Phase 7 pilot 승인을 대신하지 않으며 broker·credential 계열 값을 거부하는지 확인한다.
 

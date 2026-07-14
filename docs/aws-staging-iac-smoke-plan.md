@@ -227,11 +227,11 @@ npm run verify:aws-staging-smoke
 
 ## 8. Phase 5 비용·TTL guard
 
-Phase 5는 smoke가 실제 SSM 실행을 시작한 경우에만 다음 순서를 강제한다.
+Phase 5는 Terraform state와 private runner가 입력 `stackId`와 일치한다고 확인된 시점부터 cleanup 대상을 고정한다. SSM 실행 이전의 artifact delivery 또는 price snapshot 실패도 redacted completion receipt를 남기며, 확인되지 않은 account/state/stack에는 cleanup 권한을 만들지 않는다.
 
-1. 성공 evidence 또는 민감 오류 원문이 없는 failure evidence를 staging S3에서 회수한다.
-2. evidence evaluator가 success/failure schema를 판정한 뒤 Terraform destroy plan/apply를 같은 smoke 승인 job에서 실행한다.
-3. cleanup receipt와 smoke evidence를 GitHub artifact로 보존한다. evidence export 또는 teardown이 실패하면 workflow는 실패로 남아 수동 `AWS Staging Destroy` 재시도를 요구한다.
+1. SSM 실행 후에는 성공 evidence 또는 민감 오류 원문이 없는 failure evidence를 staging S3에서 회수한다. SSM 이전 실패에는 completion receipt가 해당 실패 상태를 보존한다.
+2. smoke job은 destroy를 직접 실행하지 않는다. `stack_confirmed=true`이면 별도 cleanup plan job이 destroy plan과 fingerprint를 artifact로 남긴다.
+3. `asklake-aws-staging-destroy` 보호 Environment 승인 job은 동일 stack input을 다시 검증·재계획하고 fingerprint가 검토한 plan과 같을 때만 apply한다. smoke evidence/completion receipt, cleanup plan, cleanup receipt는 각각 GitHub artifact로 남는다. 승인·evidence export·teardown 중 하나라도 실패하면 workflow는 실패 또는 승인 대기 상태로 남아 운영자가 보호 destroy 경로를 확인한다.
 
 `AWS Staging TTL Sweep`은 매시와 수동 dispatch에서 Terraform state bucket의 `asklake/staging/<stackId>/terraform.tfstate`만 읽는다. `Project`, `Environment`, `ManagedBy`, `Issue`, `StackId`, `ExpiresAt` tag가 일치하는지 확인하고 15분 grace 뒤 만료된 stack 또는 해석 불가능한 state가 있으면 redacted evidence를 올린 뒤 workflow를 실패 처리한다. 이 sweep은 자원을 자동 삭제하지 않으며 기존 `AWS Staging Destroy`의 `destroy:<stackId>` 승인으로만 제거한다.
 

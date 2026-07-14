@@ -41,6 +41,13 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    outputs:
+      stack_confirmed: ${{ steps.verified_target.outputs.stack_confirmed }}
+
+    env:
+      SMOKE_EVIDENCE_AVAILABLE: "false"
+      SMOKE_EXECUTION_STARTED: "false"
+      SMOKE_COMMAND_STATUS: not-started
 
     steps:
       - name: Checkout exact workflow commit
@@ -99,7 +106,8 @@ jobs:
           mask-aws-account-id: true
           unset-current-credentials: true
 
-      - name: Verify account, state, private runner, and artifact delivery
+      - name: Verify account, state, and private runner
+        id: verified_target
         env:
           EXPECTED_AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
           RUNTIME_ROOT_URI: ${{ inputs.runtime_root_uri }}
@@ -120,6 +128,13 @@ jobs:
           test -n "$smoke_runner_instance_id"
           test -n "$artifact_bucket"
           printf 'SMOKE_RUNNER_INSTANCE_ID=%s\nARTIFACT_BUCKET=%s\n' "$smoke_runner_instance_id" "$artifact_bucket" >> "$GITHUB_ENV"
+          printf 'stack_confirmed=true\n' >> "$GITHUB_OUTPUT"
+
+      - name: Verify immutable artifact delivery
+        env:
+          RUNTIME_ROOT_URI: ${{ inputs.runtime_root_uri }}
+        run: |
+          set -euo pipefail
           runtime_key="${RUNTIME_ROOT_URI#s3://$artifact_bucket/}"
           aws s3api head-object --bucket "$artifact_bucket" --key "$runtime_key/asklake-runtime.env" > /dev/null
           aws s3api head-object --bucket "$artifact_bucket" --key "$runtime_key/asklake-smoke-bundle.tgz" > /dev/null
@@ -229,40 +244,15 @@ jobs:
               > "$RUNNER_TEMP/smoke-evaluation.txt"
           fi
 
-      - name: Verify smoke evidence export before cleanup
-        if: always() && env.SMOKE_EXECUTION_STARTED == 'true'
-        run: |
-          test "$SMOKE_EVIDENCE_AVAILABLE" = "true"
-          test -f "$RUNNER_TEMP/smoke-evidence.json"
-          test -f "$RUNNER_TEMP/smoke-evaluation.txt"
-
-      - name: Destroy smoke stack after evidence export
-        if: always() && env.SMOKE_EXECUTION_STARTED == 'true'
+      - name: Write redacted smoke completion receipt
+        if: always()
         env:
+          SMOKE_JOB_STATUS: ${{ job.status }}
           STACK_ID: ${{ inputs.stack_id }}
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/smoke-cleanup"
-          terraform -chdir=infra/terraform/environments/staging init \
-            -reconfigure \
-            -backend-config="$RUNNER_TEMP/backend.hcl"
-          terraform -chdir=infra/terraform/environments/staging plan \
-            -destroy \
-            -input=false \
-            -lock-timeout=5m \
-            -var-file="$RUNNER_TEMP/staging.tfvars.json" \
-            -out="$RUNNER_TEMP/smoke-cleanup.tfplan"
-          plan_fingerprint="$(terraform -chdir=infra/terraform/environments/staging show -json "$RUNNER_TEMP/smoke-cleanup.tfplan" \
-            | node backend/scripts/fingerprint-terraform-plan.mjs)"
-          test "${#plan_fingerprint}" -eq 64
-          terraform -chdir=infra/terraform/environments/staging apply \
-            -input=false \
-            -lock-timeout=5m \
-            -auto-approve \
-            "$RUNNER_TEMP/smoke-cleanup.tfplan"
-          export PLAN_FINGERPRINT="$plan_fingerprint"
-          node -e 'const fs=require("fs"); fs.writeFileSync(process.argv[1], JSON.stringify({schemaVersion:"asklake.aws-staging-smoke-cleanup.v1", commit:process.env.GITHUB_SHA, stackId:process.env.STACK_ID, planFingerprint:process.env.PLAN_FINGERPRINT, smokeCommandStatus:process.env.SMOKE_COMMAND_STATUS || "unknown", status:"destroy-request-completed"}, null, 2)+"\n")' \
-            "$RUNNER_TEMP/smoke-cleanup/receipt.json"
+          node -e 'const fs=require("fs"); fs.writeFileSync(process.argv[1], JSON.stringify({schemaVersion:"asklake.aws-staging-smoke-run.v1", commit:process.env.GITHUB_SHA, stackId:process.env.STACK_ID, executionStarted:process.env.SMOKE_EXECUTION_STARTED === "true", commandStatus:process.env.SMOKE_COMMAND_STATUS, evidenceAvailable:process.env.SMOKE_EVIDENCE_AVAILABLE === "true", status:process.env.SMOKE_JOB_STATUS}, null, 2)+"\n")' \
+            "$RUNNER_TEMP/smoke-completion-receipt.json"
 
       - name: Upload Phase 4 evidence
         if: always()
@@ -273,7 +263,7 @@ jobs:
             ${{ runner.temp }}/smoke-evidence.json
             ${{ runner.temp }}/smoke-evaluation.txt
             ${{ runner.temp }}/smoke-plan.json
-            ${{ runner.temp }}/smoke-cleanup/receipt.json
+            ${{ runner.temp }}/smoke-completion-receipt.json
           if-no-files-found: error
           retention-days: 7
           include-hidden-files: false
@@ -289,4 +279,219 @@ jobs:
           rm -f "$RUNNER_TEMP/backend.hcl" "$RUNNER_TEMP/staging.tfvars.json" "$RUNNER_TEMP/terraform-output.json"
           rm -f "$RUNNER_TEMP/smoke-target.txt"
           rm -f "$RUNNER_TEMP/ssm-parameters.json" "$RUNNER_TEMP/emr-price-snapshot.json"
+
+  cleanup_plan:
+    name: Review smoke cleanup plan
+    needs: smoke
+    if: always() && needs.smoke.outputs.stack_confirmed == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      plan_fingerprint: ${{ steps.plan.outputs.plan_fingerprint }}
+
+    steps:
+      - name: Checkout exact workflow commit
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22.23.1"
+          package-manager-cache: false
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "1.15.8"
+          terraform_wrapper: false
+
+      - name: Configure short-lived AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_GITHUB_OIDC_ROLE_ARN }}
+          role-session-name: asklake-staging-smoke-cleanup-${{ github.run_id }}
+          aws-region: ap-northeast-2
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          mask-aws-account-id: true
+          unset-current-credentials: true
+
+      - name: Verify AWS account
+        env:
+          EXPECTED_AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          actual_account_id="$(aws sts get-caller-identity --query Account --output text)"
+          test "$actual_account_id" = "$EXPECTED_AWS_ACCOUNT_ID"
+
+      - name: Recreate exact cleanup inputs
+        env:
+          AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          AWS_GITHUB_OIDC_ROLE_ARN: ${{ vars.AWS_GITHUB_OIDC_ROLE_ARN }}
+          AWS_STAGING_CONFIRMATION: destroy:${{ inputs.stack_id }}
+          AWS_STAGING_OPERATION: destroy
+          AWS_STAGING_STACK_ID: ${{ inputs.stack_id }}
+          AWS_STAGING_TTL_HOURS: "1"
+          AWS_TERRAFORM_STATE_BUCKET: ${{ vars.AWS_TERRAFORM_STATE_BUCKET }}
+          AWS_TERRAFORM_STATE_KMS_KEY_ARN: ${{ vars.AWS_TERRAFORM_STATE_KMS_KEY_ARN }}
+        run: |
+          set -euo pipefail
+          node backend/scripts/prepare-aws-staging-terraform-inputs.mjs \
+            --backend-file "$RUNNER_TEMP/backend.hcl" \
+            --tfvars-file "$RUNNER_TEMP/staging.tfvars.json"
+
+      - name: Create reviewable smoke cleanup plan
+        id: plan
+        env:
+          SMOKE_RESULT: ${{ needs.smoke.result }}
+          STACK_ID: ${{ inputs.stack_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/smoke-cleanup-evidence"
+          terraform -chdir=infra/terraform/environments/staging init \
+            -reconfigure \
+            -backend-config="$RUNNER_TEMP/backend.hcl"
+          terraform -chdir=infra/terraform/environments/staging plan \
+            -destroy \
+            -input=false \
+            -lock-timeout=5m \
+            -var-file="$RUNNER_TEMP/staging.tfvars.json" \
+            -out="$RUNNER_TEMP/smoke-cleanup.tfplan"
+          terraform -chdir=infra/terraform/environments/staging show \
+            -no-color "$RUNNER_TEMP/smoke-cleanup.tfplan" \
+            > "$RUNNER_TEMP/smoke-cleanup-evidence/plan.txt"
+          plan_fingerprint="$(terraform -chdir=infra/terraform/environments/staging show -json "$RUNNER_TEMP/smoke-cleanup.tfplan" \
+            | node backend/scripts/fingerprint-terraform-plan.mjs)"
+          test "${#plan_fingerprint}" -eq 64
+          export PLAN_FINGERPRINT="$plan_fingerprint"
+          printf 'plan_fingerprint=%s\n' "$plan_fingerprint" >> "$GITHUB_OUTPUT"
+          node -e 'const fs=require("fs"); fs.writeFileSync(process.argv[1], JSON.stringify({schemaVersion:"asklake.aws-staging-smoke-cleanup-plan.v1", commit:process.env.GITHUB_SHA, stackId:process.env.STACK_ID, planFingerprint:process.env.PLAN_FINGERPRINT, smokeResult:process.env.SMOKE_RESULT}, null, 2)+"\n")' \
+            "$RUNNER_TEMP/smoke-cleanup-evidence/metadata.json"
+
+      - name: Upload reviewable smoke cleanup plan
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: aws-staging-smoke-cleanup-plan-${{ inputs.stack_id }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/smoke-cleanup-evidence/
+          if-no-files-found: error
+          retention-days: 7
+          include-hidden-files: false
+
+      - name: Remove private cleanup plan inputs
+        if: always()
+        run: |
+          rm -rf "$RUNNER_TEMP/smoke-cleanup-evidence"
+          rm -f "$RUNNER_TEMP/backend.hcl" "$RUNNER_TEMP/staging.tfvars.json" "$RUNNER_TEMP/smoke-cleanup.tfplan"
+
+  cleanup_apply:
+    name: Approved smoke cleanup
+    needs: cleanup_plan
+    if: always() && needs.cleanup_plan.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    environment: asklake-aws-staging-destroy
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout exact workflow commit
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22.23.1"
+          package-manager-cache: false
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "1.15.8"
+          terraform_wrapper: false
+
+      - name: Configure short-lived AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_GITHUB_OIDC_ROLE_ARN }}
+          role-session-name: asklake-staging-smoke-cleanup-apply-${{ github.run_id }}
+          aws-region: ap-northeast-2
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          mask-aws-account-id: true
+          unset-current-credentials: true
+
+      - name: Verify AWS account
+        env:
+          EXPECTED_AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          actual_account_id="$(aws sts get-caller-identity --query Account --output text)"
+          test "$actual_account_id" = "$EXPECTED_AWS_ACCOUNT_ID"
+
+      - name: Recreate exact cleanup inputs
+        env:
+          AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          AWS_GITHUB_OIDC_ROLE_ARN: ${{ vars.AWS_GITHUB_OIDC_ROLE_ARN }}
+          AWS_STAGING_CONFIRMATION: destroy:${{ inputs.stack_id }}
+          AWS_STAGING_OPERATION: destroy
+          AWS_STAGING_STACK_ID: ${{ inputs.stack_id }}
+          AWS_STAGING_TTL_HOURS: "1"
+          AWS_TERRAFORM_STATE_BUCKET: ${{ vars.AWS_TERRAFORM_STATE_BUCKET }}
+          AWS_TERRAFORM_STATE_KMS_KEY_ARN: ${{ vars.AWS_TERRAFORM_STATE_KMS_KEY_ARN }}
+        run: |
+          set -euo pipefail
+          node backend/scripts/prepare-aws-staging-terraform-inputs.mjs \
+            --backend-file "$RUNNER_TEMP/backend.hcl" \
+            --tfvars-file "$RUNNER_TEMP/staging.tfvars.json"
+
+      - name: Replan, verify approved fingerprint, and destroy
+        env:
+          APPROVED_PLAN_FINGERPRINT: ${{ needs.cleanup_plan.outputs.plan_fingerprint }}
+          STACK_ID: ${{ inputs.stack_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/smoke-cleanup"
+          terraform -chdir=infra/terraform/environments/staging init \
+            -reconfigure \
+            -backend-config="$RUNNER_TEMP/backend.hcl"
+          terraform -chdir=infra/terraform/environments/staging plan \
+            -destroy \
+            -input=false \
+            -lock-timeout=5m \
+            -var-file="$RUNNER_TEMP/staging.tfvars.json" \
+            -out="$RUNNER_TEMP/approved-smoke-cleanup.tfplan"
+          actual_plan_fingerprint="$(terraform -chdir=infra/terraform/environments/staging show -json "$RUNNER_TEMP/approved-smoke-cleanup.tfplan" \
+            | node backend/scripts/fingerprint-terraform-plan.mjs)"
+          test "${#APPROVED_PLAN_FINGERPRINT}" -eq 64
+          test "$actual_plan_fingerprint" = "$APPROVED_PLAN_FINGERPRINT"
+          terraform -chdir=infra/terraform/environments/staging apply \
+            -input=false \
+            -lock-timeout=5m \
+            -auto-approve \
+            "$RUNNER_TEMP/approved-smoke-cleanup.tfplan"
+          export PLAN_FINGERPRINT="$actual_plan_fingerprint"
+          node -e 'const fs=require("fs"); fs.writeFileSync(process.argv[1], JSON.stringify({schemaVersion:"asklake.aws-staging-smoke-cleanup.v1", commit:process.env.GITHUB_SHA, stackId:process.env.STACK_ID, planFingerprint:process.env.PLAN_FINGERPRINT, status:"destroy-request-completed"}, null, 2)+"\n")' \
+            "$RUNNER_TEMP/smoke-cleanup/receipt.json"
+
+      - name: Upload smoke cleanup receipt
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: aws-staging-smoke-cleanup-${{ inputs.stack_id }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/smoke-cleanup/receipt.json
+          if-no-files-found: warn
+          retention-days: 7
+          include-hidden-files: false
+
+      - name: Remove private cleanup apply inputs
+        if: always()
+        run: |
           rm -rf "$RUNNER_TEMP/smoke-cleanup"
+          rm -f "$RUNNER_TEMP/backend.hcl" "$RUNNER_TEMP/staging.tfvars.json" "$RUNNER_TEMP/approved-smoke-cleanup.tfplan"

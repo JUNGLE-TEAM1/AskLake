@@ -15,6 +15,7 @@ try {
     ttlSweepEvidence: readJson(options.ttlSweepEvidence),
   }, contract);
   mkdirSync(path.dirname(options.outputJson), { recursive: true, mode: 0o700 });
+  mkdirSync(path.dirname(options.outputMarkdown), { recursive: true, mode: 0o700 });
   writeFileSync(options.outputJson, `${JSON.stringify(handoff, null, 2)}\n`, { mode: 0o600 });
   writeFileSync(options.outputMarkdown, renderAwsStagingHandoffMarkdown(handoff), { mode: 0o600 });
   console.log(`ASKLAKE_AWS_STAGING_HANDOFF=${JSON.stringify({ status: handoff.status, stackId: handoff.stackId })}`);

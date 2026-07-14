@@ -6,7 +6,7 @@
 
 1. GitHub 기본 브랜치에 staging workflow가 존재하고 `AWS_ACCOUNT_ID`, `AWS_GITHUB_OIDC_ROLE_ARN`, `AWS_TERRAFORM_STATE_BUCKET`, `AWS_TERRAFORM_STATE_KMS_KEY_ARN`이 해당 Environment에 설정돼 있어야 한다.
 2. AWS OIDC role은 Terraform state S3의 List/Get, staging artifact/evidence S3의 Get/Put, KMS, SSM Send/GetCommand, Pricing, Terraform이 생성하는 staging resource 제어 권한을 가져야 한다. 장기 access key를 추가하지 않는다.
-3. `asklake-aws-staging-apply`, `artifacts`, `smoke`, `destroy`, `ttl-sweep` Environment의 승인 정책을 확인한다. smoke는 실제 SSM 실행 뒤 evidence export를 확인하고 같은 승인 범위에서 teardown한다.
+3. `asklake-aws-staging-apply`, `artifacts`, `smoke`, `destroy`, `ttl-sweep` Environment의 승인 정책을 확인한다. smoke는 대상 stack 확인 뒤 completion receipt를 남기고, cleanup plan artifact 검토 뒤 teardown은 별도 `destroy` 보호 Environment 승인에서만 수행한다.
 4. 실제 EMR Serverless quota, Budget 알림 수신자, approved smoke-runner AMI, state backend가 준비됐는지 platform 담당자에게 확인한다.
 
 ## 실행 순서와 보존물
@@ -19,7 +19,7 @@
 | 4 | TTL Sweep | redacted state expiry evidence | 만료/invalid이면 `destroy:<stackId>` 승인 |
 | 5 | Destroy | destroy plan/result receipt | 잔존 resource를 platform 담당자와 확인 |
 
-smoke 성공 여부와 관계없이 `asklake.aws-staging-smoke-cleanup.v1` receipt가 있어야 한다. SSM 실행을 시작했는데 evidence 또는 cleanup receipt가 없으면 Phase 5는 통과가 아니며, 기존 `AWS Staging Destroy` workflow로 해당 stack을 수동 정리한다.
+state/runner가 확인된 smoke는 성공 여부와 관계없이 `asklake.aws-staging-smoke-run.v1` completion receipt와 `asklake.aws-staging-smoke-cleanup.v1` receipt가 있어야 한다. SSM 실행을 시작했는데 evidence가 없거나, protected cleanup 승인 뒤 cleanup receipt가 없으면 Phase 5는 통과가 아니며, 기존 `AWS Staging Destroy` workflow로 해당 stack을 수동 정리한다.
 
 ## Handoff bundle 생성
 
