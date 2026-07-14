@@ -127,7 +127,7 @@ function validateContract(contract) {
   assert.equal(network.s3GatewayEndpointRequired, true, "private S3 access is required");
   assertStringSet(
     network.requiredInterfaceEndpoints,
-    ["ssm", "ssmmessages", "ec2messages", "logs", "emr-serverless"],
+    ["ssm", "ssmmessages", "ec2messages", "logs", "monitoring", "emr-serverless"],
     "private interface endpoints",
   );
   assert.equal(network.publicIngressAllowed, false, "public ingress is forbidden");

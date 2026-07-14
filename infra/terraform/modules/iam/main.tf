@@ -196,13 +196,6 @@ data "aws_iam_policy_document" "smoke_runner" {
   }
 
   statement {
-    sid       = "InspectMSKControlPlane"
-    effect    = "Allow"
-    actions   = ["kafka:DescribeClusterV2", "kafka:GetBootstrapBrokers"]
-    resources = [var.msk_cluster_arn]
-  }
-
-  statement {
     sid       = "ConnectMSKCluster"
     effect    = "Allow"
     actions   = ["kafka-cluster:Connect", "kafka-cluster:DescribeCluster"]

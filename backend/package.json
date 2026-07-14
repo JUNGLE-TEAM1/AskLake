@@ -62,6 +62,7 @@
     "verify:aws-staging-terraform": "npm run verify:aws-staging-terraform:static && ../infra/terraform/scripts/verify.sh",
     "aws-staging:render-runtime": "node scripts/render-aws-staging-runtime.mjs",
     "aws-staging:prepare-terraform": "node scripts/prepare-aws-staging-terraform-inputs.mjs",
+    "aws-staging:fingerprint-plan": "node scripts/fingerprint-terraform-plan.mjs",
     "aws-staging:upload-continuous-jars": "node scripts/upload-emr-continuous-jars.mjs",
     "aws-staging:activate-runtime": "node scripts/activate-aws-staging-runtime.mjs",
     "verify:aws-staging-runtime": "node scripts/verify-aws-staging-runtime.mjs",

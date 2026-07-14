@@ -5,7 +5,7 @@
 
 이 EC2 demo 배포는 Issue #727의 일회성 EMR Serverless/MSK Serverless staging과 별개다. Phase 1 Terraform, Phase 2 output 변환기와 Phase 3 수동 OIDC workflow가 있어도 일반 `scripts/deploy.sh` 또는 애플리케이션 재배포는 이를 실행하지 않는다. staging IaC/smoke의 Phase, 비용·TTL과 수동 승인 경계는 [AWS Staging IaC와 실제 Smoke 자동화 계획](aws-staging-iac-smoke-plan.md)을 따른다.
 
-승인된 staging apply 뒤에는 `terraform output -json`을 `npm --prefix backend run aws-staging:render-runtime`에 직접 pipe한다. `deploy/generated/aws-staging/<stackId>.env`는 broker 원문이 있는 mode `0600` private fragment이고, 인접 manifest는 broker 개수/SHA-256만 보존한다. 둘 다 Git ignore 대상이며 일반 EC2 `deploy/.env`나 shell log에 복사하지 않는다. Phase 3 artifact workflow가 checksum JAR bundle을 검증한 뒤 만든 활성 env도 staging artifact bucket의 실행별 runtime prefix에만 두며 이 EC2 demo 배포가 자동으로 읽지 않는다.
+승인된 staging apply 뒤에는 `terraform output -json`을 `npm --prefix backend run aws-staging:render-runtime`에 직접 pipe한다. `deploy/generated/aws-staging/<stackId>.env`는 broker 원문이 있는 mode `0600` private fragment이고, 인접 manifest는 broker 개수/SHA-256만 보존한다. 둘 다 Git ignore 대상이며 일반 EC2 `deploy/.env`나 shell log에 복사하지 않는다. Phase 3 artifact workflow가 conditional write와 S3 checksum으로 JAR bundle을 검증한 뒤 만든 활성 env도 staging artifact bucket의 실행별 runtime prefix에만 두며 이 EC2 demo 배포가 자동으로 읽지 않는다. staging apply/destroy는 승인 후 re-plan fingerprint가 검토본과 다르면 실행하지 않는다.
 
 ## 전제
 

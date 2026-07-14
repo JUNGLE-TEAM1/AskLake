@@ -155,6 +155,7 @@ function validateTerraform(files) {
   assertContains(iamMain, 'variable = "iam:PassedToService"', "PassRole must bind EMR Serverless");
   assertContains(iamMain, '"kafka-cluster:ReadData"', "MSK read permission is missing");
   assertContains(iamMain, '"kafka-cluster:WriteData"', "smoke producer permission is missing");
+  assert.doesNotMatch(iamMain, /kafka:GetBootstrapBrokers|kafka:DescribeClusterV2/, "runner must use rendered brokers without MSK control-plane egress");
   assertContains(iamMain, '"logs:DescribeLogGroups"', "EMR CloudWatch discovery permission is missing");
   assertContains(iamMain, "AmazonSSMManagedInstanceCore", "SSM runner policy is missing");
 
@@ -241,6 +242,12 @@ expectInvalid(
   "modules/network/main.tf",
   (source) => source.replace('    "emr-serverless",\n', ""),
   /required interface endpoint missing: emr-serverless/,
+);
+expectInvalid(
+  files,
+  "modules/network/main.tf",
+  (source) => source.replace('    "monitoring",\n', ""),
+  /required interface endpoint missing: monitoring/,
 );
 expectInvalid(
   files,

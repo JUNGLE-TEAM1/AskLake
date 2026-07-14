@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { lstatSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 
-import { PutObjectCommand } from "@aws-sdk/client-s3";
+import { HeadObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 
 export const EMR_JAR_BUNDLE_SCHEMA = "asklake.emr-continuous-jar-bundle.v1";
 
@@ -69,25 +69,77 @@ export async function uploadEmrJarBundle(bundle, s3Client) {
   if (manifest?.schemaVersion !== EMR_JAR_BUNDLE_SCHEMA) fail("EMR JAR bundle manifest is invalid.");
   const target = parseS3Uri(manifest.bundleRootUri);
   for (const entry of bundle.entries) {
-    await s3Client.send(new PutObjectCommand({
-      Body: readFileSync(entry.absolutePath),
+    const body = readFileSync(entry.absolutePath);
+    await putImmutableObject(s3Client, {
+      Body: body,
       Bucket: target.bucket,
+      ChecksumAlgorithm: "SHA256",
+      ChecksumSHA256: base64Sha256(body),
       ContentType: "application/java-archive",
+      IfNoneMatch: "*",
       Key: `${target.key}/${entry.fileName}`,
       Metadata: {
         "asklake-bundle-sha256": manifest.bundleSha256,
         "asklake-sha256": entry.sha256,
       },
-    }));
+    });
   }
-  await s3Client.send(new PutObjectCommand({
-    Body: `${JSON.stringify(manifest, null, 2)}\n`,
+  const manifestBody = `${JSON.stringify(manifest, null, 2)}\n`;
+  const manifestChecksum = sha256(manifestBody);
+  await putImmutableObject(s3Client, {
+    Body: manifestBody,
     Bucket: target.bucket,
+    ChecksumAlgorithm: "SHA256",
+    ChecksumSHA256: base64Sha256(manifestBody),
     ContentType: "application/json; charset=utf-8",
+    IfNoneMatch: "*",
     Key: `${target.key}/bundle.json`,
-    Metadata: { "asklake-bundle-sha256": manifest.bundleSha256 },
-  }));
+    Metadata: {
+      "asklake-bundle-sha256": manifest.bundleSha256,
+      "asklake-manifest-sha256": manifestChecksum,
+    },
+  });
   return manifest;
+}
+
+async function putImmutableObject(s3Client, input) {
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      const response = await s3Client.send(new PutObjectCommand(input));
+      if (response?.ChecksumSHA256 !== input.ChecksumSHA256) fail("S3 upload checksum response is invalid.");
+      await verifyRemoteObject(s3Client, input);
+      return;
+    } catch (error) {
+      if (isS3Status(error, 412)) {
+        await verifyRemoteObject(s3Client, input);
+        return;
+      }
+      if (isS3Status(error, 409) && attempt < 3) continue;
+      throw error;
+    }
+  }
+  fail("S3 immutable upload retry limit was exceeded.");
+}
+
+async function verifyRemoteObject(s3Client, input) {
+  const head = await s3Client.send(new HeadObjectCommand({
+    Bucket: input.Bucket,
+    ChecksumMode: "ENABLED",
+    Key: input.Key,
+  }));
+  if (head?.ChecksumSHA256 !== input.ChecksumSHA256
+    || head?.ContentLength !== byteLength(input.Body)) {
+    fail("S3 immutable object checksum or size does not match.");
+  }
+  for (const [name, value] of Object.entries(input.Metadata || {})) {
+    if (head.Metadata?.[name.toLowerCase()] !== value) fail("S3 immutable object metadata does not match.");
+  }
+}
+
+function isS3Status(error, status) {
+  return error?.$metadata?.httpStatusCode === status
+    || (status === 412 && ["PreconditionFailed", "ConditionalRequestFailed"].includes(error?.name))
+    || (status === 409 && error?.name === "ConditionalRequestConflict");
 }
 
 function canonicalArtifactRoot(value) {
@@ -107,6 +159,14 @@ function parseS3Uri(value) {
 
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function base64Sha256(value) {
+  return createHash("sha256").update(value).digest("base64");
+}
+
+function byteLength(value) {
+  return Buffer.isBuffer(value) ? value.length : Buffer.byteLength(value);
 }
 
 function fail(message) {

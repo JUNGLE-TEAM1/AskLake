@@ -93,8 +93,6 @@ jobs:
       - name: Prepare backend and validate confirmation
         env:
           AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
-          AWS_BUDGET_NOTIFICATION_EMAIL: ${{ secrets.AWS_BUDGET_NOTIFICATION_EMAIL }}
-          AWS_EMR_SERVERLESS_CONCURRENT_VCPU: "16"
           AWS_GITHUB_OIDC_ROLE_ARN: ${{ vars.AWS_GITHUB_OIDC_ROLE_ARN }}
           AWS_STAGING_CONFIRMATION: ${{ inputs.confirmation }}
           AWS_STAGING_ENABLE_SMOKE_RUNNER: "false"

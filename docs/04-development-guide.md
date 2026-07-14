@@ -197,7 +197,7 @@ npm run verify:aws-staging-workflows
 
 세 번째 명령은 mock Terraform JSON을 stack별 private env와 redacted manifest로 바꾸고 기존 Spark/MSK/EMR config parser가 그대로 읽는지 확인한다. capacity/account/bucket/sensitivity 변조, broker 문자열 주입, 재실행 overwrite와 파일 mode `0600`을 함께 검사하며 AWS API를 호출하지 않는다.
 
-네 번째 명령은 Phase 3의 manual-only OIDC workflow, 보호 Environment, account/quota/TTL/확인 문자열 gate, private 입력 제거, GitHub artifact redaction을 정적으로 검증한다. 임시 JAR로 필수 Spark Kafka/MSK IAM dependency, 파일별·bundle SHA-256, 불변 S3 prefix와 Continuous 활성화 순서도 실행하지만 AWS API나 유료 resource는 사용하지 않는다.
+네 번째 명령은 Phase 3의 manual-only OIDC workflow, 보호 Environment, account/quota/TTL/확인 문자열 gate, plan fingerprint 동일성, private 입력 제거, GitHub artifact redaction을 정적으로 검증한다. 임시 JAR와 fake S3로 필수 Spark Kafka/MSK IAM dependency, conditional write, 파일별·bundle SHA-256, 원격 checksum/size/metadata, idempotent replay·부분 실패와 Continuous 활성화 순서도 실행하지만 AWS API나 유료 resource는 사용하지 않는다.
 
 실제 apply 뒤에는 Terraform sensitive output을 log나 중간 파일에 남기지 않고 아래처럼 pipe한다. 생성 위치는 Git ignore 대상이며 일반 `deploy/.env`에 수작업 복사하지 않는다.
 
@@ -209,7 +209,7 @@ terraform -chdir=infra/terraform/environments/staging output -json \
 
 생성 env는 Batch와 MSK를 연결하지만 checksum 고정 Continuous JAR bundle 업로드 전까지 `ASKLAKE_EMR_SERVERLESS_CONTINUOUS_ENABLED=false`다. Phase 3 artifact workflow가 bundle을 검증한 뒤에만 활성화해야 하며, 생성 manifest의 `runtimePromotionAllowed`는 항상 false다.
 
-실제 provider plan은 platform이 만든 S3/KMS state backend와 GitHub OIDC role, account quota, 알림 email, 실행별 `stackId`/`ExpiresAt`을 외부 입력으로 준비한 뒤 수행한다. `backend.hcl.example`과 `staging.tfvars.example`의 placeholder를 실제 값으로 바꿔 커밋하지 않는다. 권장 순서는 `AWS Staging Plan Apply`의 `plan`, 보호 Environment의 `apply`, `AWS Staging Artifacts`, Phase 4 smoke, 증거 export, `AWS Staging Destroy`다. mutation 입력은 각각 `apply:<stackId>`, `artifacts:<stackId>`, `destroy:<stackId>`와 일치해야 한다. workflow 구현 완료만으로 실제 AWS 연결 성공을 주장하지 않으며 전체 단계와 변경 승인 기준은 [AWS Staging IaC와 실제 Smoke 자동화 계획](aws-staging-iac-smoke-plan.md)을 따른다.
+실제 provider plan은 platform이 만든 S3/KMS state backend와 GitHub OIDC role, account quota, 알림 email, 실행별 `stackId`/`ExpiresAt`을 외부 입력으로 준비한 뒤 수행한다. `backend.hcl.example`과 `staging.tfvars.example`의 placeholder를 실제 값으로 바꿔 커밋하지 않는다. 권장 순서는 `AWS Staging Plan Apply`의 plan evidence 확인, 보호 Environment의 apply, `AWS Staging Artifacts`, Phase 4 smoke, 증거 export, `AWS Staging Destroy`의 destroy plan 확인과 apply 승인이다. apply/destroy는 승인 후 re-plan fingerprint가 검토본과 같을 때만 실행되며 mutation 입력은 각각 `apply:<stackId>`, `artifacts:<stackId>`, `destroy:<stackId>`와 일치해야 한다. destroy 준비는 Budget email과 EMR quota가 없어도 가능하다. workflow 구현 완료만으로 실제 AWS 연결 성공을 주장하지 않으며 전체 단계와 변경 승인 기준은 [AWS Staging IaC와 실제 Smoke 자동화 계획](aws-staging-iac-smoke-plan.md)을 따른다.
 
 ### Phase 7 부하·장애·비용 검증
 

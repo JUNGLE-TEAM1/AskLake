@@ -35,17 +35,18 @@ export function prepareAwsStagingTerraformInputs(input, contract, options = {}) 
   if (kmsMatch?.[1] !== region || kmsMatch?.[2] !== accountId) {
     fail("Terraform state KMS key does not match the AWS account and region.");
   }
-  const availableVcpu = finiteNumber(input.availableEmrServerlessConcurrentVcpu, "EMR Serverless quota");
-  if (availableVcpu < contract.runtime.minimumRequiredAccountConcurrentVcpu) {
+  const provisioningOperation = operation === "plan" || operation === "apply";
+  const availableVcpu = provisioningOperation
+    ? finiteNumber(input.availableEmrServerlessConcurrentVcpu, "EMR Serverless quota")
+    : contract.runtime.minimumRequiredAccountConcurrentVcpu;
+  if (provisioningOperation && availableVcpu < contract.runtime.minimumRequiredAccountConcurrentVcpu) {
     fail("EMR Serverless concurrent vCPU quota is below the Phase contract.");
   }
-  const budgetEmail = requiredPattern(
-    input.budgetNotificationEmail,
-    /^[^@\s]+@[^@\s]+\.[^@\s]+$/,
-    "Budget notification endpoint",
-  );
-  const enableSmokeRunner = booleanValue(input.enableSmokeRunner);
-  const smokeRunnerAmiId = String(input.smokeRunnerAmiId || "").trim();
+  const budgetEmail = provisioningOperation
+    ? requiredPattern(input.budgetNotificationEmail, /^[^@\s]+@[^@\s]+\.[^@\s]+$/, "Budget notification endpoint")
+    : `asklake-${operation}@example.invalid`;
+  const enableSmokeRunner = provisioningOperation ? booleanValue(input.enableSmokeRunner) : false;
+  const smokeRunnerAmiId = provisioningOperation ? String(input.smokeRunnerAmiId || "").trim() : "";
   if (enableSmokeRunner && !/^ami-[0-9a-f]{17}$/.test(smokeRunnerAmiId)) {
     fail("Enabled smoke runner requires an approved AMI identity.");
   }
@@ -109,7 +110,10 @@ function resolveExpiry(input, contract, now) {
   if (explicit) {
     expiresAt = new Date(explicit);
   } else {
-    const ttlHours = finiteNumber(input.ttlHours || contract.costControl.stackTtlHours, "Stack TTL");
+    const ttlInput = input.ttlHours === undefined || input.ttlHours === null
+      ? contract.costControl.stackTtlHours
+      : input.ttlHours;
+    const ttlHours = finiteNumber(ttlInput, "Stack TTL");
     if (ttlHours <= 0 || ttlHours > contract.costControl.maximumStackTtlHours) {
       fail("Stack TTL is outside the Phase contract.");
     }

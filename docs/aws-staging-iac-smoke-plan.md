@@ -69,8 +69,9 @@ machine-readable source of truth는 [`infra/contracts/aws-staging-smoke.v1.json`
 - 3개 AZ의 private subnet은 `10.77.0.0/20`, `10.77.16.0/20`, `10.77.32.0/20`이다.
 - public subnet, public ingress, SSH ingress를 만들지 않는다.
 - NAT Gateway와 runtime Maven egress를 사용하지 않는다.
-- S3 gateway endpoint와 SSM/SSM Messages/EC2 Messages/CloudWatch Logs/EMR Serverless interface endpoint를 사용한다.
+- S3 gateway endpoint와 SSM/SSM Messages/EC2 Messages/CloudWatch Logs/CloudWatch Metrics/EMR Serverless interface endpoint를 사용한다. no-NAT smoke runner의 `GetMetricData`는 `monitoring` endpoint를 통해서만 실행한다.
 - smoke runner는 private subnet의 일회성 EC2이며 SSH 대신 SSM으로 실행한다. 실행 bundle과 결과는 S3로 전달한다.
+- MSK bootstrap broker는 Terraform sensitive output에서 private Runtime env로 전달하므로 runner에 MSK control-plane 조회 권한이나 public API egress를 주지 않는다.
 - EMR Continuous dependency는 runtime package download가 아니라 checksum을 고정한 S3 JAR bundle을 사용한다.
 
 ### 3.4 인증과 secret
@@ -131,7 +132,7 @@ Terraform root는 `infra/terraform` 아래에 있으며 AWS provider `6.54.0`을
 | 경로 | 소유 resource |
 | --- | --- |
 | `bootstrap/` | staging stack과 분리된 state S3, KMS, versioning, public access block, native S3 lockfile |
-| `modules/network` | 전용 VPC, 3개 private subnet, route table, security group, S3 gateway/5개 interface endpoint |
+| `modules/network` | 전용 VPC, 3개 private subnet, route table, security group, S3 gateway/6개 interface endpoint |
 | `modules/storage` | 실행별 artifact/output/checkpoint/report bucket과 data KMS key |
 | `modules/msk` | IAM authentication을 사용하는 MSK Serverless cluster |
 | `modules/emr` | `emr-7.9.0`, X86_64, application별 16 vCPU 상한의 Batch/Continuous application |
@@ -180,14 +181,14 @@ Phase 3은 일반 CI나 애플리케이션 배포에 연결하지 않는다. 다
 
 | Workflow | 역할 | 변경 승인 |
 | --- | --- | --- |
-| `aws-staging-plan-apply.yml` | 실제 quota 조회, Terraform plan 증거 생성, 승인 후 같은 만료 시각으로 재-plan/apply, private Runtime env 생성 | `plan`은 변경 없음, `apply`는 `asklake-aws-staging-apply` Environment와 `apply:<stackId>` |
+| `aws-staging-plan-apply.yml` | 실제 quota 조회, Terraform plan 증거/fingerprint 생성, 승인 후 같은 만료 시각으로 재-plan하고 fingerprint가 같을 때만 apply, private Runtime env 생성 | `plan`은 변경 없음, `apply`는 `asklake-aws-staging-apply` Environment와 `apply:<stackId>` |
 | `aws-staging-artifacts.yml` | state에서 private Runtime 재생성, Maven 의존성 materialize, SHA-256 JAR bundle·Python entry point 업로드, Continuous 활성 env를 암호화된 staging S3에 전달 | `asklake-aws-staging-artifacts` Environment와 `artifacts:<stackId>` |
-| `aws-staging-destroy.yml` | 별도 destroy plan을 만들고 격리 stack 제거 | `asklake-aws-staging-destroy` Environment와 `destroy:<stackId>` |
+| `aws-staging-destroy.yml` | 승인 전에 destroy plan 증거/fingerprint 생성, 별도 승인 뒤 같은 fingerprint일 때만 격리 stack 제거 | apply job의 `asklake-aws-staging-destroy` Environment와 `destroy:<stackId>` |
 
 - 모든 AWS job은 GitHub OIDC의 단기 credential만 사용하며 `id-token: write`, 예상 account 확인, `allowed-account-ids`, account masking과 기존 credential unset을 적용한다.
-- `apply`는 plan job의 binary plan을 재사용하지 않는다. 보호 Environment 승인 뒤 동일 commit·stack·만료 시각으로 다시 plan하고 바로 apply한다.
+- `apply`와 `destroy`는 binary plan을 job 사이에 전달하지 않는다. 검토 job은 민감한 plan JSON을 출력하지 않고 timestamp만 제외한 전체 plan 의미의 SHA-256 fingerprint를 남긴다. 보호 Environment 승인 뒤 동일 commit·stack·만료 시각으로 다시 plan하고 fingerprint가 정확히 같은 경우에만 적용한다.
 - GitHub artifact에는 사람이 검토할 text plan, redacted manifest, checksum/전달 receipt만 남긴다. backend 설정, tfvars, broker가 든 Runtime `.env`, Terraform binary plan은 job 종료 시 삭제한다.
-- Continuous dependency는 `infra/artifacts/emr-continuous-dependencies.pom.xml`의 정확한 버전에서 만들고 각 JAR와 전체 bundle SHA-256을 계산한다. bundle은 `s3://.../dependencies/<bundleSha256>/`에 업로드되며 필수 Spark Kafka/MSK IAM JAR가 검증된 뒤에만 Continuous flag를 켠다.
+- Continuous dependency는 `infra/artifacts/emr-continuous-dependencies.pom.xml`의 정확한 버전에서 만들고 각 JAR와 전체 bundle SHA-256을 계산한다. `If-None-Match: *`와 S3 SHA-256/size/metadata 조회로 동일 key 덮어쓰기를 차단하고 모든 JAR 검증 뒤 `bundle.json`을 마지막에 기록한다. 필수 Spark Kafka/MSK IAM JAR와 manifest까지 원격 검증된 뒤에만 Continuous flag를 켠다.
 - artifact workflow가 전달한 private Runtime env는 staging artifact bucket의 실행별 `runtime/<runId>-<attempt>/` 경로에만 둔다. 이것은 Phase 4 smoke runner가 소비할 입력이며 production 배포 파일이 아니다.
 - workflow 파일이 존재한다고 AWS 연결 성공을 뜻하지 않는다. GitHub Environment/variable/secret과 AWS OIDC trust/IAM permission을 platform이 준비한 뒤 Phase 4에서 실제 수동 실행한다.
 
@@ -198,7 +199,7 @@ cd backend
 npm run verify:aws-staging-workflows
 ```
 
-이 verifier는 입력/확인 문자열/quota/KMS/TTL 거부, private 파일 권한, JAR checksum·불변 prefix·필수 dependency, Continuous 활성화 순서, manual-only trigger, OIDC/action version, 보호 Environment, redacted artifact와 독립 destroy 경계를 검증한다.
+이 verifier는 입력/확인 문자열/quota/KMS/TTL 거부, cleanup의 budget/quota 독립성, private 파일 권한, plan fingerprint 변조, JAR conditional write·원격 checksum·부분 실패·필수 dependency, Continuous 활성화 순서, manual-only trigger, OIDC/action version, 보호 Environment, redacted artifact와 2단계 destroy 경계를 검증한다. 별도 `AWS Staging Contract Checks` PR workflow는 AWS credential과 `id-token: write` 없이 이 verifier와 Terraform mock test를 실행한다.
 
 ## 7. 실제 plan/apply 이전 외부 준비값
 
@@ -212,7 +213,7 @@ npm run verify:aws-staging-workflows
 - AWS Billing에서 활성화된 `StackId` user-defined cost allocation tag
 - 실행별 `stackId`와 ISO-8601 `ExpiresAt`
 
-GitHub OIDC provider와 Terraform 실행 role은 계정 단위 platform bootstrap으로 한 번 준비한다. AskLake Terraform은 EMR execution/smoke runner role과 staging resource policy를 소유한다. 이 선행 조건이 없으면 로컬 AWS key를 임시로 추가하지 말고 plan/apply를 중단한다.
+GitHub OIDC provider와 Terraform 실행 role은 계정 단위 platform bootstrap으로 한 번 준비한다. AskLake Terraform은 EMR execution/smoke runner role과 staging resource policy를 소유한다. artifact 단계의 control-plane role에는 생성된 artifact bucket의 `PutObject`/`GetObject`와 data KMS encrypt/decrypt가 있어야 S3 checksum을 재조회할 수 있다. 이 선행 조건이 없으면 로컬 AWS key를 임시로 추가하지 말고 plan/apply를 중단한다.
 
 Repository에는 `AWS_ACCOUNT_ID`, `AWS_GITHUB_OIDC_ROLE_ARN`, `AWS_TERRAFORM_STATE_BUCKET`, `AWS_TERRAFORM_STATE_KMS_KEY_ARN` variable과 `AWS_BUDGET_NOTIFICATION_EMAIL` secret이 필요하다. private SSM runner를 켤 때만 승인된 `AWS_STAGING_SMOKE_RUNNER_AMI_ID` variable을 추가한다. 세 mutation Environment에는 required reviewer를 설정하고 OIDC role trust policy는 이 repository와 해당 Environment/branch claim으로 제한한다.
 

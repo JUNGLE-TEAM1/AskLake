@@ -12,6 +12,7 @@ locals {
     "ssmmessages",
     "ec2messages",
     "logs",
+    "monitoring",
     "emr-serverless",
   ])
 }

@@ -5,7 +5,7 @@ Issue #727의 임시 AWS staging을 소유한다. 일반 애플리케이션 배�
 ## 구성
 
 - `bootstrap/`: versioning/KMS/S3 lockfile을 사용하는 별도 Terraform state stack
-- `modules/network`: 3개 private subnet, no-NAT, no-public-ingress, S3/SSM/Logs/EMR Serverless endpoint
+- `modules/network`: 3개 private subnet, no-NAT, no-public-ingress, S3/SSM/Logs/CloudWatch Metrics/EMR Serverless endpoint
 - `modules/storage`: artifact/output/checkpoint/report S3와 staging data KMS key
 - `modules/msk`: IAM/TLS 전용 MSK Serverless
 - `modules/emr`: 16 vCPU 상한의 Batch/Continuous EMR Serverless application
@@ -47,8 +47,8 @@ terraform -chdir=infra/terraform/environments/staging output -json \
       --output-dir deploy/generated/aws-staging
 ```
 
-Terraform sensitive JSON을 `tee`하거나 console에 출력하지 않는다. 생성 파일은 mode `0600`이며 `deploy/generated/` 전체가 Git ignore 대상이다. manifest에는 broker 원문이 없다. Continuous flag는 Phase 3 artifact workflow가 checksum 고정 JAR bundle을 불변 S3 prefix에 업로드하고 manifest를 검증한 뒤에만 true가 된다.
+Terraform sensitive JSON을 `tee`하거나 console에 출력하지 않는다. 생성 파일은 mode `0600`이며 `deploy/generated/` 전체가 Git ignore 대상이다. manifest에는 broker 원문이 없다. Continuous flag는 Phase 3 artifact workflow가 checksum 고정 JAR bundle을 conditional write로 올리고 S3 SHA-256/size/metadata와 manifest를 검증한 뒤에만 true가 된다.
 
-실제 실행은 `.github/workflows/aws-staging-plan-apply.yml`, `aws-staging-artifacts.yml`, `aws-staging-destroy.yml`의 수동 dispatch만 사용한다. apply/artifact/destroy는 별도 보호 Environment와 `apply|artifacts|destroy:<stackId>` 확인을 요구하며 OIDC 단기 credential을 사용한다. workflow 코드를 로컬 검증한 현재 단계에서는 AWS plan/apply를 실행하지 않았고 resource나 비용이 발생하지 않았다.
+실제 실행은 `.github/workflows/aws-staging-plan-apply.yml`, `aws-staging-artifacts.yml`, `aws-staging-destroy.yml`의 수동 dispatch만 사용한다. apply/artifact/destroy는 별도 보호 Environment와 `apply|artifacts|destroy:<stackId>` 확인을 요구하며 OIDC 단기 credential을 사용한다. apply와 destroy는 검토 plan의 의미적 fingerprint와 승인 후 re-plan이 정확히 같을 때만 변경한다. destroy 준비는 Budget email과 EMR quota에 의존하지 않는다. `.github/workflows/aws-staging-contract-checks.yml`은 PR에서 credential/id-token 없이 로컬 계약과 mock plan만 검증한다. 현재 단계에서는 AWS plan/apply를 실행하지 않았고 resource나 비용이 발생하지 않았다.
 
 `StackId` 기반 Budget filter가 비용을 분리하려면 platform 운영자가 AWS Billing의 user-defined cost allocation tag에서 `StackId`를 미리 활성화해야 한다. AWS Budget 알림은 실시간 종료 장치가 아니며 destroy/TTL guard를 대체하지 않는다.

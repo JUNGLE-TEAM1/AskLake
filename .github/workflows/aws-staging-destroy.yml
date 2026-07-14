@@ -25,8 +25,117 @@ env:
   TF_INPUT: "false"
 
 jobs:
-  destroy:
-    name: Independently approved Terraform destroy
+  destroy_plan:
+    name: Terraform destroy plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      expires_at: ${{ steps.prepare.outputs.expires_at }}
+      plan_fingerprint: ${{ steps.plan.outputs.plan_fingerprint }}
+      stack_id: ${{ steps.prepare.outputs.stack_id }}
+
+    steps:
+      - name: Checkout exact workflow commit
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22.23.1"
+          package-manager-cache: false
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "1.15.8"
+          terraform_wrapper: false
+
+      - name: Configure short-lived AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_GITHUB_OIDC_ROLE_ARN }}
+          role-session-name: asklake-staging-destroy-plan-${{ github.run_id }}
+          aws-region: ap-northeast-2
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          mask-aws-account-id: true
+          unset-current-credentials: true
+
+      - name: Verify AWS account
+        env:
+          EXPECTED_AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          actual_account_id="$(aws sts get-caller-identity --query Account --output text)"
+          test "$actual_account_id" = "$EXPECTED_AWS_ACCOUNT_ID"
+
+      - name: Prepare private destroy inputs
+        id: prepare
+        env:
+          AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          AWS_GITHUB_OIDC_ROLE_ARN: ${{ vars.AWS_GITHUB_OIDC_ROLE_ARN }}
+          AWS_STAGING_CONFIRMATION: ${{ inputs.confirmation }}
+          AWS_STAGING_ENABLE_SMOKE_RUNNER: "false"
+          AWS_STAGING_OPERATION: destroy
+          AWS_STAGING_STACK_ID: ${{ inputs.stack_id }}
+          AWS_STAGING_TTL_HOURS: "1"
+          AWS_TERRAFORM_STATE_BUCKET: ${{ vars.AWS_TERRAFORM_STATE_BUCKET }}
+          AWS_TERRAFORM_STATE_KMS_KEY_ARN: ${{ vars.AWS_TERRAFORM_STATE_KMS_KEY_ARN }}
+        run: |
+          set -euo pipefail
+          node backend/scripts/prepare-aws-staging-terraform-inputs.mjs \
+            --backend-file "$RUNNER_TEMP/backend.hcl" \
+            --tfvars-file "$RUNNER_TEMP/staging.tfvars.json" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Create reviewable destroy plan
+        id: plan
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/destroy-evidence"
+          terraform -chdir=infra/terraform/environments/staging init \
+            -reconfigure \
+            -backend-config="$RUNNER_TEMP/backend.hcl"
+          terraform -chdir=infra/terraform/environments/staging plan \
+            -destroy \
+            -input=false \
+            -lock-timeout=5m \
+            -var-file="$RUNNER_TEMP/staging.tfvars.json" \
+            -out="$RUNNER_TEMP/destroy.tfplan"
+          terraform -chdir=infra/terraform/environments/staging show \
+            -no-color "$RUNNER_TEMP/destroy.tfplan" \
+            > "$RUNNER_TEMP/destroy-evidence/plan.txt"
+          plan_fingerprint="$(terraform -chdir=infra/terraform/environments/staging show -json "$RUNNER_TEMP/destroy.tfplan" \
+            | node backend/scripts/fingerprint-terraform-plan.mjs)"
+          test "${#plan_fingerprint}" -eq 64
+          printf 'plan_fingerprint=%s\n' "$plan_fingerprint" >> "$GITHUB_OUTPUT"
+          export PLAN_FINGERPRINT="$plan_fingerprint"
+          node -e 'const fs=require("fs"); fs.writeFileSync(process.argv[1], JSON.stringify({schemaVersion:"asklake.aws-staging-destroy-plan.v1", commit:process.env.GITHUB_SHA, stackId:process.env.STACK_ID, planFingerprint:process.env.PLAN_FINGERPRINT}, null, 2)+"\n")' \
+            "$RUNNER_TEMP/destroy-evidence/metadata.json"
+        env:
+          STACK_ID: ${{ inputs.stack_id }}
+
+      - name: Upload destroy plan evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: aws-staging-destroy-${{ inputs.stack_id }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/destroy-evidence/
+          if-no-files-found: error
+          retention-days: 7
+          include-hidden-files: false
+
+      - name: Remove private destroy inputs
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/backend.hcl" "$RUNNER_TEMP/staging.tfvars.json" "$RUNNER_TEMP/destroy.tfplan"
+
+  destroy_apply:
+    name: Approved Terraform destroy apply
+    needs: destroy_plan
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     environment: asklake-aws-staging-destroy
@@ -56,7 +165,7 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.AWS_GITHUB_OIDC_ROLE_ARN }}
-          role-session-name: asklake-staging-destroy-${{ github.run_id }}
+          role-session-name: asklake-staging-destroy-apply-${{ github.run_id }}
           aws-region: ap-northeast-2
           allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
           mask-aws-account-id: true
@@ -70,17 +179,14 @@ jobs:
           actual_account_id="$(aws sts get-caller-identity --query Account --output text)"
           test "$actual_account_id" = "$EXPECTED_AWS_ACCOUNT_ID"
 
-      - name: Prepare private destroy inputs
+      - name: Recreate exact destroy inputs
         env:
           AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
-          AWS_BUDGET_NOTIFICATION_EMAIL: ${{ secrets.AWS_BUDGET_NOTIFICATION_EMAIL }}
-          AWS_EMR_SERVERLESS_CONCURRENT_VCPU: "16"
           AWS_GITHUB_OIDC_ROLE_ARN: ${{ vars.AWS_GITHUB_OIDC_ROLE_ARN }}
           AWS_STAGING_CONFIRMATION: ${{ inputs.confirmation }}
-          AWS_STAGING_ENABLE_SMOKE_RUNNER: "false"
+          AWS_STAGING_EXPIRES_AT: ${{ needs.destroy_plan.outputs.expires_at }}
           AWS_STAGING_OPERATION: destroy
-          AWS_STAGING_STACK_ID: ${{ inputs.stack_id }}
-          AWS_STAGING_TTL_HOURS: "1"
+          AWS_STAGING_STACK_ID: ${{ needs.destroy_plan.outputs.stack_id }}
           AWS_TERRAFORM_STATE_BUCKET: ${{ vars.AWS_TERRAFORM_STATE_BUCKET }}
           AWS_TERRAFORM_STATE_KMS_KEY_ARN: ${{ vars.AWS_TERRAFORM_STATE_KMS_KEY_ARN }}
         run: |
@@ -89,10 +195,13 @@ jobs:
             --backend-file "$RUNNER_TEMP/backend.hcl" \
             --tfvars-file "$RUNNER_TEMP/staging.tfvars.json"
 
-      - name: Review destroy plan and remove the isolated stack
+      - name: Replan, verify approved fingerprint, and destroy
+        env:
+          APPROVED_PLAN_FINGERPRINT: ${{ needs.destroy_plan.outputs.plan_fingerprint }}
+          STACK_ID: ${{ needs.destroy_plan.outputs.stack_id }}
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/destroy-evidence"
+          mkdir -p "$RUNNER_TEMP/destroy-result"
           terraform -chdir=infra/terraform/environments/staging init \
             -reconfigure \
             -backend-config="$RUNNER_TEMP/backend.hcl"
@@ -101,31 +210,30 @@ jobs:
             -input=false \
             -lock-timeout=5m \
             -var-file="$RUNNER_TEMP/staging.tfvars.json" \
-            -out="$RUNNER_TEMP/destroy.tfplan"
-          terraform -chdir=infra/terraform/environments/staging show \
-            -no-color "$RUNNER_TEMP/destroy.tfplan" \
-            > "$RUNNER_TEMP/destroy-evidence/plan.txt"
+            -out="$RUNNER_TEMP/approved-destroy.tfplan"
+          actual_plan_fingerprint="$(terraform -chdir=infra/terraform/environments/staging show -json "$RUNNER_TEMP/approved-destroy.tfplan" \
+            | node backend/scripts/fingerprint-terraform-plan.mjs)"
+          test "${#APPROVED_PLAN_FINGERPRINT}" -eq 64
+          test "$actual_plan_fingerprint" = "$APPROVED_PLAN_FINGERPRINT"
           terraform -chdir=infra/terraform/environments/staging apply \
             -input=false \
             -lock-timeout=5m \
             -auto-approve \
-            "$RUNNER_TEMP/destroy.tfplan"
-          node -e 'const fs=require("fs"); fs.writeFileSync(process.argv[1], JSON.stringify({schemaVersion:"asklake.aws-staging-destroy.v1", commit:process.env.GITHUB_SHA, stackId:process.env.STACK_ID, status:"destroy-request-completed"}, null, 2)+"\n")' \
-            "$RUNNER_TEMP/destroy-evidence/receipt.json"
-        env:
-          STACK_ID: ${{ inputs.stack_id }}
+            "$RUNNER_TEMP/approved-destroy.tfplan"
+          node -e 'const fs=require("fs"); fs.writeFileSync(process.argv[1], JSON.stringify({schemaVersion:"asklake.aws-staging-destroy.v1", commit:process.env.GITHUB_SHA, stackId:process.env.STACK_ID, planFingerprint:process.env.APPROVED_PLAN_FINGERPRINT, status:"destroy-request-completed"}, null, 2)+"\n")' \
+            "$RUNNER_TEMP/destroy-result/receipt.json"
 
-      - name: Upload destroy evidence
-        if: always()
+      - name: Upload destroy result evidence
         uses: actions/upload-artifact@v7
         with:
-          name: aws-staging-destroy-${{ inputs.stack_id }}-${{ github.run_id }}
-          path: ${{ runner.temp }}/destroy-evidence/
-          if-no-files-found: warn
+          name: aws-staging-destroy-result-${{ needs.destroy_plan.outputs.stack_id }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/destroy-result/
+          if-no-files-found: error
           retention-days: 7
           include-hidden-files: false
 
-      - name: Remove private destroy inputs
+      - name: Remove private approved destroy inputs
         if: always()
         run: |
-          rm -f "$RUNNER_TEMP/backend.hcl" "$RUNNER_TEMP/staging.tfvars.json" "$RUNNER_TEMP/destroy.tfplan"
+          rm -rf "$RUNNER_TEMP/destroy-result"
+          rm -f "$RUNNER_TEMP/backend.hcl" "$RUNNER_TEMP/staging.tfvars.json" "$RUNNER_TEMP/approved-destroy.tfplan"

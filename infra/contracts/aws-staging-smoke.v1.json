@@ -50,6 +50,7 @@
       "ssmmessages",
       "ec2messages",
       "logs",
+      "monitoring",
       "emr-serverless"
     ],
     "publicIngressAllowed": false,

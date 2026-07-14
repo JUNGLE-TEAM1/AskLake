@@ -52,6 +52,7 @@ jobs:
       id-token: write
     outputs:
       expires_at: ${{ steps.prepare.outputs.expires_at }}
+      plan_fingerprint: ${{ steps.plan.outputs.plan_fingerprint }}
       stack_id: ${{ steps.prepare.outputs.stack_id }}
 
     steps:
@@ -131,6 +132,7 @@ jobs:
             --github-output "$GITHUB_OUTPUT"
 
       - name: Initialize and create review plan
+        id: plan
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/plan-evidence"
@@ -145,7 +147,12 @@ jobs:
           terraform -chdir=infra/terraform/environments/staging show \
             -no-color "$RUNNER_TEMP/staging.tfplan" \
             > "$RUNNER_TEMP/plan-evidence/plan.txt"
-          node -e 'const fs=require("fs"); fs.writeFileSync(process.argv[1], JSON.stringify({schemaVersion:"asklake.aws-staging-plan.v1", commit:process.env.GITHUB_SHA, operation:process.env.OPERATION, stackId:process.env.STACK_ID, expiresAt:process.env.EXPIRES_AT}, null, 2)+"\n")' \
+          plan_fingerprint="$(terraform -chdir=infra/terraform/environments/staging show -json "$RUNNER_TEMP/staging.tfplan" \
+            | node backend/scripts/fingerprint-terraform-plan.mjs)"
+          test "${#plan_fingerprint}" -eq 64
+          printf 'plan_fingerprint=%s\n' "$plan_fingerprint" >> "$GITHUB_OUTPUT"
+          export PLAN_FINGERPRINT="$plan_fingerprint"
+          node -e 'const fs=require("fs"); fs.writeFileSync(process.argv[1], JSON.stringify({schemaVersion:"asklake.aws-staging-plan.v1", commit:process.env.GITHUB_SHA, operation:process.env.OPERATION, stackId:process.env.STACK_ID, expiresAt:process.env.EXPIRES_AT, planFingerprint:process.env.PLAN_FINGERPRINT}, null, 2)+"\n")' \
             "$RUNNER_TEMP/plan-evidence/metadata.json"
         env:
           EXPIRES_AT: ${{ steps.prepare.outputs.expires_at }}
@@ -240,7 +247,9 @@ jobs:
             --backend-file "$RUNNER_TEMP/backend.hcl" \
             --tfvars-file "$RUNNER_TEMP/staging.tfvars.json"
 
-      - name: Replan and apply after protected approval
+      - name: Replan, verify approved fingerprint, and apply
+        env:
+          APPROVED_PLAN_FINGERPRINT: ${{ needs.plan.outputs.plan_fingerprint }}
         run: |
           set -euo pipefail
           terraform -chdir=infra/terraform/environments/staging init \
@@ -251,6 +260,10 @@ jobs:
             -lock-timeout=5m \
             -var-file="$RUNNER_TEMP/staging.tfvars.json" \
             -out="$RUNNER_TEMP/approved.tfplan"
+          actual_plan_fingerprint="$(terraform -chdir=infra/terraform/environments/staging show -json "$RUNNER_TEMP/approved.tfplan" \
+            | node backend/scripts/fingerprint-terraform-plan.mjs)"
+          test "${#APPROVED_PLAN_FINGERPRINT}" -eq 64
+          test "$actual_plan_fingerprint" = "$APPROVED_PLAN_FINGERPRINT"
           terraform -chdir=infra/terraform/environments/staging apply \
             -input=false \
             -lock-timeout=5m \

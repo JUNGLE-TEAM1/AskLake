@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,6 +11,7 @@ import {
   prepareAwsStagingTerraformInputs,
 } from "../src/awsStagingWorkflow.mjs";
 import { createEmrJarBundle, uploadEmrJarBundle } from "../src/emrJarBundle.mjs";
+import { fingerprintTerraformPlan } from "../src/terraformPlanFingerprint.mjs";
 import { writeAwsStagingTerraformInputs } from "./prepare-aws-staging-terraform-inputs.mjs";
 
 const repositoryRoot = fileURLToPath(new URL("../..", import.meta.url));
@@ -20,6 +22,37 @@ const contract = JSON.parse(readFileSync(
 const accountId = "123456789012";
 const stackId = "phase3-test";
 const now = new Date("2030-01-01T00:00:00Z");
+
+const planFixture = {
+  format_version: "1.2",
+  terraform_version: "1.15.8",
+  timestamp: "2030-01-01T00:00:00Z",
+  variables: { secret: { value: "must-not-be-printed" } },
+  resource_changes: [{
+    address: "aws_s3_bucket.example",
+    change: { actions: ["create"], after: { bucket: "example" }, before: null },
+    mode: "managed",
+    name: "example",
+    provider_name: "registry.terraform.io/hashicorp/aws",
+    type: "aws_s3_bucket",
+  }],
+};
+const planFingerprint = fingerprintTerraformPlan(planFixture);
+assert.match(planFingerprint.sha256, /^[a-f0-9]{64}$/);
+assert.equal(
+  fingerprintTerraformPlan({ ...planFixture, timestamp: "2030-01-01T00:01:00Z" }).sha256,
+  planFingerprint.sha256,
+);
+assert.notEqual(
+  fingerprintTerraformPlan(structuredClone({
+    ...planFixture,
+    resource_changes: [{ ...planFixture.resource_changes[0], change: { actions: ["delete"], after: null, before: {} } }],
+  })).sha256,
+  planFingerprint.sha256,
+);
+assert.ok(!JSON.stringify(planFingerprint).includes("must-not-be-printed"));
+assert.match(fingerprintTerraformPlan({ format_version: "1.2" }).sha256, /^[a-f0-9]{64}$/);
+assert.throws(() => fingerprintTerraformPlan({ resource_changes: [] }), /invalid/);
 
 function validInput(overrides = {}) {
   return {
@@ -54,6 +87,12 @@ assert.throws(
   () => prepareAwsStagingTerraformInputs(validInput({ ttlHours: 25 }), contract, { now }),
   /TTL is outside/,
 );
+for (const ttlHours of [0, "0", -1, Number.NaN]) {
+  assert.throws(
+    () => prepareAwsStagingTerraformInputs(validInput({ ttlHours }), contract, { now }),
+    /TTL|invalid/,
+  );
+}
 assert.throws(
   () => prepareAwsStagingTerraformInputs(validInput({ availableEmrServerlessConcurrentVcpu: 15 }), contract, { now }),
   /quota is below/,
@@ -64,6 +103,18 @@ assert.throws(
   }), contract, { now }),
   /KMS key does not match/,
 );
+for (const operation of ["artifacts", "destroy"]) {
+  const cleanup = prepareAwsStagingTerraformInputs(validInput({
+    availableEmrServerlessConcurrentVcpu: undefined,
+    budgetNotificationEmail: undefined,
+    confirmation: `${operation}:${stackId}`,
+    operation,
+    smokeRunnerAmiId: "invalid-but-ignored-for-cleanup",
+  }), contract, { now });
+  assert.equal(cleanup.variables.available_emr_serverless_concurrent_vcpu, 16);
+  assert.equal(cleanup.variables.budget_notification_email, `asklake-${operation}@example.invalid`);
+  assert.equal(cleanup.variables.enable_smoke_runner, false);
+}
 
 const quotaPayload = {
   Quotas: [{ QuotaName: "Maximum concurrent vCPUs per account", Value: 32 }],
@@ -99,6 +150,50 @@ try {
   rmSync(inputDirectory, { force: true, recursive: true });
 }
 
+class FakeS3Client {
+  constructor(options = {}) {
+    this.conflictsRemaining = options.conflictsRemaining || 0;
+    this.failFileName = options.failFileName || "";
+    this.heads = [];
+    this.objects = new Map();
+    this.puts = [];
+    this.wrongHeadChecksum = Boolean(options.wrongHeadChecksum);
+  }
+
+  async send(command) {
+    const input = command.input;
+    const objectId = `${input.Bucket}/${input.Key}`;
+    if (!Object.hasOwn(input, "Body")) {
+      this.heads.push(input);
+      const stored = this.objects.get(objectId);
+      if (!stored) throw s3Error("NotFound", 404);
+      return {
+        ChecksumSHA256: this.wrongHeadChecksum ? Buffer.alloc(32, 2).toString("base64") : stored.checksum,
+        ContentLength: stored.size,
+        Metadata: stored.metadata,
+      };
+    }
+
+    this.puts.push(input);
+    if (this.failFileName && input.Key.endsWith(`/${this.failFileName}`)) {
+      throw new Error("simulated upload failure");
+    }
+    if (this.conflictsRemaining > 0) {
+      this.conflictsRemaining -= 1;
+      throw s3Error("ConditionalRequestConflict", 409);
+    }
+    if (this.objects.has(objectId)) throw s3Error("PreconditionFailed", 412);
+    const actualChecksum = createHash("sha256").update(input.Body).digest("base64");
+    if (actualChecksum !== input.ChecksumSHA256) throw new Error("simulated bad digest");
+    this.objects.set(objectId, {
+      checksum: actualChecksum,
+      metadata: Object.fromEntries(Object.entries(input.Metadata || {}).map(([key, value]) => [key.toLowerCase(), value])),
+      size: Buffer.isBuffer(input.Body) ? input.Body.length : Buffer.byteLength(input.Body),
+    });
+    return { ChecksumSHA256: actualChecksum };
+  }
+}
+
 const jarDirectory = mkdtempSync(path.join(os.tmpdir(), "asklake-phase3-jars-"));
 try {
   writeFileSync(path.join(jarDirectory, "spark-sql-kafka-0-10_2.12-3.5.5.jar"), "spark-kafka");
@@ -112,13 +207,37 @@ try {
     bundle.manifest.bundleRootUri,
     `${artifactRootUri}/dependencies/${bundle.manifest.bundleSha256}`,
   );
-  const uploads = [];
-  await uploadEmrJarBundle(bundle, { send: async (command) => uploads.push(command.input) });
-  assert.equal(uploads.length, 4);
-  assert.equal(uploads.at(-1).Key.endsWith("/bundle.json"), true);
-  for (const upload of uploads) {
+  const s3 = new FakeS3Client();
+  await uploadEmrJarBundle(bundle, s3);
+  assert.equal(s3.puts.length, 4);
+  assert.equal(s3.heads.length, 4);
+  assert.equal(s3.puts.at(-1).Key.endsWith("/bundle.json"), true);
+  for (const upload of s3.puts) {
+    assert.equal(upload.IfNoneMatch, "*");
+    assert.equal(upload.ChecksumAlgorithm, "SHA256");
     assert.equal(upload.Metadata["asklake-bundle-sha256"], bundle.manifest.bundleSha256);
   }
+  await uploadEmrJarBundle(bundle, s3);
+  assert.equal(s3.objects.size, 4, "identical immutable bundle replay must be idempotent");
+
+  const conflictS3 = new FakeS3Client({ conflictsRemaining: 1 });
+  await uploadEmrJarBundle(bundle, conflictS3);
+  assert.equal(conflictS3.conflictsRemaining, 0);
+  const exhaustedConflictS3 = new FakeS3Client({ conflictsRemaining: 4 });
+  await assert.rejects(() => uploadEmrJarBundle(bundle, exhaustedConflictS3), /ConditionalRequestConflict/);
+  assert.equal(exhaustedConflictS3.conflictsRemaining, 1, "conditional conflict retry must be bounded to three attempts");
+
+  const mismatchS3 = new FakeS3Client({ wrongHeadChecksum: true });
+  await assert.rejects(() => uploadEmrJarBundle(bundle, mismatchS3), /checksum or size/);
+  assert.equal([...mismatchS3.objects.keys()].some((key) => key.endsWith("bundle.json")), false);
+
+  const partialFailureS3 = new FakeS3Client({ failFileName: "kafka-clients-3.7.1.jar" });
+  await assert.rejects(() => uploadEmrJarBundle(bundle, partialFailureS3), /simulated upload failure/);
+  assert.equal([...partialFailureS3.objects.keys()].some((key) => key.endsWith("bundle.json")), false);
+
+  const manifestKey = [...s3.objects.keys()].find((key) => key.endsWith("bundle.json"));
+  s3.objects.get(manifestKey).checksum = Buffer.alloc(32, 1).toString("base64");
+  await assert.rejects(() => uploadEmrJarBundle(bundle, s3), /checksum or size/);
 
   const runtimeEnvironment = [
     "# generated private runtime",
@@ -180,6 +299,9 @@ assert.match(workflows.planApply, /inputs\.operation == 'apply'/);
 assert.match(workflows.planApply, /service-quotas list-service-quotas/g);
 assert.match(workflows.planApply, /terraform .* plan \\/);
 assert.match(workflows.planApply, /terraform .* apply \\/);
+assert.match(workflows.planApply, /plan_fingerprint: \$\{\{ steps\.plan\.outputs\.plan_fingerprint \}\}/);
+assert.equal((workflows.planApply.match(/fingerprint-terraform-plan\.mjs/g) || []).length, 2);
+assert.match(workflows.planApply, /test "\$actual_plan_fingerprint" = "\$APPROVED_PLAN_FINGERPRINT"/);
 assert.doesNotMatch(workflows.planApply, /download-artifact|terraform .* destroy/);
 assert.match(workflows.planApply, /actions\/upload-artifact@v7/g);
 const planEvidenceBlock = stepBlock(workflows.planApply, "Upload redacted plan evidence only");
@@ -201,27 +323,41 @@ assert.match(workflows.destroy, /environment: asklake-aws-staging-destroy/);
 assert.match(workflows.destroy, /AWS_STAGING_CONFIRMATION: \$\{\{ inputs\.confirmation \}\}/);
 assert.match(workflows.destroy, /-destroy/);
 assert.doesNotMatch(workflows.destroy, /service-quotas list-service-quotas/);
+assert.doesNotMatch(workflows.destroy, /AWS_BUDGET_NOTIFICATION_EMAIL|AWS_EMR_SERVERLESS_CONCURRENT_VCPU/);
+assert.match(workflows.destroy, /destroy_plan:[\s\S]*destroy_apply:/);
+assert.match(workflows.destroy, /needs: destroy_plan/);
+assert.equal((workflows.destroy.match(/fingerprint-terraform-plan\.mjs/g) || []).length, 2);
+assert.match(workflows.destroy, /test "\$actual_plan_fingerprint" = "\$APPROVED_PLAN_FINGERPRINT"/);
+assert.ok(
+  workflows.destroy.indexOf("destroy_apply:") < workflows.destroy.indexOf("environment: asklake-aws-staging-destroy"),
+  "destroy approval must protect only the apply job",
+);
+assert.doesNotMatch(workflows.artifacts, /AWS_BUDGET_NOTIFICATION_EMAIL|AWS_EMR_SERVERLESS_CONCURRENT_VCPU/);
 
 const pom = readRepositoryFile("infra/artifacts/emr-continuous-dependencies.pom.xml");
 assert.match(pom, /<artifactId>spark-sql-kafka-0-10_2\.12<\/artifactId>\s*<version>3\.5\.5<\/version>/);
 assert.match(pom, /<artifactId>aws-msk-iam-auth<\/artifactId>\s*<version>2\.3\.6<\/version>/);
 assert.doesNotMatch(pom, /SNAPSHOT|LATEST|RELEASE|\[[^\]]+\]|\([^\)]+\)/);
 
-for (const relative of [
-  ".github/workflows/frontend-ci.yml",
-  ".github/workflows/notion-task-sync.yml",
-  ".github/workflows/pr-quality.yml",
-]) {
-  const absolute = path.join(repositoryRoot, relative);
-  let source;
-  try {
-    source = readFileSync(absolute, "utf8");
-  } catch (error) {
-    if (error?.code === "ENOENT") continue;
-    throw error;
-  }
+const workflowDirectory = path.join(repositoryRoot, ".github", "workflows");
+const dedicatedWorkflowFiles = new Set([
+  "aws-staging-artifacts.yml",
+  "aws-staging-destroy.yml",
+  "aws-staging-plan-apply.yml",
+]);
+const generalWorkflowFiles = readdirSync(workflowDirectory)
+  .filter((name) => /\.ya?ml$/.test(name) && !dedicatedWorkflowFiles.has(name));
+assert.ok(generalWorkflowFiles.length >= 3, "general workflow discovery unexpectedly found too few files");
+for (const name of generalWorkflowFiles) {
+  const source = readFileSync(path.join(workflowDirectory, name), "utf8");
   assert.doesNotMatch(source, /terraform(?:\s+-chdir=[^\s]+)?\s+(?:apply|destroy)|aws-staging-(?:plan-apply|artifacts|destroy)/);
 }
+
+const contractChecks = readRepositoryFile(".github/workflows/aws-staging-contract-checks.yml");
+assert.match(contractChecks, /^  pull_request:/m);
+assert.match(contractChecks, /verify:aws-staging-workflows/);
+assert.match(contractChecks, /verify:aws-staging-terraform/);
+assert.doesNotMatch(contractChecks, /id-token: write|configure-aws-credentials|AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY/);
 
 console.log("AWS staging Phase 3 workflow contract verification passed.");
 
@@ -235,4 +371,11 @@ function stepBlock(workflow, stepName) {
   assert.notEqual(start, -1, `Missing workflow step: ${stepName}`);
   const next = workflow.indexOf("\n      - name:", start + marker.length);
   return workflow.slice(start, next === -1 ? workflow.length : next);
+}
+
+function s3Error(name, status) {
+  const error = new Error(name);
+  error.name = name;
+  error.$metadata = { httpStatusCode: status };
+  return error;
 }
