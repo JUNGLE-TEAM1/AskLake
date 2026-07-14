@@ -297,6 +297,24 @@ def load_session_actor(db: Session, token: str | None) -> dict[str, Any] | None:
     return AuthService(db).actor_for_session(token)
 
 
+def load_active_actor_by_user_id(db: Session, user_id: str | None) -> dict[str, Any] | None:
+    """Resolve a durable execution identity from the current auth record.
+
+    Scheduled work must not reuse the role/group snapshot captured when a Job
+    was created.  Returning ``None`` for deleted, disabled, or governance-
+    blocked users makes callers fail closed before executing stored work.
+    """
+    normalized_user_id = str(user_id or "").strip()
+    if not normalized_user_id:
+        return None
+    user = db.get(AuthUserModel, normalized_user_id)
+    if user is None or user.status != "active":
+        return None
+    if blocked_principal_for_actor(db, user_actor_namespace(user)) is not None:
+        return None
+    return user_to_actor(user)
+
+
 def user_to_actor(user: AuthUserModel) -> dict[str, Any]:
     return {
         "id": user.id,

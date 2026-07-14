@@ -75,7 +75,6 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { ValidationList } from "@/components/ui/validation-list";
 import { cn } from "@/lib/utils";
 import { S3PathField } from "../../components/s3/S3PathField";
-import { DatabaseField } from "../../components/target/DatabaseField";
 import { runTransformQualitySamplePreview } from "../../data/transformQualityPreview";
 import { normalizeRetryPolicy, retryFailureActionLabels, scheduleOverlapPolicyLabels, toCreatePipelineRequest } from "../../services/draftPipelineContract";
 import { getDatasets } from "../../services/mockApi";
@@ -5530,15 +5529,15 @@ export function TargetPage({
   );
   const sampleTargetSchema = useMemo(() => inferTargetSchema([], [], undefined), []);
   const [targetDataset, setTargetDataset] = useState(initialTarget.targetDataset);
-  const [databaseName, setDatabaseName] = useState(draftTarget?.databaseName ?? "asklake");
-  const [targetLayer, setTargetLayer] = useState<TargetLayer>(initialTargetLayer);
+  const databaseName = draftTarget?.databaseName ?? "asklake";
+  const targetLayer = initialTargetLayer;
   const [targetStoragePath, setTargetStoragePath] = useState(initialStoragePath);
   const [storagePathCustomized, setStoragePathCustomized] = useState(
     initialStoragePath !== buildTargetStoragePath(initialTarget.targetDataset, initialTargetLayer),
   );
   const [targetDescription, setTargetDescription] = useState(initialTarget.description);
-  const [targetFormat, setTargetFormat] = useState<TargetFileFormat>(initialTargetFormat);
-  const [targetOwner, setTargetOwner] = useState(draftTarget?.owner ?? initialTarget.owner);
+  const targetFormat = initialTargetFormat;
+  const targetOwner = draftTarget?.owner ?? initialTarget.owner;
   const [targetManager, setTargetManager] = useState(draftTarget?.manager ?? initialTarget.owner);
   const [targetTags, setTargetTags] = useState<string[]>(initialTarget.tags);
   const [customTag, setCustomTag] = useState("");
@@ -5666,13 +5665,6 @@ export function TargetPage({
     }
   };
 
-  const changeTargetLayer = (nextLayer: TargetLayer) => {
-    setTargetLayer(nextLayer);
-    if (!storagePathCustomized) {
-      setTargetStoragePath(buildTargetStoragePath(targetDataset.trim() || "target_dataset", nextLayer));
-    }
-  };
-
   const saveTargetConfig = () => {
     const config = buildConfig();
     const errors = validateTargetConfig(config, activeJsonParseFailed);
@@ -5719,7 +5711,7 @@ export function TargetPage({
   };
 
   return (
-    <CreationFlowLayout actions={<CreationTopActions nextDisabled={targetNextDisabled} prevLabel="이전" nextLabel="다음" split onPrev={onPrev} onNext={handleNext} />}>
+    <CreationFlowLayout className="target-page-layout" actions={<CreationTopActions nextDisabled={targetNextDisabled} prevLabel="이전" nextLabel="다음" split onPrev={onPrev} onNext={handleNext} />}>
       <EtlStepHeader
         className="etl-step-standalone-header"
         icon={<HardDrive />}
@@ -5742,14 +5734,31 @@ export function TargetPage({
             <FormFieldGroup className="field wide" label="데이터셋명">
               <Input className="input control-input" value={targetDataset} onChange={(event) => changeTargetDataset(event.target.value)} />
             </FormFieldGroup>
-            <FormFieldGroup className="field" label="오너">
-              <Input className="input control-input" value={targetOwner} onChange={(event) => setTargetOwner(event.target.value)} />
-            </FormFieldGroup>
-            <FormFieldGroup className="field" label="담당자">
+            <FormFieldGroup className="field target-manager-field" label="담당자">
               <Input className="input control-input" value={targetManager} onChange={(event) => setTargetManager(event.target.value)} />
             </FormFieldGroup>
             <FormFieldGroup className="field wide" label="설명">
               <Input className="input control-input" value={targetDescription} onChange={(event) => setTargetDescription(event.target.value)} />
+            </FormFieldGroup>
+            <FormFieldGroup className="field wide target-tags-field" label="태그">
+              {targetTags.length > 0 ? (
+                <TagList className="target-chip-grid" density="compact" role="group" aria-label="타겟 태그">
+                  {targetTags.map((tag) => (
+                    <Button aria-pressed={targetTags.includes(tag)} key={tag} size="sm" type="button" variant="secondary" onClick={() => toggleTag(tag)}>
+                      {tag}
+                    </Button>
+                  ))}
+                </TagList>
+              ) : null}
+              <div className="target-inline-controls">
+                <Input className="input control-input" placeholder="태그 입력" value={customTag} onChange={(event) => setCustomTag(event.target.value)} onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    addCustomTag();
+                  }
+                }} />
+                <Button type="button" variant="outline" onClick={addCustomTag}><Plus data-icon="inline-start" />추가</Button>
+              </div>
             </FormFieldGroup>
           </div>
         </section>
@@ -5761,33 +5770,8 @@ export function TargetPage({
               <h2>저장 위치 설정</h2>
             </div>
           </div>
-          <div className="target-config-form-grid destination">
-            <FormFieldGroup className="field target-db-field" label="DB 선택">
-              <DatabaseField useShadcnStyles value={databaseName} onChange={setDatabaseName} />
-            </FormFieldGroup>
-            <FormFieldGroup className="field" label="데이터 레이어">
-              <Select value={targetLayer} onValueChange={(layer) => changeTargetLayer(layer as TargetLayer)}>
-                <SelectTrigger aria-label="데이터 레이어 선택" size="sm">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {targetLayerOptions.map((layer) => <SelectItem key={layer} value={layer}>{layer}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </FormFieldGroup>
-            <FormFieldGroup className="field target-format-field" label="포맷">
-              <Select value={targetFormat} onValueChange={(format) => setTargetFormat(format as TargetFileFormat)}>
-                <SelectTrigger aria-label="파일 포맷 선택" className="target-format-select" size="sm">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {targetFormatOptions.map((format) => (
-                    <SelectItem key={format} value={format}>{format.toUpperCase()}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </FormFieldGroup>
-            <FormFieldGroup className="field wide target-storage-field" label="저장경로">
+          <div className="target-config-form-grid destination storage-only">
+            <FormFieldGroup className="field wide target-storage-field" label="저장 경로">
               <S3PathField useShadcnStyles value={targetStoragePath} onChange={(path) => {
                 setTargetStoragePath(path);
                 setStoragePathCustomized(true);
@@ -5799,43 +5783,18 @@ export function TargetPage({
           <div className="etl-review-card-header">
             <span className="etl-review-icon permission"><SlidersHorizontal size={17} /></span>
             <div>
-              <h2>파티션 및 태그</h2>
+              <h2>파티션 설정</h2>
             </div>
           </div>
-          <div className="target-config-split">
-            <div className="target-config-subsection">
-              <div className="target-config-subheader">
-                <BookOpen size={16} />
-                <h3>태그</h3>
+          <div className="target-partition-settings">
+            <div className="target-partition-table">
+              <div className="target-partition-header" aria-hidden="true">
+                <span>선택</span>
+                <span>컬럼명</span>
+                <span>데이터 타입</span>
               </div>
-              {targetTags.length > 0 ? (
-                <TagList className="target-chip-grid" density="compact" role="group" aria-label="타겟 태그">
-                  {targetTags.map((tag) => (
-                    <Button aria-pressed={targetTags.includes(tag)} key={tag} size="sm" type="button" variant="secondary" onClick={() => toggleTag(tag)}>
-                      {tag}
-                    </Button>
-                  ))}
-                </TagList>
-              ) : null}
-              <div className="target-inline-controls">
-                <Input className="input control-input" placeholder="직접 태그 추가" value={customTag} onChange={(event) => setCustomTag(event.target.value)} onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    addCustomTag();
-                  }
-                }} />
-                <Button type="button" variant="outline" onClick={addCustomTag}><Plus data-icon="inline-start" />추가</Button>
-              </div>
-            </div>
-            <div className="target-config-subsection">
-              <div className="target-config-subheader">
-                <SlidersHorizontal size={16} />
-                <h3>파티션</h3>
-              </div>
-              <div className="target-partition-settings">
-                <div className="target-partition-grid" role="group" aria-label="파티션 컬럼 다중 선택">
-                  {partitionCandidates.map(renderPartitionOption)}
-                </div>
+              <div className="target-partition-grid" role="group" aria-label="파티션 컬럼 다중 선택">
+                {partitionCandidates.map(renderPartitionOption)}
               </div>
             </div>
           </div>

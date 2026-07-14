@@ -1,3 +1,11 @@
+import type { SqlResultDraft } from "../../types";
+
+export function hasSqlResultDataShape(value: unknown): value is SqlResultDraft {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<SqlResultDraft>;
+  return Array.isArray(candidate.columns) && Array.isArray(candidate.rows);
+}
+
 export function escapeCsvCell(value: string) {
   return /[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
 }

@@ -6,6 +6,7 @@ from app.core.database import get_db
 from app.schemas.etl import (
     CreatePipelineRequest,
     CreatePipelineResponse,
+    CreateTrinoSqlJobRequest,
     DeleteJobResponse,
     ContinuousCompactionRequest,
     ContinuousMaintenanceRun,
@@ -173,6 +174,16 @@ def create_job(
     require_permission(actor, "manage", resource_label="job collection")
     owned_request = request.model_copy(update={"created_by": actor.name})
     return etl_service.create_pipeline(db, owned_request, actor)
+
+
+@router.post("/sql-jobs", response_model=CreatePipelineResponse, status_code=status.HTTP_201_CREATED)
+def create_trino_sql_job(
+    request: CreateTrinoSqlJobRequest,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(get_actor_context),
+) -> CreatePipelineResponse:
+    require_permission(actor, "manage", resource_label="job collection")
+    return etl_service.create_trino_sql_job(db, request, actor)
 
 
 @router.get("/jobs", response_model=JobListResponse)

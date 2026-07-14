@@ -95,6 +95,38 @@ is_blank() {
   [[ "$1" =~ ^[[:space:]]*$ ]]
 }
 
+trino_enabled_value="$(printf '%s' "$(env_value_for TRINO_ENABLED)" | tr '[:upper:]' '[:lower:]')"
+case "$trino_enabled_value" in
+  true|1|yes)
+    trino_enabled=true
+    ;;
+  ""|false|0|no)
+    trino_enabled=false
+    ;;
+  *)
+    printf 'error: TRINO_ENABLED must be true or false in %s\n' "$ENV_FILE" >&2
+    exit 1
+    ;;
+esac
+
+has_compose_profile() {
+  local requested_profile="$1"
+  local configured_profiles
+  configured_profiles="$(env_value_for COMPOSE_PROFILES)"
+  configured_profiles="${configured_profiles//[[:space:]]/}"
+  [[ ",$configured_profiles," == *",$requested_profile,"* ]]
+}
+
+if [[ "$trino_enabled" == "true" ]]; then
+  has_compose_profile trino || {
+    printf 'error: COMPOSE_PROFILES must include trino when TRINO_ENABLED=true\n' >&2
+    exit 1
+  }
+elif has_compose_profile trino; then
+  printf 'error: COMPOSE_PROFILES must not include trino when TRINO_ENABLED=false\n' >&2
+  exit 1
+fi
+
 required_keys=(
   AIRFLOW_API_AUTH_JWT_SECRET
   AIRFLOW_EXECUTION_API_TOKEN
@@ -137,6 +169,36 @@ case "$storage_provider" in
     ;;
 esac
 
+if [[ "$trino_enabled" == "true" ]]; then
+  [[ "$storage_provider" == "aws" ]] || {
+    printf 'error: production Trino currently requires ASKLAKE_OBJECT_STORAGE_PROVIDER=aws\n' >&2
+    exit 1
+  }
+  required_keys+=(
+    COMPOSE_PROFILES
+    TRINO_AUTH_PASSWORD
+    TRINO_AUTH_USERNAME
+    TRINO_BASE_URL
+    TRINO_CATALOG
+    TRINO_ICEBERG_JDBC_PASSWORD
+    TRINO_ICEBERG_JDBC_USER
+    TRINO_ICEBERG_WAREHOUSE_BUCKET
+    TRINO_INTERNAL_SHARED_SECRET
+    TRINO_MATERIALIZER_PASSWORD
+    TRINO_MATERIALIZER_USERNAME
+    TRINO_PASSWORD_FILE
+    TRINO_QUERY_CONFIRMATION_SECRET
+    TRINO_RESULT_CURSOR_SECRET
+    TRINO_RESULT_STORAGE_BUCKET
+    TRINO_SCHEMA
+    TRINO_TLS_CA_CONTAINER_FILE
+    TRINO_TLS_CA_FILE
+    TRINO_TLS_KEYSTORE_FILE
+    TRINO_TLS_KEYSTORE_PASSWORD
+    TRINO_USER
+  )
+fi
+
 for key in "${required_keys[@]}"; do
   key_count="$(env_count_for "$key")"
   if (( key_count > 1 )); then
@@ -150,6 +212,62 @@ for key in "${required_keys[@]}"; do
     exit 1
   fi
 done
+
+if [[ "$trino_enabled" == "true" ]]; then
+  [[ "$(env_value_for TRINO_BASE_URL)" == "https://trino:8443" ]] || {
+    printf 'error: TRINO_BASE_URL must be https://trino:8443 for the production Compose service\n' >&2
+    exit 1
+  }
+  [[ "$(env_value_for TRINO_CATALOG)" == "iceberg" && "$(env_value_for TRINO_SCHEMA)" == "asklake" ]] || {
+    printf 'error: TRINO_CATALOG=iceberg and TRINO_SCHEMA=asklake are required by the checked-in ACL\n' >&2
+    exit 1
+  }
+  [[ "$(env_value_for TRINO_USER)" == "asklake-api" \
+    && "$(env_value_for TRINO_AUTH_USERNAME)" == "asklake-api" \
+    && "$(env_value_for TRINO_MATERIALIZER_USERNAME)" == "asklake-materializer" ]] || {
+    printf 'error: Trino usernames must match the checked-in ACL (asklake-api / asklake-materializer)\n' >&2
+    exit 1
+  }
+  [[ "$(env_value_for TRINO_TLS_CA_CONTAINER_FILE)" == "/run/secrets/trino-ca.pem" ]] || {
+    printf 'error: TRINO_TLS_CA_CONTAINER_FILE must be /run/secrets/trino-ca.pem\n' >&2
+    exit 1
+  }
+
+  trino_auth_password="$(env_value_for TRINO_AUTH_PASSWORD)"
+  trino_materializer_password="$(env_value_for TRINO_MATERIALIZER_PASSWORD)"
+  [[ "$trino_auth_password" != "$trino_materializer_password" ]] || {
+    printf 'error: TRINO_AUTH_PASSWORD and TRINO_MATERIALIZER_PASSWORD must be distinct\n' >&2
+    exit 1
+  }
+  for key in TRINO_AUTH_PASSWORD TRINO_MATERIALIZER_PASSWORD TRINO_ICEBERG_JDBC_PASSWORD TRINO_TLS_KEYSTORE_PASSWORD; do
+    value="$(env_value_for "$key")"
+    if (( ${#value} < 16 )); then
+      printf 'error: %s must contain at least 16 characters\n' "$key" >&2
+      exit 1
+    fi
+  done
+  for key in TRINO_RESULT_CURSOR_SECRET TRINO_QUERY_CONFIRMATION_SECRET TRINO_INTERNAL_SHARED_SECRET; do
+    value="$(env_value_for "$key")"
+    if (( ${#value} < 32 )); then
+      printf 'error: %s must contain at least 32 characters\n' "$key" >&2
+      exit 1
+    fi
+  done
+
+  trino_result_bucket="$(env_value_for TRINO_RESULT_STORAGE_BUCKET)"
+  trino_warehouse_bucket="$(env_value_for TRINO_ICEBERG_WAREHOUSE_BUCKET)"
+  [[ "$trino_result_bucket" != "$trino_warehouse_bucket" ]] || {
+    printf 'error: TRINO_RESULT_STORAGE_BUCKET and TRINO_ICEBERG_WAREHOUSE_BUCKET must be distinct\n' >&2
+    exit 1
+  }
+  readiness_write_buckets=",$(env_value_for ASKLAKE_S3_READINESS_WRITE_BUCKETS),"
+  for required_bucket in "$trino_result_bucket" "$trino_warehouse_bucket"; do
+    if [[ "$readiness_write_buckets" != *",$required_bucket,"* ]]; then
+      printf 'error: ASKLAKE_S3_READINESS_WRITE_BUCKETS must include %s when Trino is enabled\n' "$required_bucket" >&2
+      exit 1
+    fi
+  done
+fi
 
 airflow_fernet_key="$(env_value_for AIRFLOW_FERNET_KEY)"
 if ! printf '%s' "$airflow_fernet_key" | python3 -c '
@@ -194,7 +312,7 @@ if [[ "$storage_provider" == "minio" \
 fi
 
 if [[ "$storage_provider" == "aws" ]]; then
-  for forbidden_key in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN MINIO_ACCESS_KEY MINIO_SECRET_KEY MINIO_ROOT_USER MINIO_ROOT_PASSWORD; do
+  for forbidden_key in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN MINIO_ACCESS_KEY MINIO_SECRET_KEY MINIO_ROOT_USER MINIO_ROOT_PASSWORD TRINO_RESULT_STORAGE_ACCESS_KEY TRINO_RESULT_STORAGE_SECRET_KEY TRINO_S3_ACCESS_KEY TRINO_S3_SECRET_KEY; do
     if ! is_blank "$(env_value_for "$forbidden_key")"; then
       printf 'error: %s must not be stored in an AWS production deployment env; use the EC2 instance role\n' "$forbidden_key" >&2
       exit 1
@@ -246,6 +364,20 @@ require_host_directory() {
   fi
 }
 
+require_host_file() {
+  local key="$1"
+  local file="$2"
+
+  if [[ "$file" != /* ]]; then
+    printf 'error: %s must be an absolute host file path\n' "$key" >&2
+    exit 1
+  fi
+  if [[ ! -f "$file" || ! -r "$file" ]]; then
+    printf 'error: %s file does not exist or is not readable: %s\n' "$key" "$file" >&2
+    exit 1
+  fi
+}
+
 spark_host_data_dir="$(env_value_for ASKLAKE_HOST_DATA_DIR)"
 spark_replay_input_dir="$(env_value_for ASKLAKE_REPLAY_HOST_INPUT_DIR)"
 
@@ -257,6 +389,19 @@ for spark_data_subdirectory in spark-ivy spark-output spark-runs samples review-
 done
 require_host_directory ASKLAKE_REPLAY_HOST_INPUT_DIR "$spark_replay_input_dir"
 
+if [[ "$trino_enabled" == "true" ]]; then
+  require_host_file TRINO_TLS_CA_FILE "$(env_value_for TRINO_TLS_CA_FILE)"
+  require_host_file TRINO_TLS_KEYSTORE_FILE "$(env_value_for TRINO_TLS_KEYSTORE_FILE)"
+  trino_password_file="$(env_value_for TRINO_PASSWORD_FILE)"
+  require_host_file TRINO_PASSWORD_FILE "$trino_password_file"
+  for required_trino_user in asklake-api asklake-materializer; do
+    if ! grep -q "^${required_trino_user}:" "$trino_password_file"; then
+      printf 'error: TRINO_PASSWORD_FILE must contain the checked-in ACL user %s\n' "$required_trino_user" >&2
+      exit 1
+    fi
+  done
+fi
+
 docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" config --quiet
 
 export ASKLAKE_PREFLIGHT_MINIO_ROOT_USER="$minio_root_user"
@@ -267,6 +412,9 @@ export ASKLAKE_PREFLIGHT_OBJECT_STORAGE_PROVIDER="$storage_provider"
 export ASKLAKE_PREFLIGHT_AWS_REGION="$(env_value_for AWS_REGION)"
 export ASKLAKE_PREFLIGHT_RAW_BUCKET="$(env_value_for ASKLAKE_RAW_BUCKET)"
 export ASKLAKE_PREFLIGHT_OUTPUT_BUCKET="$(env_value_for ASKLAKE_SPARK_OUTPUT_BUCKET)"
+export ASKLAKE_PREFLIGHT_TRINO_RESULT_BUCKET="$(env_value_for TRINO_RESULT_STORAGE_BUCKET)"
+export ASKLAKE_PREFLIGHT_TRINO_WAREHOUSE_BUCKET="$(env_value_for TRINO_ICEBERG_WAREHOUSE_BUCKET)"
+export ASKLAKE_PREFLIGHT_TRINO_ENABLED="$trino_enabled"
 
 compose_wiring_status=0
 docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" config --format json \
@@ -276,20 +424,40 @@ import os
 import sys
 
 try:
-    services = json.load(sys.stdin)["services"]
+    document = json.load(sys.stdin)
+    services = document["services"]
+    networks = document.get("networks", {})
     backend = services["backend"]["environment"]
     spark_worker_service = services.get("spark-worker")
     spark_worker = spark_worker_service.get("environment", {}) if spark_worker_service else None
     provider = os.environ["ASKLAKE_PREFLIGHT_OBJECT_STORAGE_PROVIDER"]
+    trino_enabled = os.environ["ASKLAKE_PREFLIGHT_TRINO_ENABLED"] == "true"
+    profiled_trino_services = {
+        "trino", "trino-postgres-bootstrap", "trino-result-collector", "trino-result-cleanup"
+    }
+    profile_wiring_valid = (
+        profiled_trino_services.issubset(services)
+        if trino_enabled
+        else profiled_trino_services.isdisjoint(services)
+    )
     if provider == "aws":
         readiness = services["aws-s3-readiness"]["environment"]
         forbidden = {
             "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
             "MINIO_ACCESS_KEY", "MINIO_SECRET_KEY", "MINIO_ROOT_USER", "MINIO_ROOT_PASSWORD",
+            "TRINO_RESULT_STORAGE_ACCESS_KEY", "TRINO_RESULT_STORAGE_SECRET_KEY",
+            "TRINO_S3_ACCESS_KEY", "TRINO_S3_SECRET_KEY",
+        }
+        readiness_write_buckets = {
+            value.strip()
+            for value in readiness.get("ASKLAKE_S3_READINESS_WRITE_BUCKETS", "").split(",")
+            if value.strip()
         }
         valid = all((
+            profile_wiring_valid,
             "minio" not in services,
             "minio-init" not in services,
+            "trino-storage-bootstrap" not in services,
             backend.get("ASKLAKE_OBJECT_STORAGE_PROVIDER") == "aws",
             backend.get("ASKLAKE_RAW_BUCKET") == os.environ["ASKLAKE_PREFLIGHT_RAW_BUCKET"],
             backend.get("ASKLAKE_SPARK_OUTPUT_BUCKET") == os.environ["ASKLAKE_PREFLIGHT_OUTPUT_BUCKET"],
@@ -299,6 +467,28 @@ try:
             not any(name in backend for name in forbidden),
             spark_worker is None or not any(name in spark_worker for name in forbidden),
         ))
+        if trino_enabled:
+            trino_service = services["trino"]
+            trino = trino_service["environment"]
+            required_trino_buckets = {
+                os.environ["ASKLAKE_PREFLIGHT_TRINO_RESULT_BUCKET"],
+                os.environ["ASKLAKE_PREFLIGHT_TRINO_WAREHOUSE_BUCKET"],
+            }
+            trino_networks = set(trino_service.get("networks", {}))
+            valid = valid and all((
+                backend.get("TRINO_ENABLED") == "true",
+                backend.get("TRINO_RESULT_STORAGE_BUCKET") == os.environ["ASKLAKE_PREFLIGHT_TRINO_RESULT_BUCKET"],
+                backend.get("TRINO_TLS_CA_FILE") == "/run/secrets/trino-ca.pem",
+                required_trino_buckets.issubset(readiness_write_buckets),
+                trino.get("TRINO_ICEBERG_WAREHOUSE_BUCKET") == os.environ["ASKLAKE_PREFLIGHT_TRINO_WAREHOUSE_BUCKET"],
+                trino.get("TRINO_S3_REGION") == os.environ["ASKLAKE_PREFLIGHT_AWS_REGION"],
+                {"trino_internal", "trino_egress"}.issubset(trino_networks),
+                networks.get("trino_internal", {}).get("internal") is True,
+                networks.get("trino_egress", {}).get("internal") is not True,
+                not any(name in trino for name in forbidden),
+            ))
+        else:
+            valid = valid and backend.get("TRINO_ENABLED") == "false"
     else:
         minio = services["minio"]["environment"]
         minio_init = services["minio-init"]["environment"]
@@ -309,6 +499,7 @@ try:
             "secret_key": os.environ["ASKLAKE_PREFLIGHT_MINIO_SECRET_KEY"],
         }
         valid = all((
+            profile_wiring_valid,
             minio.get("MINIO_ROOT_USER") == expected["root_user"],
             minio.get("MINIO_ROOT_PASSWORD") == expected["root_password"],
             backend.get("MINIO_ACCESS_KEY") == expected["access_key"],
@@ -334,6 +525,9 @@ unset ASKLAKE_PREFLIGHT_OBJECT_STORAGE_PROVIDER
 unset ASKLAKE_PREFLIGHT_AWS_REGION
 unset ASKLAKE_PREFLIGHT_RAW_BUCKET
 unset ASKLAKE_PREFLIGHT_OUTPUT_BUCKET
+unset ASKLAKE_PREFLIGHT_TRINO_RESULT_BUCKET
+unset ASKLAKE_PREFLIGHT_TRINO_WAREHOUSE_BUCKET
+unset ASKLAKE_PREFLIGHT_TRINO_ENABLED
 
 if (( compose_wiring_status != 0 )); then
   printf 'error: Compose object-storage wiring does not match the selected %s provider contract\n' "$storage_provider" >&2

@@ -504,6 +504,7 @@ async function registerCatalogDataset(metadata) {
     nextRefresh: "-",
     owner: process.env.ASKLAKE_REVIEW_DATASET_OWNER || "AskLake",
     quality: metadata.quality?.summary || (metadata.failedCount > 0 ? `적재 완료 · 실패 ${metadata.failedCount}건` : "Kafka snapshot 적재 완료"),
+    queryEngineStatus: "unavailable",
     rag: false,
     rows: String(aggregate.rowCount),
     sampleRows: metadata.sampleRows,
