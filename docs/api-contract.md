@@ -1088,6 +1088,7 @@ type ReviewSnapshot = {
 - `targetDatabase`, `targetDescription`은 Review 표시용으로 create/review request에 함께 보냅니다.
 - live mode는 source connector 결과를 재확인하고, mock mode는 동일한 response shape를 fixture로 반환합니다.
 - Review UI는 local draft를 직접 조합하지 않고 이 response를 표시합니다.
+- `basicInformation`은 내부 `id`와 자동 생성용 `jobName`을 제외하고 소스, 처리 방식, 출력 데이터셋 이름, 설명을 반환합니다. `executionMode=snapshot`은 `배치 처리`, `executionMode=continuous`는 `실시간 스트리밍`으로 표시합니다.
 - `permission`은 `담당자`, `로그인한 모든 사용자`, non-public 대상별 허용 action을 반환합니다. 담당자는 backend fallback으로 전체 권한을 가지며 `public:view`는 `로그인한 모든 사용자=조회 가능`으로 표시합니다. optional `principalName`이 있으면 대상 ID 대신 사람이 읽는 이름을 표시합니다.
 - `validation`은 실제 생성 차단 조건인 소스 데이터, 선택형 레코드 구조화, 출력 스키마, 처리 규칙, 접근 권한, 저장 위치만 반환합니다. 스케줄과 실패 재시도는 별도 단계에서 설정하지만 `canCreate`를 막지 않으므로 준비 상태에 포함하지 않습니다.
 - `ruleCompilation.status`가 `pass`일 때만 `canCreate`가 true가 될 수 있습니다. `rules`가 비어 있으면 output schema는 포함된 source schema와 같은 pass-through 결과이며 `ruleSummary`가 비어 있어도 실패하지 않습니다.
@@ -1427,7 +1428,7 @@ Validation:
 - `targetLayer`는 `RAW`, `BRONZE`, `SILVER`, `GOLD` 중 하나여야 합니다.
 - `storageType`, `partition`, `compression`, `storagePath`는 Target 화면의 draft 값이며, 없으면 frontend는 기존 기본값을 채웁니다.
 - Target metadata는 flat create contract를 유지하기 위해 `targetDescription`, `targetTags`, `partitionColumns`, `indexColumns`로 전달합니다. 기존 `partition`은 하위 호환용 표시/저장 문자열이며 `partitionColumns.join("/")` 값과 같아야 합니다.
-- Target 화면은 모든 Source에서 `targetLayer`를 RAW/BRONZE/SILVER/GOLD 중 명시적으로 선택하게 하며 기존 draft/default layer를 초기값으로 사용합니다. 자동 생성 storage path는 선택 layer를 반영합니다.
+- Target 화면은 `targetLayer` 선택을 노출하지 않습니다. 기존 create/update 계약 호환을 위해 frontend가 source/execution별 내부 기본값을 전송하며 backend의 조합 검증은 유지합니다. Review 저장 위치에는 중복된 테이블 이름과 내부 계층을 표시하지 않습니다.
 - `rag`는 호환 필드로 유지하지만, 현재 Target 화면에서는 설정을 노출하지 않고 frontend는 기본값 `false`를 전송합니다.
 - 현재 Target 화면은 저장소 선택 화면이 아니라 최종 dataset 저장 명세 화면입니다. `data` JSON 단일 컬럼 sample은 frontend에서 dot-path 컬럼으로 펼쳐 `schemaRules`와 preview를 구성하고, 원본 보존용 `raw_data`는 optional 미사용 컬럼으로 둡니다.
 - 현재 Target 화면의 파티션은 실제 사용 컬럼 중 partition 가능한 컬럼을 checkbox로 여러 개 선택하며, 선택 순서를 유지해 `/`로 연결한 뒤 create request의 `partition`에 반영합니다. 예: `event_date/region`.
