@@ -70,6 +70,7 @@ services:
       context: ../frontend
       args:
         VITE_API_BASE_URL: ${VITE_API_BASE_URL:?VITE_API_BASE_URL is required}
+        VITE_AUTH_LEGACY_DEMO_USERS_ENABLED: ${VITE_AUTH_LEGACY_DEMO_USERS_ENABLED:-false}
         VITE_AUTH_PUBLIC_SIGNUP: ${VITE_AUTH_PUBLIC_SIGNUP:-false}
         VITE_USE_MOCK_API: ${VITE_USE_MOCK_API:-false}
         VITE_DASHBOARD_ASSISTANT_API_PATH: ${VITE_DASHBOARD_ASSISTANT_API_PATH:-/api/dashboards/assistant}
@@ -108,6 +109,7 @@ services:
     environment:
       APP_ENV: ${APP_ENV:-production}
       API_PREFIX: ${API_PREFIX:-/api}
+      AUTH_LEGACY_DEMO_USERS_ENABLED: ${AUTH_LEGACY_DEMO_USERS_ENABLED:-false}
       AUTH_PUBLIC_SIGNUP_ENABLED: ${AUTH_PUBLIC_SIGNUP_ENABLED:-false}
       BACKEND_CORS_ORIGINS: ${BACKEND_CORS_ORIGINS:-}
       BOOTSTRAP_ADMIN_DISPLAY_NAME: ${BOOTSTRAP_ADMIN_DISPLAY_NAME:-AskLake Administrator}
@@ -170,6 +172,12 @@ services:
       TRINO_AUTH_PASSWORD: ${TRINO_AUTH_PASSWORD:-}
       TRINO_MATERIALIZER_USERNAME: ${TRINO_MATERIALIZER_USERNAME:-}
       TRINO_MATERIALIZER_PASSWORD: ${TRINO_MATERIALIZER_PASSWORD:-}
+      TRINO_ICEBERG_CATALOG_NAME: ${TRINO_ICEBERG_CATALOG_NAME:-asklake}
+      TRINO_ICEBERG_JDBC_DATABASE: ${POSTGRES_DB:?POSTGRES_DB is required}
+      TRINO_ICEBERG_JDBC_USER: ${TRINO_ICEBERG_JDBC_USER:?TRINO_ICEBERG_JDBC_USER is required}
+      TRINO_ICEBERG_JDBC_PASSWORD: ${TRINO_ICEBERG_JDBC_PASSWORD:?TRINO_ICEBERG_JDBC_PASSWORD is required}
+      TRINO_ICEBERG_WAREHOUSE_BUCKET: ${TRINO_ICEBERG_WAREHOUSE_BUCKET:?TRINO_ICEBERG_WAREHOUSE_BUCKET is required}
+      TRINO_ICEBERG_WAREHOUSE_PREFIX: ${TRINO_ICEBERG_WAREHOUSE_PREFIX:-warehouse}
       TRINO_TLS_CA_FILE: ${TRINO_TLS_CA_CONTAINER_FILE:-}
       ASKLAKE_MONGO_HOST: ${ASKLAKE_MONGO_HOST:-mongo}
       ASKLAKE_MONGO_PORT: ${ASKLAKE_MONGO_PORT:-27017}
@@ -183,7 +191,7 @@ services:
       ASKLAKE_KAFKA_SAMPLE_SETTLE_MS: ${ASKLAKE_KAFKA_SAMPLE_SETTLE_MS:-1500}
       ASKLAKE_KAFKA_SAMPLE_TIMEOUT_MS: ${ASKLAKE_KAFKA_SAMPLE_TIMEOUT_MS:-8000}
       ASKLAKE_REPLAY_INPUT_DIR: ${ASKLAKE_REPLAY_INPUT_DIR:-/var/lib/asklake/replay-input}
-      CONTINUOUS_RUNTIME_SYNC_INTERVAL_SECONDS: ${CONTINUOUS_RUNTIME_SYNC_INTERVAL_SECONDS:-5}
+      CONTINUOUS_RUNTIME_SYNC_INTERVAL_SECONDS: ${CONTINUOUS_RUNTIME_SYNC_INTERVAL_SECONDS:-1}
       ASKLAKE_CONTINUOUS_MAINTENANCE_LEASE_SECONDS: ${ASKLAKE_CONTINUOUS_MAINTENANCE_LEASE_SECONDS:-900}
       ASKLAKE_CONTINUOUS_FAIL_AFTER_DATA_WRITE_ONCE: ${ASKLAKE_CONTINUOUS_FAIL_AFTER_DATA_WRITE_ONCE:-false}
       ASKLAKE_SPARK_RUNNER: rest
@@ -205,6 +213,10 @@ services:
       ASKLAKE_SPARK_CORES_MAX: ${ASKLAKE_SPARK_CORES_MAX:-2}
       ASKLAKE_SPARK_SQL_SHUFFLE_PARTITIONS: ${ASKLAKE_SPARK_SQL_SHUFFLE_PARTITIONS:-32}
       ASKLAKE_SPARK_HADOOP_AWS_PACKAGE: ${ASKLAKE_SPARK_HADOOP_AWS_PACKAGE:-org.apache.hadoop:hadoop-aws:3.4.1}
+      ASKLAKE_SPARK_ICEBERG_PACKAGE: ${ASKLAKE_SPARK_ICEBERG_PACKAGE:-org.apache.iceberg:iceberg-spark-runtime-4.0_2.13:1.11.0}
+      ASKLAKE_SPARK_POSTGRES_PACKAGE: ${ASKLAKE_SPARK_POSTGRES_PACKAGE:-org.postgresql:postgresql:42.7.7}
+      ASKLAKE_SPARK_ICEBERG_CATALOG_NAME: ${TRINO_ICEBERG_CATALOG_NAME:-asklake}
+      ASKLAKE_SPARK_ICEBERG_JDBC_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:?POSTGRES_DB is required}
       ASKLAKE_SPARK_KAFKA_PACKAGE: ${ASKLAKE_SPARK_KAFKA_PACKAGE:-org.apache.spark:spark-sql-kafka-0-10_2.13:4.0.1}
       ASKLAKE_SPARK_OUTPUT_MODE: ${ASKLAKE_SPARK_OUTPUT_MODE:-s3a}
       ASKLAKE_SPARK_OUTPUT_BUCKET: ${ASKLAKE_SPARK_OUTPUT_BUCKET:?ASKLAKE_SPARK_OUTPUT_BUCKET is required}
@@ -246,7 +258,27 @@ services:
       - default
       - trino_internal
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/health', timeout=5).read()\""]
+      test:
+        - CMD
+        - python
+        - -c
+        - |
+          import json
+          import urllib.request
+
+          with urllib.request.urlopen("http://127.0.0.1:8080/api/health", timeout=5) as response:
+              payload = json.load(response)
+              http_status = response.status
+
+          ready = (
+              http_status == 200
+              and isinstance(payload, dict)
+              and payload.get("ok") is True
+              and payload.get("statusCode") == 200
+              and isinstance(payload.get("database"), dict)
+              and payload["database"].get("ok") is True
+          )
+          raise SystemExit(0 if ready else 1)
       interval: 30s
       timeout: 5s
       retries: 5

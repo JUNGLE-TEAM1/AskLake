@@ -59,6 +59,7 @@ def ensure_schema(db: Session) -> None:
             "partition": "VARCHAR(255)",
             "partition_columns": "JSON",
             "index_columns": "JSON",
+            "iceberg_target": "JSON",
             "job_kind": "VARCHAR(64)",
             "permission_roles": "JSON",
             "permission_summary": "TEXT",
@@ -121,12 +122,16 @@ def ensure_schema(db: Session) -> None:
             "status": "VARCHAR(32)",
             "last_error": "TEXT",
             "dag_steps": "JSON",
+            "source_boundary": "JSON",
+            "iceberg_snapshot_id": "VARCHAR(255)",
+            "iceberg_table_uri": "VARCHAR(1024)",
         }
         for column_name, column_type in batch_column_defs.items():
             if column_name not in batch_columns:
                 connection.execute(text(f"ALTER TABLE kafka_continuous_batches ADD COLUMN {column_name} {column_type}"))
         connection.execute(text("UPDATE kafka_continuous_batches SET status = 'success' WHERE status IS NULL"))
         connection.execute(text("UPDATE kafka_continuous_batches SET dag_steps = '[]' WHERE dag_steps IS NULL"))
+        connection.execute(text("UPDATE kafka_continuous_batches SET source_boundary = '{}' WHERE source_boundary IS NULL"))
 
         job_defaults = {
             "dag_steps": "[]",
@@ -591,6 +596,23 @@ def list_kafka_continuous_maintenance_run_models(
     return list(db.scalars(statement.order_by(KafkaContinuousMaintenanceRunModel.created_at.desc())).all())
 
 
+def list_failed_kafka_continuous_replay_models(
+    db: Session,
+    job_id: str,
+) -> list[KafkaContinuousMaintenanceRunModel]:
+    ensure_schema(db)
+    statement = (
+        select(KafkaContinuousMaintenanceRunModel)
+        .where(
+            KafkaContinuousMaintenanceRunModel.job_id == job_id,
+            KafkaContinuousMaintenanceRunModel.kind == "quarantine_replay",
+            KafkaContinuousMaintenanceRunModel.status == "failed",
+        )
+        .order_by(KafkaContinuousMaintenanceRunModel.created_at.asc())
+    )
+    return list(db.scalars(statement).all())
+
+
 def list_kafka_continuous_maintenance_runs(db: Session, job_id: str) -> list[ContinuousMaintenanceRun]:
     return [continuous_maintenance_run_to_schema(run) for run in list_kafka_continuous_maintenance_run_models(db, job_id)]
 
@@ -696,6 +718,7 @@ def job_to_schema(db: Session, job: ETLJobModel) -> JobRowData:
         index_columns=job.index_columns,
         compression=job.compression,
         storage_path=job.storage_path,
+        iceberg_target=job.iceberg_target,
         target_description=job.target_description,
         target_database=job.target_database,
         target_tags=job.target_tags,
@@ -789,7 +812,10 @@ def continuous_batch_to_schema(batch: KafkaContinuousBatchModel) -> KafkaContinu
         quarantined_count=int(batch.quarantined_count or 0),
         duration_ms=batch.duration_ms,
         source_ranges=batch.source_ranges or [],
+        source_boundary=batch.source_boundary or {},
         data_path=batch.data_path,
+        iceberg_snapshot_id=batch.iceberg_snapshot_id,
+        iceberg_table_uri=batch.iceberg_table_uri,
         quarantine_path=batch.quarantine_path,
         manifest_path=batch.manifest_path,
         last_error=batch.last_error,

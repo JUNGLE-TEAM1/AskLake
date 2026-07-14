@@ -21,6 +21,7 @@ from app.schemas.common import ErrorCode
 from app.schemas.etl import CatalogDataset, JobRowData, JobRunSummary
 from app.schemas.trino import TrinoClientPage
 from app.services.query_engine_registration_service import QueryEngineRegistrationService, build_query_engine_table
+from app.services.materialization_projection import upsert_materialization_run
 from app.services.trino_client import TrinoClient
 from app.services.trino_query_run_service import TrinoQueryRunService, trino_stats, trino_status
 
@@ -335,24 +336,22 @@ class TrinoSqlJobService:
         target_info = dict_value(recipe.get("target"))
         dataset_id = str(payload["datasetId"])
         existing = self.catalog_repository.get_dataset_payload(dataset_id) or {}
-        materialization_runs = [
+        materialization_runs = upsert_materialization_run(
+            existing.get("materializationRuns", []),
             {
                 "createdAt": run.ended_at,
                 "jobId": job.id,
+                "materializationMode": "snapshot",
                 "rowCount": int(payload.get("updateCount") or 0),
                 "runId": run.run_id,
                 "sourceKind": "sql",
                 "sourceLabel": "Trino SQL Job full refresh",
                 "status": "success",
+                "storageFormat": "iceberg",
                 "storageLocation": iceberg_uri(target),
                 "storageSizeBytes": 0,
             },
-            *[
-                item
-                for item in existing.get("materializationRuns", [])
-                if isinstance(item, dict) and str(item.get("runId") or "") != run.run_id
-            ],
-        ]
+        )
         schema = [
             [str(row[0]), str(row[1])]
             for row in schema_rows

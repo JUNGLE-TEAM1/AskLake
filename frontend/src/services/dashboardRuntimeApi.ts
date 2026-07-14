@@ -1,9 +1,26 @@
 import type {
   DashboardRuntimeResponse,
+  DashboardRuntimeWidget,
   DashboardRuntimeWidgetType,
   DashboardWidgetLayout,
 } from "../types";
-import { apiClient } from "./apiClient";
+import { apiClient, type ApiRequestOptions } from "./apiClient";
+
+export type DashboardDatasetFreshness = {
+  datasetId: string;
+  isContinuous: boolean;
+  latestRevision: number;
+  nextCheckAfterMs: number;
+  updatedAt: string | null;
+};
+
+export type DashboardDatasetFreshnessResponse = {
+  datasets: DashboardDatasetFreshness[];
+};
+
+export type DashboardWidgetRefreshResponse = {
+  widgets: DashboardRuntimeWidget[];
+};
 
 export type CreateDraftWidgetInput = {
   config?: Record<string, unknown>;
@@ -25,6 +42,29 @@ export type UpdateDraftWidgetInput = {
 export function getPublishedDashboard(dashboardId: string) {
   return apiClient.get<DashboardRuntimeResponse>(
     `/api/dashboards/${encodeURIComponent(dashboardId)}/published`,
+  );
+}
+
+export function queryDashboardDatasetFreshness(
+  datasetIds: string[],
+  options: ApiRequestOptions = {},
+) {
+  return apiClient.post<DashboardDatasetFreshnessResponse>(
+    "/api/datasets/freshness/query",
+    { datasetIds },
+    options,
+  );
+}
+
+export function queryPublishedDashboardWidgets(
+  dashboardId: string,
+  widgetIds: string[],
+  options: ApiRequestOptions = {},
+) {
+  return apiClient.post<DashboardWidgetRefreshResponse>(
+    `/api/dashboards/${encodeURIComponent(dashboardId)}/widgets/query`,
+    { widgetIds },
+    options,
   );
 }
 

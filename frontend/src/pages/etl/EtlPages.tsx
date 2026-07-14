@@ -137,12 +137,14 @@ export function SchedulePage({
   const [repeatTime, setRepeatTime] = useState(initialRepeat.time);
   const [repeatMinute, setRepeatMinute] = useState(initialRepeat.minute);
   const [customCron, setCustomCron] = useState(initialRepeat.cron);
+  const [scheduleError, setScheduleError] = useState("");
   const title = "스케줄링 설정";
   const repeatDraft = { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime };
   const selectedOption = getScheduleOptionFromLabel(draftScheduleLabel, mode);
   const scheduleTimezone = normalizeScheduleTimezone(draftSchedule.timezone);
   const scheduleStartDate = normalizeDateValue(draftSchedule.startDate, SCHEDULE_START_DATE);
   const scheduleEndDate = normalizeOptionalDateValue(draftSchedule.endDate);
+  const invalidRepeatCron = selectedOption === "repeat" && repeatFrequency === "custom" && !isValidCronExpression(customCron);
   const updateRetryPolicy = (retryPolicy: RetryPolicyDraft) => {
     onDraftChange({ schedule: { retryPolicy } });
   };
@@ -155,17 +157,23 @@ export function SchedulePage({
     onDraftChange(buildSchedulePatch(selectedOption, normalizedRepeat, scheduleTimezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }));
   };
   const selectOption = (nextOption: ScheduleOptionId) => {
+    setScheduleError("");
     onDraftChange(buildSchedulePatch(nextOption, repeatDraft, scheduleTimezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }));
     onModeChange(scheduleFlowFromOption(nextOption));
   };
   const goNext = () => {
+    if (invalidRepeatCron) {
+      setScheduleError("Cron 표현식을 5개 필드 형식으로 입력해 주세요. 예: 0 10 * * 1-5");
+      return;
+    }
+    setScheduleError("");
     applyScheduleDraft();
     onNext();
   };
 
   return (
     <CreationFlowLayout
-      actions={<CreationTopActions split onPrev={onPrev} onNext={goNext} />}
+      actions={<CreationTopActions nextDisabled={invalidRepeatCron} split onPrev={onPrev} onNext={goNext} />}
     >
         <EtlStepHeader
           className="etl-step-standalone-header"
@@ -192,6 +200,7 @@ export function SchedulePage({
               />
             </div>
             <Separator />
+            {scheduleError && <Alert variant="destructive"><Info /><AlertTitle>스케줄을 확인해 주세요.</AlertTitle><AlertDescription>{scheduleError}</AlertDescription></Alert>}
             {selectedOption === "repeat" && <RepeatSettings customCron={customCron} frequency={repeatFrequency} minute={repeatMinute} overlapPolicy={draftSchedule.overlapPolicy ?? DEFAULT_OVERLAP_POLICY} selectedDay={repeatDay} time={repeatTime} timezone={scheduleTimezone} onCronChange={(cron) => {
             const sanitizedCron = sanitizeCronInput(cron);
             setCustomCron(sanitizedCron);
@@ -216,7 +225,7 @@ export function SchedulePage({
           }} onTimeChange={(time) => {
             setRepeatTime(time);
             onDraftChange(buildSchedulePatch("repeat", { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time }, scheduleTimezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }));
-          }} onOverlapPolicyChange={(overlapPolicy) => onDraftChange({ overlapPolicy, schedule: { overlapPolicy } })} onTimezoneChange={(timezone) => onDraftChange(buildSchedulePatch("repeat", repeatDraft, timezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }))} />}
+            }} onOverlapPolicyChange={(overlapPolicy) => onDraftChange({ overlapPolicy, schedule: { overlapPolicy } })} onTimezoneChange={(timezone) => onDraftChange(buildSchedulePatch("repeat", repeatDraft, timezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }))} />}
             <ScheduleRetrySettings retryPolicy={draftRetryPolicy} onRetryPolicyChange={updateRetryPolicy} />
           </CardContent>
         </Card>
@@ -551,13 +560,13 @@ function formatScheduleLabel(option: ScheduleOptionId, repeat: RepeatScheduleDra
 
 function getScheduleFlowFromLabel(label: string): ScheduleFlowId {
   if (label.includes("건너뛰기") || label.includes("스케줄 없음") || label.includes("수동")) return "manual";
-  if (label.includes("예약") || label.includes("1회")) return "manual";
+  if (label.includes("1회") || label.includes("예약")) return "manual";
   return "repeat";
 }
 
 function getScheduleOptionFromLabel(label: string, fallbackFlow: ScheduleFlowId): ScheduleOptionId {
   if (label.includes("건너뛰기") || label.includes("스케줄 없음") || label.includes("수동")) return "skip";
-  if (label.includes("예약") || label.includes("1회")) return "skip";
+  if (label.includes("1회") || label.includes("예약")) return "skip";
   if (label) return "repeat";
   return fallbackFlow === "manual" ? "skip" : "repeat";
 }
@@ -570,16 +579,14 @@ function scheduleFlowFromOption(option: ScheduleOptionId): ScheduleFlowId {
 function buildSchedulePatch(option: ScheduleOptionId, repeat: RepeatScheduleDraft, timezone: string = SCHEDULE_TIMEZONE, currentSchedule?: ScheduleDraft, dates?: { endDate?: string; startDate?: string }): DraftPipelinePatch {
   const normalizedRepeat = normalizeRepeatScheduleDraft(repeat);
   const label = formatScheduleLabel(option, normalizedRepeat);
-  const nextRun = option === "skip"
-    ? "-"
-    : "저장 시점 기준 계산";
+  const nextRun = option === "skip" ? "-" : "저장 시점 기준 계산";
   const startDate = option === "repeat" ? normalizeDateValue(dates?.startDate ?? currentSchedule?.startDate, SCHEDULE_START_DATE) : "";
   const normalizedEndDate = option === "repeat" ? normalizeOptionalDateValue(dates?.endDate ?? currentSchedule?.endDate) : "";
   const endDate = normalizedEndDate && normalizedEndDate >= startDate ? normalizedEndDate : "";
   const scheduleTimezone = option === "skip" ? "" : timezone;
   const summary = formatScheduleSummary(option, label, scheduleTimezone);
   const nextRunUtc = option === "skip" ? "" : "";
-  const restoreRepeatDefaults = option === "repeat" && (currentSchedule?.mode === "manual" || currentSchedule?.label.includes("건너뛰기"));
+  const restoreRepeatDefaults = option !== "skip" && (currentSchedule?.mode === "manual" || currentSchedule?.label.includes("건너뛰기"));
   const overlapPolicy = option === "skip" ? undefined : restoreRepeatDefaults ? DEFAULT_OVERLAP_POLICY : currentSchedule?.overlapPolicy ?? DEFAULT_OVERLAP_POLICY;
   const watermarkPolicy = option === "skip"
     ? { ...DEFAULT_WATERMARK_POLICY, enabled: false, mode: "full_refresh" as WatermarkWindowMode }
@@ -5105,6 +5112,19 @@ function truncatePreviewValue(value: string) {
   return `${value.slice(0, 117)}...`;
 }
 
+function downloadCsv(filename: string, headers: string[], rows: Array<Array<string | number>>) {
+  const escapeCell = (value: string | number) => `"${String(value ?? "").replaceAll('"', '""')}"`;
+  const csv = [headers, ...rows].map((row) => row.map(escapeCell).join(",")).join("\r\n");
+  const url = URL.createObjectURL(new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8" }));
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
 function QualityPreviewAnalysis({
   invalidRows,
   onAction,
@@ -5210,7 +5230,10 @@ function QualityFailedRowsPanel({
         </table>
       </div>
       <ActionGroup className="hegun-rule-form-actions" density="compact">
-        <Button className="secondary-button" type="button" variant="outline" onClick={() => onAction("etl.rules.quality_failed_rows_exported", "/api/etl/rules/quality/failed-rows/export")}>행 내보내기</Button>
+        <Button className="secondary-button" type="button" variant="outline" onClick={() => {
+          downloadCsv("asklake-quality-failed-rows.csv", ["행", "컬럼", "샘플 값", "사유", "처리"], previewRows.map((row) => [row.row, row.column, row.sampleValue, qualityFailureReasonLabel(row.reason), failureActionLabel(row.action)]));
+          onAction("etl.rules.quality_failed_rows_exported", "/api/etl/rules/quality/failed-rows/export");
+        }}>행 내보내기</Button>
         <Button className="primary-button" type="button" onClick={() => onAction("etl.rules.quality_failed_rows_reviewed", "/api/etl/rules/quality/failed-rows/review")}>검토 완료</Button>
       </ActionGroup>
     </section>
@@ -5258,7 +5281,10 @@ function InvalidRowsPanel({
         </table>
       </div>
       <ActionGroup className="hegun-rule-form-actions" density="compact">
-        <Button className="secondary-button" type="button" variant="outline" onClick={() => onAction("etl.rules.invalid_rows_exported", "/api/etl/rules/invalid-rows/export")}>행 내보내기</Button>
+        <Button className="secondary-button" type="button" variant="outline" onClick={() => {
+          downloadCsv("asklake-invalid-rows.csv", ["행", "컬럼", "사유", "처리", "샘플 값"], invalidRows.map((row) => [row.row, row.column, qualityFailureReasonLabel(row.reason), failureActionLabel(row.action), row.sampleValue]));
+          onAction("etl.rules.invalid_rows_exported", "/api/etl/rules/invalid-rows/export");
+        }}>행 내보내기</Button>
         <Button className="primary-button" type="button" onClick={() => onAction("etl.rules.invalid_rows_reviewed", "/api/etl/rules/invalid-rows/review")}>검토 완료</Button>
       </ActionGroup>
     </section>
@@ -5302,9 +5328,7 @@ function RepeatSettings({
 }) {
   const cronIsValid = isValidCronExpression(customCron);
   const normalizedTimezone = normalizeScheduleTimezone(timezone);
-  const visibleRepeatFrequencyOptions = frequency === "custom"
-    ? repeatFrequencyOptions
-    : repeatFrequencyOptions.filter((option) => option.value !== "custom");
+  const visibleRepeatFrequencyOptions = repeatFrequencyOptions;
 
   return (
     <FieldSet>
@@ -5825,6 +5849,7 @@ export function PermissionPage({
   const [permissionOptionsError, setPermissionOptionsError] = useState("");
   const [permissionOptionsLoading, setPermissionOptionsLoading] = useState(true);
   const [permissionOptionsRequest, setPermissionOptionsRequest] = useState(0);
+  const [permissionActionError, setPermissionActionError] = useState("");
   const [roleChecks, setRoleChecks] = useState<Record<string, boolean>>({});
   const [userChecks, setUserChecks] = useState<Record<string, boolean>>({});
 
@@ -5857,13 +5882,16 @@ export function PermissionPage({
           ?? options.groups.find((group) => nextRoleChecks[group.id])
           ?? options.groups[0];
         setPermissionOptions(options);
+        setPermissionActionError("");
         setPermissionTemplate(selectedTemplate?.name ?? initialPermission.permissionTemplate);
         setRoleChecks(nextRoleChecks);
         setUserChecks(nextUserChecks);
       })
       .catch((error) => {
         if (!active) return;
-        setPermissionOptionsError(error instanceof Error ? error.message : "권한 대상 목록을 불러오지 못했습니다.");
+        const message = error instanceof Error ? error.message : "권한 대상 목록을 불러오지 못했습니다.";
+        setPermissionOptionsError(message);
+        setPermissionActionError(message);
       })
       .finally(() => {
         if (active) setPermissionOptionsLoading(false);
@@ -5933,7 +5961,15 @@ export function PermissionPage({
     });
   };
   const goNext = () => {
-    if (!permissionOptions) return;
+    if (permissionOptionsLoading) {
+      setPermissionActionError("권한 대상 목록을 불러오는 중입니다. 잠시 후 다시 시도해 주세요.");
+      return;
+    }
+    if (permissionOptionsError || !permissionOptions || permissionOptions.groups.length === 0) {
+      setPermissionActionError(permissionOptionsError || "사용 가능한 권한 그룹이 없어 다음 단계로 이동할 수 없습니다.");
+      return;
+    }
+    setPermissionActionError("");
     applyPermissionDraft();
     onNext();
   };
@@ -5972,6 +6008,7 @@ export function PermissionPage({
         icon={<ShieldCheck />}
         title="권한 설정"
       />
+      {permissionActionError && <Alert className="mb-4" variant="destructive"><Info /><AlertTitle>권한 확인이 필요합니다.</AlertTitle><AlertDescription>{permissionActionError}</AlertDescription></Alert>}
       <div className="grid min-w-0 gap-4 pb-6" data-testid="permission-workflow">
         <Card className="min-w-0 overflow-hidden" size="none">
           <CardHeader className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3 border-b border-slate-200 px-5 py-4">
@@ -6230,16 +6267,21 @@ export function ReviewPage({
 }) {
   const [reviewSnapshot, setReviewSnapshot] = useState<ReviewSnapshot | null>(null);
   const [reviewLoading, setReviewLoading] = useState(true);
+  const [reviewError, setReviewError] = useState("");
 
   useEffect(() => {
     let cancelled = false;
     setReviewLoading(true);
+    setReviewError("");
     void getReviewSnapshot(draft)
       .then((snapshot) => {
         if (!cancelled) setReviewSnapshot(snapshot);
       })
-      .catch(() => {
-        if (!cancelled) setReviewSnapshot(null);
+      .catch((error) => {
+        if (!cancelled) {
+          setReviewSnapshot(null);
+          setReviewError(error instanceof Error ? error.message : "검토 결과를 불러오지 못했습니다.");
+        }
       })
       .finally(() => {
         if (!cancelled) setReviewLoading(false);
@@ -6268,6 +6310,7 @@ export function ReviewPage({
           icon={<FileText />}
           title="검토 및 생성"
         />
+        {reviewError && <Alert className="mb-4" variant="destructive"><Info /><AlertTitle>검토 결과를 불러오지 못했습니다.</AlertTitle><AlertDescription>{reviewError} 수정 후 다시 시도해 주세요.</AlertDescription></Alert>}
         <div className="etl-review-stack">
           <section className="etl-review-card">
             <div className="etl-review-card-header">
