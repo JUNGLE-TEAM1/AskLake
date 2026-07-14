@@ -343,7 +343,7 @@ dashboard_widget_result_calculated
 dashboard_widget_result_failed
 ```
 
-실제 화면 지연은 `다음 Spark trigger까지 남은 시간 + Spark/S3 + backend reconciliation 0~5초 + polling 0~nextCheckAfterMs(+ dataset ID 기반 0~10% jitter) + widget 계산`이다. 2~5초 반영을 항상 보장하지 않는다.
+실제 화면 지연은 `다음 Spark trigger까지 남은 시간 + Spark/S3 + backend reconciliation 0~1초 + polling 0~nextCheckAfterMs(+ dataset ID 기반 0~10% jitter) + widget 계산`이다. 2~5초 반영을 항상 보장하지 않는다.
 
 ## 9. Frontend
 

@@ -380,12 +380,12 @@ nextCheckAfterMs
 ```text
 다음 Spark trigger까지 남은 시간
 + Spark 처리 및 S3 저장 시간
-+ Backend control-plane reconciliation 0~5초
++ Backend control-plane reconciliation 0~1초
 + 대시보드의 다음 freshness polling 0~nextCheckAfterMs
 + 위젯 계산 시간
 ```
 
-예를 들어 Spark trigger가 30초면 freshness 확인은 15초마다다. 이 경우 Kafka 메시지가 올 때부터 화면에 보일 때까지에는 남은 trigger 시간, Spark/S3 시간, 최대 5초의 reconciliation 대기, 최대 15초의 polling 대기, 계산 시간이 필요하다.
+예를 들어 Spark trigger가 30초면 freshness 확인은 15초마다다. 이 경우 Kafka 메시지가 올 때부터 화면에 보일 때까지에는 남은 trigger 시간, Spark/S3 시간, 최대 1초의 reconciliation 대기, 최대 15초의 polling 대기, 계산 시간이 필요하다.
 
 그래서 이 기능은 초당 event serving이 아니라 **micro-batch 기반 자동 갱신**이다.
 
