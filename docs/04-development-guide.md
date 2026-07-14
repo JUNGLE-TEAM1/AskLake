@@ -427,6 +427,8 @@ npm run kafka:reviews-replay -- \
 --no-recreate-topic     기존 topic을 삭제하지 않고 사용(기본값)
 ```
 
+`--loop`는 envelope `event_id`뿐 아니라 원본 `raw.event_id`/`raw.eventId`도 cycle과 stream offset으로 고유하게 만든다. Continuous merge key가 nested source event ID인 파이프라인에서도 반복 데이터가 기존 행 upsert로 소거되지 않고 새 이벤트로 누적된다.
+
 Continuous 적재를 눈으로 확인하려면 낮은 rate로 loop producer를 실행한다. 기본 실행은 topic을 보존하므로 이미 실행 중인 Continuous worker의 checkpoint를 훼손하지 않는다.
 
 ```bash

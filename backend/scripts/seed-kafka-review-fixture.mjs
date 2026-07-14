@@ -4,6 +4,8 @@ import path from "node:path";
 import { createGunzip } from "node:zlib";
 import { fileURLToPath } from "node:url";
 
+import { decorateReplayRecord } from "./kafka-replay-record.mjs";
+
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const defaultFixturePath = path.resolve(scriptDir, "../fixtures/kafka/amazon-review-fixture.jsonl");
 
@@ -116,7 +118,7 @@ async function produceRecords(producerClient) {
       let sourceRecords = 0;
       for await (const baseRecord of readStandardReviewRecords()) {
         if (stopRequested || (maxMessages && sentRecords + batch.length >= maxMessages) || (cycleTarget && recordsInCycle >= cycleTarget)) break;
-        const record = decorateReplayRecord(baseRecord, cycle, sentRecords + batch.length + 1);
+        const record = decorateReplayRecord(baseRecord, cycle, sentRecords + batch.length + 1, { loop });
         batch.push({ key: record.event_id, value: JSON.stringify(record) });
         recordsInCycle += 1;
         sourceRecords += 1;
@@ -159,15 +161,6 @@ function logProgress(sentRecords, lastProgressAt, force = false, cycle = 1) {
   if (!force && sentRecords - lastProgressAt < progressEvery) return lastProgressAt;
   console.log(`Review Kafka replay progress: ${sentRecords.toLocaleString()} messages sent (cycle ${cycle})`);
   return sentRecords;
-}
-
-function decorateReplayRecord(record, cycle, streamOffset) {
-  if (!loop) return record;
-  return {
-    ...record,
-    event_id: `${record.event_id}--cycle-${String(cycle).padStart(6, "0")}--offset-${streamOffset}`,
-    offset: streamOffset,
-  };
 }
 
 async function* readStandardReviewRecords() {
