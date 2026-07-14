@@ -578,7 +578,7 @@ Canonical schema type은 `String`, `Integer`, `Long`, `Double`, `Boolean`, `Time
 
 `SchemaColumnDraft.sourceName`은 `raw.reviewerID` 같은 원본 source path이고 `targetName`은 `raw_reviewerID` 같은 물리 output alias다. Transform step의 `input`과 lineage는 source path를 사용하며 target write는 alias를 사용한다. Kafka Continuous는 dotted path로 nested Spark schema를 구성하고 root/nested object별 unknown field를 검사하므로 `raw` object 자체를 unknown field로 오인하지 않는다. scalar/object가 같은 path를 동시에 점유하는 모호한 schema는 worker 시작 전에 거절한다.
 
-`nullable: false`는 output schema 제약이며 그 자체로 Quality Rule 수에 포함되지 않습니다. 실제 NULL 검사는 canonical `quality:not_null`, 값 누락 시 transform 오류 정책을 적용하는 Null Guard는 명시적인 `transform:null_guard`로 각각 저장합니다. 사용자가 NOT NULL을 해제하면 편집기에 남은 explicit Null Guard marker도 함께 제거합니다.
+`nullable: false`는 output schema 제약이며 그 자체로 Quality Rule 수에 포함되지 않습니다. 사용자가 지정하는 `누락 시 기본값`은 `transform:default_value`, `필수값`은 그 다음 순서의 `transform:null_guard`로 저장합니다. 명시적 Null Guard의 `onError`는 `fail_batch`(`Fail Run`)이며 기본값 적용 뒤에도 값이 비어 있을 때 실행을 중단합니다. 필수 필드에는 중복 `quality:not_null`을 새로 만들지 않습니다. 선택형 `quality:not_null`은 필수가 아닌 필드에서 누락을 별도 품질 사건으로 다룰 때만 사용하며, 이미 NULL인 값에 `set_null`을 적용하는 조합은 UI에서 제공하지 않습니다. 사용자가 필수값을 해제하면 편집기에 남은 explicit Null Guard marker도 함께 제거합니다. `severity`는 V1 payload 호환을 위해 보존하지만 현재 runtime action 분기에는 사용하지 않습니다.
 
 Rule compiler는 Regex의 비어 있지 않은 유효 pattern, Accepted Values의 1개 이상 값, Range의 유효한 min/max와 `min <= max`, boolean inclusive를 검증합니다. V1 mask policy는 `phone`(`keep first 3 digits` legacy alias), timestamp format은 `ISO-8601`(`UTC` legacy alias)만 허용합니다. Frontend, FastAPI, Node compiler는 같은 fixture와 `RULE_PARAMETER_REQUIRED`/`RULE_PARAMETER_INVALID` issue code를 사용하고 JSON root의 dotted input path를 동일하게 판정합니다.
 
