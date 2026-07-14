@@ -4,10 +4,13 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from app.core.auth_context import ActorContext
 from app.core.config import Settings
 from app.repositories.catalog_repository import CatalogRepository
 from app.repositories.dashboard_runtime_repository import DashboardRuntimeRepository
 from app.schemas.dashboard import (
+    DashboardAssistantCreateWidgetAction,
+    DashboardAssistantCreateWidgetInput,
     DashboardAssistantMode,
     DashboardAssistantReportAction,
     DashboardAssistantRequest,
@@ -18,6 +21,7 @@ from app.schemas.dashboard import (
 )
 from app.services.dashboard_assistant_context import (
     AssistantDashboardContext,
+    AssistantDatasetContext,
     build_assistant_context,
 )
 from app.services.dashboard_assistant_guard import (
@@ -40,11 +44,16 @@ class DashboardAssistantService:
         self.catalog_repository = catalog_repository
         self.settings = settings
 
-    def generate_response(self, request: DashboardAssistantRequest) -> DashboardAssistantResponse:
+    def generate_response(
+        self,
+        request: DashboardAssistantRequest,
+        actor: ActorContext,
+    ) -> DashboardAssistantResponse:
         context = build_assistant_context(
             request,
             self.runtime_repository,
             self.catalog_repository,
+            actor=actor,
             max_sample_rows=self.settings.openai_assistant_max_sample_rows,
         )
 
@@ -60,6 +69,9 @@ class DashboardAssistantService:
             raw_payload = self._request_openai(request, context)
             coerced_response = coerce_assistant_response(raw_payload)
             guarded_response = guard_assistant_response(coerced_response, context)
+            guarded_response = _prefer_prompt_bound_visualization_action(request, context, guarded_response)
+            guarded_response = _with_visualization_fallback_action(request, context, guarded_response)
+            guarded_response = _normalize_visualization_success_message(request, guarded_response)
             return self._with_context_warnings(guarded_response, context)
         except (HTTPError, URLError, TimeoutError, ValueError, OSError) as exc:
             return self._mock_fallback_response(
@@ -126,13 +138,11 @@ class DashboardAssistantService:
         context: AssistantDashboardContext,
         warning: str,
     ) -> DashboardAssistantResponse:
-        response = (
-            _build_visualization_mock_fallback(request, context)
-            if request.mode == DashboardAssistantMode.VISUALIZATION_REQUEST
-            else _build_dashboard_question_mock_fallback(request, context)
+        return DashboardAssistantResponse(
+            message="AI Assistant를 사용할 수 없어 요청을 실행하지 않았습니다.",
+            actions=[],
+            warnings=[*context.warnings, warning],
         )
-        response.warnings = [*context.warnings, warning, *response.warnings]
-        return response
 
     @staticmethod
     def _with_context_warnings(
@@ -169,7 +179,7 @@ def _is_low_signal_prompt(prompt: str) -> bool:
         return True
     if compact in LOW_SIGNAL_PROMPTS:
         return True
-    if re.fullmatch(r"[ㅋㅎㅠㅜ]+", compact):
+    if re.fullmatch(r"[ㅋㅎㅠㅜㅇㄱㄴㄷㄹㅁㅂㅅㅈㅊㅌㅍ]+", compact):
         return True
     if re.fullmatch(r"(ha|haha|lol|lmao|rofl)+", compact):
         return True
@@ -182,6 +192,327 @@ def _build_low_signal_prompt_response() -> DashboardAssistantResponse:
         actions=[],
         warnings=["의미가 부족한 짧은 입력이라 대시보드 변경을 적용하지 않았습니다."],
     )
+
+
+def _with_visualization_fallback_action(
+    request: DashboardAssistantRequest,
+    context: AssistantDashboardContext,
+    response: DashboardAssistantResponse,
+) -> DashboardAssistantResponse:
+    if request.mode != DashboardAssistantMode.VISUALIZATION_REQUEST or response.actions:
+        return response
+
+    fallback = _build_deterministic_visualization_action(request, context)
+    if fallback is None:
+        return response
+
+    guarded_fallback = guard_assistant_response(
+        DashboardAssistantResponse(
+            message="AI 응답을 대시보드에 바로 적용할 수 없어 요청과 데이터셋 기준으로 기본 차트를 생성했습니다.",
+            actions=[fallback],
+            warnings=response.warnings,
+        ),
+        context,
+    )
+    if not guarded_fallback.actions:
+        return response
+    return guarded_fallback
+
+
+def _prefer_prompt_bound_visualization_action(
+    request: DashboardAssistantRequest,
+    context: AssistantDashboardContext,
+    response: DashboardAssistantResponse,
+) -> DashboardAssistantResponse:
+    if request.mode != DashboardAssistantMode.VISUALIZATION_REQUEST:
+        return response
+    if not _prompt_has_bound_visualization_intent(request.prompt, context.datasets):
+        return response
+
+    prompt_action = _build_deterministic_visualization_action(request, context)
+    if prompt_action is None:
+        return response
+
+    guarded_prompt_response = guard_assistant_response(
+        DashboardAssistantResponse(
+            message=response.message,
+            actions=[prompt_action],
+            warnings=[
+                *response.warnings,
+                "사용자 프롬프트의 데이터셋/컬럼/집계 의도를 우선 적용했습니다.",
+            ],
+        ),
+        context,
+    )
+    if not guarded_prompt_response.actions:
+        return response
+    return guarded_prompt_response
+
+
+def _normalize_visualization_success_message(
+    request: DashboardAssistantRequest,
+    response: DashboardAssistantResponse,
+) -> DashboardAssistantResponse:
+    if request.mode != DashboardAssistantMode.VISUALIZATION_REQUEST or not response.actions:
+        return response
+    if any(action.type in {"create_widget", "update_widget"} for action in response.actions):
+        response.message = "시각화 요청을 대시보드에 적용했습니다."
+    return response
+
+
+def _build_deterministic_visualization_action(
+    request: DashboardAssistantRequest,
+    context: AssistantDashboardContext,
+) -> DashboardAssistantCreateWidgetAction | DashboardAssistantUpdateWidgetAction | None:
+    dataset = _select_fallback_dataset(request.prompt, context.datasets)
+    if dataset is None:
+        return None
+
+    config = _build_fallback_bar_config(request.prompt, dataset)
+    if config is None:
+        return None
+
+    title = _fallback_chart_title(config)
+    target_widget = _find_target_widget(request, context)
+    patch = DashboardAssistantWidgetPatch(
+        title=title,
+        type="bar_chart",
+        dataset_id=dataset.id,
+        config=config,
+    )
+    if target_widget is not None:
+        return DashboardAssistantUpdateWidgetAction(widget_id=target_widget.id, patch=patch)
+
+    return DashboardAssistantCreateWidgetAction(
+        widget=DashboardAssistantCreateWidgetInput(
+            title=title,
+            type="bar_chart",
+            dataset_id=dataset.id,
+            config=config,
+        ),
+    )
+
+
+def _select_fallback_dataset(prompt: str, datasets: list[AssistantDatasetContext]) -> AssistantDatasetContext | None:
+    if not datasets:
+        return None
+
+    prompt_tokens = _prompt_tokens(prompt)
+    normalized_prompt = _normalize_token(prompt)
+
+    def score(dataset: AssistantDatasetContext) -> tuple[int, int, int]:
+        dataset_bonus = _dataset_prompt_match_score(dataset, normalized_prompt)
+        column_names = {column.name for column in dataset.columns}
+        matched_columns = len(prompt_tokens & {_normalize_token(column_name) for column_name in column_names})
+        metric_bonus = 1 if _preferred_metric_column(prompt, dataset) else 0
+        default_bonus = 1 if _default_dimension_column(dataset) else 0
+        return (dataset_bonus, matched_columns, metric_bonus + default_bonus)
+
+    return max(datasets, key=score)
+
+
+def _build_fallback_bar_config(prompt: str, dataset: AssistantDatasetContext) -> dict[str, Any] | None:
+    prompt_tokens = _prompt_tokens(prompt)
+    mentioned_columns = [
+        column.name
+        for column in dataset.columns
+        if _normalize_token(column.name) in prompt_tokens
+    ]
+    metric_column = _preferred_metric_column(prompt, dataset) if _prompt_requests_metric(prompt) and not _prompt_requests_count(prompt) else None
+    dimension_columns = [
+        column_name
+        for column_name in mentioned_columns
+        if column_name != metric_column
+    ]
+    x_key = _preferred_dimension_column(dimension_columns, dataset)
+    if x_key is None:
+        return None
+
+    if metric_column is not None:
+        return {
+            "body": _metric_body_label(metric_column),
+            "description": f"{x_key} 기준 {_metric_body_label(metric_column)}를 보여주는 막대 차트입니다.",
+            "aggregation": "sum",
+            "color": {"colors": ["#2563eb"]},
+            "xKey": x_key,
+            "yKey": metric_column,
+            "groupKey": _secondary_dimension_column(dimension_columns, x_key),
+            "orientation": "vertical",
+        }
+
+    y_key = _secondary_dimension_column(dimension_columns, x_key) or x_key
+    return {
+        "body": "건수",
+        "description": f"{x_key} 기준 건수를 보여주는 막대 차트입니다.",
+        "aggregation": "count",
+        "color": {"colors": ["#2563eb"]},
+        "xKey": x_key,
+        "yKey": y_key,
+        "groupKey": _secondary_dimension_column(dimension_columns, x_key),
+        "orientation": "vertical",
+    }
+
+
+def _preferred_metric_column(prompt: str, dataset: AssistantDatasetContext) -> str | None:
+    wants_revenue = _prompt_requests_metric(prompt)
+    candidates = (
+        ["revenue", "total_amount", "amount", "sales", "orders", "customers"]
+        if wants_revenue
+        else ["revenue", "total_amount", "orders", "customers", "amount"]
+    )
+    return _first_existing_numeric_column(dataset, candidates) or _first_numeric_column(dataset)
+
+
+def _prompt_has_bound_visualization_intent(prompt: str, datasets: list[AssistantDatasetContext]) -> bool:
+    prompt_tokens = _prompt_tokens(prompt)
+    normalized_prompt = _normalize_token(prompt)
+    if _prompt_requests_count(prompt):
+        return True
+    for dataset in datasets:
+        dataset_terms = [
+            _normalize_token(dataset.id),
+            _normalize_token(dataset.name),
+        ]
+        if any(term and term in normalized_prompt for term in dataset_terms):
+            return True
+        if prompt_tokens & {_normalize_token(column.name) for column in dataset.columns}:
+            return True
+    return False
+
+
+def _dataset_prompt_match_score(dataset: AssistantDatasetContext, normalized_prompt: str) -> int:
+    full_terms = [
+        _normalize_token(dataset.id),
+        _normalize_token(dataset.name),
+    ]
+    if any(term and term in normalized_prompt for term in full_terms):
+        return 6
+
+    split_terms = {
+        _normalize_token(part)
+        for value in [dataset.id, dataset.name]
+        for part in re.split(r"[_\\s-]+", value)
+        if _normalize_token(part)
+    }
+    return min(sum(1 for term in split_terms if term in normalized_prompt), 2)
+
+
+def _prompt_requests_metric(prompt: str) -> bool:
+    prompt_text = prompt.lower()
+    return any(token in prompt_text for token in ["매출", "금액", "수량", "revenue", "sales", "amount"])
+
+
+def _prompt_requests_count(prompt: str) -> bool:
+    normalized = _normalize_token(prompt)
+    prompt_text = prompt.lower()
+    return (
+        any(token in prompt_text for token in ["건수", "개수", "고객 수", "주문 수", "count"])
+        or any(token in normalized for token in ["고객수", "주문수", "rowcount", "count"])
+    )
+
+
+def _preferred_dimension_column(mentioned_columns: list[str], dataset: AssistantDatasetContext) -> str | None:
+    for column_name in mentioned_columns:
+        if not _column_is_numeric(dataset, column_name):
+            return column_name
+    return _default_dimension_column(dataset)
+
+
+def _secondary_dimension_column(mentioned_columns: list[str], x_key: str) -> str | None:
+    for column_name in mentioned_columns:
+        if column_name != x_key:
+            return column_name
+    return None
+
+
+def _default_dimension_column(dataset: AssistantDatasetContext) -> str | None:
+    for column in dataset.columns:
+        name = column.name.lower()
+        if any(token in name for token in ["date", "month", "year", "time"]):
+            return column.name
+    for column in dataset.columns:
+        if not _column_is_numeric(dataset, column.name):
+            return column.name
+    return dataset.columns[0].name if dataset.columns else None
+
+
+def _first_existing_numeric_column(dataset: AssistantDatasetContext, candidates: list[str]) -> str | None:
+    columns = {column.name: column for column in dataset.columns}
+    normalized_columns = {_normalize_token(column.name): column.name for column in dataset.columns}
+    for candidate in candidates:
+        column_name = columns.get(candidate)
+        if column_name is not None and _column_is_numeric(dataset, candidate):
+            return candidate
+        normalized_match = normalized_columns.get(_normalize_token(candidate))
+        if normalized_match and _column_is_numeric(dataset, normalized_match):
+            return normalized_match
+    return None
+
+
+def _first_numeric_column(dataset: AssistantDatasetContext) -> str | None:
+    for column in dataset.columns:
+        if _column_is_numeric(dataset, column.name):
+            return column.name
+    return None
+
+
+def _column_is_numeric(dataset: AssistantDatasetContext, column_name: str) -> bool:
+    column = next((item for item in dataset.columns if item.name == column_name), None)
+    if column is None:
+        return False
+    normalized_type = column.type.strip().lower()
+    if any(hint in normalized_type for hint in ["bigint", "decimal", "double", "float", "int", "integer", "long", "number", "numeric", "real"]):
+        return True
+    sample_values = [
+        row.get(column_name)
+        for row in dataset.sample_rows
+        if isinstance(row, dict) and row.get(column_name) not in {None, ""}
+    ]
+    return bool(sample_values) and all(_can_parse_float(value) for value in sample_values[:10])
+
+
+def _can_parse_float(value: Any) -> bool:
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int | float):
+        return True
+    if not isinstance(value, str):
+        return False
+    try:
+        float(value.strip().replace(",", ""))
+    except ValueError:
+        return False
+    return True
+
+
+def _prompt_tokens(prompt: str) -> set[str]:
+    return {
+        _normalize_token(token)
+        for token in re.split(r"[^0-9A-Za-z_가-힣]+", prompt)
+        if _normalize_token(token)
+    }
+
+
+def _normalize_token(value: str) -> str:
+    return "".join(character for character in value.lower() if character.isalnum())
+
+
+def _metric_body_label(column_name: str) -> str:
+    if column_name in {"revenue", "total_amount", "amount", "sales"}:
+        return "매출액"
+    if column_name in {"orders", "order_count"}:
+        return "주문 수"
+    if column_name in {"customers", "customer_count"}:
+        return "고객 수"
+    return column_name
+
+
+def _fallback_chart_title(config: dict[str, Any]) -> str:
+    metric = _metric_body_label(str(config.get("yKey") or "건수")) if config.get("aggregation") != "count" else "건수"
+    x_key = str(config.get("xKey") or "기준")
+    group_key = config.get("groupKey")
+    dimension = f"{x_key}·{group_key}" if group_key else x_key
+    return f"{dimension}별 {metric} 막대 차트"
 
 
 def _assistant_response_schema() -> dict[str, Any]:

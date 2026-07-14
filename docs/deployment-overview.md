@@ -3,6 +3,8 @@
 이 문서는 AskLake를 AWS에 배포할 때 팀원이 빠르게 공유해야 할 결정을 정리한다.
 목표는 한 번 수동으로 올리는 것이 아니라, 고정된 AWS 인프라 위에서 `dev` 브랜치 변경을 반복 배포할 수 있게 만드는 것이다.
 
+Job A 담당자는 큰 방향을 이해한 뒤 `docs/job-a-aws-deployment-e2e-playbook.md`의 Phase 체크리스트와 증거 기록을 따라 진행한다.
+
 ## 목표
 
 AskLake 배포의 목표는 다음 흐름을 안정적으로 만드는 것이다.
@@ -30,7 +32,15 @@ AWS EC2
   - backend
   - postgres
   - mongo
+  - airflow
+  - redpanda
+
+AWS S3
+  - raw
+  - spark output
 ```
+
+Iceberg Warehouse와 Query Result bucket은 이미 만들어 두어도 되지만 현재 `dev` runtime은 사용하지 않는다. Trino/query engine 복원은 별도 이슈와 검증을 거쳐야 한다.
 
 외부 요청은 Caddy가 받는다.
 
@@ -72,7 +82,8 @@ mongo
 
 PostgreSQL fixture는 메인 데모 시나리오에 사용한다.
 MongoDB fixture는 다른 source type도 처리할 수 있다는 보조 시나리오에 사용한다.
-MinIO나 S3는 이번 기본 배포에서는 optional로 둔다.
+로컬 개발은 root Compose의 MinIO를 사용한다. EC2 production은 MinIO를 띄우지 않고 AWS S3를 사용한다.
+File / S3, Data Lake source, Target S3 picker, Spark S3A, DuckDB는 EC2 instance profile IAM Role/default credential chain을 사용하며 browser와 서버 `.env`에는 AWS access key/secret을 두지 않는다.
 
 기본 fixture는 다음처럼 고정한다.
 
@@ -82,6 +93,7 @@ MinIO나 S3는 이번 기본 배포에서는 optional로 둔다.
 | PostgreSQL `asklake_sources` | `orders_clean` | Catalog -> SQL Preview -> Job 생성 메인 demo |
 | PostgreSQL `asklake_sources` | `customers`, `user_activity` | 추후 join/event demo 후보 |
 | MongoDB `asklake_sources` | `customer_reviews`, `app_events` | document source와 nested schema 보조 demo |
+| AWS S3 raw bucket | 합성 commerce 파일과 seeded object | File / S3와 Data Lake Spark S3A demo |
 
 현재 FastAPI SQL Preview는 물리 DB를 직접 조회하지 않고 Catalog payload의 `sampleRows`를 사용한다.
 따라서 `orders_clean`의 catalog `schema`/`sampleRows`와 PostgreSQL fixture row는 같은 seed 기준으로 맞춘다.
@@ -95,7 +107,7 @@ MinIO나 S3는 이번 기본 배포에서는 optional로 둔다.
 | Priority P0 | `orders_clean` Catalog, SQL Preview, 처리 Job 생성, Catalog 재확인 | 발표 메인 흐름이므로 반드시 통과해야 한다. |
 | Priority P1 | `customers`, `user_activity`, MongoDB `customer_reviews`, `app_events`, dashboard preview | 보조 시연과 회귀 테스트에 넣는다. |
 | Priority P2 | 기존 mock catalog 후보 전체 | seed 후보 registry에 남기고 시간이 될 때 확장한다. |
-| Priority P3 | MinIO/S3, auth, backup, monitoring, production scheduler | 데모 배포 안정화 뒤 별도 작업으로 분리한다. |
+| Priority P3 | auth, backup, monitoring, production scheduler | 데모 배포 안정화 뒤 별도 작업으로 분리한다. |
 
 ## 처음 한 번 할 일
 
@@ -104,13 +116,16 @@ MinIO나 S3는 이번 기본 배포에서는 optional로 둔다.
 | 작업 | 설명 |
 | --- | --- |
 | EC2 생성 | Docker Compose를 실행할 서버를 만든다. |
+| EC2 IAM Role 연결 | Raw list/read와 Output list/read/write/delete 최소 권한을 instance profile로 연결한다. |
+| S3 bucket 생성 | Raw와 Spark Output bucket을 같은 리전에 private으로 만든다. Warehouse/Query Result bucket은 현재 runtime에 연결하지 않는다. |
+| IMDSv2 설정 | token required, container credential용 response hop limit 2를 설정한다. |
 | Elastic IP 연결 | 서버 public IP를 고정한다. |
 | 보안 그룹 설정 | 22, 80, 443 포트를 연다. |
 | DNS 연결 | 도메인 A record를 Elastic IP로 연결한다. |
 | Docker 설치 | EC2에 Docker와 Docker Compose를 설치한다. |
 | 배포 디렉터리 생성 | 예: `/opt/asklake` |
 | 서버 `.env` 작성 | 실제 secret과 connection string은 서버에만 둔다. |
-| 최초 compose up | Caddy, frontend, backend, DB 컨테이너를 띄운다. |
+| 최초 compose up | S3 readiness 통과 후 Caddy, frontend, backend, DB, Airflow, Kafka 컨테이너를 띄운다. |
 
 도메인과 서버는 매번 새로 만들지 않는다.
 한 번 고정한 뒤, 이후 배포는 코드만 갱신한다.
@@ -162,11 +177,13 @@ backend/Dockerfile
 frontend/Dockerfile
 scripts/deploy.sh
 scripts/seed-demo-data.sh
+scripts/reset-demo-data.sh
 .github/workflows/deploy-dev.yml
 docs/deployment-runbook.md
 ```
 
-`deploy/*`, backend/frontend Dockerfile은 prod-like compose baseline이고, seed script와 GitHub Actions workflow는 후속 phase에서 추가한다.
+`deploy/*`, backend/frontend Dockerfile은 prod-like compose baseline이고, seed/reset script는 demo fixture를 같은 상태로 맞추는 운영 계층이다.
+GitHub Actions workflow는 후속 phase에서 추가한다.
 `scripts/deploy.sh`와 `deploy/ec2.env.example`은 EC2 start/stop/redeploy를 반복하기 위한 로컬 운영 계층이다.
 
 이 문서들은 실제 secret 값을 포함하지 않는다.
@@ -218,6 +235,7 @@ Catalog에 `orders_clean`이 없거나 Preview가 비어 있으면 배포 성공
 
 ```bash
 docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml config
+docker build -t asklake-backend-deploy-check:local backend
 
 cd frontend
 npm run build
@@ -243,16 +261,75 @@ docker compose logs backend
 - GitHub Actions 전에는 `scripts/deploy.sh`로 start/stop/deploy/status를 반복한다.
 - demo data는 seeded fixture로 고정한다.
 - PostgreSQL과 MongoDB를 fixture source로 둔다.
-- MinIO/S3는 기본 배포에서는 후순위로 둔다.
+- 로컬은 MinIO, EC2 production은 AWS S3로 환경 분리한다.
+- production storage runtime은 EC2 IAM Role/default credential chain을 사용하고 static AWS key를 저장하지 않는다.
 - secret은 repo에 넣지 않는다.
 
 ## 아직 하지 않는 일
 
 - ECS/Fargate 전환.
 - RDS/DocumentDB 같은 managed DB 전환.
-- MinIO/S3 production storage 구성.
 - production-grade scheduler.
+
 - 실제 인증/인가.
 - 운영용 backup/monitoring 체계.
 
 이 항목들은 데모 배포가 안정화된 뒤 별도 작업으로 분리한다.
+
+## Deployment Dependency Manifest
+
+The deploy path is expected to be reproducible from declared files only.
+
+Host prerequisites:
+
+- Docker Engine and the Docker Compose plugin.
+- Git, SSH, curl, and AWS CLI for `scripts/deploy.sh`.
+- Host directories under `ASKLAKE_HOST_DATA_DIR`; Compose prepares them for Spark UID/GID `185:185`.
+- EC2 repo checkout at `ASKLAKE_DEPLOY_PATH`, default `/opt/asklake`.
+
+Compose/runtime services declared in `deploy/docker-compose.prod.yml`:
+
+- `caddy:2.8-alpine`
+- `frontend`, built from `frontend/Dockerfile`
+- `backend`, built from `backend/Dockerfile`
+- `postgres:16-alpine`
+- `mongo:7`
+- `apache/airflow:3.3.0`
+- Airflow metadata `postgres:16-alpine`
+- `redpandadata/redpanda:v24.3.1`
+- one-shot `aws-s3-readiness`, built from `backend/Dockerfile`
+- `spark-master`, `spark-worker`, and `spark-dir-init`, built from the `spark-runtime` target
+
+Airflow orchestration dependencies:
+
+- Production compose declares `apache/airflow:3.3.0`, Airflow API server, scheduler, DAG processor, and Airflow metadata Postgres.
+- The backend deploy container reads `AIRFLOW_API_BASE_URL`, `AIRFLOW_DAG_ID`, `AIRFLOW_UI_BASE_URL`, `AIRFLOW_API_TOKEN`, `AIRFLOW_USERNAME`, `AIRFLOW_PASSWORD`, and `AIRFLOW_REQUEST_TIMEOUT_SECONDS`.
+- ETL `run` and `retry` commands require a reachable Airflow API. The default prod value is `http://airflow-apiserver:8080`, the internal Compose service URL.
+- The smoke DAG is committed at `airflow/dags/asklake_etl_job.py`; it uses only packages included in the Airflow image.
+
+Backend deploy image dependencies:
+
+- OS packages from `backend/Dockerfile`: `nodejs`, `npm`, `ca-certificates`. The backend image intentionally omits Docker CLI.
+- Python packages from `backend/requirements.txt`: FastAPI/Uvicorn, SQLAlchemy, psycopg, pydantic settings, dotenv, and DuckDB.
+- Node connector packages from `backend/package.json`: S3, Kafka, MongoDB, Parquet, and PostgreSQL clients.
+
+Spark runtime dependencies:
+
+- Spark services use the `apache/spark:4.0.1`-based `spark-runtime` image with application scripts baked in.
+- Production backend submits cluster-mode drivers to the internal Spark Standalone REST endpoint and polls terminal state; it does not receive the Docker socket.
+- S3A jobs use `ASKLAKE_SPARK_HADOOP_AWS_PACKAGE`, default `org.apache.hadoop:hadoop-aws:3.4.1`.
+- Spark output/report/sample host directories are rooted at `ASKLAKE_HOST_DATA_DIR`, default `/tmp/asklake`.
+
+Frontend deploy image dependencies:
+
+- Node 22 build image and Nginx runtime from `frontend/Dockerfile`.
+- Frontend packages from `frontend/package.json`.
+- Required build args are listed in `deploy/.env.example`: `VITE_API_BASE_URL`, `VITE_USE_MOCK_API`, `VITE_DASHBOARD_ASSISTANT_API_PATH`, `VITE_OBJECT_STORAGE_PROVIDER`, and `VITE_S3_REGION`.
+
+Local deploy dependency verification:
+
+```bash
+scripts/verify-deploy-dependencies.sh
+```
+
+This renders the production and local Airflow Compose configs, builds backend/frontend/Spark runtime images, checks backend Python and Node imports, verifies Docker CLI is absent from backend, verifies UID 185 and embedded Spark scripts, checks Spark/Airflow image availability, and imports the Airflow DAG inside the Airflow image. 실제 AWS bucket/IAM 검증은 EC2에서 one-shot `aws-s3-readiness`가 수행한다.

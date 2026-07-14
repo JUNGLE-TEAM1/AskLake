@@ -1,0 +1,104 @@
+.hoverCard {
+  position: fixed;
+  z-index: 1000;
+  display: grid;
+  grid-template-columns: 54px minmax(0, 1fr);
+  width: min(360px, calc(100vw - 32px));
+  gap: 14px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 24px 60px rgb(15 23 42 / 18%);
+  color: #0f172a;
+  padding: 18px;
+  pointer-events: none;
+}
+
+.hoverCard::before {
+  position: absolute;
+  top: 26px;
+  left: -8px;
+  width: 14px;
+  height: 14px;
+  border-bottom: 1px solid #cbd5e1;
+  border-left: 1px solid #cbd5e1;
+  background: #fff;
+  content: "";
+  transform: rotate(45deg);
+}
+
+.hoverIcon {
+  display: inline-grid;
+  width: 48px;
+  height: 48px;
+  place-items: center;
+  border: 1px solid #dbe4f0;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #475569;
+}
+
+.number {
+  color: #334155;
+}
+
+.date {
+  color: #2563eb;
+}
+
+.hoverBody {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.hoverBody > strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #0f172a;
+  font-size: 18px;
+  font-weight: 900;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hoverBody > span,
+.hoverBody p {
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 750;
+  line-height: 1.4;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.hoverBody dl {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 8px 10px;
+  margin: 0;
+}
+
+.hoverBody dt {
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.hoverBody dd {
+  min-width: 0;
+  overflow: hidden;
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 850;
+  margin: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 860px) {
+  .hoverCard {
+    display: none;
+  }
+}

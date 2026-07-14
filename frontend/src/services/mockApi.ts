@@ -1,6 +1,6 @@
 import { catalogDatasets, etlJobs } from "../data/mockData";
 import { defaultDashboardCards } from "../pages/dashboard/dashboardListData";
-import type { CatalogDataset, CreateDerivedDatasetRequest, DashboardListResponse, DraftPipeline, JobCommand, JobDagStep, JobRowData, JobRunSummary, LineageGraph, LineageGraphDataset, LineageLayer, SavedDashboardCard, SqlResultDraft } from "../types";
+import type { CatalogDataset, CreateDerivedDatasetRequest, DashboardListResponse, DraftPipeline, JobCommand, JobDagStep, JobListFacets, JobListQuery, JobListResult, JobRowData, JobRunOutcome, JobRunSummary, JobScheduleKind, JobStatus, LineageGraph, LineageGraphDataset, LineageLayer, SavedDashboardCard, SqlResultDraft } from "../types";
 import { normalizeDatasetStatus, normalizeJobStatus } from "../utils/statusMeta";
 import { apiClient, apiConfig } from "./apiClient";
 
@@ -23,10 +23,6 @@ type PageEnvelope = {
     cursor: string | null;
     hasNext: boolean;
   };
-};
-
-type JobsResponse = PageEnvelope & {
-  jobs: JobRowData[];
 };
 
 type DatasetsResponse = PageEnvelope & {
@@ -69,9 +65,33 @@ export type DashboardPageResult = {
 };
 
 const mockLatencyMs = 120;
+const queryResultPageTimeoutMs = 15_000;
+const commerceRoiResultDatasetName = "gold_commerce_channel_roi";
+const commerceRoiJoinTables = ["commerce_orders_daily", "commerce_marketing_spend_daily"];
+const mockQueryRuns = new Map<string, SqlResultDraft>();
+let mockJobs = etlJobs.map((job) => ({ ...job }));
 
 function normalizeJob(job: JobRowData): JobRowData {
-  return { ...job, status: normalizeJobStatus(job.status) };
+  const status = normalizeJobStatus(job.status);
+  return { ...job, status };
+}
+
+export async function updatePipelineDraft(jobId: string, draft: DraftPipeline): Promise<JobRowData> {
+  const existing = mockJobs.find((job) => job.id === jobId);
+  if (!existing) throw new Error(`Job not found: ${jobId}`);
+  const updated = normalizeJob({
+    ...existing,
+    name: `${draft.target.datasetName.trim() || existing.target}_pipeline`,
+    owner: draft.permission.owner,
+    schedule: draft.schedule.label,
+    scheduleSummary: draft.schedule.summary,
+    target: draft.target.datasetName,
+    targetFormat: draft.target.format,
+    targetLayer: draft.target.layer,
+    updatedAt: new Date().toISOString(),
+  });
+  mockJobs = mockJobs.map((job) => job.id === jobId ? updated : job);
+  return resolveMock(updated);
 }
 
 function normalizeDataset(dataset: CatalogDataset): CatalogDataset {
@@ -89,19 +109,101 @@ function normalizeJobCommandResult(result: JobCommandResult): JobCommandResult {
   return result.job ? { ...result, job: normalizeJob(result.job) } : result;
 }
 
+function persistMockJob(job: JobRowData) {
+  const normalizedJob = normalizeJob(job);
+  const existingIndex = mockJobs.findIndex((item) => item.id === normalizedJob.id);
+  if (existingIndex < 0) {
+    mockJobs = [normalizedJob, ...mockJobs];
+    return normalizedJob;
+  }
+
+  mockJobs = mockJobs.map((item, index) => (index === existingIndex ? normalizedJob : item));
+  return normalizedJob;
+}
+
+async function resolveMockJobCommand(result: JobCommandResult): Promise<JobCommandResult> {
+  if (!result.job) return resolveMock(result);
+
+  const job = result.run
+    ? {
+      ...result.job,
+      runHistory: [result.run, ...(result.job.runHistory ?? []).filter((item) => item.runId !== result.run?.runId)],
+    }
+    : result.job;
+  return resolveMock({ ...result, job: persistMockJob(job) });
+}
+
 async function resolveMock<T>(payload: T): Promise<T> {
   await new Promise((resolve) => window.setTimeout(resolve, mockLatencyMs));
   return payload;
 }
 
-export async function getJobs(): Promise<JobRowData[]> {
+const jobStatuses: JobStatus[] = ["scheduled", "failed", "running", "paused", "canceled", "stopped"];
+
+function getLatestRunOutcome(job: JobRowData): JobRunOutcome | undefined {
+  const status = job.runHistory?.[0]?.status;
+  return status === "success" || status === "failed" || status === "canceled" ? status : undefined;
+}
+
+function getJobScheduleKind(job: JobRowData): JobScheduleKind {
+  const schedule = job.schedule.trim().toLocaleLowerCase();
+  if (!schedule || schedule === "-" || ["manual", "수동", "스케줄 없음", "건너뛰기"].some((token) => schedule.includes(token))) return "none";
+  if (["실시간", "realtime", "real-time", "stream", "kafka"].some((token) => schedule.includes(token))) return "realtime";
+  if (["매일", "daily"].some((token) => schedule.includes(token))) return "daily";
+  if (["매주", "weekly"].some((token) => schedule.includes(token))) return "weekly";
+  if (["매월", "monthly"].some((token) => schedule.includes(token))) return "monthly";
+  return "other";
+}
+
+function getJobListFacets(jobs: JobRowData[]): JobListFacets {
+  return {
+    latestRunOutcomeCounts: {
+      canceled: jobs.filter((job) => getLatestRunOutcome(job) === "canceled").length,
+      failed: jobs.filter((job) => getLatestRunOutcome(job) === "failed").length,
+      success: jobs.filter((job) => getLatestRunOutcome(job) === "success").length,
+    },
+    owners: Array.from(new Set(jobs.map((job) => job.owner).filter(Boolean))).sort((first, second) => first.localeCompare(second)),
+    statusCounts: Object.fromEntries(jobStatuses.map((status) => [status, jobs.filter((job) => job.status === status).length])) as JobListFacets["statusCounts"],
+    total: jobs.length,
+  };
+}
+
+function buildJobListResult(jobs: JobRowData[], query: JobListQuery): JobListResult {
+  const normalizedJobs = jobs.map(normalizeJob);
+  const selectedStatuses = new Set(query.statuses ?? []);
+  const filteredJobs = normalizedJobs.filter((job) => (
+    (selectedStatuses.size === 0 || selectedStatuses.has(job.status))
+    && (!query.lastRunOutcome || getLatestRunOutcome(job) === query.lastRunOutcome)
+    && (!query.scheduleKind || getJobScheduleKind(job) === query.scheduleKind)
+    && (!query.owner || job.owner === query.owner)
+  ));
+
+  return {
+    facets: getJobListFacets(normalizedJobs),
+    jobs: filteredJobs,
+  };
+}
+
+function toJobListSearchParams(query: JobListQuery) {
+  const searchParams = new URLSearchParams();
+  query.statuses?.forEach((status) => searchParams.append("status", status));
+  if (query.lastRunOutcome) searchParams.set("lastRunOutcome", query.lastRunOutcome);
+  if (query.owner) searchParams.set("owner", query.owner);
+  if (query.scheduleKind) searchParams.set("scheduleKind", query.scheduleKind);
+  const serialized = searchParams.toString();
+  return serialized ? `?${serialized}` : "";
+}
+
+export async function getJobs(query: JobListQuery = {}): Promise<JobListResult> {
   if (!apiConfig.useMock) {
-    const result = await apiClient.get<JobsResponse | JobRowData[]>("/api/etl/jobs");
-    const jobs = Array.isArray(result) ? result : result.jobs;
-    return jobs.map(normalizeJob);
+    const result = await apiClient.get<JobListResult>(`/api/etl/jobs${toJobListSearchParams(query)}`);
+    return {
+      facets: result.facets,
+      jobs: result.jobs.map(normalizeJob),
+    };
   }
 
-  return resolveMock(etlJobs.map(normalizeJob));
+  return resolveMock(buildJobListResult(mockJobs, query));
 }
 
 export async function getDatasets(): Promise<CatalogDataset[]> {
@@ -205,7 +307,7 @@ export async function getDashboards(query: DashboardQuery = {}): Promise<Dashboa
 
 export async function saveDashboardCard(card: SavedDashboardCard): Promise<SavedDashboardCard> {
   if (!apiConfig.useMock) {
-    const result = await apiClient.put<DashboardResponse>(`/api/dashboards/${encodeURIComponent(card.id)}`, card);
+    const result = await apiClient.patch<DashboardResponse>(`/api/dashboards/${encodeURIComponent(card.id)}`, card);
     return result.dashboard;
   }
 
@@ -223,22 +325,43 @@ export async function createPipelineDraft(draftPipeline: DraftPipeline, jobCount
     name: `${draftPipeline.target.datasetName}_pipeline`,
     id: `JOB-${String(jobCount + 1).padStart(3, "0")}`,
     owner: draftPipeline.permission.owner,
+    permissionRoles: draftPipeline.permission.roles,
+    permissionSummary: draftPipeline.permission.summary,
     tag: "[리뷰]",
     source: `${draftPipeline.source.sourceType} / ${draftPipeline.source.sourceLabel}`,
     target: draftPipeline.target.datasetName,
     schedule: draftPipeline.schedule.label,
+    schedulePolicy: {
+      endDate: draftPipeline.schedule.endDate,
+      nextRunUtc: draftPipeline.schedule.nextRunUtc,
+      overlapPolicy: draftPipeline.schedule.overlapPolicy,
+      startDate: draftPipeline.schedule.startDate,
+      timezone: draftPipeline.schedule.timezone,
+      watermarkPolicy: draftPipeline.schedule.watermarkPolicy,
+    },
+    scheduleSummary: draftPipeline.schedule.summary,
     lastRun: "생성됨",
     lastState: "대기 중",
     nextRun: draftPipeline.schedule.mode === "manual" ? "-" : "다음 예약 대기",
+    compression: draftPipeline.target.compression,
+    partition: draftPipeline.target.partitionColumns?.join("/") || draftPipeline.target.partition,
+    partitionColumns: draftPipeline.target.partitionColumns,
     qualityInvalidRows: draftPipeline.quality.invalidRows,
     qualityRules: draftPipeline.quality.rules,
     qualityScore: draftPipeline.quality.score,
     qualityStatus: draftPipeline.quality.status,
+    recordParsing: draftPipeline.recordParsing.enabled ? draftPipeline.recordParsing : undefined,
     sourceConfig: draftPipeline.source.sourceConfig,
     sourceLabel: draftPipeline.source.sourceLabel,
     sourceType: draftPipeline.source.sourceType,
+    storagePath: draftPipeline.target.storagePath,
+    storageType: draftPipeline.target.storageType,
+    targetDescription: draftPipeline.target.description,
+    targetDatabase: draftPipeline.target.databaseName,
     targetFormat: draftPipeline.target.format,
     targetLayer: draftPipeline.target.layer,
+    targetTags: draftPipeline.target.tags,
+    rag: draftPipeline.target.rag,
     transformOutputColumns: draftPipeline.transform.outputColumns,
     transformSteps: draftPipeline.transform.steps,
   };
@@ -264,9 +387,9 @@ export async function createPipelineDraft(draftPipeline: DraftPipeline, jobCount
   );
 
   const dataset: CatalogDataset = {
-    description: isSqlResultSource
+    description: draftPipeline.target.description?.trim() || (isSqlResultSource
       ? `${draftPipeline.target.datasetName} SQL Result 처리 Job으로 생성한 데이터셋`
-      : "생성 플로우에서 만든 고객 리뷰 분석용 데이터셋",
+      : "생성 플로우에서 만든 고객 리뷰 분석용 데이터셋"),
     downstream: ["SQL 분석", "대시보드", draftPipeline.target.rag ? "AI 활용" : "카탈로그"],
     freshness: "latest",
     id: `ds_${draftPipeline.target.datasetName}`,
@@ -275,6 +398,8 @@ export async function createPipelineDraft(draftPipeline: DraftPipeline, jobCount
     name: draftPipeline.target.datasetName,
     nextRefresh: draftPipeline.schedule.label,
     owner: draftPipeline.permission.owner,
+    partition: draftPipeline.target.partitionColumns?.join("/") || draftPipeline.target.partition,
+    partitionColumns: draftPipeline.target.partitionColumns,
     quality: isSqlResultSource ? "SQL Preview verified" : "95% (Draft verified)",
     rag: draftPipeline.target.rag,
     rows: isSqlResultSource ? `${(Number(previewRowCount) || sampleRows.length).toLocaleString()} preview rows` : "0 rows",
@@ -285,6 +410,8 @@ export async function createPipelineDraft(draftPipeline: DraftPipeline, jobCount
     size: isSqlResultSource ? "Preview result" : "Pending",
     source: job.name,
     status: "available",
+    storageFormat: draftPipeline.target.format,
+    storageLocation: draftPipeline.target.storagePath,
     tags: normalizedTags,
     upstream: [
       draftPipeline.source.sourceLabel,
@@ -317,10 +444,54 @@ export async function runJobCommand(job: JobRowData, command: Exclude<JobCommand
     run: { action: "etl.run.requested", apiPath: `/api/etl/jobs/${job.id}/runs` },
     retry: { action: "etl.run.retry_requested", apiPath: `/api/etl/jobs/${job.id}/runs` },
     pause: { action: "etl.job.pause_requested", apiPath: `/api/etl/jobs/${job.id}` },
-    cancel: { action: "etl.run.cancel_requested", apiPath: `/api/etl/jobs/${job.id}/runs/current/cancel` },
+    cancelRun: { action: "etl.run.cancel_requested", apiPath: `/api/etl/jobs/${job.id}/runs/current/cancel` },
+    stopSchedule: { action: "etl.schedule.stop_requested", apiPath: `/api/etl/jobs/${job.id}/schedule` },
+    resumeSchedule: { action: "etl.schedule.resume_requested", apiPath: `/api/etl/jobs/${job.id}/schedule` },
+    startContinuous: { action: "etl.continuous.start_requested", apiPath: `/api/etl/jobs/${job.id}/commands` },
+    pauseContinuous: { action: "etl.continuous.pause_requested", apiPath: `/api/etl/jobs/${job.id}/commands` },
+    resumeContinuous: { action: "etl.continuous.resume_requested", apiPath: `/api/etl/jobs/${job.id}/commands` },
+    stopContinuous: { action: "etl.continuous.stop_requested", apiPath: `/api/etl/jobs/${job.id}/commands` },
   };
   const audit = actionByCommand[command];
   const runId = `run_${Date.now()}`;
+
+  if (["startContinuous", "pauseContinuous", "resumeContinuous", "stopContinuous"].includes(command)) {
+    const current = job.continuousRuntime ?? {
+      checkpointPath: `s3a://asklake-output/${job.target}/_checkpoints/${job.id}`,
+      consumedCount: 0,
+      failedCount: 0,
+      lagAvailable: false,
+      laggingPartitionCount: 0,
+      lastBatchInputRows: 0,
+      partitionProgress: {},
+      quarantinedCount: 0,
+      replayedCount: 0,
+      ruleContractVersion: "1.0",
+      ruleMetrics: {},
+      lastRuleResult: {},
+      schemaChanges: [],
+      schemaStatus: "stable",
+      schemaVersion: 1,
+      status: "stopped" as const,
+      storedCount: 0,
+    };
+    const status = command === "pauseContinuous" ? "paused" : command === "stopContinuous" ? "stopped" : "running" as const;
+    return resolveMock({
+      ...audit,
+      job: {
+        ...job,
+        executionMode: "continuous",
+        continuousRuntime: {
+          ...current,
+          heartbeatAt: new Date().toISOString(),
+          status,
+        },
+        lastState: status === "running" ? "Spark 실시간 수집 실행 중" : status === "paused" ? "실시간 수집 일시정지됨" : "실시간 수집 중지됨 · 체크포인트 보존",
+        progress: status === "running" ? { label: "실시간 메시지 처리 중", value: 66 } : undefined,
+        status: status === "running" ? "running" : status,
+      },
+    });
+  }
 
   if (command === "run" || command === "retry") {
     const run: JobRunSummary = {
@@ -345,7 +516,7 @@ export async function runJobCommand(job: JobRowData, command: Exclude<JobCommand
       { id: "step-8", meta: "SQL · Dashboard · Catalog", status: "pending", title: "8. Downstream 반영" },
     ];
 
-    return resolveMock({
+    return resolveMockJobCommand({
       ...audit,
       dagSteps,
       job: {
@@ -383,12 +554,13 @@ export async function runJobCommand(job: JobRowData, command: Exclude<JobCommand
       { id: "step-8", meta: "SQL · Dashboard · Catalog", status: "blocked", title: "8. Downstream 반영" },
     ];
 
-    return resolveMock({
+    return resolveMockJobCommand({
       ...audit,
       dagSteps,
       job: {
         ...job,
         status: "paused",
+        lastRun: new Date().toISOString(),
         lastState: "사용자 일시정지",
         nextRun: "재개 대기",
         progress: job.progress ?? { label: "일시정지됨", value: 50 },
@@ -397,15 +569,69 @@ export async function runJobCommand(job: JobRowData, command: Exclude<JobCommand
     });
   }
 
+  if (command === "stopSchedule") {
+    const realtime = getJobScheduleKind(job) === "realtime";
+    const stoppedAt = new Date().toISOString();
+    const run: JobRunSummary | undefined = realtime && job.status === "running"
+      ? {
+        duration: "수집 중지",
+        endedAt: stoppedAt,
+        errorSummary: "사용자 요청으로 실시간 수집 중지",
+        failedStage: "실시간 수집 중지",
+        inputRows: job.stats?.inputRows ?? "-",
+        outputRows: job.stats?.outputRows ?? "-",
+        runId: `run_${Date.now()}`,
+        startedAt: stoppedAt,
+        status: "canceled",
+      }
+      : undefined;
+    const dagSteps: JobDagStep[] | undefined = run
+      ? [
+        { id: "step-1", meta: job.source, status: "success", title: "1. Source 연결" },
+        { id: "step-2", meta: "사용자 수집 중지", status: "blocked", title: "2. 실시간 수집" },
+        { id: "step-3", meta: job.target, status: "blocked", title: "3. Lake 적재" },
+      ]
+      : undefined;
+
+    return resolveMockJobCommand({
+      ...audit,
+      dagSteps,
+      job: {
+        ...job,
+        status: "stopped",
+        lastRun: run ? stoppedAt : job.lastRun,
+        lastState: realtime ? "실시간 수집 중지" : "스케줄 일시중지",
+        nextRun: "-",
+        progress: undefined,
+      },
+      run,
+    });
+  }
+
+  if (command === "resumeSchedule") {
+    const realtime = getJobScheduleKind(job) === "realtime";
+    return resolveMockJobCommand({
+      ...audit,
+      job: {
+        ...job,
+        status: "scheduled",
+        lastState: realtime ? "실시간 수집 재개됨" : "스케줄 재개됨",
+        nextRun: job.schedulePolicy?.nextRunUtc || "다음 예약 계산 중",
+        progress: undefined,
+      },
+    });
+  }
+
+  const canceledAt = new Date().toISOString();
   const run: JobRunSummary = {
     duration: "취소됨",
-    endedAt: new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }),
+    endedAt: canceledAt,
     errorSummary: "사용자 요청으로 취소",
     failedStage: "-",
     inputRows: "72,410",
     outputRows: "0",
     runId,
-    startedAt: new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }),
+    startedAt: canceledAt,
     status: "canceled",
   };
   const dagSteps: JobDagStep[] = [
@@ -419,13 +645,13 @@ export async function runJobCommand(job: JobRowData, command: Exclude<JobCommand
     { id: "step-8", meta: "SQL · Dashboard · Catalog", status: "blocked", title: "8. Downstream 반영" },
   ];
 
-  return resolveMock({
+  return resolveMockJobCommand({
     ...audit,
     dagSteps,
     job: {
       ...job,
-      status: "canceled",
-      lastRun: "방금 취소",
+      status: "scheduled",
+      lastRun: canceledAt,
       lastState: "취소됨",
       nextRun: job.schedule === "스케줄 없음" || job.schedule === "수동 실행" ? "-" : "다음 예약 대기",
       progress: undefined,
@@ -459,26 +685,98 @@ export async function executeQueryPreview(dataset: CatalogDataset, query: string
     });
   }
 
-  const columns = dataset.schema.slice(0, 6).map(([name]) => name);
-  const rows = dataset.sampleRows
-    .slice(0, options.limit)
+  const previewDataset = resolveMockQueryResultDataset(dataset, query);
+  const columns = previewDataset === dataset
+    ? previewDataset.schema.slice(0, 6).map(([name]) => name)
+    : previewDataset.schema.map(([name]) => name);
+  const allRows = previewDataset.sampleRows
     .map((row) => row.slice(0, Math.max(columns.length, 1)));
-
-  return resolveMock({
+  const runId = `sql_preview_${Date.now()}`;
+  const result: SqlResultDraft = {
     baseDatasetId: dataset.id,
     columns,
-    datasetId: dataset.id,
-    datasetName: dataset.name,
+    datasetId: previewDataset.id,
+    datasetName: previewDataset.name,
     executedAt: new Date().toISOString(),
     mode: "preview",
+    hasNext: allRows.length > options.limit,
+    pageLimit: options.limit,
+    pageOffset: 0,
     previewLimit: options.limit,
     query,
     referenceDatasetIds: options.referenceDatasetIds,
-    rowCount: rows.length,
-    rows,
-    runId: `sql_preview_${Date.now()}`,
+    returnedRows: Math.min(allRows.length, options.limit),
+    rangeEnd: Math.min(allRows.length, options.limit),
+    rangeStart: allRows.length === 0 ? 0 : 1,
+    rowCount: allRows.length,
+    rows: allRows.slice(0, options.limit),
+    runId,
     validationKey: options.validationKey,
+  };
+  mockQueryRuns.set(runId, { ...result, rows: allRows });
+  return resolveMock(result);
+}
+
+export type QueryResultPageOptions = {
+  limit?: number;
+  offset: number;
+};
+
+export async function getQueryPreviewPage(runId: string, options: QueryResultPageOptions): Promise<SqlResultDraft> {
+  const limit = options.limit ?? 100;
+  const offset = Math.max(options.offset, 0);
+  if (!apiConfig.useMock) {
+    const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), queryResultPageTimeoutMs);
+    try {
+      return await apiClient.get<SqlResultDraft>(
+        `/api/query/runs/${encodeURIComponent(runId)}?${params.toString()}`,
+        { signal: controller.signal },
+      );
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        throw new Error("SQL Preview 페이지 요청 시간이 초과되었습니다. 다시 시도해 주세요.");
+      }
+      throw error;
+    } finally {
+      window.clearTimeout(timeoutId);
+    }
+  }
+
+  const stored = mockQueryRuns.get(runId);
+  if (!stored) throw new Error("저장된 SQL Preview 실행 결과를 찾지 못했습니다.");
+  const pageRows = stored.rows.slice(offset, offset + limit);
+  return resolveMock({
+    ...stored,
+    hasNext: pageRows.length > 0 && offset + pageRows.length < stored.rowCount,
+    pageLimit: limit,
+    pageOffset: offset,
+    rangeEnd: pageRows.length === 0 ? 0 : offset + pageRows.length,
+    rangeStart: pageRows.length === 0 ? 0 : offset + 1,
+    returnedRows: pageRows.length,
+    rows: pageRows,
   });
+}
+
+function resolveMockQueryResultDataset(baseDataset: CatalogDataset, query: string) {
+  const normalizedQuery = normalizeMockSql(query);
+  const isCommerceRoiJoin = commerceRoiJoinTables.every((tableName) => normalizedQuery.includes(tableName))
+    && normalizedQuery.includes(" join ")
+    && (normalizedQuery.includes(" roas") || normalizedQuery.includes("cost_per_order") || normalizedQuery.includes("ad_spend"));
+
+  if (!isCommerceRoiJoin) return baseDataset;
+  return catalogDatasets.find((item) => item.name === commerceRoiResultDatasetName) ?? baseDataset;
+}
+
+function normalizeMockSql(query: string) {
+  return ` ${query
+    .replace(/--.*$/gm, "")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/["`[\]]/g, "")
+    .replace(/\s+/g, " ")
+    .toLowerCase()
+    .trim()} `;
 }
 
 export async function executeQueryDraft(dataset: CatalogDataset, query: string): Promise<SqlResultDraft> {

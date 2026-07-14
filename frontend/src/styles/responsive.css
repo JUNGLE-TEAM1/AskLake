@@ -1,19 +1,3 @@
-.footer {
-  display: flex;
-  min-height: 62px;
-  align-items: center;
-  justify-content: space-between;
-  border-top: 1px solid #dee1e6;
-  color: #9095a1;
-  font-size: 12px;
-  padding: 0 40px;
-}
-
-.footer nav {
-  display: flex;
-  gap: 24px;
-}
-
 @media (max-width: 1180px) {
   .main-shell.schema-shell {
     height: auto;
@@ -32,10 +16,6 @@
     height: auto;
     overflow: visible;
     padding: 20px;
-  }
-
-  .schema-shell .footer {
-    display: flex;
   }
 
   .schema-workbench {
@@ -62,7 +42,11 @@
   }
 
   .app-shell {
-    grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .main-shell {
+    grid-column: 1 / -1;
   }
 
   .content-grid,
@@ -73,54 +57,11 @@
     grid-template-columns: 1fr;
   }
 
-  .job-detail-card-grid.two-up,
-  .job-detail-card-grid.summary-grid,
-  .detail-kv-grid.summary-kv {
-    grid-template-columns: 1fr;
-  }
-
   .catalog-page,
   .catalog-content-grid,
   .catalog-detail-grid,
-  .sql-page,
-  .sql-page.context-collapsed,
-  .sql-editor-layout,
   .dashboard-layout,
   .dashboard-builder-layout {
-    grid-template-columns: 1fr;
-  }
-
-  .sql-schema-panel {
-    order: 2;
-    position: static;
-    height: auto;
-    max-height: none;
-    overflow: visible;
-  }
-
-  .sql-dataset-panel {
-    order: 1;
-  }
-
-  .sql-workspace {
-    order: 3;
-  }
-
-  .sql-page.context-collapsed .sql-workspace {
-    order: 2;
-  }
-
-  .sql-page.context-collapsed .sql-schema-panel {
-    order: 3;
-  }
-
-  .sql-schema-panel .sql-card-schema {
-    max-height: 360px;
-    overflow-y: auto;
-  }
-
-  .sql-dashboard-preview-hero,
-  .sql-dashboard-preview-grid {
     grid-template-columns: 1fr;
   }
 
@@ -131,15 +72,6 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .dashboard-list-toolbar {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .dashboard-toolbar-actions {
-    justify-content: flex-start;
-    min-width: 0;
-  }
-
   .hegun-source-grid,
   .hegun-schema-grid,
   .hegun-rule-layout {
@@ -147,11 +79,42 @@
   }
 
   .catalog-preview-panel {
+    position: static;
+    top: auto;
+    height: auto;
+    max-height: none;
     width: 100%;
+  }
+
+  .catalog-preview-desktop {
+    display: none;
+  }
+
+  .catalog-preview-mobile-trigger {
+    display: inline-flex;
   }
 
   .dag-summary-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .creation-validation-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .etl-review-kv,
+  .target-config-form-grid,
+  .target-config-split,
+  .etl-review-validation {
+    grid-template-columns: 1fr;
+  }
+
+  .etl-review-schema-row {
+    grid-template-columns: 28px minmax(0, 1fr) auto;
+  }
+
+  .etl-review-schema-null {
+    display: none;
   }
 
   .summary-panel,
@@ -166,90 +129,20 @@
     margin-top: 0;
   }
 
-  .review-card-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
   .connector-row,
   .compact-cards {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .jobs-page-header {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .create-job-button {
-    width: 100%;
-  }
-
-  .jobs-header-actions {
-    width: 100%;
-  }
-
-  .jobs-view-switch {
-    flex: 1 1 auto;
-  }
-
-  .jobs-view-switch button {
-    flex: 1 1 0;
-    min-width: 0;
-  }
-
-  .jobs-header-actions .primary-button,
-  .jobs-header-actions .secondary-button {
-    flex: 1 1 0;
-    min-width: 0;
-  }
-
-  .metric-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .jobs-toolbar {
-    grid-template-columns: 1fr 1fr;
-  }
-
-  .jobs-search,
-  .reset-filter {
-    grid-column: 1 / -1;
-  }
-
-  .job-row {
-    grid-template-columns: 1fr;
-  }
-
-  .job-row-main {
-    grid-template-areas:
-      "title"
-      "progress"
-      "details"
-      "actions";
-    grid-template-columns: 1fr;
-  }
-
-  .job-row-status {
-    justify-content: flex-start;
-  }
-
-  .job-row-details {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .job-row-actions {
-    justify-content: flex-start;
-  }
-
-  .job-card dl,
-  .dag-node {
-    grid-template-columns: 1fr;
-  }
 }
 
 @media (max-width: 780px) {
   .app-shell {
     grid-template-columns: 1fr;
+  }
+
+  .main-shell {
+    grid-column: 1 / -1;
   }
 
   .sidebar {
@@ -259,6 +152,7 @@
 
   .stepper-inner {
     height: auto;
+    justify-content: flex-start;
     padding: 18px 20px;
   }
 
@@ -266,23 +160,29 @@
     padding: 20px;
   }
 
-  .sql-dataset-panel {
-    position: static;
-    height: auto;
-    max-height: none;
-    overflow: visible;
+  .creation-flow-topbar {
+    justify-content: stretch;
+  }
+
+  .creation-top-actions {
+    width: 100%;
+  }
+
+  .creation-top-actions .primary-button,
+  .creation-top-actions .secondary-button {
+    flex: 1 1 0;
+    min-width: 0;
   }
 
   .option-grid,
   .form-grid,
   .form-grid.compact,
+  .creation-validation-list,
   .creation-flow-grid .summary-panel dl,
+  .source-choice-grid,
   .format-grid,
   .connector-row,
   .compact-cards,
-  .metric-grid,
-  .jobs-toolbar,
-  .job-row-details,
   .dashboard-filter-bar,
   .dashboard-metric-grid,
   .dashboard-canvas,
@@ -304,89 +204,32 @@
     width: 100%;
   }
 
-  .jobs-header-actions {
-    align-items: stretch;
-    flex-direction: column;
+  .source-choice-screen {
+    padding-top: 20px;
   }
 
-  .jobs-view-switch,
-  .create-job-button {
-    width: 100%;
+  .source-choice-card {
+    min-height: 168px;
+    padding: 24px;
   }
 
-  .job-title-row,
-  .job-detail-title-row,
-  .job-table-footer,
-  .jobs-table-preview-header,
-  .jobs-table-preview-footer,
   .job-log-modal-header,
   .run-dag-modal-header {
     align-items: flex-start;
     flex-direction: column;
   }
 
-  .jobs-table-preview-footer div {
-    width: 100%;
-    justify-content: flex-end;
-  }
-
-  .job-log-modal,
   .run-dag-modal {
     padding: 12px;
   }
 
-  .job-log-modal section,
-  .run-dag-modal > section {
+  .run-dag-modal > section,
+  .run-dag-modal-panel {
     max-height: calc(100vh - 24px);
   }
 
   .run-dag-modal-body {
     padding: 14px;
-  }
-
-  .detail-kv-grid,
-  .detail-metric-grid,
-  .detail-plain-kv-grid,
-  .job-detail-overview-grid,
-  .job-summary-stat-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .job-ops-summary-card,
-  .job-detail-disclosure summary {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .job-next-actions {
-    width: 100%;
-  }
-
-  .job-next-actions .job-action-button {
-    flex: 1 1 0;
-  }
-
-  .stats-card {
-    grid-template-areas:
-      "heading"
-      "metrics"
-      "meta"
-      "progress";
-    grid-template-columns: 1fr;
-  }
-
-  .stats-card-heading p {
-    max-width: none;
-  }
-
-  .detail-status-strip {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .dag-run-select {
-    width: 100%;
-    min-width: 0;
   }
 
   .job-runs-page,
@@ -395,26 +238,9 @@
     height: auto;
   }
 
-  .runs-table-scroll {
-    max-height: 420px;
-  }
-
-  .runs-stats-summary {
-    grid-template-columns: 1fr;
-  }
-
-  .dag-summary-grid,
-  .runs-stats-summary > div {
-    grid-template-columns: 1fr;
-  }
-
   .dag-flow-topbar,
   .dag-output-strip,
   .panel-header,
-  .sql-page-header,
-  .sql-editor-header,
-  .sql-result-header,
-  .sql-editor-footer,
   .dashboard-header,
   .dashboard-card-header,
   .dashboard-workspace-header,
@@ -451,11 +277,6 @@
     width: 100%;
   }
 
-  .sql-editor-actions,
-  .sql-result-status {
-    justify-content: flex-start;
-  }
-
   .dashboard-header-actions {
     justify-content: flex-start;
     width: 100%;
@@ -486,6 +307,10 @@
     text-align: left;
   }
 
+  .permission-config-access-row {
+    grid-column: 1 / -1;
+  }
+
   .form-actions.inline {
     justify-content: stretch;
   }
@@ -494,13 +319,8 @@
     flex: 1 1 100%;
   }
 
-  .dashboard-list-toolbar,
   .dashboard-category-chart {
     grid-template-columns: 1fr;
-  }
-
-  .dashboard-toolbar-actions {
-    flex-wrap: wrap;
   }
 
   .dashboard-list-toolbar .dashboard-filter-button {
@@ -516,22 +336,9 @@
     overflow-x: auto;
   }
 
-  .job-detail-tabs {
-    overflow-x: auto;
-  }
-
-  .job-owner,
-  .job-detail-actions,
-  .job-row-actions,
-  .job-table-footer div {
+  .job-detail-actions {
     flex-wrap: wrap;
     gap: 12px;
   }
 
-  .footer {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 10px;
-    padding: 18px 20px;
-  }
 }

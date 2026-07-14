@@ -1,6 +1,8 @@
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.core.auth_context import ActorContext
+from app.core.errors import ApiError
 from app.models.dashboard_runtime import DashboardWidget as DashboardWidgetModel
 from app.repositories.catalog_repository import CatalogRepository, dataset_model_to_payload
 from app.repositories.dashboard_runtime_repository import DashboardRuntimeRepository
@@ -12,7 +14,9 @@ from app.schemas.dashboard import (
     DashboardRuntimeWidgetType,
 )
 from app.services.dashboard_assistant_options import widget_options_payload
+from app.services.dashboard_dataset_access import require_dashboard_dataset_query_access
 from app.services.dashboard_runtime_service import DashboardRuntimeService
+from app.services.resource_permission_service import datasets_with_persisted_permission_grants
 
 
 @dataclass(frozen=True)
@@ -107,12 +111,14 @@ def build_assistant_context(
     runtime_repository: DashboardRuntimeRepository,
     catalog_repository: CatalogRepository,
     *,
+    actor: ActorContext,
     max_sample_rows: int,
 ) -> AssistantDashboardContext:
-    datasets = _available_dataset_contexts(catalog_repository, max_sample_rows)
+    datasets = _available_dataset_contexts(catalog_repository, actor, max_sample_rows)
+    allowed_dataset_ids = {dataset.id for dataset in datasets}
     dashboard_id = request.dashboard_id
     if not dashboard_id:
-        return _request_fallback_context(request, datasets)
+        return _request_fallback_context(request, datasets, allowed_dataset_ids)
 
     dashboard_meta = runtime_repository.get_dashboard_meta(dashboard_id)
     revision = (
@@ -133,6 +139,7 @@ def build_assistant_context(
     widgets_by_page_id = runtime_repository.list_widgets_by_page_ids(page_ids)
     selected_page_widgets = widgets_by_page_id.get(selected_page.id, []) if selected_page else []
     target_widgets, target_warnings = _filter_widgets_for_target(selected_page_widgets, request)
+    target_widgets = _filter_widgets_for_dataset_access(target_widgets, allowed_dataset_ids)
 
     return AssistantDashboardContext(
         id=dashboard_id,
@@ -186,9 +193,10 @@ def _filter_widgets_for_target(
 
 def _available_dataset_contexts(
     catalog_repository: CatalogRepository,
+    actor: ActorContext,
     max_sample_rows: int,
 ) -> list[AssistantDatasetContext]:
-    contexts: list[AssistantDatasetContext] = []
+    datasets: list[CatalogDatasetResponse] = []
     for model in catalog_repository.list_dataset_models():
         try:
             dataset = CatalogDatasetResponse.model_validate(dataset_model_to_payload(model))
@@ -196,6 +204,23 @@ def _available_dataset_contexts(
             continue
         if dataset.status != "available" or not dataset.schema_:
             continue
+        datasets.append(dataset)
+
+    datasets = datasets_with_persisted_permission_grants(catalog_repository.db, datasets)
+    contexts: list[AssistantDatasetContext] = []
+    for dataset in datasets:
+        try:
+            require_dashboard_dataset_query_access(
+                catalog_repository.db,
+                actor,
+                dataset,
+                api_path="/api/dashboards/assistant",
+                http_method="POST",
+            )
+        except ApiError as exc:
+            if exc.status_code in {401, 403}:
+                continue
+            raise
         contexts.append(_dataset_to_context(dataset, max_sample_rows))
     return contexts
 
@@ -264,8 +289,10 @@ def _widget_model_to_context(
 def _request_fallback_context(
     request: DashboardAssistantRequest,
     datasets: list[AssistantDatasetContext],
+    allowed_dataset_ids: set[str],
 ) -> AssistantDashboardContext:
     request_widgets, target_warnings = _filter_widgets_for_target(request.widgets, request)
+    request_widgets = _filter_widgets_for_dataset_access(request_widgets, allowed_dataset_ids)
     return AssistantDashboardContext(
         id=request.dashboard_id,
         page=AssistantPageContext(id=request.page_id),
@@ -278,11 +305,24 @@ def _request_fallback_context(
     )
 
 
+def _filter_widgets_for_dataset_access(
+    widgets: list[Any],
+    allowed_dataset_ids: set[str],
+) -> list[Any]:
+    return [
+        widget
+        for widget in widgets
+        if not getattr(widget, "dataset_id", None)
+        or getattr(widget, "dataset_id", None) in allowed_dataset_ids
+    ]
+
+
 def _request_widget_to_context(widget: DashboardAssistantWidgetContext) -> AssistantWidgetContext:
+    widget_type = widget.type if isinstance(widget.type, DashboardRuntimeWidgetType) else DashboardRuntimeWidgetType(widget.type)
     return AssistantWidgetContext(
         id=widget.id,
         title=widget.title or "제목 없는 위젯",
-        type=widget.type,
+        type=widget_type,
         dataset_id=widget.dataset_id,
         config=widget.config,
         data_sample=widget.data_sample,

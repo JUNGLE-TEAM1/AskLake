@@ -1,7 +1,7 @@
 import type { DashboardRuntimeWidget, DashboardRuntimeWidgetConfig } from "../types";
 import { apiClient } from "./apiClient";
 
-const assistantEndpoint = (import.meta.env.VITE_DASHBOARD_ASSISTANT_API_PATH ?? "").trim();
+const assistantEndpoint = (import.meta.env.VITE_DASHBOARD_ASSISTANT_API_PATH ?? "/api/dashboards/assistant").trim();
 
 export type DashboardAssistantMode = "dashboard_question" | "visualization_request";
 

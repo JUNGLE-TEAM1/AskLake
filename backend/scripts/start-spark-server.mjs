@@ -16,13 +16,15 @@ const reportHostDir = path.resolve(process.env.ASKLAKE_SPARK_REPORT_DIR || path.
 const reportContainerDir = process.env.ASKLAKE_SPARK_REPORT_CONTAINER_DIR || "/work/reports";
 const outputVolumeName = process.env.ASKLAKE_SPARK_OUTPUT_VOLUME || "asklake-spark-output";
 const outputContainerDir = process.env.ASKLAKE_SPARK_OUTPUT_CONTAINER_DIR || "/work/output";
+const workerCores = process.env.ASKLAKE_SPARK_WORKER_CORES || "4";
+const workerMemory = process.env.ASKLAKE_SPARK_WORKER_MEMORY || "10g";
 mkdirSync(sampleHostDir, { recursive: true });
 mkdirSync(reportHostDir, { recursive: true });
 
 ensureOutputVolumeWritable();
 ensureMaster();
 ensureWorker();
-console.log("Spark standalone server ready: spark://asklake-spark-master:7077");
+console.log(`Spark standalone server ready: spark://${masterName}:7077`);
 console.log("Spark master UI: http://127.0.0.1:18080");
 console.log("Spark worker UI: http://127.0.0.1:18081");
 console.log(`Spark sample mount: ${sampleHostDir} -> ${sampleContainerDir}`);
@@ -52,6 +54,7 @@ function createMasterArgs() {
       masterName,
       "--network",
       network,
+      ...hostGatewayArgs(),
       "--label",
       "asklake.role=spark-master",
       ...sampleMountArgs(),
@@ -78,6 +81,7 @@ function createWorkerArgs() {
       workerName,
       "--network",
       network,
+      ...hostGatewayArgs(),
       "--label",
       "asklake.role=spark-worker",
       ...sampleMountArgs(),
@@ -88,6 +92,10 @@ function createWorkerArgs() {
       "/opt/spark/bin/spark-class",
       "org.apache.spark.deploy.worker.Worker",
       `spark://${masterName}:7077`,
+      "--cores",
+      workerCores,
+      "--memory",
+      workerMemory,
       "--webui-port",
       "8081",
   ];
@@ -102,9 +110,24 @@ function containerNeedsCreate(name) {
   const sampleMounted = metadata?.Mounts?.some((mount) => normalizePath(mount.Source) === expectedSource && mount.Destination === sampleContainerDir);
   const reportMounted = metadata?.Mounts?.some((mount) => normalizePath(mount.Source) === expectedReportSource && mount.Destination === reportContainerDir);
   const outputMounted = metadata?.Mounts?.some((mount) => mount.Name === outputVolumeName && mount.Destination === outputContainerDir);
-  if (sampleMounted && reportMounted && outputMounted) return false;
+  const networkConnected = Boolean(metadata?.NetworkSettings?.Networks?.[network]);
+  const hostGatewayMapped = (metadata?.HostConfig?.ExtraHosts ?? []).some((entry) => (
+    String(entry || "").startsWith("host.docker.internal:")
+  ));
+  const args = (metadata?.Args ?? []).map(String);
+  const workerResourceMatches = name !== workerName || (
+    args.includes("--cores")
+    && args.includes(workerCores)
+    && args.includes("--memory")
+    && args.includes(workerMemory)
+  );
+  if (sampleMounted && reportMounted && outputMounted && networkConnected && hostGatewayMapped && workerResourceMatches) return false;
   run("docker", ["rm", "-f", name], { allowFailure: true });
   return true;
+}
+
+function hostGatewayArgs() {
+  return ["--add-host", "host.docker.internal:host-gateway"];
 }
 
 function uiPortArgs(hostPort, containerPort) {

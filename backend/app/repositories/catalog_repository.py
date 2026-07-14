@@ -3,6 +3,7 @@ from typing import Any
 from sqlalchemy import inspect, select, text
 from sqlalchemy.orm import Session
 
+from app.core.permission_metadata import permission_grants_from_roles, resource_permissions
 from app.models.catalog import CatalogDatasetModel
 
 _schema_ready_bind_ids: set[int] = set()
@@ -26,8 +27,27 @@ class CatalogRepository:
         ensure_catalog_schema(self.db)
         return self.db.get(CatalogDatasetModel, dataset_id)
 
+    def get_dataset_model_for_update(self, dataset_id: str) -> CatalogDatasetModel | None:
+        ensure_catalog_schema(self.db)
+        return self.db.scalar(
+            select(CatalogDatasetModel)
+            .where(CatalogDatasetModel.id == dataset_id)
+            .with_for_update()
+        )
+
     def get_dataset_payload(self, dataset_id: str) -> dict[str, Any] | None:
         model = self.get_dataset_model(dataset_id)
+        return dataset_model_to_payload(model) if model else None
+
+    def get_dataset_payload_for_update(self, dataset_id: str) -> dict[str, Any] | None:
+        model = self.get_dataset_model_for_update(dataset_id)
+        return dataset_model_to_payload(model) if model else None
+
+    def get_dataset_payload_by_name(self, dataset_name: str) -> dict[str, Any] | None:
+        ensure_catalog_schema(self.db)
+        model = self.db.scalar(
+            select(CatalogDatasetModel).where(CatalogDatasetModel.name == dataset_name)
+        )
         return dataset_model_to_payload(model) if model else None
 
     def get_lineage_payload(self, dataset_id: str) -> dict[str, Any] | None:
@@ -94,9 +114,9 @@ def ensure_catalog_schema(db: Session) -> None:
 
 def dataset_model_to_payload(model: CatalogDatasetModel) -> dict[str, Any]:
     if model.payload:
-        return model.payload
+        return normalize_dataset_payload(model.payload)
 
-    return {
+    return normalize_dataset_payload({
         "description": model.description or "",
         "downstream": model.downstream or [],
         "freshness": model.freshness or "latest",
@@ -117,7 +137,38 @@ def dataset_model_to_payload(model: CatalogDatasetModel) -> dict[str, Any]:
         "status": model.status or "available",
         "tags": model.tags or [],
         "upstream": model.upstream or [],
-    }
+    })
+
+
+def normalize_dataset_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    normalized_payload = dict(payload)
+    owner = str(normalized_payload.get("owner") or "")
+    normalized_payload["permissionGrants"] = normalized_payload.get("permissionGrants") or permission_grants_from_roles(
+        owner,
+        default_actions=["view", "query"],
+    )
+    normalized_payload["permissions"] = normalized_payload.get("permissions") or resource_permissions(can_query=True)
+    materialization_runs = normalized_payload.get("materializationRuns")
+    normalized_payload["materializationRuns"] = (
+        normalize_materialization_runs(materialization_runs)
+        if isinstance(materialization_runs, list)
+        else []
+    )
+    return normalized_payload
+
+
+def normalize_materialization_runs(materialization_runs: list[Any]) -> list[dict[str, Any]]:
+    normalized_runs: list[dict[str, Any]] = []
+    for run in materialization_runs:
+        if not isinstance(run, dict):
+            continue
+        normalized_run = dict(run)
+        if normalized_run.get("sourceKind") not in {"etl", "sql", "kafka"}:
+            normalized_run["sourceKind"] = "etl"
+        if normalized_run.get("materializationMode") not in {"snapshot", "delta"}:
+            normalized_run["materializationMode"] = "delta" if normalized_run["sourceKind"] == "kafka" else "snapshot"
+        normalized_runs.append(normalized_run)
+    return normalized_runs
 
 
 def dataset_payload_to_model_values(payload: dict[str, Any]) -> dict[str, Any]:

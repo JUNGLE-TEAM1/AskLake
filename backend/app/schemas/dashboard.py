@@ -4,6 +4,7 @@ from typing import Any, Literal
 from pydantic import Field
 
 from app.schemas.common import CamelModel, PageRequest, SortDirection
+from app.schemas.permissions import PermissionGrant, ResourcePermissions
 
 
 class DashboardStatus(str, Enum):
@@ -107,6 +108,10 @@ class DashboardCard(CamelModel):
     id: str
     name: str
     owner: str
+    created_by: str | None = None
+    created_by_profile: dict[str, Any] | None = None
+    permission_grants: list[PermissionGrant] = Field(default_factory=list)
+    permissions: ResourcePermissions = Field(default_factory=ResourcePermissions)
     meta: str
     status: DashboardStatus
     tags: str
@@ -164,11 +169,13 @@ class DeleteDashboardResponse(CamelModel):
 
 class DashboardWidgetConfigBase(CamelModel):
     body: str | None = None
+    data_mode: Literal["server_aggregated", "server_preview"] | None = None
     description: str | None = None
     error: str | None = None
     error_message: str | None = None
     placeholder_kind: str | None = None
     prompt: str | None = None
+    source_config: dict[str, Any] | None = None
 
 
 class DashboardWidgetColorConfig(CamelModel):
@@ -293,12 +300,18 @@ class DashboardRuntimeWidget(CamelModel):
     data: list[dict[str, Any]] = Field(default_factory=list)
     dataset_id: str | None = None
     query_id: str | None = None
+    applied_revision: int | None = None
+    calculation_version: str | None = None
+    calculated_at: str | None = None
+    live_refresh: bool = False
 
 
 class DashboardMeta(CamelModel):
     id: str
     title: str
     status: DashboardStatus
+    permission_grants: list[PermissionGrant] = Field(default_factory=list)
+    permissions: ResourcePermissions = Field(default_factory=ResourcePermissions)
     has_published_revision: bool
     updated_at: str
 
@@ -331,6 +344,30 @@ class DashboardRuntimeResponse(CamelModel):
     filters: list[DashboardFilter] = Field(default_factory=list)
 
 
+class DatasetFreshnessQueryRequest(CamelModel):
+    dataset_ids: list[str] = Field(min_length=1, max_length=100)
+
+
+class DatasetFreshnessResponse(CamelModel):
+    dataset_id: str
+    is_continuous: bool
+    latest_revision: int = Field(ge=0)
+    updated_at: str | None = None
+    next_check_after_ms: int = Field(ge=1_000, le=60_000)
+
+
+class DatasetFreshnessQueryResponse(CamelModel):
+    datasets: list[DatasetFreshnessResponse]
+
+
+class DashboardWidgetQueryRequest(CamelModel):
+    widget_ids: list[str] = Field(min_length=1, max_length=100)
+
+
+class DashboardWidgetQueryResponse(CamelModel):
+    widgets: list[DashboardRuntimeWidget]
+
+
 class CreateDraftPageRequest(CamelModel):
     title: str
 
@@ -359,6 +396,7 @@ class UpdateDraftWidgetRequest(CamelModel):
     title: str | None = None
     dataset_id: str | None = None
     config: DashboardRuntimeWidgetConfig | None = None
+    data: list[dict[str, Any]] | None = None
 
 
 class DashboardWidgetMutationResponse(CamelModel):

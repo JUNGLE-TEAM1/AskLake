@@ -36,7 +36,7 @@ export function ModulePlaceholderPage({
   };
 
   return (
-    <div className="content-grid">
+    <div className="content-grid module-page-grid">
       <div className="content-main">
         <PageTitle title={title} description={description} />
         <div className="review-card-grid compact-cards">

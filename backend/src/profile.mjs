@@ -8,7 +8,7 @@ export function parseSourceSample(name, text, options = {}) {
     return parseJsonSample(trimmed, lowerName.endsWith(".jsonl") ? "jsonl" : "json", maxRows);
   }
 
-  if (lowerName.endsWith(".txt")) {
+  if (lowerName.endsWith(".txt") || lowerName.endsWith(".log")) {
     return parseTextSample(trimmed, maxRows);
   }
 
@@ -18,15 +18,32 @@ export function parseSourceSample(name, text, options = {}) {
 export function inferSchemaColumns(sample) {
   return sample.columns.map((column, index) => {
     const values = sample.rows.map((row) => String(row[index] ?? ""));
+    const nativeValues = Array.isArray(sample.nativeRows)
+      ? sample.nativeRows.map((row) => row[index])
+      : null;
     return {
       confidence: values.length > 0 ? 90 : 65,
-      nullable: values.some((value) => value.trim() === ""),
+      nullable: nativeValues
+        ? nativeValues.some((value) => value === null || value === undefined || (typeof value === "string" && value.trim() === ""))
+        : values.some((value) => value.trim() === ""),
       role: inferRole(column),
       sourceName: column,
       targetName: normalizeColumnName(column),
-      type: inferType(values),
+      type: nativeValues ? inferNativeType(nativeValues) : inferType(values),
     };
   });
+}
+
+export function canonicalSchemaType(value) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (/json|array|struct|map|object/.test(normalized)) return "JSON";
+  if (/bool/.test(normalized)) return "Boolean";
+  if (/timestamp|datetime/.test(normalized)) return "Timestamp";
+  if (normalized === "date") return "Date";
+  if (/bigint|int64|\blong\b/.test(normalized)) return "Long";
+  if (/smallint|tinyint|int32|integer|\bint\b/.test(normalized)) return "Integer";
+  if (/float|double|decimal|numeric|number|real/.test(normalized)) return "Double";
+  return "String";
 }
 
 export function schemaFingerprint(columns) {
@@ -176,10 +193,12 @@ function parseJsonArrayPrefix(text, maxRows) {
 function jsonValuesToSample(values, format) {
   const flattened = values.map((value) => flattenRecord(value));
   const columns = Array.from(new Set(flattened.flatMap((record) => Object.keys(record))));
+  const nativeRows = flattened.map((record) => columns.map((column) => record[column]));
   return {
     columns,
     format,
-    rows: flattened.map((record) => columns.map((column) => stringifyCell(record[column]))),
+    nativeRows,
+    rows: nativeRows.map((row) => row.map(stringifyCell)),
   };
 }
 
@@ -193,10 +212,25 @@ function inferType(values) {
   const nonEmpty = values.map((value) => value.trim()).filter(Boolean);
   if (nonEmpty.length === 0) return "String";
   if (nonEmpty.every((value) => /^-?\d+$/.test(value))) return "Integer";
-  if (nonEmpty.every((value) => /^-?\d+(\.\d+)?$/.test(value))) return "Float";
+  if (nonEmpty.every((value) => /^-?\d+(\.\d+)?$/.test(value))) return "Double";
   if (nonEmpty.every((value) => !Number.isNaN(Date.parse(value)) && /[-:TZ/]/.test(value))) return "Timestamp";
   if (nonEmpty.every((value) => ["true", "false"].includes(value.toLowerCase()))) return "Boolean";
   if (nonEmpty.every((value) => (value.startsWith("{") && value.endsWith("}")) || (value.startsWith("[") && value.endsWith("]")))) return "JSON";
+  return "String";
+}
+
+function inferNativeType(values) {
+  const nonNull = values.filter((value) => value !== null && value !== undefined);
+  if (nonNull.length === 0) return "String";
+  const types = new Set(nonNull.map((value) => {
+    if (typeof value === "string") return "String";
+    if (typeof value === "boolean") return "Boolean";
+    if (typeof value === "number") return Number.isInteger(value) ? "Long" : "Double";
+    if (typeof value === "object") return "JSON";
+    return "String";
+  }));
+  if (types.size === 1) return types.values().next().value;
+  if (types.size === 2 && types.has("Long") && types.has("Double")) return "Double";
   return "String";
 }
 

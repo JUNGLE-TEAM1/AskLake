@@ -1,8 +1,10 @@
 import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { loadKafkaJs } from "../src/kafka-codecs.mjs";
 
 const backendDir = fileURLToPath(new URL("..", import.meta.url));
+process.env.KAFKAJS_NO_PARTITIONER_WARNING = process.env.KAFKAJS_NO_PARTITIONER_WARNING || "1";
 const pythonBin = process.env.ASKLAKE_FASTAPI_PYTHON || (process.platform === "win32" ? "python" : "python3");
 const port = Number(process.env.ASKLAKE_FASTAPI_SOURCES_PORT || 18085);
 const baseUrl = process.env.ASKLAKE_FASTAPI_SOURCES_BASE_URL || `http://127.0.0.1:${port}`;
@@ -13,16 +15,21 @@ const env = {
   ...process.env,
   ASKLAKE_KAFKA_SAMPLE_TIMEOUT_MS: process.env.ASKLAKE_KAFKA_SAMPLE_TIMEOUT_MS || "10000",
   MINIO_ACCESS_KEY: process.env.MINIO_ACCESS_KEY || "m3admin",
-  MINIO_ENDPOINT: process.env.MINIO_ENDPOINT || "http://127.0.0.1:19000",
+  MINIO_ENDPOINT: process.env.MINIO_ENDPOINT || "http://127.0.0.1:9000",
   MINIO_SECRET_KEY: process.env.MINIO_SECRET_KEY || "wishuponastar",
   PYTHONPATH: [backendDir, process.env.PYTHONPATH].filter(Boolean).join(path.delimiter),
 };
 
 let serverProcess = null;
 let restFixtureProcess = null;
+let generatedKafkaTopic = "";
 
 try {
   ensureFastApiPythonDependencies();
+  if (process.env.ASKLAKE_VERIFY_KAFKA === "true" && !process.env.ASKLAKE_KAFKA_TOPIC) {
+    generatedKafkaTopic = await seedSnappyKafkaFixture();
+    process.env.ASKLAKE_KAFKA_TOPIC = generatedKafkaTopic;
+  }
   if (shouldStartServer) serverProcess = startFastApiServer();
   restFixtureProcess = startRestFixtureServer();
   await waitForFastApiApp();
@@ -35,9 +42,59 @@ try {
 } finally {
   if (serverProcess) serverProcess.kill("SIGTERM");
   if (restFixtureProcess) restFixtureProcess.kill("SIGTERM");
+  if (generatedKafkaTopic) await deleteKafkaFixture(generatedKafkaTopic).catch(() => undefined);
+}
+
+async function seedSnappyKafkaFixture() {
+  const { CompressionTypes, Kafka } = await loadKafkaJs();
+  const topic = `asklake-source-snappy-${Date.now().toString(36)}`;
+  const kafka = new Kafka({
+    brokers: [process.env.ASKLAKE_KAFKA_BROKER || "127.0.0.1:19092"],
+    clientId: "asklake-source-snappy-verify",
+  });
+  const admin = kafka.admin();
+  const producer = kafka.producer();
+  await admin.connect();
+  await producer.connect();
+  try {
+    await admin.createTopics({ topics: [{ numPartitions: 1, replicationFactor: 1, topic }] });
+    await producer.send({
+      compression: CompressionTypes.Snappy,
+      messages: Array.from({ length: 3 }, (_, index) => ({ value: JSON.stringify({
+        created_at: `2026-07-12T00:00:0${index}Z`,
+        event_id: `snappy-${Date.now()}-${index}`,
+        review: `snappy source preview ${index}`,
+      }) })),
+      topic,
+    });
+  } finally {
+    await producer.disconnect();
+    await admin.disconnect();
+  }
+  return topic;
+}
+
+async function deleteKafkaFixture(topic) {
+  const { Kafka } = await loadKafkaJs();
+  const admin = new Kafka({
+    brokers: [process.env.ASKLAKE_KAFKA_BROKER || "127.0.0.1:19092"],
+    clientId: "asklake-source-snappy-cleanup",
+  }).admin();
+  await admin.connect();
+  try {
+    await admin.deleteTopics({ topics: [topic] });
+  } finally {
+    await admin.disconnect();
+  }
 }
 
 async function verifyAllSources() {
+  const defaults = await get("/api/etl/sources/defaults");
+  const expectedBroker = process.env.ASKLAKE_KAFKA_BROKER || "127.0.0.1:19092";
+  if (defaults.kafkaBroker !== expectedBroker) {
+    throw new Error(`Source defaults broker mismatch: expected ${expectedBroker}, got ${defaults.kafkaBroker}.`);
+  }
+  console.log("Source connector defaults: ok");
   await verify("File / S3 CSV", objectStorageConfig("asklake-fixtures/csv/"));
   await verify("File / S3 JSON", objectStorageConfig("asklake-fixtures/json/"));
   await verify("File / S3 JSONL", objectStorageConfig("asklake-fixtures/jsonl/"));
@@ -48,19 +105,29 @@ async function verifyAllSources() {
     ["Endpoint URL", `${restFixtureUrl}/events`],
     ["Accept", "application/json"],
   ]);
-  await verify("PostgreSQL", [
+  const postgresConnection = [
     ["Endpoint / Host", "127.0.0.1"],
     ["Port", process.env.ASKLAKE_SOURCE_PGPORT || "15432"],
     ["Database Name", "asklake_sources"],
     ["Schema", "public"],
     ["Username", "asklake"],
     ["Password / Auth Token", process.env.ASKLAKE_SOURCE_PGPASSWORD || "asklake"],
+  ];
+  await verifyDiscovery("PostgreSQL", postgresConnection, "nyc_taxi_sample");
+  await verifySelectionRequired("PostgreSQL", postgresConnection);
+  await verify("PostgreSQL", [
+    ...postgresConnection,
     ["DATASET OR TABLE SELECTOR", "nyc_taxi_sample"],
   ]);
-  await verify("MongoDB", [
+  const mongoConnection = [
     ["Endpoint / Host", "127.0.0.1"],
     ["Port", process.env.ASKLAKE_MONGO_PORT || "27018"],
     ["Database Name", "asklake_sources"],
+  ];
+  await verifyDiscovery("MongoDB", mongoConnection, "app_events");
+  await verifySelectionRequired("MongoDB", mongoConnection);
+  await verify("MongoDB", [
+    ...mongoConnection,
     ["DATASET OR TABLE SELECTOR", "app_events"],
   ]);
   await verify("Data Lake Parquet", [
@@ -70,13 +137,16 @@ async function verifyAllSources() {
     ["Access Key", env.MINIO_ACCESS_KEY],
     ["Secret Key", env.MINIO_SECRET_KEY],
     ["Use Path Style", "true"],
-  ]);
+  ], (result) => result.assets?.length > 0 && result.draftPatch?.source?.sourceType === "Data Lake Parquet");
   if (process.env.ASKLAKE_VERIFY_KAFKA === "true") {
     await verify("Kafka JSON", [
       ["Broker / Endpoint", process.env.ASKLAKE_KAFKA_BROKER || "127.0.0.1:19092"],
       ["TOPIC / QUEUE NAME", process.env.ASKLAKE_KAFKA_TOPIC || "asklake-source-events"],
       ["CONSUMER GROUP ID", "asklake-fastapi-source-verify"],
-    ]);
+    ], (result) => (
+      result.draftPatch?.schema?.columns?.some((column) => column.sourceName === "event_id")
+      && result.draftPatch?.schema?.sampleRows?.length >= (generatedKafkaTopic ? 3 : 1)
+    ));
   } else {
     console.log("Kafka verification skipped. Set ASKLAKE_VERIFY_KAFKA=true after running source fixtures.");
   }
@@ -94,11 +164,32 @@ function objectStorageConfig(prefix) {
   ];
 }
 
-async function verify(sourceType, sourceConfig) {
+async function verify(sourceType, sourceConfig, assertResult = (result) => result.draftPatch?.schema?.columns?.length > 0) {
   const result = await post("/api/etl/sources/test", { sourceConfig, sourceType });
   if (result.status !== "success") throw new Error(`${sourceType} did not return success.`);
-  if (!result.draftPatch?.schema?.columns?.length) throw new Error(`${sourceType} returned no schema columns.`);
+  if (!assertResult(result)) throw new Error(`${sourceType} returned no expected metadata.`);
   console.log(`${sourceType}: ok`);
+}
+
+async function verifyDiscovery(sourceType, sourceConfig, expectedAsset) {
+  const result = await post("/api/etl/sources/assets", { prefix: "", sourceConfig, sourceType });
+  if (!result.assets?.some(([name]) => name === expectedAsset)) {
+    throw new Error(`${sourceType} discovery did not include ${expectedAsset}.`);
+  }
+  console.log(`${sourceType} discovery: ok`);
+}
+
+async function verifySelectionRequired(sourceType, sourceConfig) {
+  try {
+    await post("/api/etl/sources/test", { sourceConfig, sourceType });
+  } catch (error) {
+    if (/400/.test(String(error))) {
+      console.log(`${sourceType} selection guard: ok`);
+      return;
+    }
+    throw error;
+  }
+  throw new Error(`${sourceType} preview unexpectedly succeeded without a selected target.`);
 }
 
 function ensureFastApiPythonDependencies() {

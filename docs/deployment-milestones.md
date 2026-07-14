@@ -193,9 +193,9 @@ Definition of Done:
 
 현재 구현 경계:
 
-- FastAPI SQL preview는 아직 실제 PostgreSQL source table을 직접 실행하지 않고 `catalog_datasets.payload.sampleRows`를 preview row로 사용한다.
+- FastAPI SQL preview는 DuckDB in-memory query runtime으로 실행한다. 로컬 `storageLocation`이 `jsonl`/`parquet`이면 물리 파일을 우선 읽고, 파일을 읽을 수 없으면 `catalog_datasets.payload.schema`와 `sampleRows`를 임시 table로 등록한다.
 - 따라서 배포 fixture는 `catalog_datasets.payload.schema`, `catalog_datasets.payload.sampleRows`, 물리 source fixture row가 서로 달라지지 않게 같은 원본 seed에서 만들어야 한다.
-- 실제 SQL engine이 source DB를 직접 조회하도록 확장되더라도 demo query와 결과가 유지되도록 PostgreSQL fixture table을 먼저 설계한다.
+- 이후 실제 source DB 직접 조회로 확장하더라도 demo query는 결과가 유지되도록 PostgreSQL fixture table과 DuckDB preview fixture를 같은 계약으로 설계한다.
 - MongoDB fixture는 메인 발표 흐름이 아니라 source type 확장성과 schema inference 확인용 보조 시나리오로 둔다.
 
 PostgreSQL 역할:
@@ -461,12 +461,11 @@ backend/src/sparkRunner.mjs
 
 Spark runner 주의:
 
-- 현재 ETL Job command 경로는 backend에서 Node bridge를 거쳐 Docker 기반 Spark 컨테이너를 실행한다.
-- backend image에는 Node dependencies와 Docker CLI를 포함한다.
-- compose는 `/var/run/docker.sock`을 backend에 mount한다.
-- EC2에서는 repo 기준 경로가 `ASKLAKE_SPARK_HOST_SCRIPTS_DIR`와 일치해야 한다.
-- 기본 문서 기준은 `/opt/asklake/backend/scripts`이며, repo clone 위치가 다르면 서버 `deploy/.env`에서 바꾼다.
-- Spark job E2E는 Phase 8 QA에서 별도로 검증한다.
+- 이 마일스톤의 Docker launcher 기록은 local 개발 호환 경로에만 해당한다.
+- 현재 production Compose는 application scripts를 Spark runtime image에 포함하고 Standalone REST create/status API를 사용한다.
+- backend image에는 Docker CLI나 `/var/run/docker.sock` mount가 없다.
+- 공유 report/output/sample/Ivy 경로는 `spark-dir-init`가 UID/GID `185:185`로 준비한다.
+- Spark job E2E는 Phase 8 QA와 production-like REST smoke에서 별도로 검증한다.
 
 검증 명령:
 
@@ -661,21 +660,29 @@ Definition of Done:
 
 ```text
 scripts/seed-demo-data.sh
+scripts/reset-demo-data.sh
+backend/app/seed/demo_mongo_fixture.json
+backend/app/seed/seed_mongo_demo.py
+backend/app/seed/reset_demo_data.py
+backend/scripts/seed-demo-postgres.mjs
+backend/scripts/seed-demo-mongo.mjs
 ```
 
 체크리스트:
 
-- [ ] metadata seed 범위를 정한다.
-- [ ] PostgreSQL source fixture seed를 만든다.
-- [ ] MongoDB source fixture seed를 만든다.
-- [ ] reset과 seed를 분리할지 결정한다.
-- [ ] reset은 production data를 지우지 않도록 demo namespace만 대상으로 한다.
-- [ ] demo 전 수동 실행 명령을 문서화한다.
+- [x] metadata seed 범위를 정한다.
+- [x] PostgreSQL source fixture seed를 만든다.
+- [x] MongoDB source fixture seed를 만든다.
+- [x] reset과 seed를 분리할지 결정한다.
+- [x] reset은 production data를 지우지 않도록 demo namespace만 대상으로 한다.
+- [x] demo 전 수동 실행 명령을 문서화한다.
 
 명령 예시:
 
 ```bash
 scripts/seed-demo-data.sh
+scripts/reset-demo-data.sh --dry-run
+scripts/reset-demo-data.sh
 ```
 
 주의:
@@ -686,9 +693,9 @@ scripts/seed-demo-data.sh
 
 Definition of Done:
 
-- [ ] seed를 여러 번 실행해도 demo data가 중복되지 않는다.
-- [ ] seed 후 Catalog/SQL demo가 가능하다.
-- [ ] reset 범위가 명확하다.
+- [x] seed를 여러 번 실행해도 demo data가 중복되지 않는다.
+- [x] seed 후 Catalog/SQL demo가 가능하다.
+- [x] reset 범위가 명확하다.
 
 ## Phase 8. QA / Health Check
 

@@ -1,51 +1,31 @@
-import { Activity, RefreshCw } from "lucide-react";
-import type { AuditEntry } from "../../types";
+import { Languages, Moon } from "lucide-react";
 
-export function Topbar({
-  auditLogs,
-  auditOpen,
-  onAuditToggle,
-  onRefresh,
-}: {
-  auditLogs: AuditEntry[];
-  auditOpen: boolean;
-  onAuditToggle: () => void;
-  onRefresh: () => void;
-}) {
+import { IconButton } from "@/components/ui/icon-button";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+
+export function Topbar() {
   return (
     <header className="topbar">
-      <div className="topbar-actions">
-        <div className="audit-menu">
-          <button className={auditOpen ? "icon-button active" : "icon-button"} type="button" aria-label="최근 API 호출" onClick={onAuditToggle}>
-            <Activity size={18} />
-            {auditLogs.length > 0 && <span className="audit-dot" />}
-          </button>
-          {auditOpen && (
-            <section className="audit-popover">
-              <div className="audit-popover-header">
-                <strong>최근 API 호출</strong>
-                <span>{auditLogs.length}건</span>
-              </div>
-              <div className="audit-log-list">
-                {auditLogs.slice(0, 8).map((log) => (
-                  <article className="audit-log-item" key={log.request_id}>
-                    <div>
-                      <strong>{log.action}</strong>
-                      <span>{log.api_path}</span>
-                    </div>
-                    <em>{log.result}</em>
-                  </article>
-                ))}
-                {auditLogs.length === 0 && <p>아직 기록된 호출이 없습니다.</p>}
-              </div>
-            </section>
-          )}
+      <TooltipProvider delayDuration={300}>
+        <div className="topbar-actions">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <IconButton className="topbar-action-button" label="다크 모드" size="sm" type="button">
+                <Moon aria-hidden="true" />
+              </IconButton>
+            </TooltipTrigger>
+            <TooltipContent>다크 모드</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <IconButton className="topbar-action-button" label="한국어·영어 전환" size="sm" type="button">
+                <Languages aria-hidden="true" />
+              </IconButton>
+            </TooltipTrigger>
+            <TooltipContent>한국어·영어 전환</TooltipContent>
+          </Tooltip>
         </div>
-        <button className="icon-button" type="button" aria-label="Refresh" onClick={onRefresh}>
-          <RefreshCw size={18} />
-        </button>
-        <div className="avatar" />
-      </div>
+      </TooltipProvider>
     </header>
   );
 }

@@ -1,3 +1,6 @@
+import type { IdentityProfile } from "./identity";
+import type { PermissionGrant, ResourcePermissions } from "./permissions";
+
 export type DashboardRuntimeMode = "published" | "draft";
 export type DashboardView = "list" | "builder" | "detail" | "runtime";
 export type DashboardStatus = "draft" | "published";
@@ -28,11 +31,13 @@ export type DashboardWidgetColorConfig = {
 
 export type DashboardWidgetConfigBase = {
   body?: string;
+  dataMode?: "server_aggregated" | "server_preview";
   description?: string;
   error?: string;
   errorMessage?: string;
   placeholderKind?: DashboardWidgetPlaceholderKind;
   prompt?: string;
+  sourceConfig?: Record<string, unknown>;
 };
 
 export type MetricWidgetConfig = DashboardWidgetConfigBase & {
@@ -139,6 +144,10 @@ export type SavedDashboardCard = {
   meta: string;
   name: string;
   owner: string;
+  createdBy?: string;
+  createdByProfile?: IdentityProfile;
+  permissionGrants?: PermissionGrant[];
+  permissions?: ResourcePermissions;
   createdAt?: string;
   createdAtValue?: string;
   sourceRunId?: string;
@@ -178,8 +187,11 @@ export type DashboardListResponse = {
 };
 
 export type DashboardEntry = {
+  baseDatasetId?: string;
   dashboardId?: string;
   runtimeMode?: DashboardRuntimeMode;
+  sqlResultDatasetId?: string;
+  sqlRunId?: string;
   source: "sidebar" | "sql" | "catalog" | "internal";
   view: DashboardView;
   version: number;
@@ -188,6 +200,8 @@ export type DashboardEntry = {
 export type DashboardMeta = {
   hasPublishedRevision: boolean;
   id: string;
+  permissionGrants?: PermissionGrant[];
+  permissions?: ResourcePermissions;
   status: DashboardStatus;
   title: string;
   updatedAt: string;
@@ -216,10 +230,14 @@ export type DashboardWidgetLayout = {
 };
 
 type DashboardRuntimeWidgetBase = {
+  appliedRevision?: number | null;
+  calculatedAt?: string | null;
+  calculationVersion?: string | null;
   data: Array<Record<string, unknown>>;
   datasetId?: string | null;
   id: string;
   layout: DashboardWidgetLayout;
+  liveRefresh?: boolean;
   pageId: string;
   queryId?: string | null;
   title: string | null;

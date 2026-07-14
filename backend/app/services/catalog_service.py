@@ -1,16 +1,22 @@
 import re
 from datetime import datetime, timezone
-from uuid import uuid4
 
 from fastapi import status
 
+from app.core.auth_context import ActorContext, require_any_permission, require_permission
+from app.core.config import settings
 from app.core.errors import ApiError
+from app.core.materialization import active_materialization_runs, materialization_mode
+from app.core.permission_metadata import permission_grants_from_roles, resource_permissions
 from app.repositories.catalog_repository import CatalogRepository, dataset_model_to_payload
+from app.repositories.audit_repository import safe_record_audit_event
 from app.repositories.sql_repository import SqlRepository
 from app.schemas.catalog import (
     CatalogDatasetListResponse,
+    CatalogDatasetRowsResponse,
     CatalogDatasetResponse,
     CreateDerivedDatasetRequest,
+    DeleteMaterializationRunResponse,
     LineageGraphColumn,
     LineageGraphDataset,
     LineageGraphEdge,
@@ -23,6 +29,57 @@ from app.services.lake_storage_service import (
     LocalLakeStorageService,
     MaterializedDatasetResult,
 )
+from app.services.dataset_rows_service import read_dataset_rows
+from app.services.governance_enforcement import require_governed_access
+from app.services.sql_service import full_query_run_response_from_payload
+from app.services.materialization_projection import (
+    aggregate_materialization_runs,
+    upsert_materialization_run,
+)
+from app.services.resource_permission_service import (
+    dataset_with_persisted_permission_grants,
+    datasets_with_persisted_permission_grants,
+    permissions_for_actor_with_governance,
+)
+
+
+def dataset_for_latest_successful_materialization(
+    dataset: CatalogDatasetResponse,
+) -> CatalogDatasetResponse:
+    """Project the catalog dataset onto its newest readable materialization.
+
+    A failed or queued run must never replace the last published storage
+    location used by catalog previews.  Keep the original dataset unchanged
+    when no successful materialization is available so callers can return the
+    existing storage error with the correct dataset identity.
+    """
+
+    successful_runs = [
+        run
+        for run in dataset.materialization_runs
+        if run.status == "success" and run.storage_location
+    ]
+    if not successful_runs:
+        return dataset
+
+    def created_at(run: object) -> datetime:
+        value = str(getattr(run, "created_at", ""))
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return datetime.min.replace(tzinfo=timezone.utc)
+
+    selected = max(successful_runs, key=created_at)
+    updates: dict[str, object] = {
+        "source_run_id": selected.run_id,
+        "storage_location": selected.storage_location,
+        "storage_size_bytes": selected.storage_size_bytes,
+        "last_updated": selected.created_at,
+        "status": "available",
+    }
+    if selected.row_count >= 0:
+        updates["rows"] = f"{selected.row_count:,}"
+    return dataset.model_copy(update=updates)
 
 
 class CatalogService:
@@ -36,49 +93,271 @@ class CatalogService:
         self.repository = repository
         self.sql_repository = sql_repository
 
-    def list_datasets(self) -> CatalogDatasetListResponse:
+    def list_datasets(self, actor: ActorContext | None = None) -> CatalogDatasetListResponse:
+        actor_context = actor or ActorContext()
+        datasets = datasets_with_persisted_permission_grants(
+            self.repository.db,
+            [
+                CatalogDatasetResponse.model_validate(dataset_model_to_payload(model))
+                for model in self.repository.list_dataset_models()
+            ],
+        )
         datasets = [
-            CatalogDatasetResponse.model_validate(dataset_model_to_payload(model))
-            for model in self.repository.list_dataset_models()
+            with_dataset_permissions(dataset, actor_context, self.repository.db)
+            for dataset in datasets
         ]
+        datasets = [dataset for dataset in datasets if dataset.permissions.can_view]
         return CatalogDatasetListResponse(
             datasets=datasets,
             page=CursorPageMeta(cursor=None, has_next=False),
         )
 
-    def get_dataset(self, dataset_id: str) -> CatalogDatasetResponse:
+    def get_dataset(self, dataset_id: str, actor: ActorContext | None = None) -> CatalogDatasetResponse:
         payload = self.repository.get_dataset_payload(dataset_id)
         if payload is None:
             raise ApiError(ErrorCode.NOT_FOUND, "Dataset not found", status.HTTP_404_NOT_FOUND)
-        return CatalogDatasetResponse.model_validate(payload)
+        dataset = dataset_with_persisted_permission_grants(
+            self.repository.db,
+            CatalogDatasetResponse.model_validate(payload),
+        )
+        actor_context = actor or ActorContext()
+        require_governed_access(
+            self.repository.db,
+            actor_context,
+            action="view",
+            api_path=f"/api/catalog/datasets/{dataset_id}",
+            http_method="GET",
+            metadata={"owner": dataset.owner},
+            resource_id=dataset.id,
+            resource_name=dataset.name,
+            resource_type="dataset",
+        )
+        try:
+            require_permission(
+                actor_context,
+                "view",
+                owner=dataset.owner,
+                grants=dataset.permission_grants,
+                resource_label="dataset",
+            )
+        except ApiError as exc:
+            record_forbidden_dataset_event(
+                self.repository.db,
+                actor_context,
+                action="dataset.view.forbidden",
+                dataset=dataset,
+                api_path=f"/api/catalog/datasets/{dataset_id}",
+                http_method="GET",
+                status_code=exc.status_code,
+            )
+            raise
+        return with_dataset_permissions(dataset, actor_context, self.repository.db)
 
-    def get_dataset_lineage(self, dataset_id: str) -> LineageGraphResponse:
-        dataset = self.get_dataset(dataset_id)
+    def get_dataset_lineage(self, dataset_id: str, actor: ActorContext | None = None) -> LineageGraphResponse:
+        dataset = self.get_dataset(dataset_id, actor)
         lineage_payload = self.repository.get_lineage_payload(dataset_id)
         if lineage_payload is not None:
             return LineageGraphResponse.model_validate(lineage_payload)
         return build_fallback_lineage_graph(dataset)
 
+    def get_dataset_rows(
+        self,
+        dataset_id: str,
+        actor: ActorContext | None = None,
+        *,
+        limit: int,
+        offset: int,
+    ) -> CatalogDatasetRowsResponse:
+        actor_context = actor or ActorContext()
+        dataset = self.get_dataset(dataset_id, actor_context)
+        require_governed_access(
+            self.repository.db,
+            actor_context,
+            action="query",
+            api_path=f"/api/catalog/datasets/{dataset_id}/rows",
+            http_method="GET",
+            metadata={"owner": dataset.owner},
+            resource_id=dataset.id,
+            resource_name=dataset.name,
+            resource_type="dataset",
+        )
+        require_permission(
+            actor_context,
+            "query",
+            owner=dataset.owner,
+            grants=dataset.permission_grants,
+            resource_label="dataset",
+        )
+        return read_dataset_rows(
+            dataset_for_latest_successful_materialization(dataset),
+            limit=limit,
+            offset=offset,
+        )
+
+    def delete_materialization_run(
+        self,
+        dataset_id: str,
+        run_id: str,
+        actor: ActorContext | None = None,
+    ) -> DeleteMaterializationRunResponse:
+        payload = self.repository.get_dataset_payload_for_update(dataset_id)
+        if payload is None:
+            raise ApiError(ErrorCode.NOT_FOUND, "Dataset not found", status.HTTP_404_NOT_FOUND)
+        dataset = dataset_with_persisted_permission_grants(
+            self.repository.db,
+            CatalogDatasetResponse.model_validate(payload),
+        )
+        actor_context = actor or ActorContext()
+        require_governed_access(
+            self.repository.db,
+            actor_context,
+            action="delete",
+            api_path=f"/api/catalog/datasets/{dataset_id}/materialization-runs/{run_id}",
+            http_method="DELETE",
+            metadata={"owner": dataset.owner, "runId": run_id},
+            resource_id=dataset.id,
+            resource_name=dataset.name,
+            resource_type="dataset",
+        )
+        try:
+            require_any_permission(
+                actor_context,
+                ("manage", "delete"),
+                owner=dataset.owner,
+                grants=dataset.permission_grants,
+                resource_label="dataset",
+            )
+        except ApiError as exc:
+            record_forbidden_dataset_event(
+                self.repository.db,
+                actor_context,
+                action="dataset.materialization_run.delete.forbidden",
+                dataset=dataset,
+                api_path=f"/api/catalog/datasets/{dataset_id}/materialization-runs/{run_id}",
+                http_method="DELETE",
+                metadata={"runId": run_id},
+                status_code=exc.status_code,
+            )
+            raise
+
+        runs = payload.get("materializationRuns")
+        materialization_runs = [run for run in runs if isinstance(run, dict)] if isinstance(runs, list) else []
+        next_runs = [
+            run
+            for run in materialization_runs
+            if str(run.get("runId") or "") != run_id
+        ]
+        if len(next_runs) == len(materialization_runs):
+            raise ApiError(
+                ErrorCode.NOT_FOUND,
+                "Materialization run not found",
+                status.HTTP_404_NOT_FOUND,
+                {"datasetId": dataset_id, "runId": run_id},
+            )
+        if dataset_is_iceberg_backed(payload):
+            raise ApiError(
+                "ICEBERG_MATERIALIZATION_DELETE_UNAVAILABLE",
+                "Iceberg materialization history cannot be deleted without an Iceberg-native table operation",
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                {"datasetId": dataset_id, "runId": run_id},
+            )
+        validate_materialization_run_delete(materialization_runs, run_id)
+
+        saved_payload = self.repository.save_dataset_payload(
+            recalculate_dataset_payload_from_runs({
+                **payload,
+                "materializationRuns": next_runs,
+            })
+        )
+        return DeleteMaterializationRunResponse(
+            dataset=with_dataset_permissions(CatalogDatasetResponse.model_validate(saved_payload), actor_context, self.repository.db),
+            deleted_run_id=run_id,
+        )
+
     def create_derived_dataset(
         self,
         request: CreateDerivedDatasetRequest,
+        actor: ActorContext | None = None,
     ) -> CatalogDatasetResponse:
-        request_source_dataset = self.get_dataset(request.source_dataset_id)
+        actor_context = actor or ActorContext()
+        request_source_dataset = self.get_dataset(request.source_dataset_id, actor_context)
         sql_result = self.get_sql_result(request.source_run_id)
         validate_derived_dataset_request(request, sql_result)
-        result_source_dataset = self.get_dataset(sql_result.dataset_id)
+        result_source_dataset = self.get_dataset(sql_result.dataset_id, actor_context)
+        require_governed_access(
+            self.repository.db,
+            actor_context,
+            action="query",
+            api_path="/api/catalog/derived-datasets",
+            http_method="POST",
+            metadata={"owner": result_source_dataset.owner},
+            resource_id=result_source_dataset.id,
+            resource_name=result_source_dataset.name,
+            resource_type="dataset",
+        )
+        try:
+            require_permission(
+                actor_context,
+                "query",
+                owner=result_source_dataset.owner,
+                grants=result_source_dataset.permission_grants,
+                resource_label="dataset",
+            )
+        except ApiError as exc:
+            record_forbidden_dataset_event(
+                self.repository.db,
+                actor_context,
+                action="dataset.derived.create.forbidden",
+                dataset=result_source_dataset,
+                api_path="/api/catalog/derived-datasets",
+                http_method="POST",
+                status_code=exc.status_code,
+            )
+            raise
 
         reference_datasets = [
-            self.get_dataset(reference_dataset_id)
+            self.get_dataset(reference_dataset_id, actor_context)
             for reference_dataset_id in unique_values(request.reference_dataset_ids)
         ]
+        for dataset in reference_datasets:
+            require_governed_access(
+                self.repository.db,
+                actor_context,
+                action="query",
+                api_path="/api/catalog/derived-datasets",
+                http_method="POST",
+                metadata={"owner": dataset.owner},
+                resource_id=dataset.id,
+                resource_name=dataset.name,
+                resource_type="dataset",
+            )
+            try:
+                require_permission(
+                    actor_context,
+                    "query",
+                    owner=dataset.owner,
+                    grants=dataset.permission_grants,
+                    resource_label="dataset",
+                )
+            except ApiError as exc:
+                record_forbidden_dataset_event(
+                    self.repository.db,
+                    actor_context,
+                    action="dataset.derived.create.forbidden",
+                    dataset=dataset,
+                    api_path="/api/catalog/derived-datasets",
+                    http_method="POST",
+                    status_code=exc.status_code,
+                )
+                raise
         schema_source_datasets = unique_datasets_by_id([
             result_source_dataset,
             *reference_datasets,
             request_source_dataset,
         ])
         dataset_name = build_derived_dataset_name(request, result_source_dataset)
-        dataset_id = build_unique_derived_dataset_id(dataset_name, self.repository)
+        dataset_id = build_derived_dataset_id(dataset_name)
+        previous_payload = self.repository.get_dataset_payload(dataset_id)
         materialized_result = self.lake_storage.materialize_sql_result(
             columns=sql_result.columns,
             dataset_id=dataset_id,
@@ -94,6 +373,8 @@ class CatalogService:
             result_source_dataset,
             sql_result,
             schema_source_datasets,
+            actor_context.name,
+            previous_payload,
         )
         derived_dataset = CatalogDatasetResponse.model_validate(dataset_payload)
         lineage_graph = build_derived_dataset_lineage_graph(
@@ -106,7 +387,7 @@ class CatalogService:
         )
 
         saved_payload = self.repository.save_dataset_payload(dataset_payload)
-        return CatalogDatasetResponse.model_validate(saved_payload)
+        return with_dataset_permissions(CatalogDatasetResponse.model_validate(saved_payload), actor_context, self.repository.db)
 
     def get_sql_result(self, run_id: str) -> QueryRunResponse:
         payload = self.sql_repository.get_run_payload(run_id)
@@ -117,7 +398,16 @@ class CatalogService:
                 status.HTTP_404_NOT_FOUND,
                 {"sourceRunId": run_id},
             )
-        return QueryRunResponse.model_validate(payload)
+        if payload.get("engine") == "trino":
+            raise ApiError(
+                ErrorCode.CONFLICT,
+                "Trino query runs require Iceberg materialization and cannot use the legacy derived dataset path",
+                status.HTTP_409_CONFLICT,
+                {"sourceRunId": run_id},
+            )
+        # Derived datasets must materialize the complete stored result, not the
+        # page-sized rows returned by the interactive SQL API.
+        return full_query_run_response_from_payload(payload)
 
 
 def validate_derived_dataset_request(
@@ -187,6 +477,8 @@ def build_derived_dataset_payload(
     result_source_dataset: CatalogDatasetResponse,
     sql_result: QueryRunResponse,
     schema_source_datasets: list[CatalogDatasetResponse],
+    actor_name: str,
+    previous_payload: dict[str, object] | None = None,
 ) -> dict[str, object]:
     dataset_description = (
         request.dataset.description.strip()
@@ -198,31 +490,51 @@ def build_derived_dataset_payload(
         if reference_dataset_id != result_source_dataset.id
     ]
 
+    materialization_runs = append_materialization_run(
+        previous_payload.get("materializationRuns") if previous_payload else [],
+        {
+            "createdAt": current_utc_timestamp(),
+            "jobId": "sql-derived",
+            "rowCount": materialized_result.row_count,
+            "runId": request.source_run_id,
+            "sourceKind": "sql",
+            "sourceLabel": f"SQL Materialize · {sql_result.run_id}",
+            "status": "success",
+            "storageLocation": materialized_result.storage_location,
+            "storageSizeBytes": materialized_result.storage_size_bytes,
+        },
+    )
+    aggregate = aggregate_materialization_runs(materialization_runs)
     return {
         "description": dataset_description,
         "downstream": ["SQL 분석", "대시보드"],
         "freshness": "latest",
         "id": dataset_id,
         "layer": request.dataset.layer,
-        "lastUpdated": current_utc_timestamp(),
+        "lastUpdated": aggregate["lastUpdated"] or current_utc_timestamp(),
+        "materializationRuns": materialization_runs,
         "name": dataset_name,
         "nextRefresh": "수동 갱신",
         "owner": result_source_dataset.owner,
+        "createdBy": created_by_from_payload(previous_payload, actor_name),
+        "createdByProfile": created_by_profile_from_payload(previous_payload, actor_name),
+        "permissionGrants": permission_grants_from_roles(result_source_dataset.owner, default_actions=["view", "query"]),
+        "permissions": resource_permissions(actor=actor_name, can_query=True),
         "quality": "SQL materialized",
         "rag": request.dataset.rag,
-        "rows": f"{materialized_result.row_count:,} rows",
+        "rows": f"{aggregate['rowCount']:,} rows",
         "sampleRows": materialized_result.sample_rows,
         "schema": [
             [column_name, infer_column_type(schema_source_datasets, column_name)]
             for column_name in sql_result.columns
         ],
-        "size": format_storage_size(materialized_result.storage_size_bytes),
+        "size": format_storage_size(aggregate["storageSizeBytes"]),
         "source": f"SQL Materialize · {sql_result.run_id}",
-        "sourceRunId": request.source_run_id,
+        "sourceRunId": aggregate["latestRunId"] or request.source_run_id,
         "status": "available",
         "storageFormat": materialized_result.storage_format,
         "storageLocation": materialized_result.storage_location,
-        "storageSizeBytes": materialized_result.storage_size_bytes,
+        "storageSizeBytes": aggregate["storageSizeBytes"],
         "tags": normalize_derived_dataset_tags(request.dataset.tags),
         "upstream": [
             result_source_dataset.name,
@@ -230,6 +542,35 @@ def build_derived_dataset_payload(
             request.source_run_id,
         ],
     }
+
+
+def with_dataset_permissions(dataset: CatalogDatasetResponse, actor: ActorContext, db: object | None = None) -> CatalogDatasetResponse:
+    grant_payloads = [
+        grant.model_dump(by_alias=True) if hasattr(grant, "model_dump") else grant
+        for grant in dataset.permission_grants
+    ]
+    permissions = (
+        permissions_for_actor_with_governance(
+            db,
+            actor,
+            owner=dataset.owner,
+            grants=grant_payloads,
+            resource_id=dataset.id,
+            resource_type="dataset",
+        )
+        if db is not None
+        else None
+    )
+    if (
+        permissions is not None
+        and settings.trino_enabled
+        and (dataset.query_engine_status != "available" or dataset.query_engine_table is None)
+    ):
+        permissions = permissions.model_copy(update={"can_query": False})
+    return dataset.model_copy(update={
+        "permissions": permissions,
+        "query_engine_required": settings.trino_enabled,
+    })
 
 
 def build_derived_dataset_name(
@@ -252,14 +593,8 @@ def build_materialized_sql_rows(
     ]
 
 
-def build_unique_derived_dataset_id(
-    dataset_name: str,
-    repository: CatalogRepository,
-) -> str:
-    base_dataset_id = f"ds_{normalize_derived_dataset_id(dataset_name)}"
-    if repository.get_dataset_payload(base_dataset_id) is None:
-        return base_dataset_id
-    return f"{base_dataset_id}_{uuid4().hex[:8]}"
+def build_derived_dataset_id(dataset_name: str) -> str:
+    return f"ds_{normalize_derived_dataset_id(dataset_name)}"
 
 
 def normalize_derived_dataset_id(name: str) -> str:
@@ -274,6 +609,24 @@ def normalize_derived_dataset_tags(tags: list[str]) -> list[str]:
         if tag
     ]
     return unique_values(normalized_tags or ["#sql-derived"])
+
+
+def created_by_from_payload(previous_payload: dict[str, object] | None, actor_name: str) -> str:
+    previous_created_by = previous_payload.get("createdBy") if previous_payload else None
+    return str(previous_created_by or actor_name or "demo-user").strip() or "demo-user"
+
+
+def created_by_profile_from_payload(previous_payload: dict[str, object] | None, actor_name: str) -> dict[str, str]:
+    previous_profile = previous_payload.get("createdByProfile") if previous_payload else None
+    if isinstance(previous_profile, dict):
+        return {str(key): str(value) for key, value in previous_profile.items()}
+    display_name = created_by_from_payload(previous_payload, actor_name)
+    words = [word for word in display_name.replace("_", " ").replace("-", " ").split(" ") if word]
+    initials = "".join(word[0].upper() for word in words[:2]) or display_name[:2].upper()
+    return {
+        "avatarInitials": initials[:2],
+        "displayName": display_name,
+    }
 
 
 def infer_column_type(
@@ -399,6 +752,87 @@ def unique_datasets_by_id(
         unique_datasets.append(dataset)
         seen_dataset_ids.add(dataset.id)
     return unique_datasets
+
+
+def append_materialization_run(
+    previous_runs: object,
+    next_run: dict[str, object],
+) -> list[dict[str, object]]:
+    return upsert_materialization_run(previous_runs, next_run)
+
+
+def dataset_for_latest_successful_materialization(
+    dataset: CatalogDatasetResponse,
+) -> CatalogDatasetResponse:
+    latest = next(
+        (run for run in dataset.materialization_runs if run.status == "success"),
+        None,
+    )
+    if latest is None:
+        return dataset
+    return dataset.model_copy(update={
+        "source_run_id": latest.run_id,
+        "storage_format": latest.storage_format or dataset.storage_format,
+        "storage_location": latest.storage_location or dataset.storage_location,
+    })
+
+
+def dataset_is_iceberg_backed(payload: dict[str, object]) -> bool:
+    if str(payload.get("storageFormat") or "").strip().casefold() == "iceberg":
+        return True
+    mapping = payload.get("queryEngineTable")
+    return (
+        str(payload.get("queryEngineStatus") or "").strip().casefold() == "available"
+        and isinstance(mapping, dict)
+        and str(mapping.get("format") or "").strip().casefold() == "iceberg"
+    )
+
+
+def validate_materialization_run_delete(runs: list[dict[str, object]], run_id: str) -> None:
+    active_runs = active_materialization_runs(runs)
+    target = next((run for run in active_runs if str(run.get("runId") or "") == run_id), None)
+    if target is None or materialization_mode(target) != "snapshot":
+        return
+    dependent_delta_ids = [
+        str(run.get("runId") or "")
+        for run in active_runs
+        if materialization_mode(run) == "delta" and str(run.get("runId") or "")
+    ]
+    if not dependent_delta_ids:
+        return
+    raise ApiError(
+        ErrorCode.CONFLICT,
+        "Delete newer delta materializations before deleting their active snapshot",
+        status.HTTP_409_CONFLICT,
+        {"dependentDeltaRunIds": dependent_delta_ids, "snapshotRunId": run_id},
+    )
+
+
+def recalculate_dataset_payload_from_runs(payload: dict[str, object]) -> dict[str, object]:
+    runs = payload.get("materializationRuns")
+    materialization_runs = [run for run in runs if isinstance(run, dict)] if isinstance(runs, list) else []
+    aggregate = aggregate_materialization_runs(materialization_runs)
+    next_payload = dict(payload)
+    next_payload["materializationRuns"] = materialization_runs
+    next_payload["lastUpdated"] = aggregate["lastUpdated"] or payload.get("lastUpdated") or current_utc_timestamp()
+    next_payload["rows"] = f"{aggregate['rowCount']:,} rows"
+    next_payload["size"] = format_storage_size(aggregate["storageSizeBytes"])
+    next_payload["sourceRunId"] = aggregate["latestRunId"]
+    next_payload["storageFormat"] = aggregate["latestStorageFormat"] or payload.get("storageFormat")
+    next_payload["storageLocation"] = aggregate["latestStorageLocation"]
+    next_payload["storageSizeBytes"] = aggregate["storageSizeBytes"]
+    return next_payload
+
+
+def parse_count_value(value: object) -> int:
+    if isinstance(value, bool) or value is None:
+        return 0
+    if isinstance(value, int):
+        return max(value, 0)
+    if isinstance(value, float):
+        return max(int(value), 0)
+    digits = re.sub(r"[^0-9]", "", str(value))
+    return int(digits) if digits else 0
 
 
 def format_storage_size(size_bytes: int) -> str:
@@ -546,3 +980,43 @@ def get_lineage_table_name(value: str) -> str:
 def normalize_lineage_id(value: str) -> str:
     normalized_value = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
     return normalized_value or "lineage"
+
+
+def record_forbidden_dataset_event(
+    db: object,
+    actor: ActorContext,
+    *,
+    action: str,
+    dataset: CatalogDatasetResponse,
+    api_path: str,
+    http_method: str,
+    metadata: dict[str, object] | None = None,
+    status_code: int | None = None,
+) -> None:
+    safe_record_audit_event(
+        db,
+        action=action,
+        actor=actor,
+        api_path=api_path,
+        http_method=http_method,
+        metadata={"owner": dataset.owner, **(metadata or {})},
+        result="forbidden",
+        status_code=status_code or status.HTTP_403_FORBIDDEN,
+        target_id=dataset.id,
+        target_name=dataset.name,
+        target_type="dataset",
+    )
+def dataset_for_latest_successful_materialization(
+    dataset: CatalogDatasetResponse,
+) -> CatalogDatasetResponse:
+    """Project the newest successful materialization onto the dataset row reader."""
+
+    for materialization in dataset.materialization_runs:
+        if materialization.status != "success" or not materialization.storage_location:
+            continue
+        return dataset.model_copy(update={
+            "source_run_id": materialization.run_id,
+            "storage_location": materialization.storage_location,
+            "storage_size_bytes": materialization.storage_size_bytes,
+        })
+    return dataset

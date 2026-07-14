@@ -1,32 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import type { CatalogDataset } from "../../../types";
-import { getDatasets } from "../../../services/mockApi";
-import type { DashboardDatasetColumn, DashboardDatasetOption } from "./dashboardRuntimeTypes";
-
-function dashboardColumnType(type: string): DashboardDatasetColumn["type"] {
-  const normalized = type.trim().toLowerCase();
-  if (["date", "time", "timestamp"].some((hint) => normalized.includes(hint))) return "date";
-  if (["bigint", "decimal", "double", "float", "int", "long", "number", "numeric", "real"].some((hint) => normalized.includes(hint))) return "number";
-  return "string";
-}
-
-function catalogDatasetToDashboardOption(dataset: CatalogDataset): DashboardDatasetOption {
-  return {
-    columns: dataset.schema.map(([name, type]) => ({
-      name,
-      type: dashboardColumnType(type),
-    })),
-    description: dataset.description,
-    id: dataset.id,
-    layer: dataset.layer,
-    name: dataset.name,
-    status: dataset.status,
-  };
-}
-
-function isUsableDashboardDataset(dataset: CatalogDataset) {
-  return dataset.status === "available" && dataset.schema.length > 0;
-}
+import type { DashboardDatasetOption } from "./dashboardRuntimeTypes";
+import { getDashboardCatalogDatasets } from "./dashboardCatalogApi";
+import {
+  catalogDatasetToDashboardOption,
+  isUsableDashboardDataset,
+} from "./dashboardDatasetAdapters";
 
 export function useDashboardDatasets() {
   const [datasets, setDatasets] = useState<DashboardDatasetOption[]>([]);
@@ -38,7 +16,7 @@ export function useDashboardDatasets() {
 
     setIsLoading(true);
     setError(null);
-    void getDatasets()
+    void getDashboardCatalogDatasets()
       .then((catalogDatasets) => {
         if (ignore) return;
         setDatasets(

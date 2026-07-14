@@ -1,19 +1,17 @@
 import { BarChart3, BookOpen, Bot, Database, Settings, TerminalSquare } from "lucide-react";
-import type { CatalogDataset, FlowId, JobRowData, NavItem } from "../types";
+import type { CatalogDataset, FlowId, JobDagStep, JobRowData, JobRunSummary, JobStats, NavItem, PermissionDraft, RetryPolicyDraft, TransformStepDraft } from "../types";
 
 export const steps = ["소스", "처리", "스케줄", "권한", "타겟", "검토"];
 
 export const flowTabs: Array<{ id: FlowId; label: string; stepIndex: number }> = [
   { id: "jobs", label: "작업 목록", stepIndex: 0 },
-  { id: "jobsTableDemo", label: "표형 데모", stepIndex: 0 },
   { id: "jobDetail", label: "작업 상세", stepIndex: 0 },
   { id: "jobRuns", label: "실행 이력", stepIndex: 0 },
   { id: "source", label: "소스 연결", stepIndex: 0 },
   { id: "schema", label: "스키마 추론", stepIndex: 1 },
   { id: "rules", label: "룰 적용", stepIndex: 1 },
-  { id: "repeat", label: "반복 스케줄", stepIndex: 2 },
-  { id: "manual", label: "스케줄 없음", stepIndex: 2 },
-  { id: "once", label: "예약 1회 실행", stepIndex: 2 },
+  { id: "repeat", label: "반복 실행", stepIndex: 2 },
+  { id: "manual", label: "스케줄링 건너뛰기", stepIndex: 2 },
   { id: "target", label: "타겟 설정", stepIndex: 4 },
   { id: "permission", label: "권한 설정", stepIndex: 3 },
   { id: "review", label: "검토 및 생성", stepIndex: 5 },
@@ -28,45 +26,312 @@ export const navItems = [
   { id: "admin", label: "관리", icon: Settings, flow: "admin" },
 ] satisfies NavItem[];
 
-export const ingestFlows: FlowId[] = ["jobs", "jobsTableDemo", "jobDetail", "jobRuns", "source", "schema", "rules", "repeat", "manual", "once", "target", "permission", "review"];
-export const jobManagerFlows: FlowId[] = ["jobs", "jobsTableDemo", "jobDetail", "jobRuns"];
-export const wizardFlows: FlowId[] = ["source", "schema", "rules", "repeat", "manual", "once", "permission", "target", "review"];
+export const ingestFlows: FlowId[] = ["jobs", "jobDetail", "jobRuns", "source", "schema", "rules", "repeat", "manual", "target", "permission", "review"];
+export const jobManagerFlows: FlowId[] = ["jobs", "jobDetail", "jobRuns"];
+export const wizardFlows: FlowId[] = ["source", "schema", "rules", "repeat", "manual", "permission", "target", "review"];
+
+const qaRetryPolicy: RetryPolicyDraft = {
+  backoffMultiplier: 2,
+  backoffStrategy: "exponential",
+  failureAction: "retry_then_fail",
+  initialRetryDelayMinutes: 1,
+  maxRetries: 3,
+  maxRetryDelayMinutes: 30,
+  retryIntervalMinutes: 10,
+  timeoutMinutes: 60,
+};
+
+const qaPermissionRoles: PermissionDraft["roles"] = [
+  { access: ["조회", "쿼리 실행", "메타데이터", "관리"], checked: true, name: "Data Platform" },
+  { access: ["조회", "쿼리 실행", "메타데이터", "관리"], checked: true, name: "Analytics" },
+  { access: ["조회", "쿼리 실행", "메타데이터", "관리"], checked: false, name: "External Partner" },
+];
+
+function qaRun({
+  duration,
+  endedAt,
+  errorSummary = "-",
+  failedStage = "-",
+  inputRows,
+  outputRows,
+  runId,
+  startedAt,
+  status,
+}: JobRunSummary): JobRunSummary {
+  return {
+    duration,
+    endedAt,
+    errorSummary,
+    failedStage,
+    inputRows,
+    outputRows,
+    runId,
+    startedAt,
+    status,
+  };
+}
+
+function qaDagSteps(
+  job: Pick<JobRowData, "source" | "target">,
+  states: JobDagStep["status"][],
+  timing?: { durationsSeconds: number[]; startedAt: string },
+): JobDagStep[] {
+  const labels = [
+    ["source-connect", "1. Source 연결", job.source],
+    ["source-read", "2. 샘플/파일 읽기", "bounded sample + profile"],
+    ["schema-infer", "3. Schema 매핑", "schema fingerprint"],
+    ["transform-rules", "4. Transform Rule", "rename/cast/quality"],
+    ["validation", "5. Validation", "row count / invalid rows"],
+    ["lake-write", "6. Lake 적재", job.target],
+    ["quality-check", "7. 품질 체크", "schema + count check"],
+    ["catalog-publish", "8. Catalog 반영", "SQL · Dashboard · Catalog"],
+  ];
+
+  let elapsedSeconds = 0;
+
+  return labels.map(([id, title, meta], index) => {
+    const status = states[index] ?? "pending";
+    const durationSeconds = timing?.durationsSeconds[index] ?? 0;
+    const isFinished = status === "success" || status === "failed";
+
+    if (isFinished) elapsedSeconds += durationSeconds;
+
+    return {
+      completedAt: isFinished && timing ? formatQaStepCompletedAt(timing.startedAt, elapsedSeconds) : undefined,
+      details: [
+        ["Step", title],
+        ["Metadata", meta],
+        ["QA fixture", "frontend mock mode"],
+      ],
+      duration: isFinished ? formatQaStepDuration(durationSeconds) : status === "running" ? "진행 중" : undefined,
+      id,
+      logs: [
+        `[${id}] ${meta}`,
+        `status=${status}`,
+      ],
+      meta,
+      note: status === "failed" ? "QA용 실패 케이스" : undefined,
+      status,
+      title,
+    };
+  });
+}
+
+function formatQaStepCompletedAt(startedAt: string, elapsedSeconds: number) {
+  const completedAt = new Date(new Date(startedAt).getTime() + elapsedSeconds * 1000);
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-CA", {
+      day: "2-digit",
+      hour: "2-digit",
+      hourCycle: "h23",
+      minute: "2-digit",
+      month: "2-digit",
+      second: "2-digit",
+      timeZone: "Asia/Seoul",
+      year: "numeric",
+    }).formatToParts(completedAt).map(({ type, value }) => [type, value]),
+  );
+
+  return `${parts.year}.${parts.month}.${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;
+}
+
+function formatQaStepDuration(seconds: number) {
+  if (seconds < 60) return `${seconds}초`;
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  return remainingSeconds ? `${minutes}분 ${remainingSeconds}초` : `${minutes}분`;
+}
+
+function qaStats({
+  averageDuration,
+  currentStage,
+  inputRows,
+  lastSuccess,
+  outputRows,
+  sampleScope,
+  schemaColumns,
+  sourceUnits,
+  successRate,
+  totalRuns,
+  outputPath,
+}: JobStats): JobStats {
+  return {
+    averageDuration,
+    currentStage,
+    inputRows,
+    lastSuccess,
+    outputRows,
+    outputPath,
+    sampleScope,
+    schemaColumns,
+    sourceUnits,
+    successRate,
+    totalRuns,
+  };
+}
+
+const orderTransformSteps: TransformStepDraft[] = [
+  { enabled: true, id: "order-rename", input: "commerce.orders", kind: "rename", label: "표준 컬럼명 적용", onError: "Fail Run", operation: "RENAME_COLUMNS", output: "orders_clean", params: "order_date,total_amount,status" },
+  { enabled: true, id: "order-cast", input: "total_amount", kind: "cast", label: "금액 타입 변환", onError: "Fail Run", operation: "CAST_DECIMAL", output: "total_amount", params: "decimal(18,2)" },
+];
+
+const logTransformSteps: TransformStepDraft[] = [
+  { enabled: true, id: "log-json", input: "raw_payload", kind: "jsonPath", label: "로그 JSON 파싱", onError: "Quarantine", operation: "JSON_PATH_EXTRACT", output: "event_name", params: "$.event.name" },
+  { enabled: true, id: "log-age", input: "age", kind: "cast", label: "나이 타입 변환", onError: "Fail Run", operation: "CAST_INT", output: "age", params: "integer" },
+];
+
+const orderDagTiming = { durationsSeconds: [3, 24, 2, 78, 45, 542, 35, 15], startedAt: "2026-07-01T00:03:00+09:00" };
+const logDagTiming = { durationsSeconds: [2, 18, 1, 231, 0, 0, 0, 0], startedAt: "2026-07-02T10:10:00+09:00" };
+const realtimeDagTiming = { durationsSeconds: [2, 15, 1, 45, 0, 0, 0, 0], startedAt: "2026-07-03T10:21:00+09:00" };
+const salesDagTiming = { durationsSeconds: [3, 34, 4, 120, 90, 720, 70, 43], startedAt: "2026-07-02T01:05:00+09:00" };
 
 export const etlJobs: JobRowData[] = [
   {
+    createdAt: "2026-06-01T09:30:00+09:00",
     status: "scheduled",
     name: "daily_order_ingestion",
     id: "JOB-001",
     owner: "admin",
+    ownerAvatarUrl: "https://randomuser.me/api/portraits/women/44.jpg",
     tag: "[주문]",
     source: "PostgreSQL / commerce.orders",
     target: "orders_clean",
+    updatedAt: "2026-07-01T00:15:00+09:00",
     schedule: "매일 00:00",
     lastRun: "2026-07-01 00:03",
     lastState: "성공",
     nextRun: "2026-07-02 00:00",
+    compression: "Snappy",
+    dagSteps: qaDagSteps({ source: "PostgreSQL / commerce.orders", target: "orders_clean" }, ["success", "success", "success", "success", "success", "success", "success", "success"], orderDagTiming),
+    dagStepsByRunId: {
+      run_20260701_0003: qaDagSteps({ source: "PostgreSQL / commerce.orders", target: "orders_clean" }, ["success", "success", "success", "success", "success", "success", "success", "success"], orderDagTiming),
+    },
+    partition: "order_date",
+    permissionRoles: qaPermissionRoles,
+    qualityRules: [
+      { enabled: true, failureAction: "Fail Run", id: "order-id-not-null", kind: "notNull", severity: "Error", targetColumn: "order_id", validationType: "Not Null" },
+      { enabled: true, failureAction: "Warn", id: "amount-range", kind: "range", severity: "Warning", targetColumn: "total_amount", validationType: "Range Check" },
+    ],
+    qualityScore: 98.2,
+    qualityStatus: "pass",
+    retryPolicy: qaRetryPolicy,
+    retryPolicySummary: "실패 시 3회 재시도 · 1분부터 지수 백오프",
+    runHistory: [
+      qaRun({ duration: "12m 24s", endedAt: "2026-07-01 00:15", errorSummary: "-", failedStage: "-", inputRows: "12,420,000", outputRows: "12,398,410", runId: "run_20260701_0003", startedAt: "2026-07-01 00:03", status: "success" }),
+      qaRun({ duration: "12m 51s", endedAt: "2026-06-30 00:16", errorSummary: "-", failedStage: "-", inputRows: "12,280,400", outputRows: "12,260,100", runId: "run_20260630_0003", startedAt: "2026-06-30 00:03", status: "success" }),
+    ],
+    runLimitSummary: "최근 30일 실행 이력 보관",
+    scheduleSummary: "매일 00:00 · Asia/Seoul · 이전 Run 실행 중이면 건너뜀",
+    sourceConfig: [["Host", "commerce-db.internal"], ["Database", "commerce"], ["Table", "orders"], ["Incremental Key", "updated_at"]],
+    sourceLabel: "commerce.orders",
+    sourceType: "PostgreSQL",
+    stats: qaStats({
+      averageDuration: "12m 38s",
+      currentStage: "스케줄 대기",
+      inputRows: "12.4M",
+      lastSuccess: "2026-07-01 00:15",
+      outputPath: "s3a://asklake-output/orders_clean/",
+      outputRows: "12.3M",
+      sampleScope: "최근 24시간 변경분",
+      schemaColumns: "18 columns",
+      sourceUnits: "1 table",
+      successRate: "100%",
+      totalRuns: "32",
+    }),
+    storagePath: "s3a://asklake-output/orders_clean/",
+    storageType: "S3",
+    targetFormat: "Parquet",
+    targetPath: "s3a://asklake-output/orders_clean/",
+    schemaSampleValues: {
+      order_id: "ORD-20260701-1042",
+      customer_id: "CUS-008421",
+      order_date: "2026-07-01 14:32:08",
+      total_amount: "128500.00",
+      status: "PAID",
+    },
+    transformOutputColumns: [["order_id", "string"], ["customer_id", "string"], ["order_date", "timestamp"], ["total_amount", "decimal"], ["status", "string"]],
+    transformSteps: orderTransformSteps,
   },
   {
-    status: "failed",
+    createdAt: "2026-06-18T14:20:00+09:00",
+    status: "scheduled",
     name: "s3_user_log_parse",
     id: "JOB-002",
     owner: "data-team",
+    ownerAvatarUrl: "https://randomuser.me/api/portraits/men/32.jpg",
     tag: "[로그]",
     source: "S3 / raw/user-log/*.csv",
     target: "user_activity",
-    schedule: "매시간 10분",
+    updatedAt: "2026-07-02T10:14:00+09:00",
+    schedule: "10분마다",
     lastRun: "2026-07-02 10:10",
-    lastState: "실패",
+    lastState: "Spark 실행 실패: NumberFormatException: For input string \"unknown\" at Transform Rule age TYPE_CAST. Quarantine threshold exceeded.",
     nextRun: "2026-07-02 11:10",
+    compression: "Snappy",
+    dagSteps: qaDagSteps({ source: "S3 / raw/user-log/*.csv", target: "user_activity" }, ["success", "success", "success", "failed", "blocked", "blocked", "blocked", "blocked"], logDagTiming),
+    dagStepsByRunId: {
+      run_20260702_1010: qaDagSteps({ source: "S3 / raw/user-log/*.csv", target: "user_activity" }, ["success", "success", "success", "failed", "blocked", "blocked", "blocked", "blocked"], logDagTiming),
+    },
+    partition: "event_date",
+    permissionRoles: qaPermissionRoles,
+    qualityInvalidRows: [["row-8812", "age", "unknown", "TYPE_CAST"], ["row-8940", "age", "n/a", "TYPE_CAST"]],
+    qualityRules: [
+      { enabled: true, failureAction: "Fail Run", id: "age-cast", kind: "regex", severity: "Error", targetColumn: "age", validationType: "Regex Match" },
+    ],
+    qualityScore: 74,
+    qualityStatus: "fail",
+    retryPolicy: qaRetryPolicy,
+    retryPolicySummary: "실패 시 3회 재시도 · 변환 실패는 승인 후 재실행",
+    runHistory: [
+      qaRun({
+        duration: "4m 12s",
+        endedAt: "2026-07-02 10:14",
+        errorSummary: "Spark 실행 실패: NumberFormatException: For input string \"unknown\" at Transform Rule age TYPE_CAST. Quarantine threshold exceeded.",
+        failedStage: "Transform Rule",
+        inputRows: "84,212",
+        outputRows: "0",
+        runId: "run_20260702_1010",
+        startedAt: "2026-07-02 10:10",
+        status: "failed",
+      }),
+      qaRun({ duration: "5m 02s", endedAt: "2026-07-02 09:15", errorSummary: "-", failedStage: "-", inputRows: "82,110", outputRows: "81,904", runId: "run_20260702_0910", startedAt: "2026-07-02 09:10", status: "success" }),
+    ],
+    runLimitSummary: "최근 7일 실패 이력 우선 노출",
+    scheduleSummary: "10분마다 · 실패 시 다음 예약 전 승인 필요",
+    sourceConfig: [["Bucket", "raw"], ["Prefix", "user-log/"], ["Format", "CSV"], ["Header", "true"]],
+    sourceLabel: "raw/user-log/*.csv",
+    sourceType: "S3",
+    stats: qaStats({
+      averageDuration: "4m 49s",
+      currentStage: "Transform Rule 실패",
+      inputRows: "84,212",
+      lastSuccess: "2026-07-02 09:15",
+      outputPath: "s3a://asklake-output/user_activity/",
+      outputRows: "0",
+      sampleScope: "최근 1시간 파일",
+      schemaColumns: "11 columns",
+      sourceUnits: "18 files",
+      successRate: "83%",
+      totalRuns: "47",
+    }),
+    storagePath: "s3a://asklake-output/user_activity/",
+    storageType: "S3",
+    targetFormat: "Parquet",
+    targetPath: "s3a://asklake-output/user_activity/",
+    transformOutputColumns: [["user_id", "string"], ["age", "integer"], ["event_name", "string"], ["event_time", "timestamp"], ["raw_value", "string"]],
+    transformSteps: logTransformSteps,
   },
   {
+    createdAt: "2026-06-25T11:00:00+09:00",
     status: "running",
     name: "realtime_clickstream_ingestion",
     id: "JOB-003",
     owner: "platform",
+    ownerAvatarUrl: "https://randomuser.me/api/portraits/men/54.jpg",
     tag: "[스트림]",
     source: "Kafka / clickstream.events",
     target: "clickstream_events",
+    updatedAt: "2026-07-03T10:21:00+09:00",
     schedule: "실시간 수집",
     lastRun: "현재 실행 중",
     lastState: "5/8 단계 · Load to Lake",
@@ -75,23 +340,498 @@ export const etlJobs: JobRowData[] = [
       label: "5/8 단계 · Load to Lake",
       value: 62,
     },
+    compression: "Snappy",
+    dagSteps: qaDagSteps({ source: "Kafka / clickstream.events", target: "clickstream_events" }, ["success", "success", "success", "success", "running", "pending", "pending", "pending"], realtimeDagTiming),
+    dagStepsByRunId: {
+      run_20260703_1021: qaDagSteps({ source: "Kafka / clickstream.events", target: "clickstream_events" }, ["success", "success", "success", "success", "running", "pending", "pending", "pending"], realtimeDagTiming),
+    },
+    partition: "event_date",
+    permissionRoles: qaPermissionRoles,
+    qualityScore: 91,
+    qualityStatus: "pass",
+    operationalMetrics: {
+      metricType: "realtime",
+      windowFrom: "2026-07-02T10:21:00+09:00",
+      windowTo: "2026-07-03T10:21:00+09:00",
+      healthStatus: "healthy",
+      availabilityRate: 99.9,
+      consumerLag: 184,
+      processingDelayMs: 2100,
+      lastHeartbeatAt: "2026-07-03T10:20:58+09:00",
+      lastCheckpointAt: "2026-07-03T10:20:00+09:00",
+      restartCount: 1,
+      errorRate: 0.1,
+    },
+    retryPolicy: qaRetryPolicy,
+    retryPolicySummary: "Streaming checkpoint 기준 재시도",
+    runHistory: [
+      qaRun({ duration: "진행 중", endedAt: "-", errorSummary: "-", failedStage: "Validation", inputRows: "142,030", outputRows: "138,420", runId: "run_20260703_1021", startedAt: "2026-07-03 10:21", status: "running" }),
+      qaRun({ duration: "59m 52s", endedAt: "2026-07-03 10:00", errorSummary: "-", failedStage: "-", inputRows: "820,440", outputRows: "818,002", runId: "run_20260703_0900", startedAt: "2026-07-03 09:00", status: "success" }),
+    ],
+    runLimitSummary: "Streaming checkpoint별 최신 24개 Run 표시",
+    scheduleSummary: "Kafka consumer group 기반 실시간 수집",
+    sourceConfig: [["Bootstrap Server", "kafka.internal:9092"], ["Topic", "clickstream.events"], ["Consumer Group", "asklake-clickstream"], ["Offset", "latest"]],
+    sourceLabel: "clickstream.events",
+    sourceType: "Kafka",
+    stats: qaStats({
+      averageDuration: "continuous",
+      currentStage: "5/8 단계 · Load to Lake",
+      inputRows: "142,030",
+      lastSuccess: "2026-07-03 10:00",
+      outputPath: "s3a://asklake-output/clickstream_events/",
+      outputRows: "138,420",
+      sampleScope: "최근 5분 이벤트",
+      schemaColumns: "22 columns",
+      sourceUnits: "1 topic",
+      successRate: "96%",
+      totalRuns: "24",
+    }),
+    storagePath: "s3a://asklake-output/clickstream_events/",
+    storageType: "S3",
+    targetFormat: "Parquet",
+    targetPath: "s3a://asklake-output/clickstream_events/",
+    transformOutputColumns: [["event_id", "string"], ["user_id", "string"], ["event_time", "timestamp"], ["page_url", "string"], ["raw_payload", "json"]],
+    transformSteps: [
+      { enabled: true, id: "click-json", input: "raw_payload", kind: "jsonPath", label: "이벤트 속성 추출", onError: "Quarantine", operation: "JSON_PATH_EXTRACT", output: "page_url", params: "$.page.url" },
+    ],
   },
   {
+    createdAt: "2026-06-12T16:40:00+09:00",
     status: "scheduled",
     name: "daily_sales_aggregation",
     id: "JOB-004",
     owner: "analytics",
+    ownerAvatarUrl: "https://randomuser.me/api/portraits/women/68.jpg",
     tag: "[집계]",
     source: "Lake / orders_clean",
     target: "sales_daily_summary",
+    updatedAt: "2026-07-02T01:23:00+09:00",
     schedule: "매일 01:00",
     lastRun: "2026-07-02 01:05",
     lastState: "성공",
     nextRun: "2026-07-03 01:00",
+    compression: "Snappy",
+    dagSteps: qaDagSteps({ source: "Lake / orders_clean", target: "sales_daily_summary" }, ["success", "success", "success", "success", "success", "success", "success", "success"], salesDagTiming),
+    dagStepsByRunId: {
+      run_20260702_0105: qaDagSteps({ source: "Lake / orders_clean", target: "sales_daily_summary" }, ["success", "success", "success", "success", "success", "success", "success", "success"], salesDagTiming),
+    },
+    partition: "sales_date",
+    permissionRoles: qaPermissionRoles,
+    qualityScore: 96,
+    qualityStatus: "pass",
+    retryPolicy: qaRetryPolicy,
+    retryPolicySummary: "집계 실패 시 3회 재시도",
+    runHistory: [
+      qaRun({ duration: "18m 04s", endedAt: "2026-07-02 01:23", errorSummary: "-", failedStage: "-", inputRows: "12,398,410", outputRows: "1,802,440", runId: "run_20260702_0105", startedAt: "2026-07-02 01:05", status: "success" }),
+      qaRun({ duration: "17m 42s", endedAt: "2026-07-01 01:22", errorSummary: "-", failedStage: "-", inputRows: "12,260,100", outputRows: "1,784,120", runId: "run_20260701_0105", startedAt: "2026-07-01 01:05", status: "success" }),
+    ],
+    runLimitSummary: "일별 집계 Run 90일 보관",
+    scheduleSummary: "매일 01:00 · orders_clean 적재 이후 실행",
+    sourceConfig: [["Dataset", "orders_clean"], ["Window", "D-1"], ["Aggregation", "daily"]],
+    sourceLabel: "orders_clean",
+    sourceType: "Lake Dataset",
+    stats: qaStats({
+      averageDuration: "17m 53s",
+      currentStage: "스케줄 대기",
+      inputRows: "12.3M",
+      lastSuccess: "2026-07-02 01:23",
+      outputPath: "s3a://asklake-output/sales_daily_summary/",
+      outputRows: "1.8M",
+      sampleScope: "D-1 partition",
+      schemaColumns: "9 columns",
+      sourceUnits: "1 dataset",
+      successRate: "100%",
+      totalRuns: "28",
+    }),
+    storagePath: "s3a://asklake-output/sales_daily_summary/",
+    storageType: "S3",
+    targetFormat: "Parquet",
+    targetPath: "s3a://asklake-output/sales_daily_summary/",
+    transformOutputColumns: [["sales_date", "date"], ["region", "string"], ["gross_sales", "decimal"], ["order_count", "integer"], ["status", "string"]],
+    transformSteps: [
+      { enabled: true, id: "sales-group", input: "orders_clean", kind: "derive", label: "일별/지역별 집계", onError: "Fail Run", operation: "GROUP_BY_SUM", output: "sales_daily_summary", params: "sales_date, region" },
+    ],
+  },
+];
+
+const commerceOrdersDatasetId = "ds_commerce_orders_daily";
+const commerceMarketingDatasetId = "ds_commerce_marketing_spend_daily";
+const commerceChannelRoiDatasetId = "ds_gold_commerce_channel_roi";
+
+const commerceOrdersSchema: Array<[string, string]> = [
+  ["order_date", "date"],
+  ["channel", "string"],
+  ["category", "string"],
+  ["orders", "integer"],
+  ["gross_revenue", "decimal"],
+  ["refund_amount", "decimal"],
+  ["net_revenue", "decimal"],
+  ["conversion_rate", "decimal"],
+];
+
+const commerceMarketingSchema: Array<[string, string]> = [
+  ["spend_date", "date"],
+  ["channel", "string"],
+  ["campaign", "string"],
+  ["impressions", "integer"],
+  ["clicks", "integer"],
+  ["ad_spend", "decimal"],
+  ["cpc", "decimal"],
+];
+
+const commerceChannelRoiSchema: Array<[string, string]> = [
+  ["order_date", "date"],
+  ["channel", "string"],
+  ["category", "string"],
+  ["net_revenue", "decimal"],
+  ["ad_spend", "decimal"],
+  ["roas", "decimal"],
+  ["orders", "integer"],
+  ["cost_per_order", "decimal"],
+];
+
+const commerceChannelConfig = [
+  {
+    adSpend: 1460000,
+    aov: 76000,
+    campaign: "brand_search_efficiency",
+    category: "electronics",
+    channel: "paid_search",
+    conversion: 4.7,
+    orders: 118,
+    refund: 0.032,
+    traffic: 18400,
+  },
+  {
+    adSpend: 980000,
+    aov: 52000,
+    campaign: "social_new_arrivals",
+    category: "beauty",
+    channel: "social",
+    conversion: 3.1,
+    orders: 96,
+    refund: 0.041,
+    traffic: 31600,
+  },
+  {
+    adSpend: 640000,
+    aov: 68000,
+    campaign: "crm_weekly_offer",
+    category: "home",
+    channel: "email",
+    conversion: 6.3,
+    orders: 84,
+    refund: 0.025,
+    traffic: 8200,
+  },
+  {
+    adSpend: 1180000,
+    aov: 41000,
+    campaign: "affiliate_summer_pick",
+    category: "sports",
+    channel: "affiliate",
+    conversion: 2.8,
+    orders: 142,
+    refund: 0.037,
+    traffic: 22400,
+  },
+];
+
+function buildCommerceOrdersRows() {
+  return Array.from({ length: 15 }, (_, dayIndex) => (
+    commerceChannelConfig.map((config, channelIndex) => {
+      const orders = config.orders + dayIndex * (5 + channelIndex) + channelIndex * 7;
+      const grossRevenue = orders * config.aov;
+      const refundAmount = Math.round(grossRevenue * config.refund);
+      const netRevenue = grossRevenue - refundAmount;
+      const conversionRate = config.conversion + dayIndex * 0.03 - channelIndex * 0.04;
+      return [
+        `2026-06-${String(dayIndex + 16).padStart(2, "0")}`,
+        config.channel,
+        config.category,
+        String(orders),
+        String(grossRevenue),
+        String(refundAmount),
+        String(netRevenue),
+        conversionRate.toFixed(2),
+      ];
+    })
+  )).flat();
+}
+
+function buildCommerceMarketingRows() {
+  return Array.from({ length: 15 }, (_, dayIndex) => (
+    commerceChannelConfig.map((config, channelIndex) => {
+      const impressions = config.traffic + dayIndex * (480 + channelIndex * 70);
+      const clicks = Math.round(impressions * (0.045 + channelIndex * 0.006));
+      const adSpend = config.adSpend + dayIndex * (42000 + channelIndex * 8500);
+      const cpc = adSpend / Math.max(clicks, 1);
+      return [
+        `2026-06-${String(dayIndex + 16).padStart(2, "0")}`,
+        config.channel,
+        config.campaign,
+        String(impressions),
+        String(clicks),
+        String(adSpend),
+        cpc.toFixed(2),
+      ];
+    })
+  )).flat();
+}
+
+function buildCommerceChannelRoiRows() {
+  const orderRows = buildCommerceOrdersRows();
+  const marketingRows = buildCommerceMarketingRows();
+  return orderRows.map((orderRow, index) => {
+    const marketingRow = marketingRows[index];
+    const netRevenue = Number(orderRow[6]);
+    const orders = Number(orderRow[3]);
+    const adSpend = Number(marketingRow[5]);
+    return [
+      orderRow[0],
+      orderRow[1],
+      orderRow[2],
+      String(netRevenue),
+      String(adSpend),
+      (netRevenue / adSpend).toFixed(2),
+      String(orders),
+      (adSpend / Math.max(orders, 1)).toFixed(2),
+    ];
+  });
+}
+
+function lineageColumns(datasetId: string, schema: Array<[string, string]>) {
+  return schema.map(([name, type]) => ({
+    id: `${datasetId}-${name}`.replaceAll("_", "-"),
+    name,
+    type,
+  }));
+}
+
+function simpleLineageGraph({
+  datasetId,
+  schema,
+  sourceName,
+  sourceNodeId,
+  targetName,
+}: {
+  datasetId: string;
+  schema: Array<[string, string]>;
+  sourceName: string;
+  sourceNodeId: string;
+  targetName: string;
+}) {
+  const sourceColumns = lineageColumns(sourceNodeId, schema);
+  const targetColumns = lineageColumns(datasetId, schema);
+  return {
+    datasetId,
+    datasets: [
+      {
+        columns: sourceColumns,
+        engine: "POSTGRESQL",
+        id: sourceNodeId,
+        layer: "SOURCE" as const,
+        name: sourceName,
+      },
+      {
+        columns: targetColumns,
+        engine: "ICEBERG",
+        id: datasetId,
+        layer: "GOLD" as const,
+        name: targetName,
+      },
+    ],
+    edges: targetColumns.map((targetColumn, index) => ({
+      fromColumnId: sourceColumns[index].id,
+      fromDatasetId: sourceNodeId,
+      toColumnId: targetColumn.id,
+      toDatasetId: datasetId,
+    })),
+  };
+}
+
+function commerceChannelRoiLineageGraph() {
+  const orderColumns = lineageColumns(commerceOrdersDatasetId, commerceOrdersSchema);
+  const marketingColumns = lineageColumns(commerceMarketingDatasetId, commerceMarketingSchema);
+  const targetColumns = lineageColumns(commerceChannelRoiDatasetId, commerceChannelRoiSchema);
+  const ordersByName = new Map(orderColumns.map((column) => [column.name, column]));
+  const marketingByName = new Map(marketingColumns.map((column) => [column.name, column]));
+  const targetByName = new Map(targetColumns.map((column) => [column.name, column]));
+  const edge = (sourceColumn: { id: string }, targetName: string, sourceDatasetId: string) => ({
+    fromColumnId: sourceColumn.id,
+    fromDatasetId: sourceDatasetId,
+    toColumnId: targetByName.get(targetName)?.id ?? targetName,
+    toDatasetId: commerceChannelRoiDatasetId,
+  });
+
+  return {
+    datasetId: commerceChannelRoiDatasetId,
+    datasets: [
+      {
+        columns: orderColumns,
+        engine: "ICEBERG",
+        id: commerceOrdersDatasetId,
+        layer: "SILVER" as const,
+        name: "commerce_orders_daily",
+      },
+      {
+        columns: marketingColumns,
+        engine: "ICEBERG",
+        id: commerceMarketingDatasetId,
+        layer: "SILVER" as const,
+        name: "commerce_marketing_spend_daily",
+      },
+      {
+        columns: targetColumns,
+        engine: "ICEBERG",
+        id: commerceChannelRoiDatasetId,
+        layer: "GOLD" as const,
+        name: "gold_commerce_channel_roi",
+      },
+    ],
+    edges: [
+      edge(ordersByName.get("order_date")!, "order_date", commerceOrdersDatasetId),
+      edge(marketingByName.get("spend_date")!, "order_date", commerceMarketingDatasetId),
+      edge(ordersByName.get("channel")!, "channel", commerceOrdersDatasetId),
+      edge(marketingByName.get("channel")!, "channel", commerceMarketingDatasetId),
+      edge(ordersByName.get("category")!, "category", commerceOrdersDatasetId),
+      edge(ordersByName.get("net_revenue")!, "net_revenue", commerceOrdersDatasetId),
+      edge(marketingByName.get("ad_spend")!, "ad_spend", commerceMarketingDatasetId),
+      edge(ordersByName.get("net_revenue")!, "roas", commerceOrdersDatasetId),
+      edge(marketingByName.get("ad_spend")!, "roas", commerceMarketingDatasetId),
+      edge(ordersByName.get("orders")!, "orders", commerceOrdersDatasetId),
+      edge(marketingByName.get("ad_spend")!, "cost_per_order", commerceMarketingDatasetId),
+      edge(ordersByName.get("orders")!, "cost_per_order", commerceOrdersDatasetId),
+    ],
+  };
+}
+
+const commerceDemoDatasets: CatalogDataset[] = [
+  {
+    description: "채널/카테고리/일자 기준 주문 수, 순매출, 환불 금액을 담은 커머스 주문 분석 원본 데이터셋",
+    downstream: ["SQL 분석", "gold_commerce_channel_roi"],
+    freshness: "latest",
+    id: commerceOrdersDatasetId,
+    layer: "SILVER",
+    lastUpdated: "2026-06-30T23:40:00.000Z",
+    lineageGraph: simpleLineageGraph({
+      datasetId: commerceOrdersDatasetId,
+      schema: commerceOrdersSchema,
+      sourceName: "PostgreSQL commerce.orders_daily",
+      sourceNodeId: "source-commerce-orders-daily",
+      targetName: "commerce_orders_daily",
+    }),
+    materializationRuns: [
+      {
+        createdAt: "2026-07-10T04:10:00.000Z",
+        jobId: "commerce_orders_daily_ingest",
+        rowCount: 32400,
+        runId: "append-orders-20260710-001",
+        sourceKind: "etl",
+        sourceLabel: "PostgreSQL commerce.orders_daily",
+        status: "success",
+        storageLocation: "s3a://asklake-demo/silver/commerce_orders_daily/2026-07-10/",
+        storageSizeBytes: 1468006,
+      },
+      {
+        createdAt: "2026-07-10T03:10:00.000Z",
+        jobId: "commerce_orders_daily_ingest",
+        rowCount: 31840,
+        runId: "append-orders-20260710-002",
+        sourceKind: "etl",
+        sourceLabel: "PostgreSQL commerce.orders_daily",
+        status: "running",
+        storageLocation: "s3a://asklake-demo/silver/commerce_orders_daily/2026-07-10/",
+        storageSizeBytes: 1394606,
+      },
+      {
+        createdAt: "2026-07-09T04:10:00.000Z",
+        jobId: "commerce_orders_daily_ingest",
+        rowCount: 0,
+        runId: "append-orders-20260709-001",
+        sourceKind: "etl",
+        sourceLabel: "PostgreSQL commerce.orders_daily",
+        status: "failed",
+        storageLocation: "s3a://asklake-demo/silver/commerce_orders_daily/2026-07-09/",
+        storageSizeBytes: 0,
+      },
+    ],
+    name: "commerce_orders_daily",
+    nextRefresh: "매일 00:10",
+    owner: "growth-analytics",
+    quality: "98% (Demo verified)",
+    rag: false,
+    rows: "32,400 rows",
+    sampleRows: buildCommerceOrdersRows(),
+    schema: commerceOrdersSchema,
+    size: "1.4MB",
+    source: "commerce_orders_daily_ingest",
+    status: "available",
+    tags: ["#commerce", "#orders", "#silver", "#demo"],
+    upstream: ["PostgreSQL commerce.orders_daily", "commerce_orders_daily_ingest"],
+  },
+  {
+    description: "채널/캠페인/일자 기준 노출, 클릭, 광고비를 담은 커머스 마케팅 비용 원본 데이터셋",
+    downstream: ["SQL 분석", "gold_commerce_channel_roi"],
+    freshness: "latest",
+    id: commerceMarketingDatasetId,
+    layer: "SILVER",
+    lastUpdated: "2026-06-30T23:45:00.000Z",
+    lineageGraph: simpleLineageGraph({
+      datasetId: commerceMarketingDatasetId,
+      schema: commerceMarketingSchema,
+      sourceName: "PostgreSQL marketing.channel_spend_daily",
+      sourceNodeId: "source-marketing-channel-spend-daily",
+      targetName: "commerce_marketing_spend_daily",
+    }),
+    name: "commerce_marketing_spend_daily",
+    nextRefresh: "매일 00:20",
+    owner: "growth-analytics",
+    quality: "97% (Demo verified)",
+    rag: false,
+    rows: "2,160 rows",
+    sampleRows: buildCommerceMarketingRows(),
+    schema: commerceMarketingSchema,
+    size: "720KB",
+    source: "commerce_marketing_spend_ingest",
+    status: "available",
+    tags: ["#commerce", "#marketing", "#silver", "#demo"],
+    upstream: ["PostgreSQL marketing.channel_spend_daily", "commerce_marketing_spend_ingest"],
+  },
+  {
+    description: "주문 데이터와 마케팅 비용 데이터를 일자+채널 기준으로 조인해 만든 채널별 ROAS/주문당 비용 분석 골드 데이터셋",
+    downstream: ["SQL 분석", "대시보드", "Growth weekly business review"],
+    freshness: "latest",
+    id: commerceChannelRoiDatasetId,
+    layer: "GOLD",
+    lastUpdated: "2026-06-30T23:55:00.000Z",
+    lineageGraph: commerceChannelRoiLineageGraph(),
+    name: "gold_commerce_channel_roi",
+    nextRefresh: "수동 갱신",
+    owner: "growth-analytics",
+    quality: "SQL Preview verified",
+    rag: false,
+    rows: "1,080 rows",
+    sampleRows: buildCommerceChannelRoiRows(),
+    schema: commerceChannelRoiSchema,
+    size: "1.1MB",
+    source: "commerce_channel_roi_gold_pipeline",
+    sourceRunId: "sql_demo_commerce_channel_roi",
+    status: "available",
+    storageFormat: "parquet",
+    storageLocation: "s3a://asklake-demo/gold/commerce_channel_roi/",
+    storageSizeBytes: 1146880,
+    tags: ["#commerce", "#marketing", "#roi", "#gold", "#demo"],
+    upstream: [
+      "commerce_orders_daily",
+      "commerce_marketing_spend_daily",
+      "SQL: orders.order_date = spend.spend_date AND orders.channel = spend.channel",
+    ],
   },
 ];
 
 export const catalogDatasets: CatalogDataset[] = [
+  ...commerceDemoDatasets,
   {
     description: "전체 채널 통합 고객 주문 정제 데이터",
     downstream: ["SQL 분석", "주문 대시보드", "customer_ltv_mart"],
@@ -266,6 +1006,31 @@ export const catalogDatasets: CatalogDataset[] = [
     upstream: ["Lake orders_clean", "daily_sales_aggregation"],
   },
   {
+    description: "한국어 테이블명과 컬럼명 SQL 입력 UX를 확인하기 위한 월별 매출 집계 데이터셋",
+    downstream: ["SQL 분석", "경영 대시보드"],
+    freshness: "latest",
+    id: "ds_korean_monthly_sales",
+    layer: "GOLD",
+    lastUpdated: "2026-07-09 09:00",
+    name: "월별 매출 데이터",
+    nextRefresh: "2026-08-01 02:00",
+    owner: "analytics",
+    quality: "97% (Excellent)",
+    rag: false,
+    rows: "36 rows",
+    sampleRows: [
+      ["2026-01", "한국", "서울", "128000000", "18420"],
+      ["2026-02", "한국", "부산", "112500000", "16310"],
+      ["2026-03", "일본", "도쿄", "98400000", "14220"],
+    ],
+    schema: [["월", "string"], ["국가", "string"], ["지역", "string"], ["매출 금액", "decimal"], ["주문 수", "integer"]],
+    size: "84KB",
+    source: "monthly_sales_korean_fixture",
+    status: "available",
+    tags: ["#sales", "#korean-identifier", "#demo"],
+    upstream: ["sales_daily_summary", "monthly_sales_korean_fixture"],
+  },
+  {
     description: "고객 리뷰 감성 분석 결과가 포함된 골드 레이어 데이터셋",
     downstream: ["AI 활용", "리뷰 분석 대시보드", "SQL 분석"],
     freshness: "stale",
@@ -401,13 +1166,6 @@ export const summaryByFlow: Record<FlowId, Array<[string, string]>> = {
     ["실패", "2"],
     ["최신 아님", "4"],
   ],
-  jobsTableDemo: [
-    ["표시 방식", "Table"],
-    ["핵심 컬럼", "7개"],
-    ["실패 로그", "요약 표시"],
-    ["원문", "모달"],
-    ["상태", "검토용"],
-  ],
   jobDetail: [
     ["작업명", "s3_user_log_parse"],
     ["상태", "FAILED"],
@@ -436,6 +1194,13 @@ export const summaryByFlow: Record<FlowId, Array<[string, string]>> = {
     ["인증 방식", "IAM Role"],
     ["다음 단계", "스키마 추론"],
   ],
+  recordParsing: [
+    ["입력 포맷", "TXT"],
+    ["구분자", "연속 공백"],
+    ["샘플 검증", "대기"],
+    ["출력 필드", "0개"],
+    ["다음 단계", "스키마 확인"],
+  ],
   schema: [
     ["샘플 Row", "10,000"],
     ["추론 필드", "24개"],
@@ -451,31 +1216,22 @@ export const summaryByFlow: Record<FlowId, Array<[string, string]>> = {
     ["다음 단계", "스케줄"],
   ],
   repeat: [
-    ["실행 방식", "반복 스케줄"],
-    ["시작 일시", "2026.07.02 10:30"],
-    ["종료 일시", "종료일 없음"],
-    ["다음 실행", "2026.07.09 10:30"],
+    ["실행 일정", "매주 목요일 10:30 · Asia/Seoul"],
+    ["다음 실행", "저장 시점 기준 계산"],
+    ["겹침 처리", "이전 Run 실행 중이면 다음 예약 건너뜀"],
+    ["실패 재시도", "3회 재시도 · 1분부터 2배 지수 백오프 · 최대 30분 · 재시도 후 실패 처리"],
     ["상태", "생성 대기"],
   ],
   manual: [
-    ["실행 방식", "스케줄 없음"],
-    ["시작 조건", "사용자 직접 실행"],
-    ["재시도", "3회"],
-    ["제한 시간", "60분"],
+    ["시작 조건", "필요할 때 즉시 실행"],
+    ["다음 실행", "없음"],
+    ["실패 재시도", "3회 재시도 · 1분부터 2배 지수 백오프 · 최대 30분 · 재시도 후 실패 처리"],
     ["상태", "저장 대기"],
-  ],
-  once: [
-    ["실행 방식", "예약 1회 실행"],
-    ["실행 일시", "2026.07.03 10:30"],
-    ["시간대", "Asia/Seoul"],
-    ["재시도", "3회"],
-    ["상태", "예약 대기"],
   ],
   target: [
     ["저장소", "S3 Gold"],
     ["포맷", "Parquet"],
     ["파티션", "year/month/region"],
-    ["RAG 색인", "활성화"],
     ["진행률", "85%"],
   ],
   permission: [
@@ -526,5 +1282,19 @@ export const summaryByFlow: Record<FlowId, Array<[string, string]>> = {
     ["상태", "아직 연결 없음"],
     ["대상", "사용자 / 그룹 / API"],
     ["로그", "Audit Log"],
+  ],
+  profile: [
+    ["해당 영역", "내 프로필"],
+    ["표시 기능", "계정 / 그룹 / 권한"],
+    ["상태", "연결됨"],
+    ["입력", "현재 Actor"],
+    ["API", "/api/users/me"],
+  ],
+  login: [
+    ["해당 영역", "계정"],
+    ["표시 기능", "로그인 / 회원가입"],
+    ["상태", "연결됨"],
+    ["입력", "이메일 / 비밀번호"],
+    ["API", "/api/auth"],
   ],
 };

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { AuditEntry, AuditResult, AuditTargetType } from "../types";
 
 type AuditLogOptions = {
@@ -22,11 +22,11 @@ export function useAuditLogs() {
     return () => window.clearTimeout(timeout);
   }, [toast]);
 
-  const showToast = (message: string, tone: ToastState["tone"] = "success") => {
+  const showToast = useCallback((message: string, tone: ToastState["tone"] = "success") => {
     setToast({ message, tone });
-  };
+  }, []);
 
-  const writeAuditLog = (action: string, apiPath: string, targetId: string, result: AuditResult = "success", options: AuditLogOptions = {}) => {
+  const writeAuditLog = useCallback((action: string, apiPath: string, targetId: string, result: AuditResult = "success", options: AuditLogOptions = {}) => {
     const entry: AuditEntry = {
       action,
       actor_id: "demo.user@asklake.local",
@@ -40,7 +40,6 @@ export function useAuditLogs() {
 
     setAuditSignal(action);
     setAuditLogs((logs) => [entry, ...logs].slice(0, 50));
-    setToast({ message: `${action} 호출 완료`, tone: result === "success" ? "success" : "info" });
 
     const debugWindow = window as typeof window & { __asklakeAuditLogs?: AuditEntry[]; __asklakeLastAction?: AuditEntry };
     debugWindow.__asklakeAuditLogs = [entry, ...(debugWindow.__asklakeAuditLogs ?? [])].slice(0, 50);
@@ -54,7 +53,7 @@ export function useAuditLogs() {
     }
 
     console.info("[AskLake API adapter]", entry);
-  };
+  }, []);
 
   return {
     auditLogs,
@@ -66,4 +65,3 @@ export function useAuditLogs() {
     writeAuditLog,
   };
 }
-

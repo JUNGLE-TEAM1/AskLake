@@ -1,41 +1,84 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
+import {
+  type ColumnDef,
+} from "@tanstack/react-table";
 import { Background, Controls, Handle, MarkerType, Position, ReactFlow, useUpdateNodeInternals } from "@xyflow/react";
-import type { Edge, Node as FlowNode, ReactFlowInstance } from "@xyflow/react";
+import type { Edge, Node as FlowNode } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import {
+  AlertCircle,
+  ArrowUpDown,
   BookOpen,
-  Calendar,
-  Check,
-  CircleUser,
-  Clock3,
-  Download,
+  Database,
   ExternalLink,
-  FileText,
-  HardDrive,
-  Info,
+  Filter,
   LayoutGrid,
-  Maximize2,
-  Minus,
+  PanelRight,
   Pin,
-  PlayCircle,
-  Plus,
   RefreshCw,
-  Repeat2,
-  Save,
   Star,
   Search,
-  Settings,
   Share2,
-  ShieldCheck,
-  SlidersHorizontal,
   Table2,
   TerminalSquare,
+  X,
 } from "lucide-react";
-import { PageTitle } from "../../components/common";
+import { Badge, type BadgeProps } from "@/components/ui/badge";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import { DataTable, type DataTableColumnMeta } from "@/components/ui/data-table";
+import { DialogShell } from "@/components/ui/dialog-shell";
+import { Empty, EmptyDescription, EmptyHeader, EmptyIcon, EmptyTitle } from "@/components/ui/empty";
+import {
+  FilterToolbar,
+  FilterToolbarActions,
+  FilterToolbarInput,
+  FilterToolbarSearch,
+} from "@/components/ui/filter-toolbar";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { PageHeader } from "@/components/ui/page-header";
+import { PaginationBar } from "@/components/ui/pagination-bar";
+import { Panel, PanelHeader } from "@/components/ui/panel";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Slider } from "@/components/ui/slider";
+import { StatusBadge } from "@/components/ui/status-badge";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { IconButton } from "@/components/ui/icon-button";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { getCatalogDataset, getCatalogDatasetRows } from "../../services/catalogApi";
+import { apiConfig } from "../../services/apiClient";
 import { getDatasetLineageGraph } from "../../services/mockApi";
-import type { AuditResult, CatalogDataset, LineageGraph, LineageGraphDataset, LineageLayer } from "../../types";
+import type { AuditResult, CatalogDataset, CatalogDatasetRowsResponse, DatasetMaterializationRun, LineageGraph, LineageGraphDataset, LineageLayer } from "../../types";
+import { canDeleteDatasetMaterializationRun, canQueryDatasetAs, permissionDeniedMessage } from "../../utils/permissions";
 import { datasetStatusMeta } from "../../utils/statusMeta";
+import { cn } from "@/lib/utils";
+import { getCatalogFieldDescription } from "./catalogFieldDescriptions";
 
 type LineageColumn = {
   baseId: string;
@@ -47,16 +90,14 @@ type LineageColumn = {
 type LineageTableNodeData = Record<string, unknown> & {
   activeColumnKey: string | null;
   columns: LineageColumn[];
+  dataset: LineageGraphDataset;
   dimmed: boolean;
-  engine: string;
   handleMode: "source" | "target" | "both";
   highlighted: boolean;
-  layerLabel: string;
   nodeId: string;
   onColumnSelect: (columnKey: string | null) => void;
   relatedColumnKeys: string[] | null;
-  tableName: string;
-  tone: "source" | "bronze" | "silver" | "gold" | "downstream";
+  selected: boolean;
 };
 
 const lineageNodeTypes = {
@@ -69,6 +110,7 @@ type CatalogFilterState = {
   available: boolean;
   rag: boolean;
 };
+type CatalogStatusFilter = "all" | keyof CatalogFilterState;
 
 type CatalogSearchQuery = {
   keywords: string[];
@@ -76,6 +118,14 @@ type CatalogSearchQuery = {
 };
 
 type CatalogSortMode = "default" | "name" | "updated" | "quality";
+type CatalogSchemaTableVariant = "full" | "preview";
+type CatalogSchemaRow = {
+  description: string;
+  id: string;
+  name: string;
+  sample: string;
+  type: string;
+};
 
 const catalogSortOptions: Array<{ label: string; mode: CatalogSortMode }> = [
   { label: "기본순", mode: "default" },
@@ -83,8 +133,15 @@ const catalogSortOptions: Array<{ label: string; mode: CatalogSortMode }> = [
   { label: "최근 갱신순", mode: "updated" },
   { label: "품질 높은순", mode: "quality" },
 ];
+const catalogStatusFilterOptions: Array<{ label: string; value: CatalogStatusFilter }> = [
+  { label: "전체", value: "all" },
+  { label: "사용 가능", value: "available" },
+  { label: "승인 필요", value: "approvalRequired" },
+  { label: "RAG 여부", value: "rag" },
+];
 
 const catalogPageSize = 5;
+const materializationRunPageSize = 5;
 const catalogSearchDebounceMs = 300;
 const lineageNodeWidth = 220;
 const lineageNodeHeaderHeight = 76;
@@ -123,6 +180,54 @@ function getCatalogTagsByFrequency(datasets: CatalogDataset[]) {
   return Array.from(tagCounts.values())
     .sort((left, right) => right.count - left.count || left.firstIndex - right.firstIndex)
     .map(({ tag }) => tag);
+}
+
+function formatCatalogDateTime(value: string) {
+  const parsed = Date.parse(value);
+  if (Number.isNaN(parsed)) return value || "-";
+  return new Intl.DateTimeFormat("ko-KR", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "Asia/Seoul",
+  }).format(new Date(parsed));
+}
+
+function formatRunCreatedAt(value: string) {
+  const parsed = Date.parse(value);
+  if (Number.isNaN(parsed)) return value || "-";
+  return new Intl.DateTimeFormat("ko-KR", {
+    dateStyle: "short",
+    timeStyle: "short",
+  }).format(new Date(parsed));
+}
+
+function formatRunStorageSize(sizeBytes: number) {
+  if (!Number.isFinite(sizeBytes) || sizeBytes <= 0) return "0B";
+  if (sizeBytes < 1024) return `${sizeBytes}B`;
+
+  const units = ["KB", "MB", "GB", "TB"];
+  let size = sizeBytes;
+  for (const unit of units) {
+    size /= 1024;
+    if (size < 1024) return `${size.toFixed(1)}${unit}`;
+  }
+  return `${size.toFixed(1)}PB`;
+}
+
+function materializationRunStatusLabel(status: DatasetMaterializationRun["status"]) {
+  if (status === "success") return "성공";
+  if (status === "failed") return "실패";
+  if (status === "canceled") return "취소";
+  if (status === "running") return "실행 중";
+  return "대기";
+}
+
+function formatCatalogModelExecution(executionMode?: string, fallbackUsed?: boolean) {
+  if (fallbackUsed || executionMode === "fallback_rule") return "규칙 Fallback";
+  if (executionMode === "selected_model") return "선택 모델";
+  if (executionMode === "auto_model") return "자동 모델";
+  if (executionMode === "missing_model") return "모델 없음";
+  return executionMode || "처리 정보 없음";
 }
 
 function parseCatalogSearchQuery(query: string, knownTags: string[]): CatalogSearchQuery {
@@ -214,31 +319,36 @@ function compareCatalogDatasetsBySort(
 
 export function CatalogPage({
   datasets,
+  error = null,
+  loading = false,
   onAction,
   onOpenSql,
+  onRefresh,
   selectedDataset,
 }: {
   datasets: CatalogDataset[];
+  error?: string | null;
+  loading?: boolean;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
   onOpenSql: (dataset: CatalogDataset) => void;
+  onRefresh?: () => void;
   selectedDataset: CatalogDataset;
 }) {
   const [previewDataset, setPreviewDataset] = useState<CatalogDataset>(selectedDataset);
   const [activeModal, setActiveModal] = useState<"lineage" | "schema" | null>(null);
   const [filterState, setFilterState] = useState<CatalogFilterState>({ approvalRequired: false, available: false, rag: false });
   const [currentPage, setCurrentPage] = useState(1);
+  const [mobilePreviewOpen, setMobilePreviewOpen] = useState(false);
   const [pinnedDatasetIds, setPinnedDatasetIds] = useState<string[]>([]);
-  const [isSortMenuOpen, setIsSortMenuOpen] = useState(false);
+  const [previewDetailError, setPreviewDetailError] = useState<string | null>(null);
+  const [previewDetailLoading, setPreviewDetailLoading] = useState(false);
+  const [selectedSqlDatasetId, setSelectedSqlDatasetId] = useState<string | null>(null);
   const [searchText, setSearchText] = useState("");
   const [debouncedSearchText, setDebouncedSearchText] = useState("");
   const [sortMode, setSortMode] = useState<CatalogSortMode>("default");
-  const sortMenuRef = useRef<HTMLDivElement>(null);
   const tags = useMemo(() => getCatalogTagsByFrequency(datasets), [datasets]);
-  const topTags = useMemo(() => tags.slice(0, 10), [tags]);
-  const inputSearchQuery = useMemo(() => parseCatalogSearchQuery(searchText, tags), [searchText, tags]);
   const searchQuery = useMemo(() => parseCatalogSearchQuery(debouncedSearchText, tags), [debouncedSearchText, tags]);
-  const selectedSearchTags = useMemo(() => new Set(inputSearchQuery.tags), [inputSearchQuery.tags]);
-  const selectedSortOption = catalogSortOptions.find((option) => option.mode === sortMode) ?? catalogSortOptions[0];
+  const canQueryCurrentDataset = (dataset: CatalogDataset | null | undefined) => canQueryDatasetAs(dataset, undefined);
   const filteredDatasets = useMemo(() => datasets
     .map((dataset, index) => ({ dataset, index }))
     .filter(({ dataset }) => {
@@ -290,16 +400,34 @@ export function CatalogPage({
   }, [currentCatalogPage, currentPage]);
 
   useEffect(() => {
-    if (!isSortMenuOpen) return undefined;
+    if (apiConfig.useMock) {
+      setPreviewDetailError(null);
+      setPreviewDetailLoading(false);
+      return;
+    }
 
-    const closeSortMenu = (event: MouseEvent) => {
-      if (sortMenuRef.current?.contains(event.target as Node)) return;
-      setIsSortMenuOpen(false);
+    let cancelled = false;
+    const datasetId = previewDataset.id;
+    setPreviewDetailError(null);
+    setPreviewDetailLoading(true);
+
+    getCatalogDataset(datasetId)
+      .then((dataset) => {
+        if (cancelled) return;
+        setPreviewDataset((currentDataset) => currentDataset.id === datasetId ? dataset : currentDataset);
+      })
+      .catch((detailError) => {
+        if (cancelled) return;
+        setPreviewDetailError(detailError instanceof Error ? detailError.message : "데이터셋 상세 정보를 불러오지 못했습니다.");
+      })
+      .finally(() => {
+        if (!cancelled) setPreviewDetailLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
     };
-
-    document.addEventListener("mousedown", closeSortMenu);
-    return () => document.removeEventListener("mousedown", closeSortMenu);
-  }, [isSortMenuOpen]);
+  }, [previewDataset.id]);
 
   useEffect(() => {
     if (!hasCatalogResults || paginatedDatasets.length === 0) return;
@@ -310,7 +438,7 @@ export function CatalogPage({
       ? selectedInResults ?? previewInResults ?? paginatedDatasets[0]
       : previewInResults ?? selectedInResults ?? paginatedDatasets[0];
 
-    if (nextPreview !== previewDataset) {
+    if (nextPreview.id !== previewDataset.id) {
       setPreviewDataset(nextPreview);
     }
   }, [hasCatalogResults, paginatedDatasets, previewDataset, selectedDataset.id]);
@@ -321,28 +449,29 @@ export function CatalogPage({
     onAction("catalog.search.submitted", `/api/catalog/datasets?q=${encodeURIComponent(query)}`, query || "empty");
   };
 
-  const addTagToSearch = (tag: string) => {
-    const normalizedTag = normalizeCatalogText(tag);
+  const activeStatusFilter: CatalogStatusFilter = filterState.available
+    ? "available"
+    : filterState.approvalRequired
+      ? "approvalRequired"
+      : filterState.rag
+        ? "rag"
+        : "all";
 
-    if (selectedSearchTags.has(normalizedTag)) {
-      onAction("catalog.tag_search_duplicate_ignored", `/api/catalog/datasets?q=${encodeURIComponent(searchText.trim())}`, tag);
-      return;
-    }
-
-    const nextSearchText = [searchText.trim(), tag].filter(Boolean).join(" ");
-
-    setSearchText(nextSearchText);
-    onAction("catalog.tag_search_added", `/api/catalog/datasets?q=${encodeURIComponent(nextSearchText)}`, tag);
-  };
-
-  const updateFilter = (filterName: keyof CatalogFilterState, checked: boolean) => {
-    setFilterState((filters) => ({ ...filters, [filterName]: checked }));
-    onAction("catalog.filter_changed", `/api/catalog/datasets?filter=${filterName}&enabled=${checked}`, filterName);
+  const updateStatusFilter = (nextStatus: CatalogStatusFilter) => {
+    setFilterState({
+      approvalRequired: nextStatus === "approvalRequired",
+      available: nextStatus === "available",
+      rag: nextStatus === "rag",
+    });
+    onAction(
+      "catalog.filter_changed",
+      `/api/catalog/datasets?filter=${nextStatus}&enabled=${nextStatus !== "all"}`,
+      nextStatus,
+    );
   };
 
   const updateSortMode = (nextSortMode: CatalogSortMode) => {
     setSortMode(nextSortMode);
-    setIsSortMenuOpen(false);
     onAction("catalog.sort_changed", `/api/catalog/search/sort?sort=${nextSortMode}`, nextSortMode);
   };
 
@@ -360,260 +489,340 @@ export function CatalogPage({
 
   const selectPreviewDataset = (dataset: CatalogDataset) => {
     setPreviewDataset(dataset);
+    setSelectedSqlDatasetId(dataset.id);
     onAction("catalog.dataset.preview_selected", `/api/catalog/datasets/${dataset.id}`, dataset.id);
   };
 
+  const openSelectedSqlDataset = () => {
+    if (selectedSqlDatasetId !== previewDataset.id || !canQueryCurrentDataset(previewDataset)) return;
+    onOpenSql(previewDataset);
+  };
+
+  const openPreviewModal = (variant: "lineage" | "schema", fromMobileSheet = false) => {
+    if (fromMobileSheet) setMobilePreviewOpen(false);
+    onAction(
+      variant === "schema" ? "catalog.schema.modal_opened" : "catalog.lineage.opened",
+      `/api/catalog/datasets/${previewDataset.id}/${variant}`,
+      previewDataset.id,
+    );
+    setActiveModal(variant);
+  };
+
+  const renderPreviewContent = (fromMobileSheet = false) => (
+    <>
+      <PanelHeader
+        actions={(
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                aria-label={isPreviewPinned ? "데이터셋 고정 해제" : "데이터셋 상단 고정"}
+                aria-pressed={isPreviewPinned}
+                shape="compact"
+                type="button"
+                size="iconSm"
+                variant={isPreviewPinned ? "subtle" : "ghost"}
+                onClick={togglePinnedDataset}
+              >
+                <Star fill={isPreviewPinned ? "currentColor" : "none"} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{isPreviewPinned ? "상단 고정 해제" : "상단에 고정"}</TooltipContent>
+          </Tooltip>
+        )}
+        bordered={false}
+        className="catalog-preview-title"
+        icon={<Database size={16} />}
+        iconVariant="outline"
+        title={(
+          <Tooltip>
+            <TooltipTrigger asChild><span className="block min-w-0 truncate">{previewDataset.name}</span></TooltipTrigger>
+            <TooltipContent>{previewDataset.name}</TooltipContent>
+          </Tooltip>
+        )}
+      />
+      <Separator />
+      <ScrollArea className="catalog-preview-scroll" type="auto">
+        <div className="catalog-preview-body">
+          {previewDetailError ? (
+            <Alert className="catalog-preview-detail-error" variant="destructive">
+              <AlertCircle />
+              <AlertTitle>기본 정보를 불러오지 못했습니다.</AlertTitle>
+              <AlertDescription>{previewDetailError}</AlertDescription>
+            </Alert>
+          ) : null}
+          <Accordion className="catalog-preview-accordion" type="multiple">
+            <AccordionItem value="overview">
+              <AccordionTrigger>
+                <span className="catalog-preview-accordion-label"><LayoutGrid /> 기본 정보</span>
+              </AccordionTrigger>
+              <AccordionContent>
+                <div aria-busy={previewDetailLoading} className="catalog-overview-metrics catalog-preview-metrics">
+                  <CatalogMiniMetric label="품질 지표" value={previewDataset.quality} />
+                  <CatalogMiniMetric label="최근 갱신 일시" value={formatCatalogDateTime(previewDataset.lastUpdated)} />
+                  <CatalogMiniMetric label="데이터 담당자" value={previewDataset.owner} />
+                  <CatalogMiniMetric label="행 수" value={previewDataset.rows} />
+                  <CatalogMiniMetric label="파일 크기" value={previewDataset.size} />
+                  <CatalogMiniMetric label="갱신 예정 일시" value={previewDataset.nextRefresh} />
+                </div>
+              </AccordionContent>
+            </AccordionItem>
+
+            <AccordionItem value="schema">
+              <AccordionTrigger>
+                <span className="catalog-preview-accordion-label"><TerminalSquare /> 스키마 미리보기</span>
+              </AccordionTrigger>
+              <AccordionContent className="catalog-preview-accordion-content">
+                <CatalogSchemaTable dataset={previewDataset} maxRows={5} variant="preview" />
+                <Button className="catalog-text-button" type="button" onClick={() => openPreviewModal("schema", fromMobileSheet)} size="sm" variant="link">전체 스키마 상세 보기</Button>
+              </AccordionContent>
+            </AccordionItem>
+
+            <AccordionItem value="lineage">
+              <AccordionTrigger>
+                <span className="catalog-preview-accordion-label"><Share2 /> 리니지</span>
+              </AccordionTrigger>
+              <AccordionContent>
+                <Button className="catalog-wide-button" shape="compact" size="sm" type="button" variant="outline" onClick={() => openPreviewModal("lineage", fromMobileSheet)}>
+                  <Share2 data-icon="inline-start" /> 전체 리니지 보기
+                </Button>
+              </AccordionContent>
+            </AccordionItem>
+          </Accordion>
+          <Button
+            className="catalog-wide-button"
+            disabled={selectedSqlDatasetId !== previewDataset.id || !canQueryCurrentDataset(previewDataset)}
+            shape="compact"
+            size="sm"
+            title={!canQueryCurrentDataset(previewDataset)
+              ? permissionDeniedMessage("데이터셋", "SQL 실행")
+              : selectedSqlDatasetId === previewDataset.id
+                ? "선택한 데이터셋을 SQL 분석에서 엽니다."
+                : "왼쪽 목록에서 데이터셋을 선택해 주세요."}
+            type="button"
+            variant="outline"
+            onClick={openSelectedSqlDataset}
+          >
+            <ExternalLink data-icon="inline-start" /> SQL 분석에서 열기
+          </Button>
+        </div>
+      </ScrollArea>
+    </>
+  );
+
   return (
+    <TooltipProvider delayDuration={300}>
     <div className="catalog-page">
-      <PageTitle title="검색/카탈로그" />
+      <PageHeader
+        className="catalog-page-header"
+        icon={<Search size={18} />}
+        title="검색/카탈로그"
+      />
+      {error ? (
+        <Alert className="border-red-200 bg-red-50 text-red-800" variant="destructive">
+          <AlertCircle />
+          <AlertTitle>카탈로그를 불러오지 못했습니다.</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      ) : null}
       <div className="catalog-content-grid">
         <div className="catalog-main">
-          <section className="catalog-search-panel">
-            <div className="catalog-search-box">
-              <Search size={18} />
-              <input
-                aria-label="카탈로그 검색"
-                onChange={(event) => setSearchText(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    handleSearchSubmit();
-                  }
-                }}
-                placeholder="테이블명, 컬럼명, 태그 또는 업무 키워드로 검색하세요..."
-                type="search"
-                value={searchText}
-              />
-            </div>
-            <div className="catalog-tag-row">
-              <span>태그</span>
-              <div>
-                {topTags.map((tag) => {
-                  const isTagInSearch = selectedSearchTags.has(normalizeCatalogText(tag));
+          {hasCatalogResults && (
+            <Sheet open={mobilePreviewOpen} onOpenChange={setMobilePreviewOpen}>
+              <SheetTrigger asChild>
+                <Button className="catalog-preview-mobile-trigger" shape="compact" type="button" variant="outline">
+                  <PanelRight data-icon="inline-start" /> 데이터셋 미리보기
+                </Button>
+              </SheetTrigger>
+              <SheetContent className="catalog-preview-sheet" closeLabel="미리보기 닫기" side="right">
+                <SheetHeader className="sr-only">
+                  <SheetTitle>{previewDataset.name} 미리보기</SheetTitle>
+                  <SheetDescription>데이터셋 정보와 빠른 작업</SheetDescription>
+                </SheetHeader>
+                {renderPreviewContent(true)}
+              </SheetContent>
+            </Sheet>
+          )}
 
-                  return (
-                    <button
-                      aria-pressed={isTagInSearch}
-                      className={isTagInSearch ? "catalog-tag active" : "catalog-tag"}
-                      key={tag}
-                      type="button"
-                      onClick={() => addTagToSearch(tag)}
-                    >
-                      {tag}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          </section>
-
-          <section className="catalog-results-section">
+          <Panel className="catalog-results-section">
             <div className="catalog-results-header">
-              <div>
-                <h2>검색 결과</h2>
-                <span>{filteredDatasets.length}건</span>
-              </div>
-              <div className="catalog-filter-row">
-                <label>
-                  <input checked={filterState.available} type="checkbox" onChange={(event) => updateFilter("available", event.target.checked)} />
-                  사용 가능
-                </label>
-                <label>
-                  <input checked={filterState.approvalRequired} type="checkbox" onChange={(event) => updateFilter("approvalRequired", event.target.checked)} />
-                  승인 필요
-                </label>
-                <label>
-                  <input checked={filterState.rag} type="checkbox" onChange={(event) => updateFilter("rag", event.target.checked)} />
-                  RAG 여부
-                </label>
-                <div className="catalog-sort-control" ref={sortMenuRef}>
-                  <button
-                    aria-expanded={isSortMenuOpen}
-                    aria-haspopup="menu"
-                    className="catalog-sort-button"
-                    type="button"
-                    onClick={() => {
-                      setIsSortMenuOpen((isOpen) => !isOpen);
-                      onAction("catalog.sort_opened", "/api/catalog/search/sort", "catalog-sort");
+              <PanelHeader
+                bordered={false}
+                icon={<BookOpen size={16} />}
+                iconVariant="outline"
+                size="section"
+                title="카탈로그 목록"
+              />
+              <FilterToolbar className="py-3" layout="actions">
+                <FilterToolbarSearch icon={<Search size={18} />}>
+                  <FilterToolbarInput
+                    aria-label="카탈로그 검색"
+                    onChange={(event) => setSearchText(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        handleSearchSubmit();
+                      }
                     }}
-                  >
-                    정렬: {selectedSortOption.label} ▾
-                  </button>
-                  {isSortMenuOpen && (
-                    <div className="catalog-sort-menu" role="menu" aria-label="정렬 기준">
-                      {catalogSortOptions.map((option) => (
-                        <button
-                          aria-checked={sortMode === option.mode}
-                          className={sortMode === option.mode ? "active" : ""}
-                          key={option.mode}
-                          role="menuitemradio"
-                          type="button"
-                          onClick={() => updateSortMode(option.mode)}
-                        >
-                          <span>{sortMode === option.mode ? "✓" : ""}</span>
-                          {option.label}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
+                    placeholder="테이블명, 컬럼명 또는 업무 키워드로 검색하세요..."
+                    type="search"
+                    value={searchText}
+                  />
+                </FilterToolbarSearch>
+                <FilterToolbarActions>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        aria-label="상태 필터"
+                        className="h-9 justify-start gap-1.5 px-0 text-lg font-semibold text-slate-600 hover:bg-transparent hover:text-slate-950"
+                        size="sm"
+                        type="button"
+                        variant="ghost"
+                      >
+                        상태
+                        <Filter className="size-[18px]" aria-hidden="true" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start" className="min-w-44">
+                      <DropdownMenuLabel>상태 필터</DropdownMenuLabel>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuRadioGroup value={activeStatusFilter} onValueChange={(value) => updateStatusFilter(value as CatalogStatusFilter)}>
+                        {catalogStatusFilterOptions.map((option) => (
+                          <DropdownMenuRadioItem key={option.value} value={option.value}>
+                            {option.label}
+                          </DropdownMenuRadioItem>
+                        ))}
+                      </DropdownMenuRadioGroup>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                  <DropdownMenu onOpenChange={(open) => open && onAction("catalog.sort_opened", "/api/catalog/search/sort", "catalog-sort")}>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        aria-label="정렬 기준"
+                        className="h-9 justify-start gap-1.5 px-0 text-lg font-semibold text-slate-600 hover:bg-transparent hover:text-slate-950"
+                        size="sm"
+                        type="button"
+                        variant="ghost"
+                      >
+                        정렬
+                        <ArrowUpDown className="size-[18px]" aria-hidden="true" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="min-w-44">
+                      <DropdownMenuLabel>정렬 기준</DropdownMenuLabel>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuRadioGroup value={sortMode} onValueChange={(value) => updateSortMode(value as CatalogSortMode)}>
+                        {catalogSortOptions.map((option) => (
+                          <DropdownMenuRadioItem key={option.mode} value={option.mode}>{option.label}</DropdownMenuRadioItem>
+                        ))}
+                      </DropdownMenuRadioGroup>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </FilterToolbarActions>
+              </FilterToolbar>
             </div>
 
             <div className="catalog-result-list">
-              {paginatedDatasets.map((dataset) => {
+                {loading ? Array.from({ length: 3 }, (_, index) => (
+                  <Card className="catalog-result-card flex items-center gap-3 p-4" key={`catalog-skeleton-${index}`} size="none">
+                    <Skeleton className="h-5 w-2/5" />
+                    <Skeleton className="ml-auto size-8" />
+                  </Card>
+                )) : paginatedDatasets.map((dataset) => {
                 const isPinned = pinnedDatasetIds.includes(dataset.id);
                 const isActive = dataset.id === previewDataset.id;
-
                 return (
-                  <article
-                    className={["catalog-result-card", isActive ? "active" : "", isPinned ? "pinned" : ""].filter(Boolean).join(" ")}
-                    key={dataset.id}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => selectPreviewDataset(dataset)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                        selectPreviewDataset(dataset);
-                      }
-                    }}
-                  >
-                    {isPinned && (
-                      <span className="catalog-result-pin-badge" aria-label="상단 고정된 데이터셋">
-                        <Pin size={13} />
-                        고정됨
-                      </span>
-                    )}
-                    <div className="catalog-result-title">
-                      <strong>{dataset.name}</strong>
-                      <DatasetStatusBadge dataset={dataset} />
-                    </div>
-                    <div className="catalog-result-tags">
-                      {dataset.tags.map((tag) => <span key={tag}>{tag}</span>)}
-                    </div>
-                  </article>
+                  <div className="catalog-result-item" key={`${dataset.id}:${dataset.name}`}>
+                    <Card className={cn("catalog-result-card", isActive && "active", isPinned && "pinned")} size="none">
+                      <Button
+                        aria-pressed={isActive}
+                        className="catalog-result-select"
+                        shape="compact"
+                        size="content"
+                        type="button"
+                        variant="ghost"
+                        onClick={() => selectPreviewDataset(dataset)}
+                        title="데이터셋 선택"
+                      >
+                        <div className="catalog-result-summary">
+                          <div className="catalog-result-title">
+                            <div className="catalog-result-mainline">
+                              <div className="catalog-result-heading">
+                                <Tooltip>
+                                  <TooltipTrigger asChild><strong className="truncate" title={undefined}>{dataset.name}</strong></TooltipTrigger>
+                                  <TooltipContent>{dataset.name}</TooltipContent>
+                                </Tooltip>
+                                <DatasetStatusBadge dataset={dataset} shape="compact" />
+                                {isPinned && (
+                                  <Badge className="catalog-result-pin-badge" aria-label="상단 고정된 데이터셋" shape="compact" size="sm">
+                                    <Pin />
+                                    고정됨
+                                  </Badge>
+                                )}
+                              </div>
+                              {dataset.description.trim() ? (
+                                <p className="catalog-result-description">{dataset.description}</p>
+                              ) : null}
+                            </div>
+                            {dataset.tags.length > 0 ? (
+                              <span className="catalog-result-tags" title={dataset.tags.join(" · ")}>{dataset.tags.join(" · ")}</span>
+                            ) : null}
+                          </div>
+                        </div>
+                      </Button>
+                    </Card>
+                  </div>
                 );
-              })}
-              {!hasCatalogResults && (
-                <div className="catalog-empty-state">
-                  <strong>검색 결과가 없습니다.</strong>
-                  <span>검색어, 태그, 상태 필터를 조정해 다시 확인하세요.</span>
-                </div>
-              )}
+                })}
+                {!loading && !hasCatalogResults && (
+                  <Empty className="catalog-empty-state" size="sm" variant="bordered">
+                    <EmptyIcon><Search /></EmptyIcon>
+                    <EmptyHeader>
+                      <EmptyTitle>검색 결과가 없습니다.</EmptyTitle>
+                      <EmptyDescription>검색어, 태그, 상태 필터를 조정해 다시 확인하세요.</EmptyDescription>
+                    </EmptyHeader>
+                  </Empty>
+                )}
             </div>
 
-            {hasCatalogResults && (
-              <div className="catalog-pagination" aria-label="검색 결과 페이지">
-                <span>{currentPageStartIndex + 1}-{currentPageEndIndex} / {filteredDatasets.length}</span>
-                <div>
-                  <button
-                    type="button"
-                    disabled={currentCatalogPage === 1}
-                    onClick={() => updateResultPage(currentCatalogPage - 1)}
-                  >
-                    이전
-                  </button>
-                  <strong>{currentCatalogPage} / {totalCatalogPages}</strong>
-                  <button
-                    type="button"
-                    disabled={currentCatalogPage === totalCatalogPages}
-                    onClick={() => updateResultPage(currentCatalogPage + 1)}
-                  >
-                    다음
-                  </button>
-                </div>
-              </div>
+            {!loading && hasCatalogResults && (
+              <PaginationBar
+                aria-label="검색 결과 페이지"
+                className="catalog-pagination"
+                currentPage={currentCatalogPage}
+                onNext={() => updateResultPage(currentCatalogPage + 1)}
+                onPrevious={() => updateResultPage(currentCatalogPage - 1)}
+                rangeLabel={`${currentPageStartIndex + 1}-${currentPageEndIndex} / ${filteredDatasets.length}`}
+                totalPages={totalCatalogPages}
+              />
             )}
-          </section>
+          </Panel>
         </div>
 
         {hasCatalogResults ? (
-          <aside className="catalog-preview-panel">
-          <div className="catalog-preview-title">
-            <LayoutGrid size={20} />
-            <div>
-              <h2>{previewDataset.name}</h2>
-            </div>
-            <button
-              aria-label={isPreviewPinned ? "데이터셋 고정 해제" : "데이터셋 상단 고정"}
-              aria-pressed={isPreviewPinned}
-              className={isPreviewPinned ? "catalog-favorite-button active" : "catalog-favorite-button"}
-              title={isPreviewPinned ? "데이터셋 고정 해제" : "데이터셋 상단 고정"}
-              type="button"
-              onClick={togglePinnedDataset}
-            >
-              <Star size={18} />
-            </button>
-          </div>
-          <div className="catalog-overview-metrics catalog-preview-metrics">
-            <CatalogMiniMetric label="품질 지표" value={previewDataset.quality} />
-            <CatalogMiniMetric label="최근 갱신 일시" value={previewDataset.lastUpdated} />
-            <CatalogMiniMetric label="데이터 담당자" value={previewDataset.owner} />
-            <CatalogMiniMetric label="행 수" value={previewDataset.rows} />
-            <CatalogMiniMetric label="파일 크기" value={previewDataset.size} />
-            <CatalogMiniMetric label="갱신 예정 일시" value={previewDataset.nextRefresh} />
-          </div>
-
-          <article className="catalog-preview-card">
-            <div className="catalog-preview-card-header">
-              <TerminalSquare size={16} />
-              <h3>스키마 미리보기</h3>
-              <span>{previewDataset.schema.length} 컬럼</span>
-            </div>
-            <table className="catalog-schema-preview">
-              <thead>
-                <tr><th>컬럼명</th><th>타입</th></tr>
-              </thead>
-              <tbody>
-                {previewDataset.schema.slice(0, 5).map(([name, type], index) => <tr key={`${name}-${index}`}><td>{name}</td><td><span>{type}</span></td></tr>)}
-              </tbody>
-            </table>
-            <button className="catalog-text-button" type="button" onClick={() => {
-              onAction("catalog.schema.modal_opened", `/api/catalog/datasets/${previewDataset.id}/schema`, previewDataset.id);
-              setActiveModal("schema");
-            }}>전체 스키마 상세 보기</button>
-          </article>
-
-          <article className="catalog-lineage-teaser" role="button" tabIndex={0} onClick={() => {
-            onAction("catalog.lineage.opened", `/api/catalog/datasets/${previewDataset.id}/lineage`, previewDataset.id);
-            setActiveModal("lineage");
-          }} onKeyDown={(event) => {
-            if (event.key === "Enter" || event.key === " ") {
-              event.preventDefault();
-              onAction("catalog.lineage.opened", `/api/catalog/datasets/${previewDataset.id}/lineage`, previewDataset.id);
-              setActiveModal("lineage");
-            }
-          }}>
-            <Share2 size={16} />
-            <div>
-              <strong>리니지 보기</strong>
-            </div>
-            <span>›</span>
-          </article>
-
-          <button className="primary-button catalog-wide-button" type="button" onClick={() => onOpenSql(previewDataset)}>
-            <ExternalLink size={16} /> SQL 분석에서 열기
-          </button>
-          </aside>
+          <Card className="catalog-preview-panel catalog-preview-desktop" size="none">
+            {renderPreviewContent()}
+          </Card>
         ) : (
-          <aside className="catalog-preview-panel catalog-preview-panel-empty">
-            <LayoutGrid size={22} />
-            <strong>선택할 데이터셋이 없습니다.</strong>
-            <p>검색 조건을 바꾸면 일치하는 데이터셋의 스키마, 리니지, SQL 이동 정보를 다시 확인할 수 있습니다.</p>
-          </aside>
+          <Empty className="catalog-preview-panel catalog-preview-panel-empty" size="lg" variant="bordered">
+            <EmptyIcon><LayoutGrid /></EmptyIcon>
+            <EmptyHeader>
+              <EmptyTitle>선택할 데이터셋이 없습니다.</EmptyTitle>
+              <EmptyDescription>검색 조건을 바꾸면 일치하는 데이터셋의 스키마, 리니지, SQL 이동 정보를 다시 확인할 수 있습니다.</EmptyDescription>
+            </EmptyHeader>
+          </Empty>
         )}
       </div>
       {activeModal && (
         <CatalogModal
           dataset={previewDataset}
           onClose={() => setActiveModal(null)}
-          title={activeModal === "schema" ? "전체 스키마" : "리니지"}
+          title={activeModal === "schema" ? "스키마 및 샘플 데이터" : "리니지"}
           variant={activeModal}
         >
-          {activeModal === "schema" ? <CatalogSchema dataset={previewDataset} /> : <CatalogLineage dataset={previewDataset} compact />}
+          {activeModal === "schema" ? <CatalogDatasetViewer dataset={previewDataset} /> : <CatalogLineage dataset={previewDataset} compact />}
         </CatalogModal>
       )}
     </div>
+    </TooltipProvider>
   );
 }
 
@@ -631,21 +840,21 @@ function CatalogModal({
   variant: "lineage" | "schema";
 }) {
   return (
-    <div className="catalog-modal-backdrop" role="presentation" onClick={onClose}>
-      <section className={`catalog-modal ${variant === "lineage" ? "lineage-modal" : ""}`} role="dialog" aria-modal="true" aria-label={`${dataset.name} ${title}`} onClick={(event) => event.stopPropagation()}>
-        <header className="catalog-modal-header">
-          <div>
-            <span>{dataset.layer} 데이터셋</span>
-            <h2>{dataset.name}</h2>
-            <p>{title}</p>
-          </div>
-          <button type="button" onClick={onClose}>닫기</button>
-        </header>
-        <div className="catalog-modal-body">
-          {children}
-        </div>
-      </section>
-    </div>
+    <DialogShell
+      aria-label={`${dataset.name} ${title}`}
+      bodyClassName="catalog-modal-body"
+      bodyScrollArea={variant === "schema"}
+      closeLabel="닫기"
+      contentClassName={`catalog-modal ${variant === "lineage" ? "lineage-modal" : ""}`}
+      headerActions={<IconButton label="닫기" size="xs" type="button" variant="ghost" onClick={onClose}><X /></IconButton>}
+      headerClassName="catalog-modal-header"
+      onClose={onClose}
+      showCloseButton={false}
+      size={variant === "lineage" ? "wide" : "xl"}
+      title={dataset.name}
+    >
+      {children}
+    </DialogShell>
   );
 }
 
@@ -655,12 +864,14 @@ export function CatalogDetailPage({
   onBack,
   onLineage,
   onOpenSql,
+  onRefresh,
 }: {
   dataset: CatalogDataset;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
   onBack: () => void;
   onLineage: () => void;
   onOpenSql: () => void;
+  onRefresh?: () => void;
 }) {
   const [activeTab, setActiveTab] = useState<"overview" | "schema" | "sample" | "lineage">("overview");
 
@@ -669,65 +880,205 @@ export function CatalogDetailPage({
     onLineage();
   };
 
+  const updateActiveTab = (nextTab: string) => {
+    const normalizedTab = nextTab as typeof activeTab;
+    if (normalizedTab === "lineage") onLineage();
+    setActiveTab(normalizedTab);
+  };
+
   return (
-    <div className="catalog-detail-page">
+    <Tabs className="catalog-detail-page" value={activeTab} onValueChange={updateActiveTab}>
       <header className="catalog-detail-header">
-        <button className="job-detail-breadcrumb" type="button" onClick={onBack}>검색/카탈로그 &gt; {dataset.name}</button>
+        <Button className="job-detail-breadcrumb" type="button" onClick={onBack} size="sm" variant="link">검색/카탈로그 &gt; {dataset.name}</Button>
         <div className="catalog-detail-title-row">
           <div>
             <h1>{dataset.name}</h1>
             <div className="job-detail-meta">
               <DatasetStatusBadge dataset={dataset} />
-              <span className="owner-chip">{dataset.owner}</span>
-              <span className="tag-chip">{dataset.layer} 레이어</span>
-              {dataset.tags.map((tag) => <span className="tag-chip" key={tag}>{tag}</span>)}
+              <Badge shape="compact" size="sm" variant="outline">{dataset.owner}</Badge>
+              <Badge shape="compact" size="sm" variant="secondary">{dataset.layer} 레이어</Badge>
             </div>
           </div>
           <div className="job-detail-actions">
-            <button className="job-action-button primary" type="button" onClick={onOpenSql}><ExternalLink size={14} /> SQL 분석에서 열기</button>
-            <button className="job-action-button" type="button" onClick={openLineage}>리니지 보기</button>
-            <button className="job-action-button" type="button" onClick={() => onAction("catalog.dataset.refreshed", `/api/catalog/datasets/${dataset.id}`, dataset.id)}>새로고침</button>
+            <Button className="job-action-button primary" type="button" onClick={onOpenSql} size="sm" variant="primary"><ExternalLink size={14} /> SQL 분석에서 열기</Button>
+            <Button className="job-action-button" type="button" onClick={openLineage} size="sm" variant="outline">리니지 보기</Button>
+            <Button className="job-action-button" type="button" onClick={() => {
+              onAction("catalog.dataset.refreshed", `/api/catalog/datasets/${dataset.id}`, dataset.id);
+              onRefresh?.();
+            }} size="sm" variant="outline">새로고침</Button>
           </div>
         </div>
-        <nav className="job-detail-tabs" aria-label="데이터셋 상세 탭">
-          {[
-            ["overview", "개요"],
-            ["schema", "스키마"],
-            ["sample", "샘플 데이터"],
-            ["lineage", "리니지"],
-          ].map(([id, label]) => (
-            <button className={activeTab === id ? "active" : ""} key={id} type="button" onClick={() => {
-              if (id === "lineage") onLineage();
-              setActiveTab(id as typeof activeTab);
-            }}>{label}</button>
-          ))}
-        </nav>
+        <TabsList aria-label="데이터셋 상세 탭" className="catalog-detail-tabs">
+          <TabsTrigger value="overview">개요</TabsTrigger>
+          <TabsTrigger value="schema">스키마</TabsTrigger>
+          <TabsTrigger value="sample">샘플 데이터</TabsTrigger>
+          <TabsTrigger value="lineage">리니지</TabsTrigger>
+        </TabsList>
       </header>
 
-      {activeTab === "overview" && <CatalogOverview dataset={dataset} onLineage={openLineage} />}
-      {activeTab === "schema" && <CatalogSchema dataset={dataset} />}
-      {activeTab === "sample" && <CatalogSample dataset={dataset} />}
-      {activeTab === "lineage" && <CatalogLineage dataset={dataset} />}
-    </div>
+      <TabsContent className="catalog-detail-tab-content" value="overview"><CatalogOverview dataset={dataset} onLineage={openLineage} /></TabsContent>
+      <TabsContent className="catalog-detail-tab-content" value="schema"><CatalogSchema dataset={dataset} /></TabsContent>
+      <TabsContent className="catalog-detail-tab-content" value="sample"><CatalogSample dataset={dataset} /></TabsContent>
+      <TabsContent className="catalog-detail-tab-content" value="lineage"><CatalogLineage dataset={dataset} /></TabsContent>
+    </Tabs>
   );
 }
 
-export function DatasetStatusBadge({ dataset }: { dataset: CatalogDataset }) {
+export function DatasetStatusBadge({ dataset, shape = "default" }: { dataset: CatalogDataset; shape?: BadgeProps["shape"] }) {
   const statusMeta = datasetStatusMeta[dataset.status];
+  const statusTone = dataset.status === "available" ? "success" : dataset.status === "approval_required" ? "warning" : "outline";
 
   return (
     <>
-      {dataset.rag && <span className="dataset-rag-badge">RAG</span>}
-      <span className={`dataset-status-badge ${statusMeta.className}`}>{statusMeta.label}</span>
+      {dataset.rag && <Badge shape={shape} size="sm">RAG</Badge>}
+      <StatusBadge shape={shape} size="sm" tone={statusTone}>{statusMeta.label}</StatusBadge>
     </>
   );
 }
 
 function CatalogMiniMetric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="catalog-mini-metric">
+    <Card className="catalog-mini-metric" size="sm" variant="muted">
       <span>{label}</span>
       <strong>{value}</strong>
+    </Card>
+  );
+}
+
+function CatalogMaterializationRuns({
+  canQueryDatasetForCurrentUser,
+  dataset,
+  onDelete,
+  onPageChange,
+  onSelectRun,
+  page,
+  selectedRunId,
+}: {
+  canQueryDatasetForCurrentUser: (dataset: CatalogDataset | null | undefined) => boolean;
+  dataset: CatalogDataset;
+  onDelete: (event: React.MouseEvent, dataset: CatalogDataset, runId: string) => void;
+  onPageChange: (dataset: CatalogDataset, nextPage: number) => void;
+  onSelectRun: (event: React.MouseEvent | React.KeyboardEvent, dataset: CatalogDataset, run: DatasetMaterializationRun) => void;
+  page: number;
+  selectedRunId: string | null;
+}) {
+  const runs = dataset.materializationRuns ?? [];
+  const totalPages = Math.max(1, Math.ceil(runs.length / materializationRunPageSize));
+  const currentPage = Math.min(Math.max(page, 1), totalPages);
+  const pageStartIndex = (currentPage - 1) * materializationRunPageSize;
+  const visibleRuns = runs.slice(pageStartIndex, pageStartIndex + materializationRunPageSize);
+
+  return (
+    <div className="catalog-materialization-panel grid gap-3" onClick={(event) => event.stopPropagation()}>
+      <p className="m-0 text-xs font-semibold leading-5 text-slate-500">
+        SQL 분석에 사용할 데이터 저장 시점을 선택합니다.
+      </p>
+      {visibleRuns.length > 0 ? (
+        <div className="grid gap-2">
+          {visibleRuns.map((run) => {
+            const isSelectable = run.status === "success" && canQueryDatasetForCurrentUser(dataset);
+            const isSelected = run.runId === selectedRunId;
+            const statusTone = run.status === "success" ? "success" : run.status === "failed" ? "danger" : run.status === "running" ? "default" : "muted";
+            const textStructuringChecks = run.textStructuringExecution?.columns ?? run.textStructuring ?? [];
+            const modelProvenance = textStructuringChecks.map((check) => {
+              const targetColumn = check.targetColumn || check.target || check.output || "컬럼";
+              const modelArtifact = check.selectedModelArtifact || check.modelArtifact;
+              const execution = modelArtifact
+                ? `${formatCatalogModelExecution(check.executionMode, check.fallbackUsed)} · ${modelArtifact}`
+                : formatCatalogModelExecution(check.executionMode || check.runtimeStatus, check.fallbackUsed);
+              return `${targetColumn}: ${execution}`;
+            }).join(", ");
+            const quarantineRows = Number(run.quarantine?.rows ?? 0);
+
+            return (
+            <Card
+              aria-disabled={!isSelectable}
+              aria-pressed={isSelected}
+              className={cn(
+                "grid gap-2 p-3 transition-colors",
+                isSelectable ? "cursor-pointer hover:border-blue-300 hover:bg-blue-50/40" : "opacity-70",
+                isSelected && "border-blue-500 bg-blue-50 ring-1 ring-blue-200",
+              )}
+              key={run.runId}
+              role="button"
+              size="none"
+              tabIndex={isSelectable ? 0 : -1}
+              title={isSelectable ? "SQL 분석 대상으로 선택" : !canQueryDatasetForCurrentUser(dataset) ? permissionDeniedMessage("데이터셋", "SQL 실행") : "성공한 데이터 버전만 SQL 분석 대상으로 선택할 수 있습니다."}
+              onClick={(event) => onSelectRun(event, dataset, run)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onSelectRun(event, dataset, run);
+                }
+              }}
+            >
+              <div className="flex min-w-0 items-center gap-2">
+                <StatusBadge shape="compact" size="sm" tone={statusTone}>{materializationRunStatusLabel(run.status)}</StatusBadge>
+                <strong className="min-w-0 truncate" title={run.runId}>{run.runId}</strong>
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button
+                      aria-label={`${run.runId} 데이터 버전 삭제`}
+                      className="ml-auto"
+                      disabled={!canDeleteDatasetMaterializationRun(dataset)}
+                      shape="compact"
+                      size="sm"
+                      title={canDeleteDatasetMaterializationRun(dataset) ? "데이터 버전을 삭제합니다." : permissionDeniedMessage("데이터셋", "데이터 버전 삭제")}
+                      type="button"
+                      variant="ghost"
+                      onClick={(event) => event.stopPropagation()}
+                    >
+                      삭제
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent onClick={(event) => event.stopPropagation()}>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>데이터 버전을 삭제하시겠습니까?</AlertDialogTitle>
+                      <AlertDialogDescription>{run.runId} 버전은 삭제 후 복구할 수 없습니다.</AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>취소</AlertDialogCancel>
+                      <AlertDialogAction onClick={(event) => onDelete(event, dataset, run.runId)}>삭제</AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              </div>
+              <div className="grid gap-1 text-xs text-slate-600 sm:grid-cols-2">
+                <span>{formatRunCreatedAt(run.createdAt)}</span>
+                <span>{run.rowCount.toLocaleString()}행 · {formatRunStorageSize(run.storageSizeBytes)}</span>
+                <span className="truncate sm:col-span-2" title={run.sourceLabel}>{run.sourceLabel}</span>
+                {modelProvenance ? (
+                  <span className="truncate font-semibold text-blue-700 sm:col-span-2" title={modelProvenance}>
+                    모델 기반 변환 · {modelProvenance}
+                  </span>
+                ) : null}
+                {quarantineRows > 0 ? (
+                  <span className="truncate font-semibold text-amber-700 sm:col-span-2" title={run.quarantine?.path || undefined}>
+                    검증 격리 · {quarantineRows.toLocaleString()}행
+                  </span>
+                ) : null}
+              </div>
+            </Card>
+            );
+          })}
+        </div>
+      ) : (
+        <Empty size="sm" variant="bordered">
+          <EmptyHeader>
+            <EmptyTitle>데이터 버전이 없습니다.</EmptyTitle>
+            <EmptyDescription>데이터셋 생성 또는 append가 완료되면 여기에서 SQL 분석 대상을 선택할 수 있습니다.</EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      )}
+      {runs.length > materializationRunPageSize && (
+        <PaginationBar
+          currentPage={currentPage}
+          onNext={() => onPageChange(dataset, currentPage + 1)}
+          onPrevious={() => onPageChange(dataset, currentPage - 1)}
+          rangeLabel={`${pageStartIndex + 1}-${Math.min(pageStartIndex + visibleRuns.length, runs.length)} / ${runs.length}`}
+          totalPages={totalPages}
+        />
+      )}
     </div>
   );
 }
@@ -735,66 +1086,353 @@ function CatalogMiniMetric({ label, value }: { label: string; value: string }) {
 function CatalogOverview({ dataset, onLineage }: { dataset: CatalogDataset; onLineage: () => void }) {
   return (
     <div className="catalog-detail-grid catalog-detail-grid-single">
-      <section className="catalog-overview-card">
-        <h2>리니지</h2>
-        <CatalogLineageMini dataset={dataset} />
-        <button className="catalog-text-button" type="button" onClick={onLineage}>전체 리니지 보기</button>
-      </section>
+      <Panel asChild className="catalog-overview-card">
+        <section>
+          <h2>리니지</h2>
+          <CatalogLineageMini dataset={dataset} />
+          <Button className="catalog-text-button" type="button" onClick={onLineage} size="sm" variant="link">전체 리니지 보기</Button>
+        </section>
+      </Panel>
     </div>
   );
 }
 
 function CatalogSchema({ dataset }: { dataset: CatalogDataset }) {
   return (
-    <section className="catalog-table-card">
-      <div className="catalog-section-header">
-        <h2>스키마</h2>
-        <span>{dataset.schema.length} 컬럼</span>
-      </div>
-      <table className="schema-table">
-        <thead><tr><th>컬럼명</th><th>타입</th><th>NULL 허용</th><th>설명</th></tr></thead>
-        <tbody>
-          {dataset.schema.map(([name, type], index) => (
-            <tr key={`${name}-${index}`}><td>{name}</td><td>{type}</td><td>{index % 2 === 0 ? "NO" : "YES"}</td><td>{dataset.name}의 {name} 필드</td></tr>
-          ))}
-        </tbody>
-      </table>
-    </section>
+    <Panel asChild className="catalog-table-card">
+      <section>
+        <div className="catalog-section-header">
+          <h2>스키마</h2>
+        </div>
+        <CatalogSchemaTable dataset={dataset} />
+      </section>
+    </Panel>
+  );
+}
+
+function CatalogDatasetViewer({ dataset }: { dataset: CatalogDataset }) {
+  return (
+    <div className="catalog-dataset-viewer">
+      <CatalogSchema dataset={dataset} />
+    </div>
+  );
+}
+
+function CatalogSchemaTable({ dataset, maxRows, variant = "full" }: { dataset: CatalogDataset; maxRows?: number; variant?: CatalogSchemaTableVariant }) {
+  const data = useMemo(
+    () => {
+      const firstSampleRow = dataset.sampleRows[0] ?? [];
+
+      return dataset.schema.slice(0, maxRows ?? dataset.schema.length).map(([name, type], index) => {
+        const sampleValue = firstSampleRow[index];
+
+        return {
+          description: getCatalogFieldDescription(dataset, name, type),
+          id: `${name}-${index}`,
+          name,
+          sample: sampleValue === undefined || String(sampleValue).trim() === "" ? "-" : String(sampleValue),
+          type,
+        };
+      });
+    },
+    [dataset.name, dataset.sampleRows, dataset.schema, maxRows],
+  );
+  const columns = useMemo<ColumnDef<CatalogSchemaRow>[]>(
+    () => {
+      const baseColumns: ColumnDef<CatalogSchemaRow>[] = [
+        {
+          accessorKey: "name",
+          cell: (info) => <span title={info.getValue<string>()}>{info.getValue<string>()}</span>,
+          enableSorting: variant !== "preview",
+          header: "컬럼명",
+          meta: {
+            cellClassName: "catalog-schema-name-cell",
+            widthClassName: variant === "preview" ? "w-[58%]" : "w-[28%]",
+          } as DataTableColumnMeta,
+        },
+        {
+          accessorKey: "type",
+          cell: (info) => <Badge shape="compact" size="sm" variant="muted">{info.getValue<string>()}</Badge>,
+          enableSorting: variant !== "preview",
+          header: "타입",
+          meta: {
+            widthClassName: variant === "preview" ? "w-[42%]" : "w-[18%]",
+          } as DataTableColumnMeta,
+        },
+      ];
+
+      if (variant === "preview") return baseColumns;
+
+      return [
+        ...baseColumns,
+        {
+          accessorKey: "sample",
+          cell: (info) => <span className="catalog-schema-sample-cell" title={info.getValue<string>()}>{info.getValue<string>()}</span>,
+          enableSorting: true,
+          header: "샘플",
+          meta: {
+            widthClassName: "w-[28%]",
+          } as DataTableColumnMeta,
+        },
+        {
+          accessorKey: "description",
+          cell: (info) => <span title={info.getValue<string>()}>{info.getValue<string>()}</span>,
+          enableSorting: true,
+          header: "설명",
+          meta: {
+            cellClassName: "catalog-schema-description-cell",
+            widthClassName: "w-[26%]",
+          } as DataTableColumnMeta,
+        },
+      ];
+    },
+    [variant],
+  );
+  return (
+    <DataTable
+      className={variant === "preview" ? "catalog-schema-table-wrap preview" : "catalog-schema-table-wrap"}
+      columns={columns}
+      data={data}
+      emptyState={{
+        title: "스키마 컬럼이 없습니다.",
+        description: "선택한 데이터셋에 표시할 컬럼 정보가 없습니다.",
+      }}
+      enableSorting={variant !== "preview"}
+      getRowId={(row) => row.id}
+      tableClassName={variant === "preview" ? "catalog-schema-preview" : "schema-table catalog-schema-table"}
+      viewportClassName={variant === "preview" ? "catalog-schema-preview-viewport" : "catalog-schema-table-viewport"}
+    />
   );
 }
 
 function CatalogSample({ dataset }: { dataset: CatalogDataset }) {
-  const columns = dataset.schema.slice(0, 5).map(([name]) => name);
+  const pageSize = 100;
+  const [offset, setOffset] = useState(0);
+  const [refreshVersion, setRefreshVersion] = useState(0);
+  const [rowsResult, setRowsResult] = useState<CatalogDatasetRowsResponse | null>(null);
+  const [rowsError, setRowsError] = useState<string | null>(null);
+  const [rowsErrorStatus, setRowsErrorStatus] = useState<number | null>(null);
+  const [isLoadingRows, setIsLoadingRows] = useState(false);
+  const scrollViewportRef = useRef<HTMLDivElement | null>(null);
+  const [horizontalScrollPercent, setHorizontalScrollPercent] = useState(0);
+  const fallbackColumns = dataset.schema.slice(0, 8).map(([name]) => name);
+  const columns = rowsResult?.columns.length ? rowsResult.columns : fallbackColumns;
+  const mayShowStoredPreview = rowsErrorStatus !== 403;
+  const rows = rowsResult?.rows ?? (mayShowStoredPreview ? dataset.sampleRows.slice(0, pageSize) : []);
+  const usingStoredPreview = rowsResult === null && rowsError !== null && mayShowStoredPreview;
+  const pageUnavailable = rowsErrorStatus === 403;
+  const displayOffset = usingStoredPreview || pageUnavailable ? 0 : offset;
+  const totalRows = rowsResult?.rowCount ?? rows.length;
+  const latestSuccessfulRun = useMemo(
+    () => (dataset.materializationRuns ?? [])
+      .filter((run) => run.status === "success")
+      .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))[0] ?? null,
+    [dataset.materializationRuns],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    setIsLoadingRows(true);
+    setRowsError(null);
+    setRowsErrorStatus(null);
+    getCatalogDatasetRows(dataset.id, { limit: pageSize, offset })
+      .then((result) => {
+        if (!cancelled) setRowsResult(result);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        const errorStatus = typeof error === "object" && error && "status" in error
+          ? Number((error as { status?: unknown }).status)
+          : null;
+        setRowsError(errorStatus === 403
+          ? permissionDeniedMessage("데이터셋", "샘플 데이터 조회")
+          : error instanceof Error ? error.message : "데이터셋 행을 불러오지 못했습니다.");
+        setRowsErrorStatus(errorStatus);
+        setRowsResult(null);
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingRows(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [dataset.id, offset, refreshVersion]);
+
+  useEffect(() => {
+    setOffset(0);
+    setRowsResult(null);
+    setRowsError(null);
+    setRowsErrorStatus(null);
+    setHorizontalScrollPercent(0);
+  }, [dataset.id]);
+
+  useEffect(() => {
+    if (!rowsResult || rowsResult.rowCount === 0 || offset < rowsResult.rowCount) return;
+    setOffset(Math.floor((rowsResult.rowCount - 1) / pageSize) * pageSize);
+  }, [offset, rowsResult]);
+
+  useEffect(() => {
+    const viewport = scrollViewportRef.current;
+    if (!viewport) return;
+
+    const updateScrollState = () => {
+      const nextMax = Math.max(0, viewport.scrollWidth - viewport.clientWidth);
+      setHorizontalScrollPercent(nextMax > 0 ? (viewport.scrollLeft / nextMax) * 100 : 0);
+    };
+    const resizeObserver = new ResizeObserver(updateScrollState);
+
+    resizeObserver.observe(viewport);
+    if (viewport.firstElementChild) resizeObserver.observe(viewport.firstElementChild);
+    updateScrollState();
+
+    return () => resizeObserver.disconnect();
+  }, [dataset.id, rowsResult]);
+
+  const updateHorizontalScroll = ([nextPercent]: number[]) => {
+    const viewport = scrollViewportRef.current;
+    if (!viewport) return;
+
+    const nextMax = Math.max(0, viewport.scrollWidth - viewport.clientWidth);
+    viewport.scrollLeft = (nextPercent / 100) * nextMax;
+    setHorizontalScrollPercent(nextPercent);
+  };
+
+  const nextOffset = displayOffset + pageSize;
+  const previousOffset = Math.max(0, displayOffset - pageSize);
+  const hasNext = rowsResult?.hasNext ?? false;
+  const startLabel = totalRows === 0 ? 0 : displayOffset + 1;
+  const endLabel = Math.min(displayOffset + rows.length, totalRows);
+  const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
+  const currentPage = Math.floor(displayOffset / pageSize) + 1;
+  const lastOffset = Math.max(0, (totalPages - 1) * pageSize);
+
   return (
-    <section className="catalog-table-card">
-      <div className="catalog-section-header">
-        <h2>샘플 데이터</h2>
-        <span>읽기 전용 미리보기</span>
-      </div>
-      <div className="catalog-sample-scroll">
-        <table className="schema-table">
-          <thead><tr>{columns.map((column, index) => <th key={`${column}-${index}`}>{column}</th>)}</tr></thead>
-          <tbody>{dataset.sampleRows.map((row, rowIndex) => <tr key={`sample-${rowIndex}`}>{row.map((cell, cellIndex) => <td key={`${rowIndex}-${cellIndex}`}>{cell}</td>)}</tr>)}</tbody>
-        </table>
-      </div>
-    </section>
+    <Panel asChild className="catalog-table-card">
+      <section>
+        <div className="catalog-section-header catalog-sample-header">
+          <div>
+            <h2>샘플 데이터</h2>
+            <span className="catalog-sample-version">
+              {latestSuccessfulRun ? `최신 성공 버전 ${latestSuccessfulRun.runId}` : "현재 데이터셋"}
+            </span>
+          </div>
+          <div className="catalog-sample-actions">
+            <span>{isLoadingRows ? "불러오는 중..." : `${startLabel}-${endLabel} / ${totalRows.toLocaleString()}행`}</span>
+            <Button
+              aria-label="샘플 데이터 새로고침"
+              disabled={isLoadingRows}
+              shape="compact"
+              size="sm"
+              type="button"
+              variant="outline"
+              onClick={() => setRefreshVersion((version) => version + 1)}
+            >
+              <RefreshCw data-icon="inline-start" /> 새로고침
+            </Button>
+          </div>
+        </div>
+        {rowsError ? (
+          <Alert className="m-4" variant="destructive">
+            <AlertCircle />
+            <AlertTitle>{rowsErrorStatus === 403 ? "샘플 데이터 조회 권한이 없습니다." : "실제 데이터를 불러오지 못했습니다."}</AlertTitle>
+            <AlertDescription>
+              {rowsError}{rowsErrorStatus === 403 ? "" : " 저장된 미리보기 데이터를 표시합니다."}
+            </AlertDescription>
+          </Alert>
+        ) : null}
+        <Slider
+          aria-label="샘플 데이터 가로 이동"
+          className="catalog-sample-slider"
+          max={100}
+          min={0}
+          step={1}
+          value={[horizontalScrollPercent]}
+          onValueChange={updateHorizontalScroll}
+        />
+        <ScrollArea
+          className="catalog-sample-scroll"
+          scrollbars="none"
+          viewportProps={{
+            onScroll: (event) => {
+              const viewport = event.currentTarget;
+              const nextMax = Math.max(0, viewport.scrollWidth - viewport.clientWidth);
+              setHorizontalScrollPercent(nextMax > 0 ? (viewport.scrollLeft / nextMax) * 100 : 0);
+            },
+          }}
+          viewportRef={scrollViewportRef}
+        >
+          <Table className="catalog-sample-table">
+            <TableHeader>
+              <TableRow>{columns.map((column, index) => <TableHead key={`${column}-${index}`}>{column}</TableHead>)}</TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.map((row, rowIndex) => (
+                <TableRow key={`dataset-row-${displayOffset + rowIndex}`}>
+                  {columns.map((_, cellIndex) => <TableCell key={`${displayOffset + rowIndex}-${cellIndex}`}>{row[cellIndex] ?? ""}</TableCell>)}
+                </TableRow>
+              ))}
+              {!isLoadingRows && rows.length === 0 ? (
+                <TableRow>
+                  <TableCell className="h-24 text-center text-slate-500" colSpan={Math.max(columns.length, 1)}>
+                    표시할 데이터 행이 없습니다.
+                  </TableCell>
+                </TableRow>
+              ) : null}
+            </TableBody>
+          </Table>
+        </ScrollArea>
+        <div className="catalog-sample-pagination">
+          <Button
+            disabled={displayOffset === 0 || isLoadingRows || usingStoredPreview || pageUnavailable}
+            shape="compact"
+            size="sm"
+            type="button"
+            variant="outline"
+            onClick={() => setOffset(0)}
+          >
+            처음
+          </Button>
+          <PaginationBar
+            className="catalog-pagination"
+            currentPage={currentPage}
+            nextDisabled={!hasNext || isLoadingRows || usingStoredPreview || pageUnavailable}
+            onNext={() => setOffset(nextOffset)}
+            onPrevious={() => setOffset(previousOffset)}
+            previousDisabled={displayOffset === 0 || isLoadingRows || usingStoredPreview || pageUnavailable}
+            rangeLabel={`${startLabel}-${endLabel} / ${totalRows.toLocaleString()}`}
+            totalPages={totalPages}
+          />
+          <Button
+            disabled={displayOffset >= lastOffset || isLoadingRows || usingStoredPreview || pageUnavailable}
+            shape="compact"
+            size="sm"
+            type="button"
+            variant="outline"
+            onClick={() => setOffset(lastOffset)}
+          >
+            마지막
+          </Button>
+        </div>
+      </section>
+    </Panel>
   );
 }
 
 function CatalogLineage({ compact = false, dataset }: { compact?: boolean; dataset: CatalogDataset }) {
   const [lineageGraph, setLineageGraph] = useState<LineageGraph | null>(dataset.lineageGraph ?? null);
   const [selectedColumnKey, setSelectedColumnKey] = useState<string | null>(null);
-  const [flowInstance, setFlowInstance] = useState<ReactFlowInstance | null>(null);
-  const flowWrapperRef = useRef<HTMLDivElement | null>(null);
+  const [selectedDatasetId, setSelectedDatasetId] = useState<string | null>(null);
   const { edges, nodes } = lineageGraph
-    ? buildLineageGraph(lineageGraph, selectedColumnKey, setSelectedColumnKey)
+    ? buildLineageGraph(lineageGraph, selectedColumnKey, selectedDatasetId, setSelectedColumnKey)
     : { edges: [], nodes: [] };
-  const statusMeta = datasetStatusMeta[dataset.status];
+  const selectedLineageDataset = lineageGraph?.datasets.find((item) => item.id === selectedDatasetId) ?? null;
 
   useEffect(() => {
     let isActive = true;
     setLineageGraph(dataset.lineageGraph ?? null);
     setSelectedColumnKey(null);
+    setSelectedDatasetId(null);
     getDatasetLineageGraph(dataset)
       .then((graph) => {
         if (isActive) setLineageGraph(graph);
@@ -808,84 +1446,100 @@ function CatalogLineage({ compact = false, dataset }: { compact?: boolean; datas
     };
   }, [dataset.id]);
 
-  useEffect(() => {
-    if (!flowInstance || !lineageGraph) return;
-
-    const animationFrame = window.requestAnimationFrame(() => {
-      void flowInstance.fitView(lineageFitViewOptions);
-    });
-
-    return () => window.cancelAnimationFrame(animationFrame);
-  }, [edges.length, flowInstance, lineageGraph, nodes.length]);
-
-  useEffect(() => {
-    if (!flowInstance || !flowWrapperRef.current || !lineageGraph || typeof ResizeObserver === "undefined") return;
-
-    let animationFrame: number | null = null;
-    const observer = new ResizeObserver(() => {
-      if (animationFrame !== null) window.cancelAnimationFrame(animationFrame);
-      animationFrame = window.requestAnimationFrame(() => {
-        void flowInstance.fitView(lineageFitViewOptions);
-      });
-    });
-
-    observer.observe(flowWrapperRef.current);
-
-    return () => {
-      if (animationFrame !== null) window.cancelAnimationFrame(animationFrame);
-      observer.disconnect();
-    };
-  }, [flowInstance, lineageGraph]);
-
   return (
-    <section className={compact ? "catalog-lineage-card compact" : "catalog-lineage-card"}>
-      {!compact && (
-        <div className="catalog-lineage-title">
-          <div className="lineage-title-icon"><LayoutGrid size={22} /></div>
-          <div>
-            <h2>{dataset.name}</h2>
-            <span>리니지</span>
-          </div>
-        </div>
-      )}
-      {lineageGraph ? (
-        <div className="catalog-lineage-flow" ref={flowWrapperRef} aria-label={`${dataset.name} lineage graph`}>
-          <ReactFlow
-            edges={edges}
-            fitView
-            fitViewOptions={lineageFitViewOptions}
-            maxZoom={1.2}
-            minZoom={0.35}
-            nodes={nodes}
-            nodesDraggable={false}
-            nodesConnectable={false}
-            nodeTypes={lineageNodeTypes}
-            onInit={setFlowInstance}
-            onPaneClick={() => setSelectedColumnKey(null)}
-            proOptions={{ hideAttribution: true }}
-          >
-            <Background color="#d5dde8" gap={22} />
-            <Controls showInteractive={false} />
-          </ReactFlow>
-        </div>
-      ) : (
-        <div className="catalog-lineage-empty">
-          <strong>리니지를 불러오지 못했습니다.</strong>
-          <span>백엔드 응답 또는 예시 데이터를 확인해 주세요.</span>
-        </div>
-      )}
-      <div className="catalog-lineage-footer">
-        <span>상위 데이터셋 <strong>{Math.max((lineageGraph?.datasets.length ?? 1) - 1, 0)}개</strong></span>
-        <span>레이어 <strong>{dataset.layer}</strong></span>
-        <span>상태 <strong>{statusMeta.label}</strong></span>
-      </div>
-    </section>
+    <>
+      <Panel asChild className={compact ? "catalog-lineage-card compact" : "catalog-lineage-card"}>
+        <section>
+          {!compact && (
+            <PanelHeader
+              bordered={false}
+              className="catalog-lineage-title min-h-0 p-0"
+              description="리니지"
+              icon={<Share2 size={18} />}
+              iconVariant="outline"
+              title={dataset.name}
+            />
+          )}
+          {lineageGraph ? (
+            <div className="catalog-lineage-flow" aria-label={`${dataset.name} 리니지 그래프`}>
+              <ReactFlow
+                edges={edges}
+                fitView
+                fitViewOptions={lineageFitViewOptions}
+                maxZoom={1.4}
+                minZoom={0.25}
+                nodes={nodes}
+                nodesConnectable={false}
+                nodesDraggable={false}
+                nodeTypes={lineageNodeTypes}
+                onNodeClick={(_, node) => setSelectedDatasetId(node.id)}
+                onPaneClick={() => {
+                  setSelectedColumnKey(null);
+                  setSelectedDatasetId(null);
+                }}
+                proOptions={{ hideAttribution: true }}
+              >
+                <Background color="#d5dde8" gap={22} />
+                <Controls position="bottom-left" showInteractive={false} />
+              </ReactFlow>
+            </div>
+          ) : (
+            <div className="catalog-lineage-empty">
+              <strong>리니지를 불러오지 못했습니다.</strong>
+              <span>백엔드 응답 또는 예시 데이터를 확인해 주세요.</span>
+            </div>
+          )}
+        </section>
+      </Panel>
+
+      <Sheet open={selectedLineageDataset !== null} onOpenChange={(open) => !open && setSelectedDatasetId(null)}>
+        {lineageGraph && selectedLineageDataset ? (
+          <SheetContent className="flex h-full flex-col gap-0 p-0" closeLabel="리니지 상세 닫기" side="right">
+            <SheetHeader className="gap-3 p-6 pr-16">
+              <Badge className="w-fit" shape="compact" variant={getLineageLayerBadgeVariant(selectedLineageDataset.layer)}>
+                {getLineageLayerLabel(selectedLineageDataset.layer)}
+              </Badge>
+              <SheetTitle className="break-words">{selectedLineageDataset.name}</SheetTitle>
+              <SheetDescription>{selectedLineageDataset.engine} 데이터셋의 컬럼과 연결 정보를 확인합니다.</SheetDescription>
+            </SheetHeader>
+            <Separator />
+            <ScrollArea className="min-h-0 flex-1">
+              <div className="flex flex-col gap-6 p-6">
+                <section className="flex flex-col gap-3">
+                  <h3 className="text-sm font-semibold text-slate-950">연결 정보</h3>
+                  <div className="flex flex-wrap gap-2">
+                    <Badge shape="compact" variant="outline">상위 {countLineageConnections(lineageGraph, selectedLineageDataset.id, "upstream")}개</Badge>
+                    <Badge shape="compact" variant="outline">하위 {countLineageConnections(lineageGraph, selectedLineageDataset.id, "downstream")}개</Badge>
+                    <Badge shape="compact" variant="outline">컬럼 {selectedLineageDataset.columns.length}개</Badge>
+                  </div>
+                </section>
+                <Separator />
+                <section className="flex flex-col gap-3">
+                  <h3 className="text-sm font-semibold text-slate-950">컬럼</h3>
+                  <Card className="overflow-hidden" size="none" variant="muted">
+                    <CardContent className="divide-y divide-slate-200 p-0 pt-0">
+                      {selectedLineageDataset.columns.map((column) => (
+                        <div className="flex min-w-0 items-center justify-between gap-3 px-4 py-3" key={column.id}>
+                          <span className="min-w-0 truncate text-sm font-medium text-slate-900" title={column.name}>{column.name}</span>
+                          <Badge shape="compact" size="sm" variant={getColumnTypeBadgeVariant(column.type)}>{column.type}</Badge>
+                        </div>
+                      ))}
+                    </CardContent>
+                  </Card>
+                </section>
+              </div>
+            </ScrollArea>
+          </SheetContent>
+        ) : null}
+      </Sheet>
+    </>
   );
 }
 
 function buildLineageGraph(
   graph: LineageGraph,
   selectedColumnKey: string | null,
+  selectedDatasetId: string | null,
   onColumnSelect: (columnKey: string | null) => void,
 ): { edges: Edge[]; nodes: FlowNode[] } {
   const graphDatasets = graph.datasets;
@@ -909,16 +1563,14 @@ function buildLineageGraph(
         data: {
           activeColumnKey: selectedColumnKey,
           columns,
+          dataset: lineageDataset,
           dimmed: !isRelated,
-          engine: lineageDataset.engine,
           handleMode: getLineageHandleMode(hasIncoming, hasOutgoing),
           highlighted: Boolean(selection && isRelated),
-          layerLabel: getLineageLayerLabel(lineageDataset.layer),
           nodeId: lineageDataset.id,
           onColumnSelect,
           relatedColumnKeys: relatedColumnKeys ? Array.from(relatedColumnKeys) : null,
-          tableName: lineageDataset.name,
-          tone: getLayerTone(lineageDataset.layer),
+          selected: selectedDatasetId === lineageDataset.id,
         },
         id: lineageDataset.id,
         position: {
@@ -966,38 +1618,55 @@ function getLineageTableHeight(columnCount: number): number {
 
 function LineageTableNode({ data }: { data: LineageTableNodeData }) {
   const updateNodeInternals = useUpdateNodeInternals();
+  const layerVariant = getLineageLayerBadgeVariant(data.dataset.layer);
+  const displayName = getLineageNodeDisplayName(data.dataset);
 
   useEffect(() => {
     updateNodeInternals(data.nodeId);
   }, [data.nodeId, updateNodeInternals]);
 
   return (
-    <article className={[
-      "xflow-schema-node",
-      data.tone,
-      data.dimmed ? "dimmed" : "",
-      data.highlighted ? "highlighted" : "",
-    ].filter(Boolean).join(" ")}>
-      <header className="xflow-schema-header">
-        <div className="xflow-schema-icon">
-          <Table2 size={18} />
+    <Card
+      className={cn(
+        "w-60 overflow-visible p-0 transition-[border-color,box-shadow,opacity]",
+        data.dimmed && "opacity-35",
+        data.highlighted && "border-orange-400 shadow-md",
+        data.selected && "border-blue-500 ring-2 ring-blue-100",
+      )}
+      size="none"
+    >
+      <CardHeader className="flex min-h-16 flex-row items-center gap-3 border-b border-slate-200 p-3">
+        <div className="grid size-10 shrink-0 place-items-center rounded-md border border-blue-100 bg-blue-50 text-blue-600">
+          <Table2 className="size-5" />
         </div>
-        <div className="xflow-schema-title">
-          <strong title={data.tableName}>{data.tableName}</strong>
-          <span>{data.layerLabel} · {data.engine}</span>
+        <div className="min-w-0 flex-1">
+          <CardTitle className="break-words text-sm leading-5" title={displayName}>{displayName}</CardTitle>
+          <CardDescription className="mt-1 flex flex-wrap items-center gap-1 text-xs leading-4">
+            <Badge shape="compact" size="sm" variant={layerVariant}>{data.dataset.layer}</Badge>
+            <span>{data.dataset.engine}</span>
+          </CardDescription>
         </div>
-      </header>
-      <div className="xflow-column-head">
+      </CardHeader>
+      <CardContent className="p-0 pt-0">
+      <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 border-b border-slate-200 bg-slate-50 px-4 py-1.5 text-[10px] font-semibold text-slate-500">
         <span>컬럼</span>
-        <span>타입</span>
+        <span className="text-right">타입</span>
       </div>
-      <div className="xflow-schema-columns">
+      <div>
         {data.columns.map((column) => (
           <LineageColumnRow column={column} data={data} key={column.id} />
         ))}
       </div>
-    </article>
+      </CardContent>
+    </Card>
   );
+}
+
+function getLineageNodeDisplayName(dataset: LineageGraphDataset): string {
+  if (dataset.layer !== "SOURCE") return dataset.name;
+
+  const enginePrefix = new RegExp(`^${escapeRegExp(dataset.engine)}\\s+`, "i");
+  return dataset.name.replace(enginePrefix, "").trim() || dataset.name;
 }
 
 function LineageColumnRow({ column, data }: { column: LineageColumn; data: LineageTableNodeData }) {
@@ -1006,38 +1675,41 @@ function LineageColumnRow({ column, data }: { column: LineageColumn; data: Linea
   const isRelated = !data.relatedColumnKeys || data.relatedColumnKeys.includes(columnKey);
 
   return (
-    <button
-      className={[
-        "xflow-column-row",
-        isActive ? "active" : "",
-        data.relatedColumnKeys && !isRelated ? "dimmed" : "",
-        data.relatedColumnKeys && isRelated ? "related" : "",
-      ].filter(Boolean).join(" ")}
+    <Button
+      className={cn(
+        "nodrag relative grid min-h-8 w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-none border-b border-slate-100 px-4 text-left text-xs last:border-b-0",
+        isActive && "bg-orange-100 ring-1 ring-inset ring-orange-300 hover:bg-orange-100",
+        data.relatedColumnKeys && !isRelated && "opacity-30",
+        data.relatedColumnKeys && isRelated && !isActive && "bg-orange-50 hover:bg-orange-50",
+      )}
       onClick={(event) => {
         event.stopPropagation();
         data.onColumnSelect(isActive ? null : columnKey);
       }}
+      shape="compact"
+      size="content"
       type="button"
+      variant="ghost"
     >
       {(data.handleMode === "target" || data.handleMode === "both") && (
         <Handle
-          className="xflow-column-handle left target-handle"
+          className="!size-3 !border-2 !border-white !bg-blue-500"
           id={lineageHandleId(data.nodeId, column.name, "target")}
           position={Position.Left}
           type="target"
         />
       )}
-      <span>{column.name}</span>
-      <b className={`lineage-type-pill ${getColumnTypeTone(column.type)}`}>{column.type}</b>
+      <span className="min-w-0 truncate" title={column.name}>{column.name}</span>
+      <Badge className="justify-self-end" shape="compact" size="sm" variant={getColumnTypeBadgeVariant(column.type)}>{column.type}</Badge>
       {(data.handleMode === "source" || data.handleMode === "both") && (
         <Handle
-          className="xflow-column-handle right source-handle"
+          className="!size-3 !border-2 !border-white !bg-blue-500"
           id={lineageHandleId(data.nodeId, column.name, "source")}
           position={Position.Right}
           type="source"
         />
       )}
-    </button>
+    </Button>
   );
 }
 
@@ -1058,16 +1730,17 @@ function buildColumnEdge({
   target: string;
   targetHandle: string;
 }): Edge {
+  const strokeColor = selected && active ? "#2563eb" : "#64748b";
+
   return {
     animated: false,
-    className: selected ? active ? "lineage-column-edge active" : "lineage-column-edge muted" : "lineage-column-edge",
     id,
-    markerEnd: { color: "#fb923c", type: MarkerType.ArrowClosed },
+    markerEnd: { color: strokeColor, height: 16, type: MarkerType.ArrowClosed, width: 16 },
     source,
     sourceHandle,
     style: {
-      stroke: "#fb923c",
-      strokeDasharray: "6 5",
+      opacity: selected && !active ? 0.28 : 1,
+      stroke: strokeColor,
       strokeWidth: selected && active ? 2.4 : 1.5,
     },
     target,
@@ -1178,21 +1851,27 @@ function getLineageLayerLabel(layer: LineageLayer): string {
   return `${layer} LAYER`;
 }
 
-function getLayerTone(layer: LineageLayer): LineageTableNodeData["tone"] {
-  if (layer === "GOLD") return "gold";
-  if (layer === "SILVER") return "silver";
-  if (layer === "BRONZE") return "bronze";
-  if (layer === "CONSUMER") return "downstream";
-  return "source";
+function getLineageLayerBadgeVariant(layer: LineageLayer): BadgeProps["variant"] {
+  if (layer === "GOLD" || layer === "SILVER") return "default";
+  if (layer === "BRONZE" || layer === "SOURCE") return "warning";
+  return "success";
 }
 
-function getColumnTypeTone(type: string): string {
+function getColumnTypeBadgeVariant(type: string): BadgeProps["variant"] {
   const normalized = type.toLowerCase();
-  if (["int", "integer", "bigint"].includes(normalized)) return "integer";
-  if (["decimal", "double", "float", "number"].includes(normalized)) return "double";
-  if (["timestamp", "date", "datetime"].includes(normalized)) return "timestamp";
-  if (normalized.includes("json")) return "json";
-  return "string";
+  if (["int", "integer", "bigint", "decimal", "double", "float", "number"].includes(normalized)) return "default";
+  if (["timestamp", "date", "datetime"].includes(normalized)) return "warning";
+  if (normalized.includes("json")) return "secondary";
+  return "success";
+}
+
+function countLineageConnections(graph: LineageGraph, datasetId: string, direction: "upstream" | "downstream"): number {
+  const connectedDatasetIds = new Set(
+    graph.edges
+      .filter((edge) => direction === "upstream" ? edge.toDatasetId === datasetId : edge.fromDatasetId === datasetId)
+      .map((edge) => direction === "upstream" ? edge.fromDatasetId : edge.toDatasetId),
+  );
+  return connectedDatasetIds.size;
 }
 
 function lineageHandleId(datasetId: string, columnName: string, kind: "source" | "target"): string {

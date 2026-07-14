@@ -1,0 +1,389 @@
+.root {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: 16px;
+  padding: 2px;
+}
+
+.evaluation,
+.timeline {
+  display: grid;
+  min-width: 0;
+  gap: 12px;
+}
+
+.evaluation {
+  border: 1px solid #dbe3ef;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 14px;
+}
+
+.sectionHeading,
+.timelineHeading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.sectionHeading > span,
+.timelineHeading > span {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.sectionHeading > strong,
+.timelineHeading > strong {
+  min-width: 0;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.high .sectionHeading > strong,
+.error .sectionHeading > strong {
+  color: #b91c1c;
+}
+
+.medium .sectionHeading > strong {
+  color: #a16207;
+}
+
+.evaluationMetrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #e2e8f0;
+}
+
+.evaluationMetrics > div {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+  background: #fff;
+  padding: 10px 12px;
+}
+
+.evaluationMetrics span {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.evaluationMetrics strong {
+  min-width: 0;
+  color: #0f172a;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.alert,
+.warning,
+.resultError {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.45;
+  padding: 9px 11px;
+}
+
+.alert,
+.resultError {
+  border: 1px solid #fecaca;
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.warning {
+  border: 1px solid #fde68a;
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.alert span,
+.warning span,
+.resultError span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.alert svg,
+.warning svg,
+.resultError svg {
+  flex: 0 0 auto;
+}
+
+.resultError {
+  justify-content: space-between;
+}
+
+.resultError > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.idleState {
+  display: grid;
+  min-height: 160px;
+  place-content: center;
+  justify-items: center;
+  gap: 6px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #64748b;
+  padding: 24px;
+  text-align: center;
+}
+
+.idleState strong {
+  color: #0f172a;
+  font-size: 14px;
+}
+
+.idleState span {
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.stageList {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+}
+
+.stage {
+  display: grid;
+  min-width: 0;
+  min-height: 50px;
+  align-content: center;
+  border: 1px solid #dbe3ef;
+  border-radius: 7px;
+  background: #fff;
+  padding: 10px 12px;
+}
+
+.stage.completed,
+.stage.expired {
+  background: #f8fafc;
+}
+
+.stage.active {
+  min-height: 92px;
+  border-color: #bfdbfe;
+  border-left: 3px solid #2563eb;
+  background: #f8fbff;
+}
+
+.stage.failed,
+.stage.cancelled {
+  border-color: #fecaca;
+  border-left: 3px solid #dc2626;
+  background: #fffafa;
+}
+
+.stage.cancelled {
+  border-left-color: #64748b;
+}
+
+.stageHeader {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.stageTitle,
+.stageMeta {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.stageTitle {
+  color: #166534;
+  font-size: 12px;
+}
+
+.active .stageTitle {
+  color: #1d4ed8;
+}
+
+.failed .stageTitle {
+  color: #b91c1c;
+}
+
+.cancelled .stageTitle {
+  color: #475569;
+}
+
+.expired .stageTitle {
+  color: #92400e;
+}
+
+.stageMeta {
+  justify-content: flex-end;
+}
+
+.stageSummary {
+  min-width: 0;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.stageBody {
+  display: grid;
+  min-width: 0;
+  gap: 9px;
+  padding: 10px 0 0 23px;
+}
+
+.stageMetrics {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+
+.stageMetrics span {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.stageMetrics strong {
+  color: #334155;
+  white-space: nowrap;
+}
+
+.stageState {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.indeterminateProgress {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+}
+
+.indeterminateProgressHeader {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.indeterminateProgressHeader strong {
+  color: #1d4ed8;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.indeterminateProgressTrack {
+  position: relative;
+  display: block;
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #dbeafe;
+}
+
+.indeterminateProgressTrack > span {
+  position: absolute;
+  inset-block: 0;
+  width: 38%;
+  border-radius: inherit;
+  background: #2563eb;
+  animation: indeterminate-progress 1.15s ease-in-out infinite;
+}
+
+.spinner {
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes indeterminate-progress {
+  from { transform: translateX(-110%); }
+  to { transform: translateX(300%); }
+}
+
+@media (max-width: 760px) {
+  .sectionHeading,
+  .timelineHeading,
+  .stageHeader {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 7px;
+  }
+
+  .sectionHeading > strong,
+  .timelineHeading > strong,
+  .stageSummary {
+    text-align: left;
+  }
+
+  .evaluationMetrics {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .stageMeta {
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    padding-left: 23px;
+  }
+
+  .stageBody {
+    padding-left: 0;
+  }
+
+  .resultError {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner,
+  .indeterminateProgressTrack > span {
+    animation: none;
+  }
+}

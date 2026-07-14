@@ -1,18 +1,39 @@
 @import url("https://fonts.googleapis.com/css2?family=Gothic+A1:wght@400;600;700;800&display=swap");
+@import url("https://cdn.jsdelivr.net/gh/sun-typeface/SUIT@2/fonts/variable/woff2/SUIT-Variable.css");
 
 @import "./styles/base.css";
 @import "./styles/layout.css";
 @import "./styles/ingest.css";
 @import "./styles/ingest-dag.css";
 @import "./styles/catalog.css";
-@import "./styles/sql.css";
 @import "./styles/dashboard.css";
 @import "./styles/dashboard-runtime.css";
 @import "./styles/etl.css";
+@import "./styles/ai.css";
 @import "./styles/responsive.css";
+@import "./styles/landing.css";
+@import "./styles/access-control.css";
 
-.page-body.jobs-body > .jobs-landing,
-.page-body.jobs-body > .jobs-table-demo-page {
+.page-title h1,
+.dashboard-header h1 {
+  color: #0f172a;
+  font-size: var(--page-title-font-size);
+  font-weight: var(--page-title-font-weight);
+  letter-spacing: 0;
+  line-height: var(--page-title-line-height);
+}
+
+.page-title p,
+.dashboard-header p {
+  max-width: 720px;
+  color: #475569;
+  font-size: var(--page-title-description-size);
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: var(--page-title-description-line-height);
+}
+
+.page-body.jobs-body > .jobs-landing {
   width: 100%;
   max-width: none;
   margin-right: 0;

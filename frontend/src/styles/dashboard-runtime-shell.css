@@ -1,0 +1,439 @@
+.page-body > .dashboard-runtime-page,
+.dashboard-runtime-page {
+  display: block;
+  height: 100%;
+  min-height: 0;
+  max-width: none;
+}
+
+.asklake-dashboard-runtime {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid #dbe4ee;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #0f172a;
+  --dash-bg: #f8fafc;
+  --dash-bg-deep: #f1f5f9;
+  --dash-panel: #ffffff;
+  --dash-panel-2: #eef4ff;
+  --dash-border: #dbe4ee;
+  --dash-border-strong: #b8c6d8;
+  --dash-text: #0f172a;
+  --dash-text-muted: #64748b;
+  --dash-blue: #2563eb;
+  --dash-green: #16a34a;
+}
+
+.asklake-dashboard-topbar {
+  display: flex;
+  min-height: 72px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  border-bottom: 1px solid var(--dash-border);
+  background: #ffffff;
+  padding: 12px 24px;
+}
+
+.asklake-dashboard-title {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.asklake-dashboard-title-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.asklake-dashboard-title span {
+  color: var(--dash-text-muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.asklake-dashboard-title h1 {
+  color: var(--dash-text);
+  font-size: 24px;
+  line-height: 1.2;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.asklake-dashboard-title-edit {
+  display: flex;
+  min-width: min(420px, 52vw);
+  align-items: center;
+  gap: 6px;
+}
+
+.asklake-dashboard-title-edit input {
+  width: 100% !important;
+  min-width: min(260px, 44vw);
+  height: 36px !important;
+  min-height: 36px !important;
+  border: 1px solid var(--dash-border-strong);
+  border-radius: 8px;
+  background: #ffffff !important;
+  color: var(--dash-text);
+  box-shadow: none !important;
+  font-size: 16px !important;
+  font-weight: 800;
+  line-height: 1.2;
+  padding: 0 10px !important;
+}
+
+.asklake-dashboard-title-edit button,
+.asklake-dashboard-title-edit-button {
+  display: grid;
+  width: 36px !important;
+  min-width: 36px !important;
+  height: 36px !important;
+  min-height: 36px !important;
+  place-items: center;
+  border: 1px solid var(--dash-border-strong);
+  border-radius: 8px;
+  background: #ffffff !important;
+  color: #475569;
+  box-shadow: none !important;
+  padding: 0 !important;
+}
+
+.asklake-dashboard-title-edit button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.asklake-dashboard-title-edit-button {
+  border-color: transparent;
+  color: #94a3b8;
+}
+
+.asklake-dashboard-title-edit-button:hover {
+  border-color: var(--dash-border-strong);
+  color: #2563eb;
+}
+
+.asklake-dashboard-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.asklake-dashboard-action,
+.asklake-dashboard-icon-action {
+  display: inline-flex;
+  height: 36px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid var(--dash-border-strong);
+  border-radius: 6px;
+  background: #ffffff;
+  color: var(--dash-text);
+  font-size: 13px;
+  font-weight: 800;
+  padding: 0 12px;
+}
+
+.asklake-dashboard-action.primary {
+  border-color: #2563eb;
+  background: #2563eb;
+  color: #ffffff;
+}
+
+.asklake-dashboard-action:disabled,
+.asklake-dashboard-icon-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.asklake-dashboard-action:focus-visible,
+.asklake-dashboard-icon-action:focus-visible,
+.asklake-dashboard-data-tab:focus-visible,
+.asklake-dashboard-tab-button:focus-visible,
+.asklake-dashboard-tab-edit input:focus-visible,
+.asklake-dashboard-tab-edit button:focus-visible,
+.asklake-dashboard-tab-delete:focus-visible,
+.asklake-dashboard-tab-rename:focus-visible,
+.asklake-dashboard-tab-add:focus-visible,
+.asklake-dashboard-title-edit input:focus-visible,
+.asklake-dashboard-title-edit button:focus-visible,
+.asklake-dashboard-title-edit-button:focus-visible,
+.asklake-widget-config-form input:focus-visible,
+.asklake-widget-config-form select:focus-visible,
+.asklake-widget-config-form textarea:focus-visible,
+.asklake-widget-create-button:focus-visible,
+.asklake-dashboard-share-sheet button:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.25);
+  outline-offset: 2px;
+}
+
+.asklake-dashboard-icon-action {
+  width: 36px;
+  padding: 0;
+}
+
+.asklake-dashboard-action:hover,
+.asklake-dashboard-icon-action:hover,
+.asklake-dashboard-page-tab:hover,
+.asklake-dashboard-tab-add:hover {
+  border-color: #94a3b8;
+  background: #f1f5f9;
+}
+
+.asklake-dashboard-action.primary:hover:not(:disabled) {
+  border-color: #1d4ed8;
+  background: #1d4ed8;
+  color: #ffffff;
+}
+
+.asklake-dashboard-subnav {
+  display: flex;
+  min-height: 58px;
+  align-items: center;
+  border-bottom: 1px solid var(--dash-border);
+  background: #ffffff;
+  padding: 8px 20px;
+}
+
+.asklake-dashboard-view-switcher {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #f8fafc;
+  padding: 4px;
+}
+
+.asklake-dashboard-view-separator {
+  height: 24px;
+  margin: 0 2px;
+}
+
+.asklake-dashboard-data-toggle {
+  flex: 0 0 auto;
+  background: transparent;
+  padding: 0;
+}
+
+.asklake-dashboard-runtime-notice {
+  border-bottom: 1px solid var(--dash-border);
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 13px;
+  font-weight: 800;
+  padding: 10px 24px;
+}
+
+.asklake-dashboard-runtime-notice.success {
+  background: #f0fdf4;
+  color: #15803d;
+}
+
+.asklake-dashboard-runtime-notice.error {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.asklake-dashboard-share-sheet {
+  display: flex;
+  width: min(26rem, calc(100vw - 2rem));
+  flex-direction: column;
+  gap: 20px;
+}
+
+.asklake-dashboard-share-sheet-body {
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+}
+
+.asklake-dashboard-share-link {
+  display: block;
+  border: 1px solid var(--dash-border);
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #1d4ed8;
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  padding: 12px;
+}
+
+.asklake-dashboard-share-sheet-footer {
+  margin-top: auto;
+}
+
+.asklake-dashboard-data-tab {
+  flex: 0 0 auto;
+  min-height: 34px;
+  padding: 0 12px;
+  white-space: nowrap;
+}
+
+.asklake-dashboard-data-tab:disabled {
+  cursor: default;
+}
+
+.asklake-dashboard-tabs-root {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.asklake-dashboard-tabs {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  min-height: 34px;
+  justify-content: flex-start;
+  align-items: center;
+  gap: 2px;
+  overflow-x: auto;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.asklake-dashboard-page-tab {
+  position: relative;
+  display: inline-flex;
+  min-width: max-content;
+  height: 34px;
+  align-items: center;
+  border-radius: 6px;
+  background: transparent;
+}
+
+.asklake-dashboard-tab-button {
+  height: 100% !important;
+  min-height: 0 !important;
+  min-width: max-content;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  color: #475569;
+  font-size: 14px;
+  font-weight: 800;
+  padding: 0 12px !important;
+}
+
+.asklake-dashboard-tab-edit {
+  display: flex;
+  height: 100%;
+  align-items: center;
+  gap: 4px;
+  padding-left: 8px;
+}
+
+.asklake-dashboard-tab-edit input,
+.asklake-dashboard-tab-edit .asklake-dashboard-tab-edit-input {
+  width: 150px !important;
+  max-width: 24vw;
+  height: 28px !important;
+  min-height: 28px !important;
+  border: 1px solid var(--dash-border-strong);
+  border-radius: 5px;
+  background: #ffffff !important;
+  color: #0f172a;
+  box-shadow: none !important;
+  font-size: 13px !important;
+  font-weight: 800;
+  padding: 5px 7px !important;
+}
+
+.asklake-dashboard-tab-edit button,
+.asklake-dashboard-tab-edit .asklake-dashboard-tab-edit-action,
+.asklake-dashboard-tab-rename {
+  display: grid;
+  width: 24px !important;
+  min-width: 24px !important;
+  height: 24px !important;
+  min-height: 24px !important;
+  place-items: center;
+  border: 0 !important;
+  border-radius: 999px;
+  background: transparent !important;
+  box-shadow: none !important;
+  color: #94a3b8;
+  padding: 0 !important;
+}
+
+.asklake-dashboard-tab-edit button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.asklake-dashboard-tab-edit button svg,
+.asklake-dashboard-tab-rename svg,
+.asklake-dashboard-tab-delete svg,
+.asklake-dashboard-tab-add svg,
+.asklake-dashboard-title-edit button svg,
+.asklake-dashboard-title-edit-button svg {
+  width: 14px !important;
+  height: 14px !important;
+}
+
+.asklake-dashboard-tab-rename:hover {
+  background: #dbeafe;
+  color: #2563eb;
+}
+
+.asklake-dashboard-page-tab.active {
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+}
+
+.asklake-dashboard-page-tab.active .asklake-dashboard-tab-button {
+  color: #0f172a;
+}
+
+.asklake-dashboard-tab-delete {
+  display: grid;
+  width: 24px !important;
+  min-width: 24px !important;
+  height: 24px !important;
+  min-height: 24px !important;
+  margin-right: 6px;
+  place-items: center;
+  border: 0 !important;
+  border-radius: 999px;
+  background: transparent !important;
+  box-shadow: none !important;
+  color: #94a3b8;
+  opacity: 0.72;
+  padding: 0 !important;
+}
+
+.asklake-dashboard-tab-delete:hover {
+  background: #fee2e2;
+  color: #b91c1c;
+  opacity: 1;
+}
+
+.asklake-dashboard-tabs .asklake-dashboard-tab-add {
+  display: grid;
+  width: 34px !important;
+  min-width: 34px !important;
+  height: 34px !important;
+  min-height: 34px !important;
+  border: 1px solid transparent !important;
+  border-radius: 6px;
+  background: transparent !important;
+  box-shadow: none !important;
+  color: #475569;
+  place-items: center;
+  padding: 0 !important;
+}

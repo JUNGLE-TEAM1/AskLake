@@ -1,15 +1,22 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { ApiError } from "../types";
 import { catalogDatasets, etlJobs } from "../data/mockData";
 import { apiConfig } from "../services/apiClient";
-import { applyDraftPipelinePatch } from "../services/draftPipelineContract";
+import { deleteDatasetMaterializationRun } from "../services/catalogApi";
+import { applyDraftPipelinePatch, hydrateDraftPipelineFromJob } from "../services/draftPipelineContract";
 import {
   createPipelineDraft as createMockPipelineDraft,
+  updatePipelineDraft as updateMockPipelineDraft,
   getDatasets,
   getJobs,
   runJobCommand as runMockJobCommand,
 } from "../services/mockApi";
 import {
   createPipelineDraft as createLivePipelineDraft,
+  createTrinoSqlJob as createLiveTrinoSqlJob,
+  deletePipelineJob as deleteLivePipelineJob,
+  getJob as getLiveJob,
+  updatePipelineDraft as updateLivePipelineDraft,
   runJobCommand as runLiveJobCommand,
 } from "../services/pipelineApi";
 import { normalizeDatasetStatus, normalizeJobStatus } from "../utils/statusMeta";
@@ -18,19 +25,22 @@ import type {
   AuditTargetType,
   CatalogDataset,
   CreateDerivedDatasetRequest,
+  CreateTrinoSqlJobRequest,
   DagStepsByRunId,
   DraftPipeline,
   DraftPipelinePatch,
   FlowId,
   JobCommand,
   JobExecutionEvidence,
+  JobListFacets,
+  JobListQuery,
   JobRowData,
+  JobRunOutcome,
   JobRunSummary,
   RunsByJobId,
   SelectedRunIdByJobId,
   SchemaColumnDraft,
   SqlResultDraft,
-  TransformStepDraft,
 } from "../types";
 
 type WriteAuditLog = (action: string, apiPath: string, targetId: string, result?: AuditResult, options?: { targetType?: AuditTargetType }) => void;
@@ -47,8 +57,88 @@ type CommandPendingByJobId = Partial<Record<string, ServerJobCommand>>;
 const catalogDatasetStorageKey = "asklake.catalogDatasets";
 const legacyDerivedDatasetStorageKey = "asklake.derivedDatasets";
 const maxStoredCatalogDatasets = 30;
+const snapshotPollIntervalMs = 1000;
+const snapshotPollMaxAttempts = 900;
+const snapshotPollMaxConsecutiveErrors = 5;
 
-const initialDraftPipeline: DraftPipeline = {
+function normalizeInitialDraftPipeline(draft: DraftPipeline): DraftPipeline {
+  return {
+    ...draft,
+    id: "",
+    permission: {
+      ...draft.permission,
+      summary: "기본 소유자만 설정되었습니다.",
+    },
+    quality: {
+      ...draft.quality,
+      invalidRows: [],
+      rules: [],
+      score: undefined,
+      status: "idle",
+      summary: "데이터 품질 규칙을 설정하세요.",
+    },
+    recordParsing: {
+      columns: [],
+      delimiterKind: "whitespace",
+      delimiterPattern: "\\s+",
+      enabled: false,
+      expectedFieldCount: 0,
+      header: false,
+    },
+    schedule: {
+      ...draft.schedule,
+      endDate: "",
+      label: "수동 실행",
+      mode: "manual",
+      nextRun: "-",
+      nextRunUtc: undefined,
+      overlapPolicy: "skip_if_running",
+      startDate: "",
+      summary: "수동 실행 · 저장 후 목록에서 직접 실행",
+      timezone: "(GMT+09:00) Seoul, Tokyo",
+      watermarkPolicy: {
+        column: "updated_at",
+        enabled: false,
+        lookbackMinutes: 5,
+        mode: "full_refresh",
+      },
+    },
+    schema: {
+      ...draft.schema,
+      columns: [],
+      sampleRows: [],
+      summary: "스키마 추론 대기",
+    },
+    source: {
+      ...draft.source,
+      connectionMessage: "소스를 선택하고 연결 테스트를 실행하세요.",
+      connectionStatus: "idle",
+      sourceConfig: [],
+      sourceLabel: "",
+      sourceType: "",
+    },
+    target: {
+      ...draft.target,
+      datasetName: "",
+      description: "",
+      partition: "",
+      partitionColumns: [],
+      rag: false,
+      storagePath: "",
+      tableName: "",
+      tags: [],
+      testStatus: "idle",
+    },
+    transform: {
+      ...draft.transform,
+      outputColumns: [],
+      steps: [],
+      summary: "변환 규칙을 설정하세요.",
+    },
+  };
+}
+
+const baseInitialDraftPipeline: DraftPipeline = normalizeInitialDraftPipeline({
   id: "pair_a_customer_review_gold",
   permission: {
     owner: "data-team-01",
@@ -62,14 +152,26 @@ const initialDraftPipeline: DraftPipeline = {
     status: "pass",
     summary: "품질 규칙 5개 · 유효하지 않은 행 격리",
   },
+  recordParsing: {
+    columns: [],
+    delimiterKind: "whitespace",
+    delimiterPattern: "\\s+",
+    enabled: false,
+    expectedFieldCount: 0,
+    header: false,
+  },
   schedule: {
     endDate: "",
     label: "매주 목요일 10:30",
     mode: "repeat",
     nextRun: "다음 예약 대기",
     retryPolicy: {
+      backoffMultiplier: 2,
+      backoffStrategy: "exponential",
       failureAction: "retry_then_fail",
+      initialRetryDelayMinutes: 1,
       maxRetries: 3,
+      maxRetryDelayMinutes: 30,
       retryIntervalMinutes: 10,
       timeoutMinutes: 60,
     },
@@ -92,19 +194,98 @@ const initialDraftPipeline: DraftPipeline = {
   target: {
     compression: "Snappy",
     datasetName: "pair_a_customer_review_gold",
+    description: "고객 리뷰 분석용 정제 데이터셋",
     format: "Parquet",
     layer: "GOLD",
-    partition: "year/month/region",
-    rag: true,
+    partition: "date/category",
+    partitionColumns: ["date", "category"],
+    rag: false,
     storagePath: "s3a://asklake-output/pair_a_customer_review_gold/gold/",
     storageType: "S3",
+    tableName: "pair_a_customer_review_gold",
+    tags: ["고객데이터", "분석용", "가공됨"],
+    testStatus: "idle",
   },
   transform: {
     outputColumns: [],
     steps: [],
     summary: "변환 규칙과 품질 검사를 설정하세요.",
   },
-};
+});
+
+const initialDraftPipeline: DraftPipeline = apiConfig.useMock
+  ? {
+      ...baseInitialDraftPipeline,
+      quality: {
+        invalidRows: [],
+        rules: [
+          {
+            enabled: true,
+            failureAction: "Fail Run",
+            id: "mock-quality-order-id-not-null",
+            kind: "notNull",
+            severity: "Error",
+            targetColumn: "order_id",
+            validationType: "Not Null",
+          },
+          {
+            enabled: true,
+            failureAction: "Warn",
+            id: "mock-quality-amount-range",
+            kind: "range",
+            params: "0,1000000",
+            severity: "Warning",
+            targetColumn: "amount",
+            validationType: "Range Check",
+          },
+        ],
+        score: undefined,
+        status: "idle",
+        summary: "확인용 품질 규칙 2개",
+      },
+      schema: {
+        columns: [
+          { confidence: 99, included: true, nullable: false, sourceName: "order_id", targetName: "order_id", targetOrder: 0, type: "string" },
+          { confidence: 98, included: true, nullable: false, sourceName: "order_date", targetName: "order_date", targetOrder: 1, type: "timestamp" },
+          { confidence: 96, included: true, nullable: true, sourceName: "amount", targetName: "amount", targetOrder: 2, type: "double" },
+          { confidence: 97, included: true, nullable: true, sourceName: "status", targetName: "status", targetOrder: 3, type: "string" },
+        ],
+        sampleRows: [
+          ["ORD-1001", "2026-07-12T09:00:00Z", "42000", "paid"],
+          ["ORD-1002", "2026-07-12T09:05:00Z", "18500", "pending"],
+          ["", "2026-07-12T09:10:00Z", "-1200", "canceled"],
+          ["ORD-1004", "2026-07-12T09:15:00Z", "71000", "paid"],
+          ["ORD-1005", "2026-07-12T09:20:00Z", "24500", "refunded"],
+        ],
+        schemaFingerprint: "order_id:string:required|order_date:timestamp:required|amount:double:nullable|status:string:nullable",
+        summary: "확인용 주문 샘플 4개 컬럼",
+      },
+      source: {
+        connectionMessage: "확인용 mock 소스가 준비되었습니다.",
+        connectionStatus: "success",
+        sourceConfig: [["File Type", "CSV"], ["Path / Prefix", "mock/orders-preview.csv"]],
+        sourceLabel: "orders-preview.csv",
+        sourceType: "File / S3",
+      },
+      transform: {
+        outputColumns: [["order_id", "String"], ["order_date", "Timestamp"], ["amount", "Double"], ["status", "String"]],
+        steps: [
+          {
+            enabled: true,
+            id: "mock-transform-amount",
+            input: "amount",
+            kind: "cast",
+            label: "금액 숫자 변환",
+            onError: "Warn",
+            operation: "SQL Expression",
+            output: "amount",
+            params: "CAST(amount AS DOUBLE)",
+          },
+        ],
+        summary: "확인용 변환 규칙 1개",
+      },
+    }
+  : baseInitialDraftPipeline;
 
 const emptySelectedDataset: CatalogDataset = {
   description: "생성된 데이터셋이 없습니다. 수집/처리에서 파이프라인을 먼저 생성하고 실행하세요.",
@@ -181,9 +362,25 @@ function mergeStoredCatalogDatasets(datasets: CatalogDataset[]) {
 function mergeCatalogDatasets(baseDatasets: CatalogDataset[], storedDatasets: CatalogDataset[]) {
   const uniqueStoredDatasets = mergeStoredCatalogDatasets(storedDatasets);
   const storedDatasetIds = new Set(uniqueStoredDatasets.map((dataset) => dataset.id));
+  const baseDatasetById = new Map(baseDatasets.map((dataset) => [dataset.id, dataset]));
+  const mergedStoredDatasets = uniqueStoredDatasets.map((storedDataset) => {
+    const baseDataset = baseDatasetById.get(storedDataset.id);
+    if (!baseDataset) return storedDataset;
+
+    const materializationRuns = new Map([
+      ...(baseDataset.materializationRuns ?? []),
+      ...(storedDataset.materializationRuns ?? []),
+    ].map((run) => [run.runId, run]));
+
+    return {
+      ...baseDataset,
+      ...storedDataset,
+      materializationRuns: Array.from(materializationRuns.values()),
+    };
+  });
 
   return [
-    ...uniqueStoredDatasets,
+    ...mergedStoredDatasets,
     ...baseDatasets.filter((dataset) => !storedDatasetIds.has(dataset.id)),
   ].map(normalizeDatasetRow);
 }
@@ -209,6 +406,23 @@ function getInitialJobs() {
   return apiConfig.useMock ? etlJobs.map(normalizeJobRow) : [];
 }
 
+const sqlJobPermissionAccess = ["조회", "쿼리 실행", "메타데이터", "관리"];
+
+function buildSqlJobPermissionRoles(
+  accessScope: NonNullable<CreateDerivedDatasetRequest["job"]>["accessScope"] | undefined,
+  owner: string,
+) {
+  if (accessScope === "private") {
+    return [{ access: [...sqlJobPermissionAccess], checked: true, name: owner }];
+  }
+
+  return [
+    { access: [...sqlJobPermissionAccess], checked: true, name: "Data Engineer Group" },
+    { access: [...sqlJobPermissionAccess], checked: accessScope !== "project", name: "Data Analyst Group" },
+    { access: [...sqlJobPermissionAccess], checked: accessScope === "project", name: "Project Members" },
+  ];
+}
+
 function buildSqlDatasetJobDraft(
   request: CreateDerivedDatasetRequest,
   sourceDataset: CatalogDataset,
@@ -216,6 +430,10 @@ function buildSqlDatasetJobDraft(
 ): DraftPipeline {
   const targetDataset = normalizeDraftDatasetName(request.dataset.name, `${sourceDataset.name}_analysis`);
   const targetLayer = request.dataset.layer;
+  const targetFormat = request.job?.fileFormat ?? "parquet";
+  const partitionColumns = request.job?.partitionColumns
+    ?? (request.job?.partitionColumn ? [request.job.partitionColumn] : []);
+  const permissionOwner = request.job?.owner || sourceDataset.owner || initialDraftPipeline.permission.owner;
   const outputColumns: Array<[string, string]> = sqlResult.columns.map((column) => [column, inferSqlResultColumnType(sourceDataset, column)]);
   const schemaColumns: SchemaColumnDraft[] = outputColumns.map(([name, type], index) => ({
     confidence: 1,
@@ -226,25 +444,14 @@ function buildSqlDatasetJobDraft(
     targetName: name,
     type,
   }));
-  const transformStep: TransformStepDraft = {
-    enabled: true,
-    id: "sql-preview-materialize",
-    input: sourceDataset.name,
-    kind: "derive",
-    label: "SQL Preview 결과 저장",
-    onError: "Fail Run",
-    operation: "SQL_RESULT_MATERIALIZE",
-    output: targetDataset,
-    params: request.query,
-  };
-
   return {
     ...initialDraftPipeline,
     id: `sql_${normalizeDraftId(targetDataset)}_${normalizeDraftId(sqlResult.runId).slice(-8)}`,
     permission: {
       ...initialDraftPipeline.permission,
-      owner: sourceDataset.owner || initialDraftPipeline.permission.owner,
-      summary: "Data Engineer Group · 조직 내부 · 승인 완료",
+      owner: permissionOwner,
+      roles: buildSqlJobPermissionRoles(request.job?.accessScope, permissionOwner),
+      summary: request.job?.permissionSummary || "Data Engineer Group · 조직 내부 · 승인 완료",
     },
     quality: {
       invalidRows: [],
@@ -256,11 +463,13 @@ function buildSqlDatasetJobDraft(
     schedule: {
       ...initialDraftPipeline.schedule,
       endDate: "",
-      label: "수동 실행",
-      mode: "manual",
-      nextRun: "수동 실행 대기",
+      label: request.job?.scheduleLabel || "스케줄링 건너뛰기",
+      mode: request.job?.scheduleMode || "manual",
+      nextRun: request.job?.scheduleMode === "repeat" ? "다음 예약 계산 중" : "수동 실행 대기",
+      overlapPolicy: request.job?.overlapPolicy ?? initialDraftPipeline.schedule.overlapPolicy,
       startDate: "",
-      summary: "SQL 결과 저장 Job · 수동 실행",
+      summary: request.job?.scheduleSummary || "SQL 결과 저장 Job · 수동 실행",
+      timezone: request.job?.timezone ?? initialDraftPipeline.schedule.timezone,
     },
     schema: {
       columns: schemaColumns,
@@ -286,18 +495,27 @@ function buildSqlDatasetJobDraft(
     },
     target: {
       ...initialDraftPipeline.target,
-      compression: "Snappy",
+      compression: request.job?.compression ?? "Snappy",
+      databaseName: request.job?.databaseName?.trim() || "asklake",
       datasetName: targetDataset,
-      format: "Parquet",
+      description: request.dataset.description,
+      format: targetFormat,
       layer: targetLayer,
-      partition: "sql_run_date",
-      rag: request.dataset.rag,
-      storagePath: `s3a://asklake-output/${targetDataset}/${targetLayer.toLowerCase()}/`,
+      partition: partitionColumns.join("/"),
+      partitionColumns,
+      rag: false,
+      storagePath: request.job?.storagePath || `s3a://asklake-output/${targetDataset}/${targetLayer.toLowerCase()}/`,
       storageType: "S3",
+      tableName: targetDataset,
+      tags: request.job?.tags ?? request.dataset.tags,
     },
     transform: {
       outputColumns,
-      steps: [transformStep],
+      // SQL Result is already the materialized source for this Job. The
+      // query result schema is carried by sourceConfig and outputColumns;
+      // representing it as a single-column transform makes the backend rule
+      // compiler reject the dataset name as an input column.
+      steps: [],
       summary: `SQL Preview ${sqlResult.runId} 결과를 ${targetDataset} 데이터셋으로 저장`,
     },
   };
@@ -317,17 +535,133 @@ function normalizeDraftId(value: string) {
 }
 
 function normalizeJobRow(job: JobRowData): JobRowData {
+  const status = normalizeJobStatus(String(job.status));
   return {
     ...job,
-    status: normalizeJobStatus(String(job.status)),
+    status,
+  };
+}
+
+function upsertJobById(jobs: JobRowData[], nextJob: JobRowData): JobRowData[] {
+  return [nextJob, ...jobs.filter((job) => job.id !== nextJob.id)];
+}
+
+function replaceJobById(
+  jobs: JobRowData[],
+  jobId: string,
+  updater: (job: JobRowData) => JobRowData,
+): JobRowData[] {
+  let replaced = false;
+  return jobs.flatMap((job) => {
+    if (job.id !== jobId) return [job];
+    if (replaced) return [];
+    replaced = true;
+    return [updater(job)];
+  });
+}
+
+const jobStatuses = ["scheduled", "failed", "running", "paused", "canceled", "stopped"] as const;
+
+function getLatestRunOutcome(job: JobRowData): JobRunOutcome | undefined {
+  const status = job.runHistory?.[0]?.status;
+  return status === "success" || status === "failed" || status === "canceled" ? status : undefined;
+}
+
+function getJobListFacets(jobs: JobRowData[]): JobListFacets {
+  return {
+    latestRunOutcomeCounts: {
+      canceled: jobs.filter((job) => getLatestRunOutcome(job) === "canceled").length,
+      failed: jobs.filter((job) => getLatestRunOutcome(job) === "failed").length,
+      success: jobs.filter((job) => getLatestRunOutcome(job) === "success").length,
+    },
+    owners: Array.from(new Set(jobs.map((job) => job.owner).filter(Boolean))).sort((first, second) => first.localeCompare(second)),
+    statusCounts: Object.fromEntries(jobStatuses.map((status) => [status, jobs.filter((job) => job.status === status).length])) as JobListFacets["statusCounts"],
+    total: jobs.length,
+  };
+}
+
+function moveJobFacetCounts(facets: JobListFacets, previousJob: JobRowData, nextJob: JobRowData): JobListFacets {
+  const previousOutcome = getLatestRunOutcome(previousJob);
+  const nextOutcome = getLatestRunOutcome(nextJob);
+  const statusCounts = { ...facets.statusCounts };
+  const latestRunOutcomeCounts = { ...facets.latestRunOutcomeCounts };
+  if (previousJob.status !== nextJob.status) {
+    statusCounts[previousJob.status] = Math.max(0, (statusCounts[previousJob.status] ?? 0) - 1);
+    statusCounts[nextJob.status] = (statusCounts[nextJob.status] ?? 0) + 1;
+  }
+  if (previousOutcome !== nextOutcome) {
+    if (previousOutcome) latestRunOutcomeCounts[previousOutcome] = Math.max(0, (latestRunOutcomeCounts[previousOutcome] ?? 0) - 1);
+    if (nextOutcome) latestRunOutcomeCounts[nextOutcome] = (latestRunOutcomeCounts[nextOutcome] ?? 0) + 1;
+  }
+  return {
+    ...facets,
+    latestRunOutcomeCounts,
+    statusCounts,
+  };
+}
+
+function removeJobFacetCounts(facets: JobListFacets, job: JobRowData): JobListFacets {
+  const latestRunOutcome = getLatestRunOutcome(job);
+  return {
+    ...facets,
+    latestRunOutcomeCounts: {
+      ...facets.latestRunOutcomeCounts,
+      ...(latestRunOutcome
+        ? { [latestRunOutcome]: Math.max(0, (facets.latestRunOutcomeCounts[latestRunOutcome] ?? 0) - 1) }
+        : {}),
+    },
+    statusCounts: {
+      ...facets.statusCounts,
+      [job.status]: Math.max(0, (facets.statusCounts[job.status] ?? 0) - 1),
+    },
+    total: Math.max(0, facets.total - 1),
   };
 }
 
 function normalizeDatasetRow(dataset: CatalogDataset): CatalogDataset {
   return {
     ...dataset,
+    materializationRuns: dataset.materializationRuns ?? [],
     status: normalizeDatasetStatus(String(dataset.status)),
   };
+}
+
+function formatStorageSize(sizeBytes: number) {
+  if (sizeBytes < 1024) return `${sizeBytes}B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let size = sizeBytes;
+  for (const unit of units) {
+    size /= 1024;
+    if (size < 1024) return `${size.toFixed(1)}${unit}`;
+  }
+  return `${size.toFixed(1)}PB`;
+}
+
+function recalculateDatasetFromMaterializationRuns(dataset: CatalogDataset): CatalogDataset {
+  const materializationRuns = dataset.materializationRuns ?? [];
+  const activeRuns = activeDatasetMaterializationRuns(materializationRuns);
+  const latestRun = activeRuns[0];
+  const rowCount = activeRuns.reduce((total, run) => total + Math.max(run.rowCount || 0, 0), 0);
+  const storageSizeBytes = activeRuns.reduce((total, run) => total + Math.max(run.storageSizeBytes || 0, 0), 0);
+
+  return normalizeDatasetRow({
+    ...dataset,
+    lastUpdated: latestRun?.createdAt ?? dataset.lastUpdated,
+    rows: `${rowCount.toLocaleString()} rows`,
+    size: storageSizeBytes > 0 ? formatStorageSize(storageSizeBytes) : "0B",
+    sourceRunId: latestRun?.runId,
+    storageSizeBytes,
+  });
+}
+
+function activeDatasetMaterializationRuns(runs: NonNullable<CatalogDataset["materializationRuns"]>) {
+  const activeRuns = [];
+  for (const run of runs) {
+    if (run.status !== "success") continue;
+    activeRuns.push(run);
+    if (run.materializationMode !== "delta") break;
+  }
+  return activeRuns;
 }
 
 function upsertRunByRunId(runs: JobRunSummary[], run: JobRunSummary): JobRunSummary[] {
@@ -416,14 +750,59 @@ function buildRunStateFromJobs(jobs: JobRowData[]): JobRunStateMaps {
   return { dagStepsByRunId, runsByJobId, selectedRunIdByJobId };
 }
 
+function isFetchConnectionError(error: unknown) {
+  return error instanceof TypeError && /fetch|network|load failed|connection/i.test(error.message);
+}
+
+function isRecoverableInitialReadError(error: unknown) {
+  if (error instanceof ApiError) {
+    return error.status === 404 || error.status === 502 || error.status === 503 || error.status === 504;
+  }
+
+  return isFetchConnectionError(error);
+}
+
+function getInitialReadErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : "Failed to load AskLake data.";
+}
+
+async function readInitialResource<T>(
+  read: () => Promise<T>,
+  resourceName: string,
+  fallback: T,
+): Promise<{ data: T; error: string | null; fatal: boolean }> {
+  try {
+    return {
+      data: await read(),
+      error: null,
+      fatal: false,
+    };
+  } catch (error) {
+    return {
+      data: fallback,
+      error: `${resourceName}: ${getInitialReadErrorMessage(error)}`,
+      fatal: !isRecoverableInitialReadError(error),
+    };
+  }
+}
+
 function isOptimisticRunCommand(command: JobCommand): command is "run" | "retry" {
   return command === "run" || command === "retry";
 }
 
-function commandSuccessMessage(command: ServerJobCommand): string {
+function commandSuccessMessage(command: ServerJobCommand, job: JobRowData): string {
+  const schedule = job.schedule.toLocaleLowerCase();
+  const realtime = ["실시간", "realtime", "real-time", "stream", "kafka"].some((token) => schedule.includes(token));
+
   if (command === "run") return "작업 실행 요청을 접수했습니다.";
   if (command === "retry") return "작업 재실행 요청을 접수했습니다.";
-  if (command === "pause") return "작업 일시정지 요청을 접수했습니다.";
+  if (command === "pause") return "실행 일시정지 요청을 접수했습니다.";
+  if (command === "startContinuous") return "Continuous 스트림 시작 요청을 접수했습니다.";
+  if (command === "pauseContinuous") return "Continuous 스트림 일시정지 요청을 접수했습니다.";
+  if (command === "resumeContinuous") return "Continuous 스트림 재개 요청을 접수했습니다.";
+  if (command === "stopContinuous") return "Continuous 스트림 중지 요청을 접수했습니다.";
+  if (command === "stopSchedule") return realtime ? "실시간 수집을 중지했습니다." : "다음 반복 예약을 중지했습니다.";
+  if (command === "resumeSchedule") return realtime ? "실시간 수집을 다시 시작했습니다." : "반복 스케줄을 다시 시작했습니다.";
   return "작업 취소 요청을 접수했습니다.";
 }
 
@@ -459,18 +838,31 @@ function buildOptimisticJob(job: JobRowData): JobRowData {
   });
 }
 
+function isContinuousRuntimeTransition(job: JobRowData) {
+  return job.executionMode === "continuous"
+    && ["starting", "pausing", "stopping"].includes(job.continuousRuntime?.status ?? "");
+}
+
+function isTerminalRunStatus(status: JobRunSummary["status"]) {
+  return status === "success" || status === "failed" || status === "canceled";
+}
+
 export function useAskLakeData({
+  enabled = true,
   onFlowChange,
   showToast,
   writeAuditLog,
 }: {
+  enabled?: boolean;
   onFlowChange: (flow: FlowId) => void;
   showToast: (message: string, tone?: "success" | "info") => void;
   writeAuditLog: WriteAuditLog;
 }) {
   const [jobs, setJobs] = useState<JobRowData[]>(getInitialJobs);
+  const [jobListFacets, setJobListFacets] = useState<JobListFacets>(() => getJobListFacets(getInitialJobs()));
   const [datasets, setDatasets] = useState<CatalogDataset[]>(getInitialDatasets);
   const [draftPipeline, setDraftPipeline] = useState<DraftPipeline>(initialDraftPipeline);
+  const [editingJobId, setEditingJobId] = useState<string | null>(null);
   const [selectedDataset, setSelectedDataset] = useState<CatalogDataset>(() => getInitialDatasets()[0] ?? emptySelectedDataset);
   const [selectedJob, setSelectedJob] = useState<JobRowData>(() => getInitialJobs()[0] ?? emptySelectedJob);
   const [runsByJobId, setRunsByJobId] = useState<RunsByJobId>({});
@@ -479,19 +871,86 @@ export function useAskLakeData({
   const [commandPendingByJobId, setCommandPendingByJobId] = useState<CommandPendingByJobId>({});
   const [sqlResultDraft, setSqlResultDraft] = useState<SqlResultDraft | null>(null);
   const [apiPending, setApiPending] = useState(false);
-  const [dataLoading, setDataLoading] = useState(!apiConfig.useMock);
+  const [dataLoading, setDataLoading] = useState(false);
+  const [jobsLoading, setJobsLoading] = useState(false);
   const [dataError, setDataError] = useState<string | null>(null);
   const createPendingRef = useRef(false);
   const commandPendingRef = useRef<Set<string>>(new Set());
+  const continuousPollingRef = useRef<Set<string>>(new Set());
+  const snapshotPollingRef = useRef<Set<string>>(new Set());
+  const dataHydrationRequestRef = useRef(0);
+  const jobsFilterRequestRef = useRef(0);
 
   const jobExecutionEvidence = useMemo(
     () => buildJobExecutionEvidence(runsByJobId, selectedRunIdByJobId, dagStepsByRunId),
     [dagStepsByRunId, runsByJobId, selectedRunIdByJobId],
   );
 
+  const applyHydratedJobs = (result: Awaited<ReturnType<typeof getJobs>>) => {
+    const normalizedJobs = result.jobs.map(normalizeJobRow);
+    const hydratedRunState = buildRunStateFromJobs(normalizedJobs);
+    setJobs(normalizedJobs);
+    setJobListFacets(result.facets);
+    setSelectedJob((current) => normalizedJobs.find((job) => job.id === current.id) ?? normalizedJobs[0] ?? emptySelectedJob);
+    setRunsByJobId(hydratedRunState.runsByJobId);
+    setSelectedRunIdByJobId(hydratedRunState.selectedRunIdByJobId);
+    setDagStepsByRunId(hydratedRunState.dagStepsByRunId);
+  };
+
+  const applyHydratedDatasets = (result: Awaited<ReturnType<typeof getDatasets>>) => {
+    const normalizedDatasets = result.map(normalizeDatasetRow);
+    setDatasets(normalizedDatasets);
+    setSelectedDataset((current) => normalizedDatasets.find((dataset) => dataset.id === current.id) ?? normalizedDatasets[0] ?? emptySelectedDataset);
+  };
+
+  const refreshData = async () => {
+    if (!enabled) return false;
+
+    const requestId = dataHydrationRequestRef.current + 1;
+    const jobsRequestId = jobsFilterRequestRef.current + 1;
+    dataHydrationRequestRef.current = requestId;
+    jobsFilterRequestRef.current = jobsRequestId;
+    setDataLoading(true);
+    setJobsLoading(false);
+    setDataError(null);
+    try {
+      const [jobsResult, datasetsResult] = await Promise.all([
+        getJobs(),
+        getDatasets(),
+      ]);
+      if (requestId !== dataHydrationRequestRef.current) return false;
+
+      if (jobsRequestId === jobsFilterRequestRef.current) applyHydratedJobs(jobsResult);
+      applyHydratedDatasets(
+        apiConfig.useMock
+          ? mergeCatalogDatasets(datasetsResult, loadStoredCatalogDatasets())
+          : datasetsResult,
+      );
+      showToast("Job과 데이터셋 목록을 새로고침했습니다.");
+      return true;
+    } catch (error) {
+      if (requestId !== dataHydrationRequestRef.current) return false;
+      const detail = getInitialReadErrorMessage(error);
+      setDataError(`refresh: ${detail}`);
+      showToast(`새로고침 실패: ${detail}`, "info");
+      return false;
+    } finally {
+      if (requestId === dataHydrationRequestRef.current) setDataLoading(false);
+    }
+  };
+
   useEffect(() => {
+    if (!enabled) {
+      dataHydrationRequestRef.current += 1;
+      jobsFilterRequestRef.current += 1;
+      setDataLoading(false);
+      setJobsLoading(false);
+      return;
+    }
     if (apiConfig.useMock) {
-      const hydratedRunState = buildRunStateFromJobs(getInitialJobs());
+      const initialJobs = getInitialJobs();
+      const hydratedRunState = buildRunStateFromJobs(initialJobs);
+      setJobListFacets(getJobListFacets(initialJobs));
       setRunsByJobId(hydratedRunState.runsByJobId);
       setSelectedRunIdByJobId(hydratedRunState.selectedRunIdByJobId);
       setDagStepsByRunId(hydratedRunState.dagStepsByRunId);
@@ -501,29 +960,38 @@ export function useAskLakeData({
     }
 
     let cancelled = false;
+    const requestId = dataHydrationRequestRef.current + 1;
+    const jobsRequestId = jobsFilterRequestRef.current + 1;
+    dataHydrationRequestRef.current = requestId;
+    jobsFilterRequestRef.current = jobsRequestId;
 
     async function hydrateData() {
-      setDataLoading(true);
       setDataError(null);
       try {
-        const [nextJobs, nextDatasets] = await Promise.all([getJobs(), getDatasets()]);
-        if (cancelled) return;
-        const normalizedJobs = nextJobs.map(normalizeJobRow);
-        const normalizedDatasets = nextDatasets.map(normalizeDatasetRow);
-        const hydratedRunState = buildRunStateFromJobs(normalizedJobs);
-        setJobs(normalizedJobs);
-        setDatasets(normalizedDatasets);
-        setSelectedJob(normalizedJobs[0] ?? emptySelectedJob);
-        setSelectedDataset(normalizedDatasets[0] ?? emptySelectedDataset);
-        setRunsByJobId(hydratedRunState.runsByJobId);
-        setSelectedRunIdByJobId(hydratedRunState.selectedRunIdByJobId);
-        setDagStepsByRunId(hydratedRunState.dagStepsByRunId);
-      } catch (error) {
-        if (cancelled) return;
-        setDataError(error instanceof Error ? error.message : "Failed to load AskLake data.");
-        showToast("DB API에서 초기 데이터를 불러오지 못했습니다.", "info");
+        const [jobsResult, datasetsResult] = await Promise.all([
+          readInitialResource(getJobs, "jobs", { facets: getJobListFacets([]), jobs: [] }),
+          readInitialResource(getDatasets, "catalog", []),
+        ]);
+        if (cancelled || requestId !== dataHydrationRequestRef.current) return;
+
+        if (jobsRequestId === jobsFilterRequestRef.current) applyHydratedJobs(jobsResult.data);
+        applyHydratedDatasets(datasetsResult.data);
+
+        const fatalErrors = [jobsResult, datasetsResult]
+          .filter((result) => result.fatal && result.error)
+          .map((result) => result.error);
+        const recoverableErrors = [jobsResult, datasetsResult]
+          .filter((result) => !result.fatal && result.error)
+          .map((result) => result.error);
+
+        if (fatalErrors.length > 0) {
+          setDataError(fatalErrors.join(" / "));
+        } else if (recoverableErrors.length > 0) {
+          setDataError(null);
+          showToast("DB API 초기 목록을 불러오지 못해 빈 상태로 표시합니다.", "info");
+        }
       } finally {
-        if (!cancelled) setDataLoading(false);
+        if (!cancelled && requestId === dataHydrationRequestRef.current) setDataLoading(false);
       }
     }
 
@@ -531,17 +999,47 @@ export function useAskLakeData({
 
     return () => {
       cancelled = true;
+      dataHydrationRequestRef.current += 1;
     };
-  }, []);
+  }, [enabled]);
+
+  const filterJobs = async (query: JobListQuery) => {
+    const requestId = jobsFilterRequestRef.current + 1;
+    jobsFilterRequestRef.current = requestId;
+    setJobsLoading(true);
+    try {
+      const result = await getJobs(query);
+      if (requestId !== jobsFilterRequestRef.current) return;
+      const normalizedJobs = result.jobs.map(normalizeJobRow);
+      const hydratedRunState = buildRunStateFromJobs(normalizedJobs);
+      setJobs(normalizedJobs);
+      setJobListFacets(result.facets);
+      setRunsByJobId(hydratedRunState.runsByJobId);
+      setSelectedRunIdByJobId(hydratedRunState.selectedRunIdByJobId);
+      setDagStepsByRunId(hydratedRunState.dagStepsByRunId);
+    } catch (error) {
+      if (requestId !== jobsFilterRequestRef.current) return;
+      const message = error instanceof ApiError ? error.message : "작업 목록 필터를 불러오지 못했습니다.";
+      showToast(message, "info");
+    } finally {
+      if (requestId === jobsFilterRequestRef.current) setJobsLoading(false);
+    }
+  };
 
   const updateDraftPipeline = (patch: DraftPipelinePatch) => {
     setDraftPipeline((draft) => applyDraftPipelinePatch(draft, patch));
   };
 
-  const createPipeline = async () => {
+  const createPipelineFromDraft = async (
+    pipelineDraft: DraftPipeline,
+    {
+      navigateToJobs = true,
+      resetDraft = true,
+    }: { navigateToJobs?: boolean; resetDraft?: boolean } = {},
+  ) => {
     if (createPendingRef.current) {
       showToast("이미 생성 요청이 처리 중입니다.", "info");
-      return;
+      return false;
     }
 
     const previousState = {
@@ -553,38 +1051,54 @@ export function useAskLakeData({
     createPendingRef.current = true;
     setApiPending(true);
     try {
-      const result = apiConfig.useMock
-        ? await createMockPipelineDraft(draftPipeline, jobs.length)
-        : await createLivePipelineDraft(draftPipeline);
+      const activeEditJobId = editingJobId === pipelineDraft.id ? editingJobId : null;
+      const updatedJob = activeEditJobId
+        ? await (apiConfig.useMock
+          ? updateMockPipelineDraft(activeEditJobId, pipelineDraft)
+          : updateLivePipelineDraft(activeEditJobId, pipelineDraft))
+        : null;
+      const result = updatedJob
+        ? { job: updatedJob }
+        : apiConfig.useMock
+          ? await createMockPipelineDraft(pipelineDraft, jobs.length)
+          : await createLivePipelineDraft(pipelineDraft);
       const normalizedJob = normalizeJobRow(result.job);
-      const normalizedDataset = result.dataset ? normalizeDatasetRow(result.dataset) : null;
+      const normalizedDataset = "dataset" in result && result.dataset ? normalizeDatasetRow(result.dataset) : null;
 
-      setJobs((items) => [normalizedJob, ...items.filter((item) => item.name !== normalizedJob.name)]);
+      setJobs((items) => upsertJobById(items, normalizedJob));
       setSelectedJob(normalizedJob);
+      setEditingJobId(null);
       if (normalizedDataset) {
         saveStoredCatalogDataset(normalizedDataset);
         setDatasets((items) => [normalizedDataset, ...items.filter((item) => item.id !== normalizedDataset.id)]);
         setSelectedDataset(normalizedDataset);
       }
-      writeAuditLog("etl.job.created", "/api/etl/jobs", draftPipeline.id);
-      writeAuditLog("etl.run.queued", `/api/etl/jobs/${draftPipeline.id}/runs`, draftPipeline.id);
+      writeAuditLog(activeEditJobId ? "etl.job.updated" : "etl.job.created", activeEditJobId ? `/api/etl/jobs/${normalizedJob.id}` : "/api/etl/jobs", normalizedJob.id);
+      if (!activeEditJobId) writeAuditLog("etl.run.queued", `/api/etl/jobs/${pipelineDraft.id}/runs`, pipelineDraft.id);
       showToast(normalizedDataset ? "파이프라인 생성 요청이 접수되었습니다." : "파이프라인 생성 요청을 접수했습니다. 실행 성공 후 카탈로그에 등록됩니다.");
-      setDraftPipeline(initialDraftPipeline);
-      onFlowChange("jobs");
-    } catch {
+      if (resetDraft) setDraftPipeline(initialDraftPipeline);
+      if (navigateToJobs) onFlowChange("jobs");
+      return true;
+    } catch (error) {
       setJobs(previousState.jobs);
       setDatasets(previousState.datasets);
       setSelectedJob(previousState.selectedJob);
       setSelectedDataset(previousState.selectedDataset);
-      writeAuditLog("etl.job.create_failed", "/api/etl/jobs", draftPipeline.id, "failed");
-      showToast("파이프라인 생성 요청에 실패했습니다.", "info");
+      writeAuditLog("etl.job.create_failed", "/api/etl/jobs", pipelineDraft.id, "failed");
+      const message = error instanceof ApiError ? error.message : "파이프라인 생성 요청에 실패했습니다.";
+      showToast(message, "info");
+      return false;
     } finally {
       createPendingRef.current = false;
       setApiPending(false);
     }
   };
 
-  const prepareSqlDatasetJobDraft = (request: CreateDerivedDatasetRequest) => {
+  const createPipeline = async () => {
+    await createPipelineFromDraft(draftPipeline);
+  };
+
+  const createSqlDatasetJob = async (request: CreateDerivedDatasetRequest) => {
     const sourceDataset = datasets.find((item) => item.id === request.sourceDatasetId);
     const currentSqlResult = sqlResultDraft?.runId === request.sourceRunId ? sqlResultDraft : null;
 
@@ -595,18 +1109,175 @@ export function useAskLakeData({
     }
 
     const nextDraft = buildSqlDatasetJobDraft(request, sourceDataset, currentSqlResult);
-    setDraftPipeline(nextDraft);
-    setSelectedDataset(sourceDataset);
     writeAuditLog("analysis.derived_dataset.job_draft_prepared", "/api/etl/jobs", nextDraft.id);
-    showToast("SQL 결과 기반 처리 Job 초안을 만들었습니다.");
-    onFlowChange("review");
-    return true;
+    return createPipelineFromDraft(nextDraft, { resetDraft: false });
+  };
+
+  const createTrinoSqlJob = async (request: CreateTrinoSqlJobRequest) => {
+    if (createPendingRef.current) {
+      showToast("이미 생성 요청이 처리 중입니다.", "info");
+      return false;
+    }
+    if (apiConfig.useMock) {
+      showToast("Trino SQL Job은 실제 API 모드에서 생성할 수 있습니다.", "info");
+      return false;
+    }
+
+    createPendingRef.current = true;
+    setApiPending(true);
+    try {
+      const result = await createLiveTrinoSqlJob(request);
+      const normalizedJob = normalizeJobRow(result.job);
+      setJobs((items) => [normalizedJob, ...items.filter((item) => item.id !== normalizedJob.id)]);
+      setSelectedJob(normalizedJob);
+      writeAuditLog("analysis.trino_sql_job.created", "/api/etl/sql-jobs", normalizedJob.id);
+      showToast("반복 SQL Job을 생성했습니다.", "success");
+      onFlowChange("jobs");
+      return true;
+    } catch (error) {
+      writeAuditLog("analysis.trino_sql_job.create_failed", "/api/etl/sql-jobs", request.baseDatasetId, "failed");
+      showToast(error instanceof ApiError ? error.message : "반복 SQL Job 생성에 실패했습니다.", "info");
+      return false;
+    } finally {
+      createPendingRef.current = false;
+      setApiPending(false);
+    }
+  };
+
+  const deleteMaterializationRun = async (datasetId: string, runId: string) => {
+    const previousState = {
+      datasets,
+      selectedDataset,
+    };
+    const targetDataset = datasets.find((dataset) => dataset.id === datasetId);
+    if (!targetDataset) {
+      showToast("삭제할 append 결과를 찾지 못했습니다.", "info");
+      return;
+    }
+
+    const applyDataset = (dataset: CatalogDataset) => {
+      const normalizedDataset = normalizeDatasetRow(dataset);
+      setDatasets((items) => items.map((item) => (item.id === datasetId ? normalizedDataset : item)));
+      setSelectedDataset((current) => (current.id === datasetId ? normalizedDataset : current));
+      return normalizedDataset;
+    };
+
+    try {
+      const nextDataset = apiConfig.useMock
+        ? recalculateDatasetFromMaterializationRuns({
+            ...targetDataset,
+            materializationRuns: (targetDataset.materializationRuns ?? []).filter((run) => run.runId !== runId),
+          })
+        : normalizeDatasetRow((await deleteDatasetMaterializationRun(datasetId, runId)).dataset);
+
+      applyDataset(nextDataset);
+      writeAuditLog("catalog.dataset.materialization_run_deleted", `/api/catalog/datasets/${datasetId}/materialization-runs/${runId}`, runId, "success", { targetType: "dataset" });
+      showToast("데이터셋 append 결과를 삭제했습니다.");
+    } catch {
+      setDatasets(previousState.datasets);
+      setSelectedDataset(previousState.selectedDataset);
+      writeAuditLog("catalog.dataset.materialization_run_delete_failed", `/api/catalog/datasets/${datasetId}/materialization-runs/${runId}`, runId, "failed", { targetType: "dataset" });
+      showToast("append 결과 삭제에 실패했습니다.", "info");
+    }
   };
 
   const updateJobState = (jobId: string, updater: (job: JobRowData) => JobRowData) => {
-    setJobs((items) => items.map((job) => (job.id === jobId ? updater(job) : job)));
+    setJobs((items) => replaceJobById(items, jobId, updater));
     setSelectedJob((job) => (job.id === jobId ? updater(job) : job));
   };
+
+  const pollContinuousRuntimeUntilStable = async (initialJob: JobRowData) => {
+    if (apiConfig.useMock || !isContinuousRuntimeTransition(initialJob) || continuousPollingRef.current.has(initialJob.id)) return;
+
+    continuousPollingRef.current.add(initialJob.id);
+    let currentJob = initialJob;
+    try {
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 1000));
+        const nextJob = normalizeJobRow(await getLiveJob(initialJob.id));
+        updateJobState(initialJob.id, () => nextJob);
+        setJobListFacets((facets) => moveJobFacetCounts(facets, currentJob, nextJob));
+        currentJob = nextJob;
+        if (!isContinuousRuntimeTransition(nextJob)) return;
+      }
+    } catch {
+      // The last accepted command state remains visible; the next list refresh can retry the read.
+    } finally {
+      continuousPollingRef.current.delete(initialJob.id);
+    }
+  };
+
+  const pollSnapshotJobUntilTerminal = async (initialJob: JobRowData, runId: string) => {
+    if (apiConfig.useMock || initialJob.executionMode === "continuous" || snapshotPollingRef.current.has(runId)) return;
+
+    snapshotPollingRef.current.add(runId);
+    let currentJob = initialJob;
+    let consecutiveErrors = 0;
+    try {
+      for (let attempt = 0; attempt < snapshotPollMaxAttempts; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, snapshotPollIntervalMs));
+
+        let nextJob: JobRowData;
+        try {
+          nextJob = normalizeJobRow(await getLiveJob(initialJob.id));
+          consecutiveErrors = 0;
+        } catch (error) {
+          consecutiveErrors += 1;
+          if (consecutiveErrors >= snapshotPollMaxConsecutiveErrors) throw error;
+          continue;
+        }
+
+        updateJobState(initialJob.id, () => nextJob);
+        setJobListFacets((facets) => moveJobFacetCounts(facets, currentJob, nextJob));
+        currentJob = nextJob;
+
+        const hydratedRunState = buildRunStateFromJobs([nextJob]);
+        const nextRuns = hydratedRunState.runsByJobId[nextJob.id];
+        if (nextRuns) {
+          setRunsByJobId((state) => ({
+            ...state,
+            [nextJob.id]: nextRuns,
+          }));
+        }
+        setDagStepsByRunId((state) => ({
+          ...state,
+          ...hydratedRunState.dagStepsByRunId,
+        }));
+
+        const nextRun = nextJob.runHistory?.find((candidate) => candidate.runId === runId);
+        if (!nextRun || !isTerminalRunStatus(nextRun.status)) continue;
+
+        if (nextRun.status === "success") {
+          try {
+            const nextDatasets = (await getDatasets()).map(normalizeDatasetRow);
+            setDatasets(nextDatasets);
+            setSelectedDataset((selected) => nextDatasets.find((dataset) => dataset.id === selected.id) ?? selected);
+          } catch {
+            showToast("작업은 완료됐지만 Catalog 목록을 자동 갱신하지 못했습니다.", "info");
+          }
+        }
+        return;
+      }
+
+      showToast("작업이 제한 시간 안에 끝나지 않아 자동 상태 갱신을 중단했습니다.", "info");
+    } catch {
+      showToast("작업 상태 자동 갱신에 실패했습니다. 잠시 후 다시 확인해 주세요.", "info");
+    } finally {
+      snapshotPollingRef.current.delete(runId);
+    }
+  };
+
+  useEffect(() => {
+    if (!enabled || apiConfig.useMock) return;
+
+    jobs.forEach((job) => {
+      if (job.executionMode === "continuous") return;
+      const activeRun = (runsByJobId[job.id] ?? job.runHistory ?? []).find(
+        (run) => !run.runId.startsWith("client:") && (run.status === "queued" || run.status === "running"),
+      );
+      if (activeRun) void pollSnapshotJobUntilTerminal(job, activeRun.runId);
+    });
+  }, [enabled, jobs, runsByJobId]);
 
   const selectRunForJob = (jobId: string, runId: string) => {
     setSelectedRunIdByJobId((state) => {
@@ -619,30 +1290,53 @@ export function useAskLakeData({
     });
   };
 
-  const handleJobCommand = async (job: JobRowData, command: JobCommand) => {
+  const handleJobCommand = async (job: JobRowData, command: JobCommand): Promise<JobRowData | undefined> => {
     if (command === "edit") {
       writeAuditLog("etl.job.edit_opened", `/api/etl/jobs/${job.id}`, job.id);
-      setSelectedJob(job);
+      let editableJob = job;
+      if (!apiConfig.useMock) {
+        try {
+          editableJob = normalizeJobRow(await getLiveJob(job.id));
+          updateJobState(job.id, () => editableJob);
+        } catch {
+          // The list payload is still a valid fallback when the detail refresh fails.
+        }
+      }
+      setSelectedJob(editableJob);
+      setDraftPipeline(hydrateDraftPipelineFromJob(editableJob, initialDraftPipeline));
+      setEditingJobId(editableJob.id);
       onFlowChange("source");
-      return;
+      return undefined;
     }
 
     if (command === "delete") {
+      if (commandPendingRef.current.has(job.id)) {
+        showToast("이미 해당 Job 삭제를 처리 중입니다.", "info");
+        return undefined;
+      }
+      commandPendingRef.current.add(job.id);
+      setApiPending(true);
       writeAuditLog("etl.job.delete_requested", `/api/etl/jobs/${job.id}`, job.id);
-      const remaining = jobs.filter((item) => item.id !== job.id);
-      const deletedRunIds = new Set((runsByJobId[job.id] ?? []).map((run) => run.runId));
-      setJobs(remaining);
-      setSelectedJob(remaining[0] ?? emptySelectedJob);
-      setRunsByJobId((state) => withoutRecordKey(state, job.id));
-      setSelectedRunIdByJobId((state) => withoutRecordKey(state, job.id));
-      setDagStepsByRunId((state) => Object.fromEntries(Object.entries(state).filter(([runId]) => !deletedRunIds.has(runId))));
-      commandPendingRef.current.delete(job.id);
-      setCommandPendingByJobId((state) => {
-        const { [job.id]: _pendingCommand, ...rest } = state;
-        return rest;
-      });
-      onFlowChange("jobs");
-      return;
+      try {
+        if (!apiConfig.useMock) await deleteLivePipelineJob(job.id);
+        const remaining = jobs.filter((item) => item.id !== job.id);
+        const deletedRunIds = new Set((runsByJobId[job.id] ?? []).map((run) => run.runId));
+        setJobs(remaining);
+        setJobListFacets((facets) => removeJobFacetCounts(facets, job));
+        setSelectedJob(remaining[0] ?? emptySelectedJob);
+        setRunsByJobId((state) => withoutRecordKey(state, job.id));
+        setSelectedRunIdByJobId((state) => withoutRecordKey(state, job.id));
+        setDagStepsByRunId((state) => Object.fromEntries(Object.entries(state).filter(([runId]) => !deletedRunIds.has(runId))));
+        writeAuditLog("etl.job.deleted", `/api/etl/jobs/${job.id}`, job.id);
+        onFlowChange("jobs");
+      } catch (error) {
+        writeAuditLog("etl.job.delete_failed", `/api/etl/jobs/${job.id}`, job.id, "failed");
+        showToast(error instanceof Error ? error.message : "Job 삭제에 실패했습니다.", "info");
+      } finally {
+        commandPendingRef.current.delete(job.id);
+        setApiPending(false);
+      }
+      return undefined;
     }
 
     if (commandPendingRef.current.has(job.id)) {
@@ -687,7 +1381,14 @@ export function useAskLakeData({
         ? await runMockJobCommand(job, command)
         : await runLiveJobCommand(job, command);
       writeAuditLog(action, apiPath, job.id);
-      if (updatedJob) updateJobState(job.id, () => normalizeJobRow(updatedJob));
+      let normalizedUpdatedJob: JobRowData | undefined;
+      if (updatedJob) {
+        const nextJob = normalizeJobRow(updatedJob);
+        normalizedUpdatedJob = nextJob;
+        updateJobState(job.id, () => nextJob);
+        setJobListFacets((facets) => moveJobFacetCounts(facets, previousJob, nextJob));
+        void pollContinuousRuntimeUntilStable(nextJob);
+      }
       if (run) {
         setRunsByJobId((state) => ({
           ...state,
@@ -709,7 +1410,7 @@ export function useAskLakeData({
       } else if (tempRunId) {
         rollbackOptimisticRun();
         showToast("실행 응답에 Run 정보가 없어 상태를 되돌렸습니다.", "info");
-        return;
+        return undefined;
       }
       if (dataset) {
         const normalizedDataset = normalizeDatasetRow(dataset);
@@ -717,13 +1418,18 @@ export function useAskLakeData({
         setDatasets((items) => [normalizedDataset, ...items.filter((item) => item.id !== normalizedDataset.id)]);
         setSelectedDataset(normalizedDataset);
       }
-      showToast(commandSuccessMessage(command));
+      if (run && normalizedUpdatedJob && isOptimisticRunCommand(command)) {
+        void pollSnapshotJobUntilTerminal(normalizedUpdatedJob, run.runId);
+      }
+      showToast(commandSuccessMessage(command, job));
+      return normalizedUpdatedJob;
     } catch {
       if (tempRunId) {
         rollbackOptimisticRun();
       }
       writeAuditLog("etl.job.command_failed", `/api/etl/jobs/${job.id}`, job.id, "failed");
       showToast("작업 명령 처리에 실패했습니다.", "info");
+      return undefined;
     } finally {
       commandPendingRef.current.delete(job.id);
       setCommandPendingByJobId((state) => {
@@ -770,18 +1476,25 @@ export function useAskLakeData({
     handleJobCommand,
     dagStepsByRunId,
     jobExecutionEvidence,
+    jobListFacets,
+    jobsLoading,
     jobs,
     openDataset,
     openDatasetInSql,
     openJobDetail,
     openJobRuns,
-    prepareSqlDatasetJobDraft,
+    filterJobs,
+    refreshData,
+    createSqlDatasetJob,
+    createTrinoSqlJob,
+    deleteMaterializationRun,
     runsByJobId,
     selectedDataset,
     selectedJob,
     selectedRunIdByJobId,
     selectRunForJob,
     setSelectedDataset,
+    setSelectedJob,
     setSqlResultDraft,
     sqlResultDraft,
     updateDraftPipeline,

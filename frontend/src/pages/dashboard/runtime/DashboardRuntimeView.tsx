@@ -1,16 +1,16 @@
 import type { LayoutItem } from "react-grid-layout";
-import { BarChart3, MousePointer2, Redo2, Type, Undo2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
 import type {
   DashboardRuntimeMode,
   DashboardRuntimePage,
   DashboardRuntimeResponse,
   DashboardRuntimeWidget,
 } from "../../../types";
-import askLakeNessiIconUrl from "../../../assets/asklake-nessi-icon.png";
 import type { DashboardAssistantWidgetPatch } from "../../../services/dashboardAssistantService";
 import { DashboardCanvas } from "./DashboardCanvas";
 import { DashboardAssistantPanel } from "./DashboardAssistantPanel";
+import { DashboardEditToolbar } from "./DashboardEditToolbar";
 import { DashboardRuntimeShell } from "./DashboardRuntimeShell";
 import { DatasetSidebar } from "./DatasetSidebar";
 import { EmptyDashboardCanvas } from "./EmptyDashboardCanvas";
@@ -100,6 +100,7 @@ type DashboardRuntimeViewActions = {
   retryDraft: () => void;
   retryPublished: () => void;
   selectDataset: (datasetId: string) => void;
+  selectWidgetDataset: (datasetId: string) => void;
   selectPage: (pageId: string) => void;
   selectWidget: (widgetId: string) => void;
   share: () => void;
@@ -114,75 +115,25 @@ type DashboardRuntimeViewProps = {
   runtime: DashboardRuntimeState;
 };
 
-function AskLakeNessiIcon({ size = 20 }: { size?: number }) {
-  return <img alt="" aria-hidden="true" className="asklake-toolbar-nessi-icon" height={size} src={askLakeNessiIconUrl} width={size} />;
-}
-
-function DashboardEditToolbar({
-  assistantActive,
-  canRedo,
-  canUndo,
-  disabled,
-  onAssistant,
-  onCreateToolbarWidget,
-  onCursor,
-  onRedo,
-  onUndo,
-}: {
-  assistantActive: boolean;
-  canRedo: boolean;
-  canUndo: boolean;
-  disabled: boolean;
-  onAssistant: () => void;
-  onCreateToolbarWidget: (kind: ToolbarDraftWidgetKind) => Promise<void> | void;
-  onCursor: () => void;
-  onRedo: () => void;
-  onUndo: () => void;
-}) {
-  return (
-    <div className="asklake-dashboard-edit-toolbar" role="toolbar" aria-label="대시보드 편집 도구">
-      <button
-        aria-label="AskLake 보조 패널"
-        className={assistantActive ? "active asklake-toolbar-assistant" : "asklake-toolbar-assistant"}
-        title="AskLake 보조 패널"
-        type="button"
-        onClick={onAssistant}
-      >
-        <AskLakeNessiIcon />
-      </button>
-      <span aria-hidden="true" />
-      <button aria-label="이동 모드" className={!assistantActive ? "active" : undefined} title="이동" type="button" onClick={onCursor}>
-        <MousePointer2 size={18} />
-      </button>
-      <span aria-hidden="true" />
-      <button aria-label="시각화 추가" disabled={disabled} title="시각화 추가" type="button" onClick={() => void onCreateToolbarWidget("visualization")}>
-        <BarChart3 size={18} />
-      </button>
-      <button aria-label="텍스트 추가" disabled={disabled} title="텍스트 추가" type="button" onClick={() => void onCreateToolbarWidget("text")}>
-        <Type size={18} />
-      </button>
-      <span aria-hidden="true" />
-      <button aria-label="실행 취소" disabled={!canUndo} title="실행 취소" type="button" onClick={onUndo}>
-        <Undo2 size={18} />
-      </button>
-      <button aria-label="다시 실행" disabled={!canRedo} title="다시 실행" type="button" onClick={onRedo}>
-        <Redo2 size={18} />
-      </button>
-    </div>
-  );
+function cloneDatasetRows(datasets: DashboardDatasetOption[], datasetId: string | null | undefined) {
+  if (!datasetId) return undefined;
+  const rows = datasets.find((dataset) => dataset.id === datasetId)?.rows;
+  return rows?.map((row) => ({ ...row }));
 }
 
 function hidesInspectorForWidget(widget: DashboardRuntimeWidget | null) {
-  return widget?.config.placeholderKind === "text" || widget?.config.placeholderKind === "visualization_request";
+  return widget?.config.placeholderKind === "text";
 }
 
 function isVisualizationRequestWidget(widget: DashboardRuntimeWidget | null) {
-  return widget?.config.placeholderKind === "visualization_request";
+  if (!widget) return false;
+  return widget.config.placeholderKind === "visualization_request"
+    || (widget.title === "시각화 요청" && !widget.datasetId && widget.data.length === 0);
 }
 
 const emptyDashboardCopy = {
-  description: "왼쪽 사이드바에서 데이터셋을 선택 후, 오른쪽 사이드바에서 위젯을 생성할 수 있습니다",
-  title: "위젯을 추가해 주세요",
+  description: "편집 모드에서 페이지와 위젯을 구성한 뒤 게시하면 이 화면에서 확인할 수 있습니다.",
+  title: "게시된 위젯이 없습니다",
 };
 
 export function DashboardRuntimeView({
@@ -191,6 +142,7 @@ export function DashboardRuntimeView({
   runtime,
 }: DashboardRuntimeViewProps) {
   const assistantPromptInsertionIdRef = useRef(0);
+  const visualizationPromptTargetWidgetIdRef = useRef<string | null>(null);
   const visualizationPromptInsertionIdRef = useRef(0);
   const [assistantPromptInsertion, setAssistantPromptInsertion] = useState<DashboardAssistantPromptInsertion | null>(null);
   const [visualizationPromptInsertion, setVisualizationPromptInsertion] = useState<VisualizationPromptInsertion | null>(null);
@@ -258,6 +210,7 @@ export function DashboardRuntimeView({
     retryDraft: onRetryDraft,
     retryPublished: onRetryPublished,
     selectDataset: onSelectDataset,
+    selectWidgetDataset: onSelectWidgetDataset,
     selectPage: onSelectPage,
     selectWidget: onSelectWidget,
     share: onShare,
@@ -267,19 +220,19 @@ export function DashboardRuntimeView({
   } = actions;
   const isDraftMode = mode === "draft";
   const openDraftAction = (
-    <button className="asklake-dashboard-empty-action" type="button" onClick={onOpenDraft}>
+    <Button type="button" onClick={onOpenDraft}>
       위젯 편집
-    </button>
+    </Button>
   );
   const retryAction = (
-    <button className="asklake-dashboard-empty-action" type="button" onClick={onRetryPublished}>
+    <Button type="button" variant="outline" onClick={onRetryPublished}>
       다시 시도
-    </button>
+    </Button>
   );
   const draftRetryAction = (
-    <button className="asklake-dashboard-empty-action" type="button" onClick={onRetryDraft}>
+    <Button type="button" variant="outline" onClick={onRetryDraft}>
       다시 시도
-    </button>
+    </Button>
   );
 
   const patchWidgetConfig = (widget: DashboardRuntimeWidget, patch: Record<string, unknown>) => onUpdateWidget(widget.id, {
@@ -292,24 +245,38 @@ export function DashboardRuntimeView({
     type: widget.type,
   });
   const mergeAssistantWidgetConfig = (widget: DashboardRuntimeWidget, patch: DashboardAssistantWidgetPatch) => {
+    const convertsVisualizationRequest = widget.config.placeholderKind === "visualization_request" && (patch.datasetId || patch.type);
     const nextConfig = {
       ...widget.config,
       ...(patch.config ?? {}),
     } as Record<string, unknown>;
 
-    if (widget.config.placeholderKind === "visualization_request" && (patch.config || patch.datasetId || patch.type || patch.title)) {
+    if (convertsVisualizationRequest) {
       delete nextConfig.placeholderKind;
+      if (typeof nextConfig.description === "string" && nextConfig.description.includes("mock fallback")) {
+        delete nextConfig.description;
+      }
+      if (typeof nextConfig.body === "string" && nextConfig.body.includes("mock fallback")) {
+        delete nextConfig.body;
+      }
     }
 
     return nextConfig as UpdateDraftWidgetFormInput["config"];
   };
-  const applyWidgetPatch = (widget: DashboardRuntimeWidget, patch: DashboardAssistantWidgetPatch) => onUpdateWidget(widget.id, {
-    config: mergeAssistantWidgetConfig(widget, patch),
-    datasetId: patch.datasetId ?? widget.datasetId ?? null,
-    title: patch.title ?? widget.title ?? "제목 없는 위젯",
-    type: patch.type ?? widget.type,
-  });
+  const applyWidgetPatch = (widget: DashboardRuntimeWidget, patch: DashboardAssistantWidgetPatch) => {
+    const nextDatasetId = patch.datasetId ?? widget.datasetId ?? selectedDatasetId ?? null;
+    const nextData = cloneDatasetRows(dashboardDatasets, nextDatasetId);
+
+    return onUpdateWidget(widget.id, {
+      config: mergeAssistantWidgetConfig(widget, patch),
+      data: nextData?.length ? nextData : undefined,
+      datasetId: nextDatasetId,
+      title: patch.title ?? widget.title ?? "제목 없는 위젯",
+      type: patch.type ?? widget.type,
+    });
+  };
   const assistantContext = {
+    activeDatasetId: selectedDatasetId,
     dashboardId: draftRuntime?.dashboard.id ?? title,
     onWorkingWidgetChange: setAiWorkingWidgetId,
     pageId: selectedPageId,
@@ -327,8 +294,10 @@ export function DashboardRuntimeView({
     });
   };
   const queueVisualizationPromptText = (text: string) => {
-    const targetWidgetId = selectedDraftWidget?.id;
-    if (!targetWidgetId || !isVisualizationRequestWidget(selectedDraftWidget)) return;
+    const targetWidgetId = selectedDraftWidget && isVisualizationRequestWidget(selectedDraftWidget)
+      ? selectedDraftWidget.id
+      : visualizationPromptTargetWidgetIdRef.current;
+    if (!targetWidgetId) return;
     visualizationPromptInsertionIdRef.current += 1;
     setVisualizationPromptInsertion({
       id: visualizationPromptInsertionIdRef.current,
@@ -370,19 +339,21 @@ export function DashboardRuntimeView({
     if (!dataset) return;
 
     if (inspectorMode === "assistant") {
-      queueAssistantPromptText(`${dataset.name} 데이터셋으로`);
+      queueAssistantPromptText(dataset.name);
       return;
     }
 
-    queueVisualizationPromptText(`${dataset.name} 데이터셋으로`);
+    queueVisualizationPromptText(dataset.name);
   };
   const handleSelectDatasetColumn = (dataset: DashboardDatasetOption, column: DashboardDatasetColumn) => {
     if (inspectorMode === "assistant") {
-      queueAssistantPromptText(`${dataset.name} 데이터셋의 ${column.name} 컬럼`);
+      queueAssistantPromptText(column.name);
+      onSelectDataset(dataset.id);
       return;
     }
 
-    queueVisualizationPromptText(`${dataset.name} 데이터셋의 ${column.name} 컬럼`);
+    queueVisualizationPromptText(column.name);
+    onSelectDataset(dataset.id);
   };
   const selectedWidgetHidesInspector = hidesInspectorForWidget(selectedDraftWidget);
   const isAssistantInspectorOpen = isDraftMode && inspectorMode === "assistant";
@@ -391,6 +362,13 @@ export function DashboardRuntimeView({
   useEffect(() => {
     if (selectedWidgetHidesInspector) onPreviewWidget(null);
   }, [onPreviewWidget, selectedWidgetHidesInspector, selectedWidgetId]);
+
+  useEffect(() => {
+    if (!selectedDraftWidget) return;
+    visualizationPromptTargetWidgetIdRef.current = isVisualizationRequestWidget(selectedDraftWidget)
+      ? selectedDraftWidget.id
+      : null;
+  }, [selectedDraftWidget]);
 
   const runtimeCanvas = isDraftMode ? (
     draftLoading ? (
@@ -483,6 +461,7 @@ export function DashboardRuntimeView({
             error={dashboardDatasetsError}
             isOpen={isDatasetSidebarOpen}
             isLoading={dashboardDatasetsLoading}
+            onClose={onToggleDatasetSidebar}
             selectedDatasetId={selectedDatasetId}
             onSelectColumn={handleSelectDatasetColumn}
             onSelectDataset={handleSelectDataset}
@@ -498,6 +477,7 @@ export function DashboardRuntimeView({
           <aside className="asklake-dashboard-inspector assistant">
             <DashboardAssistantPanel
               dashboardId={assistantContext.dashboardId}
+              datasets={dashboardDatasets}
               pageId={selectedPageId}
               promptInsertion={assistantPromptInsertion}
               selectedWidget={selectedDraftWidget}
@@ -509,6 +489,7 @@ export function DashboardRuntimeView({
         ) : isDraftMode && !selectedWidgetHidesInspector ? (
           <aside className="asklake-dashboard-inspector">
             <WidgetConfigPanel
+              datasets={dashboardDatasets}
               editingWidget={configurableDraftWidget}
               focusedColorSlot={focusedColorSlot}
               isCreating={isCreatingDatasetWidget}
@@ -517,6 +498,7 @@ export function DashboardRuntimeView({
               selectedDataset={selectedDataset}
               selectedDatasetId={selectedDatasetId}
               onCreateWidget={onCreateDatasetWidget}
+              onSelectDataset={onSelectWidgetDataset}
               onUpdateWidget={onUpdateWidget}
             />
           </aside>

@@ -1,4 +1,5 @@
 import { Sparkles, Trash2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import type { DashboardRuntimeWidget } from "../../../types";
 import { dashboardWidgetDefinitions } from "./widgetDefinitions";
 import { WidgetRenderer } from "./WidgetRenderer";
@@ -7,7 +8,11 @@ import type { DashboardAssistantWidgetPatch } from "../../../services/dashboardA
 
 function placeholderKind(widget: DashboardRuntimeWidget) {
   const kind = (widget.config as { placeholderKind?: unknown }).placeholderKind;
-  return kind === "visualization_request" || kind === "text" ? kind : null;
+  if (kind === "visualization_request" || kind === "text") return kind;
+  if (widget.title === "시각화 요청" && !widget.datasetId && widget.data.length === 0) {
+    return "visualization_request";
+  }
+  return null;
 }
 
 function widgetTypeLabel(widget: DashboardRuntimeWidget) {
@@ -74,19 +79,21 @@ export function WidgetFrame({
           <h2>{widget.title || "제목 없는 위젯"}</h2>
         </div>
         {editable && selected && (
-          <button
+          <Button
             aria-label={`${widget.title || "제목 없는 위젯"} 삭제`}
             className="asklake-widget-delete-button widget-control"
             disabled={deleteDisabled}
             title="위젯 삭제"
             type="button"
+            size="icon"
+            variant="destructive"
             onClick={(event) => {
               event.stopPropagation();
               onDelete?.(widget.id);
             }}
           >
             <Trash2 size={16} />
-          </button>
+          </Button>
         )}
       </header>
       <div className="asklake-widget-frame-body">

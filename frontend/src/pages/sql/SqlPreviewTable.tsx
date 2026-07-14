@@ -1,81 +1,108 @@
-import { useEffect, useMemo, useState } from "react";
-import {
-  flexRender,
-  getCoreRowModel,
-  getPaginationRowModel,
-  useReactTable,
-  type ColumnDef,
-} from "@tanstack/react-table";
+import { useMemo } from "react";
+import type { ColumnDef, SortingFn } from "@tanstack/react-table";
+import { SqlPageIcon as Table2 } from "./SqlPageIcon";
+
+import { DataTable, type DataTableColumnMeta } from "@/components/ui/data-table";
+import { cn } from "@/lib/utils";
 import type { SqlResultDraft } from "../../types";
-import { SQL_RESULT_PAGE_SIZE } from "./sqlLogic";
+import styles from "./SqlPreviewTable.module.css";
 
 type SqlPreviewRow = {
   cells: string[];
 };
 
-export function SqlPreviewTable({ resultDraft }: { resultDraft: SqlResultDraft }) {
-  const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: SQL_RESULT_PAGE_SIZE });
-  useEffect(() => {
-    setPagination({ pageIndex: 0, pageSize: SQL_RESULT_PAGE_SIZE });
-  }, [resultDraft.runId]);
+type SqlPreviewCellKind = "date" | "number" | "text";
 
+function getCellKind(value: string): SqlPreviewCellKind {
+  if (/^-?\d+(?:\.\d+)?$/.test(value.replace(/,/g, ""))) return "number";
+  if (/^\d{4}-\d{2}-\d{2}/.test(value)) return "date";
+  return "text";
+}
+
+function getColumnKind(rows: string[][], index: number): SqlPreviewCellKind {
+  const values = rows.map((row) => row[index] ?? "").filter((value) => value.trim().length > 0);
+  if (values.length === 0) return "text";
+  if (values.every((value) => getCellKind(value) === "number")) return "number";
+  if (values.every((value) => getCellKind(value) === "date")) return "date";
+  return "text";
+}
+
+function isIdentifierColumn(column: string) {
+  return /(?:^|[_\s-])id$/i.test(column.trim());
+}
+
+function toComparableValue(value: string, kind: SqlPreviewCellKind) {
+  if (kind === "number") {
+    const numberValue = Number(value.replace(/,/g, ""));
+    return Number.isNaN(numberValue) ? 0 : numberValue;
+  }
+  if (kind === "date") {
+    const dateValue = new Date(value).getTime();
+    return Number.isNaN(dateValue) ? 0 : dateValue;
+  }
+  return value.toLocaleLowerCase();
+}
+
+function buildSqlSortingFn(kind: SqlPreviewCellKind): SortingFn<SqlPreviewRow> {
+  return (rowA, rowB, columnId) => {
+    const left = String(rowA.getValue(columnId) ?? "");
+    const right = String(rowB.getValue(columnId) ?? "");
+    const leftValue = toComparableValue(left, kind);
+    const rightValue = toComparableValue(right, kind);
+
+    if (typeof leftValue === "number" && typeof rightValue === "number") {
+      return leftValue === rightValue ? 0 : leftValue > rightValue ? 1 : -1;
+    }
+    return String(leftValue).localeCompare(String(rightValue));
+  };
+}
+
+export function SqlPreviewTable({ isLoading = false, resultDraft }: { isLoading?: boolean; resultDraft: SqlResultDraft }) {
   const columns = useMemo<ColumnDef<SqlPreviewRow>[]>(
-    () => resultDraft.columns.map((column, index) => ({
-      accessorFn: (row) => row.cells[index] ?? "",
-      cell: (info) => info.getValue<string>(),
-      header: column,
-      id: `${index}:${column}`,
-    })),
-    [resultDraft.columns],
+    () => resultDraft.columns.map((column, index) => {
+      const columnKind = getColumnKind(resultDraft.rows, index);
+      const identifierColumn = isIdentifierColumn(column);
+      const meta: DataTableColumnMeta = {
+        align: columnKind === "number" && !identifierColumn ? "right" : "left",
+        cellClassName: columnKind === "number" || columnKind === "date" ? "tabular-nums" : undefined,
+      };
+
+      return {
+        accessorFn: (row) => row.cells[index] ?? "",
+        cell: (info) => {
+          const value = String(info.getValue() ?? "");
+          return <span className="block truncate" title={value}>{value}</span>;
+        },
+        header: () => <span className="block truncate" title={column}>{column}</span>,
+        id: `${index}:${column}`,
+        meta,
+        sortingFn: buildSqlSortingFn(columnKind),
+      };
+    }),
+    [resultDraft.columns, resultDraft.rows],
   );
   const data = useMemo(
     () => resultDraft.rows.map((row) => ({ cells: row.slice(0, resultDraft.columns.length) })),
     [resultDraft.columns.length, resultDraft.rows],
   );
-  const table = useReactTable({
-    columns,
-    data,
-    getCoreRowModel: getCoreRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
-    onPaginationChange: setPagination,
-    state: { pagination },
-  });
-  const pageRows = table.getRowModel().rows;
-  const pageStart = data.length === 0 ? 0 : pagination.pageIndex * pagination.pageSize + 1;
-  const pageEnd = data.length === 0 ? 0 : Math.min(data.length, pageStart + pageRows.length - 1);
-  const pageCount = Math.max(table.getPageCount(), 1);
 
   return (
-    <div className="sql-preview-table-wrap">
-      <table className="schema-table">
-        <thead>
-          {table.getHeaderGroups().map((headerGroup) => (
-            <tr key={headerGroup.id}>
-              {headerGroup.headers.map((header) => (
-                <th key={header.id}>
-                  {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
-                </th>
-              ))}
-            </tr>
-          ))}
-        </thead>
-        <tbody>
-          {pageRows.map((row) => (
-            <tr key={row.id}>
-              {row.getVisibleCells().map((cell) => (
-                <td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <div className="sql-result-pagination" aria-label="SQL 실행 결과 페이지">
-        <span>{pageStart}-{pageEnd} / {data.length}행 · {pagination.pageIndex + 1} / {pageCount}쪽</span>
-        <div>
-          <button type="button" disabled={!table.getCanPreviousPage()} onClick={() => table.previousPage()}>이전</button>
-          <button type="button" disabled={!table.getCanNextPage()} onClick={() => table.nextPage()}>다음</button>
-        </div>
-      </div>
-    </div>
+    <DataTable
+      className={styles.wrap}
+      columns={columns}
+      data={data}
+      data-column-count={resultDraft.columns.length}
+      emptyState={{
+        description: "쿼리는 실행됐지만 반환된 row가 없습니다.",
+        icon: <Table2 size={18} />,
+        title: "SQL preview 결과가 비어 있습니다.",
+      }}
+      isLoading={isLoading}
+      loadingRowCount={8}
+      pagination={false}
+      resetPaginationKey={`${resultDraft.runId}:${resultDraft.pageOffset ?? 0}`}
+      tableClassName={cn("schema-table", styles.table)}
+      viewportClassName="overflow-visible"
+    />
   );
 }

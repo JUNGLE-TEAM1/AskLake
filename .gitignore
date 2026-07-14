@@ -8,9 +8,15 @@ vite.config.d.ts
 AGENTS.local.md
 backend/.env
 backend/.env.local
+*.env.local.save
+frontend/.env
+frontend/.env.local
 backend/tmp/
+output/
 __pycache__/
 *.pyc
 .playwright-cli/
 deploy/.env
 deploy/ec2.env
+airflow/logs/
+airflow/config/airflow.cfg

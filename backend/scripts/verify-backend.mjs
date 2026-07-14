@@ -8,7 +8,7 @@ const env = {
   ...process.env,
   ASKLAKE_RESET_METADATA_ON_START: "true",
   MINIO_ACCESS_KEY: process.env.MINIO_ACCESS_KEY || "m3admin",
-  MINIO_ENDPOINT: process.env.MINIO_ENDPOINT || "http://127.0.0.1:19000",
+  MINIO_ENDPOINT: process.env.MINIO_ENDPOINT || "http://127.0.0.1:9000",
   MINIO_SECRET_KEY: process.env.MINIO_SECRET_KEY || "wishuponastar",
   PORT: String(port),
 };
@@ -30,7 +30,18 @@ child.stderr.on("data", (chunk) => process.stderr.write(`[backend] ${chunk}`));
 try {
   await waitForHealth();
   await waitForRestFixture();
-  await assertGet("/api/etl/jobs", []);
+  await assertGet("/api/etl/sources/defaults", {
+    kafkaBroker: env.ASKLAKE_KAFKA_BROKER || "127.0.0.1:19092",
+  });
+  await assertGet("/api/etl/jobs", {
+    facets: {
+      latestRunOutcomeCounts: { success: 0, failed: 0, canceled: 0 },
+      owners: [],
+      statusCounts: { scheduled: 0, failed: 0, running: 0, paused: 0, canceled: 0, stopped: 0 },
+      total: 0,
+    },
+    jobs: [],
+  });
   await assertGet("/api/catalog/datasets", []);
 
   const minio = await post("/api/etl/sources/test", {
@@ -92,8 +103,9 @@ try {
     owner: "data-team-01",
     permissionSummary: "verify",
     rag: false,
-    retryPolicy: { failureAction: "retry_then_fail", maxRetries: 0, retryIntervalMinutes: 10, timeoutMinutes: 60 },
-    retryPolicySummary: "no retry",
+    retryPolicy: { backoffMultiplier: 2, backoffStrategy: "exponential", failureAction: "retry_then_fail", initialRetryDelayMinutes: 1, maxRetries: 0, maxRetryDelayMinutes: 30, retryIntervalMinutes: 1, timeoutMinutes: 60 },
+    retryPolicySummary: "재시도 없음 · 재시도 후 실패 처리",
+    runLimitSummary: "60분 초과 시 Run 실패 처리",
     ruleSummary: "schema rejected",
     transformOutputColumns: [],
     transformSteps: [],
@@ -114,14 +126,58 @@ try {
     targetLayer: "GOLD",
   }, 400, "All-excluded schema should be rejected.");
 
+  const kafkaTargetRequest = {
+    id: "pair_a_verify_kafka_target",
+    jobName: "pair_a_verify_kafka_target_pipeline",
+    owner: "data-team-01",
+    permissionSummary: "verify",
+    rag: false,
+    retryPolicy: { backoffMultiplier: 2, backoffStrategy: "exponential", failureAction: "retry_then_fail", initialRetryDelayMinutes: 1, maxRetries: 0, maxRetryDelayMinutes: 30, retryIntervalMinutes: 1, timeoutMinutes: 60 },
+    retryPolicySummary: "재시도 없음 · 재시도 후 실패 처리",
+    runLimitSummary: "60분 초과 시 Run 실패 처리",
+    ruleSummary: "Kafka target contract verify",
+    transformOutputColumns: [],
+    transformSteps: [],
+    qualityInvalidRows: [],
+    qualityRules: [],
+    qualityScore: 100,
+    qualityStatus: "pass",
+    scheduleLabel: "manual",
+    schemaColumns: minio.draftPatch.schema.columns,
+    schemaFingerprint: minio.draftPatch.schema.schemaFingerprint,
+    schemaSampleRows: minio.draftPatch.schema.sampleRows,
+    schemaSummary: minio.draftPatch.schema.summary,
+    sourceConfig: [["Broker / Endpoint", "127.0.0.1:19092"], ["TOPIC / QUEUE NAME", "reviews.verify"]],
+    sourceLabel: "reviews.verify",
+    sourceType: "Stream / Kafka",
+    targetDataset: "pair_a_verify_kafka_target",
+    targetFormat: "parquet",
+    targetLayer: "BRONZE",
+  };
+  await assertPostFails(
+    "/api/etl/jobs",
+    kafkaTargetRequest,
+    400,
+    "Kafka Snapshot parquet target should be rejected.",
+    "TARGET_FORMAT_UNSUPPORTED",
+  );
+  await assertPostFails(
+    "/api/etl/jobs",
+    { ...kafkaTargetRequest, targetFormat: "jsonl", targetLayer: "GOLD" },
+    400,
+    "Kafka Snapshot GOLD target should be rejected.",
+    "TARGET_LAYER_UNSUPPORTED",
+  );
+
   const createRequest = {
     id: "pair_a_verify",
     jobName: "pair_a_verify_pipeline",
     owner: "data-team-01",
     permissionSummary: "verify",
     rag: true,
-    retryPolicy: { failureAction: "retry_then_fail", maxRetries: 3, retryIntervalMinutes: 10, timeoutMinutes: 60 },
-    retryPolicySummary: "3 retries",
+    retryPolicy: { backoffMultiplier: 2, backoffStrategy: "exponential", failureAction: "retry_then_fail", initialRetryDelayMinutes: 1, maxRetries: 3, maxRetryDelayMinutes: 30, retryIntervalMinutes: 1, timeoutMinutes: 60 },
+    retryPolicySummary: "3회 재시도 · 1분부터 2배 지수 백오프 · 최대 30분 · 재시도 후 실패 처리",
+    runLimitSummary: "60분 초과 시 Run 실패 처리",
     ruleSummary: "schema verified",
     transformOutputColumns,
     transformSteps,
@@ -148,9 +204,15 @@ try {
   await assertPostFails("/api/etl/jobs", createRequest, 409, "Duplicate pending target dataset should be rejected.");
 
   const jobs = await get("/api/etl/jobs");
+  const ownerJobs = await get("/api/etl/jobs?owner=data-team-01&status=scheduled");
   const datasets = await get("/api/catalog/datasets");
-  assert(jobs.length === 1, "Backend hydrate jobs should contain the created job only.");
-  assert(datasets.length === 0, "Catalog should stay empty until a job run succeeds.");
+  assert(jobs.jobs.length === 1, "Backend hydrate jobs should contain the created job only.");
+  assert(jobs.facets.total === 1, "Backend hydrate facets should count all jobs.");
+  assert(ownerJobs.jobs.length === 1, "Backend job filters should accept owner and status query parameters.");
+  assert(
+    !datasets.some((dataset) => dataset.id === created.catalogTarget.id || dataset.name === createRequest.targetDataset),
+    "Catalog should not expose the pending target dataset until a job run succeeds.",
+  );
 
   console.log("verify-backend: ok");
 } finally {
@@ -201,15 +263,18 @@ async function waitForRestFixture() {
   throw new Error(`REST source fixture did not become healthy at ${restFixtureUrl}/health.`);
 }
 
-async function assertPostFails(path, body, status, message) {
+async function assertPostFails(path, body, status, message, expectedCode) {
   const response = await fetch(`${baseUrl}${path}`, {
     body: JSON.stringify(body),
     headers: { "Content-Type": "application/json" },
     method: "POST",
   });
+  const payload = await response.json().catch(() => ({}));
   if (response.status !== status) {
-    const payload = await response.json().catch(() => ({}));
     throw new Error(`${message} Expected ${status}, got ${response.status}: ${JSON.stringify(payload)}`);
+  }
+  if (expectedCode && payload?.error?.code !== expectedCode) {
+    throw new Error(`${message} Expected ${expectedCode}, got ${JSON.stringify(payload)}`);
   }
 }
 

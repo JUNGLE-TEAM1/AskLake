@@ -1,5 +1,5 @@
-export type AuditResult = "success" | "failed";
-export type AuditTargetType = "etl_job" | "dataset" | "dashboard" | "ai_module" | "admin_module" | "ui";
+export type AuditResult = "success" | "failed" | "forbidden";
+export type AuditTargetType = "etl_job" | "dataset" | "dashboard" | "ai_module" | "admin_module" | "ui" | "auth" | "user" | "group";
 
 export type AuditEntry = {
   action: string;
@@ -13,8 +13,10 @@ export type AuditEntry = {
 };
 
 export type ApiErrorResponse = {
+  detail?: unknown;
   error: {
     code: string;
+    details?: Record<string, unknown> | null;
     message: string;
   };
 };
