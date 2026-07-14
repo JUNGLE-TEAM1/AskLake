@@ -283,7 +283,7 @@ ASKLAKE_VERIFY_ICEBERG_LIVE=true npm run verify:kafka-continuous-iceberg
 
 ### 8.1 Kafka Continuous 대시보드 revision/result 검증
 
-대시보드 리비전은 Spark가 data object를 쓴 시점이 아니라 backend가 `dataPath`, 해당 경로의 `_SUCCESS` 뒤 게시된 immutable `manifestPath`, 유효한 `[startOffset, endOffset)` 범위와 Catalog materialization을 확인한 뒤에만 증가해야 한다.
+대시보드 리비전은 Spark가 Iceberg data file을 쓴 시점이 아니라 backend가 immutable `manifestPath`의 `_SUCCESS`, 유효한 `[startOffset, endOffset)` 범위, 일치하는 source boundary와 exact Iceberg snapshot/table을 확인하고 Trino 검증과 Catalog materialization을 끝낸 뒤에만 증가해야 한다.
 
 ```text
 Kafka offset range
@@ -322,7 +322,7 @@ npm run verify:dashboard-live-postgres
 
 기존 Continuous 계약과 frontend polling 선택 로직은 별도로 검증한다.
 
-`npm run verify:kafka-continuous-contract`는 `manifestPath`가 없거나 batch identity·기존 run 근거가 다른 non-empty publication이 Catalog와 revision을 올리지 않는지, replay Catalog 실패 결과와 runtime 카운터가 다음 reconciliation에서 함께 복구되는지도 확인한다. 실제 E2E에서는 data/manifest `_SUCCESS` head 확인과 replay 최대 1,000행 batch 경계를 함께 본다. 위젯 증분 계산은 전체 누적 기준 `count`/`sum`/`avg`만 허용한다. `min`/`max` 등은 전체 재계산하며 최근 N분·슬라이딩 시간창은 이번 범위에서 검증하거나 지원하지 않는다.
+`npm run verify:kafka-continuous-contract`는 `manifestPath`가 없거나 batch identity·기존 run 근거가 다른 non-empty publication이 Catalog와 revision을 올리지 않는지, PostgreSQL partition cursor가 worker 시작에 전달되는지, 축약되거나 이미 ack된 종료 report window를 S3 committed manifest 목록으로 끝까지 복구하는지, 마지막 manifest가 불완전하면 ACK를 멈추는지, replay Catalog 실패 결과와 runtime 카운터가 다음 reconciliation에서 함께 복구되는지도 확인한다. 로컬 replay result가 없을 때 S3 `_SUCCESS` manifest를 `runId`로 복구하는지, 404 외의 접근·파싱·identity 오류를 실패로 유지하는지, 미반영 replay가 남은 start/resume을 `409`로 막는지도 포함한다. Unit test는 전체 중복 offset 무게시, partial overlap suffix, Spark raw batch ID와 분리된 durable publication 순번, exact snapshot Run 행 수, replay manifest 실패 rollback을 확인한다. 실제 E2E에서는 manifest `_SUCCESS`, exact Iceberg commit/Trino 검증과 replay 최대 1,000행 batch 경계를 함께 본다. 위젯은 최초에 Catalog `icebergSnapshotId`로 고정한 전체 기준값을 만들고, 이후 전체 누적 `count`/`sum`/`avg`만 `_asklake_run_id`로 revision 한 개씩 증분 합산한다. backfill/legacy/non-delta, `min`/`max` 등은 전체 재계산하며 최근 N분·슬라이딩 시간창은 이번 범위에서 검증하거나 지원하지 않는다.
 
 ```powershell
 cd backend
@@ -332,7 +332,7 @@ cd ..\frontend
 npm run test:dashboard-live-refresh
 ```
 
-실제 Kafka/MinIO/Spark/Catalog 경로는 기존 opt-in `npm run verify:kafka-continuous-e2e`를 사용한다. 이 검증은 published metric 생성, 최초 결과 저장, 새 revision 뒤 widget result 증가까지 포함한다. production compose에서는 관리자 session을 만들 수 있도록 `ASKLAKE_CONTINUOUS_E2E_EMAIL/PASSWORD` 또는 `ASKLAKE_CONTINUOUS_E2E_SESSION_COOKIE`를 전달한다. 대시보드 viewer는 `/dashboards/{dashboardId}` published route에서만 Continuous dataset을 polling하고, 서버 권장주기 `clamp(triggerIntervalSeconds * 500, 5000, 60000)`을 따른다.
+실제 Kafka/MinIO/Spark/Catalog 경로는 기존 opt-in `npm run verify:kafka-continuous-e2e`를 사용한다. 이 검증은 published metric 생성, 최초 결과 저장, 새 revision 뒤 widget result 증가까지 포함한다. production compose에서는 관리자 session을 만들 수 있도록 `ASKLAKE_CONTINUOUS_E2E_EMAIL/PASSWORD` 또는 `ASKLAKE_CONTINUOUS_E2E_SESSION_COOKIE`를 전달한다. 대시보드 viewer는 `/dashboards/{dashboardId}` published route에서만 Continuous dataset을 polling하고, 평소에는 서버 권장주기 `clamp(triggerIntervalSeconds * 500, 5000, 60000)`을 따른다. 여러 revision을 따라잡을 때는 응답이 실제 전진한 경우에만 250ms 뒤 다음 revision을 요청한다.
 
 운영 로그에서는 다음 event를 확인한다.
 

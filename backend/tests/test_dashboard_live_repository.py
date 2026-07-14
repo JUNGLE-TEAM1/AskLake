@@ -216,6 +216,80 @@ class DashboardLiveRepositoryTests(unittest.TestCase):
         self.assertEqual(cursor.next_offset, 60)
         self.assertEqual(cursor.updated_revision, 2)
 
+    def test_stream_partition_cursor_payload_is_topic_scoped_and_sorted(self) -> None:
+        self.repository.record_stream_progress(
+            "dataset-stream",
+            [
+                {"topic": "returns", "partition": 0, "startOffset": 0, "endOffset": 7},
+                {"topic": "orders", "partition": 1, "startOffset": 0, "endOffset": 20},
+                {"topic": "orders", "partition": 0, "startOffset": 0, "endOffset": 10},
+            ],
+        )
+        self.db.commit()
+
+        self.assertEqual(
+            self.repository.list_stream_partition_cursors(
+                "dataset-stream",
+                topic="orders",
+            ),
+            [
+                {"topic": "orders", "partition": 0, "nextOffset": 10},
+                {"topic": "orders", "partition": 1, "nextOffset": 20},
+            ],
+        )
+
+    def test_zero_row_stream_progress_is_idempotent_and_blocks_partial_overlap(self) -> None:
+        first_range = [
+            {"topic": "orders", "partition": 0, "startOffset": 0, "endOffset": 30},
+        ]
+        self.assertTrue(
+            self.repository.record_stream_progress("dataset-stream", first_range)
+        )
+        self.db.commit()
+
+        self.assertFalse(
+            self.repository.record_stream_progress("dataset-stream", first_range)
+        )
+        with self.assertRaisesRegex(ValueError, "partially overlaps"):
+            self.repository.record_stream_progress(
+                "dataset-stream",
+                [{"topic": "orders", "partition": 0, "startOffset": 20, "endOffset": 40}],
+            )
+        self.db.rollback()
+
+        self.assertTrue(
+            self.repository.record_stream_progress(
+                "dataset-stream",
+                [{"topic": "orders", "partition": 0, "startOffset": 30, "endOffset": 60}],
+            )
+        )
+        self.db.commit()
+        cursor = self.repository.stream_partition_cursor("dataset-stream", "orders", 0)
+        self.assertIsNotNone(cursor)
+        self.assertEqual(cursor.next_offset, 60)
+        self.assertEqual(cursor.updated_revision, 0)
+        self.assertIsNone(self.repository.get_freshness("dataset-stream"))
+
+    def test_verified_retry_fills_missing_legacy_manifest_once(self) -> None:
+        ranges = [
+            {"topic": "orders", "partition": 0, "startOffset": 0, "endOffset": 30},
+        ]
+        original, _created = self.record_stream("stream-upgrade", ranges)
+        original.manifest_location = None
+        original.source_fingerprint = None
+        self.db.add(original)
+        self.db.commit()
+
+        recovered, created = self.record_stream("stream-upgrade", ranges)
+        self.db.commit()
+
+        self.assertFalse(created)
+        self.assertEqual(
+            recovered.manifest_location,
+            "s3a://asklake-output/live/_manifests/stream-upgrade.json",
+        )
+        self.assertEqual(len(str(recovered.source_fingerprint)), 64)
+
     def test_replay_has_separate_offset_namespace_and_is_itself_idempotent(self) -> None:
         ranges = [{"topic": "orders", "partition": 0, "startOffset": 0, "endOffset": 30}]
         stream, _ = self.record_stream("stream-original", ranges)

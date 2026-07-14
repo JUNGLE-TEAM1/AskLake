@@ -244,6 +244,7 @@ function maintenanceEnvironment(input, runtimeReportDir, includeCredentials = tr
     ASKLAKE_MAINTENANCE_ORPHAN_RETENTION_HOURS: input.orphanRetentionHours || 168,
     ASKLAKE_MAINTENANCE_LIMIT: input.limit || 100,
     ASKLAKE_MAINTENANCE_REPLAY_MAX_ROWS: process.env.ASKLAKE_MAINTENANCE_REPLAY_MAX_ROWS || 1000,
+    ASKLAKE_MAINTENANCE_TRUSTED_LEGACY_REPLAY_RUN_IDS: JSON.stringify(input.trustedLegacyReplayRunIds || []),
     ASKLAKE_MAINTENANCE_RESULT_FILE: path.posix.join(runtimeReportDir, resultFileName(runId)),
     MINIO_ENDPOINT: process.env.MINIO_ENDPOINT_IN_DOCKER || process.env.MINIO_ENDPOINT || "http://minio:9000",
     MINIO_REGION: process.env.MINIO_REGION || "us-east-1",

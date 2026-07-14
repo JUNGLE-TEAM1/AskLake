@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  dashboardLiveCatchUpDatasetIds,
   dashboardLiveDatasetIds,
   dashboardLiveRefreshInterval,
   mergePublishedDashboardWidgets,
@@ -109,4 +110,41 @@ test("a refreshed widget replaces only its result and keeps the rest of the runt
   assert.equal(merged?.widgetsByPageId["page-1"][0].appliedRevision, 5);
   assert.equal(merged?.widgetsByPageId["page-1"][1], untouched);
   assert.equal(mergePublishedDashboardWidgets(runtime, "another-dashboard", [refreshed]), runtime);
+});
+
+test("partial widget revisions stay in fast catch-up until they reach freshness", () => {
+  const freshness = [{
+    datasetId: "clickstream_events",
+    isContinuous: true,
+    latestRevision: 8,
+    nextCheckAfterMs: 5_000,
+    updatedAt: "2026-07-14T00:00:08Z",
+  }];
+
+  assert.deepEqual(
+    dashboardLiveCatchUpDatasetIds(publishedRuntime([
+      metricWidget({ appliedRevision: 6, id: "partial-1" }),
+      metricWidget({ appliedRevision: 6, id: "partial-2" }),
+    ]), [
+      metricWidget({ appliedRevision: 7, id: "partial-1" }),
+      metricWidget({ appliedRevision: 7, id: "partial-2" }),
+    ], freshness),
+    ["clickstream_events"],
+  );
+  assert.deepEqual(
+    dashboardLiveCatchUpDatasetIds(publishedRuntime([
+      metricWidget({ appliedRevision: 7 }),
+    ]), [
+      metricWidget({ appliedRevision: 7 }),
+    ], freshness),
+    [],
+  );
+  assert.deepEqual(
+    dashboardLiveCatchUpDatasetIds(publishedRuntime([
+      metricWidget({ appliedRevision: 7 }),
+    ]), [
+      metricWidget({ appliedRevision: 8 }),
+    ], freshness),
+    [],
+  );
 });

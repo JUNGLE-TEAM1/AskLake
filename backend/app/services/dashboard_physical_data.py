@@ -104,6 +104,7 @@ class DashboardDatasetQuerySession:
         remote_budget: DashboardRemoteScanBudget | None = None,
         query_timeout_seconds: float | None = None,
         trino_client: TrinoClient | None = None,
+        iceberg_run_id: str | None = None,
     ) -> None:
         self.dataset = dataset
         self.query_timeout_seconds = (
@@ -113,10 +114,18 @@ class DashboardDatasetQuerySession:
         )
         self.connection: duckdb.DuckDBPyConnection | None = None
         self.trino_client: TrinoClient | None = None
+        self._aggregate_where_sql = ""
+        self.revision_delta_available = iceberg_run_id is None
         try:
             iceberg_table = iceberg_dataset_table(dataset)
             if iceberg_table is not None:
                 self.table = iceberg_table
+                snapshot_id = dashboard_iceberg_snapshot_version(dataset)
+                self.query_table = (
+                    f"{self.table} FOR VERSION AS OF {snapshot_id}"
+                    if snapshot_id is not None
+                    else self.table
+                )
                 self.trino_client = trino_client or TrinoClient()
                 description = execute_trino_rows(
                     self.trino_client,
@@ -128,6 +137,12 @@ class DashboardDatasetQuerySession:
                     for row in description.rows
                     if row and str(row[0]).strip()
                 }
+                if iceberg_run_id is not None and "_asklake_run_id" in physical_columns:
+                    self._aggregate_where_sql = (
+                        ' WHERE "_asklake_run_id" = '
+                        f"{quote_duckdb_string_literal(iceberg_run_id)}"
+                    )
+                    self.revision_delta_available = True
                 self.columns = set(iceberg_dataset_user_columns(dataset)).intersection(
                     physical_columns
                 )
@@ -137,6 +152,7 @@ class DashboardDatasetQuerySession:
 
             self.connection = duckdb.connect(database=":memory:")
             self.table = quote_duckdb_identifier(_DASHBOARD_TABLE_NAME)
+            self.query_table = self.table
             configure_dashboard_duckdb_resources(self.connection)
             storage_segments = dataset_storage_segments(dataset)
             if not storage_segments:
@@ -173,12 +189,12 @@ class DashboardDatasetQuerySession:
     def read_widget(self, widget_type: str, config: dict[str, Any]) -> dict[str, Any]:
         source_config = dashboard_source_config(config)
         if widget_type == "table":
-            query = dashboard_table_query(self.table, self.columns, source_config)
+            query = dashboard_table_query(self.query_table, self.columns, source_config)
             data_mode = "server_preview"
             runtime_config = dict(source_config)
         else:
             query, runtime_config = dashboard_aggregation_query(
-                self.table,
+                self.query_table,
                 self.columns,
                 widget_type,
                 source_config,
@@ -219,31 +235,44 @@ class DashboardDatasetQuerySession:
 
     def read_aggregate_state(self, widget_type: str, config: dict[str, Any]) -> dict[str, Any] | None:
         """Read mergeable aggregate state; return None when cardinality is unsafe."""
-        if widget_type == "table":
+        if widget_type == "table" or not self.revision_delta_available:
             return None
         source_config = dashboard_source_config(config)
         query, state_template = dashboard_aggregate_state_query(
-            self.table,
+            self.query_table,
             self.columns,
             widget_type,
             source_config,
+            where_sql=self._aggregate_where_sql,
         )
         try:
-            cursor = execute_dashboard_query(
-                self.connection,
-                query,
-                timeout_seconds=self.query_timeout_seconds,
-            )
-            column_names = [str(description[0]) for description in (cursor.description or [])]
+            if self.trino_client is not None:
+                result = execute_trino_rows(
+                    self.trino_client,
+                    query,
+                    timeout_seconds=self.query_timeout_seconds,
+                )
+                column_names = result.columns
+                raw_rows = result.rows
+            else:
+                if self.connection is None:
+                    raise ValueError("Dashboard dataset query session is closed")
+                cursor = execute_dashboard_query(
+                    self.connection,
+                    query,
+                    timeout_seconds=self.query_timeout_seconds,
+                )
+                column_names = [str(description[0]) for description in (cursor.description or [])]
+                raw_rows = cursor.fetchall()
             rows = [
                 {
                     column_name: dashboard_json_cell(row[index])
                     for index, column_name in enumerate(column_names)
                 }
-                for row in cursor.fetchall()
+                for row in raw_rows
             ]
-        except duckdb.Error as error:
-            raise dashboard_storage_error(self.dataset, str(error)) from error
+        except (ApiError, RuntimeError, ValueError, duckdb.Error) as error:
+            raise dashboard_storage_error(self.dataset, iceberg_read_reason(error)) from error
         if len(rows) > MAX_DASHBOARD_INCREMENTAL_GROUPS:
             return None
         return {**state_template, "rows": rows}
@@ -258,6 +287,16 @@ def dashboard_source_config(config: dict[str, Any]) -> dict[str, Any]:
         for key, value in config.items()
         if key not in {"dataMode", "data_mode", "sourceConfig", "source_config"}
     }
+
+
+def dashboard_iceberg_snapshot_version(dataset: Any) -> str | None:
+    value = dataset_value(dataset, "iceberg_snapshot_id", "icebergSnapshotId")
+    if value is None:
+        return None
+    normalized = str(value).strip()
+    if not normalized or not normalized.lstrip("-").isdigit():
+        raise ValueError("Catalog dataset has an invalid Iceberg snapshot ID")
+    return str(int(normalized))
 
 
 def dashboard_table_query(table: str, columns: set[str], config: dict[str, Any]) -> str:
@@ -350,6 +389,8 @@ def dashboard_aggregate_state_query(
     columns: set[str],
     widget_type: str,
     config: dict[str, Any],
+    *,
+    where_sql: str = "",
 ) -> tuple[str, dict[str, Any]]:
     aggregation = str(config.get("aggregation") or "sum").lower()
     if aggregation not in {"sum", "avg", "count", "min", "max"}:
@@ -357,6 +398,7 @@ def dashboard_aggregate_state_query(
 
     dimension_specs, value_config_key = dashboard_widget_query_fields(widget_type, config)
     select_parts: list[str] = []
+    group_expressions: list[str] = []
     dimension_keys: list[str] = []
     for column, date_unit in dimension_specs:
         if not column:
@@ -366,6 +408,7 @@ def dashboard_aggregate_state_query(
         if date_unit in {"day", "month", "year"}:
             expression = f"date_trunc('{date_unit}', TRY_CAST({expression} AS TIMESTAMP))"
         select_parts.append(f"{expression} AS {quote_duckdb_identifier(column)}")
+        group_expressions.append(expression)
         dimension_keys.append(column)
 
     configured_value_key = config.get(value_config_key) or config.get(camel_to_snake_key(value_config_key))
@@ -394,9 +437,9 @@ def dashboard_aggregate_state_query(
             f"MIN({numeric_value}) AS __asklake_state_min",
             f"MAX({numeric_value}) AS __asklake_state_max",
         ])
-    group_sql = " GROUP BY ALL" if dimension_keys else ""
+    group_sql = f" GROUP BY {', '.join(group_expressions)}" if group_expressions else ""
     query = (
-        f"SELECT {', '.join(select_parts)} FROM {table}{group_sql} "
+        f"SELECT {', '.join(select_parts)} FROM {table}{where_sql}{group_sql} "
         f"LIMIT {MAX_DASHBOARD_INCREMENTAL_GROUPS + 1}"
     )
     return query, {

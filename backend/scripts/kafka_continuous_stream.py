@@ -54,6 +54,35 @@ def bounded_int_env(name: str, default: int, *, minimum: int, maximum: int) -> i
     return max(minimum, min(value, maximum))
 
 
+def normalize_stream_partition_cursors(value: Any) -> dict[tuple[str, int], int]:
+    cursors: dict[tuple[str, int], int] = {}
+    if not isinstance(value, list):
+        return cursors
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        topic = str(item.get("topic") or "").strip()
+        try:
+            partition = int(item.get("partition"))
+            next_offset = int(item.get("nextOffset"))
+        except (TypeError, ValueError):
+            continue
+        if not topic or partition < 0 or next_offset < 0:
+            continue
+        key = (topic, partition)
+        cursors[key] = max(cursors.get(key, 0), next_offset)
+    return cursors
+
+
+def stream_partition_cursor_payload(
+    cursors: dict[tuple[str, int], int],
+) -> list[dict[str, Any]]:
+    return [
+        {"topic": topic, "partition": partition, "nextOffset": next_offset}
+        for (topic, partition), next_offset in sorted(cursors.items())
+    ]
+
+
 JOB_ID = os.environ["ASKLAKE_CONTINUOUS_JOB_ID"]
 WORKER_ATTEMPT_ID = os.environ.get("ASKLAKE_CONTINUOUS_WORKER_ATTEMPT_ID")
 REPORT_FILE = Path(os.environ["ASKLAKE_CONTINUOUS_REPORT_FILE"])
@@ -63,6 +92,9 @@ QUERY = None
 INITIAL_COUNTS = json.loads(os.environ.get("ASKLAKE_CONTINUOUS_INITIAL_COUNTS", "{}"))
 INITIAL_METRICS = json_object_env("ASKLAKE_CONTINUOUS_INITIAL_METRICS")
 INITIAL_SCHEMA_STATE = json_object_env("ASKLAKE_CONTINUOUS_INITIAL_SCHEMA_STATE")
+STREAM_PARTITION_CURSORS = normalize_stream_partition_cursors(
+    json_array_env("ASKLAKE_CONTINUOUS_STREAM_PARTITION_CURSORS")
+)
 RULE_CONTRACT_VERSION = os.environ.get("ASKLAKE_CONTINUOUS_RULE_CONTRACT_VERSION", "1.0")
 RULES = [rule for rule in json_array_env("ASKLAKE_CONTINUOUS_RULES") if isinstance(rule, dict)]
 RULE_OUTPUT_SCHEMA = [item for item in json_array_env("ASKLAKE_CONTINUOUS_RULE_OUTPUT_SCHEMA") if isinstance(item, (list, tuple)) and len(item) >= 2]
@@ -981,12 +1013,14 @@ def recover_published_state(
             "batches": [],
             "counts": {"consumedCount": 0, "storedCount": 0, "quarantinedCount": 0},
             "latest": None,
+            "partitionCursors": [],
             "ruleMetrics": {},
         }
     batches: list[dict[str, Any]] = []
     counts = {"consumedCount": 0, "storedCount": 0, "quarantinedCount": 0}
     rule_metrics: dict[str, int] = {}
     latest: dict[str, Any] | None = None
+    partition_cursors: dict[tuple[str, int], int] = {}
     backlog_count = 0
     manifest_paths: list[tuple[int, str]] = []
     for path in paths:
@@ -1000,6 +1034,21 @@ def recover_published_state(
             counts[key] += int(batch.get(key) or 0)
         for key, value in recovered_rule_metrics([batch]).items():
             rule_metrics[key] = rule_metrics.get(key, 0) + value
+        for source_range in batch.get("sourceRanges") or []:
+            if not isinstance(source_range, dict):
+                continue
+            topic = str(source_range.get("topic") or "").strip()
+            try:
+                partition = int(source_range.get("partition"))
+                next_offset = int(source_range.get("endOffset"))
+            except (TypeError, ValueError):
+                continue
+            if topic and partition >= 0 and next_offset >= 0:
+                key = (topic, partition)
+                partition_cursors[key] = max(
+                    partition_cursors.get(key, 0),
+                    next_offset,
+                )
         if latest is None or batch_id > int(latest.get("batchId") or -1):
             latest = batch
         if batch_id <= acknowledged_batch:
@@ -1013,6 +1062,7 @@ def recover_published_state(
         "counts": counts,
         "batches": batches,
         "latest": latest,
+        "partitionCursors": stream_partition_cursor_payload(partition_cursors),
         "ruleMetrics": rule_metrics,
     }
 
@@ -1030,6 +1080,47 @@ def batch_source_ranges(batch: DataFrame) -> list[dict[str, Any]]:
         }
         for row in rows
     ], key=lambda item: (item["topic"], item["partition"]))
+
+
+def retain_uncommitted_offsets(batch: DataFrame) -> DataFrame:
+    unseen = lit(True)
+    for (topic, partition), next_offset in STREAM_PARTITION_CURSORS.items():
+        already_committed = (
+            (col("topic") == lit(topic))
+            & (col("partition") == lit(partition))
+            & (col("offset") < lit(next_offset))
+        )
+        unseen = unseen & ~already_committed
+    return batch.where(unseen)
+
+
+def advance_worker_stream_partition_cursors(
+    source_ranges: list[dict[str, Any]],
+) -> None:
+    for item in source_ranges:
+        if not isinstance(item, dict):
+            continue
+        topic = str(item.get("topic") or "").strip()
+        try:
+            partition = int(item.get("partition"))
+            next_offset = int(
+                item.get("endOffset")
+                if item.get("endOffset") is not None
+                else item.get("nextOffset")
+            )
+        except (TypeError, ValueError):
+            continue
+        if not topic or partition < 0 or next_offset < 0:
+            continue
+        key = (topic, partition)
+        STREAM_PARTITION_CURSORS[key] = max(
+            STREAM_PARTITION_CURSORS.get(key, 0),
+            next_offset,
+        )
+
+
+def next_publication_batch_id() -> int:
+    return max(CATALOG_ACK_BATCH_ID, LATEST_DURABLE_BATCH_ID) + 1
 
 
 def normalized_source_ranges(value: Any) -> list[dict[str, Any]]:
@@ -1130,8 +1221,12 @@ def main() -> None:
         COUNTERS[key] = max(COUNTERS[key], value)
     PUBLISHED_BATCHES = recovered["batches"]
     PUBLISHED_BACKLOG_COUNT = recovered["backlogCount"]
+    advance_worker_stream_partition_cursors(recovered.get("partitionCursors") or [])
     latest_recovered = recovered.get("latest")
-    LATEST_DURABLE_BATCH_ID = int(latest_recovered.get("batchId") or -1) if isinstance(latest_recovered, dict) else -1
+    LATEST_DURABLE_BATCH_ID = max(
+        CATALOG_ACK_BATCH_ID,
+        int(latest_recovered.get("batchId", -1)) if isinstance(latest_recovered, dict) else -1,
+    )
     for key, value in recovered["ruleMetrics"].items():
         RULE_METRICS[key] = max(RULE_METRICS[key], value)
     if isinstance(latest_recovered, dict):
@@ -1179,11 +1274,12 @@ def main() -> None:
         from_json(col("value").cast("string"), MapType(StringType(), StringType())).alias("raw_map"),
     )
 
-    def write_batch(batch: DataFrame, batch_id: int) -> None:
+    def write_batch(batch: DataFrame, spark_batch_id: int) -> None:
         global LAST_BATCH_STORED_COUNT, LAST_BATCH_QUARANTINED_COUNT, LAST_BATCH_WRITTEN, PUBLISHED_BATCHES, LAST_BATCH_EVIDENCE, CURRENT_BATCH_CONTEXT
         if STOP_REQUESTED:
             return
         batch_started_at = time.monotonic()
+        batch = retain_uncommitted_offsets(batch)
         batch.persist()
         total = batch.count()
         if total == 0:
@@ -1193,8 +1289,13 @@ def main() -> None:
             report("running")
             batch.unpersist()
             return
+        batch_id = next_publication_batch_id()
         source_ranges = batch_source_ranges(batch)
-        source_boundary = continuous_batch_source_boundary(batch_id, source_ranges, checkpoint_path)
+        source_boundary = continuous_batch_source_boundary(
+            batch_id,
+            source_ranges,
+            checkpoint_path,
+        )
         run_id = str(source_boundary["runId"])
         stage_durations = {
             "sourceDurationMs": max(0, round((time.monotonic() - batch_started_at) * 1000)),
@@ -1230,6 +1331,7 @@ def main() -> None:
             LAST_BATCH_QUARANTINED_COUNT = int(published.get("quarantinedCount") or 0)
             LAST_BATCH_WRITTEN = True
             remember_published_batch(published)
+            advance_worker_stream_partition_cursors(source_ranges)
             LAST_RULE_RESULT.update({
                 "quality": published.get("quality") if isinstance(published.get("quality"), dict) else {},
                 "status": "success",
@@ -1477,6 +1579,7 @@ def main() -> None:
         )
         published_manifest = {
             "batchId": batch_id,
+            "sparkBatchId": int(spark_batch_id),
             "publicationId": f"stream:{JOB_ID}:batch:{batch_id}",
             "publicationType": "stream",
             "runId": run_id,
@@ -1509,6 +1612,7 @@ def main() -> None:
         }
         write_batch_manifest(spark, output_path, batch_id, published_manifest)
         remember_published_batch(published_manifest)
+        advance_worker_stream_partition_cursors(source_ranges)
         LAST_BATCH_STORED_COUNT = stored_count
         LAST_BATCH_QUARANTINED_COUNT = quarantined_count
         LAST_BATCH_WRITTEN = True

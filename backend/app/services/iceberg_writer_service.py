@@ -228,6 +228,43 @@ class IcebergWriterService:
         )
         return self._storage_metrics(rows)
 
+    def verify_snapshot_run_row_count(
+        self,
+        target: IcebergWriterTarget,
+        *,
+        snapshot_id: str,
+        run_id: str,
+        expected_row_count: int,
+    ) -> int:
+        """Bind an external writer run to its exact verified Iceberg snapshot."""
+        if isinstance(expected_row_count, bool) or not isinstance(expected_row_count, int):
+            raise IcebergWriterError("ICEBERG_RUN_ROW_COUNT_EXPECTATION_INVALID")
+        if expected_row_count < 0:
+            raise IcebergWriterError("ICEBERG_RUN_ROW_COUNT_EXPECTATION_INVALID")
+        normalized_run_id = str(run_id or "")
+        if not normalized_run_id:
+            raise IcebergWriterError("ICEBERG_RUN_ID_INVALID")
+        snapshot_literal = snapshot_version_literal(snapshot_id)
+        rows = self._execute(
+            f"SELECT COUNT(*) FROM {qualified_target(target)} "
+            f"FOR VERSION AS OF {snapshot_literal} "
+            f"WHERE {quote_identifier('_asklake_run_id')} = {sql_literal(normalized_run_id)}"
+        )
+        if not rows or not rows[0] or rows[0][0] is None:
+            raise IcebergWriterError("ICEBERG_RUN_ROW_COUNT_EVIDENCE_MISSING")
+        try:
+            actual_row_count = int(rows[0][0])
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise IcebergWriterError("ICEBERG_RUN_ROW_COUNT_EVIDENCE_INVALID") from exc
+        if actual_row_count < 0:
+            raise IcebergWriterError("ICEBERG_RUN_ROW_COUNT_EVIDENCE_INVALID")
+        if actual_row_count != expected_row_count:
+            raise IcebergWriterError(
+                "ICEBERG_RUN_ROW_COUNT_MISMATCH",
+                f"Expected {expected_row_count} rows for run {normalized_run_id}, found {actual_row_count}",
+            )
+        return actual_row_count
+
     @staticmethod
     def _storage_metrics(rows: list[list[Any]]) -> tuple[int, int]:
         if not rows or len(rows[0]) < 2:

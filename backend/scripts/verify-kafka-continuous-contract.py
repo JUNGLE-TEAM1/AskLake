@@ -262,6 +262,7 @@ def main() -> None:
 
     original_get = etl_repository.get_kafka_continuous_runtime
     original_lock = etl_repository.lock_kafka_continuous_runtime
+    original_job_get_for_update = etl_repository.get_job_for_update
     original_find = etl_repository.find_conflicting_kafka_continuous_runtime
     original_snapshot_find = etl_repository.find_conflicting_kafka_snapshot
     original_list_runs = etl_repository.list_runs_for_job
@@ -286,7 +287,10 @@ def main() -> None:
     original_batch_stage = etl_repository.stage_kafka_continuous_batch
     try:
         etl_repository.get_kafka_continuous_runtime = lambda _db, _job_id: runtime
-        etl_service.verify_continuous_publication_storage = lambda _data_path, _manifest_path: None
+        etl_repository.get_job_for_update = lambda _db, _job_id: job
+        etl_service.verify_continuous_publication_storage = (
+            lambda _data_path, _manifest_path, **_kwargs: None
+        )
         etl_repository.lock_kafka_continuous_runtime = lambda _db, _job_id: runtime
         etl_repository.find_conflicting_kafka_continuous_runtime = lambda _db, **_kwargs: None
         etl_repository.find_conflicting_kafka_snapshot = lambda _db, **_kwargs: None
@@ -353,7 +357,9 @@ def main() -> None:
         }
         fake_db = type("FakeSession", (), {
             "add": lambda _self, _model: None,
+            "commit": lambda _self: None,
             "no_autoflush": property(lambda _self: nullcontext()),
+            "rollback": lambda _self: None,
         })()
         runtime.status = "stopped"
         runtime.consumed_count = 10
@@ -478,6 +484,7 @@ def main() -> None:
         dataset_save_count = {"value": 0}
         revision_commits = {}
         latest_revision_by_dataset = {}
+        stream_progress_ranges = []
         revision_backfill_count = {"value": 0}
         etl_repository.get_dataset_by_id = lambda _db, dataset_id: captured_dataset.get(dataset_id)
         etl_repository.get_dataset_by_id_for_update = lambda _db, dataset_id: captured_dataset.get(dataset_id)
@@ -529,7 +536,7 @@ def main() -> None:
                 "storedCount": stored_count,
             }
 
-        etl_service.verify_spark_iceberg_result = lambda _job, _run_id, result: {
+        etl_service.verify_spark_iceberg_result = lambda _job, _run_id, result, **_kwargs: {
             **result,
             "dataFileCount": 1,
             "materializationOutputPath": "s3://asklake-warehouse/warehouse/asklake/reviews_continuous",
@@ -576,6 +583,13 @@ def main() -> None:
             def commit_by_run_id(self, run_id):
                 return revision_commits.get(run_id)
 
+            def lock_dataset_publication_identity(self, _dataset_id):
+                return None
+
+            def record_stream_progress(self, _dataset_id, source_ranges):
+                stream_progress_ranges.append(source_ranges)
+                return True
+
             def record_dataset_commit(self, *, run_id, source_ranges=None, **_metadata):
                 existing_commit = revision_commits.get(run_id)
                 if existing_commit is None:
@@ -598,11 +612,12 @@ def main() -> None:
             }
             return runtime
         etl_repository.lock_kafka_continuous_runtime = count_runtime_relock
-        etl_service.materialize_continuous_batch(fake_db, job, runtime, {
+        first_cursor = etl_service.materialize_continuous_batch(fake_db, job, runtime, {
             "publishedBatches": [iceberg_publication(0, 2, [
                 {"topic": "reviews.continuous", "partition": 0, "startOffset": 0, "endOffset": 2},
             ])],
         })
+        assert first_cursor == 9, "A concurrent persisted Catalog cursor must not regress."
         assert runtime_relock_count["value"] == 1, "Catalog commit boundaries must reacquire the runtime lock."
         assert runtime.metrics["concurrentMarker"] == "latest", "Reacquired runtime metrics must win over a stale local copy."
         assert runtime.metrics["catalogBatchCursor"] == 9, "Catalog cursor must not regress after a concurrent reconciliation."
@@ -681,14 +696,17 @@ def main() -> None:
         assert len(revision_commits) == 1
 
         zero_row_publication = iceberg_publication(1, 0, [
-            {"topic": "reviews.continuous", "partition": 0, "startOffset": 2, "endOffset": 2},
+            {"topic": "reviews.continuous", "partition": 0, "startOffset": 2, "endOffset": 4},
         ])
         assert etl_service.materialize_continuous_publication(fake_db, job, runtime, zero_row_publication) is True
         assert latest_revision_by_dataset[dataset_id] == 1, "A zero-row publication must not change dashboard-visible freshness."
         assert len(revision_commits) == 1
+        assert stream_progress_ranges == [[
+            {"topic": "reviews.continuous", "partition": 0, "startOffset": 2, "endOffset": 4},
+        ]], "A zero-row publication must still advance its durable Kafka watermark."
 
         legacy_publication = iceberg_publication(7, 3, [
-            {"topic": "reviews.continuous", "partition": 0, "startOffset": 2, "endOffset": 5},
+            {"topic": "reviews.continuous", "partition": 0, "startOffset": 24, "endOffset": 27},
         ])
         legacy_run_id = legacy_publication["runId"]
         legacy_run = {
@@ -756,11 +774,16 @@ def main() -> None:
         assert replay_materialization["runId"] == replay_run_id
         assert replay_materialization["materializationMode"] == "delta"
         assert replay_materialization["sourceBoundary"]["kind"] == "kafka_continuous_replay"
-        assert dataset_save_count["value"] == before_replay_saves + 1
+        assert dataset_save_count["value"] == before_replay_saves + 1, (
+            dataset_save_count["value"],
+            before_replay_saves,
+            runtime.last_error,
+        )
         assert revision_commits[replay_run_id]["revision"] == 3
         assert latest_revision_by_dataset[dataset_id] == 3
         assert etl_service.materialize_continuous_replay(fake_db, job, runtime, replay_result) is True
         assert latest_revision_by_dataset[dataset_id] == 3, "The same replay run must not advance dataset revision twice."
+        after_idempotent_replay_saves = dataset_save_count["value"]
 
         invalid_replay = {
             **replay_result,
@@ -768,7 +791,7 @@ def main() -> None:
             "sourceBoundary": {**replay_boundary, "jobId": "WRONG-JOB"},
         }
         assert etl_service.materialize_continuous_replay(fake_db, job, runtime, invalid_replay) is False
-        assert dataset_save_count["value"] == before_replay_saves + 1
+        assert dataset_save_count["value"] == after_idempotent_replay_saves
         assert runtime.last_error.startswith("Replay Catalog materialization pending retry:")
         runtime.last_error = None
 
@@ -814,11 +837,13 @@ def main() -> None:
         stored_count_before_recovery = int(runtime.stored_count or 0)
         replayed_count_before_recovery = int((runtime.metrics or {}).get("replayedCount") or 0)
         saved_replay_runs = []
-        etl_repository.list_failed_kafka_continuous_replay_models = lambda _db, _job_id: [failed_replay_run]
-        etl_repository.save_kafka_continuous_maintenance_run = (
-            lambda _db, run: saved_replay_runs.append(run) or run
+        original_fake_add = fake_db.add
+        fake_db.add = lambda run: saved_replay_runs.append(run)
+        etl_repository.list_kafka_continuous_maintenance_run_models = (
+            lambda _db, _job_id=None, active_only=False: [failed_replay_run]
         )
         etl_service.reconcile_pending_continuous_replay_catalog(fake_db, job)
+        fake_db.add = original_fake_add
         assert revision_commits[pending_replay_run_id]["revision"] == 4
         assert latest_revision_by_dataset[dataset_id] == 4
         assert failed_replay_run.status == "success"
@@ -828,6 +853,9 @@ def main() -> None:
         assert runtime.stored_count == stored_count_before_recovery + 1
         assert runtime.metrics["replayedCount"] == replayed_count_before_recovery + 1
         assert saved_replay_runs == [failed_replay_run]
+        catalog_head_before_late_recovery = captured_dataset[dataset_id].payload[
+            "materializationRuns"
+        ][0]["runId"]
         runtime.stored_count = stored_count_before_recovery
         runtime.metrics = {
             **(runtime.metrics or {}),
@@ -921,7 +949,9 @@ def main() -> None:
             ])["runId"]
             recovered_runs = captured_dataset[dataset_id].payload["materializationRuns"]
             recovered_run = next(run for run in recovered_runs if run["runId"] == recovered_run_id)
-            assert recovered_runs[0]["runId"] == replay_run_id, "Late historical recovery must not replace the current Catalog head."
+            assert recovered_runs[0]["runId"] == catalog_head_before_late_recovery, (
+                "Late historical recovery must not replace the current Catalog head."
+            )
             assert recovered_run["materializationMode"] == "delta"
             assert recovered_run["sourceRanges"][0]["endOffset"] == 8
             assert recovered_run["ruleFingerprint"] == persisted_rule_fingerprint
@@ -960,6 +990,7 @@ def main() -> None:
     finally:
         etl_repository.get_kafka_continuous_runtime = original_get
         etl_repository.lock_kafka_continuous_runtime = original_lock
+        etl_repository.get_job_for_update = original_job_get_for_update
         etl_repository.find_conflicting_kafka_continuous_runtime = original_find
         etl_repository.find_conflicting_kafka_snapshot = original_snapshot_find
         etl_repository.list_runs_for_job = original_list_runs

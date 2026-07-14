@@ -220,6 +220,103 @@ class DashboardLiveRepository:
             statement = statement.with_for_update()
         return self.db.scalars(statement).first()
 
+    def list_stream_partition_cursors(
+        self,
+        dataset_id: str,
+        *,
+        topic: str | None = None,
+    ) -> list[dict[str, Any]]:
+        statement = select(DatasetKafkaPartitionCursorModel).where(
+            DatasetKafkaPartitionCursorModel.dataset_id == dataset_id,
+            DatasetKafkaPartitionCursorModel.commit_kind == STREAM_COMMIT_KIND,
+        )
+        normalized_topic = str(topic or "").strip()
+        if normalized_topic:
+            statement = statement.where(
+                DatasetKafkaPartitionCursorModel.topic == normalized_topic
+            )
+        statement = statement.order_by(
+            DatasetKafkaPartitionCursorModel.topic,
+            DatasetKafkaPartitionCursorModel.partition,
+        )
+        return [
+            {
+                "topic": str(cursor.topic),
+                "partition": int(cursor.partition),
+                "nextOffset": int(cursor.next_offset),
+            }
+            for cursor in self.db.scalars(statement).all()
+        ]
+
+    def lock_dataset_publication_identity(self, dataset_id: str) -> None:
+        bind = self.db.get_bind()
+        if bind.dialect.name != "postgresql":
+            return
+        self.db.execute(
+            text(
+                "SELECT pg_advisory_xact_lock("
+                "hashtextextended(:lock_key, 0)"
+                ")"
+            ),
+            {"lock_key": f"asklake:catalog-publication:{dataset_id}"},
+        )
+
+    def record_stream_progress(
+        self,
+        dataset_id: str,
+        source_ranges: list[dict[str, Any]] | None,
+        *,
+        updated_at: datetime | None = None,
+    ) -> bool:
+        normalized_ranges = normalize_kafka_source_ranges(source_ranges, required=True)
+        freshness = self.get_freshness(dataset_id)
+        revision = int(freshness.latest_revision or 0) if freshness is not None else 0
+        now = updated_at or datetime.now(UTC)
+        by_partition: dict[tuple[str, int], tuple[int, int]] = {}
+        for item in normalized_ranges:
+            key = (str(item["topic"]), int(item["partition"]))
+            start_offset = int(item["startOffset"])
+            end_offset = int(item["endOffset"])
+            current = by_partition.get(key)
+            by_partition[key] = (
+                min(current[0], start_offset) if current else start_offset,
+                max(current[1], end_offset) if current else end_offset,
+            )
+
+        advanced = False
+        for (topic, partition), (start_offset, end_offset) in by_partition.items():
+            cursor = self.stream_partition_cursor(
+                dataset_id,
+                topic,
+                partition,
+                for_update=True,
+            )
+            if cursor is not None:
+                next_offset = int(cursor.next_offset)
+                if end_offset <= next_offset:
+                    continue
+                if start_offset < next_offset:
+                    raise ValueError(
+                        "Kafka stream source range partially overlaps the committed partition watermark"
+                    )
+                cursor.next_offset = end_offset
+                cursor.updated_revision = max(int(cursor.updated_revision), revision)
+                cursor.updated_at = now
+            else:
+                cursor = DatasetKafkaPartitionCursorModel(
+                    dataset_id=dataset_id,
+                    commit_kind=STREAM_COMMIT_KIND,
+                    topic=topic,
+                    partition=partition,
+                    next_offset=end_offset,
+                    updated_revision=revision,
+                    updated_at=now,
+                )
+            self.db.add(cursor)
+            advanced = True
+        self.db.flush()
+        return advanced
+
     def advance_stream_partition_cursors(
         self,
         dataset_id: str,
@@ -345,6 +442,7 @@ class DashboardLiveRepository:
                 list(existing_commit.source_ranges or []),
                 required=False,
             )
+            existing_manifest_location = str(existing_commit.manifest_location or "").strip()
             mismatched = any((
                 existing_commit.dataset_id != dataset_id,
                 str(existing_commit.storage_location or "").strip() != normalized_storage_location,
@@ -355,11 +453,18 @@ class DashboardLiveRepository:
                 existing_ranges != normalized_ranges,
                 (
                     normalized_manifest_location is not None
-                    and str(existing_commit.manifest_location or "").strip() != normalized_manifest_location
+                    and bool(existing_manifest_location)
+                    and existing_manifest_location != normalized_manifest_location
                 ),
             ))
             if mismatched:
                 raise ValueError("Dataset revision run_id was reused with different publication metadata")
+            if normalized_manifest_location is not None and not existing_manifest_location:
+                existing_commit.manifest_location = normalized_manifest_location
+                if source_fingerprint and not existing_commit.source_fingerprint:
+                    existing_commit.source_fingerprint = source_fingerprint
+                self.db.add(existing_commit)
+                self.db.flush()
             return existing_commit, False
 
         freshness = self.get_freshness(dataset_id, for_update=True)

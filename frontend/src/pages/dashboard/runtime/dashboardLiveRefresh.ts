@@ -4,6 +4,7 @@ import type { DashboardRuntimeResponse, DashboardRuntimeWidget } from "../../../
 export const DASHBOARD_LIVE_REFRESH_DEFAULT_MS = 5_000;
 export const DASHBOARD_LIVE_REFRESH_MAX_MS = 60_000;
 export const DASHBOARD_LIVE_REFRESH_MIN_MS = 5_000;
+export const DASHBOARD_LIVE_CATCH_UP_MS = 250;
 
 export function dashboardLiveRefreshInterval(
   value: number | null | undefined,
@@ -90,4 +91,42 @@ export function mergePublishedDashboardWidgets(
   );
 
   return changed ? { ...runtime, widgetsByPageId } : runtime;
+}
+
+export function dashboardLiveCatchUpDatasetIds(
+  currentRuntime: DashboardRuntimeResponse | null,
+  refreshedWidgets: DashboardRuntimeWidget[],
+  freshness: DashboardDatasetFreshness[],
+) {
+  const latestRevisionByDatasetId = new Map(
+    freshness
+      .filter((dataset) => dataset.isContinuous)
+      .map((dataset) => [dataset.datasetId, dataset.latestRevision] as const),
+  );
+  const previousWidgetById = new Map(
+    Object.values(currentRuntime?.widgetsByPageId ?? {})
+      .flat()
+      .map((widget) => [widget.id, widget] as const),
+  );
+
+  return Array.from(new Set(
+    refreshedWidgets
+      .filter((widget) => {
+        if (!widget.datasetId || !currentRuntime) return false;
+        const latestRevision = latestRevisionByDatasetId.get(widget.datasetId);
+        const appliedRevision = typeof widget.appliedRevision === "number"
+          ? widget.appliedRevision
+          : 0;
+        const previousWidget = previousWidgetById.get(widget.id);
+        const previousRevision = typeof previousWidget?.appliedRevision === "number"
+          ? previousWidget.appliedRevision
+          : 0;
+        return (
+          typeof latestRevision === "number"
+          && latestRevision > appliedRevision
+          && appliedRevision > previousRevision
+        );
+      })
+      .map((widget) => widget.datasetId as string),
+  ));
 }

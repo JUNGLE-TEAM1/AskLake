@@ -23,6 +23,7 @@ from spark_job_run import (
     make_spark,
     parse_iceberg_target,
     quote_spark_identifier,
+    rollback_iceberg_commit,
     spark_iceberg_catalog_name,
     spark_iceberg_table_identifier,
 )
@@ -187,6 +188,9 @@ def completed_batch_paths(spark: SparkSession, root: str) -> list[str]:
     hadoop = spark.sparkContext._jsc.hadoopConfiguration()
     root_path = jvm.org.apache.hadoop.fs.Path(root)
     paths = []
+    trusted_legacy_run_ids = set(json.loads(
+        os.environ.get("ASKLAKE_MAINTENANCE_TRUSTED_LEGACY_REPLAY_RUN_IDS", "[]")
+    ))
     for status in root_path.getFileSystem(hadoop).listStatus(root_path):
         child = str(status.getPath())
         child_name = status.getPath().getName()
@@ -196,7 +200,7 @@ def completed_batch_paths(spark: SparkSession, root: str) -> list[str]:
             replay_run_id = child_name.removeprefix("batch_id=replay_")
             output_root = root.rsplit("/_batches", 1)[0]
             replay_manifest = f"{output_root}/_replay-manifests/run_id={replay_run_id}"
-            if not output_committed(spark, replay_manifest):
+            if not output_committed(spark, replay_manifest) and replay_run_id not in trusted_legacy_run_ids:
                 continue
         paths.append(child)
     return sorted(paths)
@@ -291,6 +295,56 @@ def replay_source_boundary(run_id: str, source_ranges: list[dict]) -> dict:
     return boundary
 
 
+def publish_replay_manifest(
+    spark: SparkSession,
+    replay_manifest_path: str,
+    iceberg_target: dict,
+    iceberg_commit: dict,
+    *,
+    run_id: str,
+    stored_count: int,
+    source_boundary: dict,
+    source_ranges: list[dict],
+) -> dict:
+    previous_snapshot = iceberg_commit.get("_previousSnapshot")
+    committed_new_snapshot = str(iceberg_commit.get("operation") or "").strip().lower() != "reuse"
+    public_iceberg_commit = {
+        key: value
+        for key, value in iceberg_commit.items()
+        if key != "_previousSnapshot"
+    }
+    replay_manifest = {
+        "publicationId": f"replay:{run_id}",
+        "publicationType": "replay",
+        "runId": run_id,
+        "storedCount": stored_count,
+        "dataPath": iceberg_target["tableUri"],
+        "icebergCommit": public_iceberg_commit,
+        "sourceBoundary": source_boundary,
+        "sourceRanges": source_ranges,
+    }
+    try:
+        spark.read.json(
+            spark.sparkContext.parallelize([json.dumps(replay_manifest)])
+        ).write.mode("errorifexists").json(replay_manifest_path)
+        if not output_committed(spark, replay_manifest_path):
+            raise RuntimeError(
+                f"Replay manifest did not produce a completion marker: {replay_manifest_path}"
+            )
+    except Exception as error:
+        if committed_new_snapshot:
+            try:
+                rollback_iceberg_commit(spark, iceberg_target, previous_snapshot)
+            except Exception as rollback_error:
+                raise RuntimeError(
+                    f"{error}; replay Iceberg rollback failed: {rollback_error}"
+                ) from error
+        raise
+
+    iceberg_commit.pop("_previousSnapshot", None)
+    return public_iceberg_commit
+
+
 def replay_quarantine(spark: SparkSession, output_path: str, run_id: str, iceberg_target: dict):
     if not supports_snapshot_rules(RULES):
         raise RuntimeError("Continuous replay received a stateful or unsupported canonical Rule.")
@@ -373,6 +427,8 @@ def replay_quarantine(spark: SparkSession, output_path: str, run_id: str, iceber
     iceberg_commit = None
     replay_manifest_path = f"{output_path.rstrip('/')}/_replay-manifests/run_id={run_id}"
     if stored_count:
+        if not source_ranges:
+            raise RuntimeError("Iceberg replay commit has no Kafka offset evidence.")
         target_frame = (
             target_frame
             .withColumn("_asklake_run_id", lit(run_id))
@@ -389,26 +445,16 @@ def replay_quarantine(spark: SparkSession, output_path: str, run_id: str, iceber
             rule_fingerprint=RULE_FINGERPRINT,
             source_boundary=source_boundary,
         )
-        iceberg_commit.pop("_previousSnapshot", None)
-        if not source_ranges:
-            raise RuntimeError("Iceberg replay commit has no Kafka offset evidence.")
-        replay_manifest = {
-            "publicationId": f"replay:{run_id}",
-            "publicationType": "replay",
-            "runId": run_id,
-            "storedCount": stored_count,
-            "dataPath": iceberg_target["tableUri"],
-            "icebergCommit": iceberg_commit,
-            "sourceBoundary": source_boundary,
-            "sourceRanges": source_ranges,
-        }
-        spark.read.json(
-            spark.sparkContext.parallelize([json.dumps(replay_manifest)])
-        ).write.mode("errorifexists").json(replay_manifest_path)
-        if not output_committed(spark, replay_manifest_path):
-            raise RuntimeError(
-                f"Replay manifest did not produce a completion marker: {replay_manifest_path}"
-            )
+        iceberg_commit = publish_replay_manifest(
+            spark,
+            replay_manifest_path,
+            iceberg_target,
+            iceberg_commit,
+            run_id=run_id,
+            stored_count=stored_count,
+            source_boundary=source_boundary,
+            source_ranges=source_ranges,
+        )
     return {
         "inputCount": input_count,
         "storedCount": stored_count,

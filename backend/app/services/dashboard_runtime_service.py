@@ -17,7 +17,11 @@ from app.models.dashboard_runtime import DashboardWidget as DashboardWidgetModel
 from app.repositories.audit_repository import safe_record_audit_event
 from app.repositories.dashboard_card_repository import get_dashboard_card
 from app.repositories.dashboard_runtime_repository import DashboardRuntimeMetaRecord, DashboardRuntimeRepository
-from app.repositories.dashboard_live_repository import DashboardLiveRepository
+from app.repositories.dashboard_live_repository import (
+    BACKFILL_COMMIT_KIND,
+    LEGACY_COMMIT_KIND,
+    DashboardLiveRepository,
+)
 from app.repositories.catalog_repository import CatalogRepository
 from app.schemas.common import ErrorCode
 from app.schemas.catalog import CatalogDatasetResponse
@@ -776,12 +780,13 @@ class DashboardRuntimeService:
         computed_result: dict[str, Any] | None = None
         computed_state: dict[str, Any] = {}
         calculation_mode = "full"
+        applied_revision = latest_revision
         calculation_started_at = time.perf_counter()
         try:
             if (
-                saved is not None
-                and saved_state
-                and latest_revision > int(saved.applied_revision or 0)
+                latest_revision > (int(saved.applied_revision or 0) if saved is not None else 0)
+                and saved is not None
+                and bool(saved_state)
                 and dashboard_widget_supports_incremental_merge(widget_type.value, source_config)
             ):
                 incremental = self._incremental_widget_result(
@@ -790,13 +795,11 @@ class DashboardRuntimeService:
                     config,
                     saved_state,
                     dataset_id=dataset_id,
-                    after_revision=int(saved.applied_revision or 0),
-                    through_revision=latest_revision,
+                    after_revision=int(saved.applied_revision or 0) if saved is not None else 0,
                     remote_budget=remote_budget,
                 )
                 if incremental is not None:
-                    computed_result, computed_state = incremental
-                    calculation_mode = "incremental"
+                    computed_result, computed_state, applied_revision, calculation_mode = incremental
             if computed_result is None:
                 computed_result, computed_state = self._full_widget_result(
                     payload,
@@ -810,7 +813,7 @@ class DashboardRuntimeService:
                 widget_id=widget.id,
                 calculation_version=calculation_version,
                 dataset_id=dataset_id,
-                applied_revision=latest_revision,
+                applied_revision=applied_revision,
                 result_payload=computed_result,
                 calculation_state=computed_state,
                 calculation_mode=calculation_mode,
@@ -821,7 +824,7 @@ class DashboardRuntimeService:
                 "dashboard_widget_result_calculated widget_id=%s dataset_id=%s applied_revision=%s mode=%s duration_ms=%s",
                 widget.id,
                 dataset_id,
-                latest_revision,
+                applied_revision,
                 calculation_mode,
                 round((time.perf_counter() - calculation_started_at) * 1000),
             )
@@ -829,14 +832,14 @@ class DashboardRuntimeService:
                 widget,
                 config=dict(computed_result.get("config") or config),
                 data=list(computed_result.get("data") or []),
-                applied_revision=latest_revision,
+                applied_revision=applied_revision,
                 calculation_version=calculation_version,
                 calculated_at=calculated_at,
             )
         except Exception as exc:
             self.live_repository.db.rollback()
             winner = self.live_repository.get_widget_result(widget.id, calculation_version)
-            if winner is not None and int(winner.applied_revision or 0) >= latest_revision:
+            if winner is not None and int(winner.applied_revision or 0) > int(saved_revision or -1):
                 winner_payload = dict(winner.result_payload or {})
                 return self._live_widget_response(
                     widget,
@@ -913,13 +916,12 @@ class DashboardRuntimeService:
         payload: dict[str, Any],
         widget_type: DashboardRuntimeWidgetType,
         config: dict[str, Any],
-        current_state: dict[str, Any],
+        current_state: dict[str, Any] | None,
         *,
         dataset_id: str,
         after_revision: int,
-        through_revision: int,
         remote_budget: DashboardRemoteScanBudget,
-    ) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    ) -> tuple[dict[str, Any], dict[str, Any], int, str] | None:
         if not dashboard_widget_supports_incremental_merge(
             widget_type.value,
             dashboard_source_config(config),
@@ -928,13 +930,23 @@ class DashboardRuntimeService:
         commits = self.live_repository.list_commits(
             dataset_id,
             after_revision=after_revision,
-            through_revision=through_revision,
+            through_revision=after_revision + 1,
         )
-        expected_revisions = list(range(after_revision + 1, through_revision + 1))
+        expected_revisions = [after_revision + 1]
         if (
             [int(commit.revision) for commit in commits] != expected_revisions
-            or any(commit.materialization_mode != "delta" for commit in commits)
             or widget_type == DashboardRuntimeWidgetType.TABLE
+        ):
+            return None
+        commit = commits[0]
+        materialization_mode = str(commit.materialization_mode or "").strip().lower()
+        commit_kind = str(
+            getattr(commit, "commit_kind", LEGACY_COMMIT_KIND) or LEGACY_COMMIT_KIND
+        ).strip().lower()
+        if (
+            materialization_mode != "delta"
+            or commit_kind in {BACKFILL_COMMIT_KIND, LEGACY_COMMIT_KIND}
+            or not current_state
         ):
             return None
         delta_payload = dict(payload)
@@ -950,8 +962,19 @@ class DashboardRuntimeService:
             }
             for commit in reversed(commits)
         ]
-        session = DashboardDatasetQuerySession(delta_payload, remote_budget=remote_budget)
+        iceberg_run_id = (
+            str(commit.run_id)
+            if str(commit.storage_format or "").strip().lower() == "iceberg"
+            else None
+        )
+        session = DashboardDatasetQuerySession(
+            delta_payload,
+            remote_budget=remote_budget,
+            iceberg_run_id=iceberg_run_id,
+        )
         try:
+            if iceberg_run_id is not None and not session.revision_delta_available:
+                return None
             delta_state = session.read_aggregate_state(widget_type.value, config)
         finally:
             session.close()
@@ -960,7 +983,12 @@ class DashboardRuntimeService:
         merged_state = merge_dashboard_aggregate_states(current_state, delta_state)
         if merged_state is None:
             return None
-        return dashboard_result_from_aggregate_state(merged_state), merged_state
+        return (
+            dashboard_result_from_aggregate_state(merged_state),
+            merged_state,
+            int(commit.revision),
+            "incremental",
+        )
 
     @staticmethod
     def _widget_calculation_version(

@@ -7,6 +7,8 @@ import {
 import type { DashboardRuntimeMode, DashboardRuntimeResponse } from "../../../types";
 import {
   DASHBOARD_LIVE_REFRESH_DEFAULT_MS,
+  DASHBOARD_LIVE_CATCH_UP_MS,
+  dashboardLiveCatchUpDatasetIds,
   dashboardLiveDatasetIds,
   dashboardLiveRefreshInterval,
   mergePublishedDashboardWidgets,
@@ -141,8 +143,11 @@ export function usePublishedDashboardLiveRefresh({
             timeoutMs: DASHBOARD_LIVE_REFRESH_REQUEST_TIMEOUT_MS,
           });
           if (cancelled || controller.signal.aborted) return;
+          const refreshedWidgets = Array.isArray(widgetResponse.widgets) ? widgetResponse.widgets : [];
+          const catchUpAt = Date.now() + DASHBOARD_LIVE_CATCH_UP_MS;
+          dashboardLiveCatchUpDatasetIds(runtimeRef.current, refreshedWidgets, freshnessDatasets)
+            .forEach((datasetId) => nextCheckAtByDatasetId.set(datasetId, catchUpAt));
           setPublishedRuntime((current) => {
-            const refreshedWidgets = Array.isArray(widgetResponse.widgets) ? widgetResponse.widgets : [];
             const merged = mergePublishedDashboardWidgets(current, dashboardId, refreshedWidgets);
             runtimeRef.current = merged;
             return merged;

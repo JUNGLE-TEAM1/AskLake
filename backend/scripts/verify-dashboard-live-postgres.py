@@ -30,6 +30,7 @@ def main() -> None:
     suffix = uuid4().hex[:12]
     dataset_id = f"verify_live_{suffix}"
     concurrent_dataset_id = f"verify_live_concurrent_{suffix}"
+    concurrent_distinct_dataset_id = f"verify_live_distinct_{suffix}"
     run_id = f"continuous:verify:{suffix}:batch:1"
     widget_id = f"verify_widget_{suffix}"
     with SessionLocal() as db:
@@ -199,11 +200,103 @@ def main() -> None:
             assert concurrent_revisions == [1, 1]
             assert concurrent_commit_count == 1
             assert concurrent_freshness is not None and concurrent_freshness.latest_revision == 1
+
+            distinct_start = Barrier(2)
+
+            def publish_distinct_offsets(index: int) -> int:
+                with SessionLocal() as concurrent_db:
+                    distinct_start.wait(timeout=10)
+                    concurrent_repository = DashboardLiveRepository(
+                        concurrent_db,
+                        ensure_schema=False,
+                    )
+                    concurrent_repository.lock_dataset_publication_identity(
+                        concurrent_distinct_dataset_id
+                    )
+                    current_dataset = concurrent_db.scalar(
+                        select(CatalogDatasetModel)
+                        .where(CatalogDatasetModel.id == concurrent_distinct_dataset_id)
+                        .with_for_update()
+                    )
+                    current_payload = (
+                        dict(current_dataset.payload or {})
+                        if current_dataset is not None
+                        else {
+                            "id": concurrent_distinct_dataset_id,
+                            "name": concurrent_distinct_dataset_id,
+                        }
+                    )
+                    current_runs = list(current_payload.get("materializationRuns") or [])
+                    distinct_run_id = f"continuous:verify:{suffix}:distinct:{index}"
+                    current_payload["materializationRuns"] = [{
+                        "materializationMode": "delta",
+                        "rowCount": index,
+                        "runId": distinct_run_id,
+                        "sourceKind": "kafka",
+                        "status": "success",
+                        "storageFormat": "parquet",
+                        "storageLocation": f"s3a://verify-live/distinct/batch_id={index}",
+                    }, *current_runs]
+                    concurrent_dataset = CatalogDatasetModel(
+                        id=concurrent_distinct_dataset_id,
+                        name=concurrent_distinct_dataset_id,
+                        payload=current_payload,
+                    )
+                    concurrent_commit = save_catalog_dataset_and_revision(
+                        concurrent_db,
+                        concurrent_dataset,
+                        run_id=distinct_run_id,
+                        storage_location=f"s3a://verify-live/distinct/batch_id={index}",
+                        storage_format="parquet",
+                        materialization_mode="delta",
+                        row_count=index,
+                        next_check_after_ms=5_000,
+                        source_ranges=[{
+                            "topic": "verify.concurrent.distinct",
+                            "partition": index,
+                            "startOffset": 0,
+                            "endOffset": index,
+                        }],
+                        manifest_location=(
+                            "s3a://verify-live/distinct/_manifests/"
+                            f"batch_id={index}.json"
+                        ),
+                    )
+                    return int(concurrent_commit.revision)
+
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                distinct_revisions = list(executor.map(publish_distinct_offsets, (1, 2)))
+            db.expire_all()
+            distinct_dataset = db.get(CatalogDatasetModel, concurrent_distinct_dataset_id)
+            distinct_commit_count = db.scalar(
+                select(func.count()).select_from(DatasetRevisionCommitModel).where(
+                    DatasetRevisionCommitModel.dataset_id == concurrent_distinct_dataset_id
+                )
+            )
+            distinct_freshness = db.get(
+                DatasetFreshnessModel,
+                concurrent_distinct_dataset_id,
+            )
+            assert sorted(distinct_revisions) == [1, 2]
+            assert distinct_commit_count == 2
+            assert distinct_freshness is not None and distinct_freshness.latest_revision == 2
+            assert distinct_dataset is not None
+            assert {
+                item["runId"]
+                for item in distinct_dataset.payload["materializationRuns"]
+            } == {
+                f"continuous:verify:{suffix}:distinct:1",
+                f"continuous:verify:{suffix}:distinct:2",
+            }
             print("verify-dashboard-live-postgres: ok")
         finally:
             db.rollback()
             db.execute(delete(DashboardWidgetResultModel).where(DashboardWidgetResultModel.widget_id == widget_id))
-            cleanup_dataset_ids = [dataset_id, concurrent_dataset_id]
+            cleanup_dataset_ids = [
+                dataset_id,
+                concurrent_dataset_id,
+                concurrent_distinct_dataset_id,
+            ]
             db.execute(delete(DatasetKafkaPartitionCursorModel).where(DatasetKafkaPartitionCursorModel.dataset_id.in_(cleanup_dataset_ids)))
             db.execute(delete(DatasetRevisionCommitModel).where(DatasetRevisionCommitModel.dataset_id.in_(cleanup_dataset_ids)))
             db.execute(delete(DatasetFreshnessModel).where(DatasetFreshnessModel.dataset_id.in_(cleanup_dataset_ids)))

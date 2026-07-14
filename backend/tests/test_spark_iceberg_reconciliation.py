@@ -8,12 +8,20 @@ from app.services.etl_service import (
     dataset_payload_from_spark_result,
     verify_spark_iceberg_result,
 )
-from app.services.iceberg_writer_service import build_iceberg_writer_target
+from app.services.iceberg_writer_service import IcebergWriterError, build_iceberg_writer_target
 
 
 class FakeIcebergWriterService:
-    def __init__(self, *, file_count: int = 2, storage_size_bytes: int = 4096) -> None:
+    def __init__(
+        self,
+        *,
+        file_count: int = 2,
+        run_row_count_error: str | None = None,
+        storage_size_bytes: int = 4096,
+    ) -> None:
         self.file_count = file_count
+        self.run_row_count_error = run_row_count_error
+        self.run_row_count_verifications = []
         self.storage_size_bytes = storage_size_bytes
 
     def verify_commit(
@@ -46,6 +54,24 @@ class FakeIcebergWriterService:
         if snapshot_id != "123456789":
             raise AssertionError(f"expected exact snapshot metrics, got {snapshot_id}")
         return self.file_count, self.storage_size_bytes
+
+    def verify_snapshot_run_row_count(
+        self,
+        target,
+        *,
+        snapshot_id,
+        run_id,
+        expected_row_count,
+    ):
+        if self.run_row_count_error:
+            raise IcebergWriterError(self.run_row_count_error)
+        self.run_row_count_verifications.append({
+            "expectedRowCount": expected_row_count,
+            "runId": run_id,
+            "snapshotId": snapshot_id,
+            "target": target,
+        })
+        return expected_row_count
 
 
 class SparkIcebergReconciliationTests(unittest.TestCase):
@@ -96,11 +122,12 @@ class SparkIcebergReconciliationTests(unittest.TestCase):
         }
 
     def test_verified_snapshot_and_physical_files_enable_query_engine_mapping(self) -> None:
+        writer_service = FakeIcebergWriterService()
         result = verify_spark_iceberg_result(
             self.job,
             "RUN-ICEBERG-BATCH",
             self.spark_result(),
-            writer_service=FakeIcebergWriterService(),
+            writer_service=writer_service,
         )
 
         self.assertTrue(result["queryEngineVerified"])
@@ -108,6 +135,40 @@ class SparkIcebergReconciliationTests(unittest.TestCase):
         self.assertEqual(result["icebergCommit"]["snapshotId"], "123456789")
         self.assertEqual(result["dataFileCount"], 2)
         self.assertEqual(result["storageSizeBytes"], 4096)
+        self.assertEqual(writer_service.run_row_count_verifications, [])
+
+    def test_continuous_path_verifies_run_rows_at_verified_snapshot(self) -> None:
+        writer_service = FakeIcebergWriterService()
+
+        verify_spark_iceberg_result(
+            self.job,
+            "RUN-ICEBERG-BATCH",
+            self.spark_result(),
+            expected_run_row_count=2,
+            writer_service=writer_service,
+        )
+
+        self.assertEqual(len(writer_service.run_row_count_verifications), 1)
+        verification = writer_service.run_row_count_verifications[0]
+        self.assertEqual(verification["expectedRowCount"], 2)
+        self.assertEqual(verification["runId"], "RUN-ICEBERG-BATCH")
+        self.assertEqual(verification["snapshotId"], "123456789")
+        self.assertEqual(verification["target"], self.target)
+
+    def test_run_row_count_trino_failure_remains_safe_502(self) -> None:
+        with self.assertRaises(ApiError) as context:
+            verify_spark_iceberg_result(
+                self.job,
+                "RUN-ICEBERG-BATCH",
+                self.spark_result(),
+                expected_run_row_count=2,
+                writer_service=FakeIcebergWriterService(
+                    run_row_count_error="ICEBERG_TRINO_QUERY_FAILED",
+                ),
+            )
+
+        self.assertEqual(context.exception.status_code, 502)
+        self.assertEqual(context.exception.code, "ICEBERG_TRINO_QUERY_FAILED")
 
     def test_positive_output_rows_require_physical_file_evidence(self) -> None:
         with self.assertRaises(ApiError) as context:
