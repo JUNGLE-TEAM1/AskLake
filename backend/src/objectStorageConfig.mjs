@@ -15,6 +15,20 @@ function parseBoolean(value, fallback) {
   return fallback;
 }
 
+function isLoopbackEndpoint(value) {
+  const endpoint = String(value ?? "").trim();
+  if (!endpoint) return false;
+  try {
+    const parsed = new URL(endpoint.includes("://") ? endpoint : `http://${endpoint}`);
+    const hostname = parsed.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+    return hostname === "localhost"
+      || hostname === "::1"
+      || /^127(?:\.\d{1,3}){3}$/.test(hostname);
+  } catch {
+    return false;
+  }
+}
+
 export function objectStorageProvider(fields = []) {
   const configured = fieldValue(fields, "Storage Provider")
     || process.env.ASKLAKE_OBJECT_STORAGE_PROVIDER
@@ -29,11 +43,15 @@ export function resolveObjectStorageConfig(fields = [], { docker = false } = {})
   const provider = objectStorageProvider(fields);
   const isMinio = provider === MINIO_PROVIDER;
   const endpointFromFields = fieldValue(fields, "Endpoint URL") || fieldValue(fields, "Endpoint");
-  const endpoint = endpointFromFields
+  const dockerMinioEndpoint = process.env.MINIO_ENDPOINT_IN_DOCKER || "http://m3-minio:9000";
+  const runtimeEndpointFromFields = isMinio && docker && isLoopbackEndpoint(endpointFromFields)
+    ? dockerMinioEndpoint
+    : endpointFromFields;
+  const endpoint = runtimeEndpointFromFields
     || (isMinio
-      ? (docker ? process.env.MINIO_ENDPOINT_IN_DOCKER : process.env.MINIO_ENDPOINT)
+      ? (docker ? dockerMinioEndpoint : process.env.MINIO_ENDPOINT)
       : (process.env.S3_ENDPOINT || process.env.AWS_ENDPOINT_URL_S3))
-    || (isMinio ? (docker ? "http://m3-minio:9000" : "http://127.0.0.1:9000") : "");
+    || (isMinio ? "http://127.0.0.1:9000" : "");
   const region = fieldValue(fields, "Region")
     || (isMinio ? process.env.MINIO_REGION : (process.env.S3_REGION || process.env.AWS_REGION))
     || (isMinio ? "us-east-1" : "ap-northeast-2");
