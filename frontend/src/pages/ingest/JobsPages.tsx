@@ -1269,6 +1269,7 @@ function JobDetailActionIcon({ action, job }: { action: JobDetailAction; job: Jo
   if (action.kind === "edit") return <Pencil aria-hidden="true" />;
   if (action.kind === "delete") return <Trash2 aria-hidden="true" />;
   if (action.kind === "cancelRun") return <X aria-hidden="true" />;
+  if (action.kind === "stopContinuous") return <Square aria-hidden="true" />;
   if (action.kind === "stopSchedule") return isRealtimeJob(job) ? <Square aria-hidden="true" /> : <CalendarOff aria-hidden="true" />;
   if (action.kind === "resumeSchedule") return <Calendar aria-hidden="true" />;
   if (action.kind === "retry") return <RefreshCw aria-hidden="true" />;
@@ -1290,6 +1291,7 @@ type JobsTableRow = {
 function JobListActionIcon({ action }: { action: JobListAction }) {
   if (action.kind === "detail") return <Info aria-hidden="true" size={15} />;
   if (action.kind === "edit") return <Pencil aria-hidden="true" size={15} />;
+  if (action.kind === "stopContinuous") return <Square aria-hidden="true" size={15} />;
   if (action.className.includes("realtime-stop")) return <Square aria-hidden="true" size={15} />;
   if (action.className.includes("realtime-start")) return <Play aria-hidden="true" size={15} />;
   if (action.className.includes("realtime-resume")) return <Play aria-hidden="true" size={15} />;
