@@ -22,20 +22,20 @@
 
 | 항목 | 책임 | 상태 |
 | --- | --- | --- |
-| MSK 유형과 인증 방식 | A | A가 결정한다. B는 선택된 방식에 맞는 client/env/Secret 형식만 제공한다. |
+| MSK 유형과 인증 방식 | B | MSK Serverless + IAM으로 확정한다. A는 실제 cluster와 network/IAM resource를 구축한다. |
 | RDS 용도 분리 | B 계약, A 구축 | 단일 RDS PostgreSQL instance에 database와 user를 3개 용도별로 분리한다. |
 | Trino 배치 위치와 실제 port | A | A가 결정한다. B는 `TRINO_BASE_URL`과 Secret reference 형식만 제공한다. |
 | FastAPI background singleton 구현 방식 | A/B 공동 | 보류. 동시성·장애 복구 검토 후 별도 확정한다. |
 | EC2 Continuous 상태 DB와 읽기 endpoint | A/B 공동 | 보류. EKS의 변경 command 차단 원칙만 현재 확정한다. |
 
-MSK 인증과 Trino 위치는 B가 선택할 설계 방향이 아니다. 두 값은 A의 인프라 결과를 B workload에 주입하기 위한 interface 계약으로만 다룬다.
+MSK는 B가 Serverless + IAM으로 확정한다. A는 이 계약에 맞는 실제 cluster ARN, private IAM bootstrap endpoint와 network/IAM resource를 제공한다. Trino 위치는 A의 인프라 결과를 B workload에 주입하기 위한 interface 계약으로만 다룬다.
 
 ## 2. 책임 경계
 
 | 담당자 B가 정하는 것 | 담당자 A가 정하는 것 |
 | --- | --- |
 | 이미지 이름, build target, platform, port, health path | AWS account, region, 실제 ECR repository URL |
-| Kafka 메시지 형식, topic/group 이름 규칙, producer/consumer 권한 경계 | MSK 유형, 인증 방식, bootstrap endpoint, VPC와 Security Group |
+| MSK Serverless + IAM, Kafka 메시지 형식, topic/group 이름 규칙, producer/consumer 권한 경계 | 실제 MSK cluster, bootstrap endpoint, VPC와 Security Group, workload IAM policy 구축 |
 | PostgreSQL 논리 database/user 분리와 환경 변수 mapping | RDS instance/cluster 개수, 크기, subnet, backup 정책 |
 | Git SHA tag와 ECR digest 사용 규칙 | 실제 image push, 배포용 digest 기록 |
 | FastAPI 중복 실행 방지와 Run 복구 완료 기준 | EKS workload identity와 AWS IAM policy 구현 |
@@ -110,7 +110,7 @@ checkpointPrefix: eks-mvp/checkpoints/
 | EKS Spark workload | test topic 조회·consume, 전용 group 사용, 지정 S3 prefix 쓰기 | 기존 Continuous topic/group/checkpoint/output 변경 |
 | EC2 Continuous control plane/worker | 기존 Continuous runtime 제어 | MVP test topic/group/checkpoint 사용 |
 
-MSK Serverless/Provisioned 선택과 IAM/mTLS/SCRAM 인증 방식은 A가 결정한다. 선택한 인증 방식과 무관하게 위 최소 권한 경계를 유지한다.
+MSK 유형과 인증 방식은 B가 **MSK Serverless + IAM**으로 확정한다. A는 이 계약에 맞춰 실제 cluster와 VPC/Security Group, workload IAM policy를 구축한다.
 
 권장 AWS IAM action 계약:
 
@@ -137,7 +137,7 @@ MSK Serverless/Provisioned 선택과 IAM/mTLS/SCRAM 인증 방식은 A가 결정
 - 외부 fixture producer의 consumer group 접근
 - EKS workload의 기존 EC2 Continuous topic/group 접근
 
-위 action 표는 MSK IAM 인증을 선택했을 때의 추천안이다. mTLS 또는 SCRAM을 선택하면 인증 secret과 broker port 계약으로 대체하되 topic/group 최소 권한 원칙은 유지한다.
+위 action 표는 이번 MVP의 필수 IAM 권한 계약이다. 장기 AWS access key/secret이나 mTLS/SCRAM secret을 사용하지 않고 workload identity와 A가 지정한 외부 AWS principal을 사용한다.
 
 ### 4.3 메시지 형식
 
@@ -193,8 +193,7 @@ fixture producer는 UTF-8 JSON object를 Kafka message value로 전송한다. Ka
 
 ### 4.5 A의 회신 필요 항목
 
-- MSK 유형과 인증 방식
-- cluster ARN과 private bootstrap endpoint
+- MSK Serverless cluster ARN과 private IAM bootstrap endpoint(`BootstrapBrokerStringSaslIam`, AWS 내부 port `9098`)
 - 승인된 test topic/group naming
 - fixture producer 실행 위치와 AWS principal
 - 기존 Continuous가 사용하는 topic/group/checkpoint/output prefix
@@ -303,7 +302,7 @@ FastAPI에는 다음 권한을 주지 않는다.
 | `AWS_REGION` | ConfigMap | 필수 | FastAPI, Spark | Deployment rollout / 새 SparkApplication |
 | `ASKLAKE_OBJECT_STORAGE_PROVIDER=aws` | ConfigMap | 필수 | FastAPI, Spark | Deployment rollout / 새 SparkApplication |
 | `ASKLAKE_KAFKA_BROKER` | ConfigMap | 필수 | FastAPI, Spark | Deployment rollout / 새 SparkApplication |
-| `ASKLAKE_KAFKA_AUTH_MODE` | ConfigMap | 필수 | Spark | 새 SparkApplication. EKS adapter 구현 필요 |
+| `ASKLAKE_KAFKA_AUTH_MODE=iam` | ConfigMap | 필수 | Spark | 새 SparkApplication. EKS IAM adapter 구현 필요 |
 | `ASKLAKE_SPARK_RUNNER=kubernetes` | ConfigMap | 필수 | FastAPI | Deployment rollout. Kubernetes provider 구현 필요 |
 | `ASKLAKE_SPARK_OUTPUT_BUCKET` | ConfigMap | 필수 | FastAPI, Spark | Deployment rollout / 새 SparkApplication |
 | `ASKLAKE_SPARK_OUTPUT_PREFIX` | ConfigMap | 필수 | FastAPI, Spark | Deployment rollout / 새 SparkApplication |
@@ -333,16 +332,16 @@ FastAPI에는 다음 권한을 주지 않는다.
 | FastAPI | Trino | egress | A가 확정한 HTTPS port | 물리 검증과 query |
 | FastAPI, Spark | S3와 STS | egress | HTTPS `443` | object I/O와 workload identity |
 | EKS Node | ECR API/DKR와 S3 | egress | HTTPS `443` | image pull. Node/platform 책임 |
-| MSK IAM smoke Pod | MSK broker | egress | A가 인증 방식에 맞춰 확정한 broker port | bootstrap 연결과 topic metadata 조회 |
-| Spark | MSK broker | egress | A가 인증 방식에 맞춰 확정한 broker port | bounded consume |
+| MSK IAM smoke Pod | MSK broker | egress | TLS/IAM `9098` | bootstrap 연결과 topic metadata 조회 |
+| Spark | MSK broker | egress | TLS/IAM `9098` | bounded consume |
 | Spark | RDS Iceberg JDBC Catalog | egress | PostgreSQL `5432` | Iceberg metadata commit |
-| 외부 fixture producer | MSK broker | 외부 egress → MSK ingress | A가 인증 방식에 맞춰 확정한 broker port | fixture produce |
+| 외부 fixture producer | MSK broker | 외부 egress → MSK ingress | TLS/IAM `9098` | fixture produce |
 
 기본 원칙:
 
 - RDS와 MSK는 public ingress를 열지 않는다.
 - Security Group source는 workload가 사용하는 Node/Pod security group 또는 승인된 외부 producer network로 제한한다.
-- MSK broker port와 Trino port는 A의 인증·배치 결정 전까지 숫자를 임의로 고정하지 않는다.
+- MSK IAM private broker port는 `9098`로 고정하고 Trino port만 A의 배치 결정 전까지 숫자를 임의로 고정하지 않는다.
 - NetworkPolicy를 사용하는 경우 Frontend, FastAPI, Spark별 egress를 위 표에 맞춰 allowlist한다.
 
 ## 9. SparkApplication 계약
@@ -494,6 +493,7 @@ EKS는 Continuous 상태를 표시하기 위해 읽기 API를 사용할 수 있�
 
 ### 추천안으로 확정 가능한 표준 형식
 
+- MSK Serverless + IAM, private IAM bootstrap port `9098`
 - image component, build target, command, port, probe 형식
 - ServiceAccount 이름과 namespace-scoped RBAC
 - IAM 요청표의 `principal/action/resource/reason` 형식과 wildcard 금지
@@ -505,13 +505,12 @@ EKS는 Continuous 상태를 표시하기 위해 읽기 API를 사용할 수 있�
 
 ### A가 결정해야 하는 중요 항목
 
-- MSK Serverless/Provisioned와 IAM/mTLS/SCRAM 인증 방식
-- 인증 방식에 따른 실제 broker port와 certificate/secret 전달 방식
 - 실제 ECR/MSK/S3/RDS/Trino resource ARN과 endpoint
+- MSK Serverless cluster, VPC/Security Group과 workload IAM policy의 실제 구축값
 - 단일 RDS PostgreSQL instance의 크기, storage, backup/retention 정책
 - Trino 배치 위치와 port
 
-위 항목은 B에게 결정을 요청하는 목록이 아니다. A의 결정 결과를 B의 ConfigMap, Secret, NetworkPolicy와 client option에 채우기 위한 입력 목록이다.
+위 항목은 B가 확정한 MSK Serverless + IAM 계약을 A가 실제 AWS resource로 구축한 뒤 ConfigMap, NetworkPolicy와 client option에 채우기 위한 입력 목록이다.
 
 ### A/B가 함께 승인해야 하는 중요 항목
 
@@ -559,8 +558,8 @@ manifest와 adapter 구현은 다음 검증을 통과해야 한다.
 
 - [ ] ECR repository URL과 AWS region이 확정됐다.
 - [ ] Node architecture가 AMD64임을 확인했다.
-- [ ] MSK 유형과 인증 방식이 확정됐다.
-- [ ] MSK 유형과 인증 방식은 A가 결정하고 B는 연결 형식만 반영한다는 책임 경계를 확인했다.
+- [ ] B가 MSK Serverless + IAM과 private IAM port `9098`을 확정했다.
+- [ ] A가 실제 MSK Serverless cluster, private IAM bootstrap endpoint와 network/IAM resource를 제공하는 책임 경계를 확인했다.
 - [ ] test topic/group과 fixture producer principal이 확정됐다.
 - [ ] 기존 Continuous와 격리할 이름과 권한 경계를 확인했다.
 - [ ] 단일 RDS PostgreSQL instance와 세 database/user mapping을 확인했다.
@@ -591,8 +590,8 @@ B 계약 초안입니다.
 
 3. RDS는 MVP 기준 단일 PostgreSQL instance 안에서 asklake_app,
    airflow_metadata, iceberg_catalog database와 전용 user를 분리합니다.
-   MSK 인증 방식과 Trino 배치 위치는 A가 결정하고, B는 선택된 값을
-   ConfigMap, Secret, network와 client 형식에 반영합니다.
+   MSK는 B가 Serverless + IAM으로 확정하고 A는 실제 cluster와 network/IAM
+   resource를 구축합니다. Trino 배치 위치는 A가 결정하고 B가 endpoint 형식에 반영합니다.
 
 4. FastAPI singleton 구현 방식과 EC2 Continuous 상태 DB/읽기 endpoint는
    이번 계약에서 보류합니다. EKS가 Continuous 변경 command를 차단하는

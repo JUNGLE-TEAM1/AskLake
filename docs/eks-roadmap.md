@@ -44,7 +44,7 @@
 - ECR 이미지, 표시용 Git SHA tag, 배포·rollback 기준 ECR image digest
 - Frontend/FastAPI/Airflow/Spark Operator와 batch Spark용 Kubernetes workload, Service, ConfigMap, Secret reference
 - ALB/Ingress를 통한 외부 URL
-- Amazon MSK와 인증 방식, EKS→MSK network/IAM 검증, 격리된 test topic/group, EKS 밖 fixture producer 실행 경로
+- Amazon MSK Serverless와 IAM 인증, EKS→MSK network/IAM 검증, 격리된 test topic/group, EKS 밖 fixture producer 실행 경로
 - AskLake·Airflow metadata·Iceberg JDBC Catalog의 RDS mapping과 migration/rollback 기록
 - S3 연결과 필요한 경우에만 Airflow 공유 파일용 EFS 연결
 - EKS 또는 기존/공용 Trino endpoint와 물리 검증 evidence
@@ -65,7 +65,7 @@
 | 기능 | 화 7/14 | 수 7/15 | 목 7/16 | 금 7/17 | 토 7/18 | 일 7/19 |
 | --- | --- | --- | --- | --- | --- | --- |
 | EKS 클러스터/ECR | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| MSK 방식·인증·Trino 위치 결정 | ✅ 결정 | ✅ | ✅ | ✅ | ✅ | ✅ |
+| MSK Serverless+IAM·Trino 위치 결정 | ✅ 결정 | ✅ | ✅ | ✅ | ✅ | ✅ |
 | EKS → MSK network/IAM | ⬜ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | 서비스별 Pod 분리 | 🟡 | 🟡 | ✅ | ✅ | ✅ | ✅ |
 | 외부 URL 접속 | ⬜ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -130,7 +130,7 @@ AskLake를 올리기 전에 EKS 자체가 Pod와 Node를 정상적으로 만들 
 | EKS Auto Mode Cluster와 NodePool | Frontend/FastAPI/Spark AMD64 image |
 | Metrics Server와 ECR 저장소 | Kubernetes Deployment/Service/Job 기본 YAML |
 | 테스트 Pod와 Node scale-out/in | ConfigMap/Secret reference 기본 구조 |
-| MSK Serverless+IAM 또는 Provisioned+IAM/mTLS/SCRAM 결정 | Git SHA tag와 ECR digest 기록 규칙 |
+| MSK Serverless cluster·VPC·IAM 리소스 구축 준비 | MSK Serverless+IAM 방식과 client/env/Secret 계약 확정 |
 | Trino 배치 위치 결정 | 3개 PostgreSQL 용도와 RDS 이전 순서 정의 |
 | Continuous 제어권을 EC2에 유지하는 범위 확정 | FastAPI 확장·AskLake Run 재시작 안전성 완료 기준 정의 |
 
@@ -141,7 +141,7 @@ AskLake를 올리기 전에 EKS 자체가 Pod와 Node를 정상적으로 만들 
 | EKS 클러스터 | ✅ |
 | ECR image push | ✅ |
 | Kubernetes YAML 기본 구조 | ✅ |
-| MSK cluster 유형·인증 방식 | ✅ 결정 완료 |
+| MSK cluster 유형·인증 방식 | ✅ B가 Serverless+IAM으로 확정 |
 | Trino 배치 위치 | ✅ 결정 완료 |
 | RDS migration/rollback 범위 | ✅ 문서화 |
 | image digest 기준 | ✅ 문서화 |
@@ -189,7 +189,7 @@ kubectl top nodes
 - Node
 - Metrics Server
 - Kubernetes 기본 YAML
-- 승인된 MSK 인증 방식과 test topic/group naming, EKS 밖 fixture producer 실행 경로
+- 확정된 MSK Serverless+IAM과 test topic/group naming, EKS 밖 fixture producer 실행 경로
 - RDS database/user mapping과 rollback 기준
 - Trino endpoint 또는 EKS 배치 결정
 - EKS와 EC2의 Continuous 제어권 경계
@@ -199,7 +199,7 @@ kubectl top nodes
 
 EKS에서 테스트 Pod가 실행되고 Node 증가가 한 번 보이며, 아래 결정표가 승인되면 통과입니다.
 
-- MSK 유형·인증 방식
+- MSK Serverless+IAM client·권한·network 계약
 - 외부 fixture producer와 Spark의 test topic 권한·입력 경계
 - Trino 배치 위치
 - AskLake/Airflow/Iceberg JDBC의 RDS mapping
@@ -278,8 +278,8 @@ MSK 연결 확인:
 
 ```text
 EKS test client Pod
-→ private bootstrap endpoint 연결
-→ 선택한 IAM/mTLS/SCRAM 인증 성공
+→ private IAM bootstrap endpoint `:9098` 연결
+→ IAM 인증 성공
 → test topic metadata 조회
 ```
 
