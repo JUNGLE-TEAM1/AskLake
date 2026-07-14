@@ -616,7 +616,15 @@ export type CreatePipelineRequest = {
 
 export type UpdatePipelineRequest = Omit<
   CreatePipelineRequest,
-  "id" | "sourceConfig" | "sourceLabel" | "sourceType" | "recordParsing" | "createdBy" | "createdByProfile"
+  | "id"
+  | "sourceConfig"
+  | "sourceLabel"
+  | "sourceType"
+  | "executionMode"
+  | "continuousConfig"
+  | "recordParsing"
+  | "createdBy"
+  | "createdByProfile"
 >;
 
 export type DraftPipelineSlicePatch = {

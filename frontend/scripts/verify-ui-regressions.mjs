@@ -1520,6 +1520,14 @@ const checks = [
     ],
   },
   {
+    name: "ETL updates omit create-only Kafka lifecycle settings",
+    file: "src/services/draftPipelineContract.ts",
+    patterns: [
+      /continuousConfig: _continuousConfig/,
+      /executionMode: _executionMode/,
+    ],
+  },
+  {
     name: "ETL create and edit use the canonical Rule contract with legacy hydration",
     file: "src/services/draftPipelineContract.ts",
     patterns: [
