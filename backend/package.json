@@ -73,6 +73,7 @@
     "kafka:reviews-fixture": "node scripts/seed-kafka-review-fixture.mjs",
     "kafka:reviews-replay": "node scripts/seed-kafka-review-fixture.mjs",
     "kafka:reviews-loop": "node scripts/seed-kafka-review-fixture.mjs --loop --no-recreate-topic",
+    "test:kafka-replay-record": "node --test scripts/kafka-replay-record.test.mjs",
     "verify:kafka-review-scheduled-ingest": "node scripts/verify-kafka-review-scheduled-ingest.mjs",
     "verify:kafka-target-projection": "node scripts/verify-kafka-target-projection.mjs",
     "verify:kafka-continuous-contract": "node scripts/run-python-verification.mjs scripts/verify-kafka-continuous-contract.py",
