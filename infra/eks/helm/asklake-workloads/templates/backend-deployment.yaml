@@ -1,0 +1,93 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: asklake-backend
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "asklake-workloads.commonLabels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  replicas: {{ .Values.backend.replicas }}
+  revisionHistoryLimit: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      {{- include "asklake-workloads.selectorLabels" (dict "component" "backend") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "asklake-workloads.selectorLabels" (dict "component" "backend") | nindent 8 }}
+    spec:
+      serviceAccountName: {{ .Values.backend.serviceAccountName }}
+      automountServiceAccountToken: true
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: backend
+          image: "{{ required "backend image repository is required" .Values.backend.image.repository }}@{{ required "backend image digest is required" .Values.backend.image.digest }}"
+          imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: asklake-backend-config
+          env:
+            {{- $secretName := .Values.backend.runtimeSecret.name }}
+            {{- range $envName, $secretKey := dict
+              "DATABASE_URL" .Values.backend.runtimeSecret.keys.databaseUrl
+              "BOOTSTRAP_ADMIN_EMAIL" .Values.backend.runtimeSecret.keys.bootstrapAdminEmail
+              "BOOTSTRAP_ADMIN_PASSWORD" .Values.backend.runtimeSecret.keys.bootstrapAdminPassword
+              "AIRFLOW_EXECUTION_API_TOKEN" .Values.backend.runtimeSecret.keys.airflowExecutionApiToken
+              "AIRFLOW_INTERNAL_TOKEN" .Values.backend.runtimeSecret.keys.airflowInternalToken
+              "TRINO_AUTH_USERNAME" .Values.backend.runtimeSecret.keys.trinoAuthUsername
+              "TRINO_AUTH_PASSWORD" .Values.backend.runtimeSecret.keys.trinoAuthPassword
+              "TRINO_MATERIALIZER_USERNAME" .Values.backend.runtimeSecret.keys.trinoMaterializerUsername
+              "TRINO_MATERIALIZER_PASSWORD" .Values.backend.runtimeSecret.keys.trinoMaterializerPassword
+              "TRINO_RESULT_CURSOR_SECRET" .Values.backend.runtimeSecret.keys.trinoResultCursorSecret
+              "TRINO_QUERY_CONFIRMATION_SECRET" .Values.backend.runtimeSecret.keys.trinoQueryConfirmationSecret
+            }}
+            - name: {{ $envName }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: {{ $secretKey }}
+            {{- end }}
+          volumeMounts:
+            - name: trino-tls
+              mountPath: /var/run/secrets/asklake/trino
+              readOnly: true
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.backend.resources | nindent 12 }}
+      volumes:
+        - name: trino-tls
+          secret:
+            secretName: {{ .Values.backend.trinoTlsSecret.name }}
+            items:
+              - key: {{ .Values.backend.trinoTlsSecret.caKey }}
+                path: ca.crt

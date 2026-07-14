@@ -468,3 +468,13 @@ Dashboard 계산은 Catalog row → freshness row 순서로 잠그며 ETL commit
 Frontend는 published `/dashboards/:dashboardId`에서 Continuous dataset만 polling한다. 같은 dataset을 쓰는 여러 widget은 freshness를 한 번만 확인하고 `latestRevision > appliedRevision`인 widget만 재조회한다. 한 revision이라도 실제로 전진했지만 아직 최신 revision보다 뒤라면 250ms 뒤 다음 chunk를 요청한다. 계산 실패처럼 `appliedRevision`이 전진하지 않으면 빠른 재시도를 하지 않고 backend 권장 주기로 돌아간다. 일반 주기는 backend가 `clamp(triggerIntervalSeconds × 500, 1,000, 60,000)`으로 계산한 `nextCheckAfterMs`를 사용하고, 동시 요청을 흩뜨리기 위해 dataset ID 기반 0~10% deterministic jitter를 더한다. hidden tab에서는 중지하고, route unmount 시 timer/request를 정리하며, 실패하면 이전 위젯 결과를 유지한다.
 
 상세 사용·운영·검증 절차는 [Kafka PostgreSQL Dashboard Sync](kafka-postgresql-dashboard-sync.md)를 따른다.
+
+## 14) EKS MVP 애플리케이션 런타임 경계
+
+EKS 애플리케이션 workload는 `infra/eks/helm/asklake-workloads` chart가 소유한다. chart는 `asklake-dev` namespace에 Frontend와 FastAPI를 각각 `Deployment` 2 replica와 내부 `ClusterIP` `Service`로 배포한다. 외부 진입점, namespace, IRSA ServiceAccount는 EKS foundation/ingress 범위가 제공하며 이 chart는 기존 `asklake-frontend`, `asklake-backend` ServiceAccount를 참조한다. 일반 설정은 `ConfigMap`, credential과 `DATABASE_URL`은 기존 Kubernetes `Secret` 참조로만 전달하고 image는 ECR digest로 고정한다.
+
+MVP에서 Kafka Continuous control-plane은 EC2에 남는다. EKS FastAPI의 `ASKLAKE_CONTINUOUS_CONTROL_PLANE=external_ec2`는 Continuous 생성·상세·수정·삭제·명령·전용 runtime 조회를 `409 CONTINUOUS_CONTROL_OWNED_BY_EC2`로 거절하고 일반 Job 목록에서는 Continuous Job을 숨긴다. EKS process는 Continuous background sync도 시작하지 않는다. 따라서 EKS와 EC2가 같은 Continuous worker나 상태 DB를 동시에 제어하는 shared mode는 허용하지 않는다.
+
+FastAPI singleton은 별도 lease table을 만들지 않는다. 기존 `etl_runs` row의 `execution_owner`, `execution_lease_expires_at`, `execution_generation`을 사용해 같은 `runId`의 Spark/Catalog 외부 실행을 한 generation만 소유하게 한다. 기본 lease는 60초이고 20초마다 갱신한다. lease는 최대 작업 시간을 제한하지 않으며 `ASKLAKE_SPARK_RUN_TIMEOUT_SECONDS`와 독립적이다. 정상 작업은 heartbeat로 계속 연장되고, process 또는 heartbeat가 멈추면 마지막 갱신 후 최대 약 60초에 다음 generation이 takeover할 수 있다. lease를 잃은 이전 generation은 결과를 저장할 수 없다.
+
+이번 workload 범위에는 Kubernetes `SparkApplication` 제출·조회 provider가 없다. `ASKLAKE_SPARK_RUNNER=kubernetes`에서 Spark 실행 요청은 기존 local/REST bridge로 fallback하지 않고 `503 SPARK_KUBERNETES_PROVIDER_NOT_IMPLEMENTED`로 fail closed한다. 실제 EKS ETL 실행은 provider와 runId 기반 외부 실행 identity 복구가 추가된 뒤 활성화한다.

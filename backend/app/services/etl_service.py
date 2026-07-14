@@ -149,7 +149,7 @@ PERMISSION_GROUP_ACTIONS = {
 }
 DEFAULT_SOURCE_IDENTITY_WORKERS = 16
 MAX_SOURCE_IDENTITY_WORKERS = 64
-DEFAULT_SPARK_EXECUTION_LEASE_SECONDS = 1200
+DEFAULT_SPARK_EXECUTION_LEASE_SECONDS = 60
 AIRFLOW_MISSING_RUN_FAILURE_LIMIT = 3
 SPARK_REST_BRIDGE_GRACE_SECONDS = 30
 DEFAULT_SCHEDULE_TIMEZONE = "Asia/Seoul"
@@ -165,6 +165,29 @@ SCHEDULE_WEEKDAY_VALUES = {
 FASTAPI_EXECUTION_OWNER = f"{os.environ.get('HOSTNAME') or 'local'}:{os.getpid()}:{secrets.token_hex(8)}"
 
 
+def external_continuous_control_plane_enabled() -> bool:
+    return settings.asklake_continuous_control_plane == "external_ec2"
+
+
+def job_visible_in_current_control_plane(execution_mode: str | None) -> bool:
+    return not external_continuous_control_plane_enabled() or execution_mode != "continuous"
+
+
+def require_local_continuous_control_plane() -> None:
+    if not external_continuous_control_plane_enabled():
+        return
+    raise ApiError(
+        "CONTINUOUS_CONTROL_OWNED_BY_EC2",
+        "Kafka Continuous control remains owned by the EC2 environment for the EKS MVP.",
+        status.HTTP_409_CONFLICT,
+        {"controlPlane": "external_ec2"},
+    )
+
+
+def run_execution_heartbeat_interval_seconds(lease_seconds: int) -> float:
+    return max(1.0, min(float(lease_seconds) / 3, 30.0))
+
+
 class RunExecutionLeaseHeartbeat:
     """Keep an RDS Run lease alive while an external Spark/Catalog call is in flight."""
 
@@ -172,7 +195,7 @@ class RunExecutionLeaseHeartbeat:
         self._run_id = run_id
         self._generation = generation
         self._lease_seconds = lease_seconds
-        self._interval_seconds = max(1.0, min(float(lease_seconds) / 3, 30.0))
+        self._interval_seconds = run_execution_heartbeat_interval_seconds(lease_seconds)
         self._session_factory = sessionmaker(bind=db.get_bind(), autoflush=False, autocommit=False, class_=Session)
         self._lost = threading.Event()
         self._stop = threading.Event()
@@ -256,6 +279,8 @@ def create_pipeline(
     request: CreatePipelineRequest,
     actor: ActorContext | str = "demo-user",
 ) -> CreatePipelineResponse:
+    if request.execution_mode == "continuous":
+        require_local_continuous_control_plane()
     compiled_rules = compile_pipeline_rules(request)
     require_compiled_rules(compiled_rules)
     apply_compiled_rules(request, compiled_rules)
@@ -614,12 +639,14 @@ def list_jobs(
     statuses: list[str] | None = None,
     schedule_kind: JobScheduleKind | None = None,
 ) -> JobListResponse:
-    for job in etl_repository.list_job_models(db):
-        refresh_kafka_continuous_runtime(db, job)
+    if not external_continuous_control_plane_enabled():
+        for job in etl_repository.list_job_models(db):
+            refresh_kafka_continuous_runtime(db, job)
     actor_context = actor or ActorContext()
     visible_jobs = [
         with_job_permissions(db, job, actor_context)
         for job in etl_repository.list_jobs(db)
+        if job_visible_in_current_control_plane(job.execution_mode)
     ]
     all_jobs = [normalize_list_job(job) for job in visible_jobs if job.permissions.can_view]
     selected_statuses = set(statuses or [])
@@ -661,6 +688,8 @@ def latest_run_outcome(job: JobRowData) -> JobRunOutcome | None:
 
 def sync_active_kafka_continuous_runtimes() -> None:
     """Persist continuous worker progress without depending on UI polling."""
+    if external_continuous_control_plane_enabled():
+        return
     import logging
 
     from app.core.database import SessionLocal
@@ -780,7 +809,11 @@ def run_due_scheduled_jobs(
     request: ScheduledJobRunRequest,
     actor: ActorContext | None = None,
 ) -> ScheduledJobRunResponse:
-    jobs = etl_repository.list_job_models(db)
+    jobs = [
+        job
+        for job in etl_repository.list_job_models(db)
+        if job_visible_in_current_control_plane(job.execution_mode)
+    ]
     if request.job_id:
         jobs = [job for job in jobs if job.id == request.job_id]
     items: list[ScheduledJobRunItem] = []
@@ -832,11 +865,15 @@ def get_job(db: Session, job_id: str, actor: ActorContext | None = None) -> JobR
     job_model = etl_repository.get_job(db, job_id)
     if job_model is None:
         raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
+    if job_model.execution_mode == "continuous":
+        require_local_continuous_control_plane()
     sync_airflow_runs_for_job(db, job_model)
     refresh_kafka_continuous_runtime(db, job_model)
     job = etl_repository.get_job_schema(db, job_id)
     if job is None:
         raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
+    if job.execution_mode == "continuous":
+        require_local_continuous_control_plane()
     job_with_permissions = with_job_permissions(db, job, actor_context)
     if not job_with_permissions.permissions.can_view:
         safe_record_audit_event(
@@ -861,6 +898,8 @@ def update_pipeline(
     job = etl_repository.get_job(db, job_id)
     if job is None:
         raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
+    if job.execution_mode == "continuous":
+        require_local_continuous_control_plane()
 
     actor_context = actor or ActorContext()
     require_governed_access(
@@ -959,6 +998,8 @@ def delete_job(db: Session, job_id: str, actor: ActorContext | None = None) -> s
     job = etl_repository.get_job_for_update(db, job_id)
     if job is None:
         raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
+    if job.execution_mode == "continuous":
+        require_local_continuous_control_plane()
 
     job_name = job.name
     job_owner = job.owner
@@ -1139,6 +1180,8 @@ def command_job(
     continuous_commands = {"startContinuous", "pauseContinuous", "resumeContinuous", "stopContinuous"}
     if command not in {"run", "retry", "pause", "cancelRun", "stopSchedule", "resumeSchedule", *continuous_commands}:
         raise ApiError(ErrorCode.VALIDATION_ERROR, f"Unsupported job command: {command}", status.HTTP_400_BAD_REQUEST)
+    if command in continuous_commands:
+        require_local_continuous_control_plane()
     job = (
         etl_repository.get_job_for_update(db, job_id)
         if command in {"run", "retry", "startContinuous", "resumeContinuous"}
@@ -1146,6 +1189,8 @@ def command_job(
     )
     if job is None:
         raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
+    if job.execution_mode == "continuous":
+        require_local_continuous_control_plane()
 
     actor_context = actor or ActorContext()
     required_action = "run" if command in {"run", "retry", "startContinuous", "resumeContinuous"} else "manage"
@@ -2343,6 +2388,13 @@ def writer_mode_for_pipeline(source_type: str, source_config: Any) -> str:
 
 
 def run_spark_job(db: Session, job: ETLJobModel, command: str, run_id: str) -> dict[str, Any]:
+    if spark_kubernetes_mode_enabled():
+        raise ApiError(
+            "SPARK_KUBERNETES_PROVIDER_NOT_IMPLEMENTED",
+            "Kubernetes Spark execution is not available in this release.",
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            {"runner": "kubernetes"},
+        )
     ensure_batch_iceberg_target(db, job)
     rest_mode = spark_rest_mode_enabled()
     poll_timeout_ms = spark_rest_poll_timeout_ms()
@@ -2542,23 +2594,7 @@ def execute_airflow_spark_run(
     return manifest
 
 
-def spark_execution_lease_is_active(value: Any) -> bool:
-    if not isinstance(value, dict) or value.get("status") != "running":
-        return False
-    try:
-        started_at = parse_incremental_timestamp(str(value.get("startedAt") or ""), "sparkExecution.startedAt")
-    except ApiError:
-        return False
-    if started_at is None:
-        return False
-    return datetime.now(UTC) < started_at + timedelta(seconds=spark_execution_lease_seconds())
-
-
 def spark_execution_lease_seconds() -> int:
-    try:
-        run_timeout = max(1, int(os.environ.get("ASKLAKE_SPARK_RUN_TIMEOUT_SECONDS") or "900"))
-    except ValueError:
-        run_timeout = 900
     try:
         configured = int(
             os.environ.get("ASKLAKE_SPARK_EXECUTION_LEASE_SECONDS")
@@ -2566,7 +2602,7 @@ def spark_execution_lease_seconds() -> int:
         )
     except ValueError:
         configured = DEFAULT_SPARK_EXECUTION_LEASE_SECONDS
-    return max(run_timeout + 60, configured)
+    return max(10, min(configured, 3600))
 
 
 def finalize_spark_execution_attempt(
@@ -5599,6 +5635,10 @@ def spark_rest_mode_enabled() -> bool:
     return str(os.environ.get("ASKLAKE_SPARK_RUNNER") or "").strip().lower() == "rest"
 
 
+def spark_kubernetes_mode_enabled() -> bool:
+    return str(os.environ.get("ASKLAKE_SPARK_RUNNER") or "").strip().lower() == "kubernetes"
+
+
 def spark_rest_poll_timeout_ms() -> int:
     timeout_seconds = bounded_environment_integer(
         "ASKLAKE_SPARK_RUN_TIMEOUT_SECONDS",
@@ -6654,6 +6694,7 @@ def require_continuous_job_access(
     http_method: str,
     suffix: str,
 ) -> ETLJobModel:
+    require_local_continuous_control_plane()
     job = etl_repository.get_job(db, job_id)
     if job is None:
         raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
@@ -6992,6 +7033,8 @@ def continuous_session_dag_steps(
 
 
 def refresh_kafka_continuous_runtime(db: Session, job: ETLJobModel) -> None:
+    if external_continuous_control_plane_enabled():
+        return
     if job.execution_mode != "continuous":
         return
     if db is not None:

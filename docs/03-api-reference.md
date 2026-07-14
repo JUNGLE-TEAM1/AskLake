@@ -995,3 +995,29 @@ ETL Job에 직접 대응하는 action은 아래와 같다.
 - Spark run results include `textStructuring.definition` and `textStructuring.execution`; job runs, Catalog datasets, and materialization runs preserve `textStructuringExecution`.
 - Column execution records must distinguish `executionMode: "selected_model"`, `executionMode: "auto_model"`, `executionMode: "fallback_rule"`, and `executionMode: "missing_model"` so fallback output is not presented as a model result.
 - Model dropdowns must filter by `targetColumn`, `method: "one_of_values"`, and exact `allowedValues` compatibility for the edited output column.
+
+## EKS MVP runtime contract
+
+EKS FastAPI는 아래 환경 계약을 사용한다.
+
+| Variable | EKS MVP value | Meaning |
+| --- | --- | --- |
+| `ASKLAKE_CONTINUOUS_CONTROL_PLANE` | `external_ec2` | Kafka Continuous 제어권과 상태는 EC2에 남기고 EKS 접근을 차단한다. |
+| `ASKLAKE_SPARK_EXECUTION_LEASE_SECONDS` | `60` | 같은 `runId` 외부 실행의 RDS lease TTL이다. Spark run timeout과 독립적이다. |
+| `ASKLAKE_SPARK_RUNNER` | `kubernetes` | Kubernetes provider가 구현되기 전까지 실행 요청을 fail closed한다. |
+
+`external_ec2`에서 `GET /api/etl/jobs`는 Continuous Job을 반환하지 않는다. Continuous Job의 상세·수정·삭제, 생성, command와 전용 runtime/log/maintenance API는 아래 `409` envelope를 반환한다.
+
+```json
+{
+  "error": {
+    "code": "CONTINUOUS_CONTROL_OWNED_BY_EC2",
+    "message": "Kafka Continuous control remains owned by the EC2 environment for the EKS MVP.",
+    "details": {
+      "controlPlane": "external_ec2"
+    }
+  }
+}
+```
+
+`ASKLAKE_SPARK_RUNNER=kubernetes` 상태에서 실제 Spark 실행 단계에 도달하면 `503 SPARK_KUBERNETES_PROVIDER_NOT_IMPLEMENTED`를 반환한다. 이는 Kubernetes provider 미구현 상태에서 local/REST 실행기로 잘못 fallback하는 것을 막는 임시 안전 경계다.

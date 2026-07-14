@@ -1,0 +1,72 @@
+namespace: asklake-dev
+
+global:
+  environment: production
+  awsRegion: ap-northeast-2
+
+frontend:
+  replicas: 2
+  image:
+    repository: ""
+    digest: ""
+    pullPolicy: IfNotPresent
+  serviceAccountName: asklake-frontend
+  service:
+    name: frontend
+    port: 80
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+backend:
+  replicas: 2
+  image:
+    repository: ""
+    digest: ""
+    pullPolicy: IfNotPresent
+  serviceAccountName: asklake-backend
+  service:
+    name: fastapi
+    port: 8080
+  config:
+    corsOrigins: ""
+    kafkaBroker: ""
+    kafkaAuthMode: iam
+    objectStorageProvider: aws
+    rawBucket: ""
+    outputBucket: ""
+    outputPrefix: asklake-output
+    allowedBuckets: ""
+    sparkRunner: kubernetes
+    sparkExecutionLeaseSeconds: 60
+    trinoEnabled: true
+    trinoBaseUrl: ""
+    trinoResultStorageBucket: ""
+  runtimeSecret:
+    name: asklake-backend-runtime
+    keys:
+      databaseUrl: DATABASE_URL
+      bootstrapAdminEmail: BOOTSTRAP_ADMIN_EMAIL
+      bootstrapAdminPassword: BOOTSTRAP_ADMIN_PASSWORD
+      airflowExecutionApiToken: AIRFLOW_EXECUTION_API_TOKEN
+      airflowInternalToken: AIRFLOW_INTERNAL_TOKEN
+      trinoAuthUsername: TRINO_AUTH_USERNAME
+      trinoAuthPassword: TRINO_AUTH_PASSWORD
+      trinoMaterializerUsername: TRINO_MATERIALIZER_USERNAME
+      trinoMaterializerPassword: TRINO_MATERIALIZER_PASSWORD
+      trinoResultCursorSecret: TRINO_RESULT_CURSOR_SECRET
+      trinoQueryConfirmationSecret: TRINO_QUERY_CONFIRMATION_SECRET
+  trinoTlsSecret:
+    name: asklake-trino-client-tls
+    caKey: ca.crt
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "1"
+      memory: 2Gi

@@ -1,0 +1,153 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["namespace", "global", "frontend", "backend"],
+  "properties": {
+    "namespace": {
+      "type": "string",
+      "const": "asklake-dev"
+    },
+    "global": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["environment", "awsRegion"],
+      "properties": {
+        "environment": {"type": "string", "const": "production"},
+        "awsRegion": {"type": "string", "minLength": 1}
+      }
+    },
+    "frontend": {
+      "$ref": "#/$defs/frontend"
+    },
+    "backend": {
+      "$ref": "#/$defs/backend"
+    }
+  },
+  "$defs": {
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "digest", "pullPolicy"],
+      "properties": {
+        "repository": {"type": "string", "minLength": 1},
+        "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "pullPolicy": {"type": "string", "enum": ["IfNotPresent", "Always", "Never"]}
+      }
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requests", "limits"],
+      "properties": {
+        "requests": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["cpu", "memory"],
+          "properties": {
+            "cpu": {"type": "string", "minLength": 1},
+            "memory": {"type": "string", "minLength": 1}
+          }
+        },
+        "limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["cpu", "memory"],
+          "properties": {
+            "cpu": {"type": "string", "minLength": 1},
+            "memory": {"type": "string", "minLength": 1}
+          }
+        }
+      }
+    },
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "port"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "port": {"type": "integer", "minimum": 1, "maximum": 65535}
+      }
+    },
+    "frontend": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["replicas", "image", "serviceAccountName", "service", "resources"],
+      "properties": {
+        "replicas": {"type": "integer", "minimum": 2},
+        "image": {"$ref": "#/$defs/image"},
+        "serviceAccountName": {"type": "string", "const": "asklake-frontend"},
+        "service": {"$ref": "#/$defs/service"},
+        "resources": {"$ref": "#/$defs/resources"}
+      }
+    },
+    "backend": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["replicas", "image", "serviceAccountName", "service", "config", "runtimeSecret", "trinoTlsSecret", "resources"],
+      "properties": {
+        "replicas": {"type": "integer", "minimum": 2},
+        "image": {"$ref": "#/$defs/image"},
+        "serviceAccountName": {"type": "string", "const": "asklake-backend"},
+        "service": {"$ref": "#/$defs/service"},
+        "config": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["corsOrigins", "kafkaBroker", "kafkaAuthMode", "objectStorageProvider", "rawBucket", "outputBucket", "outputPrefix", "allowedBuckets", "sparkRunner", "sparkExecutionLeaseSeconds", "trinoEnabled", "trinoBaseUrl", "trinoResultStorageBucket"],
+          "properties": {
+            "corsOrigins": {"type": "string", "pattern": "^https://"},
+            "kafkaBroker": {"type": "string", "minLength": 1},
+            "kafkaAuthMode": {"type": "string", "const": "iam"},
+            "objectStorageProvider": {"type": "string", "const": "aws"},
+            "rawBucket": {"type": "string", "minLength": 1},
+            "outputBucket": {"type": "string", "minLength": 1},
+            "outputPrefix": {"type": "string", "minLength": 1},
+            "allowedBuckets": {"type": "string", "minLength": 1},
+            "sparkRunner": {"type": "string", "const": "kubernetes"},
+            "sparkExecutionLeaseSeconds": {"type": "integer", "minimum": 10, "maximum": 3600},
+            "trinoEnabled": {"type": "boolean", "const": true},
+            "trinoBaseUrl": {"type": "string", "pattern": "^https://.+:8443$"},
+            "trinoResultStorageBucket": {"type": "string", "minLength": 1}
+          }
+        },
+        "runtimeSecret": {"$ref": "#/$defs/runtimeSecret"},
+        "trinoTlsSecret": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "caKey"],
+          "properties": {
+            "name": {"type": "string", "minLength": 1},
+            "caKey": {"type": "string", "minLength": 1}
+          }
+        },
+        "resources": {"$ref": "#/$defs/resources"}
+      }
+    },
+    "runtimeSecret": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "keys"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "keys": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["databaseUrl", "bootstrapAdminEmail", "bootstrapAdminPassword", "airflowExecutionApiToken", "airflowInternalToken", "trinoAuthUsername", "trinoAuthPassword", "trinoMaterializerUsername", "trinoMaterializerPassword", "trinoResultCursorSecret", "trinoQueryConfirmationSecret"],
+          "properties": {
+            "databaseUrl": {"type": "string", "minLength": 1},
+            "bootstrapAdminEmail": {"type": "string", "minLength": 1},
+            "bootstrapAdminPassword": {"type": "string", "minLength": 1},
+            "airflowExecutionApiToken": {"type": "string", "minLength": 1},
+            "airflowInternalToken": {"type": "string", "minLength": 1},
+            "trinoAuthUsername": {"type": "string", "minLength": 1},
+            "trinoAuthPassword": {"type": "string", "minLength": 1},
+            "trinoMaterializerUsername": {"type": "string", "minLength": 1},
+            "trinoMaterializerPassword": {"type": "string", "minLength": 1},
+            "trinoResultCursorSecret": {"type": "string", "minLength": 1},
+            "trinoQueryConfirmationSecret": {"type": "string", "minLength": 1}
+          }
+        }
+      }
+    }
+  }
+}

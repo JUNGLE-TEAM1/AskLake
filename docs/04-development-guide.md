@@ -870,3 +870,24 @@ npm run build
 ```
 
 Windows에서 FastAPI 의존성이 저장소 가상환경에만 설치돼 있으면 `python` 대신 `.\.venv\Scripts\python.exe`를 사용한다. `verify:permission-job-dashboard`는 PostgreSQL metadata DB가 응답 가능한 환경을 요구한다.
+
+## 14) EKS MVP workload 검증
+
+EKS workload chart는 foundation chart와 분리된 `infra/eks/helm/asklake-workloads`에 있다. 실제 account, ECR repository, digest, bucket, endpoint는 git에 저장하지 않고 배포 시 values로 주입한다. credential은 values에 넣지 않고 사전에 생성한 `asklake-backend-runtime`, `asklake-trino-client-tls` Secret key를 참조한다.
+
+```bash
+# Helm 3이 PATH에 있는 경우
+scripts/verify-eks-workloads.sh
+
+# workspace 밖에 둔 Helm binary를 사용할 경우
+ASKLAKE_HELM_BIN=/path/to/helm scripts/verify-eks-workloads.sh
+
+cd backend
+.venv/bin/python -m unittest \
+  tests.test_eks_runtime_boundary \
+  tests.test_etl_job_delete -v
+```
+
+검증 스크립트는 Helm schema/lint/render, Deployment·Service 개수, ClusterIP, health check, digest image, ConfigMap/Secret 경계와 Continuous/Spark runner 설정을 확인한다. Secret, `LoadBalancer`, `StatefulSet`, replay producer 또는 static AWS key가 chart에 들어오면 실패한다.
+
+chart 적용 전 EKS foundation이 `asklake-dev` namespace와 `asklake-frontend`, `asklake-backend` ServiceAccount를 제공해야 한다. Kubernetes Spark provider는 이번 범위에 없으므로 workload 배포 검증과 실제 ETL 실행 검증을 구분한다.

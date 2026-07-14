@@ -3806,3 +3806,14 @@ type PermissionGrant = {
 현재 frontend의 `permissionTemplate`은 독립 정책 템플릿이 아니라 group name을 저장하며, 템플릿 선택은 해당 그룹을 선택 상태로 만든다. 대상별 action 직접 편집은 구현하지 않았고, group은 options API action을, user는 `view`, `run`을 사용한다. `owner`는 자유 문자열 입력이며 현재 이름 일치 owner fallback에도 사용된다. options API는 민감 데이터 분류나 governance 안전 판정을 제공하지 않으며, 화면의 민감 데이터 상태는 frontend 컬럼명 정규식 추정값이다.
 
 권한 옵션 조회는 admin actor만 허용한다. live frontend는 API 오류 시 grant 화면 안에 재시도 경로를 표시하고 다음 단계 이동을 막는다. `VITE_USE_MOCK_API=true`에서는 동일 response shape의 fixture를 사용하되 최종 Job request shape는 live와 동일하다.
+
+## EKS MVP execution and Continuous ownership contract
+
+- EKS workload는 `ASKLAKE_CONTINUOUS_CONTROL_PLANE=external_ec2`를 고정한다.
+- 일반 Job 목록은 Continuous Job을 숨기고 Snapshot/SQL Job만 현재 EKS control-plane resource로 노출한다.
+- Continuous 생성·상세·수정·삭제·command·전용 runtime 조회는 `409 CONTINUOUS_CONTROL_OWNED_BY_EC2`와 `details.controlPlane="external_ec2"`를 반환한다.
+- EKS process는 Continuous runtime background sync를 시작하지 않는다.
+- FastAPI Spark/Catalog singleton은 `etl_runs` row의 owner, expiry, generation을 사용한다. 별도 lease table은 없다.
+- `ASKLAKE_SPARK_EXECUTION_LEASE_SECONDS` 기본값은 60초이고 heartbeat는 기본 20초다. lease TTL은 `ASKLAKE_SPARK_RUN_TIMEOUT_SECONDS`와 독립적이며 최대 실행시간이 아니다.
+- 같은 `runId`의 활성 lease가 있으면 중복 요청은 `409 SPARK_RUN_ALREADY_EXECUTING`이다. 만료 후 takeover는 generation을 증가시키고 이전 generation의 결과 저장을 fence한다.
+- `ASKLAKE_SPARK_RUNNER=kubernetes`는 provider 구현 전 `503 SPARK_KUBERNETES_PROVIDER_NOT_IMPLEMENTED`로 fail closed한다.

@@ -523,3 +523,17 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 - [ ] owner 이름 일치 fallback을 안정적인 principal id 기반 정책으로 교체
 - [ ] deny/조건부 정책과 공개 범위 정책 고도화
 - [ ] 민감 데이터 판정이 필요하면 frontend 컬럼명 정규식이 아닌 별도 backend 분류 결과 계약 추가
+
+## EKS MVP backend readiness
+
+- [x] Frontend/FastAPI `Deployment` 2 replica와 내부 `ClusterIP` `Service` Helm chart
+- [x] ECR digest-only image, ConfigMap 일반 설정, 기존 Secret key 참조 계약
+- [x] FastAPI `/api/health` startup/readiness/liveness probe
+- [x] EKS의 Kafka Continuous 생성·조회·변경·background sync fail-closed 경계
+- [x] `etl_runs` owner/expiry/generation 기반 singleton lease와 중복 요청 `409`
+- [x] 기본 60초 lease와 20초 heartbeat를 Spark run timeout에서 분리
+- [x] Kubernetes Spark provider 미구현 시 local/REST fallback 차단
+- [x] `scripts/verify-eks-workloads.sh` Helm schema/lint/render 계약 검증
+- [ ] 실제 ECR repository/digest와 runtime Secret 값 주입
+- [ ] Kubernetes `SparkApplication` 제출·상태 조회·runId 복구 provider
+- [ ] EKS/RDS/MSK/Trino live 연결 smoke와 장애 takeover 검증
