@@ -67,6 +67,8 @@ class SchedulingTests(unittest.TestCase):
             patch("app.services.etl_service.etl_repository.list_job_models", return_value=[job]),
             patch("app.services.etl_service.etl_repository.get_job", return_value=job),
             patch("app.services.etl_service.etl_repository.save_job"),
+            patch("app.services.etl_service.etl_repository.get_job_schema", return_value=job),
+            patch("app.services.etl_service.with_job_permissions", return_value=job),
             patch(
                 "app.services.etl_service.command_job",
                 return_value=JobCommandResponse(action="etl.run.requested", api_path="/api/etl/jobs/job-1/commands"),
