@@ -113,15 +113,31 @@ def main() -> None:
 
             review_request = ReviewPipelineRequest.model_validate(pipeline_payload())
             review = etl_service.review_pipeline(review_request)
-            assert review.permission[0].label == "담당자 자동 권한"
-            assert review.permission[0].value.startswith("data-platform · 조회")
+            assert review.permission[0].label == "담당자"
+            assert review.permission[0].value == "data-platform · 전체 권한 자동 부여"
+            assert review.permission[1].label == "전체 사용자 조회"
+            assert review.permission[1].value == "허용"
             assert any(
                 entry.label == "사용자 · demo-user" and "실행" in entry.value
                 for entry in review.permission
             )
+            assert not any(entry.label.startswith("모든 사용자") for entry in review.permission)
+            assert any(row.label == "권한 설정" and row.status == "ready" for row in review.validation)
+            assert any(row.label == "저장 위치" and row.status == "ready" for row in review.validation)
+            assert not any(row.label == "권한/타겟" for row in review.validation)
+
+            invalid_permission_payload = pipeline_payload()
+            invalid_permission_payload["permissionSummary"] = ""
+            invalid_permission_payload["owner"] = ""
+            invalid_permission_review = etl_service.review_pipeline(
+                ReviewPipelineRequest.model_validate(invalid_permission_payload)
+            )
+            assert invalid_permission_review.can_create is False
             assert any(
-                entry.label == "모든 사용자 · 로그인한 사용자 전체" and entry.value == "조회"
-                for entry in review.permission
+                row.label == "권한 설정"
+                and row.status == "warning"
+                and row.value == "담당자 확인 필요"
+                for row in invalid_permission_review.validation
             )
 
             owner_options = etl_service.get_permission_options(
