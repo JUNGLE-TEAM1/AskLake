@@ -17,6 +17,7 @@ DELETED_SEED_SOURCE = "admin_seed_deleted"
 LEGACY_PERMISSION_SOURCE = "legacy_permission_roles"
 UI_MANAGED_SOURCES = {"permission_ui", LEGACY_PERMISSION_SOURCE}
 ALLOWED_ACTIONS = {"view", "query", "run", "manage", "delete", "share"}
+VIEW_DEPENDENT_ACTIONS = ALLOWED_ACTIONS - {"view"}
 ALLOWED_PRINCIPAL_TYPES = {"user", "group", "role", "public"}
 ALLOWED_RESOURCE_TYPES = {"dataset", "etl_job", "dashboard"}
 
@@ -330,7 +331,10 @@ def validate_principal_type(value: str) -> str:
 
 
 def validate_actions(values: list[str]) -> list[str]:
-    actions = sorted({value.strip() for value in values if value.strip()})
+    normalized_actions = {value.strip() for value in values if value.strip()}
+    if normalized_actions & VIEW_DEPENDENT_ACTIONS:
+        normalized_actions.add("view")
+    actions = sorted(normalized_actions)
     if not actions:
         raise ApiError(ErrorCode.VALIDATION_ERROR, "At least one permission action is required", status.HTTP_400_BAD_REQUEST)
     unsupported = [action for action in actions if action not in ALLOWED_ACTIONS]

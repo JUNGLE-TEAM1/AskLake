@@ -178,9 +178,27 @@ def permission_grants_for_etl_job(
     return permission_grants_for_resource(db, "etl_job", job.id, [])
 
 
-def get_permission_options(db: Session, actor: ActorContext) -> PermissionOptionsResponse:
-    if actor.role != "admin":
-        raise ApiError(ErrorCode.FORBIDDEN, "Admin role is required", status.HTTP_403_FORBIDDEN)
+def get_permission_options(
+    db: Session,
+    actor: ActorContext,
+    job_id: str | None = None,
+) -> PermissionOptionsResponse:
+    if job_id:
+        job = etl_repository.get_job(db, job_id)
+        if job is None:
+            raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
+        is_creator = actor.name == job.created_by
+        is_owner = actor.name == job.owner
+        if not actor.is_admin and not is_creator and not is_owner:
+            require_permission(
+                actor,
+                "manage",
+                owner=job.owner,
+                grants=permission_grants_for_etl_job(db, job),
+                resource_label="job permissions",
+            )
+    else:
+        require_permission(actor, "manage", resource_label="job collection")
     Base.metadata.create_all(bind=db.get_bind(), tables=[AuthUserModel.__table__])
     stored_users = list(db.scalars(select(AuthUserModel).order_by(AuthUserModel.display_name.asc())).all())
     users = stored_users or [

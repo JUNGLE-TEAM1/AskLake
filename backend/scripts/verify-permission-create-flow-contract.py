@@ -73,12 +73,13 @@ def main() -> None:
 
     try:
         with Session(engine) as db:
+            viewer = ActorContext(name="Demo User", role="viewer", id="demo-user")
             try:
-                etl_service.get_permission_options(db, ActorContext(name="Demo User", role="viewer"))
+                etl_service.get_permission_options(db, viewer)
             except ApiError as error:
                 assert error.status_code == 403
             else:
-                raise AssertionError("Permission options must require an admin actor")
+                raise AssertionError("New-job permission options must require collection manage access")
 
             options = etl_service.get_permission_options(db, actor)
             assert any(group.id == "data-platform" for group in options.groups)
@@ -97,6 +98,28 @@ def main() -> None:
             )
             assert any(grant.principal_id == "demo-user" for grant in created.job.permission_grants)
             assert not any(grant.source in {"owner", "permissionRoles"} for grant in created.job.permission_grants)
+
+            owner_options = etl_service.get_permission_options(
+                db,
+                ActorContext(name=created.job.owner, role="viewer"),
+                job_id,
+            )
+            assert any(group.id == "data-platform" for group in owner_options.groups)
+
+            try:
+                etl_service.get_permission_options(db, viewer, job_id)
+            except ApiError as error:
+                assert error.status_code == 403
+            else:
+                raise AssertionError("Unrelated viewers must not read permission options")
+
+            created_by_options = etl_service.get_permission_options(
+                db,
+                ActorContext(name=actor.name, role="viewer"),
+                job_id,
+            )
+            assert any(user.id == "demo-user" for user in created_by_options.users)
+
             create_permission_grant(
                 db,
                 resource_type="etl_job",
@@ -106,6 +129,24 @@ def main() -> None:
                 actions=["view"],
                 created_by=actor.name,
             )
+            create_permission_grant(
+                db,
+                resource_type="etl_job",
+                resource_id=job_id,
+                principal_type="user",
+                principal_id="manager-user",
+                actions=["manage"],
+                created_by=actor.name,
+            )
+            manager_options = etl_service.get_permission_options(
+                db,
+                ActorContext(name="Manager User", role="viewer", id="manager-user"),
+                job_id,
+            )
+            assert manager_options.groups
+            manager_grants = list_permission_grants_by_resource(db, [("etl_job", job_id)])["etl_job", job_id]
+            manager_grant = next(grant for grant in manager_grants if grant.principal_id == "manager-user")
+            assert manager_grant.actions == ["manage", "view"]
 
             update_payload = {
                 key: value
