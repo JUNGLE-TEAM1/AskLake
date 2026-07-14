@@ -2532,84 +2532,104 @@ export function RecordParsingPage({
     <CreationFlowLayout
       actions={<CreationTopActions nextDisabled={!canApply || loading} useShadcnStyles onPrev={onPrev} onNext={applyAndContinue} />}
     >
-      <section className="record-parsing-source-strip panel" aria-label="선택한 원시 소스">
-        <span><em>소스</em><strong>{draft.source.sourceLabel || "-"}</strong></span>
-        <span><em>감지 포맷</em><strong>{draft.source.detectedFormat || "TXT"}</strong></span>
-        <span><em>샘플</em><strong>{rawLines.length}행</strong></span>
-        <span><em>필드 상태</em><strong>이름 없음</strong></span>
+      <header className="record-parsing-page-header">
+        <span className="record-parsing-page-icon" aria-hidden="true"><SlidersHorizontal /></span>
+        <h2>레코드 구조화</h2>
+      </header>
+
+      <section className="record-parsing-source-strip" aria-label="선택한 원시 소스">
+        <span className="record-parsing-source-icon" aria-hidden="true"><FileText /></span>
+        <span className="record-parsing-source-name">
+          <em>원시 소스</em>
+          <strong title={draft.source.sourceLabel || "-"}>{draft.source.sourceLabel || "-"}</strong>
+        </span>
+        <span className="record-parsing-source-meta" aria-label="소스 요약">
+          <strong>{draft.source.detectedFormat || "TXT"}</strong>
+          <strong>{rawLines.length}행</strong>
+          <strong>필드 없음</strong>
+        </span>
       </section>
 
       <div className="record-parsing-workspace">
         <section className="panel record-parsing-panel">
           <div className="record-parsing-panel-header">
-            <h2>원본 샘플</h2>
-            <span className="source-select-pill active">UTF-8 · 줄바꿈</span>
+            <h2><FileText aria-hidden="true" />원본 샘플</h2>
+            <span className="record-parsing-count">{rawLines.length}행</span>
           </div>
-          <textarea className="input record-parsing-raw" readOnly aria-label="원본 TXT 샘플" value={rawLines.join("\n")} />
+          <div className="record-parsing-panel-body">
+            <textarea className="input record-parsing-raw" readOnly aria-label="원본 TXT 샘플" value={rawLines.join("\n")} />
+          </div>
         </section>
 
         <section className="panel record-parsing-panel">
           <div className="record-parsing-panel-header">
-            <h2>분리 규칙과 컬럼 초안</h2>
-            <span className={preview?.invalidRows.length ? "source-select-pill warning" : "source-select-pill active"}>
-              {loading ? "검증 중" : preview ? `${preview.validRows}/${preview.totalRows}행 정상` : "검증 대기"}
+            <h2><SlidersHorizontal aria-hidden="true" />컬럼 설정</h2>
+            <span className={cn("record-parsing-status", preview?.invalidRows.length && "is-warning")}>
+              {!loading && preview && !preview.invalidRows.length ? <Check aria-hidden="true" /> : null}
+              {loading ? "검증 중" : preview ? `${preview.validRows}/${preview.totalRows} 정상` : "검증 대기"}
             </span>
           </div>
-          <div className="record-parsing-controls">
-            <FormFieldGroup className="field" label="필드 구분자">
-              <NativeSelect disabled value="whitespace"><option value="whitespace">연속 공백 (\\s+)</option></NativeSelect>
-            </FormFieldGroup>
-            <FormFieldGroup className="field" label="헤더 처리">
-              <NativeSelect value={parsing.header ? "first" : "none"} onChange={(event) => updateHeader(event.target.value === "first")}>
-                <option value="none">헤더 없음</option>
-                <option value="first">첫 줄을 헤더로 사용</option>
-              </NativeSelect>
-            </FormFieldGroup>
+          <div className="record-parsing-panel-body record-parsing-settings-body">
+            <div className="record-parsing-controls">
+              <FormFieldGroup className="field" label="필드 구분자">
+                <NativeSelect disabled value="whitespace"><option value="whitespace">연속 공백 (\\s+)</option></NativeSelect>
+              </FormFieldGroup>
+              <FormFieldGroup className="field" label="헤더 처리">
+                <NativeSelect value={parsing.header ? "first" : "none"} onChange={(event) => updateHeader(event.target.value === "first")}>
+                  <option value="none">헤더 없음</option>
+                  <option value="first">첫 줄을 헤더로 사용</option>
+                </NativeSelect>
+              </FormFieldGroup>
+            </div>
+            {error && <p className="record-parsing-error">{error}</p>}
+            <ScrollArea type="always" scrollbars="horizontal" className="record-parsing-table-scroll">
+              <table className="schema-table record-parsing-table">
+                <thead><tr><th>순서</th><th>샘플 값</th><th>출력 컬럼명</th><th>추론 타입</th></tr></thead>
+                <tbody>
+                  {parsing.columns.map((column) => (
+                    <tr key={column.position}>
+                      <td>{column.position + 1}</td>
+                      <td><code>{preview?.sampleRows[0]?.[column.position] || "-"}</code></td>
+                      <td><Input aria-label={`${column.position + 1}번째 출력 컬럼명`} value={column.name} onChange={(event) => updateColumn(column.position, { name: event.target.value })} /></td>
+                      <td>
+                        <NativeSelect value={column.inferredType} onChange={(event) => updateColumn(column.position, { inferredType: event.target.value as RecordParsingDraft["columns"][number]["inferredType"] })}>
+                          {schemaTypeOptions.filter((type) => type !== "JSON").map((type) => <option key={type} value={type}>{type}</option>)}
+                        </NativeSelect>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </ScrollArea>
+            {!columnNamesValid && <p className="record-parsing-error">컬럼명은 비어 있거나 중복될 수 없습니다.</p>}
           </div>
-          {error && <p className="record-parsing-error">{error}</p>}
-          <ScrollArea type="always" scrollbars="horizontal" className="record-parsing-table-scroll">
-            <table className="schema-table record-parsing-table">
-              <thead><tr><th>순서</th><th>샘플 값</th><th>출력 컬럼명</th><th>추론 타입</th></tr></thead>
-              <tbody>
-                {parsing.columns.map((column) => (
-                  <tr key={column.position}>
-                    <td>{column.position + 1}</td>
-                    <td><code>{preview?.sampleRows[0]?.[column.position] || "-"}</code></td>
-                    <td><Input aria-label={`${column.position + 1}번째 출력 컬럼명`} value={column.name} onChange={(event) => updateColumn(column.position, { name: event.target.value })} /></td>
-                    <td>
-                      <NativeSelect value={column.inferredType} onChange={(event) => updateColumn(column.position, { inferredType: event.target.value as RecordParsingDraft["columns"][number]["inferredType"] })}>
-                        {schemaTypeOptions.filter((type) => type !== "JSON").map((type) => <option key={type} value={type}>{type}</option>)}
-                      </NativeSelect>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </ScrollArea>
-          {!columnNamesValid && <p className="record-parsing-error">컬럼명은 비어 있거나 중복될 수 없습니다.</p>}
         </section>
       </div>
 
       {preview?.invalidRows.length ? (
         <section className="panel record-parsing-panel">
-          <div className="record-parsing-panel-header"><h2>필드 개수 불일치</h2></div>
-          <table className="schema-table record-parsing-invalid-table">
-            <thead><tr><th>원본 행</th><th>예상</th><th>실제</th><th>원문</th></tr></thead>
-            <tbody>{preview.invalidRows.map((row) => <tr key={row.lineNumber}><td>{row.lineNumber}</td><td>{row.expectedFieldCount}</td><td>{row.actualFieldCount}</td><td><code>{row.rawPreview}</code></td></tr>)}</tbody>
-          </table>
+          <div className="record-parsing-panel-header record-parsing-panel-header-warning"><h2><Info aria-hidden="true" />필드 개수 불일치</h2></div>
+          <div className="record-parsing-panel-body">
+            <table className="schema-table record-parsing-invalid-table">
+              <thead><tr><th>원본 행</th><th>예상</th><th>실제</th><th>원문</th></tr></thead>
+              <tbody>{preview.invalidRows.map((row) => <tr key={row.lineNumber}><td>{row.lineNumber}</td><td>{row.expectedFieldCount}</td><td>{row.actualFieldCount}</td><td><code>{row.rawPreview}</code></td></tr>)}</tbody>
+            </table>
+          </div>
         </section>
       ) : preview && (
         <section className="panel record-parsing-panel">
           <div className="record-parsing-panel-header">
-            <h2>구조화 결과 미리보기</h2>
-            <span className="source-select-pill active">{preview.totalRows}행 · {parsing.expectedFieldCount}컬럼</span>
+            <h2><Table2 aria-hidden="true" />결과 미리보기</h2>
+            <span className="record-parsing-count">{preview.totalRows}행 · {parsing.expectedFieldCount}컬럼</span>
           </div>
-          <ScrollArea type="always" scrollbars="horizontal" className="record-parsing-table-scroll">
-            <table className="schema-table record-parsing-preview-table">
-              <thead><tr>{parsing.columns.map((column) => <th key={column.position}>{column.name}</th>)}</tr></thead>
-              <tbody>{preview.sampleRows.slice(0, 5).map((row, rowIndex) => <tr key={rowIndex}>{row.map((cell, cellIndex) => <td key={cellIndex}>{cell}</td>)}</tr>)}</tbody>
-            </table>
-          </ScrollArea>
+          <div className="record-parsing-panel-body record-parsing-preview-body">
+            <ScrollArea type="always" scrollbars="horizontal" className="record-parsing-table-scroll">
+              <table className="schema-table record-parsing-preview-table">
+                <thead><tr>{parsing.columns.map((column) => <th key={column.position}>{column.name}</th>)}</tr></thead>
+                <tbody>{preview.sampleRows.slice(0, 5).map((row, rowIndex) => <tr key={rowIndex}>{row.map((cell, cellIndex) => <td key={cellIndex}>{cell}</td>)}</tr>)}</tbody>
+              </table>
+            </ScrollArea>
+          </div>
         </section>
       )}
     </CreationFlowLayout>
