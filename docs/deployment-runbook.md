@@ -59,6 +59,14 @@ scripts/verify-deploy-dependencies.sh
 
 It checks the production Compose file, local Airflow orchestration Compose file, backend Python and Node dependencies, absence of Docker CLI in the backend image, UID 185 and embedded scripts in the Spark runtime image, Spark/Airflow image availability, Airflow DAG import, and the frontend production build image. If this fails, fix the declared dependency or env key before running `scripts/deploy.sh deploy`.
 
+Trino profile이 정상 기동한 뒤에는 아래 명령으로 운영 runtime edge를 확인한다.
+
+```bash
+scripts/deploy.sh smoke
+```
+
+이 smoke는 backend container에서 Spark REST endpoint, Redpanda Kafka metadata, Trino query/materializer 권한, Iceberg 임시 CTAS와 Query Result S3 round-trip을 확인한다. Trino readiness가 만드는 임시 table/object는 종료 전에 삭제하며, 사용자 Job, Catalog dataset, Kafka topic은 생성하지 않는다. 배포 과정에 함께 넣으려면 명시적으로 `ASKLAKE_RUN_POST_DEPLOY_SMOKE=true`를 설정한다. `TRINO_ENABLED=false` compatibility 배포에서는 이 명령을 실행할 수 없다.
+
 Backend run/retry actions require these Airflow variables in the server `deploy/.env` when DAG submission is expected:
 
 ```bash

@@ -16,6 +16,7 @@ COMPOSE_ENV_FILE="${ASKLAKE_COMPOSE_ENV_FILE:-deploy/.env}"
 HEALTH_PATH="${ASKLAKE_HEALTH_PATH:-/api/health}"
 HEALTH_RETRIES="${ASKLAKE_HEALTH_RETRIES:-18}"
 HEALTH_RETRY_DELAY="${ASKLAKE_HEALTH_RETRY_DELAY:-5}"
+RUN_POST_DEPLOY_SMOKE="${ASKLAKE_RUN_POST_DEPLOY_SMOKE:-false}"
 SSH_OPTS=(-o StrictHostKeyChecking=accept-new -o ServerAliveInterval=15 -i "$SSH_KEY")
 
 usage() {
@@ -29,6 +30,7 @@ Commands:
   deploy     Start if needed, pull the deploy branch, rebuild Compose, and health check.
   restart    Recreate the Compose stack on the running EC2 instance.
   health     Check HTTPS/API health and remote Compose status.
+  smoke      Run the explicit production Spark REST, Kafka, and Trino runtime smoke.
   logs       Tail remote Compose logs. Use ASKLAKE_LOG_SERVICE and ASKLAKE_LOG_LINES.
   ssh        Open an SSH shell to the EC2 instance.
 
@@ -45,6 +47,7 @@ Optional:
   ASKLAKE_APP_URL          Default: https://<resolved-host>, or http://<ipv4-host>
   ASKLAKE_HEALTH_RETRIES   Default: 18
   ASKLAKE_HEALTH_RETRY_DELAY Default: 5 seconds
+  ASKLAKE_RUN_POST_DEPLOY_SMOKE Default: false. When true, start/deploy/restart also run smoke.
 EOF
 }
 
@@ -272,6 +275,19 @@ verify_trino_runtime() {
   die "Trino production readiness failed"
 }
 
+verify_production_runtime_smoke() {
+  if [[ "$(remote_trino_enabled)" != "true" ]]; then
+    die "production runtime smoke requires TRINO_ENABLED=true and COMPOSE_PROFILES=trino"
+  fi
+  remote_compose 'exec -T backend python scripts/verify-production-runtime-smoke.py'
+}
+
+run_optional_production_runtime_smoke() {
+  if [[ "$RUN_POST_DEPLOY_SMOKE" == "true" ]]; then
+    verify_production_runtime_smoke
+  fi
+}
+
 start_stack() {
   ensure_started
   remote_deploy_preflight
@@ -279,6 +295,7 @@ start_stack() {
   remote_compose 'up -d'
   health_check
   verify_trino_runtime
+  run_optional_production_runtime_smoke
   remote_compose 'ps'
 }
 
@@ -313,6 +330,7 @@ deploy_stack() {
   remote_compose 'up -d --build'
   health_check
   verify_trino_runtime
+  run_optional_production_runtime_smoke
   remote_compose 'ps'
 }
 
@@ -323,6 +341,7 @@ restart_stack() {
   remote_compose 'up -d --build'
   health_check
   verify_trino_runtime
+  run_optional_production_runtime_smoke
   remote_compose 'ps'
 }
 
@@ -370,6 +389,7 @@ main() {
     deploy) deploy_stack ;;
     restart) restart_stack ;;
     health) health_check && remote_compose 'ps' ;;
+    smoke) ensure_started && health_check && verify_production_runtime_smoke ;;
     logs) tail_logs ;;
     ssh) open_ssh ;;
     *)

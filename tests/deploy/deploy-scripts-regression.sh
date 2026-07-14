@@ -362,6 +362,33 @@ else
   record_fail 'deploy control bootstraps and strictly verifies Trino when enabled'
 fi
 
+mock_runtime_smoke() (
+  local enabled="$1"
+
+  remote_trino_enabled() {
+    printf '%s\n' "$enabled"
+  }
+  remote_compose() {
+    printf 'compose:%s\n' "$1"
+  }
+  verify_production_runtime_smoke
+)
+
+if output="$(mock_runtime_smoke true 2>&1)" \
+  && [[ "$output" == *'compose:exec -T backend python scripts/verify-production-runtime-smoke.py'* ]]; then
+  record_pass 'explicit production runtime smoke runs inside the backend container'
+else
+  record_fail 'explicit production runtime smoke runs inside the backend container'
+fi
+
+if output="$(mock_runtime_smoke false 2>&1)"; then
+  record_fail 'production runtime smoke rejects the Trino-disabled compatibility deployment (unexpected success)'
+elif [[ "$output" == *'production runtime smoke requires TRINO_ENABLED=true'* ]]; then
+  record_pass 'production runtime smoke rejects the Trino-disabled compatibility deployment'
+else
+  record_fail 'production runtime smoke rejects the Trino-disabled compatibility deployment'
+fi
+
 mock_health_check() (
   local payload="$1"
 
