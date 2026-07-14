@@ -24,7 +24,9 @@ AWS CLI의 기본 region은 `ap-northeast-2`이고 `asklake-deployer` identity�
 
 배포 환경의 Kafka broker는 `Amazon MSK Serverless + IAM`을 사용한다. Kafka 또는 Redpanda broker를 EKS 안에 운영하지 않는다. 로컬 Redpanda는 fixture와 replay 개발 환경으로 유지한다.
 
-MVP에서 EKS로 옮길 workload 후보는 frontend, FastAPI backend, Airflow와 Spark Operator가 제출하는 batch `SparkApplication`이다. Spark driver와 executor는 EKS Pod로 실행한다. 테스트 입력 fixture producer는 EKS 밖에서 실행하고 격리된 MSK test topic에만 produce한다.
+MVP에서 EKS로 옮길 workload 후보는 frontend, FastAPI backend, Airflow, 단일 Trino coordinator와 Spark Operator가 제출하는 batch `SparkApplication`이다. Spark driver와 executor는 EKS Pod로 실행한다. 테스트 입력 fixture producer는 EKS 밖에서 실행하고 격리된 MSK test topic에만 produce한다.
+
+Trino는 기존 EC2 Compose 또는 공용 endpoint를 재사용하지 않고 EKS에 새로 배포한다. MVP에서는 단일 coordinator로 시작하고 RDS `iceberg_catalog`와 S3 warehouse를 연결한다. 고가용성과 worker 확장은 후속 단계다.
 
 현재 EC2에서 실행 중인 Kafka Continuous control plane과 장기 Spark Structured Streaming worker는 이 MVP에서 유지한다. EKS FastAPI가 같은 Continuous runtime의 start, sync, pause, stop을 실행하지 못하도록 이후 phase에서 feature flag 또는 명시적 routing boundary를 구현해야 한다. EC2 Continuous의 EKS 이전과 EC2 종료는 별도 후속 단계다.
 
@@ -57,10 +59,6 @@ Spark batch도 현재 Standalone REST 계약을 사용한다. EKS에서는 Spark
 ### RDS 위치와 database/user mapping
 
 RDS inventory 조회 권한이 없어 기존 metadata DB가 RDS인지 EC2 Compose PostgreSQL인지 AWS 계정에서 검증하지 못했다. EKS FastAPI와 Airflow가 사용할 DB endpoint, database, user, migration owner, backup owner를 확인하기 전에는 DB를 새로 만들거나 데이터를 이전하지 않는다.
-
-### Trino 위치
-
-Trino를 EKS workload로 옮길지, 기존 EC2 Compose에 유지할지, 별도 runtime으로 둘지 결정되지 않았다. JDBC catalog, S3 warehouse, Query Result storage, TLS/auth, backend/collector network 경계와 운영 비용을 학습한 뒤 선택한다.
 
 ### shared resource와 MVP 전용 resource
 
@@ -119,7 +117,7 @@ Pair A는 이 목록이 오기 전에 cluster와 delivery skeleton을 준비할 
 - EKS, ECR, MSK, RDS read-only inventory 권한 확보와 실제 inventory 확인.
 - 기존 EKS 재사용 또는 신규 생성 결정.
 - VPC/subnet/NAT/VPC endpoint 설계와 비용·보안 선택.
-- RDS와 Trino 위치 및 owner 확인.
+- RDS 실제 resource와 Trino Service/RDS/S3 연결 owner 확인.
 - shared/MVP-owned/external lifecycle 분류.
 - Pair B의 workload별 service account, IAM, network, manifest 요구사항 수령.
 

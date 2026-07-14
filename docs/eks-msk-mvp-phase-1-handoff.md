@@ -8,13 +8,15 @@
 
 Terraform은 `cluster_name`, `cluster_vpc_id`, `cluster_security_group_id`, `cluster_subnet_ids`, `managed_node_group_name`, `namespace`, `service_account_names`, `ecr_repository_urls`, `phase1_handoff`를 안정적인 output 이름으로 제공한다. 실제 output 값은 배포 environment에서 전달하며 문서나 PR 본문에 복사하지 않는다.
 
-ECR repository는 frontend, backend, Airflow와 Spark runtime을 분리한다. EKS 밖 fixture producer는 이 foundation의 workload image와 service account 대상에 포함하지 않는다. repository는 immutable tag와 push scan을 사용하며 배포 workflow는 최종적으로 repository URL과 image digest를 함께 전달해야 한다.
+ECR repository는 frontend, backend, Airflow, Trino와 Spark runtime을 분리한다. EKS 밖 fixture producer는 이 foundation의 workload image와 service account 대상에 포함하지 않는다. repository는 immutable tag와 push scan을 사용하며 배포 workflow는 최종적으로 repository URL과 image digest를 함께 전달해야 한다.
 
 `infra/eks/helm/asklake-foundation`은 다음 service account 이름을 제공한다.
 
 - frontend: `asklake-frontend`
 - FastAPI backend: `asklake-backend`
 - Airflow: `asklake-airflow`
+- Trino coordinator: `asklake-trino`
+- MSK IAM 연결 smoke: `asklake-msk-smoke`
 - Spark driver/executor: `asklake-spark`
 
 이 이름은 기본값이며 Terraform output과 Helm value를 통해 같은 값으로 전달한다. B는 workload manifest에서 별도 service account를 임의로 만들지 않는다.
@@ -26,6 +28,7 @@ ECR repository는 frontend, backend, Airflow와 Spark runtime을 분리한다. E
 - 배포 Kafka runtime: `msk-serverless`
 - Kafka authentication: `iam`
 - EKS 내부 Kafka/Redpanda broker: 없음
+- Trino runtime: EKS의 단일 coordinator
 - Continuous control plane owner: `ec2-mvp`
 - image delivery: immutable ECR digest
 - Kubernetes namespace와 service account: Terraform output/Helm value가 source of truth
@@ -64,7 +67,7 @@ B는 workload 구현 PR에 다음 내용을 machine-readable value와 문서로 
 - VPC, control-plane subnet, node subnet, NAT 또는 VPC endpoint
 - IRSA 또는 EKS Pod Identity 선택과 workload별 IAM role ARN
 - MSK bootstrap broker reference와 client security group
-- RDS/Trino endpoint reference와 security group
+- RDS endpoint reference, EKS Trino Service reference와 security group
 - S3 Raw/Output/Warehouse/Query Result/checkpoint/quarantine prefix
 - ingress domain, certificate와 public/internal load balancer 선택
 
@@ -91,7 +94,7 @@ B는 PR에서 다음 evidence를 제공한다.
 ## 6. Pair A Phase 1 완료 기준
 
 - Terraform이 credential 없이 format/init/validate되고 mock provider contract test가 통과한다.
-- Helm chart가 lint/render되고 namespace, 5개 service account와 runtime boundary가 확인된다.
+- Helm chart가 lint/render되고 namespace, 6개 service account와 runtime boundary가 확인된다.
 - 실제 account ID, ARN, endpoint, credential과 secret이 저장소에 없다.
 - existing/create cluster와 optional node group이 입력으로 분리된다.
 - ECR repository와 immutable digest 전달 계약이 출력된다.

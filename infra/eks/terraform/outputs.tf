@@ -58,7 +58,7 @@ output "ecr_repository_urls" {
 output "phase1_handoff" {
   description = "Non-secret fields Pair B can consume without reading Terraform internals."
   value = {
-    contract_version = "1.0"
+    contract_version = "1.1"
     aws_region       = var.aws_region
     environment      = var.environment
     cluster_name     = local.cluster_name
@@ -67,6 +67,7 @@ output "phase1_handoff" {
     image_delivery   = "immutable-ecr-digest"
     kafka_runtime    = "msk-serverless"
     kafka_auth       = "iam"
+    trino_runtime    = "eks"
     continuous_owner = "ec2-mvp"
     network_outputs = {
       vpc                    = "cluster_vpc_id"

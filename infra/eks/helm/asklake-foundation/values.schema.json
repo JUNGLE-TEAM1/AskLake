@@ -7,12 +7,13 @@
     "global": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["environment", "clusterName", "kafkaRuntime", "kafkaAuth", "continuousOwner"],
+      "required": ["environment", "clusterName", "kafkaRuntime", "kafkaAuth", "trinoRuntime", "continuousOwner"],
       "properties": {
         "environment": { "type": "string", "enum": ["dev", "staging"] },
         "clusterName": { "type": "string" },
         "kafkaRuntime": { "type": "string", "const": "msk-serverless" },
         "kafkaAuth": { "type": "string", "const": "iam" },
+        "trinoRuntime": { "type": "string", "const": "eks" },
         "continuousOwner": { "type": "string", "const": "ec2-mvp" }
       }
     },
@@ -29,11 +30,13 @@
     "serviceAccounts": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["frontend", "backend", "airflow", "spark"],
+      "required": ["frontend", "backend", "airflow", "trino", "mskSmoke", "spark"],
       "properties": {
         "frontend": { "$ref": "#/$defs/serviceAccount" },
         "backend": { "$ref": "#/$defs/serviceAccount" },
         "airflow": { "$ref": "#/$defs/serviceAccount" },
+        "trino": { "$ref": "#/$defs/serviceAccount" },
+        "mskSmoke": { "$ref": "#/$defs/serviceAccount" },
         "spark": { "$ref": "#/$defs/serviceAccount" }
       }
     }

@@ -36,9 +36,15 @@ if helm template asklake-foundation "$CHART_DIR" -f "$VALUES_FILE" \
   exit 1
 fi
 
+if helm template asklake-foundation "$CHART_DIR" -f "$VALUES_FILE" \
+  --set global.trinoRuntime=external >/dev/null 2>&1; then
+  echo "Helm schema accepted a non-EKS Trino runtime" >&2
+  exit 1
+fi
+
 service_account_count="$(grep -c '^kind: ServiceAccount$' "$RENDERED_FILE")"
-if [[ "$service_account_count" -ne 4 ]]; then
-  echo "expected 4 workload service accounts, rendered $service_account_count" >&2
+if [[ "$service_account_count" -ne 6 ]]; then
+  echo "expected 6 workload service accounts, rendered $service_account_count" >&2
   exit 1
 fi
 
@@ -46,6 +52,8 @@ for service_account in \
   asklake-frontend \
   asklake-backend \
   asklake-airflow \
+  asklake-trino \
+  asklake-msk-smoke \
   asklake-spark; do
   if ! grep -q "name: $service_account" "$RENDERED_FILE"; then
     echo "rendered foundation is missing service account: $service_account" >&2
@@ -55,7 +63,13 @@ done
 
 grep -q 'kafkaRuntime: "msk-serverless"' "$RENDERED_FILE"
 grep -q 'kafkaAuth: "iam"' "$RENDERED_FILE"
+grep -q 'trinoRuntime: "eks"' "$RENDERED_FILE"
 grep -q 'continuousOwner: "ec2-mvp"' "$RENDERED_FILE"
+
+if grep -q 'asklake-replay-producer' "$RENDERED_FILE"; then
+  echo "EKS foundation must not create a Replay Producer service account" >&2
+  exit 1
+fi
 
 if grep -q '^kind: StatefulSet$' "$RENDERED_FILE"; then
   echo "EKS foundation must not deploy a Kafka/Redpanda StatefulSet" >&2

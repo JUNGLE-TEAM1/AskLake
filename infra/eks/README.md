@@ -2,7 +2,7 @@
 
 이 디렉터리는 Issue #735 Phase 1의 credential-free 기반 계약이다. 실제 AWS 환경을 임의로 선택하지 않고 기존 cluster 재사용 또는 신규 cluster 생성에 필요한 입력, ECR repository, managed node group, Kubernetes namespace와 workload별 service account 이름을 고정된 interface로 제공한다.
 
-이 foundation은 Kafka broker를 배포하지 않는다. 배포 Kafka runtime은 Amazon MSK Serverless + IAM이며, 기존 EC2 Continuous control plane과 worker는 MVP 동안 별도 runtime으로 유지한다.
+이 foundation은 Kafka broker를 배포하지 않는다. 배포 Kafka runtime은 Amazon MSK Serverless + IAM이며, 기존 EC2 Continuous control plane과 worker는 MVP 동안 별도 runtime으로 유지한다. Trino는 기존 EC2 endpoint를 재사용하지 않고 EKS의 단일 coordinator workload로 배포한다.
 
 ## 디렉터리
 
@@ -70,6 +70,8 @@ helm template asklake-foundation \
 ```
 
 실제 runtime manifest는 chart가 만든 service account 이름을 참조해야 한다. 임의 이름을 별도로 만들지 않는다. 세부 인수 항목은 [Phase 1 인수 계약](../../docs/eks-msk-mvp-phase-1-handoff.md)을 따른다.
+
+현재 foundation contract `1.1`은 frontend, backend, Airflow, Trino, MSK IAM smoke와 Spark service account를 제공한다. Replay Producer는 EKS 밖에서 실행하므로 ECR repository와 service account를 만들지 않는다.
 
 ## 설계 참고 자료
 

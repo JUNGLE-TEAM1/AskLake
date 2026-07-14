@@ -6,8 +6,9 @@ metadata:
   labels:
     {{- include "asklake-foundation.labels" . | nindent 4 }}
 data:
-  contractVersion: "1.0"
+  contractVersion: "1.1"
   clusterName: {{ .Values.global.clusterName | quote }}
   kafkaRuntime: {{ .Values.global.kafkaRuntime | quote }}
   kafkaAuth: {{ .Values.global.kafkaAuth | quote }}
+  trinoRuntime: {{ .Values.global.trinoRuntime | quote }}
   continuousOwner: {{ .Values.global.continuousOwner | quote }}

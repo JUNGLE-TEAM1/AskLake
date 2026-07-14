@@ -3,6 +3,7 @@ global:
   clusterName: ""
   kafkaRuntime: msk-serverless
   kafkaAuth: iam
+  trinoRuntime: eks
   continuousOwner: ec2-mvp
 
 namespace:
@@ -24,6 +25,16 @@ serviceAccounts:
   airflow:
     create: true
     name: asklake-airflow
+    annotations: {}
+    automountServiceAccountToken: false
+  trino:
+    create: true
+    name: asklake-trino
+    annotations: {}
+    automountServiceAccountToken: false
+  mskSmoke:
+    create: true
+    name: asklake-msk-smoke
     annotations: {}
     automountServiceAccountToken: false
   spark:
