@@ -2383,6 +2383,32 @@
   box-shadow: inset 3px 0 0 #6366f1;
 }
 
+.source-asset-dataset-action {
+  min-height: 28px;
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+  background: #fff;
+  color: #2563eb;
+  cursor: pointer;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 850;
+  padding: 4px 7px;
+  white-space: nowrap;
+}
+
+.source-asset-dataset-action:hover,
+.source-asset-dataset-action:focus-visible,
+.source-asset-dataset-action.active {
+  border-color: #2563eb;
+  background: #eff6ff;
+}
+
+.source-asset-dataset-action:focus-visible {
+  outline: 2px solid #6366f1;
+  outline-offset: 1px;
+}
+
 .source-asset-tree-label strong {
   min-width: 0;
   max-width: none;

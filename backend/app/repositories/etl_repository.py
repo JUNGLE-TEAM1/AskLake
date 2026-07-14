@@ -903,13 +903,19 @@ def dataset_to_schema(dataset: CatalogDatasetModel) -> CatalogDataset:
 
 
 def run_to_schema(run: ETLRunModel) -> JobRunSummary:
+    spark_result = (run.task_states or {}).get("sparkResult")
+    if not isinstance(spark_result, dict):
+        spark_result = {}
     return JobRunSummary(
         run_id=run.run_id,
         status=run.status,
         started_at=run.started_at,
         ended_at=run.ended_at,
         duration=run.duration,
+        input_bytes=_optional_non_negative_int(spark_result.get("inputBytes")),
+        input_file_count=_optional_non_negative_int(spark_result.get("inputFileCount")),
         input_rows=run.input_rows,
+        output_file_count=_optional_non_negative_int(spark_result.get("outputFileCount")),
         output_rows=run.output_rows,
         output_path=run.output_path,
         failed_stage=run.failed_stage,
@@ -922,3 +928,11 @@ def run_to_schema(run: ETLRunModel) -> JobRunSummary:
         last_synced_at=run.last_synced_at,
         sync_error=run.sync_error,
     )
+
+
+def _optional_non_negative_int(value: Any) -> int | None:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed >= 0 else None

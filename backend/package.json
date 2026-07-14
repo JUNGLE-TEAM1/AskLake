@@ -58,6 +58,8 @@
     "verify:dashboard-assistant-guard": "node scripts/verify-dashboard-assistant-guard.mjs",
     "verify:sources": "node scripts/verify-all-sources.mjs",
     "verify:spark-run": "node scripts/verify-spark-job-run.mjs",
+    "verify:prefix-spark-e2e": "node scripts/verify-prefix-spark-e2e.mjs",
+    "synthetic-commerce:upload": "node scripts/upload-synthetic-commerce.mjs",
     "verify:object-storage-mode": "node scripts/verify-object-storage-mode.mjs",
     "verify:data-lake-iceberg-source": "PYTHONPATH=. .venv/bin/python -m unittest tests.test_etl_data_lake_source tests.test_etl_endpoint_auth && node scripts/verify-data-lake-iceberg-source.mjs",
     "verify:synthetic-click-log": "${ASKLAKE_FASTAPI_PYTHON:-python3} scripts/synthetic-commerce/test_convert_click_events_to_log.py",

@@ -883,9 +883,11 @@ Response는 기존 `CreatePipelineResponse`를 재사용하며 `job.jobKind="tri
 
 Source 연결 검증과 schema preview는 서로 다른 요청이다.
 
-- `POST /api/etl/sources/assets`는 S3·PostgreSQL·MongoDB 연결 정보를 검증하고 탐색 가능한 파일·테이블·컬렉션 목록만 반환한다.
+- `POST /api/etl/sources/assets`는 S3·PostgreSQL·MongoDB 연결 정보를 검증하고 탐색 가능한 파일·폴더·테이블·컬렉션 목록만 반환한다.
 - 이 응답은 schema draft를 확정하지 않으며 특정 대상을 자동 선택하지 않는다.
-- 사용자가 탐색 화면에서 대상을 선택하면 frontend는 선택값을 `DATASET OR TABLE SELECTOR` 또는 `__Selected Object`에 넣어 `POST /api/etl/sources/test`를 호출한다.
+- 사용자가 탐색 화면에서 단일 대상을 선택하면 frontend는 선택값을 `DATASET OR TABLE SELECTOR` 또는 `__Selected Object`에 넣어 `POST /api/etl/sources/test`를 호출한다.
+- File / S3 폴더 disclosure는 하위 항목을 여는 탐색 action이다. 사용자가 별도 prefix 데이터셋 선택 action을 실행하면 frontend는 `Path / Prefix=<canonical prefix>`, `__Selection Kind=prefix`, 빈 `__Selected Object`를 저장하고 `/sources/test`를 호출한다.
+- Prefix는 임의 파일 배열이 아니라 같은 데이터셋 조각이 모인 경로다. Backend는 그 아래를 재귀 조회해 `_SUCCESS`, `manifest.json`, basename이 `_` 또는 `.`으로 시작하는 객체, directory marker와 선택 형식이 아닌 객체를 제외한다. 남은 모든 파일의 bounded schema fingerprint가 같아야 성공한다.
 - PostgreSQL과 MongoDB의 `/sources/test`는 선택값이 없으면 `400`을 반환한다. 첫 테이블이나 첫 컬렉션으로 자동 대체하지 않는다.
 
 ```ts
@@ -895,7 +897,38 @@ type SourceAssetsResponse = {
   limit: number;
   prefix: string;
 };
+
+type SourceDatasetSummary = {
+  selectionKind: "prefix";
+  bucket: string;
+  prefix: string;
+  format: "CSV" | "TSV" | "JSON" | "JSONL" | "TXT";
+  fileCount: number;
+  totalBytes: number;
+  excludedFileCount: number;
+  representativeObject: string;
+  schemaFingerprint?: string;
+  schemaCompatible: boolean;
+};
+
+type SourceConnectorAnalysis = {
+  actionPath: string;
+  assets: Array<[string, string, string]>;
+  datasetSummary?: SourceDatasetSummary;
+  draftPatch: DraftPipelinePatch;
+  logs: string[];
+  message: string;
+  previewColumns: string[];
+  previewNote: string;
+  previewRows: string[][];
+  status: "idle" | "testing" | "success" | "failed";
+  testItems: Array<[string, string]>;
+};
 ```
+
+성공한 Prefix Preview의 `draftPatch.source.sourceConfig`에는 `Path / Prefix`, `__Selection Kind`, `__Dataset Format`, `__Source Unit Count`, `__Source Total Bytes`, `__Sample Object`, `__Schema Fingerprint`, `__Excluded File Count`를 보존한다. Job create/hydrate는 이 목록을 그대로 저장하지만 개별 object key 배열은 저장하지 않는다. `datasetSummary`는 Preview 표시용 구조화 응답이며 credential을 포함하지 않는다.
+
+현재 Prefix Preview의 호환성 검사는 row-oriented `CSV`, `TSV`, `JSON`, `JSONL`, `TXT` 조각을 대상으로 한다. 단일 Parquet object 선택은 기존 Spark schema inspector를 계속 사용하며, 여러 Parquet part의 footer-level 통합 schema 검증은 후속 범위다.
 
 ### 7.0.1 Record Parsing Preview
 
@@ -1529,7 +1562,7 @@ type AirflowSparkExecutionRequest = {
 
 PostgreSQL Snapshot source는 Source/Schema Preview와 실행 입력을 분리한다. `schemaSampleRows`, `__Schema Sample Scope`, `__Sample Row Limit`, `ASKLAKE_SPARK_RUN_ROW_LIMIT`은 PostgreSQL `run`/`retry`의 행 상한이 아니다. 실행 시 저장된 connector identity와 credential로 선택한 base table을 `REPEATABLE READ READ ONLY` transaction과 cursor batch로 끝까지 JSONL export한 뒤 Spark에 전달한다. batch 크기는 `ASKLAKE_POSTGRES_EXECUTION_BATCH_ROWS`로 조절하되 전체 행 수는 자르지 않는다. 테이블이 비어 있거나 export가 중단되면 Run을 실패시키고 Catalog materialization을 만들지 않는다.
 
-Spark manifest에는 `status`, `runId`, `startedAt`, `endedAt`, `durationMs`, `inputRows`, `outputRows`, `outputPath`, `schema`, `quality`, `failedStage`, `error`가 포함될 수 있다. Phase 2는 이 manifest와 물리 Parquet까지 저장하지만 Catalog materialization/lineage 갱신은 수행하지 않는다.
+Spark manifest에는 `status`, `runId`, `startedAt`, `endedAt`, `durationMs`, `inputFileCount`, `inputBytes`, `inputRows`, `outputFileCount`, `outputRows`, `outputPath`, `schema`, `quality`, `failedStage`, `error`가 포함될 수 있다. Prefix runtime은 Preview와 같은 객체 제외 규칙으로 실제 경로를 열거하고 이 file/byte/row 수치를 실행 증거로 기록한다. Phase 2는 이 manifest와 물리 Parquet까지 저장하지만 Catalog materialization/lineage 갱신은 수행하지 않는다.
 
 S3A 출력은 Job의 변경 불가능한 설정값 `storagePath`를 destination root로 사용하고 그 아래에 `runId`를 붙인다. `targetPath`는 최신 Run에서 관측한 실제 `outputPath`이므로 다음 재실행의 destination root로 재사용하지 않는다.
 

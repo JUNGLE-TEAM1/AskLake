@@ -19,6 +19,9 @@ This document records the Pair A person-1 backend validation path for Source, Sc
 - `backend/scripts/start-spark-server.mjs`: Spark standalone master/worker startup
 - `backend/scripts/spark_validate.py`: Spark validation and transform type checks
 - `backend/scripts/verify-spark-job-run.mjs`: create -> run -> Spark -> DAG -> Catalog verifier
+- `backend/scripts/verify-prefix-source-connector.mjs`: recursive Prefix filtering/schema contract verifier
+- `backend/scripts/upload-synthetic-commerce.mjs`: synthetic v2 manifest -> MinIO/S3 stream uploader and remote evidence verifier
+- `backend/scripts/verify-prefix-spark-e2e.mjs`: real Prefix Preview -> Job -> Spark -> Iceberg -> Catalog -> SQL verifier
 - `backend/scripts/verify-spark-iceberg-batch.py`: native Spark Iceberg replace/re-run/rollback live verifier
 - `backend/scripts/verify-kafka-snapshot-iceberg.py`: Kafka fixed snapshot -> Spark Iceberg append -> Trino/Catalog -> offset commit/retry live verifier
 - `backend/scripts/verify-spark-csv-quoting.mjs`: RFC 4180 comma/quote CSV -> Spark -> Parquet regression verifier
@@ -187,6 +190,31 @@ Prepared sample families:
 - Parquet from NYC taxi Parquet files
 
 TXT may be smaller than 1GB when the source files are smaller. Parquet is copied as whole files so row groups and footers stay valid.
+
+## 4.1 Synthetic Commerce 250MiB Prefix Harness
+
+Amazon Electronics metadata를 기준으로 만든 synthetic v2 run은 `meta/`, `users/`, `click_events/`를 서로 다른 데이터셋 Prefix로 둔다. 다중 파일 검증은 같은 스키마의 `click_events/part-*.jsonl`을 대상으로 하며 세 Prefix를 한 Job에서 자동 조인하지 않는다.
+
+```bash
+python3 backend/scripts/synthetic-commerce/generate.py \
+  --source "$HOME/Downloads/meta_Electronics.jsonl" \
+  --output-dir backend/tmp/synthetic-commerce \
+  --run-id commerce-250mb-seed-20260711 \
+  --target-total-size-mb 250 \
+  --max-file-size-mb 64 \
+  --products 10000 \
+  --seed 20260711
+
+python3 backend/scripts/synthetic-commerce/analyze.py \
+  --data-dir backend/tmp/synthetic-commerce/commerce-250mb-seed-20260711
+
+docker compose up -d minio postgres
+cd backend
+npm run synthetic-commerce:upload
+npm run verify:prefix-spark-e2e
+```
+
+Uploader는 local bytes/SHA-256을 manifest와 대조하고 data part를 stream upload한 뒤 `HeadObject`와 원격 key set을 확인하며 `manifest.json`을 마지막에 게시한다. E2E는 실제 `/api/etl/sources/test` Prefix Preview 결과로 Job을 생성하고 `inputFileCount`, `inputBytes`, `inputRows`, `outputRows`를 manifest와 대조한다. 출력은 정확한 byte 크기가 아니라 Parquet 파일이 2개 이상인지 검증하며, Catalog 물리 경로에서 SQL `COUNT(*)`와 `event_type` 퍼널 분포까지 조회한다. Compose project 이름을 바꾸면 `ASKLAKE_DOCKER_NETWORK=<project>_default`를 함께 설정한다.
 
 ## 5. Spark Server
 

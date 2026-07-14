@@ -304,6 +304,24 @@ function mergeConnectorAnalysisSourceConfig(result: SourceConnectorAnalysis, cur
   };
 }
 
+function patchConnectorAnalysisSourceConfig(
+  result: SourceConnectorAnalysis,
+  fallbackFields: Array<[string, string]>,
+  patches: Array<[string, string]>,
+): SourceConnectorAnalysis {
+  if (!result.draftPatch.source) return result;
+  return {
+    ...result,
+    draftPatch: {
+      ...result.draftPatch,
+      source: {
+        ...result.draftPatch.source,
+        sourceConfig: upsertSourceFields(result.draftPatch.source.sourceConfig ?? fallbackFields, patches),
+      },
+    },
+  };
+}
+
 const sourceTypeLabels: Record<string, string> = {
   Database: "PostgreSQL",
   "Data Lake": "데이터 레이크",
@@ -1449,20 +1467,28 @@ export function SourceConnectionPage({
   const filteredDisplayAssets = displayAssets.filter((asset) => sourceAssetMatchesExplorer(asset, assetSearchQuery, assetFilter, explorerConfig.filterMode));
   const hasDetectedAssets = displayAssets.length > 0;
   const selectedAsset = selectedAssetPath ? displayAssets.find(([path]) => path === selectedAssetPath) ?? null : null;
+  const selectedDatasetSummary = sourceRuntime?.datasetSummary;
+  const isPrefixSelection = sourceConfigValue(editableFields, "__Selection Kind").toLowerCase() === "prefix"
+    || selectedDatasetSummary?.selectionKind === "prefix";
   const requiresAssetSelectionForPreview = ["File / S3", "MongoDB", "PostgreSQL"].includes(activeSourceType);
   const selectedAssetHasSample = Boolean(
-    (!requiresAssetSelectionForPreview || selectedAsset) && sourceRuntime?.previewColumns?.length,
+    (!requiresAssetSelectionForPreview || selectedAssetPath) && sourceRuntime?.previewColumns?.length,
   );
   const displayPreviewColumns = selectedAssetHasSample ? sourceRuntime?.previewColumns ?? [] : [];
   const displayPreviewRows = selectedAssetHasSample ? sourceRuntime?.previewRows ?? [] : [];
   const hasSamplePreview = displayPreviewColumns.length > 0 && displayPreviewRows.length > 0;
-  const hasSchemaPatch = Boolean(sourceRuntime?.draftPatch.schema?.columns?.length && sourceRuntime?.draftPatch.schema?.sampleRows?.length);
-  const hasValidatedSchema = hasSchemaPatch || draft.schema.columns.length > 0;
+  const runtimeSchemaColumnCount = sourceRuntime?.draftPatch.schema?.columns?.length ?? 0;
+  const hasSchemaPatch = Boolean(runtimeSchemaColumnCount && sourceRuntime?.draftPatch.schema?.sampleRows?.length);
+  const hasValidatedSchema = isPrefixSelection
+    ? Boolean(selectedDatasetSummary?.schemaCompatible && selectedDatasetSummary.fileCount > 0 && runtimeSchemaColumnCount > 0)
+    : hasSchemaPatch || draft.schema.columns.length > 0;
   const displayPreviewNote = sourceRuntime?.previewNote ?? current.previewNote;
   const publicConnectionMessage = publicSourceLog(connectionMessage);
   const publicDisplayPreviewNote = publicSourceLog(displayPreviewNote);
   const runtimeSourceConfig = sourceRuntime?.draftPatch.source?.sourceConfig;
   const verifiedSourceFields = connectionStatus === "success" && runtimeSourceConfig ? runtimeSourceConfig : editableFields;
+  const displayPreviewFormat = selectedDatasetSummary?.format
+    || (activeSourceType === "File / S3" ? sourceFormatFromConfig(verifiedSourceFields) : sourceTypeLabel(activeSourceType));
   const previewShowsFileList = activeSourceType === "File / S3"
     && displayPreviewColumns.includes("Object Key");
   const previewShowsTopicInfo = activeSourceType === "Stream / Kafka"
@@ -1713,6 +1739,7 @@ export function SourceConnectionPage({
         ? [fieldLabel, assetPath] as [string, string]
         : [fieldLabel, fieldValue] as [string, string]
     )), [
+      ["__Selection Kind", "file"],
       ["__Selected Object", assetPath],
       ["__Sample Object", assetPath],
     ]);
@@ -1732,9 +1759,17 @@ export function SourceConnectionPage({
     onDraftChange({ recordParsing: { columns: [], delimiterKind: "whitespace", delimiterPattern: "\\s+", enabled: false, expectedFieldCount: 0, header: false } });
     onAction("etl.source.asset_selected", "/api/etl/sources/assets", assetPath);
     try {
-      const result = mergeConnectorAnalysisSourceConfig(
-        publicConnectorAnalysis(await testSourceConnector(activeSourceType, nextFields)),
+      const result = patchConnectorAnalysisSourceConfig(
+        mergeConnectorAnalysisSourceConfig(
+          publicConnectorAnalysis(await testSourceConnector(activeSourceType, nextFields)),
+          nextFields,
+        ),
         nextFields,
+        [
+          ["__Selection Kind", "file"],
+          ["__Selected Object", assetPath],
+          ["__Sample Object", assetPath],
+        ],
       );
       const successMessage = `${assetPath} 기준 샘플을 가져왔습니다.`;
       if (result.draftPatch.source?.sourceConfig) {
@@ -1752,6 +1787,115 @@ export function SourceConnectionPage({
       setConnectionMessage(message);
       applySourceDraft(activeSourceType, nextFields, "failed", message);
       onAction("etl.source.asset_sample_failed", "/api/etl/sources/test", assetPath, "failed");
+      onNotify(message);
+    }
+  };
+
+  const selectSourceFolder = async (folderPath: string) => {
+    if (activeSourceType !== "File / S3") return;
+    const folderPrefix = normalizeFolderPrefix(folderPath);
+    if (!folderPrefix) {
+      onNotify("버킷 루트가 아닌 데이터셋 폴더를 선택하세요.");
+      return;
+    }
+
+    const currentAssets = displayAssets;
+    const nextFields = upsertSourceFields(editableFields.map(([fieldLabel, fieldValue]) => (
+      fieldLabel === "Path / Prefix"
+        ? [fieldLabel, folderPrefix] as [string, string]
+        : [fieldLabel, fieldValue] as [string, string]
+    )), [
+      ["__Selection Kind", "prefix"],
+      ["__Selected Object", ""],
+      ["__Sample Object", ""],
+    ]);
+    const testingMessage = `${folderPrefix} 폴더를 데이터셋으로 검사하고 있습니다.`;
+    setSelectedAssetPath(folderPrefix);
+    setSourceFields((fields) => ({ ...fields, [activeSourceType]: nextFields }));
+    setConnectionMessage(testingMessage);
+    setConnectionStatus("testing");
+    setSourceRuntime((runtime) => runtime ? {
+      ...runtime,
+      datasetSummary: undefined,
+      draftPatch: { ...runtime.draftPatch, schema: undefined },
+      previewColumns: [],
+      previewRows: [],
+    } : runtime);
+    applySourceDraft(activeSourceType, nextFields, "testing", testingMessage);
+    onDraftChange({
+      recordParsing: { columns: [], delimiterKind: "whitespace", delimiterPattern: "\\s+", enabled: false, expectedFieldCount: 0, header: false },
+      schema: { columns: [], sampleRows: [], summary: "" },
+    });
+    onAction("etl.source.prefix_selected", "/api/etl/sources/test", folderPrefix);
+
+    try {
+      const result = patchConnectorAnalysisSourceConfig(
+        mergeConnectorAnalysisSourceConfig(
+          publicConnectorAnalysis(await testSourceConnector(activeSourceType, nextFields)),
+          nextFields,
+        ),
+        nextFields,
+        [
+          ["Path / Prefix", folderPrefix],
+          ["__Selection Kind", "prefix"],
+          ["__Selected Object", ""],
+          ["__Sample Object", ""],
+        ],
+      );
+      const summary = result.datasetSummary;
+      const hasSchema = Boolean(result.draftPatch.schema?.columns?.length);
+      const prefixIsValid = Boolean(
+        result.status === "success"
+          && summary?.selectionKind === "prefix"
+          && summary.schemaCompatible
+          && summary.fileCount > 0
+          && hasSchema,
+      );
+      const nextStatus: SourceDraft["connectionStatus"] = prefixIsValid ? "success" : "failed";
+      const nextMessage = !summary
+        ? `${folderPrefix} Prefix 검사 결과를 확인하지 못했습니다.`
+        : summary.fileCount === 0
+          ? `${folderPrefix} 아래에서 처리할 데이터 파일을 찾지 못했습니다.`
+            : !summary.schemaCompatible
+            ? `${folderPrefix} 아래 ${summary.fileCount.toLocaleString()}개 파일의 스키마가 호환되지 않습니다.`
+            : !hasSchema
+              ? `${folderPrefix} 대표 파일의 스키마를 확인하지 못했습니다.`
+              : result.status !== "success"
+                ? result.message || `${folderPrefix} 데이터셋 검증에 실패했습니다.`
+              : `${folderPrefix} 데이터셋 검증 완료: ${summary.fileCount.toLocaleString()}개 파일`;
+      const normalizedResult: SourceConnectorAnalysis = {
+        ...result,
+        draftPatch: {
+          ...result.draftPatch,
+          source: result.draftPatch.source ? {
+            ...result.draftPatch.source,
+            connectionMessage: nextMessage,
+            connectionStatus: nextStatus,
+          } : result.draftPatch.source,
+        },
+        message: nextMessage,
+        status: nextStatus,
+      };
+      if (normalizedResult.draftPatch.source?.sourceConfig) {
+        setSourceFields((fields) => ({ ...fields, [activeSourceType]: normalizedResult.draftPatch.source?.sourceConfig ?? nextFields }));
+      }
+      setSourceRuntime({ ...normalizedResult, assets: mergeSourceAssets(currentAssets, normalizedResult.assets ?? []) });
+      setConnectionStatus(nextStatus);
+      setConnectionMessage(nextMessage);
+      onDraftChange(normalizedResult.draftPatch);
+      onAction(
+        prefixIsValid ? "etl.source.prefix_sampled" : "etl.source.prefix_validation_failed",
+        normalizedResult.actionPath,
+        folderPrefix,
+        prefixIsValid ? undefined : "failed",
+      );
+      onNotify(nextMessage);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "선택한 Prefix의 샘플을 가져오지 못했습니다.";
+      setConnectionStatus("failed");
+      setConnectionMessage(message);
+      applySourceDraft(activeSourceType, nextFields, "failed", message);
+      onAction("etl.source.prefix_sample_failed", "/api/etl/sources/test", folderPrefix, "failed");
       onNotify(message);
     }
   };
@@ -1885,6 +2029,10 @@ export function SourceConnectionPage({
     }
     if (sourceStage === "connect") {
       setSourceStage("browse");
+      return;
+    }
+    if (isPrefixSelection && selectedDatasetSummary?.schemaCompatible === false) {
+      onNotify("Prefix 아래 데이터 파일의 스키마가 서로 호환되지 않아 다음 단계로 이동할 수 없습니다.");
       return;
     }
     if (!hasValidatedSchema) {
@@ -2143,6 +2291,7 @@ export function SourceConnectionPage({
                         loadingPath={loadingAssetPath}
                         selectedPath={selectedAssetPath}
                         onOpenFolder={explorerConfig.supportsPathSearch ? loadSourceAssetChildren : undefined}
+                        onSelectFolder={activeSourceType === "File / S3" ? selectSourceFolder : undefined}
                         onSelect={selectSourceAsset}
                       />
                     ) : (
@@ -2165,10 +2314,20 @@ export function SourceConnectionPage({
                     )}
                     previewMeta={(
                       <div className="source-explorer-preview-meta">
-                        <span>{displayPreviewRows.length}행 · {displayPreviewColumns.length}필드</span>
+                        <Badge variant="outline" className="border-blue-200 bg-white text-blue-700">{displayPreviewFormat}</Badge>
+                        {selectedDatasetSummary ? (
+                          <span>
+                            전체 {selectedDatasetSummary.fileCount.toLocaleString()}개 · {formatSourceBytes(selectedDatasetSummary.totalBytes)} · 스키마 {selectedDatasetSummary.schemaCompatible ? "호환" : "불일치"}
+                            {selectedDatasetSummary.excludedFileCount > 0 ? ` · 제외 ${selectedDatasetSummary.excludedFileCount.toLocaleString()}개` : ""}
+                          </span>
+                        ) : (
+                          <span>{displayPreviewRows.length}행 · {displayPreviewColumns.length}필드</span>
+                        )}
                       </div>
                     )}
-                    previewTitle={sourcePreviewTitle}
+                    previewTitle={selectedDatasetSummary
+                      ? `대표 파일 · ${selectedDatasetSummary.representativeObject}`
+                      : selectedAsset?.[0] || sourcePreviewTitle}
                     queryPlaceholder={explorerConfig.queryPlaceholder}
                     queryValue={assetSearchQuery}
                     showPathSearch={explorerConfig.supportsPathSearch}
@@ -2441,6 +2600,26 @@ export function RecordParsingPage({
   );
 }
 
+function sourceFormatFromConfig(fields: Array<[string, string]>) {
+  const fieldMap = new Map(fields.map(([label, value]) => [label, value]));
+  const declaredFormat = (fieldMap.get("File Type") || "").trim().toLowerCase();
+  const selectedPath = [
+    fieldMap.get("Path / Prefix"),
+    fieldMap.get("Path"),
+    fieldMap.get("DATASET OR TABLE SELECTOR"),
+  ].find((value) => value && value.trim().length > 0)?.trim().toLowerCase() || "";
+  const rawFormat = declaredFormat && declaredFormat !== "auto"
+    ? declaredFormat
+    : selectedPath.replace(/^.*\./, "");
+  if (rawFormat.includes("jsonl")) return "JSONL";
+  if (rawFormat.includes("json")) return "JSON";
+  if (rawFormat.includes("csv")) return "CSV";
+  if (rawFormat.includes("tsv")) return "TSV";
+  if (rawFormat.includes("txt") || rawFormat.includes("log")) return "TXT";
+  if (rawFormat.includes("parquet")) return "PARQUET";
+  return "AUTO";
+}
+
 function mergeSourceAssets(currentAssets: Array<[string, string, string]>, nextAssets: Array<[string, string, string]>) {
   const merged = new Map<string, [string, string, string]>();
   [...currentAssets, ...nextAssets].forEach(([path, meta, status]) => {
@@ -2452,6 +2631,15 @@ function mergeSourceAssets(currentAssets: Array<[string, string, string]>, nextA
 function normalizeFolderPrefix(path: string) {
   const cleanPath = path.replace(/^\/+/, "").replace(/\/+$/, "");
   return cleanPath ? `${cleanPath}/` : "";
+}
+
+function formatSourceBytes(totalBytes: number) {
+  if (!Number.isFinite(totalBytes) || totalBytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const unitIndex = Math.min(Math.floor(Math.log(totalBytes) / Math.log(1024)), units.length - 1);
+  const value = totalBytes / (1024 ** unitIndex);
+  const digits = value >= 100 || unitIndex === 0 ? 0 : value >= 10 ? 1 : 2;
+  return `${value.toFixed(digits)} ${units[unitIndex]}`;
 }
 
 function upsertSourceFields(fields: Array<[string, string]>, patches: Array<[string, string]>) {

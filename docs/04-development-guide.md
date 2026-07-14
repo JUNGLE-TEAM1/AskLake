@@ -748,25 +748,38 @@ ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:etl-lineage
 
 ### Synthetic commerce dataset 검증
 
-SQL 및 ETL 분석용 소규모 커머스 데이터는 `backend/scripts/synthetic-commerce/`의 결정적 generator로 만든다. Amazon Electronics metadata JSONL은 저장소에 포함하지 않으며 실행자가 로컬 경로로 전달한다. 검증된 고정 seed 결과는 `backend/fixtures/synthetic-commerce/`에 제공하고, 다른 seed의 임시 생성 결과는 ignored `backend/tmp/` 아래에 둔다.
+SQL 및 ETL 분석용 커머스 데이터는 `backend/scripts/synthetic-commerce/`의 결정적 generator로 만든다. Amazon Electronics metadata JSONL은 저장소에 포함하지 않으며 실행자가 로컬 경로로 전달한다. 임시 생성 결과는 ignored `backend/tmp/` 아래에 둔다. `meta`, `users`, `click_events`는 서로 다른 스키마이므로 각각 별도 Prefix/Job으로 취급하며, 한 Prefix 안에는 같은 스키마의 `part-*.jsonl`만 둔다.
 
 ```bash
 python3 backend/scripts/synthetic-commerce/generate.py \
-  --source /path/to/meta_Electronics.jsonl \
-  --output-dir backend/tmp/synthetic-commerce-output \
+  --source "$HOME/Downloads/meta_Electronics.jsonl" \
+  --output-dir backend/tmp/synthetic-commerce \
+  --run-id commerce-250mb-seed-20260711 \
+  --target-total-size-mb 250 \
+  --max-file-size-mb 64 \
   --products 10000 \
-  --users 3000 \
   --seed 20260711 \
   --start-date 2026-06-01 \
   --days 30
 
 python3 backend/scripts/synthetic-commerce/analyze.py \
-  --data-dir backend/tmp/synthetic-commerce-output
+  --data-dir backend/tmp/synthetic-commerce/commerce-250mb-seed-20260711
 
-python3 backend/scripts/synthetic-commerce/test_generate.py
+python3 -m unittest backend/scripts/synthetic-commerce/test_generate.py
 ```
 
-생성 규칙, 컬럼 계약, 인사이트 품질 기준과 산출물 커밋 정책은 `backend/scripts/synthetic-commerce/README.md`를 따른다.
+`manifest.json`에는 데이터셋별 전체 행 수·바이트, 파일별 행 수·바이트·SHA-256, seed, 시간 범위가 기록된다. 분석기는 이 증거와 실제 파일을 대조하고 사용자/상품 외래키, 가입 이후 이벤트, 퍼널 순서와 심어 둔 분석 패턴을 검증한다. `--target-total-size-mb`를 늘리면 같은 분포와 계약으로 확장되며 출력 바이트를 정확히 맞추는 기능은 아니다. 생성 규칙, 컬럼 계약, 인사이트 품질 기준과 산출물 커밋 정책은 `backend/scripts/synthetic-commerce/README.md`를 따른다.
+
+생성·분석이 통과하면 local MinIO와 metadata PostgreSQL을 올리고, manifest에 기록된 part만 고유 run prefix에 업로드한 뒤 Prefix Preview부터 Spark/Catalog/SQL까지 이어지는 E2E를 실행한다.
+
+```bash
+docker compose up -d minio postgres
+cd backend
+npm run synthetic-commerce:upload
+npm run verify:prefix-spark-e2e
+```
+
+기본 run directory는 `backend/tmp/synthetic-commerce/commerce-250mb-seed-20260711`, bucket은 `m3-raw`, key root는 `synthetic-commerce/<run-id>/`다. 다른 실행 결과는 `ASKLAKE_SYNTHETIC_COMMERCE_DIR`, `ASKLAKE_SYNTHETIC_COMMERCE_BUCKET`, `ASKLAKE_SYNTHETIC_COMMERCE_KEY_PREFIX`로 지정한다. 실제 AWS S3에서는 `ASKLAKE_SYNTHETIC_COMMERCE_ENDPOINT=''`, `ASKLAKE_SYNTHETIC_COMMERCE_USE_DEFAULT_CREDENTIALS=true`, AWS region/bucket을 설정해 default credential chain을 사용하며 credential 값을 command, 로그, 저장소에 남기지 않는다. `verify:prefix-spark-e2e`는 connector `datasetSummary`, 입력 file/byte/row 합계, 다중 Parquet, Catalog, SQL `COUNT(*)`와 이벤트 퍼널 분포를 함께 검증한다.
 
 같은 클릭 이벤트를 비정형 `.log`와 조건부 `레코드 구조화` 입력으로 사용할 때는 메모리 제한형 Python 변환기를 사용한다. 로컬 기본 입력은 `backend/fixtures/synthetic-commerce/click_events.jsonl`, 기본 출력은 ignored `backend/tmp/synthetic-commerce/click-events.log`다. 입력 JSONL을 한 줄씩 읽고 헤더 없는 10필드 로그와 행 수·byte·SHA-256 manifest를 함께 만든다.
 

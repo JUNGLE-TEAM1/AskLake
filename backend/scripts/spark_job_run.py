@@ -27,6 +27,7 @@ REVIEW_ROW_ANALYSIS_SUPPORTED_METHODS = {
     "one_of_values",
     "instruction",
 }
+NESTED_COLUMN_REFERENCE_PREFIX = "__ASKLAKE_NESTED_REF__:"
 REVIEW_ROW_ANALYSIS_METHOD_ALIASES = {
     "copy_or_extract_field": "copy",
     "custom_instruction": "instruction",
@@ -67,9 +68,12 @@ def main():
     run_id = os.environ.get("ASKLAKE_SPARK_RUN_ID", "unknown")
     source_collection = {}
     spark = None
+    input_bytes = 0
+    input_file_count = 0
     staging_path = None
     output_write_started = False
     input_rows = 0
+    output_file_count = 0
     quality = None
     transform = None
     canonical_snapshot = False
@@ -112,6 +116,11 @@ def main():
             source_collection,
             transform_steps,
         )
+        input_files = sorted(source_df.inputFiles())
+        input_file_count = len(input_files) or int(source_collection.get("expectedFileCount") or 0)
+        input_bytes = source_file_bytes(spark, input_files) if input_files else int(
+            source_collection.get("expectedTotalBytes") or 0
+        )
         working_df = source_df if row_limit <= 0 else source_df.limit(row_limit)
         normalized_df = normalize_columns(working_df, schema_columns, transform_steps)
         contracted_df, input_rows = apply_schema_contract_with_count(
@@ -146,7 +155,10 @@ def main():
                 "error": quality["summary"],
                 "failedStage": "Text Structuring Model Selection",
                 "format": source_format,
+                "inputBytes": input_bytes,
+                "inputFileCount": input_file_count,
                 "inputRows": input_rows,
+                "outputFileCount": 0,
                 "outputPath": output_path,
                 "outputRows": 0,
                 "quality": quality,
@@ -212,16 +224,21 @@ def main():
                 quarantine_df.write.mode("overwrite").parquet(quarantine_staging_path)
                 quality["quarantine"] = {"count": quarantine_rows, "path": f"{output_path.rstrip('/')}_quarantine"}
                 quality["quarantineLocation"] = f"{output_path.rstrip('/')}_quarantine"
+        write_df = output_df
+        if source_collection.get("selectionKind") == "prefix" and input_file_count > 1:
+            max_partitions = max(2, int(os.environ.get("ASKLAKE_SPARK_PREFIX_OUTPUT_PARTITIONS_MAX", "32") or "32"))
+            write_df = output_df.repartition(min(input_file_count, max_partitions))
         if iceberg_target:
-            written_df = output_df.persist()
+            written_df = write_df.persist()
             output_rows = written_df.count()
         else:
-            writer = output_df.write.mode("overwrite")
+            writer = write_df.write.mode("overwrite")
             if resolved_partition_columns:
                 writer = writer.partitionBy(*resolved_partition_columns)
             output_write_started = True
             writer.parquet(staging_path)
             written_df = spark.read.parquet(staging_path)
+            output_file_count = len(written_df.inputFiles())
             output_rows = written_df.count()
         if not canonical_snapshot:
             quality = evaluate_quality_rules(written_df, quality_rules, total_rows=output_rows)
@@ -251,7 +268,10 @@ def main():
                 "error": quality["summary"],
                 "failedStage": "Quality",
                 "format": source_format,
+                "inputBytes": input_bytes,
+                "inputFileCount": input_file_count,
                 "inputRows": input_rows,
+                "outputFileCount": output_file_count,
                 "outputPath": output_path,
                 "outputRows": output_rows,
                 "outputCleanup": {
@@ -296,16 +316,21 @@ def main():
             iceberg_previous_snapshot = iceberg_commit.pop("_previousSnapshot", None)
             publish_spark_quarantine(spark, quarantine_staging_path, output_path)
             published_output_path = iceberg_commit["target"]["tableUri"]
+            output_file_count = iceberg_output_file_count(spark, iceberg_target)
         else:
             publish_spark_paths(spark, staging_path, output_path, quarantine_staging_path)
             written_df = spark.read.parquet(output_path)
+            output_file_count = len(written_df.inputFiles())
             output_rows = written_df.count()
         ended_at = now_iso()
         result = {
             "durationMs": int(time.time() * 1000) - started_ms,
             "endedAt": ended_at,
             "format": source_format,
+            "inputBytes": input_bytes,
+            "inputFileCount": input_file_count,
             "inputRows": input_rows,
+            "outputFileCount": output_file_count,
             "outputPath": published_output_path,
             "outputRows": output_rows,
             "quality": quality,
@@ -361,7 +386,10 @@ def main():
                 else "Spark ETL",
             ),
             "format": source_format,
+            "inputBytes": input_bytes,
+            "inputFileCount": input_file_count,
             "inputRows": input_rows,
+            "outputFileCount": output_file_count,
             "outputPath": output_path,
             "outputRows": 0,
             "runId": run_id,
@@ -565,6 +593,10 @@ def iceberg_snapshot(spark, target, snapshot_id):
 
 def current_iceberg_snapshot(spark, target):
     return iceberg_snapshot(spark, target, current_iceberg_snapshot_id(spark, target))
+
+
+def iceberg_output_file_count(spark, target):
+    return len(spark.table(spark_iceberg_table_identifier(target)).inputFiles())
 
 
 def latest_iceberg_snapshot(spark, target):
@@ -861,6 +893,18 @@ def verify_spark_source_inventory(spark, source_path, source_collection, *, phas
         )
     except ValueError as exc:
         raise ValueError(f"{exc} phase={phase}") from exc
+
+
+def source_file_bytes(spark, paths):
+    total = 0
+    configuration = spark.sparkContext._jsc.hadoopConfiguration()
+    for value in paths:
+        try:
+            path = spark._jvm.org.apache.hadoop.fs.Path(value)
+            total += int(path.getFileSystem(configuration).getFileStatus(path).getLen())
+        except Exception:
+            continue
+    return total
 
 
 def read_source(
@@ -3042,12 +3086,28 @@ def try_cast_double(frame, name):
 
 
 def resolve_column_name(frame, name):
-    if name in frame.columns:
-        return name
-    normalized = normalize_column_name(name)
+    raw_name = str(name or "").strip()
+    if raw_name in frame.columns:
+        return raw_name
+    normalized = normalize_column_name(raw_name)
     if normalized in frame.columns:
         return normalized
+    parts = [part for part in raw_name.split(".") if part]
+    if len(parts) > 1 and nested_field_exists(frame.schema, parts):
+        return f"{NESTED_COLUMN_REFERENCE_PREFIX}{'.'.join(parts)}"
     return ""
+
+
+def nested_field_exists(schema, parts):
+    current = schema
+    for part in parts:
+        if not isinstance(current, T.StructType):
+            return False
+        field = next((candidate for candidate in current.fields if candidate.name == part), None)
+        if field is None:
+            return False
+        current = field.dataType
+    return True
 
 
 def collect_sample_rows(frame, limit=10):
@@ -3063,7 +3123,11 @@ def collect_sample_rows(frame, limit=10):
 
 
 def quote_identifier(name):
-    return f"`{str(name).replace('`', '``')}`"
+    raw_name = str(name)
+    if raw_name.startswith(NESTED_COLUMN_REFERENCE_PREFIX):
+        parts = raw_name[len(NESTED_COLUMN_REFERENCE_PREFIX):].split(".")
+        return ".".join(f"`{part.replace('`', '``')}`" for part in parts)
+    return f"`{raw_name.replace('`', '``')}`"
 
 
 def normalize_columns(frame, schema_columns=None, transform_steps=None):

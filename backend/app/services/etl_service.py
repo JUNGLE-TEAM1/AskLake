@@ -3046,7 +3046,10 @@ def spark_result_manifest(result: dict[str, Any], run_id: str) -> dict[str, Any]
             "error",
             "failedStage",
             "format",
+            "inputBytes",
+            "inputFileCount",
             "inputRows",
+            "outputFileCount",
             "icebergCommit",
             "outputPath",
             "outputRows",
@@ -3112,6 +3115,10 @@ def execute_airflow_run(
 
     spark_run = run_from_spark_result(job, result)
     apply_spark_result_to_airflow_run(run, spark_run)
+    run.task_states = {
+        **(run.task_states or {}),
+        "sparkResult": spark_result_manifest(result, run_id),
+    }
     dataset_model = None
     if result.get("status") == "success":
         # Do not hold the dataset lock while Spark is running. Re-read and
@@ -3170,7 +3177,10 @@ def airflow_execution_response(
         job_id=job.id,
         run_id=str(result.get("runId") or ""),
         dataset_id=dataset_id,
+        input_bytes=parse_count_value(result.get("inputBytes")),
+        input_file_count=parse_count_value(result.get("inputFileCount")),
         input_rows=parse_count_value(result.get("inputRows")),
+        output_file_count=parse_count_value(result.get("outputFileCount")),
         output_rows=parse_count_value(result.get("outputRows")),
         output_path=str(result.get("outputPath") or "-"),
         duration_ms=parse_optional_integer(result.get("durationMs")),
@@ -3193,12 +3203,18 @@ def airflow_execution_response_from_persisted(
         for item in schema_payload
         if isinstance(item, list) and len(item) >= 2
     ]
+    spark_result = (run.task_states or {}).get("sparkResult")
+    if not isinstance(spark_result, dict):
+        spark_result = {}
     return AirflowRunExecutionResponse(
         status="success",
         job_id=job.id,
         run_id=run.run_id,
         dataset_id=dataset.id,
+        input_bytes=parse_count_value(spark_result.get("inputBytes")),
+        input_file_count=parse_count_value(spark_result.get("inputFileCount")),
         input_rows=parse_count_value(run.input_rows),
+        output_file_count=parse_count_value(spark_result.get("outputFileCount")),
         output_rows=parse_count_value(run.output_rows),
         output_path=str(run.output_path or payload.get("storageLocation") or "-"),
         schema=schema,
@@ -5174,6 +5190,9 @@ def dag_steps_from_spark_result(job: ETLJobModel, command: str, run: dict[str, A
     quality_meta = f"{len(job.quality_rules or [])}개 검사"
     source_path = str(result.get("sourcePath") or job.source)
     output_path = str(result.get("outputPath") or run.get("outputPath") or "-")
+    input_file_count = result.get("inputFileCount")
+    input_bytes = result.get("inputBytes")
+    output_file_count = result.get("outputFileCount")
     spark_logs = compact_spark_logs(result)
     quality_result = result.get("quality") if isinstance(result.get("quality"), dict) else {}
     quality_summary = str(quality_result.get("summary") or "-")
@@ -5189,6 +5208,8 @@ def dag_steps_from_spark_result(job: ETLJobModel, command: str, run: dict[str, A
         ], ["생성 시 확정된 스키마를 Spark 실행 계약에 사용했습니다."]),
         dag_step("read", "3. Spark 소스 읽기", run.get("inputRows", "0"), "failed" if read_failed else "success", [
             ["입력 행", run.get("inputRows", "0")],
+            ["입력 파일", str(input_file_count) if input_file_count is not None else "-"],
+            ["입력 용량", format_storage_size(int(input_bytes)) if isinstance(input_bytes, (int, float)) and input_bytes >= 0 else "-"],
             ["Spark source", source_path],
         ], [f"Spark 소스 읽기 실패: {run.get('errorSummary')}" if read_failed else f"Spark가 {run.get('inputRows', '0')}을 읽었습니다.", *spark_logs]),
         dag_step("transform", "4. 처리 규칙 적용", transform_meta, "failed" if transform_failed else "blocked" if read_failed else "success", [
@@ -5201,6 +5222,7 @@ def dag_steps_from_spark_result(job: ETLJobModel, command: str, run: dict[str, A
         dag_step("write", "6. Parquet 적재", output_path, "blocked" if failed else "success", [
             ["출력 경로", output_path],
             ["출력 행", run.get("outputRows", "0")],
+            ["Parquet 파일", str(output_file_count) if output_file_count is not None else "-"],
         ], ["이전 단계 실패로 Parquet 적재가 수행되지 않았습니다." if failed else f"Parquet 출력 완료: {output_path}"]),
         dag_step("catalog", "7. 카탈로그 데이터셋 갱신", job.target, "blocked" if failed else "success", [
             ["데이터셋", job.target],
