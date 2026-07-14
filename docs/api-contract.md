@@ -1014,8 +1014,9 @@ Response 예시:
 
 규칙:
 
-- 서버는 `S3_ALLOWED_BUCKETS` allowlist를 우선 사용합니다.
-- allowlist가 없으면 local demo 기본값으로 `asklake-output`을 반환할 수 있습니다.
+- 서버는 Spark writer가 사용하는 `ASKLAKE_SPARK_OUTPUT_BUCKET`을 첫 번째로 반환하고, `S3_ALLOWED_BUCKETS` allowlist의 나머지 bucket을 중복 없이 뒤에 합칩니다.
+- 설정이 없으면 local MinIO demo만 `asklake-output`을 반환할 수 있습니다. AWS mode는 잘못된 기본 bucket을 반환하지 않고 `503 SERVICE_UNAVAILABLE`을 반환합니다.
+- 프론트에 저장된 기본 bucket이 응답 목록에 없으면 응답의 첫 번째 output bucket으로 교정합니다. 사용자가 명시적으로 선택한 유효 bucket은 보존합니다.
 - 프론트는 bucket 목록을 표시만 하며 AWS credential을 보관하지 않습니다.
 
 `GET /api/s3/prefixes?bucket=asklake-output&prefix=pair_a/`

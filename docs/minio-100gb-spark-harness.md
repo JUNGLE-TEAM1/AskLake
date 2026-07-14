@@ -78,6 +78,8 @@ GET /api/s3/prefixes?bucket=asklake-output&prefix= -> folder prefixes
 GET /api/target/databases -> { "databases": [{ "name": "asklake", "description": "..." }] }
 ```
 
+위 `asklake-output` 응답은 설정이 없는 local MinIO demo의 fallback이다. AWS mode에서는 `ASKLAKE_SPARK_OUTPUT_BUCKET`이 목록 첫 번째에 오고 `S3_ALLOWED_BUCKETS`의 나머지 bucket이 뒤따른다. AWS에서 두 설정이 모두 비면 잘못된 local bucket을 반환하지 않고 `503 SERVICE_UNAVAILABLE`로 기동 설정 오류를 드러낸다.
+
 Target S3 picker 환경변수:
 
 ```powershell
