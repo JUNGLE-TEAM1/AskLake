@@ -675,10 +675,10 @@ Content-Type: application/json
 Backend의 권장 polling 주기는 다음과 같다.
 
 ```text
-nextCheckAfterMs = clamp(triggerIntervalSeconds × 500, 5,000, 60,000)
+nextCheckAfterMs = clamp(triggerIntervalSeconds × 500, 1,000, 60,000)
 ```
 
-10초 trigger는 5초, 30초 trigger는 15초, 5분 trigger는 60초다. Frontend는 같은 시각에 요청이 몰리지 않도록 dataset ID로 정한 0~10% deterministic jitter를 더한다. 실제 지연은 `다음 Spark trigger까지 남은 시간 + Spark/S3 + backend reconciliation 0~1초 + polling 0~nextCheckAfterMs(+ jitter) + widget 계산`이므로 2~5초를 항상 보장하지 않는다.
+1~2초 trigger는 1초, 10초 trigger는 5초, 30초 trigger는 15초, 5분 trigger는 60초다. Frontend는 같은 시각에 요청이 몰리지 않도록 dataset ID로 정한 0~10% deterministic jitter를 더한다. 실제 지연은 `다음 Spark trigger까지 남은 시간 + Spark/S3 + backend reconciliation 0~1초 + polling 0~nextCheckAfterMs(+ jitter) + widget 계산`이므로 2~5초를 항상 보장하지 않는다.
 
 ```http
 POST /api/dashboards/{dashboardId}/widgets/query

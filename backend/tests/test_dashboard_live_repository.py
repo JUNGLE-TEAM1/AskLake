@@ -337,9 +337,10 @@ class DashboardLiveRepositoryTests(unittest.TestCase):
         cases = {
             None: 15_000,
             "invalid": 15_000,
-            -10: 5_000,
-            0: 5_000,
-            1: 5_000,
+            -10: 1_000,
+            0: 1_000,
+            1: 1_000,
+            2: 1_000,
             10: 5_000,
             11: 5_500,
             30: 15_000,
