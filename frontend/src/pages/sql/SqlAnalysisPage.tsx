@@ -340,7 +340,7 @@ export function SqlAnalysisPage({
     setPreflightResult(null);
     setMaterializeDialogOpen(false);
     setChartConfig(null);
-    setResultView(usesTrinoRuntime ? "execution" : "table");
+    setResultView("execution");
     setResultDialogOpen(false);
     setDialogResultDraft(null);
     setResultPageError(null);
@@ -1152,7 +1152,7 @@ export function SqlAnalysisPage({
   const materializationResult = visibleResult?.engine === "trino"
     ? isTrinoResultReady(actionTrinoRun) ? visibleResult : null
     : resultDraft;
-  const showExecutionView = usesTrinoRuntime || Boolean(trinoRun || trinoSubmissionPending || trinoSubmissionError);
+  const executionWorkspaceEnabled = Boolean(baseDataset || trinoRun || trinoSubmissionPending || trinoSubmissionError);
   const remoteResultPagination = trinoRun && trinoResultPage ? {
     currentPage: trinoResultPage.pageNumber ?? trinoResultPageIndex + 1,
     nextDisabled: !trinoResultPage.nextCursor,
@@ -1252,8 +1252,8 @@ export function SqlAnalysisPage({
           dialogResultDraft={trinoRun ? visibleResult : dialogResultDraft}
           dialogOpen={resultDialogOpen}
           downloadDisabled={trinoActionsDisabled}
-          executionEnabled={showExecutionView}
-          executionInfo={showExecutionView ? (
+          executionWorkspaceEnabled={executionWorkspaceEnabled}
+          executionInfo={
             <SqlExecutionInfo
               cancelPending={queryPending}
               estimate={activeQueryEstimate}
@@ -1272,7 +1272,7 @@ export function SqlAnalysisPage({
               validationError={trinoValidationError}
               validationPending={trinoValidationPending}
             />
-          ) : undefined}
+          }
           jobCreationDisabled={trinoActionsDisabled || !materializationResult}
           pageError={trinoRun ? trinoResultError : resultPageError}
           pagePending={trinoRun ? trinoResultPagePending : resultPagePending}
