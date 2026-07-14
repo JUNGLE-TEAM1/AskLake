@@ -1999,13 +1999,6 @@ type QueryAiSuggestionRequest = {
   mode?: "draft_sql";
   prompt: string;
   selectedDatasetIds: string[];
-  selectedDatasets?: Array<{
-    id: string;
-    name: string;
-    description: string;
-    layer: string;
-    schema: Array<[name: string, type: string]>;
-  }>;
 };
 ```
 
@@ -2068,8 +2061,8 @@ Response 예시:
 Validation:
 
 - `prompt`와 최소 1개 이상의 `selectedDatasetIds`가 필수입니다.
-- frontend는 사용자가 선택한 모든 dataset metadata를 `selectedDatasets`로 함께 전달합니다.
-- backend는 `OPENAI_API_KEY`를 서버 env에서만 읽고 브라우저에 노출하지 않습니다.
+- frontend는 선택한 dataset id만 전달합니다. backend가 현재 actor의 권한·governance를 확인한 뒤 Catalog에서 최신 metadata와 schema를 다시 읽으므로 client metadata는 신뢰하거나 provider에 전달하지 않습니다.
+- backend는 Query AI provider key를 읽지 않고 private AI Gateway에 service token과 dataset-scoped signed context만 전달합니다. provider key는 `AI_PROVIDER_API_KEY`로 AI Gateway 컨테이너에만 주입하며 브라우저에 노출하지 않습니다.
 - AI 응답 SQL도 backend에서 read-only guard를 다시 통과해야 합니다.
 - AI 응답 SQL은 선택된 dataset context 밖의 table을 참조하면 `422 VALIDATION_ERROR`로 실패해야 합니다.
 - 선택된 dataset 중 하나라도 현재 actor에게 `query` 권한이 없으면 dataset metadata를 AI context로 보내기 전에 `403 FORBIDDEN`을 반환합니다.

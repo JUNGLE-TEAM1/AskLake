@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.router import api_router
+from app.api.internal_mcp import create_internal_mcp_app, internal_mcp_mount_path
 from app.core.config import settings
 from app.core.database import SessionLocal
 from app.core.errors import ApiError, api_error_handler, http_error_handler, unhandled_error_handler, validation_error_handler
@@ -57,18 +58,21 @@ async def lifespan(_app: FastAPI):
     initialize_auth_on_startup()
     continuous_task = asyncio.create_task(continuous_runtime_sync_loop())
     scheduled_task = asyncio.create_task(scheduled_job_tick_loop())
-    try:
-        yield
-    finally:
-        for task in (continuous_task, scheduled_task):
-            task.cancel()
-        for task in (continuous_task, scheduled_task):
-            with suppress(asyncio.CancelledError):
-                await task
+    async with _app.state.internal_mcp_lifespan():
+        try:
+            yield
+        finally:
+            for task in (continuous_task, scheduled_task):
+                task.cancel()
+            for task in (continuous_task, scheduled_task):
+                with suppress(asyncio.CancelledError):
+                    await task
 
 
 def create_app() -> FastAPI:
     app = FastAPI(title=settings.app_name, lifespan=lifespan)
+    internal_mcp_app, internal_mcp_lifespan = create_internal_mcp_app()
+    app.state.internal_mcp_lifespan = internal_mcp_lifespan
 
     app.add_middleware(
         CORSMiddleware,
@@ -88,6 +92,7 @@ def create_app() -> FastAPI:
     app.add_exception_handler(StarletteHTTPException, http_error_handler)
     app.add_exception_handler(Exception, unhandled_error_handler)
     app.include_router(api_router, prefix=settings.api_prefix)
+    app.mount(internal_mcp_mount_path, internal_mcp_app)
 
     return app
 

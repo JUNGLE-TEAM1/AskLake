@@ -4,6 +4,8 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.database import SessionLocal
 from app.schemas.common import HealthResponse
+from app.core.config import settings
+from app.services.ai_gateway_client import AiGatewayClient
 
 router = APIRouter()
 
@@ -26,3 +28,12 @@ def health_check(response: Response) -> HealthResponse:
         statusCode=response.status_code,
         database={"ok": database_ok, "message": database_message},
     )
+
+
+@router.get("/health/ai")
+def ai_health_check(response: Response) -> dict[str, object]:
+    if settings.ai_query_provider != "gateway":
+        return {"ok": True, "status": "disabled", "provider": "direct"}
+    ready = AiGatewayClient().health_check()
+    response.status_code = status.HTTP_200_OK if ready else status.HTTP_503_SERVICE_UNAVAILABLE
+    return {"ok": ready, "status": "ready" if ready else "unavailable", "provider": "gateway"}

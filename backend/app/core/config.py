@@ -1,5 +1,6 @@
 import json
 from functools import lru_cache
+from typing import Literal
 from urllib.parse import urlparse
 
 from pydantic import Field, field_validator, model_validator
@@ -20,6 +21,16 @@ class Settings(BaseSettings):
     openai_assistant_max_sample_rows: int = Field(default=5, ge=0, le=20)
     openai_assistant_timeout_seconds: float = Field(default=20.0, ge=1.0, le=60.0)
     openai_query_ai_model: str = "gpt-4.1-mini"
+    ai_query_provider: Literal["direct", "gateway"] = "direct"
+    ai_gateway_base_url: str | None = None
+    ai_gateway_generate_path: str = "/v1/generate"
+    ai_gateway_service_token: str | None = None
+    ai_gateway_timeout_seconds: float = Field(default=30.0, ge=1.0, le=120.0)
+    ai_mcp_path: str = "/internal/mcp"
+    ai_mcp_service_token: str | None = None
+    ai_context_signing_secret: str = "asklake-local-ai-context-signing-secret"
+    ai_context_ttl_seconds: int = Field(default=300, ge=30, le=3600)
+    ai_context_max_sample_rows: int = Field(default=20, ge=0, le=20)
     airflow_api_base_url: str | None = None
     airflow_dag_id: str = "asklake_etl_job"
     airflow_api_token: str | None = None
@@ -119,6 +130,43 @@ class Settings(BaseSettings):
             return "minio"
         raise ValueError("ASKLAKE_OBJECT_STORAGE_PROVIDER must be minio or aws")
 
+    @field_validator("ai_gateway_base_url")
+    @classmethod
+    def validate_ai_gateway_base_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip().rstrip("/")
+        parsed = urlparse(normalized)
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not parsed.netloc
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.params
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError("AI_GATEWAY_BASE_URL must be an absolute http(s) URL without credentials or query parameters")
+        return normalized
+
+    @field_validator("ai_gateway_generate_path", "ai_mcp_path")
+    @classmethod
+    def validate_ai_internal_path(cls, value: str) -> str:
+        normalized = value.strip()
+        parsed = urlparse(normalized)
+        if (
+            not normalized.startswith("/")
+            or normalized.startswith("//")
+            or not parsed.path
+            or normalized == "/"
+            or parsed.path != normalized
+            or parsed.params
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError("AI internal paths must be absolute paths without query parameters")
+        return normalized.rstrip("/") or "/"
+
     @model_validator(mode="after")
     def validate_bootstrap_admin(self) -> "Settings":
         if bool(self.bootstrap_admin_email) != bool(self.bootstrap_admin_password):
@@ -202,6 +250,19 @@ class Settings(BaseSettings):
             }.items():
                 if len(str(secret or "")) < 32:
                     raise ValueError(f"{key} must contain at least 32 characters")
+        if not self.allows_header_auth_fallback and self.ai_query_provider == "gateway":
+            required_ai_values = {
+                "AI_GATEWAY_BASE_URL": self.ai_gateway_base_url,
+                "AI_GATEWAY_SERVICE_TOKEN": self.ai_gateway_service_token,
+                "AI_MCP_SERVICE_TOKEN": self.ai_mcp_service_token,
+                "AI_CONTEXT_SIGNING_SECRET": self.ai_context_signing_secret,
+            }
+            for key, value in required_ai_values.items():
+                normalized = str(value or "").strip()
+                if not normalized or "replace-with-" in normalized or "asklake-local-" in normalized:
+                    raise ValueError(f"{key} must be a non-placeholder production value when AI gateway is enabled")
+            if len(self.ai_context_signing_secret) < 32:
+                raise ValueError("AI_CONTEXT_SIGNING_SECRET must contain at least 32 characters")
         return self
 
     @property
