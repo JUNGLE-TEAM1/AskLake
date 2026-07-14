@@ -22,13 +22,13 @@
 
 | 항목 | 책임 | 상태 |
 | --- | --- | --- |
-| MSK 유형과 인증 방식 | B | MSK Serverless + IAM으로 확정한다. A는 실제 cluster와 network/IAM resource를 구축한다. |
+| MSK 유형과 인증 방식 | A 확정 입력 / B 반영 | A Phase 0/1에서 확정된 MSK Serverless + IAM을 B 계약에 반영한다. A는 실제 cluster와 network/IAM resource를 구축한다. |
 | RDS 용도 분리 | B 계약, A 구축 | 단일 RDS PostgreSQL instance에 database와 user를 3개 용도별로 분리한다. |
 | Trino 배치 위치와 실제 port | A | A가 결정한다. B는 `TRINO_BASE_URL`과 Secret reference 형식만 제공한다. |
 | FastAPI background singleton 구현 방식 | A/B 공동 | 보류. 동시성·장애 복구 검토 후 별도 확정한다. |
 | EC2 Continuous 상태 DB와 읽기 endpoint | A/B 공동 | 보류. EKS의 변경 command 차단 원칙만 현재 확정한다. |
 
-MSK는 B가 Serverless + IAM으로 확정한다. A는 이 계약에 맞는 실제 cluster ARN, private IAM bootstrap endpoint와 network/IAM resource를 제공한다. Trino 위치는 A의 인프라 결과를 B workload에 주입하기 위한 interface 계약으로만 다룬다.
+MSK Serverless + IAM은 A Phase 0/1 인수 계약의 확정 입력이며 B가 재선택하지 않는다. A는 실제 cluster ARN, private IAM bootstrap endpoint와 network/IAM resource를 제공한다. Trino 위치는 A의 인프라 결과를 B workload에 주입하기 위한 interface 계약으로만 다룬다.
 
 ## 2. 책임 경계
 
@@ -113,7 +113,7 @@ checkpointPrefix: eks-mvp/checkpoints/
 | EKS Spark workload | test topic 조회·consume, 전용 group 사용, 지정 S3 prefix 쓰기 | 기존 Continuous topic/group/checkpoint/output 변경 |
 | EC2 Continuous control plane/worker | 기존 Continuous runtime 제어 | MVP test topic/group/checkpoint 사용 |
 
-MSK 유형과 인증 방식은 B가 **MSK Serverless + IAM**으로 확정한다. A는 이 계약에 맞춰 실제 cluster와 VPC/Security Group, workload IAM policy를 구축한다.
+MSK 유형과 인증 방식은 A Phase 0/1에서 **MSK Serverless + IAM**으로 확정됐다. B는 이 값을 변경 없이 client와 workload 계약에 반영하고, A는 실제 cluster와 VPC/Security Group, workload IAM policy를 구축한다.
 
 권장 AWS IAM action 계약:
 
@@ -141,6 +141,8 @@ MSK 유형과 인증 방식은 B가 **MSK Serverless + IAM**으로 확정한다.
 - EKS workload의 기존 EC2 Continuous topic/group 접근
 
 위 action 표는 이번 MVP의 필수 IAM 권한 계약이다. 장기 AWS access key/secret이나 mTLS/SCRAM secret을 사용하지 않고 workload identity와 A가 지정한 외부 AWS principal을 사용한다.
+
+`MSK Serverless + IAM`은 A Phase 0/1 인수 계약에서 전달된 확정 입력이다. B는 Serverless/Provisioned 또는 IAM/mTLS/SCRAM 중에서 이를 재선택하거나 변경하지 않는다. A가 제공해야 하는 후속 입력은 실제 cluster ARN, private IAM bootstrap endpoint, VPC/Security Group과 workload IAM resource 값이다.
 
 ### 4.3 메시지 형식
 
@@ -527,7 +529,7 @@ EKS는 Continuous 상태를 표시하기 위해 읽기 API를 사용할 수 있�
 - 단일 RDS PostgreSQL instance의 크기, storage, backup/retention 정책
 - Trino 배치 위치와 port
 
-위 항목은 B가 확정한 MSK Serverless + IAM 계약을 A가 실제 AWS resource로 구축한 뒤 ConfigMap, NetworkPolicy와 client option에 채우기 위한 입력 목록이다.
+위 항목은 A Phase 0/1에서 확정된 MSK Serverless + IAM 계약에 따라 A가 실제 AWS resource를 구축한 뒤 ConfigMap, NetworkPolicy와 client option에 채우기 위한 입력 목록이다.
 
 ### A/B가 함께 승인해야 하는 중요 항목
 
@@ -576,7 +578,7 @@ manifest와 adapter 구현은 다음 검증을 통과해야 한다.
 - [ ] ECR repository URL과 AWS region이 확정됐다.
 - [ ] Airflow ECR mirror URL과 API Server/Scheduler/DAG Processor 공통 image digest가 확정됐다.
 - [ ] Node architecture가 AMD64임을 확인했다.
-- [ ] B가 MSK Serverless + IAM과 private IAM port `9098`을 확정했다.
+- [x] A Phase 0/1 인수 계약의 MSK Serverless + IAM과 private IAM port `9098`을 확정 입력으로 반영했다.
 - [ ] A가 실제 MSK Serverless cluster, private IAM bootstrap endpoint와 network/IAM resource를 제공하는 책임 경계를 확인했다.
 - [ ] test topic/group과 fixture producer principal이 확정됐다.
 - [ ] 기존 Continuous와 격리할 이름과 권한 경계를 확인했다.
@@ -611,8 +613,8 @@ B 계약 초안입니다.
 
 3. RDS는 MVP 기준 단일 PostgreSQL instance 안에서 asklake_app,
    airflow_metadata, iceberg_catalog database와 전용 user를 분리합니다.
-   MSK는 B가 Serverless + IAM으로 확정하고 A는 실제 cluster와 network/IAM
-   resource를 구축합니다. Trino 배치 위치는 A가 결정하고 B가 endpoint 형식에 반영합니다.
+   MSK Serverless + IAM은 A Phase 0/1의 확정 입력으로 받고 B가 재선택하지 않습니다.
+   A는 실제 cluster와 network/IAM resource를 구축합니다. Trino 배치 위치는 A가 결정하고 B가 endpoint 형식에 반영합니다.
 
 4. FastAPI singleton 구현 방식과 EC2 Continuous 상태 DB/읽기 endpoint는
    이번 계약에서 보류합니다. EKS가 Continuous 변경 command를 차단하는

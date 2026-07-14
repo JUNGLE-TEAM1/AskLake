@@ -125,6 +125,8 @@ Node 자동 증가/감소
 
 AskLake를 올리기 전에 EKS 자체가 Pod와 Node를 정상적으로 만들 수 있는지 검증하고, MSK·Trino·RDS·image 식별 방식을 문서로 확정합니다.
 
+> **MSK 확정 입력:** A Phase 0/1 인수 계약에서 전달된 `MSK Serverless + IAM`을 그대로 사용한다. 이는 B가 Serverless/Provisioned 또는 IAM/mTLS/SCRAM 중에서 다시 선택하는 항목이 아니다. A는 실제 cluster ARN, private IAM bootstrap endpoint, VPC/Security Group과 workload IAM resource 값을 제공한다.
+
 ### 이날 새로 완성되는 기능
 
 | 담당자 A | 담당자 B |
@@ -132,7 +134,7 @@ AskLake를 올리기 전에 EKS 자체가 Pod와 Node를 정상적으로 만들 
 | EKS Auto Mode Cluster와 NodePool | Frontend/FastAPI/Airflow/Spark AMD64 image |
 | Metrics Server와 ECR 저장소 | Kubernetes Deployment/Service/Job 기본 YAML |
 | 테스트 Pod와 Node scale-out/in | ConfigMap/Secret reference 기본 구조 |
-| MSK Serverless cluster·VPC·IAM 리소스 구축 준비 | MSK Serverless+IAM 방식과 client/env/Secret 계약 확정 |
+| MSK Serverless cluster·VPC·IAM 리소스 구축 준비 | 확정 입력인 MSK Serverless+IAM의 client/env/Secret 계약 반영 |
 | Trino 배치 위치 결정 | 3개 PostgreSQL 용도와 RDS 이전 순서 정의 |
 | Continuous 제어권을 EC2에 유지하는 범위 확정 | FastAPI 확장·AskLake Run 재시작 안전성 완료 기준 정의 |
 
@@ -143,7 +145,7 @@ AskLake를 올리기 전에 EKS 자체가 Pod와 Node를 정상적으로 만들 
 | EKS 클러스터 | ✅ |
 | ECR image push | ✅ |
 | Kubernetes YAML 기본 구조 | ✅ |
-| MSK cluster 유형·인증 방식 | ✅ B가 Serverless+IAM으로 확정 |
+| MSK cluster 유형·인증 방식 | ✅ A 인수 계약의 Serverless+IAM 확정값 반영 |
 | Trino 배치 위치 | ✅ 결정 완료 |
 | RDS migration/rollback 범위 | ✅ 문서화 |
 | image digest 기준 | ✅ 문서화 |
