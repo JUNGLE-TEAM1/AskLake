@@ -300,6 +300,8 @@ npm run verify:kafka-continuous-soak
 
 `npm run verify:kafka-continuous-contract`는 같은 worker attempt의 실패 카운터 멱등성, 종료 worker의 manifest 기반 Catalog 복구, Iceberg replay 경계, worker/maintenance 양방향 fencing, durable runner heartbeat 기반 lease 갱신과 stale cleanup 1회를 검증한다. E2E는 기본 replay가 현재 schema policy를 다시 적용하는지, `approveUnknownFields` 관리자 예외만 unknown-field 행을 복구하는지, replay snapshot이 Trino 검증 후 Catalog에 반영되는지, rewrite 결과가 같은 Iceberg target으로 Trino 재검증되는지 확인한다. Stream manifest는 deterministic source boundary, Iceberg snapshot/table URI와 topic/partition별 `[startOffset, endOffset)`을 포함해야 한다.
 
+ACK backlog 검증에서는 publication window보다 많은 manifest를 만든 뒤 ACK를 전진시켜도 worker가 전체 이력을 매번 다시 Spark query로 읽지 않고 다음 window만 보충하는지 확인한다. 지연 검증 환경은 `ASKLAKE_CONTINUOUS_SPARK_SHUFFLE_PARTITIONS=4`와 `ASKLAKE_CONTINUOUS_SPARK_LOG_LEVEL=WARN`을 기본으로 사용하고, `lastBatchDurationMs`와 각 DAG stage duration을 함께 기록한다.
+
 ```bash
 cd backend
 ASKLAKE_VERIFY_ICEBERG_LIVE=true npm run verify:kafka-continuous-iceberg

@@ -56,6 +56,8 @@ assert.equal(backendEnvironment.ASKLAKE_SPARK_RUNNER, "rest");
 assert.equal(backendEnvironment.ASKLAKE_MINIO_DOCKER_FALLBACK, "false");
 assert.equal(backendEnvironment.ASKLAKE_SPARK_REST_URL, "http://spark-master:6066");
 assert.equal(backendEnvironment.ASKLAKE_SPARK_MASTER_URL, "spark://spark-master:7077");
+assert.equal(backendEnvironment.ASKLAKE_CONTINUOUS_SPARK_SHUFFLE_PARTITIONS, "4");
+assert.equal(backendEnvironment.ASKLAKE_CONTINUOUS_SPARK_LOG_LEVEL, "WARN");
 assert.equal(backendEnvironment.ASKLAKE_SPARK_JOB_SCRIPT, "/opt/asklake/scripts/spark_job_run.py");
 assert.equal(
   backendEnvironment.ASKLAKE_SPARK_SOURCE_INSPECT_SCRIPT,

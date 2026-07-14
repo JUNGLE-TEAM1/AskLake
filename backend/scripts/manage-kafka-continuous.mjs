@@ -111,7 +111,10 @@ async function startWorkerRest(request, containerName) {
     sparkProperties: {
       "spark.sql.streaming.stopGracefullyOnShutdown": "true",
     },
-  }, process.env);
+  }, {
+    ...process.env,
+    ASKLAKE_SPARK_SQL_SHUFFLE_PARTITIONS: String(continuousSparkShufflePartitions()),
+  });
   const created = await createSparkRestDriver(runtime.restUrl, submission);
   const now = new Date().toISOString();
   let state = appendStateEvent({
@@ -330,6 +333,7 @@ function continuousEnvironment(request, workerAttemptId, runtimeReportDir, inclu
     ASKLAKE_CONTINUOUS_RULES: JSON.stringify(request.rules || []),
     ASKLAKE_CONTINUOUS_SCHEMA_COLUMNS: JSON.stringify(request.schemaColumns || []),
     ASKLAKE_CONTINUOUS_SCHEMA_POLICY: JSON.stringify(request.schemaEvolutionPolicy || {}),
+    ASKLAKE_CONTINUOUS_SPARK_LOG_LEVEL: process.env.ASKLAKE_CONTINUOUS_SPARK_LOG_LEVEL || "WARN",
     ASKLAKE_CONTINUOUS_FAIL_AFTER_DATA_WRITE_ONCE: process.env.ASKLAKE_CONTINUOUS_FAIL_AFTER_DATA_WRITE_ONCE || "false",
     ASKLAKE_CONTINUOUS_REPORT_FILE: path.posix.join(runtimeReportDir, reportFileName(jobId)),
     ASKLAKE_CONTINUOUS_COMMAND_FILE: path.posix.join(runtimeReportDir, commandFileName(jobId)),
@@ -460,6 +464,7 @@ async function startWorkerDocker(request, containerName) {
     "/opt/spark/bin/spark-submit", "--master", masterUrl,
     "--conf", "spark.jars.ivy=/tmp/.ivy2",
     "--conf", "spark.sql.streaming.stopGracefullyOnShutdown=true",
+    "--conf", `spark.sql.shuffle.partitions=${continuousSparkShufflePartitions()}`,
     ...packageArgs,
     "/work/scripts/kafka_continuous_stream.py",
   ];
@@ -664,6 +669,9 @@ function requiredObject(value, name) {
     throw new Error(`${name} is required`);
   }
   return value;
+}
+function continuousSparkShufflePartitions() {
+  return positiveInt(process.env.ASKLAKE_CONTINUOUS_SPARK_SHUFFLE_PARTITIONS, 4);
 }
 function positiveInt(value, fallback) {
   const parsed = Number.parseInt(value, 10);
