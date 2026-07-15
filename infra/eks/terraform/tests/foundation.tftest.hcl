@@ -1001,6 +1001,20 @@ run "managed_existing_storage_contract" {
     )
     error_message = "Backend source browsing must be able to read objects from the approved Raw bucket boundary."
   }
+
+  assert {
+    condition = (
+      one([for statement in module.workload_iam_policies.contracts.backend.Statement : statement if statement.Sid == "ListBackendRawBucket"]).Resource == [local.storage_bucket_arns.raw] &&
+      one([for statement in module.workload_iam_policies.contracts.backend.Statement : statement if statement.Sid == "ListBackendRawBucket"]).Condition.StringLike["s3:prefix"] == ["*", "*/*"] &&
+      one([for statement in module.workload_iam_policies.contracts.backend.Statement : statement if statement.Sid == "ListBackendOutputBucket"]).Resource == [local.storage_bucket_arns.output] &&
+      one([for statement in module.workload_iam_policies.contracts.backend.Statement : statement if statement.Sid == "ListBackendOutputBucket"]).Condition.StringLike["s3:prefix"] == ["*", "*/*", "evidence", "evidence/*"] &&
+      one([for statement in module.workload_iam_policies.contracts.backend.Statement : statement if statement.Sid == "ListBackendWarehouseBucket"]).Resource == [local.storage_bucket_arns.warehouse] &&
+      one([for statement in module.workload_iam_policies.contracts.backend.Statement : statement if statement.Sid == "ListBackendWarehouseBucket"]).Condition.StringLike["s3:prefix"] == ["warehouse", "warehouse/*"] &&
+      one([for statement in module.workload_iam_policies.contracts.backend.Statement : statement if statement.Sid == "ListBackendQueryResultBucket"]).Resource == [local.storage_bucket_arns.query_results] &&
+      one([for statement in module.workload_iam_policies.contracts.backend.Statement : statement if statement.Sid == "ListBackendQueryResultBucket"]).Condition.StringLike["s3:prefix"] == ["query-results", "query-results/*"]
+    )
+    error_message = "Backend ListBucket conditions must be isolated per bucket so a wildcard for Raw/Output cannot widen Warehouse or Query Result prefixes."
+  }
 }
 
 run "reject_shared_data_plane_creation" {

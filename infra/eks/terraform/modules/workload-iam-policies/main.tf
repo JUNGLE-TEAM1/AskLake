@@ -125,28 +125,59 @@ locals {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid    = "ListBackendBuckets"
-        Effect = "Allow"
-        Action = ["s3:ListBucket"]
-        Resource = [
-          var.storage_bucket_arns.raw,
-          var.storage_bucket_arns.output,
-          var.storage_bucket_arns.warehouse,
-          var.storage_bucket_arns.query_results,
-        ]
+        Sid      = "ListBackendRawBucket"
+        Effect   = "Allow"
+        Action   = ["s3:ListBucket"]
+        Resource = [var.storage_bucket_arns.raw]
         Condition = {
           StringLike = {
             "s3:prefix" = [
               var.storage_prefixes.raw,
               "${var.storage_prefixes.raw}/*",
+            ]
+          }
+        }
+      },
+      {
+        Sid      = "ListBackendOutputBucket"
+        Effect   = "Allow"
+        Action   = ["s3:ListBucket"]
+        Resource = [var.storage_bucket_arns.output]
+        Condition = {
+          StringLike = {
+            "s3:prefix" = [
               var.storage_prefixes.output,
               "${var.storage_prefixes.output}/*",
-              var.storage_prefixes.warehouse,
-              "${var.storage_prefixes.warehouse}/*",
-              var.storage_prefixes.query_results,
-              "${var.storage_prefixes.query_results}/*",
               var.storage_prefixes.evidence,
               "${var.storage_prefixes.evidence}/*",
+            ]
+          }
+        }
+      },
+      {
+        Sid      = "ListBackendWarehouseBucket"
+        Effect   = "Allow"
+        Action   = ["s3:ListBucket"]
+        Resource = [var.storage_bucket_arns.warehouse]
+        Condition = {
+          StringLike = {
+            "s3:prefix" = [
+              var.storage_prefixes.warehouse,
+              "${var.storage_prefixes.warehouse}/*",
+            ]
+          }
+        }
+      },
+      {
+        Sid      = "ListBackendQueryResultBucket"
+        Effect   = "Allow"
+        Action   = ["s3:ListBucket"]
+        Resource = [var.storage_bucket_arns.query_results]
+        Condition = {
+          StringLike = {
+            "s3:prefix" = [
+              var.storage_prefixes.query_results,
+              "${var.storage_prefixes.query_results}/*",
             ]
           }
         }

@@ -593,6 +593,18 @@ Phase 3의 MSK/RDS/S3 Terraform은 기본적으로 모두 `disabled`이며 mock 
 
 Phase 4의 workload identity 기본값은 `disabled`다. dev EKS Auto Mode는 2026-07-15 Pod Identity를 선택해 Backend/MSK smoke/Spark/Trino의 분리 role과 association, STS·S3 positive/negative smoke까지 적용했다. 다른 환경은 실제 Auto Mode/Agent readiness 확인 없이 이를 활성화하지 않는다. 신규 cluster의 IRSA는 cluster/OIDC provider 단계와 identity 단계를 분리하며, 생성 예정 ARN을 resource key로 사용하지 않는다. dev RDS의 세 database/user bootstrap은 실제 endpoint·backup·rollback 승인, expected host 일치, `verify-full` CA와 명시적 confirmation 아래 EKS Job으로 실행했다. Job은 role flags, 실제 자기 database 로그인과 cross-database 거부를 검사하며 application schema migration을 대신하지 않는다. 상세 절차는 [Phase 4 Workload Identity와 RDS Bootstrap](eks-phase-4-identity-rds-bootstrap.md)을 따른다.
 
+Backend S3 runtime smoke는 현재 FastAPI의 immutable image와 `asklake-backend` Pod Identity를 재사용한다. runner가 live IAM policy에서 허용 resource를 찾으므로 실제 bucket/ARN을 repository argument나 문서에 넣지 않는다. negative GetObject는 존재하지 않는 key가 아니라 실행자가 만든 계약 밖 sentinel을 대상으로 해야 한다. `NoSuchKey`는 권한 거절 증거로 인정하지 않는다. 실행 명령은 다음과 같다.
+
+```bash
+export ASKLAKE_EKS_CLUSTER_NAME=asklake-dev
+export ASKLAKE_EKS_NAMESPACE=asklake-dev
+export AWS_REGION=ap-northeast-2
+export ASKLAKE_BACKEND_S3_SMOKE_CONFIRM=run-backend-s3-boundary-smoke
+bash scripts/run-eks-backend-s3-smoke.sh
+```
+
+완료 조건은 예상 Pod Identity role, 허용 object Put/Get/Delete와 삭제 확인, 읽기 전용 prefix Put 거절, 계약 밖 실제 object Get·prefix List 거절, GetBucketLocation 거절, 임시 object/Pod/ConfigMap 정리다. ListBucket statement는 bucket 하나만 가져야 하며 Raw/Output의 `*` 조건을 Warehouse/Query Result statement와 합치지 않는다. 실제 결과와 rollback은 [Backend S3 최소 권한 검증 기록](eks-day15-backend-s3-runtime-evidence.md)을 따른다.
+
 2026-07-15 `dev` 환경의 실제 EC2 database 규모, 서울 리전 PostgreSQL·instance·비용 비교, 권장 Terraform 입력과 Continuous DB 분리 위험은 [EKS MVP 7월 15일 RDS 분석 결과](eks-day15-rds-analysis.md)에 기록한다. 실제 격리 RDS 적용, bootstrap 검증과 rollback 경계는 [7월 15일 RDS 적용 기록](eks-day15-rds-apply-receipt.md)을 따른다.
 
 EKS workload에 RDS endpoint를 주입하기 전 [EC2 → RDS·S3 데이터 복사 리허설](eks-day15-data-copy-rehearsal.md)을 수행한다. 사용자 접속이 없더라도 FastAPI background, Airflow scheduler, Trino collector와 Kafka Continuous가 쓰기를 계속할 수 있으므로 active writer와 실행 중 Run을 먼저 확인한다. application DB dump에서는 Iceberg JDBC Catalog 두 테이블을 분리해 각각 `asklake_app`과 `iceberg_catalog`로 복원하고, Airflow DB는 `airflow_metadata`로 복원한다. source role/ACL/secret은 복사하지 않는다. Production object가 기존 관리 S3의 같은 bucket/key에 있으면 재복사하지 않고 존재·version/checksum과 RDS row의 URI를 검증한다. 실제 copy, restore와 cutover는 한 작업으로 묶지 않으며 기존 EC2는 rollback 원본으로 유지한다. dev 실제 분리 복원과 정리 증거는 [데이터 복사 리허설 기록](eks-day15-data-copy-receipt.md)에 남긴다.
