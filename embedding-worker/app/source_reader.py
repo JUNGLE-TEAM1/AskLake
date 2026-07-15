@@ -8,6 +8,8 @@ from urllib.parse import urlparse
 
 import httpx
 
+from .errors import PermanentRagContractError
+
 
 MAX_SOURCE_BYTES = 32 * 1024 * 1024
 MAX_SOURCE_ROWS = 1000
@@ -22,7 +24,7 @@ def read_manifest_rows(manifest: dict[str, Any], *, dataset_id: str, limit: int 
             response.raise_for_status()
             content_length = int(response.headers.get("content-length") or 0)
             if content_length > MAX_SOURCE_BYTES:
-                raise ValueError("Catalog source manifest exceeds the bounded source read size")
+                raise PermanentRagContractError("Catalog source manifest exceeds the bounded source read size")
             if source_format in {"jsonl", "ndjson"}:
                 return _read_jsonl(response.iter_lines(), limit)
             if source_format == "csv":
@@ -30,34 +32,34 @@ def read_manifest_rows(manifest: dict[str, Any], *, dataset_id: str, limit: int 
             if source_format == "json":
                 body = b"".join(chunk for chunk in response.iter_bytes())
                 if len(body) > MAX_SOURCE_BYTES:
-                    raise ValueError("Catalog source manifest exceeds the bounded source read size")
+                    raise PermanentRagContractError("Catalog source manifest exceeds the bounded source read size")
                 payload = json.loads(body.decode("utf-8"))
                 if not isinstance(payload, list):
-                    raise ValueError("JSON RAG source must be an array of rows")
+                    raise PermanentRagContractError("JSON RAG source must be an array of rows")
                 return [row for row in payload[:limit] if isinstance(row, dict)]
-    raise ValueError(f"Unsupported RAG source format: {source_format}")
+    raise PermanentRagContractError(f"Unsupported RAG source format: {source_format}")
 
 
 def validate_manifest(manifest: dict[str, Any], *, dataset_id: str) -> None:
     if manifest.get("manifestVersion") != 1:
-        raise ValueError("Unsupported Catalog source manifest version")
+        raise PermanentRagContractError("Unsupported Catalog source manifest version")
     if str(manifest.get("datasetId") or "") != dataset_id:
-        raise ValueError("Source manifest Dataset does not match the RAG job")
+        raise PermanentRagContractError("Source manifest Dataset does not match the RAG job")
     if not manifest.get("fingerprint"):
-        raise ValueError("Catalog source manifest fingerprint is required")
+        raise PermanentRagContractError("Catalog source manifest fingerprint is required")
     expires_at = str(manifest.get("expiresAt") or "")
     if not expires_at:
-        raise ValueError("Catalog source manifest expiry is required")
+        raise PermanentRagContractError("Catalog source manifest expiry is required")
     try:
         expires = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
     except ValueError as exc:
-        raise ValueError("Catalog source manifest expiry is invalid") from exc
+        raise PermanentRagContractError("Catalog source manifest expiry is invalid") from exc
     if expires <= datetime.now(timezone.utc):
-        raise ValueError("Catalog source manifest has expired")
+        raise PermanentRagContractError("Catalog source manifest has expired")
     parsed = urlparse(str(manifest.get("readUrl") or ""))
     allowed_hosts = {host.strip().casefold() for host in os.environ.get("RAG_SOURCE_ALLOWED_HOSTS", "").split(",") if host.strip()}
     if parsed.scheme not in {"http", "https"} or not parsed.netloc or (allowed_hosts and (parsed.hostname or "").casefold() not in allowed_hosts):
-        raise ValueError("Catalog source manifest readUrl is not allowed")
+        raise PermanentRagContractError("Catalog source manifest readUrl is not allowed")
 
 
 def _read_jsonl(lines: Any, limit: int) -> list[dict[str, Any]]:
@@ -67,7 +69,7 @@ def _read_jsonl(lines: Any, limit: int) -> list[dict[str, Any]]:
         line_bytes = len(line.encode("utf-8"))
         total_bytes += line_bytes
         if line_bytes > MAX_SOURCE_BYTES or total_bytes > MAX_SOURCE_BYTES:
-            raise ValueError("A source row exceeds the bounded source size")
+            raise PermanentRagContractError("A source row exceeds the bounded source size")
         if not line.strip():
             continue
         value = json.loads(line)
@@ -84,7 +86,7 @@ def _read_csv(lines: Any, limit: int) -> list[dict[str, Any]]:
     for line in lines:
         total_bytes += len(line.encode("utf-8"))
         if total_bytes > MAX_SOURCE_BYTES:
-            raise ValueError("Catalog source manifest exceeds the bounded source read size")
+            raise PermanentRagContractError("Catalog source manifest exceeds the bounded source read size")
         source_lines.append(line)
     text = io.StringIO("\n".join(source_lines))
     return list(__import__("itertools").islice(csv.DictReader(text), limit))

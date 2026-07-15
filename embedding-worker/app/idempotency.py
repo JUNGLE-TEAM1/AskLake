@@ -17,6 +17,8 @@ import time
 from typing import Any
 from uuid import uuid4
 
+from .errors import IdempotencyConflictError
+
 
 class IdempotencyStore:
     def __init__(self, path: str | None = None) -> None:
@@ -51,7 +53,7 @@ class IdempotencyStore:
         if row is None:
             return None
         if row[0] != input_hash:
-            raise ValueError("Idempotency key was reused for a different request payload")
+            raise IdempotencyConflictError("Idempotency key was reused for a different request payload")
         if row[2] != "completed":
             return None
         value = json.loads(row[1])
@@ -73,7 +75,7 @@ class IdempotencyStore:
             row = connection.execute("SELECT input_hash, response_json, state, lease_until, lease_token FROM rag_idempotency WHERE request_key = ?", (request_key,)).fetchone()
             if row is not None and row[0] != input_hash:
                 connection.rollback()
-                raise ValueError("Idempotency key was reused for a different request payload")
+                raise IdempotencyConflictError("Idempotency key was reused for a different request payload")
             if row is None:
                 connection.execute("INSERT INTO rag_idempotency(request_key, input_hash, response_json, state, lease_until, lease_token) VALUES (?, ?, ?, 'processing', ?, ?)", (request_key, input_hash, "{}", lease_until, lease_token))
                 connection.commit()
@@ -91,6 +93,14 @@ class IdempotencyStore:
             connection.execute("UPDATE rag_idempotency SET state = 'processing', lease_until = ?, lease_token = ?, response_json = '{}' WHERE request_key = ?", (lease_until, lease_token, request_key))
             connection.commit()
             return "claimed", None, lease_token
+
+    def renew(self, request_key: str, input_hash: str, lease_token: str, *, lease_seconds: float = 300.0) -> bool:
+        """Extend an owned lease without allowing a stale worker to renew it."""
+        lease_until = time.time() + max(1.0, float(lease_seconds))
+        with self._lock, self._connect() as connection:
+            changed = connection.execute("UPDATE rag_idempotency SET lease_until = ? WHERE request_key = ? AND input_hash = ? AND state = 'processing' AND lease_token = ?", (lease_until, request_key, input_hash, lease_token)).rowcount
+            connection.commit()
+            return bool(changed)
 
     def put(self, request_key: str, input_hash: str, response: dict[str, Any], *, lease_token: str | None = None) -> None:
         encoded = json.dumps(response, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
@@ -119,3 +129,45 @@ class IdempotencyStore:
                 changed = connection.execute("UPDATE rag_idempotency SET state = 'permanent_failed', response_json = ?, lease_until = 0, lease_token = '' WHERE request_key = ? AND input_hash = ? AND state = 'processing' AND lease_token = ?", (json.dumps({"error": error[:1_000]}, ensure_ascii=False, separators=(",", ":")), request_key, input_hash, lease_token)).rowcount
             connection.commit()
             return bool(changed)
+
+
+class LeaseHeartbeat:
+    """Keep a long-running embedding/LLM request owned by its worker."""
+
+    def __init__(self, store: IdempotencyStore, request_key: str, input_hash: str, lease_token: str, *, lease_seconds: float) -> None:
+        self.store = store
+        self.request_key = request_key
+        self.input_hash = input_hash
+        self.lease_token = lease_token
+        self.lease_seconds = max(1.0, float(lease_seconds))
+        self.interval_seconds = max(0.5, min(self.lease_seconds / 3.0, 30.0))
+        self._stop = threading.Event()
+        self._lost = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def __enter__(self) -> "LeaseHeartbeat":
+        self._thread = threading.Thread(target=self._run, name="rag-idempotency-heartbeat", daemon=True)
+        self._thread.start()
+        return self
+
+    def _run(self) -> None:
+        while not self._stop.wait(self.interval_seconds):
+            try:
+                if not self.store.renew(self.request_key, self.input_hash, self.lease_token, lease_seconds=self.lease_seconds):
+                    self._lost.set()
+                    return
+            except Exception:
+                # A temporary SQLite failure must not silently let the lease
+                # expire; the caller will fail safely before committing output.
+                self._lost.set()
+                return
+
+    def assert_owned(self) -> None:
+        if self._lost.is_set():
+            raise RuntimeError("Idempotency lease heartbeat was lost before the response could be committed")
+
+    def __exit__(self, _exc_type: Any, _exc: Any, _traceback: Any) -> bool:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=max(1.0, self.interval_seconds + 1.0))
+        return False

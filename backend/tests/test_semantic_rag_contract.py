@@ -30,6 +30,75 @@ def test_policy_fingerprint_preserves_approved_field_order():
     assert RagService._policy_fingerprint(dataset, first) != RagService._policy_fingerprint(dataset, second)
 
 
+def test_policy_fingerprint_and_manifest_reuse_include_filter_contract_versions():
+    dataset = {"schema": [{"name": "review_text", "dataType": "string"}, {"name": "rating", "dataType": "integer"}], "sourceManifest": {"fingerprint": "fp"}}
+    profile = RagDatasetProfileModel(dataset_id="reviews", metadata_columns=["rating"], physical_column_mapping={"rating": "rating"})
+    manifest = RagIndexManifestModel(id="manifest-contract", dataset_id="reviews", index_name="reviews-v1", alias_name="reviews", embedding_model="model", dimensions=2, parent_schema_version="rag-parent-v3", filter_contract_version="typed-filter-v1", metadata_columns=["rating"], metadata_types={"rating": "integer"}, physical_column_mapping={"rating": "rating"})
+    assert RagService._manifest_contract_matches(dataset, profile, manifest)
+    manifest.filter_contract_version = "old-filter"
+    assert not RagService._manifest_contract_matches(dataset, profile, manifest)
+    manifest.filter_contract_version = "typed-filter-v1"
+    manifest.metadata_types = {"rating": "string"}
+    assert not RagService._manifest_contract_matches(dataset, profile, manifest)
+
+
+def test_pending_activation_is_reconciled_only_with_persisted_validation(monkeypatch):
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine, tables=RAG_TABLES)
+    with Session(engine) as db:
+        service = RagService(db)
+        profile = RagDatasetProfileModel(dataset_id="reviews", review_state="approved", target_alias="rag-reviews", active_index="rag-reviews-v1", desired_generation=1)
+        job = RagIndexJobModel(id="ragjob-pending", dataset_id="reviews", requested_by="admin", target_index="rag-reviews-v2", generation=1, status="ready", stage="ready", source_fingerprint="", validation_status="passed", validated_index="rag-reviews-v2", activation_status="pending", activation_alias="rag-reviews", activation_previous_index="rag-reviews-v1", activation_target_index="rag-reviews-v2")
+        db.add_all([profile, job])
+        db.commit()
+
+        class FakeOpenSearch:
+            def alias_indices(self, alias):
+                assert alias == "rag-reviews"
+                return ["rag-reviews-v1", "rag-reviews-v2"]
+
+            def replace_alias(self, alias, index):
+                assert (alias, index) == ("rag-reviews", "rag-reviews-v2")
+                return {}
+
+        monkeypatch.setattr("app.clients.opensearch_client.OpenSearchClient", lambda settings: FakeOpenSearch())
+        monkeypatch.setattr("app.core.config.settings.opensearch_base_url", "http://opensearch")
+        monkeypatch.setattr(service.catalog, "get_dataset_payload", lambda dataset_id: {"sourceManifest": {"fingerprint": ""}, "schema": []})
+        assert service.reconcile_alias_activations() == 1
+        db.refresh(job)
+        db.refresh(profile)
+        assert job.activation_status == "committed"
+        assert profile.active_index == "rag-reviews-v2"
+        assert db.query(RagIndexManifestModel).filter_by(index_name="rag-reviews-v2", status="active").count() == 1
+
+
+def test_superseded_first_activation_clears_alias_without_previous_index(monkeypatch):
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine, tables=RAG_TABLES)
+    with Session(engine) as db:
+        service = RagService(db)
+        profile = RagDatasetProfileModel(dataset_id="reviews", review_state="approved", target_alias="rag-reviews", desired_generation=2)
+        job = RagIndexJobModel(id="ragjob-first-pending", dataset_id="reviews", requested_by="admin", target_index="rag-reviews-v1", generation=1, status="ready", stage="ready", source_fingerprint="old", validation_status="passed", validated_index="rag-reviews-v1", activation_status="pending", activation_alias="rag-reviews", activation_target_index="rag-reviews-v1")
+        db.add_all([profile, job])
+        db.commit()
+
+        class FakeOpenSearch:
+            def alias_indices(self, alias):
+                return ["rag-reviews-v1"]
+
+            def clear_alias(self, alias):
+                assert alias == "rag-reviews"
+                return {}
+
+        monkeypatch.setattr("app.clients.opensearch_client.OpenSearchClient", lambda settings: FakeOpenSearch())
+        monkeypatch.setattr("app.core.config.settings.opensearch_base_url", "http://opensearch")
+        monkeypatch.setattr(service.catalog, "get_dataset_payload", lambda dataset_id: {"sourceManifest": {"fingerprint": "new"}, "schema": []})
+        assert service.reconcile_alias_activations() == 0
+        db.refresh(job)
+        assert job.activation_status == "failed"
+        assert job.status == "failed"
+
+
 def test_preview_uses_physical_filter_fields_but_logical_text_labels():
     document = build_documents(
         dataset_id="reviews",

@@ -189,6 +189,8 @@ def main() -> int:
             versions = {str(row[0]) for row in existing.select("schema_version").distinct().collect()}
             if versions and versions != {RAG_PARENT_SCHEMA_VERSION}:
                 raise RuntimeError("RAG_PARENT_SCHEMA_VERSION_MISMATCH")
+            if existing.filter("row_status = 'valid'").groupBy("source_row_id").count().filter("count > 1").limit(1).count() or existing.filter("row_status = 'valid'").groupBy("parent_document_id").count().filter("count > 1").limit(1).count():
+                raise RuntimeError("RAG parent identifier integrity check failed: duplicate source_row_id or parent_document_id")
             count = existing.filter("row_status = 'valid'").count() if "row_status" in existing.columns else existing.count()
             failed_count = existing.filter("row_status = 'failed'").count() if "row_status" in existing.columns else 0
             row_count = count + failed_count
@@ -238,7 +240,7 @@ def main() -> int:
                 document["error_reason"] = None
             except Exception as exc:
                 selected = normalized_row(values, schema_names)
-                source_id = source_row_id(selected, role_identifiers, int(ordinal))
+                source_id = f"invalid-row:{sha256_hex(selected)[:32]}"
                 content_hash = sha256_hex({"row": selected, "error": str(exc)})
                 return {
                     "schema_version": RAG_PARENT_SCHEMA_VERSION,
@@ -280,6 +282,10 @@ def main() -> int:
         indexed.checkpoint()
         indexed.count()
         parent_df = spark.createDataFrame(indexed, schema=parent_schema())
+        duplicate_source_ids = parent_df.filter("row_status = 'valid'").groupBy("source_row_id").count().filter("count > 1").limit(1).count()
+        duplicate_parent_ids = parent_df.filter("row_status = 'valid'").groupBy("parent_document_id").count().filter("count > 1").limit(1).count()
+        if duplicate_source_ids or duplicate_parent_ids:
+            raise RuntimeError("RAG parent identifier integrity check failed: duplicate source_row_id or parent_document_id")
         spark.sql(f"CREATE NAMESPACE IF NOT EXISTS `{catalog}`.`{namespace}`")
         (parent_df.writeTo(table_id).using("iceberg").tableProperty("format-version", "2").createOrReplace())
         count = parent_df.filter("row_status = 'valid'").count()

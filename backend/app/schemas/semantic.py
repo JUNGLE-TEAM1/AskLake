@@ -277,3 +277,6 @@ class RagJobResponse(CamelModel):
     validation_status: str = "pending"
     physical_column_mapping: dict[str, str] = Field(default_factory=dict)
     validated_at: datetime | None = None
+    activation_status: str = "none"
+    activation_alias: str | None = None
+    activation_target_index: str | None = None

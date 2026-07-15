@@ -29,6 +29,7 @@ from .rag_core import (
     _WORD_OR_CJK,
     split_sentences,
 )
+from .errors import PermanentRagContractError
 
 
 SentenceEmbedder = Callable[[list[str]], list[list[float]]]
@@ -138,7 +139,7 @@ def chunk_parent_document(
     sentences = split_sentences(body)
     title_tokens = estimate_tokens(title or "")
     if title_tokens >= max_tokens:
-        raise ValueError("RAG_TITLE_EXCEEDS_CHUNK_MAX_TOKENS")
+        raise PermanentRagContractError("RAG_TITLE_EXCEEDS_CHUNK_MAX_TOKENS")
     body_render_overhead = _field_section_overhead(body_blocks, "BODY")
     body_max_tokens = max(1, max_tokens - title_tokens - body_render_overhead)
     body_target_tokens = max(1, target_tokens - title_tokens - body_render_overhead)
@@ -210,7 +211,7 @@ def chunk_parent_document(
             continue
         effective_embedding_text = build_embedding_text(title, text)
         if estimate_tokens(effective_embedding_text) > max_tokens:
-            raise ValueError("RAG_CHUNK_EXCEEDS_MAX_TOKENS")
+            raise PermanentRagContractError("RAG_CHUNK_EXCEEDS_MAX_TOKENS")
         chunk_id = chunk_document_id(str(parent["parent_document_id"]), index, effective_embedding_text, metadata)
         chunk_content_hash = hashlib.sha256(effective_embedding_text.encode("utf-8")).hexdigest()
         included_keys = {

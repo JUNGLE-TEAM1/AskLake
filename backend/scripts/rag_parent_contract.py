@@ -193,10 +193,22 @@ def embedding_text(title: str | None, body: str) -> str:
 
 
 def source_row_id(row: dict[str, Any], identifier_columns: Iterable[str], ordinal: int) -> str:
-    for column in identifier_columns:
-        value = row.get(str(column))
-        if value not in (None, ""):
-            return str(value).strip()
+    identifiers = [str(column).strip() for column in identifier_columns if str(column).strip()]
+    if identifiers:
+        values: list[dict[str, Any]] = []
+        missing: list[str] = []
+        for column in identifiers:
+            value = row.get(column)
+            if value in (None, "") or (isinstance(value, str) and not value.strip()):
+                missing.append(column)
+            else:
+                values.append({"column": column, "value": flatten_value(value)})
+        if missing:
+            raise ValueError(f"RAG_SOURCE_IDENTIFIER_MISSING: {','.join(missing)}")
+        # Always include the ordered composite, even for one identifier.  The
+        # resulting opaque ID prevents collisions between differently typed
+        # values and makes the approved identifier order part of the contract.
+        return f"identifier:{sha256_hex(values)[:32]}"
     for fallback in ("id", "review_id", "row_id"):
         value = row.get(fallback)
         if value not in (None, ""):

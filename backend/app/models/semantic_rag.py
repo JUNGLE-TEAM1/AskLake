@@ -196,6 +196,12 @@ class RagIndexJobModel(TimestampMixin, Base):
     validated_parent_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     validated_dimensions: Mapped[int | None] = mapped_column(Integer, nullable=True)
     validation_evidence_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    activation_status: Mapped[str] = mapped_column(String(32), default="none", nullable=False)
+    activation_alias: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    activation_previous_index: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    activation_target_index: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    activation_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    activation_committed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class RagIndexManifestModel(TimestampMixin, Base):

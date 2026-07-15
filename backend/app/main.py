@@ -33,6 +33,7 @@ async def continuous_runtime_sync_loop() -> None:
 def run_scheduled_job_tick() -> None:
     with SessionLocal() as db:
         run_due_scheduled_jobs(db, ScheduledJobRunRequest(kafka_only=False))
+        RagService(db).reconcile_alias_activations()
         RagService(db).reconcile_source_changes()
 
 

@@ -7,6 +7,7 @@ from .document_builder import build_documents
 from .metadata import typed_metadata_filter
 from .rag_core import CHUNKING_VERSION, EMBEDDING_INPUT_VERSION, FIELD_RENDERING_VERSION, build_embedding_text
 from .source_reader import read_manifest_rows
+from .errors import PermanentRagContractError
 
 
 class EmbeddingWorker:
@@ -23,10 +24,10 @@ class EmbeddingWorker:
         if chunks:
             return self.index_chunks(dataset_id=dataset_id, dataset_name=dataset_name, chunks=chunks, target_index=target_index, embedding_model=embedding_model, embedding_dimensions=embedding_dimensions, metadata_types=metadata_types)
         if os.environ.get("RAG_LEGACY_DIRECT_INDEX_ENABLED", "false").casefold() not in {"1", "true", "yes"}:
-            raise ValueError("RAG v2 indexing requires chunk staging; legacy direct row indexing is disabled")
+            raise PermanentRagContractError("RAG v2 indexing requires chunk staging; legacy direct row indexing is disabled")
         if not rows:
             if source_manifest is None:
-                raise ValueError("Either rows or a Catalog source manifest is required")
+                raise PermanentRagContractError("Either rows or a Catalog source manifest is required")
             rows = read_manifest_rows(source_manifest, dataset_id=dataset_id)
         documents = build_documents(dataset_id, dataset_name, rows, body_columns, metadata_columns, target_index, title_columns=title_columns, identifier_columns=identifier_columns, semantic_bindings=semantic_bindings, metadata_types=metadata_types)
         return self.index_documents(documents, embedding_model=embedding_model, embedding_dimensions=embedding_dimensions, metadata_types=metadata_types)
@@ -115,9 +116,9 @@ class EmbeddingWorker:
                     raise RuntimeError("Embedding response count does not match document batch")
                 batch_dimensions = len(embeddings[0]) if embeddings and embeddings[0] else 0
                 if embedding_dimensions and batch_dimensions != embedding_dimensions:
-                    raise RuntimeError("Embedding dimensions do not match the job manifest")
+                    raise PermanentRagContractError("Embedding dimensions do not match the job manifest")
                 if dimensions and batch_dimensions != dimensions:
-                    raise RuntimeError("Embedding dimensions changed within one indexing job")
+                    raise PermanentRagContractError("Embedding dimensions changed within one indexing job")
                 dimensions = batch_dimensions
                 self.assert_target_index_compatibility(client, batch[0].get("target_index"), model, dimensions)
                 if offset == 0:
@@ -148,7 +149,7 @@ class EmbeddingWorker:
 
         index = str(target_index or "").strip()
         if not index:
-            raise ValueError("RAG target index is required")
+            raise PermanentRagContractError("RAG target index is required")
         mapping_response = client.get(f"{self.opensearch_url}/{index}/_mapping", auth=self.opensearch_auth)
         if mapping_response.status_code == 404:
             return
@@ -161,7 +162,7 @@ class EmbeddingWorker:
         vector_mapping = properties.get("body_vector") if isinstance(properties, dict) else None
         existing_dimensions = int((vector_mapping or {}).get("dimension") or 0) if isinstance(vector_mapping, dict) else 0
         if existing_dimensions and existing_dimensions != int(dimensions):
-            raise RuntimeError("Target index vector dimensions do not match the requested embedding contract")
+            raise PermanentRagContractError("Target index vector dimensions do not match the requested embedding contract")
         sample_response = client.post(f"{self.opensearch_url}/{index}/_search", auth=self.opensearch_auth, json={"size": 1, "_source": ["embedding_model", "embedding_dimensions"], "query": {"match_all": {}}})
         if sample_response.status_code == 404:
             return
@@ -172,10 +173,10 @@ class EmbeddingWorker:
         source = hits[0].get("_source") if isinstance(hits[0], dict) else {}
         existing_model = str((source or {}).get("embedding_model") or "").strip()
         if existing_model and existing_model != model:
-            raise RuntimeError("Target index embedding model does not match the requested embedding contract")
+            raise PermanentRagContractError("Target index embedding model does not match the requested embedding contract")
         existing_document_dimensions = int((source or {}).get("embedding_dimensions") or 0)
         if existing_document_dimensions and existing_document_dimensions != int(dimensions):
-            raise RuntimeError("Target index document dimensions do not match the requested embedding contract")
+            raise PermanentRagContractError("Target index document dimensions do not match the requested embedding contract")
 
     @staticmethod
     def _metadata_mapping(metadata_types: dict[str, str] | None) -> dict[str, Any]:

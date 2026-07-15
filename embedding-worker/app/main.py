@@ -10,7 +10,8 @@ from pydantic import BaseModel, Field, model_validator
 from .worker import EmbeddingWorker
 from .chunker import chunk_parent_document
 from .rag_core import CHUNKING_VERSION
-from .idempotency import IdempotencyStore
+from .idempotency import IdempotencyStore, LeaseHeartbeat
+from .errors import PermanentRagContractError
 
 app = FastAPI(title="AskLake Embedding Worker")
 logger = logging.getLogger(__name__)
@@ -143,13 +144,20 @@ def index_batch(request: IndexBatchRequest, authorization: str | None = Header(d
             raise HTTPException(status_code=409, detail="An identical RAG indexing request is already in progress")
         if state == "permanent_failed":
             raise HTTPException(status_code=409, detail="An identical RAG indexing request previously failed permanently")
-        result = worker_from_env().process(dataset_id=request.dataset_id, dataset_name=request.dataset_name, rows=request.rows, body_columns=request.body_columns, title_columns=request.title_columns, metadata_columns=request.metadata_columns, identifier_columns=request.identifier_columns, semantic_bindings=request.semantic_bindings, target_index=request.target_index, source_manifest=request.source_manifest, chunks=request.chunks, embedding_model=request.embedding_model, embedding_dimensions=request.embedding_dimensions, metadata_types=request.metadata_types)
-        store.put(key, request_hash, result, lease_token=lease_token)
+        lease_seconds = float(os.environ.get("RAG_IDEMPOTENCY_LEASE_SECONDS", "1800"))
+        with LeaseHeartbeat(store, key, request_hash, lease_token or "", lease_seconds=lease_seconds) as heartbeat:
+            result = worker_from_env().process(dataset_id=request.dataset_id, dataset_name=request.dataset_name, rows=request.rows, body_columns=request.body_columns, title_columns=request.title_columns, metadata_columns=request.metadata_columns, identifier_columns=request.identifier_columns, semantic_bindings=request.semantic_bindings, target_index=request.target_index, source_manifest=request.source_manifest, chunks=request.chunks, embedding_model=request.embedding_model, embedding_dimensions=request.embedding_dimensions, metadata_types=request.metadata_types)
+            heartbeat.assert_owned()
+            store.put(key, request_hash, result, lease_token=lease_token)
         return result
-    except ValueError as exc:
+    except PermanentRagContractError as exc:
         if "store" in locals() and "lease_token" in locals():
             release_claim(store, key, request_hash, lease_token, retryable=False, error=str(exc))
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        if "store" in locals() and "lease_token" in locals():
+            release_claim(store, key, request_hash, lease_token, retryable=True, error=str(exc))
+        raise HTTPException(status_code=502, detail="RAG indexing upstream response was invalid or transient") from exc
     except HTTPException:
         if "store" in locals() and "lease_token" in locals():
             release_claim(store, key, request_hash, lease_token, retryable=True)
@@ -179,14 +187,21 @@ def chunk_batch(request: ChunkBatchRequest, authorization: str | None = Header(d
             raise HTTPException(status_code=409, detail="An identical RAG chunking request is already in progress")
         if state == "permanent_failed":
             raise HTTPException(status_code=409, detail="An identical RAG chunking request previously failed permanently")
-        chunks = chunk_with_gateway(request)
-        result = {"schemaVersion": CHUNKING_VERSION, "chunkCount": len(chunks), "chunks": chunks}
-        store.put(key, request_hash, result, lease_token=lease_token)
+        lease_seconds = float(os.environ.get("RAG_IDEMPOTENCY_LEASE_SECONDS", "1800"))
+        with LeaseHeartbeat(store, key, request_hash, lease_token or "", lease_seconds=lease_seconds) as heartbeat:
+            chunks = chunk_with_gateway(request)
+            result = {"schemaVersion": CHUNKING_VERSION, "chunkCount": len(chunks), "chunks": chunks}
+            heartbeat.assert_owned()
+            store.put(key, request_hash, result, lease_token=lease_token)
         return result
-    except ValueError as exc:
+    except PermanentRagContractError as exc:
         if "store" in locals() and "lease_token" in locals():
             release_claim(store, key, request_hash, lease_token, retryable=False, error=str(exc))
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        if "store" in locals() and "lease_token" in locals():
+            release_claim(store, key, request_hash, lease_token, retryable=True, error=str(exc))
+        raise HTTPException(status_code=502, detail="RAG chunking upstream response was invalid or transient") from exc
     except HTTPException:
         if "store" in locals() and "lease_token" in locals():
             release_claim(store, key, request_hash, lease_token, retryable=True)

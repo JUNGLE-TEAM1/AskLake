@@ -20,9 +20,10 @@ from app.services.rag_evaluation import DEFAULT_QUALITY_THRESHOLDS, enforce_base
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--base-url", required=True)
-    parser.add_argument("--token", required=True)
+    parser.add_argument("--base-url")
+    parser.add_argument("--token")
     parser.add_argument("--fixture", required=True, type=Path)
+    parser.add_argument("--response-fixture", type=Path, help="Offline response payload keyed by golden case id; used by CI contract checks")
     parser.add_argument("--min-parent-recall", type=float, default=DEFAULT_QUALITY_THRESHOLDS["parentRecall"])
     parser.add_argument("--min-parent-mrr", type=float, default=DEFAULT_QUALITY_THRESHOLDS["parentMrr"])
     parser.add_argument("--min-parent-ndcg", type=float, default=DEFAULT_QUALITY_THRESHOLDS["parentNdcg"])
@@ -37,10 +38,20 @@ def main() -> int:
     if not isinstance(cases, list) or not cases:
         raise SystemExit("Golden fixture must contain a non-empty cases list")
 
+    offline_responses = json.loads(args.response_fixture.read_text(encoding="utf-8")) if args.response_fixture else None
+    if offline_responses is None and (not args.base_url or not args.token):
+        parser.error("--base-url and --token are required unless --response-fixture is supplied")
+
     def retrieve(case: dict) -> dict:
         dataset_id = str(case.get("datasetId") or "")
         if not dataset_id:
             raise ValueError("Every golden case requires datasetId")
+        if offline_responses is not None:
+            case_id = str(case.get("id") or "")
+            response = offline_responses.get(case_id) if isinstance(offline_responses, dict) else None
+            if not isinstance(response, dict):
+                raise ValueError(f"Offline response fixture is missing case {case_id}")
+            return response
         body = json.dumps({"query": case["query"], "filters": case.get("filters") or {}}).encode("utf-8")
         request = Request(f"{args.base_url.rstrip('/')}/api/catalog/datasets/{dataset_id}/rag/search", data=body, method="POST", headers={"Authorization": f"Bearer {args.token}", "Content-Type": "application/json"})
         with urlopen(request, timeout=120) as response:

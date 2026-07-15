@@ -44,6 +44,9 @@ def rag_physical_column(name: str) -> str:
 
 
 def metadata_types(conf: dict[str, Any]) -> dict[str, str]:
+    declared = conf.get("metadataTypes")
+    if isinstance(declared, dict) and declared:
+        return {str(key): str(value) for key, value in declared.items()}
     schema = conf.get("schema") or []
     by_name = {
         str(item.get("name")): str(item.get("dataType") or item.get("data_type") or "string")

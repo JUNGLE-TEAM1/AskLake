@@ -1,5 +1,9 @@
 from app.worker import EmbeddingWorker
-from app.main import IndexBatchRequest
+from fastapi import HTTPException
+
+from app.main import IndexBatchRequest, index_batch
+from app.idempotency import IdempotencyStore
+from app.errors import PermanentRagContractError
 
 
 def make_worker() -> EmbeddingWorker:
@@ -112,7 +116,39 @@ def test_existing_target_index_rejects_embedding_dimension_mismatch():
 
     try:
         worker.assert_target_index_compatibility(Client(), "reviews-v1", "model-a", 2)
-    except RuntimeError as exc:
+    except PermanentRagContractError as exc:
         assert "dimensions" in str(exc)
     else:
         raise AssertionError("expected target index dimension mismatch")
+
+
+def test_upstream_value_error_releases_request_for_retry(monkeypatch, tmp_path):
+    monkeypatch.setenv("WORKER_INTERNAL_TOKEN", "token")
+    monkeypatch.setenv("RAG_IDEMPOTENCY_STORE_PATH", str(tmp_path / "idempotency.sqlite3"))
+    monkeypatch.setattr("app.main.worker_from_env", lambda: type("FailingWorker", (), {"process": lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("invalid upstream JSON"))})())
+    request = IndexBatchRequest(dataset_id="reviews", dataset_name="reviews", body_columns=["review"], target_index="reviews-v1", chunks=[{"chunk_document_id": "c1", "parent_document_id": "p1", "text": "body"}], idempotency_key="request-json-retry")
+    try:
+        index_batch(request, "Bearer token")
+    except HTTPException as exc:
+        assert exc.status_code == 502
+    else:
+        raise AssertionError("upstream response parsing errors must be retryable")
+    store = IdempotencyStore()
+    digest = store.input_hash(request.model_dump(mode="json"))
+    assert store.claim("request-json-retry", digest)[0] == "claimed"
+
+
+def test_contract_error_is_permanent(monkeypatch, tmp_path):
+    monkeypatch.setenv("WORKER_INTERNAL_TOKEN", "token")
+    monkeypatch.setenv("RAG_IDEMPOTENCY_STORE_PATH", str(tmp_path / "idempotency.sqlite3"))
+    monkeypatch.setattr("app.main.worker_from_env", lambda: type("FailingWorker", (), {"process": lambda *args, **kwargs: (_ for _ in ()).throw(PermanentRagContractError("bad contract"))})())
+    request = IndexBatchRequest(dataset_id="reviews", dataset_name="reviews", body_columns=["review"], target_index="reviews-v1", chunks=[{"chunk_document_id": "c1", "parent_document_id": "p1", "text": "body"}], idempotency_key="request-contract")
+    try:
+        index_batch(request, "Bearer token")
+    except HTTPException as exc:
+        assert exc.status_code == 409
+    else:
+        raise AssertionError("contract errors must be permanent")
+    store = IdempotencyStore()
+    digest = store.input_hash(request.model_dump(mode="json"))
+    assert store.claim("request-contract", digest)[0] == "permanent_failed"

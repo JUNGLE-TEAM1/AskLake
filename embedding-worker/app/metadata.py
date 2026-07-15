@@ -1,6 +1,8 @@
 from datetime import date, datetime
 from typing import Any
 
+from .errors import PermanentRagContractError
+
 
 def _is_iso_date(value: Any) -> bool:
     if isinstance(value, (date, datetime)):
@@ -27,7 +29,7 @@ def typed_metadata_filter(metadata: dict[str, Any], expected_types: dict[str, st
             elif str(value).casefold() in {"true", "false"}:
                 normalized = str(value).casefold() == "true"
             else:
-                raise ValueError(f"Metadata field {key} is declared boolean but contains a non-boolean value")
+                raise PermanentRagContractError(f"Metadata field {key} is declared boolean but contains a non-boolean value")
             result[str(key)] = {"type": "boolean", "keyword": "true" if normalized else "false", "boolean": normalized}
         elif any(token in expected for token in ("int", "long", "float", "double", "decimal", "numeric", "number")):
             result[str(key)] = {"type": "number", "keyword": str(value), "number": float(value)}

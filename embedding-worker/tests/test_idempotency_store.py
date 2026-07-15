@@ -1,6 +1,6 @@
 import time
 
-from app.idempotency import IdempotencyStore
+from app.idempotency import IdempotencyStore, LeaseHeartbeat
 
 
 def test_idempotency_store_replays_same_payload_and_rejects_key_reuse(tmp_path):
@@ -66,3 +66,16 @@ def test_permanent_failure_rejects_same_request(tmp_path):
     assert state == "permanent_failed"
     assert response is None
     assert token is None
+
+
+def test_lease_renewal_requires_current_token_and_heartbeat_keeps_work_owned(tmp_path):
+    store = IdempotencyStore(str(tmp_path / "idempotency.sqlite3"))
+    digest = store.input_hash({"request": "heartbeat"})
+    state, _, token = store.claim("request-heartbeat", digest, lease_seconds=2)
+    assert state == "claimed"
+    assert store.renew("request-heartbeat", digest, "stale-token", lease_seconds=2) is False
+    assert store.renew("request-heartbeat", digest, token, lease_seconds=2) is True
+    with LeaseHeartbeat(store, "request-heartbeat", digest, token, lease_seconds=2) as heartbeat:
+        time.sleep(0.7)
+        heartbeat.assert_owned()
+    store.put("request-heartbeat", digest, {"ok": True}, lease_token=token)

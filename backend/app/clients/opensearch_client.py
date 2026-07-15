@@ -41,6 +41,39 @@ class OpenSearchClient:
         actions.append({"add": {"alias": alias, "index": index}})
         return self._request("POST", "_aliases", json={"actions": actions})
 
+    def alias_indices(self, alias: str) -> list[str]:
+        """Return every physical index currently attached to an alias."""
+        try:
+            payload = self._request("GET", f"_alias/{alias}")
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                return []
+            raise
+        return sorted(str(index) for index in payload if isinstance(payload, dict) and index) if isinstance(payload, dict) else []
+
+    def replace_alias(self, alias: str, index: str) -> dict[str, Any] | list[Any]:
+        """Atomically make ``index`` the sole target of ``alias``."""
+        current_indices = self.alias_indices(alias)
+        actions = [{"remove": {"alias": alias, "index": existing}} for existing in current_indices if existing != index]
+        if index not in current_indices:
+            actions.append({"add": {"alias": alias, "index": index}})
+        if not actions:
+            return {"acknowledged": True, "unchanged": True}
+        return self._request("POST", "_aliases", json={"actions": actions})
+
+    def clear_alias(self, alias: str) -> dict[str, Any] | list[Any]:
+        """Atomically detach every physical index from ``alias``.
+
+        This is used only when a pending activation has no known previous
+        serving index. Leaving a superseded build attached would make a
+        failed first activation appear healthy to callers using the alias.
+        """
+        current_indices = self.alias_indices(alias)
+        if not current_indices:
+            return {"acknowledged": True, "unchanged": True}
+        actions = [{"remove": {"alias": alias, "index": existing}} for existing in current_indices]
+        return self._request("POST", "_aliases", json={"actions": actions})
+
     def search(self, index: str, query: dict[str, Any]) -> list[dict[str, Any]]:
         payload = self.search_raw(index, query)
         hits = payload.get("hits", {}).get("hits", []) if isinstance(payload, dict) else []

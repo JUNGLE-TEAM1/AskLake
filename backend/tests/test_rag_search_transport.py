@@ -7,9 +7,11 @@ from app.clients.opensearch_client import OpenSearchClient
 class FakeGateway:
     def __init__(self):
         self.model = None
+        self.models = []
 
     def create_embeddings(self, inputs, *, model=None):
         self.model = model
+        self.models.append(model)
         return [[0.1, 0.2]]
 
 
@@ -32,6 +34,16 @@ def test_opensearch_knn_query_uses_query_knn_shape_and_pins_model():
     knn_query = client.queries[1]
     assert "query" in knn_query and "knn" in knn_query["query"]
     assert "knn" not in knn_query
+
+
+def test_multi_alias_search_creates_query_embedding_per_target_model():
+    gateway = FakeGateway()
+    client = FakeSearchClient()
+    service = RagSearchService(Settings(opensearch_base_url="http://opensearch"), search_client=client, gateway_client=gateway)
+    result = service.search(query="배송", aliases=["rag-a", "rag-b"], actor=ActorContext(name="analyst", role="viewer"), targets=[{"alias": "rag-a", "embeddingModel": "model-a", "embeddingDimensions": 2}, {"alias": "rag-b", "embeddingModel": "model-b", "embeddingDimensions": 2}])
+    assert result["retrieval"]["status"] == "ready"
+    assert gateway.models == ["model-a", "model-b"]
+    assert [query for query in client.queries if "knn" in query.get("query", {})]
 
 
 def test_distinct_parent_count_uses_composite_pages_instead_of_approximate_cardinality():

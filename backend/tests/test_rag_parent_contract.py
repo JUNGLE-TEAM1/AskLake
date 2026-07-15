@@ -12,6 +12,7 @@ from rag_parent_contract import (  # noqa: E402
     failed_row_report,
     normalized_row,
     render_scalar,
+    source_row_id,
     validate_parent_document,
 )
 
@@ -170,6 +171,20 @@ def test_parent_validation_rejects_missing_contract_fields():
         assert "RAG_PARENT_REQUIRED_FIELDS_MISSING" in str(exc)
     else:
         raise AssertionError("expected invalid parent document")
+
+
+def test_source_row_id_uses_ordered_composite_identifier_and_rejects_partial_keys():
+    left = source_row_id({"tenant": "t1", "record": 7}, ["tenant", "record"], 0)
+    right = source_row_id({"tenant": "t1", "record": 7}, ["tenant", "record"], 99)
+    assert left == right
+    assert left.startswith("identifier:")
+    assert source_row_id({"tenant": "t1", "record": 7}, ["record", "tenant"], 0) != left
+    try:
+        source_row_id({"tenant": "t1", "record": None}, ["tenant", "record"], 0)
+    except ValueError as exc:
+        assert "RAG_SOURCE_IDENTIFIER_MISSING" in str(exc)
+    else:
+        raise AssertionError("expected incomplete composite identifier to be rejected")
 
 
 def test_staging_paths_are_dataset_and_job_scoped():
