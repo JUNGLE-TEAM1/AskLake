@@ -2,6 +2,8 @@
 
 > 현재 ALB 구현 기준은 [Phase 13 Auto Mode ALB 진입 경로](eks-phase-13-auto-mode-alb.md)다. 아래 내용은 최초 선택 계약과 self-managed controller 초안의 변경 이력으로 유지한다.
 
+> 2026-07-15 dev private egress는 단일 NAT, Pod enforcement는 Auto Mode Network Policy로 선택·검증됐다. 현재 상태는 [Phase 11 Network Foundation](eks-phase-11-network-foundation.md)을 따른다.
+
 이 단계는 AskLake의 외부 진입 경로와 private workload 통신에 필요한 선택을 처음 코드로 표현한 단계다. 이후 Phase 11이 VPC/NAT/endpoint foundation을 추가했고 Phase 13이 ALB manifest를 EKS Auto Mode 방식으로 교체했다. 실제 ALB, DNS, certificate와 network smoke가 정적 검증만으로 완료되는 것은 아니다.
 
 ## 구현된 경계

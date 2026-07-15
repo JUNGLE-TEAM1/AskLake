@@ -44,6 +44,28 @@ variable "secret_source_prefix" {
   }
 }
 
+variable "external_secrets_namespace" {
+  description = "Namespace that owns the External Secrets controller ServiceAccount."
+  type        = string
+  default     = "external-secrets"
+
+  validation {
+    condition     = can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", var.external_secrets_namespace))
+    error_message = "external_secrets_namespace must be a DNS-compatible Kubernetes namespace."
+  }
+}
+
+variable "external_secrets_service_account" {
+  description = "ServiceAccount used by the External Secrets controller Pod Identity association."
+  type        = string
+  default     = "asklake-external-secrets"
+
+  validation {
+    condition     = can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", var.external_secrets_service_account))
+    error_message = "external_secrets_service_account must be a DNS-compatible Kubernetes ServiceAccount name."
+  }
+}
+
 variable "airflow_api_auth_mode" {
   description = "Keep Airflow API authentication undecided or record the reviewed token/basic-auth contract."
   type        = string

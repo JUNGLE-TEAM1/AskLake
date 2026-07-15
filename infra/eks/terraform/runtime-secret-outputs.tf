@@ -9,6 +9,11 @@ output "phase8_runtime_secret_handoff" {
       controller_owner = var.secret_controller_owner
       rotation_owner   = var.secret_rotation_owner
       source_prefix    = var.secret_source_prefix
+      external_secrets_identity = local.external_secrets_enabled ? {
+        namespace       = var.external_secrets_namespace
+        service_account = var.external_secrets_service_account
+        role_arn        = aws_iam_role.external_secrets[0].arn
+      } : null
     }
     secrets                            = local.runtime_secret_contract
     shared_bindings                    = local.runtime_secret_static_contract.sharedBindings

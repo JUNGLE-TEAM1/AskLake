@@ -1,6 +1,6 @@
 # EKS MVP Phase 4 Workload Identity와 RDS Bootstrap
 
-이 단계는 실제 AWS에 IAM role을 만들거나 RDS를 변경했다는 뜻이 아니다. Pair A가 Phase 2의 AWS inventory gate를 기다리는 동안 독립적으로 만들 수 있는 두 계약, 즉 workload identity 연결 방식과 PostgreSQL 논리 분리를 정적으로 완성한다.
+이 단계는 workload identity 연결 방식과 PostgreSQL 논리 분리를 다룬다. 2026-07-15 dev EKS에는 Pod Identity 역할과 association, private RDS와 세 논리 database/user를 실제 적용했다.
 
 ## 완료된 구현
 
@@ -8,7 +8,7 @@ Terraform의 `workload_identity_mode`는 `disabled`, `irsa`, `pod_identity`를 �
 
 identity를 활성화하면 다음 네 ServiceAccount에 서로 분리된 IAM role과 최소 권한 policy를 만든다.
 
-- `asklake-backend`: 지정된 S3 결과·evidence 경계
+- `asklake-backend`: 승인된 Raw/Output 읽기와 Warehouse·Query Result·evidence 경계
 - `asklake-trino`: 지정된 S3 Warehouse·Query Result 경계
 - `asklake-msk-smoke`: 격리된 MSK test topic metadata 경계
 - `asklake-spark`: 격리된 MSK topic/group과 지정된 S3 경계
@@ -19,24 +19,30 @@ IRSA를 선택하면 배포 환경이 제공한 IAM OIDC provider ARN과 EKS iss
 
 신규 EKS와 IRSA는 한 번에 임의 적용하지 않는다. 먼저 identity가 `disabled`인 상태로 cluster를 준비하고, 해당 cluster의 issuer와 IAM OIDC provider lifecycle owner를 확인하거나 platform 범위에서 provider를 만든 다음, 두 번째 승인된 plan에서 IRSA를 활성화한다. Terraform resource의 `for_each` key는 이 issuer나 생성 예정 MSK ARN에 의존하지 않고 `backend`, `trino`, `mskSmoke`, `spark`로 정적으로 고정된다.
 
-Pod Identity를 선택하면 annotation 대신 `aws_eks_pod_identity_association`을 만든다. 단, platform owner가 EKS Pod Identity Agent 설치와 소유권을 확인해 `pod_identity_agent_ready=true`를 제공해야 한다. 이 application state가 shared add-on을 임의로 설치하거나 삭제하지 않는다.
+Pod Identity를 선택하면 annotation 대신 `aws_eks_pod_identity_association`을 만든다. dev cluster는 EKS Auto Mode에 통합된 Pod Identity 기능을 사용하므로 별도 Agent add-on을 설치하거나 소유하지 않고, 실제 Pod STS smoke가 성공한 경우에만 `pod_identity_agent_ready=true` 증거를 유지한다.
 
 두 방식 모두 MSK와 S3 contract가 `disabled`가 아닐 때만 활성화된다. 실제 ARN과 bucket 경계가 없는 broad policy로 우회하지 않는다.
 
-workload policy는 AWS provider mock에 의해 대체되지 않는 순수 Terraform module에서 만든다. Spark는 전용 MSK topic/group과 Raw/Output/Warehouse/checkpoint/quarantine만 읽고 쓰며, Backend는 Output/Warehouse/Query Result/evidence만 사용한다. `s3:*`, `kafka-cluster:*`와 `Resource: "*"`는 허용하지 않는다.
+workload policy는 AWS provider mock에 의해 대체되지 않는 순수 Terraform module에서 만든다. Spark는 전용 MSK topic/group과 Raw/Output/Warehouse/checkpoint/quarantine만 읽고 쓰며, Backend는 승인된 Raw/Output 읽기와 Warehouse/Query Result/evidence만 사용한다. `s3:*`, `kafka-cluster:*`와 `Resource: "*"`는 허용하지 않는다.
 
 Helm handoff는 identity mode를 runtime boundary에 기록한다. IRSA fixture는 네 AWS workload ServiceAccount에만 role annotation을 렌더링하고, Pod Identity fixture는 IRSA annotation을 전혀 렌더링하지 않는다. 실제 Terraform output을 environment별 Helm values로 전달하는 deploy workflow는 후속 단계다.
 
-## 아직 학습하고 선택해야 하는 사항
+## 2026-07-15 dev Pod Identity 적용 결과
 
-IRSA와 Pod Identity 중 무엇을 사용할지는 실제 cluster 기준으로 결정해야 한다. 다음 내용을 비교한 뒤 기록한다.
+dev EKS Auto Mode에는 Pod Identity를 선택해 다음 실제 검증을 완료했다.
 
-- 기존 cluster에 IAM OIDC provider가 이미 있고 누가 lifecycle을 소유하는지
-- EKS Pod Identity Agent가 설치돼 있는지, shared add-on을 누가 upgrade·복구하는지
-- 현재 배포 도구가 ServiceAccount annotation과 Pod Identity association 중 무엇을 안정적으로 전달하는지
-- 팀의 감사·운영 방식에서 role trust와 association을 어디서 확인하기 쉬운지
+- Backend, MSK smoke, Spark, Trino IAM role·managed policy·attachment·association 각 4개, 총 16개 생성
+- 적용 결과 `16 added, 0 changed, 0 destroyed`, 후속 plan `No changes`
+- 네 ServiceAccount Pod의 `sts:GetCallerIdentity`가 각각 분리된 role session을 반환
+- Backend와 Spark는 기존 Raw object 조회 성공
+- Trino는 Warehouse object 조회 성공, Raw 접근 거절
+- MSK smoke는 S3 접근 거절
+- Backend에는 불필요한 AWS Kafka control-plane 조회 권한이 없음을 확인
+- smoke Pod가 General node scale-out을 유발한 뒤 모든 임시 Pod를 삭제
 
-Secret 저장 방식도 아직 선택하지 않았다. Kubernetes Secret을 배포 workflow가 직접 생성할지, Secrets Manager와 External Secrets 계열을 사용할지 학습해야 한다. 어느 방식을 선택해도 실제 DB password, token, TLS key와 장기 AWS access key는 Git, Terraform variable, Terraform output 또는 PR 본문에 넣지 않는다.
+MSK IAM data-plane의 실제 bootstrap/topic metadata 조회는 Kafka IAM client가 필요하므로 B의 smoke client를 받은 뒤 수행한다. 현재 완료 증거는 association, STS와 S3 positive/negative boundary까지다.
+
+Secret 저장 방식은 AWS Secrets Manager와 namespace 범위 External Secrets Operator로 적용했다. RDS master password는 RDS 관리형 secret, 세 application password는 `asklake/dev/rds/application-databases` source에 저장한다. bootstrap용 Kubernetes Secret은 ESO로 임시 생성하고 실행 후 삭제한다. 실제 DB password, token, TLS key와 장기 AWS access key는 Git, Terraform variable, Terraform output 또는 PR 본문에 넣지 않는다.
 
 Ingress, domain/certificate, public/internal ALB, VPC endpoint/NAT와 workload security group은 이 단계에서 선택하지 않았다. 이 값이 필요한 실제 EKS deploy와 network smoke는 계속 보류한다.
 
@@ -73,6 +79,10 @@ bash scripts/bootstrap-eks-rds-databases.sh
 
 script는 `PGHOST`가 별도로 확인한 `ASKLAKE_RDS_BOOTSTRAP_EXPECTED_HOST`와 정확히 일치해야 실행된다. 운영 기본 TLS는 `verify-full`이고 실제 CA bundle 파일이 필요하다. `PGSSLMODE=disable`은 격리된 Docker 검증에서 `ASKLAKE_RDS_BOOTSTRAP_ALLOW_INSECURE_LOCAL=true`를 함께 지정한 경우에만 허용한다.
 
+실제 EKS 실행은 `infra/eks/bootstrap/rds/bootstrap-job.yaml`을 사용한다. Job은 RDS CA bundle, script/SQL ConfigMap과 ESO가 만든 임시 bootstrap Secret을 mount하며 service account token과 static AWS credential을 사용하지 않는다. 성공 후 Job, ConfigMap, ExternalSecret과 target Secret을 제거한다. application password의 Secrets Manager source는 후속 workload mapping을 위해 유지한다.
+
+RDS master는 PostgreSQL 진짜 SUPERUSER가 아니라 `rds_superuser`다. 따라서 role 최초 생성 시 모든 `NO*` 속성을 명시하고 재실행에서는 password만 회전한다. bootstrap은 세 role의 관리 권한 부재, 각 database에 대한 실제 TLS 로그인과 다른 database 접근 거부를 매번 확인한다.
+
 ## 검증과 실제 완료 기준
 
 정적 검증은 다음 명령으로 수행한다.
@@ -88,4 +98,4 @@ docker run --rm --entrypoint sh \
   -c 'export TF_DATA_DIR=/tmp/tfdata; terraform fmt -check -recursive && terraform init -backend=false -input=false >/dev/null && terraform validate && terraform test'
 ```
 
-mock test는 identity 기본 비활성화, create-mode의 정적 IAM resource key, 실제 policy/trust 내용, IRSA role/annotation 4개, Pod Identity Agent 미확인 차단과 기존 data-plane 안전장치를 확인한다. RDS Docker 검증은 bootstrap을 두 번 실행하고 role의 관리 권한 부재와 세 database의 상호 CONNECT 격리를 확인한다. 실제 Phase 4 완료는 선택된 identity 방식으로 EKS Pod의 AWS caller identity와 MSK/S3 최소 권한 smoke가 성공하고, 승인된 RDS에서 bootstrap과 세 workload별 DB 연결이 확인돼야 선언할 수 있다.
+mock test는 identity 기본 비활성화, create-mode의 정적 IAM resource key, 실제 policy/trust 내용, IRSA role/annotation 4개, Pod Identity readiness 차단과 기존 data-plane 안전장치를 확인한다. RDS Docker 검증은 bootstrap을 두 번 실행하고 role의 관리 권한 부재와 세 database의 상호 CONNECT 격리를 확인한다. dev RDS bootstrap은 반복 실행을 통과했고 세 role의 TLS 로그인과 cross-database 거부가 확인됐다. Phase 4 전체 완료는 남은 MSK IAM client smoke와 각 실제 workload의 schema migration·DB 연결이 성공해야 선언할 수 있다.

@@ -18,6 +18,12 @@ spec:
   securityGroupSelectorTerms:
     - tags:
         {{- toYaml $.Values.selectors.securityGroups | nindent 8 }}
+  {{- with $.Values.networkPolicy.mode }}
+  networkPolicy: {{ . }}
+  {{- end }}
+  {{- with $.Values.networkPolicy.eventLogs }}
+  networkPolicyEventLogs: {{ . }}
+  {{- end }}
 ---
 {{ end }}
 {{ end }}

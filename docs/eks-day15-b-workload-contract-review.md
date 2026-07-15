@@ -2,7 +2,7 @@
 
 ## 목적과 기준
 
-이 문서는 A 인프라 PR #788(`feat-#735-day15`, `2dd44f8`)과 B workload PR #774(`feature/eks-tuesday-b-runtime`, `89fd61f`)의 계약을 대조한다. 실제 image digest 주입, runtime Secret 생성, workload rollout 또는 전체 E2E 완료를 주장하지 않는다.
+이 문서는 A 인프라 PR #788(`feat-#735-day15`, `2dd44f8`)과 B workload PR #774(`feature/eks-tuesday-b-runtime`)의 계약 및 이후 dev 적용 결과를 대조한다. web workload와 MSK metadata smoke의 완료 범위는 실제 증거대로 기록하되 S3 positive smoke나 전체 E2E 완료로 확대하지 않는다.
 
 현재 공통 기준은 다음과 같다.
 
@@ -10,9 +10,9 @@
 - MSK는 Serverless + IAM, private `9098`을 사용한다.
 - RDS database는 `asklake_app`, `airflow_metadata`, `iceberg_catalog`로 분리한다.
 - AWS workload identity는 dev에 적용된 EKS Pod Identity를 기준으로 한다.
-- External Secrets Operator controller와 namespaced `SecretStore` 기반은 준비됐지만 실제 네 runtime `ExternalSecret`/Secret은 아직 동기화하지 않았다.
+- External Secrets Operator controller와 namespaced `SecretStore` 기반이 준비됐고 web 배포에 필요한 `asklake-backend-runtime`은 적용됐다. Airflow/Spark/Trino runtime Secret은 후속 workload gate로 남는다.
 - Spark Operator는 2.5.1, SparkApplication API는 `sparkoperator.k8s.io/v1beta2`다.
-- ALB는 IngressClass/IngressClassParams까지만 있고 실제 Ingress와 ALB는 아직 없다.
+- `asklake-ingress`가 Frontend `/`와 Backend `/api` Ingress를 단일 internet-facing ALB에 연결했고 외부 HTTP smoke를 통과했다. DNS/ACM/HTTPS는 후속 범위다.
 - 기존 EC2는 rollback 원본이며 Kafka Continuous control-plane을 계속 소유한다.
 
 ## 1. ServiceAccount 계약
@@ -163,7 +163,6 @@ asklake-spark-executor
 Snapshot/batch Job과 그 scheduler path는 EKS에 남는다. EC2와 EKS가 같은 Continuous worker, command, runtime sync 또는 stale Continuous dashboard materialization을 동시에 소유하는 shared mode는 허용하지 않는다.
 
 이 코드 증거는 file-backed SQLite 동시성 fixture, PostgreSQL dialect의 `SELECT ... FOR UPDATE`/`populate_existing` 검사, opt-in PostgreSQL 두 Session scheduler 경쟁 테스트로 유지한다. 실제 RDS에서는 별도로 FastAPI Pod 두 개가 같은 `runId`를 동시에 claim하도록 해 한 Pod만 실행하고 다른 Pod는 `409 SPARK_RUN_ALREADY_EXECUTING`을 받으며 generation 1의 최종 row 하나만 남는 것을 확인했다. 상세 결과와 cleanup은 [EKS MVP 수요일 Pair B 실환경 검증 기록](eks-day15-b-live-evidence.md)을 따른다.
-
 ## 7. Airflow storage/executor 결정
 
 이번 MVP의 Airflow는 `LocalExecutor`가 맞으며 EFS/PVC를 사용하지 않는다.
@@ -189,10 +188,10 @@ Snapshot/batch Job과 그 scheduler path는 EKS에 남는다. EC2와 EKS가 같�
 7. Airflow는 LocalExecutor + image-baked DAG + no EFS/PVC이며 Pod-local log 비영속 제한을 기록한다.
 8. Continuous 오류 코드의 공식 표기는 `CONTINUOUS_CONTROL_OWNED_BY_EC2`다. PR 본문의 `CONTINUOUS_CONTROL_PLANE_EXTERNAL` 표기는 수정해야 한다.
 9. Service는 현재 합의된 `frontend:80`, `fastapi:8080`을 사용한다. 다른 이름을 선택하면 A Ingress와 handoff도 같은 변경에서 갱신한다.
-10. A의 ALB 상태는 class/params만 적용됐고 Ingress/ALB는 0개다. RDS 복사는 rehearsal이며 EC2 rollback 원본과 cutover 전 delta gate가 남아 있다.
-11. 두 원격 head의 3-way merge에서 `docs/system-guardrails.md`는 실제 text conflict가 난다. `docs/02-architecture.md`와 `docs/04-development-guide.md`도 양쪽이 함께 수정했으므로 자동 merge 여부와 별개로 A의 실제 foundation evidence와 B의 runtime 계약을 문단 단위로 모두 보존해 검토한다.
+10. A의 IngressClass/Params 기반에 최종 web route와 ALB가 적용돼 외부 `/`와 `/api/health`가 통과했다. RDS 복사는 rehearsal이며 EC2 rollback 원본과 cutover 전 delta gate가 남아 있다.
+11. 최신 `pair1` 병합에서 A의 foundation evidence와 B의 runtime·scheduler 계약을 문단 단위로 모두 보존한다.
 
-PR #788은 위 불일치와 MVP 예외를 계약으로 기록한 상태에서 infrastructure foundation 완료로 닫을 수 있다. Frontend/FastAPI workload rollout과 내부 live smoke는 이후 완료됐다. MSK test topic은 exact temporary `CreateTopic` permission으로 1 partition을 bootstrap한 뒤 그 permission을 제거했고, 원래 Describe-only `asklake-msk-smoke` Pod Identity로 private `9098` IAM metadata Job `Complete 1/1`을 확인했다. 따라서 MSK network/IAM gate는 완료됐지만 Ingress/ALB와 S3 positive smoke까지 완료했다는 표현은 사용하지 않는다.
+PR #788은 위 불일치와 MVP 예외를 계약으로 기록한 상태에서 infrastructure foundation 완료로 닫혔다. Frontend/FastAPI workload rollout, 내부 live smoke와 외부 ALB web/API route도 이후 완료됐다. MSK test topic은 exact temporary `CreateTopic` permission으로 1 partition을 bootstrap한 뒤 그 permission을 제거했고, 원래 Describe-only `asklake-msk-smoke` Pod Identity로 private `9098` IAM metadata Job `Complete 1/1`을 확인했다. 따라서 web/RDS/MSK gate는 완료됐지만 S3 positive smoke까지 완료했다는 표현은 사용하지 않는다.
 
 ## 9. `asklake-web` 정식 release probe·AMD64 gate (2026-07-15 B 검토)
 
@@ -208,4 +207,4 @@ PR #788은 위 불일치와 MVP 예외를 계약으로 기록한 상태에서 in
 1. Backend liveness는 `tcpSocket`의 `http` port(8080) 검사로 바꿨고, `/api/health`는 startup/readiness에만 유지한다.
 2. 공통 placement selector에 `kubernetes.io/arch: amd64`를 추가해 Frontend와 Backend 모두 AMD64 node에만 스케줄한다. 기존 `asklake.io/workload-class: general` selector는 유지한다.
 
-Verifier는 ARM64 selector override를 schema에서 거절하고, render에 AMD64 selector가 두 번·`/api/health`가 두 번(startup/readiness)·TCP liveness가 한 번만 나오는지 검사한다. runtime Secret reference, immutable Frontend/Backend image, Ready AMD64 General node와 ownership gate를 확인한 뒤 `asklake-web` revision 1을 적용했고 내부 Service/RDS health와 두 replica를 검증했다. 실제 결과는 [EKS MVP 수요일 Pair B 실환경 검증 기록](eks-day15-b-live-evidence.md)을 따른다.
+Verifier는 ARM64 selector override를 schema에서 거절하고, render에 AMD64 selector가 두 번·`/api/health`가 두 번(startup/readiness)·TCP liveness가 한 번만 나오는지 검사한다. runtime Secret reference, immutable Frontend/Backend image, Ready AMD64 General node와 ownership gate를 확인한 뒤 `asklake-web` revision 1을 적용했고, scheduler 수정 Backend image는 atomic upgrade한 revision 2에서 검증했다. 내부 Service/RDS health, 두 replica와 외부 ALB 결과는 [EKS MVP 수요일 Pair B 실환경 검증 기록](eks-day15-b-live-evidence.md)을 따른다.

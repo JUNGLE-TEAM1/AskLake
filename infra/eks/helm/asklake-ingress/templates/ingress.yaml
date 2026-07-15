@@ -1,4 +1,4 @@
-{{- if .Values.enabled }}
+{{- if and .Values.enabled .Values.routesEnabled }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -13,7 +13,9 @@ metadata:
 spec:
   ingressClassName: {{ .Values.ingressClassName }}
   rules:
-    - host: {{ .Values.host | quote }}
+    - {{- with .Values.host }}
+      host: {{ . | quote }}
+      {{- end }}
       http:
         paths:
           - path: /api
@@ -38,7 +40,9 @@ metadata:
 spec:
   ingressClassName: {{ .Values.ingressClassName }}
   rules:
-    - host: {{ .Values.host | quote }}
+    - {{- with .Values.host }}
+      host: {{ . | quote }}
+      {{- end }}
       http:
         paths:
           - path: /

@@ -4,7 +4,13 @@
 
 Phase 11은 EKS Auto Mode workload가 실행될 VPC 배치를 코드로 만든다. Phase 7에서 정의한 network/ingress 선택 계약을 실제 VPC, public/private subnet, route, NAT Gateway 또는 VPC endpoint 리소스로 연결하되 실제 AWS 환경에서 아직 선택하지 않은 비용·주소·가용성 값을 임의로 정하지 않는다.
 
-이번 단계도 `terraform apply`를 실행하지 않는다. Terraform 구조와 mock provider test가 완료된 것이며 실제 network 연결 성공은 아니다.
+초기 Phase 11은 Terraform 구조와 mock provider test까지만 완료했다. 2026-07-15 dev 환경에는 전용 VPC, 두 AZ public/private subnet, 단일 NAT, EKS/MSK/RDS 배치와 exact-port security group을 실제 적용하고 runtime smoke까지 완료했다. 실제 증거는 [7월 15일 Private Network 검증 기록](eks-day15-private-network-evidence.md)을 따른다.
+
+## 2026-07-15 dev 적용 결과
+
+dev는 `network_mode=create`, `private_egress_mode=nat_gateway`, `nat_gateway_mode=single`을 사용한다. EKS Pod에서 RDS `5432`, MSK `9098`, STS와 S3 HTTPS가 성공했고 잘못된 service port와 VPC 외부 source는 차단됐다. VPC DNS, private/public route와 public ingress 부재도 실제 AWS 상태로 확인했다.
+
+Pod traffic enforcement는 `auto_mode_network_policy`를 선택했다. AWS 공식 ConfigMap으로 Auto Mode Network Policy Controller를 활성화하고 General/Spark NodeClass를 `DefaultAllow`로 명시했다. 임시 namespace에서 ingress deny와 정책 제거 후 복구를 검증했다. 실제 workload default-deny/allow 정책은 B의 Service·port 계약 전에는 만들지 않는다.
 
 ## 두 가지 소유권 경로
 
@@ -78,7 +84,7 @@ Phase 11에서 도입한 contract `2.1`의 `phase11_network_handoff`는 Phase 13
 - 실제 CIDR/AZ/NAT/endpoints 선택 또는 AWS apply
 - Route 53, ACM, ALB/Ingress 생성과 외부 URL 개통
 - General/Spark custom NodePool·NodeClass·taint/label은 Phase 12 코드로 이동했으며 실제 selector/용량 승인과 AWS apply는 미완료
-- VPC CNI network policy 또는 Security Groups for Pods add-on 변경
+- Security Groups for Pods 적용과 실제 workload별 NetworkPolicy
 - MSK topic bootstrap, RDS migration, Secret 동기화
 - 연결 비용과 대용량 처리량 검증
 
@@ -94,10 +100,11 @@ docker run --rm --entrypoint sh \
 bash scripts/verify-eks-foundation.sh
 ```
 
-완료 기준은 external/create 소유권 분리, 2개 이상 AZ의 결정적 subnet 계산, NAT single/per-AZ와 endpoint-only 경로, endpoint 최소 집합, EKS/MSK/RDS private placement, exact service port security group과 실패 조건이 mock test로 통과하는 것이다. 실제 완료는 선택 승인 후 plan review, apply, EKS node/Pod scheduling, ECR/S3/STS, MSK IAM `9098`, RDS `5432`의 positive smoke와 허용하지 않은 경로의 negative smoke가 추가되어야 한다.
+정적 완료 기준은 external/create 소유권 분리, 2개 이상 AZ의 결정적 subnet 계산, NAT single/per-AZ와 endpoint-only 경로, endpoint 최소 집합, EKS/MSK/RDS private placement, exact service port security group과 실패 조건이 mock test로 통과하는 것이다. dev는 plan/apply, EKS Pod scheduling, S3/STS, MSK `9098`, RDS `5432`, wrong-port와 외부 source negative smoke까지 통과했다. Kafka IAM 인증과 실제 workload별 NetworkPolicy/Service 연결은 후속 완료 기준이다.
 
 ## 공식 참고
 
 - [Amazon EKS VPC와 subnet 고려사항](https://docs.aws.amazon.com/eks/latest/best-practices/subnets.html)
 - [Amazon EKS VPC와 subnet 요구사항](https://docs.aws.amazon.com/eks/latest/userguide/network-reqs.html)
 - [Interface VPC endpoint 생성](https://docs.aws.amazon.com/vpc/latest/privatelink/create-interface-endpoint.html)
+- [EKS Auto Mode Network Policy 사용](https://docs.aws.amazon.com/eks/latest/userguide/auto-net-pol.html)

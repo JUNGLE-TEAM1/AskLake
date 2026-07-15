@@ -60,6 +60,18 @@ variable "ingress_host" {
   }
 }
 
+variable "ingress_listener_protocol" {
+  description = "Reviewed ALB listener protocol. HTTP may use the generated ALB DNS name; HTTPS requires an exact host, ACM certificate, and DNS owner."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = var.ingress_listener_protocol == null || contains(["HTTP", "HTTPS"], var.ingress_listener_protocol)
+    error_message = "ingress_listener_protocol must be null, HTTP, or HTTPS."
+  }
+}
+
 variable "ingress_certificate_arn" {
   description = "Approved ACM certificate ARN reference. Certificate material never enters Terraform."
   type        = string
@@ -101,10 +113,11 @@ variable "pod_network_enforcement" {
   validation {
     condition = contains([
       "undecided",
+      "auto_mode_network_policy",
       "vpc_cni_network_policy",
       "security_groups_for_pods",
       "both",
     ], var.pod_network_enforcement)
-    error_message = "pod_network_enforcement must be undecided, vpc_cni_network_policy, security_groups_for_pods, or both."
+    error_message = "pod_network_enforcement must be undecided, auto_mode_network_policy, vpc_cni_network_policy, security_groups_for_pods, or both."
   }
 }

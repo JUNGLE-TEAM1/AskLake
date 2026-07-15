@@ -27,7 +27,7 @@
 - EKS Auto Mode의 built-in `system`/`general-purpose` NodePool은 cluster bootstrap 계약에 유지한다. General/Spark custom NodePool과 NodeClass는 Phase 12 chart가 제공하지만 기본값은 disabled이며 용량·Spot·disruption·selector를 학습하고 선택하기 전에는 렌더되지 않는다.
 - network는 기본 `external`이고 기존/shared VPC를 state에 넣지 않는다. `create`는 신규 MVP-owned cluster에서만 허용하며 실제 CIDR/AZ와 NAT single/per-AZ 또는 VPC endpoint 비용 선택이 끝나기 전에는 plan이 실패한다.
 - ECR 미태그 이미지 retention은 기본값으로 승인하지 않는다. 검토된 값을 명시적으로 입력해야 자동 삭제가 활성화된다.
-- MSK, RDS와 S3는 각각 `disabled`, `existing`, `create` 모드를 사용하며 기본값은 모두 `disabled`다. `create`를 선택해도 Phase 2 inventory와 비용·network·destroy 승인이 끝나기 전에는 apply하지 않는다.
+- MSK와 RDS는 `disabled`, `existing`, `create`, S3는 추가로 기존 bucket을 안전하게 import하는 `managed-existing` 모드를 사용하며 기본값은 모두 `disabled`다. `create`를 선택해도 Phase 2 inventory와 비용·network·destroy 승인이 끝나기 전에는 apply하지 않는다.
 - generated workload IAM policy는 IRSA 또는 Pod Identity 선택 전까지 role에 연결하지 않는다.
 - `workload_identity_mode` 기본값은 `disabled`다. IRSA와 Pod Identity를 모두 지원하지만 실제 cluster의 OIDC provider 또는 Pod Identity Agent 소유권을 확인한 뒤 하나를 명시적으로 선택한다.
 - 신규 EKS에서 IRSA를 선택하면 cluster 준비와 OIDC provider 확인을 먼저 끝내고 다음 승인된 plan에서 identity를 활성화한다. 생성 예정 ARN/issuer는 IAM resource의 `for_each` key로 사용하지 않는다.
@@ -96,7 +96,9 @@ helm template asklake-foundation \
   -f infra/eks/values/dev.example.yaml
 ```
 
-실제 runtime manifest는 chart가 만든 service account 이름을 참조해야 한다. 임의 이름을 별도로 만들지 않는다. FastAPI는 `asklake-backend` token과 namespace Role로만 SparkApplication을 제어하고 Spark driver도 `asklake-spark` namespace Role만 사용한다. 세부 인수 항목은 [Phase 1 인수 계약](../../docs/eks-msk-mvp-phase-1-handoff.md)을 따른다.
+실제 runtime manifest는 chart가 만든 service account 이름을 참조해야 한다. 임의 이름을 별도로 만들지 않는다. FastAPI는 `asklake-backend` token과 namespace Role로만 SparkApplication을 제어하고 Spark driver는 `asklake-spark` token과 namespace Role로 executor lifecycle만 관리한다. 이 두 ServiceAccount 외 application workload의 Kubernetes API token mount는 금지한다. 세부 인수 항목은 [Phase 1 인수 계약](../../docs/eks-msk-mvp-phase-1-handoff.md)을 따른다.
+
+dev SparkApplication CRD와 controller/webhook은 공식 Kubeflow Spark Operator 2.5.1 chart를 고정해 설치한다. `infra/eks/values/operators/spark-operator.dev.yaml`은 `asklake-dev`만 감시하고 Foundation의 `asklake-spark` ServiceAccount/RBAC를 재사용한다. chart archive checksum과 controller/hook image digest를 모두 검증하며 chart의 범용 job RBAC, Spark UI, batch scheduler, PodMonitor와 cert-manager는 만들지 않는다. `infra/eks/smoke/sparkapplication-admission.yaml`은 server dry-run 전용이고 실제 workload를 생성하지 않는다. 설치·삭제 전에 `scripts/verify-eks-spark-operator.sh`를 통과해야 하며, 삭제는 release 제거와 소유 CRD 제거를 별도 확인값으로 나눈다. 실제 적용 결과는 [Spark Operator 적용 기록](../../docs/eks-day15-spark-operator-evidence.md)을 따른다.
 
 IRSA와 Pod Identity render 계약은 실제 ARN이 없는 fixture로 각각 확인할 수 있다. IRSA는 Backend/Trino/MSK smoke/Spark 네 ServiceAccount annotation을 만들고 Pod Identity는 annotation 없이 association output을 사용한다.
 
