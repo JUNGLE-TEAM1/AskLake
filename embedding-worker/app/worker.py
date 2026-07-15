@@ -119,7 +119,7 @@ class EmbeddingWorker:
                 for document, vector in zip(batch, embeddings):
                     document["body_vector"] = vector
                     lines.extend([json.dumps({"index": {"_index": document["target_index"], "_id": document["document_id"]}}), json.dumps(document, ensure_ascii=False)])
-                index_response = client.post(f"{self.opensearch_url}/_bulk", auth=self.opensearch_auth, headers={"Content-Type": "application/x-ndjson"}, content=("\n".join(lines) + "\n").encode("utf-8"))
+                index_response = client.post(f"{self.opensearch_url}/_bulk?refresh=wait_for", auth=self.opensearch_auth, headers={"Content-Type": "application/x-ndjson"}, content=("\n".join(lines) + "\n").encode("utf-8"))
                 index_response.raise_for_status()
                 payload = index_response.json()
                 if payload.get("errors"):

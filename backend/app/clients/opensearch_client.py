@@ -29,7 +29,7 @@ class OpenSearchClient:
         import json
         for document in documents:
             lines.extend([json.dumps({"index": {"_index": index, "_id": document["document_id"]}}), json.dumps(document, ensure_ascii=False)])
-        return self._request("POST", "_bulk", content=("\n".join(lines) + "\n").encode("utf-8"), headers={"Content-Type": "application/x-ndjson"})
+        return self._request("POST", "_bulk?refresh=wait_for", content=("\n".join(lines) + "\n").encode("utf-8"), headers={"Content-Type": "application/x-ndjson"})
 
     def switch_alias(self, alias: str, index: str, old_index: str | None = None) -> dict[str, Any] | list[Any]:
         actions: list[dict[str, Any]] = []

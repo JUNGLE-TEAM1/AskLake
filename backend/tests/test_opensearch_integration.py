@@ -25,7 +25,7 @@ def test_opensearch_2191_rag_contract_when_enabled():
                 '{"document_id":"c1","parent_document_id":"p1","body":"delivery was late","embedding_text":"delivery was late","body_vector":[0.1,0.2],"metadata_filter":{"rating":{"number":1,"keyword":"1"}},"chunk_index":0,"chunk_count":1,"char_start":0,"char_end":17,"embedding_model":"test","embedding_dimensions":2}',
                 "",
             ]
-            bulk = client.post("/_bulk", content="\n".join(lines), headers={"Content-Type": "application/x-ndjson"})
+            bulk = client.post("/_bulk?refresh=wait_for", content="\n".join(lines), headers={"Content-Type": "application/x-ndjson"})
             bulk.raise_for_status()
             assert bulk.json().get("errors") is False
             count = client.post(f"/{index}/_count", json={"query": {"match_all": {}}})
