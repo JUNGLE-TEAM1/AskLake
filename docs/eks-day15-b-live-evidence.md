@@ -46,19 +46,20 @@ FastAPI Service health를 1초마다 호출하면서 replica 하나를 삭제했
 
 ## MSK IAM client smoke
 
-`asklake-msk-smoke` ServiceAccount를 사용하는 일회성 Job `asklake-msk-iam-smoke-8c73664b`를 실행했다. Job은 현재 Backend immutable image에서 `verify-msk-iam-metadata.mjs`를 실행했고 message produce/consume이나 topic 생성은 시도하지 않았다.
+첫 일회성 Job `asklake-msk-iam-smoke-8c73664b`는 `asklake-msk-smoke` ServiceAccount와 현재 Backend immutable image에서 `verify-msk-iam-metadata.mjs`를 실행했다.
 
 - Pod에는 EKS Pod Identity credential endpoint와 projected identity token이 자동 주입됐다. static AWS access key는 사용하지 않았다.
 - client는 private bootstrap `9098`에 TLS/OAUTHBEARER IAM 방식으로 연결했다. `admin.connect()` 뒤 test topic metadata 요청까지 broker가 처리했으므로 private network와 IAM 인증 경로는 통과했다.
-- metadata 요청은 `This server does not host this topic-partition`으로 실패했다. 이는 IAM 권한 거절이나 network timeout이 아니라 요청한 `asklake.eks-mvp.fixture.v1` topic이 bootstrap되지 않은 상태다.
-- fail-closed 동작에 따라 Pod는 exit code 1, Job은 `Failed 0/1`로 끝났고 재시도하지 않았다. 따라서 test topic metadata 조회와 Pod `Succeeded`/Job `Complete` 조건은 아직 충족하지 않았다.
+- 첫 metadata 요청은 `This server does not host this topic-partition`으로 fail-closed 종료돼 요청한 `asklake.eks-mvp.fixture.v1` topic이 bootstrap되지 않은 것을 확인했다.
+- 별도 일회성 bootstrap Job `asklake-msk-topic-bootstrap-74092403`에 exact topic의 `kafka-cluster:CreateTopic`만 임시로 허용했다. message produce/consume, topic alter/delete 권한은 주지 않았고 1 partition topic을 생성한 뒤 Job `Complete 1/1`과 `created=true`를 확인했다.
+- bootstrap 직후 임시 inline policy를 삭제하고 role의 inline policy 목록이 비어 있음을 확인했다. Terraform 관리 managed policy의 `Connect`와 exact topic `DescribeTopic` 계약은 변경하지 않았다.
+- 원래 Describe-only 권한으로 `asklake-msk-iam-smoke-74092403`을 다시 실행했다. Pod는 restart 0의 `Succeeded`, Job은 `Complete 1/1`이었고 로그는 topic, region, `partitionCount=1`, `status=success`를 기록했다.
 
-`docs/eks-phase-3-data-plane.md`는 MSK cluster 생성이 topic을 만들지 않으며 partition, retention과 생성 주체를 정한 뒤 별도 운영 bootstrap 또는 승인된 admin client가 적용하도록 명시한다. 이 결정과 bootstrap이 완료된 뒤 같은 metadata Job을 다시 실행해야 한다.
+`docs/eks-phase-3-data-plane.md`가 요구한 별도 승인 admin bootstrap은 exact temporary permission, 1 partition, MSK Serverless 기본 replication/retention으로 수행했다. 두 완료 Job은 1시간 TTL로 자동 정리되며 test topic은 목요일 bounded fixture 입력에 사용한다.
 
 ## 남은 수요일 통합 gate
 
 - Backend Pod가 EKS Pod Identity로 `asklake-dev-backend` role을 획득하는 것은 확인했다. 첫 Raw S3 목록 검증은 요청에 `Prefix`가 없어 IAM `s3:prefix` 조건과 맞지 않아 `AccessDenied`였으며 object 생성 전 실패했다. S3 positive smoke는 완료하지 않았다.
-- EKS→MSK private network와 IAM 인증은 실제 client로 확인했지만 test topic bootstrap, metadata 조회 성공과 terminal `Complete` evidence가 남았다.
 - 외부 ALB URL은 Pair A route가 준비된 뒤 팀 통합으로 확인한다.
 
-그러므로 이 기록은 B web workload, RDS health, Pod 자동복구, 두 replica 안전성, Continuous 경계와 EKS→MSK network/IAM 연결의 완료 증거다. `eks-roadmap.md`의 수요일 전체 통과 조건인 S3 positive smoke, MSK test topic metadata와 외부 URL까지 완료됐다고 선언하지 않는다.
+그러므로 이 기록은 B web workload, RDS health, Pod 자동복구, 두 replica 안전성, Continuous 경계와 EKS→MSK network/IAM·test topic metadata의 완료 증거다. `eks-roadmap.md`의 수요일 전체 통과 조건인 S3 positive smoke와 외부 URL까지 완료됐다고 선언하지 않는다.

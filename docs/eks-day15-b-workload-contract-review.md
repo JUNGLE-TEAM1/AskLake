@@ -192,7 +192,7 @@ Snapshot/batch Job과 그 scheduler path는 EKS에 남는다. EC2와 EKS가 같�
 10. A의 ALB 상태는 class/params만 적용됐고 Ingress/ALB는 0개다. RDS 복사는 rehearsal이며 EC2 rollback 원본과 cutover 전 delta gate가 남아 있다.
 11. 두 원격 head의 3-way merge에서 `docs/system-guardrails.md`는 실제 text conflict가 난다. `docs/02-architecture.md`와 `docs/04-development-guide.md`도 양쪽이 함께 수정했으므로 자동 merge 여부와 별개로 A의 실제 foundation evidence와 B의 runtime 계약을 문단 단위로 모두 보존해 검토한다.
 
-PR #788은 위 불일치와 MVP 예외를 계약으로 기록한 상태에서 infrastructure foundation 완료로 닫을 수 있다. Frontend/FastAPI workload rollout과 내부 live smoke는 이후 완료됐다. MSK IAM client는 private `9098` 연결과 IAM 인증 뒤 metadata 요청까지 도달했지만 test topic이 없어 fail-closed로 종료됐다. 따라서 Ingress/ALB, S3 positive smoke와 MSK test topic metadata까지 완료했다는 표현은 사용하지 않는다.
+PR #788은 위 불일치와 MVP 예외를 계약으로 기록한 상태에서 infrastructure foundation 완료로 닫을 수 있다. Frontend/FastAPI workload rollout과 내부 live smoke는 이후 완료됐다. MSK test topic은 exact temporary `CreateTopic` permission으로 1 partition을 bootstrap한 뒤 그 permission을 제거했고, 원래 Describe-only `asklake-msk-smoke` Pod Identity로 private `9098` IAM metadata Job `Complete 1/1`을 확인했다. 따라서 MSK network/IAM gate는 완료됐지만 Ingress/ALB와 S3 positive smoke까지 완료했다는 표현은 사용하지 않는다.
 
 ## 9. `asklake-web` 정식 release probe·AMD64 gate (2026-07-15 B 검토)
 
