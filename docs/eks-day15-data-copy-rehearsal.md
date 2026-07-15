@@ -1,5 +1,7 @@
 # EKS MVP EC2 → RDS·S3 데이터 복사 리허설
 
+> 2026-07-15 dev에서 PostgreSQL 분리 복원, table/sequence/constraint 비교와 기존 S3 참조 368개 검증을 완료했다. 실제 결과와 남은 EKS workload read/cutover 경계는 [데이터 복사 리허설 기록](eks-day15-data-copy-receipt.md)을 따른다.
+
 ## 이 페이즈를 지금 끼우는 이유
 
 현재 기존 배포 사이트를 팀원이 사용하지 않는 시간대라면 사용자 요청으로 생기는 변경이 적어 데이터 복사 리허설을 하기 좋은 시점이다. 다만 “사용자가 접속하지 않는다”와 “데이터 쓰기가 없다”는 같은 뜻이 아니다. FastAPI background 작업, Airflow scheduler, Trino result collector, Kafka Continuous sync와 실행 중인 Job은 사용자가 없어도 PostgreSQL이나 object storage를 변경할 수 있다.
@@ -119,3 +121,4 @@ rollback 원본인 기존 EC2 PostgreSQL, S3/volume과 Compose는 삭제하지 �
 - migration receipt에 실행 시각, dump 식별용 checksum, row/object 비교와 실패 항목이 기록됐다.
 - 실제 EKS cutover가 이 복사 리허설과 별도 단계라는 점이 유지됐다.
 
+dev의 구조 복사 리허설은 위 조건 중 PostgreSQL 복원, S3 object 연결과 EC2 rollback 보존까지 통과했다. EKS Spark/Trino application-level Dataset read는 B workload가 준비된 뒤 수행하므로 전체 cutover 완료 조건으로 남긴다.

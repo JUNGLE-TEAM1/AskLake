@@ -45,13 +45,14 @@ application password는 Secrets Manager의 승인된 dev prefix에 보관한다.
 ## 남은 작업
 
 - FastAPI application schema migration
-- Airflow metadata migration
-- Iceberg JDBC Catalog table 초기화
+- EKS workload의 Airflow metadata·Iceberg JDBC Catalog 연결과 application-level read 검증
 - 실제 workload별 ExternalSecret key mapping
 - Frontend/FastAPI/Airflow/Spark/Trino에서 connection pool과 연결 검증
 - CloudWatch `DatabaseConnections`, `FreeableMemory`, `CPUUtilization`, `CPUCreditBalance`, `FreeStorageSpace` 기준선 수집과 alarm 선택
 
 이 항목이 끝나기 전에는 AskLake 전체의 RDS 전환 완료로 선언하지 않는다.
+
+2026-07-15 기존 EC2의 AskLake·Airflow·Iceberg JDBC Catalog 데이터는 RDS의 세 database로 분리 복원했고 table/sequence/constraint와 기존 S3 참조를 검증했다. 이 작업은 연결 전 검증 사본이며 상세 결과는 [EC2 → RDS·S3 데이터 복사 리허설 기록](eks-day15-data-copy-receipt.md)을 따른다.
 
 ## Rollback 경계
 
