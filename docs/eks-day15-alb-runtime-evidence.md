@@ -59,4 +59,4 @@ cluster/VPC를 먼저 삭제하지 않는다. 전체 teardown에서는 Ingress �
 
 ## Phase 1 완료와 다음 gate
 
-Phase 1은 B scheduler 수정 후보 image가 배포된 상태에서 ALB 외부 route와 RDS-aware health까지 완료했다. 다음 Phase는 현재 수동 `asklake-backend-runtime`을 Secrets Manager + External Secrets Operator 관리 방식으로 전환하는 것이다. B PR #774의 scheduler 경쟁 test와 `pair1` conflict 해결은 B 범위로 남으며, 최종 merge 후보가 다시 바뀌면 동일 ALB verifier와 FastAPI replica 경쟁 검증을 다시 실행한다.
+Phase 1은 B scheduler 수정 후보 image가 배포된 상태에서 ALB 외부 route와 RDS-aware health까지 완료했다. 후속 Phase 2에서 수동 `asklake-backend-runtime`을 Secrets Manager + External Secrets Operator 관리 방식으로 전환했고 FastAPI rolling restart 뒤 같은 route와 RDS health를 재검증했다. 상세 증거는 [Backend runtime Secret 전환 기록](eks-day15-backend-secret-runtime-evidence.md)을 따른다. B PR #774의 scheduler 경쟁 test와 `pair1` conflict 해결은 B 범위로 남으며, 최종 merge 후보가 다시 바뀌면 동일 ALB verifier와 FastAPI replica 경쟁 검증을 다시 실행한다.

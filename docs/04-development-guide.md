@@ -642,6 +642,16 @@ helm template external-secrets external-secrets/external-secrets \
 
 실제 환경의 선택 완료 여부는 `node scripts/verify-eks-runtime-secrets.mjs --ready <path>`로 확인한다. 이 gate와 `SecretStore Ready`는 전달 기반이 완전하다는 의미일 뿐 네 application Secret이 생성됐거나 workload가 기동했다는 증거가 아니다. 배포에서는 value를 출력하지 않고 Secret 이름/key 존재, workload `secretKeyRef`/file mount, rotation rollout과 rollback을 별도로 검증한다. smoke source는 `asklake/dev/smoke/` 아래에만 임시 생성하고 hash 비교 후 `ExternalSecret`, target Kubernetes Secret과 Secrets Manager source를 모두 삭제한다. 상세 경계는 [Phase 8 런타임 Secret 전달 계약](eks-phase-8-runtime-secrets.md)을 따른다.
 
+15일차 Backend runtime 전환은 `infra/eks/secrets/backend-runtime-external-secret.yaml`만 사용한다. 현재 FastAPI가 실제로 소비하는 `DATABASE_URL`, `BOOTSTRAP_ADMIN_PASSWORD` 두 key만 매핑하며, 아직 consumer가 없는 전체 runtime 계약 key를 placeholder로 만들지 않는다. 기존 수동 Secret을 같은 이름의 ESO 소유 target으로 인계하기 전에는 AWS source와 현재 target의 key 집합 및 값 해시가 일치해야 한다. 인계 뒤에는 아래 명령으로 source/target 해시, ExternalSecret owner reference, FastAPI `2/2`, ALB route와 RDS-aware health를 값이나 endpoint 출력 없이 다시 확인한다.
+
+```bash
+kubectl apply --dry-run=server \
+  -f infra/eks/secrets/backend-runtime-external-secret.yaml
+bash scripts/verify-eks-day15-backend-secret-runtime.sh
+```
+
+실제 credential 값을 바꾸지 않은 강제 refresh와 FastAPI rollout restart를 rotation wiring smoke로 사용한다. DB password 자체의 회전은 RDS role password 변경과 source version 갱신을 함께 처리하는 별도 운영 절차이며, 이 smoke에서 수행하지 않는다.
+
 Phase 5와 Phase 8을 함께 검사할 때는 `verify-eks-deploy-readiness.mjs`를 사용한다. planning에서는 Phase 5가 미선택이면 Phase 8이 `disabled`인지 확인하고, `--ready`에서는 두 delivery 값의 일치와 full-service Secret contract까지 요구한다. Airflow 실행 token은 Secret key와 실제 DAG env 이름이 다르므로 `AIRFLOW_EXECUTION_API_TOKEN -> ASKLAKE_EXECUTION_API_TOKEN` binding을 유지한다.
 
 Phase 10은 신규 EKS foundation을 Auto Mode로 생성하고 표준 Managed Node Group을 사용하지 않는다. `cluster_mode = "create"`에는 검토한 `cluster_admin_principal_arn`이 필수이고, `cluster_mode = "existing"`에는 실제 환경에서 확인한 `existing_auto_mode_enabled = true`와 node role ARN이 필수다. 기존 cluster 경로의 입력은 Terraform이 해당 cluster를 활성화하거나 상태를 완전히 검증했다는 뜻이 아니다. AWS CLI/Console과 platform owner evidence가 없는 상태에서는 실제 배포 준비 완료로 표시하지 않는다.

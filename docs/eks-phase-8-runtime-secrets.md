@@ -4,7 +4,7 @@
 
 Phase 8은 FastAPI, Airflow, Spark, Trino가 참조할 Kubernetes Secret의 **이름, key, 공유 관계, 환경변수 주입과 파일 mount 위치**를 고정한다. `infra/eks/secrets/runtime-secret-contract.example.json`이 정적 계약의 단일 기준이며 Terraform은 이 JSON을 직접 읽어 handoff output을 만든다. 저장소 기본값은 계속 `disabled`지만 dev 환경은 2026-07-15에 AWS Secrets Manager와 External Secrets Operator(ESO) 2.7.0을 실제 전달 기반으로 선택하고 검증했다.
 
-현재 완료 범위는 ESO controller, 전용 Pod Identity, `asklake/dev/*` 읽기 정책과 namespaced `SecretStore`까지다. 임시 source를 사용한 최초 동기화와 값 갱신도 hash 비교로 검증했으며, 값 자체는 출력하지 않고 더미 AWS/Kubernetes Secret을 검증 직후 삭제했다. 실제 Backend·Airflow·Spark·Trino source item과 `ExternalSecret` 매핑은 B의 workload key 계약 및 RDS/Airflow/AI 선택이 끝난 뒤 별도로 생성한다.
+ESO controller, 전용 Pod Identity, `asklake/dev/*` 읽기 정책과 namespaced `SecretStore`를 적용했다. 임시 source를 사용한 최초 동기화와 값 갱신도 hash 비교로 검증했으며, 값 자체는 출력하지 않고 더미 AWS/Kubernetes Secret을 검증 직후 삭제했다. 15일차에는 실제 FastAPI가 이미 소비하던 `DATABASE_URL`, `BOOTSTRAP_ADMIN_PASSWORD` 두 key를 승인된 Backend source에서 `ExternalSecret/asklake-backend-runtime`으로 연결했다. source/기존 수동 target/staged ESO target의 해시 일치 뒤 같은 이름의 target ownership을 ESO에 넘겼고, 강제 refresh와 FastAPI rolling restart 후 RDS health를 확인했다. 전체 Backend 계약의 나머지 key와 Airflow·Spark·Trino source/매핑은 consumer가 확정된 뒤 별도로 생성한다.
 
 이 단계가 필요한 이유는 A가 만든 namespace·ServiceAccount·data-plane 경계와 B가 만드는 workload manifest가 서로 다른 Secret 이름이나 key를 가정하는 문제를 배포 전에 잡기 위해서다. 계약이 통과해도 Secret이 cluster에 존재하거나 application이 정상 기동한다는 뜻은 아니다.
 
@@ -35,6 +35,8 @@ dev는 `external_secrets`를 선택했다. Helm values는 controller를 `asklake
 IAM policy는 현재 AWS account와 `ap-northeast-2`의 `asklake/dev/*`, 그리고 Terraform이 생성한 RDS 관리형 master secret의 정확한 ARN에 대해 `DescribeSecret`, `GetSecretValue`, `ListSecretVersionIds`만 허용한다. secret 생성·수정·삭제, `ListSecrets`, KMS decrypt와 다른 prefix 접근은 허용하지 않는다. 기본 AWS 관리형 Secrets Manager key를 사용한 현재 범위이므로 향후 customer-managed KMS key를 선택하면 해당 key의 `kms:Decrypt`를 별도 검토해야 한다.
 
 `infra/eks/secrets/aws-secrets-manager-store.yaml`은 controller의 기본 AWS credential chain을 사용하는 namespaced `SecretStore`다. static access key를 참조하는 `auth.secretRef`를 추가하지 않는다. `aws-secrets-manager-smoke.yaml`은 검증 전용 fixture이며 실제 runtime source 또는 상시 Kubernetes Secret이 아니다.
+
+`infra/eks/secrets/backend-runtime-external-secret.yaml`은 현재 dev FastAPI 최소 실행 범위의 실제 매핑이다. 같은 이름의 target을 `creationPolicy: Owner`, `deletionPolicy: Retain`으로 관리하고 정확히 두 key만 가져온다. 전체 planning 계약의 미사용 key를 빈 값이나 임의 값으로 채우지 않는다. 적용 결과와 rotation/rollback 경계는 [Backend runtime Secret 전환 기록](eks-day15-backend-secret-runtime-evidence.md)을 따른다.
 
 `workflow_sync`와 Secrets Store CSI Driver는 현재 dev 적용 경로가 아니다. Terraform의 `workflow_sync` 입력은 계약 호환과 비교 검증을 위해 남지만, dev에서 병행 운영하지 않는다. 전달 방식을 변경하려면 controller·rotation·rollback 소유권과 기존 `ExternalSecret` 정리 순서를 별도 변경으로 검토한다.
 
