@@ -56,15 +56,16 @@ def initialize_auth_on_startup() -> None:
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     initialize_auth_on_startup()
-    continuous_task = asyncio.create_task(continuous_runtime_sync_loop())
-    scheduled_task = asyncio.create_task(scheduled_job_tick_loop())
+    background_tasks = [asyncio.create_task(scheduled_job_tick_loop())]
+    if settings.asklake_continuous_control_plane != "external_ec2":
+        background_tasks.append(asyncio.create_task(continuous_runtime_sync_loop()))
     async with _app.state.internal_mcp_lifespan():
         try:
             yield
         finally:
-            for task in (continuous_task, scheduled_task):
+            for task in background_tasks:
                 task.cancel()
-            for task in (continuous_task, scheduled_task):
+            for task in background_tasks:
                 with suppress(asyncio.CancelledError):
                     await task
 

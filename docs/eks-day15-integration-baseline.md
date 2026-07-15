@@ -85,4 +85,20 @@ Phase 0 완료 기준은 다음과 같다.
 - ALB 적용 전 rollback과 Secret 전환 순서를 명시했다.
 - 반복 가능한 read-only capture와 pre-change assertion이 통과한다.
 
-다음 Phase 1은 ALB route 적용이다. B PR #774의 `pair1` 충돌과 scheduler singleton 수정은 B 브랜치 범위이며 A의 ALB manifest를 막지 않는다. 다만 B 수정 image rollout 뒤 ALB health와 replica 안전성은 최종 통합 gate에서 다시 확인한다.
+다음 Phase 1은 ALB route 적용이다. 이 기준점 작성 당시 B PR #774의 `pair1` 충돌과 scheduler singleton 수정은 B 브랜치 범위였고 A의 ALB manifest를 막지 않았다. 이후 Phase 3.5 결과는 아래 동기화 기록을 따른다.
+
+## Phase 3.5 B 머지 후 동기화
+
+PR #774는 2026-07-16 KST 기준 `pair1` merge commit `4715513b`로 반영됐다. `feat-#794`는 최신 `origin/pair1`을 merge했고 `docs/system-guardrails.md` 한 곳의 충돌을 해결했다. 충돌 해결은 A의 강화된 ALB steady/rollout·ESO·S3 gate와 B의 실제 scheduler/Continuous 검증 결과를 모두 유지한다.
+
+최종 Backend source 기준은 scheduler 경쟁 수정 commit `059d8eaa`다. dev FastAPI Deployment는 이 commit tag가 붙은 ECR의 immutable digest를 사용하고 두 Pod의 실제 imageID도 같은 digest와 일치했다. 전체 digest, repository URI와 AWS 식별자는 Git에 기록하지 않는다.
+
+동기화 직후 read-only 사전 점검에서 다음 상태가 유지됐다.
+
+- FastAPI desired/updated/ready `2/2/2`, unavailable 0
+- ALB steady target 4개, draining 0, `/`와 `/api/health` HTTP 200
+- Backend `database.ok=true`
+- `ExternalSecret/asklake-backend-runtime` Ready와 target ownership/hash 검증 통과
+- ECR repository immutable 설정과 배포 digest 존재 확인
+
+이 단계는 새 image build/push나 workload rollout을 수행하지 않았다. 최신 Git 기준과 이미 배포돼 있던 B image의 일치를 확인한 동기화·사전 점검이다.

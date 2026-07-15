@@ -8,7 +8,7 @@ Airflow, Trino, Spark Operator와 SparkApplication은 이 chart에 포함하지 
 
 ## 시작 상태와 의존성
 
-Foundation namespace와 `asklake-frontend`, `asklake-backend` ServiceAccount가 있어야 한다. General NodePool에는 `asklake.io/workload-class=general` label이 있어야 한다. Phase 6의 AMD64 image receipt, Phase 8 방식으로 전달된 `asklake-backend-runtime` Secret, 비밀이 아닌 backend 설정을 담은 `asklake-runtime` ConfigMap, Foundation의 `asklake-runtime-boundary` ConfigMap도 필요하다.
+Foundation namespace와 `asklake-frontend`, `asklake-backend` ServiceAccount가 있어야 한다. General NodePool에는 `asklake.io/workload-class=general` 및 `kubernetes.io/arch=amd64` label이 있어야 한다. Phase 6의 AMD64 image receipt, Phase 8 방식으로 전달된 `asklake-backend-runtime` Secret, 비밀이 아닌 backend 설정을 담은 `asklake-runtime` ConfigMap, Foundation의 `asklake-runtime-boundary` ConfigMap도 필요하다.
 
 `asklake-runtime`의 실제 key/value와 FastAPI background singleton·Continuous 차단 구현은 Pair B의 runtime 계약이다. A는 그 값을 추측해 chart에 넣지 않는다. `backendRuntimeBoundaryReady=true`는 B가 해당 구현과 검증 증거를 넘겼다는 승인 기록이지 chart가 애플리케이션 동작을 대신 구현한다는 뜻이 아니다.
 
@@ -16,7 +16,7 @@ Frontend image는 `VITE_API_BASE_URL`을 지정하지 않은 동일-origin 빌�
 
 ## 구현 계약
 
-`infra/eks/helm/asklake-web`은 `frontend` Deployment/ClusterIP Service `frontend:80`과 `fastapi` Deployment/ClusterIP Service `fastapi:8080`만 소유한다. 서비스 이름·포트·health path는 Phase 13 ALB handoff와 동일하다. 두 Deployment는 General NodePool selector를 사용하고 Frontend는 ServiceAccount token을 mount하지 않는다. FastAPI는 Foundation이 만든 backend ServiceAccount token과 최소 namespace RBAC를 유지한다.
+`infra/eks/helm/asklake-web`은 `frontend` Deployment/ClusterIP Service `frontend:80`과 `fastapi` Deployment/ClusterIP Service `fastapi:8080`만 소유한다. 서비스 이름·포트·health path는 Phase 13 ALB handoff와 동일하다. 두 Deployment는 General NodePool과 `kubernetes.io/arch=amd64` selector를 함께 사용하고 Frontend는 ServiceAccount token을 mount하지 않는다. FastAPI는 Foundation이 만든 backend ServiceAccount token과 최소 namespace RBAC를 유지한다. FastAPI의 DB-aware `/api/health`는 startup/readiness에만 사용하고, liveness는 TCP 8080 probe로 분리한다.
 
 이미지는 ECR의 `@sha256:` digest만 허용한다. 두 replica 이상과 CPU/memory request·limit를 명시해야 하며 chart가 임의의 production 용량을 고르지 않는다. 저장소의 test values는 schema 검증용 fixture일 뿐 운영 권장치가 아니다. HPA, topology spread, PDB와 세부 autoscaling 수치는 실제 부하·가용성 요구를 학습하고 선택하는 후속 단계다.
 
@@ -40,11 +40,11 @@ export ASKLAKE_WEB_APPLY_CONFIRM=deploy-reviewed-web-workloads
 bash scripts/deploy-eks-web-workloads.sh --apply /private/web-values.yaml /private/image-receipt.json
 ```
 
-스크립트는 repository 안의 values 적용을 거부하고 AWS cluster endpoint와 현재 kubectl context, ServiceAccount·ConfigMap·Secret·General node label, server-side dry-run을 확인한 뒤 Helm atomic rollout을 수행한다.
+스크립트는 repository 안의 values 적용을 거부하고 AWS cluster endpoint와 현재 kubectl context, ServiceAccount·ConfigMap·Secret·Ready AMD64 General node label, server-side dry-run을 확인한 뒤 Helm atomic rollout을 수행한다.
 
 ## 완료 기준
 
-코드 기준 완료는 disabled render가 비어 있고 enabled fixture가 정확히 두 Deployment와 두 Service를 만들며 mutable tag·1 replica·부분 readiness·포트 drift가 모두 실패하는 것이다. Terraform handoff가 Phase 13과 같은 Service 이름/포트를 제공하고 전체 Foundation 검증이 통과해야 한다.
+코드 기준 완료는 disabled render가 비어 있고 enabled fixture가 정확히 두 Deployment와 두 Service를 만들며 mutable tag·1 replica·부분 readiness·포트 drift·ARM64 selector가 모두 실패하는 것이다. Backend는 `/api/health`를 startup/readiness에만 두고 TCP liveness를 사용해야 한다. Terraform handoff가 Phase 13과 같은 Service 이름/포트를 제공하고 전체 Foundation 검증이 통과해야 한다.
 
 실환경 완료는 별도다. 두 replica의 Ready 상태, 한 Pod 재시작 뒤 FastAPI 상태 복구, `/`와 `/api/health`, EKS FastAPI의 EC2 Continuous 격리를 확인해야 한다. 이 증거가 없으면 readiness를 true로 두거나 Phase 13 Ingress를 적용하면 안 된다.
 

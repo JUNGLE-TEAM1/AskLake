@@ -11,6 +11,7 @@ readiness:
 placement:
   nodeSelector:
     asklake.io/workload-class: general
+    kubernetes.io/arch: amd64
 frontend:
   image: 000000000000.dkr.ecr.ap-northeast-2.amazonaws.com/asklake/dev/frontend@sha256:0000000000000000000000000000000000000000000000000000000000000000
   replicaCount: 2

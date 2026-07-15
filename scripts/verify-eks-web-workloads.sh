@@ -28,6 +28,7 @@ for contract in \
   'serviceAccountName: asklake-frontend' \
   'serviceAccountName: asklake-backend' \
   'asklake.io/workload-class: general' \
+  'kubernetes.io/arch: amd64' \
   'name: asklake-runtime' \
   'name: asklake-backend-runtime' \
   'path: /api/health' \
@@ -44,6 +45,17 @@ if [[ "$(grep -c '@sha256:' "$RENDERED_FILE")" -ne 2 ]]; then
   exit 1
 fi
 
+if [[ "$(grep -c 'kubernetes.io/arch: amd64' "$RENDERED_FILE")" -ne 2 ]]; then
+  echo "web workloads must schedule both Deployments on AMD64 nodes" >&2
+  exit 1
+fi
+
+if [[ "$(grep -c 'path: /api/health' "$RENDERED_FILE")" -ne 2 ]] || \
+   [[ "$(grep -c 'tcpSocket:' "$RENDERED_FILE")" -ne 1 ]]; then
+  echo "backend must keep DB-aware health for startup/readiness and use TCP liveness" >&2
+  exit 1
+fi
+
 negative_cases=(
   'readiness.backendRuntimeBoundaryReady=false'
   'readiness.runtimeSecretReady=false'
@@ -54,6 +66,7 @@ negative_cases=(
   'backend.service.port=80'
   'frontend.image=nginx:latest'
   'backend.image=backend:latest'
+  'placement.nodeSelector.kubernetes\.io/arch=arm64'
 )
 for override in "${negative_cases[@]}"; do
   if helm template asklake-web "$CHART_DIR" -f "$VALUES_FILE" --set "$override" >/dev/null 2>&1; then
