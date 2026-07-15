@@ -212,10 +212,27 @@ function isContinuousKafkaJob(job: JobRowData) {
   return job.executionMode === "continuous";
 }
 
+const continuousRuntimeStatusLabels: Record<string, string> = {
+  failed: "실패",
+  paused: "일시정지",
+  pausing: "일시정지 중",
+  running: "실행 중",
+  starting: "시작 중",
+  stopped: "중지",
+  stopping: "중지 중",
+};
+
+const continuousSchemaStatusLabels: Record<string, string> = {
+  drift_detected: "변경 감지",
+  expected_schema_changed: "예상 스키마 변경",
+  policy_paused: "정책 일시정지",
+  stable: "정상",
+};
+
 function continuousRuntimeLabel(job: JobRowData) {
   const runtime = job.continuousRuntime;
-  if (!runtime) return "Continuous 설정 대기";
-  return `${runtime.status} · ${runtime.storedCount.toLocaleString()}건 적재`;
+  if (!runtime) return "연속 수집 설정 대기";
+  return `${continuousRuntimeStatusLabels[runtime.status] ?? runtime.status} · ${runtime.storedCount.toLocaleString()}건 적재`;
 }
 
 function jobActionDisabled(job: JobRowData, action: JobListActionKind | JobCommand) {
@@ -2256,10 +2273,7 @@ export function JobDetailPage({
               <span className="grid size-8 place-items-center rounded-lg bg-blue-50 text-blue-600">
                 <Repeat2 aria-hidden="true" className="size-[18px]" />
               </span>
-              <span className="grid min-w-0 gap-1">
-                <span className="text-base font-[850] leading-tight text-slate-900">소스 / 타겟</span>
-                <span className="text-sm font-semibold text-slate-500">{sourceType} → {job.targetFormat ?? "데이터셋"}</span>
-              </span>
+              <span className="text-base font-[850] leading-tight text-slate-900">소스 / 타겟</span>
             </span>
           </AccordionTrigger>
           <AccordionContent className="grid items-stretch gap-4 border-t border-slate-100 p-4 lg:grid-cols-2">
@@ -2287,17 +2301,13 @@ export function JobDetailPage({
               <span className="grid size-8 place-items-center rounded-lg bg-blue-50 text-blue-600">
                 <ShieldCheck aria-hidden="true" className="size-[18px]" />
               </span>
-              <span className="grid min-w-0 gap-1">
-                <span className="text-base font-[850] leading-tight text-slate-900">스키마 / 변환 / 품질</span>
-                <span className="text-sm font-semibold text-slate-500">{outputSchemaRows.length}개 컬럼 · 변환 {transformRuleRows.length}개 · 품질 규칙 {qualityRuleRows.length}개</span>
-              </span>
+              <span className="text-base font-[850] leading-tight text-slate-900">스키마 / 변환 / 품질</span>
             </span>
           </AccordionTrigger>
           <AccordionContent className="grid gap-5 border-t border-slate-100 p-4">
             <DetailTableSection
               className="overflow-hidden rounded-lg border border-slate-200 bg-white"
               headerClassName="flex min-h-16 items-center justify-between gap-3 border-b border-slate-200 px-5 [&_h3]:text-base [&_h3]:font-extrabold [&_h3]:text-slate-950"
-              meta={<Badge shape="compact" size="lg" variant="muted">{outputSchemaRows.length}개 컬럼</Badge>}
               title="출력 스키마"
             >
               <DataTable
@@ -2316,7 +2326,6 @@ export function JobDetailPage({
             <DetailTableSection
               className="overflow-hidden rounded-lg border border-slate-200 bg-white"
               headerClassName="flex min-h-16 items-center justify-between gap-3 border-b border-slate-200 px-5 [&_h3]:text-base [&_h3]:font-extrabold [&_h3]:text-slate-950"
-              meta={<Badge shape="compact" size="lg" variant="muted">{transformRuleRows.length}개 규칙</Badge>}
               title="변환 규칙"
             >
               <DataTable
@@ -2335,7 +2344,6 @@ export function JobDetailPage({
             <DetailTableSection
               className="overflow-hidden rounded-lg border border-slate-200 bg-white"
               headerClassName="flex min-h-16 items-center justify-between gap-3 border-b border-slate-200 px-5 [&_h3]:text-base [&_h3]:font-extrabold [&_h3]:text-slate-950"
-              meta={<Badge shape="compact" size="lg" variant="muted">{qualityRuleRows.length}개 규칙</Badge>}
               title="품질 규칙"
             >
               <DataTable
@@ -2359,10 +2367,7 @@ export function JobDetailPage({
               <span className="grid size-8 place-items-center rounded-lg bg-blue-50 text-blue-600">
                 <Calendar aria-hidden="true" className="size-[18px]" />
               </span>
-              <span className="grid min-w-0 gap-1">
-                <span className="text-base font-[850] leading-tight text-slate-900">스케줄 / 권한</span>
-                <span className="text-sm font-semibold text-slate-500">{formatJobSchedule(job.schedule)} · 역할별 접근 권한</span>
-              </span>
+              <span className="text-base font-[850] leading-tight text-slate-900">스케줄 / 권한</span>
             </span>
           </AccordionTrigger>
           <AccordionContent className="grid gap-5 border-t border-slate-100 p-5 lg:grid-cols-2">
@@ -2457,9 +2462,9 @@ function ContinuousRuntimeCard({ job }: { job: JobRowData }) {
         const stored = Number(run.result?.storedCount ?? 0);
         const failed = Number(run.result?.failedCount ?? 0);
         const skipped = Number(run.result?.skippedCount ?? 0);
-        setMaintenanceMessage(`격리 재처리 ${run.status} · 적재 ${stored.toLocaleString()} · 정책 거부 ${failed.toLocaleString()} · 이미 처리 ${skipped.toLocaleString()}`);
+        setMaintenanceMessage(`격리 재처리 ${runStatusMeta[run.status].label} · 적재 ${stored.toLocaleString()} · 정책 거부 ${failed.toLocaleString()} · 이미 처리 ${skipped.toLocaleString()}`);
       } else {
-        setMaintenanceMessage(`Compaction ${run.status}`);
+        setMaintenanceMessage(`파일 컴팩션 ${runStatusMeta[run.status].label}`);
       }
       await refreshMaintenance();
     } catch (error) {
@@ -2469,44 +2474,62 @@ function ContinuousRuntimeCard({ job }: { job: JobRowData }) {
     }
   };
   return (
-    <article className="job-detail-card metadata-card">
-      <h3>Continuous Runtime</h3>
-      <div className="detail-kv-grid">
-        <Field label="상태" value={continuousRuntimeLabel(job)} />
-        <Field label="마지막 batch" value={runtime?.lastBatchId ?? "-"} />
-        <Field label="소비 / 적재" value={`${runtime?.consumedCount?.toLocaleString() ?? "0"} / ${runtime?.storedCount?.toLocaleString() ?? "0"}`} />
-        <Field label="격리 / 재처리" value={`${runtime?.quarantinedCount?.toLocaleString() ?? "0"} / ${runtime?.replayedCount?.toLocaleString() ?? "0"}`} />
-        <Field label="실패" value={runtime?.failedCount?.toLocaleString() ?? "0"} />
-        <Field label="Kafka Lag" value={runtime?.lagAvailable ? `${runtime.lag?.toLocaleString() ?? 0}건 · 최대 ${runtime.maxPartitionLag?.toLocaleString() ?? 0}` : "측정 대기"} />
-        <Field label="처리량" value={runtime?.throughputRowsPerSecond != null ? `${runtime.throughputRowsPerSecond.toLocaleString()} rows/s` : "-"} />
-        <Field label="최근 Batch" value={runtime?.lastBatchDurationMs != null ? `${runtime.lastBatchInputRows.toLocaleString()}건 · ${runtime.lastBatchDurationMs.toLocaleString()}ms` : "-"} />
-        <Field label="Schema" value={`v${runtime?.schemaVersion ?? 1} · ${runtime?.schemaStatus ?? "stable"}`} />
-        <Field label="Rule 계약" value={`v${runtime?.ruleContractVersion ?? "1.0"} · ${runtime?.ruleFingerprint?.slice(0, 10) ?? "대기"}`} />
-        <Field label="Rule 처리" value={`경고 ${(Number(ruleMetrics.transformWarnCount ?? 0) + Number(ruleMetrics.qualityWarnCount ?? 0)).toLocaleString()} · 격리 ${(Number(ruleMetrics.transformQuarantinedCount ?? 0) + Number(ruleMetrics.qualityQuarantinedCount ?? 0)).toLocaleString()} · 실패 batch ${Number(ruleMetrics.failedBatchCount ?? 0).toLocaleString()}`} />
-        <Field label="Heartbeat" value={runtime?.heartbeatAt ? formatCompactDateTime(runtime.heartbeatAt) : "-"} />
-        <Field label="Checkpoint" value={runtime?.checkpointPath ?? "-"} />
-        {runtime?.lastError && <Field label="최근 오류" value={runtime.lastError} />}
-      </div>
-      <div className="job-runtime-log-header">
-        <strong>Worker Log</strong>
-        <button className="job-action-button" disabled={loadingLogs} onClick={() => void loadLogs()} type="button"><RefreshCw size={15} />새로고침</button>
-      </div>
-      {logError ? <p className="job-inline-error">{logError}</p> : <pre className="job-runtime-log">{logs.length ? logs.join("\n") : loadingLogs ? "로그 불러오는 중..." : "표시할 로그가 없습니다."}</pre>}
-      <div className="job-runtime-log-header">
-        <strong>Quarantine · Maintenance</strong>
-        <div className="job-runtime-actions">
-          <button className="job-action-button" disabled={maintenanceBlocked || maintenanceBusy || !quarantine.some((item) => item.replayStatus !== "replayed")} onClick={() => void runMaintenance("replay")} title={maintenanceBlocked ? "스트림을 중지한 뒤 실행할 수 있습니다." : undefined} type="button"><Repeat2 size={15} />전체 재처리</button>
-          <button className="job-action-button" disabled={maintenanceBlocked || maintenanceBusy || (runtime?.storedCount ?? 0) === 0} onClick={() => void runMaintenance("compact")} title={maintenanceBlocked ? "스트림을 중지한 뒤 실행할 수 있습니다." : undefined} type="button"><HardDrive size={15} />Compaction</button>
+    <div className="job-continuous-runtime">
+      <Panel>
+        <PanelHeader icon={<Activity aria-hidden="true" size={18} />} title="연속 수집 런타임" />
+        <div className="job-runtime-panel-body">
+          <div className="detail-kv-grid">
+            <Field label="상태" value={continuousRuntimeLabel(job)} />
+            <Field label="마지막 배치" value={runtime?.lastBatchId ?? "-"} />
+            <Field label="소비 / 적재" value={`${runtime?.consumedCount?.toLocaleString() ?? "0"} / ${runtime?.storedCount?.toLocaleString() ?? "0"}`} />
+            <Field label="격리 / 재처리" value={`${runtime?.quarantinedCount?.toLocaleString() ?? "0"} / ${runtime?.replayedCount?.toLocaleString() ?? "0"}`} />
+            <Field label="실패" value={runtime?.failedCount?.toLocaleString() ?? "0"} />
+            <Field label="Kafka 지연" value={runtime?.lagAvailable ? `${runtime.lag?.toLocaleString() ?? 0}건 · 최대 ${runtime.maxPartitionLag?.toLocaleString() ?? 0}` : "측정 대기"} />
+            <Field label="처리량" value={runtime?.throughputRowsPerSecond != null ? `${runtime.throughputRowsPerSecond.toLocaleString()}행/초` : "-"} />
+            <Field label="최근 배치" value={runtime?.lastBatchDurationMs != null ? `${runtime.lastBatchInputRows.toLocaleString()}건 · ${runtime.lastBatchDurationMs.toLocaleString()}ms` : "-"} />
+            <Field label="스키마" value={`v${runtime?.schemaVersion ?? 1} · ${continuousSchemaStatusLabels[runtime?.schemaStatus ?? "stable"] ?? runtime?.schemaStatus ?? "정상"}`} />
+            <Field label="규칙 계약" value={`v${runtime?.ruleContractVersion ?? "1.0"} · ${runtime?.ruleFingerprint?.slice(0, 10) ?? "대기"}`} />
+            <Field label="규칙 처리" value={`경고 ${(Number(ruleMetrics.transformWarnCount ?? 0) + Number(ruleMetrics.qualityWarnCount ?? 0)).toLocaleString()} · 격리 ${(Number(ruleMetrics.transformQuarantinedCount ?? 0) + Number(ruleMetrics.qualityQuarantinedCount ?? 0)).toLocaleString()} · 실패 배치 ${Number(ruleMetrics.failedBatchCount ?? 0).toLocaleString()}`} />
+            <Field label="하트비트" value={runtime?.heartbeatAt ? formatCompactDateTime(runtime.heartbeatAt) : "-"} />
+            <Field label="체크포인트" value={runtime?.checkpointPath ?? "-"} />
+            {runtime?.lastError && <Field label="최근 오류" value={runtime.lastError} />}
+          </div>
         </div>
-      </div>
-      {maintenanceMessage && <p className="panel-note">{maintenanceMessage}</p>}
-      <div className="job-maintenance-summary">
-        <span>격리 샘플 {quarantine.length.toLocaleString()}건</span>
-        <span>실행 이력 {maintenanceRuns.length.toLocaleString()}건</span>
-        <span>최근 {maintenanceRuns[0] ? `${maintenanceRuns[0].kind} · ${maintenanceRuns[0].status}` : "-"}</span>
-      </div>
-      {quarantine.length > 0 && <div className="job-quarantine-list">{quarantine.slice(0, 5).map((item) => <div key={`${item.partition}:${item.offset}`}><code>{item.partition}:{item.offset}</code><span>{item.stage === "schema" ? "스키마" : item.ruleId ? `${item.stage ?? "rule"} · ${item.ruleId}` : "규칙"} · {item.reason}</span><span>{item.replayStatus}</span><span>{item.rawPayload}</span></div>)}</div>}
-    </article>
+      </Panel>
+
+      <Panel>
+        <PanelHeader
+          actions={<button className="job-action-button" disabled={loadingLogs} onClick={() => void loadLogs()} type="button"><RefreshCw size={15} />새로고침</button>}
+          icon={<TerminalSquare aria-hidden="true" size={18} />}
+          title="워커 로그"
+        />
+        <div className="job-runtime-panel-body">
+          {logError ? <p className="job-inline-error">{logError}</p> : <pre className="job-runtime-log">{logs.length ? logs.join("\n") : loadingLogs ? "로그 불러오는 중..." : "표시할 로그가 없습니다."}</pre>}
+        </div>
+      </Panel>
+
+      <Panel>
+        <PanelHeader
+          actions={(
+            <div className="job-runtime-actions">
+              <button className="job-action-button" disabled={maintenanceBlocked || maintenanceBusy || !quarantine.some((item) => item.replayStatus !== "replayed")} onClick={() => void runMaintenance("replay")} title={maintenanceBlocked ? "스트림을 중지한 뒤 실행할 수 있습니다." : undefined} type="button"><Repeat2 size={15} />전체 재처리</button>
+              <button className="job-action-button" disabled={maintenanceBlocked || maintenanceBusy || (runtime?.storedCount ?? 0) === 0} onClick={() => void runMaintenance("compact")} title={maintenanceBlocked ? "스트림을 중지한 뒤 실행할 수 있습니다." : undefined} type="button"><HardDrive size={15} />파일 컴팩션</button>
+            </div>
+          )}
+          icon={<HardDrive aria-hidden="true" size={18} />}
+          title="격리 · 유지보수"
+        />
+        <div className="job-runtime-panel-body">
+          {maintenanceMessage && <p className="panel-note">{maintenanceMessage}</p>}
+          <div className="job-maintenance-summary">
+            <span>격리 샘플 {quarantine.length.toLocaleString()}건</span>
+            <span>실행 이력 {maintenanceRuns.length.toLocaleString()}건</span>
+            <span>최근 {maintenanceRuns[0] ? `${maintenanceRuns[0].kind === "quarantine_replay" ? "격리 재처리" : "파일 컴팩션"} · ${runStatusMeta[maintenanceRuns[0].status].label}` : "-"}</span>
+          </div>
+          {quarantine.length > 0 && <div className="job-quarantine-list">{quarantine.slice(0, 5).map((item) => <div key={`${item.partition}:${item.offset}`}><code>{item.partition}:{item.offset}</code><span>{item.stage === "schema" ? "스키마" : item.ruleId ? `${item.stage ?? "rule"} · ${item.ruleId}` : "규칙"} · {item.reason}</span><span>{item.replayStatus}</span><span>{item.rawPayload}</span></div>)}</div>}
+        </div>
+      </Panel>
+    </div>
   );
 }
 
