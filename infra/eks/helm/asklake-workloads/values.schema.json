@@ -59,6 +59,14 @@
         "port": {"type": "integer", "minimum": 1, "maximum": 65535}
       }
     },
+    "amd64NodeSelector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kubernetes.io/arch"],
+      "properties": {
+        "kubernetes.io/arch": {"type": "string", "const": "amd64"}
+      }
+    },
     "secretKeyMap": {
       "type": "object",
       "additionalProperties": {"type": "string", "minLength": 1}
@@ -66,24 +74,32 @@
     "frontend": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["replicas", "image", "serviceAccountName", "service", "resources"],
+      "required": ["replicas", "nodeSelector", "image", "serviceAccountName", "service", "resources"],
       "properties": {
         "replicas": {"type": "integer", "minimum": 2},
+        "nodeSelector": {"$ref": "#/$defs/amd64NodeSelector"},
         "image": {"$ref": "#/$defs/image"},
         "serviceAccountName": {"type": "string", "const": "asklake-frontend"},
-        "service": {"$ref": "#/$defs/service"},
+        "service": {
+          "allOf": [{"$ref": "#/$defs/service"}],
+          "properties": {"name": {"const": "frontend"}}
+        },
         "resources": {"$ref": "#/$defs/resources"}
       }
     },
     "backend": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["replicas", "image", "serviceAccountName", "service", "config", "runtimeSecret", "resources"],
+      "required": ["replicas", "nodeSelector", "image", "serviceAccountName", "service", "config", "runtimeSecret", "resources"],
       "properties": {
         "replicas": {"type": "integer", "minimum": 2},
+        "nodeSelector": {"$ref": "#/$defs/amd64NodeSelector"},
         "image": {"$ref": "#/$defs/image"},
         "serviceAccountName": {"type": "string", "const": "asklake-backend"},
-        "service": {"$ref": "#/$defs/service"},
+        "service": {
+          "allOf": [{"$ref": "#/$defs/service"}],
+          "properties": {"name": {"const": "fastapi"}}
+        },
         "config": {
           "type": "object",
           "additionalProperties": false,

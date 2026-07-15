@@ -6,6 +6,8 @@ global:
 
 frontend:
   replicas: 2
+  nodeSelector:
+    kubernetes.io/arch: amd64
   image:
     repository: ""
     digest: ""
@@ -24,6 +26,8 @@ frontend:
 
 backend:
   replicas: 2
+  nodeSelector:
+    kubernetes.io/arch: amd64
   image:
     repository: ""
     digest: ""

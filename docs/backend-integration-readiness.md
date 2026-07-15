@@ -530,7 +530,7 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 - [x] Airflow API server/scheduler/DAG processor/migration Job과 Trino HTTPS coordinator Helm workload
 - [x] ECR digest-only image, ConfigMap 일반 설정, 기존 Secret key 참조 계약
 - [x] A Secret contract의 backend/Airflow/Spark/Trino exact key와 file mount 반영
-- [x] FastAPI `/api/health` startup/readiness/liveness probe
+- [x] FastAPI `/api/health` startup/readiness와 DB 장애에서 재시작하지 않는 TCP liveness probe
 - [x] EKS의 Kafka Continuous 생성·조회·변경·freshness/widget read·background sync fail-closed 경계
 - [x] `etl_runs` owner/expiry/generation 기반 singleton lease와 중복 요청 `409`
 - [x] 기본 60초 lease와 20초 heartbeat를 Spark run timeout에서 분리
@@ -538,11 +538,13 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 - [x] create 응답 유실/중복 create의 runId identity 복구와 mismatch fencing test
 - [x] MSK IAM KafkaJS adapter와 metadata-only smoke Job
 - [x] bounded Kafka fixture → RDS JDBC catalog/S3 warehouse Iceberg commit `SparkApplication` smoke manifest
-- [x] FastAPI와 Spark driver least-privilege Kubernetes RBAC
+- [x] FastAPI와 Spark driver least-privilege Kubernetes RBAC 계약 소비(리소스 소유자는 EKS foundation chart)
 - [x] `scripts/verify-eks-workloads.sh` Helm schema/lint/render 계약 검증
 - [x] PR에서 B-owned Frontend/Backend/Spark/Airflow image `linux/amd64` build와 focused runtime test workflow
-- [ ] A가 실제 ECR repository/digest와 runtime Secret 값 주입
-- [ ] A가 RDS/MSK/S3 endpoint, fixture topic, IRSA와 Spark operator를 준비
-- [ ] A foundation의 `asklake-spark` ServiceAccount token 자동 mount를 `true`로 맞춤
+- [ ] 실제 ECR repository/digest와 네 runtime Secret을 workload에 주입
+- [x] A가 RDS/MSK/S3, 격리 fixture topic, EKS Pod Identity와 Spark Operator 2.5.1 준비
+- [x] A foundation의 `asklake-spark` ServiceAccount token 자동 mount를 `true`로 적용
+- [ ] Airflow migration과 Spark executor의 최소 runtime Secret consumer 범위 검증 후 A/B 정적 계약 정렬
+- [ ] 운영 전 Spark driver/executor ServiceAccount와 Kubernetes API token/RBAC 분리
 - [ ] 통합 환경에서 MSK metadata → bounded Spark output → Trino query live smoke
 - [ ] 실제 EKS 2-replica FastAPI에서 Pod 종료 후 같은 runId recovery/takeover 검증

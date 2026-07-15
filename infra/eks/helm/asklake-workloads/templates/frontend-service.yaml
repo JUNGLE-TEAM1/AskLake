@@ -9,7 +9,7 @@ metadata:
 spec:
   type: ClusterIP
   selector:
-    {{- include "asklake-workloads.selectorLabels" (dict "component" "frontend") | nindent 4 }}
+    {{- include "asklake-workloads.selectorLabels" (dict "component" "frontend" "release" .Release.Name) | nindent 4 }}
   ports:
     - name: http
       port: {{ .Values.frontend.service.port }}

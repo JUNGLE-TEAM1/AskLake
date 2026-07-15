@@ -16,14 +16,16 @@ spec:
       maxSurge: 1
   selector:
     matchLabels:
-      {{- include "asklake-workloads.selectorLabels" (dict "component" "frontend") | nindent 6 }}
+      {{- include "asklake-workloads.selectorLabels" (dict "component" "frontend" "release" .Release.Name) | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "asklake-workloads.selectorLabels" (dict "component" "frontend") | nindent 8 }}
+        {{- include "asklake-workloads.selectorLabels" (dict "component" "frontend" "release" .Release.Name) | nindent 8 }}
     spec:
       serviceAccountName: {{ .Values.frontend.serviceAccountName }}
       automountServiceAccountToken: false
+      nodeSelector:
+        {{- toYaml .Values.frontend.nodeSelector | nindent 8 }}
       containers:
         - name: frontend
           image: "{{ required "frontend image repository is required" .Values.frontend.image.repository }}@{{ required "frontend image digest is required" .Values.frontend.image.digest }}"

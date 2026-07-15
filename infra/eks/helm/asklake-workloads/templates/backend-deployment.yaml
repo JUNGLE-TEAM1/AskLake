@@ -16,16 +16,18 @@ spec:
       maxSurge: 1
   selector:
     matchLabels:
-      {{- include "asklake-workloads.selectorLabels" (dict "component" "backend") | nindent 6 }}
+      {{- include "asklake-workloads.selectorLabels" (dict "component" "backend" "release" .Release.Name) | nindent 6 }}
   template:
     metadata:
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/backend-configmap.yaml") . | sha256sum }}
       labels:
-        {{- include "asklake-workloads.selectorLabels" (dict "component" "backend") | nindent 8 }}
+        {{- include "asklake-workloads.selectorLabels" (dict "component" "backend" "release" .Release.Name) | nindent 8 }}
     spec:
       serviceAccountName: {{ .Values.backend.serviceAccountName }}
       automountServiceAccountToken: true
+      nodeSelector:
+        {{- toYaml .Values.backend.nodeSelector | nindent 8 }}
       terminationGracePeriodSeconds: 30
       containers:
         - name: backend
@@ -83,11 +85,10 @@ spec:
             timeoutSeconds: 3
             failureThreshold: 3
           livenessProbe:
-            httpGet:
-              path: /api/health
+            tcpSocket:
               port: http
             periodSeconds: 30
-            timeoutSeconds: 5
+            timeoutSeconds: 3
             failureThreshold: 3
           resources:
             {{- toYaml .Values.backend.resources | nindent 12 }}

@@ -873,7 +873,7 @@ Windows에서 FastAPI 의존성이 저장소 가상환경에만 설치돼 있으
 
 ## 14) EKS MVP workload 검증
 
-EKS workload chart는 foundation chart와 분리된 `infra/eks/helm/asklake-workloads`에 있다. 실제 account, ECR repository, digest, bucket, endpoint는 git에 저장하지 않고 배포 시 values로 주입한다. credential은 values에 넣지 않고 A가 사전에 생성한 `asklake-backend-runtime`, `asklake-airflow-runtime`, `asklake-spark-runtime`, `asklake-trino-runtime` Secret key/file을 정확히 참조한다.
+EKS workload chart는 foundation chart와 분리된 `infra/eks/helm/asklake-workloads`에 있다. 실제 account, ECR repository, digest, bucket, endpoint는 git에 저장하지 않고 배포 시 values로 주입한다. credential은 values에 넣지 않고 A가 계약한 `asklake-backend-runtime`, `asklake-airflow-runtime`, `asklake-spark-runtime`, `asklake-trino-runtime` Secret key/file을 정확히 참조한다. External Secrets Operator controller/store는 준비됐지만 실제 네 runtime Secret은 아직 동기화되지 않았으므로 사전 생성됐다고 가정하지 않는다. Namespace, ServiceAccount와 FastAPI/Spark driver Role·RoleBinding은 foundation chart가 단독 소유하며 workload chart는 재생성하지 않는다.
 
 ```bash
 # Helm 3이 PATH에 있는 경우
@@ -894,10 +894,23 @@ npm run test:spark-kubernetes
 npm run verify:airflow-catalog-wiring
 ```
 
-검증 스크립트는 Helm schema/lint/render, Frontend/FastAPI/Airflow/Trino resource 개수, ClusterIP, health check, digest image, ConfigMap/Secret 경계, least-privilege RBAC, Continuous 경계, MSK IAM과 bounded Spark smoke 설정을 확인한다. Secret, `LoadBalancer`, `StatefulSet`, replay producer, static AWS key 또는 mutable image가 chart에 들어오면 실패한다. `.github/workflows/eks-b-workload-checks.yml`은 같은 계약 테스트와 Frontend/Backend/Spark/Airflow `linux/amd64` Docker build를 PR에서 실행한다. Trino ECR mirror/digest는 A의 foundation 입력이므로 이 image build matrix에 포함하지 않는다.
+검증 스크립트는 Helm schema/lint/render, Frontend/FastAPI/Airflow/Trino resource 개수, ClusterIP, health check, digest image, ConfigMap/Secret 경계, foundation-owned RBAC 비생성, Continuous 경계, MSK IAM과 bounded Spark smoke 설정을 확인한다. Role/RoleBinding, Secret, `LoadBalancer`, `StatefulSet`, PVC/EFS, replay producer, static AWS key 또는 mutable image가 workload chart에 들어오면 실패한다. FastAPI의 DB-aware `/api/health`는 startup/readiness에만 사용하고 liveness는 TCP로 분리한다. Frontend/FastAPI는 AMD64 전용 image와 맞게 `kubernetes.io/arch=amd64`에만 스케줄한다. `.github/workflows/eks-b-workload-checks.yml`은 같은 계약 테스트와 Frontend/Backend/Spark/Airflow `linux/amd64` Docker build를 PR에서 실행한다. Trino ECR mirror/digest는 A의 foundation 입력이므로 이 image build matrix에 포함하지 않는다.
 
-chart 적용 전 EKS foundation은 `asklake-dev` namespace, `asklake-frontend`, `asklake-backend`, `asklake-airflow`, `asklake-msk-smoke`, `asklake-spark`, `asklake-trino` ServiceAccount/IRSA, Spark operator, RDS/MSK/S3/ECR과 네 runtime Secret을 제공해야 한다. `asklake-backend`와 `asklake-spark`는 각각 SparkApplication과 executor Pod를 관리하므로 `automountServiceAccountToken: true`여야 한다. 나머지 ServiceAccount의 Kubernetes API token은 끈다. 정상 install은 opt-in smoke 두 개를 만들지 않는다.
+chart 적용 전 EKS foundation은 `asklake-dev` namespace, `asklake-frontend`, `asklake-backend`, `asklake-airflow`, `asklake-msk-smoke`, `asklake-spark`, `asklake-trino` ServiceAccount/EKS Pod Identity, FastAPI/Spark driver RBAC, Spark operator, RDS/MSK/S3/ECR과 필요한 runtime Secret을 제공해야 한다. 7월 15일 기준 namespace, ServiceAccount/token, Backend/MSK smoke/Spark/Trino Pod Identity, RBAC, Spark Operator와 data plane은 적용됐고 실제 runtime Secret과 image digest는 남아 있다. `asklake-backend`와 `asklake-spark`는 각각 SparkApplication과 executor Pod를 관리하므로 `automountServiceAccountToken: true`다. 나머지 ServiceAccount의 Kubernetes API token은 끈다. 정상 install은 opt-in smoke 두 개를 만들지 않는다.
 
-AWS 입력이 준비되면 먼저 `mskSmoke.create=true`로 metadata smoke를 실행하고 성공 후 `sparkApplication.create=true`, 고유 `runId`/`jobId`, producer receipt의 `sparkApplication.kafka.fixtureBatchId`로 bounded Kafka fixture smoke를 실행한다. Spark smoke는 실행 시점의 `earliest`~`latest`를 읽되 해당 `raw.fixture_batch_id`만 남겨 전용 `iceberg.asklake.eks_mvp_fixture` table을 replace commit하므로 이전 smoke batch나 Continuous 소유권과 섞이지 않는다. 그 다음 Trino에서 `SELECT count(*) FROM iceberg.asklake.eks_mvp_fixture`와 snapshot/file evidence를 조회하고 row count가 `sparkApplication.kafka.expectedCount`(기본 100)와 같은지 비교한다. 이 live 결과는 B 코드만으로 독립 생성할 수 없고 A의 endpoint, fixture topic, IRSA, bucket, Secret, ECR digest가 실제로 연결되어야 한다.
+Frontend/FastAPI Service 계약은 `frontend:80`, `fastapi:8080`이다. A의 `asklake-web` application release는 실제 배포하지 않은 상태이므로 같은 이름의 workload chart를 병행 설치하지 않는다. 만약 임시 release를 먼저 배포했다면 두 Helm release가 같은 Deployment/Service를 동시에 소유하게 하지 말고 명시적인 ownership 전환 절차를 먼저 정한다.
+
+Airflow MVP는 `LocalExecutor`, image-baked DAG와 RDS metadata를 사용한다. EFS/PVC, shared DAG volume과 shared log volume은 없으며 Pod-local log 비영속 제한을 수용한다. Airflow migration과 Spark executor의 최소 Secret consumer 범위는 [7월 15일 A foundation / B workload 계약 대조](eks-day15-b-workload-contract-review.md)를 따른다.
+
+병합 전에는 아래 항목을 모두 확인한다.
+
+- 최신 `pair1`과 3-way merge했을 때 conflict가 없어야 한다.
+- workload chart render에는 Role/RoleBinding이 없어야 하고, foundation chart가 FastAPI/Spark driver RBAC의 유일한 소유자여야 한다.
+- foundation의 `asklake-backend`와 `asklake-spark` ServiceAccount는 모두 `automountServiceAccountToken: true`여야 한다.
+- Frontend, Backend, Spark runtime, Airflow의 실제 ECR `repository@sha256:digest`와 `linux/amd64` 증거가 receipt 또는 배포 기록에 있어야 한다. PR의 build-only `push: false` CI는 ECR push 증거로 보지 않는다.
+- PR과 API 문서의 Continuous 차단 오류 코드는 `CONTINUOUS_CONTROL_OWNED_BY_EC2`로 일치해야 한다.
+- A의 임시 `asklake-web` release가 이미 설치돼 있으면 일반 Helm install을 진행하지 않는다. 동일 `frontend`/`fastapi` Service의 명시적 ownership 전환·rollback 절차가 합의되기 전까지 merge/deploy gate를 닫는다.
+
+AWS 입력이 준비되면 먼저 `mskSmoke.create=true`로 metadata smoke를 실행하고 성공 후 `sparkApplication.create=true`, 고유 `runId`/`jobId`, producer receipt의 `sparkApplication.kafka.fixtureBatchId`로 bounded Kafka fixture smoke를 실행한다. Spark smoke는 실행 시점의 `earliest`~`latest`를 읽되 해당 `raw.fixture_batch_id`만 남겨 전용 `iceberg.asklake.eks_mvp_fixture` table을 replace commit하므로 이전 smoke batch나 Continuous 소유권과 섞이지 않는다. 그 다음 Trino에서 `SELECT count(*) FROM iceberg.asklake.eks_mvp_fixture`와 snapshot/file evidence를 조회하고 row count가 `sparkApplication.kafka.expectedCount`(기본 100)와 같은지 비교한다. 이 live 결과는 B 코드만으로 독립 생성할 수 없고 A의 endpoint, fixture topic, Pod Identity, bucket, Secret, ECR digest가 실제로 연결되어야 한다.
 
 일반 FastAPI batch 실행은 `ASKLAKE_SPARK_RUNNER=kubernetes`에서 deterministic `SparkApplication`을 제출한다. provider unit test는 두 replica가 같은 run identity를 사용하고, create 응답 유실 뒤 한 번의 POST만으로 복구하며, 다른 identity object를 거절하는지 검증한다. 실제 cluster smoke에서는 FastAPI Pod 하나를 Spark 실행 중 종료한 뒤 같은 `runId` 재요청이 새 Spark 작업을 중복 생성하지 않고 기존 object를 복구하는지도 확인한다.

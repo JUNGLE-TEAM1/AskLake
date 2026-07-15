@@ -12,13 +12,13 @@ spec:
   revisionHistoryLimit: 3
   selector:
     matchLabels:
-      {{- include "asklake-workloads.selectorLabels" (dict "component" "trino") | nindent 6 }}
+      {{- include "asklake-workloads.selectorLabels" (dict "component" "trino" "release" .Release.Name) | nindent 6 }}
   template:
     metadata:
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/trino-configmap.yaml") . | sha256sum }}
       labels:
-        {{- include "asklake-workloads.selectorLabels" (dict "component" "trino") | nindent 8 }}
+        {{- include "asklake-workloads.selectorLabels" (dict "component" "trino" "release" .Release.Name) | nindent 8 }}
     spec:
       serviceAccountName: {{ .Values.trino.serviceAccountName }}
       automountServiceAccountToken: false

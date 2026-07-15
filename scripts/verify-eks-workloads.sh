@@ -25,11 +25,9 @@ required_files=(
   "$CHART_DIR/templates/backend-configmap.yaml"
   "$CHART_DIR/templates/backend-deployment.yaml"
   "$CHART_DIR/templates/backend-service.yaml"
-  "$CHART_DIR/templates/backend-spark-rbac.yaml"
   "$CHART_DIR/templates/frontend-deployment.yaml"
   "$CHART_DIR/templates/frontend-service.yaml"
   "$CHART_DIR/templates/msk-smoke-job.yaml"
-  "$CHART_DIR/templates/spark-driver-rbac.yaml"
   "$CHART_DIR/templates/sparkapplication.yaml"
   "$CHART_DIR/templates/trino-configmap.yaml"
   "$CHART_DIR/templates/trino-deployment.yaml"
@@ -80,11 +78,35 @@ if "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" \
   exit 1
 fi
 
+if "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" \
+  --set-string 'frontend.nodeSelector.kubernetes\.io/arch=arm64' >/dev/null 2>&1; then
+  echo "EKS workload schema accepted an ARM64 Frontend node selector" >&2
+  exit 1
+fi
+
+if "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" \
+  --set-string 'backend.nodeSelector.kubernetes\.io/arch=arm64' >/dev/null 2>&1; then
+  echo "EKS workload schema accepted an ARM64 Backend node selector" >&2
+  exit 1
+fi
+
+if "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" \
+  --set frontend.service.name=asklake-frontend >/dev/null 2>&1; then
+  echo "EKS workload schema accepted a frontend Service name that drifts from the foundation handoff" >&2
+  exit 1
+fi
+
+if "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" \
+  --set backend.service.name=asklake-backend >/dev/null 2>&1; then
+  echo "EKS workload schema accepted a backend Service name that drifts from the foundation handoff" >&2
+  exit 1
+fi
+
 test "$(grep -c '^kind: Deployment$' "$RENDERED_FILE")" -eq 6
 test "$(grep -c '^kind: Service$' "$RENDERED_FILE")" -eq 4
 test "$(grep -c '^kind: ConfigMap$' "$RENDERED_FILE")" -eq 3
-test "$(grep -c '^kind: Role$' "$RENDERED_FILE")" -eq 2
-test "$(grep -c '^kind: RoleBinding$' "$RENDERED_FILE")" -eq 2
+test "$(grep -c '^kind: Role$' "$RENDERED_FILE" || true)" -eq 0
+test "$(grep -c '^kind: RoleBinding$' "$RENDERED_FILE" || true)" -eq 0
 test "$(grep -c '^kind: Job$' "$RENDERED_FILE")" -eq 1
 test "$(grep -c '^kind: SparkApplication$' "$RENDERED_FILE" || true)" -eq 0
 test "$(grep -c '^kind: Job$' "$OPT_IN_RENDERED_FILE")" -eq 2
@@ -106,7 +128,11 @@ for service_account in \
   grep -q "serviceAccountName: $service_account\|name: $service_account" "$OPT_IN_RENDERED_FILE"
 done
 
-grep -q 'path: /api/health' "$RENDERED_FILE"
+test "$(grep -c 'path: /api/health' "$RENDERED_FILE")" -eq 2
+test "$(grep -c 'kubernetes.io/arch: amd64' "$RENDERED_FILE")" -eq 2
+grep -q 'tcpSocket:' "$RENDERED_FILE"
+grep -q 'app.kubernetes.io/name: asklake-workloads' "$RENDERED_FILE"
+grep -q 'app.kubernetes.io/instance: "asklake-workloads"' "$RENDERED_FILE"
 grep -q 'path: /api/v2/monitor/health' "$RENDERED_FILE"
 grep -q 'path: /v1/info' "$RENDERED_FILE"
 grep -q 'ASKLAKE_CONTINUOUS_CONTROL_PLANE: "external_ec2"' "$RENDERED_FILE"
@@ -117,8 +143,6 @@ grep -q 'ASKLAKE_KAFKA_AUTH_MODE: "iam"' "$RENDERED_FILE"
 grep -q 'TRINO_BASE_URL: "https://asklake-trino.asklake-dev.svc.cluster.local:8443"' "$RENDERED_FILE"
 grep -q 'TRINO_TLS_CA_FILE: "/var/run/asklake/secrets/trino-ca.pem"' "$RENDERED_FILE"
 grep -q '"helm.sh/hook": pre-install,pre-upgrade' "$RENDERED_FILE"
-grep -q 'apiGroups: \["sparkoperator.k8s.io"\]' "$RENDERED_FILE"
-grep -q 'verbs: \["create", "get", "list", "watch", "delete"\]' "$RENDERED_FILE"
 grep -q 'kind: SparkApplication' "$OPT_IN_RENDERED_FILE"
 test "$(grep -c '^    serviceAccount: asklake-spark$' "$OPT_IN_RENDERED_FILE")" -eq 2
 grep -q 'mainApplicationFile: "local:///opt/asklake/scripts/spark_job_run.py"' "$OPT_IN_RENDERED_FILE"
@@ -161,8 +185,8 @@ image_count="$(grep -c '^ *image: ".*"$' "$OPT_IN_RENDERED_FILE")"
 digest_image_count="$(grep -Ec '^ *image: ".+@sha256:[0-9a-f]{64}"$' "$OPT_IN_RENDERED_FILE")"
 test "$image_count" -eq "$digest_image_count"
 
-if grep -Eq '^kind: (Secret|StatefulSet)$|type: LoadBalancer|asklake-replay-producer|AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|image: ".+:latest"' "$OPT_IN_RENDERED_FILE"; then
-  echo "rendered EKS workload contains an excluded resource, mutable image, or credential field" >&2
+if grep -Eq '^kind: (Role|RoleBinding|Secret|StatefulSet|PersistentVolumeClaim)$|efs\.csi\.aws\.com|type: LoadBalancer|asklake-replay-producer|AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|image: ".+:latest"' "$OPT_IN_RENDERED_FILE"; then
+  echo "rendered EKS workload contains foundation-owned RBAC, excluded persistent/external resources, a mutable image, or a credential field" >&2
   exit 1
 fi
 

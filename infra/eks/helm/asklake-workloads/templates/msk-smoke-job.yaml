@@ -14,7 +14,7 @@ spec:
   template:
     metadata:
       labels:
-        {{- include "asklake-workloads.selectorLabels" (dict "component" "msk-smoke") | nindent 8 }}
+        {{- include "asklake-workloads.selectorLabels" (dict "component" "msk-smoke" "release" .Release.Name) | nindent 8 }}
     spec:
       serviceAccountName: {{ .Values.mskSmoke.serviceAccountName }}
       automountServiceAccountToken: false

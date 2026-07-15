@@ -17,13 +17,13 @@ spec:
     type: RollingUpdate
   selector:
     matchLabels:
-      {{- include "asklake-workloads.selectorLabels" (dict "component" (printf "airflow-%s" $component)) | nindent 6 }}
+      {{- include "asklake-workloads.selectorLabels" (dict "component" (printf "airflow-%s" $component) "release" $root.Release.Name) | nindent 6 }}
   template:
     metadata:
       annotations:
         checksum/config: {{ include (print $root.Template.BasePath "/airflow-configmap.yaml") $root | sha256sum }}
       labels:
-        {{- include "asklake-workloads.selectorLabels" (dict "component" (printf "airflow-%s" $component)) | nindent 8 }}
+        {{- include "asklake-workloads.selectorLabels" (dict "component" (printf "airflow-%s" $component) "release" $root.Release.Name) | nindent 8 }}
     spec:
       serviceAccountName: {{ $root.Values.airflow.serviceAccountName }}
       automountServiceAccountToken: false

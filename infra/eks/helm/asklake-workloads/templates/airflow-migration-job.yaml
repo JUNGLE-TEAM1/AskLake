@@ -17,7 +17,7 @@ spec:
   template:
     metadata:
       labels:
-        {{- include "asklake-workloads.selectorLabels" (dict "component" "airflow-migration") | nindent 8 }}
+        {{- include "asklake-workloads.selectorLabels" (dict "component" "airflow-migration" "release" .Release.Name) | nindent 8 }}
     spec:
       serviceAccountName: {{ .Values.airflow.serviceAccountName }}
       automountServiceAccountToken: false
