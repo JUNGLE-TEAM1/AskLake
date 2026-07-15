@@ -118,8 +118,10 @@ resource "aws_msk_serverless_cluster" "mvp" {
   cluster_name = "${var.name_prefix}-${var.environment}-serverless"
 
   vpc_config {
-    subnet_ids         = var.msk_subnet_ids
-    security_group_ids = var.msk_security_group_ids
+    subnet_ids = local.effective_msk_subnet_ids
+    security_group_ids = local.create_network ? toset([
+      aws_security_group.msk_private[0].id,
+    ]) : var.msk_security_group_ids
   }
 
   client_authentication {
@@ -132,12 +134,12 @@ resource "aws_msk_serverless_cluster" "mvp" {
 
   lifecycle {
     precondition {
-      condition     = length(toset(var.msk_subnet_ids)) >= 2
+      condition     = length(toset(local.effective_msk_subnet_ids)) >= 2
       error_message = "MSK Serverless creation requires at least two reviewed private subnets."
     }
 
     precondition {
-      condition     = length(var.msk_security_group_ids) > 0
+      condition     = local.create_network || length(var.msk_security_group_ids) > 0
       error_message = "MSK Serverless creation requires an explicit client security group."
     }
   }
@@ -147,11 +149,11 @@ resource "aws_db_subnet_group" "metadata" {
   count = local.create_rds ? 1 : 0
 
   name       = "${var.name_prefix}-${var.environment}-metadata"
-  subnet_ids = var.rds_subnet_ids
+  subnet_ids = local.effective_rds_subnet_ids
 
   lifecycle {
     precondition {
-      condition     = length(toset(var.rds_subnet_ids)) >= 2
+      condition     = length(toset(local.effective_rds_subnet_ids)) >= 2
       error_message = "RDS creation requires at least two reviewed private subnets."
     }
   }
@@ -172,16 +174,18 @@ resource "aws_db_instance" "metadata" {
   manage_master_user_password = true
   port                        = 5432
   db_subnet_group_name        = aws_db_subnet_group.metadata[0].name
-  vpc_security_group_ids      = var.rds_security_group_ids
-  publicly_accessible         = false
-  multi_az                    = var.rds_multi_az
-  backup_retention_period     = var.rds_backup_retention_days
-  deletion_protection         = true
-  skip_final_snapshot         = false
-  final_snapshot_identifier   = "${var.name_prefix}-${var.environment}-metadata-final"
-  copy_tags_to_snapshot       = true
-  auto_minor_version_upgrade  = true
-  apply_immediately           = false
+  vpc_security_group_ids = local.create_network ? toset([
+    aws_security_group.rds_private[0].id,
+  ]) : var.rds_security_group_ids
+  publicly_accessible        = false
+  multi_az                   = var.rds_multi_az
+  backup_retention_period    = var.rds_backup_retention_days
+  deletion_protection        = true
+  skip_final_snapshot        = false
+  final_snapshot_identifier  = "${var.name_prefix}-${var.environment}-metadata-final"
+  copy_tags_to_snapshot      = true
+  auto_minor_version_upgrade = true
+  apply_immediately          = false
 
   lifecycle {
     precondition {
@@ -190,7 +194,7 @@ resource "aws_db_instance" "metadata" {
     }
 
     precondition {
-      condition     = length(var.rds_security_group_ids) > 0
+      condition     = local.create_network || length(var.rds_security_group_ids) > 0
       error_message = "RDS creation requires an explicit workload security group."
     }
   }

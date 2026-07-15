@@ -607,6 +607,10 @@ Phase 10은 신규 EKS foundation을 Auto Mode로 생성하고 표준 Managed No
 
 General/Spark custom NodePool과 NodeClass는 Phase 12, VPC와 실제 private network는 Phase 11, 공개 ALB 적용은 Phase 13의 선택·검증 범위다. Phase 10 변경 시 [Auto Mode Foundation](eks-phase-10-auto-mode-foundation.md)의 정적 검증을 실행하고 `aws_eks_node_group` 또는 삭제된 managed-node 입력이 다시 추가되지 않았는지 확인한다.
 
+Phase 11은 `network_mode=external`을 기본으로 유지한다. `create`는 신규 MVP-owned cluster에서만 사용하며 실제 VPC CIDR, 2개 이상 AZ, `subnet_newbits`, 중복되지 않는 public/private netnum과 private egress 결정을 모두 입력해야 한다. subnet CIDR은 VPC CIDR에서 계산하고 example에 실제 주소나 resource ID를 넣지 않는다.
+
+NAT를 선택하면 `single`과 `per_az`의 비용·가용성 차이를 승인 기록에 남긴다. endpoint/hybrid를 선택하면 EC2, ECR API/DKR, Logs, STS interface endpoint와 S3 gateway가 baseline이고 workload/identity/secret/ALB 선택에 따른 추가 endpoint와 non-AWS egress를 별도로 검토한다. private-only Kubernetes API를 유지하면 VPN/SSM/VPC runner 같은 `kubectl`·Helm 실행 경로도 배포 전에 확정한다. Phase 11 plan 성공은 network 연결 증거가 아니다. apply 뒤 EKS scheduling, ECR/S3/STS, MSK IAM `9098`, RDS `5432` positive smoke와 차단 경로 negative smoke가 있어야 실제 완료로 판정한다. 상세 기준은 [Phase 11 VPC와 Private Network Foundation](eks-phase-11-network-foundation.md)을 따른다.
+
 ```bash
 docker run --rm --entrypoint sh \
   -v "$PWD/infra/eks:/workspace" \

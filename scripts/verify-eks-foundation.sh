@@ -16,6 +16,9 @@ trap 'rm -f "$RENDERED_FILE" "$IRSA_RENDERED_FILE" "$POD_IDENTITY_RENDERED_FILE"
 required_files=(
   "$ROOT_DIR/infra/eks/README.md"
   "$TERRAFORM_DIR/main.tf"
+  "$TERRAFORM_DIR/network-foundation.tf"
+  "$TERRAFORM_DIR/network-foundation-variables.tf"
+  "$TERRAFORM_DIR/network-foundation-outputs.tf"
   "$TERRAFORM_DIR/outputs.tf"
   "$TERRAFORM_DIR/workload-identity.tf"
   "$TERRAFORM_DIR/workload-identity-outputs.tf"
@@ -35,6 +38,7 @@ required_files=(
   "$POD_IDENTITY_VALUES_FILE"
   "$ROOT_DIR/docs/eks-msk-mvp-phase-1-handoff.md"
   "$ROOT_DIR/docs/eks-phase-10-auto-mode-foundation.md"
+  "$ROOT_DIR/docs/eks-phase-11-network-foundation.md"
 )
 
 for required_file in "${required_files[@]}"; do
@@ -181,6 +185,8 @@ grep -q 'workload_identity_mode = "disabled"' "$TERRAFORM_DIR/dev.tfvars.example
 grep -q 'pod_identity_agent_ready = false' "$TERRAFORM_DIR/dev.tfvars.example"
 grep -q 'existing_auto_mode_enabled       = false' "$TERRAFORM_DIR/dev.tfvars.example"
 grep -q 'cluster_admin_principal_arn = null' "$TERRAFORM_DIR/dev.tfvars.example"
+grep -q 'network_mode               = "external"' "$TERRAFORM_DIR/dev.tfvars.example"
+grep -q 'private_egress_mode             = "undecided"' "$TERRAFORM_DIR/dev.tfvars.example"
 grep -q 'ASKLAKE_RDS_BOOTSTRAP_CONFIRM=create-three-isolated-databases' \
   "$ROOT_DIR/scripts/bootstrap-eks-rds-databases.sh"
 
@@ -205,6 +211,32 @@ if grep -R -Eq 'resource[[:space:]]+"aws_eks_node_group"|create_managed_node_gro
   "$TERRAFORM_DIR"/*.tf \
   "$TERRAFORM_DIR/dev.tfvars.example"; then
   echo "legacy managed node group contract remains in EKS Auto Mode Terraform" >&2
+  exit 1
+fi
+
+for network_contract in \
+  'resource "aws_vpc" "mvp"' \
+  'resource "aws_subnet" "public"' \
+  'resource "aws_subnet" "private"' \
+  'resource "aws_nat_gateway" "private"' \
+  'resource "aws_vpc_endpoint" "interface"' \
+  'resource "aws_vpc_endpoint" "s3"' \
+  'resource "aws_vpc_security_group_ingress_rule" "msk_from_eks"' \
+  'resource "aws_vpc_security_group_ingress_rule" "rds_from_eks"'; do
+  if ! grep -Fq "$network_contract" "$TERRAFORM_DIR/network-foundation.tf"; then
+    echo "EKS Phase 11 network foundation is missing contract: $network_contract" >&2
+    exit 1
+  fi
+done
+
+grep -Fq '"kubernetes.io/role/elb" = "1"' "$TERRAFORM_DIR/network-foundation.tf"
+grep -Fq '"kubernetes.io/role/internal-elb" = "1"' "$TERRAFORM_DIR/network-foundation.tf"
+grep -Fq 'map_public_ip_on_launch = false' "$TERRAFORM_DIR/network-foundation.tf"
+grep -Fq 'from_port                    = 9098' "$TERRAFORM_DIR/network-foundation.tf"
+grep -Fq 'from_port                    = 5432' "$TERRAFORM_DIR/network-foundation.tf"
+
+if grep -Eq 'cidr_ipv4[[:space:]]*=[[:space:]]*"0\.0\.0\.0/0"' "$TERRAFORM_DIR/network-foundation.tf"; then
+  echo "EKS Phase 11 network foundation contains public security-group ingress" >&2
   exit 1
 fi
 

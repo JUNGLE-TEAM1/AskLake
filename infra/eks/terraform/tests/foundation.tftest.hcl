@@ -58,14 +58,15 @@ run "existing_cluster_handoff" {
   command = plan
 
   variables {
-    environment             = "dev"
-    owner                   = "pair-a"
-    resource_lifecycle      = "external"
-    cluster_mode            = "existing"
-    existing_cluster_name   = "shared-dev"
-    create_ecr_repositories = false
-    trino_image_digest      = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-    trino_irsa_role_arn     = "arn:aws:iam::123456789012:role/asklake-dev-trino"
+    environment                = "dev"
+    owner                      = "pair-a"
+    resource_lifecycle         = "external"
+    cluster_mode               = "existing"
+    existing_cluster_name      = "shared-dev"
+    external_public_subnet_ids = ["subnet-public-a", "subnet-public-b"]
+    create_ecr_repositories    = false
+    trino_image_digest         = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    trino_irsa_role_arn        = "arn:aws:iam::123456789012:role/asklake-dev-trino"
   }
 
   assert {
@@ -81,6 +82,15 @@ run "existing_cluster_handoff" {
   assert {
     condition     = output.auto_mode_handoff.node_role_arn == "arn:aws:iam::111122223333:role/asklake-existing-auto-node"
     error_message = "existing cluster handoff must preserve its externally managed Auto Mode node role."
+  }
+
+  assert {
+    condition = (
+      length(output.phase11_network_handoff.subnets.public_alb) == 2 &&
+      contains(output.phase11_network_handoff.subnets.public_alb, "subnet-public-a") &&
+      contains(output.phase11_network_handoff.subnets.public_alb, "subnet-public-b")
+    )
+    error_message = "external networking must preserve the reviewed public ALB subnet handoff."
   }
 
   assert {
@@ -204,6 +214,253 @@ run "new_cluster_contract" {
     condition     = output.phase1_handoff.cluster_compute == "eks-auto-mode"
     error_message = "the cross-person handoff must identify EKS Auto Mode as the compute contract."
   }
+
+  assert {
+    condition     = output.phase1_handoff.contract_version == "2.1" && output.phase1_handoff.network_output == "phase11_network_handoff"
+    error_message = "the Phase 11 foundation handoff version and network output pointer must stay synchronized."
+  }
+}
+
+run "created_network_single_nat_contract" {
+  command = plan
+
+  variables {
+    environment                = "dev"
+    owner                      = "pair-a"
+    resource_lifecycle         = "mvp-owned"
+    cluster_mode               = "create"
+    network_mode               = "create"
+    vpc_cidr                   = "10.40.0.0/16"
+    network_availability_zones = ["ap-northeast-2a", "ap-northeast-2c"]
+    subnet_newbits             = 8
+    public_subnet_netnums      = [0, 1]
+    private_subnet_netnums     = [10, 11]
+    private_egress_mode        = "nat_gateway"
+    nat_gateway_mode           = "single"
+    create_ecr_repositories    = false
+  }
+
+  assert {
+    condition     = length(aws_subnet.public) == 2 && length(aws_subnet.private) == 2
+    error_message = "created networking must pair public/private subnets across two reviewed Availability Zones."
+  }
+
+  assert {
+    condition     = length(aws_nat_gateway.private) == 1 && length(aws_route.private_nat) == 2
+    error_message = "single NAT mode must create one NAT Gateway and route every private subnet through it."
+  }
+
+  assert {
+    condition     = !aws_subnet.public["ap-northeast-2a"].map_public_ip_on_launch
+    error_message = "public ALB subnets must not automatically assign public IPs to arbitrary resources."
+  }
+
+  assert {
+    condition     = aws_subnet.public["ap-northeast-2a"].tags["kubernetes.io/role/elb"] == "1"
+    error_message = "public subnet discovery tag must be present for the later ALB phase."
+  }
+
+  assert {
+    condition     = aws_subnet.private["ap-northeast-2a"].tags["kubernetes.io/role/internal-elb"] == "1"
+    error_message = "private subnet discovery tag must identify internal load-balancer placement."
+  }
+
+  assert {
+    condition = (
+      output.phase11_network_handoff.ownership == "terraform" &&
+      output.phase11_network_handoff.private_egress.mode == "nat_gateway" &&
+      output.phase11_network_handoff.private_egress.nat_gateway_mode == "single"
+    )
+    error_message = "Phase 11 handoff must preserve network ownership and reviewed NAT placement."
+  }
+
+  assert {
+    condition     = output.phase11_network_handoff.kubernetes_api.private_operator_path == "required-before-kubectl"
+    error_message = "private-only Kubernetes API must keep the operator/CI access path as an explicit deployment gate."
+  }
+}
+
+run "created_network_endpoint_contract" {
+  command = plan
+
+  variables {
+    environment                = "dev"
+    owner                      = "pair-a"
+    resource_lifecycle         = "mvp-owned"
+    cluster_mode               = "create"
+    network_mode               = "create"
+    vpc_cidr                   = "10.41.0.0/16"
+    network_availability_zones = ["ap-northeast-2a", "ap-northeast-2c"]
+    subnet_newbits             = 8
+    public_subnet_netnums      = [0, 1]
+    private_subnet_netnums     = [10, 11]
+    private_egress_mode        = "vpc_endpoints"
+    nat_gateway_mode           = "undecided"
+    interface_vpc_endpoint_services = [
+      "ec2",
+      "ecr.api",
+      "ecr.dkr",
+      "logs",
+      "sts",
+    ]
+    create_ecr_repositories = false
+  }
+
+  assert {
+    condition     = length(aws_nat_gateway.private) == 0
+    error_message = "endpoint-only mode must not create a NAT Gateway."
+  }
+
+  assert {
+    condition     = length(aws_vpc_endpoint.interface) == 5 && length(aws_vpc_endpoint.s3) == 1
+    error_message = "endpoint-only baseline must create the five reviewed interfaces and an S3 gateway endpoint."
+  }
+
+  assert {
+    condition     = output.phase11_network_handoff.private_egress.s3_gateway_endpoint
+    error_message = "Phase 11 handoff must expose the S3 gateway endpoint capability."
+  }
+}
+
+run "created_network_data_plane_placement" {
+  command = plan
+
+  variables {
+    environment                = "dev"
+    owner                      = "pair-a"
+    resource_lifecycle         = "mvp-owned"
+    cluster_mode               = "create"
+    network_mode               = "create"
+    vpc_cidr                   = "10.42.0.0/16"
+    network_availability_zones = ["ap-northeast-2a", "ap-northeast-2c"]
+    subnet_newbits             = 8
+    public_subnet_netnums      = [0, 1]
+    private_subnet_netnums     = [10, 11]
+    private_egress_mode        = "nat_gateway"
+    nat_gateway_mode           = "per_az"
+    create_ecr_repositories    = false
+    msk_mode                   = "create"
+    rds_mode                   = "create"
+    rds_instance_class         = "db.t4g.small"
+  }
+
+  assert {
+    condition     = length(local.effective_msk_subnet_ids) == 2
+    error_message = "MSK Serverless must reuse the Phase 11 private subnets."
+  }
+
+  assert {
+    condition     = length(local.effective_rds_subnet_ids) == 2
+    error_message = "RDS must reuse the Phase 11 private subnets."
+  }
+
+  assert {
+    condition = (
+      aws_vpc_security_group_ingress_rule.msk_from_eks[0].from_port == 9098 &&
+      aws_vpc_security_group_ingress_rule.rds_from_eks[0].from_port == 5432
+    )
+    error_message = "created MSK/RDS security groups must expose only their exact service ports from EKS."
+  }
+
+  assert {
+    condition     = length(aws_nat_gateway.private) == 2
+    error_message = "per-AZ NAT mode must create one NAT Gateway in each selected Availability Zone."
+  }
+}
+
+run "reject_network_creation_for_existing_cluster" {
+  command = plan
+
+  variables {
+    environment                = "dev"
+    owner                      = "pair-a"
+    resource_lifecycle         = "mvp-owned"
+    cluster_mode               = "existing"
+    existing_cluster_name      = "shared-dev"
+    network_mode               = "create"
+    vpc_cidr                   = "10.43.0.0/16"
+    network_availability_zones = ["ap-northeast-2a", "ap-northeast-2c"]
+    subnet_newbits             = 8
+    public_subnet_netnums      = [0, 1]
+    private_subnet_netnums     = [10, 11]
+    private_egress_mode        = "nat_gateway"
+    nat_gateway_mode           = "single"
+    create_ecr_repositories    = false
+  }
+
+  expect_failures = [check.network_creation_ownership]
+}
+
+run "reject_created_network_without_egress_choice" {
+  command = plan
+
+  variables {
+    environment                = "dev"
+    owner                      = "pair-a"
+    resource_lifecycle         = "mvp-owned"
+    cluster_mode               = "create"
+    network_mode               = "create"
+    vpc_cidr                   = "10.44.0.0/16"
+    network_availability_zones = ["ap-northeast-2a", "ap-northeast-2c"]
+    subnet_newbits             = 8
+    public_subnet_netnums      = [0, 1]
+    private_subnet_netnums     = [10, 11]
+    private_egress_mode        = "undecided"
+    nat_gateway_mode           = "undecided"
+    create_ecr_repositories    = false
+  }
+
+  expect_failures = [check.private_egress_selection]
+}
+
+run "reject_incomplete_private_endpoint_set" {
+  command = plan
+
+  variables {
+    environment                = "dev"
+    owner                      = "pair-a"
+    resource_lifecycle         = "mvp-owned"
+    cluster_mode               = "create"
+    network_mode               = "create"
+    vpc_cidr                   = "10.45.0.0/16"
+    network_availability_zones = ["ap-northeast-2a", "ap-northeast-2c"]
+    subnet_newbits             = 8
+    public_subnet_netnums      = [0, 1]
+    private_subnet_netnums     = [10, 11]
+    private_egress_mode        = "vpc_endpoints"
+    nat_gateway_mode           = "undecided"
+    interface_vpc_endpoint_services = [
+      "ecr.api",
+      "ecr.dkr",
+      "logs",
+      "sts",
+    ]
+    create_ecr_repositories = false
+  }
+
+  expect_failures = [check.private_endpoint_selection]
+}
+
+run "reject_duplicate_subnet_netnums" {
+  command = plan
+
+  variables {
+    environment                = "dev"
+    owner                      = "pair-a"
+    resource_lifecycle         = "mvp-owned"
+    cluster_mode               = "create"
+    network_mode               = "create"
+    vpc_cidr                   = "10.46.0.0/16"
+    network_availability_zones = ["ap-northeast-2a", "ap-northeast-2c"]
+    subnet_newbits             = 8
+    public_subnet_netnums      = [0, 1]
+    private_subnet_netnums     = [0, 11]
+    private_egress_mode        = "nat_gateway"
+    nat_gateway_mode           = "single"
+    create_ecr_repositories    = false
+  }
+
+  expect_failures = [check.network_cidr_contract]
 }
 
 run "reject_unconfirmed_existing_auto_mode" {

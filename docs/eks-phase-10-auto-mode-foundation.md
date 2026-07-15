@@ -39,7 +39,7 @@ Terraform data source만으로 기존 cluster의 모든 Auto Mode 세부 상태�
 Phase 10은 모든 Auto Mode 운영 설정을 한꺼번에 확정하지 않는다.
 
 - General workload와 Spark batch를 분리하는 custom NodePool/NodeClass, instance family, architecture, Spot/On-Demand, disruption budget은 Phase 12에서 학습하고 선택한다.
-- VPC/subnet/security group/NAT/VPC endpoint의 실제 방식과 값은 Phase 11에서 확정한다.
+- Phase 11은 external/create VPC, public/private subnet, NAT/VPC endpoint와 MSK/RDS security group 구조를 구현했다. 실제 CIDR/AZ/egress 비용 선택, apply와 smoke는 여전히 환경 작업이다.
 - Auto Mode가 load balancing capability를 제공하더라도 공개 ALB의 exposure, DNS, ACM, target type과 route 계약은 Phase 13에서 별도로 적용한다.
 - Metrics Server, Spark Operator, CloudWatch/Prometheus 운영 구성은 Phase 14 이후 범위다.
 - 기존 cluster의 Auto Mode 활성화 작업과 신규 cluster `terraform apply`는 실제 account, 비용, destroy, rollback 승인 뒤 수행한다.
@@ -57,7 +57,7 @@ Auto Mode는 노드 운영 부담을 낮추지만 무제한 자원이나 무비�
 - `custom_node_pools`: 아직 완료되지 않은 `phase-12`
 - `capabilities`: compute/load balancing/block storage 활성 계약
 
-`phase1_handoff.contract_version`은 `2.0`이고 `cluster_compute = "eks-auto-mode"`를 포함한다. B는 이 값을 바탕으로 workload manifest를 만들되 Spark custom NodePool selector가 이미 존재한다고 가정하면 안 된다.
+Phase 10은 `phase1_handoff.contract_version = "2.0"`과 `cluster_compute = "eks-auto-mode"`를 도입했다. Phase 11 network output 추가 뒤 현재 계약은 `2.1`이다. B는 이 값을 바탕으로 workload manifest를 만들되 Spark custom NodePool selector가 이미 존재한다고 가정하면 안 된다.
 
 ## 검증과 완료 기준
 

@@ -1,6 +1,6 @@
 # EKS MVP Phase 7 Network와 ALB Ingress 계약
 
-이 단계는 AskLake의 외부 진입 경로와 private workload 통신에 필요한 선택을 코드로 표현하고, 선택이 끝나지 않은 상태에서는 ALB manifest가 생성되지 않도록 만든 단계다. 실제 AWS Load Balancer Controller, ALB, DNS, ACM certificate, NAT Gateway, VPC endpoint 또는 Pod security group을 생성한 단계는 아니다.
+이 단계는 AskLake의 외부 진입 경로와 private workload 통신에 필요한 선택을 코드로 표현하고, 선택이 끝나지 않은 상태에서는 ALB manifest가 생성되지 않도록 만든 단계다. Phase 7 자체는 실제 AWS Load Balancer Controller, ALB, DNS, ACM certificate, NAT Gateway, VPC endpoint 또는 Pod security group을 생성하지 않는다. 이후 Phase 11이 별도 opt-in VPC/NAT/endpoint foundation을 추가했지만 ALB와 Pod network enforcement는 계속 후속 선택이다.
 
 ## 구현된 경계
 
@@ -15,7 +15,7 @@ Terraform의 `phase7_network_handoff`는 다음 값을 A에서 배포 계층으�
 - private egress와 Pod traffic enforcement의 선택 상태
 - Kubernetes API, ECR/S3/STS, RDS, MSK IAM, Trino, Airflow의 필수 port
 
-기본값은 `ingress_mode=disabled`, `private_egress_mode=undecided`, `pod_network_enforcement=undecided`다. 일부 ALB 값만 미리 채우는 것도 허용하지 않는다. 실제 결정을 승인한 뒤 한 번에 완전한 contract로 전환한다.
+기본값은 `ingress_mode=disabled`, `private_egress_mode=undecided`, `pod_network_enforcement=undecided`다. 일부 ALB 값만 미리 채우는 것도 허용하지 않는다. 실제 결정을 승인한 뒤 한 번에 완전한 contract로 전환한다. 단, `network_mode=create`를 선택하면 Phase 11 gate가 private egress 결정을 필수로 요구한다.
 
 `infra/eks/helm/asklake-ingress` chart는 기본값으로 아무 Ingress도 만들지 않는다. 활성화하면 HTTPS `443`만 열고 ACM certificate를 요구하며 두 Ingress를 같은 명시적 ALB group으로 묶는다. 두 resource로 나누는 이유는 Frontend와 FastAPI target group에 실제 health endpoint를 각각 적용하기 위해서다. `/api` rule의 group order가 `/`보다 먼저다.
 

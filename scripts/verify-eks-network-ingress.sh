@@ -56,8 +56,8 @@ if grep -Eiq 'AKIA[0-9A-Z]{16}|aws_secret_access_key|BEGIN (RSA |OPENSSH |EC )?P
   exit 1
 fi
 
-grep -q 'ingress_mode            = "disabled"' "$ROOT_DIR/infra/eks/terraform/dev.tfvars.example"
-grep -q 'private_egress_mode    = "undecided"' "$ROOT_DIR/infra/eks/terraform/dev.tfvars.example"
-grep -q 'pod_network_enforcement = "undecided"' "$ROOT_DIR/infra/eks/terraform/dev.tfvars.example"
+grep -Eq '^ingress_mode[[:space:]]*=[[:space:]]*"disabled"$' "$ROOT_DIR/infra/eks/terraform/dev.tfvars.example"
+grep -Eq '^private_egress_mode[[:space:]]*=[[:space:]]*"undecided"$' "$ROOT_DIR/infra/eks/terraform/dev.tfvars.example"
+grep -Eq '^pod_network_enforcement[[:space:]]*=[[:space:]]*"undecided"$' "$ROOT_DIR/infra/eks/terraform/dev.tfvars.example"
 
 echo "EKS network and ingress contract verification passed."

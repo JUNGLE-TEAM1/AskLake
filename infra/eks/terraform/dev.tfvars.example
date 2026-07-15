@@ -13,6 +13,17 @@ existing_cluster_name = "REPLACE_WITH_EXISTING_CLUSTER"
 # not contain real subnet IDs.
 control_plane_subnet_ids = []
 
+# Phase 11 keeps existing/shared networking external by default. To create an
+# MVP-owned VPC with a new cluster, select non-overlapping CIDRs and at least
+# two real Availability Zones after inventory. Do not copy these placeholders.
+network_mode               = "external"
+vpc_cidr                   = null
+network_availability_zones = []
+subnet_newbits             = null
+public_subnet_netnums      = []
+private_subnet_netnums     = []
+external_public_subnet_ids = []
+
 endpoint_private_access = true
 endpoint_public_access  = false
 public_access_cidrs     = []
@@ -111,9 +122,14 @@ ingress_host            = null
 ingress_certificate_arn = null
 
 # Study NAT Gateway versus VPC endpoints and the cluster CNI enforcement
-# capabilities before replacing these values. Terraform does not install or
-# take ownership of shared networking add-ons in this phase.
-private_egress_mode    = "undecided"
+# capabilities before replacing these values. network_mode=create requires an
+# explicit egress choice. NAT requires single/per_az cost/availability choice;
+# endpoint/hybrid requires the minimum private AWS service endpoint set.
+private_egress_mode             = "undecided"
+nat_gateway_mode                = "undecided"
+interface_vpc_endpoint_services = []
+
+# Terraform does not install or take ownership of shared networking add-ons.
 pod_network_enforcement = "undecided"
 
 # Phase 8 fixes Secret names and key names only. It never accepts Secret values.

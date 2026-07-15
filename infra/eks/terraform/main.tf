@@ -135,7 +135,7 @@ resource "aws_eks_cluster" "this" {
   }
 
   vpc_config {
-    subnet_ids              = var.control_plane_subnet_ids
+    subnet_ids              = local.effective_cluster_subnet_ids
     endpoint_private_access = var.endpoint_private_access
     endpoint_public_access  = var.endpoint_public_access
     public_access_cidrs     = var.endpoint_public_access ? var.public_access_cidrs : []
@@ -143,7 +143,7 @@ resource "aws_eks_cluster" "this" {
 
   lifecycle {
     precondition {
-      condition     = length(var.control_plane_subnet_ids) >= 2
+      condition     = length(local.effective_cluster_subnet_ids) >= 2
       error_message = "create mode requires at least two reviewed control-plane subnets."
     }
 

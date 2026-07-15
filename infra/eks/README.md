@@ -6,7 +6,7 @@
 
 ## 디렉터리
 
-- `terraform/`: 기존/new EKS Auto Mode cluster handoff, ECR repository, Trino handoff와 opt-in MSK/RDS/S3 data-plane 계약
+- `terraform/`: 기존/new EKS Auto Mode cluster, external/MVP-owned VPC network, ECR repository, Trino handoff와 opt-in MSK/RDS/S3 data-plane 계약
 - `helm/asklake-foundation/`: namespace, workload별 service account, backend/Spark namespace RBAC, non-secret runtime boundary ConfigMap
 - `helm/asklake-ingress/`: 선택 완료 전에는 아무 resource도 만들지 않는 HTTPS ALB routing 계약
 - `values/dev.example.yaml`: B가 manifest render와 fake client test에 사용할 예시 값
@@ -22,6 +22,7 @@
 - `shared` 또는 `external` resource는 이 Terraform state의 destroy 대상으로 가져오지 않는다.
 - workload IAM policy는 B의 최소 권한 요구를 받은 뒤 별도 resource로 추가한다. 현재 chart는 확정된 IAM role annotation만 입력받는다.
 - EKS Auto Mode의 built-in `system`/`general-purpose` NodePool만 cluster 생성 계약에 포함한다. General/Spark custom NodePool, NodeClass, 용량·Spot 정책은 Phase 12에서 실제 workload 요구를 학습하고 선택한 뒤 추가한다.
+- network는 기본 `external`이고 기존/shared VPC를 state에 넣지 않는다. `create`는 신규 MVP-owned cluster에서만 허용하며 실제 CIDR/AZ와 NAT single/per-AZ 또는 VPC endpoint 비용 선택이 끝나기 전에는 plan이 실패한다.
 - ECR 미태그 이미지 retention은 기본값으로 승인하지 않는다. 검토된 값을 명시적으로 입력해야 자동 삭제가 활성화된다.
 - MSK, RDS와 S3는 각각 `disabled`, `existing`, `create` 모드를 사용하며 기본값은 모두 `disabled`다. `create`를 선택해도 Phase 2 inventory와 비용·network·destroy 승인이 끝나기 전에는 apply하지 않는다.
 - generated workload IAM policy는 IRSA 또는 Pod Identity 선택 전까지 role에 연결하지 않는다.
@@ -79,7 +80,7 @@ terraform init
 terraform plan
 ```
 
-`cluster_mode = "existing"`은 기존 cluster를 읽기만 하고 EKS cluster 자체를 state에 넣지 않는다. 이 경로는 `existing_auto_mode_enabled=true`와 실제 Auto Mode node role ARN 없이는 plan이 실패한다. 이는 외부 확인 결과를 기록하는 gate이지 실제 활성 상태를 Terraform이 증명하는 기능은 아니다. `cluster_mode = "create"`는 입력한 control-plane subnet에 compute, load balancing, block storage가 모두 활성화된 Auto Mode cluster를 만든다. 암묵적인 creator admin은 끄고 검토한 IAM role/user를 EKS Access Entry로 등록한다.
+`cluster_mode = "existing"`은 기존 cluster를 읽기만 하고 EKS cluster 자체를 state에 넣지 않는다. 이 경로는 `existing_auto_mode_enabled=true`와 실제 Auto Mode node role ARN 없이는 plan이 실패한다. 이는 외부 확인 결과를 기록하는 gate이지 실제 활성 상태를 Terraform이 증명하는 기능은 아니다. `cluster_mode = "create"`는 external private subnet 또는 `network_mode=create`가 만든 private subnet에 compute, load balancing, block storage가 모두 활성화된 Auto Mode cluster를 만든다. 암묵적인 creator admin은 끄고 검토한 IAM role/user를 EKS Access Entry로 등록한다.
 
 ## Pair B handoff
 
@@ -107,7 +108,7 @@ helm template asklake-foundation \
   -f infra/eks/values/identity/pod-identity.example.yaml
 ```
 
-현재 foundation contract `2.0`은 EKS Auto Mode compute handoff와 frontend, backend, Airflow, Trino, MSK IAM smoke, Spark service account를 제공한다. Replay Producer compatibility input은 `create=false`로 유지하며 ECR repository, service account 또는 workload를 만들지 않는다. `trino_handoff`는 실제 secret 값 없이 image digest, IRSA role ARN, in-cluster Service URL, RDS/S3 network와 Secret reference를 전달한다. AWS inventory가 확정되기 전 nullable 값은 resource 생성 gate로 남고 manifest render·fake client test만 완료할 수 있다.
+현재 foundation contract `2.1`은 EKS Auto Mode compute와 Phase 11 network handoff, frontend, backend, Airflow, Trino, MSK IAM smoke, Spark service account를 제공한다. Replay Producer compatibility input은 `create=false`로 유지하며 ECR repository, service account 또는 workload를 만들지 않는다. `trino_handoff`는 실제 secret 값 없이 image digest, IRSA role ARN, in-cluster Service URL, RDS/S3 network와 Secret reference를 전달한다. AWS inventory가 확정되기 전 nullable 값은 resource 생성 gate로 남고 manifest render·fake client test만 완료할 수 있다.
 
 Phase 3 data-plane Terraform은 MSK Serverless + IAM, private PostgreSQL RDS, 분리된 S3 bucket과 workload별 최소 권한 policy document를 추가한다. MSK topic 생성, RDS의 `airflow_metadata`/`iceberg_catalog` database와 user/grant bootstrap, IAM role attachment는 Terraform resource 생성과 분리된 후속 책임이다. 상세 모드와 미결정 사항은 [Phase 3 Data Plane 계약](../../docs/eks-phase-3-data-plane.md)을 따른다.
 
@@ -122,6 +123,8 @@ Phase 7은 Terraform의 resource-free network handoff와 fail-closed ALB Ingress
 Phase 8은 한 JSON을 기준으로 FastAPI, Airflow, Spark, Trino의 runtime Secret 이름·key·공유 binding·env injection·파일 mount를 값 없이 고정하고 Terraform이 같은 계약을 output한다. delivery는 `disabled`가 기본이며 Phase 5 선택과 결합 검증한다. `ready_for_sync`와 Airflow/AI 선택까지 포함한 full-service Secret contract readiness는 구분한다. 상세 gate는 [Phase 8 런타임 Secret 전달 계약](../../docs/eks-phase-8-runtime-secrets.md)을 따른다.
 
 Phase 10은 신규 EKS를 Auto Mode로 전환하고 기존 Managed Node Group 코드를 제거한다. 기존 cluster 경로는 외부 확인 없이는 닫혀 있고, General/Spark custom NodePool과 실제 AWS smoke는 완료로 간주하지 않는다. 상세 기준은 [Phase 10 EKS Auto Mode Foundation](../../docs/eks-phase-10-auto-mode-foundation.md)을 따른다.
+
+Phase 11은 외부 network 참조와 MVP-owned VPC 생성을 분리하고 public/private subnet, NAT 또는 VPC endpoint egress, EKS/MSK/RDS private placement와 exact port security group을 추가한다. 실제 CIDR/AZ/egress 비용 선택은 example에 기본값으로 넣지 않으며 ALB와 custom NodePool은 후속이다. 상세 기준은 [Phase 11 VPC와 Private Network Foundation](../../docs/eks-phase-11-network-foundation.md)을 따른다.
 
 ## 설계 참고 자료
 

@@ -32,7 +32,7 @@ output "cluster_security_group_id" {
 
 output "cluster_subnet_ids" {
   description = "Control-plane subnet references for inventory and network handoff."
-  value       = try(local.create_cluster ? aws_eks_cluster.this[0].vpc_config[0].subnet_ids : data.aws_eks_cluster.existing[0].vpc_config[0].subnet_ids, [])
+  value       = try(local.create_cluster ? local.effective_cluster_subnet_ids : data.aws_eks_cluster.existing[0].vpc_config[0].subnet_ids, [])
 }
 
 output "auto_mode_handoff" {
@@ -112,7 +112,7 @@ output "trino_handoff" {
 output "phase1_handoff" {
   description = "Non-secret fields Pair B can consume without reading Terraform internals."
   value = {
-    contract_version = "2.0"
+    contract_version = "2.1"
     aws_region       = var.aws_region
     environment      = var.environment
     cluster_name     = local.cluster_name
@@ -126,6 +126,7 @@ output "phase1_handoff" {
     continuous_owner = "ec2-mvp"
     cluster_compute  = "eks-auto-mode"
     auto_mode_output = "auto_mode_handoff"
+    network_output   = "phase11_network_handoff"
     network_outputs = {
       vpc                    = "cluster_vpc_id"
       cluster_security_group = "cluster_security_group_id"
