@@ -146,13 +146,13 @@ variable "rds_multi_az" {
 }
 
 variable "storage_mode" {
-  description = "Disable storage wiring, reference existing buckets, or create MVP-owned buckets."
+  description = "Disable storage wiring, reference unmanaged buckets, adopt existing buckets into this state, or create MVP-owned buckets."
   type        = string
   default     = "disabled"
 
   validation {
-    condition     = contains(["disabled", "existing", "create"], var.storage_mode)
-    error_message = "storage_mode must be disabled, existing, or create."
+    condition     = contains(["disabled", "existing", "managed-existing", "create"], var.storage_mode)
+    error_message = "storage_mode must be disabled, existing, managed-existing, or create."
   }
 }
 
@@ -195,7 +195,7 @@ variable "storage_prefixes" {
 }
 
 variable "storage_sse_algorithm" {
-  description = "Server-side encryption for S3 buckets created by this state, selected after the environment key-management review."
+  description = "Server-side encryption for S3 buckets managed by this state, selected after the environment key-management review."
   type        = string
   default     = "AES256"
 

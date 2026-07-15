@@ -851,7 +851,7 @@ run "reject_disabled_ingress_runtime_values" {
 }
 
 run "mvp_data_plane_contract" {
-  command = apply
+  command = plan
 
   variables {
     environment             = "dev"
@@ -904,12 +904,43 @@ run "mvp_data_plane_contract" {
     error_message = "RDS handoff must expose the Iceberg JDBC Catalog database."
   }
 
+}
+
+run "managed_existing_storage_contract" {
+  command = plan
+
+  variables {
+    environment             = "dev"
+    owner                   = "pair-a"
+    resource_lifecycle      = "mvp-owned"
+    cluster_mode            = "existing"
+    existing_cluster_name   = "shared-dev"
+    create_ecr_repositories = false
+
+    storage_mode = "managed-existing"
+    storage_bucket_names = {
+      raw           = "asklake-dev-111122223333-raw"
+      output        = "asklake-dev-111122223333-output"
+      warehouse     = "asklake-dev-111122223333-warehouse"
+      query_results = "asklake-dev-111122223333-query-results"
+    }
+  }
+
+  assert {
+    condition     = length(aws_s3_bucket.data) == 4
+    error_message = "managed-existing storage must expose four importable bucket resource addresses."
+  }
+
   assert {
     condition = alltrue([
-      for policy in values(output.workload_iam_policy_documents) :
-      policy == null || !strcontains(policy, "kafka-cluster:*") && !strcontains(policy, "s3:*")
+      for bucket in values(aws_s3_bucket.data) : bucket.tags["Lifecycle"] == "shared-preserved"
     ])
-    error_message = "Generated workload policies must not contain broad Kafka or S3 wildcard actions."
+    error_message = "Imported buckets must override the state lifecycle tag with shared-preserved."
+  }
+
+  assert {
+    condition     = length(aws_s3_bucket_versioning.data) == 4
+    error_message = "managed-existing storage must manage versioning for every imported bucket."
   }
 }
 

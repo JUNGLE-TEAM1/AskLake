@@ -6,6 +6,8 @@ locals {
   create_rds     = var.rds_mode == "create"
   reference_rds  = var.rds_mode != "disabled"
   create_storage = var.storage_mode == "create"
+  adopt_storage  = var.storage_mode == "managed-existing"
+  manage_storage = local.create_storage || local.adopt_storage
   use_storage    = var.storage_mode != "disabled"
 
   msk_cluster_arn = local.create_msk ? try(aws_msk_serverless_cluster.mvp[0].arn, null) : var.existing_msk_cluster_arn
@@ -105,7 +107,7 @@ check "storage_prefix_contract" {
 
 check "storage_encryption_contract" {
   assert {
-    condition = !local.create_storage || var.storage_sse_algorithm != "aws:kms" || (
+    condition = !local.manage_storage || var.storage_sse_algorithm != "aws:kms" || (
       try(trimspace(var.storage_kms_key_arn), "") != ""
     )
     error_message = "aws:kms storage encryption requires an approved storage_kms_key_arn."
@@ -201,10 +203,18 @@ resource "aws_db_instance" "metadata" {
 }
 
 resource "aws_s3_bucket" "data" {
-  for_each = local.create_storage ? var.storage_bucket_names : {}
+  for_each = local.manage_storage ? var.storage_bucket_names : {}
 
   bucket        = each.value
   force_destroy = false
+
+  tags = {
+    Lifecycle = local.adopt_storage ? "shared-preserved" : var.resource_lifecycle
+  }
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "aws_s3_bucket_public_access_block" "data" {

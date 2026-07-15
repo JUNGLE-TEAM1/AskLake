@@ -1,6 +1,6 @@
 # EKS MVP Phase 3 Data Plane 계약
 
-이 문서는 실제 AWS resource를 생성했다는 기록이 아니다. Pair A가 MSK Serverless, PostgreSQL RDS와 S3를 `disabled`, `existing`, `create` 세 모드로 표현하고, 실제 환경 결정 전에도 정적으로 검증할 수 있게 만든 Terraform 계약이다.
+이 문서는 Pair A가 MSK Serverless와 PostgreSQL RDS를 `disabled`, `existing`, `create`, S3를 `disabled`, `existing`, `managed-existing`, `create` 모드로 표현하고 실제 환경 결정 전에도 정적으로 검증할 수 있게 만든 Terraform 계약이다.
 
 ## 현재 결과
 
@@ -9,7 +9,7 @@
 - MSK는 Serverless와 IAM 인증만 허용한다. EKS 안에 Kafka 또는 Redpanda broker를 만들지 않는다.
 - MSK test topic과 consumer group 이름을 EKS MVP 전용 값으로 고정해 기존 EC2 Continuous consumer와 격리한다.
 - RDS create 모드는 private PostgreSQL 단일 인스턴스를 만들 수 있는 입력을 제공한다. 암호화, RDS 관리 master secret, backup, deletion protection과 final snapshot을 기본 안전 경계로 둔다.
-- S3는 Raw, Output, Warehouse, Query Result bucket을 분리하고 public access 차단, versioning과 server-side encryption을 적용한다.
+- S3는 Raw, Output, Warehouse, Query Result bucket을 분리하고 public access 차단, versioning과 server-side encryption을 적용한다. `managed-existing`은 기존 bucket을 import해 관리하면서 bucket 삭제를 Terraform lifecycle로 차단한다.
 - workload별 MSK/S3 최소 권한은 IAM policy document로 생성한다. `kafka-cluster:*`, `s3:*`와 전체 resource wildcard는 사용하지 않는다.
 - 실제 endpoint, ARN, bucket name과 secret reference를 포함할 수 있는 output은 sensitive로 표시한다.
 
@@ -42,7 +42,23 @@ IAM policy document는 권한 요구의 결과물이지 아직 role attachment�
 
 `existing`은 AWS resource를 Terraform state의 생성·삭제 대상으로 가져오지 않고 배포 환경이 제공한 reference만 검증하고 출력한다. MSK는 cluster ARN과 IAM bootstrap broker, RDS는 endpoint와 managed secret ARN, S3는 네 bucket 이름이 필요하다.
 
+`managed-existing`은 S3 전용이다. 배포 환경의 기존 네 bucket을 `aws_s3_bucket.data`와 public-access-block, encryption, versioning resource에 각각 import한 뒤 이 state가 설정을 관리한다. bucket 자체는 `prevent_destroy=true`, `force_destroy=false`, `Lifecycle=shared-preserved`로 보호한다. import 직후 plan에서 bucket create, replace 또는 delete가 있으면 apply하지 않는다.
+
 `create`는 이 state가 MVP 전용 resource를 소유할 때만 사용한다. MSK와 RDS에는 승인된 private subnet과 security group이 필요하고, RDS instance class는 반드시 명시해야 한다. S3 bucket 이름은 전역 중복이 없도록 배포 환경에서 제공한다.
+
+## 2026-07-15 기존 S3 관리 전환 결과
+
+서울 리전 dev 계정의 기존 Raw, Output, Warehouse, Query Result bucket 네 개를 삭제나 재생성 없이 현재 EKS Terraform state로 가져왔다. 실제 이름은 저장소에 기록하지 않고 로컬 배포 입력으로만 전달했다.
+
+- import 전 plan: S3 import 대상 16개 create, 기존 EKS/MSK/VPC 39개 no-op
+- import 대상: bucket, Public Access Block, server-side encryption, versioning을 bucket별 네 주소로 관리
+- import 후 plan: create/replace/delete 0개, lifecycle tag와 versioning update 8개
+- apply 결과: 0 added, 8 changed, 0 destroyed
+- 최종 plan: `No changes`
+- 실제 검증: 네 bucket 모두 versioning `Enabled`, Public Access Block 네 항목 `true`, `Lifecycle=shared-preserved`
+- 객체 검증: 네 bucket에서 기존 객체 목록과 표본 key가 유지됨을 확인했으며 Terraform은 객체를 이동하거나 삭제하지 않았다.
+
+bucket resource에는 `prevent_destroy=true`와 `force_destroy=false`가 함께 적용된다. 따라서 이 configuration에서 bucket 삭제 plan은 실패해야 한다. 단, 현재 Terraform state는 로컬 ignored file이므로 다른 작업자나 CI가 같은 인프라를 관리하려면 remote state/backend 전환을 별도 수행해야 한다. 이 제한을 해소하기 전에는 다른 state에서 동일 bucket을 다시 import하거나 apply하지 않는다.
 
 ## 검증과 완료 기준
 

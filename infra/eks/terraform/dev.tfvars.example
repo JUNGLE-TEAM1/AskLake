@@ -95,9 +95,11 @@ rds_instance_class     = null
 rds_engine_version     = null
 rds_multi_az           = false
 
-# For storage_mode = "existing" or "create", replace every empty value with
-# deployment-owned names. AES256 is the no-extra-key baseline. Switching to
-# aws:kms requires a reviewed key ARN and workload KMS permissions.
+# For storage_mode = "existing", "managed-existing", or "create", replace every
+# empty value with deployment-owned names. managed-existing is only for buckets
+# that will be imported into this state; the bucket resources have destroy
+# protection and remain shared-preserved. AES256 is the no-extra-key baseline.
+# Switching to aws:kms requires a reviewed key ARN and workload KMS permissions.
 storage_bucket_names = {
   raw           = ""
   output        = ""

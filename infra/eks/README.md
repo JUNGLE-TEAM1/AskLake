@@ -27,7 +27,7 @@
 - EKS Auto Mode의 built-in `system`/`general-purpose` NodePool은 cluster bootstrap 계약에 유지한다. General/Spark custom NodePool과 NodeClass는 Phase 12 chart가 제공하지만 기본값은 disabled이며 용량·Spot·disruption·selector를 학습하고 선택하기 전에는 렌더되지 않는다.
 - network는 기본 `external`이고 기존/shared VPC를 state에 넣지 않는다. `create`는 신규 MVP-owned cluster에서만 허용하며 실제 CIDR/AZ와 NAT single/per-AZ 또는 VPC endpoint 비용 선택이 끝나기 전에는 plan이 실패한다.
 - ECR 미태그 이미지 retention은 기본값으로 승인하지 않는다. 검토된 값을 명시적으로 입력해야 자동 삭제가 활성화된다.
-- MSK, RDS와 S3는 각각 `disabled`, `existing`, `create` 모드를 사용하며 기본값은 모두 `disabled`다. `create`를 선택해도 Phase 2 inventory와 비용·network·destroy 승인이 끝나기 전에는 apply하지 않는다.
+- MSK와 RDS는 `disabled`, `existing`, `create`, S3는 추가로 기존 bucket을 안전하게 import하는 `managed-existing` 모드를 사용하며 기본값은 모두 `disabled`다. `create`를 선택해도 Phase 2 inventory와 비용·network·destroy 승인이 끝나기 전에는 apply하지 않는다.
 - generated workload IAM policy는 IRSA 또는 Pod Identity 선택 전까지 role에 연결하지 않는다.
 - `workload_identity_mode` 기본값은 `disabled`다. IRSA와 Pod Identity를 모두 지원하지만 실제 cluster의 OIDC provider 또는 Pod Identity Agent 소유권을 확인한 뒤 하나를 명시적으로 선택한다.
 - 신규 EKS에서 IRSA를 선택하면 cluster 준비와 OIDC provider 확인을 먼저 끝내고 다음 승인된 plan에서 identity를 활성화한다. 생성 예정 ARN/issuer는 IAM resource의 `for_each` key로 사용하지 않는다.
