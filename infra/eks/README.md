@@ -134,7 +134,7 @@ Phase 11은 외부 network 참조와 MVP-owned VPC 생성을 분리하고 public
 
 Phase 12는 custom NodeClass용 전용 node role/access entry와 General/Spark NodePool chart를 추가한다. 기본 렌더는 비어 있고 테스트 fixture의 숫자는 운영 권장값이 아니다. 실제 workload selector, 비용·용량·disruption 선택과 apply/scheduling/scale smoke는 [Phase 12 Auto Mode NodeClass와 NodePool](../../docs/eks-phase-12-auto-mode-node-pools.md)을 따른다.
 
-Phase 13은 별도 AWS Load Balancer Controller를 설치하지 않고 EKS Auto Mode `IngressClassParams`/`IngressClass`로 하나의 HTTPS ALB를 관리한다. 기본 렌더는 비어 있고 실제 subnet/DNS/ACM 값은 저장소 밖에 둔다. apply/destroy confirmation, namespace selector와 Ingress-first cleanup은 [Phase 13 Auto Mode ALB 진입 경로](../../docs/eks-phase-13-auto-mode-alb.md)을 따른다.
+Phase 13은 별도 AWS Load Balancer Controller를 설치하지 않고 EKS Auto Mode `IngressClassParams`/`IngressClass`로 하나의 ALB를 관리한다. dev MVP는 AWS 기본 DNS + HTTP를 사용하고 사용자 도메인·ACM·HTTPS는 후속 결정으로 남긴다. 기본 렌더는 비어 있고 실제 subnet/DNS/ACM 값은 저장소 밖에 둔다. apply/destroy confirmation, namespace selector, Helm ownership preflight와 Ingress-first cleanup은 [Phase 13 Auto Mode ALB 진입 경로](../../docs/eks-phase-13-auto-mode-alb.md), [ALB route 적용 기록](../../docs/eks-day15-alb-runtime-evidence.md)을 따른다.
 
 Phase 14는 ALB가 참조하는 `frontend:80`과 `fastapi:8080` Service 및 두 Deployment를 추가한다. immutable receipt, runtime ConfigMap/Secret, General NodePool과 B의 FastAPI runtime 경계가 모두 준비되기 전에는 chart가 아무것도 렌더하지 않는다. 상세 기준은 [Phase 14 Frontend·FastAPI Workload](../../docs/eks-phase-14-web-workloads.md)을 따른다.
 

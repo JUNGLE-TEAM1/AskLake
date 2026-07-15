@@ -109,7 +109,11 @@ fi
 if [[ "$ingress_count" -eq 2 ]]; then
   kubectl get service frontend fastapi -n "$ASKLAKE_EKS_NAMESPACE" >/dev/null
 fi
-kubectl apply --server-side --dry-run=server -f "$RENDERED_FILE" >/dev/null
+helm upgrade --install asklake-ingress "$CHART_DIR" \
+  --namespace "$ASKLAKE_EKS_NAMESPACE" \
+  --create-namespace=false \
+  -f "$VALUES_FILE" \
+  --dry-run=server >/dev/null
 
 helm upgrade --install asklake-ingress "$CHART_DIR" \
   --namespace "$ASKLAKE_EKS_NAMESPACE" \

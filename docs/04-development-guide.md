@@ -663,6 +663,12 @@ bash scripts/verify-eks-foundation.sh
 
 Phase 13 ingress는 저장소 밖 values 파일로 먼저 `--render`한다. `routesEnabled=false` foundation 적용은 target cluster/context·namespace label·IngressClassParams API와 server-side dry-run을 확인하고 전용 confirmation으로 class/params만 설치한다. 이 상태는 Service를 요구하지 않고 ALB도 요청하지 않는다. 최종 Frontend/FastAPI Service가 준비된 뒤 `routesEnabled=true`를 적용할 때만 두 Service와 비용 confirmation을 요구하고 ALB를 생성한다. self-managed controller용 class/group/scheme/certificate annotation을 다시 추가하지 않는다. 삭제는 Ingress finalizer 완료, Helm class 삭제, AWS 잔여 ALB 확인, cluster/VPC 순서다. 명령과 runtime 증거는 [Phase 13 Auto Mode ALB 진입 경로](eks-phase-13-auto-mode-alb.md)를 따른다.
 
+기존 release upgrade의 API server preflight는 `helm upgrade --install --dry-run=server`로 수행해 Helm field ownership을 유지한다. 별도 `kubectl apply --server-side` manager로 IngressClassParams를 인수하지 않는다. route 적용 후에는 아래 runtime verifier로 두 Ingress의 shared ALB, 2개 AZ, group별 healthy Pod target 2개 이상, `/`, `/api/health`와 RDS health를 확인한다. 실제 hostname과 ARN은 출력하거나 Git에 기록하지 않는다. 적용 결과는 [EKS 15일차 ALB route 적용 기록](eks-day15-alb-runtime-evidence.md)을 따른다.
+
+```bash
+bash scripts/verify-eks-day15-alb-runtime.sh
+```
+
 15일차 ALB·Secret·S3 통합을 시작하기 전에는 아래 read-only capture로 Frontend/FastAPI replica와 Service endpoint, RDS health, Ingress/ExternalSecret 부재, 수동 runtime Secret key, SecretStore와 General node 상태를 비밀 제외 JSON으로 고정한다. `--expect-pre-change`는 ALB route나 ExternalSecret을 적용하기 전 한 번만 사용하는 정확한 Phase 0 gate다. 적용 후 상태 확인에는 `--capture`를 사용한다. 기준 판정과 rollback 경계는 [EKS 15일차 통합 마무리 Phase 0 기준점](eks-day15-integration-baseline.md)을 따른다.
 
 ```bash
