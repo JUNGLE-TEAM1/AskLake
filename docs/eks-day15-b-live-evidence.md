@@ -12,7 +12,9 @@
 - Frontend Pod에서 `http://fastapi:8080/api/health`를 5회 호출해 모두 HTTP 200과 `database.ok=true`를 확인했다. `http://frontend:80/`도 HTTP 200이었다.
 - FastAPI startup/readiness는 DB-aware `/api/health`, liveness는 TCP 8080으로 분리돼 있다.
 
-외부 ALB URL과 `/api` route는 Pair A 소유다. 이 문서는 cluster 내부 Service까지의 B handoff만 완료로 판정하며 외부 URL 성공을 대신 주장하지 않는다.
+2026-07-16에는 scheduled tick 경쟁 수정 commit `059d8eaa`를 Backend-only 새 immutable AMD64 image로 전달하고 기존 `asklake-web` release를 atomic upgrade했다. revision 2에서 Frontend image와 replica 수는 그대로 유지됐고, 이전 Backend ReplicaSet은 0으로 줄고 새 ReplicaSet이 ready `2/2`가 됐다. 새 두 Pod는 restart 0이었으며 각 Pod의 localhost health, Frontend→FastAPI Service health가 모두 HTTP 200과 `database.ok=true`를 반환했다. rollback 기준은 superseded revision 1과 Git 밖의 이전 Backend digest receipt다.
+
+외부 ALB와 `/api` route의 소유권은 Pair A에 남는다. 재배포 검증 시 A의 `asklake-ingress`가 만든 internet-facing ALB는 `active`, 새 Backend target 두 개와 Frontend target 두 개는 `healthy`였고 외부 `/api/health`와 `/`가 각각 HTTP 200을 반환했다.
 
 ## Web Pod 자동복구
 
@@ -60,6 +62,5 @@ FastAPI Service health를 1초마다 호출하면서 replica 하나를 삭제했
 ## 남은 수요일 통합 gate
 
 - Backend Pod가 EKS Pod Identity로 `asklake-dev-backend` role을 획득하는 것은 확인했다. 첫 Raw S3 목록 검증은 요청에 `Prefix`가 없어 IAM `s3:prefix` 조건과 맞지 않아 `AccessDenied`였으며 object 생성 전 실패했다. S3 positive smoke는 완료하지 않았다.
-- 외부 ALB URL은 Pair A route가 준비된 뒤 팀 통합으로 확인한다.
 
-그러므로 이 기록은 B web workload, RDS health, Pod 자동복구, 두 replica 안전성, Continuous 경계와 EKS→MSK network/IAM·test topic metadata의 완료 증거다. `eks-roadmap.md`의 수요일 전체 통과 조건인 S3 positive smoke와 외부 URL까지 완료됐다고 선언하지 않는다.
+그러므로 이 기록은 B web workload, RDS health, Pod 자동복구, 두 replica 안전성, Continuous 경계, 외부 ALB web/API route와 EKS→MSK network/IAM·test topic metadata의 완료 증거다. `eks-roadmap.md`의 수요일 전체 통과 조건 중 S3 positive smoke는 아직 완료됐다고 선언하지 않는다.
