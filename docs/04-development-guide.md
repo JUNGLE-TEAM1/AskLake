@@ -873,7 +873,7 @@ Windows에서 FastAPI 의존성이 저장소 가상환경에만 설치돼 있으
 
 ## 14) EKS MVP workload 검증
 
-EKS workload chart는 foundation chart와 분리된 `infra/eks/helm/asklake-workloads`에 있다. 실제 account, ECR repository, digest, bucket, endpoint는 git에 저장하지 않고 배포 시 values로 주입한다. credential은 values에 넣지 않고 사전에 생성한 `asklake-backend-runtime`, `asklake-trino-client-tls` Secret key를 참조한다.
+EKS workload chart는 foundation chart와 분리된 `infra/eks/helm/asklake-workloads`에 있다. 실제 account, ECR repository, digest, bucket, endpoint는 git에 저장하지 않고 배포 시 values로 주입한다. credential은 values에 넣지 않고 A가 사전에 생성한 `asklake-backend-runtime`, `asklake-airflow-runtime`, `asklake-spark-runtime`, `asklake-trino-runtime` Secret key/file을 정확히 참조한다.
 
 ```bash
 # Helm 3이 PATH에 있는 경우
@@ -883,11 +883,21 @@ scripts/verify-eks-workloads.sh
 ASKLAKE_HELM_BIN=/path/to/helm scripts/verify-eks-workloads.sh
 
 cd backend
+.venv/bin/python -m pip install -r requirements.txt
+npm ci
+npm run test:spark-kubernetes
 .venv/bin/python -m unittest \
+  tests.test_object_storage_mode \
   tests.test_eks_runtime_boundary \
+  tests.test_dashboard_live_results \
   tests.test_etl_job_delete -v
+npm run verify:airflow-catalog-wiring
 ```
 
-검증 스크립트는 Helm schema/lint/render, Deployment·Service 개수, ClusterIP, health check, digest image, ConfigMap/Secret 경계와 Continuous/Spark runner 설정을 확인한다. Secret, `LoadBalancer`, `StatefulSet`, replay producer 또는 static AWS key가 chart에 들어오면 실패한다.
+검증 스크립트는 Helm schema/lint/render, Frontend/FastAPI/Airflow/Trino resource 개수, ClusterIP, health check, digest image, ConfigMap/Secret 경계, least-privilege RBAC, Continuous 경계, MSK IAM과 bounded Spark smoke 설정을 확인한다. Secret, `LoadBalancer`, `StatefulSet`, replay producer, static AWS key 또는 mutable image가 chart에 들어오면 실패한다. `.github/workflows/eks-b-workload-checks.yml`은 같은 계약 테스트와 Frontend/Backend/Spark/Airflow `linux/amd64` Docker build를 PR에서 실행한다. Trino ECR mirror/digest는 A의 foundation 입력이므로 이 image build matrix에 포함하지 않는다.
 
-chart 적용 전 EKS foundation이 `asklake-dev` namespace와 `asklake-frontend`, `asklake-backend` ServiceAccount를 제공해야 한다. Kubernetes Spark provider는 이번 범위에 없으므로 workload 배포 검증과 실제 ETL 실행 검증을 구분한다.
+chart 적용 전 EKS foundation은 `asklake-dev` namespace, `asklake-frontend`, `asklake-backend`, `asklake-airflow`, `asklake-msk-smoke`, `asklake-spark`, `asklake-trino` ServiceAccount/IRSA, Spark operator, RDS/MSK/S3/ECR과 네 runtime Secret을 제공해야 한다. `asklake-backend`와 `asklake-spark`는 각각 SparkApplication과 executor Pod를 관리하므로 `automountServiceAccountToken: true`여야 한다. 나머지 ServiceAccount의 Kubernetes API token은 끈다. 정상 install은 opt-in smoke 두 개를 만들지 않는다.
+
+AWS 입력이 준비되면 먼저 `mskSmoke.create=true`로 metadata smoke를 실행하고 성공 후 `sparkApplication.create=true`, 고유 `runId`/`jobId`, producer receipt의 `sparkApplication.kafka.fixtureBatchId`로 bounded Kafka fixture smoke를 실행한다. Spark smoke는 실행 시점의 `earliest`~`latest`를 읽되 해당 `raw.fixture_batch_id`만 남겨 전용 `iceberg.asklake.eks_mvp_fixture` table을 replace commit하므로 이전 smoke batch나 Continuous 소유권과 섞이지 않는다. 그 다음 Trino에서 `SELECT count(*) FROM iceberg.asklake.eks_mvp_fixture`와 snapshot/file evidence를 조회하고 row count가 `sparkApplication.kafka.expectedCount`(기본 100)와 같은지 비교한다. 이 live 결과는 B 코드만으로 독립 생성할 수 없고 A의 endpoint, fixture topic, IRSA, bucket, Secret, ECR digest가 실제로 연결되어야 한다.
+
+일반 FastAPI batch 실행은 `ASKLAKE_SPARK_RUNNER=kubernetes`에서 deterministic `SparkApplication`을 제출한다. provider unit test는 두 replica가 같은 run identity를 사용하고, create 응답 유실 뒤 한 번의 POST만으로 복구하며, 다른 identity object를 거절하는지 검증한다. 실제 cluster smoke에서는 FastAPI Pod 하나를 Spark 실행 중 종료한 뒤 같은 `runId` 재요청이 새 Spark 작업을 중복 생성하지 않고 기존 object를 복구하는지도 확인한다.

@@ -30,7 +30,8 @@ AI service guardrails, secret isolation, private Compose networking, and deploym
 | --- | --- | --- | --- | --- | --- |
 | Frontend UI checks before merge | GitHub Actions workflow running `cd frontend && npm run verify:ui-regressions && npm run build` | `enabled` | block merge when required check is enabled and the workflow fails | maintainer | PR에서 SQL/Catalog/Dashboard UI regression contract와 Vite build를 함께 확인 |
 | Prod compose config check | `docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml config --quiet` and `backend/scripts/verify-production-spark-contract.mjs` | `manual` | block operator deploy when Compose, Spark REST, UID 185 mounts, or Docker-socket contract is invalid | maintainer | CI required check 전환 전까지 PR과 배포 직전에 수동 실행 |
-| Backend deploy image build | CI/deploy workflow candidate running `docker build -t asklake-backend-deploy-check:local backend` | `planned` | catch Python/package incompatibility before EC2 compose rebuild | maintainer | FastAPI backend uses `python:3.13-slim` and `backend/requirements.txt` |
+| Backend deploy image build | `.github/workflows/eks-b-workload-checks.yml` Buildx matrix | `enabled` | fail matching PR when the backend runtime cannot build for `linux/amd64` | maintainer | the same matrix builds Frontend, Spark runtime, and Airflow; Trino mirror remains an A/foundation input |
+| EKS B workload contract | `.github/workflows/eks-b-workload-checks.yml` plus `scripts/verify-eks-workloads.sh` | `enabled` | fail matching PR on Helm schema/render, Secret/RBAC boundary, mutable image, MSK/Spark contract, focused backend tests, or AMD64 image build failure | maintainer | live AWS smoke remains deploy-time because CI has no RDS/MSK/S3/IRSA resources |
 | Secret scanning / push protection | GitHub repository setting | `unknown` | block or warn on secret push | repo admin | repository admin 확인 필요 |
 | Protected integration branches | GitHub repository ruleset on `main`, `dev`, and `pair` | `enabled` | block direct push or force push; require changes through PR | repo admin | ruleset: `Push 금지` |
 | PR source branch policy | GitHub Actions check required by ruleset on `main` and `dev` | `enabled` | block PR merge when source branch does not match the allowed chain or linked issue target | repo admin | `main <- dev`; `dev <- pair1/2/3` 또는 지원 work/`<type>-#<issue>` 브랜치 + linked issue `Target Branch: dev` |
@@ -65,7 +66,7 @@ AI service guardrails, secret isolation, private Compose networking, and deploym
 | Deferred item | Reason |
 | --- | --- |
 | CODEOWNERS review | ownership 기준이 아직 정해지지 않았다. |
-| Backend integration CI | backend scaffold가 아직 없다. |
+| Live AWS integration CI | RDS/MSK/S3/EKS/IRSA fixture를 일반 PR에 제공하지 않는다. |
 
 ### Common Failure And Fix
 
@@ -107,15 +108,15 @@ Scenario audit은 새 hard rule을 추가하는 절차가 아니다.
 | --- | --- | --- | --- |
 | Frontend UI checks | yes on matching PR paths | `frontend` | UI regression contracts and TypeScript/Vite build pass |
 | Prod compose config | no, local/manual until CI exists | `deploy/docker-compose.prod.yml` | `TRINO_ENABLED=false` excludes every Trino-profile service without Trino secrets/files/buckets; `true` plus `COMPOSE_PROFILES=trino` renders the coordinator/bootstrap/workers with internal + outbound networks |
-| Backend deploy image build | no, local/manual until CI exists | `backend/Dockerfile`, `backend/requirements.txt` | backend Docker image builds with production Python base image |
+| Backend deploy image build | yes on matching PR paths | `backend/Dockerfile`, `backend/requirements.txt` | backend Docker image builds for `linux/amd64` with production Python base image |
 | Deploy dependency verification | manual | deploy Compose/env, health JSON readiness, Spark REST create/status contract, backend/frontend/Spark/Trino images, Airflow DAG import | `tests/deploy/deploy-scripts-regression.sh`, `backend/scripts/verify-production-spark-contract.mjs`, and `scripts/verify-deploy-dependencies.sh` pass before deploy |
 | Trino contract verification | matching backend/frontend paths | Query Run, registration, result storage, collector fencing, actor reservation, timeline state | `verify:trino-query-foundation`, `verify:query-engine-registration`, `verify:trino-result-storage`, `verify:trino-collector-resilience`, `verify:trino-submission-guard`, `test:trino-timeline` pass |
 | Trino production readiness | deploy-time when `TRINO_ENABLED=true` | TLS/auth, read-only query identity, materializer CTAS/describe/drop, AWS S3 Warehouse/Query Result bucket round trip through EC2 instance profile | `verify:trino-production-readiness` passes after Compose health |
 | AWS S3 startup readiness | every production Compose startup | Raw bucket list, Output bucket put/head/delete with EC2 instance role | `aws-s3-readiness` completes before backend starts; bucket auto-create and static AWS keys are forbidden |
 | AWS S3 output identity | frontend build and every Spark run/Catalog publish | Target UI bucket, Spark writer bucket, Catalog storage location | production frontend receives `ASKLAKE_SPARK_OUTPUT_BUCKET`; only legacy `asklake-output` roots are normalized and explicit custom buckets remain unchanged |
-| EKS application workload | manual until deployment CI exists | Frontend/FastAPI Helm schema, digest image, ClusterIP, probe, ConfigMap/Secret refs, EC2-owned Continuous boundary | `scripts/verify-eks-workloads.sh` and focused backend runtime-boundary tests pass; chart contains no Secret, static AWS key, replay producer, LoadBalancer, StatefulSet, or mutable image tag |
+| EKS application workload | yes on matching PR paths | Frontend/FastAPI/Airflow/Trino Helm schema, digest image, ClusterIP, probe, ConfigMap/Secret refs, RBAC, Kubernetes Spark recovery, MSK IAM, EC2-owned Continuous boundary | `scripts/verify-eks-workloads.sh`, Node provider tests, focused FastAPI tests and four B-owned AMD64 image builds pass; chart contains no Secret, static AWS key, replay producer, LoadBalancer, StatefulSet, or mutable image tag |
 | Production legacy demo restart | focused auth tests + deploy preflight | backend startup account/session state and frontend login hint | default production disables/revokes legacy demo identities; matching opt-in flags preserve existing status/session without reactivating an explicitly disabled account |
-| PR event checks | no | future GitHub Actions | changed code satisfies required checks |
+| PR event checks | partial | frontend and EKS B matching paths | configured deterministic checks pass; repository admin separately decides whether each check is required |
 | Read-only lifecycle audit | manual | docs, PR, branch status | drift is reported without changing remote state |
 | Admin setting audit | manual | branch protection, secrets, rulesets | actual settings match inventory or gap is recorded |
 

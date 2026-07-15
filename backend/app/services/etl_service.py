@@ -812,7 +812,7 @@ def run_due_scheduled_jobs(
     jobs = [
         job
         for job in etl_repository.list_job_models(db)
-        if job_visible_in_current_control_plane(job.execution_mode)
+        if job_visible_in_current_control_plane(getattr(job, "execution_mode", None))
     ]
     if request.job_id:
         jobs = [job for job in jobs if job.id == request.job_id]
@@ -2388,15 +2388,9 @@ def writer_mode_for_pipeline(source_type: str, source_config: Any) -> str:
 
 
 def run_spark_job(db: Session, job: ETLJobModel, command: str, run_id: str) -> dict[str, Any]:
-    if spark_kubernetes_mode_enabled():
-        raise ApiError(
-            "SPARK_KUBERNETES_PROVIDER_NOT_IMPLEMENTED",
-            "Kubernetes Spark execution is not available in this release.",
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-            {"runner": "kubernetes"},
-        )
     ensure_batch_iceberg_target(db, job)
     rest_mode = spark_rest_mode_enabled()
+    kubernetes_mode = spark_kubernetes_mode_enabled()
     poll_timeout_ms = spark_rest_poll_timeout_ms()
     state_file = spark_rest_submission_state_file(run_id)
     incremental_since, incremental_before = source_incremental_window(db, job, run_id)
@@ -2434,7 +2428,7 @@ def run_spark_job(db: Session, job: ETLJobModel, command: str, run_id: str) -> d
             "runId": run_id,
         },
         error_marker="ASKLAKE_SPARK_RUN_ERROR",
-        timeout_seconds=spark_python_bridge_timeout_seconds(poll_timeout_ms) if rest_mode else 900,
+        timeout_seconds=spark_python_bridge_timeout_seconds(poll_timeout_ms) if rest_mode or kubernetes_mode else 900,
         timeout_recovery=(lambda: recover_spark_rest_submission(state_file)) if rest_mode else None,
     )
     if source_object_inventory is not None:
@@ -3218,6 +3212,7 @@ def spark_result_manifest(result: dict[str, Any], run_id: str) -> dict[str, Any]
             "inputBytes",
             "inputFileCount",
             "inputRows",
+            "kubernetesExecution",
             "outputFileCount",
             "icebergCommit",
             "outputPath",

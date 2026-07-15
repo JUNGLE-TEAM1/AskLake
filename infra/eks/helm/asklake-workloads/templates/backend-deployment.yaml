@@ -19,6 +19,8 @@ spec:
       {{- include "asklake-workloads.selectorLabels" (dict "component" "backend") | nindent 6 }}
   template:
     metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/backend-configmap.yaml") . | sha256sum }}
       labels:
         {{- include "asklake-workloads.selectorLabels" (dict "component" "backend") | nindent 8 }}
     spec:
@@ -40,8 +42,13 @@ spec:
             {{- $secretName := .Values.backend.runtimeSecret.name }}
             {{- range $envName, $secretKey := dict
               "DATABASE_URL" .Values.backend.runtimeSecret.keys.databaseUrl
-              "BOOTSTRAP_ADMIN_EMAIL" .Values.backend.runtimeSecret.keys.bootstrapAdminEmail
               "BOOTSTRAP_ADMIN_PASSWORD" .Values.backend.runtimeSecret.keys.bootstrapAdminPassword
+              "AI_GATEWAY_SERVICE_TOKEN" .Values.backend.runtimeSecret.keys.aiGatewayServiceToken
+              "AI_MCP_SERVICE_TOKEN" .Values.backend.runtimeSecret.keys.aiMcpServiceToken
+              "AI_CONTEXT_SIGNING_SECRET" .Values.backend.runtimeSecret.keys.aiContextSigningSecret
+              "OPENAI_API_KEY" .Values.backend.runtimeSecret.keys.openaiApiKey
+              "AIRFLOW_API_TOKEN" .Values.backend.runtimeSecret.keys.airflowApiToken
+              "AIRFLOW_PASSWORD" .Values.backend.runtimeSecret.keys.airflowPassword
               "AIRFLOW_EXECUTION_API_TOKEN" .Values.backend.runtimeSecret.keys.airflowExecutionApiToken
               "AIRFLOW_INTERNAL_TOKEN" .Values.backend.runtimeSecret.keys.airflowInternalToken
               "TRINO_AUTH_USERNAME" .Values.backend.runtimeSecret.keys.trinoAuthUsername
@@ -58,8 +65,8 @@ spec:
                   key: {{ $secretKey }}
             {{- end }}
           volumeMounts:
-            - name: trino-tls
-              mountPath: /var/run/secrets/asklake/trino
+            - name: backend-runtime-files
+              mountPath: /var/run/asklake/secrets
               readOnly: true
           startupProbe:
             httpGet:
@@ -85,9 +92,9 @@ spec:
           resources:
             {{- toYaml .Values.backend.resources | nindent 12 }}
       volumes:
-        - name: trino-tls
+        - name: backend-runtime-files
           secret:
-            secretName: {{ .Values.backend.trinoTlsSecret.name }}
+            secretName: {{ .Values.backend.runtimeSecret.name }}
             items:
-              - key: {{ .Values.backend.trinoTlsSecret.caKey }}
-                path: ca.crt
+              - key: {{ .Values.backend.runtimeSecret.trinoCaKey }}
+                path: trino-ca.pem

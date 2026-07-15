@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CreateBucketCommand, HeadBucketCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { closeMetadataStore, getDataset, saveDataset } from "../src/metadataStore.mjs";
-import { loadKafkaJs } from "../src/kafka-codecs.mjs";
+import { kafkaSecurityOptions, loadKafkaJs } from "../src/kafka-codecs.mjs";
 import { defaultOutputBucket, isMinioProvider, resolveObjectStorageConfig, s3ClientOptions } from "../src/objectStorageConfig.mjs";
 import { formatBytes, inferSchemaColumns, normalizeColumnName, parseSourceSample, schemaFingerprint } from "../src/profile.mjs";
 import {
@@ -111,6 +111,7 @@ async function ingestReviews() {
   }
   const { Kafka } = await loadKafkaJs();
   const kafka = new Kafka({
+    ...await kafkaSecurityOptions(),
     brokers: [broker],
     clientId: "asklake-review-ingest",
     retry: { retries: 2 },
@@ -258,6 +259,7 @@ async function commitSnapshotOffsetsOnly() {
   activeSnapshot = suppliedSnapshot;
   const { Kafka } = await loadKafkaJs();
   const kafka = new Kafka({
+    ...await kafkaSecurityOptions(),
     brokers: [broker],
     clientId: "asklake-review-ingest-offset-commit",
     retry: { retries: 2 },

@@ -3811,9 +3811,10 @@ type PermissionGrant = {
 
 - EKS workload는 `ASKLAKE_CONTINUOUS_CONTROL_PLANE=external_ec2`를 고정한다.
 - 일반 Job 목록은 Continuous Job을 숨기고 Snapshot/SQL Job만 현재 EKS control-plane resource로 노출한다.
-- Continuous 생성·상세·수정·삭제·command·전용 runtime 조회는 `409 CONTINUOUS_CONTROL_OWNED_BY_EC2`와 `details.controlPlane="external_ec2"`를 반환한다.
+- Continuous 생성·상세·수정·삭제·command·전용 runtime 조회와 Continuous dataset freshness/dashboard widget data 조회는 `409 CONTINUOUS_CONTROL_OWNED_BY_EC2`와 `details.controlPlane="external_ec2"`를 반환한다.
 - EKS process는 Continuous runtime background sync를 시작하지 않는다.
 - FastAPI Spark/Catalog singleton은 `etl_runs` row의 owner, expiry, generation을 사용한다. 별도 lease table은 없다.
 - `ASKLAKE_SPARK_EXECUTION_LEASE_SECONDS` 기본값은 60초이고 heartbeat는 기본 20초다. lease TTL은 `ASKLAKE_SPARK_RUN_TIMEOUT_SECONDS`와 독립적이며 최대 실행시간이 아니다.
+- `ASKLAKE_SPARK_RUN_TIMEOUT_SECONDS`는 EKS에서 7200초로 주입하며 SparkApplication polling의 절대 제한이다. lease heartbeat는 이 timeout을 연장하지 않는다.
 - 같은 `runId`의 활성 lease가 있으면 중복 요청은 `409 SPARK_RUN_ALREADY_EXECUTING`이다. 만료 후 takeover는 generation을 증가시키고 이전 generation의 결과 저장을 fence한다.
-- `ASKLAKE_SPARK_RUNNER=kubernetes`는 provider 구현 전 `503 SPARK_KUBERNETES_PROVIDER_NOT_IMPLEMENTED`로 fail closed한다.
+- `ASKLAKE_SPARK_RUNNER=kubernetes`는 `runId` 기반 deterministic name으로 `SparkApplication`을 create/poll하고 driver result marker를 수집한다. create 응답 유실 또는 `409`는 기존 object의 run/job/image identity가 모두 일치할 때만 복구하며, timeout이면 해당 object를 삭제한다. local/REST runner로 fallback하지 않는다.

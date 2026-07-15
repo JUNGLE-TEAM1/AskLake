@@ -1,0 +1,35 @@
+{{- if .Values.mskSmoke.create }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: asklake-msk-iam-smoke-{{ trimPrefix "sha256:" .Values.backend.image.digest | trunc 12 }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "asklake-workloads.commonLabels" . | nindent 4 }}
+    app.kubernetes.io/component: msk-smoke
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: {{ .Values.mskSmoke.timeoutSeconds | add 30 }}
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        {{- include "asklake-workloads.selectorLabels" (dict "component" "msk-smoke") | nindent 8 }}
+    spec:
+      serviceAccountName: {{ .Values.mskSmoke.serviceAccountName }}
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      containers:
+        - name: msk-iam-smoke
+          image: "{{ required "backend image repository is required" .Values.backend.image.repository }}@{{ required "backend image digest is required" .Values.backend.image.digest }}"
+          imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
+          command: ["node", "scripts/verify-msk-iam-metadata.mjs"]
+          env:
+            - {name: AWS_REGION, value: {{ .Values.global.awsRegion | quote }}}
+            - {name: ASKLAKE_KAFKA_BROKER, value: {{ .Values.backend.config.kafkaBroker | quote }}}
+            - {name: ASKLAKE_KAFKA_AUTH_MODE, value: {{ .Values.backend.config.kafkaAuthMode | quote }}}
+            - {name: ASKLAKE_MSK_SMOKE_TOPIC, value: {{ .Values.mskSmoke.topic | quote }}}
+            - {name: ASKLAKE_MSK_SMOKE_TIMEOUT_SECONDS, value: {{ .Values.mskSmoke.timeoutSeconds | quote }}}
+          resources:
+            {{- toYaml .Values.mskSmoke.resources | nindent 12 }}
+{{- end }}

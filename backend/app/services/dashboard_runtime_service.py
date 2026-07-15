@@ -71,6 +71,7 @@ from app.services.resource_permission_service import (
     dataset_with_persisted_permission_grants,
     permissions_for_actor_with_governance,
 )
+from app.services.etl_service import external_continuous_control_plane_enabled, require_local_continuous_control_plane
 from app.services.dashboard_physical_data import (
     DashboardDatasetQuerySession,
     DashboardRemoteScanBudget,
@@ -559,10 +560,17 @@ class DashboardRuntimeService:
         api_path: str,
         http_method: str,
     ) -> DashboardRuntimeWidget:
+        continuous_job = (
+            self._continuous_job(widget.dataset_id)
+            if widget.dataset_id and self.live_repository is not None
+            else None
+        )
+        if continuous_job is not None and external_continuous_control_plane_enabled():
+            require_local_continuous_control_plane()
         if (
             widget.dataset_id
             and self.live_repository is not None
-            and self._continuous_job(widget.dataset_id) is not None
+            and continuous_job is not None
         ):
             return self._live_widget_to_schema(
                 widget,

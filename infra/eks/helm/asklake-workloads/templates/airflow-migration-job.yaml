@@ -1,0 +1,48 @@
+{{- if .Values.airflow.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: asklake-airflow-db-migrate
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "asklake-workloads.commonLabels" . | nindent 4 }}
+    app.kubernetes.io/component: airflow-migration
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        {{- include "asklake-workloads.selectorLabels" (dict "component" "airflow-migration") | nindent 8 }}
+    spec:
+      serviceAccountName: {{ .Values.airflow.serviceAccountName }}
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      containers:
+        - name: airflow-db-migrate
+          image: "{{ required "airflow image repository is required" .Values.airflow.image.repository }}@{{ required "airflow image digest is required" .Values.airflow.image.digest }}"
+          imagePullPolicy: {{ .Values.airflow.image.pullPolicy }}
+          args: ["db", "migrate"]
+          env:
+            - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.airflow.runtimeSecret.name }}
+                  key: {{ .Values.airflow.runtimeSecret.keys.databaseUrl }}
+            - name: AIRFLOW__CORE__FERNET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.airflow.runtimeSecret.name }}
+                  key: {{ .Values.airflow.runtimeSecret.keys.fernetKey }}
+            - name: AIRFLOW__API_AUTH__JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.airflow.runtimeSecret.name }}
+                  key: {{ .Values.airflow.runtimeSecret.keys.jwtSecret }}
+          resources:
+            {{- toYaml .Values.airflow.resources.migration | nindent 12 }}
+{{- end }}

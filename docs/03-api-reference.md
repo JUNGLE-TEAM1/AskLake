@@ -1004,9 +1004,10 @@ EKS FastAPI는 아래 환경 계약을 사용한다.
 | --- | --- | --- |
 | `ASKLAKE_CONTINUOUS_CONTROL_PLANE` | `external_ec2` | Kafka Continuous 제어권과 상태는 EC2에 남기고 EKS 접근을 차단한다. |
 | `ASKLAKE_SPARK_EXECUTION_LEASE_SECONDS` | `60` | 같은 `runId` 외부 실행의 RDS lease TTL이다. Spark run timeout과 독립적이다. |
-| `ASKLAKE_SPARK_RUNNER` | `kubernetes` | Kubernetes provider가 구현되기 전까지 실행 요청을 fail closed한다. |
+| `ASKLAKE_SPARK_RUN_TIMEOUT_SECONDS` | `7200` | SparkApplication polling의 최대 실행시간이다. heartbeat가 이 제한을 연장하지 않는다. |
+| `ASKLAKE_SPARK_RUNNER` | `kubernetes` | in-cluster API로 `SparkApplication`을 제출·복구·조회하고 driver 결과를 수집한다. |
 
-`external_ec2`에서 `GET /api/etl/jobs`는 Continuous Job을 반환하지 않는다. Continuous Job의 상세·수정·삭제, 생성, command와 전용 runtime/log/maintenance API는 아래 `409` envelope를 반환한다.
+`external_ec2`에서 `GET /api/etl/jobs`는 Continuous Job을 반환하지 않는다. Continuous Job의 상세·수정·삭제, 생성, command, 전용 runtime/log/maintenance API와 Continuous dataset의 freshness/dashboard widget data 조회는 아래 `409` envelope를 반환한다. Batch/SQL dataset 조회는 이 경계의 영향을 받지 않는다.
 
 ```json
 {
@@ -1020,4 +1021,4 @@ EKS FastAPI는 아래 환경 계약을 사용한다.
 }
 ```
 
-`ASKLAKE_SPARK_RUNNER=kubernetes` 상태에서 실제 Spark 실행 단계에 도달하면 `503 SPARK_KUBERNETES_PROVIDER_NOT_IMPLEMENTED`를 반환한다. 이는 Kubernetes provider 미구현 상태에서 local/REST 실행기로 잘못 fallback하는 것을 막는 임시 안전 경계다.
+`ASKLAKE_SPARK_RUNNER=kubernetes`에서 같은 `runId`는 같은 Kubernetes object name을 사용한다. 최초 create 응답을 잃거나 이미 object가 있으면 provider는 기존 `SparkApplication`의 run/job/image identity를 검증한 뒤 이어서 polling한다. identity가 다르면 기존 object를 재사용하지 않고 실행을 실패시킨다. terminal 성공은 driver log에 유효한 `ASKLAKE_SPARK_JOB_RESULT` marker가 있어야 하며, timeout은 해당 application 삭제 후 실패 처리한다. API 응답에 저장되는 Spark manifest의 `kubernetesExecution`은 application name/UID, driver Pod name, image digest, recovery 여부와 final state를 포함한다.

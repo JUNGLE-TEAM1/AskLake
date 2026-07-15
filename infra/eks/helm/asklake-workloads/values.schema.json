@@ -2,12 +2,9 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
-  "required": ["namespace", "global", "frontend", "backend"],
+  "required": ["namespace", "global", "frontend", "backend", "airflow", "mskSmoke", "sparkApplication", "trino"],
   "properties": {
-    "namespace": {
-      "type": "string",
-      "const": "asklake-dev"
-    },
+    "namespace": {"type": "string", "const": "asklake-dev"},
     "global": {
       "type": "object",
       "additionalProperties": false,
@@ -17,12 +14,12 @@
         "awsRegion": {"type": "string", "minLength": 1}
       }
     },
-    "frontend": {
-      "$ref": "#/$defs/frontend"
-    },
-    "backend": {
-      "$ref": "#/$defs/backend"
-    }
+    "frontend": {"$ref": "#/$defs/frontend"},
+    "backend": {"$ref": "#/$defs/backend"},
+    "airflow": {"$ref": "#/$defs/airflow"},
+    "mskSmoke": {"$ref": "#/$defs/mskSmoke"},
+    "sparkApplication": {"$ref": "#/$defs/sparkApplication"},
+    "trino": {"$ref": "#/$defs/trino"}
   },
   "$defs": {
     "image": {
@@ -40,24 +37,17 @@
       "additionalProperties": false,
       "required": ["requests", "limits"],
       "properties": {
-        "requests": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["cpu", "memory"],
-          "properties": {
-            "cpu": {"type": "string", "minLength": 1},
-            "memory": {"type": "string", "minLength": 1}
-          }
-        },
-        "limits": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["cpu", "memory"],
-          "properties": {
-            "cpu": {"type": "string", "minLength": 1},
-            "memory": {"type": "string", "minLength": 1}
-          }
-        }
+        "requests": {"$ref": "#/$defs/resourceValues"},
+        "limits": {"$ref": "#/$defs/resourceValues"}
+      }
+    },
+    "resourceValues": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cpu", "memory"],
+      "properties": {
+        "cpu": {"type": "string", "minLength": 1},
+        "memory": {"type": "string", "minLength": 1}
       }
     },
     "service": {
@@ -68,6 +58,10 @@
         "name": {"type": "string", "minLength": 1},
         "port": {"type": "integer", "minimum": 1, "maximum": 65535}
       }
+    },
+    "secretKeyMap": {
+      "type": "object",
+      "additionalProperties": {"type": "string", "minLength": 1}
     },
     "frontend": {
       "type": "object",
@@ -84,7 +78,7 @@
     "backend": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["replicas", "image", "serviceAccountName", "service", "config", "runtimeSecret", "trinoTlsSecret", "resources"],
+      "required": ["replicas", "image", "serviceAccountName", "service", "config", "runtimeSecret", "resources"],
       "properties": {
         "replicas": {"type": "integer", "minimum": 2},
         "image": {"$ref": "#/$defs/image"},
@@ -93,9 +87,10 @@
         "config": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["corsOrigins", "kafkaBroker", "kafkaAuthMode", "objectStorageProvider", "rawBucket", "outputBucket", "outputPrefix", "allowedBuckets", "sparkRunner", "sparkExecutionLeaseSeconds", "trinoEnabled", "trinoBaseUrl", "trinoResultStorageBucket"],
+          "required": ["corsOrigins", "bootstrapAdminEmail", "kafkaBroker", "kafkaAuthMode", "objectStorageProvider", "rawBucket", "outputBucket", "outputPrefix", "allowedBuckets", "sparkRunner", "sparkExecutionLeaseSeconds", "airflowApiBaseUrl", "airflowDagId", "trinoEnabled", "trinoBaseUrl", "trinoCatalog", "trinoSchema", "trinoUser", "trinoWarehouseBucket", "trinoWarehousePrefix", "trinoResultStorageBucket"],
           "properties": {
             "corsOrigins": {"type": "string", "pattern": "^https://"},
+            "bootstrapAdminEmail": {"type": "string", "format": "email"},
             "kafkaBroker": {"type": "string", "minLength": 1},
             "kafkaAuthMode": {"type": "string", "const": "iam"},
             "objectStorageProvider": {"type": "string", "const": "aws"},
@@ -105,48 +100,212 @@
             "allowedBuckets": {"type": "string", "minLength": 1},
             "sparkRunner": {"type": "string", "const": "kubernetes"},
             "sparkExecutionLeaseSeconds": {"type": "integer", "minimum": 10, "maximum": 3600},
+            "airflowApiBaseUrl": {"type": "string", "pattern": "^http://airflow-apiserver:8080$"},
+            "airflowDagId": {"type": "string", "const": "asklake_etl_job"},
             "trinoEnabled": {"type": "boolean", "const": true},
             "trinoBaseUrl": {"type": "string", "pattern": "^https://.+:8443$"},
+            "trinoCatalog": {"type": "string", "const": "iceberg"},
+            "trinoSchema": {"type": "string", "minLength": 1},
+            "trinoUser": {"type": "string", "minLength": 1},
+            "trinoWarehouseBucket": {"type": "string", "minLength": 1},
+            "trinoWarehousePrefix": {"type": "string", "minLength": 1},
             "trinoResultStorageBucket": {"type": "string", "minLength": 1}
           }
         },
-        "runtimeSecret": {"$ref": "#/$defs/runtimeSecret"},
-        "trinoTlsSecret": {
+        "runtimeSecret": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["name", "caKey"],
+          "required": ["name", "trinoCaKey", "keys"],
           "properties": {
-            "name": {"type": "string", "minLength": 1},
-            "caKey": {"type": "string", "minLength": 1}
+            "name": {"type": "string", "const": "asklake-backend-runtime"},
+            "trinoCaKey": {"type": "string", "const": "trino-ca.pem"},
+            "keys": {
+              "allOf": [{"$ref": "#/$defs/secretKeyMap"}],
+              "required": ["databaseUrl", "bootstrapAdminPassword", "aiGatewayServiceToken", "aiMcpServiceToken", "aiContextSigningSecret", "openaiApiKey", "airflowApiToken", "airflowPassword", "airflowExecutionApiToken", "airflowInternalToken", "trinoAuthUsername", "trinoAuthPassword", "trinoMaterializerUsername", "trinoMaterializerPassword", "trinoResultCursorSecret", "trinoQueryConfirmationSecret"]
+            }
           }
         },
         "resources": {"$ref": "#/$defs/resources"}
       }
     },
-    "runtimeSecret": {
+    "airflow": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "keys"],
+      "required": ["enabled", "image", "serviceAccountName", "service", "config", "runtimeSecret", "resources"],
       "properties": {
-        "name": {"type": "string", "minLength": 1},
-        "keys": {
+        "enabled": {"type": "boolean", "const": true},
+        "image": {"$ref": "#/$defs/image"},
+        "serviceAccountName": {"type": "string", "const": "asklake-airflow"},
+        "service": {"$ref": "#/$defs/service"},
+        "config": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["databaseUrl", "bootstrapAdminEmail", "bootstrapAdminPassword", "airflowExecutionApiToken", "airflowInternalToken", "trinoAuthUsername", "trinoAuthPassword", "trinoMaterializerUsername", "trinoMaterializerPassword", "trinoResultCursorSecret", "trinoQueryConfirmationSecret"],
+          "required": ["executor", "authManager", "executionApiServerUrl", "internalBaseUrl", "executionApiBaseUrl", "dagId", "jwtIssuer", "internalTimeoutSeconds", "executionApiTimeoutSeconds"],
           "properties": {
-            "databaseUrl": {"type": "string", "minLength": 1},
-            "bootstrapAdminEmail": {"type": "string", "minLength": 1},
-            "bootstrapAdminPassword": {"type": "string", "minLength": 1},
-            "airflowExecutionApiToken": {"type": "string", "minLength": 1},
-            "airflowInternalToken": {"type": "string", "minLength": 1},
-            "trinoAuthUsername": {"type": "string", "minLength": 1},
-            "trinoAuthPassword": {"type": "string", "minLength": 1},
-            "trinoMaterializerUsername": {"type": "string", "minLength": 1},
-            "trinoMaterializerPassword": {"type": "string", "minLength": 1},
-            "trinoResultCursorSecret": {"type": "string", "minLength": 1},
-            "trinoQueryConfirmationSecret": {"type": "string", "minLength": 1}
+            "executor": {"type": "string", "const": "LocalExecutor"},
+            "authManager": {"type": "string", "minLength": 1},
+            "executionApiServerUrl": {"type": "string", "pattern": "^http://airflow-apiserver:8080/execution/$"},
+            "internalBaseUrl": {"type": "string", "const": "http://fastapi:8080"},
+            "executionApiBaseUrl": {"type": "string", "const": "http://fastapi:8080"},
+            "dagId": {"type": "string", "const": "asklake_etl_job"},
+            "jwtIssuer": {"type": "string", "minLength": 1},
+            "internalTimeoutSeconds": {"type": "integer", "minimum": 30},
+            "executionApiTimeoutSeconds": {"type": "integer", "minimum": 30}
+          }
+        },
+        "runtimeSecret": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "keys"],
+          "properties": {
+            "name": {"type": "string", "const": "asklake-airflow-runtime"},
+            "keys": {
+              "allOf": [{"$ref": "#/$defs/secretKeyMap"}],
+              "required": ["databaseUrl", "executionApiToken", "internalToken", "fernetKey", "jwtSecret"]
+            }
+          }
+        },
+        "resources": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["apiServer", "scheduler", "dagProcessor", "migration"],
+          "properties": {
+            "apiServer": {"$ref": "#/$defs/resources"},
+            "scheduler": {"$ref": "#/$defs/resources"},
+            "dagProcessor": {"$ref": "#/$defs/resources"},
+            "migration": {"$ref": "#/$defs/resources"}
           }
         }
+      }
+    },
+    "mskSmoke": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["create", "serviceAccountName", "topic", "timeoutSeconds", "resources"],
+      "properties": {
+        "create": {"type": "boolean"},
+        "serviceAccountName": {"type": "string", "const": "asklake-msk-smoke"},
+        "topic": {"type": "string", "minLength": 1},
+        "timeoutSeconds": {"type": "integer", "minimum": 10, "maximum": 300},
+        "resources": {"$ref": "#/$defs/resources"}
+      }
+    },
+    "sparkApplication": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["create", "image", "serviceAccountName", "runId", "jobId", "mainApplicationFile", "timeoutSeconds", "kafka", "output", "warehouse", "target", "runtimeSecret", "driver", "executor"],
+      "properties": {
+        "create": {"type": "boolean"},
+        "image": {"$ref": "#/$defs/image"},
+        "serviceAccountName": {"type": "string", "const": "asklake-spark"},
+        "runId": {"type": "string"},
+        "jobId": {"type": "string"},
+        "mainApplicationFile": {"type": "string", "pattern": "^local:///"},
+        "timeoutSeconds": {"type": "integer", "minimum": 60, "maximum": 86400},
+        "kafka": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["broker", "topic", "consumerGroup", "fixtureBatchId", "expectedCount", "authMode", "iamAuthPackage"],
+          "properties": {
+            "broker": {"type": "string", "minLength": 1},
+            "topic": {"type": "string", "minLength": 1},
+            "consumerGroup": {"type": "string", "minLength": 1},
+            "fixtureBatchId": {"type": "string"},
+            "expectedCount": {"type": "integer", "minimum": 1, "maximum": 100000},
+            "authMode": {"type": "string", "const": "iam"},
+            "iamAuthPackage": {"type": "string", "pattern": "^software\\.amazon\\.msk:aws-msk-iam-auth:[0-9]+\\.[0-9]+\\.[0-9]+$"}
+          }
+        },
+        "output": {"$ref": "#/$defs/bucketPrefix"},
+        "warehouse": {"$ref": "#/$defs/bucketPrefix"},
+        "target": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["catalog", "namespace", "table", "writeMode"],
+          "properties": {
+            "catalog": {"type": "string", "const": "iceberg"},
+            "namespace": {"type": "string", "const": "asklake"},
+            "table": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,62}$"},
+            "writeMode": {"type": "string", "const": "replace"}
+          }
+        },
+        "runtimeSecret": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "keys"],
+          "properties": {
+            "name": {"type": "string", "const": "asklake-spark-runtime"},
+            "keys": {
+              "allOf": [{"$ref": "#/$defs/secretKeyMap"}],
+              "required": ["jdbcUrl", "jdbcUser", "jdbcPassword"]
+            }
+          }
+        },
+        "driver": {"$ref": "#/$defs/sparkPod"},
+        "executor": {
+          "allOf": [{"$ref": "#/$defs/sparkPod"}],
+          "required": ["instances"],
+          "properties": {"instances": {"type": "integer", "minimum": 1}}
+        }
+      }
+    },
+    "sparkPod": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cores", "memory", "resources"],
+      "properties": {
+        "cores": {"type": "integer", "minimum": 1},
+        "memory": {"type": "string", "minLength": 1},
+        "instances": {"type": "integer", "minimum": 1},
+        "resources": {"$ref": "#/$defs/resources"}
+      }
+    },
+    "bucketPrefix": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bucket", "prefix"],
+      "properties": {
+        "bucket": {"type": "string", "minLength": 1},
+        "prefix": {"type": "string", "minLength": 1}
+      }
+    },
+    "trino": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "replicas", "image", "serviceAccountName", "service", "config", "runtimeSecret", "resources"],
+      "properties": {
+        "enabled": {"type": "boolean", "const": true},
+        "replicas": {"type": "integer", "const": 1},
+        "image": {"$ref": "#/$defs/image"},
+        "serviceAccountName": {"type": "string", "const": "asklake-trino"},
+        "service": {"$ref": "#/$defs/service"},
+        "config": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["catalogName", "jdbcCatalogName", "schemaName", "warehouseBucket", "warehousePrefix", "queryUser", "materializerUser"],
+          "properties": {
+            "catalogName": {"type": "string", "const": "iceberg"},
+            "jdbcCatalogName": {"type": "string", "minLength": 1},
+            "schemaName": {"type": "string", "const": "asklake"},
+            "warehouseBucket": {"type": "string", "minLength": 1},
+            "warehousePrefix": {"type": "string", "minLength": 1},
+            "queryUser": {"type": "string", "minLength": 1},
+            "materializerUser": {"type": "string", "minLength": 1}
+          }
+        },
+        "runtimeSecret": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "keys"],
+          "properties": {
+            "name": {"type": "string", "const": "asklake-trino-runtime"},
+            "keys": {
+              "allOf": [{"$ref": "#/$defs/secretKeyMap"}],
+              "required": ["jdbcUrl", "jdbcUser", "jdbcPassword", "keystorePassword", "internalSharedSecret", "keystoreFile", "passwordFile"]
+            }
+          }
+        },
+        "resources": {"$ref": "#/$defs/resources"}
       }
     }
   }

@@ -943,6 +943,48 @@ def read_source(
         return base_reader.parquet(*read_path) if isinstance(read_path, list) else base_reader.parquet(read_path)
     if source_format == "iceberg":
         return spark.table(source_path)
+    if source_format == "kafka":
+        broker = required_env("ASKLAKE_KAFKA_BROKER")
+        topic = os.environ.get("ASKLAKE_KAFKA_TOPIC") or source_path
+        group_id = required_env("ASKLAKE_KAFKA_CONSUMER_GROUP")
+        auth_mode = os.environ.get("ASKLAKE_KAFKA_AUTH_MODE", "").strip().lower()
+        if auth_mode != "iam":
+            raise ValueError("Kubernetes Kafka Spark source requires ASKLAKE_KAFKA_AUTH_MODE=iam")
+        reader = (
+            spark.read.format("kafka")
+            .option("kafka.bootstrap.servers", broker)
+            .option("subscribe", topic)
+            .option("startingOffsets", "earliest")
+            .option("endingOffsets", "latest")
+            .option("failOnDataLoss", "true")
+            .option("kafka.group.id", group_id)
+            .option("kafka.security.protocol", "SASL_SSL")
+            .option("kafka.sasl.mechanism", "AWS_MSK_IAM")
+            .option(
+                "kafka.sasl.jaas.config",
+                "software.amazon.msk.auth.iam.IAMLoginModule required;",
+            )
+            .option(
+                "kafka.sasl.client.callback.handler.class",
+                "software.amazon.msk.auth.iam.IAMClientCallbackHandler",
+            )
+        )
+        kafka_frame = reader.load()
+        source_schema = json_source_schema(schema_columns, transform_steps)
+        if source_schema is None:
+            return kafka_frame.select(F.col("value").cast("string").alias("value"))
+        parsed = (
+            kafka_frame
+            .select(F.from_json(F.col("value").cast("string"), source_schema).alias("payload"))
+            .where(F.col("payload").isNotNull())
+            .select("payload.*")
+        )
+        fixture_batch_id = os.environ.get("ASKLAKE_KAFKA_FIXTURE_BATCH_ID", "").strip()
+        if fixture_batch_id:
+            if not nested_schema_path_exists(parsed.schema, ["raw", "fixture_batch_id"]):
+                raise ValueError("Kafka fixture batch filter requires raw.fixture_batch_id")
+            parsed = parsed.where(F.col("raw.fixture_batch_id") == F.lit(fixture_batch_id))
+        return parsed
     if source_format in {"txt", "text"}:
         if isinstance(record_parsing, dict) and record_parsing.get("enabled"):
             return read_whitespace_records(spark, read_path, record_parsing)
@@ -3201,6 +3243,14 @@ def load_json_env(name, fallback):
 
 
 def load_spark_job_manifest():
+    raw = os.environ.get("ASKLAKE_SPARK_JOB_MANIFEST_JSON")
+    if raw:
+        try:
+            manifest = json.loads(raw.lstrip("\ufeff"))
+        except json.JSONDecodeError:
+            manifest = None
+        if isinstance(manifest, dict):
+            return manifest
     path = os.environ.get("ASKLAKE_SPARK_JOB_MANIFEST_FILE") or os.environ.get("ASKLAKE_SPARK_TEXT_STRUCTURING_DEFINITION_FILE")
     if not path:
         return {}
