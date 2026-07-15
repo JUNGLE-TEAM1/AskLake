@@ -528,10 +528,9 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 
 - [x] Frontend/FastAPI `Deployment` 2 replica와 내부 `ClusterIP` `Service` Helm chart
 - [x] Airflow API server/scheduler/DAG processor/migration Job과 Trino HTTPS coordinator Helm workload
-- [x] Airflow/Trino 비활성 web-only render와 optional runtime Secret/CA 참조 제거
 - [x] ECR digest-only image, ConfigMap 일반 설정, 기존 Secret key 참조 계약
 - [x] A Secret contract의 backend/Airflow/Spark/Trino exact key와 file mount 반영
-- [x] Frontend/FastAPI AMD64 node selector, FastAPI `/api/health` startup/readiness와 DB 비의존 TCP liveness
+- [x] FastAPI `/api/health` startup/readiness/liveness probe
 - [x] EKS의 Kafka Continuous 생성·조회·변경·freshness/widget read·background sync fail-closed 경계
 - [x] `etl_runs` owner/expiry/generation 기반 singleton lease와 중복 요청 `409`
 - [x] 기본 60초 lease와 20초 heartbeat를 Spark run timeout에서 분리

@@ -1293,38 +1293,6 @@ const checks = [
     ],
   },
   {
-    name: "Frontend defaults live API requests to same-origin routes",
-    file: "src/services/apiClient.ts",
-    patterns: [
-      /const defaultApiBaseUrl = "";/,
-      /baseUrl: import\.meta\.env\.VITE_API_BASE_URL \|\| defaultApiBaseUrl/,
-    ],
-    forbiddenPatterns: [
-      /http:\/\/localhost:8080/,
-    ],
-  },
-  {
-    name: "Production REST source defaults do not embed a local harness origin",
-    file: "src/pages/etl/EtlPages.tsx",
-    patterns: [
-      /const REST_SAMPLE_ENDPOINT = import\.meta\.env\.DEV[\s\S]*new URL\("\/api\/harness\/rest-sample", window\.location\.origin\)\.toString\(\)[\s\S]*: "";/,
-      /\["Endpoint URL", REST_SAMPLE_ENDPOINT\]/,
-    ],
-    forbiddenPatterns: [
-      /http:\/\/localhost:8080\/api\/harness\/rest-sample/,
-    ],
-  },
-  {
-    name: "Source connector dev fallback inherits the configured or same-origin API base",
-    file: "src/services/sourceConnectorService.ts",
-    patterns: [
-      /import\.meta\.env\.VITE_BACKEND_DIRECT_URL[\s\S]*\|\| apiConfig\.baseUrl/,
-    ],
-    forbiddenPatterns: [
-      /http:\/\/(?:localhost|127\.0\.0\.1):8080/,
-    ],
-  },
-  {
     name: "Dashboard status labels stay Korean",
     file: "src/utils/statusMeta.ts",
     patterns: [

@@ -3,7 +3,8 @@ import type { DraftPipelinePatch, RecordParsingDraft, RecordParsingPreviewRespon
 
 const directBackendBaseUrl = String(
   import.meta.env.VITE_BACKEND_DIRECT_URL
-    || apiConfig.baseUrl,
+    || import.meta.env.VITE_API_BASE_URL
+    || "http://127.0.0.1:8080",
 ).replace(/\/$/, "");
 
 type SourceFieldRows = Array<[string, string]>;

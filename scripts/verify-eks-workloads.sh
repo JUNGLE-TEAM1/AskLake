@@ -4,11 +4,9 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CHART_DIR="$ROOT_DIR/infra/eks/helm/asklake-workloads"
 VALUES_FILE="$ROOT_DIR/infra/eks/values/workloads/dev.example.yaml"
-WEB_VALUES_FILE="$ROOT_DIR/infra/eks/values/workloads/dev.web-only.example.yaml"
 RENDERED_FILE="$(mktemp)"
-WEB_RENDERED_FILE="$(mktemp)"
 OPT_IN_RENDERED_FILE="$(mktemp)"
-trap 'rm -f "$RENDERED_FILE" "$WEB_RENDERED_FILE" "$OPT_IN_RENDERED_FILE"' EXIT
+trap 'rm -f "$RENDERED_FILE" "$OPT_IN_RENDERED_FILE"' EXIT
 
 required_files=(
   "$ROOT_DIR/.github/workflows/eks-b-workload-checks.yml"
@@ -37,7 +35,6 @@ required_files=(
   "$CHART_DIR/templates/trino-deployment.yaml"
   "$CHART_DIR/templates/trino-service.yaml"
   "$VALUES_FILE"
-  "$WEB_VALUES_FILE"
 )
 
 for required_file in "${required_files[@]}"; do
@@ -57,9 +54,7 @@ if [[ -z "$HELM_BIN" || ! -x "$HELM_BIN" ]]; then
 fi
 
 "$HELM_BIN" lint "$CHART_DIR" -f "$VALUES_FILE"
-"$HELM_BIN" lint "$CHART_DIR" -f "$WEB_VALUES_FILE"
 "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" >"$RENDERED_FILE"
-"$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$WEB_VALUES_FILE" >"$WEB_RENDERED_FILE"
 "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" \
   --set mskSmoke.create=true \
   --set sparkApplication.create=true \
@@ -85,42 +80,6 @@ if "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" \
   exit 1
 fi
 
-if "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" \
-  --set-string 'frontend.nodeSelector.kubernetes\.io/arch=arm64' >/dev/null 2>&1; then
-  echo "EKS workload schema accepted an ARM64 Frontend node selector" >&2
-  exit 1
-fi
-
-if "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$WEB_VALUES_FILE" \
-  --set frontend.replicas=0 >/dev/null 2>&1; then
-  echo "EKS workload schema accepted zero Frontend replicas" >&2
-  exit 1
-fi
-
-if "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$WEB_VALUES_FILE" \
-  --set backend.replicas=0 >/dev/null 2>&1; then
-  echo "EKS workload schema accepted zero Backend replicas" >&2
-  exit 1
-fi
-
-if "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$WEB_VALUES_FILE" \
-  --set-string backend.config.corsOrigins=http://asklake.example.invalid >/dev/null 2>&1; then
-  echo "EKS workload schema accepted an insecure cross-origin CORS endpoint" >&2
-  exit 1
-fi
-
-if "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$WEB_VALUES_FILE" \
-  --set airflow.enabled=true >/dev/null 2>&1; then
-  echo "web-only values enabled Airflow without its image, config, and Secret key contract" >&2
-  exit 1
-fi
-
-if "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$WEB_VALUES_FILE" \
-  --set trino.enabled=true >/dev/null 2>&1; then
-  echo "web-only values enabled Trino without its image, config, and Secret key contract" >&2
-  exit 1
-fi
-
 test "$(grep -c '^kind: Deployment$' "$RENDERED_FILE")" -eq 6
 test "$(grep -c '^kind: Service$' "$RENDERED_FILE")" -eq 4
 test "$(grep -c '^kind: ConfigMap$' "$RENDERED_FILE")" -eq 3
@@ -130,34 +89,6 @@ test "$(grep -c '^kind: Job$' "$RENDERED_FILE")" -eq 1
 test "$(grep -c '^kind: SparkApplication$' "$RENDERED_FILE" || true)" -eq 0
 test "$(grep -c '^kind: Job$' "$OPT_IN_RENDERED_FILE")" -eq 2
 test "$(grep -c '^kind: SparkApplication$' "$OPT_IN_RENDERED_FILE")" -eq 1
-
-test "$(grep -c '^kind: Deployment$' "$WEB_RENDERED_FILE")" -eq 2
-test "$(grep -c '^kind: Service$' "$WEB_RENDERED_FILE")" -eq 2
-test "$(grep -c '^kind: ConfigMap$' "$WEB_RENDERED_FILE")" -eq 1
-test "$(grep -c '^kind: Role$' "$WEB_RENDERED_FILE")" -eq 2
-test "$(grep -c '^kind: RoleBinding$' "$WEB_RENDERED_FILE")" -eq 2
-test "$(grep -c '^kind: Job$' "$WEB_RENDERED_FILE" || true)" -eq 0
-test "$(grep -c '^kind: SparkApplication$' "$WEB_RENDERED_FILE" || true)" -eq 0
-test "$(grep -c '^  replicas: 1$' "$WEB_RENDERED_FILE")" -eq 2
-
-for resource_name in asklake-frontend asklake-backend; do
-  grep -q "name: $resource_name" "$WEB_RENDERED_FILE"
-done
-
-for service_name in frontend fastapi; do
-  grep -q "name: $service_name" "$WEB_RENDERED_FILE"
-done
-
-if grep -Eq 'asklake-airflow|asklake-trino|asklake-airflow-runtime|asklake-trino-runtime|AIRFLOW_API_TOKEN|AIRFLOW_PASSWORD|AIRFLOW_EXECUTION_API_TOKEN|AIRFLOW_INTERNAL_TOKEN|TRINO_AUTH_USERNAME|TRINO_AUTH_PASSWORD|TRINO_MATERIALIZER_USERNAME|TRINO_MATERIALIZER_PASSWORD|TRINO_RESULT_CURSOR_SECRET|TRINO_QUERY_CONFIRMATION_SECRET|trino-ca\.pem' "$WEB_RENDERED_FILE"; then
-  echo "web-only EKS render contains an Airflow/Trino resource or Secret reference" >&2
-  exit 1
-fi
-
-test "$(grep -c 'kubernetes.io/arch: amd64' "$WEB_RENDERED_FILE")" -eq 2
-test "$(grep -c 'path: /api/health' "$WEB_RENDERED_FILE")" -eq 2
-test "$(grep -c 'tcpSocket:' "$WEB_RENDERED_FILE")" -eq 1
-grep -q 'TRINO_ENABLED: "false"' "$WEB_RENDERED_FILE"
-grep -q 'BACKEND_CORS_ORIGINS: ""' "$WEB_RENDERED_FILE"
 
 for resource_name in \
   asklake-frontend asklake-backend \

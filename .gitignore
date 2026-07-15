@@ -18,6 +18,5 @@ __pycache__/
 .playwright-cli/
 deploy/.env
 deploy/ec2.env
-infra/eks/values/workloads/dev.web-only.yaml
 airflow/logs/
 airflow/config/airflow.cfg

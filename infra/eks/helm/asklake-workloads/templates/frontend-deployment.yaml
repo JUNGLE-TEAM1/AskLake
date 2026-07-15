@@ -24,8 +24,6 @@ spec:
     spec:
       serviceAccountName: {{ .Values.frontend.serviceAccountName }}
       automountServiceAccountToken: false
-      nodeSelector:
-        {{- toYaml .Values.frontend.nodeSelector | nindent 8 }}
       containers:
         - name: frontend
           image: "{{ required "frontend image repository is required" .Values.frontend.image.repository }}@{{ required "frontend image digest is required" .Values.frontend.image.digest }}"

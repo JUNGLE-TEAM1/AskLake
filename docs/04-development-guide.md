@@ -594,8 +594,7 @@ curl http://localhost:8080/api/health
 docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml down
 ```
 
-`VITE_API_BASE_URL`을 생략하면 프론트는 현재 origin의 `/api`를 호출한다. 로컬에서는 Vite proxy가 FastAPI로 전달하고, EKS에서는 Ingress가 FastAPI Service로 전달한다.
-`VITE_API_BASE_URL`을 명시할 때는 `/api`를 붙이지 않은 origin까지만 넣는다.
+`VITE_API_BASE_URL`은 `/api`를 붙이지 않은 origin까지만 넣는다.
 예를 들어 로컬은 `http://localhost:8080`, EC2 HTTPS 배포는 `https://asklake.example.com` 형태를 사용한다.
 대시보드 Assistant를 prod build에서 켜려면 `VITE_DASHBOARD_ASSISTANT_API_PATH=/api/dashboards/assistant`를 `deploy/.env`에 유지한다.
 EC2 HTTPS 배포에서는 `deploy/.env`의 `APP_DOMAIN`에 scheme 없는 domain을 넣고, Caddy가 인증서를 받을 수 있도록 `HTTP_PORT=80`, `HTTPS_PORT=443`을 사용한다.
@@ -874,15 +873,7 @@ Windows에서 FastAPI 의존성이 저장소 가상환경에만 설치돼 있으
 
 ## 14) EKS MVP workload 검증
 
-EKS workload chart는 foundation chart와 분리된 `infra/eks/helm/asklake-workloads`에 있다. 실제 account, ECR repository, digest, bucket, endpoint는 git에 저장하지 않고 배포 시 values로 주입한다. `infra/eks/values/workloads/dev.web-only.example.yaml`을 Git-ignored `dev.web-only.yaml`로 복사해 첫 staged rollout의 실제 non-secret 입력으로 사용한다. 첫 적용은 Frontend/FastAPI를 1 replica로 시작할 수 있고, ALB가 `/api/*`와 `/*`를 같은 origin으로 제공하므로 별도 cross-origin client가 없으면 `backend.config.corsOrigins`는 빈 문자열로 둔다. 명시하는 CORS origin은 HTTPS만 허용한다. credential은 values에 넣지 않고 A가 사전에 생성한 runtime Secret을 참조하며, web-only 단계에서는 `asklake-backend-runtime`만 Pod에 필요하다. Airflow/Trino/Spark 실행을 활성화할 때만 각각의 runtime Secret 계약을 추가한다.
-
-```bash
-/path/to/helm lint infra/eks/helm/asklake-workloads \
-  -f infra/eks/values/workloads/dev.web-only.yaml
-
-/path/to/helm template asklake-workloads infra/eks/helm/asklake-workloads \
-  -f infra/eks/values/workloads/dev.web-only.yaml
-```
+EKS workload chart는 foundation chart와 분리된 `infra/eks/helm/asklake-workloads`에 있다. 실제 account, ECR repository, digest, bucket, endpoint는 git에 저장하지 않고 배포 시 values로 주입한다. credential은 values에 넣지 않고 A가 사전에 생성한 `asklake-backend-runtime`, `asklake-airflow-runtime`, `asklake-spark-runtime`, `asklake-trino-runtime` Secret key/file을 정확히 참조한다.
 
 ```bash
 # Helm 3이 PATH에 있는 경우
@@ -903,9 +894,9 @@ npm run test:spark-kubernetes
 npm run verify:airflow-catalog-wiring
 ```
 
-검증 스크립트는 Helm schema/lint/render, full 모드와 web-only 모드의 resource 개수, ClusterIP, digest image, 조건부 ConfigMap/Secret 경계, AMD64 node selector, FastAPI `/api/health` startup/readiness와 TCP liveness 분리, least-privilege RBAC, Continuous 경계, MSK IAM과 bounded Spark smoke 설정을 확인한다. Secret, `LoadBalancer`, `StatefulSet`, replay producer, static AWS key 또는 mutable image가 chart에 들어오면 실패한다. `.github/workflows/eks-b-workload-checks.yml`은 같은 계약 테스트와 Frontend/Backend/Spark/Airflow `linux/amd64` Docker build를 PR에서 실행한다. Trino ECR mirror/digest는 A의 foundation 입력이므로 이 image build matrix에 포함하지 않는다.
+검증 스크립트는 Helm schema/lint/render, Frontend/FastAPI/Airflow/Trino resource 개수, ClusterIP, health check, digest image, ConfigMap/Secret 경계, least-privilege RBAC, Continuous 경계, MSK IAM과 bounded Spark smoke 설정을 확인한다. Secret, `LoadBalancer`, `StatefulSet`, replay producer, static AWS key 또는 mutable image가 chart에 들어오면 실패한다. `.github/workflows/eks-b-workload-checks.yml`은 같은 계약 테스트와 Frontend/Backend/Spark/Airflow `linux/amd64` Docker build를 PR에서 실행한다. Trino ECR mirror/digest는 A의 foundation 입력이므로 이 image build matrix에 포함하지 않는다.
 
-chart 적용 전 EKS foundation은 활성화할 workload에 필요한 namespace, ServiceAccount/IRSA, RDS/MSK/S3/ECR과 runtime Secret을 제공해야 한다. 첫 web-only 적용은 `asklake-dev`, `asklake-frontend`, `asklake-backend`, RDS/S3/ECR과 `asklake-backend-runtime`이 최소 선행 조건이다. `asklake-backend`와 `asklake-spark`는 각각 SparkApplication과 executor Pod를 관리하므로 `automountServiceAccountToken: true`여야 한다. 나머지 ServiceAccount의 Kubernetes API token은 끈다. 정상 install은 opt-in smoke 두 개를 만들지 않는다.
+chart 적용 전 EKS foundation은 `asklake-dev` namespace, `asklake-frontend`, `asklake-backend`, `asklake-airflow`, `asklake-msk-smoke`, `asklake-spark`, `asklake-trino` ServiceAccount/IRSA, Spark operator, RDS/MSK/S3/ECR과 네 runtime Secret을 제공해야 한다. `asklake-backend`와 `asklake-spark`는 각각 SparkApplication과 executor Pod를 관리하므로 `automountServiceAccountToken: true`여야 한다. 나머지 ServiceAccount의 Kubernetes API token은 끈다. 정상 install은 opt-in smoke 두 개를 만들지 않는다.
 
 AWS 입력이 준비되면 먼저 `mskSmoke.create=true`로 metadata smoke를 실행하고 성공 후 `sparkApplication.create=true`, 고유 `runId`/`jobId`, producer receipt의 `sparkApplication.kafka.fixtureBatchId`로 bounded Kafka fixture smoke를 실행한다. Spark smoke는 실행 시점의 `earliest`~`latest`를 읽되 해당 `raw.fixture_batch_id`만 남겨 전용 `iceberg.asklake.eks_mvp_fixture` table을 replace commit하므로 이전 smoke batch나 Continuous 소유권과 섞이지 않는다. 그 다음 Trino에서 `SELECT count(*) FROM iceberg.asklake.eks_mvp_fixture`와 snapshot/file evidence를 조회하고 row count가 `sparkApplication.kafka.expectedCount`(기본 100)와 같은지 비교한다. 이 live 결과는 B 코드만으로 독립 생성할 수 없고 A의 endpoint, fixture topic, IRSA, bucket, Secret, ECR digest가 실제로 연결되어야 한다.
 

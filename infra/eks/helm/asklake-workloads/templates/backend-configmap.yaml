@@ -40,12 +40,9 @@ data:
   ASKLAKE_SPARK_KUBERNETES_EXECUTOR_MEMORY: {{ .Values.sparkApplication.executor.memory | quote }}
   ASKLAKE_SPARK_MSK_IAM_AUTH_PACKAGE: {{ .Values.sparkApplication.kafka.iamAuthPackage | quote }}
   ASKLAKE_CONTINUOUS_CONTROL_PLANE: "external_ec2"
-  {{- if .Values.airflow.enabled }}
   AIRFLOW_API_BASE_URL: {{ .Values.backend.config.airflowApiBaseUrl | quote }}
   AIRFLOW_DAG_ID: {{ .Values.backend.config.airflowDagId | quote }}
-  {{- end }}
-  TRINO_ENABLED: {{ .Values.trino.enabled | quote }}
-  {{- if .Values.trino.enabled }}
+  TRINO_ENABLED: {{ .Values.backend.config.trinoEnabled | quote }}
   TRINO_BASE_URL: {{ .Values.backend.config.trinoBaseUrl | quote }}
   TRINO_CATALOG: {{ .Values.backend.config.trinoCatalog | quote }}
   TRINO_SCHEMA: {{ .Values.backend.config.trinoSchema | quote }}
@@ -55,4 +52,3 @@ data:
   TRINO_RESULT_STORAGE_BUCKET: {{ .Values.backend.config.trinoResultStorageBucket | quote }}
   TRINO_RESULT_STORAGE_AUTO_CREATE_BUCKET: "false"
   TRINO_TLS_CA_FILE: "/var/run/asklake/secrets/trino-ca.pem"
-  {{- end }}

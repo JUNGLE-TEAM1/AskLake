@@ -106,9 +106,6 @@ const SPARK_OUTPUT_BUCKET = String(import.meta.env.VITE_SPARK_OUTPUT_BUCKET ?? "
   .trim()
   .replace(/^s3a?:\/\//i, "")
   .replace(/\/+.*$/, "") || "asklake-output";
-const REST_SAMPLE_ENDPOINT = import.meta.env.DEV
-  ? new URL("/api/harness/rest-sample", window.location.origin).toString()
-  : "";
 
 type RepeatFrequency = "hourly" | "daily" | "weekly" | "custom";
 type RepeatScheduleDraft = {
@@ -1372,7 +1369,7 @@ export function SourceConnectionPage({
       description: "원격 데이터를 수집할 REST 엔드포인트를 설정합니다.",
       fields: [
         ["Method", "GET"],
-        ["Endpoint URL", REST_SAMPLE_ENDPOINT],
+        ["Endpoint URL", "http://localhost:8080/api/harness/rest-sample"],
         ["Authentication Type", "None"],
         ["Token / Secret", ""],
         ["Accept", "application/json"],

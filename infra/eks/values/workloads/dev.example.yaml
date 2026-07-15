@@ -6,7 +6,6 @@ global:
 
 frontend:
   replicas: 2
-  nodeSelector: {kubernetes.io/arch: amd64}
   image:
     repository: 000000000000.dkr.ecr.ap-northeast-2.amazonaws.com/asklake/dev/frontend
     digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
@@ -19,7 +18,6 @@ frontend:
 
 backend:
   replicas: 2
-  nodeSelector: {kubernetes.io/arch: amd64}
   image:
     repository: 000000000000.dkr.ecr.ap-northeast-2.amazonaws.com/asklake/dev/backend
     digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
@@ -40,6 +38,7 @@ backend:
     sparkExecutionLeaseSeconds: 60
     airflowApiBaseUrl: http://airflow-apiserver:8080
     airflowDagId: asklake_etl_job
+    trinoEnabled: true
     trinoBaseUrl: https://asklake-trino.asklake-dev.svc.cluster.local:8443
     trinoCatalog: iceberg
     trinoSchema: asklake
