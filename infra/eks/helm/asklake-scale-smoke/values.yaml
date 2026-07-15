@@ -1,0 +1,10 @@
+enabled: false
+namespace: asklake-dev
+metricsApiReady: false
+generalNodePoolReady: false
+imageReceiptVerified: false
+image: ""
+replicaCount: 0
+resources: {}
+nodeSelector:
+  asklake.io/workload-class: general

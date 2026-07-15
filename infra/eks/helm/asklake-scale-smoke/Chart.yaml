@@ -1,0 +1,6 @@
+apiVersion: v2
+name: asklake-scale-smoke
+description: Temporary Day 14 Metrics API and EKS Auto Mode node scale smoke workload
+type: application
+version: 0.1.0
+appVersion: "1.0"

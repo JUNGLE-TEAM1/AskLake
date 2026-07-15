@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "enabled",
+    "namespace",
+    "autoModeLoadBalancingReady",
+    "ingressClassName",
+    "ingressClassParamsName",
+    "namespaceSelector",
+    "exposure",
+    "targetType",
+    "ipAddressType",
+    "subnetIds",
+    "groupName",
+    "host",
+    "certificateArn",
+    "services"
+  ],
+  "properties": {
+    "enabled": { "type": "boolean" },
+    "namespace": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" },
+    "autoModeLoadBalancingReady": { "type": "boolean" },
+    "ingressClassName": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" },
+    "ingressClassParamsName": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" },
+    "namespaceSelector": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": { "type": "string", "minLength": 1 }
+    },
+    "exposure": { "type": "string", "enum": ["", "internal", "internet-facing"] },
+    "targetType": { "type": "string", "enum": ["", "ip", "instance"] },
+    "ipAddressType": { "type": "string", "enum": ["", "ipv4", "dualstack"] },
+    "subnetIds": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "groupName": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" },
+    "host": { "type": "string" },
+    "certificateArn": { "type": "string" },
+    "services": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["frontend", "backend"],
+      "properties": {
+        "frontend": { "$ref": "#/$defs/service" },
+        "backend": { "$ref": "#/$defs/service" }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "enabled": { "const": true } } },
+      "then": {
+        "properties": {
+          "autoModeLoadBalancingReady": { "const": true },
+          "exposure": { "enum": ["internal", "internet-facing"] },
+          "targetType": { "enum": ["ip", "instance"] },
+          "ipAddressType": { "enum": ["ipv4", "dualstack"] },
+          "subnetIds": { "minItems": 2 },
+          "host": {
+            "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$"
+          },
+          "certificateArn": {
+            "pattern": "^arn:(aws|aws-us-gov|aws-cn):acm:[a-z0-9-]+:[0-9]{12}:certificate/[0-9a-f-]+$"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "autoModeLoadBalancingReady": { "const": false },
+          "exposure": { "const": "" },
+          "targetType": { "const": "" },
+          "ipAddressType": { "const": "" },
+          "subnetIds": { "maxItems": 0 },
+          "host": { "maxLength": 0 },
+          "certificateArn": { "maxLength": 0 }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "enabled": { "const": true },
+          "targetType": { "const": "instance" }
+        }
+      },
+      "then": {
+        "properties": {
+          "services": {
+            "properties": {
+              "frontend": { "properties": { "type": { "const": "NodePort" } } },
+              "backend": { "properties": { "type": { "const": "NodePort" } } }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "type", "port", "healthPath"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" },
+        "type": { "type": "string", "enum": ["ClusterIP", "NodePort"] },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "healthPath": { "type": "string", "pattern": "^/" }
+      }
+    }
+  }
+}

@@ -1,0 +1,16 @@
+global:
+  workloadIdentityMode: irsa
+
+serviceAccounts:
+  backend:
+    annotations:
+      eks.amazonaws.com/role-arn: arn:aws:iam::111122223333:role/asklake-dev-backend
+  trino:
+    annotations:
+      eks.amazonaws.com/role-arn: arn:aws:iam::111122223333:role/asklake-dev-trino
+  mskSmoke:
+    annotations:
+      eks.amazonaws.com/role-arn: arn:aws:iam::111122223333:role/asklake-dev-msk-smoke
+  spark:
+    annotations:
+      eks.amazonaws.com/role-arn: arn:aws:iam::111122223333:role/asklake-dev-spark

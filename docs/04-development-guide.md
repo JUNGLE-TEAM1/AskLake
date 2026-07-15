@@ -547,6 +547,97 @@ FastAPI 폴더 구조와 설계 결정은 `docs/backend-fastapi-transition-plan.
 AWS 배포 전에는 로컬에서 prod-like compose 구성이 유효한지 먼저 확인한다.
 실제 secret은 `deploy/.env`에만 두고, repo에는 `deploy/.env.example`만 커밋한다.
 
+Issue #735의 EKS + MSK MVP를 시작할 때는 resource를 생성하기 전에 [EKS + MSK MVP Phase 0 환경·인수 계약](eks-msk-mvp-phase-0-contract.md)을 완료한다. EKS/ECR/MSK/RDS inventory가 `AccessDenied`인 상태에서는 빈 환경으로 판단하지 않는다. 기존 EKS 재사용 여부, VPC/subnet 경로, RDS/Trino 위치, shared resource lifecycle과 Pair B의 workload별 IAM/network 요구가 채워지기 전에는 과금 resource를 생성하지 않는다. 현재 EC2 Compose와 local Docker/Redpanda/Spark REST 검증은 EKS 후보 경로가 추가되어도 유지한다.
+
+Phase 1 foundation과 Pair B 인수 계약을 변경하면 아래 검증을 실행한다. AWS credential이나 실제 cluster 없이 Helm schema/lint/render, `asklake-backend` token mount, backend/Spark namespace Role/RoleBinding, Replay Producer `create=false`, Trino handoff와 secret pattern을 검사하며, Terraform CLI가 있으면 format/init/validate/mock-provider test도 함께 실행한다. CLI가 없는 환경은 [EKS foundation README](../infra/eks/README.md)의 Docker 검증을 추가로 실행한다.
+
+```bash
+bash scripts/verify-eks-foundation.sh
+```
+
+Phase 2 AWS inventory는 resource name, ARN, endpoint, public IP와 account ID를 출력하지 않는 아래 스크립트로 확인한다. `AccessDenied`는 빈 inventory로 해석하지 않으며 [Phase 2 AWS Inventory](eks-phase-2-inventory.md)의 read-only 권한과 생성 gate를 따른다.
+
+```bash
+bash scripts/inspect-eks-aws-inventory.sh
+```
+
+Phase 3의 MSK/RDS/S3 Terraform은 기본적으로 모두 `disabled`이며 mock provider test만으로 정적 계약을 검증한다. `existing`과 `create` 입력, MSK topic bootstrap, RDS 논리 database bootstrap, IAM identity 연결과 실제 apply 조건은 [Phase 3 Data Plane 계약](eks-phase-3-data-plane.md)을 따른다. 실제 식별자는 `terraform.tfvars` 또는 승인된 secret/config delivery에만 두고 문서나 PR 본문에 복사하지 않는다.
+
+Phase 4의 workload identity도 기본 `disabled`다. IRSA는 기존 IAM OIDC provider ARN이, Pod Identity는 platform owner가 확인한 Agent가 필요하다. 신규 cluster의 IRSA는 cluster/OIDC provider 단계와 identity 단계를 분리하며, 생성 예정 ARN을 resource key로 사용하지 않는다. 선택 전에는 role이나 association을 만들지 않는다. RDS의 세 database/user bootstrap은 실제 endpoint·backup·rollback 승인, expected host 일치, `verify-full` CA와 명시적 confirmation이 있어야 실행하며 application migration을 대신하지 않는다. 상세 절차는 [Phase 4 Workload Identity와 RDS Bootstrap](eks-phase-4-identity-rds-bootstrap.md)을 따른다.
+
+RDS bootstrap의 오대상/TLS preflight, 2회 실행 멱등성, role 관리 권한 부재와 database CONNECT 격리는 실제 AWS 없이 아래 Docker 검증으로 확인한다.
+
+```bash
+bash scripts/verify-eks-rds-bootstrap.sh
+```
+
+Phase 5에서 Pair A는 `infra/eks/delivery/dev.handoff.example.json`을 기준으로 infrastructure output을 Pair B workload에 전달한다. example은 실제 AWS 식별자와 secret을 포함하지 않는 planning 파일이며, 실제 값이 채워진 `*.handoff.json`은 Git ignore 대상이다. 선택이 필요한 항목을 임의로 정하지 않은 상태에서도 아래 검증은 통과하고 deploy-ready gate가 닫혀 있음을 확인한다.
+
+```bash
+bash scripts/verify-eks-delivery-handoff.sh
+```
+
+승인된 실제 환경 handoff는 Git 밖에서 `node scripts/verify-eks-delivery-handoff.mjs --ready <path>`로 검사한다. `--ready`는 다섯 ECR digest, 실제 MSK/RDS/S3 reference, identity mode와 ingress/secret/network 관련 선택이 모두 채워져야 통과한다. 상세 입력과 A/B 인수 기준은 [Phase 5 배포 Handoff](eks-phase-5-delivery-handoff.md)를 따른다.
+
+Phase 6 image delivery workflow를 수정하면 아래 검증을 실행한다. 이 검증은 image를 build/push하지 않고 수동 trigger, GitHub OIDC, AMD64 platform, immutable receipt와 자동 실행 금지 계약만 확인한다.
+
+```bash
+bash scripts/verify-eks-image-delivery.sh
+```
+
+실제 ECR push는 GitHub의 `EKS image delivery` workflow를 수동 실행한다. 먼저 선택한 environment에 region, OIDC image role ARN, Frontend output bucket variable을 등록하고 foundation Terraform이 만든 다섯 repository가 존재하는지 확인한다. 성공 artifact의 receipt는 `node scripts/verify-eks-image-receipt.mjs <path>`로 재검증한 뒤 Phase 5 handoff의 image 값으로 사용한다. 장기 AWS access key를 GitHub Secret이나 repository에 추가하지 않는다. 세부 실행 gate는 [Phase 6 ECR Image Delivery](eks-phase-6-image-delivery.md)를 따른다.
+
+Phase 7/13 network ingress를 변경하면 아래 검증을 실행한다. 기본 values는 Kubernetes resource를 렌더링하지 않아야 하고, enabled values는 Auto Mode readiness, exposure, target/address type, subnet 2개 이상, host와 ACM certificate가 모두 있어야 한다. 실제 identifier가 들어간 values는 example 파일에 저장하지 않는다.
+
+```bash
+bash scripts/verify-eks-network-ingress.sh
+```
+
+`phase13_alb_handoff.ready_for_server_dry_run`은 Auto Mode ALB manifest 입력이 완전하다는 뜻이고 `phase7_network_handoff.decisions_complete`는 private egress와 Pod traffic enforcement 선택까지 끝났다는 호환 상태다. 둘 다 실제 network 동작 성공을 의미하지 않는다. 실제 적용 전 server-side dry-run과 namespace/class/subnet 경계를 확인하고, 적용 후 `/`, `/api/health`, RDS, MSK, ECR/S3/STS의 positive smoke와 차단 대상 negative smoke를 실행한다. 상세 선택 기준은 [Phase 13 Auto Mode ALB 진입 경로](eks-phase-13-auto-mode-alb.md)를 따른다.
+
+Phase 8 runtime Secret 계약을 변경하면 아래 검증을 실행한다. example에는 Secret 이름, key, 공유 binding과 file mount만 있으며 실제 value를 추가하지 않는다. 기본 delivery mode는 `disabled`이고, `external_secrets` 또는 `workflow_sync`는 controller/source/rotation owner와 rollback 운영을 학습·확정한 뒤 Git 밖의 환경 계약에서 선택한다.
+
+```bash
+bash scripts/verify-eks-runtime-secrets.sh
+```
+
+실제 환경의 선택 완료 여부는 `node scripts/verify-eks-runtime-secrets.mjs --ready <path>`로 확인한다. 이 gate 통과는 값 전달 방식의 계약이 완전하다는 의미일 뿐 cluster에 Secret이 생성됐거나 workload가 기동했다는 증거가 아니다. 배포에서는 value를 출력하지 않고 Secret 이름/key 존재, workload `secretKeyRef`/file mount, rotation rollout과 rollback을 별도로 검증한다. 상세 경계는 [Phase 8 런타임 Secret 전달 계약](eks-phase-8-runtime-secrets.md)을 따른다.
+
+Phase 5와 Phase 8을 함께 검사할 때는 `verify-eks-deploy-readiness.mjs`를 사용한다. planning에서는 Phase 5가 미선택이면 Phase 8이 `disabled`인지 확인하고, `--ready`에서는 두 delivery 값의 일치와 full-service Secret contract까지 요구한다. Airflow 실행 token은 Secret key와 실제 DAG env 이름이 다르므로 `AIRFLOW_EXECUTION_API_TOKEN -> ASKLAKE_EXECUTION_API_TOKEN` binding을 유지한다.
+
+Phase 10은 신규 EKS foundation을 Auto Mode로 생성하고 표준 Managed Node Group을 사용하지 않는다. `cluster_mode = "create"`에는 검토한 `cluster_admin_principal_arn`이 필수이고, `cluster_mode = "existing"`에는 실제 환경에서 확인한 `existing_auto_mode_enabled = true`와 node role ARN이 필수다. 기존 cluster 경로의 입력은 Terraform이 해당 cluster를 활성화하거나 상태를 완전히 검증했다는 뜻이 아니다. AWS CLI/Console과 platform owner evidence가 없는 상태에서는 실제 배포 준비 완료로 표시하지 않는다.
+
+General/Spark custom NodePool과 NodeClass는 Phase 12, VPC와 실제 private network는 Phase 11, 공개/내부 ALB는 Phase 13의 선택·검증 범위다. Phase 10 변경 시 [Auto Mode Foundation](eks-phase-10-auto-mode-foundation.md)의 정적 검증을 실행하고 `aws_eks_node_group` 또는 삭제된 managed-node 입력이 다시 추가되지 않았는지 확인한다.
+
+Phase 11은 `network_mode=external`을 기본으로 유지한다. `create`는 신규 MVP-owned cluster에서만 사용하며 실제 VPC CIDR, 2개 이상 AZ, `subnet_newbits`, 중복되지 않는 public/private netnum과 private egress 결정을 모두 입력해야 한다. subnet CIDR은 VPC CIDR에서 계산하고 example에 실제 주소나 resource ID를 넣지 않는다.
+
+NAT를 선택하면 `single`과 `per_az`의 비용·가용성 차이를 승인 기록에 남긴다. endpoint/hybrid를 선택하면 EC2, ECR API/DKR, Logs, STS interface endpoint와 S3 gateway가 baseline이고 workload/identity/secret/ALB 선택에 따른 추가 endpoint와 non-AWS egress를 별도로 검토한다. private-only Kubernetes API를 유지하면 VPN/SSM/VPC runner 같은 `kubectl`·Helm 실행 경로도 배포 전에 확정한다. Phase 11 plan 성공은 network 연결 증거가 아니다. apply 뒤 EKS scheduling, ECR/S3/STS, MSK IAM `9098`, RDS `5432` positive smoke와 차단 경로 negative smoke가 있어야 실제 완료로 판정한다. 상세 기준은 [Phase 11 VPC와 Private Network Foundation](eks-phase-11-network-foundation.md)을 따른다.
+
+Phase 12 chart는 disabled 기본값에서 NodeClass와 NodePool을 하나도 렌더하지 않는다. 활성화하려면 custom node role access, private subnet/node security group tag selector, General/Spark capacity type·instance category·generation, CPU/memory 상한과 disruption 값을 실제 workload 기준으로 모두 선택한다. 저장소의 `node-pools.test.example.yaml`은 테스트 fixture이며 운영 권장값이 아니다. B의 일반 workload에는 general selector, SparkApplication driver/executor에는 spark selector와 `NoSchedule` toleration을 각각 넣고 다음 검증을 실행한다.
+
+```bash
+bash scripts/verify-eks-auto-mode-node-pools.sh
+bash scripts/verify-eks-foundation.sh
+```
+
+실제 적용은 Terraform output의 role 이름을 비공개 environment value로 넘기고 server-side dry-run 뒤 수행한다. NodeClass/NodePool Ready, positive/negative scheduling, node scale-out/in, 상한, interruption과 비용 evidence가 없으면 정적 완료 상태로만 기록한다. 세부 순서는 [Phase 12 Auto Mode NodeClass와 NodePool](eks-phase-12-auto-mode-node-pools.md)을 따른다.
+
+Phase 13 ingress는 저장소 밖 values 파일로 먼저 `--render`하고, target cluster/context·namespace label·Service·IngressClassParams API와 server-side dry-run을 확인한 뒤 정확한 비용 confirmation으로만 `--apply`한다. self-managed controller용 class/group/scheme/certificate annotation을 다시 추가하지 않는다. 삭제는 Ingress finalizer 완료, Helm class 삭제, AWS 잔여 ALB 확인, cluster/VPC 순서다. 명령과 runtime 증거는 [Phase 13 Auto Mode ALB 진입 경로](eks-phase-13-auto-mode-alb.md)를 따른다.
+
+Phase 14 web workload 변경은 `bash scripts/verify-eks-web-workloads.sh`로 검사한다. 실제 배포 values는 저장소 밖에 두고 Phase 6 image receipt와 함께 `deploy-eks-web-workloads.sh --render`로 먼저 검토한다. apply는 Foundation ServiceAccount, runtime ConfigMap/Secret, General NodePool label, B의 FastAPI runtime 경계가 실제로 준비된 뒤에만 허용한다. Phase 13 Ingress보다 workload를 먼저 배포하고 삭제할 때는 Ingress와 ALB finalizer를 먼저 제거한다. 자세한 gate와 명령은 [Phase 14 Frontend·FastAPI Workload](eks-phase-14-web-workloads.md)를 따른다.
+
+14일 Metrics Server/Node scale 계약은 `bash scripts/verify-eks-metrics-scale.sh`로 검사한다. 실제 cluster에서는 `describe-addon-versions`로 호환되는 exact community add-on version을 선택하고 Terraform plan/apply 뒤 Metrics API와 `kubectl top`을 확인한다. Node scale smoke는 저장소 밖 values와 evidence 경로를 사용하며 비용 confirmation 없이는 실행되지 않는다. scale-out 뒤 임시 Helm release를 제거하고 Auto Mode scale-in까지 별도 기록한다.
+
+2026-07-15 `dev` 환경의 실제 foundation, Metrics Server, image delivery, node scale과 MSK Serverless 적용 결과 및 후속 경계는 [EKS MVP 14일차 실제 환경 검증 기록](eks-day14-runtime-evidence.md)에 요약한다. 해당 문서는 비밀이 아닌 판정만 기록하며 실제 endpoint·ARN·digest·evidence JSON은 저장소 밖에서 관리한다.
+
+```bash
+docker run --rm --entrypoint sh \
+  -v "$PWD/infra/eks:/workspace" \
+  -w /workspace/terraform \
+  hashicorp/terraform:1.15.8 \
+  -c 'export TF_DATA_DIR=/tmp/tfdata; terraform fmt -check -recursive && terraform init -backend=false -input=false >/dev/null && terraform validate && terraform test'
+```
+
 ```bash
 docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml config
 ```

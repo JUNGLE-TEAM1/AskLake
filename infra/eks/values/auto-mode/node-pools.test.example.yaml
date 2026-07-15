@@ -1,0 +1,40 @@
+# TEST FIXTURE ONLY. These values prove render behavior; they are not approved
+# deployment capacity, Spot, disruption or cost decisions.
+enabled: true
+environment: dev
+nodeRoleName: asklake-test-custom-node
+
+selectors:
+  subnets:
+    Project: AskLake-test
+    kubernetes.io/role/internal-elb: "1"
+  securityGroups:
+    aws:eks:cluster-name: asklake-test
+
+general:
+  capacityTypes: [on-demand]
+  instanceCategories: [m]
+  instanceGenerationMin: 5
+  limits:
+    cpu: "8"
+    memory: 32Gi
+  disruption:
+    consolidationPolicy: WhenEmptyOrUnderutilized
+    consolidateAfter: 5m
+    budget: "10%"
+  expireAfter: 480h
+  terminationGracePeriod: 1h
+
+spark:
+  capacityTypes: [on-demand]
+  instanceCategories: [m]
+  instanceGenerationMin: 5
+  limits:
+    cpu: "16"
+    memory: 64Gi
+  disruption:
+    consolidationPolicy: WhenEmpty
+    consolidateAfter: 10m
+    budget: "10%"
+  expireAfter: 480h
+  terminationGracePeriod: 2h

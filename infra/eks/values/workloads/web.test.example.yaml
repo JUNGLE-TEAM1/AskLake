@@ -1,0 +1,32 @@
+enabled: true
+namespace: asklake-dev
+environment: dev
+readiness:
+  foundationReady: true
+  generalNodePoolReady: true
+  imageReceiptVerified: true
+  runtimeConfigReady: true
+  runtimeSecretReady: true
+  backendRuntimeBoundaryReady: true
+placement:
+  nodeSelector:
+    asklake.io/workload-class: general
+frontend:
+  image: 000000000000.dkr.ecr.ap-northeast-2.amazonaws.com/asklake/dev/frontend@sha256:0000000000000000000000000000000000000000000000000000000000000000
+  replicaCount: 2
+  serviceAccountName: asklake-frontend
+  service: { name: frontend, type: ClusterIP, port: 80 }
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 256Mi }
+backend:
+  image: 000000000000.dkr.ecr.ap-northeast-2.amazonaws.com/asklake/dev/backend@sha256:0000000000000000000000000000000000000000000000000000000000000000
+  replicaCount: 2
+  serviceAccountName: asklake-backend
+  service: { name: fastapi, type: ClusterIP, port: 8080 }
+  runtimeConfigMapName: asklake-runtime
+  runtimeBoundaryConfigMapName: asklake-runtime-boundary
+  runtimeSecretName: asklake-backend-runtime
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits: { cpu: "1", memory: 1Gi }

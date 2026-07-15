@@ -1,0 +1,50 @@
+global:
+  environment: dev
+  clusterName: ""
+  kafkaRuntime: msk-serverless
+  kafkaAuth: iam
+  trinoRuntime: eks
+  continuousOwner: ec2-mvp
+  workloadIdentityMode: disabled
+
+namespace:
+  create: true
+  name: asklake-dev
+  labels: {}
+
+serviceAccounts:
+  frontend:
+    create: true
+    name: asklake-frontend
+    annotations: {}
+    automountServiceAccountToken: false
+  backend:
+    create: true
+    name: asklake-backend
+    annotations: {}
+    automountServiceAccountToken: true
+  airflow:
+    create: true
+    name: asklake-airflow
+    annotations: {}
+    automountServiceAccountToken: false
+  trino:
+    create: true
+    name: asklake-trino
+    annotations: {}
+    automountServiceAccountToken: false
+  mskSmoke:
+    create: true
+    name: asklake-msk-smoke
+    annotations: {}
+    automountServiceAccountToken: false
+  spark:
+    create: true
+    name: asklake-spark
+    annotations: {}
+    automountServiceAccountToken: false
+  replayProducer:
+    create: false
+    name: asklake-replay-producer
+    annotations: {}
+    automountServiceAccountToken: false

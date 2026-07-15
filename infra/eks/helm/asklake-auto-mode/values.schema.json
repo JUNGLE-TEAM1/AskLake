@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["enabled", "environment", "nodeRoleName", "selectors", "general", "spark"],
+  "properties": {
+    "enabled": { "type": "boolean" },
+    "environment": { "type": "string", "enum": ["", "dev", "staging"] },
+    "nodeRoleName": { "type": "string", "pattern": "^$|^[A-Za-z0-9+=,.@_-]{1,64}$" },
+    "selectors": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["subnets", "securityGroups"],
+      "properties": {
+        "subnets": { "$ref": "#/$defs/nonSecretTags" },
+        "securityGroups": { "$ref": "#/$defs/nonSecretTags" }
+      }
+    },
+    "general": { "$ref": "#/$defs/nodePool" },
+    "spark": { "$ref": "#/$defs/nodePool" }
+  },
+  "$defs": {
+    "nonSecretTags": {
+      "type": "object",
+      "propertyNames": { "minLength": 1 },
+      "additionalProperties": { "type": "string", "minLength": 1 }
+    },
+    "nodePool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["capacityTypes", "instanceCategories", "instanceGenerationMin", "limits", "disruption", "expireAfter", "terminationGracePeriod"],
+      "properties": {
+        "capacityTypes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "enum": ["on-demand", "spot"] }
+        },
+        "instanceCategories": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[a-z0-9]+$" }
+        },
+        "instanceGenerationMin": { "type": "integer", "minimum": 0 },
+        "limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["cpu", "memory"],
+          "properties": {
+            "cpu": { "type": "string", "pattern": "^$|^[1-9][0-9]*$" },
+            "memory": { "type": "string", "pattern": "^$|^[1-9][0-9]*(Mi|Gi|Ti)$" }
+          }
+        },
+        "disruption": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["consolidationPolicy", "consolidateAfter", "budget"],
+          "properties": {
+            "consolidationPolicy": { "type": "string", "enum": ["", "WhenEmpty", "WhenEmptyOrUnderutilized"] },
+            "consolidateAfter": { "type": "string", "pattern": "^$|^([0-9]+(s|m|h)|Never)$" },
+            "budget": { "type": "string", "pattern": "^$|^([1-9][0-9]*|([1-9][0-9]?|100)%)$" }
+          }
+        },
+        "expireAfter": { "type": "string", "pattern": "^$|^([0-9]+(s|m|h)|Never)$" },
+        "terminationGracePeriod": { "type": "string", "pattern": "^$|^[0-9]+(s|m|h)$" }
+      }
+    }
+  }
+}
