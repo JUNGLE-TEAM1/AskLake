@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT_DIR/scripts/lib/verify-eks-context.sh"
 MODE="${1:---capture}"
 NAMESPACE="${ASKLAKE_EKS_NAMESPACE:-asklake-dev}"
 
@@ -19,6 +21,8 @@ for command in kubectl helm jq; do
     exit 1
   fi
 done
+
+verify_asklake_eks_context
 
 namespace_json="$(kubectl get namespace "$NAMESPACE" -o json)"
 deployments_json="$(kubectl get deployment frontend fastapi -n "$NAMESPACE" -o json | jq '

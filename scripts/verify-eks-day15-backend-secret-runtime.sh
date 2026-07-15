@@ -2,17 +2,21 @@
 
 set -euo pipefail
 
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT_DIR/scripts/lib/verify-eks-context.sh"
 NAMESPACE="${ASKLAKE_EKS_NAMESPACE:-asklake-dev}"
 REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-ap-northeast-2}}"
 EXTERNAL_SECRET_NAME="asklake-backend-runtime"
 EXPECTED_SOURCE="asklake/dev/backend/runtime"
 
-for command in aws jq kubectl shasum; do
+for command in aws jq kubectl; do
   if ! command -v "$command" >/dev/null 2>&1; then
     echo "missing required command: $command" >&2
     exit 1
   fi
 done
+
+verify_asklake_eks_context
 
 external_secret_json="$(kubectl get externalsecret "$EXTERNAL_SECRET_NAME" -n "$NAMESPACE" -o json)"
 target_secret_json="$(kubectl get secret "$EXTERNAL_SECRET_NAME" -n "$NAMESPACE" -o json)"
@@ -63,8 +67,8 @@ jq -e '
   and (.BOOTSTRAP_ADMIN_PASSWORD | type == "string" and length > 0)
 ' <<<"$source_json" >/dev/null
 
-source_hash="$(jq -S -c '{BOOTSTRAP_ADMIN_PASSWORD,DATABASE_URL}' <<<"$source_json" | shasum -a 256 | awk '{print $1}')"
-target_hash="$(jq -S -c '.data | with_entries(.value |= @base64d) | {BOOTSTRAP_ADMIN_PASSWORD,DATABASE_URL}' <<<"$target_secret_json" | shasum -a 256 | awk '{print $1}')"
+source_hash="$(jq -S -c '{BOOTSTRAP_ADMIN_PASSWORD,DATABASE_URL}' <<<"$source_json" | asklake_sha256)"
+target_hash="$(jq -S -c '.data | with_entries(.value |= @base64d) | {BOOTSTRAP_ADMIN_PASSWORD,DATABASE_URL}' <<<"$target_secret_json" | asklake_sha256)"
 unset source_json target_secret_json
 
 if [[ "$source_hash" != "$target_hash" ]]; then
@@ -85,6 +89,6 @@ jq -e \
     )
   ' <<<"$deployment_json" >/dev/null
 
-bash scripts/verify-eks-day15-alb-runtime.sh >/dev/null
+bash "$ROOT_DIR/scripts/verify-eks-day15-alb-runtime.sh" --steady >/dev/null
 
 echo "EKS Day 15 Backend ExternalSecret runtime verification passed"

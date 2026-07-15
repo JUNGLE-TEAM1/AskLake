@@ -603,7 +603,7 @@ export ASKLAKE_BACKEND_S3_SMOKE_CONFIRM=run-backend-s3-boundary-smoke
 bash scripts/run-eks-backend-s3-smoke.sh
 ```
 
-완료 조건은 예상 Pod Identity role, 허용 object Put/Get/Delete와 삭제 확인, 읽기 전용 prefix Put 거절, 계약 밖 실제 object Get·prefix List 거절, GetBucketLocation 거절, 임시 object/Pod/ConfigMap 정리다. ListBucket statement는 bucket 하나만 가져야 하며 Raw/Output의 `*` 조건을 Warehouse/Query Result statement와 합치지 않는다. 실제 결과와 rollback은 [Backend S3 최소 권한 검증 기록](eks-day15-backend-s3-runtime-evidence.md)을 따른다.
+완료 조건은 예상 Pod Identity role, Raw/Output/Warehouse Get 성공과 Put 거절, Query Result/Evidence Put·Get·Delete 성공, 계약 밖 실제 Warehouse/Query Result object의 Get·prefix List 거절, GetBucketLocation 거절, exact object version/DeleteMarker와 임시 Pod/ConfigMap 정리다. runner는 실행마다 고유 이름을 사용하므로 연속 두 번 실행해 충돌과 잔여 자원이 없는지 확인한다. ListBucket statement는 bucket 하나만 가져야 하며 한 bucket의 `*` 조건을 다른 bucket statement와 합치지 않는다. 이 격리는 Backend뿐 아니라 Spark·Trino에도 적용하지만, 정적 policy 적용은 해당 workload의 runtime smoke를 대신하지 않는다. 실제 결과와 rollback은 [Backend S3 최소 권한 검증 기록](eks-day15-backend-s3-runtime-evidence.md)을 따른다.
 
 2026-07-15 `dev` 환경의 실제 EC2 database 규모, 서울 리전 PostgreSQL·instance·비용 비교, 권장 Terraform 입력과 Continuous DB 분리 위험은 [EKS MVP 7월 15일 RDS 분석 결과](eks-day15-rds-analysis.md)에 기록한다. 실제 격리 RDS 적용, bootstrap 검증과 rollback 경계는 [7월 15일 RDS 적용 기록](eks-day15-rds-apply-receipt.md)을 따른다.
 
@@ -654,11 +654,15 @@ helm template external-secrets external-secrets/external-secrets \
 
 실제 환경의 선택 완료 여부는 `node scripts/verify-eks-runtime-secrets.mjs --ready <path>`로 확인한다. 이 gate와 `SecretStore Ready`는 전달 기반이 완전하다는 의미일 뿐 네 application Secret이 생성됐거나 workload가 기동했다는 증거가 아니다. 배포에서는 value를 출력하지 않고 Secret 이름/key 존재, workload `secretKeyRef`/file mount, rotation rollout과 rollback을 별도로 검증한다. smoke source는 `asklake/dev/smoke/` 아래에만 임시 생성하고 hash 비교 후 `ExternalSecret`, target Kubernetes Secret과 Secrets Manager source를 모두 삭제한다. 상세 경계는 [Phase 8 런타임 Secret 전달 계약](eks-phase-8-runtime-secrets.md)을 따른다.
 
-15일차 Backend runtime 전환은 `infra/eks/secrets/backend-runtime-external-secret.yaml`만 사용한다. 현재 FastAPI가 실제로 소비하는 `DATABASE_URL`, `BOOTSTRAP_ADMIN_PASSWORD` 두 key만 매핑하며, 아직 consumer가 없는 전체 runtime 계약 key를 placeholder로 만들지 않는다. 기존 수동 Secret을 같은 이름의 ESO 소유 target으로 인계하기 전에는 AWS source와 현재 target의 key 집합 및 값 해시가 일치해야 한다. 인계 뒤에는 아래 명령으로 source/target 해시, ExternalSecret owner reference, FastAPI `2/2`, ALB route와 RDS-aware health를 값이나 endpoint 출력 없이 다시 확인한다.
+15일차 Backend runtime 전환은 `infra/eks/secrets/backend-runtime-external-secret.yaml`과 `scripts/migrate-eks-backend-runtime-secret.sh`만 사용한다. 현재 FastAPI가 실제로 소비하는 `DATABASE_URL`, `BOOTSTRAP_ADMIN_PASSWORD` 두 key만 매핑하며, 아직 consumer가 없는 전체 runtime 계약 key를 placeholder로 만들지 않는다. 기존 수동 Secret을 같은 이름의 ESO 소유 target으로 인계하기 전에는 AWS source와 현재 target의 key 집합 및 값 해시가 일치해야 한다. migration script의 기본 `--verify-existing`은 이미 Ready인 ESO target을 재생성하지 않고 전체 verifier만 실행한다. 수동 target 인수는 staged target의 hash가 일치하고 exact confirmation을 준 `--handover`에서만 진행하며 실패하면 검증한 source를 pipe로 수동 target에 복구한다. 값, endpoint와 ARN은 출력하거나 임시 파일에 저장하지 않는다.
 
 ```bash
 kubectl apply --dry-run=server \
   -f infra/eks/secrets/backend-runtime-external-secret.yaml
+bash scripts/migrate-eks-backend-runtime-secret.sh --verify-existing
+# 수동 target을 실제로 인계할 때만:
+# ASKLAKE_BACKEND_SECRET_HANDOVER_CONFIRM=handover-validated-backend-runtime \
+#   bash scripts/migrate-eks-backend-runtime-secret.sh --handover
 bash scripts/verify-eks-day15-backend-secret-runtime.sh
 ```
 
@@ -685,10 +689,12 @@ bash scripts/verify-eks-foundation.sh
 
 Phase 13 ingress는 저장소 밖 values 파일로 먼저 `--render`한다. `routesEnabled=false` foundation 적용은 target cluster/context·namespace label·IngressClassParams API와 server-side dry-run을 확인하고 전용 confirmation으로 class/params만 설치한다. 이 상태는 Service를 요구하지 않고 ALB도 요청하지 않는다. 최종 Frontend/FastAPI Service가 준비된 뒤 `routesEnabled=true`를 적용할 때만 두 Service와 비용 confirmation을 요구하고 ALB를 생성한다. self-managed controller용 class/group/scheme/certificate annotation을 다시 추가하지 않는다. 삭제는 Ingress finalizer 완료, Helm class 삭제, AWS 잔여 ALB 확인, cluster/VPC 순서다. 명령과 runtime 증거는 [Phase 13 Auto Mode ALB 진입 경로](eks-phase-13-auto-mode-alb.md)를 따른다.
 
-기존 release upgrade의 API server preflight는 `helm upgrade --install --dry-run=server`로 수행해 Helm field ownership을 유지한다. 별도 `kubectl apply --server-side` manager로 IngressClassParams를 인수하지 않는다. route 적용 후에는 아래 runtime verifier로 두 Ingress의 shared ALB, 2개 AZ, group별 healthy Pod target 2개 이상, `/`, `/api/health`와 RDS health를 확인한다. 실제 hostname과 ARN은 출력하거나 Git에 기록하지 않는다. 적용 결과는 [EKS 15일차 ALB route 적용 기록](eks-day15-alb-runtime-evidence.md)을 따른다.
+기존 release upgrade의 API server preflight는 `helm upgrade --install --dry-run=server`로 수행해 Helm field ownership을 유지한다. 별도 `kubectl apply --server-side` manager로 IngressClassParams를 인수하지 않는다. route 적용 후에는 아래 runtime verifier로 두 Ingress의 shared ALB, 2개 AZ, listener route, target port와 health path, `/`, `/api/health`와 RDS health를 확인한다. 정상 상태에서는 `--steady`를 사용해 draining 0과 각 Service의 Ready EndpointSlice IP 집합이 ALB healthy target 집합과 정확히 같은지 확인한다. 의도한 rolling update 도중에만 `--rollout`을 사용하며 healthy/draining 외 상태는 허용하지 않는다. 실제 hostname, target IP와 ARN은 출력하거나 Git에 기록하지 않는다. 적용 결과는 [EKS 15일차 ALB route 적용 기록](eks-day15-alb-runtime-evidence.md)을 따른다.
 
 ```bash
-bash scripts/verify-eks-day15-alb-runtime.sh
+bash scripts/verify-eks-day15-alb-runtime.sh --steady
+# 의도한 rolling update 중 일시적으로만 사용한다.
+bash scripts/verify-eks-day15-alb-runtime.sh --rollout
 ```
 
 15일차 ALB·Secret·S3 통합을 시작하기 전에는 아래 read-only capture로 Frontend/FastAPI replica와 Service endpoint, RDS health, Ingress/ExternalSecret 부재, 수동 runtime Secret key, SecretStore와 General node 상태를 비밀 제외 JSON으로 고정한다. `--expect-pre-change`는 ALB route나 ExternalSecret을 적용하기 전 한 번만 사용하는 정확한 Phase 0 gate다. 적용 후 상태 확인에는 `--capture`를 사용한다. 기준 판정과 rollback 경계는 [EKS 15일차 통합 마무리 Phase 0 기준점](eks-day15-integration-baseline.md)을 따른다.
@@ -696,6 +702,8 @@ bash scripts/verify-eks-day15-alb-runtime.sh
 ```bash
 bash scripts/capture-eks-day15-integration-baseline.sh --expect-pre-change
 ```
+
+위 live 검증 script와 Backend S3 runner는 모두 `ASKLAKE_EKS_CLUSTER_NAME`을 필수로 받고 AWS EKS endpoint와 현재 `kubectl` endpoint가 같은지 먼저 확인한다. namespace 존재 확인까지 통과하기 전에는 Kubernetes 또는 AWS runtime 검증을 수행하지 않는다.
 
 Phase 14 web workload 변경은 `bash scripts/verify-eks-web-workloads.sh`로 검사한다. 실제 배포 values는 저장소 밖에 두고 Phase 6 image receipt와 함께 `deploy-eks-web-workloads.sh --render`로 먼저 검토한다. apply는 Foundation ServiceAccount, runtime ConfigMap/Secret, General NodePool label, B의 FastAPI runtime 경계가 실제로 준비된 뒤에만 허용한다. Phase 13 Ingress보다 workload를 먼저 배포하고 삭제할 때는 Ingress와 ALB finalizer를 먼저 제거한다. 자세한 gate와 명령은 [Phase 14 Frontend·FastAPI Workload](eks-phase-14-web-workloads.md)를 따른다.
 

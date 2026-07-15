@@ -62,8 +62,11 @@ AI, Airflow, Trino와 전체 Backend runtime 계약의 나머지 key는 consumer
 다음 검증은 live source/target의 key와 값 해시, target ownership, FastAPI의 Secret 참조와 `2/2`, ALB/RDS health를 확인한다.
 
 ```bash
+bash scripts/migrate-eks-backend-runtime-secret.sh --verify-existing
 bash scripts/verify-eks-day15-backend-secret-runtime.sh
 ```
+
+`--verify-existing`은 현재처럼 ESO가 이미 Ready owner이면 재적용이나 rollout 없이 전체 검증만 수행한다. 신규 수동 target을 인계할 때만 confirmation-gated `--handover`를 사용한다. 이 경로는 staged ESO target hash 일치를 먼저 요구하고 최종 인계 실패 시 승인된 source를 stdout·명령 인자·임시 파일에 펼치지 않은 채 수동 target을 복구한다.
 
 현재 상태를 비밀 제외 JSON으로 캡처할 때는 다음 명령을 사용한다.
 

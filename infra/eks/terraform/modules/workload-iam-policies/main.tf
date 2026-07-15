@@ -66,27 +66,47 @@ locals {
         Resource = [var.msk_group_arn]
       },
       {
-        Sid    = "ListSparkBuckets"
-        Effect = "Allow"
-        Action = ["s3:ListBucket"]
-        Resource = [
-          var.storage_bucket_arns.raw,
-          var.storage_bucket_arns.output,
-          var.storage_bucket_arns.warehouse,
-        ]
+        Sid      = "ListSparkRawBucket"
+        Effect   = "Allow"
+        Action   = ["s3:ListBucket"]
+        Resource = [var.storage_bucket_arns.raw]
         Condition = {
           StringLike = {
             "s3:prefix" = [
               var.storage_prefixes.raw,
               "${var.storage_prefixes.raw}/*",
+            ]
+          }
+        }
+      },
+      {
+        Sid      = "ListSparkOutputBucket"
+        Effect   = "Allow"
+        Action   = ["s3:ListBucket"]
+        Resource = [var.storage_bucket_arns.output]
+        Condition = {
+          StringLike = {
+            "s3:prefix" = [
               var.storage_prefixes.output,
               "${var.storage_prefixes.output}/*",
-              var.storage_prefixes.warehouse,
-              "${var.storage_prefixes.warehouse}/*",
               var.storage_prefixes.checkpoint,
               "${var.storage_prefixes.checkpoint}/*",
               var.storage_prefixes.quarantine,
               "${var.storage_prefixes.quarantine}/*",
+            ]
+          }
+        }
+      },
+      {
+        Sid      = "ListSparkWarehouseBucket"
+        Effect   = "Allow"
+        Action   = ["s3:ListBucket"]
+        Resource = [var.storage_bucket_arns.warehouse]
+        Condition = {
+          StringLike = {
+            "s3:prefix" = [
+              var.storage_prefixes.warehouse,
+              "${var.storage_prefixes.warehouse}/*",
             ]
           }
         }
@@ -214,18 +234,27 @@ locals {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid    = "ListTrinoBuckets"
-        Effect = "Allow"
-        Action = ["s3:ListBucket"]
-        Resource = [
-          var.storage_bucket_arns.warehouse,
-          var.storage_bucket_arns.query_results,
-        ]
+        Sid      = "ListTrinoWarehouseBucket"
+        Effect   = "Allow"
+        Action   = ["s3:ListBucket"]
+        Resource = [var.storage_bucket_arns.warehouse]
         Condition = {
           StringLike = {
             "s3:prefix" = [
               var.storage_prefixes.warehouse,
               "${var.storage_prefixes.warehouse}/*",
+            ]
+          }
+        }
+      },
+      {
+        Sid      = "ListTrinoQueryResultBucket"
+        Effect   = "Allow"
+        Action   = ["s3:ListBucket"]
+        Resource = [var.storage_bucket_arns.query_results]
+        Condition = {
+          StringLike = {
+            "s3:prefix" = [
               var.storage_prefixes.query_results,
               "${var.storage_prefixes.query_results}/*",
             ]

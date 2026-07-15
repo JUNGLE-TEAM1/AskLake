@@ -44,13 +44,15 @@ Raw/Output의 *가 나머지 bucket까지 넓힘
 
 존재하지 않는 S3 key를 읽는 방식은 최소 권한 증거로 충분하지 않다. S3는 object 부재와 ListBucket 권한 조합에 따라 `NoSuchKey` 또는 `AccessDenied`를 반환할 수 있기 때문이다.
 
-runner는 이제 실행자 권한으로 계약 밖 고유 prefix에 작은 sentinel object를 먼저 만들고, Backend Pod Identity가 그 **실제 object**를 읽을 때 `AccessDenied`인지 확인한다. sentinel과 positive object, 임시 Pod·ConfigMap은 성공·실패와 관계없이 정리한다.
+runner는 이제 실행자 권한으로 계약 안팎의 고유 sentinel을 먼저 만들고 Backend Pod Identity가 Raw/Output/Warehouse를 읽되 쓰지는 못하는지, Query Result/Evidence는 쓰고 다시 읽고 삭제할 수 있는지 확인한다. 계약 밖 Warehouse/Query Result의 **실제 object**는 Get과 List가 모두 `AccessDenied`여야 한다. sentinel과 positive object는 versioning 여부와 관계없이 exact key의 version/DeleteMarker까지 제거하고, 임시 Pod·ConfigMap도 성공·실패와 관계없이 정리한다.
 
 ## 실제 적용 방식
 
-Terraform 정책 코드를 먼저 수정하고 전체 mock test를 통과시켰다. live role과 Pod Identity association은 교체하지 않고 Terraform이 소유하는 Backend managed policy에 새 policy version을 생성해 default로 전환했다. smoke 실패 시 이전 version을 다시 default로 되돌리는 자동 rollback을 걸었으며 rollback은 실행되지 않았다.
+Terraform 정책 코드를 먼저 수정하고 전체 mock test를 통과시켰다. live role과 Pod Identity association은 교체하지 않고 Terraform이 소유하는 managed policy만 갱신했다. Backend에 이어 Spark와 Trino의 multi-bucket ListBucket도 bucket별 statement로 분리했다. 저장된 plan은 Spark·Trino policy 두 개의 in-place update만 포함했고 적용 직후 같은 실제 입력으로 만든 plan은 resource change 0개였다.
 
-이전 policy version 한 개는 즉시 rollback용으로 유지했다. 다음 Terraform plan은 live default policy를 refresh한 뒤 저장소 정책과 semantic diff가 없는지 확인해야 한다. 새 role, association 또는 broad permission은 만들지 않았다.
+Backend·Spark·Trino에서 알려진 과권한 Sid를 가진 non-default policy version 세 개를 확인해 삭제했고 해당 과거 version은 0개다. 새 role, association 또는 broad permission은 만들지 않았다. Spark·Trino 실제 workload smoke는 별도 gate로 남는다.
+
+초기 runner가 현재 version만 삭제했던 시점에 남긴 Backend smoke object를 version/DeleteMarker까지 전수 조사했다. 승인 prefix의 과거 version/DeleteMarker 20개와 거절 prefix의 9개, 총 29개를 exact key/version으로 제거했으며 재조회 결과 0개였다. bucket 자체나 업무 object는 건드리지 않았다.
 
 ## 실제 검증 결과
 
@@ -59,13 +61,15 @@ Terraform 정책 코드를 먼저 수정하고 전체 mock test를 통과시켰�
 - Backend role의 추가 inline policy: 0개
 - Backend image: 현재 FastAPI와 같은 immutable AMD64 digest
 - Pod Identity session: 예상 Backend role
-- 허용된 result object Put/Get/Delete: 성공
-- positive object 삭제 후 부재 확인: 성공
-- 읽기 전용 prefix PutObject: `AccessDenied`
-- 계약 밖 실제 sentinel GetObject: `AccessDenied`
-- 계약 밖 prefix ListBucket: `AccessDenied`
+- Raw/Output/Warehouse sentinel GetObject: 3/3 성공
+- Raw/Output/Warehouse PutObject: 3/3 `AccessDenied`
+- Query Result/Evidence Put/Get/Delete: 2/2 성공
+- 계약 밖 Warehouse/Query Result 실제 sentinel GetObject: 2/2 `AccessDenied`
+- 계약 밖 Warehouse/Query Result prefix ListBucket: 2/2 `AccessDenied`
 - 불필요한 GetBucketLocation: `AccessDenied`
-- 임시 object, Pod, ConfigMap 정리: 완료
+- exact object version/DeleteMarker, Pod, ConfigMap 정리: 완료
+- 고유 실행 이름을 사용한 연속 재실행: 통과
+- 적용 후 동일 Terraform plan: resource change 0개
 - 정책 적용 후 FastAPI: `2/2`
 - ALB `/`, `/api/health`: HTTP 200
 - Backend RDS health: 정상
@@ -83,7 +87,7 @@ export ASKLAKE_BACKEND_S3_SMOKE_CONFIRM=run-backend-s3-boundary-smoke
 bash scripts/run-eks-backend-s3-smoke.sh
 ```
 
-출력에는 bucket, ARN, object key와 digest가 포함되지 않는다. runner가 실패하면 로그에는 판정 이름과 AWS error code만 남기고 임시 자원을 정리한다.
+출력에는 bucket, ARN, object key와 digest가 포함되지 않는다. runner가 실패하면 로그에는 판정 이름과 AWS error code만 남기고 exact version/DeleteMarker와 임시 자원을 정리한다. 충돌과 cleanup 회귀를 잡기 위해 같은 명령을 연속 두 번 실행한다.
 
 정적 정책 회귀 검증은 다음 명령을 사용한다.
 
@@ -98,8 +102,8 @@ docker run --rm \
 
 ## rollback
 
-새 정책으로 실패가 발생하면 Backend managed policy의 직전 version을 default로 되돌린다. role과 Pod Identity association은 건드리지 않는다. 정책 복구 뒤 FastAPI `2/2`, ALB와 RDS health를 다시 확인한다. smoke object와 임시 Kubernetes resource가 남아 있지 않은지도 확인한다.
+새 정책으로 실패가 발생하면 Git의 직전 정책 문서를 Terraform으로 다시 적용한다. 알려진 과권한 non-default version은 rollback 수단으로 보존하지 않는다. role과 Pod Identity association은 건드리지 않는다. 정책 복구 뒤 무변경 plan, FastAPI `2/2`, ALB와 RDS health를 다시 확인한다. smoke object version/DeleteMarker와 임시 Kubernetes resource가 남아 있지 않은지도 확인한다.
 
 ## 남은 범위
 
-이번 Phase는 Backend role만 실제 검증하고 수정했다. Spark와 Trino는 별도 managed policy를 사용하므로 workload 배포 전에 각 bucket별 ListBucket 조건 분리 여부와 실제 positive/negative smoke를 따로 통과해야 한다. Backend 정책이 통과했다는 사실을 Spark/Trino 최소 권한 증거로 재사용하지 않는다.
+이번 Phase의 runtime 검증은 Backend role만 승인한다. Spark와 Trino는 별도 managed policy의 bucket별 ListBucket 조건 분리, Terraform 적용과 무변경 plan까지 완료했지만 workload 배포 전에 실제 positive/negative smoke를 따로 통과해야 한다. Backend 정책이 통과했다는 사실을 Spark/Trino 최소 권한 증거로 재사용하지 않는다.

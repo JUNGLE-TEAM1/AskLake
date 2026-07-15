@@ -31,7 +31,7 @@ AWS 기본 DNS + HTTP 80
 - ALB는 `active`, `internet-facing`, application, IPv4, 2개 AZ 상태다.
 - target group은 Frontend/Backend 두 개이며 각각 Ready Pod target 2개가 healthy다.
 - ALB provisioning 중 B가 scheduler 수정 Backend 후보 `git-059d8ea`를 rolling update해 FastAPI Deployment generation이 2가 됐다. 이전 Backend Pod target 두 개는 잠시 `Target.DeregistrationInProgress`였고 active target 4개는 모두 healthy였다. 최종 검증에서는 draining 0, healthy 4가 됐으며 FastAPI는 `2/2`다. 전체 digest는 Git 밖의 receipt에 둔다.
-- verifier는 healthy와 일시적 draining만 허용하며 unhealthy/unused/unavailable target은 거절한다.
+- verifier의 `--steady`는 draining 0개와 Frontend/FastAPI Ready EndpointSlice IP 집합이 각 ALB healthy target 집합과 정확히 같은지 확인한다. `--rollout`은 의도한 rolling update 중에만 healthy/draining을 허용하며 group별 healthy target 2개 바닥은 유지한다. 두 모드 모두 listener path, target port와 health path를 Service 계약과 대조한다.
 - ALB 기본 DNS `/`는 HTTP 200이다.
 - ALB 기본 DNS `/api/health`는 HTTP 200이고 `database.ok=true`다.
 
@@ -42,7 +42,9 @@ AWS 기본 DNS + HTTP 80
 다음 명령은 Ingress가 같은 ALB를 공유하는지, ALB 계약, 2개 target group, group별 healthy Pod 2개 이상, 외부 HTTP와 RDS health를 확인한다. hostname과 ARN은 내부 조회에만 사용하고 출력하지 않는다.
 
 ```bash
-bash scripts/verify-eks-day15-alb-runtime.sh
+bash scripts/verify-eks-day15-alb-runtime.sh --steady
+# 실제 rolling update 관찰 중에만 사용
+bash scripts/verify-eks-day15-alb-runtime.sh --rollout
 ```
 
 Phase 0의 변경 전 gate는 Ingress 0개를 요구하므로 적용 후 다시 실행하지 않는다. 현재 상태는 다음 명령으로 비밀 없이 캡처한다.
