@@ -217,9 +217,10 @@ run "new_cluster_contract" {
 
   assert {
     condition = (
-      output.phase1_handoff.contract_version == "2.2" &&
+      output.phase1_handoff.contract_version == "2.3" &&
       output.phase1_handoff.network_output == "phase11_network_handoff" &&
-      output.phase1_handoff.node_pool_output == "phase12_node_pool_handoff"
+      output.phase1_handoff.node_pool_output == "phase12_node_pool_handoff" &&
+      output.phase1_handoff.ingress_output == "phase13_alb_handoff"
     )
     error_message = "the Phase 12 foundation handoff version and output pointers must stay synchronized."
   }
@@ -715,15 +716,16 @@ run "reviewed_network_ingress_handoff" {
     existing_cluster_name   = "shared-dev"
     create_ecr_repositories = false
 
-    ingress_mode            = "alb"
-    alb_controller_ready    = true
-    alb_controller_owner    = "platform-team"
-    alb_exposure            = "internet-facing"
-    alb_target_type         = "ip"
-    ingress_host            = "asklake.example.invalid"
-    ingress_certificate_arn = "arn:aws:acm:ap-northeast-2:111122223333:certificate/00000000-0000-0000-0000-000000000000"
-    private_egress_mode     = "hybrid"
-    pod_network_enforcement = "both"
+    ingress_mode               = "auto-mode-alb"
+    alb_exposure               = "internet-facing"
+    alb_target_type            = "ip"
+    alb_ip_address_type        = "ipv4"
+    external_public_subnet_ids = ["subnet-public-a", "subnet-public-b"]
+    ingress_host               = "asklake.example.invalid"
+    ingress_certificate_arn    = "arn:aws:acm:ap-northeast-2:111122223333:certificate/00000000-0000-0000-0000-000000000000"
+    ingress_dns_owner          = "platform-team"
+    private_egress_mode        = "hybrid"
+    pod_network_enforcement    = "both"
   }
 
   assert {
@@ -740,9 +742,73 @@ run "reviewed_network_ingress_handoff" {
     condition     = output.phase7_network_handoff.ingress.routes.backend.health_path == "/api/health"
     error_message = "backend ALB target group must keep its real health endpoint."
   }
+
+  assert {
+    condition = (
+      output.phase13_alb_handoff.auto_mode_controller == "eks.amazonaws.com/alb" &&
+      !output.phase13_alb_handoff.self_managed_controller &&
+      output.phase13_alb_handoff.ready_for_server_dry_run &&
+      length(output.phase13_alb_handoff.subnet_ids) == 2
+    )
+    error_message = "Phase 13 must hand off the EKS-managed ALB class and exact reviewed subnets."
+  }
+}
+
+run "created_network_internal_auto_mode_alb_handoff" {
+  command = apply
+
+  variables {
+    environment                = "dev"
+    owner                      = "pair-a"
+    resource_lifecycle         = "mvp-owned"
+    cluster_mode               = "create"
+    network_mode               = "create"
+    vpc_cidr                   = "10.48.0.0/16"
+    network_availability_zones = ["ap-northeast-2a", "ap-northeast-2c"]
+    subnet_newbits             = 8
+    public_subnet_netnums      = [0, 1]
+    private_subnet_netnums     = [10, 11]
+    private_egress_mode        = "nat_gateway"
+    nat_gateway_mode           = "single"
+    create_ecr_repositories    = false
+
+    ingress_mode            = "auto-mode-alb"
+    alb_exposure            = "internal"
+    alb_target_type         = "ip"
+    alb_ip_address_type     = "ipv4"
+    ingress_host            = "asklake.internal.example.invalid"
+    ingress_certificate_arn = "arn:aws:acm:ap-northeast-2:111122223333:certificate/00000000-0000-0000-0000-000000000000"
+    ingress_dns_owner       = "platform-team"
+  }
+
+  assert {
+    condition = (
+      output.phase13_alb_handoff.exposure == "internal" &&
+      length(output.phase13_alb_handoff.subnet_ids) == 2 &&
+      toset(output.phase13_alb_handoff.subnet_ids) == toset(output.phase11_network_handoff.subnets.cluster_private)
+    )
+    error_message = "internal Auto Mode ALB must use the Phase 11 private subnets rather than public ALB subnets."
+  }
 }
 
 run "reject_partial_alb_contract" {
+  command = plan
+
+  variables {
+    environment                = "dev"
+    owner                      = "pair-a"
+    resource_lifecycle         = "external"
+    cluster_mode               = "existing"
+    existing_cluster_name      = "shared-dev"
+    create_ecr_repositories    = false
+    ingress_mode               = "auto-mode-alb"
+    external_public_subnet_ids = ["subnet-public-a", "subnet-public-b"]
+  }
+
+  expect_failures = [check.alb_ingress_contract, check.alb_subnet_contract]
+}
+
+run "reject_auto_mode_alb_without_selected_subnets" {
   command = plan
 
   variables {
@@ -752,10 +818,17 @@ run "reject_partial_alb_contract" {
     cluster_mode            = "existing"
     existing_cluster_name   = "shared-dev"
     create_ecr_repositories = false
-    ingress_mode            = "alb"
+
+    ingress_mode            = "auto-mode-alb"
+    alb_exposure            = "internet-facing"
+    alb_target_type         = "ip"
+    alb_ip_address_type     = "ipv4"
+    ingress_host            = "asklake.example.invalid"
+    ingress_certificate_arn = "arn:aws:acm:ap-northeast-2:111122223333:certificate/00000000-0000-0000-0000-000000000000"
+    ingress_dns_owner       = "platform-team"
   }
 
-  expect_failures = [check.alb_ingress_contract]
+  expect_failures = [check.alb_ingress_contract, check.alb_subnet_contract]
 }
 
 run "reject_disabled_ingress_runtime_values" {

@@ -1,16 +1,19 @@
 output "phase7_network_handoff" {
-  description = "Non-secret, resource-free input for the AskLake ALB ingress chart and private network review."
+  description = "Compatibility view of the Phase 7 network decisions after the Phase 13 Auto Mode ALB migration."
   value = {
-    contract_version = "1.0"
+    contract_version = "2.0"
     ingress = {
       mode             = var.ingress_mode
-      controller_ready = var.alb_controller_ready
-      controller_owner = var.alb_controller_owner
-      ingress_class    = "alb"
+      controller       = "eks.amazonaws.com/alb"
+      controller_owner = "eks-auto-mode-managed"
+      ingress_class    = "${var.name_prefix}-${var.environment}-alb"
       exposure         = var.alb_exposure
       target_type      = var.alb_target_type
+      ip_address_type  = var.alb_ip_address_type
+      subnet_ids       = local.alb_subnet_ids
       host             = var.ingress_host
       certificate_arn  = var.ingress_certificate_arn
+      dns_owner        = var.ingress_dns_owner
       group_name       = "${var.name_prefix}-${var.environment}"
       namespace        = var.namespace
       routes = {
@@ -43,5 +46,31 @@ output "phase7_network_handoff" {
     }
     ready_for_ingress_render = local.ingress_inputs_complete
     decisions_complete       = local.ingress_inputs_complete && local.private_network_decisions_complete
+  }
+}
+
+output "phase13_alb_handoff" {
+  description = "Non-secret EKS Auto Mode IngressClassParams and deployment handoff."
+  value = {
+    contract_version          = "1.0"
+    mode                      = var.ingress_mode
+    auto_mode_controller      = "eks.amazonaws.com/alb"
+    self_managed_controller   = false
+    ingress_class_name        = "${var.name_prefix}-${var.environment}-alb"
+    ingress_class_params_name = "${var.name_prefix}-${var.environment}-alb"
+    namespace                 = var.namespace
+    namespace_selector        = { "asklake.io/ingress-access" = var.namespace }
+    group_name                = "${var.name_prefix}-${var.environment}"
+    exposure                  = var.alb_exposure
+    target_type               = var.alb_target_type
+    ip_address_type           = var.alb_ip_address_type
+    subnet_ids                = local.alb_subnet_ids
+    host                      = var.ingress_host
+    certificate_arn           = var.ingress_certificate_arn
+    dns_owner                 = var.ingress_dns_owner
+    ready_for_server_dry_run  = local.ingress_inputs_complete
+    actual_alb_hostname       = "available-only-after-ingress-reconciliation"
+    runtime_and_cost_smoke    = "required-after-apply"
+    deletion_order            = ["dns-record", "ingress", "alb-finalizer-complete", "ingress-class", "cluster"]
   }
 }

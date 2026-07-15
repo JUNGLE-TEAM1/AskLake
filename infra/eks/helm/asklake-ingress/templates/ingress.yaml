@@ -9,7 +9,6 @@ metadata:
     app.kubernetes.io/component: backend
   annotations:
     {{- include "asklake-ingress.annotations" . | nindent 4 }}
-    alb.ingress.kubernetes.io/group.order: "10"
     alb.ingress.kubernetes.io/healthcheck-path: {{ .Values.services.backend.healthPath | quote }}
 spec:
   ingressClassName: {{ .Values.ingressClassName }}
@@ -35,7 +34,6 @@ metadata:
     app.kubernetes.io/component: frontend
   annotations:
     {{- include "asklake-ingress.annotations" . | nindent 4 }}
-    alb.ingress.kubernetes.io/group.order: "20"
     alb.ingress.kubernetes.io/healthcheck-path: {{ .Values.services.frontend.healthPath | quote }}
 spec:
   ingressClassName: {{ .Values.ingressClassName }}

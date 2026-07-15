@@ -1,10 +1,16 @@
 enabled: true
 namespace: asklake-dev
-controllerReady: true
-controllerOwner: platform-team
-ingressClassName: alb
+autoModeLoadBalancingReady: true
+ingressClassName: asklake-dev-alb
+ingressClassParamsName: asklake-dev-alb
+namespaceSelector:
+  asklake.io/ingress-access: asklake-dev
 exposure: internet-facing
 targetType: ip
+ipAddressType: ipv4
+subnetIds:
+  - subnet-test-public-a
+  - subnet-test-public-b
 groupName: asklake-dev
 host: asklake.example.invalid
 certificateArn: arn:aws:acm:ap-northeast-2:000000000000:certificate/00000000-0000-0000-0000-000000000000

@@ -1,12 +1,14 @@
 # EKS MVP Phase 7 Network와 ALB Ingress 계약
 
-이 단계는 AskLake의 외부 진입 경로와 private workload 통신에 필요한 선택을 코드로 표현하고, 선택이 끝나지 않은 상태에서는 ALB manifest가 생성되지 않도록 만든 단계다. Phase 7 자체는 실제 AWS Load Balancer Controller, ALB, DNS, ACM certificate, NAT Gateway, VPC endpoint 또는 Pod security group을 생성하지 않는다. 이후 Phase 11이 별도 opt-in VPC/NAT/endpoint foundation을 추가했지만 ALB와 Pod network enforcement는 계속 후속 선택이다.
+> 현재 ALB 구현 기준은 [Phase 13 Auto Mode ALB 진입 경로](eks-phase-13-auto-mode-alb.md)다. 아래 내용은 최초 선택 계약과 self-managed controller 초안의 변경 이력으로 유지한다.
+
+이 단계는 AskLake의 외부 진입 경로와 private workload 통신에 필요한 선택을 처음 코드로 표현한 단계다. 이후 Phase 11이 VPC/NAT/endpoint foundation을 추가했고 Phase 13이 ALB manifest를 EKS Auto Mode 방식으로 교체했다. 실제 ALB, DNS, certificate와 network smoke가 정적 검증만으로 완료되는 것은 아니다.
 
 ## 구현된 경계
 
 Terraform의 `phase7_network_handoff`는 다음 값을 A에서 배포 계층으로 전달한다.
 
-- ALB ingress 활성화 여부와 controller lifecycle owner
+- ALB ingress 활성화 여부와 EKS Auto Mode load balancing 상태
 - `internal` 또는 `internet-facing` exposure
 - `ip` 또는 `instance` target type
 - exact DNS host와 ACM certificate ARN reference
@@ -15,9 +17,9 @@ Terraform의 `phase7_network_handoff`는 다음 값을 A에서 배포 계층으�
 - private egress와 Pod traffic enforcement의 선택 상태
 - Kubernetes API, ECR/S3/STS, RDS, MSK IAM, Trino, Airflow의 필수 port
 
-기본값은 `ingress_mode=disabled`, `private_egress_mode=undecided`, `pod_network_enforcement=undecided`다. 일부 ALB 값만 미리 채우는 것도 허용하지 않는다. 실제 결정을 승인한 뒤 한 번에 완전한 contract로 전환한다. 단, `network_mode=create`를 선택하면 Phase 11 gate가 private egress 결정을 필수로 요구한다.
+기본값은 `ingress_mode=disabled`, `private_egress_mode=undecided`, `pod_network_enforcement=undecided`다. Phase 13 활성값은 `auto-mode-alb`이며 exposure, target/address type, subnet, DNS owner와 ACM 일부만 채우는 것도 허용하지 않는다. 단, `network_mode=create`를 선택하면 Phase 11 gate가 private egress 결정을 필수로 요구한다.
 
-`infra/eks/helm/asklake-ingress` chart는 기본값으로 아무 Ingress도 만들지 않는다. 활성화하면 HTTPS `443`만 열고 ACM certificate를 요구하며 두 Ingress를 같은 명시적 ALB group으로 묶는다. 두 resource로 나누는 이유는 Frontend와 FastAPI target group에 실제 health endpoint를 각각 적용하기 위해서다. `/api` rule의 group order가 `/`보다 먼저다.
+`infra/eks/helm/asklake-ingress` chart는 기본값으로 아무 resource도 만들지 않는다. 활성화하면 EKS Auto Mode IngressClassParams/Class와 HTTPS Ingress 두 개를 만들고 class-level group으로 하나의 ALB를 공유한다. 두 Ingress로 나누는 이유는 Frontend와 FastAPI target group에 실제 health endpoint를 각각 적용하기 위해서다.
 
 ```text
 Internet 또는 사내 network
@@ -47,7 +49,7 @@ Internet 또는 사내 network
 
 ## 보안 주의사항
 
-ALB IngressGroup은 같은 group 이름을 사용할 권한이 있는 다른 Ingress가 rule을 추가할 수 있다. 따라서 `asklake-dev`에서 Ingress를 생성·변경할 주체를 배포 role로 제한하고, 다른 namespace가 `asklake-dev` group에 참여하지 못하도록 RBAC 또는 admission policy를 검토해야 한다. application ServiceAccount에는 Ingress 변경 권한을 주지 않는다.
+Phase 13 IngressClassParams는 exact `asklake.io/ingress-access` namespace label로 class 사용 범위를 제한한다. Ingress와 cluster-scoped class를 생성·변경할 주체는 배포 role로 제한하고 application ServiceAccount에는 Ingress 변경 권한을 주지 않는다.
 
 Certificate ARN, host와 실제 network identifier가 들어간 environment values는 repository example을 덮어쓰지 않고 승인된 GitHub Environment 또는 배포 설정에서 전달한다. certificate private key, AWS credential과 application secret은 values나 Terraform output에 넣지 않는다.
 
@@ -65,6 +67,6 @@ docker run --rm --entrypoint sh \
   -c 'export TF_DATA_DIR=/tmp/tfdata; terraform fmt -check -recursive && terraform init -backend=false -input=false >/dev/null && terraform validate && terraform test'
 ```
 
-현재 코드 완료 기준은 disabled render 0개, 미완성 enabled values 거절, HTTPS ALB Ingress 2개 render, route/health check 분리와 Terraform 16개 test 통과다.
+현재 코드 완료 기준은 disabled render 0개, 미완성 enabled values 거절, Auto Mode IngressClassParams/Class와 HTTPS Ingress 2개 render, route/health check 분리와 전체 Terraform mock test 통과다.
 
-실제 운영 완료는 controller readiness, DNS/ACM 검증, ALB provisioning, `/`와 `/api/health` HTTPS 확인, 허용·차단 network smoke, RDS `5432`와 MSK IAM `9098` private 접근, ECR/S3/STS egress, ALB 삭제 후 잔여 resource 확인까지 성공해야 선언할 수 있다.
+실제 운영 완료는 EKS Auto Mode load balancing 상태, DNS/ACM 검증, ALB provisioning, `/`와 `/api/health` HTTPS 확인, 허용·차단 network smoke, RDS `5432`와 MSK IAM `9098` private 접근, ECR/S3/STS egress, ALB 삭제 후 잔여 resource 확인까지 성공해야 선언할 수 있다.

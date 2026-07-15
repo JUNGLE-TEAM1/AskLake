@@ -40,7 +40,7 @@ Phase 10은 모든 Auto Mode 운영 설정을 한꺼번에 확정하지 않는�
 
 - General workload와 Spark batch를 분리하는 custom NodePool/NodeClass 구조는 Phase 12에서 구현했다. instance category, Spot/On-Demand, pool limits와 disruption의 실제 환경값은 여전히 학습·선택 gate다.
 - Phase 11은 external/create VPC, public/private subnet, NAT/VPC endpoint와 MSK/RDS security group 구조를 구현했다. 실제 CIDR/AZ/egress 비용 선택, apply와 smoke는 여전히 환경 작업이다.
-- Auto Mode가 load balancing capability를 제공하더라도 공개 ALB의 exposure, DNS, ACM, target type과 route 계약은 Phase 13에서 별도로 적용한다.
+- Auto Mode load balancing capability 위의 공개/내부 ALB exposure, DNS, ACM, target/address type과 route 계약은 Phase 13의 IngressClassParams 구조로 구현했다. 실제 환경값과 apply/smoke는 여전히 별도 gate다.
 - Metrics Server, Spark Operator, CloudWatch/Prometheus 운영 구성은 Phase 14 이후 범위다.
 - 기존 cluster의 Auto Mode 활성화 작업과 신규 cluster `terraform apply`는 실제 account, 비용, destroy, rollback 승인 뒤 수행한다.
 
@@ -57,7 +57,7 @@ Auto Mode는 노드 운영 부담을 낮추지만 무제한 자원이나 무비�
 - `custom_node_pools`: 아직 완료되지 않은 `phase-12`
 - `capabilities`: compute/load balancing/block storage 활성 계약
 
-Phase 10은 `phase1_handoff.contract_version = "2.0"`과 `cluster_compute = "eks-auto-mode"`를 도입했다. Phase 11 network output은 `2.1`, Phase 12 node placement output 추가 뒤 현재 계약은 `2.2`다. B는 custom chart 적용 전에는 selector 대상 node가 존재한다고 가정하지 않고, 적용 뒤 일반 workload와 Spark driver/executor에 각각 전달된 placement를 사용한다.
+Phase 10은 `phase1_handoff.contract_version = "2.0"`과 `cluster_compute = "eks-auto-mode"`를 도입했다. Phase 11 network output은 `2.1`, Phase 12 node placement는 `2.2`, Phase 13 ALB handoff 추가 뒤 현재 계약은 `2.3`이다. B는 custom chart 적용 전에는 selector 대상 node가 존재한다고 가정하지 않고, 적용 뒤 일반 workload와 Spark driver/executor에 각각 전달된 placement를 사용한다.
 
 ## 검증과 완료 기준
 

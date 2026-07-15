@@ -1,10 +1,14 @@
 enabled: false
 namespace: asklake-dev
-controllerReady: false
-controllerOwner: ""
-ingressClassName: alb
+autoModeLoadBalancingReady: false
+ingressClassName: asklake-dev-alb
+ingressClassParamsName: asklake-dev-alb
+namespaceSelector:
+  asklake.io/ingress-access: asklake-dev
 exposure: ""
 targetType: ""
+ipAddressType: ""
+subnetIds: []
 groupName: asklake-dev
 host: ""
 certificateArn: ""

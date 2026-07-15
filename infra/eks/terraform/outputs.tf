@@ -112,7 +112,7 @@ output "trino_handoff" {
 output "phase1_handoff" {
   description = "Non-secret fields Pair B can consume without reading Terraform internals."
   value = {
-    contract_version = "2.2"
+    contract_version = "2.3"
     aws_region       = var.aws_region
     environment      = var.environment
     cluster_name     = local.cluster_name
@@ -128,6 +128,7 @@ output "phase1_handoff" {
     auto_mode_output = "auto_mode_handoff"
     network_output   = "phase11_network_handoff"
     node_pool_output = "phase12_node_pool_handoff"
+    ingress_output   = "phase13_alb_handoff"
     network_outputs = {
       vpc                    = "cluster_vpc_id"
       cluster_security_group = "cluster_security_group_id"

@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CHART_DIR="$ROOT_DIR/infra/eks/helm/asklake-foundation"
+INGRESS_CHART_DIR="$ROOT_DIR/infra/eks/helm/asklake-ingress"
 VALUES_FILE="$ROOT_DIR/infra/eks/values/dev.example.yaml"
 IRSA_VALUES_FILE="$ROOT_DIR/infra/eks/values/identity/irsa.example.yaml"
 POD_IDENTITY_VALUES_FILE="$ROOT_DIR/infra/eks/values/identity/pod-identity.example.yaml"
@@ -36,6 +37,10 @@ required_files=(
   "$CHART_DIR/values.schema.json"
   "$CHART_DIR/templates/backend-rbac.yaml"
   "$CHART_DIR/templates/spark-driver-rbac.yaml"
+  "$INGRESS_CHART_DIR/Chart.yaml"
+  "$INGRESS_CHART_DIR/values.schema.json"
+  "$INGRESS_CHART_DIR/templates/ingress-class.yaml"
+  "$INGRESS_CHART_DIR/templates/ingress.yaml"
   "$VALUES_FILE"
   "$IRSA_VALUES_FILE"
   "$POD_IDENTITY_VALUES_FILE"
@@ -43,6 +48,9 @@ required_files=(
   "$ROOT_DIR/docs/eks-phase-10-auto-mode-foundation.md"
   "$ROOT_DIR/docs/eks-phase-11-network-foundation.md"
   "$ROOT_DIR/docs/eks-phase-12-auto-mode-node-pools.md"
+  "$ROOT_DIR/docs/eks-phase-13-auto-mode-alb.md"
+  "$ROOT_DIR/scripts/deploy-eks-auto-mode-ingress.sh"
+  "$ROOT_DIR/scripts/destroy-eks-auto-mode-ingress.sh"
 )
 
 for required_file in "${required_files[@]}"; do
@@ -255,6 +263,7 @@ bash -n "$ROOT_DIR/scripts/bootstrap-eks-rds-databases.sh"
 bash -n "$ROOT_DIR/scripts/verify-eks-rds-bootstrap.sh"
 bash -n "$ROOT_DIR/scripts/verify-eks-auto-mode-node-pools.sh"
 bash "$ROOT_DIR/scripts/verify-eks-auto-mode-node-pools.sh"
+bash "$ROOT_DIR/scripts/verify-eks-network-ingress.sh"
 
 TERRAFORM_BIN="${ASKLAKE_TERRAFORM_BIN:-}"
 if [[ -z "$TERRAFORM_BIN" ]] && command -v terraform >/dev/null 2>&1; then

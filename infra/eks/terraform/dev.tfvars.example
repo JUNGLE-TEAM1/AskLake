@@ -121,15 +121,16 @@ irsa_oidc_provider_arn = null
 # EKS Pod Identity Agent is installed and managed.
 pod_identity_agent_ready = false
 
-# Phase 7 ingress and private networking remain fail-closed until the actual
-# VPC, controller ownership, DNS/ACM and egress cost review is complete.
-ingress_mode            = "disabled"
-alb_controller_ready    = false
-alb_controller_owner    = null
-alb_exposure            = null
-alb_target_type         = null
-ingress_host            = null
-ingress_certificate_arn = null
+# Phase 13 uses the EKS Auto Mode managed ALB controller. Keep it disabled
+# until public/internal subnets, target/address type, DNS owner and ACM are
+# reviewed. Terraform does not create the DNS record or the ALB itself.
+ingress_mode               = "disabled"
+alb_exposure               = null
+alb_target_type            = null
+alb_ip_address_type        = null
+ingress_host               = null
+ingress_certificate_arn    = null
+ingress_dns_owner          = null
 
 # Study NAT Gateway versus VPC endpoints and the cluster CNI enforcement
 # capabilities before replacing these values. network_mode=create requires an

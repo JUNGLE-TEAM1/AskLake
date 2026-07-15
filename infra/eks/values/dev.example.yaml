@@ -12,6 +12,7 @@ namespace:
   name: asklake-dev
   labels:
     asklake.io/lifecycle: mvp-owned
+    asklake.io/ingress-access: asklake-dev
 
 # Pair A replaces empty annotations only after Pair B supplies the minimum IAM
 # action list and the team selects IRSA or EKS Pod Identity.

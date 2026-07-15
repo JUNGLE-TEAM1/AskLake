@@ -1,25 +1,12 @@
 variable "ingress_mode" {
-  description = "Keep ingress disabled or render the reviewed AWS Load Balancer Controller contract."
+  description = "Keep ingress disabled or render the reviewed EKS Auto Mode ALB contract."
   type        = string
   default     = "disabled"
 
   validation {
-    condition     = contains(["disabled", "alb"], var.ingress_mode)
-    error_message = "ingress_mode must be disabled or alb."
+    condition     = contains(["disabled", "auto-mode-alb"], var.ingress_mode)
+    error_message = "ingress_mode must be disabled or auto-mode-alb."
   }
-}
-
-variable "alb_controller_ready" {
-  description = "True only after the platform owner confirms AWS Load Balancer Controller installation and lifecycle ownership."
-  type        = bool
-  default     = false
-}
-
-variable "alb_controller_owner" {
-  description = "Team or platform owner responsible for the shared AWS Load Balancer Controller lifecycle."
-  type        = string
-  default     = null
-  nullable    = true
 }
 
 variable "alb_exposure" {
@@ -35,7 +22,7 @@ variable "alb_exposure" {
 }
 
 variable "alb_target_type" {
-  description = "Reviewed AWS Load Balancer Controller target type."
+  description = "Reviewed EKS Auto Mode ALB target type."
   type        = string
   default     = null
   nullable    = true
@@ -43,6 +30,18 @@ variable "alb_target_type" {
   validation {
     condition     = var.alb_target_type == null || contains(["ip", "instance"], var.alb_target_type)
     error_message = "alb_target_type must be null, ip, or instance."
+  }
+}
+
+variable "alb_ip_address_type" {
+  description = "Reviewed ALB address family. Keep null until VPC and client requirements are known."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = var.alb_ip_address_type == null || contains(["ipv4", "dualstack"], var.alb_ip_address_type)
+    error_message = "alb_ip_address_type must be null, ipv4, or dualstack."
   }
 }
 
@@ -74,6 +73,13 @@ variable "ingress_certificate_arn" {
     ))
     error_message = "ingress_certificate_arn must be null or a valid ACM certificate ARN."
   }
+}
+
+variable "ingress_dns_owner" {
+  description = "Team or person responsible for validating the hostname and creating/removing its DNS record after the ALB hostname exists."
+  type        = string
+  default     = null
+  nullable    = true
 }
 
 variable "private_egress_mode" {

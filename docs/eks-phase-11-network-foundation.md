@@ -61,14 +61,14 @@ Pod Identity를 선택하면 `eks-auth`, external Secret delivery를 선택하�
 
 ## 전달 계약
 
-Phase 11에서 도입한 contract `2.1`의 `phase11_network_handoff`는 Phase 12의 현재 contract `2.2`에서도 같은 이름으로 다음 non-secret 값을 배포 계층에 전달한다.
+Phase 11에서 도입한 contract `2.1`의 `phase11_network_handoff`는 Phase 13의 현재 contract `2.3`에서도 같은 이름으로 다음 non-secret 값을 배포 계층에 전달한다.
 
 - external/terraform network 소유권
 - VPC와 cluster private/public ALB subnet reference
 - private egress mode, NAT 배치, interface/S3 endpoint 구성
 - 생성형 MSK/RDS destination security group reference
 - Pod network enforcement의 현재 선택 상태
-- Phase 12 custom node placement와 Phase 13 ALB가 아직 후속이라는 표시
+- Phase 12 custom node placement와 Phase 13 ALB handoff output 이름
 - 실제 runtime smoke 필요 여부
 
 실제 resource ID와 endpoint가 들어간 output은 승인된 deployment environment에서만 소비하고 저장소 문서나 PR 본문에 복사하지 않는다.

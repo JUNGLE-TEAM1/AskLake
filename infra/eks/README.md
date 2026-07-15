@@ -8,7 +8,7 @@
 
 - `terraform/`: 기존/new EKS Auto Mode cluster, external/MVP-owned VPC network, ECR repository, Trino handoff와 opt-in MSK/RDS/S3 data-plane 계약
 - `helm/asklake-foundation/`: namespace, workload별 service account, backend/Spark namespace RBAC, non-secret runtime boundary ConfigMap
-- `helm/asklake-ingress/`: 선택 완료 전에는 아무 resource도 만들지 않는 HTTPS ALB routing 계약
+- `helm/asklake-ingress/`: EKS Auto Mode IngressClassParams/Class와 HTTPS ALB routing 계약
 - `helm/asklake-auto-mode/`: 명시적인 운영값이 없으면 아무 resource도 만들지 않는 General/Spark NodeClass·NodePool 계약
 - `values/dev.example.yaml`: B가 manifest render와 fake client test에 사용할 예시 값
 - `delivery/dev.handoff.example.json`: Terraform 출력과 B workload manifest 사이의 배포 전 handoff 형식
@@ -110,7 +110,7 @@ helm template asklake-foundation \
   -f infra/eks/values/identity/pod-identity.example.yaml
 ```
 
-현재 foundation contract `2.2`는 EKS Auto Mode compute, Phase 11 network와 Phase 12 custom node placement handoff, frontend, backend, Airflow, Trino, MSK IAM smoke, Spark service account를 제공한다. Replay Producer compatibility input은 `create=false`로 유지하며 ECR repository, service account 또는 workload를 만들지 않는다. `trino_handoff`는 실제 secret 값 없이 image digest, IRSA role ARN, in-cluster Service URL, RDS/S3 network와 Secret reference를 전달한다. AWS inventory가 확정되기 전 nullable 값은 resource 생성 gate로 남고 manifest render·fake client test만 완료할 수 있다.
+현재 foundation contract `2.3`은 EKS Auto Mode compute, Phase 11 network, Phase 12 custom node placement와 Phase 13 Auto Mode ALB handoff, frontend, backend, Airflow, Trino, MSK IAM smoke, Spark service account를 제공한다. Replay Producer compatibility input은 `create=false`로 유지하며 ECR repository, service account 또는 workload를 만들지 않는다. `trino_handoff`는 실제 secret 값 없이 image digest, IRSA role ARN, in-cluster Service URL, RDS/S3 network와 Secret reference를 전달한다. AWS inventory가 확정되기 전 nullable 값은 resource 생성 gate로 남고 manifest render·fake client test만 완료할 수 있다.
 
 Phase 3 data-plane Terraform은 MSK Serverless + IAM, private PostgreSQL RDS, 분리된 S3 bucket과 workload별 최소 권한 policy document를 추가한다. MSK topic 생성, RDS의 `airflow_metadata`/`iceberg_catalog` database와 user/grant bootstrap, IAM role attachment는 Terraform resource 생성과 분리된 후속 책임이다. 상세 모드와 미결정 사항은 [Phase 3 Data Plane 계약](../../docs/eks-phase-3-data-plane.md)을 따른다.
 
@@ -120,7 +120,7 @@ Phase 5는 실제 workload를 생성하지 않고 A의 infrastructure output과 
 
 Phase 6는 수동 GitHub workflow로 Frontend, Backend, Airflow mirror, Spark runtime, Trino mirror를 `linux/amd64`로 ECR에 전달하고 digest receipt를 만든다. Workflow는 ECR repository를 생성하지 않으며 보호된 environment의 OIDC role 없이는 실행되지 않는다. 실제 push 전 설정과 비용 경계는 [Phase 6 ECR Image Delivery](../../docs/eks-phase-6-image-delivery.md)를 따른다.
 
-Phase 7은 Terraform의 resource-free network handoff와 fail-closed ALB Ingress chart를 추가한다. controller owner, exposure, target type, DNS와 ACM을 모두 선택하기 전에는 Ingress가 렌더링되지 않고 NAT/VPC endpoint 및 Pod network enforcement도 `undecided`로 남는다. 실제 선택과 smoke 기준은 [Phase 7 Network와 ALB Ingress 계약](../../docs/eks-phase-7-network-ingress.md)을 따른다.
+Phase 7은 최초의 fail-closed ALB와 private network 선택 계약을 추가했다. Phase 13에서 controller 경계를 EKS Auto Mode managed ALB로 교체했으므로 현재 ingress 적용은 Phase 13 문서를 우선하고, Phase 7 문서는 선택 배경과 호환 output 설명으로 사용한다.
 
 Phase 8은 한 JSON을 기준으로 FastAPI, Airflow, Spark, Trino의 runtime Secret 이름·key·공유 binding·env injection·파일 mount를 값 없이 고정하고 Terraform이 같은 계약을 output한다. delivery는 `disabled`가 기본이며 Phase 5 선택과 결합 검증한다. `ready_for_sync`와 Airflow/AI 선택까지 포함한 full-service Secret contract readiness는 구분한다. 상세 gate는 [Phase 8 런타임 Secret 전달 계약](../../docs/eks-phase-8-runtime-secrets.md)을 따른다.
 
@@ -129,6 +129,8 @@ Phase 10은 신규 EKS를 Auto Mode로 전환하고 기존 Managed Node Group �
 Phase 11은 외부 network 참조와 MVP-owned VPC 생성을 분리하고 public/private subnet, NAT 또는 VPC endpoint egress, EKS/MSK/RDS private placement와 exact port security group을 추가한다. 실제 CIDR/AZ/egress 비용 선택은 example에 기본값으로 넣지 않으며 ALB는 후속이다. custom NodePool 구조는 Phase 12로 이어진다. 상세 기준은 [Phase 11 VPC와 Private Network Foundation](../../docs/eks-phase-11-network-foundation.md)을 따른다.
 
 Phase 12는 custom NodeClass용 전용 node role/access entry와 General/Spark NodePool chart를 추가한다. 기본 렌더는 비어 있고 테스트 fixture의 숫자는 운영 권장값이 아니다. 실제 workload selector, 비용·용량·disruption 선택과 apply/scheduling/scale smoke는 [Phase 12 Auto Mode NodeClass와 NodePool](../../docs/eks-phase-12-auto-mode-node-pools.md)을 따른다.
+
+Phase 13은 별도 AWS Load Balancer Controller를 설치하지 않고 EKS Auto Mode `IngressClassParams`/`IngressClass`로 하나의 HTTPS ALB를 관리한다. 기본 렌더는 비어 있고 실제 subnet/DNS/ACM 값은 저장소 밖에 둔다. apply/destroy confirmation, namespace selector와 Ingress-first cleanup은 [Phase 13 Auto Mode ALB 진입 경로](../../docs/eks-phase-13-auto-mode-alb.md)을 따른다.
 
 ## 설계 참고 자료
 
