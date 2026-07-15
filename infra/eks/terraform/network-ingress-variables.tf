@@ -101,10 +101,11 @@ variable "pod_network_enforcement" {
   validation {
     condition = contains([
       "undecided",
+      "auto_mode_network_policy",
       "vpc_cni_network_policy",
       "security_groups_for_pods",
       "both",
     ], var.pod_network_enforcement)
-    error_message = "pod_network_enforcement must be undecided, vpc_cni_network_policy, security_groups_for_pods, or both."
+    error_message = "pod_network_enforcement must be undecided, auto_mode_network_policy, vpc_cni_network_policy, security_groups_for_pods, or both."
   }
 }

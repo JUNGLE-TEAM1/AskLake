@@ -7,6 +7,10 @@ selectors:
   subnets: {}
   securityGroups: {}
 
+networkPolicy:
+  mode: ""
+  eventLogs: ""
+
 general:
   capacityTypes: []
   instanceCategories: []
