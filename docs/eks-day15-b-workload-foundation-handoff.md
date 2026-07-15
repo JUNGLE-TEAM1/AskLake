@@ -17,6 +17,8 @@ B의 Draft PR #774가 제공한 Frontend, FastAPI, Airflow, Trino, MSK IAM smoke
 
 실제 endpoint, ARN, account ID, image digest와 Secret value는 이 문서에 기록하지 않는다.
 
+ServiceAccount, workload IAM, runtime Secret env/file mapping, SparkApplication, driver/executor token, EC2 Continuous 차단, Airflow storage와 PR #774 문서 충돌의 전체 대조 결과는 [7월 15일 A foundation / B workload 계약 대조](eks-day15-b-workload-contract-review.md)를 따른다.
+
 ## 발견하고 수정한 충돌
 
 FastAPI는 SparkApplication API를 호출하므로 `asklake-backend` token이 이미 활성화돼 있었다. Spark driver도 executor Pod·Service·ConfigMap을 Kubernetes API로 관리해야 하지만 `asklake-spark` token이 비활성화돼 있었다.
