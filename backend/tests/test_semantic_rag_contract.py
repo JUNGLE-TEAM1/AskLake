@@ -4,11 +4,11 @@ from sqlalchemy.orm import Session
 from app.core.auth_context import ActorContext, permissions_for_actor
 from app.models.base import Base
 from app.models.identity import PermissionGrantModel
-from app.models.semantic_rag import RagClassificationRunModel, RagColumnRecommendationModel, RagDatasetProfileModel, RagIndexJobModel
+from app.models.semantic_rag import RagClassificationRunModel, RagColumnRecommendationModel, RagDatasetProfileModel, RagIndexJobModel, RagIndexManifestModel
 from app.schemas.semantic import SemanticModelCreate
 from app.services.rag_document_service import build_documents
 from app.services.rag_search_service import RagSearchService, build_metadata_filter_clauses, hybrid_rrf
-from app.services.rag_service import RAG_TABLES, RagService
+from app.services.rag_service import FILTER_CONTRACT_VERSION, RAG_TABLES, RagService
 from app.services.semantic_model_service import SEMANTIC_TABLES, SemanticModelService
 
 
@@ -123,6 +123,51 @@ def test_service_filter_validation_maps_logical_catalog_names_to_physical_fields
         assert result["Review.Rating"]["storageType"] == "number"
         assert result["Is Active"]["physicalField"] == "is_active"
         assert result["Is Active"]["storageType"] == "boolean"
+
+
+def test_filter_validation_uses_the_serving_manifest_while_profile_is_stale(monkeypatch):
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine, tables=RAG_TABLES)
+    dataset = {
+        "id": "reviews",
+        "name": "Reviews",
+        "schema": [{"name": "Review.Rating", "dataType": "integer"}],
+        "owner": "admin",
+    }
+    with Session(engine) as db:
+        service = RagService(db)
+        profile = RagDatasetProfileModel(dataset_id="reviews", review_state="approved", metadata_columns=["Review.Rating"], physical_column_mapping={"Review.Rating": "new_rating"})
+        manifest = RagIndexManifestModel(
+            id="manifest-old",
+            dataset_id="reviews",
+            index_name="reviews-v1",
+            alias_name="reviews",
+            status="active",
+            embedding_model="test",
+            dimensions=2,
+            metadata_columns=["Review.Rating"],
+            metadata_types={"old_rating": "integer"},
+            physical_column_mapping={"Review.Rating": "old_rating"},
+            filter_contract_version=FILTER_CONTRACT_VERSION,
+        )
+        db.add_all([profile, manifest])
+        db.commit()
+        monkeypatch.setattr(service, "_dataset", lambda *args, **kwargs: dataset)
+        result = service.validate_search_filters("reviews", ActorContext(name="admin", role="admin"), {"Review.Rating": {"operator": "gte", "value": 3}})
+        assert result["Review.Rating"]["physicalField"] == "old_rating"
+        assert result["Review.Rating"]["storageType"] == "number"
+
+
+def test_empty_filter_does_not_require_metadata_contract(monkeypatch):
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine, tables=RAG_TABLES)
+    dataset = {"id": "reviews", "schema": [], "owner": "admin"}
+    with Session(engine) as db:
+        service = RagService(db)
+        db.add(RagDatasetProfileModel(dataset_id="reviews", review_state="approved"))
+        db.commit()
+        monkeypatch.setattr(service, "_dataset", lambda *args, **kwargs: dataset)
+        assert service.validate_search_filters("reviews", ActorContext(name="admin", role="admin"), {}) == {}
 
 
 def test_vector_document_preview_uses_persisted_index_shape() -> None:
@@ -270,7 +315,7 @@ def test_validation_evidence_is_persisted_and_required_for_activation(monkeypatc
     with Session(engine) as db:
         service = RagService(db)
         profile = RagDatasetProfileModel(dataset_id="reviews", review_state="approved", target_alias="rag-reviews")
-        job = RagIndexJobModel(id="ragjob_validated", dataset_id="reviews", requested_by="admin", target_index="rag-reviews-v2", status="validating", stage="validating", indexed_count=1, chunk_count=1, parent_count=1, embedding_dimensions=2)
+        job = RagIndexJobModel(id="ragjob_validated", dataset_id="reviews", requested_by="admin", target_index="rag-reviews-v2", status="validating", stage="validating", indexed_count=1, chunk_count=1, parent_count=1, embedding_dimensions=2, filter_contract_version=FILTER_CONTRACT_VERSION)
         db.add_all([profile, job])
         db.commit()
 
@@ -309,3 +354,158 @@ def test_validation_evidence_is_persisted_and_required_for_activation(monkeypatc
         service.complete_job(job.id, {"status": "success", "validationPassed": False})
         db.refresh(job)
         assert job.status == "ready"
+
+
+def test_validation_smoke_checks_every_approved_metadata_field(monkeypatch):
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine, tables=RAG_TABLES)
+    metadata_columns = ["Review.Rating", "Created At", "Is Active", "Category"]
+    physical_mapping = {
+        "Review.Rating": "review_rating",
+        "Created At": "created_at",
+        "Is Active": "is_active",
+        "Category": "category",
+    }
+    metadata_types = {
+        "review_rating": "integer",
+        "created_at": "date",
+        "is_active": "boolean",
+        "category": "string",
+    }
+    with Session(engine) as db:
+        service = RagService(db)
+        profile = RagDatasetProfileModel(dataset_id="reviews", review_state="approved", target_alias="rag-reviews")
+        job = RagIndexJobModel(
+            id="ragjob_all_metadata",
+            dataset_id="reviews",
+            requested_by="admin",
+            target_index="rag-reviews-v2",
+            status="validating",
+            stage="validating",
+            indexed_count=1,
+            chunk_count=1,
+            parent_count=1,
+            embedding_dimensions=2,
+            metadata_columns=metadata_columns,
+            metadata_types=metadata_types,
+            physical_column_mapping=physical_mapping,
+            filter_contract_version=FILTER_CONTRACT_VERSION,
+        )
+        db.add_all([profile, job])
+        db.commit()
+
+        value_properties = {
+            "type": {"type": "keyword"},
+            "keyword": {"type": "keyword"},
+            "number": {"type": "double"},
+            "date": {"type": "date"},
+            "boolean": {"type": "boolean"},
+        }
+        metadata_properties = {
+            physical: {"type": "object", "dynamic": False, "properties": value_properties}
+            for physical in physical_mapping.values()
+        }
+        sample_source = {
+            "document_id": "doc-1",
+            "body_vector": [0.1, 0.2],
+            "metadata_filter": {
+                "review_rating": {"type": "number", "number": 4.0},
+                "created_at": {"type": "date", "date": "2026-07-15"},
+                "is_active": {"type": "boolean", "boolean": True},
+                "category": {"type": "string", "keyword": "audio"},
+            },
+            "source_fields": [],
+            "parent_source_fields": [],
+            "embedding_input_version": "title_body_fields_v2",
+            "field_rendering_version": "field_blocks_v1",
+            "chunking_version": "rag-chunk-v3",
+        }
+
+        class FakeOpenSearch:
+            def __init__(self):
+                self.queries = []
+
+            def count(self, index):
+                return 1
+
+            def distinct_count(self, index, field):
+                return 1
+
+            def mapping(self, index):
+                return {index: {"mappings": {"properties": {
+                    "document_id": {}, "parent_document_id": {}, "body": {}, "embedding_text": {}, "body_vector": {"dimension": 2},
+                    "metadata_filter": {"type": "object", "properties": metadata_properties}, "chunk_index": {}, "chunk_count": {}, "char_start": {}, "char_end": {},
+                    "embedding_model": {}, "embedding_dimensions": {}, "source_fields": {}, "parent_source_fields": {}, "embedding_input_version": {}, "field_rendering_version": {},
+                }}}}
+
+            def search_raw(self, index, query):
+                self.queries.append(query)
+                return {"hits": {"hits": [{"_id": "doc-1", "_source": sample_source}]}}
+
+            def search(self, index, query):
+                return []
+
+            def switch_alias(self, alias, index, old_index=None):
+                return {}
+
+        client = FakeOpenSearch()
+        monkeypatch.setattr("app.core.config.settings.opensearch_base_url", "http://opensearch")
+        monkeypatch.setattr("app.clients.opensearch_client.OpenSearchClient", lambda settings: client)
+        validation = service.validate_job(job.id)
+
+        assert validation["validationPassed"] is True
+        exists_queries = [query["query"]["exists"]["field"] for query in client.queries if "exists" in query.get("query", {})]
+        typed_queries = [query["query"] for query in client.queries if "term" in query.get("query", {}) or "range" in query.get("query", {})]
+        assert exists_queries == [f"metadata_filter.{physical}" for physical in physical_mapping.values()]
+        assert len(typed_queries) == len(metadata_columns)
+
+
+def test_validation_rejects_approved_metadata_when_index_has_no_documents(monkeypatch):
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine, tables=RAG_TABLES)
+    with Session(engine) as db:
+        service = RagService(db)
+        job = RagIndexJobModel(
+            id="ragjob_empty_metadata",
+            dataset_id="reviews",
+            requested_by="admin",
+            target_index="rag-reviews-v2",
+            status="validating",
+            stage="validating",
+            indexed_count=0,
+            chunk_count=0,
+            parent_count=0,
+            embedding_dimensions=2,
+            metadata_columns=["Rating"],
+            metadata_types={"rating": "integer"},
+            physical_column_mapping={"Rating": "rating"},
+            filter_contract_version=FILTER_CONTRACT_VERSION,
+        )
+        db.add(job)
+        db.commit()
+
+        class EmptyOpenSearch:
+            def count(self, index):
+                return 0
+
+            def distinct_count(self, index, field):
+                return 0
+
+            def mapping(self, index):
+                return {index: {"mappings": {"properties": {
+                    "document_id": {}, "parent_document_id": {}, "body": {}, "embedding_text": {}, "body_vector": {"dimension": 2},
+                    "metadata_filter": {}, "chunk_index": {}, "chunk_count": {}, "char_start": {}, "char_end": {}, "embedding_model": {},
+                    "embedding_dimensions": {}, "source_fields": {}, "parent_source_fields": {}, "embedding_input_version": {}, "field_rendering_version": {},
+                }}}}
+
+            def search_raw(self, index, query):
+                return {"hits": {"hits": []}}
+
+        monkeypatch.setattr("app.core.config.settings.opensearch_base_url", "http://opensearch")
+        monkeypatch.setattr("app.clients.opensearch_client.OpenSearchClient", lambda settings: EmptyOpenSearch())
+        try:
+            service.validate_job(job.id)
+        except Exception as exc:
+            assert "no document" in str(exc).lower()
+        else:
+            raise AssertionError("expected metadata validation to reject an empty index")

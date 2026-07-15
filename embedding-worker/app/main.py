@@ -1,5 +1,6 @@
 import os
 import json
+import logging
 from typing import Any
 
 import httpx
@@ -12,6 +13,17 @@ from .rag_core import CHUNKING_VERSION
 from .idempotency import IdempotencyStore
 
 app = FastAPI(title="AskLake Embedding Worker")
+logger = logging.getLogger(__name__)
+
+
+def release_claim(store: IdempotencyStore, key: str, request_hash: str, lease_token: str | None, *, retryable: bool, error: str = "") -> None:
+    """Best-effort cleanup that never masks the original request failure."""
+    if not lease_token:
+        return
+    try:
+        store.fail_or_release(key, request_hash, lease_token, retryable=retryable, error=error)
+    except Exception:
+        logger.exception("Could not release RAG idempotency lease for %s", key)
 
 
 class IndexBatchRequest(BaseModel):
@@ -124,19 +136,27 @@ def index_batch(request: IndexBatchRequest, authorization: str | None = Header(d
         payload = request.model_dump(mode="json")
         key = request.idempotency_key or store.input_hash(payload)
         request_hash = store.input_hash(payload)
-        state, cached = store.claim(key, request_hash, lease_seconds=float(os.environ.get("RAG_IDEMPOTENCY_LEASE_SECONDS", "1800")))
+        state, cached, lease_token = store.claim(key, request_hash, lease_seconds=float(os.environ.get("RAG_IDEMPOTENCY_LEASE_SECONDS", "1800")))
         if state == "completed" and cached is not None:
             return {**cached, "idempotentReplay": True}
         if state == "in_progress":
             raise HTTPException(status_code=409, detail="An identical RAG indexing request is already in progress")
+        if state == "permanent_failed":
+            raise HTTPException(status_code=409, detail="An identical RAG indexing request previously failed permanently")
         result = worker_from_env().process(dataset_id=request.dataset_id, dataset_name=request.dataset_name, rows=request.rows, body_columns=request.body_columns, title_columns=request.title_columns, metadata_columns=request.metadata_columns, identifier_columns=request.identifier_columns, semantic_bindings=request.semantic_bindings, target_index=request.target_index, source_manifest=request.source_manifest, chunks=request.chunks, embedding_model=request.embedding_model, embedding_dimensions=request.embedding_dimensions, metadata_types=request.metadata_types)
-        store.put(key, request_hash, result)
+        store.put(key, request_hash, result, lease_token=lease_token)
         return result
     except ValueError as exc:
+        if "store" in locals() and "lease_token" in locals():
+            release_claim(store, key, request_hash, lease_token, retryable=False, error=str(exc))
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except HTTPException:
+        if "store" in locals() and "lease_token" in locals():
+            release_claim(store, key, request_hash, lease_token, retryable=True)
         raise
     except Exception as exc:
+        if "store" in locals() and "lease_token" in locals():
+            release_claim(store, key, request_hash, lease_token, retryable=True, error=str(exc))
         raise HTTPException(status_code=502, detail="RAG indexing failed") from exc
 
 
@@ -152,18 +172,26 @@ def chunk_batch(request: ChunkBatchRequest, authorization: str | None = Header(d
         payload = request.model_dump(mode="json")
         key = request.idempotency_key or store.input_hash(payload)
         request_hash = store.input_hash(payload)
-        state, cached = store.claim(key, request_hash, lease_seconds=float(os.environ.get("RAG_IDEMPOTENCY_LEASE_SECONDS", "1800")))
+        state, cached, lease_token = store.claim(key, request_hash, lease_seconds=float(os.environ.get("RAG_IDEMPOTENCY_LEASE_SECONDS", "1800")))
         if state == "completed" and cached is not None:
             return {**cached, "idempotentReplay": True}
         if state == "in_progress":
             raise HTTPException(status_code=409, detail="An identical RAG chunking request is already in progress")
+        if state == "permanent_failed":
+            raise HTTPException(status_code=409, detail="An identical RAG chunking request previously failed permanently")
         chunks = chunk_with_gateway(request)
         result = {"schemaVersion": CHUNKING_VERSION, "chunkCount": len(chunks), "chunks": chunks}
-        store.put(key, request_hash, result)
+        store.put(key, request_hash, result, lease_token=lease_token)
         return result
     except ValueError as exc:
+        if "store" in locals() and "lease_token" in locals():
+            release_claim(store, key, request_hash, lease_token, retryable=False, error=str(exc))
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except HTTPException:
+        if "store" in locals() and "lease_token" in locals():
+            release_claim(store, key, request_hash, lease_token, retryable=True)
         raise
     except Exception as exc:
+        if "store" in locals() and "lease_token" in locals():
+            release_claim(store, key, request_hash, lease_token, retryable=True, error=str(exc))
         raise HTTPException(status_code=502, detail="RAG chunking failed") from exc

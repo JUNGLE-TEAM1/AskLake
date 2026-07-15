@@ -26,6 +26,7 @@ RAG_PARENT_SCHEMA_VERSION = "rag-parent-v3"
 EMBEDDING_INPUT_VERSION = "title_body_fields_v2"
 CHUNKING_VERSION = "rag-chunk-v3"
 FIELD_RENDERING_VERSION = "field_blocks_v1"
+FILTER_CONTRACT_VERSION = "typed-filter-v1"
 
 
 def safe_identifier(value: str) -> str:
@@ -181,11 +182,24 @@ class RagService:
         """
         dataset = self._dataset(dataset_id, actor, "query")
         profile = self._profile_row(dataset_id)
-        schema_by_name = {str(item.get("name")): str(item.get("dataType") or item.get("data_type") or "unknown").casefold() for item in dataset_schema(dataset) if isinstance(item, dict)}
-        normalized_names = self._physical_column_mapping(dataset_schema(dataset))
+        if not filters:
+            return {}
+        active_manifest = self.db.scalar(select(RagIndexManifestModel).where(RagIndexManifestModel.dataset_id == dataset_id, RagIndexManifestModel.status == "active").order_by(RagIndexManifestModel.activated_at.desc()))
+        using_active_contract = active_manifest is not None
+        if using_active_contract:
+            if active_manifest.filter_contract_version != FILTER_CONTRACT_VERSION or not active_manifest.metadata_columns or not active_manifest.metadata_types:
+                raise ApiError("rag_filter_contract_unavailable", "The serving index does not have an immutable metadata filter contract; rebuild the RAG index", status.HTTP_409_CONFLICT)
+            allowed_metadata = list(active_manifest.metadata_columns or [])
+            physical_mapping = active_manifest.physical_column_mapping or {}
+            metadata_types = active_manifest.metadata_types or {}
+            schema_by_name = {logical: str(metadata_types.get(str(physical_mapping.get(logical) or self._physical_column_name(logical))) or "unknown").casefold() for logical in allowed_metadata}
+        else:
+            schema_by_name = {str(item.get("name")): str(item.get("dataType") or item.get("data_type") or "unknown").casefold() for item in dataset_schema(dataset) if isinstance(item, dict)}
+            physical_mapping = profile.physical_column_mapping or self._physical_column_mapping(dataset_schema(dataset))
+            allowed_metadata = list(profile.metadata_columns or [])
         result: dict[str, dict[str, Any]] = {}
         for field, predicate in (filters or {}).items():
-            if field not in set(profile.metadata_columns or []):
+            if field not in set(allowed_metadata):
                 raise ApiError("validation_error", f"RAG filter field '{field}' is not an approved metadata column", status.HTTP_400_BAD_REQUEST)
             if not isinstance(predicate, dict) or set(predicate) != {"operator", "value"}:
                 raise ApiError("validation_error", f"RAG filter '{field}' must use {{operator, value}}", status.HTTP_400_BAD_REQUEST)
@@ -207,8 +221,17 @@ class RagService:
                     raise ApiError("validation_error", f"RAG filter value for temporal column '{field}' must be ISO date/time", status.HTTP_400_BAD_REQUEST) from exc
             if "bool" in data_type and operator == "eq" and not isinstance(value, bool):
                 raise ApiError("validation_error", f"RAG filter value for boolean column '{field}' must be boolean", status.HTTP_400_BAD_REQUEST)
-            result[field] = {"operator": operator, "value": value, "storageType": "date" if temporal else "number" if numeric else "boolean" if "bool" in data_type else "keyword", "physicalField": (profile.physical_column_mapping or normalized_names).get(field, field)}
+            result[field] = {"operator": operator, "value": value, "storageType": "date" if temporal else "number" if numeric else "boolean" if "bool" in data_type else "keyword", "physicalField": physical_mapping.get(field, field)}
         return result
+
+    @classmethod
+    def _metadata_filter_contract(cls, dataset: dict[str, Any], profile: RagDatasetProfileModel) -> tuple[list[str], dict[str, str], dict[str, str]]:
+        schema = dataset_schema(dataset)
+        mapping = profile.physical_column_mapping or cls._physical_column_mapping(schema)
+        schema_by_name = {str(item.get("name")): str(item.get("dataType") or item.get("data_type") or "string") for item in schema if isinstance(item, dict) and item.get("name")}
+        metadata_columns = list(profile.metadata_columns or [])
+        metadata_types = {mapping.get(logical, cls._physical_column_name(logical)): schema_by_name.get(logical, "string") for logical in metadata_columns}
+        return metadata_columns, mapping, metadata_types
 
     def index(self, dataset_id: str, actor: ActorContext, *, mode: str = "index", idempotency_key: str | None = None) -> RagIndexResponse:
         dataset = self._dataset(dataset_id, actor, "query")
@@ -250,7 +273,8 @@ class RagService:
         parent_table = f"{settings.trino_catalog}.{settings.rag_parent_iceberg_namespace}.parents_{safe_identifier(dataset_id)}_{safe_identifier(job_id)}"
         chunk_table = f"{settings.trino_catalog}.{settings.rag_parent_iceberg_namespace}.chunks_{safe_identifier(dataset_id)}_{safe_identifier(job_id)}"
         row.desired_generation = int(row.desired_generation or 0) + 1
-        job = RagIndexJobModel(id=job_id, dataset_id=dataset_id, generation=row.desired_generation, physical_column_mapping=row.physical_column_mapping or {}, status="queued", stage="queued", requested_by=actor.name, requested_mode=mode, idempotency_key=idempotency_key, target_index=target, document_count=0, source_fingerprint=source_fingerprint or None, policy_fingerprint=policy_fingerprint, embedding_model=settings.rag_embedding_model, embedding_dimensions=settings.rag_embedding_dimensions, failed_row_rate_threshold=settings.rag_failed_row_rate_threshold, parent_table=parent_table, chunk_table=chunk_table, checkpoint_path=f"{settings.rag_staging_base_path.rstrip('/')}/rag/checkpoints/parents/dataset_id={dataset_id}/job_id={job_id}")
+        metadata_columns, physical_mapping, metadata_types = self._metadata_filter_contract(dataset, row)
+        job = RagIndexJobModel(id=job_id, dataset_id=dataset_id, generation=row.desired_generation, physical_column_mapping=physical_mapping, metadata_columns=metadata_columns, metadata_types=metadata_types, filter_contract_version=FILTER_CONTRACT_VERSION, status="queued", stage="queued", requested_by=actor.name, requested_mode=mode, idempotency_key=idempotency_key, target_index=target, document_count=0, source_fingerprint=source_fingerprint or None, policy_fingerprint=policy_fingerprint, embedding_model=settings.rag_embedding_model, embedding_dimensions=settings.rag_embedding_dimensions, failed_row_rate_threshold=settings.rag_failed_row_rate_threshold, parent_table=parent_table, chunk_table=chunk_table, checkpoint_path=f"{settings.rag_staging_base_path.rstrip('/')}/rag/checkpoints/parents/dataset_id={dataset_id}/job_id={job_id}")
         row.index_status = "queued"
         row.embedding_status = "pending"
         self.db.add(job)
@@ -444,7 +468,7 @@ class RagService:
                 manifest.status = "retired"
                 manifest.retired_at = datetime.now(timezone.utc)
             dataset = self.catalog.get_dataset_payload(job.dataset_id) or {}
-            self.db.add(RagIndexManifestModel(id=f"ragmanifest_{uuid4().hex}", dataset_id=job.dataset_id, generation=job.generation, physical_column_mapping=job.physical_column_mapping or profile.physical_column_mapping or {}, index_name=profile.active_index or job.target_index or "", alias_name=profile.target_alias or "", status="active", embedding_model=job.embedding_model or settings.rag_embedding_model, dimensions=job.embedding_dimensions or settings.rag_embedding_dimensions, document_count=job.indexed_count, parent_count=job.parent_count, chunk_count=job.chunk_count, failed_count=job.failed_count, row_count=job.row_count, failed_row_rate=job.failed_row_rate, failed_row_rate_threshold=job.failed_row_rate_threshold, failed_row_report=job.failed_row_report or {}, fallback_count=job.fallback_count, fallback_reasons=job.fallback_reasons or {}, source_fingerprint=job.source_fingerprint, schema_fingerprint=schema_fingerprint(dataset), policy_fingerprint=job.policy_fingerprint, semantic_bindings_fingerprint=self._semantic_bindings_fingerprint(profile.semantic_bindings), chunking_version=str(result.get("chunkingVersion") or CHUNKING_VERSION), embedding_input_version=EMBEDDING_INPUT_VERSION, parent_schema_version=RAG_PARENT_SCHEMA_VERSION, parent_table=job.parent_table, chunk_table=job.chunk_table, checkpoint_path=job.checkpoint_path, activated_at=datetime.now(timezone.utc)))
+            self.db.add(RagIndexManifestModel(id=f"ragmanifest_{uuid4().hex}", dataset_id=job.dataset_id, generation=job.generation, physical_column_mapping=job.physical_column_mapping or profile.physical_column_mapping or {}, metadata_columns=job.metadata_columns or [], metadata_types=job.metadata_types or {}, filter_contract_version=job.filter_contract_version, index_name=profile.active_index or job.target_index or "", alias_name=profile.target_alias or "", status="active", embedding_model=job.embedding_model or settings.rag_embedding_model, dimensions=job.embedding_dimensions or settings.rag_embedding_dimensions, document_count=job.indexed_count, parent_count=job.parent_count, chunk_count=job.chunk_count, failed_count=job.failed_count, row_count=job.row_count, failed_row_rate=job.failed_row_rate, failed_row_rate_threshold=job.failed_row_rate_threshold, failed_row_report=job.failed_row_report or {}, fallback_count=job.fallback_count, fallback_reasons=job.fallback_reasons or {}, source_fingerprint=job.source_fingerprint, schema_fingerprint=schema_fingerprint(dataset), policy_fingerprint=job.policy_fingerprint, semantic_bindings_fingerprint=self._semantic_bindings_fingerprint(profile.semantic_bindings), chunking_version=str(result.get("chunkingVersion") or CHUNKING_VERSION), embedding_input_version=EMBEDDING_INPUT_VERSION, parent_schema_version=RAG_PARENT_SCHEMA_VERSION, parent_table=job.parent_table, chunk_table=job.chunk_table, checkpoint_path=job.checkpoint_path, activated_at=datetime.now(timezone.utc)))
         job.completed_at = datetime.now(timezone.utc)
         self.db.commit()
         return self.job(job_id, ActorContext(name=job.requested_by, role="admin"))
@@ -491,6 +515,12 @@ class RagService:
         sample_hits = sample.get("hits", {}).get("hits", []) if isinstance(sample, dict) else []
         if actual_chunks and not sample_hits:
             raise ApiError("rag_validation_failed", "OpenSearch sample document query returned no document", status.HTTP_409_CONFLICT)
+        metadata_columns = list(job.metadata_columns or [])
+        metadata_types = job.metadata_types or {}
+        if job.filter_contract_version != FILTER_CONTRACT_VERSION:
+            raise ApiError("rag_validation_failed", "RAG job metadata filter contract version is missing or unsupported", status.HTTP_409_CONFLICT)
+        if metadata_columns and not sample_hits:
+            raise ApiError("rag_validation_failed", "OpenSearch has no document from which to validate approved metadata fields", status.HTTP_409_CONFLICT)
         smoke_evidence: dict[str, Any] = {}
         if sample_hits:
             sample_hit = sample_hits[0] if isinstance(sample_hits[0], dict) else {}
@@ -520,29 +550,44 @@ class RagService:
                 raise ApiError("rag_validation_failed", "OpenSearch k-NN smoke query returned no document", status.HTTP_409_CONFLICT)
             smoke_evidence["bm25"] = {"query": bm25_query, "resultIds": bm25_ids[:10]}
             smoke_evidence["knn"] = {"query": {"field": "body_vector", "k": 1, "dimensions": len(vector)}, "resultIds": knn_ids[:10]}
-            metadata = sample_source.get("metadata_filter") if isinstance(sample_source.get("metadata_filter"), dict) else {}
             metadata_evidence: list[dict[str, Any]] = []
-            for field, typed in metadata.items():
-                if not isinstance(typed, dict) or not typed or typed.get("type") not in {"string", "number", "date", "boolean"}:
-                    continue
-                field_type = str(typed["type"])
-                if field_type == "number":
-                    value = typed.get("number")
-                    query = {"range": {f"metadata_filter.{field}.number": {"gte": value}}}
-                elif field_type == "date":
-                    value = typed.get("date") or typed.get("keyword")
-                    query = {"range": {f"metadata_filter.{field}.date": {"gte": value}}}
-                elif field_type == "boolean":
-                    value = bool(typed.get("boolean"))
-                    query = {"term": {f"metadata_filter.{field}.boolean": value}}
+            metadata_mapping = ((properties.get("metadata_filter") or {}).get("properties") or {}) if isinstance(properties.get("metadata_filter"), dict) else {}
+            for logical_field in metadata_columns:
+                physical_field = str((job.physical_column_mapping or {}).get(logical_field) or self._physical_column_name(logical_field))
+                data_type = str(metadata_types.get(physical_field) or "").casefold()
+                if not data_type:
+                    raise ApiError("rag_validation_failed", f"Metadata type is missing for approved field '{logical_field}'", status.HTTP_409_CONFLICT)
+                if any(token in data_type for token in ("int", "long", "float", "double", "decimal", "numeric", "number")):
+                    field_type, suffix = "number", "number"
+                elif any(token in data_type for token in ("date", "time", "timestamp")):
+                    field_type, suffix = "date", "date"
+                elif "bool" in data_type:
+                    field_type, suffix = "boolean", "boolean"
                 else:
-                    value = typed.get("keyword")
-                    query = {"term": {f"metadata_filter.{field}.keyword": value}}
+                    field_type, suffix = "string", "keyword"
+                field_mapping = metadata_mapping.get(physical_field) if isinstance(metadata_mapping, dict) else None
+                value_mapping = (field_mapping or {}).get("properties") if isinstance(field_mapping, dict) else {}
+                if not isinstance(value_mapping, dict) or suffix not in value_mapping:
+                    raise ApiError("rag_validation_failed", f"OpenSearch mapping is missing typed metadata field '{physical_field}.{suffix}'", status.HTTP_409_CONFLICT)
+                exists_result = client.search_raw(job.target_index, {"size": 1, "_source": ["document_id", "metadata_filter"], "query": {"exists": {"field": f"metadata_filter.{physical_field}"}}})
+                exists_hits = exists_result.get("hits", {}).get("hits", []) if isinstance(exists_result, dict) else []
+                if not exists_hits:
+                    raise ApiError("rag_validation_failed", f"No indexed value exists for approved metadata field '{logical_field}'", status.HTTP_409_CONFLICT)
+                field_hit = exists_hits[0] if isinstance(exists_hits[0], dict) else {}
+                field_source = field_hit.get("_source") or {}
+                typed = (field_source.get("metadata_filter") or {}).get(physical_field) if isinstance(field_source.get("metadata_filter"), dict) else None
+                if not isinstance(typed, dict) or typed.get("type") != field_type:
+                    raise ApiError("rag_validation_failed", f"Indexed metadata type for '{logical_field}' does not match the Catalog contract", status.HTTP_409_CONFLICT)
+                value = typed.get(suffix)
+                if value is None:
+                    raise ApiError("rag_validation_failed", f"Indexed metadata value is missing for approved field '{logical_field}'", status.HTTP_409_CONFLICT)
+                query = {"range": {f"metadata_filter.{physical_field}.{suffix}": {"gte": value}}} if field_type in {"number", "date"} else {"term": {f"metadata_filter.{physical_field}.{suffix}": value}}
                 metadata_result = client.search_raw(job.target_index, {"size": 10, "query": query})
                 metadata_ids = [str(item.get("_id") or (item.get("_source") or {}).get("document_id") or "") for item in (metadata_result.get("hits", {}).get("hits", []) if isinstance(metadata_result, dict) else []) if isinstance(item, dict)]
-                if not metadata_ids:
-                    raise ApiError("rag_validation_failed", f"OpenSearch metadata pre-filter smoke query returned no document for '{field}'", status.HTTP_409_CONFLICT)
-                metadata_evidence.append({"field": field, "type": field_type, "query": query, "resultIds": metadata_ids[:10]})
+                sample_field_id = str(field_hit.get("_id") or field_source.get("document_id") or "")
+                if not metadata_ids or (sample_field_id and sample_field_id not in metadata_ids):
+                    raise ApiError("rag_validation_failed", f"OpenSearch metadata pre-filter smoke query did not return the sampled document for '{logical_field}'", status.HTTP_409_CONFLICT)
+                metadata_evidence.append({"logicalField": logical_field, "physicalField": physical_field, "type": field_type, "query": query, "resultIds": metadata_ids[:10]})
             smoke_evidence["metadataFilters"] = metadata_evidence
         evidence = {
             "index": job.target_index,
