@@ -182,9 +182,10 @@ run "new_cluster_contract" {
   assert {
     condition = (
       aws_eks_cluster.this[0].compute_config[0].enabled &&
-      toset(aws_eks_cluster.this[0].compute_config[0].node_pools) == toset(["general-purpose", "system"])
+      toset(aws_eks_cluster.this[0].compute_config[0].node_pools) == toset(["general-purpose", "system"]) &&
+      !aws_eks_cluster.this[0].bootstrap_self_managed_addons
     )
-    error_message = "new clusters must enable EKS Auto Mode with the reviewed built-in NodePools."
+    error_message = "new clusters must enable EKS Auto Mode with the reviewed built-in NodePools and disable self-managed add-on bootstrap."
   }
 
   assert {

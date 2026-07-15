@@ -104,10 +104,11 @@ resource "aws_iam_role_policy_attachment" "auto_node" {
 }
 
 resource "aws_eks_cluster" "this" {
-  count    = local.create_cluster ? 1 : 0
-  name     = local.cluster_name
-  role_arn = aws_iam_role.cluster[0].arn
-  version  = var.kubernetes_version
+  count                         = local.create_cluster ? 1 : 0
+  name                          = local.cluster_name
+  role_arn                      = aws_iam_role.cluster[0].arn
+  version                       = var.kubernetes_version
+  bootstrap_self_managed_addons = false
 
   enabled_cluster_log_types = var.enabled_cluster_log_types
 

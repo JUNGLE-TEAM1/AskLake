@@ -6,6 +6,8 @@ Phase 10은 Pair A의 EKS 기반을 표준 Managed Node Group에서 EKS Auto Mod
 
 Auto Mode는 단순한 autoscaling 옵션이 아니다. EKS가 compute, load balancing, block storage 운영 기능을 묶어서 제공하는 cluster capability다. 따라서 신규 cluster 생성 시 세 기능을 모두 활성화하고, Auto Mode 전용 cluster/node IAM 역할을 사용한다. 기존 `aws_eks_node_group`과 instance type·min/desired/max 입력은 제거한다.
 
+신규 Auto Mode cluster는 AWS API 요구에 따라 `bootstrap_self_managed_addons=false`로 생성한다. CoreDNS, kube-proxy, VPC CNI를 기존 self-managed bootstrap 경로와 중복 생성하지 않으며 필요한 EKS/Community add-on은 명시적인 별도 resource로 관리한다.
+
 ## 신규 cluster 생성 계약
 
 `cluster_mode = "create"`는 다음을 한 계약으로 만든다.

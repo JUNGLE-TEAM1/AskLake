@@ -18,10 +18,6 @@ spec:
   securityGroupSelectorTerms:
     - tags:
         {{- toYaml $.Values.selectors.securityGroups | nindent 8 }}
-  tags:
-    Project: AskLake
-    Environment: {{ $environment | quote }}
-    asklake.io/workload-class: {{ $name | quote }}
 ---
 {{ end }}
 {{ end }}

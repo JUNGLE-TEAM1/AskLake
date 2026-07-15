@@ -22,7 +22,7 @@ general:
     consolidationPolicy: WhenEmptyOrUnderutilized
     consolidateAfter: 5m
     budget: "10%"
-  expireAfter: 720h
+  expireAfter: 480h
   terminationGracePeriod: 1h
 
 spark:
@@ -36,5 +36,5 @@ spark:
     consolidationPolicy: WhenEmpty
     consolidateAfter: 10m
     budget: "10%"
-  expireAfter: 720h
+  expireAfter: 480h
   terminationGracePeriod: 2h

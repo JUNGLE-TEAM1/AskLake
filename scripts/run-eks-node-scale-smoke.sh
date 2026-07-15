@@ -50,7 +50,14 @@ grep -q "namespace: $ASKLAKE_EKS_NAMESPACE" <<<"$rendered" || { echo "scale smok
 baseline_nodes="$(kubectl get nodes --no-headers | wc -l | tr -d ' ')"
 baseline_node_names="$(kubectl get nodes -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')"
 started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-helm upgrade --install asklake-scale-smoke "$CHART_DIR" -n "$ASKLAKE_EKS_NAMESPACE" -f "$VALUES_FILE" --wait=false
+cleanup_required=true
+cleanup() {
+  if [[ "$cleanup_required" == "true" ]]; then
+    helm uninstall asklake-scale-smoke -n "$ASKLAKE_EKS_NAMESPACE" --wait >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup EXIT
+helm upgrade --install asklake-scale-smoke "$CHART_DIR" -n "$ASKLAKE_EKS_NAMESPACE" -f "$VALUES_FILE"
 
 deadline=$((SECONDS + 1200))
 scaled_nodes="$baseline_nodes"
@@ -67,7 +74,18 @@ if (( scaled_nodes <= baseline_nodes )); then
 fi
 
 kubectl rollout status deployment/asklake-node-scale-smoke -n "$ASKLAKE_EKS_NAMESPACE" --timeout=10m
-kubectl top pods -n "$ASKLAKE_EKS_NAMESPACE" -l app.kubernetes.io/name=asklake-node-scale-smoke >/dev/null
+metrics_ready=false
+for _ in {1..36}; do
+  if kubectl top pods -n "$ASKLAKE_EKS_NAMESPACE" -l app.kubernetes.io/name=asklake-node-scale-smoke >/dev/null 2>&1; then
+    metrics_ready=true
+    break
+  fi
+  sleep 5
+done
+if [[ "$metrics_ready" != "true" ]]; then
+  echo "Metrics Server did not publish smoke Pod metrics within 3 minutes" >&2
+  exit 1
+fi
 used_new_node=false
 while IFS= read -r pod_node; do
   if [[ -n "$pod_node" ]] && ! grep -Fxq -- "$pod_node" <<<"$baseline_node_names"; then
@@ -89,4 +107,5 @@ node -e '
 ' "$EVIDENCE_FILE" "$ASKLAKE_EKS_CLUSTER_NAME" "$ASKLAKE_EKS_NAMESPACE" "$started_at" "$completed_at" "$baseline_nodes" "$scaled_nodes"
 
 helm uninstall asklake-scale-smoke -n "$ASKLAKE_EKS_NAMESPACE" --wait
+cleanup_required=false
 echo "Scale-out evidence written. Observe and append scale-in evidence after Auto Mode consolidation."
