@@ -52,14 +52,13 @@ Helm이 기존 resource field를 소유하므로 다른 manager의 server-side a
 
 ## 아직 막혀 있는 실제 smoke
 
-현재 cluster에는 Spark Operator CRD가 없다. 따라서 Backend Role이 SparkApplication API group을 참조하더라도 실제 생성 검증은 할 수 없다. 또한 B workload의 immutable ECR digest, 실제 runtime Secret mapping과 최종 Deployment/Service가 아직 A 브랜치에 인수되지 않았다.
+Spark Operator 2.5.1과 `v1beta2` CRD는 후속 단계에서 적용했고 B SparkApplication manifest의 server-side dry-run도 통과했다. 다만 B workload의 immutable ECR digest, 실제 runtime Secret mapping과 최종 Deployment/Service가 아직 A 브랜치에 인수되지 않았다.
 
 다음 순서는 다음과 같다.
 
-1. Spark Operator 배포 방식·version·watch namespace·upgrade owner를 분석하고 확정한다.
-2. B PR의 immutable image digest와 workload values를 인수한다.
-3. 실제 runtime Secret을 ExternalSecret으로 연결한다.
-4. B workload를 배포한 뒤 MSK IAM metadata smoke를 실행한다.
-5. 최종 Frontend/FastAPI Service에 Ingress route를 연결하고 ALB HTTP E2E를 수행한다.
+1. B PR의 immutable image digest와 workload values를 인수한다.
+2. 실제 runtime Secret을 ExternalSecret으로 연결한다.
+3. B workload를 배포한 뒤 MSK IAM metadata smoke를 실행한다.
+4. 최종 Frontend/FastAPI Service에 Ingress route를 연결하고 ALB HTTP E2E를 수행한다.
 
 이 기록은 workload 배포 완료나 MSK IAM 인증 성공을 의미하지 않는다.
