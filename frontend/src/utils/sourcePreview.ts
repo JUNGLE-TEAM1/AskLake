@@ -36,7 +36,9 @@ export function shouldShowRawTextPreview({
   rawLines: string[];
   sourceType: string;
 }): boolean {
-  return ["File / S3", "Stream / Kafka"].includes(sourceType)
+  if (sourceType === "Stream / Kafka") return rawLines.length > 0;
+
+  return sourceType === "File / S3"
     && detectedFormat?.toUpperCase() === "TXT"
     && requiresRecordParsing === true
     && rawLines.length > 0;

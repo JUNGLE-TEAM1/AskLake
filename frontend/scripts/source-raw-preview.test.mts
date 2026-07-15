@@ -57,11 +57,11 @@ test("Kafka raw text uses backend-preserved lines even when table preview is emp
   }), true);
 });
 
-test("structured Kafka JSON remains tabular even if raw lines are present", () => {
+test("structured Kafka JSON still shows the broker value as an original log line", () => {
   assert.equal(shouldShowRawTextPreview({
     detectedFormat: "JSON",
     requiresRecordParsing: false,
     rawLines: ["{\"event_id\":\"EVT-1\"}"],
     sourceType: "Stream / Kafka",
-  }), false);
+  }), true);
 });
