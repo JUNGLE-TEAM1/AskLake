@@ -1,4 +1,5 @@
 enabled: true
+routesEnabled: true
 namespace: asklake-dev
 autoModeLoadBalancingReady: true
 ingressClassName: asklake-dev-alb
@@ -12,8 +13,9 @@ subnetIds:
   - subnet-test-public-a
   - subnet-test-public-b
 groupName: asklake-dev
-host: asklake.example.invalid
-certificateArn: arn:aws:acm:ap-northeast-2:000000000000:certificate/00000000-0000-0000-0000-000000000000
+listenerProtocol: HTTP
+host: ""
+certificateArn: ""
 
 services:
   frontend:

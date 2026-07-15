@@ -4,7 +4,7 @@
 
 Phase 13은 Phase 7의 일반 AWS Load Balancer Controller용 Ingress 초안을 EKS Auto Mode가 직접 관리하는 ALB 계약으로 전환한다. EKS Auto Mode cluster에는 load balancing controller가 관리 기능으로 포함되므로 별도 Helm controller를 설치하거나 application ServiceAccount에 ELB 권한을 주지 않는다.
 
-이번 단계는 다음 구조를 코드와 검증으로 완성했다.
+이번 단계는 route를 켜기 전 기반과 실제 ALB 생성 단계를 분리한다.
 
 ```text
 IngressClassParams (eks.amazonaws.com/v1)
@@ -13,10 +13,10 @@ IngressClassParams (eks.amazonaws.com/v1)
   ├─ 공유 ALB group
   ├─ IPv4/dualstack
   ├─ 선택된 subnet 2개 이상
-  └─ ACM certificate ARN
+  └─ HTTPS일 때만 ACM certificate ARN
           ↓
 IngressClass (controller: eks.amazonaws.com/alb)
-          ↓
+          ↓ routesEnabled=true일 때만
 AskLake Ingress 두 개
   ├─ /api → fastapi:8080 → /api/health
   └─ /    → frontend:80  → /
@@ -24,7 +24,7 @@ AskLake Ingress 두 개
 EKS Auto Mode가 ALB·target group을 reconcile
 ```
 
-실제 AWS apply, ALB 생성, Route 53 record 생성과 HTTPS 호출은 실행하지 않았다. 현재 완료 상태는 manifest, Terraform handoff, 적용·삭제 gate와 mock/static test까지다.
+dev에는 `internet-facing`, `ip`, `ipv4`, AWS 생성 ALB DNS와 HTTP 80을 선택했다. IngressClassParams와 IngressClass는 실제 적용했지만 최종 Frontend/FastAPI Service가 없으므로 Ingress는 만들지 않았다. 따라서 ALB, Route 53 record와 ACM certificate도 생성하지 않았고 기존 EC2 진입 경로도 바꾸지 않았다.
 
 ## Phase 7에서 수정한 구조 오류
 
@@ -32,8 +32,8 @@ EKS Auto Mode가 ALB·target group을 reconcile
 
 - `spec.ingressClassName`으로 환경별 class를 명시한다.
 - class controller는 `eks.amazonaws.com/alb`다.
-- scheme, group, subnet, certificate와 namespace 제한은 `IngressClassParams`에 둔다.
-- Ingress에는 target type, HTTPS listener, redirect와 target별 health path만 둔다.
+- scheme, group, subnet, 선택적 certificate와 namespace 제한은 `IngressClassParams`에 둔다.
+- Ingress에는 target type, HTTP/HTTPS listener와 target별 health path를 둔다. HTTPS일 때만 redirect를 둔다.
 - 별도 controller readiness/owner 입력은 제거하고 controller owner를 `eks-auto-mode-managed`로 기록한다.
 
 IngressClass는 cluster-scoped이므로 `alb` 같은 공용 이름을 쓰지 않는다. dev 기본 이름은 `asklake-dev-alb`이고 staging은 해당 environment 이름을 별도 values로 전달한다. default IngressClass로 지정하지 않아 class를 명시하지 않은 다른 namespace의 Ingress를 가져오지 않는다.
@@ -48,31 +48,49 @@ asklake.io/ingress-access: asklake-dev
 
 두 Ingress는 class의 `group.name=asklake-dev`를 통해 하나의 ALB를 공유한다. Backend와 Frontend를 나누는 이유는 각각 `/api/health`와 `/`라는 다른 target health check를 유지하기 위해서다. 기존 Ingress group annotation과 order annotation에는 의존하지 않는다. `/api`와 `/`의 Prefix route와 실제 ALB listener rule은 server-side dry-run과 runtime target health로 다시 검증한다.
 
-## 임의로 선택하지 않은 값
+## dev에서 선택한 값과 보류한 값
 
-다음 값은 실제 사용자 접근 방식, VPC와 비용·보안 요구를 학습하고 승인한 뒤 비공개 environment values에 넣는다.
+dev foundation에는 다음 값을 적용했다.
+
+- `internet-facing`
+- Pod IP를 직접 target으로 쓰는 `ip`
+- `ipv4`
+- Phase 11에서 만든 서로 다른 AZ의 public subnet 두 개
+- HTTP 80과 AWS 생성 ALB DNS
+
+사용자 도메인, Route 53 record owner, ACM certificate와 HTTPS 전환은 보류한다. HTTPS를 선택할 때만 exact lowercase host, 같은 region의 ACM certificate ARN과 DNS owner를 모두 비공개 environment values에 넣는다.
+
+다른 환경에서는 다음 선택을 그대로 복사하지 않고 접근 방식, VPC와 비용·보안 요구를 검토한다.
 
 - `internet-facing` 또는 `internal`
 - Pod IP를 직접 target으로 쓰는 `ip` 또는 NodePort를 쓰는 `instance`
 - `ipv4` 또는 `dualstack`
 - 서로 다른 AZ에 위치한 ALB subnet 2개 이상
-- 실제 lowercase DNS host
-- 같은 region에서 host를 포함하는 ACM certificate ARN
-- DNS record 생성·삭제 담당자
+- HTTP 또는 HTTPS listener
+- HTTPS일 때 실제 lowercase DNS host, 같은 region의 ACM certificate ARN과 DNS 담당자
 
 Terraform은 `internet-facing`이면 Phase 11 public ALB subnet, `internal`이면 private cluster subnet을 handoff한다. ID가 두 개라고 서로 다른 AZ임이 자동 증명되는 것은 아니므로 inventory evidence가 필요하다. `instance`를 선택하면 Frontend/FastAPI Service도 NodePort여야 하며 chart schema가 ClusterIP 조합을 거절한다.
 
-저장소의 `infra/eks/values/ingress/alb.example.yaml`은 렌더 검증용 fixture다. placeholder subnet, domain과 ACM ARN은 실제 배포값이 아니며 apply script는 실제 값 유출을 막기 위해 저장소 내부의 모든 values 파일 사용을 거절한다.
+저장소의 `infra/eks/values/ingress/alb.example.yaml`은 HTTP/default-DNS 렌더 검증용 fixture다. placeholder subnet은 실제 배포값이 아니며 apply script는 실제 값 유출을 막기 위해 저장소 내부의 모든 values 파일 사용을 거절한다.
 
-## 적용 순서와 과금 gate
+## 기반 적용과 유료 ALB 생성 분리
 
-먼저 Foundation namespace와 Frontend/FastAPI Deployment·Service가 준비돼야 한다. 그다음 실제 값을 저장소 밖 values 파일에 작성하고 로컬 render를 확인한다.
+먼저 실제 값을 저장소 밖 values 파일에 작성하고 로컬 render를 확인한다.
 
 ```bash
 bash scripts/deploy-eks-auto-mode-ingress.sh --render /private/path/ingress-values.yaml
 ```
 
-실제 apply는 target cluster의 Auto Mode load balancing, kubectl context, namespace label, `IngressClassParams` API, Frontend/FastAPI Service와 server-side dry-run을 확인한다. 비용 confirmation도 정확히 입력해야 한다.
+`routesEnabled=false`이면 target cluster의 Auto Mode load balancing, kubectl context, namespace label, `IngressClassParams` API와 server-side dry-run을 확인한 뒤 class/params만 적용한다. Ingress가 없으므로 Frontend/FastAPI Service를 요구하지 않고 ALB도 요청하지 않는다.
+
+```bash
+export ASKLAKE_EKS_CLUSTER_NAME='<reviewed-cluster>'
+export ASKLAKE_EKS_NAMESPACE='<reviewed-namespace>'
+export ASKLAKE_INGRESS_FOUNDATION_APPLY_CONFIRM='apply-auto-mode-ingress-foundation'
+bash scripts/deploy-eks-auto-mode-ingress.sh --apply /private/path/ingress-values.yaml
+```
+
+최종 Frontend/FastAPI Deployment와 Service가 준비된 뒤 `routesEnabled=true`로 바꾼다. 이때 스크립트가 두 Service와 server-side dry-run을 검사하며, 실제 ALB를 만들기 위한 비용 confirmation도 정확히 입력해야 한다.
 
 ```bash
 export ASKLAKE_EKS_CLUSTER_NAME='<reviewed-cluster>'
@@ -81,7 +99,7 @@ export ASKLAKE_INGRESS_APPLY_CONFIRM='create-cost-bearing-auto-mode-alb'
 bash scripts/deploy-eks-auto-mode-ingress.sh --apply /private/path/ingress-values.yaml
 ```
 
-ALB는 Ingress가 생성된 뒤 비동기로 만들어진다. Helm 성공만으로 DNS와 HTTPS 성공을 선언하지 않는다. Ingress status의 ALB hostname, target health, `/`, `/api/health`, HTTP→HTTPS, 허용/차단 source, CloudWatch/Cost Explorer evidence를 남긴다. DNS owner는 그 hostname을 확인한 뒤 승인된 방식으로 record를 생성하며 이 단계의 Terraform은 Route 53 shared zone을 소유하지 않는다.
+ALB는 Ingress가 생성된 뒤 비동기로 만들어진다. Helm 성공만으로 공개 성공을 선언하지 않는다. Ingress status의 ALB hostname, target health, `/`, `/api/health`, 허용/차단 source와 비용 evidence를 남긴다. dev 첫 검증은 AWS 생성 hostname의 HTTP 호출을 사용한다. 추후 HTTPS를 선택하면 DNS·ACM·HTTP→HTTPS evidence를 별도로 추가하며 이 단계의 Terraform은 Route 53 shared zone을 소유하지 않는다.
 
 ## 삭제와 rollback
 
@@ -104,7 +122,7 @@ bash scripts/verify-eks-network-ingress.sh
 bash scripts/verify-eks-foundation.sh
 ```
 
-정적 완료 기준은 disabled render 0개, 미선택 enabled render 실패, Auto Mode IngressClassParams/Class 각각 1개, Ingress 2개, namespace selector, exact subnet·certificate, route/health 분리와 self-managed annotation 부재다. Terraform mock test는 public subnet 누락, 부분 입력과 disabled 상태의 잔여 runtime 값을 거절해야 한다.
+정적 완료 기준은 disabled render 0개, 미선택 enabled render 실패, foundation render의 Auto Mode IngressClassParams/Class 각 1개와 Ingress 0개, route render의 Ingress 2개, namespace selector, exact subnet, route/health 분리와 self-managed annotation 부재다. HTTP는 host/certificate를 거절하고 HTTPS는 둘을 필수로 요구한다. Terraform mock test는 public subnet 누락, 부분 입력과 disabled 상태의 잔여 runtime 값을 거절해야 한다. dev 실제 foundation 결과는 [적용 기록](eks-day15-alb-foundation-evidence.md)에 남긴다.
 
 ## 공식 참고
 

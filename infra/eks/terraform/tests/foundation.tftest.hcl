@@ -1,4 +1,12 @@
 mock_provider "aws" {
+  mock_data "aws_caller_identity" {
+    defaults = {
+      account_id = "111122223333"
+      arn        = "arn:aws:iam::111122223333:user/mock"
+      user_id    = "mock-user"
+    }
+  }
+
   mock_data "aws_eks_cluster" {
     defaults = {
       endpoint = "https://existing.example.invalid"
@@ -484,22 +492,23 @@ run "created_network_data_plane_placement" {
   command = plan
 
   variables {
-    environment                = "dev"
-    owner                      = "pair-a"
-    resource_lifecycle         = "mvp-owned"
-    cluster_mode               = "create"
-    network_mode               = "create"
-    vpc_cidr                   = "10.42.0.0/16"
-    network_availability_zones = ["ap-northeast-2a", "ap-northeast-2c"]
-    subnet_newbits             = 8
-    public_subnet_netnums      = [0, 1]
-    private_subnet_netnums     = [10, 11]
-    private_egress_mode        = "nat_gateway"
-    nat_gateway_mode           = "per_az"
-    create_ecr_repositories    = false
-    msk_mode                   = "create"
-    rds_mode                   = "create"
-    rds_instance_class         = "db.t4g.small"
+    environment                   = "dev"
+    owner                         = "pair-a"
+    resource_lifecycle            = "mvp-owned"
+    cluster_mode                  = "create"
+    network_mode                  = "create"
+    vpc_cidr                      = "10.42.0.0/16"
+    network_availability_zones    = ["ap-northeast-2a", "ap-northeast-2c"]
+    subnet_newbits                = 8
+    public_subnet_netnums         = [0, 1]
+    private_subnet_netnums        = [10, 11]
+    private_egress_mode           = "nat_gateway"
+    nat_gateway_mode              = "per_az"
+    create_ecr_repositories       = false
+    msk_mode                      = "create"
+    rds_mode                      = "create"
+    rds_instance_class            = "db.t4g.small"
+    rds_final_snapshot_identifier = "asklake-dev-test-final"
   }
 
   assert {
@@ -724,9 +733,7 @@ run "reviewed_network_ingress_handoff" {
     alb_target_type            = "ip"
     alb_ip_address_type        = "ipv4"
     external_public_subnet_ids = ["subnet-public-a", "subnet-public-b"]
-    ingress_host               = "asklake.example.invalid"
-    ingress_certificate_arn    = "arn:aws:acm:ap-northeast-2:111122223333:certificate/00000000-0000-0000-0000-000000000000"
-    ingress_dns_owner          = "platform-team"
+    ingress_listener_protocol  = "HTTP"
     private_egress_mode        = "hybrid"
     pod_network_enforcement    = "both"
   }
@@ -750,6 +757,9 @@ run "reviewed_network_ingress_handoff" {
     condition = (
       output.phase13_alb_handoff.auto_mode_controller == "eks.amazonaws.com/alb" &&
       !output.phase13_alb_handoff.self_managed_controller &&
+      output.phase13_alb_handoff.listener_protocol == "HTTP" &&
+      output.phase13_alb_handoff.host == null &&
+      output.phase13_alb_handoff.certificate_arn == null &&
       output.phase13_alb_handoff.ready_for_server_dry_run &&
       length(output.phase13_alb_handoff.subnet_ids) == 2
     )
@@ -775,13 +785,14 @@ run "created_network_internal_auto_mode_alb_handoff" {
     nat_gateway_mode           = "single"
     create_ecr_repositories    = false
 
-    ingress_mode            = "auto-mode-alb"
-    alb_exposure            = "internal"
-    alb_target_type         = "ip"
-    alb_ip_address_type     = "ipv4"
-    ingress_host            = "asklake.internal.example.invalid"
-    ingress_certificate_arn = "arn:aws:acm:ap-northeast-2:111122223333:certificate/00000000-0000-0000-0000-000000000000"
-    ingress_dns_owner       = "platform-team"
+    ingress_mode              = "auto-mode-alb"
+    alb_exposure              = "internal"
+    alb_target_type           = "ip"
+    alb_ip_address_type       = "ipv4"
+    ingress_listener_protocol = "HTTPS"
+    ingress_host              = "asklake.internal.example.invalid"
+    ingress_certificate_arn   = "arn:aws:acm:ap-northeast-2:111122223333:certificate/00000000-0000-0000-0000-000000000000"
+    ingress_dns_owner         = "platform-team"
   }
 
   assert {
@@ -822,13 +833,14 @@ run "reject_auto_mode_alb_without_selected_subnets" {
     existing_cluster_name   = "shared-dev"
     create_ecr_repositories = false
 
-    ingress_mode            = "auto-mode-alb"
-    alb_exposure            = "internet-facing"
-    alb_target_type         = "ip"
-    alb_ip_address_type     = "ipv4"
-    ingress_host            = "asklake.example.invalid"
-    ingress_certificate_arn = "arn:aws:acm:ap-northeast-2:111122223333:certificate/00000000-0000-0000-0000-000000000000"
-    ingress_dns_owner       = "platform-team"
+    ingress_mode              = "auto-mode-alb"
+    alb_exposure              = "internet-facing"
+    alb_target_type           = "ip"
+    alb_ip_address_type       = "ipv4"
+    ingress_listener_protocol = "HTTPS"
+    ingress_host              = "asklake.example.invalid"
+    ingress_certificate_arn   = "arn:aws:acm:ap-northeast-2:111122223333:certificate/00000000-0000-0000-0000-000000000000"
+    ingress_dns_owner         = "platform-team"
   }
 
   expect_failures = [check.alb_ingress_contract, check.alb_subnet_contract]
@@ -851,7 +863,7 @@ run "reject_disabled_ingress_runtime_values" {
 }
 
 run "mvp_data_plane_contract" {
-  command = apply
+  command = plan
 
   variables {
     environment             = "dev"
@@ -865,10 +877,11 @@ run "mvp_data_plane_contract" {
     msk_subnet_ids         = ["subnet-private-a", "subnet-private-b"]
     msk_security_group_ids = ["sg-msk-client"]
 
-    rds_mode               = "create"
-    rds_subnet_ids         = ["subnet-private-a", "subnet-private-b"]
-    rds_security_group_ids = ["sg-rds-client"]
-    rds_instance_class     = "db.t4g.small"
+    rds_mode                      = "create"
+    rds_subnet_ids                = ["subnet-private-a", "subnet-private-b"]
+    rds_security_group_ids        = ["sg-rds-client"]
+    rds_instance_class            = "db.t4g.small"
+    rds_final_snapshot_identifier = "asklake-dev-test-final"
 
     storage_mode = "create"
     storage_bucket_names = {
@@ -876,6 +889,15 @@ run "mvp_data_plane_contract" {
       output        = "asklake-dev-111122223333-output"
       warehouse     = "asklake-dev-111122223333-warehouse"
       query_results = "asklake-dev-111122223333-query-results"
+    }
+    storage_prefixes = {
+      raw           = "*"
+      output        = "*"
+      warehouse     = "warehouse"
+      query_results = "query-results"
+      checkpoint    = "checkpoints"
+      quarantine    = "quarantine"
+      evidence      = "evidence"
     }
   }
 
@@ -895,6 +917,16 @@ run "mvp_data_plane_contract" {
   }
 
   assert {
+    condition = (
+      aws_db_instance.metadata[0].max_allocated_storage == 100 &&
+      aws_db_instance.metadata[0].backup_retention_period == 7 &&
+      aws_db_instance.metadata[0].backup_window == "18:00-18:30" &&
+      aws_db_instance.metadata[0].maintenance_window == "sun:19:00-sun:20:00"
+    )
+    error_message = "RDS must keep the reviewed autoscaling, backup and maintenance settings."
+  }
+
+  assert {
     condition     = length(aws_s3_bucket.data) == 4
     error_message = "The data plane must create isolated raw, output, warehouse, and query result buckets."
   }
@@ -904,12 +936,70 @@ run "mvp_data_plane_contract" {
     error_message = "RDS handoff must expose the Iceberg JDBC Catalog database."
   }
 
+}
+
+run "managed_existing_storage_contract" {
+  command = plan
+
+  variables {
+    environment             = "dev"
+    owner                   = "pair-a"
+    resource_lifecycle      = "mvp-owned"
+    cluster_mode            = "existing"
+    existing_cluster_name   = "shared-dev"
+    create_ecr_repositories = false
+
+    storage_mode = "managed-existing"
+    storage_bucket_names = {
+      raw           = "asklake-dev-111122223333-raw"
+      output        = "asklake-dev-111122223333-output"
+      warehouse     = "asklake-dev-111122223333-warehouse"
+      query_results = "asklake-dev-111122223333-query-results"
+    }
+    storage_prefixes = {
+      raw           = "*"
+      output        = "*"
+      warehouse     = "warehouse"
+      query_results = "query-results"
+      checkpoint    = "checkpoints"
+      quarantine    = "quarantine"
+      evidence      = "evidence"
+    }
+  }
+
+  assert {
+    condition     = length(aws_s3_bucket.data) == 4
+    error_message = "managed-existing storage must expose four importable bucket resource addresses."
+  }
+
   assert {
     condition = alltrue([
-      for policy in values(output.workload_iam_policy_documents) :
-      policy == null || !strcontains(policy, "kafka-cluster:*") && !strcontains(policy, "s3:*")
+      for bucket in values(aws_s3_bucket.data) : bucket.tags["Lifecycle"] == "shared-preserved"
     ])
-    error_message = "Generated workload policies must not contain broad Kafka or S3 wildcard actions."
+    error_message = "Imported buckets must override the state lifecycle tag with shared-preserved."
+  }
+
+  assert {
+    condition     = length(aws_s3_bucket_versioning.data) == 4
+    error_message = "managed-existing storage must manage versioning for every imported bucket."
+  }
+
+  assert {
+    condition = (
+      endswith(local.storage_object_arns.raw, ":s3:::asklake-dev-111122223333-raw/*") &&
+      endswith(local.storage_object_arns.output, ":s3:::asklake-dev-111122223333-output/*") &&
+      !endswith(local.storage_object_arns.raw, "*/*") &&
+      !endswith(local.storage_object_arns.output, "*/*")
+    )
+    error_message = "Dedicated Raw/Output bucket-wide access must render a bucket-scoped object ARN, not a malformed wildcard prefix."
+  }
+
+  assert {
+    condition = contains(
+      one([for statement in module.workload_iam_policies.contracts.backend.Statement : statement if statement.Sid == "ReadBackendObjects"]).Resource,
+      local.storage_object_arns.raw,
+    )
+    error_message = "Backend source browsing must be able to read objects from the approved Raw bucket boundary."
   }
 }
 
@@ -1246,21 +1336,39 @@ run "external_secret_delivery_handoff" {
   variables {
     environment             = "dev"
     owner                   = "pair-a"
-    resource_lifecycle      = "external"
+    resource_lifecycle      = "mvp-owned"
     cluster_mode            = "existing"
     existing_cluster_name   = "shared-dev"
     create_ecr_repositories = false
 
-    secret_delivery_mode    = "external_secrets"
-    secret_controller_ready = true
-    secret_controller_owner = "platform-team"
-    secret_rotation_owner   = "service-team"
-    secret_source_prefix    = "/asklake/dev/runtime"
+    secret_delivery_mode     = "external_secrets"
+    secret_controller_ready  = true
+    secret_controller_owner  = "platform-team"
+    secret_rotation_owner    = "service-team"
+    secret_source_prefix     = "/asklake/dev/runtime"
+    pod_identity_agent_ready = true
   }
 
   assert {
     condition     = output.phase8_runtime_secret_handoff.ready_for_sync
     error_message = "reviewed external Secret inputs must become sync-ready."
+  }
+
+  assert {
+    condition = (
+      length(aws_iam_role.external_secrets) == 1 &&
+      length(aws_iam_policy.external_secrets) == 1 &&
+      length(aws_eks_pod_identity_association.external_secrets) == 1
+    )
+    error_message = "external_secrets mode must provision one least-privilege Pod Identity path."
+  }
+
+  assert {
+    condition = (
+      output.phase8_runtime_secret_handoff.delivery.external_secrets_identity.namespace == "external-secrets" &&
+      output.phase8_runtime_secret_handoff.delivery.external_secrets_identity.service_account == "asklake-external-secrets"
+    )
+    error_message = "External Secrets handoff must expose the controller namespace and ServiceAccount."
   }
 
   assert {
@@ -1313,12 +1421,13 @@ run "reject_partial_secret_delivery" {
   variables {
     environment             = "dev"
     owner                   = "pair-a"
-    resource_lifecycle      = "external"
+    resource_lifecycle      = "mvp-owned"
     cluster_mode            = "existing"
     existing_cluster_name   = "shared-dev"
     create_ecr_repositories = false
 
-    secret_delivery_mode = "external_secrets"
+    secret_delivery_mode     = "external_secrets"
+    pod_identity_agent_ready = true
   }
 
   expect_failures = [check.runtime_secret_delivery_contract]

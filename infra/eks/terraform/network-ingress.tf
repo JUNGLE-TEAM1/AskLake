@@ -22,9 +22,18 @@ locals {
     var.alb_exposure != null &&
     var.alb_target_type != null &&
     var.alb_ip_address_type != null &&
-    try(trimspace(var.ingress_host), "") != "" &&
-    try(trimspace(var.ingress_certificate_arn), "") != "" &&
-    try(trimspace(var.ingress_dns_owner), "") != "" &&
+    var.ingress_listener_protocol != null &&
+    (
+      var.ingress_listener_protocol == "HTTP" ? (
+        var.ingress_host == null &&
+        var.ingress_certificate_arn == null &&
+        var.ingress_dns_owner == null
+        ) : var.ingress_listener_protocol == "HTTPS" ? (
+        try(trimspace(var.ingress_host), "") != "" &&
+        try(trimspace(var.ingress_certificate_arn), "") != "" &&
+        try(trimspace(var.ingress_dns_owner), "") != ""
+      ) : false
+    ) &&
     local.alb_subnet_selection_complete
   )
   private_network_decisions_complete = (
@@ -36,7 +45,7 @@ locals {
 check "alb_ingress_contract" {
   assert {
     condition     = !local.alb_ingress_enabled || local.ingress_inputs_complete
-    error_message = "Auto Mode ALB requires exposure, target/address type, exact host, ACM certificate, DNS owner, and at least two distinct reviewed subnets."
+    error_message = "Auto Mode ALB requires exposure, target/address type, listener protocol, at least two distinct reviewed subnets, and either HTTP with generated ALB DNS or HTTPS with exact host/ACM/DNS owner."
   }
 }
 
@@ -53,6 +62,7 @@ check "disabled_ingress_has_no_runtime_values" {
       var.alb_exposure == null &&
       var.alb_target_type == null &&
       var.alb_ip_address_type == null &&
+      var.ingress_listener_protocol == null &&
       var.ingress_host == null &&
       var.ingress_certificate_arn == null &&
       var.ingress_dns_owner == null

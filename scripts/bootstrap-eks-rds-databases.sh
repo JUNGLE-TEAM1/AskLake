@@ -66,6 +66,61 @@ fi
 
 psql -X --no-psqlrc --set=ON_ERROR_STOP=1 --file="$SQL_FILE"
 
+database_count="$(psql -X --no-psqlrc --tuples-only --no-align --set=ON_ERROR_STOP=1 \
+  --command="SELECT count(*) FROM pg_database WHERE datname IN ('asklake_app','airflow_metadata','iceberg_catalog');")"
+
+if [[ "$database_count" != "3" ]]; then
+  echo "error: expected exactly three isolated application databases" >&2
+  exit 1
+fi
+
+unsafe_role_count="$(psql -X --no-psqlrc --tuples-only --no-align --set=ON_ERROR_STOP=1 \
+  --command="SELECT count(*) FROM pg_roles WHERE rolname IN ('asklake_app','airflow_app','iceberg_catalog') AND (rolsuper OR rolcreatedb OR rolcreaterole OR rolreplication OR rolbypassrls);")"
+
+if [[ "$unsafe_role_count" != "0" ]]; then
+  echo "error: application roles received administrative PostgreSQL privileges" >&2
+  exit 1
+fi
+
+connect_contract="$(psql -X --no-psqlrc --tuples-only --no-align --set=ON_ERROR_STOP=1 \
+  --command="SELECT has_database_privilege('asklake_app','asklake_app','CONNECT') AND NOT has_database_privilege('asklake_app','airflow_metadata','CONNECT') AND NOT has_database_privilege('asklake_app','iceberg_catalog','CONNECT') AND has_database_privilege('airflow_app','airflow_metadata','CONNECT') AND NOT has_database_privilege('airflow_app','asklake_app','CONNECT') AND NOT has_database_privilege('airflow_app','iceberg_catalog','CONNECT') AND has_database_privilege('iceberg_catalog','iceberg_catalog','CONNECT') AND NOT has_database_privilege('iceberg_catalog','asklake_app','CONNECT') AND NOT has_database_privilege('iceberg_catalog','airflow_metadata','CONNECT');")"
+
+if [[ "$connect_contract" != "t" ]]; then
+  echo "error: application database CONNECT isolation is invalid" >&2
+  exit 1
+fi
+
+verify_login() {
+  local role="$1"
+  local password="$2"
+  local database="$3"
+
+  PGUSER="$role" PGPASSWORD="$password" PGDATABASE="$database" \
+    psql -X --no-psqlrc --tuples-only --no-align --set=ON_ERROR_STOP=1 \
+    --command="SELECT 1;" >/dev/null
+}
+
+reject_cross_database_login() {
+  local role="$1"
+  local password="$2"
+  local database="$3"
+
+  if PGUSER="$role" PGPASSWORD="$password" PGDATABASE="$database" \
+    psql -X --no-psqlrc --set=ON_ERROR_STOP=1 --command="SELECT 1;" \
+    >/dev/null 2>&1; then
+    printf 'error: role %s unexpectedly connected to database %s\n' "$role" "$database" >&2
+    exit 1
+  fi
+}
+
+verify_login asklake_app "$ASKLAKE_APP_DB_PASSWORD" asklake_app
+verify_login airflow_app "$AIRFLOW_APP_DB_PASSWORD" airflow_metadata
+verify_login iceberg_catalog "$ICEBERG_CATALOG_DB_PASSWORD" iceberg_catalog
+
+reject_cross_database_login asklake_app "$ASKLAKE_APP_DB_PASSWORD" airflow_metadata
+reject_cross_database_login airflow_app "$AIRFLOW_APP_DB_PASSWORD" iceberg_catalog
+reject_cross_database_login iceberg_catalog "$ICEBERG_CATALOG_DB_PASSWORD" asklake_app
+
 printf '%s\n' \
   'RDS bootstrap completed:' \
   '- asklake_app / asklake_app' \

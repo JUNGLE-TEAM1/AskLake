@@ -1,0 +1,76 @@
+commonLabels:
+  app.kubernetes.io/part-of: asklake
+  asklake.io/environment: dev
+  asklake.io/owner: pair-a
+
+image:
+  tag: "2.5.1@sha256:0392ad9d44afe83e9507ed0e24415f3b58de4b1cf51baabf5f6309ae280cfdce"
+
+hook:
+  upgradeCrd: true
+  image:
+    tag: "2.5.1@sha256:8def62e2e4fb3fc5a71a388e1b95f95c2a16bde81f4d1a83528405a12a17f364"
+  nodeSelector:
+    asklake.io/workload-class: general
+
+controller:
+  replicas: 1
+  workers: 2
+  leaderElection:
+    enable: true
+  uiService:
+    enable: false
+  uiIngress:
+    enable: false
+  batchScheduler:
+    enable: false
+  nodeSelector:
+    asklake.io/workload-class: general
+  resources:
+    requests:
+      cpu: 100m
+      memory: 300Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+  podDisruptionBudget:
+    enable: false
+
+webhook:
+  enable: true
+  replicas: 1
+  leaderElection:
+    enable: true
+  failurePolicy: Fail
+  nodeSelector:
+    asklake.io/workload-class: general
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+  podDisruptionBudget:
+    enable: false
+
+spark:
+  jobNamespaces:
+    - asklake-dev
+  jobNamespaceSelector: ""
+  serviceAccount:
+    create: false
+    name: asklake-spark
+    annotations: {}
+    automountServiceAccountToken: true
+  rbac:
+    create: false
+
+prometheus:
+  metrics:
+    enable: true
+  podMonitor:
+    create: false
+
+certManager:
+  enable: false

@@ -4,6 +4,7 @@
   "additionalProperties": false,
   "required": [
     "enabled",
+    "routesEnabled",
     "namespace",
     "autoModeLoadBalancingReady",
     "ingressClassName",
@@ -14,12 +15,14 @@
     "ipAddressType",
     "subnetIds",
     "groupName",
+    "listenerProtocol",
     "host",
     "certificateArn",
     "services"
   ],
   "properties": {
     "enabled": { "type": "boolean" },
+    "routesEnabled": { "type": "boolean" },
     "namespace": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" },
     "autoModeLoadBalancingReady": { "type": "boolean" },
     "ingressClassName": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" },
@@ -38,6 +41,7 @@
       "items": { "type": "string", "minLength": 1 }
     },
     "groupName": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" },
+    "listenerProtocol": { "type": "string", "enum": ["", "HTTP", "HTTPS"] },
     "host": { "type": "string" },
     "certificateArn": { "type": "string" },
     "services": {
@@ -60,23 +64,54 @@
           "targetType": { "enum": ["ip", "instance"] },
           "ipAddressType": { "enum": ["ipv4", "dualstack"] },
           "subnetIds": { "minItems": 2 },
+          "listenerProtocol": { "enum": ["HTTP", "HTTPS"] }
+        }
+      },
+      "else": {
+        "properties": {
+          "routesEnabled": { "const": false },
+          "autoModeLoadBalancingReady": { "const": false },
+          "exposure": { "const": "" },
+          "targetType": { "const": "" },
+          "ipAddressType": { "const": "" },
+          "subnetIds": { "maxItems": 0 },
+          "listenerProtocol": { "const": "" },
+          "host": { "maxLength": 0 },
+          "certificateArn": { "maxLength": 0 }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "enabled": { "const": true },
+          "listenerProtocol": { "const": "HTTP" }
+        },
+        "required": ["enabled", "listenerProtocol"]
+      },
+      "then": {
+        "properties": {
+          "host": { "maxLength": 0 },
+          "certificateArn": { "maxLength": 0 }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "enabled": { "const": true },
+          "listenerProtocol": { "const": "HTTPS" }
+        },
+        "required": ["enabled", "listenerProtocol"]
+      },
+      "then": {
+        "properties": {
           "host": {
             "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$"
           },
           "certificateArn": {
             "pattern": "^arn:(aws|aws-us-gov|aws-cn):acm:[a-z0-9-]+:[0-9]{12}:certificate/[0-9a-f-]+$"
           }
-        }
-      },
-      "else": {
-        "properties": {
-          "autoModeLoadBalancingReady": { "const": false },
-          "exposure": { "const": "" },
-          "targetType": { "const": "" },
-          "ipAddressType": { "const": "" },
-          "subnetIds": { "maxItems": 0 },
-          "host": { "maxLength": 0 },
-          "certificateArn": { "maxLength": 0 }
         }
       }
     },

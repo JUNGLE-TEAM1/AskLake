@@ -22,7 +22,7 @@ ECR repository는 frontend, backend, Airflow, Trino와 Spark runtime을 분리�
 
 이 이름은 기본값이며 Terraform output과 Helm value를 통해 같은 값으로 전달한다. B는 workload manifest에서 별도 service account를 임의로 만들지 않는다.
 
-`asklake-backend`만 SparkApplication API 호출을 위해 Kubernetes API token 자동 mount를 `true`로 사용한다. Foundation은 `asklake-dev` namespace에서 SparkApplication `create/get/list/watch/delete`, Pod `get/list/watch`, Pod log `get`, Event `get/list/watch`만 허용하는 Role/RoleBinding을 제공한다. `asklake-spark`에는 driver가 executor Pod, Service, ConfigMap lifecycle을 관리하는 namespace Role만 제공한다. 나머지 service account의 token 자동 mount는 `false`이고 Secret, Node, Namespace, ClusterRole 또는 다른 namespace 권한은 부여하지 않는다.
+`asklake-backend`는 SparkApplication API 호출을 위해, `asklake-spark`는 driver가 executor Pod·Service·ConfigMap lifecycle을 관리하기 위해 Kubernetes API token 자동 mount를 `true`로 사용한다. Foundation은 `asklake-dev` namespace에서 Backend에는 SparkApplication `create/get/list/watch/delete`, Pod `get/list/watch`, Pod log `get`, Event `get/list/watch`만 허용하고 Spark에는 driver lifecycle 최소 권한만 허용한다. Frontend, Airflow, Trino와 MSK smoke의 token 자동 mount는 `false`로 고정한다. 어느 application Role에도 Secret, Node, Namespace, ClusterRole 또는 다른 namespace 권한은 부여하지 않는다.
 
 ## 2. B가 바로 사용할 수 있는 고정 경계
 
@@ -62,19 +62,21 @@ B는 workload 구현 PR에 다음 내용을 machine-readable value와 문서로 
 
 `Action: kafka-cluster:*`, `s3:*`, 모든 resource에 대한 wildcard처럼 넓은 임시 권한은 인수 계약으로 인정하지 않는다. 필요한 action을 아직 모르면 `확인 필요`로 남기고 A가 권한을 추측해 채우지 않는다.
 
-## 4. 아직 확정되지 않은 값
+## 4. dev에서 확정된 값과 남은 gate
 
-다음 값은 Phase 1 실제 환경 inventory와 팀 선택 뒤 채운다.
+dev는 신규 EKS Auto Mode, 전용 VPC, EKS Pod Identity, MSK Serverless + IAM, 격리 RDS, 관리 인수 S3, `internet-facing` HTTP ALB foundation을 적용했다. Backend·MSK smoke·Spark·Trino Pod Identity association과 Backend/Spark namespace RBAC도 존재한다. 실제 identifier는 Terraform output과 저장소 밖 environment values로만 전달한다.
 
-- existing/new EKS 선택과 실제 cluster 이름. existing이면 Auto Mode 활성 상태와 실제 node role도 확인
-- external/create VPC 선택, 충돌하지 않는 CIDR·AZ·subnet netnum, NAT single/per-AZ 또는 VPC endpoint와 실제 비용. Phase 11 코드는 이 입력이 없으면 생성 계획을 닫지만 값을 대신 선택하지 않는다.
-- IRSA 또는 EKS Pod Identity 선택과 workload별 IAM role ARN. `trino_handoff.irsa_role_arn`은 확정 전 `null`로 남는다.
-- MSK bootstrap broker reference와 client security group
-- RDS endpoint reference, EKS Trino Service reference와 security group. 이 값과 database/user/migration owner가 비어 있으면 B는 manifest render·fake client test까지만 진행하며 실제 EKS/RDS smoke를 완료로 주장하지 않는다.
-- S3 Raw/Output/Warehouse/Query Result/checkpoint/quarantine prefix
-- ingress domain, certificate와 public/internal load balancer 선택
+다음 값과 runtime 결과는 여전히 채워야 한다.
 
-이 값이 비어 있어도 B의 manifest builder와 fake client test는 진행할 수 있다. 실제 EKS smoke와 IAM/network 완료 판정은 할 수 없다.
+- B의 immutable ECR image digest와 실제 workload values
+- 네 runtime Secret의 실제 source/key mapping과 ExternalSecret
+- Spark Operator 설치·CRD와 controller readiness
+- 최종 Frontend/FastAPI Service 이후 Ingress route와 ALB HTTP smoke
+- MSK IAM metadata positive smoke와 기존 Continuous topic/group negative smoke
+- RDS/S3/Trino application read와 FastAPI 다중 replica·재시작 evidence
+- 사용자 도메인·ACM·HTTPS 전환은 첫 HTTP E2E 이후 별도 선택
+
+이 값이 비어 있어도 B의 manifest builder와 fake client test는 진행할 수 있다. A foundation 정렬 결과는 [B workload foundation handoff 기록](eks-day15-b-workload-foundation-handoff.md)을 따른다.
 
 ## 5. PR 인수 방법
 

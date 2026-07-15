@@ -56,12 +56,16 @@ required_files=(
   "$ROOT_DIR/docs/eks-phase-12-auto-mode-node-pools.md"
   "$ROOT_DIR/docs/eks-phase-13-auto-mode-alb.md"
   "$ROOT_DIR/docs/eks-phase-14-web-workloads.md"
+  "$ROOT_DIR/docs/eks-day15-spark-operator-evidence.md"
   "$ROOT_DIR/scripts/deploy-eks-auto-mode-ingress.sh"
   "$ROOT_DIR/scripts/destroy-eks-auto-mode-ingress.sh"
   "$ROOT_DIR/scripts/deploy-eks-web-workloads.sh"
   "$ROOT_DIR/scripts/destroy-eks-web-workloads.sh"
   "$ROOT_DIR/scripts/verify-eks-web-workloads.sh"
   "$ROOT_DIR/scripts/verify-eks-metrics-scale.sh"
+  "$ROOT_DIR/scripts/verify-eks-spark-operator.sh"
+  "$ROOT_DIR/scripts/deploy-eks-spark-operator.sh"
+  "$ROOT_DIR/scripts/destroy-eks-spark-operator.sh"
   "$ROOT_DIR/scripts/run-eks-node-scale-smoke.sh"
   "$ROOT_DIR/scripts/verify-eks-node-scale-in.sh"
 )
@@ -99,6 +103,18 @@ fi
 if helm template asklake-foundation "$CHART_DIR" -f "$VALUES_FILE" \
   --set global.workloadIdentityMode=unknown >/dev/null 2>&1; then
   echo "Helm schema accepted an unknown workload identity mode" >&2
+  exit 1
+fi
+
+if helm template asklake-foundation "$CHART_DIR" -f "$VALUES_FILE" \
+  --set serviceAccounts.spark.automountServiceAccountToken=false >/dev/null 2>&1; then
+  echo "Helm schema allowed the Spark driver ServiceAccount token to be disabled" >&2
+  exit 1
+fi
+
+if helm template asklake-foundation "$CHART_DIR" -f "$VALUES_FILE" \
+  --set serviceAccounts.frontend.automountServiceAccountToken=true >/dev/null 2>&1; then
+  echo "Helm schema allowed a non-Kubernetes-API workload to mount a ServiceAccount token" >&2
   exit 1
 fi
 
@@ -141,6 +157,29 @@ backend_service_account="$({
 
 if ! grep -q '^automountServiceAccountToken: true$' <<<"$backend_service_account"; then
   echo "asklake-backend must mount its ServiceAccount token for SparkApplication API calls" >&2
+  exit 1
+fi
+
+spark_service_account="$({
+  awk '
+    /^kind: ServiceAccount$/ { block = $0 ORS; capture = 1; next }
+    capture { block = block $0 ORS }
+    capture && /^---$/ {
+      if (block ~ /name: asklake-spark/) {
+        printf "%s", block
+        exit
+      }
+      capture = 0
+      block = ""
+    }
+    END {
+      if (capture && block ~ /name: asklake-spark/) printf "%s", block
+    }
+  ' "$RENDERED_FILE"
+} || true)"
+
+if ! grep -q '^automountServiceAccountToken: true$' <<<"$spark_service_account"; then
+  echo "asklake-spark must mount its ServiceAccount token for executor Pod lifecycle calls" >&2
   exit 1
 fi
 

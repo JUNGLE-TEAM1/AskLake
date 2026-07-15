@@ -11,6 +11,10 @@ selectors:
   securityGroups:
     aws:eks:cluster-name: asklake-test
 
+networkPolicy:
+  mode: DefaultAllow
+  eventLogs: Disabled
+
 general:
   capacityTypes: [on-demand]
   instanceCategories: [m]

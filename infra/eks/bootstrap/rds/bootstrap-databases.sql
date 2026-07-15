@@ -10,21 +10,25 @@ SELECT format('CREATE ROLE asklake_app WITH LOGIN NOSUPERUSER NOCREATEDB NOCREAT
 WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'asklake_app')
 \gexec
 
-SELECT format('ALTER ROLE asklake_app WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD %L', :'asklake_app_password')
+-- RDS master users have rds_superuser rather than PostgreSQL SUPERUSER or
+-- REPLICATION. They cannot re-assert privileged flags on another role. New
+-- login roles receive every NO* flag in CREATE ROLE; retries only rotate the
+-- password, and runtime verification checks all privilege flags explicitly.
+SELECT format('ALTER ROLE asklake_app WITH LOGIN PASSWORD %L', :'asklake_app_password')
 \gexec
 
 SELECT format('CREATE ROLE airflow_app WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD %L', :'airflow_app_password')
 WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'airflow_app')
 \gexec
 
-SELECT format('ALTER ROLE airflow_app WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD %L', :'airflow_app_password')
+SELECT format('ALTER ROLE airflow_app WITH LOGIN PASSWORD %L', :'airflow_app_password')
 \gexec
 
 SELECT format('CREATE ROLE iceberg_catalog WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD %L', :'iceberg_catalog_password')
 WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'iceberg_catalog')
 \gexec
 
-SELECT format('ALTER ROLE iceberg_catalog WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD %L', :'iceberg_catalog_password')
+SELECT format('ALTER ROLE iceberg_catalog WITH LOGIN PASSWORD %L', :'iceberg_catalog_password')
 \gexec
 
 SELECT 'CREATE DATABASE asklake_app OWNER asklake_app'
