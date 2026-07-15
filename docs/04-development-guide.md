@@ -630,7 +630,7 @@ Phase 14 web workload 변경은 `bash scripts/verify-eks-web-workloads.sh`로 �
 
 2026-07-15 `dev` 환경의 실제 foundation, Metrics Server, image delivery, node scale과 MSK Serverless 적용 결과 및 후속 경계는 [EKS MVP 14일차 실제 환경 검증 기록](eks-day14-runtime-evidence.md)에 요약한다. 해당 문서는 비밀이 아닌 판정만 기록하며 실제 endpoint·ARN·digest·evidence JSON은 저장소 밖에서 관리한다.
 
-수요일 Pair B의 Frontend/FastAPI rollout, 내부 Service/RDS health, Pod 자동복구, 실제 두 Pod의 RDS lease/generation fence와 EC2 Continuous 경계는 [EKS MVP 수요일 Pair B 실환경 검증 기록](eks-day15-b-live-evidence.md)에 요약한다. 이 기록은 S3 positive smoke, MSK IAM client smoke와 외부 ALB URL을 완료로 주장하지 않는다.
+수요일 Pair B의 Frontend/FastAPI rollout, 내부 Service/RDS health, Pod 자동복구, 실제 두 Pod의 RDS lease/generation fence, EC2 Continuous 경계와 MSK IAM client 실행 결과는 [EKS MVP 수요일 Pair B 실환경 검증 기록](eks-day15-b-live-evidence.md)에 요약한다. MSK client는 private `9098` 연결과 IAM 인증 뒤 metadata 요청까지 도달했지만 test topic이 없어 실패했다. 이 기록은 S3 positive smoke, MSK test topic metadata 성공과 외부 ALB URL을 완료로 주장하지 않는다.
 
 ```bash
 docker run --rm --entrypoint sh \
