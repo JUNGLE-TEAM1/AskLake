@@ -565,6 +565,8 @@ Phase 4의 workload identity 기본값은 `disabled`다. dev EKS Auto Mode는 20
 
 2026-07-15 `dev` 환경의 실제 EC2 database 규모, 서울 리전 PostgreSQL·instance·비용 비교, 권장 Terraform 입력과 Continuous DB 분리 위험은 [EKS MVP 7월 15일 RDS 분석 결과](eks-day15-rds-analysis.md)에 기록한다. 실제 격리 RDS 적용, bootstrap 검증과 rollback 경계는 [7월 15일 RDS 적용 기록](eks-day15-rds-apply-receipt.md)을 따른다.
 
+EKS workload에 RDS endpoint를 주입하기 전 [EC2 → RDS·S3 데이터 복사 리허설](eks-day15-data-copy-rehearsal.md)을 수행한다. 사용자 접속이 없더라도 FastAPI background, Airflow scheduler, Trino collector와 Kafka Continuous가 쓰기를 계속할 수 있으므로 active writer와 실행 중 Run을 먼저 확인한다. application DB dump에서는 Iceberg JDBC Catalog 두 테이블을 분리해 각각 `asklake_app`과 `iceberg_catalog`로 복원하고, Airflow DB는 `airflow_metadata`로 복원한다. source role/ACL/secret은 복사하지 않는다. Production object가 기존 관리 S3의 같은 bucket/key에 있으면 재복사하지 않고 존재·version/checksum과 RDS row의 URI를 검증한다. 실제 copy, restore와 cutover는 한 작업으로 묶지 않으며 기존 EC2는 rollback 원본으로 유지한다.
+
 RDS bootstrap의 오대상/TLS preflight, 2회 실행 멱등성, role 관리 권한 부재와 database CONNECT 격리는 실제 AWS 없이 아래 Docker 검증으로 확인한다.
 
 ```bash
