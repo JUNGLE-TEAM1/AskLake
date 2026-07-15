@@ -79,4 +79,3 @@ RDS의 pre-copy snapshot은 rollback 증거로 유지한다. 실제 snapshot 이
 - EKS 검증과 안정화가 끝날 때까지 기존 EC2 rollback 원본 유지
 
 따라서 RDS·S3 **구조 복사 리허설은 성공**했지만, EKS application-level physical read와 사용자 traffic cutover는 완료되지 않았다.
-
