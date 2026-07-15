@@ -10,7 +10,7 @@
 - namespace와 서비스별 ServiceAccount를 foundation Helm release로 적용했다.
 - General과 Spark용 custom NodeClass·NodePool을 적용했고 모두 `Ready=True`를 확인했다.
 - Metrics Server community add-on `v0.9.0-eksbuild.1`이 AWS에서 `ACTIVE`이고 Metrics API, `kubectl top nodes`, `kubectl top pods`가 동작함을 확인했다.
-- 현재 Git revision 기준 AMD64 frontend, backend, Airflow, Spark runtime, Trino image 5개를 ECR에 전달하고 저장소 밖 receipt로 digest를 검증했다.
+- node scale smoke 당시 A 작업 revision 기준 AMD64 frontend, backend, Airflow, Spark runtime, Trino image 5개를 임시로 ECR에 전달해 receipt와 실행을 검증했다. 이후 실행 로드맵의 이미지 책임 경계에 맞추기 위해 A가 올린 다섯 image와 관련 manifest를 ECR에서 삭제하고 해당 receipt를 폐기했다. B가 준비한 frontend, backend, Airflow, Spark runtime image는 유지하며, Trino mirror/digest는 정식 배포 handoff에서 A가 다시 제공한다.
 - MSK Serverless cluster를 IAM 인증 전용으로 생성하고, EKS cluster security group에서 MSK IAM listener `9098/tcp`로만 들어가는 private network 규칙을 적용했다.
 
 ## 실제 노드 확장 검증
@@ -21,7 +21,7 @@ Auto Mode가 빈 General node를 제거해 2대에서 다시 1대로 돌아오�
 
 ## 14일차 완료 경계
 
-Pair A의 EKS/VPC/NAT, ECR image, namespace·ServiceAccount, Auto Mode NodePool, Metrics Server, 실제 node scale-out/in, MSK Serverless·private listener 기반은 14일차 결과물이다. 이것으로 AWS 기반 자리가 만들어졌다는 뜻이며 AskLake 전체 서비스가 이미 운영 배포됐다는 뜻은 아니다.
+Pair A의 EKS/VPC/NAT, ECR repository·권한 기반, namespace·ServiceAccount, Auto Mode NodePool, Metrics Server, 실제 node scale-out/in, MSK Serverless·private listener 기반은 14일차 결과물이다. node scale evidence가 참조한 임시 backend digest는 삭제됐으므로 autoscaling 동작 증거로만 사용하고 정식 배포 image evidence로 사용하지 않는다. 이것으로 AWS 기반 자리가 만들어졌다는 뜻이며 AskLake 전체 서비스가 이미 운영 배포됐다는 뜻은 아니다.
 
 다음 단계에는 B가 확정·구현하는 workload identity와 Kafka 권한을 적용한 EKS test client로 MSK IAM authentication, fixture topic/group 접근의 positive·negative smoke를 수행해야 한다. RDS 생성·논리 database bootstrap, S3 bucket/prefix 권한, Trino·FastAPI·Airflow 실제 workload, ALB/Ingress와 외부 URL 검증도 후속 단계다.
 
