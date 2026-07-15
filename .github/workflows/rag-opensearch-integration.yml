@@ -1,0 +1,50 @@
+name: RAG OpenSearch integration
+
+on:
+  push:
+    paths:
+      - "backend/app/**"
+      - "backend/tests/test_opensearch_integration.py"
+      - "backend/scripts/verify_rag_opensearch.py"
+      - "embedding-worker/app/**"
+      - ".github/workflows/rag-opensearch-integration.yml"
+  pull_request:
+    paths:
+      - "backend/app/**"
+      - "backend/tests/test_opensearch_integration.py"
+      - "backend/scripts/verify_rag_opensearch.py"
+      - "embedding-worker/app/**"
+      - ".github/workflows/rag-opensearch-integration.yml"
+
+jobs:
+  opensearch:
+    runs-on: ubuntu-latest
+    services:
+      opensearch:
+        image: opensearchproject/opensearch:2.19.1
+        ports:
+          - 9200:9200
+        env:
+          discovery.type: single-node
+          plugins.security.disabled: "true"
+          DISABLE_INSTALL_DEMO_CONFIG: "true"
+          OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
+        options: >-
+          --health-cmd "curl --fail http://localhost:9200/_cluster/health || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install backend dependencies
+        run: python -m pip install -r backend/requirements.txt
+      - name: Run RAG OpenSearch integration test
+        working-directory: backend
+        env:
+          PYTHONPATH: .
+          OPENSEARCH_INTEGRATION_URL: http://127.0.0.1:9200
+          OPENSEARCH_VERIFY_TLS: "false"
+        run: pytest -q -m integration tests/test_opensearch_integration.py

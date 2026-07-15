@@ -64,7 +64,31 @@ class EmbeddingWorker:
                 "fallback_applied": bool(chunk.get("fallback_applied")),
                 "fallback_reason": chunk.get("fallback_reason"),
             })
-        return self.index_documents(documents, embedding_model=embedding_model, embedding_dimensions=embedding_dimensions)
+        existing_ids = self.existing_document_ids(target_index, [item["document_id"] for item in documents])
+        documents = [item for item in documents if item["document_id"] not in existing_ids]
+        if not documents:
+            return {"indexedCount": 0, "skippedExistingCount": len(existing_ids), "targetIndex": target_index, "dimensions": embedding_dimensions, "embeddingModel": embedding_model or self.embedding_model}
+        result = self.index_documents(documents, embedding_model=embedding_model, embedding_dimensions=embedding_dimensions)
+        result["skippedExistingCount"] = len(existing_ids)
+        return result
+
+    def existing_document_ids(self, target_index: str, document_ids: list[str]) -> set[str]:
+        """Return already persisted IDs so Spark task retries do not re-embed them."""
+        values = [str(value) for value in document_ids if str(value).strip()]
+        if not values:
+            return set()
+        try:
+            with httpx.Client(timeout=self.timeout, verify=self.verify_tls) as client:
+                response = client.post(f"{self.opensearch_url}/{target_index}/_search", auth=self.opensearch_auth, json={"size": len(values), "_source": False, "query": {"ids": {"values": values}}})
+                if response.status_code == 404:
+                    return set()
+                response.raise_for_status()
+                hits = response.json().get("hits", {}).get("hits", [])
+                return {str(item.get("_id")) for item in hits if isinstance(item, dict) and item.get("_id")}
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                return set()
+            raise
 
     def index_documents(self, documents: list[dict[str, Any]], *, embedding_model: str | None = None, embedding_dimensions: int | None = None) -> dict[str, Any]:
         if not documents:

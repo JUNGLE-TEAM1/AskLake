@@ -73,8 +73,9 @@ def main() -> int:
         parent_count = int(chunks.select("parent_document_id").distinct().count())
         results = chunks.rdd.mapPartitions(partition_dispatch).collect()
         indexed_count = sum(int(item.get("indexedCount") or 0) for item in results)
+        skipped_existing_count = sum(int(item.get("skippedExistingCount") or 0) for item in results)
         dimensions = next((int(item["dimensions"]) for item in results if item.get("dimensions") is not None), None)
-        result = {"status": "validating", "datasetId": dataset_id, "jobId": manifest.get("jobId"), "indexedCount": indexed_count, "documentCount": document_count, "chunkCount": document_count, "parentCount": parent_count, "dimensions": dimensions, "embeddingModel": manifest.get("embeddingModel"), "activeIndex": target_index, "chunkingVersion": "rag-chunk-v2", "durationMs": int((time.time() - started) * 1000)}
+        result = {"status": "validating", "datasetId": dataset_id, "jobId": manifest.get("jobId"), "indexedCount": document_count, "embeddedCount": indexed_count, "skippedExistingCount": skipped_existing_count, "documentCount": document_count, "chunkCount": document_count, "parentCount": parent_count, "dimensions": dimensions, "embeddingModel": manifest.get("embeddingModel"), "activeIndex": target_index, "chunkingVersion": "rag-chunk-v2", "durationMs": int((time.time() - started) * 1000)}
         print(f"ASKLAKE_RAG_INDEX_RESULT={canonical_json(result)}")
         callback(manifest, result)
         chunks.unpersist()

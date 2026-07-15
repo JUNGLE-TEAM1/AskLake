@@ -1,5 +1,4 @@
-from datetime import datetime, timezone
-from datetime import date
+from datetime import date, datetime, timezone
 import hashlib
 import json
 import re
@@ -165,7 +164,7 @@ class RagService:
         target = f"{alias}-v{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{uuid4().hex[:6]}"
         policy_fingerprint = self._policy_fingerprint(dataset, row)
         active_manifest = self.db.scalar(select(RagIndexManifestModel).where(RagIndexManifestModel.dataset_id == dataset_id, RagIndexManifestModel.status == "active").order_by(RagIndexManifestModel.activated_at.desc()))
-        if mode == "index" and active_manifest is not None and active_manifest.source_fingerprint == (source_fingerprint or None) and active_manifest.policy_fingerprint == policy_fingerprint and active_manifest.embedding_model == settings.rag_embedding_model and active_manifest.index_name:
+        if mode == "index" and active_manifest is not None and active_manifest.source_fingerprint == (source_fingerprint or None) and active_manifest.policy_fingerprint == policy_fingerprint and active_manifest.embedding_model == settings.rag_embedding_model and active_manifest.dimensions == settings.rag_embedding_dimensions and active_manifest.index_name:
             return RagIndexResponse(job_id=f"active:{active_manifest.index_name}", dataset_id=dataset_id, status="ready", target_index=active_manifest.index_name)
         job_id = f"ragjob_{uuid4().hex}"
         parent_table = f"{settings.trino_catalog}.{settings.rag_parent_iceberg_namespace}.parents_{safe_identifier(dataset_id)}_{safe_identifier(job_id)}"
@@ -203,6 +202,7 @@ class RagService:
             changed = bool(current_fingerprint and current_fingerprint != manifest.source_fingerprint)
             changed = changed or bool(current_policy and current_policy != manifest.policy_fingerprint)
             changed = changed or bool(profile and manifest.embedding_model != settings.rag_embedding_model)
+            changed = changed or bool(profile and manifest.dimensions != settings.rag_embedding_dimensions)
             if not changed:
                 continue
             key = f"auto-reindex:{manifest.dataset_id}:{current_fingerprint}:{current_policy or ''}"
@@ -255,6 +255,10 @@ class RagService:
             profile.index_status = "failed"
             profile.embedding_status = "failed"
             job.error = str(result.get("error") or "RAG worker failed")
+            profile.last_error = job.error
+            job.completed_at = datetime.now(timezone.utc)
+            self.db.commit()
+            return self.job(job_id, ActorContext(name=job.requested_by, role="admin"))
         else:
             if result.get("validationPassed") is not True:
                 job.status = "failed"
@@ -262,6 +266,7 @@ class RagService:
                 profile.index_status = "failed"
                 profile.embedding_status = "failed"
                 job.error = "Activation requires a successful OpenSearch validation result"
+                profile.last_error = job.error
                 job.completed_at = datetime.now(timezone.utc)
                 self.db.commit()
                 return self.job(job_id, ActorContext(name=job.requested_by, role="admin"))
@@ -277,6 +282,7 @@ class RagService:
             job.embedding_dimensions = int(result.get("dimensions") or job.embedding_dimensions or settings.rag_embedding_dimensions)
             profile.index_status = "ready"
             profile.embedding_status = "ready"
+            profile.last_error = None
             previous_index = profile.active_index
             next_index = str(result.get("activeIndex") or job.target_index or "") or None
             if settings.opensearch_base_url and next_index:
@@ -289,6 +295,7 @@ class RagService:
                     profile.index_status = "failed"
                     profile.embedding_status = "failed"
                     job.error = f"OpenSearch alias activation failed: {exc.__class__.__name__}"
+                    profile.last_error = job.error
                     job.completed_at = datetime.now(timezone.utc)
                     self.db.commit()
                     return self.job(job_id, ActorContext(name=job.requested_by, role="admin"))
@@ -489,6 +496,7 @@ class RagService:
             job.status = "failed"
             job.stage = "failed"
             job.error = "RAG orchestration is not configured: AIRFLOW_API_BASE_URL and AIRFLOW_API_TOKEN are required"
+            profile.last_error = job.error
             job.completed_at = datetime.now(timezone.utc)
             self.db.commit()
             return
@@ -497,6 +505,7 @@ class RagService:
             job.status = "failed"
             job.stage = "failed"
             job.error = "Catalog-issued sourceManifest with datasetId, readUrl, sparkPath, format, fingerprint, and expiry is required for Airflow indexing"
+            profile.last_error = job.error
             job.completed_at = datetime.now(timezone.utc)
             self.db.commit()
             return
@@ -508,6 +517,7 @@ class RagService:
             job.status = "failed"
             job.stage = "failed"
             job.error = "Airflow rejected the RAG index request"
+            profile.last_error = job.error
             job.completed_at = datetime.now(timezone.utc)
             self.db.commit()
             return

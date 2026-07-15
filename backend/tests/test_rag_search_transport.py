@@ -1,6 +1,7 @@
 from app.core.auth_context import ActorContext
 from app.core.config import Settings
 from app.services.rag_search_service import RagSearchService
+from app.clients.opensearch_client import OpenSearchClient
 
 
 class FakeGateway:
@@ -31,3 +32,20 @@ def test_opensearch_knn_query_uses_query_knn_shape_and_pins_model():
     knn_query = client.queries[1]
     assert "query" in knn_query and "knn" in knn_query["query"]
     assert "knn" not in knn_query
+
+
+def test_distinct_parent_count_uses_composite_pages_instead_of_approximate_cardinality():
+    class CompositeClient(OpenSearchClient):
+        def __init__(self):
+            super().__init__(Settings(opensearch_base_url="http://opensearch"))
+            self.calls = 0
+
+        def search_raw(self, index, query):
+            self.calls += 1
+            if self.calls == 1:
+                return {"aggregations": {"distinct_values": {"buckets": [{"key": {"value": "p1"}}, {"key": {"value": "p2"}}], "after_key": {"value": "p2"}}}}
+            return {"aggregations": {"distinct_values": {"buckets": [{"key": {"value": "p3"}}]}}}
+
+    client = CompositeClient()
+    assert client.distinct_count("rag-reviews", "parent_document_id", page_size=2) == 3
+    assert client.calls == 2

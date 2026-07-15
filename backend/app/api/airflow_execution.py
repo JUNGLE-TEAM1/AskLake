@@ -81,4 +81,9 @@ def validate_rag_job(
     _: None = Depends(require_airflow_execution_token),
     db: Session = Depends(get_db),
 ) -> dict:
-    return RagService(db).validate_job(job_id)
+    service = RagService(db)
+    try:
+        return service.validate_job(job_id)
+    except ApiError as exc:
+        service.complete_job(job_id, {"status": "failed", "error": str(exc.detail)})
+        raise

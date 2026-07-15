@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from app.core.auth_context import ActorContext, permissions_for_actor
 from app.models.base import Base
 from app.models.identity import PermissionGrantModel
-from app.models.semantic_rag import RagClassificationRunModel, RagColumnRecommendationModel, RagDatasetProfileModel
+from app.models.semantic_rag import RagClassificationRunModel, RagColumnRecommendationModel, RagDatasetProfileModel, RagIndexJobModel
 from app.schemas.semantic import SemanticModelCreate
 from app.services.rag_document_service import build_documents
 from app.services.rag_search_service import build_metadata_filter_clauses, hybrid_rrf
@@ -98,3 +98,37 @@ def test_invalid_ai_rag_roles_are_discarded_and_old_recommendations_replaced() -
         assert run.error is not None
         recommendations = db.query(RagColumnRecommendationModel).filter_by(dataset_id="reviews").all()
         assert [item.column_name for item in recommendations] == ["review_text"]
+
+
+def test_failed_job_records_completion_and_keeps_activation_guard(monkeypatch):
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine, tables=RAG_TABLES)
+    with Session(engine) as db:
+        service = RagService(db)
+        profile = RagDatasetProfileModel(dataset_id="reviews", review_state="approved", target_alias="rag-reviews")
+        job = RagIndexJobModel(id="ragjob_failure", dataset_id="reviews", requested_by="admin", target_index="rag-reviews-v2")
+        db.add_all([profile, job])
+        db.commit()
+        monkeypatch.setattr(service, "job", lambda *args, **kwargs: None)
+        service.complete_job(job.id, {"status": "failed", "error": "validation failed"})
+        db.refresh(job)
+        db.refresh(profile)
+        assert job.completed_at is not None
+        assert profile.last_error == "validation failed"
+        assert profile.active_index is None
+
+
+def test_successful_job_without_physical_validation_cannot_activate(monkeypatch):
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine, tables=RAG_TABLES)
+    with Session(engine) as db:
+        service = RagService(db)
+        profile = RagDatasetProfileModel(dataset_id="reviews", review_state="approved", target_alias="rag-reviews")
+        job = RagIndexJobModel(id="ragjob_unvalidated", dataset_id="reviews", requested_by="admin", target_index="rag-reviews-v2")
+        db.add_all([profile, job])
+        db.commit()
+        monkeypatch.setattr(service, "job", lambda *args, **kwargs: None)
+        service.complete_job(job.id, {"status": "success", "activeIndex": "rag-reviews-v2"})
+        db.refresh(job)
+        assert job.status == "failed"
+        assert "validation" in str(job.error)
