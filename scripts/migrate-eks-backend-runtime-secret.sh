@@ -5,6 +5,7 @@ set +x
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT_DIR/scripts/lib/verify-eks-context.sh"
+source "$ROOT_DIR/scripts/lib/eks-backend-secret-rollback.sh"
 
 MODE="${1:---verify-existing}"
 NAMESPACE="${ASKLAKE_EKS_NAMESPACE:-asklake-dev}"
@@ -35,31 +36,35 @@ done
 verify_asklake_eks_context
 
 cleanup_stage() {
-  kubectl delete externalsecret "$STAGE_NAME" -n "$NAMESPACE" --ignore-not-found --wait=true >/dev/null 2>&1 || true
-  kubectl delete secret "$STAGE_NAME" -n "$NAMESPACE" --ignore-not-found --wait=true >/dev/null 2>&1 || true
+  asklake_cleanup_backend_secret_stage "$STAGE_NAME" "$NAMESPACE"
 }
 
 restore_manual_target() {
-  [[ -n "$SOURCE_JSON" ]] || return 0
-  kubectl delete externalsecret "$NAME" -n "$NAMESPACE" --ignore-not-found --wait=true >/dev/null 2>&1 || true
-  kubectl delete secret "$NAME" -n "$NAMESPACE" --ignore-not-found --wait=true >/dev/null 2>&1 || true
-  jq \
-    --arg namespace "$NAMESPACE" \
-    --arg name "$NAME" '
-      {apiVersion:"v1",kind:"Secret",metadata:{name:$name,namespace:$namespace},type:"Opaque",stringData:{DATABASE_URL:.DATABASE_URL,BOOTSTRAP_ADMIN_PASSWORD:.BOOTSTRAP_ADMIN_PASSWORD}}
-    ' <<<"$SOURCE_JSON" | kubectl apply -f - >/dev/null
-  kubectl rollout restart deployment/fastapi -n "$NAMESPACE" >/dev/null 2>&1 || true
-  kubectl rollout status deployment/fastapi -n "$NAMESPACE" --timeout=5m >/dev/null 2>&1 || true
+  asklake_restore_backend_manual_secret "$ROOT_DIR" "$NAME" "$NAMESPACE" "$SOURCE_JSON"
 }
 
 on_exit() {
   local status=$?
-  cleanup_stage
+  local cleanup_failed=0 rollback_failed=0
+  trap - EXIT
+  cleanup_stage || cleanup_failed=1
   if [[ "$status" -ne 0 && "$FINAL_STARTED" -eq 1 ]]; then
     echo "ExternalSecret handover failed; restoring the validated manual target" >&2
-    restore_manual_target || true
+    if ! restore_manual_target; then
+      rollback_failed=1
+      echo "ExternalSecret handover rollback failed; manual recovery is required" >&2
+    fi
   fi
   SOURCE_JSON=""
+  if [[ "$cleanup_failed" -ne 0 ]]; then
+    echo "ExternalSecret stage cleanup failed" >&2
+  fi
+  if [[ "$status" -eq 0 && "$cleanup_failed" -ne 0 ]]; then
+    status=1
+  fi
+  if [[ "$rollback_failed" -ne 0 ]]; then
+    status=1
+  fi
   exit "$status"
 }
 trap on_exit EXIT

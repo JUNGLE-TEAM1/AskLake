@@ -713,23 +713,30 @@ Phase 14 web workload 변경은 `bash scripts/verify-eks-web-workloads.sh`로 �
 
 수요일 Pair B의 Frontend/FastAPI rollout, 내부 Service/RDS health, Pod 자동복구, 실제 두 Pod의 RDS lease/generation fence, EC2 Continuous 경계와 MSK IAM client 실행 결과는 [EKS MVP 수요일 Pair B 실환경 검증 기록](eks-day15-b-live-evidence.md)에 요약한다. exact temporary `CreateTopic` permission으로 1 partition test topic을 bootstrap하고 권한을 제거한 뒤, 원래 Describe-only Pod Identity로 private `9098` IAM metadata Job `Complete 1/1`을 확인했다. B 기록 당시 미완료였던 S3 positive/negative 경계는 후속 [Backend S3 최소 권한 검증 기록](eks-day15-backend-s3-runtime-evidence.md)에서 완료했다. PR #774 머지 후에는 최신 `pair1`을 A 브랜치에 merge하고 최종 Backend source commit, ECR immutable digest와 현재 Pod imageID 일치, ALB `--steady`, ExternalSecret Ready와 RDS health를 다시 확인한다.
 
-최종 Backend rollout gate는 새 image를 만들지 않고 확인된 동일 digest로 Deployment를 restart한다. 아래 runner는 실행 전 Git commit/ECR tag/digest와 현재 `2/2`, ESO·ALB·RDS·실행 중 EC2를 확인하고, rollout 동안 외부 `/api/health`를 1초 간격으로 측정한다. 종료 후 같은 digest의 새 Pod `2/2`, ALB steady target, Secret/RDS health, 각 Pod의 `external_ec2` 값과 Continuous process 0개를 다시 확인한다. 실제 commit은 검토한 값으로 전달하고 전체 digest·repository·endpoint는 출력하거나 Git에 기록하지 않는다.
+최종 Backend rollout gate는 새 image를 만들지 않고 확인된 동일 digest로 Deployment를 restart한다. 아래 runner는 실행 전 Phase 6의 Git 제외 image receipt와 full Git SHA, Deployment/Pod imageID, ECR immutable digest를 대조한다. `ASKLAKE_EXPECTED_EC2_INSTANCE_ID`로 지정한 정확한 rollback EC2가 running이고 instance/system status가 모두 `ok`인지 확인하며, 다른 실행 중 instance의 존재로 대신 통과하지 않는다. 이는 EC2 instance 보존 증거이고 Continuous 서비스 자체 health 증거는 아니다. rollout 동안 외부 `/api/health`를 1초 간격으로 측정하고 30초마다 식별자 없는 진행 건수를 출력한다. 종료 후 같은 digest의 새 Pod `2/2`, ALB steady target, Secret/RDS health, 각 Pod의 `external_ec2` 값과 worker·maintenance Continuous process 0개를 다시 확인한다. 실제 receipt, commit과 instance ID는 저장소 밖에서 전달하고 전체 digest·repository·endpoint·instance ID는 출력하거나 Git에 기록하지 않는다.
 
 ```bash
 export ASKLAKE_EKS_CLUSTER_NAME='<terraform output>'
-export ASKLAKE_EXPECTED_BACKEND_COMMIT='<reviewed commit>'
+export ASKLAKE_IMAGE_RECEIPT='<private *.image-receipt.json>'
+export ASKLAKE_EXPECTED_BACKEND_COMMIT='<reviewed full 40-character commit>'
+export ASKLAKE_EXPECTED_EC2_INSTANCE_ID='<preserved instance id>'
 export ASKLAKE_BACKEND_ROLLOUT_CONFIRM='restart-same-immutable-backend'
 bash scripts/run-eks-day15-backend-rollout-smoke.sh
 ```
 
-Issue #794의 페이즈 5 최종 인수는 인프라의 “Phase 5 배포 Handoff”와 다른 작업 단계다. 새 rollout이나 infrastructure mutation 없이 현재 Backend commit/ECR digest, Pod `2/2`, ALB exact steady, Backend Secret/RDS, S3 positive/negative와 cleanup, `external_ec2`/Continuous process 0, 실행 중 EC2 보존을 한 번에 재검증한다. S3 sentinel만 임시 생성되며 runner가 version/DeleteMarker와 Kubernetes smoke resource를 모두 제거한다.
+Issue #794의 페이즈 5 최종 인수는 인프라의 “Phase 5 배포 Handoff”와 다른 작업 단계다. 새 rollout이나 infrastructure apply 없이 formal receipt의 Backend digest, Pod `2/2`, ALB exact steady, Backend Secret/RDS, S3 positive/negative와 cleanup, `external_ec2`/Continuous process 0, 정확한 EC2 instance 보존을 한 번에 재검증한다. S3 sentinel과 임시 Pod·ConfigMap을 생성하므로 read-only 검증이 아니다. 두 mutation confirmation을 모두 명시해야 하며 runner는 현재 실행의 정확한 object version/DeleteMarker를 제거한 뒤 승인된 smoke prefix 전체와 Kubernetes label/name prefix의 과거 잔여물도 검사한다. 전체 audit만 별도로 실행할 때는 `run-eks-backend-s3-smoke.sh --audit-only`를 사용하며 이 mode는 object를 만들거나 삭제하지 않는다.
 
 ```bash
 export ASKLAKE_EKS_CLUSTER_NAME='<terraform output>'
-export ASKLAKE_EXPECTED_BACKEND_COMMIT='<reviewed commit>'
-export ASKLAKE_FINAL_INTEGRATION_CONFIRM='run-read-mostly-final-integration'
+export ASKLAKE_IMAGE_RECEIPT='<private *.image-receipt.json>'
+export ASKLAKE_EXPECTED_BACKEND_COMMIT='<reviewed full 40-character commit>'
+export ASKLAKE_EXPECTED_EC2_INSTANCE_ID='<preserved instance id>'
+export ASKLAKE_BACKEND_S3_SMOKE_CONFIRM='run-backend-s3-boundary-smoke'
+export ASKLAKE_FINAL_INTEGRATION_CONFIRM='run-final-integration-with-s3-sentinels'
 bash scripts/verify-eks-day15-final-integration.sh
 ```
+
+정적 실패 경로는 `bash scripts/test-eks-day15-validation-hardening.sh`로 검사한다. 이 test는 실제 AWS나 Kubernetes를 변경하지 않고 관계없는/stopped/impaired EC2, receipt 누락·short SHA·digest/platform 불일치, 중복 ALB target group·추가 weighted target·wrong port, S3 Version/DeleteMarker 잔여와 ExternalSecret manual rollback의 삭제·apply·hash·rollout 실패를 fake command로 재현한다.
 
 실제 dev 최종 결과, Terraform 무변경과 cleanup 증거는 [Issue #794 최종 통합 인수 기록](eks-day15-final-integration-evidence.md)에 남긴다. 이 gate의 성공은 Backend web runtime 범위이며 Airflow·Spark·Trino bounded E2E 또는 production cutover 승인이 아니다.
 

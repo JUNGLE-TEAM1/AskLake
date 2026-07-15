@@ -21,7 +21,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-for command in aws curl git jq kubectl; do
+for command in aws curl jq kubectl; do
   command -v "$command" >/dev/null 2>&1 || {
     echo "missing required command: $command" >&2
     exit 1
@@ -31,12 +31,8 @@ done
   echo "set ASKLAKE_BACKEND_ROLLOUT_CONFIRM=restart-same-immutable-backend" >&2
   exit 1
 }
-[[ "$EXPECTED_COMMIT" =~ ^[0-9a-f]{7,40}$ ]] || {
-  echo "ASKLAKE_EXPECTED_BACKEND_COMMIT must be a Git commit" >&2
-  exit 1
-}
-git -C "$ROOT_DIR" merge-base --is-ancestor "$EXPECTED_COMMIT" HEAD || {
-  echo "expected Backend commit is not contained in the current branch" >&2
+[[ "$EXPECTED_COMMIT" =~ ^[0-9a-f]{40}$ ]] || {
+  echo "ASKLAKE_EXPECTED_BACKEND_COMMIT must be a full 40-character Git SHA" >&2
   exit 1
 }
 verify_asklake_eks_context
@@ -80,42 +76,10 @@ jq -e '
 ' <<<"$target_secret" >/dev/null
 unset external_secret target_secret runtime_config
 
-repository_uri="${image%@*}"
 digest="${image##*@}"
-repository_name="${repository_uri#*/}"
-expected_tag="git-${EXPECTED_COMMIT:0:7}"
-image_detail="$(aws ecr describe-images \
-  --region "$REGION" \
-  --repository-name "$repository_name" \
-  --image-ids "imageDigest=$digest" \
-  --output json)"
-jq -e --arg tag "$expected_tag" '
-  (.imageDetails | length) == 1
-  and any(.imageDetails[0].imageTags[]?; . == $tag)
-' <<<"$image_detail" >/dev/null || {
-  echo "deployed Backend digest does not match the expected commit tag" >&2
-  exit 1
-}
-mutability="$(aws ecr describe-repositories \
-  --region "$REGION" \
-  --repository-names "$repository_name" \
-  --query 'repositories[0].imageTagMutability' \
-  --output text)"
-[[ "$mutability" == "IMMUTABLE" || "$mutability" == "IMMUTABLE_WITH_EXCLUSION" ]] || {
-  echo "Backend ECR repository is not immutable" >&2
-  exit 1
-}
-unset image_detail mutability repository_uri repository_name expected_tag
-
-running_instances="$(aws ec2 describe-instances \
-  --region "$REGION" \
-  --filters Name=instance-state-name,Values=running \
-  --output json \
-  | jq '[.Reservations[].Instances[]] | length')"
-[[ "$running_instances" -ge 1 ]] || {
-  echo "the existing EC2 rollback/Continuous runtime is not running" >&2
-  exit 1
-}
+bash "$ROOT_DIR/scripts/verify-eks-backend-image-provenance.sh" \
+  "${ASKLAKE_IMAGE_RECEIPT:-}" "$image" "$EXPECTED_COMMIT" >/dev/null
+bash "$ROOT_DIR/scripts/verify-eks-external-ec2-instance.sh" >/dev/null
 
 ingresses="$(kubectl get ingress asklake-backend asklake-frontend -n "$NAMESPACE" -o json)"
 backend_host="$(jq -r '[.items[] | select(.metadata.name == "asklake-backend") | .status.loadBalancer.ingress[0].hostname][0] // ""' <<<"$ingresses")"
@@ -130,11 +94,19 @@ bash "$ROOT_DIR/scripts/verify-eks-day15-alb-runtime.sh" --steady >/dev/null
 bash "$ROOT_DIR/scripts/migrate-eks-backend-runtime-secret.sh" --verify-existing >/dev/null
 
 monitor_external_health() {
+  local code sample_number=0
   while true; do
-    code="$(curl -sS -o /dev/null -w '%{http_code}' \
+    if ! code="$(curl -sS -o /dev/null -w '%{http_code}' \
       --connect-timeout 3 --max-time 10 \
-      "http://$backend_host/api/health" 2>/dev/null || printf '000')"
+      "http://$backend_host/api/health" 2>/dev/null)"; then
+      code="000"
+    fi
     printf '%s\n' "$code" >>"$MONITOR_FILE"
+    sample_number=$((sample_number + 1))
+    if ((sample_number % 30 == 0)); then
+      printf 'backend_rollout_monitor_samples=%d failures=%d\n' \
+        "$sample_number" "$(awk '$1 != "200" {count++} END {print count+0}' "$MONITOR_FILE")"
+    fi
     sleep 1
   done
 }
@@ -201,36 +173,7 @@ jq -e --arg digest "$digest" '
   )
 ' <<<"$pods" >/dev/null
 
-continuous_processes=0
-while IFS= read -r pod; do
-  control_plane="$(kubectl exec -n "$NAMESPACE" "$pod" -c fastapi -- printenv ASKLAKE_CONTINUOUS_CONTROL_PLANE)"
-  [[ "$control_plane" == "external_ec2" ]] || {
-    echo "a FastAPI Pod does not preserve external EC2 Continuous ownership" >&2
-    exit 1
-  }
-  process_count="$(kubectl exec -n "$NAMESPACE" "$pod" -c fastapi -- python -c '
-import os
-
-current = os.getpid()
-needles = ("kafka_continuous_stream.py", "manage-kafka-continuous.mjs")
-count = 0
-for entry in os.listdir("/proc"):
-    if not entry.isdigit() or int(entry) == current:
-        continue
-    try:
-        command = open(f"/proc/{entry}/cmdline", "rb").read().replace(b"\x00", b" ").decode("utf-8", "ignore")
-    except OSError:
-        continue
-    if any(needle in command for needle in needles):
-        count += 1
-print(count)
-')"
-  continuous_processes=$((continuous_processes + process_count))
-done < <(jq -r '.items[].metadata.name' <<<"$pods")
-[[ "$continuous_processes" -eq 0 ]] || {
-  echo "EKS FastAPI started an EC2-owned Continuous process" >&2
-  exit 1
-}
+bash "$ROOT_DIR/scripts/verify-eks-continuous-process-boundary.sh" >/dev/null
 
 bash "$ROOT_DIR/scripts/verify-eks-day15-alb-runtime.sh" --steady >/dev/null
 bash "$ROOT_DIR/scripts/verify-eks-day15-backend-secret-runtime.sh" >/dev/null
@@ -240,7 +183,7 @@ printf 'backend_rollout_http_samples=%d\n' "$sample_count"
 printf 'backend_rollout_http_failures=%d\n' "$failure_count"
 printf 'backend_rollout_replicas=2_of_2\n'
 printf 'backend_rollout_digest=unchanged_immutable\n'
-printf 'backend_external_ec2_boundary=preserved\n'
-printf 'backend_continuous_processes=%d\n' "$continuous_processes"
+printf 'backend_external_ec2_instance=running_status_checks_ok\n'
+printf 'backend_continuous_runtime_health=not_asserted\n'
+printf 'backend_eks_continuous_processes=0\n'
 printf 'backend_alb_secret_rds_postcheck=passed\n'
-printf 'existing_ec2_runtime=preserved\n'

@@ -5,6 +5,8 @@ set +x
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT_DIR/scripts/lib/verify-eks-context.sh"
+source "$ROOT_DIR/scripts/lib/audit-eks-s3-smoke-residue.sh"
+MODE="${1:---run}"
 SMOKE_SOURCE="$ROOT_DIR/infra/eks/smoke/backend_s3_smoke.py"
 CLUSTER_NAME="${ASKLAKE_EKS_CLUSTER_NAME:-}"
 NAMESPACE="${ASKLAKE_EKS_NAMESPACE:-asklake-dev}"
@@ -20,7 +22,11 @@ if [[ -z "$CLUSTER_NAME" ]]; then
   echo "ASKLAKE_EKS_CLUSTER_NAME is required" >&2
   exit 1
 fi
-if [[ "${ASKLAKE_BACKEND_S3_SMOKE_CONFIRM:-}" != "run-backend-s3-boundary-smoke" ]]; then
+if [[ "$MODE" != "--run" && "$MODE" != "--audit-only" ]]; then
+  echo "usage: $0 --run|--audit-only" >&2
+  exit 2
+fi
+if [[ "$MODE" == "--run" && "${ASKLAKE_BACKEND_S3_SMOKE_CONFIRM:-}" != "run-backend-s3-boundary-smoke" ]]; then
   echo "set ASKLAKE_BACKEND_S3_SMOKE_CONFIRM=run-backend-s3-boundary-smoke" >&2
   exit 1
 fi
@@ -174,6 +180,25 @@ warehouse_denied_prefix="${warehouse_prefix%/}-denied/__asklake_smoke/${RUN_TOKE
 warehouse_denied_key="${warehouse_denied_prefix}/probe.txt"
 query_denied_prefix="${query_prefix%/}-denied/__asklake_smoke/${RUN_TOKEN}"
 query_denied_key="${query_denied_prefix}/probe.txt"
+
+audit_smoke_residue() {
+  audit_asklake_s3_smoke_residue "$REGION" <<EOF
+$raw_bucket	__asklake_smoke/
+$output_bucket	__asklake_smoke/
+$warehouse_bucket	${warehouse_prefix%/}/__asklake_smoke/
+$warehouse_bucket	${warehouse_prefix%/}-denied/__asklake_smoke/
+$query_bucket	${query_prefix%/}/__asklake_smoke/
+$query_bucket	${query_prefix%/}-denied/__asklake_smoke/
+$evidence_bucket	${evidence_prefix%/}/__asklake_smoke/
+EOF
+}
+
+if [[ "$MODE" == "--audit-only" ]]; then
+  audit_smoke_residue
+  exit 0
+fi
+
+audit_smoke_residue
 
 append_cleanup_target() {
   CLEANUP_TARGETS+="$1"$'\t'"$2"$'\n'
@@ -361,6 +386,7 @@ done
 
 trap - EXIT
 cleanup_resources
+audit_smoke_residue
 
 printf '%s\n' \
   "pod_identity=expected_backend_role" \

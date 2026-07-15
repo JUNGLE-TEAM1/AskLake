@@ -81,27 +81,41 @@ target_groups_json="$(aws elbv2 describe-target-groups \
   exit 1
 }
 
+backend_target_group_count="$(jq '[.TargetGroups[] | select(.TargetType == "ip" and .Protocol == "HTTP" and .HealthCheckPath == "/api/health")] | length' <<<"$target_groups_json")"
+frontend_target_group_count="$(jq '[.TargetGroups[] | select(.TargetType == "ip" and .Protocol == "HTTP" and .HealthCheckPath == "/")] | length' <<<"$target_groups_json")"
 backend_target_group_arn="$(jq -r '[.TargetGroups[] | select(.TargetType == "ip" and .Protocol == "HTTP" and .HealthCheckPath == "/api/health")][0].TargetGroupArn // ""' <<<"$target_groups_json")"
 frontend_target_group_arn="$(jq -r '[.TargetGroups[] | select(.TargetType == "ip" and .Protocol == "HTTP" and .HealthCheckPath == "/")][0].TargetGroupArn // ""' <<<"$target_groups_json")"
-[[ -n "$backend_target_group_arn" && -n "$frontend_target_group_arn" && "$backend_target_group_arn" != "$frontend_target_group_arn" ]] || {
+[[ "$backend_target_group_count" -eq 1 && "$frontend_target_group_count" -eq 1 \
+  && -n "$backend_target_group_arn" && -n "$frontend_target_group_arn" \
+  && "$backend_target_group_arn" != "$frontend_target_group_arn" ]] || {
   echo "ALB target group service/port/health-path contract drifted" >&2
   exit 1
 }
 
 jq -e --arg target "$backend_target_group_arn" '
-  any(.Rules[];
-    any(.Conditions[]?; .Field == "path-pattern" and any(.Values[]?; . == "/api" or . == "/api/*"))
-    and any(.Actions[]?; .TargetGroupArn == $target or any(.ForwardConfig.TargetGroups[]?; .TargetGroupArn == $target))
-  )
+  [.Rules[] | select(any(.Conditions[]?;
+    .Field == "path-pattern" and any(.Values[]?; . == "/api" or . == "/api/*")
+  ))] as $matched
+  | ($matched | length) == 1
+  and all($matched[0].Actions[]?; .Type == "forward")
+  and ([
+    $matched[0].Actions[]?
+    | (.TargetGroupArn? // .ForwardConfig.TargetGroups[]?.TargetGroupArn)
+  ] | unique) == [$target]
 ' <<<"$rules_json" >/dev/null || {
   echo "ALB /api listener rule does not target the Backend target group" >&2
   exit 1
 }
 jq -e --arg target "$frontend_target_group_arn" '
-  any(.Rules[];
-    any(.Conditions[]?; .Field == "path-pattern" and any(.Values[]?; . == "/" or . == "/*"))
-    and any(.Actions[]?; .TargetGroupArn == $target or any(.ForwardConfig.TargetGroups[]?; .TargetGroupArn == $target))
-  )
+  [.Rules[] | select(any(.Conditions[]?;
+    .Field == "path-pattern" and any(.Values[]?; . == "/" or . == "/*")
+  ))] as $matched
+  | ($matched | length) == 1
+  and all($matched[0].Actions[]?; .Type == "forward")
+  and ([
+    $matched[0].Actions[]?
+    | (.TargetGroupArn? // .ForwardConfig.TargetGroups[]?.TargetGroupArn)
+  ] | unique) == [$target]
 ' <<<"$rules_json" >/dev/null || {
   echo "ALB / listener rule does not target the Frontend target group" >&2
   exit 1
