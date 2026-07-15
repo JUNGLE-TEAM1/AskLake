@@ -1114,6 +1114,16 @@ const checks = [
     ],
   },
   {
+    name: "Dashboard field combobox uses a fixed scroll viewport",
+    file: "src/pages/dashboard/runtime/DashboardFieldCombobox.tsx",
+    patterns: [
+      /<ScrollArea className="mt-2 h-56" type="always">/,
+    ],
+    forbiddenPatterns: [
+      /<ScrollArea className="mt-2 max-h-56" type="always">/,
+    ],
+  },
+  {
     name: "Dashboard edit toolbar separates active tools from action buttons",
     file: "src/pages/dashboard/runtime/DashboardEditToolbar.tsx",
     patterns: [
