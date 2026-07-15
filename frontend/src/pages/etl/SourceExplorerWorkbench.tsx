@@ -24,6 +24,7 @@ type SourceExplorerWorkbenchProps = {
   pathPlaceholder?: string;
   pathValue: string;
   preview: React.ReactNode;
+  previewIcon?: React.ReactNode;
   previewMeta?: React.ReactNode;
   previewTitle: React.ReactNode;
   queryPlaceholder: string;
@@ -44,6 +45,7 @@ export function SourceExplorerWorkbench({
   pathPlaceholder = "경로 또는 프리픽스 입력",
   pathValue,
   preview,
+  previewIcon,
   previewMeta,
   previewTitle,
   queryPlaceholder,
@@ -104,7 +106,7 @@ export function SourceExplorerWorkbench({
       <Panel className="source-explorer-panel source-explorer-preview-panel border-2 border-blue-300 shadow-[0_6px_18px_rgb(37_99_235_/_7%)]">
         <PanelHeader
           className="min-h-14 border-blue-200 bg-blue-50 px-4 py-3"
-          icon={<Table2 />}
+          icon={previewIcon ?? <Table2 />}
           iconClassName="size-9 rounded-md bg-blue-100 [&_svg]:size-[18px]"
           meta={previewMeta}
           title={previewTitle}

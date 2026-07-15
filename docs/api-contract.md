@@ -939,6 +939,10 @@ type SourceConnectorAnalysis = {
 
 조건부 1.5단계는 이름 있는 필드가 없는 MinIO/S3 TXT와 Kafka raw text 입력에 적용한다. Source 단계에서 제한 샘플이 `line_number`, `value` 형태이고 backend가 `detectedFormat=TXT`, `requiresRecordParsing=true`를 반환하면 frontend는 `/etl/record-parsing`으로 이동한다. PostgreSQL, MongoDB JSON, Kafka JSON envelope, JSON/JSONL object, Parquet, 이름 있는 CSV는 이 단계를 건너뛴다.
 
+`line_number`, `value`와 `draftPatch.source.rawPreviewLines`는 Source API와 다음 단계 사이의 운반 계약일 뿐 Source 탐색의 정형 스키마가 아니다. Frontend는 `detectedFormat=TXT`, `requiresRecordParsing=true`인 File/S3 또는 Kafka raw text에서 원문만 추출해 줄바꿈 보존 text block으로 표시하고, 행 번호나 필드 수를 정형 컬럼처럼 노출하지 않는다. 실제 필드 분리와 컬럼명·타입 확정은 반드시 Record Parsing 단계에서 수행한다. Kafka JSON envelope처럼 이미 이름 있는 필드로 구조화된 메시지는 기존 정형 표를 유지한다.
+
+Kafka Source API가 `draftPatch.source.requiresRecordParsing=true`와 함께 `detectedFormat`, `rawPreviewLines`를 명시적으로 반환하면 frontend는 해당 값을 보존하고 공통 Record Parsing 단계로 이동한다. Kafka Snapshot/Continuous runtime은 확정된 같은 `recordParsing` 계약을 전체 입력에 적용한다.
+
 `POST /api/etl/record-parsing/preview`
 
 ```ts

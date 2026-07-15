@@ -310,29 +310,32 @@ function looksLikeDataFile(value: string) {
 }
 
 function withRecordParsingSourceMetadata(analysis: SourceConnectorAnalysis, fields: SourceFieldRows): SourceConnectorAnalysis {
+  if (!analysis.draftPatch.source) return analysis;
+  const sourceMetadata = analysis.draftPatch.source;
   const sampleObject = analysis.datasetSummary?.representativeObject
-    || fieldValue(analysis.draftPatch.source?.sourceConfig ?? fields, "__Sample Object")
-    || fieldValue(analysis.draftPatch.source?.sourceConfig ?? fields, "__Selected Object")
+    || fieldValue(sourceMetadata.sourceConfig ?? fields, "__Sample Object")
+    || fieldValue(sourceMetadata.sourceConfig ?? fields, "__Selected Object")
     || fieldValue(fields, "Path / Prefix");
-  const backendSource = analysis.draftPatch.source;
-  const detectedFormat = backendSource?.detectedFormat
+  const detectedFormat = sourceMetadata.detectedFormat
     || (/\.(txt|log)$/i.test(sampleObject) ? "TXT" : undefined);
   const rawValueIndex = analysis.previewColumns.findIndex((column) => /^(value|raw_value)$/i.test(column));
-  const requiresRecordParsing = detectedFormat === "TXT" && rawValueIndex >= 0;
-  if (!analysis.draftPatch.source) return analysis;
+  const inferredRequiresRecordParsing = detectedFormat === "TXT" && rawValueIndex >= 0;
+  const requiresRecordParsing = sourceMetadata.requiresRecordParsing ?? inferredRequiresRecordParsing;
+  const backendRawPreviewLines = sourceMetadata.rawPreviewLines?.filter((line) => line.trim()) ?? [];
+  const rawPreviewLines = backendRawPreviewLines.length > 0
+    ? backendRawPreviewLines
+    : requiresRecordParsing && rawValueIndex >= 0
+      ? analysis.previewRows.map((row) => row[rawValueIndex] ?? "").filter((line) => line.trim())
+      : [];
   return {
     ...analysis,
     draftPatch: {
       ...analysis.draftPatch,
       source: {
-        ...analysis.draftPatch.source,
+        ...sourceMetadata,
         detectedFormat,
-        rawPreviewLines: requiresRecordParsing
-          ? (backendSource?.rawPreviewLines?.length
-              ? backendSource.rawPreviewLines
-              : analysis.previewRows.map((row) => row[rawValueIndex] ?? "").filter((line) => line.trim()))
-          : [],
-        requiresRecordParsing: backendSource?.requiresRecordParsing ?? requiresRecordParsing,
+        rawPreviewLines,
+        requiresRecordParsing,
       },
     },
   };
