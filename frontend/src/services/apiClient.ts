@@ -1,7 +1,10 @@
 import { ApiError } from "../types";
 import type { ApiErrorResponse } from "../types";
 
-const defaultApiBaseUrl = import.meta.env.DEV ? "" : "http://localhost:8080";
+// Keep production images environment-neutral. The ingress routes the same
+// browser origin to the API, while local development can still opt into an
+// explicit backend URL through VITE_API_BASE_URL.
+const defaultApiBaseUrl = "";
 const useMockApi = String(import.meta.env.VITE_USE_MOCK_API ?? "false").toLowerCase() === "true";
 
 export const apiConfig = {

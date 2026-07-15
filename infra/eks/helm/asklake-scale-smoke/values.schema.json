@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["enabled", "namespace", "metricsApiReady", "generalNodePoolReady", "imageReceiptVerified", "image", "replicaCount", "resources", "nodeSelector"],
+  "properties": {
+    "enabled": { "type": "boolean" },
+    "namespace": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" },
+    "metricsApiReady": { "type": "boolean" },
+    "generalNodePoolReady": { "type": "boolean" },
+    "imageReceiptVerified": { "type": "boolean" },
+    "image": { "type": "string" },
+    "replicaCount": { "type": "integer", "minimum": 0 },
+    "resources": { "type": "object" },
+    "nodeSelector": {
+      "type": "object",
+      "additionalProperties": { "type": "string", "minLength": 1 },
+      "required": ["asklake.io/workload-class"],
+      "properties": { "asklake.io/workload-class": { "const": "general" } }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "enabled": { "const": true } } },
+      "then": {
+        "properties": {
+          "metricsApiReady": { "const": true },
+          "generalNodePoolReady": { "const": true },
+          "imageReceiptVerified": { "const": true },
+          "image": { "pattern": "^[0-9]{12}\\.dkr\\.ecr\\.[a-z0-9-]+\\.amazonaws\\.com/[a-z0-9][a-z0-9._/-]*@sha256:[a-f0-9]{64}$" },
+          "replicaCount": { "minimum": 2 },
+          "resources": {
+            "additionalProperties": false,
+            "required": ["requests", "limits"],
+            "properties": {
+              "requests": { "$ref": "#/$defs/resourcePair" },
+              "limits": { "$ref": "#/$defs/resourcePair" }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "metricsApiReady": { "const": false },
+          "generalNodePoolReady": { "const": false },
+          "imageReceiptVerified": { "const": false },
+          "image": { "maxLength": 0 },
+          "replicaCount": { "const": 0 },
+          "resources": { "maxProperties": 0 }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "resourcePair": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cpu", "memory"],
+      "properties": {
+        "cpu": { "type": "string", "minLength": 1 },
+        "memory": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

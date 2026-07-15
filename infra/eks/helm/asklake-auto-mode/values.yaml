@@ -1,0 +1,36 @@
+enabled: false
+environment: ""
+
+nodeRoleName: ""
+
+selectors:
+  subnets: {}
+  securityGroups: {}
+
+general:
+  capacityTypes: []
+  instanceCategories: []
+  instanceGenerationMin: 0
+  limits:
+    cpu: ""
+    memory: ""
+  disruption:
+    consolidationPolicy: ""
+    consolidateAfter: ""
+    budget: ""
+  expireAfter: ""
+  terminationGracePeriod: ""
+
+spark:
+  capacityTypes: []
+  instanceCategories: []
+  instanceGenerationMin: 0
+  limits:
+    cpu: ""
+    memory: ""
+  disruption:
+    consolidationPolicy: ""
+    consolidateAfter: ""
+    budget: ""
+  expireAfter: ""
+  terminationGracePeriod: ""
