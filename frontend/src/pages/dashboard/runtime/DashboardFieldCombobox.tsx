@@ -82,7 +82,7 @@ export function DashboardFieldCombobox({
               }}
             />
           </div>
-          <ScrollArea className="mt-2 max-h-56" type="always">
+          <ScrollArea className="mt-2 h-56" type="always">
             <div className="grid gap-1 pr-2" role="listbox" aria-label={label}>
               {filteredOptions.length ? filteredOptions.map((option) => (
                 <Button
