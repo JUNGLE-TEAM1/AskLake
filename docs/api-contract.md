@@ -934,6 +934,12 @@ type SourceConnectorAnalysis = {
 
 조건부 1.5단계는 이름 있는 필드가 없는 MinIO/S3 TXT 입력에만 적용한다. Source 단계에서 선택한 `.txt`/`.log`의 제한 샘플이 `line_number`, `value` 형태이면 frontend는 `requiresRecordParsing=true`로 판단하고 `/etl/record-parsing`으로 이동한다. PostgreSQL, MongoDB JSON, Kafka JSON, JSON/JSONL, Parquet, 이름 있는 CSV는 이 단계를 건너뛴다.
 
+`line_number`, `value`는 Source API와 다음 단계 사이의 운반 계약일 뿐 Source 탐색의 정형 스키마가 아니다. Frontend는 이 경우 `value`만 추출해 `원본 샘플`의 줄바꿈 보존 text block으로 표시하고, 행 번호나 필드 수를 정형 컬럼처럼 노출하지 않는다. 실제 필드 분리와 컬럼명·타입 확정은 반드시 Record Parsing 단계에서 수행한다.
+
+Kafka Preview에서 모든 샘플의 `source`가 `click-events-log`이고 `raw.event_time`, `raw.event_id`, `raw.user_id`, `raw.session_id`, `raw.event_type`, `raw.product_id`, `raw.page_url`, `raw.device_type`, `raw.referrer`, `raw.position`이 모두 존재하면 frontend는 이 열들을 원본 순서로 결합해 `원본 로그 샘플`로 표시한다. 이는 표시 전용이며 API의 JSON sample/schema draft를 변경하거나 Kafka 원시 TXT Record Parsing을 활성화하지 않는다. 조건을 충족하지 않는 Kafka 메시지는 기존 정형 표를 유지한다.
+
+Kafka Source API가 `draftPatch.source.requiresRecordParsing=true`와 함께 `detectedFormat`, `rawPreviewLines`를 명시적으로 반환하면 frontend는 해당 값을 보존하고 공통 Record Parsing 단계로 이동한다. 다만 Kafka Snapshot/Continuous 실행 시 확정된 `recordParsing`을 실제 런타임에 적용하는 기능은 backend/Spark 구현이 함께 배포되기 전까지 지원되지 않는다.
+
 `POST /api/etl/record-parsing/preview`
 
 ```ts

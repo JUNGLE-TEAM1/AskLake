@@ -94,11 +94,18 @@ import type { QualityRuleOption, TransformQualityInvalidRow, TransformQualityPre
 import { SourceAssetTree } from "./SourceAssetTree";
 import { SourceExplorerWorkbench } from "./SourceExplorerWorkbench";
 import { SourcePreviewDataTable } from "./SourcePreviewDataTable";
+import { SourceRawSamplePreview } from "./SourceRawSamplePreview";
 import { SchemaTransformWorkbench } from "./SchemaTransformWorkbench";
 import { SchemaRuleSummary } from "./SchemaRuleSummary";
 import { SchemaResultPreview } from "./SchemaResultPreview";
 import { EtlStepHeader } from "../../components/etl/EtlStepHeader";
 import { getSourceBrandMeta, SourceBrandIcon } from "../../components/source/SourceBrand";
+import {
+  extractKafkaClickLogPreviewLines,
+  extractRawTextPreviewLines,
+  shouldShowKafkaClickLogPreview,
+  shouldShowRawTextPreview,
+} from "../../utils/sourcePreview";
 
 const OBJECT_STORAGE_IS_AWS = String(import.meta.env.VITE_OBJECT_STORAGE_PROVIDER ?? "minio").trim().toLowerCase() === "aws";
 const OBJECT_STORAGE_PROVIDER_LABEL = OBJECT_STORAGE_IS_AWS ? "Amazon S3" : "MinIO";
@@ -1492,6 +1499,20 @@ export function SourceConnectionPage({
   );
   const displayPreviewColumns = selectedAssetHasSample ? sourceRuntime?.previewColumns ?? [] : [];
   const displayPreviewRows = selectedAssetHasSample ? sourceRuntime?.previewRows ?? [] : [];
+  const s3RawTextPreviewLines = extractRawTextPreviewLines(displayPreviewColumns, displayPreviewRows);
+  const kafkaClickLogPreviewLines = extractKafkaClickLogPreviewLines(displayPreviewColumns, displayPreviewRows);
+  const previewShowsS3RawText = shouldShowRawTextPreview({
+    detectedFormat: sourceRuntime?.draftPatch.source?.detectedFormat,
+    requiresRecordParsing: sourceRuntime?.draftPatch.source?.requiresRecordParsing,
+    rawLines: s3RawTextPreviewLines,
+    sourceType: activeSourceType,
+  });
+  const previewShowsKafkaClickLog = shouldShowKafkaClickLogPreview({
+    rawLines: kafkaClickLogPreviewLines,
+    sourceType: activeSourceType,
+  });
+  const previewShowsRawText = previewShowsS3RawText || previewShowsKafkaClickLog;
+  const rawTextPreviewLines = previewShowsKafkaClickLog ? kafkaClickLogPreviewLines : s3RawTextPreviewLines;
   const hasSamplePreview = displayPreviewColumns.length > 0 && displayPreviewRows.length > 0;
   const runtimeSchemaColumnCount = sourceRuntime?.draftPatch.schema?.columns?.length ?? 0;
   const hasSchemaPatch = Boolean(runtimeSchemaColumnCount && sourceRuntime?.draftPatch.schema?.sampleRows?.length);
@@ -2323,15 +2344,22 @@ export function SourceConnectionPage({
                     pathPlaceholder={explorerConfig.pathPlaceholder}
                     pathValue={assetPathQuery}
                     preview={(
-                      <SourcePreviewDataTable
-                        columnLabels={displayPreviewColumns.map(sourceColumnLabel)}
-                        rows={displayPreviewRows}
-                      />
+                      previewShowsRawText
+                        ? <SourceRawSamplePreview lines={rawTextPreviewLines} />
+                        : (
+                          <SourcePreviewDataTable
+                            columnLabels={displayPreviewColumns.map(sourceColumnLabel)}
+                            rows={displayPreviewRows}
+                          />
+                        )
                     )}
+                    previewIcon={previewShowsRawText ? <FileText /> : undefined}
                     previewMeta={(
                       <div className="source-explorer-preview-meta">
                         <Badge variant="outline" className="border-blue-200 bg-white text-blue-700">{displayPreviewFormat}</Badge>
-                        {selectedDatasetSummary ? (
+                        {previewShowsRawText ? (
+                          <span>{rawTextPreviewLines.length}행</span>
+                        ) : selectedDatasetSummary ? (
                           <span>
                             전체 {selectedDatasetSummary.fileCount.toLocaleString()}개 · {formatSourceBytes(selectedDatasetSummary.totalBytes)} · 스키마 {selectedDatasetSummary.schemaCompatible ? "호환" : "불일치"}
                             {selectedDatasetSummary.excludedFileCount > 0 ? ` · 제외 ${selectedDatasetSummary.excludedFileCount.toLocaleString()}개` : ""}
@@ -2341,7 +2369,9 @@ export function SourceConnectionPage({
                         )}
                       </div>
                     )}
-                    previewTitle={selectedDatasetSummary
+                    previewTitle={previewShowsRawText
+                      ? (previewShowsKafkaClickLog ? "원본 로그 샘플" : "원본 샘플")
+                      : selectedDatasetSummary
                       ? `대표 파일 · ${selectedDatasetSummary.representativeObject}`
                       : selectedAsset?.[0] || sourcePreviewTitle}
                     queryPlaceholder={explorerConfig.queryPlaceholder}
