@@ -23,6 +23,7 @@ required_files=(
   "$TERRAFORM_DIR/auto-mode-node-pools.tf"
   "$TERRAFORM_DIR/auto-mode-node-pools-variables.tf"
   "$TERRAFORM_DIR/auto-mode-node-pools-outputs.tf"
+  "$TERRAFORM_DIR/web-workload-outputs.tf"
   "$TERRAFORM_DIR/outputs.tf"
   "$TERRAFORM_DIR/workload-identity.tf"
   "$TERRAFORM_DIR/workload-identity-outputs.tf"
@@ -41,6 +42,8 @@ required_files=(
   "$INGRESS_CHART_DIR/values.schema.json"
   "$INGRESS_CHART_DIR/templates/ingress-class.yaml"
   "$INGRESS_CHART_DIR/templates/ingress.yaml"
+  "$ROOT_DIR/infra/eks/helm/asklake-web/Chart.yaml"
+  "$ROOT_DIR/infra/eks/helm/asklake-web/values.schema.json"
   "$VALUES_FILE"
   "$IRSA_VALUES_FILE"
   "$POD_IDENTITY_VALUES_FILE"
@@ -49,8 +52,12 @@ required_files=(
   "$ROOT_DIR/docs/eks-phase-11-network-foundation.md"
   "$ROOT_DIR/docs/eks-phase-12-auto-mode-node-pools.md"
   "$ROOT_DIR/docs/eks-phase-13-auto-mode-alb.md"
+  "$ROOT_DIR/docs/eks-phase-14-web-workloads.md"
   "$ROOT_DIR/scripts/deploy-eks-auto-mode-ingress.sh"
   "$ROOT_DIR/scripts/destroy-eks-auto-mode-ingress.sh"
+  "$ROOT_DIR/scripts/deploy-eks-web-workloads.sh"
+  "$ROOT_DIR/scripts/destroy-eks-web-workloads.sh"
+  "$ROOT_DIR/scripts/verify-eks-web-workloads.sh"
 )
 
 for required_file in "${required_files[@]}"; do
@@ -264,6 +271,7 @@ bash -n "$ROOT_DIR/scripts/verify-eks-rds-bootstrap.sh"
 bash -n "$ROOT_DIR/scripts/verify-eks-auto-mode-node-pools.sh"
 bash "$ROOT_DIR/scripts/verify-eks-auto-mode-node-pools.sh"
 bash "$ROOT_DIR/scripts/verify-eks-network-ingress.sh"
+bash "$ROOT_DIR/scripts/verify-eks-web-workloads.sh"
 
 TERRAFORM_BIN="${ASKLAKE_TERRAFORM_BIN:-}"
 if [[ -z "$TERRAFORM_BIN" ]] && command -v terraform >/dev/null 2>&1; then

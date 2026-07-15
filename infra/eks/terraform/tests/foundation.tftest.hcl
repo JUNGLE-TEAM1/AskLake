@@ -217,10 +217,11 @@ run "new_cluster_contract" {
 
   assert {
     condition = (
-      output.phase1_handoff.contract_version == "2.3" &&
+      output.phase1_handoff.contract_version == "2.4" &&
       output.phase1_handoff.network_output == "phase11_network_handoff" &&
       output.phase1_handoff.node_pool_output == "phase12_node_pool_handoff" &&
-      output.phase1_handoff.ingress_output == "phase13_alb_handoff"
+      output.phase1_handoff.ingress_output == "phase13_alb_handoff" &&
+      output.phase1_handoff.web_output == "phase14_web_workload_handoff"
     )
     error_message = "the Phase 12 foundation handoff version and output pointers must stay synchronized."
   }
@@ -1366,5 +1367,43 @@ run "gateway_ai_requires_provider_contract" {
   assert {
     condition     = !output.phase8_runtime_secret_handoff.full_service_secret_contract_ready
     error_message = "gateway AI must stay closed until its provider workload contract is separately approved."
+  }
+}
+
+run "phase14_web_workload_handoff_is_fail_closed" {
+  command = plan
+
+  variables {
+    environment             = "dev"
+    owner                   = "pair-a"
+    resource_lifecycle      = "external"
+    cluster_mode            = "existing"
+    existing_cluster_name   = "shared-dev"
+    create_ecr_repositories = false
+  }
+
+  assert {
+    condition     = output.phase1_handoff.contract_version == "2.4" && output.phase1_handoff.web_output == "phase14_web_workload_handoff"
+    error_message = "Phase 1 handoff must expose the Phase 14 web workload contract."
+  }
+
+  assert {
+    condition     = !output.phase14_web_workload_handoff.default_enabled
+    error_message = "Phase 14 web workloads must remain disabled by default."
+  }
+
+  assert {
+    condition = (
+      output.phase14_web_workload_handoff.workloads.frontend.service == "frontend" &&
+      output.phase14_web_workload_handoff.workloads.frontend.service_port == 80 &&
+      output.phase14_web_workload_handoff.workloads.backend.service == "fastapi" &&
+      output.phase14_web_workload_handoff.workloads.backend.service_port == 8080
+    )
+    error_message = "Phase 14 Services must match the Phase 13 ALB routes."
+  }
+
+  assert {
+    condition     = contains(output.phase14_web_workload_handoff.apply_gates, "backend-runtime-boundary-ready")
+    error_message = "FastAPI multi-replica deployment must remain gated by Pair B's runtime boundary."
   }
 }

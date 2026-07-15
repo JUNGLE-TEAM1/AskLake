@@ -1,0 +1,38 @@
+enabled: false
+namespace: asklake-dev
+environment: dev
+
+readiness:
+  foundationReady: false
+  generalNodePoolReady: false
+  imageReceiptVerified: false
+  runtimeConfigReady: false
+  runtimeSecretReady: false
+  backendRuntimeBoundaryReady: false
+
+placement:
+  nodeSelector:
+    asklake.io/workload-class: general
+
+frontend:
+  image: ""
+  replicaCount: 0
+  serviceAccountName: asklake-frontend
+  service:
+    name: frontend
+    type: ClusterIP
+    port: 80
+  resources: {}
+
+backend:
+  image: ""
+  replicaCount: 0
+  serviceAccountName: asklake-backend
+  service:
+    name: fastapi
+    type: ClusterIP
+    port: 8080
+  runtimeConfigMapName: asklake-runtime
+  runtimeBoundaryConfigMapName: asklake-runtime-boundary
+  runtimeSecretName: asklake-backend-runtime
+  resources: {}

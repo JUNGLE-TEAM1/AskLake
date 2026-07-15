@@ -1,0 +1,160 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["enabled", "namespace", "environment", "readiness", "placement", "frontend", "backend"],
+  "properties": {
+    "enabled": { "type": "boolean" },
+    "namespace": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" },
+    "environment": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" },
+    "readiness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["foundationReady", "generalNodePoolReady", "imageReceiptVerified", "runtimeConfigReady", "runtimeSecretReady", "backendRuntimeBoundaryReady"],
+      "properties": {
+        "foundationReady": { "type": "boolean" },
+        "generalNodePoolReady": { "type": "boolean" },
+        "imageReceiptVerified": { "type": "boolean" },
+        "runtimeConfigReady": { "type": "boolean" },
+        "runtimeSecretReady": { "type": "boolean" },
+        "backendRuntimeBoundaryReady": { "type": "boolean" }
+      }
+    },
+    "placement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nodeSelector"],
+      "properties": {
+        "nodeSelector": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "frontend": { "$ref": "#/$defs/frontend" },
+    "backend": { "$ref": "#/$defs/backend" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "enabled": { "const": true } } },
+      "then": {
+        "properties": {
+          "readiness": {
+            "properties": {
+              "foundationReady": { "const": true },
+              "generalNodePoolReady": { "const": true },
+              "imageReceiptVerified": { "const": true },
+              "runtimeConfigReady": { "const": true },
+              "runtimeSecretReady": { "const": true },
+              "backendRuntimeBoundaryReady": { "const": true }
+            }
+          },
+          "frontend": {
+            "properties": {
+              "image": { "$ref": "#/$defs/digestImage" },
+              "replicaCount": { "minimum": 2 },
+              "resources": { "$ref": "#/$defs/resources" }
+            }
+          },
+          "backend": {
+            "properties": {
+              "image": { "$ref": "#/$defs/digestImage" },
+              "replicaCount": { "minimum": 2 },
+              "resources": { "$ref": "#/$defs/resources" }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "readiness": {
+            "properties": {
+              "foundationReady": { "const": false },
+              "generalNodePoolReady": { "const": false },
+              "imageReceiptVerified": { "const": false },
+              "runtimeConfigReady": { "const": false },
+              "runtimeSecretReady": { "const": false },
+              "backendRuntimeBoundaryReady": { "const": false }
+            }
+          },
+          "frontend": { "properties": { "image": { "maxLength": 0 }, "replicaCount": { "const": 0 }, "resources": { "maxProperties": 0 } } },
+          "backend": { "properties": { "image": { "maxLength": 0 }, "replicaCount": { "const": 0 }, "resources": { "maxProperties": 0 } } }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "digestImage": {
+      "type": "string",
+      "pattern": "^[0-9]{12}\\.dkr\\.ecr\\.[a-z0-9-]+\\.amazonaws\\.com/[a-z0-9][a-z0-9._/-]*@sha256:[a-f0-9]{64}$"
+    },
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "type", "port"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" },
+        "type": { "type": "string", "const": "ClusterIP" },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+      }
+    },
+    "frontendService": {
+      "allOf": [
+        { "$ref": "#/$defs/service" },
+        { "properties": { "name": { "const": "frontend" }, "port": { "const": 80 } } }
+      ]
+    },
+    "backendService": {
+      "allOf": [
+        { "$ref": "#/$defs/service" },
+        { "properties": { "name": { "const": "fastapi" }, "port": { "const": 8080 } } }
+      ]
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requests", "limits"],
+      "properties": {
+        "requests": { "$ref": "#/$defs/resourcePair" },
+        "limits": { "$ref": "#/$defs/resourcePair" }
+      }
+    },
+    "resourcePair": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cpu", "memory"],
+      "properties": {
+        "cpu": { "type": "string", "minLength": 1 },
+        "memory": { "type": "string", "minLength": 1 }
+      }
+    },
+    "frontend": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["image", "replicaCount", "serviceAccountName", "service", "resources"],
+      "properties": {
+        "image": { "type": "string" },
+        "replicaCount": { "type": "integer", "minimum": 0 },
+        "serviceAccountName": { "type": "string", "const": "asklake-frontend" },
+        "service": { "$ref": "#/$defs/frontendService" },
+        "resources": { "type": "object" }
+      }
+    },
+    "backend": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["image", "replicaCount", "serviceAccountName", "service", "runtimeConfigMapName", "runtimeBoundaryConfigMapName", "runtimeSecretName", "resources"],
+      "properties": {
+        "image": { "type": "string" },
+        "replicaCount": { "type": "integer", "minimum": 0 },
+        "serviceAccountName": { "type": "string", "const": "asklake-backend" },
+        "service": { "$ref": "#/$defs/backendService" },
+        "runtimeConfigMapName": { "type": "string", "const": "asklake-runtime" },
+        "runtimeBoundaryConfigMapName": { "type": "string", "const": "asklake-runtime-boundary" },
+        "runtimeSecretName": { "type": "string", "const": "asklake-backend-runtime" },
+        "resources": { "type": "object" }
+      }
+    }
+  }
+}
