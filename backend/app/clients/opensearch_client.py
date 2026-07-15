@@ -17,12 +17,13 @@ class OpenSearchClient:
         auth = None
         if self.settings.opensearch_username:
             auth = (self.settings.opensearch_username, self.settings.opensearch_password or "")
-        response = httpx.request(method, f"{self.settings.opensearch_base_url.rstrip('/')}/{path.lstrip('/')}", auth=auth, timeout=self.settings.opensearch_timeout_seconds, verify=self.settings.opensearch_verify_tls, **kwargs)
+        verify = self.settings.opensearch_ca_cert or self.settings.opensearch_verify_tls
+        response = httpx.request(method, f"{self.settings.opensearch_base_url.rstrip('/')}/{path.lstrip('/')}", auth=auth, timeout=self.settings.opensearch_timeout_seconds, verify=verify, **kwargs)
         response.raise_for_status()
         return response.json() if response.content else {}
 
     def create_index(self, index: str, *, dimensions: int) -> dict[str, Any] | list[Any]:
-        return self._request("PUT", index, json={"settings": {"index": {"knn": True}}, "mappings": {"properties": {"document_id": {"type": "keyword"}, "chunk_document_id": {"type": "keyword"}, "parent_document_id": {"type": "keyword"}, "dataset_id": {"type": "keyword"}, "source_row_id": {"type": "keyword"}, "title": {"type": "text"}, "body": {"type": "text"}, "embedding_text": {"type": "text"}, "body_vector": {"type": "knn_vector", "dimension": dimensions}, "filter_terms": {"type": "object", "enabled": True}, "metadata_filter": {"type": "object", "dynamic": True}, "metadata_display": {"type": "object", "enabled": True}, "semantic_bindings": {"type": "object", "enabled": True}, "source_columns": {"type": "keyword"}, "chunk_index": {"type": "integer"}, "chunk_count": {"type": "integer"}, "start_sentence": {"type": "integer"}, "end_sentence": {"type": "integer"}, "char_start": {"type": "integer"}, "char_end": {"type": "integer"}, "chunking_strategy": {"type": "keyword"}, "chunking_version": {"type": "keyword"}, "content_hash": {"type": "keyword"}, "embedding_model": {"type": "keyword"}, "embedding_dimensions": {"type": "integer"}, "fallback_applied": {"type": "boolean"}, "fallback_reason": {"type": "keyword"}}}})
+        return self._request("PUT", index, json={"settings": {"index": {"knn": True}}, "mappings": {"properties": {"document_id": {"type": "keyword"}, "chunk_document_id": {"type": "keyword"}, "parent_document_id": {"type": "keyword"}, "dataset_id": {"type": "keyword"}, "source_row_id": {"type": "keyword"}, "title": {"type": "text"}, "body": {"type": "text"}, "embedding_text": {"type": "text"}, "body_vector": {"type": "knn_vector", "dimension": dimensions}, "filter_terms": {"type": "object", "enabled": True}, "metadata_filter": {"type": "object", "dynamic": True}, "metadata_display": {"type": "object", "enabled": False}, "semantic_bindings": {"type": "object", "enabled": True}, "source_columns": {"type": "keyword"}, "source_fields": {"type": "object", "dynamic": False, "properties": {"logicalField": {"type": "keyword"}, "physicalField": {"type": "keyword"}, "role": {"type": "keyword"}}}, "title_blocks": {"type": "object", "dynamic": False}, "body_blocks": {"type": "object", "dynamic": False}, "chunk_index": {"type": "integer"}, "chunk_count": {"type": "integer"}, "start_sentence": {"type": "integer"}, "end_sentence": {"type": "integer"}, "char_start": {"type": "integer"}, "char_end": {"type": "integer"}, "chunking_strategy": {"type": "keyword"}, "chunking_version": {"type": "keyword"}, "embedding_input_version": {"type": "keyword"}, "field_rendering_version": {"type": "keyword"}, "content_hash": {"type": "keyword"}, "embedding_model": {"type": "keyword"}, "embedding_dimensions": {"type": "integer"}, "fallback_applied": {"type": "boolean"}, "fallback_reason": {"type": "keyword"}}}})
 
     def bulk_index(self, index: str, documents: list[dict[str, Any]]) -> dict[str, Any] | list[Any]:
         lines: list[str] = []
@@ -81,3 +82,10 @@ class OpenSearchClient:
     def mapping(self, index: str) -> dict[str, Any]:
         payload = self._request("GET", f"{index}/_mapping")
         return payload if isinstance(payload, dict) else {}
+
+    def delete_index(self, index: str) -> None:
+        self._request("DELETE", index)
+
+    def list_indices(self, pattern: str) -> list[str]:
+        payload = self._request("GET", f"_cat/indices/{pattern}?format=json&h=index")
+        return sorted(str(item.get("index")) for item in payload if isinstance(item, dict) and item.get("index")) if isinstance(payload, list) else []

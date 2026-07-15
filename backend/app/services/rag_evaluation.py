@@ -117,6 +117,22 @@ class RagQualityGateError(ValueError):
     pass
 
 
+def enforce_baseline_gate(report: dict[str, Any], baseline: dict[str, Any], *, max_relative_drop: float = 0.05) -> dict[str, Any]:
+    """Require Recall@8 and MRR@8 to stay within the agreed relative drop."""
+    if not 0 <= max_relative_drop < 1:
+        raise ValueError("max_relative_drop must be between 0 and 1")
+    current = report.get("metrics") or {}
+    previous = baseline.get("metrics") or {}
+    failures = []
+    for metric in ("parentRecall", "parentMrr"):
+        before = float(previous.get(metric, 0.0))
+        after = float(current.get(metric, 0.0))
+        minimum = before * (1.0 - max_relative_drop)
+        if after < minimum:
+            failures.append({"metric": metric, "current": after, "baseline": before, "minimum": minimum})
+    return {**report, "baselineGate": {"passed": not failures, "failures": failures, "maxRelativeDrop": max_relative_drop}}
+
+
 def enforce_quality_gate(report: dict[str, Any], thresholds: dict[str, float] | None = None) -> dict[str, Any]:
     required = {**DEFAULT_QUALITY_THRESHOLDS, **(thresholds or {})}
     metrics = report.get("metrics") or {}

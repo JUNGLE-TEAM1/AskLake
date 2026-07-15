@@ -81,3 +81,6 @@
 .semantic-spin { animation: semantic-real-spin 1s linear infinite; }
 @keyframes semantic-real-spin { to { transform: rotate(360deg); } }
 @media (max-width: 960px) { .semantic-real-model-layout { grid-template-columns: 1fr; } .semantic-real-model-list { display: flex; gap: 6px; overflow-x: auto; } .semantic-real-list-heading { display: none; } .semantic-real-model-list button { min-width: 180px; } .semantic-real-model-header, .semantic-real-toolbar, .semantic-real-section-title { flex-direction: column; } .semantic-real-definition-main { grid-template-columns: 1fr; } }
+.semantic-real-rag-serving-status { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 10px; padding: 10px 14px; border: 1px solid #dbe4f0; border-radius: 10px; background: #f8fbff; color: #475467; font-size: 12px; }
+.semantic-real-rag-serving-status strong { color: #101828; }
+.semantic-real-rag-serving-live { color: #027a48; font-weight: 700; }

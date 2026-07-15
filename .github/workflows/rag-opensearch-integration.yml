@@ -4,16 +4,34 @@ on:
   push:
     paths:
       - "backend/app/**"
+      - "backend/alembic/**"
+      - "backend/scripts/rag_*.py"
+      - "backend/scripts/spark_job_run.py"
+      - "backend/requirements*.txt"
+      - "backend/tests/test_rag_*.py"
+      - "backend/tests/test_semantic_rag_contract.py"
       - "backend/tests/test_opensearch_integration.py"
       - "backend/scripts/verify_rag_opensearch.py"
       - "embedding-worker/app/**"
+      - "embedding-worker/tests/**"
+      - "embedding-worker/requirements*.txt"
+      - "airflow/dags/asklake_rag_index.py"
       - ".github/workflows/rag-opensearch-integration.yml"
   pull_request:
     paths:
       - "backend/app/**"
+      - "backend/alembic/**"
+      - "backend/scripts/rag_*.py"
+      - "backend/scripts/spark_job_run.py"
+      - "backend/requirements*.txt"
+      - "backend/tests/test_rag_*.py"
+      - "backend/tests/test_semantic_rag_contract.py"
       - "backend/tests/test_opensearch_integration.py"
       - "backend/scripts/verify_rag_opensearch.py"
       - "embedding-worker/app/**"
+      - "embedding-worker/tests/**"
+      - "embedding-worker/requirements*.txt"
+      - "airflow/dags/asklake_rag_index.py"
       - ".github/workflows/rag-opensearch-integration.yml"
 
 jobs:
@@ -40,11 +58,31 @@ jobs:
         with:
           python-version: "3.13"
       - name: Install backend dependencies
-        run: python -m pip install -r backend/requirements.txt
+        run: python -m pip install -r backend/requirements-test.txt
       - name: Run RAG OpenSearch integration test
         working-directory: backend
         env:
           PYTHONPATH: .
           OPENSEARCH_INTEGRATION_URL: http://127.0.0.1:9200
           OPENSEARCH_VERIFY_TLS: "false"
-        run: pytest -q -m integration tests/test_opensearch_integration.py
+        run: python -m pytest -q -m integration tests/test_opensearch_integration.py
+      - name: Run backend RAG regression suite
+        working-directory: backend
+        env:
+          PYTHONPATH: .
+        run: python -m pytest -q tests/test_rag_*.py tests/test_semantic_rag_contract.py
+
+  embedding-worker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install embedding worker test dependencies
+        run: python -m pip install -r embedding-worker/requirements-test.txt
+      - name: Run embedding worker tests
+        working-directory: embedding-worker
+        env:
+          PYTHONPATH: .
+        run: python -m pytest -q

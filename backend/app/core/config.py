@@ -42,6 +42,11 @@ class Settings(BaseSettings):
     rag_chunk_target_tokens: int = Field(default=800, ge=100, le=2_000)
     rag_chunk_overlap_tokens: int = Field(default=400, ge=0, le=1_000)
     rag_chunk_max_tokens: int = Field(default=1_200, ge=100, le=4_000)
+    rag_context_max_tokens: int = Field(default=6_000, ge=256, le=32_000)
+    rag_failed_row_rate_threshold: float = Field(default=0.05, ge=0.0, le=1.0)
+    rag_artifact_retention_days: int = Field(default=30, ge=1, le=3_650)
+    rag_artifact_keep_previous_indexes: int = Field(default=1, ge=0, le=100)
+    rag_runtime_create_schema: bool = False
     rag_staging_base_path: str = "s3a://asklake-warehouse/rag-staging"
     rag_parent_iceberg_namespace: str = "rag"
     rag_index_prefix: str = "asklake-rag"
@@ -50,6 +55,7 @@ class Settings(BaseSettings):
     opensearch_password: str | None = None
     opensearch_timeout_seconds: float = Field(default=30.0, ge=1.0, le=120.0)
     opensearch_verify_tls: bool = True
+    opensearch_ca_cert: str | None = None
     airflow_api_base_url: str | None = None
     airflow_dag_id: str = "asklake_etl_job"
     rag_airflow_dag_id: str = "asklake_rag_index"

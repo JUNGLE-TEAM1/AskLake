@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import sys
 import time
@@ -31,8 +32,11 @@ def callback(manifest: dict, payload: dict) -> None:
         return
 
 
-def post_index(endpoint: str, token: str, dataset_id: str, dataset_name: str, target_index: str, chunks: list[dict], *, embedding_model: str | None, embedding_dimensions: int | None) -> dict:
-    request = urllib.request.Request(endpoint, data=json.dumps({"dataset_id": dataset_id, "dataset_name": dataset_name, "body_columns": ["text"], "target_index": target_index, "embedding_model": embedding_model, "embedding_dimensions": embedding_dimensions, "chunks": chunks}).encode("utf-8"), method="POST", headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+def post_index(endpoint: str, token: str, dataset_id: str, dataset_name: str, target_index: str, chunks: list[dict], *, embedding_model: str | None, embedding_dimensions: int | None, metadata_types: dict[str, str] | None = None, job_id: str | None = None) -> dict:
+    payload = {"dataset_id": dataset_id, "dataset_name": dataset_name, "body_columns": ["text"], "target_index": target_index, "embedding_model": embedding_model, "embedding_dimensions": embedding_dimensions, "metadata_types": metadata_types or {}, "chunks": chunks}
+    digest = hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")).hexdigest()
+    payload["idempotency_key"] = f"rag-index:{job_id}:{digest}"
+    request = urllib.request.Request(endpoint, data=json.dumps(payload, ensure_ascii=False).encode("utf-8"), method="POST", headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
     with urllib.request.urlopen(request, timeout=int(os.environ.get("ASKLAKE_RAG_WORKER_HTTP_TIMEOUT_SECONDS", "600"))) as response:
         payload = json.loads(response.read().decode("utf-8") or "{}")
     if not isinstance(payload, dict) or payload.get("indexedCount") is None:
@@ -56,18 +60,23 @@ def main() -> int:
         target_index = str(manifest.get("targetIndex") or "")
         embedding_model = str(manifest.get("embeddingModel") or "") or None
         embedding_dimensions = int(manifest["embeddingDimensions"]) if manifest.get("embeddingDimensions") else None
+        metadata_types = manifest.get("metadataTypes") if isinstance(manifest.get("metadataTypes"), dict) else {}
 
         def partition_dispatch(iterator):
             batch = []
             for row in iterator:
                 chunk = row.asDict(recursive=True)
                 chunk["metadata"] = json.loads(chunk.pop("metadata_json") or "{}")
+                chunk["metadata_display"] = json.loads(chunk.pop("metadata_display_json") or "{}")
+                chunk["title_blocks"] = json.loads(chunk.pop("title_blocks_json") or "[]")
+                chunk["body_blocks"] = json.loads(chunk.pop("body_blocks_json") or "[]")
+                chunk["source_fields"] = json.loads(chunk.pop("source_fields_json") or "[]")
                 batch.append(chunk)
                 if len(batch) >= 64:
-                    yield post_index(endpoint, token, dataset_id, dataset_name, target_index, batch, embedding_model=embedding_model, embedding_dimensions=embedding_dimensions)
+                    yield post_index(endpoint, token, dataset_id, dataset_name, target_index, batch, embedding_model=embedding_model, embedding_dimensions=embedding_dimensions, metadata_types=metadata_types, job_id=str(manifest.get("jobId") or ""))
                     batch = []
             if batch:
-                yield post_index(endpoint, token, dataset_id, dataset_name, target_index, batch, embedding_model=embedding_model, embedding_dimensions=embedding_dimensions)
+                yield post_index(endpoint, token, dataset_id, dataset_name, target_index, batch, embedding_model=embedding_model, embedding_dimensions=embedding_dimensions, metadata_types=metadata_types, job_id=str(manifest.get("jobId") or ""))
 
         document_count = chunks.count()
         parent_count = int(chunks.select("parent_document_id").distinct().count())
@@ -75,7 +84,7 @@ def main() -> int:
         indexed_count = sum(int(item.get("indexedCount") or 0) for item in results)
         skipped_existing_count = sum(int(item.get("skippedExistingCount") or 0) for item in results)
         dimensions = next((int(item["dimensions"]) for item in results if item.get("dimensions") is not None), None)
-        result = {"status": "validating", "datasetId": dataset_id, "jobId": manifest.get("jobId"), "indexedCount": document_count, "embeddedCount": indexed_count, "skippedExistingCount": skipped_existing_count, "documentCount": document_count, "chunkCount": document_count, "parentCount": parent_count, "dimensions": dimensions, "embeddingModel": manifest.get("embeddingModel"), "activeIndex": target_index, "chunkingVersion": "rag-chunk-v2", "durationMs": int((time.time() - started) * 1000)}
+        result = {"status": "validating", "datasetId": dataset_id, "jobId": manifest.get("jobId"), "indexedCount": document_count, "embeddedCount": indexed_count, "skippedExistingCount": skipped_existing_count, "documentCount": document_count, "chunkCount": document_count, "parentCount": parent_count, "dimensions": dimensions, "embeddingModel": manifest.get("embeddingModel"), "activeIndex": target_index, "chunkingVersion": "rag-chunk-v3", "embeddingInputVersion": "title_body_fields_v2", "fieldRenderingVersion": "field_blocks_v1", "durationMs": int((time.time() - started) * 1000)}
         print(f"ASKLAKE_RAG_INDEX_RESULT={canonical_json(result)}")
         callback(manifest, result)
         chunks.unpersist()

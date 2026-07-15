@@ -1,6 +1,6 @@
 from app.core.auth_context import ActorContext
 from app.core.config import Settings
-from app.services.rag_search_service import RagSearchService
+from app.services.rag_search_service import RagSearchService, build_metadata_filter_clauses
 from app.clients.opensearch_client import OpenSearchClient
 
 
@@ -49,3 +49,20 @@ def test_distinct_parent_count_uses_composite_pages_instead_of_approximate_cardi
     client = CompositeClient()
     assert client.distinct_count("rag-reviews", "parent_document_id", page_size=2) == 3
     assert client.calls == 2
+
+
+def test_metadata_filter_compiler_uses_catalog_storage_type_and_physical_name():
+    clauses = build_metadata_filter_clauses({
+        "Review.Rating": {"operator": "eq", "value": 3, "storageType": "number", "physicalField": "review_rating"},
+        "Is Active": {"operator": "eq", "value": True, "storageType": "boolean", "physicalField": "is_active"},
+    })
+    assert {"term": {"metadata_filter.review_rating.number": 3}} in clauses
+    assert {"term": {"metadata_filter.is_active.boolean": True}} in clauses
+
+
+def test_context_merge_uses_chunk_offsets_to_remove_overlap():
+    merged = RagSearchService._merge_chunk_bodies([
+        {"_source": {"body": "abcdef", "char_start": 0, "char_end": 6}},
+        {"_source": {"body": "defghi", "char_start": 3, "char_end": 9}},
+    ], max_chars=100)
+    assert merged == "abcdef\n\nghi"

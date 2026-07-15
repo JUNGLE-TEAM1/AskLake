@@ -50,6 +50,17 @@ class TrinoClient:
             timeout_seconds=timeout_seconds,
         )
 
+    def execute_ddl(self, query: str) -> None:
+        """Execute a bounded DDL statement and consume all result pages."""
+        page = self.submit(query, timeout_seconds=self.settings.trino_query_timeout_seconds)
+        for _ in range(100):
+            if page.error is not None:
+                raise ApiError(ErrorCode.INTERNAL_ERROR, page.error.message, status.HTTP_502_BAD_GATEWAY)
+            if not page.next_uri:
+                return
+            page = self.fetch(page.next_uri, timeout_seconds=self.settings.trino_query_timeout_seconds)
+        raise ApiError(ErrorCode.BACKEND_TIMEOUT, "Trino DDL exceeded the page limit", status.HTTP_502_BAD_GATEWAY)
+
     def fetch(self, next_uri: str, *, timeout_seconds: float | None = None) -> TrinoClientPage:
         validate_next_uri(next_uri, self.settings.trino_base_url)
         return self._request(

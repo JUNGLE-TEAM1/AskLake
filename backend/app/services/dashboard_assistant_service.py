@@ -165,16 +165,18 @@ class DashboardAssistantService:
                 return {"sources": [], "retrieval": {"mode": "hybrid", "status": "semantic_model_not_published", "semanticModelId": request.semantic_model_id}}
             dataset_ids = list(dict.fromkeys([*dataset_ids, *(item.dataset_id for item in model.datasets)]))
         aliases: list[str] = []
+        targets: list[dict[str, Any]] = []
         for dataset_id in dataset_ids:
             try:
                 rag_service._dataset(dataset_id, actor, "query")
             except Exception:
                 continue
             profile = rag_service.profile(dataset_id, actor)
-            if profile.review_state == "approved" and profile.index_status == "ready" and profile.target_alias:
+            if profile.review_state == "approved" and profile.serving_status in {"serving", "stale"} and profile.target_alias:
                 aliases.append(profile.target_alias)
+                targets.append({"alias": profile.target_alias, "embeddingModel": profile.active_embedding_model, "embeddingDimensions": profile.active_embedding_dimensions})
         try:
-            return RagSearchService(self.settings).search(query=request.prompt, aliases=aliases, actor=actor)
+            return RagSearchService(self.settings).search(query=request.prompt, aliases=aliases, targets=targets, actor=actor)
         except Exception as exc:
             return {"sources": [], "retrieval": {"mode": "hybrid", "status": "unavailable", "reason": exc.__class__.__name__}}
 

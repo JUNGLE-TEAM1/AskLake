@@ -42,4 +42,5 @@ def test_long_document_has_overlap_and_deterministic_ids() -> None:
     first = chunk_document_id(parent, 0, "제목\n\n본문", {"rating": 5})
     second = chunk_document_id(parent, 0, "제목\n\n본문", {"rating": 5})
     assert first == second
-    assert CHUNKING_VERSION == "rag-chunk-v2"
+    assert first == chunk_document_id(parent, 0, "제목\n\n본문", {"rating": 1})
+    assert CHUNKING_VERSION == "rag-chunk-v3"

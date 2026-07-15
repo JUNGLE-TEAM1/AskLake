@@ -14,7 +14,7 @@ from pathlib import Path
 from urllib.request import Request, urlopen
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from app.services.rag_evaluation import DEFAULT_QUALITY_THRESHOLDS, run_golden_set
+from app.services.rag_evaluation import DEFAULT_QUALITY_THRESHOLDS, enforce_baseline_gate, run_golden_set
 
 
 def main() -> int:
@@ -28,6 +28,8 @@ def main() -> int:
     parser.add_argument("--min-chunk-recall", type=float, default=DEFAULT_QUALITY_THRESHOLDS["chunkRecall"])
     parser.add_argument("--min-filter-precision", type=float, default=DEFAULT_QUALITY_THRESHOLDS["filterPrecision"])
     parser.add_argument("--max-duplicate-parent-rate", type=float, default=DEFAULT_QUALITY_THRESHOLDS["duplicateParentRate"])
+    parser.add_argument("--baseline", type=Path, help="Previously accepted report JSON; Recall@8 and MRR@8 may not drop more than 5 percent")
+    parser.add_argument("--max-relative-drop", type=float, default=0.05)
     args = parser.parse_args()
     payload = json.loads(args.fixture.read_text(encoding="utf-8"))
     cases = payload.get("cases") if isinstance(payload, dict) else payload
@@ -49,6 +51,12 @@ def main() -> int:
     except Exception as exc:
         print(json.dumps({"gate": {"passed": False, "error": str(exc)}}, ensure_ascii=False, indent=2))
         return 1
+    if args.baseline:
+        baseline_report = enforce_baseline_gate(report, json.loads(args.baseline.read_text(encoding="utf-8")), max_relative_drop=args.max_relative_drop)
+        report = baseline_report
+        if not report["baselineGate"]["passed"]:
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+            return 1
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0
 

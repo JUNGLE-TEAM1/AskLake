@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import Field
@@ -167,6 +168,7 @@ class RagProfileResponse(CamelModel):
     active_chunking_version: str | None = None
     last_error: str | None = None
     semantic_bindings: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
+    physical_column_mapping: dict[str, str] = Field(default_factory=dict)
     recommendations: list[RagColumnRecommendation] = Field(default_factory=list)
 
 
@@ -205,7 +207,10 @@ class RagDocumentPreview(CamelModel):
     content_hash: str
     embedding_text: str = ""
     chunking_strategy: str = "pending"
-    chunking_version: str = "rag-chunk-v2"
+    chunking_version: str = "rag-chunk-v3"
+    source_fields: list[dict[str, Any]] = Field(default_factory=list)
+    embedding_input_version: str = "title_body_fields_v2"
+    field_rendering_version: str = "field_blocks_v1"
 
 
 class RagDocumentPreviewResponse(CamelModel):
@@ -252,6 +257,10 @@ class RagJobResponse(CamelModel):
     parent_count: int = 0
     chunk_count: int = 0
     failed_count: int = 0
+    row_count: int = 0
+    failed_row_rate: float = 0.0
+    failed_row_rate_threshold: float = 0.05
+    failed_row_report: dict[str, Any] = Field(default_factory=dict)
     fallback_count: int = 0
     fallback_reasons: dict[str, int] = Field(default_factory=dict)
     stage: str = "queued"
@@ -264,3 +273,7 @@ class RagJobResponse(CamelModel):
     checkpoint_path: str | None = None
     error: str | None = None
     airflow_run_id: str | None = None
+    generation: int = 0
+    validation_status: str = "pending"
+    physical_column_mapping: dict[str, str] = Field(default_factory=dict)
+    validated_at: datetime | None = None

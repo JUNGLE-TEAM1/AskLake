@@ -36,6 +36,24 @@ def get_json(url: str) -> dict[str, Any]:
     return body
 
 
+def rag_physical_column(name: str) -> str:
+    value = "".join(char if char.isalnum() or char == "_" else "_" for char in str(name or "").strip().lower())
+    while "__" in value:
+        value = value.replace("__", "_")
+    return value.strip("_") or "column"
+
+
+def metadata_types(conf: dict[str, Any]) -> dict[str, str]:
+    schema = conf.get("schema") or []
+    by_name = {
+        str(item.get("name")): str(item.get("dataType") or item.get("data_type") or "string")
+        for item in schema
+        if isinstance(item, dict) and item.get("name")
+    }
+    mapping = conf.get("physicalColumnMapping") if isinstance(conf.get("physicalColumnMapping"), dict) else {}
+    return {str(mapping.get(str(name)) or rag_physical_column(name)): data_type for name in conf.get("metadataColumns") or [] if (data_type := by_name.get(str(name)))}
+
+
 def submit_parent_spark_job(conf: dict[str, Any]) -> dict[str, Any]:
     source_path = str(conf.get("sourcePath") or "").strip()
     if not source_path.startswith(("s3a://", "s3://", "file://", "iceberg:")):
@@ -52,6 +70,7 @@ def submit_parent_spark_job(conf: dict[str, Any]) -> dict[str, Any]:
         "sourceFingerprint": conf.get("sourceFingerprint"),
         "schema": conf.get("schema") or [],
         "roles": {"body": conf.get("bodyColumns") or [], "title": conf.get("titleColumns") or [], "metadata": conf.get("metadataColumns") or [], "identifier": conf.get("identifierColumns") or []},
+        "physicalColumnMapping": conf.get("physicalColumnMapping") or {},
         "policyFingerprint": conf.get("policyFingerprint"),
         "stagingBasePath": conf.get("stagingBasePath"),
         "icebergTarget": {"catalog": parts[0], "namespace": parts[1], "table": parts[2], "writeMode": "replace", "tableUri": f"iceberg://{parts[0]}/{parts[1]}/{parts[2]}"},
@@ -98,11 +117,11 @@ def submit_rag_spark_stage(conf: dict[str, Any], *, kind: str) -> dict[str, Any]
     callback_url = f"{(os.environ.get('ASKLAKE_EXECUTION_API_BASE_URL') or os.environ.get('AIRFLOW_INTERNAL_BASE_URL') or '').rstrip('/')}/api/internal/airflow/rag-jobs/{conf['jobId']}/result"
     callback_token = os.environ.get("ASKLAKE_EXECUTION_API_TOKEN") or os.environ.get("AIRFLOW_INTERNAL_TOKEN") or ""
     common = {
-        "datasetId": conf["datasetId"], "jobId": conf["jobId"], "datasetName": conf.get("datasetName") or conf["datasetId"],
+        "datasetId": conf["datasetId"], "jobId": conf["jobId"], "datasetName": conf.get("datasetName") or conf["datasetId"], "physicalColumnMapping": conf.get("physicalColumnMapping") or {},
         "parentTable": conf.get("parentTable"), "chunkTable": conf.get("chunkTable"), "targetIndex": conf.get("preparedIndex") or conf.get("targetIndex"),
         "chunkerUrl": os.environ.get("RAG_WORKER_BASE_URL", "http://embedding-worker:8090"), "chunkerToken": os.environ.get("RAG_WORKER_TOKEN", ""),
         "workerUrl": os.environ.get("RAG_WORKER_BASE_URL", "http://embedding-worker:8090"), "workerToken": os.environ.get("RAG_WORKER_TOKEN", ""), "embeddingModel": conf.get("embeddingModel") or os.environ.get("RAG_EMBEDDING_MODEL", "text-embedding-3-small"), "embeddingDimensions": conf.get("embeddingDimensions"),
-        "chunkTargetTokens": conf.get("chunkTargetTokens", 800), "chunkOverlapTokens": conf.get("chunkOverlapTokens", 400), "chunkMaxTokens": conf.get("chunkMaxTokens", 1200), "callbackUrl": callback_url, "callbackToken": callback_token,
+        "chunkTargetTokens": conf.get("chunkTargetTokens", 800), "chunkOverlapTokens": conf.get("chunkOverlapTokens", 400), "chunkMaxTokens": conf.get("chunkMaxTokens", 1200), "failedRowRateThreshold": conf.get("failedRowRateThreshold", 0.05), "metadataTypes": metadata_types(conf), "parentSchemaVersion": conf.get("parentSchemaVersion", "rag-parent-v3"), "embeddingInputVersion": conf.get("embeddingInputVersion", "title_body_fields_v2"), "chunkingVersion": conf.get("chunkingVersion", "rag-chunk-v3"), "fieldRenderingVersion": conf.get("fieldRenderingVersion", "field_blocks_v1"), "callbackUrl": callback_url, "callbackToken": callback_token,
     }
     script = "/opt/asklake/scripts/rag_chunk_staging.py" if kind == "chunk" else "/opt/asklake/scripts/rag_index_dispatch.py"
     env_key = "ASKLAKE_RAG_CHUNK_MANIFEST_JSON" if kind == "chunk" else "ASKLAKE_RAG_INDEX_MANIFEST_JSON"

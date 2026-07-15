@@ -16,8 +16,9 @@ from typing import Any, Iterable, Sequence
 
 
 CHUNKING_STRATEGY = "semantic_embedding_llm"
-CHUNKING_VERSION = "rag-chunk-v2"
-EMBEDDING_INPUT_VERSION = "title_body_v1"
+CHUNKING_VERSION = "rag-chunk-v3"
+EMBEDDING_INPUT_VERSION = "title_body_fields_v2"
+FIELD_RENDERING_VERSION = "field_blocks_v1"
 DEFAULT_TARGET_TOKENS = 800
 DEFAULT_OVERLAP_TOKENS = 400
 DEFAULT_MAX_TOKENS = 1_200
@@ -119,6 +120,59 @@ def build_embedding_text(title: str | None, body: str) -> str:
     return title_value or body_value
 
 
+def render_field_section(blocks: Sequence[dict[str, Any]], section: str) -> tuple[str, list[dict[str, Any]]]:
+    """Render ordered logical field blocks with deterministic source offsets."""
+
+    section_name = str(section).upper()
+    output = [f"[{section_name}]\n"]
+    enriched: list[dict[str, Any]] = []
+    cursor = len(output[0])
+    emitted = 0
+    for block in blocks:
+        logical = str(block.get("logicalField") or block.get("logical_field") or "").strip()
+        value = str(block.get("text") or "").strip()
+        if not logical or not value:
+            continue
+        if emitted:
+            output.append("\n\n")
+            cursor += 2
+        prefix = f"{logical}: "
+        block_start = cursor
+        output.append(prefix)
+        cursor += len(prefix)
+        value_start = cursor
+        output.append(value)
+        cursor += len(value)
+        enriched.append({**block, "start": block_start, "end": cursor, "valueStart": value_start, "valueEnd": cursor})
+        emitted += 1
+    if not enriched:
+        return "", []
+    output.append(f"\n[/{section_name}]")
+    return "".join(output), enriched
+
+
+def render_field_section_range(blocks: Sequence[dict[str, Any]], section: str, start: int, end: int) -> tuple[str, list[dict[str, Any]]]:
+    """Render only the field fragments covered by a canonical body range.
+
+    Labels are repeated for every chunk, including when one field spans several
+    chunks.  Offsets remain offsets in the complete canonical section.
+    """
+
+    fragments: list[dict[str, Any]] = []
+    for block in blocks:
+        value_start = int(block.get("valueStart", block.get("start", 0)))
+        value_end = int(block.get("valueEnd", block.get("end", 0)))
+        overlap_start = max(start, value_start)
+        overlap_end = min(end, value_end)
+        if overlap_start >= overlap_end:
+            continue
+        text = str(block.get("text") or "")
+        local_start = max(0, overlap_start - value_start)
+        local_end = min(len(text), overlap_end - value_start)
+        fragments.append({**block, "text": text[local_start:local_end], "fragmentStart": overlap_start, "fragmentEnd": overlap_end})
+    return render_field_section(fragments, section)
+
+
 def split_sentences(text: str) -> list[Sentence]:
     normalized = (text or "").strip()
     if not normalized:
@@ -193,8 +247,10 @@ def build_embedding_boundary_candidates(
     segments: list[ChunkSegment] = []
     start = 0
     while start < len(sentences):
+        candidates: list[int] = []
         if totals[-1] - totals[start] <= max_tokens:
             end = len(sentences)
+            candidates = [end]
         else:
             lower = min(totals[-1], totals[start] + max(1, target_tokens - overlap_tokens // 2))
             upper = min(totals[-1], totals[start] + max_tokens)
@@ -203,9 +259,9 @@ def build_embedding_boundary_candidates(
                 candidates = [index for index in range(start + 1, len(sentences) + 1) if totals[index] <= upper]
             if not candidates:
                 candidates = [min(start + 1, len(sentences))]
-            end = max(candidates, key=lambda index: (scores.get(index, 0.0), -abs(totals[index] - target_tokens)))
+            end = max(candidates, key=lambda index: (scores.get(index, 0.0), -abs((totals[index] - totals[start]) - target_tokens)))
         boundary_score = scores.get(end)
-        nearby = sorted((value for index, value in scores.items() if start < index < len(sentences)), reverse=True)
+        nearby = sorted((scores.get(index, 0.0) for index in candidates), reverse=True)
         ambiguous = bool(vectors) and len(nearby) > 1 and nearby[0] - nearby[1] < ambiguity_margin
         segments.append(ChunkSegment(start, end, totals[end] - totals[start], sentences[start].start, sentences[end - 1].end, boundary_score, ambiguous))
         if end >= len(sentences):
@@ -221,7 +277,9 @@ def parent_document_id(dataset_id: str, source_row_id: str, normalized_row: dict
 
 
 def chunk_document_id(parent_id: str, chunk_index: int, embedding_text: str, metadata: dict[str, Any]) -> str:
-    content_hash = hashlib.sha256(compact_json({"embeddingText": embedding_text, "metadata": metadata, "version": CHUNKING_VERSION}).encode("utf-8")).hexdigest()
+    # Child identity is derived from the final embedding input only. Metadata
+    # is a filter/display concern and must not change the chunk identity.
+    content_hash = hashlib.sha256(embedding_text.encode("utf-8")).hexdigest()
     return hashlib.sha256(f"{parent_id}:{chunk_index}:{content_hash}".encode("utf-8")).hexdigest()[:32]
 
 

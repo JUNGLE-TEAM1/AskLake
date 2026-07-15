@@ -28,6 +28,7 @@ export type SemanticMetric = {
   expression: string;
   datasetId?: string | null;
   sourceColumns: string[];
+  sourceFields?: Array<{ logicalField?: string; physicalField?: string; role?: string }>;
   format?: string | null;
 };
 
@@ -78,6 +79,8 @@ export type RagProfile = {
   datasetId: string;
   reviewState: string;
   indexStatus: string;
+  buildStatus?: string;
+  servingStatus?: string;
   embeddingStatus: string;
   schema: SemanticSchemaColumn[];
   schemaFingerprint?: string | null;
@@ -94,6 +97,7 @@ export type RagProfile = {
   activeEmbeddingModel?: string | null;
   activeEmbeddingDimensions?: number | null;
   activeChunkingVersion?: string | null;
+  physicalColumnMapping?: Record<string, string>;
   semanticBindings: Record<string, Array<Record<string, unknown>>>;
   recommendations: RagRecommendation[];
 };
@@ -120,6 +124,8 @@ export type RagDocument = {
   embeddingText?: string;
   chunkingStrategy?: string;
   chunkingVersion?: string;
+  embeddingInputVersion?: string;
+  fieldRenderingVersion?: string;
 };
 
 export type RagPreview = {

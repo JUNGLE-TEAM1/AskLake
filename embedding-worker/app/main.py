@@ -8,11 +8,14 @@ from pydantic import BaseModel, Field, model_validator
 
 from .worker import EmbeddingWorker
 from .chunker import chunk_parent_document
+from .rag_core import CHUNKING_VERSION
+from .idempotency import IdempotencyStore
 
 app = FastAPI(title="AskLake Embedding Worker")
 
 
 class IndexBatchRequest(BaseModel):
+    idempotency_key: str | None = Field(default=None, min_length=8, max_length=512)
     dataset_id: str = Field(min_length=1, max_length=255)
     dataset_name: str = Field(min_length=1, max_length=255)
     rows: list[dict[str, Any]] | None = Field(default=None, max_length=1000)
@@ -24,6 +27,7 @@ class IndexBatchRequest(BaseModel):
     target_index: str = Field(min_length=1, max_length=255)
     embedding_model: str | None = Field(default=None, min_length=1, max_length=255)
     embedding_dimensions: int | None = Field(default=None, ge=1, le=16_384)
+    metadata_types: dict[str, str] = Field(default_factory=dict)
     source_manifest: dict[str, Any] | None = None
     chunks: list[dict[str, Any]] | None = Field(default=None, max_length=5_000)
 
@@ -37,6 +41,7 @@ class IndexBatchRequest(BaseModel):
 
 
 class ChunkBatchRequest(BaseModel):
+    idempotency_key: str | None = Field(default=None, min_length=8, max_length=512)
     parents: list[dict[str, Any]] = Field(min_length=1, max_length=64)
     target_tokens: int = Field(default=800, ge=100, le=2_000)
     overlap_tokens: int = Field(default=400, ge=0, le=1_000)
@@ -48,7 +53,7 @@ class ChunkBatchRequest(BaseModel):
 def worker_from_env() -> EmbeddingWorker:
     username = os.environ.get("OPENSEARCH_USERNAME")
     password = os.environ.get("OPENSEARCH_PASSWORD", "")
-    return EmbeddingWorker(gateway_url=os.environ.get("AI_GATEWAY_BASE_URL", "http://ai-gateway:8080"), gateway_token=os.environ.get("AI_GATEWAY_SERVICE_TOKEN", ""), opensearch_url=os.environ.get("OPENSEARCH_BASE_URL", "http://opensearch:9200"), opensearch_auth=(username, password) if username else None, embedding_model=os.environ.get("RAG_EMBEDDING_MODEL", "text-embedding-3-small"), verify_tls=os.environ.get("OPENSEARCH_VERIFY_TLS", "true").casefold() in {"1", "true", "yes"})
+    return EmbeddingWorker(gateway_url=os.environ.get("AI_GATEWAY_BASE_URL", "http://ai-gateway:8080"), gateway_token=os.environ.get("AI_GATEWAY_SERVICE_TOKEN", ""), opensearch_url=os.environ.get("OPENSEARCH_BASE_URL", "http://opensearch:9200"), opensearch_auth=(username, password) if username else None, embedding_model=os.environ.get("RAG_EMBEDDING_MODEL", "text-embedding-3-small"), verify_tls=os.environ.get("OPENSEARCH_CA_CERT") or os.environ.get("OPENSEARCH_VERIFY_TLS", "true").casefold() in {"1", "true", "yes"})
 
 
 def gateway_headers() -> dict[str, str]:
@@ -75,7 +80,8 @@ def chunk_with_gateway(request: ChunkBatchRequest) -> list[dict[str, Any]]:
         if len(json.dumps({"sentences": sentences, "candidateBoundaries": boundaries}, ensure_ascii=False, separators=(",", ":"))) > 24_000:
             raise ValueError("Document segmentation context exceeds the bounded AI Gateway refinement budget")
         with httpx.Client(timeout=timeout) as client:
-            response = client.post(f"{gateway_url}/v1/generate", headers=gateway_headers(), json={"mode": "segment_document", "request_id": f"chunk-{os.urandom(8).hex()}", "prompt": "Refine only the proposed sentence boundaries.", "context": {"parentDocumentId": parent.get("parent_document_id"), "title": parent.get("title"), "targetTokens": request.target_tokens, "overlapTokens": request.overlap_tokens, "maxTokens": request.max_tokens, "sentences": sentences, "candidateBoundaries": boundaries}, "selected_dataset_ids": []})
+            parent_key = str(parent.get("parent_document_id") or "")
+            response = client.post(f"{gateway_url}/v1/generate", headers=gateway_headers(), json={"mode": "segment_document", "request_id": f"chunk-boundary:{parent_key}:{request.target_tokens}:{request.overlap_tokens}:{request.max_tokens}", "prompt": "Refine only the proposed sentence boundaries.", "context": {"parentDocumentId": parent.get("parent_document_id"), "title": parent.get("title"), "targetTokens": request.target_tokens, "overlapTokens": request.overlap_tokens, "maxTokens": request.max_tokens, "sentences": sentences, "candidateBoundaries": boundaries}, "selected_dataset_ids": []})
             response.raise_for_status()
             output = response.json().get("output") or {}
             return list(output.get("segments") or [])
@@ -92,6 +98,20 @@ def health() -> dict[str, str]:
     return {"status": "ok", "service": "embedding-worker"}
 
 
+@app.get("/ready")
+def ready() -> dict[str, str]:
+    """Readiness probe that verifies both downstream services are reachable."""
+
+    worker = worker_from_env()
+    auth = worker.opensearch_auth
+    with httpx.Client(timeout=5, verify=worker.verify_tls) as client:
+        opensearch = client.get(f"{worker.opensearch_url}/_cluster/health", auth=auth)
+        opensearch.raise_for_status()
+        gateway = client.get(f"{worker.gateway_url}/health", headers=gateway_headers())
+        gateway.raise_for_status()
+    return {"status": "ready", "service": "embedding-worker"}
+
+
 @app.post("/v1/index")
 def index_batch(request: IndexBatchRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
     expected = os.environ.get("WORKER_INTERNAL_TOKEN")
@@ -100,7 +120,18 @@ def index_batch(request: IndexBatchRequest, authorization: str | None = Header(d
     if authorization != f"Bearer {expected}":
         raise HTTPException(status_code=401, detail="Invalid worker token")
     try:
-        return worker_from_env().process(dataset_id=request.dataset_id, dataset_name=request.dataset_name, rows=request.rows, body_columns=request.body_columns, title_columns=request.title_columns, metadata_columns=request.metadata_columns, identifier_columns=request.identifier_columns, semantic_bindings=request.semantic_bindings, target_index=request.target_index, source_manifest=request.source_manifest, chunks=request.chunks, embedding_model=request.embedding_model, embedding_dimensions=request.embedding_dimensions)
+        store = IdempotencyStore()
+        payload = request.model_dump(mode="json")
+        key = request.idempotency_key or store.input_hash(payload)
+        request_hash = store.input_hash(payload)
+        cached = store.get(key, request_hash)
+        if cached is not None:
+            return {**cached, "idempotentReplay": True}
+        result = worker_from_env().process(dataset_id=request.dataset_id, dataset_name=request.dataset_name, rows=request.rows, body_columns=request.body_columns, title_columns=request.title_columns, metadata_columns=request.metadata_columns, identifier_columns=request.identifier_columns, semantic_bindings=request.semantic_bindings, target_index=request.target_index, source_manifest=request.source_manifest, chunks=request.chunks, embedding_model=request.embedding_model, embedding_dimensions=request.embedding_dimensions, metadata_types=request.metadata_types)
+        store.put(key, request_hash, result)
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail="RAG indexing failed") from exc
 
@@ -113,7 +144,18 @@ def chunk_batch(request: ChunkBatchRequest, authorization: str | None = Header(d
     if authorization != f"Bearer {expected}":
         raise HTTPException(status_code=401, detail="Invalid worker token")
     try:
+        store = IdempotencyStore()
+        payload = request.model_dump(mode="json")
+        key = request.idempotency_key or store.input_hash(payload)
+        request_hash = store.input_hash(payload)
+        cached = store.get(key, request_hash)
+        if cached is not None:
+            return {**cached, "idempotentReplay": True}
         chunks = chunk_with_gateway(request)
-        return {"schemaVersion": "rag-chunk-v2", "chunkCount": len(chunks), "chunks": chunks}
+        result = {"schemaVersion": CHUNKING_VERSION, "chunkCount": len(chunks), "chunks": chunks}
+        store.put(key, request_hash, result)
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail="RAG chunking failed") from exc

@@ -16,12 +16,17 @@ from .rag_core import (
     DEFAULT_MAX_TOKENS,
     DEFAULT_OVERLAP_TOKENS,
     DEFAULT_TARGET_TOKENS,
+    EMBEDDING_INPUT_VERSION,
+    FIELD_RENDERING_VERSION,
     ChunkSegment,
     build_embedding_boundary_candidates,
     build_embedding_text,
     chunk_document_id,
     estimate_tokens,
+    render_field_section,
+    render_field_section_range,
     _overlap_start,
+    _WORD_OR_CJK,
     split_sentences,
 )
 
@@ -72,6 +77,34 @@ def _apply_overlap(segments: Sequence[ChunkSegment], sentences: Sequence[Any], o
     return _with_offsets(result, sentences)
 
 
+def _split_long_sentence(sentence: Any, *, max_tokens: int, overlap_tokens: int) -> list[Any]:
+    """Split log/OCR/code-like sentences that have no punctuation boundary."""
+    if sentence.token_count <= max_tokens:
+        return [sentence]
+    matches = list(_WORD_OR_CJK.finditer(sentence.text))
+    if not matches:
+        return [sentence]
+    result = []
+    start_token = 0
+    while start_token < len(matches):
+        end_token = min(len(matches), start_token + max_tokens)
+        local_start = matches[start_token].start()
+        local_end = matches[end_token - 1].end()
+        text = sentence.text[local_start:local_end].strip()
+        result.append(type(sentence)(len(result), text, sentence.start + local_start, sentence.start + local_end, estimate_tokens(text)))
+        if end_token >= len(matches):
+            break
+        start_token = max(start_token + 1, end_token - overlap_tokens)
+    return result
+
+
+def _field_section_overhead(blocks: Sequence[dict[str, Any]], section: str) -> int:
+    labels = [f"{str(block.get('logicalField') or '').strip()}: " for block in blocks if str(block.get('logicalField') or '').strip()]
+    if not labels:
+        return 0
+    return estimate_tokens(f"[{section}]\n" + "\n\n".join(labels) + f"\n[/{section}]")
+
+
 def chunk_parent_document(
     parent: dict[str, Any],
     *,
@@ -81,12 +114,37 @@ def chunk_parent_document(
     overlap_tokens: int = DEFAULT_OVERLAP_TOKENS,
     max_tokens: int = DEFAULT_MAX_TOKENS,
 ) -> list[dict[str, Any]]:
-    body = str(parent.get("body") or "").strip()
+    raw_body_blocks = parent.get("body_blocks")
+    if not isinstance(raw_body_blocks, list):
+        raw_body_blocks = []
+    body_blocks = [block for block in raw_body_blocks if isinstance(block, dict)]
+    if not body_blocks:
+        legacy_body = str(parent.get("body") or "").strip()
+        if legacy_body:
+            body_blocks = [{"logicalField": "body", "physicalField": "body", "text": legacy_body}]
+    body, canonical_body_blocks = render_field_section(body_blocks, "BODY")
+    raw_title_blocks = parent.get("title_blocks")
+    title_blocks = [block for block in raw_title_blocks if isinstance(block, dict)] if isinstance(raw_title_blocks, list) else []
+    if not title_blocks:
+        legacy_title = str(parent.get("title") or "").strip()
+        if legacy_title:
+            title_blocks = [{"logicalField": "title", "physicalField": "title", "text": legacy_title}]
+    title, canonical_title_blocks = render_field_section(title_blocks, "TITLE")
+    body = body.strip()
+    title = title.strip() or None
     if not body:
         return []
-    title = str(parent.get("title") or "").strip() or None
     full_text = build_embedding_text(title, body)
     sentences = split_sentences(body)
+    title_tokens = estimate_tokens(title or "")
+    if title_tokens >= max_tokens:
+        raise ValueError("RAG_TITLE_EXCEEDS_CHUNK_MAX_TOKENS")
+    body_render_overhead = _field_section_overhead(body_blocks, "BODY")
+    body_max_tokens = max(1, max_tokens - title_tokens - body_render_overhead)
+    body_target_tokens = max(1, target_tokens - title_tokens - body_render_overhead)
+    effective_overlap = min(overlap_tokens, max(0, body_max_tokens - 1))
+    sentences = [expanded for sentence in sentences for expanded in _split_long_sentence(sentence, max_tokens=body_max_tokens, overlap_tokens=effective_overlap)]
+    sentences = [type(sentence)(index, sentence.text, sentence.start, sentence.end, sentence.token_count) for index, sentence in enumerate(sentences)]
     total_tokens = estimate_tokens(full_text)
     strategy = "semantic_embedding"
     fallback_reason: str | None = None
@@ -97,11 +155,11 @@ def chunk_parent_document(
         candidates = build_embedding_boundary_candidates(
             sentences,
             vectors,
-            target_tokens=target_tokens,
-            overlap_tokens=overlap_tokens,
-            max_tokens=max_tokens,
+            target_tokens=body_target_tokens,
+            overlap_tokens=effective_overlap,
+            max_tokens=body_max_tokens,
         )
-        needs_llm = total_tokens > max_tokens or any(segment.ambiguous for segment in candidates)
+        needs_llm = total_tokens >= max_tokens or any(segment.ambiguous for segment in candidates)
         segments = candidates
         if needs_llm:
             candidate_boundaries = [segment.end_sentence - 1 for segment in candidates[:-1]]
@@ -121,8 +179,8 @@ def chunk_parent_document(
                 refined = None
                 fallback_reason = f"gateway_{exc.__class__.__name__.casefold()}"
             if refined:
-                refined_with_overlap = _apply_overlap(refined, sentences, overlap_tokens)
-                if all(segment.token_count <= max_tokens or segment.end_sentence - segment.start_sentence == 1 for segment in refined_with_overlap):
+                refined_with_overlap = _apply_overlap(refined, sentences, effective_overlap)
+                if all(segment.token_count + title_tokens <= max_tokens for segment in refined_with_overlap):
                     segments = refined_with_overlap
                     strategy = "semantic_embedding_llm"
                 else:
@@ -136,15 +194,27 @@ def chunk_parent_document(
 
     result: list[dict[str, Any]] = []
     metadata = parent.get("metadata") if isinstance(parent.get("metadata"), dict) else {}
+    metadata_display = parent.get("metadata_display") if isinstance(parent.get("metadata_display"), dict) else {}
+    source_fields = parent.get("source_fields") if isinstance(parent.get("source_fields"), list) else []
     for index, segment in enumerate(segments):
-        text = body[segment.char_start:segment.char_end].strip() if segment.char_end else " ".join(sentence.text for sentence in sentences[segment.start_sentence:segment.end_sentence])
+        text, chunk_body_blocks = render_field_section_range(
+            canonical_body_blocks,
+            "BODY",
+            segment.char_start,
+            segment.char_end,
+        )
+        if not text.strip() or text.strip() == "[BODY]\n[/BODY]":
+            text = body[segment.char_start:segment.char_end].strip() if segment.char_end else " ".join(sentence.text for sentence in sentences[segment.start_sentence:segment.end_sentence])
+            chunk_body_blocks = []
         if not text:
             continue
         effective_embedding_text = build_embedding_text(title, text)
+        if estimate_tokens(effective_embedding_text) > max_tokens:
+            raise ValueError("RAG_CHUNK_EXCEEDS_MAX_TOKENS")
         chunk_id = chunk_document_id(str(parent["parent_document_id"]), index, effective_embedding_text, metadata)
         chunk_content_hash = hashlib.sha256(effective_embedding_text.encode("utf-8")).hexdigest()
         result.append({
-            "schema_version": "rag-chunk-v2",
+            "schema_version": CHUNKING_VERSION,
             "job_id": parent.get("job_id"),
             "chunk_document_id": chunk_id,
             "parent_document_id": str(parent["parent_document_id"]),
@@ -158,14 +228,21 @@ def chunk_parent_document(
             "char_start": segment.char_start,
             "char_end": segment.char_end,
             "text": text,
+            "body": text,
             "embedding_text": effective_embedding_text,
             "title": title,
+            "title_blocks": canonical_title_blocks,
+            "body_blocks": chunk_body_blocks,
             "metadata": metadata,
+            "metadata_display": metadata_display,
             "semantic_bindings": parent.get("semantic_bindings") or {},
-            "source_columns": list(parent.get("source_columns") or []),
+            "source_columns": list(parent.get("source_columns") or [field.get("logicalField") for field in source_fields if isinstance(field, dict)]),
+            "source_fields": source_fields,
             "content_hash": chunk_content_hash,
             "chunking_strategy": strategy,
             "chunking_version": CHUNKING_VERSION,
+            "embedding_input_version": EMBEDDING_INPUT_VERSION,
+            "field_rendering_version": FIELD_RENDERING_VERSION,
             "token_count": estimate_tokens(effective_embedding_text),
             "embedding_status": "pending",
             "embedding_model": parent.get("embedding_model"),

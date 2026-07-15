@@ -882,13 +882,15 @@ def read_source(
     base_reader = spark.read if exact_paths is not None else apply_source_collection(spark.read, source_collection)
     if source_format == "csv":
         infer_schema = "false" if schema_columns else "true"
-        return (
+        reader = (
             base_reader.option("header", "true")
             .option("inferSchema", infer_schema)
             .option("quote", '"')
             .option("escape", '"')
-            .csv(read_path)
         )
+        if schema_columns:
+            reader = reader.schema(catalog_struct_type(schema_columns))
+        return reader.csv(read_path)
     if source_format == "jsonl":
         reader = base_reader.option("multiLine", "false")
         source_schema = json_source_schema(schema_columns, transform_steps)
@@ -913,19 +915,25 @@ def json_source_schema(schema_columns, transform_steps=None):
     if not paths:
         return None
 
+    type_by_path = {
+        str(column.get("sourceName") or column.get("targetName") or "").strip(): str(column.get("dataType") or column.get("data_type") or "string")
+        for column in schema_columns or []
+        if isinstance(column, dict)
+    }
     tree = {}
     for path in paths:
         parts = [part for part in str(path).split(".") if part]
         if not parts:
             continue
         current = tree
+        data_type = type_by_path.get(str(path), "string")
         for index, part in enumerate(parts):
             is_leaf = index == len(parts) - 1
             existing = current.get(part)
             if is_leaf:
                 if isinstance(existing, dict):
                     return None
-                current[part] = None
+                current[part] = data_type
                 continue
             if existing is None and part in current:
                 return None
@@ -940,11 +948,47 @@ def json_struct_type(tree):
     return T.StructType([
         T.StructField(
             name,
-            json_struct_type(value) if isinstance(value, dict) else T.StringType(),
+            json_struct_type(value) if isinstance(value, dict) else catalog_spark_type(value),
             True,
         )
         for name, value in tree.items()
     ])
+
+
+def catalog_spark_type(data_type):
+    text = str(data_type or "string").casefold()
+    if any(token in text for token in ("boolean", "bool")):
+        return T.BooleanType()
+    if any(token in text for token in ("bigint", "long", "int64")):
+        return T.LongType()
+    if any(token in text for token in ("smallint", "integer", "int32", "int")):
+        return T.IntegerType()
+    if any(token in text for token in ("double", "float64", "float")):
+        return T.DoubleType()
+    if any(token in text for token in ("decimal", "numeric")):
+        return T.DecimalType(38, 10)
+    if "timestamp" in text or "datetime" in text:
+        return T.TimestampType()
+    if text == "date" or text.endswith(" date"):
+        return T.DateType()
+    return T.StringType()
+
+
+def catalog_struct_type(schema_columns):
+    fields = []
+    seen = set()
+    for column in schema_columns or []:
+        if not isinstance(column, dict):
+            continue
+        name = str(column.get("sourceName") or column.get("targetName") or "").strip()
+        # CSV columns are flat even when a Catalog name contains a dot.  The
+        # backtick quoting in normalize_columns preserves that literal name;
+        # dotted JSON paths are handled separately by json_source_schema().
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        fields.append(T.StructField(name, catalog_spark_type(column.get("dataType") or column.get("data_type")), True))
+    return T.StructType(fields)
 
 
 def source_contract_paths(schema_columns, transform_steps=None):

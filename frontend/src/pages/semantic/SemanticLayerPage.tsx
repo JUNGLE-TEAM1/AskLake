@@ -28,6 +28,7 @@ import {
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Card } from "../../components/ui/card";
+import { RagServingStatus } from "../../components/semantic/RagServingStatus";
 import { Input } from "../../components/ui/input";
 import { Textarea } from "../../components/ui/textarea";
 import "../../styles/semantic-layer-real.css";
@@ -147,6 +148,10 @@ export function SemanticLayerPage({ onAction }: SemanticPageProps) {
   const refreshProfile = async (datasetId: string) => {
     const profile = await getRagProfile(datasetId);
     setProfiles((current) => ({ ...current, [datasetId]: profile }));
+    if (profile.reviewState === "approved") {
+      const preview = await previewRagDocuments(datasetId);
+      setPreviews((current) => ({ ...current, [datasetId]: preview.documents }));
+    }
   };
 
   useEffect(() => {
@@ -244,7 +249,7 @@ export function SemanticLayerPage({ onAction }: SemanticPageProps) {
             {activeTab === "datasets" && <DatasetsTab model={selected} catalogDatasets={catalogDatasets} onSave={saveDatasets} />}
             {activeTab === "metrics" && <MetricsTab model={selected} catalogDatasets={catalogDatasets} onSave={saveMetrics} />}
             {activeTab === "dimensions" && <DimensionsTab model={selected} catalogDatasets={catalogDatasets} onSave={saveDimensions} />}
-            {activeTab === "rag" && <RagTab model={selected} selectedDatasetId={ragDatasetId} profile={ragProfile} previewDocuments={previews[ragDatasetId] ?? []} onDatasetChange={setSelectedRagDatasetId} onRefresh={() => void run("profile", async () => refreshProfile(ragDatasetId))} onClassify={classify} onApprove={approve} onIndex={index} busy={busy} />}
+            {activeTab === "rag" && <><RagServingStatus profile={ragProfile} /><RagTab model={selected} selectedDatasetId={ragDatasetId} profile={ragProfile} previewDocuments={previews[ragDatasetId] ?? []} onDatasetChange={setSelectedRagDatasetId} onRefresh={() => void run("profile", async () => refreshProfile(ragDatasetId))} onClassify={classify} onApprove={approve} onIndex={index} busy={busy} /></>}
             {activeTab === "access" && <AccessTab model={selected} />}
           </main>
         </div>

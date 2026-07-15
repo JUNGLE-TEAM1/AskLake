@@ -7,7 +7,7 @@ from app.models.identity import PermissionGrantModel
 from app.models.semantic_rag import RagClassificationRunModel, RagColumnRecommendationModel, RagDatasetProfileModel, RagIndexJobModel
 from app.schemas.semantic import SemanticModelCreate
 from app.services.rag_document_service import build_documents
-from app.services.rag_search_service import build_metadata_filter_clauses, hybrid_rrf
+from app.services.rag_search_service import RagSearchService, build_metadata_filter_clauses, hybrid_rrf
 from app.services.rag_service import RAG_TABLES, RagService
 from app.services.semantic_model_service import SEMANTIC_TABLES, SemanticModelService
 
@@ -17,7 +17,7 @@ def test_document_preview_contains_vector_db_payload_and_is_deterministic() -> N
     first = build_documents(dataset_id="reviews", dataset_name="customer_review_gold", rows=rows, columns=[], body_columns=["review_text"], metadata_columns=["rating", "sentiment"], target_index="asklake-rag-ds-reviews")
     second = build_documents(dataset_id="reviews", dataset_name="customer_review_gold", rows=rows, columns=[], body_columns=["review_text"], metadata_columns=["rating", "sentiment"], target_index="asklake-rag-ds-reviews")
     assert first == second
-    assert first[0]["body"] == "Fast delivery"
+    assert first[0]["body"] == "[BODY]\nreview_text: Fast delivery\n[/BODY]"
     assert first[0]["filterTerms"] == {"rating": "5", "sentiment": "positive"}
     assert first[0]["targetIndex"] == "asklake-rag-ds-reviews"
     assert first[0]["embeddingStatus"] == "pending"
@@ -35,6 +35,15 @@ def test_hybrid_rrf_merges_vector_and_bm25_results() -> None:
     assert result[0]["retrieval"]["lexicalRank"] == 2
 
 
+def test_structured_chunk_merge_removes_field_overlap_and_keeps_labels() -> None:
+    merged = RagSearchService._merge_chunk_bodies([
+        {"_source": {"body_blocks": [{"logicalField": "review_text", "physicalField": "review_text", "fragmentStart": 10, "fragmentEnd": 20, "text": "abcdefghij"}]}},
+        {"_source": {"body_blocks": [{"logicalField": "review_text", "physicalField": "review_text", "fragmentStart": 15, "fragmentEnd": 28, "text": "fghijklmnopqr"}]}},
+        {"_source": {"body_blocks": [{"logicalField": "seller_response", "physicalField": "seller_response", "fragmentStart": 40, "fragmentEnd": 49, "text": "follow-up"}]}},
+    ], max_chars=10_000)
+    assert merged == "[BODY]\nreview_text: abcdefghijklmnopqr\n\nseller_response: follow-up\n[/BODY]"
+
+
 def test_rag_metadata_filters_are_exact_or_range_and_reject_query_syntax() -> None:
     clauses = build_metadata_filter_clauses({"rating": {"operator": "gte", "value": 4}, "sentiment": {"operator": "eq", "value": "positive"}})
     assert {"range": {"metadata_filter.rating.number": {"gte": 4}}} in clauses
@@ -50,6 +59,59 @@ def test_rag_metadata_filters_are_exact_or_range_and_reject_query_syntax() -> No
 def test_rag_metadata_filters_support_iso_date_ranges() -> None:
     clauses = build_metadata_filter_clauses({"created_at": {"operator": "gte", "value": "2026-01-01"}})
     assert clauses == [{"range": {"metadata_filter.created_at.date": {"gte": "2026-01-01"}}}]
+
+
+def test_service_filter_validation_maps_logical_catalog_names_to_physical_fields(monkeypatch) -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine, tables=RAG_TABLES)
+    dataset = {
+        "id": "reviews",
+        "name": "Reviews",
+        "schema": [
+            {"name": "Review.Rating", "dataType": "integer"},
+            {"name": "Is Active", "dataType": "boolean"},
+        ],
+        "owner": "admin",
+    }
+    with Session(engine) as db:
+        service = RagService(db)
+        profile = RagDatasetProfileModel(dataset_id="reviews", review_state="approved", metadata_columns=["Review.Rating", "Is Active"])
+        db.add(profile)
+        db.commit()
+        monkeypatch.setattr(service, "_dataset", lambda *args, **kwargs: dataset)
+        result = service.validate_search_filters("reviews", ActorContext(name="admin", role="admin"), {
+            "Review.Rating": {"operator": "gte", "value": 3},
+            "Is Active": {"operator": "eq", "value": True},
+        })
+        assert result["Review.Rating"]["physicalField"] == "review_rating"
+        assert result["Review.Rating"]["storageType"] == "number"
+        assert result["Is Active"]["physicalField"] == "is_active"
+        assert result["Is Active"]["storageType"] == "boolean"
+
+
+def test_vector_document_preview_uses_persisted_index_shape() -> None:
+    document = RagService._preview_document_from_index_hit({
+        "_id": "chunk-1",
+        "_source": {
+            "document_id": "chunk-1",
+            "parent_document_id": "parent-1",
+            "chunk_index": 2,
+            "dataset_id": "reviews",
+            "source_row_id": "review-1",
+            "body": "배송이 늦었습니다.",
+            "title": "무선 이어폰",
+            "metadata_filter": {"rating": {"type": "number", "number": 3}},
+            "metadata_display": {"rating": 3},
+            "body_vector": [0.1, 0.2],
+            "embedding_text": "무선 이어폰\n\n배송이 늦었습니다.",
+            "chunking_strategy": "semantic_embedding",
+            "chunking_version": "rag-chunk-v3",
+        },
+    }, dataset_name="Reviews", target_index="rag-reviews-v2")
+    assert document["document_id"] == "chunk-1"
+    assert document["chunk_index"] == 2
+    assert document["embedding_status"] == "ready"
+    assert document["embedding_text"].startswith("무선 이어폰")
 
 
 def test_rag_search_contract_exposes_query_and_filters() -> None:
@@ -132,3 +194,82 @@ def test_successful_job_without_physical_validation_cannot_activate(monkeypatch)
         db.refresh(job)
         assert job.status == "failed"
         assert "validation" in str(job.error)
+
+
+def test_physical_validation_evidence_cannot_skip_validating_state(monkeypatch):
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine, tables=RAG_TABLES)
+    with Session(engine) as db:
+        service = RagService(db)
+        profile = RagDatasetProfileModel(dataset_id="reviews", review_state="approved", target_alias="rag-reviews")
+        job = RagIndexJobModel(
+            id="ragjob_state_guard",
+            dataset_id="reviews",
+            requested_by="admin",
+            target_index="rag-reviews-v2",
+            status="queued",
+            stage="queued",
+            indexed_count=1,
+            chunk_count=1,
+            parent_count=1,
+            embedding_dimensions=2,
+            validation_status="passed",
+            validated_index="rag-reviews-v2",
+            validated_document_count=1,
+            validated_parent_count=1,
+            validated_dimensions=2,
+        )
+        db.add_all([profile, job])
+        db.commit()
+        monkeypatch.setattr(service, "job", lambda *args, **kwargs: None)
+        service.complete_job(job.id, {"status": "success", "activeIndex": "rag-reviews-v2"})
+        db.refresh(job)
+        assert job.status == "failed"
+        assert "validation" in str(job.error)
+
+
+def test_validation_evidence_is_persisted_and_required_for_activation(monkeypatch):
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine, tables=RAG_TABLES)
+    with Session(engine) as db:
+        service = RagService(db)
+        profile = RagDatasetProfileModel(dataset_id="reviews", review_state="approved", target_alias="rag-reviews")
+        job = RagIndexJobModel(id="ragjob_validated", dataset_id="reviews", requested_by="admin", target_index="rag-reviews-v2", status="validating", stage="validating", indexed_count=1, chunk_count=1, parent_count=1, embedding_dimensions=2)
+        db.add_all([profile, job])
+        db.commit()
+
+        class FakeOpenSearch:
+            def count(self, index):
+                return 1
+
+            def distinct_count(self, index, field):
+                return 1
+
+            def mapping(self, index):
+                return {index: {"mappings": {"properties": {
+                    "document_id": {}, "parent_document_id": {}, "body": {}, "embedding_text": {}, "body_vector": {"dimension": 2}, "metadata_filter": {}, "chunk_index": {}, "chunk_count": {}, "char_start": {}, "char_end": {}, "embedding_model": {}, "embedding_dimensions": {}, "source_fields": {}, "embedding_input_version": {}, "field_rendering_version": {},
+                }}}}
+
+            def search_raw(self, index, query):
+                return {"hits": {"hits": [{"_source": {"body_vector": [0.1, 0.2], "metadata_filter": {}, "source_fields": [], "embedding_input_version": "title_body_fields_v2", "field_rendering_version": "field_blocks_v1", "chunking_version": "rag-chunk-v3"}}]}}
+
+            def search(self, index, query):
+                return []
+
+            def switch_alias(self, alias, index, old_index=None):
+                return {}
+
+        monkeypatch.setattr("app.clients.opensearch_client.OpenSearchClient", lambda settings: FakeOpenSearch())
+        monkeypatch.setattr("app.core.config.settings.opensearch_base_url", "http://opensearch")
+        validation = service.validate_job(job.id)
+        db.refresh(job)
+        assert validation["validationPassed"] is True
+        assert job.validation_status == "passed"
+        assert job.validated_index == job.target_index
+        assert job.validation_evidence_hash
+
+        monkeypatch.setattr(service.catalog, "get_dataset_payload", lambda dataset_id: {"sourceManifest": {}})
+        monkeypatch.setattr(service, "job", lambda *args, **kwargs: None)
+        service.complete_job(job.id, {"status": "success", "validationPassed": False})
+        db.refresh(job)
+        assert job.status == "ready"
