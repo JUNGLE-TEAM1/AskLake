@@ -804,6 +804,10 @@ def has_pending_continuous_replay_catalog(
     return False
 
 
+class ScheduledJobOccurrenceAlreadyClaimed(Exception):
+    """The scheduler's preloaded due occurrence changed before its row lock."""
+
+
 def run_due_scheduled_jobs(
     db: Session,
     request: ScheduledJobRunRequest,
@@ -835,15 +839,27 @@ def run_due_scheduled_jobs(
         command_kwargs: dict[str, ActorContext] = {}
         if getattr(job, "job_kind", None) == "trino_sql_materialization":
             command_kwargs["execution_actor"] = trino_sql_job_run_as_actor(db, job)
-        response = command_job(
-            db,
-            job.id,
-            "run",
-            actor_context,
-            **command_kwargs,
-        )
-        if reason == "due":
-            advance_scheduled_job_after_tick(db, job.id)
+        scheduled_due_at = scheduled_job_next_run_utc(job) if reason == "due" else None
+        try:
+            response = command_job(
+                db,
+                job.id,
+                "run",
+                actor_context,
+                scheduled_due_at=scheduled_due_at,
+                **command_kwargs,
+            )
+        except ScheduledJobOccurrenceAlreadyClaimed:
+            # Release the losing scheduler's row lock before it checks another Job.
+            db.rollback()
+            items.append(ScheduledJobRunItem(
+                job_id=job.id,
+                job_name=job.name,
+                reason="already_claimed",
+                schedule=job.schedule,
+                triggered=False,
+            ))
+            continue
         items.append(ScheduledJobRunItem(
             job_id=job.id,
             job_name=job.name,
@@ -1176,6 +1192,7 @@ def command_job(
     actor: ActorContext | None = None,
     *,
     execution_actor: ActorContext | None = None,
+    scheduled_due_at: str | None = None,
 ) -> JobCommandResponse:
     continuous_commands = {"startContinuous", "pauseContinuous", "resumeContinuous", "stopContinuous"}
     if command not in {"run", "retry", "pause", "cancelRun", "stopSchedule", "resumeSchedule", *continuous_commands}:
@@ -1191,6 +1208,8 @@ def command_job(
         raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
     if job.execution_mode == "continuous":
         require_local_continuous_control_plane()
+    if scheduled_due_at is not None and not scheduled_job_occurrence_is_claimable(job, scheduled_due_at):
+        raise ScheduledJobOccurrenceAlreadyClaimed(job_id)
 
     actor_context = actor or ActorContext()
     required_action = "run" if command in {"run", "retry", "startContinuous", "resumeContinuous"} else "manage"
@@ -1269,6 +1288,8 @@ def command_job(
         )
 
     if job.job_kind == "trino_sql_materialization" and command in {"run", "retry", "cancelRun"}:
+        if scheduled_due_at is not None:
+            advance_claimed_scheduled_job(job)
         service = TrinoSqlJobService(SqlRepository(db), CatalogRepository(db))
         result = (
             service.cancel(job, execution_actor or actor_context)
@@ -1312,6 +1333,8 @@ def command_job(
             kafka_request = kafka_ingest_request_from_job(job, run_id)
             run_model = kafka_run_reservation(job, run_id)
             apply_kafka_run_reservation_job_state(job, command, run_model)
+            if scheduled_due_at is not None:
+                advance_claimed_scheduled_job(job)
             etl_repository.save_command_result(db, job, run_model)
             try:
                 result = bind_kafka_result_to_reservation(
@@ -1352,6 +1375,8 @@ def command_job(
             run_model = airflow_run_reservation(job, command, airflow_client)
             run_schema = etl_repository.run_to_schema(run_model)
             apply_airflow_submit_job_state(job, command, run_model)
+            if scheduled_due_at is not None:
+                advance_claimed_scheduled_job(job)
             job.dag_steps = dag_steps_from_airflow_submit(job, command, run_schema.model_dump(by_alias=True))
             job.dag_steps_by_run_id = {**(job.dag_steps_by_run_id or {}), run_schema.run_id: job.dag_steps}
             job.stats = stats_from_runs(job, [
@@ -8691,9 +8716,24 @@ def should_run_scheduled_job(job: ETLJobModel, request: ScheduledJobRunRequest) 
     return False, "not_due"
 
 
-def advance_scheduled_job_after_tick(db: Session, job_id: str) -> None:
-    job = etl_repository.get_job(db, job_id)
-    if job is None or not isinstance(job.schedule_policy, dict):
+def scheduled_job_next_run_utc(job: ETLJobModel) -> str:
+    if not isinstance(job.schedule_policy, dict):
+        return ""
+    return str(job.schedule_policy.get("nextRunUtc") or "").strip()
+
+
+def scheduled_job_occurrence_is_claimable(job: ETLJobModel, expected_next_run_utc: str) -> bool:
+    if not expected_next_run_utc or scheduled_job_next_run_utc(job) != expected_next_run_utc:
+        return False
+    should_run, reason = should_run_scheduled_job(
+        job,
+        ScheduledJobRunRequest(force=False, job_id=job.id, kafka_only=False),
+    )
+    return should_run and reason == "due"
+
+
+def advance_claimed_scheduled_job(job: ETLJobModel) -> None:
+    if not isinstance(job.schedule_policy, dict):
         return
 
     next_run_utc = next_scheduled_run_utc(job)
@@ -8702,7 +8742,6 @@ def advance_scheduled_job_after_tick(db: Session, job_id: str) -> None:
         job.next_run = "-"
         job.status = "stopped"
         job.last_state = "스케줄 종료"
-        etl_repository.save_job(db, job)
         return
 
     job.schedule_policy = {
@@ -8710,7 +8749,6 @@ def advance_scheduled_job_after_tick(db: Session, job_id: str) -> None:
         "nextRunUtc": next_run_utc,
     }
     job.next_run = next_run_utc
-    etl_repository.save_job(db, job)
 
 
 def next_scheduled_run_utc(job: ETLJobModel) -> str:

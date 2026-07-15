@@ -987,6 +987,15 @@ npm run test:spark-kubernetes
 npm run verify:airflow-catalog-wiring
 ```
 
+FastAPI replica의 scheduler 경쟁을 실제 PostgreSQL row lock으로 검증할 때는 PostgreSQL을 `settings.database_url`에서 접근 가능하게 준비한 뒤 아래 opt-in 테스트를 추가로 실행한다. 테스트는 고유 Job/Run row를 만들고 종료 시 삭제한다.
+
+```bash
+cd backend
+ASKLAKE_TEST_POSTGRES_CONCURRENCY=1 \
+  .venv/bin/python -m unittest \
+  tests.test_etl_job_delete.EtlSchedulerPostgresConcurrencyTests -v
+```
+
 검증 스크립트는 Helm schema/lint/render, Frontend/FastAPI/Airflow/Trino resource 개수, ClusterIP, health check, digest image, ConfigMap/Secret 경계, foundation-owned RBAC 비생성, Continuous 경계, MSK IAM과 bounded Spark smoke 설정을 확인한다. Role/RoleBinding, Secret, `LoadBalancer`, `StatefulSet`, PVC/EFS, replay producer, static AWS key 또는 mutable image가 workload chart에 들어오면 실패한다. FastAPI의 DB-aware `/api/health`는 startup/readiness에만 사용하고 liveness는 TCP로 분리한다. Frontend/FastAPI는 AMD64 전용 image와 맞게 `kubernetes.io/arch=amd64`에만 스케줄한다. `.github/workflows/eks-b-workload-checks.yml`은 같은 계약 테스트와 Frontend/Backend/Spark/Airflow `linux/amd64` Docker build를 PR에서 실행한다. Trino ECR mirror/digest는 A의 foundation 입력이므로 이 image build matrix에 포함하지 않는다.
 
 chart 적용 전 EKS foundation은 `asklake-dev` namespace, `asklake-frontend`, `asklake-backend`, `asklake-airflow`, `asklake-msk-smoke`, `asklake-spark`, `asklake-trino` ServiceAccount/EKS Pod Identity, FastAPI/Spark driver RBAC, Spark operator, RDS/MSK/S3/ECR과 필요한 runtime Secret을 제공해야 한다. 7월 15일 기준 namespace, ServiceAccount/token, Backend/MSK smoke/Spark/Trino Pod Identity, RBAC, Spark Operator와 data plane이 적용됐다. 수요일 web 범위의 Backend runtime Secret reference와 Frontend/Backend immutable image도 적용됐고 Airflow/Spark/Trino runtime delivery는 목요일 이후 범위로 남는다. `asklake-backend`와 `asklake-spark`는 각각 SparkApplication과 executor Pod를 관리하므로 `automountServiceAccountToken: true`다. 나머지 ServiceAccount의 Kubernetes API token은 끈다. 정상 install은 opt-in smoke 두 개를 만들지 않는다.

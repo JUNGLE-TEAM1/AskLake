@@ -253,6 +253,7 @@ def get_job_for_update(db: Session, job_id: str) -> ETLJobModel | None:
         select(ETLJobModel)
         .where(ETLJobModel.id == job_id)
         .with_for_update()
+        .execution_options(populate_existing=True)
     )
     if db.get_bind().dialect.name == "sqlite":
         # SQLite ignores SELECT FOR UPDATE. A no-op write takes its database-level
