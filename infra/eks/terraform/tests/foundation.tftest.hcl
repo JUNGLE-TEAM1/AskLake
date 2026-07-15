@@ -733,9 +733,7 @@ run "reviewed_network_ingress_handoff" {
     alb_target_type            = "ip"
     alb_ip_address_type        = "ipv4"
     external_public_subnet_ids = ["subnet-public-a", "subnet-public-b"]
-    ingress_host               = "asklake.example.invalid"
-    ingress_certificate_arn    = "arn:aws:acm:ap-northeast-2:111122223333:certificate/00000000-0000-0000-0000-000000000000"
-    ingress_dns_owner          = "platform-team"
+    ingress_listener_protocol  = "HTTP"
     private_egress_mode        = "hybrid"
     pod_network_enforcement    = "both"
   }
@@ -759,6 +757,9 @@ run "reviewed_network_ingress_handoff" {
     condition = (
       output.phase13_alb_handoff.auto_mode_controller == "eks.amazonaws.com/alb" &&
       !output.phase13_alb_handoff.self_managed_controller &&
+      output.phase13_alb_handoff.listener_protocol == "HTTP" &&
+      output.phase13_alb_handoff.host == null &&
+      output.phase13_alb_handoff.certificate_arn == null &&
       output.phase13_alb_handoff.ready_for_server_dry_run &&
       length(output.phase13_alb_handoff.subnet_ids) == 2
     )
@@ -784,13 +785,14 @@ run "created_network_internal_auto_mode_alb_handoff" {
     nat_gateway_mode           = "single"
     create_ecr_repositories    = false
 
-    ingress_mode            = "auto-mode-alb"
-    alb_exposure            = "internal"
-    alb_target_type         = "ip"
-    alb_ip_address_type     = "ipv4"
-    ingress_host            = "asklake.internal.example.invalid"
-    ingress_certificate_arn = "arn:aws:acm:ap-northeast-2:111122223333:certificate/00000000-0000-0000-0000-000000000000"
-    ingress_dns_owner       = "platform-team"
+    ingress_mode              = "auto-mode-alb"
+    alb_exposure              = "internal"
+    alb_target_type           = "ip"
+    alb_ip_address_type       = "ipv4"
+    ingress_listener_protocol = "HTTPS"
+    ingress_host              = "asklake.internal.example.invalid"
+    ingress_certificate_arn   = "arn:aws:acm:ap-northeast-2:111122223333:certificate/00000000-0000-0000-0000-000000000000"
+    ingress_dns_owner         = "platform-team"
   }
 
   assert {
@@ -831,13 +833,14 @@ run "reject_auto_mode_alb_without_selected_subnets" {
     existing_cluster_name   = "shared-dev"
     create_ecr_repositories = false
 
-    ingress_mode            = "auto-mode-alb"
-    alb_exposure            = "internet-facing"
-    alb_target_type         = "ip"
-    alb_ip_address_type     = "ipv4"
-    ingress_host            = "asklake.example.invalid"
-    ingress_certificate_arn = "arn:aws:acm:ap-northeast-2:111122223333:certificate/00000000-0000-0000-0000-000000000000"
-    ingress_dns_owner       = "platform-team"
+    ingress_mode              = "auto-mode-alb"
+    alb_exposure              = "internet-facing"
+    alb_target_type           = "ip"
+    alb_ip_address_type       = "ipv4"
+    ingress_listener_protocol = "HTTPS"
+    ingress_host              = "asklake.example.invalid"
+    ingress_certificate_arn   = "arn:aws:acm:ap-northeast-2:111122223333:certificate/00000000-0000-0000-0000-000000000000"
+    ingress_dns_owner         = "platform-team"
   }
 
   expect_failures = [check.alb_ingress_contract, check.alb_subnet_contract]

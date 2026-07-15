@@ -5,11 +5,14 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CHART_DIR="$ROOT_DIR/infra/eks/helm/asklake-ingress"
 VALUES_FILE="$ROOT_DIR/infra/eks/values/ingress/alb.example.yaml"
 DISABLED_RENDER="$(mktemp)"
+FOUNDATION_RENDER="$(mktemp)"
 ENABLED_RENDER="$(mktemp)"
-trap 'rm -f "$DISABLED_RENDER" "$ENABLED_RENDER"' EXIT
+trap 'rm -f "$DISABLED_RENDER" "$FOUNDATION_RENDER" "$ENABLED_RENDER"' EXIT
 
 helm lint "$CHART_DIR"
 helm template asklake-ingress "$CHART_DIR" >"$DISABLED_RENDER"
+helm template asklake-ingress "$CHART_DIR" -f "$VALUES_FILE" \
+  --set routesEnabled=false >"$FOUNDATION_RENDER"
 helm template asklake-ingress "$CHART_DIR" -f "$VALUES_FILE" >"$ENABLED_RENDER"
 
 if grep -q '^kind:' "$DISABLED_RENDER"; then
@@ -19,7 +22,15 @@ fi
 
 if helm template asklake-ingress "$CHART_DIR" \
   --set enabled=true >/dev/null 2>&1; then
-  echo "enabled ingress accepted unresolved Auto Mode/subnet/DNS/ACM choices" >&2
+  echo "enabled ingress accepted unresolved Auto Mode/subnet/listener choices" >&2
+  exit 1
+fi
+
+foundation_ingress_count="$(grep -c '^kind: Ingress$' "$FOUNDATION_RENDER" || true)"
+foundation_class_count="$(grep -c '^kind: IngressClass$' "$FOUNDATION_RENDER")"
+foundation_params_count="$(grep -c '^kind: IngressClassParams$' "$FOUNDATION_RENDER")"
+if [[ "$foundation_ingress_count" -ne 0 || "$foundation_class_count" -ne 1 || "$foundation_params_count" -ne 1 ]]; then
+  echo "foundation-only values must render one class/params pair and no Ingress" >&2
   exit 1
 fi
 
@@ -38,9 +49,11 @@ grep -q 'asklake.io/ingress-access: asklake-dev' "$ENABLED_RENDER"
 grep -q 'scheme: internet-facing' "$ENABLED_RENDER"
 grep -q 'ipAddressType: ipv4' "$ENABLED_RENDER"
 grep -q 'subnet-test-public-a' "$ENABLED_RENDER"
-grep -q 'certificateARNs:' "$ENABLED_RENDER"
-grep -q 'alb.ingress.kubernetes.io/listen-ports:.*HTTPS' "$ENABLED_RENDER"
-grep -q 'alb.ingress.kubernetes.io/ssl-redirect: "443"' "$ENABLED_RENDER"
+grep -q 'alb.ingress.kubernetes.io/listen-ports:.*HTTP' "$ENABLED_RENDER"
+if grep -Eq 'certificateARNs:|alb.ingress.kubernetes.io/ssl-redirect|  host:' "$ENABLED_RENDER"; then
+  echo "HTTP/default-DNS render unexpectedly contains HTTPS host or certificate settings" >&2
+  exit 1
+fi
 grep -q 'alb.ingress.kubernetes.io/healthcheck-path: "/api/health"' "$ENABLED_RENDER"
 grep -q 'alb.ingress.kubernetes.io/healthcheck-path: "/"' "$ENABLED_RENDER"
 grep -q 'path: /api' "$ENABLED_RENDER"
@@ -57,6 +70,12 @@ fi
 if helm template asklake-ingress "$CHART_DIR" -f "$VALUES_FILE" \
   --set targetType=instance >/dev/null 2>&1; then
   echo "instance target type accepted ClusterIP service contracts" >&2
+  exit 1
+fi
+
+if helm template asklake-ingress "$CHART_DIR" -f "$VALUES_FILE" \
+  --set listenerProtocol=HTTPS >/dev/null 2>&1; then
+  echo "HTTPS listener accepted without an exact host and ACM certificate" >&2
   exit 1
 fi
 
@@ -78,6 +97,7 @@ grep -q 'output "phase13_alb_handoff"' "$ROOT_DIR/infra/eks/terraform/network-in
 bash -n "$ROOT_DIR/scripts/deploy-eks-auto-mode-ingress.sh"
 bash -n "$ROOT_DIR/scripts/destroy-eks-auto-mode-ingress.sh"
 grep -q 'create-cost-bearing-auto-mode-alb' "$ROOT_DIR/scripts/deploy-eks-auto-mode-ingress.sh"
+grep -q 'apply-auto-mode-ingress-foundation' "$ROOT_DIR/scripts/deploy-eks-auto-mode-ingress.sh"
 grep -q 'delete-auto-mode-alb-before-cluster' "$ROOT_DIR/scripts/destroy-eks-auto-mode-ingress.sh"
 grep -q 'dns-record-removed-or-not-created' "$ROOT_DIR/scripts/destroy-eks-auto-mode-ingress.sh"
 grep -q -- '--dry-run=server' "$ROOT_DIR/scripts/deploy-eks-auto-mode-ingress.sh"

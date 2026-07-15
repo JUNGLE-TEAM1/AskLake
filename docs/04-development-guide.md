@@ -589,7 +589,7 @@ bash scripts/verify-eks-image-delivery.sh
 
 실제 ECR push는 GitHub의 `EKS image delivery` workflow를 수동 실행한다. 먼저 선택한 environment에 region, OIDC image role ARN, Frontend output bucket variable을 등록하고 foundation Terraform이 만든 다섯 repository가 존재하는지 확인한다. 성공 artifact의 receipt는 `node scripts/verify-eks-image-receipt.mjs <path>`로 재검증한 뒤 Phase 5 handoff의 image 값으로 사용한다. 장기 AWS access key를 GitHub Secret이나 repository에 추가하지 않는다. 세부 실행 gate는 [Phase 6 ECR Image Delivery](eks-phase-6-image-delivery.md)를 따른다.
 
-Phase 7/13 network ingress를 변경하면 아래 검증을 실행한다. 기본 values는 Kubernetes resource를 렌더링하지 않아야 하고, enabled values는 Auto Mode readiness, exposure, target/address type, subnet 2개 이상, host와 ACM certificate가 모두 있어야 한다. 실제 identifier가 들어간 values는 example 파일에 저장하지 않는다.
+Phase 7/13 network ingress를 변경하면 아래 검증을 실행한다. 기본 values는 Kubernetes resource를 렌더링하지 않아야 한다. enabled values는 Auto Mode readiness, exposure, target/address type, listener protocol과 subnet 2개 이상이 필요하다. HTTP는 AWS 생성 ALB DNS를 사용하므로 host·certificate·DNS owner를 비워 두고, HTTPS를 선택할 때만 세 값을 모두 요구한다. 실제 identifier가 들어간 values는 example 파일에 저장하지 않는다.
 
 ```bash
 bash scripts/verify-eks-network-ingress.sh
@@ -631,7 +631,7 @@ bash scripts/verify-eks-foundation.sh
 
 실제 적용은 Terraform output의 role 이름을 비공개 environment value로 넘기고 server-side dry-run 뒤 수행한다. NodeClass/NodePool Ready, positive/negative scheduling, node scale-out/in, 상한, interruption과 비용 evidence가 없으면 정적 완료 상태로만 기록한다. 세부 순서는 [Phase 12 Auto Mode NodeClass와 NodePool](eks-phase-12-auto-mode-node-pools.md)을 따른다.
 
-Phase 13 ingress는 저장소 밖 values 파일로 먼저 `--render`하고, target cluster/context·namespace label·Service·IngressClassParams API와 server-side dry-run을 확인한 뒤 정확한 비용 confirmation으로만 `--apply`한다. self-managed controller용 class/group/scheme/certificate annotation을 다시 추가하지 않는다. 삭제는 Ingress finalizer 완료, Helm class 삭제, AWS 잔여 ALB 확인, cluster/VPC 순서다. 명령과 runtime 증거는 [Phase 13 Auto Mode ALB 진입 경로](eks-phase-13-auto-mode-alb.md)를 따른다.
+Phase 13 ingress는 저장소 밖 values 파일로 먼저 `--render`한다. `routesEnabled=false` foundation 적용은 target cluster/context·namespace label·IngressClassParams API와 server-side dry-run을 확인하고 전용 confirmation으로 class/params만 설치한다. 이 상태는 Service를 요구하지 않고 ALB도 요청하지 않는다. 최종 Frontend/FastAPI Service가 준비된 뒤 `routesEnabled=true`를 적용할 때만 두 Service와 비용 confirmation을 요구하고 ALB를 생성한다. self-managed controller용 class/group/scheme/certificate annotation을 다시 추가하지 않는다. 삭제는 Ingress finalizer 완료, Helm class 삭제, AWS 잔여 ALB 확인, cluster/VPC 순서다. 명령과 runtime 증거는 [Phase 13 Auto Mode ALB 진입 경로](eks-phase-13-auto-mode-alb.md)를 따른다.
 
 Phase 14 web workload 변경은 `bash scripts/verify-eks-web-workloads.sh`로 검사한다. 실제 배포 values는 저장소 밖에 두고 Phase 6 image receipt와 함께 `deploy-eks-web-workloads.sh --render`로 먼저 검토한다. apply는 Foundation ServiceAccount, runtime ConfigMap/Secret, General NodePool label, B의 FastAPI runtime 경계가 실제로 준비된 뒤에만 허용한다. Phase 13 Ingress보다 workload를 먼저 배포하고 삭제할 때는 Ingress와 ALB finalizer를 먼저 제거한다. 자세한 gate와 명령은 [Phase 14 Frontend·FastAPI Workload](eks-phase-14-web-workloads.md)를 따른다.
 

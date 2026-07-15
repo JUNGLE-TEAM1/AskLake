@@ -16,8 +16,10 @@ spec:
   subnets:
     ids:
       {{- toYaml .Values.subnetIds | nindent 6 }}
+  {{- with .Values.certificateArn }}
   certificateARNs:
-    - {{ .Values.certificateArn | quote }}
+    - {{ . | quote }}
+  {{- end }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: IngressClass
