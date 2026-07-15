@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from pyspark.sql import DataFrame, SparkSession
-from pyspark.sql.functions import array, array_except, array_union, col, concat, current_timestamp, explode, from_json, get_json_object, input_file_name, lit, map_keys, min as spark_min, max as spark_max, size, transform, when
+from pyspark.sql.functions import array, array_except, array_union, col, concat, current_timestamp, explode, from_json, get_json_object, input_file_name, lit, map_keys, min as spark_min, max as spark_max, size, split, struct, transform, trim, when
 from pyspark.sql.types import BooleanType, DoubleType, LongType, MapType, StringType, StructField, StructType, TimestampType
 
 from kafka_schema_paths import build_nested_schema_tree, expected_object_keys, json_path, split_source_path
@@ -97,6 +97,8 @@ STREAM_PARTITION_CURSORS = normalize_stream_partition_cursors(
 )
 RULE_CONTRACT_VERSION = os.environ.get("ASKLAKE_CONTINUOUS_RULE_CONTRACT_VERSION", "1.0")
 RULES = [rule for rule in json_array_env("ASKLAKE_CONTINUOUS_RULES") if isinstance(rule, dict)]
+RECORD_PARSING = json_object_env("ASKLAKE_CONTINUOUS_RECORD_PARSING")
+RECORD_PARSING_ENABLED = RECORD_PARSING.get("enabled") is True
 RULE_OUTPUT_SCHEMA = [item for item in json_array_env("ASKLAKE_CONTINUOUS_RULE_OUTPUT_SCHEMA") if isinstance(item, (list, tuple)) and len(item) >= 2]
 RULE_FINGERPRINT = canonical_hash({"contractVersion": RULE_CONTRACT_VERSION, "rules": RULES})
 EXPECTED_RULE_FINGERPRINT = os.environ.get("ASKLAKE_CONTINUOUS_RULE_FINGERPRINT", "")
@@ -577,7 +579,50 @@ def nested_payload_column(source_path: str):
     return value
 
 
+def raw_record_tokens(value_column: Any = None):
+    source_value = value_column if value_column is not None else col("raw_payload")
+    return split(trim(source_value), r"\s+")
+
+
+def raw_record_columns() -> list[dict[str, Any]]:
+    columns = RECORD_PARSING.get("columns")
+    if not isinstance(columns, list):
+        return []
+    return sorted(
+        [column for column in columns if isinstance(column, dict)],
+        key=lambda column: int(column.get("position") or 0),
+    )
+
+
+def raw_record_payload(schema: StructType, value_column: Any = None):
+    tokens = raw_record_tokens(value_column)
+    columns_by_name = {
+        str(column.get("name") or "").strip(): column
+        for column in raw_record_columns()
+        if str(column.get("name") or "").strip()
+    }
+    fields = []
+    for field in schema.fields:
+        column_def = columns_by_name.get(field.name)
+        if column_def is None:
+            value = lit(None).cast(field.dataType)
+        else:
+            value = tokens.getItem(int(column_def.get("position") or 0)).cast(field.dataType)
+        fields.append(value.alias(field.name))
+    expected = int(RECORD_PARSING.get("expectedFieldCount") or len(raw_record_columns()))
+    parsed = struct(*fields).cast(schema)
+    return when(size(tokens) == lit(expected), parsed).otherwise(lit(None).cast(schema))
+
+
 def raw_source_value(source_path: str):
+    if RECORD_PARSING_ENABLED:
+        column_def = next(
+            (column for column in raw_record_columns() if str(column.get("name") or "").strip() == source_path),
+            None,
+        )
+        if column_def is None:
+            return lit(None).cast("string")
+        return raw_record_tokens().getItem(int(column_def.get("position") or 0))
     return get_json_object(col("raw_payload"), json_path(source_path))
 
 
@@ -585,6 +630,8 @@ def unknown_field_expressions(expected_keys_by_parent: dict[str, list[str]]):
     unknown_condition = lit(False)
     unknown_keys = None
     empty_array = array().cast("array<string>")
+    if RECORD_PARSING_ENABLED:
+        return unknown_condition, empty_array
     for parent_path, expected_keys in expected_keys_by_parent.items():
         raw_object = from_json(
             col("raw_payload") if not parent_path else get_json_object(col("raw_payload"), json_path(parent_path)),
@@ -830,7 +877,7 @@ def schema_quarantine_rows(
         col("raw_payload").cast("string").alias("raw_payload"),
         lit("").alias("event_id"),
         col("raw_payload").alias("record"),
-        when(malformed, lit("malformed_json"))
+        when(malformed, lit("malformed_record" if RECORD_PARSING_ENABLED else "malformed_json"))
         .when(required_missing, lit("missing_required"))
         .when(incompatible_type, lit("incompatible_type"))
         .when(unknown_condition, lit("unknown_field"))
@@ -1379,11 +1426,14 @@ def main() -> None:
         .option("maxOffsetsPerTrigger", os.environ.get("ASKLAKE_CONTINUOUS_MAX_OFFSETS", "10000"))
         .option("kafka.group.id", os.environ["ASKLAKE_CONTINUOUS_CONSUMER_GROUP_ID"])
         .load())
+    raw_payload = col("value").cast("string")
+    payload = raw_record_payload(schema, raw_payload) if RECORD_PARSING_ENABLED else from_json(raw_payload, schema)
+    raw_map = lit(None).cast(MapType(StringType(), StringType())) if RECORD_PARSING_ENABLED else from_json(raw_payload, MapType(StringType(), StringType()))
     parsed = source.select(
         col("topic"), col("partition"), col("offset"), col("timestamp").alias("kafka_timestamp"),
-        col("value").cast("string").alias("raw_payload"),
-        from_json(col("value").cast("string"), schema).alias("payload"),
-        from_json(col("value").cast("string"), MapType(StringType(), StringType())).alias("raw_map"),
+        raw_payload.alias("raw_payload"),
+        payload.alias("payload"),
+        raw_map.alias("raw_map"),
     )
 
     def write_batch(batch: DataFrame, spark_batch_id: int) -> None:
@@ -1484,7 +1534,7 @@ def main() -> None:
             if field_name in required_fields:
                 required_missing = required_missing | source_value.isNull()
             incompatible_type = incompatible_type | (source_value.isNotNull() & parsed_value_missing)
-        malformed = col("raw_map").isNull() | col("payload").isNull()
+        malformed = col("payload").isNull() if RECORD_PARSING_ENABLED else (col("raw_map").isNull() | col("payload").isNull())
         unknown_condition, unknown_keys = unknown_field_expressions(expected_keys_by_parent)
         unknown_rows = (batch.where(col("raw_map").isNotNull())
             .select(explode(unknown_keys).alias("field"))
