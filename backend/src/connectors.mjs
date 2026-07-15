@@ -6,6 +6,7 @@ import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadKafkaJs } from "./kafka-codecs.mjs";
+import { recoverKafkaLogLines } from "./kafkaPreview.mjs";
 import {
   isMinioProvider,
   objectStorageDockerEnv,
@@ -781,8 +782,14 @@ export async function testKafkaSource(fields, sourceType = "Stream / Kafka") {
     const parsedSample = parseKafkaMessages(topic, messages, samplePolicy.rowLimit);
     const schemaColumns = inferSchemaColumns(parsedSample);
     const rawValueIndex = parsedSample.columns.findIndex((column) => column === "value");
-    const requiresRecordParsing = parsedSample.format === "txt" && rawValueIndex >= 0;
-    const detectedFormat = parsedSample.format === "kafka"
+    const recoveredLogLines = recoverKafkaLogLines(messages);
+    const rawTextLines = parsedSample.format === "txt" && rawValueIndex >= 0
+      ? messages.filter((line) => line.trim())
+      : recoveredLogLines;
+    const requiresRecordParsing = rawTextLines.length > 0;
+    const detectedFormat = requiresRecordParsing
+      ? "TXT"
+      : parsedSample.format === "kafka"
       ? undefined
       : parsedSample.format.toUpperCase();
 
@@ -821,7 +828,9 @@ export async function testKafkaSource(fields, sourceType = "Stream / Kafka") {
           connectionMessage: `Kafka 토픽 연결 성공: ${topic}`,
           connectionStatus: "success",
           detectedFormat,
-          rawPreviewLines: messages.filter((line) => line.trim()),
+          rawPreviewLines: requiresRecordParsing
+            ? rawTextLines
+            : messages.filter((line) => line.trim()),
           requiresRecordParsing,
           sourceConfig,
           sourceLabel: `${broker}/${topic}`,
