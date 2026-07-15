@@ -1,0 +1,60 @@
+{{- if .Values.trino.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: asklake-trino-config
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "asklake-workloads.commonLabels" . | nindent 4 }}
+    app.kubernetes.io/component: trino
+data:
+  config.properties: |
+    coordinator=true
+    node-scheduler.include-coordinator=true
+    http-server.https.enabled=true
+    http-server.https.port=8443
+    http-server.https.keystore.path=/etc/trino/tls/keystore.jks
+    http-server.https.keystore.key=${ENV:TRINO_TLS_KEYSTORE_PASSWORD}
+    http-server.authentication.type=PASSWORD
+    internal-communication.shared-secret=${ENV:TRINO_INTERNAL_SHARED_SECRET}
+    internal-communication.https.required=true
+    discovery.uri=https://{{ .Values.trino.service.name }}:8443
+  password-authenticator.properties: |
+    password-authenticator.name=file
+    file.password-file=/etc/trino/auth/password.db
+    file.refresh-period=5s
+  access-control.properties: |
+    access-control.name=file
+    security.config-file=/etc/trino/access-control/rules.json
+  rules.json: |
+    {
+      "catalogs": [
+        {"user": {{ .Values.trino.config.materializerUser | quote }}, "catalog": {{ .Values.trino.config.catalogName | quote }}, "allow": "all"},
+        {"user": {{ .Values.trino.config.queryUser | quote }}, "catalog": {{ .Values.trino.config.catalogName | quote }}, "allow": "read-only"}
+      ],
+      "tables": [
+        {"user": {{ .Values.trino.config.materializerUser | quote }}, "catalog": {{ .Values.trino.config.catalogName | quote }}, "schema": {{ .Values.trino.config.schemaName | quote }}, "table": ".*", "privileges": ["SELECT", "INSERT", "DELETE", "UPDATE", "OWNERSHIP"]},
+        {"user": {{ .Values.trino.config.queryUser | quote }}, "catalog": {{ .Values.trino.config.catalogName | quote }}, "schema": {{ .Values.trino.config.schemaName | quote }}, "table": ".*", "privileges": ["SELECT"]}
+      ],
+      "schemas": [{"user": {{ .Values.trino.config.materializerUser | quote }}, "schema": {{ .Values.trino.config.schemaName | quote }}, "owner": true}],
+      "queries": [
+        {"user": {{ .Values.trino.config.materializerUser | quote }}, "allow": ["execute"]},
+        {"user": {{ .Values.trino.config.queryUser | quote }}, "allow": ["execute"]}
+      ],
+      "functions": []
+    }
+  iceberg.properties: |
+    connector.name=iceberg
+    iceberg.catalog.type=jdbc
+    iceberg.jdbc-catalog.driver-class=org.postgresql.Driver
+    iceberg.jdbc-catalog.connection-url=${ENV:TRINO_ICEBERG_JDBC_URL}
+    iceberg.jdbc-catalog.connection-user=${ENV:TRINO_ICEBERG_JDBC_USER}
+    iceberg.jdbc-catalog.connection-password=${ENV:TRINO_ICEBERG_JDBC_PASSWORD}
+    iceberg.jdbc-catalog.catalog-name=${ENV:TRINO_ICEBERG_CATALOG_NAME}
+    iceberg.jdbc-catalog.default-warehouse-dir=s3://${ENV:TRINO_ICEBERG_WAREHOUSE_BUCKET}/${ENV:TRINO_ICEBERG_WAREHOUSE_PREFIX}
+    iceberg.file-format=PARQUET
+    iceberg.metadata-cache.enabled=false
+    fs.s3.enabled=true
+    s3.region=${ENV:TRINO_S3_REGION}
+    s3.path-style-access=false
+{{- end }}

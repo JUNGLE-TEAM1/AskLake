@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import secrets
 import subprocess
+import threading
 from types import SimpleNamespace
 from typing import Any, Callable
 import unicodedata
@@ -18,7 +19,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import status
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.auth_context import ActorContext, require_permission
 from app.core.config import settings
@@ -148,7 +149,7 @@ PERMISSION_GROUP_ACTIONS = {
 }
 DEFAULT_SOURCE_IDENTITY_WORKERS = 16
 MAX_SOURCE_IDENTITY_WORKERS = 64
-DEFAULT_SPARK_EXECUTION_LEASE_SECONDS = 1200
+DEFAULT_SPARK_EXECUTION_LEASE_SECONDS = 60
 AIRFLOW_MISSING_RUN_FAILURE_LIMIT = 3
 SPARK_REST_BRIDGE_GRACE_SECONDS = 30
 DEFAULT_SCHEDULE_TIMEZONE = "Asia/Seoul"
@@ -161,6 +162,73 @@ SCHEDULE_WEEKDAY_VALUES = {
     "토": 5,
     "일": 6,
 }
+FASTAPI_EXECUTION_OWNER = f"{os.environ.get('HOSTNAME') or 'local'}:{os.getpid()}:{secrets.token_hex(8)}"
+
+
+def external_continuous_control_plane_enabled() -> bool:
+    return settings.asklake_continuous_control_plane == "external_ec2"
+
+
+def job_visible_in_current_control_plane(execution_mode: str | None) -> bool:
+    return not external_continuous_control_plane_enabled() or execution_mode != "continuous"
+
+
+def require_local_continuous_control_plane() -> None:
+    if not external_continuous_control_plane_enabled():
+        return
+    raise ApiError(
+        "CONTINUOUS_CONTROL_OWNED_BY_EC2",
+        "Kafka Continuous control remains owned by the EC2 environment for the EKS MVP.",
+        status.HTTP_409_CONFLICT,
+        {"controlPlane": "external_ec2"},
+    )
+
+
+def run_execution_heartbeat_interval_seconds(lease_seconds: int) -> float:
+    return max(1.0, min(float(lease_seconds) / 3, 30.0))
+
+
+class RunExecutionLeaseHeartbeat:
+    """Keep an RDS Run lease alive while an external Spark/Catalog call is in flight."""
+
+    def __init__(self, db: Session, *, run_id: str, generation: int, lease_seconds: int) -> None:
+        self._run_id = run_id
+        self._generation = generation
+        self._lease_seconds = lease_seconds
+        self._interval_seconds = run_execution_heartbeat_interval_seconds(lease_seconds)
+        self._session_factory = sessionmaker(bind=db.get_bind(), autoflush=False, autocommit=False, class_=Session)
+        self._lost = threading.Event()
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, name=f"asklake-run-lease-{run_id}", daemon=True)
+
+    @property
+    def lost(self) -> bool:
+        return self._lost.is_set()
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._thread.join(timeout=1)
+
+    def _run(self) -> None:
+        while not self._stop.wait(self._interval_seconds):
+            try:
+                with self._session_factory() as lease_db:
+                    renewed = etl_repository.renew_run_execution_lease(
+                        lease_db,
+                        self._run_id,
+                        owner=FASTAPI_EXECUTION_OWNER,
+                        generation=self._generation,
+                        lease_seconds=self._lease_seconds,
+                    )
+                if not renewed:
+                    self._lost.set()
+                    return
+            except Exception:
+                self._lost.set()
+                return
 
 
 def source_connector_defaults() -> SourceConnectorDefaults:
@@ -211,6 +279,8 @@ def create_pipeline(
     request: CreatePipelineRequest,
     actor: ActorContext | str = "demo-user",
 ) -> CreatePipelineResponse:
+    if request.execution_mode == "continuous":
+        require_local_continuous_control_plane()
     compiled_rules = compile_pipeline_rules(request)
     require_compiled_rules(compiled_rules)
     apply_compiled_rules(request, compiled_rules)
@@ -569,12 +639,14 @@ def list_jobs(
     statuses: list[str] | None = None,
     schedule_kind: JobScheduleKind | None = None,
 ) -> JobListResponse:
-    for job in etl_repository.list_job_models(db):
-        refresh_kafka_continuous_runtime(db, job)
+    if not external_continuous_control_plane_enabled():
+        for job in etl_repository.list_job_models(db):
+            refresh_kafka_continuous_runtime(db, job)
     actor_context = actor or ActorContext()
     visible_jobs = [
         with_job_permissions(db, job, actor_context)
         for job in etl_repository.list_jobs(db)
+        if job_visible_in_current_control_plane(job.execution_mode)
     ]
     all_jobs = [normalize_list_job(job) for job in visible_jobs if job.permissions.can_view]
     selected_statuses = set(statuses or [])
@@ -616,6 +688,8 @@ def latest_run_outcome(job: JobRowData) -> JobRunOutcome | None:
 
 def sync_active_kafka_continuous_runtimes() -> None:
     """Persist continuous worker progress without depending on UI polling."""
+    if external_continuous_control_plane_enabled():
+        return
     import logging
 
     from app.core.database import SessionLocal
@@ -730,12 +804,20 @@ def has_pending_continuous_replay_catalog(
     return False
 
 
+class ScheduledJobOccurrenceAlreadyClaimed(Exception):
+    """The scheduler's preloaded due occurrence changed before its row lock."""
+
+
 def run_due_scheduled_jobs(
     db: Session,
     request: ScheduledJobRunRequest,
     actor: ActorContext | None = None,
 ) -> ScheduledJobRunResponse:
-    jobs = etl_repository.list_job_models(db)
+    jobs = [
+        job
+        for job in etl_repository.list_job_models(db)
+        if job_visible_in_current_control_plane(getattr(job, "execution_mode", None))
+    ]
     if request.job_id:
         jobs = [job for job in jobs if job.id == request.job_id]
     items: list[ScheduledJobRunItem] = []
@@ -757,15 +839,27 @@ def run_due_scheduled_jobs(
         command_kwargs: dict[str, ActorContext] = {}
         if getattr(job, "job_kind", None) == "trino_sql_materialization":
             command_kwargs["execution_actor"] = trino_sql_job_run_as_actor(db, job)
-        response = command_job(
-            db,
-            job.id,
-            "run",
-            actor_context,
-            **command_kwargs,
-        )
-        if reason == "due":
-            advance_scheduled_job_after_tick(db, job.id)
+        scheduled_due_at = scheduled_job_next_run_utc(job) if reason == "due" else None
+        try:
+            response = command_job(
+                db,
+                job.id,
+                "run",
+                actor_context,
+                scheduled_due_at=scheduled_due_at,
+                **command_kwargs,
+            )
+        except ScheduledJobOccurrenceAlreadyClaimed:
+            # Release the losing scheduler's row lock before it checks another Job.
+            db.rollback()
+            items.append(ScheduledJobRunItem(
+                job_id=job.id,
+                job_name=job.name,
+                reason="already_claimed",
+                schedule=job.schedule,
+                triggered=False,
+            ))
+            continue
         items.append(ScheduledJobRunItem(
             job_id=job.id,
             job_name=job.name,
@@ -787,11 +881,15 @@ def get_job(db: Session, job_id: str, actor: ActorContext | None = None) -> JobR
     job_model = etl_repository.get_job(db, job_id)
     if job_model is None:
         raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
+    if job_model.execution_mode == "continuous":
+        require_local_continuous_control_plane()
     sync_airflow_runs_for_job(db, job_model)
     refresh_kafka_continuous_runtime(db, job_model)
     job = etl_repository.get_job_schema(db, job_id)
     if job is None:
         raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
+    if job.execution_mode == "continuous":
+        require_local_continuous_control_plane()
     job_with_permissions = with_job_permissions(db, job, actor_context)
     if not job_with_permissions.permissions.can_view:
         safe_record_audit_event(
@@ -816,6 +914,8 @@ def update_pipeline(
     job = etl_repository.get_job(db, job_id)
     if job is None:
         raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
+    if job.execution_mode == "continuous":
+        require_local_continuous_control_plane()
 
     actor_context = actor or ActorContext()
     require_governed_access(
@@ -914,6 +1014,8 @@ def delete_job(db: Session, job_id: str, actor: ActorContext | None = None) -> s
     job = etl_repository.get_job_for_update(db, job_id)
     if job is None:
         raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
+    if job.execution_mode == "continuous":
+        require_local_continuous_control_plane()
 
     job_name = job.name
     job_owner = job.owner
@@ -1090,10 +1192,13 @@ def command_job(
     actor: ActorContext | None = None,
     *,
     execution_actor: ActorContext | None = None,
+    scheduled_due_at: str | None = None,
 ) -> JobCommandResponse:
     continuous_commands = {"startContinuous", "pauseContinuous", "resumeContinuous", "stopContinuous"}
     if command not in {"run", "retry", "pause", "cancelRun", "stopSchedule", "resumeSchedule", *continuous_commands}:
         raise ApiError(ErrorCode.VALIDATION_ERROR, f"Unsupported job command: {command}", status.HTTP_400_BAD_REQUEST)
+    if command in continuous_commands:
+        require_local_continuous_control_plane()
     job = (
         etl_repository.get_job_for_update(db, job_id)
         if command in {"run", "retry", "startContinuous", "resumeContinuous"}
@@ -1101,6 +1206,10 @@ def command_job(
     )
     if job is None:
         raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
+    if job.execution_mode == "continuous":
+        require_local_continuous_control_plane()
+    if scheduled_due_at is not None and not scheduled_job_occurrence_is_claimable(job, scheduled_due_at):
+        raise ScheduledJobOccurrenceAlreadyClaimed(job_id)
 
     actor_context = actor or ActorContext()
     required_action = "run" if command in {"run", "retry", "startContinuous", "resumeContinuous"} else "manage"
@@ -1179,6 +1288,8 @@ def command_job(
         )
 
     if job.job_kind == "trino_sql_materialization" and command in {"run", "retry", "cancelRun"}:
+        if scheduled_due_at is not None:
+            advance_claimed_scheduled_job(job)
         service = TrinoSqlJobService(SqlRepository(db), CatalogRepository(db))
         result = (
             service.cancel(job, execution_actor or actor_context)
@@ -1222,6 +1333,8 @@ def command_job(
             kafka_request = kafka_ingest_request_from_job(job, run_id)
             run_model = kafka_run_reservation(job, run_id)
             apply_kafka_run_reservation_job_state(job, command, run_model)
+            if scheduled_due_at is not None:
+                advance_claimed_scheduled_job(job)
             etl_repository.save_command_result(db, job, run_model)
             try:
                 result = bind_kafka_result_to_reservation(
@@ -1262,6 +1375,8 @@ def command_job(
             run_model = airflow_run_reservation(job, command, airflow_client)
             run_schema = etl_repository.run_to_schema(run_model)
             apply_airflow_submit_job_state(job, command, run_model)
+            if scheduled_due_at is not None:
+                advance_claimed_scheduled_job(job)
             job.dag_steps = dag_steps_from_airflow_submit(job, command, run_schema.model_dump(by_alias=True))
             job.dag_steps_by_run_id = {**(job.dag_steps_by_run_id or {}), run_schema.run_id: job.dag_steps}
             job.stats = stats_from_runs(job, [
@@ -2300,6 +2415,7 @@ def writer_mode_for_pipeline(source_type: str, source_config: Any) -> str:
 def run_spark_job(db: Session, job: ETLJobModel, command: str, run_id: str) -> dict[str, Any]:
     ensure_batch_iceberg_target(db, job)
     rest_mode = spark_rest_mode_enabled()
+    kubernetes_mode = spark_kubernetes_mode_enabled()
     poll_timeout_ms = spark_rest_poll_timeout_ms()
     state_file = spark_rest_submission_state_file(run_id)
     incremental_since, incremental_before = source_incremental_window(db, job, run_id)
@@ -2337,7 +2453,7 @@ def run_spark_job(db: Session, job: ETLJobModel, command: str, run_id: str) -> d
             "runId": run_id,
         },
         error_marker="ASKLAKE_SPARK_RUN_ERROR",
-        timeout_seconds=spark_python_bridge_timeout_seconds(poll_timeout_ms) if rest_mode else 900,
+        timeout_seconds=spark_python_bridge_timeout_seconds(poll_timeout_ms) if rest_mode or kubernetes_mode else 900,
         timeout_recovery=(lambda: recover_spark_rest_submission(state_file)) if rest_mode else None,
     )
     if source_object_inventory is not None:
@@ -2377,10 +2493,10 @@ def execute_airflow_spark_run(
     run_id: str,
     command: str,
 ) -> dict[str, Any]:
-    job = etl_repository.get_job_for_update(db, job_id)
+    job = etl_repository.get_job(db, job_id)
+    run = etl_repository.get_run_model(db, run_id)
     if job is None:
         raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
-    run = etl_repository.get_run_model(db, run_id)
     if run is None or run.job_id != job.id or run.airflow_dag_run_id != run_id:
         raise ApiError(
             "AIRFLOW_RUN_MISMATCH",
@@ -2388,16 +2504,19 @@ def execute_airflow_spark_run(
             status.HTTP_409_CONFLICT,
             {"jobId": job_id, "runId": run_id},
         )
-    etl_repository.refresh_run_for_update(db, run)
 
     existing_result = (run.task_states or {}).get("sparkResult")
     if isinstance(existing_result, dict) and existing_result.get("status") == "success":
-        db.rollback()
         return existing_result
 
-    execution = (run.task_states or {}).get("sparkExecution")
-    if spark_execution_lease_is_active(execution):
-        db.rollback()
+    lease_seconds = spark_execution_lease_seconds()
+    lease = etl_repository.claim_run_execution_lease(
+        db,
+        run_id,
+        owner=FASTAPI_EXECUTION_OWNER,
+        lease_seconds=lease_seconds,
+    )
+    if lease is None:
         raise ApiError(
             "SPARK_RUN_ALREADY_EXECUTING",
             "Spark execution is already active for this Airflow Run.",
@@ -2405,47 +2524,71 @@ def execute_airflow_spark_run(
             {"jobId": job_id, "runId": run_id},
         )
 
-    attempt_id = stable_id("spark-attempt", f"{run_id}:{iso_now()}:{secrets.token_hex(8)}")
+    attempt_id = stable_id("spark-attempt", f"{run_id}:{lease.generation}:{FASTAPI_EXECUTION_OWNER}")
+    with_execution_lease = RunExecutionLeaseHeartbeat(
+        db,
+        run_id=run_id,
+        generation=lease.generation,
+        lease_seconds=lease_seconds,
+    )
+    with_execution_lease.start()
+
+    run = etl_repository.get_run_for_execution_fence(
+        db,
+        run_id,
+        owner=FASTAPI_EXECUTION_OWNER,
+        generation=lease.generation,
+    )
+    if run is None:
+        with_execution_lease.stop()
+        raise run_execution_lease_lost(job_id, run_id)
     run.task_states = {
         **(run.task_states or {}),
         "sparkExecution": {
             "attemptId": attempt_id,
+            "generation": lease.generation,
             "startedAt": iso_now(),
             "status": "running",
         },
     }
     db.commit()
-    job = etl_repository.get_job(db, job_id)
-    if job is None:
-        raise ApiError(ErrorCode.NOT_FOUND, f"Job not found after Spark claim: {job_id}", status.HTTP_404_NOT_FOUND)
 
     try:
+        job = etl_repository.get_job(db, job_id)
+        if job is None:
+            raise ApiError(ErrorCode.NOT_FOUND, f"Job not found after Spark claim: {job_id}", status.HTTP_404_NOT_FOUND)
         result = run_spark_job(db, job, command, run_id)
     except Exception as exc:
+        with_execution_lease.stop()
         finalize_spark_execution_attempt(
             db,
             job_id=job_id,
             run_id=run_id,
-            attempt_id=attempt_id,
+            generation=lease.generation,
             error=compact_storage_text(exc, limit=1000),
         )
         raise
+    with_execution_lease.stop()
+    if with_execution_lease.lost:
+        raise run_execution_lease_lost(job_id, run_id)
+
     manifest = spark_result_manifest(result, run_id)
+    run = etl_repository.get_run_for_execution_fence(
+        db,
+        run_id,
+        owner=FASTAPI_EXECUTION_OWNER,
+        generation=lease.generation,
+    )
+    if run is None:
+        raise run_execution_lease_lost(job_id, run_id)
     job = etl_repository.get_job_for_update(db, job_id)
     if job is None:
         raise ApiError(ErrorCode.NOT_FOUND, f"Job not found after Spark execution: {job_id}", status.HTTP_404_NOT_FOUND)
-    run = etl_repository.get_run_model(db, run_id)
-    if run is None or run.job_id != job.id:
+    if run.job_id != job.id:
         raise ApiError(ErrorCode.INVALID_JOB_STATE, "Spark Run disappeared during finalization", status.HTTP_409_CONFLICT)
-    etl_repository.refresh_run_for_update(db, run)
     execution = (run.task_states or {}).get("sparkExecution")
-    if not isinstance(execution, dict) or execution.get("attemptId") != attempt_id:
-        raise ApiError(
-            ErrorCode.INVALID_JOB_STATE,
-            "Spark execution lease changed before finalization",
-            status.HTTP_409_CONFLICT,
-            {"jobId": job_id, "runId": run_id, "attemptId": attempt_id},
-        )
+    if not isinstance(execution, dict) or execution.get("generation") != lease.generation:
+        raise run_execution_lease_lost(job_id, run_id)
     run.input_rows = format_rows(manifest.get("inputRows"))
     run.output_rows = format_rows(manifest.get("outputRows"))
     run.output_path = manifest.get("outputPath") or run.output_path
@@ -2462,29 +2605,15 @@ def execute_airflow_spark_run(
         },
         "sparkResult": manifest,
     }
+    run.execution_owner = None
+    run.execution_lease_expires_at = None
     if manifest.get("status") == "success" and manifest.get("outputPath"):
         job.target_path = str(manifest["outputPath"])
     db.commit()
     return manifest
 
 
-def spark_execution_lease_is_active(value: Any) -> bool:
-    if not isinstance(value, dict) or value.get("status") != "running":
-        return False
-    try:
-        started_at = parse_incremental_timestamp(str(value.get("startedAt") or ""), "sparkExecution.startedAt")
-    except ApiError:
-        return False
-    if started_at is None:
-        return False
-    return datetime.now(UTC) < started_at + timedelta(seconds=spark_execution_lease_seconds())
-
-
 def spark_execution_lease_seconds() -> int:
-    try:
-        run_timeout = max(1, int(os.environ.get("ASKLAKE_SPARK_RUN_TIMEOUT_SECONDS") or "900"))
-    except ValueError:
-        run_timeout = 900
     try:
         configured = int(
             os.environ.get("ASKLAKE_SPARK_EXECUTION_LEASE_SECONDS")
@@ -2492,7 +2621,7 @@ def spark_execution_lease_seconds() -> int:
         )
     except ValueError:
         configured = DEFAULT_SPARK_EXECUTION_LEASE_SECONDS
-    return max(run_timeout + 60, configured)
+    return max(10, min(configured, 3600))
 
 
 def finalize_spark_execution_attempt(
@@ -2500,20 +2629,23 @@ def finalize_spark_execution_attempt(
     *,
     job_id: str,
     run_id: str,
-    attempt_id: str,
+    generation: int,
     error: str,
 ) -> None:
+    run = etl_repository.get_run_for_execution_fence(
+        db,
+        run_id,
+        owner=FASTAPI_EXECUTION_OWNER,
+        generation=generation,
+    )
+    if run is None:
+        return
     job = etl_repository.get_job_for_update(db, job_id)
-    if job is None:
+    if job is None or run.job_id != job.id:
         db.rollback()
         return
-    run = etl_repository.get_run_model(db, run_id)
-    if run is None or run.job_id != job.id:
-        db.rollback()
-        return
-    etl_repository.refresh_run_for_update(db, run)
     execution = (run.task_states or {}).get("sparkExecution")
-    if not isinstance(execution, dict) or execution.get("attemptId") != attempt_id:
+    if not isinstance(execution, dict) or execution.get("generation") != generation:
         db.rollback()
         return
     run.task_states = {
@@ -2525,7 +2657,18 @@ def finalize_spark_execution_attempt(
             "status": "failed",
         },
     }
+    run.execution_owner = None
+    run.execution_lease_expires_at = None
     db.commit()
+
+
+def run_execution_lease_lost(job_id: str, run_id: str) -> ApiError:
+    return ApiError(
+        "SPARK_RUN_LEASE_LOST",
+        "Spark Run execution lease was lost before the result could be persisted.",
+        status.HTTP_409_CONFLICT,
+        {"jobId": job_id, "runId": run_id},
+    )
 
 
 def reconcile_airflow_catalog(
@@ -2536,14 +2679,6 @@ def reconcile_airflow_catalog(
 ) -> AirflowCatalogReconciliationResponse:
     job, run = airflow_catalog_identity(db, job_id, run_id)
     dataset_id = str(job.dataset_id or "").strip()
-    if not dataset_id:
-        error = catalog_reconciliation_error(
-            "Persisted Job does not have a target dataset id.",
-            {"jobId": job_id, "runId": run_id},
-        )
-        persist_catalog_reconciliation_failure(db, run_id, dataset_id, error.message)
-        raise error
-
     task_states = dict(run.task_states or {})
     catalog_result = task_states.get("catalogResult")
     if (
@@ -2560,24 +2695,52 @@ def reconcile_airflow_catalog(
                 run_id=run_id,
             )
 
-    spark_result = task_states.get("sparkResult")
-    if not isinstance(spark_result, dict) or spark_result.get("status") != "success":
+    lease_seconds = spark_execution_lease_seconds()
+    lease = etl_repository.claim_run_execution_lease(
+        db,
+        run_id,
+        owner=FASTAPI_EXECUTION_OWNER,
+        lease_seconds=lease_seconds,
+    )
+    if lease is None:
         raise ApiError(
-            "SPARK_RESULT_NOT_READY",
-            "A persisted successful Spark result is required before Catalog reconciliation.",
+            "SPARK_RUN_ALREADY_EXECUTING",
+            "Spark Run submission or Catalog reconciliation is already active.",
             status.HTTP_409_CONFLICT,
             {"jobId": job_id, "runId": run_id},
         )
-    if str(spark_result.get("runId") or run_id) != run_id:
-        raise ApiError(
-            "AIRFLOW_RUN_MISMATCH",
-            "Persisted Spark result does not match the requested Airflow Run.",
-            status.HTTP_409_CONFLICT,
-            {"jobId": job_id, "runId": run_id, "sparkRunId": spark_result.get("runId")},
-        )
+    heartbeat = RunExecutionLeaseHeartbeat(
+        db,
+        run_id=run_id,
+        generation=lease.generation,
+        lease_seconds=lease_seconds,
+    )
+    heartbeat.start()
+    completed = False
 
-    output_path = str(spark_result.get("outputPath") or "").strip()
     try:
+        if not dataset_id:
+            raise catalog_reconciliation_error(
+                "Persisted Job does not have a target dataset id.",
+                {"jobId": job_id, "runId": run_id},
+            )
+        spark_result = task_states.get("sparkResult")
+        if not isinstance(spark_result, dict) or spark_result.get("status") != "success":
+            raise ApiError(
+                "SPARK_RESULT_NOT_READY",
+                "A persisted successful Spark result is required before Catalog reconciliation.",
+                status.HTTP_409_CONFLICT,
+                {"jobId": job_id, "runId": run_id},
+            )
+        if str(spark_result.get("runId") or run_id) != run_id:
+            raise ApiError(
+                "AIRFLOW_RUN_MISMATCH",
+                "Persisted Spark result does not match the requested Airflow Run.",
+                status.HTTP_409_CONFLICT,
+                {"jobId": job_id, "runId": run_id, "sparkRunId": spark_result.get("runId")},
+            )
+
+        output_path = str(spark_result.get("outputPath") or "").strip()
         if job.iceberg_target and not is_kafka_job(job):
             enriched_result = verify_spark_iceberg_result(job, run_id, spark_result)
         else:
@@ -2588,24 +2751,54 @@ def reconcile_airflow_catalog(
                 "parquetObjectCount": physical["parquetObjectCount"],
                 "storageSizeBytes": physical["storageSizeBytes"],
             }
-        return commit_airflow_catalog_reconciliation(
+        if heartbeat.lost:
+            raise run_execution_lease_lost(job_id, run_id)
+        response = commit_airflow_catalog_reconciliation(
             db,
             job_id=job_id,
             run_id=run_id,
             result=enriched_result,
             retry_on_create_conflict=True,
+            owner=FASTAPI_EXECUTION_OWNER,
+            generation=lease.generation,
         )
+        completed = True
+        return response
     except ApiError as exc:
         if str(exc.code) == "CATALOG_RECONCILIATION_FAILED":
-            persist_catalog_reconciliation_failure(db, run_id, dataset_id, exc.message)
+            persist_catalog_reconciliation_failure(
+                db,
+                run_id,
+                dataset_id,
+                exc.message,
+                owner=FASTAPI_EXECUTION_OWNER,
+                generation=lease.generation,
+            )
         raise
     except Exception as exc:
         message = compact_storage_text(exc, limit=1800)
-        persist_catalog_reconciliation_failure(db, run_id, dataset_id, message)
+        persist_catalog_reconciliation_failure(
+            db,
+            run_id,
+            dataset_id,
+            message,
+            owner=FASTAPI_EXECUTION_OWNER,
+            generation=lease.generation,
+        )
         raise catalog_reconciliation_error(
             "Catalog reconciliation failed.",
             {"jobId": job_id, "runId": run_id, "reason": message},
         ) from exc
+    finally:
+        heartbeat.stop()
+        if not completed:
+            db.rollback()
+            etl_repository.release_run_execution_lease(
+                db,
+                run_id,
+                owner=FASTAPI_EXECUTION_OWNER,
+                generation=lease.generation,
+            )
 
 
 def airflow_catalog_identity(db: Session, job_id: str, run_id: str) -> tuple[ETLJobModel, ETLRunModel]:
@@ -2630,8 +2823,26 @@ def commit_airflow_catalog_reconciliation(
     run_id: str,
     result: dict[str, Any],
     retry_on_create_conflict: bool,
+    owner: str,
+    generation: int,
 ) -> AirflowCatalogReconciliationResponse:
-    job, run = airflow_catalog_identity(db, job_id, run_id)
+    run = etl_repository.get_run_for_execution_fence(
+        db,
+        run_id,
+        owner=owner,
+        generation=generation,
+    )
+    if run is None:
+        raise run_execution_lease_lost(job_id, run_id)
+    job = etl_repository.get_job_for_update(db, job_id)
+    if job is None or run.job_id != job.id or run.airflow_dag_run_id != run_id:
+        db.rollback()
+        raise ApiError(
+            "AIRFLOW_RUN_MISMATCH",
+            "Catalog reconciliation does not match a persisted AskLake Run.",
+            status.HTTP_409_CONFLICT,
+            {"jobId": job_id, "runId": run_id},
+        )
     dataset_id = str(job.dataset_id or "").strip()
     existing_dataset = etl_repository.get_dataset_by_id_for_update(db, dataset_id)
     name_match = etl_repository.get_dataset_by_name(db, job.target)
@@ -2660,6 +2871,8 @@ def commit_airflow_catalog_reconciliation(
         "sparkResult": result,
         "catalogResult": catalog_result,
     }
+    run.execution_owner = None
+    run.execution_lease_expires_at = None
 
     try:
         _, _, dataset = etl_repository.save_command_result(db, job, run, dataset_model)
@@ -2672,6 +2885,8 @@ def commit_airflow_catalog_reconciliation(
                 run_id=run_id,
                 result=result,
                 retry_on_create_conflict=False,
+                owner=owner,
+                generation=generation,
             )
         raise
 
@@ -2684,10 +2899,23 @@ def commit_airflow_catalog_reconciliation(
     )
 
 
-def persist_catalog_reconciliation_failure(db: Session, run_id: str, dataset_id: str, message: str) -> None:
+def persist_catalog_reconciliation_failure(
+    db: Session,
+    run_id: str,
+    dataset_id: str,
+    message: str,
+    *,
+    owner: str,
+    generation: int,
+) -> None:
     try:
         db.rollback()
-        run = etl_repository.get_run_model(db, run_id)
+        run = etl_repository.get_run_for_execution_fence(
+            db,
+            run_id,
+            owner=owner,
+            generation=generation,
+        )
         if run is None:
             return
         failed_at = iso_now()
@@ -2704,6 +2932,8 @@ def persist_catalog_reconciliation_failure(db: Session, run_id: str, dataset_id:
         }
         run.failed_stage = "Catalog reconciliation"
         run.error_summary = compact_message
+        run.execution_owner = None
+        run.execution_lease_expires_at = None
         db.add(run)
         db.commit()
     except Exception:
@@ -3007,6 +3237,7 @@ def spark_result_manifest(result: dict[str, Any], run_id: str) -> dict[str, Any]
             "inputBytes",
             "inputFileCount",
             "inputRows",
+            "kubernetesExecution",
             "outputFileCount",
             "icebergCommit",
             "outputPath",
@@ -5424,6 +5655,10 @@ def spark_rest_mode_enabled() -> bool:
     return str(os.environ.get("ASKLAKE_SPARK_RUNNER") or "").strip().lower() == "rest"
 
 
+def spark_kubernetes_mode_enabled() -> bool:
+    return str(os.environ.get("ASKLAKE_SPARK_RUNNER") or "").strip().lower() == "kubernetes"
+
+
 def spark_rest_poll_timeout_ms() -> int:
     timeout_seconds = bounded_environment_integer(
         "ASKLAKE_SPARK_RUN_TIMEOUT_SECONDS",
@@ -6479,6 +6714,7 @@ def require_continuous_job_access(
     http_method: str,
     suffix: str,
 ) -> ETLJobModel:
+    require_local_continuous_control_plane()
     job = etl_repository.get_job(db, job_id)
     if job is None:
         raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
@@ -6817,6 +7053,8 @@ def continuous_session_dag_steps(
 
 
 def refresh_kafka_continuous_runtime(db: Session, job: ETLJobModel) -> None:
+    if external_continuous_control_plane_enabled():
+        return
     if job.execution_mode != "continuous":
         return
     if db is not None:
@@ -8478,9 +8716,24 @@ def should_run_scheduled_job(job: ETLJobModel, request: ScheduledJobRunRequest) 
     return False, "not_due"
 
 
-def advance_scheduled_job_after_tick(db: Session, job_id: str) -> None:
-    job = etl_repository.get_job(db, job_id)
-    if job is None or not isinstance(job.schedule_policy, dict):
+def scheduled_job_next_run_utc(job: ETLJobModel) -> str:
+    if not isinstance(job.schedule_policy, dict):
+        return ""
+    return str(job.schedule_policy.get("nextRunUtc") or "").strip()
+
+
+def scheduled_job_occurrence_is_claimable(job: ETLJobModel, expected_next_run_utc: str) -> bool:
+    if not expected_next_run_utc or scheduled_job_next_run_utc(job) != expected_next_run_utc:
+        return False
+    should_run, reason = should_run_scheduled_job(
+        job,
+        ScheduledJobRunRequest(force=False, job_id=job.id, kafka_only=False),
+    )
+    return should_run and reason == "due"
+
+
+def advance_claimed_scheduled_job(job: ETLJobModel) -> None:
+    if not isinstance(job.schedule_policy, dict):
         return
 
     next_run_utc = next_scheduled_run_utc(job)
@@ -8489,7 +8742,6 @@ def advance_scheduled_job_after_tick(db: Session, job_id: str) -> None:
         job.next_run = "-"
         job.status = "stopped"
         job.last_state = "스케줄 종료"
-        etl_repository.save_job(db, job)
         return
 
     job.schedule_policy = {
@@ -8497,7 +8749,6 @@ def advance_scheduled_job_after_tick(db: Session, job_id: str) -> None:
         "nextRunUtc": next_run_utc,
     }
     job.next_run = next_run_utc
-    etl_repository.save_job(db, job)
 
 
 def next_scheduled_run_utc(job: ETLJobModel) -> str:

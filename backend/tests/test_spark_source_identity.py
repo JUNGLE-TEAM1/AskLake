@@ -1,4 +1,5 @@
 import importlib
+from contextlib import ExitStack
 import os
 from pathlib import Path
 import sys
@@ -93,6 +94,9 @@ class FakeFrame:
 
     def withColumn(self, _name: str, _value):
         return self
+
+    def inputFiles(self) -> list[str]:
+        return []
 
 
 class FakeSpark:
@@ -322,33 +326,45 @@ class SparkSourceIdentityTests(unittest.TestCase):
         original_publish = spark_job_run.publish_spark_paths
         spark_job_run.delete_spark_path = lambda _spark, _path: None
         spark_job_run.publish_spark_paths = lambda _spark, _staging, _output, _quarantine: None
-        with (
-            patch.dict(os.environ, environment, clear=True),
-            patch.object(spark_job_run, "load_spark_job_manifest", return_value={"sourceCollection": collection}),
-            patch.object(spark_job_run, "make_spark", return_value=spark),
-            patch.object(
+        with ExitStack() as stack:
+            stack.enter_context(patch.dict(os.environ, environment, clear=True))
+            stack.enter_context(patch.object(
+                spark_job_run,
+                "load_spark_job_manifest",
+                return_value={"sourceCollection": collection},
+            ))
+            stack.enter_context(patch.object(spark_job_run, "make_spark", return_value=spark))
+            verify = stack.enter_context(patch.object(
                 spark_job_run,
                 "verify_spark_source_inventory",
                 side_effect=[None, ValueError("SOURCE_OBJECT_IDENTITY_MISMATCH key=incoming/a.jsonl phase=after_read")],
-            ) as verify,
-            patch.object(spark_job_run, "read_source", return_value=frame),
-            patch.object(spark_job_run, "normalize_columns", return_value=frame),
-            patch.object(spark_job_run, "apply_schema_contract", return_value=frame),
-            patch.object(spark_job_run, "apply_transform_steps", return_value=frame),
-            patch.object(spark_job_run, "select_final_schema_columns", return_value=frame),
-            patch.object(spark_job_run, "resolve_partition_columns", return_value=[]),
-            patch.object(spark_job_run, "plan_review_row_analysis_checks", return_value=[]),
-            patch.object(spark_job_run, "evaluate_quality_rules", return_value={"status": "pass"}),
-            patch.object(spark_job_run, "evaluate_custom_csv_classifier_checks", return_value=[]),
-            patch.object(spark_job_run, "evaluate_review_row_analysis_checks", return_value=[]),
-            patch.object(spark_job_run, "text_structuring_manifest", return_value={"definition": {"columns": []}}),
-            patch.object(spark_job_run, "collect_sample_rows", return_value=[]),
-            patch.object(spark_job_run, "write_report", write_report),
-            patch.object(spark_job_run, "cleanup_failed_output_paths", return_value=[]) as cleanup,
-            patch.object(spark_job_run.F, "lit", return_value="run-1"),
-            patch.object(spark_job_run.F, "current_timestamp", return_value="now"),
-            patch("builtins.print"),
-        ):
+            ))
+            for name, value in (
+                ("read_source", frame),
+                ("normalize_columns", frame),
+                ("apply_transform_steps", frame),
+                ("select_final_schema_columns", frame),
+                ("resolve_partition_columns", []),
+                ("plan_review_row_analysis_checks", []),
+                ("evaluate_quality_rules", {"status": "pass"}),
+                ("evaluate_custom_csv_classifier_checks", []),
+                ("evaluate_review_row_analysis_checks", []),
+                ("text_structuring_manifest", {"definition": {"columns": []}}),
+                ("collect_sample_rows", []),
+            ):
+                stack.enter_context(patch.object(spark_job_run, name, return_value=value))
+            stack.enter_context(patch.object(
+                spark_job_run,
+                "apply_schema_contract_with_count",
+                return_value=(frame, 1),
+            ))
+            stack.enter_context(patch.object(spark_job_run, "write_report", write_report))
+            cleanup = stack.enter_context(
+                patch.object(spark_job_run, "cleanup_failed_output_paths", return_value=[])
+            )
+            stack.enter_context(patch.object(spark_job_run.F, "lit", return_value="run-1"))
+            stack.enter_context(patch.object(spark_job_run.F, "current_timestamp", return_value="now"))
+            stack.enter_context(patch("builtins.print"))
             exit_code = spark_job_run.main()
         spark_job_run.delete_spark_path = original_delete
         spark_job_run.publish_spark_paths = original_publish

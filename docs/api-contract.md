@@ -1530,7 +1530,7 @@ type AirflowSparkExecutionRequest = {
 };
 ```
 
-이 endpoint는 브라우저용 API가 아니다. FastAPI는 path `runId`, body `jobId`, 저장된 `etl_runs.airflow_dag_run_id`가 모두 일치하는지 확인한 뒤 PySpark를 실행한다. 일반 non-Kafka Job은 실행 전에 backend-owned `icebergTarget`을 보정하고 Spark DataFrameWriterV2가 공유 JDBC catalog에 commit한다. 성공한 manifest가 이미 `taskStates.sparkResult`에 있으면 같은 Airflow task retry는 물리 출력을 다시 만들지 않고 기존 manifest를 반환한다.
+이 endpoint는 브라우저용 API가 아니다. FastAPI는 path `runId`, body `jobId`, 저장된 `etl_runs.airflow_dag_run_id`가 모두 일치하는지 확인한 뒤 PySpark를 실행한다. 실행과 다음 Catalog reconciliation은 `etl_runs.execution_owner`, `execution_lease_expires_at`, `execution_generation`으로 같은 `runId`를 원자적으로 선점한다. 작업 중 lease를 갱신하며 generation이 바뀐 이전 owner는 결과를 저장할 수 없다. 일반 non-Kafka Job은 실행 전에 backend-owned `icebergTarget`을 보정하고 Spark DataFrameWriterV2가 공유 JDBC catalog에 commit한다. 성공한 manifest가 이미 `taskStates.sparkResult`에 있으면 같은 Airflow task retry는 물리 출력을 다시 만들지 않고 기존 manifest를 반환한다.
 
 PostgreSQL Snapshot source는 Source/Schema Preview와 실행 입력을 분리한다. `schemaSampleRows`, `__Schema Sample Scope`, `__Sample Row Limit`, `ASKLAKE_SPARK_RUN_ROW_LIMIT`은 PostgreSQL `run`/`retry`의 행 상한이 아니다. 실행 시 저장된 connector identity와 credential로 선택한 base table을 `REPEATABLE READ READ ONLY` transaction과 cursor batch로 끝까지 JSONL export한 뒤 Spark에 전달한다. batch 크기는 `ASKLAKE_POSTGRES_EXECUTION_BATCH_ROWS`로 조절하되 전체 행 수는 자르지 않는다. 테이블이 비어 있거나 export가 중단되면 Run을 실패시키고 Catalog materialization을 만들지 않는다.
 
@@ -3806,3 +3806,15 @@ type PermissionGrant = {
 현재 frontend의 `permissionTemplate`은 독립 정책 템플릿이 아니라 group name을 저장하며, 템플릿 선택은 해당 그룹을 선택 상태로 만든다. 대상별 action 직접 편집은 구현하지 않았고, group은 options API action을, user는 `view`, `run`을 사용한다. `owner`는 자유 문자열 입력이며 현재 이름 일치 owner fallback에도 사용된다. options API는 민감 데이터 분류나 governance 안전 판정을 제공하지 않으며, 화면의 민감 데이터 상태는 frontend 컬럼명 정규식 추정값이다.
 
 권한 옵션 조회는 admin actor만 허용한다. live frontend는 API 오류 시 grant 화면 안에 재시도 경로를 표시하고 다음 단계 이동을 막는다. `VITE_USE_MOCK_API=true`에서는 동일 response shape의 fixture를 사용하되 최종 Job request shape는 live와 동일하다.
+
+## EKS MVP execution and Continuous ownership contract
+
+- EKS workload는 `ASKLAKE_CONTINUOUS_CONTROL_PLANE=external_ec2`를 고정한다.
+- 일반 Job 목록은 Continuous Job을 숨기고 Snapshot/SQL Job만 현재 EKS control-plane resource로 노출한다.
+- Continuous 생성·상세·수정·삭제·command·전용 runtime 조회와 Continuous dataset freshness/dashboard widget data 조회는 `409 CONTINUOUS_CONTROL_OWNED_BY_EC2`와 `details.controlPlane="external_ec2"`를 반환한다.
+- EKS process는 Continuous runtime background sync를 시작하지 않는다.
+- FastAPI Spark/Catalog singleton은 `etl_runs` row의 owner, expiry, generation을 사용한다. 별도 lease table은 없다.
+- `ASKLAKE_SPARK_EXECUTION_LEASE_SECONDS` 기본값은 60초이고 heartbeat는 기본 20초다. lease TTL은 `ASKLAKE_SPARK_RUN_TIMEOUT_SECONDS`와 독립적이며 최대 실행시간이 아니다.
+- `ASKLAKE_SPARK_RUN_TIMEOUT_SECONDS`는 EKS에서 7200초로 주입하며 SparkApplication polling의 절대 제한이다. lease heartbeat는 이 timeout을 연장하지 않는다.
+- 같은 `runId`의 활성 lease가 있으면 중복 요청은 `409 SPARK_RUN_ALREADY_EXECUTING`이다. 만료 후 takeover는 generation을 증가시키고 이전 generation의 결과 저장을 fence한다.
+- `ASKLAKE_SPARK_RUNNER=kubernetes`는 `runId` 기반 deterministic name으로 `SparkApplication`을 create/poll하고 driver result marker를 수집한다. create 응답 유실 또는 `409`는 기존 object의 run/job/image identity가 모두 일치할 때만 복구하며, timeout이면 해당 object를 삭제한다. local/REST runner로 fallback하지 않는다.

@@ -28,6 +28,10 @@
         "nodeSelector": {
           "type": "object",
           "minProperties": 1,
+          "required": ["kubernetes.io/arch"],
+          "properties": {
+            "kubernetes.io/arch": { "const": "amd64" }
+          },
           "additionalProperties": { "type": "string", "minLength": 1 }
         }
       }

@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -15,6 +16,7 @@ import { fieldValue, normalizeColumnName } from "./profile.mjs";
 const backendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const scriptsDir = path.join(backendDir, "scripts");
 const sparkRestClientScript = path.join(scriptsDir, "spark-rest-client.mjs");
+const sparkKubernetesClientScript = path.join(scriptsDir, "spark-kubernetes-client.mjs");
 const sparkHostScriptsDir = path.resolve(process.env.ASKLAKE_SPARK_HOST_SCRIPTS_DIR || scriptsDir);
 const ivyDir = path.resolve(process.env.ASKLAKE_SPARK_IVY_DIR || path.join(backendDir, "tmp", "spark-ivy"));
 const reportDir = path.resolve(process.env.ASKLAKE_SPARK_REPORT_DIR || path.join(backendDir, "tmp", "spark-runs"));
@@ -50,12 +52,20 @@ export function runSparkPipeline(job, command, runId, options = {}) {
 }
 
 function runSparkPipelineWithSource(job, command, runId, source, executionMode, options = {}) {
+  if (executionMode === "kubernetes" && !usesS3A(source.path) && source.format !== "iceberg") {
+    throw sparkConfigurationError(
+      `Kubernetes Spark requires an S3 or Iceberg source; backend-local source paths cannot be mounted. source=${source.path}`,
+    );
+  }
   const output = sparkOutputPath(job, runId);
   const reportPath = path.join(reportDir, `${runId}.json`);
   const dockerReportPath = `${reportContainerDir}/${runId}.json`;
   const manifestPath = path.join(reportDir, `${runId}.manifest.json`);
   const dockerManifestPath = `${reportContainerDir}/${runId}.manifest.json`;
   const packages = sparkPackages(job, source, output);
+  if (executionMode === "kubernetes" && String(process.env.ASKLAKE_KAFKA_AUTH_MODE || "").toLowerCase() === "iam") {
+    packages.push(process.env.ASKLAKE_SPARK_MSK_IAM_AUTH_PACKAGE || "software.amazon.msk:aws-msk-iam-auth:2.3.6");
+  }
   const packageArgs = sparkPackageArgs(packages);
   const localLlmEndpoint = process.env.ASKLAKE_LOCAL_LLM_ENDPOINT_IN_DOCKER
     || process.env.ASKLAKE_LOCAL_LLM_ENDPOINT
@@ -64,9 +74,10 @@ function runSparkPipelineWithSource(job, command, runId, source, executionMode, 
   const localLlmTimeoutSeconds = process.env.ASKLAKE_LOCAL_LLM_TIMEOUT_SECONDS
     || String(Math.ceil(Number(process.env.ASKLAKE_LOCAL_LLM_TIMEOUT_MS || 120000) / 1000));
   const reviewAnalysisRuntime = process.env.ASKLAKE_REVIEW_ANALYSIS_RUNTIME || "scalable";
-  const icebergEnvironment = sparkIcebergEnvironment(job);
+  const icebergEnvironment = sparkIcebergEnvironment(job, executionMode);
   assertSparkRestStorageCredentials(job.sourceConfig ?? [], executionMode);
-  writeSparkJobManifest(manifestPath, job);
+  const jobManifest = sparkJobManifest(job);
+  writeSparkJobManifest(manifestPath, jobManifest);
   const storageEnvironment = Object.fromEntries(
     objectStorageDockerEnv(job.sourceConfig ?? []).filter(([name]) => (
       executionMode === "docker"
@@ -80,9 +91,10 @@ function runSparkPipelineWithSource(job, command, runId, source, executionMode, 
     ASKLAKE_SPARK_OUTPUT_PATH: output.sparkPath,
     ASKLAKE_SPARK_RUN_ROW_LIMIT: sparkRowLimitFromJob(job),
     ASKLAKE_SPARK_RUN_ID: runId,
-    ASKLAKE_SPARK_JOB_MANIFEST_FILE: dockerManifestPath,
-    ASKLAKE_SPARK_TEXT_STRUCTURING_DEFINITION_FILE: dockerManifestPath,
-    ASKLAKE_SPARK_REPORT_FILE: dockerReportPath,
+    ASKLAKE_SPARK_JOB_MANIFEST_FILE: executionMode === "kubernetes" ? "" : dockerManifestPath,
+    ASKLAKE_SPARK_JOB_MANIFEST_JSON: executionMode === "kubernetes" ? JSON.stringify(jobManifest) : "",
+    ASKLAKE_SPARK_TEXT_STRUCTURING_DEFINITION_FILE: executionMode === "kubernetes" ? "" : dockerManifestPath,
+    ASKLAKE_SPARK_REPORT_FILE: executionMode === "kubernetes" ? "" : dockerReportPath,
     ASKLAKE_SPARK_APP_NAME: `asklake-${command}-${job.id}`,
     ASKLAKE_LOCAL_LLM_ENDPOINT: localLlmEndpoint,
     ASKLAKE_LOCAL_LLM_MODEL: localLlmModel,
@@ -189,8 +201,20 @@ function runSparkPipelineWithSource(job, command, runId, source, executionMode, 
     "/work/scripts/spark_job_run.py",
   ];
 
-  let result = executionMode === "rest"
-    ? runSparkRestSubmission(
+  let result = executionMode === "kubernetes"
+    ? runSparkKubernetesApplication(
+      createSparkKubernetesApplication({
+        appName: sparkEnvironment.ASKLAKE_SPARK_APP_NAME,
+        environmentVariables: sparkEnvironment,
+        jobId: job.id,
+        packages,
+        runId,
+      }),
+      positiveInteger(options.sparkRestTimeoutMs, sparkRunTimeoutMs()),
+      process.env,
+    )
+    : executionMode === "rest"
+      ? runSparkRestSubmission(
       createSparkRestSubmission({
         appName: sparkEnvironment.ASKLAKE_SPARK_APP_NAME,
         environmentVariables: sparkEnvironment,
@@ -203,8 +227,8 @@ function runSparkPipelineWithSource(job, command, runId, source, executionMode, 
       {
         stateFile: sparkRestStateFileForRun(runId, options.sparkRestStateFile),
       },
-    )
-    : runSparkSubmitContainer(dockerArgs);
+      )
+      : runSparkSubmitContainer(dockerArgs);
   let report = readSparkReport(reportPath, result.stdout);
   if (executionMode === "docker" && report.status !== "success" && shouldRetryDockerWait(result)) {
     rmSync(reportPath, { force: true });
@@ -240,13 +264,13 @@ export function sparkExecutionMode(environment = process.env) {
   const configured = String(environment.ASKLAKE_SPARK_RUNNER || "").trim().toLowerCase();
   const production = [environment.APP_ENV, environment.NODE_ENV]
     .some((value) => ["prod", "production"].includes(String(value || "").trim().toLowerCase()));
-  if (production && configured !== "rest") {
+  if (production && !new Set(["rest", "kubernetes"]).has(configured)) {
     throw sparkConfigurationError(
-      "Production Spark execution requires ASKLAKE_SPARK_RUNNER=rest; Docker-based submission is not allowed.",
+      "Production Spark execution requires ASKLAKE_SPARK_RUNNER=rest or kubernetes; Docker-based submission is not allowed.",
     );
   }
   const mode = configured || "docker";
-  if (!new Set(["docker", "rest"]).has(mode)) {
+  if (!new Set(["docker", "rest", "kubernetes"]).has(mode)) {
     throw sparkConfigurationError(`Unsupported ASKLAKE_SPARK_RUNNER mode: ${mode}`);
   }
   return mode;
@@ -321,6 +345,180 @@ export function createSparkRestSubmission({
   };
 }
 
+function kubernetesIdentifier(value, fallback = "run") {
+  const normalized = String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .replace(/-+/g, "-");
+  return normalized || fallback;
+}
+
+export function sparkKubernetesApplicationName(runId) {
+  const normalized = kubernetesIdentifier(runId);
+  const digest = createHash("sha256").update(String(runId || "")).digest("hex").slice(0, 10);
+  return `asklake-run-${normalized.slice(0, 38).replace(/-+$/g, "")}-${digest}`;
+}
+
+function kubernetesEnvironmentVariables(environmentVariables) {
+  return Object.entries(stringValues(environmentVariables))
+    .filter(([, value]) => value !== "")
+    .map(([name, value]) => ({ name, value }));
+}
+
+function requiredDigestImage(environment) {
+  const image = String(environment.ASKLAKE_SPARK_KUBERNETES_IMAGE || "").trim();
+  if (!/@sha256:[0-9a-f]{64}$/.test(image)) {
+    throw sparkConfigurationError("ASKLAKE_SPARK_KUBERNETES_IMAGE must use repository@sha256:digest format.");
+  }
+  return image;
+}
+
+function sparkRuntimeSecretEnvironment(environment) {
+  const secretName = String(environment.ASKLAKE_SPARK_KUBERNETES_RUNTIME_SECRET || "asklake-spark-runtime").trim();
+  const mappings = [
+    ["ASKLAKE_SPARK_ICEBERG_JDBC_URL", environment.ASKLAKE_SPARK_KUBERNETES_JDBC_URL_KEY || "ASKLAKE_SPARK_ICEBERG_JDBC_URL"],
+    ["ASKLAKE_SPARK_ICEBERG_JDBC_USER", environment.ASKLAKE_SPARK_KUBERNETES_JDBC_USER_KEY || "ASKLAKE_SPARK_ICEBERG_JDBC_USER"],
+    ["ASKLAKE_SPARK_ICEBERG_JDBC_PASSWORD", environment.ASKLAKE_SPARK_KUBERNETES_JDBC_PASSWORD_KEY || "ASKLAKE_SPARK_ICEBERG_JDBC_PASSWORD"],
+  ];
+  return mappings.map(([name, key]) => ({
+    name,
+    valueFrom: { secretKeyRef: { key: String(key), name: secretName } },
+  }));
+}
+
+export function createSparkKubernetesApplication({
+  appName,
+  environmentVariables = {},
+  jobId,
+  packages = [],
+  runId,
+}, environment = process.env) {
+  const namespace = String(environment.ASKLAKE_SPARK_KUBERNETES_NAMESPACE || "asklake-dev").trim();
+  const serviceAccount = String(environment.ASKLAKE_SPARK_KUBERNETES_SERVICE_ACCOUNT || "asklake-spark").trim();
+  const image = requiredDigestImage(environment);
+  const imageDigest = image.slice(image.lastIndexOf("@") + 1);
+  const name = sparkKubernetesApplicationName(runId);
+  const runLabel = kubernetesIdentifier(runId).slice(0, 63).replace(/-+$/g, "") || "run";
+  const jobLabel = kubernetesIdentifier(jobId, "job").slice(0, 63).replace(/-+$/g, "") || "job";
+  const driverEnvironment = [
+    ...kubernetesEnvironmentVariables(environmentVariables),
+    ...sparkRuntimeSecretEnvironment(environment),
+  ];
+  const executorEnvironmentNames = new Set([
+    "ASKLAKE_LOCAL_LLM_ENDPOINT",
+    "ASKLAKE_LOCAL_LLM_MAX_INPUT_CHARS",
+    "ASKLAKE_LOCAL_LLM_MODEL",
+    "ASKLAKE_LOCAL_LLM_TIMEOUT_SECONDS",
+    "ASKLAKE_OBJECT_STORAGE_PROVIDER",
+    "ASKLAKE_REVIEW_ANALYSIS_RUNTIME",
+    "ASKLAKE_REVIEW_TEXT_MODEL_ROOT",
+    "AWS_REGION",
+    "S3_ENDPOINT",
+    "S3_FORCE_PATH_STYLE",
+  ]);
+  const executorEnvironment = driverEnvironment.filter((item) => executorEnvironmentNames.has(item.name));
+  const packageList = [...new Set(packages.map((item) => String(item || "").trim()).filter(Boolean))];
+  return {
+    apiVersion: "sparkoperator.k8s.io/v1beta2",
+    kind: "SparkApplication",
+    metadata: {
+      annotations: {
+        "asklake.io/image-digest": imageDigest,
+        "asklake.io/job-id": String(jobId),
+        "asklake.io/run-id": String(runId),
+      },
+      labels: {
+        "app.kubernetes.io/name": "asklake-spark",
+        "app.kubernetes.io/part-of": "asklake",
+        "asklake.io/job-id": jobLabel,
+        "asklake.io/run-id": runLabel,
+      },
+      name,
+      namespace,
+    },
+    spec: {
+      deps: { packages: packageList },
+      driver: {
+        coreLimit: String(environment.ASKLAKE_SPARK_KUBERNETES_DRIVER_CORES || "1"),
+        cores: positiveInteger(environment.ASKLAKE_SPARK_KUBERNETES_DRIVER_CORES, 1),
+        env: driverEnvironment,
+        labels: { "asklake.io/run-id": runLabel },
+        memory: String(environment.ASKLAKE_SPARK_KUBERNETES_DRIVER_MEMORY || "2g"),
+        memoryOverhead: String(environment.ASKLAKE_SPARK_KUBERNETES_DRIVER_MEMORY_OVERHEAD || "512m"),
+        serviceAccount,
+      },
+      executor: {
+        coreLimit: String(environment.ASKLAKE_SPARK_KUBERNETES_EXECUTOR_CORES || "2"),
+        cores: positiveInteger(environment.ASKLAKE_SPARK_KUBERNETES_EXECUTOR_CORES, 2),
+        env: executorEnvironment,
+        instances: positiveInteger(environment.ASKLAKE_SPARK_KUBERNETES_EXECUTOR_INSTANCES, 1),
+        labels: { "asklake.io/run-id": runLabel },
+        memory: String(environment.ASKLAKE_SPARK_KUBERNETES_EXECUTOR_MEMORY || "4g"),
+        memoryOverhead: String(environment.ASKLAKE_SPARK_KUBERNETES_EXECUTOR_MEMORY_OVERHEAD || "1g"),
+        serviceAccount,
+      },
+      hadoopConf: {
+        "fs.s3a.aws.credentials.provider": "software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider",
+        "fs.s3a.endpoint.region": String(environment.AWS_REGION || "ap-northeast-2"),
+        "fs.s3a.path.style.access": "false",
+      },
+      image,
+      imagePullPolicy: "IfNotPresent",
+      mainApplicationFile: String(
+        environment.ASKLAKE_SPARK_KUBERNETES_MAIN_APPLICATION_FILE
+          || "/opt/asklake/scripts/spark_job_run.py",
+      ).startsWith("local:///")
+        ? String(environment.ASKLAKE_SPARK_KUBERNETES_MAIN_APPLICATION_FILE)
+        : `local://${String(
+          environment.ASKLAKE_SPARK_KUBERNETES_MAIN_APPLICATION_FILE
+            || "/opt/asklake/scripts/spark_job_run.py",
+        )}`,
+      mode: "cluster",
+      pythonVersion: "3",
+      restartPolicy: { type: "Never" },
+      sparkConf: {
+        "spark.app.name": String(appName || `asklake-${runLabel}`),
+        "spark.kubernetes.executor.deleteOnTermination": "true",
+        "spark.sql.shuffle.partitions": String(environment.ASKLAKE_SPARK_SQL_SHUFFLE_PARTITIONS || "32"),
+      },
+      sparkVersion: String(environment.ASKLAKE_SPARK_VERSION || "4.0.1"),
+      timeToLiveSeconds: 3_600,
+      type: "Python",
+    },
+  };
+}
+
+export function runSparkKubernetesApplication(application, timeoutMs, environment = process.env) {
+  const result = spawnSync(process.execPath, [sparkKubernetesClientScript], {
+    cwd: backendDir,
+    encoding: "utf8",
+    env: environment,
+    input: JSON.stringify({
+      application,
+      pollIntervalMs: positiveInteger(environment.ASKLAKE_SPARK_KUBERNETES_POLL_INTERVAL_MS, 2_000),
+      timeoutMs: positiveInteger(timeoutMs, 7_200_000),
+    }),
+    maxBuffer: 32 * 1024 * 1024,
+    timeout: positiveInteger(timeoutMs, 7_200_000) + SPARK_REST_BRIDGE_GRACE_MS,
+  });
+  if (result.status !== 0 || result.error || result.signal) return result;
+  const marker = String(result.stdout || "").split(/\r?\n/)
+    .findLast((line) => line.startsWith("ASKLAKE_SPARK_KUBERNETES_RESULT="));
+  if (!marker) {
+    return { ...result, status: 1, stderr: `${result.stderr || ""}\nKubernetes Spark client returned no result marker.` };
+  }
+  const payload = safeJsonParse(marker.slice("ASKLAKE_SPARK_KUBERNETES_RESULT=".length));
+  if (!payload?.report) {
+    return { ...result, status: 1, stderr: `${result.stderr || ""}\nKubernetes Spark client returned an invalid result.` };
+  }
+  return {
+    ...result,
+    status: 0,
+    stdout: `ASKLAKE_SPARK_JOB_RESULT=${JSON.stringify(payload.report)}\n`,
+  };
+}
+
 export function runSparkRestSubmission(submission, timeoutMs, environment = process.env, options = {}) {
   const runtime = sparkRestRuntimeConfig(environment);
   const effectiveTimeoutMs = positiveInteger(timeoutMs, 90_000);
@@ -356,9 +554,9 @@ export function runSparkRestSubmission(submission, timeoutMs, environment = proc
   };
 }
 
-function writeSparkJobManifest(manifestPath, job) {
+export function sparkJobManifest(job) {
   const textStructuringColumns = textStructuringDefinitionColumns(job.transformSteps ?? []);
-  const manifest = {
+  return {
     createdAt: new Date().toISOString(),
     icebergTarget: job.icebergTarget ?? null,
     jobId: job.id,
@@ -388,6 +586,9 @@ function writeSparkJobManifest(manifestPath, job) {
     },
     transformSteps: job.transformSteps ?? [],
   };
+}
+
+function writeSparkJobManifest(manifestPath, manifest) {
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 }
 
@@ -582,7 +783,7 @@ export function sparkPackages(job, source, output) {
   return [...new Set(packages.filter((item) => item && item !== "none"))];
 }
 
-export function sparkIcebergEnvironment(job) {
+export function sparkIcebergEnvironment(job, executionMode = sparkExecutionMode()) {
   if (!job?.icebergTarget) return {};
   const database = String(process.env.TRINO_ICEBERG_JDBC_DATABASE || process.env.POSTGRES_DB || "asklake");
   const warehouseBucket = String(process.env.TRINO_ICEBERG_WAREHOUSE_BUCKET || "").trim();
@@ -597,23 +798,30 @@ export function sparkIcebergEnvironment(job) {
   ).trim();
   const jdbcUser = String(process.env.TRINO_ICEBERG_JDBC_USER || "").trim();
   const jdbcPassword = String(process.env.TRINO_ICEBERG_JDBC_PASSWORD || "");
-  if (!jdbcUrl || !jdbcUser || !jdbcPassword || !warehouse) {
+  if (!warehouse) {
     throw sparkConfigurationError(
-      "Iceberg Spark execution requires TRINO_ICEBERG_JDBC_USER, "
-      + "TRINO_ICEBERG_JDBC_PASSWORD, and TRINO_ICEBERG_WAREHOUSE_BUCKET "
-      + "or ASKLAKE_SPARK_ICEBERG_WAREHOUSE.",
+      "Iceberg Spark execution requires TRINO_ICEBERG_WAREHOUSE_BUCKET or ASKLAKE_SPARK_ICEBERG_WAREHOUSE.",
     );
   }
-  return {
+  const environment = {
     ASKLAKE_SPARK_ICEBERG_CATALOG_NAME: String(
       process.env.ASKLAKE_SPARK_ICEBERG_CATALOG_NAME
         || process.env.TRINO_ICEBERG_CATALOG_NAME
         || "asklake",
     ),
+    ASKLAKE_SPARK_ICEBERG_WAREHOUSE: warehouse,
+  };
+  if (executionMode === "kubernetes") return environment;
+  if (!jdbcUrl || !jdbcUser || !jdbcPassword) {
+    throw sparkConfigurationError(
+      "Iceberg Spark execution requires TRINO_ICEBERG_JDBC_USER and TRINO_ICEBERG_JDBC_PASSWORD.",
+    );
+  }
+  return {
+    ...environment,
     ASKLAKE_SPARK_ICEBERG_JDBC_PASSWORD: jdbcPassword,
     ASKLAKE_SPARK_ICEBERG_JDBC_URL: jdbcUrl,
     ASKLAKE_SPARK_ICEBERG_JDBC_USER: jdbcUser,
-    ASKLAKE_SPARK_ICEBERG_WAREHOUSE: warehouse,
   };
 }
 

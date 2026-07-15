@@ -5,7 +5,7 @@ import { NodeHttpHandler } from "@smithy/node-http-handler";
 import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadKafkaJs } from "./kafka-codecs.mjs";
+import { kafkaSecurityOptions, loadKafkaJs } from "./kafka-codecs.mjs";
 import {
   isMinioProvider,
   objectStorageDockerEnv,
@@ -763,6 +763,7 @@ export async function testKafkaSource(fields, sourceType = "Stream / Kafka") {
   const sampleGroupId = `asklake-schema-preview-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const samplePolicy = samplePolicyForFields(fields, "rows");
   const kafka = new Kafka({
+    ...await kafkaSecurityOptions(),
     brokers: [broker],
     clientId: "asklake-source-test",
     connectionTimeout: sourceConnectTimeoutMs("ASKLAKE_KAFKA_CONNECT_TIMEOUT_MS", 3000),
@@ -2005,6 +2006,7 @@ async function inspectParquetObjectWithJs({ bucket, client, key, rowLimit }) {
 async function sampleKafkaMessages({ broker, groupId, rowLimit, topic }) {
   const { Kafka } = await loadKafkaJs();
   const kafka = new Kafka({
+    ...await kafkaSecurityOptions(),
     brokers: [broker],
     clientId: "asklake-source-sampler",
     connectionTimeout: sourceConnectTimeoutMs("ASKLAKE_KAFKA_CONNECT_TIMEOUT_MS", 3000),
