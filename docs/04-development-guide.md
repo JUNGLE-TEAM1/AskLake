@@ -391,10 +391,25 @@ cd backend
 npm run kafka:reviews-replay -- --input /path/to/amazon_reviews.jsonl.gz --limit 100 --rate 100
 ```
 
-배포 환경의 클릭 로그를 Kafka Continuous 입력으로 재사용할 때는 raw S3 object를 서버의 허용된 replay 디렉터리로 내려받고, 10필드 로그를 표준 replay JSONL로 변환한 뒤 기존 producer를 사용한다. 클릭 필드는 `raw.event_time`, `raw.event_id`, `raw.user_id`, `raw.session_id`, `raw.event_type`, `raw.product_id`, `raw.page_url`, `raw.device_type`, `raw.referrer`, `raw.position`에 보존된다.
+배포 환경의 클릭 로그를 Kafka Continuous 입력으로 재사용할 때는 raw S3 object를 서버의 허용된 replay 디렉터리로 내려받는다. 레코드 구조화 데모에서는 변환 CLI를 거치지 않고 `payloadMode=raw_text`로 10필드 원문 줄을 그대로 전송한다. 기존 JSON envelope 회귀 검증이 필요할 때만 아래 변환 CLI로 `raw.*` 필드를 가진 JSONL을 만든다.
 
 ```bash
 aws s3 cp s3://<raw-bucket>/commerce/click-events.log /var/lib/asklake/replay-input/click-events.log
+
+# 레코드 구조화 데모: 원문 한 줄을 Kafka value로 그대로 전송
+curl -X POST https://<asklake-host>/api/etl/kafka/replay-producer \
+  -H 'Content-Type: application/json' \
+  -b '<session-cookie>' \
+  -d '{
+    "topic": "synthetic-commerce.click-events.raw",
+    "inputPath": "click-events.log",
+    "payloadMode": "raw_text",
+    "rate": 100,
+    "batchSize": 100,
+    "loop": false
+  }'
+
+# 기존 JSON envelope 회귀 검증 경로
 cd backend
 npm run kafka:click-log:convert -- \
   --input /var/lib/asklake/replay-input/click-events.log \

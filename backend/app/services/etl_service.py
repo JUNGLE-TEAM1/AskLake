@@ -5873,6 +5873,7 @@ def run_kafka_continuous_worker(
             "ruleFingerprint": rule_fingerprint,
             "ruleOutputSchema": compiled_rules.result.output_schema,
             "rules": canonical_rules,
+            "recordParsing": job.record_parsing or None,
             "schemaColumns": job.schema_columns or [],
             "schemaFingerprint": job.schema_fingerprint or "",
             "schemaEvolutionPolicy": config.get("schemaEvolutionPolicy") or {},
@@ -7991,8 +7992,8 @@ def validate_create_request(request: CreatePipelineRequest) -> None:
     )
     if request.record_parsing and request.record_parsing.enabled:
         parsing_names = [normalize_column_name(column.name) for column in request.record_parsing.columns]
-        if request.source_type != "File / S3":
-            missing.append("recordParsingSource=File / S3")
+        if request.source_type != "File / S3" and "kafka" not in request.source_type.lower():
+            missing.append("recordParsingSource=File / S3 or Kafka")
         if request.record_parsing.expected_field_count <= 0:
             missing.append("recordParsing.expectedFieldCount")
         if len(request.record_parsing.columns) != request.record_parsing.expected_field_count:

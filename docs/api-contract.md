@@ -657,6 +657,7 @@ Snapshot Job은 기존 스케줄 단계에서 수동 또는 반복 실행 정책
 type KafkaReplayProducerRequest = {
   topic?: string; // default: reviews.raw
   inputPath?: string; // ASKLAKE_REPLAY_INPUT_DIR 아래 상대 경로
+  payloadMode?: "json_envelope" | "raw_text"; // default: json_envelope
   rate?: number; // default: 10 messages/sec
   batchSize?: number; // default: 100
   progressEvery?: number; // default: 100
@@ -670,7 +671,7 @@ type KafkaReplayProducerRequest = {
 };
 ```
 
-loop는 cycle별 `event_id` suffix와 전역 증가 `offset`을 보장한다. burst 세 필드는 함께 지정해야 하며, loop 중 매 `burstIntervalSeconds`마다 `burstMinMessages`~`burstMaxMessages`의 랜덤 건수를 한 burst로 전송한다. `DELETE`는 SIGTERM을 보내 현재 send batch를 마친 뒤 연결을 닫도록 요청하며, 응답은 `running`, `pid`, `sentMessages`, `completedCycles`, bounded `logs`를 반환한다.
+`payloadMode=json_envelope`은 기존 JSONL fixture를 파싱하고 cycle별 `event_id` suffix와 전역 증가 `offset`을 보장한다. `payloadMode=raw_text`는 `inputPath`를 필수로 받고 `.txt`, `.log`, `.jsonl` 또는 gzip 파일의 비어 있지 않은 각 줄을 JSON 변환 없이 Kafka message value 그대로 전송한다. raw mode에서는 파일 확장자가 아니라 실제 줄 내용이 원문 계약이다. 따라서 `{...}`로 시작하는 기존 JSONL을 지정하면 Kafka JSON으로 계속 탐색되며 레코드 구조화가 열리지 않는다. 레코드 구조화 데모에는 공백 구분 10필드가 그대로 저장된 `click-events.log`를 지정해야 한다. burst 세 필드는 함께 지정해야 하며, loop 중 매 `burstIntervalSeconds`마다 `burstMinMessages`~`burstMaxMessages`의 랜덤 건수를 한 burst로 전송한다. `DELETE`는 SIGTERM을 보내 현재 send batch를 마친 뒤 연결을 닫도록 요청하며, 응답은 `running`, `pid`, `sentMessages`, `completedCycles`, bounded `logs`를 반환한다.
 
 Continuous runtime operations:
 
@@ -936,7 +937,7 @@ type SourceConnectorAnalysis = {
 
 ### 7.0.1 Record Parsing Preview
 
-조건부 1.5단계는 이름 있는 필드가 없는 MinIO/S3 TXT 입력에만 적용한다. Source 단계에서 선택한 `.txt`/`.log`의 제한 샘플이 `line_number`, `value` 형태이면 frontend는 `requiresRecordParsing=true`로 판단하고 `/etl/record-parsing`으로 이동한다. PostgreSQL, MongoDB JSON, Kafka JSON, JSON/JSONL, Parquet, 이름 있는 CSV는 이 단계를 건너뛴다.
+조건부 1.5단계는 이름 있는 필드가 없는 MinIO/S3 TXT와 Kafka raw text 입력에 적용한다. Source 단계에서 제한 샘플이 `line_number`, `value` 형태이고 backend가 `detectedFormat=TXT`, `requiresRecordParsing=true`를 반환하면 frontend는 `/etl/record-parsing`으로 이동한다. PostgreSQL, MongoDB JSON, Kafka JSON envelope, JSON/JSONL object, Parquet, 이름 있는 CSV는 이 단계를 건너뛴다.
 
 `POST /api/etl/record-parsing/preview`
 
@@ -991,8 +992,8 @@ type RecordParsingPreviewResponse = {
 - 컬럼명은 비어 있거나 중복될 수 없고 컬럼 수는 `expectedFieldCount`와 같아야 한다.
 - Preview의 invalid row는 line number, expected/actual count, 200자 이하 raw preview만 반환한다.
 - 부족한 값을 null로 채우거나 초과 값을 자르거나 오류 행을 조용히 버리지 않는다.
-- `CreatePipelineRequest.recordParsing`은 확정된 규칙을 저장한다. Spark batch runtime은 전체 TXT 입력에 같은 규칙을 다시 적용하고 불일치가 하나라도 있으면 `RECORD_FIELD_COUNT_MISMATCH`로 target write 전에 Run을 실패시킨다.
-- 이번 범위는 MinIO/S3 TXT batch만 지원한다. Kafka Snapshot/Continuous 원시 TXT와 임의 정규식은 지원하지 않는다.
+- `CreatePipelineRequest.recordParsing`은 확정된 규칙을 저장한다. File/S3 batch, Kafka Snapshot, Kafka Continuous runtime은 전체 입력에 같은 규칙을 다시 적용한다. Snapshot은 필드 수 또는 타입 변환 불일치를 invalid record로 처리하고, Continuous는 malformed record를 기존 실패 정책에 따라 중단 또는 격리한다.
+- 이번 범위의 Kafka 원문 구조화는 메시지 하나가 한 줄이고 연속 공백(`\\s+`)으로 분리되는 단일 레코드만 지원한다. 임의 정규식, 복수 구분자와 멀티라인 메시지는 지원하지 않는다.
 
 ### 7.1 Target S3 Path Picker
 

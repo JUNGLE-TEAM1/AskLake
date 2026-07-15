@@ -314,7 +314,9 @@ function withRecordParsingSourceMetadata(analysis: SourceConnectorAnalysis, fiel
     || fieldValue(analysis.draftPatch.source?.sourceConfig ?? fields, "__Sample Object")
     || fieldValue(analysis.draftPatch.source?.sourceConfig ?? fields, "__Selected Object")
     || fieldValue(fields, "Path / Prefix");
-  const detectedFormat = /\.(txt|log)$/i.test(sampleObject) ? "TXT" : undefined;
+  const backendSource = analysis.draftPatch.source;
+  const detectedFormat = backendSource?.detectedFormat
+    || (/\.(txt|log)$/i.test(sampleObject) ? "TXT" : undefined);
   const rawValueIndex = analysis.previewColumns.findIndex((column) => /^(value|raw_value)$/i.test(column));
   const requiresRecordParsing = detectedFormat === "TXT" && rawValueIndex >= 0;
   if (!analysis.draftPatch.source) return analysis;
@@ -326,9 +328,11 @@ function withRecordParsingSourceMetadata(analysis: SourceConnectorAnalysis, fiel
         ...analysis.draftPatch.source,
         detectedFormat,
         rawPreviewLines: requiresRecordParsing
-          ? analysis.previewRows.map((row) => row[rawValueIndex] ?? "").filter((line) => line.trim())
+          ? (backendSource?.rawPreviewLines?.length
+              ? backendSource.rawPreviewLines
+              : analysis.previewRows.map((row) => row[rawValueIndex] ?? "").filter((line) => line.trim()))
           : [],
-        requiresRecordParsing,
+        requiresRecordParsing: backendSource?.requiresRecordParsing ?? requiresRecordParsing,
       },
     },
   };
