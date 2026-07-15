@@ -1,7 +1,9 @@
+import asyncio
+from contextlib import asynccontextmanager
 import os
 import unittest
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from fastapi import status
 from pydantic import ValidationError
@@ -10,6 +12,7 @@ from app.core.auth_context import ActorContext
 from app.core.config import Settings
 from app.core.errors import ApiError
 from app.api import dashboard_live
+from app import main as main_module
 from app.services import etl_service
 from app.services.dashboard_runtime_service import DashboardRuntimeService
 
@@ -109,6 +112,32 @@ class EksContinuousControlPlaneTests(unittest.TestCase):
 
         session_factory.assert_not_called()
 
+    def test_external_ec2_lifespan_does_not_start_continuous_sync_loop(self) -> None:
+        @asynccontextmanager
+        async def internal_mcp_lifespan():
+            yield
+
+        app = SimpleNamespace(
+            state=SimpleNamespace(internal_mcp_lifespan=internal_mcp_lifespan),
+        )
+        scheduled_tick = AsyncMock()
+        continuous_sync = AsyncMock()
+
+        async def exercise_lifespan() -> None:
+            with (
+                patch.object(main_module.settings, "asklake_continuous_control_plane", "external_ec2"),
+                patch.object(main_module, "initialize_auth_on_startup"),
+                patch.object(main_module, "scheduled_job_tick_loop", scheduled_tick),
+                patch.object(main_module, "continuous_runtime_sync_loop", continuous_sync),
+            ):
+                async with main_module.lifespan(app):
+                    await asyncio.sleep(0)
+
+        asyncio.run(exercise_lifespan())
+
+        scheduled_tick.assert_awaited_once()
+        continuous_sync.assert_not_called()
+
     def test_external_ec2_rejects_continuous_dataset_freshness_read(self) -> None:
         catalog_repository = Mock()
         catalog_repository.get_dataset_payload.return_value = {"id": "DATASET-CONTINUOUS"}
@@ -186,6 +215,25 @@ class EksSparkRunnerBoundaryTests(unittest.TestCase):
         ensure_target.assert_called_once()
         self.assertEqual(node_bridge.call_args.kwargs["timeout_seconds"], 7260)
         self.assertIsNone(node_bridge.call_args.kwargs["timeout_recovery"])
+
+    def test_stale_execution_generation_cannot_commit_catalog_result(self) -> None:
+        database = Mock()
+
+        with patch.object(etl_service.etl_repository, "get_run_for_execution_fence", return_value=None):
+            with self.assertRaises(ApiError) as raised:
+                etl_service.commit_airflow_catalog_reconciliation(
+                    database,
+                    job_id="JOB-EKS",
+                    run_id="RUN-EKS",
+                    result={"runId": "RUN-EKS", "status": "success"},
+                    retry_on_create_conflict=False,
+                    owner="fastapi",
+                    generation=1,
+                )
+
+        self.assertEqual(raised.exception.code, "SPARK_RUN_LEASE_LOST")
+        self.assertEqual(raised.exception.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(database.method_calls, [])
 
 
 class RunExecutionLeaseTimingTests(unittest.TestCase):

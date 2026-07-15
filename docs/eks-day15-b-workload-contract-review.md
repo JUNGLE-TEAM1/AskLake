@@ -157,8 +157,12 @@ asklake-spark-executor
 - Continuous dataset의 단건 freshness와 published dashboard widget data 조회를 거절한다. 다건 freshness query는 전체 요청을 실패시키지 않고 해당 dataset을 결과에서 제외한다.
 - FastAPI lifespan은 Continuous runtime sync loop를 시작하지 않고, `sync_active_kafka_continuous_runtimes()`도 DB를 열기 전에 return한다.
 - 일반 scheduled tick은 계속 실행되지만 현재 control-plane에서 보이지 않는 Continuous Job을 필터링한다.
+- scheduled tick은 FastAPI replica마다 시작된다. 같은 due Snapshot/Batch Job을 두 tick이 동시에 읽어도 `command_job()`이 Job row를 잠근 뒤 첫 Run reservation과 `job.status=running`을 먼저 commit한다. 따라서 다음 tick은 Run을 하나 더 만들지 않는다. `test_two_scheduler_ticks_reserve_one_airflow_run`은 두 tick이 같은 초기 Job 목록을 읽도록 강제해도 Airflow trigger와 `etl_runs` row가 각각 정확히 하나임을 확인한다.
+- 같은 `runId`의 Spark/Catalog 실행은 RDS Run row의 owner, live lease, generation으로 fence한다. live lease의 두 번째 실행은 `409 SPARK_RUN_ALREADY_EXECUTING`이고, lease가 만료되어 generation을 넘긴 이전 replica는 결과 commit 전에 `409 SPARK_RUN_LEASE_LOST`로 막힌다.
 
 Snapshot/batch Job과 그 scheduler path는 EKS에 남는다. EC2와 EKS가 같은 Continuous worker, command, runtime sync 또는 stale Continuous dashboard materialization을 동시에 소유하는 shared mode는 허용하지 않는다.
+
+이 코드 증거는 file-backed SQLite 동시성 fixture와 PostgreSQL dialect의 `SELECT ... FOR UPDATE` 생성 검사로 유지한다. 실제 RDS에서 FastAPI Pod 두 개를 띄운 상태의 restart/scale smoke는 runtime Secret과 `asklake-web` release가 준비된 뒤 별도 live 검증으로 남긴다.
 
 ## 7. Airflow storage/executor 결정
 

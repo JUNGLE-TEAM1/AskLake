@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.auth_context import ActorContext
 from app.core.errors import ApiError
+from app.schemas.etl import ScheduledJobRunRequest
 from app.repositories import etl_repository
 from app.models import (
     AuditEventModel,
@@ -36,6 +37,7 @@ from app.services.etl_service import (
     delete_job,
     execute_airflow_spark_run,
     record_airflow_sync_error,
+    run_due_scheduled_jobs,
     sync_airflow_run,
 )
 
@@ -766,6 +768,71 @@ class EtlJobDeleteRunConcurrencyTests(unittest.TestCase):
             run = db.get(ETLRunModel, run_id)
             self.assertEqual(run.task_states["sparkExecution"]["status"], "success")
             self.assertEqual(run.task_states["sparkResult"]["status"], "success")
+
+    def test_two_scheduler_ticks_reserve_one_airflow_run(self) -> None:
+        job_id = "JOB-SQLITE-SCHEDULER-RACE"
+        self.insert_job(job_id)
+        with self.session_factory() as db:
+            job = db.get(ETLJobModel, job_id)
+            self.assertIsNotNone(job)
+            job.schedule = "매일 09:00"
+            job.schedule_policy = {
+                "nextRunUtc": "2020-01-01T00:00:00Z",
+                "timezone": "Asia/Seoul",
+            }
+            job.next_run = "2020-01-01T00:00:00Z"
+            db.commit()
+
+        listed_by_both_ticks = threading.Barrier(2)
+        outcomes: Queue = Queue()
+        airflow = BlockingAirflowClient()
+        original_list_job_models = etl_repository.list_job_models
+
+        def synchronized_list_job_models(db: Session):
+            jobs = original_list_job_models(db)
+            listed_by_both_ticks.wait(timeout=5)
+            return jobs
+
+        def tick() -> None:
+            try:
+                with self.session_factory() as db:
+                    outcomes.put(run_due_scheduled_jobs(db, ScheduledJobRunRequest(kafka_only=False)))
+            except BaseException as exc:
+                outcomes.put(exc)
+
+        with (
+            patch("app.repositories.etl_repository.ensure_schema", return_value=None),
+            patch("app.services.etl_service.build_airflow_client", return_value=airflow),
+            patch(
+                "app.services.etl_service.etl_repository.list_job_models",
+                side_effect=synchronized_list_job_models,
+            ),
+        ):
+            first_tick = threading.Thread(target=tick, name="scheduler-pod-a")
+            second_tick = threading.Thread(target=tick, name="scheduler-pod-b")
+            first_tick.start()
+            second_tick.start()
+            first_tick.join(timeout=10)
+            second_tick.join(timeout=10)
+
+        self.assertFalse(first_tick.is_alive())
+        self.assertFalse(second_tick.is_alive())
+        tick_outcomes = [outcomes.get_nowait() for _ in range(2)]
+        successes = [outcome for outcome in tick_outcomes if not isinstance(outcome, BaseException)]
+        conflicts = [outcome for outcome in tick_outcomes if isinstance(outcome, ApiError)]
+        self.assertEqual(len(successes) + len(conflicts), 2)
+        self.assertEqual(
+            sum(outcome.triggered_count for outcome in successes),
+            1,
+            [(outcome.triggered_count, [item.reason for item in outcome.items]) for outcome in successes],
+        )
+        self.assertLessEqual(len(conflicts), 1)
+        if conflicts:
+            self.assertEqual(conflicts[0].status_code, 409)
+        self.assertEqual(airflow.trigger_count, 1)
+        with self.session_factory() as db:
+            runs = list(db.scalars(select(ETLRunModel).where(ETLRunModel.job_id == job_id)))
+            self.assertEqual(len(runs), 1)
 
     @patch("app.repositories.etl_repository.ensure_schema", return_value=None)
     def test_expired_run_lease_increments_generation_and_fences_previous_owner(self, _ensure_schema: Mock) -> None:
