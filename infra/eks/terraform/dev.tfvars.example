@@ -165,6 +165,8 @@ secret_controller_ready  = false
 secret_controller_owner  = null
 secret_rotation_owner    = null
 secret_source_prefix     = null
+external_secrets_namespace       = "external-secrets"
+external_secrets_service_account = "asklake-external-secrets"
 
 # These remain separate learning/selection gates. Do not infer them from the
 # Secret delivery choice. Gateway mode also needs a separately approved AI

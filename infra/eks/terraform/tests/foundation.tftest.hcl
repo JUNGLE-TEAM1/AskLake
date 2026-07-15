@@ -1,4 +1,12 @@
 mock_provider "aws" {
+  mock_data "aws_caller_identity" {
+    defaults = {
+      account_id = "111122223333"
+      arn        = "arn:aws:iam::111122223333:user/mock"
+      user_id    = "mock-user"
+    }
+  }
+
   mock_data "aws_eks_cluster" {
     defaults = {
       endpoint = "https://existing.example.invalid"
@@ -1313,21 +1321,39 @@ run "external_secret_delivery_handoff" {
   variables {
     environment             = "dev"
     owner                   = "pair-a"
-    resource_lifecycle      = "external"
+    resource_lifecycle      = "mvp-owned"
     cluster_mode            = "existing"
     existing_cluster_name   = "shared-dev"
     create_ecr_repositories = false
 
-    secret_delivery_mode    = "external_secrets"
-    secret_controller_ready = true
-    secret_controller_owner = "platform-team"
-    secret_rotation_owner   = "service-team"
-    secret_source_prefix    = "/asklake/dev/runtime"
+    secret_delivery_mode     = "external_secrets"
+    secret_controller_ready  = true
+    secret_controller_owner  = "platform-team"
+    secret_rotation_owner    = "service-team"
+    secret_source_prefix     = "/asklake/dev/runtime"
+    pod_identity_agent_ready = true
   }
 
   assert {
     condition     = output.phase8_runtime_secret_handoff.ready_for_sync
     error_message = "reviewed external Secret inputs must become sync-ready."
+  }
+
+  assert {
+    condition = (
+      length(aws_iam_role.external_secrets) == 1 &&
+      length(aws_iam_policy.external_secrets) == 1 &&
+      length(aws_eks_pod_identity_association.external_secrets) == 1
+    )
+    error_message = "external_secrets mode must provision one least-privilege Pod Identity path."
+  }
+
+  assert {
+    condition = (
+      output.phase8_runtime_secret_handoff.delivery.external_secrets_identity.namespace == "external-secrets" &&
+      output.phase8_runtime_secret_handoff.delivery.external_secrets_identity.service_account == "asklake-external-secrets"
+    )
+    error_message = "External Secrets handoff must expose the controller namespace and ServiceAccount."
   }
 
   assert {
@@ -1380,12 +1406,13 @@ run "reject_partial_secret_delivery" {
   variables {
     environment             = "dev"
     owner                   = "pair-a"
-    resource_lifecycle      = "external"
+    resource_lifecycle      = "mvp-owned"
     cluster_mode            = "existing"
     existing_cluster_name   = "shared-dev"
     create_ecr_repositories = false
 
-    secret_delivery_mode = "external_secrets"
+    secret_delivery_mode     = "external_secrets"
+    pod_identity_agent_ready = true
   }
 
   expect_failures = [check.runtime_secret_delivery_contract]

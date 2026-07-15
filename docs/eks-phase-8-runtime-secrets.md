@@ -2,7 +2,9 @@
 
 ## 1. 목적과 현재 완료 범위
 
-Phase 8은 FastAPI, Airflow, Spark, Trino가 참조할 Kubernetes Secret의 **이름, key, 공유 관계, 환경변수 주입과 파일 mount 위치**를 먼저 고정한다. 실제 비밀값을 만들거나 AWS 또는 Kubernetes에 전달하는 단계가 아니다. `infra/eks/secrets/runtime-secret-contract.example.json`이 정적 계약의 단일 기준이며 Terraform은 이 JSON을 직접 읽어 handoff output을 만든다. 선택 전 기본 mode는 `disabled`다.
+Phase 8은 FastAPI, Airflow, Spark, Trino가 참조할 Kubernetes Secret의 **이름, key, 공유 관계, 환경변수 주입과 파일 mount 위치**를 고정한다. `infra/eks/secrets/runtime-secret-contract.example.json`이 정적 계약의 단일 기준이며 Terraform은 이 JSON을 직접 읽어 handoff output을 만든다. 저장소 기본값은 계속 `disabled`지만 dev 환경은 2026-07-15에 AWS Secrets Manager와 External Secrets Operator(ESO) 2.7.0을 실제 전달 기반으로 선택하고 검증했다.
+
+현재 완료 범위는 ESO controller, 전용 Pod Identity, `asklake/dev/*` 읽기 정책과 namespaced `SecretStore`까지다. 임시 source를 사용한 최초 동기화와 값 갱신도 hash 비교로 검증했으며, 값 자체는 출력하지 않고 더미 AWS/Kubernetes Secret을 검증 직후 삭제했다. 실제 Backend·Airflow·Spark·Trino source item과 `ExternalSecret` 매핑은 B의 workload key 계약 및 RDS/Airflow/AI 선택이 끝난 뒤 별도로 생성한다.
 
 이 단계가 필요한 이유는 A가 만든 namespace·ServiceAccount·data-plane 경계와 B가 만드는 workload manifest가 서로 다른 Secret 이름이나 key를 가정하는 문제를 배포 전에 잡기 위해서다. 계약이 통과해도 Secret이 cluster에 존재하거나 application이 정상 기동한다는 뜻은 아니다.
 
@@ -24,17 +26,17 @@ Git, Terraform variable, Terraform state/output, PR 본문, workflow log와 검�
 
 `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`과 MinIO static credential은 workload Secret에 넣지 않는다. AWS 접근은 Phase 4에서 선택한 IRSA 또는 EKS Pod Identity를 사용한다. application ServiceAccount에 Kubernetes Secret `get/list/watch` 권한을 추가하지 않는다. Pod spec이 Secret reference를 선언하면 kubelet이 필요한 env/file을 주입하는 구조를 사용한다.
 
-Terraform은 Kubernetes Secret이나 Secrets Manager secret version을 만들지 않는다. 따라서 이 state의 plan/output만으로 비밀값이 유출되거나 destroy 시 비밀 원본을 삭제하는 소유권 혼동이 생기지 않는다.
+Terraform은 ESO 전용 IAM role/policy와 EKS Pod Identity association만 소유한다. Kubernetes Secret이나 Secrets Manager secret/version은 만들지 않는다. 따라서 이 state의 plan/output만으로 비밀값이 유출되거나 destroy 시 비밀 원본을 삭제하는 소유권 혼동이 생기지 않는다.
 
-## 4. 실제 전달 방식은 아직 선택하지 않는다
+## 4. dev 전달 방식과 보안 경계
 
-`external_secrets`는 cluster의 controller가 승인된 외부 secret store에서 값을 동기화하는 방식이다. 중앙 rotation과 선언형 운영에는 유리하지만 controller 설치 주체, CRD/version upgrade, source store, IAM 권한, refresh와 rollback 책임을 먼저 정해야 한다. 이 선택을 하면 `secret_controller_ready`, controller owner, rotation owner와 source prefix가 모두 있어야 readiness gate가 열린다.
+dev는 `external_secrets`를 선택했다. Helm values는 controller를 `asklake-dev` namespace만 감시하도록 제한한다. `ClusterSecretStore`, `ClusterExternalSecret`, `PushSecret`, generic target, webhook과 불필요한 cluster RBAC은 만들지 않는다. 단일 replica이므로 leader election도 끈다. controller ServiceAccount는 `external-secrets/asklake-external-secrets`이며 EKS Pod Identity로만 AWS 자격을 받는다.
 
-`workflow_sync`는 보호된 배포 workflow가 외부 secret source를 읽고 Kubernetes Secret을 동기화하는 방식이다. 별도 controller 없이 시작하기 쉽지만 runner 권한, command/log masking, rotation 때 rollout, 실패 후 rollback과 수동 실행 책임이 workflow에 집중된다. 이 선택은 controller가 있다고 표시해서는 안 되며 rotation owner와 source prefix가 필요하다.
+IAM policy는 현재 AWS account와 `ap-northeast-2`의 `asklake/dev/*` secret ARN에 대해 `DescribeSecret`, `GetSecretValue`, `ListSecretVersionIds`만 허용한다. secret 생성·수정·삭제, `ListSecrets`, KMS decrypt와 다른 prefix 접근은 허용하지 않는다. 기본 AWS 관리형 Secrets Manager key를 사용한 현재 범위이므로 향후 customer-managed KMS key를 선택하면 해당 key의 `kms:Decrypt`를 별도 검토해야 한다.
 
-Secrets Store CSI Driver 같은 volume 중심 방식은 향후 선택지로 학습할 수 있지만 이번 contract에는 구현하지 않았다. 기존 env 기반 설정과 file mount를 함께 만족시키는 동기화 구조, driver/add-on 소유권과 rotation 동작을 검증한 뒤 별도 변경으로 추가한다.
+`infra/eks/secrets/aws-secrets-manager-store.yaml`은 controller의 기본 AWS credential chain을 사용하는 namespaced `SecretStore`다. static access key를 참조하는 `auth.secretRef`를 추가하지 않는다. `aws-secrets-manager-smoke.yaml`은 검증 전용 fixture이며 실제 runtime source 또는 상시 Kubernetes Secret이 아니다.
 
-어느 방식을 사용할지는 실제 cluster add-on 현황, 조직의 secret source, 운영 owner와 rotation 절차를 확인한 뒤 선택한다. Phase 8 구현은 두 후보를 지원하는 fail-closed 입력만 제공하며 임의의 기본 선택을 하지 않는다.
+`workflow_sync`와 Secrets Store CSI Driver는 현재 dev 적용 경로가 아니다. Terraform의 `workflow_sync` 입력은 계약 호환과 비교 검증을 위해 남지만, dev에서 병행 운영하지 않는다. 전달 방식을 변경하려면 controller·rotation·rollback 소유권과 기존 `ExternalSecret` 정리 순서를 별도 변경으로 검토한다.
 
 Airflow API 인증도 실제 배포 전에 별도로 선택해야 한다. 현재 Backend는 API token 또는 username/password를 지원하지만 B의 최소 계약은 어느 방식을 운영 표준으로 쓸지 확정하지 않았다. 두 방식의 key와 injection 계약은 준비하되 `runtimeDecisions.airflowApiAuth`는 `learning-required`로 유지한다. 이번 단계에서 둘 중 하나를 임의로 고르지 않는다.
 
@@ -52,7 +54,7 @@ bash scripts/verify-eks-runtime-secrets.sh
 
 이 검증은 workload별 Secret 이름/key, 공유 binding, 읽기 전용 mount, static AWS credential 금지와 실제 value 형태의 property 유입을 검사한다. 기본 example은 planning 검증을 통과하고 `--ready`에는 실패해야 정상이다.
 
-실제 전달 방식을 결정한 뒤 Git 밖의 계약 파일에서 delivery 항목만 채우고 다음 gate를 사용한다.
+실제 환경 계약 파일에서 delivery 항목을 채우고 다음 gate를 사용한다.
 
 ```bash
 node scripts/verify-eks-runtime-secrets.mjs \
@@ -70,7 +72,7 @@ node scripts/verify-eks-deploy-readiness.mjs \
 
 그 다음 배포 주체가 Kubernetes API에서 Secret 이름과 필요한 key 존재 여부만 확인한다. base64 data와 decoded value를 stdout, CI log 또는 artifact에 출력하지 않는다. workload manifest의 `secretKeyRef`와 volume item은 이 문서의 이름/key/path를 그대로 참조해야 한다.
 
-완료 상태는 단계별로 구분한다. 현재 구현은 정적 계약과 fail-closed 선택 gate 완료다. `ready_for_sync`는 동기화 입력 계약 완료, 실제 Secret 생성은 cluster의 이름/key 존재 확인 완료, workload 주입은 startup과 env/file reference 검증 완료를 뜻한다. 그 뒤 health·rotation·rollback evidence까지 있어야 운영 Secret 전달이 완료된다. 전체 서비스 production-ready는 image, network, database migration과 workload rollout까지 별도 gate를 모두 통과해야 한다.
+완료 상태는 단계별로 구분한다. dev는 정적 계약, ESO 설치, Pod Identity, namespaced store와 임시 동기화·갱신 smoke까지 완료했다. `ready_for_sync`는 기반 전달 경로가 준비됐다는 뜻이며 실제 네 workload Secret이 존재한다는 뜻은 아니다. 실제 Secret 생성은 cluster의 이름/key 존재 확인 완료, workload 주입은 startup과 env/file reference 검증 완료를 뜻한다. 그 뒤 application health·rotation rollout·rollback evidence까지 있어야 운영 Secret 전달이 완료된다. 전체 서비스 production-ready는 image, network, database migration과 workload rollout까지 별도 gate를 모두 통과해야 한다.
 
 ## 6. A/B 인수 기준
 

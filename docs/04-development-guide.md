@@ -595,13 +595,20 @@ bash scripts/verify-eks-network-ingress.sh
 
 `phase13_alb_handoff.ready_for_server_dry_run`은 Auto Mode ALB manifest 입력이 완전하다는 뜻이고 `phase7_network_handoff.decisions_complete`는 private egress와 Pod traffic enforcement 선택까지 끝났다는 호환 상태다. 둘 다 실제 network 동작 성공을 의미하지 않는다. 실제 적용 전 server-side dry-run과 namespace/class/subnet 경계를 확인하고, 적용 후 `/`, `/api/health`, RDS, MSK, ECR/S3/STS의 positive smoke와 차단 대상 negative smoke를 실행한다. 상세 선택 기준은 [Phase 13 Auto Mode ALB 진입 경로](eks-phase-13-auto-mode-alb.md)를 따른다.
 
-Phase 8 runtime Secret 계약을 변경하면 아래 검증을 실행한다. example에는 Secret 이름, key, 공유 binding과 file mount만 있으며 실제 value를 추가하지 않는다. 기본 delivery mode는 `disabled`이고, `external_secrets` 또는 `workflow_sync`는 controller/source/rotation owner와 rollback 운영을 학습·확정한 뒤 Git 밖의 환경 계약에서 선택한다.
+Phase 8 runtime Secret 계약을 변경하면 아래 검증을 실행한다. example에는 Secret 이름, key, 공유 binding과 file mount만 있으며 실제 value를 추가하지 않는다. 저장소 기본 delivery mode는 `disabled`지만 dev 환경은 Secrets Manager + ESO를 선택했다. ESO chart는 `infra/eks/values/secrets/external-secrets.dev.yaml`, namespaced store는 `infra/eks/secrets/aws-secrets-manager-store.yaml`을 기준으로 한다.
 
 ```bash
 bash scripts/verify-eks-runtime-secrets.sh
+
+helm template external-secrets external-secrets/external-secrets \
+  --version 2.7.0 \
+  --namespace external-secrets \
+  -f infra/eks/values/secrets/external-secrets.dev.yaml
 ```
 
-실제 환경의 선택 완료 여부는 `node scripts/verify-eks-runtime-secrets.mjs --ready <path>`로 확인한다. 이 gate 통과는 값 전달 방식의 계약이 완전하다는 의미일 뿐 cluster에 Secret이 생성됐거나 workload가 기동했다는 증거가 아니다. 배포에서는 value를 출력하지 않고 Secret 이름/key 존재, workload `secretKeyRef`/file mount, rotation rollout과 rollback을 별도로 검증한다. 상세 경계는 [Phase 8 런타임 Secret 전달 계약](eks-phase-8-runtime-secrets.md)을 따른다.
+실제 환경에서는 controller Helm release를 먼저 설치하고 Terraform으로 전용 Pod Identity를 연결한 뒤 controller Pod를 재생성한다. association 전에 시작한 Pod는 credential endpoint가 주입되지 않으므로 재시작이 필수다. 이후 namespaced `SecretStore`가 `Ready=True`인지 확인한다. 전용 IAM policy는 현재 account/region의 `asklake/dev/*`에 대한 read 세 action만 가져야 한다. static access key, `ClusterSecretStore`, PushSecret과 application ServiceAccount의 Secret read RBAC은 추가하지 않는다.
+
+실제 환경의 선택 완료 여부는 `node scripts/verify-eks-runtime-secrets.mjs --ready <path>`로 확인한다. 이 gate와 `SecretStore Ready`는 전달 기반이 완전하다는 의미일 뿐 네 application Secret이 생성됐거나 workload가 기동했다는 증거가 아니다. 배포에서는 value를 출력하지 않고 Secret 이름/key 존재, workload `secretKeyRef`/file mount, rotation rollout과 rollback을 별도로 검증한다. smoke source는 `asklake/dev/smoke/` 아래에만 임시 생성하고 hash 비교 후 `ExternalSecret`, target Kubernetes Secret과 Secrets Manager source를 모두 삭제한다. 상세 경계는 [Phase 8 런타임 Secret 전달 계약](eks-phase-8-runtime-secrets.md)을 따른다.
 
 Phase 5와 Phase 8을 함께 검사할 때는 `verify-eks-deploy-readiness.mjs`를 사용한다. planning에서는 Phase 5가 미선택이면 Phase 8이 `disabled`인지 확인하고, `--ready`에서는 두 delivery 값의 일치와 full-service Secret contract까지 요구한다. Airflow 실행 token은 Secret key와 실제 DAG env 이름이 다르므로 `AIRFLOW_EXECUTION_API_TOKEN -> ASKLAKE_EXECUTION_API_TOKEN` binding을 유지한다.
 
