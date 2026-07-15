@@ -1,0 +1,53 @@
+# EKS MVP 수요일 Pair B 실환경 검증 기록
+
+이 문서는 `eks-roadmap.md`의 7월 15일 Pair B 범위인 Frontend/FastAPI web workload, RDS health, 두 replica 실행 안전성, EC2 Continuous 제어권 경계를 2026-07-15~16 `dev` EKS에서 검증한 저장소용 요약이다. 실제 계정 ID, ECR digest, Pod UID/IP, node ID, RDS 접속 문자열과 실행용 private values는 Git 밖의 Pair B evidence에 둔다.
+
+## Web workload와 내부 Service
+
+- A가 소유하는 `asklake-web` chart 하나로 Frontend와 FastAPI Deployment/ClusterIP Service를 적용했다. B의 workload chart를 경쟁 release로 설치하지 않았다.
+- Frontend와 FastAPI는 각각 desired/ready/available `2/2/2`였고 unavailable replica는 없었다.
+- Frontend는 `asklake-frontend`, FastAPI는 `asklake-backend` ServiceAccount를 사용했다.
+- 네 Pod 모두 immutable `repository@sha256:digest` imageID로 실행됐고 restart count는 0이었다. 실제 digest receipt는 Git 밖에 보관한다.
+- Service handoff는 `frontend:80`, `fastapi:8080`이다. 두 EndpointSlice는 각각 Ready Pod IP 두 개를 가리켰다.
+- Frontend Pod에서 `http://fastapi:8080/api/health`를 5회 호출해 모두 HTTP 200과 `database.ok=true`를 확인했다. `http://frontend:80/`도 HTTP 200이었다.
+- FastAPI startup/readiness는 DB-aware `/api/health`, liveness는 TCP 8080으로 분리돼 있다.
+
+외부 ALB URL과 `/api` route는 Pair A 소유다. 이 문서는 cluster 내부 Service까지의 B handoff만 완료로 판정하며 외부 URL 성공을 대신 주장하지 않는다.
+
+## Web Pod 자동복구
+
+FastAPI Service health를 1초마다 호출하면서 replica 하나를 삭제했다. 45회 요청이 모두 성공하는 동안 ReplicaSet이 다른 UID/IP의 대체 Pod를 만들었고 Deployment는 다시 ready `2/2`가 됐다. EndpointSlice도 삭제된 IP 대신 새 Ready Pod IP를 가리켰다.
+
+이 결과는 Pod 하나의 삭제와 Service 연속성에 대한 수요일 기본 자동복구 증거다. 검증 당시 두 FastAPI replica가 같은 node에 있었으므로 node 장애, multi-AZ 또는 multi-node 고가용성 증거로 확대 해석하지 않는다. HPA, node autoscaling, Rolling Update와 node 장애는 로드맵의 금요일·토요일 범위다.
+
+## RDS Run lease와 두 replica 중복 방지
+
+운영 데이터와 섞이지 않는 고유 `JOB-EKS-REPLICA-*`, `RUN-EKS-REPLICA-*` fixture를 RDS에 만들고 schedule을 `manual`로 고정했다. 두 실제 FastAPI Pod에서 같은 `runId`의 `execute_airflow_spark_run()`을 같은 시각에 호출했으며 외부 Spark 호출은 6초짜리 in-memory fake로 대체했다. 따라서 Airflow, Spark, MSK와 S3에는 접근하지 않았다.
+
+결과는 다음과 같다.
+
+- 한 Pod만 execution lease를 획득해 fake Spark를 정확히 1회 실행하고 `success`를 기록했다.
+- 다른 Pod는 fake Spark를 한 번도 호출하지 않고 `409 SPARK_RUN_ALREADY_EXECUTING`을 받았다.
+- RDS에는 해당 `runId` row가 하나만 있었고 `execution_generation=1`, `sparkExecution.status=success`, `sparkResult.status=success`였다.
+- 완료 뒤 `execution_owner`와 lease 만료 시각이 해제됐다.
+- 증거 확인 후 fixture Job/Run을 삭제했고 두 row count가 모두 0임을 확인했다.
+
+이 실증은 실제 두 Pod와 실제 RDS row lock/lease/generation fence를 사용한다. 실제 SparkApplication 또는 데이터 결과의 중복 방지는 목요일 bounded E2E에서 같은 `runId`로 별도 검증한다.
+
+## EC2 Continuous 제어권 경계
+
+두 FastAPI Pod에서 각각 다음을 확인했다.
+
+- `ASKLAKE_CONTINUOUS_CONTROL_PLANE=external_ec2`
+- `sync_active_kafka_continuous_runtimes()`가 DB session을 열기 전에 반환
+- `kafka_continuous_stream.py`, maintenance runner와 manager process 0개
+
+따라서 EKS FastAPI는 Snapshot/Batch scheduler만 유지하고 Kafka Continuous worker·command·runtime sync를 시작하지 않는다. Continuous 제어권과 상태 변경 책임은 수요일 범위에서 EC2에 남는다.
+
+## 보류된 수요일 통합 gate
+
+- Backend Pod가 EKS Pod Identity로 `asklake-dev-backend` role을 획득하는 것은 확인했다. 첫 Raw S3 목록 검증은 요청에 `Prefix`가 없어 IAM `s3:prefix` 조건과 맞지 않아 `AccessDenied`였으며 object 생성 전 실패했다. S3 positive smoke는 완료하지 않았다.
+- `asklake-msk-smoke` ServiceAccount의 Pod Identity association과 최소 IAM policy는 확인했지만 private bootstrap IAM metadata client smoke는 실행하지 않았다.
+- 외부 ALB URL은 Pair A route가 준비된 뒤 팀 통합으로 확인한다.
+
+그러므로 이 기록은 B web workload, RDS health, Pod 자동복구, 두 replica 안전성과 Continuous 경계의 완료 증거다. `eks-roadmap.md`의 수요일 전체 통과 조건인 S3 권한, EKS→MSK network/IAM과 외부 URL까지 완료됐다고 선언하지 않는다.
