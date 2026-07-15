@@ -73,7 +73,7 @@ TARGET_DATABASES=asklake,asklake_gold,analytics,marketing
 - AWS Source request는 provider, region, bucket/prefix만 받으며 frontend는 endpoint/access key/secret 입력을 노출하거나 API payload에 포함하지 않습니다.
 - mock mode에서는 Source/Schema 연결 테스트도 `sourceConnectorService.ts`의 mock `SourceConnectorAnalysis`를 사용합니다.
 - live mode에서는 Source/Schema/Create/Run 흐름이 실제 백엔드를 호출합니다.
-- 새 Kafka Source의 broker 기본값은 `GET /api/etl/sources/defaults`가 반환하는 backend runtime 값이며 frontend build에 복제하지 않습니다.
+- 새 Kafka/S3 Source의 비밀이 아닌 기본값은 `GET /api/etl/sources/defaults`가 반환하는 backend runtime 값이며 frontend build에 복제하지 않습니다.
 - Target 저장경로 선택은 브라우저가 AWS SDK나 secret을 갖지 않고 `/api/s3/buckets`, `/api/s3/prefixes` 서버 API만 호출합니다. 서버는 `S3_ALLOWED_BUCKETS` allowlist를 검증하고 AWS SDK v3 `ListObjectsV2`로 prefix를 조회합니다.
 - Dashboard 원격 widget scan은 `S3_ALLOWED_BUCKETS`, runtime 응답 전체에서 공유하는 기본 512 MiB/256 object 예산, DuckDB query당 기본 15초와 memory/temp 각 256 MiB/2 threads 경계를 사용합니다. 예산은 `ASKLAKE_DASHBOARD_MAX_REMOTE_BYTES`/`ASKLAKE_DASHBOARD_MAX_REMOTE_OBJECTS`, 실행 경계는 `ASKLAKE_DASHBOARD_QUERY_TIMEOUT_SECONDS`/`ASKLAKE_DASHBOARD_DUCKDB_MEMORY_BYTES`/`ASKLAKE_DASHBOARD_DUCKDB_TEMP_BYTES`/`ASKLAKE_DASHBOARD_DUCKDB_THREADS`로 설정합니다.
 - Target DB 선택은 `/api/target/databases` 서버 API만 호출합니다. 서버는 `TARGET_DATABASES` 또는 `ASKLAKE_TARGET_DATABASES` allowlist를 사용하고, 값이 없으면 local demo 기본 DB 목록을 반환합니다.
@@ -111,11 +111,11 @@ Phase 0 기준에서 identity metadata와 access control은 별도 개념입니�
 | --- | --- | --- |
 | `createdBy` | Job/Dataset/Dashboard에 optional 표시 metadata로 제공 | resource를 생성한 사용자 표시와 감사 로그 문맥에 사용 |
 | `createdByProfile` | `displayName`, `avatarInitials` 중심의 optional 표시 metadata | profile/avatar 표시용으로 확장 가능 |
-| `owner` | Job/Dataset/Dashboard 화면에 표시되는 소유자 문자열 | 표시/책임자 metadata로 유지하고 권한 판정의 단일 근거로 쓰지 않음 |
+| `owner` | Job/Dataset/Dashboard 화면에 표시되는 담당자 문자열 | ETL Job에서는 표시 값이면서 전체 권한을 주는 backend fallback 기준이며 별도 grant로 저장하지 않음 |
 | profile/avatar | `createdByProfile`의 optional 표시 값 | `createdBy`/`owner` 옆 표시용 identity metadata로 추가 |
 | `permissionSummary` | Create Permission 단계의 요약 문구 | governance metadata로 유지 |
-| `permissionRoles` | Create Permission 단계의 역할별 설정 값 | 후속 `permissionGrants` 계약으로 승격 전까지 enforce하지 않음 |
-| `permissionGrants` | Job/Dataset/Dashboard에 optional response/request metadata로 제공 | user/group/role/public별 resource action 허용 목록 |
+| `permissionRoles` | 이전 Create Permission 단계의 역할별 호환 값 | ETL Job 최초 접근 시 `legacy_permission_roles` source의 table grant로 한 번만 이관 |
+| `permissionGrants` | Job/Dataset/Dashboard의 실제 resource action 허용 목록 | ETL 생성·수정 request를 `permission_grants` table에 저장하고 backend가 enforce |
 | `permissions` | Job/Dataset/Dashboard에 optional response metadata로 제공 | backend가 현재 actor 기준 `canView`, `canQuery`, `canManage` 등을 계산해 내려주는 값 |
 
 Catalog 목록/상세, SQL Query Run, Query AI, ETL job command API, Dashboard card/runtime API는 `permissionSummary`나 `permissionRoles`만으로 접근 권한을 판정하지 않습니다. 이 값들은 표시용 governance metadata이고, 실제 허용 여부는 `ActorContext`와 resource별 `permissionGrants`로 계산합니다. Dashboard 삭제 API의 `X-AskLake-User`, `X-AskLake-Role` header는 초기 dashboard 전용 입력에서 시작했지만, 이후 공통 actor header로 해석됩니다.
@@ -142,7 +142,7 @@ Backend는 세션 쿠키가 있으면 session user를 우선 actor로 사용하�
 
 Governance control은 위 allow-only 판정 앞에서 적용됩니다. `principal_controls`에서 actor의 user id/email/display name 또는 소속 group이 `blocked`이면 grant가 있어도 `403 FORBIDDEN`입니다. `resource_locks`에서 resource가 잠겨 있으면 `view`는 유지하고 `query`, `run`, `manage`, `delete`, `share` action은 `403 FORBIDDEN`입니다. 목록 API는 blocked actor에게 해당 resource를 숨깁니다. Resource lock은 목록 노출을 막지 않고, 응답 `permissions`에서 `canQuery`, `canRun`, `canManage`, `canDelete`, `canShare`를 `false`로 내려 UI preflight와 backend enforcement가 같은 상태를 보게 합니다.
 
-관리자 권한 편집 기능은 이 우선순위를 바꾸지 않고 독립 `permission_grants` table row를 생성/수정/삭제하는 API로 확장합니다. 운영 기본값은 group grant 중심이며, user grant는 예외 권한에 사용합니다. Admin 권한은 resource 접근 그룹이 아니라 `role=admin`으로 부여하고, 로컬 demo admin 계정의 groups는 빈 배열로 유지합니다. Group grant/block은 일반 사용자 권한 운영 단위입니다. `role`/`public` grant는 계약상 지원하지만 운영 위험이 크므로 정책 확인 후 사용합니다. 현재 backend는 resource payload 안의 legacy `permissionGrants`와 독립 `permission_grants` table row를 병합해 같은 `grants` 응답과 permission check 입력으로 사용합니다.
+관리자 권한 편집 기능은 이 우선순위를 바꾸지 않고 독립 `permission_grants` table row를 생성/수정/삭제합니다. 운영 기본값은 group grant 중심이며, user grant는 예외 권한에 사용합니다. Admin 권한은 resource 접근 그룹이 아니라 `role=admin`으로 부여하고, 로컬 demo admin 계정의 groups는 빈 배열로 유지합니다. Group grant/block은 일반 사용자 권한 운영 단위입니다. `role`/`public` grant도 계약상 지원합니다. ETL Job은 table row를 권한 source of truth로 사용하며, 이전 `permissionRoles`는 `legacy_permission_roles` source로 한 번만 이관합니다. 다른 resource의 기존 payload grant 병합은 해당 resource 계약의 호환 범위로 유지합니다.
 
 Resource/action 기준:
 
@@ -204,7 +204,7 @@ Profile/Admin Console Phase 0 기준:
 - `GET /api/users/me`는 현재 actor의 표시 프로필, role, group, 권한 요약을 반환합니다.
 - `/api/admin/*` endpoint는 현재 ActorContext의 role이 `admin`인 actor만 호출할 수 있습니다. 권한이 없으면 `403 FORBIDDEN`을 반환합니다.
 - 관리 콘솔은 사용자/그룹/감사 로그 조회, 사용자/그룹 차단, resource lock, permission grant 생성/수정/삭제를 지원합니다. 사용자/그룹 자체 생성, 멤버십 편집, deny policy, 조건부 정책은 후속 계약으로 분리합니다.
-- 관리자 편집 API는 group grant를 기본 흐름으로, user grant를 예외 흐름으로 제공합니다. Admin 계정은 resource 접근 그룹에 속하지 않고 `role=admin`으로 관리 권한을 받습니다. role/public grant는 계약상 허용하지만 운영 위험이 크므로 관리 콘솔의 기본 추가 옵션으로 노출하지 않고 정책 확인 후 사용합니다. payload에서 유래한 owner/permissionRoles grant는 원본 resource metadata로 남기며, 관리 콘솔에서는 읽기 전용으로 표시합니다.
+- 관리자 편집 API는 group grant를 기본 흐름으로, user grant를 예외 흐름으로 제공합니다. Admin 계정은 resource 접근 그룹에 속하지 않고 `role=admin`으로 관리 권한을 받습니다. role/public grant는 계약상 허용하지만 운영 위험이 크므로 관리 콘솔의 기본 추가 옵션으로 노출하지 않고 정책 확인 후 사용합니다. ETL Job의 owner 권한은 backend fallback으로 계산해 table grant로 저장하지 않으며, 이전 `permissionRoles`는 `legacy_permission_roles` source의 읽기 전용 table grant로 이관합니다.
 - 관리 콘솔의 권한 표시는 resource별 `permissionGrants`와 현재 actor 기준 `permissions`를 설명하는 운영 화면이며, 프론트 표시만으로 보안 판정을 대체하지 않습니다.
 - Auth table은 현재 repo의 기존 로컬 persistence 패턴에 맞춰 service에서 `create_all`로 보강합니다. 운영 배포의 schema source of truth는 후속 Alembic migration으로 분리해야 합니다.
 
@@ -215,6 +215,7 @@ type PermissionPrincipalType = "user" | "group" | "role" | "public";
 type PermissionGrant = {
   principalType: PermissionPrincipalType;
   principalId: string;
+  principalName?: string; // Review 표시용, 권한 판정에는 사용하지 않음
   actions: PermissionAction[];
   source?: string;
 };
@@ -588,10 +589,13 @@ type CatalogDataset = {
 ```ts
 type SourceConnectorDefaults = {
   kafkaBroker: string; // ASKLAKE_KAFKA_BROKER, fallback 127.0.0.1:19092
+  kafkaTopic: string; // ASKLAKE_SOURCE_DEFAULT_KAFKA_TOPIC -> ASKLAKE_KAFKA_TOPIC -> asklake-source-events
+  s3Bucket: string; // ASKLAKE_SOURCE_DEFAULT_S3_BUCKET -> ASKLAKE_RAW_BUCKET -> empty
+  s3Prefix: string; // ASKLAKE_SOURCE_DEFAULT_S3_PREFIX -> empty
 };
 ```
 
-저장된 Job을 수정할 때는 이 응답이 기존 `sourceConfig`를 덮어쓰지 않습니다. 실제 연결과 실행은 request에 저장된 broker를 사용합니다.
+Frontend는 새 빈 draft에서만 이 응답을 한 번 적용합니다. 저장된 Job을 수정하거나 사용자가 값을 입력한 뒤에는 기존 `sourceConfig`를 덮어쓰지 않습니다. 응답은 비밀이 아닌 연결 위치만 제공하며 credential은 포함하지 않습니다. 실제 연결과 실행은 request에 저장된 값을 사용합니다.
 
 ### Schema Type and Source Path Contract
 
@@ -653,6 +657,7 @@ Snapshot Job은 기존 스케줄 단계에서 수동 또는 반복 실행 정책
 type KafkaReplayProducerRequest = {
   topic?: string; // default: reviews.raw
   inputPath?: string; // ASKLAKE_REPLAY_INPUT_DIR 아래 상대 경로
+  payloadMode?: "json_envelope" | "raw_text"; // default: json_envelope
   rate?: number; // default: 10 messages/sec
   batchSize?: number; // default: 100
   progressEvery?: number; // default: 100
@@ -666,7 +671,7 @@ type KafkaReplayProducerRequest = {
 };
 ```
 
-loop는 cycle별 `event_id` suffix와 전역 증가 `offset`을 보장한다. burst 세 필드는 함께 지정해야 하며, loop 중 매 `burstIntervalSeconds`마다 `burstMinMessages`~`burstMaxMessages`의 랜덤 건수를 한 burst로 전송한다. `DELETE`는 SIGTERM을 보내 현재 send batch를 마친 뒤 연결을 닫도록 요청하며, 응답은 `running`, `pid`, `sentMessages`, `completedCycles`, bounded `logs`를 반환한다.
+`payloadMode=json_envelope`은 기존 JSONL fixture를 파싱하고 cycle별 `event_id` suffix와 전역 증가 `offset`을 보장한다. `payloadMode=raw_text`는 `inputPath`를 필수로 받고 `.txt`, `.log`, `.jsonl` 또는 gzip 파일의 비어 있지 않은 각 줄을 JSON 변환 없이 Kafka message value 그대로 전송한다. raw mode에서는 파일 확장자가 아니라 실제 줄 내용이 원문 계약이다. 따라서 `{...}`로 시작하는 기존 JSONL을 지정하면 Kafka JSON으로 계속 탐색되며 레코드 구조화가 열리지 않는다. 레코드 구조화 데모에는 공백 구분 10필드가 그대로 저장된 `click-events.log`를 지정해야 한다. burst 세 필드는 함께 지정해야 하며, loop 중 매 `burstIntervalSeconds`마다 `burstMinMessages`~`burstMaxMessages`의 랜덤 건수를 한 burst로 전송한다. `DELETE`는 SIGTERM을 보내 현재 send batch를 마친 뒤 연결을 닫도록 요청하며, 응답은 `running`, `pid`, `sentMessages`, `completedCycles`, bounded `logs`를 반환한다.
 
 Continuous runtime operations:
 
@@ -932,13 +937,11 @@ type SourceConnectorAnalysis = {
 
 ### 7.0.1 Record Parsing Preview
 
-조건부 1.5단계는 이름 있는 필드가 없는 MinIO/S3 TXT 입력에만 적용한다. Source 단계에서 선택한 `.txt`/`.log`의 제한 샘플이 `line_number`, `value` 형태이면 frontend는 `requiresRecordParsing=true`로 판단하고 `/etl/record-parsing`으로 이동한다. PostgreSQL, MongoDB JSON, Kafka JSON, JSON/JSONL, Parquet, 이름 있는 CSV는 이 단계를 건너뛴다.
+조건부 1.5단계는 이름 있는 필드가 없는 MinIO/S3 TXT와 Kafka raw text 입력에 적용한다. Source 단계에서 제한 샘플이 `line_number`, `value` 형태이고 backend가 `detectedFormat=TXT`, `requiresRecordParsing=true`를 반환하면 frontend는 `/etl/record-parsing`으로 이동한다. PostgreSQL, MongoDB JSON, Kafka JSON envelope, JSON/JSONL object, Parquet, 이름 있는 CSV는 이 단계를 건너뛴다.
 
-`line_number`, `value`는 Source API와 다음 단계 사이의 운반 계약일 뿐 Source 탐색의 정형 스키마가 아니다. Frontend는 이 경우 `value`만 추출해 `원본 샘플`의 줄바꿈 보존 text block으로 표시하고, 행 번호나 필드 수를 정형 컬럼처럼 노출하지 않는다. 실제 필드 분리와 컬럼명·타입 확정은 반드시 Record Parsing 단계에서 수행한다.
+`line_number`, `value`와 `draftPatch.source.rawPreviewLines`는 Source API와 다음 단계 사이의 운반 계약일 뿐 Source 탐색의 정형 스키마가 아니다. Frontend는 `detectedFormat=TXT`, `requiresRecordParsing=true`인 File/S3 또는 Kafka raw text에서 원문만 추출해 줄바꿈 보존 text block으로 표시하고, 행 번호나 필드 수를 정형 컬럼처럼 노출하지 않는다. 실제 필드 분리와 컬럼명·타입 확정은 반드시 Record Parsing 단계에서 수행한다. Kafka JSON envelope처럼 이미 이름 있는 필드로 구조화된 메시지는 기존 정형 표를 유지한다.
 
-Kafka Preview에서 모든 샘플의 `source`가 `click-events-log`이고 `raw.event_time`, `raw.event_id`, `raw.user_id`, `raw.session_id`, `raw.event_type`, `raw.product_id`, `raw.page_url`, `raw.device_type`, `raw.referrer`, `raw.position`이 모두 존재하면 frontend는 이 열들을 원본 순서로 결합해 `원본 로그 샘플`로 표시한다. 이는 표시 전용이며 API의 JSON sample/schema draft를 변경하거나 Kafka 원시 TXT Record Parsing을 활성화하지 않는다. 조건을 충족하지 않는 Kafka 메시지는 기존 정형 표를 유지한다.
-
-Kafka Source API가 `draftPatch.source.requiresRecordParsing=true`와 함께 `detectedFormat`, `rawPreviewLines`를 명시적으로 반환하면 frontend는 해당 값을 보존하고 공통 Record Parsing 단계로 이동한다. 다만 Kafka Snapshot/Continuous 실행 시 확정된 `recordParsing`을 실제 런타임에 적용하는 기능은 backend/Spark 구현이 함께 배포되기 전까지 지원되지 않는다.
+Kafka Source API가 `draftPatch.source.requiresRecordParsing=true`와 함께 `detectedFormat`, `rawPreviewLines`를 명시적으로 반환하면 frontend는 해당 값을 보존하고 공통 Record Parsing 단계로 이동한다. Kafka Snapshot/Continuous runtime은 확정된 같은 `recordParsing` 계약을 전체 입력에 적용한다.
 
 `POST /api/etl/record-parsing/preview`
 
@@ -993,8 +996,8 @@ type RecordParsingPreviewResponse = {
 - 컬럼명은 비어 있거나 중복될 수 없고 컬럼 수는 `expectedFieldCount`와 같아야 한다.
 - Preview의 invalid row는 line number, expected/actual count, 200자 이하 raw preview만 반환한다.
 - 부족한 값을 null로 채우거나 초과 값을 자르거나 오류 행을 조용히 버리지 않는다.
-- `CreatePipelineRequest.recordParsing`은 확정된 규칙을 저장한다. Spark batch runtime은 전체 TXT 입력에 같은 규칙을 다시 적용하고 불일치가 하나라도 있으면 `RECORD_FIELD_COUNT_MISMATCH`로 target write 전에 Run을 실패시킨다.
-- 이번 범위는 MinIO/S3 TXT batch만 지원한다. Kafka Snapshot/Continuous 원시 TXT와 임의 정규식은 지원하지 않는다.
+- `CreatePipelineRequest.recordParsing`은 확정된 규칙을 저장한다. File/S3 batch, Kafka Snapshot, Kafka Continuous runtime은 전체 입력에 같은 규칙을 다시 적용한다. Snapshot은 필드 수 또는 타입 변환 불일치를 invalid record로 처리하고, Continuous는 malformed record를 기존 실패 정책에 따라 중단 또는 격리한다.
+- 이번 범위의 Kafka 원문 구조화는 메시지 하나가 한 줄이고 연속 공백(`\\s+`)으로 분리되는 단일 레코드만 지원한다. 임의 정규식, 복수 구분자와 멀티라인 메시지는 지원하지 않는다.
 
 ### 7.1 Target S3 Path Picker
 
@@ -1143,6 +1146,9 @@ type ReviewSnapshot = {
 - live mode는 source connector 결과를 재확인하고, mock mode는 동일한 response shape를 fixture로 반환합니다.
 - 내부 `Data Lake` source는 `sourceConfig`의 `Source Dataset ID`를 기준으로 Catalog dataset을 다시 검증합니다. dataset은 `available` 상태이며 현재 actor가 조회할 수 있어야 하고, `queryEngineStatus=available`인 Iceberg `queryEngineTable`을 가져야 합니다. 실제 Snapshot Run은 이 table identity를 Spark catalog source로 읽습니다. `Data Lake Parquet`은 이 계약과 별개로 S3/S3A path connector 검증을 유지합니다.
 - Review UI는 local draft를 직접 조합하지 않고 이 response를 표시합니다.
+- `basicInformation`은 내부 `id`와 자동 생성용 `jobName`을 제외하고 소스, 처리 방식, 출력 데이터셋 이름, 설명을 반환합니다. `executionMode=snapshot`은 `배치 처리`, `executionMode=continuous`는 `실시간 스트리밍`으로 표시합니다.
+- `permission`은 `담당자`, `로그인한 모든 사용자`, non-public 대상별 허용 action을 반환합니다. 담당자는 backend fallback으로 전체 권한을 가지며 `public:view`는 `로그인한 모든 사용자=조회 가능`으로 표시합니다. optional `principalName`이 있으면 대상 ID 대신 사람이 읽는 이름을 표시합니다.
+- `validation`은 실제 생성 차단 조건인 소스 데이터, 선택형 레코드 구조화, 출력 스키마, 처리 규칙, 접근 권한, 저장 위치만 반환합니다. 스케줄과 실패 재시도는 별도 단계에서 설정하지만 `canCreate`를 막지 않으므로 준비 상태에 포함하지 않습니다.
 - `ruleCompilation.status`가 `pass`일 때만 `canCreate`가 true가 될 수 있습니다. `rules`가 비어 있으면 output schema는 포함된 source schema와 같은 pass-through 결과이며 `ruleSummary`가 비어 있어도 실패하지 않습니다.
 
 ### 7.3 작업 목록 조회
@@ -1308,7 +1314,8 @@ type CreatePipelineRequest = {
 };
 ```
 
-`permissionSummary`, `permissionRoles`, `owner`, `createdBy`, `createdByProfile`은 생성 결과를 설명하고 표시하기 위한 governance/identity metadata입니다. 반면 `permissionGrants`는 실제 resource access control 입력이며 Job 생성·수정 시 `permission_grants` table의 `permission_ui` source로 저장되어 Job 조회·실행·관리·삭제 권한 판정에 사용됩니다. Backend는 `asklake_session` 쿠키 actor를 우선 사용하고, 세션이 없을 때만 `X-AskLake-User` header 또는 demo actor를 `createdBy` fallback으로 사용할 수 있습니다.
+`permissionSummary`와 `permissionRoles`는 호환용 governance 요약이고, `createdBy`와 `createdByProfile`은 identity metadata입니다. `permissionGrants`는 실제 Job 접근 권한이며 backend가 조회·실행·관리·삭제·공유를 판정할 때 사용합니다. `owner`는 표시용 담당자이면서 전체 권한을 주는 backend fallback 기준입니다. Backend는 `asklake_session` 쿠키 actor를 우선 사용하고, 세션이 없을 때만 `X-AskLake-User` header 또는 demo actor를 `createdBy` fallback으로 사용할 수 있습니다.
+Job 생성·수정 시 `permissionGrants`는 `permission_grants` table의 `permission_ui` source로 저장됩니다. `owner`는 grant로 저장하지 않고 backend의 전체 권한 fallback 기준으로 사용합니다.
 
 Rule contract rules:
 
@@ -1481,7 +1488,7 @@ Validation:
 - `storageType`, `partition`, `compression`, `storagePath`는 Target 화면의 draft 값이며, 없으면 frontend는 기존 기본값을 채웁니다.
 - `icebergTarget`은 create payload에 포함하지 않습니다. Backend가 새 Job에 생성해 create/list/detail response와 Spark runtime payload에 같은 값으로 반환합니다.
 - Target metadata는 flat create contract를 유지하기 위해 `targetDescription`, `targetTags`, `partitionColumns`, `indexColumns`로 전달합니다. 기존 `partition`은 하위 호환용 표시/저장 문자열이며 `partitionColumns.join("/")` 값과 같아야 합니다.
-- Target 화면은 모든 Source에서 `targetLayer`를 RAW/BRONZE/SILVER/GOLD 중 명시적으로 선택하게 하며 기존 draft/default layer를 초기값으로 사용합니다. 자동 생성 storage path는 선택 layer를 반영합니다.
+- Target 화면은 `targetLayer` 선택을 노출하지 않습니다. 기존 create/update 계약 호환을 위해 frontend가 source/execution별 내부 기본값을 전송하며 backend의 조합 검증은 유지합니다. Review 저장 위치에는 중복된 테이블 이름과 내부 계층을 표시하지 않습니다.
 - `rag`는 호환 필드로 유지하지만, 현재 Target 화면에서는 설정을 노출하지 않고 frontend는 기본값 `false`를 전송합니다.
 - 현재 Target 화면은 저장소 선택 화면이 아니라 최종 dataset 저장 명세 화면입니다. `data` JSON 단일 컬럼 sample은 frontend에서 dot-path 컬럼으로 펼쳐 `schemaRules`와 preview를 구성하고, 원본 보존용 `raw_data`는 optional 미사용 컬럼으로 둡니다.
 - 현재 Target 화면의 파티션은 실제 사용 컬럼 중 partition 가능한 컬럼을 checkbox로 여러 개 선택하며, 선택 순서를 유지해 `/`로 연결한 뒤 create request의 `partition`에 반영합니다. 예: `event_date/region`.
@@ -1499,7 +1506,7 @@ Validation:
 
 - `updatePipelineDraft(jobId, draftPipeline)`
 
-Request는 `CreatePipelineRequest`에서 `id`, `sourceConfig`, `sourceLabel`, `sourceType`, `createdBy`, `createdByProfile`, `permissionGrants`를 제외한 `UpdatePipelineRequest`다. source field가 body에 포함되면 `422` validation error로 거부한다.
+Request는 `CreatePipelineRequest`에서 `id`, `sourceConfig`, `sourceLabel`, `sourceType`, `createdBy`, `createdByProfile`을 제외한 `UpdatePipelineRequest`다. `permissionGrants`는 수정 가능하며 기존 `permission_ui` source grant를 교체한다. source field가 body에 포함되면 `422` validation error로 거부한다.
 
 Response `200 OK`:
 
@@ -3792,24 +3799,28 @@ type AuditEntry = {
 
 ETL Permission 화면은 더 이상 하드코딩 사용자 목록을 source of truth로 사용하지 않는다. 다만 그룹 후보는 현재 backend의 `DEMO_GROUPS` 고정 정의이며, 사용자 후보만 `auth_users` table을 우선 사용한다.
 
-1. 화면 진입 시 `GET /api/etl/permission-options`로 그룹과 사용자 후보를 조회한다.
-2. 선택한 그룹은 응답의 `actions`를 유지한 `group` grant로 변환한다.
-3. 선택한 사용자는 기본 `view`, `run` action을 가진 `user` grant로 변환한다.
-4. 공개 범위를 `외부 공유`로 지정하면 `public` principal의 `view` grant를 추가한다. 이 값은 익명 공개 링크가 아니라 현재 인증 경계 안의 모든 actor에 매칭되는 grant다.
-5. 생성 또는 수정 request의 `permissionGrants`를 `permission_grants` table에 `source=permission_ui`로 저장한다.
-6. 동일 resource 수정은 `permission_ui` source만 교체하고 `admin`, `admin_seed` 등 다른 source는 보존한다.
+1. 화면 진입 시 `GET /api/etl/permission-options`로 그룹과 사용자 후보를 조회한다. 새 작업은 `jobId` 없이 호출하고, 기존 작업 수정은 `jobId`를 query로 전달한다.
+2. 그룹 또는 사용자를 권한 대상으로 추가한다. 대상 추가만으로는 identity가 결정되고, 실제 action은 프리셋 또는 직접 설정으로 지정한다.
+3. `조회 전용`, `실행 가능`, `운영 가능` 프리셋은 선택된 모든 대상에 공통 action 집합을 적용한다. `직접 설정`은 대상별 action을 편집한다.
+4. `query`, `run`, `manage`, `delete`, `share` 중 하나를 부여하면 기본 조회가 가능하도록 `view`도 포함해 정규화한다.
+5. `모든 사용자에게 조회 허용`을 켜면 `public` principal의 `view` grant를 추가한다. 이는 비로그인 공개가 아니라 로그인한 모든 actor의 조회 허용을 뜻한다.
+6. 담당자(owner)는 backend fallback으로 전체 권한을 자동 보유한다. owner grant는 저장하지 않고 최종 확인 화면에서 읽기 전용으로 표시한다.
+7. 생성 또는 수정 request의 `permissionGrants`를 `permission_grants` table에 `source=permission_ui`로 저장한다.
+8. 동일 resource 수정은 `permission_ui` source만 교체하고 `admin`, `admin_seed` 등 다른 source는 보존한다.
+9. 이전 Job의 `permissionRoles`는 최초 접근 시 `legacy_permission_roles` source의 table grant로 한 번만 이관한다.
 
 ```ts
 type PermissionGrant = {
   actions: Array<"view" | "query" | "run" | "manage" | "delete" | "share">;
   principalId: string;
+  principalName?: string;
   principalType: "user" | "group" | "role" | "public";
   source?: string;
 };
 ```
 
-빈 `principalId` 또는 action이 없는 grant는 `400 VALIDATION_ERROR`다. `public` principal은 `principalId`를 `public`으로 정규화한다. backend는 client가 보낸 `id`와 `source`를 신뢰하지 않고 새 ID와 `permission_ui` source를 부여한다.
+빈 `principalId` 또는 action이 없는 grant는 `400 VALIDATION_ERROR`다. `public` principal은 `principalId`를 `public`으로 정규화한다. `principalName`은 Review 표시용 optional metadata이며 저장 identity와 권한 판정은 `principalType + principalId`만 사용한다. backend는 client가 보낸 `id`와 `source`를 신뢰하지 않고 새 ID와 `permission_ui` source를 부여한다.
 
-현재 frontend의 `permissionTemplate`은 독립 정책 템플릿이 아니라 group name을 저장하며, 템플릿 선택은 해당 그룹을 선택 상태로 만든다. 대상별 action 직접 편집은 구현하지 않았고, group은 options API action을, user는 `view`, `run`을 사용한다. `owner`는 자유 문자열 입력이며 현재 이름 일치 owner fallback에도 사용된다. options API는 민감 데이터 분류나 governance 안전 판정을 제공하지 않으며, 화면의 민감 데이터 상태는 frontend 컬럼명 정규식 추정값이다.
+새 작업의 권한 옵션 조회는 인증된 actor에게 허용한다. 기존 작업은 admin, 생성자, 담당자(owner), 또는 `manage` grant를 가진 actor만 조회할 수 있고, 그 외 actor는 `403 FORBIDDEN`을 받는다. live frontend는 API 오류 시 권한 화면 안에 재시도 경로를 표시하고 다음 단계 이동을 막는다. `VITE_USE_MOCK_API=true`에서는 동일 response shape의 fixture를 사용하되 최종 Job request shape는 live와 동일하다. Review 응답의 `permission`은 담당자 자동 권한을 첫 항목으로 표시하고, 이어서 실제 저장 예정 grant를 대상별로 나열한다.
 
-권한 옵션 조회는 admin actor만 허용한다. live frontend는 API 오류 시 grant 화면 안에 재시도 경로를 표시하고 다음 단계 이동을 막는다. `VITE_USE_MOCK_API=true`에서는 동일 response shape의 fixture를 사용하되 최종 Job request shape는 live와 동일하다.
+현재 그룹 후보는 backend의 `DEMO_GROUPS` 고정 정의이고 사용자 후보는 `auth_users` table을 우선한다. `permissionTemplate`은 과거 request 호환용 요약이며 권한 판정에는 사용하지 않는다.

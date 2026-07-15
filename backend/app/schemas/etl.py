@@ -834,6 +834,7 @@ class KafkaReviewIngestResponse(CamelModel):
 class KafkaReplayProducerRequest(CamelModel):
     topic: str = "reviews.raw"
     input_path: str | None = None
+    payload_mode: Literal["json_envelope", "raw_text"] = "json_envelope"
     rate: int = Field(default=10, ge=1, le=100_000)
     batch_size: int = Field(default=100, ge=1, le=10_000)
     progress_every: int = Field(default=100, ge=1, le=100_000)
@@ -923,6 +924,9 @@ class SourceConnectorRequest(CamelModel):
 
 class SourceConnectorDefaults(CamelModel):
     kafka_broker: str
+    kafka_topic: str
+    s3_bucket: str
+    s3_prefix: str
 
 
 class SourceAssetsRequest(CamelModel):

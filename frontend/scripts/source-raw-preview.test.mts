@@ -2,9 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  extractKafkaClickLogPreviewLines,
   extractRawTextPreviewLines,
-  shouldShowKafkaClickLogPreview,
+  resolveRawTextPreviewLines,
   shouldShowRawTextPreview,
 } from "../src/utils/sourcePreview.ts";
 
@@ -29,63 +28,40 @@ test("TXT source preview extracts only the original value column", () => {
   }), true);
 });
 
-test("structured and Kafka previews remain tabular", () => {
+test("structured previews remain tabular", () => {
   assert.equal(shouldShowRawTextPreview({
     detectedFormat: "JSONL",
     requiresRecordParsing: false,
     rawLines: ["{\"event_id\":\"EVT-1\"}"],
     sourceType: "File / S3",
   }), false);
+});
+
+test("Kafka raw text uses backend-preserved lines even when table preview is empty", () => {
+  const lines = resolveRawTextPreviewLines({
+    backendRawLines: [
+      "2026-06-12T14:21:32+09:00 EVT-000000001 USR-0000001 SES-00000001 product_impression B07WMTD66B /search mobile email 1",
+    ],
+    columnLabels: [],
+    rows: [],
+  });
+
+  assert.deepEqual(lines, [
+    "2026-06-12T14:21:32+09:00 EVT-000000001 USR-0000001 SES-00000001 product_impression B07WMTD66B /search mobile email 1",
+  ]);
   assert.equal(shouldShowRawTextPreview({
     detectedFormat: "TXT",
     requiresRecordParsing: true,
-    rawLines: ["raw event"],
+    rawLines: lines,
+    sourceType: "Stream / Kafka",
+  }), true);
+});
+
+test("structured Kafka JSON remains tabular even if raw lines are present", () => {
+  assert.equal(shouldShowRawTextPreview({
+    detectedFormat: "JSON",
+    requiresRecordParsing: false,
+    rawLines: ["{\"event_id\":\"EVT-1\"}"],
     sourceType: "Stream / Kafka",
   }), false);
-});
-
-test("Kafka click-events-log payload reconstructs the preserved raw log lines", () => {
-  const columns = [
-    "schema_version",
-    "source",
-    "raw.event_time",
-    "raw.event_id",
-    "raw.user_id",
-    "raw.session_id",
-    "raw.event_type",
-    "raw.product_id",
-    "raw.page_url",
-    "raw.device_type",
-    "raw.referrer",
-    "raw.position",
-  ];
-  const lines = extractKafkaClickLogPreviewLines(columns, [[
-    "1.0",
-    "click-events-log",
-    "2026-06-12T14:21:32+09:00",
-    "EVT-000000001",
-    "USR-0000001",
-    "SES-00000001",
-    "product_impression",
-    "B07WMTD66B",
-    "/search?category=Camera+%26+Photo",
-    "mobile",
-    "email",
-    "1",
-  ]]);
-
-  assert.deepEqual(lines, [
-    "2026-06-12T14:21:32+09:00 EVT-000000001 USR-0000001 SES-00000001 product_impression B07WMTD66B /search?category=Camera+%26+Photo mobile email 1",
-  ]);
-  assert.equal(shouldShowKafkaClickLogPreview({ rawLines: lines, sourceType: "Stream / Kafka" }), true);
-});
-
-test("ordinary Kafka JSON does not masquerade as a raw click log", () => {
-  const lines = extractKafkaClickLogPreviewLines(
-    ["source", "event_id", "review"],
-    [["orders-api", "EVT-1", "created"]],
-  );
-
-  assert.deepEqual(lines, []);
-  assert.equal(shouldShowKafkaClickLogPreview({ rawLines: lines, sourceType: "Stream / Kafka" }), false);
 });

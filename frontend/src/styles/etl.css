@@ -6641,7 +6641,7 @@
 .etl-review-card-header h2 {
   margin: 0;
   color: #111827;
-  font-size: 15px;
+  font-size: 18px;
   font-weight: 850;
   line-height: 1.35;
 }
@@ -6649,7 +6649,7 @@
 .etl-review-card-header p {
   margin: 4px 0 0;
   color: #64748b;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 650;
   line-height: 1.45;
 }
@@ -6658,8 +6658,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   border-radius: 8px;
   background: #eff6ff;
   color: #2563eb;
@@ -6678,6 +6678,11 @@
 .etl-review-icon.permission {
   background: #fff7ed;
   color: #ea580c;
+}
+
+.etl-review-icon.readiness {
+  background: #eff6ff;
+  color: #2563eb;
 }
 
 .etl-review-edit {
@@ -6725,7 +6730,7 @@
 
 .etl-review-kv dt {
   color: #64748b;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 750;
 }
 
@@ -6733,7 +6738,7 @@
   min-width: 0;
   margin: 0;
   color: #111827;
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 750;
   line-height: 1.45;
   overflow-wrap: anywhere;
@@ -6755,7 +6760,7 @@
   gap: 12px;
   border-bottom: 1px solid #eef0f4;
   color: #64748b;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 900;
   padding: 0 16px;
   text-transform: uppercase;
@@ -6765,7 +6770,7 @@
   border-radius: 6px;
   background: #eff6ff;
   color: #2563eb;
-  font-size: 11px;
+  font-size: 12px;
   font-style: normal;
   padding: 4px 8px;
   text-transform: none;
@@ -6793,7 +6798,7 @@
 
 .etl-review-schema-index {
   color: #94a3b8;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 800;
   text-align: center;
 }
@@ -6806,7 +6811,7 @@
 
 .etl-review-schema-column strong {
   color: #111827;
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 850;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -6815,7 +6820,7 @@
 
 .etl-review-schema-column small {
   color: #64748b;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 650;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -6828,7 +6833,7 @@
   border-radius: 6px;
   background: #f9fbfc;
   color: #374151;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 900;
   padding: 5px 8px;
   text-transform: uppercase;
@@ -6841,7 +6846,7 @@
 
 .etl-review-empty {
   color: #64748b;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 750;
   padding: 18px;
 }
@@ -6849,8 +6854,8 @@
 .etl-review-validation {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-  padding: 0 20px 16px;
+  gap: 12px;
+  padding: 20px;
 }
 
 .etl-review-validation div {
@@ -6882,7 +6887,7 @@
 .etl-review-validation span {
   min-width: 0;
   color: #374151;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 750;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -6891,7 +6896,7 @@
 
 .etl-review-validation strong {
   color: #111827;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 900;
   white-space: nowrap;
 }
@@ -6933,38 +6938,38 @@
 
 .target-page-layout .creation-top-actions .primary-button,
 .target-page-layout .creation-top-actions .secondary-button {
-  min-height: 48px;
-  font-size: 18px;
+  min-height: 40px;
+  font-size: 16px;
 }
 
 .target-config-card .etl-review-card-header {
-  padding: 22px 24px;
+  padding: 18px 20px;
 }
 
 .target-config-card .etl-review-card-header h2 {
-  font-size: 22px;
+  font-size: 18px;
 }
 
 .target-config-card .etl-review-icon {
-  width: 36px;
-  height: 36px;
+  width: 32px;
+  height: 32px;
 }
 
 .target-config-card .etl-review-icon svg {
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
 }
 
 .target-config-card .field > span {
   color: #334155;
-  font-size: 18px;
+  font-size: 15px;
   font-weight: 800;
 }
 
 .target-config-card .input {
-  min-height: 52px;
+  min-height: 44px;
   padding: 0 16px;
-  font-size: 20px;
+  font-size: 16px;
 }
 
 .target-config-form-grid {
@@ -7022,7 +7027,7 @@
 .target-config-subheader h3 {
   margin: 0;
   color: #111827;
-  font-size: 21px;
+  font-size: 18px;
   font-weight: 850;
 }
 
@@ -7070,9 +7075,9 @@
 }
 
 .target-config-card .target-chip-grid button {
-  min-height: 42px;
+  min-height: 36px;
   padding: 0 14px;
-  font-size: 18px;
+  font-size: 15px;
 }
 
 .target-chip-grid.partition {
@@ -7088,9 +7093,9 @@
 
 .target-config-card .target-inline-controls button,
 .target-config-card .s3-path-field button {
-  min-height: 52px;
+  min-height: 40px;
   padding: 0 18px;
-  font-size: 18px;
+  font-size: 15px;
 }
 
 .target-metadata-grid .target-db-field,
@@ -7121,7 +7126,7 @@
   border-radius: 8px;
   background: #fef2f2;
   color: #991b1b;
-  font-size: 17px;
+  font-size: 14px;
   font-weight: 800;
   padding: 16px 18px;
 }
@@ -7146,7 +7151,7 @@
 }
 
 .target-config-card .s3-path-display {
-  min-height: 52px;
+  min-height: 44px;
   padding: 0 16px;
 }
 
@@ -7170,7 +7175,7 @@
 
 .target-config-card .s3-path-empty,
 .target-config-card .s3-path-text {
-  font-size: 18px;
+  font-size: 14px;
 }
 
 .s3-path-action {
@@ -7568,10 +7573,10 @@
 }
 
 .target-partition-header {
-  min-height: 54px;
+  min-height: 44px;
   background: #f8fafc;
   color: #475569;
-  font-size: 18px;
+  font-size: 14px;
   font-weight: 850;
 }
 
@@ -7589,7 +7594,7 @@
 }
 
 .target-partition-option {
-  min-height: 64px;
+  min-height: 52px;
   border-top: 1px solid #e2e8f0;
   background: #fff;
   cursor: pointer;
@@ -7619,7 +7624,7 @@
 .target-partition-name {
   min-width: 0;
   color: #171a1f;
-  font-size: 18px;
+  font-size: 15px;
   font-weight: 850;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -7633,7 +7638,7 @@
 .target-partition-type {
   color: #64748b;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-  font-size: 18px;
+  font-size: 14px;
   font-weight: 850;
 }
 
@@ -9693,6 +9698,31 @@ input.schema-checkbox:checked {
   width: 17px;
 }
 
+.record-parsing-panel-actions {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  margin-left: auto;
+}
+
+.record-parsing-preset-button {
+  border-color: #93c5fd;
+  color: #1d4ed8;
+  font-family: var(--jobs-font-family);
+  font-weight: 700;
+}
+
+.record-parsing-preset-button:hover {
+  background: #dbeafe;
+  border-color: #60a5fa;
+  color: #1d4ed8;
+}
+
+.record-parsing-preset-button svg {
+  height: 15px;
+  width: 15px;
+}
+
 .record-parsing-panel-header-warning {
   background: #fff7ed;
   border-bottom-color: #fed7aa;
@@ -9838,8 +9868,16 @@ input.schema-checkbox:checked {
   }
 
   .record-parsing-panel-header {
+    align-items: flex-start;
+    flex-wrap: wrap;
     min-height: 50px;
-    padding: 0 13px;
+    padding: 10px 13px;
+  }
+
+  .record-parsing-panel-actions {
+    justify-content: flex-end;
+    margin-left: 0;
+    width: 100%;
   }
 
   .record-parsing-panel-body {

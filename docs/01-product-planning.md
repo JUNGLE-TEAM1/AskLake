@@ -38,8 +38,7 @@ AskLake는 사용자가 데이터셋의 출처, 품질, 권한, 실행 결과, �
 - 사용자·그룹·권한·감사 로그 관리 콘솔
 - Source 연결 테스트와 Schema 추론
 - MinIO/S3에서 같은 형식의 파일 조각이 모인 하나의 prefix를 데이터셋으로 선택하고, 대표 파일 Preview와 전체 파일 수·용량·스키마 호환성을 확인한 뒤 전체 prefix를 실행 입력으로 사용
-- 이름 있는 필드가 없는 MinIO/S3 TXT 소스의 조건부 레코드 구조화: Source 탐색에서는 `.txt`/`.log` 제한 샘플을 열 테이블로 오해하지 않도록 원문 행 블록으로 표시하고, 다음 레코드 구조화 단계에서만 한 줄을 하나의 레코드로 보고 연속 공백(`\\s+`)으로 분리한 뒤 컬럼명·타입 초안을 Schema 단계에 전달
-- Kafka의 `click-events-log` replay 메시지는 파이프라인용 JSON schema를 유지하되 Source 탐색에서 보존된 `raw.*` 10필드를 원본 `.log` 순서의 행 블록으로 표시한다. 다른 Kafka JSON 메시지는 기존 정형 Preview를 사용한다.
+- 이름 있는 필드가 없는 MinIO/S3 TXT 또는 Kafka raw text 소스의 조건부 레코드 구조화: Source 탐색에서는 `.txt`/`.log` 제한 샘플과 raw text 메시지를 열 테이블로 오해하지 않도록 원문 행 블록으로 표시하고, 다음 레코드 구조화 단계에서만 한 줄 또는 메시지 하나를 하나의 레코드로 보고 연속 공백(`\\s+`)으로 분리한 뒤 컬럼명·타입 초안을 Schema 단계에 전달
 - 새 수집/처리 Job 생성
 - 작업 명령 UI: 실행, 재실행, 일시정지, 취소
 - Run History와 Run별 DAG 표시
@@ -87,11 +86,13 @@ FastAPI live backend에서 현재 우선 구현하는 범위:
 
 ### Permission/Governance Phase 0 기준
 
-현재 Create flow의 Permission 단계는 실제 ETL Job 접근 권한을 설정한다. 화면에서 선택한 사용자·그룹은 `permissionGrants`로 변환되고, Job 생성·수정 시 `permission_grants` table의 `source=permission_ui` 행으로 저장된다. 이후 Job 조회, 실행, 수정, 삭제 API는 현재 actor와 저장된 grant를 기준으로 접근을 판정한다.
+Create flow의 Permission 단계는 실제 Job 접근 권한을 설정한다. 사용자는 그룹 또는 사용자를 선택하고 대상별 허용 작업을 지정하며, `모든 사용자에게 조회 허용`을 켜면 로그인한 모든 사용자에게 `view` 권한을 부여한다. 선택 결과는 `permissionGrants`로 저장되고 Job 조회·실행·관리·삭제·공유 판정에 사용된다. `permissionSummary`와 `permissionRoles`는 기존 화면 및 이전 데이터 호환을 위한 요약 값이며 새 권한의 source of truth가 아니다.
 
-`createdBy`, `owner`, profile/avatar, `permissionSummary`, `permissionRoles`는 표시와 호환을 위한 identity/governance metadata이며 실제 권한의 source of truth가 아니다. 실제 접근 제어는 `ActorContext`, resource별 `permissionGrants`, backend permission check로 다룬다. 현재 기준 권한 판정은 allow-only 모델이며, `admin`은 전체 허용되고, legacy owner fallback과 user/group/role/public grant 중 하나가 맞으면 허용된다. 공통 action은 `view`, `query`, `run`, `manage`, `delete`, `share`이고 여러 grant는 합산한다. 현재 생성 화면은 선택한 그룹에 backend가 내려준 action 묶음을 그대로 적용하고, 선택한 사용자에는 `view`, `run`을 고정 적용한다. 대상별 action 직접 편집은 아직 구현하지 않았다. 관리 콘솔의 `admin` source grant는 생성 화면의 `permission_ui` 수정으로 덮어쓰지 않는다.
+최종 Review의 첫 섹션은 `생성 준비 상태`다. 이 섹션에는 생성 API를 실제로 차단하는 소스 데이터, 선택형 레코드 구조화, 출력 스키마, 처리 규칙, 접근 권한, 저장 위치만 표시한다. 스케줄과 실패 재시도는 각 설정 단계에서 검토하지만 생성 차단 조건이 아니므로 준비 상태 건수에 포함하지 않는다. 별도 `권한 설정` 섹션은 담당자의 자동 전체 권한, 로그인한 모든 사용자의 조회 허용 여부, 그룹·사용자별 허용 작업을 모두 보여준다.
 
-현재 제한은 그룹 후보가 고정된 demo group 정의를 사용하고, 권한 옵션 조회가 admin actor에게만 열리며, deny/조건부 정책이 없다는 점이다. `permissionTemplate`은 별도 정책 템플릿이 아니라 선택 그룹 이름을 재사용하고, `owner`는 자유 문자열 입력이며 이름 일치 fallback에도 사용된다. 컬럼명 정규식 기반 민감 데이터 감지는 frontend 추정값일 뿐 backend governance 결과가 아니다.
+`createdBy`, `owner`, profile/avatar 같은 값은 표시·감사 문맥의 identity metadata로 분리한다. 담당자(owner)는 Job에 대한 전체 권한을 자동으로 가지며 별도 grant로 저장하거나 화면에서 편집하지 않는다. 실제 접근 제어는 `ActorContext`, resource별 `permissionGrants`, backend permission check로 다룬다. 현재 기준은 allow-only 모델이며 `admin`, owner fallback, user/group/role/public grant 순으로 허용 여부를 계산한다. 지원 action은 `view`, `query`, `run`, `manage`, `delete`, `share`이고, `query`, `run`, `manage`, `delete`, `share`를 부여하면 기본 조회가 가능하도록 `view`도 함께 정규화한다. 이전 `permissionRoles` 데이터는 최초 접근 시 `legacy_permission_roles` source의 table grant로 한 번만 이관한다.
+
+Job 생성·수정 시 화면이 관리하는 grant는 `permission_grants` table의 `source=permission_ui` 행으로 저장한다. 관리 콘솔의 `admin`, `admin_seed` source grant는 생성 화면 수정으로 덮어쓰지 않는다. 현재 제한은 그룹 후보가 고정 demo group 정의를 사용하고 deny·조건부 정책이 없다는 점이다.
 
 ## 6) 핵심 사용자 흐름
 
@@ -106,7 +107,7 @@ FastAPI live backend에서 현재 우선 구현하는 범위:
 
 1. 사용자는 source 연결을 검증한 뒤 탐색 목록에서 단일 파일, 같은 형식의 파일 조각이 모인 prefix, 테이블 또는 컬렉션을 명시적으로 선택하고 해당 대상의 제한 샘플을 확인한다. 폴더 펼치기는 탐색 동작이고 prefix 데이터셋 선택은 별도 action이다. 연결 검증만으로 임의 대상을 자동 선택하지 않는다.
 2. Prefix 데이터셋은 임의로 흩어진 파일 선택이 아니라 한 prefix 아래 같은 형식과 호환 스키마를 가진 파일 집합이다. `_SUCCESS`, `manifest.json`, 숨김 파일과 선택 형식이 아닌 객체는 입력에서 제외하며, Preview는 결정적인 대표 파일과 전체 데이터 파일 수·용량을 표시한다.
-3. 소스에 이름 있는 필드가 있으면 바로 Schema 단계로 이동한다. MinIO/S3 TXT처럼 필드명이 없는 원시 레코드이면 조건부 `레코드 구조화` 단계에서 연속 공백(`\\s+`) 분리, 헤더 여부, 컬럼명과 타입 초안을 확정한다.
+3. 소스에 이름 있는 필드가 있으면 바로 Schema 단계로 이동한다. MinIO/S3 TXT 또는 Kafka raw text처럼 필드명이 없는 원시 레코드이면 조건부 `레코드 구조화` 단계에서 연속 공백(`\\s+`) 분리, 헤더 여부, 컬럼명과 타입 초안을 확정한다. 발표·검증용 클릭 이벤트 레코드가 정확히 10필드로 파싱되면 사용자가 명시적으로 누를 수 있는 추천 스키마를 제공하되 자동 확정하지 않는다.
 4. 사용자는 schema, rule, schedule, permission, target을 설정한다.
    - Schema의 `필수값`과 `누락 시 기본값`은 한 흐름으로 동작한다. 누락된 값은 기본값으로 먼저 채우고, 그 뒤에도 비어 있는 필수값은 실행을 실패시킨다.
    - 필수 필드에는 중복되는 `누락값 검사`를 별도로 노출하지 않는다. 선택 품질 검사의 실패 처리는 기록 후 계속, 실행 실패, 행 제외, 격리, 문제 값을 NULL로 변경 중 실제 실행 action만 설정한다.
@@ -115,7 +116,7 @@ FastAPI live backend에서 현재 우선 구현하는 범위:
 7. 사용자가 PostgreSQL Snapshot Job을 실행하거나 재실행하면 스키마 Preview 행 수와 무관하게 선택한 기본 테이블 전체를 일관된 DB snapshot으로 읽는다.
 8. 일반 Snapshot Job의 성공 결과는 새 물리 경로에 전체 데이터로 저장하고, Catalog의 현재 Dataset은 최신 성공 snapshot만 가리킨다. 이전 성공 snapshot은 실행 이력으로 보존하지만 현재 행 수와 기본 SQL 조회에는 합산하지 않는다.
 9. 사용자가 Prefix Job을 실행하면 Spark는 같은 제외 규칙으로 prefix의 모든 데이터 파일을 읽고 실제 입력 파일 수·전체 입력 바이트·전체 입력 행 수를 Run manifest에 기록한다.
-10. 사용자가 TXT Job을 실행하면 Spark는 Preview와 같은 구조화 규칙을 전체 TXT 입력에 다시 적용한다.
+10. 사용자가 File/S3 TXT, Kafka Snapshot 또는 Kafka Continuous raw text Job을 실행하면 runtime은 Preview와 같은 구조화 규칙을 전체 입력에 다시 적용한다.
 11. 모든 비어 있지 않은 행의 필드 개수가 확정된 컬럼 수와 같을 때만 target을 쓰고 Catalog dataset을 생성 또는 갱신한다. 불일치가 있으면 Run을 실패시키고 Catalog materialization을 만들지 않는다.
 12. 실패하면 toast와 audit log에 실패 기록을 남기고 optimistic 상태를 되돌린다.
 
@@ -165,7 +166,7 @@ FastAPI live backend에서 현재 우선 구현하는 범위:
 ## 9) 보류 범위
 
 - 모든 source type의 production 연결
-- Kafka Snapshot/Continuous 원시 TXT 구조화, 임의 정규식 작성, 복수 구분자, 멀티라인 로그, 오류 행 자동 보정·quarantine·재처리
+- 임의 정규식 작성, 복수 구분자, 멀티라인 로그, 오류 행 자동 보정·재처리
 - 대용량 처리 성능 검증
 - Kafka Continuous Ingestion V1 운영 확장: 지속 실행 Spark worker, checkpoint 재개, Catalog 등록, partition lag, bounded log, quarantine replay, staged compaction은 Issue #500에서 구현했다. autoscaling, alerting/SLA, 장기 로그 object storage, compaction 결과의 atomic reader 전환/retention, 다중 worker 운영은 후속 범위
 - Spark, Trino, Kafka, Airflow 전체 운영 완성

@@ -780,6 +780,8 @@ export async function testKafkaSource(fields, sourceType = "Stream / Kafka") {
     const messages = await sampleKafkaMessages({ broker, groupId: sampleGroupId, rowLimit: Math.min(samplePolicy.rowLimit, 100), topic });
     const parsedSample = parseKafkaMessages(topic, messages, samplePolicy.rowLimit);
     const schemaColumns = inferSchemaColumns(parsedSample);
+    const rawValueIndex = parsedSample.columns.findIndex((column) => column === "value");
+    const requiresRecordParsing = parsedSample.format === "txt" && rawValueIndex >= 0;
 
     const id = sourceId("source", `kafka://${broker}/${topic}`);
     const runId = sourceId("run", `${id}:${Date.now()}`);
@@ -815,6 +817,11 @@ export async function testKafkaSource(fields, sourceType = "Stream / Kafka") {
         source: {
           connectionMessage: `Kafka 토픽 연결 성공: ${topic}`,
           connectionStatus: "success",
+          detectedFormat: requiresRecordParsing ? "TXT" : undefined,
+          rawPreviewLines: requiresRecordParsing
+            ? parsedSample.rows.map((row) => row[rawValueIndex] ?? "").filter((line) => line.trim())
+            : [],
+          requiresRecordParsing,
           sourceConfig,
           sourceLabel: `${broker}/${topic}`,
           sourceType,

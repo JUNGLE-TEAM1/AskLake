@@ -1,13 +1,12 @@
 import { apiClient, apiConfig } from "./apiClient";
 import type { DraftPipelinePatch, RecordParsingDraft, RecordParsingPreviewResponse, SchemaColumnDraft, SourceDraft } from "../types";
+import { sanitizeSourceConnectorFields, type SourceFieldRows } from "../utils/sourceConnectorFields";
 
 const directBackendBaseUrl = String(
   import.meta.env.VITE_BACKEND_DIRECT_URL
     || import.meta.env.VITE_API_BASE_URL
     || "http://127.0.0.1:8080",
 ).replace(/\/$/, "");
-
-type SourceFieldRows = Array<[string, string]>;
 
 export type SourceDatasetSummary = {
   selectionKind: "prefix";
@@ -38,6 +37,9 @@ export type SourceConnectorAnalysis = {
 
 export type SourceConnectorDefaults = {
   kafkaBroker: string;
+  kafkaTopic: string;
+  s3Bucket: string;
+  s3Prefix: string;
 };
 
 type BackendSourceConnectorResponse = SourceConnectorAnalysis;
@@ -54,11 +56,12 @@ export async function testSourceConnector(sourceType: string, fields: SourceFiel
   if (normalizedSourceType === "SQL Result") {
     return buildSqlResultConnectorAnalysis(fields);
   }
+  const requestFields = sanitizeSourceConnectorFields(normalizedSourceType, fields);
   return withUnselectedTargetSchema(withRecordParsingSourceMetadata(normalizeConnectorAnalysis(
-    await postSourceConnector(normalizedSourceType, fields),
+    await postSourceConnector(normalizedSourceType, requestFields),
     normalizedSourceType,
-    fields,
-  ), fields));
+    requestFields,
+  ), requestFields));
 }
 
 export async function previewRecordParsing(rawLines: string[], recordParsing: RecordParsingDraft): Promise<RecordParsingPreviewResponse> {
@@ -67,12 +70,20 @@ export async function previewRecordParsing(rawLines: string[], recordParsing: Re
 }
 
 export async function getSourceConnectorDefaults(): Promise<SourceConnectorDefaults> {
-  if (apiConfig.useMock) return { kafkaBroker: "127.0.0.1:19092" };
+  if (apiConfig.useMock) {
+    return {
+      kafkaBroker: "127.0.0.1:19092",
+      kafkaTopic: "asklake-source-events",
+      s3Bucket: "m3-raw",
+      s3Prefix: "",
+    };
+  }
   return getWithDevFallback<SourceConnectorDefaults>("/api/etl/sources/defaults");
 }
 
 export async function listSourceAssets(sourceType: string, fields: SourceFieldRows, prefix = ""): Promise<SourceAssetsResponse> {
-  return postSourceAssets(normalizeSourceType(sourceType), fields, prefix);
+  const normalizedSourceType = normalizeSourceType(sourceType);
+  return postSourceAssets(normalizedSourceType, sanitizeSourceConnectorFields(normalizedSourceType, fields), prefix);
 }
 
 async function postSourceConnector(sourceType: string, fields: SourceFieldRows): Promise<BackendSourceConnectorResponse> {
@@ -309,7 +320,7 @@ function withRecordParsingSourceMetadata(analysis: SourceConnectorAnalysis, fiel
     || (/\.(txt|log)$/i.test(sampleObject) ? "TXT" : undefined);
   const rawValueIndex = analysis.previewColumns.findIndex((column) => /^(value|raw_value)$/i.test(column));
   const inferredRequiresRecordParsing = detectedFormat === "TXT" && rawValueIndex >= 0;
-  const requiresRecordParsing = sourceMetadata.requiresRecordParsing === true || inferredRequiresRecordParsing;
+  const requiresRecordParsing = sourceMetadata.requiresRecordParsing ?? inferredRequiresRecordParsing;
   const backendRawPreviewLines = sourceMetadata.rawPreviewLines?.filter((line) => line.trim()) ?? [];
   const rawPreviewLines = backendRawPreviewLines.length > 0
     ? backendRawPreviewLines

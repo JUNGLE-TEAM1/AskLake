@@ -109,6 +109,10 @@ Prod compose는 MinIO를 포함하지 않고 실제 AWS S3를 사용한다. 시�
 ASKLAKE_OBJECT_STORAGE_PROVIDER=aws
 AWS_REGION=ap-northeast-2
 ASKLAKE_RAW_BUCKET=replace-with-asklake-raw-bucket
+# 선택 사항: 새 빈 Source draft에만 표시할 비밀이 아닌 기본값
+ASKLAKE_SOURCE_DEFAULT_S3_BUCKET=
+ASKLAKE_SOURCE_DEFAULT_S3_PREFIX=
+ASKLAKE_SOURCE_DEFAULT_KAFKA_TOPIC=asklake-source-events
 ASKLAKE_SPARK_OUTPUT_MODE=s3a
 ASKLAKE_SPARK_OUTPUT_BUCKET=replace-with-asklake-output-bucket
 COMPOSE_PROFILES=

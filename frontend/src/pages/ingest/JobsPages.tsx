@@ -1213,7 +1213,11 @@ function getJobDetailActions(job: JobRowData): JobDetailAction[] {
     if (["starting", "running", "pausing"].includes(runtimeStatus)) {
       return [{ className: "job-action-button danger", kind: "stopContinuous", label: "스트림 중지" }];
     }
-    return [{ className: "job-action-button primary", kind: "startContinuous", label: "스트림 시작" }, { className: "job-action-button", kind: "edit", label: "수정" }];
+    return [
+      { className: "job-action-button primary", kind: "startContinuous", label: "스트림 시작" },
+      { className: "job-action-button", kind: "edit", label: "수정" },
+      { className: "job-action-button danger", kind: "delete", label: "삭제" },
+    ];
   }
   if (job.status === "running") {
     if (isRealtimeJob(job)) {
@@ -2033,19 +2037,24 @@ function JobDetailHeader({
         actions={(
           <div className="grid max-w-full justify-items-end gap-3">
             <ActionGroup density="compact">
-              {getJobDetailActions(job).map((action) => (
-                <Button
-                  className={getJobDetailActionClassName(action)}
-                  key={action.label}
-                  size="sm"
-                  type="button"
-                  variant="outline"
-                  onClick={() => runAction(action.kind)}
-                >
-                  <JobDetailActionIcon action={action} job={job} />
-                  {action.label}
-                </Button>
-              ))}
+              {getJobDetailActions(job).map((action) => {
+                const disabled = jobActionDisabled(job, action.kind);
+                return (
+                  <Button
+                    className={getJobDetailActionClassName(action)}
+                    disabled={disabled}
+                    key={action.label}
+                    size="sm"
+                    title={disabled ? permissionDeniedMessage("작업", action.label) : undefined}
+                    type="button"
+                    variant="outline"
+                    onClick={() => runAction(action.kind)}
+                  >
+                    <JobDetailActionIcon action={action} job={job} />
+                    {action.label}
+                  </Button>
+                );
+              })}
             </ActionGroup>
             <OwnerIdentity job={job} layout="header" />
           </div>

@@ -30,7 +30,7 @@ from app.core.materialization import (
     has_bounded_source_window,
     materialization_source_window,
 )
-from app.core.permission_metadata import permission_grants_from_roles, resource_permissions
+from app.core.permission_metadata import normalize_actions, permission_grants_from_roles, resource_permissions
 from app.core.s3_policy import resolve_s3_source_location, s3_source_config_fields, validate_s3_source_config
 from app.models import (
     CatalogDatasetModel,
@@ -59,7 +59,7 @@ from app.repositories.dashboard_live_repository import (
     save_catalog_dataset_and_revision,
 )
 from app.repositories.sql_repository import SqlRepository
-from app.repositories.permission_repository import replace_permission_ui_grants
+from app.repositories.permission_repository import ensure_legacy_permission_grants, replace_permission_ui_grants
 from app.schemas.common import ErrorCode
 from app.schemas.etl import (
     AirflowCatalogReconciliationResponse,
@@ -113,6 +113,7 @@ from app.schemas.etl import (
     UpdatePipelineRequest,
 )
 from app.schemas.iceberg import IcebergWriterTarget
+from app.schemas.permissions import PermissionGrant
 
 from app.services.airflow_client import AirflowDagRun, AirflowTaskInstance, build_airflow_client
 from app.services.auth_service import load_active_actor_by_user_id
@@ -133,7 +134,7 @@ from app.services.materialization_projection import (
     upsert_materialization_run,
 )
 from app.services.rule_compiler import CompiledRuleSet, compile_rule_set
-from app.services.resource_permission_service import job_with_persisted_permission_grants, permission_grants_for_resource, permissions_for_actor_with_governance
+from app.services.resource_permission_service import permission_grants_for_resource, permissions_for_actor_with_governance
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 SCRIPTS_DIR = BACKEND_DIR / "scripts"
@@ -141,10 +142,23 @@ JOB_STATUSES = ("scheduled", "failed", "running", "paused", "canceled", "stopped
 ACTIVE_RUN_STATUSES = {"queued", "running"}
 TERMINAL_RUN_STATUSES = {"success", "failed", "canceled"}
 SPARK_OUTPUT_FORMAT = "parquet"
+PERMISSION_REVIEW_ACTION_LABELS = {
+    "view": "조회",
+    "query": "쿼리 실행",
+    "run": "실행",
+    "manage": "관리",
+    "share": "공유",
+    "delete": "삭제",
+}
 PERMISSION_GROUP_ACTIONS = {
     "analytics": ["view", "query"],
     "data-platform": ["view", "run", "manage"],
     "ops": ["view", "run"],
+}
+LEGACY_PERMISSION_GROUP_IDS = {
+    alias.casefold(): group.id
+    for group in DEMO_GROUPS.values()
+    for alias in (group.id, group.name, group.name.removesuffix(" Team"))
 }
 DEFAULT_SOURCE_IDENTITY_WORKERS = 16
 MAX_SOURCE_IDENTITY_WORKERS = 64
@@ -166,12 +180,71 @@ SCHEDULE_WEEKDAY_VALUES = {
 def source_connector_defaults() -> SourceConnectorDefaults:
     return SourceConnectorDefaults(
         kafka_broker=os.environ.get("ASKLAKE_KAFKA_BROKER") or "127.0.0.1:19092",
+        kafka_topic=(
+            os.environ.get("ASKLAKE_SOURCE_DEFAULT_KAFKA_TOPIC")
+            or os.environ.get("ASKLAKE_KAFKA_TOPIC")
+            or "asklake-source-events"
+        ),
+        s3_bucket=(
+            os.environ.get("ASKLAKE_SOURCE_DEFAULT_S3_BUCKET")
+            or os.environ.get("ASKLAKE_RAW_BUCKET")
+            or ""
+        ),
+        s3_prefix=os.environ.get("ASKLAKE_SOURCE_DEFAULT_S3_PREFIX") or "",
     )
 
 
-def get_permission_options(db: Session, actor: ActorContext) -> PermissionOptionsResponse:
-    if actor.role != "admin":
-        raise ApiError(ErrorCode.FORBIDDEN, "Admin role is required", status.HTTP_403_FORBIDDEN)
+def legacy_permission_grants(roles: list[dict[str, Any]] | None) -> list[PermissionGrant]:
+    grants: list[PermissionGrant] = []
+    for role in roles or []:
+        if not isinstance(role, dict) or role.get("checked") is False:
+            continue
+        name = str(role.get("name") or "").strip()
+        if not name:
+            continue
+        group_id = LEGACY_PERMISSION_GROUP_IDS.get(name.casefold())
+        grants.append(PermissionGrant(
+            actions=normalize_actions(role.get("access")) or ["view"],
+            principal_id=group_id or name,
+            principal_type="group" if group_id else "role",
+            source="legacy_permission_roles",
+        ))
+    return grants
+
+
+def permission_grants_for_etl_job(
+    db: Session,
+    job: ETLJobModel | JobRowData,
+) -> list[PermissionGrant]:
+    ensure_legacy_permission_grants(
+        db,
+        resource_type="etl_job",
+        resource_id=job.id,
+        grants=legacy_permission_grants(job.permission_roles),
+        created_by=job.owner,
+    )
+    return permission_grants_for_resource(db, "etl_job", job.id, [])
+
+
+def get_permission_options(
+    db: Session,
+    actor: ActorContext,
+    job_id: str | None = None,
+) -> PermissionOptionsResponse:
+    if job_id:
+        job = etl_repository.get_job(db, job_id)
+        if job is None:
+            raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
+        is_creator = actor.name == job.created_by
+        is_owner = actor.name == job.owner
+        if not actor.is_admin and not is_creator and not is_owner:
+            require_permission(
+                actor,
+                "manage",
+                owner=job.owner,
+                grants=permission_grants_for_etl_job(db, job),
+                resource_label="job permissions",
+            )
     Base.metadata.create_all(bind=db.get_bind(), tables=[AuthUserModel.__table__])
     stored_users = list(db.scalars(select(AuthUserModel).order_by(AuthUserModel.display_name.asc())).all())
     users = stored_users or [
@@ -833,12 +906,7 @@ def update_pipeline(
         actor_context,
         "manage",
         owner=job.owner,
-        grants=permission_grants_for_resource(
-            db,
-            "etl_job",
-            job.id,
-            permission_grants_from_roles(job.owner, job.permission_roles, default_actions=["view", "run"]),
-        ),
+        grants=permission_grants_for_etl_job(db, job),
         resource_label="job",
     )
     compiled_rules = compile_pipeline_rules(
@@ -934,12 +1002,7 @@ def delete_job(db: Session, job_id: str, actor: ActorContext | None = None) -> s
             actor_context,
             "delete",
             owner=job.owner,
-            grants=permission_grants_for_resource(
-                db,
-                "etl_job",
-                job.id,
-                permission_grants_from_roles(job.owner, job.permission_roles, default_actions=["view", "run"]),
-            ),
+            grants=permission_grants_for_etl_job(db, job),
             resource_label="job",
         )
     except ApiError as exc:
@@ -1120,12 +1183,7 @@ def command_job(
             actor_context,
             required_action,
             owner=job.owner,
-            grants=permission_grants_for_resource(
-                db,
-                "etl_job",
-                job.id,
-                permission_grants_from_roles(job.owner, job.permission_roles, default_actions=["view", "run"]),
-            ),
+            grants=permission_grants_for_etl_job(db, job),
             resource_label="job",
         )
     except ApiError as exc:
@@ -1473,7 +1531,9 @@ def command_kafka_continuous_job(
 
 
 def with_job_permissions(db: Session, job: JobRowData, actor: ActorContext) -> JobRowData:
-    job_with_grants = job_with_persisted_permission_grants(db, job)
+    job_with_grants = job.model_copy(update={
+        "permission_grants": permission_grants_for_etl_job(db, job),
+    })
     grant_payloads = [
         grant.model_dump(by_alias=True) if hasattr(grant, "model_dump") else grant
         for grant in job_with_grants.permission_grants
@@ -1771,22 +1831,26 @@ def review_pipeline(
         and len(request.record_parsing.columns) == request.record_parsing.expected_field_count
         and len({normalize_column_name(column.name) for column in request.record_parsing.columns}) == len(request.record_parsing.columns)
     )
-    schedule_ready = bool(request.schedule_label.strip())
-    retry_ready = bool(request.retry_policy_summary.strip())
     target_issue = target_contract_issue(
         source_type=request.source_type,
         execution_mode=request.execution_mode,
         target_layer=request.target_layer,
         target_format=request.target_format,
     )
-    target_ready = target_issue is None
-    permission_ready = bool(request.permission_summary.strip() and request.target_dataset.strip() and request.owner.strip()) and target_ready
+    target_ready = target_issue is None and bool(
+        request.target_dataset.strip()
+        and str(request.target_layer).strip()
+        and request.target_format.strip()
+    )
+    permission_issue = review_permission_issue(request)
+    permission_ready = permission_issue is None
     can_create = (
         source_ready
         and schema_ready
         and rules_ready
         and record_parsing_ready
         and target_ready
+        and permission_ready
         and bool(request.source_type.strip())
         and bool(request.source_label.strip())
         and bool(request.target_dataset.strip())
@@ -1798,26 +1862,19 @@ def review_pipeline(
 
     return ReviewSnapshot(
         basic_information=[
-            review_entry("작업 ID", request.id),
-            review_entry("작업명", request.job_name),
             review_entry("소스", source_display),
-            review_entry("실행 방식", "실시간 스트림" if request.execution_mode == "continuous" else "Snapshot batch"),
-            review_entry("대상 데이터셋", request.target_dataset),
+            review_entry("처리 방식", "실시간 스트리밍" if request.execution_mode == "continuous" else "배치 처리"),
+            review_entry("출력 데이터셋 이름", request.target_dataset),
             review_entry("설명", request.target_description),
         ],
         can_create=can_create,
         destination=[
             review_entry("저장 경로", request.storage_path),
             review_entry("데이터베이스", request.target_database or "asklake"),
-            review_entry("테이블 이름", request.target_dataset),
             review_entry("형식", request.target_format),
-            review_entry("계층", request.target_layer),
             review_entry("파티션", request.partition or "없음"),
         ],
-        permission=[
-            review_entry("담당자", request.owner),
-            review_entry("요약", request.permission_summary),
-        ],
+        permission=permission_review_entries(request),
         rule_compilation=compiled_rules.result,
         schema=[
             ReviewSchemaRow(
@@ -1829,19 +1886,62 @@ def review_pipeline(
             for name, type_ in output_columns
         ],
         validation=[
-            review_validation("소스 연결", source_ready, "완료", "확인 필요"),
+            review_validation("소스 데이터", source_ready, "연결됨", "연결 확인 필요"),
             *([review_validation("레코드 구조화", record_parsing_ready, "확정됨", "구조화 규칙 확인 필요")] if request.record_parsing and request.record_parsing.enabled else []),
-            review_validation("스키마", schema_ready, "확정됨", "추론 필요"),
+            review_validation("출력 스키마", schema_ready, "확정됨", "필드 선택 필요"),
             review_validation("처리 규칙", rules_ready, rule_ready_value, rule_warning_value),
-            review_validation("스트림 제어" if request.execution_mode == "continuous" else "스케줄", schedule_ready, "시작/중지로 제어" if request.execution_mode == "continuous" else "유효함", "확인 필요"),
-            review_validation("실패 재시도", retry_ready, "유효함", "확인 필요"),
-            review_validation("권한/타겟", permission_ready, "유효함", target_issue or "확인 필요"),
+            review_validation("접근 권한", permission_ready, "설정됨", permission_issue or "권한 확인 필요"),
+            review_validation("저장 위치", target_ready, "설정됨", target_issue or "출력 데이터셋 이름 확인 필요"),
         ],
     )
 
 
 def review_entry(label: str, value: str | None) -> ReviewEntry:
     return ReviewEntry(label=label, value=(value or "").strip() or "미설정")
+
+
+def permission_review_entries(request: ReviewPipelineRequest) -> list[ReviewEntry]:
+    grants = request.permission_grants or []
+    public_view = any(
+        str(grant.principal_type) == "public" and "view" in grant.actions
+        for grant in grants
+    )
+    entries = [
+        review_entry("담당자", f"{request.owner} · 모든 작업 가능"),
+        review_entry("로그인한 모든 사용자", "조회 가능" if public_view else "조회 불가"),
+    ]
+    principal_labels = {
+        "group": "그룹",
+        "user": "사용자",
+        "role": "역할",
+        "public": "모든 사용자",
+    }
+
+    for grant in grants:
+        principal_type = str(grant.principal_type)
+        if principal_type == "public":
+            continue
+        label = principal_labels.get(principal_type, principal_type)
+        principal = grant.principal_name or grant.principal_id
+        actions = " · ".join(
+            PERMISSION_REVIEW_ACTION_LABELS.get(str(action), str(action))
+            for action in grant.actions
+        ) or "권한 없음"
+        entries.append(review_entry(f"{principal} ({label})", actions))
+
+    return entries
+
+
+def review_permission_issue(request: ReviewPipelineRequest) -> str | None:
+    if not request.owner.strip():
+        return "담당자 확인 필요"
+    for grant in request.permission_grants or []:
+        principal_type = str(grant.principal_type)
+        if principal_type != "public" and not grant.principal_id.strip():
+            return "권한 대상 확인 필요"
+        if not grant.actions:
+            return "허용 작업 확인 필요"
+    return None
 
 
 def review_validation(label: str, ready: bool, ready_value: str, warning_value: str) -> ReviewValidationRow:
@@ -5773,6 +5873,7 @@ def run_kafka_continuous_worker(
             "ruleFingerprint": rule_fingerprint,
             "ruleOutputSchema": compiled_rules.result.output_schema,
             "rules": canonical_rules,
+            "recordParsing": job.record_parsing or None,
             "schemaColumns": job.schema_columns or [],
             "schemaFingerprint": job.schema_fingerprint or "",
             "schemaEvolutionPolicy": config.get("schemaEvolutionPolicy") or {},
@@ -7891,8 +7992,8 @@ def validate_create_request(request: CreatePipelineRequest) -> None:
     )
     if request.record_parsing and request.record_parsing.enabled:
         parsing_names = [normalize_column_name(column.name) for column in request.record_parsing.columns]
-        if request.source_type != "File / S3":
-            missing.append("recordParsingSource=File / S3")
+        if request.source_type != "File / S3" and "kafka" not in request.source_type.lower():
+            missing.append("recordParsingSource=File / S3 or Kafka")
         if request.record_parsing.expected_field_count <= 0:
             missing.append("recordParsing.expectedFieldCount")
         if len(request.record_parsing.columns) != request.record_parsing.expected_field_count:

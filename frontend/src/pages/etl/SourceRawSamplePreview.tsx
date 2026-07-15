@@ -11,7 +11,7 @@ export function SourceRawSamplePreview({ lines }: SourceRawSamplePreviewProps) {
     return (
       <EmptyState
         className="source-preview-empty-state"
-        description="왼쪽에서 .log 또는 .txt 파일을 선택하면 원문 일부를 확인할 수 있습니다."
+        description=".log/.txt 파일 또는 Kafka raw text 토픽을 선택하면 원문 일부를 확인할 수 있습니다."
         icon={<FileText />}
         size="sm"
         title="표시할 원본 샘플이 없습니다."
