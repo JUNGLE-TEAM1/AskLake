@@ -279,7 +279,8 @@ kubectl create configmap "$CONFIG_MAP_NAME" \
   -n "$NAMESPACE" \
   --from-file=backend_s3_smoke.py="$SMOKE_SOURCE" \
   --dry-run=client \
-  -o yaml \
+  -o json \
+  | jq '.metadata.labels = {"app.kubernetes.io/name":"asklake-backend-s3-smoke"}' \
   | kubectl apply -f - >/dev/null
 
 jq -n \

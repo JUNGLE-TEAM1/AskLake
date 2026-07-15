@@ -122,3 +122,9 @@ Kubernetes rollout 완료 직후에는 이전 Backend target 두 개가 ALB의 �
 - 새 Backend Pod Identity로 S3 positive/negative boundary smoke 재통과 및 임시 자원 정리
 
 따라서 Phase 4는 새 image build/push, EC2 traffic cutover 또는 기존 환경 삭제 없이 최종 Backend rollout 가용성과 Continuous 소유권 경계를 완료했다.
+
+## Phase 5 최종 통합 인수
+
+Issue #794의 마지막 단계에서는 새 rollout 없이 `scripts/verify-eks-day15-final-integration.sh`로 현재 상태를 다시 결합 검증했다. 최종 Backend commit·immutable ECR digest, Pod `2/2`, ALB exact steady, Backend Secret/RDS, S3 positive/negative와 cleanup, EKS Continuous process 0, 실행 중 EC2 보존이 한 번에 통과했다.
+
+Terraform 전체 mock test는 44개 통과·0개 실패였고 실제 dev 입력의 refresh plan은 complete 상태에서 resource change 0개였다. 반복 S3 smoke 뒤 version/DeleteMarker와 Kubernetes smoke Pod/ConfigMap 잔여도 각각 0개다. 세부 결과와 제외 범위는 [Issue #794 최종 통합 인수 기록](eks-day15-final-integration-evidence.md)을 따른다.

@@ -722,6 +722,17 @@ export ASKLAKE_BACKEND_ROLLOUT_CONFIRM='restart-same-immutable-backend'
 bash scripts/run-eks-day15-backend-rollout-smoke.sh
 ```
 
+Issue #794의 페이즈 5 최종 인수는 인프라의 “Phase 5 배포 Handoff”와 다른 작업 단계다. 새 rollout이나 infrastructure mutation 없이 현재 Backend commit/ECR digest, Pod `2/2`, ALB exact steady, Backend Secret/RDS, S3 positive/negative와 cleanup, `external_ec2`/Continuous process 0, 실행 중 EC2 보존을 한 번에 재검증한다. S3 sentinel만 임시 생성되며 runner가 version/DeleteMarker와 Kubernetes smoke resource를 모두 제거한다.
+
+```bash
+export ASKLAKE_EKS_CLUSTER_NAME='<terraform output>'
+export ASKLAKE_EXPECTED_BACKEND_COMMIT='<reviewed commit>'
+export ASKLAKE_FINAL_INTEGRATION_CONFIRM='run-read-mostly-final-integration'
+bash scripts/verify-eks-day15-final-integration.sh
+```
+
+실제 dev 최종 결과, Terraform 무변경과 cleanup 증거는 [Issue #794 최종 통합 인수 기록](eks-day15-final-integration-evidence.md)에 남긴다. 이 gate의 성공은 Backend web runtime 범위이며 Airflow·Spark·Trino bounded E2E 또는 production cutover 승인이 아니다.
+
 ```bash
 docker run --rm --entrypoint sh \
   -v "$PWD/infra/eks:/workspace" \
