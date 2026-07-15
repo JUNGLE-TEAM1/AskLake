@@ -42,7 +42,7 @@ serviceAccounts:
     create: true
     name: asklake-spark
     annotations: {}
-    automountServiceAccountToken: false
+    automountServiceAccountToken: true
   replayProducer:
     create: false
     name: asklake-replay-producer
