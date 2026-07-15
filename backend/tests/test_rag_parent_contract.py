@@ -11,6 +11,7 @@ from rag_parent_contract import (  # noqa: E402
     embedding_text,
     failed_row_report,
     normalized_row,
+    render_scalar,
     validate_parent_document,
 )
 
@@ -47,6 +48,16 @@ def test_nested_values_and_arrays_are_retained_without_row_explosion():
     assert row["payload"] == {"customer": {"id": "c-1"}}
     assert row["tags"] == ["a", "b"]
     assert "ignored" not in row
+
+
+def test_render_scalar_does_not_drop_integer_zeroes_or_fractional_precision():
+    assert render_scalar(10, "decimal") == "10"
+    assert render_scalar(100, "decimal") == "100"
+    assert render_scalar(120, "decimal") == "120"
+    assert render_scalar(10.50, "decimal") == "10.5"
+    assert render_scalar(0.10, "decimal") == "0.1"
+    assert render_scalar(-120.00, "decimal") == "-120"
+    assert render_scalar("2026-07-15", "date") == "2026-07-15"
 
 
 def test_parent_normalized_row_contains_only_approved_role_columns():

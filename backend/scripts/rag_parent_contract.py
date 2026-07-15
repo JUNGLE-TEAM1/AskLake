@@ -17,6 +17,7 @@ from typing import Any, Iterable
 RAG_PARENT_SCHEMA_VERSION = "rag-parent-v3"
 EMBEDDING_INPUT_VERSION = "title_body_fields_v2"
 FIELD_RENDERING_VERSION = "field_blocks_v1"
+CHUNKING_VERSION = "rag-chunk-v3"
 DEFAULT_CHUNK_TARGET_TOKENS = 800
 DEFAULT_CHUNK_OVERLAP_TOKENS = 400
 DEFAULT_CHUNK_MAX_TOKENS = 1200
@@ -58,7 +59,9 @@ def render_scalar(value: Any, data_type: str | None = None) -> str:
             pass
     if any(token in kind for token in ("float", "double", "decimal", "numeric", "number")):
         try:
-            normalized = format(Decimal(str(value).strip()), "f").rstrip("0").rstrip(".")
+            normalized = format(Decimal(str(value).strip()), "f")
+            if "." in normalized:
+                normalized = normalized.rstrip("0").rstrip(".")
             return normalized or "0"
         except (InvalidOperation, ValueError):
             pass
@@ -66,6 +69,11 @@ def render_scalar(value: Any, data_type: str | None = None) -> str:
         return str(value.isoformat()).strip()
     if any(token in kind for token in ("date", "time", "timestamp")) and isinstance(value, str):
         text = value.strip()
+        if kind == "date" or ("date" in kind and not any(token in kind for token in ("time", "timestamp", "datetime"))):
+            try:
+                return date.fromisoformat(text).isoformat()
+            except ValueError:
+                pass
         try:
             return datetime.fromisoformat(text.replace("Z", "+00:00")).isoformat()
         except ValueError:

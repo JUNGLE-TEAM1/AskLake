@@ -65,6 +65,7 @@ def chunk_schema() -> T.StructType:
         T.StructField("semantic_bindings_json", T.StringType(), False),
         T.StructField("source_columns", T.ArrayType(T.StringType(), False), False),
         T.StructField("source_fields_json", T.StringType(), False),
+        T.StructField("parent_source_fields_json", T.StringType(), False),
         T.StructField("content_hash", T.StringType(), False),
         T.StructField("chunking_strategy", T.StringType(), False),
         T.StructField("chunking_version", T.StringType(), False),
@@ -113,12 +114,16 @@ def serialize_chunks(chunks: list[dict]):
         source_fields = chunk.pop("source_fields", [])
         if not isinstance(source_fields, list):
             raise RuntimeError("RAG Chunker returned invalid source fields")
+        parent_source_fields = chunk.pop("parent_source_fields", source_fields)
+        if not isinstance(parent_source_fields, list):
+            raise RuntimeError("RAG Chunker returned invalid parent source fields")
         chunk["metadata_json"] = json.dumps(metadata, ensure_ascii=False, sort_keys=True, default=str)
         chunk["metadata_display_json"] = json.dumps(metadata_display, ensure_ascii=False, sort_keys=True, default=str)
         chunk["title_blocks_json"] = json.dumps(title_blocks, ensure_ascii=False, sort_keys=True, default=str)
         chunk["body_blocks_json"] = json.dumps(body_blocks, ensure_ascii=False, sort_keys=True, default=str)
         chunk["semantic_bindings_json"] = json.dumps(semantic_bindings, ensure_ascii=False, sort_keys=True, default=str)
         chunk["source_fields_json"] = json.dumps(source_fields, ensure_ascii=False, sort_keys=True, default=str)
+        chunk["parent_source_fields_json"] = json.dumps(parent_source_fields, ensure_ascii=False, sort_keys=True, default=str)
         yield chunk
 
 
@@ -139,7 +144,7 @@ def main() -> int:
         # a driver restart without calling the Chunker again.
         if spark.catalog.tableExists(target_table):
             existing_chunks = spark.table(target_table)
-            if "chunking_version" not in existing_chunks.columns:
+            if "chunking_version" not in existing_chunks.columns or "parent_source_fields_json" not in existing_chunks.columns:
                 raise RuntimeError("RAG_CHUNK_SCHEMA_VERSION_MISMATCH")
             versions = {str(row[0]) for row in existing_chunks.select("chunking_version").distinct().collect()}
             if versions and versions != {CHUNKING_VERSION}:

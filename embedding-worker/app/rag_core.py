@@ -169,7 +169,7 @@ def render_field_section_range(blocks: Sequence[dict[str, Any]], section: str, s
         text = str(block.get("text") or "")
         local_start = max(0, overlap_start - value_start)
         local_end = min(len(text), overlap_end - value_start)
-        fragments.append({**block, "text": text[local_start:local_end], "fragmentStart": overlap_start, "fragmentEnd": overlap_end})
+        fragments.append({**block, "text": text[local_start:local_end], "fieldText": text, "fieldValueStart": value_start, "fragmentStart": overlap_start, "fragmentEnd": overlap_end})
     return render_field_section(fragments, section)
 
 

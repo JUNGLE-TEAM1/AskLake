@@ -13,6 +13,7 @@ import json
 import os
 import sqlite3
 import threading
+import time
 from typing import Any
 
 
@@ -24,7 +25,12 @@ class IdempotencyStore:
             os.makedirs(directory, exist_ok=True)
         self._lock = threading.Lock()
         with self._connect() as connection:
-            connection.execute("CREATE TABLE IF NOT EXISTS rag_idempotency (request_key TEXT PRIMARY KEY, input_hash TEXT NOT NULL, response_json TEXT NOT NULL)")
+            connection.execute("CREATE TABLE IF NOT EXISTS rag_idempotency (request_key TEXT PRIMARY KEY, input_hash TEXT NOT NULL, response_json TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'completed', lease_until REAL NOT NULL DEFAULT 0)")
+            columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(rag_idempotency)").fetchall()}
+            if "state" not in columns:
+                connection.execute("ALTER TABLE rag_idempotency ADD COLUMN state TEXT NOT NULL DEFAULT 'completed'")
+            if "lease_until" not in columns:
+                connection.execute("ALTER TABLE rag_idempotency ADD COLUMN lease_until REAL NOT NULL DEFAULT 0")
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, timeout=30)
@@ -38,16 +44,51 @@ class IdempotencyStore:
 
     def get(self, request_key: str, input_hash: str) -> dict[str, Any] | None:
         with self._lock, self._connect() as connection:
-            row = connection.execute("SELECT input_hash, response_json FROM rag_idempotency WHERE request_key = ?", (request_key,)).fetchone()
+            row = connection.execute("SELECT input_hash, response_json, state FROM rag_idempotency WHERE request_key = ?", (request_key,)).fetchone()
         if row is None:
             return None
         if row[0] != input_hash:
             raise ValueError("Idempotency key was reused for a different request payload")
+        if row[2] != "completed":
+            return None
         value = json.loads(row[1])
         return value if isinstance(value, dict) else None
+
+    def claim(self, request_key: str, input_hash: str, *, lease_seconds: float = 300.0) -> tuple[str, dict[str, Any] | None]:
+        """Atomically claim work or report a completed/in-progress request.
+
+        A lease prevents concurrent Spark retries from running the same costly
+        embedding/LLM operation at the same time. Expired leases are safely
+        reclaimed, allowing a crashed worker to be retried.
+        """
+
+        now = time.time()
+        lease_until = now + max(1.0, float(lease_seconds))
+        with self._lock, self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT input_hash, response_json, state, lease_until FROM rag_idempotency WHERE request_key = ?", (request_key,)).fetchone()
+            if row is not None and row[0] != input_hash:
+                connection.rollback()
+                raise ValueError("Idempotency key was reused for a different request payload")
+            if row is None:
+                connection.execute("INSERT INTO rag_idempotency(request_key, input_hash, response_json, state, lease_until) VALUES (?, ?, ?, 'processing', ?)", (request_key, input_hash, "{}", lease_until))
+                connection.commit()
+                return "claimed", None
+            if row[2] == "completed":
+                connection.commit()
+                value = json.loads(row[1])
+                return "completed", value if isinstance(value, dict) else None
+            if float(row[3] or 0) > now:
+                connection.commit()
+                return "in_progress", None
+            connection.execute("UPDATE rag_idempotency SET state = 'processing', lease_until = ?, response_json = '{}' WHERE request_key = ?", (lease_until, request_key))
+            connection.commit()
+            return "claimed", None
 
     def put(self, request_key: str, input_hash: str, response: dict[str, Any]) -> None:
         encoded = json.dumps(response, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
         with self._lock, self._connect() as connection:
-            connection.execute("INSERT OR REPLACE INTO rag_idempotency(request_key, input_hash, response_json) VALUES (?, ?, ?)", (request_key, input_hash, encoded))
+            updated = connection.execute("UPDATE rag_idempotency SET response_json = ?, state = 'completed', lease_until = 0 WHERE request_key = ? AND input_hash = ?", (encoded, request_key, input_hash)).rowcount
+            if not updated:
+                connection.execute("INSERT INTO rag_idempotency(request_key, input_hash, response_json, state, lease_until) VALUES (?, ?, ?, 'completed', 0)", (request_key, input_hash, encoded))
             connection.commit()

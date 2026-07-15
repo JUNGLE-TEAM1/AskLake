@@ -104,8 +104,8 @@ class RagService:
         role_sets = [set(request.body_columns), set(request.title_columns), set(request.metadata_columns), set(request.identifier_columns), set(request.excluded_columns)]
         if sum(len(item) for item in role_sets) != len(set().union(*role_sets)):
             raise ApiError("validation_error", "A column cannot have multiple RAG roles", status.HTTP_400_BAD_REQUEST)
-        if not request.identifier_columns and not any(str(column).casefold() in {"id", "row_id", "review_id"} or str(column).casefold().endswith("_id") for column in columns):
-            raise ApiError("validation_error", "RAG indexing requires a stable identifier column; assign an id column to the identifier role", status.HTTP_400_BAD_REQUEST)
+        if not request.identifier_columns:
+            raise ApiError("validation_error", "RAG indexing requires at least one stable identifier column assigned to the identifier role", status.HTTP_400_BAD_REQUEST)
         row.body_columns = request.body_columns
         row.title_columns = request.title_columns
         row.metadata_columns = request.metadata_columns
@@ -138,7 +138,7 @@ class RagService:
             hits = payload.get("hits", {}).get("hits", []) if isinstance(payload, dict) else []
             documents = [self._preview_document_from_index_hit(hit, dataset_name=str(dataset.get("name") or dataset_id), target_index=active_manifest.index_name) for hit in hits if isinstance(hit, dict)]
             return RagDocumentPreviewResponse(dataset_id=dataset_id, target_alias=alias, source_columns=[*(row.body_columns or []), *(row.title_columns or []), *(row.metadata_columns or []), *(row.identifier_columns or [])], documents=documents)
-        documents = build_documents(dataset_id=dataset_id, dataset_name=str(dataset.get("name") or dataset_id), rows=dataset.get("sampleRows") or [], columns=dataset_columns(dataset), body_columns=row.body_columns or [], title_columns=row.title_columns or [], metadata_columns=row.metadata_columns or [], identifier_columns=row.identifier_columns or [], semantic_bindings=row.semantic_bindings or {}, schema_types={str(item.get("name")): str(item.get("dataType") or item.get("data_type") or "") for item in dataset_schema(dataset) if isinstance(item, dict) and item.get("name")}, target_index=alias, limit=settings.rag_document_preview_limit)
+        documents = build_documents(dataset_id=dataset_id, dataset_name=str(dataset.get("name") or dataset_id), rows=dataset.get("sampleRows") or [], columns=dataset_columns(dataset), body_columns=row.body_columns or [], title_columns=row.title_columns or [], metadata_columns=row.metadata_columns or [], identifier_columns=row.identifier_columns or [], semantic_bindings=row.semantic_bindings or {}, schema_types={str(item.get("name")): str(item.get("dataType") or item.get("data_type") or "") for item in dataset_schema(dataset) if isinstance(item, dict) and item.get("name")}, physical_column_mapping=row.physical_column_mapping or {}, target_index=alias, limit=settings.rag_document_preview_limit)
         return RagDocumentPreviewResponse(dataset_id=dataset_id, target_alias=alias, source_columns=[*(row.body_columns or []), *(row.title_columns or []), *(row.metadata_columns or []), *(row.identifier_columns or [])], documents=documents)
 
     @staticmethod
@@ -480,19 +480,22 @@ class RagService:
             raise ApiError("rag_validation_failed", f"OpenSearch parent count mismatch: expected {job.parent_count}, got {actual_parents}", status.HTTP_409_CONFLICT)
         mapping = client.mapping(job.target_index)
         properties = self._mapping_properties(mapping, job.target_index)
-        required = {"document_id", "parent_document_id", "body", "embedding_text", "body_vector", "metadata_filter", "chunk_index", "chunk_count", "char_start", "char_end", "embedding_model", "embedding_dimensions", "source_fields", "embedding_input_version", "field_rendering_version"}
+        required = {"document_id", "parent_document_id", "body", "embedding_text", "body_vector", "metadata_filter", "chunk_index", "chunk_count", "char_start", "char_end", "embedding_model", "embedding_dimensions", "source_fields", "parent_source_fields", "embedding_input_version", "field_rendering_version"}
         missing = sorted(required - set(properties))
         if missing:
             raise ApiError("rag_validation_failed", f"OpenSearch mapping is missing fields: {', '.join(missing)}", status.HTTP_409_CONFLICT)
         vector_mapping = properties.get("body_vector") or {}
         if int(vector_mapping.get("dimension") or 0) != int(job.embedding_dimensions or 0):
             raise ApiError("rag_validation_failed", "OpenSearch vector dimension does not match the job manifest", status.HTTP_409_CONFLICT)
-        sample = client.search_raw(job.target_index, {"size": 1, "_source": ["body_vector", "metadata_filter", "source_fields", "embedding_input_version", "field_rendering_version", "chunking_version", "embedding_model", "embedding_dimensions"], "query": {"match_all": {}}})
+        sample = client.search_raw(job.target_index, {"size": 1, "_source": ["document_id", "title", "body", "embedding_text", "body_vector", "metadata_filter", "source_fields", "parent_source_fields", "embedding_input_version", "field_rendering_version", "chunking_version", "embedding_model", "embedding_dimensions"], "query": {"match_all": {}}})
         sample_hits = sample.get("hits", {}).get("hits", []) if isinstance(sample, dict) else []
         if actual_chunks and not sample_hits:
-            raise ApiError("rag_validation_failed", "OpenSearch BM25 smoke query returned no document", status.HTTP_409_CONFLICT)
+            raise ApiError("rag_validation_failed", "OpenSearch sample document query returned no document", status.HTTP_409_CONFLICT)
+        smoke_evidence: dict[str, Any] = {}
         if sample_hits:
-            sample_source = sample_hits[0].get("_source") or {}
+            sample_hit = sample_hits[0] if isinstance(sample_hits[0], dict) else {}
+            sample_id = str(sample_hit.get("_id") or (sample_hit.get("_source") or {}).get("document_id") or "")
+            sample_source = sample_hit.get("_source") or {}
             vector = sample_source.get("body_vector")
             if not isinstance(vector, list) or len(vector) != int(job.embedding_dimensions or 0):
                 raise ApiError("rag_validation_failed", "OpenSearch stored vector is missing or has the wrong dimension", status.HTTP_409_CONFLICT)
@@ -500,20 +503,54 @@ class RagService:
                 raise ApiError("rag_validation_failed", "OpenSearch document versions do not match the RAG v3 contract", status.HTTP_409_CONFLICT)
             if not isinstance(sample_source.get("source_fields"), list):
                 raise ApiError("rag_validation_failed", "OpenSearch document is missing source field provenance", status.HTTP_409_CONFLICT)
-            client.search(job.target_index, {"size": 1, "query": {"knn": {"body_vector": {"vector": vector, "k": 1}}}})
+            if not isinstance(sample_source.get("parent_source_fields"), list):
+                raise ApiError("rag_validation_failed", "OpenSearch document is missing parent source field provenance", status.HTTP_409_CONFLICT)
+            body_text = str(sample_source.get("body") or sample_source.get("title") or sample_source.get("embedding_text") or "")
+            tokens = [token for token in re.findall(r"[A-Za-z0-9_]+|[가-힣]+", body_text) if token]
+            bm25_query_text = body_text[:500] if body_text else (max(tokens, key=len) if tokens else "rag")
+            bm25_query = {"size": 10, "query": {"multi_match": {"query": bm25_query_text, "fields": ["title^2", "body", "embedding_text"], "type": "phrase"}}}
+            bm25_result = client.search_raw(job.target_index, bm25_query)
+            bm25_ids = [str(item.get("_id") or (item.get("_source") or {}).get("document_id") or "") for item in (bm25_result.get("hits", {}).get("hits", []) if isinstance(bm25_result, dict) else []) if isinstance(item, dict)]
+            if not bm25_ids or (sample_id and sample_id not in bm25_ids):
+                raise ApiError("rag_validation_failed", "OpenSearch BM25 multi_match smoke query did not return the sample document", status.HTTP_409_CONFLICT)
+            knn_query = {"size": 1, "query": {"knn": {"body_vector": {"vector": vector, "k": 1}}}}
+            knn_result = client.search_raw(job.target_index, knn_query)
+            knn_ids = [str(item.get("_id") or (item.get("_source") or {}).get("document_id") or "") for item in (knn_result.get("hits", {}).get("hits", []) if isinstance(knn_result, dict) else []) if isinstance(item, dict)]
+            if not knn_ids:
+                raise ApiError("rag_validation_failed", "OpenSearch k-NN smoke query returned no document", status.HTTP_409_CONFLICT)
+            smoke_evidence["bm25"] = {"query": bm25_query, "resultIds": bm25_ids[:10]}
+            smoke_evidence["knn"] = {"query": {"field": "body_vector", "k": 1, "dimensions": len(vector)}, "resultIds": knn_ids[:10]}
             metadata = sample_source.get("metadata_filter") if isinstance(sample_source.get("metadata_filter"), dict) else {}
-            if metadata:
-                field, typed = next(iter(metadata.items()))
-                if isinstance(typed, dict) and typed:
-                    typed_field = next((candidate for candidate in ("keyword", "number", "date", "boolean") if candidate in typed), next(iter(typed)))
-                    typed_value = typed[typed_field]
-                    client.search(job.target_index, {"size": 1, "query": {"term": {f"metadata_filter.{field}.{typed_field}": typed_value}}})
+            metadata_evidence: list[dict[str, Any]] = []
+            for field, typed in metadata.items():
+                if not isinstance(typed, dict) or not typed or typed.get("type") not in {"string", "number", "date", "boolean"}:
+                    continue
+                field_type = str(typed["type"])
+                if field_type == "number":
+                    value = typed.get("number")
+                    query = {"range": {f"metadata_filter.{field}.number": {"gte": value}}}
+                elif field_type == "date":
+                    value = typed.get("date") or typed.get("keyword")
+                    query = {"range": {f"metadata_filter.{field}.date": {"gte": value}}}
+                elif field_type == "boolean":
+                    value = bool(typed.get("boolean"))
+                    query = {"term": {f"metadata_filter.{field}.boolean": value}}
+                else:
+                    value = typed.get("keyword")
+                    query = {"term": {f"metadata_filter.{field}.keyword": value}}
+                metadata_result = client.search_raw(job.target_index, {"size": 10, "query": query})
+                metadata_ids = [str(item.get("_id") or (item.get("_source") or {}).get("document_id") or "") for item in (metadata_result.get("hits", {}).get("hits", []) if isinstance(metadata_result, dict) else []) if isinstance(item, dict)]
+                if not metadata_ids:
+                    raise ApiError("rag_validation_failed", f"OpenSearch metadata pre-filter smoke query returned no document for '{field}'", status.HTTP_409_CONFLICT)
+                metadata_evidence.append({"field": field, "type": field_type, "query": query, "resultIds": metadata_ids[:10]})
+            smoke_evidence["metadataFilters"] = metadata_evidence
         evidence = {
             "index": job.target_index,
             "documentCount": actual_chunks,
             "parentCount": actual_parents,
             "dimensions": int(job.embedding_dimensions or 0),
             "requiredFields": sorted(required),
+            "smoke": smoke_evidence,
         }
         evidence_hash = hashlib.sha256(json.dumps(evidence, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
         job.validation_status = "passed"
@@ -633,10 +670,10 @@ class RagService:
     def _policy_fingerprint(dataset: dict[str, Any], profile: RagDatasetProfileModel) -> str:
         payload = {
             "schemaFingerprint": schema_fingerprint(dataset),
-            "body": sorted(profile.body_columns or []),
-            "title": sorted(profile.title_columns or []),
-            "metadata": sorted(profile.metadata_columns or []),
-            "identifier": sorted(profile.identifier_columns or []),
+            "body": list(profile.body_columns or []),
+            "title": list(profile.title_columns or []),
+            "metadata": list(profile.metadata_columns or []),
+            "identifier": list(profile.identifier_columns or []),
             "chunkTargetTokens": settings.rag_chunk_target_tokens,
             "chunkOverlapTokens": settings.rag_chunk_overlap_tokens,
             "chunkMaxTokens": settings.rag_chunk_max_tokens,

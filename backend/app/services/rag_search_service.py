@@ -167,7 +167,11 @@ class RagSearchService:
                     start, end = 0, len(text)
                 key = (logical, physical)
                 order.setdefault(key, start)
-                by_field.setdefault(key, []).append({"start": start, "end": end, "text": text})
+                try:
+                    field_value_start = int(block.get("fieldValueStart", block.get("valueStart", 0)))
+                except (TypeError, ValueError):
+                    field_value_start = 0
+                by_field.setdefault(key, []).append({"start": start, "end": end, "text": text, "fieldText": str(block.get("fieldText") or ""), "fieldValueStart": field_value_start})
         if not by_field:
             return ""
         rendered_fields: list[str] = []
@@ -180,6 +184,13 @@ class RagSearchService:
                     merged = text
                     cursor = end
                     continue
+                if start > cursor:
+                    field_text = fragment.get("fieldText") or ""
+                    field_start = int(fragment.get("fieldValueStart") or 0)
+                    gap_start = max(0, cursor - field_start)
+                    gap_end = max(gap_start, start - field_start)
+                    if field_text and gap_end > gap_start:
+                        merged += field_text[gap_start:gap_end]
                 if start < cursor:
                     skip = min(len(text), cursor - start)
                     text = text[skip:]

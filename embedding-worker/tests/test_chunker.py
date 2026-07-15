@@ -5,6 +5,10 @@ from app.rag_core import estimate_tokens
 
 
 def _parent(body: str, *, title: str | None = "delivery", blocks: list[dict] | None = None) -> dict:
+    source_fields = [
+        {"logicalField": block["logicalField"], "physicalField": block.get("physicalField", block["logicalField"]), "role": "body"}
+        for block in (blocks or [{"logicalField": "review_text", "physicalField": "review_text"}])
+    ]
     return {
         "parent_document_id": "p1",
         "dataset_id": "d1",
@@ -16,7 +20,7 @@ def _parent(body: str, *, title: str | None = "delivery", blocks: list[dict] | N
         "metadata": {"rating": 5},
         "metadata_display": {"rating": 5},
         "source_columns": ["review_text"],
-        "source_fields": [{"logicalField": "review_text", "physicalField": "review_text", "role": "body"}],
+        "source_fields": source_fields,
         "content_hash": "c1",
     }
 
@@ -47,6 +51,8 @@ def test_multiple_body_fields_keep_labels_even_when_values_match():
     assert "review_text: same value" in chunks[0]["body"]
     assert "seller_response: same value" in chunks[0]["body"]
     assert [item["logicalField"] for item in chunks[0]["body_blocks"]] == ["review_text", "seller_response"]
+    assert [item["logicalField"] for item in chunks[0]["source_fields"]] == ["review_text", "seller_response"]
+    assert [item["logicalField"] for item in chunks[0]["parent_source_fields"]] == ["review_text", "seller_response"]
 
 
 def test_long_field_repeats_its_label_on_each_chunk():

@@ -124,14 +124,18 @@ def index_batch(request: IndexBatchRequest, authorization: str | None = Header(d
         payload = request.model_dump(mode="json")
         key = request.idempotency_key or store.input_hash(payload)
         request_hash = store.input_hash(payload)
-        cached = store.get(key, request_hash)
-        if cached is not None:
+        state, cached = store.claim(key, request_hash, lease_seconds=float(os.environ.get("RAG_IDEMPOTENCY_LEASE_SECONDS", "1800")))
+        if state == "completed" and cached is not None:
             return {**cached, "idempotentReplay": True}
+        if state == "in_progress":
+            raise HTTPException(status_code=409, detail="An identical RAG indexing request is already in progress")
         result = worker_from_env().process(dataset_id=request.dataset_id, dataset_name=request.dataset_name, rows=request.rows, body_columns=request.body_columns, title_columns=request.title_columns, metadata_columns=request.metadata_columns, identifier_columns=request.identifier_columns, semantic_bindings=request.semantic_bindings, target_index=request.target_index, source_manifest=request.source_manifest, chunks=request.chunks, embedding_model=request.embedding_model, embedding_dimensions=request.embedding_dimensions, metadata_types=request.metadata_types)
         store.put(key, request_hash, result)
         return result
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=502, detail="RAG indexing failed") from exc
 
@@ -148,14 +152,18 @@ def chunk_batch(request: ChunkBatchRequest, authorization: str | None = Header(d
         payload = request.model_dump(mode="json")
         key = request.idempotency_key or store.input_hash(payload)
         request_hash = store.input_hash(payload)
-        cached = store.get(key, request_hash)
-        if cached is not None:
+        state, cached = store.claim(key, request_hash, lease_seconds=float(os.environ.get("RAG_IDEMPOTENCY_LEASE_SECONDS", "1800")))
+        if state == "completed" and cached is not None:
             return {**cached, "idempotentReplay": True}
+        if state == "in_progress":
+            raise HTTPException(status_code=409, detail="An identical RAG chunking request is already in progress")
         chunks = chunk_with_gateway(request)
         result = {"schemaVersion": CHUNKING_VERSION, "chunkCount": len(chunks), "chunks": chunks}
         store.put(key, request_hash, result)
         return result
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=502, detail="RAG chunking failed") from exc

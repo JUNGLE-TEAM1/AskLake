@@ -2,7 +2,8 @@
 
 Example:
   python backend/scripts/run_rag_quality_gate.py --base-url http://localhost:8080 \
-    --token "$ASKLAKE_TOKEN" --fixture backend/tests/fixtures/rag_golden.sample.json
+    --token "$ASKLAKE_TOKEN" --fixture backend/tests/fixtures/rag_golden.sample.json \
+    --baseline backend/tests/fixtures/rag_baseline.sample.json
 """
 
 from __future__ import annotations
@@ -28,7 +29,7 @@ def main() -> int:
     parser.add_argument("--min-chunk-recall", type=float, default=DEFAULT_QUALITY_THRESHOLDS["chunkRecall"])
     parser.add_argument("--min-filter-precision", type=float, default=DEFAULT_QUALITY_THRESHOLDS["filterPrecision"])
     parser.add_argument("--max-duplicate-parent-rate", type=float, default=DEFAULT_QUALITY_THRESHOLDS["duplicateParentRate"])
-    parser.add_argument("--baseline", type=Path, help="Previously accepted report JSON; Recall@8 and MRR@8 may not drop more than 5 percent")
+    parser.add_argument("--baseline", type=Path, required=True, help="Previously accepted report JSON; Recall@8 and MRR@8 may not drop more than 5 percent")
     parser.add_argument("--max-relative-drop", type=float, default=0.05)
     args = parser.parse_args()
     payload = json.loads(args.fixture.read_text(encoding="utf-8"))

@@ -1,3 +1,4 @@
+import os
 from typing import Any
 
 import httpx
@@ -21,6 +22,8 @@ class EmbeddingWorker:
     def process(self, *, dataset_id: str, dataset_name: str, rows: list[dict[str, Any]] | None, body_columns: list[str], metadata_columns: list[str], target_index: str, source_manifest: dict[str, Any] | None = None, title_columns: list[str] | None = None, identifier_columns: list[str] | None = None, semantic_bindings: dict[str, list[dict[str, Any]]] | None = None, chunks: list[dict[str, Any]] | None = None, embedding_model: str | None = None, embedding_dimensions: int | None = None, metadata_types: dict[str, str] | None = None) -> dict[str, Any]:
         if chunks:
             return self.index_chunks(dataset_id=dataset_id, dataset_name=dataset_name, chunks=chunks, target_index=target_index, embedding_model=embedding_model, embedding_dimensions=embedding_dimensions, metadata_types=metadata_types)
+        if os.environ.get("RAG_LEGACY_DIRECT_INDEX_ENABLED", "false").casefold() not in {"1", "true", "yes"}:
+            raise ValueError("RAG v2 indexing requires chunk staging; legacy direct row indexing is disabled")
         if not rows:
             if source_manifest is None:
                 raise ValueError("Either rows or a Catalog source manifest is required")
@@ -49,6 +52,7 @@ class EmbeddingWorker:
                 "source_dataset": dataset_name,
                 "source_columns": list(chunk.get("source_columns") or []),
                 "source_fields": list(chunk.get("source_fields") or []),
+                "parent_source_fields": list(chunk.get("parent_source_fields") or []),
                 "title_blocks": list(chunk.get("title_blocks") or []),
                 "body_blocks": list(chunk.get("body_blocks") or []),
                 "semantic_bindings": chunk.get("semantic_bindings") or {},
@@ -117,8 +121,9 @@ class EmbeddingWorker:
                 dimensions = batch_dimensions
                 self.assert_target_index_compatibility(client, batch[0].get("target_index"), model, dimensions)
                 if offset == 0:
-                    block_mapping = {"type": "object", "dynamic": False, "properties": {"logicalField": {"type": "keyword"}, "physicalField": {"type": "keyword"}, "text": {"type": "text"}, "start": {"type": "integer"}, "end": {"type": "integer"}, "valueStart": {"type": "integer"}, "valueEnd": {"type": "integer"}, "fragmentStart": {"type": "integer"}, "fragmentEnd": {"type": "integer"}}}
-                    mapping = {"settings": {"index": {"knn": True}}, "mappings": {"properties": {"document_id": {"type": "keyword"}, "job_id": {"type": "keyword"}, "chunk_document_id": {"type": "keyword"}, "parent_document_id": {"type": "keyword"}, "dataset_id": {"type": "keyword"}, "source_row_id": {"type": "keyword"}, "title": {"type": "text"}, "body": {"type": "text"}, "embedding_text": {"type": "text"}, "body_vector": {"type": "knn_vector", "dimension": dimensions}, "filter_terms": {"type": "object", "enabled": True}, "metadata_filter": self._metadata_mapping(metadata_types), "metadata_display": {"type": "object", "enabled": False}, "semantic_bindings": {"type": "object", "enabled": True}, "source_columns": {"type": "keyword"}, "source_fields": {"type": "object", "dynamic": False, "properties": {"logicalField": {"type": "keyword"}, "physicalField": {"type": "keyword"}, "role": {"type": "keyword"}}}, "title_blocks": block_mapping, "body_blocks": block_mapping, "chunk_index": {"type": "integer"}, "chunk_count": {"type": "integer"}, "start_sentence": {"type": "integer"}, "end_sentence": {"type": "integer"}, "char_start": {"type": "integer"}, "char_end": {"type": "integer"}, "chunking_strategy": {"type": "keyword"}, "chunking_version": {"type": "keyword"}, "embedding_input_version": {"type": "keyword"}, "field_rendering_version": {"type": "keyword"}, "content_hash": {"type": "keyword"}, "embedding_model": {"type": "keyword"}, "embedding_dimensions": {"type": "integer"}, "fallback_applied": {"type": "boolean"}, "fallback_reason": {"type": "keyword"}}}}
+                    block_mapping = {"type": "object", "dynamic": False, "properties": {"logicalField": {"type": "keyword"}, "physicalField": {"type": "keyword"}, "text": {"type": "text"}, "fieldText": {"type": "text"}, "start": {"type": "integer"}, "end": {"type": "integer"}, "valueStart": {"type": "integer"}, "valueEnd": {"type": "integer"}, "fieldValueStart": {"type": "integer"}, "fragmentStart": {"type": "integer"}, "fragmentEnd": {"type": "integer"}}}
+                    source_field_mapping = {"type": "object", "dynamic": False, "properties": {"logicalField": {"type": "keyword"}, "physicalField": {"type": "keyword"}, "role": {"type": "keyword"}}}
+                    mapping = {"settings": {"index": {"knn": True}}, "mappings": {"properties": {"document_id": {"type": "keyword"}, "job_id": {"type": "keyword"}, "chunk_document_id": {"type": "keyword"}, "parent_document_id": {"type": "keyword"}, "dataset_id": {"type": "keyword"}, "source_row_id": {"type": "keyword"}, "title": {"type": "text"}, "body": {"type": "text"}, "embedding_text": {"type": "text"}, "body_vector": {"type": "knn_vector", "dimension": dimensions}, "filter_terms": {"type": "object", "enabled": True}, "metadata_filter": self._metadata_mapping(metadata_types), "metadata_display": {"type": "object", "enabled": False}, "semantic_bindings": {"type": "object", "enabled": True}, "source_columns": {"type": "keyword"}, "source_fields": source_field_mapping, "parent_source_fields": source_field_mapping, "title_blocks": block_mapping, "body_blocks": block_mapping, "chunk_index": {"type": "integer"}, "chunk_count": {"type": "integer"}, "start_sentence": {"type": "integer"}, "end_sentence": {"type": "integer"}, "char_start": {"type": "integer"}, "char_end": {"type": "integer"}, "chunking_strategy": {"type": "keyword"}, "chunking_version": {"type": "keyword"}, "embedding_input_version": {"type": "keyword"}, "field_rendering_version": {"type": "keyword"}, "content_hash": {"type": "keyword"}, "embedding_model": {"type": "keyword"}, "embedding_dimensions": {"type": "integer"}, "fallback_applied": {"type": "boolean"}, "fallback_reason": {"type": "keyword"}}}}
                     create_response = client.put(f"{self.opensearch_url}/{batch[0].get('target_index')}", auth=self.opensearch_auth, json=mapping)
                     if create_response.status_code >= 400 and "resource_already_exists_exception" not in create_response.text:
                         create_response.raise_for_status()

@@ -213,6 +213,17 @@ def chunk_parent_document(
             raise ValueError("RAG_CHUNK_EXCEEDS_MAX_TOKENS")
         chunk_id = chunk_document_id(str(parent["parent_document_id"]), index, effective_embedding_text, metadata)
         chunk_content_hash = hashlib.sha256(effective_embedding_text.encode("utf-8")).hexdigest()
+        included_keys = {
+            (str(field.get("logicalField") or ""), str(field.get("physicalField") or field.get("logicalField") or ""))
+            for field in [*chunk_body_blocks, *canonical_title_blocks]
+            if isinstance(field, dict) and field.get("logicalField")
+        }
+        included_source_fields = [
+            field for field in source_fields
+            if isinstance(field, dict)
+            and str(field.get("role") or "") in {"body", "title"}
+            and (str(field.get("logicalField") or ""), str(field.get("physicalField") or field.get("logicalField") or "")) in included_keys
+        ]
         result.append({
             "schema_version": CHUNKING_VERSION,
             "job_id": parent.get("job_id"),
@@ -237,7 +248,8 @@ def chunk_parent_document(
             "metadata_display": metadata_display,
             "semantic_bindings": parent.get("semantic_bindings") or {},
             "source_columns": list(parent.get("source_columns") or [field.get("logicalField") for field in source_fields if isinstance(field, dict)]),
-            "source_fields": source_fields,
+            "source_fields": included_source_fields,
+            "parent_source_fields": source_fields,
             "content_hash": chunk_content_hash,
             "chunking_strategy": strategy,
             "chunking_version": CHUNKING_VERSION,

@@ -23,6 +23,34 @@ def test_document_preview_contains_vector_db_payload_and_is_deterministic() -> N
     assert first[0]["embeddingStatus"] == "pending"
 
 
+def test_policy_fingerprint_preserves_approved_field_order():
+    dataset = {"id": "reviews", "schema": [{"name": "a", "dataType": "string"}, {"name": "b", "dataType": "string"}]}
+    first = RagDatasetProfileModel(dataset_id="reviews", body_columns=["a", "b"], title_columns=[], metadata_columns=[], identifier_columns=["a"])
+    second = RagDatasetProfileModel(dataset_id="reviews", body_columns=["b", "a"], title_columns=[], metadata_columns=[], identifier_columns=["a"])
+    assert RagService._policy_fingerprint(dataset, first) != RagService._policy_fingerprint(dataset, second)
+
+
+def test_preview_uses_physical_filter_fields_but_logical_text_labels():
+    document = build_documents(
+        dataset_id="reviews",
+        dataset_name="reviews",
+        rows=[{"Review.Rating": 10, "Review Text": " late ", "Review Id": "r-1", "Created At": "2026-07-15"}],
+        columns=["Review.Rating", "Review Text", "Review Id", "Created At"],
+        body_columns=["Review Text"],
+        title_columns=[],
+        metadata_columns=["Review.Rating", "Created At"],
+        identifier_columns=["Review Id"],
+        schema_types={"Review.Rating": "decimal", "Created At": "date"},
+        physical_column_mapping={"Review.Rating": "review_rating", "Created At": "created_at", "Review Text": "review_text", "Review Id": "review_id"},
+        target_index="reviews-v1",
+    )[0]
+    assert "Review Text: late" in document["body"]
+    assert document["sourceFields"][0]["physicalField"] == "review_text"
+    assert document["metadataFilter"]["review_rating"]["number"] == 10.0
+    assert document["metadataFilter"]["created_at"]["date"] == "2026-07-15"
+    assert document["metadataDisplay"] == {"Review.Rating": 10, "Created At": "2026-07-15"}
+
+
 def test_hybrid_rrf_merges_vector_and_bm25_results() -> None:
     result = hybrid_rrf(
         [{"_id": "lexical-only", "_source": {"body": "lexical"}}, {"_id": "shared", "_source": {"body": "shared"}}],
@@ -42,6 +70,14 @@ def test_structured_chunk_merge_removes_field_overlap_and_keeps_labels() -> None
         {"_source": {"body_blocks": [{"logicalField": "seller_response", "physicalField": "seller_response", "fragmentStart": 40, "fragmentEnd": 49, "text": "follow-up"}]}},
     ], max_chars=10_000)
     assert merged == "[BODY]\nreview_text: abcdefghijklmnopqr\n\nseller_response: follow-up\n[/BODY]"
+
+
+def test_structured_chunk_merge_restores_a_gap_from_canonical_field_text():
+    merged = RagSearchService._merge_chunk_bodies([
+        {"_source": {"body_blocks": [{"logicalField": "review_text", "physicalField": "review_text", "fragmentStart": 10, "fragmentEnd": 15, "fieldValueStart": 10, "fieldText": "abcdefghij", "text": "abcde"}]}},
+        {"_source": {"body_blocks": [{"logicalField": "review_text", "physicalField": "review_text", "fragmentStart": 17, "fragmentEnd": 20, "fieldValueStart": 10, "fieldText": "abcdefghij", "text": "hij"}]}},
+    ], max_chars=10_000)
+    assert merged == "[BODY]\nreview_text: abcdefghij\n[/BODY]"
 
 
 def test_rag_metadata_filters_are_exact_or_range_and_reject_query_syntax() -> None:
@@ -247,11 +283,11 @@ def test_validation_evidence_is_persisted_and_required_for_activation(monkeypatc
 
             def mapping(self, index):
                 return {index: {"mappings": {"properties": {
-                    "document_id": {}, "parent_document_id": {}, "body": {}, "embedding_text": {}, "body_vector": {"dimension": 2}, "metadata_filter": {}, "chunk_index": {}, "chunk_count": {}, "char_start": {}, "char_end": {}, "embedding_model": {}, "embedding_dimensions": {}, "source_fields": {}, "embedding_input_version": {}, "field_rendering_version": {},
+                    "document_id": {}, "parent_document_id": {}, "body": {}, "embedding_text": {}, "body_vector": {"dimension": 2}, "metadata_filter": {}, "chunk_index": {}, "chunk_count": {}, "char_start": {}, "char_end": {}, "embedding_model": {}, "embedding_dimensions": {}, "source_fields": {}, "parent_source_fields": {}, "embedding_input_version": {}, "field_rendering_version": {},
                 }}}}
 
             def search_raw(self, index, query):
-                return {"hits": {"hits": [{"_source": {"body_vector": [0.1, 0.2], "metadata_filter": {}, "source_fields": [], "embedding_input_version": "title_body_fields_v2", "field_rendering_version": "field_blocks_v1", "chunking_version": "rag-chunk-v3"}}]}}
+                return {"hits": {"hits": [{"_source": {"body_vector": [0.1, 0.2], "metadata_filter": {}, "source_fields": [], "parent_source_fields": [], "embedding_input_version": "title_body_fields_v2", "field_rendering_version": "field_blocks_v1", "chunking_version": "rag-chunk-v3"}}]}}
 
             def search(self, index, query):
                 return []

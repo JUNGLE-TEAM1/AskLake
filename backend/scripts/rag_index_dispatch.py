@@ -11,7 +11,7 @@ import urllib.request
 
 from pyspark.sql import types as T
 
-from rag_parent_contract import canonical_json
+from rag_parent_contract import CHUNKING_VERSION, EMBEDDING_INPUT_VERSION, FIELD_RENDERING_VERSION, canonical_json
 from spark_job_run import make_spark, required_env, quote_spark_identifier
 
 
@@ -71,6 +71,7 @@ def main() -> int:
                 chunk["title_blocks"] = json.loads(chunk.pop("title_blocks_json") or "[]")
                 chunk["body_blocks"] = json.loads(chunk.pop("body_blocks_json") or "[]")
                 chunk["source_fields"] = json.loads(chunk.pop("source_fields_json") or "[]")
+                chunk["parent_source_fields"] = json.loads(chunk.pop("parent_source_fields_json") or "[]")
                 batch.append(chunk)
                 if len(batch) >= 64:
                     yield post_index(endpoint, token, dataset_id, dataset_name, target_index, batch, embedding_model=embedding_model, embedding_dimensions=embedding_dimensions, metadata_types=metadata_types, job_id=str(manifest.get("jobId") or ""))
@@ -84,7 +85,7 @@ def main() -> int:
         indexed_count = sum(int(item.get("indexedCount") or 0) for item in results)
         skipped_existing_count = sum(int(item.get("skippedExistingCount") or 0) for item in results)
         dimensions = next((int(item["dimensions"]) for item in results if item.get("dimensions") is not None), None)
-        result = {"status": "validating", "datasetId": dataset_id, "jobId": manifest.get("jobId"), "indexedCount": document_count, "embeddedCount": indexed_count, "skippedExistingCount": skipped_existing_count, "documentCount": document_count, "chunkCount": document_count, "parentCount": parent_count, "dimensions": dimensions, "embeddingModel": manifest.get("embeddingModel"), "activeIndex": target_index, "chunkingVersion": "rag-chunk-v3", "embeddingInputVersion": "title_body_fields_v2", "fieldRenderingVersion": "field_blocks_v1", "durationMs": int((time.time() - started) * 1000)}
+        result = {"status": "validating", "datasetId": dataset_id, "jobId": manifest.get("jobId"), "indexedCount": document_count, "embeddedCount": indexed_count, "skippedExistingCount": skipped_existing_count, "documentCount": document_count, "chunkCount": document_count, "parentCount": parent_count, "dimensions": dimensions, "embeddingModel": manifest.get("embeddingModel"), "activeIndex": target_index, "chunkingVersion": CHUNKING_VERSION, "embeddingInputVersion": EMBEDDING_INPUT_VERSION, "fieldRenderingVersion": FIELD_RENDERING_VERSION, "durationMs": int((time.time() - started) * 1000)}
         print(f"ASKLAKE_RAG_INDEX_RESULT={canonical_json(result)}")
         callback(manifest, result)
         chunks.unpersist()

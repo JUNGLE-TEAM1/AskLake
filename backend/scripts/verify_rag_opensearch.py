@@ -37,7 +37,7 @@ def main() -> int:
         payload = mapping_response.json()
         root = payload.get(args.index) or next(iter(payload.values()))
         properties = ((root.get("mappings") or {}).get("properties") or {}) if isinstance(root, dict) else {}
-        required = {"document_id", "parent_document_id", "body", "embedding_text", "body_vector", "metadata_filter", "chunk_index", "chunk_count", "char_start", "char_end", "embedding_model", "embedding_dimensions", "source_fields", "embedding_input_version", "field_rendering_version"}
+        required = {"document_id", "parent_document_id", "body", "embedding_text", "body_vector", "metadata_filter", "chunk_index", "chunk_count", "char_start", "char_end", "embedding_model", "embedding_dimensions", "source_fields", "parent_source_fields", "embedding_input_version", "field_rendering_version"}
         missing = sorted(required - set(properties))
         dimension = int((properties.get("body_vector") or {}).get("dimension") or 0)
         report["checks"]["mapping"] = {"passed": not missing and dimension == args.dimensions, "missing": missing, "dimension": dimension}
