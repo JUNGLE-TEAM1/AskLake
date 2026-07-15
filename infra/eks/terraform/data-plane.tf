@@ -173,6 +173,7 @@ resource "aws_db_instance" "metadata" {
   engine_version              = var.rds_engine_version
   instance_class              = var.rds_instance_class
   allocated_storage           = var.rds_allocated_storage_gib
+  max_allocated_storage       = var.rds_max_allocated_storage_gib
   storage_type                = "gp3"
   storage_encrypted           = true
   db_name                     = local.logical_databases.asklake_app
@@ -183,15 +184,18 @@ resource "aws_db_instance" "metadata" {
   vpc_security_group_ids = local.create_network ? toset([
     aws_security_group.rds_private[0].id,
   ]) : var.rds_security_group_ids
-  publicly_accessible        = false
-  multi_az                   = var.rds_multi_az
-  backup_retention_period    = var.rds_backup_retention_days
-  deletion_protection        = true
-  skip_final_snapshot        = false
-  final_snapshot_identifier  = "${var.name_prefix}-${var.environment}-metadata-final"
-  copy_tags_to_snapshot      = true
-  auto_minor_version_upgrade = true
-  apply_immediately          = false
+  publicly_accessible             = false
+  multi_az                        = var.rds_multi_az
+  backup_retention_period         = var.rds_backup_retention_days
+  backup_window                   = var.rds_backup_window
+  maintenance_window              = var.rds_maintenance_window
+  enabled_cloudwatch_logs_exports = var.rds_enabled_cloudwatch_logs_exports
+  deletion_protection             = true
+  skip_final_snapshot             = false
+  final_snapshot_identifier       = var.rds_final_snapshot_identifier
+  copy_tags_to_snapshot           = true
+  auto_minor_version_upgrade      = true
+  apply_immediately               = false
 
   lifecycle {
     precondition {
@@ -202,6 +206,16 @@ resource "aws_db_instance" "metadata" {
     precondition {
       condition     = local.create_network || length(var.rds_security_group_ids) > 0
       error_message = "RDS creation requires an explicit workload security group."
+    }
+
+    precondition {
+      condition     = var.rds_max_allocated_storage_gib >= var.rds_allocated_storage_gib
+      error_message = "RDS storage autoscaling ceiling must be greater than or equal to initial storage."
+    }
+
+    precondition {
+      condition     = try(trimspace(var.rds_final_snapshot_identifier), "") != ""
+      error_message = "RDS creation requires an explicit unique final snapshot identifier."
     }
   }
 }

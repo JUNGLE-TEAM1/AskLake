@@ -1,6 +1,6 @@
 # EKS MVP Phase 4 Workload Identity와 RDS Bootstrap
 
-이 단계는 workload identity 연결 방식과 PostgreSQL 논리 분리를 다룬다. 2026-07-15 dev EKS에는 Pod Identity 역할과 association을 실제 적용했지만 RDS는 아직 생성하거나 변경하지 않았다.
+이 단계는 workload identity 연결 방식과 PostgreSQL 논리 분리를 다룬다. 2026-07-15 dev EKS에는 Pod Identity 역할과 association, private RDS와 세 논리 database/user를 실제 적용했다.
 
 ## 완료된 구현
 
@@ -42,7 +42,7 @@ dev EKS Auto Mode에는 Pod Identity를 선택해 다음 실제 검증을 완료
 
 MSK IAM data-plane의 실제 bootstrap/topic metadata 조회는 Kafka IAM client가 필요하므로 B의 smoke client를 받은 뒤 수행한다. 현재 완료 증거는 association, STS와 S3 positive/negative boundary까지다.
 
-Secret 저장 방식은 AWS Secrets Manager와 External Secrets Operator로 선택했지만 아직 설치·동기화하지 않았다. 실제 DB password, token, TLS key와 장기 AWS access key는 Git, Terraform variable, Terraform output 또는 PR 본문에 넣지 않는다.
+Secret 저장 방식은 AWS Secrets Manager와 namespace 범위 External Secrets Operator로 적용했다. RDS master password는 RDS 관리형 secret, 세 application password는 `asklake/dev/rds/application-databases` source에 저장한다. bootstrap용 Kubernetes Secret은 ESO로 임시 생성하고 실행 후 삭제한다. 실제 DB password, token, TLS key와 장기 AWS access key는 Git, Terraform variable, Terraform output 또는 PR 본문에 넣지 않는다.
 
 Ingress, domain/certificate, public/internal ALB, VPC endpoint/NAT와 workload security group은 이 단계에서 선택하지 않았다. 이 값이 필요한 실제 EKS deploy와 network smoke는 계속 보류한다.
 
@@ -79,6 +79,10 @@ bash scripts/bootstrap-eks-rds-databases.sh
 
 script는 `PGHOST`가 별도로 확인한 `ASKLAKE_RDS_BOOTSTRAP_EXPECTED_HOST`와 정확히 일치해야 실행된다. 운영 기본 TLS는 `verify-full`이고 실제 CA bundle 파일이 필요하다. `PGSSLMODE=disable`은 격리된 Docker 검증에서 `ASKLAKE_RDS_BOOTSTRAP_ALLOW_INSECURE_LOCAL=true`를 함께 지정한 경우에만 허용한다.
 
+실제 EKS 실행은 `infra/eks/bootstrap/rds/bootstrap-job.yaml`을 사용한다. Job은 RDS CA bundle, script/SQL ConfigMap과 ESO가 만든 임시 bootstrap Secret을 mount하며 service account token과 static AWS credential을 사용하지 않는다. 성공 후 Job, ConfigMap, ExternalSecret과 target Secret을 제거한다. application password의 Secrets Manager source는 후속 workload mapping을 위해 유지한다.
+
+RDS master는 PostgreSQL 진짜 SUPERUSER가 아니라 `rds_superuser`다. 따라서 role 최초 생성 시 모든 `NO*` 속성을 명시하고 재실행에서는 password만 회전한다. bootstrap은 세 role의 관리 권한 부재, 각 database에 대한 실제 TLS 로그인과 다른 database 접근 거부를 매번 확인한다.
+
 ## 검증과 실제 완료 기준
 
 정적 검증은 다음 명령으로 수행한다.
@@ -94,4 +98,4 @@ docker run --rm --entrypoint sh \
   -c 'export TF_DATA_DIR=/tmp/tfdata; terraform fmt -check -recursive && terraform init -backend=false -input=false >/dev/null && terraform validate && terraform test'
 ```
 
-mock test는 identity 기본 비활성화, create-mode의 정적 IAM resource key, 실제 policy/trust 내용, IRSA role/annotation 4개, Pod Identity readiness 차단과 기존 data-plane 안전장치를 확인한다. RDS Docker 검증은 bootstrap을 두 번 실행하고 role의 관리 권한 부재와 세 database의 상호 CONNECT 격리를 확인한다. 실제 Phase 4 전체 완료는 남은 MSK IAM client smoke가 성공하고, 승인된 RDS에서 bootstrap과 세 workload별 DB 연결이 확인돼야 선언할 수 있다.
+mock test는 identity 기본 비활성화, create-mode의 정적 IAM resource key, 실제 policy/trust 내용, IRSA role/annotation 4개, Pod Identity readiness 차단과 기존 data-plane 안전장치를 확인한다. RDS Docker 검증은 bootstrap을 두 번 실행하고 role의 관리 권한 부재와 세 database의 상호 CONNECT 격리를 확인한다. dev RDS bootstrap은 반복 실행을 통과했고 세 role의 TLS 로그인과 cross-database 거부가 확인됐다. Phase 4 전체 완료는 남은 MSK IAM client smoke와 각 실제 workload의 schema migration·DB 연결이 성공해야 선언할 수 있다.

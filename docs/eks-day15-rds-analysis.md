@@ -4,7 +4,7 @@
 
 이 문서는 `docs/eks-roadmap.md`의 7월 15일 담당자 A 범위인 PostgreSQL RDS 구성, 세 용도별 database/user 분리, migration·backup·rollback 준비를 위해 작성한 생성 전 분석 기록이다.
 
-분석일은 2026-07-15이며 대상은 서울 리전의 `dev` EKS MVP다. 이 분석에서는 AWS와 EC2의 상태를 읽기 전용으로 확인하고 Terraform plan까지만 실행했다. RDS 생성, database 변경, dump·restore와 애플리케이션 전환은 수행하지 않았다.
+분석일은 2026-07-15이며 대상은 서울 리전의 `dev` EKS MVP다. 최초 분석은 AWS와 EC2의 상태를 읽기 전용으로 확인하고 Terraform plan까지만 실행했다. 같은 날 승인된 권고안을 실제 dev 환경에 적용해 RDS 생성과 세 논리 database/user bootstrap까지 완료했다. dump·restore와 애플리케이션 전환은 수행하지 않았다.
 
 계정 ID, instance ID, endpoint, ARN, username과 password는 기록하지 않는다.
 
@@ -35,7 +35,7 @@ logical databases: asklake_app, airflow_metadata, iceberg_catalog
 - RDS private security group
 - EKS에서 RDS `5432/tcp`로 들어오는 security group rule
 
-이 결과는 생성 권고이지 apply 승인 기록이 아니다. 아래 Terraform 보완과 migration 경계 확인 후에만 생성한다.
+이 결과는 생성 전 권고였으며, 실제 적용 결과와 검증 증거는 [7월 15일 RDS 적용 기록](eks-day15-rds-apply-receipt.md)에 남긴다.
 
 ## 조사한 현재 상태
 
@@ -134,7 +134,7 @@ gp3 20GiB를 권장한다. AWS 문서상 PostgreSQL gp3는 20~399GiB 구간에�
 - T4g surplus CPU credit
 - Secrets Manager와 KMS의 별도 사용량
 
-현재 Terraform에는 storage autoscaling ceiling이 없다. 생성 전 `max_allocated_storage=100`에 해당하는 명시적 입력을 추가한다. 자동 증가는 허용하되 자동 축소는 되지 않으므로 CloudWatch alarm과 비용 검토를 함께 둔다.
+Terraform에 `max_allocated_storage=100`, 명시적 backup/maintenance window, PostgreSQL/upgrade 로그 export와 고유 final snapshot identifier 입력을 추가했다. 자동 증가는 허용하되 자동 축소는 되지 않으므로 CloudWatch metric과 비용을 계속 확인한다.
 
 참고: [Amazon RDS DB instance storage](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/CHAP_Storage.html)
 
@@ -213,17 +213,17 @@ EC2 database를 RDS로 한 번 복사한 뒤 EC2 Continuous를 기존 database�
 - EKS MVP 중 새로 생긴 RDS 데이터는 EC2로 역동기화하지 않는다.
 - 이 데이터 손실 경계는 dev MVP에만 허용하며 운영 전환에서는 허용하지 않는다.
 
-## 생성 전 Terraform 보완
+## 생성 전 Terraform 보완 결과
 
 현재 Terraform은 private subnet, private security group, encryption, RDS managed master secret, backup retention, deletion protection과 final snapshot을 이미 구현한다.
 
-apply 전에 다음을 보완한다.
+apply 전에 다음을 보완했다.
 
-- storage autoscaling ceiling 입력과 `max_allocated_storage`
-- preferred backup window
-- preferred maintenance window
-- PostgreSQL/upgrade CloudWatch log export 여부
-- final snapshot identifier 재사용 충돌 방지 방식
+- storage autoscaling ceiling 입력과 `max_allocated_storage=100`
+- KST 03:00에 해당하는 preferred backup window
+- 월요일 KST 04:00에 해당하는 preferred maintenance window
+- PostgreSQL/upgrade CloudWatch log export
+- 재생성 전에 반드시 바꾸는 명시적 final snapshot identifier
 - instance class 변경 alarm 기준
 - `DatabaseConnections`, `FreeableMemory`, `CPUUtilization`, `CPUCreditBalance`, `FreeStorageSpace` 관찰 runbook
 
@@ -262,8 +262,8 @@ maintenance window: backup과 겹치지 않는 주간 KST 시간대
 - 격리된 EKS MVP RDS 방식을 승인하거나, 전체 migration이 필요하면 별도 cutover 결정을 완료함
 - rollback 담당자와 실행 순서를 기록함
 
-## 분석 완료 판정
+## 분석 및 적용 완료 판정
 
 RDS engine, 첫 instance class, AZ, storage, backup과 비용 권고안은 도출됐다. Terraform plan도 생성 4건, 변경·삭제 0건으로 확인했다.
 
-RDS 생성 전 남은 핵심은 Terraform 운영 보완과 **기존 데이터를 옮기지 않는 격리 MVP 방식의 승인**이다. 이 두 항목을 해결하지 않고 apply하지 않는다.
+Terraform 운영 보완과 **기존 데이터를 옮기지 않는 격리 MVP 방식**으로 실제 적용했다. RDS와 논리 database/user는 준비됐지만 FastAPI schema migration, Airflow migration, Iceberg Catalog 초기화와 실제 workload Secret mapping은 B workload 단계에 남아 있다.

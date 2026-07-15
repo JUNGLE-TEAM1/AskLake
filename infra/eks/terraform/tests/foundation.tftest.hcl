@@ -492,22 +492,23 @@ run "created_network_data_plane_placement" {
   command = plan
 
   variables {
-    environment                = "dev"
-    owner                      = "pair-a"
-    resource_lifecycle         = "mvp-owned"
-    cluster_mode               = "create"
-    network_mode               = "create"
-    vpc_cidr                   = "10.42.0.0/16"
-    network_availability_zones = ["ap-northeast-2a", "ap-northeast-2c"]
-    subnet_newbits             = 8
-    public_subnet_netnums      = [0, 1]
-    private_subnet_netnums     = [10, 11]
-    private_egress_mode        = "nat_gateway"
-    nat_gateway_mode           = "per_az"
-    create_ecr_repositories    = false
-    msk_mode                   = "create"
-    rds_mode                   = "create"
-    rds_instance_class         = "db.t4g.small"
+    environment                   = "dev"
+    owner                         = "pair-a"
+    resource_lifecycle            = "mvp-owned"
+    cluster_mode                  = "create"
+    network_mode                  = "create"
+    vpc_cidr                      = "10.42.0.0/16"
+    network_availability_zones    = ["ap-northeast-2a", "ap-northeast-2c"]
+    subnet_newbits                = 8
+    public_subnet_netnums         = [0, 1]
+    private_subnet_netnums        = [10, 11]
+    private_egress_mode           = "nat_gateway"
+    nat_gateway_mode              = "per_az"
+    create_ecr_repositories       = false
+    msk_mode                      = "create"
+    rds_mode                      = "create"
+    rds_instance_class            = "db.t4g.small"
+    rds_final_snapshot_identifier = "asklake-dev-test-final"
   }
 
   assert {
@@ -873,10 +874,11 @@ run "mvp_data_plane_contract" {
     msk_subnet_ids         = ["subnet-private-a", "subnet-private-b"]
     msk_security_group_ids = ["sg-msk-client"]
 
-    rds_mode               = "create"
-    rds_subnet_ids         = ["subnet-private-a", "subnet-private-b"]
-    rds_security_group_ids = ["sg-rds-client"]
-    rds_instance_class     = "db.t4g.small"
+    rds_mode                      = "create"
+    rds_subnet_ids                = ["subnet-private-a", "subnet-private-b"]
+    rds_security_group_ids        = ["sg-rds-client"]
+    rds_instance_class            = "db.t4g.small"
+    rds_final_snapshot_identifier = "asklake-dev-test-final"
 
     storage_mode = "create"
     storage_bucket_names = {
@@ -909,6 +911,16 @@ run "mvp_data_plane_contract" {
   assert {
     condition     = aws_db_instance.metadata[0].deletion_protection
     error_message = "MVP-owned RDS must keep deletion protection enabled."
+  }
+
+  assert {
+    condition = (
+      aws_db_instance.metadata[0].max_allocated_storage == 100 &&
+      aws_db_instance.metadata[0].backup_retention_period == 7 &&
+      aws_db_instance.metadata[0].backup_window == "18:00-18:30" &&
+      aws_db_instance.metadata[0].maintenance_window == "sun:19:00-sun:20:00"
+    )
+    error_message = "RDS must keep the reviewed autoscaling, backup and maintenance settings."
   }
 
   assert {

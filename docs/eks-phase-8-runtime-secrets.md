@@ -32,7 +32,7 @@ Terraform은 ESO 전용 IAM role/policy와 EKS Pod Identity association만 소�
 
 dev는 `external_secrets`를 선택했다. Helm values는 controller를 `asklake-dev` namespace만 감시하도록 제한한다. `ClusterSecretStore`, `ClusterExternalSecret`, `PushSecret`, generic target, webhook과 불필요한 cluster RBAC은 만들지 않는다. 단일 replica이므로 leader election도 끈다. controller ServiceAccount는 `external-secrets/asklake-external-secrets`이며 EKS Pod Identity로만 AWS 자격을 받는다.
 
-IAM policy는 현재 AWS account와 `ap-northeast-2`의 `asklake/dev/*` secret ARN에 대해 `DescribeSecret`, `GetSecretValue`, `ListSecretVersionIds`만 허용한다. secret 생성·수정·삭제, `ListSecrets`, KMS decrypt와 다른 prefix 접근은 허용하지 않는다. 기본 AWS 관리형 Secrets Manager key를 사용한 현재 범위이므로 향후 customer-managed KMS key를 선택하면 해당 key의 `kms:Decrypt`를 별도 검토해야 한다.
+IAM policy는 현재 AWS account와 `ap-northeast-2`의 `asklake/dev/*`, 그리고 Terraform이 생성한 RDS 관리형 master secret의 정확한 ARN에 대해 `DescribeSecret`, `GetSecretValue`, `ListSecretVersionIds`만 허용한다. secret 생성·수정·삭제, `ListSecrets`, KMS decrypt와 다른 prefix 접근은 허용하지 않는다. 기본 AWS 관리형 Secrets Manager key를 사용한 현재 범위이므로 향후 customer-managed KMS key를 선택하면 해당 key의 `kms:Decrypt`를 별도 검토해야 한다.
 
 `infra/eks/secrets/aws-secrets-manager-store.yaml`은 controller의 기본 AWS credential chain을 사용하는 namespaced `SecretStore`다. static access key를 참조하는 `auth.secretRef`를 추가하지 않는다. `aws-secrets-manager-smoke.yaml`은 검증 전용 fixture이며 실제 runtime source 또는 상시 Kubernetes Secret이 아니다.
 

@@ -20,6 +20,14 @@ output "rds_contract" {
     port              = local.rds_port
     master_secret_arn = local.rds_master_secret_arn
     logical_databases = local.logical_databases
+    operations = local.create_rds ? {
+      initial_storage_gib = var.rds_allocated_storage_gib
+      max_storage_gib     = var.rds_max_allocated_storage_gib
+      backup_retention    = var.rds_backup_retention_days
+      backup_window       = var.rds_backup_window
+      maintenance_window  = var.rds_maintenance_window
+      final_snapshot      = var.rds_final_snapshot_identifier
+    } : null
   }
 }
 

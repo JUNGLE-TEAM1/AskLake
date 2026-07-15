@@ -92,9 +92,12 @@ resource "aws_iam_policy" "external_secrets" {
         "secretsmanager:GetSecretValue",
         "secretsmanager:ListSecretVersionIds",
       ]
-      Resource = [
-        "arn:${data.aws_partition.current.partition}:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:${local.external_secret_source_prefix}/*",
-      ]
+      Resource = concat(
+        [
+          "arn:${data.aws_partition.current.partition}:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:${local.external_secret_source_prefix}/*",
+        ],
+        local.reference_rds ? compact([local.rds_master_secret_arn]) : [],
+      )
     }]
   })
 }

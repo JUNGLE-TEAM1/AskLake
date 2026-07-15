@@ -128,6 +128,17 @@ variable "rds_allocated_storage_gib" {
   }
 }
 
+variable "rds_max_allocated_storage_gib" {
+  description = "Storage autoscaling ceiling for an MVP-owned RDS instance."
+  type        = number
+  default     = 100
+
+  validation {
+    condition     = var.rds_max_allocated_storage_gib >= 20
+    error_message = "rds_max_allocated_storage_gib must be at least 20 GiB."
+  }
+}
+
 variable "rds_backup_retention_days" {
   description = "Automated backup retention for an MVP-owned RDS instance."
   type        = number
@@ -143,6 +154,47 @@ variable "rds_multi_az" {
   description = "Enable only after availability and cost review."
   type        = bool
   default     = false
+}
+
+variable "rds_backup_window" {
+  description = "UTC automated backup window; dev default is 03:00 KST."
+  type        = string
+  default     = "18:00-18:30"
+}
+
+variable "rds_maintenance_window" {
+  description = "UTC weekly maintenance window; dev default is Monday 04:00 KST."
+  type        = string
+  default     = "sun:19:00-sun:20:00"
+}
+
+variable "rds_enabled_cloudwatch_logs_exports" {
+  description = "PostgreSQL logs exported for bootstrap and upgrade diagnosis."
+  type        = set(string)
+  default     = ["postgresql", "upgrade"]
+
+  validation {
+    condition = alltrue([
+      for log_type in var.rds_enabled_cloudwatch_logs_exports :
+      contains(["postgresql", "upgrade"], log_type)
+    ])
+    error_message = "RDS CloudWatch log exports may contain only postgresql and upgrade."
+  }
+}
+
+variable "rds_final_snapshot_identifier" {
+  description = "Explicit unique final snapshot identifier for an MVP-owned RDS instance; change it before recreating a previously destroyed instance."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = var.rds_final_snapshot_identifier == null || can(regex(
+      "^[a-z][a-z0-9-]{1,62}$",
+      var.rds_final_snapshot_identifier,
+    ))
+    error_message = "rds_final_snapshot_identifier must be null or a lowercase RDS-compatible identifier."
+  }
 }
 
 variable "storage_mode" {

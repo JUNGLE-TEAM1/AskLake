@@ -94,6 +94,13 @@ rds_security_group_ids = []
 rds_instance_class     = null
 rds_engine_version     = null
 rds_multi_az           = false
+rds_allocated_storage_gib          = 20
+rds_max_allocated_storage_gib      = 100
+rds_backup_retention_days          = 7
+rds_backup_window                  = "18:00-18:30"
+rds_maintenance_window             = "sun:19:00-sun:20:00"
+rds_enabled_cloudwatch_logs_exports = ["postgresql", "upgrade"]
+rds_final_snapshot_identifier      = null
 
 # For storage_mode = "existing", "managed-existing", or "create", replace every
 # empty value with deployment-owned names. managed-existing is only for buckets
