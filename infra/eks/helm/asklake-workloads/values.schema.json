@@ -21,6 +21,49 @@
     "sparkApplication": {"$ref": "#/$defs/sparkApplication"},
     "trino": {"$ref": "#/$defs/trino"}
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"airflow": {"properties": {"enabled": {"const": true}}, "required": ["enabled"]}},
+        "required": ["airflow"]
+      },
+      "then": {
+        "properties": {
+          "backend": {
+            "properties": {
+              "config": {"required": ["airflowApiBaseUrl", "airflowDagId"]},
+              "runtimeSecret": {
+                "properties": {
+                  "keys": {"required": ["airflowApiToken", "airflowPassword", "airflowExecutionApiToken", "airflowInternalToken"]}
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"trino": {"properties": {"enabled": {"const": true}}, "required": ["enabled"]}},
+        "required": ["trino"]
+      },
+      "then": {
+        "properties": {
+          "backend": {
+            "properties": {
+              "config": {"required": ["trinoBaseUrl", "trinoCatalog", "trinoSchema", "trinoUser", "trinoWarehouseBucket", "trinoWarehousePrefix", "trinoResultStorageBucket"]},
+              "runtimeSecret": {
+                "required": ["trinoCaKey"],
+                "properties": {
+                  "keys": {"required": ["trinoAuthUsername", "trinoAuthPassword", "trinoMaterializerUsername", "trinoMaterializerPassword", "trinoResultCursorSecret", "trinoQueryConfirmationSecret"]}
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
   "$defs": {
     "image": {
       "type": "object",
@@ -59,6 +102,14 @@
         "port": {"type": "integer", "minimum": 1, "maximum": 65535}
       }
     },
+    "amd64NodeSelector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kubernetes.io/arch"],
+      "properties": {
+        "kubernetes.io/arch": {"type": "string", "const": "amd64"}
+      }
+    },
     "secretKeyMap": {
       "type": "object",
       "additionalProperties": {"type": "string", "minLength": 1}
@@ -66,9 +117,10 @@
     "frontend": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["replicas", "image", "serviceAccountName", "service", "resources"],
+      "required": ["replicas", "nodeSelector", "image", "serviceAccountName", "service", "resources"],
       "properties": {
-        "replicas": {"type": "integer", "minimum": 2},
+        "replicas": {"type": "integer", "minimum": 1},
+        "nodeSelector": {"$ref": "#/$defs/amd64NodeSelector"},
         "image": {"$ref": "#/$defs/image"},
         "serviceAccountName": {"type": "string", "const": "asklake-frontend"},
         "service": {"$ref": "#/$defs/service"},
@@ -78,18 +130,25 @@
     "backend": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["replicas", "image", "serviceAccountName", "service", "config", "runtimeSecret", "resources"],
+      "required": ["replicas", "nodeSelector", "image", "serviceAccountName", "service", "config", "runtimeSecret", "resources"],
       "properties": {
-        "replicas": {"type": "integer", "minimum": 2},
+        "replicas": {"type": "integer", "minimum": 1},
+        "nodeSelector": {"$ref": "#/$defs/amd64NodeSelector"},
         "image": {"$ref": "#/$defs/image"},
         "serviceAccountName": {"type": "string", "const": "asklake-backend"},
         "service": {"$ref": "#/$defs/service"},
         "config": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["corsOrigins", "bootstrapAdminEmail", "kafkaBroker", "kafkaAuthMode", "objectStorageProvider", "rawBucket", "outputBucket", "outputPrefix", "allowedBuckets", "sparkRunner", "sparkExecutionLeaseSeconds", "airflowApiBaseUrl", "airflowDagId", "trinoEnabled", "trinoBaseUrl", "trinoCatalog", "trinoSchema", "trinoUser", "trinoWarehouseBucket", "trinoWarehousePrefix", "trinoResultStorageBucket"],
+          "required": ["corsOrigins", "bootstrapAdminEmail", "kafkaBroker", "kafkaAuthMode", "objectStorageProvider", "rawBucket", "outputBucket", "outputPrefix", "allowedBuckets", "sparkRunner", "sparkExecutionLeaseSeconds"],
           "properties": {
-            "corsOrigins": {"type": "string", "pattern": "^https://"},
+            "corsOrigins": {
+              "type": "string",
+              "anyOf": [
+                {"const": ""},
+                {"pattern": "^https://"}
+              ]
+            },
             "bootstrapAdminEmail": {"type": "string", "format": "email"},
             "kafkaBroker": {"type": "string", "minLength": 1},
             "kafkaAuthMode": {"type": "string", "const": "iam"},
@@ -102,7 +161,6 @@
             "sparkExecutionLeaseSeconds": {"type": "integer", "minimum": 10, "maximum": 3600},
             "airflowApiBaseUrl": {"type": "string", "pattern": "^http://airflow-apiserver:8080$"},
             "airflowDagId": {"type": "string", "const": "asklake_etl_job"},
-            "trinoEnabled": {"type": "boolean", "const": true},
             "trinoBaseUrl": {"type": "string", "pattern": "^https://.+:8443$"},
             "trinoCatalog": {"type": "string", "const": "iceberg"},
             "trinoSchema": {"type": "string", "minLength": 1},
@@ -115,13 +173,13 @@
         "runtimeSecret": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["name", "trinoCaKey", "keys"],
+          "required": ["name", "keys"],
           "properties": {
             "name": {"type": "string", "const": "asklake-backend-runtime"},
             "trinoCaKey": {"type": "string", "const": "trino-ca.pem"},
             "keys": {
               "allOf": [{"$ref": "#/$defs/secretKeyMap"}],
-              "required": ["databaseUrl", "bootstrapAdminPassword", "aiGatewayServiceToken", "aiMcpServiceToken", "aiContextSigningSecret", "openaiApiKey", "airflowApiToken", "airflowPassword", "airflowExecutionApiToken", "airflowInternalToken", "trinoAuthUsername", "trinoAuthPassword", "trinoMaterializerUsername", "trinoMaterializerPassword", "trinoResultCursorSecret", "trinoQueryConfirmationSecret"]
+              "required": ["databaseUrl", "bootstrapAdminPassword", "aiGatewayServiceToken", "aiMcpServiceToken", "aiContextSigningSecret", "openaiApiKey"]
             }
           }
         },
@@ -129,6 +187,19 @@
       }
     },
     "airflow": {
+      "type": "object",
+      "required": ["enabled"],
+      "properties": {
+        "enabled": {"type": "boolean"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"enabled": {"const": true}}, "required": ["enabled"]},
+          "then": {"$ref": "#/$defs/airflowEnabled"}
+        }
+      ]
+    },
+    "airflowEnabled": {
       "type": "object",
       "additionalProperties": false,
       "required": ["enabled", "image", "serviceAccountName", "service", "config", "runtimeSecret", "resources"],
@@ -270,6 +341,19 @@
       }
     },
     "trino": {
+      "type": "object",
+      "required": ["enabled"],
+      "properties": {
+        "enabled": {"type": "boolean"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"enabled": {"const": true}}, "required": ["enabled"]},
+          "then": {"$ref": "#/$defs/trinoEnabled"}
+        }
+      ]
+    },
+    "trinoEnabled": {
       "type": "object",
       "additionalProperties": false,
       "required": ["enabled", "replicas", "image", "serviceAccountName", "service", "config", "runtimeSecret", "resources"],

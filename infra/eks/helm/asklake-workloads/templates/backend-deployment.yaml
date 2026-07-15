@@ -26,6 +26,8 @@ spec:
     spec:
       serviceAccountName: {{ .Values.backend.serviceAccountName }}
       automountServiceAccountToken: true
+      nodeSelector:
+        {{- toYaml .Values.backend.nodeSelector | nindent 8 }}
       terminationGracePeriodSeconds: 30
       containers:
         - name: backend
@@ -47,10 +49,29 @@ spec:
               "AI_MCP_SERVICE_TOKEN" .Values.backend.runtimeSecret.keys.aiMcpServiceToken
               "AI_CONTEXT_SIGNING_SECRET" .Values.backend.runtimeSecret.keys.aiContextSigningSecret
               "OPENAI_API_KEY" .Values.backend.runtimeSecret.keys.openaiApiKey
+            }}
+            - name: {{ $envName }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: {{ $secretKey }}
+            {{- end }}
+            {{- if .Values.airflow.enabled }}
+            {{- range $envName, $secretKey := dict
               "AIRFLOW_API_TOKEN" .Values.backend.runtimeSecret.keys.airflowApiToken
               "AIRFLOW_PASSWORD" .Values.backend.runtimeSecret.keys.airflowPassword
               "AIRFLOW_EXECUTION_API_TOKEN" .Values.backend.runtimeSecret.keys.airflowExecutionApiToken
               "AIRFLOW_INTERNAL_TOKEN" .Values.backend.runtimeSecret.keys.airflowInternalToken
+            }}
+            - name: {{ $envName }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: {{ $secretKey }}
+            {{- end }}
+            {{- end }}
+            {{- if .Values.trino.enabled }}
+            {{- range $envName, $secretKey := dict
               "TRINO_AUTH_USERNAME" .Values.backend.runtimeSecret.keys.trinoAuthUsername
               "TRINO_AUTH_PASSWORD" .Values.backend.runtimeSecret.keys.trinoAuthPassword
               "TRINO_MATERIALIZER_USERNAME" .Values.backend.runtimeSecret.keys.trinoMaterializerUsername
@@ -64,10 +85,13 @@ spec:
                   name: {{ $secretName }}
                   key: {{ $secretKey }}
             {{- end }}
+            {{- end }}
+          {{- if .Values.trino.enabled }}
           volumeMounts:
             - name: backend-runtime-files
               mountPath: /var/run/asklake/secrets
               readOnly: true
+          {{- end }}
           startupProbe:
             httpGet:
               path: /api/health
@@ -83,14 +107,14 @@ spec:
             timeoutSeconds: 3
             failureThreshold: 3
           livenessProbe:
-            httpGet:
-              path: /api/health
+            tcpSocket:
               port: http
             periodSeconds: 30
             timeoutSeconds: 5
             failureThreshold: 3
           resources:
             {{- toYaml .Values.backend.resources | nindent 12 }}
+      {{- if .Values.trino.enabled }}
       volumes:
         - name: backend-runtime-files
           secret:
@@ -98,3 +122,4 @@ spec:
             items:
               - key: {{ .Values.backend.runtimeSecret.trinoCaKey }}
                 path: trino-ca.pem
+      {{- end }}

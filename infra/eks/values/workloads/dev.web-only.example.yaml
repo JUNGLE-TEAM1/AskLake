@@ -1,0 +1,49 @@
+frontend:
+  replicas: 1
+  image:
+    repository: 000000000000.dkr.ecr.ap-northeast-2.amazonaws.com/asklake/dev/frontend
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+    pullPolicy: IfNotPresent
+
+backend:
+  replicas: 1
+  image:
+    repository: 000000000000.dkr.ecr.ap-northeast-2.amazonaws.com/asklake/dev/backend
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+    pullPolicy: IfNotPresent
+  config:
+    corsOrigins: ""
+    bootstrapAdminEmail: admin@example.invalid
+    kafkaBroker: boot.example.kafka.ap-northeast-2.amazonaws.com:9098
+    kafkaAuthMode: iam
+    objectStorageProvider: aws
+    rawBucket: asklake-dev-raw-example
+    outputBucket: asklake-dev-output-example
+    outputPrefix: asklake-output
+    allowedBuckets: asklake-dev-raw-example,asklake-dev-output-example
+    sparkRunner: kubernetes
+    sparkExecutionLeaseSeconds: 60
+
+airflow:
+  enabled: false
+
+mskSmoke:
+  create: false
+
+sparkApplication:
+  create: false
+  image:
+    repository: 000000000000.dkr.ecr.ap-northeast-2.amazonaws.com/asklake/dev/spark-runtime
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+    pullPolicy: IfNotPresent
+  kafka:
+    broker: boot.example.kafka.ap-northeast-2.amazonaws.com:9098
+  output:
+    bucket: asklake-dev-output-example
+    prefix: eks-mvp/output
+  warehouse:
+    bucket: asklake-dev-warehouse-example
+    prefix: warehouse
+
+trino:
+  enabled: false

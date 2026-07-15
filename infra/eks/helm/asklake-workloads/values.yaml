@@ -6,6 +6,8 @@ global:
 
 frontend:
   replicas: 2
+  nodeSelector:
+    kubernetes.io/arch: amd64
   image:
     repository: ""
     digest: ""
@@ -24,6 +26,8 @@ frontend:
 
 backend:
   replicas: 2
+  nodeSelector:
+    kubernetes.io/arch: amd64
   image:
     repository: ""
     digest: ""
@@ -44,19 +48,8 @@ backend:
     allowedBuckets: ""
     sparkRunner: kubernetes
     sparkExecutionLeaseSeconds: 60
-    airflowApiBaseUrl: http://airflow-apiserver:8080
-    airflowDagId: asklake_etl_job
-    trinoEnabled: true
-    trinoBaseUrl: ""
-    trinoCatalog: iceberg
-    trinoSchema: asklake
-    trinoUser: asklake-api
-    trinoWarehouseBucket: ""
-    trinoWarehousePrefix: warehouse
-    trinoResultStorageBucket: ""
   runtimeSecret:
     name: asklake-backend-runtime
-    trinoCaKey: trino-ca.pem
     keys:
       databaseUrl: DATABASE_URL
       bootstrapAdminPassword: BOOTSTRAP_ADMIN_PASSWORD
@@ -64,16 +57,6 @@ backend:
       aiMcpServiceToken: AI_MCP_SERVICE_TOKEN
       aiContextSigningSecret: AI_CONTEXT_SIGNING_SECRET
       openaiApiKey: OPENAI_API_KEY
-      airflowApiToken: AIRFLOW_API_TOKEN
-      airflowPassword: AIRFLOW_PASSWORD
-      airflowExecutionApiToken: AIRFLOW_EXECUTION_API_TOKEN
-      airflowInternalToken: AIRFLOW_INTERNAL_TOKEN
-      trinoAuthUsername: TRINO_AUTH_USERNAME
-      trinoAuthPassword: TRINO_AUTH_PASSWORD
-      trinoMaterializerUsername: TRINO_MATERIALIZER_USERNAME
-      trinoMaterializerPassword: TRINO_MATERIALIZER_PASSWORD
-      trinoResultCursorSecret: TRINO_RESULT_CURSOR_SECRET
-      trinoQueryConfirmationSecret: TRINO_QUERY_CONFIRMATION_SECRET
   resources:
     requests:
       cpu: 500m
@@ -83,7 +66,7 @@ backend:
       memory: 2Gi
 
 airflow:
-  enabled: true
+  enabled: false
   image:
     repository: ""
     digest: ""
@@ -184,7 +167,7 @@ sparkApplication:
       limits: {cpu: "3", memory: 5Gi}
 
 trino:
-  enabled: true
+  enabled: false
   replicas: 1
   image:
     repository: ""

@@ -66,7 +66,7 @@ TRINO_CLEANUP_POLL_SECONDS=3600
 
 로컬 root Compose는 Query Result/Warehouse bucket을 MinIO에 만들고 로컬 전용 credential을 사용한다. Production은 endpoint와 장기 access key/secret을 두지 않고 사전 생성한 AWS S3 Warehouse/Query Result bucket과 EC2 instance profile default credential chain을 사용한다. 일반 Trino 결과는 private gzip page object로 저장하고 PostgreSQL에는 manifest/page metadata만 둔다. `trino-result-cleanup` worker는 terminal run을 keyset batch로 순회한다.
 
-- 개발 서버에서 `VITE_API_BASE_URL`을 생략하면 프론트는 같은 출처의 `/api`를 호출하고, Vite proxy가 FastAPI `http://127.0.0.1:8080`으로 전달한다.
+- `VITE_API_BASE_URL`을 생략하면 개발·배포 환경 모두 프론트는 같은 출처의 `/api`를 호출한다. 로컬에서는 Vite proxy가 FastAPI `http://127.0.0.1:8080`으로 전달하고, EKS에서는 Ingress가 FastAPI Service로 전달한다.
 - `VITE_USE_MOCK_API=false` 또는 미설정: live backend mode. Source connector, create/run/query/catalog/dashboard API를 실제 backend로 보낸다.
 - `VITE_USE_MOCK_API=true`: frontend demo/mock mode. Source connector도 mock sample을 반환한다.
 - Production demo 계정을 유지하는 배포만 `AUTH_LEGACY_DEMO_USERS_ENABLED=true`와 `VITE_AUTH_LEGACY_DEMO_USERS_ENABLED=true`를 함께 설정한다. backend flag는 재시작 시 기존 demo 계정 상태/세션을 보존하고 frontend flag는 로그인 기본값과 안내를 노출한다. 두 값은 preflight에서 일치해야 하며 기본값은 모두 `false`다.

@@ -2,7 +2,7 @@
 
 This chart renders the Tuesday MVP application layer:
 
-- Frontend and FastAPI: two replicas each with internal `ClusterIP` Services
+- Frontend and FastAPI: two replicas by default, with one replica allowed for the staged first rollout, and internal `ClusterIP` Services
 - Airflow 3 API server, scheduler, DAG processor, migration hook, and internal Service
 - Trino coordinator with HTTPS/password auth, JDBC Iceberg catalog, and internal Service
 - least-privilege RBAC for FastAPI `SparkApplication` submission and Spark driver executor management
@@ -12,7 +12,7 @@ This chart renders the Tuesday MVP application layer:
 
 The chart does not create a namespace, ServiceAccount/IRSA, ALB/Ingress, Secret, RDS, MSK, Spark operator, ECR repository, or replay producer. The EKS foundation must provide the `asklake-dev` namespace, all referenced ServiceAccounts/IRSA bindings, Spark operator, AWS resources, runtime Secrets, and image digests first.
 
-Use `infra/eks/values/workloads/dev.example.yaml` only as a shape example. Replace placeholder repositories, digests, buckets, and endpoints in the deployment system; do not commit real credentials. Create the Secret objects before installing this chart.
+Use `infra/eks/values/workloads/dev.example.yaml` only as a shape example. Copy `dev.web-only.example.yaml` to the Git-ignored `dev.web-only.yaml` for the local staged rollout, then replace placeholder repositories, digests, buckets, endpoints, and the bootstrap administrator email. Do not commit that environment-specific file or any real credentials. Same-origin ALB routing does not need a CORS allowlist, so the web-only file may keep `backend.config.corsOrigins` empty; any configured cross-origin entry must be an explicit HTTPS origin. Create the Secret objects before installing this chart.
 
 ```bash
 scripts/verify-eks-workloads.sh

@@ -8,7 +8,7 @@ AI Gateway/MCP 경계와 파일별 변경 계획은 [ai-gateway-mcp-rollout.md](
 
 현재 Pair A 브랜치의 기준 경계는 다음과 같다.
 
-- Source, Schema, Create, Run은 `VITE_API_BASE_URL`을 통해 live backend를 호출한다.
+- Source, Schema, Create, Run은 `VITE_API_BASE_URL`로 지정한 origin 또는 기본 same-origin `/api` 경로를 통해 live backend를 호출한다.
 - 생성 wizard는 Source 결과의 `requiresRecordParsing`에 따라 `Source -> Record Parsing -> Schema` 또는 `Source -> Schema`로 분기한다. 이번 vertical slice에서 `requiresRecordParsing`은 선택한 MinIO/S3 `.txt`/`.log`가 이름 없는 `line_number + value` 샘플로 반환될 때만 활성화한다.
 - Record Parsing Preview와 Spark batch runtime은 Job에 저장된 동일 `recordParsing` 계약을 사용한다. Preview는 제한 샘플을, Spark는 전체 입력을 검증하며 어느 쪽도 부족한 필드를 null로 채우거나 초과 필드를 버리지 않는다.
 - File / S3 source는 단일 object와 prefix 데이터셋을 구분한다. Prefix 선택은 `Path / Prefix`와 `__Selection Kind=prefix`를 Job의 `sourceConfig`에 저장하고 개별 object 배열은 저장하지 않는다. Backend는 prefix를 재귀 조회해 `_SUCCESS`, `manifest.json`, basename이 `_` 또는 `.`으로 시작하는 객체와 선택 형식이 아닌 객체를 제외한다. Preview는 사전식 첫 데이터 파일을 대표 파일로 사용하고 모든 데이터 파일의 bounded schema fingerprint가 호환될 때만 Schema 단계로 진행한다.
@@ -471,9 +471,9 @@ Frontend는 published `/dashboards/:dashboardId`에서 Continuous dataset만 pol
 
 ## 14) EKS MVP 애플리케이션 런타임 경계
 
-EKS 애플리케이션 workload는 `infra/eks/helm/asklake-workloads` chart가 소유한다. chart는 `asklake-dev` namespace에 Frontend/FastAPI 2 replica, Airflow API server/scheduler/DAG processor, Trino coordinator를 `Deployment`로 배포하고 외부에 직접 노출하지 않는 `ClusterIP` Service를 만든다. Airflow DB migration은 Helm pre-install/pre-upgrade hook Job으로 실행한다. 외부 진입점, namespace, Spark operator, IRSA ServiceAccount, RDS/MSK/S3/ECR은 EKS foundation 범위가 제공한다.
+EKS 애플리케이션 workload는 `infra/eks/helm/asklake-workloads` chart가 소유한다. 기본 chart values는 `asklake-dev` namespace에 Frontend/FastAPI 2 replica와 외부에 직접 노출하지 않는 `ClusterIP` Service만 만드는 web-only 모드다. 첫 staged rollout은 두 workload를 1 replica로 명시한 뒤 FastAPI health를 확인하고 Backend만 2개로 확장할 수 있다. ALB가 `/api/*`와 `/*`를 같은 origin으로 제공하는 동안 Backend CORS allowlist는 비워 두며, 별도 cross-origin client를 허용할 때만 명시적 HTTPS origin을 추가한다. `airflow.enabled=true`이면 Airflow API server/scheduler/DAG processor와 pre-install/pre-upgrade DB migration Job을, `trino.enabled=true`이면 Trino coordinator를 추가한다. 외부 진입점, namespace, Spark operator, IRSA ServiceAccount, RDS/MSK/S3/ECR은 EKS foundation 범위가 제공한다.
 
-일반 설정은 `ConfigMap`으로 전달한다. credential과 TLS 파일은 chart가 만들지 않으며 기존 `asklake-backend-runtime`, `asklake-airflow-runtime`, `asklake-spark-runtime`, `asklake-trino-runtime` Secret의 확정된 key만 참조한다. workload image는 모두 `repository@sha256:digest`로 고정하고 static AWS access key는 허용하지 않는다. FastAPI RBAC는 `SparkApplication` create/get/list/watch/delete와 Pod log 조회만, Spark driver RBAC는 executor Pod/Service/ConfigMap 관리만 허용한다.
+일반 설정은 `ConfigMap`으로 전달한다. credential과 TLS 파일은 chart가 만들지 않는다. web-only 모드는 `asklake-backend-runtime`의 DB·기본 인증 key만 참조하고, Airflow/Trino를 활성화한 경우에만 해당 Backend key, `asklake-airflow-runtime`, `asklake-trino-runtime`, Trino CA mount를 추가한다. `asklake-spark-runtime`은 SparkApplication을 실제 생성할 때 사용한다. workload image는 모두 `repository@sha256:digest`로 고정하고 static AWS access key는 허용하지 않는다. Frontend/FastAPI는 AMD64 image 계약에 맞춰 `kubernetes.io/arch=amd64`로 scheduling한다. FastAPI startup/readiness는 DB를 포함한 `/api/health`를 사용하지만 liveness는 DB 장애가 process restart로 번지지 않도록 TCP 8080만 검사한다. FastAPI RBAC는 `SparkApplication` create/get/list/watch/delete와 Pod log 조회만, Spark driver RBAC는 executor Pod/Service/ConfigMap 관리만 허용한다.
 
 MVP에서 Kafka Continuous control-plane은 EC2에 남는다. EKS FastAPI의 `ASKLAKE_CONTINUOUS_CONTROL_PLANE=external_ec2`는 Continuous 생성·상세·수정·삭제·명령·전용 runtime 조회뿐 아니라 Continuous dataset freshness와 dashboard widget data 조회도 `409 CONTINUOUS_CONTROL_OWNED_BY_EC2`로 거절하고 일반 Job 목록에서는 Continuous Job을 숨긴다. EKS process는 Continuous background sync도 시작하지 않는다. 따라서 EKS와 EC2가 같은 Continuous worker나 상태 DB를 동시에 제어하거나 EKS가 stale Continuous 결과를 읽는 shared mode는 허용하지 않는다.
 
