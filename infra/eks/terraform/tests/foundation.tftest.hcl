@@ -877,6 +877,15 @@ run "mvp_data_plane_contract" {
       warehouse     = "asklake-dev-111122223333-warehouse"
       query_results = "asklake-dev-111122223333-query-results"
     }
+    storage_prefixes = {
+      raw           = "*"
+      output        = "*"
+      warehouse     = "warehouse"
+      query_results = "query-results"
+      checkpoint    = "checkpoints"
+      quarantine    = "quarantine"
+      evidence      = "evidence"
+    }
   }
 
   assert {
@@ -924,6 +933,15 @@ run "managed_existing_storage_contract" {
       warehouse     = "asklake-dev-111122223333-warehouse"
       query_results = "asklake-dev-111122223333-query-results"
     }
+    storage_prefixes = {
+      raw           = "*"
+      output        = "*"
+      warehouse     = "warehouse"
+      query_results = "query-results"
+      checkpoint    = "checkpoints"
+      quarantine    = "quarantine"
+      evidence      = "evidence"
+    }
   }
 
   assert {
@@ -941,6 +959,24 @@ run "managed_existing_storage_contract" {
   assert {
     condition     = length(aws_s3_bucket_versioning.data) == 4
     error_message = "managed-existing storage must manage versioning for every imported bucket."
+  }
+
+  assert {
+    condition = (
+      endswith(local.storage_object_arns.raw, ":s3:::asklake-dev-111122223333-raw/*") &&
+      endswith(local.storage_object_arns.output, ":s3:::asklake-dev-111122223333-output/*") &&
+      !endswith(local.storage_object_arns.raw, "*/*") &&
+      !endswith(local.storage_object_arns.output, "*/*")
+    )
+    error_message = "Dedicated Raw/Output bucket-wide access must render a bucket-scoped object ARN, not a malformed wildcard prefix."
+  }
+
+  assert {
+    condition = contains(
+      one([for statement in module.workload_iam_policies.contracts.backend.Statement : statement if statement.Sid == "ReadBackendObjects"]).Resource,
+      local.storage_object_arns.raw,
+    )
+    error_message = "Backend source browsing must be able to read objects from the approved Raw bucket boundary."
   }
 }
 

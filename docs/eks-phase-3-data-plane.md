@@ -60,6 +60,8 @@ IAM policy document는 권한 요구의 결과물이지 아직 role attachment�
 
 bucket resource에는 `prevent_destroy=true`와 `force_destroy=false`가 함께 적용된다. 따라서 이 configuration에서 bucket 삭제 plan은 실패해야 한다. 단, 현재 Terraform state는 로컬 ignored file이므로 다른 작업자나 CI가 같은 인프라를 관리하려면 remote state/backend 전환을 별도 수행해야 한다. 이 제한을 해소하기 전에는 다른 state에서 동일 bucket을 다시 import하거나 apply하지 않는다.
 
+기존 Dataset inventory에서 Raw와 Output bucket은 여러 최상위 prefix를 사용하고 있음을 확인했다. 따라서 이 두 전용 bucket은 bucket ARN 자체를 IAM 경계로 삼고 object ARN은 해당 bucket 아래 전체 key로 허용한다. 이는 계정 전체 S3 wildcard가 아니며 다른 bucket에는 접근하지 못한다. Backend는 기존 Source browse/preview 계약에 맞춰 Raw 읽기 권한을 포함하고, Warehouse와 Query Result는 고정 prefix만 허용한다.
+
 ## 검증과 완료 기준
 
 다음 검증은 AWS credential 없이 mock provider로 실행하며 실제 AWS API를 변경하지 않는다.

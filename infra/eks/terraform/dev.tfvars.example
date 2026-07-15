@@ -106,6 +106,18 @@ storage_bucket_names = {
   warehouse     = ""
   query_results = ""
 }
+storage_prefixes = {
+  # Dedicated Raw/Output buckets may use "*" when existing Dataset paths span
+  # multiple top-level prefixes. The IAM resource boundary remains that exact
+  # bucket; Warehouse and Query Result stay on explicit prefixes.
+  raw           = "raw"
+  output        = "output"
+  warehouse     = "warehouse"
+  query_results = "query-results"
+  checkpoint    = "checkpoints"
+  quarantine    = "quarantine"
+  evidence      = "evidence"
+}
 storage_sse_algorithm = "AES256"
 storage_kms_key_arn   = null
 

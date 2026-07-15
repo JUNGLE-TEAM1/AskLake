@@ -129,6 +129,7 @@ locals {
         Effect = "Allow"
         Action = ["s3:ListBucket"]
         Resource = [
+          var.storage_bucket_arns.raw,
           var.storage_bucket_arns.output,
           var.storage_bucket_arns.warehouse,
           var.storage_bucket_arns.query_results,
@@ -136,6 +137,8 @@ locals {
         Condition = {
           StringLike = {
             "s3:prefix" = [
+              var.storage_prefixes.raw,
+              "${var.storage_prefixes.raw}/*",
               var.storage_prefixes.output,
               "${var.storage_prefixes.output}/*",
               var.storage_prefixes.warehouse,
@@ -153,6 +156,7 @@ locals {
         Effect = "Allow"
         Action = ["s3:GetObject"]
         Resource = [
+          var.storage_object_arns.raw,
           var.storage_object_arns.output,
           var.storage_object_arns.warehouse,
           var.storage_object_arns.query_results,

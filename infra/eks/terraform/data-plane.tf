@@ -45,8 +45,8 @@ locals {
   } : {}
 
   storage_object_arns = local.use_storage ? {
-    raw           = "${local.storage_bucket_arns.raw}/${var.storage_prefixes.raw}/*"
-    output        = "${local.storage_bucket_arns.output}/${var.storage_prefixes.output}/*"
+    raw           = var.storage_prefixes.raw == "*" ? "${local.storage_bucket_arns.raw}/*" : "${local.storage_bucket_arns.raw}/${var.storage_prefixes.raw}/*"
+    output        = var.storage_prefixes.output == "*" ? "${local.storage_bucket_arns.output}/*" : "${local.storage_bucket_arns.output}/${var.storage_prefixes.output}/*"
     warehouse     = "${local.storage_bucket_arns.warehouse}/${var.storage_prefixes.warehouse}/*"
     query_results = "${local.storage_bucket_arns.query_results}/${var.storage_prefixes.query_results}/*"
     checkpoint    = "${local.storage_bucket_arns.output}/${var.storage_prefixes.checkpoint}/*"
@@ -99,9 +99,13 @@ check "storage_prefix_contract" {
   assert {
     condition = !local.use_storage || (
       alltrue([for prefix in values(var.storage_prefixes) : trim(prefix, "/ ") != ""]) &&
-      length(toset([for prefix in values(var.storage_prefixes) : trim(prefix, "/ ")])) == length(values(var.storage_prefixes))
+      length(toset([
+        var.storage_prefixes.checkpoint,
+        var.storage_prefixes.quarantine,
+        var.storage_prefixes.evidence,
+      ])) == 3
     )
-    error_message = "storage prefixes must be non-empty and distinct."
+    error_message = "storage prefixes must be non-empty, and checkpoint/quarantine/evidence prefixes in the shared output bucket must be distinct."
   }
 }
 
