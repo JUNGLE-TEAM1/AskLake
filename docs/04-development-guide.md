@@ -713,6 +713,15 @@ Phase 14 web workload 변경은 `bash scripts/verify-eks-web-workloads.sh`로 �
 
 수요일 Pair B의 Frontend/FastAPI rollout, 내부 Service/RDS health, Pod 자동복구, 실제 두 Pod의 RDS lease/generation fence, EC2 Continuous 경계와 MSK IAM client 실행 결과는 [EKS MVP 수요일 Pair B 실환경 검증 기록](eks-day15-b-live-evidence.md)에 요약한다. exact temporary `CreateTopic` permission으로 1 partition test topic을 bootstrap하고 권한을 제거한 뒤, 원래 Describe-only Pod Identity로 private `9098` IAM metadata Job `Complete 1/1`을 확인했다. B 기록 당시 미완료였던 S3 positive/negative 경계는 후속 [Backend S3 최소 권한 검증 기록](eks-day15-backend-s3-runtime-evidence.md)에서 완료했다. PR #774 머지 후에는 최신 `pair1`을 A 브랜치에 merge하고 최종 Backend source commit, ECR immutable digest와 현재 Pod imageID 일치, ALB `--steady`, ExternalSecret Ready와 RDS health를 다시 확인한다.
 
+최종 Backend rollout gate는 새 image를 만들지 않고 확인된 동일 digest로 Deployment를 restart한다. 아래 runner는 실행 전 Git commit/ECR tag/digest와 현재 `2/2`, ESO·ALB·RDS·실행 중 EC2를 확인하고, rollout 동안 외부 `/api/health`를 1초 간격으로 측정한다. 종료 후 같은 digest의 새 Pod `2/2`, ALB steady target, Secret/RDS health, 각 Pod의 `external_ec2` 값과 Continuous process 0개를 다시 확인한다. 실제 commit은 검토한 값으로 전달하고 전체 digest·repository·endpoint는 출력하거나 Git에 기록하지 않는다.
+
+```bash
+export ASKLAKE_EKS_CLUSTER_NAME='<terraform output>'
+export ASKLAKE_EXPECTED_BACKEND_COMMIT='<reviewed commit>'
+export ASKLAKE_BACKEND_ROLLOUT_CONFIRM='restart-same-immutable-backend'
+bash scripts/run-eks-day15-backend-rollout-smoke.sh
+```
+
 ```bash
 docker run --rm --entrypoint sh \
   -v "$PWD/infra/eks:/workspace" \

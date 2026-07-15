@@ -102,3 +102,23 @@ PR #774는 2026-07-16 KST 기준 `pair1` merge commit `4715513b`로 반영됐다
 - ECR repository immutable 설정과 배포 digest 존재 확인
 
 이 단계는 새 image build/push나 workload rollout을 수행하지 않았다. 최신 Git 기준과 이미 배포돼 있던 B image의 일치를 확인한 동기화·사전 점검이다.
+
+## Phase 4 최종 Backend rollout gate
+
+Phase 4는 Phase 3.5에서 확인한 동일 immutable digest로 FastAPI Deployment만 rolling restart한다. rollout 동안 ALB 기본 DNS의 `/api/health`를 1초 간격으로 연속 호출하고 모든 표본이 HTTP 200이어야 한다. 종료 후 Deployment generation/revision 증가, 같은 digest의 Ready Pod `2/2`, restart 0, ALB steady target, RDS health와 Backend ExternalSecret을 다시 검증한다.
+
+Continuous 경계는 두 새 Pod 모두 `ASKLAKE_CONTINUOUS_CONTROL_PLANE=external_ec2`인지, Kafka Continuous stream/manager process가 0개인지 확인한다. 기존 실행 중 EC2는 조회만 하고 중지·재시작·삭제하지 않는다. 실행 절차와 실제 결과는 `scripts/run-eks-day15-backend-rollout-smoke.sh`와 이 문서의 Phase 4 완료 기록을 기준으로 한다.
+
+2026-07-16 KST 실제 실행에서는 Backend source commit `059d8eaa`의 기존 immutable ECR digest를 변경하지 않고 FastAPI Deployment를 rolling restart했다. Deployment generation과 revision이 증가했고 새 Pod 두 개는 같은 digest, Ready `2/2`, restart 0으로 복구됐다. rollout 중 1초 간격으로 수집한 외부 `/api/health` 표본은 모두 HTTP 200이었다.
+
+Kubernetes rollout 완료 직후에는 이전 Backend target 두 개가 ALB의 정상 `draining` 상태로 남았다. target group의 설정된 deregistration delay 300초 동안 healthy target 4개와 RDS health는 계속 정상이고 비정상 target은 0개였다. runner는 고정 대기 대신 외부 health 측정을 유지하면서 최대 420초 동안 exact steady를 기다리도록 보완했다. delay 종료 뒤 ALB는 healthy 4, draining 0이며 Frontend/FastAPI EndpointSlice와 target 집합이 정확히 일치했다.
+
+최종 post-check 결과는 다음과 같다.
+
+- Backend ExternalSecret source/target hash, owner와 Ready 상태 유지
+- ALB `/`, `/api/health` HTTP 200과 `database.ok=true`
+- 두 FastAPI Pod 모두 `external_ec2`, Kafka Continuous stream/manager process 합계 0
+- 기존 EC2 running 상태 유지, 중지·재시작·삭제 없음
+- 새 Backend Pod Identity로 S3 positive/negative boundary smoke 재통과 및 임시 자원 정리
+
+따라서 Phase 4는 새 image build/push, EC2 traffic cutover 또는 기존 환경 삭제 없이 최종 Backend rollout 가용성과 Continuous 소유권 경계를 완료했다.

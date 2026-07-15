@@ -62,3 +62,5 @@ cluster/VPC를 먼저 삭제하지 않는다. 전체 teardown에서는 Ingress �
 ## Phase 1 완료와 다음 gate
 
 Phase 1은 B scheduler 수정 image가 배포된 상태에서 ALB 외부 route와 RDS-aware health까지 완료했다. 후속 Phase 2에서 수동 `asklake-backend-runtime`을 Secrets Manager + External Secrets Operator 관리 방식으로 전환했고 FastAPI rolling restart 뒤 같은 route와 RDS health를 재검증했다. 상세 증거는 [Backend runtime Secret 전환 기록](eks-day15-backend-secret-runtime-evidence.md)을 따른다. PR #774는 이후 `pair1`에 머지됐고 Phase 3.5 동기화에서 최종 Backend commit·immutable ECR digest와 ALB steady target 4개, RDS health, ExternalSecret Ready 상태를 다시 확인했다. 최종 merge 후보나 image가 다시 바뀌면 동일 ALB verifier와 FastAPI replica 경쟁 검증을 재실행한다.
+
+Phase 4에서는 같은 최종 digest로 FastAPI를 다시 rolling restart하면서 외부 `/api/health`를 1초 간격으로 측정했고 실패 표본은 없었다. 새 Pod `2/2`와 restart 0을 확인한 뒤 target group의 설정된 300초 deregistration delay가 끝날 때까지 healthy/draining 외 상태가 없음을 확인했다. 최종 상태는 healthy 4, draining 0, EndpointSlice와 target 집합 일치, 두 외부 route와 RDS health 정상이다.
