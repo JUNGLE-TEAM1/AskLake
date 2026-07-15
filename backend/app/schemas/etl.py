@@ -907,6 +907,9 @@ class SchemaDraft(CamelModel):
 class SourceDraft(CamelModel):
     connection_message: str | None = None
     connection_status: Literal["idle", "testing", "success", "failed"]
+    detected_format: str | None = None
+    raw_preview_lines: list[str] = Field(default_factory=list)
+    requires_record_parsing: bool | None = None
     source_config: SourceFieldRows
     source_label: str
     source_type: str
