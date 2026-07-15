@@ -217,11 +217,12 @@ run "new_cluster_contract" {
 
   assert {
     condition = (
-      output.phase1_handoff.contract_version == "2.4" &&
+      output.phase1_handoff.contract_version == "2.5" &&
       output.phase1_handoff.network_output == "phase11_network_handoff" &&
       output.phase1_handoff.node_pool_output == "phase12_node_pool_handoff" &&
       output.phase1_handoff.ingress_output == "phase13_alb_handoff" &&
-      output.phase1_handoff.web_output == "phase14_web_workload_handoff"
+      output.phase1_handoff.web_output == "phase14_web_workload_handoff" &&
+      output.phase1_handoff.metrics_output == "phase14_metrics_server_handoff"
     )
     error_message = "the Phase 12 foundation handoff version and output pointers must stay synchronized."
   }
@@ -1383,7 +1384,7 @@ run "phase14_web_workload_handoff_is_fail_closed" {
   }
 
   assert {
-    condition     = output.phase1_handoff.contract_version == "2.4" && output.phase1_handoff.web_output == "phase14_web_workload_handoff"
+    condition     = output.phase1_handoff.contract_version == "2.5" && output.phase1_handoff.web_output == "phase14_web_workload_handoff"
     error_message = "Phase 1 handoff must expose the Phase 14 web workload contract."
   }
 
@@ -1406,4 +1407,64 @@ run "phase14_web_workload_handoff_is_fail_closed" {
     condition     = contains(output.phase14_web_workload_handoff.apply_gates, "backend-runtime-boundary-ready")
     error_message = "FastAPI multi-replica deployment must remain gated by Pair B's runtime boundary."
   }
+}
+
+run "phase14_metrics_server_defaults_fail_closed" {
+  command = plan
+
+  variables {
+    environment             = "dev"
+    owner                   = "pair-a"
+    resource_lifecycle      = "external"
+    cluster_mode            = "existing"
+    existing_cluster_name   = "shared-dev"
+    create_ecr_repositories = false
+  }
+
+  assert {
+    condition     = output.phase14_metrics_server_handoff.mode == "disabled" && !output.phase14_metrics_server_handoff.ready_for_apply
+    error_message = "Metrics Server must remain disabled until ownership and an exact compatible version are reviewed."
+  }
+}
+
+run "phase14_metrics_server_eks_addon_contract" {
+  command = plan
+
+  variables {
+    environment                       = "dev"
+    owner                             = "pair-a"
+    resource_lifecycle                = "mvp-owned"
+    cluster_mode                      = "create"
+    control_plane_subnet_ids          = ["subnet-test-a", "subnet-test-b"]
+    create_ecr_repositories           = false
+    metrics_server_mode               = "eks_addon"
+    metrics_server_addon_version      = "v0.8.0-eksbuild.1"
+    metrics_server_owner              = "pair-a"
+    external_metrics_server_confirmed = false
+  }
+
+  assert {
+    condition = (
+      aws_eks_addon.metrics_server[0].addon_name == "metrics-server" &&
+      aws_eks_addon.metrics_server[0].addon_version == "v0.8.0-eksbuild.1" &&
+      output.phase14_metrics_server_handoff.ready_for_apply
+    )
+    error_message = "Reviewed Metrics Server inputs must create the exact EKS community add-on."
+  }
+}
+
+run "reject_partial_metrics_server_contract" {
+  command = plan
+
+  variables {
+    environment              = "dev"
+    owner                    = "pair-a"
+    resource_lifecycle       = "mvp-owned"
+    cluster_mode             = "create"
+    control_plane_subnet_ids = ["subnet-test-a", "subnet-test-b"]
+    create_ecr_repositories  = false
+    metrics_server_mode      = "eks_addon"
+  }
+
+  expect_failures = [check.metrics_server_contract]
 }

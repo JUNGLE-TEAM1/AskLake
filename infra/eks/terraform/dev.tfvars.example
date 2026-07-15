@@ -158,3 +158,12 @@ secret_source_prefix     = null
 airflow_api_auth_mode               = "undecided"
 ai_runtime_mode                     = "undecided"
 ai_provider_workload_contract_ready = false
+
+# Day 14 Metrics Server is an EKS community add-on. Keep disabled until the
+# target cluster exists, then query its compatible versions and record the
+# reviewed exact version and lifecycle owner. Use external only when another
+# owner already operates it and has supplied runtime evidence.
+metrics_server_mode               = "disabled"
+metrics_server_addon_version      = null
+metrics_server_owner              = null
+external_metrics_server_confirmed = false

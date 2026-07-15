@@ -1,4 +1,4 @@
-# EKS Phase 14 Frontend·FastAPI Workload
+# EKS Phase 14 Frontend·FastAPI Workload와 Day 14 Scale 증거
 
 ## 결과
 
@@ -60,3 +60,45 @@ bash scripts/destroy-eks-web-workloads.sh
 ```
 
 Foundation ServiceAccount·ConfigMap·Secret, database migration, EC2 데이터 rollback은 Phase 14가 삭제하거나 수행하지 않는다.
+
+## Metrics Server와 Node scale-out
+
+14일 A 완료 항목에는 Metrics Server와 test Pod 기반 Node scale-out 검증이 포함된다. Metrics Server는 Amazon EKS가 기본 설치하지 않으므로 `metrics-server` EKS community add-on으로 관리한다. 수동 latest manifest를 직접 적용하지 않고 AWS가 target Kubernetes version과 호환성을 확인하는 add-on 경로를 사용한다. 이 add-on은 IAM policy를 요구하지 않지만 Metrics Server Pod에서 각 node kubelet의 TCP `10250` 접근이 가능해야 한다.
+
+저장소는 add-on 버전을 임의로 고정하지 않는다. target cluster가 생긴 뒤 다음 조회 결과에서 검토한 exact version을 `metrics_server_addon_version`에 기록한다.
+
+```bash
+aws eks describe-addon-versions \
+  --addon-name metrics-server \
+  --kubernetes-version <target-version>
+```
+
+`metrics_server_mode=eks_addon`, exact version, lifecycle owner와 `resource_lifecycle=mvp-owned`가 모두 있어야 Terraform이 `aws_eks_addon.metrics_server`를 만든다. 다른 platform owner가 이미 운영한다면 `external`과 실제 확인 증거를 사용하며 중복 설치하지 않는다. 기본 `disabled`는 add-on resource를 만들지 않는다.
+
+설치 후에는 `ACTIVE` 상태만으로 완료하지 않는다. `v1beta1.metrics.k8s.io` APIService가 Available이고 `kubectl top nodes`, `kubectl top pods`가 성공해야 한다. Metrics Server는 현재값과 HPA 입력용이며 장기 이력·알림 시스템으로 간주하지 않는다.
+
+Node scale smoke는 `infra/eks/helm/asklake-scale-smoke`의 임시 Deployment를 사용한다. 운영 resource 수치를 재사용하지 않고 실제 General NodePool 한도 안에서 replica와 CPU/memory request를 학습·선택한다. backend image receipt의 immutable digest만 사용하며 Service·Ingress·Secret을 만들지 않는다.
+
+```bash
+bash scripts/verify-eks-metrics-scale.sh
+
+export ASKLAKE_EKS_CLUSTER_NAME=<reviewed-cluster>
+export ASKLAKE_EKS_NAMESPACE=asklake-dev
+export ASKLAKE_SCALE_SMOKE_CONFIRM=run-cost-bearing-node-scale-smoke
+bash scripts/run-eks-node-scale-smoke.sh \
+  /private/scale-values.yaml \
+  /private/image-receipt.json \
+  /private/day14-scale-evidence.json
+```
+
+실행 스크립트는 cluster/context, add-on `ACTIVE`, Metrics API, image receipt를 확인하고 baseline보다 node 수가 증가할 때까지 최대 20분 기다린다. scale-out과 Pod metrics 확인 후 test Deployment를 삭제한다. Auto Mode consolidation에 따른 scale-in은 시간이 더 걸릴 수 있으므로 삭제 직후 성공으로 추정하지 않고 별도 관찰 결과를 evidence에 추가한다. test values의 replica/resource는 schema fixture일 뿐 실제 실행값이 아니다.
+
+```bash
+bash scripts/verify-eks-node-scale-in.sh /private/day14-scale-evidence.json
+```
+
+scale-in verifier는 임시 release와 Deployment가 삭제됐는지 확인하고 최대 30분 동안 node 수가 사전 baseline으로 돌아오는지 관찰한 뒤 같은 evidence 파일을 갱신한다.
+
+14일 A 실환경 완료 증거는 Metrics add-on/version/owner, Metrics API와 `kubectl top` 성공, scale 전후 node 수, test Pod rollout, cleanup, 이후 scale-in 관찰 결과다. 코드 검증만 통과하고 이 evidence가 없으면 14일 A는 배포 준비 완료이지 실환경 완료가 아니다.
+
+공식 기준은 [Amazon EKS Metrics Server](https://docs.aws.amazon.com/eks/latest/userguide/metrics-server.html)와 [Amazon EKS community add-ons](https://docs.aws.amazon.com/eks/latest/userguide/community-addons.html)를 따른다.
