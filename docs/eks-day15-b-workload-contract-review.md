@@ -189,3 +189,19 @@ Snapshot/batch Job과 그 scheduler path는 EKS에 남는다. EC2와 EKS가 같�
 11. 두 원격 head의 3-way merge에서 `docs/system-guardrails.md`는 실제 text conflict가 난다. `docs/02-architecture.md`와 `docs/04-development-guide.md`도 양쪽이 함께 수정했으므로 자동 merge 여부와 별개로 A의 실제 foundation evidence와 B의 runtime 계약을 문단 단위로 모두 보존해 검토한다.
 
 PR #788은 위 불일치와 MVP 예외를 계약으로 기록한 상태에서 infrastructure foundation 완료로 닫을 수 있다. 다만 실제 runtime Secret sync, image digest, workload rollout, Ingress/ALB와 live smoke까지 완료했다는 표현은 사용하지 않는다.
+
+## 9. `asklake-web` 정식 release probe·AMD64 gate (2026-07-15 B 검토)
+
+`asklake-web`은 A가 소유하는 Frontend/FastAPI application release chart다. B는 이 chart를 새로 만들거나 apply하지 않고, 실제 dev 값으로 `helm lint`와 `helm template`을 실행해 다음 결과를 확인했다.
+
+- Service는 합의된 `frontend:80`, `fastapi:8080`이고 Frontend/FastAPI image는 immutable ECR digest 형식이다.
+- Backend는 `asklake-runtime` ConfigMap과 `asklake-backend-runtime` Secret을 `envFrom`으로 참조한다.
+- 그러나 Backend `startupProbe`, `readinessProbe`, **`livenessProbe` 모두** `/api/health` HTTP probe다. `/api/health`는 DB-aware endpoint이므로 liveness로 사용하면 RDS의 일시 장애가 FastAPI container 재시작으로 이어진다.
+- Frontend와 Backend의 `placement.nodeSelector`는 `asklake.io/workload-class: general`만 렌더하며 `kubernetes.io/arch: amd64`를 강제하지 않는다.
+
+초기 렌더 불일치는 사용자 승인 후 B가 아래처럼 수정했고, `scripts/verify-eks-web-workloads.sh`의 Helm lint/template 및 unsafe override 검사까지 통과했다.
+
+1. Backend liveness는 `tcpSocket`의 `http` port(8080) 검사로 바꿨고, `/api/health`는 startup/readiness에만 유지한다.
+2. 공통 placement selector에 `kubernetes.io/arch: amd64`를 추가해 Frontend와 Backend 모두 AMD64 node에만 스케줄한다. 기존 `asklake.io/workload-class: general` selector는 유지한다.
+
+Verifier는 ARM64 selector override를 schema에서 거절하고, render에 AMD64 selector가 두 번·`/api/health`가 두 번(startup/readiness)·TCP liveness가 한 번만 나오는지 검사한다. 실제 release apply는 여전히 runtime Secret, image receipt, Ready AMD64 General node와 별도 ownership gate가 모두 만족된 뒤에만 수행한다.
