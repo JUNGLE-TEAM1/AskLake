@@ -4,9 +4,9 @@
 
 ## 1. Pair A가 제공한 기반
 
-`infra/eks/terraform`은 기존 EKS cluster 재사용과 MVP-owned 신규 cluster 생성 경로를 분리한다. 실제 적용 전 선택은 `cluster_mode`에 기록한다. 신규 cluster는 검토된 control-plane subnet을 입력받고, managed node group은 `create_managed_node_group=true`일 때만 생성한다.
+`infra/eks/terraform`은 기존 EKS cluster 재사용과 MVP-owned 신규 EKS Auto Mode cluster 생성 경로를 분리한다. 실제 적용 전 선택은 `cluster_mode`에 기록한다. 신규 cluster는 검토된 control-plane subnet을 입력받아 Auto Mode compute, load balancing, block storage를 함께 활성화하며 표준 Managed Node Group은 만들지 않는다. 기존 cluster는 Terraform이 변경하거나 import하지 않고, 실제 환경에서 Auto Mode와 node role을 확인했다는 명시적 입력이 있어야 handoff를 연다.
 
-Terraform은 `cluster_name`, `cluster_vpc_id`, `cluster_security_group_id`, `cluster_subnet_ids`, `managed_node_group_name`, `namespace`, `service_account_names`, `ecr_repository_urls`, `trino_handoff`, `phase1_handoff`를 안정적인 output 이름으로 제공한다. `trino_handoff`는 image mirror/digest, `asklake-trino` IRSA, in-cluster HTTPS Service, RDS `iceberg_catalog`, S3 warehouse, TLS/auth/JDBC Secret reference와 network port를 묶는다. 실제 output 값은 배포 environment에서 전달하며 문서나 PR 본문에 복사하지 않는다.
+Terraform은 `cluster_name`, `cluster_vpc_id`, `cluster_security_group_id`, `cluster_subnet_ids`, `auto_mode_handoff`, `namespace`, `service_account_names`, `ecr_repository_urls`, `trino_handoff`, `phase1_handoff`를 안정적인 output 이름으로 제공한다. `auto_mode_handoff`는 신규 cluster의 Terraform 소유 또는 기존 cluster의 외부 확인 소유권, API 인증, node role, built-in NodePool과 세 Auto Mode capability를 전달한다. `trino_handoff`는 image mirror/digest, `asklake-trino` IRSA, in-cluster HTTPS Service, RDS `iceberg_catalog`, S3 warehouse, TLS/auth/JDBC Secret reference와 network port를 묶는다. 실제 output 값은 배포 environment에서 전달하며 문서나 PR 본문에 복사하지 않는다.
 
 ECR repository는 frontend, backend, Airflow, Trino와 Spark runtime을 분리한다. EKS 밖 fixture producer는 이 foundation의 workload image와 service account 대상에 포함하지 않는다. repository는 immutable tag와 push scan을 사용하며 배포 workflow는 최종적으로 repository URL과 image digest를 함께 전달해야 한다.
 
@@ -35,6 +35,7 @@ ECR repository는 frontend, backend, Airflow, Trino와 Spark runtime을 분리�
 - Kubernetes namespace와 service account: Terraform output/Helm value가 source of truth
 - secret value: Git에 저장하지 않고 Kubernetes Secret 또는 외부 secret reference로만 전달
 - Replay Producer: EKS 밖 fixture producer이며 compatibility value도 `create=false`
+- EKS compute: Auto Mode. 신규 cluster는 `system`/`general-purpose` built-in NodePool을 사용하고 General/Spark custom NodePool은 Phase 12에서 별도로 설계
 
 B는 실제 AWS resource가 없어도 Helm render 결과와 fake Kubernetes client로 SparkApplication과 FastAPI provider contract를 개발할 수 있다.
 
@@ -65,8 +66,8 @@ B는 workload 구현 PR에 다음 내용을 machine-readable value와 문서로 
 
 다음 값은 Phase 1 실제 환경 inventory와 팀 선택 뒤 채운다.
 
-- existing/new EKS 선택과 실제 cluster 이름
-- VPC, control-plane subnet, node subnet, NAT 또는 VPC endpoint
+- existing/new EKS 선택과 실제 cluster 이름. existing이면 Auto Mode 활성 상태와 실제 node role도 확인
+- VPC, control-plane subnet, workload subnet, NAT 또는 VPC endpoint
 - IRSA 또는 EKS Pod Identity 선택과 workload별 IAM role ARN. `trino_handoff.irsa_role_arn`은 확정 전 `null`로 남는다.
 - MSK bootstrap broker reference와 client security group
 - RDS endpoint reference, EKS Trino Service reference와 security group. 이 값과 database/user/migration owner가 비어 있으면 B는 manifest render·fake client test까지만 진행하며 실제 EKS/RDS smoke를 완료로 주장하지 않는다.
@@ -98,7 +99,7 @@ B는 PR에서 다음 evidence를 제공한다.
 - Terraform이 credential 없이 format/init/validate되고 mock provider contract test가 통과한다.
 - Helm chart가 lint/render되고 namespace, 생성되는 6개 service account, `create=false` Replay input, backend/Spark namespace RBAC와 runtime boundary가 확인된다.
 - 실제 account ID, ARN, endpoint, credential과 secret이 저장소에 없다.
-- existing/create cluster와 optional node group이 입력으로 분리된다.
+- existing Auto Mode 외부 확인과 신규 Auto Mode 생성 경로가 입력으로 분리되고 표준 Managed Node Group resource가 존재하지 않는다.
 - ECR repository와 immutable digest 전달 계약, Trino IRSA/Service/RDS/S3/Secret reference를 묶은 `trino_handoff`가 출력된다.
 - B가 필요한 값과 B가 반환할 값을 코드와 문서에서 찾을 수 있다.
 - AWS apply는 Phase 0의 resource 생성 gate가 채워지기 전까지 실행하지 않는다.

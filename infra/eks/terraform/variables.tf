@@ -77,12 +77,6 @@ variable "control_plane_subnet_ids" {
   default     = []
 }
 
-variable "node_subnet_ids" {
-  description = "At least two subnets for an optional managed node group. Prefer private subnets after network review."
-  type        = list(string)
-  default     = []
-}
-
 variable "endpoint_private_access" {
   description = "Enable the private Kubernetes API endpoint for a new cluster."
   type        = bool
@@ -107,42 +101,45 @@ variable "enabled_cluster_log_types" {
   default     = ["api", "audit", "authenticator"]
 }
 
-variable "create_managed_node_group" {
-  description = "Create the baseline managed node group after subnet and cost review."
+variable "existing_auto_mode_enabled" {
+  description = "Explicit confirmation that an externally owned existing cluster has all EKS Auto Mode capabilities enabled."
   type        = bool
   default     = false
 }
 
-variable "node_instance_types" {
-  description = "Explicit instance types selected after workload capacity and cost review."
-  type        = list(string)
-  default     = []
-}
-
-variable "node_capacity_type" {
-  description = "Baseline node capacity type."
+variable "existing_auto_mode_node_role_arn" {
+  description = "Externally managed EKS Auto Mode node role ARN for an existing cluster."
   type        = string
-  default     = "ON_DEMAND"
+  default     = null
+  nullable    = true
 
   validation {
-    condition     = contains(["ON_DEMAND", "SPOT"], var.node_capacity_type)
-    error_message = "node_capacity_type must be ON_DEMAND or SPOT."
+    condition     = var.existing_auto_mode_node_role_arn == null || can(regex("^arn:aws:iam::[0-9]{12}:role/.+$", var.existing_auto_mode_node_role_arn))
+    error_message = "existing_auto_mode_node_role_arn must be null or an IAM role ARN."
   }
 }
 
-variable "node_min_size" {
-  type    = number
-  default = 1
+variable "auto_mode_builtin_node_pools" {
+  description = "AWS-managed built-in NodePools enabled at cluster creation. Custom General/Spark pools are a later phase."
+  type        = set(string)
+  default     = ["general-purpose", "system"]
+
+  validation {
+    condition     = var.auto_mode_builtin_node_pools == toset(["general-purpose", "system"])
+    error_message = "auto_mode_builtin_node_pools must contain exactly general-purpose and system for the Phase 10 baseline."
+  }
 }
 
-variable "node_desired_size" {
-  type    = number
-  default = 1
-}
+variable "cluster_admin_principal_arn" {
+  description = "Explicit IAM role/user granted EKS cluster-admin through an access entry for a newly created Auto Mode cluster."
+  type        = string
+  default     = null
+  nullable    = true
 
-variable "node_max_size" {
-  type    = number
-  default = 3
+  validation {
+    condition     = var.cluster_admin_principal_arn == null || can(regex("^arn:aws:iam::[0-9]{12}:(role|user)/.+$", var.cluster_admin_principal_arn))
+    error_message = "cluster_admin_principal_arn must be null or an IAM role/user ARN, never an STS session ARN."
+  }
 }
 
 variable "ecr_repository_names" {

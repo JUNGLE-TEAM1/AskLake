@@ -603,6 +603,10 @@ bash scripts/verify-eks-runtime-secrets.sh
 
 Phase 5와 Phase 8을 함께 검사할 때는 `verify-eks-deploy-readiness.mjs`를 사용한다. planning에서는 Phase 5가 미선택이면 Phase 8이 `disabled`인지 확인하고, `--ready`에서는 두 delivery 값의 일치와 full-service Secret contract까지 요구한다. Airflow 실행 token은 Secret key와 실제 DAG env 이름이 다르므로 `AIRFLOW_EXECUTION_API_TOKEN -> ASKLAKE_EXECUTION_API_TOKEN` binding을 유지한다.
 
+Phase 10은 신규 EKS foundation을 Auto Mode로 생성하고 표준 Managed Node Group을 사용하지 않는다. `cluster_mode = "create"`에는 검토한 `cluster_admin_principal_arn`이 필수이고, `cluster_mode = "existing"`에는 실제 환경에서 확인한 `existing_auto_mode_enabled = true`와 node role ARN이 필수다. 기존 cluster 경로의 입력은 Terraform이 해당 cluster를 활성화하거나 상태를 완전히 검증했다는 뜻이 아니다. AWS CLI/Console과 platform owner evidence가 없는 상태에서는 실제 배포 준비 완료로 표시하지 않는다.
+
+General/Spark custom NodePool과 NodeClass는 Phase 12, VPC와 실제 private network는 Phase 11, 공개 ALB 적용은 Phase 13의 선택·검증 범위다. Phase 10 변경 시 [Auto Mode Foundation](eks-phase-10-auto-mode-foundation.md)의 정적 검증을 실행하고 `aws_eks_node_group` 또는 삭제된 managed-node 입력이 다시 추가되지 않았는지 확인한다.
+
 ```bash
 docker run --rm --entrypoint sh \
   -v "$PWD/infra/eks:/workspace" \

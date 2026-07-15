@@ -19,10 +19,27 @@ check "mvp_owned_resource_creation" {
   assert {
     condition = !(
       local.create_cluster ||
-      var.create_managed_node_group ||
       var.create_ecr_repositories
     ) || var.resource_lifecycle == "mvp-owned"
     error_message = "resources created by this state must use resource_lifecycle=mvp-owned. Shared and external resources are references only."
+  }
+}
+
+check "existing_auto_mode_contract" {
+  assert {
+    condition = local.create_cluster || (
+      var.existing_auto_mode_enabled &&
+      var.existing_auto_mode_node_role_arn != null &&
+      trimspace(var.existing_auto_mode_node_role_arn) != ""
+    )
+    error_message = "existing mode requires explicit Auto Mode confirmation and its externally managed node role ARN."
+  }
+}
+
+check "new_auto_mode_admin_access" {
+  assert {
+    condition     = !local.create_cluster || (var.cluster_admin_principal_arn != null && trimspace(var.cluster_admin_principal_arn) != "")
+    error_message = "create mode requires an explicit cluster_admin_principal_arn because bootstrap creator admin access is disabled."
   }
 }
 
@@ -42,15 +59,48 @@ resource "aws_iam_role" "cluster" {
       Principal = {
         Service = "eks.amazonaws.com"
       }
+      Action = ["sts:AssumeRole", "sts:TagSession"]
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "auto_cluster" {
+  for_each = local.create_cluster ? toset([
+    "AmazonEKSClusterPolicy",
+    "AmazonEKSComputePolicy",
+    "AmazonEKSBlockStoragePolicy",
+    "AmazonEKSLoadBalancingPolicy",
+    "AmazonEKSNetworkingPolicy",
+  ]) : toset([])
+
+  role       = aws_iam_role.cluster[0].name
+  policy_arn = "arn:aws:iam::aws:policy/${each.value}"
+}
+
+resource "aws_iam_role" "auto_node" {
+  count = local.create_cluster ? 1 : 0
+  name  = "${var.name_prefix}-${var.environment}-eks-auto-node"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Service = "ec2.amazonaws.com"
+      }
       Action = "sts:AssumeRole"
     }]
   })
 }
 
-resource "aws_iam_role_policy_attachment" "cluster_policy" {
-  count      = local.create_cluster ? 1 : 0
-  role       = aws_iam_role.cluster[0].name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
+resource "aws_iam_role_policy_attachment" "auto_node" {
+  for_each = local.create_cluster ? toset([
+    "AmazonEKSWorkerNodeMinimalPolicy",
+    "AmazonEC2ContainerRegistryPullOnly",
+  ]) : toset([])
+
+  role       = aws_iam_role.auto_node[0].name
+  policy_arn = "arn:aws:iam::aws:policy/${each.value}"
 }
 
 resource "aws_eks_cluster" "this" {
@@ -60,6 +110,29 @@ resource "aws_eks_cluster" "this" {
   version  = var.kubernetes_version
 
   enabled_cluster_log_types = var.enabled_cluster_log_types
+
+  access_config {
+    authentication_mode                         = "API"
+    bootstrap_cluster_creator_admin_permissions = false
+  }
+
+  compute_config {
+    enabled       = true
+    node_pools    = var.auto_mode_builtin_node_pools
+    node_role_arn = aws_iam_role.auto_node[0].arn
+  }
+
+  kubernetes_network_config {
+    elastic_load_balancing {
+      enabled = true
+    }
+  }
+
+  storage_config {
+    block_storage {
+      enabled = true
+    }
+  }
 
   vpc_config {
     subnet_ids              = var.control_plane_subnet_ids
@@ -90,90 +163,32 @@ resource "aws_eks_cluster" "this" {
     }
   }
 
-  depends_on = [aws_iam_role_policy_attachment.cluster_policy]
-}
-
-resource "aws_iam_role" "node" {
-  count = var.create_managed_node_group ? 1 : 0
-  name  = "${var.name_prefix}-${var.environment}-eks-node"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Principal = {
-        Service = "ec2.amazonaws.com"
-      }
-      Action = "sts:AssumeRole"
-    }]
-  })
-}
-
-resource "aws_iam_role_policy_attachment" "node_worker" {
-  count      = var.create_managed_node_group ? 1 : 0
-  role       = aws_iam_role.node[0].name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
-}
-
-resource "aws_iam_role_policy_attachment" "node_ecr" {
-  count      = var.create_managed_node_group ? 1 : 0
-  role       = aws_iam_role.node[0].name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPullOnly"
-}
-
-resource "aws_iam_role_policy_attachment" "node_cni" {
-  count      = var.create_managed_node_group ? 1 : 0
-  role       = aws_iam_role.node[0].name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
-}
-
-resource "aws_eks_node_group" "baseline" {
-  count = var.create_managed_node_group ? 1 : 0
-
-  cluster_name    = local.cluster_name
-  node_group_name = "${var.name_prefix}-${var.environment}-baseline"
-  node_role_arn   = aws_iam_role.node[0].arn
-  subnet_ids      = var.node_subnet_ids
-  instance_types  = var.node_instance_types
-  capacity_type   = var.node_capacity_type
-
-  scaling_config {
-    min_size     = var.node_min_size
-    desired_size = var.node_desired_size
-    max_size     = var.node_max_size
-  }
-
-  update_config {
-    max_unavailable = 1
-  }
-
-  labels = {
-    "asklake.io/node-pool" = "baseline"
-  }
-
-  lifecycle {
-    precondition {
-      condition     = length(var.node_subnet_ids) >= 2
-      error_message = "managed node group creation requires at least two reviewed subnets."
-    }
-
-    precondition {
-      condition     = length(var.node_instance_types) > 0
-      error_message = "managed node group creation requires an explicitly reviewed instance type."
-    }
-
-    precondition {
-      condition     = var.node_min_size <= var.node_desired_size && var.node_desired_size <= var.node_max_size
-      error_message = "node sizes must satisfy min <= desired <= max."
-    }
-  }
-
   depends_on = [
-    aws_eks_cluster.this,
-    aws_iam_role_policy_attachment.node_worker,
-    aws_iam_role_policy_attachment.node_ecr,
-    aws_iam_role_policy_attachment.node_cni,
+    aws_iam_role_policy_attachment.auto_cluster,
+    aws_iam_role_policy_attachment.auto_node,
   ]
+}
+
+resource "aws_eks_access_entry" "cluster_admin" {
+  count = local.create_cluster && var.cluster_admin_principal_arn != null ? 1 : 0
+
+  cluster_name  = aws_eks_cluster.this[0].name
+  principal_arn = var.cluster_admin_principal_arn
+  type          = "STANDARD"
+}
+
+resource "aws_eks_access_policy_association" "cluster_admin" {
+  count = local.create_cluster && var.cluster_admin_principal_arn != null ? 1 : 0
+
+  cluster_name  = aws_eks_cluster.this[0].name
+  principal_arn = var.cluster_admin_principal_arn
+  policy_arn    = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+
+  access_scope {
+    type = "cluster"
+  }
+
+  depends_on = [aws_eks_access_entry.cluster_admin]
 }
 
 resource "aws_ecr_repository" "workload" {

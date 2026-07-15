@@ -12,19 +12,21 @@ existing_cluster_name = "REPLACE_WITH_EXISTING_CLUSTER"
 # subnets in at least two Availability Zones. This example intentionally does
 # not contain real subnet IDs.
 control_plane_subnet_ids = []
-node_subnet_ids          = []
 
 endpoint_private_access = true
 endpoint_public_access  = false
 public_access_cidrs     = []
 
-# Enable only after node subnet, instance type, quota and cost review.
-create_managed_node_group = false
-node_instance_types       = []
-node_capacity_type        = "ON_DEMAND"
-node_min_size             = 1
-node_desired_size         = 1
-node_max_size             = 3
+# New clusters use EKS Auto Mode with AWS-managed system/general-purpose pools.
+# Existing clusters must be confirmed externally and provide their Auto Mode
+# node role; this state does not import or mutate an existing cluster.
+existing_auto_mode_enabled       = false
+existing_auto_mode_node_role_arn = null
+auto_mode_builtin_node_pools     = ["system", "general-purpose"]
+
+# New clusters disable implicit creator-admin access and require an explicit
+# IAM role/user access entry. Never use an STS assumed-role session ARN.
+cluster_admin_principal_arn = null
 
 # These repositories are MVP-owned. Set false when an external platform team
 # provides repositories and pass their URLs through the deployment environment.

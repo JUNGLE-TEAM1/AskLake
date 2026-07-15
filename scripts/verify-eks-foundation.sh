@@ -34,6 +34,7 @@ required_files=(
   "$IRSA_VALUES_FILE"
   "$POD_IDENTITY_VALUES_FILE"
   "$ROOT_DIR/docs/eks-msk-mvp-phase-1-handoff.md"
+  "$ROOT_DIR/docs/eks-phase-10-auto-mode-foundation.md"
 )
 
 for required_file in "${required_files[@]}"; do
@@ -178,8 +179,34 @@ fi
 
 grep -q 'workload_identity_mode = "disabled"' "$TERRAFORM_DIR/dev.tfvars.example"
 grep -q 'pod_identity_agent_ready = false' "$TERRAFORM_DIR/dev.tfvars.example"
+grep -q 'existing_auto_mode_enabled       = false' "$TERRAFORM_DIR/dev.tfvars.example"
+grep -q 'cluster_admin_principal_arn = null' "$TERRAFORM_DIR/dev.tfvars.example"
 grep -q 'ASKLAKE_RDS_BOOTSTRAP_CONFIRM=create-three-isolated-databases' \
   "$ROOT_DIR/scripts/bootstrap-eks-rds-databases.sh"
+
+for auto_mode_contract in \
+  'compute_config {' \
+  'elastic_load_balancing {' \
+  'block_storage {' \
+  'bootstrap_cluster_creator_admin_permissions = false' \
+  'resource "aws_eks_access_entry" "cluster_admin"' \
+  'AmazonEKSComputePolicy' \
+  'AmazonEKSBlockStoragePolicy' \
+  'AmazonEKSLoadBalancingPolicy' \
+  'AmazonEKSNetworkingPolicy' \
+  'AmazonEKSWorkerNodeMinimalPolicy'; do
+  if ! grep -Fq "$auto_mode_contract" "$TERRAFORM_DIR/main.tf"; then
+    echo "EKS Auto Mode foundation is missing contract: $auto_mode_contract" >&2
+    exit 1
+  fi
+done
+
+if grep -R -Eq 'resource[[:space:]]+"aws_eks_node_group"|create_managed_node_group|managed_node_group_name|node_instance_types|node_capacity_type|node_(min|desired|max)_size' \
+  "$TERRAFORM_DIR"/*.tf \
+  "$TERRAFORM_DIR/dev.tfvars.example"; then
+  echo "legacy managed node group contract remains in EKS Auto Mode Terraform" >&2
+  exit 1
+fi
 
 for database in asklake_app airflow_metadata iceberg_catalog; do
   if ! grep -q "CREATE DATABASE $database" "$ROOT_DIR/infra/eks/bootstrap/rds/bootstrap-databases.sql"; then

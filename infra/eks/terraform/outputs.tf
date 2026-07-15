@@ -35,9 +35,21 @@ output "cluster_subnet_ids" {
   value       = try(local.create_cluster ? aws_eks_cluster.this[0].vpc_config[0].subnet_ids : data.aws_eks_cluster.existing[0].vpc_config[0].subnet_ids, [])
 }
 
-output "managed_node_group_name" {
-  description = "Null until the optional baseline managed node group is explicitly enabled."
-  value       = var.create_managed_node_group ? aws_eks_node_group.baseline[0].node_group_name : null
+output "auto_mode_handoff" {
+  description = "Non-secret EKS Auto Mode capability and ownership contract."
+  value = {
+    enabled            = true
+    ownership          = local.create_cluster ? "terraform" : "external-confirmed"
+    authentication     = "API"
+    node_role_arn      = local.create_cluster ? aws_iam_role.auto_node[0].arn : var.existing_auto_mode_node_role_arn
+    builtin_node_pools = local.create_cluster ? var.auto_mode_builtin_node_pools : toset([])
+    custom_node_pools  = "phase-12"
+    capabilities = {
+      compute        = true
+      load_balancing = true
+      block_storage  = true
+    }
+  }
 }
 
 output "namespace" {
@@ -100,7 +112,7 @@ output "trino_handoff" {
 output "phase1_handoff" {
   description = "Non-secret fields Pair B can consume without reading Terraform internals."
   value = {
-    contract_version = "1.2"
+    contract_version = "2.0"
     aws_region       = var.aws_region
     environment      = var.environment
     cluster_name     = local.cluster_name
@@ -112,6 +124,8 @@ output "phase1_handoff" {
     trino_runtime    = "eks"
     trino_output     = "trino_handoff"
     continuous_owner = "ec2-mvp"
+    cluster_compute  = "eks-auto-mode"
+    auto_mode_output = "auto_mode_handoff"
     network_outputs = {
       vpc                    = "cluster_vpc_id"
       cluster_security_group = "cluster_security_group_id"

@@ -48,6 +48,12 @@ mock_provider "aws" {
   }
 }
 
+variables {
+  existing_auto_mode_enabled       = true
+  existing_auto_mode_node_role_arn = "arn:aws:iam::111122223333:role/asklake-existing-auto-node"
+  cluster_admin_principal_arn      = "arn:aws:iam::111122223333:role/asklake-platform-admin"
+}
+
 run "existing_cluster_handoff" {
   command = plan
 
@@ -65,6 +71,16 @@ run "existing_cluster_handoff" {
   assert {
     condition     = output.cluster_name == "shared-dev"
     error_message = "existing cluster name must be preserved in the handoff."
+  }
+
+  assert {
+    condition     = output.auto_mode_handoff.ownership == "external-confirmed"
+    error_message = "existing clusters must remain externally owned after explicit Auto Mode confirmation."
+  }
+
+  assert {
+    condition     = output.auto_mode_handoff.node_role_arn == "arn:aws:iam::111122223333:role/asklake-existing-auto-node"
+    error_message = "existing cluster handoff must preserve its externally managed Auto Mode node role."
   }
 
   assert {
@@ -144,6 +160,83 @@ run "new_cluster_contract" {
     condition     = output.service_account_names["mskSmoke"] == "asklake-msk-smoke"
     error_message = "MSK smoke service account must remain isolated from application workloads."
   }
+
+  assert {
+    condition = (
+      aws_eks_cluster.this[0].access_config[0].authentication_mode == "API" &&
+      !aws_eks_cluster.this[0].access_config[0].bootstrap_cluster_creator_admin_permissions
+    )
+    error_message = "new Auto Mode clusters must use API access entries without implicit creator admin access."
+  }
+
+  assert {
+    condition = (
+      aws_eks_cluster.this[0].compute_config[0].enabled &&
+      toset(aws_eks_cluster.this[0].compute_config[0].node_pools) == toset(["general-purpose", "system"])
+    )
+    error_message = "new clusters must enable EKS Auto Mode with the reviewed built-in NodePools."
+  }
+
+  assert {
+    condition = (
+      aws_eks_cluster.this[0].kubernetes_network_config[0].elastic_load_balancing[0].enabled &&
+      aws_eks_cluster.this[0].storage_config[0].block_storage[0].enabled
+    )
+    error_message = "Auto Mode load balancing and block storage capabilities must be enabled with compute."
+  }
+
+  assert {
+    condition     = length(aws_iam_role_policy_attachment.auto_cluster) == 5
+    error_message = "the Auto Mode cluster role must receive all five AWS-managed cluster policies."
+  }
+
+  assert {
+    condition     = length(aws_iam_role_policy_attachment.auto_node) == 2
+    error_message = "the Auto Mode node role must receive only the minimal worker and ECR pull policies."
+  }
+
+  assert {
+    condition     = aws_eks_access_entry.cluster_admin[0].principal_arn == "arn:aws:iam::111122223333:role/asklake-platform-admin"
+    error_message = "new clusters must grant the reviewed administrator through an explicit EKS access entry."
+  }
+
+  assert {
+    condition     = output.phase1_handoff.cluster_compute == "eks-auto-mode"
+    error_message = "the cross-person handoff must identify EKS Auto Mode as the compute contract."
+  }
+}
+
+run "reject_unconfirmed_existing_auto_mode" {
+  command = plan
+
+  variables {
+    environment                      = "dev"
+    owner                            = "pair-a"
+    resource_lifecycle               = "external"
+    cluster_mode                     = "existing"
+    existing_cluster_name            = "shared-dev"
+    existing_auto_mode_enabled       = false
+    existing_auto_mode_node_role_arn = null
+    create_ecr_repositories          = false
+  }
+
+  expect_failures = [check.existing_auto_mode_contract]
+}
+
+run "reject_new_cluster_without_admin_access" {
+  command = plan
+
+  variables {
+    environment                 = "dev"
+    owner                       = "pair-a"
+    resource_lifecycle          = "mvp-owned"
+    cluster_mode                = "create"
+    control_plane_subnet_ids    = ["subnet-test-a", "subnet-test-b"]
+    cluster_admin_principal_arn = null
+    create_ecr_repositories     = false
+  }
+
+  expect_failures = [check.new_auto_mode_admin_access]
 }
 
 run "workload_repository_contract" {
