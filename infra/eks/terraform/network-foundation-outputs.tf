@@ -27,7 +27,7 @@ output "phase11_network_handoff" {
     }
     pod_network_enforcement = var.pod_network_enforcement
     alb_contract            = "phase-13"
-    custom_node_placement   = "phase-12"
+    custom_node_placement   = "phase12_node_pool_handoff"
     runtime_smoke_required  = true
   }
 }

@@ -43,7 +43,7 @@ output "auto_mode_handoff" {
     authentication     = "API"
     node_role_arn      = local.create_cluster ? aws_iam_role.auto_node[0].arn : var.existing_auto_mode_node_role_arn
     builtin_node_pools = local.create_cluster ? var.auto_mode_builtin_node_pools : toset([])
-    custom_node_pools  = "phase-12"
+    custom_node_pools  = "phase12_node_pool_handoff"
     capabilities = {
       compute        = true
       load_balancing = true
@@ -112,7 +112,7 @@ output "trino_handoff" {
 output "phase1_handoff" {
   description = "Non-secret fields Pair B can consume without reading Terraform internals."
   value = {
-    contract_version = "2.1"
+    contract_version = "2.2"
     aws_region       = var.aws_region
     environment      = var.environment
     cluster_name     = local.cluster_name
@@ -127,6 +127,7 @@ output "phase1_handoff" {
     cluster_compute  = "eks-auto-mode"
     auto_mode_output = "auto_mode_handoff"
     network_output   = "phase11_network_handoff"
+    node_pool_output = "phase12_node_pool_handoff"
     network_outputs = {
       vpc                    = "cluster_vpc_id"
       cluster_security_group = "cluster_security_group_id"

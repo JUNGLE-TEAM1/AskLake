@@ -216,9 +216,163 @@ run "new_cluster_contract" {
   }
 
   assert {
-    condition     = output.phase1_handoff.contract_version == "2.1" && output.phase1_handoff.network_output == "phase11_network_handoff"
-    error_message = "the Phase 11 foundation handoff version and network output pointer must stay synchronized."
+    condition = (
+      output.phase1_handoff.contract_version == "2.2" &&
+      output.phase1_handoff.network_output == "phase11_network_handoff" &&
+      output.phase1_handoff.node_pool_output == "phase12_node_pool_handoff"
+    )
+    error_message = "the Phase 12 foundation handoff version and output pointers must stay synchronized."
   }
+}
+
+run "created_custom_node_access_contract" {
+  command = plan
+
+  variables {
+    environment              = "dev"
+    owner                    = "pair-a"
+    resource_lifecycle       = "mvp-owned"
+    cluster_mode             = "create"
+    control_plane_subnet_ids = ["subnet-test-a", "subnet-test-b"]
+    create_ecr_repositories  = false
+    custom_node_pool_mode    = "create"
+  }
+
+  assert {
+    condition     = length(aws_iam_role.auto_custom_node) == 1 && length(aws_iam_role_policy_attachment.auto_custom_node) == 2
+    error_message = "custom NodeClasses must use a dedicated MVP-owned node role with only the minimal worker and ECR pull policies."
+  }
+
+  assert {
+    condition = (
+      aws_eks_access_entry.auto_custom_node[0].type == "EC2" &&
+      aws_eks_access_policy_association.auto_custom_node[0].policy_arn == "arn:aws:eks::aws:cluster-access-policy/AmazonEKSAutoNodePolicy"
+    )
+    error_message = "custom node role must receive the EC2 access entry and AmazonEKSAutoNodePolicy association required by Auto Mode."
+  }
+
+  assert {
+    condition = (
+      output.phase12_node_pool_handoff.mode == "create" &&
+      output.phase12_node_pool_handoff.manifest_render_ready &&
+      output.phase12_node_pool_handoff.access_entry_owner == "terraform"
+    )
+    error_message = "created custom node access must open the non-secret manifest handoff."
+  }
+
+  assert {
+    condition = (
+      output.phase12_node_pool_handoff.workload_placement.spark.node_selector["asklake.io/workload-class"] == "spark" &&
+      output.phase12_node_pool_handoff.workload_placement.spark.tolerations[0].effect == "NoSchedule"
+    )
+    error_message = "Spark placement must preserve its dedicated label and NoSchedule toleration contract."
+  }
+}
+
+run "external_custom_node_access_contract" {
+  command = plan
+
+  variables {
+    environment                       = "dev"
+    owner                             = "pair-a"
+    resource_lifecycle                = "external"
+    cluster_mode                      = "existing"
+    existing_cluster_name             = "shared-dev"
+    create_ecr_repositories           = false
+    custom_node_pool_mode             = "external-confirmed"
+    existing_custom_node_role_name    = "asklake-shared-custom-node"
+    existing_custom_node_role_arn     = "arn:aws:iam::111122223333:role/asklake-shared-custom-node"
+    existing_custom_node_access_ready = true
+  }
+
+  assert {
+    condition     = length(aws_iam_role.auto_custom_node) == 0 && length(aws_eks_access_entry.auto_custom_node) == 0
+    error_message = "existing cluster custom node access must remain external and outside this Terraform state."
+  }
+
+  assert {
+    condition = (
+      output.phase12_node_pool_handoff.node_role_name == "asklake-shared-custom-node" &&
+      output.phase12_node_pool_handoff.access_entry_owner == "external-confirmed"
+    )
+    error_message = "external custom node access must preserve the confirmed role name for NodeClass rendering."
+  }
+}
+
+run "custom_node_pools_disabled_by_default" {
+  command = plan
+
+  variables {
+    environment             = "dev"
+    owner                   = "pair-a"
+    resource_lifecycle      = "external"
+    cluster_mode            = "existing"
+    existing_cluster_name   = "shared-dev"
+    create_ecr_repositories = false
+  }
+
+  assert {
+    condition = (
+      output.phase12_node_pool_handoff.mode == "disabled" &&
+      !output.phase12_node_pool_handoff.manifest_render_ready &&
+      length(aws_iam_role.auto_custom_node) == 0
+    )
+    error_message = "default Phase 12 inputs must create no custom node access and keep manifest delivery closed."
+  }
+}
+
+run "reject_unconfirmed_external_custom_node_access" {
+  command = plan
+
+  variables {
+    environment                       = "dev"
+    owner                             = "pair-a"
+    resource_lifecycle                = "external"
+    cluster_mode                      = "existing"
+    existing_cluster_name             = "shared-dev"
+    create_ecr_repositories           = false
+    custom_node_pool_mode             = "external-confirmed"
+    existing_custom_node_role_name    = "asklake-shared-custom-node"
+    existing_custom_node_role_arn     = "arn:aws:iam::111122223333:role/asklake-shared-custom-node"
+    existing_custom_node_access_ready = false
+  }
+
+  expect_failures = [check.external_custom_node_access]
+}
+
+run "reject_mismatched_external_custom_node_role" {
+  command = plan
+
+  variables {
+    environment                       = "dev"
+    owner                             = "pair-a"
+    resource_lifecycle                = "external"
+    cluster_mode                      = "existing"
+    existing_cluster_name             = "shared-dev"
+    create_ecr_repositories           = false
+    custom_node_pool_mode             = "external-confirmed"
+    existing_custom_node_role_name    = "asklake-shared-custom-node"
+    existing_custom_node_role_arn     = "arn:aws:iam::111122223333:role/a-different-node-role"
+    existing_custom_node_access_ready = true
+  }
+
+  expect_failures = [check.external_custom_node_access]
+}
+
+run "reject_custom_node_access_ownership_mismatch" {
+  command = plan
+
+  variables {
+    environment             = "dev"
+    owner                   = "pair-a"
+    resource_lifecycle      = "external"
+    cluster_mode            = "existing"
+    existing_cluster_name   = "shared-dev"
+    create_ecr_repositories = false
+    custom_node_pool_mode   = "create"
+  }
+
+  expect_failures = [check.custom_node_pool_ownership]
 }
 
 run "created_network_single_nat_contract" {

@@ -19,6 +19,9 @@ required_files=(
   "$TERRAFORM_DIR/network-foundation.tf"
   "$TERRAFORM_DIR/network-foundation-variables.tf"
   "$TERRAFORM_DIR/network-foundation-outputs.tf"
+  "$TERRAFORM_DIR/auto-mode-node-pools.tf"
+  "$TERRAFORM_DIR/auto-mode-node-pools-variables.tf"
+  "$TERRAFORM_DIR/auto-mode-node-pools-outputs.tf"
   "$TERRAFORM_DIR/outputs.tf"
   "$TERRAFORM_DIR/workload-identity.tf"
   "$TERRAFORM_DIR/workload-identity-outputs.tf"
@@ -39,6 +42,7 @@ required_files=(
   "$ROOT_DIR/docs/eks-msk-mvp-phase-1-handoff.md"
   "$ROOT_DIR/docs/eks-phase-10-auto-mode-foundation.md"
   "$ROOT_DIR/docs/eks-phase-11-network-foundation.md"
+  "$ROOT_DIR/docs/eks-phase-12-auto-mode-node-pools.md"
 )
 
 for required_file in "${required_files[@]}"; do
@@ -249,6 +253,8 @@ done
 
 bash -n "$ROOT_DIR/scripts/bootstrap-eks-rds-databases.sh"
 bash -n "$ROOT_DIR/scripts/verify-eks-rds-bootstrap.sh"
+bash -n "$ROOT_DIR/scripts/verify-eks-auto-mode-node-pools.sh"
+bash "$ROOT_DIR/scripts/verify-eks-auto-mode-node-pools.sh"
 
 TERRAFORM_BIN="${ASKLAKE_TERRAFORM_BIN:-}"
 if [[ -z "$TERRAFORM_BIN" ]] && command -v terraform >/dev/null 2>&1; then

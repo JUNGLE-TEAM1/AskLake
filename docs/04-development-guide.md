@@ -611,6 +611,15 @@ Phase 11은 `network_mode=external`을 기본으로 유지한다. `create`는 �
 
 NAT를 선택하면 `single`과 `per_az`의 비용·가용성 차이를 승인 기록에 남긴다. endpoint/hybrid를 선택하면 EC2, ECR API/DKR, Logs, STS interface endpoint와 S3 gateway가 baseline이고 workload/identity/secret/ALB 선택에 따른 추가 endpoint와 non-AWS egress를 별도로 검토한다. private-only Kubernetes API를 유지하면 VPN/SSM/VPC runner 같은 `kubectl`·Helm 실행 경로도 배포 전에 확정한다. Phase 11 plan 성공은 network 연결 증거가 아니다. apply 뒤 EKS scheduling, ECR/S3/STS, MSK IAM `9098`, RDS `5432` positive smoke와 차단 경로 negative smoke가 있어야 실제 완료로 판정한다. 상세 기준은 [Phase 11 VPC와 Private Network Foundation](eks-phase-11-network-foundation.md)을 따른다.
 
+Phase 12 chart는 disabled 기본값에서 NodeClass와 NodePool을 하나도 렌더하지 않는다. 활성화하려면 custom node role access, private subnet/node security group tag selector, General/Spark capacity type·instance category·generation, CPU/memory 상한과 disruption 값을 실제 workload 기준으로 모두 선택한다. 저장소의 `node-pools.test.example.yaml`은 테스트 fixture이며 운영 권장값이 아니다. B의 일반 workload에는 general selector, SparkApplication driver/executor에는 spark selector와 `NoSchedule` toleration을 각각 넣고 다음 검증을 실행한다.
+
+```bash
+bash scripts/verify-eks-auto-mode-node-pools.sh
+bash scripts/verify-eks-foundation.sh
+```
+
+실제 적용은 Terraform output의 role 이름을 비공개 environment value로 넘기고 server-side dry-run 뒤 수행한다. NodeClass/NodePool Ready, positive/negative scheduling, node scale-out/in, 상한, interruption과 비용 evidence가 없으면 정적 완료 상태로만 기록한다. 세부 순서는 [Phase 12 Auto Mode NodeClass와 NodePool](eks-phase-12-auto-mode-node-pools.md)을 따른다.
+
 ```bash
 docker run --rm --entrypoint sh \
   -v "$PWD/infra/eks:/workspace" \

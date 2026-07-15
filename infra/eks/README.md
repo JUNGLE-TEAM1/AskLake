@@ -9,6 +9,7 @@
 - `terraform/`: 기존/new EKS Auto Mode cluster, external/MVP-owned VPC network, ECR repository, Trino handoff와 opt-in MSK/RDS/S3 data-plane 계약
 - `helm/asklake-foundation/`: namespace, workload별 service account, backend/Spark namespace RBAC, non-secret runtime boundary ConfigMap
 - `helm/asklake-ingress/`: 선택 완료 전에는 아무 resource도 만들지 않는 HTTPS ALB routing 계약
+- `helm/asklake-auto-mode/`: 명시적인 운영값이 없으면 아무 resource도 만들지 않는 General/Spark NodeClass·NodePool 계약
 - `values/dev.example.yaml`: B가 manifest render와 fake client test에 사용할 예시 값
 - `delivery/dev.handoff.example.json`: Terraform 출력과 B workload manifest 사이의 배포 전 handoff 형식
 - `delivery/image-receipt.example.json`: 한 Git revision에서 만든 다섯 immutable ECR image의 전달 형식
@@ -21,7 +22,7 @@
 - 실제 account ID, ARN, endpoint, credential, public IP, secret value는 저장소에 커밋하지 않는다.
 - `shared` 또는 `external` resource는 이 Terraform state의 destroy 대상으로 가져오지 않는다.
 - workload IAM policy는 B의 최소 권한 요구를 받은 뒤 별도 resource로 추가한다. 현재 chart는 확정된 IAM role annotation만 입력받는다.
-- EKS Auto Mode의 built-in `system`/`general-purpose` NodePool만 cluster 생성 계약에 포함한다. General/Spark custom NodePool, NodeClass, 용량·Spot 정책은 Phase 12에서 실제 workload 요구를 학습하고 선택한 뒤 추가한다.
+- EKS Auto Mode의 built-in `system`/`general-purpose` NodePool은 cluster bootstrap 계약에 유지한다. General/Spark custom NodePool과 NodeClass는 Phase 12 chart가 제공하지만 기본값은 disabled이며 용량·Spot·disruption·selector를 학습하고 선택하기 전에는 렌더되지 않는다.
 - network는 기본 `external`이고 기존/shared VPC를 state에 넣지 않는다. `create`는 신규 MVP-owned cluster에서만 허용하며 실제 CIDR/AZ와 NAT single/per-AZ 또는 VPC endpoint 비용 선택이 끝나기 전에는 plan이 실패한다.
 - ECR 미태그 이미지 retention은 기본값으로 승인하지 않는다. 검토된 값을 명시적으로 입력해야 자동 삭제가 활성화된다.
 - MSK, RDS와 S3는 각각 `disabled`, `existing`, `create` 모드를 사용하며 기본값은 모두 `disabled`다. `create`를 선택해도 Phase 2 inventory와 비용·network·destroy 승인이 끝나기 전에는 apply하지 않는다.
@@ -38,6 +39,7 @@ bash scripts/verify-eks-delivery-handoff.sh
 bash scripts/verify-eks-image-delivery.sh
 bash scripts/verify-eks-network-ingress.sh
 bash scripts/verify-eks-runtime-secrets.sh
+bash scripts/verify-eks-auto-mode-node-pools.sh
 ```
 
 AWS 환경 inventory는 실제 식별자를 출력하지 않는 별도 read-only 스크립트로 확인한다.
@@ -108,7 +110,7 @@ helm template asklake-foundation \
   -f infra/eks/values/identity/pod-identity.example.yaml
 ```
 
-현재 foundation contract `2.1`은 EKS Auto Mode compute와 Phase 11 network handoff, frontend, backend, Airflow, Trino, MSK IAM smoke, Spark service account를 제공한다. Replay Producer compatibility input은 `create=false`로 유지하며 ECR repository, service account 또는 workload를 만들지 않는다. `trino_handoff`는 실제 secret 값 없이 image digest, IRSA role ARN, in-cluster Service URL, RDS/S3 network와 Secret reference를 전달한다. AWS inventory가 확정되기 전 nullable 값은 resource 생성 gate로 남고 manifest render·fake client test만 완료할 수 있다.
+현재 foundation contract `2.2`는 EKS Auto Mode compute, Phase 11 network와 Phase 12 custom node placement handoff, frontend, backend, Airflow, Trino, MSK IAM smoke, Spark service account를 제공한다. Replay Producer compatibility input은 `create=false`로 유지하며 ECR repository, service account 또는 workload를 만들지 않는다. `trino_handoff`는 실제 secret 값 없이 image digest, IRSA role ARN, in-cluster Service URL, RDS/S3 network와 Secret reference를 전달한다. AWS inventory가 확정되기 전 nullable 값은 resource 생성 gate로 남고 manifest render·fake client test만 완료할 수 있다.
 
 Phase 3 data-plane Terraform은 MSK Serverless + IAM, private PostgreSQL RDS, 분리된 S3 bucket과 workload별 최소 권한 policy document를 추가한다. MSK topic 생성, RDS의 `airflow_metadata`/`iceberg_catalog` database와 user/grant bootstrap, IAM role attachment는 Terraform resource 생성과 분리된 후속 책임이다. 상세 모드와 미결정 사항은 [Phase 3 Data Plane 계약](../../docs/eks-phase-3-data-plane.md)을 따른다.
 
@@ -124,7 +126,9 @@ Phase 8은 한 JSON을 기준으로 FastAPI, Airflow, Spark, Trino의 runtime Se
 
 Phase 10은 신규 EKS를 Auto Mode로 전환하고 기존 Managed Node Group 코드를 제거한다. 기존 cluster 경로는 외부 확인 없이는 닫혀 있고, General/Spark custom NodePool과 실제 AWS smoke는 완료로 간주하지 않는다. 상세 기준은 [Phase 10 EKS Auto Mode Foundation](../../docs/eks-phase-10-auto-mode-foundation.md)을 따른다.
 
-Phase 11은 외부 network 참조와 MVP-owned VPC 생성을 분리하고 public/private subnet, NAT 또는 VPC endpoint egress, EKS/MSK/RDS private placement와 exact port security group을 추가한다. 실제 CIDR/AZ/egress 비용 선택은 example에 기본값으로 넣지 않으며 ALB와 custom NodePool은 후속이다. 상세 기준은 [Phase 11 VPC와 Private Network Foundation](../../docs/eks-phase-11-network-foundation.md)을 따른다.
+Phase 11은 외부 network 참조와 MVP-owned VPC 생성을 분리하고 public/private subnet, NAT 또는 VPC endpoint egress, EKS/MSK/RDS private placement와 exact port security group을 추가한다. 실제 CIDR/AZ/egress 비용 선택은 example에 기본값으로 넣지 않으며 ALB는 후속이다. custom NodePool 구조는 Phase 12로 이어진다. 상세 기준은 [Phase 11 VPC와 Private Network Foundation](../../docs/eks-phase-11-network-foundation.md)을 따른다.
+
+Phase 12는 custom NodeClass용 전용 node role/access entry와 General/Spark NodePool chart를 추가한다. 기본 렌더는 비어 있고 테스트 fixture의 숫자는 운영 권장값이 아니다. 실제 workload selector, 비용·용량·disruption 선택과 apply/scheduling/scale smoke는 [Phase 12 Auto Mode NodeClass와 NodePool](../../docs/eks-phase-12-auto-mode-node-pools.md)을 따른다.
 
 ## 설계 참고 자료
 

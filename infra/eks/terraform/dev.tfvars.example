@@ -35,6 +35,16 @@ existing_auto_mode_enabled       = false
 existing_auto_mode_node_role_arn = null
 auto_mode_builtin_node_pools     = ["system", "general-purpose"]
 
+# Phase 12 custom General/Spark NodeClasses and NodePools are fail-closed.
+# For a new MVP-owned cluster, use create only after reviewing the actual
+# workload capacity/disruption values in the Helm release. Existing clusters
+# use external-confirmed only after the platform owner creates the EC2 access
+# entry and associates AmazonEKSAutoNodePolicy with this exact role.
+custom_node_pool_mode             = "disabled"
+existing_custom_node_role_name    = null
+existing_custom_node_role_arn     = null
+existing_custom_node_access_ready = false
+
 # New clusters disable implicit creator-admin access and require an explicit
 # IAM role/user access entry. Never use an STS assumed-role session ARN.
 cluster_admin_principal_arn = null

@@ -61,7 +61,7 @@ Pod Identity를 선택하면 `eks-auth`, external Secret delivery를 선택하�
 
 ## 전달 계약
 
-Foundation contract `2.1`의 `phase11_network_handoff`는 다음 non-secret 값을 배포 계층에 전달한다.
+Phase 11에서 도입한 contract `2.1`의 `phase11_network_handoff`는 Phase 12의 현재 contract `2.2`에서도 같은 이름으로 다음 non-secret 값을 배포 계층에 전달한다.
 
 - external/terraform network 소유권
 - VPC와 cluster private/public ALB subnet reference
@@ -77,7 +77,7 @@ Foundation contract `2.1`의 `phase11_network_handoff`는 다음 non-secret 값�
 
 - 실제 CIDR/AZ/NAT/endpoints 선택 또는 AWS apply
 - Route 53, ACM, ALB/Ingress 생성과 외부 URL 개통
-- General/Spark custom NodePool·NodeClass·taint/label
+- General/Spark custom NodePool·NodeClass·taint/label은 Phase 12 코드로 이동했으며 실제 selector/용량 승인과 AWS apply는 미완료
 - VPC CNI network policy 또는 Security Groups for Pods add-on 변경
 - MSK topic bootstrap, RDS migration, Secret 동기화
 - 연결 비용과 대용량 처리량 검증
