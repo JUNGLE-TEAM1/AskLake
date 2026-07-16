@@ -1123,6 +1123,8 @@ Phase 4 fixture producer는 `prepare-eks-day16-fixture-producer-identity.sh`로 
 
 Phase 5 private handoff는 `scripts/prepare-eks-day16-a-handoff.sh`로 생성하고 exact EKS context에서 `scripts/verify-eks-day16-a-handoff.sh --audit`로 검사한다. 실제 reference는 `*.handoff.json`, `*.runtime-secret-contract.json`, `*.private-values.json`, `*.fixture-receipt.json` Git 제외 파일에만 둔다. audit은 현재 blocker를 보고하지만 임시 ownership 충돌의 재현 자체를 성공 조건으로 삼지 않는다. `--ready`는 전체 server dry-run, fixture receipt, Backend full runtime/CA mount와 full-service decision이 모두 준비돼야 통과한다. HTTP ALB MVP에서는 domain/ACM이 deferred여도 되지만 HTTPS 선택 시에는 필수다. 모든 blocker가 0인 뒤 confirmation을 준 `scripts/promote-eks-day16-a-handoff.sh`만 private handoff를 `ready-for-deploy`로 올린다. 기존 Deployment ownership을 임의로 덮어쓰지 않는다. [Phase 5 검증 기록](eks-day16-a-handoff.md)을 따른다.
 
+A/B merge 이후에는 [16일차 A/B 통합 계약 감사](eks-day16-integration-contract-audit.md)를 기준으로 static verifier와 live Helm owner를 먼저 대조한다. 현재 component별 Web·Airflow·Trino release는 충돌 없이 Ready지만 A private runtime의 Airflow password binding, canonical Backend Trino Secret/CA, fixture checkpoint prefix와 full-service decision은 별도 drift다. 기존 성공 Run이나 Helm resource를 삭제해 맞추지 않고 source/target hash, server dry-run과 rollback을 갖춘 후속 Phase에서 보완한다.
+
 private input이 없으면 `scripts/prepare-eks-physical-read-input.sh`로 현재 Catalog의 queryable Iceberg Dataset과 root 아래 non-empty Parquet object를 읽기 전용으로 대조해 생성한다. 이 helper도 Dataset ID와 URI를 출력하지 않으며 결과 파일은 `infra/eks/delivery/*.physical-read-input.json`에만 둔다. `kubectl auth can-i`는 deny일 때 `no`와 exit code 1을 반환하므로 runner는 둘을 함께 정상 거부 증거로 요구하고, exit 0 `yes`나 그 밖의 오류 code를 실패 처리한다.
 
 ```bash
