@@ -13,6 +13,7 @@ frontend/.env
 frontend/.env.local
 backend/tmp/
 output/
+.artifacts/
 __pycache__/
 *.pyc
 .playwright-cli/
