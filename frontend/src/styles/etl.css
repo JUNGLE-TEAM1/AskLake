@@ -9584,73 +9584,6 @@ input.schema-checkbox:checked {
   width: 20px;
 }
 
-.record-parsing-source-strip {
-  align-items: center;
-  background: #fff;
-  border: 1px solid #dce4ef;
-  border-radius: 12px;
-  display: flex;
-  gap: 14px;
-  min-width: 0;
-  padding: 14px 16px;
-}
-
-.record-parsing-source-icon {
-  background: #edf5ff;
-  border-color: #cfe2ff;
-  box-shadow: none;
-  height: 40px;
-  width: 40px;
-}
-
-.record-parsing-source-icon svg {
-  height: 19px;
-  width: 19px;
-}
-
-.record-parsing-source-name {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-}
-
-.record-parsing-source-name em {
-  color: #64748b;
-  font-family: var(--jobs-font-family);
-  font-size: 12px;
-  font-style: normal;
-  font-weight: 700;
-}
-
-.record-parsing-source-name strong {
-  color: #172033;
-  font-family: var(--jobs-font-family);
-  font-size: 14px;
-  font-weight: 700;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.record-parsing-source-meta {
-  align-items: center;
-  display: flex;
-  gap: 8px;
-  margin-left: auto;
-}
-
-.record-parsing-source-meta strong {
-  background: #f7f9fc;
-  border: 1px solid #e2e8f0;
-  border-radius: 7px;
-  color: #475569;
-  font-family: var(--jobs-font-family);
-  font-size: 12px;
-  font-weight: 700;
-  padding: 6px 9px;
-  white-space: nowrap;
-}
-
 .record-parsing-workspace {
   display: grid;
   gap: 18px;
@@ -9738,7 +9671,6 @@ input.schema-checkbox:checked {
   padding: 16px;
 }
 
-.record-parsing-count,
 .record-parsing-status {
   align-items: center;
   color: #1769ff;
@@ -9846,21 +9778,6 @@ input.schema-checkbox:checked {
 
   .record-parsing-page-header h2 {
     font-size: 18px;
-  }
-
-  .record-parsing-source-strip {
-    align-items: flex-start;
-    flex-wrap: wrap;
-  }
-
-  .record-parsing-source-name {
-    max-width: calc(100% - 58px);
-  }
-
-  .record-parsing-source-meta {
-    flex-wrap: wrap;
-    margin-left: 54px;
-    margin-top: -4px;
   }
 
   .record-parsing-controls {

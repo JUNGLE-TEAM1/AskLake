@@ -98,6 +98,44 @@ const checks = [
     ],
   },
   {
+    name: "Kafka raw text creation removes repeated preview counts and keeps permission presets compact",
+    file: "src/pages/etl/EtlPages.tsx",
+    patterns: [
+      /previewShowsRawText && activeSourceType === "Stream \/ Kafka" \? undefined/,
+      /"h-16 justify-center whitespace-normal px-4 py-3 text-center"/,
+      /<strong>\{preset\.label\}<\/strong>/,
+    ],
+    forbiddenPatterns: [
+      /className="record-parsing-source-strip"/,
+      /className="record-parsing-count"/,
+      /\{preset\.description\}/,
+      /description: "데이터와 작업 정보를 확인합니다\."/,
+    ],
+  },
+  {
+    name: "Continuous Kafka details use localized common headers without duplicate summaries",
+    file: "src/pages/ingest/JobsPages.tsx",
+    patterns: [
+      /<PanelHeader icon=\{<Activity[^>]*\/>\} title="연속 수집 런타임" \/>/,
+      /icon=\{<TerminalSquare[^>]*\/>\}[\s\S]*title="워커 로그"/,
+      /icon=\{<HardDrive[^>]*\/>\}[\s\S]*title="격리 · 유지보수"/,
+      /<Field label="Kafka 지연"/,
+      /<Field label="체크포인트"/,
+      /running: "실행 중"/,
+      /stable: "정상"/,
+    ],
+    forbiddenPatterns: [
+      />Continuous Runtime</,
+      />Worker Log</,
+      />Quarantine · Maintenance</,
+      /Continuous 설정 대기/,
+      /\{sourceType\} → \{job\.targetFormat/,
+      /개 컬럼 · 변환 \{transformRuleRows\.length\}개/,
+      /\{formatJobSchedule\(job\.schedule\)\} · 역할별 접근 권한/,
+      /meta=\{<Badge[^>]*>\{(?:outputSchemaRows|transformRuleRows|qualityRuleRows)\.length\}/,
+    ],
+  },
+  {
     name: "Production login hides demo credentials by default and supports an explicit demo opt-in",
     file: "src/pages/auth/AuthPage.tsx",
     patterns: [

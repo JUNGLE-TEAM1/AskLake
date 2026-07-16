@@ -780,14 +780,13 @@ type PermissionPresetId = "view" | "run" | "manage" | "custom";
 const PERMISSION_ACTION_ORDER: PermissionAction[] = ["view", "query", "run", "manage", "share", "delete"];
 const PERMISSION_PRESETS: Array<{
   actions: PermissionAction[];
-  description: string;
   id: PermissionPresetId;
   label: string;
 }> = [
-  { actions: ["view"], description: "데이터와 작업 정보를 확인합니다.", id: "view", label: "조회 전용" },
-  { actions: ["view", "run"], description: "조회하고 작업을 실행할 수 있습니다.", id: "run", label: "실행 가능" },
-  { actions: ["view", "run", "manage"], description: "조회, 실행, 설정 변경을 허용합니다.", id: "manage", label: "운영 가능" },
-  { actions: [], description: "대상마다 허용 작업을 직접 선택합니다.", id: "custom", label: "직접 설정" },
+  { actions: ["view"], id: "view", label: "조회 전용" },
+  { actions: ["view", "run"], id: "run", label: "실행 가능" },
+  { actions: ["view", "run", "manage"], id: "manage", label: "운영 가능" },
+  { actions: [], id: "custom", label: "직접 설정" },
 ];
 
 type PermissionDraftSlice = {
@@ -2541,7 +2540,7 @@ export function SourceConnectionPage({
                         )
                     )}
                     previewIcon={previewShowsRawText ? <FileText /> : undefined}
-                    previewMeta={(
+                    previewMeta={previewShowsRawText && activeSourceType === "Stream / Kafka" ? undefined : (
                       <div className="source-explorer-preview-meta">
                         <Badge variant="outline" className="border-blue-200 bg-white text-blue-700">{displayPreviewFormat}</Badge>
                         {previewShowsRawText ? (
@@ -2777,24 +2776,10 @@ export function RecordParsingPage({
         <h2>레코드 구조화</h2>
       </header>
 
-      <section className="record-parsing-source-strip" aria-label="선택한 원시 소스">
-        <span className="record-parsing-source-icon" aria-hidden="true"><FileText /></span>
-        <span className="record-parsing-source-name">
-          <em>원시 소스</em>
-          <strong title={draft.source.sourceLabel || "-"}>{draft.source.sourceLabel || "-"}</strong>
-        </span>
-        <span className="record-parsing-source-meta" aria-label="소스 요약">
-          <strong>{draft.source.detectedFormat || "TXT"}</strong>
-          <strong>{rawLines.length}행</strong>
-          <strong>필드 없음</strong>
-        </span>
-      </section>
-
       <div className="record-parsing-workspace">
         <section className="panel record-parsing-panel">
           <div className="record-parsing-panel-header">
             <h2><FileText aria-hidden="true" />원본 샘플</h2>
-            <span className="record-parsing-count">{rawLines.length}행</span>
           </div>
           <div className="record-parsing-panel-body">
             <textarea className="input record-parsing-raw" readOnly aria-label="원본 TXT 샘플" value={rawLines.join("\n")} />
@@ -2875,7 +2860,6 @@ export function RecordParsingPage({
         <section className="panel record-parsing-panel">
           <div className="record-parsing-panel-header">
             <h2><Table2 aria-hidden="true" />결과 미리보기</h2>
-            <span className="record-parsing-count">{preview.totalRows}행 · {parsing.expectedFieldCount}컬럼</span>
           </div>
           <div className="record-parsing-panel-body record-parsing-preview-body">
             <ScrollArea type="always" scrollbars="horizontal" className="record-parsing-table-scroll">
@@ -6594,7 +6578,7 @@ export function PermissionPage({
                     <Button
                       aria-pressed={selected}
                       className={cn(
-                        "h-auto min-h-20 justify-start whitespace-normal px-4 py-3 text-left",
+                        "h-16 justify-center whitespace-normal px-4 py-3 text-center",
                         selected && "border-blue-400 bg-blue-50/80 text-blue-700 hover:bg-blue-100/80",
                       )}
                       key={preset.id}
@@ -6602,10 +6586,7 @@ export function PermissionPage({
                       variant="outline"
                       onClick={() => applyPreset(preset.id)}
                     >
-                      <span className="grid gap-1">
-                        <strong>{preset.label}</strong>
-                        <span className="text-xs font-normal text-slate-500">{preset.description}</span>
-                      </span>
+                      <strong>{preset.label}</strong>
                     </Button>
                   );
                 })}
