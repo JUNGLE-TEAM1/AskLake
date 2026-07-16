@@ -21,6 +21,7 @@ from app.services.trino_query_run_service import (
     result_collection_progress_percentage,
     trino_stats,
     trino_request_fingerprint,
+    with_trino_preview_limit,
     with_result_collection_timing,
 )
 from app.services.trino_sql_compiler import compile_trino_read_query
@@ -73,8 +74,9 @@ def assert_client_identity(client: TrinoClient, expected_user: str, expected_pas
         body: bytes | None = None,
         headers: dict[str, str] | None = None,
         allow_empty_response: bool = False,
+        timeout_seconds: float | None = None,
     ) -> TrinoClientPage:
-        requests.append({"allowEmpty": allow_empty_response, "body": body, "headers": headers or {}, "method": method, "url": url})
+        requests.append({"allowEmpty": allow_empty_response, "body": body, "headers": headers or {}, "method": method, "timeout": timeout_seconds, "url": url})
         return TrinoClientPage(queryId="query_identity_test", rawStats={"state": "RUNNING"})
 
     client._request = record_request  # type: ignore[method-assign]
@@ -120,12 +122,20 @@ def verify() -> None:
 
     canonical_request = QueryRunSubmitRequest(datasetId="ds_orders", query="SELECT * FROM orders")
     assert canonical_request.trino_request().base_dataset_id == "ds_orders"
+    assert canonical_request.trino_request().mode == "preview"
+    assert canonical_request.trino_request().preview_limit == 100
+    assert QueryRunSubmitRequest(
+        datasetId="ds_orders",
+        mode="run",
+        query="SELECT * FROM orders",
+    ).trino_request().mode == "preview"
     normalized_request = SubmitTrinoQueryRunRequest(
         baseDatasetId="ds_orders",
         clientRequestId="  request-1  ",
         query="SELECT * FROM orders",
     )
     assert normalized_request.client_request_id == "request-1"
+    assert normalized_request.mode == "run"
     try:
         SubmitTrinoQueryRunRequest(baseDatasetId="ds_orders", clientRequestId="   ", query="SELECT * FROM orders")
     except ValueError:
@@ -141,6 +151,9 @@ def verify() -> None:
     assert 'FROM "iceberg"."asklake"."orders_clean" AS o' in compiled
     assert 'JOIN "iceberg"."asklake"."customers_clean" AS c' in compiled
     assert [dataset.id for dataset in references] == ["ds_orders", "ds_customers"]
+    preview_compiled = with_trino_preview_limit(compiled, 500)
+    assert preview_compiled.startswith('SELECT * FROM (')
+    assert preview_compiled.endswith('AS "_asklake_preview" LIMIT 100')
 
     comma_compiled, _ = compile_trino_read_query(
         "SELECT * FROM orders o, customers c WHERE o.customer_id = c.customer_id",
@@ -476,6 +489,9 @@ def verify() -> None:
     assert trino_request_fingerprint(request_a) == trino_request_fingerprint(request_b)
     assert trino_request_fingerprint(request_a) != trino_request_fingerprint(
         request_b.model_copy(update={"query": "SELECT order_id FROM orders"}),
+    )
+    assert trino_request_fingerprint(request_a) != trino_request_fingerprint(
+        request_a.model_copy(update={"mode": "preview"}),
     )
 
     estimate_dataset = orders.model_copy(update={"size": "2 GB"})

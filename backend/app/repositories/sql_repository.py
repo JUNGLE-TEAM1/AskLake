@@ -165,6 +165,7 @@ class SqlRepository:
         columns: list[str],
         rows: list[list[object]],
         byte_size: int,
+        source_next_uri: str | None = None,
     ) -> None:
         ensure_sql_schema(self.db)
         page_id = f"{run_id}:{page_index}"
@@ -179,6 +180,7 @@ class SqlRepository:
                 byte_size=byte_size,
                 row_count=len(rows),
                 storage_backend="postgres",
+                source_next_uri=source_next_uri,
             ))
         else:
             model.columns = columns
@@ -186,7 +188,61 @@ class SqlRepository:
             model.byte_size = byte_size
             model.row_count = len(rows)
             model.storage_backend = "postgres"
+            model.object_key = None
+            model.checksum = None
+            model.source_next_uri = source_next_uri
         self.db.commit()
+
+    def save_result_page_if_owned(
+        self,
+        *,
+        run_id: str,
+        worker_id: str,
+        generation: int,
+        page_index: int,
+        columns: list[str],
+        rows: list[list[object]],
+        byte_size: int,
+        source_next_uri: str,
+    ) -> Literal["saved", "duplicate", "fenced"]:
+        """Atomically save an inline preview page while the collector lease is valid."""
+        ensure_sql_schema(self.db)
+        run = self.db.scalar(select(SqlRunModel).where(SqlRunModel.id == run_id).with_for_update())
+        now = datetime.now(timezone.utc)
+        if (
+            run is None
+            or run.collector_owner != worker_id
+            or run.collector_generation != generation
+            or run.collector_lease_expires_at is None
+            or run.collector_lease_expires_at <= now
+        ):
+            self.db.rollback()
+            return "fenced"
+        duplicate = self.db.scalar(
+            select(SqlRunResultPageModel)
+            .where(SqlRunResultPageModel.run_id == run_id)
+            .where(SqlRunResultPageModel.source_next_uri == source_next_uri)
+        )
+        if duplicate is not None:
+            self.db.rollback()
+            return "duplicate"
+        self.db.add(SqlRunResultPageModel(
+            id=f"{run_id}:{page_index}",
+            run_id=run_id,
+            page_index=page_index,
+            columns=columns,
+            rows=rows,
+            byte_size=byte_size,
+            storage_backend="postgres",
+            row_count=len(rows),
+            source_next_uri=source_next_uri,
+        ))
+        try:
+            self.db.commit()
+        except IntegrityError:
+            self.db.rollback()
+            return "duplicate"
+        return "saved"
 
     def save_result_page_metadata(
         self,
@@ -354,6 +410,19 @@ class SqlRepository:
             .limit(max(1, min(limit, 50)))
         ).all()
         return [model.payload for model in models]
+
+    def get_latest_full_result_run_payload(self, source_run_id: str) -> dict[str, Any] | None:
+        ensure_sql_schema(self.db)
+        model = self.db.scalar(
+            select(SqlRunModel)
+            .where(
+                SqlRunModel.payload["engine"].astext == "trino",
+                SqlRunModel.payload["mode"].astext == "run",
+                SqlRunModel.payload["sourceRunId"].astext == source_run_id,
+            )
+            .order_by(SqlRunModel.created_at.desc(), SqlRunModel.id.desc())
+        )
+        return dict(model.payload or {}) if model is not None else None
 
     def list_terminal_trino_run_payload_batch(
         self,

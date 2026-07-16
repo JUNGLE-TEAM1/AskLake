@@ -24,6 +24,7 @@ from app.repositories.sql_repository import SqlRepository
 from app.schemas.catalog import CatalogDatasetResponse
 from app.schemas.common import ErrorCode
 from app.schemas.trino import (
+    CreateTrinoFullResultRequest,
     SubmitTrinoQueryRunRequest,
     TrinoClientPage,
     TrinoQueryRunError,
@@ -45,7 +46,7 @@ from app.services.governance_enforcement import require_governed_access
 from app.services.resource_permission_service import dataset_with_persisted_permission_grants
 from app.services.trino_client import TrinoClient, TrinoQueryInfo
 from app.services.trino_result_storage import TrinoResultStorage
-from app.services.trino_query_estimate import build_query_estimate, estimate_iceberg_scan_bytes, parse_plan_estimated_bytes, require_estimate_confirmation
+from app.services.trino_query_estimate import build_query_estimate, create_confirmation_token, estimate_iceberg_scan_bytes, parse_plan_estimated_bytes, require_estimate_confirmation
 from app.services.trino_sql_compiler import compile_trino_read_query
 
 
@@ -137,8 +138,9 @@ class TrinoQueryRunService:
                 {"limit": self.settings.trino_max_concurrent_runs_per_user},
             )
 
+        execution_query = with_trino_preview_limit(compiled_query, request.preview_limit) if request.mode == "preview" else compiled_query
         try:
-            page = self.client.submit(compiled_query)
+            page = self.client.submit(execution_query)
         except ApiError as exc:
             failed = reserved.model_copy(update={
                 "completed_at": current_utc_timestamp(),
@@ -181,6 +183,9 @@ class TrinoQueryRunService:
                 status.HTTP_503_SERVICE_UNAVAILABLE,
                 {"runId": failed.run_id},
             ) from exc
+        # Keep the unbounded compiled query as the durable SQL recipe. The
+        # preview wrapper is an execution-only concern and must never leak
+        # into later CTAS materialization or scheduled SQL Jobs.
         self._save_response(response, compiled_query=compiled_query, trino_next_uri=page.next_uri)
         safe_record_audit_event(
             self.repository.db,
@@ -196,6 +201,71 @@ class TrinoQueryRunService:
             target_type="dataset",
         )
         return response
+
+    def create_full_result_run(
+        self,
+        preview_run_id: str,
+        request: CreateTrinoFullResultRequest,
+        actor: ActorContext | None = None,
+    ) -> TrinoQueryRunResponse:
+        """Start or reuse the on-demand full result run linked to a succeeded preview."""
+        actor_context = actor or ActorContext()
+        preview = self.get(preview_run_id, actor_context)
+        if preview.mode != "preview":
+            raise ApiError(
+                ErrorCode.VALIDATION_ERROR,
+                "Full results can only be created from a preview Query Run",
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                {"runId": preview_run_id, "mode": preview.mode},
+            )
+        if preview.status != "succeeded" or preview.result is None or preview.result.storage_status != "available":
+            raise ApiError(
+                ErrorCode.RESULT_PAGE_NOT_READY,
+                "Wait for the preview result before creating the full result",
+                status.HTTP_409_CONFLICT,
+                {"runId": preview_run_id, "status": preview.status},
+            )
+
+        existing_payload = self.repository.get_latest_full_result_run_payload(preview_run_id)
+        if existing_payload is not None:
+            existing = TrinoQueryRunResponse.model_validate(existing_payload)
+            if existing.status in {"queued", "running"}:
+                self._require_access_for_response(existing, actor_context, operation="view")
+                return existing
+            if existing.status == "succeeded" and existing.result and existing.result.storage_status == "available":
+                try:
+                    self._require_result_retention(existing)
+                except ApiError as exc:
+                    if exc.code != ErrorCode.RESULT_EXPIRED:
+                        raise
+                else:
+                    self._require_access_for_response(existing, actor_context, operation="view")
+                    return existing
+
+        context_datasets = self._resolve_context(SubmitTrinoQueryRunRequest(
+            baseDatasetId=preview.base_dataset_id,
+            query=preview.query,
+            referenceDatasetIds=preview.reference_dataset_ids,
+        ))
+        confirmation_token = create_confirmation_token(
+            actor=actor_context,
+            context_datasets=context_datasets,
+            query=preview.query,
+            runtime_settings=self.settings,
+        )
+        return self.submit(
+            SubmitTrinoQueryRunRequest(
+                baseDatasetId=preview.base_dataset_id,
+                clientRequestId=request.client_request_id,
+                confirmationToken=confirmation_token,
+                mode="run",
+                query=preview.query,
+                referenceDatasetIds=preview.reference_dataset_ids,
+                resultPageSize=100,
+                sourceRunId=preview.run_id,
+            ),
+            actor_context,
+        )
 
     def estimate(self, request: TrinoQueryEstimateRequest, actor: ActorContext | None = None) -> TrinoQueryEstimate:
         if not self.settings.trino_enabled:
@@ -618,6 +688,13 @@ class TrinoQueryRunService:
         actor_context = actor or ActorContext()
         self._require_access_for_response(response, actor_context, operation="view")
         self._require_result_retention(response)
+        if response.mode != "run":
+            raise ApiError(
+                ErrorCode.RESULT_PAGE_NOT_READY,
+                "Create the full result before downloading CSV",
+                status.HTTP_409_CONFLICT,
+                {"runId": run_id, "mode": response.mode},
+            )
         if response.status != "succeeded" or response.result is None or response.result.storage_status != "available":
             raise ApiError(
                 ErrorCode.RESULT_PAGE_NOT_READY,
@@ -801,6 +878,37 @@ class TrinoQueryRunService:
         if not page.rows and (response.status != "succeeded" or page_count > 0):
             return response
         columns = page.columns or (response.result.columns if response.result else [])
+        if response.mode == "preview":
+            byte_size = len(json.dumps(
+                {"columns": columns, "rows": page.rows},
+                ensure_ascii=False,
+                separators=(",", ":"),
+                default=str,
+            ).encode("utf-8"))
+            if worker_id is not None and generation is not None and source_next_uri:
+                outcome = self.repository.save_result_page_if_owned(
+                    run_id=response.run_id,
+                    worker_id=worker_id,
+                    generation=generation,
+                    page_index=page_count,
+                    columns=columns,
+                    rows=page.rows,
+                    byte_size=byte_size,
+                    source_next_uri=source_next_uri,
+                )
+                if outcome == "fenced":
+                    raise CollectorLeaseLost(response.run_id)
+            else:
+                self.repository.save_result_page(
+                    run_id=response.run_id,
+                    page_index=page_count,
+                    columns=columns,
+                    rows=page.rows,
+                    byte_size=byte_size,
+                    source_next_uri=source_next_uri,
+                )
+            return self._with_result_manifest(response, columns, next_uri=page.next_uri)
+
         stored_page = self.result_storage.write_page(
             run_id=response.run_id,
             page_index=page_count,
@@ -869,7 +977,7 @@ class TrinoQueryRunService:
                 "expected_row_count": expected_rows,
                 "page_count": page_count,
                 "row_count": collected_rows,
-                "storage": "s3",
+                "storage": "postgres" if response.mode == "preview" else "s3",
                 "storage_status": storage_status,
             }),
         })
@@ -1029,6 +1137,7 @@ def build_run_response(
         base_dataset_id=request.base_dataset_id,
         estimate=estimate,
         error=page.error,
+        mode=request.mode,
         query=request.query,
         reference_dataset_ids=unique_values(request.reference_dataset_ids),
         result=TrinoQueryRunResult(
@@ -1043,6 +1152,7 @@ def build_run_response(
         submitted_at=submitted_at,
         submitted_by_name=actor.name,
         submitted_by_user_id=actor.id,
+        source_run_id=request.source_run_id,
         trino_query_id=page.query_id or None,
     )
     return apply_terminal_timestamps(response)
@@ -1058,6 +1168,7 @@ def build_reserved_run_response(
     return TrinoQueryRunResponse(
         base_dataset_id=request.base_dataset_id,
         estimate=estimate,
+        mode=request.mode,
         query=request.query,
         reference_dataset_ids=unique_values(request.reference_dataset_ids),
         result=TrinoQueryRunResult(
@@ -1069,6 +1180,7 @@ def build_reserved_run_response(
         submitted_at=current_utc_timestamp(),
         submitted_by_name=actor.name,
         submitted_by_user_id=actor.id,
+        source_run_id=request.source_run_id,
     )
 
 
@@ -1420,11 +1532,20 @@ def is_run_submitter(submitted_by_user_id: str | None, submitted_by_name: str | 
 def trino_request_fingerprint(request: SubmitTrinoQueryRunRequest) -> str:
     canonical = json.dumps({
         "baseDatasetId": request.base_dataset_id,
+        "mode": request.mode,
+        "previewLimit": request.preview_limit if request.mode == "preview" else None,
         "query": request.query.replace("\r\n", "\n").strip(),
         "referenceDatasetIds": sorted(unique_values(request.reference_dataset_ids)),
         "resultPageSize": normalized_result_page_size(request.result_page_size),
+        "sourceRunId": request.source_run_id,
     }, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def with_trino_preview_limit(compiled_query: str, limit: int = 100) -> str:
+    statement = compiled_query.strip().rstrip(";").strip()
+    bounded_limit = max(1, min(int(limit), 100))
+    return f'SELECT * FROM ({statement}) AS "_asklake_preview" LIMIT {bounded_limit}'
 
 
 def normalized_result_page_size(value: object) -> int:
