@@ -48,6 +48,34 @@ const etlWizardFiles = [
   "src/pages/etl/ReviewPage.tsx",
 ];
 
+const jobsPageFiles = [
+  "src/pages/ingest/JobsPages.tsx",
+  "src/pages/ingest/jobs/jobShared.tsx",
+  "src/pages/ingest/jobs/JobsLandingPage.tsx",
+  "src/pages/ingest/jobs/jobDetailModel.tsx",
+  "src/pages/ingest/jobs/JobDetailPage.tsx",
+  "src/pages/ingest/jobs/jobRunsModel.tsx",
+  "src/pages/ingest/jobs/JobRunsPage.tsx",
+  "src/pages/ingest/jobs/ContinuousJobRunsPage.tsx",
+  "src/pages/ingest/jobs/SnapshotJobRunsPage.tsx",
+];
+
+const askLakeDataFiles = [
+  "src/hooks/useAskLakeData.ts",
+  "src/state/asklake/catalogState.ts",
+  "src/state/asklake/contracts.ts",
+  "src/state/asklake/etlDraftState.ts",
+  "src/state/asklake/initialRead.ts",
+  "src/state/asklake/jobState.ts",
+  "src/state/asklake/sqlJobDraft.ts",
+  "src/state/asklake/useAskLakeWorkspace.ts",
+  "src/state/asklake/useAskLakeWorkspaceState.ts",
+  "src/state/asklake/useCatalogController.ts",
+  "src/state/asklake/useJobController.ts",
+  "src/state/asklake/usePipelineMutations.ts",
+  "src/state/asklake/useWorkspaceHydration.ts",
+];
+
 const checks = [
   {
     name: "ETL target storage path uses the deployed Spark output bucket",
@@ -142,7 +170,7 @@ const checks = [
   },
   {
     name: "Continuous Kafka details use localized common headers without duplicate summaries",
-    file: "src/pages/ingest/JobsPages.tsx",
+    files: jobsPageFiles,
     patterns: [
       /<PanelHeader icon=\{<Activity[^>]*\/>\} title="연속 수집 런타임" \/>/,
       /icon=\{<TerminalSquare[^>]*\/>\}[\s\S]*title="워커 로그"/,
@@ -500,7 +528,7 @@ const checks = [
   },
   {
     name: "SQL Job creation submits an explicit draft without opening ETL Review",
-    file: "src/hooks/useAskLakeData.ts",
+    files: askLakeDataFiles,
     patterns: [
       /const createPipelineFromDraft = async \(/,
       /const createSqlDatasetJob = async \(request: CreateDerivedDatasetRequest\) =>/,
@@ -517,7 +545,7 @@ const checks = [
   },
   {
     name: "ETL Job collection upserts and reconciles rows by stable job id",
-    file: "src/hooks/useAskLakeData.ts",
+    files: askLakeDataFiles,
     patterns: [
       /function upsertJobById\(/,
       /jobs\.filter\(\(job\) => job\.id !== nextJob\.id\)/,
@@ -599,7 +627,7 @@ const checks = [
   },
   {
     name: "SQL Job draft preserves database, format, tags, and multiple partitions",
-    file: "src/hooks/useAskLakeData.ts",
+    files: askLakeDataFiles,
     patterns: [
       /const targetFormat = request\.job\?\.fileFormat/,
       /const partitionColumns = request\.job\?\.partitionColumns/,
@@ -777,7 +805,7 @@ const checks = [
   },
   {
     name: "Job detail localizes source metadata and manual schedules",
-    file: "src/pages/ingest/JobsPages.tsx",
+    files: jobsPageFiles,
     patterns: [
       /"Bucket \/ Stage Name": "버킷 \/ 스테이지 이름"/,
       /"Path \/ Prefix": "경로 \/ 프리픽스"/,
@@ -823,7 +851,7 @@ const checks = [
   },
   {
     name: "Job detail tolerates partial stats so delete remains reachable",
-    file: "src/pages/ingest/JobsPages.tsx",
+    files: jobsPageFiles,
     patterns: [
       /const stats = \{ \.\.\.fallbackJobStats\(job\), \.\.\.\(job\.stats \?\? \{\}\) \};/,
       /const totalRuns = String\(stats\.totalRuns \?\? "-"\);/,
@@ -831,7 +859,7 @@ const checks = [
   },
   {
     name: "Live Job deletion updates persisted rows and list facets together",
-    file: "src/hooks/useAskLakeData.ts",
+    files: askLakeDataFiles,
     patterns: [
       /deletePipelineJob as deleteLivePipelineJob/,
       /if \(!apiConfig\.useMock\) await deleteLivePipelineJob\(job\.id\);/,
@@ -841,7 +869,7 @@ const checks = [
   },
   {
     name: "Stopped continuous Job detail exposes governed deletion",
-    file: "src/pages/ingest/JobsPages.tsx",
+    files: jobsPageFiles,
     patterns: [
       /if \(isContinuousKafkaJob\(job\)\)/,
       /return \[\s*\{ className: "job-action-button primary", kind: "startContinuous", label: "스트림 시작" \},\s*\{ className: "job-action-button", kind: "edit", label: "수정" \},\s*\{ className: "job-action-button danger", kind: "delete", label: "삭제" \},\s*\];/,
@@ -863,7 +891,7 @@ const checks = [
   },
   {
     name: "Jobs landing run modal follows centrally polled state by stable run identity",
-    file: "src/pages/ingest/JobsPages.tsx",
+    files: jobsPageFiles,
     patterns: [
       /type LatestRunModalSelection = \{[\s\S]*jobId: string;[\s\S]*runId: string;/,
       /const latestRunModal = useMemo\(\(\) => \{[\s\S]*jobs\.find\(\(candidate\) => candidate\.id === latestRunModalSelection\.jobId\)/,
@@ -1506,7 +1534,7 @@ const checks = [
   },
   {
     name: "Continuous execution history uses durable sessions and guarded live polling",
-    file: "src/pages/ingest/JobsPages.tsx",
+    files: jobsPageFiles,
     patterns: [
       /props\.job\.executionMode === "continuous"/,
       /getContinuousSessions\(job\.id\)/,
@@ -1771,19 +1799,21 @@ const checks = [
   },
   {
     name: "Manual workspace refresh replaces Jobs and Catalog data from live APIs",
-    file: "src/hooks/useAskLakeData.ts",
+    files: askLakeDataFiles,
     patterns: [
       /const dataHydrationRequests = useRef\(new LatestRequestGate\(\)\);/,
       /const refreshData = async \(\) =>/,
       /const \[jobsResult, datasetsResult\] = await Promise\.all\(\[\s*getJobs\(\),\s*getDatasets\(\),?\s*\]\);/,
       /const applyHydratedJobs[\s\S]*setJobs\(normalizedJobs\);[\s\S]*setJobListFacets\(result\.facets\);/,
       /const applyHydratedDatasets[\s\S]*setDatasets\(normalizedDatasets\);[\s\S]*normalizedDatasets\.find\(\(dataset\) => dataset\.id === current\.id\)/,
-      /filterJobs,\s*refreshData,\s*createSqlDatasetJob,/,
+      /filterJobs: hydration\.filterJobs,/,
+      /refreshData: hydration\.refreshData,/,
+      /createSqlDatasetJob: pipeline\.createSqlDatasetJob,/,
     ],
   },
   {
     name: "Catalog materialization totals stop at the newest snapshot",
-    file: "src/hooks/useAskLakeData.ts",
+    files: askLakeDataFiles,
     patterns: [
       /activeDatasetMaterializationRuns\(materializationRuns\)/,
       /if \(run\.materializationMode !== "delta"\) break;/,
@@ -1843,7 +1873,7 @@ const checks = [
   },
   {
     name: "SQL Result Job drafts use the query result as the source contract",
-    file: "src/hooks/useAskLakeData.ts",
+    files: askLakeDataFiles,
     patterns: [
       /sourceType: "SQL Result",/,
       /SQL Run ID/,
