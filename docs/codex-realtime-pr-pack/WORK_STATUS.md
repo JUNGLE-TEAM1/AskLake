@@ -25,7 +25,7 @@ merge_order:
 | STACK-01 | DONE | PR-00, PR-01 | 계약·ADR·baseline test·feature flag | #803 / `feat-#803` / #808 |
 | STACK-02 | DONE | PR-02, PR-03, PR-04 | durable SSE backend·frontend·infra | #811 / `feat-#811` / #815 Draft |
 | STACK-03 | DONE | PR-05, PR-06 | continuous SQL planner·runtime·publication | #816 / `feat-#816` / #822 Draft |
-| STACK-04 | DONE | PR-07, PR-08 | E2E·복구·보안·CI·rollout·최종 감사 | #823 / `feat-#823` / 생성 예정 |
+| STACK-04 | DONE | PR-07, PR-08 | E2E·복구·보안·CI·rollout·최종 감사 | #823 / `feat-#823` / #826 Draft |
 
 ## 상태 변경 규칙
 
@@ -81,6 +81,7 @@ merge_order:
 
 - 시작 기준: `feat-#816`의 `243b70a5`, `origin/dev`의 `b93ae273`이 조상임을 확인했다.
 - Issue/branch: #823 / `feat-#823`.
+- Draft PR: #826 (`feat-#823 -> dev`), 선행 #822 merge 후 review-ready 전환.
 - backend recovery/security/Continuous SQL focused 63 tests, frontend UI 132 checks, realtime transport 7 tests, Dashboard refresh 6 tests와 production build가 통과했다.
 - production Compose render, proxy/architecture static gate, Continuous SQL 17 tests와 Kafka contract/REST가 통과했다.
 - PR용 disposable PostgreSQL·Caddy/NGINX parser gate와 scheduled/manual Kafka/Spark/Iceberg fault harness를 추가했다.

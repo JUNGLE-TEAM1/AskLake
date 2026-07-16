@@ -2,7 +2,7 @@
 
 - 작업일: 2026-07-16
 - 포함 원본 단계: PR-07, PR-08
-- Issue/branch/PR: #823 / `feat-#823` / 생성 예정
+- Issue/branch/PR: #823 / `feat-#823` / #826 Draft
 - 구현 판정: DONE
 - production realtime 활성화 판정: NO-GO, 실제 통합·canary 증거 필요
 
@@ -62,4 +62,4 @@
 - code/contract/CI/runbook은 merge 준비가 됐지만 production flag enable은 No-Go다.
 - production enable 전 실제 Spark JOIN, ALB/browser, rolling restart, canary와 rollback drill P0를 완료해야 한다.
 - 상세 owner·승격·중단 기준은 `docs/realtime-2026/final-audit.md`, `docs/realtime-2026/handover.md`, `docs/realtime-2026/runbooks/`에 있다.
-- merge 순서는 #808 → #815 → #822 → STACK-04 PR이다.
+- merge 순서는 #808 → #815 → #822 → #826이다.
