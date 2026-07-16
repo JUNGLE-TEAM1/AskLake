@@ -354,7 +354,7 @@ Phase 7 output:
   - expected Quality `Fail Run`: persisted Spark failure manifest and terminal
     Airflow/AskLake failure
   - Phase 3 live browser check on 2026-07-11: no early Catalog request during
-    optimistic command submission; Run `run_0ad0266cae32` triggered exactly one
+    optimistic command submission; Run `<run-redacted>` triggered exactly one
     `GET /api/catalog/datasets` after terminal success, without a session/page
     reload, and the UI matched the server at 2 runs / 4 rows / 2.9 KB.
 

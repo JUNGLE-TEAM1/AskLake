@@ -130,8 +130,10 @@
         "config": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["corsOrigins", "bootstrapAdminEmail", "kafkaBroker", "kafkaAuthMode", "objectStorageProvider", "rawBucket", "outputBucket", "outputPrefix", "allowedBuckets", "sparkRunner", "sparkExecutionLeaseSeconds", "airflowApiBaseUrl", "airflowDagId", "trinoEnabled", "trinoBaseUrl", "trinoCatalog", "trinoSchema", "trinoUser", "trinoWarehouseBucket", "trinoWarehousePrefix", "trinoResultStorageBucket"],
+          "required": ["aiQueryProvider", "airflowApiAuthMode", "corsOrigins", "bootstrapAdminEmail", "kafkaBroker", "kafkaAuthMode", "objectStorageProvider", "rawBucket", "outputBucket", "outputPrefix", "allowedBuckets", "sparkRunner", "sparkExecutionLeaseSeconds", "airflowApiBaseUrl", "airflowDagId", "trinoEnabled", "trinoBaseUrl", "trinoCatalog", "trinoSchema", "trinoUser", "trinoWarehouseBucket", "trinoWarehousePrefix", "trinoResultStorageBucket"],
           "properties": {
+            "aiQueryProvider": {"type": "string", "enum": ["direct", "gateway"]},
+            "airflowApiAuthMode": {"type": "string", "enum": ["api_token", "username_password"]},
             "corsOrigins": {"type": "string", "pattern": "^https://"},
             "bootstrapAdminEmail": {"type": "string", "format": "email"},
             "kafkaBroker": {"type": "string", "minLength": 1},

@@ -36,7 +36,7 @@ export ASKLAKE_DEPLOY_BRANCH=dev
 
 ```bash
 export ASKLAKE_EC2_HOST=203-0-113-10.sslip.io
-export ASKLAKE_APP_URL=https://203-0-113-10.sslip.io
+export ASKLAKE_APP_URL='https://<public-app-host>'
 ```
 
 작업 shell에서 환경 파일을 불러온다.

@@ -6,6 +6,7 @@ set +x
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT_DIR/scripts/lib/verify-eks-context.sh"
 source "$ROOT_DIR/scripts/lib/eks-backend-secret-rollback.sh"
+source "$ROOT_DIR/scripts/lib/eks-backend-runtime-profile.sh"
 
 MODE="${1:---verify-existing}"
 NAMESPACE="${ASKLAKE_EKS_NAMESPACE:-asklake-dev}"
@@ -17,6 +18,7 @@ RUN_TOKEN="$(date -u +%s)-$$-${RANDOM}"
 STAGE_NAME="${NAME}-stage-${RUN_TOKEN}"
 FINAL_STARTED=0
 SOURCE_JSON=""
+EXPECTED_KEYS=""
 
 usage() {
   echo "usage: $0 --verify-existing|--handover" >&2
@@ -32,6 +34,8 @@ for command in aws jq kubectl; do
     exit 1
   }
 done
+EXPECTED_KEYS="$(asklake_backend_runtime_profile "$ROOT_DIR" bounded)"
+[[ -n "$EXPECTED_KEYS" ]] || { echo "Backend bounded runtime profile is invalid" >&2; exit 1; }
 [[ -s "$MANIFEST" ]] || { echo "Backend ExternalSecret manifest is missing" >&2; exit 1; }
 verify_asklake_eks_context
 
@@ -40,7 +44,7 @@ cleanup_stage() {
 }
 
 restore_manual_target() {
-  asklake_restore_backend_manual_secret "$ROOT_DIR" "$NAME" "$NAMESPACE" "$SOURCE_JSON"
+  asklake_restore_backend_manual_secret "$ROOT_DIR" "$NAME" "$NAMESPACE" "$SOURCE_JSON" "$EXPECTED_KEYS"
 }
 
 on_exit() {
@@ -85,9 +89,9 @@ if kubectl get externalsecret "$NAME" -n "$NAMESPACE" >/dev/null 2>&1; then
 fi
 
 target_secret_json="$(kubectl get secret "$NAME" -n "$NAMESPACE" -o json)"
-jq -e '
+jq -e --argjson keys "$EXPECTED_KEYS" '
   .type == "Opaque"
-  and (.data | keys | sort) == ["BOOTSTRAP_ADMIN_PASSWORD", "DATABASE_URL"]
+  and (.data | keys | sort) == $keys
   and ((.metadata.ownerReferences // []) | length == 0)
 ' <<<"$target_secret_json" >/dev/null || {
   echo "manual Backend runtime target does not match the handover contract" >&2
@@ -96,14 +100,14 @@ jq -e '
 
 SOURCE_JSON="$(aws secretsmanager get-secret-value \
   --region "$REGION" --secret-id "$SOURCE_NAME" --query SecretString --output text)"
-jq -e '
-  (keys | sort) == ["BOOTSTRAP_ADMIN_PASSWORD", "DATABASE_URL"]
-  and (.DATABASE_URL | type == "string" and length > 0)
-  and (.BOOTSTRAP_ADMIN_PASSWORD | type == "string" and length > 0)
+jq -e --argjson keys "$EXPECTED_KEYS" '
+  (keys | sort) == $keys
+  and all(.[]; type == "string" and length > 0)
 ' <<<"$SOURCE_JSON" >/dev/null
-source_hash="$(jq -S -c '{BOOTSTRAP_ADMIN_PASSWORD,DATABASE_URL}' <<<"$SOURCE_JSON" | asklake_sha256)"
-target_hash="$(jq -S -c '.data | with_entries(.value |= @base64d) | {BOOTSTRAP_ADMIN_PASSWORD,DATABASE_URL}' <<<"$target_secret_json" | asklake_sha256)"
-unset target_secret_json
+source_hash="$(asklake_backend_runtime_hash "$SOURCE_JSON" "$EXPECTED_KEYS")"
+target_decoded="$(jq -S -c '.data | with_entries(.value |= @base64d)' <<<"$target_secret_json")"
+target_hash="$(asklake_backend_runtime_hash "$target_decoded" "$EXPECTED_KEYS")"
+unset target_secret_json target_decoded
 [[ "$source_hash" == "$target_hash" ]] || {
   echo "manual Backend target and Secrets Manager source hashes differ" >&2
   exit 1
@@ -126,9 +130,10 @@ kubectl create --dry-run=client -f "$MANIFEST" -o json \
   | kubectl apply -f - >/dev/null
 kubectl wait --for=condition=Ready "externalsecret/$STAGE_NAME" -n "$NAMESPACE" --timeout=3m >/dev/null
 stage_secret_json="$(kubectl get secret "$STAGE_NAME" -n "$NAMESPACE" -o json)"
-stage_hash="$(jq -S -c '.data | with_entries(.value |= @base64d) | {BOOTSTRAP_ADMIN_PASSWORD,DATABASE_URL}' <<<"$stage_secret_json" | asklake_sha256)"
-source_hash="$(jq -S -c '{BOOTSTRAP_ADMIN_PASSWORD,DATABASE_URL}' <<<"$SOURCE_JSON" | asklake_sha256)"
-unset stage_secret_json
+stage_decoded="$(jq -S -c '.data | with_entries(.value |= @base64d)' <<<"$stage_secret_json")"
+stage_hash="$(asklake_backend_runtime_hash "$stage_decoded" "$EXPECTED_KEYS")"
+source_hash="$(asklake_backend_runtime_hash "$SOURCE_JSON" "$EXPECTED_KEYS")"
+unset stage_secret_json stage_decoded
 [[ "$stage_hash" == "$source_hash" ]] || {
   echo "staged ESO target and source hashes differ" >&2
   exit 1

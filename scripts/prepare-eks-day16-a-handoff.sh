@@ -5,8 +5,8 @@ set +x
 umask 077
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT_DIR/scripts/lib/require-eks-image-receipt.sh"
 STATE="${ASKLAKE_TERRAFORM_STATE:-$ROOT_DIR/infra/eks/terraform/terraform.tfstate}"
-RECEIPT="${ASKLAKE_IMAGE_RECEIPT:-$ROOT_DIR/infra/eks/delivery/dev-8d4414df.image-receipt.json}"
 EXAMPLE="$ROOT_DIR/infra/eks/delivery/dev.handoff.example.json"
 RUNTIME_EXAMPLE="$ROOT_DIR/infra/eks/secrets/runtime-secret-contract.example.json"
 HANDOFF="${ASKLAKE_DAY16_HANDOFF:-$ROOT_DIR/infra/eks/delivery/dev.day16-a.handoff.json}"
@@ -14,10 +14,9 @@ RUNTIME="${ASKLAKE_DAY16_RUNTIME_CONTRACT:-$ROOT_DIR/infra/eks/secrets/dev.day16
 
 fail() { echo "$1" >&2; exit 1; }
 for command in git jq node; do command -v "$command" >/dev/null 2>&1 || fail "missing required command: $command"; done
+RECEIPT="$(asklake_require_image_receipt "$ROOT_DIR")" || fail "current image receipt is invalid"
 for file in "$STATE" "$RECEIPT" "$EXAMPLE" "$RUNTIME_EXAMPLE"; do [[ -s "$file" ]] || fail "handoff source input is missing"; done
 git -C "$ROOT_DIR" check-ignore -q -- "$STATE" || fail "Terraform state must be ignored"
-git -C "$ROOT_DIR" check-ignore -q -- "$RECEIPT" || fail "image receipt must be ignored"
-node "$ROOT_DIR/scripts/verify-eks-image-receipt.mjs" "$RECEIPT" >/dev/null
 [[ ! -e "$HANDOFF" && ! -e "$RUNTIME" ]] || fail "private handoff already exists; verify instead of overwriting"
 
 temporary_handoff="$(mktemp "$(dirname "$HANDOFF")/.day16-handoff.XXXXXX")"

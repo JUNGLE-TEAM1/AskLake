@@ -2,11 +2,16 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT_DIR/scripts/lib/eks-backend-runtime-profile.sh"
 TERRAFORM_DIR="$ROOT_DIR/infra/eks/terraform"
 DEV_EXTERNAL_SECRETS="$ROOT_DIR/infra/eks/secrets/runtime-externalsecrets.dev.yaml"
+BACKEND_EXTERNAL_SECRET="$ROOT_DIR/infra/eks/secrets/backend-runtime-external-secret.yaml"
+TRINO_EXTERNAL_SECRET="$ROOT_DIR/infra/eks/secrets/trino-runtime-external-secret.yaml"
 node --check "$ROOT_DIR/scripts/verify-eks-runtime-secrets.mjs"
 node --check "$ROOT_DIR/scripts/test-eks-runtime-secrets.mjs"
 node "$ROOT_DIR/scripts/test-eks-runtime-secrets.mjs"
+node --check "$ROOT_DIR/scripts/lib/validate-trino-password-db.mjs"
+node "$ROOT_DIR/scripts/test-trino-password-db.mjs"
 
 if grep -ERq 'resource[[:space:]]+"(kubernetes_secret|aws_secretsmanager_secret_version)"|data[[:space:]]*=|stringData[[:space:]]*=' \
   "$TERRAFORM_DIR/runtime-secret"*.tf; then
@@ -67,5 +72,24 @@ for key in \
   grep -q "^    - secretKey: $key$" "$DEV_EXTERNAL_SECRETS"
   grep -q "^        property: $key$" "$DEV_EXTERNAL_SECRETS"
 done
+
+expected_backend_keys="$(asklake_backend_runtime_profile "$ROOT_DIR" bounded)"
+manifest_backend_keys="$(awk '$1 == "-" && $2 == "secretKey:" { print $3 }' "$BACKEND_EXTERNAL_SECRET" \
+  | jq -Rsc 'split("\n") | map(select(length > 0)) | sort')"
+[[ "$manifest_backend_keys" == "$expected_backend_keys" ]] || {
+  echo "Backend ExternalSecret differs from the bounded runtime profile" >&2
+  exit 1
+}
+
+test "$(grep -c 'decodingStrategy: Base64' "$TRINO_EXTERNAL_SECRET")" -eq 1
+test "$(grep -c 'decodingStrategy: Base64' "$DEV_EXTERNAL_SECRETS")" -eq 1
+awk '
+  $0 ~ /secretKey: trino-password.db/ { in_password = 1; next }
+  in_password && $0 ~ /secretKey:/ { in_password = 0 }
+  in_password && $0 ~ /decodingStrategy:/ { exit 1 }
+' "$TRINO_EXTERNAL_SECRET" "$DEV_EXTERNAL_SECRETS" || {
+  echo "Trino password database must be delivered as plaintext SecretString data" >&2
+  exit 1
+}
 
 echo "EKS runtime Secret contract verification passed."

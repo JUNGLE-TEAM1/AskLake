@@ -112,7 +112,7 @@ run_keytool -exportcert -rfc \
 
 certificate="$(cat "$certificate_file")"
 keystore_base64="$(base64 <"$keystore_file" | tr -d '\n')"
-password_base64="$(base64 <"$password_file" | tr -d '\n')"
+password_database="$(<"$password_file")"
 jdbc_url="jdbc:postgresql://${rds_host}:5432/iceberg_catalog"
 
 jq -n \
@@ -126,7 +126,7 @@ jq -n \
   --arg internalSharedSecret "$internal_shared_secret" \
   --arg certificate "$certificate" \
   --arg keystore "$keystore_base64" \
-  --arg passwordDb "$password_base64" '
+  --arg passwordDb "$password_database" '
   {
     contractVersion: "1.0",
     namespace: "asklake-dev",
@@ -163,5 +163,5 @@ mv "$temporary_output" "$OUTPUT"
 chmod 600 "$OUTPUT"
 
 unset iceberg_password query_password materializer_password cursor_secret confirmation_secret
-unset keystore_password internal_shared_secret certificate keystore_base64 password_base64
+unset keystore_password internal_shared_secret certificate keystore_base64 password_database
 echo "private_input_state=created_valid"

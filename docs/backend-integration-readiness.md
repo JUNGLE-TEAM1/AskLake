@@ -309,7 +309,7 @@ Live Airflow verification through 2026-07-11:
 - expected Spark Quality failure: pass, `sparkResult`, Airflow DAG Run, AskLake Run/Job all failed
 - invalid internal execution token: pass, `401 AIRFLOW_EXECUTION_UNAUTHORIZED`
 - FastAPI Catalog reconciliation contract: pass in local PostgreSQL with cleaned unique fixtures, including idempotent same-Run retry, second Snapshot Run replacement, missing output, transaction rollback, stale polling concurrency, and preserved failure evidence
-- Python S3 physical inspection against `s3a://asklake-output/customer_review_gold/gold/run_d783b7d326e1`: pass, Parquet 1 object / 3,882 bytes
+- Python S3 physical inspection against `s3a://asklake-output/customer_review_gold/gold/<run-redacted>`: pass, Parquet 1 object / 3,882 bytes
 - Airflow `publish_run_result` -> Catalog endpoint: pass, real Spark/MinIO output published with matching Run id/path, positive bytes, one materialization, and 3-node lineage
 - concurrent polling evidence preservation: pass, stale session could not erase committed `sparkResult`
 - frontend terminal-success Catalog refresh: 기존 polling/hydrate 경로 pass. Snapshot 재실행의 현재 행 수는 `verify:materialization-projection`과 갱신된 Catalog reconciliation fixture에서 최신 snapshot 기준으로 검증한다.

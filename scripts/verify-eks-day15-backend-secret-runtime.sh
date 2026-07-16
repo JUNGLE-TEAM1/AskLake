@@ -4,10 +4,13 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT_DIR/scripts/lib/verify-eks-context.sh"
+source "$ROOT_DIR/scripts/lib/eks-backend-runtime-profile.sh"
 NAMESPACE="${ASKLAKE_EKS_NAMESPACE:-asklake-dev}"
 REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-ap-northeast-2}}"
 EXTERNAL_SECRET_NAME="asklake-backend-runtime"
 EXPECTED_SOURCE="asklake/dev/backend/runtime"
+BACKEND_SCOPE="${ASKLAKE_BACKEND_RUNTIME_SCOPE:-bounded}"
+EXPECTED_KEYS=""
 
 for command in aws jq kubectl; do
   if ! command -v "$command" >/dev/null 2>&1; then
@@ -15,6 +18,8 @@ for command in aws jq kubectl; do
     exit 1
   fi
 done
+EXPECTED_KEYS="$(asklake_backend_runtime_profile "$ROOT_DIR" "$BACKEND_SCOPE")"
+[[ -n "$EXPECTED_KEYS" ]] || { echo "Backend runtime profile is invalid: $BACKEND_SCOPE" >&2; exit 1; }
 
 verify_asklake_eks_context
 
@@ -24,7 +29,8 @@ target_secret_json="$(kubectl get secret "$EXTERNAL_SECRET_NAME" -n "$NAMESPACE"
 jq -e \
   --arg namespace "$NAMESPACE" \
   --arg name "$EXTERNAL_SECRET_NAME" \
-  --arg source "$EXPECTED_SOURCE" '
+  --arg source "$EXPECTED_SOURCE" \
+  --argjson keys "$EXPECTED_KEYS" '
     .apiVersion == "external-secrets.io/v1"
     and .metadata.namespace == $namespace
     and .metadata.name == $name
@@ -36,26 +42,15 @@ jq -e \
       secretKey,
       source: .remoteRef.key,
       property: .remoteRef.property
-    }] | sort_by(.secretKey)) == ([
-      {secretKey: "AIRFLOW_EXECUTION_API_TOKEN", source: $source, property: "AIRFLOW_EXECUTION_API_TOKEN"},
-      {secretKey: "AIRFLOW_INTERNAL_TOKEN", source: $source, property: "AIRFLOW_INTERNAL_TOKEN"},
-      {secretKey: "AIRFLOW_PASSWORD", source: $source, property: "AIRFLOW_PASSWORD"},
-      {secretKey: "BOOTSTRAP_ADMIN_PASSWORD", source: $source, property: "BOOTSTRAP_ADMIN_PASSWORD"},
-      {secretKey: "DATABASE_URL", source: $source, property: "DATABASE_URL"}
-    ] | sort_by(.secretKey))
+    }] | sort_by(.secretKey)) == ($keys | map({secretKey: ., source: $source, property: .}) | sort_by(.secretKey))
     and ([.status.conditions[]? | select(.type == "Ready")][0].status == "True")
   ' <<<"$external_secret_json" >/dev/null
 
 jq -e \
-  --arg name "$EXTERNAL_SECRET_NAME" '
+  --arg name "$EXTERNAL_SECRET_NAME" \
+  --argjson keys "$EXPECTED_KEYS" '
     .type == "Opaque"
-    and (.data | keys | sort) == [
-      "AIRFLOW_EXECUTION_API_TOKEN",
-      "AIRFLOW_INTERNAL_TOKEN",
-      "AIRFLOW_PASSWORD",
-      "BOOTSTRAP_ADMIN_PASSWORD",
-      "DATABASE_URL"
-    ]
+    and (.data | keys | sort) == $keys
     and ((.metadata.ownerReferences // []) | any(
       .apiVersion == "external-secrets.io/v1"
       and .kind == "ExternalSecret"
@@ -70,14 +65,8 @@ source_json="$(aws secretsmanager get-secret-value \
   --query SecretString \
   --output text)"
 
-jq -e '
-  (keys | sort) == [
-    "AIRFLOW_EXECUTION_API_TOKEN",
-    "AIRFLOW_INTERNAL_TOKEN",
-    "AIRFLOW_PASSWORD",
-    "BOOTSTRAP_ADMIN_PASSWORD",
-    "DATABASE_URL"
-  ]
+jq -e --argjson keys "$EXPECTED_KEYS" '
+  (keys | sort) == $keys
   and all(.[]; type == "string" and length > 0)
 ' <<<"$source_json" >/dev/null
 

@@ -43,15 +43,9 @@ spec:
                 name: asklake-backend-config
           env:
             {{- $secretName := .Values.backend.runtimeSecret.name }}
-            {{- range $envName, $secretKey := dict
+            {{- $commonKeys := dict
               "DATABASE_URL" .Values.backend.runtimeSecret.keys.databaseUrl
               "BOOTSTRAP_ADMIN_PASSWORD" .Values.backend.runtimeSecret.keys.bootstrapAdminPassword
-              "AI_GATEWAY_SERVICE_TOKEN" .Values.backend.runtimeSecret.keys.aiGatewayServiceToken
-              "AI_MCP_SERVICE_TOKEN" .Values.backend.runtimeSecret.keys.aiMcpServiceToken
-              "AI_CONTEXT_SIGNING_SECRET" .Values.backend.runtimeSecret.keys.aiContextSigningSecret
-              "OPENAI_API_KEY" .Values.backend.runtimeSecret.keys.openaiApiKey
-              "AIRFLOW_API_TOKEN" .Values.backend.runtimeSecret.keys.airflowApiToken
-              "AIRFLOW_PASSWORD" .Values.backend.runtimeSecret.keys.airflowPassword
               "AIRFLOW_EXECUTION_API_TOKEN" .Values.backend.runtimeSecret.keys.airflowExecutionApiToken
               "AIRFLOW_INTERNAL_TOKEN" .Values.backend.runtimeSecret.keys.airflowInternalToken
               "TRINO_AUTH_USERNAME" .Values.backend.runtimeSecret.keys.trinoAuthUsername
@@ -61,11 +55,45 @@ spec:
               "TRINO_RESULT_CURSOR_SECRET" .Values.backend.runtimeSecret.keys.trinoResultCursorSecret
               "TRINO_QUERY_CONFIRMATION_SECRET" .Values.backend.runtimeSecret.keys.trinoQueryConfirmationSecret
             }}
+            {{- range $envName, $secretKey := $commonKeys }}
             - name: {{ $envName }}
               valueFrom:
                 secretKeyRef:
                   name: {{ $secretName }}
                   key: {{ $secretKey }}
+            {{- end }}
+            {{- if eq .Values.backend.config.airflowApiAuthMode "api_token" }}
+            - name: AIRFLOW_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: {{ .Values.backend.runtimeSecret.keys.airflowApiToken }}
+            {{- else }}
+            - name: AIRFLOW_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: {{ .Values.backend.runtimeSecret.keys.airflowPassword }}
+            {{- end }}
+            {{- if eq .Values.backend.config.aiQueryProvider "gateway" }}
+            {{- range $envName, $secretKey := dict
+              "AI_GATEWAY_SERVICE_TOKEN" .Values.backend.runtimeSecret.keys.aiGatewayServiceToken
+              "AI_MCP_SERVICE_TOKEN" .Values.backend.runtimeSecret.keys.aiMcpServiceToken
+              "AI_CONTEXT_SIGNING_SECRET" .Values.backend.runtimeSecret.keys.aiContextSigningSecret
+              "OPENAI_API_KEY" .Values.backend.runtimeSecret.keys.openaiApiKey
+            }}
+            - name: {{ $envName }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: {{ $secretKey }}
+            {{- end }}
+            {{- else }}
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: {{ .Values.backend.runtimeSecret.keys.openaiApiKey }}
             {{- end }}
           volumeMounts:
             - name: backend-runtime-files

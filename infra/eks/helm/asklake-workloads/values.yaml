@@ -39,6 +39,8 @@ backend:
     name: fastapi
     port: 8080
   config:
+    aiQueryProvider: direct
+    airflowApiAuthMode: username_password
     corsOrigins: ""
     bootstrapAdminEmail: ""
     kafkaBroker: ""

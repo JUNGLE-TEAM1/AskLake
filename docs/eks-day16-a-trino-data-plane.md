@@ -1,5 +1,7 @@
 # EKS 16일차 Pair A Phase 3 Trino data plane 검증
 
+> 역사적 foundation 검증 기록이다. 이후 coordinator·TLS·Backend query와 bounded E2E까지 완료했으며 현재 상태는 [Phase 5 E2E](eks-day16-phase5-current-runtime-e2e.md)를 따른다.
+
 ## 결과
 
 Issue #812 Phase 3에서 `asklake-trino` ServiceAccount의 실제 EKS Pod Identity, RDS `iceberg_catalog`, Warehouse·Query Result S3 최소 권한, namespace DNS와 Trino Service/private values 계약을 검증했다. Trino coordinator Deployment는 생성하지 않았다.

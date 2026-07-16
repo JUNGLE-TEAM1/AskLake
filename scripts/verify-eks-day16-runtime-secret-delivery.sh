@@ -5,10 +5,13 @@ set +x
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT_DIR/scripts/lib/verify-eks-context.sh"
+source "$ROOT_DIR/scripts/lib/eks-backend-runtime-profile.sh"
 
 NAMESPACE="${ASKLAKE_EKS_NAMESPACE:-asklake-dev}"
 REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-ap-northeast-2}}"
+BACKEND_SCOPE="${ASKLAKE_BACKEND_RUNTIME_SCOPE:-bounded}"
 INPUT="${ASKLAKE_DAY16_SECRET_INPUT:-$ROOT_DIR/infra/eks/secrets/dev.runtime-secret-input.json}"
+RUNTIME_CONTRACT="${ASKLAKE_DAY16_RUNTIME_CONTRACT:-$ROOT_DIR/infra/eks/secrets/dev.day16-a.runtime-secret-contract.json}"
 
 fail() {
   echo "$1" >&2
@@ -75,7 +78,7 @@ verify_component() {
         .remoteRef.key == $source
         and .remoteRef.property == .secretKey
         and (
-          if $component == "trino" and (.secretKey == "trino-keystore.jks" or .secretKey == "trino-password.db")
+          if $component == "trino" and .secretKey == "trino-keystore.jks"
           then .remoteRef.decodingStrategy == "Base64"
           else (.remoteRef.decodingStrategy // "None") == "None"
           end
@@ -102,7 +105,7 @@ verify_component() {
 
   if [[ "$component" == "trino" ]]; then
     expected_data="$(jq -S -c 'with_entries(
-      if .key == "trino-keystore.jks" or .key == "trino-password.db"
+      if .key == "trino-keystore.jks"
       then . else .value |= @base64 end
     )' <<<"$source_json")"
   else
@@ -138,13 +141,9 @@ jq -e '. == [
 ]' <<<"$airflow_keys" >/dev/null || fail "Airflow preserved key set drifted"
 
 backend_keys="$(kubectl get secret asklake-backend-runtime -n "$NAMESPACE" -o json | jq -c '.data | keys | sort')"
-jq -e '. == [
-  "AIRFLOW_EXECUTION_API_TOKEN",
-  "AIRFLOW_INTERNAL_TOKEN",
-  "AIRFLOW_PASSWORD",
-  "BOOTSTRAP_ADMIN_PASSWORD",
-  "DATABASE_URL"
-]' <<<"$backend_keys" >/dev/null || fail "Backend preserved key set drifted"
+expected_backend_keys="$(asklake_backend_runtime_profile "$ROOT_DIR" "$BACKEND_SCOPE" "$RUNTIME_CONTRACT")" || \
+  fail "Backend runtime profile is invalid: $BACKEND_SCOPE"
+[[ "$backend_keys" == "$expected_backend_keys" ]] || fail "Backend preserved key set drifted"
 
 for service_account in asklake-frontend asklake-backend asklake-airflow asklake-msk-smoke asklake-spark asklake-trino; do
   status=0

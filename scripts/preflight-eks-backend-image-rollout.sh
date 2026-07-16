@@ -5,6 +5,7 @@ set +x
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT_DIR/scripts/lib/verify-eks-context.sh"
+source "$ROOT_DIR/scripts/lib/eks-backend-runtime-profile.sh"
 
 RECEIPT_PATH="${1:-${ASKLAKE_IMAGE_RECEIPT:-}}"
 NAMESPACE="${ASKLAKE_EKS_NAMESPACE:-asklake-dev}"
@@ -24,7 +25,9 @@ fail() {
 }
 
 verify_backend_secret_runtime() {
-  local external_secret_json target_secret_json source_json target_keys source_hash target_hash
+  local external_secret_json target_secret_json source_json target_keys expected_keys source_hash target_hash
+  expected_keys="$(asklake_backend_runtime_profile "$ROOT_DIR" "${ASKLAKE_BACKEND_RUNTIME_SCOPE:-bounded}")" || \
+    fail "Backend runtime profile is invalid"
   external_secret_json="$(kubectl get externalsecret asklake-backend-runtime -n "$NAMESPACE" -o json)"
   target_secret_json="$(kubectl get secret asklake-backend-runtime -n "$NAMESPACE" -o json)"
   target_keys="$(jq -c '.data | keys | sort' <<<"$target_secret_json")"
@@ -52,15 +55,8 @@ verify_backend_secret_runtime() {
     )
   ' <<<"$target_secret_json" >/dev/null || fail "Backend runtime Secret owner or key contract is invalid"
 
-  jq -e '
-    . == ["BOOTSTRAP_ADMIN_PASSWORD", "DATABASE_URL"]
-    or . == [
-      "AIRFLOW_EXECUTION_API_TOKEN",
-      "AIRFLOW_INTERNAL_TOKEN",
-      "AIRFLOW_PASSWORD",
-      "BOOTSTRAP_ADMIN_PASSWORD",
-      "DATABASE_URL"
-    ]
+  jq -e --argjson keys "$expected_keys" '
+    . == $keys
   ' <<<"$target_keys" >/dev/null || fail "Backend runtime Secret contains an unapproved key set"
 
   source_json="$(aws secretsmanager get-secret-value \
@@ -73,7 +69,7 @@ verify_backend_secret_runtime() {
   source_hash="$(jq -S -c . <<<"$source_json" | asklake_sha256)"
   target_hash="$(jq -S -c '.data | with_entries(.value |= @base64d)' <<<"$target_secret_json" | asklake_sha256)"
   [[ "$source_hash" == "$target_hash" ]] || fail "Backend runtime source and target hashes do not match"
-  unset external_secret_json target_secret_json source_json target_keys source_hash target_hash
+  unset external_secret_json target_secret_json source_json target_keys expected_keys source_hash target_hash
 }
 
 for command in aws git helm jq kubectl node; do

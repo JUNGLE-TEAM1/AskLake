@@ -114,7 +114,7 @@ spark_actual="$(kubectl get secret "$SPARK_STAGE" -n "$NAMESPACE" -o json | jq -
 [[ "$(asklake_sha256 <<<"$spark_expected")" == "$(asklake_sha256 <<<"$spark_actual")" ]] || fail "staged Spark target hash mismatch"
 
 trino_expected="$(jq -S -c '.sources.trino | with_entries(
-  if .key == "trino-keystore.jks" or .key == "trino-password.db" then . else .value |= @base64 end
+  if .key == "trino-keystore.jks" then . else .value |= @base64 end
 )' "$INPUT")"
 trino_actual="$(kubectl get secret "$TRINO_STAGE" -n "$NAMESPACE" -o json | jq -S -c '.data')"
 [[ "$(asklake_sha256 <<<"$trino_expected")" == "$(asklake_sha256 <<<"$trino_actual")" ]] || fail "staged Trino target hash mismatch"

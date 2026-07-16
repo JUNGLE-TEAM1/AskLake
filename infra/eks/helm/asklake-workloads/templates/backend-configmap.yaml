@@ -14,7 +14,7 @@ data:
   BOOTSTRAP_ADMIN_EMAIL: {{ .Values.backend.config.bootstrapAdminEmail | quote }}
   AUTH_LEGACY_DEMO_USERS_ENABLED: "false"
   AUTH_PUBLIC_SIGNUP_ENABLED: "false"
-  AI_QUERY_PROVIDER: "direct"
+  AI_QUERY_PROVIDER: {{ .Values.backend.config.aiQueryProvider | quote }}
   ASKLAKE_OBJECT_STORAGE_PROVIDER: {{ .Values.backend.config.objectStorageProvider | quote }}
   ASKLAKE_RAW_BUCKET: {{ .Values.backend.config.rawBucket | quote }}
   ASKLAKE_SPARK_OUTPUT_BUCKET: {{ .Values.backend.config.outputBucket | quote }}
