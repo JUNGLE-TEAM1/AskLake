@@ -13,6 +13,7 @@ from app.core.config import Settings
 from app.models.continuous_sql import ContinuousSqlBatchModel, ContinuousSqlJobModel
 from app.repositories.continuous_sql_repository import ContinuousSqlRepository
 from app.repositories.dashboard_live_repository import ensure_dashboard_live_schema
+from app.repositories.realtime_event_repository import ensure_realtime_event_schema
 from app.schemas.continuous_sql import ContinuousSqlCommandRequest
 from app.schemas.iceberg import IcebergCommitEvidence
 from app.services.continuous_sql_planner import CatalogRelation, ContinuousSqlPlanner
@@ -105,6 +106,7 @@ class ContinuousSqlRuntimeContractTests(unittest.TestCase):
         self.engine = create_engine("sqlite+pysqlite:///:memory:")
         self.db = Session(self.engine)
         ensure_dashboard_live_schema(self.db)
+        ensure_realtime_event_schema(self.db)
         self.repository = ContinuousSqlRepository(self.db)
         self.gateway = FakeGateway()
         self.settings = Settings(
