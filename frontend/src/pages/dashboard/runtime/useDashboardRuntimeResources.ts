@@ -1,12 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
-import {
-  ensureDraftDashboard,
-  getPublishedDashboard,
-} from "../../../services/dashboardRuntimeApi";
-import type {
-  DashboardRuntimeMode,
-  DashboardRuntimeResponse,
-} from "../../../types";
+import { useEffect, useState } from "react";
+import type { DashboardRuntimeMode } from "../../../types";
+import { useDashboardRuntimeLoaders } from "./useDashboardRuntimeLoaders";
 import { usePublishedDashboardLiveRefresh } from "./usePublishedDashboardLiveRefresh";
 
 export function useDashboardRuntimeResources({
@@ -18,71 +12,13 @@ export function useDashboardRuntimeResources({
   dashboardId: string;
   mode: DashboardRuntimeMode;
 }) {
-  const [publishedRuntime, setPublishedRuntime] = useState<DashboardRuntimeResponse | null>(null);
-  const [runtimeLoading, setRuntimeLoading] = useState(false);
-  const [runtimeError, setRuntimeError] = useState<string | null>(null);
-  const [draftRuntime, setDraftRuntime] = useState<DashboardRuntimeResponse | null>(null);
-  const [draftLoading, setDraftLoading] = useState(false);
-  const [draftError, setDraftError] = useState<string | null>(null);
   const [selectedPageId, setSelectedPageId] = useState<string | null>("page-1");
-
-  const selectPageFromResponse = useCallback((runtime: DashboardRuntimeResponse) => {
-    const requestedPageId = new URLSearchParams(window.location.search).get("page");
-    const requestedPageExists = requestedPageId && runtime.pages.some((page) => page.id === requestedPageId);
-    const fallbackPageId = requestedPageExists ? requestedPageId : runtime.pages[0]?.id ?? null;
-
-    setSelectedPageId((currentPageId) => {
-      if (currentPageId && runtime.pages.some((page) => page.id === currentPageId)) {
-        return currentPageId;
-      }
-      return fallbackPageId;
-    });
-  }, []);
-
-  const loadPublishedRuntime = useCallback(async (
-    nextDashboardId: string,
-    options: { silent?: boolean } = {},
-  ) => {
-    if (!options.silent) {
-      setRuntimeLoading(true);
-      setRuntimeError(null);
-    }
-    try {
-      const runtime = await getPublishedDashboard(nextDashboardId);
-      setPublishedRuntime(runtime);
-      setRuntimeError(null);
-      selectPageFromResponse(runtime);
-      return runtime;
-    } catch (error) {
-      if (!options.silent) {
-        setPublishedRuntime(null);
-        setRuntimeError(error instanceof Error ? error.message : "Failed to load the published dashboard.");
-      }
-      return null;
-    } finally {
-      if (!options.silent) setRuntimeLoading(false);
-    }
-  }, [selectPageFromResponse]);
-
-  const loadDraftRuntime = useCallback(async (
-    nextDashboardId: string,
-    options: { silent?: boolean } = {},
-  ) => {
-    if (!options.silent) setDraftLoading(true);
-    setDraftError(null);
-    try {
-      const runtime = await ensureDraftDashboard(nextDashboardId);
-      setDraftRuntime(runtime);
-      selectPageFromResponse(runtime);
-      return runtime;
-    } catch (error) {
-      if (!options.silent) setDraftRuntime(null);
-      setDraftError(error instanceof Error ? error.message : "Failed to load the draft dashboard.");
-      return null;
-    } finally {
-      if (!options.silent) setDraftLoading(false);
-    }
-  }, [selectPageFromResponse]);
+  const {
+    draftError, draftLoading, draftRuntime, loadDraftRuntime,
+    loadPublishedRuntime, publishedRuntime, runtimeError, runtimeLoading,
+    setDraftError, setDraftLoading, setDraftRuntime, setPublishedRuntime,
+    setRuntimeError, setRuntimeLoading,
+  } = useDashboardRuntimeLoaders(setSelectedPageId);
 
   const pages = mode === "published"
     ? (publishedRuntime?.pages ?? [])
