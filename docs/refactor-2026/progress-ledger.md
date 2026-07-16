@@ -5,13 +5,13 @@
 ## 현재 상태
 
 - 계획 버전: `2026-07-16-15-pr`
-- 작업 배치: `4/5`
-- 현재 PR 단위: `11 완료`
+- 작업 배치: `5/5`
+- 현재 PR 단위: `13 진행 중`
 - 상태: `IN_PROGRESS`
-- 시작 기준: `origin/dev@b93ae27370fdfa50ce949bcabb9ff7fe37ca1098`
-- 최근 이슈/PR: `#838` / `#839`
-- 현재 브랜치: `refactor-#838`
-- 다음 사용자 확인 지점: PR 10~12 생성 후
+- 시작 기준: `PR 12 branch@60ec0910`
+- 최근 이슈/PR: `#842` / `생성 예정`
+- 현재 브랜치: `refactor-#842`
+- 다음 사용자 확인 지점: PR 13~15 생성 후
 
 ## 15개 PR 원장
 
@@ -28,8 +28,8 @@
 | 09 | 13~14 | frontend 상태 소유권·ETL Wizard 분해 | 08 | DONE |
 | 10 | 15~16 | Jobs 화면·데이터 hook 분해 | 09 | DONE |
 | 11 | 17 | CSS·Catalog·Layout 경계 | 10 | DONE |
-| 12 | 18~19 | API·DB 호환·Legacy/Fallback 정리 | 11 | WAITING |
-| 13 | 20~21 | 관측성·오류 모델·CI gate | 12 | WAITING |
+| 12 | 18~19 | API·DB 호환·Legacy/Fallback 정리 | 11 | DONE |
+| 13 | 20~21 | 관측성·오류 모델·CI gate | 12 | IN_PROGRESS |
 | 14 | 22~23 | Full-stack E2E·재부팅·장애 복구 | 13 | WAITING |
 | 15 | 24~25 | 최종 감사·배포·rollback 준비 | 14 | WAITING |
 
@@ -79,13 +79,24 @@
 
 ## Latest handoff
 
-- 상태: 배치 4의 이슈·브랜치·PR 3개 생성 완료, 사용자 승인 전 다음 배치 중지
+- 상태: 배치 5 PR 13 구현 및 검증 중
 - 원격 PR: `#837`, `#839`, `#841` 모두 `dev` 대상 ready PR
 - 실제 변경: Jobs·전역 data hook 분해, CSS·Catalog 경계 분리, API·DB persisted 하위 호환 gate와 legacy 경로 가시화
 - 통과: backend unit 419건(1 opt-in skip), API breaking 0건, legacy registry 15건, frontend UI regression 132 checks, TypeScript/Vite production build, diff check
 - 남은 경고: frontend App chunk 약 2.6 MB warning은 R-014 및 후속 bundle/quality gate 범위로 유지한다.
 - 차단 사항: 기술적 blocker 없음. `#837` → `#839` → `#841` 순서 머지가 필요하다.
-- 다음 단위: 사용자 승인 후 PR 13 — observability·CI 품질 gate와 dependency/security 정리
+- 다음 단위: PR 13 완료 후 PR 14 — full-stack E2E와 reboot/fault recovery
+
+## PR 13 작업 기록
+
+- 시작 HEAD: `60ec0910` (PR 12 branch HEAD)
+- branch/issue/PR: `refactor-#842`, `#842`, 생성 예정
+- 포함: HTTP correlation ID, 공통 사용자/운영 오류 모델, recursive redaction, Continuous 진단 ID와 process counter, Job 상세 진단 ID 복사, liveness/readiness 분리, baseline ratchet과 GitHub Actions gate
+- 하위 호환: 기존 API error `code/message/details`, `/api/health`, Continuous `message/context`, DB schema와 Node bridge protocol을 유지하고 additive header/field/endpoint만 추가한다.
+- 제외: 외부 APM 도입, 기존 God file 즉시 제거, production 배포, 장기 metric backend와 alert routing
+- 검증: structural quality ratchet, backend unit 425건(1 opt-in skip), observability/runtime 집중 20건, API breaking 0건(95→98 operations additive), legacy registry 15건, frontend UI regression 136 checks, TypeScript/Vite production build, Python compile·diff check 통과
+- rollback: observability middleware/error additive field/UI와 quality workflow/baseline을 함께 되돌린다. persisted data migration은 없다.
+- 머지 순서: `#841` 다음 PR 13; PR 14는 PR 13 다음이다.
 
 ## PR 04 작업 기록
 
