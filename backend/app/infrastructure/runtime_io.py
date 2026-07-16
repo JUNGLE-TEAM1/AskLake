@@ -15,6 +15,7 @@ from uuid import uuid4
 from fastapi import status
 
 from app.core.errors import ApiError
+from app.core.observability import current_correlation_id
 from app.ports.runtime_io import (
     JsonDocument,
     JsonDocumentState,
@@ -65,7 +66,7 @@ class SubprocessNodeBridge:
         timeout_recovery: Callable[[], dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         script_path = self._scripts_dir / script_name
-        bridge_id = _bridge_request_id(payload)
+        bridge_id = current_correlation_id() or _bridge_request_id(payload)
         bridge_environment = {
             **os.environ,
             "ASKLAKE_NODE_BRIDGE_VERSION": "1.0",
@@ -161,7 +162,7 @@ class VersionedNodeBridge:
         correlation_id: str | None = None,
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
-        request_id = correlation_id or _bridge_request_id(payload)
+        request_id = correlation_id or current_correlation_id() or _bridge_request_id(payload)
         envelope = {
             "version": self.protocol_version,
             "requestId": request_id,

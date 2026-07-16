@@ -3,7 +3,7 @@ from typing import Any, Literal
 
 from pydantic import ConfigDict, Field, field_validator, model_validator
 
-from app.schemas.common import CamelModel, to_camel
+from app.schemas.common import CamelModel, DiagnosticFields, to_camel
 from app.schemas.iceberg import IcebergWriterTarget
 from app.schemas.permissions import PermissionAction, PermissionGrant, ResourcePermissions
 
@@ -195,7 +195,7 @@ class KafkaContinuousConfigDraft(CamelModel):
     schema_evolution_policy: KafkaSchemaEvolutionPolicy = Field(default_factory=KafkaSchemaEvolutionPolicy)
 
 
-class ContinuousRuntimeErrorDetail(CamelModel):
+class ContinuousRuntimeErrorDetail(DiagnosticFields):
     stage: ContinuousRuntimeErrorStage
     code: str
     message: str
