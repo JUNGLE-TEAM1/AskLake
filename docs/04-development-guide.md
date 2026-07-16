@@ -719,6 +719,8 @@ Phase 14 web workload 변경은 `bash scripts/verify-eks-web-workloads.sh`로 �
 
 15.5 물리 조회에서 발견한 Iceberg rows `ApiError` import 수정은 source와 회귀 test에만 있고 현재 배포 Backend image에는 없다. image owner가 이 수정 commit을 포함한 새 `linux/amd64` immutable digest와 formal receipt를 전달하기 전에는 runtime 수정 완료로 표시하지 않는다. 새 receipt가 준비되면 기존 same-digest restart가 아니라 Backend-only atomic image upgrade로 처리하고, receipt revision/digest와 Deployment/Pod imageID를 대조한다. Trino 미배포 상태에서는 rows API가 HTTP 200이 아니라 sanitized HTTP 502 `SQL_STORAGE_ERROR`를 반환하고 `NameError`/generic 500을 만들지 않는지를 검증한다. Trino snapshot HTTP 200은 별도 후속 gate다. 세부 handoff와 rollback 기준은 [15.5 Backend image handoff](eks-day15-5-backend-image-handoff.md)를 따른다.
 
+Issue #798의 변경 전 기준점은 [15.5 runtime 보완 실행 기록](eks-15-5-runtime-remediation-evidence.md)에 둔다. 새 image rollout 전에는 FastAPI 2/2·Pod digest, ALB/RDS, ExternalSecret source/target hash, `external_ec2` process 0, exact 보존 EC2 status와 직전 Helm revision/ECR digest를 다시 확인한다. Phase 0 확인은 읽기 전용이며 새 image 반영이나 live 재검증 성공으로 확대하지 않는다.
+
 ```bash
 export ASKLAKE_EKS_CLUSTER_NAME='<terraform output>'
 export ASKLAKE_IMAGE_RECEIPT='<private *.image-receipt.json>'
