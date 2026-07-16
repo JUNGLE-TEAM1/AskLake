@@ -9,6 +9,7 @@ from sqlalchemy import delete, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.models.base import Base
 from app.models.dashboard_live import (
     DashboardWidgetResultModel,
@@ -18,6 +19,7 @@ from app.models.dashboard_live import (
 )
 from app.models.etl import ETLJobModel
 from app.models.catalog import CatalogDatasetModel
+from app.repositories.realtime_event_repository import RealtimeEventRepository
 
 
 DEFAULT_DASHBOARD_POLL_MS = 1_000
@@ -524,6 +526,24 @@ class DashboardLiveRepository:
         self.db.add(commit)
         self.db.add(freshness)
         self.db.flush()
+        if settings.realtime_events_enabled:
+            RealtimeEventRepository(self.db).append(
+                event_type="dataset.revision.committed",
+                resource_type="dataset",
+                resource_id=dataset_id,
+                aggregate_revision=revision,
+                correlation_id=run_id,
+                idempotency_key=f"dataset:{dataset_id}:revision:{revision}",
+                invalidations=[
+                    f"dataset:{dataset_id}:freshness",
+                    f"dashboard-widgets-by-dataset:{dataset_id}",
+                ],
+                payload={
+                    "runId": run_id,
+                    "commitKind": normalized_commit_kind,
+                },
+                occurred_at=now,
+            )
         return commit, True
 
     def list_commits(

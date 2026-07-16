@@ -8,6 +8,7 @@ import type {
   DashboardRuntimeWidget,
 } from "../../../types";
 import type { DashboardAssistantWidgetPatch } from "../../../services/dashboardAssistantService";
+import type { RealtimeConnectionState } from "../../../services/realtimeEvents";
 import { DashboardCanvas } from "./DashboardCanvas";
 import { DashboardAssistantPanel } from "./DashboardAssistantPanel";
 import { DashboardEditToolbar } from "./DashboardEditToolbar";
@@ -55,6 +56,7 @@ type DashboardRuntimeState = {
   notice: RuntimeNotice | null;
   pages: DashboardRuntimePage[];
   publishedRuntime: DashboardRuntimeResponse | null;
+  realtimeConnectionState: RealtimeConnectionState;
   renamingPageId: string | null;
   runtimeError: string | null;
   runtimeLoading: boolean;
@@ -167,6 +169,7 @@ export function DashboardRuntimeView({
     notice,
     pages,
     publishedRuntime,
+    realtimeConnectionState,
     renamingPageId,
     runtimeError,
     runtimeLoading,
@@ -506,6 +509,7 @@ export function DashboardRuntimeView({
         mode={mode}
         notice={notice}
         pages={pages}
+        realtimeConnectionState={realtimeConnectionState}
         renamingPageId={renamingPageId}
         selectedPageId={selectedPageId}
         shareLink={shareLink}

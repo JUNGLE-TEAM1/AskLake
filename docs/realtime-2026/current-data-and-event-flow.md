@@ -25,11 +25,11 @@
 | Dashboard 화면 상태 | REST snapshot을 보유한 React runtime state | useDashboardRuntimeResources |
 | 정적 SQL 실행 | Trino Query Run 또는 DuckDB compatibility 경로 | SQL router/service |
 
-## 목표 흐름
+## STACK-02 구현 흐름
 
-STACK-02부터 dataset revision commit과 같은 DB transaction에서 durable event를 기록한다. PostgreSQL NOTIFY는 프로세스를 깨우는 힌트일 뿐 권위 데이터가 아니며, API 프로세스는 event log cursor로 누락을 복구한다.
+STACK-02는 dataset revision commit과 같은 DB transaction에서 durable event를 기록한다. Dashboard publish도 published revision과 event를 한 transaction에 둔다. PostgreSQL NOTIFY는 프로세스를 깨우는 힌트일 뿐 권위 데이터가 아니며, API 프로세스는 event log cursor로 누락을 복구한다.
 
-브라우저는 SSE payload를 데이터 본문으로 사용하지 않는다. 알림에 포함된 resource identity와 revision을 기준으로 기존 권한 검사를 거치는 REST endpoint를 targeted refetch한다. 연결 실패, cursor 만료, resync 지시는 기존 polling으로 복귀한다.
+브라우저는 SSE payload를 데이터 본문으로 사용하지 않는다. 알림에 포함된 resource identity와 revision을 기준으로 기존 권한 검사를 거치는 REST endpoint를 targeted refetch한다. 연결 실패, cursor 만료, resync 지시는 snapshot 재조회 또는 기존 polling으로 복귀한다.
 
 ## Race-free snapshot 규칙
 

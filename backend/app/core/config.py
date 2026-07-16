@@ -44,6 +44,15 @@ class Settings(BaseSettings):
     continuous_sql_join_enabled: bool = False
     latest_static_per_batch_enabled: bool = False
     static_change_backfill_enabled: bool = False
+    realtime_event_retention_seconds: int = Field(default=86_400, ge=60, le=604_800)
+    realtime_event_payload_max_bytes: int = Field(default=8_192, ge=512, le=65_536)
+    realtime_replay_limit: int = Field(default=500, ge=1, le=5_000)
+    realtime_subscriber_queue_size: int = Field(default=128, ge=8, le=1_000)
+    realtime_connection_limit_per_actor: int = Field(default=5, ge=1, le=50)
+    realtime_heartbeat_seconds: int = Field(default=15, ge=5, le=60)
+    realtime_dispatch_poll_seconds: float = Field(default=0.5, ge=0.1, le=10.0)
+    realtime_cleanup_interval_seconds: int = Field(default=3_600, ge=60, le=86_400)
+    realtime_sse_send_timeout_seconds: int = Field(default=10, ge=1, le=60)
     scheduled_job_tick_interval_seconds: float = Field(default=30.0, ge=5.0, le=300.0)
     airflow_execution_api_token: str | None = None
     airflow_internal_token: str | None = None

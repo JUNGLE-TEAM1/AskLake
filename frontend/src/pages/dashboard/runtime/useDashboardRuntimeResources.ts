@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   ensureDraftDashboard,
   getPublishedDashboard,
@@ -26,7 +26,7 @@ export function useDashboardRuntimeResources({
   const [draftError, setDraftError] = useState<string | null>(null);
   const [selectedPageId, setSelectedPageId] = useState<string | null>("page-1");
 
-  const selectPageFromResponse = (runtime: DashboardRuntimeResponse) => {
+  const selectPageFromResponse = useCallback((runtime: DashboardRuntimeResponse) => {
     const requestedPageId = new URLSearchParams(window.location.search).get("page");
     const requestedPageExists = requestedPageId && runtime.pages.some((page) => page.id === requestedPageId);
     const fallbackPageId = requestedPageExists ? requestedPageId : runtime.pages[0]?.id ?? null;
@@ -37,26 +37,37 @@ export function useDashboardRuntimeResources({
       }
       return fallbackPageId;
     });
-  };
+  }, []);
 
-  const loadPublishedRuntime = async (nextDashboardId: string) => {
-    setRuntimeLoading(true);
-    setRuntimeError(null);
+  const loadPublishedRuntime = useCallback(async (
+    nextDashboardId: string,
+    options: { silent?: boolean } = {},
+  ) => {
+    if (!options.silent) {
+      setRuntimeLoading(true);
+      setRuntimeError(null);
+    }
     try {
       const runtime = await getPublishedDashboard(nextDashboardId);
       setPublishedRuntime(runtime);
+      setRuntimeError(null);
       selectPageFromResponse(runtime);
       return runtime;
     } catch (error) {
-      setPublishedRuntime(null);
-      setRuntimeError(error instanceof Error ? error.message : "Failed to load the published dashboard.");
+      if (!options.silent) {
+        setPublishedRuntime(null);
+        setRuntimeError(error instanceof Error ? error.message : "Failed to load the published dashboard.");
+      }
       return null;
     } finally {
-      setRuntimeLoading(false);
+      if (!options.silent) setRuntimeLoading(false);
     }
-  };
+  }, [selectPageFromResponse]);
 
-  const loadDraftRuntime = async (nextDashboardId: string, options: { silent?: boolean } = {}) => {
+  const loadDraftRuntime = useCallback(async (
+    nextDashboardId: string,
+    options: { silent?: boolean } = {},
+  ) => {
     if (!options.silent) setDraftLoading(true);
     setDraftError(null);
     try {
@@ -71,7 +82,7 @@ export function useDashboardRuntimeResources({
     } finally {
       if (!options.silent) setDraftLoading(false);
     }
-  };
+  }, [selectPageFromResponse]);
 
   const pages = mode === "published"
     ? (publishedRuntime?.pages ?? [])
@@ -85,7 +96,7 @@ export function useDashboardRuntimeResources({
     }
 
     void loadPublishedRuntime(dashboardId);
-  }, [active, dashboardId, mode]);
+  }, [active, dashboardId, loadPublishedRuntime, mode]);
 
   useEffect(() => {
     if (!active || mode !== "draft") {
@@ -95,7 +106,7 @@ export function useDashboardRuntimeResources({
     }
 
     void loadDraftRuntime(dashboardId);
-  }, [active, dashboardId, mode]);
+  }, [active, dashboardId, loadDraftRuntime, mode]);
 
   useEffect(() => {
     if (!active) return;
@@ -104,11 +115,12 @@ export function useDashboardRuntimeResources({
     }
   }, [active, pages, selectedPageId]);
 
-  usePublishedDashboardLiveRefresh({
+  const realtimeConnectionState = usePublishedDashboardLiveRefresh({
     active,
     dashboardId,
     mode,
     publishedRuntime,
+    reloadPublishedRuntime: loadPublishedRuntime,
     setPublishedRuntime,
   });
 
@@ -120,6 +132,7 @@ export function useDashboardRuntimeResources({
     loadPublishedRuntime,
     pages,
     publishedRuntime,
+    realtimeConnectionState,
     runtimeError,
     runtimeLoading,
     selectedPageId,

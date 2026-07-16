@@ -9,6 +9,7 @@ from fastapi import status
 from pydantic import ValidationError
 
 from app.core.auth_context import ActorContext, require_permission
+from app.core.config import settings
 from app.core.errors import ApiError
 from app.core.permission_metadata import permission_grants_from_roles
 from app.models.dashboard_runtime import DashboardPage as DashboardPageModel
@@ -17,6 +18,7 @@ from app.models.dashboard_runtime import DashboardWidget as DashboardWidgetModel
 from app.repositories.audit_repository import safe_record_audit_event
 from app.repositories.dashboard_card_repository import get_dashboard_card
 from app.repositories.dashboard_runtime_repository import DashboardRuntimeMetaRecord, DashboardRuntimeRepository
+from app.repositories.realtime_event_repository import RealtimeEventRepository
 from app.repositories.dashboard_live_repository import (
     BACKFILL_COMMIT_KIND,
     LEGACY_COMMIT_KIND,
@@ -103,10 +105,12 @@ class DashboardRuntimeService:
         repository: DashboardRuntimeRepository,
         catalog_repository: CatalogRepository,
         live_repository: DashboardLiveRepository | None = None,
+        realtime_event_repository: RealtimeEventRepository | None = None,
     ) -> None:
         self.repository = repository
         self.catalog_repository = catalog_repository
         self.live_repository = live_repository
+        self.realtime_event_repository = realtime_event_repository
         self._continuous_job_cache: dict[str, object | None] = {}
 
     def get_published_runtime(self, dashboard_id: str, actor: ActorContext | None = None) -> DashboardRuntimeResponse:
@@ -298,6 +302,18 @@ class DashboardRuntimeService:
         published_revision_id = published_revision.id
         published_at = published_revision.published_at or datetime.now(UTC)
         self.repository.update_dashboard_published_metadata(dashboard_id, published_revision_id, published_at)
+        if settings.realtime_events_enabled:
+            RealtimeEventRepository(self.repository.db).append(
+                event_type="dashboard.published",
+                resource_type="dashboard",
+                resource_id=dashboard_id,
+                aggregate_revision=published_revision.version,
+                correlation_id=published_revision_id,
+                idempotency_key=f"dashboard:{dashboard_id}:published:{published_revision_id}",
+                invalidations=[f"dashboard:{dashboard_id}:published"],
+                payload={"publishedRevisionId": published_revision_id},
+                occurred_at=published_at,
+            )
         self.repository.db.commit()
         return PublishDashboardResponse(
             dashboard_id=dashboard_id,
@@ -313,6 +329,12 @@ class DashboardRuntimeService:
         actor: ActorContext,
         dashboard_card: DashboardCard,
     ) -> DashboardRuntimeResponse:
+        snapshot_event_cursor = (
+            self.realtime_event_repository.max_cursor()
+            if mode == DashboardRuntimeMode.PUBLISHED
+            and self.realtime_event_repository is not None
+            else 0
+        )
         has_published_revision = (
             dashboard_meta.has_published_revision
             or (mode == DashboardRuntimeMode.PUBLISHED and revision is not None)
@@ -323,6 +345,7 @@ class DashboardRuntimeService:
                 dashboard=self._dashboard_meta_to_schema(dashboard_meta, has_published_revision, actor, dashboard_card),
                 mode=mode,
                 revision=None,
+                event_cursor=snapshot_event_cursor,
                 pages=[],
                 widgets_by_page_id={},
                 filters=[],
@@ -347,6 +370,7 @@ class DashboardRuntimeService:
                 dashboard=self._dashboard_meta_to_schema(dashboard_meta, has_published_revision, actor, dashboard_card),
                 mode=mode,
                 revision=self._revision_to_schema(revision),
+                event_cursor=snapshot_event_cursor,
                 pages=[self._page_to_schema(page) for page in pages],
                 widgets_by_page_id={
                     page_id: [
