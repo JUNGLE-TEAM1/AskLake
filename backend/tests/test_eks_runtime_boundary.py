@@ -209,12 +209,25 @@ class EksSparkRunnerBoundaryTests(unittest.TestCase):
             patch.object(etl_service, "job_payload_for_spark", return_value={"id": "JOB-EKS"}),
             patch.object(etl_service, "run_node_bridge", return_value=expected) as node_bridge,
         ):
-            actual = etl_service.run_spark_job(Mock(), job, "run", "RUN-EKS")
+            progress_callback = Mock()
+            actual = etl_service.run_spark_job(
+                Mock(),
+                job,
+                "run",
+                "RUN-EKS",
+                spark_progress_callback=progress_callback,
+            )
 
         self.assertEqual(actual, expected)
         ensure_target.assert_called_once()
         self.assertEqual(node_bridge.call_args.kwargs["timeout_seconds"], 7260)
         self.assertIsNone(node_bridge.call_args.kwargs["timeout_recovery"])
+        progress_file = node_bridge.call_args.kwargs["progress_file"]
+        self.assertEqual(
+            node_bridge.call_args.args[2]["sparkKubernetesProgressFile"],
+            str(progress_file),
+        )
+        self.assertIs(node_bridge.call_args.kwargs["progress_callback"], progress_callback)
 
     def test_stale_execution_generation_cannot_commit_catalog_result(self) -> None:
         database = Mock()

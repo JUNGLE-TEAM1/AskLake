@@ -86,6 +86,7 @@ test("lost create response recovers the same SparkApplication without another PO
     },
   };
   const calls = [];
+  const progress = [];
   const requestJson = async (method, path) => {
     calls.push([method, path]);
     if (method === "POST") throw new Error("simulated response loss");
@@ -95,12 +96,27 @@ test("lost create response recovers the same SparkApplication without another PO
         status: 200,
       };
     }
+    if (path.includes("/pods/")) {
+      return {
+        body: {
+          status: {
+            containerStatuses: [{
+              name: "spark-kubernetes-driver",
+              state: { terminated: { exitCode: 0, finishedAt: "2026-07-16T02:00:00Z", reason: "Completed" } },
+            }],
+            phase: "Succeeded",
+          },
+        },
+        status: 200,
+      };
+    }
     return { body: completed, status: 200 };
   };
   const result = await submitAndWait({
     application,
     delay: async () => undefined,
     now: () => 1_000,
+    onProgress: (execution) => progress.push(execution),
     pollIntervalMs: 1,
     requestJson,
     timeoutMs: 1_000,
@@ -109,6 +125,59 @@ test("lost create response recovers the same SparkApplication without another PO
   assert.equal(result.report.status, "success");
   assert.equal(result.report.kubernetesExecution.applicationUid, "spark-uid-001");
   assert.equal(result.report.kubernetesExecution.recovered, true);
+  assert.equal(result.report.kubernetesExecution.namespace, "asklake-dev");
+  assert.equal(result.report.kubernetesExecution.runId, RUN_ID);
+  assert.equal(result.report.kubernetesExecution.jobId, JOB_ID);
+  assert.equal(result.report.kubernetesExecution.driverPodPhase, "Succeeded");
+  assert.equal(result.report.kubernetesExecution.driverTerminationReason, "Completed");
+  assert.equal(result.report.kubernetesExecution.resultMarkerFound, true);
+  assert.equal(progress[0].applicationUid, "spark-uid-001");
+  assert.equal(progress.at(-1).resultMarkerFound, true);
+});
+
+test("publishes Kubernetes UID before waiting for a non-terminal application", async () => {
+  const application = applicationFixture();
+  const submitted = {
+    ...application,
+    metadata: { ...application.metadata, uid: "spark-uid-running-001" },
+    status: { applicationState: { state: "SUBMITTED" } },
+  };
+  const completed = {
+    ...submitted,
+    status: {
+      applicationState: { state: "COMPLETED" },
+      driverInfo: { podName: "asklake-driver-running-001" },
+    },
+  };
+  const progress = [];
+  const requestJson = async (method, path) => {
+    if (method === "POST") return { body: submitted, status: 201 };
+    if (path.includes("/pods/") && path.includes("/log")) {
+      return {
+        body: `ASKLAKE_SPARK_JOB_RESULT=${JSON.stringify({ runId: RUN_ID, status: "success" })}\n`,
+        status: 200,
+      };
+    }
+    if (path.includes("/pods/")) return { body: { status: { phase: "Succeeded" } }, status: 200 };
+    return { body: completed, status: 200 };
+  };
+
+  await submitAndWait({
+    application,
+    delay: async () => {
+      assert.equal(progress.length, 1);
+      assert.equal(progress[0].applicationUid, "spark-uid-running-001");
+      assert.equal(progress[0].state, "SUBMITTED");
+    },
+    now: () => 1_000,
+    onProgress: (execution) => progress.push(execution),
+    pollIntervalMs: 1,
+    requestJson,
+    timeoutMs: 1_000,
+  });
+
+  assert.equal(progress.at(-1).state, "COMPLETED");
+  assert.equal(progress.at(-1).resultMarkerFound, true);
 });
 
 test("existing deterministic name with another run identity is rejected", async () => {

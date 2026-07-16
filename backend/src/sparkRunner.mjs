@@ -212,6 +212,9 @@ function runSparkPipelineWithSource(job, command, runId, source, executionMode, 
       }),
       positiveInteger(options.sparkRestTimeoutMs, sparkRunTimeoutMs()),
       process.env,
+      {
+        progressFile: sparkKubernetesProgressFileForRun(runId, options.sparkKubernetesProgressFile),
+      },
     )
     : executionMode === "rest"
       ? runSparkRestSubmission(
@@ -507,7 +510,7 @@ export function createSparkKubernetesApplication({
   };
 }
 
-export function runSparkKubernetesApplication(application, timeoutMs, environment = process.env) {
+export function runSparkKubernetesApplication(application, timeoutMs, environment = process.env, options = {}) {
   const result = spawnSync(process.execPath, [sparkKubernetesClientScript], {
     cwd: backendDir,
     encoding: "utf8",
@@ -515,6 +518,7 @@ export function runSparkKubernetesApplication(application, timeoutMs, environmen
     input: JSON.stringify({
       application,
       pollIntervalMs: positiveInteger(environment.ASKLAKE_SPARK_KUBERNETES_POLL_INTERVAL_MS, 2_000),
+      progressFile: options.progressFile,
       timeoutMs: positiveInteger(timeoutMs, 7_200_000),
     }),
     maxBuffer: 32 * 1024 * 1024,
@@ -1332,6 +1336,17 @@ function sparkRestStateFileForRun(runId, configured) {
   const relative = path.relative(reportDir, resolved);
   if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
     throw sparkConfigurationError("Spark REST state file must be below ASKLAKE_SPARK_REPORT_DIR.");
+  }
+  return resolved;
+}
+
+function sparkKubernetesProgressFileForRun(runId, configured) {
+  const candidate = configured
+    || path.join(reportDir, `${safeArtifactSegment(runId)}.spark-kubernetes-state.json`);
+  const resolved = requiredSparkRestStateFile(candidate);
+  const relative = path.relative(reportDir, resolved);
+  if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw sparkConfigurationError("Spark Kubernetes progress file must be below ASKLAKE_SPARK_REPORT_DIR.");
   }
   return resolved;
 }

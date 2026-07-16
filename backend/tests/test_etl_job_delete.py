@@ -93,6 +93,38 @@ def kafka_fixture_job(job_id: str) -> ETLJobModel:
     return job
 
 
+def kubernetes_execution_fixture(job_id: str, run_id: str, *, recovered: bool = False) -> dict:
+    return {
+        "applicationName": "asklake-run-contract-001",
+        "applicationUid": "spark-uid-contract-001",
+        "driverPodName": "asklake-run-contract-001-driver",
+        "driverPodPhase": "Succeeded",
+        "driverTerminationReason": "Completed",
+        "driverExitCode": 0,
+        "imageDigest": f"example.invalid/spark@sha256:{'a' * 64}",
+        "jobId": job_id,
+        "namespace": "asklake-dev",
+        "observedAt": "2026-07-16T02:00:00Z",
+        "recovered": recovered,
+        "resultMarkerFound": True,
+        "runId": run_id,
+        "state": "COMPLETED",
+    }
+
+
+def spark_terminal_result(job_id: str, run_id: str, execution: dict) -> dict:
+    return {
+        "endedAt": "2026-07-16T02:00:02Z",
+        "inputRows": 2,
+        "kubernetesExecution": execution,
+        "outputPath": f"s3a://asklake-output/test/{run_id}",
+        "outputRows": 2,
+        "runId": run_id,
+        "startedAt": "2026-07-16T02:00:00Z",
+        "status": "success",
+    }
+
+
 class EtlJobDeleteTests(unittest.TestCase):
     def setUp(self) -> None:
         self.engine = create_engine("sqlite+pysqlite:///:memory:")
@@ -772,6 +804,108 @@ class EtlJobDeleteRunConcurrencyTests(unittest.TestCase):
             run = db.get(ETLRunModel, run_id)
             self.assertEqual(run.task_states["sparkExecution"]["status"], "success")
             self.assertEqual(run.task_states["sparkResult"]["status"], "success")
+
+    def test_kubernetes_execution_identity_is_persisted_before_terminal_result(self) -> None:
+        job_id = "JOB-SQLITE-SPARK-KUBERNETES-PROGRESS"
+        run_id = "RUN-SQLITE-SPARK-KUBERNETES-PROGRESS"
+        self.insert_job(job_id)
+        self.insert_airflow_run(job_id, run_id)
+        observed_while_running: dict = {}
+
+        def spark_with_progress(_db, _job, _command, _run_id, *, spark_progress_callback):
+            progress = kubernetes_execution_fixture(job_id, run_id)
+            spark_progress_callback(progress)
+            with self.session_factory() as observer:
+                running = observer.get(ETLRunModel, run_id)
+                observed_while_running.update(running.task_states["sparkExecution"]["kubernetesExecution"])
+            return spark_terminal_result(job_id, run_id, progress)
+
+        with (
+            patch.dict(os.environ, {"ASKLAKE_SPARK_RUNNER": "kubernetes"}),
+            patch("app.repositories.etl_repository.ensure_schema", return_value=None),
+            patch("app.services.etl_service.run_spark_job", side_effect=spark_with_progress),
+            self.session_factory() as db,
+        ):
+            result = execute_airflow_spark_run(db, job_id=job_id, run_id=run_id, command="run")
+
+        self.assertEqual(observed_while_running["applicationUid"], "spark-uid-contract-001")
+        self.assertEqual(observed_while_running["namespace"], "asklake-dev")
+        self.assertEqual(result["kubernetesExecution"]["resultMarkerFound"], True)
+        with self.session_factory() as db:
+            run = db.get(ETLRunModel, run_id)
+            self.assertEqual(run.task_states["sparkExecution"]["status"], "success")
+            self.assertEqual(
+                run.task_states["sparkResult"]["kubernetesExecution"]["applicationUid"],
+                "spark-uid-contract-001",
+            )
+
+    def test_kubernetes_terminal_identity_mismatch_is_not_marked_success(self) -> None:
+        job_id = "JOB-SQLITE-SPARK-KUBERNETES-MISMATCH"
+        run_id = "RUN-SQLITE-SPARK-KUBERNETES-MISMATCH"
+        self.insert_job(job_id)
+        self.insert_airflow_run(job_id, run_id)
+
+        def spark_with_mismatch(_db, _job, _command, _run_id, *, spark_progress_callback):
+            progress = kubernetes_execution_fixture(job_id, run_id)
+            spark_progress_callback(progress)
+            terminal = {**progress, "applicationUid": "spark-uid-different"}
+            return spark_terminal_result(job_id, run_id, terminal)
+
+        with (
+            patch.dict(os.environ, {"ASKLAKE_SPARK_RUNNER": "kubernetes"}),
+            patch("app.repositories.etl_repository.ensure_schema", return_value=None),
+            patch("app.services.etl_service.run_spark_job", side_effect=spark_with_mismatch),
+            self.session_factory() as db,
+        ):
+            with self.assertRaises(ApiError) as raised:
+                execute_airflow_spark_run(db, job_id=job_id, run_id=run_id, command="run")
+
+        self.assertEqual(raised.exception.code, "SPARK_EXECUTION_IDENTITY_MISMATCH")
+        with self.session_factory() as db:
+            run = db.get(ETLRunModel, run_id)
+            self.assertEqual(run.task_states["sparkExecution"]["status"], "failed")
+            self.assertEqual(
+                run.task_states["sparkExecution"]["kubernetesExecution"]["applicationUid"],
+                "spark-uid-contract-001",
+            )
+            self.assertNotIn("sparkResult", run.task_states)
+
+    def test_kubernetes_retry_recovers_the_same_persisted_uid(self) -> None:
+        job_id = "JOB-SQLITE-SPARK-KUBERNETES-RECOVERY"
+        run_id = "RUN-SQLITE-SPARK-KUBERNETES-RECOVERY"
+        self.insert_job(job_id)
+        self.insert_airflow_run(job_id, run_id)
+        calls = 0
+
+        def recover_same_application(_db, _job, _command, _run_id, *, spark_progress_callback):
+            nonlocal calls
+            calls += 1
+            progress = kubernetes_execution_fixture(job_id, run_id, recovered=calls > 1)
+            spark_progress_callback(progress)
+            if calls == 1:
+                raise RuntimeError("simulated FastAPI interruption")
+            return spark_terminal_result(job_id, run_id, progress)
+
+        with (
+            patch.dict(os.environ, {"ASKLAKE_SPARK_RUNNER": "kubernetes"}),
+            patch("app.repositories.etl_repository.ensure_schema", return_value=None),
+            patch("app.services.etl_service.run_spark_job", side_effect=recover_same_application),
+        ):
+            with self.session_factory() as db:
+                with self.assertRaisesRegex(RuntimeError, "interruption"):
+                    execute_airflow_spark_run(db, job_id=job_id, run_id=run_id, command="run")
+            with self.session_factory() as db:
+                result = execute_airflow_spark_run(db, job_id=job_id, run_id=run_id, command="run")
+
+        self.assertEqual(result["kubernetesExecution"]["applicationUid"], "spark-uid-contract-001")
+        self.assertEqual(result["kubernetesExecution"]["recovered"], True)
+        with self.session_factory() as db:
+            run = db.get(ETLRunModel, run_id)
+            self.assertEqual(run.execution_generation, 2)
+            self.assertEqual(
+                run.task_states["sparkExecution"]["kubernetesExecution"]["applicationUid"],
+                "spark-uid-contract-001",
+            )
 
     def test_two_scheduler_ticks_reserve_one_airflow_run(self) -> None:
         job_id = "JOB-SQLITE-SCHEDULER-RACE"

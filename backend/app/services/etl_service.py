@@ -2412,12 +2412,20 @@ def writer_mode_for_pipeline(source_type: str, source_config: Any) -> str:
     return "append" if incremental_folder else "replace"
 
 
-def run_spark_job(db: Session, job: ETLJobModel, command: str, run_id: str) -> dict[str, Any]:
+def run_spark_job(
+    db: Session,
+    job: ETLJobModel,
+    command: str,
+    run_id: str,
+    *,
+    spark_progress_callback: Callable[[dict[str, Any]], None] | None = None,
+) -> dict[str, Any]:
     ensure_batch_iceberg_target(db, job)
     rest_mode = spark_rest_mode_enabled()
     kubernetes_mode = spark_kubernetes_mode_enabled()
     poll_timeout_ms = spark_rest_poll_timeout_ms()
     state_file = spark_rest_submission_state_file(run_id)
+    kubernetes_state_file = spark_kubernetes_execution_state_file(run_id)
     incremental_since, incremental_before = source_incremental_window(db, job, run_id)
     source_window_rebaseline = source_uses_incremental_folder_window(job) and incremental_since is None
     source_object_inventory = incremental_source_object_inventory(
@@ -2451,10 +2459,17 @@ def run_spark_job(db: Session, job: ETLJobModel, command: str, run_id: str) -> d
                 source_iceberg_table=source_iceberg_table,
             ),
             "runId": run_id,
+            **(
+                {"sparkKubernetesProgressFile": str(kubernetes_state_file)}
+                if kubernetes_mode
+                else {}
+            ),
         },
         error_marker="ASKLAKE_SPARK_RUN_ERROR",
         timeout_seconds=spark_python_bridge_timeout_seconds(poll_timeout_ms) if rest_mode or kubernetes_mode else 900,
         timeout_recovery=(lambda: recover_spark_rest_submission(state_file)) if rest_mode else None,
+        progress_callback=spark_progress_callback if kubernetes_mode else None,
+        progress_file=kubernetes_state_file if kubernetes_mode else None,
     )
     if source_object_inventory is not None:
         source_collection = result.get("sourceCollection")
@@ -2542,6 +2557,13 @@ def execute_airflow_spark_run(
     if run is None:
         with_execution_lease.stop()
         raise run_execution_lease_lost(job_id, run_id)
+    previous_execution = (run.task_states or {}).get("sparkExecution")
+    previous_kubernetes_execution = (
+        previous_execution.get("kubernetesExecution")
+        if isinstance(previous_execution, dict)
+        and isinstance(previous_execution.get("kubernetesExecution"), dict)
+        else None
+    )
     run.task_states = {
         **(run.task_states or {}),
         "sparkExecution": {
@@ -2549,6 +2571,11 @@ def execute_airflow_spark_run(
             "generation": lease.generation,
             "startedAt": iso_now(),
             "status": "running",
+            **(
+                {"kubernetesExecution": previous_kubernetes_execution}
+                if previous_kubernetes_execution is not None
+                else {}
+            ),
         },
     }
     db.commit()
@@ -2557,7 +2584,22 @@ def execute_airflow_spark_run(
         job = etl_repository.get_job(db, job_id)
         if job is None:
             raise ApiError(ErrorCode.NOT_FOUND, f"Job not found after Spark claim: {job_id}", status.HTTP_404_NOT_FOUND)
-        result = run_spark_job(db, job, command, run_id)
+        if spark_kubernetes_mode_enabled():
+            progress_callback = spark_kubernetes_execution_progress_callback(
+                db,
+                job_id=job_id,
+                run_id=run_id,
+                generation=lease.generation,
+            )
+            result = run_spark_job(
+                db,
+                job,
+                command,
+                run_id,
+                spark_progress_callback=progress_callback,
+            )
+        else:
+            result = run_spark_job(db, job, command, run_id)
     except Exception as exc:
         with_execution_lease.stop()
         finalize_spark_execution_attempt(
@@ -2573,6 +2615,21 @@ def execute_airflow_spark_run(
         raise run_execution_lease_lost(job_id, run_id)
 
     manifest = spark_result_manifest(result, run_id)
+    if str(manifest.get("runId") or "") != run_id:
+        mismatch = spark_execution_identity_mismatch(
+            "Spark result runId does not match the persisted AskLake Run.",
+            job_id=job_id,
+            run_id=run_id,
+        )
+        finalize_spark_execution_attempt(
+            db,
+            job_id=job_id,
+            run_id=run_id,
+            generation=lease.generation,
+            error=mismatch.message,
+        )
+        raise mismatch
+    db.expire_all()
     run = etl_repository.get_run_for_execution_fence(
         db,
         run_id,
@@ -2589,6 +2646,46 @@ def execute_airflow_spark_run(
     execution = (run.task_states or {}).get("sparkExecution")
     if not isinstance(execution, dict) or execution.get("generation") != lease.generation:
         raise run_execution_lease_lost(job_id, run_id)
+    if spark_kubernetes_mode_enabled():
+        try:
+            terminal_kubernetes_execution = normalize_spark_kubernetes_execution(
+                manifest.get("kubernetesExecution"),
+                job_id=job_id,
+                run_id=run_id,
+            )
+            persisted_kubernetes_execution = execution.get("kubernetesExecution")
+            if not isinstance(persisted_kubernetes_execution, dict):
+                raise spark_execution_identity_mismatch(
+                    "SparkApplication identity was not persisted before terminal result handling.",
+                    job_id=job_id,
+                    run_id=run_id,
+                )
+            terminal_kubernetes_execution = merge_spark_kubernetes_execution(
+                persisted_kubernetes_execution,
+                terminal_kubernetes_execution,
+                job_id=job_id,
+                run_id=run_id,
+            )
+            if manifest.get("status") == "success" and terminal_kubernetes_execution.get("resultMarkerFound") is not True:
+                raise spark_execution_identity_mismatch(
+                    "Spark success result is missing the driver result marker.",
+                    job_id=job_id,
+                    run_id=run_id,
+                )
+            manifest["kubernetesExecution"] = terminal_kubernetes_execution
+            execution = {
+                **execution,
+                "kubernetesExecution": terminal_kubernetes_execution,
+            }
+        except ApiError as exc:
+            finalize_spark_execution_attempt(
+                db,
+                job_id=job_id,
+                run_id=run_id,
+                generation=lease.generation,
+                error=exc.message,
+            )
+            raise
     run.input_rows = format_rows(manifest.get("inputRows"))
     run.output_rows = format_rows(manifest.get("outputRows"))
     run.output_path = manifest.get("outputPath") or run.output_path
@@ -2669,6 +2766,152 @@ def run_execution_lease_lost(job_id: str, run_id: str) -> ApiError:
         status.HTTP_409_CONFLICT,
         {"jobId": job_id, "runId": run_id},
     )
+
+
+SPARK_KUBERNETES_IMMUTABLE_IDENTITY_FIELDS = (
+    "runId",
+    "jobId",
+    "namespace",
+    "applicationName",
+    "applicationUid",
+    "imageDigest",
+    "driverPodName",
+)
+
+
+def spark_execution_identity_mismatch(message: str, *, job_id: str, run_id: str) -> ApiError:
+    return ApiError(
+        "SPARK_EXECUTION_IDENTITY_MISMATCH",
+        message,
+        status.HTTP_409_CONFLICT,
+        {"jobId": job_id, "runId": run_id},
+    )
+
+
+def normalize_spark_kubernetes_execution(
+    value: Any,
+    *,
+    job_id: str,
+    run_id: str,
+) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise spark_execution_identity_mismatch(
+            "Spark Kubernetes execution identity is missing.",
+            job_id=job_id,
+            run_id=run_id,
+        )
+    normalized: dict[str, Any] = {}
+    for key in ("runId", "jobId", "namespace", "applicationName", "applicationUid", "imageDigest", "state"):
+        item = str(value.get(key) or "").strip()
+        if not item:
+            raise spark_execution_identity_mismatch(
+                f"Spark Kubernetes execution identity is missing {key}.",
+                job_id=job_id,
+                run_id=run_id,
+            )
+        normalized[key] = item
+    if normalized["runId"] != run_id or normalized["jobId"] != job_id:
+        raise spark_execution_identity_mismatch(
+            "Spark Kubernetes run/job identity does not match the persisted AskLake Run.",
+            job_id=job_id,
+            run_id=run_id,
+        )
+    for key in ("driverPodName", "driverPodPhase", "driverTerminationReason", "driverFinishedAt", "observedAt"):
+        item = str(value.get(key) or "").strip()
+        if item:
+            normalized[key] = item
+    if isinstance(value.get("driverExitCode"), int) and not isinstance(value.get("driverExitCode"), bool):
+        normalized["driverExitCode"] = value["driverExitCode"]
+    if isinstance(value.get("recovered"), bool):
+        normalized["recovered"] = value["recovered"]
+    if isinstance(value.get("resultMarkerFound"), bool):
+        normalized["resultMarkerFound"] = value["resultMarkerFound"]
+    return normalized
+
+
+def merge_spark_kubernetes_execution(
+    current: dict[str, Any],
+    observed: dict[str, Any],
+    *,
+    job_id: str,
+    run_id: str,
+) -> dict[str, Any]:
+    for key in SPARK_KUBERNETES_IMMUTABLE_IDENTITY_FIELDS:
+        current_value = str(current.get(key) or "").strip()
+        observed_value = str(observed.get(key) or "").strip()
+        if current_value and observed_value and current_value != observed_value:
+            raise spark_execution_identity_mismatch(
+                f"Spark Kubernetes execution identity changed for {key}.",
+                job_id=job_id,
+                run_id=run_id,
+            )
+    return {**current, **observed}
+
+
+def persist_spark_kubernetes_execution_progress(
+    db: Session,
+    *,
+    job_id: str,
+    run_id: str,
+    generation: int,
+    progress: dict[str, Any],
+) -> None:
+    run = etl_repository.get_run_for_execution_fence(
+        db,
+        run_id,
+        owner=FASTAPI_EXECUTION_OWNER,
+        generation=generation,
+    )
+    if run is None:
+        raise run_execution_lease_lost(job_id, run_id)
+    if run.job_id != job_id:
+        raise spark_execution_identity_mismatch(
+            "Spark progress jobId does not match the persisted AskLake Run.",
+            job_id=job_id,
+            run_id=run_id,
+        )
+    execution = (run.task_states or {}).get("sparkExecution")
+    if not isinstance(execution, dict) or execution.get("generation") != generation:
+        raise run_execution_lease_lost(job_id, run_id)
+    observed = normalize_spark_kubernetes_execution(progress, job_id=job_id, run_id=run_id)
+    current = execution.get("kubernetesExecution")
+    if isinstance(current, dict):
+        observed = merge_spark_kubernetes_execution(
+            current,
+            observed,
+            job_id=job_id,
+            run_id=run_id,
+        )
+    run.task_states = {
+        **(run.task_states or {}),
+        "sparkExecution": {
+            **execution,
+            "kubernetesExecution": observed,
+        },
+    }
+    db.commit()
+
+
+def spark_kubernetes_execution_progress_callback(
+    db: Session,
+    *,
+    job_id: str,
+    run_id: str,
+    generation: int,
+) -> Callable[[dict[str, Any]], None]:
+    progress_sessions = sessionmaker(bind=db.get_bind(), autoflush=False, autocommit=False, class_=Session)
+
+    def persist(progress: dict[str, Any]) -> None:
+        with progress_sessions() as progress_db:
+            persist_spark_kubernetes_execution_progress(
+                progress_db,
+                job_id=job_id,
+                run_id=run_id,
+                generation=generation,
+                progress=progress,
+            )
+
+    return persist
 
 
 def reconcile_airflow_catalog(
@@ -5579,8 +5822,13 @@ def run_node_bridge(
     error_marker: str,
     timeout_seconds: int,
     timeout_recovery: Callable[[], dict[str, Any]] | None = None,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
+    progress_file: Path | None = None,
 ) -> dict[str, Any]:
     script_path = SCRIPTS_DIR / script_name
+    progress_watcher = BridgeProgressFileWatcher(progress_file, progress_callback)
+    progress_watcher.start()
+    timeout_error: subprocess.TimeoutExpired | None = None
     try:
         result = subprocess.run(
             ["node", str(script_path)],
@@ -5593,6 +5841,13 @@ def run_node_bridge(
             timeout=timeout_seconds,
         )
     except subprocess.TimeoutExpired as exc:
+        timeout_error = exc
+        result = None
+    finally:
+        progress_error = progress_watcher.stop()
+    if progress_error is not None:
+        raise progress_error
+    if timeout_error is not None:
         recovery: dict[str, Any] = {"attempted": timeout_recovery is not None}
         if timeout_recovery is not None:
             try:
@@ -5604,7 +5859,8 @@ def run_node_bridge(
             f"{script_name} exceeded its derived {timeout_seconds}s bridge timeout.",
             status.HTTP_504_GATEWAY_TIMEOUT,
             {"recovery": recovery, "timeoutSeconds": timeout_seconds},
-        ) from exc
+        ) from timeout_error
+    assert result is not None
     stdout = result.stdout or ""
     stderr = result.stderr or ""
     if result.returncode != 0:
@@ -5627,6 +5883,64 @@ def run_node_bridge(
         payload_result.setdefault("stdout", stdout)
         payload_result.setdefault("stderr", stderr)
     return payload_result
+
+
+class BridgeProgressFileWatcher:
+    def __init__(
+        self,
+        progress_file: Path | None,
+        progress_callback: Callable[[dict[str, Any]], None] | None,
+    ) -> None:
+        self._progress_file = progress_file
+        self._progress_callback = progress_callback
+        self._last_content: str | None = None
+        self._error: Exception | None = None
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        if self._progress_file is None or self._progress_callback is None:
+            return
+        self._progress_file.unlink(missing_ok=True)
+        self._thread = threading.Thread(target=self._run, name="asklake-spark-kubernetes-progress", daemon=True)
+        self._thread.start()
+
+    def stop(self) -> Exception | None:
+        if self._thread is None:
+            return None
+        self._stop.set()
+        self._thread.join(timeout=1)
+        self._consume()
+        try:
+            self._progress_file.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return self._error
+
+    def _run(self) -> None:
+        while not self._stop.wait(0.05):
+            self._consume()
+
+    def _consume(self) -> None:
+        if self._error is not None or self._progress_file is None or self._progress_callback is None:
+            return
+        try:
+            content = self._progress_file.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            self._error = exc
+            return
+        if content == self._last_content:
+            return
+        self._last_content = content
+        try:
+            progress = json.loads(content)
+            if not isinstance(progress, dict):
+                raise ValueError("Spark Kubernetes progress state must be a JSON object")
+            self._progress_callback(progress)
+        except Exception as exc:
+            self._error = exc
 
 
 def recover_spark_rest_submission(state_file: Path) -> dict[str, Any]:
@@ -5694,6 +6008,14 @@ def spark_rest_submission_state_file(run_id: str) -> Path:
         report_dir = BACKEND_DIR / report_dir
     safe_run_id = re.sub(r"[^a-zA-Z0-9_.-]+", "-", str(run_id)).strip("-") or "run"
     return (report_dir.resolve() / f"{safe_run_id.lower()}.spark-rest-state.json")
+
+
+def spark_kubernetes_execution_state_file(run_id: str) -> Path:
+    report_dir = Path(os.environ.get("ASKLAKE_SPARK_REPORT_DIR") or BACKEND_DIR / "tmp" / "spark-runs")
+    if not report_dir.is_absolute():
+        report_dir = BACKEND_DIR / report_dir
+    safe_run_id = re.sub(r"[^a-zA-Z0-9_.-]+", "-", str(run_id)).strip("-") or "run"
+    return (report_dir.resolve() / f"{safe_run_id.lower()}.spark-kubernetes-state.json")
 
 
 def continuous_maintenance_state_file(run_id: str) -> Path:

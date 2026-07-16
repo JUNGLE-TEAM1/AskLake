@@ -1021,4 +1021,24 @@ EKS FastAPI는 아래 환경 계약을 사용한다.
 }
 ```
 
-`ASKLAKE_SPARK_RUNNER=kubernetes`에서 같은 `runId`는 같은 Kubernetes object name을 사용한다. 최초 create 응답을 잃거나 이미 object가 있으면 provider는 기존 `SparkApplication`의 run/job/image identity를 검증한 뒤 이어서 polling한다. identity가 다르면 기존 object를 재사용하지 않고 실행을 실패시킨다. terminal 성공은 driver log에 유효한 `ASKLAKE_SPARK_JOB_RESULT` marker가 있어야 하며, timeout은 해당 application 삭제 후 실패 처리한다. API 응답에 저장되는 Spark manifest의 `kubernetesExecution`은 application name/UID, driver Pod name, image digest, recovery 여부와 final state를 포함한다.
+`ASKLAKE_SPARK_RUNNER=kubernetes`에서 같은 `runId`는 같은 Kubernetes object name을 사용한다. 최초 create 응답을 잃거나 이미 object가 있으면 provider는 기존 `SparkApplication`의 run/job/image identity를 검증한 뒤 이어서 polling한다. identity가 다르면 기존 object를 재사용하지 않고 실행을 실패시킨다. create/recover 직후 terminal 전에도 `etl_runs.task_states.sparkExecution.kubernetesExecution`에 namespace, application name/UID, run/job/image identity, 관찰 state와 recovery 여부를 저장한다. driver가 생기면 Pod name을 연결하고 terminal에는 Pod phase, termination reason/exit code, result marker 존재 여부를 합친다. terminal manifest와 이미 저장한 RDS identity의 namespace/name/UID/image/driver Pod가 다르거나 `success`에 유효한 `ASKLAKE_SPARK_JOB_RESULT` marker가 없으면 `409 SPARK_EXECUTION_IDENTITY_MISMATCH`로 성공 처리를 차단한다. timeout은 해당 application 삭제 후 실패 처리한다.
+
+`kubernetesExecution`의 비밀값 없는 추적 필드는 다음과 같다. `driverPodName`과 terminal Pod 필드는 해당 단계가 관찰된 뒤 추가된다.
+
+```json
+{
+  "runId": "<AskLake runId>",
+  "jobId": "<AskLake jobId>",
+  "namespace": "asklake-dev",
+  "applicationName": "asklake-run-...",
+  "applicationUid": "<Kubernetes UID>",
+  "imageDigest": "<repository>@sha256:<digest>",
+  "state": "COMPLETED",
+  "recovered": false,
+  "driverPodName": "asklake-run-...-driver",
+  "driverPodPhase": "Succeeded",
+  "driverTerminationReason": "Completed",
+  "driverExitCode": 0,
+  "resultMarkerFound": true
+}
+```
