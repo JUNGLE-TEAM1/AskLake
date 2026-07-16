@@ -145,12 +145,13 @@ function applicationError(application) {
   );
 }
 
-async function driverLogs(requestJson, namespace, podName) {
+async function driverLogs(requestJson, namespace, podName, { allowMissing = false } = {}) {
   if (!podName) return "";
   const path = `/api/v1/namespaces/${encodeURIComponent(namespace)}/pods/${encodeURIComponent(podName)}/log`
     + "?container=spark-kubernetes-driver&timestamps=false&limitBytes=4194304";
   const response = await requestJson("GET", path, { timeoutMs: 30_000 });
   if (response.status === 403) throw new Error("Spark driver log access was denied by Kubernetes RBAC");
+  if (response.status === 404 && allowMissing) return "";
   if (response.status !== 200) throw apiError("Spark driver log", response);
   return typeof response.body === "string" ? response.body : response.text;
 }
@@ -192,7 +193,9 @@ export async function submitAndWait({
 
   const state = applicationState(observed);
   const podName = String(observed?.status?.driverInfo?.podName || "");
-  const logs = await driverLogs(requestJson, namespace, podName);
+  const logs = await driverLogs(requestJson, namespace, podName, {
+    allowMissing: state !== SUCCESS_STATE,
+  });
   const report = reportFromLogs(logs) || {
     endedAt: new Date().toISOString(),
     error: state === SUCCESS_STATE

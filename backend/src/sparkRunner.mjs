@@ -496,6 +496,7 @@ export function createSparkKubernetesApplication({
       restartPolicy: { type: "Never" },
       sparkConf: {
         "spark.app.name": String(appName || `asklake-${runLabel}`),
+        "spark.jars.ivy": "/tmp/.ivy2",
         "spark.kubernetes.executor.deleteOnTermination": "true",
         "spark.sql.shuffle.partitions": String(environment.ASKLAKE_SPARK_SQL_SHUFFLE_PARTITIONS || "32"),
       },

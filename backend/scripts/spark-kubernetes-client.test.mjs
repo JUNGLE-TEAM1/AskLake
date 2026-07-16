@@ -49,6 +49,7 @@ test("Kubernetes Spark application uses deterministic identity and Secret refere
   assert.equal(first.spec.image, IMAGE);
   assert.equal(first.spec.driver.serviceAccount, "asklake-spark");
   assert.equal(first.spec.executor.serviceAccount, "asklake-spark");
+  assert.equal(first.spec.sparkConf["spark.jars.ivy"], "/tmp/.ivy2");
   const expectedPlacement = {
     nodeSelector: {
       "asklake.io/workload-class": "spark",
@@ -126,6 +127,40 @@ test("existing deterministic name with another run identity is rejected", async 
     createOrRecoverApplication({ application, requestJson }),
     /identity mismatch/,
   );
+});
+
+test("submission failure preserves the SparkApplication error when no driver Pod exists", async () => {
+  const application = applicationFixture();
+  const failed = {
+    ...application,
+    metadata: { ...application.metadata, uid: "spark-uid-failed-001" },
+    status: {
+      applicationState: {
+        errorMessage: "spark-submit could not write the Ivy cache",
+        state: "FAILED",
+      },
+      driverInfo: { podName: "driver-that-was-never-created" },
+    },
+  };
+  const requestJson = async (method, path) => {
+    if (method === "POST") return { body: failed, status: 201 };
+    if (path.includes("/pods/") && path.includes("/log")) {
+      return { body: { message: "pods not found" }, status: 404 };
+    }
+    return { body: failed, status: 200 };
+  };
+  const result = await submitAndWait({
+    application,
+    delay: async () => undefined,
+    now: () => 1_000,
+    pollIntervalMs: 1,
+    requestJson,
+    timeoutMs: 1_000,
+  });
+  assert.equal(result.logs, "");
+  assert.equal(result.report.status, "failed");
+  assert.match(result.report.error, /Ivy cache/);
+  assert.equal(result.report.kubernetesExecution.state, "FAILED");
 });
 
 test("production mode accepts kubernetes but still rejects Docker", () => {
