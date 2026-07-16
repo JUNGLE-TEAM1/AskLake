@@ -39,6 +39,18 @@ from app.application.continuous_publication import (
     execute_continuous_publication,
     reconcile_continuous_publications,
 )
+from app.application.pipeline_mapping import (
+    CreatePipelineMappingContext,
+    UpdatePipelineMappingContext,
+    apply_append_request_to_job,
+    apply_update_request_to_job,
+    map_create_request_to_job,
+)
+from app.application.snapshot_commands import (
+    SnapshotCommandViolation,
+    SnapshotExecutionPath,
+    plan_snapshot_command,
+)
 from app.core.config import settings
 from app.core.errors import ApiError
 from app.core.materialization import (
@@ -59,6 +71,12 @@ from app.domain.continuous_runtime import (
     record_runtime_error,
     record_runtime_observation,
     runtime_contract_projection,
+)
+from app.domain.pipeline_contract import (
+    create_request_violations,
+    permission_grant_violations,
+    target_contract_violation,
+    update_request_violations,
 )
 from app.models import (
     CatalogDatasetModel,
@@ -350,7 +368,14 @@ def create_pipeline(
                 "Continuous Job configuration is immutable. Copy the Job to create another continuous stream.",
                 status.HTTP_409_CONFLICT,
             )
-        update_existing_append_job(existing_job, request, dataset_id, created_by, created_by_profile)
+        append_context = pipeline_create_mapping_context(
+            request,
+            dataset_id=dataset_id,
+            job_id=existing_job.id,
+            created_by=created_by,
+            created_by_profile=created_by_profile,
+        )
+        apply_append_request_to_job(existing_job, request, append_context)
         saved_job = etl_repository.save_job(db, existing_job)
         saved_job = persist_requested_permission_grants(db, saved_job, request.permission_grants, created_by, actor_context)
         return CreatePipelineResponse(
@@ -363,77 +388,16 @@ def create_pipeline(
             job=saved_job,
         )
 
-    dataset_schema = dataset_schema_from_request(request)
-    sample_rows = dataset_sample_rows_from_request(request, dataset_schema)
-    metrics = source_metrics_from_request(request, dataset_schema, sample_rows)
     job_id = make_job_id(request.id or request.job_name)
-    dag_steps = initial_dag_steps(request, metrics)
-    stats = initial_job_stats(metrics)
-    schedule_policy = schedule_policy_from_request(request)
-
-    job = ETLJobModel(
-        id=job_id,
-        name=request.job_name,
-        owner=request.owner,
-        created_by=created_by,
-        created_by_profile=created_by_profile,
-        status="scheduled",
-        tag="[생성]",
-        source=f"{request.source_type} / {request.source_label}",
-        target=request.target_dataset,
-        schedule=request.schedule_label,
-        schedule_policy=schedule_policy,
-        schedule_summary=request.schedule_summary,
-        retry_policy=request.retry_policy.model_dump(mode="json", by_alias=True) if request.retry_policy else None,
-        retry_policy_summary=request.retry_policy_summary,
-        run_limit_summary=request.run_limit_summary,
-        source_config=tuple_rows_to_lists(request.source_config),
-        source_label=request.source_label,
-        source_type=request.source_type,
-        execution_mode=request.execution_mode,
-        continuous_config=continuous_config_from_request(request, job_id),
-        record_parsing=request.record_parsing.model_dump(mode="json", by_alias=True) if request.record_parsing else None,
-        schema_columns=[column.model_dump(mode="json", by_alias=True) for column in request.schema_columns],
-        schema_fingerprint=request.schema_fingerprint,
-        schema_sample_rows=request.schema_sample_rows,
-        schema_summary=request.schema_summary,
-        rule_summary=request.rule_summary,
-        rule_contract_version=request.rule_contract_version,
-        rules=[rule.model_dump(mode="json", by_alias=True) for rule in request.rules],
-        permission_summary=request.permission_summary,
-        permission_roles=request.permission_roles,
-        storage_type=request.storage_type,
-        partition=request.partition,
-        partition_columns=normalize_string_list(request.partition_columns),
-        index_columns=normalize_string_list(request.index_columns),
-        compression=request.compression,
-        storage_path=request.storage_path,
-        iceberg_target=build_iceberg_writer_target(
-            request.target_dataset,
-            dataset_id,
-            write_mode=writer_mode_for_pipeline(request.source_type, request.source_config),
-            partition_columns=normalize_string_list(request.partition_columns),
-        ).model_dump(mode="json", by_alias=True),
-        target_description=normalize_optional_text(request.target_description),
-        target_database=normalize_optional_text(request.target_database),
-        target_tags=normalize_target_tags(request.target_tags),
-        target_format=request.target_format,
-        target_layer=request.target_layer,
-        target_path=request.storage_path,
-        rag=request.rag,
-        transform_output_columns=tuple_rows_to_lists(request.transform_output_columns),
-        transform_steps=[step.model_dump(mode="json", by_alias=True) for step in request.transform_steps],
-        quality_invalid_rows=request.quality_invalid_rows,
-        quality_rules=[rule.model_dump(mode="json", by_alias=True) for rule in request.quality_rules],
-        quality_score=request.quality_score,
-        quality_status=request.quality_status,
-        last_run="생성 후 미실행",
-        last_state=f"{metrics['schema_columns']}개 컬럼 추론 완료",
-        next_run=schedule_next_run_label(request.schedule_label, schedule_policy.get("nextRunUtc")),
-        progress=None,
-        stats=stats,
-        dag_steps=dag_steps,
-        dataset_id=dataset_id,
+    job = map_create_request_to_job(
+        request,
+        pipeline_create_mapping_context(
+            request,
+            dataset_id=dataset_id,
+            job_id=job_id,
+            created_by=created_by,
+            created_by_profile=created_by_profile,
+        ),
     )
 
     saved_job = etl_repository.create_job(db, job)
@@ -449,6 +413,41 @@ def create_pipeline(
             "status": "pending_run",
         },
         job=saved_job,
+    )
+
+
+def pipeline_create_mapping_context(
+    request: CreatePipelineRequest,
+    *,
+    dataset_id: str,
+    job_id: str,
+    created_by: str,
+    created_by_profile: dict[str, Any],
+) -> CreatePipelineMappingContext:
+    dataset_schema = dataset_schema_from_request(request)
+    sample_rows = dataset_sample_rows_from_request(request, dataset_schema)
+    metrics = source_metrics_from_request(request, dataset_schema, sample_rows)
+    schedule_policy = schedule_policy_from_request(request)
+    return CreatePipelineMappingContext(
+        continuous_config=continuous_config_from_request(request, job_id),
+        created_by=created_by,
+        created_by_profile=created_by_profile,
+        dag_steps=initial_dag_steps(request, metrics),
+        dataset_id=dataset_id,
+        iceberg_target=build_iceberg_writer_target(
+            request.target_dataset,
+            dataset_id,
+            write_mode=writer_mode_for_pipeline(request.source_type, request.source_config),
+            partition_columns=normalize_string_list(request.partition_columns),
+        ).model_dump(mode="json", by_alias=True),
+        job_id=job_id,
+        metrics=metrics,
+        next_run=schedule_next_run_label(
+            request.schedule_label,
+            schedule_policy.get("nextRunUtc"),
+        ),
+        schedule_policy=schedule_policy,
+        stats=initial_job_stats(metrics),
     )
 
 
@@ -1250,34 +1249,23 @@ def command_job(
         )
     if command in continuous_commands:
         return command_kafka_continuous_job(db, job, command, actor_context)
-    if command in {"run", "retry"} and job.status == "running":
-        raise ApiError(ErrorCode.CONFLICT, f"Job is already running: {job_id}", status.HTTP_409_CONFLICT)
-    if command == "pause" and job.status != "running":
+    plan = plan_snapshot_command(
+        command=command,
+        execution_mode=job.execution_mode or "snapshot",
+        has_active_schedule=has_scheduled_execution(job),
+        has_schedule_label=has_scheduled_label(job.schedule),
+        job_id=job.id,
+        job_kind=job.job_kind,
+        status=job.status,
+    )
+    if isinstance(plan, SnapshotCommandViolation):
         raise ApiError(
-            ErrorCode.INVALID_JOB_STATE,
-            f"Job cannot be paused from status: {job.status}",
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-        )
-    if command == "cancelRun" and job.status != "running":
-        raise ApiError(
-            ErrorCode.INVALID_JOB_STATE,
-            f"Current run cannot be canceled from status: {job.status}",
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-        )
-    if command == "stopSchedule" and not has_scheduled_execution(job):
-        raise ApiError(
-            ErrorCode.INVALID_JOB_STATE,
-            f"Job has no schedule to stop: {job_id}",
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-        )
-    if command == "resumeSchedule" and (job.status != "stopped" or not has_scheduled_label(job.schedule)):
-        raise ApiError(
-            ErrorCode.INVALID_JOB_STATE,
-            f"Job has no paused schedule to resume: {job_id}",
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            plan.code,
+            plan.message,
+            plan.http_status,
         )
 
-    if job.job_kind == "trino_sql_materialization" and command in {"run", "retry", "cancelRun"}:
+    if plan.execution_path == SnapshotExecutionPath.TRINO:
         service = TrinoSqlJobService(SqlRepository(db), CatalogRepository(db))
         result = (
             service.cancel(job, execution_actor or actor_context)
@@ -1302,20 +1290,11 @@ def command_job(
             },
         )
 
-    action_by_command = {
-        "cancelRun": "etl.run.cancel_requested",
-        "pause": "etl.job.pause_requested",
-        "retry": "etl.run.retry_requested",
-        "run": "etl.run.requested",
-        "stopSchedule": "etl.schedule.stop_requested",
-        "resumeSchedule": "etl.schedule.resume_requested",
-    }
-
     run_schema = None
     dataset_schema = None
     run_model = None
     dataset_model = None
-    if command in {"run", "retry"}:
+    if plan.execution_path == SnapshotExecutionPath.RUN:
         if is_kafka_job(job):
             run_id = stable_id("run", f"{job.id}:{command}:kafka:{iso_now()}")
             kafka_request = kafka_ingest_request_from_job(job, run_id)
@@ -1408,7 +1387,7 @@ def command_job(
                 if previous_run.run_id != run_schema.run_id
             ],
         ])
-    elif command == "cancelRun":
+    elif plan.execution_path == SnapshotExecutionPath.CANCEL:
         run_model = run_from_command(job, command)
         run_schema = etl_repository.run_to_schema(run_model)
         apply_job_command(job, command)
@@ -1424,7 +1403,7 @@ def command_job(
         dataset_schema = etl_repository.get_dataset_schema_by_id(db, job.dataset_id)
 
     return JobCommandResponse(
-        action=action_by_command[command],
+        action=plan.action,
         api_path=f"/api/etl/jobs/{job_id}/commands",
         dataset=dataset_schema,
         job=with_job_permissions(db, saved_job, actor or ActorContext()),
@@ -4771,79 +4750,6 @@ def dataset_payload_from_spark_result(
     }
 
 
-def update_existing_append_job(
-    job: ETLJobModel,
-    request: CreatePipelineRequest,
-    dataset_id: str,
-    created_by: str,
-    created_by_profile: dict[str, Any],
-) -> None:
-    dataset_schema = dataset_schema_from_request(request)
-    sample_rows = dataset_sample_rows_from_request(request, dataset_schema)
-    metrics = source_metrics_from_request(request, dataset_schema, sample_rows)
-    job.name = request.job_name or job.name
-    job.owner = request.owner
-    job.created_by = job.created_by or created_by
-    job.created_by_profile = job.created_by_profile or created_by_profile
-    job.tag = "[append]"
-    job.source = f"{request.source_type} / {request.source_label}"
-    job.target = request.target_dataset
-    job.schedule = request.schedule_label
-    schedule_policy = schedule_policy_from_request(request)
-    job.schedule_policy = schedule_policy
-    job.schedule_summary = request.schedule_summary
-    job.retry_policy = request.retry_policy.model_dump(mode="json", by_alias=True) if request.retry_policy else None
-    job.retry_policy_summary = request.retry_policy_summary
-    job.run_limit_summary = request.run_limit_summary
-    job.source_config = tuple_rows_to_lists(request.source_config)
-    job.source_label = request.source_label
-    job.source_type = request.source_type
-    job.execution_mode = request.execution_mode
-    job.continuous_config = continuous_config_from_request(request, job.id)
-    job.record_parsing = request.record_parsing.model_dump(mode="json", by_alias=True) if request.record_parsing else None
-    job.schema_columns = [column.model_dump(mode="json", by_alias=True) for column in request.schema_columns]
-    job.schema_fingerprint = request.schema_fingerprint
-    job.schema_sample_rows = request.schema_sample_rows
-    job.schema_summary = request.schema_summary
-    job.rule_summary = request.rule_summary
-    job.rule_contract_version = request.rule_contract_version
-    job.rules = [rule.model_dump(mode="json", by_alias=True) for rule in request.rules]
-    job.permission_summary = request.permission_summary
-    job.permission_roles = request.permission_roles
-    job.storage_type = request.storage_type
-    job.partition = request.partition
-    job.partition_columns = normalize_string_list(request.partition_columns)
-    job.index_columns = normalize_string_list(request.index_columns)
-    job.compression = request.compression
-    job.storage_path = request.storage_path
-    job.iceberg_target = build_iceberg_writer_target(
-        request.target_dataset,
-        dataset_id,
-        write_mode=writer_mode_for_pipeline(request.source_type, request.source_config),
-        partition_columns=normalize_string_list(request.partition_columns),
-    ).model_dump(mode="json", by_alias=True)
-    job.target_description = normalize_optional_text(request.target_description)
-    job.target_database = normalize_optional_text(request.target_database)
-    job.target_tags = normalize_target_tags(request.target_tags)
-    job.target_format = request.target_format
-    job.target_layer = request.target_layer
-    job.target_path = request.storage_path
-    job.rag = request.rag
-    job.transform_output_columns = tuple_rows_to_lists(request.transform_output_columns)
-    job.transform_steps = [step.model_dump(mode="json", by_alias=True) for step in request.transform_steps]
-    job.quality_invalid_rows = request.quality_invalid_rows
-    job.quality_rules = [rule.model_dump(mode="json", by_alias=True) for rule in request.quality_rules]
-    job.quality_score = request.quality_score
-    job.quality_status = request.quality_status
-    job.last_run = "append draft updated"
-    job.last_state = f"{metrics['schema_columns']}개 컬럼 · 기존 데이터셋 append 대기"
-    job.next_run = schedule_next_run_label(request.schedule_label, schedule_policy.get("nextRunUtc"))
-    job.progress = None
-    job.stats = initial_job_stats(metrics)
-    job.dag_steps = initial_dag_steps(request, metrics)
-    job.dataset_id = dataset_id
-
-
 def append_materialization_run(previous_runs: Any, next_run: dict[str, Any]) -> list[dict[str, Any]]:
     return upsert_materialization_run(previous_runs, next_run)
 
@@ -7862,104 +7768,45 @@ def apply_compiled_rules(request: CreatePipelineRequest | UpdatePipelineRequest,
 
 
 def validate_create_request(request: CreatePipelineRequest) -> None:
-    validate_requested_permission_grants(request.permission_grants)
-    missing = []
-    if not request.job_name:
-        missing.append("jobName")
-    if not request.source_type:
-        missing.append("sourceType")
-    if not request.source_label:
-        missing.append("sourceLabel")
-    if not request.target_dataset:
-        missing.append("targetDataset")
-    if not request.target_layer:
-        missing.append("targetLayer")
-    if not request.owner:
-        missing.append("owner")
-    if request.execution_mode == "continuous":
-        if "kafka" not in request.source_type.lower():
-            missing.append("continuousKafkaSource")
-        if request.target_format.lower() != "parquet":
-            missing.append("continuousTargetFormat=parquet")
-    validate_target_contract(
-        source_type=request.source_type,
-        execution_mode=request.execution_mode,
-        target_layer=request.target_layer,
-        target_format=request.target_format,
+    violations = create_request_violations(
+        request,
+        normalize_column_name=normalize_column_name,
     )
-    if request.record_parsing and request.record_parsing.enabled:
-        parsing_names = [normalize_column_name(column.name) for column in request.record_parsing.columns]
-        if request.source_type != "File / S3" and "kafka" not in request.source_type.lower():
-            missing.append("recordParsingSource=File / S3 or Kafka")
-        if request.record_parsing.expected_field_count <= 0:
-            missing.append("recordParsing.expectedFieldCount")
-        if len(request.record_parsing.columns) != request.record_parsing.expected_field_count:
-            missing.append("recordParsing.columns")
-        if any(not name for name in parsing_names) or len(set(parsing_names)) != len(parsing_names):
-            missing.append("recordParsing.columns[uniqueName]")
-    if not request.schema_columns:
-        missing.append("schemaColumns")
-    elif not any(column.included and column.target_name.strip() for column in request.schema_columns):
-        missing.append("schemaColumns[included]")
-    if missing:
+    if violations:
+        violation = violations[0]
         raise ApiError(
-            ErrorCode.VALIDATION_ERROR,
-            f"Missing required fields: {', '.join(missing)}",
+            violation.code,
+            violation.message,
             status.HTTP_400_BAD_REQUEST,
+            violation.details,
         )
 
 
 def validate_update_request(request: UpdatePipelineRequest) -> None:
-    validate_requested_permission_grants(request.permission_grants)
-    missing = []
-    if not request.job_name:
-        missing.append("jobName")
-    if not request.target_dataset:
-        missing.append("targetDataset")
-    if not request.target_layer:
-        missing.append("targetLayer")
-    if not request.owner:
-        missing.append("owner")
-    if not request.schema_columns:
-        missing.append("schemaColumns")
-    elif not any(column.included and column.target_name.strip() for column in request.schema_columns):
-        missing.append("schemaColumns[included]")
-    if missing:
+    violations = update_request_violations(request)
+    if violations:
+        violation = violations[0]
         raise ApiError(
-            ErrorCode.VALIDATION_ERROR,
-            f"Missing required fields: {', '.join(missing)}",
+            violation.code,
+            violation.message,
             status.HTTP_400_BAD_REQUEST,
+            violation.details,
         )
 
 
 def validate_target_contract(*, source_type: str, execution_mode: str, target_layer: str, target_format: str) -> None:
-    if "kafka" not in str(source_type or "").lower():
-        return
-    normalized_mode = str(execution_mode or "snapshot").lower()
-    normalized_layer = str(target_layer or "").upper()
-    normalized_format = str(target_format or "").lower()
-    if normalized_mode == "continuous":
-        if normalized_format != "parquet":
-            raise ApiError(
-                "TARGET_FORMAT_UNSUPPORTED",
-                "Kafka Continuous target format must be parquet.",
-                status.HTTP_400_BAD_REQUEST,
-                {"executionMode": normalized_mode, "supportedFormats": ["parquet"]},
-            )
-        return
-    if normalized_layer not in {"RAW", "BRONZE", "SILVER"}:
+    violation = target_contract_violation(
+        source_type=source_type,
+        execution_mode=execution_mode,
+        target_layer=target_layer,
+        target_format=target_format,
+    )
+    if violation is not None:
         raise ApiError(
-            "TARGET_LAYER_UNSUPPORTED",
-            "Kafka Snapshot target layer must be RAW, BRONZE, or SILVER.",
+            violation.code,
+            violation.message,
             status.HTTP_400_BAD_REQUEST,
-            {"executionMode": normalized_mode, "supportedLayers": ["RAW", "BRONZE", "SILVER"]},
-        )
-    if normalized_format != "jsonl":
-        raise ApiError(
-            "TARGET_FORMAT_UNSUPPORTED",
-            "Kafka Snapshot target format must be jsonl.",
-            status.HTTP_400_BAD_REQUEST,
-            {"executionMode": normalized_mode, "supportedFormats": ["jsonl"]},
+            violation.details,
         )
 
 
@@ -7977,22 +7824,15 @@ def target_contract_issue(*, source_type: str, execution_mode: str, target_layer
 
 
 def validate_requested_permission_grants(grants: list[Any] | None) -> None:
-    for grant in grants or []:
-        principal_type = str(getattr(grant, "principal_type", "") or "").strip()
-        principal_id = str(getattr(grant, "principal_id", "") or "").strip()
-        actions = list(getattr(grant, "actions", []) or [])
-        if principal_type != "public" and not principal_id:
-            raise ApiError(
-                ErrorCode.VALIDATION_ERROR,
-                "permissionGrants principalId is required",
-                status.HTTP_400_BAD_REQUEST,
-            )
-        if not actions:
-            raise ApiError(
-                ErrorCode.VALIDATION_ERROR,
-                "permissionGrants actions must include at least one action",
-                status.HTTP_400_BAD_REQUEST,
-            )
+    violations = permission_grant_violations(grants)
+    if violations:
+        violation = violations[0]
+        raise ApiError(
+            violation.code,
+            violation.message,
+            status.HTTP_400_BAD_REQUEST,
+            violation.details,
+        )
 
 
 def target_identity_changed(job: ETLJobModel, request: UpdatePipelineRequest) -> bool:
@@ -8064,60 +7904,36 @@ def has_successful_run(db: Session, job_id: str) -> bool:
     return any(run.status == "success" for run in etl_repository.list_runs_for_job(db, job_id))
 
 
-def apply_update_request(job: ETLJobModel, request: UpdatePipelineRequest, target_changed: bool) -> None:
-    job.name = request.job_name
-    job.owner = request.owner
-    job.target = request.target_dataset
-    job.schedule = request.schedule_label
+def apply_update_request(
+    job: ETLJobModel,
+    request: UpdatePipelineRequest,
+    target_changed: bool,
+) -> None:
+    """Compatibility facade for the extracted pipeline draft mapper."""
+
     schedule_policy = schedule_policy_from_request(request)
-    job.schedule_policy = schedule_policy
-    job.schedule_summary = request.schedule_summary
-    job.retry_policy = request.retry_policy.model_dump(mode="json", by_alias=True) if request.retry_policy else None
-    job.retry_policy_summary = request.retry_policy_summary
-    job.run_limit_summary = request.run_limit_summary
-    job.schema_columns = [column.model_dump(mode="json", by_alias=True) for column in request.schema_columns]
-    job.schema_fingerprint = request.schema_fingerprint
-    job.schema_sample_rows = request.schema_sample_rows
-    job.schema_summary = request.schema_summary
-    job.rule_summary = request.rule_summary
-    job.rule_contract_version = request.rule_contract_version
-    job.rules = [rule.model_dump(mode="json", by_alias=True) for rule in request.rules]
-    job.permission_summary = request.permission_summary
-    job.permission_roles = request.permission_roles
-    job.storage_type = request.storage_type
-    job.partition = request.partition
-    job.partition_columns = normalize_string_list(request.partition_columns)
-    job.index_columns = normalize_string_list(request.index_columns)
-    job.compression = request.compression
-    job.storage_path = request.storage_path
-    job.target_path = request.storage_path
-    job.target_database = normalize_optional_text(request.target_database)
-    job.target_description = normalize_optional_text(request.target_description)
-    job.target_tags = normalize_target_tags(request.target_tags)
-    job.target_format = request.target_format
-    job.target_layer = request.target_layer
-    job.rag = request.rag
-    job.transform_output_columns = tuple_rows_to_lists(request.transform_output_columns)
-    job.transform_steps = [step.model_dump(mode="json", by_alias=True) for step in request.transform_steps]
-    job.quality_invalid_rows = request.quality_invalid_rows
-    job.quality_rules = [rule.model_dump(mode="json", by_alias=True) for rule in request.quality_rules]
-    job.quality_score = request.quality_score
-    job.quality_status = request.quality_status
-    job.last_state = "설정 수정됨"
-    job.next_run = schedule_next_run_label(request.schedule_label, schedule_policy.get("nextRunUtc") or request.next_run_utc or job.next_run)
-    job.stats = {
-        **(job.stats or {}),
-        "currentStage": "설정 수정됨",
-        "schemaColumns": f"{len(dataset_schema_from_request(request)):,}개",
-    }
-    if target_changed:
-        job.dataset_id = make_dataset_id(request.target_dataset)
-    job.iceberg_target = build_iceberg_writer_target(
-        request.target_dataset,
-        job.dataset_id or make_dataset_id(request.target_dataset),
-        write_mode=writer_mode_for_pipeline(job.source_type, job.source_config),
-        partition_columns=normalize_string_list(request.partition_columns),
-    ).model_dump(mode="json", by_alias=True)
+    dataset_id = make_dataset_id(request.target_dataset) if target_changed else str(
+        job.dataset_id or make_dataset_id(request.target_dataset)
+    )
+    apply_update_request_to_job(
+        job,
+        request,
+        UpdatePipelineMappingContext(
+            dataset_id=dataset_id,
+            iceberg_target=build_iceberg_writer_target(
+                request.target_dataset,
+                dataset_id,
+                write_mode=writer_mode_for_pipeline(job.source_type, job.source_config),
+                partition_columns=normalize_string_list(request.partition_columns),
+            ).model_dump(mode="json", by_alias=True),
+            next_run=schedule_next_run_label(
+                request.schedule_label,
+                schedule_policy.get("nextRunUtc") or request.next_run_utc or job.next_run,
+            ),
+            schedule_policy=schedule_policy,
+            target_changed=target_changed,
+        ),
+    )
 
 
 def schedule_next_run_label(schedule_label: str | None, fallback: str | None = None) -> str:

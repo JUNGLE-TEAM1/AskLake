@@ -14,7 +14,7 @@ from app.core.permission_metadata import permission_grants_from_roles, resource_
 from app.models import ETLJobModel, ETLRunModel
 from app.repositories import etl_repository
 from app.repositories.audit_repository import safe_record_audit_event
-from app.repositories.catalog_repository import CatalogRepository
+from app.ports.catalog import CatalogWriterPort
 from app.repositories.sql_repository import SqlRepository
 from app.schemas.catalog import QueryEngineTableRef
 from app.schemas.common import ErrorCode
@@ -42,7 +42,7 @@ class TrinoSqlJobService:
     def __init__(
         self,
         repository: SqlRepository,
-        catalog_repository: CatalogRepository,
+        catalog_repository: CatalogWriterPort,
         runtime_settings: Settings | None = None,
         *,
         client: TrinoClient | None = None,

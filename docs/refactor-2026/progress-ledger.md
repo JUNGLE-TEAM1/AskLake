@@ -5,13 +5,13 @@
 ## 현재 상태
 
 - 계획 버전: `2026-07-16-15-pr`
-- 작업 배치: `2/5`
-- 현재 PR 단위: `06 완료`
-- 상태: `AWAITING_USER_APPROVAL`
+- 작업 배치: `3/5`
+- 현재 PR 단위: `07 진행 중`
+- 상태: `IN_PROGRESS`
 - 시작 기준: `origin/dev@b93ae27370fdfa50ce949bcabb9ff7fe37ca1098`
-- 최근 이슈/PR: `#825` / `#827`
-- 현재 브랜치: `refactor-#825`
-- 다음 사용자 확인 지점: PR 04~06 생성 후
+- 최근 이슈/PR: `#829` / `생성 예정`
+- 현재 브랜치: `refactor-#829`
+- 다음 사용자 확인 지점: PR 07~09 생성 후
 
 ## 15개 PR 원장
 
@@ -23,7 +23,7 @@
 | 04 | 05 | 외부 I/O Port·Adapter 분리 | 03 | DONE |
 | 05 | 06~07 | Continuous 명령·Reconciliation 분리 | 04 | DONE |
 | 06 | 08 | Materialization·Catalog·Dashboard 발행 분리 | 05 | DONE |
-| 07 | 09~10 | Pipeline·Snapshot·SQL·Catalog 경계 | 06 | WAITING |
+| 07 | 09~10 | Pipeline·Snapshot·SQL·Catalog 경계 | 06 | IN_PROGRESS |
 | 08 | 11~12 | Spark/Kafka script·Python/Node 경계 | 07 | WAITING |
 | 09 | 13~14 | frontend 상태 소유권·ETL Wizard 분해 | 08 | WAITING |
 | 10 | 15~16 | Jobs 화면·데이터 hook 분해 | 09 | WAITING |
@@ -123,3 +123,14 @@
 - 제외: Pipeline·Snapshot·SQL application 경계, 새 queue/service, destructive migration, production 배포
 - rollback: application publication workflow와 `etl_service.py` hook wiring을 함께 되돌린다. additive `metrics.publicationWorkflow`는 구버전이 무시하므로 data migration은 없다.
 - 머지 순서: `#824` 다음 `#827`; PR 07은 `#827` 다음이다.
+
+## PR 07 작업 기록
+
+- 시작 HEAD: `beeb5580` (PR 06 branch HEAD)
+- branch/issue/PR: `refactor-#829`, `#829`, 생성 예정
+- 포함: Pipeline create/update validation과 persisted mapper, finite Snapshot command planner, SQL/ETL 공용 Catalog payload port, dataset materialization identity와 멱등 publication
+- 하위 호환: 기존 public API/status/error, DB schema, Job/Run/Catalog payload, `etl_service` facade, Snapshot·Continuous command 구분을 유지한다.
+- 검증: backend unit 402건(1 opt-in skip), Pipeline/Snapshot/Catalog 경계 9건, Job update·dataset identity·Rule persistence·permission create-flow, target mode, Kafka Continuous, Airflow Catalog wiring 계약, Python app compile
+- 제외: Continuous lifecycle 재설계, SQL engine 교체, destructive migration, frontend redesign, live Kafka/S3/Trino fault injection, production 배포
+- rollback: application/domain/port 모듈과 facade wiring을 함께 되돌린다. persisted data migration은 없다.
+- 머지 순서: `#827` 다음 PR 07; PR 08은 PR 07 다음이다.

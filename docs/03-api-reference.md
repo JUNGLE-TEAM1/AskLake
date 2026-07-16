@@ -943,6 +943,10 @@ type DashboardAssistantResponse = {
 
 ## 9) 변경 규칙
 
+### Pipeline·Snapshot·SQL·Catalog 내부 경계 호환
+
+PR 07의 application 경계 분리는 공개 endpoint와 payload를 변경하지 않는다. `POST /api/etl/jobs`, `PATCH /api/etl/jobs/{jobId}`, `POST /api/etl/jobs/{jobId}/commands`, SQL Query Run, derived Dataset, Catalog 조회 endpoint는 기존 request/response/status code를 유지한다. 내부적으로 Snapshot command는 Continuous command와 별도 planner를 사용하고, SQL/ETL Catalog writer는 같은 payload port 및 materialization identity를 사용한다. 상세 검증은 [Pipeline·Snapshot·SQL·Catalog Application 경계](refactor-2026/contracts/pipeline-snapshot-sql-catalog-boundaries.md)를 따른다.
+
 - Endpoint, request, response, status code, error code가 바뀌면 이 문서와 `docs/api-contract.md`를 함께 업데이트한다.
 
 ## 10) ETL Permission 옵션 및 grant 저장

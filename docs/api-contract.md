@@ -3,6 +3,18 @@
 이 문서는 AskLake 프론트엔드와 실제 백엔드 API를 연결하기 위한 구현 명세입니다.
 프론트 연결 지점은 `frontend/src/services/apiClient.ts`, `frontend/src/services/pipelineApi.ts`, `frontend/src/services/sourceConnectorService.ts`입니다.
 
+## Pipeline·Snapshot·SQL·Catalog 내부 경계
+
+PR 07의 내부 리팩터링은 기존 API 계약에 additive field도 추가하지 않는다. Pipeline draft validation, persisted Job mapping, finite Snapshot command planning, Catalog payload publication을 application/domain 경계로 옮기되 다음 외부 계약을 그대로 유지한다.
+
+- `recordParsing`, `schemaColumns`, Rule, schedule, permission, target request shape
+- Job hydrate와 command response의 `job`, `run`, `dataset`, `dagSteps`
+- Snapshot과 Continuous가 허용하는 command 집합 및 기존 오류 code/status
+- SQL Query Run, SQL Job, derived Dataset과 Catalog payload
+- 기존 DB schema, Job/Run/Catalog JSON, DuckDB compatibility mode
+
+Catalog terminal publication은 `datasetId`, materialization version, storage location, query-engine table identity가 일치하는 재시도를 멱등으로 처리한다. 내부 모듈과 검증 명령은 [Pipeline·Snapshot·SQL·Catalog Application 경계](refactor-2026/contracts/pipeline-snapshot-sql-catalog-boundaries.md)를 따른다.
+
 ## 1. 구현 우선순위
 
 | 단계 | 우선순위 | API | 목적 |
