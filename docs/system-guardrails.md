@@ -144,3 +144,12 @@ Scenario audit은 새 hard rule을 추가하는 절차가 아니다.
 - baseline 예외는 owner, reason, expiresAt 없이 추가할 수 없고 만료되면 CI가 실패한다.
 - frontend 변경은 별도 `Frontend UI Checks`의 전체 UI regression과 production build를 계속 필수로 한다.
 - release 전에는 수동 slow suite로 production Spark와 Continuous runtime contract를 실행한다.
+
+# ETL E2E·복구 gate (2026-07-16)
+
+- `Refactor E2E Recovery / pr-contract`는 backend/frontend/deploy 관련 PR에서 deterministic `pr` profile을 실행하고 JSON/JUnit/Markdown artifact를 항상 보존한다.
+- `release` profile은 수동 dispatch로 실제 Node process와 Docker Spark runtime UID 185 경계를 검사한다.
+- `nightly` profile은 `self-hosted + asklake-e2e` 격리 runner에서만 실행하며 `ASKLAKE_E2E_ISOLATED_ENV=true`와 loopback API/frontend URL을 강제한다.
+- runner는 static AWS/MinIO credential을 child process에 전달하지 않으며 non-loopback nightly target을 실행 전에 차단한다.
+- recovery check의 timeout, missing artifact, duplicate/loss/checkpoint rollback, non-convergent reconcile은 release No-Go다.
+- production fault injection, 공유 consumer group/topic/table/dashboard 사용, runtime data 포괄 삭제는 금지한다.
