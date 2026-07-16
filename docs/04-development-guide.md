@@ -164,6 +164,13 @@ Backend `DATABASE_URL`은 미설정 시 `postgres://asklake:asklake_dev@127.0.0.
 
 Kafka Continuous 대시보드의 table, unique constraint, revision/source range, partition watermark, widget result/state를 실제 PostgreSQL 16에서 확인할 때는 opt-in verifier를 사용한다. 스크립트는 고유 fixture를 만들어 같은 `run_id`, 다른 `run_id`의 같은 offset, 부분 겹침 거절, manifest/fingerprint/cursor와 결과 재조회를 확인한 뒤 자신이 만든 행을 정리한다.
 
+Dashboard draft의 widget·layout 저장, 새 DB session 재조회, publish snapshot 분리와 잘못된 cross-page layout 요청의 rollback 기준은 외부 서비스 없이 SQLite 회귀 테스트로 확인한다.
+
+```bash
+cd backend
+npm run verify:dashboard-runtime-persistence
+```
+
 ```powershell
 docker compose up -d postgres
 cd backend
