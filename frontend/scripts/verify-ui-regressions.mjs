@@ -842,7 +842,7 @@ const checks = [
     file: "src/pages/etl/SourceExplorerWorkbench.tsx",
     patterns: [
       /<EtlSectionHeader[\s\S]{0,180}icon=\{<FolderSearch \/>\}/,
-      /<EtlSectionHeader[\s\S]{0,180}icon=\{<Table2 \/>\}/,
+      /<EtlSectionHeader[\s\S]{0,180}icon=\{(?:previewIcon \?\? )?<Table2 \/>\}/,
     ],
     forbiddenPatterns: [
       /density="compact"/,

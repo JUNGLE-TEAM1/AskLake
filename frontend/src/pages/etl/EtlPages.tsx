@@ -2523,7 +2523,9 @@ export function SourceConnectionPage({
                         )
                     )}
                     previewIcon={previewShowsRawText ? <FileText /> : undefined}
-                    previewMeta={<Badge variant="outline" className="border-blue-200 bg-white text-blue-700">{displayPreviewFormat}</Badge>}
+                    previewMeta={previewShowsRawText && activeSourceType === "Stream / Kafka" ? undefined : (
+                      <Badge variant="outline" className="border-blue-200 bg-white text-blue-700">{displayPreviewFormat}</Badge>
+                    )}
                     previewTitle={previewShowsRawText
                       ? (activeSourceType === "Stream / Kafka" ? "원본 로그 샘플" : "원본 샘플")
                       : selectedDatasetSummary
