@@ -826,9 +826,26 @@ const checks = [
     file: "src/components/etl/EtlSectionHeader.tsx",
     patterns: [
       /<PanelHeader/,
-      /compact \? "min-h-14 px-4 py-3" : "min-h-\[68px\] px-5 py-3\.5"/,
-      /compact && "size-9 rounded-md \[&_svg\]:size-\[18px\]"/,
-      /size=\{compact \? "section" : "default"\}/,
+      /etl-section-header min-h-\[68px\] px-5 py-3\.5/,
+      /iconClassName=\{iconToneClasses\[tone\]\}/,
+      /size="default"/,
+    ],
+    forbiddenPatterns: [
+      /density/,
+      /compact/,
+      /size-9/,
+      /size-\[18px\]/,
+    ],
+  },
+  {
+    name: "ETL source explorer uses the same full-size section headers as every other panel",
+    file: "src/pages/etl/SourceExplorerWorkbench.tsx",
+    patterns: [
+      /<EtlSectionHeader[\s\S]{0,180}icon=\{<FolderSearch \/>\}/,
+      /<EtlSectionHeader[\s\S]{0,180}icon=\{<Table2 \/>\}/,
+    ],
+    forbiddenPatterns: [
+      /density="compact"/,
     ],
   },
   {

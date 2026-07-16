@@ -2376,7 +2376,7 @@ export function SourceConnectionPage({
                 </div>
                 {activeSourceType === "Stream / Kafka" && (
                   <section className="source-step-section" aria-label="Kafka 실행 방식">
-                    <EtlSectionHeader density="compact" icon={<Repeat2 />} title="Kafka 실행 방식" />
+                    <EtlSectionHeader icon={<Repeat2 />} title="Kafka 실행 방식" />
                     <div className="kafka-execution-mode-grid" role="group" aria-label="Kafka 실행 방식 선택">
                       <button aria-pressed={kafkaExecutionMode === "snapshot"} className={`kafka-execution-mode-card ${kafkaExecutionMode === "snapshot" ? "selected" : ""}`} disabled={sourceLocked} type="button" onClick={() => onDraftChange({ source: { executionMode: "snapshot" } })}>
                         <span className="kafka-execution-mode-icon"><Clock3 size={19} /></span>
@@ -2480,11 +2480,6 @@ export function SourceConnectionPage({
                         rows={selectedCatalogDataset?.sampleRows ?? []}
                       />
                     )}
-                    previewMeta={selectedCatalogDataset ? (
-                      <div className="source-explorer-preview-meta">
-                        <span>{selectedCatalogDataset.sampleRows.length}행 · {selectedCatalogDataset.schema.length}필드</span>
-                      </div>
-                    ) : undefined}
                     previewTitle="데이터 미리보기"
                     queryPlaceholder="데이터셋 이름, 설명, 소유자 검색"
                     queryValue={assetSearchQuery}
@@ -2528,21 +2523,7 @@ export function SourceConnectionPage({
                         )
                     )}
                     previewIcon={previewShowsRawText ? <FileText /> : undefined}
-                    previewMeta={previewShowsRawText && activeSourceType === "Stream / Kafka" ? undefined : (
-                      <div className="source-explorer-preview-meta">
-                        <Badge variant="outline" className="border-blue-200 bg-white text-blue-700">{displayPreviewFormat}</Badge>
-                        {previewShowsRawText ? (
-                          <span>{rawTextPreviewLines.length}행</span>
-                        ) : selectedDatasetSummary ? (
-                          <span>
-                            전체 {selectedDatasetSummary.fileCount.toLocaleString()}개 · {formatSourceBytes(selectedDatasetSummary.totalBytes)} · 스키마 {selectedDatasetSummary.schemaCompatible ? "호환" : "불일치"}
-                            {selectedDatasetSummary.excludedFileCount > 0 ? ` · 제외 ${selectedDatasetSummary.excludedFileCount.toLocaleString()}개` : ""}
-                          </span>
-                        ) : (
-                          <span>{displayPreviewRows.length}행 · {displayPreviewColumns.length}필드</span>
-                        )}
-                      </div>
-                    )}
+                    previewMeta={<Badge variant="outline" className="border-blue-200 bg-white text-blue-700">{displayPreviewFormat}</Badge>}
                     previewTitle={previewShowsRawText
                       ? (activeSourceType === "Stream / Kafka" ? "원본 로그 샘플" : "원본 샘플")
                       : selectedDatasetSummary
@@ -2978,15 +2959,6 @@ function mergeSourceAssets(currentAssets: Array<[string, string, string]>, nextA
 function normalizeFolderPrefix(path: string) {
   const cleanPath = path.replace(/^\/+/, "").replace(/\/+$/, "");
   return cleanPath ? `${cleanPath}/` : "";
-}
-
-function formatSourceBytes(totalBytes: number) {
-  if (!Number.isFinite(totalBytes) || totalBytes <= 0) return "0 B";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  const unitIndex = Math.min(Math.floor(Math.log(totalBytes) / Math.log(1024)), units.length - 1);
-  const value = totalBytes / (1024 ** unitIndex);
-  const digits = value >= 100 || unitIndex === 0 ? 0 : value >= 10 ? 1 : 2;
-  return `${value.toFixed(digits)} ${units[unitIndex]}`;
 }
 
 function upsertSourceFields(fields: Array<[string, string]>, patches: Array<[string, string]>) {

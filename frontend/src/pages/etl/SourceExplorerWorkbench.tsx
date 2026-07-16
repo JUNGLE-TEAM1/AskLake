@@ -57,7 +57,6 @@ export function SourceExplorerWorkbench({
     <div className="source-explorer-workbench">
       <Panel className="source-explorer-panel source-explorer-assets-panel border-2 border-blue-300 shadow-[0_6px_18px_rgb(37_99_235_/_7%)]">
         <EtlSectionHeader
-          density="compact"
           icon={<FolderSearch />}
           meta={explorerMeta}
           title={explorerTitle}
@@ -105,7 +104,6 @@ export function SourceExplorerWorkbench({
 
       <Panel className="source-explorer-panel source-explorer-preview-panel border-2 border-blue-300 shadow-[0_6px_18px_rgb(37_99_235_/_7%)]">
         <EtlSectionHeader
-          density="compact"
           icon={previewIcon ?? <Table2 />}
           meta={previewMeta}
           title={previewTitle}

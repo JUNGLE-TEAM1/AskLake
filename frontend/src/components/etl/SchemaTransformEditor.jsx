@@ -1223,7 +1223,6 @@ export default function SchemaTransformEditor({
                   {sqlPreviewPanelOpen ? <ChevronUp className="size-4" /> : <ChevronDown className="size-4" />}
                 </button>
               )}
-              density="compact"
               icon={<Table2 />}
               title="결과 미리보기"
             />

@@ -706,16 +706,6 @@
   min-width: 0;
 }
 
-.source-explorer-preview-meta {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  color: #64748b;
-  font-size: 12px;
-  font-weight: 750;
-  white-space: nowrap;
-}
-
 .source-preview-data-table-viewport {
   max-height: min(520px, calc(100vh - 360px));
   overflow: auto;
@@ -806,12 +796,6 @@
 
   .source-explorer-filter-select {
     width: 100%;
-  }
-
-  .source-explorer-preview-meta {
-    align-items: flex-end;
-    flex-direction: column;
-    gap: 3px;
   }
 
   .source-raw-sample-preview {

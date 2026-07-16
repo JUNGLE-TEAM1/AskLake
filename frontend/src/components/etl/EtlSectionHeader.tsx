@@ -4,7 +4,6 @@ import { cn } from "@/lib/utils";
 export type EtlSectionHeaderTone = "default" | "success" | "warning" | "danger";
 
 type EtlSectionHeaderProps = Omit<PanelHeaderProps, "iconClassName" | "iconVariant" | "size"> & {
-  density?: "default" | "compact";
   tone?: EtlSectionHeaderTone;
 };
 
@@ -31,26 +30,19 @@ const iconToneVariants: Record<EtlSectionHeaderTone, PanelHeaderProps["iconVaria
 
 export function EtlSectionHeader({
   className,
-  density = "default",
   tone = "default",
   ...props
 }: EtlSectionHeaderProps) {
-  const compact = density === "compact";
-
   return (
     <PanelHeader
       className={cn(
-        "etl-section-header [&_h2]:text-slate-950",
-        compact ? "min-h-14 px-4 py-3" : "min-h-[68px] px-5 py-3.5",
+        "etl-section-header min-h-[68px] px-5 py-3.5 [&_h2]:text-slate-950",
         headerToneClasses[tone],
         className,
       )}
-      iconClassName={cn(
-        iconToneClasses[tone],
-        compact && "size-9 rounded-md [&_svg]:size-[18px]",
-      )}
+      iconClassName={iconToneClasses[tone]}
       iconVariant={iconToneVariants[tone]}
-      size={compact ? "section" : "default"}
+      size="default"
       {...props}
     />
   );
