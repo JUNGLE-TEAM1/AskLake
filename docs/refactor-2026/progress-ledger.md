@@ -6,11 +6,11 @@
 
 - 계획 버전: `2026-07-16-15-pr`
 - 작업 배치: `3/5`
-- 현재 PR 단위: `08 진행 중`
+- 현재 PR 단위: `09 진행 중`
 - 상태: `IN_PROGRESS`
 - 시작 기준: `origin/dev@b93ae27370fdfa50ce949bcabb9ff7fe37ca1098`
-- 최근 이슈/PR: `#831` / `생성 예정`
-- 현재 브랜치: `refactor-#831`
+- 최근 이슈/PR: `#833` / `생성 예정`
+- 현재 브랜치: `refactor-#833`
 - 다음 사용자 확인 지점: PR 07~09 생성 후
 
 ## 15개 PR 원장
@@ -24,8 +24,8 @@
 | 05 | 06~07 | Continuous 명령·Reconciliation 분리 | 04 | DONE |
 | 06 | 08 | Materialization·Catalog·Dashboard 발행 분리 | 05 | DONE |
 | 07 | 09~10 | Pipeline·Snapshot·SQL·Catalog 경계 | 06 | DONE |
-| 08 | 11~12 | Spark/Kafka script·Python/Node 경계 | 07 | IN_PROGRESS |
-| 09 | 13~14 | frontend 상태 소유권·ETL Wizard 분해 | 08 | WAITING |
+| 08 | 11~12 | Spark/Kafka script·Python/Node 경계 | 07 | DONE |
+| 09 | 13~14 | frontend 상태 소유권·ETL Wizard 분해 | 08 | IN_PROGRESS |
 | 10 | 15~16 | Jobs 화면·데이터 hook 분해 | 09 | WAITING |
 | 11 | 17 | CSS·Catalog·Layout 경계 | 10 | WAITING |
 | 12 | 18~19 | API·DB 호환·Legacy/Fallback 정리 | 11 | WAITING |
@@ -145,3 +145,14 @@
 - 제외: Node 전체 삭제, connector/Spark launcher 즉시 Python 전환, processing semantics 변경, destructive migration, live cluster soak, production 배포
 - rollback: entrypoint façade를 이전 구현으로 되돌리고 ReviewAnalysis adapter를 교체한다. additive version field는 이전 consumer가 무시하며 runtime data/checkpoint를 삭제하지 않는다.
 - 머지 순서: `#830` 다음 PR 08; PR 09는 PR 08 다음이다.
+
+## PR 09 작업 기록
+
+- 시작 HEAD: `69c15c0c` (PR 08 branch HEAD)
+- branch/issue/PR: `refactor-#833`, `#833`, `생성 예정`
+- 포함: 최신 요청 lease와 query key, 생성 mutation lifecycle, versioned·credential-safe ETL draft, ETL step registry, 단계별 page/model/panel 분리, compatibility re-export façade
+- 하위 호환: 기존 `/etl/*` URL, `DraftPipeline`·`useAskLakeData` public shape, API/DB 계약, CSS class, record parsing과 Continuous Kafka schedule 생략을 유지한다.
+- 검증: 요청 소유권 3건, draft contract 3건, step registry 3건, frontend UI regression 132 checks, TypeScript/Vite production build
+- 제외: `JobsPages.tsx`·전역 data hook 전체 분해, 새 state library, CSS/Catalog/Layout 분리, API/DB 변경, production 배포
+- rollback: 단계 모듈과 App registry wiring, state contract, `EtlPages.tsx` façade를 함께 되돌린다. versioned browser draft는 서버 migration이 필요 없다.
+- 머지 순서: `#832` 다음 PR 09; PR 10은 PR 09 다음이다.
