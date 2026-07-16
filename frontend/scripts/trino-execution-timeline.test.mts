@@ -13,6 +13,7 @@ function makeRun(overrides: Partial<TrinoQueryRun> = {}): TrinoQueryRun {
   return {
     baseDatasetId: "dataset-1",
     engine: "trino",
+    mode: "run",
     query: "SELECT * FROM events",
     referenceDatasetIds: [],
     runId: "run-1",
@@ -37,6 +38,24 @@ test("queued Trino work remains in the query execution stage", () => {
   assert.equal(model.queryStageStatus, "active");
   assert.equal(model.queryPhaseLabel, "Trino 대기 중");
   assert.equal(model.firstResultStageVisible, false);
+  assert.equal(model.collectionStageVisible, false);
+});
+
+test("preview runs stop after the first bounded result instead of showing full collection", () => {
+  const model = buildTrinoExecutionTimelineModel(makeRun({
+    mode: "preview",
+    result: {
+      availablePageCount: 1,
+      columns: ["event_id"],
+      rowCount: 100,
+      storage: "postgres",
+      storageStatus: "available",
+    },
+    status: "succeeded",
+  }));
+
+  assert.equal(model.firstResultStageVisible, true);
+  assert.equal(model.firstResultStageStatus, "completed");
   assert.equal(model.collectionStageVisible, false);
 });
 

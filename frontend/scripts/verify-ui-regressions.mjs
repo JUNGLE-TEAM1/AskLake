@@ -346,6 +346,21 @@ const checks = [
     ],
   },
   {
+    name: "SQL Trino execution separates preview, full view, CSV, and SQL Job boundaries",
+    file: "src/pages/sql/SqlAnalysisPage.tsx",
+    patterns: [
+      /requestTrinoFullResults/,
+      /const startFullResult = async \(intent: "csv" \| "view"\)/,
+      /previewRun\.mode !== "preview"/,
+      /triggerFullResultCsvDownload\(fullResultRun\)/,
+      /fullTrinoDisplayResult/,
+      /jobCreationDisabled=\{!trinoPreviewReady \|\| !materializationResult\}/,
+    ],
+    forbiddenPatterns: [
+      /exports\/csv`[\s\S]{0,200}activeTrinoRun\.runId/,
+    ],
+  },
+  {
     name: "SQL preview table uses readable centered widths for narrow result sets",
     file: "src/pages/sql/SqlPreviewTable.module.css",
     patterns: [

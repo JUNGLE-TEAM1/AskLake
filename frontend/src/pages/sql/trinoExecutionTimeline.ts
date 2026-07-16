@@ -155,7 +155,7 @@ export function buildTrinoExecutionTimelineModel(
   const firstResultStageStatus: TrinoExecutionStageStatus = firstResultReady
     ? "completed"
     : storageStatus === "unavailable" ? "failed" : terminalStageStatus ?? "active";
-  const collectionStageVisible = queryExecutionComplete && firstResultReady;
+  const collectionStageVisible = run.mode === "run" && queryExecutionComplete && firstResultReady;
   const storageFailed = storageStatus === "unavailable";
   const collectionStateUnknown = collectionStageVisible && storageStatus == null && terminalStageStatus == null;
   const collectionActive = collectionStageVisible

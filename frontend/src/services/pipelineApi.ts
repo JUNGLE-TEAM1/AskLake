@@ -101,9 +101,17 @@ export async function submitSqlQueryRun(
     clientRequestId,
     confirmationToken,
     datasetId: dataset.id,
+    limit: 100,
+    mode: "preview",
     query,
     referenceDatasetIds,
     resultPageSize: 100,
+  });
+}
+
+export async function requestTrinoFullResults(previewRunId: string, clientRequestId?: string): Promise<TrinoQueryRun> {
+  return apiClient.post<TrinoQueryRun>(`/api/query/runs/${encodeURIComponent(previewRunId)}/full-results`, {
+    clientRequestId,
   });
 }
 

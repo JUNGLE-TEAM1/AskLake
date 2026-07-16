@@ -22,6 +22,7 @@ import {
   getTrinoQueryRun,
   getTrinoQueryRunResultPage,
   isTrinoQueryRun,
+  requestTrinoFullResults,
   submitSqlQueryRun,
   validateSqlQueryRun,
 } from "../../services/pipelineApi";
@@ -78,6 +79,54 @@ function isTrinoResultReady(run: TrinoQueryRun | null | undefined): run is Trino
   return run?.status === "succeeded" && run.result?.storageStatus === "available";
 }
 
+function buildTrinoDisplayResult({
+  cursors,
+  dataset,
+  firstPageDisplayMs,
+  firstPageRowCount,
+  page,
+  pageIndex,
+  run,
+}: {
+  cursors: Array<string | null>;
+  dataset: CatalogDataset;
+  firstPageDisplayMs: number | null;
+  firstPageRowCount: number | null;
+  page: TrinoQueryRunResultPage;
+  pageIndex: number;
+  run: TrinoQueryRun;
+}): SqlResultDraft {
+  const pageColumns = Array.isArray(page.columns) ? page.columns : run.result?.columns ?? [];
+  const pageRows = Array.isArray(page.rows) ? page.rows : [];
+  const provisionalRowCount = Math.max(page.rowEnd, run.result?.rowCount ?? 0, pageRows.length);
+  return {
+    baseDatasetId: run.baseDatasetId,
+    columns: pageColumns,
+    datasetId: dataset.id,
+    datasetName: dataset.name,
+    engine: "trino",
+    executedAt: run.completedAt ?? run.startedAt ?? run.submittedAt,
+    mode: run.mode,
+    pageLimit: page.pageSize,
+    pageOffset: Math.max(0, page.rowStart - 1),
+    query: run.query,
+    rangeEnd: page.rowEnd,
+    rangeStart: page.rowStart,
+    referenceDatasetIds: run.referenceDatasetIds,
+    rowCount: page.totalRows ?? provisionalRowCount,
+    rows: pageRows.map((row) => row.map((cell) => cell == null ? "" : String(cell))),
+    runId: run.runId,
+    trinoRuntime: {
+      cursors: [...cursors],
+      firstPageDisplayMs,
+      firstPageRowCount,
+      page,
+      pageIndex,
+      run,
+    },
+  };
+}
+
 export function SqlAnalysisPage({
   cachedResult,
   createPending,
@@ -128,6 +177,18 @@ export function SqlAnalysisPage({
   const [trinoResultError, setTrinoResultError] = useState<string | null>(null);
   const [trinoResultRetryCursor, setTrinoResultRetryCursor] = useState<string | null | undefined>(undefined);
   const [trinoResultRetryTargetIndex, setTrinoResultRetryTargetIndex] = useState(0);
+  const [fullResultRun, setFullResultRun] = useState<TrinoQueryRun | null>(null);
+  const [fullResultRequestPending, setFullResultRequestPending] = useState(false);
+  const [fullResultError, setFullResultError] = useState<string | null>(null);
+  const [fullResultIntent, setFullResultIntent] = useState<"csv" | "view" | null>(null);
+  const [fullResultPollRetry, setFullResultPollRetry] = useState(0);
+  const [fullResultPage, setFullResultPage] = useState<TrinoQueryRunResultPage | null>(null);
+  const [fullResultCursors, setFullResultCursors] = useState<Array<string | null>>([null]);
+  const [fullResultPageIndex, setFullResultPageIndex] = useState(0);
+  const [fullResultPagePending, setFullResultPagePending] = useState(false);
+  const [fullResultPageError, setFullResultPageError] = useState<string | null>(null);
+  const [fullResultRetryCursor, setFullResultRetryCursor] = useState<string | null | undefined>(undefined);
+  const [fullResultRetryTargetIndex, setFullResultRetryTargetIndex] = useState(0);
   const [queryEstimate, setQueryEstimate] = useState<TrinoQueryEstimate | null>(null);
   const [queryEstimateError, setQueryEstimateError] = useState<string | null>(null);
   const [queryEstimateKey, setQueryEstimateKey] = useState<string | null>(null);
@@ -152,6 +213,7 @@ export function SqlAnalysisPage({
   const queryOperationGenerationRef = useRef(0);
   const queryClientRequestRef = useRef<{ generation: number; id: string; key: string } | null>(null);
   const trinoResultLoadKeyRef = useRef("");
+  const fullResultLoadKeyRef = useRef("");
   const referenceDatasetIdSet = useMemo(() => new Set(referenceDatasetIds), [referenceDatasetIds]);
   const queryValidationKey = useMemo(
     () => JSON.stringify({
@@ -175,42 +237,28 @@ export function SqlAnalysisPage({
   );
   const trinoDisplayResult = useMemo<SqlResultDraft | null>(() => {
     if (!trinoRun || !trinoResultPage || !baseDataset) return null;
-    const pageColumns = Array.isArray(trinoResultPage.columns)
-      ? trinoResultPage.columns
-      : trinoRun.result?.columns ?? [];
-    const pageRows = Array.isArray(trinoResultPage.rows) ? trinoResultPage.rows : [];
-    const provisionalRowCount = Math.max(
-      trinoResultPage.rowEnd,
-      trinoRun.result?.rowCount ?? 0,
-      pageRows.length,
-    );
-    return {
-      baseDatasetId: trinoRun.baseDatasetId,
-      columns: pageColumns,
-      datasetId: baseDataset.id,
-      datasetName: baseDataset.name,
-      engine: "trino",
-      executedAt: trinoRun.completedAt ?? trinoRun.startedAt ?? trinoRun.submittedAt,
-      mode: "run",
-      pageLimit: trinoResultPage.pageSize,
-      pageOffset: Math.max(0, trinoResultPage.rowStart - 1),
-      query: trinoRun.query,
-      rangeEnd: trinoResultPage.rowEnd,
-      rangeStart: trinoResultPage.rowStart,
-      referenceDatasetIds: trinoRun.referenceDatasetIds,
-      rowCount: trinoResultPage.totalRows ?? provisionalRowCount,
-      rows: pageRows.map((row) => row.map((cell) => cell == null ? "" : String(cell))),
-      runId: trinoRun.runId,
-      trinoRuntime: {
-        cursors: [...trinoResultCursors],
-        firstPageDisplayMs: trinoFirstPageDisplayMs,
-        firstPageRowCount: trinoFirstPageRowCount,
-        page: trinoResultPage,
-        pageIndex: trinoResultPageIndex,
-        run: trinoRun,
-      },
-    };
+    return buildTrinoDisplayResult({
+      cursors: trinoResultCursors,
+      dataset: baseDataset,
+      firstPageDisplayMs: trinoFirstPageDisplayMs,
+      firstPageRowCount: trinoFirstPageRowCount,
+      page: trinoResultPage,
+      pageIndex: trinoResultPageIndex,
+      run: trinoRun,
+    });
   }, [baseDataset, trinoFirstPageDisplayMs, trinoFirstPageRowCount, trinoResultCursors, trinoResultPage, trinoResultPageIndex, trinoRun]);
+  const fullTrinoDisplayResult = useMemo<SqlResultDraft | null>(() => {
+    if (!fullResultRun || !fullResultPage || !baseDataset) return null;
+    return buildTrinoDisplayResult({
+      cursors: fullResultCursors,
+      dataset: baseDataset,
+      firstPageDisplayMs: null,
+      firstPageRowCount: fullResultPage.rows.length,
+      page: fullResultPage,
+      pageIndex: fullResultPageIndex,
+      run: fullResultRun,
+    });
+  }, [baseDataset, fullResultCursors, fullResultPage, fullResultPageIndex, fullResultRun]);
   const visibleResultCandidate = resultDraft ?? trinoDisplayResult;
   const visibleResult = hasSqlResultDataShape(visibleResultCandidate) ? visibleResultCandidate : null;
   const chartSources = useMemo(
@@ -264,6 +312,22 @@ export function SqlAnalysisPage({
       && cachedResultBaseDatasetId === baseDataset.id,
   );
 
+  const clearFullResultState = () => {
+    setFullResultRun(null);
+    setFullResultRequestPending(false);
+    setFullResultError(null);
+    setFullResultIntent(null);
+    setFullResultPollRetry(0);
+    setFullResultPage(null);
+    setFullResultCursors([null]);
+    setFullResultPageIndex(0);
+    setFullResultPagePending(false);
+    setFullResultPageError(null);
+    setFullResultRetryCursor(undefined);
+    setFullResultRetryTargetIndex(0);
+    fullResultLoadKeyRef.current = "";
+  };
+
   const clearTrinoState = () => {
     queryOperationGenerationRef.current += 1;
     setTrinoRun(null);
@@ -289,6 +353,7 @@ export function SqlAnalysisPage({
     setEstimateDialogOpen(false);
     queryClientRequestRef.current = null;
     trinoResultLoadKeyRef.current = "";
+    clearFullResultState();
   };
 
   useEffect(() => {
@@ -567,6 +632,78 @@ export function SqlAnalysisPage({
       });
   }, [trinoResultCursors, trinoResultPage, trinoResultPageIndex, trinoResultPagePending, trinoRun]);
 
+  useEffect(() => {
+    if (!fullResultRun) return;
+    const shouldPoll = ["queued", "running"].includes(fullResultRun.status)
+      || fullResultRun.result?.storageStatus === "collecting";
+    if (!shouldPoll) return;
+
+    let disposed = false;
+    const generation = queryOperationGenerationRef.current;
+    const runId = fullResultRun.runId;
+    const timeoutId = window.setTimeout(() => {
+      void getTrinoQueryRun(runId)
+        .then((nextRun) => {
+          if (disposed || queryOperationGenerationRef.current !== generation || nextRun.runId !== runId) return;
+          setFullResultPollRetry(0);
+          setFullResultRun(nextRun);
+          if (nextRun.status === "failed" || nextRun.status === "cancelled") {
+            setFullResultError(nextRun.error?.message ?? "전체 결과 준비에 실패했습니다.");
+            setFullResultIntent(null);
+          }
+        })
+        .catch((error) => {
+          if (disposed || queryOperationGenerationRef.current !== generation) return;
+          setFullResultError(error instanceof Error ? error.message : "전체 결과 상태를 확인하지 못했습니다.");
+          setFullResultPollRetry((attempt) => attempt + 1);
+        });
+    }, Math.min(5_000, 600 * (fullResultPollRetry + 1)));
+
+    return () => {
+      disposed = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [fullResultPollRetry, fullResultRun]);
+
+  useEffect(() => {
+    const availablePageCount = fullResultRun?.result?.availablePageCount ?? 0;
+    const storageStatus = fullResultRun?.result?.storageStatus;
+    if (
+      !fullResultRun
+      || availablePageCount < 1
+      || !["collecting", "available"].includes(storageStatus ?? "")
+      || fullResultPagePending
+      || (fullResultPage
+        && fullResultPage.nextCursor
+        && !(storageStatus === "available" && fullResultPage.totalRows == null))
+    ) return;
+
+    const cursor = fullResultCursors[fullResultPageIndex] ?? null;
+    const loadKey = createTrinoResultLoadKey(fullResultRun, fullResultPageIndex, cursor);
+    if (fullResultLoadKeyRef.current === loadKey) return;
+    fullResultLoadKeyRef.current = loadKey;
+    const generation = queryOperationGenerationRef.current;
+    setFullResultPagePending(true);
+    void getTrinoQueryRunResultPage(fullResultRun.runId, cursor)
+      .then((page) => {
+        if (queryOperationGenerationRef.current !== generation || fullResultLoadKeyRef.current !== loadKey) return;
+        setFullResultPage(page);
+        setFullResultPageError(null);
+        setFullResultRetryCursor(undefined);
+      })
+      .catch((error) => {
+        if (queryOperationGenerationRef.current !== generation || fullResultLoadKeyRef.current !== loadKey) return;
+        setFullResultPageError(error instanceof Error ? error.message : "전체 결과 페이지를 불러오지 못했습니다.");
+        setFullResultRetryCursor(cursor);
+        setFullResultRetryTargetIndex(fullResultPageIndex);
+      })
+      .finally(() => {
+        if (queryOperationGenerationRef.current === generation && fullResultLoadKeyRef.current === loadKey) {
+          setFullResultPagePending(false);
+        }
+      });
+  }, [fullResultCursors, fullResultPage, fullResultPageIndex, fullResultPagePending, fullResultRun]);
+
   const resetResultState = () => {
     setResultDraft(null);
     clearTrinoState();
@@ -684,6 +821,7 @@ export function SqlAnalysisPage({
         setTrinoResultRetryCursor(undefined);
         setMaterializeDialogOpen(false);
         trinoResultLoadKeyRef.current = "";
+        clearFullResultState();
         onResultChange(null);
       }
       setResultView("execution");
@@ -829,7 +967,7 @@ export function SqlAnalysisPage({
   const changeResultDialogOpen = (open: boolean) => {
     setResultDialogOpen(open);
     setResultPageError(null);
-    if (open && visibleResult) setDialogResultDraft(visibleResult);
+    if (open && (fullTrinoDisplayResult ?? visibleResult)) setDialogResultDraft(fullTrinoDisplayResult ?? visibleResult);
   };
 
   const loadResultPage = async (offset: number) => {
@@ -946,6 +1084,85 @@ export function SqlAnalysisPage({
     }
   };
 
+  const loadNextFullResultPage = async () => {
+    if (!fullResultRun || !fullResultPage?.nextCursor || fullResultPagePending) return;
+    const generation = queryOperationGenerationRef.current;
+    const runId = fullResultRun.runId;
+    const nextCursor = fullResultPage.nextCursor;
+    const targetIndex = fullResultPageIndex + 1;
+    setFullResultPagePending(true);
+    setFullResultPageError(null);
+    try {
+      const page = await getTrinoQueryRunResultPage(runId, nextCursor);
+      if (queryOperationGenerationRef.current !== generation || page.runId !== runId) return;
+      setFullResultCursors((cursors) => [...cursors.slice(0, targetIndex), nextCursor]);
+      setFullResultPage(page);
+      setFullResultPageIndex(targetIndex);
+      setFullResultRetryCursor(undefined);
+      fullResultLoadKeyRef.current = createTrinoResultLoadKey(fullResultRun, targetIndex, nextCursor);
+    } catch (error) {
+      if (queryOperationGenerationRef.current !== generation) return;
+      setFullResultPageError(error instanceof Error ? error.message : "다음 전체 결과 페이지를 불러오지 못했습니다.");
+      setFullResultRetryCursor(nextCursor);
+      setFullResultRetryTargetIndex(targetIndex);
+    } finally {
+      if (queryOperationGenerationRef.current === generation) setFullResultPagePending(false);
+    }
+  };
+
+  const loadPreviousFullResultPage = async () => {
+    if (!fullResultRun || fullResultPageIndex < 1 || fullResultPagePending) return;
+    const generation = queryOperationGenerationRef.current;
+    const runId = fullResultRun.runId;
+    const targetIndex = fullResultPageIndex - 1;
+    const cursor = fullResultCursors[targetIndex] ?? null;
+    setFullResultPagePending(true);
+    setFullResultPageError(null);
+    try {
+      const page = await getTrinoQueryRunResultPage(runId, cursor);
+      if (queryOperationGenerationRef.current !== generation || page.runId !== runId) return;
+      setFullResultPage(page);
+      setFullResultPageIndex(targetIndex);
+      setFullResultRetryCursor(undefined);
+      fullResultLoadKeyRef.current = createTrinoResultLoadKey(fullResultRun, targetIndex, cursor);
+    } catch (error) {
+      if (queryOperationGenerationRef.current !== generation) return;
+      setFullResultPageError(error instanceof Error ? error.message : "이전 전체 결과 페이지를 불러오지 못했습니다.");
+      setFullResultRetryCursor(cursor);
+      setFullResultRetryTargetIndex(targetIndex);
+    } finally {
+      if (queryOperationGenerationRef.current === generation) setFullResultPagePending(false);
+    }
+  };
+
+  const retryFullResultPage = async () => {
+    if (!fullResultRun || fullResultRetryCursor === undefined || fullResultPagePending) return;
+    const generation = queryOperationGenerationRef.current;
+    const runId = fullResultRun.runId;
+    const retryCursor = fullResultRetryCursor;
+    const targetIndex = fullResultRetryTargetIndex;
+    setFullResultPagePending(true);
+    setFullResultPageError(null);
+    try {
+      const page = await getTrinoQueryRunResultPage(runId, retryCursor);
+      if (queryOperationGenerationRef.current !== generation || page.runId !== runId) return;
+      setFullResultCursors((cursors) => {
+        const next = [...cursors];
+        next[targetIndex] = retryCursor;
+        return next.slice(0, targetIndex + 1);
+      });
+      setFullResultPage(page);
+      setFullResultPageIndex(targetIndex);
+      setFullResultRetryCursor(undefined);
+      fullResultLoadKeyRef.current = createTrinoResultLoadKey(fullResultRun, targetIndex, retryCursor);
+    } catch (error) {
+      if (queryOperationGenerationRef.current !== generation) return;
+      setFullResultPageError(error instanceof Error ? error.message : "전체 결과 페이지를 다시 불러오지 못했습니다.");
+    } finally {
+      if (queryOperationGenerationRef.current === generation) setFullResultPagePending(false);
+    }
+  };
+
   const cancelActiveTrinoRun = async () => {
     if (!trinoRun || !["queued", "running"].includes(trinoRun.status)) return;
     const generation = queryOperationGenerationRef.current;
@@ -1036,14 +1253,72 @@ export function SqlAnalysisPage({
     );
   };
 
+  const startFullResult = async (intent: "csv" | "view") => {
+    const previewRun = trinoRun ?? visibleResult?.trinoRuntime?.run;
+    if (!isTrinoResultReady(previewRun) || previewRun.mode !== "preview") return;
+    setFullResultIntent(intent);
+    setFullResultError(null);
+
+    if (fullResultRun && ["queued", "running"].includes(fullResultRun.status)) return;
+    if (isTrinoResultReady(fullResultRun)) return;
+
+    const generation = queryOperationGenerationRef.current;
+    setFullResultRequestPending(true);
+    try {
+      const run = await requestTrinoFullResults(previewRun.runId, createClientRequestId());
+      if (queryOperationGenerationRef.current !== generation || run.sourceRunId !== previewRun.runId) return;
+      setFullResultRun(run);
+      setFullResultPollRetry(0);
+      setFullResultPage(null);
+      setFullResultCursors([null]);
+      setFullResultPageIndex(0);
+      setFullResultPageError(null);
+      setFullResultRetryCursor(undefined);
+      fullResultLoadKeyRef.current = "";
+      onAction("analysis.query_run.full_result.requested", `/api/query/runs/${previewRun.runId}/full-results`, previewRun.runId);
+    } catch (error) {
+      if (queryOperationGenerationRef.current !== generation) return;
+      setFullResultError(error instanceof Error ? error.message : "전체 결과 준비를 시작하지 못했습니다.");
+      setFullResultIntent(null);
+      onAction("analysis.query_run.full_result.failed", `/api/query/runs/${previewRun.runId}/full-results`, previewRun.runId, "failed");
+    } finally {
+      if (queryOperationGenerationRef.current === generation) setFullResultRequestPending(false);
+    }
+  };
+
+  const triggerFullResultCsvDownload = (run: TrinoQueryRun) => {
+    const url = `${apiConfig.baseUrl}/api/query/runs/${encodeURIComponent(run.runId)}/exports/csv`;
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${baseDataset?.name ?? "query-result"}_${run.runId}.csv`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    onAction("analysis.query_run.csv_export.download", `/api/query/runs/${run.runId}/exports/csv`, run.runId);
+  };
+
+  useEffect(() => {
+    if (fullResultIntent === "view" && fullTrinoDisplayResult) {
+      setDialogResultDraft(fullTrinoDisplayResult);
+      setResultDialogOpen(true);
+      setFullResultIntent(null);
+      return;
+    }
+    if (fullResultIntent === "csv" && isTrinoResultReady(fullResultRun)) {
+      triggerFullResultCsvDownload(fullResultRun);
+      setFullResultIntent(null);
+    }
+  }, [fullResultIntent, fullResultRun, fullTrinoDisplayResult]);
+
   const downloadCsv = () => {
     const activeTrinoRun = trinoRun ?? visibleResult?.trinoRuntime?.run;
     if (visibleResult?.engine === "trino") {
       if (!isTrinoResultReady(activeTrinoRun)) return;
-      const runId = activeTrinoRun.runId;
-      const url = `${apiConfig.baseUrl}/api/query/runs/${encodeURIComponent(runId)}/exports/csv`;
-      window.open(url, "_blank", "noopener,noreferrer");
-      onAction("analysis.query_run.csv_export.download", `/api/query/runs/${runId}/exports/csv`, runId);
+      if (isTrinoResultReady(fullResultRun)) {
+        triggerFullResultCsvDownload(fullResultRun);
+        return;
+      }
+      void startFullResult("csv");
       return;
     }
     if (!resultDraft) return;
@@ -1148,9 +1423,13 @@ export function SqlAnalysisPage({
   };
 
   const actionTrinoRun = trinoRun ?? visibleResult?.trinoRuntime?.run;
-  const trinoActionsDisabled = visibleResult?.engine === "trino" && !isTrinoResultReady(actionTrinoRun);
+  const trinoPreviewReady = visibleResult?.engine !== "trino" || (
+    isTrinoResultReady(actionTrinoRun) && actionTrinoRun.mode === "preview"
+  );
+  const fullResultPreparing = fullResultRequestPending
+    || Boolean(fullResultRun && (["queued", "running"].includes(fullResultRun.status) || fullResultRun.result?.storageStatus === "collecting"));
   const materializationResult = visibleResult?.engine === "trino"
-    ? isTrinoResultReady(actionTrinoRun) ? visibleResult : null
+    ? trinoPreviewReady ? visibleResult : null
     : resultDraft;
   const executionWorkspaceEnabled = Boolean(baseDataset || trinoRun || trinoSubmissionPending || trinoSubmissionError);
   const remoteResultPagination = trinoRun && trinoResultPage ? {
@@ -1164,6 +1443,18 @@ export function SqlAnalysisPage({
       ? `${trinoResultPage.rowStart.toLocaleString()}–${trinoResultPage.rowEnd.toLocaleString()}행 · 전체 수집 중`
       : `${trinoResultPage.rowStart.toLocaleString()}–${trinoResultPage.rowEnd.toLocaleString()} / ${Math.max(trinoResultPage.totalRows, trinoResultPage.rowEnd).toLocaleString()}행`,
     totalPages: trinoResultPage.totalPages,
+  } : undefined;
+  const fullRemoteResultPagination = fullResultRun && fullResultPage ? {
+    currentPage: fullResultPage.pageNumber ?? fullResultPageIndex + 1,
+    nextDisabled: !fullResultPage.nextCursor,
+    onNext: () => void loadNextFullResultPage(),
+    onPrevious: () => void loadPreviousFullResultPage(),
+    pending: fullResultPagePending,
+    previousDisabled: fullResultPageIndex < 1,
+    rangeLabel: fullResultPage.totalRows == null
+      ? `${fullResultPage.rowStart.toLocaleString()}–${fullResultPage.rowEnd.toLocaleString()}행 · 전체 결과 준비 중`
+      : `${fullResultPage.rowStart.toLocaleString()}–${fullResultPage.rowEnd.toLocaleString()} / ${Math.max(fullResultPage.totalRows, fullResultPage.rowEnd).toLocaleString()}행`,
+    totalPages: fullResultPage.totalPages,
   } : undefined;
 
   return (
@@ -1249,9 +1540,13 @@ export function SqlAnalysisPage({
           activeChartSource={activeChartSource}
           baseDatasetSelected={Boolean(baseDataset)}
           chartConfig={chartConfig}
-          dialogResultDraft={trinoRun ? visibleResult : dialogResultDraft}
+          dialogPageError={visibleResult?.engine === "trino" ? fullResultPageError ?? fullResultError : resultPageError}
+          dialogPagePending={visibleResult?.engine === "trino" ? fullResultPagePending : resultPagePending}
+          dialogRemotePagination={fullRemoteResultPagination}
+          dialogResultDraft={fullTrinoDisplayResult ?? (trinoRun ? visibleResult : dialogResultDraft)}
           dialogOpen={resultDialogOpen}
-          downloadDisabled={trinoActionsDisabled}
+          downloadDisabled={!trinoPreviewReady || fullResultPreparing}
+          downloadPending={fullResultIntent === "csv"}
           executionWorkspaceEnabled={executionWorkspaceEnabled}
           executionInfo={
             <SqlExecutionInfo
@@ -1273,13 +1568,28 @@ export function SqlAnalysisPage({
               validationPending={trinoValidationPending}
             />
           }
-          jobCreationDisabled={trinoActionsDisabled || !materializationResult}
-          pageError={trinoRun ? trinoResultError : resultPageError}
+          fullViewDisabled={!trinoPreviewReady || (fullResultPreparing && !fullTrinoDisplayResult)}
+          fullViewPending={fullResultIntent === "view"}
+          jobCreationDisabled={!trinoPreviewReady || !materializationResult}
+          pageError={trinoRun ? trinoResultError ?? fullResultError : resultPageError}
           pagePending={trinoRun ? trinoResultPagePending : resultPagePending}
           onDialogOpenChange={changeResultDialogOpen}
+          onDialogPageRetry={fullResultRetryCursor === undefined ? undefined : () => void retryFullResultPage()}
           onDownloadCsv={downloadCsv}
+          onOpenFullView={() => {
+            if (visibleResult?.engine !== "trino") {
+              changeResultDialogOpen(true);
+              return;
+            }
+            if (fullTrinoDisplayResult) {
+              setDialogResultDraft(fullTrinoDisplayResult);
+              setResultDialogOpen(true);
+              return;
+            }
+            void startFullResult("view");
+          }}
           onOpenJobWizard={() => {
-            if (!materializationResult || (materializationResult.engine === "trino" && !isTrinoResultReady(actionTrinoRun))) return;
+            if (!materializationResult || (materializationResult.engine === "trino" && !trinoPreviewReady)) return;
             setMaterializeDialogOpen(true);
           }}
           onPageChange={loadResultPage}
