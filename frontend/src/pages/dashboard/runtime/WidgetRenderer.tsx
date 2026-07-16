@@ -689,7 +689,7 @@ function VisualizationRequestWidget({
   widget,
 }: {
   assistantContext?: DashboardAssistantRuntimeContext;
-  onApplyWidgetPatch?: (patch: DashboardAssistantWidgetPatch) => Promise<void> | void;
+  onApplyWidgetPatch?: (patch: DashboardAssistantWidgetPatch) => Promise<void | boolean> | void;
   onPatchConfig?: (patch: WidgetConfigPatch) => Promise<void> | void;
   widget: DashboardRuntimeWidget;
 }) {
@@ -1406,7 +1406,7 @@ export const WidgetRenderer = memo(function WidgetRenderer({
   widget,
 }: {
   assistantContext?: DashboardAssistantRuntimeContext;
-  onApplyWidgetPatch?: (patch: DashboardAssistantWidgetPatch) => Promise<void> | void;
+  onApplyWidgetPatch?: (patch: DashboardAssistantWidgetPatch) => Promise<void | boolean> | void;
   onPatchConfig?: (patch: WidgetConfigPatch) => Promise<void> | void;
   onSelectColorSlot?: ChartColorSlotSelectHandler;
   widget: DashboardRuntimeWidget;

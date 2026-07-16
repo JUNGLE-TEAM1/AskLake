@@ -15,6 +15,8 @@ type ChatMessage = {
   content: string;
   contextNames: string[];
   notices?: string[];
+  retrieval?: NonNullable<import("../../services/queryAiService").QueryAiSuggestion["retrieval"]>;
+  sources?: import("../../services/queryAiService").QueryAiSuggestion["sources"];
   sql?: string;
 };
 
@@ -212,6 +214,8 @@ export function AiChatPage({
         content: suggestion.body,
         contextNames,
         notices: suggestion.notices,
+        retrieval: suggestion.retrieval ?? undefined,
+        sources: suggestion.sources,
         sql: suggestion.sql,
       });
       onAction("ai.chat.suggestion_created", "/api/query/ai-suggestions", selectedDatasets[0].id);
@@ -301,6 +305,23 @@ export function AiChatPage({
               <div>
                 <p>{message.content}</p>
                 {message.sql ? <pre className="ai-chat-sql"><code>{message.sql}</code></pre> : null}
+                {message.retrieval ? (
+                  <section className="ai-chat-evidence" aria-label="RAG 근거">
+                    <strong>RAG 근거</strong>
+                    <span>
+                      {(message.retrieval.semanticModelNames ?? []).join(", ") || "연결된 Semantic Model 없음"}
+                      {message.retrieval.semanticModelVersions?.some((version) => version !== null && version !== undefined)
+                        ? ` · v${message.retrieval.semanticModelVersions.filter((version): version is number => version !== null && version !== undefined).join(", v")}`
+                        : ""}
+                      {` · ${message.retrieval.status ?? "unknown"} · ${message.retrieval.resultCount ?? message.sources?.length ?? 0}건`}
+                    </span>
+                    {message.sources?.slice(0, 3).map((source, index) => (
+                      <p key={`${source.parentDocumentId ?? "source"}-${index}`}>
+                        <b>{index + 1}.</b> {source.body?.trim().slice(0, 220) || source.title || source.datasetId || "source chunk"}
+                      </p>
+                    ))}
+                  </section>
+                ) : null}
                 {message.notices?.length ? <ul className="ai-chat-notices">{message.notices.map((notice) => <li key={notice}>{notice}</li>)}</ul> : null}
                 <span className="ai-message-context">{message.contextNames.join(" · ")}</span>
               </div>

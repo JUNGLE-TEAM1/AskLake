@@ -320,16 +320,16 @@ Source/Schema/Create/Run 흐름은 항상 live backend 기준으로 검증한다
 
 Job 목록의 query/facet/legacy 상태 정규화는 외부 인프라 없이 `cd backend && npm run verify:job-list`로 먼저 확인한다. Target 표시명과 내부 ID 분리는 `cd backend && npm run verify:dataset-identity`로 확인하며, 서로 다른 한글 이름과 같은 ASCII slug를 만드는 이름이 별도 Job으로 남고 정확히 같은 target만 append 재사용되는지 검증한다. 전체 `npm run verify`는 PostgreSQL, MinIO, REST fixture를 포함한다.
 
-### AI 활용 UI Skeleton
+### AI 활용 runtime 확인
 
-`AI 활용` 메뉴의 대화형 화면은 현재 UI-only 범위다. 실제 OpenAI/RAG runtime을 호출하지 않으며, 질문을 전송하면 사용자 메시지와 `AI runtime 연결 대기` 상태만 표시한다. 답변, 근거, SQL, 결과 미리보기는 가짜 데이터로 만들지 않는다.
+`AI 활용` 메뉴는 선택한 Catalog Dataset을 Query AI endpoint에 전달한다. backend는 published Semantic Model과 approved serving RAG index를 확인한 뒤 SQL 초안, retrieval provenance, source body/title evidence를 반환한다. 선행 조건이 없으면 명시적인 상태와 빈 근거를 보여주며, 근거를 임의로 만들지 않는다.
 
 수동 확인은 다음 순서로 한다.
 
 1. `AI 활용` 메뉴를 열어 empty state와 composer가 겹치지 않는지 확인한다.
 2. `데이터셋 선택`에서 `available`이며 query 권한이 있는 Catalog Dataset을 선택한다.
 3. 추천 질문을 누르거나 질문을 입력한 뒤 Enter로 전송한다. Shift+Enter는 줄바꿈으로 유지돼야 한다.
-4. 질문 카드에 선택 Dataset 이름이 보이고, 응답 카드는 `AI runtime 미연결`만 보이는지 확인한다.
+4. 질문 카드에 선택 Dataset 이름이 보이고, 응답 카드에 SQL 초안과 `RAG 근거`의 Semantic Model/status/source chunk가 보이는지 확인한다. 선행 조건이 없으면 `no_published_semantic_model` 또는 `no_active_rag_index` 상태가 보여야 한다.
 5. `새 대화`를 눌러 빈 대화가 목록에 추가되는지 확인한다. 새 대화에는 Dataset context가 복사되지 않아야 한다.
 6. 대화 항목 위에 마우스를 올려 삭제 아이콘이 보이는지 확인하고, 삭제 후 다음 대화로 전환되는지 확인한다. 마지막 대화를 삭제하면 빈 대화 하나가 유지되어야 한다.
 7. 이전 대화를 다시 선택해 질문, Dataset context, runtime 미연결 상태가 복원되는지 확인한다.

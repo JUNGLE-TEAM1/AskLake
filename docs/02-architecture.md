@@ -206,10 +206,12 @@ Kafka Job의 source identity(`sourceType`, `sourceLabel`, `sourceConfig`)는 bro
 - `/login`은 `AuthPage`와 `/api/auth/*` session API를 사용하고, workspace hydrate는 session actor 확인 이후 시작한다.
 - `AiChatPage`는 AI 활용 메뉴의 실제 화면이며 선택 가능한 Catalog Dataset context만 대화 초안에 사용한다.
 - `AdminConsolePage`는 admin actor에게만 노출하고 `/api/admin/*`를 통해 사용자·그룹·permission grant·governance control·감사 로그를 관리한다.
-- AI 활용 메뉴는 SQL Query AI와 Dashboard Assistant를 대체하지 않는 독립 대화형 UI surface다. 초기에는 `CatalogDataset` 중 `available` 상태이면서 `permissions.canQuery !== false`인 Dataset만 대화 context로 고를 수 있으며, 질문과 선택 상태는 브라우저 메모리에만 둔다. UI-only 단계는 OpenAI 호출, RAG index, vector DB, sessionStorage 대화 영속화를 만들지 않는다. 실제 runtime 연결 전에는 답변·근거·SQL·결과 테이블을 위조하지 않는다. 화면 구조와 후속 response contract는 [AI Chat UI Contract](ai-chat-ui-contract.md)를 따른다.
+- AI 활용 메뉴는 SQL Query AI와 Dashboard Assistant를 대체하지 않는 독립 대화형 UI surface다. `available` 상태이면서 `permissions.canQuery !== false`인 Dataset만 대화 context로 고르고, 선택 상태는 브라우저 메모리에 둔다. Query AI runtime은 published Semantic Model과 serving RAG index를 확인해 SQL 초안과 근거 provenance/source를 반환하며, 선행 조건이 없을 때 답변·근거·SQL·결과 테이블을 위조하지 않는다. 화면 구조와 response contract는 [AI Chat UI Contract](ai-chat-ui-contract.md)를 따른다.
 - 수집/처리 Transform 화면의 필드 transform은 사용자가 quick function 또는 expression을 직접 선택/입력하는 범위로 둔다. AI 기반 field transform/SQL transform 보조 버튼은 SQL 분석 Query AI와 역할이 겹치고 backend 계약이 없으므로 현재 MVP 화면에 노출하지 않는다.
 
 라우팅은 `frontend/src/main.tsx`에서 React Router Declarative Mode의 `BrowserRouter`를 사용한다. `/`는 shell 밖의 랜딩이고 `/login` 및 workspace route는 `App`의 session guard를 통과한다.
+
+현재 AI runtime 계약에서는 `AiChatPage`가 Query AI endpoint를 통해 선택 Dataset의 published Semantic Model과 serving RAG index를 조회하고, 응답의 retrieval provenance와 source evidence를 표시한다. Dashboard Assistant의 `visualization_request`는 draft widget create/update action으로 저장되며, OpenAI가 비활성화되었거나 일시 실패해도 허용된 Dataset/컬럼 컨텍스트에 한해 결정론적 chart fallback을 사용한다.
 `frontend/src/App.tsx`는 Router Shell 역할을 맡아 `/jobs`, `/jobs/:jobId`, `/jobs/:jobId/runs`, `/etl/source`, `/etl/schema`, `/etl/schedule`, `/etl/permission`, `/etl/target`, `/etl/review`, `/catalog`, `/catalog/:datasetId`, `/sql`, `/dashboards`, `/dashboards/:dashboardId`, `/dashboards/:dashboardId/edit`를 기존 flow state와 매핑한다.
 route param은 기존 `selectedJob`, `selectedDataset`, `dashboardEntry` 상태와 동기화하지만, 데이터 로딩은 React Router loader/action으로 옮기지 않는다.
 수집/처리 생성 flow의 상단 stepper는 같은 `App.tsx` 상태 이동을 사용해 소스, 처리, 스케줄, 권한, 타겟, 검토 단계로 직접 이동하며, 화면 전환은 `useNavigate` 기반으로 URL도 함께 갱신한다.
@@ -283,9 +285,9 @@ Dashboard Assistant는 `POST /api/dashboards/assistant`를 FastAPI가 소유한�
 현재 actor의 dataset `query` permission과 governance 검사를 통과한 available catalog dataset과 그 dataset에 연결된 현재 page widget, 지원 가능한 widget type/config option만 OpenAI에 전달한다. 제외된 dataset의 `sampleRows`와 widget data sample은 provider context에 포함하지 않는다.
 OpenAI 응답은 backend guard를 통과해야 하며, guard는 없는 datasetId, 없는 widgetId, 지원하지 않는 widget type,
 데이터셋 컬럼과 맞지 않는 config를 제외하고 `warnings`로 돌려준다.
-`OPENAI_API_KEY`가 없거나 `OPENAI_ASSISTANT_ENABLED=false`이거나 OpenAI 호출이 실패하면 응답 `message`/`warnings`에 `mock fallback`을 명시한 fallback 응답을 반환한다.
+`OPENAI_API_KEY`가 없거나 `OPENAI_ASSISTANT_ENABLED=false`이거나 OpenAI 호출이 실패하면 응답 `message`/`warnings`에 `mock fallback`을 명시한다. 시각화 요청이면 허용된 Dataset/컬럼 컨텍스트로 결정론적 chart action을 생성하고, 일반 질문이면 action 없이 fallback 상태를 반환한다.
 현재 시각화 요청 위젯과의 호환을 위해 `configPatch`, `widgetPatch`도 임시로 유지한다.
-RAG 검색과 action 자동 적용 고도화는 후속 작업 범위다.
+RAG 검색은 published Semantic Model과 approved serving index를 공통 resolver로 확인하며, `semantic_layer_rag` provenance와 source evidence를 응답에 포함한다.
 
 ## 8) 데이터 모델 요약
 

@@ -83,6 +83,10 @@ function schemaColumnLabel(column: SemanticSchemaColumn) {
   return `${column.name} · ${column.dataType}`;
 }
 
+function delay(milliseconds: number) {
+  return new Promise<void>((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
 export function SemanticLayerPage({ onAction }: SemanticPageProps) {
   const [models, setModels] = useState<SemanticModel[]>([]);
   const [catalogDatasets, setCatalogDatasets] = useState<CatalogDataset[]>([]);
@@ -220,9 +224,24 @@ export function SemanticLayerPage({ onAction }: SemanticPageProps) {
   const index = async () => {
     if (!ragDatasetId) return;
     await run("index", async () => {
-      await indexRagDataset(ragDatasetId, ragProfile?.indexStatus === "ready" ? "reindex" : "index");
-      await refreshProfile(ragDatasetId);
-      setNotice({ tone: "info", message: "RAG 색인 작업을 요청했습니다. 작업 상태는 Dataset profile에서 확인합니다." });
+      const accepted = await indexRagDataset(ragDatasetId, ragProfile?.indexStatus === "ready" ? "reindex" : "index");
+      let latest: RagProfile | null = null;
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        await delay(1000);
+        latest = await getRagProfile(ragDatasetId);
+        setProfiles((current) => ({ ...current, [ragDatasetId]: latest as RagProfile }));
+        if (latest.indexStatus === "failed" || latest.buildStatus === "failed") {
+          throw new Error(latest.lastError || `RAG 색인 작업 ${accepted.jobId}가 실패했습니다.`);
+        }
+        if (latest.servingStatus === "serving" && latest.indexStatus === "ready") break;
+      }
+      if (!latest || latest.servingStatus !== "serving" || latest.indexStatus !== "ready") {
+        setNotice({ tone: "info", message: `RAG 색인 작업 ${accepted.jobId}를 접수했습니다. 백그라운드 작업이 끝나면 근거 검색이 활성화됩니다.` });
+        return;
+      }
+      const preview = await previewRagDocuments(ragDatasetId);
+      setPreviews((current) => ({ ...current, [ragDatasetId]: preview.documents }));
+      setNotice({ tone: "success", message: "RAG 색인과 Semantic Model 연결이 완료되어 근거 검색을 사용할 수 있습니다." });
     });
   };
 

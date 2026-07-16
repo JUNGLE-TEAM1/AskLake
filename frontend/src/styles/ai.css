@@ -199,6 +199,32 @@
   white-space: pre;
 }
 
+.ai-chat-evidence {
+  display: grid;
+  gap: 5px;
+  margin-top: 10px;
+  border-left: 3px solid #4f8df7;
+  background: #f5f8ff;
+  padding: 9px 10px;
+  color: #36527c;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.ai-chat-evidence strong {
+  color: #1e3a6d;
+  font-size: 12px;
+}
+
+.ai-chat-evidence p {
+  overflow: hidden;
+  color: #52657d;
+  font-size: 12px;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .ai-chat-notices {
   display: grid;
   gap: 4px;

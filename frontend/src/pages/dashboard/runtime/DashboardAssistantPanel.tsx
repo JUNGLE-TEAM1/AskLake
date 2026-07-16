@@ -21,8 +21,8 @@ type DashboardAssistantPanelProps = {
   currentDatasetId?: string | null;
   dashboardId?: string;
   datasets: DashboardDatasetOption[];
-  onCreateWidget?: (input: CreateDraftWidgetFormInput) => Promise<void> | void;
-  onUpdateWidget?: (widgetId: string, input: UpdateDraftWidgetFormInput) => Promise<void> | void;
+  onCreateWidget?: (input: CreateDraftWidgetFormInput) => Promise<void | boolean> | void;
+  onUpdateWidget?: (widgetId: string, input: UpdateDraftWidgetFormInput) => Promise<void | boolean> | void;
   pageId: string | null;
   promptInsertion?: DashboardAssistantPromptInsertion | null;
   selectedWidget: DashboardRuntimeWidget | null;
@@ -40,17 +40,26 @@ type AssistantMessage = {
   text: string;
 };
 
-function retrievalSummary(response: DashboardAssistantResponse) {
+function isWidgetMutationPrompt(prompt: string) {
+  const hasWidgetTarget = /(위젯|차트|그래프|시각화|widget|chart|graph|visuali[sz])/i.test(prompt);
+  const hasMutationVerb = /(바꿔|변경|수정|만들|추가|생성|업데이트|전환|구성|설정|그려|해줘|보여|change|update|create|add|make|draw|show)/i.test(prompt);
+  return hasWidgetTarget && hasMutationVerb;
+}
+
+function semanticRetrievalSummary(response: DashboardAssistantResponse) {
   const retrieval = response.retrieval;
   if (!retrieval) return "";
-
   const resultCount = retrieval.resultCount ?? response.sources?.length ?? 0;
+  const modelNames = retrieval.semanticModelNames ?? [];
+  const modelVersions = retrieval.semanticModelVersions ?? [];
+  const modelSummary = modelNames.map((name, index) => `${name}${modelVersions[index] ? ` v${modelVersions[index]}` : ""}`).join(", ");
+  const datasetSummary = (retrieval.datasetIds ?? []).slice(0, 3).join(", ");
   const sourceTitles = (response.sources ?? [])
-    .map((source) => source.title?.split("\\n").find((line) => line.includes(":")) ?? source.title)
+    .map((source) => source.title || source.body?.trim().slice(0, 120) || source.datasetId)
     .filter((title): title is string => Boolean(title))
     .slice(0, 3);
-  const evidence = sourceTitles.length > 0 ? ` · 근거: ${sourceTitles.join(", ")}` : "";
-  return `RAG 검색 ${retrieval.status ?? "unknown"} · ${resultCount}건${evidence}`;
+  const evidence = sourceTitles.length > 0 ? ` · 근거: ${sourceTitles.join(" / ")}` : "";
+  return `RAG 근거 · ${modelSummary || "semantic model 없음"} · Dataset: ${datasetSummary || "-"} · ${retrieval.status ?? "unknown"} · ${resultCount}건${evidence}`;
 }
 
 function AskLakeAssistantMark() {
@@ -113,10 +122,11 @@ export function DashboardAssistantPanel({
 
     setIsSubmitting(true);
     try {
+      const mode = isWidgetMutationPrompt(nextPrompt) ? "visualization_request" : "dashboard_question";
       const response = await requestDashboardAssistant({
         dashboardId,
         currentDatasetId,
-        mode: "dashboard_question",
+        mode,
         pageId,
         prompt: nextPrompt,
         selectedWidgetId: selectedWidget?.id ?? null,
@@ -132,7 +142,7 @@ export function DashboardAssistantPanel({
         response,
         widgets,
       });
-      const retrievalMessage = retrievalSummary(response);
+      const retrievalMessage = semanticRetrievalSummary(response);
       const warningMessage = response.warnings.length > 0
         ? `경고: ${response.warnings.join(" / ")}`
         : "";
@@ -258,8 +268,8 @@ async function applyAssistantWidgetActions({
   widgets,
 }: {
   datasets: DashboardDatasetOption[];
-  onCreateWidget?: (input: CreateDraftWidgetFormInput) => Promise<void> | void;
-  onUpdateWidget?: (widgetId: string, input: UpdateDraftWidgetFormInput) => Promise<void> | void;
+  onCreateWidget?: (input: CreateDraftWidgetFormInput) => Promise<void | boolean> | void;
+  onUpdateWidget?: (widgetId: string, input: UpdateDraftWidgetFormInput) => Promise<void | boolean> | void;
   response: DashboardAssistantResponse;
   widgets: DashboardRuntimeWidget[];
 }) {
@@ -289,15 +299,16 @@ async function applyAssistantWidgetActions({
 
 async function applyCreateWidgetAction(
   action: DashboardAssistantCreateWidgetAction,
-  onCreateWidget?: (input: CreateDraftWidgetFormInput) => Promise<void> | void,
+  onCreateWidget?: (input: CreateDraftWidgetFormInput) => Promise<void | boolean> | void,
 ) {
   if (!onCreateWidget) return "위젯 생성 함수가 연결되지 않아 새 위젯을 추가하지 못했습니다.";
-  await onCreateWidget({
+  const applied = await onCreateWidget({
     config: action.widget.config,
     datasetId: action.widget.datasetId,
     title: action.widget.title || "AI 추천 위젯",
     type: action.widget.type,
   });
+  if (applied === false) return "위젯 생성 저장에 실패했습니다. 화면의 오류를 확인해 주세요.";
   return "AI가 제안한 위젯을 추가했습니다.";
 }
 
@@ -305,7 +316,7 @@ async function applyUpdateWidgetAction(
   action: DashboardAssistantUpdateWidgetAction,
   datasets: DashboardDatasetOption[],
   widgets: DashboardRuntimeWidget[],
-  onUpdateWidget?: (widgetId: string, input: UpdateDraftWidgetFormInput) => Promise<void> | void,
+  onUpdateWidget?: (widgetId: string, input: UpdateDraftWidgetFormInput) => Promise<void | boolean> | void,
 ) {
   if (!onUpdateWidget) return "위젯 수정 함수가 연결되지 않아 변경사항을 적용하지 못했습니다.";
 
@@ -317,7 +328,7 @@ async function applyUpdateWidgetAction(
   const nextDatasetId = action.patch.datasetId ?? currentWidget?.datasetId ?? null;
   const nextRows = nextDatasetId ? datasets.find((dataset) => dataset.id === nextDatasetId)?.rows : undefined;
 
-  await onUpdateWidget(action.widgetId, {
+  const applied = await onUpdateWidget(action.widgetId, {
     config: {
       ...(currentWidget?.config ?? {}),
       ...(action.patch.config ?? {}),
@@ -327,5 +338,6 @@ async function applyUpdateWidgetAction(
     title: action.patch.title ?? currentWidget?.title ?? "제목 없는 위젯",
     type: action.patch.type ?? currentWidget?.type ?? "bar_chart",
   });
+  if (applied === false) return "위젯 변경사항 저장에 실패했습니다. 화면의 오류를 확인해 주세요.";
   return "AI가 제안한 위젯 변경사항을 적용했습니다.";
 }

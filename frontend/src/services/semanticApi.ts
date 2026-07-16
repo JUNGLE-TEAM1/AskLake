@@ -97,6 +97,7 @@ export type RagProfile = {
   activeEmbeddingModel?: string | null;
   activeEmbeddingDimensions?: number | null;
   activeChunkingVersion?: string | null;
+  lastError?: string | null;
   physicalColumnMapping?: Record<string, string>;
   semanticBindings: Record<string, Array<Record<string, unknown>>>;
   recommendations: RagRecommendation[];

@@ -61,6 +61,38 @@ class SemanticModelService:
             self._require(row, actor, "view")
         return self._to_response(row, actor, enforce=enforce)
 
+    def published_query_model(self, model_id: str, actor: ActorContext) -> dict[str, Any] | None:
+        """Return the compact, query-authorized provenance contract for one model."""
+        row = self.db.get(SemanticModelModel, model_id)
+        if row is None or row.status != "published" or not self._has(row, actor, "query"):
+            return None
+        return self._query_model_info(row)
+
+    def published_query_models_for_datasets(
+        self,
+        dataset_ids: list[str],
+        actor: ActorContext,
+    ) -> list[dict[str, Any]]:
+        """Resolve published semantic models that can be used for RAG retrieval.
+
+        This is deliberately a query-permission check, not a view check.  A
+        model can be visible in the UI while its underlying retrieval contract
+        is not available to the current actor.
+        """
+        normalized_dataset_ids = list(dict.fromkeys(str(item) for item in dataset_ids if str(item).strip()))
+        if not normalized_dataset_ids:
+            return []
+        rows = self.db.scalars(
+            select(SemanticModelModel)
+            .join(SemanticModelDatasetModel, SemanticModelDatasetModel.model_id == SemanticModelModel.id)
+            .where(
+                SemanticModelModel.status == "published",
+                SemanticModelDatasetModel.dataset_id.in_(normalized_dataset_ids),
+            )
+            .order_by(SemanticModelModel.updated_at.desc())
+        ).unique().all()
+        return [self._query_model_info(row) for row in rows if self._has(row, actor, "query")]
+
     def create(self, request: SemanticModelCreate, actor: ActorContext) -> SemanticModelResponse:
         model_id = f"sm_{uuid4().hex}"
         model = SemanticModelModel(
@@ -205,6 +237,76 @@ class SemanticModelService:
             metrics=[self._item(item) for item in metrics], dimensions=[self._item(item) for item in dimensions],
             relationships=[self._item(item) for item in relationships], vocabulary=[self._item(item) for item in vocabulary],
         )
+
+    def _query_model_info(self, row: SemanticModelModel) -> dict[str, Any]:
+        datasets = self.db.scalars(
+            select(SemanticModelDatasetModel)
+            .where(SemanticModelDatasetModel.model_id == row.id)
+            .order_by(SemanticModelDatasetModel.created_at.asc())
+        ).all()
+        metrics = self.db.scalars(
+            select(SemanticMetricModel)
+            .where(SemanticMetricModel.model_id == row.id)
+            .order_by(SemanticMetricModel.created_at.asc())
+        ).all()
+        dimensions = self.db.scalars(
+            select(SemanticDimensionModel)
+            .where(SemanticDimensionModel.model_id == row.id)
+            .order_by(SemanticDimensionModel.created_at.asc())
+        ).all()
+        relationships = self.db.scalars(
+            select(SemanticRelationshipModel)
+            .where(SemanticRelationshipModel.model_id == row.id)
+            .order_by(SemanticRelationshipModel.created_at.asc())
+        ).all()
+        vocabulary = self.db.scalars(
+            select(SemanticVocabularyModel)
+            .where(SemanticVocabularyModel.model_id == row.id)
+            .order_by(SemanticVocabularyModel.created_at.asc())
+        ).all()
+        return {
+            "id": row.id,
+            "name": row.name,
+            "version": row.published_version,
+            "status": row.status,
+            "datasetIds": [item.dataset_id for item in datasets],
+            "metrics": [
+                {
+                    "name": item.name,
+                    "label": item.label,
+                    "description": item.description,
+                    "expression": item.expression,
+                    "datasetId": item.dataset_id,
+                    "sourceColumns": item.source_columns or [],
+                    "format": item.format,
+                }
+                for item in metrics
+            ],
+            "dimensions": [
+                {
+                    "name": item.name,
+                    "label": item.label,
+                    "description": item.description,
+                    "columnName": item.column_name,
+                    "datasetId": item.dataset_id,
+                    "dataType": item.data_type,
+                }
+                for item in dimensions
+            ],
+            "relationships": [
+                {
+                    "fromDatasetId": item.from_dataset_id,
+                    "toDatasetId": item.to_dataset_id,
+                    "relationshipType": item.relationship_type,
+                    "joinExpression": item.join_expression,
+                }
+                for item in relationships
+            ],
+            "vocabulary": [
+                {"term": item.term, "synonyms": item.synonyms or []}
+                for item in vocabulary
+            ],
+        }
 
     @staticmethod
     def _item(item: Any) -> dict[str, Any]:

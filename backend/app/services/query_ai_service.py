@@ -25,6 +25,7 @@ from app.services.sql_service import (
     unique_dataset_ids,
     validate_read_only_query,
 )
+from app.services.semantic_rag_context import build_semantic_rag_context
 
 OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
 PREVIEW_LIMIT = 100
@@ -94,6 +95,14 @@ class QueryAiService:
                 resource_label="dataset",
             )
         base_dataset = self.pick_base_dataset(datasets, request.base_dataset_id)
+        rag_context = build_semantic_rag_context(
+            db=self.catalog_repository.db,
+            settings=settings,
+            actor=actor_context,
+            query=prompt,
+            dataset_ids=context_dataset_ids,
+            semantic_model_id=request.semantic_model_id,
+        )
         if settings.ai_query_provider == "gateway":
             request_id = str(uuid4())
             context_token = issue_ai_context_token(
@@ -109,6 +118,7 @@ class QueryAiService:
                 base_dataset_id=base_dataset.id,
                 selected_dataset_ids=context_dataset_ids,
                 context_token=context_token,
+                rag_context=rag_context,
             )
         else:
             client = OpenAiResponsesClient(
@@ -122,6 +132,7 @@ class QueryAiService:
                     current_query=request.current_query or "",
                     datasets=datasets,
                     prompt=prompt,
+                    rag_context=rag_context,
                 ),
             )
 
@@ -135,6 +146,8 @@ class QueryAiService:
             or "Read-only SQL draft generated from the selected dataset context.",
             model=(str(raw_suggestion.get("model")) if isinstance(raw_suggestion, dict) and raw_suggestion.get("model") else settings.openai_query_ai_model),
             notices=normalize_notices(suggestion.get("notices")),
+            retrieval=rag_context.get("retrieval"),
+            sources=list(rag_context.get("sources") or []),
             sql=sql,
             title=suggestion.get("title") or "SQL draft",
         )
@@ -247,6 +260,7 @@ def build_system_prompt() -> str:
             "Use only the selected dataset table names exactly as provided.",
             "Prefer current non-legacy datasets. Do not use a dataset whose name or tags indicate legacy unless it is the only selected dataset.",
             "Do not silently ignore requested filters, dimensions, or business qualifiers.",
+            "When ragContext.retrieval.provenance is semantic_layer_rag, use its source chunks as evidence for business terminology and requested qualifiers. Do not claim that RAG was used unless the context says it was.",
             "If the request mentions a qualifier such as VIP, region, channel, product category, payment method, status, or date range, include the matching WHERE, GROUP BY, or JOIN logic when selected schemas contain matching columns.",
             "Generate JOIN or multi-table SQL when the selected datasets and joinHints contain the needed tables and keys.",
             "When using joins, keep every physical table reference inside the selected dataset context.",
@@ -266,12 +280,14 @@ def build_user_payload(
     current_query: str,
     datasets: list[CatalogDatasetResponse],
     prompt: str,
+    rag_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
         "baseDatasetId": base_dataset.id,
         "currentQuery": current_query,
         "joinHints": build_join_hints(datasets),
         "naturalLanguageRequest": prompt,
+        "ragContext": rag_context or {},
         "previewLimit": PREVIEW_LIMIT,
         "selectedDatasets": [
             {

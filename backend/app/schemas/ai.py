@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import ConfigDict, Field
 
@@ -60,6 +60,7 @@ class AiGatewayQueryRequest(CamelModel):
     prompt: str = Field(min_length=1, max_length=20_000)
     current_query: str = Field(default="", max_length=100_000)
     base_dataset_id: str | None = Field(default=None, max_length=255)
+    rag_context: dict[str, Any] = Field(default_factory=dict)
     selected_dataset_ids: list[str] = Field(min_length=1, max_length=100)
 
 

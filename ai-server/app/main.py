@@ -212,7 +212,10 @@ def create_app(settings: Settings | None = None, llm_client: LLMClient | None = 
             except McpContextError as exc:
                 raise HTTPException(status_code=502, detail="MCP catalog context request failed") from exc
             mcp_duration_ms = (time.perf_counter() - mcp_started) * 1000
-            request = request.model_copy(update={"context": catalog_context})
+            request = request.model_copy(update={"context": {**catalog_context, "ragContext": request.rag_context}})
+            validate_request_limits(request, app_settings)
+        elif request.rag_context:
+            request = request.model_copy(update={"context": {**request.context, "ragContext": request.rag_context}})
             validate_request_limits(request, app_settings)
         try:
             output = await app.state.llm_client.generate(request)

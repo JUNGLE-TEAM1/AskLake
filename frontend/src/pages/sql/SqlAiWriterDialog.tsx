@@ -181,6 +181,29 @@ export function SqlAiWriterDialog({
                 <span className="mt-1 block text-sm text-muted-foreground">{suggestion.body}</span>
               </BubbleContent>
             </Bubble>
+            {suggestion.retrieval && (
+              <Bubble className="max-w-full" variant="tinted">
+                <BubbleContent className="max-w-full text-sm">
+                  <strong>RAG 근거</strong>
+                  <span className="mt-1 block">
+                    Semantic model: {(suggestion.retrieval.semanticModelNames ?? []).join(", ") || "없음"}
+                    {suggestion.retrieval.semanticModelVersions?.some(Boolean)
+                      ? ` · version ${suggestion.retrieval.semanticModelVersions.filter(Boolean).join(", ")}`
+                      : ""}
+                  </span>
+                  <span className="mt-1 block text-muted-foreground">
+                    Dataset: {(suggestion.retrieval.datasetIds ?? []).join(", ") || "-"}
+                    {` · ${suggestion.retrieval.status ?? "unknown"} · ${suggestion.retrieval.resultCount ?? suggestion.sources?.length ?? 0} source chunks`}
+                  </span>
+                  {(suggestion.sources ?? []).slice(0, 3).map((source, index) => (
+                    <span className="mt-1 block text-muted-foreground" key={`${source.parentDocumentId ?? "source"}-${index}`}>
+                      {index + 1}. {source.title || source.body?.trim().slice(0, 180) || source.datasetId || "source chunk"}
+                      {source.chunkIndex !== undefined ? ` · chunk ${source.chunkIndex}` : ""}
+                    </span>
+                  ))}
+                </BubbleContent>
+              </Bubble>
+            )}
             <Bubble className="w-full max-w-full" variant="outline">
               <BubbleContent className="w-full max-w-full p-0">
                 <ScrollArea className={styles.preview} scrollbars="both" type="always">

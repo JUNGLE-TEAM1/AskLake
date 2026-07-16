@@ -1,3 +1,4 @@
+from typing import Any
 from urllib.parse import urljoin
 
 import httpx
@@ -27,6 +28,7 @@ class AiGatewayClient:
         base_dataset_id: str | None,
         selected_dataset_ids: list[str],
         context_token: str,
+        rag_context: dict[str, Any] | None = None,
     ) -> dict[str, object]:
         request = AiGatewayQueryRequest(
             request_id=request_id,
@@ -34,6 +36,7 @@ class AiGatewayClient:
             current_query=current_query,
             base_dataset_id=base_dataset_id,
             selected_dataset_ids=selected_dataset_ids,
+            rag_context=rag_context or {},
         )
         if not isinstance(context_token, str) or not context_token.strip():
             raise ApiError(

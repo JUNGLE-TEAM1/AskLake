@@ -147,6 +147,75 @@ class QueryAiContractTests(unittest.TestCase):
         self.assertEqual(generate.call_args.kwargs["selected_dataset_ids"], [dataset.id])
         self.assertTrue(generate.call_args.kwargs["context_token"])
 
+    def test_sql_suggestion_returns_semantic_layer_rag_provenance(self) -> None:
+        repository = type("Repository", (), {"db": object()})()
+        service = QueryAiService(repository)
+        dataset = catalog_dataset()
+        request = QueryAiSuggestionRequest(
+            base_dataset_id=dataset.id,
+            prompt="Show negative review counts",
+            selected_dataset_ids=[dataset.id],
+        )
+        rag_context = {
+            "sources": [{"datasetId": dataset.id, "parentDocumentId": "parent-1", "title": "review_text"}],
+            "retrieval": {
+                "provenance": "semantic_layer_rag",
+                "semanticModelIds": ["sm_reviews"],
+                "semanticModelNames": ["Reviews semantic layer"],
+                "semanticModelVersions": [3],
+                "datasetIds": [dataset.id],
+                "status": "ready",
+                "resultCount": 1,
+            },
+        }
+
+        with (
+            patch.object(service, "get_catalog_dataset", return_value=dataset),
+            patch("app.services.query_ai_service.require_governed_access"),
+            patch("app.services.query_ai_service.require_permission"),
+            patch("app.services.query_ai_service.build_semantic_rag_context", return_value=rag_context),
+            patch(
+                "app.services.query_ai_service.OpenAiResponsesClient.create_json_response",
+                return_value='{"title":"Counts","body":"Draft","sql":"SELECT count(*) FROM review_gold LIMIT 10","notices":[]}',
+            ) as generate,
+        ):
+            response = service.create_suggestion(request, ActorContext(name="analyst", role="admin"))
+
+        self.assertEqual(response.retrieval["provenance"], "semantic_layer_rag")
+        self.assertEqual(response.sources[0]["parentDocumentId"], "parent-1")
+        self.assertEqual(generate.call_args.kwargs["user_payload"]["ragContext"], rag_context)
+
+    def test_gateway_receives_semantic_layer_rag_context(self) -> None:
+        repository = type("Repository", (), {"db": object()})()
+        service = QueryAiService(repository)
+        dataset = catalog_dataset()
+        request = QueryAiSuggestionRequest(
+            base_dataset_id=dataset.id,
+            prompt="Show review counts",
+            selected_dataset_ids=[dataset.id],
+        )
+        rag_context = {"sources": [], "retrieval": {"provenance": "semantic_layer_rag", "status": "ready"}}
+
+        with (
+            patch.object(service, "get_catalog_dataset", return_value=dataset),
+            patch("app.services.query_ai_service.require_governed_access"),
+            patch("app.services.query_ai_service.require_permission"),
+            patch("app.services.query_ai_service.settings.ai_query_provider", "gateway"),
+            patch("app.services.query_ai_service.build_semantic_rag_context", return_value=rag_context),
+            patch("app.services.query_ai_service.AiGatewayClient.generate_query_sql") as generate,
+        ):
+            generate.return_value = {
+                "title": "Counts",
+                "body": "Gateway draft",
+                "sql": "SELECT review_id FROM review_gold LIMIT 10",
+                "notices": [],
+                "model": "gateway-test-model",
+            }
+            response = service.create_suggestion(request, ActorContext(name="analyst", role="admin"))
+
+        self.assertEqual(response.retrieval["provenance"], "semantic_layer_rag")
+        self.assertEqual(generate.call_args.kwargs["rag_context"], rag_context)
+
 
 if __name__ == "__main__":
     unittest.main()

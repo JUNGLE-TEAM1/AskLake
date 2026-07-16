@@ -518,3 +518,5 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 - [x] 생성·수정 응답과 접근 판정에 persisted grant 병합
 - [x] `backend/scripts/verify-permission-create-flow-contract.py` 생성·교체 계약 검증
 - [ ] Docker/PostgreSQL 기반 `verify:permission-job-dashboard` 전체 스모크는 metadata DB가 응답 가능한 환경에서 실행
+
+RAG v2 runtime readiness: Query AI and Dashboard Assistant share the semantic-layer resolver. Published model definitions and approved serving index aliases are required for retrieval; `retrieval.provenance=semantic_layer_rag` and source body/title evidence are rendered in the AI surfaces. Dashboard mutation actions are considered successful only after the draft widget save completes.

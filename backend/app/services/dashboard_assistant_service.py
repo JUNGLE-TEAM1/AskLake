@@ -28,10 +28,7 @@ from app.services.dashboard_assistant_guard import (
     coerce_assistant_response,
     guard_assistant_response,
 )
-from app.services.rag_search_service import RagSearchService
-from app.services.rag_service import RagService
-from app.services.semantic_model_service import SemanticModelService
-from app.models.semantic_rag import RagDatasetProfileModel
+from app.services.semantic_rag_context import build_semantic_rag_context
 
 OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
 LOW_SIGNAL_PROMPTS = {"ㅋ", "ㅋㅋ", "ㅋㅋㅋ", "ㅎㅎ", "ㅎㅎㅎ", "ㅇㅋ", "ㅇㅇ", "ㄴㄴ", "lol", "haha", "hehe", "ok", "okay"}
@@ -67,12 +64,12 @@ class DashboardAssistantService:
 
         if not self.settings.openai_assistant_enabled:
             return self._attach_rag(
-                self._mock_fallback_response(request, context, "mock fallback: OpenAI Assistant가 비활성화되어 있습니다."),
+                self._offline_fallback_response(request, context, "mock fallback: OpenAI Assistant가 비활성화되어 있습니다."),
                 rag_context,
             )
         if not self.settings.openai_api_key:
             return self._attach_rag(
-                self._mock_fallback_response(request, context, "mock fallback: OPENAI_API_KEY가 설정되지 않았습니다."),
+                self._offline_fallback_response(request, context, "mock fallback: OPENAI_API_KEY가 설정되지 않았습니다."),
                 rag_context,
             )
 
@@ -86,7 +83,7 @@ class DashboardAssistantService:
             return self._attach_rag(self._with_context_warnings(guarded_response, context), rag_context)
         except (HTTPError, URLError, TimeoutError, ValueError, OSError) as exc:
             return self._attach_rag(
-                self._mock_fallback_response(
+                self._offline_fallback_response(
                     request,
                     context,
                     f"mock fallback: OpenAI 호출에 실패해 mock 응답을 사용했습니다. ({exc.__class__.__name__})",
@@ -160,34 +157,31 @@ class DashboardAssistantService:
             warnings=[*context.warnings, warning],
         )
 
+    def _offline_fallback_response(
+        self,
+        request: DashboardAssistantRequest,
+        context: AssistantDashboardContext,
+        warning: str,
+    ) -> DashboardAssistantResponse:
+        response = self._mock_fallback_response(request, context, warning)
+        if request.mode == DashboardAssistantMode.VISUALIZATION_REQUEST:
+            response = _with_visualization_fallback_action(request, context, response)
+        return response
+
     def _build_rag_context(self, request: DashboardAssistantRequest, actor: ActorContext) -> dict[str, Any] | None:
         if not request.semantic_model_id and not request.current_dataset_id:
             return None
         db = getattr(self.runtime_repository, "db", None)
         if db is None:
-            return {"sources": [], "retrieval": {"mode": "hybrid", "status": "unavailable"}}
-        rag_service = RagService(db)
-        dataset_ids = [request.current_dataset_id] if request.current_dataset_id else []
-        if request.semantic_model_id:
-            model = SemanticModelService(db).get(request.semantic_model_id, actor)
-            if model.status != "published":
-                return {"sources": [], "retrieval": {"mode": "hybrid", "status": "semantic_model_not_published", "semanticModelId": request.semantic_model_id}}
-            dataset_ids = list(dict.fromkeys([*dataset_ids, *(item.dataset_id for item in model.datasets)]))
-        aliases: list[str] = []
-        targets: list[dict[str, Any]] = []
-        for dataset_id in dataset_ids:
-            try:
-                rag_service._dataset(dataset_id, actor, "query")
-            except Exception:
-                continue
-            profile = rag_service.profile(dataset_id, actor)
-            if profile.review_state == "approved" and profile.serving_status in {"serving", "stale"} and profile.target_alias:
-                aliases.append(profile.target_alias)
-                targets.append({"alias": profile.target_alias, "embeddingModel": profile.active_embedding_model, "embeddingDimensions": profile.active_embedding_dimensions})
-        try:
-            return RagSearchService(self.settings).search(query=request.prompt, aliases=aliases, targets=targets, actor=actor)
-        except Exception as exc:
-            return {"sources": [], "retrieval": {"mode": "hybrid", "status": "unavailable", "reason": exc.__class__.__name__}}
+            return {"sources": [], "retrieval": {"mode": "hybrid", "status": "unavailable", "provenance": "semantic_layer_rag"}}
+        return build_semantic_rag_context(
+            db=db,
+            settings=self.settings,
+            actor=actor,
+            query=request.prompt,
+            dataset_ids=[request.current_dataset_id] if request.current_dataset_id else [],
+            semantic_model_id=request.semantic_model_id,
+        )
 
     @staticmethod
     def _attach_rag(response: DashboardAssistantResponse, rag_context: dict[str, Any] | None) -> DashboardAssistantResponse:

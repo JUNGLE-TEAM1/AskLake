@@ -3799,3 +3799,8 @@ type PermissionGrant = {
 빈 `principalId` 또는 action이 없는 grant는 `400 VALIDATION_ERROR`다. `public` principal은 `principalId`를 `public`으로 정규화한다. backend는 client가 보낸 `id`와 `source`를 신뢰하지 않고 새 ID와 `permission_ui` source를 부여한다.
 
 권한 옵션 조회는 admin actor만 허용한다. live frontend는 API 오류 시 grant 화면 안에 재시도 경로를 표시하고 다음 단계 이동을 막는다. `VITE_USE_MOCK_API=true`에서는 동일 response shape의 fixture를 사용하되 최종 Job request shape는 live와 동일하다.
+#### RAG v2 and Dashboard Assistant action application
+
+Query AI and Dashboard Assistant use a shared semantic-layer RAG resolver. `retrieval.provenance=semantic_layer_rag` means the response was authorized by a published Semantic Model and an approved serving index; `semanticModels` carries metrics, dimensions, relationships, and vocabulary, while `sources` carries retrieved source body/title evidence. If either prerequisite is missing, the response contains an explicit retrieval status and no fabricated sources.
+
+When a Dashboard Assistant prompt requests a widget/chart mutation, the frontend sends `visualization_request` and persists the guarded action through the draft widget create/update API. The assistant only reports success after the save callback succeeds.

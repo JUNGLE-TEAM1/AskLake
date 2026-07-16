@@ -65,7 +65,11 @@ export type DashboardAssistantResponse = {
   message: string;
   retrieval?: {
     aliases?: string[];
+    datasetIds?: string[];
+    provenance?: string;
     resultCount?: number;
+    semanticModelNames?: string[];
+    semanticModelVersions?: Array<number | null>;
     status?: string;
   };
   sources?: Array<{
@@ -74,6 +78,7 @@ export type DashboardAssistantResponse = {
     datasetId?: string;
     metadata?: Record<string, unknown>;
     parentDocumentId?: string;
+    semanticModelIds?: string[];
     title?: string;
   }>;
   warnings: string[];

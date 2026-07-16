@@ -1,4 +1,5 @@
 import json
+import re
 from typing import Any, Protocol
 
 import httpx
@@ -6,6 +7,13 @@ import httpx
 from .config import Settings
 from .schemas import DatasetClassificationOutput, DocumentSegmentationOutput, GenerateRequest, GenerationOutput, QuerySqlOutput
 from .mcp_client import McpContextClient
+
+
+def quote_sql_identifier(value: str) -> str:
+    """Quote a SQL identifier without changing its logical Dataset name."""
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", value):
+        return value
+    return '"' + value.replace('"', '""') + '"'
 
 
 class ProviderError(Exception):
@@ -79,7 +87,7 @@ class MockLLMClient:
             first_dataset = datasets[0]
             if isinstance(first_dataset, dict):
                 table_name = first_dataset.get("dataset_name") or first_dataset.get("datasetName")
-        query_sql = f"SELECT * FROM {table_name} LIMIT 100;" if table_name else "SELECT 1 AS mock_result;"
+        query_sql = f"SELECT * FROM {quote_sql_identifier(str(table_name))} LIMIT 100;" if table_name else "SELECT 1 AS mock_result;"
         return QuerySqlOutput(
             query_sql=query_sql,
             explanation="Deterministic mock provider output for local development and tests.",
@@ -174,7 +182,7 @@ def build_chat_completion_request(settings: Settings, request: GenerateRequest) 
                 "role": "system",
                 "content": (
                     "Return only a JSON object matching the supplied output schema. "
-                    "For query_sql mode, produce a read-only SQL draft; do not execute SQL or tools. "
+                    "For query_sql mode, produce a read-only SQL draft; do not execute SQL or tools. When context.ragContext.provenance is semantic_layer_rag, use its source chunks as evidence. "
                     "For classify_dataset mode, assign one role to each supplied schema column. "
                     "For segment_document mode, return only contiguous inclusive sentence ranges; never rewrite or omit text."
                 ),

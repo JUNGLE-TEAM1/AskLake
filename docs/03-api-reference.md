@@ -920,7 +920,7 @@ type DashboardAssistantResponse = {
 ```
 
 `dashboard_question` 모드는 리포트/분석 결과를 `actions: [{ type: "report", markdown }]` 형태로 받을 수 있다.
-`visualization_request` 모드는 장기적으로 `actions`의 `create_widget` 또는 `update_widget`을 적용한다.
+`visualization_request` 모드는 `actions`의 `create_widget` 또는 `update_widget`을 적용한다.
 현재 시각화 요청 위젯은 기존 구현과의 호환을 위해 `configPatch` 또는 `widgetPatch.config`가 내려오면 현재 위젯 config에 병합한다.
 `VITE_DASHBOARD_ASSISTANT_API_PATH`가 없으면 기본 경로 `/api/dashboards/assistant`를 사용한다.
 `widgets`는 구버전/테스트 호환 fallback payload로 유지하지만, `dashboardId`가 있으면 서버 DB runtime 컨텍스트가 우선이다.
@@ -975,3 +975,9 @@ type PermissionOptionsResponse = {
 - Spark run results include `textStructuring.definition` and `textStructuring.execution`; job runs, Catalog datasets, and materialization runs preserve `textStructuringExecution`.
 - Column execution records must distinguish `executionMode: "selected_model"`, `executionMode: "auto_model"`, `executionMode: "fallback_rule"`, and `executionMode: "missing_model"` so fallback output is not presented as a model result.
 - Model dropdowns must filter by `targetColumn`, `method: "one_of_values"`, and exact `allowedValues` compatibility for the edited output column.
+
+### RAG v2 semantic-layer runtime contract
+
+`POST /api/query/ai-suggestions` and `POST /api/dashboards/assistant` use the same semantic-layer RAG resolver. It checks a published Semantic Model, its metrics/dimensions/relationships/vocabulary, and an approved serving RAG index before retrieval. Responses expose `retrieval.provenance=semantic_layer_rag`, model/version/dataset metadata, and `sources[].body/title`; unavailable models or indexes return an explicit status and empty sources.
+
+Dashboard widget/chart mutation prompts use `visualization_request`, apply `create_widget`/`update_widget` actions to the draft widget API, and report save failures instead of displaying a false success message.

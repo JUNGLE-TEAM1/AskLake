@@ -22,6 +22,22 @@ export type QueryAiSuggestion = {
   mode: QueryAiMode;
   model?: string | null;
   notices: string[];
+  retrieval?: {
+    datasetIds?: string[];
+    provenance?: string;
+    resultCount?: number;
+    semanticModelNames?: string[];
+    semanticModelVersions?: Array<number | null>;
+    status?: string;
+  } | null;
+  sources?: Array<{
+    body?: string;
+    chunkIndex?: number;
+    datasetId?: string;
+    parentDocumentId?: string;
+    semanticModelIds?: string[];
+    title?: string;
+  }>;
   sql?: string;
   title: string;
 };
