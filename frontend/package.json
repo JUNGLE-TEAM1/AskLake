@@ -16,6 +16,8 @@
     "test:css-catalog-boundary": "node --experimental-strip-types --test scripts/css-catalog-boundary.test.mts",
     "test:compatibility-runtime": "node --experimental-strip-types --test scripts/compatibility-runtime.test.mts",
     "test:diagnostic-contract": "node --experimental-strip-types --test scripts/diagnostic-contract.test.mts",
+    "test:e2e-selectors": "node --experimental-strip-types --test scripts/e2e-selectors.test.mts",
+    "test:e2e-contracts": "npm run test:continuous-runtime-contract && npm run test:e2e-selectors",
     "test:record-parsing-ai-action": "node --experimental-strip-types --test scripts/record-parsing-ai-action.test.mts",
     "test:source-raw-preview": "node --experimental-strip-types --test scripts/source-raw-preview.test.mts",
     "test:sql-result-boundary": "node --experimental-strip-types --test scripts/sql-result-boundary.test.mts",
