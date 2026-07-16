@@ -564,11 +564,12 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 - [x] deployment scope feature flag와 invalid value fail-closed
 - [x] 인증된 GET /api/realtime/config 및 frontend adapter
 - [x] backend/deploy example env와 production Compose 전달
-- [ ] durable event log와 PostgreSQL NOTIFY listener
-- [ ] SSE replay/heartbeat/resync endpoint
-- [ ] Dashboard hybrid/SSE client와 polling fallback E2E
+- [x] durable event log, transactional producer와 process당 PostgreSQL NOTIFY listener/cursor catch-up
+- [x] Dashboard/Dataset ACL을 적용한 SSE replay/heartbeat/resync/overflow endpoint
+- [x] Dashboard hybrid/SSE typed client, targeted REST refetch, bounded coalescing과 polling fallback
+- [x] Caddy/NGINX streaming 설정, realtime status/readiness와 proxy contract verification
 - [ ] Continuous SQL planner/runtime/publication
-- [ ] production PostgreSQL·proxy·Spark 통합 검증
+- [ ] production PostgreSQL multi-worker·실제 proxy/ALB·Spark 통합 및 rolling restart 검증
 
 현재 운영 기본값은 polling/disabled이며 schema 변경 없이 기존 동작으로 rollback할 수 있다.
 

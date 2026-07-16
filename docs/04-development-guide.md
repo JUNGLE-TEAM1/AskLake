@@ -985,6 +985,26 @@ cd ..
 docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml config --quiet
 ```
 
+STACK-02 focused validation:
+
+```powershell
+cd backend
+.\.venv\Scripts\python.exe -m unittest tests.test_realtime_events tests.test_realtime_feature_flags tests.test_dashboard_live_repository
+.\.venv\Scripts\python.exe scripts\verify-realtime-proxy-contract.py
+.\.venv\Scripts\python.exe -m compileall -q app tests
+
+cd ..\frontend
+npm run test:realtime-events
+npm run test:dashboard-live-refresh
+npm run build
+
+cd ..
+docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml config --quiet
+git diff --check
+```
+
+실제 PostgreSQL multi-worker replay, Caddy/ALB heartbeat, rolling restart와 장시간 burst는 STACK-04 통합 환경에서 검증한다. 정적 proxy 계약과 단위 테스트 통과를 production 통합 검증으로 과장하지 않는다.
+
 기능을 즉시 되돌릴 때는 DASHBOARD_SYNC_MODE=polling, REALTIME_EVENTS_ENABLED=false, CONTINUOUS_SQL_JOIN_ENABLED=false로 재배포한다.
 ## 15) Runtime script·Node bridge 변경 검증
 

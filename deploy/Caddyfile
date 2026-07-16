@@ -1,5 +1,8 @@
 {$APP_DOMAIN} {
-	encode zstd gzip
+	@not_realtime {
+		not path /api/realtime/events
+	}
+	encode @not_realtime zstd gzip
 
 	header {
 		-Server
@@ -9,6 +12,13 @@
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		X-Content-Type-Options "nosniff"
 		X-Frame-Options "DENY"
+	}
+
+	@realtime path /api/realtime/events
+	handle @realtime {
+		reverse_proxy backend:8080 {
+			flush_interval -1
+		}
 	}
 
 	@api path /api/*

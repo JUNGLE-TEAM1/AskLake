@@ -3852,10 +3852,39 @@ type PermissionGrant = {
 | staticChangeBackfillEnabled | boolean | Continuous SQL이 켜진 경우에만 true |
 | featureScope | deployment | 현재 저장소에는 tenant model이 없으므로 고정 |
 | fallbackReason | string or null | invalid_dashboard_sync_mode, realtime_events_disabled |
+| heartbeatSeconds | integer | stream heartbeat seconds, 기본 15 |
+| reconnectRetryMs | integer | EventSource retry hint, 현재 3000 |
+| safetyPollAfterMs | integer | hybrid open 상태의 safety refresh 하한, 현재 60000 |
 
 이 API는 설정 원문, credential, secret을 반환하지 않는다. 기능 off 상태는 기존 Dashboard adaptive polling, 정적 SQL, Kafka Continuous ingestion 계약과 동일하다.
 
-SSE와 Continuous SQL 상세 계약은 docs/realtime-2026/adr/001-sse-dashboard-sync.md와 002-continuous-stream-static-join.md에 고정한다.
+### GET /api/realtime/events
+
+인증된 published Dashboard용 SSE change-notification stream이다.
+
+| 입력 | 타입 | 계약 |
+|---|---|---|
+| `dashboardId` | query string | 필수, Dashboard `view` permission 검사 |
+| `datasetIds` | comma-separated query string | 1~100개, 각 Dataset `query` permission/governance 검사 |
+| `cursor` | non-negative integer | optional initial snapshot cursor |
+| `Last-Event-ID` | header | optional reconnect cursor; query cursor와 함께 있으면 큰 값 사용 |
+
+성공 response content type은 `text/event-stream`이다. domain event는 `dataset.revision.committed`, `dashboard.published`이고 control event는 `stream.ready`, `system.heartbeat`, `system.resync_required`, `system.authorization_changed`다. resource ACL은 연결 전과 heartbeat마다 다시 확인한다. actor별 기본 연결 한도는 5이며 초과는 `429`, 권한 없음은 `403`, 기능 비활성은 `409`, dispatcher 초기화·복구 중에는 `503`이다.
+
+### GET /api/realtime/status
+
+인증된 actor에게 effective mode, `ready`, `eventCursor`, `minAvailableCursor`, process-local connection/replay/overflow/lag metric을 반환한다. raw env나 credential은 반환하지 않는다.
+
+### GET /api/health/realtime
+
+기능이 꺼져 있으면 `200 disabled`, 켜져 있으면 DB와 dispatcher readiness를 기준으로 `200 ready` 또는 `503 unavailable`을 반환한다. 무한 stream을 healthcheck로 사용하지 않는다.
+
+### Dashboard snapshot cursor
+
+`GET /api/dashboards/{dashboardId}/published`의 `DashboardRuntimeResponse`에 non-negative `eventCursor`가 추가된다. 값은 snapshot 계산 전에 읽은 durable event high watermark다. 기존 `revision`, `pages`, `widgetsByPageId`, `filters` 의미는 바뀌지 않는다.
+
+SSE event envelope와 wire/rollback 상세 계약은 docs/realtime-2026/contracts/realtime-event-v1.md, docs/realtime-2026/sse-operations.md에 있고 Continuous SQL 계약은 docs/realtime-2026/adr/002-continuous-stream-static-join.md에 고정한다.
+
 ## Internal runtime compatibility contract
 
 Spark/Kafka production entrypoint 경로, 기존 CLI/environment 입력, exit 의미와 public ETL API shape는 유지한다. runtime report에는 optional `runtimeReportSchemaVersion`, Continuous checkpoint contract에는 optional `contractSchemaVersion`, batch manifest에는 optional `manifestSchemaVersion`이 추가된다. 필드가 없는 기존 문서는 version 0으로 읽으며 기존 consumer는 새 필드를 무시할 수 있다.

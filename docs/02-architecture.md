@@ -494,7 +494,7 @@ Frontend는 published `/dashboards/:dashboardId`에서 Continuous dataset만 pol
 
 ## 14) Realtime 2026 전환 아키텍처
 
-Realtime 확장은 기존 publication과 REST 계약 위에 단계적으로 추가한다.
+Realtime 확장은 기존 publication과 REST 계약 위에 단계적으로 추가한다. STACK-02에서 Dashboard SSE 경로까지 구현됐고 운영 기본값은 계속 polling/disabled다.
 
 ```text
 Spark/Iceberg commit
@@ -507,14 +507,18 @@ Spark/Iceberg commit
 ```
 
 - PostgreSQL event log가 전달의 source of truth이고 NOTIFY는 multi-process listener를 깨우는 힌트다.
+- 각 API process는 LISTEN connection 하나와 bounded local hub를 소유한다. browser connection 수만큼 DB listener를 만들지 않으며 NOTIFY 유실은 0.5초 기본 cursor catch-up으로 복구한다.
 - SSE payload는 change notification만 담으며 Dashboard 데이터 권위는 기존 REST response와 PostgreSQL widget result다.
 - REST snapshot은 event cursor를 함께 반환하고 client는 cursor 이후 replay를 구독한다. retention gap은 resync 후 snapshot 재조회로 복구한다.
 - 현재 코드에는 tenant 식별자가 없으므로 기능 플래그는 deployment scope로 평가한다. event 전송과 refetch는 기존 ActorContext, resource permission, governance를 다시 검사한다.
+- Dataset revision과 `dataset.revision.committed`, Dashboard published revision과 `dashboard.published`는 각각 같은 transaction에서 기록한다. event insert 실패 시 canonical 변경도 rollback한다.
+- frontend는 Dataset별 최고 revision만 coalesce하고 affected widget REST endpoint만 재조회한다. Dashboard publish와 resync는 snapshot을 다시 읽으며 offline/stream 장애에서는 adaptive polling으로 복귀한다.
 - DASHBOARD_SYNC_MODE 기본값은 polling이다. REALTIME_EVENTS_ENABLED=false이면 hybrid/sse 설정도 polling으로 fail closed한다.
 - Continuous SQL V1은 Kafka Structured Streaming runtime과 Iceberg/Catalog publication을 재사용하되, 별도 planner와 versioned manifest로 streaming relation 1개 + static relation N개의 INNER/LEFT JOIN만 허용한다.
 - static binding 기본값은 PINNED_AT_START다. advanced binding과 historical backfill은 기본 비활성 상태다.
 
-결정 근거와 race-free 계약은 docs/realtime-2026/adr에 있으며, 4개 stacked PR의 범위는 docs/codex-realtime-pr-pack/STACKED_PR_PLAN.md를 따른다.
+결정 근거와 race-free 계약은 docs/realtime-2026/adr, event/wire 계약은 docs/realtime-2026/contracts/realtime-event-v1.md와 docs/realtime-2026/sse-operations.md에 있다. 4개 stacked PR의 범위는 docs/codex-realtime-pr-pack/STACKED_PR_PLAN.md를 따른다.
+
 ## 15) Pipeline·Snapshot·SQL·Catalog application 경계
 
 Pipeline 생성·수정은 `pipeline_contract`의 순수 validation과 `pipeline_mapping`의 persisted Job mapper를 거친다. `etl_service.py`는 actor 권한, source capability, repository transaction과 외부 runtime adapter를 조정하는 compatibility facade이며 필수값·target·permission 규칙과 draft 직렬화를 중복 구현하지 않는다.

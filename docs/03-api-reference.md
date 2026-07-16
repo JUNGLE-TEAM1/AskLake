@@ -67,6 +67,15 @@ REALTIME_EVENTS_ENABLED=false
 CONTINUOUS_SQL_JOIN_ENABLED=false
 LATEST_STATIC_PER_BATCH_ENABLED=false
 STATIC_CHANGE_BACKFILL_ENABLED=false
+REALTIME_EVENT_RETENTION_SECONDS=86400
+REALTIME_EVENT_PAYLOAD_MAX_BYTES=8192
+REALTIME_REPLAY_LIMIT=500
+REALTIME_SUBSCRIBER_QUEUE_SIZE=128
+REALTIME_CONNECTION_LIMIT_PER_ACTOR=5
+REALTIME_HEARTBEAT_SECONDS=15
+REALTIME_DISPATCH_POLL_SECONDS=0.5
+REALTIME_CLEANUP_INTERVAL_SECONDS=3600
+REALTIME_SSE_SEND_TIMEOUT_SECONDS=10
 ```
 
 로컬 root Compose는 Query Result/Warehouse bucket을 MinIO에 만들고 로컬 전용 credential을 사용한다. Production은 endpoint와 장기 access key/secret을 두지 않고 사전 생성한 AWS S3 Warehouse/Query Result bucket과 EC2 instance profile default credential chain을 사용한다. 일반 Trino 결과는 private gzip page object로 저장하고 PostgreSQL에는 manifest/page metadata만 둔다. `trino-result-cleanup` worker는 terminal run을 keyset batch로 순회한다.
@@ -80,6 +89,9 @@ STATIC_CHANGE_BACKFILL_ENABLED=false
 - `REALTIME_EVENTS_ENABLED`: durable event/SSE 경로의 총괄 kill switch다. 기본값은 `false`다.
 - `CONTINUOUS_SQL_JOIN_ENABLED`: Continuous SQL create/start 경로의 kill switch다. 기존 Kafka Continuous ingestion과 정적 SQL에는 영향을 주지 않는다.
 - `LATEST_STATIC_PER_BATCH_ENABLED`, `STATIC_CHANGE_BACKFILL_ENABLED`: Continuous SQL이 활성화된 경우에만 effective true가 될 수 있는 advanced mode opt-in이다.
+- `REALTIME_EVENT_*`, `REALTIME_REPLAY_LIMIT`: durable event retention, payload byte limit, replay page의 안전 경계다.
+- `REALTIME_SUBSCRIBER_QUEUE_SIZE`, `REALTIME_CONNECTION_LIMIT_PER_ACTOR`: process memory와 actor별 multi-tab 연결을 제한한다.
+- `REALTIME_HEARTBEAT_SECONDS`, `REALTIME_DISPATCH_POLL_SECONDS`, `REALTIME_CLEANUP_INTERVAL_SECONDS`, `REALTIME_SSE_SEND_TIMEOUT_SECONDS`: heartbeat, NOTIFY 유실 catch-up, retention cleanup, slow-send 종료 경계다.
 - `DATABASE_URL`: backend metadata DB. 미설정 시 `docker-compose.yml`의 local Postgres 기본값을 사용한다.
 - Object storage local mode는 `ASKLAKE_OBJECT_STORAGE_PROVIDER=minio`, MinIO endpoint/static local credential, `S3_FORCE_PATH_STYLE=true`를 사용한다.
 - EC2 production mode는 `ASKLAKE_OBJECT_STORAGE_PROVIDER=aws`, `AWS_REGION`, `S3_FORCE_PATH_STYLE=false`를 사용한다. `S3_ENDPOINT`와 장기 AWS access key/secret은 비워 두고 EC2 instance profile IAM Role/default credential chain을 사용한다.
@@ -129,11 +141,26 @@ FastAPI schema 구현 기준:
   "latestStaticPerBatchEnabled": false,
   "staticChangeBackfillEnabled": false,
   "featureScope": "deployment",
-  "fallbackReason": null
+  "fallbackReason": null,
+  "heartbeatSeconds": 15,
+  "reconnectRetryMs": 3000,
+  "safetyPollAfterMs": 60000
 }
 ```
 
 `fallbackReason`은 `invalid_dashboard_sync_mode` 또는 `realtime_events_disabled`일 수 있다. 이 endpoint는 secret이나 raw env 값을 반환하지 않는다.
+
+### Realtime Dashboard stream
+
+`GET /api/realtime/events?dashboardId=<id>&datasetIds=<id,id>&cursor=<eventCursor>`는 인증된 `text/event-stream` endpoint다. `asklake_session` cookie를 사용하고 Dashboard `view`와 모든 Dataset `query` 권한을 검사한다. reconnect에서는 `Last-Event-ID`와 query cursor 중 큰 값을 사용한다.
+
+Domain event는 `id`, `event`, JSON `data`를 가지며 `dataset.revision.committed`와 `dashboard.published`를 지원한다. `stream.ready`, `system.heartbeat`, `system.resync_required`, `system.authorization_changed`는 client control event다. response는 `Cache-Control: no-cache, no-transform`, `X-Accel-Buffering: no`이며 cursor retention gap 또는 bounded queue overflow에서는 resync를 지시하고 연결을 닫는다.
+
+`GET /api/realtime/status`는 인증된 운영 진단용 JSON으로 effective mode, readiness, cursor bounds와 process metric/capacity snapshot을 반환한다. `GET /api/health/realtime`는 load balancer용 realtime readiness를 일반 `/api/health`와 분리한다.
+
+Published Dashboard `GET /api/dashboards/{dashboardId}/published` 응답에는 snapshot 작성 시작 시점의 `eventCursor`가 포함된다. frontend는 이 cursor 이후를 구독하므로 snapshot fetch와 EventSource 연결 사이의 event도 replay된다.
+
+상세 envelope, replay, proxy, rollback 계약은 `docs/realtime-2026/contracts/realtime-event-v1.md`와 `docs/realtime-2026/sse-operations.md`를 따른다.
 
 Canonical status values:
 

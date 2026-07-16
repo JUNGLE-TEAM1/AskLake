@@ -7,8 +7,11 @@ export type RealtimeFeatureConfig = {
   dashboardSyncMode: DashboardSyncMode;
   fallbackReason: string | null;
   featureScope: "deployment";
+  heartbeatSeconds: number;
   latestStaticPerBatchEnabled: boolean;
   realtimeEventsEnabled: boolean;
+  reconnectRetryMs: number;
+  safetyPollAfterMs: number;
   staticChangeBackfillEnabled: boolean;
 };
 

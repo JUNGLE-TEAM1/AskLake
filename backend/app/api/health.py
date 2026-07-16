@@ -5,7 +5,11 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.core.database import SessionLocal
 from app.schemas.common import HealthResponse
 from app.core.config import settings
+from app.repositories.realtime_event_repository import RealtimeEventRepository
 from app.services.ai_gateway_client import AiGatewayClient
+from app.services.realtime_event_service import realtime_event_dispatcher, realtime_event_hub
+from app.services.realtime_feature_flags import resolve_realtime_feature_state
+from app.services.realtime_metrics import realtime_metrics
 from app.core.observability import metrics_snapshot
 
 router = APIRouter()
@@ -53,3 +57,34 @@ def ai_health_check(response: Response) -> dict[str, object]:
     ready = AiGatewayClient().health_check()
     response.status_code = status.HTTP_200_OK if ready else status.HTTP_503_SERVICE_UNAVAILABLE
     return {"ok": ready, "status": "ready" if ready else "unavailable", "provider": "gateway"}
+
+
+@router.get("/health/realtime")
+def realtime_health_check(response: Response) -> dict[str, object]:
+    state = resolve_realtime_feature_state(settings)
+    if not state.realtime_events_enabled:
+        return {
+            "ok": True,
+            "status": "disabled",
+            "effectiveMode": state.dashboard_sync_mode,
+        }
+    database_ok = True
+    event_cursor = 0
+    try:
+        with SessionLocal() as session:
+            event_cursor = RealtimeEventRepository(session).max_cursor()
+    except SQLAlchemyError:
+        database_ok = False
+    ready = database_ok and realtime_event_dispatcher.ready
+    response.status_code = status.HTTP_200_OK if ready else status.HTTP_503_SERVICE_UNAVAILABLE
+    metrics = realtime_metrics.snapshot()
+    return {
+        "ok": ready,
+        "status": "ready" if ready else "unavailable",
+        "effectiveMode": state.dashboard_sync_mode,
+        "database": {"ok": database_ok},
+        "dispatcher": {"ready": realtime_event_dispatcher.ready},
+        "listener": {"ready": bool(metrics.get("listenerReady"))},
+        "capacity": realtime_event_hub.capacity_snapshot(),
+        "eventCursor": event_cursor,
+    }
