@@ -6,10 +6,10 @@
 
 - 계획 버전: `2026-07-16-15-pr`
 - 작업 배치: `2/5`
-- 현재 PR 단위: `05 구현·검증 중`
+- 현재 PR 단위: `05 완료 · 06 준비`
 - 상태: `BATCH_IN_PROGRESS`
 - 시작 기준: `origin/dev@b93ae27370fdfa50ce949bcabb9ff7fe37ca1098`
-- 최근 이슈/PR: `#821` / `생성 전`
+- 최근 이슈/PR: `#821` / `#824`
 - 현재 브랜치: `refactor-#821`
 - 다음 사용자 확인 지점: PR 04~06 생성 후
 
@@ -21,7 +21,7 @@
 | 02 | 02 | Spark 재부팅·경로·권한 복구 | 01 | DONE |
 | 03 | 03~04 | Characterization Test·Continuous 상태 계약 | 02 | DONE |
 | 04 | 05 | 외부 I/O Port·Adapter 분리 | 03 | DONE |
-| 05 | 06~07 | Continuous 명령·Reconciliation 분리 | 04 | IN_PROGRESS |
+| 05 | 06~07 | Continuous 명령·Reconciliation 분리 | 04 | DONE |
 | 06 | 08 | Materialization·Catalog·Dashboard 발행 분리 | 05 | WAITING |
 | 07 | 09~10 | Pipeline·Snapshot·SQL·Catalog 경계 | 06 | WAITING |
 | 08 | 11~12 | Spark/Kafka script·Python/Node 경계 | 07 | WAITING |
@@ -102,8 +102,11 @@
 ## PR 05 작업 기록
 
 - 시작 HEAD: `20355166` (PR 04 branch HEAD)
-- branch/issue/PR: `refactor-#821`, `#821`, `생성 전`
+- branch/issue/PR: `refactor-#821`, `#821`, `#824`
+- 변경 commit: `39fb6b36` (`refactor(runtime): extract continuous command and reconciliation use cases`)
 - 포함: command intent-before-side-effect, deterministic worker response-loss recovery, immutable runtime evidence, pure reconciliation decision, restart/fencing/unknown-vs-failed 정책
 - 하위 호환: 기존 command endpoint/response, DB schema, Job/runtime/session/checkpoint/report/manifest 형식을 유지한다.
+- 검증: backend unit 383건(1 opt-in skip), application/Continuous 집중 회귀 48건, Continuous runtime contract 39건, Kafka Continuous contract, Python compile, diff check
 - 제외: Materialization·Catalog·Dashboard 발행 내부 분리, 새 DI framework, public API 제거, production 배포
 - rollback: application use case와 `etl_service.py` facade wiring을 함께 되돌린다. additive `metrics.lastReconciliation`은 구버전이 무시하므로 data migration은 없다.
+- 머지 순서: `#820` 다음 `#824`; PR 06은 `#824` 다음이다.
