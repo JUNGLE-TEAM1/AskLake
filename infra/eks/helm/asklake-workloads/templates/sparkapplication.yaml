@@ -39,6 +39,7 @@ spec:
     type: Never
   sparkConf:
     "spark.jars.packages": {{ printf "org.apache.spark:spark-sql-kafka-0-10_2.13:4.0.1,org.apache.iceberg:iceberg-spark-runtime-4.0_2.13:1.11.0,org.postgresql:postgresql:42.7.7,org.apache.hadoop:hadoop-aws:3.4.1,%s" .Values.sparkApplication.kafka.iamAuthPackage | quote }}
+    "spark.jars.ivy": "/tmp/.ivy2"
     "spark.driver.extraJavaOptions": "-Djava.io.tmpdir=/tmp"
     "spark.executor.extraJavaOptions": "-Djava.io.tmpdir=/tmp"
   hadoopConf:

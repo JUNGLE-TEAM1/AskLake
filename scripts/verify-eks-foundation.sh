@@ -146,6 +146,10 @@ for service_account in \
   fi
 done
 
+grep -q 'resources: \["pods"\]' "$ROOT_DIR/infra/eks/helm/asklake-foundation/templates/spark-driver-rbac.yaml"
+grep -q 'resources: \["persistentvolumeclaims"\]' "$ROOT_DIR/infra/eks/helm/asklake-foundation/templates/spark-driver-rbac.yaml"
+test "$(grep -c 'deletecollection' "$ROOT_DIR/infra/eks/helm/asklake-foundation/templates/spark-driver-rbac.yaml")" -eq 3
+
 backend_service_account="$({
   awk '
     /^kind: ServiceAccount$/ { block = $0 ORS; capture = 1; next }
