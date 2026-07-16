@@ -6,8 +6,8 @@
 
 ```yaml
 current_pr: null
-last_completed_pr: STACK-03
-next_ready_pr: STACK-04
+last_completed_pr: STACK-04
+next_ready_pr: null
 last_result: DONE
 updated_at: 2026-07-16
 base_branch: dev
@@ -25,7 +25,7 @@ merge_order:
 | STACK-01 | DONE | PR-00, PR-01 | 계약·ADR·baseline test·feature flag | #803 / `feat-#803` / #808 |
 | STACK-02 | DONE | PR-02, PR-03, PR-04 | durable SSE backend·frontend·infra | #811 / `feat-#811` / #815 Draft |
 | STACK-03 | DONE | PR-05, PR-06 | continuous SQL planner·runtime·publication | #816 / `feat-#816` / #822 Draft |
-| STACK-04 | READY | PR-07, PR-08 | E2E·복구·보안·CI·rollout·최종 감사 | 생성 예정 |
+| STACK-04 | DONE | PR-07, PR-08 | E2E·복구·보안·CI·rollout·최종 감사 | #823 / `feat-#823` / 생성 예정 |
 
 ## 상태 변경 규칙
 
@@ -76,3 +76,14 @@ merge_order:
 - Continuous SQL contract 17개와 기존 경로를 포함한 focused 56개 테스트, Kafka contract/REST manager, compile/Compose 검증이 통과했다.
 - 전체 backend discovery의 기존 3개 drift는 결과 문서에 별도로 기록했고 이번 branch에서 범위를 넓혀 수정하지 않았다.
 - 실제 Spark/Iceberg/Trino fault·restart·soak는 STACK-04 opt-in gate로 이관했다.
+
+### STACK-04
+
+- 시작 기준: `feat-#816`의 `243b70a5`, `origin/dev`의 `b93ae273`이 조상임을 확인했다.
+- Issue/branch: #823 / `feat-#823`.
+- backend recovery/security/Continuous SQL focused 63 tests, frontend UI 132 checks, realtime transport 7 tests, Dashboard refresh 6 tests와 production build가 통과했다.
+- production Compose render, proxy/architecture static gate, Continuous SQL 17 tests와 Kafka contract/REST가 통과했다.
+- PR용 disposable PostgreSQL·Caddy/NGINX parser gate와 scheduled/manual Kafka/Spark/Iceberg fault harness를 추가했다.
+- canary/rollback/production runbook, handover와 항목별 final audit를 작성했다.
+- Docker client는 설치되어 있으나 Docker Desktop daemon이 꺼져 실제 container/proxy/Spark E2E는 local에서 실행하지 못했다. production 활성화는 CI와 operator evidence 전까지 No-Go다.
+- 전체 backend discovery의 기존 3개 drift는 결과 문서에 기록했으며 이번 branch에서 범위를 넓혀 수정하지 않았다.

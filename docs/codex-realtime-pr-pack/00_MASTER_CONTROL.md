@@ -274,6 +274,8 @@ Dashboard event는 output이 query engine에서 보이기 전에 발행하면 �
 
 ## 전체 완료 기준
 
+> 4개 stacked PR 실행 결과와 항목별 증거·미실행 사유·production Go/No-Go는 `docs/realtime-2026/final-audit.md`에서 관리한다. 아래 원본 체크리스트는 요구사항 원문으로 유지하며, 실제 운영 증거가 없는 항목을 자동화 통과만으로 완료 처리하지 않는다.
+
 ## SSE와 Dashboard
 
 - [ ] 정상 연결 중 Dashboard의 기존 짧은 주기 polling 요청이 발생하지 않는다.

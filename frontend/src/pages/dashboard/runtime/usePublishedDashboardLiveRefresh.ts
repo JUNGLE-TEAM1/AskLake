@@ -22,6 +22,7 @@ import {
   DASHBOARD_LIVE_CATCH_UP_MS,
   dashboardLiveCatchUpDatasetIds,
   dashboardLiveDatasetIds,
+  dashboardLivePollingStrategy,
   dashboardLiveRefreshInterval,
   mergePublishedDashboardWidgets,
   staleDashboardWidgetIds,
@@ -98,10 +99,7 @@ export function usePublishedDashboardLiveRefresh({
       eventFlushTimer = undefined;
     };
 
-    const pollingStrategy = (): "normal" | "safety" | "suspended" => {
-      if (connectionState !== "open" || syncMode === "polling") return "normal";
-      return syncMode === "sse" ? "suspended" : "safety";
-    };
+    const pollingStrategy = () => dashboardLivePollingStrategy(syncMode, connectionState);
 
     const scheduleNextPoll = () => {
       clearTimer();
