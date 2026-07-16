@@ -23,7 +23,7 @@ const layoutParts = [
 ];
 
 function read(relativePath: string) {
-  return readFileSync(resolve(root, relativePath), "utf8");
+  return readFileSync(resolve(root, relativePath), "utf8").replace(/\r\n/g, "\n");
 }
 
 function digest(value: string) {
