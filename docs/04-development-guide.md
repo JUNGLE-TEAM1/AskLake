@@ -876,6 +876,34 @@ ASKLAKE_POSTGRES_FULL_SOURCE_TABLE=click_events npm run verify:postgres-full-sou
 `AGENTS.local.md` may be used for local-only Codex workflow preferences, such as routing natural-language issue, PR, and review requests to installed personal skills.
 
 This file is ignored by git and must not contain shared team policy, secrets, tokens, private keys, or real credentials.
+
+## 14) Realtime 4-PR 개발 순서
+
+이번 전환은 다음 순서로만 merge한다.
+
+1. 계약·ADR·baseline·feature flag
+2. durable SSE backend·Dashboard frontend·proxy/observability
+3. Continuous SQL planner·runtime·publication
+4. recovery/security/E2E/CI/rollout audit
+
+각 후속 branch는 직전 branch에서 만들지만 GitHub PR base는 dev다. 앞 PR이 merge되기 전 후속 PR은 Draft로 유지한다. 상세 원장은 docs/codex-realtime-pr-pack/WORK_STATUS.md다.
+
+STACK-01 focused validation:
+
+```powershell
+cd backend
+.\.venv\Scripts\python.exe -m unittest tests.test_realtime_feature_flags tests.test_continuous_runtime_sync_config
+.\.venv\Scripts\python.exe -m unittest tests.test_dashboard_live_repository tests.test_dashboard_live_results tests.test_kafka_continuous_dashboard_sync
+
+cd ..\frontend
+npm run test:dashboard-live-refresh
+npm run build
+
+cd ..
+docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml config --quiet
+```
+
+기능을 즉시 되돌릴 때는 DASHBOARD_SYNC_MODE=polling, REALTIME_EVENTS_ENABLED=false, CONTINUOUS_SQL_JOIN_ENABLED=false로 재배포한다.
 ### ETL Permission create-flow 검증
 
 ```powershell

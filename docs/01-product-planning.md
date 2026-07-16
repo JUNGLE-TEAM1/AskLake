@@ -56,7 +56,8 @@ AskLake는 사용자가 데이터셋의 출처, 품질, 권한, 실행 결과, �
 - 완료된 Trino Query Run의 결과 화면은 CSV 다운로드와 반복 SQL Job 생성만 제공한다. 1회성 Iceberg CTAS materialization API는 별도 운영 경로로 유지하며 이 화면에서 노출하지 않는다.
 - 반복 Trino SQL Job은 결과 page를 복사하지 않고 SQL recipe, 실행 actor, 스케줄, target metadata를 저장한다. 수동/예약 Run마다 전체 SQL을 다시 실행해 같은 논리 Dataset을 검증된 새 Iceberg table version으로 갱신한다.
 - Dashboard 목록/빌더/런타임은 FastAPI API를 우선 사용하고, 이전 backend 호환을 위해 404 local/mock fallback을 유지
-- Kafka Continuous 데이터셋을 연결한 published Dashboard는 PostgreSQL의 데이터셋 리비전을 데이터셋별 권장 주기로 확인하고, 새 리비전이 있을 때만 서버가 계산한 위젯 결과를 자동 교체한다. 원본 event는 기존대로 S3/MinIO에 두며 SSE/WebSocket, Redis cache, SQL 결과 자동 재실행은 이 범위에 포함하지 않는다.
+- Kafka Continuous 데이터셋을 연결한 published Dashboard는 기본 polling을 유지하되, 배포 기능 플래그에 따라 durable SSE 변경 알림과 targeted REST refetch를 사용하는 hybrid/SSE mode로 단계 전환한다. SSE는 위젯 데이터 본문을 운반하지 않으며 연결 실패·cursor 만료·기능 비활성 시 기존 adaptive polling으로 복귀한다. 원본 event는 기존대로 S3/MinIO에 둔다.
+- Continuous SQL V1은 streaming relation 1개와 static relation 1개 이상을 INNER/LEFT equality JOIN으로 처리한다. 기본 static binding은 Job 시작 시 snapshot을 고정하는 PINNED_AT_START이며, LATEST_PER_BATCH와 static change backfill은 각각 별도 기능 플래그와 운영 승인이 필요한 opt-in이다.
 - 감사 로그와 toast feedback
 
 ## 5) Backend 확장 범위

@@ -62,6 +62,11 @@ TRINO_COLLECTOR_POLL_SECONDS=1
 TRINO_PROGRESS_POLL_SECONDS=0.5
 TRINO_PROGRESS_TIMEOUT_SECONDS=1
 TRINO_CLEANUP_POLL_SECONDS=3600
+DASHBOARD_SYNC_MODE=polling
+REALTIME_EVENTS_ENABLED=false
+CONTINUOUS_SQL_JOIN_ENABLED=false
+LATEST_STATIC_PER_BATCH_ENABLED=false
+STATIC_CHANGE_BACKFILL_ENABLED=false
 ```
 
 로컬 root Compose는 Query Result/Warehouse bucket을 MinIO에 만들고 로컬 전용 credential을 사용한다. Production은 endpoint와 장기 access key/secret을 두지 않고 사전 생성한 AWS S3 Warehouse/Query Result bucket과 EC2 instance profile default credential chain을 사용한다. 일반 Trino 결과는 private gzip page object로 저장하고 PostgreSQL에는 manifest/page metadata만 둔다. `trino-result-cleanup` worker는 terminal run을 keyset batch로 순회한다.
@@ -71,6 +76,10 @@ TRINO_CLEANUP_POLL_SECONDS=3600
 - `VITE_USE_MOCK_API=true`: frontend demo/mock mode. Source connector도 mock sample을 반환한다.
 - Production demo 계정을 유지하는 배포만 `AUTH_LEGACY_DEMO_USERS_ENABLED=true`와 `VITE_AUTH_LEGACY_DEMO_USERS_ENABLED=true`를 함께 설정한다. backend flag는 재시작 시 기존 demo 계정 상태/세션을 보존하고 frontend flag는 로그인 기본값과 안내를 노출한다. 두 값은 preflight에서 일치해야 하며 기본값은 모두 `false`다.
 - `VITE_DASHBOARD_ASSISTANT_API_PATH`: 미설정 시 `/api/dashboards/assistant`를 사용한다. 다른 Assistant API origin 또는 경로가 필요할 때만 지정한다.
+- `DASHBOARD_SYNC_MODE`: `polling`, `hybrid`, `sse` 중 하나다. invalid 값 또는 event backbone 비활성 조합은 effective `polling`으로 fail closed한다.
+- `REALTIME_EVENTS_ENABLED`: durable event/SSE 경로의 총괄 kill switch다. 기본값은 `false`다.
+- `CONTINUOUS_SQL_JOIN_ENABLED`: Continuous SQL create/start 경로의 kill switch다. 기존 Kafka Continuous ingestion과 정적 SQL에는 영향을 주지 않는다.
+- `LATEST_STATIC_PER_BATCH_ENABLED`, `STATIC_CHANGE_BACKFILL_ENABLED`: Continuous SQL이 활성화된 경우에만 effective true가 될 수 있는 advanced mode opt-in이다.
 - `DATABASE_URL`: backend metadata DB. 미설정 시 `docker-compose.yml`의 local Postgres 기본값을 사용한다.
 - Object storage local mode는 `ASKLAKE_OBJECT_STORAGE_PROVIDER=minio`, MinIO endpoint/static local credential, `S3_FORCE_PATH_STYLE=true`를 사용한다.
 - EC2 production mode는 `ASKLAKE_OBJECT_STORAGE_PROVIDER=aws`, `AWS_REGION`, `S3_FORCE_PATH_STYLE=false`를 사용한다. `S3_ENDPOINT`와 장기 AWS access key/secret은 비워 두고 EC2 instance profile IAM Role/default credential chain을 사용한다.
@@ -107,6 +116,24 @@ FastAPI schema 구현 기준:
 - 실패 응답은 `ErrorResponse` / `ErrorDetail`을 사용하고, code 값은 `docs/api-contract.md`의 권장 에러 코드를 우선한다.
 - 목록형 API는 필요에 따라 `PageRequest`, `PageMeta`, `PageResponse`, `CursorPageMeta`, `SortDirection`을 재사용한다.
 - 모든 성공 응답을 하나의 envelope로 강제하지 않는다. 각 endpoint의 성공 response shape는 `docs/api-contract.md`의 상세 계약을 따른다.
+
+### Realtime runtime config
+
+`GET /api/realtime/config`는 인증된 actor에게 frontend와 backend가 공유할 effective deployment mode를 반환한다.
+
+```json
+{
+  "dashboardSyncMode": "polling",
+  "realtimeEventsEnabled": false,
+  "continuousSqlJoinEnabled": false,
+  "latestStaticPerBatchEnabled": false,
+  "staticChangeBackfillEnabled": false,
+  "featureScope": "deployment",
+  "fallbackReason": null
+}
+```
+
+`fallbackReason`은 `invalid_dashboard_sync_mode` 또는 `realtime_events_disabled`일 수 있다. 이 endpoint는 secret이나 raw env 값을 반환하지 않는다.
 
 Canonical status values:
 

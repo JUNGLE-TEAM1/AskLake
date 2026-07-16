@@ -1,0 +1,36 @@
+# ADR-002: Continuous SQL stream-static JOIN
+
+- 상태: Accepted
+- 결정일: 2026-07-16
+- 범위: Continuous SQL V1
+
+## 결정
+
+V1은 streaming relation 정확히 1개와 static relation 1개 이상을 지원한다. JOIN은 INNER와 LEFT만 허용하며 명시적인 equality key가 필요하다. SELECT projection, alias, deterministic scalar expression을 허용하고 aggregate, window, subquery, UNION, CROSS/FULL/RIGHT JOIN, stream-stream JOIN은 거절한다.
+
+기본 static binding은 PINNED_AT_START다. Job 시작 시 static dataset의 검증된 Iceberg snapshot/table metadata를 manifest에 고정하고, 모든 micro-batch가 그 binding을 사용한다.
+
+LATEST_PER_BATCH는 별도 flag가 켜진 경우에만 batch 시작 시 최신 static snapshot을 다시 resolve한다. STATIC_CHANGE_BACKFILL은 별도 flag와 명시적 운영 승인 없이는 실행하지 않는다.
+
+## 결과 의미
+
+- PINNED_AT_START: static dataset이 바뀌어도 실행 중인 Job의 이후 batch와 과거 output은 바뀌지 않는다. 새 binding은 restart/new run에서 적용한다.
+- LATEST_PER_BATCH: static 변경 이후 시작한 batch만 새 snapshot을 사용한다. 이미 publish한 batch는 재작성하지 않는다.
+- BACKFILL_ON_CHANGE: V1의 기본 실행 경로가 아니다. replay 가능한 source boundary, stable output key, 별도 generation/fencing이 준비된 승인 작업에서만 과거 범위를 재계산한다.
+
+## Cardinality와 null
+
+- planner는 static JOIN key 존재와 타입 호환성을 검증한다.
+- static key uniqueness는 기본 요구다. 검증할 수 없거나 중복이면 create/start를 거절한다.
+- NULL equality key는 SQL 표준대로 match하지 않는다.
+- LEFT JOIN의 불일치 stream row는 static projection을 NULL로 둔다.
+- many-to-many 결과 증폭은 V1에서 허용하지 않는다.
+- SCD2/as-of temporal JOIN은 V1 범위 밖이다.
+
+## Idempotency
+
+Job/run/batch identity, source boundary, plan fingerprint, static binding fingerprint, output target을 batch manifest에 기록한다. 같은 identity 재시도는 같은 결과를 재사용하거나 안전하게 거절하며, 다른 plan/binding으로 같은 batch identity를 덮어쓰지 않는다. Catalog publication 성공 후에만 dataset revision과 Dashboard event를 노출한다.
+
+## Rollback
+
+CONTINUOUS_SQL_JOIN_ENABLED=false이면 create/start를 명확히 거절하되 기존 Kafka Continuous ingestion과 정적 SQL/Trino Job은 그대로 동작한다. advanced flags를 꺼도 PINNED_AT_START 기본 경로는 유지된다.

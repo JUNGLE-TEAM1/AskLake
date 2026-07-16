@@ -475,3 +475,27 @@ Dashboard 계산은 Catalog row → freshness row 순서로 잠그며 ETL commit
 Frontend는 published `/dashboards/:dashboardId`에서 Continuous dataset만 polling한다. 같은 dataset을 쓰는 여러 widget은 freshness를 한 번만 확인하고 `latestRevision > appliedRevision`인 widget만 재조회한다. 한 revision이라도 실제로 전진했지만 아직 최신 revision보다 뒤라면 250ms 뒤 다음 chunk를 요청한다. 계산 실패처럼 `appliedRevision`이 전진하지 않으면 빠른 재시도를 하지 않고 backend 권장 주기로 돌아간다. 일반 주기는 backend가 `clamp(triggerIntervalSeconds × 500, 1,000, 60,000)`으로 계산한 `nextCheckAfterMs`를 사용하고, 동시 요청을 흩뜨리기 위해 dataset ID 기반 0~10% deterministic jitter를 더한다. hidden tab에서는 중지하고, route unmount 시 timer/request를 정리하며, 실패하면 이전 위젯 결과를 유지한다.
 
 상세 사용·운영·검증 절차는 [Kafka PostgreSQL Dashboard Sync](kafka-postgresql-dashboard-sync.md)를 따른다.
+
+## 14) Realtime 2026 전환 아키텍처
+
+Realtime 확장은 기존 publication과 REST 계약 위에 단계적으로 추가한다.
+
+```text
+Spark/Iceberg commit
+→ Catalog 검증
+→ dataset revision + durable event를 한 DB transaction으로 기록
+→ PostgreSQL NOTIFY wake-up
+→ SSE cursor replay
+→ resource identity 기반 targeted REST refetch
+→ published Dashboard 교체
+```
+
+- PostgreSQL event log가 전달의 source of truth이고 NOTIFY는 multi-process listener를 깨우는 힌트다.
+- SSE payload는 change notification만 담으며 Dashboard 데이터 권위는 기존 REST response와 PostgreSQL widget result다.
+- REST snapshot은 event cursor를 함께 반환하고 client는 cursor 이후 replay를 구독한다. retention gap은 resync 후 snapshot 재조회로 복구한다.
+- 현재 코드에는 tenant 식별자가 없으므로 기능 플래그는 deployment scope로 평가한다. event 전송과 refetch는 기존 ActorContext, resource permission, governance를 다시 검사한다.
+- DASHBOARD_SYNC_MODE 기본값은 polling이다. REALTIME_EVENTS_ENABLED=false이면 hybrid/sse 설정도 polling으로 fail closed한다.
+- Continuous SQL V1은 Kafka Structured Streaming runtime과 Iceberg/Catalog publication을 재사용하되, 별도 planner와 versioned manifest로 streaming relation 1개 + static relation N개의 INNER/LEFT JOIN만 허용한다.
+- static binding 기본값은 PINNED_AT_START다. advanced binding과 historical backfill은 기본 비활성 상태다.
+
+결정 근거와 race-free 계약은 docs/realtime-2026/adr에 있으며, 4개 stacked PR의 범위는 docs/codex-realtime-pr-pack/STACKED_PR_PLAN.md를 따른다.

@@ -3824,3 +3824,23 @@ type PermissionGrant = {
 새 작업의 권한 옵션 조회는 인증된 actor에게 허용한다. 기존 작업은 admin, 생성자, 담당자(owner), 또는 `manage` grant를 가진 actor만 조회할 수 있고, 그 외 actor는 `403 FORBIDDEN`을 받는다. live frontend는 API 오류 시 권한 화면 안에 재시도 경로를 표시하고 다음 단계 이동을 막는다. `VITE_USE_MOCK_API=true`에서는 동일 response shape의 fixture를 사용하되 최종 Job request shape는 live와 동일하다. Review 응답의 `permission`은 담당자 자동 권한을 첫 항목으로 표시하고, 이어서 실제 저장 예정 grant를 대상별로 나열한다.
 
 현재 그룹 후보는 backend의 `DEMO_GROUPS` 고정 정의이고 사용자 후보는 `auth_users` table을 우선한다. `permissionTemplate`은 과거 request 호환용 요약이며 권한 판정에는 사용하지 않는다.
+
+## Realtime 2026 전환 계약
+
+### GET /api/realtime/config
+
+인증된 frontend가 서버의 effective realtime mode를 읽는 진단 endpoint다. response field는 camelCase다.
+
+| 필드 | 타입 | 계약 |
+|---|---|---|
+| dashboardSyncMode | polling \| hybrid \| sse | invalid 값 또는 event 비활성 조합은 polling |
+| realtimeEventsEnabled | boolean | durable event/SSE kill switch |
+| continuousSqlJoinEnabled | boolean | Continuous SQL create/start kill switch |
+| latestStaticPerBatchEnabled | boolean | Continuous SQL이 켜진 경우에만 true |
+| staticChangeBackfillEnabled | boolean | Continuous SQL이 켜진 경우에만 true |
+| featureScope | deployment | 현재 저장소에는 tenant model이 없으므로 고정 |
+| fallbackReason | string or null | invalid_dashboard_sync_mode, realtime_events_disabled |
+
+이 API는 설정 원문, credential, secret을 반환하지 않는다. 기능 off 상태는 기존 Dashboard adaptive polling, 정적 SQL, Kafka Continuous ingestion 계약과 동일하다.
+
+SSE와 Continuous SQL 상세 계약은 docs/realtime-2026/adr/001-sse-dashboard-sync.md와 002-continuous-stream-static-join.md에 고정한다.
