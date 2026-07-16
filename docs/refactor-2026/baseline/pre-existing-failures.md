@@ -21,7 +21,7 @@ PYTHONPATH=. .venv/bin/python -m unittest discover -s tests -p 'test_*.py'
    - 기대: `before_read`, `after_read`
    - 실제: `before_read`만 호출
 
-처리 계획: PR 03 Characterization Test·상태 계약에서 현재 제품 Source of Truth와 테스트 중 무엇이 stale인지 판정한 뒤 수정한다.
+처리 결과: PR 03에서 제품 코드를 바꾸지 않고 stale fixture/assertion을 현재 계약에 맞췄다. Data Lake review의 canonical label은 `소스 데이터`이며, Spark post-read identity test는 현재 `inputFiles()` 및 `apply_schema_contract_with_count()` 경계를 사용한다. 전체 backend unit 368건 중 367건 통과, opt-in 1건 skip으로 기준선을 녹색화했다.
 
 ## F-002 — production Spark contract verifier signature drift
 

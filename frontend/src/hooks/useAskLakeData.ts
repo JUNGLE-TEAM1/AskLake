@@ -4,6 +4,7 @@ import { catalogDatasets, etlJobs } from "../data/mockData";
 import { apiConfig } from "../services/apiClient";
 import { deleteDatasetMaterializationRun } from "../services/catalogApi";
 import { applyDraftPipelinePatch, hydrateDraftPipelineFromJob } from "../services/draftPipelineContract";
+import { isContinuousRuntimeTransition, shouldAcceptContinuousRuntimeUpdate } from "../services/continuousRuntimeContract";
 import {
   createPipelineDraft as createMockPipelineDraft,
   updatePipelineDraft as updateMockPipelineDraft,
@@ -838,11 +839,6 @@ function buildOptimisticJob(job: JobRowData): JobRowData {
   });
 }
 
-function isContinuousRuntimeTransition(job: JobRowData) {
-  return job.executionMode === "continuous"
-    && ["starting", "pausing", "stopping"].includes(job.continuousRuntime?.status ?? "");
-}
-
 function isTerminalRunStatus(status: JobRunSummary["status"]) {
   return status === "success" || status === "failed" || status === "canceled";
 }
@@ -1195,6 +1191,7 @@ export function useAskLakeData({
       for (let attempt = 0; attempt < 20; attempt += 1) {
         await new Promise((resolve) => window.setTimeout(resolve, 1000));
         const nextJob = normalizeJobRow(await getLiveJob(initialJob.id));
+        if (!shouldAcceptContinuousRuntimeUpdate(currentJob, nextJob)) continue;
         updateJobState(initialJob.id, () => nextJob);
         setJobListFacets((facets) => moveJobFacetCounts(facets, currentJob, nextJob));
         currentJob = nextJob;

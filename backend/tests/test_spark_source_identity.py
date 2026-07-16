@@ -91,6 +91,9 @@ class FakeFrame:
     def limit(self, _limit: int):
         return self
 
+    def inputFiles(self) -> list[str]:
+        return []
+
     def withColumn(self, _name: str, _value):
         return self
 
@@ -333,7 +336,7 @@ class SparkSourceIdentityTests(unittest.TestCase):
             ) as verify,
             patch.object(spark_job_run, "read_source", return_value=frame),
             patch.object(spark_job_run, "normalize_columns", return_value=frame),
-            patch.object(spark_job_run, "apply_schema_contract", return_value=frame),
+            patch.object(spark_job_run, "apply_schema_contract_with_count", return_value=(frame, 1)),
             patch.object(spark_job_run, "apply_transform_steps", return_value=frame),
             patch.object(spark_job_run, "select_final_schema_columns", return_value=frame),
             patch.object(spark_job_run, "resolve_partition_columns", return_value=[]),

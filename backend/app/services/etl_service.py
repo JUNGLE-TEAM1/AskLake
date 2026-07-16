@@ -32,6 +32,20 @@ from app.core.materialization import (
 )
 from app.core.permission_metadata import normalize_actions, permission_grants_from_roles, resource_permissions
 from app.core.s3_policy import resolve_s3_source_location, s3_source_config_fields, validate_s3_source_config
+from app.domain.continuous_runtime import (
+    ContinuousErrorStage,
+    bind_worker_attempt,
+    clear_runtime_error,
+    command_transition,
+    derive_public_status,
+    observation_is_current,
+    observed_state_from_evidence,
+    record_runtime_command,
+    record_runtime_error,
+    record_runtime_observation,
+    runtime_contract_initialized,
+    runtime_contract_projection,
+)
 from app.models import (
     CatalogDatasetModel,
     ETLJobModel,
@@ -1415,8 +1429,6 @@ def command_kafka_continuous_job(
         "resumeContinuous": "etl.continuous.resume_requested",
         "stopContinuous": "etl.continuous.stop_requested",
     }
-    active_statuses = {"starting", "running", "pausing", "stopping"}
-
     if command in {"startContinuous", "resumeContinuous"}:
         if callable(getattr(db, "get_bind", None)):
             reconcile_stale_continuous_maintenance_runs(db, job.id, commit=False)
@@ -1435,8 +1447,15 @@ def command_kafka_continuous_job(
                 job = locked_job
             if locked_runtime is not None:
                 runtime = locked_runtime
-        if runtime.status in active_statuses:
-            raise ApiError(ErrorCode.CONFLICT, f"Continuous Job is already active: {job.id}", status.HTTP_409_CONFLICT)
+        transition = command_transition(runtime.status, command)
+        if not transition.allowed:
+            if transition.rejection == "already_active":
+                raise ApiError(ErrorCode.CONFLICT, f"Continuous Job is already active: {job.id}", status.HTTP_409_CONFLICT)
+            raise ApiError(
+                ErrorCode.INVALID_JOB_STATE,
+                f"Continuous Job cannot start from: {runtime.status}",
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+            )
         conflict = etl_repository.find_conflicting_kafka_continuous_runtime(
             db,
             broker=runtime.broker,
@@ -1474,12 +1493,26 @@ def command_kafka_continuous_job(
                 runtime,
             ),
         }
+        runtime.metrics = record_runtime_command(runtime.metrics, transition)
         try:
             worker_result = run_kafka_continuous_worker(job, runtime, "start")
         except ApiError as exc:
             runtime.status = "failed"
             runtime.failed_count += 1
             runtime.last_error = exc.message
+            runtime.metrics = record_runtime_observation(
+                runtime.metrics,
+                "failed",
+                default_public_status="failed",
+            )
+            runtime.metrics = record_runtime_error(
+                runtime.metrics,
+                stage=ContinuousErrorStage.SUBMISSION,
+                code="continuous_worker_start_failed",
+                message=exc.message,
+                retryable=True,
+                context={"jobId": job.id, "command": command},
+            )
             fail_kafka_continuous_session(session, exc.message, "start_failed")
             job.status = "failed"
             job.last_state = "Continuous worker 시작 실패"
@@ -1488,29 +1521,46 @@ def command_kafka_continuous_job(
         worker_attempt_id = optional_string(worker_result.get("workerAttemptId")) or optional_string(worker_result.get("containerId"))
         if session is not None:
             session.worker_attempt_id = worker_attempt_id
-        runtime.status = "starting"
-        runtime.metrics = {
-            **(runtime.metrics or {}),
-            "currentWorkerAttemptId": worker_attempt_id,
-        }
+        runtime.status = transition.next_status.value
+        runtime.metrics = bind_worker_attempt(runtime.metrics, worker_attempt_id)
+        runtime.metrics = record_runtime_observation(
+            runtime.metrics,
+            "starting",
+            default_public_status=runtime.status,
+            worker_attempt_id=worker_attempt_id,
+        )
         runtime.last_error = None
         job.status = "running"
         job.last_state = "Continuous Spark worker 시작 요청"
         job.progress = {"label": "Continuous worker 시작 요청", "value": 5}
     elif command == "pauseContinuous":
-        if runtime.status not in {"starting", "running"}:
+        transition = command_transition(runtime.status, command)
+        if not transition.allowed:
             raise ApiError(ErrorCode.INVALID_JOB_STATE, f"Continuous Job cannot pause from: {runtime.status}", status.HTTP_422_UNPROCESSABLE_ENTITY)
         worker_result = run_kafka_continuous_worker(job, runtime, "pause")
-        runtime.status = "pausing"
+        runtime.status = transition.next_status.value
+        runtime.metrics = record_runtime_command(runtime.metrics, transition)
+        runtime.metrics = record_runtime_observation(
+            runtime.metrics,
+            "stopping",
+            default_public_status=runtime.status,
+        )
         mark_kafka_continuous_session_stopping(db, runtime, "paused")
         job.status = "running"
         job.last_state = "Continuous worker 마이크로배치 종료 대기"
         job.progress = {"label": "일시정지 중", "value": 95}
     else:
-        if runtime.status in {"stopped", "stopping"}:
+        transition = command_transition(runtime.status, command)
+        if not transition.allowed:
             raise ApiError(ErrorCode.INVALID_JOB_STATE, f"Continuous Job cannot stop from: {runtime.status}", status.HTTP_422_UNPROCESSABLE_ENTITY)
         worker_result = run_kafka_continuous_worker(job, runtime, "stop")
-        runtime.status = "stopping"
+        runtime.status = transition.next_status.value
+        runtime.metrics = record_runtime_command(runtime.metrics, transition)
+        runtime.metrics = record_runtime_observation(
+            runtime.metrics,
+            "stopping",
+            default_public_status=runtime.status,
+        )
         mark_kafka_continuous_session_stopping(db, runtime, "stopped")
         job.status = "running"
         job.last_state = "Continuous worker 중지 요청"
@@ -6929,6 +6979,7 @@ def refresh_kafka_continuous_runtime(db: Session, job: ETLJobModel) -> None:
     report_path = continuous_runtime_report_path(job.id)
     worker_status = continuous_worker_status(job, runtime)
     container_state = str(worker_status.get("containerState") or "unknown")
+    contract_was_initialized = runtime_contract_initialized(runtime.metrics)
     requested_action = optional_string(worker_status.get("requestedAction"))
     requested_terminal_status = "paused" if requested_action == "pause" else "stopped" if requested_action == "stop" else None
     forced_terminal_status = None
@@ -6941,6 +6992,12 @@ def refresh_kafka_continuous_runtime(db: Session, job: ETLJobModel) -> None:
         runtime_state_changed = False
         if forced_terminal_status:
             runtime.status = forced_terminal_status
+            runtime.metrics = record_runtime_observation(
+                runtime.metrics,
+                observed_state_from_evidence(forced_terminal_status, container_state),
+                default_public_status=forced_terminal_status,
+            )
+            runtime.metrics = clear_runtime_error(runtime.metrics)
             runtime.last_error = None
             if runtime.status == "paused":
                 job.status = "paused"
@@ -6951,7 +7008,14 @@ def refresh_kafka_continuous_runtime(db: Session, job: ETLJobModel) -> None:
             job.progress = None
             runtime_state_changed = True
         elif runtime.status in {"starting", "running", "pausing", "stopping"} and container_state in {"exited", "missing"}:
-            mark_continuous_runtime_failed(job, runtime, f"Continuous worker container is {container_state} without a runtime report.")
+            mark_continuous_runtime_failed(
+                job,
+                runtime,
+                f"Continuous worker container is {container_state} without a runtime report.",
+                error_stage=ContinuousErrorStage.REPORT,
+                error_code="runtime_report_missing",
+                retryable=True,
+            )
             runtime_state_changed = True
         recovery_requested = db is not None and (
             runtime.status in {"paused", "stopped", "failed"}
@@ -6975,13 +7039,53 @@ def refresh_kafka_continuous_runtime(db: Session, job: ETLJobModel) -> None:
         return
     try:
         payload = json.loads(report_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except OSError as exc:
+        runtime.metrics = record_runtime_error(
+            runtime.metrics,
+            stage=ContinuousErrorStage.REPORT,
+            code="runtime_report_unreadable",
+            message=f"Continuous runtime report could not be read: {compact_storage_text(str(exc), limit=500)}",
+            retryable=True,
+            context={"jobId": job.id},
+        )
+        if db is not None:
+            etl_repository.save_kafka_continuous_command(db, job, runtime)
+        return
+    except json.JSONDecodeError as exc:
+        runtime.metrics = record_runtime_error(
+            runtime.metrics,
+            stage=ContinuousErrorStage.REPORT,
+            code="runtime_report_invalid",
+            message="Continuous runtime report is not valid JSON.",
+            retryable=True,
+            context={"jobId": job.id, "line": exc.lineno, "column": exc.colno},
+        )
+        if db is not None:
+            etl_repository.save_kafka_continuous_command(db, job, runtime)
         return
     previous_metrics = runtime.metrics or {}
     worker_attempt_id = optional_string(payload.get("workerAttemptId"))
-    expected_worker_attempt_id = optional_string(previous_metrics.get("currentWorkerAttemptId"))
-    if worker_attempt_id and expected_worker_attempt_id and worker_attempt_id != expected_worker_attempt_id:
+    if worker_attempt_id and not observation_is_current(previous_metrics, worker_attempt_id):
         if not forced_terminal_status:
+            contract = runtime_contract_projection(
+                previous_metrics,
+                public_status=runtime.status,
+                legacy_error=runtime.last_error,
+            )
+            runtime.metrics = record_runtime_error(
+                previous_metrics,
+                stage=ContinuousErrorStage.RECONCILIATION,
+                code="stale_worker_observation",
+                message="Ignored a Continuous runtime report from a stale worker attempt.",
+                retryable=False,
+                context={
+                    "jobId": job.id,
+                    "expectedWorkerAttemptId": contract.get("fencingToken"),
+                    "observedWorkerAttemptId": worker_attempt_id,
+                },
+            )
+            if db is not None:
+                etl_repository.save_kafka_continuous_command(db, job, runtime)
             return
         payload = {}
         worker_attempt_id = None
@@ -6997,9 +7101,25 @@ def refresh_kafka_continuous_runtime(db: Session, job: ETLJobModel) -> None:
         **({"lastRuleResult": last_rule_result} if last_rule_result is not None else {}),
         **({"lastBatchEvidence": last_batch_evidence} if last_batch_evidence is not None else {}),
     }
-    runtime_status = forced_terminal_status or str(payload.get("status") or runtime.status)
-    if runtime_status not in {"starting", "running", "pausing", "paused", "stopping", "stopped", "failed"}:
+    reported_status = forced_terminal_status or str(payload.get("status") or runtime.status)
+    if reported_status not in {"starting", "running", "pausing", "paused", "stopping", "stopped", "failed"}:
         return
+    observed_state = observed_state_from_evidence(reported_status, container_state)
+    if contract_was_initialized and not forced_terminal_status:
+        contract = runtime_contract_projection(
+            previous_metrics,
+            public_status=runtime.status,
+            legacy_error=runtime.last_error,
+        )
+        runtime_status = derive_public_status(contract["desiredState"], observed_state).value
+    else:
+        runtime_status = reported_status
+    previous_metrics = record_runtime_observation(
+        previous_metrics,
+        observed_state,
+        default_public_status=runtime_status,
+        worker_attempt_id=worker_attempt_id,
+    )
     runtime.status = runtime_status
     runtime.heartbeat_at = optional_string(payload.get("heartbeatAt")) or runtime.heartbeat_at
     runtime.last_flush_at = optional_string(payload.get("lastFlushAt")) or runtime.last_flush_at
@@ -7052,6 +7172,17 @@ def refresh_kafka_continuous_runtime(db: Session, job: ETLJobModel) -> None:
         runtime.last_error = worker_error
     if forced_terminal_status:
         runtime.last_error = None
+    if worker_error:
+        runtime.metrics = record_runtime_error(
+            runtime.metrics,
+            stage=ContinuousErrorStage.EXECUTION,
+            code="worker_reported_failure",
+            message=worker_error,
+            retryable=True,
+            context={"jobId": job.id, "workerAttemptId": worker_attempt_id},
+        )
+    elif runtime.last_error is None:
+        runtime.metrics = clear_runtime_error(runtime.metrics)
     # A publication manifest is durable independently from the worker process.
     # Reconcile Catalog before liveness handling so a crash cannot strand Lake
     # data outside Catalog merely because the worker is no longer running.
@@ -7074,6 +7205,9 @@ def refresh_kafka_continuous_runtime(db: Session, job: ETLJobModel) -> None:
             runtime,
             f"Continuous worker container is {container_state} (exitCode={worker_status.get('exitCode')}).",
             continuous_failure_identity(job, runtime, worker_status, "container_exit"),
+            error_stage=ContinuousErrorStage.EXECUTION,
+            error_code="worker_container_exited",
+            retryable=True,
         )
     elif runtime_status in {"starting", "running", "pausing", "stopping"} and heartbeat_stale:
         mark_continuous_runtime_failed(
@@ -7081,6 +7215,9 @@ def refresh_kafka_continuous_runtime(db: Session, job: ETLJobModel) -> None:
             runtime,
             "Continuous worker heartbeat expired.",
             continuous_failure_identity(job, runtime, worker_status, "heartbeat_expired"),
+            error_stage=ContinuousErrorStage.EXECUTION,
+            error_code="worker_heartbeat_expired",
+            retryable=True,
         )
         stop_stale_continuous_worker(job, runtime)
     if runtime.status == "running":
@@ -7148,6 +7285,10 @@ def mark_continuous_runtime_failed(
     runtime: KafkaContinuousRuntimeModel,
     message: str,
     failure_identity: str | None = None,
+    *,
+    error_stage: ContinuousErrorStage = ContinuousErrorStage.EXECUTION,
+    error_code: str = "continuous_runtime_failed",
+    retryable: bool = True,
 ) -> None:
     metrics = dict(runtime.metrics or {})
     already_counted = bool(failure_identity and metrics.get("lastFailureIdentity") == failure_identity)
@@ -7156,7 +7297,19 @@ def mark_continuous_runtime_failed(
         runtime.failed_count += 1
     if failure_identity:
         metrics["lastFailureIdentity"] = failure_identity
-    runtime.metrics = metrics
+    metrics = record_runtime_observation(
+        metrics,
+        "failed",
+        default_public_status="failed",
+    )
+    runtime.metrics = record_runtime_error(
+        metrics,
+        stage=error_stage,
+        code=error_code,
+        message=message,
+        retryable=retryable,
+        context={"jobId": job.id, **({"failureIdentity": failure_identity} if failure_identity else {})},
+    )
     runtime.last_error = message
     job.status = "failed"
     job.last_state = "Continuous worker 실패"
@@ -8904,6 +9057,11 @@ def continuous_runtime_from_job(job: ETLJobModel) -> KafkaContinuousRuntimeModel
         target_identity=str(job.storage_path or job.target_path or job.target),
         checkpoint_path=checkpoint_path,
         status="stopped",
+        metrics=record_runtime_observation(
+            {},
+            "stopped",
+            default_public_status="stopped",
+        ),
     )
 
 
