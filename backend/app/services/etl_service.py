@@ -4631,6 +4631,75 @@ def dataset_from_spark_result(job: ETLJobModel, result: dict[str, Any], existing
     )
 
 
+def rag_source_manifest_from_spark_result(
+    *,
+    result: dict[str, Any],
+    dataset_id: str,
+    schema_json: list[list[str]],
+) -> dict[str, Any] | None:
+    """Issue the durable source contract consumed by the RAG Airflow DAG.
+
+    Iceberg-backed GOLD datasets used to be published without a source
+    manifest.  That made the Dataset queryable in Trino but impossible for
+    RAG to read because the RAG DAG deliberately refuses an unscoped source.
+    Keep the manifest tied to the committed run and expose the Iceberg table
+    identifier as the Spark-readable path; the physical S3 location remains
+    the human/read URL only.
+    """
+    storage_location = str(
+        result.get("warehouseLocation")
+        or result.get("materializationOutputPath")
+        or result.get("outputPath")
+        or ""
+    ).strip()
+    if not storage_location or storage_location == "-":
+        return None
+
+    query_engine_table = result.get("queryEngineTable")
+    query_engine_available = (
+        result.get("queryEngineVerified") is True
+        and isinstance(query_engine_table, dict)
+        and all(str(query_engine_table.get(key) or "").strip() for key in ("catalog", "schema", "table", "format"))
+        and str(query_engine_table.get("format") or "").strip().lower() == "iceberg"
+    )
+    if query_engine_available:
+        catalog = str(query_engine_table["catalog"]).strip()
+        namespace = str(query_engine_table["schema"]).strip()
+        table = str(query_engine_table["table"]).strip()
+        spark_catalog = str(settings.asklake_spark_iceberg_catalog_name or catalog).strip()
+        spark_path = f"iceberg:{spark_catalog}.{namespace}.{table}"
+        source_format = "iceberg"
+    else:
+        spark_path = storage_location
+        source_format = "parquet"
+
+    run_id = str(result.get("runId") or "").strip()
+    snapshot_id = str((result.get("icebergCommit") or {}).get("snapshotId") or "").strip() if isinstance(result.get("icebergCommit"), dict) else ""
+    fingerprint_payload = {
+        "datasetId": dataset_id,
+        "runId": run_id,
+        "storageLocation": storage_location,
+        "sparkPath": spark_path,
+        "format": source_format,
+        "snapshotId": snapshot_id,
+        "schema": schema_json,
+    }
+    fingerprint = hashlib.sha256(
+        json.dumps(fingerprint_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return {
+        "manifestVersion": 1,
+        "datasetId": dataset_id,
+        "readUrl": storage_location,
+        "sparkPath": spark_path,
+        "format": source_format,
+        "fingerprint": fingerprint,
+        "expiresAt": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+        "runId": run_id or None,
+        "sourceCollection": {},
+    }
+
+
 def spark_result_schema(value: Any) -> list[list[str]]:
     if not isinstance(value, list):
         return []
@@ -4719,6 +4788,11 @@ def dataset_payload_from_spark_result(
             "sourceRunId": aggregate["latestRunId"],
             "storageSizeBytes": previous_payload.get("storageSizeBytes", current_storage_size_bytes),
         }
+    source_manifest = rag_source_manifest_from_spark_result(
+        result=result,
+        dataset_id=dataset_id,
+        schema_json=schema_json,
+    )
     return {
         "description": target_dataset_description(job),
         "downstream": downstream,
@@ -4742,6 +4816,7 @@ def dataset_payload_from_spark_result(
         "schema": schema_json,
         "size": format_storage_size(current_storage_size_bytes) if current_storage_size_bytes > 0 else display_size,
         "source": job.name,
+        **({"sourceManifest": source_manifest} if source_manifest else {}),
         "sourceRunId": aggregate["latestRunId"] or result.get("runId"),
         "status": "available",
         "storageFormat": storage_format,

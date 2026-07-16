@@ -67,10 +67,24 @@ function runSparkPipelineWithSource(job, command, runId, source, executionMode, 
   const icebergEnvironment = sparkIcebergEnvironment(job);
   assertSparkRestStorageCredentials(job.sourceConfig ?? [], executionMode);
   writeSparkJobManifest(manifestPath, job);
+  // Spark REST drivers inherit object-storage credentials from the Spark
+  // worker.  Never serialize those credentials into the REST submission;
+  // Docker-mode jobs may still receive them directly in their isolated
+  // container environment.
+  const forbiddenRestCredentialNames = new Set([
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+    "MINIO_ACCESS_KEY",
+    "MINIO_SECRET_KEY",
+    "MINIO_ROOT_USER",
+    "MINIO_ROOT_PASSWORD",
+    "SPARK_MINIO_ACCESS_KEY",
+    "SPARK_MINIO_SECRET_KEY",
+  ]);
   const storageEnvironment = Object.fromEntries(
     objectStorageDockerEnv(job.sourceConfig ?? []).filter(([name]) => (
-      executionMode === "docker"
-      || !["MINIO_ACCESS_KEY", "MINIO_SECRET_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"].includes(name)
+      executionMode === "docker" || !forbiddenRestCredentialNames.has(name)
     )),
   );
   const sparkEnvironment = {

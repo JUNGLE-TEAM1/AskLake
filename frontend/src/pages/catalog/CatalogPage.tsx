@@ -646,7 +646,7 @@ export function CatalogPage({
         variant={view === "semantic" ? "primary" : "outline"}
         onClick={() => onViewChange("semantic")}
       >
-        업무 모델 보기
+        시맨틱 레이어
       </Button>
     </div>
   );
@@ -658,7 +658,7 @@ export function CatalogPage({
           <PageHeader
             actions={viewSwitcher}
             className="catalog-page-header"
-            description="데이터 자산을 찾고, 같은 Catalog 안에서 업무 모델로 해석합니다."
+            description="데이터 자산을 찾고, 같은 Catalog 안에서 시맨틱 레이어로 해석합니다."
             icon={<Search size={18} />}
             title="검색/카탈로그"
           />

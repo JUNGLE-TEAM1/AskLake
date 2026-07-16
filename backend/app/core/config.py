@@ -74,6 +74,7 @@ class Settings(BaseSettings):
     s3_endpoint: str | None = None
     s3_force_path_style: bool = False
     aws_region: str = "ap-northeast-2"
+    asklake_spark_iceberg_catalog_name: str = "asklake"
     trino_enabled: bool = False
     trino_base_url: str = "http://localhost:8088"
     trino_catalog: str = "iceberg"

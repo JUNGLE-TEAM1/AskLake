@@ -276,8 +276,9 @@ class RagService:
         if mode == "index" and active_manifest is not None and active_manifest.source_fingerprint == (source_fingerprint or None) and active_manifest.policy_fingerprint == policy_fingerprint and active_manifest.embedding_model == settings.rag_embedding_model and active_manifest.dimensions == settings.rag_embedding_dimensions and active_manifest.index_name and self._manifest_contract_matches(dataset, row, active_manifest):
             return RagIndexResponse(job_id=f"active:{active_manifest.index_name}", dataset_id=dataset_id, status="ready", target_index=active_manifest.index_name)
         job_id = f"ragjob_{uuid4().hex}"
-        parent_table = f"{settings.trino_catalog}.{settings.rag_parent_iceberg_namespace}.parents_{safe_identifier(dataset_id)}_{safe_identifier(job_id)}"
-        chunk_table = f"{settings.trino_catalog}.{settings.rag_parent_iceberg_namespace}.chunks_{safe_identifier(dataset_id)}_{safe_identifier(job_id)}"
+        spark_catalog = str(settings.asklake_spark_iceberg_catalog_name or settings.trino_catalog).strip()
+        parent_table = f"{spark_catalog}.{settings.rag_parent_iceberg_namespace}.parents_{safe_identifier(dataset_id)}_{safe_identifier(job_id)}"
+        chunk_table = f"{spark_catalog}.{settings.rag_parent_iceberg_namespace}.chunks_{safe_identifier(dataset_id)}_{safe_identifier(job_id)}"
         row.desired_generation = int(row.desired_generation or 0) + 1
         job = RagIndexJobModel(id=job_id, dataset_id=dataset_id, generation=row.desired_generation, physical_column_mapping=physical_mapping, metadata_columns=metadata_columns, metadata_types=metadata_types, filter_contract_version=FILTER_CONTRACT_VERSION, status="queued", stage="queued", requested_by=actor.name, requested_mode=mode, idempotency_key=idempotency_key, target_index=target, document_count=0, source_fingerprint=source_fingerprint or None, policy_fingerprint=policy_fingerprint, embedding_model=settings.rag_embedding_model, embedding_dimensions=settings.rag_embedding_dimensions, failed_row_rate_threshold=settings.rag_failed_row_rate_threshold, parent_table=parent_table, chunk_table=chunk_table, checkpoint_path=f"{settings.rag_staging_base_path.rstrip('/')}/rag/checkpoints/parents/dataset_id={dataset_id}/job_id={job_id}")
         row.index_status = "queued"

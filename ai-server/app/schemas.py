@@ -24,6 +24,21 @@ class QuerySqlOutput(BaseModel):
         return value
 
 
+class ClassificationRole(BaseModel):
+    """Strict role contract used by the provider JSON schema."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        populate_by_name=True,
+        str_strip_whitespace=True,
+    )
+
+    column_name: str = Field(min_length=1, max_length=255, alias="columnName")
+    role: Literal["body", "title", "metadata", "identifier", "excluded"]
+    confidence: float = Field(ge=0, le=1)
+    reason: str = Field(max_length=500)
+
+
 class DatasetClassificationOutput(BaseModel):
     """Strict, bounded role recommendation for Catalog columns."""
 
@@ -31,27 +46,7 @@ class DatasetClassificationOutput(BaseModel):
 
     classification: str = Field(min_length=1, max_length=100)
     confidence: float = Field(ge=0, le=1)
-    roles: list[dict[str, Any]] = Field(max_length=256)
-
-    @field_validator("roles")
-    @classmethod
-    def validate_roles(cls, value: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        allowed = {"body", "title", "metadata", "identifier", "excluded"}
-        normalized: list[dict[str, Any]] = []
-        for role in value:
-            if not isinstance(role, dict):
-                raise ValueError("classification roles must be objects")
-            column_name = str(role.get("columnName") or "").strip()
-            role_name = str(role.get("role") or "").strip()
-            if not column_name or role_name not in allowed:
-                raise ValueError("classification roles require columnName and a supported role")
-            normalized.append({
-                "columnName": column_name,
-                "role": role_name,
-                "confidence": max(0, min(1, float(role.get("confidence") or 0))),
-                "reason": str(role.get("reason") or "")[:500],
-            })
-        return normalized
+    roles: list[ClassificationRole] = Field(max_length=256)
 
 
 class DocumentSegment(BaseModel):

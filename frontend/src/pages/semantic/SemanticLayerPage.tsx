@@ -249,10 +249,10 @@ export function SemanticLayerPage({ onAction }: SemanticPageProps) {
   if (error) return <div className="semantic-real-error" role="alert"><AlertTriangle /><div><strong>실제 백엔드 연결이 필요합니다.</strong><p>{error}</p><Button type="button" onClick={() => void load()}><RefreshCw /> 다시 시도</Button></div></div>;
 
   return (
-    <section className="semantic-real-page" aria-label="실제 업무 모델 관리">
+    <section className="semantic-real-page" aria-label="실제 시맨틱 레이어 관리">
       {notice && <div className={`semantic-real-notice ${notice.tone}`} role={notice.tone === "error" ? "alert" : "status"}>{notice.message}<button type="button" aria-label="알림 닫기" onClick={() => setNotice(null)}><X size={15} /></button></div>}
       <div className="semantic-real-toolbar">
-        <div><span className="semantic-real-eyebrow">CATALOG / 업무 모델</span><h1>업무 모델</h1><p>Catalog의 실제 schema를 선택해 지표·분석 기준과 RAG 문서를 연결합니다.</p></div>
+        <div><span className="semantic-real-eyebrow">CATALOG / 시맨틱 레이어</span><h1>시맨틱 레이어</h1><p>Catalog의 실제 schema를 선택해 지표·분석 기준과 RAG 문서를 연결합니다.</p></div>
         <div className="semantic-real-toolbar-actions"><Button variant="outline" type="button" onClick={() => void load()}><RefreshCw /> 새로고침</Button><Button type="button" onClick={() => setCreateOpen(true)}><Plus /> 업무 모델 추가</Button></div>
       </div>
       {createOpen && <CreateModelPanel datasets={catalogDatasets} busy={busy === "create"} onCancel={() => setCreateOpen(false)} onCreate={(name, description, datasetIds) => void run("create", async () => { const created = await createSemanticModel({ name, description, datasets: datasetIds.map((datasetId) => ({ datasetId, role: "source" as const })) }); setModels((current) => [created, ...current]); setSelectedModelId(created.id); setCreateOpen(false); setNotice({ tone: "success", message: "실제 데이터베이스에 업무 모델을 생성했습니다." }); })} />}

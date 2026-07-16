@@ -357,6 +357,9 @@ class SemanticModelService:
             if only is not None:
                 for row in self.db.scalars(select(table).where(table.model_id == model_id)).all():
                     self.db.delete(row)
+                # Flush deletes before replacement inserts so the unique
+                # model/dataset constraint cannot be hit during autoflush.
+                self.db.flush()
             self.db.add_all([table(**factory(item)) for item in items])
 
     def _create_version(self, model_id: str, version: int, request: SemanticModelCreate, *, status_value: str = "draft", published_by: str | None = None) -> SemanticModelVersionModel:
