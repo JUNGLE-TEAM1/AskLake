@@ -84,78 +84,12 @@ class ContinuousSqlCatalogResolver:
         payload: dict[str, Any],
         dataset: CatalogDatasetResponse,
     ) -> CatalogRelation:
-        stream_job = self.db.scalars(
-            select(ETLJobModel)
-            .where(
-                ETLJobModel.dataset_id == dataset.id,
-                ETLJobModel.execution_mode == "continuous",
-                ETLJobModel.source_type.ilike("%kafka%"),
-            )
-            .order_by(ETLJobModel.updated_at.desc(), ETLJobModel.created_at.desc())
-            .limit(1)
-        ).first()
-        explicit_mode = str(
-            payload.get("relationMode")
-            or payload.get("relation_mode")
-            or ""
-        ).strip().casefold()
-        if explicit_mode and explicit_mode not in {"streaming", "static"}:
-            raise ContinuousSqlValidationError(
-                "CONTINUOUS_SQL_RELATION_MODE_INVALID",
-                "Catalog relationMode must be streaming or static.",
-                {"datasetId": dataset.id, "relationMode": explicit_mode},
-            )
-        mode = explicit_mode or ("streaming" if stream_job is not None else "static")
-
-        mapping = payload.get("queryEngineTable") or payload.get("query_engine_table")
-        query_engine_status = str(
-            payload.get("queryEngineStatus")
-            or payload.get("query_engine_status")
-            or ""
-        ).strip().casefold()
-        if not isinstance(mapping, dict) or query_engine_status != "available":
-            raise ContinuousSqlValidationError(
-                "CONTINUOUS_SQL_RELATION_NOT_QUERYABLE",
-                "Continuous SQL relations require an available Iceberg query-engine table.",
-                {"datasetId": dataset.id, "queryEngineStatus": query_engine_status or "unavailable"},
-            )
-        normalized_mapping = {
-            "catalog": str(mapping.get("catalog") or "").strip(),
-            "schema": str(mapping.get("schema") or mapping.get("namespace") or "").strip(),
-            "table": str(mapping.get("table") or "").strip(),
-            "format": str(mapping.get("format") or "").strip().casefold(),
-            "partitionColumns": [str(item) for item in mapping.get("partitionColumns") or []],
-        }
-        if (
-            not all(normalized_mapping[key] for key in ("catalog", "schema", "table"))
-            or normalized_mapping["format"] != "iceberg"
-        ):
-            raise ContinuousSqlValidationError(
-                "CONTINUOUS_SQL_RELATION_NOT_ICEBERG",
-                "Continuous SQL V1 requires Iceberg Catalog relations.",
-                {"datasetId": dataset.id},
-            )
-
-        schema = normalize_schema(payload.get("schema") or payload.get("schema_json") or [])
-        if not schema:
-            raise ContinuousSqlValidationError(
-                "CONTINUOUS_SQL_SCHEMA_MISSING",
-                "Continuous SQL relation requires a Catalog schema.",
-                {"datasetId": dataset.id},
-            )
-        fingerprint = str(
-            payload.get("schemaFingerprint")
-            or payload.get("schema_fingerprint")
-            or (stream_job.schema_fingerprint if stream_job is not None else "")
-            or schema_fingerprint(schema)
-        ).strip()
-        snapshot_id = current_snapshot_id(payload)
-        if mode == "static" and not snapshot_id:
-            raise ContinuousSqlValidationError(
-                "CONTINUOUS_SQL_STATIC_SNAPSHOT_MISSING",
-                "Static Continuous SQL relations require a committed Iceberg snapshot.",
-                {"datasetId": dataset.id},
-            )
+        stream_job = self._stream_job(dataset.id)
+        mode = self._relation_mode(payload, dataset.id, stream_job)
+        normalized_mapping = self._query_engine_mapping(payload, dataset.id)
+        schema, fingerprint, snapshot_id = self._schema_identity(
+            payload, dataset.id, stream_job, mode,
+        )
 
         streaming_source = self._streaming_source(payload, stream_job) if mode == "streaming" else None
         if mode == "streaming" and not streaming_source:
@@ -185,6 +119,91 @@ class ContinuousSqlCatalogResolver:
             unique_key_sets=tuple(unique_key_sets(payload)),
             estimated_row_count=parse_row_count(payload.get("estimatedRowCount") or payload.get("rows")),
         )
+
+    def _stream_job(self, dataset_id: str) -> ETLJobModel | None:
+        return self.db.scalars(
+            select(ETLJobModel)
+            .where(
+                ETLJobModel.dataset_id == dataset_id,
+                ETLJobModel.execution_mode == "continuous",
+                ETLJobModel.source_type.ilike("%kafka%"),
+            )
+            .order_by(ETLJobModel.updated_at.desc(), ETLJobModel.created_at.desc())
+            .limit(1)
+        ).first()
+
+    @staticmethod
+    def _relation_mode(
+        payload: dict[str, Any],
+        dataset_id: str,
+        stream_job: ETLJobModel | None,
+    ) -> str:
+        explicit_mode = str(
+            payload.get("relationMode") or payload.get("relation_mode") or ""
+        ).strip().casefold()
+        if explicit_mode and explicit_mode not in {"streaming", "static"}:
+            raise ContinuousSqlValidationError(
+                "CONTINUOUS_SQL_RELATION_MODE_INVALID",
+                "Catalog relationMode must be streaming or static.",
+                {"datasetId": dataset_id, "relationMode": explicit_mode},
+            )
+        return explicit_mode or ("streaming" if stream_job is not None else "static")
+
+    @staticmethod
+    def _query_engine_mapping(payload: dict[str, Any], dataset_id: str) -> dict[str, Any]:
+        mapping = payload.get("queryEngineTable") or payload.get("query_engine_table")
+        query_engine_status = str(
+            payload.get("queryEngineStatus") or payload.get("query_engine_status") or ""
+        ).strip().casefold()
+        if not isinstance(mapping, dict) or query_engine_status != "available":
+            raise ContinuousSqlValidationError(
+                "CONTINUOUS_SQL_RELATION_NOT_QUERYABLE",
+                "Continuous SQL relations require an available Iceberg query-engine table.",
+                {"datasetId": dataset_id, "queryEngineStatus": query_engine_status or "unavailable"},
+            )
+        normalized = {
+            "catalog": str(mapping.get("catalog") or "").strip(),
+            "schema": str(mapping.get("schema") or mapping.get("namespace") or "").strip(),
+            "table": str(mapping.get("table") or "").strip(),
+            "format": str(mapping.get("format") or "").strip().casefold(),
+            "partitionColumns": [str(item) for item in mapping.get("partitionColumns") or []],
+        }
+        if not all(normalized[key] for key in ("catalog", "schema", "table")) or normalized["format"] != "iceberg":
+            raise ContinuousSqlValidationError(
+                "CONTINUOUS_SQL_RELATION_NOT_ICEBERG",
+                "Continuous SQL V1 requires Iceberg Catalog relations.",
+                {"datasetId": dataset_id},
+            )
+        return normalized
+
+    @staticmethod
+    def _schema_identity(
+        payload: dict[str, Any],
+        dataset_id: str,
+        stream_job: ETLJobModel | None,
+        mode: str,
+    ) -> tuple[list[tuple[str, str]], str, str | None]:
+        schema = normalize_schema(payload.get("schema") or payload.get("schema_json") or [])
+        if not schema:
+            raise ContinuousSqlValidationError(
+                "CONTINUOUS_SQL_SCHEMA_MISSING",
+                "Continuous SQL relation requires a Catalog schema.",
+                {"datasetId": dataset_id},
+            )
+        fingerprint = str(
+            payload.get("schemaFingerprint")
+            or payload.get("schema_fingerprint")
+            or (stream_job.schema_fingerprint if stream_job is not None else "")
+            or schema_fingerprint(schema)
+        ).strip()
+        snapshot_id = current_snapshot_id(payload)
+        if mode == "static" and not snapshot_id:
+            raise ContinuousSqlValidationError(
+                "CONTINUOUS_SQL_STATIC_SNAPSHOT_MISSING",
+                "Static Continuous SQL relations require a committed Iceberg snapshot.",
+                {"datasetId": dataset_id},
+            )
+        return schema, fingerprint, snapshot_id
 
     def _streaming_source(
         self,
