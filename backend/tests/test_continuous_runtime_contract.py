@@ -150,13 +150,17 @@ class ContinuousErrorContractTests(unittest.TestCase):
             context={"jobId": "job-1"},
         )
         projection = runtime_contract_projection(metrics, public_status="running", legacy_error="legacy")
-        self.assertEqual(projection["errorDetail"], {
+        detail = projection["errorDetail"]
+        self.assertEqual({key: value for key, value in detail.items() if key != "diagnosticId"}, {
             "stage": "report",
             "code": "runtime_report_invalid",
             "message": "Runtime report is invalid.",
             "retryable": True,
             "context": {"jobId": "job-1"},
+            "operatorMessage": "Runtime report is invalid.",
+            "userMessage": "Runtime report is invalid.",
         })
+        self.assertRegex(detail["diagnosticId"], r"^[a-f0-9]{32}$")
 
     def test_legacy_errors_are_classified_without_rewriting_persisted_rows(self) -> None:
         cases = [

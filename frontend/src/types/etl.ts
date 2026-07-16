@@ -16,6 +16,9 @@ export type ContinuousRuntimeErrorDetail = {
   message: string;
   retryable: boolean;
   context?: Record<string, unknown> | null;
+  diagnosticId?: string | null;
+  operatorMessage?: string | null;
+  userMessage?: string | null;
 };
 
 export type KafkaSchemaEvolutionPolicy = {
