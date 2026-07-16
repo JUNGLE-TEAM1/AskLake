@@ -12,6 +12,7 @@ from app.infrastructure.runtime_io import (
     Boto3ObjectManifestAdapter,
     JsonFileRuntimeDocumentStore,
     SubprocessNodeBridge,
+    VersionedNodeBridge,
 )
 from app.ports.runtime_io import JsonDocumentState
 from app.services import etl_service
@@ -120,6 +121,70 @@ class RuntimeIoPortTests(unittest.TestCase):
         self.assertEqual(captured.exception.code, "BACKEND_BRIDGE_TIMEOUT")
         self.assertEqual(recovery_calls, ["recover"])
         self.assertTrue(captured.exception.details["recovery"]["succeeded"])
+
+    def test_legacy_bridge_redacts_secrets_from_diagnostics(self) -> None:
+        bridge = SubprocessNodeBridge(
+            backend_dir=Path("/backend"),
+            scripts_dir=Path("/backend/scripts"),
+            runner=lambda *_args, **_options: SimpleNamespace(
+                returncode=2,
+                stdout="",
+                stderr="password=plain-secret token:abc123",
+            ),
+        )
+        with self.assertRaises(ApiError) as captured:
+            bridge.execute(
+                "worker.mjs",
+                "SUCCESS",
+                {"jobId": "job-1"},
+                error_marker="ERROR",
+                timeout_seconds=1,
+            )
+        self.assertNotIn("plain-secret", captured.exception.details["stderr"])
+        self.assertNotIn("abc123", captured.exception.details["stderr"])
+
+    def test_versioned_bridge_validates_identity_and_returns_object(self) -> None:
+        calls = []
+
+        def runner(command, **options):
+            calls.append((command, options))
+            request = json.loads(options["input"])
+            return SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps({
+                    "version": "1.0",
+                    "requestId": request["requestId"],
+                    "ok": True,
+                    "result": {"status": "ready"},
+                }),
+                stderr="",
+            )
+
+        bridge = VersionedNodeBridge(backend_dir=Path("/backend"), runner=runner)
+        result = bridge.execute_operation(
+            "reviewAnalysis.suggestSchema",
+            {"jobId": "job-1"},
+            timeout_seconds=3,
+        )
+        request = json.loads(calls[0][1]["input"])
+        self.assertEqual(result, {"status": "ready"})
+        self.assertEqual(request["version"], "1.0")
+        self.assertEqual(request["requestId"], "job-1")
+        self.assertTrue(request["idempotencyKey"])
+
+    def test_versioned_bridge_classifies_malformed_json(self) -> None:
+        bridge = VersionedNodeBridge(
+            backend_dir=Path("/backend"),
+            runner=lambda *_args, **_options: SimpleNamespace(
+                returncode=0,
+                stdout="log before json",
+                stderr="",
+            ),
+        )
+        with self.assertRaises(ApiError) as captured:
+            bridge.execute_operation("reviewAnalysis.run", {}, timeout_seconds=1)
+        self.assertEqual(captured.exception.code, "NODE_BRIDGE_PROTOCOL_ERROR")
+        self.assertEqual(captured.exception.details["stage"], "protocol")
 
     def test_json_document_store_distinguishes_missing_invalid_and_found(self) -> None:
         store = JsonFileRuntimeDocumentStore()

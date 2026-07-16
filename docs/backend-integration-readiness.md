@@ -517,6 +517,21 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 - Trino 운영 quota/old table retention 고도화
 - Dashboard 권한/공유/export API
 - Audit log server persistence
+
+## Spark/Kafka runtime·Node bridge readiness
+
+- [x] 배포가 참조하는 Spark/Kafka entrypoint 경로를 얇은 compatibility façade로 유지
+- [x] typed Spark/Kafka 환경 config와 Spark 없는 validation test
+- [x] Spark text analysis·classifier 책임을 별도 runtime 모듈로 분리
+- [x] Kafka partition cursor 정규화를 순수 state 모듈로 분리
+- [x] runtime report atomic rename과 additive schema version
+- [x] checkpoint contract와 batch manifest additive schema version 및 legacy field-less reader
+- [x] primary runtime error와 secondary report-write error 분리
+- [x] Python/Node use case authority matrix와 compatibility 종료 조건 문서화
+- [x] review analysis의 allow-list versioned JSON bridge 적용
+- [x] timeout/start/process/protocol 오류 분류, bounded diagnostic, secret redaction
+- [ ] live Spark/Kafka integration과 long-running soak는 opt-in 운영 환경에서 확인
+- [ ] connector·Spark/Kafka launcher compatibility의 Python 전환은 authority matrix 종료 조건 충족 후 별도 진행
 ## ETL Permission create-flow readiness
 
 - [x] `GET /api/etl/permission-options` 그룹·사용자 경량 조회
