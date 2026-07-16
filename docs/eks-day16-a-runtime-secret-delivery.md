@@ -68,4 +68,4 @@ Phase 1 private input에는 Backend가 Trino HTTPS/password client로 사용할 
 
 이번 단계는 Spark와 Trino용 Secrets Manager secret 두 개를 추가했다. ExternalSecret과 Kubernetes Secret 자체에 별도 AWS 서비스 요금은 없지만 Secrets Manager 저장·API 호출 비용은 환경이 유지되는 동안 발생할 수 있다.
 
-Phase 2는 Trino Pod, SparkApplication, Kafka fixture, S3 결과 또는 전체 E2E 성공 증거가 아니다. Phase 3에서 Trino Pod Identity/RDS/S3/network/private values를 검증하고, 실제 workload 연결은 B 결과와 합쳐진 통합 단계에서 수행한다.
+Phase 2는 Trino Pod, SparkApplication, Kafka fixture, S3 결과 또는 전체 E2E 성공 증거가 아니다. 후속 Trino Pod Identity/RDS/S3/network/private values 검증은 [Phase 3 Trino data plane 기록](eks-day16-a-trino-data-plane.md)에서 완료했으며, 실제 workload 연결은 B 결과와 합쳐진 통합 단계에서 수행한다.

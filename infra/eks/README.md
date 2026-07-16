@@ -134,6 +134,8 @@ Phase 7은 최초의 fail-closed ALB와 private network 선택 계약을 추가�
 
 Phase 8은 한 JSON을 기준으로 FastAPI, Airflow, Spark, Trino의 runtime Secret 이름·key·공유 binding·env injection·파일 mount를 값 없이 고정하고 Terraform이 같은 계약을 output한다. delivery는 `disabled`가 기본이며 Phase 5 선택과 결합 검증한다. `ready_for_sync`와 Airflow/AI 선택까지 포함한 full-service Secret contract readiness는 구분한다. dev에는 네 workload 이름의 source/ExternalSecret/target이 있고 Spark 3-key와 Trino 7-key는 staged hash 검증을 통과했다. Backend Trino patch와 실제 Spark/Trino 주입은 아직 통합 gate다. 상세 기준과 증거는 [Phase 8 런타임 Secret 전달 계약](../../docs/eks-phase-8-runtime-secrets.md), [Backend runtime Secret 전환 기록](../../docs/eks-day15-backend-secret-runtime-evidence.md), [16일차 Phase 2 전달 기록](../../docs/eks-day16-a-runtime-secret-delivery.md)을 따른다.
 
+16일차 Phase 3은 Terraform output과 immutable receipt로 Git 제외 Trino private values를 만들고, Trino 리소스만 server-side dry-run한다. `asklake-trino` Pod Identity의 실제 RDS/S3/DNS 경계는 임시 Job으로 검증하되 coordinator를 배포하지 않는다. 실행과 cleanup 기준은 [16일차 Phase 3 Trino data plane 검증](../../docs/eks-day16-a-trino-data-plane.md)을 따른다.
+
 Phase 10은 신규 EKS를 Auto Mode로 전환하고 기존 Managed Node Group 코드를 제거한다. 기존 cluster 경로는 외부 확인 없이는 닫혀 있고, General/Spark custom NodePool과 실제 AWS smoke는 완료로 간주하지 않는다. 상세 기준은 [Phase 10 EKS Auto Mode Foundation](../../docs/eks-phase-10-auto-mode-foundation.md)을 따른다.
 
 Phase 11은 외부 network 참조와 MVP-owned VPC 생성을 분리하고 public/private subnet, NAT 또는 VPC endpoint egress, EKS/MSK/RDS private placement와 exact port security group을 추가한다. 실제 CIDR/AZ/egress 비용 선택은 example에 기본값으로 넣지 않으며 ALB는 후속이다. custom NodePool 구조는 Phase 12로 이어진다. 상세 기준은 [Phase 11 VPC와 Private Network Foundation](../../docs/eks-phase-11-network-foundation.md)을 따른다.
