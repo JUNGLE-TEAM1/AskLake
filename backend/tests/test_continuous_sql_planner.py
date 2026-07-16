@@ -1,6 +1,7 @@
 import json
 import unittest
 
+from app.schemas.continuous_sql import ContinuousSqlPlanRequest
 from app.services.continuous_sql_planner import (
     CatalogRelation,
     ContinuousSqlPlanner,
@@ -210,27 +211,56 @@ class ContinuousSqlPlannerTests(unittest.TestCase):
             unique_key_sets=(("id",),),
             estimated_row_count=50_000,
         )
+        empty_users = relation(
+            "dataset-users-empty",
+            "users_empty",
+            mode="static",
+            schema=(("id", "bigint"), ("name", "string")),
+            unique_key_sets=(("id",),),
+            estimated_row_count=0,
+        )
         small = self.planner.compile(
             "SELECT e.event_id, u.name AS user_name FROM events e JOIN users_small u ON e.user_id = u.id",
             [self.stream, small_users],
             static_broadcast_max_rows=100,
+            static_cache_max_rows=10_000,
         )
         large = self.planner.compile(
             "SELECT e.event_id, u.name AS user_name FROM events e JOIN users_large u ON e.user_id = u.id",
             [self.stream, large_users],
             static_broadcast_max_rows=100,
+            static_cache_max_rows=10_000,
         )
         unknown = self.compile(
             "SELECT e.event_id, u.name AS user_name FROM events e JOIN users u ON e.user_id = u.id"
+        )
+        cache_disabled = self.planner.compile(
+            "SELECT e.event_id, u.name AS user_name FROM events e JOIN users_empty u ON e.user_id = u.id",
+            [self.stream, empty_users],
+            static_cache_max_rows=0,
         )
 
         self.assertTrue(small.plan["relations"][1]["broadcastHint"])
         self.assertFalse(large.plan["relations"][1]["broadcastHint"])
         self.assertFalse(unknown.plan["relations"][1]["broadcastHint"])
+        self.assertTrue(small.plan["relations"][1]["cacheHint"])
+        self.assertFalse(large.plan["relations"][1]["cacheHint"])
+        self.assertFalse(unknown.plan["relations"][1]["cacheHint"])
+        self.assertFalse(cache_disabled.plan["relations"][1]["cacheHint"])
+        self.assertEqual(small.plan["staticCacheMaxRows"], 10_000)
         self.assert_error(
             "CONTINUOUS_SQL_OUTPUT_COLUMN_DUPLICATE",
             "SELECT e.event_id, u.id AS event_id FROM events e JOIN users u ON e.user_id = u.id",
         )
+
+    def test_continuous_sql_defaults_to_five_second_low_latency_trigger(self) -> None:
+        request = ContinuousSqlPlanRequest(
+            query="SELECT e.event_id, u.name AS user_name FROM events e JOIN users u ON e.user_id = u.id",
+            relationDatasetIds=["dataset-events", "dataset-users"],
+        )
+
+        self.assertEqual(request.trigger_interval_seconds, 5)
+        self.assertEqual(self.compile(request.query).plan["triggerIntervalSeconds"], 5)
 
 
 if __name__ == "__main__":

@@ -8,6 +8,7 @@ from app.schemas.common import CamelModel
 from app.schemas.iceberg import IcebergWriterTarget
 
 ContinuousSqlStaticBindingPolicy = Literal["PINNED_AT_START", "LATEST_PER_BATCH"]
+CONTINUOUS_SQL_DEFAULT_TRIGGER_SECONDS = 5
 ContinuousSqlDesiredState = Literal["stopped", "running", "paused"]
 ContinuousSqlObservedState = Literal[
     "starting",
@@ -58,7 +59,11 @@ class ContinuousSqlPlanRequest(CamelModel):
     query: str = Field(min_length=1, max_length=100_000)
     relation_dataset_ids: list[str] = Field(min_length=2, max_length=100)
     static_binding_policy: ContinuousSqlStaticBindingPolicy = "PINNED_AT_START"
-    trigger_interval_seconds: int = Field(default=30, ge=1, le=3600)
+    trigger_interval_seconds: int = Field(
+        default=CONTINUOUS_SQL_DEFAULT_TRIGGER_SECONDS,
+        ge=1,
+        le=3600,
+    )
 
     @field_validator("relation_dataset_ids")
     @classmethod
@@ -103,6 +108,7 @@ class ContinuousSqlRelationBinding(CamelModel):
     unique_key_sets: list[list[str]] = Field(default_factory=list)
     estimated_row_count: int | None = None
     broadcast_hint: bool = False
+    cache_hint: bool = False
 
 
 class ContinuousSqlPlanResponse(CamelModel):

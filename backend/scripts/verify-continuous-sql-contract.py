@@ -5,6 +5,7 @@ import unittest
 
 MODULES = (
     "tests.test_continuous_sql_planner",
+    "tests.test_continuous_sql_runtime_performance",
     "tests.test_continuous_sql_runtime_contract",
 )
 

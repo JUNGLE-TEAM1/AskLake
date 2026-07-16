@@ -72,7 +72,8 @@ merge_order:
 - Draft PR: #822 (`feat-#816 -> dev`), 선행 #815 merge 후 review-ready 전환.
 - SQL AST planner, persisted Job/Run/Batch/command, generation/fencing lifecycle을 구현했다.
 - PINNED/LATEST batch-local static binding과 Spark JOIN adapter, exact Iceberg 검증 및 3단계 publication을 구현했다.
+- 새 Continuous SQL 5초 기본 trigger, bounded static snapshot cache, snapshot별 유일키 검증 재사용과 신규 output `_asklake_run_id` partition을 추가했다.
 - API는 fencing token 원문을 숨기고 start/resume/recover 때 입력 권한·governance를 다시 검사한다.
-- Continuous SQL contract 17개와 기존 경로를 포함한 focused 56개 테스트, Kafka contract/REST manager, compile/Compose 검증이 통과했다.
+- Continuous SQL contract 23개와 기존 경로를 포함한 focused 56개 테스트, exact Iceberg writer 12개, Kafka contract/REST manager, compile/Compose 검증이 통과했다.
 - 전체 backend discovery의 기존 3개 drift는 결과 문서에 별도로 기록했고 이번 branch에서 범위를 넓혀 수정하지 않았다.
 - 실제 Spark/Iceberg/Trino fault·restart·soak는 STACK-04 opt-in gate로 이관했다.

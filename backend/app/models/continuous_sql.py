@@ -29,7 +29,7 @@ class ContinuousSqlJobModel(TimestampMixin, Base):
     compiled_plan: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     relation_bindings: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
     static_binding_policy: Mapped[str] = mapped_column(String(32), nullable=False)
-    trigger_interval_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
+    trigger_interval_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
     checkpoint_path: Mapped[str] = mapped_column(String(2048), nullable=False)
     output_dataset_id: Mapped[str] = mapped_column(String(160), nullable=False, unique=True, index=True)
     output_dataset_name: Mapped[str] = mapped_column(String(255), nullable=False)

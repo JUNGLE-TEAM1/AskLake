@@ -11,6 +11,7 @@ from sqlglot.errors import ParseError
 
 
 PLAN_VERSION = "continuous-sql-v1"
+DEFAULT_TRIGGER_INTERVAL_SECONDS = 5
 RUNTIME_METADATA_COLUMNS = (
     "kafka_timestamp",
     "kafka_partition",
@@ -119,8 +120,9 @@ class ContinuousSqlPlanner:
         relations: Iterable[CatalogRelation],
         *,
         static_binding_policy: str = "PINNED_AT_START",
-        trigger_interval_seconds: int = 30,
+        trigger_interval_seconds: int = DEFAULT_TRIGGER_INTERVAL_SECONDS,
         static_broadcast_max_rows: int = 100_000,
+        static_cache_max_rows: int = 5_000_000,
         max_output_rows_per_input: int = 10,
     ) -> CompiledContinuousSqlPlan:
         relation_list = list(relations)
@@ -251,6 +253,7 @@ class ContinuousSqlPlanner:
                 item,
                 referenced_columns[normalize_identifier(item.alias)],
                 static_broadcast_max_rows=max(0, int(static_broadcast_max_rows)),
+                static_cache_max_rows=max(0, int(static_cache_max_rows)),
             )
             for item in bound_relations
         ]
@@ -262,6 +265,7 @@ class ContinuousSqlPlanner:
             "triggerIntervalSeconds": int(trigger_interval_seconds),
             "maxOutputRowsPerInput": max(1, int(max_output_rows_per_input)),
             "staticBroadcastMaxRows": max(0, int(static_broadcast_max_rows)),
+            "staticCacheMaxRows": max(0, int(static_cache_max_rows)),
             "relations": bindings,
             "joins": compiled_joins,
             "outputSchema": output_schema,
@@ -737,12 +741,19 @@ def relation_binding_payload(
     referenced: set[str],
     *,
     static_broadcast_max_rows: int,
+    static_cache_max_rows: int,
 ) -> dict[str, Any]:
     relation = bound.relation
     broadcast_hint = bool(
         relation.mode == "static"
         and relation.estimated_row_count is not None
         and relation.estimated_row_count <= static_broadcast_max_rows
+    )
+    cache_hint = bool(
+        relation.mode == "static"
+        and static_cache_max_rows > 0
+        and relation.estimated_row_count is not None
+        and relation.estimated_row_count <= static_cache_max_rows
     )
     return {
         "alias": bound.alias,
@@ -758,6 +769,7 @@ def relation_binding_payload(
         "uniqueKeySets": [list(item) for item in relation.unique_key_sets],
         "estimatedRowCount": relation.estimated_row_count,
         "broadcastHint": broadcast_hint,
+        "cacheHint": cache_hint,
         "referencedColumns": sorted(referenced, key=normalize_identifier),
     }
 

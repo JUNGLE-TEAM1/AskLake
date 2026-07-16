@@ -385,6 +385,7 @@ class ContinuousSqlService:
                 static_binding_policy=request.static_binding_policy,
                 trigger_interval_seconds=request.trigger_interval_seconds,
                 static_broadcast_max_rows=self.settings.continuous_sql_static_broadcast_max_rows,
+                static_cache_max_rows=self.settings.continuous_sql_static_cache_max_rows,
                 max_output_rows_per_input=self.settings.continuous_sql_max_output_rows_per_input,
             )
         except ContinuousSqlValidationError as exc:
