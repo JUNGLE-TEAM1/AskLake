@@ -2315,7 +2315,7 @@ export function SourceConnectionPage({
 
           {sourceStage === "choose" && (
             <div className="source-stage-screen source-choice-screen">
-              <Panel className="source-step-section active source-choice-panel">
+              <Panel className="source-bordered-panel source-choice-panel">
                 <EtlSectionHeader icon={<Database />} title="데이터 소스 선택" />
                 <div className="source-choice-grid">
                   {sourceChoiceConnectors.map((connector) => {
@@ -2347,7 +2347,7 @@ export function SourceConnectionPage({
           {sourceStage === "connect" && hasSelectedSource && !isInternalDataLake && (
             <ScrollArea className="h-[calc(100vh-270px)] min-h-0">
               <div className="source-stage-screen">
-              <Panel className="source-step-section active">
+              <Panel className="source-bordered-panel source-step-section active">
                 <EtlSectionHeader
                   actions={(
                     <div className="hegun-status-actions">

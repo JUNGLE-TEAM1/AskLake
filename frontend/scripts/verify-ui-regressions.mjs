@@ -852,17 +852,19 @@ const checks = [
     name: "ETL source selection and connection settings share the common bordered panel",
     file: "src/pages/etl/EtlPages.tsx",
     patterns: [
-      /<Panel className="source-step-section active source-choice-panel">[\s\S]{0,180}<EtlSectionHeader icon=\{<Database \/>\} title="데이터 소스 선택" \/>/,
-      /<Panel className="source-step-section active">[\s\S]{0,220}<EtlSectionHeader/,
+      /<Panel className="source-bordered-panel source-choice-panel">[\s\S]{0,180}<EtlSectionHeader icon=\{<Database \/>\} title="데이터 소스 선택" \/>/,
+      /<Panel className="source-bordered-panel source-step-section active">[\s\S]{0,220}<EtlSectionHeader/,
     ],
     forbiddenPatterns: [
       /<EtlSectionHeader bordered=\{false\} icon=\{<Database \/>\} title="데이터 소스 선택" \/>/,
     ],
   },
   {
-    name: "ETL source selection panel contains the connector grid inside its body",
+    name: "ETL source selection panel fills the workbench and contains the connector grid",
     file: "src/styles/etl.css",
     patterns: [
+      /\.source-choice-screen \{[\s\S]*?max-width: none;[\s\S]*?margin: 0;[\s\S]*?width: 100%;/,
+      /\.source-bordered-panel,\s*\.source-bordered-panel\.source-step-section \{[\s\S]*?width: 100%;[\s\S]*?border: 2px solid #93c5fd;[\s\S]*?border-radius: 12px;/,
       /\.source-choice-panel > \.source-choice-grid \{[\s\S]*?padding: 18px;/,
     ],
   },
