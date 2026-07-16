@@ -6,6 +6,8 @@ import math
 import re
 from typing import Any, Iterable
 
+from app.core.compatibility import CompatibilityPath, record_compatibility_path
+
 from app.schemas.etl import (
     CanonicalRuleDraft,
     QualityRuleDraft,
@@ -98,9 +100,20 @@ def compile_rule_set(
         for rule in (rules or [])
     ]
     if not canonical_supplied:
+        legacy_transform_steps = list(transform_steps or [])
+        legacy_quality_rules = list(quality_rules or [])
+        if legacy_transform_steps or legacy_quality_rules:
+            record_compatibility_path(
+                CompatibilityPath.RULES_LEGACY_ADAPTER,
+                reason="canonical rules were omitted; legacy transform and quality drafts were adapted",
+                context={
+                    "qualityRuleCount": len(legacy_quality_rules),
+                    "transformStepCount": len(legacy_transform_steps),
+                },
+            )
         canonical_rules = adapt_legacy_rules(
-            transform_steps=transform_steps,
-            quality_rules=quality_rules,
+            transform_steps=legacy_transform_steps,
+            quality_rules=legacy_quality_rules,
             schema_columns=schema,
             transform_output_columns=declared_outputs,
         )

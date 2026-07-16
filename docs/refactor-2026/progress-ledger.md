@@ -79,13 +79,13 @@
 
 ## Latest handoff
 
-- 상태: 배치 3의 이슈·브랜치·PR 3개 생성 완료, 사용자 승인 전 다음 배치 중지
-- 원격 PR: `#830`, `#832`, `#835` 모두 `dev` 대상 ready PR
-- 실제 변경: Pipeline·Snapshot·SQL·Catalog application 경계, Spark/Kafka runtime·Python/Node 경계, frontend 상태 소유권·ETL Wizard 단계 분리
-- 통과: backend unit 414건, runtime/bridge/Spark/Kafka 계약, frontend UI regression 132 checks, 요청·draft·step registry 9건, TypeScript/Vite production build, diff check
-- 남은 경고: frontend App chunk 약 2.63 MB warning은 R-014 및 PR 11 범위로 유지한다.
-- 차단 사항: 기술적 blocker 없음. `#830` → `#832` → `#835` 순서 머지가 필요하다.
-- 다음 단위: 사용자 승인 후 PR 10 — Jobs 화면·데이터 hook 분해
+- 상태: 배치 4의 이슈·브랜치·PR 3개 생성 완료, 사용자 승인 전 다음 배치 중지
+- 원격 PR: `#837`, `#839`, `#841` 모두 `dev` 대상 ready PR
+- 실제 변경: Jobs·전역 data hook 분해, CSS·Catalog 경계 분리, API·DB persisted 하위 호환 gate와 legacy 경로 가시화
+- 통과: backend unit 419건(1 opt-in skip), API breaking 0건, legacy registry 15건, frontend UI regression 132 checks, TypeScript/Vite production build, diff check
+- 남은 경고: frontend App chunk 약 2.6 MB warning은 R-014 및 후속 bundle/quality gate 범위로 유지한다.
+- 차단 사항: 기술적 blocker 없음. `#837` → `#839` → `#841` 순서 머지가 필요하다.
+- 다음 단위: 사용자 승인 후 PR 13 — observability·CI 품질 gate와 dependency/security 정리
 
 ## PR 04 작업 기록
 
@@ -179,3 +179,14 @@
 - 제외: 기존 selector 중복 제거, 디자인 변경, API/DB migration, production 배포
 - rollback: CSS entrypoint와 feature file, Catalog façade·feature module을 함께 되돌린다. persisted data migration은 없다.
 - 머지 순서: `#837` 다음 `#839`; PR 12는 `#839` 다음이다.
+
+## PR 12 작업 기록
+
+- 시작 HEAD: `ab8a3708` (PR 11 branch HEAD)
+- branch/issue/PR: `refactor-#840`, `#840`, `#841`
+- 포함: baseline OpenAPI·DB model·frontend route 자동 하위 호환 gate, 기존 Job/session/runtime/draft fixture, 15개 semantic legacy 경로 등록부, 운영 도달 10개 경로의 구조화 warning+counter, production mock API fail-closed
+- 하위 호환: 기존 83 paths/95 operations, 23개 table model, public status/lastError, Job/session/checkpoint/report와 versionless reader를 유지한다.
+- 검증: backend unit 418건(1 opt-in skip), backward compatibility breaking 0건, legacy registry 15건, frontend UI regression 132 checks, compatibility/draft 6건, TypeScript/Vite production build
+- 제외: DB migration·backfill 실행, legacy reader 즉시 삭제, endpoint/field 제거, production 배포
+- rollback: telemetry wiring과 production mock guard를 되돌리되 기존 Job/session/runtime/checkpoint/browser draft를 삭제하지 않는다.
+- 머지 순서: `#839` 다음 `#841`; PR 13은 `#841` 다음이다.

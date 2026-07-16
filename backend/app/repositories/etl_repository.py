@@ -3,6 +3,7 @@ from typing import Any
 from sqlalchemy import inspect, select, text
 from sqlalchemy.orm import Session
 
+from app.core.compatibility import record_legacy_runtime_error_projection
 from app.core.permission_metadata import permission_grants_from_roles, resource_permissions
 from app.domain.continuous_runtime import runtime_contract_projection
 from app.models import (
@@ -748,6 +749,11 @@ def continuous_runtime_to_schema(runtime: KafkaContinuousRuntimeModel | None) ->
         return None
     metrics = runtime.metrics or {}
     schema_state = runtime.schema_state or {}
+    record_legacy_runtime_error_projection(
+        metrics,
+        runtime.last_error,
+        public_status=runtime.status,
+    )
     contract = runtime_contract_projection(
         metrics,
         public_status=runtime.status,

@@ -1019,3 +1019,26 @@ npm run build
 ```
 
 Windows에서 FastAPI 의존성이 저장소 가상환경에만 설치돼 있으면 `python` 대신 `.\.venv\Scripts\python.exe`를 사용한다. `verify:permission-job-dashboard`는 PostgreSQL metadata DB가 응답 가능한 환경을 요구한다.
+
+## 18) API·DB 하위 호환과 Legacy 경로 검증
+
+API schema, SQLAlchemy/Pydantic model, persisted Job/session/runtime document, frontend route 또는 wizard flow를 변경할 때 baseline 검증을 먼저 실행한다.
+
+```bash
+cd backend
+npm run verify:backward-compatibility
+npm run verify:legacy-paths
+PYTHONPATH=. .venv/bin/python -m unittest \
+  tests.test_backward_compatibility_contracts \
+  tests.test_runtime_script_contracts
+
+cd ../frontend
+npm run test:compatibility-runtime
+npm run test:etl-draft-contract
+npm run verify:ui-regressions
+npm run build
+```
+
+운영에서 도달 가능한 fallback/legacy adapter를 추가할 때 `docs/refactor-2026/legacy-path-register.json`에 안정적인 ID, owner, activation, telemetry, 제거 조건과 목표 release를 등록한다. 구조화 warning과 counter 없는 production entry는 검증 실패다. 개발 mock/우회는 명시적 환경 guard가 필요하며 production에서 mock으로 조용히 전환해서는 안 된다.
+
+DB breaking change는 같은 PR에서 바로 수행하지 않는다. expand schema와 rollback reader, idempotent backfill, 호출 0 관측 기간, contract 제거를 각각 검증 가능한 단계로 나눈다. Job, session, runtime artifact, checkpoint를 테스트 편의를 위해 초기화하지 않는다.

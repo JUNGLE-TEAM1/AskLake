@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Mapping
 
-
 RUNTIME_CONTRACT_VERSION = "1.0"
 RUNTIME_CONTRACT_KEY = "runtimeContract"
 

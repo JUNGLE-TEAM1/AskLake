@@ -1,5 +1,6 @@
 
 import { ApiError } from "../../types";
+import { recordCompatibilityPath } from "../../services/compatibilityTelemetry.ts";
 
 export function isFetchConnectionError(error: unknown) {
   return error instanceof TypeError && /fetch|network|load failed|connection/i.test(error.message);
@@ -29,10 +30,20 @@ export async function readInitialResource<T>(
       fatal: false,
     };
   } catch (error) {
+    const fatal = !isRecoverableInitialReadError(error);
+    recordCompatibilityPath(
+      "frontend.initial-read-degraded",
+      "initial backend read failed and the caller-provided fallback value was returned",
+      {
+        errorType: error instanceof Error ? error.name : typeof error,
+        fatal,
+        resourceName,
+      },
+    );
     return {
       data: fallback,
       error: `${resourceName}: ${getInitialReadErrorMessage(error)}`,
-      fatal: !isRecoverableInitialReadError(error),
+      fatal,
     };
   }
 }

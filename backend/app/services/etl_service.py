@@ -20,6 +20,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.auth_context import ActorContext, require_permission
+from app.core.compatibility import (
+    CompatibilityPath,
+    record_compatibility_path,
+    record_legacy_runtime_error_projection,
+)
 from app.application.continuous_commands import (
     ContinuousCommandHooks,
     ContinuousCommandRequest,
@@ -268,6 +273,12 @@ def legacy_permission_grants(roles: list[dict[str, Any]] | None) -> list[Permiss
             principal_type="group" if group_id else "role",
             source="legacy_permission_roles",
         ))
+    if grants:
+        record_compatibility_path(
+            CompatibilityPath.ETL_LEGACY_PERMISSION_ROLES,
+            reason="legacy permissionRoles are being projected into persisted grants",
+            context={"grantCount": len(grants)},
+        )
     return grants
 
 
@@ -6791,6 +6802,11 @@ def _apply_continuous_runtime_report(
         return
     observed_state = observed_state_from_evidence(reported_status, container_state)
     if contract_was_initialized and not forced_terminal_status:
+        record_legacy_runtime_error_projection(
+            previous_metrics,
+            runtime.last_error,
+            public_status=runtime.status,
+        )
         contract = runtime_contract_projection(
             previous_metrics,
             public_status=runtime.status,

@@ -1,4 +1,5 @@
 import type { DraftPipeline, RetryPolicyDraft, WatermarkPolicyDraft } from "../types";
+import { recordCompatibilityPath } from "../services/compatibilityTelemetry.ts";
 
 export const ETL_DRAFT_CONTRACT_VERSION = 1 as const;
 export const ETL_DRAFT_REDACTED_VALUE = "********";
@@ -83,7 +84,17 @@ export function hydrateEtlDraft(serialized: string | null | undefined, fallback:
   if (!serialized) return normalizeEtlDraft(fallback);
   try {
     const parsed = JSON.parse(serialized) as unknown;
-    const candidate = isRecord(parsed) && parsed.version === ETL_DRAFT_CONTRACT_VERSION && isRecord(parsed.draft) ? parsed.draft : parsed;
+    if (isRecord(parsed) && "version" in parsed && parsed.version !== ETL_DRAFT_CONTRACT_VERSION) {
+      return normalizeEtlDraft(fallback);
+    }
+    const versioned = isRecord(parsed) && parsed.version === ETL_DRAFT_CONTRACT_VERSION && isRecord(parsed.draft);
+    if (isRecord(parsed) && !("version" in parsed)) {
+      recordCompatibilityPath(
+        "frontend.etl-draft-v0",
+        "an unversioned browser draft was hydrated through the v0 reader",
+      );
+    }
+    const candidate = versioned ? parsed.draft : parsed;
     if (!isRecord(candidate)) return normalizeEtlDraft(fallback);
     return normalizeEtlDraft({
       ...fallback,
