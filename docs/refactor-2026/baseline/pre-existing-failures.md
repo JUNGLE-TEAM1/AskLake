@@ -67,4 +67,3 @@ PATH="$PWD/backend/.venv/bin:$PATH" \
 - frontend build: `App` chunk 약 2.6 MB warning
 - frontend `npm ci`: npm audit 2건(1 moderate, 1 high)
 - 두 항목은 PR 01을 차단하지 않으며 risk register에서 후속 추적한다.
-

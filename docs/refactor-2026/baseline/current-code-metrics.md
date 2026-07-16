@@ -88,4 +88,3 @@
 - `JobsPages.tsx`: 3,559 → 3,582
 - `etl_service.py`, `useAskLakeData.ts`, `kafka_continuous_stream.py`는 동일하다.
 - 현재 집계의 `deploy` 범위는 shell/SQL/YAML 전체를 포함하므로 감사 보고서의 `deploy=121`과 방법이 다르다. 이후 비교는 이 artifact의 수집기를 고정해서 수행한다.
-

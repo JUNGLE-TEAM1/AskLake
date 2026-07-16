@@ -51,4 +51,3 @@
 ## 판정
 
 PR 01은 제품 동작을 바꾸지 않는 기준선이므로 진행 가능하다. PR 02는 기존 verifier drift를 먼저 green으로 복구한 뒤 Spark path P0의 실패 재현을 추가하는 조건으로 `GO`다.
-

@@ -24,4 +24,3 @@
 - 각 PR은 해당 위험의 실패 재현 또는 characterization guard를 먼저 추가한다.
 - 외부 side effect와 DB transaction 경계를 한 PR에서 암묵적으로 바꾸지 않는다.
 - 위험을 해결하지 못하면 다음 PR로 넘기지 않고 원장에 blocker와 rollback을 기록한다.
-

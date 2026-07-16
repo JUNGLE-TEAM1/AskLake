@@ -34,4 +34,3 @@ PYTHONPATH=backend backend/.venv/bin/python scripts/refactor_audit/export_openap
 - 머지 순서는 원장의 `선행 PR`을 따른다.
 - 이전 PR이 머지된 뒤 다음 PR의 diff와 CI를 다시 확인한다.
 - 한 배치에서 3개 PR을 연 뒤 사용자 확인 전 다음 배치를 시작하지 않는다.
-

@@ -88,4 +88,3 @@ review
 production Compose service는 20개다. P0와 직접 관련된 service는 `spark-dir-init`, `spark-master`, `spark-worker`, `backend`다.
 
 `spark-dir-init` one-shot 실행과 Docker daemon의 `unless-stopped` 자동 restart가 동일한 path·ownership 결과를 보장하지 않는 것이 PR 02의 해결 대상이다.
-

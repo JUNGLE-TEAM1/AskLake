@@ -6,19 +6,19 @@
 
 - 계획 버전: `2026-07-16-15-pr`
 - 작업 배치: `1/5`
-- 현재 PR 단위: `01 — 현황·drift·기준선·작업 원장`
-- 상태: `IN_PROGRESS`
+- 현재 PR 단위: `02 — Spark 재부팅·경로·권한 복구`
+- 상태: `READY`
 - 시작 기준: `origin/dev@b93ae27370fdfa50ce949bcabb9ff7fe37ca1098`
-- 현재 이슈: `#804`
-- 현재 브랜치: `docs-#804`
+- 현재 이슈: PR 02 시작 시 생성
+- 현재 브랜치: PR 02 시작 시 `docs-#804`에서 분기
 - 다음 사용자 확인 지점: PR 01~03 생성 후
 
 ## 15개 PR 원장
 
 | PR 단위 | 원본 Stage | 결과 | 선행 PR | 상태 |
 |---:|---|---|---|---|
-| 01 | 00~01 | 현황·drift·기준선·작업 원장 | 없음 | IN_PROGRESS |
-| 02 | 02 | Spark 재부팅·경로·권한 복구 | 01 | WAITING |
+| 01 | 00~01 | 현황·drift·기준선·작업 원장 | 없음 | DONE |
+| 02 | 02 | Spark 재부팅·경로·권한 복구 | 01 | READY |
 | 03 | 03~04 | Characterization Test·Continuous 상태 계약 | 02 | WAITING |
 | 04 | 05 | 외부 I/O Port·Adapter 분리 | 03 | WAITING |
 | 05 | 06~07 | Continuous 명령·Reconciliation 분리 | 04 | WAITING |
@@ -54,9 +54,11 @@
 
 ## Latest handoff
 
-- 상태: 작업 중
-- 실제 변경: 기준선 수집기와 기준선 문서 작성
-- 검증: [baseline/test-command-map.md](./baseline/test-command-map.md) 참조
-- 차단 사항: 없음. 변경 전 backend unit·deploy verifier 실패는 [baseline/pre-existing-failures.md](./baseline/pre-existing-failures.md)에 분리했다.
+- 상태: PR 01 구현·로컬 검증 완료
+- 변경 commit: `4eacff60` (`docs(refactor): 최신 코드 기준선과 작업 원장 고정`)
+- 실제 변경: deterministic 정량/계약/OpenAPI 수집기, drift·위험·결정·진행 원장, 테스트 명령과 기존 실패 분리
+- 통과: 수집기 재현성, OpenAPI export, frontend regression/build, backend compile, Kafka Continuous contract, Compose render, Markdown link, secret pattern, whitespace
+- 기준선 실패: backend unit 3건, production Spark verifier signature drift, deploy regression 18건
+- rollback: `docs/refactor-2026/`, `scripts/refactor_audit/`, Development Guide 기준선 안내만 되돌린다.
+- 차단 사항: 없음. 기준선 실패는 [baseline/pre-existing-failures.md](./baseline/pre-existing-failures.md)에 분리했다.
 - 다음 단위: PR 02 — Spark 재부팅·경로·권한 복구
-

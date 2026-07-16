@@ -63,4 +63,3 @@ ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:kafka-continuous-contract
 - frontend extraction: UI regressions + build
 - API/schema 변경: OpenAPI snapshot diff + 관련 docs + compatibility test
 - DB 변경: 기존 schema bootstrap + additive migration + 구버전 row fixture
-

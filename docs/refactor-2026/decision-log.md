@@ -43,4 +43,3 @@
 - 상태: Accepted
 - 결정: 이후 상태 계약 변경은 additive field/table을 먼저 도입하고 기존 persisted Job/Run/checkpoint/manifest를 유지한다.
 - 이유: 운영 데이터와 구버전 worker의 동시 호환을 보장하기 위해서다.
-
