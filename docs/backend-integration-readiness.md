@@ -572,3 +572,14 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 - [ ] production PostgreSQL multi-worker·실제 proxy/ALB·Spark 통합 및 rolling restart 검증
 
 현재 운영 기본값은 polling/disabled이며 schema 변경 없이 기존 동작으로 rollback할 수 있다.
+
+## Full-stack E2E·recovery readiness
+
+- [x] PR/release/nightly 누적 profile과 선언형 fault matrix
+- [x] source→Job→Continuous publication→Catalog→Dashboard application/API evidence 재사용
+- [x] duplicate start, submission response loss, stale report/worker, maintenance race, partial publication 계약
+- [x] 실제 Node Spark REST process와 Docker UID 185 runtime path release check
+- [x] JSON/JUnit/Markdown artifact와 correlation ID, bounded secret-redacted output
+- [x] frontend reversed polling과 stable browser selector 계약
+- [x] nightly의 isolated loopback·credential fail-closed guard
+- [ ] 실제 Kafka/Spark/object storage/browser nightly는 `self-hosted + asklake-e2e` runner에서 배포 후보마다 실행

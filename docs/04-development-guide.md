@@ -1102,3 +1102,16 @@ PYTHONPATH=. .venv/bin/python -m unittest tests.test_observability_contract test
 ```
 
 API/schema 변경은 `docs/03-api-reference.md` 또는 아키텍처 문서를, CI/deploy 변경은 이 문서 또는 `docs/system-guardrails.md`를 같은 PR에서 갱신해야 한다. baseline을 다시 생성해 실패를 덮지 말고 개선된 값은 별도 PR에서 낮춘다. 느린 production Spark·Continuous 검증은 `Refactor Quality Gates` workflow dispatch의 `release_suite=true`로 실행한다.
+
+## 20) ETL E2E·복구 프로필 실행
+
+Continuous, publication, Catalog, Dashboard, Spark runtime path를 변경하면 아래 빠른 프로필을 실행한다.
+
+```bash
+cd backend
+ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:etl-e2e-recovery
+```
+
+배포 후보는 `verify:etl-e2e-recovery:release`를 추가한다. 실제 Kafka/브라우저/서비스 fault가 포함된 `nightly`는 `ASKLAKE_E2E_ISOLATED_ENV=true`와 loopback URL이 설정된 `self-hosted + asklake-e2e` runner에서만 실행한다. production URL·credential로 우회 실행하지 않는다. 결과물은 `.artifacts/etl-e2e-recovery/`의 JSON/JUnit/Markdown 세 파일이며, 실패 시 correlation ID와 해당 check의 bounded output을 PR에 첨부한다.
+
+시나리오를 추가할 때는 [하네스 계약](refactor-2026/contracts/etl-e2e-recovery-harness.md)에 따라 initial state, injection, expected state, timeout, automatic/operator recovery, evidence를 모두 정의한다. fixed sleep이나 화면 문구/CSS selector로 완료를 판정하지 않는다.

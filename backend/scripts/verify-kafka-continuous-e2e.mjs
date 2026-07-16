@@ -147,6 +147,8 @@ try {
 } finally {
   if (jobId) await post(`/api/etl/jobs/${encodeURIComponent(jobId)}/commands`, { command: "stopContinuous" }).catch(() => undefined);
   if (dashboardId) await del(`/api/dashboards/${encodeURIComponent(dashboardId)}`).catch(() => undefined);
+  if (jobId) await del(`/api/etl/jobs/${encodeURIComponent(jobId)}`).catch(() => undefined);
+  try { rpk(["topic", "delete", topic]); } catch { /* Unique test topic cleanup is best effort. */ }
 }
 
 function jobPayload() {
