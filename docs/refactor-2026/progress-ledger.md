@@ -6,10 +6,10 @@
 
 - 계획 버전: `2026-07-16-15-pr`
 - 작업 배치: `4/5`
-- 현재 PR 단위: `11 구현 완료·PR 생성 대기`
+- 현재 PR 단위: `11 완료`
 - 상태: `IN_PROGRESS`
 - 시작 기준: `origin/dev@b93ae27370fdfa50ce949bcabb9ff7fe37ca1098`
-- 최근 이슈/PR: `#838` / `생성 대기`
+- 최근 이슈/PR: `#838` / `#839`
 - 현재 브랜치: `refactor-#838`
 - 다음 사용자 확인 지점: PR 10~12 생성 후
 
@@ -27,7 +27,7 @@
 | 08 | 11~12 | Spark/Kafka script·Python/Node 경계 | 07 | DONE |
 | 09 | 13~14 | frontend 상태 소유권·ETL Wizard 분해 | 08 | DONE |
 | 10 | 15~16 | Jobs 화면·데이터 hook 분해 | 09 | DONE |
-| 11 | 17 | CSS·Catalog·Layout 경계 | 10 | IN_PROGRESS |
+| 11 | 17 | CSS·Catalog·Layout 경계 | 10 | DONE |
 | 12 | 18~19 | API·DB 호환·Legacy/Fallback 정리 | 11 | WAITING |
 | 13 | 20~21 | 관측성·오류 모델·CI gate | 12 | WAITING |
 | 14 | 22~23 | Full-stack E2E·재부팅·장애 복구 | 13 | WAITING |
@@ -171,11 +171,11 @@
 ## PR 11 작업 기록
 
 - 시작 HEAD: `0d0a040b` (PR 10 branch HEAD)
-- branch/issue/PR: `refactor-#838`, `#838`, 생성 대기
+- branch/issue/PR: `refactor-#838`, `#838`, `#839`
 - 포함: ETL·Layout CSS feature ownership, byte-identical cascade entrypoint, Catalog 목록·상세·lineage·model·state hook 분리, stale 상세 요청 cleanup
 - 하위 호환: 기존 CSS import 순서와 selector/DOM class, Catalog public export·route·API/DB payload, keyboard/focus/loading/error/empty 상태를 유지한다.
 - selector 근거: ETL 1,313 definitions/1,241 unique/기존 중복 72, Layout 246 definitions/246 unique/중복 0
 - 검증: CSS/Catalog 경계 3건, UI regression 132 checks, TypeScript/Vite production build
 - 제외: 기존 selector 중복 제거, 디자인 변경, API/DB migration, production 배포
 - rollback: CSS entrypoint와 feature file, Catalog façade·feature module을 함께 되돌린다. persisted data migration은 없다.
-- 머지 순서: `#837` 다음 PR 11; PR 12는 PR 11 다음이다.
+- 머지 순서: `#837` 다음 `#839`; PR 12는 `#839` 다음이다.
