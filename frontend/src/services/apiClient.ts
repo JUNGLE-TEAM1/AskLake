@@ -87,7 +87,10 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
       const detailMessage = typeof payload.error?.details?.message === "string" ? payload.error.details.message : "";
       throw new ApiError({
         code: payload.error?.code ?? fallback.error.code,
-        message: detailMessage || payload.error?.message || validationDetail || fallback.error.message,
+        diagnosticId: payload.error?.diagnosticId ?? response.headers.get("X-Correlation-ID") ?? undefined,
+        message: payload.error?.userMessage || detailMessage || payload.error?.message || validationDetail || fallback.error.message,
+        retryable: payload.error?.retryable ?? response.status >= 500,
+        stage: payload.error?.stage ?? "api",
         status: response.status,
       });
     }

@@ -10,6 +10,7 @@
     "verify:node-dependencies": "node --input-type=module -e \"await import('@aws-sdk/client-s3'); await import('kafkajs'); await import('mongodb'); await import('parquetjs-lite'); await import('pg');\"",
     "verify:backward-compatibility": "PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-.venv/bin/python} scripts/verify-backward-compatibility.py",
     "verify:legacy-paths": "${ASKLAKE_FASTAPI_PYTHON:-python3} scripts/verify-legacy-path-register.py",
+    "verify:quality-gates": "python3 ../scripts/refactor_audit/quality_gate.py --base ${ASKLAKE_QUALITY_GATE_BASE:-origin/dev}",
     "start": "npm run start:fastapi",
     "start:fastapi": "npm run verify:node-dependencies && python -m uvicorn app.main:app --host 0.0.0.0 --port 8080",
     "start:node-compat": "npm run verify:node-dependencies && node src/server.mjs",

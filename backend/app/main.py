@@ -12,6 +12,7 @@ from app.api.internal_mcp import create_internal_mcp_app, internal_mcp_mount_pat
 from app.core.config import settings
 from app.core.database import SessionLocal
 from app.core.errors import ApiError, api_error_handler, http_error_handler, unhandled_error_handler, validation_error_handler
+from app.core.observability import CorrelationIdMiddleware
 from app.repositories.dashboard_live_repository import ensure_dashboard_live_schema
 from app.repositories.continuous_sql_repository import ensure_continuous_sql_schema
 from app.repositories.realtime_event_repository import ensure_realtime_event_schema
@@ -99,6 +100,7 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.add_middleware(CorrelationIdMiddleware)
 
     app.add_exception_handler(ApiError, api_error_handler)
     app.add_exception_handler(RequestValidationError, validation_error_handler)

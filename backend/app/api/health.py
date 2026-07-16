@@ -10,12 +10,23 @@ from app.services.ai_gateway_client import AiGatewayClient
 from app.services.realtime_event_service import realtime_event_dispatcher, realtime_event_hub
 from app.services.realtime_feature_flags import resolve_realtime_feature_state
 from app.services.realtime_metrics import realtime_metrics
+from app.core.observability import metrics_snapshot
 
 router = APIRouter()
 
 
 @router.get("/health", response_model=HealthResponse)
 def health_check(response: Response) -> HealthResponse:
+    return readiness_check(response)
+
+
+@router.get("/health/live")
+def liveness_check() -> dict[str, object]:
+    return {"ok": True, "status": "alive"}
+
+
+@router.get("/health/ready", response_model=HealthResponse)
+def readiness_check(response: Response) -> HealthResponse:
     database_ok = True
     database_message = "ok"
 
@@ -32,6 +43,11 @@ def health_check(response: Response) -> HealthResponse:
         statusCode=response.status_code,
         database={"ok": database_ok, "message": database_message},
     )
+
+
+@router.get("/health/metrics")
+def observability_metrics() -> dict[str, object]:
+    return {"ok": True, "metrics": metrics_snapshot()}
 
 
 @router.get("/health/ai")
