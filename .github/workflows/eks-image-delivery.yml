@@ -1,0 +1,170 @@
+name: EKS image delivery
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Protected GitHub environment containing the approved AWS image role and build values
+        required: true
+        type: choice
+        options:
+          - dev
+          - staging
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: eks-image-delivery-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish immutable AMD64 images
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: ${{ inputs.environment }}
+    env:
+      AWS_REGION: ${{ vars.ASKLAKE_AWS_REGION }}
+      AWS_DEPLOY_ROLE_ARN: ${{ vars.ASKLAKE_EKS_IMAGE_ROLE_ARN }}
+      ECR_PREFIX: asklake/${{ inputs.environment }}
+      VITE_SPARK_OUTPUT_BUCKET: ${{ vars.ASKLAKE_SPARK_OUTPUT_BUCKET }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify selected ref contains the image delivery contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f scripts/create-eks-image-receipt.mjs
+          test -f scripts/verify-eks-image-receipt.mjs
+          test -f frontend/Dockerfile
+          test -f backend/Dockerfile
+
+      - name: Validate protected environment inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$AWS_REGION"
+          test -n "$AWS_DEPLOY_ROLE_ARN"
+          test -n "$VITE_SPARK_OUTPUT_BUCKET"
+          echo "::add-mask::$VITE_SPARK_OUTPUT_BUCKET"
+
+      - name: Configure short-lived AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          mask-aws-account-id: true
+
+      - name: Sign in to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Verify repositories already exist
+        shell: bash
+        run: |
+          set -euo pipefail
+          for component in frontend backend airflow spark-runtime trino; do
+            aws ecr describe-repositories \
+              --region "$AWS_REGION" \
+              --repository-names "$ECR_PREFIX/$component" \
+              >/dev/null
+          done
+
+      - name: Build, mirror and publish images
+        id: publish
+        shell: bash
+        env:
+          ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          set -euo pipefail
+          echo "::add-mask::$ECR_REGISTRY"
+          short_sha="${GITHUB_SHA:0:7}"
+          display_tag="git-$short_sha"
+
+          get_digest() {
+            local repository="$1"
+            local digest=""
+            for attempt in 1 2 3 4 5 6; do
+              digest="$(aws ecr describe-images \
+                --region "$AWS_REGION" \
+                --repository-name "$repository" \
+                --image-ids imageTag="$display_tag" \
+                --query 'imageDetails[0].imageDigest' \
+                --output text 2>/dev/null || true)"
+              if [[ "$digest" == sha256:* ]]; then
+                printf '%s' "$digest"
+                return 0
+              fi
+              sleep 2
+            done
+            return 1
+          }
+
+          docker buildx build \
+            --platform linux/amd64 \
+            --file frontend/Dockerfile \
+            --build-arg VITE_USE_MOCK_API=false \
+            --build-arg VITE_OBJECT_STORAGE_PROVIDER=aws \
+            --build-arg VITE_S3_REGION="$AWS_REGION" \
+            --build-arg VITE_SPARK_OUTPUT_BUCKET="$VITE_SPARK_OUTPUT_BUCKET" \
+            --tag "$ECR_REGISTRY/$ECR_PREFIX/frontend:$display_tag" \
+            --push frontend
+
+          docker buildx build \
+            --platform linux/amd64 \
+            --file backend/Dockerfile \
+            --target backend-runtime \
+            --tag "$ECR_REGISTRY/$ECR_PREFIX/backend:$display_tag" \
+            --push backend
+
+          docker buildx build \
+            --platform linux/amd64 \
+            --file backend/Dockerfile \
+            --target spark-runtime \
+            --tag "$ECR_REGISTRY/$ECR_PREFIX/spark-runtime:$display_tag" \
+            --push backend
+
+          mirror_image() {
+            local source_image="$1"
+            local component="$2"
+            docker pull --platform linux/amd64 "$source_image"
+            test "$(docker image inspect "$source_image" --format '{{.Architecture}}')" = "amd64"
+            docker tag "$source_image" "$ECR_REGISTRY/$ECR_PREFIX/$component:$display_tag"
+            docker push "$ECR_REGISTRY/$ECR_PREFIX/$component:$display_tag" >/dev/null
+          }
+
+          mirror_image apache/airflow:3.3.0 airflow
+          mirror_image trinodb/trino:482 trino
+
+          frontend_image="$ECR_REGISTRY/$ECR_PREFIX/frontend@$(get_digest "$ECR_PREFIX/frontend")"
+          backend_image="$ECR_REGISTRY/$ECR_PREFIX/backend@$(get_digest "$ECR_PREFIX/backend")"
+          airflow_image="$ECR_REGISTRY/$ECR_PREFIX/airflow@$(get_digest "$ECR_PREFIX/airflow")"
+          spark_image="$ECR_REGISTRY/$ECR_PREFIX/spark-runtime@$(get_digest "$ECR_PREFIX/spark-runtime")"
+          trino_image="$ECR_REGISTRY/$ECR_PREFIX/trino@$(get_digest "$ECR_PREFIX/trino")"
+
+          node scripts/create-eks-image-receipt.mjs \
+            --output "$RUNNER_TEMP/eks-image-receipt.json" \
+            --environment "${{ inputs.environment }}" \
+            --revision "$GITHUB_SHA" \
+            --image "frontend=$frontend_image" \
+            --image "backend=$backend_image" \
+            --image "airflow=$airflow_image" \
+            --image "sparkRuntime=$spark_image" \
+            --image "trino=$trino_image"
+
+          node scripts/verify-eks-image-receipt.mjs \
+            "$RUNNER_TEMP/eks-image-receipt.json"
+
+      - name: Upload digest receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: eks-${{ inputs.environment }}-image-receipt-${{ github.sha }}
+          path: ${{ runner.temp }}/eks-image-receipt.json
+          if-no-files-found: error
+          retention-days: 30
