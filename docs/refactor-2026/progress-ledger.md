@@ -6,10 +6,10 @@
 
 - 계획 버전: `2026-07-16-15-pr`
 - 작업 배치: `2/5`
-- 현재 PR 단위: `06 구현·검증 완료 · PR 생성 준비`
-- 상태: `BATCH_IN_PROGRESS`
+- 현재 PR 단위: `06 완료`
+- 상태: `AWAITING_USER_APPROVAL`
 - 시작 기준: `origin/dev@b93ae27370fdfa50ce949bcabb9ff7fe37ca1098`
-- 최근 이슈/PR: `#825` / `생성 전`
+- 최근 이슈/PR: `#825` / `#827`
 - 현재 브랜치: `refactor-#825`
 - 다음 사용자 확인 지점: PR 04~06 생성 후
 
@@ -22,7 +22,7 @@
 | 03 | 03~04 | Characterization Test·Continuous 상태 계약 | 02 | DONE |
 | 04 | 05 | 외부 I/O Port·Adapter 분리 | 03 | DONE |
 | 05 | 06~07 | Continuous 명령·Reconciliation 분리 | 04 | DONE |
-| 06 | 08 | Materialization·Catalog·Dashboard 발행 분리 | 05 | IN_PROGRESS |
+| 06 | 08 | Materialization·Catalog·Dashboard 발행 분리 | 05 | DONE |
 | 07 | 09~10 | Pipeline·Snapshot·SQL·Catalog 경계 | 06 | WAITING |
 | 08 | 11~12 | Spark/Kafka script·Python/Node 경계 | 07 | WAITING |
 | 09 | 13~14 | frontend 상태 소유권·ETL Wizard 분해 | 08 | WAITING |
@@ -79,13 +79,13 @@
 
 ## Latest handoff
 
-- 상태: 배치 1의 이슈·브랜치·PR 3개 생성 완료, 사용자 승인 전 다음 배치 중지
-- 원격 PR: `#809`, `#813`, `#818` 모두 `dev` 대상 ready PR
-- 실제 변경: Continuous 상태/오류 domain contract, active worker fencing, additive API/frontend projection, characterization 안전망
-- 통과: backend 전체 unit, Continuous/Kafka/production Spark 계약, OpenAPI 호환, frontend 회귀·build, 문서 link
+- 상태: 배치 2의 이슈·브랜치·PR 3개 생성 완료, 사용자 승인 전 다음 배치 중지
+- 원격 PR: `#820`, `#824`, `#827` 모두 `dev` 대상 ready PR
+- 실제 변경: runtime I/O Port·Adapter, Continuous command/reconciliation, output·manifest·Catalog·Dashboard staged publication
+- 통과: backend 전체 unit 393건, Continuous/Kafka/production Spark 계약, 단계별 partial failure·retry·restart·동시 reconciler 회귀, Python compile, 문서 link와 diff check
 - 남은 경고: frontend 2.6 MB chunk warning은 R-014로 유지한다.
-- 차단 사항: 기술적 blocker 없음. `#809` → `#813` → `#818` 순서 머지가 필요하다.
-- 다음 단위: 사용자 승인 후 PR 04 — 외부 I/O Port·Adapter 경계 추출
+- 차단 사항: 기술적 blocker 없음. `#820` → `#824` → `#827` 순서 머지가 필요하다.
+- 다음 단위: 사용자 승인 후 PR 07 — Pipeline·Snapshot·SQL·Catalog application 경계 추출
 
 ## PR 04 작업 기록
 
@@ -114,11 +114,12 @@
 ## PR 06 작업 기록
 
 - 시작 HEAD: `7cdaa607` (PR 05 branch HEAD)
-- branch/issue/PR: `refactor-#825`, `#825`, 생성 전
+- branch/issue/PR: `refactor-#825`, `#825`, `#827`
+- 변경 commit: `54bf53e6` (`refactor(publication): separate materialization catalog dashboard`)
 - 포함: output/manifest/Catalog/Dashboard staged workflow, manifest fingerprint 기반 idempotency identity, Catalog·Dashboard 독립 transaction, 부분 실패 재개와 bounded 단계 진단
 - 하위 호환: 기존 facade signature, 공개 API, DB schema, Job/runtime/session/checkpoint/report/manifest 형식을 유지한다.
 - 검증: backend unit 393건(1 opt-in skip), publication·Dashboard 집중 회귀 49건, Continuous runtime contract 39건, Kafka Continuous contract, production Spark contract, Python compile, Markdown local link와 diff check
 - 검증 보정: PR 04의 Port·Adapter 이동 뒤 stale했던 Spark timeout verifier를 `SubprocessNodeBridge` 주입 방식으로 맞췄다.
 - 제외: Pipeline·Snapshot·SQL application 경계, 새 queue/service, destructive migration, production 배포
 - rollback: application publication workflow와 `etl_service.py` hook wiring을 함께 되돌린다. additive `metrics.publicationWorkflow`는 구버전이 무시하므로 data migration은 없다.
-- 머지 순서: `#824` 다음 PR 06; PR 07은 PR 06 다음이다.
+- 머지 순서: `#824` 다음 `#827`; PR 07은 `#827` 다음이다.
