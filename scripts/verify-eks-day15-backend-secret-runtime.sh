@@ -41,7 +41,14 @@ jq -e \
       {secretKey: "AIRFLOW_INTERNAL_TOKEN", source: $source, property: "AIRFLOW_INTERNAL_TOKEN"},
       {secretKey: "AIRFLOW_PASSWORD", source: $source, property: "AIRFLOW_PASSWORD"},
       {secretKey: "BOOTSTRAP_ADMIN_PASSWORD", source: $source, property: "BOOTSTRAP_ADMIN_PASSWORD"},
-      {secretKey: "DATABASE_URL", source: $source, property: "DATABASE_URL"}
+      {secretKey: "DATABASE_URL", source: $source, property: "DATABASE_URL"},
+      {secretKey: "TRINO_AUTH_PASSWORD", source: $source, property: "TRINO_AUTH_PASSWORD"},
+      {secretKey: "TRINO_AUTH_USERNAME", source: $source, property: "TRINO_AUTH_USERNAME"},
+      {secretKey: "TRINO_MATERIALIZER_PASSWORD", source: $source, property: "TRINO_MATERIALIZER_PASSWORD"},
+      {secretKey: "TRINO_MATERIALIZER_USERNAME", source: $source, property: "TRINO_MATERIALIZER_USERNAME"},
+      {secretKey: "TRINO_QUERY_CONFIRMATION_SECRET", source: $source, property: "TRINO_QUERY_CONFIRMATION_SECRET"},
+      {secretKey: "TRINO_RESULT_CURSOR_SECRET", source: $source, property: "TRINO_RESULT_CURSOR_SECRET"},
+      {secretKey: "trino-ca.pem", source: $source, property: "trino-ca.pem"}
     ] | sort_by(.secretKey))
     and ([.status.conditions[]? | select(.type == "Ready")][0].status == "True")
   ' <<<"$external_secret_json" >/dev/null
@@ -54,7 +61,14 @@ jq -e \
       "AIRFLOW_INTERNAL_TOKEN",
       "AIRFLOW_PASSWORD",
       "BOOTSTRAP_ADMIN_PASSWORD",
-      "DATABASE_URL"
+      "DATABASE_URL",
+      "TRINO_AUTH_PASSWORD",
+      "TRINO_AUTH_USERNAME",
+      "TRINO_MATERIALIZER_PASSWORD",
+      "TRINO_MATERIALIZER_USERNAME",
+      "TRINO_QUERY_CONFIRMATION_SECRET",
+      "TRINO_RESULT_CURSOR_SECRET",
+      "trino-ca.pem"
     ]
     and ((.metadata.ownerReferences // []) | any(
       .apiVersion == "external-secrets.io/v1"
@@ -76,7 +90,14 @@ jq -e '
     "AIRFLOW_INTERNAL_TOKEN",
     "AIRFLOW_PASSWORD",
     "BOOTSTRAP_ADMIN_PASSWORD",
-    "DATABASE_URL"
+    "DATABASE_URL",
+    "TRINO_AUTH_PASSWORD",
+    "TRINO_AUTH_USERNAME",
+    "TRINO_MATERIALIZER_PASSWORD",
+    "TRINO_MATERIALIZER_USERNAME",
+    "TRINO_QUERY_CONFIRMATION_SECRET",
+    "TRINO_RESULT_CURSOR_SECRET",
+    "trino-ca.pem"
   ]
   and all(.[]; type == "string" and length > 0)
 ' <<<"$source_json" >/dev/null

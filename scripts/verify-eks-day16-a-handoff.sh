@@ -47,23 +47,34 @@ jq -e --slurpfile state "$STATE" --slurpfile receipt "$RECEIPT" '
   and .isolatedFixture.checkpointPrefix==($state[0].outputs.storage_contract.value.prefixes.checkpoint+"/eks-mvp/")
 ' "$HANDOFF" >/dev/null || fail "private handoff differs from actual state or receipt"
 
-rendered="$(mktemp)"; trino_rendered="$(mktemp)"; dryrun_error="$(mktemp)"; before="$(mktemp)"; after="$(mktemp)"
-trap 'rm -f "$rendered" "$trino_rendered" "$dryrun_error" "$before" "$after"' EXIT
+web_values="$(mktemp)"; airflow_values="$(mktemp)"; trino_values="$(mktemp)"
+dryrun_error="$(mktemp)"; before="$(mktemp)"; after="$(mktemp)"
+trap 'rm -f "$web_values" "$airflow_values" "$trino_values" "$dryrun_error" "$before" "$after"' EXIT
+chmod 600 "$web_values" "$airflow_values" "$trino_values"
 kubectl get deployment,service,configmap,job -n "$NAMESPACE" -o json | jq -S -c '[.items[]|{kind,name:.metadata.name,uid:.metadata.uid,resourceVersion:.metadata.resourceVersion}]|sort_by(.kind,.name)' >"$before"
-helm lint "$CHART" -f "$BASE_VALUES" -f "$VALUES" >/dev/null
-helm template asklake-workloads "$CHART" -f "$BASE_VALUES" -f "$VALUES" >"$rendered"
-awk 'BEGIN{RS="---";ORS="---\n"}/app.kubernetes.io\/component: trino/{print $0}' "$rendered" >"$trino_rendered"
-kubectl apply --dry-run=server -f "$trino_rendered" >/dev/null
+helm get values asklake-web -n "$NAMESPACE" -o json >"$web_values"
+helm get values asklake-airflow -n "$NAMESPACE" -o json >"$airflow_values"
+helm get values asklake-trino -n "$NAMESPACE" -o json >"$trino_values"
 
 release_ownership="ready"
 blockers=0
-if ! kubectl apply --dry-run=server -f "$rendered" >/dev/null 2>"$dryrun_error"; then
-  if rg -q 'field is immutable|already exists|invalid ownership metadata' "$dryrun_error"; then
-    release_ownership="blocked"
-    blockers=$((blockers+1))
-  else
-    fail "full workload server dry-run failed for an unexpected reason"
-  fi
+if ! helm upgrade --install asklake-web "$ROOT_DIR/infra/eks/helm/asklake-web" \
+  --namespace "$NAMESPACE" --create-namespace=false -f "$web_values" --dry-run=server \
+  >/dev/null 2>"$dryrun_error"; then
+  release_ownership="blocked"
+fi
+if ! helm upgrade --install asklake-airflow "$CHART" \
+  --namespace "$NAMESPACE" --create-namespace=false -f "$airflow_values" --dry-run=server \
+  >/dev/null 2>>"$dryrun_error"; then
+  release_ownership="blocked"
+fi
+if ! helm upgrade --install asklake-trino "$CHART" \
+  --namespace "$NAMESPACE" --create-namespace=false -f "$trino_values" --dry-run=server \
+  >/dev/null 2>>"$dryrun_error"; then
+  release_ownership="blocked"
+fi
+if [[ "$release_ownership" == "blocked" ]]; then
+  blockers=$((blockers+1))
 fi
 
 kubectl get deployment,service,configmap,job -n "$NAMESPACE" -o json | jq -S -c '[.items[]|{kind,name:.metadata.name,uid:.metadata.uid,resourceVersion:.metadata.resourceVersion}]|sort_by(.kind,.name)' >"$after"
@@ -87,7 +98,20 @@ else
 fi
 
 backend_contract="blocked"
-expected_backend_keys="$(jq -c '.secrets.backend.keys|sort' "$RUNTIME")"
+expected_backend_keys="$(jq -cn '[
+  "AIRFLOW_EXECUTION_API_TOKEN",
+  "AIRFLOW_INTERNAL_TOKEN",
+  "AIRFLOW_PASSWORD",
+  "BOOTSTRAP_ADMIN_PASSWORD",
+  "DATABASE_URL",
+  "TRINO_AUTH_PASSWORD",
+  "TRINO_AUTH_USERNAME",
+  "TRINO_MATERIALIZER_PASSWORD",
+  "TRINO_MATERIALIZER_USERNAME",
+  "TRINO_QUERY_CONFIRMATION_SECRET",
+  "TRINO_RESULT_CURSOR_SECRET",
+  "trino-ca.pem"
+] | sort')"
 actual_backend_keys="$(kubectl get secret asklake-backend-runtime -n "$NAMESPACE" -o json | jq -c '.data|keys|sort')"
 if [[ "$expected_backend_keys" == "$actual_backend_keys" ]]; then
   backend_contract="ready"

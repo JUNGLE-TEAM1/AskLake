@@ -95,20 +95,20 @@ nonEmptyString(trino.TRINO_INTERNAL_SHARED_SECRET, 'Trino internal shared secret
 let passwordDb = '';
 let keystore = Buffer.alloc(0);
 try {
-  for (const [label, encoded] of [
-    ['Trino password database', trino['trino-password.db']],
-    ['Trino keystore', trino['trino-keystore.jks']],
-  ]) {
-    if (typeof encoded !== 'string' || encoded.length === 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded) || encoded.length % 4 !== 0) {
-      throw new Error(`${label} is not canonical base64`);
-    }
+  const encodedKeystore = trino['trino-keystore.jks'];
+  if (typeof encodedKeystore !== 'string' || encodedKeystore.length === 0 ||
+      !/^[A-Za-z0-9+/]+={0,2}$/.test(encodedKeystore) || encodedKeystore.length % 4 !== 0) {
+    throw new Error('Trino keystore is not canonical base64');
   }
-  passwordDb = Buffer.from(trino['trino-password.db'], 'base64').toString('utf8');
-  keystore = Buffer.from(trino['trino-keystore.jks'], 'base64');
+  keystore = Buffer.from(encodedKeystore, 'base64');
+  passwordDb = trino['trino-password.db'];
+  if (typeof passwordDb !== 'string' || passwordDb.length === 0) {
+    throw new Error('Trino password database must be non-empty plaintext');
+  }
 } catch (error) {
-  fail(`Trino file values must be valid base64: ${error.message}`);
+  fail(`Trino file encoding is invalid: ${error.message}`);
 }
-const passwordLines = passwordDb.trim().split('\n');
+const passwordLines = passwordDb.split(/\r?\n/).filter((line) => line.length > 0);
 if (passwordLines.length !== 2 ||
     !passwordLines.some((line) => /^asklake-api:\$2[aby]\$\d{2}\$/.test(line)) ||
     !passwordLines.some((line) => /^asklake-materializer:\$2[aby]\$\d{2}\$/.test(line))) {

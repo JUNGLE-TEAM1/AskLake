@@ -4,6 +4,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TERRAFORM_DIR="$ROOT_DIR/infra/eks/terraform"
 DEV_EXTERNAL_SECRETS="$ROOT_DIR/infra/eks/secrets/runtime-externalsecrets.dev.yaml"
+BACKEND_EXTERNAL_SECRET="$ROOT_DIR/infra/eks/secrets/backend-runtime-external-secret.yaml"
+TRINO_EXTERNAL_SECRET="$ROOT_DIR/infra/eks/secrets/trino-runtime-external-secret.yaml"
 node --check "$ROOT_DIR/scripts/verify-eks-runtime-secrets.mjs"
 node --check "$ROOT_DIR/scripts/test-eks-runtime-secrets.mjs"
 node "$ROOT_DIR/scripts/test-eks-runtime-secrets.mjs"
@@ -67,5 +69,24 @@ for key in \
   grep -q "^    - secretKey: $key$" "$DEV_EXTERNAL_SECRETS"
   grep -q "^        property: $key$" "$DEV_EXTERNAL_SECRETS"
 done
+
+test "$(grep -c '^    - secretKey:' "$BACKEND_EXTERNAL_SECRET")" -eq 12
+for key in \
+  DATABASE_URL BOOTSTRAP_ADMIN_PASSWORD AIRFLOW_PASSWORD AIRFLOW_EXECUTION_API_TOKEN AIRFLOW_INTERNAL_TOKEN \
+  TRINO_AUTH_USERNAME TRINO_AUTH_PASSWORD TRINO_MATERIALIZER_USERNAME TRINO_MATERIALIZER_PASSWORD \
+  TRINO_RESULT_CURSOR_SECRET TRINO_QUERY_CONFIRMATION_SECRET trino-ca.pem; do
+  grep -q "^    - secretKey: $key$" "$BACKEND_EXTERNAL_SECRET"
+done
+
+test "$(grep -c 'decodingStrategy: Base64' "$TRINO_EXTERNAL_SECRET")" -eq 1
+test "$(grep -c 'decodingStrategy: Base64' "$DEV_EXTERNAL_SECRETS")" -eq 1
+awk '
+  $0 ~ /secretKey: trino-password.db/ { in_password = 1; next }
+  in_password && $0 ~ /secretKey:/ { in_password = 0 }
+  in_password && $0 ~ /decodingStrategy:/ { exit 1 }
+' "$TRINO_EXTERNAL_SECRET" "$DEV_EXTERNAL_SECRETS" || {
+  echo "Trino password database must be delivered as plaintext SecretString data" >&2
+  exit 1
+}
 
 echo "EKS runtime Secret contract verification passed."

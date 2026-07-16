@@ -656,7 +656,7 @@ helm template external-secrets external-secrets/external-secrets \
 
 실제 환경의 선택 완료 여부는 `node scripts/verify-eks-runtime-secrets.mjs --ready <path>`로 확인한다. 이 gate와 `SecretStore Ready`는 전달 기반이 완전하다는 의미일 뿐 네 application Secret이 생성됐거나 workload가 기동했다는 증거가 아니다. 배포에서는 value를 출력하지 않고 Secret 이름/key 존재, workload `secretKeyRef`/file mount, rotation rollout과 rollback을 별도로 검증한다. smoke source는 `asklake/dev/smoke/` 아래에만 임시 생성하고 hash 비교 후 `ExternalSecret`, target Kubernetes Secret과 Secrets Manager source를 모두 삭제한다. 상세 경계는 [Phase 8 런타임 Secret 전달 계약](eks-phase-8-runtime-secrets.md)을 따른다.
 
-15일차 Backend runtime 전환은 `infra/eks/secrets/backend-runtime-external-secret.yaml`과 `scripts/migrate-eks-backend-runtime-secret.sh`만 사용한다. 현재 FastAPI가 실제로 소비하는 `DATABASE_URL`, `BOOTSTRAP_ADMIN_PASSWORD` 두 key만 매핑하며, 아직 consumer가 없는 전체 runtime 계약 key를 placeholder로 만들지 않는다. 기존 수동 Secret을 같은 이름의 ESO 소유 target으로 인계하기 전에는 AWS source와 현재 target의 key 집합 및 값 해시가 일치해야 한다. migration script의 기본 `--verify-existing`은 이미 Ready인 ESO target을 재생성하지 않고 전체 verifier만 실행한다. 수동 target 인수는 staged target의 hash가 일치하고 exact confirmation을 준 `--handover`에서만 진행하며 실패하면 검증한 source를 pipe로 수동 target에 복구한다. 값, endpoint와 ARN은 출력하거나 임시 파일에 저장하지 않는다.
+15일차 최초 Backend runtime 전환은 `DATABASE_URL`, `BOOTSTRAP_ADMIN_PASSWORD` 두 key의 수동 target에서 시작했으며 이후 Airflow 연결에서 5개로 확장됐다. 이 상태는 역사적 migration baseline이다. 현재 `infra/eks/secrets/backend-runtime-external-secret.yaml`은 bounded Backend가 실제 소비하는 DB 2개, Airflow 3개, Trino 인증·서명·CA 7개의 정확한 12-key canonical mapping이다. AI runtime 선택 전에는 planning 계약의 AI key를 placeholder로 만들지 않는다. 기존 target을 같은 이름의 ESO 소유 target으로 인계하기 전에는 AWS source와 staged target의 key 집합 및 전체 byte hash가 일치해야 한다. 값, endpoint와 ARN은 출력하거나 tracked·일반 artifact에 저장하지 않는다.
 
 ```bash
 kubectl apply --dry-run=server \
@@ -723,7 +723,7 @@ Issue #798의 변경 전 기준점은 [15.5 runtime 보완 실행 기록](eks-15
 
 Issue #798 Phase 1은 수동 `EKS image delivery` workflow의 dev 보호 환경과 OIDC를 사용해 `f556e95e`를 포함하는 새 Backend AMD64 digest와 formal receipt를 인수했다. receipt가 함께 제공한 다른 component digest는 이번 Backend-only rollout 입력으로 승인하지 않는다. receipt는 Git 제외 경로에 두고 Phase 2에서 새 Backend digest만 private Helm values에 반영해 render와 server dry-run을 수행한다.
 
-Phase 2 Backend-only 사전 검증은 아래 명령으로 수행한다. 이 script는 현재 Helm release values를 읽어 임시 candidate의 `backend.image`만 바꾸고, receipt/fix ancestry·ECR immutability·실제 AMD64 OCI index·Frontend image 보존을 확인한 뒤 `helm upgrade --install --dry-run=server`만 실행한다. 전후 Helm revision, Deployment generation/image와 Pod UID가 같지 않으면 실패한다. Backend ExternalSecret은 승인된 2-key web baseline 또는 5-key runtime 계약 중 하나와 정확히 일치해야 하며 Secrets Manager source와 target 전체 hash가 같아야 한다. 다른 rollout 때문에 ALB target이 draining이면 기다림 없이 실패하므로 steady 복구 후 다시 실행한다.
+Phase 2 Backend-only 사전 검증은 아래 명령으로 수행한다. 이 script는 현재 Helm release values를 읽어 임시 candidate의 `backend.image`만 바꾸고, receipt/fix ancestry·ECR immutability·실제 AMD64 OCI index·Frontend image 보존을 확인한 뒤 `helm upgrade --install --dry-run=server`만 실행한다. 전후 Helm revision, Deployment generation/image와 Pod UID가 같지 않으면 실패한다. Backend ExternalSecret은 현재 승인된 12-key bounded runtime 계약과 정확히 일치해야 하며 Secrets Manager source와 target 전체 hash가 같아야 한다. 다른 rollout 때문에 ALB target이 draining이면 기다림 없이 실패하므로 steady 복구 후 다시 실행한다.
 
 ```bash
 export ASKLAKE_EKS_CLUSTER_NAME='<terraform output>'
@@ -1178,6 +1178,8 @@ kubectl apply -f infra/eks/secrets/runtime-externalsecrets.dev.yaml
 kubectl wait --for=condition=Ready \
   externalsecret/asklake-backend-runtime \
   externalsecret/asklake-airflow-runtime \
+  externalsecret/asklake-spark-runtime \
+  externalsecret/asklake-trino-runtime \
   --namespace asklake-dev \
   --timeout=60s
 ```
@@ -1192,7 +1194,9 @@ helm upgrade --install asklake-airflow \
   --set trino.enabled=false
 ```
 
-chart 적용 전 EKS foundation은 `asklake-dev` namespace, `asklake-frontend`, `asklake-backend`, `asklake-airflow`, `asklake-msk-smoke`, `asklake-spark`, `asklake-trino` ServiceAccount/EKS Pod Identity, FastAPI/Spark driver RBAC, Spark operator, RDS/MSK/S3/ECR과 필요한 runtime Secret을 제공해야 한다. 7월 16일 기준 namespace, ServiceAccount/token, Backend/MSK smoke/Spark/Trino Pod Identity, RBAC, Spark Operator와 data plane이 적용됐고 네 workload 이름의 runtime Secret source/target도 존재한다. Spark·Trino source-target hash와 Trino identity/RDS/S3/DNS, 실제 Spark/Trino consumer 주입은 검증했다. 다만 Backend main ExternalSecret의 Trino mapping과 임시 target 제거는 후속 통합 범위다. `asklake-backend`와 `asklake-spark`는 각각 SparkApplication과 executor Pod를 관리하므로 `automountServiceAccountToken: true`다. 나머지 ServiceAccount의 Kubernetes API token은 끈다. 정상 install은 opt-in smoke 두 개를 만들지 않는다.
+chart 적용 전 EKS foundation은 `asklake-dev` namespace, `asklake-frontend`, `asklake-backend`, `asklake-airflow`, `asklake-msk-smoke`, `asklake-spark`, `asklake-trino` ServiceAccount/EKS Pod Identity, FastAPI/Spark driver RBAC, Spark operator, RDS/MSK/S3/ECR과 필요한 runtime Secret을 제공해야 한다. 7월 16일 기준 namespace, ServiceAccount/token, Backend/MSK smoke/Spark/Trino Pod Identity, RBAC, Spark Operator와 data plane이 적용됐고 네 workload 이름의 runtime Secret source/ExternalSecret/target도 `Ready=True`다. Backend main target은 실제 bounded runtime에 필요한 12개 key로 수렴했고 FastAPI는 이 canonical Secret 하나만 참조한다. Trino password database는 Secrets Manager의 plaintext bcrypt file property로, JKS만 Base64 decode 대상으로 전달한다. 임시 Backend Trino target은 canonical rollout, ALB/RDS health와 Trino data-plane smoke 뒤 삭제했다. `asklake-backend`와 `asklake-spark`는 각각 SparkApplication과 executor Pod를 관리하므로 `automountServiceAccountToken: true`다. 나머지 ServiceAccount의 Kubernetes API token은 끈다. 정상 install은 opt-in smoke 두 개를 만들지 않는다.
+
+Web, Airflow, Trino는 각각 `asklake-web`, `asklake-airflow`, `asklake-trino` Helm release가 소유한다. 통합 검증은 전체 chart를 임의의 네 번째 release 이름으로 raw apply하지 않고 각 live release의 현재 values를 `helm upgrade --install --dry-run=server`에 넣는다. Trino private values 검증에서는 Frontend, Backend, Airflow를 명시적으로 끈 `asklake-trino` render만 사용한다. immutable selector 또는 ownership 충돌을 발견해도 Deployment 삭제나 Helm annotation 강제 인수로 해결하지 않는다.
 
 Frontend/FastAPI Service 계약은 `frontend:80`, `fastapi:8080`이다. A의 `asklake-web` application release 하나로 실제 배포했으며 B workload chart를 병행 설치하지 않는다. 이후 변경에서도 두 Helm release가 같은 Deployment/Service를 동시에 소유하게 하지 않는다.
 

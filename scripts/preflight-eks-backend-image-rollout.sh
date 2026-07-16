@@ -53,13 +53,19 @@ verify_backend_secret_runtime() {
   ' <<<"$target_secret_json" >/dev/null || fail "Backend runtime Secret owner or key contract is invalid"
 
   jq -e '
-    . == ["BOOTSTRAP_ADMIN_PASSWORD", "DATABASE_URL"]
-    or . == [
+    . == [
       "AIRFLOW_EXECUTION_API_TOKEN",
       "AIRFLOW_INTERNAL_TOKEN",
       "AIRFLOW_PASSWORD",
       "BOOTSTRAP_ADMIN_PASSWORD",
-      "DATABASE_URL"
+      "DATABASE_URL",
+      "TRINO_AUTH_PASSWORD",
+      "TRINO_AUTH_USERNAME",
+      "TRINO_MATERIALIZER_PASSWORD",
+      "TRINO_MATERIALIZER_USERNAME",
+      "TRINO_QUERY_CONFIRMATION_SECRET",
+      "TRINO_RESULT_CURSOR_SECRET",
+      "trino-ca.pem"
     ]
   ' <<<"$target_keys" >/dev/null || fail "Backend runtime Secret contains an unapproved key set"
 

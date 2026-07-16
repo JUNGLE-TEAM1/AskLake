@@ -54,16 +54,22 @@ if rg -q 'AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN|BEGIN .*PRIV
 fi
 
 rendered="$(mktemp)"
-trino_rendered="$(mktemp)"
 before="$(mktemp)"
 after="$(mktemp)"
-trap 'rm -f "$rendered" "$trino_rendered" "$before" "$after"' EXIT
+trap 'rm -f "$rendered" "$before" "$after"' EXIT
 kubectl get deployment,service,configmap -n "$NAMESPACE" -o json | jq -S -c '[.items[]|select(.metadata.name|contains("trino"))|{kind,namespace:.metadata.namespace,name:.metadata.name,uid:.metadata.uid,resourceVersion:.metadata.resourceVersion}]|sort_by(.kind,.name)' >"$before"
-helm lint "$CHART" -f "$BASE_VALUES" -f "$VALUES" >/dev/null
-helm template asklake-workloads "$CHART" -f "$BASE_VALUES" -f "$VALUES" >"$rendered"
-awk 'BEGIN { RS="---"; ORS="---\n" } /app.kubernetes.io\/component: trino/ { print $0 }' "$rendered" >"$trino_rendered"
-[[ -s "$trino_rendered" ]] || fail "rendered Trino resources are missing"
-kubectl apply --dry-run=server -f "$trino_rendered" >/dev/null
+component_overrides=(
+  --set frontend.enabled=false
+  --set backend.enabled=false
+  --set airflow.enabled=false
+)
+helm lint "$CHART" -f "$BASE_VALUES" -f "$VALUES" "${component_overrides[@]}" >/dev/null
+helm template asklake-trino "$CHART" -f "$BASE_VALUES" -f "$VALUES" \
+  "${component_overrides[@]}" >"$rendered"
+grep -q 'app.kubernetes.io/component: trino' "$rendered" || fail "rendered Trino resources are missing"
+helm upgrade --install asklake-trino "$CHART" \
+  --namespace "$NAMESPACE" --create-namespace=false \
+  -f "$BASE_VALUES" -f "$VALUES" "${component_overrides[@]}" --dry-run=server >/dev/null
 kubectl get deployment,service,configmap -n "$NAMESPACE" -o json | jq -S -c '[.items[]|select(.metadata.name|contains("trino"))|{kind,namespace:.metadata.namespace,name:.metadata.name,uid:.metadata.uid,resourceVersion:.metadata.resourceVersion}]|sort_by(.kind,.name)' >"$after"
 cmp -s "$before" "$after" || fail "server dry-run changed live resources"
 

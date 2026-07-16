@@ -75,7 +75,7 @@ verify_component() {
         .remoteRef.key == $source
         and .remoteRef.property == .secretKey
         and (
-          if $component == "trino" and (.secretKey == "trino-keystore.jks" or .secretKey == "trino-password.db")
+          if $component == "trino" and .secretKey == "trino-keystore.jks"
           then .remoteRef.decodingStrategy == "Base64"
           else (.remoteRef.decodingStrategy // "None") == "None"
           end
@@ -102,7 +102,7 @@ verify_component() {
 
   if [[ "$component" == "trino" ]]; then
     expected_data="$(jq -S -c 'with_entries(
-      if .key == "trino-keystore.jks" or .key == "trino-password.db"
+      if .key == "trino-keystore.jks"
       then . else .value |= @base64 end
     )' <<<"$source_json")"
   else
@@ -143,7 +143,14 @@ jq -e '. == [
   "AIRFLOW_INTERNAL_TOKEN",
   "AIRFLOW_PASSWORD",
   "BOOTSTRAP_ADMIN_PASSWORD",
-  "DATABASE_URL"
+  "DATABASE_URL",
+  "TRINO_AUTH_PASSWORD",
+  "TRINO_AUTH_USERNAME",
+  "TRINO_MATERIALIZER_PASSWORD",
+  "TRINO_MATERIALIZER_USERNAME",
+  "TRINO_QUERY_CONFIRMATION_SECRET",
+  "TRINO_RESULT_CURSOR_SECRET",
+  "trino-ca.pem"
 ]' <<<"$backend_keys" >/dev/null || fail "Backend preserved key set drifted"
 
 for service_account in asklake-frontend asklake-backend asklake-airflow asklake-msk-smoke asklake-spark asklake-trino; do
