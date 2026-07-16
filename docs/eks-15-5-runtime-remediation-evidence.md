@@ -73,3 +73,27 @@ GitHub의 수동 `EKS image delivery` workflow를 `fix-#798`의 Phase 0 commit�
 ### Phase 1 결론
 
 `f556e95e` 이후 source를 포함한 새 Backend immutable image와 formal receipt 인수가 완료됐다. 아직 Helm render/server dry-run, Backend-only rollout과 실제 Catalog rows HTTP 검증은 수행하지 않았다. 다음 단계는 현재 Phase 0 기준점을 다시 확인하고 private values의 Backend digest만 교체하는 rollout 사전 검증이다.
+
+## Phase 2: Backend-only rollout 사전 검증
+
+Git에서 제외된 Phase 1 receipt와 현재 `asklake-web` Helm release values를 사용해 실제 apply 없는 사전 검증을 수행했다. `scripts/preflight-eks-backend-image-rollout.sh`는 receipt revision이 `f556e95e`를 포함하고 현재 branch의 ancestor인지, Backend digest가 immutable ECR artifact인지, 실제 OCI index가 `linux/amd64`인지 다시 확인한다.
+
+현재 Helm values에서 `backend.image`만 새 receipt의 digest로 바꾼 임시 candidate를 만들었다. 원본과 candidate를 구조적으로 비교해 다른 field가 바뀌지 않았음을 확인했고, render 결과에서 Frontend image가 현재 값 그대로이며 Backend image만 새 digest가 되는지 검사했다. 이어 기존 release의 field ownership을 유지하는 `helm upgrade --install --dry-run=server`를 통과했다.
+
+server dry-run 전후의 Helm release revision, Backend Deployment generation과 현재 image, Backend Pod UID 집합은 모두 같았다. 따라서 이 단계에서 Helm revision 생성, Deployment 변경, Pod 교체 또는 새 image 배포는 발생하지 않았다.
+
+### 동시 runtime 변경 처리
+
+첫 사전 검증 사이에 별도 작업이 기존 Backend digest를 유지한 채 Pod를 재시작했다. 이 때문에 ALB에 draining target이 남아 첫 검증은 steady gate에서 fail-closed 했다. 해당 변경을 되돌리거나 덮어쓰지 않고 draining 종료를 기다린 뒤 다시 실행해 ALB healthy target과 Ready EndpointSlice의 일치를 확인했다.
+
+같은 시점에 `asklake-backend-runtime`은 기존 2-key web baseline에서 repository의 승인된 5-key runtime 계약으로 확장됐다. 사전 검증은 두 승인 집합 중 하나와 정확히 일치하는 경우만 허용하고, ExternalSecret mapping, target owner, Secrets Manager source와 Kubernetes target의 전체 key/value canonical hash 일치를 확인한다. 임의 key 추가나 부분 일치는 허용하지 않는다. Secret value는 출력하거나 Git에 기록하지 않았다.
+
+### Phase 2 결론
+
+- 새 Backend receipt의 수정 ancestry, immutable digest와 AMD64 platform 검증이 통과했다.
+- candidate values는 `backend.image`만 변경했다.
+- Helm lint, render와 API server dry-run이 통과했다.
+- dry-run 전후 cluster mutation은 0이다.
+- FastAPI `2/2`, ALB steady, Backend Secret, RDS-aware health, `external_ec2` Continuous 경계와 정확한 보존 EC2 상태가 통과했다.
+
+실제 EKS는 여전히 기존 Backend image를 실행한다. 다음 단계는 같은 private receipt와 candidate를 사용한 Backend-only atomic rollout이며, 그 뒤에 새 Pod digest와 Catalog rows HTTP 오류 계약을 실제로 검증한다.

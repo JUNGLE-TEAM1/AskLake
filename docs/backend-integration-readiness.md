@@ -30,6 +30,8 @@ Issue #798 Phase 0은 현재 receipt·Deployment·두 Pod digest 일치, FastAPI
 
 Issue #798 Phase 1은 source fix와 HTTP 회귀 test를 포함한 exact revision으로 Backend focused test 8개와 수동 OIDC image delivery를 통과했다. 새 formal receipt의 Backend digest는 immutable `linux/amd64`이고 현재 배포 image와 다르며 ECR에 존재한다. EKS Deployment는 아직 기존 digest이므로 Phase 2 render/server dry-run과 Phase 3 Backend-only rollout 전에는 runtime 반영 완료가 아니다.
 
+Issue #798 Phase 2는 현재 Helm values에서 `backend.image`만 새 receipt digest로 바꾼 candidate의 lint/render와 API server dry-run을 통과했다. dry-run 전후 Helm revision, Backend Deployment generation/image와 Pod UID는 변하지 않았고 ALB·RDS·ExternalSecret·Continuous·보존 EC2 gate도 정상이다. 승인된 concurrent Secret 확장은 source/target 전체 hash로 검증했으며 기존 digest의 외부 Pod restart를 덮어쓰지 않았다. 실제 EKS는 여전히 기존 Backend image이므로 Phase 3 atomic rollout과 runtime HTTP 회귀 검증 전에는 수정 반영 완료가 아니다.
+
 FastAPI 1차 scaffold의 범위는 서버 실행, CORS, PostgreSQL 연결, 공통 error envelope, `/api/health` 확인이었다.
 현재 브랜치는 ETL/Catalog/SQL live endpoint, Dashboard card/runtime, local session auth와 Phase 0 admin endpoint를 함께 포함한다.
 FastAPI 공통 schema 기준은 `backend/app/schemas/common.py`에 두며, 각 Pair는 도메인별 schema 파일에서 `CamelModel`, `ErrorResponse`, pagination 관련 schema를 재사용한다.

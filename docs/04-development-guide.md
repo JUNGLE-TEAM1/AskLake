@@ -723,6 +723,17 @@ Issue #798의 변경 전 기준점은 [15.5 runtime 보완 실행 기록](eks-15
 
 Issue #798 Phase 1은 수동 `EKS image delivery` workflow의 dev 보호 환경과 OIDC를 사용해 `f556e95e`를 포함하는 새 Backend AMD64 digest와 formal receipt를 인수했다. receipt가 함께 제공한 다른 component digest는 이번 Backend-only rollout 입력으로 승인하지 않는다. receipt는 Git 제외 경로에 두고 Phase 2에서 새 Backend digest만 private Helm values에 반영해 render와 server dry-run을 수행한다.
 
+Phase 2 Backend-only 사전 검증은 아래 명령으로 수행한다. 이 script는 현재 Helm release values를 읽어 임시 candidate의 `backend.image`만 바꾸고, receipt/fix ancestry·ECR immutability·실제 AMD64 OCI index·Frontend image 보존을 확인한 뒤 `helm upgrade --install --dry-run=server`만 실행한다. 전후 Helm revision, Deployment generation/image와 Pod UID가 같지 않으면 실패한다. Backend ExternalSecret은 승인된 2-key web baseline 또는 5-key runtime 계약 중 하나와 정확히 일치해야 하며 Secrets Manager source와 target 전체 hash가 같아야 한다. 다른 rollout 때문에 ALB target이 draining이면 기다림 없이 실패하므로 steady 복구 후 다시 실행한다.
+
+```bash
+export ASKLAKE_EKS_CLUSTER_NAME='<terraform output>'
+export ASKLAKE_IMAGE_RECEIPT='<private Git-ignored *.image-receipt.json>'
+export ASKLAKE_EXPECTED_EC2_INSTANCE_ID='<preserved instance id>'
+bash scripts/preflight-eks-backend-image-rollout.sh
+```
+
+이 명령은 실제 Backend image를 배포하지 않는다. 성공 결과는 Backend-only atomic rollout의 입력이 준비됐다는 뜻이며 runtime 수정 완료 증거가 아니다.
+
 ```bash
 export ASKLAKE_EKS_CLUSTER_NAME='<terraform output>'
 export ASKLAKE_IMAGE_RECEIPT='<private *.image-receipt.json>'
