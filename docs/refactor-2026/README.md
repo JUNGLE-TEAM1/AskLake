@@ -16,6 +16,8 @@
 10. [contracts/runtime-state-ownership.md](./contracts/runtime-state-ownership.md): Continuous desired/observed/public 상태와 오류·fencing 계약
 11. [testing/characterization-matrix.md](./testing/characterization-matrix.md): 분해 전 보호해야 할 backend/frontend 동작과 검증 위치
 12. [contracts/frontend-state-etl-wizard.md](./contracts/frontend-state-etl-wizard.md): frontend 요청·draft·route·mutation 소유권과 ETL Wizard 모듈 경계
+13. [final-audit.md](./final-audit.md): 정량 재감사, 잔여 위험, END_STATE 증거와 guarded Go/No-Go
+14. [operations/staged-rollout-and-rollback.md](./operations/staged-rollout-and-rollback.md): production 전 수동 gate, canary, 관찰, rollback template
 
 ## 기준선 재생성
 
@@ -30,6 +32,15 @@ PYTHONPATH=backend backend/.venv/bin/python scripts/refactor_audit/export_openap
 `backend/requirements.txt`의 `mcp==1.28.1`은 Python 3.10 이상이 필요하다. macOS 기본 Python 3.9를 사용하는 환경에서는 Python 3.10+로 가상환경을 만들어야 한다.
 
 생성되는 JSON은 deterministic ordering을 사용하고 timestamp, hostname, credential을 포함하지 않는다.
+
+최종 재감사와 release plan은 다음처럼 재생한다. 두 번째 명령은 plan 구조만 확인한다. 실제 production 실행 gate는 세 수동 증거가 모두 `passed`가 되기 전 의도적으로 exit 2를 반환한다.
+
+```bash
+cd backend
+npm run verify:refactor-final-audit
+npm run verify:refactor-release-plan
+npm run verify:refactor-release-execution
+```
 
 ## 머지 규칙
 

@@ -30,6 +30,7 @@ AI service guardrails, secret isolation, private Compose networking, and deploym
 | --- | --- | --- | --- | --- | --- |
 | Frontend UI checks before merge | GitHub Actions workflow running `cd frontend && npm run verify:ui-regressions && npm run build` | `enabled` | block merge when required check is enabled and the workflow fails | maintainer | PR에서 SQL/Catalog/Dashboard UI regression contract와 Vite build를 함께 확인 |
 | Prod compose config check | `docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml config --quiet`, `backend/scripts/verify-production-spark-contract.mjs`, and Spark runtime path verifiers | `manual` | block operator deploy when Compose, Spark REST, reboot-safe UID 185 mounts, or Docker-socket contract is invalid | maintainer | `npm run verify:spark-runtime-paths:container`가 clean mount, owner/mode repair, guard restart와 data 보존을 실제 container에서 확인. CI required check 전환 전까지 PR과 배포 직전에 수동 실행 |
+| Refactor release execution gate | `npm run verify:refactor-release-execution` + `docs/refactor-2026/final/release-gates.json` | `enabled` | exit 2 and block production execution until isolated nightly, clean reboot, backup/restore evidence are passed | maintainer | plan validation is read-only; changing a manual gate to passed requires release-record evidence and operator review |
 | Continuous runtime contract | `backend npm run verify:continuous-runtime-contract` | `manual` | block Continuous control-plane changes when transition, revision/fencing, legacy hydration, structured error, or frontend stale-response guards fail | maintainer | CI required check 전환 전까지 Continuous 관련 PR에서 수동 실행 |
 | Backend deploy image build | CI/deploy workflow candidate running `docker build -t asklake-backend-deploy-check:local backend` | `planned` | catch Python/package incompatibility before EC2 compose rebuild | maintainer | FastAPI backend uses `python:3.13-slim` and `backend/requirements.txt` |
 | Secret scanning / push protection | GitHub repository setting | `unknown` | block or warn on secret push | repo admin | repository admin 확인 필요 |
@@ -151,3 +152,11 @@ Scenario audit은 새 hard rule을 추가하는 절차가 아니다.
 - runner는 static AWS/MinIO credential을 child process에 전달하지 않으며 non-loopback nightly target을 실행 전에 차단한다.
 - recovery check의 timeout, missing artifact, duplicate/loss/checkpoint rollback, non-convergent reconcile은 release No-Go다.
 - production fault injection, 공유 consumer group/topic/table/dashboard 사용, runtime data 포괄 삭제는 금지한다.
+
+# 리팩토링 release gate (2026-07-16)
+
+- 최종 정량 artifact는 `npm run verify:refactor-final-audit`로 재생한다.
+- `npm run verify:refactor-release-plan`은 runbook 구조, P1 owner/date, bounded rollback 결정을 검사한다.
+- `npm run verify:refactor-release-execution`은 격리 nightly fault, production canary clean reboot, backup/restore drill이 모두 증명되기 전 exit 2로 차단한다.
+- production 배포, EC2 reboot, traffic promotion은 별도 명시적 승인과 release owner가 필요하다.
+- rollback은 DB 수동 편집, checkpoint 삭제, 수동 chown을 정상 절차로 사용하지 않는다.

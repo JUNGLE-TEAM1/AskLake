@@ -13,7 +13,11 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { getDatasetLineageGraph } from "../../services/mockApi";
 import type { CatalogDataset, LineageGraph, LineageGraphDataset, LineageLayer } from "../../types";
 import { cn } from "@/lib/utils";
-import { LineageColumn, LineageTableNodeData, escapeRegExp, lineageColumnRowHeight, lineageFitViewOptions, lineageGroupGap, lineageNodeHeaderHeight, lineageNodeTypes } from "./catalogModel";
+import { LineageColumn, LineageTableNodeData, escapeRegExp, lineageColumnRowHeight, lineageFitViewOptions, lineageGroupGap, lineageNodeHeaderHeight } from "./catalogModel";
+
+const lineageNodeTypes = {
+  lineageTable: LineageTableNode,
+};
 export function CatalogLineage({ compact = false, dataset }: { compact?: boolean; dataset: CatalogDataset }) {
   const [lineageGraph, setLineageGraph] = useState<LineageGraph | null>(dataset.lineageGraph ?? null);
   const [selectedColumnKey, setSelectedColumnKey] = useState<string | null>(null);
