@@ -24,7 +24,7 @@ merge_order:
 |---|---|---|---|---|
 | STACK-01 | DONE | PR-00, PR-01 | 계약·ADR·baseline test·feature flag | #803 / `feat-#803` / #808 |
 | STACK-02 | DONE | PR-02, PR-03, PR-04 | durable SSE backend·frontend·infra | #811 / `feat-#811` / #815 Draft |
-| STACK-03 | DONE | PR-05, PR-06 | continuous SQL planner·runtime·publication | #816 / `feat-#816` / 생성 예정 |
+| STACK-03 | DONE | PR-05, PR-06 | continuous SQL planner·runtime·publication | #816 / `feat-#816` / #822 Draft |
 | STACK-04 | READY | PR-07, PR-08 | E2E·복구·보안·CI·rollout·최종 감사 | 생성 예정 |
 
 ## 상태 변경 규칙
@@ -69,6 +69,7 @@ merge_order:
 - 시작 기준: `feat-#811`의 `72a4dffe`, `origin/dev`의 `b93ae273`이 조상임을 확인했다.
 - 기준선: SQL route/auth 및 Kafka Continuous runtime/publication 회귀 39개 테스트가 통과했다.
 - Issue/branch: #816 / `feat-#816`.
+- Draft PR: #822 (`feat-#816 -> dev`), 선행 #815 merge 후 review-ready 전환.
 - SQL AST planner, persisted Job/Run/Batch/command, generation/fencing lifecycle을 구현했다.
 - PINNED/LATEST batch-local static binding과 Spark JOIN adapter, exact Iceberg 검증 및 3단계 publication을 구현했다.
 - API는 fencing token 원문을 숨기고 start/resume/recover 때 입력 권한·governance를 다시 검사한다.

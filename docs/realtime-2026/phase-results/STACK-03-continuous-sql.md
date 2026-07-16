@@ -2,7 +2,7 @@
 
 - 작업일: 2026-07-16
 - 포함 원본 단계: PR-05, PR-06
-- Issue/branch/PR: #816 / `feat-#816` / 생성 예정
+- Issue/branch/PR: #816 / `feat-#816` / #822 Draft
 - 판정: 구현 및 focused/local contract 검증 완료
 
 ## 구현 결과
