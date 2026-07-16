@@ -56,7 +56,21 @@ bash scripts/verify-eks-day15-final-integration.sh
 
 fake AWS/Kubernetes/curl을 사용하는 `scripts/test-eks-day15-validation-hardening.sh`는 관계없는/stopped/impaired EC2, receipt 누락·short SHA·digest/platform 불일치, 중복/weighted/wrong-port ALB, S3 version residue와 Secret rollback 실패를 거절하는 것을 확인했다.
 
-실제 formal receipt와 exact EC2 instance ID는 Git에 저장하지 않는 private 입력이다. 두 입력으로 강화된 live runner를 다시 실행하기 전까지 상태는 `strengthened live revalidation pending`이며, 기존 성공 기록을 새 gate 통과로 소급하지 않는다. EC2 instance/status check가 통과해도 Continuous 서비스 자체 health를 증명하는 것은 아니다.
+실제 formal receipt와 exact EC2 instance ID는 Git에 저장하지 않는 private 입력이다. EC2 instance/status check가 통과해도 Continuous 서비스 자체 health를 증명하는 것은 아니다.
+
+## 2026-07-16 강화 live 재검증
+
+Git 제외 경로의 formal receipt와 저장소 밖에서 선택한 exact rollback EC2 instance ID를 사용해 강화된 runner를 실제 dev 환경에서 다시 실행했다. receipt의 full revision과 Backend digest가 Helm revision 3의 Deployment 및 두 Pod imageID와 일치했고, 두 Pod는 Ready 2/2와 restart 0을 유지했다.
+
+- ALB는 healthy target 4개, draining 0이었고 Frontend와 Backend EndpointSlice 집합이 target과 정확히 일치했다.
+- 기본 ALB DNS의 `/`와 `/api/health`는 HTTP 200이었고 Backend의 `database.ok=true`를 확인했다.
+- ExternalSecret의 Ready·owner·source/target hash 계약이 통과했다.
+- Backend Pod Identity로 Raw/Output/Warehouse 읽기, Query Result/Evidence 쓰기·읽기·삭제와 계약 밖 접근 거절을 확인했다.
+- exact rollback EC2는 running이고 instance/system status check는 모두 `ok`였다.
+- EKS FastAPI의 worker·maintenance Continuous process 합계는 0이었다.
+- runner 종료 후 승인된 S3 smoke prefix의 Version/DeleteMarker와 임시 Pod·ConfigMap 잔여는 모두 0이었다.
+
+따라서 이전의 `strengthened live revalidation pending` 상태는 해소됐다. 이 성공은 Backend web runtime 통합 gate에 한정되며 EC2 내부 Continuous 서비스 health, Airflow·Spark·Trino bounded E2E, production cutover를 증명하지는 않는다.
 
 ## Terraform과 정적 회귀
 
@@ -82,7 +96,7 @@ Kubernetes smoke Pod/ConfigMap residue: 0
 
 ## 완료와 제외 범위
 
-기존 ALB 외부 경로, Backend runtime Secret, RDS health, Backend S3 최소 권한과 rollout 가용성의 실행 결과는 유지한다. 다만 최종 Backend image provenance와 exact EC2 보존 acceptance는 강화된 private 입력으로 live runner를 다시 실행해야 완료된다.
+기존 ALB 외부 경로, Backend runtime Secret, RDS health, Backend S3 최소 권한과 rollout 가용성의 실행 결과를 유지했다. 최종 Backend image provenance와 exact EC2 보존 acceptance도 강화된 private 입력을 사용한 live runner로 완료했다.
 
 다음 항목은 이번 완료 범위가 아니다.
 
