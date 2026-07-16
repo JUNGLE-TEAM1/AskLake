@@ -113,10 +113,35 @@ async function getApplication(requestJson, namespace, name) {
   return response.body;
 }
 
-export async function createOrRecoverApplication({ application, requestJson }) {
+export async function createOrRecoverApplication({ application, expectedKubernetesExecution, requestJson }) {
   const namespace = application?.metadata?.namespace;
   const name = application?.metadata?.name;
   if (!namespace || !name) throw new Error("SparkApplication namespace and name are required");
+  if (expectedKubernetesExecution) {
+    const expectedNamespace = String(expectedKubernetesExecution.namespace || "").trim();
+    const expectedName = String(expectedKubernetesExecution.applicationName || "").trim();
+    const expectedUid = String(expectedKubernetesExecution.applicationUid || "").trim();
+    if (!expectedNamespace || !expectedName || !expectedUid) {
+      throw new Error("Persisted SparkApplication namespace, name, and UID are required for recovery");
+    }
+    if (expectedNamespace !== namespace || expectedName !== name) {
+      throw new Error("Persisted SparkApplication name or namespace does not match the deterministic application identity");
+    }
+    const existing = await getApplication(requestJson, namespace, name);
+    if (!existing) {
+      throw new Error(
+        `Persisted SparkApplication ${namespace}/${name} with UID ${expectedUid} was not found; refusing to create a replacement`,
+      );
+    }
+    validateExistingApplication(application, existing);
+    const actualUid = String(existing?.metadata?.uid || "").trim();
+    if (actualUid !== expectedUid) {
+      throw new Error(
+        `Persisted SparkApplication UID mismatch for ${namespace}/${name}: expected ${expectedUid}, observed ${actualUid || "missing"}`,
+      );
+    }
+    return { application: existing, recovered: true };
+  }
   try {
     const response = await requestJson("POST", applicationPath(namespace), { body: application });
     if (response.status === 200 || response.status === 201) return { application: response.body, recovered: false };
@@ -220,6 +245,7 @@ function writeProgressFile(progressFile, execution) {
 
 export async function submitAndWait({
   application,
+  expectedKubernetesExecution,
   requestJson,
   timeoutMs,
   pollIntervalMs = 2_000,
@@ -229,7 +255,7 @@ export async function submitAndWait({
 }) {
   const namespace = application.metadata.namespace;
   const name = application.metadata.name;
-  const created = await createOrRecoverApplication({ application, requestJson });
+  const created = await createOrRecoverApplication({ application, expectedKubernetesExecution, requestJson });
   const startedAt = now();
   let observed = created.application;
   let lastProgressFingerprint = "";
@@ -296,6 +322,7 @@ async function main() {
   const input = JSON.parse(readFileSync(0, "utf8") || "{}");
   const result = await submitAndWait({
     application: input.application,
+    expectedKubernetesExecution: input.expectedKubernetesExecution,
     requestJson: createKubernetesRequest(process.env),
     timeoutMs: Number(input.timeoutMs || 7_200_000),
     pollIntervalMs: Number(input.pollIntervalMs || 2_000),

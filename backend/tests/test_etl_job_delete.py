@@ -1240,10 +1240,20 @@ class EtlJobDeleteRunConcurrencyTests(unittest.TestCase):
         self.insert_job(job_id)
         self.insert_airflow_run(job_id, run_id)
         calls = 0
+        expected_executions: list[dict | None] = []
 
-        def recover_same_application(_db, _job, _command, _run_id, *, spark_progress_callback):
+        def recover_same_application(
+            _db,
+            _job,
+            _command,
+            _run_id,
+            *,
+            spark_progress_callback,
+            expected_kubernetes_execution=None,
+        ):
             nonlocal calls
             calls += 1
+            expected_executions.append(expected_kubernetes_execution)
             progress = kubernetes_execution_fixture(job_id, run_id, recovered=calls > 1)
             spark_progress_callback(progress)
             if calls == 1:
@@ -1263,9 +1273,54 @@ class EtlJobDeleteRunConcurrencyTests(unittest.TestCase):
 
         self.assertEqual(result["kubernetesExecution"]["applicationUid"], "spark-uid-contract-001")
         self.assertEqual(result["kubernetesExecution"]["recovered"], True)
+        self.assertIsNone(expected_executions[0])
+        self.assertEqual(
+            expected_executions[1]["applicationUid"],
+            "spark-uid-contract-001",
+        )
         with self.session_factory() as db:
             run = db.get(ETLRunModel, run_id)
             self.assertEqual(run.execution_generation, 2)
+            self.assertEqual(
+                run.task_states["sparkExecution"]["kubernetesExecution"]["applicationUid"],
+                "spark-uid-contract-001",
+            )
+
+    def test_successful_same_run_retry_returns_persisted_result_without_spark_call(self) -> None:
+        job_id = "JOB-SQLITE-SPARK-TERMINAL-RETRY"
+        run_id = "RUN-SQLITE-SPARK-TERMINAL-RETRY"
+        self.insert_job(job_id)
+        self.insert_airflow_run(job_id, run_id)
+        persisted = spark_terminal_result(
+            job_id,
+            run_id,
+            kubernetes_execution_fixture(job_id, run_id),
+        )
+        with self.session_factory() as db:
+            run = db.get(ETLRunModel, run_id)
+            run.execution_generation = 7
+            run.task_states = {
+                "sparkExecution": {
+                    "generation": 7,
+                    "kubernetesExecution": persisted["kubernetesExecution"],
+                    "status": "success",
+                },
+                "sparkResult": persisted,
+            }
+            db.commit()
+
+        with (
+            patch("app.repositories.etl_repository.ensure_schema", return_value=None),
+            patch("app.services.etl_service.run_spark_job") as run_spark,
+            self.session_factory() as db,
+        ):
+            result = execute_airflow_spark_run(db, job_id=job_id, run_id=run_id, command="run")
+
+        self.assertEqual(result, persisted)
+        run_spark.assert_not_called()
+        with self.session_factory() as db:
+            run = db.get(ETLRunModel, run_id)
+            self.assertEqual(run.execution_generation, 7)
             self.assertEqual(
                 run.task_states["sparkExecution"]["kubernetesExecution"]["applicationUid"],
                 "spark-uid-contract-001",

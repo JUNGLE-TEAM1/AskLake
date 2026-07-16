@@ -2610,6 +2610,7 @@ def run_spark_job(
     *,
     spark_progress_callback: Callable[[dict[str, Any]], None] | None = None,
     source_boundary: dict[str, Any] | None = None,
+    expected_kubernetes_execution: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     ensure_batch_iceberg_target(db, job)
     rest_mode = spark_rest_mode_enabled()
@@ -2652,7 +2653,14 @@ def run_spark_job(
             ),
             "runId": run_id,
             **(
-                {"sparkKubernetesProgressFile": str(kubernetes_state_file)}
+                {
+                    "sparkKubernetesProgressFile": str(kubernetes_state_file),
+                    **(
+                        {"expectedKubernetesExecution": expected_kubernetes_execution}
+                        if expected_kubernetes_execution is not None
+                        else {}
+                    ),
+                }
                 if kubernetes_mode
                 else {}
             ),
@@ -2765,7 +2773,7 @@ def validate_eks_mvp_fixture_spark_result(
     if mismatches:
         raise ApiError(
             "EKS_MVP_FIXTURE_RESULT_INVALID",
-            "Spark result does not prove the persisted EKS fixture boundary was committed exactly once.",
+            "Spark result does not prove the persisted EKS fixture boundary was committed with the expected identity.",
             status.HTTP_502_BAD_GATEWAY,
             {
                 "expectedCount": expected_count,
@@ -2823,7 +2831,6 @@ def execute_airflow_spark_run(
         generation=lease.generation,
         lease_seconds=lease_seconds,
     )
-    with_execution_lease.start()
 
     run = etl_repository.get_run_for_execution_fence(
         db,
@@ -2832,30 +2839,46 @@ def execute_airflow_spark_run(
         generation=lease.generation,
     )
     if run is None:
-        with_execution_lease.stop()
         raise run_execution_lease_lost(job_id, run_id)
-    previous_execution = (run.task_states or {}).get("sparkExecution")
-    previous_kubernetes_execution = (
-        previous_execution.get("kubernetesExecution")
-        if isinstance(previous_execution, dict)
-        and isinstance(previous_execution.get("kubernetesExecution"), dict)
-        else None
-    )
-    run.task_states = {
-        **(run.task_states or {}),
-        "sparkExecution": {
-            "attemptId": attempt_id,
-            "generation": lease.generation,
-            "startedAt": iso_now(),
-            "status": "running",
-            **(
-                {"kubernetesExecution": previous_kubernetes_execution}
-                if previous_kubernetes_execution is not None
-                else {}
-            ),
-        },
-    }
-    db.commit()
+    try:
+        previous_execution = (run.task_states or {}).get("sparkExecution")
+        previous_kubernetes_execution = (
+            previous_execution.get("kubernetesExecution")
+            if isinstance(previous_execution, dict)
+            and isinstance(previous_execution.get("kubernetesExecution"), dict)
+            else None
+        )
+        if previous_kubernetes_execution is not None:
+            previous_kubernetes_execution = normalize_spark_kubernetes_execution(
+                previous_kubernetes_execution,
+                job_id=job_id,
+                run_id=run_id,
+            )
+        run.task_states = {
+            **(run.task_states or {}),
+            "sparkExecution": {
+                "attemptId": attempt_id,
+                "generation": lease.generation,
+                "startedAt": iso_now(),
+                "status": "running",
+                **(
+                    {"kubernetesExecution": previous_kubernetes_execution}
+                    if previous_kubernetes_execution is not None
+                    else {}
+                ),
+            },
+        }
+        db.commit()
+    except Exception:
+        db.rollback()
+        etl_repository.release_run_execution_lease(
+            db,
+            run_id,
+            owner=FASTAPI_EXECUTION_OWNER,
+            generation=lease.generation,
+        )
+        raise
+    with_execution_lease.start()
 
     try:
         job = etl_repository.get_job(db, job_id)
@@ -2873,6 +2896,8 @@ def execute_airflow_spark_run(
             }
             if source_boundary is not None:
                 spark_kwargs["source_boundary"] = source_boundary
+            if previous_kubernetes_execution is not None:
+                spark_kwargs["expected_kubernetes_execution"] = previous_kubernetes_execution
             result = run_spark_job(
                 db,
                 job,
@@ -3023,6 +3048,11 @@ def finalize_spark_execution_attempt(
     generation: int,
     error: str,
 ) -> None:
+    # Kubernetes progress is committed through a separate session while the
+    # bridge is running. Expire this session's identity map so exception
+    # finalization cannot overwrite the persisted application UID with stale
+    # task state.
+    db.expire_all()
     run = etl_repository.get_run_for_execution_fence(
         db,
         run_id,
@@ -3277,17 +3307,7 @@ def reconcile_airflow_catalog(
                 {"jobId": job_id, "runId": run_id, "sparkRunId": spark_result.get("runId")},
             )
 
-        output_path = str(spark_result.get("outputPath") or "").strip()
-        if job.iceberg_target and not is_kafka_job(job):
-            enriched_result = verify_spark_iceberg_result(job, run_id, spark_result)
-        else:
-            validate_catalog_output_identity(job, run_id, output_path)
-            physical = inspect_spark_output(output_path)
-            enriched_result = {
-                **spark_result,
-                "parquetObjectCount": physical["parquetObjectCount"],
-                "storageSizeBytes": physical["storageSizeBytes"],
-            }
+        enriched_result = enrich_airflow_catalog_spark_result(job, run, spark_result)
         if heartbeat.lost:
             raise run_execution_lease_lost(job_id, run_id)
         response = commit_airflow_catalog_reconciliation(
@@ -3493,6 +3513,39 @@ def validate_catalog_output_identity(job: ETLJobModel, run_id: str, output_path:
             "Spark output path does not match the persisted Job destination.",
             {"expected": expected, "outputPath": actual, "runId": run_id},
         )
+
+
+def enrich_airflow_catalog_spark_result(
+    job: ETLJobModel,
+    run: ETLRunModel,
+    result: dict[str, Any],
+) -> dict[str, Any]:
+    fixture_job = is_eks_mvp_bounded_fixture_job(job)
+    if job.iceberg_target and (not is_kafka_job(job) or fixture_job):
+        expected_run_row_count = None
+        if fixture_job:
+            source_boundary = persisted_eks_mvp_fixture_source_boundary(run)
+            if source_boundary is None:
+                raise catalog_reconciliation_error(
+                    "Persisted EKS fixture boundary is required for Catalog reconciliation.",
+                    {"jobId": job.id, "runId": run.run_id},
+                )
+            expected_run_row_count = source_boundary["expectedCount"]
+        return verify_spark_iceberg_result(
+            job,
+            run.run_id,
+            result,
+            expected_run_row_count=expected_run_row_count,
+        )
+
+    output_path = str(result.get("outputPath") or "").strip()
+    validate_catalog_output_identity(job, run.run_id, output_path)
+    physical = inspect_spark_output(output_path)
+    return {
+        **result,
+        "parquetObjectCount": physical["parquetObjectCount"],
+        "storageSizeBytes": physical["storageSizeBytes"],
+    }
 
 
 def verify_spark_iceberg_result(

@@ -654,8 +654,7 @@ def commit_iceberg_table(
     if effective_write_mode == "append" and bool((source_boundary or {}).get("rebaseline")):
         effective_write_mode = "replace"
     if (
-        effective_write_mode == "append"
-        and existed_before
+        existed_before
         and iceberg_source_boundary_exists(spark, target, source_boundary)
     ):
         snapshot = latest_iceberg_snapshot(spark, target)

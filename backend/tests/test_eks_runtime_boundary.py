@@ -210,12 +210,18 @@ class EksSparkRunnerBoundaryTests(unittest.TestCase):
             patch.object(etl_service, "run_node_bridge", return_value=expected) as node_bridge,
         ):
             progress_callback = Mock()
+            expected_execution = {
+                "applicationName": "asklake-run-run-eks-contract",
+                "applicationUid": "spark-uid-eks-contract",
+                "namespace": "asklake-dev",
+            }
             actual = etl_service.run_spark_job(
                 Mock(),
                 job,
                 "run",
                 "RUN-EKS",
                 spark_progress_callback=progress_callback,
+                expected_kubernetes_execution=expected_execution,
             )
 
         self.assertEqual(actual, expected)
@@ -226,6 +232,10 @@ class EksSparkRunnerBoundaryTests(unittest.TestCase):
         self.assertEqual(
             node_bridge.call_args.args[2]["sparkKubernetesProgressFile"],
             str(progress_file),
+        )
+        self.assertEqual(
+            node_bridge.call_args.args[2]["expectedKubernetesExecution"],
+            expected_execution,
         )
         self.assertIs(node_bridge.call_args.kwargs["progress_callback"], progress_callback)
 

@@ -173,6 +173,49 @@ class SparkSourceIdentityTests(unittest.TestCase):
         self.assertEqual(result["sourceBoundary"], boundary)
         frame.writeTo.assert_not_called()
 
+    def test_kafka_snapshot_retry_reuses_existing_iceberg_commit_for_replace_target(self) -> None:
+        spark = SimpleNamespace(sql=Mock())
+        frame = SimpleNamespace(writeTo=Mock())
+        target = {
+            "catalog": "iceberg",
+            "namespace": "asklake",
+            "partitionColumns": [],
+            "table": "eks_mvp_fixture",
+            "tableUri": "iceberg://iceberg/asklake/eks_mvp_fixture",
+            "writeMode": "replace",
+        }
+        boundary = {
+            "kind": "kafka_snapshot",
+            "snapshotId": "run_cp4_retry_001",
+        }
+        committed = {
+            "committedAt": "2026-07-16T09:00:00Z",
+            "snapshotId": "676467971672461132",
+            "warehouseLocation": "s3://asklake-warehouse/warehouse/eks_mvp_fixture",
+        }
+
+        with (
+            patch.object(spark_job_run, "iceberg_table_exists", return_value=True),
+            patch.object(spark_job_run, "latest_iceberg_snapshot", return_value=committed),
+            patch.object(spark_job_run, "iceberg_source_boundary_exists", return_value=True),
+        ):
+            result = spark_job_run.commit_iceberg_table(
+                spark,
+                frame,
+                target,
+                job_id="JOB-EKS-MVP",
+                run_id="run_cp4_retry_001",
+                partition_columns=[],
+                schema_fingerprint="schema-v1",
+                rule_fingerprint="rules-v1",
+                source_boundary=boundary,
+            )
+
+        self.assertEqual(result["operation"], "reuse")
+        self.assertEqual(result["snapshotId"], "676467971672461132")
+        self.assertEqual(result["sourceBoundary"], boundary)
+        frame.writeTo.assert_not_called()
+
     def test_iceberg_rollback_uses_fully_qualified_table_name(self) -> None:
         spark = SimpleNamespace(sql=Mock())
         target = {

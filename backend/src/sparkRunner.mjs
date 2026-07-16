@@ -224,6 +224,7 @@ function runSparkPipelineWithSource(job, command, runId, source, executionMode, 
       positiveInteger(options.sparkRestTimeoutMs, sparkRunTimeoutMs()),
       process.env,
       {
+        expectedKubernetesExecution: options.expectedKubernetesExecution,
         progressFile: sparkKubernetesProgressFileForRun(runId, options.sparkKubernetesProgressFile),
       },
     )
@@ -550,6 +551,7 @@ export function runSparkKubernetesApplication(application, timeoutMs, environmen
     env: environment,
     input: JSON.stringify({
       application,
+      expectedKubernetesExecution: options.expectedKubernetesExecution,
       pollIntervalMs: positiveInteger(environment.ASKLAKE_SPARK_KUBERNETES_POLL_INTERVAL_MS, 2_000),
       progressFile: options.progressFile,
       timeoutMs: positiveInteger(timeoutMs, 7_200_000),

@@ -250,6 +250,81 @@ test("lost create response recovers the same SparkApplication without another PO
   assert.equal(progress.at(-1).resultMarkerFound, true);
 });
 
+test("persisted UID recovery reads the existing SparkApplication without POST", async () => {
+  const application = applicationFixture();
+  const existing = {
+    ...application,
+    metadata: { ...application.metadata, uid: "spark-uid-persisted-001" },
+  };
+  const calls = [];
+  const result = await createOrRecoverApplication({
+    application,
+    expectedKubernetesExecution: {
+      applicationName: application.metadata.name,
+      applicationUid: "spark-uid-persisted-001",
+      namespace: application.metadata.namespace,
+    },
+    requestJson: async (method, path) => {
+      calls.push([method, path]);
+      return { body: existing, status: 200 };
+    },
+  });
+
+  assert.equal(result.recovered, true);
+  assert.equal(result.application.metadata.uid, "spark-uid-persisted-001");
+  assert.deepEqual(calls.map(([method]) => method), ["GET"]);
+});
+
+test("persisted UID recovery refuses replacement when the SparkApplication is gone", async () => {
+  const application = applicationFixture();
+  const calls = [];
+
+  await assert.rejects(
+    createOrRecoverApplication({
+      application,
+      expectedKubernetesExecution: {
+        applicationName: application.metadata.name,
+        applicationUid: "spark-uid-deleted-001",
+        namespace: application.metadata.namespace,
+      },
+      requestJson: async (method, path) => {
+        calls.push([method, path]);
+        return { body: { message: "not found" }, status: 404 };
+      },
+    }),
+    /refusing to create a replacement/,
+  );
+
+  assert.deepEqual(calls.map(([method]) => method), ["GET"]);
+});
+
+test("persisted UID recovery rejects a same-name replacement before execution", async () => {
+  const application = applicationFixture();
+  const calls = [];
+  const replacement = {
+    ...application,
+    metadata: { ...application.metadata, uid: "spark-uid-replacement-002" },
+  };
+
+  await assert.rejects(
+    createOrRecoverApplication({
+      application,
+      expectedKubernetesExecution: {
+        applicationName: application.metadata.name,
+        applicationUid: "spark-uid-original-001",
+        namespace: application.metadata.namespace,
+      },
+      requestJson: async (method, path) => {
+        calls.push([method, path]);
+        return { body: replacement, status: 200 };
+      },
+    }),
+    /UID mismatch/,
+  );
+
+  assert.deepEqual(calls.map(([method]) => method), ["GET"]);
+});
+
 test("publishes Kubernetes UID before waiting for a non-terminal application", async () => {
   const application = applicationFixture();
   const submitted = {
