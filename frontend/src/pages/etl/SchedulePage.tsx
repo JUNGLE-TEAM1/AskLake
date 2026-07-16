@@ -24,6 +24,7 @@ import {
 import type React from "react";
 import { useState } from "react";
 import { CreationFlowLayout, CreationTopActions } from "../../components/creation/CreationFlow";
+import { EtlSectionHeader } from "../../components/etl/EtlSectionHeader";
 import { EtlStepHeader } from "../../components/etl/EtlStepHeader";
 import { normalizeRetryPolicy, retryFailureActionLabels, scheduleOverlapPolicyLabels } from "../../services/draftPipelineContract";
 import type { DraftPipelinePatch, ScheduleFlowId } from "../../types";
@@ -97,33 +98,31 @@ export function SchedulePage({
     <CreationFlowLayout
       actions={<CreationTopActions nextDisabled={invalidRepeatCron} split onPrev={onPrev} onNext={goNext} />}
     >
-      <EtlStepHeader
-        className="etl-step-standalone-header"
-        icon={<Calendar />}
-        title={title}
-      />
-      <Card className="overflow-hidden" size="none">
-        <CardHeader className="border-b border-slate-200 p-5">
-          <CardTitle>실행 방식</CardTitle>
-        </CardHeader>
-        <CardContent className="grid gap-6 p-5">
-          <div aria-label="실행 방식" className="grid gap-4 md:grid-cols-2" role="group">
-            <ScheduleModeCard
-              icon={<PlayCircle size={24} />}
-              selected={selectedOption === "skip"}
-              title="직접 실행"
-              onClick={() => selectOption("skip")}
-            />
-            <ScheduleModeCard
-              icon={<Repeat2 size={24} />}
-              selected={selectedOption === "repeat"}
-              title="반복 실행"
-              onClick={() => selectOption("repeat")}
-            />
-          </div>
-          <Separator />
-          {scheduleError && <Alert variant="destructive"><Info /><AlertTitle>스케줄을 확인해 주세요.</AlertTitle><AlertDescription>{scheduleError}</AlertDescription></Alert>}
-          {selectedOption === "repeat" && <RepeatSettings customCron={customCron} frequency={repeatFrequency} minute={repeatMinute} overlapPolicy={draftSchedule.overlapPolicy ?? DEFAULT_OVERLAP_POLICY} selectedDay={repeatDay} time={repeatTime} timezone={scheduleTimezone} onCronChange={(cron) => {
+        <EtlStepHeader
+          className="etl-step-standalone-header"
+          icon={<Calendar />}
+          title={title}
+        />
+        <Card className="overflow-hidden" size="none">
+          <EtlSectionHeader icon={<PlayCircle />} title="실행 방식" />
+          <CardContent className="grid gap-6 p-5">
+            <div aria-label="실행 방식" className="grid gap-4 md:grid-cols-2" role="group">
+              <ScheduleModeCard
+                icon={<PlayCircle size={24} />}
+                selected={selectedOption === "skip"}
+                title="직접 실행"
+                onClick={() => selectOption("skip")}
+              />
+              <ScheduleModeCard
+                icon={<Repeat2 size={24} />}
+                selected={selectedOption === "repeat"}
+                title="반복 실행"
+                onClick={() => selectOption("repeat")}
+              />
+            </div>
+            <Separator />
+            {scheduleError && <Alert variant="destructive"><Info /><AlertTitle>스케줄을 확인해 주세요.</AlertTitle><AlertDescription>{scheduleError}</AlertDescription></Alert>}
+            {selectedOption === "repeat" && <RepeatSettings customCron={customCron} frequency={repeatFrequency} minute={repeatMinute} overlapPolicy={draftSchedule.overlapPolicy ?? DEFAULT_OVERLAP_POLICY} selectedDay={repeatDay} time={repeatTime} timezone={scheduleTimezone} onCronChange={(cron) => {
             const sanitizedCron = sanitizeCronInput(cron);
             setCustomCron(sanitizedCron);
             onDraftChange(buildSchedulePatch("repeat", { cron: sanitizedCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime }, scheduleTimezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }));
@@ -147,10 +146,10 @@ export function SchedulePage({
           }} onTimeChange={(time) => {
             setRepeatTime(time);
             onDraftChange(buildSchedulePatch("repeat", { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time }, scheduleTimezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }));
-          }} onOverlapPolicyChange={(overlapPolicy) => onDraftChange({ overlapPolicy, schedule: { overlapPolicy } })} onTimezoneChange={(timezone) => onDraftChange(buildSchedulePatch("repeat", repeatDraft, timezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }))} />}
-          <ScheduleRetrySettings retryPolicy={draftRetryPolicy} onRetryPolicyChange={updateRetryPolicy} />
-        </CardContent>
-      </Card>
+            }} onOverlapPolicyChange={(overlapPolicy) => onDraftChange({ overlapPolicy, schedule: { overlapPolicy } })} onTimezoneChange={(timezone) => onDraftChange(buildSchedulePatch("repeat", repeatDraft, timezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }))} />}
+            <ScheduleRetrySettings retryPolicy={draftRetryPolicy} onRetryPolicyChange={updateRetryPolicy} />
+          </CardContent>
+        </Card>
     </CreationFlowLayout>
   );
 }

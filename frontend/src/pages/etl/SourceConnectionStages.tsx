@@ -2,11 +2,14 @@ import { Button } from "@/components/ui/button";
 import { FormFieldGroup } from "@/components/ui/form-field-group";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
+import { Panel } from "@/components/ui/panel";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Check, ChevronDown, ChevronUp, Clock3, Repeat2 } from "lucide-react";
+import { Check, ChevronDown, ChevronUp, Clock3, Database, Repeat2 } from "lucide-react";
 import type { Dispatch, SetStateAction } from "react";
 
 import { InfoBox } from "../../components/common";
+import { EtlSectionHeader } from "../../components/etl/EtlSectionHeader";
+import { getSourceBrandMeta, SourceBrandIcon } from "../../components/source/SourceBrand";
 import type { DraftPipelinePatch, SourceDraft } from "../../types";
 import type { SourceConnectionDefinition, SourceConnectorMeta } from "./sourceDefinitions";
 import {
@@ -39,38 +42,37 @@ export function SourceChoiceStage({
 }) {
   return (
     <div className="source-stage-screen source-choice-screen">
-      <div className="source-select-heading">
-        <h2>데이터 소스 선택</h2>
-      </div>
-      <div className="source-choice-grid">
-        {connectors.map((connector) => {
-          const meta = connectorMeta[connector];
-          return (
-            <Button
-              aria-label={`${meta.label} 소스 선택`}
-              aria-pressed={sourceType === connector}
-              className="source-choice-button relative grid h-auto min-h-36 w-full grid-cols-[64px_minmax(0,1fr)] items-center justify-items-start gap-5 whitespace-normal px-10 py-8 text-left"
-              key={connector}
-              type="button"
-              variant={sourceType === connector ? "subtle" : "outline"}
-              onClick={() => onSelect(connector)}
-            >
-              {sourceType === connector && <span className="absolute right-4 top-4 inline-flex size-7 items-center justify-center rounded-full bg-blue-600 text-white"><Check /></span>}
-              <span className="inline-flex size-16 items-center justify-center">{meta.icon}</span>
-              <span className="grid min-w-0 gap-1.5">
-                <span className="text-lg font-bold text-slate-950">{meta.label}</span>
-                <span className="text-[13px] font-medium leading-5 text-slate-500">{meta.description}</span>
-              </span>
-            </Button>
-          );
-        })}
-      </div>
+      <Panel className="source-bordered-panel source-choice-panel">
+        <EtlSectionHeader icon={<Database />} title="데이터 소스 선택" />
+        <div className="source-choice-grid">
+          {connectors.map((connector) => {
+            const meta = connectorMeta[connector];
+            return (
+              <Button
+                aria-label={`${meta.label} 소스 선택`}
+                aria-pressed={sourceType === connector}
+                className="source-choice-button relative grid h-auto min-h-36 w-full grid-cols-[64px_minmax(0,1fr)] items-center justify-items-start gap-5 whitespace-normal px-10 py-8 text-left"
+                key={connector}
+                type="button"
+                variant={sourceType === connector ? "subtle" : "outline"}
+                onClick={() => onSelect(connector)}
+              >
+                {sourceType === connector && <span className="absolute right-4 top-4 inline-flex size-7 items-center justify-center rounded-full bg-blue-600 text-white"><Check /></span>}
+                <span className="inline-flex size-16 items-center justify-center">{meta.icon}</span>
+                <span className="grid min-w-0 gap-1.5">
+                  <span className="text-lg font-bold text-slate-950">{meta.label}</span>
+                  <span className="text-[13px] font-medium leading-5 text-slate-500">{meta.description}</span>
+                </span>
+              </Button>
+            );
+          })}
+        </div>
+      </Panel>
     </div>
   );
 }
 
 export function SourceConnectStage({
-  activeSourceMeta,
   activeSourceType,
   connectionStatus,
   connectionStatusCopy,
@@ -88,7 +90,6 @@ export function SourceConnectStage({
   setContinuousAdvancedOpen,
   sourceLocked,
 }: {
-  activeSourceMeta: SourceConnectorMeta;
   activeSourceType: string;
   connectionStatus: SourceDraft["connectionStatus"];
   connectionStatusCopy: Record<SourceDraft["connectionStatus"], { badge: string; title: string }>;
@@ -111,14 +112,16 @@ export function SourceConnectStage({
   return (
     <ScrollArea className="h-[calc(100vh-270px)] min-h-0">
       <div className="source-stage-screen">
-        <section className="source-step-section active">
-          <div className="source-step-header">
-            <div className="source-step-brand" aria-hidden="true">{activeSourceMeta.icon}</div>
-            <div><strong>{current.title}</strong></div>
-            <div className="hegun-status-actions">
-              {isSqlResultSource ? <span className="panel-note">연결 테스트 생략</span> : <Button type="button" disabled={connectionStatus === "testing"} onClick={onTestConnection}>연결 테스트</Button>}
-            </div>
-          </div>
+        <Panel className="source-bordered-panel source-step-section active">
+          <EtlSectionHeader
+            actions={(
+              <div className="hegun-status-actions">
+                {isSqlResultSource ? <span className="panel-note">연결 테스트 생략</span> : <Button type="button" disabled={connectionStatus === "testing"} onClick={onTestConnection}>연결 테스트</Button>}
+              </div>
+            )}
+            icon={<SourceBrandIcon kind={getSourceBrandMeta(activeSourceType).kind} size={22} />}
+            title={current.title}
+          />
           <div className="hegun-field-grid source-flow-fields">
             {visibleEditableFields.map(([label, value]) => (
               <FormFieldGroup
@@ -138,10 +141,7 @@ export function SourceConnectStage({
           </div>
           {activeSourceType === "Stream / Kafka" && (
             <section className="source-step-section" aria-label="Kafka 실행 방식">
-              <div className="source-step-header">
-                <em>2</em>
-                <div><strong>Kafka 실행 방식</strong></div>
-              </div>
+              <EtlSectionHeader icon={<Repeat2 />} title="Kafka 실행 방식" />
               <div className="kafka-execution-mode-grid" role="group" aria-label="Kafka 실행 방식 선택">
                 <button aria-pressed={kafkaExecutionMode === "snapshot"} className={`kafka-execution-mode-card ${kafkaExecutionMode === "snapshot" ? "selected" : ""}`} disabled={sourceLocked} type="button" onClick={() => onDraftChange({ source: { executionMode: "snapshot" } })}>
                   <span className="kafka-execution-mode-icon"><Clock3 size={19} /></span>
@@ -189,18 +189,15 @@ export function SourceConnectStage({
             </section>
           )}
           {current.info && <InfoBox title={isSqlResultSource ? "SQL Preview 입력" : "보안 연결"} body={current.info} />}
-        </section>
+        </Panel>
 
         <section className={`hegun-source-status-bar ${connectionStatus}`} aria-label="연결 테스트 상태">
-          <div className="hegun-status-head">
-            <div className="hegun-status-copy single-line">
-              {sourceStatusIcon(connectionStatus)}
-              <h2>{connectionStatusCopy[connectionStatus].title}</h2>
-            </div>
-            <div className="hegun-status-actions">
-              {isSqlResultSource && <span className="panel-note">연결 테스트 생략</span>}
-            </div>
-          </div>
+          <EtlSectionHeader
+            actions={isSqlResultSource ? <span className="panel-note">연결 테스트 생략</span> : null}
+            icon={sourceStatusIcon(connectionStatus)}
+            title={connectionStatusCopy[connectionStatus].title}
+            tone={connectionStatus === "success" ? "success" : connectionStatus === "failed" ? "danger" : "default"}
+          />
           <div className="hegun-test-strip">
             {displayTestItems.map(([label, value], index) => (
               <span className={sourceCheckState(value)} key={`${activeSourceType}-${label}-${index}`}>
