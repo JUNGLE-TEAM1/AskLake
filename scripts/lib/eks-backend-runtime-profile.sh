@@ -7,19 +7,9 @@ asklake_backend_runtime_contract() {
 
 asklake_backend_runtime_profile() {
   local root_dir="$1" scope="${2:-bounded}" contract
-  contract="$(asklake_backend_runtime_contract "$root_dir")" || return 1
+  contract="${3:-${ASKLAKE_DAY16_RUNTIME_CONTRACT:-$(asklake_backend_runtime_contract "$root_dir")}}" || return 1
   [[ -s "$contract" ]] || return 1
-  case "$scope" in
-    bounded)
-      jq -c '.runtimeProfiles.backend.boundedKeys | sort' "$contract"
-      ;;
-    full-service)
-      jq -c '.secrets.backend.keys | sort' "$contract"
-      ;;
-    *)
-      return 2
-      ;;
-  esac
+  node "$root_dir/scripts/resolve-eks-backend-runtime-profile.mjs" "$scope" "$contract"
 }
 
 asklake_backend_runtime_hash() {

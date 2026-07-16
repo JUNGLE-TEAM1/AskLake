@@ -71,4 +71,4 @@ tracked Markdown 전체를 다시 검사한 결과 다음 원문 패턴은 0개�
 
 Phase 7은 **통과**다. 회귀검증, live steady 확인, temporary resource cleanup과 tracked evidence redaction을 완료했다.
 
-Phase 6은 별도 상태로 계속 미완료다. full-service AI runtime/provider 선택과 실제 Secret source/target 입력이 없으므로 private handoff를 `ready-for-deploy`로 승격하지 않았다. Phase 7 통과는 이 blocker를 우회하거나 production cutover를 승인하지 않는다.
+Phase 6은 별도 상태로 계속 미완료다. live `asklake-runtime` ConfigMap owner 선택/Helm 인수와 full-service AI runtime/provider 선택/실제 Secret source-target 입력이 없으므로 private handoff를 `ready-for-deploy`로 승격하지 않았다. Phase 7 통과는 이 두 blocker를 우회하거나 production cutover를 승인하지 않는다.

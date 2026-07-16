@@ -5,17 +5,15 @@ set +x
 umask 077
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT_DIR/scripts/lib/require-eks-image-receipt.sh"
 HANDOFF="${ASKLAKE_DAY16_HANDOFF:-$ROOT_DIR/infra/eks/delivery/dev.day16-a.handoff.json}"
-RECEIPT="${ASKLAKE_IMAGE_RECEIPT:-}"
 
 fail() { echo "$1" >&2; exit 1; }
 [[ "${ASKLAKE_DAY16_PROMOTE_CONFIRM:-}" == "promote-ready-for-deploy" ]] || \
   fail "set ASKLAKE_DAY16_PROMOTE_CONFIRM=promote-ready-for-deploy"
-[[ -n "$RECEIPT" && -s "$RECEIPT" ]] || \
-  fail "set ASKLAKE_IMAGE_RECEIPT to the current private formal image receipt"
+RECEIPT="$(asklake_require_image_receipt "$ROOT_DIR")" || fail "current image receipt is invalid"
 [[ -s "$HANDOFF" ]] || fail "private handoff is missing"
 git -C "$ROOT_DIR" check-ignore -q -- "$HANDOFF" || fail "private handoff must remain ignored"
-git -C "$ROOT_DIR" check-ignore -q -- "$RECEIPT" || fail "private image receipt must remain ignored"
 
 candidate="$(dirname "$HANDOFF")/dev.day16-a.promote-candidate.handoff.json"
 [[ ! -e "$candidate" ]] || fail "promotion candidate already exists"

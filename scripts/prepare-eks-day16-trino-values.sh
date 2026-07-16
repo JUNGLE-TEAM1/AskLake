@@ -5,8 +5,8 @@ set +x
 umask 077
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT_DIR/scripts/lib/require-eks-image-receipt.sh"
 STATE="${ASKLAKE_TERRAFORM_STATE:-$ROOT_DIR/infra/eks/terraform/terraform.tfstate}"
-RECEIPT="${ASKLAKE_IMAGE_RECEIPT:-$ROOT_DIR/infra/eks/delivery/dev-8d4414df.image-receipt.json}"
 OUTPUT="${ASKLAKE_DAY16_TRINO_VALUES:-$ROOT_DIR/infra/eks/values/workloads/dev.day16-a.private-values.json}"
 NAMESPACE="${ASKLAKE_EKS_NAMESPACE:-asklake-dev}"
 
@@ -18,10 +18,9 @@ fail() {
 for command in git jq kubectl node; do
   command -v "$command" >/dev/null 2>&1 || fail "missing required command: $command"
 done
+RECEIPT="$(asklake_require_image_receipt "$ROOT_DIR")" || fail "current image receipt is invalid"
 [[ -s "$STATE" && -s "$RECEIPT" ]] || fail "Terraform state or image receipt is missing"
 git -C "$ROOT_DIR" check-ignore -q -- "$STATE" || fail "Terraform state must remain ignored by Git"
-git -C "$ROOT_DIR" check-ignore -q -- "$RECEIPT" || fail "image receipt must remain ignored by Git"
-node "$ROOT_DIR/scripts/verify-eks-image-receipt.mjs" "$RECEIPT" >/dev/null
 
 if [[ -e "$OUTPUT" ]]; then
   echo "private Trino values already exist; verify instead of overwriting" >&2

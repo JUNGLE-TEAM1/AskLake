@@ -254,7 +254,7 @@ for (const mount of contract.fileMounts ?? []) {
 exactStringSet([...actualMountBindings], new Set(Object.keys(expectedMounts)), 'file mount bindings');
 
 exactKeys(contract.runtimeProfiles, new Set(['backend']), 'runtimeProfiles');
-exactKeys(contract.runtimeProfiles?.backend, new Set(['active', 'boundedKeys']), 'runtimeProfiles.backend');
+exactKeys(contract.runtimeProfiles?.backend, new Set(['active', 'boundedKeys', 'fullServiceKeys']), 'runtimeProfiles.backend');
 if (!['bounded', 'full-service'].includes(contract.runtimeProfiles?.backend?.active)) {
   fail('Backend active runtime profile must be bounded or full-service');
 }
@@ -282,6 +282,39 @@ for (const key of contract.runtimeProfiles?.backend?.boundedKeys ?? []) {
     fail(`Backend bounded profile references a key outside the full-service contract: ${key}`);
   }
 }
+const fullServiceKeys = contract.runtimeProfiles?.backend?.fullServiceKeys;
+exactKeys(fullServiceKeys, new Set(['common', 'airflowApiAuth', 'aiRuntime']), 'runtimeProfiles.backend.fullServiceKeys');
+exactKeys(fullServiceKeys?.airflowApiAuth, new Set(['api_token', 'username_password']), 'Backend Airflow profile keys');
+exactKeys(fullServiceKeys?.aiRuntime, new Set(['direct', 'gateway']), 'Backend AI profile keys');
+const expectedCommonBackendKeys = new Set([
+  'DATABASE_URL',
+  'BOOTSTRAP_ADMIN_PASSWORD',
+  'AIRFLOW_EXECUTION_API_TOKEN',
+  'AIRFLOW_INTERNAL_TOKEN',
+  'TRINO_AUTH_USERNAME',
+  'TRINO_AUTH_PASSWORD',
+  'TRINO_MATERIALIZER_USERNAME',
+  'TRINO_MATERIALIZER_PASSWORD',
+  'TRINO_RESULT_CURSOR_SECRET',
+  'TRINO_QUERY_CONFIRMATION_SECRET',
+  'trino-ca.pem',
+]);
+exactStringSet(fullServiceKeys?.common, expectedCommonBackendKeys, 'Backend full-service common keys');
+exactStringSet(fullServiceKeys?.airflowApiAuth?.api_token, new Set(['AIRFLOW_API_TOKEN']), 'Backend Airflow API token keys');
+exactStringSet(fullServiceKeys?.airflowApiAuth?.username_password, new Set(['AIRFLOW_PASSWORD']), 'Backend Airflow username/password keys');
+exactStringSet(fullServiceKeys?.aiRuntime?.direct, new Set(['OPENAI_API_KEY']), 'Backend direct AI keys');
+exactStringSet(fullServiceKeys?.aiRuntime?.gateway, new Set([
+  'AI_GATEWAY_SERVICE_TOKEN',
+  'AI_MCP_SERVICE_TOKEN',
+  'AI_CONTEXT_SIGNING_SECRET',
+  'OPENAI_API_KEY',
+]), 'Backend gateway AI keys');
+const declaredProfileKeys = new Set([
+  ...(fullServiceKeys?.common ?? []),
+  ...Object.values(fullServiceKeys?.airflowApiAuth ?? {}).flat(),
+  ...Object.values(fullServiceKeys?.aiRuntime ?? {}).flat(),
+]);
+exactStringSet([...declaredProfileKeys], expectedSecrets.backend.keys, 'Backend full-service profile union');
 
 if (!Array.isArray(contract.envBindings)) fail('envBindings must be an array');
 const envBoundSecretKeys = new Set();

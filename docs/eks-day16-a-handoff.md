@@ -1,5 +1,7 @@
 # EKS 16일차 Pair A Phase 5 handoff 검증 기록
 
+> 역사적 최초 handoff 기록이다. 현재 blocker와 자동 gate는 [최종 보완 검수](eks-day16-final-remediation-review.md)를 따른다.
+
 ## 현재 판정
 
 Issue #812 Phase 5의 private handoff 생성, planning 계약 검증, 전체 workload Helm lint/render와 신규 Trino 리소스 server-side dry-run을 수행했다. 현재 판정은 `integration_blocked`이며 Phase 5를 완료 처리하지 않는다.

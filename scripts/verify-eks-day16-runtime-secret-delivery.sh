@@ -11,6 +11,7 @@ NAMESPACE="${ASKLAKE_EKS_NAMESPACE:-asklake-dev}"
 REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-ap-northeast-2}}"
 BACKEND_SCOPE="${ASKLAKE_BACKEND_RUNTIME_SCOPE:-bounded}"
 INPUT="${ASKLAKE_DAY16_SECRET_INPUT:-$ROOT_DIR/infra/eks/secrets/dev.runtime-secret-input.json}"
+RUNTIME_CONTRACT="${ASKLAKE_DAY16_RUNTIME_CONTRACT:-$ROOT_DIR/infra/eks/secrets/dev.day16-a.runtime-secret-contract.json}"
 
 fail() {
   echo "$1" >&2
@@ -140,7 +141,7 @@ jq -e '. == [
 ]' <<<"$airflow_keys" >/dev/null || fail "Airflow preserved key set drifted"
 
 backend_keys="$(kubectl get secret asklake-backend-runtime -n "$NAMESPACE" -o json | jq -c '.data | keys | sort')"
-expected_backend_keys="$(asklake_backend_runtime_profile "$ROOT_DIR" "$BACKEND_SCOPE")" || \
+expected_backend_keys="$(asklake_backend_runtime_profile "$ROOT_DIR" "$BACKEND_SCOPE" "$RUNTIME_CONTRACT")" || \
   fail "Backend runtime profile is invalid: $BACKEND_SCOPE"
 [[ "$backend_keys" == "$expected_backend_keys" ]] || fail "Backend preserved key set drifted"
 

@@ -4,10 +4,10 @@ set -euo pipefail
 set +x
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT_DIR/scripts/lib/require-eks-image-receipt.sh"
 VALUES="${ASKLAKE_DAY16_TRINO_VALUES:-$ROOT_DIR/infra/eks/values/workloads/dev.day16-a.private-values.json}"
 BASE_VALUES="$ROOT_DIR/infra/eks/values/workloads/dev.example.yaml"
 STATE="${ASKLAKE_TERRAFORM_STATE:-$ROOT_DIR/infra/eks/terraform/terraform.tfstate}"
-RECEIPT="${ASKLAKE_IMAGE_RECEIPT:-$ROOT_DIR/infra/eks/delivery/dev-8d4414df.image-receipt.json}"
 CHART="$ROOT_DIR/infra/eks/helm/asklake-workloads"
 NAMESPACE="${ASKLAKE_EKS_NAMESPACE:-asklake-dev}"
 
@@ -19,6 +19,7 @@ fail() {
 for command in git helm jq kubectl node; do
   command -v "$command" >/dev/null 2>&1 || fail "missing required command: $command"
 done
+RECEIPT="$(asklake_require_image_receipt "$ROOT_DIR")" || fail "current image receipt is invalid"
 for file in "$VALUES" "$BASE_VALUES" "$STATE" "$RECEIPT"; do [[ -s "$file" ]] || fail "required private input is missing"; done
 git -C "$ROOT_DIR" check-ignore -q -- "$VALUES" || fail "private Trino values must be ignored by Git"
 if git -C "$ROOT_DIR" ls-files --error-unmatch -- "$VALUES" >/dev/null 2>&1; then fail "private Trino values must not be tracked"; fi

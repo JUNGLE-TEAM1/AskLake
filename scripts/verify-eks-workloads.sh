@@ -7,7 +7,9 @@ VALUES_FILE="$ROOT_DIR/infra/eks/values/workloads/dev.example.yaml"
 RENDERED_FILE="$(mktemp)"
 OPT_IN_RENDERED_FILE="$(mktemp)"
 AIRFLOW_ONLY_RENDERED_FILE="$(mktemp)"
-trap 'rm -f "$RENDERED_FILE" "$OPT_IN_RENDERED_FILE" "$AIRFLOW_ONLY_RENDERED_FILE"' EXIT
+GATEWAY_RENDERED_FILE="$(mktemp)"
+AIRFLOW_TOKEN_RENDERED_FILE="$(mktemp)"
+trap 'rm -f "$RENDERED_FILE" "$OPT_IN_RENDERED_FILE" "$AIRFLOW_ONLY_RENDERED_FILE" "$GATEWAY_RENDERED_FILE" "$AIRFLOW_TOKEN_RENDERED_FILE"' EXIT
 
 required_files=(
   "$ROOT_DIR/.github/workflows/eks-b-workload-checks.yml"
@@ -270,8 +272,7 @@ for secret_name in asklake-backend-runtime asklake-airflow-runtime asklake-spark
 done
 
 for required_key in \
-  DATABASE_URL BOOTSTRAP_ADMIN_PASSWORD AI_GATEWAY_SERVICE_TOKEN AI_MCP_SERVICE_TOKEN \
-  AI_CONTEXT_SIGNING_SECRET OPENAI_API_KEY AIRFLOW_API_TOKEN AIRFLOW_PASSWORD \
+  DATABASE_URL BOOTSTRAP_ADMIN_PASSWORD OPENAI_API_KEY AIRFLOW_PASSWORD \
   AIRFLOW_EXECUTION_API_TOKEN AIRFLOW_INTERNAL_TOKEN TRINO_AUTH_USERNAME TRINO_AUTH_PASSWORD \
   TRINO_MATERIALIZER_USERNAME TRINO_MATERIALIZER_PASSWORD TRINO_RESULT_CURSOR_SECRET \
   TRINO_QUERY_CONFIRMATION_SECRET trino-ca.pem AIRFLOW__DATABASE__SQL_ALCHEMY_CONN \
@@ -281,6 +282,31 @@ for required_key in \
   TRINO_TLS_KEYSTORE_PASSWORD TRINO_INTERNAL_SHARED_SECRET trino-keystore.jks trino-password.db; do
   grep -q "$required_key" "$OPT_IN_RENDERED_FILE"
 done
+
+if grep -Eq 'AI_GATEWAY_SERVICE_TOKEN|AI_MCP_SERVICE_TOKEN|AI_CONTEXT_SIGNING_SECRET|name: AIRFLOW_API_TOKEN' \
+  "$OPT_IN_RENDERED_FILE"; then
+  echo "default direct/username-password Backend render references an unselected Secret key" >&2
+  exit 1
+fi
+
+"$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" \
+  --set backend.config.aiQueryProvider=gateway >"$GATEWAY_RENDERED_FILE"
+for gateway_key in AI_GATEWAY_SERVICE_TOKEN AI_MCP_SERVICE_TOKEN AI_CONTEXT_SIGNING_SECRET OPENAI_API_KEY; do
+  grep -q "$gateway_key" "$GATEWAY_RENDERED_FILE"
+done
+grep -q 'name: AIRFLOW_PASSWORD' "$GATEWAY_RENDERED_FILE"
+if grep -q 'name: AIRFLOW_API_TOKEN' "$GATEWAY_RENDERED_FILE"; then
+  echo "gateway selection changed the independent Airflow auth profile" >&2
+  exit 1
+fi
+
+"$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" \
+  --set backend.config.airflowApiAuthMode=api_token >"$AIRFLOW_TOKEN_RENDERED_FILE"
+grep -q 'name: AIRFLOW_API_TOKEN' "$AIRFLOW_TOKEN_RENDERED_FILE"
+if grep -q 'name: AIRFLOW_PASSWORD' "$AIRFLOW_TOKEN_RENDERED_FILE"; then
+  echo "Airflow API token profile retained the Backend password-only key" >&2
+  exit 1
+fi
 
 image_count="$(grep -c '^ *image: ".*"$' "$OPT_IN_RENDERED_FILE")"
 digest_image_count="$(grep -Ec '^ *image: ".+@sha256:[0-9a-f]{64}"$' "$OPT_IN_RENDERED_FILE")"

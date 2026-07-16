@@ -8,7 +8,7 @@
 
 ## 실행 전 런타임 정합성
 
-`asklake-runtime` ConfigMap의 Spark image가 현재 formal receipt와 달라 해당 image key만 최신 immutable digest로 교체했다. 다른 runtime key와 `external_ec2` Continuous control-plane 경계는 변경하지 않았다. FastAPI를 rolling restart한 뒤 desired replica와 updated·ready replica가 모두 일치하는지 확인했다.
+`asklake-runtime` ConfigMap의 Spark image가 당시 formal receipt와 달라 해당 image key만 최신 immutable digest로 교체했다. 다른 runtime key와 `external_ec2` Continuous control-plane 경계는 변경하지 않았다. FastAPI를 rolling restart한 뒤 desired replica와 updated·ready replica가 모두 일치하는지 확인했다. 이 수동 patch는 실행 증거일 뿐 desired-state ownership 해결이 아니다. 후속 감사에서 ConfigMap에 Helm owner metadata가 없음을 확인했으므로 owner release가 정식으로 인수하기 전 promotion은 차단한다.
 
 현재 receipt의 Spark image로 실행된 완료 SparkApplication은 정확히 하나다. Kubernetes object의 UID와 RDS `sparkResult.kubernetesExecution` UID가 일치하고, object image와 receipt image digest도 일치한다.
 

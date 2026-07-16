@@ -6,10 +6,10 @@ set +x
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT_DIR/scripts/lib/verify-eks-context.sh"
 source "$ROOT_DIR/scripts/lib/audit-eks-s3-smoke-residue.sh"
+source "$ROOT_DIR/scripts/lib/require-eks-image-receipt.sh"
 
 NAMESPACE="${ASKLAKE_EKS_NAMESPACE:-asklake-dev}"
 REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-ap-northeast-2}}"
-RECEIPT="${ASKLAKE_IMAGE_RECEIPT:-$ROOT_DIR/infra/eks/delivery/dev-8d4414df.image-receipt.json}"
 STATE="${ASKLAKE_TERRAFORM_STATE:-$ROOT_DIR/infra/eks/terraform/terraform.tfstate}"
 SMOKE_SOURCE="$ROOT_DIR/infra/eks/smoke/trino_data_plane_smoke.py"
 RUN_TOKEN="$(date -u +%Y%m%dT%H%M%SZ)-$$-${RANDOM}"
@@ -27,6 +27,7 @@ fail() {
 for command in aws git jq kubectl node; do
   command -v "$command" >/dev/null 2>&1 || fail "missing required command: $command"
 done
+RECEIPT="$(asklake_require_image_receipt "$ROOT_DIR")" || fail "current image receipt is invalid"
 [[ "${ASKLAKE_TRINO_DATA_PLANE_SMOKE_CONFIRM:-}" == "run-trino-data-plane-smoke" ]] || \
   fail "set ASKLAKE_TRINO_DATA_PLANE_SMOKE_CONFIRM=run-trino-data-plane-smoke"
 [[ -s "$RECEIPT" && -s "$STATE" && -s "$SMOKE_SOURCE" ]] || fail "image receipt, Terraform state, or Trino smoke source is missing"

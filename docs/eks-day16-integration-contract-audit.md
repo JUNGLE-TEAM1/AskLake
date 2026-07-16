@@ -1,5 +1,7 @@
 # EKS 16일차 A/B 통합 계약 감사
 
+> 역사적 Phase 1 감사 기록이다. 아래 drift 판정은 이후 해소됐으며 현재 promotion 상태는 [최종 보완 검수](eks-day16-final-remediation-review.md)를 따른다.
+
 ## 목적과 판정
 
 이 문서는 A PR #834와 B PR #849가 병합된 최신 `pair1`에서 A의 Terraform·Secret·network·private handoff와 B의 Helm workload·runtime 계약을 대조한 Phase 1 결과다. 실제 AWS 식별자, endpoint, Secret value, image digest와 실행 식별자는 기록하지 않는다.

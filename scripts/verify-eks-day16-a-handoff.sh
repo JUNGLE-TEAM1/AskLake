@@ -5,11 +5,11 @@ set +x
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT_DIR/scripts/lib/eks-backend-runtime-profile.sh"
+source "$ROOT_DIR/scripts/lib/require-eks-image-receipt.sh"
 HANDOFF="${ASKLAKE_DAY16_HANDOFF:-$ROOT_DIR/infra/eks/delivery/dev.day16-a.handoff.json}"
 RUNTIME="${ASKLAKE_DAY16_RUNTIME_CONTRACT:-$ROOT_DIR/infra/eks/secrets/dev.day16-a.runtime-secret-contract.json}"
 VALUES="${ASKLAKE_DAY16_TRINO_VALUES:-$ROOT_DIR/infra/eks/values/workloads/dev.day16-a.private-values.json}"
 BASE_VALUES="$ROOT_DIR/infra/eks/values/workloads/dev.example.yaml"
-RECEIPT="${ASKLAKE_IMAGE_RECEIPT:-}"
 STATE="${ASKLAKE_TERRAFORM_STATE:-$ROOT_DIR/infra/eks/terraform/terraform.tfstate}"
 FIXTURE_RECEIPT="${ASKLAKE_FIXTURE_RECEIPT:-$ROOT_DIR/infra/eks/delivery/dev.fixture-receipt.json}"
 CHART="$ROOT_DIR/infra/eks/helm/asklake-workloads"
@@ -18,8 +18,8 @@ MODE="${1:---audit}"
 
 fail() { echo "$1" >&2; exit 1; }
 [[ "$MODE" == "--audit" || "$MODE" == "--ready" ]] || fail "usage: verify-eks-day16-a-handoff.sh [--audit|--ready]"
-[[ -n "$RECEIPT" ]] || fail "set ASKLAKE_IMAGE_RECEIPT to the current private formal image receipt"
 for command in git helm jq kubectl node; do command -v "$command" >/dev/null 2>&1 || fail "missing required command: $command"; done
+RECEIPT="$(asklake_require_image_receipt "$ROOT_DIR")" || fail "current image receipt is invalid"
 for file in "$HANDOFF" "$RUNTIME" "$VALUES" "$BASE_VALUES" "$RECEIPT" "$STATE"; do [[ -s "$file" ]] || fail "Phase 5 handoff input is missing"; done
 export ASKLAKE_EKS_CLUSTER_NAME="${ASKLAKE_EKS_CLUSTER_NAME:-$(jq -r '.outputs.cluster_name.value' "$STATE")}"
 for file in "$HANDOFF" "$RUNTIME" "$VALUES" "$RECEIPT" "$STATE"; do
@@ -27,7 +27,6 @@ for file in "$HANDOFF" "$RUNTIME" "$VALUES" "$RECEIPT" "$STATE"; do
   [[ "$(stat -f '%Lp' "$file")" == "600" || "$file" == "$STATE" ]] || fail "private Phase 5 input must use mode 0600"
 done
 git merge-base --is-ancestor origin/pair1 HEAD || fail "current branch does not contain latest origin/pair1"
-node "$ROOT_DIR/scripts/verify-eks-image-receipt.mjs" "$RECEIPT" >/dev/null
 if [[ "$MODE" == "--ready" ]]; then
   node "$ROOT_DIR/scripts/verify-eks-delivery-handoff.mjs" --ready "$HANDOFF" >/dev/null
 else
@@ -43,6 +42,11 @@ ASKLAKE_BACKEND_RUNTIME_SCOPE="$backend_scope" \
   bash "$ROOT_DIR/scripts/verify-eks-day16-runtime-secret-delivery.sh" >/dev/null
 runtime_secret_delivery="ready"
 bash "$ROOT_DIR/scripts/verify-eks-day16-trino-values.sh" >/dev/null
+
+runtime_config_result="$(bash "$ROOT_DIR/scripts/verify-eks-runtime-config-ownership.sh" --audit)"
+runtime_config_ownership="$(jq -r '.ownership' <<<"$runtime_config_result")"
+runtime_config_image="$(jq -r '.image' <<<"$runtime_config_result")"
+runtime_config_selection="$(jq -r '.selection' <<<"$runtime_config_result")"
 
 jq -e --slurpfile state "$STATE" --slurpfile receipt "$RECEIPT" '
   .kubernetes.clusterName==$state[0].outputs.cluster_name.value
@@ -64,6 +68,9 @@ helm get values asklake-trino -n "$NAMESPACE" -o json >"$trino_values"
 
 release_ownership="ready"
 blockers=0
+if [[ "$(jq -r '.status' <<<"$runtime_config_result")" != "ready" ]]; then
+  blockers=$((blockers+1))
+fi
 if ! helm upgrade --install asklake-web "$ROOT_DIR/infra/eks/helm/asklake-web" \
   --namespace "$NAMESPACE" --create-namespace=false -f "$web_values" --dry-run=server \
   >/dev/null 2>"$dryrun_error"; then
@@ -104,7 +111,7 @@ else
 fi
 
 backend_contract="blocked"
-expected_backend_keys="$(asklake_backend_runtime_profile "$ROOT_DIR" "$backend_scope")" || \
+expected_backend_keys="$(asklake_backend_runtime_profile "$ROOT_DIR" "$backend_scope" "$RUNTIME")" || \
   fail "Backend runtime profile is invalid: $backend_scope"
 actual_backend_keys="$(kubectl get secret asklake-backend-runtime -n "$NAMESPACE" -o json | jq -c '.data|keys|sort')"
 if [[ "$expected_backend_keys" == "$actual_backend_keys" ]]; then
@@ -122,6 +129,6 @@ fi
 
 status="ready"
 [[ "$blockers" -gt 0 ]] && status="integration_blocked"
-printf 'phase5_handoff_status=%s blockers=%d fixture_receipt=%s release_ownership=%s runtime_secret_delivery=%s backend_scope=%s backend_runtime=%s full_service_contract=%s\n' \
-  "$status" "$blockers" "$fixture_state" "$release_ownership" "$runtime_secret_delivery" "$backend_scope" "$backend_contract" "$full_service_contract"
+printf 'phase5_handoff_status=%s blockers=%d fixture_receipt=%s release_ownership=%s runtime_secret_delivery=%s backend_scope=%s backend_runtime=%s runtime_config_selection=%s runtime_config_ownership=%s runtime_config_image=%s full_service_contract=%s\n' \
+  "$status" "$blockers" "$fixture_state" "$release_ownership" "$runtime_secret_delivery" "$backend_scope" "$backend_contract" "$runtime_config_selection" "$runtime_config_ownership" "$runtime_config_image" "$full_service_contract"
 [[ "$MODE" == "--audit" || "$blockers" -eq 0 ]] || exit 1
